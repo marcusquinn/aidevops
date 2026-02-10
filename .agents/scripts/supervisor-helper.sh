@@ -34,6 +34,7 @@
 #   supervisor-helper.sh dashboard [--batch id] [--interval N] Live TUI dashboard (t068.8)
 #   supervisor-helper.sh pr-lifecycle <task_id> [--dry-run] [--skip-review-triage] Handle post-PR lifecycle
 #   supervisor-helper.sh pr-check <task_id>             Check PR CI/review status
+#   supervisor-helper.sh scan-orphaned-prs [batch_id]   Scan for PRs workers created but supervisor missed (t210)
 #   supervisor-helper.sh pr-merge <task_id> [--dry-run]  Merge PR (squash)
 #   supervisor-helper.sh verify <task_id>               Run post-merge verification checks (t180)
 #   supervisor-helper.sh self-heal <task_id>            Create diagnostic subtask for failed/blocked task
@@ -5863,6 +5864,190 @@ check_pr_status() {
 }
 
 #######################################
+# Scan for orphaned PRs — PRs that workers created but the supervisor
+# missed during evaluation (t210).
+#
+# Scenarios this catches:
+#   - Worker created PR but exited without FULL_LOOP_COMPLETE signal
+#   - Worker used a non-standard branch name not in the DB branch column
+#   - evaluate_worker() fallback PR detection failed (API timeout, etc.)
+#   - Task stuck in failed/blocked/retrying with a valid PR on GitHub
+#
+# Strategy:
+#   1. Find tasks in non-terminal states that have no PR URL (or no_pr/task_only)
+#   2. For each unique repo, do a single bulk gh pr list call
+#   3. Match PRs to tasks by task ID in title or branch name
+#   4. Link matched PRs and transition tasks to complete
+#
+# Throttled: runs at most every 10 minutes (uses timestamp file).
+# Called from cmd_pulse() Phase 6.
+#######################################
+scan_orphaned_prs() {
+    local batch_id="${1:-}"
+
+    ensure_db
+
+    # Throttle: run at most every 10 minutes to avoid excessive GH API calls
+    local scan_interval=600  # seconds (10 min)
+    local scan_stamp="$SUPERVISOR_DIR/orphan-pr-scan-last-run"
+    local now_epoch
+    now_epoch=$(date +%s)
+    local last_run=0
+    if [[ -f "$scan_stamp" ]]; then
+        last_run=$(cat "$scan_stamp" 2>/dev/null || echo 0)
+    fi
+    local elapsed=$((now_epoch - last_run))
+    if [[ "$elapsed" -lt "$scan_interval" ]]; then
+        local remaining=$((scan_interval - elapsed))
+        log_verbose "  Phase 6: Orphaned PR scan skipped (${remaining}s until next run)"
+        return 0
+    fi
+
+    # Find tasks that might have orphaned PRs:
+    # - Status indicates work was done but no PR linked
+    # - pr_url is NULL, empty, 'no_pr', 'task_only', or 'task_obsolete'
+    local where_clause="status IN ('failed', 'blocked', 'retrying', 'complete', 'running', 'evaluating')
+        AND (pr_url IS NULL OR pr_url = '' OR pr_url = 'no_pr' OR pr_url = 'task_only' OR pr_url = 'task_obsolete')"
+    if [[ -n "$batch_id" ]]; then
+        where_clause="$where_clause AND id IN (SELECT task_id FROM batch_tasks WHERE batch_id = '$(sql_escape "$batch_id")')"
+    fi
+
+    local candidate_tasks
+    candidate_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
+        SELECT id, repo, branch FROM tasks
+        WHERE $where_clause
+        ORDER BY updated_at DESC;
+    " 2>/dev/null || echo "")
+
+    if [[ -z "$candidate_tasks" ]]; then
+        echo "$now_epoch" > "$scan_stamp"
+        log_verbose "  Phase 6: Orphaned PR scan — no candidate tasks"
+        return 0
+    fi
+
+    # Group tasks by repo to minimise API calls (one gh pr list per repo)
+    local linked_count=0
+    local scanned_repos=0
+
+    # Collect unique repos from candidate tasks
+    local unique_repos=""
+    while IFS='|' read -r tid trepo tbranch; do
+        [[ -n "$trepo" ]] || continue
+        # Deduplicate repos (bash 3.2 compatible — no associative arrays)
+        case "|${unique_repos}|" in
+            *"|${trepo}|"*) ;;  # already seen
+            *) unique_repos="${unique_repos:+${unique_repos}|}${trepo}" ;;
+        esac
+    done <<< "$candidate_tasks"
+
+    # For each unique repo, fetch open PRs and match against task IDs
+    while IFS='|' read -r repo_path; do
+        [[ -n "$repo_path" && -d "$repo_path" ]] || continue
+
+        local repo_slug
+        repo_slug=$(git -C "$repo_path" remote get-url origin 2>/dev/null | grep -oE '[^/:]+/[^/.]+' | tail -1 || echo "")
+        if [[ -z "$repo_slug" ]]; then
+            log_verbose "  Phase 6: Cannot determine repo slug for $repo_path — skipping"
+            continue
+        fi
+
+        # Fetch all open PRs for this repo in a single API call
+        # Include title, headRefName, and url for matching
+        local pr_list
+        pr_list=$(gh pr list --repo "$repo_slug" --state open --limit 100 \
+            --json number,title,headRefName,url 2>>"$SUPERVISOR_LOG" || echo "")
+
+        if [[ -z "$pr_list" || "$pr_list" == "[]" ]]; then
+            scanned_repos=$((scanned_repos + 1))
+            continue
+        fi
+
+        # Also check recently merged PRs (last 7 days) — workers may have
+        # created PRs that were auto-merged or manually merged
+        local merged_pr_list
+        merged_pr_list=$(gh pr list --repo "$repo_slug" --state merged --limit 50 \
+            --json number,title,headRefName,url 2>>"$SUPERVISOR_LOG" || echo "")
+
+        # Combine open and merged PR lists
+        local all_prs
+        if [[ -n "$merged_pr_list" && "$merged_pr_list" != "[]" ]]; then
+            # Merge the two JSON arrays
+            all_prs=$(echo "$pr_list" "$merged_pr_list" | jq -s 'add' 2>/dev/null || echo "$pr_list")
+        else
+            all_prs="$pr_list"
+        fi
+
+        # For each candidate task in this repo, check if any PR matches
+        while IFS='|' read -r tid trepo tbranch; do
+            [[ -n "$tid" && "$trepo" == "$repo_path" ]] || continue
+
+            # Check if any PR references this task ID in title or branch
+            # Uses jq to filter — word boundary matching via regex
+            local matched_pr_url
+            matched_pr_url=$(echo "$all_prs" | jq -r --arg tid "$tid" '
+                .[] | select(
+                    (.title | test("\\b" + $tid + "\\b"; "i")) or
+                    (.headRefName | test("\\b" + $tid + "\\b"; "i"))
+                ) | .url
+            ' 2>/dev/null | head -1 || echo "")
+
+            if [[ -n "$matched_pr_url" ]]; then
+                # Validate the PR belongs to this task (reuse existing validation)
+                local validated_url
+                validated_url=$(validate_pr_belongs_to_task "$tid" "$repo_slug" "$matched_pr_url") || validated_url=""
+
+                if [[ -n "$validated_url" ]]; then
+                    # Link the PR to the task
+                    local escaped_tid
+                    escaped_tid=$(sql_escape "$tid")
+                    db "$SUPERVISOR_DB" "UPDATE tasks SET pr_url = '$(sql_escape "$validated_url")' WHERE id = '$escaped_tid';" 2>/dev/null || true
+
+                    local current_status
+                    current_status=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$escaped_tid';" 2>/dev/null || echo "")
+
+                    # Transition eligible tasks to complete
+                    case "$current_status" in
+                        failed|blocked|retrying)
+                            log_info "  Phase 6: ORPHANED PR found for $tid ($current_status -> complete): $validated_url"
+                            cmd_transition "$tid" "complete" --pr-url "$validated_url" 2>>"$SUPERVISOR_LOG" || true
+                            # Run post-completion hooks
+                            update_todo_on_complete "$tid" 2>>"$SUPERVISOR_LOG" || true
+                            send_task_notification "$tid" "complete" "orphaned_pr_linked:$validated_url" 2>>"$SUPERVISOR_LOG" || true
+                            local tid_desc
+                            tid_desc=$(db "$SUPERVISOR_DB" "SELECT description FROM tasks WHERE id = '$escaped_tid';" 2>/dev/null || echo "")
+                            store_success_pattern "$tid" "orphaned_pr_linked" "$tid_desc" 2>>"$SUPERVISOR_LOG" || true
+                            ;;
+                        complete)
+                            # Already complete but missing PR URL — just link it
+                            log_info "  Phase 6: Linked orphaned PR to completed task $tid: $validated_url"
+                            ;;
+                        *)
+                            # running/evaluating — just link the PR, don't change status
+                            log_info "  Phase 6: Linked orphaned PR to $tid ($current_status): $validated_url"
+                            ;;
+                    esac
+
+                    linked_count=$((linked_count + 1))
+                fi
+            fi
+        done <<< "$candidate_tasks"
+
+        scanned_repos=$((scanned_repos + 1))
+    done <<< "$(echo "$unique_repos" | tr '|' '\n')"
+
+    # Update throttle timestamp
+    echo "$now_epoch" > "$scan_stamp"
+
+    if [[ "$linked_count" -gt 0 ]]; then
+        log_success "  Phase 6: Orphaned PR scan — linked $linked_count PRs across $scanned_repos repos"
+    else
+        log_verbose "  Phase 6: Orphaned PR scan — no orphaned PRs found ($scanned_repos repos scanned)"
+    fi
+
+    return 0
+}
+
+#######################################
 # Command: pr-check - check PR CI/review status for a task
 #######################################
 cmd_pr_check() {
@@ -7059,6 +7244,11 @@ cmd_pulse() {
     if [[ "$orphan_killed" -gt 0 ]]; then
         log_info "  Cleaned:    $orphan_killed stale worker processes"
     fi
+
+    # Phase 6: Orphaned PR scanner (t210)
+    # Detect PRs that workers created but the supervisor missed during evaluation.
+    # Throttled internally (10-minute interval) to avoid excessive GH API calls.
+    scan_orphaned_prs "${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
 
     # Phase 7: Reconcile TODO.md for any stale tasks (t160)
     # Runs when completed tasks exist and nothing is actively running/queued
@@ -10308,6 +10498,7 @@ Usage:
   supervisor-helper.sh pulse [--batch id]            Run supervisor pulse cycle
   supervisor-helper.sh pr-lifecycle <task_id> [--dry-run] [--skip-review-triage] Handle post-PR lifecycle
   supervisor-helper.sh pr-check <task_id>             Check PR CI/review status
+  supervisor-helper.sh scan-orphaned-prs [batch_id]   Scan for PRs workers created but supervisor missed (t210)
   supervisor-helper.sh pr-merge <task_id> [--dry-run]  Merge PR (squash)
   supervisor-helper.sh verify <task_id>               Run post-merge verification checks (t180)
   supervisor-helper.sh self-heal <task_id>            Create diagnostic subtask for failed/blocked task
@@ -10520,6 +10711,12 @@ Post-PR Lifecycle (t128.8, t148):
   CI pending tasks are retried on the next pulse (no state change).
   CI failures and review rejections transition to 'blocked' for human action.
 
+Options for 'scan-orphaned-prs':
+  [batch_id]             Optional batch ID to scope the scan (default: all tasks)
+  Scans GitHub for PRs that reference task IDs in title or branch name but
+  are not linked in the supervisor DB. Links found PRs and transitions
+  failed/blocked/retrying tasks to complete. Throttled to every 10 minutes.
+
 Options for 'pr-lifecycle':
   --dry-run              Show what would happen without executing
 
@@ -10608,6 +10805,7 @@ main() {
         pulse) cmd_pulse "$@" ;;
         pr-lifecycle) cmd_pr_lifecycle "$@" ;;
         pr-check) cmd_pr_check "$@" ;;
+        scan-orphaned-prs) scan_orphaned_prs "$@" ;;
         pr-merge) cmd_pr_merge "$@" ;;
         verify) cmd_verify "$@" ;;
         self-heal) cmd_self_heal "$@" ;;
