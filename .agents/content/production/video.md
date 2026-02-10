@@ -694,7 +694,7 @@ color_variation: 2-5%
 - `tools/video/higgsfield.md` - Higgsfield API integration
 - `tools/video/remotion.md` - Programmatic video editing
 - `content/production/image.md` - Image generation (Nanobanana Pro, Midjourney, Freepik)
-- `content/production/audio.md` - Voice pipeline (CapCut cleanup + ElevenLabs)
+- `content/production/audio.md` - Voice pipeline (CapCut cleanup + ElevenLabs), `voice-pipeline-helper.sh`
 - `content/production/characters.md` - Character consistency (Facial Engineering, Character Bibles)
 - `content/optimization.md` - A/B testing, seed bracketing automation
 - `scripts/seed-bracket-helper.sh` - Seed bracketing CLI (generate, score, report)

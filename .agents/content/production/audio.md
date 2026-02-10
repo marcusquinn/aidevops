@@ -22,7 +22,8 @@ tools:
 - **Purpose**: Professional audio production for content creation
 - **Pipeline**: Voice cleanup → Voice transformation → Sound design → Mixing
 - **Key Rule**: ALWAYS clean AI voice output with CapCut BEFORE ElevenLabs transformation
-- **Helper**: `voice-helper.sh [talk|devices|voices|benchmark]`
+- **Pipeline Helper**: `voice-pipeline-helper.sh [pipeline|extract|cleanup|transform|normalize|tts|voices|clone|status]`
+- **Voice Bridge**: `voice-helper.sh [talk|devices|voices|benchmark]`
 - **References**: `tools/voice/speech-to-speech.md`, `voice-helper.sh`
 
 **When to Use**: Read this when producing voiceovers, narration, podcasts, video audio, or any content requiring professional audio quality.
@@ -351,14 +352,22 @@ voice-helper.sh benchmark         # Test component speeds
 - Voice cloning from 3-5 minute samples
 - 29 languages, 100+ stock voices
 - Emotional control and speaking style
-- API: `elevenlabs-helper.sh` (if implemented)
+- API: `voice-pipeline-helper.sh [transform|tts|voices|clone]`
 
-**CapCut** (AI voice cleanup):
+**CapCut-equivalent cleanup** (local ffmpeg processing):
+
+- Noise reduction, high-pass filter, de-essing
+- Loudness normalization to target LUFS
+- Compression and presence boost for voice clarity
+- CLI: `voice-pipeline-helper.sh cleanup <audio> [output] [target-lufs]`
+- Full pipeline: `voice-pipeline-helper.sh pipeline <file> [voice-id]`
+
+**CapCut** (web-based AI voice cleanup):
 
 - Accent normalization
 - Artifact removal
 - Background noise reduction
-- Web-based, no API (manual workflow)
+- Web-based, no API (manual workflow — use `voice-pipeline-helper.sh cleanup` for automated equivalent)
 
 **Edge TTS** (Microsoft, free):
 
@@ -549,6 +558,7 @@ Distribution (content/distribution/)
 
 - **Script writing**: `content/production/writing.md` - Dialogue pacing, emotional cues
 - **Video production**: `content/production/video.md` - Audio sync, dialogue timing
+- **Voice pipeline**: `voice-pipeline-helper.sh` - CapCut cleanup + ElevenLabs transformation chain
 - **Voice tools**: `tools/voice/speech-to-speech.md` - Advanced voice pipeline
 - **Voice helper**: `voice-helper.sh` - Local voice processing
 
