@@ -4,10 +4,11 @@
 // Part of AI DevOps Framework
 
 import { chromium } from 'playwright';
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, readdirSync, statSync, copyFileSync } from 'fs';
-import { join, basename, extname } from 'path';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, readdirSync, statSync, copyFileSync, symlinkSync, unlinkSync } from 'fs';
+import { join, basename, extname, dirname } from 'path';
 import { homedir } from 'os';
 import { execSync } from 'child_process';
+import { fileURLToPath } from 'url';
 
 // Constants
 const BASE_URL = 'https://higgsfield.ai';
@@ -2688,50 +2689,115 @@ async function pollAndDownloadVideos(page, submittedJobs, outputDir, timeout = 6
     if (completedThisPoll > 0) {
       console.log(`  ${completedThisPoll} new completion(s) detected, downloading via API...`);
 
-      // Intercept API to get all video URLs
+      // Intercept API to get all video URLs — try multiple approaches
       let projectApiData = null;
       const apiHandler = async (response) => {
         const url = response.url();
-        if (url.includes('fnf.higgsfield.ai/project')) {
-          try { projectApiData = await response.json(); } catch {}
+        // Catch project API, job_sets API, or any Higgsfield API with video data
+        if (url.includes('fnf.higgsfield.ai/project') ||
+            url.includes('fnf.higgsfield.ai/job') ||
+            url.includes('higgsfield.ai/api/')) {
+          try {
+            const data = await response.json();
+            // Accept any response that has job_sets with video URLs
+            if (data?.job_sets?.length > 0) {
+              projectApiData = data;
+            }
+          } catch {}
         }
       };
       page.on('response', apiHandler);
-      await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
-      await page.waitForTimeout(6000);
+
+      // Navigate to video creation page to trigger API call (reload may not fire it)
+      await page.goto(`${BASE_URL}/create/video`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.waitForTimeout(4000);
+
+      // Click History tab to load job data
+      const histTab = page.locator('[role="tab"]:has-text("History")');
+      if (await histTab.count() > 0) {
+        await histTab.click({ force: true });
+        await page.waitForTimeout(4000);
+      }
+
+      // If no API data yet, try a page reload as fallback
+      if (!projectApiData) {
+        await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
+        await page.waitForTimeout(6000);
+      }
+
       page.off('response', apiHandler);
+
+      if (!projectApiData) {
+        console.log(`  WARNING: No API data captured. API interception may need updating.`);
+      }
 
       if (projectApiData?.job_sets?.length > 0) {
         if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
 
-        // Match API job_sets to our submitted jobs by prompt text
-        for (const jobSet of projectApiData.job_sets) {
-          const jobPrompt = jobSet.prompt?.substring(0, 60) || '';
+        // Match API job_sets to our submitted jobs by prompt text.
+        // CRITICAL: Track matched jobSets to prevent the same video being
+        // downloaded for multiple scenes (each jobSet matches exactly one scene).
+        const matchedJobSetIds = new Set();
 
-          // Find which of our submitted jobs this matches
-          for (const job of submittedJobs) {
-            if (results.has(job.sceneIndex)) continue;
-            if (!jobPrompt.includes(job.promptPrefix.substring(0, 30)) &&
-                !job.promptPrefix.includes(jobPrompt.substring(0, 30))) continue;
+        for (const job of submittedJobs) {
+          if (results.has(job.sceneIndex)) continue;
 
-            // Found a match — check for completed video URL
-            for (const j of (jobSet.jobs || [])) {
-              if (j.status === 'completed' && j.results?.raw?.url?.includes('cloudfront.net')) {
-                const videoUrl = j.results.raw.url;
-                const meta = { model: job.model, promptSnippet: job.promptPrefix };
-                const filename = buildDescriptiveFilename(meta, `scene-${job.sceneIndex + 1}-${Date.now()}.mp4`, job.sceneIndex);
-                const savePath = join(outputDir, filename);
-                try {
-                  const curlResult = execSync(`curl -sL -w '%{http_code}' -o "${savePath}" "${videoUrl}"`, { timeout: 120000, encoding: 'utf-8' });
-                  const httpCode = curlResult.trim();
-                  if (httpCode === '200' && existsSync(savePath) && statSync(savePath).size > 10000) {
-                    const fileSize = statSync(savePath).size;
-                    console.log(`  Scene ${job.sceneIndex + 1}: downloaded (${(fileSize / 1024 / 1024).toFixed(1)}MB) ${filename}`);
-                    results.set(job.sceneIndex, savePath);
-                  }
-                } catch {}
-                break;
+          // Find the best matching jobSet for this specific job
+          let bestMatch = null;
+          let bestScore = 0;
+
+          for (const jobSet of projectApiData.job_sets) {
+            const jobSetId = jobSet.id || jobSet.prompt;
+            if (matchedJobSetIds.has(jobSetId)) continue; // Already claimed by another scene
+
+            const jobPrompt = jobSet.prompt || '';
+            const submittedPrompt = job.promptPrefix || '';
+
+            // Score the match: longer matching prefix = better match
+            let score = 0;
+            const minLen = Math.min(jobPrompt.length, submittedPrompt.length, 60);
+            for (let c = 0; c < minLen; c++) {
+              if (jobPrompt[c] === submittedPrompt[c]) score++;
+              else break;
+            }
+
+            // Require at least 20 chars of exact prefix match
+            if (score >= 20 && score > bestScore) {
+              // Also verify this jobSet has a completed video
+              const hasVideo = (jobSet.jobs || []).some(
+                j => j.status === 'completed' && j.results?.raw?.url?.includes('cloudfront.net')
+              );
+              if (hasVideo) {
+                bestMatch = jobSet;
+                bestScore = score;
               }
+            }
+          }
+
+          if (!bestMatch) continue;
+
+          // Claim this jobSet so no other scene can use it
+          const bestId = bestMatch.id || bestMatch.prompt;
+          matchedJobSetIds.add(bestId);
+
+          // Download the completed video
+          for (const j of (bestMatch.jobs || [])) {
+            if (j.status === 'completed' && j.results?.raw?.url?.includes('cloudfront.net')) {
+              const videoUrl = j.results.raw.url;
+              const meta = { model: job.model, promptSnippet: job.promptPrefix };
+              const filename = buildDescriptiveFilename(meta, `scene-${job.sceneIndex + 1}-${Date.now()}.mp4`, job.sceneIndex);
+              const savePath = join(outputDir, filename);
+              try {
+                const curlResult = execSync(`curl -sL -w '%{http_code}' -o "${savePath}" "${videoUrl}"`, { timeout: 120000, encoding: 'utf-8' });
+                const httpCode = curlResult.trim();
+                if (httpCode === '200' && existsSync(savePath) && statSync(savePath).size > 10000) {
+                  const fileSize = statSync(savePath).size;
+                  console.log(`  Scene ${job.sceneIndex + 1}: downloaded (${(fileSize / 1024 / 1024).toFixed(1)}MB) ${filename}`);
+                  console.log(`    Matched prompt (${bestScore} chars): "${bestMatch.prompt?.substring(0, 60)}..."`);
+                  results.set(job.sceneIndex, savePath);
+                }
+              } catch {}
+              break;
             }
           }
         }
@@ -2754,6 +2820,55 @@ async function pollAndDownloadVideos(page, submittedJobs, outputDir, timeout = 6
   }
 
   return results;
+}
+
+// ffmpeg fallback for video assembly (no captions/transitions)
+function assembleWithFfmpeg(validVideos, finalPath, brief, outputDir, pipelineState) {
+  if (validVideos.length === 1) {
+    copyFileSync(validVideos[0], finalPath);
+    console.log(`Final video (single scene, ffmpeg copy): ${finalPath}`);
+  } else {
+    const concatList = join(outputDir, 'concat-list.txt');
+    const concatContent = validVideos.map(v => `file '${v}'`).join('\n');
+    writeFileSync(concatList, concatContent);
+
+    try {
+      execSync(`ffmpeg -y -f concat -safe 0 -i "${concatList}" -c copy "${finalPath}"`, {
+        timeout: 120000,
+        stdio: 'pipe',
+      });
+      console.log(`Final video (ffmpeg concat, ${validVideos.length} scenes): ${finalPath}`);
+    } catch (ffmpegErr) {
+      try {
+        execSync(`ffmpeg -y -f concat -safe 0 -i "${concatList}" -c:v libx264 -c:a aac -movflags +faststart "${finalPath}"`, {
+          timeout: 300000,
+          stdio: 'pipe',
+        });
+        console.log(`Final video (ffmpeg re-encoded, ${validVideos.length} scenes): ${finalPath}`);
+      } catch (reencodeErr) {
+        console.log(`ffmpeg assembly failed: ${reencodeErr.message}`);
+        console.log(`Individual scene videos are in: ${outputDir}`);
+        pipelineState.steps.push({ step: 'assembly', success: false, method: 'ffmpeg', reason: reencodeErr.message });
+        return;
+      }
+    }
+  }
+
+  // Add background music if specified
+  if (brief.music && existsSync(brief.music) && existsSync(finalPath)) {
+    const withMusicPath = finalPath.replace('-final.mp4', '-final-music.mp4');
+    try {
+      execSync(`ffmpeg -y -i "${finalPath}" -i "${brief.music}" -c:v copy -c:a aac -map 0:v:0 -map 1:a:0 -shortest "${withMusicPath}"`, {
+        timeout: 120000,
+        stdio: 'pipe',
+      });
+      console.log(`Final video with music: ${withMusicPath}`);
+    } catch (musicErr) {
+      console.log(`Adding music failed: ${musicErr.message}`);
+    }
+  }
+
+  pipelineState.steps.push({ step: 'assembly', success: true, method: 'ffmpeg', path: finalPath });
 }
 
 async function pipeline(options = {}) {
@@ -2837,16 +2952,21 @@ async function pipeline(options = {}) {
   }
 
   // Step 2: Generate scene images (one per scene)
+  // If brief.imagePrompts[] exists, use those for image generation (separate from video prompts)
   console.log(`\n--- Step 2: Generate scene images (${brief.scenes.length} scenes) ---`);
+  if (brief.imagePrompts?.length > 0) {
+    console.log(`Using separate imagePrompts for start frame generation`);
+  }
   const sceneImages = [];
 
   for (let i = 0; i < brief.scenes.length; i++) {
     const scene = brief.scenes[i];
-    console.log(`\nScene ${i + 1}/${brief.scenes.length}: "${scene.prompt?.substring(0, 60)}..."`);
+    const imagePrompt = brief.imagePrompts?.[i] || scene.prompt;
+    console.log(`\nScene ${i + 1}/${brief.scenes.length}: "${imagePrompt?.substring(0, 60)}..."`);
 
     const sceneResult = await generateImage({
       ...options,
-      prompt: scene.prompt,
+      prompt: imagePrompt,
       model: brief.imageModel,
       aspect: brief.aspect,
       batch: 1,
@@ -2971,59 +3091,89 @@ async function pipeline(options = {}) {
   }
   pipelineState.steps.push({ step: 'lipsync', count: lipsyncVideos.filter(Boolean).length });
 
-  // Step 5: Assemble final video with ffmpeg
+  // Step 5: Assemble final video with Remotion (captions + transitions)
+  // Falls back to ffmpeg concat if Remotion is not installed
   console.log(`\n--- Step 5: Assemble final video ---`);
   const validVideos = lipsyncVideos.filter(Boolean);
 
   if (validVideos.length > 0) {
     const finalPath = join(outputDir, `${brief.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-final.mp4`);
+    const __dirname = dirname(fileURLToPath(import.meta.url));
+    const remotionDir = join(__dirname, 'remotion');
+    const remotionInstalled = existsSync(join(remotionDir, 'node_modules', 'remotion'));
+    const hasCaptions = brief.captions && brief.captions.length > 0;
 
-    if (validVideos.length === 1) {
-      // Single video - just copy/rename
+    if (remotionInstalled && (hasCaptions || validVideos.length > 1)) {
+      // Remotion render: captions + transitions + assembly in one pass
+      console.log(`Using Remotion for assembly (${validVideos.length} scenes, ${brief.captions?.length || 0} captions)`);
+
+      // Copy scene videos into Remotion public/ dir so staticFile() can find them
+      // Note: symlinks don't survive Remotion's webpack bundling (copies public/ to temp dir)
+      const publicDir = join(remotionDir, 'public');
+      if (!existsSync(publicDir)) mkdirSync(publicDir, { recursive: true });
+      const staticVideoNames = [];
+      for (let i = 0; i < validVideos.length; i++) {
+        const staticName = `scene-${i}.mp4`;
+        const destPath = join(publicDir, staticName);
+        try { if (existsSync(destPath)) unlinkSync(destPath); } catch (e) { /* ignore */ }
+        copyFileSync(validVideos[i], destPath);
+        staticVideoNames.push(staticName);
+      }
+
+      const remotionProps = {
+        title: brief.title || 'Untitled',
+        scenes: brief.scenes || [],
+        aspect: brief.aspect || '9:16',
+        captions: brief.captions || [],
+        sceneVideos: staticVideoNames, // staticFile() names, not absolute paths
+        transitionStyle: brief.transitionStyle || 'fade',
+        transitionDuration: brief.transitionDuration || 15,
+        musicPath: brief.music && existsSync(brief.music) ? brief.music : undefined,
+      };
+
+      const propsJson = JSON.stringify(remotionProps);
+      // Write props to file to avoid shell escaping issues
+      const propsFile = join(outputDir, 'remotion-props.json');
+      writeFileSync(propsFile, propsJson);
+
+      // calculateMetadata in Root.tsx dynamically computes duration/dimensions from props
+      const remotionCmd = [
+        'npx remotion render',
+        'src/index.ts',
+        'FullVideo',
+        `"${finalPath}"`,
+        `--props="${propsFile}"`,
+        '--codec=h264',
+        '--log=warn',
+      ].join(' ');
+
+      try {
+        execSync(remotionCmd, {
+          cwd: remotionDir,
+          stdio: 'inherit',
+          timeout: 600000, // 10 min
+        });
+        console.log(`Final video (Remotion, ${validVideos.length} scenes + captions): ${finalPath}`);
+        pipelineState.steps.push({ step: 'assembly', success: true, method: 'remotion', path: finalPath });
+      } catch (remotionErr) {
+        console.log(`Remotion render failed: ${remotionErr.message}`);
+        console.log('Falling back to ffmpeg concat...');
+        // Fall through to ffmpeg fallback below
+        assembleWithFfmpeg(validVideos, finalPath, brief, outputDir, pipelineState);
+      }
+    } else if (validVideos.length === 1 && !hasCaptions) {
+      // Single video, no captions - just copy
       copyFileSync(validVideos[0], finalPath);
       console.log(`Final video (single scene): ${finalPath}`);
+      pipelineState.steps.push({ step: 'assembly', success: true, method: 'copy', path: finalPath });
     } else {
-      // Multiple videos - concatenate with ffmpeg
-      const concatList = join(outputDir, 'concat-list.txt');
-      const concatContent = validVideos.map(v => `file '${v}'`).join('\n');
-      writeFileSync(concatList, concatContent);
-
-      try {
-        execSync(`ffmpeg -y -f concat -safe 0 -i "${concatList}" -c copy "${finalPath}"`, {
-          timeout: 120000,
-          stdio: 'pipe',
-        });
-        console.log(`Final video (${validVideos.length} scenes concatenated): ${finalPath}`);
-      } catch (ffmpegErr) {
-        // Try re-encoding if copy fails (different codecs/resolutions)
-        try {
-          execSync(`ffmpeg -y -f concat -safe 0 -i "${concatList}" -c:v libx264 -c:a aac -movflags +faststart "${finalPath}"`, {
-            timeout: 300000,
-            stdio: 'pipe',
-          });
-          console.log(`Final video (re-encoded, ${validVideos.length} scenes): ${finalPath}`);
-        } catch (reencodeErr) {
-          console.log(`ffmpeg assembly failed: ${reencodeErr.message}`);
-          console.log(`Individual scene videos are in: ${outputDir}`);
-        }
+      // ffmpeg fallback (no Remotion installed)
+      if (!remotionInstalled) {
+        console.log('Remotion not installed - using ffmpeg concat (no captions/transitions)');
+        console.log(`Install with: cd ${remotionDir} && npm install`);
       }
+      assembleWithFfmpeg(validVideos, finalPath, brief, outputDir, pipelineState);
     }
-
-    // Add background music if specified
-    if (brief.music && existsSync(brief.music) && existsSync(finalPath)) {
-      const withMusicPath = finalPath.replace('-final.mp4', '-final-music.mp4');
-      try {
-        execSync(`ffmpeg -y -i "${finalPath}" -i "${brief.music}" -c:v copy -c:a aac -map 0:v:0 -map 1:a:0 -shortest "${withMusicPath}"`, {
-          timeout: 120000,
-          stdio: 'pipe',
-        });
-        console.log(`Final video with music: ${withMusicPath}`);
-      } catch (musicErr) {
-        console.log(`Adding music failed: ${musicErr.message}`);
-      }
-    }
-
-    pipelineState.steps.push({ step: 'assembly', success: true, path: finalPath });
   } else {
     console.log('No valid video clips to assemble');
     pipelineState.steps.push({ step: 'assembly', success: false, reason: 'no valid clips' });
