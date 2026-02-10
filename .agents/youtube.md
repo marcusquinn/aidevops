@@ -8,6 +8,7 @@ subagents:
   - topic-research
   - script-writer
   - optimizer
+  - thumbnail-ab-testing
   - pipeline
 tools:
   read: true
@@ -40,6 +41,7 @@ tools:
 | `topic-research` | Niche trends, content gaps, keyword clustering, angle generation |
 | `script-writer` | YouTube script generation with hooks, retention curves, remix mode |
 | `optimizer` | Title, tags, description, hook, and thumbnail optimization |
+| `thumbnail-ab-testing` | Generate, score, and A/B test multiple thumbnail variants |
 | `pipeline` | Automated cron-driven research pipeline |
 
 <!-- AI-CONTEXT-END -->
@@ -62,16 +64,18 @@ The YouTube agent composes existing aidevops tools rather than building from scr
 ```text
 youtube.md (orchestrator)
   |
-  +-- youtube-helper.sh          YouTube Data API v3 wrapper
-  +-- yt-dlp-helper.sh           Video/transcript download
-  +-- keyword-research-helper.sh SEO keyword data
-  +-- memory-helper.sh           Cross-session persistence
+  +-- youtube-helper.sh              YouTube Data API v3 wrapper
+  +-- thumbnail-factory-helper.sh    Thumbnail generation & A/B testing
+  +-- yt-dlp-helper.sh               Video/transcript download
+  +-- keyword-research-helper.sh     SEO keyword data
+  +-- memory-helper.sh               Cross-session persistence
   |
-  +-- youtube/channel-intel.md   Competitor profiling
-  +-- youtube/topic-research.md  Ideation & gap analysis
-  +-- youtube/script-writer.md   Script generation
-  +-- youtube/optimizer.md       Title/tag/description optimization
-  +-- youtube/pipeline.md        Automated cron pipeline
+  +-- youtube/channel-intel.md       Competitor profiling
+  +-- youtube/topic-research.md      Ideation & gap analysis
+  +-- youtube/script-writer.md       Script generation
+  +-- youtube/optimizer.md           Title/tag/description optimization
+  +-- youtube/thumbnail-ab-testing.md Thumbnail variant pipeline
+  +-- youtube/pipeline.md            Automated cron pipeline
 ```
 
 ## Data Sources (No Browser Required)
@@ -189,7 +193,13 @@ memory-helper.sh recall --namespace youtube "competitor analysis"
    - SEO-optimized descriptions
    - Thumbnail analysis and generation brief
 
-5. **Pipeline** (read `youtube/pipeline.md`)
+5. **Thumbnail A/B Testing** (read `youtube/thumbnail-ab-testing.md`)
+   - Generate 5-10 thumbnail variants per video
+   - Score against quality rubric (face, contrast, text space, brand, emotion, clarity)
+   - Upload passing variants (7.5+) to YouTube Studio A/B test
+   - Track CTR performance and store winning patterns
+
+6. **Pipeline** (read `youtube/pipeline.md`)
    - Automated daily/weekly research via cron
    - Each phase runs as isolated worker (no context overflow)
    - Results persist in memory across sessions

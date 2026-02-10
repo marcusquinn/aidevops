@@ -27,6 +27,7 @@ model: sonnet
 | `topic-research` | `youtube/topic-research.md` | Niche trends, content gaps, keyword clustering |
 | `script-writer` | `youtube/script-writer.md` | Long-form scripts with hooks and retention curves |
 | `optimizer` | `youtube/optimizer.md` | Title, description, tags, thumbnail optimization |
+| `thumbnail-ab-testing` | `youtube/thumbnail-ab-testing.md` | Generate, score, and A/B test thumbnails |
 | `pipeline` | `youtube/pipeline.md` | End-to-end automation pipeline |
 
 ## Distribution Workflow

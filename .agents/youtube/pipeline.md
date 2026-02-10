@@ -55,6 +55,12 @@ Supervisor Pulse
     |   Output: titles, tags, descriptions, thumbnail briefs -> workspace
     |   Quota:  ~10 units (competitor tag lookup)
     |
+    +-- Worker 5: Thumbnail A/B Testing
+    |   Input:  video metadata + briefs from workspace
+    |   Output: 5-10 scored thumbnail variants per video -> workspace
+    |   Quota:  ~100 units (competitor thumbnail search)
+    |   Cost:   ~$0.40-0.80/video (DALL-E 3 generation)
+    |
     +-- Notification
         Output: summary email/mailbox message
 ```
@@ -102,6 +108,7 @@ Add tasks to TODO.md for the supervisor:
 - [ ] yt-research YouTube topic research @runner #youtube ~45m blocked-by:yt-intel
 - [ ] yt-scripts YouTube script generation @runner #youtube ~30m blocked-by:yt-research
 - [ ] yt-optimize YouTube metadata optimization @runner #youtube ~20m blocked-by:yt-scripts
+- [ ] yt-thumbnails YouTube thumbnail A/B testing @runner #youtube ~30m blocked-by:yt-optimize
 ```
 
 ### Step 3: Create Supervisor Batch
@@ -120,10 +127,13 @@ supervisor-helper.sh add yt-scripts --repo "$(pwd)" \
 supervisor-helper.sh add yt-optimize --repo "$(pwd)" \
   --description "Generate titles, tags, descriptions for draft scripts"
 
+supervisor-helper.sh add yt-thumbnails --repo "$(pwd)" \
+  --description "Generate and score thumbnail variants for draft videos"
+
 # Create batch with sequential execution (dependencies)
 supervisor-helper.sh batch "youtube-daily" \
   --concurrency 1 \
-  --tasks "yt-intel,yt-research,yt-scripts,yt-optimize"
+  --tasks "yt-intel,yt-research,yt-scripts,yt-optimize,yt-thumbnails"
 ```
 
 ### Step 4: Install Cron
@@ -214,6 +224,27 @@ You are a YouTube metadata optimizer. Your task is to generate titles, tags, and
 4. Report via mailbox with final deliverables summary
 ```
 
+### Worker 5: Thumbnail A/B Testing
+
+```text
+You are a YouTube thumbnail production worker. Your task is to generate and score
+thumbnail variants for videos in the production pipeline.
+
+1. List draft videos: ls ~/.aidevops/.agent-workspace/work/youtube/scripts/
+2. For each video with a script but no thumbnails:
+   a. Generate brief: thumbnail-factory-helper.sh brief VIDEO_ID
+   b. Generate 10 variants: thumbnail-factory-helper.sh generate VIDEO_ID 10
+   c. Score each variant using vision AI with the generated scoring prompt
+   d. Record scores: thumbnail-factory-helper.sh record-score <path> <scores>
+   e. Flag variants scoring 7.5+ as ready for A/B testing
+3. Download competitor thumbnails for context:
+   thumbnail-factory-helper.sh competitors VIDEO_ID 5
+4. Store winning patterns in memory:
+   memory-helper.sh store --namespace youtube-patterns "Thumbnail: [pattern]"
+5. Report via mailbox: mail-helper.sh send --type status_report
+   "Thumbnail generation complete. [N] variants generated, [M] pass threshold."
+```
+
 ## Monitoring
 
 ### Check Pipeline Status
@@ -253,7 +284,7 @@ memory-helper.sh recall --namespace youtube-patterns --recent
 | Pipeline | Frequency | Quota Budget | Best For |
 |----------|-----------|-------------|----------|
 | **Intel scan only** | Daily | ~50 units | Monitoring competitor uploads |
-| **Full pipeline** | Weekly | ~300 units | Complete research + script cycle |
+| **Full pipeline** | Weekly | ~400 units + ~$0.80 | Complete research + script + thumbnails |
 | **Trending check** | 2x/week | ~200 units | Fast-moving niches |
 | **Deep analysis** | Monthly | ~1000 units | Comprehensive competitor review |
 
@@ -282,6 +313,12 @@ With 10,000 daily quota units, you can run the full pipeline daily and still hav
 │   │   ├── description.md      # YouTube description
 │   │   └── thumbnail-brief.md  # Thumbnail design brief
 │   └── ...
+├── thumbnails/
+│   ├── VIDEO_ID/
+│   │   ├── brief.md            # Design brief
+│   │   ├── variants/           # Generated thumbnail images
+│   │   └── competitors/        # Competitor thumbnails
+│   └── style-library/          # Winning style templates
 ├── intel/
 │   ├── latest-scan.json        # Most recent competitor scan
 │   └── history/                # Historical scan data
@@ -296,6 +333,8 @@ With 10,000 daily quota units, you can run the full pipeline daily and still hav
 - `youtube/topic-research.md` — Worker 2 detailed instructions
 - `youtube/script-writer.md` — Worker 3 detailed instructions
 - `youtube/optimizer.md` — Worker 4 detailed instructions
+- `youtube/thumbnail-ab-testing.md` — Worker 5 detailed instructions
 - `tools/ai-assistants/headless-dispatch.md` — Supervisor architecture
 - `tools/automation/cron-agent.md` — Cron job configuration
 - `scripts/supervisor-helper.sh` — Supervisor CLI reference
+- `scripts/thumbnail-factory-helper.sh` — Thumbnail generation and scoring CLI

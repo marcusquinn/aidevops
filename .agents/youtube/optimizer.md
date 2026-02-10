@@ -285,7 +285,9 @@ memory-helper.sh recall --namespace youtube-patterns "title"
 
 - `youtube/script-writer.md` — Scripts feed into metadata generation
 - `youtube/topic-research.md` — Keywords feed into title/tag optimization
+- `youtube/thumbnail-ab-testing.md` — Full thumbnail A/B testing pipeline
 - `seo/keyword-research.md` — Deep keyword volume data
 - `seo/meta-creator.md` — General meta title/description patterns
 - `tools/vision/image-understanding.md` — Thumbnail analysis
 - `tools/vision/image-generation.md` — Thumbnail generation
+- `scripts/thumbnail-factory-helper.sh` — Thumbnail generation and scoring CLI

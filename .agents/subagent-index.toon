@@ -64,7 +64,7 @@ services/communications/,Communications - SMS voice and Matrix bot dispatch,twil
 services/crm/,CRM integration - contact management,fluentcrm
 services/analytics/,Website analytics - GA4 reporting,google-analytics
 services/monitoring/,Error monitoring and debugging,sentry|socket
-youtube/,YouTube competitor research - channel intel topic research script writing and optimization,channel-intel|topic-research|script-writer|optimizer|pipeline
+youtube/,YouTube competitor research - channel intel topic research script writing optimization and thumbnail A/B testing,channel-intel|topic-research|script-writer|optimizer|thumbnail-ab-testing|pipeline
 services/accounting/,Accounting integration - invoicing,quickfile
 services/document-processing/,Document processing - LLM-powered extraction,unstract
 -->
@@ -143,4 +143,5 @@ coderabbit-task-creator-helper.sh,Auto-create tasks from CodeRabbit findings wit
 sops-helper.sh,SOPS encrypted config file management (init encrypt decrypt edit rotate status install)
 gocryptfs-helper.sh,gocryptfs encrypted filesystem overlay (init mount unmount create open close list status install)
 youtube-helper.sh,YouTube Data API v3 wrapper (auth channel videos competitors search quota)
+thumbnail-factory-helper.sh,Thumbnail A/B testing pipeline (brief generate score batch-score competitors compare ab-status history report)
 -->

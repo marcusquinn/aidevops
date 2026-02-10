@@ -588,6 +588,7 @@ Different platforms have different optimal image dimensions and aspect ratios.
 - **Video production**: `content/production/video.md` — frame-to-video workflow, Veo 3.1 ingredients
 - **Character consistency**: `content/production/characters.md` — Facial Engineering Framework, character bibles
 - **A/B testing**: `content/optimization.md` — thumbnail variant testing, scoring, analytics
+- **Thumbnail pipeline**: `youtube/thumbnail-ab-testing.md` — full A/B testing pipeline with `thumbnail-factory-helper.sh`
 - **Distribution**: `content/distribution/` — platform-specific formatting for YouTube, social, blog
 
 ## See Also
