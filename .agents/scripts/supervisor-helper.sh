@@ -6673,6 +6673,198 @@ cmd_pr_check() {
 }
 
 #######################################
+# Get sibling subtasks for a given task (t225)
+# Siblings share the same parent ID (e.g., t215.1, t215.2, t215.3 are siblings)
+# Returns pipe-separated rows: id|status|pr_url|branch|worktree|repo
+# Args: task_id [exclude_self]
+#######################################
+get_sibling_tasks() {
+    local task_id="$1"
+    local exclude_self="${2:-true}"
+
+    # Extract parent ID: t215.3 -> t215, t100.1.2 -> t100.1
+    local parent_id=""
+    if [[ "$task_id" =~ ^(t[0-9]+(\.[0-9]+)*)\.[0-9]+$ ]]; then
+        parent_id="${BASH_REMATCH[1]}"
+    else
+        # Not a subtask (no dot notation) — no siblings
+        return 0
+    fi
+
+    ensure_db
+
+    local escaped_parent
+    escaped_parent=$(sql_escape "$parent_id")
+
+    # Find all tasks whose ID starts with parent_id followed by a dot and a number
+    # e.g., parent t215 matches t215.1, t215.2, etc. but not t2150 or t215abc
+    local where_clause="t.id LIKE '${escaped_parent}.%' AND t.id GLOB '${escaped_parent}.[0-9]*'"
+    if [[ "$exclude_self" == "true" ]]; then
+        local escaped_id
+        escaped_id=$(sql_escape "$task_id")
+        where_clause="$where_clause AND t.id != '$escaped_id'"
+    fi
+
+    db -separator '|' "$SUPERVISOR_DB" "
+        SELECT t.id, t.status, t.pr_url, t.branch, t.worktree, t.repo
+        FROM tasks t
+        WHERE $where_clause
+        ORDER BY t.id ASC;
+    "
+    return 0
+}
+
+#######################################
+# Rebase a single PR branch onto updated main (t225)
+# Used after merging a sibling's PR to prevent cascading conflicts.
+# Operates on the worktree if available, otherwise uses the main repo.
+# Args: task_id
+# Returns: 0 on success, 1 on rebase failure, 2 on force-push failure
+#######################################
+rebase_sibling_pr() {
+    local task_id="$1"
+
+    ensure_db
+
+    local escaped_id
+    escaped_id=$(sql_escape "$task_id")
+    local task_row
+    task_row=$(db -separator '|' "$SUPERVISOR_DB" "
+        SELECT branch, worktree, repo, pr_url FROM tasks WHERE id = '$escaped_id';
+    ")
+
+    if [[ -z "$task_row" ]]; then
+        log_warn "rebase_sibling_pr: task $task_id not found in DB"
+        return 1
+    fi
+
+    local tbranch tworktree trepo tpr
+    IFS='|' read -r tbranch tworktree trepo tpr <<< "$task_row"
+
+    if [[ -z "$tbranch" ]]; then
+        log_warn "rebase_sibling_pr: no branch recorded for $task_id"
+        return 1
+    fi
+
+    if [[ -z "$trepo" || ! -d "$trepo/.git" ]]; then
+        log_warn "rebase_sibling_pr: repo not found for $task_id ($trepo)"
+        return 1
+    fi
+
+    # Determine the git directory to operate in
+    local git_dir="$trepo"
+    local use_worktree=false
+    if [[ -n "$tworktree" && -d "$tworktree" ]]; then
+        git_dir="$tworktree"
+        use_worktree=true
+    fi
+
+    log_info "rebase_sibling_pr: rebasing $task_id ($tbranch) onto main..."
+
+    # Fetch latest main
+    if ! git -C "$trepo" fetch origin main 2>>"$SUPERVISOR_LOG"; then
+        log_warn "rebase_sibling_pr: failed to fetch origin main for $task_id"
+        return 1
+    fi
+
+    if [[ "$use_worktree" == "true" ]]; then
+        # Worktree is already on the branch — rebase in place
+        if ! git -C "$git_dir" rebase origin/main 2>>"$SUPERVISOR_LOG"; then
+            log_warn "rebase_sibling_pr: rebase conflict for $task_id — aborting"
+            git -C "$git_dir" rebase --abort 2>>"$SUPERVISOR_LOG" || true
+            return 1
+        fi
+    else
+        # No worktree — checkout branch in main repo temporarily
+        # This is less ideal but handles edge cases where worktree was cleaned up
+        local current_branch
+        current_branch=$(git -C "$git_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+
+        if ! git -C "$git_dir" checkout "$tbranch" 2>>"$SUPERVISOR_LOG"; then
+            log_warn "rebase_sibling_pr: cannot checkout $tbranch for $task_id"
+            return 1
+        fi
+
+        if ! git -C "$git_dir" rebase origin/main 2>>"$SUPERVISOR_LOG"; then
+            log_warn "rebase_sibling_pr: rebase conflict for $task_id — aborting"
+            git -C "$git_dir" rebase --abort 2>>"$SUPERVISOR_LOG" || true
+            # Return to original branch
+            git -C "$git_dir" checkout "${current_branch:-main}" 2>>"$SUPERVISOR_LOG" || true
+            return 1
+        fi
+
+        # Return to original branch
+        git -C "$git_dir" checkout "${current_branch:-main}" 2>>"$SUPERVISOR_LOG" || true
+    fi
+
+    # Force-push the rebased branch (required after rebase)
+    if ! git -C "$git_dir" push --force-with-lease origin "$tbranch" 2>>"$SUPERVISOR_LOG"; then
+        log_warn "rebase_sibling_pr: force-push failed for $task_id ($tbranch)"
+        return 2
+    fi
+
+    log_success "rebase_sibling_pr: $task_id ($tbranch) rebased onto main and pushed"
+    return 0
+}
+
+#######################################
+# Rebase all sibling PRs after a merge (t225)
+# Called after a subtask's PR is merged to prevent cascading conflicts
+# in remaining sibling subtasks.
+# Args: merged_task_id
+# Returns: 0 (best-effort — individual failures are logged but don't block)
+#######################################
+rebase_sibling_prs_after_merge() {
+    local merged_task_id="$1"
+
+    local siblings
+    siblings=$(get_sibling_tasks "$merged_task_id" "true")
+
+    if [[ -z "$siblings" ]]; then
+        return 0
+    fi
+
+    local rebase_count=0
+    local fail_count=0
+    local skip_count=0
+
+    while IFS='|' read -r sid sstatus spr sbranch sworktree srepo; do
+        # Only rebase siblings that have open PRs and are in states where
+        # their branch is still active (not yet merged/deployed/cancelled)
+        case "$sstatus" in
+            complete|pr_review|review_triage|merging|running|evaluating|retrying|queued|dispatched)
+                # These states have active branches that need rebasing
+                ;;
+            *)
+                # merged, deployed, verified, blocked, failed, cancelled — skip
+                log_verbose "  rebase_siblings: skipping $sid (status: $sstatus)"
+                skip_count=$((skip_count + 1))
+                continue
+                ;;
+        esac
+
+        if [[ -z "$sbranch" ]]; then
+            log_verbose "  rebase_siblings: skipping $sid (no branch)"
+            skip_count=$((skip_count + 1))
+            continue
+        fi
+
+        if rebase_sibling_pr "$sid"; then
+            rebase_count=$((rebase_count + 1))
+        else
+            fail_count=$((fail_count + 1))
+            log_warn "  rebase_siblings: failed to rebase $sid (non-blocking)"
+        fi
+    done <<< "$siblings"
+
+    if [[ "$rebase_count" -gt 0 || "$fail_count" -gt 0 ]]; then
+        log_info "rebase_siblings after $merged_task_id: rebased=$rebase_count failed=$fail_count skipped=$skip_count"
+    fi
+
+    return 0
+}
+
+#######################################
 # Merge a PR for a task (squash merge)
 # Returns 0 on success, 1 on failure
 #######################################
@@ -7439,6 +7631,11 @@ cmd_pr_lifecycle() {
             if merge_task_pr "$task_id" "$dry_run"; then
                 cmd_transition "$task_id" "merged" 2>>"$SUPERVISOR_LOG" || true
                 tstatus="merged"
+
+                # t225: Rebase sibling subtask PRs after merge to prevent
+                # cascading conflicts. Best-effort — failures are logged
+                # but don't block the merged task's lifecycle.
+                rebase_sibling_prs_after_merge "$task_id" 2>>"$SUPERVISOR_LOG" || true
             else
                 cmd_transition "$task_id" "blocked" --error "Merge failed" 2>>"$SUPERVISOR_LOG" || true
                 send_task_notification "$task_id" "blocked" "PR merge failed" 2>>"$SUPERVISOR_LOG" || true
@@ -7556,9 +7753,29 @@ cmd_pr_lifecycle() {
 }
 
 #######################################
+# Extract parent task ID from a subtask ID (t225)
+# e.g., t215.3 -> t215, t100.1.2 -> t100.1, t50 -> "" (no parent)
+#######################################
+extract_parent_id() {
+    local task_id="$1"
+    if [[ "$task_id" =~ ^(t[0-9]+(\.[0-9]+)*)\.[0-9]+$ ]]; then
+        echo "${BASH_REMATCH[1]}"
+    fi
+    # No output for non-subtasks (intentional)
+    return 0
+}
+
+#######################################
 # Process post-PR lifecycle for all eligible tasks
-# Called as Phase 4 of the pulse cycle
+# Called as Phase 3 of the pulse cycle
 # Finds tasks in complete/pr_review/merging/merged states with PR URLs
+#
+# t225: Serial merge strategy for sibling subtasks
+# When multiple subtasks share a parent (e.g., t215.1, t215.2, t215.3),
+# only one sibling is allowed to merge per pulse cycle. After it merges,
+# rebase_sibling_prs_after_merge() (called from cmd_pr_lifecycle) rebases
+# the remaining siblings' branches onto the updated main. This prevents
+# cascading merge conflicts that occur when parallel PRs all target main.
 #######################################
 process_post_pr_lifecycle() {
     local batch_id="${1:-}"
@@ -7585,6 +7802,12 @@ process_post_pr_lifecycle() {
     local processed=0
     local merged_count=0
     local deployed_count=0
+    local deferred_count=0
+
+    # t225: Track which parent IDs have already had a sibling merge in this pulse.
+    # Only one sibling per parent group is allowed to merge per cycle.
+    # Use a simple string list (bash 3.2 compatible — no associative arrays).
+    local merged_parents=""
 
     while IFS='|' read -r tid tstatus tpr; do
         # Skip tasks without PRs that are already complete
@@ -7596,20 +7819,44 @@ process_post_pr_lifecycle() {
             continue
         fi
 
+        # t225: Serial merge guard for sibling subtasks
+        # If this task is a subtask and a sibling has already merged in this
+        # pulse, defer it to the next cycle (after rebase completes).
+        local parent_id
+        parent_id=$(extract_parent_id "$tid")
+        if [[ -n "$parent_id" ]]; then
+            # Check if a sibling already merged in this pulse
+            if [[ "$merged_parents" == *"|${parent_id}|"* ]]; then
+                # A sibling already merged — defer this task to next pulse
+                # so the rebase can land first and CI can re-run
+                log_info "  $tid: deferred (sibling under $parent_id already merged this pulse — serial merge strategy)"
+                deferred_count=$((deferred_count + 1))
+                continue
+            fi
+        fi
+
         log_info "  $tid: processing post-PR lifecycle (status: $tstatus)"
         if cmd_pr_lifecycle "$tid" >> "$SUPERVISOR_DIR/post-pr.log" 2>&1; then
             local new_status
             new_status=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "")
             case "$new_status" in
-                merged) merged_count=$((merged_count + 1)) ;;
-                deployed) deployed_count=$((deployed_count + 1)) ;;
+                merged|deploying|deployed)
+                    merged_count=$((merged_count + 1))
+                    # t225: Record that this parent group had a merge
+                    if [[ -n "$parent_id" ]]; then
+                        merged_parents="${merged_parents}|${parent_id}|"
+                    fi
+                    ;;
             esac
+            if [[ "$new_status" == "deployed" ]]; then
+                deployed_count=$((deployed_count + 1))
+            fi
         fi
         processed=$((processed + 1))
     done <<< "$eligible_tasks"
 
-    if [[ "$processed" -gt 0 ]]; then
-        log_info "Post-PR lifecycle: processed $processed tasks (merged: $merged_count, deployed: $deployed_count)"
+    if [[ "$processed" -gt 0 || "$deferred_count" -gt 0 ]]; then
+        log_info "Post-PR lifecycle: processed=$processed merged=$merged_count deployed=$deployed_count deferred=$deferred_count"
     fi
 
     return 0
