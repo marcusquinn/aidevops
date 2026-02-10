@@ -87,6 +87,7 @@ Actions:
 | `/email-health-check example.com dkim google` | DKIM with selector |
 | `/email-health-check newsletter.html check-links` | Link validation only |
 | `/email-health-check newsletter.html check-subject` | Subject line check only |
+| `/email-health-check accessibility newsletter.html` | Email accessibility audit |
 
 ## Examples
 
@@ -144,9 +145,32 @@ AI: Running full precheck...
     Combined:      20/25 (80%) - Grade: B
 ```
 
+**Email accessibility check:**
+
+```text
+User: /email-health-check accessibility newsletter.html
+AI: Running email accessibility audit on newsletter.html...
+
+    Email Accessibility Report
+    Standard: WCAG 2.1 AA (email-applicable subset)
+
+    PASS: All images have alt attributes (5 images)
+    FAIL: Missing lang attribute on <html> tag
+    WARN: 3 table(s) without role attribute
+    PASS: No excessively small font sizes detected
+    PASS: No generic link text detected
+
+    Summary: 1 error(s), 1 warning(s)
+
+    Recommendations:
+    1. Add lang="en" to the <html> tag
+    2. Add role="presentation" to layout tables
+```
+
 ## Related
 
 - `services/email/email-health-check.md` - Full documentation
 - `services/email/email-testing.md` - Design rendering and delivery testing
 - `content/distribution/email.md` - Email content strategy
 - `services/email/ses.md` - Amazon SES integration
+- `tools/accessibility/accessibility.md` - WCAG accessibility reference
