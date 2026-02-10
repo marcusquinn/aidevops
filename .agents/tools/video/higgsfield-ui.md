@@ -190,9 +190,9 @@ higgsfield-helper.sh download --model video # videos from History
 |-------|------|-----|----------|------|------------|
 | Higgsfield Soul | `soul` | `/image/soul` | aspect (9:16,3:4,2:3,1:1,4:3,16:9,3:2), quality (1.5k,2k), enhance, batch 1-4, presets/styles, CHARACTER | 2 credits | Yes (365) |
 | Nano Banana | `nano_banana` | `/image/nano_banana` | batch 1-4, auto aspect | 1 credit | Yes (365) |
-| Nano Banana Pro | `nano_banana_pro` | `/image/nano_banana_2` | aspect, quality (1K), batch 1-4 | 2 credits | Yes (365) |
+| Nano Banana Pro | `nano-banana-pro` | `/nano-banana-pro` | aspect, quality (1K), batch 1-4, Unlimited switch | 2 credits | Yes (365) |
 | Seedream 4.0 | `seedream` | `/image/seedream` | mode (Basic), aspect, batch 1-4 | 1 credit | Yes (365) |
-| Seedream 4.5 | `seedream-4.5` | `/image/seedream` | aspect, batch 1-4 | 1 credit | Yes (365) |
+| Seedream 4.5 | `seedream-4.5` | `/seedream-4-5` | aspect, quality (2K), batch 1-4, Unlimited switch | 1 credit | Yes (365) |
 | WAN 2.2 | `wan2` | `/image/wan2` | aspect, enhance | 1 credit | No |
 | GPT Image | `gpt` | `/image/gpt` | aspect, quality (Mid), batch 1-4, presets | 2 credits | Yes (365) |
 | Flux Kontext Max | `kontext` | `/image/kontext` | batch 1-4, auto aspect, enhance | 1.5 credits | Yes (365) |
@@ -275,6 +275,8 @@ The account has 19 unlimited models (no credit cost). Always prefer these:
 
 Use `--unlimited` flag to restrict to unlimited models only.
 
+**Unlimited model routing**: Models with "365" subscriptions use dedicated feature pages (e.g., `/nano-banana-pro`, `/seedream-4-5`) that have an "Unlimited" toggle switch. The automator automatically navigates to these pages and enables the switch. Standard `/image/` routes cost credits even for subscribed models.
+
 ## Download Filenames
 
 All downloads use descriptive filenames:
@@ -312,23 +314,61 @@ The `pipeline` command chains image generation, video animation, lipsync, and ff
       "dialogue": "I use it every single day."
     }
   ],
-  "imageModel": "soul",
+  "imagePrompts": [
+    "Photorealistic product shot, warm lighting, shallow DOF, 9:16",
+    "Wide shot modern kitchen, natural light, clean aesthetic, 9:16"
+  ],
+  "imageModel": "nano-banana-pro",
   "videoModel": "kling-2.6",
   "aspect": "9:16",
+  "captions": [
+    { "text": "Check this out!", "startFrame": 0, "endFrame": 60 },
+    { "text": "It changed everything.", "startFrame": 60, "endFrame": 150 }
+  ],
+  "transitionStyle": "fade",
+  "transitionDuration": 15,
   "music": "/path/to/background.mp3"
 }
 ```
 
+**`imagePrompts[]`** (optional): Separate prompts for start frame image generation. When provided, `imagePrompts[i]` is used for image generation while `scenes[i].prompt` is used for video animation. This allows optimizing each prompt for its purpose (static composition vs motion).
+
+**`captions[]`** (optional): Caption entries for Remotion overlay. Each entry has `text`, `startFrame`, `endFrame`, and optional `style` (bold-white, minimal, impact, typewriter, highlight).
+
+**`transitionStyle`** (optional): Scene transition type for Remotion (fade, slide, wipe). Default: fade.
+
+**`transitionDuration`** (optional): Transition duration in frames. Default: 15.
+
 ### Pipeline Steps
 
 1. **Character image** - Generate or use provided character face
-2. **Scene images** - Generate one image per scene from prompts (sequential)
+2. **Scene images** - Generate one image per scene (uses `imagePrompts[]` if provided, else `scenes[].prompt`)
 3. **Video animation** - Submit ALL scene videos in parallel, poll for all simultaneously
    - 3a: Submit jobs (upload start frame + prompt + click Generate for each scene, ~30s each)
    - 3b: Poll History tab for all submitted prompts at once
-   - 3c: Download completed videos via API interception (CloudFront, 1080p)
+   - 3c: Download completed videos via API interception or direct fetch (CloudFront, 1080p)
 4. **Lipsync** - Add dialogue to scenes that have it
-5. **Assembly** - Concatenate clips with ffmpeg, add background music
+5. **Assembly** - Remotion render with captions + transitions (falls back to ffmpeg concat)
+
+### Remotion Post-Production
+
+When Remotion is installed (`cd .agents/scripts/higgsfield/remotion && npm install`), the pipeline uses it for assembly instead of ffmpeg. Remotion provides:
+
+- **Animated captions** with 5 preset styles (bold-white, minimal, impact, typewriter, highlight)
+- **Scene transitions** (fade, slide, wipe) via `@remotion/transitions`
+- **Title cards** and static graphics between scenes
+- **Dynamic duration** computed from actual video files via `calculateMetadata`
+- **Programmatic rendering** at any resolution (default: 1080x1920 for 9:16)
+
+```bash
+# Install Remotion (one-time)
+cd ~/.aidevops/agents/scripts/higgsfield/remotion && npm install
+
+# Standalone render (outside pipeline)
+node render.mjs --props brief-props.json --output final.mp4
+```
+
+Files in `remotion/`: Root.tsx (composition registry), FullVideo.tsx (main composition), CaptionOverlay.tsx (animated captions), SceneVideo.tsx (video embed), SceneGraphic.tsx (title cards), styles.ts (caption presets), types.ts (TypeScript types).
 
 ### Pipeline Examples
 
@@ -466,11 +506,12 @@ higgsfield-helper.sh login
 
 ### Video Download Issues
 
-Video results appear in the History tab, not as inline elements. If download fails:
+Video results appear in the History tab, not as inline elements. The automator uses two strategies: API response interception (primary) and direct API fetch (fallback). If download fails:
 
 1. Try downloading manually: `higgsfield-helper.sh download --model video`
 2. Check `video-result.png` screenshot for the current state
 3. The video may still be processing -- try again after a few minutes
+4. The direct fetch fallback calls `fnf.higgsfield.ai/project?job_set_type=image2video` using the page's auth cookies
 
 ### Browser Not Found
 
