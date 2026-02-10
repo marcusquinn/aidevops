@@ -11861,13 +11861,18 @@ cmd_cron() {
             fi
 
             # Add to crontab (preserve existing entries)
+            # Use temp file instead of stdin pipe to avoid macOS hang under load
             local existing_cron
             existing_cron=$(crontab -l 2>/dev/null || true)
+            local temp_cron
+            temp_cron=$(mktemp)
             if [[ -n "$existing_cron" ]]; then
-                echo "${existing_cron}"$'\n'"${cron_cmd}" | crontab -
+                printf "%s\n%s\n" "$existing_cron" "$cron_cmd" > "$temp_cron"
             else
-                echo "$cron_cmd" | crontab -
+                printf "%s\n" "$cron_cmd" > "$temp_cron"
             fi
+            crontab "$temp_cron"
+            rm -f "$temp_cron"
 
             log_success "Installed supervisor cron (every ${interval} minutes)"
             log_info "Log: ${SUPERVISOR_DIR}/cron.log"
@@ -11884,10 +11889,16 @@ cmd_cron() {
             fi
 
             # Remove the supervisor line from crontab
-            crontab -l 2>/dev/null | grep -vF "$cron_marker" | crontab - 2>/dev/null || {
+            # Use temp file instead of stdin pipe to avoid macOS hang under load
+            local temp_cron
+            temp_cron=$(mktemp)
+            if crontab -l 2>/dev/null | grep -vF "$cron_marker" > "$temp_cron"; then
+                crontab "$temp_cron"
+            else
                 # If crontab is now empty, remove it entirely
                 crontab -r 2>/dev/null || true
-            }
+            fi
+            rm -f "$temp_cron"
 
             log_success "Uninstalled supervisor cron"
             return 0
