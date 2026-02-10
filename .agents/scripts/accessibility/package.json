@@ -1,0 +1,10 @@
+{
+  "name": "accessibility-playwright-contrast",
+  "version": "1.0.0",
+  "description": "Playwright-based WCAG contrast extraction for all visible elements",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "playwright": "^1.58.2"
+  }
+}
