@@ -8,6 +8,7 @@ subagents:
   - platform-personas
   - humanise
   - summarize
+  - story
   - seo-writer
   - meta-creator
   - editor
@@ -45,6 +46,7 @@ subagents:
 | `guidelines.md` | Content standards and style guide |
 | `platform-personas.md` | Platform-specific voice adaptations (LinkedIn, Instagram, YouTube, X, Facebook) |
 | `humanise.md` | Remove AI writing patterns, make text sound human |
+| `story.md` | Narrative design -- hooks, angles, frameworks, emotional architecture |
 | `seo-writer.md` | SEO-optimized content writing with keyword integration |
 | `meta-creator.md` | Generate meta titles and descriptions for SEO |
 | `editor.md` | Transform AI content into human-sounding articles |
@@ -79,13 +81,14 @@ python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py intent "search query"
 ```
 
 **Workflow**:
-1. Plan (`tools/content/content-calendar.md` for gap analysis and scheduling)
+1. Plan (`content/content-calendar.md` for gap analysis and scheduling)
 2. Research (keywords, competitors, audience)
-3. Write (`content/seo-writer.md` with keyword targets)
-4. Analyze (`seo-content-analyzer.py analyze`)
-5. Optimize (address issues from analysis)
-6. Edit (`content/editor.md` for human voice)
-7. Publish (via WordPress or CMS)
+3. Design narrative (`content/story.md` for hooks, angles, and structure)
+4. Write (`content/seo-writer.md` with keyword targets)
+5. Analyze (`seo-content-analyzer.py analyze`)
+6. Optimize (address issues from analysis)
+7. Edit (`content/editor.md` for human voice)
+8. Publish (via WordPress or CMS)
 
 <!-- AI-CONTEXT-END -->
 
