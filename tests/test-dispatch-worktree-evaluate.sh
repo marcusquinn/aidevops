@@ -835,6 +835,32 @@ else
 fi
 
 # ============================================================
+# SECTION: GitHub Auth Failure Detection (t198)
+# ============================================================
+section "GitHub Auth Failure Detection (t198)"
+
+# Integration test: worker completes work but gh auth is expired
+sup add integ-t198b --repo "$TEST_REPO" --description "GH auth failure test" --no-issue >/dev/null
+sup transition integ-t198b dispatched >/dev/null
+sup transition integ-t198b running >/dev/null
+
+create_log "integ-t198b" 'WORKER_STARTED task_id=integ-t198b pid=12345 timestamp=2026-02-09T03:00:00Z
+{"type":"step_start","timestamp":1770606000000,"part":{"type":"step-start"}}
+{"type":"text","timestamp":1770606100000,"part":{"type":"text","text":"All implementation complete. Files created and committed."}}
+{"type":"tool_use","timestamp":1770606200000,"part":{"type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"gh auth status"},"output":"You are not logged in to any GitHub hosts. Run gh auth login to authenticate.","metadata":{"exit":1}}}}
+{"type":"text","timestamp":1770606300000,"part":{"type":"text","text":"GitHub authentication has expired. Cannot create PR."}}
+{"type":"step_finish","timestamp":1770606400000,"part":{"type":"step-finish","reason":"stop"}}
+EXIT:0' >/dev/null
+
+sup transition integ-t198b evaluating >/dev/null
+eval_result=$(sup evaluate integ-t198b --no-ai 2>&1 | grep "^Verdict:" || echo "")
+if echo "$eval_result" | grep -q "blocked.*gh_auth_expired"; then
+    pass "Worker + gh auth failure -> blocked:gh_auth_expired (t198)"
+else
+    fail "Worker with gh auth failure should be blocked:gh_auth_expired" "Got: $eval_result"
+fi
+
+# ============================================================
 # SECTION 10: Concurrent Worktrees (parallel tasks)
 # ============================================================
 section "Concurrent Worktrees (parallel task isolation)"

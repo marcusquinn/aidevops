@@ -4766,6 +4766,19 @@ extract_log_metadata() {
     fi
     echo "task_obsolete=$task_obsolete"
 
+    # GitHub auth failure detection (t198): workers that complete their work but
+    # can't push/create a PR because gh auth is expired. This is the #1 cause of
+    # clean_exit_no_signal (79% of cases in production logs). Without this check,
+    # the supervisor retries them 3x at Opus cost, each failing identically.
+    # Search the FULL log (not just tail) because auth failures appear in tool
+    # output mid-log, not at the end. This is safe because gh auth patterns are
+    # specific enough to avoid false positives from documentation content.
+    local gh_auth_failure="false"
+    if grep -qiE 'gh auth (status|login).*fail|authentication token.*expired|not logged in|try authenticating|gh: To use .* in a non-interactive context|could not authenticate|failed to authenticate' "$log_file" 2>/dev/null; then
+        gh_auth_failure="true"
+    fi
+    echo "gh_auth_failure=$gh_auth_failure"
+
     # Task tool parallelism tracking (t217): detect whether the worker used the
     # Task tool (mcp_task) to spawn sub-agents for parallel work. This is a
     # heuristic quality signal — workers that parallelise independent subtasks
@@ -5135,6 +5148,20 @@ evaluate_worker() {
         meta_task_obsolete=$(_meta_get "task_obsolete" "false")
         if [[ "$meta_task_obsolete" == "true" ]]; then
             echo "complete:task_obsolete"
+            return 0
+        fi
+    fi
+
+    # GitHub auth failure detection (t198): workers that complete their work but
+    # can't push/create a PR because gh auth is expired or invalid. This is the
+    # #1 cause of clean_exit_no_signal (79% of cases). Retrying is pointless —
+    # the auth issue persists across retries. Block immediately so the human can
+    # fix credentials, then reset the task.
+    if [[ "$meta_exit_code" == "0" && "$meta_signal" == "none" ]]; then
+        local meta_gh_auth_failure
+        meta_gh_auth_failure=$(_meta_get "gh_auth_failure" "false")
+        if [[ "$meta_gh_auth_failure" == "true" ]]; then
+            echo "blocked:gh_auth_expired"
             return 0
         fi
     fi

@@ -1099,6 +1099,37 @@ else
     fail "Normal incomplete exit should still be clean_exit_no_signal" "Got: $eval_result"
 fi
 
+# Test: GitHub auth failure -> blocked:gh_auth_expired (t198)
+# Workers that complete work but can't push due to expired gh auth should be
+# blocked immediately, not retried. This is the #1 cause of wasted retries.
+create_eval_task "eval-t198e" 'WORKER_STARTED task_id=eval-t198e pid=12345 timestamp=2026-02-09T03:00:00Z
+{"type":"step_start","timestamp":1770606000000,"part":{"type":"step-start"}}
+{"type":"text","timestamp":1770606100000,"part":{"type":"text","text":"Implementation complete. All files created and committed."}}
+{"type":"tool_use","timestamp":1770606200000,"part":{"type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"gh auth status"},"output":"gh auth status\nYou are not logged in to any GitHub hosts. Run gh auth login to authenticate.","metadata":{"exit":1}}}}
+{"type":"text","timestamp":1770606300000,"part":{"type":"text","text":"GitHub authentication token has expired. Cannot push or create PR. The implementation is complete locally but needs gh auth login to proceed."}}
+{"type":"step_finish","timestamp":1770606400000,"part":{"type":"step-finish","reason":"stop"}}
+EXIT:0'
+eval_result=$(sup evaluate eval-t198e --no-ai 2>&1 | grep "^Verdict:" || echo "")
+if echo "$eval_result" | grep -q "blocked.*gh_auth_expired"; then
+    pass "Exit 0 + gh auth failure -> blocked:gh_auth_expired (not retried)"
+else
+    fail "Exit 0 + gh auth failure should be blocked:gh_auth_expired" "Got: $eval_result"
+fi
+
+# Test: gh auth failure with different wording (try authenticating)
+create_eval_task "eval-t198f" 'WORKER_STARTED task_id=eval-t198f pid=12345 timestamp=2026-02-09T03:00:00Z
+{"type":"step_start","timestamp":1770606000000,"part":{"type":"step-start"}}
+{"type":"tool_use","timestamp":1770606100000,"part":{"type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"git push"},"output":"remote: Permission denied. try authenticating with gh auth login","metadata":{"exit":1}}}}
+{"type":"text","timestamp":1770606200000,"part":{"type":"text","text":"Push failed. Need to authenticate with GitHub."}}
+{"type":"step_finish","timestamp":1770606300000,"part":{"type":"step-finish","reason":"stop"}}
+EXIT:0'
+eval_result=$(sup evaluate eval-t198f --no-ai 2>&1 | grep "^Verdict:" || echo "")
+if echo "$eval_result" | grep -q "blocked.*gh_auth_expired"; then
+    pass "Exit 0 + 'try authenticating' -> blocked:gh_auth_expired"
+else
+    fail "Exit 0 + 'try authenticating' should be blocked:gh_auth_expired" "Got: $eval_result"
+fi
+
 # ============================================================
 # SECTION 7: Worktree Path Integrity
 # ============================================================
