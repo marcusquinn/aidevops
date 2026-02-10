@@ -1118,6 +1118,15 @@ async function generateImage(options = {}) {
     });
     console.log(`Items already in queue: ${queueBefore}`);
 
+    // Dry-run mode: stop before clicking Generate
+    if (options.dryRun) {
+      console.log('[DRY-RUN] Configuration complete. Skipping Generate click.');
+      await page.screenshot({ path: join(STATE_DIR, 'dry-run-configured.png'), fullPage: false });
+      await context.storageState({ path: STATE_FILE });
+      await browser.close();
+      return { success: true, dryRun: true };
+    }
+
     // Click generate button - use force to bypass overlays
     // Capture button text before clicking to verify the click registered
     const generateBtn = page.locator('button:has-text("Generate"), button[type="submit"]');
@@ -1830,6 +1839,15 @@ async function generateVideo(options = {}) {
         await createTab.first().click({ force: true });
         await page.waitForTimeout(1000);
       }
+    }
+
+    // Dry-run mode: stop before clicking Generate
+    if (options.dryRun) {
+      console.log('[DRY-RUN] Configuration complete. Skipping Generate click.');
+      await page.screenshot({ path: join(STATE_DIR, 'dry-run-configured.png'), fullPage: false });
+      await context.storageState({ path: STATE_FILE });
+      await browser.close();
+      return { success: true, dryRun: true };
     }
 
     // Click generate button
@@ -5268,6 +5286,201 @@ async function featurePage(options = {}) {
   }
 }
 
+// Auth health check - verify auth state is valid
+async function authHealthCheck(options = {}) {
+  console.log('[health-check] Verifying authentication state...');
+  
+  // Check if state file exists
+  if (!existsSync(STATE_FILE)) {
+    console.log('[health-check] ❌ No auth state found');
+    console.log('[health-check] Run: higgsfield-helper.sh login');
+    return { success: false, error: 'No auth state' };
+  }
+
+  // Check state file age
+  const stats = statSync(STATE_FILE);
+  const ageMs = Date.now() - stats.mtimeMs;
+  const ageHours = Math.floor(ageMs / (1000 * 60 * 60));
+  const ageDays = Math.floor(ageHours / 24);
+  
+  console.log(`[health-check] Auth state file: ${STATE_FILE}`);
+  console.log(`[health-check] Age: ${ageDays}d ${ageHours % 24}h`);
+
+  // Try to load and verify the state
+  try {
+    const { browser, context, page } = await launchBrowser({ ...options, headless: true });
+    
+    // Navigate to a protected page to verify auth
+    console.log('[health-check] Testing auth by navigating to /image/soul...');
+    await page.goto(`${BASE_URL}/image/soul`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(3000);
+    
+    const currentUrl = page.url();
+    
+    // If redirected to login/auth, session is invalid
+    if (currentUrl.includes('login') || currentUrl.includes('auth') || currentUrl.includes('sign-in')) {
+      console.log('[health-check] ❌ Auth state is invalid (redirected to login)');
+      console.log('[health-check] Run: higgsfield-helper.sh login');
+      await browser.close();
+      return { success: false, error: 'Auth expired or invalid' };
+    }
+    
+    // Check for user menu or account indicator
+    const userMenuSelectors = [
+      '[data-testid="user-menu"]',
+      'button[aria-label*="account" i]',
+      'button[aria-label*="profile" i]',
+      'img[alt*="avatar" i]',
+      'div[class*="avatar"]',
+    ];
+    
+    let foundUserIndicator = false;
+    for (const selector of userMenuSelectors) {
+      if (await page.locator(selector).count() > 0) {
+        foundUserIndicator = true;
+        break;
+      }
+    }
+    
+    await browser.close();
+    
+    if (foundUserIndicator) {
+      console.log('[health-check] ✅ Auth state is valid');
+      console.log('[health-check] Session age: OK');
+      return { success: true, age: { hours: ageHours, days: ageDays } };
+    } else {
+      console.log('[health-check] ⚠️  Auth state uncertain (no user indicator found)');
+      console.log('[health-check] Page loaded but could not verify login status');
+      return { success: true, warning: 'Could not verify user indicator' };
+    }
+    
+  } catch (error) {
+    console.error(`[health-check] ❌ Error during health check: ${error.message}`);
+    return { success: false, error: error.message };
+  }
+}
+
+// Smoke test - quick end-to-end test without consuming credits
+async function smokeTest(options = {}) {
+  console.log('[smoke-test] Running smoke test...');
+  console.log('[smoke-test] This will verify: auth, navigation, UI elements (no generation)');
+  
+  const results = {
+    auth: false,
+    navigation: false,
+    credits: false,
+    discovery: false,
+    overall: false,
+  };
+  
+  try {
+    // 1. Check auth health
+    console.log('\n[smoke-test] Step 1/4: Auth health check...');
+    const authResult = await authHealthCheck({ ...options, headless: true });
+    results.auth = authResult.success;
+    
+    if (!results.auth) {
+      console.log('[smoke-test] ❌ Auth check failed, aborting smoke test');
+      return results;
+    }
+    
+    // 2. Test navigation to key pages
+    console.log('\n[smoke-test] Step 2/4: Testing navigation...');
+    const { browser, context, page } = await launchBrowser({ ...options, headless: true });
+    
+    const testPages = [
+      { url: `${BASE_URL}/image/soul`, name: 'Image Generation' },
+      { url: `${BASE_URL}/video`, name: 'Video Generation' },
+      { url: `${BASE_URL}/apps`, name: 'Apps' },
+    ];
+    
+    let navSuccess = true;
+    for (const testPage of testPages) {
+      try {
+        await page.goto(testPage.url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+        await page.waitForTimeout(2000);
+        const currentUrl = page.url();
+        
+        if (currentUrl.includes('login') || currentUrl.includes('auth')) {
+          console.log(`[smoke-test]   ❌ ${testPage.name}: Redirected to login`);
+          navSuccess = false;
+        } else {
+          console.log(`[smoke-test]   ✅ ${testPage.name}: OK`);
+        }
+      } catch (error) {
+        console.log(`[smoke-test]   ❌ ${testPage.name}: ${error.message}`);
+        navSuccess = false;
+      }
+    }
+    results.navigation = navSuccess;
+    
+    // 3. Check credits
+    console.log('\n[smoke-test] Step 3/4: Checking credits...');
+    try {
+      await page.goto(`${BASE_URL}/image/soul`, { waitUntil: 'domcontentloaded', timeout: 20000 });
+      await page.waitForTimeout(2000);
+      
+      const creditSelectors = [
+        'text=/\\d+\\s*(credits?|cr)/i',
+        '[data-testid*="credit"]',
+        'div:has-text("credits")',
+      ];
+      
+      let foundCredits = false;
+      for (const selector of creditSelectors) {
+        const el = page.locator(selector);
+        if (await el.count() > 0) {
+          const text = await el.first().textContent();
+          console.log(`[smoke-test]   ✅ Credits visible: ${text?.trim()}`);
+          foundCredits = true;
+          break;
+        }
+      }
+      
+      if (!foundCredits) {
+        console.log('[smoke-test]   ⚠️  Could not find credit indicator (may still work)');
+      }
+      results.credits = foundCredits;
+    } catch (error) {
+      console.log(`[smoke-test]   ❌ Credits check failed: ${error.message}`);
+      results.credits = false;
+    }
+    
+    // 4. Verify discovery cache
+    console.log('\n[smoke-test] Step 4/4: Checking discovery cache...');
+    if (existsSync(ROUTES_CACHE)) {
+      const cache = JSON.parse(readFileSync(ROUTES_CACHE, 'utf-8'));
+      const modelCount = Object.keys(cache.models || {}).length;
+      const appCount = Object.keys(cache.apps || {}).length;
+      console.log(`[smoke-test]   ✅ Discovery cache: ${modelCount} models, ${appCount} apps`);
+      results.discovery = true;
+    } else {
+      console.log('[smoke-test]   ⚠️  No discovery cache (run: higgsfield-helper.sh image "test")');
+      results.discovery = false;
+    }
+    
+    await browser.close();
+    
+    // Overall result
+    results.overall = results.auth && results.navigation;
+    
+    console.log('\n[smoke-test] ========== RESULTS ==========');
+    console.log(`[smoke-test] Auth:       ${results.auth ? '✅' : '❌'}`);
+    console.log(`[smoke-test] Navigation: ${results.navigation ? '✅' : '❌'}`);
+    console.log(`[smoke-test] Credits:    ${results.credits ? '✅' : '⚠️ '}`);
+    console.log(`[smoke-test] Discovery:  ${results.discovery ? '✅' : '⚠️ '}`);
+    console.log(`[smoke-test] Overall:    ${results.overall ? '✅ PASS' : '❌ FAIL'}`);
+    console.log('[smoke-test] ============================');
+    
+    return results;
+    
+  } catch (error) {
+    console.error(`[smoke-test] ❌ Smoke test error: ${error.message}`);
+    results.overall = false;
+    return results;
+  }
+}
+
 // Main CLI handler
 async function main() {
   const { command, options } = parseArgs();
@@ -5281,6 +5494,8 @@ Usage: node playwright-automator.mjs <command> [options]
 Commands:
   login              Login and save auth state
   discover           Force re-scan site for new features/models/apps
+  health-check       Verify auth state is valid (no credits used)
+  smoke-test         Run quick end-to-end test (no credits used)
   image              Generate an image from text prompt
   video              Generate a video (text-to-video or image-to-video)
   lipsync            Generate a lipsync video (image + text/audio)
@@ -5386,8 +5601,9 @@ Examples:
     return;
   }
 
-  // Run site discovery if cache is stale (skips login and discovery commands)
-  if (command !== 'login' && command !== 'discover') {
+  // Run site discovery if cache is stale (skips login, discovery, and diagnostic commands)
+  const skipDiscoveryCommands = ['login', 'discover', 'health-check', 'health', 'smoke-test', 'smoke'];
+  if (!skipDiscoveryCommands.includes(command)) {
     await ensureDiscovery(options);
   }
 
@@ -5438,6 +5654,14 @@ Examples:
       break;
     case 'credits':
       await checkCredits(options);
+      break;
+    case 'health-check':
+    case 'health':
+      await authHealthCheck(options);
+      break;
+    case 'smoke-test':
+    case 'smoke':
+      await smokeTest(options);
       break;
     case 'screenshot':
       await screenshot(options);

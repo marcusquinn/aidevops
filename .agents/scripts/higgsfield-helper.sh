@@ -239,6 +239,20 @@ cmd_status() {
     return 0
 }
 
+# Auth health check - verify auth is valid
+cmd_health_check() {
+    print_info "Running auth health check..."
+    run_automator health-check "$@"
+    return $?
+}
+
+# Smoke test - quick end-to-end test
+cmd_smoke_test() {
+    print_info "Running smoke test (no credits used)..."
+    run_automator smoke-test "$@"
+    return $?
+}
+
 # Show help
 show_help() {
     cat <<'EOF'
@@ -249,7 +263,9 @@ Usage: higgsfield-helper.sh <command> [arguments] [options]
 Commands:
   setup              Install dependencies and verify credentials
   login              Login to Higgsfield (opens browser)
-  status             Check auth state
+  status             Check auth state (local file check only)
+  health-check       Verify auth is valid by testing login (no credits used)
+  smoke-test         Run quick end-to-end test (no credits used)
   image <prompt>     Generate image from text prompt
   video <prompt>     Generate video (text or image-to-video)
   lipsync <text>     Generate lipsync video (image + text)
@@ -265,6 +281,7 @@ Commands:
 Options (pass after command):
   --headed           Show browser window
   --headless         Run without browser window (default)
+  --dry-run          Configure but don't click Generate (no credits used)
   --model, -m        Model: soul, nano_banana, seedream, kling-2.6, etc.
   --output, -o       Output directory
   --project          Project name for organized output dirs ({output}/{project}/{type}/)
@@ -312,6 +329,8 @@ main() {
         setup)      setup "$@" ;;
         login)      cmd_login "$@" ;;
         status)     cmd_status "$@" ;;
+        health-check|health) cmd_health_check "$@" ;;
+        smoke-test|smoke)    cmd_smoke_test "$@" ;;
         image)      cmd_image "$@" ;;
         video)      cmd_video "$@" ;;
         lipsync)    cmd_lipsync "$@" ;;
