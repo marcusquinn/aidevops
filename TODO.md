@@ -120,7 +120,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t135.9 Add trap cleanup for temp files #quality #shell ~1h assignee:marcusquinn started:2026-02-09T18:55:45Z completed:2026-02-09
   - [ ] t135.10 Fix package.json main field #bugfix #config ~15m assignee:marcusquinn started:2026-02-09T19:12:28Z ref:GH#869
   - [ ] t135.12 Archive unreferenced fix scripts #chore #cleanup ~1h ref:GH#870 assignee:marcusquinn started:2026-02-10T13:18:06Z
-  - [ ] t135.14 Standardize shebangs to env bash #chore #shell ~30m ref:GH#871
+  - [ ] t135.14 Standardize shebangs to env bash #chore #shell ~30m ref:GH#871 assignee:marcusquinn started:2026-02-10T13:19:24Z
 - [ ] t020 Issue Sync Enrichment #plan #github #automation → [todo/PLANS.md#2026-02-08-issue-sync-enrichment] ~4h (ai:3h test:1h) logged:2026-02-08
   - [x] t020.1 Build core TODO.md parser + rich issue body composer #feature ~45m assignee:marcusquinn started:2026-02-09T20:05:10Z completed:2026-02-09
   - [x] t020.2 PLANS.md section extraction + todo/tasks/ lookup #feature ~30m assignee:marcusquinn started:2026-02-09T20:05:25Z completed:2026-02-09
