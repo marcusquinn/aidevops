@@ -141,6 +141,12 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: 3 CI-checks-failed errors in DB. Workers modify shell scripts but don't run ShellCheck before pushing, causing CI failures that waste a retry cycle. Add to worker prompt: after each commit, run `shellcheck` on modified .sh files. If violations found, fix before pushing. This catches issues 5-10 minutes earlier than waiting for CI.
 - [x] t235 Proof-log coverage for all pr_url mutations — ensure every DB write has an audit trail #enhancement #supervisor #audit ~45m (ai:30m test:15m) assignee:marcusquinn started:2026-02-10T17:50:18Z logged:2026-02-10 completed:2026-02-10
   - Notes: Proof log (t218) instruments 10+ decision points but misses pr_url mutations in scan_orphaned_prs (L6591), scan_orphaned_pr_for_task (L6737), and process_post_pr_lifecycle (L7465). These unaudited paths are where cross-contamination happens invisibly. If t232 centralizes via link_pr_to_task(), this becomes automatic. Otherwise add record_proof_log calls at each mutation point. blocked-by:t232
+- [ ] t236 Higgsfield Automator Production Hardening #plan #higgsfield #automation #reliability → [todo/PLANS.md#2026-02-10-higgsfield-automator-production-hardening] ~6h (ai:4h test:1.5h read:30m) logged:2026-02-10 started:2026-02-10T18:00:00Z
+  - [ ] t236.1 Retry logic + credit guard — exponential backoff, pre-op credit check, cost map #higgsfield #reliability ~1.5h
+  - [ ] t236.2 Unlimited model auto-selection — parse/cache unlimited models, auto-select when available #higgsfield #cost-optimization ~1h
+  - [ ] t236.3 Batch operations — batch-image, batch-video, batch-lipsync with concurrency control #higgsfield #productivity ~1.5h
+  - [ ] t236.4 Output organization + metadata — project dirs, descriptive filenames, JSON sidecars, dedup #higgsfield #output ~1h
+  - [ ] t236.5 Dry-run + auth resilience — --dry-run flag, auth health check, smoke test command #higgsfield #testing ~1h
 - [ ] t135 Code Quality Hardening #plan #quality #shell → [todo/PLANS.md#2026-02-07-code-quality-hardening] ~2d (ai:1d test:0.5d) ref:GH#495 logged:2026-02-07
   - [x] t135.3 SQLite WAL mode + busy_timeout #quality #database ~2h assignee:marcusquinn started:2026-02-09T18:32:20Z ref:GH#865 completed:2026-02-10
     - Notes: BLOCKED by supervisor: Max retries exceeded: clean_exit_no_signal BLOCKED: Max retries exceeded: clean_exit_no_signal BLOCKED: Max retries exceeded: clean_exit_no_signal BLOCKED: Max retries exceeded: clean_exit_no_signal

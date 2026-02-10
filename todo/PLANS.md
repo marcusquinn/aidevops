@@ -3735,6 +3735,72 @@ disc008,p019,GPT-4o-Realtime is most mature S2S option,First Pipecat S2S provide
 
 ---
 
+### [2026-02-10] Higgsfield Automator Production Hardening
+
+**Status:** In Progress (Phase 1/5)
+**Estimate:** ~6h (ai:4h test:1.5h read:30m)
+**TODO:** t236
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p029,Higgsfield Automator Production Hardening,in_progress,1,5,,higgsfield|automation|reliability|video|image,6h,4h,1.5h,30m,2026-02-10T18:00Z,2026-02-10T18:00Z
+-->
+
+#### Purpose
+
+Harden the Higgsfield Playwright automator from "works in testing" to "reliable production tool." The automator covers 100% of Higgsfield UI features (27 CLI commands, 70+ apps, 271 motion presets, 32 mixed media presets, 10 image models, 11 lipsync models) but lacks error recovery, cost awareness, batch operations, and output organization needed for real content production workflows.
+
+#### Context
+
+**Current state:** 27 CLI commands covering all Higgsfield UI features. PRs #926, #942, #956, #958 merged. Auth working, 5,924/6,000 credits remaining, 19 unlimited models available. All commands navigate and click correctly after overlay/dialog fixes.
+
+**Gaps identified:** No retry logic, no credit guards, no unlimited model auto-selection, no batch mode, no output organization, no dry-run mode, no auth resilience.
+
+#### Phases
+
+- [ ] **Phase 1: Retry Logic + Credit Guard** ~1.5h `t236.1`
+  - Add retry wrapper with exponential backoff for transient failures
+  - Pre-operation credit check (abort if insufficient credits for the operation)
+  - Credit cost map per operation type (image: 1-2, video: 10-40, lipsync: 5-20, upscale: 2)
+  - Handle "Failed - unsupported content" by logging and skipping (not retrying)
+  - Handle rate limits / queue full with backoff
+
+- [ ] **Phase 2: Unlimited Model Auto-Selection** ~1h `t236.2`
+  - Parse unlimited models from credits page (already extracted: 19 models)
+  - Cache unlimited model list in state dir
+  - Auto-select unlimited model when available for the requested operation type
+  - `--prefer-unlimited` flag (default: true) and `--model` override
+  - Map unlimited model names to UI model selector values
+
+- [ ] **Phase 3: Batch Operations** ~1.5h `t236.3`
+  - `batch-image` command: generate N images across M models with prompt variations
+  - `batch-video` command: animate a set of images (from dir or asset library)
+  - `batch-lipsync` command: apply audio to multiple video assets
+  - Concurrency control (1 at a time for credit safety, parallel for unlimited)
+  - Progress reporting and summary output
+
+- [ ] **Phase 4: Output Organization + Metadata** ~1h `t236.4`
+  - Project-based output directories (`--project <name>` flag)
+  - Descriptive filenames: `{project}_{model}_{prompt-slug}_{timestamp}.{ext}`
+  - JSON sidecar metadata files (model, prompt, settings, credits used, duration)
+  - Deduplication: skip download if file with same CDN URL already exists
+  - Manifest file per batch run
+
+- [ ] **Phase 5: Dry-Run + Auth Resilience** ~1h `t236.5`
+  - `--dry-run` flag: navigate to tool, configure settings, screenshot, but don't click Generate
+  - Auth health check before long operations (re-login if session expired)
+  - Smoke test command: `higgsfield smoke-test` runs dry-run on 5 key workflows
+  - Auto-refresh auth state after successful operations
+
+#### Decision Log
+
+| Date | Decision | Rationale |
+|------|----------|-----------|
+| 2026-02-10 | Start with retry + credit guard | Prevents wasted credits, highest ROI |
+| 2026-02-10 | Unlimited model auto-select as Phase 2 | Maximizes Creator plan value |
+| 2026-02-10 | Batch ops before output org | Productivity multiplier > file management |
+
+---
+
 ## Completed Plans
 
 ### [2025-12-21] Beads Integration for aidevops Tasks & Plans ✓
