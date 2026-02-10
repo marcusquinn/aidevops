@@ -367,10 +367,10 @@ check_mta_sts() {
     print_success "MTA-STS DNS record found:"
     echo "  $mta_sts_record"
     
-    # Check for policy file
+    # Check for policy file (enforce HTTPS-only to prevent redirect to insecure sites — S6506)
     local policy_url="https://mta-sts.${domain}/.well-known/mta-sts.txt"
     local policy_response
-    policy_response=$(curl -sL --max-time 10 "$policy_url" 2>/dev/null || true)
+    policy_response=$(curl -s --proto =https --max-time 10 "$policy_url" 2>/dev/null || true)
     
     if [[ -n "$policy_response" && "$policy_response" == *"version: STSv1"* ]]; then
         print_success "MTA-STS policy file accessible:"

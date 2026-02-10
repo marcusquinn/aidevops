@@ -471,8 +471,8 @@ test_smtp() {
 
     print_header "SMTP Connectivity Test: $server:$port"
 
-    # Test basic TCP connectivity
-    if timeout 10 bash -c "echo > /dev/tcp/$server/$port" 2>/dev/null; then
+    # Test basic TCP connectivity using nc (avoids clear-text /dev/tcp — S5332)
+    if timeout 10 nc -z "$server" "$port" 2>/dev/null; then
         print_success "TCP connection to $server:$port successful"
     else
         print_error "Cannot connect to $server:$port"
@@ -482,7 +482,7 @@ test_smtp() {
 
     # Test SMTP banner
     local banner
-    banner=$(timeout 10 bash -c "exec 3<>/dev/tcp/$server/$port; cat <&3; exec 3>&-" 2>/dev/null || true)
+    banner=$(echo "" | timeout 10 nc -w 5 "$server" "$port" 2>/dev/null | head -1 || true)
     if [[ -n "$banner" ]]; then
         print_success "SMTP banner received:"
         echo "  $banner"
