@@ -4066,9 +4066,20 @@ create_task_worktree() {
         local open_pr_url
         open_pr_url=$(gh pr list --head "$branch_name" --state open --json url --jq '.[0].url' 2>/dev/null || echo "")
         if [[ -n "$open_pr_url" && "$open_pr_url" != "null" ]]; then
-            log_warn "Force-fresh requested but branch $branch_name has open PR: $open_pr_url" >&2
-            log_warn "Merging PR before cleanup to preserve work..." >&2
-            gh pr merge "$open_pr_url" --squash 2>/dev/null || log_warn "PR merge failed — work may be lost. Recover via: gh pr view NNN --json commits" >&2
+            # Validate PR belongs to this task before merging (t223)
+            local repo_slug_ff
+            repo_slug_ff=$(detect_repo_slug "$repo" 2>/dev/null || echo "")
+            local validated_ff=""
+            if [[ -n "$repo_slug_ff" ]]; then
+                validated_ff=$(validate_pr_belongs_to_task "$task_id" "$repo_slug_ff" "$open_pr_url") || validated_ff=""
+            fi
+            if [[ -n "$validated_ff" ]]; then
+                log_warn "Force-fresh requested but branch $branch_name has open PR: $open_pr_url" >&2
+                log_warn "Merging PR before cleanup to preserve work..." >&2
+                gh pr merge "$open_pr_url" --squash 2>/dev/null || log_warn "PR merge failed — work may be lost. Recover via: gh pr view NNN --json commits" >&2
+            else
+                log_warn "Force-fresh: open PR on $branch_name does not reference $task_id — skipping merge to prevent cross-contamination" >&2
+            fi
         fi
         needs_cleanup=true
         log_info "Force-fresh requested for $task_id — cleaning stale worktree/branch" >&2
@@ -5133,14 +5144,22 @@ evaluate_worker() {
         repo_slug_detect=$(detect_repo_slug "$task_repo" 2>/dev/null || echo "")
     fi
 
-    # Validate DB-seeded PR URL belongs to this task (t195): a previous pulse
+    # Validate PR URL belongs to this task (t195, t223): a previous pulse
     # may have stored a PR URL that doesn't actually reference this task ID
-    # (e.g., branch reuse, stale data). Validate before using for attribution.
-    if [[ -n "$meta_pr_url" && -n "$repo_slug_detect" ]]; then
-        local validated_url
-        validated_url=$(validate_pr_belongs_to_task "$task_id" "$repo_slug_detect" "$meta_pr_url") || validated_url=""
-        if [[ -z "$validated_url" ]]; then
-            log_warn "evaluate_worker: DB PR URL for $task_id failed task ID validation — clearing"
+    # (e.g., branch reuse, stale data, or log containing another task's PR URL).
+    # Validate before using for attribution. If repo slug detection failed,
+    # clear the PR URL entirely — unvalidated URLs cause cross-contamination
+    # where the wrong PR gets linked to the wrong task (t223).
+    if [[ -n "$meta_pr_url" ]]; then
+        if [[ -n "$repo_slug_detect" ]]; then
+            local validated_url
+            validated_url=$(validate_pr_belongs_to_task "$task_id" "$repo_slug_detect" "$meta_pr_url") || validated_url=""
+            if [[ -z "$validated_url" ]]; then
+                log_warn "evaluate_worker: PR URL for $task_id failed task ID validation — clearing"
+                meta_pr_url=""
+            fi
+        else
+            log_warn "evaluate_worker: cannot validate PR URL for $task_id (repo slug detection failed) — clearing to prevent cross-contamination"
             meta_pr_url=""
         fi
     fi
@@ -6669,6 +6688,15 @@ merge_task_pr() {
         return 1
     fi
 
+    # Defense-in-depth: validate PR belongs to this task before merging (t223).
+    # Prevents merging the wrong PR if cross-contamination occurred upstream.
+    local merge_validated_url
+    merge_validated_url=$(validate_pr_belongs_to_task "$task_id" "$repo_slug" "$tpr") || merge_validated_url=""
+    if [[ -z "$merge_validated_url" ]]; then
+        log_error "merge_task_pr: PR #$pr_number does not reference $task_id — refusing to merge (cross-contamination guard)"
+        return 1
+    fi
+
     if [[ "$dry_run" == "true" ]]; then
         log_info "[dry-run] Would merge PR #$pr_number in $repo_slug (squash)"
         return 0
@@ -7071,16 +7099,25 @@ cmd_pr_lifecycle() {
     if [[ "$tstatus" == "complete" ]]; then
         if [[ -z "$tpr" || "$tpr" == "no_pr" || "$tpr" == "task_only" ]]; then
             # Before marking deployed, try to find a PR via gh pr list
+            # Validate found PR belongs to this task to prevent cross-contamination (t223)
             local found_pr=""
             if [[ -n "$trepo" ]]; then
                 local repo_slug_lifecycle
                 repo_slug_lifecycle=$(detect_repo_slug "$trepo" 2>/dev/null || echo "")
                 if [[ -n "$repo_slug_lifecycle" ]]; then
-                    found_pr=$(gh pr list --repo "$repo_slug_lifecycle" --head "feature/${task_id}" --json url --jq '.[0].url' 2>>"$SUPERVISOR_LOG" || echo "")
+                    local candidate_pr_lifecycle
+                    candidate_pr_lifecycle=$(gh pr list --repo "$repo_slug_lifecycle" --head "feature/${task_id}" --json url --jq '.[0].url' 2>>"$SUPERVISOR_LOG" || echo "")
+                    # Validate candidate PR references this task ID (t223)
+                    if [[ -n "$candidate_pr_lifecycle" ]]; then
+                        found_pr=$(validate_pr_belongs_to_task "$task_id" "$repo_slug_lifecycle" "$candidate_pr_lifecycle") || found_pr=""
+                        if [[ -z "$found_pr" ]]; then
+                            log_warn "pr-lifecycle: candidate PR for $task_id failed task ID validation — ignoring"
+                        fi
+                    fi
                 fi
             fi
             if [[ -n "$found_pr" ]]; then
-                log_info "Found PR for $task_id via branch lookup: $found_pr"
+                log_info "Found PR for $task_id via branch lookup (validated): $found_pr"
                 if [[ "$dry_run" == "false" ]]; then
                     sqlite3 "$SUPERVISOR_DB" "UPDATE tasks SET pr_url = '$(sql_escape "$found_pr")' WHERE id = '$escaped_id';"
                     tpr="$found_pr"
@@ -8558,6 +8595,15 @@ verify_task_deliverables() {
     fi
     if ! check_gh_auth; then
         log_warn "gh CLI not authenticated; cannot verify deliverables for $task_id"
+        return 1
+    fi
+
+    # Cross-contamination guard (t223): verify PR references this task ID
+    # in its title or branch name before accepting it as a deliverable.
+    local deliverable_validated
+    deliverable_validated=$(validate_pr_belongs_to_task "$task_id" "$repo_slug" "$pr_url") || deliverable_validated=""
+    if [[ -z "$deliverable_validated" ]]; then
+        log_warn "verify_task_deliverables: PR #$pr_number does not reference $task_id — rejecting (cross-contamination guard)"
         return 1
     fi
 
