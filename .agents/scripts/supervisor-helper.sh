@@ -9003,6 +9003,10 @@ cmd_pulse() {
 
     # Phase 4: Worker health checks - detect dead, hung, and orphaned workers
     local worker_timeout_seconds="${SUPERVISOR_WORKER_TIMEOUT:-1800}"  # 30 min default
+    # Absolute max runtime: kill workers regardless of log activity.
+    # Prevents runaway workers (e.g., shellcheck on huge files) from accumulating
+    # and exhausting system memory. Default 2 hours.
+    local worker_max_runtime_seconds="${SUPERVISOR_WORKER_MAX_RUNTIME:-7200}"  # 2 hour default
 
     if [[ -d "$SUPERVISOR_DIR/pids" ]]; then
         for pid_file in "$SUPERVISOR_DIR/pids"/*.pid; do
@@ -9027,27 +9031,58 @@ cmd_pulse() {
                     }
                 fi
             else
-                # Alive worker: check for hung state (no log output for timeout period)
-                if [[ "$health_status" == "running" ]]; then
-                    local log_file
-                    log_file=$(db "$SUPERVISOR_DB" "SELECT log_file FROM tasks WHERE id = '$(sql_escape "$health_task")';" 2>/dev/null || echo "")
-                    if [[ -n "$log_file" && -f "$log_file" ]]; then
-                        local log_age_seconds=0
-                        local log_mtime
-                        log_mtime=$(stat -f %m "$log_file" 2>/dev/null || stat -c %Y "$log_file" 2>/dev/null || echo "0")
+                # Alive worker: check for hung state or max runtime exceeded
+                if [[ "$health_status" == "running" || "$health_status" == "dispatched" ]]; then
+                    local should_kill=false
+                    local kill_reason=""
+
+                    # Check 1: Absolute max runtime (prevents indefinite accumulation)
+                    local started_at
+                    started_at=$(db "$SUPERVISOR_DB" "SELECT started_at FROM tasks WHERE id = '$(sql_escape "$health_task")';" 2>/dev/null || echo "")
+                    if [[ -n "$started_at" ]]; then
+                        local started_epoch
+                        started_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$started_at" +%s 2>/dev/null || date -d "$started_at" +%s 2>/dev/null || echo "0")
                         local now_epoch
                         now_epoch=$(date +%s)
-                        log_age_seconds=$(( now_epoch - log_mtime ))
-                        if [[ "$log_age_seconds" -gt "$worker_timeout_seconds" ]]; then
-                            log_warn "  Hung worker for $health_task (no log output for ${log_age_seconds}s, timeout ${worker_timeout_seconds}s) — killing"
-                            kill "$health_pid" 2>/dev/null || true
-                            sleep 2
-                            kill -9 "$health_pid" 2>/dev/null || true
-                            rm -f "$pid_file"
-                            cmd_transition "$health_task" "failed" --error "Worker hung (no output for ${log_age_seconds}s)" 2>>"$SUPERVISOR_LOG" || true
-                            failed_count=$((failed_count + 1))
-                            attempt_self_heal "$health_task" "failed" "Worker hung (no output for ${log_age_seconds}s)" "${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
+                        local runtime_seconds=$(( now_epoch - started_epoch ))
+                        if [[ "$started_epoch" -gt 0 && "$runtime_seconds" -gt "$worker_max_runtime_seconds" ]]; then
+                            should_kill=true
+                            kill_reason="Max runtime exceeded (${runtime_seconds}s > ${worker_max_runtime_seconds}s limit)"
                         fi
+                    fi
+
+                    # Check 2: Hung state (no log output for timeout period)
+                    if [[ "$should_kill" == "false" ]]; then
+                        local log_file
+                        log_file=$(db "$SUPERVISOR_DB" "SELECT log_file FROM tasks WHERE id = '$(sql_escape "$health_task")';" 2>/dev/null || echo "")
+                        if [[ -n "$log_file" && -f "$log_file" ]]; then
+                            local log_age_seconds=0
+                            local log_mtime
+                            log_mtime=$(stat -f %m "$log_file" 2>/dev/null || stat -c %Y "$log_file" 2>/dev/null || echo "0")
+                            local now_epoch
+                            now_epoch=$(date +%s)
+                            log_age_seconds=$(( now_epoch - log_mtime ))
+                            if [[ "$log_age_seconds" -gt "$worker_timeout_seconds" ]]; then
+                                should_kill=true
+                                kill_reason="Worker hung (no output for ${log_age_seconds}s, timeout ${worker_timeout_seconds}s)"
+                            fi
+                        fi
+                    fi
+
+                    if [[ "$should_kill" == "true" ]]; then
+                        log_warn "  Killing worker for $health_task (PID $health_pid): $kill_reason"
+                        # Kill all descendants first (shellcheck, node, bash-language-server, etc.)
+                        _kill_descendants "$health_pid"
+                        kill "$health_pid" 2>/dev/null || true
+                        sleep 2
+                        # Force kill if still alive
+                        if kill -0 "$health_pid" 2>/dev/null; then
+                            kill -9 "$health_pid" 2>/dev/null || true
+                        fi
+                        rm -f "$pid_file"
+                        cmd_transition "$health_task" "failed" --error "$kill_reason" 2>>"$SUPERVISOR_LOG" || true
+                        failed_count=$((failed_count + 1))
+                        attempt_self_heal "$health_task" "failed" "$kill_reason" "${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
                     fi
                 fi
             fi
@@ -9235,6 +9270,96 @@ cmd_pulse() {
     fi
     if [[ "$orphan_killed" -gt 0 ]]; then
         log_info "  Cleaned:    $orphan_killed stale worker processes"
+    fi
+
+    # Phase 4e: System-wide orphan process sweep + memory pressure emergency kill
+    # Catches processes that escaped PID-file tracking (e.g., PID file deleted,
+    # never written, or child processes like shellcheck/node that outlived their parent).
+    # Also triggers emergency cleanup when memory pressure is critical.
+    local sweep_killed=0
+
+    # Build a set of PIDs we should NOT kill (active tracked workers + this process chain)
+    local protected_pids=""
+    if [[ -d "$SUPERVISOR_DIR/pids" ]]; then
+        for pid_file in "$SUPERVISOR_DIR/pids"/*.pid; do
+            [[ -f "$pid_file" ]] || continue
+            local sweep_pid
+            sweep_pid=$(cat "$pid_file" 2>/dev/null || echo "")
+            [[ -z "$sweep_pid" ]] && continue
+            local sweep_task_status
+            sweep_task_status=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$(basename "$pid_file" .pid)")';" 2>/dev/null || echo "")
+            if [[ "$sweep_task_status" == "running" || "$sweep_task_status" == "dispatched" ]] && kill -0 "$sweep_pid" 2>/dev/null; then
+                protected_pids="${protected_pids} ${sweep_pid}"
+                local sweep_descendants
+                sweep_descendants=$(_list_descendants "$sweep_pid" 2>/dev/null || true)
+                if [[ -n "$sweep_descendants" ]]; then
+                    protected_pids="${protected_pids} ${sweep_descendants}"
+                fi
+            fi
+        done
+    fi
+    # Protect this process chain
+    local self_pid=$$
+    while [[ "$self_pid" -gt 1 ]] 2>/dev/null; do
+        protected_pids="${protected_pids} ${self_pid}"
+        self_pid=$(ps -o ppid= -p "$self_pid" 2>/dev/null | tr -d ' ')
+        [[ -z "$self_pid" ]] && break
+    done
+
+    # Find orphaned opencode/shellcheck/bash-language-server processes with PPID=1
+    # PPID=1 means the parent died and the process was reparented to init/launchd
+    local orphan_candidates
+    orphan_candidates=$(pgrep -f 'opencode|shellcheck|bash-language-server' 2>/dev/null || true)
+    if [[ -n "$orphan_candidates" ]]; then
+        while read -r opid; do
+            [[ -z "$opid" ]] && continue
+            # Skip protected PIDs
+            if echo " ${protected_pids} " | grep -q " ${opid} "; then
+                continue
+            fi
+            # Only kill orphans (PPID=1) — processes whose parent has died
+            local oppid
+            oppid=$(ps -o ppid= -p "$opid" 2>/dev/null | tr -d ' ')
+            [[ "$oppid" != "1" ]] && continue
+
+            local ocmd
+            ocmd=$(ps -o args= -p "$opid" 2>/dev/null | head -c 100)
+            log_warn "  Killing orphaned process PID $opid (PPID=1): $ocmd"
+            _kill_descendants "$opid"
+            kill "$opid" 2>/dev/null || true
+            sleep 0.5
+            if kill -0 "$opid" 2>/dev/null; then
+                kill -9 "$opid" 2>/dev/null || true
+            fi
+            sweep_killed=$((sweep_killed + 1))
+        done <<< "$orphan_candidates"
+    fi
+
+    # Memory pressure emergency kill: if memory is critical, kill ALL non-protected
+    # worker processes regardless of PPID. This is the last line of defence against
+    # the system running out of RAM and becoming unresponsive.
+    if [[ "${sys_memory:-}" == "high" ]]; then
+        log_error "  CRITICAL: Memory pressure HIGH — emergency worker cleanup"
+        local emergency_candidates
+        emergency_candidates=$(pgrep -f 'opencode|shellcheck|bash-language-server' 2>/dev/null || true)
+        if [[ -n "$emergency_candidates" ]]; then
+            while read -r epid; do
+                [[ -z "$epid" ]] && continue
+                if echo " ${protected_pids} " | grep -q " ${epid} "; then
+                    continue
+                fi
+                local ecmd
+                ecmd=$(ps -o args= -p "$epid" 2>/dev/null | head -c 100)
+                log_warn "  Emergency kill PID $epid: $ecmd"
+                _kill_descendants "$epid"
+                kill -9 "$epid" 2>/dev/null || true
+                sweep_killed=$((sweep_killed + 1))
+            done <<< "$emergency_candidates"
+        fi
+    fi
+
+    if [[ "$sweep_killed" -gt 0 ]]; then
+        log_warn "  Phase 4e: Killed $sweep_killed orphaned/emergency processes"
     fi
 
     # Phase 6: Orphaned PR scanner — broad sweep (t210, t216)
@@ -11879,7 +12004,7 @@ cmd_cron() {
     local action="${1:-status}"
     shift || true
 
-    local interval=5
+    local interval=2
     local batch_arg=""
 
     while [[ $# -gt 0 ]]; do
