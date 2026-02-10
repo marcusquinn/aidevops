@@ -49,31 +49,32 @@ const CREDIT_COSTS = {
 const FREE_COMMANDS = new Set([
   'login', 'discover', 'credits', 'screenshot', 'download',
   'assets', 'manage-assets', 'asset', 'test', 'self-test',
+  'api-status',
 ]);
 
 // Unlimited model mapping: subscription model name -> { slug, type, priority }
 // Priority determines preference order when multiple unlimited models are available.
 // Lower number = higher preference. Ranked by SOTA quality for product/commercial photography:
-//   - GPT Image: Best photorealism, text rendering, product shots (OpenAI GPT-4o)
+//   - Nano Banana Pro: Gemini 3.0 reasoning engine, native 4K, best text rendering, <10s (Higgsfield flagship)
+//   - GPT Image: Strong photorealism, text rendering, product shots (OpenAI GPT-4o)
 //   - Seedream 4.5: Excellent photorealism and fine detail (ByteDance latest)
 //   - FLUX.2 Pro: Strong photorealism, great commercial/product imagery (Black Forest Labs)
 //   - Flux Kontext: Context-aware editing, product placement (Black Forest Labs)
 //   - Reve: Good photorealism, newer model
-//   - Nano Banana Pro: Higgsfield premium, solid quality
-//   - Soul: Higgsfield flagship, reliable all-rounder
+//   - Soul: Higgsfield reliable all-rounder
 //   - Kling O1 Image: Decent, primarily a video company's image offering
 //   - Seedream 4.0: Older generation, still capable
-//   - Nano Banana: Standard tier
+//   - Nano Banana: Standard tier (non-Pro)
 //   - Z Image: Less established
 //   - Popcorn: Stylized/creative, less suited for photorealistic product shots
 const UNLIMITED_MODELS = {
   // Image models (type: 'image') — sorted by SOTA quality for product/commercial use
-  'GPT Image365 Unlimited':             { slug: 'gpt',           type: 'image',          priority: 1 },
-  'Seedream 4.5365 Unlimited':          { slug: 'seedream-4-5',  type: 'image',          priority: 2 },
-  'FLUX.2 Pro365 Unlimited':            { slug: 'flux',          type: 'image',          priority: 3 },
-  'Flux Kontext365 Unlimited':          { slug: 'kontext',       type: 'image',          priority: 4 },
-  'Reve365 Unlimited':                  { slug: 'reve',          type: 'image',          priority: 5 },
-  'Nano Banana Pro365 Unlimited':       { slug: 'nano-banana-pro', type: 'image',        priority: 6 },
+  'Nano Banana Pro365 Unlimited':       { slug: 'nano-banana-pro', type: 'image',        priority: 1 },
+  'GPT Image365 Unlimited':             { slug: 'gpt',           type: 'image',          priority: 2 },
+  'Seedream 4.5365 Unlimited':          { slug: 'seedream-4-5',  type: 'image',          priority: 3 },
+  'FLUX.2 Pro365 Unlimited':            { slug: 'flux',          type: 'image',          priority: 4 },
+  'Flux Kontext365 Unlimited':          { slug: 'kontext',       type: 'image',          priority: 5 },
+  'Reve365 Unlimited':                  { slug: 'reve',          type: 'image',          priority: 6 },
   'Higgsfield Soul365 Unlimited':       { slug: 'soul',          type: 'image',          priority: 7 },
   'Kling O1 Image365 Unlimited':        { slug: 'kling_o1',      type: 'image',          priority: 8 },
   'Seedream 4.0365 Unlimited':          { slug: 'seedream',      type: 'image',          priority: 9 },
@@ -273,6 +274,359 @@ function loadCredentials() {
   return { user, pass };
 }
 
+// --- Higgsfield Cloud API client (https://docs.higgsfield.ai) ---
+// Separate credit pool from web UI. Uses REST API with async queue pattern.
+// Auth: HF_API_KEY + HF_API_SECRET from credentials.sh
+const API_BASE_URL = 'https://platform.higgsfield.ai';
+const API_POLL_INTERVAL_MS = 2000;
+const API_POLL_MAX_WAIT_MS = 10 * 60 * 1000; // 10 minutes max wait
+
+// Map CLI model slugs to Higgsfield API model IDs.
+// Discovered from docs + cloud dashboard model gallery.
+// Not all web UI models have API equivalents — only those listed here.
+const API_MODEL_MAP = {
+  // Text-to-image models
+  'soul':           'higgsfield-ai/soul/standard',
+  'soul-reference': 'higgsfield-ai/soul/reference',
+  'soul-character': 'higgsfield-ai/soul/character',
+  'popcorn':        'higgsfield-ai/popcorn/auto',
+  'seedream-4-5':   'bytedance/seedream/v4.5/text-to-image',
+  'seedream':       'bytedance/seedream/v4/text-to-image',
+  'reve':           'reve/text-to-image',
+  // Image-to-video models
+  'dop-standard':   'higgsfield-ai/dop/standard',
+  'dop-lite':       'higgsfield-ai/dop/lite',
+  'dop-turbo':      'higgsfield-ai/dop/turbo',
+  'dop-preview':    'higgsfield-ai/dop/preview',
+  'kling-2.6':      'kling-video/v2.6/pro/image-to-video',
+  'kling-2.5':      'kling-video/v2.5/turbo/image-to-video',
+  'kling-o1':       'kling-video/o1/pro/image-to-video',
+  'seedance':       'bytedance/seedance/v1/pro/image-to-video',
+  // Image edit models
+  'seedream-edit':  'bytedance/seedream/v4/edit',
+};
+
+// Load API credentials from credentials.sh (HF_API_KEY + HF_API_SECRET)
+function loadApiCredentials() {
+  const credFile = join(homedir(), '.config', 'aidevops', 'credentials.sh');
+  if (!existsSync(credFile)) return null;
+  const content = readFileSync(credFile, 'utf-8');
+  const apiKey = content.match(/HF_API_KEY="([^"]+)"/)?.[1];
+  const apiSecret = content.match(/HF_API_SECRET="([^"]+)"/)?.[1];
+  if (!apiKey || !apiSecret) return null;
+  return { apiKey, apiSecret };
+}
+
+// Make an authenticated API request
+async function apiRequest(method, path, { body, apiKey, apiSecret, timeout = 90000 } = {}) {
+  const url = path.startsWith('http') ? path : `${API_BASE_URL}${path.startsWith('/') ? '' : '/'}${path}`;
+  const headers = {
+    'Authorization': `Key ${apiKey}:${apiSecret}`,
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+    'User-Agent': 'higgsfield-automator/1.0',
+  };
+  const fetchOpts = { method, headers };
+  if (body) fetchOpts.body = JSON.stringify(body);
+
+  // Retry on transient errors (matching Python SDK: 408, 429, 500, 502, 503, 504)
+  const retryableCodes = new Set([408, 429, 500, 502, 503, 504]);
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeout);
+      fetchOpts.signal = controller.signal;
+      const response = await fetch(url, fetchOpts);
+      clearTimeout(timer);
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        if (retryableCodes.has(response.status) && attempt < 2) {
+          const delay = 200 * Math.pow(2, attempt);
+          console.log(`[api] Retrying ${method} ${path} (${response.status}) in ${delay}ms...`);
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+        let detail = text;
+        try { detail = JSON.parse(text).detail || JSON.parse(text).message || text; } catch {}
+        throw new Error(`API ${response.status}: ${detail}`);
+      }
+      return await response.json();
+    } catch (err) {
+      lastError = err;
+      if (err.name === 'AbortError') throw new Error(`API request timed out after ${timeout}ms`);
+      if (attempt < 2 && !err.message.startsWith('API ')) {
+        await new Promise(r => setTimeout(r, 200 * Math.pow(2, attempt)));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastError;
+}
+
+// Upload a local file to Higgsfield's CDN via pre-signed URL.
+// Returns the public URL for use in API requests.
+async function apiUploadFile(filePath, creds) {
+  const { apiKey, apiSecret } = creds;
+  const ext = extname(filePath).toLowerCase();
+  const mimeMap = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif', '.mp4': 'video/mp4', '.mov': 'video/quicktime' };
+  const contentType = mimeMap[ext] || 'application/octet-stream';
+
+  // Get pre-signed upload URL
+  const { public_url, upload_url } = await apiRequest('POST', '/files/generate-upload-url', {
+    body: { content_type: contentType },
+    apiKey, apiSecret,
+  });
+
+  // Upload the file data
+  const fileData = readFileSync(filePath);
+  const uploadResp = await fetch(upload_url, {
+    method: 'PUT',
+    body: fileData,
+    headers: { 'Content-Type': contentType },
+  });
+  if (!uploadResp.ok) {
+    throw new Error(`File upload failed: ${uploadResp.status} ${await uploadResp.text().catch(() => '')}`);
+  }
+
+  console.log(`[api] Uploaded ${basename(filePath)} (${(fileData.length / 1024).toFixed(0)}KB) -> ${public_url}`);
+  return public_url;
+}
+
+// Poll for request completion. Returns the final response JSON.
+async function apiPollStatus(requestId, creds, { maxWait = API_POLL_MAX_WAIT_MS } = {}) {
+  const { apiKey, apiSecret } = creds;
+  const startTime = Date.now();
+  let delay = API_POLL_INTERVAL_MS;
+
+  while (Date.now() - startTime < maxWait) {
+    const data = await apiRequest('GET', `/requests/${requestId}/status`, { apiKey, apiSecret });
+    const status = data.status;
+
+    if (status === 'completed') return data;
+    if (status === 'failed') throw new Error(`Generation failed: ${data.error || 'unknown error'}`);
+    if (status === 'nsfw') throw new Error('Content flagged as NSFW (credits refunded)');
+
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
+    process.stdout.write(`\r[api] Status: ${status} (${elapsed}s elapsed)...`);
+
+    await new Promise(r => setTimeout(r, delay));
+    // Gradual backoff: 2s -> 3s -> 4s -> 5s (cap)
+    delay = Math.min(delay + 1000, 5000);
+  }
+  throw new Error(`Generation timed out after ${maxWait / 1000}s`);
+}
+
+// Download a file from URL to local path
+async function apiDownloadFile(url, outputPath) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+  const buffer = Buffer.from(await response.arrayBuffer());
+  writeFileSync(outputPath, buffer);
+  return buffer.length;
+}
+
+// Resolve the API model ID from a CLI slug. Returns null if no API mapping exists.
+function resolveApiModelId(slug, commandType) {
+  if (!slug) return null;
+  // Direct match
+  if (API_MODEL_MAP[slug]) return API_MODEL_MAP[slug];
+  // Try with command type prefix (e.g., 'dop' -> 'dop-standard')
+  if (commandType === 'video' && API_MODEL_MAP[`${slug}-standard`]) return API_MODEL_MAP[`${slug}-standard`];
+  return null;
+}
+
+// Generate an image via the Higgsfield Cloud API.
+// Returns { outputPath, sidecar } or throws on failure.
+async function apiGenerateImage(options = {}) {
+  const creds = loadApiCredentials();
+  if (!creds) throw new Error('API credentials not configured (HF_API_KEY/HF_API_SECRET in credentials.sh)');
+
+  // Resolve model
+  const modelSlug = options.model || 'soul';
+  const modelId = resolveApiModelId(modelSlug, 'image');
+  if (!modelId) throw new Error(`No API model mapping for slug '${modelSlug}'. Available: ${Object.keys(API_MODEL_MAP).filter(k => !k.includes('dop') && !k.includes('kling') && !k.includes('seedance')).join(', ')}`);
+
+  const prompt = options.prompt;
+  if (!prompt) throw new Error('--prompt is required for image generation');
+
+  // Build request body
+  const body = { prompt };
+  if (options.aspect) body.aspect_ratio = options.aspect;
+  if (options.quality) body.resolution = options.quality;
+  if (options.seed !== undefined) body.seed = options.seed;
+
+  console.log(`[api] Generating image via API: model=${modelId}`);
+  console.log(`[api] Prompt: "${prompt.substring(0, 80)}${prompt.length > 80 ? '...' : ''}"`);
+
+  if (options.dryRun) {
+    console.log('[api] DRY RUN — would submit:', JSON.stringify(body, null, 2));
+    return { dryRun: true };
+  }
+
+  // Submit
+  const submitResp = await apiRequest('POST', `/${modelId}`, {
+    body,
+    apiKey: creds.apiKey,
+    apiSecret: creds.apiSecret,
+  });
+  console.log(`[api] Request queued: ${submitResp.request_id}`);
+
+  // Poll for completion
+  const result = await apiPollStatus(submitResp.request_id, creds);
+  console.log(''); // Clear the status line
+
+  // Download result image(s)
+  const baseOutput = options.output || DOWNLOAD_DIR;
+  const outputDir = resolveOutputDir(baseOutput, options, 'images');
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
+  const downloads = [];
+
+  if (result.images && result.images.length > 0) {
+    for (let i = 0; i < result.images.length; i++) {
+      const imgUrl = result.images[i].url;
+      const suffix = result.images.length > 1 ? `_${i + 1}` : '';
+      const filename = `hf_api_${modelSlug}_${timestamp}${suffix}.png`;
+      const outputPath = join(outputDir, filename);
+
+      const size = await apiDownloadFile(imgUrl, outputPath);
+      console.log(`[api] Downloaded: ${outputPath} (${(size / 1024).toFixed(0)}KB)`);
+
+      // Write sidecar metadata
+      writeJsonSidecar(outputPath, {
+        source: 'higgsfield-cloud-api',
+        model: modelId,
+        modelSlug,
+        prompt,
+        aspectRatio: options.aspect || 'default',
+        resolution: options.quality || 'default',
+        seed: options.seed,
+        requestId: submitResp.request_id,
+        imageUrl: imgUrl,
+      }, options);
+
+      downloads.push(outputPath);
+    }
+  }
+
+  console.log(`[api] Image generation complete: ${downloads.length} file(s)`);
+  return { outputPaths: downloads, requestId: submitResp.request_id };
+}
+
+// Generate a video via the Higgsfield Cloud API (image-to-video).
+// Requires --image-file or --image-url for the source image.
+async function apiGenerateVideo(options = {}) {
+  const creds = loadApiCredentials();
+  if (!creds) throw new Error('API credentials not configured (HF_API_KEY/HF_API_SECRET in credentials.sh)');
+
+  // Resolve model — default to dop-standard for video
+  const modelSlug = options.model || 'dop-standard';
+  const modelId = resolveApiModelId(modelSlug, 'video');
+  if (!modelId) throw new Error(`No API model mapping for video slug '${modelSlug}'. Available: ${Object.keys(API_MODEL_MAP).filter(k => k.includes('dop') || k.includes('kling') || k.includes('seedance')).join(', ')}`);
+
+  // Need an image source for image-to-video
+  let imageUrl = options.imageUrl;
+  if (!imageUrl && options.imageFile) {
+    console.log(`[api] Uploading source image: ${options.imageFile}`);
+    imageUrl = await apiUploadFile(options.imageFile, creds);
+  }
+  if (!imageUrl) throw new Error('--image-file or --image-url is required for API video generation');
+
+  // Build request body
+  const body = { image_url: imageUrl };
+  if (options.prompt) body.prompt = options.prompt;
+  if (options.duration) body.duration = parseInt(options.duration, 10);
+  if (options.aspect) body.aspect_ratio = options.aspect;
+
+  console.log(`[api] Generating video via API: model=${modelId}`);
+  if (options.prompt) console.log(`[api] Prompt: "${options.prompt.substring(0, 80)}${options.prompt.length > 80 ? '...' : ''}"`);
+
+  if (options.dryRun) {
+    console.log('[api] DRY RUN — would submit:', JSON.stringify(body, null, 2));
+    return { dryRun: true };
+  }
+
+  // Submit
+  const submitResp = await apiRequest('POST', `/${modelId}`, {
+    body,
+    apiKey: creds.apiKey,
+    apiSecret: creds.apiSecret,
+  });
+  console.log(`[api] Request queued: ${submitResp.request_id}`);
+
+  // Poll for completion
+  const result = await apiPollStatus(submitResp.request_id, creds);
+  console.log(''); // Clear the status line
+
+  // Download result video
+  const baseOutput = options.output || DOWNLOAD_DIR;
+  const outputDir = resolveOutputDir(baseOutput, options, 'videos');
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
+
+  if (result.video && result.video.url) {
+    const filename = `hf_api_${modelSlug}_${timestamp}.mp4`;
+    const outputPath = join(outputDir, filename);
+
+    const size = await apiDownloadFile(result.video.url, outputPath);
+    console.log(`[api] Downloaded: ${outputPath} (${(size / 1024 / 1024).toFixed(1)}MB)`);
+
+    writeJsonSidecar(outputPath, {
+      source: 'higgsfield-cloud-api',
+      model: modelId,
+      modelSlug,
+      prompt: options.prompt,
+      imageUrl,
+      duration: options.duration,
+      aspectRatio: options.aspect || 'default',
+      requestId: submitResp.request_id,
+      videoUrl: result.video.url,
+    }, options);
+
+    console.log(`[api] Video generation complete`);
+    return { outputPath, requestId: submitResp.request_id };
+  }
+
+  throw new Error('API returned completed status but no video URL');
+}
+
+// Check API account status (credits, connectivity)
+async function apiStatus() {
+  const creds = loadApiCredentials();
+  if (!creds) {
+    console.log('[api] No API credentials configured');
+    console.log('[api] Set HF_API_KEY and HF_API_SECRET in ~/.config/aidevops/credentials.sh');
+    console.log('[api] Get keys from: https://cloud.higgsfield.ai/api-keys');
+    return null;
+  }
+
+  console.log('[api] Checking API connectivity...');
+  try {
+    // Try a lightweight request to verify auth — submit a dummy and immediately check
+    // Actually, just verify we can reach the status endpoint (will 404 but auth is checked)
+    const testUrl = `${API_BASE_URL}/requests/00000000-0000-0000-0000-000000000000/status`;
+    const response = await fetch(testUrl, {
+      headers: {
+        'Authorization': `Key ${creds.apiKey}:${creds.apiSecret}`,
+        'Accept': 'application/json',
+      },
+    });
+    // 404 = auth works, endpoint reached. 401/403 = bad credentials.
+    if (response.status === 401 || response.status === 403) {
+      console.log('[api] ERROR: Invalid API credentials (401/403)');
+      return { authenticated: false };
+    }
+    console.log('[api] API credentials valid (authenticated)');
+    console.log('[api] Note: API uses separate credit pool from web UI subscription');
+    console.log('[api] Top up credits at: https://cloud.higgsfield.ai/credits');
+    return { authenticated: true };
+  } catch (err) {
+    console.log(`[api] Connection error: ${err.message}`);
+    return { authenticated: false, error: err.message };
+  }
+}
+
 // Parse CLI arguments
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -377,6 +731,11 @@ function parseArgs() {
       options.preferUnlimited = true;
     } else if (args[i] === '--no-prefer-unlimited') {
       options.preferUnlimited = false;
+    } else if (args[i] === '--api') {
+      options.useApi = true;
+    } else if (args[i] === '--api-only') {
+      options.useApi = true;
+      options.apiOnly = true;
     }
   }
 
@@ -5647,10 +6006,10 @@ async function runSelfTests() {
   // Test 2: Priority ordering — SOTA quality ranking
   console.log('\n--- SOTA quality priority ordering ---');
   const imagePriorities = imageModels.sort((a, b) => a[1].priority - b[1].priority);
-  assert(imagePriorities[0][1].slug === 'gpt', 'GPT Image is priority 1 (best photorealism)');
-  assert(imagePriorities[1][1].slug === 'seedream-4-5', 'Seedream 4.5 is priority 2');
-  assert(imagePriorities[2][1].slug === 'flux', 'FLUX.2 Pro is priority 3');
-  assert(imagePriorities[3][1].slug === 'kontext', 'Flux Kontext is priority 4');
+  assert(imagePriorities[0][1].slug === 'nano-banana-pro', 'Nano Banana Pro is priority 1 (Gemini 3.0, native 4K, fastest)');
+  assert(imagePriorities[1][1].slug === 'gpt', 'GPT Image is priority 2 (strong photorealism)');
+  assert(imagePriorities[2][1].slug === 'seedream-4-5', 'Seedream 4.5 is priority 3');
+  assert(imagePriorities[3][1].slug === 'flux', 'FLUX.2 Pro is priority 4');
   assert(imagePriorities[11][1].slug === 'popcorn', 'Popcorn is last (stylized, not photorealistic)');
 
   const videoPriorities = videoModels.sort((a, b) => a[1].priority - b[1].priority);
@@ -5675,6 +6034,7 @@ async function runSelfTests() {
     total: '6000',
     plan: 'Creator',
     unlimitedModels: [
+      { model: 'Nano Banana Pro365 Unlimited', starts: 'Auto-renewing', expires: 'Auto-renewing' },
       { model: 'GPT Image365 Unlimited', starts: 'Auto-renewing', expires: 'Auto-renewing' },
       { model: 'Higgsfield Soul365 Unlimited', starts: 'Auto-renewing', expires: 'Auto-renewing' },
       { model: 'Seedream 4.5365 Unlimited', starts: 'Auto-renewing', expires: 'Auto-renewing' },
@@ -5689,8 +6049,8 @@ async function runSelfTests() {
 
   const bestImage = getUnlimitedModelForCommand('image');
   assert(bestImage !== null, 'Returns a model for image type');
-  assert(bestImage.slug === 'gpt', `Best image model is GPT (got: ${bestImage?.slug})`);
-  assert(bestImage.name === 'GPT Image365 Unlimited', `Returns full model name`);
+  assert(bestImage.slug === 'nano-banana-pro', `Best image model is Nano Banana Pro (got: ${bestImage?.slug})`);
+  assert(bestImage.name === 'Nano Banana Pro365 Unlimited', `Returns full model name`);
 
   const bestVideo = getUnlimitedModelForCommand('video');
   assert(bestVideo !== null, 'Returns a model for video type');
@@ -5782,7 +6142,58 @@ async function runSelfTests() {
   process.argv = ['node', 'test', 'image'];
   parsed = parseArgs();
   assert(parsed.options.preferUnlimited === undefined, 'No flag leaves undefined (default behavior)');
+
+  // Test 12: --api and --api-only flag parsing
+  console.log('\n--- API flag parsing ---');
+  process.argv = ['node', 'test', 'image', '--api'];
+  parsed = parseArgs();
+  assert(parsed.options.useApi === true, '--api sets useApi=true');
+  assert(parsed.options.apiOnly === undefined, '--api does not set apiOnly');
+
+  process.argv = ['node', 'test', 'image', '--api-only'];
+  parsed = parseArgs();
+  assert(parsed.options.useApi === true, '--api-only sets useApi=true');
+  assert(parsed.options.apiOnly === true, '--api-only sets apiOnly=true');
+
+  process.argv = ['node', 'test', 'image'];
+  parsed = parseArgs();
+  assert(parsed.options.useApi === undefined, 'No --api flag leaves useApi undefined');
   process.argv = origArgv;
+
+  // Test 13: API model ID mapping
+  console.log('\n--- API model ID mapping ---');
+  assert(resolveApiModelId('soul', 'image') === 'higgsfield-ai/soul/standard', 'soul -> higgsfield-ai/soul/standard');
+  assert(resolveApiModelId('seedream-4-5', 'image') === 'bytedance/seedream/v4.5/text-to-image', 'seedream-4-5 maps correctly');
+  assert(resolveApiModelId('reve', 'image') === 'reve/text-to-image', 'reve maps correctly');
+  assert(resolveApiModelId('dop-standard', 'video') === 'higgsfield-ai/dop/standard', 'dop-standard maps correctly');
+  assert(resolveApiModelId('kling-2.6', 'video') === 'kling-video/v2.6/pro/image-to-video', 'kling-2.6 maps correctly');
+  assert(resolveApiModelId('seedance', 'video') === 'bytedance/seedance/v1/pro/image-to-video', 'seedance maps correctly');
+  assert(resolveApiModelId('nonexistent', 'image') === null, 'Unknown slug returns null');
+  assert(resolveApiModelId('dop', 'video') === 'higgsfield-ai/dop/standard', 'dop shorthand resolves to dop-standard for video');
+  assert(resolveApiModelId(null, 'image') === null, 'null slug returns null');
+
+  // Test 14: API credential loading
+  console.log('\n--- API credential loading ---');
+  const apiCreds = loadApiCredentials();
+  // May or may not have creds — just verify the function doesn't crash
+  if (apiCreds) {
+    assert(typeof apiCreds.apiKey === 'string' && apiCreds.apiKey.length > 0, 'API key is non-empty string');
+    assert(typeof apiCreds.apiSecret === 'string' && apiCreds.apiSecret.length > 0, 'API secret is non-empty string');
+  } else {
+    console.log('  (No API credentials configured — skipping value checks)');
+    passed++; // Count as pass — absence is valid
+  }
+
+  // Test 15: API_MODEL_MAP completeness
+  console.log('\n--- API_MODEL_MAP structure ---');
+  const apiImageModels = Object.entries(API_MODEL_MAP).filter(([k]) => !k.includes('dop') && !k.includes('kling') && !k.includes('seedance') && !k.includes('edit'));
+  const apiVideoModels = Object.entries(API_MODEL_MAP).filter(([k]) => k.includes('dop') || k.includes('kling') || k.includes('seedance'));
+  assert(apiImageModels.length >= 5, `At least 5 image models in API map (got ${apiImageModels.length})`);
+  assert(apiVideoModels.length >= 6, `At least 6 video models in API map (got ${apiVideoModels.length})`);
+  // All values should be non-empty strings containing '/'
+  for (const [slug, modelId] of Object.entries(API_MODEL_MAP)) {
+    assert(typeof modelId === 'string' && modelId.includes('/'), `API model ID for '${slug}' is valid path: ${modelId}`);
+  }
 
   // Restore original cache
   if (originalCache) {
@@ -6234,6 +6645,7 @@ async function batchLipsync(options = {}) {
   }
 
   return batchState;
+}
 
 // Main CLI handler
 async function main() {
@@ -6274,6 +6686,7 @@ Commands:
   credits            Check account credits/plan
   screenshot         Take screenshot of any page
   download           Download latest generation (use --model video for videos)
+  api-status         Check API credentials and connectivity
   test               Run self-tests for unlimited model selection logic
 
 Options:
@@ -6325,6 +6738,8 @@ Options:
   --no-retry         Disable automatic retry on failure
   --prefer-unlimited Auto-select unlimited models when available (default: on)
   --no-prefer-unlimited  Use default models even if unlimited alternatives exist
+  --api              Use Higgsfield Cloud API instead of browser (separate credit pool)
+  --api-only         Use API only, fail if API unavailable (no Playwright fallback)
 
 Examples:
   node playwright-automator.mjs login --headed
@@ -6354,12 +6769,18 @@ Examples:
   node playwright-automator.mjs influencer --preset Human -p "Fashion influencer, warm smile"
   node playwright-automator.mjs character --image-file face1.jpg -p "Sarah"
   node playwright-automator.mjs feature --feature fashion-factory --image-file outfit.jpg
+
+API mode (uses cloud.higgsfield.ai — separate credit pool from web UI):
+  node playwright-automator.mjs api-status
+  node playwright-automator.mjs image -p "A sunset over mountains" --api
+  node playwright-automator.mjs image -p "Product shot" -m soul --api-only
+  node playwright-automator.mjs video --image-file photo.jpg -p "Camera pans" --api -m dop-standard
 `);
     return;
   }
 
   // Run site discovery if cache is stale (skips login, discovery, and diagnostic commands)
-  const skipDiscoveryCommands = ['login', 'discover', 'health-check', 'health', 'smoke-test', 'smoke'];
+  const skipDiscoveryCommands = ['login', 'discover', 'health-check', 'health', 'smoke-test', 'smoke', 'api-status'];
   if (!skipDiscoveryCommands.includes(command)) {
     await ensureDiscovery(options);
   }
@@ -6389,10 +6810,32 @@ Examples:
       await runDiscovery(options);
       break;
     case 'image':
-      await withRetry(() => generateImage(options), retryOpts);
+      if (options.useApi) {
+        try {
+          await withRetry(() => apiGenerateImage(options), retryOpts);
+        } catch (err) {
+          if (options.apiOnly) throw err;
+          console.log(`[api] API failed: ${err.message}`);
+          console.log('[api] Falling back to Playwright browser automation...');
+          await withRetry(() => generateImage(options), retryOpts);
+        }
+      } else {
+        await withRetry(() => generateImage(options), retryOpts);
+      }
       break;
     case 'video':
-      await withRetry(() => generateVideo(options), { ...retryOpts, maxRetries: 1 });
+      if (options.useApi) {
+        try {
+          await withRetry(() => apiGenerateVideo(options), { ...retryOpts, maxRetries: 1 });
+        } catch (err) {
+          if (options.apiOnly) throw err;
+          console.log(`[api] API failed: ${err.message}`);
+          console.log('[api] Falling back to Playwright browser automation...');
+          await withRetry(() => generateVideo(options), { ...retryOpts, maxRetries: 1 });
+        }
+      } else {
+        await withRetry(() => generateVideo(options), { ...retryOpts, maxRetries: 1 });
+      }
       break;
     case 'lipsync':
       await withRetry(() => generateLipsync(options), { ...retryOpts, maxRetries: 1 });
@@ -6411,6 +6854,9 @@ Examples:
       break;
     case 'credits':
       await checkCredits(options);
+      break;
+    case 'api-status':
+      await apiStatus();
       break;
     case 'health-check':
     case 'health':
