@@ -7,9 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.110.1] - 2026-02-11
+
+### Added
+
+- add orchestration commands to quality-sweep-helper.sh for daily sweep (t245.4) (#1013)
+- verify API model IDs via platform probing, fix incorrect mappings (t252)
+- add Codacy API integration — fetch, normalize, deduplicate (t245.2) (#1000)
+- auto-create PR for orphaned branches instead of retrying (t247.2) (#988)
+- expand model routing classifier with haiku tier, tag hints, and TODO.md model: field (t246) (#986)
+- Higgsfield Cloud API client + model priority fix (#975)
+- add quality-sweep-helper.sh with SonarCloud API integration (t245.1) (#984)
+- Email Testing Suite cross-references (t214) (#963)
+- add unlimited model auto-selection with SOTA quality ranking (t236.2) (#970)
+- retroactive verification audit — 292 tasks verified, 69 unverifiable (t238) (#968)
+- add dry-run, health-check, and smoke-test to higgsfield-helper (t236.5) (#969)
+
+### Changed
+
+- Documentation: add t249 to changelog
+- Refactor: extract parseArgs() into data-driven flag map and main() into command registry (t250.1, t250.4) (#1002)
+
 ### Fixed
 
-- inject mandatory read instruction into subagent stubs so rules are loaded during Task tool dispatch (t249) (#1014)
+- inject mandatory read instruction into subagent stubs (t249) (#1014)
+- clamp caption scene index to last scene when out of range (t244) (#981)
+- replace execSync with execFileSync to prevent shell injection (t243) (#980)
+- separate reloadAttempted flag from retryAttempted in waitForGeneration (t242) (#979)
+- harden worktree auto-cleanup after deploy (t240) (#978)
+- add missing closing brace for batchLipsync function (#976)
+- Remotion staticFile path handling, Seedance video download matching, caption normalization (#926)
 
 ## [2.110.0] - 2026-02-10
 
