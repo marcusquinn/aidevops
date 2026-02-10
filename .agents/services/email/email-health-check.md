@@ -1,5 +1,5 @@
 ---
-description: Check email deliverability health (SPF, DKIM, DMARC, MX, blacklists)
+description: Check email deliverability health and content quality (SPF, DKIM, DMARC, MX, blacklists, content precheck)
 mode: subagent
 tools:
   read: true
@@ -17,24 +17,39 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Validate email authentication and deliverability for domains
-- **Script**: `email-health-check-helper.sh [command] [domain]`
-- **Checks**: SPF, DKIM, DMARC, MX records, blacklist status
+- **Purpose**: Validate email authentication, deliverability, and content quality
+- **Script**: `email-health-check-helper.sh [command] [domain|file]`
+- **Infrastructure checks**: SPF, DKIM, DMARC, MX, blacklist, BIMI, MTA-STS, TLS-RPT, DANE, rDNS
+- **Content checks**: Subject line, preheader, accessibility, links, images, spam words
 - **Tools**: checkdmarc (Python CLI), dig/nslookup, mxtoolbox.com
 - **Install**: `pip install checkdmarc` or `pipx install checkdmarc`
 
 **Quick commands:**
 
 ```bash
-# Full health check
+# Full infrastructure health check
 email-health-check-helper.sh check example.com
 
-# Individual checks
+# Full content precheck (HTML email file)
+email-health-check-helper.sh content-check newsletter.html
+
+# Combined precheck (infrastructure + content)
+email-health-check-helper.sh precheck example.com newsletter.html
+
+# Individual infrastructure checks
 email-health-check-helper.sh spf example.com
 email-health-check-helper.sh dkim example.com selector1
 email-health-check-helper.sh dmarc example.com
 email-health-check-helper.sh mx example.com
 email-health-check-helper.sh blacklist example.com
+
+# Individual content checks
+email-health-check-helper.sh check-subject newsletter.html
+email-health-check-helper.sh check-preheader newsletter.html
+email-health-check-helper.sh check-accessibility newsletter.html
+email-health-check-helper.sh check-links newsletter.html
+email-health-check-helper.sh check-images newsletter.html
+email-health-check-helper.sh check-spam-words newsletter.html
 ```
 
 <!-- AI-CONTEXT-END -->
@@ -335,11 +350,114 @@ The health check now includes additional checks beyond the core SPF/DKIM/DMARC/M
 | **DANE/TLSA** | Cryptographic TLS verification | 1 pt |
 | **Reverse DNS** | PTR record for mail server | 1 pt |
 
-**Full check** now produces a health score (out of 15) with letter grade:
+## Content-Level Checks (v3)
+
+Inspired by [Email on Acid Campaign Precheck](https://www.emailonacid.com/features/), the health check now includes content-level validation for HTML email files. These checks catch issues that hurt open rates, engagement, and deliverability before you hit send.
+
+### Content Check Commands
 
 ```bash
-email-health-check-helper.sh check example.com
-# Score: 12/15 (80%) - Grade: B
+# Full content precheck (all content checks)
+email-health-check-helper.sh content-check newsletter.html
+
+# Individual content checks
+email-health-check-helper.sh check-subject newsletter.html
+email-health-check-helper.sh check-preheader newsletter.html
+email-health-check-helper.sh check-accessibility newsletter.html
+email-health-check-helper.sh check-links newsletter.html
+email-health-check-helper.sh check-images newsletter.html
+email-health-check-helper.sh check-spam-words newsletter.html
+```
+
+### Content Check Categories
+
+| Check | What It Does | Score |
+|-------|-------------|-------|
+| **Subject Line** | Length (under 50 chars), ALL CAPS, excessive punctuation, emoji count, spam trigger words | 2 pts |
+| **Preheader Text** | Presence, length (40-130 chars), not duplicating subject line | 1 pt |
+| **Accessibility** | Alt text on images, lang attribute, semantic structure, color contrast hints, role attributes | 2 pts |
+| **Link Validation** | Broken links, missing href, tracking parameters, unsubscribe link present, excessive links | 2 pts |
+| **Image Validation** | Missing images, oversized files (>200KB), missing dimensions, total image weight, image-to-text ratio | 2 pts |
+| **Spam Word Scan** | Scans subject, preheader, and body for words/phrases that trigger spam filters | 1 pt |
+
+### Subject Line Analysis
+
+The subject line check validates:
+
+- **Length**: Warns if over 50 characters (mobile truncation), errors if over 80
+- **ALL CAPS**: Flags subjects with >50% uppercase (spam filter trigger)
+- **Punctuation**: Flags excessive `!` or `?` (more than 1 of each)
+- **Spam triggers**: Checks against common spam words (`free`, `act now`, `limited time`, `click here`, `buy now`, `order now`, `100%`, `no obligation`, etc.)
+- **Empty subject**: Errors if no `<title>` tag or subject line found
+
+### Preheader Text Analysis
+
+The preheader check validates:
+
+- **Presence**: Warns if no preheader/preview text is defined
+- **Length**: Optimal range is 40-130 characters (too short wastes space, too long gets truncated)
+- **Duplication**: Flags if preheader duplicates the subject line
+- **Default text**: Flags common placeholder text ("View in browser", "Email not displaying correctly")
+
+### Accessibility Checks
+
+Based on ADA/WCAG email compliance:
+
+- **Image alt text**: Every `<img>` must have an `alt` attribute (decorative images use `alt=""`)
+- **Language attribute**: `<html lang="en">` (or appropriate language) must be present
+- **Semantic headings**: Checks for proper heading hierarchy (h1 → h2 → h3)
+- **Table roles**: Layout tables should have `role="presentation"`
+- **Link text**: Flags generic link text ("click here", "read more") without context
+- **Font size**: Warns if body text is below 14px (readability)
+
+### Link Validation
+
+- **Empty hrefs**: Flags `<a>` tags with empty or missing `href`
+- **Placeholder links**: Detects `#`, `javascript:`, or placeholder URLs
+- **Unsubscribe link**: Verifies at least one unsubscribe/opt-out link exists (CAN-SPAM requirement)
+- **Link count**: Warns if more than 20 links (spam filter trigger)
+- **Tracking parameters**: Informational — reports UTM parameters found
+
+### Image Validation
+
+- **Missing alt text**: Cross-referenced with accessibility check
+- **File size**: Warns if any single image exceeds 200KB (slow loading)
+- **Total weight**: Warns if total image weight exceeds 800KB
+- **Missing dimensions**: Flags images without `width`/`height` attributes (causes layout shift)
+- **Image-to-text ratio**: Warns if email is >60% images (spam filter trigger, accessibility issue)
+- **External images**: Reports count of externally-hosted images
+
+### Spam Word Scanner
+
+Scans email content for words and phrases known to trigger spam filters:
+
+**High-risk words** (subject line): `free`, `act now`, `limited time`, `click here`, `buy now`, `order now`, `100% free`, `no obligation`, `risk free`, `winner`, `congratulations`, `urgent`, `cash`, `guarantee`
+
+**Medium-risk words** (body): `unsubscribe` (without actual link), `dear friend`, `once in a lifetime`, `as seen on`, `double your`, `earn money`, `no cost`, `special promotion`
+
+**Scoring**: Each high-risk word in the subject deducts 0.5 points. Each medium-risk word in the body deducts 0.25 points. Minimum score is 0.
+
+### Full Precheck (Domain + Content)
+
+Run both infrastructure and content checks together:
+
+```bash
+# Full precheck: domain health + content validation
+email-health-check-helper.sh precheck example.com newsletter.html
+
+# Output includes:
+# - All DNS/infrastructure checks (SPF, DKIM, DMARC, etc.)
+# - All content checks (subject, preheader, accessibility, etc.)
+# - Combined score out of 25 with letter grade
+```
+
+**Full precheck** produces a combined health score (out of 25) with letter grade:
+
+```bash
+email-health-check-helper.sh precheck example.com newsletter.html
+# Infrastructure: 12/15 (80%) - Grade: B
+# Content:        8/10 (80%) - Grade: B
+# Combined:      20/25 (80%) - Grade: B
 ```
 
 ## Related
@@ -347,4 +465,5 @@ email-health-check-helper.sh check example.com
 - `services/email/email-testing.md` - Design rendering and delivery testing
 - `services/email/ses.md` - Amazon SES integration
 - `services/hosting/dns.md` - DNS management
+- `content/distribution/email.md` - Email content strategy and best practices
 - `tools/browser/browser-automation.md` - For mail-tester automation
