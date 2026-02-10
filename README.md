@@ -1390,7 +1390,7 @@ aidevops is registered as a **Claude Code plugin marketplace**. Install with two
 /plugin install aidevops@aidevops
 ```
 
-This installs the complete framework: 11 primary agents, 735+ subagents, and 194 helper scripts.
+This installs the complete framework: 11 primary agents, 735+ subagents, and 201 helper scripts.
 
 ### Importing External Skills
 
@@ -2120,7 +2120,7 @@ aidevops/
 ├── .agents/                        # Agents and documentation
 │   ├── AGENTS.md                  # User guide (deployed to ~/.aidevops/agents/)
 │   ├── *.md                       # 11 primary agents
-│   ├── scripts/                   # 194 helper scripts
+│   ├── scripts/                   # 201 helper scripts
 │   ├── tools/                     # Cross-domain utilities (video, browser, git, etc.)
 │   ├── services/                  # External service integrations
 │   └── workflows/                 # Development process guides

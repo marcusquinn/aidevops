@@ -8,9 +8,8 @@ set -euo pipefail
 # --- Configuration ---
 RUNWAY_API_BASE="https://api.dev.runwayml.com"
 RUNWAY_API_VERSION="2024-11-06"
-# SCRIPT_DIR available for future use by sourcing scripts
-# shellcheck disable=SC2034
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RUNWAY_CURL_CONNECT_TIMEOUT="${RUNWAY_CURL_CONNECT_TIMEOUT:-10}"
+RUNWAY_CURL_MAX_TIME="${RUNWAY_CURL_MAX_TIME:-60}"
 
 # --- Load credentials ---
 load_credentials() {
@@ -43,6 +42,8 @@ runway_api() {
     local curl_args=(
         -s -w "\n%{http_code}"
         -X "$method"
+        --connect-timeout "$RUNWAY_CURL_CONNECT_TIMEOUT"
+        --max-time "$RUNWAY_CURL_MAX_TIME"
         -H "Authorization: Bearer ${RUNWAYML_API_SECRET}"
         -H "X-Runway-Version: ${RUNWAY_API_VERSION}"
         -H "Content-Type: application/json"
@@ -67,6 +68,51 @@ runway_api() {
     fi
 
     echo "$body"
+    return 0
+}
+
+# --- JSON builder helpers (safe via jq) ---
+
+# Build video-to-video JSON payload
+_build_v2v_json() {
+    local model="$1" video_uri="$2" prompt="$3"
+    jq -n \
+        --arg model "$model" \
+        --arg videoUri "$video_uri" \
+        --arg promptText "$prompt" \
+        '{model: $model, videoUri: $videoUri, promptText: $promptText}'
+    return 0
+}
+
+# Build image-to-video JSON payload
+_build_i2v_json() {
+    local model="$1" image="$2" ratio="$3" prompt="$4" duration="$5" seed="$6"
+    jq -n \
+        --arg model "$model" \
+        --arg promptImage "$image" \
+        --arg ratio "$ratio" \
+        --arg promptText "$prompt" \
+        --arg duration "$duration" \
+        --arg seed "$seed" \
+        '{model: $model, promptImage: $promptImage, ratio: $ratio}
+         + if $promptText != "" then {promptText: $promptText} else {} end
+         + if $duration != "" then {duration: ($duration | tonumber)} else {} end
+         + if $seed != "" then {seed: ($seed | tonumber)} else {} end'
+    return 0
+}
+
+# Build text-to-video JSON payload
+_build_t2v_json() {
+    local model="$1" prompt="$2" ratio="$3" duration="$4" audio="$5"
+    jq -n \
+        --arg model "$model" \
+        --arg promptText "$prompt" \
+        --arg ratio "$ratio" \
+        --arg duration "$duration" \
+        --arg audio "$audio" \
+        '{model: $model, promptText: $promptText, ratio: $ratio}
+         + if $duration != "" then {duration: ($duration | tonumber)} else {} end
+         + if $audio != "" then {audio: ($audio == "true")} else {} end'
     return 0
 }
 
@@ -99,41 +145,22 @@ cmd_video() {
     done
 
     local json_body=""
+    local endpoint=""
 
     # Determine endpoint based on inputs
     if [[ -n "$video_uri" ]]; then
-        # Video-to-video (Aleph)
-        json_body="{\"model\":\"${model}\",\"videoUri\":\"${video_uri}\",\"promptText\":\"${prompt}\"}"
-        local endpoint="/v1/video_to_video"
+        json_body="$(_build_v2v_json "$model" "$video_uri" "$prompt")"
+        endpoint="/v1/video_to_video"
     elif [[ -n "$image" ]]; then
-        # Image-to-video
-        json_body="{\"model\":\"${model}\",\"promptImage\":\"${image}\",\"ratio\":\"${ratio}\""
-        if [[ -n "$prompt" ]]; then
-            json_body="${json_body},\"promptText\":\"${prompt}\""
-        fi
-        if [[ -n "$duration" ]]; then
-            json_body="${json_body},\"duration\":${duration}"
-        fi
-        if [[ -n "$seed" ]]; then
-            json_body="${json_body},\"seed\":${seed}"
-        fi
-        json_body="${json_body}}"
-        local endpoint="/v1/image_to_video"
+        json_body="$(_build_i2v_json "$model" "$image" "$ratio" "$prompt" "$duration" "$seed")"
+        endpoint="/v1/image_to_video"
     else
-        # Text-to-video (Veo models)
         if [[ -z "$prompt" ]]; then
             echo "ERROR: --prompt is required for text-to-video" >&2
             return 1
         fi
-        json_body="{\"model\":\"${model}\",\"promptText\":\"${prompt}\",\"ratio\":\"${ratio}\""
-        if [[ -n "$duration" ]]; then
-            json_body="${json_body},\"duration\":${duration}"
-        fi
-        if [[ -n "$audio" ]]; then
-            json_body="${json_body},\"audio\":${audio}"
-        fi
-        json_body="${json_body}}"
-        local endpoint="/v1/text_to_video"
+        json_body="$(_build_t2v_json "$model" "$prompt" "$ratio" "$duration" "$audio")"
+        endpoint="/v1/text_to_video"
     fi
 
     local result
@@ -183,7 +210,7 @@ cmd_image() {
         return 1
     fi
 
-    # Build reference images JSON array
+    # Build reference images JSON array using jq
     local ref_json="[]"
     if [[ ${#refs[@]} -gt 0 ]]; then
         ref_json="["
@@ -193,31 +220,29 @@ cmd_image() {
                 ref_json="${ref_json},"
             fi
             first=false
-            # Format: url:tag or just url
-            if [[ "$ref" == *":"* ]] && [[ "$ref" != "https://"* ]] && [[ "$ref" != "http://"* ]]; then
-                # Has a tag suffix (not a URL scheme colon)
-                local ref_uri="${ref%:*}"
-                local ref_tag="${ref##*:}"
-                ref_json="${ref_json}{\"uri\":\"${ref_uri}\",\"tag\":\"${ref_tag}\"}"
-            elif [[ "$ref" == *"https://"* ]]; then
-                # URL with possible tag after space
-                local ref_uri="$ref"
-                ref_json="${ref_json}{\"uri\":\"${ref_uri}\"}"
+            # Split on last colon; if suffix has no slash, treat as tag
+            local ref_tag="${ref##*:}"
+            local ref_uri="${ref%:*}"
+            if [[ "$ref_tag" != "$ref" ]] && [[ "$ref_tag" != "//"* ]] && [[ "$ref_tag" != *"/"* ]]; then
+                ref_json="${ref_json}$(jq -n --arg u "$ref_uri" --arg t "$ref_tag" '{uri:$u,tag:$t}')"
             else
-                ref_json="${ref_json}{\"uri\":\"${ref}\"}"
+                ref_json="${ref_json}$(jq -n --arg u "$ref" '{uri:$u}')"
             fi
         done
         ref_json="${ref_json}]"
     fi
 
-    local json_body="{\"model\":\"${model}\",\"promptText\":\"${prompt}\",\"ratio\":\"${ratio}\""
-    if [[ "$ref_json" != "[]" ]]; then
-        json_body="${json_body},\"referenceImages\":${ref_json}"
-    fi
-    if [[ -n "$seed" ]]; then
-        json_body="${json_body},\"seed\":${seed}"
-    fi
-    json_body="${json_body}}"
+    local json_body
+    json_body="$(jq -n \
+        --arg model "$model" \
+        --arg promptText "$prompt" \
+        --arg ratio "$ratio" \
+        --arg seed "$seed" \
+        --argjson referenceImages "$ref_json" \
+        '{model: $model, promptText: $promptText, ratio: $ratio}
+         + if ($referenceImages | length) > 0 then {referenceImages: $referenceImages} else {} end
+         + if $seed != "" then {seed: ($seed | tonumber)} else {} end'
+    )"
 
     local result
     result="$(runway_api POST "/v1/text_to_image" "$json_body")"
@@ -260,7 +285,11 @@ cmd_tts() {
     fi
 
     local json_body
-    json_body="{\"model\":\"eleven_multilingual_v2\",\"promptText\":\"${text}\",\"voice\":{\"type\":\"runway-preset\",\"presetId\":\"${voice}\"}}"
+    json_body="$(jq -n \
+        --arg promptText "$text" \
+        --arg presetId "$voice" \
+        '{model: "eleven_multilingual_v2", promptText: $promptText, voice: {type: "runway-preset", presetId: $presetId}}'
+    )"
 
     local result
     result="$(runway_api POST "/v1/text_to_speech" "$json_body")"
@@ -301,21 +330,29 @@ cmd_sts() {
         esac
     done
 
-    local media_json=""
+    local media_type="" media_uri=""
     if [[ -n "$video_uri" ]]; then
-        media_json="{\"type\":\"video\",\"uri\":\"${video_uri}\"}"
+        media_type="video"
+        media_uri="$video_uri"
     elif [[ -n "$audio_uri" ]]; then
-        media_json="{\"type\":\"audio\",\"uri\":\"${audio_uri}\"}"
+        media_type="audio"
+        media_uri="$audio_uri"
     else
         echo "ERROR: --audio or --video is required" >&2
         return 1
     fi
 
-    local json_body="{\"model\":\"eleven_multilingual_sts_v2\",\"media\":${media_json},\"voice\":{\"type\":\"runway-preset\",\"presetId\":\"${voice}\"}"
-    if [[ -n "$remove_noise" ]]; then
-        json_body="${json_body},\"removeBackgroundNoise\":true"
-    fi
-    json_body="${json_body}}"
+    local json_body
+    json_body="$(jq -n \
+        --arg media_type "$media_type" \
+        --arg media_uri "$media_uri" \
+        --arg presetId "$voice" \
+        --arg remove_noise "$remove_noise" \
+        '{model: "eleven_multilingual_sts_v2",
+          media: {type: $media_type, uri: $media_uri},
+          voice: {type: "runway-preset", presetId: $presetId}}
+         + if $remove_noise == "true" then {removeBackgroundNoise: true} else {} end'
+    )"
 
     local result
     result="$(runway_api POST "/v1/speech_to_speech" "$json_body")"
@@ -359,14 +396,15 @@ cmd_sfx() {
         return 1
     fi
 
-    local json_body="{\"model\":\"eleven_text_to_sound_v2\",\"promptText\":\"${prompt}\""
-    if [[ -n "$duration" ]]; then
-        json_body="${json_body},\"duration\":${duration}"
-    fi
-    if [[ -n "$loop" ]]; then
-        json_body="${json_body},\"loop\":true"
-    fi
-    json_body="${json_body}}"
+    local json_body
+    json_body="$(jq -n \
+        --arg promptText "$prompt" \
+        --arg duration "$duration" \
+        --arg loop "$loop" \
+        '{model: "eleven_text_to_sound_v2", promptText: $promptText}
+         + if $duration != "" then {duration: ($duration | tonumber)} else {} end
+         + if $loop == "true" then {loop: true} else {} end'
+    )"
 
     local result
     result="$(runway_api POST "/v1/sound_effect" "$json_body")"
@@ -417,17 +455,18 @@ cmd_dub() {
         return 1
     fi
 
-    local json_body="{\"model\":\"eleven_voice_dubbing\",\"audioUri\":\"${audio_uri}\",\"targetLang\":\"${target_lang}\""
-    if [[ -n "$disable_cloning" ]]; then
-        json_body="${json_body},\"disableVoiceCloning\":true"
-    fi
-    if [[ -n "$drop_bg" ]]; then
-        json_body="${json_body},\"dropBackgroundAudio\":true"
-    fi
-    if [[ -n "$num_speakers" ]]; then
-        json_body="${json_body},\"numSpeakers\":${num_speakers}"
-    fi
-    json_body="${json_body}}"
+    local json_body
+    json_body="$(jq -n \
+        --arg audioUri "$audio_uri" \
+        --arg targetLang "$target_lang" \
+        --arg disable_cloning "$disable_cloning" \
+        --arg drop_bg "$drop_bg" \
+        --arg num_speakers "$num_speakers" \
+        '{model: "eleven_voice_dubbing", audioUri: $audioUri, targetLang: $targetLang}
+         + if $disable_cloning == "true" then {disableVoiceCloning: true} else {} end
+         + if $drop_bg == "true" then {dropBackgroundAudio: true} else {} end
+         + if $num_speakers != "" then {numSpeakers: ($num_speakers | tonumber)} else {} end'
+    )"
 
     local result
     result="$(runway_api POST "/v1/voice_dubbing" "$json_body")"
@@ -467,7 +506,8 @@ cmd_isolate() {
         return 1
     fi
 
-    local json_body="{\"model\":\"eleven_voice_isolation\",\"audioUri\":\"${audio_uri}\"}"
+    local json_body
+    json_body="$(jq -n --arg audioUri "$audio_uri" '{model: "eleven_voice_isolation", audioUri: $audioUri}')"
 
     local result
     result="$(runway_api POST "/v1/voice_isolation" "$json_body")"
@@ -512,6 +552,7 @@ cmd_wait() {
 
     local elapsed=0
     local interval=5
+    local max_interval=30
     echo "Waiting for task $task_id (timeout: ${timeout}s)..."
 
     while [[ "$elapsed" -lt "$timeout" ]]; do
@@ -532,7 +573,7 @@ cmd_wait() {
                 return 1
                 ;;
             PENDING|THROTTLED|RUNNING)
-                echo "  Status: $status (${elapsed}s elapsed)"
+                echo "  Status: $status (${elapsed}s elapsed, next poll in ${interval}s)"
                 ;;
             *)
                 echo "  Unknown status: $status" >&2
@@ -541,8 +582,11 @@ cmd_wait() {
 
         sleep "$interval"
         elapsed=$((elapsed + interval))
-        # Add jitter: vary interval between 5-8 seconds
-        interval=$(( (RANDOM % 4) + 5 ))
+        # Exponential backoff with jitter, capped at max_interval
+        interval=$(( interval + (RANDOM % 4) + 1 ))
+        if [[ "$interval" -gt "$max_interval" ]]; then
+            interval="$max_interval"
+        fi
     done
 
     echo "ERROR: Timeout after ${timeout}s" >&2
@@ -583,22 +627,14 @@ cmd_usage() {
         esac
     done
 
-    local json_body="{}"
-    if [[ -n "$start_date" ]] || [[ -n "$end_date" ]]; then
-        json_body="{"
-        local first=true
-        if [[ -n "$start_date" ]]; then
-            json_body="${json_body}\"startDate\":\"${start_date}\""
-            first=false
-        fi
-        if [[ -n "$end_date" ]]; then
-            if [[ "$first" != true ]]; then
-                json_body="${json_body},"
-            fi
-            json_body="${json_body}\"beforeDate\":\"${end_date}\""
-        fi
-        json_body="${json_body}}"
-    fi
+    local json_body
+    json_body="$(jq -n \
+        --arg startDate "$start_date" \
+        --arg beforeDate "$end_date" \
+        'if $startDate != "" then {startDate: $startDate} else {} end
+         + if $beforeDate != "" then {beforeDate: $beforeDate} else {} end
+         | if . == {} then {} else . end'
+    )"
 
     local result
     result="$(runway_api POST "/v1/organization/usage" "$json_body")"
@@ -716,7 +752,9 @@ EXAMPLES:
   runway-helper.sh wait abc-123-def
 
 ENVIRONMENT:
-  RUNWAYML_API_SECRET   API secret key (required)
+  RUNWAYML_API_SECRET            API secret key (required)
+  RUNWAY_CURL_CONNECT_TIMEOUT    curl connect timeout in seconds (default: 10)
+  RUNWAY_CURL_MAX_TIME           curl max time in seconds (default: 60)
 
 VOICE PRESETS:
   Maya, Arjun, Serene, Bernard, Billy, Mark, Clint, Mabel, Chad, Leslie,
