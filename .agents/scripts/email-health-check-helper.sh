@@ -617,8 +617,38 @@ check_full() {
     print_info "For MX diagnostics: https://mxtoolbox.com/SuperTool.aspx?action=mx:$domain"
     print_info "For design rendering tests: email-test-suite-helper.sh test-design <html-file>"
     print_info "For inbox placement analysis: email-test-suite-helper.sh check-placement $domain"
+    print_info "For email accessibility audit: $0 accessibility <html-file>"
     
     return 0
+}
+
+# Email accessibility check (delegates to accessibility-helper.sh)
+check_email_accessibility() {
+    local html_file="$1"
+    
+    print_header "Email Accessibility Check"
+    
+    if [[ ! -f "$html_file" ]]; then
+        print_error "HTML file not found: $html_file"
+        return 1
+    fi
+    
+    local a11y_helper="${SCRIPT_DIR}/accessibility-helper.sh"
+    if [[ -x "$a11y_helper" ]]; then
+        "$a11y_helper" email "$html_file"
+        local exit_code=$?
+        
+        print_header "Accessibility Next Steps"
+        print_info "For contrast ratio checks: accessibility-helper.sh contrast '#fg' '#bg'"
+        print_info "For design rendering tests: email-test-suite-helper.sh test-design $html_file"
+        print_info "For full web accessibility audit: accessibility-helper.sh audit <url>"
+        
+        return $exit_code
+    else
+        print_error "accessibility-helper.sh not found at: $a11y_helper"
+        print_info "Run email accessibility checks manually with: accessibility-helper.sh email $html_file"
+        return 1
+    fi
 }
 
 # Guide for mail-tester.com
@@ -664,6 +694,7 @@ show_help() {
     echo "  tls-rpt [domain]            Check TLS-RPT (TLS failure reporting)"
     echo "  dane [domain]               Check DANE/TLSA records"
     echo "  reverse-dns [domain]        Check reverse DNS for mail server"
+    echo "  accessibility [html-file]   Check email HTML accessibility (WCAG 2.1)"
     echo "  mail-tester                 Guide for using mail-tester.com"
     echo "  help                        $HELP_SHOW_MESSAGE"
     echo ""
@@ -674,6 +705,7 @@ show_help() {
     echo "  $0 dmarc example.com"
     echo "  $0 bimi example.com"
     echo "  $0 mta-sts example.com"
+    echo "  $0 accessibility newsletter.html"
     echo ""
     echo "Health Score (out of 15):"
     echo "  SPF(2) + DKIM(2) + DMARC(3) + MX(1) + Blacklist(2)"
@@ -693,6 +725,7 @@ show_help() {
     echo ""
     echo "Related:"
     echo "  email-test-suite-helper.sh  Design rendering and delivery testing"
+    echo "  accessibility-helper.sh     WCAG accessibility auditing (web + email)"
     
     return 0
 }
@@ -781,6 +814,14 @@ main() {
                 exit 1
             fi
             check_reverse_dns "$domain"
+            ;;
+        "accessibility"|"a11y")
+            if [[ -z "$domain" ]]; then
+                print_error "HTML file required"
+                echo "$HELP_USAGE_INFO"
+                exit 1
+            fi
+            check_email_accessibility "$domain"
             ;;
         "mail-tester"|"mailtester")
             mail_tester_guide

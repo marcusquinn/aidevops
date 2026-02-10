@@ -35,6 +35,9 @@ email-health-check-helper.sh dkim example.com selector1
 email-health-check-helper.sh dmarc example.com
 email-health-check-helper.sh mx example.com
 email-health-check-helper.sh blacklist example.com
+
+# Email accessibility audit (WCAG 2.1)
+email-health-check-helper.sh accessibility newsletter.html
 ```
 
 <!-- AI-CONTEXT-END -->
@@ -342,9 +345,31 @@ email-health-check-helper.sh check example.com
 # Score: 12/15 (80%) - Grade: B
 ```
 
+## Email Accessibility
+
+The health check now includes an `accessibility` command for auditing HTML email templates against WCAG 2.1 AA (email-applicable subset):
+
+```bash
+email-health-check-helper.sh accessibility newsletter.html
+```
+
+This delegates to `accessibility-helper.sh email` and checks:
+
+- Images without `alt` attributes (WCAG 1.1.1)
+- Missing `lang` attribute on `<html>` (WCAG 3.1.1)
+- Layout tables without `role="presentation"` (WCAG 1.3.1)
+- Small font sizes below 12px (WCAG 1.4.4)
+- Generic link text like "click here" (WCAG 2.4.4)
+- Heading structure (WCAG 1.3.1)
+- Colour-only information indicators (WCAG 1.4.1)
+
+For contrast ratio checks, use: `accessibility-helper.sh contrast '#fg' '#bg'`
+
 ## Related
 
 - `services/email/email-testing.md` - Design rendering and delivery testing
 - `services/email/ses.md` - Amazon SES integration
 - `services/hosting/dns.md` - DNS management
+- `tools/accessibility/accessibility.md` - WCAG accessibility reference
+- `services/accessibility/accessibility-audit.md` - Full accessibility audit service
 - `tools/browser/browser-automation.md` - For mail-tester automation
