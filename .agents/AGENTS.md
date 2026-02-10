@@ -314,6 +314,7 @@ Orchestration agents can create drafts in `draft/` for reusable parallel process
 | Mobile/E2E | `tools/mobile/agent-device.md`, `tools/mobile/xcodebuild-mcp.md`, `tools/mobile/axe-cli.md`, `tools/mobile/maestro.md`, `tools/mobile/ios-simulator-mcp.md`, `tools/mobile/minisim.md` |
 | WordPress | `tools/wordpress/wp-dev.md`, `tools/wordpress/mainwp.md` |
 | SEO | `seo/dataforseo.md`, `seo/google-search-console.md` |
+| Email | `services/email/email-testing.md`, `services/email/email-health-check.md`, `email-test-suite-helper.sh`, `email-health-check-helper.sh` |
 | Content | `content.md` (orchestrator), `content/research.md`, `content/story.md`, `content/production/`, `content/distribution/`, `content/optimization.md` |
 | Video | `tools/video/video-prompt-design.md`, `tools/video/remotion.md`, `tools/video/higgsfield.md` |
 | YouTube | `content/distribution/youtube/` (migrated from root, see content.md) |

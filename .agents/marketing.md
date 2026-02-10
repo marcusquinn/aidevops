@@ -179,6 +179,32 @@ fluentcrm_create_email_template with:
 - body: "<html>...</html>"
 ```
 
+### Email Testing
+
+Before sending campaigns, validate design rendering and deliverability:
+
+**Design Rendering Tests** (HTML validation, CSS compatibility, dark mode, responsive):
+
+```bash
+email-test-suite-helper.sh test-design newsletter.html
+email-test-suite-helper.sh check-dark-mode template.html
+email-test-suite-helper.sh check-responsive campaign.html
+```
+
+**Deliverability Health Check** (SPF, DKIM, DMARC, MX, blacklists):
+
+```bash
+email-health-check-helper.sh check example.com
+```
+
+**Inbox Placement Analysis** (comprehensive scoring):
+
+```bash
+email-test-suite-helper.sh check-placement example.com
+```
+
+See `services/email/email-testing.md` and `services/email/email-health-check.md` for full documentation.
+
 ## Marketing Automation
 
 ### Automation Triggers
@@ -431,6 +457,18 @@ After each campaign:
 - Use double opt-in
 - Monitor sender reputation
 - Authenticate with SPF, DKIM, DMARC
+
+**Testing deliverability:**
+
+```bash
+# Check DNS authentication
+email-health-check-helper.sh check your-domain.com
+
+# Test inbox placement factors
+email-test-suite-helper.sh check-placement your-domain.com
+```
+
+See `services/email/email-health-check.md` for detailed deliverability testing.
 
 ### List Hygiene
 
