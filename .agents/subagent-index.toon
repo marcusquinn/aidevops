@@ -61,7 +61,7 @@ tools/infrastructure/,Infrastructure - cloud GPU deployment and compute,cloud-gp
 services/accessibility/,Unified web and email accessibility auditing - WCAG compliance remediation and monitoring,accessibility-audit
 services/hosting/,Hosting providers - DNS and cloud servers,hostinger|hetzner|cloudflare|cloudflare-platform|cloudron|closte
 services/networking/,Networking - mesh VPN and secure device connectivity,tailscale
-services/email/,Email services - transactional email deliverability and testing,ses|email-health-check|email-testing|email-delivery-test|email-design-test
+services/email/,Email services - transactional email deliverability and testing,ses|email-health-check|email-testing|email-delivery-test|email-design-test|email-delivery-testing
 services/communications/,Communications - SMS voice and Matrix bot dispatch,twilio|telfon|matrix-bot
 services/crm/,CRM integration - contact management,fluentcrm
 services/analytics/,Website analytics - GA4 reporting,google-analytics
@@ -122,6 +122,7 @@ document-extraction-helper.sh,Document extraction with PII redaction (extract ba
 cloudron-package-helper.sh,Cloudron app packaging workflow (init scaffold build test)
 email-health-check-helper.sh,Email health check with scoring (SPF DKIM DMARC BIMI MTA-STS TLS-RPT DANE)
 email-test-suite-helper.sh,Email testing suite (design rendering delivery testing inbox placement)
+email-delivery-test-helper.sh,Email delivery testing (spam content analysis provider deliverability inbox placement warm-up)
 yt-dlp-helper.sh,YouTube video/audio download and local file conversion
 privacy-filter-helper.sh,Privacy filter for public PR contributions
 self-improve-helper.sh,Self-improving agent system (analyze refine test pr)
