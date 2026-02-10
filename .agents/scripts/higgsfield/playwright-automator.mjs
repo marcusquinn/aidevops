@@ -609,114 +609,99 @@ async function apiStatus() {
 }
 
 // Parse CLI arguments
+// Declarative flag definitions: [cliFlag, optionKey, type, alias?]
+// Types: 'string' (takes next arg), 'int' (parseInt next arg), 'true' (boolean true),
+//        'false:key' (sets key to false), 'compound' (custom multi-set logic)
+const FLAG_DEFS = [
+  // Generation flags
+  ['--prompt',           'prompt',           'string', '-p'],
+  ['--model',            'model',            'string', '-m'],
+  ['--aspect',           'aspect',           'string', '-a'],
+  ['--duration',         'duration',         'string', '-d'],
+  ['--quality',          'quality',          'string', '-q'],
+  ['--batch',            'batch',            'int',    '-b'],
+  ['--seed',             'seed',             'int'          ],
+  ['--seed-range',       'seedRange',        'string'       ],
+  ['--brief',            'brief',            'string'       ],
+  ['--scenes',           'scenes',           'int'          ],
+  ['--preset',           'preset',           'string', '-s'],
+  ['--effect',           'effect',           'string'       ],
+  ['--camera',           'camera',           'string'       ],
+  ['--lens',             'lens',             'string'       ],
+  // Input/output flags
+  ['--output',           'output',           'string', '-o'],
+  ['--image-url',        'imageUrl',         'string', '-i'],
+  ['--image-file',       'imageFile',        'string'       ],
+  ['--image-file2',      'imageFile2',       'string'       ],
+  ['--video-file',       'videoFile',        'string'       ],
+  ['--motion-ref',       'motionRef',        'string'       ],
+  ['--character-image',  'characterImage',   'string'       ],
+  ['--dialogue',         'dialogue',         'string'       ],
+  // Asset/chain flags
+  ['--asset-action',     'assetAction',      'string'       ],
+  ['--asset-type',       'assetType',        'string'       ],
+  ['--asset-index',      'assetIndex',       'int'          ],
+  ['--chain-action',     'chainAction',      'string'       ],
+  ['--filter',           'filter',           'string'       ],
+  ['--tab',              'tab',              'string'       ],
+  ['--feature',          'feature',          'string'       ],
+  ['--subtype',          'subtype',          'string'       ],
+  ['--project',          'project',          'string'       ],
+  ['--limit',            'limit',            'int'          ],
+  ['--timeout',          'timeout',          'int'          ],
+  // Boolean flags
+  ['--headed',           'headed',           'true'         ],
+  ['--headless',         'headless',         'true'         ],
+  ['--wait',             'wait',             'true'         ],
+  ['--unlimited',        'unlimited',        'true'         ],
+  ['--force',            'force',            'true'         ],
+  ['--dry-run',          'dryRun',           'true'         ],
+  ['--no-retry',         'noRetry',          'true'         ],
+  ['--no-sidecar',       'noSidecar',        'true'         ],
+  ['--no-dedup',         'noDedup',          'true'         ],
+  ['--api',              'useApi',           'true'         ],
+  // Negation flags (set a key to false)
+  ['--no-enhance',       'enhance',          'false'        ],
+  ['--no-sound',         'sound',            'false'        ],
+  ['--no-prefer-unlimited', 'preferUnlimited', 'false'     ],
+  // Positive boolean flags that set true
+  ['--enhance',          'enhance',          'true'         ],
+  ['--sound',            'sound',            'true'         ],
+  ['--prefer-unlimited', 'preferUnlimited',  'true'         ],
+  // Compound flags (set multiple keys)
+  ['--api-only',         null,               'compound'     ],
+];
+
+// Build lookup maps from FLAG_DEFS for O(1) flag resolution
+const FLAG_MAP = new Map();
+for (const [flag, key, type, alias] of FLAG_DEFS) {
+  FLAG_MAP.set(flag, { key, type });
+  if (alias) FLAG_MAP.set(alias, { key, type });
+}
+
 function parseArgs() {
   const args = process.argv.slice(2);
   const command = args[0];
   const options = {};
 
   for (let i = 1; i < args.length; i++) {
-    if (args[i] === '--prompt' || args[i] === '-p') {
-      options.prompt = args[++i];
-    } else if (args[i] === '--model' || args[i] === '-m') {
-      options.model = args[++i];
-    } else if (args[i] === '--aspect' || args[i] === '-a') {
-      options.aspect = args[++i];
-    } else if (args[i] === '--output' || args[i] === '-o') {
-      options.output = args[++i];
-    } else if (args[i] === '--headed') {
-      options.headed = true;
-    } else if (args[i] === '--headless') {
-      options.headless = true;
-    } else if (args[i] === '--duration' || args[i] === '-d') {
-      options.duration = args[++i];
-    } else if (args[i] === '--image-url' || args[i] === '-i') {
-      options.imageUrl = args[++i];
-    } else if (args[i] === '--image-file') {
-      options.imageFile = args[++i];
-    } else if (args[i] === '--wait') {
-      options.wait = true;
-    } else if (args[i] === '--timeout') {
-      options.timeout = parseInt(args[++i], 10);
-    } else if (args[i] === '--effect') {
-      options.effect = args[++i];
-    } else if (args[i] === '--quality' || args[i] === '-q') {
-      options.quality = args[++i];
-    } else if (args[i] === '--enhance') {
-      options.enhance = true;
-    } else if (args[i] === '--no-enhance') {
-      options.enhance = false;
-    } else if (args[i] === '--sound') {
-      options.sound = true;
-    } else if (args[i] === '--no-sound') {
-      options.sound = false;
-    } else if (args[i] === '--batch' || args[i] === '-b') {
-      options.batch = parseInt(args[++i], 10);
-    } else if (args[i] === '--unlimited') {
-      options.unlimited = true;
-    } else if (args[i] === '--preset' || args[i] === '-s') {
-      options.preset = args[++i];
-    } else if (args[i] === '--seed') {
-      options.seed = parseInt(args[++i], 10);
-    } else if (args[i] === '--seed-range') {
-      // Format: "1000-1010" or "1000,1005,1010"
-      options.seedRange = args[++i];
-    } else if (args[i] === '--brief') {
-      options.brief = args[++i];
-    } else if (args[i] === '--character-image') {
-      options.characterImage = args[++i];
-    } else if (args[i] === '--dialogue') {
-      options.dialogue = args[++i];
-    } else if (args[i] === '--scenes') {
-      options.scenes = parseInt(args[++i], 10);
-    } else if (args[i] === '--video-file') {
-      options.videoFile = args[++i];
-    } else if (args[i] === '--motion-ref') {
-      options.motionRef = args[++i];
-    } else if (args[i] === '--image-file2') {
-      options.imageFile2 = args[++i];
-    } else if (args[i] === '--filter') {
-      options.filter = args[++i];
-    } else if (args[i] === '--asset-action') {
-      options.assetAction = args[++i];
-    } else if (args[i] === '--asset-type') {
-      options.assetType = args[++i];
-    } else if (args[i] === '--asset-index') {
-      options.assetIndex = parseInt(args[++i], 10);
-    } else if (args[i] === '--limit') {
-      options.limit = parseInt(args[++i], 10);
-    } else if (args[i] === '--camera') {
-      options.camera = args[++i];
-    } else if (args[i] === '--lens') {
-      options.lens = args[++i];
-    } else if (args[i] === '--tab') {
-      options.tab = args[++i];
-    } else if (args[i] === '--chain-action') {
-      options.chainAction = args[++i];
-    } else if (args[i] === '--feature') {
-      options.feature = args[++i];
-    } else if (args[i] === '--subtype') {
-      options.subtype = args[++i];
-    } else if (args[i] === '--project') {
-      options.project = args[++i];
-    } else if (args[i] === '--no-sidecar') {
-      options.noSidecar = true;
-    } else if (args[i] === '--no-dedup') {
-      options.noDedup = true;
-    } else if (args[i] === '--force') {
-      options.force = true;
-    } else if (args[i] === '--dry-run') {
-      options.dryRun = true;
-    } else if (args[i] === '--no-retry') {
-      options.noRetry = true;
-    } else if (args[i] === '--prefer-unlimited') {
-      options.preferUnlimited = true;
-    } else if (args[i] === '--no-prefer-unlimited') {
-      options.preferUnlimited = false;
-    } else if (args[i] === '--api') {
-      options.useApi = true;
-    } else if (args[i] === '--api-only') {
-      options.useApi = true;
-      options.apiOnly = true;
+    const def = FLAG_MAP.get(args[i]);
+    if (!def) continue;
+
+    if (def.type === 'string') {
+      options[def.key] = args[++i];
+    } else if (def.type === 'int') {
+      options[def.key] = parseInt(args[++i], 10);
+    } else if (def.type === 'true') {
+      options[def.key] = true;
+    } else if (def.type === 'false') {
+      options[def.key] = false;
+    } else if (def.type === 'compound') {
+      // --api-only sets both useApi and apiOnly
+      if (args[i] === '--api-only') {
+        options.useApi = true;
+        options.apiOnly = true;
+      }
     }
   }
 
@@ -6716,6 +6701,100 @@ async function batchLipsync(options = {}) {
   return batchState;
 }
 
+// Run a command with API-first fallback to Playwright browser automation.
+async function runWithApiFallback(apiFn, browserFn, options, retryOpts) {
+  if (!options.useApi) return withRetry(() => browserFn(options), retryOpts);
+  try {
+    return await withRetry(() => apiFn(options), retryOpts);
+  } catch (err) {
+    if (options.apiOnly) throw err;
+    console.log(`[api] API failed: ${err.message}`);
+    console.log('[api] Falling back to Playwright browser automation...');
+    return withRetry(() => browserFn(options), retryOpts);
+  }
+}
+
+// Download latest generation results from the web UI.
+async function downloadFromHistory(options) {
+  const dlModel = options.model || 'soul';
+  const isVideoDownload = dlModel === 'video' || options.duration;
+  const { browser: dlBrowser, context: dlCtx, page: dlPage } = await launchBrowser(options);
+
+  if (isVideoDownload) {
+    console.log('Navigating to video page to download from History...');
+    await dlPage.goto(`${BASE_URL}/create/video`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await dlPage.waitForTimeout(5000);
+    await dismissAllModals(dlPage);
+    const dlDir = resolveOutputDir(options.output || DOWNLOAD_DIR, options, 'videos');
+    await downloadVideoFromHistory(dlPage, dlDir, {}, options);
+  } else {
+    const dlUrl = `${BASE_URL}/image/${dlModel}`;
+    console.log(`Navigating to ${dlUrl} to download latest generations...`);
+    await dlPage.goto(dlUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await dlPage.waitForTimeout(5000);
+    await dismissAllModals(dlPage);
+    const dlDir = resolveOutputDir(options.output || DOWNLOAD_DIR, options, 'images');
+    await downloadLatestResult(dlPage, dlDir, true, options);
+  }
+
+  await dlCtx.storageState({ path: STATE_FILE });
+  await dlBrowser.close();
+}
+
+// Command registry: maps CLI command names to handler functions.
+// Each entry is (options, retryOpts, retryOnce) => Promise<void>.
+// Aliases (e.g., 'cinema' -> cinemaStudio) share the same handler reference.
+const COMMAND_REGISTRY = {
+  'login':              (opts) => login(opts),
+  'discover':           (opts) => runDiscovery(opts),
+  'image':              (opts, r) => runWithApiFallback(apiGenerateImage, generateImage, opts, r),
+  'video':              (opts, _r, r1) => runWithApiFallback(apiGenerateVideo, generateVideo, opts, r1),
+  'lipsync':            (opts, _r, r1) => withRetry(() => generateLipsync(opts), r1),
+  'pipeline':           (opts) => pipeline(opts),
+  'seed-bracket':       (opts) => seedBracket(opts),
+  'app':                (opts, r) => withRetry(() => useApp(opts), r),
+  'assets':             (opts) => listAssets(opts),
+  'credits':            (opts) => checkCredits(opts),
+  'api-status':         () => apiStatus(),
+  'health-check':       (opts) => authHealthCheck(opts),
+  'health':             (opts) => authHealthCheck(opts),
+  'smoke-test':         (opts) => smokeTest(opts),
+  'smoke':              (opts) => smokeTest(opts),
+  'screenshot':         (opts) => screenshot(opts),
+  'download':           (opts) => downloadFromHistory(opts),
+  'cinema':             (opts, _r, r1) => withRetry(() => cinemaStudio(opts), r1),
+  'cinema-studio':      (opts, _r, r1) => withRetry(() => cinemaStudio(opts), r1),
+  'motion-control':     (opts, _r, r1) => withRetry(() => motionControl(opts), r1),
+  'edit':               (opts, r) => withRetry(() => editImage(opts), r),
+  'inpaint':            (opts, r) => withRetry(() => editImage(opts), r),
+  'upscale':            (opts, r) => withRetry(() => upscale(opts), r),
+  'asset':              (opts) => manageAssets(opts),
+  'manage-assets':      (opts) => manageAssets(opts),
+  'chain':              (opts, r) => withRetry(() => assetChain(opts), r),
+  'asset-chain':        (opts, r) => withRetry(() => assetChain(opts), r),
+  'open-in':            (opts, r) => withRetry(() => assetChain(opts), r),
+  'mixed-media':        (opts, r) => withRetry(() => mixedMediaPreset(opts), r),
+  'mixed-media-preset': (opts, r) => withRetry(() => mixedMediaPreset(opts), r),
+  'motion-preset':      (opts, r) => withRetry(() => motionPreset(opts), r),
+  'vfx-preset':         (opts, r) => withRetry(() => motionPreset(opts), r),
+  'video-edit':         (opts, _r, r1) => withRetry(() => editVideo(opts), r1),
+  'edit-video':         (opts, _r, r1) => withRetry(() => editVideo(opts), r1),
+  'storyboard':         (opts, r) => withRetry(() => storyboard(opts), r),
+  'vibe-motion':        (opts, r) => withRetry(() => vibeMotion(opts), r),
+  'vibe':               (opts, r) => withRetry(() => vibeMotion(opts), r),
+  'influencer':         (opts, r) => withRetry(() => aiInfluencer(opts), r),
+  'ai-influencer':      (opts, r) => withRetry(() => aiInfluencer(opts), r),
+  'character':          (opts, r) => withRetry(() => createCharacter(opts), r),
+  'feature':            (opts, r) => withRetry(() => featurePage(opts), r),
+  'fashion-factory':    (opts, r) => { opts.feature = 'fashion-factory'; return withRetry(() => featurePage(opts), r); },
+  'ugc-factory':        (opts, r) => { opts.feature = 'ugc-factory'; return withRetry(() => featurePage(opts), r); },
+  'photodump':          (opts, r) => { opts.feature = 'photodump'; return withRetry(() => featurePage(opts), r); },
+  'camera-controls':    (opts, r) => { opts.feature = 'camera-controls'; return withRetry(() => featurePage(opts), r); },
+  'effects':            (opts, r) => { opts.feature = 'effects'; return withRetry(() => featurePage(opts), r); },
+  'test':               () => runSelfTests(),
+  'self-test':          () => runSelfTests(),
+};
+
 // Main CLI handler
 async function main() {
   const { command, options } = parseArgs();
@@ -6849,8 +6928,8 @@ API mode (uses cloud.higgsfield.ai — separate credit pool from web UI):
   }
 
   // Run site discovery if cache is stale (skips login, discovery, and diagnostic commands)
-  const skipDiscoveryCommands = ['login', 'discover', 'health-check', 'health', 'smoke-test', 'smoke', 'api-status'];
-  if (!skipDiscoveryCommands.includes(command)) {
+  const skipDiscoveryCommands = new Set(['login', 'discover', 'health-check', 'health', 'smoke-test', 'smoke', 'api-status']);
+  if (!skipDiscoveryCommands.has(command)) {
     await ensureDiscovery(options);
   }
 
@@ -6863,177 +6942,19 @@ API mode (uses cloud.higgsfield.ai — separate credit pool from web UI):
         console.error(e.message);
         process.exit(1);
       }
-      // Non-credit errors: proceed
     }
   }
 
   // Retry configuration: generation commands get retry, read-only commands don't
-  // Use --no-retry to disable
   const retryOpts = { maxRetries: options.noRetry ? 0 : 2, baseDelay: 3000, label: command };
+  const retryOnce = { ...retryOpts, maxRetries: options.noRetry ? 0 : 1 };
 
-  switch (command) {
-    case 'login':
-      await login(options);
-      break;
-    case 'discover':
-      await runDiscovery(options);
-      break;
-    case 'image':
-      if (options.useApi) {
-        try {
-          await withRetry(() => apiGenerateImage(options), retryOpts);
-        } catch (err) {
-          if (options.apiOnly) throw err;
-          console.log(`[api] API failed: ${err.message}`);
-          console.log('[api] Falling back to Playwright browser automation...');
-          await withRetry(() => generateImage(options), retryOpts);
-        }
-      } else {
-        await withRetry(() => generateImage(options), retryOpts);
-      }
-      break;
-    case 'video':
-      if (options.useApi) {
-        try {
-          await withRetry(() => apiGenerateVideo(options), { ...retryOpts, maxRetries: 1 });
-        } catch (err) {
-          if (options.apiOnly) throw err;
-          console.log(`[api] API failed: ${err.message}`);
-          console.log('[api] Falling back to Playwright browser automation...');
-          await withRetry(() => generateVideo(options), { ...retryOpts, maxRetries: 1 });
-        }
-      } else {
-        await withRetry(() => generateVideo(options), { ...retryOpts, maxRetries: 1 });
-      }
-      break;
-    case 'lipsync':
-      await withRetry(() => generateLipsync(options), { ...retryOpts, maxRetries: 1 });
-      break;
-    case 'pipeline':
-      await pipeline(options); // pipeline has its own internal retry per scene
-      break;
-    case 'seed-bracket':
-      await seedBracket(options); // bracket has its own loop
-      break;
-    case 'app':
-      await withRetry(() => useApp(options), retryOpts);
-      break;
-    case 'assets':
-      await listAssets(options);
-      break;
-    case 'credits':
-      await checkCredits(options);
-      break;
-    case 'api-status':
-      await apiStatus();
-      break;
-    case 'health-check':
-    case 'health':
-      await authHealthCheck(options);
-      break;
-    case 'smoke-test':
-    case 'smoke':
-      await smokeTest(options);
-      break;
-    case 'screenshot':
-      await screenshot(options);
-      break;
-    case 'download': {
-      const dlModel = options.model || 'soul';
-      const isVideoDownload = dlModel === 'video' || options.duration;
-      const { browser: dlBrowser, context: dlCtx, page: dlPage } = await launchBrowser(options);
-
-      if (isVideoDownload) {
-        // Download latest video from /create/video History tab
-        console.log('Navigating to video page to download from History...');
-        await dlPage.goto(`${BASE_URL}/create/video`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-        await dlPage.waitForTimeout(5000);
-        await dismissAllModals(dlPage);
-        const baseOutput = options.output || DOWNLOAD_DIR;
-        const dlDir = resolveOutputDir(baseOutput, options, 'videos');
-        await downloadVideoFromHistory(dlPage, dlDir, {}, options);
-      } else {
-        // Download latest image from image page
-        const dlUrl = `${BASE_URL}/image/${dlModel}`;
-        console.log(`Navigating to ${dlUrl} to download latest generations...`);
-        await dlPage.goto(dlUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-        await dlPage.waitForTimeout(5000);
-        await dismissAllModals(dlPage);
-        const baseOutput = options.output || DOWNLOAD_DIR;
-        const dlDir = resolveOutputDir(baseOutput, options, 'images');
-        await downloadLatestResult(dlPage, dlDir, true, options);
-      }
-
-      await dlCtx.storageState({ path: STATE_FILE });
-      await dlBrowser.close();
-      break;
-    }
-    case 'cinema':
-    case 'cinema-studio':
-      await withRetry(() => cinemaStudio(options), { ...retryOpts, maxRetries: 1 });
-      break;
-    case 'motion-control':
-      await withRetry(() => motionControl(options), { ...retryOpts, maxRetries: 1 });
-      break;
-    case 'edit':
-    case 'inpaint':
-      await withRetry(() => editImage(options), retryOpts);
-      break;
-    case 'upscale':
-      await withRetry(() => upscale(options), retryOpts);
-      break;
-    case 'asset':
-    case 'manage-assets':
-      await manageAssets(options);
-      break;
-    case 'chain':
-    case 'asset-chain':
-    case 'open-in':
-      await withRetry(() => assetChain(options), retryOpts);
-      break;
-    case 'mixed-media':
-    case 'mixed-media-preset':
-      await withRetry(() => mixedMediaPreset(options), retryOpts);
-      break;
-    case 'motion-preset':
-    case 'vfx-preset':
-      await withRetry(() => motionPreset(options), retryOpts);
-      break;
-    case 'video-edit':
-    case 'edit-video':
-      await withRetry(() => editVideo(options), { ...retryOpts, maxRetries: 1 });
-      break;
-    case 'storyboard':
-      await withRetry(() => storyboard(options), retryOpts);
-      break;
-    case 'vibe-motion':
-    case 'vibe':
-      await withRetry(() => vibeMotion(options), retryOpts);
-      break;
-    case 'influencer':
-    case 'ai-influencer':
-      await withRetry(() => aiInfluencer(options), retryOpts);
-      break;
-    case 'character':
-      await withRetry(() => createCharacter(options), retryOpts);
-      break;
-    case 'feature':
-    case 'fashion-factory':
-    case 'ugc-factory':
-    case 'photodump':
-    case 'camera-controls':
-    case 'effects':
-      if (command !== 'feature') options.feature = command;
-      await withRetry(() => featurePage(options), retryOpts);
-      break;
-    case 'test':
-    case 'self-test':
-      await runSelfTests();
-      break;
-    default:
-      console.error(`Unknown command: ${command}`);
-      process.exit(1);
+  const entry = COMMAND_REGISTRY[command];
+  if (!entry) {
+    console.error(`Unknown command: ${command}`);
+    process.exit(1);
   }
+  await entry(options, retryOpts, retryOnce);
 }
 
 main().catch(error => {
