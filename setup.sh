@@ -5101,6 +5101,30 @@ main() {
 
     echo ""
     print_success "🎉 Setup complete!"
+    
+    # Enable auto-update if not already enabled
+    local auto_update_script="$target_dir/scripts/auto-update-helper.sh"
+    if [[ -x "$auto_update_script" ]]; then
+        if ! crontab -l 2>/dev/null | grep -q "aidevops-auto-update"; then
+            if [[ "$NON_INTERACTIVE" == "true" ]]; then
+                # Non-interactive: enable silently
+                bash "$auto_update_script" enable >/dev/null 2>&1 || true
+                print_info "Auto-update enabled (every 10 min). Disable: aidevops auto-update disable"
+            else
+                echo ""
+                echo "Auto-update keeps aidevops current by checking every 10 minutes."
+                echo "Safe to run while AI sessions are active."
+                echo ""
+                read -r -p "Enable auto-update? [Y/n]: " enable_auto
+                if [[ "$enable_auto" =~ ^[Yy]?$ || -z "$enable_auto" ]]; then
+                    bash "$auto_update_script" enable
+                else
+                    print_info "Skipped. Enable later: aidevops auto-update enable"
+                fi
+            fi
+        fi
+    fi
+    
     echo ""
 echo "CLI Command:"
 echo "  aidevops init         - Initialize aidevops in a project"

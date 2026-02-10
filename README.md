@@ -87,6 +87,7 @@ The result: AI agents that work *with* your development process, not around it.
 
 - `aidevops init` - Initialize in any project
 - `aidevops update` - Update framework
+- `aidevops auto-update` - Automatic update polling (enable/disable/status)
 - `aidevops secret` - Manage secrets (gopass encrypted, AI-safe)
 - `/onboarding` - Interactive setup wizard (in AI assistant)
 
@@ -167,6 +168,7 @@ git clone https://github.com/marcusquinn/aidevops.git ~/Git/aidevops
 ```bash
 aidevops status           # Check what's installed
 aidevops update           # Update framework + check registered projects
+aidevops auto-update      # Manage automatic update polling (every 10 min)
 aidevops init             # Initialize aidevops in any project
 aidevops features         # List available features
 aidevops repos            # List/add/remove registered projects
