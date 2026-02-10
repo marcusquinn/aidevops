@@ -144,4 +144,5 @@ sops-helper.sh,SOPS encrypted config file management (init encrypt decrypt edit 
 gocryptfs-helper.sh,gocryptfs encrypted filesystem overlay (init mount unmount create open close list status install)
 youtube-helper.sh,YouTube Data API v3 wrapper (auth channel videos competitors search quota)
 seed-bracket-helper.sh,Seed bracketing for AI video generation (generate status score report presets list)
+video-gen-helper.sh,Unified AI video generation CLI (generate status download list models bracket) for Sora 2 Veo 3.1 and Nanobanana Pro
 -->
