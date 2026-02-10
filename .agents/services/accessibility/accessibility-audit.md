@@ -27,8 +27,14 @@ tools:
 **Quick commands:**
 
 ```bash
-# Full web audit (Lighthouse + pa11y, desktop + mobile)
+# Full web audit (Lighthouse + pa11y + WAVE, desktop + mobile)
 accessibility-helper.sh audit https://example.com
+
+# WAVE API only (comprehensive, CSS/JS-rendered analysis)
+accessibility-helper.sh wave https://example.com
+
+# WAVE with XPath locations for precise element identification
+accessibility-helper.sh wave https://example.com 3
 
 # Email HTML accessibility check
 accessibility-helper.sh email ./newsletter.html
@@ -48,10 +54,10 @@ This agent orchestrates accessibility auditing across web and email channels. It
 
 | Channel | Tools | Coverage |
 |---------|-------|----------|
-| **Web (desktop)** | Lighthouse, pa11y | axe-core engine + HTML_CodeSniffer |
-| **Web (mobile)** | Lighthouse mobile, pa11y | Touch targets, viewport, zoom |
+| **Web (desktop)** | Lighthouse, pa11y, WAVE API | axe-core + HTML_CodeSniffer + WAVE engine |
+| **Web (mobile)** | Lighthouse mobile, pa11y, WAVE API (375px) | Touch targets, viewport, zoom |
 | **HTML email** | Built-in static analysis | Email-specific WCAG subset |
-| **Colour** | Built-in contrast calculator | WCAG AA + AAA ratios |
+| **Colour** | Built-in contrast calculator, WAVE contrast data | WCAG AA + AAA ratios |
 
 ## Audit Workflow
 
@@ -244,12 +250,16 @@ accessibility-helper.sh pa11y https://staging.example.com WCAG2AA
 |----------|------|---------|
 | Quick score check | Lighthouse | `accessibility-helper.sh lighthouse <url>` |
 | WCAG compliance audit | pa11y | `accessibility-helper.sh pa11y <url> WCAG2AA` |
-| Full web audit | Both | `accessibility-helper.sh audit <url>` |
+| Comprehensive analysis | WAVE API | `accessibility-helper.sh wave <url>` |
+| Element-level issues | WAVE API (type 3/4) | `accessibility-helper.sh wave <url> 3` |
+| Mobile accessibility | WAVE API | `accessibility-helper.sh wave-mobile <url>` |
+| Full web audit | All tools | `accessibility-helper.sh audit <url>` |
 | Email template check | Built-in | `accessibility-helper.sh email <file>` |
 | Colour pair validation | Built-in | `accessibility-helper.sh contrast <fg> <bg>` |
 | Multi-site monitoring | Bulk | `accessibility-helper.sh bulk <urls-file>` |
 | Dynamic SPA content | Playwright | Use `playwright` for JS-rendered pages |
 | Real device rendering | Browser tools | `pagespeed-helper.sh` or Litmus/Email on Acid |
+| Item documentation | WAVE docs | `accessibility-helper.sh wave-docs <item-id>` |
 
 ## Integration with Other Services
 
