@@ -1731,6 +1731,147 @@ EOF
 }
 
 #######################################
+# Prune repetitive pattern entries by keyword (t230)
+# Consolidates entries where the same error/pattern keyword appears
+# across many tasks, keeping only a few representative entries
+#######################################
+cmd_prune_patterns() {
+    local keyword=""
+    local dry_run=false
+    local keep_count=3
+    local types="FAILURE_PATTERN,ERROR_FIX,FAILED_APPROACH"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --keyword) keyword="$2"; shift 2 ;;
+            --dry-run) dry_run=true; shift ;;
+            --keep) keep_count="$2"; shift 2 ;;
+            --types) types="$2"; shift 2 ;;
+            *) 
+                if [[ -z "$keyword" ]]; then
+                    keyword="$1"
+                fi
+                shift ;;
+        esac
+    done
+
+    if [[ -z "$keyword" ]]; then
+        log_error "Usage: memory-helper.sh prune-patterns <keyword> [--keep N] [--dry-run]"
+        log_error "Example: memory-helper.sh prune-patterns clean_exit_no_signal --keep 3"
+        return 1
+    fi
+
+    # Validate keep_count is a positive integer
+    if ! [[ "$keep_count" =~ ^[1-9][0-9]*$ ]]; then
+        log_error "--keep must be a positive integer (got: $keep_count)"
+        return 1
+    fi
+
+    init_db
+
+    # Build type filter SQL
+    local type_sql=""
+    local IFS=','
+    local type_parts=()
+    read -ra type_parts <<< "$types"
+    unset IFS
+    local type_conditions=()
+    for t in "${type_parts[@]}"; do
+        type_conditions+=("'$t'")
+    done
+    type_sql=$(printf "%s," "${type_conditions[@]}")
+    type_sql="${type_sql%,}"
+
+    local escaped_keyword="${keyword//"'"/"''"}"
+
+    # Count matching entries
+    local total_count
+    total_count=$(db "$MEMORY_DB" \
+        "SELECT COUNT(*) FROM learnings WHERE type IN ($type_sql) AND content LIKE '%${escaped_keyword}%';")
+
+    if [[ "$total_count" -le "$keep_count" ]]; then
+        log_success "Only $total_count entries match '$keyword' (keep=$keep_count). Nothing to prune."
+        return 0
+    fi
+
+    local to_remove=$((total_count - keep_count))
+    log_info "Found $total_count entries matching '$keyword' across types ($types)"
+    log_info "Will keep $keep_count newest entries, remove $to_remove"
+
+    if [[ "$dry_run" == true ]]; then
+        log_info "[DRY RUN] Would remove $to_remove entries. Entries to keep:"
+        db "$MEMORY_DB" <<EOF
+SELECT id, type, substr(content, 1, 80) || '...' as preview, created_at
+FROM learnings
+WHERE type IN ($type_sql) AND content LIKE '%${escaped_keyword}%'
+ORDER BY created_at DESC
+LIMIT $keep_count;
+EOF
+        echo ""
+        log_info "[DRY RUN] Sample entries to remove:"
+        db "$MEMORY_DB" <<EOF
+SELECT id, type, substr(content, 1, 80) || '...' as preview, created_at
+FROM learnings
+WHERE type IN ($type_sql) AND content LIKE '%${escaped_keyword}%'
+ORDER BY created_at DESC
+LIMIT 5 OFFSET $keep_count;
+EOF
+        return 0
+    fi
+
+    # Backup before bulk delete
+    local prune_backup
+    prune_backup=$(backup_sqlite_db "$MEMORY_DB" "pre-prune-patterns")
+    if [[ $? -ne 0 || -z "$prune_backup" ]]; then
+        log_warn "Backup failed before prune-patterns — proceeding cautiously"
+    fi
+
+    # Get IDs to keep (newest N per type combination)
+    local keep_ids
+    keep_ids=$(db "$MEMORY_DB" <<EOF
+SELECT id FROM learnings
+WHERE type IN ($type_sql) AND content LIKE '%${escaped_keyword}%'
+ORDER BY created_at DESC
+LIMIT $keep_count;
+EOF
+    )
+
+    # Build exclusion list
+    local exclude_sql=""
+    while IFS= read -r kid; do
+        [[ -z "$kid" ]] && continue
+        local kid_esc="${kid//"'"/"''"}"
+        if [[ -z "$exclude_sql" ]]; then
+            exclude_sql="'$kid_esc'"
+        else
+            exclude_sql="$exclude_sql,'$kid_esc'"
+        fi
+    done <<< "$keep_ids"
+
+    # Delete matching entries except the ones we're keeping
+    local delete_where="type IN ($type_sql) AND content LIKE '%${escaped_keyword}%'"
+    if [[ -n "$exclude_sql" ]]; then
+        delete_where="$delete_where AND id NOT IN ($exclude_sql)"
+    fi
+
+    # Clean up relations first
+    db "$MEMORY_DB" "DELETE FROM learning_relations WHERE id IN (SELECT id FROM learnings WHERE $delete_where);" 2>/dev/null || true
+    db "$MEMORY_DB" "DELETE FROM learning_relations WHERE supersedes_id IN (SELECT id FROM learnings WHERE $delete_where);" 2>/dev/null || true
+    db "$MEMORY_DB" "DELETE FROM learning_access WHERE id IN (SELECT id FROM learnings WHERE $delete_where);"
+    db "$MEMORY_DB" "DELETE FROM learnings WHERE $delete_where;"
+
+    # Rebuild FTS index
+    db "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');"
+
+    log_success "Pruned $to_remove repetitive '$keyword' entries (kept $keep_count newest)"
+
+    # Clean up old backups
+    cleanup_sqlite_backups "$MEMORY_DB" 5
+
+    return 0
+}
+
+#######################################
 # Export memories
 #######################################
 cmd_export() {
@@ -2110,6 +2251,7 @@ COMMANDS:
     stats       Show memory statistics
     validate    Check for stale/duplicate entries (with detailed reports)
     prune       Remove old entries (auto-runs every 24h on store)
+    prune-patterns  Remove repetitive pattern entries by keyword (e.g., clean_exit_no_signal)
     dedup       Remove exact and near-duplicate entries
     consolidate Merge similar memories to reduce redundancy
     export      Export all memories
@@ -2166,6 +2308,12 @@ PRUNE OPTIONS:
     --older-than-days <n> Age threshold (default: 90)
     --dry-run             Show what would be deleted
     --include-accessed    Also prune accessed entries
+
+PRUNE-PATTERNS OPTIONS:
+    <keyword>             Error/pattern keyword to match (required)
+    --keep <n>            Number of newest entries to keep (default: 3)
+    --types <list>        Comma-separated types to search (default: FAILURE_PATTERN,ERROR_FIX,FAILED_APPROACH)
+    --dry-run             Show what would be removed without deleting
 
 DEDUP OPTIONS:
     --dry-run             Show what would be removed without deleting
@@ -2321,6 +2469,7 @@ main() {
         stats) cmd_stats ;;
         validate) cmd_validate ;;
         prune) cmd_prune "$@" ;;
+        prune-patterns) cmd_prune_patterns "$@" ;;
         dedup) cmd_dedup "$@" ;;
         consolidate) cmd_consolidate "$@" ;;
         export) cmd_export "$@" ;;

@@ -10032,8 +10032,10 @@ store_failure_pattern() {
         retry)
             # Only store retry patterns if they indicate a recurring issue
             # Skip transient ones like rate_limited, timeout, interrupted
+            # Skip clean_exit_no_signal retries — infrastructure noise (t230)
+            # The blocked/failed outcomes above still capture the final state
             case "$outcome_detail" in
-                rate_limited|timeout|interrupted_sigint|killed_sigkill|terminated_sigterm)
+                rate_limited|timeout|interrupted_sigint|killed_sigkill|terminated_sigterm|clean_exit_no_signal)
                     return 0
                     ;;
             esac
@@ -10042,6 +10044,21 @@ store_failure_pattern() {
             return 0
             ;;
     esac
+
+    # Rate-limit: skip if 3+ entries with the same outcome_detail exist in last 24h (t230)
+    # Prevents memory pollution from repetitive infrastructure failures
+    local recent_count=0
+    local escaped_detail
+    escaped_detail="$(sql_escape "$outcome_detail")"
+    if [[ -r "$MEMORY_DB" ]]; then
+        recent_count=$(sqlite3 "$MEMORY_DB" \
+            "SELECT COUNT(*) FROM learnings WHERE type = 'FAILURE_PATTERN' AND content LIKE '%${escaped_detail}%' AND created_at > datetime('now', '-1 day');" \
+            2>/dev/null || echo "0")
+    fi
+    if [[ "$recent_count" -ge 3 ]]; then
+        log_info "Skipping failure pattern storage: $outcome_detail already has $recent_count entries in last 24h (t230)"
+        return 0
+    fi
 
     # Look up model tier from task record for pattern routing (t102.3)
     local model_tier=""
