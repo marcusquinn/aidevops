@@ -7,7 +7,7 @@ import { chromium } from 'playwright';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, readdirSync, statSync, copyFileSync, symlinkSync, unlinkSync } from 'fs';
 import { join, basename, extname, dirname } from 'path';
 import { homedir } from 'os';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { createHash } from 'crypto';
 
@@ -1626,7 +1626,7 @@ async function downloadVideoFromHistory(page, outputDir, metadata = {}, options 
               const filename = buildDescriptiveFilename(combinedMeta, `higgsfield-video-${Date.now()}.mp4`, 0);
               const savePath = join(outputDir, filename);
               try {
-                const curlResult = execSync(`curl -sL -w '%{http_code}' -o "${savePath}" "${videoUrl}"`, { timeout: 120000, encoding: 'utf-8' });
+                const curlResult = execFileSync('curl', ['-sL', '-w', '%{http_code}', '-o', savePath, videoUrl], { timeout: 120000, encoding: 'utf-8' });
                 const httpCode = curlResult.trim();
                 if (httpCode === '200' && existsSync(savePath)) {
                     const fileSize = statSync(savePath).size;
@@ -1681,7 +1681,7 @@ async function downloadVideoFromHistory(page, outputDir, metadata = {}, options 
         const filename = buildDescriptiveFilename(combinedMeta, `higgsfield-video-${Date.now()}.mp4`, 0);
         const savePath = join(outputDir, filename);
         try {
-          execSync(`curl -sL -o "${savePath}" "${videoSrc}"`, { timeout: 120000 });
+          execFileSync('curl', ['-sL', '-o', savePath, videoSrc], { timeout: 120000 });
           const result = finalizeDownload(savePath, {
             command: 'video', type: 'video', ...combinedMeta,
             strategy: 'cdn-fallback', cdnUrl: videoSrc,
@@ -2723,7 +2723,7 @@ async function downloadLatestResult(page, outputDir, downloadAll = true, options
         const savePath = join(outputDir, filename);
 
         try {
-          execSync(`curl -sL -o "${savePath}" "${url}"`, { timeout: 60000 });
+          execFileSync('curl', ['-sL', '-o', savePath, url], { timeout: 60000 });
           const result = finalizeDownload(savePath, {
             command: 'download', type: isVideo ? 'video' : 'image',
             cdnUrl: url, strategy: 'cdn-fallback',
@@ -2832,7 +2832,7 @@ async function downloadSpecificImages(page, outputDir, indices, options = {}) {
       const filename = buildDescriptiveFilename(cdnMeta, `higgsfield-cdn-${Date.now()}${ext}`, downloaded.length);
       const savePath = join(outputDir, filename);
       try {
-        execSync(`curl -sL -o "${savePath}" "${cdnUrls[i]}"`, { timeout: 60000 });
+        execFileSync('curl', ['-sL', '-o', savePath, cdnUrls[i]], { timeout: 60000 });
         const result = finalizeDownload(savePath, {
           command: 'image', type: 'image', cdnUrl: cdnUrls[i],
           strategy: 'cdn-fallback', imageIndex: indices[downloaded.length],
@@ -3467,7 +3467,7 @@ async function pollAndDownloadVideos(page, submittedJobs, outputDir, timeout = 6
               const filename = buildDescriptiveFilename(meta, `scene-${job.sceneIndex + 1}-${Date.now()}.mp4`, job.sceneIndex);
               const savePath = join(outputDir, filename);
               try {
-                const curlResult = execSync(`curl -sL -w '%{http_code}' -o "${savePath}" "${videoUrl}"`, { timeout: 120000, encoding: 'utf-8' });
+                const curlResult = execFileSync('curl', ['-sL', '-w', '%{http_code}', '-o', savePath, videoUrl], { timeout: 120000, encoding: 'utf-8' });
                 const httpCode = curlResult.trim();
                 if (httpCode === '200' && existsSync(savePath) && statSync(savePath).size > 10000) {
                   const fileSize = statSync(savePath).size;
@@ -3519,14 +3519,14 @@ function assembleWithFfmpeg(validVideos, finalPath, brief, outputDir, pipelineSt
     writeFileSync(concatList, concatContent);
 
     try {
-      execSync(`ffmpeg -y -f concat -safe 0 -i "${concatList}" -c copy "${finalPath}"`, {
+      execFileSync('ffmpeg', ['-y', '-f', 'concat', '-safe', '0', '-i', concatList, '-c', 'copy', finalPath], {
         timeout: 120000,
         stdio: 'pipe',
       });
       console.log(`Final video (ffmpeg concat, ${validVideos.length} scenes): ${finalPath}`);
     } catch (ffmpegErr) {
       try {
-        execSync(`ffmpeg -y -f concat -safe 0 -i "${concatList}" -c:v libx264 -c:a aac -movflags +faststart "${finalPath}"`, {
+        execFileSync('ffmpeg', ['-y', '-f', 'concat', '-safe', '0', '-i', concatList, '-c:v', 'libx264', '-c:a', 'aac', '-movflags', '+faststart', finalPath], {
           timeout: 300000,
           stdio: 'pipe',
         });
@@ -3544,7 +3544,7 @@ function assembleWithFfmpeg(validVideos, finalPath, brief, outputDir, pipelineSt
   if (brief.music && existsSync(brief.music) && existsSync(finalPath)) {
     const withMusicPath = finalPath.replace('-final.mp4', '-final-music.mp4');
     try {
-      execSync(`ffmpeg -y -i "${finalPath}" -i "${brief.music}" -c:v copy -c:a aac -map 0:v:0 -map 1:a:0 -shortest "${withMusicPath}"`, {
+      execFileSync('ffmpeg', ['-y', '-i', finalPath, '-i', brief.music, '-c:v', 'copy', '-c:a', 'aac', '-map', '0:v:0', '-map', '1:a:0', '-shortest', withMusicPath], {
         timeout: 120000,
         stdio: 'pipe',
       });
@@ -3823,18 +3823,18 @@ async function pipeline(options = {}) {
       writeFileSync(propsFile, propsJson);
 
       // calculateMetadata in Root.tsx dynamically computes duration/dimensions from props
-      const remotionCmd = [
-        'npx remotion render',
+      const remotionArgs = [
+        'remotion', 'render',
         'src/index.ts',
         'FullVideo',
-        `"${finalPath}"`,
-        `--props="${propsFile}"`,
+        finalPath,
+        `--props=${propsFile}`,
         '--codec=h264',
         '--log=warn',
-      ].join(' ');
+      ];
 
       try {
-        execSync(remotionCmd, {
+        execFileSync('npx', remotionArgs, {
           cwd: remotionDir,
           stdio: 'inherit',
           timeout: 600000, // 10 min
@@ -4699,7 +4699,7 @@ async function assetChain(options = {}) {
               const ext = imgSrc.includes('.png') ? 'png' : 'webp';
               const savePath = join(outputDir, `chained-${action}-${Date.now()}.${ext}`);
               try {
-                execSync(`curl -sL -o "${savePath}" "${imgSrc}"`, { timeout: 60000 });
+                execFileSync('curl', ['-sL', '-o', savePath, imgSrc], { timeout: 60000 });
                 console.log(`Downloaded via CDN: ${savePath}`);
               } catch (curlErr) {
                 console.log(`CDN download failed: ${curlErr.message}`);

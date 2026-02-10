@@ -4,7 +4,7 @@
 //   node render.mjs --brief <path> --videos <v1.mp4,v2.mp4,...> --output <path>
 //   node render.mjs --still --text "Title" --aspect 9:16 --output title.png
 
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { readFileSync, existsSync, copyFileSync, mkdirSync } from "node:fs";
 import { resolve, dirname, join, basename } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -115,20 +115,19 @@ function renderVideo(opts) {
   const [width, height] = dims[props.aspect] || dims["9:16"];
 
   const propsJson = JSON.stringify(props);
-  const propsArg = `--props='${propsJson.replace(/'/g, "'\\''")}'`;
 
-  const cmd = [
-    "npx remotion render",
-    `src/index.ts`,
+  const renderArgs = [
+    "remotion", "render",
+    "src/index.ts",
     "FullVideo",
-    `"${output}"`,
-    propsArg,
+    output,
+    `--props=${propsJson}`,
     `--width=${width}`,
     `--height=${height}`,
     `--frames=0-${totalFrames - 1}`,
     "--codec=h264",
     "--log=verbose",
-  ].join(" ");
+  ];
 
   console.log(`Rendering ${sceneVideoFilenames.length} scenes -> ${output}`);
   console.log(`  Aspect: ${props.aspect} (${width}x${height})`);
@@ -137,7 +136,7 @@ function renderVideo(opts) {
   console.log(`  Captions: ${props.captions.length}`);
 
   try {
-    execSync(cmd, {
+    execFileSync("npx", renderArgs, {
       cwd: __dirname,
       stdio: "inherit",
       timeout: 600000, // 10 min
@@ -170,21 +169,22 @@ function renderStill(opts) {
   };
 
   const propsJson = JSON.stringify(props);
-  const cmd = [
-    "npx remotion still",
-    `src/index.ts`,
+
+  const stillArgs = [
+    "remotion", "still",
+    "src/index.ts",
     "SceneGraphic",
-    `"${output}"`,
-    `--props='${propsJson.replace(/'/g, "'\\''")}'`,
+    output,
+    `--props=${propsJson}`,
     `--width=${width}`,
     `--height=${height}`,
     "--log=verbose",
-  ].join(" ");
+  ];
 
   console.log(`Rendering still: "${props.text}" -> ${output}`);
 
   try {
-    execSync(cmd, {
+    execFileSync("npx", stillArgs, {
       cwd: __dirname,
       stdio: "inherit",
       timeout: 120000,
