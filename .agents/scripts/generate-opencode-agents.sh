@@ -695,6 +695,13 @@ while IFS= read -r f; do
     
     rel_path="${f#"$AGENTS_DIR"/}"
     
+    # Extract description from source file frontmatter (t255)
+    # Falls back to "Read <path>" if no description found
+    src_desc=$(sed -n '/^---$/,/^---$/{ /^description:/{s/^description: *//p; q} }' "$f" 2>/dev/null)
+    if [[ -z "$src_desc" ]]; then
+        src_desc="Read ~/.aidevops/agents/${rel_path}"
+    fi
+    
     # Determine additional tools based on subagent name/path
     extra_tools=""
     case "$name" in
@@ -742,7 +749,7 @@ while IFS= read -r f; do
     if [[ -n "$extra_tools" ]]; then
         cat > "$OPENCODE_AGENT_DIR/$name.md" << EOF
 ---
-description: Read ~/.aidevops/agents/${rel_path}
+description: ${src_desc}
 mode: subagent
 temperature: 0.2
 permission:
@@ -758,7 +765,7 @@ EOF
     else
         cat > "$OPENCODE_AGENT_DIR/$name.md" << EOF
 ---
-description: Read ~/.aidevops/agents/${rel_path}
+description: ${src_desc}
 mode: subagent
 temperature: 0.2
 permission:
