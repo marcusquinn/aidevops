@@ -1033,6 +1033,73 @@ else
 fi
 
 # ============================================================
+# SECTION: Backend Error in Retry Logs (t198 - content_lines fix)
+# ============================================================
+section "Backend Error in Retry Logs (t198)"
+
+# Test: Backend error with REPROMPT METADATA header should be detected as
+# backend_quota_error, not clean_exit_no_signal. The metadata header inflates
+# log_lines to 12, but content_lines (excluding metadata) is only 4.
+create_eval_task "eval-t198a" '=== REPROMPT METADATA (t183) ===
+task_id=eval-t198a
+timestamp=2026-02-09T23:30:27Z
+retry=3/5
+work_dir=/tmp/test
+previous_error=clean_exit_no_signal
+fresh_worktree=true
+=== END REPROMPT METADATA ===
+
+WORKER_STARTED task_id=eval-t198a retry=3 pid=$$ timestamp=2026-02-09T23:30:27Z
+{"type":"error","timestamp":1770679838445,"error":{"name":"UnknownError","data":{"message":"Error: All Antigravity endpoints failed"}}}
+EXIT:0'
+eval_result=$(sup evaluate eval-t198a --no-ai 2>&1 | grep "^Verdict:" || echo "")
+if echo "$eval_result" | grep -q "retry.*backend_quota_error"; then
+    pass "Backend error + REPROMPT METADATA -> retry:backend_quota_error (t198 fix)"
+else
+    fail "Backend error in retry log should be backend_quota_error, not clean_exit_no_signal" "Got: $eval_result"
+fi
+
+# Test: Task obsolete detection — worker says "already done" in final text
+create_eval_task "eval-t198b" 'WORKER_STARTED task_id=eval-t198b pid=12345 timestamp=2026-02-09T03:00:00Z
+{"type":"step_start","timestamp":1770606000000,"part":{"type":"step-start"}}
+{"type":"tool_use","timestamp":1770606100000,"part":{"type":"tool_use","name":"bash","input":"git status"}}
+{"type":"text","timestamp":1770606693412,"part":{"type":"text","text":"**TASK ALREADY DONE — exiting cleanly.** Both files are already valid JSON with no corruption. No PR needed — there are no changes to make."}}
+{"type":"step_finish","timestamp":1770606693614,"part":{"type":"step-finish","reason":"stop"}}
+EXIT:0'
+eval_result=$(sup evaluate eval-t198b --no-ai 2>&1 | grep "^Verdict:" || echo "")
+if echo "$eval_result" | grep -q "complete.*task_obsolete"; then
+    pass "Worker says 'already done' -> complete:task_obsolete (t198 fix)"
+else
+    fail "Worker saying 'already done' should be complete:task_obsolete" "Got: $eval_result"
+fi
+
+# Test: Task obsolete with "no changes needed" phrasing
+create_eval_task "eval-t198c" 'WORKER_STARTED task_id=eval-t198c pid=12345 timestamp=2026-02-09T03:00:00Z
+{"type":"step_start","timestamp":1770606000000,"part":{"type":"step-start"}}
+{"type":"text","timestamp":1770606693412,"part":{"type":"text","text":"Task t135.5 is already done. The investigation confirms no changes needed. All specified artifacts are untracked and both directories are gitignored. No PR needed."}}
+{"type":"step_finish","timestamp":1770606693614,"part":{"type":"step-finish","reason":"stop"}}
+EXIT:0'
+eval_result=$(sup evaluate eval-t198c --no-ai 2>&1 | grep "^Verdict:" || echo "")
+if echo "$eval_result" | grep -q "complete.*task_obsolete"; then
+    pass "Worker says 'no changes needed' -> complete:task_obsolete (t198 fix)"
+else
+    fail "Worker saying 'no changes needed' should be complete:task_obsolete" "Got: $eval_result"
+fi
+
+# Test: Normal clean_exit_no_signal still works (worker didn't say task is done)
+create_eval_task "eval-t198d" 'WORKER_STARTED task_id=eval-t198d pid=12345 timestamp=2026-02-09T03:00:00Z
+{"type":"step_start","timestamp":1770606000000,"part":{"type":"step-start"}}
+{"type":"text","timestamp":1770606693412,"part":{"type":"text","text":"I started working on the task but ran out of context. The implementation is partially complete."}}
+{"type":"step_finish","timestamp":1770606693614,"part":{"type":"step-finish","reason":"stop"}}
+EXIT:0'
+eval_result=$(sup evaluate eval-t198d --no-ai 2>&1 | grep "^Verdict:" || echo "")
+if echo "$eval_result" | grep -q "retry.*clean_exit_no_signal"; then
+    pass "Normal incomplete exit -> retry:clean_exit_no_signal (unchanged)"
+else
+    fail "Normal incomplete exit should still be clean_exit_no_signal" "Got: $eval_result"
+fi
+
+# ============================================================
 # SECTION 7: Worktree Path Integrity
 # ============================================================
 section "Worktree Path Integrity"
