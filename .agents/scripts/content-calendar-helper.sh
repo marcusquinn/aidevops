@@ -396,6 +396,7 @@ cmd_status() {
             return 1
         fi
 
+        local id title pillar cluster stage intent word_count tags author created updated notes
         IFS='|' read -r id title pillar cluster stage intent word_count tags author created updated notes <<< "$item_data"
 
         echo ""

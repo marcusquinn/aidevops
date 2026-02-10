@@ -1182,8 +1182,10 @@ do_keyword_research() {
     local results="[]"
     
     # Split keywords by comma and process each
+    local -a keyword_array
     IFS=',' read -ra keyword_array <<< "$keywords"
     
+    local keyword
     for keyword in "${keyword_array[@]}"; do
         keyword=$(echo "$keyword" | xargs)  # Trim whitespace
         print_info "Researching: $keyword"
@@ -1536,6 +1538,7 @@ apply_filters() {
     local result="$json_data"
     
     # Parse filters (format: min-volume:1000,max-difficulty:40,intent:commercial,contains:term,excludes:term)
+    local -a filter_array
     IFS=',' read -ra filter_array <<< "$filters"
     
     for filter in "${filter_array[@]}"; do

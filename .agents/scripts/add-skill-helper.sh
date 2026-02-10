@@ -147,6 +147,7 @@ parse_github_url() {
     fi
     
     # Split by /
+    local -a parts
     IFS='/' read -ra parts <<< "$input"
     
     if [[ ${#parts[@]} -ge 2 ]]; then

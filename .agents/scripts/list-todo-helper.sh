@@ -329,6 +329,7 @@ parse_plans() {
 apply_filters() {
     local line="$1"
     
+    local status id desc est tags owner logged blocked_by is_plan
     IFS='|' read -r status id desc est tags owner logged blocked_by is_plan <<< "$line"
     
     # Status filter

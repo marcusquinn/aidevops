@@ -245,6 +245,7 @@ example_captcha_demo() {
     )
 
     local i=1
+    local url captcha_type site_key description
     for config in "${demo_configs[@]}"; do
         IFS='|' read -r url captcha_type site_key description <<< "$config"
 

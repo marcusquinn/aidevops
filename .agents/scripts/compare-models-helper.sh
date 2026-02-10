@@ -908,6 +908,7 @@ cmd_discover() {
         local active_key=""
 
         # Check each possible key name for this provider
+        local -a keys
         IFS=',' read -ra keys <<< "$key_names"
         for key_name in "${keys[@]}"; do
             if check_provider_key "$key_name"; then
@@ -1004,6 +1005,7 @@ cmd_discover() {
                 pname=$(echo "$pline" | cut -d'|' -f1)
                 pkeys=$(echo "$pline" | cut -d'|' -f2)
                 if [[ "$pname" == "$model_provider" ]]; then
+                    local -a pkey_arr
                     IFS=',' read -ra pkey_arr <<< "$pkeys"
                     for pk in "${pkey_arr[@]}"; do
                         if check_provider_key "$pk"; then
@@ -1044,6 +1046,7 @@ cmd_discover() {
                 pname=$(echo "$pline" | cut -d'|' -f1)
                 pkeys=$(echo "$pline" | cut -d'|' -f2)
                 if [[ "$pname" == "$model_provider" ]]; then
+                    local -a pkey_arr
                     IFS=',' read -ra pkey_arr <<< "$pkeys"
                     for pk in "${pkey_arr[@]}"; do
                         if check_provider_key "$pk"; then

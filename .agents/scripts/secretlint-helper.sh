@@ -538,6 +538,7 @@ run_secretlint_scan() {
     fi
     
     # Handle extra_args safely by splitting on spaces (limited use case)
+    local -a extra_array
     if [[ -n "$extra_args" ]]; then
         read -ra extra_array <<< "$extra_args"
         cmd_array+=("${extra_array[@]}")
@@ -617,6 +618,7 @@ run_docker_scan() {
     )
     
     # Handle extra_args safely
+    local -a extra_array
     if [[ -n "$extra_args" ]]; then
         read -ra extra_array <<< "$extra_args"
         cmd_array+=("${extra_array[@]}")
