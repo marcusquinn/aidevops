@@ -107,6 +107,7 @@ domain-research-helper.sh,DNS intelligence (rDNS subdomains CNAMEs)
 toon-helper.sh,TOON format conversion
 sonarcloud-cli.sh,SonarCloud analysis
 quality-sweep-helper.sh,Unified quality debt sweep (SonarCloud Codacy CodeFactor findings)
+finding-to-task-helper.sh,Convert quality findings into grouped TODO tasks with auto-dispatch
 secretlint-helper.sh,Secret detection
 security-helper.sh,Security analysis (OSV Ferret history full-scan)
 beads-sync-helper.sh,Sync TODO.md/PLANS.md with Beads graph
