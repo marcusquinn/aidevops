@@ -1528,11 +1528,25 @@ cmd_add() {
         repo="$(pwd)"
     fi
 
-    # Try to look up description from TODO.md if not provided
-    if [[ -z "$description" ]]; then
-        local todo_file="$repo/TODO.md"
-        if [[ -f "$todo_file" ]]; then
-            description=$(grep -E "^[[:space:]]*- \[( |x|-)\] $task_id " "$todo_file" 2>/dev/null | head -1 | sed -E 's/^[[:space:]]*- \[( |x|-)\] [^ ]* //' || true)
+    # Try to look up description and model: field from TODO.md if not provided
+    local todo_file="$repo/TODO.md"
+    if [[ -z "$description" && -f "$todo_file" ]]; then
+        description=$(grep -E "^[[:space:]]*- \[( |x|-)\] $task_id " "$todo_file" 2>/dev/null | head -1 | sed -E 's/^[[:space:]]*- \[( |x|-)\] [^ ]* //' || true)
+    fi
+
+    # t246: Extract model:<tier> from TODO.md task line if --model wasn't explicitly set.
+    # This allows users to pin a task to a specific tier in TODO.md, e.g.:
+    #   - [ ] t001 Update readme #docs model:sonnet ~30m
+    if [[ "$model" == "anthropic/claude-opus-4-6" && -f "$todo_file" ]]; then
+        local todo_line
+        todo_line=$(grep -E "^[[:space:]]*- \[( |x|-)\] $task_id " "$todo_file" 2>/dev/null | head -1 || true)
+        if [[ -n "$todo_line" ]]; then
+            local todo_model
+            todo_model=$(echo "$todo_line" | grep -oE 'model:[a-zA-Z0-9/_.-]+' | head -1 | sed 's/^model://' || true)
+            if [[ -n "$todo_model" ]]; then
+                model="$todo_model"
+                log_info "Task $task_id: model override from TODO.md: $model"
+            fi
         fi
     fi
 
@@ -3245,27 +3259,84 @@ resolve_model_from_frontmatter() {
 }
 
 #######################################
-# Classify task complexity from description to suggest model tier.
-# Returns: "sonnet" for simple tasks, "opus" for complex ones.
-# Simple tasks: docs updates, config changes, renaming, formatting,
-#   adding comments, updating references, simple script additions.
-# Complex tasks: architecture, novel features, multi-file refactors,
-#   security, anything requiring deep reasoning.
+# Classify task complexity for model routing (t132.5, t246)
+# Returns a tier name: haiku, sonnet, or opus.
+#
+# Tier heuristics (aligned with model-routing.md decision flowchart):
+#   haiku  — trivial: rename, reformat, classify, triage, commit messages,
+#            simple text transforms, tag/label operations
+#   sonnet — simple-to-moderate: docs updates, config changes, cross-refs,
+#            adding comments, updating references, writing tests, bug fixes,
+#            simple script additions, markdown changes
+#   opus   — complex: architecture, novel features, multi-file refactors,
+#            security audits, system design, anything requiring deep reasoning
+#
+# Accepts optional $2 for TODO.md tags (e.g., "#docs #optimization") to
+# provide additional routing hints when description alone is ambiguous.
 #######################################
 classify_task_complexity() {
     local description="$1"
+    local tags="${2:-}"
     local desc_lower
     desc_lower=$(echo "$description" | tr '[:upper:]' '[:lower:]')
+    local tags_lower
+    tags_lower=$(echo "$tags" | tr '[:upper:]' '[:lower:]')
 
-    # Patterns that indicate simple/docs/config tasks → sonnet
-    local simple_patterns=(
+    # --- Tag-based hints (highest priority when present) ---
+    # Tags are explicit human intent — trust them over keyword matching
+    if [[ "$tags_lower" == *"#trivial"* ]]; then
+        echo "haiku"
+        return 0
+    fi
+    if [[ "$tags_lower" == *"#simple"* || "$tags_lower" == *"#docs"* ]]; then
+        echo "sonnet"
+        return 0
+    fi
+    if [[ "$tags_lower" == *"#complex"* || "$tags_lower" == *"#architecture"* ]]; then
+        echo "opus"
+        return 0
+    fi
+
+    # --- Haiku tier: trivial mechanical tasks (no reasoning needed) ---
+    # Aligned with model-registry-helper.sh route patterns
+    local haiku_patterns=(
+        "^rename "
+        "rename.*variable"
+        "rename.*function"
+        "rename.*file"
+        "reformat"
+        "re-format"
+        "classify"
+        "triage"
+        "commit.message"
+        "simple.*(text|transform)"
+        "extract.field"
+        "sort.*list"
+        "prioriti[sz]e"
+        "tag.*label"
+        "label.*tag"
+        "fix.*whitespace"
+        "fix.*indent"
+        "remove.*unused.*import"
+        "update.*copyright"
+    )
+
+    for pattern in "${haiku_patterns[@]}"; do
+        if [[ "$desc_lower" =~ $pattern ]]; then
+            echo "haiku"
+            return 0
+        fi
+    done
+
+    # --- Sonnet tier: simple-to-moderate dev tasks ---
+    # Standard work that doesn't require deep architectural reasoning
+    local sonnet_patterns=(
         "update.*readme"
         "update.*docs"
         "update.*documentation"
         "add.*comment"
         "add.*reference"
         "update.*reference"
-        "rename"
         "fix.*typo"
         "update.*version"
         "bump.*version"
@@ -3277,21 +3348,56 @@ classify_task_complexity() {
         "update.*agents\.md"
         "progressive.*disclosure"
         "cross-reference"
+        "add.*test"
+        "write.*test"
+        "unit.*test"
+        "fix.*bug"
+        "fix.*error"
+        "fix.*issue"
+        "bugfix"
+        "hotfix"
+        "update.*config"
+        "update.*setting"
+        "add.*flag"
+        "add.*option"
+        "add.*parameter"
+        "update.*script"
+        "add.*helper"
+        "add.*logging"
+        "add.*validation"
+        "improve.*error.*message"
+        "update.*template"
+        "markdown.*change"
+        "update.*markdown"
+        "add.*entry"
+        "add.*section"
+        "move.*file"
+        "move.*function"
+        "extract.*function"
+        "inline.*function"
+        "add.*env.*var"
+        "update.*env"
+        "clean.*up"
+        "remove.*deprecated"
+        "update.*dependency"
+        "upgrade.*dependency"
     )
 
-    for pattern in "${simple_patterns[@]}"; do
+    for pattern in "${sonnet_patterns[@]}"; do
         if [[ "$desc_lower" =~ $pattern ]]; then
             echo "sonnet"
             return 0
         fi
     done
 
-    # Patterns that indicate complex tasks → opus
-    local complex_patterns=(
+    # --- Opus tier: complex tasks requiring deep reasoning ---
+    local opus_patterns=(
         "architect"
         "design.*system"
+        "system.*design"
         "security.*audit"
         "refactor.*major"
+        "major.*refactor"
         "migration"
         "novel"
         "from.*scratch"
@@ -3300,26 +3406,40 @@ classify_task_complexity() {
         "cross.*model"
         "quality.*gate"
         "fallback.*chain"
+        "trade.?off"
+        "evaluat.*option"
+        "evaluat.*approach"
+        "complex.*(plan|design|decision)"
+        "implement.*new.*(framework|engine|pipeline|protocol)"
+        "redesign"
+        "state.*machine"
+        "concurren"
+        "parallel.*processing"
+        "distributed"
+        "consensus"
+        "orchestrat"
     )
 
-    for pattern in "${complex_patterns[@]}"; do
+    for pattern in "${opus_patterns[@]}"; do
         if [[ "$desc_lower" =~ $pattern ]]; then
             echo "opus"
             return 0
         fi
     done
 
-    # Default: opus for safety (complex tasks fail on weaker models)
+    # Default: opus for safety (complex tasks fail on weaker models,
+    # but the quality gate can escalate haiku/sonnet tasks if needed)
     echo "opus"
     return 0
 }
 
 #######################################
-# Resolve the model for a task (t132.5)
-# Priority: 1) Task's explicit model (if not default)
+# Resolve the model for a task (t132.5, t246)
+# Priority: 1) Task's explicit model (if not default) — from --model or model: in TODO.md
 #           2) Subagent frontmatter model:
-#           3) Task complexity classification (auto-route simple tasks to sonnet)
-#           4) resolve_model() with tier/fallback chain
+#           3) Pattern-tracker recommendation (data-driven, requires 3+ samples)
+#           4) Task complexity classification (auto-route from description + tags)
+#           5) resolve_model() with tier/fallback chain
 # Returns the resolved provider/model string
 #######################################
 resolve_task_model() {
@@ -3364,14 +3484,47 @@ resolve_task_model() {
         fi
     fi
 
-    # 3) Auto-classify task complexity from description
-    #    Route simple tasks (docs, config, renaming) to sonnet (~5x cheaper)
-    #    Keep complex tasks (architecture, novel features) on opus
+    # Fetch task description for classification (used by steps 3 and 4)
     local task_desc
     task_desc=$(db "$SUPERVISOR_DB" "SELECT description FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo "")
+
+    # 3) Pattern-tracker recommendation (t246: data-driven routing)
+    #    If we have 3+ samples for a task type with >75% success rate on a
+    #    cheaper tier, use that tier. This learns from actual dispatch outcomes.
+    local pattern_helper="${SCRIPTS_DIR}/pattern-tracker-helper.sh"
+    if [[ -n "$task_desc" && -x "$pattern_helper" ]]; then
+        local pattern_json
+        pattern_json=$("$pattern_helper" recommend --json 2>/dev/null || echo "")
+        if [[ -n "$pattern_json" && "$pattern_json" != "{}" ]]; then
+            local recommended_tier
+            recommended_tier=$(echo "$pattern_json" | sed -n 's/.*"recommended_tier"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' 2>/dev/null || echo "")
+            local sample_count
+            sample_count=$(echo "$pattern_json" | sed -n 's/.*"total_samples"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p' 2>/dev/null || echo "0")
+            local success_rate
+            success_rate=$(echo "$pattern_json" | sed -n 's/.*"success_rate"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p' 2>/dev/null || echo "0")
+
+            if [[ -n "$recommended_tier" && "$sample_count" -ge 3 && "$success_rate" -ge 75 ]]; then
+                if [[ "$recommended_tier" != "opus" ]]; then
+                    local resolved
+                    resolved=$(resolve_model "$recommended_tier" "$ai_cli")
+                    log_info "Model for $task_id: $resolved (pattern-tracker: ${recommended_tier}, ${success_rate}% success over ${sample_count} samples)"
+                    echo "$resolved"
+                    return 0
+                fi
+            fi
+        fi
+    fi
+
+    # 4) Auto-classify task complexity from description + tags (t246)
+    #    Route trivial tasks to haiku, simple tasks to sonnet (~5x cheaper)
+    #    Keep complex tasks (architecture, novel features) on opus
     if [[ -n "$task_desc" ]]; then
+        # Extract tags from description (e.g., "#docs #optimization")
+        local task_tags
+        task_tags=$(echo "$task_desc" | grep -oE '#[a-zA-Z][a-zA-Z0-9_-]*' | tr '\n' ' ' || echo "")
+
         local suggested_tier
-        suggested_tier=$(classify_task_complexity "$task_desc")
+        suggested_tier=$(classify_task_complexity "$task_desc" "$task_tags")
         if [[ "$suggested_tier" != "opus" ]]; then
             local resolved
             resolved=$(resolve_model "$suggested_tier" "$ai_cli")
@@ -3381,7 +3534,7 @@ resolve_task_model() {
         fi
     fi
 
-    # 4) Fall back to resolve_model with default tier
+    # 5) Fall back to resolve_model with default tier
     local resolved
     resolved=$(resolve_model "coding" "$ai_cli")
     log_info "Model for $task_id: $resolved (default coding tier)"
