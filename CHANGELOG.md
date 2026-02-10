@@ -7,9 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.110.2] - 2026-02-11
+
 ### Added
 
-- use source file description in generated subagent stubs — 426/479 stubs now have meaningful descriptions (t255) (#1017)
+- use source file description in generated subagent stubs (t255) (#1017)
 
 ## [2.110.1] - 2026-02-11
 
