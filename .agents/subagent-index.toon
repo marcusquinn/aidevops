@@ -84,7 +84,7 @@ bug-fixing,workflows/bug-fixing.md,Bug fix workflow
 feature-development,workflows/feature-development.md,Feature development workflow
 -->
 
-<!--TOON:scripts[59]{name,purpose}:
+<!--TOON:scripts[60]{name,purpose}:
 list-keys-helper.sh,List all API keys with storage locations
 list-verify-helper.sh,List verification queue entries with filtering (pending passed failed)
 verify-run-helper.sh,Execute verification checks with proof logging to verify-proof-log.md
@@ -145,4 +145,5 @@ gocryptfs-helper.sh,gocryptfs encrypted filesystem overlay (init mount unmount c
 youtube-helper.sh,YouTube Data API v3 wrapper (auth channel videos competitors search quota)
 seed-bracket-helper.sh,Seed bracketing for AI video generation (generate status score report presets list)
 video-gen-helper.sh,Unified AI video generation CLI (generate status download list models bracket) for Sora 2 Veo 3.1 and Nanobanana Pro
+thumbnail-helper.sh,Thumbnail A/B testing pipeline (generate score batch-score upload ab-test analyze templates) for YouTube thumbnails
 -->
