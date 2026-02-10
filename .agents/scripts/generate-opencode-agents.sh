@@ -752,6 +752,8 @@ tools:
   bash: true
 $extra_tools
 ---
+
+**MANDATORY**: Your first action MUST be to read ~/.aidevops/agents/${rel_path} and follow ALL rules within it.
 EOF
     else
         cat > "$OPENCODE_AGENT_DIR/$name.md" << EOF
@@ -765,6 +767,8 @@ tools:
   read: true
   bash: true
 ---
+
+**MANDATORY**: Your first action MUST be to read ~/.aidevops/agents/${rel_path} and follow ALL rules within it.
 EOF
     fi
     subagent_count=$((subagent_count + 1))
