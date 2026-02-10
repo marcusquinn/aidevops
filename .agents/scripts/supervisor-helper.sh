@@ -4239,7 +4239,18 @@ $memory_context"
             printf '%s\0' "$model"
         fi
         printf '%s\0' "--title"
-        printf '%s\0' "$task_id"
+        # t262: Include truncated description in session title for readability
+        local session_title="$task_id"
+        if [[ -n "$description" ]]; then
+            local short_desc="${description%% -- *}"  # strip notes after --
+            short_desc="${short_desc%% #*}"            # strip tags
+            short_desc="${short_desc%% ~*}"            # strip estimates
+            if [[ ${#short_desc} -gt 40 ]]; then
+                short_desc="${short_desc:0:37}..."
+            fi
+            session_title="${task_id}: ${short_desc}"
+        fi
+        printf '%s\0' "$session_title"
         printf '%s\0' "$prompt"
     else
         # claude CLI
@@ -6390,7 +6401,18 @@ Task description: ${tdesc:-$task_id}"
     # Dispatch the re-prompt
     local -a cmd_parts=()
     if [[ "$ai_cli" == "opencode" ]]; then
-        cmd_parts=(opencode run --format json --title "${task_id}-retry${tretries}" "$reprompt_msg")
+        # t262: Include truncated description in retry session title
+        local retry_title="${task_id}-retry${tretries}"
+        if [[ -n "$tdesc" ]]; then
+            local short_desc="${tdesc%% -- *}"
+            short_desc="${short_desc%% #*}"
+            short_desc="${short_desc%% ~*}"
+            if [[ ${#short_desc} -gt 30 ]]; then
+                short_desc="${short_desc:0:27}..."
+            fi
+            retry_title="${task_id}-r${tretries}: ${short_desc}"
+        fi
+        cmd_parts=(opencode run --format json --title "$retry_title" "$reprompt_msg")
     else
         cmd_parts=(claude -p "$reprompt_msg" --output-format json)
     fi
@@ -6698,7 +6720,7 @@ dispatch_review_fix_worker() {
     escaped_id=$(sql_escape "$task_id")
     local task_row
     task_row=$(db -separator '|' "$SUPERVISOR_DB" "
-        SELECT repo, worktree, branch, pr_url, model
+        SELECT repo, worktree, branch, pr_url, model, description
         FROM tasks WHERE id = '$escaped_id';
     ")
 
@@ -6707,8 +6729,8 @@ dispatch_review_fix_worker() {
         return 1
     fi
 
-    local trepo tworktree tbranch tpr tmodel
-    IFS='|' read -r trepo tworktree tbranch tpr tmodel <<< "$task_row"
+    local trepo tworktree tbranch tpr tmodel tdesc
+    IFS='|' read -r trepo tworktree tbranch tpr tmodel tdesc <<< "$task_row"
 
     # Extract actionable threads (high + medium, skip low/dismiss)
     local fix_threads
@@ -6811,7 +6833,18 @@ Instructions:
         if [[ -n "$tmodel" ]]; then
             cmd_parts+=(-m "$tmodel")
         fi
-        cmd_parts+=(--title "${task_id}-review-fix" "$fix_prompt")
+        # t262: Include truncated description in review-fix session title
+        local fix_title="${task_id}-review-fix"
+        if [[ -n "$tdesc" ]]; then
+            local short_desc="${tdesc%% -- *}"
+            short_desc="${short_desc%% #*}"
+            short_desc="${short_desc%% ~*}"
+            if [[ ${#short_desc} -gt 25 ]]; then
+                short_desc="${short_desc:0:22}..."
+            fi
+            fix_title="${task_id}-fix: ${short_desc}"
+        fi
+        cmd_parts+=(--title "$fix_title" "$fix_prompt")
     else
         cmd_parts=(claude -p "$fix_prompt" --output-format json)
     fi
