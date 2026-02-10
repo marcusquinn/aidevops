@@ -26,6 +26,11 @@ set -euo pipefail
 # Resolve script directory for sibling script references
 LOOP_COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly LOOP_COMMON_DIR
+
+# Source shared constants for cleanup stack utilities (t196)
+# shellcheck source=shared-constants.sh
+source "${LOOP_COMMON_DIR}/shared-constants.sh"
+
 readonly LOOP_MAIL_HELPER="${LOOP_COMMON_DIR}/mail-helper.sh"
 readonly LOOP_MEMORY_HELPER="${LOOP_COMMON_DIR}/memory-helper.sh"
 
@@ -175,7 +180,8 @@ loop_set_state() {
     
     local temp_file
     temp_file=$(mktemp)
-    trap 'rm -f "${temp_file:-}"' RETURN
+    _save_cleanup_scope; trap '_run_cleanups' RETURN
+    push_cleanup "rm -f '${temp_file}'"
     
     # Determine value type and update
     if [[ "$value" =~ ^[0-9]+$ ]]; then

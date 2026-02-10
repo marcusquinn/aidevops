@@ -152,7 +152,8 @@ get_job() {
 sync_crontab() {
     local temp_cron
     temp_cron=$(mktemp)
-    trap 'rm -f "${temp_cron:-}"' RETURN
+    _save_cleanup_scope; trap '_run_cleanups' RETURN
+    push_cleanup "rm -f '${temp_cron}'"
     
     # Get existing crontab (excluding our managed entries)
     crontab -l 2>/dev/null | grep -v "cron-dispatch.sh" > "$temp_cron" || true
@@ -271,7 +272,8 @@ cmd_add() {
     # Add job to config
     local temp_file
     temp_file=$(mktemp)
-    trap 'rm -f "${temp_file:-}"' RETURN
+    _save_cleanup_scope; trap '_run_cleanups' RETURN
+    push_cleanup "rm -f '${temp_file}'"
     jq --arg id "$job_id" \
        --arg name "$name" \
        --arg schedule "$schedule" \
@@ -360,7 +362,8 @@ cmd_remove() {
     # Remove from config
     local temp_file
     temp_file=$(mktemp)
-    trap 'rm -f "${temp_file:-}"' RETURN
+    _save_cleanup_scope; trap '_run_cleanups' RETURN
+    push_cleanup "rm -f '${temp_file}'"
     jq --arg id "$job_id" '.jobs = [.jobs[] | select(.id != $id)]' "$CONFIG_FILE" > "$temp_file"
     mv "$temp_file" "$CONFIG_FILE"
     
@@ -395,7 +398,8 @@ cmd_pause() {
     # Update status
     local temp_file
     temp_file=$(mktemp)
-    trap 'rm -f "${temp_file:-}"' RETURN
+    _save_cleanup_scope; trap '_run_cleanups' RETURN
+    push_cleanup "rm -f '${temp_file}'"
     jq --arg id "$job_id" '(.jobs[] | select(.id == $id)).status = "paused"' "$CONFIG_FILE" > "$temp_file"
     mv "$temp_file" "$CONFIG_FILE"
     
@@ -432,7 +436,8 @@ cmd_resume() {
     # Update status
     local temp_file
     temp_file=$(mktemp)
-    trap 'rm -f "${temp_file:-}"' RETURN
+    _save_cleanup_scope; trap '_run_cleanups' RETURN
+    push_cleanup "rm -f '${temp_file}'"
     jq --arg id "$job_id" '(.jobs[] | select(.id == $id)).status = "active"' "$CONFIG_FILE" > "$temp_file"
     mv "$temp_file" "$CONFIG_FILE"
     

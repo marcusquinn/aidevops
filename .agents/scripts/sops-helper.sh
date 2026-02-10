@@ -104,7 +104,8 @@ cmd_install() {
         local latest_url="https://github.com/getsops/sops/releases/latest/download/sops_3.9.4_${arch}.deb"
         local tmp_deb
         tmp_deb=$(mktemp /tmp/sops-XXXXXX.deb)
-        trap 'rm -f "${tmp_deb:-}"' RETURN
+        _save_cleanup_scope; trap '_run_cleanups' RETURN
+        push_cleanup "rm -f '${tmp_deb}'"
         curl -fsSL "$latest_url" -o "$tmp_deb"
         sudo dpkg -i "$tmp_deb"
         rm -f "$tmp_deb"

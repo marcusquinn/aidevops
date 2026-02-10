@@ -384,7 +384,9 @@ collect_reviews() {
     local jq_filter_file sql_file
     jq_filter_file=$(mktemp)
     sql_file=$(mktemp)
-    trap 'rm -f "${jq_filter_file:-}" "${sql_file:-}"' RETURN
+    _save_cleanup_scope; trap '_run_cleanups' RETURN
+    push_cleanup "rm -f '${jq_filter_file}'"
+    push_cleanup "rm -f '${sql_file}'"
 
     cat > "$jq_filter_file" << 'JQ_EOF'
 def sql_str: gsub("'"; "''") | "'" + . + "'";
@@ -452,7 +454,9 @@ collect_comments() {
     local jq_filter_file sql_file
     jq_filter_file=$(mktemp)
     sql_file=$(mktemp)
-    trap 'rm -f "${jq_filter_file:-}" "${sql_file:-}"' RETURN
+    _save_cleanup_scope; trap '_run_cleanups' RETURN
+    push_cleanup "rm -f '${jq_filter_file}'"
+    push_cleanup "rm -f '${sql_file}'"
 
     cat > "$jq_filter_file" << 'JQ_EOF'
 def sql_str: gsub("'"; "''") | "'" + . + "'";

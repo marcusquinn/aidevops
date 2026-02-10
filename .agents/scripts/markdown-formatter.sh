@@ -37,7 +37,8 @@ fix_markdown_file() {
     local file="$1"
     local temp_file
     temp_file=$(mktemp)
-    trap 'rm -f "${temp_file:-}"' RETURN
+    _save_cleanup_scope; trap '_run_cleanups' RETURN
+    push_cleanup "rm -f '${temp_file}'"
     local changes_made=0
     
     print_info "Processing: $file"
@@ -123,7 +124,8 @@ apply_advanced_fixes() {
     local file="$1"
     local temp_file
     temp_file=$(mktemp)
-    trap 'rm -f "${temp_file:-}"' RETURN
+    _save_cleanup_scope; trap '_run_cleanups' RETURN
+    push_cleanup "rm -f '${temp_file}'"
 
     print_info "Applying advanced fixes to: $file"
 

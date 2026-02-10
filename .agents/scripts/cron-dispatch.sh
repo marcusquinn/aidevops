@@ -118,7 +118,8 @@ update_job_status() {
     
     local temp_file
     temp_file=$(mktemp)
-    trap 'rm -f "${temp_file:-}"' RETURN
+    _save_cleanup_scope; trap '_run_cleanups' RETURN
+    push_cleanup "rm -f '${temp_file}'"
     jq --arg id "$job_id" \
        --arg status "$status" \
        --arg timestamp "$timestamp" \
