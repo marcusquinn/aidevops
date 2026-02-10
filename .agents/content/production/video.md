@@ -347,41 +347,28 @@ If no winners in initial range:
 2. Test 10 more seeds
 3. If still no winners, revise prompt (likely prompt issue, not seed)
 
-### Automation Script
+### Automation
+
+Use `seed-bracket-helper.sh` for the full automation workflow:
 
 ```bash
-#!/bin/bash
-# seed-bracket-helper.sh
+# Generate 11 product video variants with seed bracketing
+seed-bracket-helper.sh generate --type product --prompt "Product rotating on white background"
 
-PROMPT="$1"
-SEED_START="${2:-1000}"
-SEED_END="${3:-1010}"
-MODEL="${4:-dop-turbo}"
+# Check job status
+seed-bracket-helper.sh status
 
-for seed in $(seq "$SEED_START" "$SEED_END"); do
-  echo "Testing seed $seed..."
-  
-  # Generate video
-  result=$(curl -s -X POST 'https://platform.higgsfield.ai/v1/image2video/dop' \
-    --header "hf-api-key: $HIGGSFIELD_API_KEY" \
-    --header "hf-secret: $HIGGSFIELD_SECRET" \
-    --data "{
-      \"params\": {
-        \"prompt\": \"$PROMPT\",
-        \"seed\": $seed,
-        \"model\": \"$MODEL\"
-      }
-    }")
-  
-  job_id=$(echo "$result" | jq -r '.jobs[0].id')
-  echo "Job $job_id queued for seed $seed"
-  
-  # Store for later scoring
-  echo "$seed,$job_id" >> seed_bracket_results.csv
-done
+# Score completed outputs (composition, quality, style, motion, accuracy — each 1-10)
+seed-bracket-helper.sh score 4005 8 9 7 8 9
 
-echo "Bracket test complete. Review outputs and score manually."
+# View report with winners and recommendations
+seed-bracket-helper.sh report
+
+# List content-type presets and scoring weights
+seed-bracket-helper.sh presets
 ```
+
+The helper manages bracket runs, tracks job status via the Higgsfield API, calculates weighted scores, and identifies production-ready winners (80+/100) vs acceptable outputs (65-80) vs rejects.
 
 ## 8K Camera Model Prompting
 
@@ -709,7 +696,8 @@ color_variation: 2-5%
 - `content/production/image.md` - Image generation (Nanobanana Pro, Midjourney, Freepik)
 - `content/production/audio.md` - Voice pipeline (CapCut cleanup + ElevenLabs)
 - `content/production/characters.md` - Character consistency (Facial Engineering, Character Bibles)
-- `content/optimization.md` - A/B testing, seed bracketing automation (t202)
+- `content/optimization.md` - A/B testing, seed bracketing automation
+- `scripts/seed-bracket-helper.sh` - Seed bracketing CLI (generate, score, report)
 
 ### External Resources
 
@@ -721,8 +709,11 @@ color_variation: 2-5%
 ### Helper Scripts
 
 ```bash
-# Seed bracketing automation (planned - t202)
-seed-bracket-helper.sh "prompt" 1000 1010 dop-turbo
+# Seed bracketing automation
+seed-bracket-helper.sh generate --type product --prompt "Product rotating on white background"
+seed-bracket-helper.sh status
+seed-bracket-helper.sh score 4005 8 9 7 8 9
+seed-bracket-helper.sh report
 
 # Video generation via Higgsfield
 higgsfield-helper.sh generate --model veo-3.1 --prompt "prompt.txt" --ingredient "char_id"
