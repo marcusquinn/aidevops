@@ -7,18 +7,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.110.0] - 2026-02-10
+
 ### Added
 
-- add auto-update polling daemon - cron-based GitHub release checking every 10 min (t231) (#955)
-- add retry logic, credit guard, and cost estimation for Higgsfield (t236.1) (#962)
+- add auto-update polling daemon (t231) (#955)
+- add retry logic, credit guard, and cost estimation (t236.1) (#962)
 - add ShellCheck pre-push gate to worker prompt (t234) (#961)
 - add proof-log coverage for all pr_url mutations (t235) (#960)
-- add pre-dispatch model availability check with distinct exit codes (t233) (#959)
-- centralize PR-to-task linking with single source of truth link_pr_to_task (t232) (#957)
+- auto-dismiss CodeRabbit reviews that block merge pipeline (#952)
+- serial merge strategy for sibling subtasks (#951)
+- Auto-merge PRs when SonarCloud GH Action passes but external quality gate fails (#947)
+- expand Higgsfield UI automation — Cinema Studio, Motion Control, Edit/Inpaint, Upscale, Asset Library (#942)
+- link closing PR reference when issue-sync closes issues (t220) (#944)
+- disable osgrep in worker MCP configs to save CPU (t221) (#945)
+- integrate email accessibility checks into email-health-check + email-design-test (t215.6) (#943)
+- add WAVE API integration for comprehensive accessibility analysis (t215.4) (#941)
+- update AGENTS.md and cross-references for accessibility (#940)
+- surface Lighthouse accessibility as first-class output in pagespeed (#936)
+- add Playwright contrast extraction for all visible elements (t215.3) (#937)
+- add accessibility-audit-helper.sh — CLI wrapping axe-core, WAVE API, WebAIM contrast, Lighthouse a11y (#935)
+- add email-design-test-helper.sh — CLI for local + EOA API email design testing (#930)
+- add email-delivery-test-helper.sh — spam testing + inbox placement CLI (t214.4) (#933)
+- add email delivery test subagent for spam filter testing and inbox placement (#929)
+- add content-level checks to email health check (inspired by EOA Campaign Precheck) (#934)
+- add unified web + email accessibility audit agent (t215.1) (#932)
+- add critical thinking directive and Socratic pre-flight questions to subjective agents
+- email testing suite — design rendering + delivery testing + health check enhancements (t214)
+- eager orphaned PR scan after worker evaluation (t216)
+- add accessibility & contrast testing for websites and emails (t215)
+- auto-deploy agents after supervisor merges PRs (t213)
+- add Higgsfield UI automation subagent for subscription credit usage (#797)
+- faster PR merge pipeline with parallel CI + review triage (t219) (#922)
+- add structured proof-logs for task completion trust (t218) (#921)
+- enforce Task tool parallelism in worker prompt + track usage (t217) (#918)
+- Thumbnail A/B testing pipeline (t207)
+- add content calendar and posting cadence engine (t208)
+- multi-channel content fan-out orchestration (t206)
+- add voice-pipeline-helper.sh — CapCut cleanup + ElevenLabs transformation chain (t204)
+
+### Changed
+
+- Documentation: update changelog for v2.110.0 release
+- Documentation: add email-design-test.md — local Playwright rendering + Email on Acid API v5 integration (#928)
+- Documentation: add t220-t223 — issue-sync PR linking, osgrep worker perf, deploying stuck state, PR cross-contamination
+- Documentation: mark t135.4/.5/.6/.10/.14 complete — all had merged PRs from Feb 7
+- Documentation: mark t198 complete (PR #834 merged previously)
+- Refactor: archive 4 remaining fix scripts to _archive/ (t135.12) (#925)
+- Documentation: mark t214 complete with PR #923
+- Documentation: mark t213, t215, t216 complete; fix corrupted t215 line
+- Documentation: mark t204, t206, t208 complete with merged PR links
 
 ### Fixed
 
 - add missing local declarations in cmd_transition to prevent cross-contamination (#967)
+- add force:true to all generate button clicks to bypass overlay interception (#958)
+- asset chain dialog scoping, media upload agreement dismissal, and result download (#956)
+- pre-dispatch check for already-merged PRs (#950)
+- prevent PR cross-contamination in task linking (#949)
+- auto-recover deploying stuck state when deploy completes (#948)
+- worker incremental commit protocol to prevent context-exhaustion data loss (t228) (#946)
+- setup.sh cross-shell grep -c arithmetic error
+- use detect_repo_slug() instead of broken inline regex for GitHub API calls (#902)
 
 ## [2.109.0] - 2026-02-10
 
