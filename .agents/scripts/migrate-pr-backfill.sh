@@ -52,7 +52,7 @@ done
 
 # --- Helpers ------------------------------------------------------------------
 
-log() { echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $*" | tee -a "$MIGRATION_LOG"; }
+log() { echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $*" >> "$MIGRATION_LOG"; echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $*" >&2; }
 log_verbose() { [[ "$VERBOSE" == "true" ]] && log "  $*" || true; }
 
 db() {
@@ -218,14 +218,17 @@ search_prs_for_task() {
     local task_id="$1"
     local merged_prs_json="$2"
 
-    # Search by branch name: feature/{task_id} or containing task_id
-    # Search by title: containing task_id as word boundary
-    # jq filter: match task_id in headRefName or title (case-insensitive)
+    # Search by branch name or title containing the task ID.
+    # Uses word boundary + negative lookahead to prevent t132 matching t132.2:
+    #   \bt132\b(?!\.\d) — matches "t132" but not "t132.2" or "t132.8"
+    # For subtask IDs like t132.3, the dot is escaped so it matches literally.
     local matches
     matches=$(echo "$merged_prs_json" | jq -r --arg tid "$task_id" '
+        ($tid | gsub("\\."; "\\.")) as $escaped_tid |
+        ("(?i)\\b" + $escaped_tid + "\\b(?!\\.\\d)") as $pattern |
         [.[] | select(
-            (.headRefName | test("\\b" + $tid + "\\b"; "i")) or
-            (.title | test("\\b" + $tid + "\\b"; "i"))
+            (.headRefName | test($pattern)) or
+            (.title | test($pattern))
         )] | sort_by(.number) | reverse | .[].url
     ' 2>/dev/null || echo "")
 
