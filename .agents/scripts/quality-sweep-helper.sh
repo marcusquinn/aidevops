@@ -7,7 +7,7 @@
 # t245.1: SonarCloud API integration
 # t245.2: Codacy API integration
 # t245.3: Finding-to-task pipeline (finding-to-task-helper.sh)
-# t245.4: Daily GitHub Action (future)
+# t245.4: Daily GitHub Action (quality-sweep.yml)
 #
 # Usage:
 #   quality-sweep-helper.sh sonarcloud [fetch|query|summary|export|status] [options]
@@ -1196,6 +1196,320 @@ cmd_codacy() {
 }
 
 # =============================================================================
+# Top-level orchestration commands (called by GitHub Action — t245.4)
+# =============================================================================
+
+# Run the full quality sweep across all configured sources.
+# Arguments (via flags):
+#   --severity LEVEL   Minimum severity to report (default: medium)
+#   --auto-dispatch    Auto-dispatch tasks to workers (future)
+# Output: JSON findings file in SWEEP_DATA_DIR/findings/
+cmd_run() {
+    local severity="medium"
+    local auto_dispatch="false"
+    local include_shellcheck="false"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --severity) severity="${2:-medium}"; shift 2 ;;
+            --auto-dispatch) auto_dispatch="true"; shift ;;
+            --shellcheck) include_shellcheck="true"; shift ;;
+            *) shift ;;
+        esac
+    done
+
+    init_db
+    mkdir -p "${SWEEP_DATA_DIR}/findings" 2>/dev/null || true
+
+    local timestamp
+    timestamp=$(date -u +%Y%m%dT%H%M%SZ)
+    local findings_file="${SWEEP_DATA_DIR}/findings/${timestamp}-findings.json"
+    local total_findings=0
+    local sources_run=0
+    local sources_failed=0
+
+    print_info "Starting quality sweep (severity >= $severity)"
+
+    # --- ShellCheck (local, opt-in via --shellcheck flag) ---
+    # Full ShellCheck already runs in code-quality.yml on every push/PR.
+    # Include here only when explicitly requested (can be slow on large repos).
+    local shellcheck_findings=0
+    if [[ "$include_shellcheck" == "true" ]]; then
+        if command -v shellcheck &>/dev/null; then
+            _save_cleanup_scope
+            trap '_run_cleanups' RETURN
+            local sc_json
+            sc_json=$(mktemp)
+            push_cleanup "rm -f '${sc_json}'"
+
+            local sh_file_list
+            sh_file_list=$(mktemp)
+            push_cleanup "rm -f '${sh_file_list}'"
+            git ls-files '*.sh' 2>/dev/null > "$sh_file_list" || find . -name '*.sh' -not -path './.git/*' > "$sh_file_list"
+
+            local sh_count
+            sh_count=$(wc -l < "$sh_file_list" | tr -d ' ')
+            print_info "Running ShellCheck on $sh_count shell scripts..."
+
+            local sc_results="[]"
+            if [[ "$sh_count" -gt 0 ]]; then
+                sc_results=$(xargs shellcheck -f json -S warning < "$sh_file_list" 2>/dev/null || echo "[]")
+                if ! echo "$sc_results" | jq empty 2>/dev/null; then
+                    sc_results="[]"
+                fi
+            fi
+
+            # Convert ShellCheck JSON to normalized format, filter by severity
+            shellcheck_findings=$(echo "$sc_results" | jq --arg sev "$severity" '
+                def sc_level_to_severity:
+                    if . == "error" then "high"
+                    elif . == "warning" then "medium"
+                    elif . == "info" then "low"
+                    elif . == "style" then "info"
+                    else "info"
+                    end;
+                def severity_rank:
+                    if . == "critical" then 1
+                    elif . == "high" then 2
+                    elif . == "medium" then 3
+                    elif . == "low" then 4
+                    elif . == "info" then 5
+                    else 6
+                    end;
+                ($sev | severity_rank) as $min_rank |
+                [.[] | {
+                    source: "shellcheck",
+                    external_key: ("SC" + (.code | tostring) + ":" + .file + ":" + (.line | tostring)),
+                    file: .file,
+                    line: .line,
+                    end_line: (.endLine // .line),
+                    severity: (.level | sc_level_to_severity),
+                    type: "CODE_SMELL",
+                    rule: ("SC" + (.code | tostring)),
+                    message: .message,
+                    status: "OPEN"
+                } | select((.severity | severity_rank) <= $min_rank)]
+                | length
+            ')
+            print_info "ShellCheck: $shellcheck_findings findings (severity >= $severity)"
+            sources_run=$((sources_run + 1))
+        else
+            print_warning "ShellCheck not installed — skipping"
+        fi
+    fi
+
+    # --- SonarCloud (remote API) ---
+    local sonar_findings=0
+    load_sonar_token
+    if [[ -n "${SONAR_TOKEN:-}" ]]; then
+        print_info "Fetching SonarCloud findings..."
+        if fetch_sonarcloud_issues --project "$SONAR_DEFAULT_PROJECT" >/dev/null 2>&1; then
+            local sev_filter
+            case "$severity" in
+                critical) sev_filter="'critical'" ;;
+                high)     sev_filter="'critical','high'" ;;
+                medium)   sev_filter="'critical','high','medium'" ;;
+                low)      sev_filter="'critical','high','medium','low'" ;;
+                *)        sev_filter="'critical','high','medium','low','info'" ;;
+            esac
+            sonar_findings=$(db "$SWEEP_DB" "SELECT count(*) FROM findings WHERE source='sonarcloud' AND severity IN ($sev_filter);")
+            print_info "SonarCloud: $sonar_findings findings (severity >= $severity)"
+            sources_run=$((sources_run + 1))
+        else
+            print_warning "SonarCloud fetch failed — continuing with other sources"
+            sources_failed=$((sources_failed + 1))
+        fi
+    else
+        print_info "SONAR_TOKEN not set — skipping SonarCloud (public API is rate-limited)"
+    fi
+
+    # --- Codacy (remote API) ---
+    local codacy_findings=0
+    load_codacy_token 2>/dev/null || true
+    if [[ -n "${CODACY_API_TOKEN:-}" ]]; then
+        print_info "Fetching Codacy findings..."
+        if fetch_codacy_issues >/dev/null 2>&1; then
+            local codacy_sev_filter
+            case "$severity" in
+                critical) codacy_sev_filter="'critical'" ;;
+                high)     codacy_sev_filter="'critical','high'" ;;
+                medium)   codacy_sev_filter="'critical','high','medium'" ;;
+                low)      codacy_sev_filter="'critical','high','medium','low'" ;;
+                *)        codacy_sev_filter="'critical','high','medium','low','info'" ;;
+            esac
+            codacy_findings=$(db "$SWEEP_DB" "SELECT count(*) FROM findings WHERE source='codacy' AND severity IN ($codacy_sev_filter);")
+            print_info "Codacy: $codacy_findings findings (severity >= $severity)"
+            sources_run=$((sources_run + 1))
+        else
+            print_warning "Codacy fetch failed — continuing with other sources"
+            sources_failed=$((sources_failed + 1))
+        fi
+    else
+        print_info "CODACY_API_TOKEN not set — skipping Codacy"
+    fi
+
+    # --- CodeRabbit / CodeFactor (future) ---
+
+    total_findings=$((shellcheck_findings + sonar_findings + codacy_findings))
+
+    # Build findings JSON output (combine all sources from DB, filtered by severity)
+    local all_findings_json="[]"
+    if [[ -f "$SWEEP_DB" ]]; then
+        local output_sev_filter
+        case "$severity" in
+            critical) output_sev_filter="'critical'" ;;
+            high)     output_sev_filter="'critical','high'" ;;
+            medium)   output_sev_filter="'critical','high','medium'" ;;
+            low)      output_sev_filter="'critical','high','medium','low'" ;;
+            *)        output_sev_filter="'critical','high','medium','low','info'" ;;
+        esac
+        all_findings_json=$(db "$SWEEP_DB" -json "SELECT source, external_key, file, line, end_line, severity, type, rule, message, status FROM findings WHERE status='OPEN' AND severity IN ($output_sev_filter) ORDER BY CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END LIMIT 500;" 2>/dev/null || echo "[]")
+    fi
+
+    # Assemble final findings file
+    jq -n \
+        --argjson sonar_count "$sonar_findings" \
+        --argjson codacy_count "$codacy_findings" \
+        --argjson shellcheck_count "$shellcheck_findings" \
+        --argjson total "$total_findings" \
+        --argjson sources_run "$sources_run" \
+        --argjson sources_failed "$sources_failed" \
+        --arg severity "$severity" \
+        --arg timestamp "$timestamp" \
+        --argjson findings "$all_findings_json" \
+        '{
+            meta: {
+                timestamp: $timestamp,
+                severity_filter: $severity,
+                sources_run: $sources_run,
+                sources_failed: $sources_failed
+            },
+            stats: {
+                total_findings: $total,
+                deduplicated_findings: $total,
+                final_findings: $total
+            },
+            findings: $findings,
+            breakdown: {
+                sonarcloud: $sonar_count,
+                codacy: $codacy_count,
+                shellcheck: $shellcheck_count
+            }
+        }' > "$findings_file"
+
+    print_success "Sweep complete: $total_findings findings across $sources_run sources"
+    print_info "Findings saved to: $findings_file"
+
+    if [[ "$auto_dispatch" == "true" ]]; then
+        print_info "Auto-dispatch requested — generating tasks..."
+        cmd_tasks --findings "$findings_file"
+    fi
+
+    return 0
+}
+
+# Show a summary of the most recent sweep run.
+cmd_sweep_summary() {
+    local findings_dir="${SWEEP_DATA_DIR}/findings"
+    local latest
+    latest=$(ls -t "$findings_dir"/*-findings.json 2>/dev/null | head -1 || echo "")
+
+    if [[ -z "$latest" || ! -f "$latest" ]]; then
+        print_warning "No findings file found. Run 'quality-sweep-helper.sh run' first."
+        return 0
+    fi
+
+    print_info "Quality Sweep Summary ($(basename "$latest"))"
+    echo ""
+
+    local total deduped final
+    total=$(jq '.stats.total_findings // 0' "$latest")
+    deduped=$(jq '.stats.deduplicated_findings // 0' "$latest")
+    final=$(jq '.stats.final_findings // 0' "$latest")
+
+    echo "Total findings:      $total"
+    echo "After deduplication: $deduped"
+    echo "Final actionable:    $final"
+    echo ""
+
+    echo "By Source:"
+    jq -r '.breakdown | to_entries[] | "  \(.key): \(.value)"' "$latest"
+    echo ""
+
+    # Show critical/high from DB if available
+    if [[ -f "$SWEEP_DB" ]]; then
+        local critical high
+        critical=$(db "$SWEEP_DB" "SELECT count(*) FROM findings WHERE severity='critical';" 2>/dev/null || echo "0")
+        high=$(db "$SWEEP_DB" "SELECT count(*) FROM findings WHERE severity='high';" 2>/dev/null || echo "0")
+        if [[ "$critical" -gt 0 || "$high" -gt 0 ]]; then
+            echo "Attention Required:"
+            echo "  Critical: $critical"
+            echo "  High:     $high"
+        else
+            echo "No critical or high severity findings."
+        fi
+    fi
+
+    return 0
+}
+
+# Generate task suggestions from findings (dry-run by default).
+# Arguments (via flags):
+#   --dry-run          Show tasks without creating them (default)
+#   --create           Actually create tasks (future)
+#   --findings FILE    Use specific findings file
+cmd_tasks() {
+    local dry_run="true"
+    local findings_file=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --dry-run) dry_run="true"; shift ;;
+            --create) dry_run="false"; shift ;;
+            --findings) findings_file="${2:-}"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+
+    if [[ -z "$findings_file" ]]; then
+        local findings_dir="${SWEEP_DATA_DIR}/findings"
+        findings_file=$(ls -t "$findings_dir"/*-findings.json 2>/dev/null | head -1 || echo "")
+    fi
+
+    if [[ -z "$findings_file" || ! -f "$findings_file" ]]; then
+        print_warning "No findings file found. Run 'quality-sweep-helper.sh run' first."
+        return 0
+    fi
+
+    print_info "Task Suggestions from Quality Sweep"
+    echo ""
+
+    if [[ "$dry_run" == "true" ]]; then
+        echo "(dry-run mode — no tasks will be created)"
+        echo ""
+    fi
+
+    # Group findings by rule and suggest tasks
+    if [[ -f "$SWEEP_DB" ]]; then
+        echo "Suggested tasks by rule (top 10 most frequent):"
+        echo ""
+        db "$SWEEP_DB" -header -column \
+            "SELECT rule, severity, count(*) as count,
+                    'fix: resolve ' || count(*) || ' ' || rule || ' findings' as suggested_task
+             FROM findings
+             WHERE status='OPEN'
+             GROUP BY rule
+             ORDER BY CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END, count DESC
+             LIMIT 10;"
+    else
+        echo "No database available — showing findings file summary only."
+        jq -r '.findings | group_by(.rule) | sort_by(-length) | .[:10][] | "  \(.[0].rule) (\(.[0].severity)): \(length) findings"' "$findings_file" 2>/dev/null || true
+    fi
+
+    return 0
+}
+
+# =============================================================================
 # Top-level help
 # =============================================================================
 
@@ -1203,7 +1517,16 @@ show_help() {
     echo ""
     echo "quality-sweep-helper.sh — Unified quality debt sweep"
     echo ""
-    echo "Usage: quality-sweep-helper.sh <source> <command> [options]"
+    echo "Usage:"
+    echo "  quality-sweep-helper.sh run [--severity LEVEL] [--auto-dispatch] [--shellcheck]"
+    echo "  quality-sweep-helper.sh summary"
+    echo "  quality-sweep-helper.sh tasks [--dry-run]"
+    echo "  quality-sweep-helper.sh <source> <command> [options]"
+    echo ""
+    echo "Top-level commands (used by GitHub Action — t245.4):"
+    echo "  run          Run full quality sweep across all sources"
+    echo "  summary      Show summary of most recent sweep"
+    echo "  tasks        Generate task suggestions from findings"
     echo ""
     echo "Sources:"
     echo "  sonarcloud   SonarCloud code quality findings (t245.1)"
@@ -1213,7 +1536,6 @@ show_help() {
     echo ""
     echo "Cross-source:"
     echo "  dedup        Show findings that appear in multiple sources (same file+line+type)"
-    echo "  triage       Finding-to-task pipeline (t245.3 — delegates to finding-to-task-helper.sh)"
     echo ""
     echo "Commands (per source):"
     echo "  fetch        Fetch findings from the source API"
@@ -1223,15 +1545,14 @@ show_help() {
     echo "  status       Show configuration and database status"
     echo ""
     echo "Examples:"
+    echo "  quality-sweep-helper.sh run --severity high"
+    echo "  quality-sweep-helper.sh summary"
+    echo "  quality-sweep-helper.sh tasks --dry-run"
     echo "  quality-sweep-helper.sh sonarcloud fetch"
     echo "  quality-sweep-helper.sh sonarcloud query --severity high --limit 20"
-    echo "  quality-sweep-helper.sh sonarcloud summary"
-    echo "  quality-sweep-helper.sh sonarcloud export --format json --output findings.json"
     echo "  quality-sweep-helper.sh codacy fetch"
     echo "  quality-sweep-helper.sh codacy fetch --org myorg --repo myrepo"
-    echo "  quality-sweep-helper.sh codacy summary"
     echo "  quality-sweep-helper.sh dedup --format json"
-    echo "  quality-sweep-helper.sh triage create --dry-run --by file"
     echo ""
     return 0
 }
@@ -1241,10 +1562,21 @@ show_help() {
 # =============================================================================
 
 main() {
-    local source="${1:-help}"
+    local cmd="${1:-help}"
     shift || true
 
-    case "$source" in
+    case "$cmd" in
+        # Top-level orchestration commands (called by GitHub Action — t245.4)
+        run)
+            cmd_run "$@"
+            ;;
+        summary)
+            cmd_sweep_summary "$@"
+            ;;
+        tasks)
+            cmd_tasks "$@"
+            ;;
+        # Source-specific commands
         sonarcloud)
             cmd_sonarcloud "$@"
             ;;
@@ -1254,24 +1586,15 @@ main() {
         dedup)
             cmd_dedup "$@"
             ;;
-        triage)
-            # Delegate to finding-to-task-helper.sh (t245.3)
-            local triage_script="${SCRIPT_DIR}/finding-to-task-helper.sh"
-            if [[ ! -x "$triage_script" ]]; then
-                print_error "finding-to-task-helper.sh not found at $triage_script"
-                return 1
-            fi
-            "$triage_script" "$@"
-            ;;
         codefactor|coderabbit)
-            print_warning "Source '$source' is not yet implemented."
+            print_warning "Source '$cmd' is not yet implemented. See TODO.md for t245.3+."
             return 0
             ;;
         help|--help|-h)
             show_help
             ;;
         *)
-            print_error "Unknown source: $source"
+            print_error "Unknown command: $cmd"
             show_help
             return 1
             ;;
