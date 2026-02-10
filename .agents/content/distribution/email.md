@@ -263,7 +263,7 @@ Tag subscribers based on:
 - `services/email/email-design-test.md` - Cross-client rendering tests (Litmus, Email on Acid)
 - `services/email/email-delivery-test.md` - Inbox placement and spam scoring (GlockApps, Mail Tester)
 
-**Pre-Send Testing Checklist** (run via `email-test-suite-helper.sh full`):
+**Pre-Send Testing Checklist** (use `email-test-suite-helper.sh` subcommands):
 
 1. Content checks — subject line, preheader, accessibility, links, images, spam words (`email-health-check-helper.sh`)
 2. Design rendering — cross-client screenshots and compatibility (`email-design-test-helper.sh`)

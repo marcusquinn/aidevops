@@ -478,7 +478,7 @@ After each campaign:
 | Spam complaints | Better consent, relevant content |
 | Template rendering | Use `services/email/email-design-test.md` for cross-client testing |
 | Delivery issues | Use `services/email/email-delivery-test.md` for inbox placement and spam scoring |
-| Pre-send validation | Run `email-test-suite-helper.sh full` for comprehensive checks |
+| Pre-send validation | Run `email-test-suite-helper.sh test-design <file>` and `check-placement <domain>` for comprehensive checks |
 | Accessibility issues | Use `services/accessibility/accessibility-audit.md` for WCAG compliance |
 
 ### Getting Help
