@@ -537,15 +537,17 @@ Workers are injected with an efficiency protocol via the supervisor dispatch pro
 
 2. **Commit early, commit often** — After EACH implementation subtask, `git add -A && git commit` immediately. After the FIRST commit, `git push -u origin HEAD && gh pr create --draft`. This ensures work survives context exhaustion. The supervisor auto-promotes draft PRs to ready-for-review when the worker dies.
 
-3. **Research offloading** — Spawn Task sub-agents for heavy codebase exploration (reading 500+ line files, understanding patterns across multiple files). Sub-agents get fresh context windows and return concise summaries, saving the parent worker's context for implementation.
+3. **ShellCheck gate before push** (t234) — Before every `git push`, if any committed `.sh` files changed, run `shellcheck -x -S warning` on them and fix violations before pushing. This catches CI failures 5-10 minutes earlier than waiting for the remote pipeline. If `shellcheck` is not installed, skip and note it in the PR body.
 
-4. **Parallel sub-work** — For independent subtasks (e.g., tests + docs), workers can use the Task tool to spawn sub-agents. This is faster than sequential execution when subtasks don't modify the same files.
+4. **Research offloading** — Spawn Task sub-agents for heavy codebase exploration (reading 500+ line files, understanding patterns across multiple files). Sub-agents get fresh context windows and return concise summaries, saving the parent worker's context for implementation.
 
-5. **Checkpoint after each subtask** — Workers call `session-checkpoint-helper.sh save` after completing each subtask. If the session restarts or compacts, the worker can resume from the last checkpoint instead of restarting from scratch.
+5. **Parallel sub-work** — For independent subtasks (e.g., tests + docs), workers can use the Task tool to spawn sub-agents. This is faster than sequential execution when subtasks don't modify the same files.
 
-6. **Fail fast** — Workers verify assumptions before writing code: read target files, check dependencies exist, confirm the task isn't already done. This prevents wasting an entire session on a false premise.
+6. **Checkpoint after each subtask** — Workers call `session-checkpoint-helper.sh save` after completing each subtask. If the session restarts or compacts, the worker can resume from the last checkpoint instead of restarting from scratch.
 
-7. **Token minimisation** — Read file ranges (not entire files), write concise commit messages, and exit with BLOCKED after one failed retry instead of burning tokens on repeated attempts.
+7. **Fail fast** — Workers verify assumptions before writing code: read target files, check dependencies exist, confirm the task isn't already done. This prevents wasting an entire session on a false premise.
+
+8. **Token minimisation** — Read file ranges (not entire files), write concise commit messages, and exit with BLOCKED after one failed retry instead of burning tokens on repeated attempts.
 
 ### Why This Matters
 
@@ -558,6 +560,7 @@ Workers are injected with an efficiency protocol via the supervisor dispatch pro
 | Complex task done linearly → 1 failure = full restart | Subtask tracking → only redo the failed subtask |
 | No internal structure → steps skipped or repeated | Explicit subtask list → nothing missed |
 | All work sequential → slower | Independent subtasks parallelised via Task tool |
+| ShellCheck failures found in CI 5-10 min later | Pre-push gate catches violations instantly |
 
 ### Token Cost
 
