@@ -1940,9 +1940,10 @@ trigger_batch_release() {
     }
 
     # Run the release (--skip-preflight: batch tasks already passed CI individually)
+    # Use --force to bypass empty CHANGELOG check (auto-generates from commits)
     local release_output=""
     local release_exit=0
-    release_output=$(cd "$repo" && bash "$version_manager" release "$release_type" --skip-preflight 2>&1) || release_exit=$?
+    release_output=$(cd "$repo" && bash "$version_manager" release "$release_type" --skip-preflight --force 2>&1) || release_exit=$?
 
     echo "$release_output" > "$release_log" 2>/dev/null || true
 
