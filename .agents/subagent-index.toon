@@ -22,7 +22,7 @@ pro,gemini-2.5-pro,Capable large context
 grok,grok-3,Research and real-time web knowledge
 -->
 
-<!--TOON:subagents[43]{folder,purpose,key_files}:
+<!--TOON:subagents[44]{folder,purpose,key_files}:
 aidevops/,Framework internals - extending aidevops and architecture and plugins,setup|architecture|troubleshooting|self-improving-agents|claude-flow-comparison|plugins
 memory/,Cross-session memory - SQLite FTS5 storage,README
 seo/,Search optimization - keywords and rankings and UX/CRO,dataforseo|serper|semrush|neuronwriter|google-search-console|gsc-sitemaps|site-crawler|eeat-score|analytics-tracking|bing-webmaster-tools|screaming-frog|rich-results|debug-opengraph|debug-favicon|contentking|programmatic-seo|schema-validator|content-analyzer|seo-optimizer|keyword-mapper|mom-test-ux
@@ -36,6 +36,7 @@ tools/ai-orchestration/,AI orchestration - visual builders and multi-agent,overv
 tools/browser/,Browser automation - scraping and testing,agent-browser|stagehand|playwright|playwright-cli|playwright-emulation|playwriter|crawl4ai|watercrawl|pagespeed|peekaboo|curl-copy
 tools/mobile/,Mobile development - iOS/macOS build test simulator and emulator automation,agent-device|xcodebuild-mcp|ios-simulator-mcp|maestro|axe-cli|minisim
 tools/pdf/,PDF processing - form filling and digital signatures,overview|libpdf
+tools/accessibility/,Accessibility and contrast testing - WCAG compliance for websites and emails,accessibility
 tools/performance/,Web performance - Core Web Vitals and network analysis,performance|webpagetest
 tools/ui/,UI components - design systems and debugging,shadcn|ui-skills|frontend-debugging
 tools/code-review/,Code quality - linting and security scanning,code-standards|code-simplifier|codacy|coderabbit|qlty|snyk|secretlint|security-analysis
@@ -84,7 +85,8 @@ bug-fixing,workflows/bug-fixing.md,Bug fix workflow
 feature-development,workflows/feature-development.md,Feature development workflow
 -->
 
-<!--TOON:scripts[60]{name,purpose}:
+<!--TOON:scripts[61]{name,purpose}:
+accessibility-helper.sh,Accessibility and contrast testing (WCAG compliance for websites and emails)
 list-keys-helper.sh,List all API keys with storage locations
 list-verify-helper.sh,List verification queue entries with filtering (pending passed failed)
 verify-run-helper.sh,Execute verification checks with proof logging to verify-proof-log.md
