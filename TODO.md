@@ -144,7 +144,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t236 Higgsfield Automator Production Hardening #plan #higgsfield #automation #reliability → [todo/PLANS.md#2026-02-10-higgsfield-automator-production-hardening] ~6h (ai:4h test:1.5h read:30m) logged:2026-02-10 started:2026-02-10T18:00:00Z
   - [x] t236.1 Retry logic + credit guard — exponential backoff, pre-op credit check, cost map #higgsfield #reliability ~1.5h assignee:marcusquinn started:2026-02-10T18:12:41Z completed:2026-02-10
   - [ ] t236.2 Unlimited model auto-selection — parse/cache unlimited models, auto-select when available #higgsfield #cost-optimization ~1h assignee:marcusquinn started:2026-02-10T18:12:47Z
-  - [ ] t236.3 Batch operations — batch-image, batch-video, batch-lipsync with concurrency control #higgsfield #productivity ~1.5h assignee:marcusquinn started:2026-02-10T18:12:55Z
+  - [x] t236.3 Batch operations — batch-image, batch-video, batch-lipsync with concurrency control #higgsfield #productivity ~1.5h assignee:marcusquinn started:2026-02-10T18:12:55Z completed:2026-02-10
   - [x] t236.4 Output organization + metadata — project dirs, descriptive filenames, JSON sidecars, dedup #higgsfield #output ~1h assignee:marcusquinn started:2026-02-10T18:15:56Z completed:2026-02-10
   - [x] t236.5 Dry-run + auth resilience — --dry-run flag, auth health check, smoke test command #higgsfield #testing ~1h assignee:marcusquinn started:2026-02-10T18:16:09Z completed:2026-02-10
 - [x] t237 Retroactive PR backfill for supervisor DB — link ~60 no_pr tasks to their actual merged PRs #chore #supervisor #data-integrity ~1h (ai:45m test:15m) assignee:marcusquinn started:2026-02-10T18:12:33Z logged:2026-02-10 completed:2026-02-10
