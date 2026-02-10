@@ -28,6 +28,17 @@ Pre-writing research to validate niches, understand audiences, and analyse compe
 
 <!-- AI-CONTEXT-END -->
 
+## Pre-flight Questions
+
+Before generating audience or market research, work through:
+
+1. What are the first principles here — what is actually true vs commonly assumed?
+2. What is the root cause, not the symptom?
+3. What biases could be distorting this — confirmation, anchoring, availability, survivorship?
+4. What is the evidence — and how reliable is the source?
+5. Are there physics, psychology, or reliability constraints that limit what's possible?
+6. What would disprove this conclusion?
+
 ## Workflow
 
 ### 1. Audience Research

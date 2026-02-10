@@ -26,6 +26,15 @@ model: sonnet
 
 <!-- AI-CONTEXT-END -->
 
+## Pre-flight Questions
+
+Before generating copy, scripts, or long-form content, work through:
+
+1. What is the one thing the reader should do after reading this?
+2. Is the value front-loaded — would someone get something useful from the first paragraph alone?
+3. Is every section earning its place, or am I padding to fill a word count?
+4. Does the tone match the context — and am I matching it deliberately or defaulting?
+
 ## Output Formats
 
 ### Long-Form Script (YouTube, Podcast)

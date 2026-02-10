@@ -17,6 +17,15 @@ tools:
 
 Generate YouTube video scripts optimized for audience retention. Supports structured outlines, full scripts with pattern interrupts, hook generation, and remix mode (transform competitor videos into unique content).
 
+## Pre-flight Questions
+
+Before writing a video script, work through:
+
+1. What is the single takeaway — and does every section of the script serve it?
+2. Why would someone watch past 30 seconds — what tension or promise holds them?
+3. What does the viewer already know — where does this video meet them?
+4. What would make this indistinguishable from the last 10 videos on this topic — and how do we avoid that?
+
 ## When to Use
 
 Read this subagent when the user wants to:

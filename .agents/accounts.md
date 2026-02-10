@@ -29,6 +29,16 @@ subagents:
 
 <!-- AI-CONTEXT-END -->
 
+## Pre-flight Questions
+
+Before generating financial or accounting output, work through:
+
+1. How would this look to a tax inspector, investor, or lender reviewing the books?
+2. What is the tax treatment — and in which jurisdiction(s)?
+3. Are we recording substance or just form — does this reflect economic reality?
+4. What audit trail exists to support every figure?
+5. What would change if the business were investigated, sold, or seeking funding tomorrow?
+
 ## Accounting Workflows
 
 ### QuickFile Integration

@@ -78,6 +78,18 @@ subagents:
 
 <!-- AI-CONTEXT-END -->
 
+## Pre-flight Questions
+
+Before generating marketing strategy or campaign output, work through:
+
+1. Is the offer valuable? What specific problem does it solve, and is that problem real and painful?
+2. What is unique about our solution — what do we offer that alternatives don't?
+3. What are the benefits (outcomes the buyer gets) before the features (how it works)?
+4. How does our pricing and value compare to alternatives — including doing nothing?
+5. How can we guarantee results or satisfaction — and are our claims realistic and provable?
+6. Who specifically are we addressing — named personas with real constraints, not demographics?
+7. What would make someone say "this isn't for me" — and is that the right person to lose?
+
 ## Email Marketing
 
 ### FluentCRM Setup
