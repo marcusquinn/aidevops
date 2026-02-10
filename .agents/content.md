@@ -21,8 +21,9 @@ subagents:
   # WordPress publishing
   - wp-admin
   - mainwp
-  # Research
+  # Research & Story
   - research
+  - story
   - context7
   - crawl4ai
   # Built-in
@@ -53,6 +54,7 @@ subagents:
 | `context-templates.md` | Per-project SEO context templates (brand voice, style, keywords) |
 | `content-calendar.md` | Content calendar planning with gap analysis and lifecycle tracking |
 | `research.md` | Audience research, niche validation, competitor analysis |
+| `story.md` | Narrative design, hooks, angles, and storytelling frameworks |
 
 **SEO Analysis** (via `seo/`):
 
@@ -83,11 +85,12 @@ python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py intent "search query"
 **Workflow**:
 1. Plan (`tools/content/content-calendar.md` for gap analysis and scheduling)
 2. Research (`content/research.md` for audience, niche validation, competitors)
-3. Write (`content/seo-writer.md` with keyword targets)
-4. Analyze (`seo-content-analyzer.py analyze`)
-5. Optimize (address issues from analysis)
-6. Edit (`content/editor.md` for human voice)
-7. Publish (via WordPress or CMS)
+3. Story (`content/story.md` for hooks, angles, narrative frameworks)
+4. Write (`content/seo-writer.md` with keyword targets)
+5. Analyze (`seo-content-analyzer.py analyze`)
+6. Optimize (address issues from analysis)
+7. Edit (`content/editor.md` for human voice)
+8. Publish (via WordPress or CMS)
 
 <!-- AI-CONTEXT-END -->
 
