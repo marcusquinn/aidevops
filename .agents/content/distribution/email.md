@@ -259,7 +259,15 @@ Tag subscribers based on:
 
 - `services/accessibility/accessibility-audit.md` - Email accessibility checks (WCAG compliance)
 - `services/email/email-health-check.md` - DNS authentication and deliverability
-- `services/email/email-testing.md` - Design rendering and delivery testing
+- `services/email/email-testing.md` - Design rendering and delivery testing overview
+- `services/email/email-design-test.md` - Cross-client rendering tests (Litmus, Email on Acid)
+- `services/email/email-delivery-test.md` - Inbox placement and spam scoring (GlockApps, Mail Tester)
+
+**Pre-Send Testing Checklist** (run via `email-test-suite-helper.sh full`):
+
+1. Content checks — subject line, preheader, accessibility, links, images, spam words (`email-health-check-helper.sh`)
+2. Design rendering — cross-client screenshots and compatibility (`email-design-test-helper.sh`)
+3. Delivery testing — inbox placement, spam score, authentication (`email-delivery-test-helper.sh`)
 
 **Distribution Channels**:
 
