@@ -95,7 +95,7 @@ The result: AI agents that work *with* your development process, not around it.
 
 - 11 primary agents (Build+, SEO, Marketing, etc.) with specialist @subagents on demand
 - 735+ subagent markdown files organized by domain
-- 194 helper scripts in `.agents/scripts/`
+- 201 helper scripts in `.agents/scripts/`
 - 53 slash commands for common workflows
 
 <!-- AI-CONTEXT-END -->
@@ -435,7 +435,7 @@ aidevops implements proven agent design patterns identified by [Lance Martin (La
 
 | Pattern | Description | aidevops Implementation |
 |---------|-------------|------------------------|
-| **Give Agents a Computer** | Filesystem + shell for persistent context | `~/.aidevops/.agent-workspace/`, 194 helper scripts |
+| **Give Agents a Computer** | Filesystem + shell for persistent context | `~/.aidevops/.agent-workspace/`, 201 helper scripts |
 | **Multi-Layer Action Space** | Few tools, push actions to computer | Per-agent MCP filtering (~12-20 tools each) |
 | **Progressive Disclosure** | Load context on-demand | Subagent routing with content summaries, YAML frontmatter, read-on-demand |
 | **Offload Context** | Write results to filesystem | `.agent-workspace/work/[project]/` for persistence |
@@ -1390,7 +1390,7 @@ aidevops is registered as a **Claude Code plugin marketplace**. Install with two
 /plugin install aidevops@aidevops
 ```
 
-This installs the complete framework: 11 primary agents, 735+ subagents, and 194 helper scripts.
+This installs the complete framework: 11 primary agents, 735+ subagents, and 201 helper scripts.
 
 ### Importing External Skills
 
@@ -2120,7 +2120,7 @@ aidevops/
 ├── .agents/                        # Agents and documentation
 │   ├── AGENTS.md                  # User guide (deployed to ~/.aidevops/agents/)
 │   ├── *.md                       # 11 primary agents
-│   ├── scripts/                   # 194 helper scripts
+│   ├── scripts/                   # 201 helper scripts
 │   ├── tools/                     # Cross-domain utilities (video, browser, git, etc.)
 │   ├── services/                  # External service integrations
 │   └── workflows/                 # Development process guides
