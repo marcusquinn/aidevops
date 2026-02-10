@@ -738,8 +738,8 @@ commit_version_changes() {
     
     print_info "Committing version changes..."
     
-    # Stage all version-related files (including CHANGELOG.md, TODO.md, and Claude plugin)
-    git add VERSION package.json README.md setup.sh aidevops.sh sonar-project.properties CHANGELOG.md TODO.md .claude-plugin/marketplace.json 2>/dev/null
+    # Stage all version-related files (including CHANGELOG.md, TODO.md, Homebrew formula, and Claude plugin)
+    git add VERSION package.json README.md setup.sh aidevops.sh sonar-project.properties CHANGELOG.md TODO.md homebrew/aidevops.rb .claude-plugin/marketplace.json 2>/dev/null
     
     # Check if there are changes to commit
     if git diff --cached --quiet; then
