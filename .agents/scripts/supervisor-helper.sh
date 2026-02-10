@@ -6296,6 +6296,9 @@ check_pr_status() {
                     if [[ -n "$validated_url" ]]; then
                         pr_url="$validated_url"
                         log_cmd "db-update-pr-url" sqlite3 "$SUPERVISOR_DB" "UPDATE tasks SET pr_url = '$(sql_escape "$validated_url")' WHERE id = '$escaped_id';" || log_warn "Failed to persist PR URL for $task_id"
+                        write_proof_log --task "$task_id" --event "pr_url_linked" --stage "pr_discovered" \
+                            --decision "branch_lookup" --evidence "url=$validated_url" \
+                            --maker "check_pr_status" --pr-url "$validated_url" 2>/dev/null || true
                     else
                         log_warn "check_pr_status: candidate PR for $task_id failed task ID validation — not persisting"
                         echo "no_pr"
@@ -6589,6 +6592,9 @@ scan_orphaned_prs() {
                     local escaped_tid
                     escaped_tid=$(sql_escape "$tid")
                     db "$SUPERVISOR_DB" "UPDATE tasks SET pr_url = '$(sql_escape "$validated_url")' WHERE id = '$escaped_tid';" 2>/dev/null || true
+                    write_proof_log --task "$tid" --event "pr_url_linked" --stage "orphan_scan" \
+                        --decision "batch_sweep" --evidence "url=$validated_url" \
+                        --maker "scan_orphaned_prs" --pr-url "$validated_url" 2>/dev/null || true
 
                     local current_status
                     current_status=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$escaped_tid';" 2>/dev/null || echo "")
@@ -6735,6 +6741,9 @@ scan_orphaned_pr_for_task() {
 
     # Link the PR to the task
     db "$SUPERVISOR_DB" "UPDATE tasks SET pr_url = '$(sql_escape "$validated_url")' WHERE id = '$escaped_id';" 2>/dev/null || true
+    write_proof_log --task "$task_id" --event "pr_url_linked" --stage "orphan_scan_eager" \
+        --decision "eager_single_task" --evidence "url=$validated_url" \
+        --maker "scan_orphaned_pr_for_task" --pr-url "$validated_url" 2>/dev/null || true
 
     # Transition eligible tasks to complete
     case "$tstatus" in
@@ -7464,6 +7473,9 @@ cmd_pr_lifecycle() {
                 if [[ "$dry_run" == "false" ]]; then
                     sqlite3 "$SUPERVISOR_DB" "UPDATE tasks SET pr_url = '$(sql_escape "$found_pr")' WHERE id = '$escaped_id';"
                     tpr="$found_pr"
+                    write_proof_log --task "$task_id" --event "pr_url_linked" --stage "pr_lifecycle" \
+                        --decision "branch_lookup" --evidence "url=$found_pr" \
+                        --maker "cmd_pr_lifecycle" --pr-url "$found_pr" 2>/dev/null || true
                 fi
             else
                 log_warn "No PR for $task_id - skipping post-PR lifecycle"
