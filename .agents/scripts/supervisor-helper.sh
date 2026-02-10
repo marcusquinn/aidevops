@@ -7180,15 +7180,15 @@ merge_task_pr() {
         return 1
     fi
 
-    local pr_number
-    pr_number=$(echo "$tpr" | grep -oE '[0-9]+$' || echo "")
-    local repo_slug
-    repo_slug=$(echo "$tpr" | grep -oE 'github\.com/[^/]+/[^/]+' | sed 's|github\.com/||' || echo "")
-
-    if [[ -z "$pr_number" || -z "$repo_slug" ]]; then
+    # t232: Use centralized parse_pr_url() for URL parsing
+    local parsed_merge pr_number repo_slug
+    parsed_merge=$(parse_pr_url "$tpr") || parsed_merge=""
+    if [[ -z "$parsed_merge" ]]; then
         log_error "Cannot parse PR URL: $tpr"
         return 1
     fi
+    repo_slug="${parsed_merge%%|*}"
+    pr_number="${parsed_merge##*|}"
 
     # Defense-in-depth: validate PR belongs to this task before merging (t223).
     # Prevents merging the wrong PR if cross-contamination occurred upstream.
@@ -7740,10 +7740,11 @@ cmd_pr_lifecycle() {
                 else
                     log_info "PR is draft and worker is dead for $task_id — auto-promoting to ready"
                     if [[ "$dry_run" == "false" ]]; then
-                        local pr_num_draft
-                        pr_num_draft=$(echo "$tpr" | grep -oE '[0-9]+$' || echo "")
-                        local repo_slug_draft
-                        repo_slug_draft=$(echo "$tpr" | grep -oE 'github\.com/[^/]+/[^/]+' | sed 's|github\.com/||' || echo "")
+                        # t232: Use centralized parse_pr_url() for URL parsing
+                        local parsed_draft pr_num_draft repo_slug_draft
+                        parsed_draft=$(parse_pr_url "$tpr") || parsed_draft=""
+                        repo_slug_draft="${parsed_draft%%|*}"
+                        pr_num_draft="${parsed_draft##*|}"
                         if [[ -n "$pr_num_draft" && -n "$repo_slug_draft" ]]; then
                             gh pr ready "$pr_num_draft" --repo "$repo_slug_draft" 2>>"$SUPERVISOR_LOG" || true
                             log_success "Auto-promoted draft PR #$pr_num_draft to ready for $task_id"
@@ -7801,11 +7802,11 @@ cmd_pr_lifecycle() {
         local stage_start
         stage_start=$(date +%s)
         
-        # Extract PR number and repo slug for GraphQL query
-        local pr_number_triage
-        pr_number_triage=$(echo "$tpr" | grep -oE '[0-9]+$' || echo "")
-        local repo_slug_triage
-        repo_slug_triage=$(echo "$tpr" | grep -oE 'github\.com/[^/]+/[^/]+' | sed 's|github\.com/||' || echo "")
+        # Extract PR number and repo slug for GraphQL query (t232)
+        local parsed_triage pr_number_triage repo_slug_triage
+        parsed_triage=$(parse_pr_url "$tpr") || parsed_triage=""
+        repo_slug_triage="${parsed_triage%%|*}"
+        pr_number_triage="${parsed_triage##*|}"
 
         if [[ -z "$pr_number_triage" || -z "$repo_slug_triage" ]]; then
             log_warn "Cannot parse PR URL for triage: $tpr - skipping triage"
@@ -9120,15 +9121,15 @@ verify_task_deliverables() {
         return 1
     fi
 
-    # Extract repo slug and PR number from URL
-    local repo_slug pr_number
-    repo_slug=$(echo "$pr_url" | grep -oE 'github\.com/[^/]+/[^/]+' | sed 's|github\.com/||' || echo "")
-    pr_number=$(echo "$pr_url" | grep -oE '[0-9]+$' || echo "")
-
-    if [[ -z "$repo_slug" || -z "$pr_number" ]]; then
+    # Extract repo slug and PR number from URL (t232)
+    local parsed_verify repo_slug pr_number
+    parsed_verify=$(parse_pr_url "$pr_url") || parsed_verify=""
+    if [[ -z "$parsed_verify" ]]; then
         log_warn "Cannot parse PR URL for $task_id: $pr_url"
         return 1
     fi
+    repo_slug="${parsed_verify%%|*}"
+    pr_number="${parsed_verify##*|}"
 
     # Pre-flight: verify gh CLI is available and authenticated
     if ! command -v gh &>/dev/null; then
@@ -9208,15 +9209,15 @@ populate_verify_queue() {
         return 0
     fi
 
-    # Extract PR number and repo slug
-    local pr_number repo_slug
-    pr_number=$(echo "$pr_url" | grep -oE '[0-9]+$' || echo "")
-    repo_slug=$(echo "$pr_url" | grep -oE 'github\.com/[^/]+/[^/]+' | sed 's|github\.com/||' || echo "")
-
-    if [[ -z "$pr_number" || -z "$repo_slug" ]]; then
+    # Extract PR number and repo slug (t232)
+    local parsed_populate pr_number repo_slug
+    parsed_populate=$(parse_pr_url "$pr_url") || parsed_populate=""
+    if [[ -z "$parsed_populate" ]]; then
         log_warn "populate_verify_queue: cannot parse PR URL for $task_id: $pr_url"
         return 1
     fi
+    repo_slug="${parsed_populate%%|*}"
+    pr_number="${parsed_populate##*|}"
 
     # Check if this task already has a verify entry (idempotency)
     if grep -q "^- \[.\] v[0-9]* $task_id " "$verify_file" 2>/dev/null; then
