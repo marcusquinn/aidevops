@@ -12,7 +12,7 @@
   },
   "video": {
     "create": "/create/video",
-    "draw_to_video": "/create/draw-to-video",
+    "storyboard": "/storyboard-generator",
     "edit": "/create/edit",
     "motion_control": "/create/motion-control",
     "cinema_studio": "/cinema-studio",
@@ -65,7 +65,7 @@
     "ai_stylist": "/app/ai-stylist",
     "outfit_swap": "/app/outfit-swap",
     "outfit_shot": "/app/outfit-shot",
-    "click_to_ad": "/app/click-to-ad",
+    "link_to_video_ad": "/app/link-to-video-ad",
     "plushies": "/app/plushies",
     "sticker_matchcut": "/app/sticker-matchcut",
     "glitter_sticker": "/app/glitter-sticker",
@@ -128,7 +128,8 @@
     "asmr_add_on": "/app/asmr-add-on",
     "asmr_classic": "/app/asmr-classic",
     "asmr_host": "/app/asmr-host",
-    "asmr_promo": "/app/asmr-promo"
+    "asmr_promo": "/app/asmr-promo",
+    "surrounded_by_animals": "/app/surrounded-by-animals"
   },
   "mixed_media_presets": {
     "layer": "/mixed-media-presets/preset/6ff15c8c-de78-459e-af32-e7a1266dc075",
@@ -149,6 +150,48 @@
     "ocean": "/mixed-media-presets/preset/19115d24-276e-4222-a23f-39cc23d9a326",
     "magazine": "/mixed-media-presets/preset/963c3300-8967-4880-b078-c956de4c1e12",
     "modern": "/mixed-media-presets/preset/9196d356-1406-43ef-bc68-cb26e7eaf507",
-    "acid": "/mixed-media-presets/preset/b501a54d-7c2a-42f8-a47d-484cbdace0a6"
+    "acid": "/mixed-media-presets/preset/b501a54d-7c2a-42f8-a47d-484cbdace0a6",
+    "tracking": "/mixed-media-presets/preset/tracking",
+    "ultraviolet": "/mixed-media-presets/preset/ultraviolet",
+    "windows": "/mixed-media-presets/preset/windows",
+    "palette": "/mixed-media-presets/preset/palette",
+    "glitch": "/mixed-media-presets/preset/glitch",
+    "neon": "/mixed-media-presets/preset/neon",
+    "watercolor": "/mixed-media-presets/preset/watercolor",
+    "blueprint": "/mixed-media-presets/preset/blueprint",
+    "thermal": "/mixed-media-presets/preset/thermal",
+    "xray": "/mixed-media-presets/preset/xray",
+    "infrared": "/mixed-media-presets/preset/infrared",
+    "hologram": "/mixed-media-presets/preset/hologram",
+    "pixelate": "/mixed-media-presets/preset/pixelate",
+    "mosaic": "/mixed-media-presets/preset/mosaic"
+  },
+  "model_pages": {
+    "kling_30": "/kling-30-community",
+    "kling_26_motion_control": "/kling-2-6-motion-control",
+    "camera_controls": "/camera-controls",
+    "effects": "/effects",
+    "creative_challenge": "/creative-challenge",
+    "minimax": "/minimax",
+    "seedance_2": "/seedance/2.0",
+    "wan_26": "/wan-2.6",
+    "veo_31": "/veo3.1"
+  },
+  "asset_chain_actions": [
+    "animate", "inpaint", "upscale", "relight", "angles",
+    "shots", "ai-stylist", "skin-enhancer", "multishot"
+  ],
+  "lipsync_models": {
+    "wan_25_fast": "Wan 2.5 Fast",
+    "kling_26_lipsync": "Kling 2.6 Lipsync",
+    "google_veo_3": "Google Veo 3",
+    "google_veo_3_fast": "Google Veo 3 Fast",
+    "wan_25_speak": "Wan 2.5 Speak",
+    "wan_25_speak_fast": "Wan 2.5 Speak Fast",
+    "kling_avatars_20": "Kling Avatars 2.0",
+    "higgsfield_speak_20": "Higgsfield Speak 2.0",
+    "infinite_talk": "Infinite Talk",
+    "kling_lipsync": "Kling Lipsync",
+    "sync_lipsync_2_pro": "Sync Lipsync 2 Pro"
   }
 }

@@ -16,6 +16,8 @@ tools:
 
 Browser-based automation for Higgsfield AI using Playwright. This subagent drives the Higgsfield web UI to generate images, videos, lipsync, and effects using **subscription credits** (which are only available through the UI, not the API).
 
+**Automation Coverage**: Full UI coverage -- Image generation (10/10 models), Video creation (4/4 workflows), Cinema Studio, Motion Control, Video Edit, Edit/Inpaint (5 models), Upscale, Lipsync (11 models), Apps (38+ via generic handler), Asset Library + Asset Chaining (9 actions), Mixed Media Presets (32), Motion/VFX Presets (150+), Vibe Motion (5 sub-types), Storyboard Generator, AI Influencer Studio, Character profiles, Feature pages (Fashion Factory, UGC Factory, Photodump Studio, Camera Controls, Effects), Pipeline with Remotion post-production, Seed Bracketing. **27 CLI commands total.**
+
 ## When to Use
 
 Use this subagent instead of the API subagent (`higgsfield.md`) when:
@@ -46,6 +48,21 @@ Use this subagent instead of the API subagent (`higgsfield.md`) when:
 # Use an app/effect
 ~/.aidevops/agents/scripts/higgsfield-helper.sh app face-swap --image-file photo.jpg
 
+# Cinema Studio (cinematic image/video with camera+lens presets)
+~/.aidevops/agents/scripts/higgsfield-helper.sh cinema-studio "Epic landscape" --tab image --camera "Dolly Zoom"
+
+# Motion Control (animate character with motion reference video)
+~/.aidevops/agents/scripts/higgsfield-helper.sh motion-control --video-file dance.mp4 --image-file character.jpg
+
+# Edit/Inpaint (5 models: soul_inpaint, banana_placement, canvas, multi, nano_banana_pro_inpaint)
+~/.aidevops/agents/scripts/higgsfield-helper.sh edit "Replace background with beach" --image-file photo.jpg -m soul_inpaint
+
+# Upscale (AI upscale image or video)
+~/.aidevops/agents/scripts/higgsfield-helper.sh upscale --image-file low-res.jpg
+
+# Asset Library (browse, filter, download)
+~/.aidevops/agents/scripts/higgsfield-helper.sh manage-assets --asset-action list --filter video
+
 # Check credits and unlimited models
 ~/.aidevops/agents/scripts/higgsfield-helper.sh credits
 
@@ -57,7 +74,7 @@ Use this subagent instead of the API subagent (`higgsfield.md`) when:
 
 ```text
 higgsfield-helper.sh (shell wrapper)
-  └── higgsfield/playwright-automator.mjs (Playwright automation, ~3400 lines)
+  └── higgsfield/playwright-automator.mjs (Playwright automation, ~4900 lines)
         ├── Persistent auth state (~/.aidevops/.agent-workspace/work/higgsfield/auth-state.json)
         ├── Site discovery cache (~/.aidevops/.agent-workspace/work/higgsfield/routes-cache.json)
         ├── Credentials from ~/.config/aidevops/credentials.sh
@@ -147,7 +164,7 @@ higgsfield-helper.sh lipsync "Breaking news today..." --image-file anchor.jpg --
 
 ### Apps and Effects
 
-Higgsfield has 86+ apps for one-click content creation:
+Higgsfield has 38+ apps for one-click content creation (visible on /apps page):
 
 ```bash
 # Face swap
@@ -163,7 +180,258 @@ higgsfield-helper.sh app comic-book --image-file photo.jpg
 higgsfield-helper.sh app sketch-to-real --image-file sketch.jpg
 ```
 
-**Popular apps**: face-swap, 3d-render, comic-book, transitions, recast, skin-enhancer, angles, relight, shots, zooms, poster, sketch-to-real, renaissance, mugshot, character-swap, outfit-swap, click-to-ad, plushies, sticker-matchcut
+**Popular apps**: face-swap, 3d-render, comic-book, transitions, recast, skin-enhancer, angles, relight, shots, zooms, poster, sketch-to-real, renaissance, mugshot, character-swap, outfit-swap, link-to-video-ad, plushies, sticker-matchcut, surrounded-by-animals
+
+### Cinema Studio
+
+Professional cinematic image/video with camera and lens simulation presets.
+
+```bash
+# Cinematic image with camera preset
+higgsfield-helper.sh cinema-studio "Epic mountain landscape at golden hour" --tab image --camera "Dolly Zoom"
+
+# Cinematic video
+higgsfield-helper.sh cinema-studio "Dramatic reveal of ancient temple" --duration 10 --lens "Anamorphic"
+
+# With quality and aspect
+higgsfield-helper.sh cinema-studio "Product hero shot" --tab image --quality 4K --aspect 16:9
+```
+
+Controls: Image/Video tab, camera presets (Dolly Zoom, Tracking, etc.), lens presets (Anamorphic, etc.), quality (1K/2K/4K), aspect ratio, batch count. Cost: 20 credits (has free generations).
+
+### Motion Control
+
+Animate a character image using a motion reference video.
+
+```bash
+# Upload dance video as motion reference + character image
+higgsfield-helper.sh motion-control --video-file dance.mp4 --image-file character.jpg
+
+# With prompt guidance
+higgsfield-helper.sh motion-control --motion-ref walk.mp4 --image-file person.jpg -p "Walking through park"
+
+# Unlimited mode (Kling)
+higgsfield-helper.sh motion-control --video-file ref.mp4 --image-file face.jpg --unlimited
+```
+
+Accepts `--video-file` or `--motion-ref` for the reference video (3-30s), `--image-file` for the character. Cost: UNLIMITED with Kling.
+
+### Edit/Inpaint
+
+Upload an image and edit/inpaint specific regions with 5 available models.
+
+```bash
+# Soul Inpaint (default)
+higgsfield-helper.sh edit "Replace background with tropical beach" --image-file photo.jpg
+
+# Product placement (Banana Placement model)
+higgsfield-helper.sh edit "Place product on marble table" --image-file product.jpg -m banana_placement
+
+# Multi-reference (two images)
+higgsfield-helper.sh edit "Combine styles" --image-file base.jpg --image-file2 reference.jpg -m multi
+
+# Canvas model
+higgsfield-helper.sh edit "Extend the scene" --image-file photo.jpg -m canvas
+```
+
+Models: `soul_inpaint` (default), `nano_banana_pro_inpaint`, `banana_placement`, `canvas`, `multi`. The `--image-file2` flag provides a second reference image for multi-reference and product placement models.
+
+### Upscale
+
+AI upscale an image or video to higher resolution.
+
+```bash
+# Upscale an image
+higgsfield-helper.sh upscale --image-file low-res.jpg
+
+# Upscale a video
+higgsfield-helper.sh upscale --video-file clip.mp4
+
+# Custom output
+higgsfield-helper.sh upscale --image-file photo.jpg --output ~/Projects/hires/
+```
+
+### Asset Library
+
+Browse, filter, and download from the Higgsfield asset library.
+
+```bash
+# List all assets
+higgsfield-helper.sh manage-assets --asset-action list
+
+# List filtered by type
+higgsfield-helper.sh manage-assets --asset-action list --filter video
+higgsfield-helper.sh manage-assets --asset-action list --filter lipsync
+
+# Download latest asset
+higgsfield-helper.sh manage-assets --asset-action download-latest --filter image
+
+# Download specific asset by index
+higgsfield-helper.sh manage-assets --asset-action download --asset-index 3
+
+# Bulk download (up to N assets)
+higgsfield-helper.sh manage-assets --asset-action download-all --limit 20
+```
+
+Filters: `image`, `video`, `lipsync`, `upscaled`, `liked`. Actions: `list`, `download`, `download-latest`, `download-all`.
+
+### Asset Chaining ("Open in")
+
+Chain an existing asset directly to another tool without downloading and re-uploading. Uses the "Open in" menu from the asset detail dialog.
+
+```bash
+# Animate an asset (send to video generation)
+higgsfield-helper.sh chain --chain-action animate --asset-index 0
+
+# Inpaint an asset with a prompt
+higgsfield-helper.sh chain --chain-action inpaint -p "Replace background with sunset" --asset-index 0
+
+# Upscale the latest asset
+higgsfield-helper.sh chain --chain-action upscale --asset-index 0
+
+# Relight, change angles, or apply AI styling
+higgsfield-helper.sh chain --chain-action relight --asset-index 2
+higgsfield-helper.sh chain --chain-action angles --asset-index 0
+higgsfield-helper.sh chain --chain-action ai-stylist --asset-index 0
+```
+
+Available actions: `animate`, `inpaint`, `upscale`, `relight`, `angles`, `shots`, `ai-stylist`, `skin-enhancer`, `multishot`. The `--asset-index` selects which asset to chain (0 = latest).
+
+### Mixed Media Presets
+
+Apply visual transformation presets (32+ presets with UUID-based URLs).
+
+```bash
+# Apply sketch preset
+higgsfield-helper.sh mixed-media --preset sketch --image-file photo.jpg
+
+# Apply noir preset
+higgsfield-helper.sh mixed-media --preset noir --image-file photo.jpg
+
+# Other presets: layer, canvas, flash_comic, overexposed, paper, particles,
+# hand_paint, toxic, vintage, comic, origami, marble, lava, ocean, magazine,
+# modern, acid, tracking, ultraviolet, glitch, neon, watercolor, blueprint,
+# thermal, xray, infrared, hologram, pixelate, mosaic
+```
+
+### Motion/VFX Presets
+
+Apply motion or VFX effects from 150+ presets discovered dynamically.
+
+```bash
+# List available presets
+higgsfield-helper.sh motion-preset
+
+# Apply a preset by name
+higgsfield-helper.sh motion-preset --preset dolly_zoom --image-file photo.jpg
+
+# Apply by UUID directly
+higgsfield-helper.sh motion-preset --preset "a1b2c3d4-..." --image-file photo.jpg
+```
+
+Presets are discovered by `discover` and cached in `routes-cache.json`. Run `discover` to refresh.
+
+### Video Edit
+
+Edit an existing video with a character image overlay.
+
+```bash
+# Edit video with character
+higgsfield-helper.sh video-edit --video-file clip.mp4 --image-file character.jpg -p "Character walks through scene"
+```
+
+### Storyboard Generator
+
+Create multi-panel storyboards from a script or prompt.
+
+```bash
+# Generate storyboard
+higgsfield-helper.sh storyboard -p "A hero's journey through a cyberpunk city" --scenes 6
+
+# With style preset
+higgsfield-helper.sh storyboard -p "Product launch story" --scenes 4 --preset "Cinematic"
+
+# With reference image
+higgsfield-helper.sh storyboard -p "Day in the life" --image-file reference.jpg
+```
+
+### Vibe Motion
+
+Animated content creation with 5 sub-types.
+
+```bash
+# Poster animation
+higgsfield-helper.sh vibe-motion -p "Product launch announcement" --tab posters --preset Corporate
+
+# Text animation
+higgsfield-helper.sh vibe-motion -p "Breaking News: AI Revolution" --tab text-animation --duration 10
+
+# Infographics
+higgsfield-helper.sh vibe-motion -p "Q4 Revenue Growth 45%" --tab infographics --preset Minimal
+
+# Presentation
+higgsfield-helper.sh vibe-motion -p "Company overview slides" --tab presentation --duration 30
+
+# From scratch (default)
+higgsfield-helper.sh vibe-motion -p "Abstract motion graphics" --image-file logo.png
+```
+
+Sub-types: `infographics`, `text-animation`, `posters`, `presentation`, `from-scratch`. Styles: Minimal, Corporate, Fashion, Marketing. Duration: Auto/5/10/15/30s. Cost: 8-60 credits.
+
+### AI Influencer Studio
+
+Create AI-generated influencer characters.
+
+```bash
+# Create human influencer
+higgsfield-helper.sh influencer --preset Human -p "Fashion influencer, warm smile, studio lighting"
+
+# Create fantasy character
+higgsfield-helper.sh influencer --preset Elf -p "Ethereal forest guardian"
+
+# With reference image
+higgsfield-helper.sh influencer --image-file reference.jpg -p "Similar style influencer"
+```
+
+Character types: Human, Ant, Bee, Octopus, Alien, Elf, and more. Cost: 30 free generations.
+
+### Character Profiles
+
+Create persistent character profiles for consistent generation across sessions.
+
+```bash
+# Create character from photo
+higgsfield-helper.sh character --image-file face.jpg -p "Sarah"
+
+# With multiple reference photos
+higgsfield-helper.sh character --image-file face1.jpg --image-file2 face2.jpg -p "Alex"
+```
+
+### Feature Pages
+
+Generic handler for feature pages that follow the standard upload + generate pattern.
+
+```bash
+# Fashion Factory
+higgsfield-helper.sh feature --feature fashion-factory --image-file outfit.jpg -p "Summer collection"
+
+# UGC Factory
+higgsfield-helper.sh feature --feature ugc-factory --image-file product.jpg -p "Unboxing review script"
+
+# Photodump Studio
+higgsfield-helper.sh feature --feature photodump-studio --image-file photo1.jpg
+
+# Camera Controls
+higgsfield-helper.sh feature --feature camera-controls --image-file scene.jpg
+
+# Effects
+higgsfield-helper.sh feature --feature effects --image-file photo.jpg
+
+# Shorthand (command name = feature name)
+higgsfield-helper.sh fashion-factory --image-file outfit.jpg
+higgsfield-helper.sh ugc-factory --image-file product.jpg
+higgsfield-helper.sh effects --image-file photo.jpg
+```
 
 ### Account Management
 
@@ -221,6 +489,7 @@ higgsfield-helper.sh download --model video # videos from History
 
 | Model | Resolution | Duration | Cost |
 |-------|-----------|----------|------|
+| Wan 2.5 Fast | varies | varies | varies |
 | Kling 2.6 Lipsync | 1080p | 10s | varies |
 | Google Veo 3 | 720p | 8s | varies |
 | Veo 3 Fast | 720p | 8s | varies |
@@ -460,6 +729,20 @@ Results saved to `~/Downloads/seed-bracket-{timestamp}/` with `bracket-results.j
 --character-image  Character face image for pipeline
 --dialogue         Dialogue text for lipsync in pipeline
 --scenes           Number of scenes to generate
+--video-file       Path to video file (motion reference for motion-control)
+--motion-ref       Alias for --video-file (motion reference video)
+--image-file2      Second image file (multi-reference edit, product placement)
+--camera           Camera preset for cinema-studio (e.g., "Dolly Zoom")
+--lens             Lens preset for cinema-studio (e.g., "Anamorphic")
+--tab              Tab selection: "image" or "video" (cinema-studio)
+--filter           Asset filter: image, video, lipsync, upscaled, liked
+--asset-action     Asset action: list, download, download-latest, download-all
+--asset-type       Asset type filter for manage-assets
+--asset-index      Index of specific asset to download (0-based)
+--limit            Max number of assets to download
+--chain-action     Asset chain action: animate, inpaint, upscale, relight, angles, shots, ai-stylist, skin-enhancer, multishot
+--feature          Feature page slug: fashion-factory, ugc-factory, photodump-studio, camera-controls, effects
+--subtype          Vibe Motion sub-type: infographics, text-animation, posters, presentation, from-scratch
 ```
 
 ## Prompt Engineering Tips

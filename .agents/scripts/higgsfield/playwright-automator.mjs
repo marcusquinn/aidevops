@@ -101,6 +101,34 @@ function parseArgs() {
       options.dialogue = args[++i];
     } else if (args[i] === '--scenes') {
       options.scenes = parseInt(args[++i], 10);
+    } else if (args[i] === '--video-file') {
+      options.videoFile = args[++i];
+    } else if (args[i] === '--motion-ref') {
+      options.motionRef = args[++i];
+    } else if (args[i] === '--image-file2') {
+      options.imageFile2 = args[++i];
+    } else if (args[i] === '--filter') {
+      options.filter = args[++i];
+    } else if (args[i] === '--asset-action') {
+      options.assetAction = args[++i];
+    } else if (args[i] === '--asset-type') {
+      options.assetType = args[++i];
+    } else if (args[i] === '--asset-index') {
+      options.assetIndex = parseInt(args[++i], 10);
+    } else if (args[i] === '--limit') {
+      options.limit = parseInt(args[++i], 10);
+    } else if (args[i] === '--camera') {
+      options.camera = args[++i];
+    } else if (args[i] === '--lens') {
+      options.lens = args[++i];
+    } else if (args[i] === '--tab') {
+      options.tab = args[++i];
+    } else if (args[i] === '--chain-action') {
+      options.chainAction = args[++i];
+    } else if (args[i] === '--feature') {
+      options.feature = args[++i];
+    } else if (args[i] === '--subtype') {
+      options.subtype = args[++i];
     }
   }
 
@@ -3265,6 +3293,1343 @@ async function pipeline(options = {}) {
   return pipelineState;
 }
 
+// Cinema Studio — professional cinematic image/video with camera/lens simulation
+async function cinemaStudio(options = {}) {
+  const { browser, context, page } = await launchBrowser(options);
+
+  try {
+    console.log('Navigating to Cinema Studio...');
+    await page.goto(`${BASE_URL}/cinema-studio`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(3000);
+    await dismissAllModals(page);
+
+    // Select Image or Video tab (default: Image)
+    const tabName = options.duration ? 'Video' : 'Image';
+    const tab = page.locator(`[role="tab"]:has-text("${tabName}")`);
+    if (await tab.count() > 0) {
+      await tab.click();
+      await page.waitForTimeout(1000);
+      console.log(`Selected ${tabName} tab`);
+    }
+
+    // Upload image if provided (as prompt reference)
+    if (options.imageFile) {
+      const fileInput = page.locator('input[type="file"]').first();
+      if (await fileInput.count() > 0) {
+        await fileInput.setInputFiles(options.imageFile);
+        await page.waitForTimeout(2000);
+        console.log('Image uploaded to Cinema Studio');
+      }
+    }
+
+    // Fill prompt
+    if (options.prompt) {
+      const promptInput = page.locator('textarea').first();
+      if (await promptInput.count() > 0) {
+        await promptInput.fill(options.prompt);
+        console.log('Prompt entered');
+      }
+    }
+
+    // Set quality (1K, 2K, 4K)
+    if (options.quality) {
+      const qualityBtn = page.locator(`button:has-text("${options.quality}")`);
+      if (await qualityBtn.count() > 0) {
+        await qualityBtn.first().click();
+        await page.waitForTimeout(500);
+        console.log(`Quality set to ${options.quality}`);
+      }
+    }
+
+    // Set aspect ratio
+    if (options.aspect) {
+      const aspectBtn = page.locator(`button:has-text("${options.aspect}")`);
+      if (await aspectBtn.count() > 0) {
+        await aspectBtn.first().click();
+        await page.waitForTimeout(500);
+        console.log(`Aspect set to ${options.aspect}`);
+      }
+    }
+
+    // Set batch count
+    if (options.batch) {
+      const batchBtn = page.locator(`button:has-text("${options.batch}/4"), button:has-text("1/${options.batch}")`);
+      if (await batchBtn.count() > 0) {
+        await batchBtn.first().click();
+        await page.waitForTimeout(500);
+      }
+    }
+
+    await page.screenshot({ path: join(STATE_DIR, 'cinema-studio-configured.png'), fullPage: false });
+
+    // Click Generate
+    const generateBtn = page.locator('button:has-text("Generate")');
+    if (await generateBtn.count() > 0) {
+      await generateBtn.first().click();
+      console.log('Clicked Generate in Cinema Studio');
+    }
+
+    // Wait for result
+    const timeout = options.timeout || 180000;
+    console.log(`Waiting up to ${timeout / 1000}s for Cinema Studio result...`);
+
+    try {
+      await page.waitForSelector('img[alt="image generation"], video', { timeout, state: 'visible' });
+    } catch {
+      console.log('Timeout waiting for Cinema Studio result');
+    }
+
+    await page.waitForTimeout(3000);
+    await dismissAllModals(page);
+    await page.screenshot({ path: join(STATE_DIR, 'cinema-studio-result.png'), fullPage: false });
+
+    if (options.wait !== false) {
+      await downloadLatestResult(page, options.output || DOWNLOAD_DIR, true);
+    }
+
+    await context.storageState({ path: STATE_FILE });
+    await browser.close();
+    return { success: true };
+  } catch (error) {
+    console.error('Cinema Studio error:', error.message);
+    await browser.close();
+    return { success: false, error: error.message };
+  }
+}
+
+// Motion Control — upload motion reference video + character image
+async function motionControl(options = {}) {
+  const { browser, context, page } = await launchBrowser(options);
+
+  try {
+    console.log('Navigating to Motion Control...');
+    await page.goto(`${BASE_URL}/create/motion-control`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(3000);
+    await dismissAllModals(page);
+
+    // Upload motion reference video (first file input)
+    if (options.videoFile || options.motionRef) {
+      const videoPath = options.videoFile || options.motionRef;
+      const fileInputs = page.locator('input[type="file"]');
+      if (await fileInputs.count() > 0) {
+        await fileInputs.first().setInputFiles(videoPath);
+        await page.waitForTimeout(3000);
+        console.log(`Motion reference uploaded: ${basename(videoPath)}`);
+      }
+    }
+
+    // Upload character/subject image (second file input)
+    if (options.imageFile) {
+      const fileInputs = page.locator('input[type="file"]');
+      const count = await fileInputs.count();
+      if (count > 1) {
+        await fileInputs.nth(1).setInputFiles(options.imageFile);
+        await page.waitForTimeout(2000);
+        console.log(`Character image uploaded: ${basename(options.imageFile)}`);
+      }
+    }
+
+    // Fill prompt if provided
+    if (options.prompt) {
+      const promptInput = page.locator('textarea').first();
+      if (await promptInput.count() > 0) {
+        await promptInput.fill(options.prompt);
+        console.log('Prompt entered');
+      }
+    }
+
+    // Enable unlimited mode if requested
+    if (options.unlimited) {
+      const unlimitedToggle = page.locator('text=Unlimited mode').locator('..').locator('[role="switch"], input[type="checkbox"]');
+      if (await unlimitedToggle.count() > 0) {
+        const isChecked = await unlimitedToggle.getAttribute('aria-checked') === 'true' || await unlimitedToggle.isChecked().catch(() => false);
+        if (!isChecked) {
+          await unlimitedToggle.click();
+          await page.waitForTimeout(500);
+          console.log('Unlimited mode enabled');
+        }
+      }
+    }
+
+    await page.screenshot({ path: join(STATE_DIR, 'motion-control-configured.png'), fullPage: false });
+
+    // Click Generate
+    const generateBtn = page.locator('button:has-text("Generate")');
+    if (await generateBtn.count() > 0) {
+      await generateBtn.first().click();
+      console.log('Clicked Generate in Motion Control');
+    }
+
+    // Wait for result — motion control videos take longer
+    const timeout = options.timeout || 300000;
+    console.log(`Waiting up to ${timeout / 1000}s for Motion Control result...`);
+
+    // Poll History tab for completion
+    const historyTab = page.locator('[role="tab"]:has-text("History")');
+    if (await historyTab.count() > 0) {
+      await page.waitForTimeout(10000);
+      await historyTab.click();
+      await page.waitForTimeout(3000);
+    }
+
+    try {
+      await page.waitForSelector('video', { timeout, state: 'visible' });
+    } catch {
+      console.log('Timeout waiting for Motion Control result');
+    }
+
+    await page.waitForTimeout(3000);
+    await dismissAllModals(page);
+    await page.screenshot({ path: join(STATE_DIR, 'motion-control-result.png'), fullPage: false });
+
+    if (options.wait !== false) {
+      await downloadVideoFromHistory(page, options.output || DOWNLOAD_DIR);
+    }
+
+    await context.storageState({ path: STATE_FILE });
+    await browser.close();
+    return { success: true };
+  } catch (error) {
+    console.error('Motion Control error:', error.message);
+    await browser.close();
+    return { success: false, error: error.message };
+  }
+}
+
+// Edit/Inpaint — upload image, apply mask region, generate with prompt
+async function editImage(options = {}) {
+  const { browser, context, page } = await launchBrowser(options);
+
+  try {
+    // 5 edit models: soul_inpaint, nano_banana_pro_inpaint, banana_placement, canvas, multi
+    const model = options.model || 'soul_inpaint';
+    const editUrl = `${BASE_URL}/edit?model=${model}`;
+    console.log(`Navigating to Edit (${model})...`);
+    await page.goto(editUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(3000);
+    await dismissAllModals(page);
+
+    // Upload image
+    if (options.imageFile) {
+      const fileInput = page.locator('input[type="file"]').first();
+      if (await fileInput.count() > 0) {
+        await fileInput.setInputFiles(options.imageFile);
+        await page.waitForTimeout(3000);
+        console.log(`Image uploaded for editing: ${basename(options.imageFile)}`);
+      }
+    }
+
+    // Upload second image for multi-reference or product placement
+    if (options.imageFile2) {
+      const fileInputs = page.locator('input[type="file"]');
+      const count = await fileInputs.count();
+      if (count > 1) {
+        await fileInputs.nth(1).setInputFiles(options.imageFile2);
+        await page.waitForTimeout(2000);
+        console.log(`Second image uploaded: ${basename(options.imageFile2)}`);
+      }
+    }
+
+    // Fill prompt (describes what to generate in the masked area)
+    if (options.prompt) {
+      const promptInput = page.locator('textarea').first();
+      if (await promptInput.count() > 0) {
+        await promptInput.fill(options.prompt);
+        console.log('Edit prompt entered');
+      }
+    }
+
+    await page.screenshot({ path: join(STATE_DIR, `edit-${model}-configured.png`), fullPage: false });
+
+    // Click Generate/Apply
+    const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Apply"), button:has-text("Edit")').first();
+    if (await generateBtn.count() > 0) {
+      await generateBtn.click();
+      console.log('Clicked Generate/Apply for edit');
+    }
+
+    // Wait for result
+    const timeout = options.timeout || 120000;
+    console.log(`Waiting up to ${timeout / 1000}s for edit result...`);
+
+    try {
+      await page.waitForSelector('img[alt="image generation"]', { timeout, state: 'visible' });
+    } catch {
+      console.log('Timeout waiting for edit result');
+    }
+
+    await page.waitForTimeout(3000);
+    await dismissAllModals(page);
+    await page.screenshot({ path: join(STATE_DIR, `edit-${model}-result.png`), fullPage: false });
+
+    if (options.wait !== false) {
+      await downloadLatestResult(page, options.output || DOWNLOAD_DIR, true);
+    }
+
+    await context.storageState({ path: STATE_FILE });
+    await browser.close();
+    return { success: true };
+  } catch (error) {
+    console.error('Edit error:', error.message);
+    await browser.close();
+    return { success: false, error: error.message };
+  }
+}
+
+// Upscale — upload media for AI upscaling
+async function upscale(options = {}) {
+  const { browser, context, page } = await launchBrowser(options);
+
+  try {
+    console.log('Navigating to Upscale...');
+    await page.goto(`${BASE_URL}/upscale`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(3000);
+    await dismissAllModals(page);
+
+    // Upload media file
+    const mediaFile = options.imageFile || options.videoFile;
+    if (mediaFile) {
+      const fileInput = page.locator('input[type="file"]').first();
+      if (await fileInput.count() > 0) {
+        await fileInput.setInputFiles(mediaFile);
+        await page.waitForTimeout(3000);
+        console.log(`Media uploaded for upscaling: ${basename(mediaFile)}`);
+      }
+    }
+
+    await page.screenshot({ path: join(STATE_DIR, 'upscale-configured.png'), fullPage: false });
+
+    // Click Upscale/Generate
+    const upscaleBtn = page.locator('button:has-text("Upscale"), button:has-text("Generate"), button:has-text("Enhance")');
+    if (await upscaleBtn.count() > 0) {
+      await upscaleBtn.first().click();
+      console.log('Clicked Upscale');
+    }
+
+    // Wait for result
+    const timeout = options.timeout || 180000;
+    console.log(`Waiting up to ${timeout / 1000}s for upscale result...`);
+
+    try {
+      await page.waitForSelector('img[alt="image generation"], a[download]', { timeout, state: 'visible' });
+    } catch {
+      console.log('Timeout waiting for upscale result');
+    }
+
+    await page.waitForTimeout(3000);
+    await dismissAllModals(page);
+    await page.screenshot({ path: join(STATE_DIR, 'upscale-result.png'), fullPage: false });
+
+    if (options.wait !== false) {
+      await downloadLatestResult(page, options.output || DOWNLOAD_DIR, true);
+    }
+
+    await context.storageState({ path: STATE_FILE });
+    await browser.close();
+    return { success: true };
+  } catch (error) {
+    console.error('Upscale error:', error.message);
+    await browser.close();
+    return { success: false, error: error.message };
+  }
+}
+
+// Asset Library — browse, filter, download, delete assets
+async function manageAssets(options = {}) {
+  const { browser, context, page } = await launchBrowser(options);
+
+  try {
+    const action = options.assetAction || 'list';
+    console.log(`Asset Library: ${action}...`);
+    await page.goto(`${BASE_URL}/asset/all`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(3000);
+    await dismissAllModals(page);
+
+    // Apply filter if specified
+    const filter = options.filter || options.assetType;
+    if (filter) {
+      const filterMap = { image: 'Image', video: 'Video', lipsync: 'Lipsync', upscaled: 'Upscaled', liked: 'Liked' };
+      const filterLabel = filterMap[filter.toLowerCase()] || filter;
+      const filterBtn = page.locator(`button:has-text("${filterLabel}")`).last();
+      if (await filterBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await filterBtn.click();
+        await page.waitForTimeout(2000);
+        console.log(`Filter applied: ${filterLabel}`);
+      }
+    }
+
+    // Scroll to load assets
+    for (let i = 0; i < 3; i++) {
+      await page.evaluate(() => window.scrollBy(0, 800));
+      await page.waitForTimeout(1000);
+    }
+
+    // Count assets
+    const assetCount = await page.evaluate(() => document.querySelectorAll('main img').length);
+    console.log(`Assets loaded: ${assetCount}`);
+
+    if (action === 'list') {
+      await page.screenshot({ path: join(STATE_DIR, 'asset-library.png'), fullPage: false });
+      console.log(`Asset library screenshot saved. ${assetCount} assets visible.`);
+      await context.storageState({ path: STATE_FILE });
+      await browser.close();
+      return { success: true, count: assetCount };
+    }
+
+    if (action === 'download' || action === 'download-latest') {
+      // Click on the first/latest asset
+      const targetIndex = options.assetIndex || 0;
+      const assetImg = page.locator('main img').nth(targetIndex);
+      if (await assetImg.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await assetImg.click();
+        await page.waitForTimeout(2500);
+        await page.screenshot({ path: join(STATE_DIR, 'asset-detail.png'), fullPage: false });
+
+        // Try to download via the asset detail view
+        await downloadLatestResult(page, options.output || DOWNLOAD_DIR, false);
+        console.log('Asset downloaded');
+      }
+    }
+
+    if (action === 'download-all') {
+      // Download multiple assets
+      const maxDownloads = options.limit || 10;
+      const outputDir = options.output || DOWNLOAD_DIR;
+      console.log(`Downloading up to ${maxDownloads} assets...`);
+
+      for (let i = 0; i < Math.min(maxDownloads, assetCount); i++) {
+        const assetImg = page.locator('main img').nth(i);
+        if (await assetImg.isVisible({ timeout: 2000 }).catch(() => false)) {
+          await assetImg.click();
+          await page.waitForTimeout(2000);
+          await downloadLatestResult(page, outputDir, false);
+          await page.keyboard.press('Escape');
+          await page.waitForTimeout(500);
+          console.log(`Downloaded asset ${i + 1}/${maxDownloads}`);
+        }
+      }
+    }
+
+    await context.storageState({ path: STATE_FILE });
+    await browser.close();
+    return { success: true, count: assetCount };
+  } catch (error) {
+    console.error('Asset Library error:', error.message);
+    await browser.close();
+    return { success: false, error: error.message };
+  }
+}
+
+// Asset Chaining — "Open in" menu from asset detail dialog
+// Allows chaining operations without download/re-upload round-trip
+// Actions: animate, inpaint, upscale, relight, angles, shots, ai-stylist, skin-enhancer, multishot
+async function assetChain(options = {}) {
+  const { browser, context, page } = await launchBrowser(options);
+
+  try {
+    const action = options.chainAction || 'animate';
+    const actionMap = {
+      animate: 'Animate',
+      inpaint: 'Inpaint',
+      upscale: 'Upscale',
+      relight: 'Relight',
+      angles: 'Angles',
+      shots: 'Shots',
+      'ai-stylist': 'AI Stylist',
+      'skin-enhancer': 'Skin Enhancer',
+      multishot: 'Multishot',
+    };
+    const actionLabel = actionMap[action] || action;
+    console.log(`Asset Chain: ${actionLabel}...`);
+
+    // Navigate to asset source — either a specific page or the asset library
+    const sourceUrl = options.prompt || `${BASE_URL}/asset/all`;
+    await page.goto(sourceUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(3000);
+    await dismissAllModals(page);
+
+    // If an image file is provided, navigate to the image model page and generate first
+    if (options.imageFile) {
+      // Upload to the current page if there is a file input
+      const fileInput = page.locator('input[type="file"]').first();
+      if (await fileInput.count() > 0) {
+        await fileInput.setInputFiles(options.imageFile);
+        await page.waitForTimeout(3000);
+        console.log('Source image uploaded');
+      }
+    }
+
+    // Click on the target asset (first/latest or by index)
+    const targetIndex = options.assetIndex || 0;
+    const assetImg = page.locator('img[alt="image generation"], img[alt*="media asset by id"]');
+    const assetCount = await assetImg.count();
+
+    if (assetCount === 0) {
+      console.error('No assets found on page');
+      await browser.close();
+      return { success: false, error: 'No assets found' };
+    }
+
+    console.log(`Found ${assetCount} assets, clicking index ${targetIndex}...`);
+    await assetImg.nth(targetIndex).click({ force: true });
+    await page.waitForTimeout(2000);
+
+    // Look for the "Open in" menu in the asset dialog
+    const openInBtn = page.locator('button:has-text("Open in"), [role="dialog"] button:has-text("Open in")');
+    if (await openInBtn.count() > 0) {
+      await openInBtn.first().click();
+      await page.waitForTimeout(1000);
+      console.log('Opened "Open in" menu');
+
+      // Click the target action
+      const actionBtn = page.locator(`button:has-text("${actionLabel}"), a:has-text("${actionLabel}"), [role="menuitem"]:has-text("${actionLabel}")`);
+      if (await actionBtn.count() > 0) {
+        await actionBtn.first().click();
+        await page.waitForTimeout(3000);
+        console.log(`Clicked "${actionLabel}" — navigating to tool...`);
+      } else {
+        console.log(`Action "${actionLabel}" not found in menu. Available actions may differ.`);
+        await page.screenshot({ path: join(STATE_DIR, 'asset-chain-menu.png'), fullPage: false });
+      }
+    } else {
+      // Try alternative: look for action icons/buttons directly in the dialog
+      const directBtn = page.locator(`[role="dialog"] button:has-text("${actionLabel}"), [role="dialog"] a:has-text("${actionLabel}")`);
+      if (await directBtn.count() > 0) {
+        await directBtn.first().click();
+        await page.waitForTimeout(3000);
+        console.log(`Clicked "${actionLabel}" directly from dialog`);
+      } else {
+        // Try the three-dot/more menu
+        const moreBtn = page.locator('[role="dialog"] button[aria-label*="more" i], [role="dialog"] button[aria-label*="menu" i], [role="dialog"] button:has(svg)').last();
+        if (await moreBtn.count() > 0) {
+          await moreBtn.click();
+          await page.waitForTimeout(1000);
+          const menuAction = page.locator(`[role="menuitem"]:has-text("${actionLabel}"), button:has-text("${actionLabel}")`);
+          if (await menuAction.count() > 0) {
+            await menuAction.first().click();
+            await page.waitForTimeout(3000);
+            console.log(`Clicked "${actionLabel}" from overflow menu`);
+          }
+        }
+      }
+    }
+
+    await page.screenshot({ path: join(STATE_DIR, `asset-chain-${action}.png`), fullPage: false });
+
+    // Now we should be on the target tool page with the asset pre-loaded
+    // Fill additional prompt if provided
+    if (options.prompt && !options.prompt.startsWith('http')) {
+      const promptInput = page.locator('textarea').first();
+      if (await promptInput.count() > 0) {
+        await promptInput.fill(options.prompt);
+        console.log('Additional prompt entered');
+      }
+    }
+
+    // Click Generate if there is a generate button on the target page
+    const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Apply"), button:has-text("Create")');
+    if (await generateBtn.count() > 0) {
+      await generateBtn.first().click();
+      console.log('Clicked Generate on target tool');
+    }
+
+    // Wait for result
+    const timeout = options.timeout || 300000;
+    console.log(`Waiting up to ${timeout / 1000}s for chained result...`);
+
+    try {
+      await page.waitForSelector('img[alt="image generation"], video', { timeout, state: 'visible' });
+    } catch {
+      console.log('Timeout waiting for chained result');
+    }
+
+    await page.waitForTimeout(3000);
+    await dismissAllModals(page);
+    await page.screenshot({ path: join(STATE_DIR, `asset-chain-${action}-result.png`), fullPage: false });
+
+    if (options.wait !== false) {
+      const isVideoAction = ['animate'].includes(action);
+      if (isVideoAction) {
+        await downloadVideoFromHistory(page, options.output || DOWNLOAD_DIR);
+      } else {
+        await downloadLatestResult(page, options.output || DOWNLOAD_DIR, true);
+      }
+    }
+
+    await context.storageState({ path: STATE_FILE });
+    await browser.close();
+    return { success: true };
+  } catch (error) {
+    console.error('Asset Chain error:', error.message);
+    await browser.close();
+    return { success: false, error: error.message };
+  }
+}
+
+// Mixed Media Presets — apply visual transformation presets (32+ presets)
+// Each preset has a UUID-based URL: /mixed-media-presets/preset/{uuid}
+async function mixedMediaPreset(options = {}) {
+  const { browser, context, page } = await launchBrowser(options);
+
+  try {
+    const presetName = options.preset || 'sketch';
+
+    // Load preset lookup from routes.json
+    const routesPath = join(dirname(fileURLToPath(import.meta.url)), 'routes.json');
+    const routes = JSON.parse(readFileSync(routesPath, 'utf-8'));
+    const presets = routes.mixed_media_presets || {};
+
+    // Find the preset URL
+    const presetKey = presetName.toLowerCase().replace(/[\s-]+/g, '_');
+    let presetUrl = presets[presetKey];
+
+    if (!presetUrl) {
+      // Try fuzzy match
+      const match = Object.keys(presets).find(k => k.includes(presetKey) || presetKey.includes(k));
+      if (match) {
+        presetUrl = presets[match];
+        console.log(`Fuzzy matched preset: ${presetName} → ${match}`);
+      } else {
+        console.log(`Available presets: ${Object.keys(presets).join(', ')}`);
+        await browser.close();
+        return { success: false, error: `Unknown preset: ${presetName}` };
+      }
+    }
+
+    console.log(`Navigating to Mixed Media preset: ${presetName}...`);
+    await page.goto(`${BASE_URL}${presetUrl}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(3000);
+    await dismissAllModals(page);
+
+    // Upload media file
+    const mediaFile = options.imageFile || options.videoFile;
+    if (mediaFile) {
+      const fileInput = page.locator('input[type="file"]').first();
+      if (await fileInput.count() > 0) {
+        await fileInput.setInputFiles(mediaFile);
+        await page.waitForTimeout(3000);
+        console.log(`Media uploaded: ${basename(mediaFile)}`);
+      }
+    }
+
+    // Fill prompt if provided
+    if (options.prompt) {
+      const promptInput = page.locator('textarea').first();
+      if (await promptInput.count() > 0) {
+        await promptInput.fill(options.prompt);
+        console.log('Prompt entered');
+      }
+    }
+
+    await page.screenshot({ path: join(STATE_DIR, `mixed-media-${presetKey}-configured.png`), fullPage: false });
+
+    // Click Generate
+    const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Apply"), button:has-text("Create")');
+    if (await generateBtn.count() > 0) {
+      await generateBtn.first().click();
+      console.log('Clicked Generate for mixed media preset');
+    }
+
+    // Wait for result
+    const timeout = options.timeout || 180000;
+    console.log(`Waiting up to ${timeout / 1000}s for mixed media result...`);
+
+    try {
+      await page.waitForSelector('img[alt="image generation"], video', { timeout, state: 'visible' });
+    } catch {
+      console.log('Timeout waiting for mixed media result');
+    }
+
+    await page.waitForTimeout(3000);
+    await dismissAllModals(page);
+    await page.screenshot({ path: join(STATE_DIR, `mixed-media-${presetKey}-result.png`), fullPage: false });
+
+    if (options.wait !== false) {
+      await downloadLatestResult(page, options.output || DOWNLOAD_DIR, true);
+    }
+
+    await context.storageState({ path: STATE_FILE });
+    await browser.close();
+    return { success: true };
+  } catch (error) {
+    console.error('Mixed Media Preset error:', error.message);
+    await browser.close();
+    return { success: false, error: error.message };
+  }
+}
+
+// Motion/VFX Presets — apply motion or VFX effects (150+ presets)
+// Presets discovered dynamically and stored in routes-cache.json
+async function motionPreset(options = {}) {
+  const { browser, context, page } = await launchBrowser(options);
+
+  try {
+    const presetName = options.preset;
+
+    if (!presetName) {
+      // List available presets from discovery cache
+      if (existsSync(ROUTES_CACHE)) {
+        const cache = JSON.parse(readFileSync(ROUTES_CACHE, 'utf-8'));
+        const motions = cache.motions || {};
+        const names = Object.keys(motions);
+        console.log(`Available motion presets (${names.length}):`);
+        names.slice(0, 50).forEach(n => console.log(`  ${n} → ${motions[n]}`));
+        if (names.length > 50) console.log(`  ... and ${names.length - 50} more`);
+      } else {
+        console.log('No discovery cache found. Run "discover" first.');
+      }
+      await browser.close();
+      return { success: true, action: 'list' };
+    }
+
+    // Resolve preset to URL from discovery cache
+    let presetUrl = null;
+    if (existsSync(ROUTES_CACHE)) {
+      const cache = JSON.parse(readFileSync(ROUTES_CACHE, 'utf-8'));
+      const motions = cache.motions || {};
+      const presetKey = presetName.toLowerCase().replace(/[\s-]+/g, '_');
+
+      // Exact match
+      presetUrl = motions[presetKey];
+
+      // Fuzzy match
+      if (!presetUrl) {
+        const match = Object.keys(motions).find(k =>
+          k.includes(presetKey) || presetKey.includes(k) ||
+          k.toLowerCase().includes(presetName.toLowerCase())
+        );
+        if (match) {
+          presetUrl = motions[match];
+          console.log(`Fuzzy matched: ${presetName} → ${match}`);
+        }
+      }
+    }
+
+    // If preset is a UUID or URL path, use directly
+    if (!presetUrl && presetName.includes('/')) {
+      presetUrl = presetName.startsWith('/') ? presetName : `/motion/${presetName}`;
+    }
+    if (!presetUrl && presetName.match(/^[0-9a-f-]{36}$/i)) {
+      presetUrl = `/motion/${presetName}`;
+    }
+
+    if (!presetUrl) {
+      console.error(`Motion preset not found: ${presetName}. Run "discover" to refresh cache.`);
+      await browser.close();
+      return { success: false, error: `Unknown preset: ${presetName}` };
+    }
+
+    console.log(`Navigating to motion preset: ${presetName}...`);
+    await page.goto(`${BASE_URL}${presetUrl}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(3000);
+    await dismissAllModals(page);
+
+    // Upload media file
+    const mediaFile = options.imageFile || options.videoFile;
+    if (mediaFile) {
+      const fileInput = page.locator('input[type="file"]').first();
+      if (await fileInput.count() > 0) {
+        await fileInput.setInputFiles(mediaFile);
+        await page.waitForTimeout(3000);
+        console.log(`Media uploaded: ${basename(mediaFile)}`);
+      }
+    }
+
+    // Fill prompt if provided
+    if (options.prompt) {
+      const promptInput = page.locator('textarea').first();
+      if (await promptInput.count() > 0) {
+        await promptInput.fill(options.prompt);
+        console.log('Prompt entered');
+      }
+    }
+
+    await page.screenshot({ path: join(STATE_DIR, 'motion-preset-configured.png'), fullPage: false });
+
+    // Click Generate
+    const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Apply"), button:has-text("Create")');
+    if (await generateBtn.count() > 0) {
+      await generateBtn.first().click();
+      console.log('Clicked Generate for motion preset');
+    }
+
+    // Wait for result (motion presets produce videos, which take longer)
+    const timeout = options.timeout || 300000;
+    console.log(`Waiting up to ${timeout / 1000}s for motion preset result...`);
+
+    try {
+      await page.waitForSelector('video, img[alt="image generation"]', { timeout, state: 'visible' });
+    } catch {
+      console.log('Timeout waiting for motion preset result');
+    }
+
+    await page.waitForTimeout(3000);
+    await dismissAllModals(page);
+    await page.screenshot({ path: join(STATE_DIR, 'motion-preset-result.png'), fullPage: false });
+
+    if (options.wait !== false) {
+      await downloadVideoFromHistory(page, options.output || DOWNLOAD_DIR);
+    }
+
+    await context.storageState({ path: STATE_FILE });
+    await browser.close();
+    return { success: true };
+  } catch (error) {
+    console.error('Motion Preset error:', error.message);
+    await browser.close();
+    return { success: false, error: error.message };
+  }
+}
+
+// Video Edit — upload video + character image for video editing
+async function editVideo(options = {}) {
+  const { browser, context, page } = await launchBrowser(options);
+
+  try {
+    console.log('Navigating to Video Edit...');
+    await page.goto(`${BASE_URL}/create/edit`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(3000);
+    await dismissAllModals(page);
+
+    // Upload video file (first file input)
+    if (options.videoFile) {
+      const fileInputs = page.locator('input[type="file"]');
+      if (await fileInputs.count() > 0) {
+        await fileInputs.first().setInputFiles(options.videoFile);
+        await page.waitForTimeout(3000);
+        console.log(`Video uploaded: ${basename(options.videoFile)}`);
+      }
+    }
+
+    // Upload character/subject image (second file input)
+    if (options.imageFile) {
+      const fileInputs = page.locator('input[type="file"]');
+      const count = await fileInputs.count();
+      if (count > 1) {
+        await fileInputs.nth(1).setInputFiles(options.imageFile);
+        await page.waitForTimeout(2000);
+        console.log(`Character image uploaded: ${basename(options.imageFile)}`);
+      } else if (count === 1 && !options.videoFile) {
+        // Only one input and no video — use it for the image
+        await fileInputs.first().setInputFiles(options.imageFile);
+        await page.waitForTimeout(2000);
+        console.log(`Image uploaded: ${basename(options.imageFile)}`);
+      }
+    }
+
+    // Fill prompt
+    if (options.prompt) {
+      const promptInput = page.locator('textarea').first();
+      if (await promptInput.count() > 0) {
+        await promptInput.fill(options.prompt);
+        console.log('Edit prompt entered');
+      }
+    }
+
+    await page.screenshot({ path: join(STATE_DIR, 'video-edit-configured.png'), fullPage: false });
+
+    // Click Generate
+    const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Apply"), button:has-text("Edit")');
+    if (await generateBtn.count() > 0) {
+      await generateBtn.first().click();
+      console.log('Clicked Generate for video edit');
+    }
+
+    // Wait for result
+    const timeout = options.timeout || 300000;
+    console.log(`Waiting up to ${timeout / 1000}s for video edit result...`);
+
+    // Poll History tab
+    const historyTab = page.locator('[role="tab"]:has-text("History")');
+    if (await historyTab.count() > 0) {
+      await page.waitForTimeout(10000);
+      await historyTab.click();
+      await page.waitForTimeout(3000);
+    }
+
+    try {
+      await page.waitForSelector('video', { timeout, state: 'visible' });
+    } catch {
+      console.log('Timeout waiting for video edit result');
+    }
+
+    await page.waitForTimeout(3000);
+    await dismissAllModals(page);
+    await page.screenshot({ path: join(STATE_DIR, 'video-edit-result.png'), fullPage: false });
+
+    if (options.wait !== false) {
+      await downloadVideoFromHistory(page, options.output || DOWNLOAD_DIR);
+    }
+
+    await context.storageState({ path: STATE_FILE });
+    await browser.close();
+    return { success: true };
+  } catch (error) {
+    console.error('Video Edit error:', error.message);
+    await browser.close();
+    return { success: false, error: error.message };
+  }
+}
+
+// Storyboard Generator — create multi-panel storyboards from a script/prompt
+async function storyboard(options = {}) {
+  const { browser, context, page } = await launchBrowser(options);
+
+  try {
+    console.log('Navigating to Storyboard Generator...');
+    await page.goto(`${BASE_URL}/storyboard-generator`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(3000);
+    await dismissAllModals(page);
+
+    // Upload reference image if provided
+    if (options.imageFile) {
+      const fileInput = page.locator('input[type="file"]').first();
+      if (await fileInput.count() > 0) {
+        await fileInput.setInputFiles(options.imageFile);
+        await page.waitForTimeout(2000);
+        console.log('Reference image uploaded');
+      }
+    }
+
+    // Fill script/prompt
+    if (options.prompt) {
+      const promptInput = page.locator('textarea').first();
+      if (await promptInput.count() > 0) {
+        await promptInput.fill(options.prompt);
+        console.log('Storyboard script entered');
+      }
+    }
+
+    // Set number of panels/scenes if supported
+    if (options.scenes) {
+      const scenesInput = page.locator('input[type="number"], input[placeholder*="scene" i], input[placeholder*="panel" i]');
+      if (await scenesInput.count() > 0) {
+        await scenesInput.first().fill(String(options.scenes));
+        console.log(`Panels set to ${options.scenes}`);
+      }
+    }
+
+    // Select style if provided
+    if (options.preset) {
+      const styleBtn = page.locator(`button:has-text("${options.preset}")`);
+      if (await styleBtn.count() > 0) {
+        await styleBtn.first().click();
+        await page.waitForTimeout(500);
+        console.log(`Style selected: ${options.preset}`);
+      }
+    }
+
+    await page.screenshot({ path: join(STATE_DIR, 'storyboard-configured.png'), fullPage: false });
+
+    // Click Generate
+    const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Create"), button:has-text("Build")');
+    if (await generateBtn.count() > 0) {
+      await generateBtn.first().click();
+      console.log('Clicked Generate for storyboard');
+    }
+
+    // Wait for result — storyboards may take longer due to multiple panels
+    const timeout = options.timeout || 300000;
+    console.log(`Waiting up to ${timeout / 1000}s for storyboard result...`);
+
+    try {
+      await page.waitForSelector('img[alt="image generation"], .storyboard-panel, [class*="storyboard"]', { timeout, state: 'visible' });
+    } catch {
+      console.log('Timeout waiting for storyboard result');
+    }
+
+    await page.waitForTimeout(5000);
+    await dismissAllModals(page);
+    await page.screenshot({ path: join(STATE_DIR, 'storyboard-result.png'), fullPage: true });
+
+    if (options.wait !== false) {
+      await downloadLatestResult(page, options.output || DOWNLOAD_DIR, true);
+    }
+
+    await context.storageState({ path: STATE_FILE });
+    await browser.close();
+    return { success: true };
+  } catch (error) {
+    console.error('Storyboard error:', error.message);
+    await browser.close();
+    return { success: false, error: error.message };
+  }
+}
+
+// Vibe Motion — animated content with sub-types (Infographics, Text Animation, Posters, Presentation, From Scratch)
+async function vibeMotion(options = {}) {
+  const { browser, context, page } = await launchBrowser(options);
+
+  try {
+    console.log('Navigating to Vibe Motion...');
+    await page.goto(`${BASE_URL}/vibe-motion`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(3000);
+    await dismissAllModals(page);
+
+    // Select sub-type tab (default: From Scratch)
+    const subtype = options.tab || 'From Scratch';
+    const subtypeMap = {
+      infographics: 'Infographics',
+      'text-animation': 'Text Animation',
+      text: 'Text Animation',
+      posters: 'Posters',
+      poster: 'Posters',
+      presentation: 'Presentation',
+      scratch: 'From Scratch',
+      'from-scratch': 'From Scratch',
+    };
+    const subtypeLabel = subtypeMap[subtype.toLowerCase()] || subtype;
+    const subtypeTab = page.locator(`[role="tab"]:has-text("${subtypeLabel}"), button:has-text("${subtypeLabel}")`);
+    if (await subtypeTab.count() > 0) {
+      await subtypeTab.first().click();
+      await page.waitForTimeout(1000);
+      console.log(`Selected sub-type: ${subtypeLabel}`);
+    }
+
+    // Upload image/logo if provided
+    if (options.imageFile) {
+      const fileInput = page.locator('input[type="file"]').first();
+      if (await fileInput.count() > 0) {
+        await fileInput.setInputFiles(options.imageFile);
+        await page.waitForTimeout(2000);
+        console.log('Image/logo uploaded');
+      }
+    }
+
+    // Fill content/prompt
+    if (options.prompt) {
+      const promptInput = page.locator('textarea').first();
+      if (await promptInput.count() > 0) {
+        await promptInput.fill(options.prompt);
+        console.log('Content entered');
+      }
+    }
+
+    // Select style if provided (Minimal, Corporate, Fashion, Marketing)
+    if (options.preset) {
+      const styleBtn = page.locator(`button:has-text("${options.preset}")`);
+      if (await styleBtn.count() > 0) {
+        await styleBtn.first().click();
+        await page.waitForTimeout(500);
+        console.log(`Style selected: ${options.preset}`);
+      }
+    }
+
+    // Set duration if provided (Auto, 5, 10, 15, 30)
+    if (options.duration) {
+      const durBtn = page.locator(`button:has-text("${options.duration}s"), button:has-text("${options.duration}")`);
+      if (await durBtn.count() > 0) {
+        await durBtn.first().click();
+        await page.waitForTimeout(500);
+        console.log(`Duration set to ${options.duration}s`);
+      }
+    }
+
+    // Set aspect ratio
+    if (options.aspect) {
+      const aspectBtn = page.locator(`button:has-text("${options.aspect}")`);
+      if (await aspectBtn.count() > 0) {
+        await aspectBtn.first().click();
+        await page.waitForTimeout(500);
+        console.log(`Aspect set to ${options.aspect}`);
+      }
+    }
+
+    await page.screenshot({ path: join(STATE_DIR, 'vibe-motion-configured.png'), fullPage: false });
+
+    // Click Generate
+    const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Create"), button:has-text("Build")');
+    if (await generateBtn.count() > 0) {
+      await generateBtn.first().click();
+      console.log('Clicked Generate for Vibe Motion');
+    }
+
+    // Wait for result — Vibe Motion produces videos
+    const timeout = options.timeout || 300000;
+    console.log(`Waiting up to ${timeout / 1000}s for Vibe Motion result...`);
+
+    try {
+      await page.waitForSelector('video', { timeout, state: 'visible' });
+    } catch {
+      console.log('Timeout waiting for Vibe Motion result');
+    }
+
+    await page.waitForTimeout(3000);
+    await dismissAllModals(page);
+    await page.screenshot({ path: join(STATE_DIR, 'vibe-motion-result.png'), fullPage: false });
+
+    if (options.wait !== false) {
+      await downloadVideoFromHistory(page, options.output || DOWNLOAD_DIR);
+    }
+
+    await context.storageState({ path: STATE_FILE });
+    await browser.close();
+    return { success: true };
+  } catch (error) {
+    console.error('Vibe Motion error:', error.message);
+    await browser.close();
+    return { success: false, error: error.message };
+  }
+}
+
+// AI Influencer Studio — create AI-generated influencer characters
+async function aiInfluencer(options = {}) {
+  const { browser, context, page } = await launchBrowser(options);
+
+  try {
+    console.log('Navigating to AI Influencer Studio...');
+    await page.goto(`${BASE_URL}/ai-influencer-studio`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(3000);
+    await dismissAllModals(page);
+
+    // Select character type if provided (Human, Ant, Bee, Octopus, Alien, Elf, etc.)
+    if (options.preset) {
+      const typeBtn = page.locator(`button:has-text("${options.preset}"), [role="option"]:has-text("${options.preset}")`);
+      if (await typeBtn.count() > 0) {
+        await typeBtn.first().click();
+        await page.waitForTimeout(500);
+        console.log(`Character type: ${options.preset}`);
+      }
+    }
+
+    // Upload reference image if provided
+    if (options.imageFile) {
+      const fileInput = page.locator('input[type="file"]').first();
+      if (await fileInput.count() > 0) {
+        await fileInput.setInputFiles(options.imageFile);
+        await page.waitForTimeout(2000);
+        console.log('Reference image uploaded');
+      }
+    }
+
+    // Fill prompt/description
+    if (options.prompt) {
+      const promptInput = page.locator('textarea, input[placeholder*="prompt" i], input[placeholder*="describe" i]');
+      if (await promptInput.count() > 0) {
+        await promptInput.first().fill(options.prompt);
+        console.log('Description entered');
+      }
+    }
+
+    await page.screenshot({ path: join(STATE_DIR, 'ai-influencer-configured.png'), fullPage: false });
+
+    // Click Generate/Create
+    const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Create"), button:has-text("Build")');
+    if (await generateBtn.count() > 0) {
+      await generateBtn.first().click();
+      console.log('Clicked Generate for AI Influencer');
+    }
+
+    const timeout = options.timeout || 180000;
+    console.log(`Waiting up to ${timeout / 1000}s for AI Influencer result...`);
+
+    try {
+      await page.waitForSelector('img[alt="image generation"]', { timeout, state: 'visible' });
+    } catch {
+      console.log('Timeout waiting for AI Influencer result');
+    }
+
+    await page.waitForTimeout(3000);
+    await dismissAllModals(page);
+    await page.screenshot({ path: join(STATE_DIR, 'ai-influencer-result.png'), fullPage: false });
+
+    if (options.wait !== false) {
+      await downloadLatestResult(page, options.output || DOWNLOAD_DIR, true);
+    }
+
+    await context.storageState({ path: STATE_FILE });
+    await browser.close();
+    return { success: true };
+  } catch (error) {
+    console.error('AI Influencer error:', error.message);
+    await browser.close();
+    return { success: false, error: error.message };
+  }
+}
+
+// Character — create persistent character profiles for consistent generation
+async function createCharacter(options = {}) {
+  const { browser, context, page } = await launchBrowser(options);
+
+  try {
+    console.log('Navigating to Character...');
+    await page.goto(`${BASE_URL}/character`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(3000);
+    await dismissAllModals(page);
+
+    // Upload character photos (may accept multiple)
+    if (options.imageFile) {
+      const fileInput = page.locator('input[type="file"]').first();
+      if (await fileInput.count() > 0) {
+        // Check if multiple files can be uploaded
+        const isMultiple = await fileInput.getAttribute('multiple');
+        if (isMultiple !== null && options.imageFile2) {
+          await fileInput.setInputFiles([options.imageFile, options.imageFile2]);
+        } else {
+          await fileInput.setInputFiles(options.imageFile);
+        }
+        await page.waitForTimeout(2000);
+        console.log('Character photo(s) uploaded');
+      }
+    }
+
+    // Fill character name/label
+    if (options.prompt) {
+      const nameInput = page.locator('input[placeholder*="name" i], input[placeholder*="label" i], textarea').first();
+      if (await nameInput.count() > 0) {
+        await nameInput.fill(options.prompt);
+        console.log(`Character name/description: ${options.prompt}`);
+      }
+    }
+
+    await page.screenshot({ path: join(STATE_DIR, 'character-configured.png'), fullPage: false });
+
+    // Click Create/Save
+    const createBtn = page.locator('button:has-text("Create"), button:has-text("Save"), button:has-text("Generate")');
+    if (await createBtn.count() > 0) {
+      await createBtn.first().click();
+      console.log('Clicked Create for character');
+    }
+
+    const timeout = options.timeout || 120000;
+    console.log(`Waiting up to ${timeout / 1000}s for character creation...`);
+
+    try {
+      await page.waitForSelector('img[alt="image generation"], [class*="character"]', { timeout, state: 'visible' });
+    } catch {
+      console.log('Timeout waiting for character creation');
+    }
+
+    await page.waitForTimeout(3000);
+    await dismissAllModals(page);
+    await page.screenshot({ path: join(STATE_DIR, 'character-result.png'), fullPage: false });
+
+    if (options.wait !== false) {
+      await downloadLatestResult(page, options.output || DOWNLOAD_DIR, true);
+    }
+
+    await context.storageState({ path: STATE_FILE });
+    await browser.close();
+    return { success: true };
+  } catch (error) {
+    console.error('Character error:', error.message);
+    await browser.close();
+    return { success: false, error: error.message };
+  }
+}
+
+// Feature Page — generic handler for simple feature pages
+// Covers: Fashion Factory, UGC Factory, Photodump Studio, Camera Controls, Effects
+async function featurePage(options = {}) {
+  const { browser, context, page } = await launchBrowser(options);
+
+  try {
+    const featureMap = {
+      'fashion-factory': { url: '/fashion-factory', name: 'Fashion Factory' },
+      fashion: { url: '/fashion-factory', name: 'Fashion Factory' },
+      'ugc-factory': { url: '/ugc-factory', name: 'UGC Factory' },
+      ugc: { url: '/ugc-factory', name: 'UGC Factory' },
+      'photodump-studio': { url: '/photodump-studio', name: 'Photodump Studio' },
+      photodump: { url: '/photodump-studio', name: 'Photodump Studio' },
+      'camera-controls': { url: '/camera-controls', name: 'Camera Controls' },
+      camera: { url: '/camera-controls', name: 'Camera Controls' },
+      effects: { url: '/effects', name: 'Effects' },
+    };
+
+    const featureKey = options.effect || options.feature || 'fashion-factory';
+    const feature = featureMap[featureKey.toLowerCase()] || { url: `/${featureKey}`, name: featureKey };
+
+    console.log(`Navigating to ${feature.name}...`);
+    await page.goto(`${BASE_URL}${feature.url}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(3000);
+    await dismissAllModals(page);
+
+    // Upload image(s)
+    if (options.imageFile) {
+      const fileInput = page.locator('input[type="file"]').first();
+      if (await fileInput.count() > 0) {
+        await fileInput.setInputFiles(options.imageFile);
+        await page.waitForTimeout(2000);
+        console.log('Image uploaded');
+      }
+    }
+
+    // Upload additional images for multi-upload features (e.g., Photodump)
+    if (options.imageFile2) {
+      const fileInputs = page.locator('input[type="file"]');
+      const count = await fileInputs.count();
+      if (count > 1) {
+        await fileInputs.nth(1).setInputFiles(options.imageFile2);
+        await page.waitForTimeout(2000);
+        console.log('Additional image uploaded');
+      }
+    }
+
+    // Upload video if provided (Camera Controls may accept video)
+    if (options.videoFile) {
+      const fileInput = page.locator('input[type="file"][accept*="video"], input[type="file"]').first();
+      if (await fileInput.count() > 0) {
+        await fileInput.setInputFiles(options.videoFile);
+        await page.waitForTimeout(2000);
+        console.log('Video uploaded');
+      }
+    }
+
+    // Fill prompt
+    if (options.prompt) {
+      const promptInput = page.locator('textarea, input[placeholder*="prompt" i]');
+      if (await promptInput.count() > 0) {
+        await promptInput.first().fill(options.prompt);
+        console.log('Prompt entered');
+      }
+    }
+
+    // Select style/preset if provided
+    if (options.preset) {
+      const styleBtn = page.locator(`button:has-text("${options.preset}")`);
+      if (await styleBtn.count() > 0) {
+        await styleBtn.first().click();
+        await page.waitForTimeout(500);
+        console.log(`Style/preset selected: ${options.preset}`);
+      }
+    }
+
+    await page.screenshot({ path: join(STATE_DIR, `feature-${featureKey}-configured.png`), fullPage: false });
+
+    // Click Generate/Create/Apply
+    const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Create"), button:has-text("Apply"), button[type="submit"]:visible');
+    if (await generateBtn.count() > 0) {
+      await generateBtn.first().click();
+      console.log('Clicked Generate');
+    }
+
+    const timeout = options.timeout || 180000;
+    console.log(`Waiting up to ${timeout / 1000}s for ${feature.name} result...`);
+
+    try {
+      await page.waitForSelector('img[alt="image generation"], video', { timeout, state: 'visible' });
+    } catch {
+      console.log(`Timeout waiting for ${feature.name} result`);
+    }
+
+    await page.waitForTimeout(3000);
+    await dismissAllModals(page);
+    await page.screenshot({ path: join(STATE_DIR, `feature-${featureKey}-result.png`), fullPage: false });
+
+    if (options.wait !== false) {
+      await downloadLatestResult(page, options.output || DOWNLOAD_DIR, true);
+    }
+
+    await context.storageState({ path: STATE_FILE });
+    await browser.close();
+    return { success: true };
+  } catch (error) {
+    console.error(`Feature page error: ${error.message}`);
+    await browser.close();
+    return { success: false, error: error.message };
+  }
+}
+
 // Main CLI handler
 async function main() {
   const { command, options } = parseArgs();
@@ -3284,6 +4649,20 @@ Commands:
   pipeline           Full production: image -> video -> lipsync -> assembly
   seed-bracket       Test seed range to find best seeds for a prompt
   app                Use a Higgsfield app/effect
+  cinema-studio      Cinema Studio - cinematic image/video with camera+lens presets
+  motion-control     Motion Control - animate character with motion reference video
+  edit               Edit/Inpaint an image (soul_inpaint, banana_placement, canvas, etc.)
+  upscale            AI upscale an image or video
+  manage-assets      Browse, filter, and download from Asset Library
+  chain              Chain asset to another tool (animate, inpaint, upscale, relight, etc.)
+  mixed-media        Apply a mixed media preset (sketch, noir, particles, etc.)
+  motion-preset      Apply a motion/VFX preset (150+ presets from discovery)
+  video-edit         Edit a video with character image overlay
+  storyboard         Generate multi-panel storyboard from script
+  vibe-motion        Animated content (Infographics, Text Animation, Posters, etc.)
+  influencer         AI Influencer Studio - create AI characters
+  character          Create persistent character profile from photos
+  feature            Generic feature page (fashion-factory, ugc-factory, photodump, etc.)
   assets             List recent generations
   credits            Check account credits/plan
   screenshot         Take screenshot of any page
@@ -3316,6 +4695,20 @@ Options:
   --character-image  Path to character face image for pipeline
   --dialogue         Dialogue text for lipsync in pipeline
   --scenes           Number of scenes to generate in pipeline
+  --video-file       Path to video file (motion reference for motion-control)
+  --motion-ref       Alias for --video-file (motion reference video)
+  --image-file2      Second image file (multi-reference edit, product placement)
+  --camera           Camera preset for cinema-studio (e.g., "Dolly Zoom")
+  --lens             Lens preset for cinema-studio (e.g., "Anamorphic")
+  --tab              Tab selection: "image" or "video" (cinema-studio)
+  --filter           Asset filter: image, video, lipsync, upscaled, liked
+  --asset-action     Asset action: list, download, download-latest, download-all
+  --asset-type       Asset type filter for manage-assets
+  --asset-index      Index of specific asset to download (0-based)
+  --limit            Max number of assets to download
+  --chain-action     Asset chain action: animate, inpaint, upscale, relight, angles, shots, ai-stylist, skin-enhancer, multishot
+  --feature          Feature page slug: fashion-factory, ugc-factory, photodump-studio, camera-controls, effects
+  --subtype          Vibe Motion sub-type: infographics, text-animation, posters, presentation, from-scratch
 
 Examples:
   node playwright-automator.mjs login --headed
@@ -3329,6 +4722,22 @@ Examples:
   node playwright-automator.mjs credits
   node playwright-automator.mjs download --model video
   node playwright-automator.mjs screenshot -p "https://higgsfield.ai/image/soul"
+  node playwright-automator.mjs cinema-studio -p "Epic landscape" --tab image --camera "Dolly Zoom"
+  node playwright-automator.mjs motion-control --video-file dance.mp4 --image-file character.jpg
+  node playwright-automator.mjs edit -p "Replace background with beach" --image-file photo.jpg -m soul_inpaint
+  node playwright-automator.mjs upscale --image-file low-res.jpg
+  node playwright-automator.mjs manage-assets --asset-action list --filter video
+  node playwright-automator.mjs manage-assets --asset-action download-latest --filter image
+  node playwright-automator.mjs chain --chain-action animate --asset-index 0
+  node playwright-automator.mjs chain --chain-action inpaint -p "Replace background" --asset-index 0
+  node playwright-automator.mjs mixed-media --preset sketch --image-file photo.jpg
+  node playwright-automator.mjs motion-preset --preset "dolly_zoom" --image-file photo.jpg
+  node playwright-automator.mjs video-edit --video-file clip.mp4 --image-file character.jpg
+  node playwright-automator.mjs storyboard -p "A hero's journey through a cyberpunk city" --scenes 6
+  node playwright-automator.mjs vibe-motion -p "Product launch announcement" --tab posters --preset Corporate
+  node playwright-automator.mjs influencer --preset Human -p "Fashion influencer, warm smile"
+  node playwright-automator.mjs character --image-file face1.jpg -p "Sarah"
+  node playwright-automator.mjs feature --feature fashion-factory --image-file outfit.jpg
 `);
     return;
   }
@@ -3398,6 +4807,64 @@ Examples:
       await dlBrowser.close();
       break;
     }
+    case 'cinema':
+    case 'cinema-studio':
+      await cinemaStudio(options);
+      break;
+    case 'motion-control':
+      await motionControl(options);
+      break;
+    case 'edit':
+    case 'inpaint':
+      await editImage(options);
+      break;
+    case 'upscale':
+      await upscale(options);
+      break;
+    case 'asset':
+    case 'manage-assets':
+      await manageAssets(options);
+      break;
+    case 'chain':
+    case 'asset-chain':
+    case 'open-in':
+      await assetChain(options);
+      break;
+    case 'mixed-media':
+    case 'mixed-media-preset':
+      await mixedMediaPreset(options);
+      break;
+    case 'motion-preset':
+    case 'vfx-preset':
+      await motionPreset(options);
+      break;
+    case 'video-edit':
+    case 'edit-video':
+      await editVideo(options);
+      break;
+    case 'storyboard':
+      await storyboard(options);
+      break;
+    case 'vibe-motion':
+    case 'vibe':
+      await vibeMotion(options);
+      break;
+    case 'influencer':
+    case 'ai-influencer':
+      await aiInfluencer(options);
+      break;
+    case 'character':
+      await createCharacter(options);
+      break;
+    case 'feature':
+    case 'fashion-factory':
+    case 'ugc-factory':
+    case 'photodump':
+    case 'camera-controls':
+    case 'effects':
+      if (command !== 'feature') options.feature = command;
+      await featurePage(options);
+      break;
     default:
       console.error(`Unknown command: ${command}`);
       process.exit(1);
