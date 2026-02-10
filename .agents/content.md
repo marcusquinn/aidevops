@@ -22,6 +22,7 @@ subagents:
   - wp-admin
   - mainwp
   # Research
+  - research
   - context7
   - crawl4ai
   # Built-in
@@ -51,6 +52,7 @@ subagents:
 | `internal-linker.md` | Strategic internal linking recommendations |
 | `context-templates.md` | Per-project SEO context templates (brand voice, style, keywords) |
 | `content-calendar.md` | Content calendar planning with gap analysis and lifecycle tracking |
+| `research.md` | Audience research, niche validation, competitor analysis |
 
 **SEO Analysis** (via `seo/`):
 
@@ -80,7 +82,7 @@ python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py intent "search query"
 
 **Workflow**:
 1. Plan (`tools/content/content-calendar.md` for gap analysis and scheduling)
-2. Research (keywords, competitors, audience)
+2. Research (`content/research.md` for audience, niche validation, competitors)
 3. Write (`content/seo-writer.md` with keyword targets)
 4. Analyze (`seo-content-analyzer.py analyze`)
 5. Optimize (address issues from analysis)
@@ -93,10 +95,16 @@ python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py intent "search query"
 
 ### Research Phase
 
-Use context tools for research:
+Use `content/research.md` for structured pre-writing research:
+- Audience profiling and validation
+- Niche scoring and viability assessment
+- Competitor content analysis and gap identification
+
+Supporting tools:
 - `tools/context/context7.md` - Documentation lookup
-- `tools/browser/crawl4ai.md` - Competitor analysis
+- `tools/browser/crawl4ai.md` - Web content extraction
 - `seo/google-search-console.md` - Performance data
+- `seo/dataforseo.md` - Keyword volume and difficulty
 
 ### Content Standards
 
