@@ -138,6 +138,55 @@ subagents:
 
 <!-- AI-CONTEXT-END -->
 
+## Fan-Out Orchestration (t206)
+
+The `content-fanout-helper.sh` script automates the diamond pipeline from brief to channel-specific outputs.
+
+**Quick start**:
+
+```bash
+# 1. Generate a story brief template
+content-fanout-helper.sh template default
+
+# 2. Edit the brief with your topic, audience, and channels
+# 3. Generate a fan-out plan
+content-fanout-helper.sh plan ~/my-story-brief.md
+
+# 4. Execute the plan (generates channel-specific prompts)
+content-fanout-helper.sh run <plan-file>
+
+# 5. Process each channel's prompt with AI
+# Each channel directory contains a prompt.md ready for AI processing
+```
+
+**Commands**:
+
+| Command | Purpose |
+|---------|---------|
+| `plan <brief>` | Generate fan-out plan from story brief |
+| `run <plan>` | Execute plan, create channel-specific prompts |
+| `channels` | List available distribution channels (8 channels) |
+| `formats` | List media formats and channel requirements |
+| `status <plan>` | Show progress of a fan-out run |
+| `template [type]` | Generate brief template (default, video, blog, social) |
+| `estimate <brief>` | Estimate time and token cost |
+
+**Available channels**: youtube, short-form, social-x, social-linkedin, social-reddit, blog, email, podcast
+
+**Brief format** (simple key: value):
+
+```text
+topic: Why 95% of AI influencers fail
+angle: contrarian
+audience: aspiring AI content creators
+channels: youtube, short-form, social-x, social-linkedin, blog, email
+tone: direct, data-backed, slightly provocative
+cta: Subscribe for weekly AI creator breakdowns
+notes: Include specific failure stats, name no names
+```
+
+**Pipeline flow**: Brief -> Plan -> Run -> AI Processing -> 10+ Outputs
+
 ## The Multi-Media Multiplier
 
 The core insight: **one story → 10+ outputs**.
