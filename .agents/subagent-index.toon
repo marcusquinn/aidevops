@@ -22,7 +22,7 @@ pro,gemini-2.5-pro,Capable large context
 grok,grok-3,Research and real-time web knowledge
 -->
 
-<!--TOON:subagents[45]{folder,purpose,key_files}:
+<!--TOON:subagents[46]{folder,purpose,key_files}:
 aidevops/,Framework internals - extending aidevops and architecture and plugins,setup|architecture|troubleshooting|self-improving-agents|claude-flow-comparison|plugins
 memory/,Cross-session memory - SQLite FTS5 storage,README
 seo/,Search optimization - keywords and rankings and UX/CRO,dataforseo|serper|semrush|neuronwriter|google-search-console|gsc-sitemaps|site-crawler|eeat-score|analytics-tracking|bing-webmaster-tools|screaming-frog|rich-results|debug-opengraph|debug-favicon|contentking|programmatic-seo|schema-validator|content-analyzer|seo-optimizer|keyword-mapper|mom-test-ux
@@ -44,6 +44,7 @@ tools/context/,Context optimization - semantic search and indexing,osgrep|augmen
 tools/conversion/,Format conversion - document transformation,pandoc
 tools/document/,Document extraction - conversion structured data extraction and workflow orchestration,document-extraction|extraction-workflow|docstrange
 tools/ocr/,OCR and text extraction - local document processing via Ollama,glm-ocr
+tools/ai-generation/,AI generation management - ComfyUI install nodes models workflows via comfy-cli,comfy-cli
 tools/video/,Video creation and downloading - programmatic generation and YouTube downloads,remotion|higgsfield|yt-dlp|video-prompt-design
 tools/vision/,Vision AI - image generation understanding and editing with local and cloud models,overview|image-generation|image-understanding|image-editing
 tools/voice/,Voice AI - TTS/STT/S2S model catalog voice bridge Pipecat pipeline and cloud voice agents,voice-models|voice-ai-models|speech-to-speech|cloud-voice-agents|voice-bridge|hyprwhspr|pipecat-opencode|transcription|buzz
@@ -86,7 +87,7 @@ bug-fixing,workflows/bug-fixing.md,Bug fix workflow
 feature-development,workflows/feature-development.md,Feature development workflow
 -->
 
-<!--TOON:scripts[64]{name,purpose}:
+<!--TOON:scripts[65]{name,purpose}:
 accessibility-helper.sh,Accessibility and contrast testing (WCAG compliance WAVE API for websites and emails)
 accessibility-audit-helper.sh,Accessibility audit CLI wrapping axe-core WAVE API WebAIM contrast and Lighthouse a11y
 auto-update-helper.sh,Automatic update polling daemon (enable disable status check logs)
@@ -158,4 +159,5 @@ seed-bracket-helper.sh,Seed bracketing for AI video generation (generate status 
 video-gen-helper.sh,Unified AI video generation CLI (generate status download list models bracket) for Sora 2 Veo 3.1 and Nanobanana Pro
 thumbnail-helper.sh,Thumbnail A/B testing pipeline (generate score batch-score upload ab-test analyze templates) for YouTube thumbnails
 stale-pr-helper.sh,Stale PR detection and notification - scan for open PRs older than 24h not linked to active tasks (scan report help)
+comfy-cli-helper.sh,ComfyUI management via comfy-cli (status install setup launch node-install node-list model-download model-list snapshot-save snapshot-restore workflow-deps)
 -->
