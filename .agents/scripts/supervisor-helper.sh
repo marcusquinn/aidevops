@@ -6597,8 +6597,64 @@ cleanup_after_merge() {
 }
 
 #######################################
+# Record PR lifecycle timing metrics to proof-log for pipeline latency analysis (t219)
+# Args: task_id, stage_timings (e.g., "pr_review:5s,merging:3s,deploying:12s,total:20s")
+#######################################
+record_lifecycle_timing() {
+    local task_id="$1"
+    local stage_timings="$2"
+    
+    if [[ -z "$task_id" || -z "$stage_timings" ]]; then
+        return 0
+    fi
+    
+    # Write to proof-log if it exists
+    local proof_log="${SUPERVISOR_DIR}/proof-log.jsonl"
+    if [[ ! -f "$proof_log" ]]; then
+        return 0
+    fi
+    
+    local timestamp
+    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    
+    # Parse stage timings into JSON object
+    local stages_json="{"
+    local first=true
+    IFS=',' read -ra STAGES <<< "$stage_timings"
+    for stage in "${STAGES[@]}"; do
+        if [[ "$stage" =~ ^([^:]+):(.+)$ ]]; then
+            local stage_name="${BASH_REMATCH[1]}"
+            local stage_time="${BASH_REMATCH[2]}"
+            if [[ "$first" == "true" ]]; then
+                first=false
+            else
+                stages_json="${stages_json},"
+            fi
+            stages_json="${stages_json}\"${stage_name}\":\"${stage_time}\""
+        fi
+    done
+    stages_json="${stages_json}}"
+    
+    # Append to proof-log
+    local log_entry
+    log_entry=$(jq -n \
+        --arg ts "$timestamp" \
+        --arg tid "$task_id" \
+        --arg event "pr_lifecycle_timing" \
+        --argjson stages "$stages_json" \
+        '{timestamp: $ts, task_id: $tid, event: $event, stages: $stages}' 2>/dev/null || echo "")
+    
+    if [[ -n "$log_entry" ]]; then
+        echo "$log_entry" >> "$proof_log"
+    fi
+    
+    return 0
+}
+
+#######################################
 # Command: pr-lifecycle - handle full post-PR lifecycle for a task
 # Checks CI, triages review threads, merges, runs postflight, deploys, cleans up worktree
+# t219: Multi-stage transitions within single pulse for faster merge pipeline
 #######################################
 cmd_pr_lifecycle() {
     local task_id="" dry_run="false" skip_review_triage="false"
@@ -6643,6 +6699,11 @@ cmd_pr_lifecycle() {
     local tstatus tpr trepo tworktree
     IFS='|' read -r tstatus tpr trepo tworktree <<< "$task_row"
 
+    # t219: Track timing metrics for pipeline latency analysis
+    local lifecycle_start_time
+    lifecycle_start_time=$(date +%s)
+    local stage_timings=""
+
     echo -e "${BOLD}=== Post-PR Lifecycle: $task_id ===${NC}"
     echo "  Status:   $tstatus"
     echo "  PR:       ${tpr:-none}"
@@ -6683,6 +6744,9 @@ cmd_pr_lifecycle() {
 
     # Step 2: Check PR status
     if [[ "$tstatus" == "pr_review" ]]; then
+        local stage_start
+        stage_start=$(date +%s)
+        
         local pr_status
         pr_status=$(check_pr_status "$task_id")
         log_info "PR status: $pr_status"
@@ -6691,6 +6755,8 @@ cmd_pr_lifecycle() {
             ready_to_merge)
                 # CI passed and no CHANGES_REQUESTED - but bot reviews post as
                 # COMMENTED, so we need to check unresolved threads directly (t148)
+                # t219: Fast-path optimization - check for zero review threads immediately
+                # If CI is green and no threads exist, skip review_triage state entirely
                 if [[ "$skip_review_triage" == "true" ]]; then
                     log_info "Review triage skipped (--skip-review-triage) for $task_id"
                     if [[ "$dry_run" == "false" ]]; then
@@ -6698,10 +6764,39 @@ cmd_pr_lifecycle() {
                     fi
                     tstatus="merging"
                 else
-                    if [[ "$dry_run" == "false" ]]; then
-                        cmd_transition "$task_id" "review_triage" 2>>"$SUPERVISOR_LOG" || true
+                    # t219: Fast-path check - if zero review threads, skip triage state
+                    local pr_number_fastpath
+                    pr_number_fastpath=$(echo "$tpr" | grep -oE '[0-9]+$' || echo "")
+                    local repo_slug_fastpath
+                    repo_slug_fastpath=$(echo "$tpr" | grep -oE 'github\.com/[^/]+/[^/]+' | sed 's|github\.com/||' || echo "")
+                    
+                    if [[ -n "$pr_number_fastpath" && -n "$repo_slug_fastpath" ]]; then
+                        local threads_json_fastpath
+                        threads_json_fastpath=$(check_review_threads "$repo_slug_fastpath" "$pr_number_fastpath" 2>/dev/null || echo "[]")
+                        local thread_count_fastpath
+                        thread_count_fastpath=$(echo "$threads_json_fastpath" | jq 'length' 2>/dev/null || echo "0")
+                        
+                        if [[ "$thread_count_fastpath" -eq 0 ]]; then
+                            log_info "Fast-path: CI green + zero review threads - skipping review_triage, going directly to merge"
+                            if [[ "$dry_run" == "false" ]]; then
+                                db "$SUPERVISOR_DB" "UPDATE tasks SET triage_result = '{\"action\":\"merge\",\"threads\":0,\"fast_path\":true}' WHERE id = '$escaped_id';"
+                                cmd_transition "$task_id" "merging" 2>>"$SUPERVISOR_LOG" || true
+                            fi
+                            tstatus="merging"
+                        else
+                            # Has review threads - go through normal triage
+                            if [[ "$dry_run" == "false" ]]; then
+                                cmd_transition "$task_id" "review_triage" 2>>"$SUPERVISOR_LOG" || true
+                            fi
+                            tstatus="review_triage"
+                        fi
+                    else
+                        # Cannot parse PR URL - fall back to triage
+                        if [[ "$dry_run" == "false" ]]; then
+                            cmd_transition "$task_id" "review_triage" 2>>"$SUPERVISOR_LOG" || true
+                        fi
+                        tstatus="review_triage"
                     fi
-                    tstatus="review_triage"
                 fi
                 ;;
             already_merged)
@@ -6713,6 +6808,11 @@ cmd_pr_lifecycle() {
                 ;;
             ci_pending)
                 log_info "CI still pending for $task_id, will retry next pulse"
+                # t219: Record timing even for early returns
+                local stage_end
+                stage_end=$(date +%s)
+                stage_timings="${stage_timings}pr_review:$((stage_end - stage_start))s(ci_pending),"
+                record_lifecycle_timing "$task_id" "$stage_timings" 2>/dev/null || true
                 return 0
                 ;;
             ci_failed)
@@ -6733,6 +6833,11 @@ cmd_pr_lifecycle() {
                 ;;
             draft)
                 log_info "PR is still a draft for $task_id"
+                # t219: Record timing even for early returns
+                local stage_end
+                stage_end=$(date +%s)
+                stage_timings="${stage_timings}pr_review:$((stage_end - stage_start))s(draft),"
+                record_lifecycle_timing "$task_id" "$stage_timings" 2>/dev/null || true
                 return 0
                 ;;
             closed)
@@ -6767,10 +6872,18 @@ cmd_pr_lifecycle() {
                 return 0
                 ;;
         esac
+        
+        # t219: Record pr_review stage timing
+        local stage_end
+        stage_end=$(date +%s)
+        stage_timings="${stage_timings}pr_review:$((stage_end - stage_start))s,"
     fi
 
     # Step 2b: Review triage - check unresolved threads and classify (t148)
     if [[ "$tstatus" == "review_triage" ]]; then
+        local stage_start
+        stage_start=$(date +%s)
+        
         # Extract PR number and repo slug for GraphQL query
         local pr_number_triage
         pr_number_triage=$(echo "$tpr" | grep -oE '[0-9]+$' || echo "")
@@ -6854,10 +6967,18 @@ cmd_pr_lifecycle() {
                 esac
             fi
         fi
+        
+        # t219: Record review_triage stage timing
+        local stage_end
+        stage_end=$(date +%s)
+        stage_timings="${stage_timings}review_triage:$((stage_end - stage_start))s,"
     fi
 
     # Step 3: Merge
     if [[ "$tstatus" == "merging" ]]; then
+        local stage_start
+        stage_start=$(date +%s)
+        
         if [[ "$dry_run" == "true" ]]; then
             log_info "[dry-run] Would merge PR for $task_id"
         else
@@ -6870,10 +6991,19 @@ cmd_pr_lifecycle() {
                 return 1
             fi
         fi
+        
+        # t219: Record merging stage timing
+        local stage_end
+        stage_end=$(date +%s)
+        stage_timings="${stage_timings}merging:$((stage_end - stage_start))s,"
     fi
 
     # Step 4: Postflight + Deploy
+    # t219: This step already runs deploy + verify in same pulse (no change needed)
     if [[ "$tstatus" == "merged" ]]; then
+        local stage_start
+        stage_start=$(date +%s)
+        
         if [[ "$dry_run" == "false" ]]; then
             cmd_transition "$task_id" "deploying" || log_warn "Failed to transition $task_id to deploying"
 
@@ -6906,9 +7036,25 @@ cmd_pr_lifecycle() {
         else
             log_info "[dry-run] Would deploy and clean up for $task_id"
         fi
+        
+        # t219: Record deploying stage timing
+        local stage_end
+        stage_end=$(date +%s)
+        stage_timings="${stage_timings}deploying:$((stage_end - stage_start))s,"
     fi
 
-    log_success "Post-PR lifecycle complete for $task_id (status: $(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo 'unknown'))"
+    # t219: Record total lifecycle timing and log to proof-log
+    local lifecycle_end_time
+    lifecycle_end_time=$(date +%s)
+    local total_time
+    total_time=$((lifecycle_end_time - lifecycle_start_time))
+    stage_timings="${stage_timings}total:${total_time}s"
+    
+    log_success "Post-PR lifecycle complete for $task_id (status: $(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo 'unknown')) - timing: $stage_timings"
+    
+    # Record timing metrics to proof-log for pipeline latency analysis
+    record_lifecycle_timing "$task_id" "$stage_timings" 2>/dev/null || true
+    
     return 0
 }
 
