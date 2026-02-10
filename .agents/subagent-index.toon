@@ -149,6 +149,7 @@ model-availability-helper.sh,Model availability checker - probe before dispatch 
 fallback-chain-helper.sh,Fallback chain configuration - per-agent and global model fallbacks (list get set test status validate)
 response-scoring-helper.sh,Response scoring - evaluate AI model responses side-by-side (prompt record score compare leaderboard export)
 coderabbit-task-creator-helper.sh,Auto-create tasks from CodeRabbit findings with false positive filtering (scan create filter status)
+quality-sweep-helper.sh,Finding-to-task pipeline - group findings from all quality tools by file/category and create batched TODO tasks (ingest create-tasks groups stats)
 sops-helper.sh,SOPS encrypted config file management (init encrypt decrypt edit rotate status install)
 gocryptfs-helper.sh,gocryptfs encrypted filesystem overlay (init mount unmount create open close list status install)
 youtube-helper.sh,YouTube Data API v3 wrapper (auth channel videos competitors search quota)
