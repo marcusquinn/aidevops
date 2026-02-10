@@ -6146,6 +6146,15 @@ merge_task_pr() {
 
     log_info "Merging PR #$pr_number in $repo_slug (squash)..."
 
+    # Record pre-merge commit for targeted deploy (t213)
+    local pre_merge_commit=""
+    if [[ -n "$trepo" && -d "$trepo/.git" ]]; then
+        pre_merge_commit=$(git -C "$trepo" rev-parse HEAD 2>/dev/null || echo "")
+        if [[ -n "$pre_merge_commit" ]]; then
+            db "$SUPERVISOR_DB" "UPDATE tasks SET error = json_set(COALESCE(error, '{}'), '$.pre_merge_commit', '$pre_merge_commit') WHERE id = '$escaped_id';" 2>/dev/null || true
+        fi
+    fi
+
     # Squash merge without --delete-branch (worktree handles branch cleanup)
     local merge_output
     if ! merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash 2>&1); then
@@ -6221,7 +6230,9 @@ run_postflight_for_task() {
 }
 
 #######################################
-# Run deploy for a task (aidevops repos only: setup.sh)
+# Run deploy for a task (aidevops repos only)
+# Uses targeted deploy-agents-on-merge.sh when available (t213),
+# falls back to full setup.sh --non-interactive
 #######################################
 run_deploy_for_task() {
     local task_id="$1"
@@ -6242,15 +6253,55 @@ run_deploy_for_task() {
         return 0
     fi
 
+    local deploy_log
+    deploy_log="$SUPERVISOR_DIR/logs/${task_id}-deploy-$(date +%Y%m%d%H%M%S).log"
+    mkdir -p "$SUPERVISOR_DIR/logs"
+
+    # Try targeted deploy first (faster: only syncs changed agent files)
+    local deploy_script="$repo/.agents/scripts/deploy-agents-on-merge.sh"
+    if [[ -x "$deploy_script" ]]; then
+        # Detect what changed in the merged PR to choose deploy strategy
+        local pre_merge_commit=""
+        local escaped_id
+        escaped_id=$(sql_escape "$task_id")
+        pre_merge_commit=$(db "$SUPERVISOR_DB" "
+            SELECT json_extract(error, '$.pre_merge_commit')
+            FROM tasks WHERE id = '$escaped_id';
+        " 2>/dev/null || echo "")
+
+        local deploy_args=("--repo" "$repo" "--quiet")
+        if [[ -n "$pre_merge_commit" && "$pre_merge_commit" != "null" ]]; then
+            deploy_args+=("--diff" "$pre_merge_commit")
+            log_info "Targeted deploy for $task_id (diff since $pre_merge_commit)..."
+        else
+            log_info "Targeted deploy for $task_id (version-based detection)..."
+        fi
+
+        local deploy_output
+        if deploy_output=$("$deploy_script" "${deploy_args[@]}" 2>&1); then
+            log_success "Targeted deploy complete for $task_id"
+            echo "$deploy_output" > "$deploy_log" 2>/dev/null || true
+            return 0
+        fi
+
+        local deploy_exit=$?
+        if [[ "$deploy_exit" -eq 2 ]]; then
+            # Exit 2 = nothing to deploy (no changes detected)
+            log_info "No agent changes to deploy for $task_id"
+            return 0
+        fi
+
+        log_warn "Targeted deploy failed for $task_id (exit $deploy_exit), falling back to setup.sh"
+        echo "$deploy_output" > "$deploy_log" 2>/dev/null || true
+    fi
+
+    # Fallback: full setup.sh --non-interactive
     if [[ ! -x "$repo/setup.sh" ]]; then
         log_warn "setup.sh not found or not executable in $repo"
         return 0
     fi
 
     log_info "Running setup.sh for $task_id (timeout: 300s)..."
-    local deploy_output deploy_log
-    deploy_log="$SUPERVISOR_DIR/logs/${task_id}-deploy-$(date +%Y%m%d%H%M%S).log"
-    mkdir -p "$SUPERVISOR_DIR/logs"
 
     # Portable timeout: prefer timeout/gtimeout, fall back to background+kill
     local timeout_cmd=""
@@ -6260,6 +6311,7 @@ run_deploy_for_task() {
         timeout_cmd="gtimeout 300"
     fi
 
+    local deploy_output
     if [[ -n "$timeout_cmd" ]]; then
         if ! deploy_output=$(cd "$repo" && AIDEVOPS_NON_INTERACTIVE=true $timeout_cmd ./setup.sh --non-interactive 2>&1); then
             log_warn "Deploy (setup.sh) returned non-zero for $task_id (see $deploy_log)"
