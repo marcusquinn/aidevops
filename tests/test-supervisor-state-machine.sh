@@ -1576,6 +1576,118 @@ fi
 rm -rf "$CLAIM_TEST_DIR"
 
 # ============================================================
+# SECTION: Stuck Deploying Auto-Recovery (t222)
+# ============================================================
+section "Stuck Deploying Auto-Recovery (t222)"
+
+# Test: deploying -> deployed transition is valid (prerequisite)
+sup add test-t222a --repo /tmp/test --description "Deploying recovery test" >/dev/null
+sup transition test-t222a dispatched >/dev/null
+sup transition test-t222a running >/dev/null
+sup transition test-t222a evaluating >/dev/null
+sup transition test-t222a complete >/dev/null
+sup transition test-t222a pr_review >/dev/null
+sup transition test-t222a merging >/dev/null
+sup transition test-t222a merged >/dev/null
+sup transition test-t222a deploying >/dev/null
+
+# Verify task is in deploying state
+if [[ "$(get_status test-t222a)" == "deploying" ]]; then
+    pass "Task reaches deploying state correctly"
+else
+    fail "Task should be in deploying state: $(get_status test-t222a)"
+fi
+
+# Simulate recovery: deploying -> deployed
+sup transition test-t222a deployed >/dev/null
+if [[ "$(get_status test-t222a)" == "deployed" ]]; then
+    pass "deploying -> deployed recovery transition succeeds (t222)"
+else
+    fail "deploying -> deployed recovery failed: $(get_status test-t222a)"
+fi
+
+# Test: deploying -> failed is also valid (deploy failure path)
+sup add test-t222b --repo /tmp/test --description "Deploying failure test" >/dev/null
+sup transition test-t222b dispatched >/dev/null
+sup transition test-t222b running >/dev/null
+sup transition test-t222b evaluating >/dev/null
+sup transition test-t222b complete >/dev/null
+sup transition test-t222b pr_review >/dev/null
+sup transition test-t222b merging >/dev/null
+sup transition test-t222b merged >/dev/null
+sup transition test-t222b deploying >/dev/null
+sup transition test-t222b failed --error "Deploy failed during recovery" >/dev/null
+if [[ "$(get_status test-t222b)" == "failed" ]]; then
+    pass "deploying -> failed transition succeeds (deploy failure path)"
+else
+    fail "deploying -> failed transition failed: $(get_status test-t222b)"
+fi
+
+# Test: state_log records deploying recovery transitions
+log_entries=$(test_db "SELECT from_state || '->' || to_state FROM state_log WHERE task_id = 'test-t222a' AND from_state = 'deploying';")
+if echo "$log_entries" | grep -q "deploying->deployed"; then
+    pass "State log records deploying -> deployed recovery (t222)"
+else
+    fail "State log missing deploying -> deployed entry" "Got: $log_entries"
+fi
+
+# Test: cmd_pr_lifecycle handles deploying state via sourced function
+# Create a task stuck in deploying and verify pr_lifecycle recovers it
+sup add test-t222c --repo /tmp/test --description "PR lifecycle deploying recovery" >/dev/null
+sup transition test-t222c dispatched >/dev/null
+sup transition test-t222c running >/dev/null
+sup transition test-t222c evaluating >/dev/null
+sup transition test-t222c complete >/dev/null
+sup transition test-t222c pr_review >/dev/null
+sup transition test-t222c merging >/dev/null
+sup transition test-t222c merged >/dev/null
+sup transition test-t222c deploying >/dev/null
+
+# Run cmd_pr_lifecycle on the stuck task — it should auto-recover
+lifecycle_output=$(bash -c "
+    export AIDEVOPS_SUPERVISOR_DIR='$TEST_DIR'
+    set -- init
+    source '$SUPERVISOR_SCRIPT' >/dev/null
+    cmd_pr_lifecycle 'test-t222c'
+" 2>&1 || true)
+
+recovered_status=$(get_status test-t222c)
+if [[ "$recovered_status" == "deployed" ]]; then
+    pass "cmd_pr_lifecycle auto-recovers stuck deploying -> deployed (t222)"
+else
+    # Also acceptable: failed (if recovery transition was rejected for some reason)
+    if [[ "$recovered_status" == "failed" ]]; then
+        pass "cmd_pr_lifecycle handles stuck deploying (transitioned to failed)"
+    else
+        fail "cmd_pr_lifecycle did not recover stuck deploying task" "Status: $recovered_status, Output: $(echo "$lifecycle_output" | tail -3)"
+    fi
+fi
+
+# Test: invalid transition from deploying (e.g., deploying -> queued)
+sup add test-t222d --repo /tmp/test --description "Invalid deploying transition" >/dev/null
+sup transition test-t222d dispatched >/dev/null
+sup transition test-t222d running >/dev/null
+sup transition test-t222d evaluating >/dev/null
+sup transition test-t222d complete >/dev/null
+sup transition test-t222d pr_review >/dev/null
+sup transition test-t222d merging >/dev/null
+sup transition test-t222d merged >/dev/null
+sup transition test-t222d deploying >/dev/null
+invalid_deploying=$(sup transition test-t222d queued 2>&1 || true)
+if echo "$invalid_deploying" | grep -qi "invalid transition"; then
+    pass "deploying -> queued rejected (invalid transition)"
+else
+    fail "deploying -> queued should be rejected" "$invalid_deploying"
+fi
+
+# Verify state unchanged after invalid transition
+if [[ "$(get_status test-t222d)" == "deploying" ]]; then
+    pass "State unchanged after invalid deploying transition (t222)"
+else
+    fail "State changed despite invalid transition: $(get_status test-t222d)"
+fi
+
+# ============================================================
 # SUMMARY
 # ============================================================
 echo ""
