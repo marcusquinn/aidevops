@@ -9,6 +9,7 @@ import { join, basename, extname, dirname } from 'path';
 import { homedir } from 'os';
 import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
+import { createHash } from 'crypto';
 
 // Constants
 const BASE_URL = 'https://higgsfield.ai';
@@ -253,6 +254,12 @@ function parseArgs() {
       options.feature = args[++i];
     } else if (args[i] === '--subtype') {
       options.subtype = args[++i];
+    } else if (args[i] === '--project') {
+      options.project = args[++i];
+    } else if (args[i] === '--no-sidecar') {
+      options.noSidecar = true;
+    } else if (args[i] === '--no-dedup') {
+      options.noDedup = true;
     } else if (args[i] === '--force') {
       options.force = true;
     } else if (args[i] === '--dry-run') {
@@ -1284,9 +1291,10 @@ async function generateImage(options = {}) {
 
     // Download only the new results
     if (options.wait !== false) {
-      const outputDir = options.output || DOWNLOAD_DIR;
+      const baseOutput = options.output || DOWNLOAD_DIR;
+      const outputDir = resolveOutputDir(baseOutput, options, 'images');
       if (newImageIndices.length > 0) {
-        await downloadSpecificImages(page, outputDir, newImageIndices);
+        await downloadSpecificImages(page, outputDir, newImageIndices, options);
       } else if (generationComplete) {
         // Count-based detection failed (page may have refreshed during generation).
         // Use batch size as a cap: download at most N images from the top of the grid.
@@ -1295,7 +1303,7 @@ async function generateImage(options = {}) {
         console.log(`Count-based detection missed new images. Downloading top ${downloadCount} (batch=${batchSize})...`);
         const fallbackIndices = [];
         for (let i = 0; i < downloadCount; i++) fallbackIndices.push(i);
-        await downloadSpecificImages(page, outputDir, fallbackIndices);
+        await downloadSpecificImages(page, outputDir, fallbackIndices, options);
       } else {
         console.log('No new images detected. Generation may still be in progress.');
         console.log('Try: node playwright-automator.mjs download');
@@ -1324,7 +1332,7 @@ async function generateImage(options = {}) {
 // Strategy 2 (FALLBACK): Navigate to the page fresh to trigger the API call,
 //   then extract the URL from the intercepted response.
 // Strategy 3 (LAST RESORT): Extract <video src> from the list item (motion template, low quality).
-async function downloadVideoFromHistory(page, outputDir, metadata = {}) {
+async function downloadVideoFromHistory(page, outputDir, metadata = {}, options = {}) {
   const downloaded = [];
 
   try {
@@ -1442,11 +1450,17 @@ async function downloadVideoFromHistory(page, outputDir, metadata = {}) {
                 const curlResult = execSync(`curl -sL -w '%{http_code}' -o "${savePath}" "${videoUrl}"`, { timeout: 120000, encoding: 'utf-8' });
                 const httpCode = curlResult.trim();
                 if (httpCode === '200' && existsSync(savePath)) {
-                  const fileSize = statSync(savePath).size;
-                  if (fileSize > 10000) { // Sanity check: real videos are >10KB
-                    console.log(`Downloaded full-quality video (${(fileSize / 1024 / 1024).toFixed(1)}MB, HTTP ${httpCode}): ${savePath}`);
-                    downloaded.push(savePath);
-                  } else {
+                    const fileSize = statSync(savePath).size;
+                    if (fileSize > 10000) { // Sanity check: real videos are >10KB
+                      const result = finalizeDownload(savePath, {
+                        command: 'video', type: 'video', ...combinedMeta,
+                        strategy: 'api-interception', cloudFrontUrl: videoUrl,
+                      }, outputDir, options);
+                      if (!result.skipped) {
+                        console.log(`Downloaded full-quality video (${(fileSize / 1024 / 1024).toFixed(1)}MB, HTTP ${httpCode}): ${savePath}`);
+                      }
+                      downloaded.push(result.path);
+                    } else {
                     console.log(`CloudFront returned ${httpCode} but file too small (${fileSize}B), skipping: ${videoUrl.substring(videoUrl.lastIndexOf('/') + 1)}`);
                   }
                 } else {
@@ -1489,8 +1503,14 @@ async function downloadVideoFromHistory(page, outputDir, metadata = {}) {
         const savePath = join(outputDir, filename);
         try {
           execSync(`curl -sL -o "${savePath}" "${videoSrc}"`, { timeout: 120000 });
-          console.log(`Downloaded video (CDN fallback): ${savePath}`);
-          downloaded.push(savePath);
+          const result = finalizeDownload(savePath, {
+            command: 'video', type: 'video', ...combinedMeta,
+            strategy: 'cdn-fallback', cdnUrl: videoSrc,
+          }, outputDir, options);
+          if (!result.skipped) {
+            console.log(`Downloaded video (CDN fallback): ${savePath}`);
+          }
+          downloaded.push(result.path);
         } catch (curlErr) {
           console.log(`CDN video download failed: ${curlErr.message}`);
         }
@@ -1928,9 +1948,10 @@ async function generateVideo(options = {}) {
 
     // Download the video from History
     if (generationComplete && options.wait !== false) {
-      const outputDir = options.output || DOWNLOAD_DIR;
+      const baseOutput = options.output || DOWNLOAD_DIR;
+      const outputDir = resolveOutputDir(baseOutput, options, 'videos');
       const videoMeta = { model, promptSnippet: prompt.substring(0, 80) };
-      const downloads = await downloadVideoFromHistory(page, outputDir, videoMeta);
+      const downloads = await downloadVideoFromHistory(page, outputDir, videoMeta, options);
       if (downloads.length > 0) {
         console.log(`Video downloaded successfully: ${downloads.join(', ')}`);
       } else {
@@ -2083,9 +2104,10 @@ async function generateLipsync(options = {}) {
 
     // Download from History
     if (generationComplete && options.wait !== false) {
-      const outputDir = options.output || DOWNLOAD_DIR;
+      const baseOutput = options.output || DOWNLOAD_DIR;
+      const outputDir = resolveOutputDir(baseOutput, options, 'lipsync');
       const meta = { model: options.model || 'lipsync', promptSnippet: prompt.substring(0, 80) };
-      const downloads = await downloadVideoFromHistory(page, outputDir, meta);
+      const downloads = await downloadVideoFromHistory(page, outputDir, meta, options);
       if (downloads.length > 0) {
         console.log(`Lipsync video downloaded: ${downloads.join(', ')}`);
       }
@@ -2234,11 +2256,156 @@ function buildDescriptiveFilename(metadata, originalFilename, index) {
   return parts.join('_') + ext;
 }
 
+// --- Output Organization: project dirs, JSON sidecars, dedup ---
+
+// Resolve the output directory with optional project organization.
+// When --project is set, creates: {baseOutput}/{project}/{type}/
+// Types: images, videos, lipsync, edits, pipeline, misc
+function resolveOutputDir(baseOutput, options = {}, type = 'misc') {
+  let dir = baseOutput;
+
+  if (options.project) {
+    // Sanitize project name for filesystem
+    const projectSlug = options.project
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '');
+    dir = join(baseOutput, projectSlug, type);
+  }
+
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+// Infer the output type from the command/context
+function inferOutputType(command, options = {}) {
+  const typeMap = {
+    image: 'images',
+    video: 'videos',
+    lipsync: 'lipsync',
+    pipeline: 'pipeline',
+    'seed-bracket': 'seed-brackets',
+    edit: 'edits',
+    inpaint: 'edits',
+    upscale: 'upscaled',
+    'cinema-studio': 'cinema',
+    'motion-control': 'videos',
+    'video-edit': 'videos',
+    storyboard: 'storyboards',
+    'vibe-motion': 'videos',
+    influencer: 'characters',
+    character: 'characters',
+    app: 'apps',
+    chain: 'chained',
+    'mixed-media': 'mixed-media',
+    'motion-preset': 'motion-presets',
+    feature: 'features',
+    download: options.model === 'video' ? 'videos' : 'images',
+  };
+  return typeMap[command] || 'misc';
+}
+
+// Write a JSON sidecar metadata file alongside a downloaded file.
+// Sidecar path: {filePath}.json (e.g., hf_soul_2k_sunset_20260210.png.json)
+function writeJsonSidecar(filePath, metadata, options = {}) {
+  if (options.noSidecar) return;
+
+  const sidecarPath = `${filePath}.json`;
+  const sidecar = {
+    source: 'higgsfield-ui-automator',
+    version: '1.0',
+    timestamp: new Date().toISOString(),
+    file: basename(filePath),
+    ...metadata,
+  };
+
+  // Add file stats if the file exists
+  if (existsSync(filePath)) {
+    const stats = statSync(filePath);
+    sidecar.fileSize = stats.size;
+    sidecar.fileSizeHuman = stats.size > 1024 * 1024
+      ? `${(stats.size / 1024 / 1024).toFixed(1)}MB`
+      : `${(stats.size / 1024).toFixed(1)}KB`;
+  }
+
+  try {
+    writeFileSync(sidecarPath, JSON.stringify(sidecar, null, 2));
+  } catch (err) {
+    console.log(`[sidecar] Warning: could not write ${sidecarPath}: ${err.message}`);
+  }
+}
+
+// Compute SHA-256 hash of a file for deduplication
+function computeFileHash(filePath) {
+  try {
+    const data = readFileSync(filePath);
+    return createHash('sha256').update(data).digest('hex');
+  } catch {
+    return null;
+  }
+}
+
+// Check if a file is a duplicate of any existing file in the output directory.
+// Uses SHA-256 hash comparison. Returns the path of the duplicate if found, null otherwise.
+// Maintains a hash index file (.dedup-index.json) in the output directory for fast lookups.
+function checkDuplicate(filePath, outputDir, options = {}) {
+  if (options.noDedup) return null;
+
+  const hash = computeFileHash(filePath);
+  if (!hash) return null;
+
+  const indexPath = join(outputDir, '.dedup-index.json');
+  let index = {};
+
+  // Load existing index
+  if (existsSync(indexPath)) {
+    try {
+      index = JSON.parse(readFileSync(indexPath, 'utf-8'));
+    } catch { index = {}; }
+  }
+
+  // Check for duplicate
+  if (index[hash] && index[hash] !== basename(filePath)) {
+    const existingPath = join(outputDir, index[hash]);
+    if (existsSync(existingPath)) {
+      return existingPath;
+    }
+    // Stale entry — remove it
+    delete index[hash];
+  }
+
+  // Register this file in the index
+  index[hash] = basename(filePath);
+  try {
+    writeFileSync(indexPath, JSON.stringify(index, null, 2));
+  } catch { /* ignore write errors */ }
+
+  return null;
+}
+
+// Wrapper: save a downloaded file with sidecar + dedup.
+// Returns { path, duplicate, skipped } where duplicate is the existing file path if skipped.
+function finalizeDownload(filePath, metadata, outputDir, options = {}) {
+  // Check for duplicates
+  const duplicate = checkDuplicate(filePath, outputDir, options);
+  if (duplicate) {
+    console.log(`[dedup] Skipping duplicate: ${basename(filePath)} matches ${basename(duplicate)}`);
+    // Remove the duplicate file we just downloaded
+    try { unlinkSync(filePath); } catch { /* ignore */ }
+    return { path: duplicate, duplicate: true, skipped: true };
+  }
+
+  // Write JSON sidecar
+  writeJsonSidecar(filePath, metadata, options);
+
+  return { path: filePath, duplicate: false, skipped: false };
+}
+
 // Download generated results from the current page
 // Strategy: click each generated image to open the "Asset showcase" dialog,
 // then click the Download button in the dialog. Falls back to extracting
 // CloudFront CDN URLs directly from img[alt="image generation"] elements.
-async function downloadLatestResult(page, outputDir, downloadAll = true) {
+async function downloadLatestResult(page, outputDir, downloadAll = true, options = {}) {
   const downloaded = [];
 
   try {
@@ -2284,8 +2451,14 @@ async function downloadLatestResult(page, outputDir, downloadAll = true) {
                 const descriptiveName = buildDescriptiveFilename(metadata, origFilename, i);
                 const savePath = join(outputDir, descriptiveName);
                 await download.saveAs(savePath);
-                console.log(`Downloaded [${i + 1}/${toDownload}]: ${savePath}`);
-                downloaded.push(savePath);
+                const result = finalizeDownload(savePath, {
+                  command: 'download', type: 'image', ...metadata,
+                  originalFilename: origFilename,
+                }, outputDir, options);
+                if (!result.skipped) {
+                  console.log(`Downloaded [${i + 1}/${toDownload}]: ${savePath}`);
+                }
+                downloaded.push(result.path);
               } else {
                 // Download event didn't fire - the button may trigger a blob/fetch download
                 // Wait a moment and check if a file appeared
@@ -2346,13 +2519,20 @@ async function downloadLatestResult(page, outputDir, downloadAll = true) {
         const url = toDownload[i];
         const isVideo = url.includes('.mp4') || url.includes('video');
         const ext = isVideo ? '.mp4' : '.webp';
-        const filename = `higgsfield-${Date.now()}-${i}${ext}`;
+        const cdnMeta = { promptSnippet: 'cdn-fallback' };
+        const filename = buildDescriptiveFilename(cdnMeta, `higgsfield-cdn-${Date.now()}${ext}`, i);
         const savePath = join(outputDir, filename);
 
         try {
           execSync(`curl -sL -o "${savePath}" "${url}"`, { timeout: 60000 });
-          console.log(`Downloaded via CDN [${i + 1}/${toDownload.length}]: ${savePath}`);
-          downloaded.push(savePath);
+          const result = finalizeDownload(savePath, {
+            command: 'download', type: isVideo ? 'video' : 'image',
+            cdnUrl: url, strategy: 'cdn-fallback',
+          }, outputDir, options);
+          if (!result.skipped) {
+            console.log(`Downloaded via CDN [${i + 1}/${toDownload.length}]: ${savePath}`);
+          }
+          downloaded.push(result.path);
         } catch (curlErr) {
           console.log(`CDN download failed for ${url}: ${curlErr.message}`);
         }
@@ -2375,7 +2555,7 @@ async function downloadLatestResult(page, outputDir, downloadAll = true) {
 
 // Download specific images by their index on the page
 // Uses the same dialog-based approach as downloadLatestResult but only for specified indices
-async function downloadSpecificImages(page, outputDir, indices) {
+async function downloadSpecificImages(page, outputDir, indices, options = {}) {
   const downloaded = [];
   const generatedImgs = page.locator('img[alt="image generation"], img[alt*="media asset by id"]');
 
@@ -2402,8 +2582,14 @@ async function downloadSpecificImages(page, outputDir, indices) {
             const descriptiveName = buildDescriptiveFilename(metadata, origFilename, downloaded.length);
             const savePath = join(outputDir, descriptiveName);
             await download.saveAs(savePath);
-            console.log(`Downloaded [${downloaded.length + 1}/${indices.length}]: ${savePath}`);
-            downloaded.push(savePath);
+            const result = finalizeDownload(savePath, {
+              command: 'image', type: 'image', ...metadata,
+              originalFilename: origFilename, imageIndex: idx,
+            }, outputDir, options);
+            if (!result.skipped) {
+              console.log(`Downloaded [${downloaded.length + 1}/${indices.length}]: ${savePath}`);
+            }
+            downloaded.push(result.path);
           }
         }
 
@@ -2443,12 +2629,19 @@ async function downloadSpecificImages(page, outputDir, indices) {
 
     for (let i = 0; i < cdnUrls.length; i++) {
       const ext = cdnUrls[i].includes('.mp4') ? '.mp4' : '.webp';
-      const filename = `higgsfield-${Date.now()}-cdn-${i}${ext}`;
+      const cdnMeta = { promptSnippet: 'cdn-fallback' };
+      const filename = buildDescriptiveFilename(cdnMeta, `higgsfield-cdn-${Date.now()}${ext}`, downloaded.length);
       const savePath = join(outputDir, filename);
       try {
         execSync(`curl -sL -o "${savePath}" "${cdnUrls[i]}"`, { timeout: 60000 });
-        console.log(`Downloaded via CDN [${downloaded.length + 1}]: ${savePath}`);
-        downloaded.push(savePath);
+        const result = finalizeDownload(savePath, {
+          command: 'image', type: 'image', cdnUrl: cdnUrls[i],
+          strategy: 'cdn-fallback', imageIndex: indices[downloaded.length],
+        }, outputDir, options);
+        if (!result.skipped) {
+          console.log(`Downloaded via CDN [${downloaded.length + 1}]: ${savePath}`);
+        }
+        downloaded.push(result.path);
       } catch (curlErr) {
         console.log(`CDN download failed: ${curlErr.message}`);
       }
@@ -2518,7 +2711,9 @@ async function useApp(options = {}) {
     await page.screenshot({ path: join(STATE_DIR, `app-${appSlug}-result.png`), fullPage: false });
 
     if (options.wait !== false) {
-      await downloadLatestResult(page, options.output || DOWNLOAD_DIR, true);
+      const baseOutput = options.output || DOWNLOAD_DIR;
+      const outputDir = resolveOutputDir(baseOutput, options, 'apps');
+      await downloadLatestResult(page, outputDir, true, options);
     }
 
     await context.storageState({ path: STATE_FILE });
