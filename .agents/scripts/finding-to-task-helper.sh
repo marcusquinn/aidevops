@@ -28,15 +28,6 @@ readonly SWEEP_DATA_DIR="${HOME}/.aidevops/.agent-workspace/work/quality-sweep"
 readonly SWEEP_DB="${SWEEP_DATA_DIR}/findings.db"
 readonly TASK_DB="${SWEEP_DATA_DIR}/finding-tasks.db"
 
-# Severity ordering (lower = more severe)
-declare -A SEVERITY_ORDER=(
-    [critical]=1
-    [high]=2
-    [medium]=3
-    [low]=4
-    [info]=5
-)
-
 # Minimum findings to create a grouped task (avoids noise)
 readonly MIN_FINDINGS_PER_TASK=1
 
@@ -56,7 +47,7 @@ db() {
 init_task_db() {
     mkdir -p "$SWEEP_DATA_DIR" 2>/dev/null || true
 
-    db "$TASK_DB" <<'SQL'
+    db "$TASK_DB" <<'SQL' >/dev/null
 PRAGMA journal_mode=WAL;
 
 CREATE TABLE IF NOT EXISTS generated_tasks (
@@ -100,7 +91,14 @@ SQL
 
 severity_rank() {
     local sev="$1"
-    echo "${SEVERITY_ORDER[$sev]:-5}"
+    case "$sev" in
+        critical) echo 1 ;;
+        high)     echo 2 ;;
+        medium)   echo 3 ;;
+        low)      echo 4 ;;
+        info)     echo 5 ;;
+        *)        echo 5 ;;
+    esac
     return 0
 }
 
