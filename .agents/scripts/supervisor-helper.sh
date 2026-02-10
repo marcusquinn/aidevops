@@ -3540,7 +3540,7 @@ check_model_health() {
     fi
 
     # Check for known failure patterns
-    if echo "$probe_result" | grep -qiE 'endpoints failed|Quota protection|over[_ -]?usage|quota reset|"status":[[:space:]]*503|HTTP 503|503 Service|service unavailable' 2>/dev/null; then
+    if echo "$probe_result" | grep -qiE 'endpoints failed|Quota protection|over[_ -]?usage|quota reset|"status":[[:space:]]*503|HTTP 503|503 Service|service unavailable|CreditsError|Insufficient balance' 2>/dev/null; then
         log_warn "Model health check FAILED: provider error detected"
         return 1
     fi
@@ -4542,7 +4542,7 @@ extract_log_metadata() {
     # discusses errors, APIs, status codes as documentation content.
     # Anchored patterns prevent substring matches (e.g., 503 in timestamps).
     local backend_error_count=0
-    backend_error_count=$(grep -ci 'endpoints failed\|gateway[[:space:]].*error\|service unavailable\|HTTP 503\|503 Service\|"status":[[:space:]]*503\|Quota protection\|over[_ -]\{0,1\}usage\|quota reset' "$log_tail_file" 2>/dev/null || echo 0)
+    backend_error_count=$(grep -ci 'endpoints failed\|gateway[[:space:]].*error\|service unavailable\|HTTP 503\|503 Service\|"status":[[:space:]]*503\|Quota protection\|over[_ -]\{0,1\}usage\|quota reset\|CreditsError\|Insufficient balance\|statusCode.*401' "$log_tail_file" 2>/dev/null || echo 0)
 
     rm -f "$log_tail_file"
 
@@ -4840,7 +4840,14 @@ evaluate_worker() {
     if [[ "$meta_exit_code" == "0" && "$meta_signal" == "none" ]]; then
         local meta_content_lines
         meta_content_lines=$(_meta_get "content_lines" "0")
+        # Billing/credits errors: block immediately, retrying won't help.
+        # OpenCode Zen proxy returns CreditsError when credits exhausted;
+        # this is a billing issue, not a transient backend error.
         if [[ "$meta_backend_error_count" -gt 0 && "$meta_content_lines" -lt 10 ]]; then
+            if grep -qi 'CreditsError\|Insufficient balance' "$log_file" 2>/dev/null; then
+                echo "blocked:billing_credits_exhausted"
+                return 0
+            fi
             echo "retry:backend_quota_error"
             return 0
         fi
