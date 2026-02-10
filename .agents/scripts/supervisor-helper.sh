@@ -5078,6 +5078,283 @@ validate_pr_belongs_to_task() {
 }
 
 #######################################
+# Parse a GitHub PR URL into repo_slug and pr_number (t232)
+#
+# Single source of truth for PR URL parsing. Replaces scattered
+# grep -oE '[0-9]+$' and grep -oE 'github\.com/...' patterns.
+#
+# $1: pr_url (e.g., "https://github.com/owner/repo/pull/123")
+#
+# Outputs: "repo_slug|pr_number" on stdout (e.g., "owner/repo|123")
+# Returns 0 on success, 1 if URL cannot be parsed
+#######################################
+parse_pr_url() {
+    local pr_url="$1"
+
+    if [[ -z "$pr_url" ]]; then
+        return 1
+    fi
+
+    local pr_number
+    pr_number=$(echo "$pr_url" | grep -oE '[0-9]+$' || echo "")
+    if [[ -z "$pr_number" ]]; then
+        return 1
+    fi
+
+    local repo_slug
+    repo_slug=$(echo "$pr_url" | grep -oE 'github\.com/[^/]+/[^/]+' | sed 's|github\.com/||' || echo "")
+    if [[ -z "$repo_slug" ]]; then
+        return 1
+    fi
+
+    echo "${repo_slug}|${pr_number}"
+    return 0
+}
+
+#######################################
+# Discover a PR for a task via GitHub branch-name lookup (t232)
+#
+# Single source of truth for branch-based PR discovery. Tries:
+#   1. The task's actual branch from the DB (worktree branch name)
+#   2. Convention: feature/${task_id}
+#
+# All candidates are validated via validate_pr_belongs_to_task() before
+# being returned. This prevents cross-contamination (t195, t223).
+#
+# $1: task_id (e.g., "t195")
+# $2: repo_slug (e.g., "owner/repo")
+# $3: task_branch (optional — the DB branch column; empty to skip)
+#
+# Outputs: validated PR URL on stdout (empty if none found)
+# Returns 0 on success (URL found), 1 if no PR found
+#######################################
+discover_pr_by_branch() {
+    local task_id="$1"
+    local repo_slug="$2"
+    local task_branch="${3:-}"
+
+    if [[ -z "$task_id" || -z "$repo_slug" ]]; then
+        return 1
+    fi
+
+    local candidate_pr_url=""
+
+    # Try DB branch first (actual worktree branch name)
+    if [[ -n "$task_branch" ]]; then
+        candidate_pr_url=$(gh pr list --repo "$repo_slug" --head "$task_branch" --json url --jq '.[0].url' 2>>"${SUPERVISOR_LOG:-/dev/null}" || echo "")
+    fi
+
+    # Fallback to convention: feature/${task_id}
+    if [[ -z "$candidate_pr_url" ]]; then
+        candidate_pr_url=$(gh pr list --repo "$repo_slug" --head "feature/${task_id}" --json url --jq '.[0].url' 2>>"${SUPERVISOR_LOG:-/dev/null}" || echo "")
+    fi
+
+    if [[ -z "$candidate_pr_url" ]]; then
+        return 1
+    fi
+
+    # Validate candidate PR contains task ID in title or branch (t195)
+    local validated_url
+    validated_url=$(validate_pr_belongs_to_task "$task_id" "$repo_slug" "$candidate_pr_url") || validated_url=""
+
+    if [[ -n "$validated_url" ]]; then
+        echo "$validated_url"
+        return 0
+    fi
+
+    log_warn "discover_pr_by_branch: candidate PR for $task_id failed task ID validation — ignoring"
+    return 1
+}
+
+#######################################
+# Link a PR to a task — single source of truth (t232)
+#
+# Centralizes the full discover-validate-persist pipeline for PR-to-task
+# linking. Replaces scattered inline patterns across evaluate_worker(),
+# check_pr_status(), scan_orphaned_prs(), scan_orphaned_pr_for_task(),
+# and cmd_pr_lifecycle().
+#
+# Modes:
+#   1. With --url: validate and persist a known PR URL
+#   2. Without --url: discover PR via branch lookup, validate, persist
+#
+# Options:
+#   --url <pr_url>     Candidate PR URL to validate and link
+#   --transition       Also transition the task to complete (for orphan scans)
+#   --notify           Send task notification after linking
+#   --caller <name>    Caller name for log messages (default: "link_pr_to_task")
+#
+# $1: task_id
+#
+# Outputs: validated PR URL on stdout (empty if none found/linked)
+# Returns 0 if PR was linked, 1 if no PR found/validated
+#######################################
+link_pr_to_task() {
+    local task_id=""
+    local candidate_url=""
+    local do_transition="false"
+    local do_notify="false"
+    local caller="link_pr_to_task"
+
+    # Parse arguments
+    if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
+        task_id="$1"
+        shift
+    fi
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --url) [[ $# -lt 2 ]] && { log_error "--url requires a value"; return 1; }; candidate_url="$2"; shift 2 ;;
+            --transition) do_transition="true"; shift ;;
+            --notify) do_notify="true"; shift ;;
+            --caller) [[ $# -lt 2 ]] && { log_error "--caller requires a value"; return 1; }; caller="$2"; shift 2 ;;
+            *) log_error "link_pr_to_task: unknown option: $1"; return 1 ;;
+        esac
+    done
+
+    if [[ -z "$task_id" ]]; then
+        log_error "link_pr_to_task: task_id required"
+        return 1
+    fi
+
+    ensure_db
+
+    local escaped_id
+    escaped_id=$(sql_escape "$task_id")
+
+    # Fetch task details from DB
+    local task_row
+    task_row=$(db -separator '|' "$SUPERVISOR_DB" "
+        SELECT status, repo, branch, pr_url FROM tasks
+        WHERE id = '$escaped_id';
+    " 2>/dev/null || echo "")
+
+    if [[ -z "$task_row" ]]; then
+        log_error "$caller: task not found: $task_id"
+        return 1
+    fi
+
+    local tstatus trepo tbranch tpr_url
+    IFS='|' read -r tstatus trepo tbranch tpr_url <<< "$task_row"
+
+    # If a candidate URL was provided, validate and persist it
+    if [[ -n "$candidate_url" ]]; then
+        # Resolve repo slug for validation
+        local repo_slug=""
+        if [[ -n "$trepo" ]]; then
+            repo_slug=$(detect_repo_slug "$trepo" 2>/dev/null || echo "")
+        fi
+
+        if [[ -z "$repo_slug" ]]; then
+            log_warn "$caller: cannot validate PR URL for $task_id (repo slug detection failed) — clearing to prevent cross-contamination"
+            return 1
+        fi
+
+        local validated_url
+        validated_url=$(validate_pr_belongs_to_task "$task_id" "$repo_slug" "$candidate_url") || validated_url=""
+
+        if [[ -z "$validated_url" ]]; then
+            log_warn "$caller: PR URL for $task_id failed task ID validation — not linking"
+            return 1
+        fi
+
+        # Persist to DB
+        db "$SUPERVISOR_DB" "UPDATE tasks SET pr_url = '$(sql_escape "$validated_url")' WHERE id = '$escaped_id';" 2>/dev/null || {
+            log_warn "$caller: failed to persist PR URL for $task_id"
+            return 1
+        }
+
+        # Transition if requested (for orphan scan use cases)
+        if [[ "$do_transition" == "true" ]]; then
+            case "$tstatus" in
+                failed|blocked|retrying)
+                    log_info "  $caller: PR found for $task_id ($tstatus -> complete): $validated_url"
+                    cmd_transition "$task_id" "complete" --pr-url "$validated_url" 2>>"${SUPERVISOR_LOG:-/dev/null}" || true
+                    update_todo_on_complete "$task_id" 2>>"${SUPERVISOR_LOG:-/dev/null}" || true
+                    ;;
+                complete)
+                    log_info "  $caller: linked PR to completed task $task_id: $validated_url"
+                    ;;
+                *)
+                    log_info "  $caller: linked PR to $task_id ($tstatus): $validated_url"
+                    ;;
+            esac
+        fi
+
+        # Notify if requested
+        if [[ "$do_notify" == "true" ]]; then
+            send_task_notification "$task_id" "complete" "pr_linked:$validated_url" 2>>"${SUPERVISOR_LOG:-/dev/null}" || true
+            local tid_desc
+            tid_desc=$(db "$SUPERVISOR_DB" "SELECT description FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+            store_success_pattern "$task_id" "pr_linked_${caller}" "$tid_desc" 2>>"${SUPERVISOR_LOG:-/dev/null}" || true
+        fi
+
+        echo "$validated_url"
+        return 0
+    fi
+
+    # No candidate URL — discover via branch lookup
+    # Skip if PR already linked
+    if [[ -n "$tpr_url" && "$tpr_url" != "no_pr" && "$tpr_url" != "task_only" && "$tpr_url" != "task_obsolete" && "$tpr_url" != "" ]]; then
+        echo "$tpr_url"
+        return 0
+    fi
+
+    # Need a repo to discover
+    if [[ -z "$trepo" ]]; then
+        return 1
+    fi
+
+    local repo_slug
+    repo_slug=$(detect_repo_slug "$trepo" 2>/dev/null || echo "")
+    if [[ -z "$repo_slug" ]]; then
+        return 1
+    fi
+
+    # Discover via branch lookup
+    local discovered_url
+    discovered_url=$(discover_pr_by_branch "$task_id" "$repo_slug" "$tbranch") || discovered_url=""
+
+    if [[ -z "$discovered_url" ]]; then
+        return 1
+    fi
+
+    # Persist to DB
+    db "$SUPERVISOR_DB" "UPDATE tasks SET pr_url = '$(sql_escape "$discovered_url")' WHERE id = '$escaped_id';" 2>/dev/null || {
+        log_warn "$caller: failed to persist discovered PR URL for $task_id"
+        return 1
+    }
+
+    # Transition if requested
+    if [[ "$do_transition" == "true" ]]; then
+        case "$tstatus" in
+            failed|blocked|retrying)
+                log_info "  $caller: discovered PR for $task_id ($tstatus -> complete): $discovered_url"
+                cmd_transition "$task_id" "complete" --pr-url "$discovered_url" 2>>"${SUPERVISOR_LOG:-/dev/null}" || true
+                update_todo_on_complete "$task_id" 2>>"${SUPERVISOR_LOG:-/dev/null}" || true
+                ;;
+            complete)
+                log_info "  $caller: linked discovered PR to completed task $task_id: $discovered_url"
+                ;;
+            *)
+                log_info "  $caller: linked discovered PR to $task_id ($tstatus): $discovered_url"
+                ;;
+        esac
+    fi
+
+    # Notify if requested
+    if [[ "$do_notify" == "true" ]]; then
+        send_task_notification "$task_id" "complete" "pr_discovered:$discovered_url" 2>>"${SUPERVISOR_LOG:-/dev/null}" || true
+        local tid_desc
+        tid_desc=$(db "$SUPERVISOR_DB" "SELECT description FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+        store_success_pattern "$task_id" "pr_discovered_${caller}" "$tid_desc" 2>>"${SUPERVISOR_LOG:-/dev/null}" || true
+    fi
+
+    echo "$discovered_url"
+    return 0
+}
+
+#######################################
 # Evaluate a completed worker's outcome using log analysis
 # Returns: complete:<detail>, retry:<reason>, blocked:<reason>, failed:<reason>
 #
