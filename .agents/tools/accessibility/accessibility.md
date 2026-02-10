@@ -19,11 +19,11 @@ tools:
 ## Quick Reference
 
 - **Helper**: `.agents/scripts/accessibility-helper.sh`
-- **Commands**: `audit [url]` | `lighthouse [url]` | `pa11y [url]` | `email [file]` | `contrast [fg] [bg]` | `bulk [file]`
+- **Commands**: `audit [url]` | `lighthouse [url]` | `pa11y [url]` | `wave [url]` | `email [file]` | `contrast [fg] [bg]` | `bulk [file]`
 - **Install**: `npm install -g lighthouse pa11y` or `.agents/scripts/accessibility-helper.sh install-deps`
 - **Standards**: WCAG 2.1 Level A, AA (default), AAA
 - **Reports**: `~/.aidevops/reports/accessibility/`
-- **Tools**: Lighthouse (accessibility category), pa11y (WCAG runner), built-in contrast calculator, email HTML checker
+- **Tools**: Lighthouse (accessibility category), pa11y (WCAG runner), WAVE API (comprehensive analysis), built-in contrast calculator, email HTML checker
 
 <!-- AI-CONTEXT-END -->
 
@@ -35,6 +35,7 @@ Comprehensive WCAG compliance testing for websites and HTML emails. Combines mul
 |------|---------|-------|-------|
 | **Lighthouse** | Accessibility score + audit failures | ~15s | Broad (axe-core engine) |
 | **pa11y** | WCAG-specific violation reporting | ~10s | Deep (HTML_CodeSniffer) |
+| **WAVE API** | Comprehensive accessibility analysis | ~2-5s | Deep (WAVE engine, CSS/JS-rendered) |
 | **Email checker** | HTML email accessibility (static analysis) | <1s | Email-specific rules |
 | **Contrast calculator** | WCAG contrast ratio for color pairs | Instant | AA + AAA levels |
 
@@ -94,6 +95,51 @@ Standards-based testing with HTML_CodeSniffer:
 ```
 
 Reports categorise issues as errors (must fix), warnings (should fix), and notices (advisory).
+
+### WAVE API Analysis
+
+Comprehensive accessibility analysis using the WAVE engine. Evaluates pages after CSS and JavaScript rendering for accurate results. Requires an API key (register at https://wave.webaim.org/api/register).
+
+```bash
+# Basic WAVE audit (report type 2 — item details, 2 credits)
+.agents/scripts/accessibility-helper.sh wave https://example.com
+
+# Detailed with XPath locations (report type 3, 3 credits)
+.agents/scripts/accessibility-helper.sh wave https://example.com 3
+
+# Detailed with CSS selectors (report type 4, 3 credits)
+.agents/scripts/accessibility-helper.sh wave https://example.com 4
+
+# Mobile viewport (375px)
+.agents/scripts/accessibility-helper.sh wave-mobile https://example.com
+
+# Look up a specific WAVE item
+.agents/scripts/accessibility-helper.sh wave-docs alt_missing
+
+# Check remaining API credits
+.agents/scripts/accessibility-helper.sh wave-credits
+```
+
+**Report types:**
+
+| Type | Cost | Data |
+|------|------|------|
+| 1 | 1 credit | Category counts only (errors, alerts, features, etc.) |
+| 2 | 2 credits | Category counts + item details (default) |
+| 3 | 3 credits | All above + XPath locations + contrast data |
+| 4 | 3 credits | All above + CSS selector locations + contrast data |
+
+**API key setup:**
+
+```bash
+# Encrypted (recommended)
+aidevops secret set wave-api-key
+
+# Or environment variable
+export WAVE_API_KEY="your-key-here"
+```
+
+WAVE categories: errors (must fix), contrast errors, alerts (should review), features (positive), structural elements, ARIA usage.
 
 ### Email HTML Accessibility
 
@@ -192,6 +238,7 @@ HTML emails have unique constraints because email clients strip most CSS and Jav
 
 | Tool | Integration |
 |------|-------------|
+| **WAVE API** | Comprehensive analysis with CSS/JS rendering, contrast data, XPath/CSS selectors |
 | **PageSpeed** | `pagespeed-helper.sh` includes Lighthouse accessibility score |
 | **Playwright** | Use for dynamic content testing (SPA accessibility) |
 | **Chrome DevTools MCP** | Real-time accessibility tree inspection |
@@ -202,6 +249,7 @@ HTML emails have unique constraints because email clients strip most CSS and Jav
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `A11Y_WCAG_LEVEL` | `WCAG2AA` | Default WCAG standard for pa11y |
+| `WAVE_API_KEY` | — | WAVE API key (or use `aidevops secret set wave-api-key`) |
 
 ## Report Storage
 
@@ -209,6 +257,7 @@ All reports are saved to `~/.aidevops/reports/accessibility/`:
 
 - `lighthouse_a11y_YYYYMMDD_HHMMSS.json` — Lighthouse accessibility audit
 - `pa11y_YYYYMMDD_HHMMSS.json` — pa11y WCAG violations
+- `wave_YYYYMMDD_HHMMSS.json` — WAVE API analysis results
 - `email_a11y_YYYYMMDD_HHMMSS.txt` — Email HTML check results
 
 ## Related

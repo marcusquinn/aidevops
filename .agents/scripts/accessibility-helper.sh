@@ -3,7 +3,7 @@
 
 # Accessibility & Contrast Testing Helper Script
 # WCAG compliance auditing for websites and HTML emails
-# Uses: Lighthouse (accessibility category), pa11y (WCAG runner), contrast checks
+# Uses: Lighthouse (accessibility category), pa11y (WCAG runner), WAVE API, contrast checks
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
@@ -15,6 +15,9 @@ init_log_file
 # Configuration
 readonly A11Y_REPORTS_DIR="$HOME/.aidevops/reports/accessibility"
 readonly A11Y_WCAG_LEVEL="${A11Y_WCAG_LEVEL:-WCAG2AA}"
+readonly WAVE_API_ENDPOINT="https://wave.webaim.org/api/request"
+readonly WAVE_DOCS_ENDPOINT="https://wave.webaim.org/api/docs"
+# Note: WAVE API limits to 2 simultaneous requests per account
 
 # Ensure reports directory exists
 mkdir -p "$A11Y_REPORTS_DIR"
@@ -80,6 +83,311 @@ install_deps() {
     fi
 
     print_success "Dependencies installed"
+    return 0
+}
+
+# ============================================================================
+# WAVE API Integration
+# ============================================================================
+
+# Load WAVE API key from gopass or credentials file
+load_wave_api_key() {
+    # Already set via environment
+    if [[ -n "${WAVE_API_KEY:-}" ]]; then
+        return 0
+    fi
+
+    # Try gopass (encrypted, preferred)
+    if command -v gopass &> /dev/null; then
+        WAVE_API_KEY=$(gopass show -o "aidevops/wave-api-key" 2>/dev/null || echo "")
+        if [[ -n "$WAVE_API_KEY" ]]; then
+            export WAVE_API_KEY
+            return 0
+        fi
+    fi
+
+    # Try credentials file (plaintext fallback)
+    local creds_file="$HOME/.config/aidevops/credentials.sh"
+    if [[ -f "$creds_file" ]]; then
+        # shellcheck source=/dev/null
+        source "$creds_file"
+        if [[ -n "${WAVE_API_KEY:-}" ]]; then
+            export WAVE_API_KEY
+            return 0
+        fi
+    fi
+
+    print_error "WAVE API key not found"
+    print_info "Set via: aidevops secret set wave-api-key"
+    print_info "Or set WAVE_API_KEY environment variable"
+    print_info "Register at: https://wave.webaim.org/api/register"
+    return 1
+}
+
+# Run WAVE API audit on a URL
+# Arguments:
+#   $1 - URL to audit (required)
+#   $2 - report type: 1=stats, 2=items, 3=items+xpath, 4=items+selectors (default: 2)
+#   $3 - viewport width (default: 1200)
+run_wave_audit() {
+    local url="$1"
+    local report_type="${2:-2}"
+    local viewport_width="${3:-1200}"
+
+    load_wave_api_key || return 1
+    check_jq || return 1
+
+    print_info "Running WAVE API audit..."
+    print_info "URL: $url"
+    print_info "Report type: $report_type (1=stats, 2=items, 3=xpath, 4=selectors)"
+
+    local timestamp
+    timestamp=$(date +"%Y%m%d_%H%M%S")
+    local report_file="${A11Y_REPORTS_DIR}/wave_${timestamp}.json"
+
+    local encoded_url
+    encoded_url=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$url', safe=''))" 2>/dev/null || echo "$url")
+
+    local api_url="${WAVE_API_ENDPOINT}?key=${WAVE_API_KEY}&url=${encoded_url}&reporttype=${report_type}&viewportwidth=${viewport_width}&format=json"
+
+    local http_code
+    http_code=$(curl -s -w "%{http_code}" -o "$report_file" \
+        --max-time "$LONG_TIMEOUT" \
+        "$api_url" 2>/dev/null) || {
+        print_error "WAVE API request failed (network error)"
+        return 1
+    }
+
+    if [[ "$http_code" -ne 200 ]]; then
+        print_error "WAVE API returned HTTP $http_code"
+        rm -f "$report_file" 2>/dev/null || true
+        return 1
+    fi
+
+    # Check API-level success
+    local api_success
+    api_success=$(jq -r '.status.success // false' "$report_file" 2>/dev/null || echo "false")
+    if [[ "$api_success" != "true" ]]; then
+        local api_error
+        api_error=$(jq -r '.status.error // "Unknown error"' "$report_file" 2>/dev/null || echo "Unknown error")
+        print_error "WAVE API error: $api_error"
+        return 1
+    fi
+
+    print_success "Report saved: $report_file"
+    parse_wave_report "$report_file" "$report_type"
+    return 0
+}
+
+# Parse and display WAVE API report
+parse_wave_report() {
+    local report_file="$1"
+    local report_type="${2:-2}"
+
+    echo ""
+    print_header_line "WAVE API Results"
+
+    # Statistics
+    local page_title page_url total_elements aim_score credits_remaining wave_url
+    page_title=$(jq -r '.statistics.pagetitle // "N/A"' "$report_file")
+    page_url=$(jq -r '.statistics.pageurl // "N/A"' "$report_file")
+    total_elements=$(jq -r '.statistics.totalelements // "N/A"' "$report_file")
+    aim_score=$(jq -r '.statistics.AIMscore // "N/A"' "$report_file")
+    credits_remaining=$(jq -r '.statistics.creditsremaining // "N/A"' "$report_file")
+    wave_url=$(jq -r '.statistics.waveurl // "N/A"' "$report_file")
+
+    echo "  Page: $page_title"
+    echo "  URL: $page_url"
+    echo "  Elements: $total_elements"
+    if [[ "$aim_score" != "N/A" ]]; then
+        echo "  AIM Score: $aim_score"
+    fi
+    echo "  Credits remaining: $credits_remaining"
+    echo ""
+
+    # Category counts
+    print_header_line "Category Summary"
+
+    local errors contrasts alerts features structures arias
+    errors=$(jq -r '.categories.error.count // 0' "$report_file")
+    contrasts=$(jq -r '.categories.contrast.count // 0' "$report_file")
+    alerts=$(jq -r '.categories.alert.count // 0' "$report_file")
+    features=$(jq -r '.categories.feature.count // 0' "$report_file")
+    structures=$(jq -r '.categories.structure.count // 0' "$report_file")
+    arias=$(jq -r '.categories.aria.count // 0' "$report_file")
+
+    if [[ "$errors" -gt 0 ]]; then
+        echo -e "  Errors:     ${RED}${errors}${NC}"
+    else
+        echo -e "  Errors:     ${GREEN}0${NC}"
+    fi
+
+    if [[ "$contrasts" -gt 0 ]]; then
+        echo -e "  Contrast:   ${RED}${contrasts}${NC}"
+    else
+        echo -e "  Contrast:   ${GREEN}0${NC}"
+    fi
+
+    if [[ "$alerts" -gt 0 ]]; then
+        echo -e "  Alerts:     ${YELLOW}${alerts}${NC}"
+    else
+        echo -e "  Alerts:     ${GREEN}0${NC}"
+    fi
+
+    echo "  Features:   $features"
+    echo "  Structure:  $structures"
+    echo "  ARIA:       $arias"
+    echo ""
+
+    # Item details (reporttype >= 2)
+    if [[ "$report_type" -ge 2 ]]; then
+        # Errors
+        if [[ "$errors" -gt 0 ]]; then
+            print_header_line "Errors (must fix)"
+            jq -r '
+                .categories.error.items // {} | to_entries[]
+                | "  \(.value.id): \(.value.description) (x\(.value.count))"
+            ' "$report_file" 2>/dev/null || true
+            echo ""
+        fi
+
+        # Contrast errors
+        if [[ "$contrasts" -gt 0 ]]; then
+            print_header_line "Contrast Errors"
+            jq -r '
+                .categories.contrast.items // {} | to_entries[]
+                | "  \(.value.id): \(.value.description) (x\(.value.count))"
+            ' "$report_file" 2>/dev/null || true
+
+            # Show contrast data if available (reporttype 3 or 4)
+            if [[ "$report_type" -ge 3 ]]; then
+                local contrast_data
+                contrast_data=$(jq -r '
+                    .categories.contrast.items.contrast.contrastdata // [] | .[]
+                    | "    Ratio: \(.[0]):1 | FG: \(.[1]) | BG: \(.[2]) | Large: \(.[3])"
+                ' "$report_file" 2>/dev/null || echo "")
+                if [[ -n "$contrast_data" ]]; then
+                    echo "$contrast_data"
+                fi
+            fi
+            echo ""
+        fi
+
+        # Alerts
+        if [[ "$alerts" -gt 0 ]]; then
+            print_header_line "Alerts (should review)"
+            jq -r '
+                .categories.alert.items // {} | to_entries[]
+                | "  \(.value.id): \(.value.description) (x\(.value.count))"
+            ' "$report_file" 2>/dev/null || true
+            echo ""
+        fi
+    fi
+
+    # Full WAVE report link
+    if [[ "$wave_url" != "N/A" ]]; then
+        print_info "Full WAVE report: $wave_url"
+    fi
+
+    echo ""
+    return 0
+}
+
+# Run WAVE audit at mobile viewport width
+run_wave_mobile() {
+    local url="$1"
+    local report_type="${2:-2}"
+
+    print_info "Running WAVE API audit (mobile viewport)..."
+    run_wave_audit "$url" "$report_type" "375"
+    return $?
+}
+
+# Query WAVE documentation for a specific item
+wave_docs() {
+    local item_id="${1:-}"
+
+    check_jq || return 1
+
+    if [[ -z "$item_id" ]]; then
+        print_error "Please provide a WAVE item ID"
+        print_info "Usage: $0 wave-docs <item-id>"
+        print_info "Example: $0 wave-docs alt_missing"
+        return 1
+    fi
+
+    local docs_url="${WAVE_DOCS_ENDPOINT}?id=${item_id}"
+    local result
+    result=$(curl -s --max-time "$DEFAULT_TIMEOUT" "$docs_url" 2>/dev/null) || {
+        print_error "Failed to fetch WAVE documentation"
+        return 1
+    }
+
+    echo ""
+    print_header_line "WAVE Documentation: $item_id"
+
+    local title type summary purpose actions details
+    title=$(echo "$result" | jq -r '.title // "N/A"')
+    type=$(echo "$result" | jq -r '.type // "N/A"')
+    summary=$(echo "$result" | jq -r '.summary // "N/A"')
+    purpose=$(echo "$result" | jq -r '.purpose // "N/A"')
+    actions=$(echo "$result" | jq -r '.actions // "N/A"')
+    details=$(echo "$result" | jq -r '.details // "N/A"')
+
+    echo "  Title: $title"
+    echo "  Type: $type"
+    echo "  Summary: $summary"
+    echo ""
+    echo "  Purpose: $purpose"
+    echo ""
+    echo "  Actions: $actions"
+    echo ""
+    echo "  Algorithm: $details"
+    echo ""
+
+    # WCAG guidelines
+    local guidelines
+    guidelines=$(echo "$result" | jq -r '
+        .guidelines // [] | .[]
+        | "  - \(.name)"
+    ' 2>/dev/null || echo "")
+    if [[ -n "$guidelines" ]]; then
+        print_header_line "WCAG Guidelines"
+        echo "$guidelines"
+    fi
+
+    echo ""
+    return 0
+}
+
+# Check WAVE API credits remaining
+wave_credits() {
+    load_wave_api_key || return 1
+    check_jq || return 1
+
+    # Use a lightweight request (reporttype=1, 1 credit) against a known URL
+    print_info "Checking WAVE API credits..."
+
+    local result
+    result=$(curl -s --max-time "$DEFAULT_TIMEOUT" \
+        "${WAVE_API_ENDPOINT}?key=${WAVE_API_KEY}&url=https://example.com&reporttype=1" \
+        2>/dev/null) || {
+        print_error "Failed to reach WAVE API"
+        return 1
+    }
+
+    local success
+    success=$(echo "$result" | jq -r '.status.success // false')
+    if [[ "$success" != "true" ]]; then
+        local error_msg
+        error_msg=$(echo "$result" | jq -r '.status.error // "Unknown error"')
+        print_error "WAVE API error: $error_msg"
+        return 1
+    fi
+
+    local credits
+    credits=$(echo "$result" | jq -r '.statistics.creditsremaining // "N/A"')
+    print_success "WAVE API credits remaining: $credits"
     return 0
 }
 
@@ -540,7 +848,7 @@ check_contrast() {
 }
 
 # ============================================================================
-# Full Audit (Lighthouse + pa11y combined)
+# Full Audit (Lighthouse + pa11y + WAVE combined)
 # ============================================================================
 
 run_full_audit() {
@@ -565,6 +873,15 @@ run_full_audit() {
         run_pa11y_audit "$url" "$A11Y_WCAG_LEVEL" || exit_code=1
     else
         print_warning "Skipping pa11y (not installed). Install: npm install -g pa11y"
+    fi
+
+    echo ""
+
+    # WAVE API (if key is available)
+    if load_wave_api_key 2>/dev/null; then
+        run_wave_audit "$url" "2" || exit_code=1
+    else
+        print_warning "Skipping WAVE API (no API key). Set via: aidevops secret set wave-api-key"
     fi
 
     echo ""
@@ -680,6 +997,29 @@ main() {
             fi
             check_contrast "$account_name" "$3"
             ;;
+        "wave")
+            if [[ -z "$account_name" ]]; then
+                print_error "Please provide a URL"
+                print_info "Usage: $0 wave <url> [reporttype] [viewport-width]"
+                print_info "Report types: 1=stats, 2=items (default), 3=items+xpath, 4=items+selectors"
+                return 1
+            fi
+            run_wave_audit "$account_name" "${3:-2}" "${4:-1200}"
+            ;;
+        "wave-mobile")
+            if [[ -z "$account_name" ]]; then
+                print_error "Please provide a URL"
+                print_info "Usage: $0 wave-mobile <url> [reporttype]"
+                return 1
+            fi
+            run_wave_mobile "$account_name" "${3:-2}"
+            ;;
+        "wave-docs")
+            wave_docs "$account_name"
+            ;;
+        "wave-credits")
+            wave_credits
+            ;;
         "bulk")
             if [[ -z "$account_name" ]]; then
                 print_error "Please provide a file containing URLs"
@@ -696,25 +1036,36 @@ main() {
             echo "Usage: $0 [command] [options]"
             echo ""
             echo "Commands:"
-            echo "  audit <url>                    Full accessibility audit (Lighthouse + pa11y)"
+            echo "  audit <url>                    Full accessibility audit (Lighthouse + pa11y + WAVE)"
             echo "  lighthouse <url> [strategy]    Lighthouse accessibility-only audit"
             echo "  pa11y <url> [standard]         pa11y WCAG compliance test"
+            echo "  wave <url> [type] [width]      WAVE API accessibility analysis"
+            echo "  wave-mobile <url> [type]       WAVE API audit at mobile viewport (375px)"
+            echo "  wave-docs <item-id>            Look up WAVE item documentation"
+            echo "  wave-credits                   Check WAVE API credits remaining"
             echo "  email <file.html>              Check HTML email accessibility"
             echo "  contrast <fg-hex> <bg-hex>     Calculate WCAG contrast ratio"
             echo "  bulk <urls-file>               Audit multiple URLs from file"
             echo "  install-deps                   Install required dependencies"
             echo "  help                           Show this help"
             echo ""
+            echo "WAVE Report Types: 1=stats (1 credit), 2=items (2 credits),"
+            echo "  3=items+xpath (3 credits), 4=items+selectors (3 credits)"
+            echo ""
             echo "Standards: WCAG2A, WCAG2AA (default), WCAG2AAA"
             echo "Strategies: desktop (default), mobile"
             echo ""
             echo "Environment Variables:"
             echo "  A11Y_WCAG_LEVEL    Default WCAG level (default: WCAG2AA)"
+            echo "  WAVE_API_KEY       WAVE API key (or use: aidevops secret set wave-api-key)"
             echo ""
             echo "Examples:"
             echo "  $0 audit https://example.com"
             echo "  $0 lighthouse https://example.com mobile"
             echo "  $0 pa11y https://example.com WCAG2AAA"
+            echo "  $0 wave https://example.com 3"
+            echo "  $0 wave-mobile https://example.com"
+            echo "  $0 wave-docs alt_missing"
             echo "  $0 email ./newsletter.html"
             echo "  $0 contrast '#333333' '#ffffff'"
             echo "  $0 bulk websites.txt"
