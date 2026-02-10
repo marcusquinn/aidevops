@@ -38,6 +38,7 @@ bump_version() {
     local current_version
     current_version=$(get_current_version)
     
+    local major minor patch
     IFS='.' read -r major minor patch <<< "$current_version"
     
     case "$bump_type" in
