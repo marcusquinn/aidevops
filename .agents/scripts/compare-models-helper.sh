@@ -481,12 +481,12 @@ cmd_providers() {
 # Dispatches via runner-helper.sh in parallel, collects outputs, produces summary.
 #######################################
 cmd_cross_review() {
-    local prompt="" models="" workdir="" review_timeout="600" output_dir=""
+    local prompt="" models_str="" workdir="" review_timeout="600" output_dir=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --prompt) [[ $# -lt 2 ]] && { print_error "--prompt requires a value"; return 1; }; prompt="$2"; shift 2 ;;
-            --models) [[ $# -lt 2 ]] && { print_error "--models requires a value"; return 1; }; models="$2"; shift 2 ;;
+            --models) [[ $# -lt 2 ]] && { print_error "--models requires a value"; return 1; }; models_str="$2"; shift 2 ;;
             --workdir) [[ $# -lt 2 ]] && { print_error "--workdir requires a value"; return 1; }; workdir="$2"; shift 2 ;;
             --timeout) [[ $# -lt 2 ]] && { print_error "--timeout requires a value"; return 1; }; review_timeout="$2"; shift 2 ;;
             --output) [[ $# -lt 2 ]] && { print_error "--output requires a value"; return 1; }; output_dir="$2"; shift 2 ;;
@@ -501,8 +501,8 @@ cmd_cross_review() {
     fi
 
     # Default models: sonnet + opus (Anthropic second opinion)
-    if [[ -z "$models" ]]; then
-        models="sonnet,opus"
+    if [[ -z "$models_str" ]]; then
+        models_str="sonnet,opus"
     fi
 
     # Set up output directory
@@ -524,7 +524,7 @@ cmd_cross_review() {
 
     # Parse models list
     local -a model_array=()
-    IFS=',' read -ra model_array <<< "$models"
+    IFS=',' read -ra model_array <<< "$models_str"
 
     if [[ ${#model_array[@]} -lt 2 ]]; then
         print_error "At least 2 models required for cross-review (got ${#model_array[@]})"
@@ -534,7 +534,7 @@ cmd_cross_review() {
     echo ""
     echo "Cross-Model Review"
     echo "==================="
-    echo "Models: ${models}"
+    echo "Models: ${models_str}"
     echo "Output: ${output_dir}"
     echo "Timeout: ${review_timeout}s per model"
     echo ""
@@ -622,7 +622,7 @@ cmd_cross_review() {
     # Generate diff summary if we have 2+ results
     echo "=== DIFF SUMMARY ==="
     echo ""
-    echo "Models compared: ${models}"
+    echo "Models compared: ${models_str}"
     echo "Results: ${results_found}/${#model_names[@]} successful"
     echo ""
 
