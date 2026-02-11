@@ -1291,14 +1291,23 @@ cmd_close() {
         task_id=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
         [[ -z "$task_id" ]] && continue
 
+        # Safe associative array lookup (set -u compatible)
+        # ${arr[$key]+x} tests existence without triggering unbound variable
+        local has_open_issue="false"
+        local mapped_issue=""
+        if [[ -n "${open_issue_map[$task_id]+x}" ]]; then
+            has_open_issue="true"
+            mapped_issue="${open_issue_map[$task_id]}"
+        fi
+
         # Check 1: Does this task have a ref:GH# that matches an open issue?
         local issue_number=""
         local ref_number
         ref_number=$(echo "$line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
 
-        if [[ -n "$ref_number" && -n "${open_issue_map[$task_id]:-}" ]]; then
+        if [[ -n "$ref_number" && "$has_open_issue" == "true" ]]; then
             # Task has ref:GH# AND an open issue exists for this task ID
-            issue_number="${open_issue_map[$task_id]}"
+            issue_number="$mapped_issue"
             # Verify ref matches (fix stale refs)
             if [[ "$ref_number" != "$issue_number" ]]; then
                 log_verbose "$task_id: ref:GH#$ref_number doesn't match open issue #$issue_number, fixing..."
@@ -1307,9 +1316,9 @@ cmd_close() {
                     ref_fixed=$((ref_fixed + 1))
                 fi
             fi
-        elif [[ -n "${open_issue_map[$task_id]:-}" ]]; then
+        elif [[ "$has_open_issue" == "true" ]]; then
             # No ref:GH# but an open issue exists — use it and fix the ref
-            issue_number="${open_issue_map[$task_id]}"
+            issue_number="$mapped_issue"
             log_verbose "$task_id: no ref:GH# but found open issue #$issue_number"
             if [[ "$DRY_RUN" != "true" ]]; then
                 add_gh_ref_to_todo "$task_id" "$issue_number" "$todo_file"
