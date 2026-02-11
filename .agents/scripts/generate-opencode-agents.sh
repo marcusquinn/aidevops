@@ -779,7 +779,7 @@ tools:
 EOF
     fi
     subagent_count=$((subagent_count + 1))
-done < <(find "$AGENTS_DIR" -mindepth 2 -name "*.md" -type f -not -path "*/loop-state/*" | sort)
+done < <(find "$AGENTS_DIR" -mindepth 2 -name "*.md" -type f -not -path "*/loop-state/*" -not -name "*-skill.md" | sort)
 
 echo -e "  ${GREEN}✓${NC} Generated $subagent_count subagent files"
 
