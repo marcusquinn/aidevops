@@ -636,7 +636,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Added Playwright MCP installation to setup_browser_tools() in setup.sh. Checks for existing installation, prompts user, installs browsers (chromium, firefox, webkit) via `npx playwright install`.
 - [x] t007 Create MCP server for QuickFile accounting API #accounting ~2h (ai:1h test:40m read:20m) ref:GH#505 logged:2025-12-20 completed:2026-02-08 verified:2026-02-08 PR #585 merged
 - [ ] t012 OCR Invoice/Receipt Extraction Pipeline #plan → [todo/PLANS.md#ocr-invoicereceipt-extraction-pipeline] ~3h (ai:1.5h test:1h read:30m) ref:GH#506 assignee:marcusquinn logged:2025-12-21
-  - [ ] t012.1 Research OCR approaches and @pontusab's implementation ~4h #auto-dispatch ref:GH#1098 assignee:marcusquinn started:2026-02-11T14:54:25Z
+  - [x] t012.1 Research OCR approaches and @pontusab's implementation ~4h #auto-dispatch ref:GH#1098 assignee:marcusquinn started:2026-02-11T14:54:25Z completed:2026-02-11
 <<<<<<< Updated upstream
   - [x] t012.2 Design extraction schema (vendor, amount, date, VAT, items) ~4h #auto-dispatch blocked-by:t012.1 ref:GH#1116 completed:2026-02-11
 =======
