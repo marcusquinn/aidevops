@@ -146,9 +146,13 @@ Document Input (PDF/DOCX/Image/HTML)
          |              Nominal code auto-categorisation
          |              Review flagging (confidence < 0.7 or VAT mismatch)
          |
-    [7. Output]  ── JSON with data + validation summary
+     [7. Output]  ── JSON with data + validation summary
          |
-    [8. De-anonymize]  ── Presidio decrypt (if encrypted in step 4)
+     [8. De-anonymize]  ── Presidio decrypt (if encrypted in step 4)
+         |
+     [9. Record]  ── (optional) quickfile-helper.sh
+                     Supplier resolution + purchase/expense recording
+                     Tools: quickfile_supplier_search, quickfile_purchase_create
 ```
 
 ## Custom Schemas
