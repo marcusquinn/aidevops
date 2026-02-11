@@ -121,9 +121,7 @@ run_cli_review() {
 
 # Run review via GitHub API (trigger @coderabbitai on a tracking issue)
 run_gh_api_review() {
-    local repo_path="$1"
     local output_file="$2"
-    local repo_id="$3"
 
     if ! command -v gh &>/dev/null; then
         print_error "Neither CodeRabbit CLI nor gh CLI available"

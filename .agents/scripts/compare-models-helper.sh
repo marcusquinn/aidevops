@@ -1032,7 +1032,6 @@ cmd_discover() {
         echo "Unavailable Models (provider not configured):"
         echo ""
 
-        local has_unavailable=false
         echo "$MODEL_DATA" | while IFS= read -r model_line; do
             local model_provider
             model_provider=$(get_field "$model_line" 2)

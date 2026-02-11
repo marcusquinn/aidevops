@@ -481,7 +481,6 @@ sync_opencode() {
 
 sync_providers() {
     local added=0
-    local json_flag="${1:-false}"
 
     # Skip if opencode sync already ran successfully (check sync_log)
     local opencode_synced
