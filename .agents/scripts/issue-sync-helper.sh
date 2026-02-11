@@ -514,7 +514,9 @@ extract_file_summary() {
 # Tag to Label Mapping
 # =============================================================================
 
-# Map TODO.md #tags to GitHub labels
+# Map TODO.md #tags to GitHub labels (passthrough with aliases)
+# All tags are passed through as labels. A small alias map normalises
+# common synonyms to their canonical GitHub label name.
 map_tags_to_labels() {
     local tags="$1"
 
@@ -526,33 +528,48 @@ map_tags_to_labels() {
     local IFS=','
     for tag in $tags; do
         tag="${tag#\#}"  # Remove # prefix if present
+        tag="${tag// /}"  # Strip whitespace
+
+        [[ -z "$tag" ]] && continue
+
+        # Skip meta-tags that aren't useful as labels
         case "$tag" in
-            plan) labels="${labels:+$labels,}plan" ;;
-            bugfix|bug) labels="${labels:+$labels,}bug" ;;
-            enhancement|feat|feature) labels="${labels:+$labels,}enhancement" ;;
-            security) labels="${labels:+$labels,}security" ;;
-            git|sync) labels="${labels:+$labels,}git" ;;
-            orchestration) labels="${labels:+$labels,}orchestration" ;;
-            plugins) labels="${labels:+$labels,}plugins" ;;
-            architecture) labels="${labels:+$labels,}architecture" ;;
-            voice) labels="${labels:+$labels,}voice" ;;
-            tools) labels="${labels:+$labels,}tools" ;;
-            seo) labels="${labels:+$labels,}seo" ;;
-            research) labels="${labels:+$labels,}research" ;;
-            agents) labels="${labels:+$labels,}agents" ;;
-            browser) labels="${labels:+$labels,}browser" ;;
-            mobile) labels="${labels:+$labels,}mobile" ;;
-            content) labels="${labels:+$labels,}content" ;;
-            accounting) labels="${labels:+$labels,}accounting" ;;
-            dashboard) labels="${labels:+$labels,}dashboard" ;;
-            multi-model) labels="${labels:+$labels,}multi-model" ;;
-            quality|hardening) labels="${labels:+$labels,}quality" ;;
-            # Tags that don't map to labels are silently skipped
+            auto-dispatch) continue ;;
         esac
+
+        # Alias common synonyms to canonical label names
+        local label="$tag"
+        case "$tag" in
+            bugfix|bug) label="bug" ;;
+            feat|feature) label="enhancement" ;;
+            hardening) label="quality" ;;
+            sync) label="git" ;;
+            docs) label="documentation" ;;
+        esac
+
+        labels="${labels:+$labels,}$label"
     done
 
     # Deduplicate
     echo "$labels" | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//'
+    return 0
+}
+
+# Ensure all labels in a comma-separated list exist on the repo.
+# Creates missing labels with a neutral colour via gh label create --force.
+ensure_labels_exist() {
+    local labels="$1"
+    local repo_slug="$2"
+
+    [[ -z "$labels" || -z "$repo_slug" ]] && return 0
+
+    local IFS=','
+    for label in $labels; do
+        [[ -z "$label" ]] && continue
+        # --force is idempotent: updates if exists, creates if not
+        gh label create "$label" --repo "$repo_slug" --color "EDEDED" \
+            --description "Auto-created from TODO.md tag" --force 2>/dev/null || true
+    done
     return 0
 }
 
@@ -827,6 +844,11 @@ cmd_push() {
             continue
         fi
 
+        # Ensure all tag-derived labels exist on the repo (t295)
+        if [[ -n "$labels" ]]; then
+            ensure_labels_exist "$labels" "$repo_slug"
+        fi
+
         # Create the issue with appropriate status label (t164, t212)
         # If task already has an assignee, use status:claimed instead of status:available
         local status_label="status:available"
@@ -917,14 +939,39 @@ cmd_enrich() {
             continue
         fi
 
+        # Parse tags and map to labels (t295)
+        local parsed
+        parsed=$(parse_task_line "$task_line")
+        local tags
+        tags=$(echo "$parsed" | grep '^tags=' | cut -d= -f2-)
+        local labels
+        labels=$(map_tags_to_labels "$tags")
+
         # Compose rich body
         local body
         body=$(compose_issue_body "$task_id" "$project_root")
 
         if [[ "$DRY_RUN" == "true" ]]; then
             print_info "[DRY-RUN] Would enrich #$issue_number ($task_id)"
+            if [[ -n "$labels" ]]; then
+                print_info "  Labels: $labels"
+            fi
             enriched=$((enriched + 1))
             continue
+        fi
+
+        # Ensure labels exist and sync them to the issue (t295)
+        if [[ -n "$labels" ]]; then
+            ensure_labels_exist "$labels" "$repo_slug"
+            local label_args=()
+            local IFS=','
+            for lbl in $labels; do
+                [[ -n "$lbl" ]] && label_args+=("--add-label" "$lbl")
+            done
+            unset IFS
+            if [[ ${#label_args[@]} -gt 0 ]]; then
+                gh issue edit "$issue_number" --repo "$repo_slug" "${label_args[@]}" 2>/dev/null || true
+            fi
         fi
 
         # Update the issue body
