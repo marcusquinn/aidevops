@@ -7592,20 +7592,23 @@ check_pr_status() {
         fi
     fi
 
-    # BLOCKED = required checks failed or pending
+    # BLOCKED = required checks failed/pending, OR required reviews missing
     # UNSTABLE = non-required checks failed but required checks passed
     # CLEAN = all required checks passed, ready to merge
     # BEHIND = needs rebase/merge with base branch
     # DIRTY = merge conflicts
 
+    # Hoist check_rollup above case to avoid duplicate declarations
+    local check_rollup
+    check_rollup=$(echo "$pr_json" | jq -r '.statusCheckRollup // []' 2>/dev/null || echo "[]")
+
     case "$merge_state" in
         BLOCKED)
-            # BLOCKED means required checks failed or are pending.
-            # Distinguish pending vs failed by checking for any in-progress checks.
+            # BLOCKED can mean: required checks failed/pending, OR required reviews
+            # are missing. We must distinguish CI blocks from review blocks.
             # Note: gh pr view --json statusCheckRollup does NOT include isRequired,
-            # but BLOCKED already implies the issue is with required checks.
-            local check_rollup
-            check_rollup=$(echo "$pr_json" | jq -r '.statusCheckRollup // []' 2>/dev/null || echo "[]")
+            # so we check for pending/failed checks and fall through if none found
+            # (the block is likely due to required reviews, handled below).
 
             if [[ "$check_rollup" != "[]" && "$check_rollup" != "null" ]]; then
                 local has_pending
@@ -7615,17 +7618,24 @@ check_pr_status() {
                     echo "ci_pending"
                     return 0
                 fi
+
+                # Check for explicitly failed checks (conclusion or state)
+                local has_failed
+                has_failed=$(echo "$check_rollup" | jq '[.[] | select((.conclusion | test("FAILURE|TIMED_OUT|ACTION_REQUIRED")) or .state == "FAILURE" or .state == "ERROR")] | length' 2>/dev/null || echo "0")
+
+                if [[ "$has_failed" -gt 0 ]]; then
+                    echo "ci_failed"
+                    return 0
+                fi
             fi
 
-            # No pending checks — required checks must have failed
-            echo "ci_failed"
-            return 0
+            # No CI failures or pending checks detected — BLOCKED is likely due to
+            # required reviews or other non-CI branch protection rules.
+            # Fall through to review check below.
             ;;
         UNSTABLE)
             # t227: Non-required checks failed (e.g., CodeFactor, CodeRabbit)
             # Check for SonarCloud pattern specifically
-            local check_rollup
-            check_rollup=$(echo "$pr_json" | jq -r '.statusCheckRollup // []' 2>/dev/null || echo "[]")
 
             if [[ "$check_rollup" != "[]" && "$check_rollup" != "null" ]]; then
                 local sonar_action_pass
