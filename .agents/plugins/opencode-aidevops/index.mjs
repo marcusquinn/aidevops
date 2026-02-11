@@ -1,12 +1,26 @@
 import { execSync } from "child_process";
-import { readFileSync, existsSync } from "fs";
-import { join } from "path";
+import { readFileSync, existsSync, writeFileSync, mkdirSync } from "fs";
+import { join, extname } from "path";
 import { homedir } from "os";
+import { tmpdir } from "os";
 
 const HOME = homedir();
 const AGENTS_DIR = join(HOME, ".aidevops", "agents");
 const SCRIPTS_DIR = join(AGENTS_DIR, "scripts");
 const WORKSPACE_DIR = join(HOME, ".aidevops", ".agent-workspace");
+
+/**
+ * File extensions and their corresponding quality check commands.
+ * Each entry maps an extension to a checker config.
+ * @type {Record<string, {cmd: string, args: string[], name: string}>}
+ */
+const QUALITY_CHECKERS = {
+  ".sh": {
+    cmd: "shellcheck",
+    args: ["-x", "-S", "warning"],
+    name: "ShellCheck",
+  },
+};
 
 /**
  * Run a shell command and return stdout, or empty string on failure.
@@ -167,10 +181,221 @@ function getMailboxState() {
 }
 
 /**
+ * Check if a quality checker binary is available on the system.
+ * Results are cached for the lifetime of the plugin session.
+ * @param {string} cmd - The command to check
+ * @returns {boolean}
+ */
+const checkerAvailability = new Map();
+function isCheckerAvailable(cmd) {
+  if (checkerAvailability.has(cmd)) {
+    return checkerAvailability.get(cmd);
+  }
+  const available = run(`command -v ${cmd} 2>/dev/null`) !== "";
+  checkerAvailability.set(cmd, available);
+  return available;
+}
+
+/**
+ * Run a quality checker against file content.
+ * Writes content to a temp file, runs the checker, and returns findings.
+ * @param {string} filePath - The target file path (for extension detection)
+ * @param {string} content - The file content to check (if available)
+ * @returns {{ok: boolean, findings: string, checker: string} | null}
+ */
+function runQualityCheck(filePath, content) {
+  const ext = extname(filePath);
+  const checker = QUALITY_CHECKERS[ext];
+  if (!checker) return null;
+  if (!isCheckerAvailable(checker.cmd)) return null;
+
+  // If content is provided, write to a temp file for checking
+  // Otherwise check the file in-place (for Edit operations where
+  // we don't have the full content upfront)
+  let targetPath = filePath;
+  let tempFile = null;
+
+  if (content) {
+    try {
+      const tmpDir = join(tmpdir(), "aidevops-quality-hooks");
+      mkdirSync(tmpDir, { recursive: true });
+      tempFile = join(tmpDir, `check-${Date.now()}${ext}`);
+      writeFileSync(tempFile, content, "utf-8");
+      targetPath = tempFile;
+    } catch {
+      // Fall back to checking the original file path
+      targetPath = filePath;
+    }
+  }
+
+  try {
+    const args = checker.args.join(" ");
+    execSync(`${checker.cmd} ${args} "${targetPath}"`, {
+      encoding: "utf-8",
+      timeout: 10000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    return { ok: true, findings: "", checker: checker.name };
+  } catch (error) {
+    const output = (error.stdout || "") + (error.stderr || "");
+    // Replace temp file paths with the original file path in output
+    const findings = tempFile
+      ? output.replace(new RegExp(tempFile.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"), filePath)
+      : output;
+    return { ok: false, findings: findings.trim(), checker: checker.name };
+  } finally {
+    // Clean up temp file
+    if (tempFile) {
+      try {
+        execSync(`rm -f "${tempFile}"`, { stdio: "pipe" });
+      } catch {
+        // ignore cleanup failures
+      }
+    }
+  }
+}
+
+/**
+ * Track files modified in the current session for post-commit reminders.
+ * @type {Set<string>}
+ */
+const modifiedFiles = new Set();
+
+/**
+ * Count of modifications since last quality reminder.
+ * @type {number}
+ */
+let modsSinceReminder = 0;
+
+/** Quality reminder threshold — suggest linters-local.sh after this many edits. */
+const REMINDER_THRESHOLD = 10;
+
+/**
  * @type {import('@opencode-ai/plugin').Plugin}
  */
 export async function AidevopsPlugin({ directory }) {
+  /** @type {boolean} */
+  const hooksEnabled = (() => {
+    const configPath = join(HOME, ".config", "aidevops", "plugin-config.json");
+    try {
+      if (existsSync(configPath)) {
+        const config = JSON.parse(readFileSync(configPath, "utf-8"));
+        return config?.hooks?.qualityChecks !== false;
+      }
+    } catch {
+      // ignore parse errors
+    }
+    return true; // enabled by default
+  })();
+
   return {
+    "experimental.preToolUse": async (input) => {
+      if (!hooksEnabled) return;
+
+      const { tool, args } = input || {};
+
+      // Only intercept Write and Edit operations
+      if (tool !== "Write" && tool !== "Edit") return;
+
+      const filePath = args?.filePath || args?.file_path || "";
+      if (!filePath) return;
+
+      // For Write operations, we have the full content
+      const content = tool === "Write" ? (args?.content || "") : null;
+
+      const result = runQualityCheck(filePath, content);
+      if (!result) return; // No checker for this file type
+
+      if (!result.ok && result.findings) {
+        // Return findings as context — don't block the operation
+        // The AI agent will see these warnings and can fix issues
+        return {
+          message: [
+            `## ${result.checker} Quality Check`,
+            "",
+            `Warnings found in \`${filePath}\`:`,
+            "",
+            "```",
+            result.findings,
+            "```",
+            "",
+            "Consider fixing these issues before committing.",
+          ].join("\n"),
+        };
+      }
+    },
+
+    "experimental.postToolUse": async (input) => {
+      if (!hooksEnabled) return;
+
+      const { tool, args } = input || {};
+
+      // Track file modifications for quality reminders
+      if (tool === "Write" || tool === "Edit") {
+        const filePath = args?.filePath || args?.file_path || "";
+        if (filePath) {
+          modifiedFiles.add(filePath);
+          modsSinceReminder++;
+        }
+
+        // After N modifications, remind about running quality checks
+        if (modsSinceReminder >= REMINDER_THRESHOLD) {
+          modsSinceReminder = 0;
+          const shellFiles = [...modifiedFiles].filter((f) => f.endsWith(".sh"));
+          const mdFiles = [...modifiedFiles].filter((f) => f.endsWith(".md"));
+
+          const reminders = [];
+          if (shellFiles.length > 0) {
+            reminders.push(
+              `- ${shellFiles.length} shell script(s) modified — run \`shellcheck -x -S warning\` on them`
+            );
+          }
+          if (mdFiles.length > 0) {
+            reminders.push(
+              `- ${mdFiles.length} markdown file(s) modified — run \`markdownlint\` on them`
+            );
+          }
+          reminders.push(
+            "- Run `linters-local.sh` for a full quality check before committing"
+          );
+
+          return {
+            message: [
+              "## Quality Check Reminder",
+              "",
+              `You've modified ${modifiedFiles.size} file(s) this session:`,
+              "",
+              ...reminders,
+            ].join("\n"),
+          };
+        }
+      }
+
+      // After Bash tool use with git commit, remind about quality
+      if (tool === "Bash") {
+        const command = args?.command || "";
+        if (command.includes("git commit") && !command.includes("--amend")) {
+          const uncheckedShell = [...modifiedFiles].filter(
+            (f) => f.endsWith(".sh")
+          );
+          if (uncheckedShell.length > 0) {
+            return {
+              message: [
+                "## Post-Commit Quality Note",
+                "",
+                "Shell scripts were modified in this session. If you haven't already,",
+                "verify they pass ShellCheck before pushing:",
+                "",
+                "```bash",
+                `shellcheck -x -S warning ${uncheckedShell.map((f) => `"${f}"`).join(" ")}`,
+                "```",
+              ].join("\n"),
+            };
+          }
+        }
+      }
+    },
+
     "experimental.session.compacting": async (_input, output) => {
       // Gather dynamic context that should survive compaction
       const sections = [
