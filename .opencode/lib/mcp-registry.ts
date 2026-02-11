@@ -173,9 +173,10 @@ function extractFromTemplate(
  */
 function hasPlaceholders(config: McpConfig): boolean {
   const check = (val: string): boolean =>
-    /YOUR_.*_HERE|REPLACE_ME|<.*>/i.test(val)
+    /YOUR_.*_HERE|REPLACE_ME|<.*>|\/Users\/YOU\//i.test(val)
 
   if (config.type === 'local') {
+    if (config.command.some(check)) return true
     if (config.environment) {
       return Object.values(config.environment).some(check)
     }

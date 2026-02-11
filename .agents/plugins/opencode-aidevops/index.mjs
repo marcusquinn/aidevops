@@ -189,8 +189,12 @@ function readJson(filepath) {
  * @returns {boolean}
  */
 function hasPlaceholders(config) {
-  const check = (val) => /YOUR_.*_HERE|REPLACE_ME|<.*>/i.test(val);
+  const check = (val) =>
+    /YOUR_.*_HERE|REPLACE_ME|<.*>|\/Users\/YOU\//i.test(val);
 
+  if (config.type === "local" && Array.isArray(config.command)) {
+    if (config.command.some(check)) return true;
+  }
   const env = config.environment || config.env;
   if (env && typeof env === "object") {
     if (Object.values(env).some(check)) return true;
