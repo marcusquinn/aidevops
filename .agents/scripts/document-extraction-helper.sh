@@ -10,6 +10,9 @@ set -euo pipefail
 # Commands:
 #   extract <file> [--schema <name>] [--privacy <mode>] [--output <format>]
 #   batch <dir> [--schema <name>] [--privacy <mode>] [--pattern <glob>]
+#   classify <file>                  Auto-detect document type (invoice/receipt/other)
+#   accounting-extract <file> [--privacy <mode>]  Extract invoice/receipt for QuickFile
+#   watch <dir> [--schema <name>] [--privacy <mode>] [--interval <secs>]
 #   pii-scan <file>                  Scan for PII without extraction
 #   pii-redact <file> [--output <file>]  Redact PII from text
 #   convert <file> [--output <format>]   Convert document to markdown/JSON
@@ -19,11 +22,11 @@ set -euo pipefail
 #   help                                 Show this help
 #
 # Privacy modes: local (Ollama), edge (Cloudflare), cloud (OpenAI/Anthropic), none
-# Output formats: json, markdown, csv, text
-# Schemas: invoice, receipt, contract, id-document, custom
+# Output formats: json, markdown, text
+# Schemas: invoice, receipt, contract, id-document, auto
 #
 # Author: AI DevOps Framework
-# Version: 1.0.0
+# Version: 2.0.0
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
@@ -266,14 +269,21 @@ do_convert() {
 
     print_info "Converting ${input_file} to ${output_format}..."
 
-    "${VENV_DIR}/bin/python3" -c "
+    local safe_input safe_output
+    safe_input="$(sanitize_path_for_python "$input_file")"
+    safe_output="$(sanitize_path_for_python "$output_file")"
+
+    "${VENV_DIR}/bin/python3" - "$safe_input" "$safe_output" "$output_format" <<'PYCONVERT'
 import sys
 from docling.document_converter import DocumentConverter
 
-converter = DocumentConverter()
-result = converter.convert('${input_file}')
+input_file = sys.argv[1]
+output_file = sys.argv[2]
+output_format = sys.argv[3]
 
-output_format = '${output_format}'
+converter = DocumentConverter()
+result = converter.convert(input_file)
+
 if output_format in ('markdown', 'md'):
     content = result.document.export_to_markdown()
 elif output_format == 'json':
@@ -282,14 +292,16 @@ elif output_format == 'json':
 else:
     content = result.document.export_to_markdown()
 
-with open('${output_file}', 'w') as f:
+with open(output_file, 'w') as f:
     f.write(content)
 
-print(f'Converted: ${output_file}')
-" || {
+print(f'Converted: {output_file}')
+PYCONVERT
+
+    if [[ $? -ne 0 ]]; then
         print_error "Conversion failed"
         return 1
-    }
+    fi
 
     print_success "Output: ${output_file}"
     return 0
@@ -309,13 +321,17 @@ do_pii_scan() {
 
     print_info "Scanning ${input_file} for PII..."
 
-    "${VENV_DIR}/bin/python3" -c "
+    local safe_input
+    safe_input="$(sanitize_path_for_python "$input_file")"
+
+    "${VENV_DIR}/bin/python3" - "$safe_input" <<'PYPIISCAN'
 import sys
 from presidio_analyzer import AnalyzerEngine
 
+input_file = sys.argv[1]
 analyzer = AnalyzerEngine()
 
-with open('${input_file}', 'r') as f:
+with open(input_file, 'r') as f:
     text = f.read()
 
 results = analyzer.analyze(text=text, language='en')
@@ -330,10 +346,12 @@ for r in sorted(results, key=lambda x: x.score, reverse=True):
     snippet = text[r.start:r.end]
     masked = snippet[0] + '*' * (len(snippet) - 2) + snippet[-1] if len(snippet) > 2 else '**'
     print(f'  {r.entity_type:20s} score={r.score:.2f}  [{masked}]  pos={r.start}-{r.end}')
-" || {
+PYPIISCAN
+
+    if [[ $? -ne 0 ]]; then
         print_error "PII scan failed"
         return 1
-    }
+    fi
 
     return 0
 }
@@ -361,30 +379,215 @@ do_pii_redact() {
     ensure_workspace
     print_info "Redacting PII from ${input_file}..."
 
-    "${VENV_DIR}/bin/python3" -c "
+    local safe_input safe_output
+    safe_input="$(sanitize_path_for_python "$input_file")"
+    safe_output="$(sanitize_path_for_python "$output_file")"
+
+    "${VENV_DIR}/bin/python3" - "$safe_input" "$safe_output" <<'PYREDACT'
 from presidio_analyzer import AnalyzerEngine
 from presidio_anonymizer import AnonymizerEngine
+import sys
+
+input_file = sys.argv[1]
+output_file = sys.argv[2]
 
 analyzer = AnalyzerEngine()
 anonymizer = AnonymizerEngine()
 
-with open('${input_file}', 'r') as f:
+with open(input_file, 'r') as f:
     text = f.read()
 
 results = analyzer.analyze(text=text, language='en')
 anonymized = anonymizer.anonymize(text=text, analyzer_results=results)
 
-with open('${output_file}', 'w') as f:
+with open(output_file, 'w') as f:
     f.write(anonymized.text)
 
 print(f'Redacted {len(results)} PII entities')
-print(f'Output: ${output_file}')
-" || {
+print(f'Output: {output_file}')
+PYREDACT
+
+    if [[ $? -ne 0 ]]; then
         print_error "PII redaction failed"
         return 1
-    }
+    fi
 
     print_success "Redacted output: ${output_file}"
+    return 0
+}
+
+# Resolve LLM backend from privacy mode
+# Usage: resolve_llm_backend <privacy_mode>
+# Outputs backend string to stdout, returns 1 on error
+resolve_llm_backend() {
+    local privacy="$1"
+
+    case "$privacy" in
+        local)
+            if ! command -v ollama &>/dev/null; then
+                print_error "Ollama required for local privacy mode but not installed"
+                return 1
+            fi
+            echo "ollama/llama3.2"
+            ;;
+        edge)
+            echo "cloudflare/workers-ai"
+            ;;
+        cloud)
+            echo "openai/gpt-4o"
+            ;;
+        none)
+            if command -v ollama &>/dev/null; then
+                echo "ollama/llama3.2"
+            else
+                print_warning "Ollama not found, falling back to cloud API (data will leave machine)"
+                echo "openai/gpt-4o"
+            fi
+            ;;
+        *)
+            print_error "Unknown privacy mode: ${privacy}"
+            print_info "Options: local, edge, cloud, none"
+            return 1
+            ;;
+    esac
+    return 0
+}
+
+# Sanitize a file path for safe use in Python string literals
+# Escapes backslashes and single quotes to prevent injection
+sanitize_path_for_python() {
+    local path="$1"
+    # Escape backslashes first, then single quotes
+    path="${path//\\/\\\\}"
+    path="${path//\'/\\\'}"
+    echo "$path"
+    return 0
+}
+
+# Build Pydantic schema code for a given schema name
+# Usage: build_schema_code <schema_name>
+# Outputs Python code to stdout
+build_schema_code() {
+    local schema="$1"
+
+    case "$schema" in
+        invoice)
+            cat <<'PYSCHEMA'
+from typing import Optional
+from enum import Enum
+
+class VATRate(str, Enum):
+    STANDARD = 'standard'
+    REDUCED = 'reduced'
+    ZERO = 'zero'
+    EXEMPT = 'exempt'
+    REVERSE_CHARGE = 'reverse_charge'
+    UNKNOWN = 'unknown'
+
+class LineItem(BaseModel):
+    description: str = ''
+    quantity: float = 0
+    unit_price: float = 0
+    amount: float = 0
+    vat_rate: str = 'unknown'
+    vat_amount: float = 0
+    product_code: str = ''
+
+class TaxBreakdown(BaseModel):
+    rate_label: str = ''
+    rate_percent: float = 0
+    taxable_amount: float = 0
+    tax_amount: float = 0
+
+class Invoice(BaseModel):
+    vendor_name: str = ''
+    vendor_address: str = ''
+    vendor_vat_number: str = ''
+    vendor_company_number: str = ''
+    customer_name: str = ''
+    customer_address: str = ''
+    customer_vat_number: str = ''
+    invoice_number: str = ''
+    invoice_date: str = ''
+    due_date: str = ''
+    payment_terms: str = ''
+    purchase_order: str = ''
+    subtotal: float = 0
+    discount: float = 0
+    tax: float = 0
+    total: float = 0
+    amount_paid: float = 0
+    amount_due: float = 0
+    currency: str = 'GBP'
+    tax_breakdowns: list[TaxBreakdown] = []
+    line_items: list[LineItem] = []
+    payment_details: str = ''
+    notes: str = ''
+
+schema_class = Invoice
+PYSCHEMA
+            ;;
+        receipt)
+            cat <<'PYSCHEMA'
+from typing import Optional
+
+class ReceiptItem(BaseModel):
+    name: str = ''
+    quantity: float = 1
+    unit_price: float = 0
+    price: float = 0
+    vat_code: str = ''
+
+class Receipt(BaseModel):
+    merchant: str = ''
+    merchant_address: str = ''
+    merchant_vat_number: str = ''
+    merchant_phone: str = ''
+    date: str = ''
+    time: str = ''
+    receipt_number: str = ''
+    subtotal: float = 0
+    vat_amount: float = 0
+    total: float = 0
+    currency: str = 'GBP'
+    payment_method: str = ''
+    card_last_four: str = ''
+    items: list[ReceiptItem] = []
+    cashier: str = ''
+    store_number: str = ''
+
+schema_class = Receipt
+PYSCHEMA
+            ;;
+        contract)
+            cat <<'PYSCHEMA'
+class ContractSummary(BaseModel):
+    parties: list[str] = []
+    effective_date: str = ''
+    termination_date: str = ''
+    key_terms: list[str] = []
+    obligations: list[str] = []
+
+schema_class = ContractSummary
+PYSCHEMA
+            ;;
+        id-document)
+            cat <<'PYSCHEMA'
+class IDDocument(BaseModel):
+    document_type: str = ''
+    full_name: str = ''
+    date_of_birth: str = ''
+    document_number: str = ''
+    expiry_date: str = ''
+    issuing_authority: str = ''
+
+schema_class = IDDocument
+PYSCHEMA
+            ;;
+        auto|*)
+            echo "schema_class = None"
+            ;;
+    esac
     return 0
 }
 
@@ -403,147 +606,366 @@ do_extract() {
     basename="$(basename "$input_file" | sed 's/\.[^.]*$//')"
     local output_file="${WORKSPACE_DIR}/${basename}-extracted.json"
 
-    # Determine LLM backend based on privacy mode
     local llm_backend
-    case "$privacy" in
-        local)
-            if ! command -v ollama &>/dev/null; then
-                print_error "Ollama required for local privacy mode but not installed"
-                return 1
-            fi
-            llm_backend="ollama/llama3.2"
-            ;;
-        edge)
-            llm_backend="cloudflare/workers-ai"
-            ;;
-        cloud)
-            llm_backend="openai/gpt-4o"
-            ;;
-        none)
-            llm_backend="ollama/llama3.2"
-            if ! command -v ollama &>/dev/null; then
-                llm_backend="openai/gpt-4o"
-            fi
-            ;;
-        *)
-            print_error "Unknown privacy mode: ${privacy}"
-            print_info "Options: local, edge, cloud, none"
-            return 1
-            ;;
-    esac
+    llm_backend="$(resolve_llm_backend "$privacy")" || return 1
 
     print_info "Extracting from ${input_file} (schema=${schema}, privacy=${privacy}, llm=${llm_backend})..."
 
-    # Build schema selection
-    local schema_code
-    case "$schema" in
-        invoice)
-            schema_code="
-class LineItem(BaseModel):
-    description: str = ''
-    quantity: float = 0
-    unit_price: float = 0
-    amount: float = 0
+    # Build schema code and write to temp file (avoids shell injection)
+    local schema_file
+    schema_file="$(mktemp "${TMPDIR:-/tmp}/docext-schema-XXXXXX.py")"
+    local _prev_trap
+    _prev_trap="$(trap -p RETURN)"
+    trap 'rm -f "$schema_file"; eval "$_prev_trap"' RETURN
 
-class Invoice(BaseModel):
-    vendor_name: str = ''
-    invoice_number: str = ''
-    invoice_date: str = ''
-    due_date: str = ''
-    subtotal: float = 0
-    tax: float = 0
-    total: float = 0
-    currency: str = 'USD'
-    line_items: list[LineItem] = []
+    build_schema_code "$schema" > "$schema_file"
 
-schema_class = Invoice
-"
-            ;;
-        receipt)
-            schema_code="
-class ReceiptItem(BaseModel):
-    name: str = ''
-    price: float = 0
+    # Sanitize paths for Python
+    local safe_input safe_output
+    safe_input="$(sanitize_path_for_python "$input_file")"
+    safe_output="$(sanitize_path_for_python "$output_file")"
 
-class Receipt(BaseModel):
-    merchant: str = ''
-    date: str = ''
-    total: float = 0
-    payment_method: str = ''
-    items: list[ReceiptItem] = []
-
-schema_class = Receipt
-"
-            ;;
-        contract)
-            schema_code="
-class ContractSummary(BaseModel):
-    parties: list[str] = []
-    effective_date: str = ''
-    termination_date: str = ''
-    key_terms: list[str] = []
-    obligations: list[str] = []
-
-schema_class = ContractSummary
-"
-            ;;
-        id-document)
-            schema_code="
-class IDDocument(BaseModel):
-    document_type: str = ''
-    full_name: str = ''
-    date_of_birth: str = ''
-    document_number: str = ''
-    expiry_date: str = ''
-    issuing_authority: str = ''
-
-schema_class = IDDocument
-"
-            ;;
-        auto|*)
-            schema_code="
-schema_class = None
-"
-            ;;
-    esac
-
-    "${VENV_DIR}/bin/python3" -c "
+    "${VENV_DIR}/bin/python3" - "$safe_input" "$safe_output" "$llm_backend" "$schema_file" <<'PYEXTRACT'
 import json
 import sys
+import os
 from pydantic import BaseModel
-from extract_thinker import Extractor
 
-${schema_code}
+input_file = sys.argv[1]
+output_file = sys.argv[2]
+llm_backend = sys.argv[3]
+schema_file = sys.argv[4]
 
-extractor = Extractor()
-extractor.load_document_loader('docling')
-extractor.load_llm('${llm_backend}')
+# Load schema code
+schema_ns = {'BaseModel': BaseModel}
+with open(schema_file, 'r') as f:
+    exec(f.read(), schema_ns)
+
+schema_class = schema_ns.get('schema_class')
 
 try:
     if schema_class is not None:
-        result = extractor.extract('${input_file}', schema_class)
+        from extract_thinker import Extractor
+        extractor = Extractor()
+        extractor.load_document_loader('docling')
+        extractor.load_llm(llm_backend)
+        result = extractor.extract(input_file, schema_class)
         output = result.model_dump()
     else:
-        # Auto mode: extract to markdown first
         from docling.document_converter import DocumentConverter
         converter = DocumentConverter()
-        doc_result = converter.convert('${input_file}')
+        doc_result = converter.convert(input_file)
         output = {'content': doc_result.document.export_to_markdown(), 'format': 'markdown'}
 
-    with open('${output_file}', 'w') as f:
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    with open(output_file, 'w') as f:
         json.dump(output, f, indent=2, default=str)
 
     print(json.dumps(output, indent=2, default=str))
 except Exception as e:
     print(f'Extraction error: {e}', file=sys.stderr)
     sys.exit(1)
-" || {
+PYEXTRACT
+
+    local exit_code=$?
+    if [[ $exit_code -ne 0 ]]; then
         print_error "Extraction failed"
         return 1
-    }
+    fi
 
     print_success "Output: ${output_file}"
     return 0
+}
+
+# Classify document type (invoice, receipt, or unknown)
+do_classify() {
+    local input_file="$1"
+    local privacy="${2:-none}"
+
+    validate_file_exists "$input_file" "Input file" || return 1
+    activate_venv || return 1
+
+    local llm_backend
+    llm_backend="$(resolve_llm_backend "$privacy")" || return 1
+
+    local safe_input
+    safe_input="$(sanitize_path_for_python "$input_file")"
+
+    print_info "Classifying document: ${input_file}..."
+
+    "${VENV_DIR}/bin/python3" - "$safe_input" "$llm_backend" <<'PYCLASSIFY'
+import json
+import sys
+from pydantic import BaseModel
+
+input_file = sys.argv[1]
+llm_backend = sys.argv[2]
+
+class DocumentClassification(BaseModel):
+    document_type: str = 'unknown'
+    confidence: float = 0.0
+    reasoning: str = ''
+
+try:
+    from extract_thinker import Extractor
+    extractor = Extractor()
+    extractor.load_document_loader('docling')
+    extractor.load_llm(llm_backend)
+    result = extractor.extract(input_file, DocumentClassification)
+    output = result.model_dump()
+    print(json.dumps(output, indent=2))
+except ImportError:
+    # Fallback: use Docling to convert to text, then keyword-match
+    from docling.document_converter import DocumentConverter
+    converter = DocumentConverter()
+    doc_result = converter.convert(input_file)
+    text = doc_result.document.export_to_markdown().lower()
+
+    invoice_signals = ['invoice', 'inv no', 'invoice number', 'bill to', 'due date',
+                       'payment terms', 'purchase order', 'po number', 'vat reg']
+    receipt_signals = ['receipt', 'transaction', 'paid', 'change due', 'cashier',
+                       'store', 'thank you for your purchase', 'card ending']
+
+    inv_score = sum(1 for s in invoice_signals if s in text)
+    rec_score = sum(1 for s in receipt_signals if s in text)
+
+    if inv_score > rec_score and inv_score >= 2:
+        doc_type = 'invoice'
+        confidence = min(0.5 + inv_score * 0.1, 0.95)
+    elif rec_score > inv_score and rec_score >= 2:
+        doc_type = 'receipt'
+        confidence = min(0.5 + rec_score * 0.1, 0.95)
+    else:
+        doc_type = 'unknown'
+        confidence = 0.3
+
+    output = {'document_type': doc_type, 'confidence': confidence,
+              'reasoning': f'keyword match: invoice={inv_score}, receipt={rec_score}'}
+    print(json.dumps(output, indent=2))
+except Exception as e:
+    print(f'Classification error: {e}', file=sys.stderr)
+    sys.exit(1)
+PYCLASSIFY
+
+    local exit_code=$?
+    if [[ $exit_code -ne 0 ]]; then
+        print_error "Classification failed"
+        return 1
+    fi
+    return 0
+}
+
+# Extract invoice/receipt for accounting (QuickFile-ready output)
+do_accounting_extract() {
+    local input_file="$1"
+    local privacy="${2:-none}"
+
+    validate_file_exists "$input_file" "Input file" || return 1
+    activate_venv || return 1
+    ensure_workspace
+
+    local llm_backend
+    llm_backend="$(resolve_llm_backend "$privacy")" || return 1
+
+    local basename
+    basename="$(basename "$input_file" | sed 's/\.[^.]*$//')"
+
+    print_info "Accounting extraction: ${input_file} (auto-classifying...)"
+
+    # Step 1: Classify the document
+    local classification
+    classification="$(do_classify "$input_file" "$privacy" 2>/dev/null)" || {
+        print_warning "Classification failed, defaulting to invoice schema"
+        classification='{"document_type": "invoice"}'
+    }
+
+    local doc_type
+    doc_type="$(echo "$classification" | "${VENV_DIR}/bin/python3" -c "import json,sys; print(json.load(sys.stdin).get('document_type','invoice'))" 2>/dev/null)" || doc_type="invoice"
+
+    # Normalize to supported schema
+    case "$doc_type" in
+        invoice|receipt) ;;
+        *) doc_type="invoice" ;;
+    esac
+
+    print_info "Detected document type: ${doc_type}"
+
+    # Step 2: Extract with the appropriate schema
+    local output_file="${WORKSPACE_DIR}/${basename}-accounting.json"
+
+    local schema_file
+    schema_file="$(mktemp "${TMPDIR:-/tmp}/docext-schema-XXXXXX.py")"
+    local _prev_trap
+    _prev_trap="$(trap -p RETURN)"
+    trap 'rm -f "$schema_file"; eval "$_prev_trap"' RETURN
+
+    build_schema_code "$doc_type" > "$schema_file"
+
+    local safe_input safe_output
+    safe_input="$(sanitize_path_for_python "$input_file")"
+    safe_output="$(sanitize_path_for_python "$output_file")"
+
+    "${VENV_DIR}/bin/python3" - "$safe_input" "$safe_output" "$llm_backend" "$schema_file" "$doc_type" <<'PYACCOUNT'
+import json
+import sys
+import os
+from datetime import datetime
+from pydantic import BaseModel
+
+input_file = sys.argv[1]
+output_file = sys.argv[2]
+llm_backend = sys.argv[3]
+schema_file = sys.argv[4]
+doc_type = sys.argv[5]
+
+# Load schema
+schema_ns = {'BaseModel': BaseModel}
+with open(schema_file, 'r') as f:
+    exec(f.read(), schema_ns)
+
+schema_class = schema_ns.get('schema_class')
+
+try:
+    from extract_thinker import Extractor
+    extractor = Extractor()
+    extractor.load_document_loader('docling')
+    extractor.load_llm(llm_backend)
+    result = extractor.extract(input_file, schema_class)
+    extracted = result.model_dump()
+
+    # Wrap in accounting envelope with QuickFile-compatible metadata
+    accounting_output = {
+        'source_file': os.path.basename(input_file),
+        'document_type': doc_type,
+        'extracted_at': datetime.utcnow().isoformat() + 'Z',
+        'extraction_model': llm_backend,
+        'data': extracted,
+        'quickfile_mapping': {}
+    }
+
+    # Generate QuickFile field mapping hints
+    if doc_type == 'invoice':
+        accounting_output['quickfile_mapping'] = {
+            'endpoint': 'POST /invoice/create',
+            'field_map': {
+                'InvoiceDescription': extracted.get('vendor_name', ''),
+                'InvoiceDate': extracted.get('invoice_date', ''),
+                'DueDate': extracted.get('due_date', ''),
+                'Currency': extracted.get('currency', 'GBP'),
+                'NetAmount': extracted.get('subtotal', 0),
+                'VATAmount': extracted.get('tax', 0),
+                'GrossAmount': extracted.get('total', 0),
+                'SupplierRef': extracted.get('invoice_number', ''),
+            },
+            'line_items': [
+                {
+                    'ItemDescription': item.get('description', ''),
+                    'UnitCost': item.get('unit_price', 0),
+                    'Qty': item.get('quantity', 0),
+                    'NetAmount': item.get('amount', 0),
+                    'VATAmount': item.get('vat_amount', 0),
+                }
+                for item in extracted.get('line_items', [])
+            ]
+        }
+    elif doc_type == 'receipt':
+        accounting_output['quickfile_mapping'] = {
+            'endpoint': 'POST /expense/create',
+            'field_map': {
+                'Description': extracted.get('merchant', ''),
+                'Date': extracted.get('date', ''),
+                'Currency': extracted.get('currency', 'GBP'),
+                'NetAmount': extracted.get('subtotal', 0),
+                'VATAmount': extracted.get('vat_amount', 0),
+                'GrossAmount': extracted.get('total', 0),
+                'PaymentMethod': extracted.get('payment_method', ''),
+            }
+        }
+
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    with open(output_file, 'w') as f:
+        json.dump(accounting_output, f, indent=2, default=str)
+
+    print(json.dumps(accounting_output, indent=2, default=str))
+except Exception as e:
+    print(f'Accounting extraction error: {e}', file=sys.stderr)
+    sys.exit(1)
+PYACCOUNT
+
+    local exit_code=$?
+    if [[ $exit_code -ne 0 ]]; then
+        print_error "Accounting extraction failed"
+        return 1
+    fi
+
+    print_success "Accounting output: ${output_file}"
+    return 0
+}
+
+# Watch a directory for new documents and auto-extract
+do_watch() {
+    local watch_dir="$1"
+    local schema="${2:-auto}"
+    local privacy="${3:-none}"
+    local interval="${4:-10}"
+
+    if [[ ! -d "$watch_dir" ]]; then
+        print_error "Watch directory not found: ${watch_dir}"
+        return 1
+    fi
+
+    ensure_workspace
+
+    local processed_log="${WORKSPACE_DIR}/.watch-processed.log"
+    touch "$processed_log"
+
+    local supported_extensions="pdf docx pptx xlsx html htm png jpg jpeg tiff bmp"
+
+    print_info "Watching ${watch_dir} for new documents (interval=${interval}s, schema=${schema})..."
+    print_info "Press Ctrl+C to stop"
+
+    while true; do
+        for file in "${watch_dir}"/*; do
+            [[ -f "$file" ]] || continue
+
+            local ext="${file##*.}"
+            ext="$(echo "$ext" | tr '[:upper:]' '[:lower:]')"
+
+            # Check if extension is supported
+            local supported=0
+            local supported_ext
+            for supported_ext in $supported_extensions; do
+                if [[ "$ext" == "$supported_ext" ]]; then
+                    supported=1
+                    break
+                fi
+            done
+            [[ "$supported" -eq 1 ]] || continue
+
+            # Check if already processed (by inode + mtime to handle renames)
+            local file_id
+            file_id="$(stat -f '%i:%m' "$file" 2>/dev/null || stat -c '%i:%Y' "$file" 2>/dev/null)"
+            if grep -qF "$file_id" "$processed_log" 2>/dev/null; then
+                continue
+            fi
+
+            echo ""
+            print_info "New document detected: ${file}"
+
+            # Use accounting-extract for auto schema, otherwise regular extract
+            if [[ "$schema" == "auto" ]]; then
+                if do_accounting_extract "$file" "$privacy"; then
+                    echo "$file_id" >> "$processed_log"
+                fi
+            else
+                if do_extract "$file" "$schema" "$privacy" "json"; then
+                    echo "$file_id" >> "$processed_log"
+                fi
+            fi
+        done
+
+        sleep "$interval"
+    done
 }
 
 # Batch extract from directory
@@ -605,11 +1027,19 @@ do_schemas() {
     echo "Available Extraction Schemas"
     echo "============================"
     echo ""
-    echo "  invoice       - Vendor, line items, totals, dates"
-    echo "  receipt       - Merchant, items, total, payment method"
+    echo "  invoice       - Vendor/customer details, VAT breakdowns, line items,"
+    echo "                  payment terms, PO numbers, multi-currency (default: GBP)"
+    echo "  receipt       - Merchant, items with VAT codes, payment method,"
+    echo "                  card details, store/cashier info"
     echo "  contract      - Parties, dates, key terms, obligations"
     echo "  id-document   - Name, DOB, document number, expiry"
     echo "  auto          - Auto-detect and convert to markdown (default)"
+    echo ""
+    echo "Accounting Schemas (invoice/receipt) include:"
+    echo "  - UK VAT support (standard/reduced/zero/exempt/reverse charge)"
+    echo "  - Multi-currency with GBP default"
+    echo "  - Tax breakdown by rate"
+    echo "  - QuickFile field mapping in accounting-extract output"
     echo ""
     echo "Custom schemas can be defined as Pydantic models in Python."
     echo "See: .agents/tools/document/document-extraction.md"
@@ -627,8 +1057,17 @@ do_help() {
     echo "  extract <file> [--schema <name>] [--privacy <mode>] [--output <format>]"
     echo "      Extract structured data from a document"
     echo ""
+    echo "  classify <file> [--privacy <mode>]"
+    echo "      Auto-detect document type (invoice, receipt, or unknown)"
+    echo ""
+    echo "  accounting-extract <file> [--privacy <mode>]"
+    echo "      Auto-classify and extract for accounting (QuickFile-ready output)"
+    echo ""
     echo "  batch <dir> [--schema <name>] [--privacy <mode>] [--pattern <glob>]"
     echo "      Batch extract from all documents in a directory"
+    echo ""
+    echo "  watch <dir> [--schema <name>] [--privacy <mode>] [--interval <secs>]"
+    echo "      Watch directory for new documents and auto-extract"
     echo ""
     echo "  pii-scan <file>"
     echo "      Scan a text file for PII entities"
@@ -654,16 +1093,33 @@ do_help() {
     echo "  cloud   - OpenAI/Anthropic APIs (best quality)"
     echo "  none    - Auto-select best available backend (default)"
     echo ""
-    echo "Output Formats: json, markdown, csv, text"
+    echo "Output Formats: json, markdown, text"
     echo ""
     echo "${HELP_LABEL_EXAMPLES}"
+    echo "  # Extract invoice with UK VAT support"
     echo "  document-extraction-helper.sh extract invoice.pdf --schema invoice --privacy local"
+    echo ""
+    echo "  # Auto-classify and extract for QuickFile accounting"
+    echo "  document-extraction-helper.sh accounting-extract receipt.jpg"
+    echo ""
+    echo "  # Batch process a folder of invoices"
     echo "  document-extraction-helper.sh batch ./invoices --schema invoice"
+    echo ""
+    echo "  # Watch a folder for new receipts (e.g. phone camera uploads)"
+    echo "  document-extraction-helper.sh watch ~/Downloads/receipts --interval 30"
+    echo ""
+    echo "  # Classify a document before extraction"
+    echo "  document-extraction-helper.sh classify unknown-doc.pdf"
+    echo ""
+    echo "  # PII operations"
     echo "  document-extraction-helper.sh pii-scan document.txt"
     echo "  document-extraction-helper.sh pii-redact document.txt --output redacted.txt"
+    echo ""
+    echo "  # Simple conversion (no LLM needed)"
     echo "  document-extraction-helper.sh convert report.pdf --output markdown"
+    echo ""
+    echo "  # Install dependencies"
     echo "  document-extraction-helper.sh install --core"
-    echo "  document-extraction-helper.sh status"
     return 0
 }
 
@@ -680,6 +1136,7 @@ parse_args() {
     local output_file=""
     local pattern="*"
     local install_component="all"
+    local interval="10"
 
     # First positional arg after command is the file/dir
     if [[ $# -gt 0 ]] && [[ ! "$1" =~ ^-- ]]; then
@@ -705,6 +1162,10 @@ parse_args() {
                 pattern="${2:-*}"
                 shift 2 || { print_error "Missing value for --pattern"; return 1; }
                 ;;
+            --interval)
+                interval="${2:-10}"
+                shift 2 || { print_error "Missing value for --interval"; return 1; }
+                ;;
             --all|--core|--pii|--llm)
                 install_component="${1#--}"
                 shift
@@ -727,12 +1188,33 @@ parse_args() {
             fi
             do_extract "$file" "$schema" "$privacy" "$output_format"
             ;;
+        classify)
+            if [[ -z "$file" ]]; then
+                print_error "${ERROR_INPUT_FILE_REQUIRED}"
+                return 1
+            fi
+            do_classify "$file" "$privacy"
+            ;;
+        accounting-extract)
+            if [[ -z "$file" ]]; then
+                print_error "${ERROR_INPUT_FILE_REQUIRED}"
+                return 1
+            fi
+            do_accounting_extract "$file" "$privacy"
+            ;;
         batch)
             if [[ -z "$file" ]]; then
                 print_error "Input directory is required"
                 return 1
             fi
             do_batch "$file" "$schema" "$privacy" "$pattern"
+            ;;
+        watch)
+            if [[ -z "$file" ]]; then
+                print_error "Watch directory is required"
+                return 1
+            fi
+            do_watch "$file" "$schema" "$privacy" "$interval"
             ;;
         pii-scan)
             if [[ -z "$file" ]]; then
