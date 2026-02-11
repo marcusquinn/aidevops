@@ -113,6 +113,8 @@ Use `/save-todo` after planning. Auto-detects complexity:
 
 **Dependencies**: `blocked-by:t001`, `blocks:t002`, `t001.1` (subtask)
 
+**Auto-dispatch**: Add `#auto-dispatch` to tasks that can run autonomously (clear spec, bounded scope, no user input needed). Default to including it — only omit when a specific exclusion applies. See `workflows/plans.md` "Auto-Dispatch Tagging" for full criteria. The supervisor's Phase 0 picks these up automatically every 2 minutes.
+
 **Task completion rules** (CRITICAL - prevents false completion cascade):
 - NEVER mark a task `[x]` unless a merged PR exists with real deliverables for that task
 - The supervisor `update_todo_on_complete()` is the ONLY path to mark tasks done - it requires a merged PR URL or `verified:YYYY-MM-DD` field
