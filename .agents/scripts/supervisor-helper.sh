@@ -12892,8 +12892,8 @@ cmd_auto_pickup() {
                 continue
             fi
 
-            # Add to supervisor with special metadata for decomposition
-            if cmd_add "$task_id" --repo "$repo" --metadata "plan_anchor=$plan_anchor,needs_decomposition=true" 2>/dev/null; then
+            # Add to supervisor (plan_anchor passed directly to dispatch_decomposition_worker)
+            if cmd_add "$task_id" --repo "$repo" 2>/dev/null; then
                 picked_up=$((picked_up + 1))
                 log_success "  Auto-picked: $task_id (#plan task for decomposition)"
                 
