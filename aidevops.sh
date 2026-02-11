@@ -1107,7 +1107,8 @@ EOF
         if ! command -v bd &> /dev/null; then
             print_warning "Beads CLI (bd) not installed"
             echo "  Install with: brew install steveyegge/beads/bd"
-            echo "  Or: go install github.com/steveyegge/beads/cmd/bd@latest"
+            echo "  Or download: https://github.com/steveyegge/beads/releases"
+            echo "  Or via Go:   go install github.com/steveyegge/beads/cmd/bd@latest"
         else
             # Initialize Beads in the project
             if [[ ! -d "$project_root/.beads" ]]; then

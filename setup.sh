@@ -1236,6 +1236,89 @@ install_packages() {
     esac
 }
 
+# Offer to install Homebrew (Linuxbrew) on Linux when brew is not available
+# Many tools in the aidevops ecosystem (Beads, Worktrunk, bv) are distributed
+# via Homebrew taps. On macOS, brew is almost always present. On Linux, this
+# function offers to install it so those tools can be installed automatically.
+# Returns: 0 if brew is now available, 1 if user declined or install failed
+ensure_homebrew() {
+    # Already available
+    if command -v brew &> /dev/null; then
+        return 0
+    fi
+
+    # Only offer on Linux (macOS users should install Homebrew themselves)
+    if [[ "$(uname)" == "Darwin" ]]; then
+        print_warning "Homebrew not found. Install from https://brew.sh"
+        return 1
+    fi
+
+    # Non-interactive mode: skip
+    if [[ "$NON_INTERACTIVE" == "true" ]]; then
+        return 1
+    fi
+
+    echo ""
+    print_info "Homebrew (Linuxbrew) is not installed."
+    print_info "Several optional tools (Beads CLI, Worktrunk, bv) install via Homebrew taps."
+    echo ""
+    read -r -p "Install Homebrew for Linux? [Y/n]: " install_brew
+
+    if [[ ! "$install_brew" =~ ^[Yy]?$ ]]; then
+        print_info "Skipped Homebrew installation"
+        return 1
+    fi
+
+    print_info "Installing Homebrew (Linuxbrew)..."
+
+    # Prerequisites for Linuxbrew
+    if command -v apt-get &> /dev/null; then
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq build-essential procps curl file git
+    elif command -v dnf &> /dev/null; then
+        sudo dnf groupinstall -y 'Development Tools'
+        sudo dnf install -y procps-ng curl file git
+    elif command -v yum &> /dev/null; then
+        sudo yum groupinstall -y 'Development Tools'
+        sudo yum install -y procps-ng curl file git
+    fi
+
+    # Install Homebrew using verified_install pattern
+    if verified_install "Homebrew" "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh"; then
+        # Add Homebrew to PATH for this session
+        local brew_prefix="/home/linuxbrew/.linuxbrew"
+        if [[ -x "$brew_prefix/bin/brew" ]]; then
+            eval "$("$brew_prefix/bin/brew" shellenv)"
+        fi
+
+        # Persist to shell rc files
+        local brew_line="eval \"\$($brew_prefix/bin/brew shellenv)\""
+        local rc_file
+        while IFS= read -r rc_file; do
+            [[ -z "$rc_file" ]] && continue
+            if ! grep -q 'linuxbrew' "$rc_file" 2>/dev/null; then
+                {
+                    echo ""
+                    echo "# Homebrew (Linuxbrew) - added by aidevops setup"
+                    echo "$brew_line"
+                } >> "$rc_file"
+            fi
+        done < <(get_all_shell_rcs)
+
+        if command -v brew &> /dev/null; then
+            print_success "Homebrew installed and added to PATH"
+            return 0
+        else
+            print_warning "Homebrew installed but not yet in PATH. Restart your shell or run:"
+            echo "  $brew_line"
+            return 1
+        fi
+    else
+        print_warning "Homebrew installation failed"
+        return 1
+    fi
+}
+
 # Check system requirements
 check_requirements() {
     print_info "Checking system requirements..."
@@ -3915,6 +3998,106 @@ setup_osgrep() {
     return 0
 }
 
+# Install Beads CLI from GitHub release binary
+# Downloads the prebuilt binary for the current platform from GitHub releases.
+# Returns: 0 on success, 1 on failure
+install_beads_binary() {
+    local os arch tarball_name
+    os=$(uname -s | tr '[:upper:]' '[:lower:]')
+    arch=$(uname -m)
+
+    # Map architecture names to Beads release naming convention
+    case "$arch" in
+        x86_64|amd64) arch="amd64" ;;
+        aarch64|arm64) arch="arm64" ;;
+        *)
+            print_warning "Unsupported architecture for Beads binary download: $arch"
+            return 1
+            ;;
+    esac
+
+    # Get latest version tag from GitHub API
+    local latest_version
+    latest_version=$(curl -fsSL "https://api.github.com/repos/steveyegge/beads/releases/latest" 2>/dev/null \
+        | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"v\{0,1\}\([^"]*\)".*/\1/')
+
+    if [[ -z "$latest_version" ]]; then
+        print_warning "Could not determine latest Beads version from GitHub"
+        return 1
+    fi
+
+    tarball_name="beads_${latest_version}_${os}_${arch}.tar.gz"
+    local download_url="https://github.com/steveyegge/beads/releases/download/v${latest_version}/${tarball_name}"
+
+    print_info "Downloading Beads CLI v${latest_version} (${os}/${arch})..."
+
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+    # shellcheck disable=SC2064
+    trap "rm -rf '$tmp_dir'" RETURN
+
+    if ! curl -fsSL "$download_url" -o "$tmp_dir/$tarball_name" 2>/dev/null; then
+        print_warning "Failed to download Beads binary from $download_url"
+        return 1
+    fi
+
+    # Extract and install
+    if ! tar -xzf "$tmp_dir/$tarball_name" -C "$tmp_dir" 2>/dev/null; then
+        print_warning "Failed to extract Beads binary"
+        return 1
+    fi
+
+    # Find the bd binary in the extracted files
+    local bd_binary
+    bd_binary=$(find "$tmp_dir" -name "bd" -type f 2>/dev/null | head -1)
+    if [[ -z "$bd_binary" ]]; then
+        print_warning "bd binary not found in downloaded archive"
+        return 1
+    fi
+
+    # Install to a writable location
+    local install_dir="/usr/local/bin"
+    if [[ ! -w "$install_dir" ]]; then
+        if command -v sudo &> /dev/null; then
+            sudo install -m 755 "$bd_binary" "$install_dir/bd"
+        else
+            # Fallback to user-local bin
+            install_dir="$HOME/.local/bin"
+            mkdir -p "$install_dir"
+            install -m 755 "$bd_binary" "$install_dir/bd"
+            # Ensure ~/.local/bin is in PATH
+            if ! echo "$PATH" | grep -q "$HOME/.local/bin"; then
+                export PATH="$HOME/.local/bin:$PATH"
+                print_info "Added ~/.local/bin to PATH for this session"
+            fi
+        fi
+    else
+        install -m 755 "$bd_binary" "$install_dir/bd"
+    fi
+
+    if command -v bd &> /dev/null; then
+        print_success "Beads CLI installed via binary download (v${latest_version})"
+        return 0
+    else
+        print_warning "Beads binary installed to $install_dir/bd but not found in PATH"
+        return 1
+    fi
+}
+
+# Install Beads CLI via Go
+# Returns: 0 on success, 1 on failure
+install_beads_go() {
+    if ! command -v go &> /dev/null; then
+        return 1
+    fi
+    if run_with_spinner "Installing Beads via Go" go install github.com/steveyegge/beads/cmd/bd@latest; then
+        print_info "Ensure \$GOPATH/bin is in your PATH"
+        return 0
+    fi
+    print_warning "Go installation failed"
+    return 1
+}
+
 # Setup Beads - Task Graph Visualization
 setup_beads() {
     print_info "Setting up Beads (task graph visualization)..."
@@ -3931,30 +4114,36 @@ setup_beads() {
                 : # Success message handled by spinner
             else
                 print_warning "Homebrew tap installation failed, trying alternative..."
-                # Try Go install if Go is available
-                if command -v go &> /dev/null; then
-                    if run_with_spinner "Installing Beads via Go" go install github.com/steveyegge/beads/cmd/bd@latest; then
-                        print_info "Ensure \$GOPATH/bin is in your PATH"
-                    else
-                        print_warning "Go installation failed"
-                    fi
-                fi
+                install_beads_binary || install_beads_go
             fi
         elif command -v go &> /dev/null; then
             if run_with_spinner "Installing Beads via Go" go install github.com/steveyegge/beads/cmd/bd@latest; then
                 print_info "Ensure \$GOPATH/bin is in your PATH"
             else
-                print_warning "Go installation failed"
+                print_warning "Go installation failed, trying binary download..."
+                install_beads_binary
             fi
         else
-            # Provide manual installation instructions
-            print_warning "Beads CLI (bd) not installed"
-            echo ""
-            echo "  Install options:"
-            echo "    macOS/Linux (Homebrew): brew install steveyegge/beads/bd"
-            echo "    Go:                     go install github.com/steveyegge/beads/cmd/bd@latest"
-            echo "    Manual:                 https://github.com/steveyegge/beads/releases"
-            echo ""
+            # No brew, no Go -- try binary download first, then offer Homebrew install
+            if ! install_beads_binary; then
+                # Binary download failed -- offer to install Homebrew (Linux only)
+                if ensure_homebrew; then
+                    # Homebrew now available, retry via tap
+                    if run_with_spinner "Installing Beads via Homebrew" brew install steveyegge/beads/bd; then
+                        : # Success
+                    else
+                        print_warning "Homebrew tap installation failed"
+                    fi
+                else
+                    print_warning "Beads CLI (bd) not installed"
+                    echo ""
+                    echo "  Install options:"
+                    echo "    Binary download:        https://github.com/steveyegge/beads/releases"
+                    echo "    macOS/Linux (Homebrew):  brew install steveyegge/beads/bd"
+                    echo "    Go:                      go install github.com/steveyegge/beads/cmd/bd@latest"
+                    echo ""
+                fi
+            fi
         fi
     fi
     
