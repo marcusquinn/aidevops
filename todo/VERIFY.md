@@ -1,253 +1,42 @@
-# Verification Queue
 
-Post-merge verification for completed tasks. Entries are auto-appended by the supervisor
-after PR merge. Verification workers run the `check:` directives and mark pass `[x]` or
-fail `[!]`. Failed verifications reopen the original task in TODO.md.
+- [ ] v001 t267 Higgsfield image count detection fails after generation -... | PR #1068 | merged:2026-02-11
+  files: .agents/scripts/higgsfield/playwright-automator.mjs
+  check: file-exists .agents/scripts/higgsfield/playwright-automator.mjs
 
-## Format
+- [ ] v002 t269 Higgsfield video download fails silently - downloadLatest... | PR #1067 | merged:2026-02-11
+  files: .agents/scripts/higgsfield/playwright-automator.mjs
+  check: file-exists .agents/scripts/higgsfield/playwright-automator.mjs
 
-```text
-- [ ] vNNN tNNN Description | PR #NNN | merged:YYYY-MM-DD
-  files: path/to/changed/file1, path/to/changed/file2
-  check: shellcheck .agents/scripts/script-name.sh
-  check: file-exists .agents/tools/category/subagent.md
-  check: rg "pattern" .agents/subagent-index.toon
-  check: bash tests/test-name.sh
-```
+- [ ] v003 t008 aidevops-opencode Plugin #plan → [todo/PLANS.md#aidevop... | PR #1073 | merged:2026-02-11
+  files: .agents/plugins/opencode-aidevops/index.mjs, .agents/plugins/opencode-aidevops/package.json, .agents/tools/build-mcp/aidevops-plugin.md
+  check: file-exists .agents/plugins/opencode-aidevops/index.mjs
+  check: file-exists .agents/plugins/opencode-aidevops/package.json
+  check: file-exists .agents/tools/build-mcp/aidevops-plugin.md
+  check: rg "aidevops-plugin" .agents/subagent-index.toon
 
-## States
-
-- `[ ]` — pending verification
-- `[x]` — verified, deliverables confirmed working (verified:YYYY-MM-DD)
-- `[!]` — verification failed, task reopened (failed:YYYY-MM-DD reason:description)
-
-## Proof Log
-
-Run `verify-run-helper.sh run <vNNN|--pending|--all>` to execute checks with proof logging.
-Results are appended to `todo/verify-proof-log.md` with timestamps, exit codes, and match
-counts as auditable evidence. Use `verify-run-helper.sh log [vNNN]` to view proof.
-
-## Queue
-
-<!-- VERIFY-QUEUE-START -->
-
-- [x] v001 t168 /compare-models commands | PR #660 | merged:2026-02-08 verified:2026-02-09
-  files: .agents/scripts/commands/compare-models.md
-  check: file-exists .agents/scripts/commands/compare-models.md
-
-- [x] v002 t120 Agent Device subagent | PR #665 | merged:2026-02-08 verified:2026-02-09
-  files: .agents/tools/mobile/agent-device.md, .agents/AGENTS.md, .agents/subagent-index.toon
-  check: file-exists .agents/tools/mobile/agent-device.md
-  check: rg "agent-device" .agents/subagent-index.toon
-
-- [x] v003 t133 Cloud GPU deployment guide | cherry-picked:301b86c1 | merged:2026-02-08 verified:2026-02-09
-  files: .agents/tools/infrastructure/cloud-gpu.md
-  check: file-exists .agents/tools/infrastructure/cloud-gpu.md
-
-- [x] v004 t073 Document Extraction subagent + helper | PR #667 | merged:2026-02-08 verified:2026-02-09
-  files: .agents/scripts/document-extraction-helper.sh, .agents/tools/document/extraction-workflow.md, .agents/tools/document/document-extraction.md
-  check: file-exists .agents/scripts/document-extraction-helper.sh
+- [ ] v004 t012 OCR Invoice/Receipt Extraction Pipeline #plan → [todo/P... | PR #1074 | merged:2026-02-11
+  files: .agents/accounts.md, .agents/scripts/ocr-receipt-helper.sh, .agents/subagent-index.toon, .agents/tools/accounts/receipt-ocr.md, .agents/tools/document/extraction-workflow.md
+  check: file-exists .agents/accounts.md
+  check: shellcheck .agents/scripts/ocr-receipt-helper.sh
+  check: file-exists .agents/scripts/ocr-receipt-helper.sh
+  check: file-exists .agents/subagent-index.toon
+  check: file-exists .agents/tools/accounts/receipt-ocr.md
   check: file-exists .agents/tools/document/extraction-workflow.md
+  check: rg "receipt-ocr" .agents/subagent-index.toon
+  check: rg "extraction-workflow" .agents/subagent-index.toon
+
+- [ ] v005 t012.2 Design extraction schema (vendor, amount, date, VAT, item... | PR #1080 | merged:2026-02-11
+  files: .agents/scripts/document-extraction-helper.sh, .agents/subagent-index.toon, .agents/tools/document/document-extraction.md, .agents/tools/document/extraction-schemas.md
   check: shellcheck .agents/scripts/document-extraction-helper.sh
+  check: file-exists .agents/scripts/document-extraction-helper.sh
+  check: file-exists .agents/subagent-index.toon
+  check: file-exists .agents/tools/document/document-extraction.md
+  check: file-exists .agents/tools/document/extraction-schemas.md
   check: rg "document-extraction" .agents/subagent-index.toon
+  check: rg "extraction-schemas" .agents/subagent-index.toon
 
-- [x] v005 t175 Git heuristic signals for evaluator | PR #655 | merged:2026-02-08 verified:2026-02-09
-  files: .agents/scripts/supervisor-helper.sh
-  check: rg "Tier 2.5: Git heuristic" .agents/scripts/supervisor-helper.sh
-
-- [x] v006 t176 Uncertainty decision framework | PR #656 | merged:2026-02-08 verified:2026-02-09
-  files: .agents/scripts/commands/full-loop.md, .agents/scripts/supervisor-helper.sh, .agents/tools/ai-assistants/headless-dispatch.md
-  check: rg "Uncertainty decision framework" .agents/scripts/commands/full-loop.md
-  check: rg "PROCEED autonomously" .agents/scripts/commands/full-loop.md
-
-- [x] v007 t177 Integration tests for dispatch cycle | PR #658 | merged:2026-02-08 verified:2026-02-09
-  files: tests/test-supervisor-state-machine.sh
-  check: file-exists tests/test-supervisor-state-machine.sh
-
-- [x] v008 t178 Fix cmd_reprompt missing worktrees | PR #659 | merged:2026-02-08 verified:2026-02-09
-  files: .agents/scripts/supervisor-helper.sh
-  check: rg "cmd_reprompt" .agents/scripts/supervisor-helper.sh
-
-- [x] v009 t166 Daily CodeRabbit review pulse | PR #657 | merged:2026-02-08 verified:2026-02-09
-  files: .agents/scripts/review-pulse-helper.sh, .github/workflows/review-pulse.yml, .agents/tools/code-review/coderabbit.md
-  check: file-exists .github/workflows/review-pulse.yml
-  check: file-exists .agents/scripts/review-pulse-helper.sh
-
-- [x] v010 t179 Issue-sync reconciliation | PR #677 | merged:2026-02-09 verified:2026-02-09
+- [ ] v006 t283 issue-sync cmd_close iterates all 533 completed tasks mak... | PR #1084 | merged:2026-02-11
   files: .agents/scripts/issue-sync-helper.sh, .github/workflows/issue-sync.yml
+  check: shellcheck .agents/scripts/issue-sync-helper.sh
   check: file-exists .agents/scripts/issue-sync-helper.sh
-  check: rg "reconcile" .agents/scripts/issue-sync-helper.sh
   check: file-exists .github/workflows/issue-sync.yml
-
-- [!] v011 t180 Post-merge verification worker phase | PR #679 | merged:2026-02-09 "post_merge_verify|verification" .ag; bash tests/test-su failed:2026-02-09 reason:bash tests/test-supervisor-state-machine; 
-  files: .agents/scripts/supervisor-helper.sh, tests/test-supervisor-state-machine.sh
-  check: rg "post_merge_verify\|verification" .agents/scripts/supervisor-helper.sh
-  check: bash tests/test-supervisor-state-machine.sh
-
-- [x] v012 t181 Memory deduplication and auto-pruning | PR #681 | merged:2026-02-09 "dedup|auto_prune|consolidate" .age;  verified:2026-02-09
-  files: .agents/scripts/memory-helper.sh, tests/test-memory-mail.sh
-  check: rg "dedup\|auto_prune\|consolidate" .agents/scripts/memory-helper.sh
-  check: bash tests/test-memory-mail.sh
-
-- [x] v013 t182 GHA auto-fix workflow safety | PR #684 | merged:2026-02-09 "validate|auto.fix" .agents/scripts/;  verified:2026-02-09
-  files: .agents/scripts/monitor-code-review.sh, .github/workflows/code-review-monitoring.yml
-  check: file-exists .agents/scripts/monitor-code-review.sh
-  check: rg "validate\|auto.fix" .agents/scripts/monitor-code-review.sh
-
-- [x] v014 t183 Fix supervisor no_log_file dispatch | PR #685 | merged:2026-02-09 "no_log_file|log_file" .agents/scrip;  verified:2026-02-09
-  files: .agents/scripts/supervisor-helper.sh
-  check: rg "no_log_file\|log_file" .agents/scripts/supervisor-helper.sh
-
-- [x] v015 t184 Graduate memories to docs | PR #689 | merged:2026-02-09 .agents/scripts/memory-gradua;  verified:2026-02-09
-  files: .agents/scripts/memory-graduate-helper.sh, .agents/scripts/commands/graduate-memories.md
-  check: file-exists .agents/scripts/memory-graduate-helper.sh
-  check: file-exists .agents/scripts/commands/graduate-memories.md
-  check: shellcheck .agents/scripts/memory-graduate-helper.sh
-
-- [x] v016 t185 Memory audit pulse | PR #691 | merged:2026-02-09 .agents/scripts/memory-audit-;  verified:2026-02-09
-  files: .agents/scripts/memory-audit-pulse.sh, .agents/scripts/commands/memory-audit.md
-  check: file-exists .agents/scripts/memory-audit-pulse.sh
-  check: file-exists .agents/scripts/commands/memory-audit.md
-  check: shellcheck .agents/scripts/memory-audit-pulse.sh
-
-- [x] v017 t072 Audio/Video Transcription subagent | PR #690 | merged:2026-02-09 verified:2026-02-09
-  files: .agents/scripts/transcription-helper.sh, .agents/tools/voice/transcription.md
-  check: file-exists .agents/scripts/transcription-helper.sh
-  check: file-exists .agents/tools/voice/transcription.md
-  check: shellcheck .agents/scripts/transcription-helper.sh
-  check: rg "transcription" .agents/subagent-index.toon
-
-- [x] v018 t189 Worktree ownership safety | PR #695 | merged:2026-02-09 "worktree_registry|ownership" .agent; rg "in_use|regist verified:2026-02-09
-  files: .agents/scripts/shared-constants.sh, .agents/scripts/worktree-helper.sh
-  check: rg "worktree_registry\|ownership" .agents/scripts/shared-constants.sh
-  check: rg "in_use\|registry" .agents/scripts/worktree-helper.sh
-
-- [x] v019 t188 Pre-migration safety backups | PR #697 | merged:2026-02-09 "backup_sqlite_db|verify_migration_r;  verified:2026-02-09
-  files: .agents/scripts/shared-constants.sh, .agents/scripts/supervisor-helper.sh, .agents/scripts/memory-helper.sh, tests/test-backup-safety.sh
-  check: rg "backup_sqlite_db\|verify_migration_rowcounts" .agents/scripts/shared-constants.sh
-  check: file-exists tests/test-backup-safety.sh
-  check: bash tests/test-backup-safety.sh
-
-- [x] v020 t187 Compaction-resilient session state | PR #699 | merged:2026-02-09 "continuation|auto.save" .agents/scr;  verified:2026-02-09
-  files: .agents/scripts/session-checkpoint-helper.sh, .agents/scripts/session-distill-helper.sh, .agents/prompts/build.txt
-  check: rg "continuation\|auto.save" .agents/scripts/session-checkpoint-helper.sh
-  check: rg "checkpoint" .agents/scripts/session-distill-helper.sh
-  check: rg "Context Compaction Survival" .agents/prompts/build.txt
-
-- [x] v021 t186 Development lifecycle enforcement | PR #700 | merged:2026-02-09 verified:2026-02-09
-  files: .agents/AGENTS.md
-  check: rg "MANDATORY: Development Lifecycle" .agents/AGENTS.md
-
-- [x] v022 t190 Memory graduation markdown fix | PR #703 | merged:2026-02-09 .agents/scripts/memory-gradua;  .agents/scripts/memory-gradua;  verified:2026-02-09
-  files: .agents/scripts/memory-graduate-helper.sh
-  check: shellcheck .agents/scripts/memory-graduate-helper.sh
-
-- [x] v023 t131 Create tools/vision/ category | PR #710 | merged:2026-02-09 verified:2026-02-09
-  files: .agents/tools/vision/overview.md, .agents/tools/vision/image-generation.md, .agents/tools/vision/image-editing.md, .agents/tools/vision/image-understanding.md
-  check: file-exists .agents/tools/vision/overview.md
-  check: file-exists .agents/tools/vision/image-generation.md
-  check: file-exists .agents/tools/vision/image-editing.md
-  check: file-exists .agents/tools/vision/image-understanding.md
-  check: rg "vision" .agents/subagent-index.toon
-
-- [x] v024 t132 Evaluate multimodal vs per-modality structure | PR #708 | merged:2026-02-09 verified:2026-02-09
-  files: .agents/tools/multimodal-evaluation.md
-  check: file-exists .agents/tools/multimodal-evaluation.md
-  check: rg "per-modality" .agents/tools/multimodal-evaluation.md
-
-- [x] v025 t165 Provider-agnostic task claiming | PR #712 | merged:2026-02-09 "find_project_root|detect_repo_slug";  "find_project_root|detect_repo_slug";  verified:2026-02-09
-  files: .agents/scripts/supervisor-helper.sh, .agents/AGENTS.md, tests/test-supervisor-state-machine.sh
-  check: rg "find_project_root\|detect_repo_slug" .agents/scripts/supervisor-helper.sh
-  check: rg "with-issue" .agents/scripts/supervisor-helper.sh
-  check: rg "Task claiming" .agents/AGENTS.md
-  check: rg "Task Claiming via TODO.md" tests/test-supervisor-state-machine.sh
-
-- [x] v026 t080 Cloud voice agents and S2S models | PR #713 | merged:2026-02-09 verified:2026-02-09
-  files: .agents/tools/voice/cloud-voice-agents.md, .agents/tools/voice/voice-ai-models.md
-  check: file-exists .agents/tools/voice/cloud-voice-agents.md
-  check: rg "GPT-4o Realtime" .agents/tools/voice/cloud-voice-agents.md
-  check: rg "MiniCPM-o" .agents/tools/voice/cloud-voice-agents.md
-  check: rg "Nemotron" .agents/tools/voice/cloud-voice-agents.md
-
-- [x] v027 t191 Fix secretlint-helper.sh install and scan in git worktrees | PR #717 | merged:2026-02-09 verified:2026-02-09
-  files: .agents/scripts/secretlint-helper.sh, .agents/scripts/linters-local.sh
-  check: rg "is_git_worktree\|get_repo_root" .agents/scripts/secretlint-helper.sh
-  check: rg "git-common-dir|git rev-parse --git-common" .agents/scripts/linters-local.sh
-  check: shellcheck .agents/scripts/secretlint-helper.sh
-
-- [x] v028 t000 verify-run-helper.sh BRE pattern normalization and shellcheck flags | PR #716 | merged:2026-02-09 verified:2026-02-09
-  files: .agents/scripts/verify-run-helper.sh
-  check: rg "Normalize grep BRE" .agents/scripts/verify-run-helper.sh
-  check: rg "shellcheck -x -S warning" .agents/scripts/verify-run-helper.sh
-
-- [x] v029 t134 SOPS + gocryptfs encryption stack | PR #718 | merged:2026-02-09 verified:2026-02-09
-  files: .agents/scripts/sops-helper.sh, .agents/scripts/gocryptfs-helper.sh, .agents/tools/credentials/encryption-stack.md, .agents/tools/credentials/sops.md, .agents/tools/credentials/gocryptfs.md
-  check: file-exists .agents/scripts/sops-helper.sh
-  check: file-exists .agents/scripts/gocryptfs-helper.sh
-  check: file-exists .agents/tools/credentials/encryption-stack.md
-  check: rg "age|GPG" .agents/tools/credentials/sops.md
-  check: rg "FUSE|AES-256" .agents/tools/credentials/gocryptfs.md
-  check: shellcheck .agents/scripts/sops-helper.sh
-  check: shellcheck .agents/scripts/gocryptfs-helper.sh
-
-- [x] v030 t132.2 Provider/model registry with periodic sync | PR #761 | merged:2026-02-09 verified:2026-02-09
-  files: .agents/scripts/model-registry-helper.sh, .agents/subagent-index.toon, .agents/tools/ai-assistants/models/README.md
-  check: file-exists .agents/scripts/model-registry-helper.sh
-  check: shellcheck .agents/scripts/model-registry-helper.sh
-  check: rg "model-registry" .agents/subagent-index.toon
-
-- [x] v031 t168.2 Task dispatch to selected models via subagents | PR #761 | merged:2026-02-09 verified:2026-02-09
-  files: .agents/scripts/compare-models-helper.sh
-  check: file-exists .agents/scripts/compare-models-helper.sh
-  check: rg "compare\|recommend" .agents/scripts/compare-models-helper.sh
-
-- [x] v032 t166.2 CodeRabbit review feedback collector | PR #765 | merged:2026-02-09 verified:2026-02-09
-  files: .agents/scripts/coderabbit-collector-helper.sh
-  check: file-exists .agents/scripts/coderabbit-collector-helper.sh
-  check: shellcheck .agents/scripts/coderabbit-collector-helper.sh
-  check: rg "collect_pr_reviews|collect_comments" .agents/scripts/coderabbit-collector-helper.sh
-
-- [x] v033 t136.2 Plugin CLI commands | PR #759 | merged:2026-02-09 verified:2026-02-09
-  files: .agents/aidevops/plugins.md, aidevops.sh
-  check: rg "plugin" aidevops.sh
-  check: file-exists .agents/aidevops/plugins.md
-
-- [x] v034 t136.3 Extend setup.sh to deploy plugins | PR #762 | merged:2026-02-09 verified:2026-02-09
-  files: .agents/aidevops/plugins.md, setup.sh
-  check: rg "plugin" setup.sh
-
-- [x] v035 t102.1 Cost-Aware Model Routing docs | PR #766 | merged:2026-02-09 verified:2026-02-09
-  files: .agents/tools/context/model-routing.md
-  check: file-exists .agents/tools/context/model-routing.md
-  check: rg "provider.*discovery|fallback.*routing" .agents/tools/context/model-routing.md
-
-- [x] v036 t102.2 Semantic Memory with Embeddings | PR #768 | merged:2026-02-09 verified:2026-02-09
-  files: .agents/scripts/memory-embeddings-helper.sh, .agents/scripts/memory-helper.sh, .agents/memory/README.md, tests/test-memory-mail.sh
-  check: file-exists .agents/scripts/memory-embeddings-helper.sh
-  check: shellcheck .agents/scripts/memory-embeddings-helper.sh
-  check: rg "hybrid|semantic" .agents/memory/README.md
-  check: rg "auto.index|--hybrid" .agents/scripts/memory-helper.sh
-
-- [x] v037 t132.3 Model availability checker | PR #770 | merged:2026-02-09 verified:2026-02-09
-  files: .agents/scripts/model-availability-helper.sh, .agents/scripts/supervisor-helper.sh, tests/test-model-availability.sh
-  check: file-exists .agents/scripts/model-availability-helper.sh
-  check: shellcheck .agents/scripts/model-availability-helper.sh
-  check: rg "resolve\|probe\|check" .agents/scripts/model-availability-helper.sh
-  check: rg "availability_helper" .agents/scripts/supervisor-helper.sh
-  check: file-exists tests/test-model-availability.sh
-
-- [x] v038 t168.3 Response comparison and scoring framework | PR #773 | merged:2026-02-09 verified:2026-02-09
-  files: .agents/scripts/response-scoring-helper.sh, .agents/tools/ai-assistants/response-scoring.md, tests/test-response-scoring.sh
-  check: file-exists .agents/scripts/response-scoring-helper.sh
-  check: shellcheck .agents/scripts/response-scoring-helper.sh
-  check: bash -n .agents/scripts/response-scoring-helper.sh
-  check: file-exists tests/test-response-scoring.sh
-
-- [x] v039 t166.3 Auto-create tasks from CodeRabbit findings | PR #778 | merged:2026-02-09 verified:2026-02-09
-  files: .agents/scripts/coderabbit-task-creator-helper.sh, .agents/scripts/review-pulse-helper.sh, .agents/tools/code-review/coderabbit.md
-  check: file-exists .agents/scripts/coderabbit-task-creator-helper.sh
-  check: shellcheck .agents/scripts/coderabbit-task-creator-helper.sh
-  check: bash -n .agents/scripts/coderabbit-task-creator-helper.sh
-  check: rg "false.positive\|filter" .agents/scripts/coderabbit-task-creator-helper.sh
-
-<!-- VERIFY-QUEUE-END -->
