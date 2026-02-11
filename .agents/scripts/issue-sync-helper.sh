@@ -87,6 +87,11 @@ verify_gh_cli() {
         print_error "gh CLI not installed. Install with: brew install gh"
         return 1
     fi
+    # Accept GH_TOKEN or GITHUB_TOKEN env vars (used in GitHub Actions)
+    # gh auth status checks the credential store but doesn't recognize env tokens
+    if [[ -n "${GH_TOKEN:-}" || -n "${GITHUB_TOKEN:-}" ]]; then
+        return 0
+    fi
     if ! gh auth status &>/dev/null 2>&1; then
         print_error "gh CLI not authenticated. Run: gh auth login"
         return 1
