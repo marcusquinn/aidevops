@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- supervisor auto-decomposition of #plan tasks — Phase 0 detects plans without subtasks and dispatches decomposition workers (t274) (#1060)
+- UGC brief storyboard template for multi-shot content generation (t272) (#1055)
+- auto-recall memories in Build+ workflow and session start (t273) (#1056)
+- Higgsfield download --count flag to limit downloads (t268) (#1052)
+- results-driven mission principle to build.txt (#1050)
+- supervisor session memory monitoring + respawn on batch completion (t264, t264.1) (#1040, #1043)
+
+### Fixed
+
+- sanitize supervisor arithmetic: task_tool_count non-numeric chars, verify ID octal parsing (#1062)
+- Phase 3 error visibility — redirect stderr to log instead of /dev/null (t265) (#1059, #1061)
+- missing DIM color constant for respawn-history output (#1049)
+- version-manager.sh unbound variable on `get` subcommand (t275) (#1063)
+- Higgsfield default output to ~/Downloads for interactive sessions (t270) (#1054)
+
+### Changed
+
+- auto-dispatch evaluation step added to /save-todo command (t273) (#1057)
+- auto-dispatch tagging guidance added to plans.md and AGENTS.md (#1051)
+- rule against manual `gh issue close` — use issue-sync pipeline (#1062)
+- removed stale Plan+ agent config (#1058)
+- graduated permanent learnings into docs (t266) (#1053)
+
 ## [2.110.2] - 2026-02-11
 
 ### Added
