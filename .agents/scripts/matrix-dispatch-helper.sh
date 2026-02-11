@@ -762,11 +762,9 @@ cmd_map() {
     fi
 
     # Check runner exists
-    if [[ -x "$RUNNER_HELPER" ]]; then
-        if ! "$RUNNER_HELPER" status "$runner_name" &>/dev/null 2>&1; then
-            log_warn "Runner '$runner_name' not found. Create it with:"
-            echo "  runner-helper.sh create $runner_name --description \"Description\""
-        fi
+    if [[ -x "$RUNNER_HELPER" ]] && ! "$RUNNER_HELPER" status "$runner_name" &>/dev/null 2>&1; then
+        log_warn "Runner '$runner_name' not found. Create it with:"
+        echo "  runner-helper.sh create $runner_name --description \"Description\""
     fi
 
     local temp_file
