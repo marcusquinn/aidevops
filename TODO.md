@@ -10,9 +10,9 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 
 ```markdown
 - [ ] t001 Task description @owner #tag ~4h (ai:2h test:1h read:30m) logged:2025-01-15
-  - [ ] t001.1 Subtask ~2h blocked-by:t002
-    - [ ] t001.1.1 Sub-subtask ~1h
-  - [ ] t001.2 Another subtask ~1h blocks:t003
+  - [ ] t001.1 Subtask ~2h blocked-by:t002 ref:GH#1113
+    - [ ] t001.1.1 Sub-subtask ~1h ref:GH#1114
+  - [ ] t001.2 Another subtask ~1h blocks:t003 ref:GH#1115
 - [x] t002 Completed task ~2h actual:1.5h logged:2025-01-10 completed:2025-01-15
 - [-] t003 Declined task
 ```
@@ -610,7 +610,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t068.8 TUI Dashboard (extend bdui or new Ink app) ~1h blocked-by:t068.4,t068.5 ref:GH#499 completed:2026-02-09 verified:2026-02-09 pr:#482
     - Notes: Already implemented as cmd_dashboard() in supervisor-helper.sh (lines 8989-9498). Full interactive TUI with: batch summary, progress bar, task table with status icons/colors, system resources (CPU/memory/processes), active worker PIDs, keyboard controls (q/p/r/j/k/?), scroll support, adaptive column widths.
 - [x] t009 Claude Code Destructive Command Hooks #plan → [todo/PLANS.md#claude-code-destructive-command-hooks] ~30m (ai:15m test:10m read:5m) ref:GH#500 logged:2025-12-21 completed:2026-02-08 verified:2026-02-08 PR #562 merged
-- [ ] t008 aidevops-opencode Plugin #plan → [todo/PLANS.md#aidevops-opencode-plugin] ~1.5h (ai:45m test:30m read:15m) ref:GH#501 logged:2025-12-21
+- [ ] t008 aidevops-opencode Plugin #plan → [todo/PLANS.md#aidevops-opencode-plugin] ~1.5h (ai:45m test:30m read:15m) ref:GH#501 assignee:marcusquinn logged:2025-12-21
   - [ ] t008.1 Core plugin structure + agent loader ~4h #auto-dispatch ref:GH#1094 assignee:marcusquinn
   - [ ] t008.2 MCP registration ~2h #auto-dispatch blocked-by:t008.1 ref:GH#1095 assignee:marcusquinn
   - [ ] t008.3 Quality hooks (pre-commit) ~3h #auto-dispatch blocked-by:t008.1 ref:GH#1096 assignee:marcusquinn
@@ -632,9 +632,9 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t006 Add Playwright MCP auto-setup to setup.sh #browser ~1d actual:15m (ai:0.5d test:0.5d) logged:2025-12-20 started:2026-01-22T01:30Z completed:2026-01-22
   - Notes: Added Playwright MCP installation to setup_browser_tools() in setup.sh. Checks for existing installation, prompts user, installs browsers (chromium, firefox, webkit) via `npx playwright install`.
 - [x] t007 Create MCP server for QuickFile accounting API #accounting ~2h (ai:1h test:40m read:20m) ref:GH#505 logged:2025-12-20 completed:2026-02-08 verified:2026-02-08 PR #585 merged
-- [ ] t012 OCR Invoice/Receipt Extraction Pipeline #plan → [todo/PLANS.md#ocr-invoicereceipt-extraction-pipeline] ~3h (ai:1.5h test:1h read:30m) ref:GH#506 logged:2025-12-21
+- [ ] t012 OCR Invoice/Receipt Extraction Pipeline #plan → [todo/PLANS.md#ocr-invoicereceipt-extraction-pipeline] ~3h (ai:1.5h test:1h read:30m) ref:GH#506 assignee:marcusquinn logged:2025-12-21
   - [ ] t012.1 Research OCR approaches and @pontusab's implementation ~4h #auto-dispatch ref:GH#1098
-  - [ ] t012.2 Design extraction schema (vendor, amount, date, VAT, items) ~4h #auto-dispatch blocked-by:t012.1
+  - [ ] t012.2 Design extraction schema (vendor, amount, date, VAT, items) ~4h #auto-dispatch blocked-by:t012.1 ref:GH#1116
   - [ ] t012.3 Implement OCR extraction pipeline ~8h #auto-dispatch blocked-by:t012.2 ref:GH#1099 assignee:marcusquinn
   - [ ] t012.4 QuickFile integration (purchases/expenses) ~4h #auto-dispatch blocked-by:t012.3 ref:GH#1100 assignee:marcusquinn
   - [ ] t012.5 Testing with various invoice/receipt formats ~4h #auto-dispatch blocked-by:t012.4 ref:GH#1101 assignee:marcusquinn
