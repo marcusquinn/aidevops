@@ -2989,7 +2989,7 @@ deploy_plugins() {
     while IFS= read -r disabled_ns; do
         [[ -z "$disabled_ns" ]] && continue
         if [[ -d "$target_dir/$disabled_ns" ]]; then
-            rm -rf "$target_dir/$disabled_ns"
+            rm -rf "${target_dir:?}/${disabled_ns:?}"
             print_info "  Removed disabled plugin directory: $disabled_ns"
         fi
     done < <(jq -r '.plugins[] | select(.enabled == false) | .namespace // empty' "$plugins_file" 2>/dev/null)
@@ -3535,7 +3535,8 @@ setup_nodejs_env() {
         return
     fi
 
-    local node_version=$(node --version | cut -d'v' -f2 | cut -d'.' -f1)
+    local node_version
+    node_version=$(node --version | cut -d'v' -f2 | cut -d'.' -f1)
     if [[ $node_version -lt 18 ]]; then
         print_warning "Node.js 18+ required for DSPyGround, found v$node_version - DSPyGround setup skipped"
         return
@@ -3811,7 +3812,8 @@ setup_augment_context_engine() {
         return
     fi
 
-    local node_version=$(node --version | cut -d'v' -f2 | cut -d'.' -f1)
+    local node_version
+    node_version=$(node --version | cut -d'v' -f2 | cut -d'.' -f1)
     if [[ $node_version -lt 22 ]]; then
         print_warning "Node.js 22+ required for Augment Context Engine, found v$node_version"
         print_info "Install: brew install node@22 (macOS) or nvm install 22"
