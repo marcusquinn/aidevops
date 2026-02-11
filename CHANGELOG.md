@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Workers comment on GH issues when blocked — visible feedback loop for auto-dispatch (t296) (#1167)
+- Auto-create batches when auto-pickup finds new #auto-dispatch tasks (t296) (#1162)
+- Auto-rebase BEHIND/DIRTY PRs in supervisor pulse with max attempts counter (t298) (#1166)
+- Pipecat local voice agent with Soniox STT + Cartesia TTS (t081) (#1161)
+- QuickFile integration for purchases/expenses (t012.4) (#1156)
+- OCR extraction pipeline (t012.3) (#1148)
+- oh-my-opencode compatibility for aidevops-opencode plugin (t008.4) (#1157)
+- MCP registration for OpenCode plugin (t008.2) (#1149)
+- Quality hooks (pre-commit) for OpenCode plugin (t008.3) (#1150)
+- Graduate 19 high-confidence memories to shared docs (t293) (#1152)
+
+### Changed
+
+- SonarCloud code smell sweep — 33 files, 492 insertions (t292) (#1151)
+- ShellCheck warning sweep — fix SC2178/SC2128/SC2115/SC2155 (t294) (#1158)
+- Explicit PR-required rule for all non-planning changes (t297) (#1160)
+- Issue-sync label passthrough — replace hardcoded allowlist with on-the-fly creation (t295) (#1154)
+
+### Fixed
+
+- Issue-sync title truncation — split at em dash, full description in body (#1165)
+- SUPERVISOR_AUTO_ISSUE help text default corrected (true -> false) (#1164)
+- Issue-sync auto-dispatch tag passthrough as GitHub label
+- Conflict resolution rules — escalate ambiguous conflicts (#1141)
+
 ## [2.110.10] - 2026-02-11
 
 ### Added
