@@ -9,6 +9,7 @@ import {
 } from "fs";
 import { join, relative, basename } from "path";
 import { homedir } from "os";
+import { platform } from "os";
 
 const HOME = homedir();
 const AGENTS_DIR = join(HOME, ".aidevops", "agents");
@@ -16,6 +17,7 @@ const SCRIPTS_DIR = join(AGENTS_DIR, "scripts");
 const WORKSPACE_DIR = join(HOME, ".aidevops", ".agent-workspace");
 const LOGS_DIR = join(HOME, ".aidevops", "logs");
 const QUALITY_LOG = join(LOGS_DIR, "quality-hooks.log");
+const IS_MACOS = platform() === "darwin";
 
 // ---------------------------------------------------------------------------
 // Utility helpers
@@ -204,42 +206,345 @@ function loadAgentsRecursive(dirPath, relBase, agents) {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 2: Config Hook — inject agents and MCPs into OpenCode config
+// Phase 2: MCP Server Registry + Config Hook
 // ---------------------------------------------------------------------------
 
 /**
- * Modify OpenCode config to register aidevops agents dynamically.
- * This complements generate-opencode-agents.sh by ensuring agents are
- * always up-to-date even without re-running setup.sh.
+ * Resolve the package runner command (bun x preferred, npx fallback).
+ * Cached after first call.
+ * @returns {string}
+ */
+let _pkgRunner = null;
+function getPkgRunner() {
+  if (_pkgRunner !== null) return _pkgRunner;
+  const bunPath = run("which bun");
+  const npxPath = run("which npx");
+  _pkgRunner = bunPath ? `${bunPath} x` : npxPath || "npx";
+  return _pkgRunner;
+}
+
+/**
+ * MCP Server Registry — canonical catalog of all known MCP servers.
+ *
+ * Each entry defines:
+ *   - command: Array of command + args for local MCPs
+ *   - url: URL for remote MCPs (mutually exclusive with command)
+ *   - type: "local" (default) or "remote"
+ *   - eager: true = start at launch, false = lazy-load on demand
+ *   - toolPattern: glob pattern for tool permissions (e.g. "osgrep_*")
+ *   - globallyEnabled: whether tools are enabled globally (true) or per-agent (false)
+ *   - requiresBinary: optional binary name that must exist for local MCPs
+ *   - macOnly: optional flag for macOS-only MCPs
+ *   - description: human-readable description for logging
+ *
+ * This mirrors the Python definitions in generate-opencode-agents.sh but
+ * runs at plugin load time, ensuring MCPs are registered even without
+ * re-running setup.sh.
+ *
+ * @returns {Array<object>}
+ */
+function getMcpRegistry() {
+  const pkgRunner = getPkgRunner();
+  const pkgRunnerParts = pkgRunner.split(" ");
+
+  return [
+    // --- Eager-loaded MCPs (start at launch) ---
+    {
+      name: "osgrep",
+      type: "local",
+      command: ["osgrep", "mcp"],
+      eager: true,
+      toolPattern: "osgrep_*",
+      globallyEnabled: true,
+      requiresBinary: "osgrep",
+      description: "Semantic code search (local, no auth)",
+    },
+
+    // --- Lazy-loaded MCPs (start on demand) ---
+    {
+      name: "playwriter",
+      type: "local",
+      command: [...pkgRunnerParts, "playwriter@latest"],
+      eager: false,
+      toolPattern: "playwriter_*",
+      globallyEnabled: true,
+      description: "Browser automation via Chrome extension",
+    },
+    {
+      name: "augment-context-engine",
+      type: "local",
+      command: ["auggie", "--mcp"],
+      eager: false,
+      toolPattern: "augment-context-engine_*",
+      globallyEnabled: false,
+      requiresBinary: "auggie",
+      description: "Semantic codebase search (Augment)",
+    },
+    {
+      name: "context7",
+      type: "remote",
+      url: "https://mcp.context7.com/mcp",
+      eager: false,
+      toolPattern: "context7_*",
+      globallyEnabled: false,
+      description: "Library documentation lookup",
+    },
+    {
+      name: "outscraper",
+      type: "local",
+      command: [
+        "/bin/bash",
+        "-c",
+        "OUTSCRAPER_API_KEY=$OUTSCRAPER_API_KEY uv tool run outscraper-mcp-server",
+      ],
+      eager: false,
+      toolPattern: "outscraper_*",
+      globallyEnabled: false,
+      description: "Business intelligence extraction",
+    },
+    {
+      name: "dataforseo",
+      type: "local",
+      command: [
+        "/bin/bash",
+        "-c",
+        `source ~/.config/aidevops/credentials.sh && DATAFORSEO_USERNAME=$DATAFORSEO_USERNAME DATAFORSEO_PASSWORD=$DATAFORSEO_PASSWORD ${pkgRunner} dataforseo-mcp-server`,
+      ],
+      eager: false,
+      toolPattern: "dataforseo_*",
+      globallyEnabled: false,
+      description: "Comprehensive SEO data",
+    },
+    {
+      name: "shadcn",
+      type: "local",
+      command: ["npx", "shadcn@latest", "mcp"],
+      eager: false,
+      toolPattern: "shadcn_*",
+      globallyEnabled: false,
+      description: "UI component library",
+    },
+    {
+      name: "claude-code-mcp",
+      type: "local",
+      command: ["npx", "-y", "github:marcusquinn/claude-code-mcp"],
+      eager: false,
+      toolPattern: "claude-code-mcp_*",
+      globallyEnabled: false,
+      alwaysOverwrite: true,
+      description: "Claude Code one-shot execution",
+    },
+    {
+      name: "macos-automator",
+      type: "local",
+      command: ["npx", "-y", "@steipete/macos-automator-mcp@0.2.0"],
+      eager: false,
+      toolPattern: "macos-automator_*",
+      globallyEnabled: false,
+      macOnly: true,
+      description: "AppleScript and JXA automation",
+    },
+    {
+      name: "ios-simulator",
+      type: "local",
+      command: ["npx", "-y", "ios-simulator-mcp"],
+      eager: false,
+      toolPattern: "ios-simulator_*",
+      globallyEnabled: false,
+      macOnly: true,
+      description: "iOS Simulator interaction",
+    },
+    {
+      name: "sentry",
+      type: "remote",
+      url: "https://mcp.sentry.dev/mcp",
+      eager: false,
+      toolPattern: "sentry_*",
+      globallyEnabled: false,
+      description: "Error tracking (requires OAuth)",
+    },
+    {
+      name: "socket",
+      type: "remote",
+      url: "https://mcp.socket.dev/",
+      eager: false,
+      toolPattern: "socket_*",
+      globallyEnabled: false,
+      description: "Dependency security scanning",
+    },
+  ];
+}
+
+/**
+ * Map of subagent names to the MCP tool patterns they need enabled.
+ * Used by the config hook to set per-agent tool permissions.
+ *
+ * Only includes subagents that need MCP tools beyond the defaults.
+ * Agents not listed here get only the globally-enabled tools.
+ */
+const AGENT_MCP_TOOLS = {
+  outscraper: ["outscraper_*"],
+  mainwp: ["localwp_*"],
+  localwp: ["localwp_*"],
+  quickfile: ["quickfile_*"],
+  "google-search-console": ["gsc_*"],
+  dataforseo: ["dataforseo_*"],
+  "claude-code": ["claude-code-mcp_*"],
+  playwriter: ["playwriter_*"],
+  shadcn: ["shadcn_*"],
+  "macos-automator": IS_MACOS ? ["macos-automator_*"] : [],
+  mac: IS_MACOS ? ["macos-automator_*"] : [],
+  "ios-simulator-mcp": IS_MACOS ? ["ios-simulator_*"] : [],
+  "augment-context-engine": ["augment-context-engine_*"],
+  context7: ["context7_*"],
+  sentry: ["sentry_*"],
+  socket: ["socket_*"],
+};
+
+/**
+ * Oh-My-OpenCode tool patterns to disable globally.
+ * These MCPs may exist from old configs or OmO installations.
+ */
+const OMO_DISABLED_PATTERNS = ["grep_app_*", "websearch_*", "gh_grep_*"];
+
+/**
+ * Register MCP servers in the OpenCode config.
+ * Complements generate-opencode-agents.sh by ensuring MCPs are always
+ * registered even without re-running setup.sh.
+ *
+ * @param {object} config - OpenCode Config object (mutable)
+ * @returns {number} Number of MCPs registered
+ */
+function registerMcpServers(config) {
+  if (!config.mcp) config.mcp = {};
+  if (!config.tools) config.tools = {};
+
+  const registry = getMcpRegistry();
+  let registered = 0;
+
+  for (const mcp of registry) {
+    // Skip macOS-only MCPs on other platforms
+    if (mcp.macOnly && !IS_MACOS) continue;
+
+    // Skip local MCPs whose binary isn't installed
+    if (mcp.requiresBinary) {
+      const binaryPath = run(`which ${mcp.requiresBinary}`);
+      if (!binaryPath) {
+        // Disable tools if binary not available
+        if (mcp.toolPattern) {
+          config.tools[mcp.toolPattern] = false;
+        }
+        continue;
+      }
+    }
+
+    // Register MCP server if not already configured (or if alwaysOverwrite)
+    if (!config.mcp[mcp.name] || mcp.alwaysOverwrite) {
+      if (mcp.type === "remote" && mcp.url) {
+        config.mcp[mcp.name] = {
+          type: "remote",
+          url: mcp.url,
+          enabled: mcp.eager,
+        };
+      } else {
+        config.mcp[mcp.name] = {
+          type: "local",
+          command: mcp.command,
+          enabled: mcp.eager,
+        };
+      }
+      registered++;
+    } else {
+      // Enforce loading policy on existing MCPs
+      config.mcp[mcp.name].enabled = mcp.eager;
+    }
+
+    // Set global tool permissions
+    if (mcp.toolPattern) {
+      config.tools[mcp.toolPattern] = mcp.globallyEnabled;
+    }
+  }
+
+  // Disable Oh-My-OpenCode tool patterns globally
+  for (const pattern of OMO_DISABLED_PATTERNS) {
+    if (!(pattern in config.tools)) {
+      config.tools[pattern] = false;
+    }
+  }
+
+  return registered;
+}
+
+/**
+ * Apply per-agent MCP tool permissions.
+ * Ensures subagents that need specific MCP tools have them enabled
+ * in their agent config, even if the tools are disabled globally.
+ *
+ * @param {object} config - OpenCode Config object (mutable)
+ * @returns {number} Number of agents updated
+ */
+function applyAgentMcpTools(config) {
+  if (!config.agent) return 0;
+
+  let updated = 0;
+
+  for (const [agentName, toolPatterns] of Object.entries(AGENT_MCP_TOOLS)) {
+    if (!config.agent[agentName]) continue;
+    if (toolPatterns.length === 0) continue;
+
+    // Ensure agent has a tools section
+    if (!config.agent[agentName].tools) {
+      config.agent[agentName].tools = {};
+    }
+
+    for (const pattern of toolPatterns) {
+      // Only set if not already configured (shell script takes precedence)
+      if (!(pattern in config.agent[agentName].tools)) {
+        config.agent[agentName].tools[pattern] = true;
+        updated++;
+      }
+    }
+  }
+
+  return updated;
+}
+
+/**
+ * Modify OpenCode config to register aidevops agents and MCP servers.
+ * This complements generate-opencode-agents.sh by ensuring agents and
+ * MCPs are always up-to-date even without re-running setup.sh.
  * @param {object} config - OpenCode Config object (mutable)
  */
 async function configHook(config) {
-  // Ensure agent section exists
+  // --- Agent registration (Phase 1) ---
   if (!config.agent) config.agent = {};
 
-  // Load agent definitions and register any that aren't already configured
   const agents = loadAgentDefinitions();
-  let injected = 0;
+  let agentsInjected = 0;
 
   for (const agent of agents) {
-    // Skip if already configured (generate-opencode-agents.sh takes precedence)
     if (config.agent[agent.name]) continue;
-
-    // Only auto-register subagents — primary agents need explicit config
     if (agent.mode !== "subagent") continue;
 
     config.agent[agent.name] = {
       description: agent.description || `aidevops subagent: ${agent.relPath}`,
       mode: "subagent",
     };
-    injected++;
+    agentsInjected++;
   }
 
-  if (injected > 0) {
-    // Log for debugging (visible in OpenCode logs)
-    console.error(
-      `[aidevops] Config hook: injected ${injected} subagent definitions`,
-    );
+  // --- MCP registration (Phase 2) ---
+  const mcpsRegistered = registerMcpServers(config);
+  const agentToolsUpdated = applyAgentMcpTools(config);
+
+  // Log summary for debugging (visible in OpenCode logs)
+  const parts = [];
+  if (agentsInjected > 0) parts.push(`${agentsInjected} agents`);
+  if (mcpsRegistered > 0) parts.push(`${mcpsRegistered} MCPs`);
+  if (agentToolsUpdated > 0) parts.push(`${agentToolsUpdated} agent tool perms`);
+
+  if (parts.length > 0) {
+    console.error(`[aidevops] Config hook: injected ${parts.join(", ")}`);
   }
 }
 
@@ -1092,12 +1397,20 @@ function createTools() {
  * aidevops OpenCode Plugin
  *
  * Provides:
- * 1. Config hook — dynamic agent loading from ~/.aidevops/agents/
+ * 1. Config hook — dynamic agent loading + MCP server registration from ~/.aidevops/agents/
  * 2. Custom tools — aidevops CLI, memory, pre-edit check, quality check, hook installer
  * 3. Quality hooks — full pre-commit pipeline (ShellCheck, return statements,
  *    positional params, secrets scan, markdown lint) on Write/Edit operations
  * 4. Shell environment — aidevops paths and variables
  * 5. Compaction context — preserves operational state across context resets
+ *
+ * MCP registration (Phase 2, t008.2):
+ * - Registers all known MCP servers from a data-driven registry
+ * - Enforces eager/lazy loading policy (only osgrep starts at launch)
+ * - Sets global tool permissions and per-agent MCP tool enablement
+ * - Skips MCPs whose required binaries aren't installed
+ * - Disables Oh-My-OpenCode tool patterns globally
+ * - Complements generate-opencode-agents.sh (shell script takes precedence)
  *
  * @type {import('@opencode-ai/plugin').Plugin}
  */
