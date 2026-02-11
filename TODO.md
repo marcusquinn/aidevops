@@ -619,7 +619,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t009 Claude Code Destructive Command Hooks #plan → [todo/PLANS.md#claude-code-destructive-command-hooks] ~30m (ai:15m test:10m read:5m) ref:GH#500 logged:2025-12-21 completed:2026-02-08 verified:2026-02-08 PR #562 merged
 - [ ] t008 aidevops-opencode Plugin #plan → [todo/PLANS.md#aidevops-opencode-plugin] ~1.5h (ai:45m test:30m read:15m) ref:GH#501 assignee:marcusquinn logged:2025-12-21
   - [x] t008.1 Core plugin structure + agent loader ~4h #auto-dispatch ref:GH#1094 assignee:marcusquinn completed:2026-02-11
-  - [ ] t008.2 MCP registration ~2h #auto-dispatch blocked-by:t008.1 ref:GH#1095 assignee:marcusquinn
+  - [x] t008.2 MCP registration ~2h #auto-dispatch blocked-by:t008.1 ref:GH#1095 assignee:marcusquinn completed:2026-02-12 pr:#1149
   - [x] t008.3 Quality hooks (pre-commit) ~3h #auto-dispatch blocked-by:t008.1 ref:GH#1096 assignee:marcusquinn completed:2026-02-11
   - [ ] t008.4 oh-my-opencode compatibility ~2h #auto-dispatch blocked-by:t008.1,t008.2,t008.3 ref:GH#1097 assignee:marcusquinn
 - [x] t004 Add Ahrefs MCP server integration #seo ~4h (ai:2h test:1h read:1h) logged:2025-12-20 completed:2026-01-25
@@ -641,12 +641,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t007 Create MCP server for QuickFile accounting API #accounting ~2h (ai:1h test:40m read:20m) ref:GH#505 logged:2025-12-20 completed:2026-02-08 verified:2026-02-08 PR #585 merged
 - [x] t012 OCR Invoice/Receipt Extraction Pipeline #plan → [todo/PLANS.md#ocr-invoicereceipt-extraction-pipeline] ~3h (ai:1.5h test:1h read:30m) ref:GH#506 assignee:marcusquinn logged:2025-12-21 completed:2026-02-11
   - [x] t012.1 Research OCR approaches and @pontusab's implementation ~4h #auto-dispatch ref:GH#1098 assignee:marcusquinn started:2026-02-11T14:54:25Z completed:2026-02-11
-<<<<<<< Updated upstream
   - [x] t012.2 Design extraction schema (vendor, amount, date, VAT, items) ~4h #auto-dispatch blocked-by:t012.1 ref:GH#1116 completed:2026-02-11
-=======
-  - [x] t012.2 Design extraction schema (vendor, amount, date, VAT, items) ~4h #auto-dispatch blocked-by:t012.1 completed:2026-02-11
->>>>>>> Stashed changes
-  - [ ] t012.3 Implement OCR extraction pipeline ~8h #auto-dispatch blocked-by:t012.2 ref:GH#1099 assignee:marcusquinn
+  - [x] t012.3 Implement OCR extraction pipeline ~8h #auto-dispatch blocked-by:t012.2 ref:GH#1099 assignee:marcusquinn completed:2026-02-11 pr:#1148
   - [ ] t012.4 QuickFile integration (purchases/expenses) ~4h #auto-dispatch blocked-by:t012.3 ref:GH#1100 assignee:marcusquinn
   - [ ] t012.5 Testing with various invoice/receipt formats ~4h #auto-dispatch blocked-by:t012.4 ref:GH#1101 assignee:marcusquinn
 - [x] t013 Image SEO Enhancement with AI Vision #plan → [todo/PLANS.md#image-seo-enhancement-with-ai-vision] ~45m (ai:25m test:10m read:10m) ref:GH#507 logged:2025-12-21 completed:2026-02-08 pr:#593

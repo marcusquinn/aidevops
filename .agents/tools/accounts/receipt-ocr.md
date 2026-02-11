@@ -19,8 +19,9 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Extract structured data from receipts and invoices via OCR, with optional QuickFile purchase invoice creation
+- **Purpose**: Extract structured data from receipts and invoices via OCR, with validation pipeline and optional QuickFile integration
 - **Helper**: `scripts/ocr-receipt-helper.sh`
+- **Validation**: `scripts/extraction_pipeline.py` (Pydantic schemas, VAT checks, confidence scoring)
 - **OCR Engine**: GLM-OCR via Ollama (local, no API keys)
 - **Extraction**: llama3.2 via Ollama (structured parsing) or Docling + ExtractThinker (PDF/documents)
 - **Accounting**: QuickFile MCP (`quickfile_purchase_create`, `quickfile_supplier_search`)
@@ -50,10 +51,12 @@ ocr-receipt-helper.sh quickfile invoice.pdf --nominal 7502
 |------|---------|
 | Quick text dump from image | `ocr-receipt-helper.sh scan photo.jpg` |
 | Structured JSON from receipt/invoice | `ocr-receipt-helper.sh extract file` |
+| Validate extracted JSON (VAT, dates) | `ocr-receipt-helper.sh validate file.json` |
 | Process a folder of receipts | `ocr-receipt-helper.sh batch ~/receipts/` |
 | Create QuickFile purchase invoice | `ocr-receipt-helper.sh quickfile file` |
 | Check what would be sent to QuickFile | `ocr-receipt-helper.sh preview file` |
-| Complex PDF with tables/forms | `document-extraction-helper.sh extract file --schema invoice` |
+| Classify document type | `document-extraction-helper.sh classify file` |
+| Complex PDF with tables/forms | `document-extraction-helper.sh extract file --schema purchase-invoice` |
 
 <!-- AI-CONTEXT-END -->
 
@@ -65,17 +68,23 @@ Input (photo/scan/PDF)
     [1. OCR]  ── GLM-OCR via Ollama (~2GB, local)
          |        Prompt: "Extract all text from this receipt/invoice"
          |
-    [2. Type Detection]  ── Heuristic scoring
-         |                   Invoice: invoice number, due date, PO, bill-to
-         |                   Receipt: receipt, cash/card, change, thank you
+    [2. Classification]  ── Weighted keyword scoring (extraction_pipeline.py)
+         |                   purchase_invoice | expense_receipt | credit_note
          |
     [3. Structured Extraction]  ── llama3.2 via Ollama (local)
          |                          or Docling + ExtractThinker (for PDFs)
-         |                          Schema: Invoice or Receipt (Pydantic)
+         |                          Schema: PurchaseInvoice or ExpenseReceipt (Pydantic)
          |
-    [4. Output]  ── JSON with vendor, date, items, totals, VAT
+    [4. Validation]  ── extraction_pipeline.py
+         |               VAT arithmetic check (subtotal + VAT = total)
+         |               Date format validation (YYYY-MM-DD)
+         |               Per-field confidence scoring (0.0-1.0)
+         |               Nominal code auto-categorisation
          |
-    [5. QuickFile]  ── (optional) Supplier lookup/create + purchase invoice
+    [5. Output]  ── JSON with data + validation summary
+         |           Flags requires_review if confidence < 0.7 or VAT mismatch
+         |
+    [6. QuickFile]  ── (optional) Supplier lookup/create + purchase invoice
                        Tools: quickfile_supplier_search, quickfile_purchase_create
 ```
 

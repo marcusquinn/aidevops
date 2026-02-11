@@ -27,7 +27,7 @@ set -euo pipefail
 #   --vat-rate <rate>          VAT rate percentage (default: 20)
 #
 # Author: AI DevOps Framework
-# Version: 1.0.0
+# Version: 2.0.0
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
@@ -36,6 +36,7 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 readonly OCR_MODEL="glm-ocr"
 readonly WORKSPACE_DIR="${HOME}/.aidevops/.agent-workspace/work/ocr-receipts"
 readonly VENV_DIR="${HOME}/.aidevops/.agent-workspace/python-env/document-extraction"
+readonly PIPELINE_PY="${SCRIPT_DIR}/extraction_pipeline.py"
 readonly DEFAULT_NOMINAL_CODE="7901"
 readonly DEFAULT_CURRENCY="GBP"
 readonly DEFAULT_VAT_RATE="20"
@@ -380,24 +381,27 @@ extract_from_text() {
             ;;
     esac
 
-    # Build extraction prompt based on document type
+    # Build extraction prompt based on document type (aligned with Pydantic schemas)
     local extraction_prompt
     if [[ "$doc_type" == "invoice" ]]; then
         extraction_prompt="Extract the following fields from this invoice text as JSON. Use null for missing fields.
+All dates must be in YYYY-MM-DD format. All amounts must be numbers (not strings).
 
 Fields:
 - vendor_name: string (the company/person who issued the invoice)
 - vendor_address: string or null
+- vendor_vat_number: string or null (VAT registration number if shown)
 - invoice_number: string or null
 - invoice_date: string (YYYY-MM-DD format)
 - due_date: string or null (YYYY-MM-DD format)
-- currency: string (3-letter code like GBP, USD, EUR)
-- subtotal: number
-- tax_amount: number (VAT/tax amount)
-- tax_rate: number or null (percentage, e.g. 20 for 20%)
-- total: number
-- line_items: array of {description: string, quantity: number, unit_price: number, amount: number}
-- payment_method: string or null
+- purchase_order: string or null (PO number if referenced)
+- currency: string (3-letter ISO code like GBP, USD, EUR)
+- subtotal: number (total before VAT)
+- vat_amount: number (VAT/tax amount, 0 if none)
+- total: number (total including VAT)
+- line_items: array of {description: string, quantity: number, unit_price: number, amount: number, vat_rate: string}
+- payment_terms: string or null (e.g. 'Net 30', '14 days')
+- document_type: \"purchase_invoice\"
 
 Return ONLY valid JSON, no explanation.
 
@@ -405,17 +409,22 @@ Invoice text:
 ${ocr_text}"
     else
         extraction_prompt="Extract the following fields from this receipt text as JSON. Use null for missing fields.
+All dates must be in YYYY-MM-DD format. All amounts must be numbers (not strings).
 
 Fields:
-- merchant: string (the shop/business name)
+- merchant_name: string (the shop/business name)
 - merchant_address: string or null
+- merchant_vat_number: string or null (VAT number if shown)
+- receipt_number: string or null (transaction/receipt number)
 - date: string (YYYY-MM-DD format)
-- currency: string (3-letter code like GBP, USD, EUR)
-- subtotal: number or null
-- tax_amount: number or null (VAT/tax amount)
-- total: number
+- time: string or null (HH:MM format)
+- currency: string (3-letter ISO code like GBP, USD, EUR)
+- subtotal: number or null (total before VAT if shown)
+- vat_amount: number or null (VAT amount if shown)
+- total: number (total amount paid)
 - payment_method: string or null (cash, card, contactless, etc.)
-- items: array of {name: string, quantity: number, price: number}
+- items: array of {name: string, quantity: number, price: number, vat_rate: string or null}
+- document_type: \"expense_receipt\"
 
 Return ONLY valid JSON, no explanation.
 
@@ -461,10 +470,36 @@ ${ocr_text}"
             "$source_file" "$doc_type" "$(echo "$ocr_text" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" \
             > "$output_file"
     else
-        # Wrap with metadata
+        # Write raw extraction first
+        local raw_output_file="${WORKSPACE_DIR}/${basename}-raw-extracted.json"
         printf '{\n  "source_file": "%s",\n  "document_type": "%s",\n  "extraction_status": "complete",\n  "data": %s\n}\n' \
             "$source_file" "$doc_type" "$extracted_json" \
-            > "$output_file"
+            > "$raw_output_file"
+
+        # Run validation pipeline if available
+        if [[ -f "$PIPELINE_PY" ]]; then
+            local pipeline_type
+            if [[ "$doc_type" == "invoice" ]]; then
+                pipeline_type="purchase_invoice"
+            else
+                pipeline_type="expense_receipt"
+            fi
+            print_info "Running validation pipeline..."
+            if python3 "$PIPELINE_PY" validate "$raw_output_file" --type "$pipeline_type" > "$output_file" 2>/dev/null; then
+                print_info "Validation complete"
+            else
+                # Validation ran but flagged issues (exit code 2) - output is still valid
+                if [[ $? -eq 2 ]]; then
+                    print_warning "Extraction requires manual review (see validation.warnings)"
+                else
+                    # Validation failed entirely, use raw output
+                    print_warning "Validation pipeline failed, using raw extraction"
+                    cp "$raw_output_file" "$output_file"
+                fi
+            fi
+        else
+            cp "$raw_output_file" "$output_file"
+        fi
     fi
 
     # Display the extracted data
@@ -814,6 +849,20 @@ cmd_status() {
         echo "  imagemagick:    not installed (run: brew install imagemagick)"
     fi
 
+    # Validation pipeline
+    echo ""
+    echo "Validation Pipeline:"
+    if [[ -f "$PIPELINE_PY" ]]; then
+        echo "  extraction_pipeline.py: available"
+    else
+        echo "  extraction_pipeline.py: not found"
+    fi
+    if python3 -c "import pydantic" 2>/dev/null; then
+        echo "  pydantic:       installed"
+    else
+        echo "  pydantic:       not installed (run: pip install pydantic>=2.0)"
+    fi
+
     # Document extraction venv
     echo ""
     echo "Structured Extraction:"
@@ -936,7 +985,8 @@ cmd_help() {
     echo ""
     echo "${HELP_LABEL_COMMANDS}"
     echo "  scan <file>              Quick OCR text extraction (GLM-OCR)"
-    echo "  extract <file>           Structured extraction with schema"
+    echo "  extract <file>           Structured extraction with validation pipeline"
+    echo "  validate <json-file>     Validate extracted JSON (VAT, dates, confidence)"
     echo "  batch <dir>              Batch process directory of receipts/invoices"
     echo "  quickfile <file>         Extract and prepare QuickFile purchase invoice"
     echo "  preview <file>           Dry run - show what would be sent to QuickFile"
@@ -954,10 +1004,11 @@ cmd_help() {
     echo "  --vat-rate <rate>          VAT rate percentage (default: 20)"
     echo ""
     echo "Pipeline:"
-    echo "  1. scan     - Raw OCR text extraction (GLM-OCR via Ollama, local)"
-    echo "  2. extract  - Structured data extraction (auto-detect invoice/receipt)"
-    echo "  3. preview  - Show QuickFile purchase invoice preview (dry run)"
-    echo "  4. quickfile - Generate QuickFile-ready JSON for purchase creation"
+    echo "  1. scan      - Raw OCR text extraction (GLM-OCR via Ollama, local)"
+    echo "  2. extract   - Structured extraction + validation (auto-detect type)"
+    echo "  3. validate  - VAT arithmetic, date checks, confidence scoring"
+    echo "  4. preview   - Show QuickFile purchase invoice preview (dry run)"
+    echo "  5. quickfile  - Generate QuickFile-ready JSON for purchase creation"
     echo ""
     echo "${HELP_LABEL_EXAMPLES}"
     echo "  ocr-receipt-helper.sh scan receipt.jpg"
@@ -1048,6 +1099,24 @@ parse_args() {
                 return 1
             fi
             cmd_extract "$file" "$doc_type" "$privacy" "$output_format"
+            ;;
+        validate)
+            if [[ -z "$file" ]]; then
+                print_error "${ERROR_INPUT_FILE_REQUIRED}"
+                return 1
+            fi
+            if [[ -f "$PIPELINE_PY" ]]; then
+                local pipeline_type="auto"
+                if [[ "$doc_type" == "invoice" ]]; then
+                    pipeline_type="purchase_invoice"
+                elif [[ "$doc_type" == "receipt" ]]; then
+                    pipeline_type="expense_receipt"
+                fi
+                python3 "$PIPELINE_PY" validate "$file" --type "$pipeline_type"
+            else
+                print_error "Validation pipeline not found: ${PIPELINE_PY}"
+                return 1
+            fi
             ;;
         batch)
             if [[ -z "$file" ]]; then
