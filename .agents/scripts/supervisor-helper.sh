@@ -10212,6 +10212,94 @@ cmd_pulse() {
         bash "$coderabbit_pulse_script" run --repo "$pulse_repo" --quiet 2>>"$SUPERVISOR_LOG" || true
     fi
 
+    # Phase 10b: Auto-create TODO tasks from quality findings (t299)
+    # Converts CodeRabbit and quality-sweep findings into TODO.md tasks.
+    # Self-throttles with 24h cooldown. Only runs if task creator script exists.
+    local task_creator_script="${SCRIPT_DIR}/coderabbit-task-creator-helper.sh"
+    local task_creation_cooldown_file="${SUPERVISOR_STATE_DIR}/task-creation-last-run"
+    local task_creation_cooldown=86400  # 24 hours
+    if [[ -x "$task_creator_script" ]]; then
+        local should_run_task_creation=true
+        if [[ -f "$task_creation_cooldown_file" ]]; then
+            local last_run
+            last_run=$(cat "$task_creation_cooldown_file" 2>/dev/null || echo "0")
+            local now
+            now=$(date +%s)
+            local elapsed=$((now - last_run))
+            if [[ $elapsed -lt $task_creation_cooldown ]]; then
+                should_run_task_creation=false
+                local remaining=$(( (task_creation_cooldown - elapsed) / 3600 ))
+                log_verbose "  Phase 10b: Task creation skipped (${remaining}h until next run)"
+            fi
+        fi
+
+        if [[ "$should_run_task_creation" == "true" ]]; then
+            log_info "  Phase 10b: Auto-creating tasks from quality findings"
+            date +%s > "$task_creation_cooldown_file"
+
+            # Determine repo for TODO.md
+            local task_repo=""
+            task_repo=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks LIMIT 1;" 2>/dev/null || echo "")
+            if [[ -z "$task_repo" ]]; then
+                task_repo="$(pwd)"
+            fi
+            local todo_file="$task_repo/TODO.md"
+
+            if [[ -f "$todo_file" ]]; then
+                local tasks_added=0
+
+                # 1. CodeRabbit findings → tasks
+                local cr_output
+                cr_output=$(bash "$task_creator_script" create 2>>"$SUPERVISOR_LOG" || echo "")
+                if [[ -n "$cr_output" ]]; then
+                    # Extract task lines between the markers
+                    local cr_tasks
+                    cr_tasks=$(echo "$cr_output" | sed -n '/=== Task Lines/,/===$/p' | grep -E '^\s*- \[ \]' || true)
+                    if [[ -n "$cr_tasks" ]]; then
+                        # Find next task ID
+                        local max_id
+                        max_id=$(grep -oE 't[0-9]+' "$todo_file" | grep -oE '[0-9]+' | sort -n | tail -1 || echo "0")
+                        max_id=$((10#$max_id))
+
+                        # Append each task with a unique ID
+                        while IFS= read -r task_line; do
+                            max_id=$((max_id + 1))
+                            # Replace placeholder or add task ID
+                            local new_line
+                            new_line=$(echo "$task_line" | sed -E "s/^(\s*- \[ \] )/\1t${max_id} /")
+                            # Ensure #auto-dispatch tag and source tag
+                            if ! echo "$new_line" | grep -q '#auto-dispatch'; then
+                                new_line="$new_line #auto-dispatch"
+                            fi
+                            if ! echo "$new_line" | grep -q '#auto-review'; then
+                                new_line="$new_line #auto-review"
+                            fi
+                            new_line="$new_line logged:$(date +%Y-%m-%d)"
+                            # Append after the last open task line
+                            echo "$new_line" >> "$todo_file"
+                            tasks_added=$((tasks_added + 1))
+                            log_info "    Created t${max_id} from CodeRabbit finding"
+                        done <<< "$cr_tasks"
+                    fi
+                fi
+
+                # 2. Commit and push if tasks were added
+                if [[ $tasks_added -gt 0 ]]; then
+                    log_info "  Phase 10b: Added $tasks_added task(s) to TODO.md"
+                    if git -C "$task_repo" add TODO.md 2>>"$SUPERVISOR_LOG" && \
+                       git -C "$task_repo" commit -m "chore: auto-create $tasks_added task(s) from quality findings (Phase 10b)" 2>>"$SUPERVISOR_LOG" && \
+                       git -C "$task_repo" push 2>>"$SUPERVISOR_LOG"; then
+                        log_success "  Phase 10b: Committed and pushed $tasks_added new task(s)"
+                    else
+                        log_warn "  Phase 10b: Failed to commit/push TODO.md changes"
+                    fi
+                else
+                    log_verbose "  Phase 10b: No new tasks to create"
+                fi
+            fi
+        fi
+    fi
+
     # Phase 11: Supervisor session memory monitoring + respawn (t264, t264.1)
     # OpenCode/Bun processes accumulate WebKit malloc dirty pages that are never
     # returned to the OS. Over long sessions, a single process can grow to 25GB+.
