@@ -229,3 +229,18 @@
   files: .agents/scripts/supervisor-helper.sh
   check: shellcheck .agents/scripts/supervisor-helper.sh
   check: file-exists .agents/scripts/supervisor-helper.sh
+
+- [x] v024 Homebrew install offer + Beads binary download fallback for Linux | PR #1168 | merged:2026-02-11 | verified:2026-02-11
+  files: setup.sh, .agents/scripts/beads-sync-helper.sh, aidevops.sh
+  check: shellcheck setup.sh
+  check: file-exists setup.sh
+  check: rg "ensure_homebrew" setup.sh
+  check: rg "install_beads_binary" setup.sh
+  proof: OrbStack Ubuntu 24.04 (x86_64) container test
+    - Fresh container: no brew, no go, no bd installed
+    - install_beads_binary(): downloaded bd v0.49.6 to /usr/local/bin/bd, exit 0
+    - bd --version: "bd version 0.49.6 (c064f2aa)" -- functional
+    - bd init + bd list: created .beads/beads.db, listed issues -- fully working
+    - setup_beads() full chain: no brew/go -> binary download -> success
+    - ensure_homebrew() decline path: prompted, user said "n", returned 1 cleanly
+    - All 11 CI checks passed on PR #1168
