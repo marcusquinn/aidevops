@@ -418,7 +418,6 @@ cmd_batch_record() {
 
     local count=0
     local failed=0
-    local skipped=0
 
     print_info "Batch recording QuickFile purchases from: ${input_dir}"
     echo ""
