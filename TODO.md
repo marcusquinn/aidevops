@@ -232,7 +232,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t135.10 Fix package.json main field #bugfix #config ~15m assignee:marcusquinn started:2026-02-09T19:12:28Z ref:GH#869 completed:2026-02-07 pr:#424
   - [x] t135.12 Archive unreferenced fix scripts #chore #cleanup ~1h ref:GH#870 assignee:marcusquinn started:2026-02-10T13:18:06Z completed:2026-02-10 pr:#925
   - [x] t135.14 Standardize shebangs to env bash #chore #shell ~30m ref:GH#871 assignee:marcusquinn started:2026-02-10T13:19:24Z completed:2026-02-07 pr:#428
-- [ ] t020 Issue Sync Enrichment #plan #github #automation → [todo/PLANS.md#2026-02-08-issue-sync-enrichment] ~4h (ai:3h test:1h) logged:2026-02-08
+- [ ] t020 Issue Sync Enrichment #plan #github #automation → [todo/PLANS.md#2026-02-08-issue-sync-enrichment] ~4h (ai:3h test:1h) pr:#804 logged:2026-02-08
   - [x] t020.1 Build core TODO.md parser + rich issue body composer #feature ~45m assignee:marcusquinn started:2026-02-09T20:05:10Z completed:2026-02-09 pr:#804
   - [x] t020.2 PLANS.md section extraction + todo/tasks/ lookup #feature ~30m assignee:marcusquinn started:2026-02-09T20:05:25Z completed:2026-02-09 pr:#805
   - [x] t020.3 Tag to GitHub label mapping + push/enrich commands #feature ~30m assignee:marcusquinn started:2026-02-09T20:06:06Z completed:2026-02-09 pr:#543
@@ -653,7 +653,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t016 Uncloud Integration for aidevops #plan → [todo/PLANS.md#uncloud-integration-for-aidevops] ~45m (ai:25m test:10m read:10m) ref:GH#508 logged:2025-12-21 completed:2026-02-08 pr:#594
   - Notes: Created uncloud.md subagent (deployment provider guide with Quick Reference, CLI examples, Compose format, architecture diagram), uncloud-helper.sh (CLI wrapper with 20 commands, zero ShellCheck violations), uncloud-config.json.txt (cluster config template). Updated subagent-index.toon. Uncloud v0.16.0, 4.6k stars, Apache-2.0, active development.
 - [x] t017 SEO Machine Integration for aidevops #plan → [todo/PLANS.md#seo-machine-integration-for-aidevops] ~1.5h (ai:45m test:30m read:15m) ref:GH#509 logged:2025-12-21 completed:2026-02-08 pr:#599
-- [x] t020 Git Issues Bi-directional Sync (GitHub, GitLab, Gitea) #plan #git #sync → [todo/PLANS.md#2026-02-08-git-issues-bi-directional-sync] ~3h (ai:1.5h test:1h read:30m) logged:2025-12-21 ref:GH#1125 completed:2026-02-08 verified:2026-02-08 PR #543 merged
+- [x] t020 Git Issues Bi-directional Sync (GitHub, GitLab, Gitea) #plan #git #sync → [todo/PLANS.md#2026-02-08-git-issues-bi-directional-sync] ~3h (ai:1.5h test:1h read:30m) pr:#804 logged:2025-12-21 ref:GH#1128 completed:2026-02-08 verified:2026-02-08 PR #543 merged
   - [x] t020.1 Build issue-sync-helper.sh core: TODO.md parser + rich issue body composer ~45m blocked-by:none completed:2026-02-08
   - [x] t020.2 Add PLANS.md section extraction and todo/tasks/ PRD/task file lookup ~30m blocked-by:t020.1 completed:2026-02-08
   - [x] t020.3 Add #tag → GitHub label mapping and push/enrich commands ~30m blocked-by:t020.1 completed:2026-02-08
