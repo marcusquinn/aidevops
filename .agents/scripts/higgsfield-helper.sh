@@ -218,6 +218,21 @@ cmd_seed_bracket() {
     run_automator seed-bracket --prompt "${prompt}" "$@"
 }
 
+# Trinity UGC Windows template
+cmd_trinity_ugc_windows() {
+    local first_arg="${1:-}"
+
+    # If first arg doesn't start with --, treat it as a prompt
+    if [[ -n "${first_arg}" && "${first_arg}" != --* ]]; then
+        shift
+        print_info "Trinity UGC Windows: ${first_arg}"
+        run_automator trinity-ugc-windows --prompt "${first_arg}" "$@"
+    else
+        print_info "Running Trinity UGC Windows template..."
+        run_automator trinity-ugc-windows "$@"
+    fi
+}
+
 # Download latest
 cmd_download() {
     print_info "Downloading latest generation..."
@@ -333,6 +348,7 @@ Commands:
   batch-video <file> Batch video generation from JSON manifest
   batch-lipsync <file> Batch lipsync generation from JSON manifest
   pipeline           Full production: image -> video -> lipsync -> assembly
+  trinity-ugc-windows  Pre-built: image -> Windows preset -> UGC video
   seed-bracket       Test seed range to find best seeds for a prompt
   app <effect>       Use a Higgsfield app/effect
   assets             List recent generations
@@ -356,6 +372,8 @@ Options (pass after command):
   --seed-range       Seed range for bracketing (e.g., "1000-1010")
   --brief            Path to pipeline brief JSON file
   --character-image  Character face image for pipeline
+  --video-model      Video model for trinity/pipeline (e.g., kling-2.6)
+  --video-prompt     Video animation prompt for trinity/pipeline
   --dialogue         Dialogue text for lipsync
   --unlimited        Prefer unlimited models only
   --no-sidecar       Disable JSON sidecar metadata files
@@ -376,6 +394,8 @@ Examples:
   higgsfield-helper.sh pipeline --brief brief.json
   higgsfield-helper.sh pipeline "Person reviews product" --character-image face.png
   higgsfield-helper.sh seed-bracket "Elegant woman, golden hour" --seed-range 1000-1010
+  higgsfield-helper.sh trinity-ugc-windows "Product on marble table, clean aesthetic"
+  higgsfield-helper.sh trinity-ugc-windows --image-file product.jpg --video-model kling-2.6
   higgsfield-helper.sh app face-swap --image-file face.jpg
   higgsfield-helper.sh credits
   higgsfield-helper.sh batch-image prompts.json --concurrency 2 -o ./output
@@ -413,6 +433,7 @@ main() {
         batch-video)  cmd_batch_video "$@" ;;
         batch-lipsync) cmd_batch_lipsync "$@" ;;
         pipeline)   cmd_pipeline "$@" ;;
+        trinity-ugc-windows|trinity-windows|ugc-windows) cmd_trinity_ugc_windows "$@" ;;
         seed-bracket) cmd_seed_bracket "$@" ;;
         app)        cmd_app "$@" ;;
         assets)     cmd_assets "$@" ;;
