@@ -122,7 +122,8 @@ check_beads_installed() {
     if ! command -v bd &> /dev/null; then
         log_error "Beads CLI (bd) not found"
         log_info "Install with: brew install steveyegge/beads/bd"
-        log_info "Or: curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash"
+        log_info "Or download binary: https://github.com/steveyegge/beads/releases"
+        log_info "Or via Go: go install github.com/steveyegge/beads/cmd/bd@latest"
         return 1
     fi
     return 0
