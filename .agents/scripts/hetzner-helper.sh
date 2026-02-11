@@ -116,8 +116,8 @@ exec_on_server() {
         exit 1
     fi
     
-    local ip name project
-    read -r ip name project <<< "$server_info"
+    local ip name
+    read -r ip name _ <<< "$server_info"
     print_info "Executing '$command' on $name..."
     ssh "root@$ip" "$command"
     return 0

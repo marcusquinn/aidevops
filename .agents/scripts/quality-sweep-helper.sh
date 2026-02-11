@@ -159,7 +159,6 @@ sonar_api_call() {
         curl_args+=(-u "${SONAR_TOKEN}:")
     fi
 
-    local response
     local http_code
     local tmp_body
     tmp_body=$(mktemp)

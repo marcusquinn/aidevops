@@ -1186,12 +1186,12 @@ cmd_check_updates() {
     
     local updates_available=false
     
-    local name url commit owner repo subpath
+    local name url commit owner repo
     while IFS='|' read -r name url commit; do
         # Extract owner/repo from URL
         local parsed
         parsed=$(parse_github_url "$url")
-        IFS='|' read -r owner repo subpath <<< "$parsed"
+        IFS='|' read -r owner repo _ <<< "$parsed"
         
         if [[ -z "$owner" || -z "$repo" ]]; then
             log_warning "Could not parse URL for $name: $url"
