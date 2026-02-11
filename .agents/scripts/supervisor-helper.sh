@@ -12533,7 +12533,8 @@ dispatch_decomposition_worker() {
 
     # Build decomposition prompt with explicit TODO.md edit permission
     local decomposition_prompt
-    decomposition_prompt="You are a task decomposition worker with SPECIAL PERMISSION to edit TODO.md.
+    read -r -d '' decomposition_prompt <<EOF || true
+You are a task decomposition worker with SPECIAL PERMISSION to edit TODO.md.
 
 Your mission: Read a plan from PLANS.md and generate subtasks in TODO.md with #auto-dispatch tags.
 
@@ -12571,14 +12572,14 @@ Create subtasks following this format:
 - Keep descriptions concise but actionable
 
 ### Step 4: Insert subtasks in TODO.md
-1. Find the parent task line (starts with \"- [ ] ${task_id} \")
+1. Find the parent task line (starts with "- [ ] ${task_id} ")
 2. Insert subtasks immediately after it (before any blank line or next task)
 3. Preserve all existing content
 4. DO NOT modify the parent task line
 
 ### Step 5: Commit and exit
 1. Run: git add TODO.md
-2. Run: git commit -m \"feat: auto-decompose ${task_id} from PLANS.md (${plan_anchor})\"
+2. Run: git commit -m "feat: auto-decompose ${task_id} from PLANS.md (${plan_anchor})"
 3. Run: git push origin main
 4. Exit with status 0
 
@@ -12607,7 +12608,8 @@ If the plan structure is unclear:
 - FLAG: Exit with error if plan anchor not found in PLANS.md
 - FLAG: Exit with error if plan has no actionable content
 
-Start now. Read todo/PLANS.md, find the anchor, generate subtasks, commit, push, exit 0."
+Start now. Read todo/PLANS.md, find the anchor, generate subtasks, commit, push, exit 0.
+EOF
 
     # Create logs directory if it doesn't exist
     mkdir -p "$HOME/.aidevops/logs"
