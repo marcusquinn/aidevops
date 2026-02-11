@@ -346,7 +346,8 @@ Options (pass after command):
   --headless         Run without browser window (default)
   --dry-run          Configure but don't click Generate (no credits used)
   --model, -m        Model: soul, nano_banana, seedream, kling-2.6, etc.
-  --output, -o       Output directory
+  --output, -o       Output directory (default: ~/Downloads/higgsfield/ for
+                     interactive sessions, .agent-workspace for headless/pipeline)
   --project          Project name for organized output dirs ({output}/{project}/{type}/)
   --image-file       Image file for upload
   --timeout          Timeout in milliseconds
