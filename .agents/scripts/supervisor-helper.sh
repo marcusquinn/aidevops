@@ -10270,12 +10270,12 @@ cmd_pulse() {
             fi
         fi
         
-        # Create tasks from quality-sweep findings
-        local quality_sweep="${SCRIPT_DIR}/quality-sweep-helper.sh"
-        if [[ -x "$quality_sweep" ]]; then
+        # Create tasks from quality-sweep findings (SonarCloud, Codacy)
+        local finding_to_task="${SCRIPT_DIR}/finding-to-task-helper.sh"
+        if [[ -x "$finding_to_task" ]]; then
             log_verbose "    Converting quality-sweep findings to tasks..."
             local sweep_output
-            sweep_output=$("$quality_sweep" tasks 2>>"$SUPERVISOR_LOG" || true)
+            sweep_output=$("$finding_to_task" create --min-severity medium --limit 10 2>>"$SUPERVISOR_LOG" || true)
             
             if [[ -n "$sweep_output" ]] && echo "$sweep_output" | grep -q "^- \[ \]"; then
                 # Append tasks to TODO.md
