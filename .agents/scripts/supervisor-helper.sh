@@ -12503,6 +12503,94 @@ cmd_notify() {
 }
 
 #######################################
+# Dispatch a decomposition worker for a #plan task (t274)
+# Reads PLANS.md section and generates subtasks in TODO.md
+# with #auto-dispatch tags for autonomous execution.
+#
+# Arguments:
+#   $1 - task_id (e.g., t199)
+#   $2 - plan_anchor (e.g., 2026-02-09-content-creation-agent-architecture)
+#   $3 - repo path
+#######################################
+dispatch_decomposition_worker() {
+    local task_id="$1"
+    local plan_anchor="$2"
+    local repo="$3"
+
+    if [[ -z "$task_id" || -z "$plan_anchor" || -z "$repo" ]]; then
+        log_error "dispatch_decomposition_worker: missing required arguments"
+        return 1
+    fi
+
+    local plans_file="$repo/todo/PLANS.md"
+    if [[ ! -f "$plans_file" ]]; then
+        log_error "  $task_id: PLANS.md not found at $plans_file"
+        return 1
+    fi
+
+    # Build decomposition prompt
+    local decomposition_prompt
+    decomposition_prompt=$(cat <<EOF
+You are a task decomposition worker. Your job is to read a plan from PLANS.md and generate subtasks in TODO.md.
+
+## Task: $task_id
+## Plan anchor: $plan_anchor
+## Repository: $repo
+
+## Instructions:
+1. Read the plan section from todo/PLANS.md with anchor #$plan_anchor
+2. Analyze the plan structure (phases, milestones, deliverables)
+3. Generate subtasks in TODO.md following this format:
+   - Parent task: $task_id (already exists, DO NOT modify)
+   - Subtasks: ${task_id}.1, ${task_id}.2, etc. (indented with 2 spaces)
+   - Each subtask MUST have #auto-dispatch tag
+   - Include estimates (~Xh or ~Xm)
+   - Preserve any dependencies or metadata from the plan
+
+4. Insert subtasks immediately after the parent task line in TODO.md
+5. Commit with message: "feat: auto-decompose $task_id from PLANS.md ($plan_anchor)"
+6. DO NOT create a PR (this is a TODO.md-only change, goes directly to main)
+7. Exit with status 0 when done
+
+## Example output format:
+- [ ] $task_id Parent task description #plan → [todo/PLANS.md#$plan_anchor]
+  - [ ] ${task_id}.1 First subtask from plan ~30m #auto-dispatch
+  - [ ] ${task_id}.2 Second subtask from plan ~45m #auto-dispatch blocked-by:${task_id}.1
+  - [ ] ${task_id}.3 Third subtask from plan ~20m #auto-dispatch
+
+## CRITICAL:
+- DO NOT modify the parent task line
+- DO NOT remove any existing content
+- ONLY add the indented subtasks
+- Each subtask MUST be actionable and have #auto-dispatch
+- Commit directly to main (no branch, no PR)
+EOF
+)
+
+    # Dispatch worker using Claude CLI
+    local worker_log="$HOME/.aidevops/logs/decomposition-worker-${task_id}.log"
+    log_info "  Decomposition worker log: $worker_log"
+
+    # Use Claude CLI to dispatch the worker
+    if command -v Claude &>/dev/null; then
+        (
+            cd "$repo" || exit 1
+            Claude -p "$decomposition_prompt" > "$worker_log" 2>&1
+        ) &
+        local worker_pid=$!
+        log_success "  Decomposition worker dispatched (PID: $worker_pid)"
+        
+        # Update task metadata with worker PID
+        db "$SUPERVISOR_DB" "UPDATE tasks SET metadata = metadata || ',decomposition_worker_pid=$worker_pid' WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || true
+    else
+        log_error "  Claude CLI not found — cannot dispatch decomposition worker"
+        return 1
+    fi
+
+    return 0
+}
+
+#######################################
 # Scan TODO.md for tasks tagged #auto-dispatch or in a
 # "Dispatch Queue" section. Auto-adds them to supervisor
 # if not already tracked, then queues them for dispatch.
@@ -12626,6 +12714,65 @@ cmd_auto_pickup() {
                 log_success "  Auto-picked: $task_id (Dispatch Queue section)"
             fi
         done <<< "$section_tasks"
+    fi
+
+    # Strategy 3: Find #plan tasks with PLANS.md references but no subtasks (t274)
+    # Matches: - [ ] tXXX description #plan ... → [todo/PLANS.md#anchor]
+    # Dispatches decomposition worker to generate subtasks with #auto-dispatch
+    local plan_tasks
+    plan_tasks=$(grep -E '^[[:space:]]*- \[ \] (t[0-9]+) .*#plan.*→ \[todo/PLANS\.md#' "$todo_file" 2>/dev/null || true)
+
+    if [[ -n "$plan_tasks" ]]; then
+        while IFS= read -r line; do
+            local task_id
+            task_id=$(echo "$line" | grep -oE 't[0-9]+' | head -1)
+            if [[ -z "$task_id" ]]; then
+                continue
+            fi
+
+            # Check if task already has subtasks (e.g., t001.1, t001.2)
+            local has_subtasks
+            has_subtasks=$(grep -E "^[[:space:]]+-[[:space:]]\[[[:space:]xX]\][[:space:]]${task_id}\.[0-9]+" "$todo_file" 2>/dev/null || true)
+            if [[ -n "$has_subtasks" ]]; then
+                log_info "  $task_id: already has subtasks — skipping auto-decomposition"
+                continue
+            fi
+
+            # Check if already in supervisor
+            local existing
+            existing=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || true)
+            if [[ -n "$existing" ]]; then
+                if [[ "$existing" == "complete" || "$existing" == "cancelled" ]]; then
+                    continue
+                fi
+                log_info "  $task_id: already tracked (status: $existing)"
+                continue
+            fi
+
+            # Pre-pickup check: skip tasks with merged PRs (t224).
+            if check_task_already_done "$task_id" "$repo"; then
+                log_info "  $task_id: already completed (merged PR) — skipping auto-pickup"
+                continue
+            fi
+
+            # Extract PLANS.md anchor from the line
+            local plan_anchor
+            plan_anchor=$(echo "$line" | grep -oE 'todo/PLANS\.md#[^]]+' | sed 's/todo\/PLANS\.md#//' || true)
+            if [[ -z "$plan_anchor" ]]; then
+                log_warn "  $task_id: #plan tag found but no PLANS.md anchor — skipping"
+                continue
+            fi
+
+            # Add to supervisor with special metadata for decomposition
+            if cmd_add "$task_id" --repo "$repo" --metadata "plan_anchor=$plan_anchor,needs_decomposition=true" 2>/dev/null; then
+                picked_up=$((picked_up + 1))
+                log_success "  Auto-picked: $task_id (#plan task for decomposition)"
+                
+                # Dispatch decomposition worker immediately
+                log_info "  Dispatching decomposition worker for $task_id..."
+                dispatch_decomposition_worker "$task_id" "$plan_anchor" "$repo"
+            fi
+        done <<< "$plan_tasks"
     fi
 
     if [[ "$picked_up" -eq 0 ]]; then
