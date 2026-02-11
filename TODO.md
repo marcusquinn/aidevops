@@ -634,7 +634,11 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t007 Create MCP server for QuickFile accounting API #accounting ~2h (ai:1h test:40m read:20m) ref:GH#505 logged:2025-12-20 completed:2026-02-08 verified:2026-02-08 PR #585 merged
 - [ ] t012 OCR Invoice/Receipt Extraction Pipeline #plan → [todo/PLANS.md#ocr-invoicereceipt-extraction-pipeline] ~3h (ai:1.5h test:1h read:30m) ref:GH#506 assignee:marcusquinn logged:2025-12-21
   - [ ] t012.1 Research OCR approaches and @pontusab's implementation ~4h #auto-dispatch ref:GH#1098
+<<<<<<< Updated upstream
   - [ ] t012.2 Design extraction schema (vendor, amount, date, VAT, items) ~4h #auto-dispatch blocked-by:t012.1 ref:GH#1116
+=======
+  - [x] t012.2 Design extraction schema (vendor, amount, date, VAT, items) ~4h #auto-dispatch blocked-by:t012.1 completed:2026-02-11
+>>>>>>> Stashed changes
   - [ ] t012.3 Implement OCR extraction pipeline ~8h #auto-dispatch blocked-by:t012.2 ref:GH#1099 assignee:marcusquinn
   - [ ] t012.4 QuickFile integration (purchases/expenses) ~4h #auto-dispatch blocked-by:t012.3 ref:GH#1100 assignee:marcusquinn
   - [ ] t012.5 Testing with various invoice/receipt formats ~4h #auto-dispatch blocked-by:t012.4 ref:GH#1101 assignee:marcusquinn
