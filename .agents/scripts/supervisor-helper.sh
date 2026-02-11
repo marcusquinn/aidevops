@@ -17,6 +17,7 @@
 #   supervisor-helper.sh worker-status <task_id>       Check worker process status
 #   supervisor-helper.sh cleanup [--dry-run]           Clean up completed worktrees + processes
 #   supervisor-helper.sh kill-workers [--dry-run]      Kill orphaned worker processes (emergency)
+#   supervisor-helper.sh mem-check                 Check supervisor session memory footprint
 #   supervisor-helper.sh update-todo <task_id>         Update TODO.md for completed/blocked task
 #   supervisor-helper.sh reconcile-todo [--batch id] [--dry-run]  Bulk-fix stale TODO.md entries
 #   supervisor-helper.sh notify <task_id>              Send notification about task state
@@ -701,6 +702,151 @@ check_system_load() {
             echo "overloaded=false"
         fi
     fi
+
+    return 0
+}
+
+#######################################
+# Get the physical memory footprint of a process in MB (t264)
+# On macOS: uses footprint(1) for phys_footprint (what Activity Monitor shows)
+# On Linux: reads /proc/PID/status VmRSS (resident set size)
+# Returns: footprint in MB on stdout, or 0 if process not found
+#
+# $1: PID to measure
+#######################################
+get_process_footprint_mb() {
+    local pid="$1"
+
+    # Verify process exists
+    if ! kill -0 "$pid" 2>/dev/null; then
+        echo "0"
+        return 0
+    fi
+
+    if [[ "$(uname)" == "Darwin" ]]; then
+        # macOS: footprint --pid gives phys_footprint (dirty + swapped + compressed)
+        # This matches what Activity Monitor displays
+        local fp_output
+        fp_output=$(footprint --pid "$pid" -f bytes --noCategories 2>/dev/null || echo "")
+        if [[ -n "$fp_output" ]]; then
+            local fp_bytes
+            fp_bytes=$(echo "$fp_output" | grep -oE 'phys_footprint: [0-9]+' | grep -oE '[0-9]+' || echo "")
+            if [[ -n "$fp_bytes" && "$fp_bytes" -gt 0 ]] 2>/dev/null; then
+                echo "$((fp_bytes / 1048576))"
+                return 0
+            fi
+            # Fallback: parse the Footprint line (e.g., "Footprint: 30 GB" or "Footprint: 500 MB")
+            local fp_line
+            fp_line=$(echo "$fp_output" | grep -E 'Footprint:' | head -1)
+            if [[ -n "$fp_line" ]]; then
+                local fp_val fp_unit
+                fp_val=$(echo "$fp_line" | grep -oE '[0-9]+' | head -1)
+                fp_unit=$(echo "$fp_line" | grep -oE '(GB|MB|KB)' | head -1)
+                case "$fp_unit" in
+                    GB) echo "$((fp_val * 1024))" ;;
+                    MB) echo "$fp_val" ;;
+                    KB) echo "$((fp_val / 1024))" ;;
+                    *) echo "0" ;;
+                esac
+                return 0
+            fi
+        fi
+        # Final fallback: RSS from ps (underestimates — doesn't include swapped pages)
+        local rss_kb
+        rss_kb=$(ps -o rss= -p "$pid" 2>/dev/null | tr -d ' ')
+        if [[ -n "$rss_kb" && "$rss_kb" -gt 0 ]] 2>/dev/null; then
+            echo "$((rss_kb / 1024))"
+            return 0
+        fi
+    else
+        # Linux: VmRSS from /proc (closest to physical footprint)
+        if [[ -f "/proc/$pid/status" ]]; then
+            local vm_rss_kb
+            vm_rss_kb=$(awk '/VmRSS/ {print $2}' "/proc/$pid/status" 2>/dev/null || echo "0")
+            if [[ -n "$vm_rss_kb" && "$vm_rss_kb" -gt 0 ]] 2>/dev/null; then
+                echo "$((vm_rss_kb / 1024))"
+                return 0
+            fi
+        fi
+        # Fallback: RSS from ps
+        local rss_kb
+        rss_kb=$(ps -o rss= -p "$pid" 2>/dev/null | tr -d ' ')
+        if [[ -n "$rss_kb" && "$rss_kb" -gt 0 ]] 2>/dev/null; then
+            echo "$((rss_kb / 1024))"
+            return 0
+        fi
+    fi
+
+    echo "0"
+    return 0
+}
+
+#######################################
+# Check if the supervisor's own cron process should trigger a respawn (t264)
+# The supervisor runs via cron every 2 minutes. Each invocation is a fresh
+# process, so the supervisor itself doesn't accumulate memory. However,
+# long-running interactive OpenCode sessions (used as supervisor monitors)
+# DO accumulate WebKit malloc pages. This function checks the PARENT
+# process chain for bloated OpenCode instances and logs a warning.
+#
+# For cron-based supervisors: no action needed (each pulse is fresh).
+# For interactive sessions: logs a recommendation to restart.
+#
+# $1 (optional): threshold in MB (default: SUPERVISOR_SELF_MEM_LIMIT or 8192)
+# Returns: 0 if healthy, 1 if respawn recommended
+#######################################
+check_supervisor_memory() {
+    local threshold_mb="${1:-${SUPERVISOR_SELF_MEM_LIMIT:-8192}}"
+
+    # Check our own process footprint
+    local self_footprint
+    self_footprint=$(get_process_footprint_mb $$)
+
+    if [[ "$self_footprint" -gt "$threshold_mb" ]] 2>/dev/null; then
+        log_warn "Supervisor process (PID $$) footprint ${self_footprint}MB exceeds ${threshold_mb}MB"
+        log_warn "Recommendation: restart the supervisor session to reclaim memory"
+        return 1
+    fi
+
+    # Check if we're running inside an interactive OpenCode session
+    # by walking up the process tree looking for opencode processes
+    local check_pid=$$
+    local depth=0
+    while [[ "$check_pid" -gt 1 && "$depth" -lt 10 ]] 2>/dev/null; do
+        local parent_pid
+        parent_pid=$(ps -o ppid= -p "$check_pid" 2>/dev/null | tr -d ' ')
+        [[ -z "$parent_pid" || "$parent_pid" == "0" ]] && break
+
+        local parent_cmd
+        parent_cmd=$(ps -o comm= -p "$parent_pid" 2>/dev/null || echo "")
+        if [[ "$parent_cmd" == *"opencode"* ]]; then
+            local parent_footprint
+            parent_footprint=$(get_process_footprint_mb "$parent_pid")
+            if [[ "$parent_footprint" -gt "$threshold_mb" ]] 2>/dev/null; then
+                log_warn "Parent OpenCode session (PID $parent_pid) footprint ${parent_footprint}MB exceeds ${threshold_mb}MB"
+                log_warn "WebKit/Bun malloc accumulates dirty pages that are never freed"
+                log_warn "Recommendation: save session state and restart OpenCode to reclaim ${parent_footprint}MB"
+
+                # Write a respawn marker file for external tooling to detect
+                local respawn_marker="${SUPERVISOR_DIR}/respawn-recommended"
+                {
+                    echo "pid=$parent_pid"
+                    echo "footprint_mb=$parent_footprint"
+                    echo "threshold_mb=$threshold_mb"
+                    echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                    echo "reason=webkit_malloc_accumulation"
+                } > "$respawn_marker"
+
+                return 1
+            fi
+        fi
+
+        check_pid="$parent_pid"
+        depth=$((depth + 1))
+    done
+
+    # Clean up stale respawn marker if we're healthy
+    rm -f "${SUPERVISOR_DIR}/respawn-recommended" 2>/dev/null || true
 
     return 0
 }
@@ -4690,6 +4836,82 @@ cmd_kill_workers() {
         else
             log_info "No orphaned worker processes found"
         fi
+    fi
+
+    return 0
+}
+
+#######################################
+# Check supervisor session memory footprint (t264)
+# Shows the footprint of this process and any parent OpenCode session.
+# OpenCode/Bun accumulates WebKit malloc dirty pages that are never freed;
+# the only reclaim path is process restart. Workers are short-lived and
+# already cleaned up by Phase 4 — this command focuses on the long-running
+# supervisor session that needs periodic respawn on compaction.
+#######################################
+cmd_mem_check() {
+    local threshold_mb="${SUPERVISOR_SELF_MEM_LIMIT:-8192}"
+
+    echo -e "${BOLD}=== Supervisor Session Memory (t264) ===${NC}"
+    echo -e "  Respawn threshold: ${threshold_mb}MB (SUPERVISOR_SELF_MEM_LIMIT)"
+    echo ""
+
+    # This process (the bash script itself — trivial)
+    local self_footprint
+    self_footprint=$(get_process_footprint_mb $$ 2>/dev/null || echo "0")
+    echo "  This process (PID $$): ${self_footprint}MB"
+
+    # Walk up the process tree looking for parent OpenCode sessions
+    local found_opencode=false
+    local check_pid=$$
+    local depth=0
+    while [[ "$check_pid" -gt 1 && "$depth" -lt 10 ]] 2>/dev/null; do
+        local parent_pid
+        parent_pid=$(ps -o ppid= -p "$check_pid" 2>/dev/null | tr -d ' ')
+        [[ -z "$parent_pid" || "$parent_pid" == "0" ]] && break
+
+        local parent_cmd
+        parent_cmd=$(ps -o comm= -p "$parent_pid" 2>/dev/null || echo "")
+        if [[ "$parent_cmd" == *"opencode"* ]]; then
+            found_opencode=true
+            local parent_footprint
+            parent_footprint=$(get_process_footprint_mb "$parent_pid")
+            local uptime_str
+            uptime_str=$(ps -o etime= -p "$parent_pid" 2>/dev/null | tr -d ' ' || echo "n/a")
+
+            local fp_color="$GREEN"
+            if [[ "$parent_footprint" -gt "$threshold_mb" ]] 2>/dev/null; then
+                fp_color="$RED"
+            elif [[ "$parent_footprint" -gt "$((threshold_mb / 2))" ]] 2>/dev/null; then
+                fp_color="$YELLOW"
+            fi
+
+            echo -e "  Parent OpenCode (PID $parent_pid): ${fp_color}${parent_footprint}MB${NC}  uptime: $uptime_str"
+
+            if [[ "$parent_footprint" -gt "$threshold_mb" ]] 2>/dev/null; then
+                echo ""
+                echo -e "  ${RED}RESPAWN RECOMMENDED${NC}"
+                echo "    WebKit/Bun malloc accumulates dirty pages that are never freed."
+                echo "    Trigger compaction or restart the session to reclaim ${parent_footprint}MB."
+            fi
+        fi
+
+        check_pid="$parent_pid"
+        depth=$((depth + 1))
+    done
+
+    if [[ "$found_opencode" == "false" ]]; then
+        echo ""
+        echo -e "  ${GREEN}No parent OpenCode session detected${NC} (cron-based pulse — each invocation is fresh)"
+    fi
+
+    # Check for respawn marker from previous pulse
+    if [[ -f "${SUPERVISOR_DIR}/respawn-recommended" ]]; then
+        echo ""
+        echo -e "  ${YELLOW}Respawn marker present${NC} (from previous pulse):"
+        while IFS= read -r line; do
+            echo "    $line"
+        done < "${SUPERVISOR_DIR}/respawn-recommended"
     fi
 
     return 0
@@ -9443,6 +9665,7 @@ cmd_pulse() {
         if [[ "$sys_overloaded" == "true" ]]; then
             echo -e "  ${BLUE}[SUPERVISOR]${NC}   ${RED}OVERLOADED${NC} - adaptive throttling active"
         fi
+
     fi
 
     # macOS notification on progress (when something changed this pulse)
@@ -9638,6 +9861,17 @@ cmd_pulse() {
             pulse_repo="$(pwd)"
         fi
         bash "$coderabbit_pulse_script" run --repo "$pulse_repo" --quiet 2>>"$SUPERVISOR_LOG" || true
+    fi
+
+    # Phase 11: Supervisor session memory monitoring (t264)
+    # OpenCode/Bun processes accumulate WebKit malloc dirty pages that are never
+    # returned to the OS. Over long sessions, a single process can grow to 25GB+.
+    # Cron-based pulses are already fresh processes (no accumulation).
+    # Interactive supervisor sessions need monitoring and respawn on compaction.
+    # Worker concurrency is managed by memory budget in calculate_adaptive_concurrency()
+    # — we don't kill workers, we throttle dispatch when total memory is high.
+    if ! check_supervisor_memory 2>/dev/null; then
+        log_warn "  Phase 11: Supervisor session memory exceeds threshold — respawn recommended"
     fi
 
     # Release pulse dispatch lock (t159)
@@ -13156,6 +13390,7 @@ Usage:
   supervisor-helper.sh self-heal <task_id>            Create diagnostic subtask for failed/blocked task
   supervisor-helper.sh worker-status <task_id>       Check worker process status
   supervisor-helper.sh cleanup [--dry-run]           Clean up completed worktrees
+  supervisor-helper.sh mem-check                    Check supervisor session memory (t264)
   supervisor-helper.sh update-todo <task_id>         Update TODO.md for completed/blocked task
   supervisor-helper.sh reconcile-todo [--batch id] [--dry-run]  Bulk-fix stale TODO.md entries
   supervisor-helper.sh notify <task_id>              Send notification about task state
@@ -13287,6 +13522,7 @@ Environment:
   SUPERVISOR_AUTO_ISSUE       Enable/disable GitHub issue creation (default: true)
   SUPERVISOR_SKIP_REVIEW_TRIAGE Skip review triage before merge (default: false)
   SUPERVISOR_WORKER_TIMEOUT   Seconds before a hung worker is killed (default: 1800)
+  SUPERVISOR_SELF_MEM_LIMIT   MB before supervisor recommends respawn (default: 8192)
   AIDEVOPS_SUPERVISOR_DIR     Override supervisor data directory
 
 Database: ~/.aidevops/.agent-workspace/supervisor/supervisor.db
@@ -13473,6 +13709,7 @@ main() {
         worker-status) cmd_worker_status "$@" ;;
         cleanup) cmd_cleanup "$@" ;;
         kill-workers) cmd_kill_workers "$@" ;;
+        mem-check) cmd_mem_check "$@" ;;
         update-todo) cmd_update_todo "$@" ;;
         reconcile-todo) cmd_reconcile_todo "$@" ;;
         notify) cmd_notify "$@" ;;
