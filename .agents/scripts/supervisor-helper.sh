@@ -7580,31 +7580,44 @@ check_pr_status() {
     # mergeStateStatus values: BEHIND, BLOCKED, CLEAN, DIRTY, DRAFT, HAS_HOOKS, UNKNOWN, UNSTABLE
     local merge_state
     merge_state=$(echo "$pr_json" | jq -r '.mergeStateStatus // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
-    
+
+    # t277: GitHub lazy-loads mergeStateStatus — first query often returns UNKNOWN.
+    # Re-query once (the first call triggers computation, second returns the result).
+    if [[ "$merge_state" == "UNKNOWN" ]]; then
+        sleep 2
+        local pr_json_retry
+        pr_json_retry=$(gh pr view "$pr_number" --repo "$repo_slug" --json mergeable,mergeStateStatus 2>>"$SUPERVISOR_LOG" || echo "")
+        if [[ -n "$pr_json_retry" ]]; then
+            merge_state=$(echo "$pr_json_retry" | jq -r '.mergeStateStatus // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
+        fi
+    fi
+
     # BLOCKED = required checks failed or pending
     # UNSTABLE = non-required checks failed but required checks passed
     # CLEAN = all required checks passed, ready to merge
     # BEHIND = needs rebase/merge with base branch
     # DIRTY = merge conflicts
-    
+
     case "$merge_state" in
         BLOCKED)
-            # Check if blocked due to pending checks or failed checks
+            # BLOCKED means required checks failed or are pending.
+            # Distinguish pending vs failed by checking for any in-progress checks.
+            # Note: gh pr view --json statusCheckRollup does NOT include isRequired,
+            # but BLOCKED already implies the issue is with required checks.
             local check_rollup
             check_rollup=$(echo "$pr_json" | jq -r '.statusCheckRollup // []' 2>/dev/null || echo "[]")
-            
+
             if [[ "$check_rollup" != "[]" && "$check_rollup" != "null" ]]; then
-                # Check for pending REQUIRED checks only
                 local has_pending
-                has_pending=$(echo "$check_rollup" | jq '[.[] | select(.isRequired == true and (.status == "IN_PROGRESS" or .status == "QUEUED" or .status == "PENDING"))] | length' 2>/dev/null || echo "0")
-                
+                has_pending=$(echo "$check_rollup" | jq '[.[] | select(.status == "IN_PROGRESS" or .status == "QUEUED" or .status == "PENDING")] | length' 2>/dev/null || echo "0")
+
                 if [[ "$has_pending" -gt 0 ]]; then
                     echo "ci_pending"
                     return 0
                 fi
             fi
-            
-            # If not pending, must be failed required checks
+
+            # No pending checks — required checks must have failed
             echo "ci_failed"
             return 0
             ;;
@@ -7613,19 +7626,19 @@ check_pr_status() {
             # Check for SonarCloud pattern specifically
             local check_rollup
             check_rollup=$(echo "$pr_json" | jq -r '.statusCheckRollup // []' 2>/dev/null || echo "[]")
-            
+
             if [[ "$check_rollup" != "[]" && "$check_rollup" != "null" ]]; then
                 local sonar_action_pass
                 sonar_action_pass=$(echo "$check_rollup" | jq '[.[] | select(.name == "SonarCloud Analysis" and .conclusion == "SUCCESS")] | length' 2>/dev/null || echo "0")
                 local sonar_gate_fail
                 sonar_gate_fail=$(echo "$check_rollup" | jq '[.[] | select(.name == "SonarCloud Code Analysis" and .conclusion == "FAILURE")] | length' 2>/dev/null || echo "0")
-                
+
                 if [[ "$sonar_action_pass" -gt 0 && "$sonar_gate_fail" -gt 0 ]]; then
                     echo "unstable_sonarcloud"
                     return 0
                 fi
             fi
-            
+
             # Other non-required checks failed, but PR is still mergeable
             # Treat as ready since required checks passed
             # Fall through to review check
@@ -7639,19 +7652,27 @@ check_pr_status() {
             return 0
             ;;
         *)
-            # UNKNOWN, DRAFT, HAS_HOOKS - check individual statuses as fallback
-            local check_rollup
-            check_rollup=$(echo "$pr_json" | jq -r '.statusCheckRollup // []' 2>/dev/null || echo "[]")
-            
-            if [[ "$check_rollup" != "[]" && "$check_rollup" != "null" ]]; then
-                local has_pending
-                has_pending=$(echo "$check_rollup" | jq '[.[] | select(.status == "IN_PROGRESS" or .status == "QUEUED" or .status == "PENDING")] | length' 2>/dev/null || echo "0")
-                
-                if [[ "$has_pending" -gt 0 ]]; then
+            # UNKNOWN (even after retry), HAS_HOOKS — use mergeable as fallback.
+            # Do NOT check individual statusCheckRollup items here because that
+            # conflates non-required pending checks with actual blockers (the
+            # original bug this fix addresses).
+            local mergeable_state
+            mergeable_state=$(echo "$pr_json" | jq -r '.mergeable // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
+
+            case "$mergeable_state" in
+                MERGEABLE)
+                    # GitHub says it's mergeable — fall through to review check
+                    ;;
+                CONFLICTING)
                     echo "ci_pending"
                     return 0
-                fi
-            fi
+                    ;;
+                *)
+                    # UNKNOWN mergeable too — report as pending, will resolve next pulse
+                    echo "ci_pending"
+                    return 0
+                    ;;
+            esac
             ;;
     esac
 
