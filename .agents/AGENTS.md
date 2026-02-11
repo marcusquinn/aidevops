@@ -259,7 +259,7 @@ supervisor-helper.sh status <batch-id>
 
 **Cron pulse is mandatory** for autonomous operation. Without it, the supervisor is passive and requires manual `pulse` calls. The pulse cycle: check workers -> evaluate outcomes -> dispatch next -> cleanup.
 
-**Session memory monitoring** (t264): Long-running OpenCode/Bun sessions accumulate WebKit malloc dirty pages that are never returned to the OS (25GB+ observed). Phase 11 of the pulse cycle checks the parent OpenCode session's `phys_footprint` and writes a respawn marker when it exceeds `SUPERVISOR_SELF_MEM_LIMIT` (default: 8192MB). Cron-based pulses are already fresh processes. Use `supervisor-helper.sh mem-check` to inspect session memory.
+**Session memory monitoring + respawn** (t264, t264.1): Long-running OpenCode/Bun sessions accumulate WebKit malloc dirty pages that are never returned to the OS (25GB+ observed). Phase 11 of the pulse cycle checks the parent session's `phys_footprint` when a batch wave completes (no running/queued tasks). If memory exceeds `SUPERVISOR_SELF_MEM_LIMIT` (default: 8192MB), it saves a checkpoint, logs the respawn event to `~/.aidevops/logs/respawn-history.log`, and exits cleanly for the next cron pulse to start fresh. Use `supervisor-helper.sh mem-check` to inspect memory and `supervisor-helper.sh respawn-history` to review respawn patterns.
 
 **Full docs**: `tools/ai-assistants/headless-dispatch.md`, `supervisor-helper.sh help`
 
