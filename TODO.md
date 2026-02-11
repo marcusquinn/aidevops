@@ -601,7 +601,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t008 aidevops-opencode Plugin #plan → [todo/PLANS.md#aidevops-opencode-plugin] ~1.5h (ai:45m test:30m read:15m) ref:GH#501 assignee:marcusquinn started:2026-02-11T03:28:15Z logged:2025-12-21
   - [ ] t008.1 Core plugin structure + agent loader ~4h #auto-dispatch assignee:marcusquinn started:2026-02-11T03:32:12Z
   - [ ] t008.2 MCP registration ~2h #auto-dispatch blocked-by:t008.1 assignee:marcusquinn started:2026-02-11T03:32:24Z
-  - [ ] t008.3 Quality hooks (pre-commit) ~3h #auto-dispatch blocked-by:t008.1
+  - [ ] t008.3 Quality hooks (pre-commit) ~3h #auto-dispatch blocked-by:t008.1 assignee:marcusquinn started:2026-02-11T03:32:41Z
   - [ ] t008.4 oh-my-opencode compatibility ~2h #auto-dispatch blocked-by:t008.1,t008.2,t008.3
 - [x] t004 Add Ahrefs MCP server integration #seo ~4h (ai:2h test:1h read:1h) logged:2025-12-20 completed:2026-01-25
 - [x] t005 Implement multi-tenant credential storage #security ~1.5d (ai:8h test:4h read:2h) logged:2025-12-20 completed:2026-01-24
