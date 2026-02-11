@@ -29,7 +29,7 @@ content/,Multi-media multi-channel content production - research to distribution
 tools/content/,Content tools - calendar planning summarization and extraction,content-calendar|summarize
 tools/social-media/,Social media tools - X/Twitter LinkedIn and Reddit,bird|linkedin|reddit
 tools/build-agent/,Agent design - composing efficient agents,build-agent|agent-review|agent-testing
-tools/build-mcp/,MCP development - creating MCP servers,build-mcp|server-patterns|api-wrapper|transports|deployment
+tools/build-mcp/,MCP development - creating MCP servers and plugins,build-mcp|server-patterns|api-wrapper|transports|deployment|aidevops-plugin
 tools/ai-assistants/,AI tool integration - OpenCode headless dispatch model comparison and response scoring,agno|capsolver|claude-code|compare-models|response-scoring|overview|openclaw|opencode-server|headless-dispatch
 tools/ai-orchestration/,AI orchestration - visual builders and multi-agent,overview|langflow|crewai|autogen|openprose
 tools/browser/,Browser automation - scraping and testing,agent-browser|stagehand|playwright|playwright-cli|playwright-emulation|playwriter|crawl4ai|watercrawl|pagespeed|peekaboo|curl-copy
@@ -71,7 +71,7 @@ services/accounting/,Accounting integration - invoicing,quickfile
 services/document-processing/,Document processing - LLM-powered extraction,unstract
 -->
 
-<!--TOON:workflows[12]{name,file,purpose}:
+<!--TOON:workflows[13]{name,file,purpose}:
 git-workflow,workflows/git-workflow.md,Branch naming and commit conventions
 plans,workflows/plans.md,Complex execution plans
 release,workflows/release.md,Semver and changelog generation
@@ -84,6 +84,7 @@ session-review,workflows/session-review.md,Session completeness review
 review-issue-pr,workflows/review-issue-pr.md,External issue/PR triage
 bug-fixing,workflows/bug-fixing.md,Bug fix workflow
 feature-development,workflows/feature-development.md,Feature development workflow
+conversation-starter,workflows/conversation-starter.md,Session greeting and auto-recall
 -->
 
 <!--TOON:scripts[73]{name,purpose}:
