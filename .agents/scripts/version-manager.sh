@@ -894,7 +894,7 @@ EOF
 
 # Main function
 main() {
-    local action="$1"
+    local action="${1:-}"
     local bump_type="${2:-}"
     
     case "$action" in
