@@ -77,6 +77,35 @@ sqlite3 --version
 ~/.aidevops/agents/scripts/memory-helper.sh validate
 ```
 
+## Auto-Recall
+
+Memories are automatically recalled at key entry points to provide relevant context:
+
+**Interactive Sessions:**
+- **Session start**: Recent memories (last 5) surface via `conversation-starter.md`
+- **Session resume**: After loading checkpoint, recent memories provide context
+
+**Headless Workers:**
+- **Runner dispatch**: Before task execution, runners recall:
+  - Recent memories (last 5) from runner's namespace
+  - Task-specific memories based on prompt query
+- **Objective runner**: On first step only (token efficiency), recalls:
+  - Recent memories (last 5)
+  - Objective-specific memories based on goal description
+  - Failure patterns from previous runs of the same objective
+
+**Behavior:**
+- Silent if no memories found (no noise)
+- Uses namespace isolation for runners (`--namespace <name> --shared`)
+- Formatted as markdown sections prepended to prompts
+- Only runs once per entry point (not on every iteration)
+
+**Implementation:**
+- `conversation-starter.md`: Lines 10-24 (interactive session start)
+- `session-checkpoint-helper.sh`: `cmd_load()` (session resume)
+- `runner-helper.sh`: `cmd_run()` (runner dispatch)
+- `objective-runner-helper.sh`: `recall_objective_memories()` + `run_loop()` (objective runner)
+
 ## Slash Commands
 
 | Command | Purpose |

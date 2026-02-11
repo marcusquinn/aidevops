@@ -293,6 +293,87 @@ Do NOT use other tools. If you need a restricted tool, STOP and report the need.
 }
 
 #######################################
+# Recall relevant memories for the objective
+# Returns formatted memory context to prepend to runner prompt
+#######################################
+recall_objective_memories() {
+    local obj_id="$1"
+    local objective="$2"
+
+    if [[ ! -x "$MEMORY_HELPER" ]]; then
+        return 0
+    fi
+
+    # Check if this objective is using a runner with namespace
+    local runner
+    runner=$(obj_config "$obj_id" "runner")
+    local namespace_arg=""
+    if [[ -n "$runner" ]]; then
+        namespace_arg="--namespace $runner --shared"
+    fi
+
+    # Recall recent memories (cross-session context)
+    local recent_memories=""
+    if [[ -n "$namespace_arg" ]]; then
+        # shellcheck disable=SC2086  # namespace_arg intentionally unquoted for word splitting
+        recent_memories=$("$MEMORY_HELPER" recall --recent --limit 5 $namespace_arg --format text 2>/dev/null || echo "")
+    else
+        recent_memories=$("$MEMORY_HELPER" recall --recent --limit 5 --format text 2>/dev/null || echo "")
+    fi
+
+    # Recall objective-specific memories based on description
+    local objective_memories=""
+    if [[ -n "$namespace_arg" ]]; then
+        # shellcheck disable=SC2086  # namespace_arg intentionally unquoted for word splitting
+        objective_memories=$("$MEMORY_HELPER" recall --query "$objective" --limit 5 $namespace_arg --format text 2>/dev/null || echo "")
+    else
+        objective_memories=$("$MEMORY_HELPER" recall --query "$objective" --limit 5 --format text 2>/dev/null || echo "")
+    fi
+
+    # Also check for failure patterns from previous objective runs
+    local failure_memories=""
+    if [[ -n "$namespace_arg" ]]; then
+        # shellcheck disable=SC2086  # namespace_arg intentionally unquoted for word splitting
+        failure_memories=$("$MEMORY_HELPER" recall --query "objective $obj_id failure" --limit 3 --auto-only $namespace_arg --format text 2>/dev/null || echo "")
+    else
+        failure_memories=$("$MEMORY_HELPER" recall --query "objective $obj_id failure" --limit 3 --auto-only --format text 2>/dev/null || echo "")
+    fi
+
+    local result=""
+    if [[ -n "$recent_memories" && "$recent_memories" != *"No memories found"* ]]; then
+        result="## Recent Memories (from prior sessions)
+$recent_memories"
+    fi
+
+    if [[ -n "$objective_memories" && "$objective_memories" != *"No memories found"* ]]; then
+        if [[ -n "$result" ]]; then
+            result="$result
+
+## Relevant Memories for this Objective
+$objective_memories"
+        else
+            result="## Relevant Memories for this Objective
+$objective_memories"
+        fi
+    fi
+
+    if [[ -n "$failure_memories" && "$failure_memories" != *"No memories found"* ]]; then
+        if [[ -n "$result" ]]; then
+            result="$result
+
+## Prior Failure Patterns for $obj_id
+$failure_memories"
+        else
+            result="## Prior Failure Patterns for $obj_id
+$failure_memories"
+        fi
+    fi
+
+    echo "$result"
+    return 0
+}
+
+#######################################
 # Estimate token cost from log file size
 # Rough heuristic: 1 byte ~= 0.25 tokens, cost ~= tokens * $0.000003 (sonnet input)
 #######################################
@@ -535,6 +616,15 @@ run_loop() {
         update_state "$obj_id" "current_step=$next_step" "last_step=$step_timestamp"
         audit_log "$dir" "STEP_START step=$next_step"
 
+        # Recall relevant memories for context (only on first step to save tokens)
+        local memory_context=""
+        if [[ "$next_step" -eq 1 ]]; then
+            memory_context=$(recall_objective_memories "$obj_id" "$objective")
+            if [[ -n "$memory_context" ]]; then
+                audit_log "$dir" "MEMORY_RECALL recalled memories for objective context"
+            fi
+        fi
+
         # Build prompt with scope constraints and progress context
         local scope_instructions
         scope_instructions=$(build_scope_instructions "$obj_id")
@@ -542,7 +632,11 @@ run_loop() {
         local max_steps
         max_steps=$(obj_config "$obj_id" "max_steps")
 
-        local prompt="## Objective
+        local prompt=""
+        if [[ -n "$memory_context" ]]; then
+            prompt="$memory_context
+
+## Objective
 
 $objective
 
@@ -560,6 +654,26 @@ Work toward the objective above. After each meaningful unit of work:
 - Otherwise, describe what you accomplished and what remains.
 
 Focus on making measurable progress. Be efficient with tokens."
+        else
+            prompt="## Objective
+
+$objective
+
+## Progress
+
+Step $next_step of $max_steps maximum.
+
+$scope_instructions
+
+## Instructions
+
+Work toward the objective above. After each meaningful unit of work:
+- If the objective is COMPLETE, respond with exactly: <promise>OBJECTIVE_COMPLETE</promise>
+- If you are BLOCKED and need human input, respond with exactly: <promise>OBJECTIVE_BLOCKED</promise>
+- Otherwise, describe what you accomplished and what remains.
+
+Focus on making measurable progress. Be efficient with tokens."
+        fi
 
         # Dispatch to opencode
         local log_file="$dir/runs/step-${next_step}.log"

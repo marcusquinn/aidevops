@@ -163,6 +163,14 @@ Cross-session SQLite FTS5 memory. Commands: `/remember {content}`, `/recall {que
 
 **Namespaces**: Runners can have isolated memory via `--namespace <name>`. Use `--shared` to also search global memory. List with `memory-helper.sh namespaces`.
 
+**Auto-recall**: Memories are automatically recalled at key entry points:
+- **Interactive session start**: Recent memories (last 5) surface via conversation-starter.md
+- **Session resume**: After loading checkpoint, recent memories provide context
+- **Runner dispatch**: Before task execution, runners recall recent + task-specific memories
+- **Objective runner**: On first step, recalls recent + objective-specific + failure pattern memories
+
+Auto-recall is silent (no output if no memories found) and uses namespace isolation for runners.
+
 **Full docs**: `memory/README.md`
 
 **Proactive memory**: When you detect solutions, preferences, workarounds, failed approaches, or decisions — proactively suggest `/remember {description}`. Use `memory-helper.sh store --auto` for auto-captured memories. Privacy: `<private>` blocks stripped, secrets rejected.

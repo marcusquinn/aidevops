@@ -425,6 +425,43 @@ cmd_run() {
     local mailbox_context
     mailbox_context=$(mailbox_before_run "$name" 2>/dev/null || true)
 
+    # Memory auto-recall: retrieve relevant memories before work
+    local memory_context=""
+    
+    # Recall recent memories (last 5)
+    local recent_memories=""
+    if [[ -x "$MEMORY_HELPER" ]]; then
+        recent_memories=$("$MEMORY_HELPER" --namespace "$name" recall --recent --limit 5 --format text 2>/dev/null || echo "")
+    fi
+    
+    # If we have a task description in the prompt, also recall task-specific memories
+    local task_memories=""
+    if [[ -n "$prompt" && -x "$MEMORY_HELPER" ]]; then
+        task_memories=$("$MEMORY_HELPER" --namespace "$name" recall --query "$prompt" --limit 5 --format text 2>/dev/null || echo "")
+    fi
+    
+    # Combine memory contexts
+    if [[ -n "$recent_memories" || -n "$task_memories" ]]; then
+        memory_context="## Memory Context (relevant learnings from previous runs)
+
+"
+        if [[ -n "$recent_memories" ]]; then
+            memory_context="${memory_context}### Recent Memories
+
+$recent_memories
+
+"
+        fi
+        if [[ -n "$task_memories" ]]; then
+            memory_context="${memory_context}### Task-Relevant Memories
+
+$task_memories
+
+"
+        fi
+        log_info "Retrieved memory context for runner: $name"
+    fi
+
     # Build the full prompt with runner context
     local agents_md="$dir/AGENTS.md"
     local full_prompt
@@ -440,6 +477,15 @@ cmd_run() {
 $prompt"
     else
         full_prompt="$prompt"
+    fi
+
+    # Prepend memory context if available
+    if [[ -n "$memory_context" ]]; then
+        full_prompt="$memory_context
+
+---
+
+$full_prompt"
     fi
 
     # Prepend mailbox context if there are unread messages
