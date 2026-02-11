@@ -7568,8 +7568,10 @@ check_pr_status() {
     fi
 
     # Check PR state
+    # t277: Use mergeStateStatus to respect GitHub's required vs non-required check distinction
+    # Note: mergeable field must be queried to populate mergeStateStatus correctly
     local pr_json
-    pr_json=$(gh pr view "$pr_number" --repo "$repo_slug" --json state,isDraft,reviewDecision,statusCheckRollup 2>>"$SUPERVISOR_LOG" || echo "")
+    pr_json=$(gh pr view "$pr_number" --repo "$repo_slug" --json state,isDraft,reviewDecision,mergeable,mergeStateStatus,statusCheckRollup 2>>"$SUPERVISOR_LOG" || echo "")
 
     if [[ -z "$pr_json" ]]; then
         echo "no_pr"
@@ -7599,60 +7601,115 @@ check_pr_status() {
         return 0
     fi
 
-    # Check CI status
-    local ci_status="pass"
-    local check_rollup
-    check_rollup=$(echo "$pr_json" | jq -r '.statusCheckRollup // []' 2>/dev/null || echo "[]")
+    # t277: Check CI status using mergeStateStatus (respects required checks only)
+    # mergeStateStatus values: BEHIND, BLOCKED, CLEAN, DIRTY, DRAFT, HAS_HOOKS, UNKNOWN, UNSTABLE
+    local merge_state
+    merge_state=$(echo "$pr_json" | jq -r '.mergeStateStatus // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
 
-    if [[ "$check_rollup" != "[]" && "$check_rollup" != "null" ]]; then
-        local has_failure
-        has_failure=$(echo "$check_rollup" | jq '[.[] | select(.conclusion == "FAILURE" or .conclusion == "ERROR")] | length' 2>/dev/null || echo "0")
-        local has_pending
-        has_pending=$(echo "$check_rollup" | jq '[.[] | select(.status == "IN_PROGRESS" or .status == "QUEUED" or .status == "PENDING")] | length' 2>/dev/null || echo "0")
-
-        if [[ "$has_failure" -gt 0 ]]; then
-            # t227: Check for SonarCloud pattern: GH Action passes but external quality gate fails
-            # This is UNSTABLE but safe to merge with --admin flag
-            local sonar_action_pass
-            sonar_action_pass=$(echo "$check_rollup" | jq '[.[] | select(.name == "SonarCloud Analysis" and .conclusion == "SUCCESS")] | length' 2>/dev/null || echo "0")
-            local sonar_gate_fail
-            sonar_gate_fail=$(echo "$check_rollup" | jq '[.[] | select(.name == "SonarCloud Code Analysis" and .conclusion == "FAILURE")] | length' 2>/dev/null || echo "0")
-            
-            if [[ "$sonar_action_pass" -gt 0 && "$sonar_gate_fail" -gt 0 ]]; then
-                # Only the external SonarCloud quality gate failed, GH Action passed
-                # Check if there are any OTHER failures besides SonarCloud Code Analysis
-                local other_failures
-                other_failures=$(echo "$check_rollup" | jq '[.[] | select((.conclusion == "FAILURE" or .conclusion == "ERROR") and .name != "SonarCloud Code Analysis")] | length' 2>/dev/null || echo "0")
-                
-                if [[ "$other_failures" -eq 0 ]]; then
-                    # Only SonarCloud external gate failed, everything else passed
-                    ci_status="unstable_sonarcloud"
-                else
-                    # Other checks also failed
-                    ci_status="failed"
-                fi
-            else
-                ci_status="failed"
-            fi
-        elif [[ "$has_pending" -gt 0 ]]; then
-            ci_status="pending"
+    # t277: GitHub lazy-loads mergeStateStatus — first query often returns UNKNOWN.
+    # Re-query once (the first call triggers computation, second returns the result).
+    if [[ "$merge_state" == "UNKNOWN" ]]; then
+        sleep 2
+        local pr_json_retry
+        pr_json_retry=$(gh pr view "$pr_number" --repo "$repo_slug" --json mergeable,mergeStateStatus 2>>"$SUPERVISOR_LOG" || echo "")
+        if [[ -n "$pr_json_retry" ]]; then
+            merge_state=$(echo "$pr_json_retry" | jq -r '.mergeStateStatus // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
         fi
     fi
 
-    if [[ "$ci_status" == "failed" ]]; then
-        echo "ci_failed"
-        return 0
-    fi
-    
-    if [[ "$ci_status" == "unstable_sonarcloud" ]]; then
-        echo "unstable_sonarcloud"
-        return 0
-    fi
+    # BLOCKED = required checks failed/pending, OR required reviews missing
+    # UNSTABLE = non-required checks failed but required checks passed
+    # CLEAN = all required checks passed, ready to merge
+    # BEHIND = needs rebase/merge with base branch
+    # DIRTY = merge conflicts
 
-    if [[ "$ci_status" == "pending" ]]; then
-        echo "ci_pending"
-        return 0
-    fi
+    # Hoist check_rollup above case to avoid duplicate declarations
+    local check_rollup
+    check_rollup=$(echo "$pr_json" | jq -r '.statusCheckRollup // []' 2>/dev/null || echo "[]")
+
+    case "$merge_state" in
+        BLOCKED)
+            # BLOCKED can mean: required checks failed/pending, OR required reviews
+            # are missing. We must distinguish CI blocks from review blocks.
+            # Note: gh pr view --json statusCheckRollup does NOT include isRequired,
+            # so we check for pending/failed checks and fall through if none found
+            # (the block is likely due to required reviews, handled below).
+
+            if [[ "$check_rollup" != "[]" && "$check_rollup" != "null" ]]; then
+                local has_pending
+                has_pending=$(echo "$check_rollup" | jq '[.[] | select(.status == "IN_PROGRESS" or .status == "QUEUED" or .status == "PENDING")] | length' 2>/dev/null || echo "0")
+
+                if [[ "$has_pending" -gt 0 ]]; then
+                    echo "ci_pending"
+                    return 0
+                fi
+
+                # Check for explicitly failed checks (conclusion or state)
+                local has_failed
+                has_failed=$(echo "$check_rollup" | jq '[.[] | select((.conclusion | test("FAILURE|TIMED_OUT|ACTION_REQUIRED")) or .state == "FAILURE" or .state == "ERROR")] | length' 2>/dev/null || echo "0")
+
+                if [[ "$has_failed" -gt 0 ]]; then
+                    echo "ci_failed"
+                    return 0
+                fi
+            fi
+
+            # No CI failures or pending checks detected — BLOCKED is likely due to
+            # required reviews or other non-CI branch protection rules.
+            # Fall through to review check below.
+            ;;
+        UNSTABLE)
+            # t227: Non-required checks failed (e.g., CodeFactor, CodeRabbit)
+            # Check for SonarCloud pattern specifically
+
+            if [[ "$check_rollup" != "[]" && "$check_rollup" != "null" ]]; then
+                local sonar_action_pass
+                sonar_action_pass=$(echo "$check_rollup" | jq '[.[] | select(.name == "SonarCloud Analysis" and .conclusion == "SUCCESS")] | length' 2>/dev/null || echo "0")
+                local sonar_gate_fail
+                sonar_gate_fail=$(echo "$check_rollup" | jq '[.[] | select(.name == "SonarCloud Code Analysis" and .conclusion == "FAILURE")] | length' 2>/dev/null || echo "0")
+
+                if [[ "$sonar_action_pass" -gt 0 && "$sonar_gate_fail" -gt 0 ]]; then
+                    echo "unstable_sonarcloud"
+                    return 0
+                fi
+            fi
+
+            # Other non-required checks failed, but PR is still mergeable
+            # Treat as ready since required checks passed
+            # Fall through to review check
+            ;;
+        CLEAN)
+            # All required checks passed, fall through to review check
+            ;;
+        BEHIND|DIRTY)
+            # Needs rebase or has conflicts - treat as pending
+            echo "ci_pending"
+            return 0
+            ;;
+        *)
+            # UNKNOWN (even after retry), HAS_HOOKS — use mergeable as fallback.
+            # Do NOT check individual statusCheckRollup items here because that
+            # conflates non-required pending checks with actual blockers (the
+            # original bug this fix addresses).
+            local mergeable_state
+            mergeable_state=$(echo "$pr_json" | jq -r '.mergeable // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
+
+            case "$mergeable_state" in
+                MERGEABLE)
+                    # GitHub says it's mergeable — fall through to review check
+                    ;;
+                CONFLICTING)
+                    echo "ci_pending"
+                    return 0
+                    ;;
+                *)
+                    # UNKNOWN mergeable too — report as pending, will resolve next pulse
+                    echo "ci_pending"
+                    return 0
+                    ;;
+            esac
+            ;;
+    esac
 
     # Check review status
     local review_decision
