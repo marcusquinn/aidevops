@@ -21,7 +21,7 @@ pro,gemini-2.5-pro,Capable large context
 grok,grok-3,Research and real-time web knowledge
 -->
 
-<!--TOON:subagents[48]{folder,purpose,key_files}:
+<!--TOON:subagents[47]{folder,purpose,key_files}:
 aidevops/,Framework internals - extending aidevops and architecture and plugins,setup|architecture|troubleshooting|self-improving-agents|claude-flow-comparison|plugins
 memory/,Cross-session memory - SQLite FTS5 storage,README
 seo/,Search optimization - keywords and rankings and UX/CRO,dataforseo|serper|semrush|neuronwriter|google-search-console|gsc-sitemaps|site-crawler|eeat-score|analytics-tracking|bing-webmaster-tools|screaming-frog|rich-results|debug-opengraph|debug-favicon|contentking|programmatic-seo|schema-validator|content-analyzer|seo-optimizer|keyword-mapper|mom-test-ux
@@ -45,7 +45,7 @@ tools/document/,Document extraction - conversion structured data extraction sche
 tools/ocr/,OCR and text extraction - local document processing via Ollama,glm-ocr
 tools/accounts/,Accounting tools - receipt OCR subscription audit,receipt-ocr|subscription-audit
 tools/ai-generation/,AI generation management - ComfyUI install nodes models workflows via comfy-cli,comfy-cli
-tools/video/,Video creation and downloading - programmatic generation and YouTube downloads,remotion|higgsfield|runway|yt-dlp|video-prompt-design
+tools/video/,Video creation and generation - programmatic editing and AI generation APIs,remotion|higgsfield|runway|wavespeed|yt-dlp|video-prompt-design
 tools/vision/,Vision AI - image generation understanding and editing with local and cloud models,overview|image-generation|image-understanding|image-editing
 tools/voice/,Voice AI - TTS/STT/S2S model catalog voice bridge Pipecat pipeline and cloud voice agents,voice-models|voice-ai-models|speech-to-speech|cloud-voice-agents|voice-bridge|hyprwhspr|pipecat-opencode|transcription|buzz
 tools/data-extraction/,Data extraction - scraping business data,outscraper
@@ -66,7 +66,6 @@ services/email/,Email services - transactional email deliverability and testing,
 services/communications/,Communications - SMS voice and Matrix bot dispatch,twilio|telfon|matrix-bot
 services/crm/,CRM integration - contact management,fluentcrm
 services/analytics/,Website analytics - GA4 reporting,google-analytics
-services/ai-generation/,AI generation API gateway - unified access to 200+ models (image video audio 3D),wavespeed
 services/monitoring/,Error monitoring and debugging,sentry|socket
 services/accounting/,Accounting integration - invoicing,quickfile
 services/document-processing/,Document processing - LLM-powered extraction,unstract
