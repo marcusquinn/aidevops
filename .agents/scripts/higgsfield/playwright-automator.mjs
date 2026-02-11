@@ -23,6 +23,12 @@ const DISCOVERY_MAX_AGE_HOURS = 24;
 const CREDITS_CACHE_FILE = join(STATE_DIR, 'credits-cache.json');
 const CREDITS_CACHE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
 
+// Unified CSS selector for generated images on the page.
+// Higgsfield renders images with either alt="image generation" or alt containing
+// "media asset by id" depending on the model/page state. Both must be counted
+// for accurate generation detection and download.
+const GENERATED_IMAGE_SELECTOR = 'img[alt="image generation"], img[alt*="media asset by id"]';
+
 // Resolve the default output directory based on session context.
 // Interactive sessions (TTY or --headed) save to ~/Downloads/higgsfield/ so users
 // can immediately review assets in Finder. Headless/pipeline runs save to the
@@ -1552,9 +1558,9 @@ async function clickAndVerifyGenerate(page, queueBefore, existingImageCount) {
 
   // Verify the click registered by checking for state changes
   await page.waitForTimeout(3000);
-  const postClickState = await page.evaluate(({ prevQueue, prevImages }) => {
+  const postClickState = await page.evaluate(({ prevQueue, prevImages, imgSelector }) => {
     const queueNow = (document.body.innerText.match(/In queue/g) || []).length;
-    const imagesNow = document.querySelectorAll('img[alt="image generation"]').length;
+    const imagesNow = document.querySelectorAll(imgSelector).length;
     const hasGeneratingIndicator = document.body.innerText.includes('Generating') ||
       document.body.innerText.includes('Processing') ||
       document.querySelectorAll('[class*="spinner"], [class*="loading"], [class*="progress"]').length > 0;
@@ -1562,7 +1568,7 @@ async function clickAndVerifyGenerate(page, queueBefore, existingImageCount) {
     const btnDisabled = genBtns.some(b => b.disabled || b.getAttribute('aria-disabled') === 'true');
     const btnTextNow = genBtns.map(b => b.textContent?.trim()).join(', ');
     return { queueNow, imagesNow, hasGeneratingIndicator, btnDisabled, btnTextNow };
-  }, { prevQueue: queueBefore, prevImages: existingImageCount });
+  }, { prevQueue: queueBefore, prevImages: existingImageCount, imgSelector: GENERATED_IMAGE_SELECTOR });
 
   const clickRegistered = postClickState.queueNow > queueBefore ||
     postClickState.imagesNow > existingImageCount ||
@@ -1621,9 +1627,9 @@ async function waitForImageGeneration(page, existingImageCount, queueBefore, opt
   while (Date.now() - startTime < timeout) {
     await page.waitForTimeout(pollInterval);
 
-    const state = await page.evaluate(() => {
+    const state = await page.evaluate((imgSelector) => {
       const queueItems = (document.body.innerText.match(/In queue/g) || []).length;
-      const images = document.querySelectorAll('img[alt="image generation"]').length;
+      const images = document.querySelectorAll(imgSelector).length;
       const genBtns = [...document.querySelectorAll('button')].filter(b =>
         b.textContent.includes('Generate') || b.textContent.includes('Unlimited')
       );
@@ -1634,7 +1640,7 @@ async function waitForImageGeneration(page, existingImageCount, queueBefore, opt
                         document.querySelector('main [class*="spinner"]') !== null ||
                         document.querySelector('main [class*="loading"]') !== null;
       return { queueItems, images, btnDisabled, btnText, hasSpinner };
-    });
+    }, GENERATED_IMAGE_SELECTOR);
 
     if (state.queueItems > peakQueue) peakQueue = state.queueItems;
     if (state.btnDisabled || state.hasSpinner) btnWasDisabled = true;
@@ -1683,9 +1689,9 @@ async function waitForImageGeneration(page, existingImageCount, queueBefore, opt
       console.log('No queue or button activity after 60s - reloading to check for new images...');
       await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
       await page.waitForTimeout(5000);
-      const freshCount = await page.evaluate(() =>
-        document.querySelectorAll('img[alt="image generation"]').length
-      );
+      const freshCount = await page.evaluate((imgSelector) =>
+        document.querySelectorAll(imgSelector).length
+      , GENERATED_IMAGE_SELECTOR);
       if (freshCount > existingImageCount) {
         console.log(`Generation complete (post-reload)! ${freshCount} images, ${freshCount - existingImageCount} new (${elapsed}s)`);
         return true;
@@ -1703,9 +1709,9 @@ async function waitForImageGeneration(page, existingImageCount, queueBefore, opt
 async function downloadNewImages(page, options, existingImageCount, generationComplete) {
   if (options.wait === false) return;
 
-  const currentImageCount = await page.evaluate(() =>
-    document.querySelectorAll('img[alt="image generation"]').length
-  );
+  const currentImageCount = await page.evaluate((imgSelector) =>
+    document.querySelectorAll(imgSelector).length
+  , GENERATED_IMAGE_SELECTOR);
   const newCount = currentImageCount - existingImageCount;
   const newImageIndices = [];
   for (let i = 0; i < newCount; i++) newImageIndices.push(i);
@@ -1769,9 +1775,9 @@ async function generateImage(options = {}) {
     await enableUnlimitedMode(page);
 
     // Capture pre-generation state
-    const existingImageCount = await page.evaluate(() =>
-      document.querySelectorAll('img[alt="image generation"]').length
-    );
+    const existingImageCount = await page.evaluate((imgSelector) =>
+      document.querySelectorAll(imgSelector).length
+    , GENERATED_IMAGE_SELECTOR);
     const queueBefore = await page.evaluate(() =>
       (document.body.innerText.match(/In queue/g) || []).length
     );
@@ -2944,8 +2950,8 @@ async function downloadImageViaDialog(page, imgLocator, index, outputDir, extraM
 // Returns array of downloaded file paths.
 async function downloadImagesByCDN(page, indices, outputDir, extraMeta, options) {
   const downloaded = [];
-  const cdnUrls = await page.evaluate((idxList) => {
-    const imgs = document.querySelectorAll('img[alt="image generation"], img[alt*="media asset by id"]');
+  const cdnUrls = await page.evaluate(({ idxList, imgSelector }) => {
+    const imgs = document.querySelectorAll(imgSelector);
     const targets = idxList != null ? idxList : [...Array(imgs.length).keys()];
     return targets.map(idx => {
       const img = imgs[idx];
@@ -2953,7 +2959,7 @@ async function downloadImagesByCDN(page, indices, outputDir, extraMeta, options)
       const cfMatch = img.src.match(/(https:\/\/d8j0ntlcm91z4\.cloudfront\.net\/[^\s]+)/);
       return { url: cfMatch ? cfMatch[1] : img.src, idx };
     }).filter(Boolean);
-  }, indices);
+  }, { idxList: indices, imgSelector: GENERATED_IMAGE_SELECTOR });
 
   // Also check for video elements when downloading all
   if (indices == null) {
@@ -2997,7 +3003,7 @@ async function downloadLatestResult(page, outputDir, count = 4, options = {}) {
   try {
     await dismissAllModals(page);
 
-    const generatedImgs = page.locator('img[alt="image generation"], img[alt*="media asset by id"]');
+    const generatedImgs = page.locator(GENERATED_IMAGE_SELECTOR);
     const imgCount = await generatedImgs.count();
     console.log(`Found ${imgCount} generated image(s) on page`);
 
@@ -3042,7 +3048,7 @@ async function downloadLatestResult(page, outputDir, count = 4, options = {}) {
 // Uses dialog-based download with CDN fallback for failures.
 async function downloadSpecificImages(page, outputDir, indices, options = {}) {
   const downloaded = [];
-  const generatedImgs = page.locator('img[alt="image generation"], img[alt*="media asset by id"]');
+  const generatedImgs = page.locator(GENERATED_IMAGE_SELECTOR);
 
   for (const idx of indices) {
     try {
@@ -3113,7 +3119,7 @@ async function useApp(options = {}) {
     console.log(`Waiting up to ${timeout / 1000}s for result...`);
 
     try {
-      await page.waitForSelector('img[alt="image generation"], video', {
+      await page.waitForSelector(`${GENERATED_IMAGE_SELECTOR}, video`, {
         timeout,
         state: 'visible'
       });
@@ -4175,7 +4181,7 @@ async function cinemaStudio(options = {}) {
     console.log(`Waiting up to ${timeout / 1000}s for Cinema Studio result...`);
 
     try {
-      await page.waitForSelector('img[alt="image generation"], video', { timeout, state: 'visible' });
+      await page.waitForSelector(`${GENERATED_IMAGE_SELECTOR}, video`, { timeout, state: 'visible' });
     } catch {
       console.log('Timeout waiting for Cinema Studio result');
     }
@@ -4358,7 +4364,7 @@ async function editImage(options = {}) {
     console.log(`Waiting up to ${timeout / 1000}s for edit result...`);
 
     try {
-      await page.waitForSelector('img[alt="image generation"]', { timeout, state: 'visible' });
+      await page.waitForSelector(GENERATED_IMAGE_SELECTOR, { timeout, state: 'visible' });
     } catch {
       console.log('Timeout waiting for edit result');
     }
@@ -4418,7 +4424,7 @@ async function upscale(options = {}) {
     console.log(`Waiting up to ${timeout / 1000}s for upscale result...`);
 
     try {
-      await page.waitForSelector('img[alt="image generation"], a[download]', { timeout, state: 'visible' });
+      await page.waitForSelector(`${GENERATED_IMAGE_SELECTOR}, a[download]`, { timeout, state: 'visible' });
     } catch {
       console.log('Timeout waiting for upscale result');
     }
@@ -4593,7 +4599,7 @@ async function assetChain(options = {}) {
     let assetCount = await assetImg.count();
     // Fallback to alt-based selector if main img finds nothing
     if (assetCount === 0) {
-      assetImg = page.locator('img[alt="image generation"], img[alt*="media asset by id"]');
+      assetImg = page.locator(GENERATED_IMAGE_SELECTOR);
       assetCount = await assetImg.count();
     }
     // Final fallback: wait longer for lazy-loaded content
@@ -4995,7 +5001,7 @@ async function mixedMediaPreset(options = {}) {
     console.log(`Waiting up to ${timeout / 1000}s for mixed media result...`);
 
     try {
-      await page.waitForSelector('img[alt="image generation"], video', { timeout, state: 'visible' });
+      await page.waitForSelector(`${GENERATED_IMAGE_SELECTOR}, video`, { timeout, state: 'visible' });
     } catch {
       console.log('Timeout waiting for mixed media result');
     }
@@ -5120,7 +5126,7 @@ async function motionPreset(options = {}) {
     console.log(`Waiting up to ${timeout / 1000}s for motion preset result...`);
 
     try {
-      await page.waitForSelector('video, img[alt="image generation"]', { timeout, state: 'visible' });
+      await page.waitForSelector(`video, ${GENERATED_IMAGE_SELECTOR}`, { timeout, state: 'visible' });
     } catch {
       console.log('Timeout waiting for motion preset result');
     }
@@ -5299,7 +5305,7 @@ async function storyboard(options = {}) {
     console.log(`Waiting up to ${timeout / 1000}s for storyboard result...`);
 
     try {
-      await page.waitForSelector('img[alt="image generation"], .storyboard-panel, [class*="storyboard"]', { timeout, state: 'visible' });
+      await page.waitForSelector(`${GENERATED_IMAGE_SELECTOR}, .storyboard-panel, [class*="storyboard"]`, { timeout, state: 'visible' });
     } catch {
       console.log('Timeout waiting for storyboard result');
     }
@@ -5494,7 +5500,7 @@ async function aiInfluencer(options = {}) {
     console.log(`Waiting up to ${timeout / 1000}s for AI Influencer result...`);
 
     try {
-      await page.waitForSelector('img[alt="image generation"]', { timeout, state: 'visible' });
+      await page.waitForSelector(GENERATED_IMAGE_SELECTOR, { timeout, state: 'visible' });
     } catch {
       console.log('Timeout waiting for AI Influencer result');
     }
@@ -5567,7 +5573,7 @@ async function createCharacter(options = {}) {
     console.log(`Waiting up to ${timeout / 1000}s for character creation...`);
 
     try {
-      await page.waitForSelector('img[alt="image generation"], [class*="character"]', { timeout, state: 'visible' });
+      await page.waitForSelector(`${GENERATED_IMAGE_SELECTOR}, [class*="character"]`, { timeout, state: 'visible' });
     } catch {
       console.log('Timeout waiting for character creation');
     }
@@ -5681,7 +5687,7 @@ async function featurePage(options = {}) {
     console.log(`Waiting up to ${timeout / 1000}s for ${feature.name} result...`);
 
     try {
-      await page.waitForSelector('img[alt="image generation"], video', { timeout, state: 'visible' });
+      await page.waitForSelector(`${GENERATED_IMAGE_SELECTOR}, video`, { timeout, state: 'visible' });
     } catch {
       console.log(`Timeout waiting for ${feature.name} result`);
     }
