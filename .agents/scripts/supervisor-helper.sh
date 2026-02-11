@@ -12507,6 +12507,9 @@ cmd_notify() {
 # Reads PLANS.md section and generates subtasks in TODO.md
 # with #auto-dispatch tags for autonomous execution.
 #
+# This is a special worker that IS allowed to edit TODO.md
+# because it's generating subtasks for orchestration.
+#
 # Arguments:
 #   $1 - task_id (e.g., t199)
 #   $2 - plan_anchor (e.g., 2026-02-09-content-creation-agent-architecture)
@@ -12528,60 +12531,115 @@ dispatch_decomposition_worker() {
         return 1
     fi
 
-    # Build decomposition prompt
+    # Build decomposition prompt with explicit TODO.md edit permission
     local decomposition_prompt
-    decomposition_prompt=$(cat <<EOF
-You are a task decomposition worker. Your job is to read a plan from PLANS.md and generate subtasks in TODO.md.
+    decomposition_prompt=$(cat <<'PROMPT_EOF'
+You are a task decomposition worker with SPECIAL PERMISSION to edit TODO.md.
 
-## Task: $task_id
-## Plan anchor: $plan_anchor
-## Repository: $repo
+Your mission: Read a plan from PLANS.md and generate subtasks in TODO.md with #auto-dispatch tags.
 
-## Instructions:
-1. Read the plan section from todo/PLANS.md with anchor #$plan_anchor
-2. Analyze the plan structure (phases, milestones, deliverables)
-3. Generate subtasks in TODO.md following this format:
-   - Parent task: $task_id (already exists, DO NOT modify)
-   - Subtasks: ${task_id}.1, ${task_id}.2, etc. (indented with 2 spaces)
-   - Each subtask MUST have #auto-dispatch tag
-   - Include estimates (~Xh or ~Xm)
-   - Preserve any dependencies or metadata from the plan
+## MANDATORY Worker Restrictions (t173) - EXCEPTION FOR THIS WORKER
+You ARE allowed to edit TODO.md for this specific task because you are generating
+subtasks for orchestration. This is the ONLY exception to the worker TODO.md restriction.
 
-4. Insert subtasks immediately after the parent task line in TODO.md
-5. Commit with message: "feat: auto-decompose $task_id from PLANS.md ($plan_anchor)"
-6. DO NOT create a PR (this is a TODO.md-only change, goes directly to main)
-7. Exit with status 0 when done
+## Task Details
+PROMPT_EOF
+)
+    decomposition_prompt+="
+Task ID: $task_id
+Plan anchor: $plan_anchor
+Repository: $repo
+"
+    decomposition_prompt+=$(cat <<'PROMPT_EOF'
 
-## Example output format:
-- [ ] $task_id Parent task description #plan → [todo/PLANS.md#$plan_anchor]
-  - [ ] ${task_id}.1 First subtask from plan ~30m #auto-dispatch
-  - [ ] ${task_id}.2 Second subtask from plan ~45m #auto-dispatch blocked-by:${task_id}.1
-  - [ ] ${task_id}.3 Third subtask from plan ~20m #auto-dispatch
+## Instructions
 
-## CRITICAL:
+### Step 1: Read the plan
+Read todo/PLANS.md and find the section with anchor matching the plan_anchor above.
+The anchor format is: ### [YYYY-MM-DD] Plan Title
+Look for the heading that matches the anchor slug.
+
+### Step 2: Analyze the plan structure
+Extract:
+- Phases or milestones (usually in #### Progress section)
+- Deliverables and their estimates
+- Dependencies between phases
+- Any special requirements or constraints
+
+### Step 3: Generate subtasks
+Create subtasks following this format:
+- Parent task line: DO NOT MODIFY (already exists in TODO.md)
+- Subtasks: ${task_id}.1, ${task_id}.2, etc.
+- Indentation: 2 spaces before the dash
+- Each subtask MUST have #auto-dispatch tag
+- Include estimates (~Xh or ~Xm) based on plan
+- Add blocked-by: dependencies if phases are sequential
+- Keep descriptions concise but actionable
+
+### Step 4: Insert subtasks in TODO.md
+1. Find the parent task line (starts with "- [ ] ${task_id} ")
+2. Insert subtasks immediately after it (before any blank line or next task)
+3. Preserve all existing content
+4. DO NOT modify the parent task line
+
+### Step 5: Commit and exit
+1. Run: git add TODO.md
+2. Run: git commit -m "feat: auto-decompose ${task_id} from PLANS.md (${plan_anchor})"
+3. Run: git push origin main
+4. Exit with status 0
+
+## Example output format
+```markdown
+- [ ] t300 Email Testing Suite #plan → [todo/PLANS.md#2026-02-10-email-testing-suite] ~2h
+  - [ ] t300.1 Email Design Test agent + helper script ~35m #auto-dispatch
+  - [ ] t300.2 Email Delivery Test agent + helper script ~35m #auto-dispatch blocked-by:t300.1
+  - [ ] t300.3 Email Health Check enhancements ~15m #auto-dispatch blocked-by:t300.2
+  - [ ] t300.4 Cross-references + integration ~10m #auto-dispatch blocked-by:t300.3
+```
+
+## CRITICAL Rules
 - DO NOT modify the parent task line
 - DO NOT remove any existing content
 - ONLY add the indented subtasks
 - Each subtask MUST be actionable and have #auto-dispatch
 - Commit directly to main (no branch, no PR)
-EOF
+- This is a TODO.md-only change (exception to worker restrictions)
+- Exit 0 when done, exit 1 on error
+
+## Uncertainty Decision Framework
+If the plan structure is unclear:
+- PROCEED: Generate subtasks based on visible phases/milestones
+- PROCEED: Use reasonable estimates if not specified in plan
+- FLAG: Exit with error if plan anchor not found in PLANS.md
+- FLAG: Exit with error if plan has no actionable content
+
+Start now. Read todo/PLANS.md, find the anchor, generate subtasks, commit, push, exit 0.
+PROMPT_EOF
 )
 
+    # Create logs directory if it doesn't exist
+    mkdir -p "$HOME/.aidevops/logs"
+    
     # Dispatch worker using Claude CLI
     local worker_log="$HOME/.aidevops/logs/decomposition-worker-${task_id}.log"
     log_info "  Decomposition worker log: $worker_log"
 
-    # Use Claude CLI to dispatch the worker
+    # Use Claude CLI to dispatch the worker (background process)
     if command -v Claude &>/dev/null; then
         (
             cd "$repo" || exit 1
-            Claude -p "$decomposition_prompt" > "$worker_log" 2>&1
+            echo "$decomposition_prompt" | Claude > "$worker_log" 2>&1
+            local exit_code=$?
+            echo "Worker exit code: $exit_code" >> "$worker_log"
+            exit "$exit_code"
         ) &
         local worker_pid=$!
         log_success "  Decomposition worker dispatched (PID: $worker_pid)"
         
         # Update task metadata with worker PID
-        db "$SUPERVISOR_DB" "UPDATE tasks SET metadata = metadata || ',decomposition_worker_pid=$worker_pid' WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || true
+        local escaped_id
+        escaped_id=$(sql_escape "$task_id")
+        db "$SUPERVISOR_DB" "UPDATE tasks SET metadata = metadata || ',decomposition_worker_pid=$worker_pid' WHERE id = '$escaped_id';" 2>/dev/null || true
     else
         log_error "  Claude CLI not found — cannot dispatch decomposition worker"
         return 1
