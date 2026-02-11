@@ -10968,6 +10968,44 @@ update_todo_on_complete() {
         return 1
     fi
 
+    # t278: Guard against marking #plan tasks complete when subtasks are still open.
+    # A #plan task is a parent that was decomposed into subtasks. It should only be
+    # marked [x] when ALL its subtasks are [x]. This prevents decomposition workers
+    # from prematurely completing the parent.
+    local task_line
+    task_line=$(grep -E "^[[:space:]]*- \[[ x-]\] ${task_id}( |$)" "$todo_file" | head -1 || true)
+    if [[ -n "$task_line" && "$task_line" == *"#plan"* ]]; then
+        # Get the indentation level of this task
+        local task_indent
+        task_indent=$(echo "$task_line" | sed -E 's/^([[:space:]]*).*/\1/' | wc -c)
+        task_indent=$((task_indent - 1))  # wc -c counts newline
+
+        # Check for open subtasks (lines indented deeper with [ ])
+        local open_subtasks
+        open_subtasks=$(awk -v tid="$task_id" -v tindent="$task_indent" '
+            BEGIN { found=0 }
+            /- \[[ x-]\] '"$task_id"'( |$)/ { found=1; next }
+            found && /^[[:space:]]*- \[/ {
+                # Count leading spaces
+                match($0, /^[[:space:]]*/);
+                line_indent = RLENGTH;
+                if (line_indent > tindent) {
+                    if ($0 ~ /- \[ \]/) { print $0 }
+                } else { found=0 }
+            }
+            found && /^[[:space:]]*$/ { next }
+            found && !/^[[:space:]]*- / && !/^[[:space:]]*$/ { found=0 }
+        ' "$todo_file")
+
+        if [[ -n "$open_subtasks" ]]; then
+            local open_count
+            open_count=$(echo "$open_subtasks" | wc -l | tr -d ' ')
+            log_warn "Task $task_id is a #plan task with $open_count open subtask(s) — NOT marking [x]"
+            log_warn "  Parent #plan tasks should only be completed when all subtasks are done"
+            return 1
+        fi
+    fi
+
     local today
     today=$(date +%Y-%m-%d)
 
@@ -12627,7 +12665,8 @@ Create subtasks following this format:
 \`\`\`
 
 ## CRITICAL Rules
-- DO NOT modify the parent task line
+- DO NOT modify the parent task line — it MUST remain [ ] (unchecked)
+- DO NOT mark the parent task [x] — it stays open until ALL subtasks are complete
 - DO NOT remove any existing content
 - ONLY add the indented subtasks
 - Each subtask MUST be actionable and have #auto-dispatch
