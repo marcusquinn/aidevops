@@ -803,14 +803,33 @@ print(json.dumps(qf_data, indent=2))
 
     print_success "QuickFile-ready data saved to: ${qf_file}"
     echo ""
-    print_info "Step 3/3: To create the purchase invoice in QuickFile, use the AI assistant:"
-    echo ""
-    echo "  Prompt the AI with:"
-    echo "    \"Read ${qf_file} and use quickfile_supplier_search to find or"
-    echo "     quickfile_supplier_create to create the supplier, then use"
-    echo "     quickfile_purchase_create to record this purchase invoice.\""
-    echo ""
-    print_info "Or use the QuickFile MCP tools directly in your AI session."
+
+    # Step 3: Generate MCP recording instructions via quickfile-helper.sh
+    local qf_helper="${SCRIPT_DIR}/quickfile-helper.sh"
+    if [[ -x "$qf_helper" ]]; then
+        local record_cmd="record-purchase"
+        if [[ "$doc_type" == "receipt" ]]; then
+            record_cmd="record-expense"
+        fi
+        print_info "Step 3/3: Generating QuickFile MCP recording instructions..."
+        "$qf_helper" "$record_cmd" "$qf_file" --nominal "$nominal_code" --auto-supplier || {
+            print_warning "quickfile-helper.sh failed, showing manual instructions"
+            echo ""
+            echo "  Prompt the AI with:"
+            echo "    \"Read ${qf_file} and use quickfile_supplier_search to find or"
+            echo "     quickfile_supplier_create to create the supplier, then use"
+            echo "     quickfile_purchase_create to record this purchase invoice.\""
+        }
+    else
+        print_info "Step 3/3: To create the purchase invoice in QuickFile, use the AI assistant:"
+        echo ""
+        echo "  Prompt the AI with:"
+        echo "    \"Read ${qf_file} and use quickfile_supplier_search to find or"
+        echo "     quickfile_supplier_create to create the supplier, then use"
+        echo "     quickfile_purchase_create to record this purchase invoice.\""
+        echo ""
+        print_info "Or install quickfile-helper.sh for automated MCP instructions."
+    fi
     return 0
 }
 
@@ -1008,7 +1027,9 @@ cmd_help() {
     echo "  2. extract   - Structured extraction + validation (auto-detect type)"
     echo "  3. validate  - VAT arithmetic, date checks, confidence scoring"
     echo "  4. preview   - Show QuickFile purchase invoice preview (dry run)"
-    echo "  5. quickfile  - Generate QuickFile-ready JSON for purchase creation"
+    echo "  5. quickfile - Generate QuickFile-ready JSON + MCP recording instructions"
+    echo ""
+    echo "  For recording in QuickFile, also see: quickfile-helper.sh"
     echo ""
     echo "${HELP_LABEL_EXAMPLES}"
     echo "  ocr-receipt-helper.sh scan receipt.jpg"

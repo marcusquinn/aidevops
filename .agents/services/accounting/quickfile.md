@@ -62,6 +62,73 @@ Use it for:
 - **Reporting**: P&L, Balance Sheet, VAT, Ageing reports
 - **System**: Account details, event log, notes
 
+## Purchase/Expense Recording Workflow
+
+The OCR extraction pipeline (t012.3) feeds into QuickFile via `quickfile-helper.sh` (t012.4):
+
+```text
+Receipt/Invoice (photo/scan/PDF)
+        |
+   [OCR Extract]  ocr-receipt-helper.sh extract file
+        |
+   [Prepare JSON]  ocr-receipt-helper.sh quickfile file
+        |
+   [Record]  quickfile-helper.sh record-purchase file-quickfile.json
+        |
+   [MCP Calls]  AI executes: supplier_search -> supplier_create -> purchase_create
+```
+
+### Quick Start
+
+```bash
+# Full pipeline: extract + prepare + generate MCP instructions
+ocr-receipt-helper.sh quickfile invoice.pdf
+
+# Or step by step:
+ocr-receipt-helper.sh extract invoice.pdf          # Step 1: Extract
+quickfile-helper.sh preview invoice-quickfile.json  # Step 2: Preview
+quickfile-helper.sh record-purchase invoice-quickfile.json  # Step 3: Record
+
+# Expense receipts (auto-categorises nominal code):
+quickfile-helper.sh record-expense receipt-quickfile.json --auto-supplier
+
+# Batch process a folder:
+quickfile-helper.sh batch-record ~/.aidevops/.agent-workspace/work/ocr-receipts/
+```
+
+### Supplier Resolution
+
+The helper automatically generates supplier lookup/creation instructions:
+
+1. `quickfile_supplier_search` with extracted vendor/merchant name
+2. If found: uses the returned SupplierId
+3. If not found (with `--auto-supplier`): `quickfile_supplier_create`
+
+### Nominal Code Auto-Categorisation
+
+For expense receipts, `quickfile-helper.sh record-expense` auto-categorises:
+
+| Merchant Pattern | Nominal Code | Category |
+|-----------------|-------------|----------|
+| Shell, BP, fuel | 7401 | Motor Expenses - Fuel |
+| Hotel, Airbnb | 7403 | Hotel & Accommodation |
+| Restaurant, cafe | 7402 | Subsistence |
+| Train, taxi, Uber | 7400 | Travel & Subsistence |
+| Amazon, office supplies | 7504 | Stationery & Office Supplies |
+| Adobe, Microsoft, SaaS | 7404 | Computer Software |
+| *Default* | 5000 | General Purchases |
+
+Override with `--nominal <code>`. Full list: `quickfile_report_chart_of_accounts`.
+
+### Related Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `quickfile-helper.sh` | QuickFile recording bridge (supplier resolve, purchase/expense create) |
+| `ocr-receipt-helper.sh` | OCR extraction pipeline (scan, extract, batch, quickfile) |
+| `document-extraction-helper.sh` | General document extraction (Docling + ExtractThinker) |
+| `extraction_pipeline.py` | Pydantic validation, VAT checks, confidence scoring |
+
 ## Prerequisites
 
 - **Node.js 18+**: Required to run the MCP server

@@ -84,8 +84,11 @@ Input (photo/scan/PDF)
     [5. Output]  ── JSON with data + validation summary
          |           Flags requires_review if confidence < 0.7 or VAT mismatch
          |
-    [6. QuickFile]  ── (optional) Supplier lookup/create + purchase invoice
-                       Tools: quickfile_supplier_search, quickfile_purchase_create
+     [6. QuickFile]  ── quickfile-helper.sh (t012.4)
+                       Supplier resolution + purchase invoice creation
+                       Tools: quickfile_supplier_search, quickfile_supplier_create,
+                              quickfile_purchase_create
+                       Helper: quickfile-helper.sh record-purchase|record-expense
 ```
 
 ## Supported Input Formats
@@ -146,36 +149,53 @@ Input (photo/scan/PDF)
 
 ## QuickFile Integration
 
-The `quickfile` command generates a JSON file ready for the QuickFile MCP tools:
+The `quickfile` command extracts data and generates MCP recording instructions via `quickfile-helper.sh`:
 
 ```text
 ocr-receipt-helper.sh quickfile invoice.pdf
-  → Extracts structured data
-  → Generates ~/.aidevops/.agent-workspace/work/ocr-receipts/{name}-quickfile.json
-  → Provides AI prompt to create the purchase invoice via MCP tools
+  → Step 1: Extracts structured data (OCR + LLM)
+  → Step 2: Generates {name}-quickfile.json
+  → Step 3: Calls quickfile-helper.sh to generate MCP tool call instructions
 ```
 
-### QuickFile Workflow (AI-Assisted)
+### QuickFile Workflow
 
-After running `quickfile`, prompt the AI assistant:
+```bash
+# One-command pipeline (extract + prepare + instructions):
+ocr-receipt-helper.sh quickfile invoice.pdf
 
-1. **Supplier lookup**: `quickfile_supplier_search` with the extracted vendor name
-2. **Supplier creation** (if new): `quickfile_supplier_create` with vendor details
-3. **Purchase invoice**: `quickfile_purchase_create` with extracted line items, amounts, VAT
-4. **Nominal codes**: Use `quickfile_report_chart_of_accounts` to find the right code
+# Or use quickfile-helper.sh directly with pre-extracted JSON:
+quickfile-helper.sh record-purchase invoice-quickfile.json
+quickfile-helper.sh record-expense receipt-quickfile.json --auto-supplier
+
+# Batch process a folder:
+quickfile-helper.sh batch-record ~/.aidevops/.agent-workspace/work/ocr-receipts/
+
+# Preview (dry run):
+quickfile-helper.sh preview invoice-quickfile.json
+```
+
+The AI assistant then executes the generated MCP tool calls:
+
+1. **Supplier resolution**: `quickfile_supplier_search` -> `quickfile_supplier_create` (if new)
+2. **Purchase recording**: `quickfile_purchase_create` with mapped line items, VAT, nominal codes
+3. **Expense auto-categorisation**: `record-expense` infers nominal codes from merchant/item patterns
 
 ### Common Nominal Codes (UK)
 
 | Code | Category |
 |------|----------|
-| 7901 | General Purchases |
-| 7502 | Office Supplies |
-| 7501 | Postage & Delivery |
+| 5000 | General Purchases |
 | 7400 | Travel & Subsistence |
-| 7304 | Software & IT |
-| 7200 | Advertising & Marketing |
-| 7100 | Rent |
-| 7003 | Subcontractors |
+| 7401 | Motor Expenses - Fuel |
+| 7402 | Subsistence (meals) |
+| 7403 | Hotel & Accommodation |
+| 7404 | Computer Software |
+| 7501 | Postage & Shipping |
+| 7502 | Telephone & Internet |
+| 7504 | Stationery & Office Supplies |
+| 6201 | Advertising & Marketing |
+| 7600 | Professional Fees |
 
 ## Privacy Modes
 
