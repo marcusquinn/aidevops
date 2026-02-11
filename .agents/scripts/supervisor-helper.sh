@@ -5678,7 +5678,9 @@ extract_log_metadata() {
     # heuristic quality signal — workers that parallelise independent subtasks
     # are more efficient. Logged for pattern tracking and supervisor dashboards.
     local task_tool_count=0
-    task_tool_count=$(grep -c 'mcp_task\|"tool_name":"task"\|"name":"task"' "$log_file" 2>/dev/null || echo 0)
+    task_tool_count=$(grep -c 'mcp_task\|"tool_name":"task"\|"name":"task"' "$log_file" 2>/dev/null || true)
+    task_tool_count="${task_tool_count//[^0-9]/}"
+    task_tool_count="${task_tool_count:-0}"
     echo "task_tool_count=$task_tool_count"
 
     # Exit code
@@ -10506,6 +10508,7 @@ populate_verify_queue() {
     # Determine next verify ID
     local last_vnum
     last_vnum=$(grep -oE 'v[0-9]+' "$verify_file" | grep -oE '[0-9]+' | sort -n | tail -1 || echo "0")
+    last_vnum=$((10#$last_vnum))
     local next_vnum=$((last_vnum + 1))
     local verify_id
     verify_id=$(printf "v%03d" "$next_vnum")
@@ -11044,6 +11047,7 @@ generate_verify_entry() {
     # Get next vNNN number
     local last_v
     last_v=$(grep -oE '^- \[.\] v([0-9]+)' "$verify_file" | grep -oE '[0-9]+' | sort -n | tail -1 || echo "0")
+    last_v=$((10#$last_v))
     local next_v=$((last_v + 1))
     local vid
     vid=$(printf "v%03d" "$next_v")
@@ -11606,7 +11610,9 @@ store_success_pattern() {
     local log_file task_tool_count=0
     log_file=$(db "$SUPERVISOR_DB" "SELECT log_file FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
     if [[ -n "$log_file" && -f "$log_file" ]]; then
-        task_tool_count=$(grep -c 'mcp_task\|"tool_name":"task"\|"name":"task"' "$log_file" 2>/dev/null || echo 0)
+        task_tool_count=$(grep -c 'mcp_task\|"tool_name":"task"\|"name":"task"' "$log_file" 2>/dev/null || true)
+        task_tool_count="${task_tool_count//[^0-9]/}"
+        task_tool_count="${task_tool_count:-0}"
     fi
     if [[ "$task_tool_count" -gt 0 ]]; then
         content="$content [task_tool:$task_tool_count]"
