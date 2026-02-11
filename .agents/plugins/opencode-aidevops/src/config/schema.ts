@@ -36,6 +36,11 @@ const configSchema = z.object({
       "configs",
       "templates",
       "plugins",
+      "scripts",
+      "hooks",
+      "prompts",
+      ".agent",
+      "loop-state",
     ]),
 });
 

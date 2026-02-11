@@ -2,12 +2,12 @@
   "name": "opencode-aidevops",
   "version": "2.0.0",
   "description": "OpenCode plugin for aidevops - agent loader, compaction context, CLI tools",
-  "main": "dist/index.mjs",
+  "main": "dist/index.js",
   "type": "module",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.mjs"
+      "import": "./dist/index.js"
     }
   },
   "scripts": {

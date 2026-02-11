@@ -17,10 +17,11 @@ tools:
 
 ## Quick Reference
 
-- **Status**: Design phase (not yet implemented)
+- **Status**: Phase 1 implemented (t008.1), Phases 2-4 pending
 - **Purpose**: Native OpenCode plugin wrapper for aidevops
 - **Approach**: Thin wrapper that loads existing aidevops agents/MCPs
 - **Compatibility**: Works with OpenCode plugin system
+- **Location**: `.agents/plugins/opencode-aidevops/`
 
 **Key Decision**: aidevops is built for OpenCode (TUI, Desktop, Extension).
 The plugin provides additional OpenCode-specific enhancements.
@@ -52,30 +53,27 @@ aidevops currently integrates with OpenCode via:
 
 ## Architecture Design
 
-### Plugin Structure
+### Plugin Structure (implemented)
 
 ```text
-aidevops-opencode/
+.agents/plugins/opencode-aidevops/
 ├── src/
-│   ├── index.ts              # Main plugin entry
+│   ├── index.ts              # Main plugin factory (composes hooks + tools)
+│   ├── types.d.ts            # Plugin type definitions
 │   ├── agents/
-│   │   ├── loader.ts         # Load agents from ~/.aidevops/agents/
-│   │   └── registry.ts       # Register agents with OpenCode
-│   ├── mcps/
-│   │   ├── loader.ts         # Load MCP configs
-│   │   └── registry.ts       # Register MCPs with OpenCode
+│   │   └── loader.ts         # Scan ~/.aidevops/agents/, parse YAML frontmatter
+│   ├── config/
+│   │   └── schema.ts         # Zod config schema + loader
 │   ├── hooks/
-│   │   ├── pre-commit.ts     # Quality checks before commit
-│   │   ├── post-tool-use.ts  # After tool execution
-│   │   └── user-prompt.ts    # Prompt preprocessing
-│   ├── tools/
-│   │   └── aidevops-cli.ts   # Expose aidevops CLI as tool
-│   └── config/
-│       ├── schema.ts         # Zod config schema
-│       └── types.ts          # TypeScript types
-├── package.json
-├── tsconfig.json
-└── README.md
+│   │   ├── compaction.ts     # Session compaction context injection
+│   │   ├── shell-env.ts      # AIDEVOPS_* env vars + PATH injection
+│   │   └── chat-context.ts   # Lightweight session-start context
+│   └── tools/
+│       └── aidevops-cli.ts   # aidevops + aidevops-helper tool definitions
+├── index.mjs                 # Legacy plugin (v1, compaction-only)
+├── package.json              # v2.0.0, deps: gray-matter, zod
+├── tsconfig.json             # Strict TS, ES2022 target
+└── .gitignore                # node_modules/, dist/
 ```
 
 ### Core Components
@@ -375,24 +373,33 @@ export async function loadConfig(): Promise<Config> {
 
 ## Implementation Roadmap
 
-### Phase 1: Core Plugin (MVP)
+### Phase 1: Core Plugin (MVP) — t008.1 (implemented)
 
-- [ ] Basic plugin structure
-- [ ] Agent loader from `~/.aidevops/agents/`
-- [ ] MCP registration
-- [ ] aidevops CLI tool
+- [x] Basic plugin structure (TypeScript src/ layout with modular architecture)
+- [x] Agent loader from `~/.aidevops/agents/` (434 agents, YAML frontmatter parsing)
+- [ ] MCP registration (t008.2)
+- [x] aidevops CLI tool (aidevops + aidevops-helper tools)
+- [x] Compaction hook (ported from index.mjs + checkpoint support)
+- [x] Shell env hook (AIDEVOPS_* vars + PATH injection)
+- [x] Chat context hook (session-start context injection)
 
-### Phase 2: Hooks
+### Phase 2: MCP Registration — t008.2
+
+- [ ] Load MCP configs from opencode.json
+- [ ] Register MCPs programmatically
+- [ ] MCP health monitoring
+
+### Phase 3: Quality Hooks — t008.3
 
 - [ ] Pre-commit quality checks (ShellCheck)
 - [ ] Post-tool-use logging
 - [ ] Quality check reminders
 
-### Phase 3: Enhanced Features
+### Phase 4: Enhanced Features
 
 - [ ] Dynamic agent reloading
-- [ ] MCP health monitoring
 - [ ] Integration with aidevops update system
+- [ ] oh-my-opencode compatibility (t008.4)
 
 ## Decision: Plugin vs Current Approach
 

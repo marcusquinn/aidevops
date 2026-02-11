@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, existsSync, statSync } from "fs";
-import { join, relative } from "path";
+import { join } from "path";
 import matter from "gray-matter";
 import type { PluginConfig } from "../config/schema.js";
 
