@@ -22,7 +22,7 @@ tools:
 - **Conflict markers**: `<<<<<<<` (ours), `|||||||` (base, with diff3), `=======`, `>>>>>>>` (theirs)
 - **Strategy options**: `-Xours` (our side wins conflicts), `-Xtheirs` (their side wins), `-Xignore-space-change`
 - **Key commands**: `git merge --abort`, `git checkout --ours/--theirs <file>`, `git log --merge -p`
-- **Resolution rules**: Diff is truth, surgical resolution, structure vs values, check migrations (see Intent-Based Resolution Rules)
+- **Resolution rules**: Diff is truth, surgical resolution, structure vs values, check migrations, escalate ambiguity (see Intent-Based Resolution Rules)
 
 **Decision Tree** -- when you hit a conflict:
 
@@ -95,12 +95,12 @@ git checkout --conflict=diff3 <file>
 
 ### Strategy options for merge (`-X`)
 
-| Option | Effect | When to use |
-|--------|--------|-------------|
-| `-Xours` | Our side wins on conflicts (non-conflicting theirs still merges) | Your branch is authoritative |
-| `-Xtheirs` | Their side wins on conflicts | Accepting incoming as authoritative |
-| `-Xignore-space-change` | Treat whitespace-only changes as identical | Mixed line endings, reformatting |
-| `-Xpatience` | Use patience diff algorithm | Better alignment when matching lines cause misalignment |
+| Option                  | Effect                                                           | When to use                                             |
+| ----------------------- | ---------------------------------------------------------------- | ------------------------------------------------------- |
+| `-Xours`                | Our side wins on conflicts (non-conflicting theirs still merges) | Your branch is authoritative                            |
+| `-Xtheirs`              | Their side wins on conflicts                                     | Accepting incoming as authoritative                     |
+| `-Xignore-space-change` | Treat whitespace-only changes as identical                       | Mixed line endings, reformatting                        |
+| `-Xpatience`            | Use patience diff algorithm                                      | Better alignment when matching lines cause misalignment |
 
 **Important**: `-Xours` (strategy option) is different from `-s ours` (strategy). The strategy discards the other branch entirely. The option only resolves conflicts in your favor while still merging non-conflicting changes.
 
@@ -185,12 +185,12 @@ git cherry-pick --abort
 
 Useful cherry-pick flags:
 
-| Flag | Purpose |
-|------|---------|
-| `--no-commit` (`-n`) | Apply without committing (inspect first) |
-| `-x` | Append "(cherry picked from ...)" to message |
-| `-m 1` | Cherry-pick a merge commit (specify mainline parent) |
-| `--strategy-option=theirs` | Their side wins on conflicts |
+| Flag                       | Purpose                                              |
+| -------------------------- | ---------------------------------------------------- |
+| `--no-commit` (`-n`)       | Apply without committing (inspect first)             |
+| `-x`                       | Append "(cherry picked from ...)" to message         |
+| `-m 1`                     | Cherry-pick a merge commit (specify mainline parent) |
+| `--strategy-option=theirs` | Their side wins on conflicts                         |
 
 ### Stash pop conflicts
 
@@ -325,6 +325,24 @@ When rebasing over upstream, custom values (sizes, colors, copy) take priority o
 
 Remove orphaned imports and unused variables left behind after replacing code from one side with the other.
 
+### Rule 7: Escalate ambiguous resolutions
+
+When you are not confident that your resolution is correct, DO NOT guess -- resolve what you can and escalate the rest. It is better to ask than to silently produce a wrong resolution.
+
+**Escalate when:**
+
+- You cannot confidently map a diff change to a specific location in the target file (e.g., the code was refactored, split, or reformatted and the correspondence is unclear)
+- The resolution would require adding content that exists in neither side
+- You feel the need to modify a file that git did not mark as conflicted
+
+**Format:** For each ambiguous case, output:
+
+```text
+ESCALATE: <file> | <description of ambiguity> | <options you see>
+```
+
+Continue resolving all non-ambiguous conflicts normally. Return escalations at the end of your response so the caller can collect user decisions and resume.
+
 ## AI-Assisted Conflict Resolution
 
 When using AI coding tools to resolve conflicts:
@@ -334,11 +352,13 @@ When using AI coding tools to resolve conflicts:
 3. **Review carefully** -- AI may not understand project conventions, build implications, or runtime behavior
 
 AI works well for:
+
 - Code conflicts where both sides add different features
 - Import/export statement conflicts
 - Configuration file conflicts
 
 AI needs human review for:
+
 - Generated files (schemas, lock files) -- regenerate instead
 - Database migrations -- ordering matters
 - Security-sensitive code
@@ -356,13 +376,13 @@ git config --global diff.algorithm histogram
 
 ### Workflow practices
 
-| Practice | Effect |
-|----------|--------|
-| Frequent integration | Merge/rebase from main often -- small conflicts early |
-| Small PRs | Fewer files changed = fewer conflicts |
-| Rebase before PR | `git rebase main` surfaces conflicts in your branch |
-| Worktrees | Parallel work without stash conflicts (see `tools/git/worktrunk.md`) |
-| Feature flags | Ship disabled features to main early -- avoid long-lived branches |
+| Practice             | Effect                                                               |
+| -------------------- | -------------------------------------------------------------------- |
+| Frequent integration | Merge/rebase from main often -- small conflicts early                |
+| Small PRs            | Fewer files changed = fewer conflicts                                |
+| Rebase before PR     | `git rebase main` surfaces conflicts in your branch                  |
+| Worktrees            | Parallel work without stash conflicts (see `tools/git/worktrunk.md`) |
+| Feature flags        | Ship disabled features to main early -- avoid long-lived branches    |
 
 ## Error Recovery
 
