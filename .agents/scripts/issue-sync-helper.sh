@@ -532,11 +532,6 @@ map_tags_to_labels() {
 
         [[ -z "$tag" ]] && continue
 
-        # Skip meta-tags that aren't useful as labels
-        case "$tag" in
-            auto-dispatch) continue ;;
-        esac
-
         # Alias common synonyms to canonical label names
         local label="$tag"
         case "$tag" in
