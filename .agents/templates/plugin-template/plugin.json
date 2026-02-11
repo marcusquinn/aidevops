@@ -1,0 +1,27 @@
+{
+  "name": "{{PLUGIN_NAME}}",
+  "version": "1.0.0",
+  "description": "{{PLUGIN_DESCRIPTION}}",
+  "min_aidevops_version": "2.110.0",
+  "agents": [
+    {
+      "file": "{{NAMESPACE}}.md",
+      "name": "{{NAMESPACE}}",
+      "description": "Main agent for {{PLUGIN_NAME}}",
+      "model": "sonnet"
+    },
+    {
+      "file": "{{NAMESPACE}}/example.md",
+      "name": "example",
+      "description": "Example subagent",
+      "model": "sonnet"
+    }
+  ],
+  "hooks": {
+    "init": "scripts/on-init.sh",
+    "load": "scripts/on-load.sh",
+    "unload": "scripts/on-unload.sh"
+  },
+  "scripts": [],
+  "dependencies": []
+}

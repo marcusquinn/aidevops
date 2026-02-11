@@ -2239,6 +2239,12 @@ cmd_plugin() {
                '.plugins += [{"name": $name, "repo": $repo, "branch": $branch, "namespace": $ns, "enabled": true}]' \
                "$plugins_file" > "$tmp_file" && mv "$tmp_file" "$plugins_file"
 
+            # Run init hook via plugin-loader if available
+            local loader_script="$agents_dir/scripts/plugin-loader-helper.sh"
+            if [[ -f "$loader_script" ]]; then
+                bash "$loader_script" hooks "$namespace" init 2>/dev/null || true
+            fi
+
             print_success "Plugin '$plugin_name' installed to $clone_dir"
             echo ""
             echo "  Agents available at: ~/.aidevops/agents/$namespace/"
@@ -2366,6 +2372,12 @@ cmd_plugin() {
                 fi
             fi
 
+            # Run init hook via plugin-loader if available
+            local loader_script="$agents_dir/scripts/plugin-loader-helper.sh"
+            if [[ -f "$loader_script" ]]; then
+                bash "$loader_script" hooks "$target_ns" init 2>/dev/null || true
+            fi
+
             print_success "Plugin '$target_name' enabled"
             ;;
 
@@ -2383,13 +2395,19 @@ cmd_plugin() {
                 return 1
             fi
 
+            # Run unload hook before removing files
+            local loader_script="$agents_dir/scripts/plugin-loader-helper.sh"
+            if [[ -f "$loader_script" && -d "$agents_dir/$target_ns" ]]; then
+                bash "$loader_script" hooks "$target_ns" unload 2>/dev/null || true
+            fi
+
             # Update enabled flag
             local tmp_file="${plugins_file}.tmp"
             jq --arg n "$target_name" '(.plugins[] | select(.name == $n)).enabled = false' "$plugins_file" > "$tmp_file" && mv "$tmp_file" "$plugins_file"
 
             # Remove deployed files
-            if [[ -d "$agents_dir/$target_ns" ]]; then
-                rm -rf "$agents_dir/$target_ns"
+            if [[ -d "$agents_dir/${target_ns:?}" ]]; then
+                rm -rf "$agents_dir/${target_ns:?}"
             fi
 
             print_success "Plugin '$target_name' disabled (config preserved)"
@@ -2409,9 +2427,15 @@ cmd_plugin() {
                 return 1
             fi
 
+            # Run unload hook before removing files
+            local loader_script="$agents_dir/scripts/plugin-loader-helper.sh"
+            if [[ -f "$loader_script" && -d "$agents_dir/$target_ns" ]]; then
+                bash "$loader_script" hooks "$target_ns" unload 2>/dev/null || true
+            fi
+
             # Remove deployed files
-            if [[ -d "$agents_dir/$target_ns" ]]; then
-                rm -rf "$agents_dir/$target_ns"
+            if [[ -d "$agents_dir/${target_ns:?}" ]]; then
+                rm -rf "$agents_dir/${target_ns:?}"
                 print_info "Removed $agents_dir/$target_ns/"
             fi
 
@@ -2468,24 +2492,48 @@ cmd_plugin() {
                 -e "s|{{NAMESPACE}}|$namespace|g" \
                 "$template_dir/example-subagent.md" > "$target_dir/$namespace/example.md"
 
-            # Scripts directory
+            # Scripts directory with lifecycle hooks
             mkdir -p "$target_dir/scripts"
+            if [[ -d "$template_dir/scripts" ]]; then
+                for hook_file in "$template_dir/scripts"/on-*.sh; do
+                    [[ -f "$hook_file" ]] || continue
+                    local hook_base
+                    hook_base=$(basename "$hook_file")
+                    sed -e "s|{{PLUGIN_NAME}}|$plugin_name|g" \
+                        -e "s|{{NAMESPACE}}|$namespace|g" \
+                        "$hook_file" > "$target_dir/scripts/$hook_base"
+                    chmod +x "$target_dir/scripts/$hook_base"
+                done
+            fi
+
+            # Plugin manifest (plugin.json)
+            if [[ -f "$template_dir/plugin.json" ]]; then
+                sed -e "s|{{PLUGIN_NAME}}|$plugin_name|g" \
+                    -e "s|{{PLUGIN_DESCRIPTION}}|$plugin_name plugin for aidevops|g" \
+                    -e "s|{{NAMESPACE}}|$namespace|g" \
+                    "$template_dir/plugin.json" > "$target_dir/plugin.json"
+            fi
 
             print_success "Plugin scaffolded in $target_dir/"
             echo ""
             echo "Structure:"
             echo "  $target_dir/"
             echo "  ├── AGENTS.md              # Plugin documentation"
+            echo "  ├── plugin.json            # Plugin manifest"
             echo "  ├── $namespace.md           # Main agent"
             echo "  ├── $namespace/"
             echo "  │   └── example.md          # Example subagent"
-            echo "  └── scripts/                # Helper scripts (empty)"
+            echo "  └── scripts/"
+            echo "      ├── on-init.sh          # Init lifecycle hook"
+            echo "      ├── on-load.sh          # Load lifecycle hook"
+            echo "      └── on-unload.sh        # Unload lifecycle hook"
             echo ""
             echo "Next steps:"
-            echo "  1. Edit $namespace.md with your agent instructions"
-            echo "  2. Add subagents to $namespace/"
-            echo "  3. Push to a git repo"
-            echo "  4. Install: aidevops plugin add <repo-url> --namespace $namespace"
+            echo "  1. Edit plugin.json with your plugin metadata"
+            echo "  2. Edit $namespace.md with your agent instructions"
+            echo "  3. Add subagents to $namespace/"
+            echo "  4. Push to a git repo"
+            echo "  5. Install: aidevops plugin add <repo-url> --namespace $namespace"
             ;;
 
         help|--help|-h)
