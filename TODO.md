@@ -643,7 +643,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t012.1 Research OCR approaches and @pontusab's implementation ~4h #auto-dispatch ref:GH#1098 assignee:marcusquinn started:2026-02-11T14:54:25Z completed:2026-02-11
   - [x] t012.2 Design extraction schema (vendor, amount, date, VAT, items) ~4h #auto-dispatch blocked-by:t012.1 ref:GH#1116 completed:2026-02-11
   - [x] t012.3 Implement OCR extraction pipeline ~8h #auto-dispatch blocked-by:t012.2 ref:GH#1099 assignee:marcusquinn completed:2026-02-11 pr:#1148
-  - [ ] t012.4 QuickFile integration (purchases/expenses) ~4h #auto-dispatch blocked-by:t012.3 ref:GH#1100 assignee:marcusquinn
+  - [x] t012.4 QuickFile integration (purchases/expenses) ~4h #auto-dispatch blocked-by:t012.3 ref:GH#1100 assignee:marcusquinn completed:2026-02-11
   - [ ] t012.5 Testing with various invoice/receipt formats ~4h #auto-dispatch blocked-by:t012.4 ref:GH#1101 assignee:marcusquinn
 - [x] t013 Image SEO Enhancement with AI Vision #plan → [todo/PLANS.md#image-seo-enhancement-with-ai-vision] ~45m (ai:25m test:10m read:10m) ref:GH#507 logged:2025-12-21 completed:2026-02-08 pr:#593
   - Notes: Created 3 subagents: seo/moondream.md (Moondream 3 vision API - caption, query, detect, point, segment with SEO-specific prompts), seo/image-seo.md (orchestrator for alt text, filename, tag generation with WCAG guidelines and WordPress integration), seo/upscale.md (Real-ESRGAN local, Replicate cloud, Cloudflare CDN, Sharp format conversion). Updated seo.md with subagent references and Image SEO workflow section.
