@@ -742,21 +742,18 @@ check_provider_key() {
     fi
 
     # 2. Check gopass (encrypted secrets)
-    if command -v gopass &>/dev/null; then
-        if gopass ls "aidevops/${key_name}" &>/dev/null 2>&1; then
-            FOUND_SOURCE="gopass"
-            return 0
-        fi
+    if command -v gopass &>/dev/null && gopass ls "aidevops/${key_name}" &>/dev/null 2>&1; then
+        FOUND_SOURCE="gopass"
+        return 0
     fi
 
     # 3. Check credentials.sh (plaintext fallback)
     local creds_file="${HOME}/.config/aidevops/credentials.sh"
-    if [[ -f "$creds_file" ]]; then
-        if grep -q "^export ${key_name}=" "$creds_file" 2>/dev/null || \
-           grep -q "^${key_name}=" "$creds_file" 2>/dev/null; then
-            FOUND_SOURCE="credentials.sh"
-            return 0
-        fi
+    if [[ -f "$creds_file" ]] && \
+       (grep -q "^export ${key_name}=" "$creds_file" 2>/dev/null || \
+        grep -q "^${key_name}=" "$creds_file" 2>/dev/null); then
+        FOUND_SOURCE="credentials.sh"
+        return 0
     fi
 
     return 1
