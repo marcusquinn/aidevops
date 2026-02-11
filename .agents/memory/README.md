@@ -37,6 +37,8 @@ sqlite3 --version
 - **Dual timestamps** - Distinguish when stored vs when event occurred
 - **Contextual disambiguation** - Self-contained, atomic memories
 
+**Architecture Decision: SQLite FTS5 over PostgreSQL** - SQLite was chosen for memory storage to minimize deployment complexity and eliminate external dependencies. No separate database server required, no connection management, and FTS5 provides fast full-text search out of the box. This aligns with the aidevops philosophy of self-contained, portable tooling.
+
 ## Quick Start
 
 ```bash
