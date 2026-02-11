@@ -4470,10 +4470,19 @@ exhaustion, crash, timeout), uncommitted work is LOST. Committed work survives.
 After your FIRST commit, push and create a draft PR immediately:
 \`\`\`bash
 git push -u origin HEAD
-gh pr create --draft --title '<task-id>: <description>' --body 'WIP - incremental commits'
+# t288: Include GitHub issue reference in PR body when task has ref:GH# in TODO.md
+# Look up: grep -oE 'ref:GH#[0-9]+' TODO.md for your task ID, extract the number
+# If found, add 'Ref #NNN' to the PR body so GitHub cross-links the issue
+gh_issue=\$(grep -E '^\s*- \[.\] <task-id> ' TODO.md 2>/dev/null | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || true)
+pr_body='WIP - incremental commits'
+[[ -n \"\$gh_issue\" ]] && pr_body=\"\${pr_body}
+
+Ref #\${gh_issue}\"
+gh pr create --draft --title '<task-id>: <description>' --body \"\$pr_body\"
 \`\`\`
 Subsequent commits just need \`git push\`. The PR already exists.
 This ensures the supervisor can detect your PR even if you run out of context.
+The \`Ref #NNN\` line cross-links the PR to its GitHub issue for auditability.
 
 When ALL implementation is done, mark the PR as ready for review:
 \`\`\`bash
@@ -5983,6 +5992,22 @@ auto_create_pr_for_task() {
     local commit_log
     commit_log=$(git -C "$repo_path" log --oneline "${base_branch}..${branch_name}" 2>/dev/null | head -10 || echo "(no commits)")
 
+    # t288: Look up GitHub issue ref from TODO.md for cross-referencing
+    local gh_issue_ref=""
+    local todo_file="$repo_path/TODO.md"
+    if [[ -f "$todo_file" ]]; then
+        gh_issue_ref=$(grep -E "^\s*- \[.\] ${task_id} " "$todo_file" 2>/dev/null \
+            | head -1 | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || true)
+    fi
+
+    # Build issue reference line for PR body
+    local issue_ref_line=""
+    if [[ -n "$gh_issue_ref" ]]; then
+        issue_ref_line="
+
+Ref #${gh_issue_ref}"
+    fi
+
     # Create draft PR
     local pr_body
     pr_body="## Auto-created by supervisor (t247.2)
@@ -5998,7 +6023,7 @@ ${commit_log}
 
 ### Task
 
-${task_desc}"
+${task_desc}${issue_ref_line}"
 
     local pr_url
     pr_url=$(gh pr create \
