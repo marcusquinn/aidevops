@@ -173,6 +173,7 @@ See `tools/opencode/opencode.md` for CLI testing patterns.
 - Consider: expected behavior, edge cases, potential pitfalls
 - How does this fit into the larger context of the codebase?
 - What are the dependencies and interactions with other parts?
+- **Recall prior lessons**: Run `~/.aidevops/agents/scripts/memory-helper.sh recall --query "<keywords from the task>" --limit 5` to surface relevant decisions, failure patterns, and working solutions from previous sessions. Extract 2-3 keywords from the user's request (e.g., "higgsfield video generation" or "supervisor worker dispatch"). If results are returned, read them and apply any relevant lessons before proceeding. This is how the framework learns across sessions.
 
 ### 2b. Domain Expertise Check (CRITICAL)
 
