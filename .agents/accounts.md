@@ -70,11 +70,19 @@ ocr-receipt-helper.sh scan receipt.jpg
 # Structured extraction
 ocr-receipt-helper.sh extract invoice.pdf
 
-# Create QuickFile purchase invoice
-ocr-receipt-helper.sh quickfile receipt.png --nominal 7502
+# Full pipeline: extract + prepare + record in QuickFile
+ocr-receipt-helper.sh quickfile invoice.pdf
+
+# Or use quickfile-helper.sh directly with pre-extracted JSON:
+quickfile-helper.sh record-purchase invoice-quickfile.json --auto-supplier
+quickfile-helper.sh record-expense receipt-quickfile.json --auto-supplier
+
+# Batch process a folder:
+quickfile-helper.sh batch-record ~/.aidevops/.agent-workspace/work/ocr-receipts/
 ```
 
 See `tools/accounts/receipt-ocr.md` for full pipeline documentation.
+See `services/accounting/quickfile.md` for QuickFile recording workflow.
 
 ### Expense Tracking
 
@@ -95,5 +103,6 @@ See `tools/accounts/receipt-ocr.md` for full pipeline documentation.
 - `sales.md` - Quote to invoice
 - `services/` - Project-based billing
 - `tools/accounts/receipt-ocr.md` - OCR receipt/invoice extraction
+- `scripts/quickfile-helper.sh` - QuickFile purchase/expense recording bridge
 
 *See `services/accounting/quickfile.md` for detailed QuickFile operations.*
