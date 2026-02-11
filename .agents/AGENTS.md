@@ -125,6 +125,8 @@ Use `/save-todo` after planning. Auto-detects complexity:
 
 **After ANY TODO/planning edit** (interactive sessions only, NOT workers): Commit and push immediately. Planning-only files (TODO.md, todo/) go directly to main -- no branch, no PR. Mixed changes (planning + non-exception files) use a worktree. NEVER `git checkout -b` in the main repo.
 
+**PR required for ALL non-planning changes** (MANDATORY): Every change to scripts, agents, configs, workflows, or any file outside `TODO.md`, `todo/`, and `VERIFY.md` MUST go through a worktree + PR + CI pipeline — no matter how small. "It's just one line" is not a valid reason to skip CI. The pre-edit-check script enforces this; never bypass it by editing directly on main.
+
 **Task ID collision prevention**: When assigning a new task ID, if `git push` fails and you `git pull --rebase`, you MUST re-read TODO.md and verify your assigned ID is still unique before pushing again. Parallel sessions may have claimed the same ID. If a collision exists, renumber to the next available ID.
 
 **Full docs**: `workflows/plans.md`, `tools/task-management/beads.md`
