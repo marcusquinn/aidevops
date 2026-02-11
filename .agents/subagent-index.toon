@@ -124,7 +124,7 @@ memory-embeddings-helper.sh,Semantic memory search with vector embeddings (opt-i
 pattern-tracker-helper.sh,Success/failure pattern tracking and analysis
 pdf-helper.sh,PDF operations (info fields fill merge text)
 unstract-helper.sh,Unstract self-hosted document processing (install start stop)
-document-extraction-helper.sh,Document extraction with PII redaction (extract batch pii-scan pii-redact convert install status schemas)
+document-extraction-helper.sh,Document extraction with OCR and accounting support (extract classify accounting-extract batch watch pii-scan pii-redact convert install status schemas)
 cloudron-package-helper.sh,Cloudron app packaging workflow (init scaffold build test)
 email-health-check-helper.sh,Email health check with scoring (SPF DKIM DMARC BIMI MTA-STS TLS-RPT DANE)
 email-test-suite-helper.sh,Email testing suite (design rendering delivery testing inbox placement)

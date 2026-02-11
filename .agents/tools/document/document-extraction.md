@@ -31,8 +31,17 @@ tools:
 # Install dependencies
 document-extraction-helper.sh install --all
 
-# Extract structured data from an invoice
+# Extract structured data from an invoice (UK VAT, multi-currency)
 document-extraction-helper.sh extract invoice.pdf --schema invoice --privacy local
+
+# Auto-classify and extract for QuickFile accounting
+document-extraction-helper.sh accounting-extract receipt.jpg
+
+# Watch a folder for new receipts
+document-extraction-helper.sh watch ~/Downloads/receipts --interval 30
+
+# Classify a document type
+document-extraction-helper.sh classify unknown-doc.pdf
 
 # Scan for PII
 document-extraction-helper.sh pii-scan document.txt
@@ -128,47 +137,140 @@ print(anonymized.text)  # "<PERSON>'s SSN is <US_SSN>"
 - **Entities**: PERSON, EMAIL, PHONE, SSN, CREDIT_CARD, IBAN, IP_ADDRESS, etc.
 - **Repo**: https://github.com/microsoft/presidio
 
-## Extraction Schemas (Templates)
+## Extraction Schemas
 
-> These are example/template schemas for common document types. Customize for your project.
+### Invoice (UK VAT-aware)
 
-### Invoice
+Full invoice extraction with UK VAT support, multi-currency (GBP default), and QuickFile field mapping.
 
 ```python
+class LineItem(BaseModel):
+    description: str = ''
+    quantity: float = 0
+    unit_price: float = 0
+    amount: float = 0
+    vat_rate: str = 'unknown'      # standard/reduced/zero/exempt/reverse_charge
+    vat_amount: float = 0
+    product_code: str = ''
+
+class TaxBreakdown(BaseModel):
+    rate_label: str = ''           # e.g. "Standard Rate 20%"
+    rate_percent: float = 0
+    taxable_amount: float = 0
+    tax_amount: float = 0
+
 class Invoice(BaseModel):
-    vendor_name: str
-    vendor_address: str | None
-    invoice_number: str
-    invoice_date: str
-    due_date: str | None
-    subtotal: float
-    tax: float | None
-    total: float
-    currency: str
-    line_items: list[LineItem]
+    vendor_name: str = ''
+    vendor_address: str = ''
+    vendor_vat_number: str = ''
+    vendor_company_number: str = ''
+    customer_name: str = ''
+    customer_address: str = ''
+    customer_vat_number: str = ''
+    invoice_number: str = ''
+    invoice_date: str = ''
+    due_date: str = ''
+    payment_terms: str = ''
+    purchase_order: str = ''
+    subtotal: float = 0
+    discount: float = 0
+    tax: float = 0
+    total: float = 0
+    amount_paid: float = 0
+    amount_due: float = 0
+    currency: str = 'GBP'
+    tax_breakdowns: list[TaxBreakdown] = []
+    line_items: list[LineItem] = []
+    payment_details: str = ''
+    notes: str = ''
 ```
 
 ### Receipt
 
+Detailed receipt extraction with VAT codes and payment details.
+
 ```python
+class ReceiptItem(BaseModel):
+    name: str = ''
+    quantity: float = 1
+    unit_price: float = 0
+    price: float = 0
+    vat_code: str = ''
+
 class Receipt(BaseModel):
-    merchant: str
-    date: str
-    total: float
-    payment_method: str | None
-    items: list[ReceiptItem]
+    merchant: str = ''
+    merchant_address: str = ''
+    merchant_vat_number: str = ''
+    merchant_phone: str = ''
+    date: str = ''
+    time: str = ''
+    receipt_number: str = ''
+    subtotal: float = 0
+    vat_amount: float = 0
+    total: float = 0
+    currency: str = 'GBP'
+    payment_method: str = ''
+    card_last_four: str = ''
+    items: list[ReceiptItem] = []
+    cashier: str = ''
+    store_number: str = ''
 ```
 
 ### Contract
 
 ```python
 class ContractSummary(BaseModel):
-    parties: list[str]
-    effective_date: str
-    termination_date: str | None
-    key_terms: list[str]
-    obligations: list[str]
+    parties: list[str] = []
+    effective_date: str = ''
+    termination_date: str = ''
+    key_terms: list[str] = []
+    obligations: list[str] = []
 ```
+
+## Accounting Pipeline
+
+The `accounting-extract` command combines classification and extraction into a single workflow optimized for QuickFile integration:
+
+```bash
+# Auto-classify (invoice vs receipt) and extract with QuickFile field mapping
+document-extraction-helper.sh accounting-extract invoice.pdf --privacy local
+```
+
+Output includes a `quickfile_mapping` section with endpoint hints and field mappings:
+
+```json
+{
+  "source_file": "invoice.pdf",
+  "document_type": "invoice",
+  "extracted_at": "2026-02-11T12:00:00Z",
+  "data": { ... },
+  "quickfile_mapping": {
+    "endpoint": "POST /invoice/create",
+    "field_map": {
+      "InvoiceDescription": "Acme Corp",
+      "InvoiceDate": "2026-02-01",
+      "Currency": "GBP",
+      "NetAmount": 1000.00,
+      "VATAmount": 200.00,
+      "GrossAmount": 1200.00
+    }
+  }
+}
+```
+
+### Watch Folder Mode
+
+Monitor a directory for new documents and auto-extract:
+
+```bash
+# Watch ~/Downloads/receipts, check every 30 seconds
+document-extraction-helper.sh watch ~/Downloads/receipts --interval 30
+
+# Watch with explicit schema (skip classification)
+document-extraction-helper.sh watch ./invoices --schema invoice --privacy local
+```
+
+Files are tracked by inode+mtime to avoid reprocessing. Output goes to `~/.aidevops/.agent-workspace/work/document-extraction/`.
 
 ## Privacy Modes
 
@@ -233,6 +335,8 @@ Use this stack when you need custom Pydantic schemas, PII redaction, or fully lo
 
 ## Related
 
+- `accounts.md` - Accounting agent (uses OCR extraction for invoice/receipt processing)
+- `services/accounting/quickfile.md` - QuickFile integration (target for extracted data)
 - `tools/document/extraction-workflow.md` - Workflow orchestration and tool selection guide
 - `scripts/document-extraction-helper.sh` - CLI helper script
 - `tools/document/docstrange.md` - DocStrange: simpler single-install alternative (NanoNets, 7B model, schema extraction)
