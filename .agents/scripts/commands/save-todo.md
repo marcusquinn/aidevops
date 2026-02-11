@@ -31,8 +31,23 @@ Extract from the discussion:
 - **Title**: Concise task/plan name
 - **Description**: What needs to be done
 - **Estimate**: Time estimate with breakdown `~Xh (ai:Xh test:Xh read:Xm)`
-- **Tags**: Relevant categories (#seo, #security, #feature, etc.)
+- **Tags**: Relevant categories (#feature, #bugfix, #enhancement, #docs, etc.)
 - **Context**: Key decisions, research findings, constraints discussed
+
+### Step 1b: Evaluate Dispatch Tags
+
+Every task MUST be evaluated for these pipeline tags:
+
+**`#auto-dispatch`** — Add when ALL are true:
+- Clear fix/feature description with specific files or patterns
+- Bounded scope (~2h or less)
+- No user credentials, accounts, or purchases needed
+- No design decisions requiring user preference
+- Verification is automatable (tests, ShellCheck, browser test)
+
+**`#plan`** — Add when the task needs decomposition into subtasks before implementation (multi-phase, >2h, research/design needed).
+
+**Default to `#auto-dispatch`** — only omit when a specific exclusion applies. This keeps the autonomous pipeline moving. See `workflows/plans.md` "Auto-Dispatch Tagging" for full criteria.
 
 ### Step 2: Determine Complexity
 
@@ -53,8 +68,10 @@ Saving to TODO.md: "{title}" ~{estimate}
 After confirmation, add to TODO.md Backlog:
 
 ```markdown
-- [ ] {title} #{tag} ~{estimate} logged:{YYYY-MM-DD}
+- [ ] {title} #{tag} #auto-dispatch ~{estimate} logged:{YYYY-MM-DD}
 ```
+
+(Omit `#auto-dispatch` only if a specific exclusion applies per Step 1b.)
 
 Respond:
 
