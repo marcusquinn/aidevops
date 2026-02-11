@@ -115,13 +115,107 @@ A plugin repo should follow this structure:
 
 ```text
 plugin-repo/
+├── plugin.json        # Plugin manifest (recommended)
 ├── AGENTS.md          # Plugin agent definitions (optional)
 ├── *.md               # Agent/subagent files
-├── scripts/           # Helper scripts (optional)
+├── scripts/           # Helper scripts and lifecycle hooks (optional)
+│   ├── on-init.sh     # Runs on install/update
+│   ├── on-load.sh     # Runs on session load
+│   └── on-unload.sh   # Runs on disable/remove
 └── tools/             # Tool definitions (optional)
 ```
 
 The entire repo contents are deployed to `~/.aidevops/agents/<namespace>/`.
+
+## Plugin Manifest (plugin.json)
+
+The manifest declares a plugin's agents, hooks, scripts, and dependencies. It is optional — plugins without a manifest fall back to directory scanning for agent discovery.
+
+```json
+{
+  "name": "my-plugin",
+  "version": "1.0.0",
+  "description": "What this plugin does",
+  "min_aidevops_version": "2.110.0",
+  "agents": [
+    {
+      "file": "my-agent.md",
+      "name": "my-agent",
+      "description": "Agent purpose",
+      "model": "sonnet"
+    }
+  ],
+  "hooks": {
+    "init": "scripts/on-init.sh",
+    "load": "scripts/on-load.sh",
+    "unload": "scripts/on-unload.sh"
+  },
+  "scripts": ["scripts/my-helper.sh"],
+  "dependencies": []
+}
+```
+
+### Manifest Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | yes | Plugin name (matches plugins.json entry) |
+| `version` | string | yes | Semver version (X.Y.Z) |
+| `description` | string | no | Human-readable description |
+| `min_aidevops_version` | string | no | Minimum aidevops version required |
+| `agents` | array | no | Agent definitions (file, name, description, model) |
+| `hooks` | object | no | Lifecycle hook scripts (init, load, unload) |
+| `scripts` | array | no | Additional helper scripts |
+| `dependencies` | array | no | Required external tools or plugins |
+
+### Agent Loader
+
+The `plugin-loader-helper.sh` script handles plugin discovery and agent loading:
+
+```bash
+# Discover all installed plugins
+plugin-loader-helper.sh discover
+
+# Load agents from a specific plugin
+plugin-loader-helper.sh load pro
+
+# Validate plugin manifest(s)
+plugin-loader-helper.sh validate
+
+# List agents provided by plugins
+plugin-loader-helper.sh agents
+
+# Generate subagent-index entries
+plugin-loader-helper.sh index
+
+# Run a lifecycle hook
+plugin-loader-helper.sh hooks pro init
+
+# Show plugin system status
+plugin-loader-helper.sh status
+```
+
+Agent loading priority:
+1. If `plugin.json` exists with an `agents` array, use it (explicit declaration)
+2. Otherwise, scan the plugin directory for `.md` files and parse YAML frontmatter
+
+## Lifecycle Hooks
+
+Plugins can define shell scripts that run at specific lifecycle events:
+
+| Hook | When | Use Case |
+|------|------|----------|
+| `init` | Install, update, enable | One-time setup, dependency checks, config creation |
+| `load` | Session start, agent loading | Environment setup, PATH additions |
+| `unload` | Disable, remove | Cleanup temp files, revoke registrations |
+
+Hooks receive environment variables:
+- `AIDEVOPS_PLUGIN_NAMESPACE` — Plugin namespace
+- `AIDEVOPS_PLUGIN_DIR` — Plugin directory path
+- `AIDEVOPS_AGENTS_DIR` — Root agents directory
+- `AIDEVOPS_HOOK` — Current hook name (init, load, unload)
+
+Hook scripts are defined in the manifest under `hooks`, or discovered by convention at `scripts/on-{hook}.sh`.
 
 ## Security
 

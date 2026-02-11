@@ -33,9 +33,6 @@ AGENTS_DIR="${AIDEVOPS_AGENTS_DIR:-$HOME/.aidevops/agents}"
 PLUGINS_FILE="${AIDEVOPS_CONFIG_DIR:-$HOME/.config/aidevops}/plugins.json"
 PLUGIN_CACHE_DIR="${HOME}/.aidevops/.agent-workspace/tmp/plugin-cache"
 
-# Reserved namespaces that cannot be used by plugins
-RESERVED_NAMESPACES="custom draft scripts tools services workflows templates memory plugins seo wordpress aidevops content"
-
 # =============================================================================
 # Logging
 # =============================================================================
