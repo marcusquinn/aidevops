@@ -18,6 +18,7 @@
 #   supervisor-helper.sh cleanup [--dry-run]           Clean up completed worktrees + processes
 #   supervisor-helper.sh kill-workers [--dry-run]      Kill orphaned worker processes (emergency)
 #   supervisor-helper.sh mem-check                 Check supervisor session memory footprint
+#   supervisor-helper.sh respawn-history [N]        Show last N respawn events (default: 20)
 #   supervisor-helper.sh update-todo <task_id>         Update TODO.md for completed/blocked task
 #   supervisor-helper.sh reconcile-todo [--batch id] [--dry-run]  Bulk-fix stale TODO.md entries
 #   supervisor-helper.sh notify <task_id>              Send notification about task state
@@ -170,7 +171,9 @@ readonly MEMORY_HELPER="${SCRIPT_DIR}/memory-helper.sh"   # Used by pulse comman
 readonly SESSION_REVIEW_HELPER="${SCRIPT_DIR}/session-review-helper.sh"   # Used by batch completion (t128.9)
 readonly SESSION_DISTILL_HELPER="${SCRIPT_DIR}/session-distill-helper.sh" # Used by batch completion (t128.9)
 readonly MEMORY_AUDIT_HELPER="${SCRIPT_DIR}/memory-audit-pulse.sh"       # Used by pulse Phase 9 (t185)
-export MAIL_HELPER MEMORY_HELPER SESSION_REVIEW_HELPER SESSION_DISTILL_HELPER MEMORY_AUDIT_HELPER
+readonly SESSION_CHECKPOINT_HELPER="${SCRIPT_DIR}/session-checkpoint-helper.sh" # Used by respawn (t264.1)
+readonly RESPAWN_LOG="${HOME}/.aidevops/logs/respawn-history.log"               # Persistent respawn log (t264.1)
+export MAIL_HELPER MEMORY_HELPER SESSION_REVIEW_HELPER SESSION_DISTILL_HELPER MEMORY_AUDIT_HELPER SESSION_CHECKPOINT_HELPER
 
 # Valid states for the state machine
 readonly VALID_STATES="queued dispatched running evaluating retrying complete pr_review review_triage merging merged deploying deployed verifying verified verify_failed blocked failed cancelled"
@@ -847,6 +850,165 @@ check_supervisor_memory() {
 
     # Clean up stale respawn marker if we're healthy
     rm -f "${SUPERVISOR_DIR}/respawn-recommended" 2>/dev/null || true
+
+    return 0
+}
+
+#######################################
+# Log a respawn event to persistent history (t264.1)
+# Appends a structured line to respawn-history.log for pattern analysis.
+# Each line: timestamp | pid | footprint_mb | threshold_mb | reason | batch_id | uptime
+#
+# $1: PID of the process being respawned
+# $2: footprint in MB
+# $3: threshold in MB
+# $4: reason (e.g., "batch_complete_memory_exceeded")
+# $5: batch_id (optional)
+#######################################
+log_respawn_event() {
+    local pid="$1"
+    local footprint_mb="$2"
+    local threshold_mb="$3"
+    local reason="$4"
+    local batch_id="${5:-none}"
+
+    local timestamp
+    timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+    local uptime_str="unknown"
+    uptime_str=$(ps -o etime= -p "$pid" 2>/dev/null | tr -d ' ' || echo "unknown")
+
+    mkdir -p "$(dirname "$RESPAWN_LOG")" 2>/dev/null || true
+    echo "${timestamp}|${pid}|${footprint_mb}MB|${threshold_mb}MB|${reason}|batch:${batch_id}|uptime:${uptime_str}" >> "$RESPAWN_LOG"
+
+    log_info "Respawn logged: PID=$pid footprint=${footprint_mb}MB reason=$reason batch=$batch_id uptime=$uptime_str"
+    return 0
+}
+
+#######################################
+# Check if supervisor should respawn after a batch wave completes (t264.1)
+# Conditions: no running/queued tasks AND memory exceeds threshold.
+# If triggered: saves checkpoint, logs respawn event, exits cleanly.
+# The next cron pulse (2 min) starts fresh with zero accumulated memory.
+#
+# $1: batch_id (optional)
+# Returns: 0 if respawn was triggered (caller should exit), 1 if no respawn needed
+#######################################
+attempt_respawn_after_batch() {
+    local batch_id="${1:-}"
+    local threshold_mb="${SUPERVISOR_SELF_MEM_LIMIT:-8192}"
+
+    # Only respawn if there are no running or queued tasks
+    local active_count=0
+    if [[ -n "$batch_id" ]]; then
+        active_count=$(db "$SUPERVISOR_DB" "
+            SELECT COUNT(*) FROM tasks
+            WHERE batch_id = '$(sql_escape "$batch_id")'
+            AND status IN ('queued', 'dispatched', 'running', 'evaluating', 'retrying');
+        " 2>/dev/null || echo "0")
+    else
+        active_count=$(db "$SUPERVISOR_DB" "
+            SELECT COUNT(*) FROM tasks
+            WHERE status IN ('queued', 'dispatched', 'running', 'evaluating', 'retrying');
+        " 2>/dev/null || echo "0")
+    fi
+
+    if [[ "$active_count" -gt 0 ]]; then
+        log_verbose "  Phase 11: $active_count tasks still active, skipping respawn check"
+        return 1
+    fi
+
+    # Check if we're inside an interactive session with high memory
+    local check_pid=$$
+    local depth=0
+    while [[ "$check_pid" -gt 1 && "$depth" -lt 10 ]] 2>/dev/null; do
+        local parent_pid
+        parent_pid=$(ps -o ppid= -p "$check_pid" 2>/dev/null | tr -d ' ')
+        [[ -z "$parent_pid" || "$parent_pid" == "0" ]] && break
+
+        local parent_cmd
+        parent_cmd=$(ps -o comm= -p "$parent_pid" 2>/dev/null || echo "")
+        if [[ "$parent_cmd" == *"opencode"* || "$parent_cmd" == *"claude"* ]]; then
+            local parent_footprint
+            parent_footprint=$(get_process_footprint_mb "$parent_pid" 2>/dev/null || echo "0")
+
+            if [[ "$parent_footprint" -gt "$threshold_mb" ]] 2>/dev/null; then
+                log_warn "  Phase 11: Batch complete + memory ${parent_footprint}MB > ${threshold_mb}MB — triggering respawn"
+
+                # Log the respawn event to persistent history
+                log_respawn_event "$parent_pid" "$parent_footprint" "$threshold_mb" \
+                    "batch_complete_memory_exceeded" "$batch_id"
+
+                # Save checkpoint so next session can resume
+                if [[ -x "$SESSION_CHECKPOINT_HELPER" ]]; then
+                    local next_tasks_summary=""
+                    next_tasks_summary=$(db "$SUPERVISOR_DB" "
+                        SELECT id || ': ' || COALESCE(description, 'no description')
+                        FROM tasks WHERE status IN ('queued', 'blocked')
+                        ORDER BY id LIMIT 5;
+                    " 2>/dev/null || echo "none pending")
+
+                    "$SESSION_CHECKPOINT_HELPER" save \
+                        --task "supervisor-respawn" \
+                        --batch "${batch_id:-none}" \
+                        --note "Auto-respawn after batch completion. Memory: ${parent_footprint}MB exceeded ${threshold_mb}MB threshold. Reason: WebKit/Bun malloc accumulation. Next cron pulse will start fresh." \
+                        --next "$next_tasks_summary" \
+                        2>>"$SUPERVISOR_LOG" || true
+                    log_info "  Phase 11: Checkpoint saved for respawn continuity"
+                fi
+
+                # Write respawn marker (signals the parent session to restart)
+                local respawn_marker="${SUPERVISOR_DIR}/respawn-recommended"
+                {
+                    echo "pid=$parent_pid"
+                    echo "footprint_mb=$parent_footprint"
+                    echo "threshold_mb=$threshold_mb"
+                    echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                    echo "reason=batch_complete_memory_exceeded"
+                    echo "batch_id=${batch_id:-none}"
+                    echo "action=respawn_triggered"
+                } > "$respawn_marker"
+
+                return 0
+            fi
+        fi
+
+        check_pid="$parent_pid"
+        depth=$((depth + 1))
+    done
+
+    # Cron-based pulse or memory within threshold — no respawn needed
+    return 1
+}
+
+#######################################
+# Show respawn history log (t264.1)
+# Displays the persistent log of all respawn events with optional filtering.
+#######################################
+cmd_respawn_history() {
+    local lines="${1:-20}"
+
+    echo -e "${BOLD}=== Respawn History (t264.1) ===${NC}"
+    echo -e "  Log: ${RESPAWN_LOG}"
+    echo ""
+
+    if [[ ! -f "$RESPAWN_LOG" ]]; then
+        echo "  No respawn events recorded yet."
+        return 0
+    fi
+
+    local total
+    total=$(wc -l < "$RESPAWN_LOG" | tr -d ' ')
+    echo -e "  Total events: ${total}"
+    echo -e "  Showing last ${lines}:"
+    echo ""
+    echo -e "  ${DIM}TIMESTAMP                  | PID    | FOOTPRINT | THRESHOLD | REASON                          | BATCH        | UPTIME${NC}"
+    echo -e "  ${DIM}$(printf '%.0s-' {1..120})${NC}"
+
+    tail -n "$lines" "$RESPAWN_LOG" | while IFS='|' read -r ts pid fp thresh reason batch uptime; do
+        printf "  %-26s | %-6s | %-9s | %-9s | %-31s | %-12s | %s\n" \
+            "$ts" "$pid" "$fp" "$thresh" "$reason" "$batch" "$uptime"
+    done
 
     return 0
 }
@@ -4912,6 +5074,18 @@ cmd_mem_check() {
         while IFS= read -r line; do
             echo "    $line"
         done < "${SUPERVISOR_DIR}/respawn-recommended"
+    fi
+
+    # Show recent respawn history (t264.1)
+    if [[ -f "$RESPAWN_LOG" ]]; then
+        local respawn_count
+        respawn_count=$(wc -l < "$RESPAWN_LOG" | tr -d ' ')
+        echo ""
+        echo -e "  ${BOLD}Respawn history:${NC} ${respawn_count} total events (use 'respawn-history' for full log)"
+        echo -e "  Last 3:"
+        tail -n 3 "$RESPAWN_LOG" | while IFS='|' read -r ts pid fp thresh reason batch uptime; do
+            echo -e "    ${DIM}${ts}${NC} PID=${pid} ${fp} reason=${reason} ${batch} ${uptime}"
+        done
     fi
 
     return 0
@@ -9863,15 +10037,24 @@ cmd_pulse() {
         bash "$coderabbit_pulse_script" run --repo "$pulse_repo" --quiet 2>>"$SUPERVISOR_LOG" || true
     fi
 
-    # Phase 11: Supervisor session memory monitoring (t264)
+    # Phase 11: Supervisor session memory monitoring + respawn (t264, t264.1)
     # OpenCode/Bun processes accumulate WebKit malloc dirty pages that are never
     # returned to the OS. Over long sessions, a single process can grow to 25GB+.
     # Cron-based pulses are already fresh processes (no accumulation).
-    # Interactive supervisor sessions need monitoring and respawn on compaction.
-    # Worker concurrency is managed by memory budget in calculate_adaptive_concurrency()
-    # — we don't kill workers, we throttle dispatch when total memory is high.
+    #
+    # Respawn strategy (t264.1): after a batch wave completes (no running/queued
+    # tasks) AND memory exceeds threshold, save checkpoint and exit cleanly.
+    # The next cron pulse (2 min) starts fresh with zero accumulated memory.
+    # Workers are NOT killed — they're short-lived and managed by Phase 4.
+    if attempt_respawn_after_batch "${batch_id:-}" 2>/dev/null; then
+        log_warn "  Phase 11: Respawn triggered — releasing lock and exiting for fresh restart"
+        release_pulse_lock
+        trap - EXIT INT TERM
+        return 0
+    fi
+    # If no respawn needed, still log a warning if memory is high (passive monitoring)
     if ! check_supervisor_memory 2>/dev/null; then
-        log_warn "  Phase 11: Supervisor session memory exceeds threshold — respawn recommended"
+        log_warn "  Phase 11: Memory exceeds threshold but tasks still active — monitoring"
     fi
 
     # Release pulse dispatch lock (t159)
@@ -13391,6 +13574,7 @@ Usage:
   supervisor-helper.sh worker-status <task_id>       Check worker process status
   supervisor-helper.sh cleanup [--dry-run]           Clean up completed worktrees
   supervisor-helper.sh mem-check                    Check supervisor session memory (t264)
+  supervisor-helper.sh respawn-history [N]          Show last N respawn events (t264.1)
   supervisor-helper.sh update-todo <task_id>         Update TODO.md for completed/blocked task
   supervisor-helper.sh reconcile-todo [--batch id] [--dry-run]  Bulk-fix stale TODO.md entries
   supervisor-helper.sh notify <task_id>              Send notification about task state
@@ -13522,7 +13706,7 @@ Environment:
   SUPERVISOR_AUTO_ISSUE       Enable/disable GitHub issue creation (default: true)
   SUPERVISOR_SKIP_REVIEW_TRIAGE Skip review triage before merge (default: false)
   SUPERVISOR_WORKER_TIMEOUT   Seconds before a hung worker is killed (default: 1800)
-  SUPERVISOR_SELF_MEM_LIMIT   MB before supervisor recommends respawn (default: 8192)
+  SUPERVISOR_SELF_MEM_LIMIT   MB before supervisor respawns after batch (default: 8192)
   AIDEVOPS_SUPERVISOR_DIR     Override supervisor data directory
 
 Database: ~/.aidevops/.agent-workspace/supervisor/supervisor.db
@@ -13710,6 +13894,7 @@ main() {
         cleanup) cmd_cleanup "$@" ;;
         kill-workers) cmd_kill_workers "$@" ;;
         mem-check) cmd_mem_check "$@" ;;
+        respawn-history) cmd_respawn_history "$@" ;;
         update-todo) cmd_update_todo "$@" ;;
         reconcile-todo) cmd_reconcile_todo "$@" ;;
         notify) cmd_notify "$@" ;;
