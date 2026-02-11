@@ -17,12 +17,14 @@ subagents:
 - **Purpose**: Financial operations and accounting
 - **Primary Tool**: QuickFile (UK accounting)
 
-**Subagents** (`services/accounting/`):
-- `quickfile.md` - QuickFile MCP integration
+**Subagents**:
+- `services/accounting/quickfile.md` - QuickFile MCP integration
+- `tools/accounts/receipt-ocr.md` - OCR receipt/invoice extraction pipeline
 
 **Typical Tasks**:
 - Invoice management
 - Expense tracking
+- **Receipt/invoice OCR** (scan → extract → QuickFile)
 - Financial reporting
 - Client/supplier management
 - Bank reconciliation
@@ -57,6 +59,23 @@ Use `services/accounting/quickfile.md` for:
 - Send reminders
 - Record payments
 
+### Receipt/Invoice OCR
+
+Scan paper receipts and invoices, extract structured data, and record in QuickFile:
+
+```bash
+# Quick OCR scan
+ocr-receipt-helper.sh scan receipt.jpg
+
+# Structured extraction
+ocr-receipt-helper.sh extract invoice.pdf
+
+# Create QuickFile purchase invoice
+ocr-receipt-helper.sh quickfile receipt.png --nominal 7502
+```
+
+See `tools/accounts/receipt-ocr.md` for full pipeline documentation.
+
 ### Expense Tracking
 
 - Categorize expenses
@@ -75,5 +94,6 @@ Use `services/accounting/quickfile.md` for:
 
 - `sales.md` - Quote to invoice
 - `services/` - Project-based billing
+- `tools/accounts/receipt-ocr.md` - OCR receipt/invoice extraction
 
 *See `services/accounting/quickfile.md` for detailed QuickFile operations.*
