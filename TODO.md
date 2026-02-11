@@ -598,7 +598,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t068.8 TUI Dashboard (extend bdui or new Ink app) ~1h blocked-by:t068.4,t068.5 ref:GH#499 completed:2026-02-09 verified:2026-02-09
     - Notes: Already implemented as cmd_dashboard() in supervisor-helper.sh (lines 8989-9498). Full interactive TUI with: batch summary, progress bar, task table with status icons/colors, system resources (CPU/memory/processes), active worker PIDs, keyboard controls (q/p/r/j/k/?), scroll support, adaptive column widths.
 - [x] t009 Claude Code Destructive Command Hooks #plan → [todo/PLANS.md#claude-code-destructive-command-hooks] ~30m (ai:15m test:10m read:5m) ref:GH#500 logged:2025-12-21 completed:2026-02-08 verified:2026-02-08 PR #562 merged
-- [ ] t008 aidevops-opencode Plugin #plan → [todo/PLANS.md#aidevops-opencode-plugin] ~1.5h (ai:45m test:30m read:15m) ref:GH#501 logged:2025-12-21
+- [ ] t008 aidevops-opencode Plugin #plan → [todo/PLANS.md#aidevops-opencode-plugin] ~1.5h (ai:45m test:30m read:15m) ref:GH#501 assignee:marcusquinn started:2026-02-11T03:28:15Z logged:2025-12-21
 - [x] t004 Add Ahrefs MCP server integration #seo ~4h (ai:2h test:1h read:1h) logged:2025-12-20 completed:2026-01-25
 - [x] t005 Implement multi-tenant credential storage #security ~1.5d (ai:8h test:4h read:2h) logged:2025-12-20 completed:2026-01-24
 - [x] t070 Backlink & Expired Domain Checker subagent #seo #domains ~15m (ai:10m test:3m read:2m) logged:2026-01-24 completed:2026-02-07
