@@ -1,12 +1,31 @@
 {
   "name": "opencode-aidevops",
-  "version": "1.0.0",
-  "description": "OpenCode plugin for aidevops - compaction context injection",
-  "main": "index.mjs",
+  "version": "2.0.0",
+  "description": "OpenCode plugin for aidevops - agent loader, compaction context, CLI tools",
+  "main": "dist/index.mjs",
   "type": "module",
-  "keywords": ["opencode", "plugin", "aidevops", "compaction"],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs"
+    }
+  },
+  "scripts": {
+    "build": "bun build src/index.ts --outdir dist --target bun --format esm --external zod --external gray-matter && cp src/types.d.ts dist/index.d.ts",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "keywords": ["opencode", "plugin", "aidevops", "devops", "agents", "compaction"],
   "author": "Marcus Quinn",
   "license": "MIT",
+  "dependencies": {
+    "gray-matter": "^4.0.3",
+    "zod": "^3.24.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "typescript": "^5.8.3"
+  },
   "peerDependencies": {
     "opencode-ai": ">=1.0.150"
   }
