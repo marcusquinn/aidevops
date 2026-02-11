@@ -243,11 +243,9 @@ reclassify_severity() {
 
     # Check for high upgrades
     for pattern in "${SEVERITY_UPGRADE_HIGH[@]}"; do
-        if echo "$lower_body" | grep -qiE "$pattern"; then
-            if [[ "$current_severity" != "critical" ]]; then
-                echo "high"
-                return 0
-            fi
+        if echo "$lower_body" | grep -qiE "$pattern" && [[ "$current_severity" != "critical" ]]; then
+            echo "high"
+            return 0
         fi
     done
 

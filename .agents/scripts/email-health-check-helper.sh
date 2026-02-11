@@ -678,7 +678,7 @@ check_preheader() {
     # Check for placeholder text
     local preheader_lower
     preheader_lower=$(echo "$preheader" | tr '[:upper:]' '[:lower:]')
-    local placeholders="view in browser email not displaying view this email having trouble viewing"
+    local phrase
     for phrase in "view in browser" "email not displaying" "view this email" "having trouble viewing"; do
         if [[ "$preheader_lower" == *"$phrase"* ]]; then
             print_warning "Default/placeholder preheader text detected: '$phrase'"

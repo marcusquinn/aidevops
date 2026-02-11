@@ -759,11 +759,10 @@ main() {
     shift || true
 
     # Verify required dependencies (jq is needed for all scan commands)
-    if [[ "$command" != "help" && "$command" != "--help" && "$command" != "-h" ]]; then
-        if ! command -v jq &>/dev/null; then
-            log_error "jq is required but not installed (brew install jq)"
-            return 1
-        fi
+    if [[ "$command" != "help" && "$command" != "--help" && "$command" != "-h" ]] && \
+       ! command -v jq &>/dev/null; then
+        log_error "jq is required but not installed (brew install jq)"
+        return 1
     fi
 
     # Parse global flags

@@ -241,10 +241,8 @@ deploy_all_agents() {
         local preserve_ok=true
 
         for pdir in custom draft; do
-            if [[ -d "$TARGET_DIR/$pdir" ]]; then
-                if ! cp -R "$TARGET_DIR/$pdir" "$tmp_preserve/$pdir"; then
-                    preserve_ok=false
-                fi
+            if [[ -d "$TARGET_DIR/$pdir" ]] && ! cp -R "$TARGET_DIR/$pdir" "$tmp_preserve/$pdir"; then
+                preserve_ok=false
             fi
         done
 

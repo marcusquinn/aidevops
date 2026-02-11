@@ -73,12 +73,10 @@ build_curl_args() {
     # Add SSL options for HTTPS
     local protocol
     protocol=$(get_protocol "$OPENCODE_HOST")
-    if [[ "$protocol" == "https" ]]; then
-        if [[ -n "$OPENCODE_INSECURE" ]]; then
-            # Allow insecure connections (self-signed certs) - use with caution
-            CURL_ARGS+=(-k)
-            log_info "WARNING: SSL verification disabled (OPENCODE_INSECURE=1)"
-        fi
+    if [[ "$protocol" == "https" ]] && [[ -n "$OPENCODE_INSECURE" ]]; then
+        # Allow insecure connections (self-signed certs) - use with caution
+        CURL_ARGS+=(-k)
+        log_info "WARNING: SSL verification disabled (OPENCODE_INSECURE=1)"
     fi
 }
 

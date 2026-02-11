@@ -364,12 +364,11 @@ cmd_stop() {
     fi
 
     # Stop Docker if running
-    if command -v docker &>/dev/null && [[ -f "${S2S_DIR}/docker-compose.yml" ]]; then
-        if docker compose -f "${S2S_DIR}/docker-compose.yml" ps --quiet 2>>"$S2S_LOG_FILE" | grep -q .; then
-            print_info "Stopping Docker containers..."
-            (cd "$S2S_DIR" && docker compose down) || return 1
-            print_success "Docker containers stopped"
-        fi
+    if command -v docker &>/dev/null && [[ -f "${S2S_DIR}/docker-compose.yml" ]] && \
+       docker compose -f "${S2S_DIR}/docker-compose.yml" ps --quiet 2>>"$S2S_LOG_FILE" | grep -q .; then
+        print_info "Stopping Docker containers..."
+        (cd "$S2S_DIR" && docker compose down) || return 1
+        print_success "Docker containers stopped"
     fi
 
     return 0

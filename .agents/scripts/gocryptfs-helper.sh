@@ -250,7 +250,6 @@ cmd_create() {
     fi
 
     local cipher_dir="$VAULT_BASE_DIR/$name"
-    local mount_dir="$VAULT_MOUNT_DIR/$name"
 
     if is_cipher_dir "$cipher_dir"; then
         print_warning "Vault already exists: $name"

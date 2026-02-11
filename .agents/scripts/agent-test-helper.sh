@@ -424,21 +424,17 @@ validate_response() {
     # Check expect_regex
     local regex
     regex=$(echo "$test_json" | jq -r '.expect_regex // empty' 2>/dev/null)
-    if [[ -n "$regex" ]]; then
-        if ! echo "$response" | grep -qEi "$regex"; then
-            log_fail "  Expected to match regex: \"$regex\""
-            failures=$((failures + 1))
-        fi
+    if [[ -n "$regex" ]] && ! echo "$response" | grep -qEi "$regex"; then
+        log_fail "  Expected to match regex: \"$regex\""
+        failures=$((failures + 1))
     fi
 
     # Check expect_not_regex
     local not_regex
     not_regex=$(echo "$test_json" | jq -r '.expect_not_regex // empty' 2>/dev/null)
-    if [[ -n "$not_regex" ]]; then
-        if echo "$response" | grep -qEi "$not_regex"; then
-            log_fail "  Expected NOT to match regex: \"$not_regex\""
-            failures=$((failures + 1))
-        fi
+    if [[ -n "$not_regex" ]] && echo "$response" | grep -qEi "$not_regex"; then
+        log_fail "  Expected NOT to match regex: \"$not_regex\""
+        failures=$((failures + 1))
     fi
 
     # Check min_length

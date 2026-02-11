@@ -72,6 +72,7 @@ validate_html_structure() {
     # Check for html xmlns
     if ! grep -qi 'xmlns=' "$html_file"; then
         print_warning "Missing xmlns attribute on html tag"
+        # NOSONAR - xmlns URL is a namespace identifier, not a network request
         print_info "Add: xmlns=\"http://www.w3.org/1999/xhtml\" for Outlook compatibility"
         warnings=$((warnings + 1))
     else

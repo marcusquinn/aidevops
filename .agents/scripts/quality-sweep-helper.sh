@@ -159,13 +159,11 @@ sonar_api_call() {
         curl_args+=(-u "${SONAR_TOKEN}:")
     fi
 
-    local response
-    local http_code
     local tmp_body
     tmp_body=$(mktemp)
     trap 'rm -f "${tmp_body:-}"' RETURN
 
-    http_code=$(curl "${curl_args[@]}" -o "$tmp_body" -w '%{http_code}' "$url" 2>/dev/null) || {
+    curl "${curl_args[@]}" -o "$tmp_body" -w '%{http_code}' "$url" 2>/dev/null || {
         print_error "SonarCloud API request failed: ${endpoint}"
         return 1
     }

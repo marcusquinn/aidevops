@@ -349,8 +349,8 @@ cmd_read_msg() {
     "
 
     # Output in TOON format for backward compatibility
-    local id from_agent to_agent msg_type priority convoy created_at status payload
-    IFS='|' read -r id from_agent to_agent msg_type priority convoy created_at status payload <<< "$row"
+    local id from_agent to_agent msg_type priority convoy created_at payload
+    IFS='|' read -r id from_agent to_agent msg_type priority convoy created_at _ payload <<< "$row"
     echo "<!--TOON:message{id,from,to,type,priority,convoy,timestamp,status}:"
     echo "${id},${from_agent},${to_agent},${msg_type},${priority},${convoy},${created_at},read"
     echo "-->"
