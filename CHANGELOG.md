@@ -7,9 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.110.7] - 2026-02-11
+
+### Changed
+
+- Documentation: changelog for t283 string lookup fix
+
 ### Fixed
 
-- replace associative array with string lookup in cmd_close for bash set -u compatibility (t283) (#1086)
+- replace associative array with string lookup in cmd_close (t283) (#1086)
 
 ## [2.110.6] - 2026-02-11
 
