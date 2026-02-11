@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- add Homebrew install offer and Beads binary download fallback for Linux (#1168)
+
 ## [2.110.11] - 2026-02-11
 
 ### Added
