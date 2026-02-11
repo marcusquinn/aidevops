@@ -7,10 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.110.5] - 2026-02-11
+
+### Changed
+
+- Documentation: add changelog entry for t283 issue-sync performance fix
+
 ### Fixed
 
 - cmd_close pre-fetches open issues to avoid 2000+ API calls per run (t283) (#1084)
-- push job concurrency changed to cancel-in-progress: false so issue-sync completes (#1084)
 
 ## [2.110.4] - 2026-02-11
 
