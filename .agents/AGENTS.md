@@ -412,6 +412,8 @@ Import community skills: `aidevops skill add <source>` (→ `*-skill.md` suffix)
 
 Proactively use a browser for: dev server verification, form testing, deployment checks, frontend debugging. Read `tools/browser/browser-automation.md` for tool selection. Quick default: Playwright for dev testing, dev-browser for persistent login.
 
+**CRITICAL: Never use curl/HTTP to verify frontend fixes.** Server returns 200 even when React crashes client-side because error boundaries render successfully. The crash happens during hydration which curl never executes. Always use browser screenshots (dev-browser agent, Playwright) to verify frontend fixes work.
+
 ## Localhost Standards
 
 `.local` domains + SSL via Traefik + mkcert. See `services/hosting/localhost.md`.
