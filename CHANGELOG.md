@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- aidevops-opencode plugin — full SDK rewrite with agent loader, MCP registration, quality hooks (t008) (#1073)
+- OCR invoice/receipt extraction pipeline with accounting support (t012) (#1074)
+- extraction schema design for vendor, amount, date, VAT, items (t012.2) (#1080)
+- Higgsfield Trinity UGC Windows storyboard template (t271) (#1069)
+- default Higgsfield output to ~/Downloads/higgsfield/ for interactive sessions (t270) (#1054)
+
+### Fixed
+
+- verify_gh_cli accepts GH_TOKEN/GITHUB_TOKEN env vars for GitHub Actions compatibility (#1083)
+- recognize pr:#NNN field as completion evidence in issue-sync close (t282) (#1075)
+- prevent shell injection and race conditions in issue-sync workflow (#1070)
+- remove unsupported --metadata flag from auto-decomposition cmd_add (#1071)
+- fix decomposition worker dispatch to use standard CLI and process patterns (t274) (#1066)
+- fix Higgsfield image count detection after generation (t267) (#1068)
+- fix silent failure when downloading still-processing videos (t269) (#1067)
+
+### Changed
+
+- revert t271 Trinity UGC Windows template from shared codebase (#1072)
+
 ## [2.110.3] - 2026-02-11
 
 ### Added
