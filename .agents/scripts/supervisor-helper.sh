@@ -13052,6 +13052,68 @@ cmd_auto_pickup() {
         log_info "No new tasks to pick up"
     else
         log_success "Picked up $picked_up new tasks"
+
+        # Auto-batch: assign picked-up tasks to a batch (t296)
+        # Find unbatched queued tasks (just added by auto-pickup)
+        local unbatched_queued
+        unbatched_queued=$(db "$SUPERVISOR_DB" "
+            SELECT t.id FROM tasks t
+            WHERE t.status = 'queued'
+              AND t.id NOT IN (SELECT task_id FROM batch_tasks)
+            ORDER BY t.created_at;
+        " 2>/dev/null || true)
+
+        if [[ -n "$unbatched_queued" ]]; then
+            # Check for an active batch (has non-terminal tasks)
+            local active_batch_id
+            active_batch_id=$(db "$SUPERVISOR_DB" "
+                SELECT b.id FROM batches b
+                WHERE EXISTS (
+                    SELECT 1 FROM batch_tasks bt
+                    JOIN tasks t ON bt.task_id = t.id
+                    WHERE bt.batch_id = b.id
+                      AND t.status NOT IN ('complete','deployed','verified','verify_failed','merged','cancelled','failed','blocked')
+                )
+                ORDER BY b.created_at DESC
+                LIMIT 1;
+            " 2>/dev/null || true)
+
+            if [[ -n "$active_batch_id" ]]; then
+                # Add to existing active batch
+                local added_count=0
+                local max_pos
+                max_pos=$(db "$SUPERVISOR_DB" "
+                    SELECT COALESCE(MAX(position), -1) FROM batch_tasks
+                    WHERE batch_id = '$(sql_escape "$active_batch_id")';
+                " 2>/dev/null || echo "-1")
+                local pos=$((max_pos + 1))
+
+                while IFS= read -r tid; do
+                    [[ -z "$tid" ]] && continue
+                    db "$SUPERVISOR_DB" "
+                        INSERT OR IGNORE INTO batch_tasks (batch_id, task_id, position)
+                        VALUES ('$(sql_escape "$active_batch_id")', '$(sql_escape "$tid")', $pos);
+                    "
+                    pos=$((pos + 1))
+                    added_count=$((added_count + 1))
+                done <<< "$unbatched_queued"
+
+                if [[ "$added_count" -gt 0 ]]; then
+                    log_success "Auto-batch: added $added_count tasks to active batch $active_batch_id"
+                fi
+            else
+                # Create a new auto-batch
+                local auto_batch_name
+                auto_batch_name="auto-$(date +%Y%m%d-%H%M%S)"
+                local task_csv
+                task_csv=$(echo "$unbatched_queued" | tr '\n' ',' | sed 's/,$//')
+                local auto_batch_id
+                auto_batch_id=$(cmd_batch "$auto_batch_name" --concurrency 3 --tasks "$task_csv" 2>/dev/null)
+                if [[ -n "$auto_batch_id" ]]; then
+                    log_success "Auto-batch: created '$auto_batch_name' ($auto_batch_id) with $picked_up tasks"
+                fi
+            fi
+        fi
     fi
 
     return 0
@@ -14154,11 +14216,17 @@ GitHub Issue Auto-Creation (t149):
   (dedup by title search). Requires: gh CLI authenticated.
   Disable: --no-issue flag on add, or SUPERVISOR_AUTO_ISSUE=false globally.
 
-Cron Integration & Auto-Pickup (t128.5):
+Cron Integration & Auto-Pickup (t128.5, t296):
   Auto-pickup scans TODO.md for tasks to automatically queue:
     1. Tasks tagged with #auto-dispatch anywhere in the line
     2. Tasks listed under a "## Dispatch Queue" section header
   Both strategies skip tasks already tracked by the supervisor.
+
+  Auto-batching (t296): When new tasks are picked up, they are automatically
+  assigned to a batch. If an active batch exists, tasks are added to it.
+  Otherwise, a new batch named 'auto-YYYYMMDD-HHMMSS' is created with
+  concurrency 3. This ensures all auto-dispatched tasks get batch-level
+  concurrency control, completion tracking, and lifecycle management.
 
   Cron scheduling runs pulse (which includes auto-pickup) every N minutes:
     supervisor-helper.sh cron install              # Every 5 minutes (default)
