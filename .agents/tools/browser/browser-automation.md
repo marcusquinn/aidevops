@@ -687,6 +687,8 @@ await client.disconnect();
 EOF
 ```
 
+**NEVER use curl/HTTP to verify frontend fixes**: Server returns 200 even when React crashes client-side because error boundaries render successfully. The crash happens during hydration which curl never executes. Always use browser screenshots to verify frontend fixes work.
+
 **Self-diagnosis workflow**:
 1. Action fails or unexpected result
 2. Take screenshot
