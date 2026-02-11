@@ -7532,9 +7532,11 @@ dismiss_bot_reviews() {
 
 #######################################
 # Check PR CI and review status for a task
-# Returns: ready_to_merge, unstable_sonarcloud, ci_pending, ci_failed, changes_requested, draft, no_pr
+# Returns: status|mergeStateStatus (e.g., "ci_pending|BEHIND", "ready_to_merge|CLEAN")
+# Status values: ready_to_merge, unstable_sonarcloud, ci_pending, ci_failed, changes_requested, draft, no_pr
 # t227: unstable_sonarcloud = SonarCloud GH Action passed but external quality gate failed
 # t226: auto-dismiss bot reviews that block merge
+# t298: Return mergeStateStatus to enable auto-rebase for BEHIND/DIRTY PRs
 #######################################
 check_pr_status() {
     local task_id="$1"
@@ -7550,7 +7552,7 @@ check_pr_status() {
     if [[ -z "$pr_url" || "$pr_url" == "no_pr" || "$pr_url" == "task_only" ]]; then
         pr_url=$(link_pr_to_task "$task_id" --caller "check_pr_status") || pr_url=""
         if [[ -z "$pr_url" ]]; then
-            echo "no_pr"
+            echo "no_pr|UNKNOWN"
             return 0
         fi
     fi
@@ -7559,14 +7561,14 @@ check_pr_status() {
     local parsed_pr pr_number repo_slug
     parsed_pr=$(parse_pr_url "$pr_url") || parsed_pr=""
     if [[ -z "$parsed_pr" ]]; then
-        echo "no_pr"
+        echo "no_pr|UNKNOWN"
         return 0
     fi
     repo_slug="${parsed_pr%%|*}"
     pr_number="${parsed_pr##*|}"
 
     if [[ -z "$pr_number" || -z "$repo_slug" ]]; then
-        echo "no_pr"
+        echo "no_pr|UNKNOWN"
         return 0
     fi
 
@@ -7577,7 +7579,7 @@ check_pr_status() {
     pr_json=$(gh pr view "$pr_number" --repo "$repo_slug" --json state,isDraft,reviewDecision,mergeable,mergeStateStatus,statusCheckRollup 2>>"$SUPERVISOR_LOG" || echo "")
 
     if [[ -z "$pr_json" ]]; then
-        echo "no_pr"
+        echo "no_pr|UNKNOWN"
         return 0
     fi
 
@@ -7586,13 +7588,13 @@ check_pr_status() {
 
     # Already merged
     if [[ "$pr_state" == "MERGED" ]]; then
-        echo "already_merged"
+        echo "already_merged|MERGED"
         return 0
     fi
 
     # Closed without merge
     if [[ "$pr_state" == "CLOSED" ]]; then
-        echo "closed"
+        echo "closed|CLOSED"
         return 0
     fi
 
@@ -7600,7 +7602,7 @@ check_pr_status() {
     local is_draft
     is_draft=$(echo "$pr_json" | jq -r '.isDraft // false' 2>/dev/null || echo "false")
     if [[ "$is_draft" == "true" ]]; then
-        echo "draft"
+        echo "draft|DRAFT"
         return 0
     fi
 
@@ -7643,7 +7645,7 @@ check_pr_status() {
                 has_pending=$(echo "$check_rollup" | jq '[.[] | select(.status == "IN_PROGRESS" or .status == "QUEUED" or .status == "PENDING")] | length' 2>/dev/null || echo "0")
 
                 if [[ "$has_pending" -gt 0 ]]; then
-                    echo "ci_pending"
+                    echo "ci_pending|$merge_state"
                     return 0
                 fi
 
@@ -7652,7 +7654,7 @@ check_pr_status() {
                 has_failed=$(echo "$check_rollup" | jq '[.[] | select((.conclusion | test("FAILURE|TIMED_OUT|ACTION_REQUIRED")) or .state == "FAILURE" or .state == "ERROR")] | length' 2>/dev/null || echo "0")
 
                 if [[ "$has_failed" -gt 0 ]]; then
-                    echo "ci_failed"
+                    echo "ci_failed|$merge_state"
                     return 0
                 fi
             fi
@@ -7672,7 +7674,7 @@ check_pr_status() {
                 sonar_gate_fail=$(echo "$check_rollup" | jq '[.[] | select(.name == "SonarCloud Code Analysis" and .conclusion == "FAILURE")] | length' 2>/dev/null || echo "0")
 
                 if [[ "$sonar_action_pass" -gt 0 && "$sonar_gate_fail" -gt 0 ]]; then
-                    echo "unstable_sonarcloud"
+                    echo "unstable_sonarcloud|$merge_state"
                     return 0
                 fi
             fi
@@ -7685,8 +7687,8 @@ check_pr_status() {
             # All required checks passed, fall through to review check
             ;;
         BEHIND|DIRTY)
-            # Needs rebase or has conflicts - treat as pending
-            echo "ci_pending"
+            # t298: Needs rebase or has conflicts - return merge_state for auto-rebase
+            echo "ci_pending|$merge_state"
             return 0
             ;;
         *)
@@ -7702,12 +7704,12 @@ check_pr_status() {
                     # GitHub says it's mergeable — fall through to review check
                     ;;
                 CONFLICTING)
-                    echo "ci_pending"
+                    echo "ci_pending|CONFLICTING"
                     return 0
                     ;;
                 *)
                     # UNKNOWN mergeable too — report as pending, will resolve next pulse
-                    echo "ci_pending"
+                    echo "ci_pending|$merge_state"
                     return 0
                     ;;
             esac
@@ -7730,7 +7732,7 @@ check_pr_status() {
             # If still CHANGES_REQUESTED after dismissal, there are human reviews blocking
             if [[ "$review_decision" == "CHANGES_REQUESTED" ]]; then
                 log_warn "PR #${pr_number} still has CHANGES_REQUESTED after dismissing bot reviews (human reviews present)"
-                echo "changes_requested"
+                echo "changes_requested|$merge_state"
                 return 0
             else
                 log_success "PR #${pr_number} unblocked after dismissing bot reviews"
@@ -7739,13 +7741,13 @@ check_pr_status() {
         else
             # No bot reviews to dismiss, must be human reviews
             log_info "PR #${pr_number} has CHANGES_REQUESTED from human reviewers (not auto-dismissing)"
-            echo "changes_requested"
+            echo "changes_requested|$merge_state"
             return 0
         fi
     fi
 
     # CI passed, no blocking reviews
-    echo "ready_to_merge"
+    echo "ready_to_merge|$merge_state"
     return 0
 }
 
