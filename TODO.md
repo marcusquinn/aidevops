@@ -617,7 +617,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t068.8 TUI Dashboard (extend bdui or new Ink app) ~1h blocked-by:t068.4,t068.5 ref:GH#499 completed:2026-02-09 verified:2026-02-09 pr:#482
     - Notes: Already implemented as cmd_dashboard() in supervisor-helper.sh (lines 8989-9498). Full interactive TUI with: batch summary, progress bar, task table with status icons/colors, system resources (CPU/memory/processes), active worker PIDs, keyboard controls (q/p/r/j/k/?), scroll support, adaptive column widths.
 - [x] t009 Claude Code Destructive Command Hooks #plan → [todo/PLANS.md#claude-code-destructive-command-hooks] ~30m (ai:15m test:10m read:5m) ref:GH#500 logged:2025-12-21 completed:2026-02-08 verified:2026-02-08 PR #562 merged
-- [x] t008 aidevops-opencode Plugin #plan → [todo/PLANS.md#aidevops-opencode-plugin] ~1.5h (ai:45m test:30m read:15m) ref:GH#501 assignee:marcusquinn logged:2025-12-21 completed:2026-02-11
+- [x] t008 aidevops-opencode Plugin #plan → [todo/PLANS.md#aidevops-opencode-plugin] ~1.5h (ai:45m test:30m read:15m) ref:GH#501 assignee:marcusquinn pr:#1149 logged:2025-12-21 completed:2026-02-11
   - [x] t008.1 Core plugin structure + agent loader ~4h #auto-dispatch ref:GH#1094 assignee:marcusquinn completed:2026-02-11
   - [x] t008.2 MCP registration ~2h #auto-dispatch blocked-by:t008.1 ref:GH#1095 assignee:marcusquinn completed:2026-02-12 pr:#1149
   - [x] t008.3 Quality hooks (pre-commit) ~3h #auto-dispatch blocked-by:t008.1 ref:GH#1096 assignee:marcusquinn completed:2026-02-11
