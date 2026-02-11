@@ -17,7 +17,7 @@ tools:
 
 ## Quick Reference
 
-- **Status**: Implemented (t008, PR #1073)
+- **Status**: Implemented (t008.1 PR #1138, t008.2 PR #1149)
 - **Purpose**: Native OpenCode plugin wrapper for aidevops
 - **Approach**: Single-file ESM plugin using hooks-based SDK pattern
 - **Location**: `.agents/plugins/opencode-aidevops/index.mjs`
@@ -40,15 +40,16 @@ aidevops integrates with OpenCode via multiple layers:
 |-------|-----------|------------|
 | Primary agents | `opencode.json` agent section | `generate-opencode-agents.sh` |
 | Subagent stubs | `~/.config/opencode/agent/*.md` | `generate-opencode-agents.sh` |
-| MCP configs | `opencode.json` mcp section | `generate-opencode-agents.sh` |
+| MCP configs | `opencode.json` mcp section | `generate-opencode-agents.sh` + **This plugin** |
 | Slash commands | `~/.config/opencode/commands/` | `setup.sh` |
 | **Runtime hooks** | Plugin hooks API | **This plugin** |
 | **Custom tools** | Plugin tool registration | **This plugin** |
 | **Dynamic agents** | Plugin config hook | **This plugin** |
+| **MCP registration** | Plugin config hook (t008.2) | **This plugin** |
 | **Shell environment** | Plugin shell.env hook | **This plugin** |
 | **Compaction context** | Plugin compacting hook | **This plugin** |
 
-The plugin only injects agents not already configured by `generate-opencode-agents.sh`, ensuring the shell script always takes precedence.
+The plugin only injects agents and MCPs not already configured by `generate-opencode-agents.sh`, ensuring the shell script always takes precedence.
 
 ## Actual SDK API (v1.1.56)
 
@@ -108,24 +109,61 @@ interface Hooks {
 
 ### Hooks Implemented
 
-#### 1. Config Hook — Dynamic Agent Loading
+#### 1. Config Hook — Dynamic Agent Loading + MCP Registration
 
-Reads all markdown files from `~/.aidevops/agents/` and subdirectories, parses YAML frontmatter, and injects subagent definitions into OpenCode's config. Only injects agents not already configured (shell script takes precedence).
+The config hook performs two complementary registrations:
+
+**Agent Loading** (t008.1): Reads all markdown files from `~/.aidevops/agents/` and subdirectories, parses YAML frontmatter, and injects subagent definitions into OpenCode's config. Only injects agents not already configured (shell script takes precedence).
+
+**MCP Registration** (t008.2): Registers MCP servers from a data-driven registry, enforces eager/lazy loading policy, and applies per-agent tool permissions. This ensures MCPs are always registered even without re-running `generate-opencode-agents.sh`.
 
 ```javascript
-// Mutates config.agent to add missing subagents
 async function configHook(config) {
-  const agents = loadAgentDefinitions();  // ~400 agents from filesystem
+  // Phase 1: Agent registration
+  const agents = loadAgentDefinitions();
   for (const agent of agents) {
-    if (config.agent[agent.name]) continue;  // Skip if already configured
-    if (agent.mode !== "subagent") continue;  // Only auto-register subagents
-    config.agent[agent.name] = {
-      description: agent.description,
-      mode: "subagent",
-    };
+    if (config.agent[agent.name]) continue;
+    if (agent.mode !== "subagent") continue;
+    config.agent[agent.name] = { description: agent.description, mode: "subagent" };
   }
+
+  // Phase 2: MCP registration
+  registerMcpServers(config);     // Register servers + global tool perms
+  applyAgentMcpTools(config);     // Per-agent MCP tool enablement
 }
 ```
+
+**MCP Server Registry**: Data-driven catalog of 12 MCP servers with metadata:
+
+| Field | Purpose |
+|-------|---------|
+| `name` | MCP server identifier |
+| `type` | `"local"` or `"remote"` |
+| `command` / `url` | Server launch command or remote URL |
+| `eager` | `true` = start at launch, `false` = lazy-load |
+| `toolPattern` | Glob pattern for tool permissions (e.g. `"osgrep_*"`) |
+| `globallyEnabled` | Whether tools are enabled for all agents |
+| `requiresBinary` | Binary that must exist (skips if missing) |
+| `macOnly` | Platform restriction flag |
+
+**Registered MCPs**:
+
+| MCP | Type | Loading | Tools Global |
+|-----|------|---------|-------------|
+| osgrep | local | eager | yes |
+| playwriter | local | lazy | yes |
+| context7 | remote | lazy | no |
+| augment-context-engine | local | lazy | no |
+| outscraper | local | lazy | no |
+| dataforseo | local | lazy | no |
+| shadcn | local | lazy | no |
+| claude-code-mcp | local | lazy | no |
+| macos-automator | local | lazy | no (macOS) |
+| ios-simulator | local | lazy | no (macOS) |
+| sentry | remote | lazy | no |
+| socket | remote | lazy | no |
+
+**Per-Agent Tool Permissions**: Subagents that need specific MCP tools (e.g. `@dataforseo` needs `dataforseo_*`, `@sentry` needs `sentry_*`) get them enabled via `AGENT_MCP_TOOLS` mapping, applied in `applyAgentMcpTools()`.
 
 #### 2. Custom Tools
 
@@ -185,6 +223,9 @@ Preserves operational state across context resets:
 | Zero runtime dependencies | Built-in Node.js APIs + lightweight YAML parser; no `gray-matter` or `zod` needed |
 | Complement shell script, don't replace | `generate-opencode-agents.sh` handles primary agent config with full control; plugin adds runtime features |
 | Subagents only in config hook | Primary agents need explicit config (model, temperature, tools); auto-registration would override intentional settings |
+| Data-driven MCP registry over config file | Plugin needs runtime binary detection and platform-specific logic that a static JSON config cannot express |
+| Only osgrep eager-loaded | All other MCPs lazy-load on demand to save ~7K+ tokens on session startup |
+| Shell script takes precedence for MCPs | Plugin only registers MCPs not already configured; `generate-opencode-agents.sh` definitions win |
 | Phase 4 (oh-my-opencode) skipped | oh-my-opencode is deprecated and actively removed by setup.sh |
 
 ## Future Enhancements
@@ -194,7 +235,6 @@ Preserves operational state across context resets:
 - **`chat.message` hook**: Intercept user messages for slash command routing
 - **`chat.params` hook**: Dynamic model routing based on task complexity
 - **`permission.ask` hook**: Auto-approve safe operations, deny dangerous ones
-- **`config` hook for MCPs**: Dynamically register MCPs (when SDK supports it natively)
 - **Dynamic agent reloading**: Watch filesystem for agent changes and hot-reload
 - **Pattern tracking integration**: Feed tool execution data to `pattern-tracker-helper.sh`
 
