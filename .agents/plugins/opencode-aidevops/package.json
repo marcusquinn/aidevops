@@ -1,13 +1,16 @@
 {
   "name": "opencode-aidevops",
   "version": "1.0.0",
-  "description": "OpenCode plugin for aidevops - compaction context injection",
+  "description": "OpenCode plugin for aidevops — agent loading, quality hooks, CLI tools, compaction context",
   "main": "index.mjs",
   "type": "module",
-  "keywords": ["opencode", "plugin", "aidevops", "compaction"],
+  "keywords": ["opencode", "plugin", "aidevops", "devops", "agents", "compaction"],
   "author": "Marcus Quinn",
   "license": "MIT",
   "peerDependencies": {
-    "opencode-ai": ">=1.0.150"
+    "opencode-ai": ">=1.1.0"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.1.56"
   }
 }
