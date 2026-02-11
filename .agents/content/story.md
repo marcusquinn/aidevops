@@ -170,9 +170,186 @@ When generating a story package, produce:
 - Podcast: [specific adaptations]
 ```
 
+## UGC Brief Storyboard
+
+Generate a complete multi-shot storyboard from a business description. This template eliminates manual shot-by-shot prompt writing by combining the 4-Part Script Framework (above) with the 7-component video prompt format (`tools/video/video-prompt-design.md`).
+
+### Input: Business Brief
+
+Provide a single business description and the template generates all shots:
+
+```text
+# UGC Brief
+
+Business:     [Company name and what they do]
+Product:      [Specific product/service being featured]
+Audience:     [Target customer — demographics, pain points]
+Presenter:    [Character description — 15+ attributes per video-prompt-design.md]
+Tone:         [warm | energetic | authoritative | casual | inspirational]
+Platform:     [TikTok/Reels (9:16) | YouTube (16:9) | both]
+Duration:     [15s | 30s | 60s]
+CTA:          [What the viewer should do — visit site, sign up, buy, etc.]
+```
+
+### Output: 5-Shot Storyboard
+
+The template produces a 5-shot storyboard. Each shot maps to the 4-Part Script Framework and includes all 7 components from `video-prompt-design.md`.
+
+| Shot | Framework Role | Duration | Purpose |
+|------|---------------|----------|---------|
+| 1 | **Hook** | 2-3s | Pattern interrupt — bold claim or question from the 7 Hook Formulas |
+| 2 | **Story: Before State** | 3-5s | Presenter shows the pain/frustration the audience knows |
+| 3 | **Story: Transformation** | 5-8s | Product hero — demonstrate the solution in action |
+| 4 | **Story: After State** | 3-5s | Result proof — show the outcome or transformation |
+| 5 | **Soft Sell + CTA** | 2-3s | Direct call to action with presenter addressing camera |
+
+### Per-Shot 7-Component Format
+
+Each shot in the storyboard uses this structure (from `tools/video/video-prompt-design.md`):
+
+```text
+## Shot [N]: [FRAMEWORK_ROLE]
+
+Subject:   [Presenter description — identical across all shots for consistency]
+Action:    [Specific movements, gestures, micro-expressions for this shot]
+Scene:     [Environment, props, lighting — matches business context]
+Style:     [Camera: shot type, angle, movement | Colour palette | DOF]
+Dialogue:  (Presenter): "[8s-rule: 12-15 words max]" (Tone: [from brief])
+Sounds:    [Diegetic audio only for UGC — no score, no stock music]
+Technical: [Negatives: subtitles, watermark, text overlays, amateur quality]
+```
+
+### Worked Example
+
+**Brief**: "FreshBrew, a specialty coffee subscription. Product: monthly curated coffee box. Audience: 25-40 remote workers who drink 3+ cups/day but are bored of supermarket coffee. Presenter: Maya, a 32-year-old South Asian woman with shoulder-length dark hair, warm brown eyes, wearing a cream knit sweater, relaxed posture, genuine smile. Tone: warm. Platform: TikTok/Reels (9:16). Duration: 30s. CTA: Link in bio for first box 50% off."
+
+---
+
+**Shot 1: Hook** (3s) — Bold Claim formula
+
+```text
+Subject:   Maya, a 32-year-old South Asian woman with shoulder-length dark wavy
+           hair, warm brown eyes, light olive skin, wearing a cream knit sweater
+           over a white tee, relaxed posture, genuine warm smile, minimal gold
+           stud earrings, natural makeup, confident and approachable demeanour
+Action:    Holds coffee mug close to face, inhales deeply, eyes widen with
+           surprise, looks directly into camera with eyebrows raised
+Scene:     Modern kitchen counter, morning light from window, coffee equipment
+           visible in background, warm wood tones, steam rising from mug
+Style:     CU (head and shoulders), eye-level, handheld with subtle movement,
+           warm colour palette (#F4E4C1, #6B4226, #FFFFFF), shallow DOF
+Dialogue:  (Maya): "Your morning coffee is lying to you." (Tone: warm playfulness
+           with a hint of conspiracy)
+Sounds:    Coffee pouring, gentle morning kitchen ambiance, no music
+Technical: subtitles, captions, watermark, text overlays, logo, amateur quality,
+           distorted hands, oversaturation
+```
+
+**Shot 2: Before State** (5s) — Pain angle
+
+```text
+Subject:   [Identical Maya description]
+Action:    Grimaces while sipping from a generic mug, sets it down with
+           disappointment, shakes head slightly, shoulders slump
+Scene:     Same kitchen, harsh overhead fluorescent light, generic supermarket
+           coffee bag visible on counter, dull morning atmosphere
+Style:     MS (waist up), slightly high angle (looking down = diminished),
+           static shot, desaturated warm tones, medium DOF
+Dialogue:  (Maya): "Same bland bag every week. Three cups a day of... nothing."
+           (Tone: genuine frustration, relatable)
+Sounds:    Mug clinking on counter, quiet kitchen hum, no music
+Technical: subtitles, captions, watermark, text overlays, logo, amateur quality
+```
+
+**Shot 3: Transformation — Product Hero** (8s)
+
+```text
+Subject:   [Identical Maya description]
+Action:    Opens FreshBrew box with visible excitement, lifts out a coffee bag,
+           reads the label with curiosity, scoops beans into grinder, presses
+           brew — movements are deliberate and tactile
+Scene:     Same kitchen, now warm natural window light, FreshBrew branded box
+           centre-frame, colourful coffee bags inside, steam rising from fresh
+           pour, warm golden atmosphere
+Style:     Sequence: CU on hands opening box → MS of Maya reading label → CU
+           tracking shot following pour into mug, warm saturated palette
+           (#F4E4C1, #6B4226, #D4A574), shallow DOF on product
+Dialogue:  (Maya): "Every month, beans I'd never find myself. Single origin,
+           roasted last week." (Tone: warm discovery, genuine enthusiasm)
+Sounds:    Box opening, beans rustling, grinder whirring, coffee pouring,
+           no music
+Technical: subtitles, captions, watermark, text overlays, logo, amateur quality,
+           blurry product text
+```
+
+**Shot 4: After State — Result Proof** (5s)
+
+```text
+Subject:   [Identical Maya description]
+Action:    Takes first sip of new coffee, eyes close in satisfaction, opens
+           eyes with a genuine smile, nods slowly, holds mug with both hands
+Scene:     Same kitchen, warm morning light, laptop open in background
+           suggesting remote work, cosy and elevated atmosphere
+Style:     CU (face and mug), eye-level, slow dolly in (building intimacy),
+           warm rich palette, shallow DOF — face sharp, background soft
+Dialogue:  (Maya): "This is what three cups a day should taste like."
+           (Tone: quiet satisfaction, contentment)
+Sounds:    Gentle sip, quiet morning ambiance, distant birdsong, no music
+Technical: subtitles, captions, watermark, text overlays, logo, amateur quality
+```
+
+**Shot 5: CTA** (3s)
+
+```text
+Subject:   [Identical Maya description]
+Action:    Looks directly into camera, points down (toward link), warm
+           confident smile, slight head tilt
+Scene:     Same kitchen, FreshBrew box visible beside her, warm natural light,
+           clean and inviting frame
+Style:     MS (waist up), eye-level, static shot, warm palette, medium DOF
+Dialogue:  (Maya): "Link in bio — first box is half off." (Tone: friendly
+           invitation, no pressure)
+Sounds:    Quiet kitchen ambiance, no music
+Technical: subtitles, captions, watermark, text overlays, logo, amateur quality
+```
+
+---
+
+### Storyboard Generation Process
+
+1. **Fill the brief** — Business, product, audience, presenter, tone, platform, duration, CTA
+2. **Select hook formula** — Pick from the 7 Hook Formulas based on audience state and platform
+3. **Generate 5 shots** — Use the per-shot 7-component format above
+4. **Score hooks** — Generate 5+ hook variants for Shot 1, score on specificity/emotion/curiosity
+5. **Generate image frames** — Feed each shot to `content/production/image.md` UGC Brief Image Template for static keyframes
+6. **Generate video** — Feed shots to video model (Sora 2 Pro for UGC, Veo 3.1 for cinematic)
+7. **Assemble** — Stitch shots in editing tool, add text overlays in post (not in generation)
+
+### Adapting Shot Count
+
+| Duration | Shots | Adjustment |
+|----------|-------|------------|
+| 15s | 3 | Merge: Hook + Before State, Transformation, CTA |
+| 30s | 5 | Standard template above |
+| 60s | 7-8 | Split Transformation into 2-3 product demo shots, add testimonial shot |
+
+### Integration Points
+
+- **Hook formulas**: Shot 1 uses the 7 Hook Formulas from this document
+- **4-Part Framework**: Shots map directly to Hook → Story → Soft Sell → Visual Cues
+- **Video prompts**: Each shot follows `tools/video/video-prompt-design.md` 7-component format
+- **Image keyframes**: Feed shots to `content/production/image.md` UGC Brief Image Template
+- **Character consistency**: Presenter description stays identical across all shots per `content/production/characters.md`
+- **Audio design**: UGC = all diegetic, no score per `content/production/audio.md`
+- **Distribution**: Output adapts to platform specs in `content/distribution/short-form.md`
+
 ## Related
 
 - `content/research.md` -- Feeds into story design (audience data, pain points)
 - `content/production/writing.md` -- Expands story into full scripts and copy
+- `content/production/image.md` -- UGC Brief Image Template for per-shot keyframes
 - `content/optimization.md` -- A/B tests hook variants and story angles
 - `content.md` -- Parent orchestrator (diamond pipeline)
+- `tools/video/video-prompt-design.md` -- 7-component format used in each shot
+- `content/production/video.md` -- Video generation (Sora 2 Pro for UGC)
+- `content/production/audio.md` -- UGC audio design (diegetic only)
