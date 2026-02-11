@@ -394,6 +394,28 @@ export async function loadConfig(): Promise<Config> {
 - [ ] MCP health monitoring
 - [ ] Integration with aidevops update system
 
+### Phase 4: oh-my-opencode Compatibility (t008.4)
+
+- [x] Detect OMOC presence (OpenCode config, OMOC config files, npm)
+- [x] Deduplicate MCP registrations (skip MCPs managed by OMOC)
+- [x] Complement hooks without overlap (ShellCheck vs comment-checker)
+- [x] Inject OMOC state into compaction context
+- [x] Make setup.sh OMOC-aware (skip cleanup when plugin handles coexistence)
+
+#### Design Decisions
+
+**Coexistence over replacement**: When both `opencode-aidevops` and `oh-my-opencode` are installed, the plugin runs in compatibility mode rather than requiring the user to choose one. This is because:
+
+1. OMOC provides agent orchestration (Sisyphus, background agents, magic keywords)
+2. aidevops provides framework integration (memory, mailbox, supervisor, quality gates)
+3. The overlap is limited to MCP registration and some hook events
+
+**MCP deduplication strategy**: aidevops defers to OMOC for shared MCPs (exa, context7, grep-app) since OMOC may have user-customised versions. aidevops-specific MCPs (augment-context-engine, repomix, etc.) are registered normally.
+
+**Hook complementarity**: OMOC hooks (comment-checker, todo-continuation-enforcer) operate at the agent-behaviour level. aidevops hooks (ShellCheck PreToolUse, quality reminders) operate at the file-quality level. No overlap — both run simultaneously.
+
+**Detection approach**: Checks OpenCode config `plugin` array and OMOC config file existence. Does NOT check npm global install alone (OMOC could be installed but not configured as a plugin).
+
 ## Decision: Plugin vs Current Approach
 
 ### Keep Current Approach (Recommended for Now)
