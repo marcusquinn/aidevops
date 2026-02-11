@@ -338,7 +338,7 @@ Commands:
   assets             List recent generations
   credits            Check account credits/plan
   screenshot [url]   Take screenshot of a page
-  download           Download latest generation
+  download           Download latest generation (default: 4 most recent images)
   help               Show this help
 
 Options (pass after command):
@@ -359,6 +359,7 @@ Options (pass after command):
   --unlimited        Prefer unlimited models only
   --no-sidecar       Disable JSON sidecar metadata files
   --no-dedup         Disable SHA-256 duplicate detection
+  --count, -c        Number of images to download (default: 4, use 0 for all)
   --concurrency, -C  Max concurrent jobs for batch operations (default varies)
   --resume           Resume a previous batch run (skip completed jobs)
 
