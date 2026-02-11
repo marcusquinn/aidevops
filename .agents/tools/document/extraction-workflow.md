@@ -18,8 +18,9 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Orchestrate document extraction - select tools, run pipelines, handle PII
+- **Purpose**: Orchestrate document extraction - select tools, run pipelines, validate output
 - **Helper**: `scripts/document-extraction-helper.sh`
+- **Validation**: `scripts/extraction_pipeline.py` (Pydantic schemas, VAT checks, confidence scoring)
 - **Stack**: Docling (parsing) + ExtractThinker (LLM extraction) + Presidio (PII)
 - **Alternatives**: DocStrange (simpler), Unstract (enterprise), MinerU (PDF-only), Pandoc (basic)
 
@@ -27,6 +28,9 @@ tools:
 
 | Need | Tool | Command |
 |------|------|---------|
+| Structured extraction with validation | Docling+ExtractThinker+Pipeline | `document-extraction-helper.sh extract file --schema purchase-invoice --privacy local` |
+| Classify document type | Classification pipeline | `document-extraction-helper.sh classify file.pdf` |
+| Validate extracted JSON | Validation pipeline | `document-extraction-helper.sh validate file.json` |
 | Structured extraction with PII redaction | Docling+ExtractThinker+Presidio | `document-extraction-helper.sh extract file --schema invoice --privacy local` |
 | Quick extraction, good OCR, no PII needs | DocStrange | `docstrange file.pdf --output json` |
 | Enterprise ETL, visual schema builder | Unstract | `unstract-helper.sh` |
@@ -34,6 +38,7 @@ tools:
 | Simple format conversion | Pandoc | `pandoc-helper.sh convert file.docx` |
 | Local OCR only | GLM-OCR | `ollama run glm-ocr "Extract text" --images file.png` |
 | Receipt/invoice OCR → QuickFile | OCR Receipt Pipeline | `ocr-receipt-helper.sh extract invoice.pdf` |
+| Auto-categorise nominal code | Pipeline utility | `python3 extraction_pipeline.py categorise "Amazon" "office supplies"` |
 
 <!-- AI-CONTEXT-END -->
 
@@ -120,19 +125,30 @@ Document Input (PDF/DOCX/Image/HTML)
          |            or MinerU (PDF-only, layout-aware)
          |            or Pandoc (basic conversion)
          |
-    [2. PII Scan]  ── Presidio (optional)
+    [2. Classify]  ── extraction_pipeline.py classify
+         |              Weighted keyword scoring
+         |              purchase_invoice | expense_receipt | credit_note | invoice
+         |
+    [3. PII Scan]  ── Presidio (optional)
          |              Detect: PERSON, EMAIL, PHONE, SSN, CREDIT_CARD, etc.
          |
-    [3. Anonymize]  ── Presidio (optional)
+    [4. Anonymize]  ── Presidio (optional)
          |              Operators: redact, replace, hash, encrypt
          |
-    [4. Extract]  ── ExtractThinker + LLM
-         |             Schema: Pydantic model (invoice, receipt, contract, etc.)
-         |             Backend: Ollama (local), Cloudflare (edge), OpenAI (cloud)
+    [5. Extract]  ── ExtractThinker + LLM
+         |             Schema: Pydantic model (PurchaseInvoice, ExpenseReceipt, etc.)
+         |             Backend: Gemini Flash (cloud) -> Ollama (local) -> OpenAI (fallback)
          |
-    [5. Output]  ── JSON, Markdown, CSV
+    [6. Validate]  ── extraction_pipeline.py validate
+         |              VAT arithmetic (subtotal + VAT = total within 2p tolerance)
+         |              Date format validation (YYYY-MM-DD)
+         |              Per-field confidence scoring (0.0-1.0)
+         |              Nominal code auto-categorisation
+         |              Review flagging (confidence < 0.7 or VAT mismatch)
          |
-    [6. De-anonymize]  ── Presidio decrypt (if encrypted in step 3)
+    [7. Output]  ── JSON with data + validation summary
+         |
+    [8. De-anonymize]  ── Presidio decrypt (if encrypted in step 4)
 ```
 
 ## Custom Schemas
@@ -158,6 +174,48 @@ extractor.load_llm("ollama/llama3.2")
 
 result = extractor.extract("record.pdf", MedicalRecord)
 print(result.model_dump_json(indent=2))
+```
+
+## Validation Pipeline
+
+The extraction pipeline includes automatic validation via `extraction_pipeline.py`:
+
+### VAT Arithmetic Checks
+
+```text
+Rule 1: subtotal + vat_amount must equal total (within 2p tolerance)
+Rule 2: VAT claimed without supplier VAT number triggers warning
+Rule 3: Line items VAT sum must match total VAT (within 5p tolerance)
+Rule 4: VAT rates must be valid UK rates (0, 5, 20, exempt, oos, servrc, cisrc, postgoods)
+```
+
+### Confidence Scoring
+
+Each extracted field gets a confidence score (0.0-1.0):
+
+- **0.7+**: Field present and non-empty (base score)
+- **+0.2**: Field matches expected format (valid date, positive amount)
+- **+0.1**: Required field is present
+- **< 0.5**: Flagged for manual review
+
+### Nominal Code Auto-Categorisation
+
+When no nominal code is extracted, the pipeline infers from vendor/item patterns:
+
+```bash
+# Example: auto-categorise from vendor name
+python3 extraction_pipeline.py categorise "Shell" "diesel fuel"
+# Output: {"nominal_code": "7401", "category": "Motor Expenses - Fuel"}
+```
+
+### Standalone Validation
+
+```bash
+# Validate an already-extracted JSON file
+document-extraction-helper.sh validate extracted.json --type purchase_invoice
+
+# Or directly via Python
+python3 extraction_pipeline.py validate extracted.json --type expense_receipt
 ```
 
 ## Tool Comparison Matrix
