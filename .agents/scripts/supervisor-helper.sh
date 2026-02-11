@@ -231,6 +231,7 @@ readonly -a VALID_TRANSITIONS=(
 )
 
 readonly BOLD='\033[1m'
+readonly DIM='\033[2m'
 
 log_info() { echo -e "${BLUE}[SUPERVISOR]${NC} $*" >&2; }
 log_success() { echo -e "${GREEN}[SUPERVISOR]${NC} $*" >&2; }
