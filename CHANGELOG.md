@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- opencode plugin crash: remove Zod v4-incompatible args from createTools() (t284) (#1103)
+
 ## [2.110.7] - 2026-02-11
 
 ### Changed
