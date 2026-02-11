@@ -283,8 +283,8 @@ memory-helper.sh recall --namespace youtube-patterns "title"
 
 ## Related
 
-- `youtube/script-writer.md` — Scripts feed into metadata generation
-- `youtube/topic-research.md` — Keywords feed into title/tag optimization
+- `script-writer.md` — Scripts feed into metadata generation
+- `topic-research.md` — Keywords feed into title/tag optimization
 - `seo/keyword-research.md` — Deep keyword volume data
 - `seo/meta-creator.md` — General meta title/description patterns
 - `tools/vision/image-understanding.md` — Thumbnail analysis

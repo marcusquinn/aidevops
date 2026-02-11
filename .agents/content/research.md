@@ -249,7 +249,7 @@ Bulk ingest competitor channel transcripts to build a queryable competitive inte
 2. **Bulk download transcripts**:
 
    ```bash
-   # Using yt-dlp-helper.sh (see youtube/channel-intel.md)
+   # Using yt-dlp-helper.sh (see content/distribution/youtube/channel-intel.md)
    yt-dlp-helper.sh transcripts @channelhandle --limit 50
    # Or: yt-dlp --write-auto-sub --skip-download [channel-url]
    ```

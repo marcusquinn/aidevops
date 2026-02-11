@@ -214,8 +214,8 @@ When reporting channel intel, use this structure:
 
 ## Related
 
-- `youtube.md` - Main YouTube agent
-- `youtube/topic-research.md` - Find content gaps from intel data
-- `youtube/optimizer.md` - Apply outlier title/tag patterns
+- `youtube.md` - Main YouTube orchestrator (this directory)
+- `topic-research.md` - Find content gaps from intel data
+- `optimizer.md` - Apply outlier title/tag patterns
 - `seo/keyword-research.md` - Deep keyword analysis
 - `tools/data-extraction/outscraper.md` - YouTube comment extraction

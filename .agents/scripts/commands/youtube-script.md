@@ -87,7 +87,7 @@ Transform competitor video into unique script:
 
 ### Step 3: Generate Script
 
-Read `youtube/script-writer.md` for full guidance on:
+Read `content/distribution/youtube/script-writer.md` for full guidance on:
 
 - Hook formulas (7 proven patterns)
 - Pattern interrupt types (curiosity gaps, story pivots, direct address)
@@ -414,8 +414,8 @@ AI: Analyzing competitor video dQw4w9WgXcQ...
 
 ## Related
 
-- `youtube.md` - Main YouTube agent
-- `youtube/script-writer.md` - Full script writing guide
+- `content/distribution/youtube/youtube.md` - Main YouTube agent
+- `content/distribution/youtube/script-writer.md` - Full script writing guide
 - `content/story.md` - Storytelling frameworks and hook formulas
 - `/youtube research` - Research topics before scripting
 - `/youtube setup` - Configure channel and niche

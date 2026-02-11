@@ -74,7 +74,7 @@ Setup complete! Next steps:
 
 1. Run /youtube research @competitor to analyze their content strategy
 2. Run /youtube research trending to find trending topics in your niche
-3. Set up automated monitoring with youtube/pipeline.md
+3. Set up automated monitoring with content/distribution/youtube/pipeline.md
 4. Generate your first script with /youtube script "topic"
 
 Your configuration is stored in memory and will persist across sessions.
@@ -168,8 +168,8 @@ AI: Current YouTube Configuration:
 
 ## Related
 
-- `youtube.md` - Main YouTube agent
-- `youtube/channel-intel.md` - Competitor analysis
-- `youtube/pipeline.md` - Automated monitoring
+- `content/distribution/youtube/youtube.md` - Main YouTube agent
+- `content/distribution/youtube/channel-intel.md` - Competitor analysis
+- `content/distribution/youtube/pipeline.md` - Automated monitoring
 - `youtube-helper.sh` - YouTube Data API wrapper
 - `memory-helper.sh` - Cross-session persistence

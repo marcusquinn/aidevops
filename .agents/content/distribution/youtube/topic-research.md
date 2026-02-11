@@ -290,9 +290,9 @@ memory-helper.sh store --type FAILED_APPROACH --namespace youtube-topics \
 
 ## Related
 
-- `youtube/channel-intel.md` — Competitor data feeds into gap analysis
-- `youtube/script-writer.md` — Turn validated topics into scripts
-- `youtube/optimizer.md` — Optimize titles/tags for chosen keywords
+- `channel-intel.md` — Competitor data feeds into gap analysis
+- `script-writer.md` — Turn validated topics into scripts
+- `optimizer.md` — Optimize titles/tags for chosen keywords
 - `seo/keyword-research.md` — Deep keyword volume and competition data
 - `seo/dataforseo.md` — YouTube SERP API for ranking data
 - `seo/serper.md` — Google Trends and web search signals
