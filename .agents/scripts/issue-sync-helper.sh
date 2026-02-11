@@ -1238,7 +1238,15 @@ find_closing_pr() {
     local task_id="$2"
     local repo_slug="$3"
 
-    # Check 1: Extract PR number from task line notes (e.g., "PR #123 merged")
+    # Check 1 (t291): Extract pr:#NNN from TODO.md task line — most reliable source
+    local todo_pr
+    todo_pr=$(echo "$task_line" | grep -oE 'pr:#[0-9]+' | head -1 | grep -oE '[0-9]+' || echo "")
+    if [[ -n "$todo_pr" ]]; then
+        echo "${todo_pr}|https://github.com/${repo_slug}/pull/${todo_pr}"
+        return 0
+    fi
+
+    # Check 2: Extract PR number from task line notes (e.g., "PR #123 merged")
     local inline_pr
     inline_pr=$(echo "$task_line" | grep -oiE 'PR #[0-9]+' | head -1 | grep -oE '[0-9]+' || echo "")
     if [[ -n "$inline_pr" ]]; then
@@ -1246,7 +1254,7 @@ find_closing_pr() {
         return 0
     fi
 
-    # Check 2: Search GitHub for a merged PR with this task ID in the title
+    # Check 3: Search GitHub for a merged PR with this task ID in the title
     if command -v gh &>/dev/null && [[ -n "$repo_slug" ]]; then
         local pr_json
         pr_json=$(gh pr list --repo "$repo_slug" --state merged --search "$task_id in:title" --limit 1 --json number,url 2>/dev/null || echo "[]")
@@ -1257,6 +1265,19 @@ find_closing_pr() {
         if [[ -n "$pr_number" && "$pr_number" != "null" ]]; then
             echo "${pr_number}|${pr_url}"
             return 0
+        fi
+
+        # Check 3b (t291): For subtask IDs (e.g., t214.6), also search by parent ID (t214)
+        local parent_id
+        parent_id=$(echo "$task_id" | grep -oE '^t[0-9]+' || echo "")
+        if [[ -n "$parent_id" && "$parent_id" != "$task_id" ]]; then
+            pr_json=$(gh pr list --repo "$repo_slug" --state merged --search "$parent_id in:title" --limit 1 --json number,url 2>/dev/null || echo "[]")
+            pr_number=$(echo "$pr_json" | jq -r '.[0].number // empty' 2>/dev/null || echo "")
+            pr_url=$(echo "$pr_json" | jq -r '.[0].url // empty' 2>/dev/null || echo "")
+            if [[ -n "$pr_number" && "$pr_number" != "null" ]]; then
+                echo "${pr_number}|${pr_url}"
+                return 0
+            fi
         fi
     fi
 
