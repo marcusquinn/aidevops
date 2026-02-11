@@ -7,30 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.110.3] - 2026-02-11
+
 ### Added
 
-- supervisor auto-decomposition of #plan tasks — Phase 0 detects plans without subtasks and dispatches decomposition workers (t274) (#1060)
-- UGC brief storyboard template for multi-shot content generation (t272) (#1055)
+- add UGC brief storyboard template to story.md and image.md (t272) (#1055)
 - auto-recall memories in Build+ workflow and session start (t273) (#1056)
-- Higgsfield download --count flag to limit downloads (t268) (#1052)
-- results-driven mission principle to build.txt (#1050)
-- supervisor session memory monitoring + respawn on batch completion (t264, t264.1) (#1040, #1043)
-
-### Fixed
-
-- sanitize supervisor arithmetic: task_tool_count non-numeric chars, verify ID octal parsing (#1062)
-- Phase 3 error visibility — redirect stderr to log instead of /dev/null (t265) (#1059, #1061)
-- missing DIM color constant for respawn-history output (#1049)
-- version-manager.sh unbound variable on `get` subcommand (t275) (#1063)
-- Higgsfield default output to ~/Downloads for interactive sessions (t270) (#1054)
+- add --count flag to download command to limit downloads (t268) (#1052)
+- add results-driven mission principle and completion summary instruction (#1050)
+- respawn supervisor after batch completion when memory exceeds threshold (t264.1) (#1043)
+- add domain expertise check to Build+ workflow (step 2b) (#1039)
+- supervisor session memory monitoring with respawn detection (t264) (#1040)
+- add infinite loop guard for deploying auto-recovery (t263) (#1036)
+- exclude skill reference files from subagent stub generation (t258) (#1035)
+- add WaveSpeed AI service agent with REST API helper (t258) (#1016)
+- include task description in worker session titles (t262)
+- accept planning-only PRs for planning tasks (t261) (#1024)
+- add Runway API agent for video, image, and audio generation (#1015)
+- add comfy-cli agent for ComfyUI automations (t259) (#1020)
+- fix deploying->deployed transition stuck state (t248) (#1018)
 
 ### Changed
 
-- auto-dispatch evaluation step added to /save-todo command (t273) (#1057)
-- auto-dispatch tagging guidance added to plans.md and AGENTS.md (#1051)
-- rule against manual `gh issue close` — use issue-sync pipeline (#1062)
-- removed stale Plan+ agent config (#1058)
-- graduated permanent learnings into docs (t266) (#1053)
+- Documentation: add changelog entries for v2.110.3
+- Documentation: add auto-dispatch tagging guidance for TODO creation (t273) (#1051)
+- Documentation: document t247 clean_exit_no_signal reduction strategy (t247) (#1038)
+- Refactor: simplify shared UI helpers with guard clauses and dedup (t250.5) (#1034)
+- Refactor: extract generateVideo() into 8 focused helpers (t250.3) (#1032)
+- Refactor: extract generateImage() into 6 focused helpers (t250.2) (#1021)
+
+### Fixed
+
+- sanitize supervisor arithmetic to prevent syntax errors (#1062)
+- redirect Phase 3/3b stderr to log and capture errors (t265) (#1061)
+- redirect Phase 3/3b stderr to log and capture errors (t265) (#1059)
+- add missing DIM color constant for respawn-history output (t264.1) (#1049)
+- SCRIPTS_DIR typo breaks quality gate model escalation (set -u unbound variable) (#1037)
+- add PR URL discovery for terminal-state tasks (t260) (#1025)
+- add --force flag to batch release to handle empty CHANGELOG (t257) (#1023)
+- replace crontab stdin pipe with temp file to prevent macOS hang (t254) (#1022)
+- prevent worker process accumulation exhausting system RAM (#1031)
 
 ## [2.110.2] - 2026-02-11
 
