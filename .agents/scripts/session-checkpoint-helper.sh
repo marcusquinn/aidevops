@@ -134,6 +134,25 @@ cmd_load() {
     fi
 
     cat "$CHECKPOINT_FILE"
+    
+    # Auto-recall relevant memories after loading checkpoint
+    local memory_helper="$HOME/.aidevops/agents/scripts/memory-helper.sh"
+    if [[ -x "$memory_helper" ]]; then
+        echo ""
+        echo "## Relevant Memories (from prior sessions)"
+        echo ""
+        
+        # Recall recent memories to provide context for resumed session
+        local memories
+        memories=$("$memory_helper" recall --recent --limit 5 --format text 2>/dev/null || echo "")
+        
+        if [[ -n "$memories" && "$memories" != *"No memories found"* ]]; then
+            echo "$memories"
+        else
+            echo "No recent memories found."
+        fi
+    fi
+    
     return 0
 }
 
