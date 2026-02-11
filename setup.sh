@@ -2935,6 +2935,14 @@ deploy_aidevops_agents() {
             fi
         fi
         
+        # Migration: wavespeed.md moved from services/ai-generation/ to tools/video/ (v2.111+)
+        local old_wavespeed="$target_dir/services/ai-generation/wavespeed.md"
+        if [[ -f "$old_wavespeed" ]]; then
+            rm -f "$old_wavespeed"
+            rmdir "$target_dir/services/ai-generation" 2>/dev/null || true
+            print_info "Migrated wavespeed.md from services/ai-generation/ to tools/video/"
+        fi
+        
         # Deploy enabled plugins from plugins.json
         deploy_plugins "$target_dir" "$plugins_file"
     else
