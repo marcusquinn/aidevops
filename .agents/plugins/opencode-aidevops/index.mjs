@@ -498,24 +498,22 @@ async function compactingHook(_input, output, directory) {
 
 /**
  * Create tool definitions for the plugin.
- * Uses inline Zod-compatible schema objects (the tool() helper from
- * @opencode-ai/plugin re-exports zod as tool.schema).
+ *
+ * NOTE: opencode 1.1.56+ uses Zod v4 to validate tool args schemas.
+ * Plain `{ type: "string" }` objects are NOT valid Zod schemas and cause:
+ *   TypeError: undefined is not an object (evaluating 'schema._zod.def')
+ * Fix: omit `args` entirely and document parameters in `description`.
+ * The LLM passes args as a plain object; we extract fields defensively.
+ *
  * @returns {Record<string, object>}
  */
 function createTools() {
   return {
     aidevops: {
       description:
-        "Run aidevops CLI commands (status, repos, features, secret, etc.)",
-      args: {
-        command: {
-          type: "string",
-          description:
-            'The aidevops command to run (e.g. "status", "repos", "features")',
-        },
-      },
+        'Run aidevops CLI commands (status, repos, features, secret, etc.). Pass command as string e.g. "status", "repos", "features"',
       async execute(args) {
-        const cmd = `aidevops ${args.command}`;
+        const cmd = `aidevops ${args.command || args}`;
         const result = run(cmd, 15000);
         return result || `Command completed: ${cmd}`;
       },
@@ -523,17 +521,7 @@ function createTools() {
 
     aidevops_memory_recall: {
       description:
-        "Recall memories from the aidevops cross-session memory system",
-      args: {
-        query: {
-          type: "string",
-          description: "Search query for memory recall",
-        },
-        limit: {
-          type: "string",
-          description: "Maximum number of results (default: 5)",
-        },
-      },
+        'Recall memories from the aidevops cross-session memory system. Args: query (string), limit (string, default "5")',
       async execute(args) {
         const memoryHelper = join(SCRIPTS_DIR, "memory-helper.sh");
         if (!existsSync(memoryHelper)) {
@@ -549,17 +537,8 @@ function createTools() {
     },
 
     aidevops_memory_store: {
-      description: "Store a new memory in the aidevops cross-session memory",
-      args: {
-        content: {
-          type: "string",
-          description: "The memory content to store",
-        },
-        confidence: {
-          type: "string",
-          description: "Confidence level: low, medium, high (default: medium)",
-        },
-      },
+      description:
+        'Store a new memory in the aidevops cross-session memory. Args: content (string), confidence (string: low/medium/high, default "medium")',
       async execute(args) {
         const memoryHelper = join(SCRIPTS_DIR, "memory-helper.sh");
         if (!existsSync(memoryHelper)) {
@@ -576,14 +555,7 @@ function createTools() {
 
     aidevops_pre_edit_check: {
       description:
-        "Run the pre-edit git safety check before modifying files. Returns exit code and guidance.",
-      args: {
-        task: {
-          type: "string",
-          description:
-            "Optional task description for loop mode (e.g. 't008 opencode plugin')",
-        },
-      },
+        'Run the pre-edit git safety check before modifying files. Returns exit code and guidance. Args: task (optional string for loop mode)',
       async execute(args) {
         const script = join(SCRIPTS_DIR, "pre-edit-check.sh");
         if (!existsSync(script)) {
