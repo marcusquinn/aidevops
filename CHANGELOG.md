@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- associative array lookup under set -u in cmd_close (t283) (#1085)
+
 ## [2.110.5] - 2026-02-11
 
 ### Changed
