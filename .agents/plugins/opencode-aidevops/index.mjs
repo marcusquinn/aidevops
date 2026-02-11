@@ -19,6 +19,12 @@ const LOGS_DIR = join(HOME, ".aidevops", "logs");
 const QUALITY_LOG = join(LOGS_DIR, "quality-hooks.log");
 const IS_MACOS = platform() === "darwin";
 
+/**
+ * Cached oh-my-opencode detection result.
+ * @type {{ detected: boolean, version: string, mcps: string[], hooks: string[], configPath: string } | null}
+ */
+let _omocState = null;
+
 // ---------------------------------------------------------------------------
 // Utility helpers
 // ---------------------------------------------------------------------------
@@ -90,6 +96,184 @@ function parseFrontmatter(content) {
   }
 
   return { data, body };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 0: oh-my-opencode (OMOC) Detection & Compatibility (t008.4)
+// ---------------------------------------------------------------------------
+
+/**
+ * MCPs known to be managed by oh-my-opencode.
+ * When OMOC is detected, aidevops skips registering these to avoid duplicates.
+ * Maps OMOC MCP name → aidevops registry name (if different) or null (no equivalent).
+ */
+const OMOC_MANAGED_MCPS = {
+  websearch: null,       // Exa web search — no aidevops equivalent
+  context7: "context7",  // Both plugins register context7
+  grep_app: null,        // GitHub code search — no aidevops equivalent
+};
+
+/**
+ * Hooks known to be provided by oh-my-opencode.
+ * aidevops skips overlapping hook behaviour when these are active.
+ */
+const OMOC_HOOK_NAMES = [
+  "comment-checker",
+  "todo-enforcer",
+  "todo-continuation-enforcer",
+  "aggressive-truncation",
+  "auto-resume",
+  "think-mode",
+  "ralph-loop",
+];
+
+/**
+ * Detect oh-my-opencode presence and capabilities.
+ *
+ * Detection strategy (ordered by reliability):
+ * 1. Check OpenCode config for OMOC in plugin array
+ * 2. Check for OMOC config files (project-level, then user-level)
+ * 3. Check for OMOC npm installation
+ *
+ * Results are cached after first call.
+ *
+ * @param {string} [directory] - Project directory to check for local config
+ * @returns {{ detected: boolean, version: string, mcps: string[], hooks: string[], configPath: string }}
+ */
+function detectOhMyOpenCode(directory) {
+  if (_omocState !== null) return _omocState;
+
+  _omocState = {
+    detected: false,
+    version: "",
+    mcps: [],
+    hooks: [],
+    configPath: "",
+  };
+
+  // 1. Check OpenCode config for OMOC in plugin array
+  const ocConfigPaths = [
+    join(HOME, ".config", "opencode", "opencode.json"),
+    join(HOME, ".config", "opencode", "opencode.jsonc"),
+  ];
+
+  for (const configPath of ocConfigPaths) {
+    const content = readIfExists(configPath);
+    if (!content) continue;
+
+    try {
+      // Strip JSONC comments for parsing
+      const cleaned = content.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+      const config = JSON.parse(cleaned);
+
+      if (Array.isArray(config.plugin) && config.plugin.includes("oh-my-opencode")) {
+        _omocState.detected = true;
+        break;
+      }
+    } catch {
+      // JSON parse error — try next config
+    }
+  }
+
+  // 2. Check for OMOC config files
+  const omocConfigPaths = [
+    directory ? join(directory, ".opencode", "oh-my-opencode.json") : "",
+    join(HOME, ".config", "opencode", "oh-my-opencode.json"),
+  ].filter(Boolean);
+
+  for (const configPath of omocConfigPaths) {
+    if (existsSync(configPath)) {
+      _omocState.detected = true;
+      _omocState.configPath = configPath;
+
+      // Parse OMOC config to discover disabled hooks and MCP overrides
+      const content = readIfExists(configPath);
+      if (content) {
+        try {
+          const cleaned = content.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+          const omocConfig = JSON.parse(cleaned);
+
+          // Discover which hooks are active (all enabled unless in disabled_hooks)
+          const disabledHooks = omocConfig.disabled_hooks || [];
+          _omocState.hooks = OMOC_HOOK_NAMES.filter((h) => !disabledHooks.includes(h));
+
+          // Discover which MCPs are active (all enabled unless explicitly disabled)
+          const mcpConfig = omocConfig.mcp || {};
+          _omocState.mcps = Object.keys(OMOC_MANAGED_MCPS).filter((name) => {
+            const mcpEntry = mcpConfig[name];
+            // MCP is active unless explicitly disabled in OMOC config
+            return !mcpEntry || mcpEntry.enabled !== false;
+          });
+        } catch {
+          // Parse error — assume defaults (all MCPs and hooks active)
+          _omocState.mcps = Object.keys(OMOC_MANAGED_MCPS);
+          _omocState.hooks = [...OMOC_HOOK_NAMES];
+        }
+      }
+      break;
+    }
+  }
+
+  // 3. If not yet detected, check npm for OMOC installation
+  if (!_omocState.detected) {
+    const npmCheck = run("npm ls oh-my-opencode --json 2>/dev/null", 5000);
+    if (npmCheck && npmCheck.includes("oh-my-opencode")) {
+      _omocState.detected = true;
+    }
+  }
+
+  // 4. Get OMOC version if detected
+  if (_omocState.detected) {
+    const version = run("npm view oh-my-opencode version 2>/dev/null", 5000);
+    if (version) {
+      _omocState.version = version;
+    }
+
+    // Default MCPs and hooks if not populated from config
+    if (_omocState.mcps.length === 0) {
+      _omocState.mcps = Object.keys(OMOC_MANAGED_MCPS);
+    }
+    if (_omocState.hooks.length === 0) {
+      _omocState.hooks = [...OMOC_HOOK_NAMES];
+    }
+
+    console.error(
+      `[aidevops] oh-my-opencode detected${_omocState.version ? ` (v${_omocState.version})` : ""}: ` +
+      `${_omocState.mcps.length} MCPs, ${_omocState.hooks.length} hooks active — ` +
+      `aidevops will complement (not duplicate) OMOC features`,
+    );
+  }
+
+  return _omocState;
+}
+
+/**
+ * Check if a specific MCP is managed by oh-my-opencode.
+ * @param {string} mcpName - aidevops MCP registry name
+ * @returns {boolean}
+ */
+function isMcpManagedByOmoc(mcpName) {
+  const omoc = detectOhMyOpenCode();
+  if (!omoc.detected) return false;
+
+  // Check if any OMOC MCP maps to this aidevops MCP name
+  for (const [omocName, aidevopsName] of Object.entries(OMOC_MANAGED_MCPS)) {
+    if (aidevopsName === mcpName && omoc.mcps.includes(omocName)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Check if a specific hook type is handled by oh-my-opencode.
+ * @param {string} hookName - OMOC hook name to check
+ * @returns {boolean}
+ */
+function isHookManagedByOmoc(hookName) {
+  const omoc = detectOhMyOpenCode();
+  if (!omoc.detected) return false;
+  return omoc.hooks.includes(hookName);
 }
 
 // ---------------------------------------------------------------------------
@@ -402,8 +586,9 @@ const AGENT_MCP_TOOLS = {
 };
 
 /**
- * Oh-My-OpenCode tool patterns to disable globally.
- * These MCPs may exist from old configs or OmO installations.
+ * Oh-My-OpenCode tool patterns to disable globally when OMOC is NOT detected.
+ * When OMOC IS detected, these are left alone (OMOC manages them).
+ * These MCPs may exist from old configs or stale OmO installations.
  */
 const OMO_DISABLED_PATTERNS = ["grep_app_*", "websearch_*", "gh_grep_*"];
 
@@ -423,6 +608,12 @@ function registerMcpServers(config) {
   let registered = 0;
 
   for (const mcp of registry) {
+    // Skip MCPs managed by oh-my-opencode to avoid duplicates (t008.4)
+    if (isMcpManagedByOmoc(mcp.name)) {
+      console.error(`[aidevops] Skipping MCP '${mcp.name}' — managed by oh-my-opencode`);
+      continue;
+    }
+
     // Skip macOS-only MCPs on other platforms
     if (mcp.macOnly && !IS_MACOS) continue;
 
@@ -465,10 +656,14 @@ function registerMcpServers(config) {
     }
   }
 
-  // Disable Oh-My-OpenCode tool patterns globally
-  for (const pattern of OMO_DISABLED_PATTERNS) {
-    if (!(pattern in config.tools)) {
-      config.tools[pattern] = false;
+  // Disable stale Oh-My-OpenCode tool patterns — but only when OMOC is NOT active.
+  // When OMOC is detected, it manages its own tool permissions.
+  const omoc = detectOhMyOpenCode();
+  if (!omoc.detected) {
+    for (const pattern of OMO_DISABLED_PATTERNS) {
+      if (!(pattern in config.tools)) {
+        config.tools[pattern] = false;
+      }
     }
   }
 
@@ -1157,6 +1352,29 @@ function getMailboxState() {
 }
 
 /**
+ * Get oh-my-opencode compatibility state for compaction context.
+ * @returns {string}
+ */
+function getOmocState() {
+  const omoc = detectOhMyOpenCode();
+  if (!omoc.detected) return "";
+
+  const lines = ["## oh-my-opencode Compatibility"];
+  lines.push(`oh-my-opencode detected${omoc.version ? ` (v${omoc.version})` : ""}`);
+  lines.push("aidevops complements OMOC — no duplicate MCPs or hooks.");
+
+  if (omoc.mcps.length > 0) {
+    lines.push(`OMOC-managed MCPs (skipped by aidevops): ${omoc.mcps.join(", ")}`);
+  }
+  if (omoc.hooks.length > 0) {
+    lines.push(`OMOC hooks active: ${omoc.hooks.join(", ")}`);
+    lines.push("aidevops hooks (ShellCheck, return-statements, secrets, MD031) are complementary.");
+  }
+
+  return lines.join("\n");
+}
+
+/**
  * Compaction hook — inject aidevops context into compaction summary.
  * @param {object} _input - { sessionID }
  * @param {object} output - { context: string[], prompt?: string }
@@ -1170,6 +1388,7 @@ async function compactingHook(_input, output, directory) {
     getRelevantMemories(directory),
     getGitContext(directory),
     getMailboxState(),
+    getOmocState(),
   ].filter(Boolean);
 
   if (sections.length === 0) return;
@@ -1397,6 +1616,7 @@ function createTools() {
  * aidevops OpenCode Plugin
  *
  * Provides:
+ * 0. oh-my-opencode detection — detects OMOC presence and deduplicates (t008.4)
  * 1. Config hook — dynamic agent loading + MCP server registration from ~/.aidevops/agents/
  * 2. Custom tools — aidevops CLI, memory, pre-edit check, quality check, hook installer
  * 3. Quality hooks — full pre-commit pipeline (ShellCheck, return statements,
@@ -1409,12 +1629,22 @@ function createTools() {
  * - Enforces eager/lazy loading policy (only osgrep starts at launch)
  * - Sets global tool permissions and per-agent MCP tool enablement
  * - Skips MCPs whose required binaries aren't installed
+ * - Skips MCPs managed by oh-my-opencode when OMOC is detected (t008.4)
  * - Disables Oh-My-OpenCode tool patterns globally
  * - Complements generate-opencode-agents.sh (shell script takes precedence)
+ *
+ * oh-my-opencode compatibility (Phase 0, t008.4):
+ * - Detects OMOC via OpenCode config, OMOC config files, and npm
+ * - Skips MCP registration for MCPs managed by OMOC (context7, websearch, grep_app)
+ * - Quality hooks are complementary (aidevops: ShellCheck, secrets; OMOC: comments, todos)
+ * - OMOC state injected into compaction context for session continuity
  *
  * @type {import('@opencode-ai/plugin').Plugin}
  */
 export async function AidevopsPlugin({ directory }) {
+  // Phase 0: Detect oh-my-opencode early so all hooks can adapt
+  detectOhMyOpenCode(directory);
+
   return {
     // Phase 1+2: Dynamic agent and config injection
     config: async (config) => configHook(config),
@@ -1422,14 +1652,14 @@ export async function AidevopsPlugin({ directory }) {
     // Phase 1: Custom tools
     tool: createTools(),
 
-    // Phase 3: Quality hooks
+    // Phase 3: Quality hooks (complementary to OMOC — no overlap)
     "tool.execute.before": toolExecuteBefore,
     "tool.execute.after": toolExecuteAfter,
 
     // Phase 4: Shell environment
     "shell.env": shellEnvHook,
 
-    // Compaction context (existing + improved)
+    // Compaction context (includes OMOC state when detected)
     "experimental.session.compacting": async (input, output) =>
       compactingHook(input, output, directory),
   };

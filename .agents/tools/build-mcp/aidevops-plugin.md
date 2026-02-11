@@ -17,11 +17,12 @@ tools:
 
 ## Quick Reference
 
-- **Status**: Implemented (t008.1 PR #1138, t008.2 PR #1149)
+- **Status**: Implemented (t008.1 PR #1138, t008.2 PR #1149, t008.3 PR #1150, t008.4 PR #1157)
 - **Purpose**: Native OpenCode plugin wrapper for aidevops
 - **Approach**: Single-file ESM plugin using hooks-based SDK pattern
 - **Location**: `.agents/plugins/opencode-aidevops/index.mjs`
 - **SDK**: `@opencode-ai/plugin` v1.1.56+
+- **OMOC Compatibility**: Detects and complements oh-my-opencode when both installed
 
 **Key Decision**: Plugin complements `generate-opencode-agents.sh` — the shell
 script handles primary agent config, the plugin adds runtime hooks and tools.
@@ -108,6 +109,27 @@ interface Hooks {
 ```
 
 ### Hooks Implemented
+
+#### 0. oh-my-opencode Detection (t008.4)
+
+At plugin startup, detects whether oh-my-opencode (OMOC) is installed and active. Detection checks (in order):
+
+1. OpenCode config (`opencode.json`) — looks for `"oh-my-opencode"` in the `plugin` array
+2. OMOC config files — `.opencode/oh-my-opencode.json` (project) or `~/.config/opencode/oh-my-opencode.json` (user)
+3. npm installation — `npm ls oh-my-opencode`
+
+When OMOC is detected:
+
+| Behaviour | Without OMOC | With OMOC |
+|-----------|-------------|-----------|
+| context7 MCP | Registered by aidevops | Skipped (OMOC manages it) |
+| websearch/grep_app MCPs | N/A (not in aidevops registry) | Left to OMOC |
+| Stale OMOC tool patterns | Disabled globally | Left alone (OMOC manages) |
+| ShellCheck/secrets hooks | Active | Active (complementary) |
+| Comment-checker/todo-enforcer | N/A | OMOC handles |
+| Compaction context | Standard | Includes OMOC state |
+
+Results are cached after first detection. The OMOC state is logged at startup and injected into compaction context for session continuity.
 
 #### 1. Config Hook — Dynamic Agent Loading + MCP Registration
 
@@ -226,7 +248,7 @@ Preserves operational state across context resets:
 | Data-driven MCP registry over config file | Plugin needs runtime binary detection and platform-specific logic that a static JSON config cannot express |
 | Only osgrep eager-loaded | All other MCPs lazy-load on demand to save ~7K+ tokens on session startup |
 | Shell script takes precedence for MCPs | Plugin only registers MCPs not already configured; `generate-opencode-agents.sh` definitions win |
-| Phase 4 (oh-my-opencode) skipped | oh-my-opencode is deprecated and actively removed by setup.sh |
+| Complement oh-my-opencode, don't conflict | OMOC detected at startup; shared MCPs (context7) skipped; quality hooks are complementary (no overlap) |
 
 ## Future Enhancements
 
