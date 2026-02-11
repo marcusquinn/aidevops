@@ -2249,11 +2249,25 @@ trigger_batch_release() {
         }
     fi
 
+    # t276: Stash any dirty working tree before release.
+    # Common cause: todo/VERIFY.md, untracked files from parallel sessions.
+    # version-manager.sh refuses to release with uncommitted changes.
+    local stashed=false
+    if [[ -n "$(git -C "$repo" status --porcelain 2>/dev/null)" ]]; then
+        log_info "Stashing dirty working tree before release..."
+        if git -C "$repo" stash push -m "auto-release-stash-$(date +%Y%m%d%H%M%S)" 2>/dev/null; then
+            stashed=true
+        else
+            log_warn "git stash failed, proceeding anyway (release may fail)"
+        fi
+    fi
+
     # Pull latest (all batch PRs should be merged by now)
     git -C "$repo" pull --ff-only origin main 2>/dev/null || {
         log_warn "Fast-forward pull failed, trying rebase..."
         git -C "$repo" pull --rebase origin main 2>/dev/null || {
             log_error "Failed to pull latest main for release"
+            [[ "$stashed" == "true" ]] && git -C "$repo" stash pop 2>/dev/null || true
             return 1
         }
     }
@@ -2263,6 +2277,12 @@ trigger_batch_release() {
     local release_output=""
     local release_exit=0
     release_output=$(cd "$repo" && bash "$version_manager" release "$release_type" --skip-preflight --force 2>&1) || release_exit=$?
+
+    # t276: Restore stashed changes after release (regardless of success/failure)
+    if [[ "$stashed" == "true" ]]; then
+        log_info "Restoring stashed working tree..."
+        git -C "$repo" stash pop 2>/dev/null || log_warn "git stash pop failed (may need manual recovery)"
+    fi
 
     echo "$release_output" > "$release_log" 2>/dev/null || true
 
