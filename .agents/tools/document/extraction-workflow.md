@@ -33,6 +33,7 @@ tools:
 | PDF to markdown (layout-aware) | MinerU | `mineru -p file.pdf -o output/` |
 | Simple format conversion | Pandoc | `pandoc-helper.sh convert file.docx` |
 | Local OCR only | GLM-OCR | `ollama run glm-ocr "Extract text" --images file.png` |
+| Receipt/invoice OCR → QuickFile | OCR Receipt Pipeline | `ocr-receipt-helper.sh extract invoice.pdf` |
 
 <!-- AI-CONTEXT-END -->
 
@@ -221,4 +222,5 @@ python3 -m spacy validate
 - `tools/conversion/mineru.md` - PDF to markdown (layout-aware)
 - `services/document-processing/unstract.md` - Enterprise document processing
 - `tools/pdf/overview.md` - PDF manipulation (form filling, signing)
+- `tools/accounts/receipt-ocr.md` - Receipt/invoice OCR with QuickFile integration
 - `todo/tasks/prd-document-extraction.md` - Full PRD
