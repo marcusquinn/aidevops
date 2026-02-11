@@ -129,9 +129,13 @@ Document Input (PDF/DOCX/Image/HTML)
          |             Schema: Pydantic model (invoice, receipt, contract, etc.)
          |             Backend: Ollama (local), Cloudflare (edge), OpenAI (cloud)
          |
-    [5. Output]  ── JSON, Markdown, CSV
+     [5. Output]  ── JSON, Markdown, CSV
          |
-    [6. De-anonymize]  ── Presidio decrypt (if encrypted in step 3)
+     [6. De-anonymize]  ── Presidio decrypt (if encrypted in step 3)
+         |
+     [7. Accounting]  ── QuickFile integration (optional)
+                          quickfile-purchase-helper.sh prepare <output.json>
+                          → Supplier lookup → Nominal code → Purchase creation
 ```
 
 ## Custom Schemas

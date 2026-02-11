@@ -290,6 +290,28 @@ See `configs/mcp-templates/quickfile.json` for all AI assistant configurations
 "Record a purchase invoice from Amazon for GBP 50 office supplies"
 "List all purchases from supplier 11111"
 
+### OCR Receipt/Invoice to Purchase (Automated)
+
+"Extract this receipt and create a QuickFile purchase"
+"Process all invoices in ~/Documents/receipts/ and prepare QuickFile purchases"
+"Scan this invoice PDF and record it as a purchase expense"
+
+**Pipeline** (uses `quickfile-purchase-helper.sh`):
+
+```bash
+# 1. Extract structured data from document
+document-extraction-helper.sh extract invoice.pdf --schema invoice --privacy local
+
+# 2. Prepare QuickFile purchase payload
+quickfile-purchase-helper.sh prepare invoice-extracted.json
+
+# 3. AI agent reviews and creates purchase via MCP tools
+```
+
+The helper script outputs a JSON payload with `agent_instructions` that guide
+the AI through supplier lookup, nominal code selection, and purchase creation.
+See `scripts/quickfile-purchase-helper.sh` for details.
+
 ## API Rate Limits
 
 - **Default**: 1000 API calls per day per account

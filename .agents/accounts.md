@@ -64,6 +64,43 @@ Use `services/accounting/quickfile.md` for:
 - Track by project/client
 - VAT handling (UK)
 
+### OCR Receipt/Invoice to Purchase
+
+Automated pipeline for scanning receipts and invoices into QuickFile purchases:
+
+```text
+Receipt/Invoice (photo, PDF, scan)
+    → document-extraction-helper.sh extract --schema invoice|receipt
+    → quickfile-purchase-helper.sh prepare <extracted.json>
+    → AI agent reviews payload, matches supplier, selects nominal code
+    → User confirms → quickfile_purchase_create (MCP)
+```
+
+**Quick commands**:
+
+```bash
+# Extract structured data from a receipt image
+document-extraction-helper.sh extract receipt.jpg --schema receipt --privacy local
+
+# Prepare QuickFile purchase payload from extraction output
+quickfile-purchase-helper.sh prepare receipt-extracted.json
+
+# Batch process a folder of invoices
+document-extraction-helper.sh batch ./invoices --schema invoice
+quickfile-purchase-helper.sh batch ~/.aidevops/.agent-workspace/work/document-extraction/
+```
+
+**Agent workflow** (after payload is prepared):
+
+1. Search for supplier: `quickfile_supplier_search`
+2. Create supplier if not found: `quickfile_supplier_create`
+3. Review nominal codes (default 5000 — Cost of Sales)
+4. Confirm line items and totals with user
+5. Create purchase: `quickfile_purchase_create`
+
+See `scripts/quickfile-purchase-helper.sh` for payload preparation and
+`tools/document/extraction-workflow.md` for the full extraction pipeline.
+
 ### Reporting
 
 - Profit and loss
