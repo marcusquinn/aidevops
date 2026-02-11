@@ -7,9 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.110.8] - 2026-02-11
+
+### Changed
+
+- Documentation: add changelog entry for t284 opencode plugin fix
+
 ### Fixed
 
-- opencode plugin crash: remove Zod v4-incompatible args from createTools() (t284) (#1103)
+- unmark t008, t012 as incomplete — subtasks still open, PRs closed due to merge conflicts from parallel dispatch
+- remove Zod-incompatible args from opencode plugin tools (t284)
 
 ## [2.110.7] - 2026-02-11
 
