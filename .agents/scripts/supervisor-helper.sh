@@ -12543,6 +12543,26 @@ dispatch_decomposition_worker() {
         return 1
     fi
 
+    # Check for already-running decomposition worker (throttle)
+    local pid_file="$SUPERVISOR_DIR/pids/${task_id}-decompose.pid"
+    if [[ -f "$pid_file" ]]; then
+        local existing_pid
+        existing_pid=$(cat "$pid_file" 2>/dev/null || true)
+        if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" 2>/dev/null; then
+            log_info "  $task_id: decomposition worker already running (PID: $existing_pid)"
+            return 0
+        fi
+        # Stale PID file — clean up
+        rm -f "$pid_file"
+    fi
+
+    # Resolve AI CLI (uses opencode with claude fallback)
+    local ai_cli
+    ai_cli=$(resolve_ai_cli 2>/dev/null) || {
+        log_error "  $task_id: no AI CLI available for decomposition worker"
+        return 1
+    }
+
     # Build decomposition prompt with explicit TODO.md edit permission
     local decomposition_prompt
     read -r -d '' decomposition_prompt <<EOF || true
@@ -12553,6 +12573,8 @@ Your mission: Read a plan from PLANS.md and generate subtasks in TODO.md with #a
 ## MANDATORY Worker Restrictions (t173) - EXCEPTION FOR THIS WORKER
 You ARE allowed to edit TODO.md for this specific task because you are generating
 subtasks for orchestration. This is the ONLY exception to the worker TODO.md restriction.
+- Do NOT edit todo/PLANS.md or todo/tasks/* — these are supervisor-managed.
+- Do NOT create branches or PRs — commit directly to main.
 
 ## Task Details
 Task ID: $task_id
@@ -12568,7 +12590,7 @@ Look for the heading that matches the anchor slug.
 
 ### Step 2: Analyze the plan structure
 Extract:
-- Phases or milestones (usually in #### Progress section)
+- Phases or milestones (usually in #### Progress or #### Phases section)
 - Deliverables and their estimates
 - Dependencies between phases
 - Any special requirements or constraints
@@ -12623,33 +12645,75 @@ If the plan structure is unclear:
 Start now. Read todo/PLANS.md, find the anchor, generate subtasks, commit, push, exit 0.
 EOF
 
-    # Create logs directory if it doesn't exist
+    # Create logs and PID directories
     mkdir -p "$HOME/.aidevops/logs"
-    
-    # Dispatch worker using Claude CLI
+    mkdir -p "$SUPERVISOR_DIR/pids"
+
     local worker_log="$HOME/.aidevops/logs/decomposition-worker-${task_id}.log"
     log_info "  Decomposition worker log: $worker_log"
 
-    # Use Claude CLI to dispatch the worker (background process)
-    if command -v Claude &>/dev/null; then
-        (
-            cd "$repo" || exit 1
-            echo "$decomposition_prompt" | Claude > "$worker_log" 2>&1
-            local exit_code=$?
-            echo "Worker exit code: $exit_code" >> "$worker_log"
-            exit "$exit_code"
-        ) &
-        local worker_pid=$!
-        log_success "  Decomposition worker dispatched (PID: $worker_pid)"
-        
-        # Update task metadata with worker PID
-        local escaped_id
-        escaped_id=$(sql_escape "$task_id")
-        db "$SUPERVISOR_DB" "UPDATE tasks SET metadata = metadata || ',decomposition_worker_pid=$worker_pid' WHERE id = '$escaped_id';" 2>/dev/null || true
+    # Build dispatch script for the decomposition worker
+    local dispatch_script="${SUPERVISOR_DIR}/pids/${task_id}-decompose-dispatch.sh"
+    {
+        echo '#!/usr/bin/env bash'
+        echo "echo 'DECOMPOSE_WORKER_STARTED task_id=${task_id} pid=\$\$ timestamp='\$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        echo "cd '${repo}' || { echo 'DECOMPOSE_FAILED: cd to repo failed: ${repo}'; exit 1; }"
+    } > "$dispatch_script"
+
+    # Append CLI-specific invocation
+    if [[ "$ai_cli" == "opencode" ]]; then
+        {
+            printf 'exec opencode run --format json --title %q %q\n' \
+                "decompose-${task_id}" "$decomposition_prompt"
+        } >> "$dispatch_script"
     else
-        log_error "  Claude CLI not found — cannot dispatch decomposition worker"
-        return 1
+        {
+            printf 'exec claude -p %q --output-format json\n' \
+                "$decomposition_prompt"
+        } >> "$dispatch_script"
     fi
+    chmod +x "$dispatch_script"
+
+    # Wrapper script with cleanup handlers (matches cmd_dispatch pattern)
+    local wrapper_script="${SUPERVISOR_DIR}/pids/${task_id}-decompose-wrapper.sh"
+    {
+        echo '#!/usr/bin/env bash'
+        echo 'cleanup_children() {'
+        echo '  local children'
+        echo '  children=$(pgrep -P $$ 2>/dev/null || true)'
+        echo '  if [[ -n "$children" ]]; then'
+        echo '    kill -TERM $children 2>/dev/null || true'
+        echo '    sleep 0.5'
+        echo '    kill -9 $children 2>/dev/null || true'
+        echo '  fi'
+        echo '}'
+        echo 'trap cleanup_children EXIT INT TERM'
+        echo "'${dispatch_script}' >> '${worker_log}' 2>&1"
+        echo "rc=\$?"
+        echo "echo \"EXIT:\${rc}\" >> '${worker_log}'"
+        echo "if [ \$rc -ne 0 ]; then"
+        echo "  echo \"DECOMPOSE_WORKER_ERROR: dispatch exited with code \${rc}\" >> '${worker_log}'"
+        echo "fi"
+    } > "$wrapper_script"
+    chmod +x "$wrapper_script"
+
+    # Launch background process with nohup + setsid (matches cmd_dispatch pattern)
+    if command -v setsid &>/dev/null; then
+        nohup setsid bash "${wrapper_script}" &>/dev/null &
+    else
+        nohup bash "${wrapper_script}" &>/dev/null &
+    fi
+    disown 2>/dev/null || true
+    local worker_pid=$!
+
+    # Store PID for throttle check and monitoring
+    echo "$worker_pid" > "$pid_file"
+    log_success "  Decomposition worker dispatched (PID: $worker_pid, CLI: $ai_cli)"
+
+    # Update task metadata with worker PID
+    local escaped_id
+    escaped_id=$(sql_escape "$task_id")
+    db "$SUPERVISOR_DB" "UPDATE tasks SET metadata = CASE WHEN metadata IS NULL OR metadata = '' THEN 'decomposition_worker_pid=$worker_pid' ELSE metadata || ',decomposition_worker_pid=$worker_pid' END WHERE id = '$escaped_id';" 2>/dev/null || true
 
     return 0
 }
@@ -12795,8 +12859,9 @@ cmd_auto_pickup() {
             fi
 
             # Check if task already has subtasks (e.g., t001.1, t001.2)
+            # Matches any checkbox state: [ ], [x], [X], [-]
             local has_subtasks
-            has_subtasks=$(grep -E "^[[:space:]]+-[[:space:]]\[[[:space:]xX]\][[:space:]]${task_id}\.[0-9]+" "$todo_file" 2>/dev/null || true)
+            has_subtasks=$(grep -E "^[[:space:]]+-[[:space:]]\[[ xX-]\][[:space:]]${task_id}\.[0-9]+" "$todo_file" 2>/dev/null || true)
             if [[ -n "$has_subtasks" ]]; then
                 log_info "  $task_id: already has subtasks — skipping auto-decomposition"
                 continue
