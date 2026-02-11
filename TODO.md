@@ -653,7 +653,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t016 Uncloud Integration for aidevops #plan → [todo/PLANS.md#uncloud-integration-for-aidevops] ~45m (ai:25m test:10m read:10m) ref:GH#508 logged:2025-12-21 completed:2026-02-08 pr:#594
   - Notes: Created uncloud.md subagent (deployment provider guide with Quick Reference, CLI examples, Compose format, architecture diagram), uncloud-helper.sh (CLI wrapper with 20 commands, zero ShellCheck violations), uncloud-config.json.txt (cluster config template). Updated subagent-index.toon. Uncloud v0.16.0, 4.6k stars, Apache-2.0, active development.
 - [x] t017 SEO Machine Integration for aidevops #plan → [todo/PLANS.md#seo-machine-integration-for-aidevops] ~1.5h (ai:45m test:30m read:15m) ref:GH#509 logged:2025-12-21 completed:2026-02-08 pr:#599
-- [x] t020 Git Issues Bi-directional Sync (GitHub, GitLab, Gitea) #plan #git #sync → [todo/PLANS.md#2026-02-08-git-issues-bi-directional-sync] ~3h (ai:1.5h test:1h read:30m) pr:#804 logged:2025-12-21 ref:GH#1128 completed:2026-02-08 verified:2026-02-08 PR #543 merged
+- [x] t020 Git Issues Bi-directional Sync (GitHub, GitLab, Gitea) #plan #git #sync → [todo/PLANS.md#2026-02-08-git-issues-bi-directional-sync] ~3h (ai:1.5h test:1h read:30m) pr:#804 logged:2025-12-21 ref:GH#1131 completed:2026-02-08 verified:2026-02-08 PR #543 merged
   - [x] t020.1 Build issue-sync-helper.sh core: TODO.md parser + rich issue body composer ~45m blocked-by:none completed:2026-02-08
   - [x] t020.2 Add PLANS.md section extraction and todo/tasks/ PRD/task file lookup ~30m blocked-by:t020.1 completed:2026-02-08
   - [x] t020.3 Add #tag → GitHub label mapping and push/enrich commands ~30m blocked-by:t020.1 completed:2026-02-08
