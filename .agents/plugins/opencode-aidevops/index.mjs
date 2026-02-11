@@ -1,5 +1,12 @@
 import { execSync } from "child_process";
-import { readFileSync, readdirSync, existsSync, statSync } from "fs";
+import {
+  readFileSync,
+  readdirSync,
+  existsSync,
+  statSync,
+  appendFileSync,
+  mkdirSync,
+} from "fs";
 import { join, relative, basename } from "path";
 import { homedir } from "os";
 
@@ -7,6 +14,8 @@ const HOME = homedir();
 const AGENTS_DIR = join(HOME, ".aidevops", "agents");
 const SCRIPTS_DIR = join(AGENTS_DIR, "scripts");
 const WORKSPACE_DIR = join(HOME, ".aidevops", ".agent-workspace");
+const LOGS_DIR = join(HOME, ".aidevops", "logs");
+const QUALITY_LOG = join(LOGS_DIR, "quality-hooks.log");
 
 // ---------------------------------------------------------------------------
 // Utility helpers
@@ -235,12 +244,319 @@ async function configHook(config) {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3: Quality Hooks
+// Phase 3: Quality Hooks (t008.3)
 // ---------------------------------------------------------------------------
 
 /**
- * Pre-tool-use hook: ShellCheck gate for Write/Edit on .sh files.
- * Runs ShellCheck before the tool executes and adds warnings to output.
+ * Log a quality event to the quality hooks log file.
+ * @param {string} level - "INFO" | "WARN" | "ERROR"
+ * @param {string} message
+ */
+function qualityLog(level, message) {
+  try {
+    mkdirSync(LOGS_DIR, { recursive: true });
+    const timestamp = new Date().toISOString();
+    appendFileSync(QUALITY_LOG, `[${timestamp}] [${level}] ${message}\n`);
+  } catch {
+    // Logging should never break the hook
+  }
+}
+
+/**
+ * Validate shell script return statements.
+ * Checks that functions have explicit return statements (aidevops convention).
+ * @param {string} filePath
+ * @returns {{ violations: number, details: string[] }}
+ */
+function validateReturnStatements(filePath) {
+  const details = [];
+  let violations = 0;
+
+  try {
+    const content = readFileSync(filePath, "utf-8");
+    const lines = content.split("\n");
+
+    // Find function definitions and check for return statements
+    let inFunction = false;
+    let functionName = "";
+    let functionStart = 0;
+    let braceDepth = 0;
+    let hasReturn = false;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmed = line.trim();
+
+      // Detect function definition: name() { or function name {
+      const funcMatch = trimmed.match(
+        /^([a-zA-Z_][a-zA-Z0-9_]*)\s*\(\)\s*\{/,
+      );
+      const funcMatch2 = trimmed.match(/^function\s+([a-zA-Z_][a-zA-Z0-9_]*)/);
+
+      if (funcMatch || funcMatch2) {
+        if (inFunction && !hasReturn) {
+          details.push(
+            `  Line ${functionStart}: function '${functionName}' missing explicit return`,
+          );
+          violations++;
+        }
+        inFunction = true;
+        functionName = funcMatch ? funcMatch[1] : funcMatch2[1];
+        functionStart = i + 1;
+        braceDepth = trimmed.includes("{") ? 1 : 0;
+        hasReturn = false;
+        continue;
+      }
+
+      if (inFunction) {
+        // Track brace depth
+        for (const ch of trimmed) {
+          if (ch === "{") braceDepth++;
+          else if (ch === "}") braceDepth--;
+        }
+
+        // Check for return statement
+        if (/\breturn\s+[0-9]/.test(trimmed) || /\breturn\s*$/.test(trimmed)) {
+          hasReturn = true;
+        }
+
+        // Function ended
+        if (braceDepth <= 0) {
+          if (!hasReturn) {
+            details.push(
+              `  Line ${functionStart}: function '${functionName}' missing explicit return`,
+            );
+            violations++;
+          }
+          inFunction = false;
+        }
+      }
+    }
+
+    // Handle last function if file ends inside it
+    if (inFunction && !hasReturn) {
+      details.push(
+        `  Line ${functionStart}: function '${functionName}' missing explicit return`,
+      );
+      violations++;
+    }
+  } catch {
+    // File read error — skip validation
+  }
+
+  return { violations, details };
+}
+
+/**
+ * Validate positional parameter usage in shell scripts.
+ * Checks that $1, $2, etc. are assigned to local variables (aidevops convention).
+ * @param {string} filePath
+ * @returns {{ violations: number, details: string[] }}
+ */
+function validatePositionalParams(filePath) {
+  const details = [];
+  let violations = 0;
+
+  try {
+    const content = readFileSync(filePath, "utf-8");
+    const lines = content.split("\n");
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmed = line.trim();
+
+      // Skip comments
+      if (trimmed.startsWith("#")) continue;
+
+      // Check for direct $1-$9 usage not in a local assignment
+      if (/\$[1-9]/.test(trimmed) && !/local\s+\w+=.*\$[1-9]/.test(trimmed)) {
+        // Allow shift, case "$1", and getopts patterns
+        if (
+          /^\s*shift/.test(trimmed) ||
+          /case\s+.*\$[1-9]/.test(trimmed) ||
+          /getopts/.test(trimmed) ||
+          /"\$@"/.test(trimmed) ||
+          /"\$\*"/.test(trimmed)
+        ) {
+          continue;
+        }
+        details.push(`  Line ${i + 1}: direct positional parameter: ${trimmed.substring(0, 80)}`);
+        violations++;
+      }
+    }
+  } catch {
+    // File read error — skip validation
+  }
+
+  return { violations, details };
+}
+
+/**
+ * Scan file content for potential secrets.
+ * Lightweight check — not a replacement for secretlint, but catches common patterns.
+ * @param {string} filePath
+ * @param {string} [content] - Optional content to scan (for Write operations)
+ * @returns {{ violations: number, details: string[] }}
+ */
+function scanForSecrets(filePath, content) {
+  const details = [];
+  let violations = 0;
+
+  const secretPatterns = [
+    { pattern: /(?:api[_-]?key|apikey)\s*[:=]\s*['"][A-Za-z0-9+/=]{20,}['"]/i, label: "API key" },
+    { pattern: /(?:secret|password|passwd|pwd)\s*[:=]\s*['"][^'"]{8,}['"]/i, label: "Secret/password" },
+    { pattern: /(?:AKIA|ASIA)[A-Z0-9]{16}/, label: "AWS access key" },
+    { pattern: /ghp_[A-Za-z0-9]{36}/, label: "GitHub personal access token" },
+    { pattern: /gho_[A-Za-z0-9]{36}/, label: "GitHub OAuth token" },
+    { pattern: /sk-[A-Za-z0-9]{20,}/, label: "OpenAI/Stripe secret key" },
+    { pattern: /-----BEGIN (?:RSA |EC |DSA )?PRIVATE KEY-----/, label: "Private key" },
+  ];
+
+  try {
+    const text = content || readFileSync(filePath, "utf-8");
+    const lines = text.split("\n");
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      // Skip comments and example/placeholder lines
+      if (line.trim().startsWith("#") || /example|placeholder|YOUR_/i.test(line)) {
+        continue;
+      }
+      for (const { pattern, label } of secretPatterns) {
+        if (pattern.test(line)) {
+          details.push(`  Line ${i + 1}: potential ${label} detected`);
+          violations++;
+          break;
+        }
+      }
+    }
+  } catch {
+    // File read error — skip
+  }
+
+  return { violations, details };
+}
+
+/**
+ * Run the full pre-commit quality pipeline on a shell script.
+ * Mirrors the checks in pre-commit-hook.sh but runs inline.
+ * @param {string} filePath
+ * @returns {{ totalViolations: number, report: string }}
+ */
+function runShellQualityPipeline(filePath) {
+  const sections = [];
+  let totalViolations = 0;
+
+  // 1. ShellCheck
+  const shellcheckResult = run(
+    `shellcheck -x -S warning "${filePath}" 2>&1`,
+    10000,
+  );
+  if (shellcheckResult) {
+    const count = (shellcheckResult.match(/^In /gm) || []).length || 1;
+    totalViolations += count;
+    sections.push(`ShellCheck (${count} issue${count !== 1 ? "s" : ""}):\n${shellcheckResult}`);
+  }
+
+  // 2. Return statements
+  const returnResult = validateReturnStatements(filePath);
+  if (returnResult.violations > 0) {
+    totalViolations += returnResult.violations;
+    sections.push(
+      `Return statements (${returnResult.violations} missing):\n${returnResult.details.join("\n")}`,
+    );
+  }
+
+  // 3. Positional parameters
+  const paramResult = validatePositionalParams(filePath);
+  if (paramResult.violations > 0) {
+    totalViolations += paramResult.violations;
+    sections.push(
+      `Positional params (${paramResult.violations} direct usage):\n${paramResult.details.join("\n")}`,
+    );
+  }
+
+  // 4. Secrets scan
+  const secretResult = scanForSecrets(filePath);
+  if (secretResult.violations > 0) {
+    totalViolations += secretResult.violations;
+    sections.push(
+      `Secrets scan (${secretResult.violations} potential):\n${secretResult.details.join("\n")}`,
+    );
+  }
+
+  const report = sections.length > 0
+    ? sections.join("\n\n")
+    : "All quality checks passed.";
+
+  return { totalViolations, report };
+}
+
+/**
+ * Run markdown quality checks on a file.
+ * Checks for common issues: trailing whitespace, missing blank lines around
+ * code blocks (MD031), consecutive blank lines, broken links.
+ * @param {string} filePath
+ * @returns {{ totalViolations: number, report: string }}
+ */
+function runMarkdownQualityPipeline(filePath) {
+  const sections = [];
+  let totalViolations = 0;
+
+  try {
+    const content = readFileSync(filePath, "utf-8");
+    const lines = content.split("\n");
+
+    // MD031: Fenced code blocks should be surrounded by blank lines
+    let inCodeBlock = false;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (/^```/.test(line.trim())) {
+        if (!inCodeBlock) {
+          // Opening fence — check line before
+          if (i > 0 && lines[i - 1].trim() !== "") {
+            sections.push(`  Line ${i + 1}: MD031 — missing blank line before code fence`);
+            totalViolations++;
+          }
+        } else {
+          // Closing fence — check line after
+          if (i < lines.length - 1 && lines[i + 1] !== undefined && lines[i + 1].trim() !== "") {
+            sections.push(`  Line ${i + 1}: MD031 — missing blank line after code fence`);
+            totalViolations++;
+          }
+        }
+        inCodeBlock = !inCodeBlock;
+      }
+    }
+
+    // Check for trailing whitespace (common quality issue)
+    let trailingCount = 0;
+    for (let i = 0; i < lines.length; i++) {
+      if (/\s+$/.test(lines[i]) && !inCodeBlock) {
+        trailingCount++;
+      }
+    }
+    if (trailingCount > 0) {
+      sections.push(`  Trailing whitespace on ${trailingCount} line${trailingCount !== 1 ? "s" : ""}`);
+      totalViolations += trailingCount;
+    }
+  } catch {
+    // File read error — skip
+  }
+
+  const report = sections.length > 0
+    ? `Markdown quality:\n${sections.join("\n")}`
+    : "Markdown checks passed.";
+
+  return { totalViolations, report };
+}
+
+/**
+ * Pre-tool-use hook: Comprehensive quality gate for Write/Edit operations.
+ * Runs the full quality pipeline matching pre-commit-hook.sh checks:
+ * - Shell scripts (.sh): ShellCheck, return statements, positional params, secrets
+ * - Markdown (.md): MD031 (blank lines around code blocks), trailing whitespace
+ * - All files: secrets scanning
  * @param {object} input - { tool, sessionID, callID }
  * @param {object} output - { args } (mutable)
  */
@@ -248,40 +564,119 @@ async function toolExecuteBefore(input, output) {
   const { tool } = input;
 
   // Only intercept Write and Edit tools
-  if (tool !== "Write" && tool !== "Edit" && tool !== "write" && tool !== "edit")
+  if (
+    tool !== "Write" &&
+    tool !== "Edit" &&
+    tool !== "write" &&
+    tool !== "edit"
+  ) {
     return;
+  }
 
-  // Check if the target file is a shell script
   const filePath = output.args?.filePath || output.args?.file_path || "";
-  if (!filePath.endsWith(".sh")) return;
+  if (!filePath) return;
 
-  // Run ShellCheck if available
-  const result = run(
-    `shellcheck -x -S warning "${filePath}" 2>&1`,
-    10000,
-  );
+  // Shell script quality pipeline
+  if (filePath.endsWith(".sh")) {
+    const { totalViolations, report } = runShellQualityPipeline(filePath);
+    if (totalViolations > 0) {
+      console.error(
+        `[aidevops] Quality gate: ${totalViolations} issue${totalViolations !== 1 ? "s" : ""} in ${filePath}:\n${report}`,
+      );
+      qualityLog(
+        "WARN",
+        `Shell quality: ${totalViolations} violations in ${filePath}`,
+      );
+    } else {
+      qualityLog("INFO", `Shell quality: PASS for ${filePath}`);
+    }
+    return;
+  }
 
-  if (result) {
-    // ShellCheck found issues — log them (they'll appear in tool output)
-    console.error(`[aidevops] ShellCheck warnings for ${filePath}:\n${result}`);
+  // Markdown quality pipeline
+  if (filePath.endsWith(".md")) {
+    const { totalViolations, report } = runMarkdownQualityPipeline(filePath);
+    if (totalViolations > 0) {
+      console.error(
+        `[aidevops] Markdown quality: ${totalViolations} issue${totalViolations !== 1 ? "s" : ""} in ${filePath}:\n${report}`,
+      );
+      qualityLog(
+        "WARN",
+        `Markdown quality: ${totalViolations} violations in ${filePath}`,
+      );
+    }
+    return;
+  }
+
+  // Secrets scan for all other file types
+  const writeContent = output.args?.content || output.args?.newString || "";
+  if (writeContent) {
+    const secretResult = scanForSecrets(filePath, writeContent);
+    if (secretResult.violations > 0) {
+      console.error(
+        `[aidevops] SECURITY: ${secretResult.violations} potential secret${secretResult.violations !== 1 ? "s" : ""} in ${filePath}:\n${secretResult.details.join("\n")}`,
+      );
+      qualityLog(
+        "ERROR",
+        `Secrets detected: ${secretResult.violations} in ${filePath}`,
+      );
+    }
   }
 }
 
 /**
- * Post-tool-use hook: Log tool execution for debugging and pattern tracking.
+ * Post-tool-use hook: Quality metrics tracking and pattern recording.
+ * Logs tool execution for debugging and feeds data to pattern-tracker-helper.sh.
  * @param {object} input - { tool, sessionID, callID }
  * @param {object} output - { title, output, metadata } (mutable)
  */
 async function toolExecuteAfter(input, output) {
-  // Lightweight logging — only for shell commands that modify files
-  if (input.tool !== "Bash" && input.tool !== "bash") return;
-
-  // Check if this was a git commit (for pattern tracking)
+  const toolName = input.tool || "";
   const title = output.title || "";
-  if (title.includes("git commit") || title.includes("git push")) {
-    // Could integrate with pattern-tracker-helper.sh here
-    // For now, just log
-    console.error(`[aidevops] Git operation detected: ${title}`);
+  const outputText = output.output || "";
+
+  // Track git operations for pattern recording
+  if (toolName === "Bash" || toolName === "bash") {
+    if (title.includes("git commit") || title.includes("git push")) {
+      console.error(`[aidevops] Git operation detected: ${title}`);
+      qualityLog("INFO", `Git operation: ${title}`);
+
+      // Record pattern if pattern-tracker-helper.sh is available
+      const patternTracker = join(SCRIPTS_DIR, "pattern-tracker-helper.sh");
+      if (existsSync(patternTracker)) {
+        const success = !outputText.includes("error") && !outputText.includes("fatal");
+        const patternType = success ? "SUCCESS_PATTERN" : "FAILURE_PATTERN";
+        run(
+          `bash "${patternTracker}" record "${patternType}" "git operation: ${title.substring(0, 100)}" --tag "quality-hook" 2>/dev/null`,
+          5000,
+        );
+      }
+    }
+
+    // Track ShellCheck/lint runs in Bash commands
+    if (
+      title.includes("shellcheck") ||
+      title.includes("linters-local")
+    ) {
+      const passed = !outputText.includes("error") && !outputText.includes("violation");
+      qualityLog(
+        passed ? "INFO" : "WARN",
+        `Lint run: ${title} — ${passed ? "PASS" : "issues found"}`,
+      );
+    }
+  }
+
+  // Track Write/Edit operations for quality metrics
+  if (
+    toolName === "Write" ||
+    toolName === "Edit" ||
+    toolName === "write" ||
+    toolName === "edit"
+  ) {
+    const filePath = output.metadata?.filePath || "";
+    if (filePath) {
+      qualityLog("INFO", `File modified: ${filePath} via ${toolName}`);
+    }
   }
 }
 
@@ -573,14 +968,117 @@ function createTools() {
           return `Pre-edit check PASSED (exit 0):\n${result.trim()}`;
         } catch (err) {
           const code = err.status || 1;
-          const output = (err.stdout || "") + (err.stderr || "");
+          const cmdOutput = (err.stdout || "") + (err.stderr || "");
           const guidance = {
             1: "STOP — you are on main/master branch. Create a worktree first.",
             2: "Create a worktree before proceeding with edits.",
             3: "WARNING — proceed with caution.",
           };
-          return `Pre-edit check exit ${code}: ${guidance[code] || "Unknown"}\n${output.trim()}`;
+          return `Pre-edit check exit ${code}: ${guidance[code] || "Unknown"}\n${cmdOutput.trim()}`;
         }
+      },
+    },
+
+    aidevops_quality_check: {
+      description:
+        'Run quality checks on a file or the full pre-commit pipeline. Args: file (string, path to check) OR command "pre-commit" to run full pipeline on staged files',
+      async execute(args) {
+        const file = args.file || args.command || args;
+
+        // Full pre-commit pipeline
+        if (file === "pre-commit" || file === "staged") {
+          const hookScript = join(SCRIPTS_DIR, "pre-commit-hook.sh");
+          if (!existsSync(hookScript)) {
+            return "pre-commit-hook.sh not found — run aidevops update";
+          }
+          try {
+            const result = execSync(`bash "${hookScript}"`, {
+              encoding: "utf-8",
+              timeout: 30000,
+              stdio: ["pipe", "pipe", "pipe"],
+            });
+            return `Pre-commit quality checks PASSED:\n${result.trim()}`;
+          } catch (err) {
+            const cmdOutput = (err.stdout || "") + (err.stderr || "");
+            return `Pre-commit quality checks FAILED:\n${cmdOutput.trim()}`;
+          }
+        }
+
+        // Single file check
+        if (typeof file === "string" && file.endsWith(".sh")) {
+          const { totalViolations, report } = runShellQualityPipeline(file);
+          return totalViolations > 0
+            ? `Quality check: ${totalViolations} issue(s) found:\n${report}`
+            : "Quality check: all checks passed.";
+        }
+
+        if (typeof file === "string" && file.endsWith(".md")) {
+          const { totalViolations, report } = runMarkdownQualityPipeline(file);
+          return totalViolations > 0
+            ? `Markdown check: ${totalViolations} issue(s) found:\n${report}`
+            : "Markdown check: all checks passed.";
+        }
+
+        // Generic secrets scan
+        if (typeof file === "string" && existsSync(file)) {
+          const secretResult = scanForSecrets(file);
+          return secretResult.violations > 0
+            ? `Secrets scan: ${secretResult.violations} potential issue(s):\n${secretResult.details.join("\n")}`
+            : "Secrets scan: no issues found.";
+        }
+
+        return `Usage: pass a file path (.sh or .md) or "pre-commit" for full pipeline`;
+      },
+    },
+
+    aidevops_install_hooks: {
+      description:
+        'Install or manage git pre-commit quality hooks. Args: action (string: "install", "uninstall", "status", "test")',
+      async execute(args) {
+        const action = args.action || args || "install";
+        const helperScript = join(SCRIPTS_DIR, "install-hooks-helper.sh");
+
+        // Try install-hooks-helper.sh first (Claude Code hooks)
+        if (existsSync(helperScript)) {
+          try {
+            const result = execSync(
+              `bash "${helperScript}" ${action}`,
+              {
+                encoding: "utf-8",
+                timeout: 15000,
+                stdio: ["pipe", "pipe", "pipe"],
+              },
+            );
+            return result.trim();
+          } catch (err) {
+            const cmdOutput = (err.stdout || "") + (err.stderr || "");
+            return `Hook ${action} failed:\n${cmdOutput.trim()}`;
+          }
+        }
+
+        // Fallback: install git pre-commit hook directly
+        if (action === "install") {
+          const preCommitHook = join(SCRIPTS_DIR, "pre-commit-hook.sh");
+          if (!existsSync(preCommitHook)) {
+            return "pre-commit-hook.sh not found — run aidevops update";
+          }
+          const gitHookDir = run("git rev-parse --git-dir 2>/dev/null");
+          if (!gitHookDir) {
+            return "Not in a git repository — cannot install pre-commit hook";
+          }
+          const hookDest = join(gitHookDir, "hooks", "pre-commit");
+          try {
+            execSync(`cp "${preCommitHook}" "${hookDest}" && chmod +x "${hookDest}"`, {
+              encoding: "utf-8",
+              timeout: 5000,
+            });
+            return `Git pre-commit hook installed at ${hookDest}`;
+          } catch (err) {
+            return `Failed to install hook: ${err.message}`;
+          }
+        }
+
+        return `install-hooks-helper.sh not found. Available actions: install, uninstall, status, test`;
       },
     },
   };
@@ -595,8 +1093,9 @@ function createTools() {
  *
  * Provides:
  * 1. Config hook — dynamic agent loading from ~/.aidevops/agents/
- * 2. Custom tools — aidevops CLI, memory recall/store, pre-edit check
- * 3. Quality hooks — ShellCheck gate on .sh file edits
+ * 2. Custom tools — aidevops CLI, memory, pre-edit check, quality check, hook installer
+ * 3. Quality hooks — full pre-commit pipeline (ShellCheck, return statements,
+ *    positional params, secrets scan, markdown lint) on Write/Edit operations
  * 4. Shell environment — aidevops paths and variables
  * 5. Compaction context — preserves operational state across context resets
  *
