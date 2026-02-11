@@ -40,7 +40,6 @@ readonly CHECKPOINT_DIR="${HOME}/.aidevops/.agent-workspace/tmp"
 readonly CHECKPOINT_FILE="${CHECKPOINT_DIR}/session-checkpoint.md"
 
 readonly BOLD='\033[1m'
-readonly DIM='\033[2m'
 
 ensure_dir() {
     if [[ ! -d "$CHECKPOINT_DIR" ]]; then
