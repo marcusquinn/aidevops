@@ -14186,7 +14186,7 @@ Environment:
   SUPERVISOR_MAX_CONCURRENCY  Global concurrency limit (default: 4)
   SUPERVISOR_DISPATCH_MODE    Force dispatch mode: headless|tabby
   SUPERVISOR_SELF_HEAL        Enable/disable self-healing (default: true)
-  SUPERVISOR_AUTO_ISSUE       Enable/disable GitHub issue creation (default: true)
+  SUPERVISOR_AUTO_ISSUE       Enable/disable GitHub issue creation (default: false)
   SUPERVISOR_SKIP_REVIEW_TRIAGE Skip review triage before merge (default: false)
   SUPERVISOR_WORKER_TIMEOUT   Seconds before a hung worker is killed (default: 1800)
   SUPERVISOR_SELF_MEM_LIMIT   MB before supervisor respawns after batch (default: 8192)
@@ -14201,7 +14201,7 @@ Integration:
   - Memory: memory-helper.sh for cross-batch learning
   - Git: wt/worktree-helper.sh for isolation
   - TODO: auto-updates TODO.md on task completion/failure
-  - GitHub: auto-creates issues on task add (t149)
+   - GitHub: creates issues on task add when --with-issue or SUPERVISOR_AUTO_ISSUE=true (t149)
   - Proof-logs: structured audit trail for task completion trust (t218)
 
 TODO.md Auto-Update (t128.4):
@@ -14214,7 +14214,7 @@ GitHub Issue Auto-Creation (t149):
   On task add: creates a GitHub issue with t{NNN}: prefix title, adds ref:GH#N
   to TODO.md, stores issue_url in supervisor DB. Skips if issue already exists
   (dedup by title search). Requires: gh CLI authenticated.
-  Disable: --no-issue flag on add, or SUPERVISOR_AUTO_ISSUE=false globally.
+   Enable: --with-issue flag on add, or SUPERVISOR_AUTO_ISSUE=true globally.
 
 Cron Integration & Auto-Pickup (t128.5, t296):
   Auto-pickup scans TODO.md for tasks to automatically queue:
