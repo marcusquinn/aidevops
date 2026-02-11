@@ -12533,8 +12533,7 @@ dispatch_decomposition_worker() {
 
     # Build decomposition prompt with explicit TODO.md edit permission
     local decomposition_prompt
-    decomposition_prompt=$(cat <<'PROMPT_EOF'
-You are a task decomposition worker with SPECIAL PERMISSION to edit TODO.md.
+    decomposition_prompt="You are a task decomposition worker with SPECIAL PERMISSION to edit TODO.md.
 
 Your mission: Read a plan from PLANS.md and generate subtasks in TODO.md with #auto-dispatch tags.
 
@@ -12543,14 +12542,9 @@ You ARE allowed to edit TODO.md for this specific task because you are generatin
 subtasks for orchestration. This is the ONLY exception to the worker TODO.md restriction.
 
 ## Task Details
-PROMPT_EOF
-)
-    decomposition_prompt+="
 Task ID: $task_id
 Plan anchor: $plan_anchor
 Repository: $repo
-"
-    decomposition_prompt+=$(cat <<'PROMPT_EOF'
 
 ## Instructions
 
@@ -12577,25 +12571,25 @@ Create subtasks following this format:
 - Keep descriptions concise but actionable
 
 ### Step 4: Insert subtasks in TODO.md
-1. Find the parent task line (starts with "- [ ] ${task_id} ")
+1. Find the parent task line (starts with \"- [ ] ${task_id} \")
 2. Insert subtasks immediately after it (before any blank line or next task)
 3. Preserve all existing content
 4. DO NOT modify the parent task line
 
 ### Step 5: Commit and exit
 1. Run: git add TODO.md
-2. Run: git commit -m "feat: auto-decompose ${task_id} from PLANS.md (${plan_anchor})"
+2. Run: git commit -m \"feat: auto-decompose ${task_id} from PLANS.md (${plan_anchor})\"
 3. Run: git push origin main
 4. Exit with status 0
 
 ## Example output format
-```markdown
+\`\`\`markdown
 - [ ] t300 Email Testing Suite #plan → [todo/PLANS.md#2026-02-10-email-testing-suite] ~2h
   - [ ] t300.1 Email Design Test agent + helper script ~35m #auto-dispatch
   - [ ] t300.2 Email Delivery Test agent + helper script ~35m #auto-dispatch blocked-by:t300.1
   - [ ] t300.3 Email Health Check enhancements ~15m #auto-dispatch blocked-by:t300.2
   - [ ] t300.4 Cross-references + integration ~10m #auto-dispatch blocked-by:t300.3
-```
+\`\`\`
 
 ## CRITICAL Rules
 - DO NOT modify the parent task line
@@ -12613,9 +12607,7 @@ If the plan structure is unclear:
 - FLAG: Exit with error if plan anchor not found in PLANS.md
 - FLAG: Exit with error if plan has no actionable content
 
-Start now. Read todo/PLANS.md, find the anchor, generate subtasks, commit, push, exit 0.
-PROMPT_EOF
-)
+Start now. Read todo/PLANS.md, find the anchor, generate subtasks, commit, push, exit 0."
 
     # Create logs directory if it doesn't exist
     mkdir -p "$HOME/.aidevops/logs"
