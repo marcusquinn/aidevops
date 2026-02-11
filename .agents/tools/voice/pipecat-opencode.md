@@ -19,12 +19,14 @@ tools:
 
 ## Quick Reference
 
-- **Source**: [pipecat-ai/pipecat](https://github.com/pipecat-ai/pipecat) (BSD 2-Clause, 10.2k stars)
+- **Source**: [pipecat-ai/pipecat](https://github.com/pipecat-ai/pipecat) (BSD 2-Clause, 10.3k stars, v0.0.102+)
 - **Purpose**: Real-time speech-to-speech conversation with AI coding agents
 - **Pipeline**: Mic -> Soniox STT -> Anthropic/OpenAI LLM -> Cartesia TTS -> Speaker
 - **Transport**: SmallWebRTCTransport (local, serverless) or Daily.co (cloud, multi-user)
-- **Helper**: `voice-helper.sh talk` (simple bridge) or `pipecat-helper.sh start` (full Pipecat pipeline)
+- **Helper**: `pipecat-helper.sh [setup|start|stop|status|client|keys|logs]` (full lifecycle management)
+- **Simple alternative**: `voice-helper.sh talk` (terminal-based, no web client needed)
 - **API keys**: Soniox, Cartesia, Anthropic/OpenAI (store via `aidevops secret set`)
+- **Reference impl**: [kwindla/macos-local-voice-agents](https://github.com/kwindla/macos-local-voice-agents) (all-local models, <800ms latency)
 
 **When to Use**: Read this when building real-time voice conversation with AI agents. For simpler voice interaction, use `voice-helper.sh talk` (the existing voice bridge). Use this Pipecat approach when you need: streaming TTS as text arrives, barge-in interruption, S2S mode, multi-user WebRTC rooms, or phone integration.
 
@@ -72,25 +74,39 @@ S2S providers handle STT, reasoning, and TTS in a single model call. Lower laten
 - macOS (Apple Silicon) or Linux with CUDA
 - API keys: Soniox, Cartesia, Anthropic (or OpenAI)
 
-### Install Pipecat
+### Automated Setup (Recommended)
+
+```bash
+# One-command setup: installs Pipecat, generates bot template, sets up web client
+pipecat-helper.sh setup
+
+# Or with specific LLM provider
+pipecat-helper.sh setup openai
+pipecat-helper.sh setup both     # Install both Anthropic and OpenAI
+```
+
+### Manual Install
 
 ```bash
 # Create project directory
-mkdir -p ~/.aidevops/.agent-workspace/work/pipecat-opencode
-cd ~/.aidevops/.agent-workspace/work/pipecat-opencode
+mkdir -p ~/.aidevops/.agent-workspace/work/pipecat-voice-agent
+cd ~/.aidevops/.agent-workspace/work/pipecat-voice-agent
 
 # Create virtual environment
 python3.12 -m venv .venv
 source .venv/bin/activate
 
-# Install Pipecat with required services
-pip install "pipecat-ai[soniox,cartesia,anthropic,silero,smallwebrtc]"
+# Install Pipecat with required services (webrtc replaces old smallwebrtc extra)
+pip install "pipecat-ai[soniox,cartesia,anthropic,silero,webrtc]"
 
 # For OpenAI LLM (alternative to Anthropic)
 pip install "pipecat-ai[openai]"
 
 # For S2S mode (OpenAI Realtime)
 pip install "pipecat-ai[openai-realtime]"
+
+# Additional dependencies for the bot server
+pip install python-dotenv uvicorn fastapi
 ```
 
 ### Store API Keys
@@ -107,7 +123,26 @@ aidevops secret set ANTHROPIC_API_KEY
 
 ## Usage
 
+### Quick Start
+
+```bash
+# 1. Setup (one-time)
+pipecat-helper.sh setup
+
+# 2. Store API keys
+aidevops secret set SONIOX_API_KEY
+aidevops secret set CARTESIA_API_KEY
+aidevops secret set ANTHROPIC_API_KEY
+
+# 3. Start agent + web client
+pipecat-helper.sh start
+
+# 4. Open http://localhost:3000 and click Connect to talk
+```
+
 ### Minimal Pipeline (Local, Anthropic LLM)
+
+The `pipecat-helper.sh setup` command generates a complete `bot.py` with FastAPI signaling. Below is the core pipeline pattern for reference (Pipecat v0.0.80+):
 
 ```python
 """Pipecat voice agent with Soniox STT + Anthropic LLM + Cartesia TTS."""
@@ -115,23 +150,21 @@ aidevops secret set ANTHROPIC_API_KEY
 import os
 from dotenv import load_dotenv
 
-from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.audio.vad.silero import SileroVADAnalyzer, VADParams
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
-from pipecat.processors.aggregators.llm_context import LLMContext
-from pipecat.processors.aggregators.llm_response_universal import (
-    LLMContextAggregatorPair,
-    LLMUserAggregatorParams,
-)
+from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
 from pipecat.services.cartesia.tts import CartesiaTTSService
 from pipecat.services.soniox.stt import SonioxSTTService
 from pipecat.services.anthropic.llm import AnthropicLLMService
+from pipecat.transports.network.small_webrtc import SmallWebRTCTransport
+from pipecat.transports.network.webrtc_connection import SmallWebRTCConnection, IceServer
 from pipecat.transports.base_transport import TransportParams
 
 load_dotenv(override=True)
 
-async def run_agent():
+async def run_agent(webrtc_connection: SmallWebRTCConnection):
     # Services
     stt = SonioxSTTService(api_key=os.getenv("SONIOX_API_KEY"))
     tts = CartesiaTTSService(
@@ -158,22 +191,18 @@ async def run_agent():
         },
     ]
 
-    # Context and aggregators
-    context = LLMContext(messages)
-    user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
-        context,
-        user_params=LLMUserAggregatorParams(
-            vad_analyzer=SileroVADAnalyzer(),
-        ),
-    )
+    # Context aggregator (v0.0.80+ pattern — replaces old LLMContextAggregatorPair)
+    context = OpenAILLMContext(messages)
+    context_aggregator = llm.create_context_aggregator(context)
 
-    # Transport (local serverless WebRTC)
-    from pipecat.transports.small_webrtc.transport import SmallWebRTCTransport
-
+    # Transport (local serverless WebRTC — requires a SmallWebRTCConnection from signaling)
     transport = SmallWebRTCTransport(
+        webrtc_connection=webrtc_connection,
         params=TransportParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
+            vad_enabled=True,
+            vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=0.3)),
         ),
     )
 
@@ -181,24 +210,27 @@ async def run_agent():
     pipeline = Pipeline([
         transport.input(),
         stt,
-        user_aggregator,
+        context_aggregator.user(),
         llm,
         tts,
         transport.output(),
-        assistant_aggregator,
+        context_aggregator.assistant(),
     ])
 
     task = PipelineTask(
         pipeline,
         params=PipelineParams(
+            allow_interruptions=True,
             enable_metrics=True,
             enable_usage_metrics=True,
         ),
     )
 
-    runner = PipelineRunner()
+    runner = PipelineRunner(handle_sigint=False)
     await runner.run(task)
 ```
+
+**Signaling**: The `SmallWebRTCConnection` is created from a WebRTC offer via a FastAPI `/api/offer` endpoint. See the generated `bot.py` for the full server implementation, or the [macos-local-voice-agents](https://github.com/kwindla/macos-local-voice-agents) reference.
 
 ### With OpenAI LLM (Alternative)
 
@@ -316,17 +348,17 @@ Direct API integration (Option 1) is recommended for Pipecat because it enables 
 The existing `voice-helper.sh talk` / `voice-bridge.py` provides a simpler approach:
 
 ```bash
-# Simple voice bridge (existing, works today)
+# Simple voice bridge (existing, works in terminal, no web client)
 voice-helper.sh talk
 
-# Pipecat pipeline (this subagent, more capable)
-# Requires Pipecat setup + web client for WebRTC
+# Pipecat pipeline (this subagent, more capable, requires web client)
+pipecat-helper.sh start
 ```
 
 **When to use which:**
 
-- **voice-bridge.py**: Quick voice interaction, no web client needed, works in terminal
-- **Pipecat pipeline**: Production voice agents, streaming TTS, barge-in, S2S, phone integration, multi-user
+- **voice-bridge.py** (`voice-helper.sh talk`): Quick voice interaction, no web client needed, works in terminal, ~6-8s round-trip
+- **Pipecat pipeline** (`pipecat-helper.sh start`): Production voice agents, streaming TTS, barge-in, S2S, phone integration, multi-user, ~1-3s round-trip
 
 ## Service Options
 
@@ -370,28 +402,43 @@ voice-helper.sh talk
 
 Pipecat voice agents communicate via WebRTC. You need a web client to connect:
 
-### Using voice-ui-kit (Recommended)
+### Built-in Client (Recommended)
+
+The `pipecat-helper.sh setup` command creates a Next.js client using [@pipecat-ai/voice-ui-kit](https://github.com/pipecat-ai/voice-ui-kit) (v0.7+) with the ConsoleTemplate debug UI:
 
 ```bash
-# Clone the voice UI kit
+# Included in setup — starts automatically with `pipecat-helper.sh start`
+# Or start client separately:
+pipecat-helper.sh client
+
+# Opens at http://localhost:3000
+# Proxies /api/offer to the bot server on port 7860
+```
+
+Key npm packages: `@pipecat-ai/client-js`, `@pipecat-ai/client-react`, `@pipecat-ai/small-webrtc-transport`, `@pipecat-ai/voice-ui-kit`.
+
+### Using voice-ui-kit Directly
+
+For custom UI development:
+
+```bash
 git clone https://github.com/pipecat-ai/voice-ui-kit
-cd voice-ui-kit
+cd voice-ui-kit/examples/01-console
 
 npm install
 npm run dev
-
-# Navigate to http://localhost:5173 in your browser
+# Navigate to http://localhost:5173
 ```
 
 ### Using kwindla/macos-local-voice-agents
 
-For a complete local setup with debug console:
+For a complete all-local setup (MLX Whisper STT + local LLM + Kokoro TTS, <800ms latency):
 
 ```bash
 git clone https://github.com/kwindla/macos-local-voice-agents
 cd macos-local-voice-agents
 
-# Start the bot
+# Start the bot (requires LM Studio running on port 1234)
 cd server && uv run bot.py
 
 # Start the web client
@@ -448,6 +495,7 @@ For production deployment:
 
 ## See Also
 
+- `scripts/pipecat-helper.sh` - Pipecat lifecycle management (setup, start, stop, status)
 - `tools/voice/cloud-voice-agents.md` - Cloud voice agents (GPT-4o Realtime, MiniCPM-o, NVIDIA Nemotron)
 - `tools/voice/speech-to-speech.md` - HuggingFace S2S pipeline (alternative approach)
 - `scripts/voice-helper.sh` - Simple voice bridge (existing, terminal-based)
@@ -455,3 +503,5 @@ For production deployment:
 - `tools/voice/transcription.md` - Standalone transcription
 - `tools/voice/voice-models.md` - Voice AI model catalog
 - `services/communications/twilio.md` - Phone integration with Pipecat
+- [pipecat-ai/voice-ui-kit](https://github.com/pipecat-ai/voice-ui-kit) - React web client components
+- [kwindla/macos-local-voice-agents](https://github.com/kwindla/macos-local-voice-agents) - All-local reference implementation

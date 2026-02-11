@@ -142,6 +142,7 @@ matrix-dispatch-helper.sh,Matrix bot for dispatching messages to AI runners (set
 supervisor-helper.sh,Autonomous supervisor for multi-task orchestration (init add batch dispatch reprompt evaluate pulse dashboard worker-status cleanup transition status list next running-count reset cancel db)
 objective-runner-helper.sh,Long-running objective execution with safety guardrails (start status pause resume rollback audit list)
 schema-validator-helper.sh,Schema.org structured data validation (validate validate-json status install)
+pipecat-helper.sh,Pipecat local voice agent - Soniox STT + LLM + Cartesia TTS with WebRTC (setup start stop status client keys logs)
 speech-to-speech-helper.sh,Voice pipeline management (setup start stop status client config benchmark)
 transcription-helper.sh,Audio/video transcription (transcribe models configure install status)
 voice-helper.sh,Voice bridge - talk to AI agents via speech (talk devices voices status benchmark)
