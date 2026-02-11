@@ -2406,8 +2406,8 @@ cmd_plugin() {
             jq --arg n "$target_name" '(.plugins[] | select(.name == $n)).enabled = false' "$plugins_file" > "$tmp_file" && mv "$tmp_file" "$plugins_file"
 
             # Remove deployed files
-            if [[ -d "$agents_dir/$target_ns" ]]; then
-                rm -rf "$agents_dir/$target_ns"
+            if [[ -d "$agents_dir/${target_ns:?}" ]]; then
+                rm -rf "$agents_dir/${target_ns:?}"
             fi
 
             print_success "Plugin '$target_name' disabled (config preserved)"
@@ -2434,8 +2434,8 @@ cmd_plugin() {
             fi
 
             # Remove deployed files
-            if [[ -d "$agents_dir/$target_ns" ]]; then
-                rm -rf "$agents_dir/$target_ns"
+            if [[ -d "$agents_dir/${target_ns:?}" ]]; then
+                rm -rf "$agents_dir/${target_ns:?}"
                 print_info "Removed $agents_dir/$target_ns/"
             fi
 
