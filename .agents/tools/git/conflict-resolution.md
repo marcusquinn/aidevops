@@ -337,7 +337,7 @@ When you are not confident that your resolution is correct, DO NOT guess -- reso
 
 **Format:** For each ambiguous case, output:
 
-```
+```text
 ESCALATE: <file> | <description of ambiguity> | <options you see>
 ```
 
