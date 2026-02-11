@@ -2509,16 +2509,21 @@ async function generateVideo(options = {}) {
     await dismissAllModals(page);
     await page.screenshot({ path: join(STATE_DIR, 'video-result.png'), fullPage: false });
 
-    // Download the video from History
-    if (generationComplete && options.wait !== false) {
+    // Download the video from History.
+    // Always attempt download when wait is enabled (t269): even if waitForVideoGeneration
+    // timed out at the UI level, the video may still complete in the API. The polling in
+    // downloadVideoFromHistory will wait for it.
+    if (options.wait !== false) {
       const baseOutput = options.output || getDefaultOutputDir(options);
       const outputDir = resolveOutputDir(baseOutput, options, 'videos');
       const videoMeta = { model, promptSnippet: prompt.substring(0, 80) };
       const downloads = await downloadVideoFromHistory(page, outputDir, videoMeta, options);
       if (downloads.length > 0) {
         console.log(`Video downloaded successfully: ${downloads.join(', ')}`);
-      } else {
+      } else if (generationComplete) {
         console.log('Video appeared in History but download failed. Try manually or re-run download command.');
+      } else {
+        console.log('Video generation timed out and no completed video found. Try: download --model video');
       }
     }
 
@@ -2665,14 +2670,16 @@ async function generateLipsync(options = {}) {
     await dismissAllModals(page);
     await page.screenshot({ path: join(STATE_DIR, 'lipsync-result.png'), fullPage: false });
 
-    // Download from History
-    if (generationComplete && options.wait !== false) {
+    // Download from History (t269: always attempt when wait is enabled — polling handles processing)
+    if (options.wait !== false) {
       const baseOutput = options.output || getDefaultOutputDir(options);
       const outputDir = resolveOutputDir(baseOutput, options, 'lipsync');
       const meta = { model: options.model || 'lipsync', promptSnippet: prompt.substring(0, 80) };
       const downloads = await downloadVideoFromHistory(page, outputDir, meta, options);
       if (downloads.length > 0) {
         console.log(`Lipsync video downloaded: ${downloads.join(', ')}`);
+      } else if (!generationComplete) {
+        console.log('Lipsync generation timed out and no completed video found. Try: download --model video');
       }
     }
 
