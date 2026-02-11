@@ -138,54 +138,32 @@ async function loadAgentsFromDir(dir: string, mode: 'primary' | 'subagent'): Pro
 }
 ```
 
-#### 2. MCP Registry
+#### 2. MCP Registry (Implemented)
+
+The MCP registry reads configs from three sources (in priority order):
+
+1. **User overrides**: `~/.config/aidevops/mcp-overrides.json`
+2. **Template files**: `configs/mcp-templates/*.json` (each has an `opencode` section)
+3. **Legacy config**: `configs/mcp-servers-config.json.txt`
+
+MCPs with placeholder credentials (`YOUR_*_HERE`, `/Users/YOU/`) are auto-disabled.
+User's existing OpenCode MCP config is never overwritten.
+
+Implementation files:
+
+- `.agents/plugins/opencode-aidevops/index.mjs` — Plugin with `config` hook
+- `.opencode/lib/mcp-registry.ts` — TypeScript registry for Bun-native consumers
+- `.opencode/tool/mcp-status.ts` — Health check tool
 
 ```typescript
-// src/mcps/registry.ts
-import type { PluginInput } from '@opencode-ai/plugin';
-
-interface MCPConfig {
-  name: string;
-  type: 'local' | 'remote';
-  command: string[];
-  env?: Record<string, string>;
-  enabled: boolean;
-}
-
-export function registerMCPs(input: PluginInput, mcps: MCPConfig[]) {
-  for (const mcp of mcps) {
-    input.mcp.register({
-      name: mcp.name,
-      type: mcp.type,
-      command: mcp.command,
-      environment: mcp.env,
-      enabled: mcp.enabled,
-    });
+// Usage in plugin config hook:
+config: async (config) => {
+  if (!config.mcp) config.mcp = {};
+  for (const [name, mcpConfig] of Object.entries(registry.entries)) {
+    if (config.mcp[name]) continue; // Don't overwrite user config
+    config.mcp[name] = mcpConfig;
   }
 }
-
-// Default aidevops MCPs
-export const defaultMCPs: MCPConfig[] = [
-  {
-    name: 'context7',
-    type: 'local',
-    command: ['npx', '-y', '@context7/mcp@latest'],
-    enabled: true,
-  },
-  {
-    name: 'augment-context-engine',
-    type: 'local',
-    command: ['auggie', '--mcp'],
-    enabled: true,
-  },
-  {
-    name: 'repomix',
-    type: 'local',
-    command: ['npx', '-y', 'repomix@latest', '--mcp'],
-    enabled: true,
-  },
-  // ... more MCPs
-];
 ```
 
 #### 3. Quality Hooks
@@ -377,9 +355,9 @@ export async function loadConfig(): Promise<Config> {
 
 ### Phase 1: Core Plugin (MVP)
 
-- [ ] Basic plugin structure
+- [x] Basic plugin structure (compaction context injection)
 - [ ] Agent loader from `~/.aidevops/agents/`
-- [ ] MCP registration
+- [x] MCP registration (config hook + registry from templates)
 - [ ] aidevops CLI tool
 
 ### Phase 2: Hooks
@@ -391,7 +369,7 @@ export async function loadConfig(): Promise<Config> {
 ### Phase 3: Enhanced Features
 
 - [ ] Dynamic agent reloading
-- [ ] MCP health monitoring
+- [x] MCP health monitoring (mcp-status tool)
 - [ ] Integration with aidevops update system
 
 ## Decision: Plugin vs Current Approach
