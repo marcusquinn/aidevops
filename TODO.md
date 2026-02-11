@@ -623,7 +623,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t012 OCR Invoice/Receipt Extraction Pipeline #plan → [todo/PLANS.md#ocr-invoicereceipt-extraction-pipeline] ~3h (ai:1.5h test:1h read:30m) ref:GH#506 assignee:marcusquinn started:2026-02-11T03:29:33Z logged:2025-12-21
   - [ ] t012.1 Research OCR approaches and @pontusab's implementation ~4h #auto-dispatch
   - [ ] t012.2 Design extraction schema (vendor, amount, date, VAT, items) ~4h #auto-dispatch blocked-by:t012.1 assignee:marcusquinn started:2026-02-11T03:38:25Z
-  - [ ] t012.3 Implement OCR extraction pipeline ~8h #auto-dispatch blocked-by:t012.2
+  - [ ] t012.3 Implement OCR extraction pipeline ~8h #auto-dispatch blocked-by:t012.2 assignee:marcusquinn started:2026-02-11T03:38:45Z
   - [ ] t012.4 QuickFile integration (purchases/expenses) ~4h #auto-dispatch blocked-by:t012.3
   - [ ] t012.5 Testing with various invoice/receipt formats ~4h #auto-dispatch blocked-by:t012.4
 - [x] t013 Image SEO Enhancement with AI Vision #plan → [todo/PLANS.md#image-seo-enhancement-with-ai-vision] ~45m (ai:25m test:10m read:10m) ref:GH#507 logged:2025-12-21 completed:2026-02-08
