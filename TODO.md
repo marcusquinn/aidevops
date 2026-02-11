@@ -602,7 +602,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [ ] t008.1 Core plugin structure + agent loader ~4h #auto-dispatch assignee:marcusquinn started:2026-02-11T03:32:12Z
   - [ ] t008.2 MCP registration ~2h #auto-dispatch blocked-by:t008.1 assignee:marcusquinn started:2026-02-11T03:32:24Z
   - [ ] t008.3 Quality hooks (pre-commit) ~3h #auto-dispatch blocked-by:t008.1 assignee:marcusquinn started:2026-02-11T03:32:41Z
-  - [ ] t008.4 oh-my-opencode compatibility ~2h #auto-dispatch blocked-by:t008.1,t008.2,t008.3
+  - [ ] t008.4 oh-my-opencode compatibility ~2h #auto-dispatch blocked-by:t008.1,t008.2,t008.3 assignee:marcusquinn started:2026-02-11T03:34:29Z
 - [x] t004 Add Ahrefs MCP server integration #seo ~4h (ai:2h test:1h read:1h) logged:2025-12-20 completed:2026-01-25
 - [x] t005 Implement multi-tenant credential storage #security ~1.5d (ai:8h test:4h read:2h) logged:2025-12-20 completed:2026-01-24
 - [x] t070 Backlink & Expired Domain Checker subagent #seo #domains ~15m (ai:10m test:3m read:2m) logged:2026-01-24 completed:2026-02-07
