@@ -174,6 +174,39 @@ See `tools/opencode/opencode.md` for CLI testing patterns.
 - How does this fit into the larger context of the codebase?
 - What are the dependencies and interactions with other parts?
 
+### 2b. Domain Expertise Check (CRITICAL)
+
+Before implementing, check whether the work touches a domain that has specialist
+subagents. These contain prompt templates, best practices, tool routing, and
+testing strategies that dramatically improve output quality.
+
+**How to check**: Scan the AGENTS.md progressive disclosure table for matching
+domains. If the task involves content generation, video, images, SEO, WordPress,
+voice, accessibility, or any other listed domain — read the relevant subagent(s)
+BEFORE writing code or generating assets.
+
+**Examples**:
+
+| Task involves... | Read first |
+|------------------|------------|
+| Image generation, thumbnails, visual assets | `content/production/image.md` (structured prompt templates) |
+| Video generation, animation | `content/production/video.md` + `tools/video/video-prompt-design.md` |
+| UGC, ads, social content | `content.md` (orchestrator) -> `content/story.md` -> `content/production/` |
+| Audio, voice, narration | `content/production/audio.md` + `tools/voice/speech-to-speech.md` |
+| SEO content, blog posts | `seo/` + `content/distribution/` |
+| WordPress changes | `tools/wordpress/wp-dev.md` |
+| Browser automation | `tools/browser/browser-automation.md` (decision tree) |
+| Accessibility | `services/accessibility/accessibility-audit.md` |
+
+**Why this matters**: Domain subagents contain tested prompt schemas (e.g.,
+Nanobanana Pro JSON templates for images), model routing decisions (which AI
+model for which task), and quality criteria. Using freehand prompts when
+structured templates exist wastes credits and produces inferior results.
+
+**For testing**: Domain subagents also document how to verify output quality
+(scoring rubrics, A/B testing patterns, platform-specific requirements). Read
+them before declaring work complete.
+
 ### 3. Codebase Investigation
 
 - Explore relevant files and directories
