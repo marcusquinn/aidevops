@@ -42,7 +42,7 @@ tools/ui/,UI components - design systems and debugging,shadcn|ui-skills|frontend
 tools/code-review/,Code quality - linting and security scanning,code-standards|code-simplifier|codacy|coderabbit|qlty|snyk|secretlint|security-analysis
 tools/context/,Context optimization - semantic search and indexing,osgrep|augment-context-engine|context-builder|context7|toon|mcp-discovery|github-search|model-routing
 tools/conversion/,Format conversion - document transformation,pandoc
-tools/document/,Document extraction - conversion structured data extraction and workflow orchestration,document-extraction|extraction-workflow|docstrange
+tools/document/,Document extraction - conversion structured data extraction schemas and workflow orchestration,document-extraction|extraction-schemas|extraction-workflow|docstrange
 tools/ocr/,OCR and text extraction - local document processing via Ollama,glm-ocr
 tools/ai-generation/,AI generation management - ComfyUI install nodes models workflows via comfy-cli,comfy-cli
 tools/video/,Video creation and downloading - programmatic generation and YouTube downloads,remotion|higgsfield|runway|yt-dlp|video-prompt-design
