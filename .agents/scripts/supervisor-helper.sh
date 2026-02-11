@@ -1628,6 +1628,15 @@ MIGRATE_T218
         log_success "Added deploying_recovery_attempts column to tasks (t263)"
     fi
 
+    # Migrate: add rebase_attempts column to tasks (t298)
+    local has_rebase_attempts
+    has_rebase_attempts=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('tasks') WHERE name='rebase_attempts';" 2>/dev/null || echo "0")
+    if [[ "$has_rebase_attempts" -eq 0 ]]; then
+        log_info "Migrating tasks table: adding rebase_attempts column (t298)..."
+        db "$SUPERVISOR_DB" "ALTER TABLE tasks ADD COLUMN rebase_attempts INTEGER NOT NULL DEFAULT 0;" 2>/dev/null || true
+        log_success "Added rebase_attempts column to tasks (t298)"
+    fi
+
     # Ensure WAL mode for existing databases created before t135.3
     local current_mode
     current_mode=$(db "$SUPERVISOR_DB" "PRAGMA journal_mode;" 2>/dev/null || echo "")
@@ -7532,9 +7541,11 @@ dismiss_bot_reviews() {
 
 #######################################
 # Check PR CI and review status for a task
-# Returns: ready_to_merge, unstable_sonarcloud, ci_pending, ci_failed, changes_requested, draft, no_pr
+# Returns: status|mergeStateStatus (e.g., "ci_pending|BEHIND", "ready_to_merge|CLEAN")
+# Status values: ready_to_merge, unstable_sonarcloud, ci_pending, ci_failed, changes_requested, draft, no_pr
 # t227: unstable_sonarcloud = SonarCloud GH Action passed but external quality gate failed
 # t226: auto-dismiss bot reviews that block merge
+# t298: Return mergeStateStatus to enable auto-rebase for BEHIND/DIRTY PRs
 #######################################
 check_pr_status() {
     local task_id="$1"
@@ -7550,7 +7561,7 @@ check_pr_status() {
     if [[ -z "$pr_url" || "$pr_url" == "no_pr" || "$pr_url" == "task_only" ]]; then
         pr_url=$(link_pr_to_task "$task_id" --caller "check_pr_status") || pr_url=""
         if [[ -z "$pr_url" ]]; then
-            echo "no_pr"
+            echo "no_pr|UNKNOWN"
             return 0
         fi
     fi
@@ -7559,14 +7570,14 @@ check_pr_status() {
     local parsed_pr pr_number repo_slug
     parsed_pr=$(parse_pr_url "$pr_url") || parsed_pr=""
     if [[ -z "$parsed_pr" ]]; then
-        echo "no_pr"
+        echo "no_pr|UNKNOWN"
         return 0
     fi
     repo_slug="${parsed_pr%%|*}"
     pr_number="${parsed_pr##*|}"
 
     if [[ -z "$pr_number" || -z "$repo_slug" ]]; then
-        echo "no_pr"
+        echo "no_pr|UNKNOWN"
         return 0
     fi
 
@@ -7577,7 +7588,7 @@ check_pr_status() {
     pr_json=$(gh pr view "$pr_number" --repo "$repo_slug" --json state,isDraft,reviewDecision,mergeable,mergeStateStatus,statusCheckRollup 2>>"$SUPERVISOR_LOG" || echo "")
 
     if [[ -z "$pr_json" ]]; then
-        echo "no_pr"
+        echo "no_pr|UNKNOWN"
         return 0
     fi
 
@@ -7586,13 +7597,13 @@ check_pr_status() {
 
     # Already merged
     if [[ "$pr_state" == "MERGED" ]]; then
-        echo "already_merged"
+        echo "already_merged|MERGED"
         return 0
     fi
 
     # Closed without merge
     if [[ "$pr_state" == "CLOSED" ]]; then
-        echo "closed"
+        echo "closed|CLOSED"
         return 0
     fi
 
@@ -7600,7 +7611,7 @@ check_pr_status() {
     local is_draft
     is_draft=$(echo "$pr_json" | jq -r '.isDraft // false' 2>/dev/null || echo "false")
     if [[ "$is_draft" == "true" ]]; then
-        echo "draft"
+        echo "draft|DRAFT"
         return 0
     fi
 
@@ -7643,7 +7654,7 @@ check_pr_status() {
                 has_pending=$(echo "$check_rollup" | jq '[.[] | select(.status == "IN_PROGRESS" or .status == "QUEUED" or .status == "PENDING")] | length' 2>/dev/null || echo "0")
 
                 if [[ "$has_pending" -gt 0 ]]; then
-                    echo "ci_pending"
+                    echo "ci_pending|$merge_state"
                     return 0
                 fi
 
@@ -7652,7 +7663,7 @@ check_pr_status() {
                 has_failed=$(echo "$check_rollup" | jq '[.[] | select((.conclusion | test("FAILURE|TIMED_OUT|ACTION_REQUIRED")) or .state == "FAILURE" or .state == "ERROR")] | length' 2>/dev/null || echo "0")
 
                 if [[ "$has_failed" -gt 0 ]]; then
-                    echo "ci_failed"
+                    echo "ci_failed|$merge_state"
                     return 0
                 fi
             fi
@@ -7672,7 +7683,7 @@ check_pr_status() {
                 sonar_gate_fail=$(echo "$check_rollup" | jq '[.[] | select(.name == "SonarCloud Code Analysis" and .conclusion == "FAILURE")] | length' 2>/dev/null || echo "0")
 
                 if [[ "$sonar_action_pass" -gt 0 && "$sonar_gate_fail" -gt 0 ]]; then
-                    echo "unstable_sonarcloud"
+                    echo "unstable_sonarcloud|$merge_state"
                     return 0
                 fi
             fi
@@ -7685,8 +7696,8 @@ check_pr_status() {
             # All required checks passed, fall through to review check
             ;;
         BEHIND|DIRTY)
-            # Needs rebase or has conflicts - treat as pending
-            echo "ci_pending"
+            # t298: Needs rebase or has conflicts - return merge_state for auto-rebase
+            echo "ci_pending|$merge_state"
             return 0
             ;;
         *)
@@ -7702,12 +7713,12 @@ check_pr_status() {
                     # GitHub says it's mergeable — fall through to review check
                     ;;
                 CONFLICTING)
-                    echo "ci_pending"
+                    echo "ci_pending|CONFLICTING"
                     return 0
                     ;;
                 *)
                     # UNKNOWN mergeable too — report as pending, will resolve next pulse
-                    echo "ci_pending"
+                    echo "ci_pending|$merge_state"
                     return 0
                     ;;
             esac
@@ -7730,7 +7741,7 @@ check_pr_status() {
             # If still CHANGES_REQUESTED after dismissal, there are human reviews blocking
             if [[ "$review_decision" == "CHANGES_REQUESTED" ]]; then
                 log_warn "PR #${pr_number} still has CHANGES_REQUESTED after dismissing bot reviews (human reviews present)"
-                echo "changes_requested"
+                echo "changes_requested|$merge_state"
                 return 0
             else
                 log_success "PR #${pr_number} unblocked after dismissing bot reviews"
@@ -7739,13 +7750,13 @@ check_pr_status() {
         else
             # No bot reviews to dismiss, must be human reviews
             log_info "PR #${pr_number} has CHANGES_REQUESTED from human reviewers (not auto-dismissing)"
-            echo "changes_requested"
+            echo "changes_requested|$merge_state"
             return 0
         fi
     fi
 
     # CI passed, no blocking reviews
-    echo "ready_to_merge"
+    echo "ready_to_merge|$merge_state"
     return 0
 }
 
@@ -8303,8 +8314,9 @@ merge_task_pr() {
     
     # Also check current PR status for unstable_sonarcloud
     if [[ "$use_admin_flag" == "false" ]]; then
-        local current_pr_status
-        current_pr_status=$(check_pr_status "$task_id")
+        local current_pr_status_full current_pr_status
+        current_pr_status_full=$(check_pr_status "$task_id")
+        current_pr_status="${current_pr_status_full%%|*}"
         if [[ "$current_pr_status" == "unstable_sonarcloud" ]]; then
             use_admin_flag="true"
             log_info "SonarCloud external gate failed but GH Action passed - using --admin to bypass"
@@ -8363,8 +8375,9 @@ cmd_pr_merge() {
     fi
 
     # Check PR is ready
-    local pr_status
-    pr_status=$(check_pr_status "$task_id")
+    local pr_status_full pr_status
+    pr_status_full=$(check_pr_status "$task_id")
+    pr_status="${pr_status_full%%|*}"
 
     if [[ "$pr_status" != "ready_to_merge" ]]; then
         log_error "PR for $task_id is not ready to merge (status: $pr_status)"
@@ -8391,8 +8404,9 @@ run_postflight_for_task() {
     fi
 
     # Verify the branch was merged (PR should show as merged)
-    local pr_status
-    pr_status=$(check_pr_status "$task_id")
+    local pr_status_full pr_status
+    pr_status_full=$(check_pr_status "$task_id")
+    pr_status="${pr_status_full%%|*}"
     if [[ "$pr_status" == "already_merged" ]]; then
         log_success "Postflight: PR confirmed merged for $task_id"
         return 0
@@ -8733,9 +8747,12 @@ cmd_pr_lifecycle() {
         local stage_start
         stage_start=$(date +%s)
         
-        local pr_status
-        pr_status=$(check_pr_status "$task_id")
-        log_info "PR status: $pr_status"
+        # t298: Parse status|mergeStateStatus format
+        local pr_status_full pr_status merge_state_status
+        pr_status_full=$(check_pr_status "$task_id")
+        pr_status="${pr_status_full%%|*}"
+        merge_state_status="${pr_status_full##*|}"
+        log_info "PR status: $pr_status (merge state: $merge_state_status)"
 
         case "$pr_status" in
             ready_to_merge|unstable_sonarcloud)
@@ -8802,7 +8819,51 @@ cmd_pr_lifecycle() {
                 tstatus="merged"
                 ;;
             ci_pending)
-                log_info "CI still pending for $task_id, will retry next pulse"
+                # t298: Auto-rebase BEHIND/DIRTY PRs to unblock CI
+                if [[ "$merge_state_status" == "BEHIND" || "$merge_state_status" == "DIRTY" ]]; then
+                    # Check rebase attempt counter to prevent infinite loops
+                    local rebase_attempts
+                    rebase_attempts=$(db "$SUPERVISOR_DB" "SELECT rebase_attempts FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "0")
+                    rebase_attempts=${rebase_attempts:-0}
+                    
+                    local max_rebase_attempts=2
+                    if [[ "$rebase_attempts" -lt "$max_rebase_attempts" ]]; then
+                        log_info "PR is $merge_state_status for $task_id — attempting auto-rebase (attempt $((rebase_attempts + 1))/$max_rebase_attempts)"
+                        
+                        if rebase_sibling_pr "$task_id"; then
+                            log_success "Auto-rebase succeeded for $task_id — CI will re-run"
+                            # Increment rebase counter
+                            if [[ "$dry_run" == "false" ]]; then
+                                db "$SUPERVISOR_DB" "UPDATE tasks SET rebase_attempts = $((rebase_attempts + 1)) WHERE id = '$escaped_id';"
+                            fi
+                            # Continue pulse — CI will re-run and we'll check again next pulse
+                            local stage_end
+                            stage_end=$(date +%s)
+                            stage_timings="${stage_timings}pr_review:$((stage_end - stage_start))s(rebased),"
+                            record_lifecycle_timing "$task_id" "$stage_timings" 2>/dev/null || true
+                            return 0
+                        else
+                            # Rebase failed (conflicts or other error)
+                            log_warn "Auto-rebase failed for $task_id — transitioning to blocked:merge_conflict"
+                            if [[ "$dry_run" == "false" ]]; then
+                                cmd_transition "$task_id" "blocked" --error "Merge conflict — auto-rebase failed" 2>>"$SUPERVISOR_LOG" || true
+                                send_task_notification "$task_id" "blocked" "PR has merge conflicts that require manual resolution" 2>>"$SUPERVISOR_LOG" || true
+                            fi
+                            return 1
+                        fi
+                    else
+                        log_warn "Max rebase attempts ($max_rebase_attempts) reached for $task_id — transitioning to blocked"
+                        if [[ "$dry_run" == "false" ]]; then
+                            cmd_transition "$task_id" "blocked" --error "Max rebase attempts reached — manual intervention required" 2>>"$SUPERVISOR_LOG" || true
+                            send_task_notification "$task_id" "blocked" "PR stuck in $merge_state_status state after $max_rebase_attempts rebase attempts" 2>>"$SUPERVISOR_LOG" || true
+                        fi
+                        return 1
+                    fi
+                else
+                    # CI pending for other reasons (checks running, etc.)
+                    log_info "CI still pending for $task_id (merge state: $merge_state_status), will retry next pulse"
+                fi
+                
                 # t219: Record timing even for early returns
                 local stage_end
                 stage_end=$(date +%s)
