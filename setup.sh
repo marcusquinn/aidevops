@@ -307,6 +307,9 @@ cleanup_deprecated_paths() {
         "$agents_dir/tools/ai-assistants/status.md"
         # Removed oh-my-opencode integration (no longer supported)
         "$agents_dir/tools/opencode/oh-my-opencode.md"
+        # t199.8: youtube moved from root to content/distribution/youtube/
+        "$agents_dir/youtube.md"
+        "$agents_dir/youtube"
     )
     
     for path in "${deprecated_paths[@]}"; do
