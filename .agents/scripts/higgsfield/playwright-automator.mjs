@@ -1818,8 +1818,16 @@ async function generateImage(options = {}) {
 // Strategy 2 (FALLBACK): Navigate to the page fresh to trigger the API call,
 //   then extract the URL from the intercepted response.
 // Strategy 3 (LAST RESORT): Extract <video src> from the list item (motion template, low quality).
+//
+// POLLING BEHAVIOUR (t269): When the newest video is still processing, this function
+// polls the Higgsfield project API at increasing intervals until the video completes
+// or the timeout is reached. This prevents the silent empty-return that occurred when
+// downloadLatestResult was called immediately after generation submission.
+// Controlled by options.wait (default: true) and options.timeout (default: 300000ms).
 async function downloadVideoFromHistory(page, outputDir, metadata = {}, options = {}) {
   const downloaded = [];
+  const shouldWait = options.wait !== false;
+  const maxWaitMs = options.timeout || 300000; // 5 minutes default
 
   try {
     // Switch to History tab if not already there
@@ -1879,45 +1887,16 @@ async function downloadVideoFromHistory(page, outputDir, metadata = {}, options 
       promptSnippet: videoInfo?.promptText?.substring(0, 80) || metadata.promptSnippet,
     };
 
-    // Strategy 1 (PRIMARY): Intercept the project API to get the full-quality CloudFront URL.
+    // Strategy 1 (PRIMARY): Fetch the project API to get the full-quality CloudFront URL.
     // The API at fnf.higgsfield.ai/project returns job data with results.raw.url containing
     // the actual video at d8j0ntlcm91z4.cloudfront.net (1920x1080 full quality).
     // The <video src> in the DOM is just a shared motion template URL (same for all items).
+    //
+    // If the newest job is still processing, poll until it completes (t269 fix).
     console.log('Extracting full-quality video URL from API data...');
 
-    // Set up API interception and reload the page to trigger the API call
-    let projectApiData = null;
-    const apiHandler = async (response) => {
-      const url = response.url();
-      if (url.includes('fnf.higgsfield.ai/project')) {
-        try { projectApiData = await response.json(); } catch {}
-      }
-    };
-    page.on('response', apiHandler);
-
-    // Reload the video page to trigger the API call
-    await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
-    await page.waitForTimeout(6000);
-    page.off('response', apiHandler);
-
-    // Fallback: Direct API fetch if interception missed the response
-    if (!projectApiData) {
-      try {
-        projectApiData = await page.evaluate(async () => {
-          const resp = await fetch('https://fnf.higgsfield.ai/project?job_set_type=image2video&limit=20&offset=0', {
-            credentials: 'include',
-            headers: { 'Accept': 'application/json' },
-          });
-          if (resp.ok) return await resp.json();
-          return null;
-        });
-        if (projectApiData?.job_sets?.length > 0) {
-          console.log(`Direct API fetch got ${projectApiData.job_sets.length} job set(s)`);
-        }
-      } catch (fetchErr) {
-        console.log(`Direct API fetch failed: ${fetchErr.message}`);
-      }
-    }
+    // Fetch project API data (with polling for still-processing videos)
+    const projectApiData = await fetchProjectApiWithPolling(page, { shouldWait, maxWaitMs });
 
     if (projectApiData?.job_sets?.length > 0) {
       // Ensure output directory exists
@@ -2009,6 +1988,93 @@ async function downloadVideoFromHistory(page, outputDir, metadata = {}, options 
   }
 
   return downloaded;
+}
+
+// Fetch project API data, polling if the newest video is still processing (t269).
+// Returns the API response with at least one completed job, or the last response
+// if timeout is reached. Uses exponential backoff: 10s, 15s, 20s, 25s, 30s (cap).
+async function fetchProjectApiWithPolling(page, { shouldWait = true, maxWaitMs = 300000 } = {}) {
+  const startTime = Date.now();
+  let pollDelay = 10000; // Start at 10s — video generation typically takes 60-180s
+  let attempt = 0;
+
+  while (true) {
+    attempt++;
+    let projectApiData = null;
+
+    // Try API interception via page reload first
+    const apiHandler = async (response) => {
+      const url = response.url();
+      if (url.includes('fnf.higgsfield.ai/project')) {
+        try { projectApiData = await response.json(); } catch {}
+      }
+    };
+    page.on('response', apiHandler);
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(6000);
+    page.off('response', apiHandler);
+
+    // Fallback: Direct API fetch if interception missed the response
+    if (!projectApiData) {
+      try {
+        projectApiData = await page.evaluate(async () => {
+          const resp = await fetch('https://fnf.higgsfield.ai/project?job_set_type=image2video&limit=20&offset=0', {
+            credentials: 'include',
+            headers: { 'Accept': 'application/json' },
+          });
+          if (resp.ok) return await resp.json();
+          return null;
+        });
+        if (projectApiData?.job_sets?.length > 0) {
+          console.log(`Direct API fetch got ${projectApiData.job_sets.length} job set(s)`);
+        }
+      } catch (fetchErr) {
+        console.log(`Direct API fetch failed: ${fetchErr.message}`);
+      }
+    }
+
+    // Check if the newest job is completed
+    if (projectApiData?.job_sets?.length > 0) {
+      const newestJobSet = projectApiData.job_sets[0];
+      const newestJob = newestJobSet?.jobs?.[0];
+      const status = newestJob?.status;
+
+      if (status === 'completed' && newestJob?.results?.raw?.url) {
+        if (attempt > 1) {
+          const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
+          console.log(`Video ready after ${elapsed}s of polling (${attempt} attempts)`);
+        }
+        return projectApiData;
+      }
+
+      if (status === 'failed') {
+        console.log(`Newest video job failed: ${newestJob?.error || 'unknown error'}`);
+        return projectApiData;
+      }
+
+      // Video is still processing — decide whether to poll or return
+      const processingStatuses = ['queued', 'processing', 'in_queue', 'pending', 'running'];
+      const isProcessing = processingStatuses.includes(status) || !status;
+      const elapsed = Date.now() - startTime;
+
+      if (isProcessing && shouldWait && elapsed < maxWaitMs) {
+        const elapsedSec = (elapsed / 1000).toFixed(0);
+        const remainingSec = ((maxWaitMs - elapsed) / 1000).toFixed(0);
+        console.log(`  Video still processing (status: ${status || 'unknown'}, ${elapsedSec}s elapsed, ${remainingSec}s remaining)...`);
+        await page.waitForTimeout(pollDelay);
+        // Gradual backoff: 10s -> 15s -> 20s -> 25s -> 30s (cap)
+        pollDelay = Math.min(pollDelay + 5000, 30000);
+        continue;
+      }
+
+      if (isProcessing) {
+        const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(0);
+        console.log(`Video still processing after ${elapsedSec}s. Use 'download --model video' to retry later.`);
+      }
+    }
+
+    return projectApiData;
+  }
 }
 
 // Generate video via UI
