@@ -657,9 +657,14 @@ compose_issue_body() {
         body="$body"$'\n'"**Tags:** $formatted_tags"
     fi
 
+    # Full description (the detailed spec after the em dash)
+    if [[ -n "$description" ]]; then
+        body="$body"$'\n\n'"## Description"$'\n\n'"$description"
+    fi
+
     # Dependencies
     if [[ -n "$blocked_by" ]]; then
-        body="$body"$'\n'"**Blocked by:** \`$blocked_by\`"
+        body="$body"$'\n\n'"**Blocked by:** \`$blocked_by\`"
     fi
     if [[ -n "$blocks" ]]; then
         body="$body"$'\n'"**Blocks:** \`$blocks\`"
@@ -819,7 +824,15 @@ cmd_push() {
         local assignee
         assignee=$(echo "$parsed" | grep '^assignee=' | cut -d= -f2-)
 
-        local title="${task_id}: ${description}"
+        # Split at em dash for concise title; full description goes in body
+        local title
+        if [[ "$description" == *" — "* ]]; then
+            title="${task_id}: ${description%% — *}"
+        elif [[ ${#description} -gt 80 ]]; then
+            title="${task_id}: ${description:0:77}..."
+        else
+            title="${task_id}: ${description}"
+        fi
         local labels
         labels=$(map_tags_to_labels "$tags")
 
@@ -937,10 +950,22 @@ cmd_enrich() {
         # Parse tags and map to labels (t295)
         local parsed
         parsed=$(parse_task_line "$task_line")
+        local description
+        description=$(echo "$parsed" | grep '^description=' | cut -d= -f2-)
         local tags
         tags=$(echo "$parsed" | grep '^tags=' | cut -d= -f2-)
         local labels
         labels=$(map_tags_to_labels "$tags")
+
+        # Build concise title (same logic as create)
+        local title
+        if [[ "$description" == *" — "* ]]; then
+            title="${task_id}: ${description%% — *}"
+        elif [[ ${#description} -gt 80 ]]; then
+            title="${task_id}: ${description:0:77}..."
+        else
+            title="${task_id}: ${description}"
+        fi
 
         # Compose rich body
         local body
@@ -969,8 +994,8 @@ cmd_enrich() {
             fi
         fi
 
-        # Update the issue body
-        if gh issue edit "$issue_number" --repo "$repo_slug" --body "$body" 2>/dev/null; then
+        # Update the issue title and body
+        if gh issue edit "$issue_number" --repo "$repo_slug" --title "$title" --body "$body" 2>/dev/null; then
             print_success "Enriched #$issue_number ($task_id)"
             enriched=$((enriched + 1))
         else
