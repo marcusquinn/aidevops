@@ -32,7 +32,7 @@ jobs:
     timeout-minutes: 10
     concurrency:
       group: issue-sync-push-${{ github.ref }}
-      cancel-in-progress: true
+      cancel-in-progress: false
     permissions:
       contents: write
       issues: write
