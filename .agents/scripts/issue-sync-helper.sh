@@ -1242,84 +1242,82 @@ cmd_close() {
     local todo_file="$project_root/TODO.md"
     verify_gh_cli || return 1
 
-    # Collect completed tasks — both with and without GH refs (t179.1)
-    local tasks=()
-    if [[ -n "$target_task" ]]; then
-        tasks=("$target_task")
-    else
-        # Include all completed tasks, not just those with ref:GH#
-        while IFS= read -r line; do
-            local tid
-            tid=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
-            if [[ -n "$tid" ]]; then
-                tasks+=("$tid")
-            fi
-        done < <(grep -E '^\s*- \[x\] t[0-9]+' "$todo_file" || true)
-    fi
-
-    if [[ ${#tasks[@]} -eq 0 ]]; then
-        print_info "No completed tasks to close"
-        return 0
-    fi
+    # t283: Performance optimization — pre-fetch all open issues in ONE API call,
+    # then only process completed tasks that have a matching open issue.
+    # Before: iterated all 533+ completed tasks × 2-5 API calls each = 2000+ calls, 5+ min.
+    # After: 1 bulk fetch + only process tasks with open issues = ~30 API calls, <30s.
 
     local closed=0
     local skipped=0
     local ref_fixed=0
-    for task_id in "${tasks[@]}"; do
-        local task_line
-        task_line=$(grep -E "^\s*- \[.\] ${task_id} " "$todo_file" | head -1 || echo "")
-        local issue_number
-        issue_number=$(echo "$task_line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
 
-        # t179.1: Fallback — search by task ID in issue title when ref:GH# is missing or stale
-        if [[ -z "$issue_number" ]]; then
-            log_verbose "$task_id: no ref:GH# in TODO.md, searching GitHub by title..."
-            issue_number=$(gh issue list --repo "$repo_slug" --state open --search "in:title ${task_id}:" --json number --jq '.[0].number' 2>/dev/null || echo "")
-            if [[ -n "$issue_number" && "$issue_number" != "null" ]]; then
-                log_verbose "$task_id: found open issue #$issue_number by title search"
-                # Fix the ref in TODO.md
+    if [[ -n "$target_task" ]]; then
+        # Single-task mode: process just this one task (original per-task logic)
+        _close_single_task "$target_task" "$todo_file" "$repo_slug"
+        return $?
+    fi
+
+    # Bulk mode: fetch all open issues once, build task_id -> issue_number map
+    log_verbose "Fetching all open issues from $repo_slug..."
+    local open_issues_json
+    open_issues_json=$(gh issue list --repo "$repo_slug" --state open --limit 500 \
+        --json number,title 2>/dev/null || echo "[]")
+
+    # Build associative array: task_id -> issue_number from open issues
+    # Only issues whose title starts with tNNN pattern are relevant
+    declare -A open_issue_map
+    while IFS='|' read -r num title; do
+        [[ -z "$num" ]] && continue
+        local tid
+        tid=$(echo "$title" | grep -oE '^t[0-9]+(\.[0-9]+)*' || echo "")
+        if [[ -n "$tid" ]]; then
+            open_issue_map["$tid"]="$num"
+        fi
+    done < <(echo "$open_issues_json" | jq -r '.[] | "\(.number)|\(.title)"' 2>/dev/null || true)
+
+    local open_count="${#open_issue_map[@]}"
+    log_verbose "Found $open_count open issues with task IDs"
+
+    if [[ "$open_count" -eq 0 ]]; then
+        print_info "No open issues to close"
+        return 0
+    fi
+
+    # Now iterate only completed tasks that have a matching open issue
+    # This is the key optimization: instead of checking 533 tasks against the API,
+    # we only process the ~20-30 that actually have open issues
+    while IFS= read -r line; do
+        local task_id
+        task_id=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
+        [[ -z "$task_id" ]] && continue
+
+        # Check 1: Does this task have a ref:GH# that matches an open issue?
+        local issue_number=""
+        local ref_number
+        ref_number=$(echo "$line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
+
+        if [[ -n "$ref_number" && -n "${open_issue_map[$task_id]:-}" ]]; then
+            # Task has ref:GH# AND an open issue exists for this task ID
+            issue_number="${open_issue_map[$task_id]}"
+            # Verify ref matches (fix stale refs)
+            if [[ "$ref_number" != "$issue_number" ]]; then
+                log_verbose "$task_id: ref:GH#$ref_number doesn't match open issue #$issue_number, fixing..."
                 if [[ "$DRY_RUN" != "true" ]]; then
-                    add_gh_ref_to_todo "$task_id" "$issue_number" "$todo_file"
+                    fix_gh_ref_in_todo "$task_id" "$ref_number" "$issue_number" "$todo_file"
                     ref_fixed=$((ref_fixed + 1))
                 fi
-            else
-                # Also check closed issues (might already be closed)
-                issue_number=$(gh issue list --repo "$repo_slug" --state closed --search "in:title ${task_id}:" --json number --jq '.[0].number' 2>/dev/null || echo "")
-                if [[ -n "$issue_number" && "$issue_number" != "null" ]]; then
-                    log_verbose "$task_id: found closed issue #$issue_number (already closed)"
-                    if [[ "$DRY_RUN" != "true" ]]; then
-                        add_gh_ref_to_todo "$task_id" "$issue_number" "$todo_file"
-                        ref_fixed=$((ref_fixed + 1))
-                    fi
-                    continue  # Already closed, nothing to do
-                fi
-                log_verbose "$task_id: no matching GitHub issue found"
-                continue
+            fi
+        elif [[ -n "${open_issue_map[$task_id]:-}" ]]; then
+            # No ref:GH# but an open issue exists — use it and fix the ref
+            issue_number="${open_issue_map[$task_id]}"
+            log_verbose "$task_id: no ref:GH# but found open issue #$issue_number"
+            if [[ "$DRY_RUN" != "true" ]]; then
+                add_gh_ref_to_todo "$task_id" "$issue_number" "$todo_file"
+                ref_fixed=$((ref_fixed + 1))
             fi
         else
-            # Verify the ref:GH# actually matches an issue with this task ID (t179.1)
-            local ref_title
-            ref_title=$(gh issue view "$issue_number" --repo "$repo_slug" --json title --jq '.title' 2>/dev/null || echo "")
-            local ref_task_id
-            ref_task_id=$(echo "$ref_title" | grep -oE '^t[0-9]+(\.[0-9]+)*' || echo "")
-
-            if [[ -n "$ref_task_id" && "$ref_task_id" != "$task_id" ]]; then
-                # ref:GH# points to a different task's issue — search for the correct one
-                log_verbose "$task_id: ref:GH#$issue_number belongs to $ref_task_id, searching for correct issue..."
-                local correct_number
-                correct_number=$(gh issue list --repo "$repo_slug" --state all --search "in:title ${task_id}:" --json number,state --jq '.[] | select(.state == "OPEN") | .number' 2>/dev/null | head -1 || echo "")
-                if [[ -z "$correct_number" ]]; then
-                    correct_number=$(gh issue list --repo "$repo_slug" --state all --search "in:title ${task_id}:" --json number --jq '.[0].number' 2>/dev/null || echo "")
-                fi
-                if [[ -n "$correct_number" && "$correct_number" != "null" ]]; then
-                    log_verbose "$task_id: correct issue is #$correct_number (was ref:GH#$issue_number)"
-                    if [[ "$DRY_RUN" != "true" ]]; then
-                        fix_gh_ref_in_todo "$task_id" "$issue_number" "$correct_number" "$todo_file"
-                        ref_fixed=$((ref_fixed + 1))
-                    fi
-                    issue_number="$correct_number"
-                fi
-            fi
+            # No open issue for this completed task — skip (nothing to close)
+            continue
         fi
 
         if [[ -z "$issue_number" || "$issue_number" == "null" ]]; then
@@ -1327,9 +1325,10 @@ cmd_close() {
         fi
 
         # Guard: verify task has completion evidence (merged PR or verified: field)
-        # Also find the closing PR for the auditable close comment (t220)
         local task_with_notes
         task_with_notes=$(extract_task_block "$task_id" "$todo_file")
+        local task_line
+        task_line=$(grep -E "^\s*- \[.\] ${task_id} " "$todo_file" | head -1 || echo "")
         if [[ -z "$task_with_notes" ]]; then
             task_with_notes="$task_line"
         fi
@@ -1367,14 +1366,6 @@ cmd_close() {
             close_comment="Completed (verified: $verified_date). Task $task_id marked done in TODO.md."
         fi
 
-        # Check if issue is already closed
-        local issue_state
-        issue_state=$(gh issue view "$issue_number" --repo "$repo_slug" --json state --jq '.state' 2>/dev/null || echo "")
-        if [[ "$issue_state" == "CLOSED" ]]; then
-            log_verbose "#$issue_number already closed"
-            continue
-        fi
-
         if [[ "$DRY_RUN" == "true" ]]; then
             print_info "[DRY-RUN] Would close #$issue_number ($task_id)"
             if [[ -n "$closing_pr_number" ]]; then
@@ -1394,9 +1385,94 @@ cmd_close() {
         else
             print_error "Failed to close #$issue_number ($task_id)"
         fi
-    done
+    done < <(grep -E '^\s*- \[x\] t[0-9]+' "$todo_file" || true)
 
     print_info "Close complete: $closed closed, $skipped skipped (no evidence), $ref_fixed refs fixed"
+    return 0
+}
+
+# Single-task close helper (used by cmd_close for targeted single-task mode)
+_close_single_task() {
+    local task_id="$1"
+    local todo_file="$2"
+    local repo_slug="$3"
+
+    local task_line
+    task_line=$(grep -E "^\s*- \[.\] ${task_id} " "$todo_file" | head -1 || echo "")
+    local issue_number
+    issue_number=$(echo "$task_line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
+
+    # Fallback: search by task ID in issue title when ref:GH# is missing
+    if [[ -z "$issue_number" ]]; then
+        log_verbose "$task_id: no ref:GH# in TODO.md, searching GitHub by title..."
+        issue_number=$(gh issue list --repo "$repo_slug" --state open --search "in:title ${task_id}:" --json number --jq '.[0].number' 2>/dev/null || echo "")
+        if [[ -n "$issue_number" && "$issue_number" != "null" ]]; then
+            log_verbose "$task_id: found open issue #$issue_number by title search"
+            if [[ "$DRY_RUN" != "true" ]]; then
+                add_gh_ref_to_todo "$task_id" "$issue_number" "$todo_file"
+            fi
+        else
+            print_info "$task_id: no matching open GitHub issue found"
+            return 0
+        fi
+    fi
+
+    if [[ -z "$issue_number" || "$issue_number" == "null" ]]; then
+        return 0
+    fi
+
+    # Check if already closed
+    local issue_state
+    issue_state=$(gh issue view "$issue_number" --repo "$repo_slug" --json state --jq '.state' 2>/dev/null || echo "")
+    if [[ "$issue_state" == "CLOSED" ]]; then
+        log_verbose "#$issue_number already closed"
+        return 0
+    fi
+
+    # Verify completion evidence
+    local task_with_notes
+    task_with_notes=$(extract_task_block "$task_id" "$todo_file")
+    if [[ -z "$task_with_notes" ]]; then
+        task_with_notes="$task_line"
+    fi
+
+    if [[ "$FORCE_CLOSE" != "true" ]]; then
+        if ! task_has_completion_evidence "$task_with_notes" "$task_id" "$repo_slug"; then
+            print_warning "Skipping #$issue_number ($task_id): no merged PR or verified: field found"
+            return 0
+        fi
+    fi
+
+    # Find closing PR
+    local closing_pr_info closing_pr_number closing_pr_url
+    closing_pr_info=$(find_closing_pr "$task_with_notes" "$task_id" "$repo_slug" 2>/dev/null || echo "")
+    closing_pr_number=""
+    closing_pr_url=""
+    if [[ -n "$closing_pr_info" ]]; then
+        closing_pr_number="${closing_pr_info%%|*}"
+        closing_pr_url="${closing_pr_info#*|}"
+    fi
+
+    local close_comment="Completed. Task $task_id marked done in TODO.md."
+    if [[ -n "$closing_pr_number" && -n "$closing_pr_url" ]]; then
+        close_comment="Completed via [PR #${closing_pr_number}](${closing_pr_url}). Task $task_id marked done in TODO.md."
+    elif [[ -n "$closing_pr_number" ]]; then
+        close_comment="Completed via PR #${closing_pr_number}. Task $task_id marked done in TODO.md."
+    fi
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        print_info "[DRY-RUN] Would close #$issue_number ($task_id)"
+        return 0
+    fi
+
+    if gh issue close "$issue_number" --repo "$repo_slug" --comment "$close_comment" 2>/dev/null; then
+        gh label create "status:done" --repo "$repo_slug" --color "6F42C1" --description "Task is complete" --force 2>/dev/null || true
+        gh issue edit "$issue_number" --repo "$repo_slug" \
+            --add-label "status:done" --remove-label "status:available" --remove-label "status:claimed" --remove-label "status:in-review" 2>/dev/null || true
+        print_success "Closed #$issue_number ($task_id)"
+    else
+        print_error "Failed to close #$issue_number ($task_id)"
+    fi
     return 0
 }
 
