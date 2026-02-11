@@ -54,6 +54,7 @@ ensure_workspace() {
 
 # Check if OpenCode server is running
 check_opencode_server() {
+    # NOSONAR - localhost dev server health check, HTTP is intentional
     if curl -s "${OPENCODE_URL}/global/health" > /dev/null 2>&1; then
         return 0
     else
@@ -66,6 +67,7 @@ create_session() {
     local title="$1"
     local response
     
+    # NOSONAR - localhost dev server API call, HTTP is intentional
     response=$(curl -s -X POST "${OPENCODE_URL}/session" \
         -H "Content-Type: application/json" \
         -d "{\"title\": \"$title\"}")
@@ -79,6 +81,7 @@ send_prompt() {
     local prompt="$2"
     local response
     
+    # NOSONAR - localhost dev server API call, HTTP is intentional
     response=$(curl -s -X POST "${OPENCODE_URL}/session/${session_id}/message" \
         -H "Content-Type: application/json" \
         -d "{\"parts\": [{\"type\": \"text\", \"text\": $(echo "$prompt" | jq -Rs .)}]}")
