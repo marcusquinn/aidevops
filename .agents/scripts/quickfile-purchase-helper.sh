@@ -255,7 +255,7 @@ prepare_invoice_payload() {
             "notes": ("Auto-extracted from: " + $source),
             "requires_review": true,
             "agent_instructions": {
-                "step_1": "Search for supplier: quickfile_supplier_search with name=" + $vendor,
+                "step_1": ("Search for supplier: quickfile_supplier_search with name=" + $vendor),
                 "step_2": "If no supplier found, create one: quickfile_supplier_create",
                 "step_3": "Review nominal codes — default 5000 (Cost of Sales). Common alternatives: 7501 (Postage), 7502 (Office Stationery), 7504 (IT Software & Consumables), 7901 (Bank Charges)",
                 "step_4": "Confirm line items and totals with user before creating",
@@ -324,7 +324,7 @@ prepare_receipt_payload() {
             "notes": ("Auto-extracted from receipt: " + $source),
             "requires_review": true,
             "agent_instructions": {
-                "step_1": "Search for supplier: quickfile_supplier_search with name=" + $vendor,
+                "step_1": ("Search for supplier: quickfile_supplier_search with name=" + $vendor),
                 "step_2": "If no supplier found, create one: quickfile_supplier_create",
                 "step_3": "Review nominal codes — default 5000 (Cost of Sales). Common alternatives: 7501 (Postage), 7502 (Office Stationery), 7504 (IT Software & Consumables), 7901 (Bank Charges)",
                 "step_4": "If payment_method is known, consider recording as paid immediately",
