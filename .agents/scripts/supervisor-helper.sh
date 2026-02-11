@@ -3197,7 +3197,10 @@ check_task_already_done() {
         local first_match=""
         first_match=$(grep -E "^\s*- \[(x| |-)\] ${task_id}[[:space:]]" "$todo_file" 2>/dev/null | head -1) || true
         if [[ -n "$first_match" ]]; then
-            if [[ "$first_match" =~ \[x\] ]]; then
+            # Extract ONLY the checkbox at the start of the line, not [x] anywhere in description
+            local checkbox=""
+            checkbox=$(printf '%s' "$first_match" | sed -n 's/^[[:space:]]*- \[\(.\)\].*/\1/p')
+            if [[ "$checkbox" == "x" ]]; then
                 log_info "Pre-dispatch check: $task_id is marked [x] in TODO.md (first occurrence)" >&2
                 return 0
             else
