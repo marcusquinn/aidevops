@@ -17,406 +17,183 @@ tools:
 
 ## Quick Reference
 
-- **Status**: Design phase (not yet implemented)
+- **Status**: Implemented (t008, PR #1073)
 - **Purpose**: Native OpenCode plugin wrapper for aidevops
-- **Approach**: Thin wrapper that loads existing aidevops agents/MCPs
-- **Compatibility**: Works with OpenCode plugin system
+- **Approach**: Single-file ESM plugin using hooks-based SDK pattern
+- **Location**: `.agents/plugins/opencode-aidevops/index.mjs`
+- **SDK**: `@opencode-ai/plugin` v1.1.56+
 
-**Key Decision**: aidevops is built for OpenCode (TUI, Desktop, Extension).
-The plugin provides additional OpenCode-specific enhancements.
+**Key Decision**: Plugin complements `generate-opencode-agents.sh` — the shell
+script handles primary agent config, the plugin adds runtime hooks and tools.
 
 <!-- AI-CONTEXT-END -->
 
 ## Overview
 
-This document outlines the architecture for an optional `aidevops-opencode` plugin that would provide native OpenCode integration for the aidevops framework.
+The `aidevops-opencode` plugin provides native OpenCode integration for the aidevops framework. It runs as an OpenCode plugin loaded via `file://` protocol and provides dynamic agent loading, custom tools, quality hooks, and compaction context.
 
-### Current State
+### Integration with Existing Setup
 
-aidevops currently integrates with OpenCode via:
+aidevops integrates with OpenCode via multiple layers:
 
-1. **Markdown agents** deployed to `~/.config/opencode/agent/`
-2. **JSON MCP configs** in `~/.config/opencode/opencode.json`
-3. **Slash commands** in `~/.config/opencode/commands/`
-4. **Shell scripts** for helper operations
+| Layer | Mechanism | Managed By |
+|-------|-----------|------------|
+| Primary agents | `opencode.json` agent section | `generate-opencode-agents.sh` |
+| Subagent stubs | `~/.config/opencode/agent/*.md` | `generate-opencode-agents.sh` |
+| MCP configs | `opencode.json` mcp section | `generate-opencode-agents.sh` |
+| Slash commands | `~/.config/opencode/commands/` | `setup.sh` |
+| **Runtime hooks** | Plugin hooks API | **This plugin** |
+| **Custom tools** | Plugin tool registration | **This plugin** |
+| **Dynamic agents** | Plugin config hook | **This plugin** |
+| **Shell environment** | Plugin shell.env hook | **This plugin** |
+| **Compaction context** | Plugin compacting hook | **This plugin** |
 
-### Proposed Plugin Benefits
+The plugin only injects agents not already configured by `generate-opencode-agents.sh`, ensuring the shell script always takes precedence.
 
-| Benefit | Description |
-|---------|-------------|
-| **Cleaner Installation** | `npm install aidevops-opencode` vs running setup.sh |
-| **Lifecycle Hooks** | Pre-commit quality checks, auto-formatting |
-| **Dynamic Agent Loading** | Load agents from `~/.aidevops/agents/` at runtime |
-| **MCP Registration** | Register aidevops MCPs programmatically |
-| **Version Management** | Automatic updates via npm |
+## Actual SDK API (v1.1.56)
 
-## Architecture Design
+**Important**: The original design in this document assumed APIs that do not exist (`input.agent.register()`, `input.mcp.register()`, `input.hook.register()`). The actual SDK uses a different pattern:
+
+```typescript
+// Plugin signature — function that returns Hooks object
+type Plugin = (input: PluginInput) => Promise<Hooks>;
+
+// PluginInput — provided by OpenCode at startup
+type PluginInput = {
+  client: OpencodeClient;     // API client
+  project: Project;           // Project metadata
+  directory: string;          // Current working directory
+  worktree: string;           // Git worktree root
+  serverUrl: URL;             // OpenCode server URL
+  $: BunShell;                // Bun shell for running commands
+};
+
+// Hooks — returned by the plugin function
+interface Hooks {
+  config?: (input: Config) => Promise<void>;                    // Mutate OpenCode config
+  tool?: { [key: string]: ToolDefinition };                     // Register custom tools
+  event?: (input: { event: Event }) => Promise<void>;           // Event listener
+  auth?: AuthHook;                                              // Auth provider
+  "chat.message"?: (input, output) => Promise<void>;            // Message interception
+  "chat.params"?: (input, output) => Promise<void>;             // LLM parameter modification
+  "permission.ask"?: (input, output) => Promise<void>;          // Permission handling
+  "tool.execute.before"?: (input, output) => Promise<void>;     // Pre-tool hook
+  "tool.execute.after"?: (input, output) => Promise<void>;      // Post-tool hook
+  "shell.env"?: (input, output) => Promise<void>;               // Shell environment
+  "experimental.session.compacting"?: (input, output) => Promise<void>;  // Compaction
+}
+```
+
+### Key Differences from Original Design
+
+| Original Assumption | Actual SDK |
+|---------------------|------------|
+| `input.agent.register()` | Use `config` hook to mutate `config.agent` |
+| `input.mcp.register()` | Use `config` hook to mutate `config.mcp` |
+| `input.hook.register()` | Return hooks as properties of Hooks object |
+| `input.tool.register()` | Return tools in `tool` property |
+| Class-based plugin | Function-based plugin |
+| TypeScript + build step | ESM loaded directly (no build needed) |
+| `gray-matter` dependency | Built-in YAML frontmatter parser |
+
+## Current Implementation
 
 ### Plugin Structure
 
 ```text
-aidevops-opencode/
-├── src/
-│   ├── index.ts              # Main plugin entry
-│   ├── agents/
-│   │   ├── loader.ts         # Load agents from ~/.aidevops/agents/
-│   │   └── registry.ts       # Register agents with OpenCode
-│   ├── mcps/
-│   │   ├── loader.ts         # Load MCP configs
-│   │   └── registry.ts       # Register MCPs with OpenCode
-│   ├── hooks/
-│   │   ├── pre-commit.ts     # Quality checks before commit
-│   │   ├── post-tool-use.ts  # After tool execution
-│   │   └── user-prompt.ts    # Prompt preprocessing
-│   ├── tools/
-│   │   └── aidevops-cli.ts   # Expose aidevops CLI as tool
-│   └── config/
-│       ├── schema.ts         # Zod config schema
-│       └── types.ts          # TypeScript types
-├── package.json
-├── tsconfig.json
-└── README.md
+.agents/plugins/opencode-aidevops/
+├── index.mjs          # Single-file plugin (all hooks and tools)
+└── package.json       # Metadata + peer dependency
 ```
 
-### Core Components
+### Hooks Implemented
 
-#### 1. Agent Loader
+#### 1. Config Hook — Dynamic Agent Loading
 
-```typescript
-// src/agents/loader.ts
-import { readdir, readFile } from 'fs/promises';
-import { join } from 'path';
-import { homedir } from 'os';
-import matter from 'gray-matter';
+Reads all markdown files from `~/.aidevops/agents/` and subdirectories, parses YAML frontmatter, and injects subagent definitions into OpenCode's config. Only injects agents not already configured (shell script takes precedence).
 
-interface AgentDefinition {
-  name: string;
-  description: string;
-  mode: 'primary' | 'subagent';
-  tools: Record<string, boolean>;
-  content: string;
-}
-
-export async function loadAgents(): Promise<AgentDefinition[]> {
-  const agentsDir = join(homedir(), '.aidevops', 'agents');
-  const agents: AgentDefinition[] = [];
-  
-  // Load main agents (*.md in root)
-  const mainAgents = await loadAgentsFromDir(agentsDir, 'primary');
-  agents.push(...mainAgents);
-  
-  // Load subagents from subdirectories
-  const subdirs = ['aidevops', 'wordpress', 'seo', 'tools', 'services', 'workflows'];
-  for (const subdir of subdirs) {
-    const subAgents = await loadAgentsFromDir(join(agentsDir, subdir), 'subagent');
-    agents.push(...subAgents);
+```javascript
+// Mutates config.agent to add missing subagents
+async function configHook(config) {
+  const agents = loadAgentDefinitions();  // ~400 agents from filesystem
+  for (const agent of agents) {
+    if (config.agent[agent.name]) continue;  // Skip if already configured
+    if (agent.mode !== "subagent") continue;  // Only auto-register subagents
+    config.agent[agent.name] = {
+      description: agent.description,
+      mode: "subagent",
+    };
   }
-  
-  return agents;
-}
-
-async function loadAgentsFromDir(dir: string, mode: 'primary' | 'subagent'): Promise<AgentDefinition[]> {
-  const files = await readdir(dir).catch(() => []);
-  const agents: AgentDefinition[] = [];
-  
-  for (const file of files) {
-    if (!file.endsWith('.md')) continue;
-    
-    const content = await readFile(join(dir, file), 'utf-8');
-    const { data, content: body } = matter(content);
-    
-    agents.push({
-      name: file.replace('.md', ''),
-      description: data.description || '',
-      mode: data.mode || mode,
-      tools: data.tools || {},
-      content: body,
-    });
-  }
-  
-  return agents;
 }
 ```
 
-#### 2. MCP Registry
+#### 2. Custom Tools
 
-```typescript
-// src/mcps/registry.ts
-import type { PluginInput } from '@opencode-ai/plugin';
-
-interface MCPConfig {
-  name: string;
-  type: 'local' | 'remote';
-  command: string[];
-  env?: Record<string, string>;
-  enabled: boolean;
-}
-
-export function registerMCPs(input: PluginInput, mcps: MCPConfig[]) {
-  for (const mcp of mcps) {
-    input.mcp.register({
-      name: mcp.name,
-      type: mcp.type,
-      command: mcp.command,
-      environment: mcp.env,
-      enabled: mcp.enabled,
-    });
-  }
-}
-
-// Default aidevops MCPs
-export const defaultMCPs: MCPConfig[] = [
-  {
-    name: 'context7',
-    type: 'local',
-    command: ['npx', '-y', '@context7/mcp@latest'],
-    enabled: true,
-  },
-  {
-    name: 'augment-context-engine',
-    type: 'local',
-    command: ['auggie', '--mcp'],
-    enabled: true,
-  },
-  {
-    name: 'repomix',
-    type: 'local',
-    command: ['npx', '-y', 'repomix@latest', '--mcp'],
-    enabled: true,
-  },
-  // ... more MCPs
-];
-```
+| Tool | Description |
+|------|-------------|
+| `aidevops` | Run aidevops CLI commands (status, repos, features, etc.) |
+| `aidevops_memory_recall` | Search cross-session memory |
+| `aidevops_memory_store` | Store new memories |
+| `aidevops_pre_edit_check` | Run pre-edit git safety check |
 
 #### 3. Quality Hooks
 
-```typescript
-// src/hooks/pre-commit.ts
-import type { PluginInput, HookResult } from '@opencode-ai/plugin';
-import { exec } from 'child_process';
-import { promisify } from 'util';
+- **`tool.execute.before`**: Runs ShellCheck on `.sh` files before Write/Edit operations
+- **`tool.execute.after`**: Logs git operations for pattern tracking
 
-const execAsync = promisify(exec);
+#### 4. Shell Environment
 
-export function createPreCommitHook(input: PluginInput) {
-  return {
-    event: 'PreToolUse',
-    matcher: /^(Write|Edit)$/,
-    async handler(context: any): Promise<HookResult> {
-      const { tool, args } = context;
-      
-      // Skip if not a shell script
-      if (!args.filePath?.endsWith('.sh')) {
-        return { continue: true };
-      }
-      
-      // Run ShellCheck
-      try {
-        await execAsync(`shellcheck "${args.filePath}"`);
-      } catch (error: any) {
-        return {
-          continue: true,
-          message: `ShellCheck warnings:\n${error.stdout}`,
-        };
-      }
-      
-      return { continue: true };
-    },
-  };
-}
-```
+Injects into every shell session:
 
-#### 4. Main Plugin Entry
+- `PATH` — prepends `~/.aidevops/agents/scripts/`
+- `AIDEVOPS_AGENTS_DIR` — path to agents directory
+- `AIDEVOPS_WORKSPACE_DIR` — path to agent workspace
+- `AIDEVOPS_VERSION` — current framework version
 
-```typescript
-// src/index.ts
-import type { Plugin, PluginInput } from '@opencode-ai/plugin';
-import { loadAgents } from './agents/loader';
-import { registerMCPs, defaultMCPs } from './mcps/registry';
-import { createPreCommitHook } from './hooks/pre-commit';
-import { loadConfig } from './config/schema';
+#### 5. Compaction Context
 
-export default function aidevopsPlugin(): Plugin {
-  return {
-    name: 'aidevops-opencode',
-    version: '1.0.0',
-    
-    async setup(input: PluginInput) {
-      const config = await loadConfig();
-      
-      // Load and register agents from ~/.aidevops/agents/
-      const agents = await loadAgents();
-      for (const agent of agents) {
-        input.agent.register({
-          name: agent.name,
-          description: agent.description,
-          mode: agent.mode,
-          tools: agent.tools,
-          prompt: agent.content,
-        });
-      }
-      
-      // Register MCPs
-      const mcps = config.mcps ?? defaultMCPs;
-      registerMCPs(input, mcps);
-      
-      // Register hooks
-      if (config.hooks?.preCommit !== false) {
-        input.hook.register(createPreCommitHook(input));
-      }
-      
-      // Register aidevops CLI as a tool
-      input.tool.register({
-        name: 'aidevops',
-        description: 'Run aidevops CLI commands',
-        parameters: {
-          command: { type: 'string', description: 'Command to run' },
-          args: { type: 'array', items: { type: 'string' } },
-        },
-        async handler({ command, args }) {
-          const { exec } = await import('child_process');
-          const { promisify } = await import('util');
-          const execAsync = promisify(exec);
-          
-          const result = await execAsync(`aidevops ${command} ${args.join(' ')}`);
-          return result.stdout;
-        },
-      });
-    },
-  };
-}
-```
+Preserves operational state across context resets:
 
-### Configuration Schema
+- Active agent state (mailbox registry)
+- Loop guardrails (iteration count, objectives)
+- Session checkpoint state
+- Relevant memories (project-scoped, limit 5)
+- Git context (branch, recent commits)
+- Pending mailbox messages
 
-```typescript
-// src/config/schema.ts
-import { z } from 'zod';
-import { readFile } from 'fs/promises';
-import { join } from 'path';
-import { homedir } from 'os';
+### Design Decisions
 
-const configSchema = z.object({
-  // Agent loading
-  agentsDir: z.string().default('~/.aidevops/agents'),
-  loadSubagents: z.boolean().default(true),
-  disabledAgents: z.array(z.string()).default([]),
-  
-  // MCP configuration
-  mcps: z.array(z.object({
-    name: z.string(),
-    type: z.enum(['local', 'remote']),
-    command: z.array(z.string()),
-    env: z.record(z.string()).optional(),
-    enabled: z.boolean().default(true),
-  })).optional(),
-  disabledMcps: z.array(z.string()).default([]),
-  
-  // Hooks
-  hooks: z.object({
-    preCommit: z.boolean().default(true),
-    postToolUse: z.boolean().default(true),
-    qualityCheck: z.boolean().default(true),
-  }).default({}),
-  
-});
+| Decision | Rationale |
+|----------|-----------|
+| Single-file ESM (no build step) | OpenCode loads `file://` ESM directly; avoids TypeScript compilation complexity |
+| Zero runtime dependencies | Built-in Node.js APIs + lightweight YAML parser; no `gray-matter` or `zod` needed |
+| Complement shell script, don't replace | `generate-opencode-agents.sh` handles primary agent config with full control; plugin adds runtime features |
+| Subagents only in config hook | Primary agents need explicit config (model, temperature, tools); auto-registration would override intentional settings |
+| Phase 4 (oh-my-opencode) skipped | oh-my-opencode is deprecated and actively removed by setup.sh |
 
-export type Config = z.infer<typeof configSchema>;
+## Future Enhancements
 
-export async function loadConfig(): Promise<Config> {
-  const configPath = join(homedir(), '.config', 'opencode', 'aidevops-opencode.json');
-  
-  try {
-    const content = await readFile(configPath, 'utf-8');
-    return configSchema.parse(JSON.parse(content));
-  } catch {
-    return configSchema.parse({});
-  }
-}
-```
+### Potential Additions
 
-### Package Configuration
+- **`chat.message` hook**: Intercept user messages for slash command routing
+- **`chat.params` hook**: Dynamic model routing based on task complexity
+- **`permission.ask` hook**: Auto-approve safe operations, deny dangerous ones
+- **`config` hook for MCPs**: Dynamically register MCPs (when SDK supports it natively)
+- **Dynamic agent reloading**: Watch filesystem for agent changes and hot-reload
+- **Pattern tracking integration**: Feed tool execution data to `pattern-tracker-helper.sh`
 
-```json
-{
-  "name": "aidevops-opencode",
-  "version": "1.0.0",
-  "description": "OpenCode plugin for aidevops framework",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "type": "module",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    }
-  },
-  "scripts": {
-    "build": "bun build src/index.ts --outdir dist --target bun --format esm && tsc --emitDeclarationOnly",
-    "typecheck": "tsc --noEmit"
-  },
-  "keywords": ["opencode", "plugin", "aidevops", "devops", "agents"],
-  "author": "Marcus Quinn",
-  "license": "MIT",
-  "dependencies": {
-    "@opencode-ai/plugin": "^1.0.162",
-    "gray-matter": "^4.0.3",
-    "zod": "^4.1.8"
-  },
-  "devDependencies": {
-    "bun-types": "latest",
-    "typescript": "^5.7.3"
-  },
-  "peerDependencies": {
-    "opencode": ">=1.0.150"
-  }
-}
-```
+### When to Expand
 
-## Implementation Roadmap
+Expand the plugin when:
 
-### Phase 1: Core Plugin (MVP)
-
-- [ ] Basic plugin structure
-- [ ] Agent loader from `~/.aidevops/agents/`
-- [ ] MCP registration
-- [ ] aidevops CLI tool
-
-### Phase 2: Hooks
-
-- [ ] Pre-commit quality checks (ShellCheck)
-- [ ] Post-tool-use logging
-- [ ] Quality check reminders
-
-### Phase 3: Enhanced Features
-
-- [ ] Dynamic agent reloading
-- [ ] MCP health monitoring
-- [ ] Integration with aidevops update system
-
-## Decision: Plugin vs Current Approach
-
-### Keep Current Approach (Recommended for Now)
-
-| Aspect | Current | Plugin |
-|--------|---------|--------|
-| **Scope** | Full framework (agents, scripts) | OpenCode plugin API |
-| **Flexibility** | High (markdown agents) | Medium (TypeScript) |
-| **Maintenance** | Shell scripts | TypeScript + npm |
-| **Installation** | setup.sh | npm install |
-| **Updates** | git pull + setup.sh | npm update |
-
-**Recommendation**: Continue with current approach, but design plugin for future.
-
-### When to Build Plugin
-
-Build the plugin when:
-
-1. OpenCode becomes dominant AI CLI tool
-2. Users request native plugin experience
-3. Hooks become essential (quality gates, etc.)
+1. OpenCode adds new hook types that enable features not possible via shell scripts
+2. Users request native tool integrations (memory, pre-edit check) in the tool palette
+3. Performance benefits from plugin-level caching become measurable
 
 ## References
 
-- [OpenCode Plugin SDK](https://opencode.ai/docs/plugins)
-- [aidevops Framework](https://github.com/marcusquinn/aidevops)
+- [OpenCode Plugin SDK](https://opencode.ai/docs/plugins) — `@opencode-ai/plugin` npm package
+- [Plugin types](https://www.npmjs.com/package/@opencode-ai/plugin) — `index.d.ts` for full API
+- [aidevops Framework](https://github.com/marcusquinn/aidevops) — source repository
+- Implementation: `.agents/plugins/opencode-aidevops/index.mjs`
+- Plan: `todo/PLANS.md` section "aidevops-opencode Plugin" (p001)
