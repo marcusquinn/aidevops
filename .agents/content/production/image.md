@@ -604,6 +604,140 @@ Different platforms have different optimal image dimensions and aspect ratios.
 - **PNG**: Graphics with transparency, text overlays, logos
 - **WebP**: Modern format, smaller than JPG, use for web when supported
 
+## UGC Brief Image Template
+
+Generate keyframe images for each shot in a UGC storyboard (from `content/story.md` UGC Brief Storyboard). Each keyframe becomes either a standalone social image or a reference frame for video generation via the annotated frame-to-video workflow.
+
+### When to Use
+
+- Generating static keyframes before committing to video generation (cheaper iteration)
+- Creating social media stills from a storyboard (Instagram carousel, blog headers)
+- Producing reference frames for the annotated frame-to-video workflow (see above)
+- Building a visual shot list for a video editor or director
+
+### UGC Keyframe JSON Template
+
+This template extends the Street Photography Template (above) with UGC-specific defaults. Swap `subject`, `concept`, and `composition.focal_point` per shot while keeping the authentic UGC aesthetic constant.
+
+```json
+{
+  "subject": "[PRESENTER_DESCRIPTION — identical across all shots]",
+  "concept": "[SHOT_PURPOSE from storyboard — e.g., 'Hook: presenter reacts to bold claim']",
+  "composition": {
+    "framing": "[Per shot: CU for hook/emotion, MS for dialogue, WS for context]",
+    "angle": "eye-level",
+    "rule_of_thirds": true,
+    "focal_point": "[Per shot: eyes for hook, product for hero, presenter for CTA]",
+    "depth_of_field": "shallow"
+  },
+  "lighting": {
+    "type": "natural",
+    "direction": "available light",
+    "quality": "soft diffused",
+    "color_temperature": "warm (4000K)",
+    "mood": "authentic and approachable"
+  },
+  "color": {
+    "palette": ["[BRAND_PRIMARY]", "[BRAND_SECONDARY]", "[NEUTRAL]"],
+    "dominant": "[BRAND_PRIMARY]",
+    "accent": "[BRAND_SECONDARY]",
+    "saturation": "muted",
+    "harmony": "analogous"
+  },
+  "style": {
+    "aesthetic": "photorealistic",
+    "texture": "film grain",
+    "post_processing": "film emulation",
+    "reference": "iPhone 15 Pro casual photography"
+  },
+  "technical": {
+    "camera": "iPhone 15 Pro",
+    "lens": "24mm f/1.78",
+    "settings": "f/1.78, 1/120s, ISO 640",
+    "resolution": "4K",
+    "aspect_ratio": "[9:16 for TikTok/Reels | 16:9 for YouTube]"
+  },
+  "negative": "studio lighting, professional setup, staged, posed, oversaturated, digital artifacts, watermark, text overlays, perfect skin retouching"
+}
+```
+
+### Per-Shot Keyframe Variations
+
+Map each storyboard shot to specific JSON overrides:
+
+| Shot | Framing | Focal Point | Concept Override | Lighting Override |
+|------|---------|-------------|-----------------|-------------------|
+| 1: Hook | CU | Eyes | "Pattern interrupt — [hook text]" | Warm natural, slightly bright |
+| 2: Before State | MS | Presenter (frustrated) | "Pain point — [problem]" | Flat, slightly desaturated |
+| 3: Product Hero | CU → MS | Product in hands | "Product reveal — [product name]" | Warm golden, product lit |
+| 4: After State | CU | Face (satisfied) | "Transformation result — [outcome]" | Warm, rich, inviting |
+| 5: CTA | MS | Presenter (direct to camera) | "Call to action — [CTA text]" | Clean, warm, confident |
+
+### Worked Example: FreshBrew Shot 3 (Product Hero)
+
+Using the FreshBrew storyboard from `content/story.md`:
+
+```json
+{
+  "subject": "Maya, a 32-year-old South Asian woman with shoulder-length dark wavy hair, warm brown eyes, light olive skin, wearing a cream knit sweater over a white tee, relaxed posture, genuine warm smile, minimal gold stud earrings, natural makeup",
+  "concept": "Product reveal — Maya opens FreshBrew subscription box with visible excitement, colourful coffee bags inside",
+  "composition": {
+    "framing": "medium shot",
+    "angle": "eye-level",
+    "rule_of_thirds": true,
+    "focal_point": "FreshBrew box and coffee bags in hands",
+    "depth_of_field": "shallow"
+  },
+  "lighting": {
+    "type": "natural",
+    "direction": "side (window light from left)",
+    "quality": "golden hour",
+    "color_temperature": "warm (3500K)",
+    "mood": "warm and inviting"
+  },
+  "color": {
+    "palette": ["#F4E4C1", "#6B4226", "#D4A574"],
+    "dominant": "#F4E4C1",
+    "accent": "#6B4226",
+    "saturation": "muted",
+    "harmony": "analogous"
+  },
+  "style": {
+    "aesthetic": "photorealistic",
+    "texture": "film grain",
+    "post_processing": "film emulation",
+    "reference": "iPhone 15 Pro casual photography"
+  },
+  "technical": {
+    "camera": "iPhone 15 Pro",
+    "lens": "24mm f/1.78",
+    "settings": "f/1.78, 1/120s, ISO 640",
+    "resolution": "4K",
+    "aspect_ratio": "9:16"
+  },
+  "negative": "studio lighting, professional setup, staged, posed, oversaturated, digital artifacts, watermark, text overlays, perfect skin retouching, blurry product text"
+}
+```
+
+### Keyframe-to-Video Handoff
+
+After generating keyframe images:
+
+1. **Score keyframes** using the Thumbnail Scoring Rubric (above) — threshold 7.5+
+2. **Annotate with motion** — Add arrows and labels per the Annotated Frame-to-Video Workflow (above)
+3. **Feed to video model** — Use the corresponding 7-component prompt from the storyboard
+4. **Model selection**: Sora 2 Pro for UGC aesthetic, Veo 3.1 for cinematic (see `content/production/video.md`)
+
+### Batch Generation Workflow
+
+Generate all 5 keyframes in a single session:
+
+1. Create base JSON with presenter description and UGC defaults (template above)
+2. For each shot, override only: `concept`, `composition.framing`, `composition.focal_point`, and `lighting` per the Per-Shot Keyframe Variations table
+3. Batch generate via Nanobanana Pro API or sequential Midjourney prompts
+4. Score all outputs, regenerate any below 7.5
+5. Assemble into a visual shot list for review before committing to video generation
+
 ## Cross-References
 
 - **Model comparison**: `tools/vision/image-generation.md` — detailed comparison of DALL-E 3, Midjourney, FLUX, SD XL
@@ -611,11 +745,13 @@ Different platforms have different optimal image dimensions and aspect ratios.
 - **Character consistency**: `content/production/characters.md` — Facial Engineering Framework, character bibles
 - **A/B testing**: `content/optimization.md` — thumbnail variant testing, scoring, analytics
 - **Distribution**: `content/distribution/` — platform-specific formatting for YouTube, social, blog
+- **UGC storyboard**: `content/story.md` — UGC Brief Storyboard template (generates the shot list this template visualises)
+- **Video prompts**: `tools/video/video-prompt-design.md` — 7-component format for video generation from keyframes
 
 ## See Also
 
 - `tools/vision/overview.md` — Vision AI decision tree
 - `tools/vision/image-editing.md` — Modify existing images
 - `tools/vision/image-understanding.md` — Analyze images
-- `content/story.md` — Hook formulas and visual storytelling frameworks
+- `content/story.md` — Hook formulas, visual storytelling frameworks, and UGC Brief Storyboard
 - `content/research.md` — Audience research to inform visual style
