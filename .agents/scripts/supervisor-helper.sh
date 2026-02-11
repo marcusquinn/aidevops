@@ -1628,6 +1628,15 @@ MIGRATE_T218
         log_success "Added deploying_recovery_attempts column to tasks (t263)"
     fi
 
+    # Migrate: add rebase_attempts column to tasks (t298)
+    local has_rebase_attempts
+    has_rebase_attempts=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('tasks') WHERE name='rebase_attempts';" 2>/dev/null || echo "0")
+    if [[ "$has_rebase_attempts" -eq 0 ]]; then
+        log_info "Migrating tasks table: adding rebase_attempts column (t298)..."
+        db "$SUPERVISOR_DB" "ALTER TABLE tasks ADD COLUMN rebase_attempts INTEGER NOT NULL DEFAULT 0;" 2>/dev/null || true
+        log_success "Added rebase_attempts column to tasks (t298)"
+    fi
+
     # Ensure WAL mode for existing databases created before t135.3
     local current_mode
     current_mode=$(db "$SUPERVISOR_DB" "PRAGMA journal_mode;" 2>/dev/null || echo "")
@@ -8305,8 +8314,9 @@ merge_task_pr() {
     
     # Also check current PR status for unstable_sonarcloud
     if [[ "$use_admin_flag" == "false" ]]; then
-        local current_pr_status
-        current_pr_status=$(check_pr_status "$task_id")
+        local current_pr_status_full current_pr_status
+        current_pr_status_full=$(check_pr_status "$task_id")
+        current_pr_status="${current_pr_status_full%%|*}"
         if [[ "$current_pr_status" == "unstable_sonarcloud" ]]; then
             use_admin_flag="true"
             log_info "SonarCloud external gate failed but GH Action passed - using --admin to bypass"
@@ -8365,8 +8375,9 @@ cmd_pr_merge() {
     fi
 
     # Check PR is ready
-    local pr_status
-    pr_status=$(check_pr_status "$task_id")
+    local pr_status_full pr_status
+    pr_status_full=$(check_pr_status "$task_id")
+    pr_status="${pr_status_full%%|*}"
 
     if [[ "$pr_status" != "ready_to_merge" ]]; then
         log_error "PR for $task_id is not ready to merge (status: $pr_status)"
@@ -8393,8 +8404,9 @@ run_postflight_for_task() {
     fi
 
     # Verify the branch was merged (PR should show as merged)
-    local pr_status
-    pr_status=$(check_pr_status "$task_id")
+    local pr_status_full pr_status
+    pr_status_full=$(check_pr_status "$task_id")
+    pr_status="${pr_status_full%%|*}"
     if [[ "$pr_status" == "already_merged" ]]; then
         log_success "Postflight: PR confirmed merged for $task_id"
         return 0
@@ -8735,9 +8747,12 @@ cmd_pr_lifecycle() {
         local stage_start
         stage_start=$(date +%s)
         
-        local pr_status
-        pr_status=$(check_pr_status "$task_id")
-        log_info "PR status: $pr_status"
+        # t298: Parse status|mergeStateStatus format
+        local pr_status_full pr_status merge_state_status
+        pr_status_full=$(check_pr_status "$task_id")
+        pr_status="${pr_status_full%%|*}"
+        merge_state_status="${pr_status_full##*|}"
+        log_info "PR status: $pr_status (merge state: $merge_state_status)"
 
         case "$pr_status" in
             ready_to_merge|unstable_sonarcloud)
@@ -8804,7 +8819,51 @@ cmd_pr_lifecycle() {
                 tstatus="merged"
                 ;;
             ci_pending)
-                log_info "CI still pending for $task_id, will retry next pulse"
+                # t298: Auto-rebase BEHIND/DIRTY PRs to unblock CI
+                if [[ "$merge_state_status" == "BEHIND" || "$merge_state_status" == "DIRTY" ]]; then
+                    # Check rebase attempt counter to prevent infinite loops
+                    local rebase_attempts
+                    rebase_attempts=$(db "$SUPERVISOR_DB" "SELECT rebase_attempts FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "0")
+                    rebase_attempts=${rebase_attempts:-0}
+                    
+                    local max_rebase_attempts=2
+                    if [[ "$rebase_attempts" -lt "$max_rebase_attempts" ]]; then
+                        log_info "PR is $merge_state_status for $task_id — attempting auto-rebase (attempt $((rebase_attempts + 1))/$max_rebase_attempts)"
+                        
+                        if rebase_sibling_pr "$task_id"; then
+                            log_success "Auto-rebase succeeded for $task_id — CI will re-run"
+                            # Increment rebase counter
+                            if [[ "$dry_run" == "false" ]]; then
+                                db "$SUPERVISOR_DB" "UPDATE tasks SET rebase_attempts = $((rebase_attempts + 1)) WHERE id = '$escaped_id';"
+                            fi
+                            # Continue pulse — CI will re-run and we'll check again next pulse
+                            local stage_end
+                            stage_end=$(date +%s)
+                            stage_timings="${stage_timings}pr_review:$((stage_end - stage_start))s(rebased),"
+                            record_lifecycle_timing "$task_id" "$stage_timings" 2>/dev/null || true
+                            return 0
+                        else
+                            # Rebase failed (conflicts or other error)
+                            log_warn "Auto-rebase failed for $task_id — transitioning to blocked:merge_conflict"
+                            if [[ "$dry_run" == "false" ]]; then
+                                cmd_transition "$task_id" "blocked" --error "Merge conflict — auto-rebase failed" 2>>"$SUPERVISOR_LOG" || true
+                                send_task_notification "$task_id" "blocked" "PR has merge conflicts that require manual resolution" 2>>"$SUPERVISOR_LOG" || true
+                            fi
+                            return 1
+                        fi
+                    else
+                        log_warn "Max rebase attempts ($max_rebase_attempts) reached for $task_id — transitioning to blocked"
+                        if [[ "$dry_run" == "false" ]]; then
+                            cmd_transition "$task_id" "blocked" --error "Max rebase attempts reached — manual intervention required" 2>>"$SUPERVISOR_LOG" || true
+                            send_task_notification "$task_id" "blocked" "PR stuck in $merge_state_status state after $max_rebase_attempts rebase attempts" 2>>"$SUPERVISOR_LOG" || true
+                        fi
+                        return 1
+                    fi
+                else
+                    # CI pending for other reasons (checks running, etc.)
+                    log_info "CI still pending for $task_id (merge state: $merge_state_status), will retry next pulse"
+                fi
+                
                 # t219: Record timing even for early returns
                 local stage_end
                 stage_end=$(date +%s)
