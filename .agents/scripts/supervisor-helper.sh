@@ -3503,7 +3503,7 @@ resolve_task_model() {
     # 3) Pattern-tracker recommendation (t246: data-driven routing)
     #    If we have 3+ samples for a task type with >75% success rate on a
     #    cheaper tier, use that tier. This learns from actual dispatch outcomes.
-    local pattern_helper="${SCRIPTS_DIR}/pattern-tracker-helper.sh"
+    local pattern_helper="${SCRIPT_DIR}/pattern-tracker-helper.sh"
     if [[ -n "$task_desc" && -x "$pattern_helper" ]]; then
         local pattern_json
         pattern_json=$("$pattern_helper" recommend --json 2>/dev/null || echo "")
