@@ -116,9 +116,9 @@ exec_on_server() {
         exit 1
     fi
     
-    local ip name
-    read -r ip name _ <<< "$server_info"
-    print_info "Executing '$command' on $name..."
+    local ip
+    read -r ip _ _ <<< "$server_info"
+    print_info "Executing '$command' on $server_name..."
     ssh "root@$ip" "$command"
     return 0
 }

@@ -393,7 +393,6 @@ do_extract() {
     local input_file="$1"
     local schema="${2:-auto}"
     local privacy="${3:-none}"
-    local output_format="${4:-json}"
 
     validate_file_exists "$input_file" "Input file" || return 1
     activate_venv || return 1

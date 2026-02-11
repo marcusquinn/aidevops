@@ -186,7 +186,7 @@ parse_channels() {
     channel_str="${channel_str//, /,}"
     channel_str="${channel_str// ,/,}"
 
-    IFS=','
+    local IFS=','
     for ch in $channel_str; do
         # Trim whitespace
         ch=$(echo "$ch" | tr -d ' ')
@@ -278,7 +278,7 @@ cmd_plan() {
             total_outputs=$((total_outputs + 1))
 
             # Collect unique formats
-            IFS=','
+            local IFS=','
             for fmt in $formats; do
                 case " ${all_formats} " in
                     *" ${fmt} "*) ;;  # already present

@@ -523,7 +523,7 @@ map_tags_to_labels() {
     fi
 
     local labels=""
-    local IFS=','
+    local IFS=',' tag
     for tag in $tags; do
         tag="${tag#\#}"  # Remove # prefix if present
         case "$tag" in

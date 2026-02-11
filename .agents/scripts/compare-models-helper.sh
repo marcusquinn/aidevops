@@ -165,7 +165,7 @@ cmd_list() {
         "-----" "--------" "-------" "--------" "---------" "----" "--------"
 
     echo "$MODEL_DATA" | while IFS= read -r line; do
-        local model_id provider display ctx input output tier caps best
+        local model_id provider ctx input output tier best
         model_id=$(get_field "$line" 1)
         provider=$(get_field "$line" 2)
         ctx=$(get_field "$line" 4)
@@ -1036,9 +1036,8 @@ cmd_discover() {
             local model_provider
             model_provider=$(get_field "$model_line" 2)
 
-            local provider_available=false
+            local provider_available=false pname pkeys
             while IFS= read -r pline; do
-                local pname pkeys
                 pname=$(echo "$pline" | cut -d'|' -f1)
                 pkeys=$(echo "$pline" | cut -d'|' -f2)
                 if [[ "$pname" == "$model_provider" ]]; then

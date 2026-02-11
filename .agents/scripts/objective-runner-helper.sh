@@ -267,7 +267,7 @@ build_scope_instructions() {
 
 You are ONLY allowed to read/modify files within these paths:
 "
-        local IFS=','
+        local IFS=',' path
         for path in $allowed_paths; do
             instructions="$instructions- $path
 "

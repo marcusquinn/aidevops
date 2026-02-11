@@ -1191,7 +1191,7 @@ cmd_check_updates() {
         # Extract owner/repo from URL
         local parsed
         parsed=$(parse_github_url "$url")
-        IFS='|' read -r owner repo _ <<< "$parsed"
+        IFS='|' read -r owner repo _ _ <<< "$parsed"
         
         if [[ -z "$owner" || -z "$repo" ]]; then
             log_warning "Could not parse URL for $name: $url"

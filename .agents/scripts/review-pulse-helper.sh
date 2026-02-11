@@ -238,7 +238,6 @@ parse_findings() {
 
     local current_file=""
     local current_finding=""
-    local finding_id=0
 
     # Parse the CodeRabbit output line by line
     # CodeRabbit --plain output format varies, but typically includes:
