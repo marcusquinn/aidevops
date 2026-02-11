@@ -1,12 +1,13 @@
 import { execSync } from "child_process";
-import { readFileSync, existsSync } from "fs";
-import { join } from "path";
+import { readFileSync, existsSync, readdirSync } from "fs";
+import { join, resolve } from "path";
 import { homedir } from "os";
 
 const HOME = homedir();
 const AGENTS_DIR = join(HOME, ".aidevops", "agents");
 const SCRIPTS_DIR = join(AGENTS_DIR, "scripts");
 const WORKSPACE_DIR = join(HOME, ".aidevops", ".agent-workspace");
+const MCP_OVERRIDES_PATH = join(HOME, ".config", "aidevops", "mcp-overrides.json");
 
 /**
  * Run a shell command and return stdout, or empty string on failure.
@@ -166,11 +167,247 @@ function getMailboxState() {
   ].join("\n");
 }
 
+// ── MCP Registry ──────────────────────────────────────────────────────
+
+/**
+ * Read and parse a JSON file. Returns null on any error.
+ * @param {string} filepath
+ * @returns {object|null}
+ */
+function readJson(filepath) {
+  try {
+    if (!existsSync(filepath)) return null;
+    return JSON.parse(readFileSync(filepath, "utf-8"));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Check if an MCP config contains placeholder values needing user configuration.
+ * @param {object} config
+ * @returns {boolean}
+ */
+function hasPlaceholders(config) {
+  const check = (val) => /YOUR_.*_HERE|REPLACE_ME|<.*>/i.test(val);
+
+  const env = config.environment || config.env;
+  if (env && typeof env === "object") {
+    if (Object.values(env).some(check)) return true;
+  }
+  if (config.headers && typeof config.headers === "object") {
+    if (Object.values(config.headers).some(check)) return true;
+  }
+  return false;
+}
+
+/**
+ * Extract OpenCode MCP configs from a template file's "opencode" section.
+ * @param {object} json - Parsed template JSON
+ * @returns {Record<string, object>}
+ */
+function extractFromTemplate(json) {
+  const result = {};
+  const opencode = json.opencode;
+  if (!opencode || typeof opencode !== "object") return result;
+
+  for (const [key, value] of Object.entries(opencode)) {
+    if (key.startsWith("_")) continue;
+    if (typeof value !== "object" || value === null) continue;
+
+    if (value.type === "remote" && typeof value.url === "string") {
+      result[key] = {
+        type: "remote",
+        url: value.url,
+        enabled: value.enabled !== false,
+        ...(value.headers ? { headers: value.headers } : {}),
+      };
+    } else if (Array.isArray(value.command)) {
+      const entry = {
+        type: "local",
+        command: value.command,
+        enabled: value.enabled !== false,
+      };
+      if (value.environment && typeof value.environment === "object") {
+        entry.environment = value.environment;
+      }
+      result[key] = entry;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Normalise a legacy mcpServers entry into OpenCode format.
+ * @param {object} raw
+ * @returns {object|null}
+ */
+function normaliseLegacyEntry(raw) {
+  if (raw.type === "remote" && typeof raw.url === "string") {
+    return {
+      type: "remote",
+      url: raw.url,
+      enabled: raw.enabled !== false,
+      ...(raw.headers ? { headers: raw.headers } : {}),
+    };
+  }
+
+  const cmd = raw.command;
+  const args = Array.isArray(raw.args) ? raw.args : [];
+
+  if (typeof cmd === "string") {
+    const entry = {
+      type: "local",
+      command: [cmd, ...args],
+      enabled: raw.enabled !== false,
+    };
+    const env = raw.env || raw.environment;
+    if (env && typeof env === "object") {
+      entry.environment = env;
+    }
+    return entry;
+  }
+
+  if (Array.isArray(cmd)) {
+    const entry = {
+      type: "local",
+      command: cmd,
+      enabled: raw.enabled !== false,
+    };
+    const env = raw.env || raw.environment;
+    if (env && typeof env === "object") {
+      entry.environment = env;
+    }
+    return entry;
+  }
+
+  return null;
+}
+
+/**
+ * Load all MCP configurations from template files and legacy config.
+ * @param {string} repoRoot - Path to the aidevops repo root
+ * @returns {{ entries: Record<string, object>, errors: Array<{name: string, reason: string}> }}
+ */
+function loadMcpRegistry(repoRoot) {
+  const entries = {};
+  const errors = [];
+
+  // 1. Load from template files
+  const templatesDir = join(repoRoot, "configs", "mcp-templates");
+  try {
+    const files = readdirSync(templatesDir).filter((f) => f.endsWith(".json"));
+    for (const file of files) {
+      const json = readJson(join(templatesDir, file));
+      if (!json) {
+        errors.push({ name: file, reason: "Failed to parse JSON" });
+        continue;
+      }
+      const extracted = extractFromTemplate(json);
+      for (const [name, config] of Object.entries(extracted)) {
+        if (hasPlaceholders(config)) {
+          config.enabled = false;
+        }
+        entries[name] = config;
+      }
+    }
+  } catch {
+    errors.push({ name: "mcp-templates/", reason: "Directory not found" });
+  }
+
+  // 2. Load from legacy config (lower priority)
+  const legacyPath = join(repoRoot, "configs", "mcp-servers-config.json.txt");
+  const legacy = readJson(legacyPath);
+  if (legacy?.mcpServers && typeof legacy.mcpServers === "object") {
+    for (const [name, raw] of Object.entries(legacy.mcpServers)) {
+      if (entries[name]) continue; // Template takes priority
+      const config = normaliseLegacyEntry(raw);
+      if (config) {
+        if (hasPlaceholders(config)) {
+          config.enabled = false;
+        }
+        entries[name] = config;
+      } else {
+        errors.push({ name, reason: "Could not normalise legacy config" });
+      }
+    }
+  }
+
+  // 3. Apply user overrides (highest priority)
+  const overrides = readJson(MCP_OVERRIDES_PATH);
+  if (overrides && typeof overrides === "object") {
+    for (const [name, raw] of Object.entries(overrides)) {
+      if (typeof raw !== "object" || raw === null) continue;
+      if (raw.enabled === false) {
+        if (entries[name]) entries[name].enabled = false;
+        continue;
+      }
+      const config = normaliseLegacyEntry(raw);
+      if (config) entries[name] = config;
+    }
+  }
+
+  return { entries, errors };
+}
+
+/**
+ * Find the aidevops repo root by walking up from the deployed agents directory
+ * or from the current working directory.
+ * @param {string} directory - Current working directory
+ * @returns {string|null}
+ */
+function findRepoRoot(directory) {
+  // Check if we're in the aidevops repo itself
+  if (existsSync(join(directory, "configs", "mcp-templates"))) {
+    return directory;
+  }
+
+  // Check the main repo location
+  const mainRepo = join(HOME, "Git", "aidevops");
+  if (existsSync(join(mainRepo, "configs", "mcp-templates"))) {
+    return mainRepo;
+  }
+
+  // Check deployed location (setup.sh copies configs)
+  const deployedConfigs = join(HOME, ".aidevops", "configs");
+  if (existsSync(join(deployedConfigs, "mcp-templates"))) {
+    return join(HOME, ".aidevops");
+  }
+
+  return null;
+}
+
+// ── Plugin Entry Point ────────────────────────────────────────────────
+
 /**
  * @type {import('@opencode-ai/plugin').Plugin}
  */
 export async function AidevopsPlugin({ directory }) {
+  // Load MCP registry at plugin startup
+  const repoRoot = findRepoRoot(directory);
+  let mcpRegistry = null;
+  if (repoRoot) {
+    mcpRegistry = loadMcpRegistry(repoRoot);
+  }
+
   return {
+    // Register MCPs via the config hook
+    config: async (config) => {
+      if (!mcpRegistry || Object.keys(mcpRegistry.entries).length === 0) return;
+
+      // Initialise mcp section if absent
+      if (!config.mcp) {
+        config.mcp = {};
+      }
+
+      // Merge registry entries — user's existing config takes priority
+      for (const [name, mcpConfig] of Object.entries(mcpRegistry.entries)) {
+        if (config.mcp[name]) continue; // Don't overwrite user's existing config
+        config.mcp[name] = mcpConfig;
+      }
+    },
+
     "experimental.session.compacting": async (_input, output) => {
       // Gather dynamic context that should survive compaction
       const sections = [
