@@ -1065,6 +1065,24 @@ async function dismissAllModals(page) {
   return totalDismissed;
 }
 
+// Force-close any open dialogs by removing them from the DOM.
+// Used after Escape key fails to close a dialog (e.g. React ARIA modals).
+async function forceCloseDialogs(page) {
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(500);
+  const stillOpen = await page.locator('[role="dialog"]').count();
+  if (stillOpen === 0) return;
+  await page.evaluate(() => {
+    document.querySelectorAll('[role="dialog"]').forEach(d => {
+      const overlay = d.closest('.react-aria-ModalOverlay') || d.parentElement;
+      if (overlay) overlay.remove();
+      else d.remove();
+    });
+    document.body.style.overflow = '';
+    document.body.style.pointerEvents = '';
+  });
+}
+
 // Login to Higgsfield
 async function login(options = {}) {
   const { user, pass } = loadCredentials();
@@ -1280,19 +1298,53 @@ async function checkAuth(page) {
   return isLoggedIn;
 }
 
+// Adjust the batch size counter (1-4) using Decrement/Increment ARIA buttons.
+async function adjustBatchSize(page, targetBatch) {
+  console.log(`Setting batch size: ${targetBatch}`);
+  const currentBatch = await page.evaluate(() => {
+    const batchMatch = document.body.innerText.match(/(\d)\/4/);
+    return batchMatch ? parseInt(batchMatch[1], 10) : 4;
+  });
+  console.log(`Current batch size: ${currentBatch}, target: ${targetBatch}`);
+
+  if (currentBatch === targetBatch) {
+    console.log(`Batch size already at ${targetBatch}`);
+    return;
+  }
+
+  const diff = targetBatch - currentBatch;
+  const btnName = diff < 0 ? 'Decrement' : 'Increment';
+  const btn = page.getByRole('button', { name: btnName, exact: true });
+  if (await btn.count() === 0) {
+    console.log(`Could not find ${btnName} button for batch size`);
+    return;
+  }
+
+  for (let clicks = 0; clicks < Math.abs(diff); clicks++) {
+    await btn.click({ force: true });
+    await page.waitForTimeout(200);
+  }
+  console.log(`Clicked ${btnName} ${Math.abs(diff)} time(s) to set batch to ${targetBatch}`);
+
+  const newBatch = await page.evaluate(() => {
+    const batchMatch = document.body.innerText.match(/(\d)\/4/);
+    return batchMatch ? parseInt(batchMatch[1], 10) : -1;
+  });
+  console.log(newBatch === targetBatch
+    ? `Batch size confirmed: ${newBatch}`
+    : `WARNING: Batch size may not have changed (showing ${newBatch})`);
+}
+
 // Configure image generation options on the page (aspect ratio, quality, enhance, batch, preset)
 async function configureImageOptions(page, options) {
-  // Select aspect ratio if specified
   if (options.aspect) {
     console.log(`Setting aspect ratio: ${options.aspect}`);
-    // Aspect ratio buttons are typically in a button group
     const aspectBtn = page.locator(`button:has-text("${options.aspect}")`);
     if (await aspectBtn.count() > 0) {
       await aspectBtn.first().click({ force: true });
       await page.waitForTimeout(300);
       console.log(`Selected aspect ratio: ${options.aspect}`);
     } else {
-      // Try clicking the aspect ratio dropdown/selector first
       const aspectSelector = page.locator('button:has-text("Aspect"), [class*="aspect"]');
       if (await aspectSelector.count() > 0) {
         await aspectSelector.first().click({ force: true });
@@ -1307,7 +1359,6 @@ async function configureImageOptions(page, options) {
     }
   }
 
-  // Select quality if specified
   if (options.quality) {
     console.log(`Setting quality: ${options.quality}`);
     const qualityBtn = page.locator(`button:has-text("${options.quality}")`);
@@ -1318,7 +1369,6 @@ async function configureImageOptions(page, options) {
     }
   }
 
-  // Toggle enhance on/off
   if (options.enhance !== undefined) {
     const enhanceLabel = page.locator('label:has-text("Enhance"), button:has-text("Enhance")');
     if (await enhanceLabel.count() > 0) {
@@ -1335,72 +1385,12 @@ async function configureImageOptions(page, options) {
     }
   }
 
-  // Set batch size if specified (1-4 images)
-  // The UI uses a Decrement/Increment button pattern with ARIA labels:
-  //   button "Decrement 4/4 Increment" containing:
-  //     button "Decrement" (SVG icon, no text)
-  //     text "N/4"
-  //     button "Increment" (SVG icon, no text, disabled at max)
   if (options.batch && options.batch >= 1 && options.batch <= 4) {
-    console.log(`Setting batch size: ${options.batch}`);
-
-    // Read the current batch count from the "N/4" display
-    const currentBatch = await page.evaluate(() => {
-      const allText = document.body.innerText;
-      const batchMatch = allText.match(/(\d)\/4/);
-      return batchMatch ? parseInt(batchMatch[1], 10) : 4;
-    });
-    console.log(`Current batch size: ${currentBatch}, target: ${options.batch}`);
-
-    if (currentBatch !== options.batch) {
-      const diff = options.batch - currentBatch;
-
-      if (diff < 0) {
-        // Need to decrease: click Decrement button |diff| times
-        // Use exact:true to match aria-label="Decrement" (not the outer wrapper)
-        const decrementBtn = page.getByRole('button', { name: 'Decrement', exact: true });
-        if (await decrementBtn.count() > 0) {
-          for (let clicks = 0; clicks < Math.abs(diff); clicks++) {
-            await decrementBtn.click({ force: true });
-            await page.waitForTimeout(200);
-          }
-          console.log(`Clicked Decrement ${Math.abs(diff)} time(s) to set batch to ${options.batch}`);
-        } else {
-          console.log('Could not find Decrement button for batch size');
-        }
-      } else {
-        // Need to increase: click Increment button diff times
-        const incrementBtn = page.getByRole('button', { name: 'Increment', exact: true });
-        if (await incrementBtn.count() > 0) {
-          for (let clicks = 0; clicks < diff; clicks++) {
-            await incrementBtn.click({ force: true });
-            await page.waitForTimeout(200);
-          }
-          console.log(`Clicked Increment ${diff} time(s) to set batch to ${options.batch}`);
-        } else {
-          console.log('Could not find Increment button for batch size');
-        }
-      }
-
-      // Verify the new batch size
-      const newBatch = await page.evaluate(() => {
-        const batchMatch = document.body.innerText.match(/(\d)\/4/);
-        return batchMatch ? parseInt(batchMatch[1], 10) : -1;
-      });
-      if (newBatch === options.batch) {
-        console.log(`Batch size confirmed: ${newBatch}`);
-      } else {
-        console.log(`WARNING: Batch size may not have changed (showing ${newBatch})`);
-      }
-    } else {
-      console.log(`Batch size already at ${options.batch}`);
-    }
+    await adjustBatchSize(page, options.batch);
   }
 
-  // Select style preset if specified
   if (options.preset) {
     console.log(`Selecting preset: ${options.preset}`);
-    // Presets are shown as a scrollable list of style cards
     const presetBtn = page.locator(`button:has-text("${options.preset}"), [class*="preset"]:has-text("${options.preset}")`);
     if (await presetBtn.count() > 0) {
       await presetBtn.first().click({ force: true });
@@ -2896,87 +2886,115 @@ function finalizeDownload(filePath, metadata, outputDir, options = {}) {
 
 // Download generated results from the current page
 // Strategy: click each generated image to open the "Asset showcase" dialog,
+// Download a single image via the Asset showcase dialog.
+// Clicks the image, waits for dialog, clicks Download, saves file.
+// Returns the saved file path, or null if download failed.
+async function downloadImageViaDialog(page, imgLocator, index, outputDir, extraMeta, options) {
+  await imgLocator.click({ force: true });
+  await page.waitForTimeout(1500);
+
+  const dialog = page.locator('dialog, [role="dialog"]');
+  if (await dialog.count() === 0) return null;
+
+  const metadata = await extractDialogMetadata(page);
+  const dlBtn = page.locator('[role="dialog"] button:has-text("Download"), dialog button:has-text("Download")');
+  if (await dlBtn.count() === 0) {
+    await forceCloseDialogs(page);
+    return null;
+  }
+
+  const downloadPromise = page.waitForEvent('download', { timeout: 30000 }).catch(() => null);
+  await dlBtn.first().click({ force: true });
+  const download = await downloadPromise;
+
+  if (!download) {
+    await page.waitForTimeout(2000);
+    console.log(`Download button clicked but no download event for image ${index + 1} - trying CDN fallback`);
+    await forceCloseDialogs(page);
+    return null;
+  }
+
+  const origFilename = download.suggestedFilename() || `higgsfield-${Date.now()}-${index}.png`;
+  const descriptiveName = buildDescriptiveFilename(metadata, origFilename, index);
+  const savePath = join(outputDir, descriptiveName);
+  await download.saveAs(savePath);
+  const result = finalizeDownload(savePath, {
+    ...extraMeta, type: 'image', ...metadata, originalFilename: origFilename,
+  }, outputDir, options);
+
+  await forceCloseDialogs(page);
+  return result.skipped ? null : result.path;
+}
+
+// Download images from the page via CDN URL extraction (fallback when dialog download fails).
+// Returns array of downloaded file paths.
+async function downloadImagesByCDN(page, indices, outputDir, extraMeta, options) {
+  const downloaded = [];
+  const cdnUrls = await page.evaluate((idxList) => {
+    const imgs = document.querySelectorAll('img[alt="image generation"], img[alt*="media asset by id"]');
+    const targets = idxList != null ? idxList : [...Array(imgs.length).keys()];
+    return targets.map(idx => {
+      const img = imgs[idx];
+      if (!img) return null;
+      const cfMatch = img.src.match(/(https:\/\/d8j0ntlcm91z4\.cloudfront\.net\/[^\s]+)/);
+      return { url: cfMatch ? cfMatch[1] : img.src, idx };
+    }).filter(Boolean);
+  }, indices);
+
+  // Also check for video elements when downloading all
+  if (indices == null) {
+    const videoUrls = await page.evaluate(() => {
+      const videos = document.querySelectorAll('video source[src], video[src]');
+      return [...videos].map(v => v.src || v.getAttribute('src')).filter(Boolean);
+    });
+    for (const url of videoUrls) {
+      cdnUrls.push({ url, idx: cdnUrls.length });
+    }
+  }
+
+  for (const { url, idx } of cdnUrls) {
+    const isVideo = url.includes('.mp4') || url.includes('video');
+    const ext = isVideo ? '.mp4' : '.webp';
+    const cdnMeta = { promptSnippet: 'cdn-fallback' };
+    const filename = buildDescriptiveFilename(cdnMeta, `higgsfield-cdn-${Date.now()}${ext}`, downloaded.length);
+    const savePath = join(outputDir, filename);
+    try {
+      execFileSync('curl', ['-sL', '-o', savePath, url], { timeout: 60000 });
+      const result = finalizeDownload(savePath, {
+        ...extraMeta, type: isVideo ? 'video' : 'image',
+        cdnUrl: url, strategy: 'cdn-fallback', imageIndex: idx,
+      }, outputDir, options);
+      if (!result.skipped) {
+        console.log(`Downloaded via CDN [${downloaded.length + 1}]: ${savePath}`);
+      }
+      downloaded.push(result.path);
+    } catch (curlErr) {
+      console.log(`CDN download failed for ${url}: ${curlErr.message}`);
+    }
+  }
+  return downloaded;
+}
+
 // then click the Download button in the dialog. Falls back to extracting
 // CloudFront CDN URLs directly from img[alt="image generation"] elements.
 async function downloadLatestResult(page, outputDir, downloadAll = true, options = {}) {
   const downloaded = [];
 
   try {
-    // Dismiss any lingering modals first
     await dismissAllModals(page);
 
-    // Strategy 1: Click generated images to open detail dialog with Download button
-    // On image generation pages: img[alt="image generation"]
-    // On assets page: img[alt*="media asset by id"]
     const generatedImgs = page.locator('img[alt="image generation"], img[alt*="media asset by id"]');
     const imgCount = await generatedImgs.count();
     console.log(`Found ${imgCount} generated image(s) on page`);
 
     if (imgCount > 0) {
       const toDownload = downloadAll ? imgCount : 1;
-
       for (let i = 0; i < toDownload; i++) {
         try {
-          // Click the image to open the Asset showcase dialog
-          await generatedImgs.nth(i).click({ force: true });
-          await page.waitForTimeout(1500);
-
-          // Wait for the dialog to appear
-          const dialog = page.locator('dialog, [role="dialog"]');
-          const dialogVisible = await dialog.count() > 0;
-
-          if (dialogVisible) {
-            // Extract metadata from dialog before downloading
-            const metadata = await extractDialogMetadata(page);
-
-            // Look for Download button inside the dialog
-            const dlBtn = page.locator('[role="dialog"] button:has-text("Download"), dialog button:has-text("Download")');
-            const dlBtnCount = await dlBtn.count();
-
-            if (dlBtnCount > 0) {
-              // Set up download event handler before clicking
-              const downloadPromise = page.waitForEvent('download', { timeout: 30000 }).catch(() => null);
-              await dlBtn.first().click({ force: true });
-
-              const download = await downloadPromise;
-              if (download) {
-                const origFilename = download.suggestedFilename() || `higgsfield-${Date.now()}-${i}.png`;
-                const descriptiveName = buildDescriptiveFilename(metadata, origFilename, i);
-                const savePath = join(outputDir, descriptiveName);
-                await download.saveAs(savePath);
-                const result = finalizeDownload(savePath, {
-                  command: 'download', type: 'image', ...metadata,
-                  originalFilename: origFilename,
-                }, outputDir, options);
-                if (!result.skipped) {
-                  console.log(`Downloaded [${i + 1}/${toDownload}]: ${savePath}`);
-                }
-                downloaded.push(result.path);
-              } else {
-                // Download event didn't fire - the button may trigger a blob/fetch download
-                // Wait a moment and check if a file appeared
-                await page.waitForTimeout(2000);
-                console.log(`Download button clicked but no download event for image ${i + 1} - trying CDN fallback`);
-              }
-            }
-
-            // Close the dialog (press Escape or click outside)
-            await page.keyboard.press('Escape');
-            await page.waitForTimeout(500);
-
-            // Verify dialog closed, force-remove if not
-            const stillOpen = await page.locator('[role="dialog"]').count();
-            if (stillOpen > 0) {
-              await page.evaluate(() => {
-                document.querySelectorAll('[role="dialog"]').forEach(d => {
-                  const overlay = d.closest('.react-aria-ModalOverlay') || d.parentElement;
-                  if (overlay) overlay.remove();
-                  else d.remove();
-                });
-                document.body.style.overflow = '';
-                document.body.style.pointerEvents = '';
-              });
-            }
+          const path = await downloadImageViaDialog(page, generatedImgs.nth(i), i, outputDir, { command: 'download' }, options);
+          if (path) {
+            console.log(`Downloaded [${i + 1}/${toDownload}]: ${path}`);
+            downloaded.push(path);
           }
         } catch (imgErr) {
           console.log(`Error downloading image ${i + 1}: ${imgErr.message}`);
@@ -2984,52 +3002,11 @@ async function downloadLatestResult(page, outputDir, downloadAll = true, options
       }
     }
 
-    // Strategy 2: If dialog-based download didn't work, extract CDN URLs directly
+    // CDN fallback if dialog download failed
     if (downloaded.length === 0) {
       console.log('Falling back to direct CDN URL extraction...');
-
-      const cdnUrls = await page.evaluate(() => {
-        const imgs = document.querySelectorAll('img[alt="image generation"], img[alt*="media asset by id"]');
-        return [...imgs].map(img => {
-          const src = img.src;
-          // Extract the raw CloudFront URL from the cdn-cgi wrapper
-          // Format: https://higgsfield.ai/cdn-cgi/image/.../https://d8j0ntlcm91z4.cloudfront.net/...
-          const cfMatch = src.match(/(https:\/\/d8j0ntlcm91z4\.cloudfront\.net\/[^\s]+)/);
-          return cfMatch ? cfMatch[1] : src;
-        });
-      });
-
-      // Also check for video elements
-      const videoUrls = await page.evaluate(() => {
-        const videos = document.querySelectorAll('video source[src], video[src]');
-        return [...videos].map(v => v.src || v.getAttribute('src')).filter(Boolean);
-      });
-
-      const allUrls = [...cdnUrls, ...videoUrls];
-      const toDownload = downloadAll ? allUrls : allUrls.slice(0, 1);
-
-      for (let i = 0; i < toDownload.length; i++) {
-        const url = toDownload[i];
-        const isVideo = url.includes('.mp4') || url.includes('video');
-        const ext = isVideo ? '.mp4' : '.webp';
-        const cdnMeta = { promptSnippet: 'cdn-fallback' };
-        const filename = buildDescriptiveFilename(cdnMeta, `higgsfield-cdn-${Date.now()}${ext}`, i);
-        const savePath = join(outputDir, filename);
-
-        try {
-          execFileSync('curl', ['-sL', '-o', savePath, url], { timeout: 60000 });
-          const result = finalizeDownload(savePath, {
-            command: 'download', type: isVideo ? 'video' : 'image',
-            cdnUrl: url, strategy: 'cdn-fallback',
-          }, outputDir, options);
-          if (!result.skipped) {
-            console.log(`Downloaded via CDN [${i + 1}/${toDownload.length}]: ${savePath}`);
-          }
-          downloaded.push(result.path);
-        } catch (curlErr) {
-          console.log(`CDN download failed for ${url}: ${curlErr.message}`);
-        }
-      }
+      const cdnDownloads = await downloadImagesByCDN(page, null, outputDir, { command: 'download' }, options);
+      downloaded.push(...(downloadAll ? cdnDownloads : cdnDownloads.slice(0, 1)));
     }
 
     if (downloaded.length === 0) {
@@ -3046,61 +3023,18 @@ async function downloadLatestResult(page, outputDir, downloadAll = true, options
   }
 }
 
-// Download specific images by their index on the page
-// Uses the same dialog-based approach as downloadLatestResult but only for specified indices
+// Download specific images by their index on the page.
+// Uses dialog-based download with CDN fallback for failures.
 async function downloadSpecificImages(page, outputDir, indices, options = {}) {
   const downloaded = [];
   const generatedImgs = page.locator('img[alt="image generation"], img[alt*="media asset by id"]');
 
   for (const idx of indices) {
     try {
-      // Click the image to open the Asset showcase dialog
-      await generatedImgs.nth(idx).click({ force: true });
-      await page.waitForTimeout(1500);
-
-      // Wait for dialog
-      const dialog = page.locator('[role="dialog"]');
-      if (await dialog.count() > 0) {
-        // Extract metadata for descriptive filename
-        const metadata = await extractDialogMetadata(page);
-
-        const dlBtn = page.locator('[role="dialog"] button:has-text("Download"), dialog button:has-text("Download")');
-        if (await dlBtn.count() > 0) {
-          const downloadPromise = page.waitForEvent('download', { timeout: 30000 }).catch(() => null);
-          await dlBtn.first().click({ force: true });
-
-          const download = await downloadPromise;
-          if (download) {
-            const origFilename = download.suggestedFilename() || `higgsfield-${Date.now()}-${idx}.png`;
-            const descriptiveName = buildDescriptiveFilename(metadata, origFilename, downloaded.length);
-            const savePath = join(outputDir, descriptiveName);
-            await download.saveAs(savePath);
-            const result = finalizeDownload(savePath, {
-              command: 'image', type: 'image', ...metadata,
-              originalFilename: origFilename, imageIndex: idx,
-            }, outputDir, options);
-            if (!result.skipped) {
-              console.log(`Downloaded [${downloaded.length + 1}/${indices.length}]: ${savePath}`);
-            }
-            downloaded.push(result.path);
-          }
-        }
-
-        // Close dialog
-        await page.keyboard.press('Escape');
-        await page.waitForTimeout(500);
-        const stillOpen = await page.locator('[role="dialog"]').count();
-        if (stillOpen > 0) {
-          await page.evaluate(() => {
-            document.querySelectorAll('[role="dialog"]').forEach(d => {
-              const overlay = d.closest('.react-aria-ModalOverlay') || d.parentElement;
-              if (overlay) overlay.remove();
-              else d.remove();
-            });
-            document.body.style.overflow = '';
-            document.body.style.pointerEvents = '';
-          });
-        }
+      const path = await downloadImageViaDialog(page, generatedImgs.nth(idx), downloaded.length, outputDir, { command: 'image', imageIndex: idx }, options);
+      if (path) {
+        console.log(`Downloaded [${downloaded.length + 1}/${indices.length}]: ${path}`);
+        downloaded.push(path);
       }
     } catch (err) {
       console.log(`Error downloading image at index ${idx}: ${err.message}`);
@@ -3110,35 +3044,8 @@ async function downloadSpecificImages(page, outputDir, indices, options = {}) {
   // CDN fallback for any that failed
   if (downloaded.length < indices.length) {
     console.log(`Dialog download got ${downloaded.length}/${indices.length}, trying CDN fallback for remainder...`);
-    const cdnUrls = await page.evaluate((idxList) => {
-      const imgs = document.querySelectorAll('img[alt="image generation"], img[alt*="media asset by id"]');
-      return idxList.map(idx => {
-        const img = imgs[idx];
-        if (!img) return null;
-        const cfMatch = img.src.match(/(https:\/\/d8j0ntlcm91z4\.cloudfront\.net\/[^\s]+)/);
-        return cfMatch ? cfMatch[1] : img.src;
-      }).filter(Boolean);
-    }, indices.slice(downloaded.length));
-
-    for (let i = 0; i < cdnUrls.length; i++) {
-      const ext = cdnUrls[i].includes('.mp4') ? '.mp4' : '.webp';
-      const cdnMeta = { promptSnippet: 'cdn-fallback' };
-      const filename = buildDescriptiveFilename(cdnMeta, `higgsfield-cdn-${Date.now()}${ext}`, downloaded.length);
-      const savePath = join(outputDir, filename);
-      try {
-        execFileSync('curl', ['-sL', '-o', savePath, cdnUrls[i]], { timeout: 60000 });
-        const result = finalizeDownload(savePath, {
-          command: 'image', type: 'image', cdnUrl: cdnUrls[i],
-          strategy: 'cdn-fallback', imageIndex: indices[downloaded.length],
-        }, outputDir, options);
-        if (!result.skipped) {
-          console.log(`Downloaded via CDN [${downloaded.length + 1}]: ${savePath}`);
-        }
-        downloaded.push(result.path);
-      } catch (curlErr) {
-        console.log(`CDN download failed: ${curlErr.message}`);
-      }
-    }
+    const cdnDownloads = await downloadImagesByCDN(page, indices.slice(downloaded.length), outputDir, { command: 'image' }, options);
+    downloaded.push(...cdnDownloads);
   }
 
   console.log(`Successfully downloaded ${downloaded.length} file(s)`);
@@ -4789,17 +4696,7 @@ async function assetChain(options = {}) {
       const downloadedFile = Array.isArray(downloadedFiles) ? downloadedFiles[0] : downloadedFiles;
 
       // Close dialog
-      await page.keyboard.press('Escape');
-      await page.waitForTimeout(1000);
-      await page.evaluate(() => {
-        document.querySelectorAll('[role="dialog"]').forEach(d => {
-          const overlay = d.closest('.react-aria-ModalOverlay') || d.parentElement;
-          if (overlay) overlay.remove();
-          else d.remove();
-        });
-        document.body.style.overflow = '';
-        document.body.style.pointerEvents = '';
-      });
+      await forceCloseDialogs(page);
 
       // Navigate to the target tool directly
       const toolUrlMap = {
