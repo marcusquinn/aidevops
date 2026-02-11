@@ -17,10 +17,22 @@ const STATE_DIR = join(homedir(), '.aidevops', '.agent-workspace', 'work', 'higg
 const STATE_FILE = join(STATE_DIR, 'auth-state.json');
 const ROUTES_CACHE = join(STATE_DIR, 'routes-cache.json');
 const DISCOVERY_TIMESTAMP = join(STATE_DIR, 'last-discovery.txt');
-const DOWNLOAD_DIR = join(homedir(), 'Downloads');
+const USER_DOWNLOADS_DIR = join(homedir(), 'Downloads', 'higgsfield');
+const WORKSPACE_OUTPUT_DIR = join(STATE_DIR, 'output');
 const DISCOVERY_MAX_AGE_HOURS = 24;
 const CREDITS_CACHE_FILE = join(STATE_DIR, 'credits-cache.json');
 const CREDITS_CACHE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
+
+// Resolve the default output directory based on session context.
+// Interactive sessions (TTY or --headed) save to ~/Downloads/higgsfield/ so users
+// can immediately review assets in Finder. Headless/pipeline runs save to the
+// agent workspace directory to keep automation artifacts separate.
+function getDefaultOutputDir(options = {}) {
+  if (options.headless || (!process.stdout.isTTY && !options.headed)) {
+    return WORKSPACE_OUTPUT_DIR;
+  }
+  return USER_DOWNLOADS_DIR;
+}
 
 // Credit cost estimates per operation type (approximate, varies by model/settings)
 const CREDIT_COSTS = {
@@ -462,7 +474,7 @@ async function apiSubmitAndPoll(modelId, body, creds, options = {}) {
 
 // Download API result images and write sidecar metadata.
 async function apiDownloadImages(result, { modelSlug, modelId, options, sidecarExtra = {} }) {
-  const baseOutput = options.output || DOWNLOAD_DIR;
+  const baseOutput = options.output || getDefaultOutputDir(options);
   const outputDir = resolveOutputDir(baseOutput, options, 'images');
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
   const downloads = [];
@@ -486,7 +498,7 @@ async function apiDownloadImages(result, { modelSlug, modelId, options, sidecarE
 // Download API result video and write sidecar metadata.
 async function apiDownloadVideo(result, { modelSlug, modelId, options, sidecarExtra = {} }) {
   if (!result.video?.url) throw new Error('API returned completed status but no video URL');
-  const baseOutput = options.output || DOWNLOAD_DIR;
+  const baseOutput = options.output || getDefaultOutputDir(options);
   const outputDir = resolveOutputDir(baseOutput, options, 'videos');
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
   const filename = `hf_api_${modelSlug}_${timestamp}.mp4`;
@@ -1699,7 +1711,7 @@ async function downloadNewImages(page, options, existingImageCount, generationCo
   for (let i = 0; i < newCount; i++) newImageIndices.push(i);
   console.log(`New images: ${newImageIndices.length} of ${currentImageCount} total (indices: ${newImageIndices.join(', ')})`);
 
-  const baseOutput = options.output || DOWNLOAD_DIR;
+  const baseOutput = options.output || getDefaultOutputDir(options);
   const outputDir = resolveOutputDir(baseOutput, options, 'images');
 
   if (newImageIndices.length > 0) {
@@ -2433,7 +2445,7 @@ async function generateVideo(options = {}) {
 
     // Download the video from History
     if (generationComplete && options.wait !== false) {
-      const baseOutput = options.output || DOWNLOAD_DIR;
+      const baseOutput = options.output || getDefaultOutputDir(options);
       const outputDir = resolveOutputDir(baseOutput, options, 'videos');
       const videoMeta = { model, promptSnippet: prompt.substring(0, 80) };
       const downloads = await downloadVideoFromHistory(page, outputDir, videoMeta, options);
@@ -2589,7 +2601,7 @@ async function generateLipsync(options = {}) {
 
     // Download from History
     if (generationComplete && options.wait !== false) {
-      const baseOutput = options.output || DOWNLOAD_DIR;
+      const baseOutput = options.output || getDefaultOutputDir(options);
       const outputDir = resolveOutputDir(baseOutput, options, 'lipsync');
       const meta = { model: options.model || 'lipsync', promptSnippet: prompt.substring(0, 80) };
       const downloads = await downloadVideoFromHistory(page, outputDir, meta, options);
@@ -3114,7 +3126,7 @@ async function useApp(options = {}) {
     await page.screenshot({ path: join(STATE_DIR, `app-${appSlug}-result.png`), fullPage: false });
 
     if (options.wait !== false) {
-      const baseOutput = options.output || DOWNLOAD_DIR;
+      const baseOutput = options.output || getDefaultOutputDir(options);
       const outputDir = resolveOutputDir(baseOutput, options, 'apps');
       await downloadLatestResult(page, outputDir, true, options);
     }
@@ -3267,7 +3279,7 @@ async function seedBracket(options = {}) {
   console.log(`Seeds: ${seeds.join(', ')}`);
 
   const model = options.model || (options.preferUnlimited !== false && getUnlimitedModelForCommand('image')?.slug) || 'soul';
-  const outputDir = options.output || join(DOWNLOAD_DIR, `seed-bracket-${Date.now()}`);
+  const outputDir = options.output || join(getDefaultOutputDir(options), `seed-bracket-${Date.now()}`);
   if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
 
   const results = [];
@@ -3789,7 +3801,7 @@ async function pipeline(options = {}) {
     };
   }
 
-  const outputDir = options.output || join(DOWNLOAD_DIR, `pipeline-${Date.now()}`);
+  const outputDir = options.output || join(getDefaultOutputDir(options), `pipeline-${Date.now()}`);
   if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
 
   console.log(`\n=== Video Production Pipeline ===`);
@@ -4173,7 +4185,7 @@ async function cinemaStudio(options = {}) {
     await page.screenshot({ path: join(STATE_DIR, 'cinema-studio-result.png'), fullPage: false });
 
     if (options.wait !== false) {
-      const baseOutput = options.output || DOWNLOAD_DIR;
+      const baseOutput = options.output || getDefaultOutputDir(options);
       const outputDir = resolveOutputDir(baseOutput, options, 'cinema');
       await downloadLatestResult(page, outputDir, true, options);
     }
@@ -4274,7 +4286,7 @@ async function motionControl(options = {}) {
     await page.screenshot({ path: join(STATE_DIR, 'motion-control-result.png'), fullPage: false });
 
     if (options.wait !== false) {
-      const baseOutput = options.output || DOWNLOAD_DIR;
+      const baseOutput = options.output || getDefaultOutputDir(options);
       const outputDir = resolveOutputDir(baseOutput, options, 'videos');
       await downloadVideoFromHistory(page, outputDir, {}, options);
     }
@@ -4356,7 +4368,7 @@ async function editImage(options = {}) {
     await page.screenshot({ path: join(STATE_DIR, `edit-${model}-result.png`), fullPage: false });
 
     if (options.wait !== false) {
-      const baseOutput = options.output || DOWNLOAD_DIR;
+      const baseOutput = options.output || getDefaultOutputDir(options);
       const outputDir = resolveOutputDir(baseOutput, options, 'edits');
       await downloadLatestResult(page, outputDir, true, options);
     }
@@ -4416,7 +4428,7 @@ async function upscale(options = {}) {
     await page.screenshot({ path: join(STATE_DIR, 'upscale-result.png'), fullPage: false });
 
     if (options.wait !== false) {
-      const baseOutput = options.output || DOWNLOAD_DIR;
+      const baseOutput = options.output || getDefaultOutputDir(options);
       const outputDir = resolveOutputDir(baseOutput, options, 'upscaled');
       await downloadLatestResult(page, outputDir, true, options);
     }
@@ -4483,7 +4495,7 @@ async function manageAssets(options = {}) {
         await page.screenshot({ path: join(STATE_DIR, 'asset-detail.png'), fullPage: false });
 
         // Try to download via the asset detail view
-        const baseOutput = options.output || DOWNLOAD_DIR;
+        const baseOutput = options.output || getDefaultOutputDir(options);
         const dlDir = resolveOutputDir(baseOutput, options, 'misc');
         await downloadLatestResult(page, dlDir, false, options);
         console.log('Asset downloaded');
@@ -4493,7 +4505,7 @@ async function manageAssets(options = {}) {
     if (action === 'download-all') {
       // Download multiple assets
       const maxDownloads = options.limit || 10;
-      const baseOutput = options.output || DOWNLOAD_DIR;
+      const baseOutput = options.output || getDefaultOutputDir(options);
       const dlDir = resolveOutputDir(baseOutput, options, 'misc');
       console.log(`Downloading up to ${maxDownloads} assets...`);
 
@@ -4694,7 +4706,7 @@ async function assetChain(options = {}) {
       await page.screenshot({ path: join(STATE_DIR, 'asset-chain-fallback.png'), fullPage: false });
 
       // Download the asset from the dialog first
-      const outputDir = options.output || DOWNLOAD_DIR;
+      const outputDir = options.output || getDefaultOutputDir(options);
       const downloadedFiles = await downloadLatestResult(page, outputDir, false, options);
       const downloadedFile = Array.isArray(downloadedFiles) ? downloadedFiles[0] : downloadedFiles;
 
@@ -4830,7 +4842,7 @@ async function assetChain(options = {}) {
     await page.screenshot({ path: join(STATE_DIR, `asset-chain-${action}-result.png`), fullPage: false });
 
     if (options.wait !== false) {
-      const baseOutput = options.output || DOWNLOAD_DIR;
+      const baseOutput = options.output || getDefaultOutputDir(options);
       const outputDir = resolveOutputDir(baseOutput, options, 'chained');
       const isVideoAction = ['animate'].includes(action);
       if (isVideoAction) {
@@ -4993,7 +5005,7 @@ async function mixedMediaPreset(options = {}) {
     await page.screenshot({ path: join(STATE_DIR, `mixed-media-${presetKey}-result.png`), fullPage: false });
 
     if (options.wait !== false) {
-      const baseOutput = options.output || DOWNLOAD_DIR;
+      const baseOutput = options.output || getDefaultOutputDir(options);
       const outputDir = resolveOutputDir(baseOutput, options, 'mixed-media');
       await downloadLatestResult(page, outputDir, true, options);
     }
@@ -5118,7 +5130,7 @@ async function motionPreset(options = {}) {
     await page.screenshot({ path: join(STATE_DIR, 'motion-preset-result.png'), fullPage: false });
 
     if (options.wait !== false) {
-      const baseOutput = options.output || DOWNLOAD_DIR;
+      const baseOutput = options.output || getDefaultOutputDir(options);
       const outputDir = resolveOutputDir(baseOutput, options, 'motion-presets');
       await downloadVideoFromHistory(page, outputDir, {}, options);
     }
@@ -5210,7 +5222,7 @@ async function editVideo(options = {}) {
     await page.screenshot({ path: join(STATE_DIR, 'video-edit-result.png'), fullPage: false });
 
     if (options.wait !== false) {
-      const baseOutput = options.output || DOWNLOAD_DIR;
+      const baseOutput = options.output || getDefaultOutputDir(options);
       const outputDir = resolveOutputDir(baseOutput, options, 'videos');
       await downloadVideoFromHistory(page, outputDir, {}, options);
     }
@@ -5297,7 +5309,7 @@ async function storyboard(options = {}) {
     await page.screenshot({ path: join(STATE_DIR, 'storyboard-result.png'), fullPage: true });
 
     if (options.wait !== false) {
-      const baseOutput = options.output || DOWNLOAD_DIR;
+      const baseOutput = options.output || getDefaultOutputDir(options);
       const outputDir = resolveOutputDir(baseOutput, options, 'storyboards');
       await downloadLatestResult(page, outputDir, true, options);
     }
@@ -5415,7 +5427,7 @@ async function vibeMotion(options = {}) {
     await page.screenshot({ path: join(STATE_DIR, 'vibe-motion-result.png'), fullPage: false });
 
     if (options.wait !== false) {
-      const baseOutput = options.output || DOWNLOAD_DIR;
+      const baseOutput = options.output || getDefaultOutputDir(options);
       const outputDir = resolveOutputDir(baseOutput, options, 'videos');
       await downloadVideoFromHistory(page, outputDir, {}, options);
     }
@@ -5492,7 +5504,7 @@ async function aiInfluencer(options = {}) {
     await page.screenshot({ path: join(STATE_DIR, 'ai-influencer-result.png'), fullPage: false });
 
     if (options.wait !== false) {
-      const baseOutput = options.output || DOWNLOAD_DIR;
+      const baseOutput = options.output || getDefaultOutputDir(options);
       const outputDir = resolveOutputDir(baseOutput, options, 'characters');
       await downloadLatestResult(page, outputDir, true, options);
     }
@@ -5565,7 +5577,7 @@ async function createCharacter(options = {}) {
     await page.screenshot({ path: join(STATE_DIR, 'character-result.png'), fullPage: false });
 
     if (options.wait !== false) {
-      const baseOutput = options.output || DOWNLOAD_DIR;
+      const baseOutput = options.output || getDefaultOutputDir(options);
       const outputDir = resolveOutputDir(baseOutput, options, 'characters');
       await downloadLatestResult(page, outputDir, true, options);
     }
@@ -5679,7 +5691,7 @@ async function featurePage(options = {}) {
     await page.screenshot({ path: join(STATE_DIR, `feature-${featureKey}-result.png`), fullPage: false });
 
     if (options.wait !== false) {
-      const baseOutput = options.output || DOWNLOAD_DIR;
+      const baseOutput = options.output || getDefaultOutputDir(options);
       const outputDir = resolveOutputDir(baseOutput, options, 'features');
       await downloadLatestResult(page, outputDir, true, options);
     }
@@ -6214,7 +6226,7 @@ async function batchImage(options = {}) {
 
   const { jobs, defaults } = loadBatchManifest(manifestPath);
   const concurrency = options.concurrency || 2;
-  const outputDir = options.output || join(DOWNLOAD_DIR, `batch-image-${Date.now()}`);
+  const outputDir = options.output || join(getDefaultOutputDir(options), `batch-image-${Date.now()}`);
   if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
 
   console.log(`\n=== Batch Image Generation ===`);
@@ -6324,7 +6336,7 @@ async function batchVideo(options = {}) {
 
   const { jobs, defaults } = loadBatchManifest(manifestPath);
   const concurrency = options.concurrency || 3; // How many to submit before polling
-  const outputDir = options.output || join(DOWNLOAD_DIR, `batch-video-${Date.now()}`);
+  const outputDir = options.output || join(getDefaultOutputDir(options), `batch-video-${Date.now()}`);
   if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
 
   console.log(`\n=== Batch Video Generation ===`);
@@ -6471,7 +6483,7 @@ async function batchLipsync(options = {}) {
 
   const { jobs, defaults } = loadBatchManifest(manifestPath);
   const concurrency = options.concurrency || 1; // Lipsync is slow, default sequential
-  const outputDir = options.output || join(DOWNLOAD_DIR, `batch-lipsync-${Date.now()}`);
+  const outputDir = options.output || join(getDefaultOutputDir(options), `batch-lipsync-${Date.now()}`);
   if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
 
   console.log(`\n=== Batch Lipsync Generation ===`);
@@ -6593,7 +6605,7 @@ async function downloadFromHistory(options) {
     await dlPage.goto(`${BASE_URL}/create/video`, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await dlPage.waitForTimeout(5000);
     await dismissAllModals(dlPage);
-    const dlDir = resolveOutputDir(options.output || DOWNLOAD_DIR, options, 'videos');
+    const dlDir = resolveOutputDir(options.output || getDefaultOutputDir(options), options, 'videos');
     await downloadVideoFromHistory(dlPage, dlDir, {}, options);
   } else {
     const dlUrl = `${BASE_URL}/image/${dlModel}`;
@@ -6602,7 +6614,7 @@ async function downloadFromHistory(options) {
     await dlPage.goto(dlUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await dlPage.waitForTimeout(5000);
     await dismissAllModals(dlPage);
-    const dlDir = resolveOutputDir(options.output || DOWNLOAD_DIR, options, 'images');
+    const dlDir = resolveOutputDir(options.output || getDefaultOutputDir(options), options, 'images');
     await downloadLatestResult(dlPage, dlDir, count, options);
   }
 

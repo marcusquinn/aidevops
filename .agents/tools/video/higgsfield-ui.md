@@ -78,7 +78,8 @@ higgsfield-helper.sh (shell wrapper)
         ├── Persistent auth state (~/.aidevops/.agent-workspace/work/higgsfield/auth-state.json)
         ├── Site discovery cache (~/.aidevops/.agent-workspace/work/higgsfield/routes-cache.json)
         ├── Credentials from ~/.config/aidevops/credentials.sh
-        ├── Downloads to ~/Downloads/ (descriptive filenames: hf_{model}_{quality}_{prompt}_{ts}.ext)
+        ├── Downloads to ~/Downloads/higgsfield/ (interactive) or .agent-workspace (headless)
+        ├── Descriptive filenames: hf_{model}_{quality}_{prompt}_{ts}.ext
         ├── JSON sidecar metadata (.json alongside each download)
         ├── SHA-256 dedup index (.dedup-index.json per output dir)
         └── Project dirs via --project (organized by type: images/, videos/, etc.)
@@ -576,16 +577,30 @@ The account has 19 unlimited models (no credit cost). The automator **auto-selec
 
 ## Output Organization
 
+### Default Output Paths
+
+The default output directory depends on session context:
+
+| Context | Default Output | Reason |
+|---------|---------------|--------|
+| Interactive (TTY / `--headed`) | `~/Downloads/higgsfield/` | Visible in Finder for immediate review |
+| Headless / pipeline | `~/.aidevops/.agent-workspace/work/higgsfield/output/` | Keeps automation artifacts separate |
+
+Override with `--output` to save anywhere.
+
 ### Project Directories
 
 Use `--project` to organize outputs into structured directories:
 
 ```bash
-# Without --project: files go to ~/Downloads/ (flat)
-higgsfield-helper.sh image "A sunset" --output ~/Downloads/
+# Without --project: files go to ~/Downloads/higgsfield/ (interactive)
+higgsfield-helper.sh image "A sunset"
 
-# With --project: files go to ~/Downloads/my-video/images/
-higgsfield-helper.sh image "A sunset" --output ~/Downloads/ --project my-video
+# With --project: files go to ~/Downloads/higgsfield/my-video/images/
+higgsfield-helper.sh image "A sunset" --project my-video
+
+# Explicit output overrides the default
+higgsfield-helper.sh image "A sunset" --output ~/Projects/assets/
 ```
 
 Directory structure with `--project`:
@@ -753,7 +768,7 @@ higgsfield-helper.sh pipeline "Person reviews product" --character-image face.pn
 higgsfield-helper.sh pipeline --brief scenes.json --output ~/Projects/shorts/
 ```
 
-Output goes to `~/Downloads/pipeline-{timestamp}/` with all intermediate files and a `pipeline-state.json` manifest.
+Output goes to `{default-output}/pipeline-{timestamp}/` with all intermediate files and a `pipeline-state.json` manifest.
 
 ### Performance
 
@@ -799,7 +814,7 @@ higgsfield-helper.sh seed-bracket "Product on marble table" --seed-range "4000,4
 higgsfield-helper.sh seed-bracket "Cyberpunk street" --seed-range 2000-2010 --model nano_banana_pro
 ```
 
-Results saved to `~/Downloads/seed-bracket-{timestamp}/` with `bracket-results.json` manifest.
+Results saved to `{default-output}/seed-bracket-{timestamp}/` with `bracket-results.json` manifest.
 
 ## CLI Options Reference
 
@@ -808,9 +823,10 @@ Results saved to `~/Downloads/seed-bracket-{timestamp}/` with `bracket-results.j
 --model, -m        Model slug (soul, nano_banana, seedream, kling-2.6, gpt, kontext, flux)
 --aspect, -a       Aspect ratio (16:9, 9:16, 1:1, 3:4, 4:3, 2:3, 3:2)
 --quality, -q      Quality setting (1K, 1.5K, 2K, 4K)
---output, -o       Output directory or file path
---headed           Run browser in headed mode (visible)
---headless         Run browser in headless mode (default)
+--output, -o       Output directory (default: ~/Downloads/higgsfield/ interactive,
+                   .agent-workspace headless)
+--headed           Run browser in headed mode (visible, outputs to ~/Downloads/higgsfield/)
+--headless         Run browser in headless mode (default, outputs to .agent-workspace)
 --duration, -d     Video duration in seconds (5, 10, 15)
 --image-file       Path to image file for upload
 --image-url, -i    URL of image for image-to-video
