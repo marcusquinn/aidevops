@@ -54,6 +54,7 @@ const CREDIT_COSTS = {
   feature: 5,
   chain: 5,           // depends on target action
   'seed-bracket': 10, // multiple images
+  'trinity-ugc-windows': 30, // image + windows preset + video
   pipeline: 60,       // multi-step: images + videos + lipsync
 };
 
@@ -648,6 +649,8 @@ const FLAG_DEFS = [
   ['--video-file',       'videoFile',        'string'       ],
   ['--motion-ref',       'motionRef',        'string'       ],
   ['--character-image',  'characterImage',   'string'       ],
+  ['--video-model',      'videoModel',       'string'       ],
+  ['--video-prompt',     'videoPrompt',      'string'       ],
   ['--dialogue',         'dialogue',         'string'       ],
   // Asset/chain flags
   ['--asset-action',     'assetAction',      'string'       ],
@@ -2796,6 +2799,7 @@ function inferOutputType(command, options = {}) {
     chain: 'chained',
     'mixed-media': 'mixed-media',
     'motion-preset': 'motion-presets',
+    'trinity-ugc-windows': 'trinity-ugc-windows',
     feature: 'features',
     download: options.model === 'video' ? 'videos' : 'images',
   };
@@ -5706,6 +5710,190 @@ async function featurePage(options = {}) {
   }
 }
 
+// Trinity UGC Windows — pre-built 3-step pipeline for Windows-style UGC video
+// Step 1: Generate product/character image (or use provided image)
+// Step 2: Apply Windows mixed-media preset (retro Windows visual effect)
+// Step 3: Animate the result into a UGC-style video
+// This produces the viral "Windows aesthetic" UGC content format.
+async function trinityUgcWindows(options = {}) {
+  const startTime = Date.now();
+  const baseOutput = options.output || getDefaultOutputDir(options);
+  const outputDir = resolveOutputDir(baseOutput, options, 'trinity-ugc-windows');
+  const stateFile = join(outputDir, 'trinity-state.json');
+
+  const trinityState = {
+    template: 'trinity-ugc-windows',
+    startTime: new Date().toISOString(),
+    steps: [],
+    options: {
+      prompt: options.prompt,
+      imageModel: options.model || null,
+      videoModel: options.videoModel || null,
+      aspect: options.aspect || '9:16',
+    },
+  };
+
+  console.log('\n=== Trinity UGC Windows Template ===');
+  console.log(`Output: ${outputDir}`);
+
+  // --- Step 1: Generate or use product/character image ---
+  let sourceImagePath = options.imageFile;
+
+  if (!sourceImagePath) {
+    if (!options.prompt) {
+      console.error('ERROR: Either --prompt (to generate image) or --image-file (to use existing) is required');
+      return { success: false, error: 'Missing --prompt or --image-file' };
+    }
+
+    console.log('\n--- Step 1/3: Generate source image ---');
+    const imageModel = options.model ||
+      (options.preferUnlimited !== false && getUnlimitedModelForCommand('image')?.slug) ||
+      'soul';
+    console.log(`Model: ${imageModel}`);
+    console.log(`Prompt: "${(options.prompt || '').substring(0, 80)}..."`);
+
+    const imageResult = await generateImage({
+      ...options,
+      model: imageModel,
+      aspect: options.aspect || '9:16',
+      batch: 1,
+      output: outputDir,
+      project: undefined, // Don't nest further
+    });
+
+    if (!imageResult?.success) {
+      console.error('Step 1 FAILED: Image generation failed');
+      trinityState.steps.push({ step: 'generate-image', success: false });
+      writeFileSync(stateFile, JSON.stringify(trinityState, null, 2));
+      return { success: false, error: 'Image generation failed' };
+    }
+
+    // Find the most recently created image in outputDir
+    const imageFiles = existsSync(outputDir) ? readdirSync(outputDir)
+      .filter(f => /\.(png|jpg|jpeg|webp)$/i.test(f) && !f.endsWith('.json'))
+      .map(f => ({ name: f, time: statSync(join(outputDir, f)).mtimeMs }))
+      .sort((a, b) => b.time - a.time) : [];
+
+    if (imageFiles.length === 0) {
+      console.error('Step 1 FAILED: No image file found after generation');
+      trinityState.steps.push({ step: 'generate-image', success: false, error: 'No output file' });
+      writeFileSync(stateFile, JSON.stringify(trinityState, null, 2));
+      return { success: false, error: 'No image file found after generation' };
+    }
+
+    sourceImagePath = join(outputDir, imageFiles[0].name);
+    console.log(`Source image: ${sourceImagePath}`);
+    trinityState.steps.push({ step: 'generate-image', success: true, path: sourceImagePath });
+  } else {
+    console.log(`\n--- Step 1/3: Using provided image: ${sourceImagePath} ---`);
+    trinityState.steps.push({ step: 'generate-image', success: true, path: sourceImagePath, provided: true });
+  }
+
+  writeFileSync(stateFile, JSON.stringify(trinityState, null, 2));
+
+  // --- Step 2: Apply Windows mixed-media preset ---
+  console.log('\n--- Step 2/3: Apply Windows mixed-media preset ---');
+
+  const windowsResult = await mixedMediaPreset({
+    ...options,
+    preset: 'windows',
+    imageFile: sourceImagePath,
+    output: outputDir,
+    project: undefined,
+  });
+
+  if (!windowsResult?.success) {
+    console.error('Step 2 FAILED: Windows preset application failed');
+    trinityState.steps.push({ step: 'windows-preset', success: false, error: windowsResult?.error });
+    writeFileSync(stateFile, JSON.stringify(trinityState, null, 2));
+    return { success: false, error: 'Windows preset failed' };
+  }
+
+  // Find the Windows-preset output (most recent file after the source image)
+  const windowsFiles = readdirSync(outputDir)
+    .filter(f => /\.(png|jpg|jpeg|webp|mp4)$/i.test(f) && !f.endsWith('.json'))
+    .map(f => ({ name: f, time: statSync(join(outputDir, f)).mtimeMs }))
+    .sort((a, b) => b.time - a.time);
+
+  const windowsOutputPath = windowsFiles.length > 0 ? join(outputDir, windowsFiles[0].name) : null;
+
+  if (!windowsOutputPath || windowsOutputPath === sourceImagePath) {
+    console.log('Step 2 WARNING: Could not find Windows preset output, using source image for video');
+    trinityState.steps.push({ step: 'windows-preset', success: true, warning: 'output not found, using source' });
+  } else {
+    console.log(`Windows preset output: ${windowsOutputPath}`);
+    trinityState.steps.push({ step: 'windows-preset', success: true, path: windowsOutputPath });
+  }
+
+  writeFileSync(stateFile, JSON.stringify(trinityState, null, 2));
+
+  // --- Step 3: Animate into UGC-style video ---
+  console.log('\n--- Step 3/3: Animate into UGC video ---');
+
+  const videoSourceImage = windowsOutputPath || sourceImagePath;
+  // Check if the Windows preset already produced a video (some presets output video directly)
+  const isVideo = videoSourceImage && /\.mp4$/i.test(videoSourceImage);
+
+  if (isVideo) {
+    console.log('Windows preset produced a video directly — skipping video generation step');
+    trinityState.steps.push({ step: 'animate-video', success: true, path: videoSourceImage, skipped: 'preset-produced-video' });
+  } else {
+    const videoModel = options.videoModel ||
+      (options.preferUnlimited !== false && getUnlimitedModelForCommand('video')?.slug) ||
+      'kling-2.6';
+    const videoPrompt = options.videoPrompt || options.prompt ||
+      'Smooth camera movement, product showcase, clean aesthetic, Windows retro style';
+
+    console.log(`Video model: ${videoModel}`);
+    console.log(`Video prompt: "${videoPrompt.substring(0, 80)}..."`);
+    console.log(`Source image: ${videoSourceImage}`);
+
+    const videoResult = await generateVideo({
+      ...options,
+      prompt: videoPrompt,
+      model: videoModel,
+      imageFile: videoSourceImage,
+      duration: options.duration || '5',
+      output: outputDir,
+      project: undefined,
+    });
+
+    if (!videoResult?.success) {
+      console.error('Step 3 FAILED: Video generation failed');
+      trinityState.steps.push({ step: 'animate-video', success: false, error: videoResult?.error });
+      writeFileSync(stateFile, JSON.stringify(trinityState, null, 2));
+      // Still partial success — we have the Windows-styled image
+      return { success: false, error: 'Video generation failed (Windows image available)', partialOutput: outputDir };
+    }
+
+    trinityState.steps.push({ step: 'animate-video', success: true });
+  }
+
+  // --- Complete ---
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+  trinityState.completedAt = new Date().toISOString();
+  trinityState.elapsedSeconds = parseFloat(elapsed);
+  writeFileSync(stateFile, JSON.stringify(trinityState, null, 2));
+
+  console.log(`\n=== Trinity UGC Windows Complete (${elapsed}s) ===`);
+  console.log(`Output directory: ${outputDir}`);
+  console.log(`State file: ${stateFile}`);
+
+  // List all output files
+  const allFiles = readdirSync(outputDir)
+    .filter(f => !f.endsWith('.json') && f !== 'trinity-state.json')
+    .sort();
+  if (allFiles.length > 0) {
+    console.log(`Files:`);
+    for (const f of allFiles) {
+      const size = statSync(join(outputDir, f)).size;
+      console.log(`  ${f} (${(size / 1024).toFixed(0)}KB)`);
+    }
+  }
+
+  return { success: true, outputDir, stateFile, elapsed: parseFloat(elapsed) };
+}
+
 // Auth health check - verify auth state is valid
 async function authHealthCheck(options = {}) {
   console.log('[health-check] Verifying authentication state...');
@@ -6672,6 +6860,9 @@ const COMMAND_REGISTRY = {
   'photodump':          (opts, r) => { opts.feature = 'photodump'; return withRetry(() => featurePage(opts), r); },
   'camera-controls':    (opts, r) => { opts.feature = 'camera-controls'; return withRetry(() => featurePage(opts), r); },
   'effects':            (opts, r) => { opts.feature = 'effects'; return withRetry(() => featurePage(opts), r); },
+  'trinity-ugc-windows': (opts, r) => withRetry(() => trinityUgcWindows(opts), r),
+  'trinity-windows':     (opts, r) => withRetry(() => trinityUgcWindows(opts), r),
+  'ugc-windows':         (opts, r) => withRetry(() => trinityUgcWindows(opts), r),
   'test':               () => runSelfTests(),
   'self-test':          () => runSelfTests(),
 };
@@ -6711,6 +6902,7 @@ Commands:
   influencer         AI Influencer Studio - create AI characters
   character          Create persistent character profile from photos
   feature            Generic feature page (fashion-factory, ugc-factory, photodump, etc.)
+  trinity-ugc-windows  Pre-built 3-step pipeline: image → Windows preset → UGC video
   assets             List recent generations
   credits            Check account credits/plan
   screenshot         Take screenshot of any page
@@ -6743,6 +6935,8 @@ Options:
   --seed-range       Seed range for bracketing (e.g., "1000-1010" or "1000,1005,1010")
   --brief            Path to pipeline brief JSON file
   --character-image  Path to character face image for pipeline
+  --video-model      Video model override (for trinity/pipeline, e.g., kling-2.6)
+  --video-prompt     Video animation prompt override (for trinity/pipeline)
   --dialogue         Dialogue text for lipsync in pipeline
   --scenes           Number of scenes to generate in pipeline
   --video-file       Path to video file (motion reference for motion-control)
@@ -6801,6 +6995,9 @@ Examples:
   node playwright-automator.mjs influencer --preset Human -p "Fashion influencer, warm smile"
   node playwright-automator.mjs character --image-file face1.jpg -p "Sarah"
   node playwright-automator.mjs feature --feature fashion-factory --image-file outfit.jpg
+  node playwright-automator.mjs trinity-ugc-windows -p "Product on marble table, clean aesthetic" --aspect 9:16
+  node playwright-automator.mjs trinity-ugc-windows --image-file product.jpg --video-prompt "Smooth zoom in"
+  node playwright-automator.mjs trinity-ugc-windows -p "Fashion model, studio lighting" --video-model kling-2.6
 
 API mode (uses cloud.higgsfield.ai — separate credit pool from web UI):
   node playwright-automator.mjs api-status
