@@ -1263,19 +1263,24 @@ cmd_close() {
     open_issues_json=$(gh issue list --repo "$repo_slug" --state open --limit 500 \
         --json number,title 2>/dev/null || echo "[]")
 
-    # Build associative array: task_id -> issue_number from open issues
-    # Only issues whose title starts with tNNN pattern are relevant
-    declare -A open_issue_map
+    # Build newline-delimited lookup: "task_id|issue_number" per line
+    # Avoids bash associative arrays which break under set -u on empty arrays
+    local open_issue_lines=""
     while IFS='|' read -r num title; do
         [[ -z "$num" ]] && continue
         local tid
         tid=$(echo "$title" | grep -oE '^t[0-9]+(\.[0-9]+)*' || echo "")
         if [[ -n "$tid" ]]; then
-            open_issue_map["$tid"]="$num"
+            open_issue_lines="${open_issue_lines}${tid}|${num}"$'\n'
         fi
     done < <(echo "$open_issues_json" | jq -r '.[] | "\(.number)|\(.title)"' 2>/dev/null || true)
 
-    local open_count="${#open_issue_map[@]}"
+    local open_count
+    if [[ -z "$open_issue_lines" ]]; then
+        open_count=0
+    else
+        open_count=$(echo -n "$open_issue_lines" | grep -c '.' || echo "0")
+    fi
     log_verbose "Found $open_count open issues with task IDs"
 
     if [[ "$open_count" -eq 0 ]]; then
@@ -1291,21 +1296,21 @@ cmd_close() {
         task_id=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
         [[ -z "$task_id" ]] && continue
 
-        # Safe associative array lookup (set -u compatible)
-        # ${arr[$key]+x} tests existence without triggering unbound variable
-        local has_open_issue="false"
-        local mapped_issue=""
-        if [[ -n "${open_issue_map[$task_id]+x}" ]]; then
-            has_open_issue="true"
-            mapped_issue="${open_issue_map[$task_id]}"
+        # Lookup task_id in the open issues list (grep for exact match at line start)
+        local mapped_line
+        mapped_line=$(echo "$open_issue_lines" | grep -E "^${task_id}\|" | head -1 || echo "")
+        if [[ -z "$mapped_line" ]]; then
+            # No open issue for this completed task — skip (nothing to close)
+            continue
         fi
+        local mapped_issue="${mapped_line#*|}"
 
         # Check 1: Does this task have a ref:GH# that matches an open issue?
         local issue_number=""
         local ref_number
         ref_number=$(echo "$line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
 
-        if [[ -n "$ref_number" && "$has_open_issue" == "true" ]]; then
+        if [[ -n "$ref_number" ]]; then
             # Task has ref:GH# AND an open issue exists for this task ID
             issue_number="$mapped_issue"
             # Verify ref matches (fix stale refs)
@@ -1316,7 +1321,7 @@ cmd_close() {
                     ref_fixed=$((ref_fixed + 1))
                 fi
             fi
-        elif [[ "$has_open_issue" == "true" ]]; then
+        else
             # No ref:GH# but an open issue exists — use it and fix the ref
             issue_number="$mapped_issue"
             log_verbose "$task_id: no ref:GH# but found open issue #$issue_number"
@@ -1324,9 +1329,6 @@ cmd_close() {
                 add_gh_ref_to_todo "$task_id" "$issue_number" "$todo_file"
                 ref_fixed=$((ref_fixed + 1))
             fi
-        else
-            # No open issue for this completed task — skip (nothing to close)
-            continue
         fi
 
         if [[ -z "$issue_number" || "$issue_number" == "null" ]]; then
