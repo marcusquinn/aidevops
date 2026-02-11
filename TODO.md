@@ -189,12 +189,12 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t235 Proof-log coverage for all pr_url mutations — ensure every DB write has an audit trail #enhancement #supervisor #audit ~45m (ai:30m test:15m) assignee:marcusquinn started:2026-02-10T17:50:18Z logged:2026-02-10 completed:2026-02-10
   - Notes: Proof log (t218) instruments 10+ decision points but misses pr_url mutations in scan_orphaned_prs (L6591), scan_orphaned_pr_for_task (L6737), and process_post_pr_lifecycle (L7465). These unaudited paths are where cross-contamination happens invisibly. If t232 centralizes via link_pr_to_task(), this becomes automatic. Otherwise add record_proof_log calls at each mutation point. blocked-by:t232
 - [ ] t236 Higgsfield Automator Production Hardening #plan #higgsfield #automation #reliability → [todo/PLANS.md#2026-02-10-higgsfield-automator-production-hardening] ~6h (ai:4h test:1.5h read:30m) ref:GH#972 logged:2026-02-10 started:2026-02-10T18:00:00Z
-  - [x] t236.1 Retry logic + credit guard — exponential backoff, pre-op credit check, cost map #higgsfield #reliability ~1.5h assignee:marcusquinn started:2026-02-10T18:12:41Z completed:2026-02-10
+  - [x] t236.1 Retry logic + credit guard — exponential backoff, pre-op credit check, cost map #higgsfield #reliability ~1.5h assignee:marcusquinn started:2026-02-10T18:12:41Z completed:2026-02-10 pr:#967
   - [x] t236.2 Unlimited model auto-selection — parse/cache unlimited models, auto-select when available #higgsfield #cost-optimization ~1h assignee:marcusquinn started:2026-02-10T18:12:47Z ref:GH#973 completed:2026-02-10 pr:#970
   - [x] t236.6 Cloud API client + model priority fix — REST API integration, Nano Banana Pro to #1, batchLipsync syntax fix #higgsfield #api ~2h assignee:marcusquinn started:2026-02-10 completed:2026-02-10 pr:#975
-  - [x] t236.3 Batch operations — batch-image, batch-video, batch-lipsync with concurrency control #higgsfield #productivity ~1.5h assignee:marcusquinn started:2026-02-10T18:12:55Z completed:2026-02-10
-  - [x] t236.4 Output organization + metadata — project dirs, descriptive filenames, JSON sidecars, dedup #higgsfield #output ~1h assignee:marcusquinn started:2026-02-10T18:15:56Z completed:2026-02-10
-  - [x] t236.5 Dry-run + auth resilience — --dry-run flag, auth health check, smoke test command #higgsfield #testing ~1h assignee:marcusquinn started:2026-02-10T18:16:09Z completed:2026-02-10
+  - [x] t236.3 Batch operations — batch-image, batch-video, batch-lipsync with concurrency control #higgsfield #productivity ~1.5h assignee:marcusquinn started:2026-02-10T18:12:55Z completed:2026-02-10 pr:#976
+  - [x] t236.4 Output organization + metadata — project dirs, descriptive filenames, JSON sidecars, dedup #higgsfield #output ~1h assignee:marcusquinn started:2026-02-10T18:15:56Z completed:2026-02-10 pr:#965
+  - [x] t236.5 Dry-run + auth resilience — --dry-run flag, auth health check, smoke test command #higgsfield #testing ~1h assignee:marcusquinn started:2026-02-10T18:16:09Z completed:2026-02-10 pr:#969
 - [x] t237 Retroactive PR backfill for supervisor DB — link ~60 no_pr tasks to their actual merged PRs #chore #supervisor #data-integrity ~1h (ai:45m test:15m) assignee:marcusquinn started:2026-02-10T18:12:33Z logged:2026-02-10 completed:2026-02-10
   - Notes: 60 tasks in supervisor DB show no_pr/task_only despite having real merged PRs on GitHub. These predate the PR-linking system or used non-standard branch names. Script should: for each deployed/verified task with no_pr, search GitHub for merged PRs matching feature/{task_id} or containing task_id in title, validate via validate_pr_belongs_to_task(), update DB via link_pr_to_task() (t232), and write proof log entries. One-time data migration, not ongoing.
 - [x] t238 Retroactive verification audit — verify all 114 tasks without proof logs have real deliverables #chore #supervisor #audit #quality ~2h (ai:1.5h test:30m) assignee:marcusquinn started:2026-02-10T18:15:28Z ref:GH#974 logged:2026-02-10 completed:2026-02-11 pr:#968
@@ -206,8 +206,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t243 Higgsfield execSync shell injection hardening — replace execSync with execFileSync for API-sourced URLs in playwright-automator.mjs to prevent shell injection via compromised API responses #security #higgsfield ~45m (ai:30m test:15m) assignee:marcusquinn started:2026-02-10T19:16:17Z ref:GH#1012 logged:2026-02-10 completed:2026-02-10 pr:#980
 - [x] t244 Higgsfield caption scene fallback — clamp caption sceneIdx to last scene instead of defaulting to scene 0 when startFrame exceeds total duration. Extract helper function to reduce cyclomatic complexity #bugfix #higgsfield ~30m (ai:20m test:10m) assignee:marcusquinn started:2026-02-10T19:17:29Z ref:GH#1012 logged:2026-02-10 completed:2026-02-10 pr:#981
 - [ ] t245 Unified quality debt sweep — daily pipeline that pulls findings from ALL code quality tools (SonarCloud API, Codacy API, CodeFactor, CodeRabbit), deduplicates across tools, auto-creates TODO tasks for actionable findings, and optionally dispatches to workers. Extend review-pulse-helper.sh or create quality-sweep-helper.sh. Current gap: daily workflows generate reports but findings don't feed back into the task pipeline. SonarCloud shows 36 code smells + 19 security hotspots accruing. #plan #quality #self-improvement #automation ~4h (ai:3h test:1h) ref:GH#1007 logged:2026-02-10
-  - [x] t245.1 SonarCloud API integration — fetch issues via sonarcloud.io/api/issues/search, parse into normalized finding format with file, line, severity, rule, message. Filter by new/confirmed status. #quality #sonarcloud ~1h assignee:marcusquinn started:2026-02-10T19:20:37Z logged:2026-02-10 completed:2026-02-10
-  - [x] t245.2 Codacy API integration — fetch issues via Codacy API, normalize to same format. Deduplicate against SonarCloud findings (same file+line+category = single finding). #quality #codacy ~1h assignee:marcusquinn started:2026-02-10T19:20:55Z logged:2026-02-10 completed:2026-02-10
+  - [x] t245.1 SonarCloud API integration — fetch issues via sonarcloud.io/api/issues/search, parse into normalized finding format with file, line, severity, rule, message. Filter by new/confirmed status. #quality #sonarcloud ~1h assignee:marcusquinn started:2026-02-10T19:20:37Z logged:2026-02-10 completed:2026-02-10 pr:#984
+  - [x] t245.2 Codacy API integration — fetch issues via Codacy API, normalize to same format. Deduplicate against SonarCloud findings (same file+line+category = single finding). #quality #codacy ~1h assignee:marcusquinn started:2026-02-10T19:20:55Z logged:2026-02-10 completed:2026-02-10 pr:#984
   - [x] t245.3 Finding-to-task pipeline — group findings by file/category, create batched TODO tasks (e.g. "Fix 5 code smells in supervisor-helper.sh"), respect existing task dedup (don't recreate tasks for known issues). Add --auto-dispatch flag for supervisor integration. #quality #automation ~1h assignee:marcusquinn started:2026-02-10T19:21:09Z ref:GH#1006 logged:2026-02-10 completed:2026-02-10 pr:#1001
   - [x] t245.4 Daily GitHub Action — new workflow or extend review-pulse.yml to run quality-sweep after CodeRabbit review. Upload findings artifact, create tasks on schedule. Cron at 4 AM UTC (after CodeRabbit at 3 AM, code-review-monitoring at 2 AM). #quality #ci ~1h assignee:marcusquinn started:2026-02-10T19:21:25Z ref:GH#1007 logged:2026-02-10 completed:2026-02-10 pr:#1013
     - Notes: BLOCKED by supervisor: Re-prompt dispatch failed: clean_exit_no_signal
@@ -226,17 +226,17 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t135.5 Remove tracked artifacts from git #chore #git ~30m assignee:marcusquinn started:2026-02-09T18:33:16Z ref:GH#867 completed:2026-02-07 pr:#422
     - Notes: BLOCKED by supervisor: Max retries exceeded: clean_exit_no_signal BLOCKED: Max retries exceeded: clean_exit_no_signal BLOCKED: Re-prompt dispatch failed: clean_exit_no_signal
   - [x] t135.6 Fix CI code-quality.yml typos and paths #bugfix #ci ~1h assignee:marcusquinn started:2026-02-09T18:51:23Z ref:GH#868 completed:2026-02-07 pr:#432
-  - [x] t135.9 Add trap cleanup for temp files #quality #shell ~1h assignee:marcusquinn started:2026-02-09T18:55:45Z completed:2026-02-09
+  - [x] t135.9 Add trap cleanup for temp files #quality #shell ~1h assignee:marcusquinn started:2026-02-09T18:55:45Z completed:2026-02-09 pr:#436
   - [x] t135.10 Fix package.json main field #bugfix #config ~15m assignee:marcusquinn started:2026-02-09T19:12:28Z ref:GH#869 completed:2026-02-07 pr:#424
   - [x] t135.12 Archive unreferenced fix scripts #chore #cleanup ~1h ref:GH#870 assignee:marcusquinn started:2026-02-10T13:18:06Z completed:2026-02-10 pr:#925
   - [x] t135.14 Standardize shebangs to env bash #chore #shell ~30m ref:GH#871 assignee:marcusquinn started:2026-02-10T13:19:24Z completed:2026-02-07 pr:#428
 - [ ] t020 Issue Sync Enrichment #plan #github #automation → [todo/PLANS.md#2026-02-08-issue-sync-enrichment] ~4h (ai:3h test:1h) logged:2026-02-08
-  - [x] t020.1 Build core TODO.md parser + rich issue body composer #feature ~45m assignee:marcusquinn started:2026-02-09T20:05:10Z completed:2026-02-09
-  - [x] t020.2 PLANS.md section extraction + todo/tasks/ lookup #feature ~30m assignee:marcusquinn started:2026-02-09T20:05:25Z completed:2026-02-09
-  - [x] t020.3 Tag to GitHub label mapping + push/enrich commands #feature ~30m assignee:marcusquinn started:2026-02-09T20:06:06Z completed:2026-02-09
-  - [x] t020.4 Pull command (GH to TODO.md) #feature ~30m assignee:marcusquinn started:2026-02-09T21:03:36Z completed:2026-02-09
-  - [x] t020.5 Close + status commands #feature ~30m assignee:marcusquinn started:2026-02-09T21:03:44Z completed:2026-02-09
-  - [x] t020.6 Wire supervisor delegation to issue-sync-helper.sh #refactor ~15m assignee:marcusquinn started:2026-02-09T21:13:17Z completed:2026-02-09
+  - [x] t020.1 Build core TODO.md parser + rich issue body composer #feature ~45m assignee:marcusquinn started:2026-02-09T20:05:10Z completed:2026-02-09 pr:#804
+  - [x] t020.2 PLANS.md section extraction + todo/tasks/ lookup #feature ~30m assignee:marcusquinn started:2026-02-09T20:05:25Z completed:2026-02-09 pr:#805
+  - [x] t020.3 Tag to GitHub label mapping + push/enrich commands #feature ~30m assignee:marcusquinn started:2026-02-09T20:06:06Z completed:2026-02-09 pr:#543
+  - [x] t020.4 Pull command (GH to TODO.md) #feature ~30m assignee:marcusquinn started:2026-02-09T21:03:36Z completed:2026-02-09 pr:#808
+  - [x] t020.5 Close + status commands #feature ~30m assignee:marcusquinn started:2026-02-09T21:03:44Z completed:2026-02-09 pr:#808
+  - [x] t020.6 Wire supervisor delegation to issue-sync-helper.sh #refactor ~15m assignee:marcusquinn started:2026-02-09T21:13:17Z completed:2026-02-09 pr:#807
 - [x] t195 Supervisor evaluate_worker PR validation — verify PR title/branch contains task ID before attributing #bugfix #supervisor ~1h (ai:45m test:15m) ref:GH#814 assignee:marcusquinn started:2026-02-09T22:46:42Z logged:2026-02-09 completed:2026-02-09 pr:#826
   - Notes: evaluate_worker() fallback PR detection (line ~4639) uses `gh pr list --head` to find PRs matching the task's branch. If the branch column in the DB is corrupted (e.g., t194's branch was recorded as feature/t020.6), the wrong PR gets attributed to the wrong task, causing false completion. Fix: after finding a PR via branch match, verify the PR title contains the task ID. If not, log a warning and skip. Discovered when t020.6 was falsely marked complete with t194's PR #810.
 - [x] t196 Fix RETURN trap clobbering in trap cleanup scripts #bugfix #quality #shell ~1h (ai:45m test:15m) ref:GH#815 assignee:marcusquinn started:2026-02-09T22:46:55Z logged:2026-02-09 completed:2026-02-09 pr:#827
@@ -252,67 +252,67 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t205 Add AGENTS.md rule: re-verify task ID after git pull --rebase before push #docs #workflow #quality ~15m (ai:10m) logged:2026-02-09 completed:2026-02-09 verified:2026-02-09 PR #820 merged
   - Notes: Race condition hit twice in one session — parallel sessions created t195 and t196 simultaneously, causing duplicate IDs in TODO.md. Root cause: agent assigns next ID, commits, push fails, does pull --rebase, pushes again WITHOUT re-checking if the ID is still free. Fix: added rule to AGENTS.md Planning & Tasks section. Originally t201, renumbered to t205 due to parallel session collision (ironic).
 - [x] t189 Worktree ownership safety — prevent sessions from removing worktrees owned by other parallel sessions #bugfix #git #supervisor ~2h (ai:1.5h test:30m) ref:GH#692 assignee:marcusquinn started:2026-02-09T00:24:23Z logged:2026-02-09 completed:2026-02-09 verified:2026-02-09 PR #695 merged
-  - [x] t189.1 Add worktree ownership registry ~45m blocked-by:none
+  - [x] t189.1 Add worktree ownership registry ~45m blocked-by:none pr:#695
     - Notes: When a session creates or claims a worktree, register it in a SQLite table or lockfile: worktree path, session ID, PID, task ID, created timestamp. Before removing any worktree, check the registry — if another session owns it and its PID is still alive, REFUSE to remove. If PID is dead but session is recent (<1h), WARN and require --force. This prevents the exact bug that happened: supervisor session cleaned up a worktree that a parallel interactive session was actively using.
-  - [x] t189.2 Add "in use" detection to worktree cleanup ~30m blocked-by:t189.1
+  - [x] t189.2 Add "in use" detection to worktree cleanup ~30m blocked-by:t189.1 pr:#695
     - Notes: Before `git worktree remove`, check: (1) is any process with CWD inside the worktree? (`lsof +D` or `fuser`), (2) is the worktree registered to another session?, (3) are there uncommitted changes? Only remove if all three are clear. Add --force to override (with warning). Wire into supervisor cleanup, `wt merge`, and any other worktree removal paths.
-  - [x] t189.3 Add AGENTS.md rule: never remove worktrees you didn't create ~15m blocked-by:none
+  - [x] t189.3 Add AGENTS.md rule: never remove worktrees you didn't create ~15m blocked-by:none pr:#695
     - Notes: Immediate instruction-level fix. Add to AGENTS.md: "NEVER remove a worktree unless (a) you created it in this session, (b) it belongs to a task you are managing, or (c) the user explicitly asks. Worktrees may belong to parallel sessions — removing them destroys another agent's working directory." This is the cheapest fix and should be done first.
-  - [x] t189.4 Scope batch cleanup to batch-owned worktrees only ~30m blocked-by:none
+  - [x] t189.4 Scope batch cleanup to batch-owned worktrees only ~30m blocked-by:none pr:#695
     - Notes: The supervisor's worktree cleanup during pulse should ONLY touch worktrees for tasks in the current batch. Currently it can discover and remove any worktree matching the naming pattern. Add batch_id filtering: only clean worktrees whose task_id is in the batch being pulsed.
   - Notes: Root cause from 2026-02-09: supervisor session force-removed a worktree (`bugfix/setup-template-opencode-install`) that belonged to a parallel interactive session. The branch survived but the other session lost its working directory and had to restart. Git workflow protects code (branches survive), but the worktree directory is the active workspace — losing it mid-session is disruptive. Three layers of fix needed: (1) instruction-level rule (t189.3, cheapest), (2) ownership registry (t189.1, most robust), (3) in-use detection (t189.2, defense in depth).
 - [x] t187 Compaction-resilient session state — ensure critical context survives LLM context compaction #feature #framework #self-improvement ~2h (ai:1.5h test:30m) ref:GH#686 assignee:marcusquinn started:2026-02-09T00:59:21Z logged:2026-02-09 completed:2026-02-09 verified:2026-02-09 PR #699 merged
-  - [x] t187.1 Add compaction survival instruction to AGENTS.md/build.txt ~30m blocked-by:none
+  - [x] t187.1 Add compaction survival instruction to AGENTS.md/build.txt ~30m blocked-by:none pr:#699
     - Notes: Add an instruction that is always preserved through compaction summaries. Something like "When summarizing this conversation for compaction, ALWAYS include: current batch ID, active task IDs and their states, worktree paths, and the next 3 action items." This ensures the model retains operational state even after aggressive compaction. Test by verifying the instruction appears in compaction output.
-  - [x] t187.2 Add session-state checkpoint command ~1h blocked-by:none
+  - [x] t187.2 Add session-state checkpoint command ~1h blocked-by:none pr:#699
     - Notes: Create a `/checkpoint` command that outputs a structured continuation prompt (like the one used to resume this session). Format: batch state, task statuses, worktree list, open PRs, next steps, user preferences. Can be auto-generated at session end or on demand. Store in memory for cross-session recall. This is the single highest-impact factor for session continuity through compaction.
-  - [x] t187.3 Enhance session-distill to capture operational state ~30m blocked-by:t187.2
+  - [x] t187.3 Enhance session-distill to capture operational state ~30m blocked-by:t187.2 pr:#699
     - Notes: Current session-distill captures learnings but not operational state (which tasks are running, what PRs need review). Extend to also emit a checkpoint block that can be fed back as a continuation prompt.
   - Notes: Lesson from 2026-02-09 session: continuation prompt was the single biggest factor in surviving compaction. AGENTS.md provides the "how" (conventions, tools), but the continuation prompt provides the "where we are" (task states, batch IDs, next steps). Without it, the agent can operate the framework but doesn't know what to work on. Tool outputs (supervisor status, git log, gh pr list) can partially reconstruct state but are slower and lossy.
 - [x] t188 Pre-migration safety backups for non-git state — backup DBs and local state before destructive operations #bugfix #supervisor #self-improvement ~1h (ai:45m test:15m) ref:GH#687 assignee:marcusquinn started:2026-02-09T00:41:26Z logged:2026-02-09 completed:2026-02-09 verified:2026-02-09 PR #697 merged
-  - [x] t188.1 Add automatic backup before schema migrations ~30m blocked-by:none
+  - [x] t188.1 Add automatic backup before schema migrations ~30m blocked-by:none pr:#697
     - Notes: The t180 migration already calls backup_db() but the INSERT INTO tasks SELECT * FROM tasks_old_t180 silently failed, leaving the tasks table empty. Need: (a) verify row count after migration matches before, (b) rollback if mismatch, (c) keep backup until next successful pulse confirms data integrity. The backup existed and saved us — but the migration should have caught its own failure.
-  - [x] t188.2 Add backup-before-modify pattern for non-git state ~30m blocked-by:none
+  - [x] t188.2 Add backup-before-modify pattern for non-git state ~30m blocked-by:none pr:#697
     - Notes: Git workflow protects code files, but SQLite DBs, memory stores, and config files aren't version-controlled. Pattern: before any destructive operation on non-git state (schema migration, bulk prune, consolidate), create a timestamped backup, verify the operation succeeded, and only clean up the backup after the next successful operation confirms integrity. This is what saved the supervisor DB today — the backup_db() call in the migration created a restore point.
-  - [x] t188.3 Add backup cleanup on successful verification ~15m blocked-by:t188.1
+  - [x] t188.3 Add backup cleanup on successful verification ~15m blocked-by:t188.1 pr:#697
     - Notes: Backups accumulate. After a successful pulse confirms task data is intact (row count matches batch_tasks), clean up backups older than 24h. Keep the most recent backup always.
   - Notes: Lesson from 2026-02-09: t180 schema migration emptied the tasks table (INSERT from renamed table silently failed). The backup_db() call saved us — we restored 60 tasks from the pre-migration backup. Git workflow wouldn't have caught this because SQLite DBs are gitignored. Non-git state needs its own safety net.
 - [x] t186 Add development lifecycle enforcement to AGENTS.md — all work must create TODO entry and either full-loop or queue for runners #docs #workflow #quality ~30m (ai:20m) ref:GH#682 assignee:marcusquinn started:2026-02-09T01:08:14Z logged:2026-02-08 completed:2026-02-09 verified:2026-02-09 PR #700 merged
   - Notes: Development work was being done without TODO entries and without full-loop testing. Rule added to AGENTS.md: every change must (1) have a TODO entry, (2) ask user whether to implement now or queue, (3) if implementing, follow full-loop (plan->implement->test->verify->deliver). Prevents shipping untested code.
 - [x] t185 Memory audit pulse — periodic scan of memories for self-improvement opportunities #feature #memory #supervisor ~2h (ai:1.5h test:30m) ref:GH#675 assignee:marcusquinn started:2026-02-08T23:42:46Z logged:2026-02-08 completed:2026-02-09 verified:2026-02-09 PR #691 merged
-  - [x] t185.1 Add memory-audit command to memory-helper.sh ~45m blocked-by:none
+  - [x] t185.1 Add memory-audit command to memory-helper.sh ~45m blocked-by:none pr:#691
     - Notes: New command that scans all memories and produces actionable output. Logic: (1) Find recurring patterns — same error type 3+ times across different tasks = needs a fix task. (2) Check FAILED_APPROACH memories against merged PRs — if the referenced PR/issue is resolved, mark memory as graduated. (3) Identify DECISION/CODEBASE_PATTERN memories not yet in shared docs — flag for graduation. (4) Detect duplicates and near-duplicates for pruning. Output: structured report with proposed TODOs, graduation candidates, and prune candidates.
-  - [x] t185.2 Wire memory audit into supervisor pulse as periodic phase ~30m blocked-by:t185.1
+  - [x] t185.2 Wire memory audit into supervisor pulse as periodic phase ~30m blocked-by:t185.1 pr:#691
     - Notes: Add Phase 9 to pulse cycle (after issue-sync Phase 8). Run memory-audit every N pulses (e.g. every 50th pulse = ~every 4 hours with 5-min cron). When recurring patterns found, auto-create TODO entries with ref to the memory IDs. When graduation candidates found, create t184-style tasks. When prune candidates found, auto-prune with log.
-  - [x] t185.3 Add memory lifecycle states (active/graduated/pruned) ~30m blocked-by:t185.1
+  - [x] t185.3 Add memory lifecycle states (active/graduated/pruned) ~30m blocked-by:t185.1 pr:#691
     - Notes: Add status column to learnings table: active (default), graduated (moved to docs, link to file:line), pruned (resolved, link to PR#). Graduated memories stay in DB as audit trail but don't appear in recall. This enables the full lifecycle: capture -> validate -> graduate -> prune.
   - Notes: Closes the self-improvement loop. Currently memories accumulate but nothing reviews them for action. This session manually audited 881 memories down to 26, created 6 tasks (t179-t184), and pruned 855 entries. That process should be automated. The pulse checks for: recurring errors needing fix tasks, resolved issues to prune, validated learnings to graduate into shared docs.
 - [x] t184 Graduate validated memories into shared docs — move local learnings into codebase so all users benefit #docs #self-improvement ~1h (ai:45m test:15m) ref:GH#674 assignee:marcusquinn started:2026-02-08T23:07:28Z logged:2026-02-08 completed:2026-02-09 verified:2026-02-09 PR #689 merged
-  - [x] t184.1 Add supervisor architecture decisions to architecture.md ~15m blocked-by:none
+  - [x] t184.1 Add supervisor architecture decisions to architecture.md ~15m blocked-by:none pr:#689
     - Notes: 7 DECISION memories about supervisor role (pure control plane, never does worker tasks, self-improving dispatch loop), agent tiers (draft/custom/shared), evaluation priority order, concurrency limits. These are framework-defining decisions that new users and contributors need.
-  - [x] t184.2 Add macOS bash 3.2 constraints and model routing to code-standards.md ~15m blocked-by:none
+  - [x] t184.2 Add macOS bash 3.2 constraints and model routing to code-standards.md ~15m blocked-by:none pr:#689
     - Notes: No associative arrays, grep-based key=value parsing, heuristic eval gated on non-zero exit. Model routing: Opus for race conditions/bugs, Sonnet for features, Haiku misses edge cases on complex shell. Also: worktree rebase before push pattern.
-  - [x] t184.3 Add cherry-pick recovery and curl verification limits to relevant subagents ~15m blocked-by:none
+  - [x] t184.3 Add cherry-pick recovery and curl verification limits to relevant subagents ~15m blocked-by:none pr:#689
     - Notes: Cherry-pick recovery (gh pr view --json commits -> git fetch -> cherry-pick) goes in conflict-resolution.md. Curl/HTTP status code limitation (200 on React crash) goes in browser-automation.md verification section.
-  - [x] t184.4 Add memory graduation workflow to build-agent.md ~15m blocked-by:none
+  - [x] t184.4 Add memory graduation workflow to build-agent.md ~15m blocked-by:none pr:#689
     - Notes: Document the pattern: memories are a staging area for learnings. Once validated (fix merged, pattern confirmed), graduate into shared docs. Add /graduate-memories command or integrate into session-review. Prevents knowledge staying local.
   - Notes: Memory audit found 26 useful learnings that only exist locally. 7 architecture decisions, 5 codebase patterns, 3 model routing insights, and recovery techniques that would help all aidevops users. These need to move from SQLite memory into shipped docs.
 - [x] t180 Post-merge verification via todo/VERIFY.md — dispatch verification workers after PR merge to confirm deliverables work #feature #supervisor #quality ~3h (ai:2h test:1h) ref:GH#670 assignee:marcusquinn started:2026-02-08T22:38:20Z logged:2026-02-08 completed:2026-02-09 verified:2026-02-09 PR #679 merged
-  - [x] t180.1 Add verify states to supervisor state machine (merged -> verifying -> verified/verify_failed) ~1h blocked-by:none
+  - [x] t180.1 Add verify states to supervisor state machine (merged -> verifying -> verified/verify_failed) ~1h blocked-by:none pr:#679
     - Notes: New states between merged and deployed. On merge, supervisor auto-appends entry to todo/VERIFY.md with task ID, PR number, changed files, and auto-generated check commands. Dispatch a verification worker that runs the checks. If verify fails, task goes to verify_failed and reopens the TODO.md task with a bugfix note.
-  - [x] t180.2 Create VERIFY.md auto-population in supervisor merge phase ~30m blocked-by:t180.1
+  - [x] t180.2 Create VERIFY.md auto-population in supervisor merge phase ~30m blocked-by:t180.1 pr:#679
     - Notes: After PR merge, supervisor extracts: changed files from PR, generates check commands (shellcheck for .sh, file-exists for .md, rg for index references), appends to todo/VERIFY.md. Format is TOON-style with check: directives per entry.
-  - [x] t180.3 Create verification worker prompt and dispatch logic ~30m blocked-by:t180.1
+  - [x] t180.3 Create verification worker prompt and dispatch logic ~30m blocked-by:t180.1 pr:#679
     - Notes: Lightweight worker reads todo/VERIFY.md, runs each check: directive, marks [x] (pass) or [!] (fail) with evidence. On fail, reopens original task in TODO.md and creates follow-up bugfix task. On pass, supervisor transitions to deployed and marks TODO.md [x].
-  - [x] t180.4 Wire verify phase into pulse cycle ~30m blocked-by:t180.1
+  - [x] t180.4 Wire verify phase into pulse cycle ~30m blocked-by:t180.1 pr:#679
     - Notes: After merge phase, auto-dispatch verify worker for entries in VERIFY.md. Only transition to deployed after verify passes. Add --skip-verify flag for trusted/trivial tasks. Batch verify multiple tasks in single worker dispatch for efficiency.
   - Notes: Root cause: 12 GitHub issues were open for tasks marked [x] that were never verified. Memory audit revealed pattern of tasks marked complete without checking deliverables actually work. Design: todo/VERIFY.md acts as a verification queue with machine-parseable check directives. Workers verify, supervisor acts on results.
 - [x] t181 Memory deduplication and auto-pruning — prevent duplicate memories and prune stale entries #bugfix #memory #self-improvement ~1h (ai:45m test:15m) ref:GH#671 assignee:marcusquinn started:2026-02-08T22:56:04Z logged:2026-02-08 completed:2026-02-09 verified:2026-02-09 PR #681 merged
-  - [x] t181.1 Add content-hash dedup on memory store ~30m blocked-by:none
+  - [x] t181.1 Add content-hash dedup on memory store ~30m blocked-by:none pr:#681
     - Notes: Before inserting, check if a memory with identical or near-identical content already exists (fuzzy match using word overlap, similar to consolidate). Skip insert if >90% match. Currently 23 copies of "Failed: Task blocked" exist.
-  - [x] t181.2 Cap supervisor retry/pulse log memories ~15m blocked-by:none
+  - [x] t181.2 Cap supervisor retry/pulse log memories ~15m blocked-by:none pr:#681
     - Notes: Auto-distill and supervisor retry logging create duplicate entries every pulse cycle. Either: (a) only store first occurrence of each retry pattern per task, or (b) update existing memory instead of creating new one, or (c) use a separate retry_log table instead of learnings.
-  - [x] t181.3 Auto-prune memories for issues that have been fixed ~15m blocked-by:none
+  - [x] t181.3 Auto-prune memories for issues that have been fixed ~15m blocked-by:none pr:#681
     - Notes: When a PR merges that fixes an issue referenced in a memory, mark those memories as resolved/stale. Could tag with PR# and auto-archive on merge. Currently 350 ERROR_FIX memories, many for issues fixed weeks ago.
   - Notes: 881 memories, 654 auto-captured, massive duplication. Top duplicate: "Failed: Task blocked" x23. Auto-distill creates identical entries across pulse cycles. Memory is becoming noise rather than signal.
 - [x] t182 GHA auto-fix workflow safety — validate auto-fixes before committing #bugfix #ci #quality ~30m (ai:20m test:10m) ref:GH#672 assignee:marcusquinn started:2026-02-08T23:07:18Z logged:2026-02-08 completed:2026-02-09 verified:2026-02-09 PR #684 merged
@@ -324,9 +324,9 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - Notes: cmd_close() currently only looks up issues by ref:GH#NNN from TODO.md. When ref:GH# is stale/wrong (e.g. issue recreated with new number), the close silently skips. Add fallback: gh issue list --search "tNNN in:title" --state open. Also fix ref:GH# in TODO.md when mismatch detected.
   - [x] t179.2 Add reconcile command to fix mismatched ref:GH# values in TODO.md ~30m blocked-by:t179.1 verified:2026-02-11
     - Notes: Scan all tasks with ref:GH#, verify the issue number matches an issue with the task ID in its title. Fix mismatches. Run as part of status command output.
-  - [x] t179.3 Wire issue-sync close into supervisor pulse cycle as periodic reconciliation ~30m blocked-by:t179.1
+  - [x] t179.3 Wire issue-sync close into supervisor pulse cycle as periodic reconciliation ~30m blocked-by:t179.1 pr:#677
     - Notes: Add Phase 8 to pulse cycle: run issue-sync-helper.sh close after TODO reconciliation (Phase 7). Only run when no workers active (same guard as reconcile-todo). Prevents stale issues accumulating between manual syncs.
-  - [x] t179.4 Add issue-sync close to postflight/session-review checklist ~15m blocked-by:t179.1
+  - [x] t179.4 Add issue-sync close to postflight/session-review checklist ~15m blocked-by:t179.1 pr:#677
     - Notes: After PR merge and TODO update, remind to check issue sync. Or auto-run close as part of postflight.
   - Notes: Root cause discovered 2026-02-08: 12 GitHub issues were open for completed tasks because ref:GH# values in TODO.md didn't match actual issue numbers (issues recreated with new numbers by push command). The GHA workflow runs close on push but uses ref:GH# for lookup, missing the mismatched issues. Also fixed: task ID grep truncation bug (t131 matching t131.vision) in PR #668.
 - [x] t168 /compare-models and /compare-models-free commands for model capability comparison #feature #tools #multi-model ~4h (ai:3h test:30m read:30m) ref:GH#626 assignee:marcusquinn started:2026-02-08T20:42:38Z logged:2026-02-08 completed:2026-02-08 verified:2026-02-08 PR #660 merged
@@ -362,13 +362,13 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Root cause: t128.8 migration uses INSERT INTO tasks SELECT * FROM tasks_old which fails on column count mismatch if migrations run out of order. No backup before destructive table rename/recreate migrations. Fix: 1) Add backup_db() helper with SQLite .backup, timestamped copies, auto-prune to 5. 2) Add backup before t128.8 and t148 destructive migrations. 3) Fix t128.8 SELECT * to use explicit column list. 4) Add backup/restore commands for manual recovery.
 
 - [x] t163 Prevent false task completion cascade (AGENTS.md rule + issue-sync guard + supervisor verify) #plan #quality #workflow → [todo/PLANS.md] ~4h (ai:2h test:1h read:1h) ref:GH#618 logged:2026-02-08 completed:2026-02-08 verified:2026-02-08 PR #622 merged
-  - [x] t163.1 Add task completion rules to AGENTS.md Planning & Tasks section ~15m blocked-by:none
+  - [x] t163.1 Add task completion rules to AGENTS.md Planning & Tasks section ~15m blocked-by:none pr:#622
     - Notes: Rule: NEVER mark [x] unless YOU wrote code/content in THIS session. Workers leave tasks for reviewer. Verify deliverable exists and is substantive before marking.
   - [x] t163.2 Add guard to issue-sync-helper.sh cmd_close() - require merged PR or verified: field ~1h blocked-by:none
     - Notes: cmd_close currently blindly closes issues when TODO.md has [x]. Add check: task must have either a merged PR ref or verified:YYYY-MM-DD field. Dry-run by default, --force for real close.
-  - [x] t163.3 Add pre-commit validation for TODO.md [x] transitions ~1h blocked-by:none
+  - [x] t163.3 Add pre-commit validation for TODO.md [x] transitions ~1h blocked-by:none pr:#622
     - Notes: Git hook or CI check: when task goes [ ] -> [x], verify current branch has commits touching related files. Warn if no deliverable found.
-  - [x] t163.4 Add supervisor verify phase after worker PR merge ~1.5h blocked-by:none
+  - [x] t163.4 Add supervisor verify phase after worker PR merge ~1.5h blocked-by:none pr:#622
     - Notes: After merge, supervisor checks: file exists, not empty, ShellCheck pass for .sh, word count > threshold for .md. Only after verify -> [x] + issue close.
 
 - [x] t164 Distributed task claiming via GitHub Issue assignees #feature #supervisor ref:GH#619 logged:2026-02-08 verified:2026-02-08
@@ -467,15 +467,15 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t136.5 Scaffold aidevops-pro and aidevops-anon repos ~2h blocked-by:t136.3,t136.4 ref:GH#732 assignee:marcusquinn started:2026-02-09T17:00:18Z completed:2026-02-09 pr:#792
   - Notes: Namespaced plugin architecture (pro.md + pro/) to avoid clashes. Plugin AGENTS.md points to main framework. Minimal CI (local linting only) for private repos. aidevops update deploys main + all plugins. Open questions: license (MIT vs proprietary), Gitea Actions availability, plugin deploy order, subagent index strategy.
 - [x] t135 Codebase Quality Hardening (Opus 4.6 review findings) #plan #quality #hardening → [todo/PLANS.md#2026-02-07-codebase-quality-hardening] ~3d (ai:1.5d test:1d read:0.5d) ref:GH#545 logged:2026-02-07 completed:2026-02-08 verified:2026-02-08
-  - [x] t135.1 P0-A: Add set -euo pipefail to 61 scripts missing strict mode ~4h blocked-by:none completed:2026-02-08
-    - [x] t135.1.1 Audit scripts for intentional failures needing || true guards completed:2026-02-08
-    - [x] t135.1.2 Add set -euo pipefail with appropriate guards ~1.5h blocked-by:t135.1.1 completed:2026-02-08
-    - [x] t135.1.3 Run bash -n + shellcheck on all modified scripts ~15m blocked-by:t135.1.2 completed:2026-02-08
-    - [x] t135.1.4 Smoke test help command for each modified script ~15m blocked-by:t135.1.3 completed:2026-02-08
+  - [x] t135.1 P0-A: Add set -euo pipefail to 61 scripts missing strict mode ~4h blocked-by:none completed:2026-02-08 pr:#491
+    - [x] t135.1.1 Audit scripts for intentional failures needing || true guards completed:2026-02-08 pr:#491
+    - [x] t135.1.2 Add set -euo pipefail with appropriate guards ~1.5h blocked-by:t135.1.1 completed:2026-02-08 pr:#491
+    - [x] t135.1.3 Run bash -n + shellcheck on all modified scripts ~15m blocked-by:t135.1.2 completed:2026-02-08 pr:#491
+    - [x] t135.1.4 Smoke test help command for each modified script ~15m blocked-by:t135.1.3 completed:2026-02-08 pr:#491
     - Notes: PR #491 merged. Added strict mode to 61 active scripts. Fixed 9 unguarded grep/pipeline calls in 4 scripts. Also fixed CI monitor-code-review.sh wait $pid under set -e (PR #492).
-  - [x] t135.2 P0-B: Replace blanket ShellCheck disables with targeted inline disables (95 scripts) ~8h blocked-by:none completed:2026-02-08
-    - [x] t135.2.1 Run shellcheck without blanket disable, categorize actual violations per-script completed:2026-02-08
-    - [x] t135.2.2 Fix genuine violations (SC2086, SC2155) where safe completed:2026-02-08
+  - [x] t135.2 P0-B: Replace blanket ShellCheck disables with targeted inline disables (95 scripts) ~8h blocked-by:none completed:2026-02-08 pr:#492
+    - [x] t135.2.1 Run shellcheck without blanket disable, categorize actual violations per-script completed:2026-02-08 pr:#492
+    - [x] t135.2.2 Fix genuine violations (SC2086, SC2155) where safe completed:2026-02-08 pr:#492
     - [x] t135.2.3 Add targeted inline disables with reason comments for intentional patterns completed:2026-02-08
     - [x] t135.2.4 Remove blanket disable line from each script completed:2026-02-08
     - [x] t135.2.5 Verify zero violations with linters-local.sh completed:2026-02-08
