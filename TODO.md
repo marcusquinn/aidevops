@@ -298,21 +298,21 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - Notes: Document the pattern: memories are a staging area for learnings. Once validated (fix merged, pattern confirmed), graduate into shared docs. Add /graduate-memories command or integrate into session-review. Prevents knowledge staying local.
   - Notes: Memory audit found 26 useful learnings that only exist locally. 7 architecture decisions, 5 codebase patterns, 3 model routing insights, and recovery techniques that would help all aidevops users. These need to move from SQLite memory into shipped docs.
 - [x] t180 Post-merge verification via todo/VERIFY.md — dispatch verification workers after PR merge to confirm deliverables work #feature #supervisor #quality ~3h (ai:2h test:1h) ref:GH#670 assignee:marcusquinn started:2026-02-08T22:38:20Z logged:2026-02-08 completed:2026-02-09 verified:2026-02-09 PR #679 merged
-  - [x] t180.1 Add verify states to supervisor state machine (merged -> verifying -> verified/verify_failed) ~1h blocked-by:none
+  - [x] t180.1 Add verify states to supervisor state machine (merged -> verifying -> verified/verify_failed) ~1h blocked-by:none pr:#679
     - Notes: New states between merged and deployed. On merge, supervisor auto-appends entry to todo/VERIFY.md with task ID, PR number, changed files, and auto-generated check commands. Dispatch a verification worker that runs the checks. If verify fails, task goes to verify_failed and reopens the TODO.md task with a bugfix note.
-  - [x] t180.2 Create VERIFY.md auto-population in supervisor merge phase ~30m blocked-by:t180.1
+  - [x] t180.2 Create VERIFY.md auto-population in supervisor merge phase ~30m blocked-by:t180.1 pr:#679
     - Notes: After PR merge, supervisor extracts: changed files from PR, generates check commands (shellcheck for .sh, file-exists for .md, rg for index references), appends to todo/VERIFY.md. Format is TOON-style with check: directives per entry.
-  - [x] t180.3 Create verification worker prompt and dispatch logic ~30m blocked-by:t180.1
+  - [x] t180.3 Create verification worker prompt and dispatch logic ~30m blocked-by:t180.1 pr:#679
     - Notes: Lightweight worker reads todo/VERIFY.md, runs each check: directive, marks [x] (pass) or [!] (fail) with evidence. On fail, reopens original task in TODO.md and creates follow-up bugfix task. On pass, supervisor transitions to deployed and marks TODO.md [x].
-  - [x] t180.4 Wire verify phase into pulse cycle ~30m blocked-by:t180.1
+  - [x] t180.4 Wire verify phase into pulse cycle ~30m blocked-by:t180.1 pr:#679
     - Notes: After merge phase, auto-dispatch verify worker for entries in VERIFY.md. Only transition to deployed after verify passes. Add --skip-verify flag for trusted/trivial tasks. Batch verify multiple tasks in single worker dispatch for efficiency.
   - Notes: Root cause: 12 GitHub issues were open for tasks marked [x] that were never verified. Memory audit revealed pattern of tasks marked complete without checking deliverables actually work. Design: todo/VERIFY.md acts as a verification queue with machine-parseable check directives. Workers verify, supervisor acts on results.
 - [x] t181 Memory deduplication and auto-pruning — prevent duplicate memories and prune stale entries #bugfix #memory #self-improvement ~1h (ai:45m test:15m) ref:GH#671 assignee:marcusquinn started:2026-02-08T22:56:04Z logged:2026-02-08 completed:2026-02-09 verified:2026-02-09 PR #681 merged
-  - [x] t181.1 Add content-hash dedup on memory store ~30m blocked-by:none
+  - [x] t181.1 Add content-hash dedup on memory store ~30m blocked-by:none pr:#681
     - Notes: Before inserting, check if a memory with identical or near-identical content already exists (fuzzy match using word overlap, similar to consolidate). Skip insert if >90% match. Currently 23 copies of "Failed: Task blocked" exist.
-  - [x] t181.2 Cap supervisor retry/pulse log memories ~15m blocked-by:none
+  - [x] t181.2 Cap supervisor retry/pulse log memories ~15m blocked-by:none pr:#681
     - Notes: Auto-distill and supervisor retry logging create duplicate entries every pulse cycle. Either: (a) only store first occurrence of each retry pattern per task, or (b) update existing memory instead of creating new one, or (c) use a separate retry_log table instead of learnings.
-  - [x] t181.3 Auto-prune memories for issues that have been fixed ~15m blocked-by:none
+  - [x] t181.3 Auto-prune memories for issues that have been fixed ~15m blocked-by:none pr:#681
     - Notes: When a PR merges that fixes an issue referenced in a memory, mark those memories as resolved/stale. Could tag with PR# and auto-archive on merge. Currently 350 ERROR_FIX memories, many for issues fixed weeks ago.
   - Notes: 881 memories, 654 auto-captured, massive duplication. Top duplicate: "Failed: Task blocked" x23. Auto-distill creates identical entries across pulse cycles. Memory is becoming noise rather than signal.
 - [x] t182 GHA auto-fix workflow safety — validate auto-fixes before committing #bugfix #ci #quality ~30m (ai:20m test:10m) ref:GH#672 assignee:marcusquinn started:2026-02-08T23:07:18Z logged:2026-02-08 completed:2026-02-09 verified:2026-02-09 PR #684 merged
@@ -324,9 +324,9 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - Notes: cmd_close() currently only looks up issues by ref:GH#NNN from TODO.md. When ref:GH# is stale/wrong (e.g. issue recreated with new number), the close silently skips. Add fallback: gh issue list --search "tNNN in:title" --state open. Also fix ref:GH# in TODO.md when mismatch detected.
   - [x] t179.2 Add reconcile command to fix mismatched ref:GH# values in TODO.md ~30m blocked-by:t179.1 verified:2026-02-11
     - Notes: Scan all tasks with ref:GH#, verify the issue number matches an issue with the task ID in its title. Fix mismatches. Run as part of status command output.
-  - [x] t179.3 Wire issue-sync close into supervisor pulse cycle as periodic reconciliation ~30m blocked-by:t179.1
+  - [x] t179.3 Wire issue-sync close into supervisor pulse cycle as periodic reconciliation ~30m blocked-by:t179.1 pr:#677
     - Notes: Add Phase 8 to pulse cycle: run issue-sync-helper.sh close after TODO reconciliation (Phase 7). Only run when no workers active (same guard as reconcile-todo). Prevents stale issues accumulating between manual syncs.
-  - [x] t179.4 Add issue-sync close to postflight/session-review checklist ~15m blocked-by:t179.1
+  - [x] t179.4 Add issue-sync close to postflight/session-review checklist ~15m blocked-by:t179.1 pr:#677
     - Notes: After PR merge and TODO update, remind to check issue sync. Or auto-run close as part of postflight.
   - Notes: Root cause discovered 2026-02-08: 12 GitHub issues were open for completed tasks because ref:GH# values in TODO.md didn't match actual issue numbers (issues recreated with new numbers by push command). The GHA workflow runs close on push but uses ref:GH# for lookup, missing the mismatched issues. Also fixed: task ID grep truncation bug (t131 matching t131.vision) in PR #668.
 - [x] t168 /compare-models and /compare-models-free commands for model capability comparison #feature #tools #multi-model ~4h (ai:3h test:30m read:30m) ref:GH#626 assignee:marcusquinn started:2026-02-08T20:42:38Z logged:2026-02-08 completed:2026-02-08 verified:2026-02-08 PR #660 merged
@@ -362,13 +362,13 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Root cause: t128.8 migration uses INSERT INTO tasks SELECT * FROM tasks_old which fails on column count mismatch if migrations run out of order. No backup before destructive table rename/recreate migrations. Fix: 1) Add backup_db() helper with SQLite .backup, timestamped copies, auto-prune to 5. 2) Add backup before t128.8 and t148 destructive migrations. 3) Fix t128.8 SELECT * to use explicit column list. 4) Add backup/restore commands for manual recovery.
 
 - [x] t163 Prevent false task completion cascade (AGENTS.md rule + issue-sync guard + supervisor verify) #plan #quality #workflow → [todo/PLANS.md] ~4h (ai:2h test:1h read:1h) ref:GH#618 logged:2026-02-08 completed:2026-02-08 verified:2026-02-08 PR #622 merged
-  - [x] t163.1 Add task completion rules to AGENTS.md Planning & Tasks section ~15m blocked-by:none
+  - [x] t163.1 Add task completion rules to AGENTS.md Planning & Tasks section ~15m blocked-by:none pr:#622
     - Notes: Rule: NEVER mark [x] unless YOU wrote code/content in THIS session. Workers leave tasks for reviewer. Verify deliverable exists and is substantive before marking.
   - [x] t163.2 Add guard to issue-sync-helper.sh cmd_close() - require merged PR or verified: field ~1h blocked-by:none
     - Notes: cmd_close currently blindly closes issues when TODO.md has [x]. Add check: task must have either a merged PR ref or verified:YYYY-MM-DD field. Dry-run by default, --force for real close.
-  - [x] t163.3 Add pre-commit validation for TODO.md [x] transitions ~1h blocked-by:none
+  - [x] t163.3 Add pre-commit validation for TODO.md [x] transitions ~1h blocked-by:none pr:#622
     - Notes: Git hook or CI check: when task goes [ ] -> [x], verify current branch has commits touching related files. Warn if no deliverable found.
-  - [x] t163.4 Add supervisor verify phase after worker PR merge ~1.5h blocked-by:none
+  - [x] t163.4 Add supervisor verify phase after worker PR merge ~1.5h blocked-by:none pr:#622
     - Notes: After merge, supervisor checks: file exists, not empty, ShellCheck pass for .sh, word count > threshold for .md. Only after verify -> [x] + issue close.
 
 - [x] t164 Distributed task claiming via GitHub Issue assignees #feature #supervisor ref:GH#619 logged:2026-02-08 verified:2026-02-08
@@ -467,15 +467,15 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t136.5 Scaffold aidevops-pro and aidevops-anon repos ~2h blocked-by:t136.3,t136.4 ref:GH#732 assignee:marcusquinn started:2026-02-09T17:00:18Z completed:2026-02-09 pr:#792
   - Notes: Namespaced plugin architecture (pro.md + pro/) to avoid clashes. Plugin AGENTS.md points to main framework. Minimal CI (local linting only) for private repos. aidevops update deploys main + all plugins. Open questions: license (MIT vs proprietary), Gitea Actions availability, plugin deploy order, subagent index strategy.
 - [x] t135 Codebase Quality Hardening (Opus 4.6 review findings) #plan #quality #hardening → [todo/PLANS.md#2026-02-07-codebase-quality-hardening] ~3d (ai:1.5d test:1d read:0.5d) ref:GH#545 logged:2026-02-07 completed:2026-02-08 verified:2026-02-08
-  - [x] t135.1 P0-A: Add set -euo pipefail to 61 scripts missing strict mode ~4h blocked-by:none completed:2026-02-08
-    - [x] t135.1.1 Audit scripts for intentional failures needing || true guards completed:2026-02-08
-    - [x] t135.1.2 Add set -euo pipefail with appropriate guards ~1.5h blocked-by:t135.1.1 completed:2026-02-08
-    - [x] t135.1.3 Run bash -n + shellcheck on all modified scripts ~15m blocked-by:t135.1.2 completed:2026-02-08
-    - [x] t135.1.4 Smoke test help command for each modified script ~15m blocked-by:t135.1.3 completed:2026-02-08
+  - [x] t135.1 P0-A: Add set -euo pipefail to 61 scripts missing strict mode ~4h blocked-by:none completed:2026-02-08 pr:#491
+    - [x] t135.1.1 Audit scripts for intentional failures needing || true guards completed:2026-02-08 pr:#491
+    - [x] t135.1.2 Add set -euo pipefail with appropriate guards ~1.5h blocked-by:t135.1.1 completed:2026-02-08 pr:#491
+    - [x] t135.1.3 Run bash -n + shellcheck on all modified scripts ~15m blocked-by:t135.1.2 completed:2026-02-08 pr:#491
+    - [x] t135.1.4 Smoke test help command for each modified script ~15m blocked-by:t135.1.3 completed:2026-02-08 pr:#491
     - Notes: PR #491 merged. Added strict mode to 61 active scripts. Fixed 9 unguarded grep/pipeline calls in 4 scripts. Also fixed CI monitor-code-review.sh wait $pid under set -e (PR #492).
-  - [x] t135.2 P0-B: Replace blanket ShellCheck disables with targeted inline disables (95 scripts) ~8h blocked-by:none completed:2026-02-08
-    - [x] t135.2.1 Run shellcheck without blanket disable, categorize actual violations per-script completed:2026-02-08
-    - [x] t135.2.2 Fix genuine violations (SC2086, SC2155) where safe completed:2026-02-08
+  - [x] t135.2 P0-B: Replace blanket ShellCheck disables with targeted inline disables (95 scripts) ~8h blocked-by:none completed:2026-02-08 pr:#492
+    - [x] t135.2.1 Run shellcheck without blanket disable, categorize actual violations per-script completed:2026-02-08 pr:#492
+    - [x] t135.2.2 Fix genuine violations (SC2086, SC2155) where safe completed:2026-02-08 pr:#492
     - [x] t135.2.3 Add targeted inline disables with reason comments for intentional patterns completed:2026-02-08
     - [x] t135.2.4 Remove blanket disable line from each script completed:2026-02-08
     - [x] t135.2.5 Verify zero violations with linters-local.sh completed:2026-02-08
