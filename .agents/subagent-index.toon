@@ -1,4 +1,4 @@
-<!--TOON:agents[12]{name,file,purpose,model_tier}:
+<!--TOON:agents[11]{name,file,purpose,model_tier}:
 Build+,build-plus.md,Enhanced Build with context tools,opus
 Accounts,accounts.md,Financial operations,opus
 Content,content.md,Content creation workflows,opus
@@ -10,7 +10,6 @@ Sales,sales.md,Sales operations and CRM pipeline (FluentCRM),opus
 SEO,seo.md,SEO optimization and analysis,opus
 Social-Media,social-media.md,Social media management,opus
 Video,video.md,AI video generation and prompt engineering,opus
-YouTube,youtube.md,YouTube competitor research and content automation,sonnet
 -->
 
 <!--TOON:model_tiers[6]{tier,model_id,use_case}:
@@ -22,7 +21,7 @@ pro,gemini-2.5-pro,Capable large context
 grok,grok-3,Research and real-time web knowledge
 -->
 
-<!--TOON:subagents[49]{folder,purpose,key_files}:
+<!--TOON:subagents[48]{folder,purpose,key_files}:
 aidevops/,Framework internals - extending aidevops and architecture and plugins,setup|architecture|troubleshooting|self-improving-agents|claude-flow-comparison|plugins
 memory/,Cross-session memory - SQLite FTS5 storage,README
 seo/,Search optimization - keywords and rankings and UX/CRO,dataforseo|serper|semrush|neuronwriter|google-search-console|gsc-sitemaps|site-crawler|eeat-score|analytics-tracking|bing-webmaster-tools|screaming-frog|rich-results|debug-opengraph|debug-favicon|contentking|programmatic-seo|schema-validator|content-analyzer|seo-optimizer|keyword-mapper|mom-test-ux
@@ -69,7 +68,6 @@ services/crm/,CRM integration - contact management,fluentcrm
 services/analytics/,Website analytics - GA4 reporting,google-analytics
 services/ai-generation/,AI generation API gateway - unified access to 200+ models (image video audio 3D),wavespeed
 services/monitoring/,Error monitoring and debugging,sentry|socket
-youtube/,YouTube competitor research - channel intel topic research script writing and optimization,channel-intel|topic-research|script-writer|optimizer|pipeline
 services/accounting/,Accounting integration - invoicing,quickfile
 services/document-processing/,Document processing - LLM-powered extraction,unstract
 -->

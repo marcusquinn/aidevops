@@ -314,9 +314,9 @@ AI: Analyzing video dQw4w9WgXcQ...
 
 ## Related
 
-- `youtube.md` - Main YouTube agent
-- `youtube/channel-intel.md` - Deep competitor profiling
-- `youtube/topic-research.md` - Advanced topic research
+- `content/distribution/youtube/youtube.md` - Main YouTube agent
+- `content/distribution/youtube/channel-intel.md` - Deep competitor profiling
+- `content/distribution/youtube/topic-research.md` - Advanced topic research
 - `/youtube setup` - Configure tracking
 - `/youtube script` - Generate scripts from research
 - `youtube-helper.sh` - YouTube Data API wrapper

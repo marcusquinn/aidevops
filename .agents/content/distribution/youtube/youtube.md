@@ -32,7 +32,7 @@ tools:
 - **Memory**: Cross-session persistence via `memory-helper.sh` (namespace: `youtube`)
 - **Commands**: `/youtube setup`, `/youtube research`, `/youtube competitors`, `/youtube script`, `/youtube pipeline`
 
-**Subagents** (`youtube/`):
+**Subagents** (this directory):
 
 | Subagent | Purpose |
 |----------|---------|
@@ -60,18 +60,19 @@ Read this agent when the user wants to:
 The YouTube agent composes existing aidevops tools rather than building from scratch:
 
 ```text
-youtube.md (orchestrator)
+content/distribution/youtube/
   |
-  +-- youtube-helper.sh          YouTube Data API v3 wrapper
-  +-- yt-dlp-helper.sh           Video/transcript download
-  +-- keyword-research-helper.sh SEO keyword data
-  +-- memory-helper.sh           Cross-session persistence
+  +-- youtube.md (orchestrator)
+  +-- channel-intel.md           Competitor profiling
+  +-- topic-research.md          Ideation & gap analysis
+  +-- script-writer.md           Script generation
+  +-- optimizer.md               Title/tag/description optimization
+  +-- pipeline.md                Automated cron pipeline
   |
-  +-- youtube/channel-intel.md   Competitor profiling
-  +-- youtube/topic-research.md  Ideation & gap analysis
-  +-- youtube/script-writer.md   Script generation
-  +-- youtube/optimizer.md       Title/tag/description optimization
-  +-- youtube/pipeline.md        Automated cron pipeline
+  +-- youtube-helper.sh          YouTube Data API v3 wrapper (scripts/)
+  +-- yt-dlp-helper.sh           Video/transcript download (scripts/)
+  +-- keyword-research-helper.sh SEO keyword data (scripts/)
+  +-- memory-helper.sh           Cross-session persistence (scripts/)
 ```
 
 ## Data Sources (No Browser Required)
@@ -167,29 +168,29 @@ memory-helper.sh recall --namespace youtube "competitor analysis"
 
 ## Workflow: Full Research Cycle
 
-1. **Channel Intel** (read `youtube/channel-intel.md`)
+1. **Channel Intel** (read `channel-intel.md`)
    - Profile your channel and 3-5 competitors
    - Identify outlier videos (3x+ channel average views)
    - Extract content DNA (topics, formats, angles)
 
-2. **Topic Research** (read `youtube/topic-research.md`)
+2. **Topic Research** (read `topic-research.md`)
    - Content gap analysis (your topics vs competitors)
    - Keyword clustering for YouTube search
    - Trend detection (rising topics before they peak)
    - Angle generation (unique takes on proven topics)
 
-3. **Script Writing** (read `youtube/script-writer.md`)
+3. **Script Writing** (read `script-writer.md`)
    - Generate scripts with hook -> intro -> body -> CTA
    - Remix mode: transform competitor video into unique script
    - Audience retention curve optimization
 
-4. **Optimization** (read `youtube/optimizer.md`)
+4. **Optimization** (read `optimizer.md`)
    - Title variants with CTR signals
    - Tag generation (primary + long-tail + competitor)
    - SEO-optimized descriptions
    - Thumbnail analysis and generation brief
 
-5. **Pipeline** (read `youtube/pipeline.md`)
+5. **Pipeline** (read `pipeline.md`)
    - Automated daily/weekly research via cron
    - Each phase runs as isolated worker (no context overflow)
    - Results persist in memory across sessions

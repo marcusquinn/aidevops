@@ -291,11 +291,11 @@ With 10,000 daily quota units, you can run the full pipeline daily and still hav
 
 ## Related
 
-- `youtube.md` — Main YouTube agent
-- `youtube/channel-intel.md` — Worker 1 detailed instructions
-- `youtube/topic-research.md` — Worker 2 detailed instructions
-- `youtube/script-writer.md` — Worker 3 detailed instructions
-- `youtube/optimizer.md` — Worker 4 detailed instructions
+- `youtube.md` — Main YouTube orchestrator (this directory)
+- `channel-intel.md` — Worker 1 detailed instructions
+- `topic-research.md` — Worker 2 detailed instructions
+- `script-writer.md` — Worker 3 detailed instructions
+- `optimizer.md` — Worker 4 detailed instructions
 - `tools/ai-assistants/headless-dispatch.md` — Supervisor architecture
 - `tools/automation/cron-agent.md` — Cron job configuration
 - `scripts/supervisor-helper.sh` — Supervisor CLI reference

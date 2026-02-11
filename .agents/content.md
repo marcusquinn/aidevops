@@ -77,7 +77,7 @@ subagents:
    - `audio.md` - Voice pipeline, sound design, emotional cues
    - `characters.md` - Facial engineering, character bibles, personas
 4. **Distribution** (`content/distribution/`) - Multi-channel publishing
-   - `youtube/` - Long-form YouTube (migrated from root `.agents/youtube/`)
+   - `youtube/` - Long-form YouTube (channel-intel, topic-research, script-writer, optimizer, pipeline)
    - `short-form.md` - TikTok, Reels, Shorts (9:16, 1-3s cuts)
    - `social.md` - X, LinkedIn, Reddit (platform-native tone)
    - `blog.md` - SEO-optimized articles (references `seo/`)
@@ -134,7 +134,7 @@ subagents:
 3. Upsell ladder
 4. Q4 seasonality awareness for buying intent
 
-**Migration Note**: YouTube agents moved from `.agents/youtube/` to `.agents/content/distribution/youtube/` as of t199.8. YouTube is a distribution channel, not a main agent. Root `.agents/` is reserved for main domain agents only.
+**Note**: YouTube agents live in `.agents/content/distribution/youtube/` (migrated from root `.agents/youtube/` in t199.8). YouTube is a distribution channel, not a main agent. Root `.agents/` is reserved for main domain agents only.
 
 <!-- AI-CONTEXT-END -->
 
@@ -226,8 +226,8 @@ Traditional content creation is linear: research → write → publish. This pip
 - `tools/browser/crawl4ai.md` - Web content extraction
 - `seo/google-search-console.md` - Performance data
 - `seo/dataforseo.md` - Keyword volume and difficulty
-- `youtube/channel-intel.md` - Competitor channel analysis
-- `youtube/topic-research.md` - Topic validation
+- `content/distribution/youtube/channel-intel.md` - Competitor channel analysis
+- `content/distribution/youtube/topic-research.md` - Topic validation
 
 ## Story Phase
 
@@ -309,8 +309,6 @@ Traditional content creation is linear: research → write → publish. This pip
 **Purpose**: Adapt media assets to platform-specific formats and conventions.
 
 ### YouTube (`content/distribution/youtube/`)
-
-**Migrated from** `.agents/youtube/` (as of t199.8).
 
 **Subagents**:
 

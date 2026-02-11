@@ -371,14 +371,14 @@ memory-helper.sh recall --namespace youtube "channel voice"
 | `content/seo-writer.md` | SEO-optimize the script for search |
 | `content/humanise.md` | Remove AI writing patterns from generated scripts |
 | `content/platform-personas.md` | YouTube-specific voice guidelines |
-| `youtube/optimizer.md` | Generate titles, tags, descriptions from the script |
-| `youtube/topic-research.md` | Feed validated topics into script generation |
+| `optimizer.md` | Generate titles, tags, descriptions from the script |
+| `topic-research.md` | Feed validated topics into script generation |
 | `tools/voice/transcription.md` | Transcribe your own videos for voice analysis |
 
 ## Related
 
-- `youtube.md` — Main YouTube agent
-- `youtube/topic-research.md` — Topic validation before scripting
-- `youtube/optimizer.md` — Title/tag/description from completed scripts
+- `youtube.md` — Main YouTube orchestrator (this directory)
+- `topic-research.md` — Topic validation before scripting
+- `optimizer.md` — Title/tag/description from completed scripts
 - `content.md` — General content writing workflows
 - `tools/video/video-prompt-design.md` — If generating AI video from the script
