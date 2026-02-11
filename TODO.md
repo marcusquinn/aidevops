@@ -9,12 +9,12 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 **Human-readable:**
 
 ```markdown
-- [ ] t001 Task description @owner #tag ~4h (ai:2h test:1h read:30m) logged:2025-01-15
-  - [ ] t001.1 Subtask ~2h blocked-by:t002 ref:GH#1113
-    - [ ] t001.1.1 Sub-subtask ~1h ref:GH#1114
-  - [ ] t001.2 Another subtask ~1h blocks:t003 ref:GH#1115
-- [x] t002 Completed task ~2h actual:1.5h logged:2025-01-10 completed:2025-01-15
-- [-] t003 Declined task
+- [ ] tXXX Task description @owner #tag ~4h (ai:2h test:1h read:30m) logged:2025-01-15
+  - [ ] tXXX.1 Subtask ~2h blocked-by:tYYY
+    - [ ] tXXX.1.1 Sub-subtask ~1h
+  - [ ] tXXX.2 Another subtask ~1h blocks:tZZZ
+- [x] tYYY Completed task ~2h actual:1.5h logged:2025-01-10 completed:2025-01-15
+- [-] tZZZ Declined task
 ```
 
 **Task ID format:**
