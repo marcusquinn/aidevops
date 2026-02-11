@@ -188,43 +188,29 @@ export const defaultMCPs: MCPConfig[] = [
 ];
 ```
 
-#### 3. Quality Hooks
+#### 3. Quality Hooks (Implemented in t008.3)
 
-```typescript
-// src/hooks/pre-commit.ts
-import type { PluginInput, HookResult } from '@opencode-ai/plugin';
-import { exec } from 'child_process';
-import { promisify } from 'util';
+The quality hooks are implemented directly in `index.mjs` using the
+`experimental.preToolUse` and `experimental.postToolUse` plugin events.
 
-const execAsync = promisify(exec);
+**PreToolUse** — intercepts Write/Edit on `.sh` files, runs ShellCheck via temp
+file, returns warnings as non-blocking context to the AI agent.
 
-export function createPreCommitHook(input: PluginInput) {
-  return {
-    event: 'PreToolUse',
-    matcher: /^(Write|Edit)$/,
-    async handler(context: any): Promise<HookResult> {
-      const { tool, args } = context;
-      
-      // Skip if not a shell script
-      if (!args.filePath?.endsWith('.sh')) {
-        return { continue: true };
-      }
-      
-      // Run ShellCheck
-      try {
-        await execAsync(`shellcheck "${args.filePath}"`);
-      } catch (error: any) {
-        return {
-          continue: true,
-          message: `ShellCheck warnings:\n${error.stdout}`,
-        };
-      }
-      
-      return { continue: true };
-    },
-  };
+**PostToolUse** — tracks modified files, provides periodic quality reminders
+(every 10 edits), and post-commit notes for unchecked shell scripts.
+
+**Configuration** — `~/.config/aidevops/plugin-config.json`:
+
+```json
+{
+  "hooks": {
+    "qualityChecks": true
+  }
 }
 ```
+
+**Extensibility** — the `QUALITY_CHECKERS` map in `index.mjs` can be extended
+to support additional file types and linters beyond ShellCheck.
 
 #### 4. Main Plugin Entry
 
@@ -382,11 +368,11 @@ export async function loadConfig(): Promise<Config> {
 - [ ] MCP registration
 - [ ] aidevops CLI tool
 
-### Phase 2: Hooks
+### Phase 2: Hooks (t008.3)
 
-- [ ] Pre-commit quality checks (ShellCheck)
-- [ ] Post-tool-use logging
-- [ ] Quality check reminders
+- [x] Pre-commit quality checks (ShellCheck) — `experimental.preToolUse` hook
+- [x] Post-tool-use quality reminders — `experimental.postToolUse` hook
+- [x] Configurable via `~/.config/aidevops/plugin-config.json`
 
 ### Phase 3: Enhanced Features
 
