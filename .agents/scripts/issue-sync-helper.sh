@@ -1168,7 +1168,12 @@ task_has_completion_evidence() {
         return 0
     fi
 
-    # Check 2: Has a merged PR reference in the task line (e.g., "PR #NNN merged" in Notes)
+    # Check 2a: Has pr:#NNN field in the task line (supervisor-written proof-log format)
+    if echo "$task_line" | grep -qE 'pr:#[0-9]+'; then
+        return 0
+    fi
+
+    # Check 2b: Has a merged PR reference in the task line (e.g., "PR #NNN merged" in Notes)
     # Look for the task and its Notes lines
     if echo "$task_line" | grep -qiE 'PR #[0-9]+ merged|PR.*merged'; then
         return 0
