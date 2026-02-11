@@ -1137,7 +1137,7 @@ t165,Provider-agnostic task claiming via TODO.md,marcusquinn,orchestration archi
   - Notes: All 4 phases complete. 1) Disabled built-in build/plan agents. 2) Set Plan+ as default_agent. 3) Added granular bash permissions for file discovery (git ls-files, fd, rg --files). 4) Updated generate-opencode-agents.sh. PR #123 merged.
 - [x] t065 Fix postflight warnings: SonarCloud critical issues + OpenCode Agent workflow #bugfix #quality ~2h actual:30m logged:2026-01-17 started:2026-01-18T18:00Z completed:2026-01-18
   - Notes: SonarCloud quality gate was already OK. Fixed OpenCode Agent workflow failing on `pull_request_review_comment` events due to `context.payload.issue` being undefined. Now uses `context.payload.pull_request` as fallback and appropriate API methods for PR review comments. PR #121 merged.
-- [x] t001 Add TODO.md and planning workflow #workflow ~2h actual:1.5h ref:GH#544 logged:2025-12-18 completed:2025-12-20 verified:2026-02-11
+- [x] t001 Add TODO.md and planning workflow #workflow ~2h actual:1.5h ref:GH#1112 logged:2025-12-18 completed:2025-12-20 verified:2026-02-11
 - [x] t002 Add shadcn/ui MCP support #tools ~1h actual:45m logged:2025-12-18 completed:2025-12-18
 - [x] t003 Add oh-my-opencode integration #tools ~30m actual:25m logged:2025-12-18 completed:2025-12-18
 - [x] t011 Demote wordpress.md from main agent to subagent #architecture ~1h actual:45m logged:2025-12-21 started:2025-12-22T04:10Z completed:2025-12-22
