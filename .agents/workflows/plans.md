@@ -115,6 +115,35 @@ When a task meets Ralph criteria, add the `#ralph` tag:
 - [ ] t044 Design new dashboard layout #feature ~3h  (NOT ralph-able)
 ```
 
+### Auto-Dispatch Tagging
+
+When creating TODO entries, assess whether the task can run autonomously without user monitoring. If yes, add `#auto-dispatch`. The supervisor's Phase 0 picks these up automatically on the next cron pulse.
+
+**Add `#auto-dispatch` when ALL of these are true:**
+- Clear fix/feature description with specific files or patterns to change
+- Bounded scope (~2h or less estimated)
+- No user credentials, accounts, or purchases needed
+- No design decisions requiring user preference
+- Verification is automatable (tests, ShellCheck, syntax check, browser test)
+
+**Do NOT add `#auto-dispatch` when ANY of these are true:**
+- Task requires user to provide credentials, top up accounts, or make purchases
+- Task is a `#plan` that needs decomposition into subtasks first
+- Task requires hardware setup or external service configuration
+- Task description says "investigate" or "evaluate" without a clear deliverable
+- Task has `blocked-by:` dependencies on incomplete tasks
+
+**Examples:**
+
+```markdown
+- [ ] t042 Fix ShellCheck violations in helper.sh #bugfix #auto-dispatch ~30m
+- [ ] t043 Add download --count flag to automator #enhancement #auto-dispatch ~1h
+- [ ] t044 Investigate API pricing tiers #investigation ~30m  (NOT auto-dispatch)
+- [ ] t045 Design new dashboard layout #plan ~3h  (NOT auto-dispatch — needs decomposition)
+```
+
+**AI agents MUST**: When creating a new TODO entry, always evaluate auto-dispatch eligibility and add the tag if criteria are met. Default to including `#auto-dispatch` — only omit when a specific exclusion criterion applies. The goal is to keep the autonomous pipeline moving.
+
 ### Ralph Task Requirements
 
 When tagging a task as `#ralph`, ensure it includes:
