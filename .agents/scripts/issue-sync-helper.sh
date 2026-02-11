@@ -1160,6 +1160,39 @@ add_gh_ref_to_todo() {
     return 0
 }
 
+# Add pr:#NNN to a task line in TODO.md (t280)
+# Called by cmd_close() when find_closing_pr() discovers a PR that isn't
+# already recorded in the task line. This ensures the proof-log is complete.
+add_pr_ref_to_todo() {
+    local task_id="$1"
+    local pr_number="$2"
+    local todo_file="$3"
+
+    # Check if pr: ref already exists for this PR number
+    if grep -qE "^\s*- \[.\] ${task_id} .*pr:#${pr_number}" "$todo_file" 2>/dev/null; then
+        return 0
+    fi
+
+    # Check if any pr: ref already exists (don't duplicate)
+    if grep -qE "^\s*- \[.\] ${task_id} .*pr:#" "$todo_file" 2>/dev/null; then
+        log_verbose "$task_id already has a pr: ref, skipping"
+        return 0
+    fi
+
+    # Add pr:#NNN before logged: or completed: or at end of line
+    if grep -qE "^\s*- \[.\] ${task_id} .* logged:" "$todo_file" 2>/dev/null; then
+        sed_inplace -E "s/^([[:space:]]*- \[.\] ${task_id} .*)( logged:)/\1 pr:#${pr_number}\2/" "$todo_file"
+    elif grep -qE "^\s*- \[.\] ${task_id} .* completed:" "$todo_file" 2>/dev/null; then
+        sed_inplace -E "s/^([[:space:]]*- \[.\] ${task_id} .*)( completed:)/\1 pr:#${pr_number}\2/" "$todo_file"
+    else
+        # Append at end of line
+        sed_inplace -E "s/^([[:space:]]*- \[.\] ${task_id} .*)/\1 pr:#${pr_number}/" "$todo_file"
+    fi
+
+    log_verbose "Added pr:#$pr_number to $task_id (t280: backfill proof-log)"
+    return 0
+}
+
 # Verify a completed task has evidence of real work (merged PR or verified: field)
 # Returns 0 if verified, 1 if not
 # shellcheck disable=SC2155
@@ -1362,6 +1395,11 @@ cmd_close() {
         if [[ -n "$closing_pr_info" ]]; then
             closing_pr_number="${closing_pr_info%%|*}"
             closing_pr_url="${closing_pr_info#*|}"
+
+            # t280: Write pr:#NNN back to TODO.md if missing (proof-log backfill)
+            if [[ "$DRY_RUN" != "true" && -n "$closing_pr_number" ]]; then
+                add_pr_ref_to_todo "$task_id" "$closing_pr_number" "$todo_file"
+            fi
         fi
 
         # Build close comment with PR reference for auditability (t220)
@@ -1462,6 +1500,11 @@ _close_single_task() {
     if [[ -n "$closing_pr_info" ]]; then
         closing_pr_number="${closing_pr_info%%|*}"
         closing_pr_url="${closing_pr_info#*|}"
+
+        # t280: Write pr:#NNN back to TODO.md if missing (proof-log backfill)
+        if [[ "$DRY_RUN" != "true" && -n "$closing_pr_number" ]]; then
+            add_pr_ref_to_todo "$task_id" "$closing_pr_number" "$todo_file"
+        fi
     fi
 
     local close_comment="Completed. Task $task_id marked done in TODO.md."
