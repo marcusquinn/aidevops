@@ -11369,9 +11369,87 @@ process_verify_queue() {
 }
 
 #######################################
+# Post a comment to GitHub issue when a worker is blocked (t296)
+# Extracts the GitHub issue number from TODO.md ref:GH# field
+# Posts a comment explaining what's needed and removes auto-dispatch label
+# Args: task_id, blocked_reason, repo_path
+#######################################
+post_blocked_comment_to_github() {
+    local task_id="$1"
+    local reason="${2:-unknown}"
+    local repo_path="$3"
+
+    # Check if gh CLI is available
+    if ! command -v gh &>/dev/null; then
+        log_warn "gh CLI not available, skipping GitHub issue comment for $task_id"
+        return 0
+    fi
+
+    # Extract GitHub issue number from TODO.md
+    local todo_file="$repo_path/TODO.md"
+    if [[ ! -f "$todo_file" ]]; then
+        return 0
+    fi
+
+    local task_line
+    task_line=$(grep -E "^[[:space:]]*- \[.\] ${task_id} " "$todo_file" | head -1 || echo "")
+    if [[ -z "$task_line" ]]; then
+        return 0
+    fi
+
+    local gh_issue_num
+    gh_issue_num=$(echo "$task_line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
+    if [[ -z "$gh_issue_num" ]]; then
+        log_info "No GitHub issue reference found for $task_id, skipping comment"
+        return 0
+    fi
+
+    # Detect repo slug
+    local repo_slug
+    repo_slug=$(detect_repo_slug "$repo_path" 2>/dev/null || echo "")
+    if [[ -z "$repo_slug" ]]; then
+        log_warn "Could not detect repo slug for $repo_path, skipping GitHub comment"
+        return 0
+    fi
+
+    # Construct the comment body
+    local comment_body
+    comment_body="**Worker Blocked** 🚧
+
+The automated worker for this task encountered an issue and needs clarification:
+
+**Reason:** ${reason}
+
+**Next Steps:**
+1. Review the blocked reason above
+2. Provide the missing information or fix the blocking issue
+3. Add the \`#auto-dispatch\` tag to the task in TODO.md when ready for the next attempt
+
+The supervisor will automatically retry this task once it's tagged with \`#auto-dispatch\`."
+
+    # Post the comment
+    if gh issue comment "$gh_issue_num" --repo "$repo_slug" --body "$comment_body" 2>/dev/null; then
+        log_success "Posted blocked comment to GitHub issue #$gh_issue_num"
+    else
+        log_warn "Failed to post comment to GitHub issue #$gh_issue_num"
+    fi
+
+    # Remove auto-dispatch label if it exists
+    if gh issue edit "$gh_issue_num" --repo "$repo_slug" --remove-label "auto-dispatch" 2>/dev/null; then
+        log_success "Removed auto-dispatch label from GitHub issue #$gh_issue_num"
+    else
+        # Label might not exist, which is fine
+        log_info "auto-dispatch label not present on issue #$gh_issue_num (or removal failed)"
+    fi
+
+    return 0
+}
+
+#######################################
 # Update TODO.md when a task is blocked or failed
 # Adds Notes line with blocked reason
 # Then commits and pushes the change
+# t296: Also posts a comment to GitHub issue if ref:GH# exists
 #######################################
 update_todo_on_blocked() {
     local task_id="$1"
@@ -11430,6 +11508,9 @@ update_todo_on_blocked() {
     fi
 
     log_success "Updated TODO.md: $task_id marked blocked ($reason)"
+
+    # t296: Post comment to GitHub issue if ref:GH# exists
+    post_blocked_comment_to_github "$task_id" "$reason" "$trepo" 2>>"${SUPERVISOR_LOG:-/dev/null}" || true
 
     commit_and_push_todo "$trepo" "chore: mark $task_id blocked in TODO.md"
     return $?
