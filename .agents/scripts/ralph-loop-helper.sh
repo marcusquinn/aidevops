@@ -316,11 +316,10 @@ To complete, output: <promise>$completion_promise</promise> (ONLY when TRUE)"
 
         # Context-remaining guard (t247.1): detect approaching context
         # exhaustion and proactively signal + push before silent exit.
-        if type loop_context_guard &>/dev/null; then
-            if loop_context_guard "$output_file" "$iteration" "$max_iterations" "$output_sizes_file"; then
-                print_success "Context guard: work preserved, signal emitted"
-                return 0
-            fi
+        if type loop_context_guard &>/dev/null && \
+           loop_context_guard "$output_file" "$iteration" "$max_iterations" "$output_sizes_file"; then
+            print_success "Context guard: work preserved, signal emitted"
+            return 0
         fi
 
         # Track attempt and check for blocking

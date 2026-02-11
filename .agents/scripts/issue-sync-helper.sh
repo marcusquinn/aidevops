@@ -1506,11 +1506,9 @@ _close_single_task() {
         task_with_notes="$task_line"
     fi
 
-    if [[ "$FORCE_CLOSE" != "true" ]]; then
-        if ! task_has_completion_evidence "$task_with_notes" "$task_id" "$repo_slug"; then
-            print_warning "Skipping #$issue_number ($task_id): no merged PR or verified: field found"
-            return 0
-        fi
+    if [[ "$FORCE_CLOSE" != "true" ]] && ! task_has_completion_evidence "$task_with_notes" "$task_id" "$repo_slug"; then
+        print_warning "Skipping #$issue_number ($task_id): no merged PR or verified: field found"
+        return 0
     fi
 
     # Find closing PR
