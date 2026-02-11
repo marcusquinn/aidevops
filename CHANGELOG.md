@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.110.10] - 2026-02-11
+
+### Added
+
+- add OCR approaches research document (t012.1) (#1136)
+
 ## [2.110.9] - 2026-02-11
 
 ### Added
