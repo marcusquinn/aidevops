@@ -219,3 +219,13 @@
   check: file-exists .agents/subagent-index.toon
   check: file-exists .agents/tools/voice/pipecat-opencode.md
   check: rg "pipecat-opencode" .agents/subagent-index.toon
+
+- [ ] v022 t298 Auto-rebase BEHIND/DIRTY PRs in supervisor pulse — when... | PR #1166 | merged:2026-02-11
+  files: .agents/scripts/supervisor-helper.sh
+  check: shellcheck .agents/scripts/supervisor-helper.sh
+  check: file-exists .agents/scripts/supervisor-helper.sh
+
+- [ ] v023 t296 Workers comment on GH issues when blocked | PR #1167 | merged:2026-02-11
+  files: .agents/scripts/supervisor-helper.sh
+  check: shellcheck .agents/scripts/supervisor-helper.sh
+  check: file-exists .agents/scripts/supervisor-helper.sh
