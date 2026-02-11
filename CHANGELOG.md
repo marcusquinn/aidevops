@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.110.9] - 2026-02-11
+
+### Added
+
+- write pr:#NNN to TODO.md when closing issues (t280) (#1117)
+
+### Changed
+
+- Refactor: move wavespeed.md to tools/video/ with setup.sh migration (#1106)
+- Refactor: migrate YouTube agents from root to content/distribution/youtube/ (#1104)
+
+### Fixed
+
+- pre-dispatch check matched [x] in task description, not checkbox (t290) (#1132)
+- find_closing_pr() now reads pr:#NNN format from TODO.md (t291) (#1129)
+- PRs now cross-reference GitHub issues via Ref #NNN (t288) (#1118)
+- stash dirty working tree before batch auto-release (t276) (#1119)
+- guard against marking #plan tasks [x] when subtasks are open (t278) (#1110)
+- setup.sh stale file cleanup + false-close audit (t285, t286) (#1111)
+- remove 2>/dev/null from cmd_add calls in auto-pickup (t279) (#1109)
+
 ## [2.110.8] - 2026-02-11
 
 ### Changed
