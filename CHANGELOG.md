@@ -7,27 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.110.4] - 2026-02-11
+
 ### Added
 
-- aidevops-opencode plugin — full SDK rewrite with agent loader, MCP registration, quality hooks (t008) (#1073)
-- OCR invoice/receipt extraction pipeline with accounting support (t012) (#1074)
-- extraction schema design for vendor, amount, date, VAT, items (t012.2) (#1080)
-- Higgsfield Trinity UGC Windows storyboard template (t271) (#1069)
-- default Higgsfield output to ~/Downloads/higgsfield/ for interactive sessions (t270) (#1054)
+- auto-decompose t012 from PLANS.md (ocr-invoicereceipt-extraction-pipeline)
+- auto-decompose t008 from PLANS.md (aidevops-opencode-plugin)
+- default output to ~/Downloads/higgsfield/ for interactive sessions (t270) (#1054)
+
+### Changed
+
+- Documentation: add changelog entries for v2.110.4
 
 ### Fixed
 
 - verify_gh_cli accepts GH_TOKEN/GITHUB_TOKEN env vars for GitHub Actions compatibility (#1083)
-- recognize pr:#NNN field as completion evidence in issue-sync close (t282) (#1075)
-- prevent shell injection and race conditions in issue-sync workflow (#1070)
+- recognize pr:#NNN field as completion evidence in issue-sync close (#1075)
 - remove unsupported --metadata flag from auto-decomposition cmd_add (#1071)
-- fix decomposition worker dispatch to use standard CLI and process patterns (t274) (#1066)
-- fix Higgsfield image count detection after generation (t267) (#1068)
-- fix silent failure when downloading still-processing videos (t269) (#1067)
-
-### Changed
-
-- revert t271 Trinity UGC Windows template from shared codebase (#1072)
+- prevent shell injection and race conditions in issue-sync workflow (#1070)
+- unify image selector for generation detection (t267) (#1068)
+- use resolve_ai_cli() and standard dispatch pattern for decomposition worker (t274) (#1066)
 
 ## [2.110.3] - 2026-02-11
 
