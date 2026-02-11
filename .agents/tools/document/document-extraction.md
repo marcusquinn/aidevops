@@ -22,6 +22,7 @@ tools:
 - **Stack**: Docling (parsing) + ExtractThinker (LLM extraction) + Presidio (PII detection)
 - **Privacy**: Fully local processing via Ollama or Cloudflare Workers AI
 - **Helper**: `scripts/document-extraction-helper.sh`
+- **Schemas**: `tools/document/extraction-schemas.md` (full contracts with QuickFile mapping)
 - **Workflow**: `tools/document/extraction-workflow.md` (tool selection, pipeline orchestration)
 - **PRD**: `todo/tasks/prd-document-extraction.md`
 
@@ -31,14 +32,17 @@ tools:
 # Install dependencies
 document-extraction-helper.sh install --all
 
-# Extract structured data from an invoice
-document-extraction-helper.sh extract invoice.pdf --schema invoice --privacy local
+# Extract supplier invoice (UK VAT, QuickFile-ready)
+document-extraction-helper.sh extract invoice.pdf --schema purchase-invoice --privacy local
+
+# Extract shop receipt
+document-extraction-helper.sh extract receipt.jpg --schema expense-receipt --privacy local
 
 # Scan for PII
 document-extraction-helper.sh pii-scan document.txt
 
-# Check component status
-document-extraction-helper.sh status
+# List all schemas
+document-extraction-helper.sh schemas
 ```
 
 <!-- AI-CONTEXT-END -->
@@ -128,35 +132,57 @@ print(anonymized.text)  # "<PERSON>'s SSN is <US_SSN>"
 - **Entities**: PERSON, EMAIL, PHONE, SSN, CREDIT_CARD, IBAN, IP_ADDRESS, etc.
 - **Repo**: https://github.com/microsoft/presidio
 
-## Extraction Schemas (Templates)
+## Extraction Schemas
 
-> These are example/template schemas for common document types. Customize for your project.
+> Full schema contracts with field descriptions, VAT handling, and QuickFile mapping:
+> `tools/document/extraction-schemas.md`
 
-### Invoice
+### Accounting Schemas (UK VAT, QuickFile Integration)
+
+| Schema | Use Case | Command |
+|--------|----------|---------|
+| `purchase-invoice` | Supplier invoices with invoice number | `--schema purchase-invoice` |
+| `expense-receipt` | Till/shop receipts, fuel, meals | `--schema expense-receipt` |
+| `credit-note` | Supplier credit notes/refunds | `--schema credit-note` |
+
+### General Schemas
+
+| Schema | Use Case | Command |
+|--------|----------|---------|
+| `invoice` | Sales invoices (issued by you) | `--schema invoice` |
+| `receipt` | Generic receipts (no accounting) | `--schema receipt` |
+| `contract` | Contract key terms extraction | `--schema contract` |
+| `id-document` | Identity documents | `--schema id-document` |
+| `auto` | Auto-detect and convert to markdown | `--schema auto` |
+
+### Purchase Invoice (Summary)
 
 ```python
-class Invoice(BaseModel):
+class PurchaseInvoice(BaseModel):
     vendor_name: str
-    vendor_address: str | None
+    vendor_vat_number: str | None
     invoice_number: str
-    invoice_date: str
+    invoice_date: str          # YYYY-MM-DD
     due_date: str | None
     subtotal: float
-    tax: float | None
+    vat_amount: float          # Explicit VAT (not "tax")
     total: float
-    currency: str
-    line_items: list[LineItem]
+    currency: str              # Default: GBP
+    line_items: list[PurchaseLineItem]  # With per-line VAT rate + nominal code
 ```
 
-### Receipt
+### Expense Receipt (Summary)
 
 ```python
-class Receipt(BaseModel):
-    merchant: str
-    date: str
+class ExpenseReceipt(BaseModel):
+    merchant_name: str
+    date: str                  # YYYY-MM-DD
     total: float
-    payment_method: str | None
+    vat_amount: float | None   # If shown on receipt
+    currency: str              # Default: GBP
     items: list[ReceiptItem]
+    payment_method: str | None
+    expense_category: str | None  # Auto-categorised nominal code
 ```
 
 ### Contract
@@ -233,8 +259,10 @@ Use this stack when you need custom Pydantic schemas, PII redaction, or fully lo
 
 ## Related
 
+- `tools/document/extraction-schemas.md` - Full schema contracts with VAT handling and QuickFile mapping
 - `tools/document/extraction-workflow.md` - Workflow orchestration and tool selection guide
 - `scripts/document-extraction-helper.sh` - CLI helper script
+- `services/accounting/quickfile.md` - QuickFile MCP integration (target for extracted data)
 - `tools/document/docstrange.md` - DocStrange: simpler single-install alternative (NanoNets, 7B model, schema extraction)
 - `tools/conversion/pandoc.md` - Document format conversion
 - `tools/conversion/mineru.md` - PDF to markdown (layout-aware)
