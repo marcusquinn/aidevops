@@ -9593,11 +9593,17 @@ cmd_pulse() {
 
     # Phase 3: Post-PR lifecycle (t128.8)
     # Process tasks that workers completed (PR created) but still need merge/deploy
-    process_post_pr_lifecycle "${batch_id:-}" 2>/dev/null || true
+    # t265: Redirect stderr to log and capture errors before || true suppresses them
+    if ! process_post_pr_lifecycle "${batch_id:-}" 2>>"$SUPERVISOR_LOG"; then
+        log_error "Phase 3 (process_post_pr_lifecycle) failed — see $SUPERVISOR_LOG for details"
+    fi
 
     # Phase 3b: Post-merge verification (t180.4)
     # Run check: directives from VERIFY.md for deployed tasks
-    process_verify_queue "${batch_id:-}" 2>/dev/null || true
+    # t265: Redirect stderr to log and capture errors before || true suppresses them
+    if ! process_verify_queue "${batch_id:-}" 2>>"$SUPERVISOR_LOG"; then
+        log_error "Phase 3b (process_verify_queue) failed — see $SUPERVISOR_LOG for details"
+    fi
 
     # Phase 4: Worker health checks - detect dead, hung, and orphaned workers
     local worker_timeout_seconds="${SUPERVISOR_WORKER_TIMEOUT:-1800}"  # 30 min default
