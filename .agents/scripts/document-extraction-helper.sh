@@ -4,12 +4,15 @@ set -euo pipefail
 
 # Document Extraction Helper for AI DevOps Framework
 # Orchestrates document parsing, PII detection, and structured extraction
+# with validation pipeline, confidence scoring, and multi-model fallback.
 #
 # Usage: document-extraction-helper.sh [command] [options]
 #
 # Commands:
 #   extract <file> [--schema <name>] [--privacy <mode>] [--output <format>]
 #   batch <dir> [--schema <name>] [--privacy <mode>] [--pattern <glob>]
+#   classify <file>                  Classify document type from text/OCR
+#   validate <json-file>             Validate extracted JSON (VAT, dates, confidence)
 #   pii-scan <file>                  Scan for PII without extraction
 #   pii-redact <file> [--output <file>]  Redact PII from text
 #   convert <file> [--output <format>]   Convert document to markdown/JSON
@@ -23,7 +26,7 @@ set -euo pipefail
 # Schemas: purchase-invoice, expense-receipt, credit-note, invoice, receipt, contract, id-document, auto
 #
 # Author: AI DevOps Framework
-# Version: 1.0.0
+# Version: 2.0.0
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
@@ -31,6 +34,7 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 # Constants
 readonly VENV_DIR="${HOME}/.aidevops/.agent-workspace/python-env/document-extraction"
 readonly WORKSPACE_DIR="${HOME}/.aidevops/.agent-workspace/work/document-extraction"
+readonly PIPELINE_PY="${SCRIPT_DIR}/extraction_pipeline.py"
 
 # Ensure workspace exists
 ensure_workspace() {
@@ -115,9 +119,9 @@ install_core() {
 
     # Install packages
     "${VENV_DIR}/bin/pip" install --quiet --upgrade pip
-    "${VENV_DIR}/bin/pip" install --quiet docling extract-thinker
+    "${VENV_DIR}/bin/pip" install --quiet docling extract-thinker "pydantic>=2.0"
 
-    print_success "Core dependencies installed (docling, extract-thinker)"
+    print_success "Core dependencies installed (docling, extract-thinker, pydantic)"
     return 0
 }
 
@@ -223,6 +227,20 @@ do_status() {
         echo "  easyocr:        installed"
     else
         echo "  easyocr:        not installed"
+    fi
+
+    # Validation pipeline
+    echo ""
+    echo "Validation Pipeline:"
+    if [[ -f "$PIPELINE_PY" ]]; then
+        echo "  extraction_pipeline.py: available"
+        if check_python_package "pydantic" 2>/dev/null; then
+            echo "  pydantic:       installed"
+        else
+            echo "  pydantic:       not installed (run: pip install pydantic>=2.0)"
+        fi
+    else
+        echo "  extraction_pipeline.py: not found"
     fi
 
     # Related tools
@@ -388,6 +406,156 @@ print(f'Output: ${output_file}')
     return 0
 }
 
+# Classify document type from text or file
+do_classify() {
+    local input_file="$1"
+
+    validate_file_exists "$input_file" "Input file" || return 1
+
+    # If it's a text file, pass directly to pipeline
+    local ext="${input_file##*.}"
+    ext="$(echo "$ext" | tr '[:upper:]' '[:lower:]')"
+
+    if [[ "$ext" == "txt" ]] || [[ "$ext" == "md" ]]; then
+        "${VENV_DIR}/bin/python3" "$PIPELINE_PY" classify "$input_file" 2>/dev/null || {
+            # Fallback: use system python if venv not available
+            python3 "$PIPELINE_PY" classify "$input_file"
+        }
+        return $?
+    fi
+
+    # For non-text files, convert to text first via Docling or OCR
+    ensure_workspace
+    local basename
+    basename="$(basename "$input_file" | sed 's/\.[^.]*$//')"
+    local text_file="${WORKSPACE_DIR}/${basename}-ocr-text.txt"
+
+    if [[ "$ext" == "pdf" ]] || [[ "$ext" == "docx" ]] || [[ "$ext" == "html" ]]; then
+        # Try Docling conversion
+        if activate_venv 2>/dev/null && check_python_package "docling" 2>/dev/null; then
+            "${VENV_DIR}/bin/python3" -c "
+from docling.document_converter import DocumentConverter
+converter = DocumentConverter()
+result = converter.convert('${input_file}')
+text = result.document.export_to_markdown()
+with open('${text_file}', 'w') as f:
+    f.write(text)
+" 2>/dev/null || {
+                print_warning "Docling conversion failed, trying OCR fallback"
+            }
+        fi
+    fi
+
+    # For images or if Docling failed, try GLM-OCR
+    if [[ ! -f "$text_file" ]] || [[ ! -s "$text_file" ]]; then
+        if command -v ollama &>/dev/null; then
+            local ocr_text
+            if [[ "$ext" =~ ^(png|jpg|jpeg|tiff|bmp|webp|heic)$ ]]; then
+                ocr_text="$(ollama run glm-ocr "Extract all text from this document" --images "$input_file" 2>/dev/null)" || true
+            elif [[ "$ext" == "pdf" ]]; then
+                # Convert first page to image for classification
+                local tmp_img
+                tmp_img="$(mktemp /tmp/classify-XXXXXX.png)"
+                if command -v magick &>/dev/null; then
+                    magick -density 150 "${input_file}[0]" -quality 80 "$tmp_img" 2>/dev/null
+                elif command -v convert &>/dev/null; then
+                    convert -density 150 "${input_file}[0]" -quality 80 "$tmp_img" 2>/dev/null
+                fi
+                if [[ -f "$tmp_img" ]] && [[ -s "$tmp_img" ]]; then
+                    ocr_text="$(ollama run glm-ocr "Extract all text" --images "$tmp_img" 2>/dev/null)" || true
+                fi
+                rm -f "$tmp_img"
+            fi
+            if [[ -n "${ocr_text:-}" ]]; then
+                echo "$ocr_text" > "$text_file"
+            fi
+        fi
+    fi
+
+    if [[ -f "$text_file" ]] && [[ -s "$text_file" ]]; then
+        "${VENV_DIR}/bin/python3" "$PIPELINE_PY" classify "$text_file" 2>/dev/null || \
+            python3 "$PIPELINE_PY" classify "$text_file"
+    else
+        print_error "Could not extract text for classification"
+        return 1
+    fi
+
+    return 0
+}
+
+# Validate extracted JSON through the validation pipeline
+do_validate() {
+    local input_file="$1"
+    local doc_type="${2:-auto}"
+
+    validate_file_exists "$input_file" "Input file" || return 1
+
+    local type_arg=""
+    if [[ "$doc_type" != "auto" ]]; then
+        type_arg="--type ${doc_type}"
+    fi
+
+    # Try venv python first, fall back to system python
+    # shellcheck disable=SC2086
+    "${VENV_DIR}/bin/python3" "$PIPELINE_PY" validate "$input_file" $type_arg 2>/dev/null || \
+        python3 "$PIPELINE_PY" validate "$input_file" $type_arg
+    return $?
+}
+
+# Determine LLM backend with multi-model fallback
+resolve_llm_backend() {
+    local privacy="$1"
+    local llm_backend=""
+
+    case "$privacy" in
+        local)
+            if command -v ollama &>/dev/null; then
+                llm_backend="ollama/llama3.2"
+            else
+                print_error "Ollama required for local privacy mode but not installed"
+                return 1
+            fi
+            ;;
+        edge)
+            llm_backend="cloudflare/workers-ai"
+            ;;
+        cloud)
+            # Prefer Gemini Flash for cost efficiency, fall back to OpenAI
+            if [[ -n "${GOOGLE_API_KEY:-}" ]] || [[ -n "${GEMINI_API_KEY:-}" ]]; then
+                llm_backend="google/gemini-2.5-flash"
+            elif [[ -n "${OPENAI_API_KEY:-}" ]]; then
+                llm_backend="openai/gpt-4o"
+            elif [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+                llm_backend="anthropic/claude-sonnet-4-20250514"
+            else
+                print_warning "No cloud API key found, falling back to local"
+                if command -v ollama &>/dev/null; then
+                    llm_backend="ollama/llama3.2"
+                else
+                    print_error "No LLM backend available"
+                    return 1
+                fi
+            fi
+            ;;
+        none|*)
+            # Auto-select: prefer local, fall back to cloud
+            if command -v ollama &>/dev/null; then
+                llm_backend="ollama/llama3.2"
+            elif [[ -n "${GOOGLE_API_KEY:-}" ]] || [[ -n "${GEMINI_API_KEY:-}" ]]; then
+                llm_backend="google/gemini-2.5-flash"
+            elif [[ -n "${OPENAI_API_KEY:-}" ]]; then
+                llm_backend="openai/gpt-4o"
+            else
+                print_error "No LLM backend available (install Ollama or set API key)"
+                return 1
+            fi
+            ;;
+    esac
+
+    echo "$llm_backend"
+    return 0
+}
+
 # Extract structured data from document
 do_extract() {
     local input_file="$1"
@@ -403,34 +571,9 @@ do_extract() {
     basename="$(basename "$input_file" | sed 's/\.[^.]*$//')"
     local output_file="${WORKSPACE_DIR}/${basename}-extracted.json"
 
-    # Determine LLM backend based on privacy mode
+    # Determine LLM backend with multi-model fallback
     local llm_backend
-    case "$privacy" in
-        local)
-            if ! command -v ollama &>/dev/null; then
-                print_error "Ollama required for local privacy mode but not installed"
-                return 1
-            fi
-            llm_backend="ollama/llama3.2"
-            ;;
-        edge)
-            llm_backend="cloudflare/workers-ai"
-            ;;
-        cloud)
-            llm_backend="openai/gpt-4o"
-            ;;
-        none)
-            llm_backend="ollama/llama3.2"
-            if ! command -v ollama &>/dev/null; then
-                llm_backend="openai/gpt-4o"
-            fi
-            ;;
-        *)
-            print_error "Unknown privacy mode: ${privacy}"
-            print_info "Options: local, edge, cloud, none"
-            return 1
-            ;;
-    esac
+    llm_backend="$(resolve_llm_backend "$privacy")" || return 1
 
     print_info "Extracting from ${input_file} (schema=${schema}, privacy=${privacy}, llm=${llm_backend})..."
 
@@ -601,31 +744,92 @@ schema_class = None
 
     "${VENV_DIR}/bin/python3" -c "
 import json
+import os
 import sys
+from pathlib import Path
 from pydantic import BaseModel
 from extract_thinker import Extractor
 
 ${schema_code}
 
+input_file = '${input_file}'
+output_file = '${output_file}'
+llm_backend = '${llm_backend}'
+schema_name = '${schema}'
+
+# Determine file type for dual-input strategy
+file_ext = Path(input_file).suffix.lower()
+is_pdf = file_ext == '.pdf'
+
 extractor = Extractor()
 extractor.load_document_loader('docling')
-extractor.load_llm('${llm_backend}')
+extractor.load_llm(llm_backend)
 
 try:
     if schema_class is not None:
-        result = extractor.extract('${input_file}', schema_class)
-        output = result.model_dump()
+        result = extractor.extract(input_file, schema_class)
+        raw_output = result.model_dump()
     else:
-        # Auto mode: extract to markdown first
+        # Auto mode: extract to markdown first, then classify
         from docling.document_converter import DocumentConverter
         converter = DocumentConverter()
-        doc_result = converter.convert('${input_file}')
-        output = {'content': doc_result.document.export_to_markdown(), 'format': 'markdown'}
+        doc_result = converter.convert(input_file)
+        md_content = doc_result.document.export_to_markdown()
 
-    with open('${output_file}', 'w') as f:
-        json.dump(output, f, indent=2, default=str)
+        # Try classification via extraction_pipeline
+        pipeline_py = os.path.join(os.path.dirname(os.path.abspath('${PIPELINE_PY}')), 'extraction_pipeline.py')
+        if os.path.exists('${PIPELINE_PY}'):
+            pipeline_py = '${PIPELINE_PY}'
 
-    print(json.dumps(output, indent=2, default=str))
+        try:
+            sys.path.insert(0, os.path.dirname(pipeline_py))
+            from extraction_pipeline import classify_document, DocumentType
+            doc_type, scores = classify_document(md_content)
+            print(f'Auto-classified as: {doc_type.value} (scores: {scores})', file=sys.stderr)
+        except ImportError:
+            doc_type = None
+
+        raw_output = {
+            'content': md_content,
+            'format': 'markdown',
+            'classified_type': doc_type.value if doc_type else 'unknown',
+        }
+
+    # Run validation pipeline if extraction_pipeline.py is available
+    validated_output = None
+    try:
+        sys.path.insert(0, os.path.dirname('${PIPELINE_PY}'))
+        from extraction_pipeline import parse_and_validate, DocumentType as DT
+
+        # Map schema name to DocumentType
+        type_map = {
+            'purchase-invoice': DT.PURCHASE_INVOICE,
+            'purchase_invoice': DT.PURCHASE_INVOICE,
+            'expense-receipt': DT.EXPENSE_RECEIPT,
+            'expense_receipt': DT.EXPENSE_RECEIPT,
+            'credit-note': DT.CREDIT_NOTE,
+            'credit_note': DT.CREDIT_NOTE,
+            'invoice': DT.SALES_INVOICE,
+            'receipt': DT.GENERIC_RECEIPT,
+        }
+        dt = type_map.get(schema_name)
+        if dt is None and 'document_type' in raw_output:
+            dt = type_map.get(raw_output['document_type'])
+        if dt is None:
+            dt = DT.PURCHASE_INVOICE
+
+        validated = parse_and_validate(raw_output, dt, input_file)
+        validated_output = json.loads(validated.model_dump_json())
+    except (ImportError, Exception) as e:
+        print(f'Validation pipeline skipped: {e}', file=sys.stderr)
+
+    # Use validated output if available, otherwise raw
+    final_output = validated_output if validated_output else raw_output
+
+    with open(output_file, 'w') as f:
+        json.dump(final_output, f, indent=2, default=str)
+
+    print(json.dumps(final_output, indent=2, default=str))
 except Exception as e:
     print(f'Extraction error: {e}', file=sys.stderr)
     sys.exit(1)
@@ -723,10 +927,16 @@ do_help() {
     echo ""
     echo "${HELP_LABEL_COMMANDS}"
     echo "  extract <file> [--schema <name>] [--privacy <mode>] [--output <format>]"
-    echo "      Extract structured data from a document"
+    echo "      Extract structured data with validation pipeline"
     echo ""
     echo "  batch <dir> [--schema <name>] [--privacy <mode>] [--pattern <glob>]"
     echo "      Batch extract from all documents in a directory"
+    echo ""
+    echo "  classify <file>"
+    echo "      Classify document type (purchase-invoice, expense-receipt, credit-note)"
+    echo ""
+    echo "  validate <json-file> [--type <doc-type>]"
+    echo "      Validate extracted JSON (VAT arithmetic, dates, confidence scoring)"
     echo ""
     echo "  pii-scan <file>"
     echo "      Scan a text file for PII entities"
@@ -825,6 +1035,20 @@ parse_args() {
                 return 1
             fi
             do_extract "$file" "$schema" "$privacy" "$output_format"
+            ;;
+        classify)
+            if [[ -z "$file" ]]; then
+                print_error "${ERROR_INPUT_FILE_REQUIRED}"
+                return 1
+            fi
+            do_classify "$file"
+            ;;
+        validate)
+            if [[ -z "$file" ]]; then
+                print_error "${ERROR_INPUT_FILE_REQUIRED}"
+                return 1
+            fi
+            do_validate "$file" "$schema"
             ;;
         batch)
             if [[ -z "$file" ]]; then
