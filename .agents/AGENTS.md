@@ -121,6 +121,7 @@ Use `/save-todo` after planning. Auto-detects complexity:
 - Checking that a file exists is NOT sufficient - verify the PR was merged and contains substantive changes
 - If a worker completes with `no_pr` or `task_only`, the task stays `[ ]` until a human or the supervisor verifies the deliverable
 - The `issue-sync` GitHub Action auto-closes issues when tasks are marked `[x]` - false completions cascade into closed issues
+- NEVER close GitHub issues manually with `gh issue close` — let the issue-sync pipeline verify deliverables (`pr:` or `verified:` field) before closing. Manual closure bypasses the proof-log safety check
 
 **After ANY TODO/planning edit** (interactive sessions only, NOT workers): Commit and push immediately. Planning-only files (TODO.md, todo/) go directly to main -- no branch, no PR. Mixed changes (planning + non-exception files) use a worktree. NEVER `git checkout -b` in the main repo.
 
