@@ -12779,7 +12779,7 @@ cmd_auto_pickup() {
             fi
 
             # Add to supervisor
-            if cmd_add "$task_id" --repo "$repo" 2>/dev/null; then
+            if cmd_add "$task_id" --repo "$repo"; then
                 picked_up=$((picked_up + 1))
                 log_success "  Auto-picked: $task_id (tagged #auto-dispatch)"
             fi
@@ -12837,7 +12837,7 @@ cmd_auto_pickup() {
                 continue
             fi
 
-            if cmd_add "$task_id" --repo "$repo" 2>/dev/null; then
+            if cmd_add "$task_id" --repo "$repo"; then
                 picked_up=$((picked_up + 1))
                 log_success "  Auto-picked: $task_id (Dispatch Queue section)"
             fi
@@ -12893,7 +12893,7 @@ cmd_auto_pickup() {
             fi
 
             # Add to supervisor (plan_anchor passed directly to dispatch_decomposition_worker)
-            if cmd_add "$task_id" --repo "$repo" 2>/dev/null; then
+            if cmd_add "$task_id" --repo "$repo"; then
                 picked_up=$((picked_up + 1))
                 log_success "  Auto-picked: $task_id (#plan task for decomposition)"
                 
