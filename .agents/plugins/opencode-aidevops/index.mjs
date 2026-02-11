@@ -1,8 +1,7 @@
 import { execSync } from "child_process";
-import { readFileSync, existsSync, writeFileSync, mkdirSync } from "fs";
+import { readFileSync, existsSync, writeFileSync, mkdirSync, unlinkSync } from "fs";
 import { join, extname } from "path";
-import { homedir } from "os";
-import { tmpdir } from "os";
+import { homedir, tmpdir } from "os";
 
 const HOME = homedir();
 const AGENTS_DIR = join(HOME, ".aidevops", "agents");
@@ -247,7 +246,7 @@ function runQualityCheck(filePath, content) {
     // Clean up temp file
     if (tempFile) {
       try {
-        execSync(`rm -f "${tempFile}"`, { stdio: "pipe" });
+        unlinkSync(tempFile);
       } catch {
         // ignore cleanup failures
       }
