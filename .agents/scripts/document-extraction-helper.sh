@@ -20,7 +20,7 @@ set -euo pipefail
 #
 # Privacy modes: local (Ollama), edge (Cloudflare), cloud (OpenAI/Anthropic), none
 # Output formats: json, markdown, csv, text
-# Schemas: invoice, receipt, contract, id-document, custom
+# Schemas: purchase-invoice, expense-receipt, credit-note, invoice, receipt, contract, id-document, auto
 #
 # Author: AI DevOps Framework
 # Version: 1.0.0
@@ -500,6 +500,98 @@ class IDDocument(BaseModel):
 schema_class = IDDocument
 "
             ;;
+        purchase-invoice)
+            schema_code="
+from typing import Optional
+
+class PurchaseLineItem(BaseModel):
+    description: str = ''
+    quantity: float = 1.0
+    unit_price: float = 0.0
+    amount: float = 0.0
+    vat_rate: str = '20'
+    vat_amount: Optional[float] = None
+    nominal_code: Optional[str] = None
+
+class PurchaseInvoice(BaseModel):
+    vendor_name: str = ''
+    vendor_address: Optional[str] = None
+    vendor_vat_number: Optional[str] = None
+    invoice_number: str = ''
+    invoice_date: str = ''
+    due_date: Optional[str] = None
+    purchase_order: Optional[str] = None
+    subtotal: float = 0.0
+    vat_amount: float = 0.0
+    total: float = 0.0
+    currency: str = 'GBP'
+    line_items: list[PurchaseLineItem] = []
+    payment_terms: Optional[str] = None
+    bank_details: Optional[str] = None
+    document_type: str = 'purchase_invoice'
+
+schema_class = PurchaseInvoice
+"
+            ;;
+        expense-receipt)
+            schema_code="
+from typing import Optional
+
+class ReceiptItem(BaseModel):
+    name: str = ''
+    quantity: float = 1.0
+    unit_price: Optional[float] = None
+    price: float = 0.0
+    vat_rate: Optional[str] = None
+
+class ExpenseReceipt(BaseModel):
+    merchant_name: str = ''
+    merchant_address: Optional[str] = None
+    merchant_vat_number: Optional[str] = None
+    receipt_number: Optional[str] = None
+    date: str = ''
+    time: Optional[str] = None
+    subtotal: Optional[float] = None
+    vat_amount: Optional[float] = None
+    total: float = 0.0
+    currency: str = 'GBP'
+    items: list[ReceiptItem] = []
+    payment_method: Optional[str] = None
+    card_last_four: Optional[str] = None
+    expense_category: Optional[str] = None
+    document_type: str = 'expense_receipt'
+
+schema_class = ExpenseReceipt
+"
+            ;;
+        credit-note)
+            schema_code="
+from typing import Optional
+
+class CreditLineItem(BaseModel):
+    description: str = ''
+    quantity: float = 1.0
+    unit_price: float = 0.0
+    amount: float = 0.0
+    vat_rate: str = '20'
+    vat_amount: Optional[float] = None
+
+class CreditNote(BaseModel):
+    vendor_name: str = ''
+    credit_note_number: str = ''
+    date: str = ''
+    original_invoice: Optional[str] = None
+    subtotal: float = 0.0
+    vat_amount: float = 0.0
+    total: float = 0.0
+    currency: str = 'GBP'
+    reason: Optional[str] = None
+    line_items: list[CreditLineItem] = []
+    document_type: str = 'credit_note'
+
+schema_class = CreditNote
+"
+            ;;
         auto|*)
             schema_code="
 schema_class = None
@@ -605,14 +697,20 @@ do_schemas() {
     echo "Available Extraction Schemas"
     echo "============================"
     echo ""
-    echo "  invoice       - Vendor, line items, totals, dates"
-    echo "  receipt       - Merchant, items, total, payment method"
+    echo "  Accounting schemas (UK VAT support, QuickFile integration):"
+    echo "  purchase-invoice  - Supplier invoices: vendor, items, VAT, totals, dates"
+    echo "  expense-receipt   - Till/shop receipts: merchant, items, VAT, payment method"
+    echo "  credit-note       - Supplier credit notes: vendor, credited items, VAT"
+    echo ""
+    echo "  General schemas:"
+    echo "  invoice       - Sales invoices (issued by you): client, items, totals"
+    echo "  receipt       - Generic receipts (no accounting integration)"
     echo "  contract      - Parties, dates, key terms, obligations"
     echo "  id-document   - Name, DOB, document number, expiry"
     echo "  auto          - Auto-detect and convert to markdown (default)"
     echo ""
     echo "Custom schemas can be defined as Pydantic models in Python."
-    echo "See: .agents/tools/document/document-extraction.md"
+    echo "See: .agents/tools/document/extraction-schemas.md"
     return 0
 }
 
@@ -657,8 +755,9 @@ do_help() {
     echo "Output Formats: json, markdown, csv, text"
     echo ""
     echo "${HELP_LABEL_EXAMPLES}"
-    echo "  document-extraction-helper.sh extract invoice.pdf --schema invoice --privacy local"
-    echo "  document-extraction-helper.sh batch ./invoices --schema invoice"
+    echo "  document-extraction-helper.sh extract invoice.pdf --schema purchase-invoice --privacy local"
+    echo "  document-extraction-helper.sh extract receipt.jpg --schema expense-receipt --privacy local"
+    echo "  document-extraction-helper.sh batch ./invoices --schema purchase-invoice"
     echo "  document-extraction-helper.sh pii-scan document.txt"
     echo "  document-extraction-helper.sh pii-redact document.txt --output redacted.txt"
     echo "  document-extraction-helper.sh convert report.pdf --output markdown"
