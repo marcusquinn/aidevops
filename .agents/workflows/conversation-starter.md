@@ -7,7 +7,7 @@ Shared prompts for Build+ agent to ensure consistent UX.
 
 ## Inside Git Repository
 
-**First**: Check git context and recall recent lessons:
+**First**: Check git context and auto-recall recent lessons:
 
 ```bash
 BRANCH=$(git branch --show-current)
@@ -15,12 +15,19 @@ if [[ "$BRANCH" == "main" ]]; then
     echo "Currently on main branch - will suggest work branch for coding tasks"
 fi
 
-# Surface recent lessons from memory (silent if no results)
-~/.aidevops/agents/scripts/memory-helper.sh recall --recent --limit 3 2>/dev/null
+# Auto-recall recent lessons from memory (silent if no results)
+# This runs automatically at session start to surface relevant context
+RECENT_MEMORIES=$(~/.aidevops/agents/scripts/memory-helper.sh recall --recent --limit 5 2>/dev/null || echo "")
+if [[ -n "$RECENT_MEMORIES" ]]; then
+    echo "## Recent Learnings"
+    echo "$RECENT_MEMORIES"
+    echo ""
+fi
 ```
 
-If memory recall returns results, briefly note any relevant lessons (e.g.,
-"Recent lesson: always read domain subagents before content generation tasks").
+**Auto-recall behavior**: The memory system automatically surfaces recent lessons
+at session start. If results are returned, briefly note any relevant lessons
+(e.g., "Recent lesson: always read domain subagents before content generation tasks").
 Do not dump raw memory output — summarize actionable items only.
 
 If on `main` branch, include this note in the prompt:
