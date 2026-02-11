@@ -135,11 +135,27 @@ async function configHook(config) {
 | `aidevops_memory_recall` | Search cross-session memory |
 | `aidevops_memory_store` | Store new memories |
 | `aidevops_pre_edit_check` | Run pre-edit git safety check |
+| `aidevops_quality_check` | Run quality pipeline on a file or full pre-commit checks |
+| `aidevops_install_hooks` | Install/manage git pre-commit quality hooks |
 
-#### 3. Quality Hooks
+#### 3. Quality Hooks (t008.3)
 
-- **`tool.execute.before`**: Runs ShellCheck on `.sh` files before Write/Edit operations
-- **`tool.execute.after`**: Logs git operations for pattern tracking
+**Pre-tool hooks** (`tool.execute.before`):
+
+- **Shell scripts (.sh)**: Full quality pipeline matching `pre-commit-hook.sh`:
+  - ShellCheck with `-x -S warning` flags
+  - Return statement validation (functions must have explicit returns)
+  - Positional parameter convention (`local var="$1"` pattern)
+  - Secrets pattern scanning (API keys, tokens, private keys)
+- **Markdown (.md)**: MD031 (blank lines around code blocks), trailing whitespace
+- **All files**: Secrets scanning on Write content (API keys, AWS keys, GitHub tokens, etc.)
+
+**Post-tool hooks** (`tool.execute.after`):
+
+- Git operation detection and logging
+- Pattern tracker integration (`pattern-tracker-helper.sh`) for success/failure recording
+- ShellCheck/lint run tracking
+- File modification audit logging to `~/.aidevops/logs/quality-hooks.log`
 
 #### 4. Shell Environment
 
