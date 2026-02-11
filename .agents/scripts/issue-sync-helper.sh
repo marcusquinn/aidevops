@@ -1398,14 +1398,12 @@ cmd_close() {
             task_with_notes="$task_line"
         fi
 
-        if [[ "$FORCE_CLOSE" != "true" ]]; then
-            if ! task_has_completion_evidence "$task_with_notes" "$task_id" "$repo_slug"; then
-                print_warning "Skipping #$issue_number ($task_id): no merged PR or verified: field found"
-                log_verbose "  To force close: FORCE_CLOSE=true issue-sync-helper.sh close $task_id"
-                log_verbose "  To verify: add 'verified:$(date +%Y-%m-%d)' to the task line in TODO.md"
-                skipped=$((skipped + 1))
-                continue
-            fi
+        if [[ "$FORCE_CLOSE" != "true" ]] && ! task_has_completion_evidence "$task_with_notes" "$task_id" "$repo_slug"; then
+            print_warning "Skipping #$issue_number ($task_id): no merged PR or verified: field found"
+            log_verbose "  To force close: FORCE_CLOSE=true issue-sync-helper.sh close $task_id"
+            log_verbose "  To verify: add 'verified:$(date +%Y-%m-%d)' to the task line in TODO.md"
+            skipped=$((skipped + 1))
+            continue
         fi
 
         # Find the closing PR for an auditable reference in the close comment (t220)
