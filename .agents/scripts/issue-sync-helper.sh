@@ -525,7 +525,7 @@ map_tags_to_labels() {
     fi
 
     local labels=""
-    local IFS=','
+    local IFS=',' tag
     for tag in $tags; do
         tag="${tag#\#}"  # Remove # prefix if present
         tag="${tag// /}"  # Strip whitespace
@@ -1445,14 +1445,12 @@ cmd_close() {
             task_with_notes="$task_line"
         fi
 
-        if [[ "$FORCE_CLOSE" != "true" ]]; then
-            if ! task_has_completion_evidence "$task_with_notes" "$task_id" "$repo_slug"; then
-                print_warning "Skipping #$issue_number ($task_id): no merged PR or verified: field found"
-                log_verbose "  To force close: FORCE_CLOSE=true issue-sync-helper.sh close $task_id"
-                log_verbose "  To verify: add 'verified:$(date +%Y-%m-%d)' to the task line in TODO.md"
-                skipped=$((skipped + 1))
-                continue
-            fi
+        if [[ "$FORCE_CLOSE" != "true" ]] && ! task_has_completion_evidence "$task_with_notes" "$task_id" "$repo_slug"; then
+            print_warning "Skipping #$issue_number ($task_id): no merged PR or verified: field found"
+            log_verbose "  To force close: FORCE_CLOSE=true issue-sync-helper.sh close $task_id"
+            log_verbose "  To verify: add 'verified:$(date +%Y-%m-%d)' to the task line in TODO.md"
+            skipped=$((skipped + 1))
+            continue
         fi
 
         # Find the closing PR for an auditable reference in the close comment (t220)
@@ -1553,11 +1551,9 @@ _close_single_task() {
         task_with_notes="$task_line"
     fi
 
-    if [[ "$FORCE_CLOSE" != "true" ]]; then
-        if ! task_has_completion_evidence "$task_with_notes" "$task_id" "$repo_slug"; then
-            print_warning "Skipping #$issue_number ($task_id): no merged PR or verified: field found"
-            return 0
-        fi
+    if [[ "$FORCE_CLOSE" != "true" ]] && ! task_has_completion_evidence "$task_with_notes" "$task_id" "$repo_slug"; then
+        print_warning "Skipping #$issue_number ($task_id): no merged PR or verified: field found"
+        return 0
     fi
 
     # Find closing PR

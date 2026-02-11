@@ -952,11 +952,10 @@ EOF
             echo "$results"
         fi
     else
-        if [[ -z "$results" || "$results" == "[]" ]]; then
-            if [[ -z "$shared_results" || "$shared_results" == "[]" ]]; then
-                log_warn "No results found for: $query"
-                return 0
-            fi
+        if [[ -z "$results" || "$results" == "[]" ]] && \
+           [[ -z "$shared_results" || "$shared_results" == "[]" ]]; then
+            log_warn "No results found for: $query"
+            return 0
         fi
         
         local header_suffix=""

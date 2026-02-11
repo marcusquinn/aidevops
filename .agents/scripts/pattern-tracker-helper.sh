@@ -675,8 +675,6 @@ cmd_report() {
 # Used by suggest command to add routing context
 #######################################
 _show_model_hint() {
-    local task_desc="$1"
-
     if ! ensure_db 2>/dev/null; then
         return 0
     fi

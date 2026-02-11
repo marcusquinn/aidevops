@@ -229,11 +229,10 @@ check_guardrails() {
     fi
 
     # Cost limit check (using bc for float comparison)
-    if command -v bc &>/dev/null; then
-        if [[ $(echo "$estimated_cost >= $max_cost" | bc -l 2>/dev/null || echo "0") -eq 1 ]]; then
-            GUARDRAIL_VIOLATION="Cost limit reached (\$$estimated_cost/\$$max_cost)"
-            return 1
-        fi
+    if command -v bc &>/dev/null && \
+       [[ $(echo "$estimated_cost >= $max_cost" | bc -l 2>/dev/null || echo "0") -eq 1 ]]; then
+        GUARDRAIL_VIOLATION="Cost limit reached (\$$estimated_cost/\$$max_cost)"
+        return 1
     fi
 
     # Token limit check
@@ -268,7 +267,7 @@ build_scope_instructions() {
 
 You are ONLY allowed to read/modify files within these paths:
 "
-        local IFS=','
+        local IFS=',' path
         for path in $allowed_paths; do
             instructions="$instructions- $path
 "

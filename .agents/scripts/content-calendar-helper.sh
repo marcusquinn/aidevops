@@ -620,8 +620,8 @@ cmd_gaps() {
     weeks_ahead=$(echo "scale=1; ${days} / 7" | bc 2>/dev/null || echo "4")
 
     for target_entry in "${CC_CADENCE_TARGETS[@]}"; do
-        local plat min_rate max_rate optimal_rate
-        IFS=':' read -r plat min_rate max_rate optimal_rate <<< "$target_entry"
+        local plat optimal_rate
+        IFS=':' read -r plat _ _ optimal_rate <<< "$target_entry"
 
         local scheduled_count
         scheduled_count=$(sqlite3 "$CC_DB" "

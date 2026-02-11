@@ -443,23 +443,21 @@ probe_provider() {
     local quiet="${4:-false}"
 
     # Check cache first (unless forced)
-    if [[ "$force" != "true" ]]; then
-        if is_cache_valid "$provider" "provider_health" "$custom_ttl"; then
-            local cached_status
-            cached_status=$(db_query "SELECT status FROM provider_health WHERE provider = '$(sql_escape "$provider")';")
-            if [[ "$cached_status" == "healthy" ]]; then
-                [[ "$quiet" != "true" ]] && print_info "$provider: cached healthy"
-                return 0
-            elif [[ "$cached_status" == "rate_limited" ]]; then
-                [[ "$quiet" != "true" ]] && print_warning "$provider: cached rate-limited"
-                return 2
-            elif [[ "$cached_status" == "key_invalid" ]]; then
-                [[ "$quiet" != "true" ]] && print_warning "$provider: cached key-invalid"
-                return 3
-            else
-                [[ "$quiet" != "true" ]] && print_warning "$provider: cached unhealthy"
-                return 1
-            fi
+    if [[ "$force" != "true" ]] && is_cache_valid "$provider" "provider_health" "$custom_ttl"; then
+        local cached_status
+        cached_status=$(db_query "SELECT status FROM provider_health WHERE provider = '$(sql_escape "$provider")';")
+        if [[ "$cached_status" == "healthy" ]]; then
+            [[ "$quiet" != "true" ]] && print_info "$provider: cached healthy"
+            return 0
+        elif [[ "$cached_status" == "rate_limited" ]]; then
+            [[ "$quiet" != "true" ]] && print_warning "$provider: cached rate-limited"
+            return 2
+        elif [[ "$cached_status" == "key_invalid" ]]; then
+            [[ "$quiet" != "true" ]] && print_warning "$provider: cached key-invalid"
+            return 3
+        else
+            [[ "$quiet" != "true" ]] && print_warning "$provider: cached unhealthy"
+            return 1
         fi
     fi
 
@@ -880,12 +878,10 @@ resolve_tier() {
     fi
 
     # Try fallback
-    if [[ -n "$fallback" && "$fallback" != "$primary" ]]; then
-        if check_model_available "$fallback" "$force" "true"; then
-            echo "$fallback"
-            [[ "$quiet" != "true" ]] && print_warning "Resolved $tier -> $fallback (fallback, primary $primary unavailable)"
-            return 0
-        fi
+    if [[ -n "$fallback" && "$fallback" != "$primary" ]] && check_model_available "$fallback" "$force" "true"; then
+        echo "$fallback"
+        [[ "$quiet" != "true" ]] && print_warning "Resolved $tier -> $fallback (fallback, primary $primary unavailable)"
+        return 0
     fi
 
     # Extended fallback: delegate to fallback-chain-helper.sh (t132.4)

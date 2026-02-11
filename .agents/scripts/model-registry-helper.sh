@@ -481,7 +481,6 @@ sync_opencode() {
 
 sync_providers() {
     local added=0
-    local json_flag="${1:-false}"
 
     # Skip if opencode sync already ran successfully (check sync_log)
     local opencode_synced
@@ -491,6 +490,11 @@ sync_providers() {
         AND (julianday('now') - julianday(timestamp)) * 86400 < 60
         ORDER BY id DESC LIMIT 1;
     " 2>/dev/null || echo "")
+    
+    # If recent successful sync, skip
+    if [[ -n "$opencode_synced" && "$opencode_synced" != "0" ]]; then
+        return 0
+    fi
     if [[ -n "$opencode_synced" && "$opencode_synced" -gt 0 ]]; then
         print_info "Skipping direct API probing (OpenCode sync already discovered $opencode_synced models)"
         return 0
