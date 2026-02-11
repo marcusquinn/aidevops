@@ -649,6 +649,8 @@ const FLAG_DEFS = [
   ['--project',          'project',          'string'       ],
   ['--limit',            'limit',            'int'          ],
   ['--timeout',          'timeout',          'int'          ],
+  ['--count',            'count',            'int',    '-c'],
+  ['--concurrency',      'concurrency',      'int',    '-C'],
   // Boolean flags
   ['--headed',           'headed',           'true'         ],
   ['--headless',         'headless',         'true'         ],
@@ -2977,7 +2979,7 @@ async function downloadImagesByCDN(page, indices, outputDir, extraMeta, options)
 
 // then click the Download button in the dialog. Falls back to extracting
 // CloudFront CDN URLs directly from img[alt="image generation"] elements.
-async function downloadLatestResult(page, outputDir, downloadAll = true, options = {}) {
+async function downloadLatestResult(page, outputDir, count = 4, options = {}) {
   const downloaded = [];
 
   try {
@@ -2988,7 +2990,8 @@ async function downloadLatestResult(page, outputDir, downloadAll = true, options
     console.log(`Found ${imgCount} generated image(s) on page`);
 
     if (imgCount > 0) {
-      const toDownload = downloadAll ? imgCount : 1;
+      // count === 0 means download all, otherwise download min(count, imgCount)
+      const toDownload = count === 0 ? imgCount : Math.min(count, imgCount);
       for (let i = 0; i < toDownload; i++) {
         try {
           const path = await downloadImageViaDialog(page, generatedImgs.nth(i), i, outputDir, { command: 'download' }, options);
@@ -3006,7 +3009,7 @@ async function downloadLatestResult(page, outputDir, downloadAll = true, options
     if (downloaded.length === 0) {
       console.log('Falling back to direct CDN URL extraction...');
       const cdnDownloads = await downloadImagesByCDN(page, null, outputDir, { command: 'download' }, options);
-      downloaded.push(...(downloadAll ? cdnDownloads : cdnDownloads.slice(0, 1)));
+      downloaded.push(...(count === 0 ? cdnDownloads : cdnDownloads.slice(0, count)));
     }
 
     if (downloaded.length === 0) {
@@ -6594,12 +6597,13 @@ async function downloadFromHistory(options) {
     await downloadVideoFromHistory(dlPage, dlDir, {}, options);
   } else {
     const dlUrl = `${BASE_URL}/image/${dlModel}`;
-    console.log(`Navigating to ${dlUrl} to download latest generations...`);
+    const count = options.count !== undefined ? options.count : 4;
+    console.log(`Navigating to ${dlUrl} to download ${count === 0 ? 'all' : count} latest generation(s)...`);
     await dlPage.goto(dlUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await dlPage.waitForTimeout(5000);
     await dismissAllModals(dlPage);
     const dlDir = resolveOutputDir(options.output || DOWNLOAD_DIR, options, 'images');
-    await downloadLatestResult(dlPage, dlDir, true, options);
+    await downloadLatestResult(dlPage, dlDir, count, options);
   }
 
   await dlCtx.storageState({ path: STATE_FILE });
@@ -6698,7 +6702,7 @@ Commands:
   assets             List recent generations
   credits            Check account credits/plan
   screenshot         Take screenshot of any page
-  download           Download latest generation (use --model video for videos)
+  download           Download latest generation (default: 4 most recent, use --count 0 for all)
   api-status         Check API credentials and connectivity
   test               Run self-tests for unlimited model selection logic
 
@@ -6740,6 +6744,8 @@ Options:
   --asset-type       Asset type filter for manage-assets
   --asset-index      Index of specific asset to download (0-based)
   --limit            Max number of assets to download
+  --count, -c        Number of images to download (default: 4, use 0 for all)
+  --concurrency, -C  Max concurrent jobs for batch operations (default varies by command)
   --chain-action     Asset chain action: animate, inpaint, upscale, relight, angles, shots, ai-stylist, skin-enhancer, multishot
   --feature          Feature page slug: fashion-factory, ugc-factory, photodump-studio, camera-controls, effects
   --subtype          Vibe Motion sub-type: infographics, text-animation, posters, presentation, from-scratch
@@ -6764,7 +6770,8 @@ Examples:
   node playwright-automator.mjs seed-bracket -p "Elegant woman, golden hour" --seed-range 1000-1010
   node playwright-automator.mjs app --effect face-swap --image-file face.jpg
   node playwright-automator.mjs credits
-  node playwright-automator.mjs download --model video
+  node playwright-automator.mjs download --count 4
+  node playwright-automator.mjs download --count 0 --model video
   node playwright-automator.mjs screenshot -p "https://higgsfield.ai/image/soul"
   node playwright-automator.mjs cinema-studio -p "Epic landscape" --tab image --camera "Dolly Zoom"
   node playwright-automator.mjs motion-control --video-file dance.mp4 --image-file character.jpg
