@@ -7544,8 +7544,9 @@ check_pr_status() {
 
     # Check PR state
     # t277: Use mergeStateStatus to respect GitHub's required vs non-required check distinction
+    # Note: mergeable field must be queried to populate mergeStateStatus correctly
     local pr_json
-    pr_json=$(gh pr view "$pr_number" --repo "$repo_slug" --json state,isDraft,reviewDecision,mergeStateStatus,statusCheckRollup 2>>"$SUPERVISOR_LOG" || echo "")
+    pr_json=$(gh pr view "$pr_number" --repo "$repo_slug" --json state,isDraft,reviewDecision,mergeable,mergeStateStatus,statusCheckRollup 2>>"$SUPERVISOR_LOG" || echo "")
 
     if [[ -z "$pr_json" ]]; then
         echo "no_pr"
