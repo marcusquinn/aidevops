@@ -56,6 +56,7 @@ resolve_namespace() {
 		return 1
 	fi
 
+	# shellcheck disable=SC2034 # Used by memory-helper.sh main() and recall.sh/maintenance.sh
 	MEMORY_NAMESPACE="$namespace"
 	MEMORY_DIR="$MEMORY_BASE_DIR/namespaces/$namespace"
 	MEMORY_DB="$MEMORY_DIR/memory.db"

@@ -46,8 +46,9 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 
 set -euo pipefail
 
-# Configuration
+# Configuration — globals used by sourced modules (memory/_common.sh, store.sh, recall.sh, maintenance.sh)
 readonly MEMORY_BASE_DIR="${AIDEVOPS_MEMORY_DIR:-$HOME/.aidevops/.agent-workspace/memory}"
+# shellcheck disable=SC2034 # Used in memory/_common.sh and memory/maintenance.sh
 readonly DEFAULT_MAX_AGE_DAYS=90
 
 # Namespace support: --namespace sets a per-runner isolated DB
@@ -55,15 +56,18 @@ readonly DEFAULT_MAX_AGE_DAYS=90
 MEMORY_NAMESPACE=""
 MEMORY_DIR="$MEMORY_BASE_DIR"
 MEMORY_DB="$MEMORY_DIR/memory.db"
+# shellcheck disable=SC2034 # Used in memory/maintenance.sh
 readonly STALE_WARNING_DAYS=60
 
 # Valid learning types (matches documentation and Continuous-Claude-v3)
+# shellcheck disable=SC2034 # Used in memory/store.sh and memory/recall.sh
 readonly VALID_TYPES="WORKING_SOLUTION FAILED_APPROACH CODEBASE_PATTERN USER_PREFERENCE TOOL_CONFIG DECISION CONTEXT ARCHITECTURAL_DECISION ERROR_FIX OPEN_THREAD SUCCESS_PATTERN FAILURE_PATTERN"
 
 # Valid relation types (inspired by Supermemory's relational versioning)
 # - updates: New info supersedes old (state mutation)
 # - extends: Adds detail without contradiction (refinement)
 # - derives: Second-order inference from combining memories
+# shellcheck disable=SC2034 # Used in memory/store.sh
 readonly VALID_RELATIONS="updates extends derives"
 
 # Source modules (eager loading — simpler, avoids path resolution bugs)
