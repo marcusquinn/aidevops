@@ -298,3 +298,13 @@
   files: aidevops.sh
   check: shellcheck aidevops.sh
   check: file-exists aidevops.sh
+
+- [ ] v033 t305 Fix path traversal risk in setup.sh plugin clone paths â€... | PR #1188 | merged:2026-02-12
+  files: setup.sh
+  check: shellcheck setup.sh
+  check: file-exists setup.sh
+
+- [ ] v034 t305 Fix path traversal risk in setup.sh plugin clone paths â€... | PR #1188 | merged:2026-02-12
+  files: setup.sh
+  check: shellcheck setup.sh
+  check: file-exists setup.sh
