@@ -309,7 +309,7 @@ function loadAgentDefinitions() {
 
       const { data } = parseFrontmatter(content);
       agents.push({
-        name: basename(file, ".md"),
+        name: basename(file, ".md"), // Root agents keep simple names
         description: data.description || "",
         mode: data.mode || "primary",
         relPath: file,
@@ -330,6 +330,8 @@ function loadAgentDefinitions() {
     "memory",
     "custom",
     "draft",
+    "scripts",
+    "templates",
   ];
 
   for (const subdir of subdirs) {
@@ -379,11 +381,15 @@ function loadAgentsRecursive(dirPath, relBase, agents) {
       if (!content) continue;
 
       const { data } = parseFrontmatter(content);
+      const relPath = join(relBase, entry.name);
+      // Use relative path without .md extension as agent name to prevent collisions
+      // e.g., "tools/git/github-cli.md" → "tools/git/github-cli"
+      const agentName = relPath.replace(/\.md$/, "");
       agents.push({
-        name: basename(entry.name, ".md"),
+        name: agentName,
         description: data.description || "",
         mode: data.mode || "subagent",
-        relPath: join(relBase, entry.name),
+        relPath: relPath,
       });
     }
   }
