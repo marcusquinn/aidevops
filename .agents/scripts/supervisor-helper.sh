@@ -13088,9 +13088,8 @@ cmd_auto_pickup() {
 				# A 10-core Mac gets 5, a 32-core server gets 16, etc.
 				# The adaptive scaling in calculate_adaptive_concurrency() then
 				# adjusts up/down from this base depending on actual load.
-				local auto_cores auto_base_concurrency
-				auto_cores=$(get_cpu_cores)
-				auto_base_concurrency=$((auto_cores / 2))
+				local auto_cores="$(get_cpu_cores)"
+				local auto_base_concurrency=$((auto_cores / 2))
 				if [[ "$auto_base_concurrency" -lt 2 ]]; then
 					auto_base_concurrency=2
 				fi
