@@ -372,13 +372,12 @@ update_todo_on_complete() {
 		return 1
 	fi
 
-	# t278: Guard against marking #plan tasks complete when subtasks are still open.
-	# A #plan task is a parent that was decomposed into subtasks. It should only be
-	# marked [x] when ALL its subtasks are [x]. This prevents decomposition workers
-	# from prematurely completing the parent.
+	# t278, t1003: Guard against marking parent tasks complete when subtasks are open.
+	# Any task with subtasks (indented lines below it) should only be marked [x]
+	# when ALL its subtasks are [x]. This applies to all parents, not just #plan tasks.
 	local task_line
 	task_line=$(grep -E "^[[:space:]]*- \[[ x-]\] ${task_id}( |$)" "$todo_file" | head -1 || true)
-	if [[ -n "$task_line" && "$task_line" == *"#plan"* ]]; then
+	if [[ -n "$task_line" ]]; then
 		# Get the indentation level of this task
 		local task_indent
 		task_indent=$(echo "$task_line" | sed -E 's/^([[:space:]]*).*/\1/' | wc -c)
@@ -404,8 +403,8 @@ update_todo_on_complete() {
 		if [[ -n "$open_subtasks" ]]; then
 			local open_count
 			open_count=$(echo "$open_subtasks" | wc -l | tr -d ' ')
-			log_warn "Task $task_id is a #plan task with $open_count open subtask(s) — NOT marking [x]"
-			log_warn "  Parent #plan tasks should only be completed when all subtasks are done"
+			log_warn "Task $task_id has $open_count open subtask(s) — NOT marking [x]"
+			log_warn "  Parent tasks can only be completed when all subtasks are done"
 			return 1
 		fi
 	fi

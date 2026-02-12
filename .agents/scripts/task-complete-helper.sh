@@ -151,6 +151,41 @@ complete_task() {
 		fi
 	fi
 
+	# t1003: Block completion if any subtasks are still open
+	local task_line
+	task_line=$(grep -E "^[[:space:]]*- \[ \] ${task_id}( |$)" "$todo_file" | head -1 || true)
+	if [[ -n "$task_line" ]]; then
+		local task_indent
+		task_indent=$(echo "$task_line" | sed -E 's/^([[:space:]]*).*/\1/' | wc -c)
+		task_indent=$((task_indent - 1))
+
+		local open_subtasks
+		open_subtasks=$(awk -v tid="$task_id" -v tindent="$task_indent" '
+			BEGIN { found=0 }
+			/- \[[ x-]\] '"$task_id"'( |$)/ { found=1; next }
+			found && /^[[:space:]]*- \[/ {
+				match($0, /^[[:space:]]*/);
+				line_indent = RLENGTH;
+				if (line_indent > tindent) {
+					if ($0 ~ /- \[ \]/) { print $0 }
+				} else { found=0 }
+			}
+			found && /^[[:space:]]*$/ { next }
+			found && !/^[[:space:]]*- / && !/^[[:space:]]*$/ { found=0 }
+		' "$todo_file")
+
+		if [[ -n "$open_subtasks" ]]; then
+			local open_count
+			open_count=$(echo "$open_subtasks" | wc -l | tr -d ' ')
+			log_error "Task $task_id has $open_count open subtask(s) — cannot mark complete"
+			log_error "  Complete all subtasks first, then mark the parent"
+			echo "$open_subtasks" | while IFS= read -r line; do
+				log_error "    $line"
+			done
+			return 1
+		fi
+	fi
+
 	local today
 	today=$(date +%Y-%m-%d)
 
