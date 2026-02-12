@@ -282,6 +282,24 @@ create_backup_with_rotation() {
     return 0
 }
 
+# Validate namespace string for safe use in paths and shell commands
+# Returns 0 if valid, 1 if invalid
+# Valid: alphanumeric, dash, underscore, forward slash (no .., no shell metacharacters)
+validate_namespace() {
+    local ns="$1"
+    # Reject empty
+    [[ -z "$ns" ]] && return 1
+    # Reject path traversal
+    [[ "$ns" == *".."* ]] && return 1
+    # Reject shell metacharacters and dangerous characters
+    [[ "$ns" =~ [^a-zA-Z0-9/_-] ]] && return 1
+    # Reject absolute paths
+    [[ "$ns" == /* ]] && return 1
+    # Reject trailing slash (causes issues with rsync/tar exclusions)
+    [[ "$ns" == */ ]] && return 1
+    return 0
+}
+
 # Remove deprecated agent paths that have been moved
 # This ensures clean upgrades when agents are reorganized
 cleanup_deprecated_paths() {
@@ -3097,7 +3115,13 @@ deploy_aidevops_agents() {
     local -a plugin_namespaces=()
     if [[ -f "$plugins_file" ]] && command -v jq &>/dev/null; then
         while IFS= read -r ns; do
-            [[ -n "$ns" ]] && plugin_namespaces+=("$ns")
+            if [[ -n "$ns" ]]; then
+                if validate_namespace "$ns"; then
+                    plugin_namespaces+=("$ns")
+                else
+                    print_warning "Skipping invalid plugin namespace: '$ns' (contains unsafe characters or path traversal)"
+                fi
+            fi
         done < <(jq -r '.plugins[].namespace // empty' "$plugins_file" 2>/dev/null)
     fi
     
@@ -3294,6 +3318,10 @@ deploy_plugins() {
     local disabled_ns
     while IFS= read -r disabled_ns; do
         [[ -z "$disabled_ns" ]] && continue
+        if ! validate_namespace "$disabled_ns"; then
+            print_warning "Skipping invalid disabled plugin namespace: '$disabled_ns' (contains unsafe characters or path traversal)"
+            continue
+        fi
         if [[ -d "$target_dir/$disabled_ns" ]]; then
             rm -rf "${target_dir:?}/${disabled_ns:?}"
             print_info "  Removed disabled plugin directory: $disabled_ns"
@@ -3309,6 +3337,14 @@ deploy_plugins() {
     # Process each enabled plugin
     while IFS=$'\t' read -r pname prepo pns pbranch; do
         [[ -z "$pname" ]] && continue
+
+        # Validate namespace before use in paths
+        if ! validate_namespace "$pns"; then
+            print_warning "Skipping plugin '$pname' with invalid namespace: '$pns' (contains unsafe characters or path traversal)"
+            failed=$((failed + 1))
+            continue
+        fi
+
         pbranch="${pbranch:-main}"
         local clone_dir="$target_dir/$pns"
         
