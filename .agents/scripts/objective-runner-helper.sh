@@ -213,9 +213,13 @@ check_guardrails() {
 	current_step="${current_step:-0}"
 
 	max_steps=$(obj_config "$obj_id" "max_steps")
+	max_steps="${max_steps:-$DEFAULT_MAX_STEPS}"
 	max_cost=$(obj_config "$obj_id" "max_cost")
+	max_cost="${max_cost:-$DEFAULT_MAX_COST}"
 	max_tokens=$(obj_config "$obj_id" "max_tokens")
+	max_tokens="${max_tokens:-$DEFAULT_MAX_TOKENS}"
 	checkpoint_every=$(obj_config "$obj_id" "checkpoint_every")
+	checkpoint_every="${checkpoint_every:-$DEFAULT_CHECKPOINT_EVERY}"
 
 	estimated_cost=$(obj_state "$obj_id" "estimated_cost")
 	estimated_cost="${estimated_cost:-0}"

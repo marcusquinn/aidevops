@@ -488,12 +488,16 @@ if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=args.port, log_level="warning")
 BOTEOF
 
-	# Patch the default values based on arguments
+	# Patch the default values based on arguments (portable sed in-place)
 	if [[ "${llm_provider}" != "anthropic" ]]; then
-		sed -i '' "s/DEFAULT_LLM = \"anthropic\"/DEFAULT_LLM = \"${llm_provider}\"/" "${PIPECAT_BOT}" 2>/dev/null || true
+		local tmp_bot
+		tmp_bot="$(mktemp)"
+		sed "s/DEFAULT_LLM = \"anthropic\"/DEFAULT_LLM = \"${llm_provider}\"/" "${PIPECAT_BOT}" >"$tmp_bot" && mv "$tmp_bot" "${PIPECAT_BOT}"
 	fi
 	if [[ "${voice_id}" != "${DEFAULT_CARTESIA_VOICE_ID}" ]]; then
-		sed -i '' "s/${DEFAULT_CARTESIA_VOICE_ID}/${voice_id}/g" "${PIPECAT_BOT}" 2>/dev/null || true
+		local tmp_bot2
+		tmp_bot2="$(mktemp)"
+		sed "s/${DEFAULT_CARTESIA_VOICE_ID}/${voice_id}/g" "${PIPECAT_BOT}" >"$tmp_bot2" && mv "$tmp_bot2" "${PIPECAT_BOT}"
 	fi
 
 	print_success "Bot template generated: ${PIPECAT_BOT}"
