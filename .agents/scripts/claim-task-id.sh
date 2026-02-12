@@ -372,8 +372,10 @@ main() {
 		if check_cli "$platform"; then
 			if [[ "$DRY_RUN" == "true" ]]; then
 				log_info "Would create ${platform} issue and allocate task ID"
+				local platform_upper
+				platform_upper=$(echo "$platform" | tr '[:lower:]' '[:upper:]')
 				echo "task_id=tDRY_RUN"
-				echo "ref=${platform^^}#DRY_RUN"
+				echo "ref=${platform_upper}#DRY_RUN"
 				return 0
 			fi
 
