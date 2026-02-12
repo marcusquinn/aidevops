@@ -3187,8 +3187,11 @@ get_aidevops_identity() {
 }
 
 #######################################
-# Get the assignee: value from a task line in TODO.md (t165)
+# Get the assignee: value from a task line in TODO.md (t165, t1017)
 # Outputs the assignee identity string, empty if unassigned.
+# Only matches assignee: as a metadata field (preceded by space, not inside
+# backticks or description text). Uses last occurrence to avoid matching
+# assignee: mentioned in task description prose.
 # $1: task_id  $2: todo_file path
 #######################################
 get_task_assignee() {
@@ -3208,9 +3211,17 @@ get_task_assignee() {
 		return 0
 	fi
 
-	# Extract assignee:value — unambiguous key:value field
-	local assignee
-	assignee=$(echo "$task_line" | grep -oE 'assignee:[A-Za-z0-9._@-]+' | head -1 | sed 's/^assignee://' || echo "")
+	# Extract the metadata suffix after the last tag/field marker.
+	# Real assignee: fields appear in the metadata tail (after #tags, ~estimate, model:, ref:, etc.)
+	# not inside description prose or backtick-quoted code.
+	# Strategy: find all assignee:value matches, take the LAST one (metadata fields are appended
+	# at the end, description text comes first). Also reject matches inside backticks.
+	local assignee=""
+	# Strip backtick-quoted segments to avoid matching `assignee:foo` in descriptions
+	local stripped_line
+	stripped_line=$(echo "$task_line" | sed 's/`[^`]*`//g')
+	# Take the last assignee:value match (metadata fields are at the end of the line)
+	assignee=$(echo "$stripped_line" | grep -oE ' assignee:[A-Za-z0-9._@-]+' | tail -1 | sed 's/^ *assignee://' || echo "")
 	echo "$assignee"
 	return 0
 }
@@ -3336,11 +3347,28 @@ cmd_claim() {
 # Optional: sync to GitHub Issue
 #######################################
 cmd_unclaim() {
-	local task_id="${1:-}"
-	local explicit_root="${2:-}"
+	local task_id=""
+	local explicit_root=""
+	local force=false
+
+	# Parse arguments (t1017: support --force flag)
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+			--force) force=true ;;
+			-*) log_error "Unknown option: $1"; return 1 ;;
+			*)
+				if [[ -z "$task_id" ]]; then
+					task_id="$1"
+				elif [[ -z "$explicit_root" ]]; then
+					explicit_root="$1"
+				fi
+				;;
+		esac
+		shift
+	done
 
 	if [[ -z "$task_id" ]]; then
-		log_error "Usage: supervisor-helper.sh unclaim <task_id> [project_root]"
+		log_error "Usage: supervisor-helper.sh unclaim <task_id> [project_root] [--force]"
 		return 1
 	fi
 
@@ -3376,12 +3404,16 @@ cmd_unclaim() {
 		return 0
 	fi
 
-	# Use check_task_claimed for consistent fuzzy matching
+	# Use check_task_claimed for consistent fuzzy matching (t1017)
 	local claimed_other=""
 	claimed_other=$(check_task_claimed "$task_id" "$project_root" 2>/dev/null) || true
 	if [[ -n "$claimed_other" ]]; then
-		log_error "$task_id is claimed by assignee:$current_assignee, not by you (assignee:$identity)"
-		return 1
+		if [[ "$force" == "true" ]]; then
+			log_warn "Force-unclaiming $task_id from assignee:$current_assignee (you: assignee:$identity)"
+		else
+			log_error "$task_id is claimed by assignee:$current_assignee, not by you (assignee:$identity). Use --force to override."
+			return 1
+		fi
 	fi
 
 	# Remove assignee:identity and started:... from the task line

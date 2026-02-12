@@ -64,10 +64,31 @@ If the first argument is NOT a task ID (it's a description):
 ## Full Loop Phases
 
 ```text
-Task Development → Preflight → PR Create → PR Review → Postflight → Deploy
+Claim → Branch Setup → Task Development → Preflight → PR Create → PR Review → Postflight → Deploy
 ```
 
 ## Workflow
+
+### Step 0.5: Claim Task (t1017)
+
+If the first argument is a task ID (`t\d+`), claim it before starting work. This prevents two agents (or a human and an agent) from working on the same task concurrently.
+
+```bash
+# Claim the task — adds assignee: to TODO.md
+~/.aidevops/agents/scripts/supervisor-helper.sh claim "$TASK_ID" "$(pwd)"
+```
+
+**Exit codes:**
+- `0` - Claimed successfully (or already claimed by you) — proceed
+- `1` - Claimed by someone else — **STOP, do not start work**
+
+**If claim fails** (task is claimed by another contributor):
+- In interactive mode: inform the user and stop
+- In headless mode: exit cleanly with `BLOCKED: task claimed by assignee:{name}`
+
+**Skip claim when:**
+- The first argument is not a task ID (it's a description)
+- The `--no-claim` flag is passed
 
 ### Step 1: Auto-Branch Setup
 
