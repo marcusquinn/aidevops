@@ -14030,6 +14030,39 @@ cmd_watch() {
 # Zero dependencies beyond bash + sqlite3 + tput (standard on macOS/Linux).
 # Refreshes every N seconds (default 2). Reads from supervisor.db.
 #######################################
+
+#######################################
+# Manually trigger queue health issue update (t1013)
+# Usage: supervisor-helper.sh queue-health [--batch <id>]
+# Forces an immediate update of the pinned queue health issue.
+#######################################
+cmd_queue_health() {
+	local batch_id=""
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--batch)
+			[[ $# -lt 2 ]] && {
+				log_error "Missing batch ID"
+				return 1
+			}
+			batch_id="$2"
+			shift 2
+			;;
+		*)
+			log_error "Unknown option: $1"
+			return 1
+			;;
+		esac
+	done
+
+	ensure_db
+	log_info "Updating queue health issue..."
+	update_queue_health_issue "$batch_id" ""
+	log_success "Queue health issue updated"
+	return 0
+}
+
 cmd_dashboard() {
 	local refresh_interval=2
 	local batch_filter=""
@@ -14847,6 +14880,7 @@ Usage:
   supervisor-helper.sh cron [install|uninstall|status] Manage cron-based pulse scheduling
   supervisor-helper.sh watch [--repo path]            Watch TODO.md for changes (fswatch)
   supervisor-helper.sh dashboard [--batch id] [--interval N] Live TUI dashboard
+  supervisor-helper.sh queue-health [--batch id]     Update pinned queue health issue (t1013)
   supervisor-helper.sh db [sql]                      Direct SQLite access
   supervisor-helper.sh help                          Show this help
 
@@ -15166,6 +15200,7 @@ main() {
 	cron) cmd_cron "$@" ;;
 	watch) cmd_watch "$@" ;;
 	dashboard) cmd_dashboard "$@" ;;
+	queue-health) cmd_queue_health "$@" ;;
 	recall) cmd_recall "$@" ;;
 	release) cmd_release "$@" ;;
 	retrospective) cmd_retrospective "$@" ;;
