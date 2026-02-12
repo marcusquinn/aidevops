@@ -1427,12 +1427,9 @@ check_quality_tools() {
     print_info "Checking quality tools..."
     
     local missing_tools=()
-    local has_shellcheck=false
-    local has_shfmt=false
     
     # Check for shellcheck
     if command -v shellcheck >/dev/null 2>&1; then
-        has_shellcheck=true
         print_success "shellcheck: $(shellcheck --version | head -1)"
     else
         missing_tools+=("shellcheck")
@@ -1440,7 +1437,6 @@ check_quality_tools() {
     
     # Check for shfmt
     if command -v shfmt >/dev/null 2>&1; then
-        has_shfmt=true
         print_success "shfmt: $(shfmt --version)"
     else
         missing_tools+=("shfmt")

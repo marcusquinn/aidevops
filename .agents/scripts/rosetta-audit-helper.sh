@@ -145,8 +145,10 @@ audit_system() {
     
     # Detect Homebrew installations
     print_info "Detecting Homebrew installations..."
-    local installations
-    mapfile -t installations < <(detect_homebrew_installations)
+    local installations=()
+    while IFS= read -r install; do
+        installations+=("$install")
+    done < <(detect_homebrew_installations)
     
     if [[ ${#installations[@]} -eq 0 ]]; then
         print_warning "No Homebrew installations found"
@@ -155,8 +157,6 @@ audit_system() {
     
     local has_x86_brew=false
     local has_arm_brew=false
-    local x86_brew_path=""
-    local arm_brew_path=""
     
     for install in "${installations[@]}"; do
         local type="${install%%:*}"
@@ -164,11 +164,9 @@ audit_system() {
         
         if [[ "$type" == "x86" ]]; then
             has_x86_brew=true
-            x86_brew_path="$path"
             print_warning "Found x86 Homebrew: $path"
         elif [[ "$type" == "arm" ]]; then
             has_arm_brew=true
-            arm_brew_path="$path"
             print_success "Found ARM Homebrew: $path"
         fi
     done
@@ -179,8 +177,10 @@ audit_system() {
         local x86_prefix="/usr/local"
         print_warning "Scanning for x86 binaries in $x86_prefix..."
         
-        local x86_binaries
-        mapfile -t x86_binaries < <(scan_homebrew_binaries "$x86_prefix")
+        local x86_binaries=()
+        while IFS= read -r binary; do
+            x86_binaries+=("$binary")
+        done < <(scan_homebrew_binaries "$x86_prefix")
         
         if [[ ${#x86_binaries[@]} -gt 0 ]]; then
             print_error "Found ${#x86_binaries[@]} x86 binaries running under Rosetta:"
@@ -268,8 +268,10 @@ quick_check() {
         print_info "Rosetta 2: not installed"
     fi
     
-    local installations
-    mapfile -t installations < <(detect_homebrew_installations)
+    local installations=()
+    while IFS= read -r install; do
+        installations+=("$install")
+    done < <(detect_homebrew_installations)
     
     for install in "${installations[@]}"; do
         local type="${install%%:*}"
