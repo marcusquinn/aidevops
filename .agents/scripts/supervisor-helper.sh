@@ -2383,6 +2383,10 @@ cmd_transition() {
 		;;
 	esac
 
+	# t1009: Sync GitHub issue status label on every state transition
+	# Best-effort — silently skips if gh CLI unavailable or no issue linked
+	sync_issue_status_label "$task_id" "$new_state" "$current_state" 2>>"${SUPERVISOR_LOG:-/dev/null}" || true
+
 	# Auto-generate VERIFY.md entry when task reaches deployed (t180.4)
 	if [[ "$new_state" == "deployed" ]]; then
 		generate_verify_entry "$task_id" 2>>"$SUPERVISOR_LOG" || true
@@ -2960,10 +2964,157 @@ ensure_status_labels() {
 	fi
 
 	# --force updates existing labels without error, creates if missing
+	# t1009: Full set of status labels for state-transition tracking
 	gh label create "status:available" --repo "$repo_slug" --color "0E8A16" --description "Task is available for claiming" --force 2>/dev/null || true
+	gh label create "status:queued" --repo "$repo_slug" --color "C5DEF5" --description "Task is queued for dispatch" --force 2>/dev/null || true
 	gh label create "status:claimed" --repo "$repo_slug" --color "D93F0B" --description "Task is claimed by a worker" --force 2>/dev/null || true
 	gh label create "status:in-review" --repo "$repo_slug" --color "FBCA04" --description "Task PR is in review" --force 2>/dev/null || true
+	gh label create "status:blocked" --repo "$repo_slug" --color "B60205" --description "Task is blocked" --force 2>/dev/null || true
+	gh label create "status:verify-failed" --repo "$repo_slug" --color "E4E669" --description "Task verification failed" --force 2>/dev/null || true
 	gh label create "status:done" --repo "$repo_slug" --color "6F42C1" --description "Task is complete" --force 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Map supervisor state to GitHub issue status label (t1009)
+# Returns the label name for a given state, empty if no label applies
+# (terminal states that close the issue return empty).
+# $1: supervisor state
+#######################################
+state_to_status_label() {
+	local state="$1"
+	case "$state" in
+	queued) echo "status:queued" ;;
+	dispatched | running | evaluating | retrying) echo "status:claimed" ;;
+	complete | pr_review | review_triage | merging) echo "status:in-review" ;;
+	merged | deploying) echo "status:in-review" ;;
+	blocked) echo "status:blocked" ;;
+	verify_failed) echo "status:verify-failed" ;;
+	# Terminal states: verified/deployed close the issue, cancelled closes as not-planned
+	# These return empty — the caller handles close logic separately
+	verified | deployed | cancelled | failed) echo "" ;;
+	*) echo "" ;;
+	esac
+	return 0
+}
+
+#######################################
+# All status labels that can be set on an issue (t1009)
+# Used to remove stale labels before applying the new one.
+#######################################
+ALL_STATUS_LABELS="status:available,status:queued,status:claimed,status:in-review,status:blocked,status:verify-failed,status:done"
+
+#######################################
+# Sync GitHub issue status label on state transition (t1009)
+# Called from cmd_transition() after each state change.
+# Removes all status:* labels, then adds the one matching the new state.
+# For terminal states (verified, deployed, cancelled), closes the issue.
+# Best-effort: silently skips if gh CLI unavailable or no issue linked.
+# $1: task_id
+# $2: new_state
+# $3: old_state (for logging)
+#######################################
+sync_issue_status_label() {
+	local task_id="$1"
+	local new_state="$2"
+	local old_state="${3:-}"
+
+	# Skip if gh CLI not available or not authenticated
+	command -v gh &>/dev/null || return 0
+	check_gh_auth || return 0
+
+	# Find the repo path from the task's DB record
+	local escaped_id
+	escaped_id=$(sql_escape "$task_id")
+	local repo_path
+	repo_path=$(db "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+	if [[ -z "$repo_path" ]]; then
+		repo_path=$(find_project_root 2>/dev/null || echo ".")
+	fi
+
+	local issue_number
+	issue_number=$(find_task_issue_number "$task_id" "$repo_path")
+	if [[ -z "$issue_number" ]]; then
+		log_verbose "sync_issue_status_label: no GH issue for $task_id, skipping"
+		return 0
+	fi
+
+	local repo_slug
+	repo_slug=$(detect_repo_slug "$repo_path" 2>/dev/null || echo "")
+	if [[ -z "$repo_slug" ]]; then
+		return 0
+	fi
+
+	# Ensure all status labels exist on the repo
+	ensure_status_labels "$repo_slug"
+
+	# Determine the new label
+	local new_label
+	new_label=$(state_to_status_label "$new_state")
+
+	# Build remove args for all status labels except the new one
+	local -a remove_args=()
+	local label
+	while IFS=',' read -ra labels; do
+		for label in "${labels[@]}"; do
+			if [[ "$label" != "$new_label" ]]; then
+				remove_args+=("--remove-label" "$label")
+			fi
+		done
+	done <<<"$ALL_STATUS_LABELS"
+
+	# Handle terminal states that close the issue
+	case "$new_state" in
+	verified | deployed)
+		# Close the issue with a completion comment
+		gh issue close "$issue_number" --repo "$repo_slug" \
+			--comment "Task $task_id reached state: $new_state (from $old_state)" 2>/dev/null || true
+		# Add status:done and remove all other status labels
+		gh issue edit "$issue_number" --repo "$repo_slug" \
+			--add-label "status:done" "${remove_args[@]}" 2>/dev/null || true
+		log_verbose "sync_issue_status_label: closed #$issue_number ($task_id -> $new_state)"
+		return 0
+		;;
+	cancelled)
+		# Close as not-planned
+		gh issue close "$issue_number" --repo "$repo_slug" --reason "not planned" \
+			--comment "Task $task_id cancelled (was: $old_state)" 2>/dev/null || true
+		# Remove all status labels
+		gh issue edit "$issue_number" --repo "$repo_slug" \
+			"${remove_args[@]}" 2>/dev/null || true
+		log_verbose "sync_issue_status_label: closed #$issue_number as not-planned ($task_id)"
+		return 0
+		;;
+	failed)
+		# Close with failure comment but don't add status:done
+		gh issue close "$issue_number" --repo "$repo_slug" \
+			--comment "Task $task_id failed (was: $old_state)" 2>/dev/null || true
+		gh issue edit "$issue_number" --repo "$repo_slug" \
+			"${remove_args[@]}" 2>/dev/null || true
+		log_verbose "sync_issue_status_label: closed #$issue_number as failed ($task_id)"
+		return 0
+		;;
+	esac
+
+	# Non-terminal state: apply the new label, remove all others
+	if [[ -n "$new_label" ]]; then
+		gh issue edit "$issue_number" --repo "$repo_slug" \
+			--add-label "$new_label" "${remove_args[@]}" 2>/dev/null || true
+		log_verbose "sync_issue_status_label: #$issue_number -> $new_label ($task_id: $old_state -> $new_state)"
+	fi
+
+	# Reopen the issue if it was closed and we're transitioning to a non-terminal state
+	# (e.g., failed -> queued for retry, blocked -> queued)
+	if [[ -n "$new_label" ]]; then
+		local issue_state
+		issue_state=$(gh issue view "$issue_number" --repo "$repo_slug" --json state --jq '.state' 2>/dev/null || echo "")
+		if [[ "$issue_state" == "CLOSED" ]]; then
+			gh issue reopen "$issue_number" --repo "$repo_slug" \
+				--comment "Task $task_id re-entered pipeline: $old_state -> $new_state" 2>/dev/null || true
+			log_verbose "sync_issue_status_label: reopened #$issue_number ($task_id: $old_state -> $new_state)"
+		fi
+	fi
+
 	return 0
 }
 
@@ -13190,16 +13341,16 @@ cmd_cron() {
 	local script_path
 	script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/supervisor-helper.sh"
 	local cron_marker="# aidevops-supervisor-pulse"
-	
+
 	# Detect current PATH for cron environment (t1006)
 	local user_path="${PATH}"
-	
+
 	# Detect GH_TOKEN from gh CLI if available (t1006)
 	local gh_token=""
 	if command -v gh &>/dev/null; then
 		gh_token=$(gh auth token 2>/dev/null || true)
 	fi
-	
+
 	# Build cron command with environment variables
 	local env_vars=""
 	if [[ -n "$user_path" ]]; then
@@ -13208,7 +13359,7 @@ cmd_cron() {
 	if [[ -n "$gh_token" ]]; then
 		env_vars="${env_vars:+${env_vars} }GH_TOKEN=${gh_token}"
 	fi
-	
+
 	local cron_cmd="*/${interval} * * * * ${env_vars:+${env_vars} }${script_path} pulse ${batch_arg} >> ${SUPERVISOR_DIR}/cron.log 2>&1 ${cron_marker}"
 
 	case "$action" in
