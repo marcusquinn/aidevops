@@ -445,3 +445,19 @@
   check: file-exists .agents/services/communications/matrix-bot.md
   check: file-exists README.md
   check: rg "matrix-bot" .agents/subagent-index.toon
+
+- [x] v053 t1004 Ensure all task completion paths write pr:#NNN to TODO.md | PR #1295 | merged:2026-02-12 verified:2026-02-12
+  files: .agents/scripts/supervisor/todo-sync.sh, .agents/scripts/version-manager.sh
+  check: shellcheck .agents/scripts/supervisor/todo-sync.sh
+  check: file-exists .agents/scripts/supervisor/todo-sync.sh
+  check: shellcheck .agents/scripts/version-manager.sh
+  check: file-exists .agents/scripts/version-manager.sh
+
+- [ ] v054 t1009 Supervisor auto-updates GitHub issue status labels on eve... | PR #1299 | merged:2026-02-12
+  files: .agents/scripts/issue-sync-helper.sh, .agents/scripts/supervisor-helper.sh, .agents/scripts/supervisor/issue-sync.sh
+  check: shellcheck .agents/scripts/issue-sync-helper.sh
+  check: file-exists .agents/scripts/issue-sync-helper.sh
+  check: shellcheck .agents/scripts/supervisor-helper.sh
+  check: file-exists .agents/scripts/supervisor-helper.sh
+  check: shellcheck .agents/scripts/supervisor/issue-sync.sh
+  check: file-exists .agents/scripts/supervisor/issue-sync.sh
