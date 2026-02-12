@@ -1978,6 +1978,20 @@ cmd_add() {
 		fi
 	fi
 
+	# Model routing safeguard: warn if explicit model:sonnet conflicts with complexity classifier
+	# This catches tasks that are tagged model:sonnet but are actually complex enough for opus.
+	# The warning is logged but the explicit model is respected (user intent takes priority).
+	if [[ -n "$description" && "$model" != "anthropic/claude-opus-4-6" && "$model" != "opus" ]]; then
+		local auto_tier
+		auto_tier=$(classify_task_complexity "$description" "" 2>/dev/null || echo "")
+		if [[ "$auto_tier" == "opus" ]]; then
+			log_warn "Task $task_id: explicit model:$model but classifier recommends opus — consider upgrading for complex tasks"
+			# Auto-upgrade to opus when classifier disagrees with explicit sonnet (safety-first)
+			model="opus"
+			log_info "Task $task_id: auto-upgraded to model:opus (classifier override)"
+		fi
+	fi
+
 	ensure_db
 
 	# Check if task already exists
@@ -3992,6 +4006,14 @@ classify_task_complexity() {
 		return 0
 	fi
 
+	# --- Pre-check: disambiguate patterns that match both sonnet and opus ---
+	# "extract modules" matches sonnet "extract.*function" when description also
+	# mentions functions. Check for module-level operations first (opus-tier).
+	if [[ "$desc_lower" =~ module && ("$desc_lower" =~ extract || "$desc_lower" =~ move.*into) ]]; then
+		echo "opus"
+		return 0
+	fi
+
 	# --- Haiku tier: trivial mechanical tasks (no reasoning needed) ---
 	# Aligned with model-registry-helper.sh route patterns
 	local haiku_patterns=(
@@ -4113,6 +4135,21 @@ classify_task_complexity() {
 		"distributed"
 		"consensus"
 		"orchestrat"
+		"pre.commit.*hook"
+		"ci.*check"
+		"ci.*workflow"
+		"github.*action"
+		"edge.*case"
+		"enforce"
+		"guard"
+		"wire.*into"
+		"end.to.end"
+		"multi.file"
+		"modular"
+		"extract.*module"
+		"supervisor"
+		"parse.*diff"
+		"parse.*staged"
 	)
 
 	for pattern in "${opus_patterns[@]}"; do
@@ -10156,6 +10193,8 @@ cmd_pulse() {
 				cleanup_worker_processes "$tid"
 				# Store failure pattern in memory (t128.6)
 				store_failure_pattern "$tid" "retry" "$outcome_detail" "$tid_desc" 2>>"$SUPERVISOR_LOG" || true
+				# Auto-escalate model on retry so re-prompt uses stronger model (t314 wiring)
+				escalate_model_on_failure "$tid" 2>>"$SUPERVISOR_LOG" || true
 				# Backend quota errors: defer re-prompt to next pulse (t095-diag-1).
 				# Quota resets take hours, not minutes. Immediate re-prompt wastes
 				# retry attempts. Leave in retrying state for deferred retry loop.
@@ -10434,6 +10473,8 @@ cmd_pulse() {
 						rm -f "$pid_file"
 						cmd_transition "$health_task" "failed" --error "$kill_reason" 2>>"$SUPERVISOR_LOG" || true
 						failed_count=$((failed_count + 1))
+						# Auto-escalate model on failure so retry uses stronger model (t314 wiring)
+						escalate_model_on_failure "$health_task" 2>>"$SUPERVISOR_LOG" || true
 						attempt_self_heal "$health_task" "failed" "$kill_reason" "${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
 					fi
 				fi
@@ -10454,6 +10495,8 @@ cmd_pulse() {
 					cmd_transition "$orphan_id" "failed" --error "No worker process found (DB orphan)" 2>>"$SUPERVISOR_LOG" || true
 					failed_count=$((failed_count + 1))
 					attempt_self_heal "$orphan_id" "failed" "No worker process found" "${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
+					# Auto-escalate model on failure before self-heal retry (t314 wiring)
+					escalate_model_on_failure "$orphan_id" 2>>"$SUPERVISOR_LOG" || true
 				}
 			fi
 		done <<<"$db_orphans"
