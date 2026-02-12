@@ -587,6 +587,37 @@ After completing file changes, run preflight automatically:
 > 2. Continue working
 > 3. Done for now
 
+### PR Title Requirements
+
+**MANDATORY**: All PR titles MUST include the task ID from TODO.md for traceability.
+
+**Format**: `{task-id}: {description}`
+
+**Examples**:
+- `t318: Update PR workflow documentation`
+- `t042: Fix login timeout bug`
+- `t156: Add Ahrefs MCP server integration`
+
+**For unplanned work** (hotfixes, quick fixes discovered during development):
+
+1. **Create TODO entry first** with `~15m` estimate:
+   ```bash
+   # Add to TODO.md:
+   - [ ] t999 Fix typo in error message ~15m #hotfix
+   ```
+2. **Then create PR** with the task ID:
+   ```bash
+   gh pr create --title "t999: Fix typo in error message" --body "Quick fix"
+   ```
+
+**Rationale**: Every code change must be traceable to a task. This enables:
+- Accurate time tracking (compare estimate vs actual)
+- Work history and context for future reference
+- Linking PRs to GitHub issues via `ref:GH#` in TODO.md
+- Preventing untraceable "drive-by" changes
+
+**No exceptions**: Even 1-line fixes need a task ID. If the work wasn't planned, create the TODO entry first.
+
 **If changes include `.agents/` files** (in aidevops repo or repos with local agents):
 
 > Agent files modified. Run `./setup.sh` to deploy to `~/.aidevops/agents/`?
