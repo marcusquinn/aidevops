@@ -3354,15 +3354,18 @@ cmd_unclaim() {
 	# Parse arguments (t1017: support --force flag)
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-			--force) force=true ;;
-			-*) log_error "Unknown option: $1"; return 1 ;;
-			*)
-				if [[ -z "$task_id" ]]; then
-					task_id="$1"
-				elif [[ -z "$explicit_root" ]]; then
-					explicit_root="$1"
-				fi
-				;;
+		--force) force=true ;;
+		-*)
+			log_error "Unknown option: $1"
+			return 1
+			;;
+		*)
+			if [[ -z "$task_id" ]]; then
+				task_id="$1"
+			elif [[ -z "$explicit_root" ]]; then
+				explicit_root="$1"
+			fi
+			;;
 		esac
 		shift
 	done
@@ -8905,9 +8908,22 @@ rebase_sibling_pr() {
 	if [[ "$use_worktree" == "true" ]]; then
 		# Worktree is already on the branch — rebase in place
 		if ! git -C "$git_dir" rebase origin/main 2>>"$SUPERVISOR_LOG"; then
-			log_warn "rebase_sibling_pr: rebase conflict for $task_id — aborting"
-			git -C "$git_dir" rebase --abort 2>>"$SUPERVISOR_LOG" || true
-			return 1
+			log_warn "rebase_sibling_pr: rebase conflict for $task_id — attempting AI resolution"
+			# Try AI-assisted conflict resolution before aborting
+			if resolve_rebase_conflicts "$git_dir" "$task_id"; then
+				log_info "rebase_sibling_pr: AI resolved conflicts for $task_id — continuing rebase"
+				if git -C "$git_dir" rebase --continue 2>>"$SUPERVISOR_LOG"; then
+					log_success "rebase_sibling_pr: rebase completed after AI resolution for $task_id"
+				else
+					log_warn "rebase_sibling_pr: rebase --continue failed after AI resolution for $task_id"
+					git -C "$git_dir" rebase --abort 2>>"$SUPERVISOR_LOG" || true
+					return 1
+				fi
+			else
+				log_warn "rebase_sibling_pr: AI resolution failed for $task_id — aborting"
+				git -C "$git_dir" rebase --abort 2>>"$SUPERVISOR_LOG" || true
+				return 1
+			fi
 		fi
 	else
 		# No worktree — checkout branch in main repo temporarily
@@ -8921,11 +8937,26 @@ rebase_sibling_pr() {
 		fi
 
 		if ! git -C "$git_dir" rebase origin/main 2>>"$SUPERVISOR_LOG"; then
-			log_warn "rebase_sibling_pr: rebase conflict for $task_id — aborting"
-			git -C "$git_dir" rebase --abort 2>>"$SUPERVISOR_LOG" || true
-			# Return to original branch
-			git -C "$git_dir" checkout "${current_branch:-main}" 2>>"$SUPERVISOR_LOG" || true
-			return 1
+			log_warn "rebase_sibling_pr: rebase conflict for $task_id — attempting AI resolution"
+			# Try AI-assisted conflict resolution before aborting
+			if resolve_rebase_conflicts "$git_dir" "$task_id"; then
+				log_info "rebase_sibling_pr: AI resolved conflicts for $task_id — continuing rebase"
+				if git -C "$git_dir" rebase --continue 2>>"$SUPERVISOR_LOG"; then
+					log_success "rebase_sibling_pr: rebase completed after AI resolution for $task_id"
+				else
+					log_warn "rebase_sibling_pr: rebase --continue failed after AI resolution for $task_id"
+					git -C "$git_dir" rebase --abort 2>>"$SUPERVISOR_LOG" || true
+					# Return to original branch
+					git -C "$git_dir" checkout "${current_branch:-main}" 2>>"$SUPERVISOR_LOG" || true
+					return 1
+				fi
+			else
+				log_warn "rebase_sibling_pr: AI resolution failed for $task_id — aborting"
+				git -C "$git_dir" rebase --abort 2>>"$SUPERVISOR_LOG" || true
+				# Return to original branch
+				git -C "$git_dir" checkout "${current_branch:-main}" 2>>"$SUPERVISOR_LOG" || true
+				return 1
+			fi
 		fi
 
 		# Return to original branch
