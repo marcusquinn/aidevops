@@ -246,8 +246,8 @@ validate_duplicate_task_ids() {
 	# We extract only the leading task ID (the one that defines the task).
 	local task_ids
 	task_ids=$(git show :TODO.md 2>/dev/null |
-		grep -E '^\s*- \[[x ]\] t[0-9]+' |
-		sed -E 's/^\s*- \[[x ]\] (t[0-9]+(\.[0-9]+)*).*/\1/' ||
+		grep -E '^[[:space:]]*- \[[x ]\] t[0-9]+' |
+		sed -E 's/^[[:space:]]*- \[[x ]\] (t[0-9]+(\.[0-9]+)*).*/\1/' ||
 		true)
 
 	if [[ -z "$task_ids" ]]; then
