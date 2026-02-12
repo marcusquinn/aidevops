@@ -1460,7 +1460,7 @@ cmd_close() {
 			continue
 		fi
 
-		# Guard: verify task has completion evidence (merged PR or verified: field)
+		# Extract task block for evidence checking and PR discovery
 		local task_with_notes
 		task_with_notes=$(extract_task_block "$task_id" "$todo_file")
 		local task_line
@@ -1469,15 +1469,9 @@ cmd_close() {
 			task_with_notes="$task_line"
 		fi
 
-		if [[ "$FORCE_CLOSE" != "true" ]] && ! task_has_completion_evidence "$task_with_notes" "$task_id" "$repo_slug"; then
-			print_warning "Skipping #$issue_number ($task_id): no merged PR or verified: field found"
-			log_verbose "  To force close: FORCE_CLOSE=true issue-sync-helper.sh close $task_id"
-			log_verbose "  To verify: add 'verified:$(date +%Y-%m-%d)' to the task line in TODO.md"
-			skipped=$((skipped + 1))
-			continue
-		fi
-
-		# Find the closing PR for an auditable reference in the close comment (t220)
+		# t1004: Find the closing PR BEFORE evidence check (chicken-and-egg fix)
+		# This allows us to discover and write pr:#NNN to TODO.md, which then
+		# satisfies the evidence check on the next pass
 		local closing_pr_info closing_pr_number closing_pr_url
 		closing_pr_info=$(find_closing_pr "$task_with_notes" "$task_id" "$repo_slug" 2>/dev/null || echo "")
 		closing_pr_number=""
@@ -1489,7 +1483,22 @@ cmd_close() {
 			# t280: Write pr:#NNN back to TODO.md if missing (proof-log backfill)
 			if [[ "$DRY_RUN" != "true" && -n "$closing_pr_number" ]]; then
 				add_pr_ref_to_todo "$task_id" "$closing_pr_number" "$todo_file"
+				# Re-read task line after adding pr:#NNN
+				task_line=$(grep -E "^\s*- \[.\] ${task_id} " "$todo_file" | head -1 || echo "")
+				task_with_notes=$(extract_task_block "$task_id" "$todo_file")
+				if [[ -z "$task_with_notes" ]]; then
+					task_with_notes="$task_line"
+				fi
 			fi
+		fi
+
+		# Guard: verify task has completion evidence (merged PR or verified: field)
+		if [[ "$FORCE_CLOSE" != "true" ]] && ! task_has_completion_evidence "$task_with_notes" "$task_id" "$repo_slug"; then
+			print_warning "Skipping #$issue_number ($task_id): no merged PR or verified: field found"
+			log_verbose "  To force close: FORCE_CLOSE=true issue-sync-helper.sh close $task_id"
+			log_verbose "  To verify: add 'verified:$(date +%Y-%m-%d)' to the task line in TODO.md"
+			skipped=$((skipped + 1))
+			continue
 		fi
 
 		# Build close comment with PR reference for auditability (t220)
