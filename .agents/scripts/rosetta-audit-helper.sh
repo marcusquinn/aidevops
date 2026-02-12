@@ -262,38 +262,16 @@ cmd_migrate() {
 
     local migrated=0 removed_dups=0 failed=0 skipped=0
 
-    # Phase 1: Remove duplicate x86 packages (ARM already installed)
-    local duplicates
-    duplicates=$(get_duplicate_packages)
+    # Suppress brew cleanup during migration (it interferes with batch installs)
+    export HOMEBREW_NO_INSTALL_CLEANUP=1
 
-    if [[ -n "$duplicates" ]]; then
-        echo -e "${BLUE}Phase 1: Removing duplicate x86 packages${NC}"
-        echo ""
-
-        while IFS= read -r pkg; do
-            [[ -z "$pkg" ]] && continue
-            if [[ "$dry_run" = true ]]; then
-                echo "  [DRY RUN] Would remove x86: $pkg (ARM version already installed)"
-                ((removed_dups++))
-            else
-                if "$X86_BREW" uninstall "$pkg" 2>/dev/null; then
-                    print_success "Removed x86 duplicate: $pkg"
-                    ((removed_dups++))
-                else
-                    print_warning "Failed to remove x86 duplicate: $pkg (may have dependents)"
-                    ((skipped++))
-                fi
-            fi
-        done <<< "$duplicates"
-        echo ""
-    fi
-
-    # Phase 2: Migrate x86-only packages to ARM
+    # Phase 1: Install ARM versions of x86-only packages
+    # (Must happen BEFORE removing anything — x86 packages depend on each other)
     local x86_only
     x86_only=$(get_x86_only_packages)
 
     if [[ -n "$x86_only" ]]; then
-        echo -e "${BLUE}Phase 2: Migrating x86-only packages to ARM${NC}"
+        echo -e "${BLUE}Phase 1: Installing ARM versions of x86-only packages${NC}"
         echo ""
 
         while IFS= read -r pkg; do
@@ -306,23 +284,14 @@ cmd_migrate() {
             fi
 
             if [[ "$dry_run" = true ]]; then
-                echo "  [DRY RUN] Would migrate: $pkg (install ARM, remove x86)"
+                echo "  [DRY RUN] Would install ARM: $pkg"
                 ((migrated++))
             else
-                print_info "Migrating: $pkg"
-
-                # Install ARM version first
-                if "$ARM_BREW" install "$pkg" 2>/dev/null; then
-                    # Then remove x86 version
-                    if "$X86_BREW" uninstall "$pkg" 2>/dev/null; then
-                        print_success "Migrated: $pkg"
-                        ((migrated++))
-                    else
-                        print_warning "ARM installed but x86 removal failed: $pkg"
-                        ((migrated++))
-                    fi
+                if "$ARM_BREW" install "$pkg" 2>&1 | tail -1; then
+                    print_success "Installed ARM: $pkg"
+                    ((migrated++))
                 else
-                    print_error "Failed to install ARM version: $pkg"
+                    print_error "Failed to install ARM: $pkg"
                     ((failed++))
                 fi
             fi
@@ -330,12 +299,60 @@ cmd_migrate() {
         echo ""
     fi
 
+    # Phase 2: Remove ALL x86 packages (duplicates + migrated)
+    # Now safe because ARM versions are installed for everything migratable
+    local all_x86
+    all_x86=$("$X86_BREW" list --formula 2>/dev/null)
+
+    if [[ -n "$all_x86" ]]; then
+        echo -e "${BLUE}Phase 2: Removing x86 packages${NC}"
+        echo ""
+
+        # Count duplicates for summary
+        local duplicates
+        duplicates=$(get_duplicate_packages)
+        local dup_count=0
+        if [[ -n "$duplicates" ]]; then
+            dup_count=$(echo "$duplicates" | wc -l | tr -d ' ')
+        fi
+
+        if [[ "$dry_run" = true ]]; then
+            while IFS= read -r pkg; do
+                [[ -z "$pkg" ]] && continue
+                echo "  [DRY RUN] Would remove x86: $pkg"
+            done <<< "$all_x86"
+            removed_dups=$dup_count
+        else
+            # Use --force --ignore-dependencies to remove all x86 packages in one pass
+            # Safe because ARM versions are now installed for everything migratable
+            local x86_list=()
+            while IFS= read -r pkg; do
+                [[ -z "$pkg" ]] && continue
+                x86_list+=("$pkg")
+            done <<< "$all_x86"
+
+            if [[ ${#x86_list[@]} -gt 0 ]]; then
+                print_info "Removing ${#x86_list[@]} x86 packages..."
+                if "$X86_BREW" uninstall --force --ignore-dependencies "${x86_list[@]}" 2>&1 | tail -3; then
+                    removed_dups=${#x86_list[@]}
+                    print_success "Removed ${#x86_list[@]} x86 packages"
+                else
+                    print_warning "Some x86 packages could not be removed"
+                    # Count what's left
+                    local remaining_after
+                    remaining_after=$("$X86_BREW" list --formula 2>/dev/null | wc -l | tr -d ' ')
+                    removed_dups=$(( ${#x86_list[@]} - remaining_after ))
+                fi
+            fi
+        fi
+        echo ""
+    fi
     # Summary
     echo -e "${BLUE}=== Migration Summary$([ "$dry_run" = true ] && echo " (DRY RUN)") ===${NC}"
     echo ""
-    echo "  Migrated to ARM:        $migrated"
-    echo "  Duplicate x86 removed:  $removed_dups"
-    echo "  Skipped (no ARM/deps):  $skipped"
+    echo "  Installed ARM versions: $migrated"
+    echo "  x86 packages removed:  $removed_dups"
+    echo "  Skipped (no ARM):      $skipped"
     echo "  Failed:                 $failed"
     echo ""
 
