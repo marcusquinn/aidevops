@@ -3123,6 +3123,437 @@ sync_issue_status_label() {
 }
 
 #######################################
+# Update pinned queue health issue with live supervisor status (t1013)
+#
+# Creates or updates a single comment on a pinned GitHub issue with:
+#   - Running/queued/blocked counts
+#   - Active worker table (task, model, duration)
+#   - Recent completions (last 5)
+#   - System resources snapshot
+#   - Alerts section (stale batches, auth failures, stuck workers)
+#   - "Last pulse" timestamp
+#
+# The comment is edited in-place (not appended) using the GitHub API.
+# The comment ID is cached to avoid repeated lookups.
+#
+# Graceful degradation: never breaks the pulse if gh fails.
+#
+# $1: batch_id (optional)
+# $2: repo_slug (optional, auto-detected if empty)
+# Returns: 0 always (best-effort)
+#######################################
+update_queue_health_issue() {
+	local batch_id="${1:-}"
+	local repo_slug="${2:-}"
+
+	# Require gh CLI and authentication
+	command -v gh &>/dev/null || return 0
+	check_gh_auth 2>/dev/null || return 0
+
+	# Auto-detect repo slug if not provided
+	if [[ -z "$repo_slug" ]]; then
+		local health_repo
+		health_repo=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks LIMIT 1;" 2>/dev/null || echo "")
+		if [[ -z "$health_repo" ]]; then
+			health_repo="$(pwd)"
+		fi
+		repo_slug=$(detect_repo_slug "$health_repo" 2>/dev/null || echo "")
+		if [[ -z "$repo_slug" ]]; then
+			return 0
+		fi
+	fi
+
+	# Find or create the health issue
+	local health_issue_file="${SUPERVISOR_DIR}/queue-health-issue"
+	local health_comment_file="${SUPERVISOR_DIR}/queue-health-comment-id"
+	local health_issue_number=""
+
+	# Try cached issue number first
+	if [[ -f "$health_issue_file" ]]; then
+		health_issue_number=$(cat "$health_issue_file" 2>/dev/null || echo "")
+	fi
+
+	# Validate cached issue still exists and is open
+	if [[ -n "$health_issue_number" ]]; then
+		local issue_state
+		issue_state=$(gh issue view "$health_issue_number" --repo "$repo_slug" --json state --jq '.state' 2>/dev/null || echo "")
+		if [[ "$issue_state" != "OPEN" ]]; then
+			health_issue_number=""
+			rm -f "$health_issue_file" "$health_comment_file" 2>/dev/null || true
+		fi
+	fi
+
+	# Search for existing health issue by title if not cached
+	if [[ -z "$health_issue_number" ]]; then
+		health_issue_number=$(gh issue list --repo "$repo_slug" \
+			--search "in:title [Supervisor] Queue Health" \
+			--state open --json number --jq '.[0].number' 2>/dev/null || echo "")
+	fi
+
+	# Create the issue if it doesn't exist
+	if [[ -z "$health_issue_number" ]]; then
+		health_issue_number=$(gh issue create --repo "$repo_slug" \
+			--title "[Supervisor] Queue Health" \
+			--body "Live supervisor queue status. Updated every pulse cycle. Pin this issue for at-a-glance monitoring." \
+			--label "supervisor" 2>/dev/null | grep -oE '[0-9]+$' || echo "")
+		if [[ -z "$health_issue_number" ]]; then
+			log_verbose "  Phase 8c: Could not create health issue"
+			return 0
+		fi
+		# Pin the issue (best-effort — requires admin permissions)
+		gh api graphql -f query="
+			mutation {
+				pinIssue(input: {issueId: \"$(gh issue view "$health_issue_number" --repo "$repo_slug" --json id --jq '.id' 2>/dev/null || echo "")\"}) {
+					issue { number }
+				}
+			}" 2>/dev/null || true
+		log_info "  Phase 8c: Created and pinned health issue #$health_issue_number"
+	fi
+
+	# Cache the issue number
+	echo "$health_issue_number" >"$health_issue_file"
+
+	# --- Generate status markdown ---
+	local now_iso
+	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+	# Counts
+	local cnt_running cnt_queued cnt_blocked cnt_failed cnt_complete cnt_total
+	local cnt_pr_review cnt_retrying cnt_dispatched
+	cnt_running=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status = 'running';" 2>/dev/null || echo "0")
+	cnt_dispatched=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status = 'dispatched';" 2>/dev/null || echo "0")
+	cnt_queued=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status = 'queued';" 2>/dev/null || echo "0")
+	cnt_blocked=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status = 'blocked';" 2>/dev/null || echo "0")
+	cnt_failed=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status = 'failed';" 2>/dev/null || echo "0")
+	cnt_retrying=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status = 'retrying';" 2>/dev/null || echo "0")
+	cnt_pr_review=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('pr_review','review_triage','merging','merged','deploying');" 2>/dev/null || echo "0")
+	cnt_complete=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('complete','deployed','verified');" 2>/dev/null || echo "0")
+	cnt_total=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks;" 2>/dev/null || echo "0")
+
+	# Active batch info
+	local active_batch_name=""
+	if [[ -n "$batch_id" ]]; then
+		local escaped_batch
+		escaped_batch=$(sql_escape "$batch_id")
+		active_batch_name=$(db "$SUPERVISOR_DB" "SELECT name FROM batches WHERE id = '$escaped_batch';" 2>/dev/null || echo "$batch_id")
+	else
+		active_batch_name=$(db "$SUPERVISOR_DB" "SELECT name FROM batches WHERE status = 'active' ORDER BY created_at DESC LIMIT 1;" 2>/dev/null || echo "none")
+	fi
+
+	# Active workers table
+	local workers_md=""
+	local active_workers
+	active_workers=$(db -separator '|' "$SUPERVISOR_DB" "
+		SELECT id, status, description, model, started_at, retries, pr_url
+		FROM tasks
+		WHERE status IN ('running', 'dispatched', 'evaluating')
+		ORDER BY started_at ASC;" 2>/dev/null || echo "")
+
+	if [[ -n "$active_workers" ]]; then
+		workers_md="| Task | Status | Description | Model | Duration | Retries | PR |
+| --- | --- | --- | --- | --- | --- | --- |
+"
+		while IFS='|' read -r w_id w_status w_desc w_model w_started w_retries w_pr; do
+			[[ -z "$w_id" ]] && continue
+			# Calculate duration
+			local w_duration="--"
+			if [[ -n "$w_started" ]]; then
+				local w_start_epoch w_now_epoch w_elapsed_s
+				w_start_epoch=$(date -jf "%Y-%m-%dT%H:%M:%S" "${w_started%%Z*}" +%s 2>/dev/null || date -d "$w_started" +%s 2>/dev/null || echo "0")
+				w_now_epoch=$(date +%s)
+				if [[ "$w_start_epoch" -gt 0 ]]; then
+					w_elapsed_s=$((w_now_epoch - w_start_epoch))
+					local w_min=$((w_elapsed_s / 60))
+					local w_sec=$((w_elapsed_s % 60))
+					w_duration="${w_min}m${w_sec}s"
+				fi
+			fi
+			# Truncate description
+			local w_desc_short="${w_desc:0:50}"
+			[[ ${#w_desc} -gt 50 ]] && w_desc_short="${w_desc_short}..."
+			# Model short name
+			local w_model_short="${w_model##*/}"
+			[[ -z "$w_model_short" ]] && w_model_short="--"
+			# PR link
+			local w_pr_display="--"
+			if [[ -n "$w_pr" ]]; then
+				local w_pr_num
+				w_pr_num=$(echo "$w_pr" | grep -oE '[0-9]+$' || echo "")
+				if [[ -n "$w_pr_num" ]]; then
+					w_pr_display="#${w_pr_num}"
+				fi
+			fi
+			# Status emoji
+			local w_status_icon
+			case "$w_status" in
+			running) w_status_icon="running" ;;
+			dispatched) w_status_icon="dispatched" ;;
+			evaluating) w_status_icon="evaluating" ;;
+			*) w_status_icon="$w_status" ;;
+			esac
+			workers_md="${workers_md}| \`${w_id}\` | ${w_status_icon} | ${w_desc_short} | ${w_model_short} | ${w_duration} | ${w_retries} | ${w_pr_display} |
+"
+		done <<<"$active_workers"
+	else
+		workers_md="_No active workers_"
+	fi
+
+	# Recent completions (last 5)
+	local completions_md=""
+	local recent_completions
+	recent_completions=$(db -separator '|' "$SUPERVISOR_DB" "
+		SELECT id, status, description, completed_at, pr_url
+		FROM tasks
+		WHERE status IN ('complete', 'deployed', 'verified', 'merged')
+		ORDER BY completed_at DESC
+		LIMIT 5;" 2>/dev/null || echo "")
+
+	if [[ -n "$recent_completions" ]]; then
+		completions_md="| Task | Status | Description | Completed | PR |
+| --- | --- | --- | --- | --- |
+"
+		while IFS='|' read -r c_id c_status c_desc c_completed c_pr; do
+			[[ -z "$c_id" ]] && continue
+			local c_desc_short="${c_desc:0:50}"
+			[[ ${#c_desc} -gt 50 ]] && c_desc_short="${c_desc_short}..."
+			local c_time="--"
+			if [[ -n "$c_completed" ]]; then
+				c_time="${c_completed:0:16}"
+			fi
+			local c_pr_display="--"
+			if [[ -n "$c_pr" ]]; then
+				local c_pr_num
+				c_pr_num=$(echo "$c_pr" | grep -oE '[0-9]+$' || echo "")
+				[[ -n "$c_pr_num" ]] && c_pr_display="#${c_pr_num}"
+			fi
+			completions_md="${completions_md}| \`${c_id}\` | ${c_status} | ${c_desc_short} | ${c_time} | ${c_pr_display} |
+"
+		done <<<"$recent_completions"
+	else
+		completions_md="_No recent completions_"
+	fi
+
+	# System resources
+	local sys_md=""
+	local resource_output
+	resource_output=$(check_system_load 2>/dev/null || echo "")
+	if [[ -n "$resource_output" ]]; then
+		local h_load_ratio h_memory h_cpu_cores h_load_1m h_load_5m h_proc_count
+		h_load_ratio=$(echo "$resource_output" | grep '^load_ratio=' | cut -d= -f2)
+		h_memory=$(echo "$resource_output" | grep '^memory_pressure=' | cut -d= -f2)
+		h_cpu_cores=$(echo "$resource_output" | grep '^cpu_cores=' | cut -d= -f2)
+		h_load_1m=$(echo "$resource_output" | grep '^load_1m=' | cut -d= -f2)
+		h_load_5m=$(echo "$resource_output" | grep '^load_5m=' | cut -d= -f2)
+		h_proc_count=$(echo "$resource_output" | grep '^process_count=' | cut -d= -f2)
+		sys_md="| Metric | Value |
+| --- | --- |
+| CPU | ${h_load_ratio:-?}% used (${h_cpu_cores:-?} cores, load: ${h_load_1m:-?}/${h_load_5m:-?}) |
+| Memory | ${h_memory:-unknown} |
+| Processes | ${h_proc_count:-?} |"
+	else
+		sys_md="_System metrics unavailable_"
+	fi
+
+	# Alerts section
+	local alerts_md=""
+	local alert_count=0
+
+	# Alert: failed tasks
+	if [[ "${cnt_failed:-0}" -gt 0 ]]; then
+		local failed_list
+		failed_list=$(db -separator '|' "$SUPERVISOR_DB" "SELECT id, error FROM tasks WHERE status = 'failed' LIMIT 5;" 2>/dev/null || echo "")
+		alerts_md="${alerts_md}- **${cnt_failed} failed task(s)**:"
+		while IFS='|' read -r f_id f_err; do
+			[[ -z "$f_id" ]] && continue
+			local f_err_short="${f_err:0:80}"
+			[[ ${#f_err} -gt 80 ]] && f_err_short="${f_err_short}..."
+			alerts_md="${alerts_md}
+  - \`${f_id}\`: ${f_err_short:-unknown error}"
+		done <<<"$failed_list"
+		alerts_md="${alerts_md}
+"
+		alert_count=$((alert_count + 1))
+	fi
+
+	# Alert: blocked tasks
+	if [[ "${cnt_blocked:-0}" -gt 0 ]]; then
+		alerts_md="${alerts_md}- **${cnt_blocked} blocked task(s)**
+"
+		alert_count=$((alert_count + 1))
+	fi
+
+	# Alert: retrying tasks
+	if [[ "${cnt_retrying:-0}" -gt 0 ]]; then
+		alerts_md="${alerts_md}- **${cnt_retrying} task(s) retrying**
+"
+		alert_count=$((alert_count + 1))
+	fi
+
+	# Alert: stale batch (no dispatches in 10+ pulses)
+	local last_dispatch_ts
+	last_dispatch_ts=$(db "$SUPERVISOR_DB" "SELECT MAX(started_at) FROM tasks WHERE status IN ('running','dispatched','evaluating');" 2>/dev/null || echo "")
+	if [[ -n "$last_dispatch_ts" && "$last_dispatch_ts" != "" ]]; then
+		local ld_epoch ld_now ld_age_min
+		ld_epoch=$(date -jf "%Y-%m-%dT%H:%M:%S" "${last_dispatch_ts%%Z*}" +%s 2>/dev/null || date -d "$last_dispatch_ts" +%s 2>/dev/null || echo "0")
+		ld_now=$(date +%s)
+		if [[ "$ld_epoch" -gt 0 ]]; then
+			ld_age_min=$(((ld_now - ld_epoch) / 60))
+			if [[ "$ld_age_min" -gt 20 && "${cnt_queued:-0}" -gt 0 ]]; then
+				alerts_md="${alerts_md}- **Stale queue**: ${cnt_queued} task(s) queued but no dispatch in ${ld_age_min}min
+"
+				alert_count=$((alert_count + 1))
+			fi
+		fi
+	elif [[ "${cnt_queued:-0}" -gt 0 ]]; then
+		alerts_md="${alerts_md}- **Stale queue**: ${cnt_queued} task(s) queued but no active workers
+"
+		alert_count=$((alert_count + 1))
+	fi
+
+	# Alert: system overload
+	local h_overloaded
+	h_overloaded=$(echo "$resource_output" | grep '^overloaded=' | cut -d= -f2)
+	if [[ "$h_overloaded" == "true" ]]; then
+		alerts_md="${alerts_md}- **System overloaded** — adaptive throttling active
+"
+		alert_count=$((alert_count + 1))
+	fi
+
+	if [[ "$alert_count" -eq 0 ]]; then
+		alerts_md="_No alerts — all clear_"
+	fi
+
+	# Progress bar
+	local progress_pct=0
+	if [[ "${cnt_total:-0}" -gt 0 ]]; then
+		progress_pct=$(((cnt_complete * 100) / cnt_total))
+	fi
+	local progress_filled=$((progress_pct / 5))
+	local progress_empty=$((20 - progress_filled))
+	local progress_bar=""
+	local pi
+	for ((pi = 0; pi < progress_filled; pi++)); do
+		progress_bar="${progress_bar}#"
+	done
+	for ((pi = 0; pi < progress_empty; pi++)); do
+		progress_bar="${progress_bar}-"
+	done
+
+	# Queued task list (next 5 in queue)
+	local queued_md=""
+	local queued_tasks
+	queued_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
+		SELECT id, description, model
+		FROM tasks
+		WHERE status = 'queued'
+		ORDER BY created_at ASC
+		LIMIT 5;" 2>/dev/null || echo "")
+
+	if [[ -n "$queued_tasks" ]]; then
+		queued_md="| Task | Description | Model |
+| --- | --- | --- |
+"
+		while IFS='|' read -r q_id q_desc q_model; do
+			[[ -z "$q_id" ]] && continue
+			local q_desc_short="${q_desc:0:60}"
+			[[ ${#q_desc} -gt 60 ]] && q_desc_short="${q_desc_short}..."
+			local q_model_short="${q_model##*/}"
+			[[ -z "$q_model_short" ]] && q_model_short="--"
+			queued_md="${queued_md}| \`${q_id}\` | ${q_desc_short} | ${q_model_short} |
+"
+		done <<<"$queued_tasks"
+	fi
+
+	# Assemble the full markdown body
+	local body
+	body="## Queue Health Dashboard
+
+**Last pulse**: \`${now_iso}\`
+**Active batch**: \`${active_batch_name}\`
+
+### Summary
+
+\`\`\`
+[${progress_bar}] ${progress_pct}% (${cnt_complete}/${cnt_total})
+\`\`\`
+
+| Status | Count |
+| --- | --- |
+| Running | ${cnt_running} |
+| Dispatched | ${cnt_dispatched} |
+| Queued | ${cnt_queued} |
+| In Review | ${cnt_pr_review} |
+| Retrying | ${cnt_retrying} |
+| Blocked | ${cnt_blocked} |
+| Failed | ${cnt_failed} |
+| Complete | ${cnt_complete} |
+| **Total** | **${cnt_total}** |
+
+### Active Workers
+
+${workers_md}
+
+### Up Next (Queued)
+
+${queued_md:-_Queue empty_}
+
+### Recent Completions
+
+${completions_md}
+
+### System Resources
+
+${sys_md}
+
+### Alerts
+
+${alerts_md}
+
+---
+_Auto-updated by supervisor pulse (t1013). Do not edit manually._"
+
+	# Find or create the status comment
+	local comment_id=""
+	if [[ -f "$health_comment_file" ]]; then
+		comment_id=$(cat "$health_comment_file" 2>/dev/null || echo "")
+	fi
+
+	# Validate cached comment still exists
+	if [[ -n "$comment_id" ]]; then
+		local comment_check
+		comment_check=$(gh api "repos/${repo_slug}/issues/comments/${comment_id}" --jq '.id' 2>/dev/null || echo "")
+		if [[ -z "$comment_check" ]]; then
+			comment_id=""
+			rm -f "$health_comment_file" 2>/dev/null || true
+		fi
+	fi
+
+	if [[ -n "$comment_id" ]]; then
+		# Update existing comment in-place
+		gh api -X PATCH "repos/${repo_slug}/issues/comments/${comment_id}" \
+			-f body="$body" 2>/dev/null || {
+			log_verbose "  Phase 8c: Failed to update comment $comment_id"
+			return 0
+		}
+	else
+		# Create new comment and cache its ID
+		local create_response
+		create_response=$(gh api "repos/${repo_slug}/issues/${health_issue_number}/comments" \
+			-f body="$body" --jq '.id' 2>/dev/null || echo "")
+		if [[ -n "$create_response" ]]; then
+			echo "$create_response" >"$health_comment_file"
+			comment_id="$create_response"
+		else
+			log_verbose "  Phase 8c: Failed to create health comment"
+			return 0
+		fi
+	fi
+
+	log_verbose "  Phase 8c: Updated queue health issue #$health_issue_number"
+	return 0
+}
+
+#######################################
 # Find GitHub issue number for a task from TODO.md (t164)
 # Outputs the issue number on stdout, empty if not found.
 # $1: task_id
@@ -11058,6 +11489,13 @@ cmd_pulse() {
 			fi
 		fi
 	fi
+
+	# Phase 8c: Pinned queue health issue — live status dashboard (t1013)
+	# Updates a single comment in-place on a pinned GitHub issue with live
+	# supervisor status: counts, active workers, recent completions, resources,
+	# and alerts. Runs every pulse (not just idle) so the timestamp stays fresh.
+	# Graceful degradation — never breaks the pulse if gh fails.
+	update_queue_health_issue "${batch_id:-}" "" 2>>"$SUPERVISOR_LOG" || true
 
 	# Phase 9: Memory audit pulse (t185)
 	# Runs dedup, prune, graduate, and opportunity scan.
