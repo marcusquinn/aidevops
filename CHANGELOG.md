@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.111.0] - 2026-02-12
+
+### Added
+
+- add mandatory proof-log check to pre-commit hook (t317.1) (#1249)
+- complete setup.sh function audit and module assignment (t316.1) (#1233)
+- add TODO.md dedup Phase 0.5b to supervisor pulse cycle (t319.4) (#1261)
+- complete PR task ID backfill audit (t318.4) (#1255)
+
+### Changed
+
+- Documentation: update AGENTS.md task completion rules (t317.3) (#1250)
+- Documentation: add comprehensive verification report for t316.5 (t316.5) (#1241)
+
+### Fixed
+
+- wire escalate_model_on_failure, improve classifier, add auto-upgrade safeguard (#1257)
+
 ## [2.110.14] - 2026-02-12
 
 ### Added
