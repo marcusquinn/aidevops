@@ -2393,7 +2393,6 @@ cmd_transition() {
 	return 0
 }
 
-
 #######################################
 # Check if a batch is complete after task state change
 #######################################
@@ -3365,10 +3364,10 @@ check_task_already_done() {
 # Output (stdout): staleness reason if stale/uncertain, empty if current
 #######################################
 check_task_staleness() {
-    # Allow bypassing staleness check via env var (t314: for create tasks that reference non-existent files)
-    if [[ "${SUPERVISOR_SKIP_STALENESS:-false}" == "true" ]]; then
-        return 1  # Assume current
-    fi
+	# Allow bypassing staleness check via env var (t314: for create tasks that reference non-existent files)
+	if [[ "${SUPERVISOR_SKIP_STALENESS:-false}" == "true" ]]; then
+		return 1 # Assume current
+	fi
 
 	local task_id="${1:-}"
 	local task_description="${2:-}"
@@ -8540,7 +8539,6 @@ get_sibling_tasks() {
 	return 0
 }
 
-
 #######################################
 # AI-assisted merge conflict resolution during rebase (t302)
 # When a rebase hits conflicts, uses the AI CLI to resolve each
@@ -8553,48 +8551,48 @@ get_sibling_tasks() {
 # Returns: 0 if all conflicts resolved, 1 if resolution failed
 #######################################
 resolve_rebase_conflicts() {
-    local git_dir="$1"
-    local task_id="$2"
+	local git_dir="$1"
+	local task_id="$2"
 
-    # Get list of conflicting files
-    local conflicting_files
-    conflicting_files=$(git -C "$git_dir" diff --name-only --diff-filter=U 2>/dev/null || true)
+	# Get list of conflicting files
+	local conflicting_files
+	conflicting_files=$(git -C "$git_dir" diff --name-only --diff-filter=U 2>/dev/null || true)
 
-    if [[ -z "$conflicting_files" ]]; then
-        log_warn "resolve_rebase_conflicts: no conflicting files found for $task_id"
-        return 1
-    fi
+	if [[ -z "$conflicting_files" ]]; then
+		log_warn "resolve_rebase_conflicts: no conflicting files found for $task_id"
+		return 1
+	fi
 
-    local file_count
-    file_count=$(echo "$conflicting_files" | wc -l | tr -d ' ')
-    log_info "resolve_rebase_conflicts: $file_count conflicting file(s) for $task_id"
+	local file_count
+	file_count=$(echo "$conflicting_files" | wc -l | tr -d ' ')
+	log_info "resolve_rebase_conflicts: $file_count conflicting file(s) for $task_id"
 
-    # Resolve AI CLI
-    local ai_cli
-    ai_cli=$(resolve_ai_cli 2>/dev/null || echo "")
-    if [[ -z "$ai_cli" ]]; then
-        log_warn "resolve_rebase_conflicts: AI CLI not available — cannot resolve conflicts"
-        return 1
-    fi
+	# Resolve AI CLI
+	local ai_cli
+	ai_cli=$(resolve_ai_cli 2>/dev/null || echo "")
+	if [[ -z "$ai_cli" ]]; then
+		log_warn "resolve_rebase_conflicts: AI CLI not available — cannot resolve conflicts"
+		return 1
+	fi
 
-    # Process each conflicting file
-    local resolved_count=0
-    local failed_files=""
-    while IFS= read -r conflict_file; do
-        [[ -z "$conflict_file" ]] && continue
+	# Process each conflicting file
+	local resolved_count=0
+	local failed_files=""
+	while IFS= read -r conflict_file; do
+		[[ -z "$conflict_file" ]] && continue
 
-        local full_path="$git_dir/$conflict_file"
-        if [[ ! -f "$full_path" ]]; then
-            log_warn "resolve_rebase_conflicts: file not found: $conflict_file"
-            failed_files="${failed_files}${failed_files:+, }${conflict_file}"
-            continue
-        fi
+		local full_path="$git_dir/$conflict_file"
+		if [[ ! -f "$full_path" ]]; then
+			log_warn "resolve_rebase_conflicts: file not found: $conflict_file"
+			failed_files="${failed_files}${failed_files:+, }${conflict_file}"
+			continue
+		fi
 
-        log_info "  Resolving: $conflict_file"
+		log_info "  Resolving: $conflict_file"
 
-        # Use AI CLI to resolve the conflict
-        local resolve_prompt
-        resolve_prompt="You are resolving a git rebase merge conflict in: $full_path
+		# Use AI CLI to resolve the conflict
+		local resolve_prompt
+		resolve_prompt="You are resolving a git rebase merge conflict in: $full_path
 
 RULES:
 1. Read the file — it contains git conflict markers (<<<<<<<, =======, >>>>>>>)
@@ -8608,33 +8606,33 @@ RULES:
 9. After writing, run: git -C \"$git_dir\" add \"$conflict_file\"
 10. Output ONLY 'RESOLVED' if successful or 'FAILED: reason' if not"
 
-        # Run AI CLI — output is not used directly; the CLI writes the resolved file
-        $ai_cli run --format json --title "resolve-conflict-${task_id}-$(basename "$conflict_file")" "$resolve_prompt" 2>>"$SUPERVISOR_LOG" || true
+		# Run AI CLI — output is not used directly; the CLI writes the resolved file
+		$ai_cli run --format json --title "resolve-conflict-${task_id}-$(basename "$conflict_file")" "$resolve_prompt" 2>>"$SUPERVISOR_LOG" || true
 
-        # Check if the file was resolved (no more conflict markers)
-        if git -C "$git_dir" diff --check -- "$conflict_file" 2>/dev/null; then
-            # diff --check returns 0 if no conflict markers remain
-            resolved_count=$((resolved_count + 1))
-            log_info "  Resolved: $conflict_file"
-        elif ! grep -q '<<<<<<<' "$full_path" 2>/dev/null; then
-            # Fallback check: no conflict markers in file
-            # Ensure it is staged
-            git -C "$git_dir" add "$conflict_file" 2>>"$SUPERVISOR_LOG" || true
-            resolved_count=$((resolved_count + 1))
-            log_info "  Resolved: $conflict_file"
-        else
-            log_warn "  Failed to resolve: $conflict_file (conflict markers remain)"
-            failed_files="${failed_files}${failed_files:+, }${conflict_file}"
-        fi
-    done <<< "$conflicting_files"
+		# Check if the file was resolved (no more conflict markers)
+		if git -C "$git_dir" diff --check -- "$conflict_file" 2>/dev/null; then
+			# diff --check returns 0 if no conflict markers remain
+			resolved_count=$((resolved_count + 1))
+			log_info "  Resolved: $conflict_file"
+		elif ! grep -q '<<<<<<<' "$full_path" 2>/dev/null; then
+			# Fallback check: no conflict markers in file
+			# Ensure it is staged
+			git -C "$git_dir" add "$conflict_file" 2>>"$SUPERVISOR_LOG" || true
+			resolved_count=$((resolved_count + 1))
+			log_info "  Resolved: $conflict_file"
+		else
+			log_warn "  Failed to resolve: $conflict_file (conflict markers remain)"
+			failed_files="${failed_files}${failed_files:+, }${conflict_file}"
+		fi
+	done <<<"$conflicting_files"
 
-    if [[ -n "$failed_files" ]]; then
-        log_warn "resolve_rebase_conflicts: failed to resolve: $failed_files"
-        return 1
-    fi
+	if [[ -n "$failed_files" ]]; then
+		log_warn "resolve_rebase_conflicts: failed to resolve: $failed_files"
+		return 1
+	fi
 
-    log_success "resolve_rebase_conflicts: resolved $resolved_count/$file_count file(s) for $task_id"
-    return 0
+	log_success "resolve_rebase_conflicts: resolved $resolved_count/$file_count file(s) for $task_id"
+	return 0
 }
 #######################################
 # Rebase a single PR branch onto updated main (t225, t302)
@@ -10050,6 +10048,21 @@ cmd_pulse() {
 		log_success "Phase 0.5: Deduplication complete"
 	fi
 
+	# Phase 0.5b: Deduplicate task IDs in TODO.md (t319.4)
+	# Scans for duplicate tNNN on multiple open `- [ ]` lines.
+	# Keeps first occurrence, renames duplicates to t(max+1).
+	if [[ -n "$all_repos" ]]; then
+		while IFS= read -r repo_path; do
+			if [[ -f "$repo_path/TODO.md" ]]; then
+				dedup_todo_task_ids "$repo_path" 2>>"$SUPERVISOR_LOG" || true
+			fi
+		done <<<"$all_repos"
+	else
+		if [[ -f "$(pwd)/TODO.md" ]]; then
+			dedup_todo_task_ids "$(pwd)" 2>>"$SUPERVISOR_LOG" || true
+		fi
+	fi
+
 	# Phase 1: Check running workers for completion
 	# Also check 'evaluating' tasks - AI eval may have timed out, leaving them stuck
 	local running_tasks
@@ -11156,7 +11169,6 @@ create_github_issue() {
 # issue-sync-helper.sh push (called from create_github_issue) and committed
 # by commit_and_push_todo within create_github_issue itself.
 
-
 #######################################
 # Verify task has real deliverables before marking complete (t163.4)
 # Checks: merged PR exists with substantive file changes (not just TODO.md)
@@ -11433,7 +11445,6 @@ run_verify_checks() {
 # Mark a verify entry as passed [x] or failed [!] in VERIFY.md (t180.3)
 #######################################
 
-
 #######################################
 # Command: verify — manually run verification for a task (t180.3)
 #######################################
@@ -11498,9 +11509,6 @@ cmd_verify() {
 #######################################
 # Commit and push VERIFY.md changes after verification (t180.3)
 #######################################
-
-
-
 
 #######################################
 # Post a comment to GitHub issue when a worker is blocked (t296)
@@ -11578,7 +11586,6 @@ The supervisor will automatically retry this task once it's tagged with \`#auto-
 
 	return 0
 }
-
 
 #######################################
 # Send notification about task state change
@@ -12117,75 +12124,75 @@ attempt_self_heal() {
 # Returns: 0 if escalated, 1 if already at max tier or not applicable
 #######################################
 escalate_model_on_failure() {
-    local task_id="$1"
+	local task_id="$1"
 
-    ensure_db
+	ensure_db
 
-    local escaped_id
-    escaped_id=$(sql_escape "$task_id")
+	local escaped_id
+	escaped_id=$(sql_escape "$task_id")
 
-    # Get current model and escalation state
-    local task_data
-    task_data=$(db -separator '|' "$SUPERVISOR_DB" "
+	# Get current model and escalation state
+	local task_data
+	task_data=$(db -separator '|' "$SUPERVISOR_DB" "
         SELECT model, escalation_depth, max_escalation
         FROM tasks WHERE id = '$escaped_id';
     " 2>/dev/null || echo "")
 
-    if [[ -z "$task_data" ]]; then
-        return 1
-    fi
+	if [[ -z "$task_data" ]]; then
+		return 1
+	fi
 
-    local current_model current_depth max_depth
-    IFS='|' read -r current_model current_depth max_depth <<< "$task_data"
+	local current_model current_depth max_depth
+	IFS='|' read -r current_model current_depth max_depth <<<"$task_data"
 
-    # Already at max escalation depth
-    if [[ "$current_depth" -ge "$max_depth" ]]; then
-        log_info "Model escalation: $task_id already at max depth ($current_depth/$max_depth)"
-        return 1
-    fi
+	# Already at max escalation depth
+	if [[ "$current_depth" -ge "$max_depth" ]]; then
+		log_info "Model escalation: $task_id already at max depth ($current_depth/$max_depth)"
+		return 1
+	fi
 
-    # Get next tier
-    local next_tier
-    next_tier=$(get_next_tier "$current_model")
+	# Get next tier
+	local next_tier
+	next_tier=$(get_next_tier "$current_model")
 
-    if [[ -z "$next_tier" ]]; then
-        log_info "Model escalation: $task_id already at max tier ($current_model)"
-        return 1
-    fi
+	if [[ -z "$next_tier" ]]; then
+		log_info "Model escalation: $task_id already at max tier ($current_model)"
+		return 1
+	fi
 
-    # Resolve to full model string
-    local ai_cli
-    ai_cli=$(resolve_ai_cli 2>/dev/null || echo "opencode")
-    local next_model
-    next_model=$(resolve_model "$next_tier" "$ai_cli")
+	# Resolve to full model string
+	local ai_cli
+	ai_cli=$(resolve_ai_cli 2>/dev/null || echo "opencode")
+	local next_model
+	next_model=$(resolve_model "$next_tier" "$ai_cli")
 
-    if [[ -z "$next_model" || "$next_model" == "$current_model" ]]; then
-        log_info "Model escalation: no higher model available for $task_id"
-        return 1
-    fi
+	if [[ -z "$next_model" || "$next_model" == "$current_model" ]]; then
+		log_info "Model escalation: no higher model available for $task_id"
+		return 1
+	fi
 
-    # Update model and escalation depth in DB
-    db "$SUPERVISOR_DB" "
+	# Update model and escalation depth in DB
+	db "$SUPERVISOR_DB" "
         UPDATE tasks SET
             model = '$(sql_escape "$next_model")',
             escalation_depth = $((current_depth + 1))
         WHERE id = '$escaped_id';
     "
 
-    log_warn "Model escalation (t314): $task_id escalated from $current_model to $next_model (depth $((current_depth + 1))/$max_depth)"
+	log_warn "Model escalation (t314): $task_id escalated from $current_model to $next_model (depth $((current_depth + 1))/$max_depth)"
 
-    # Record pattern for future routing decisions
-    local pattern_helper="${SCRIPT_DIR}/pattern-tracker-helper.sh"
-    if [[ -x "$pattern_helper" ]]; then
-        "$pattern_helper" record \
-            --type "FAILURE_PATTERN" \
-            --task "$task_id" \
-            --model "$current_model" \
-            --detail "Auto-escalated to $next_model after failure" \
-            2>/dev/null || true
-    fi
+	# Record pattern for future routing decisions
+	local pattern_helper="${SCRIPT_DIR}/pattern-tracker-helper.sh"
+	if [[ -x "$pattern_helper" ]]; then
+		"$pattern_helper" record \
+			--type "FAILURE_PATTERN" \
+			--task "$task_id" \
+			--model "$current_model" \
+			--detail "Auto-escalated to $next_model after failure" \
+			2>/dev/null || true
+	fi
 
-    return 0
+	return 0
 }
 
 #######################################
@@ -12509,7 +12516,6 @@ run_session_review() {
 	return 0
 }
 
-
 #######################################
 # Command: retrospective - run batch retrospective
 #######################################
@@ -12582,7 +12588,6 @@ cmd_recall() {
 
 #######################################
 # Command: update-todo - manually trigger TODO.md update for a task
-
 
 #######################################
 # Command: notify - manually send notification for a task
