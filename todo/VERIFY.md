@@ -426,3 +426,22 @@
   files: .agents/scripts/test-task-id-collision.sh
   check: shellcheck .agents/scripts/test-task-id-collision.sh
   check: file-exists .agents/scripts/test-task-id-collision.sh
+
+- [ ] v050 t318.2 Verify supervisor worker PRs include task ID | PR #1283 | merged:2026-02-12
+  files: .agents/scripts/full-loop-helper.sh, .agents/scripts/supervisor-helper.sh
+  check: shellcheck .agents/scripts/full-loop-helper.sh
+  check: file-exists .agents/scripts/full-loop-helper.sh
+  check: shellcheck .agents/scripts/supervisor-helper.sh
+  check: file-exists .agents/scripts/supervisor-helper.sh
+
+- [x] v051 t318.1 Create GitHub Action CI check for PR task ID | PR #1284 | merged:2026-02-12 verified:2026-02-12
+  files: .github/PR-TASK-ID-CHECK-README.md
+  check: file-exists .github/PR-TASK-ID-CHECK-README.md
+
+- [!] v052 t1000 Matrix bot: SQLite session store with per-channel compact... | PR #1273 | merged:2026-02-12 failed:2026-02-12 reason:shellcheck: .agents/scripts/matrix-dispatch-helper.sh has violations
+  files: .agents/scripts/matrix-dispatch-helper.sh, .agents/services/communications/matrix-bot.md, README.md
+  check: shellcheck .agents/scripts/matrix-dispatch-helper.sh
+  check: file-exists .agents/scripts/matrix-dispatch-helper.sh
+  check: file-exists .agents/services/communications/matrix-bot.md
+  check: file-exists README.md
+  check: rg "matrix-bot" .agents/subagent-index.toon
