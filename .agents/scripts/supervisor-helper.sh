@@ -4904,7 +4904,25 @@ fi
 This catches CI failures 5-10 min earlier. Do NOT push .sh files with ShellCheck violations.
 If \`shellcheck\` is not installed, skip this gate and note it in the PR body.
 
-**4. Offload research to Task sub-agents (saves context for implementation)**
+**4. PR title validation (MANDATORY before gh pr create — t318.2)**
+Before creating a PR with \`gh pr create\`, verify the title includes your task ID:
+\`\`\`bash
+# Extract task ID from your assigned task (should be in your prompt as /full-loop tNNN)
+task_id="<task-id>"  # Replace with actual task ID from your prompt
+pr_title="<your-pr-title>"  # The title you're about to use
+
+# Validate task ID is in the title
+if ! echo "\$pr_title" | grep -qE "\\bt[0-9]+(\\.[0-9]+)*\\b"; then
+  echo "WARNING: PR title does not contain task ID (tNNN format)"
+  echo "Current title: \$pr_title"
+  echo "Expected format: '\${task_id}: <description>' or 'feat: <description> (\${task_id})'"
+  echo "Fix the title before creating the PR to ensure traceability."
+  # DO NOT proceed with gh pr create until title is fixed
+fi
+\`\`\`
+This ensures all worker PRs are traceable to their TODO.md tasks (t318).
+
+**5. Offload research to Task sub-agents (saves context for implementation)**
 Reading large files (500+ lines) consumes your context budget fast. Instead of reading
 entire files yourself, spawn a Task sub-agent with a focused question:
 \`\`\`
@@ -4921,7 +4939,7 @@ or when you need to understand a codebase pattern across multiple files.
 **When NOT to offload**: When you need to edit the file (you must read it yourself for
 the Edit tool to work), or when the answer is a simple grep/rg query.
 
-**5. Parallel sub-work with Task tool (MANDATORY when applicable)**
+**6. Parallel sub-work with Task tool (MANDATORY when applicable)**
 After creating your TodoWrite subtasks, check: do any two subtasks modify DIFFERENT files?
 If yes, you MUST spawn the independent subtask via the Task tool — do NOT execute sequentially.
 
@@ -4950,13 +4968,13 @@ files, spawn the independent one via Task tool. Common parallelisable pairs:
 **Do NOT parallelise when**: subtasks modify the same file, or subtask B depends on
 subtask A's output (e.g., B imports a function A creates). When in doubt, run sequentially.
 
-**6. Fail fast, not late**
+**7. Fail fast, not late**
 Before writing any code, verify your assumptions:
 - Read the files you plan to modify (stale assumptions waste entire sessions)
 - Check that dependencies/imports you plan to use actually exist in the project
 - If the task seems already done, EXIT immediately with explanation — don't redo work
 
-**7. Minimise token waste**
+**8. Minimise token waste**
 - Don't read entire large files — use line ranges from search results
 - Don't output verbose explanations in commit messages — be concise
 - Don't retry failed approaches more than once — exit with BLOCKED instead"
