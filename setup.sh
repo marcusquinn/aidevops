@@ -341,23 +341,48 @@ cleanup_deprecated_paths() {
 		print_info "Cleaned up $cleaned deprecated agent path(s)"
 	fi
 
-	# Remove oh-my-opencode config file if present
+	# Optionally remove oh-my-opencode config (GH#1142: default to keeping it)
+	# Users who independently installed oh-my-opencode should not have their config deleted
 	local omo_config="$HOME/.config/opencode/oh-my-opencode.json"
-	if [[ -f "$omo_config" ]]; then
-		rm -f "$omo_config"
-		print_info "Removed deprecated oh-my-opencode config"
-	fi
-
-	# Remove oh-my-opencode from plugin array in opencode.json if present
+	local has_omo_config=false
+	local has_omo_plugin=false
 	local opencode_config
 	opencode_config=$(find_opencode_config 2>/dev/null) || true
+
+	if [[ -f "$omo_config" ]]; then
+		has_omo_config=true
+	fi
 	if [[ -n "$opencode_config" ]] && [[ -f "$opencode_config" ]] && command -v jq &>/dev/null; then
 		if jq -e '.plugin | index("oh-my-opencode")' "$opencode_config" >/dev/null 2>&1; then
-			local tmp_file
-			tmp_file=$(mktemp)
-			trap 'rm -f "${tmp_file:-}"' RETURN
-			jq '.plugin = [.plugin[] | select(. != "oh-my-opencode")]' "$opencode_config" >"$tmp_file" && mv "$tmp_file" "$opencode_config"
-			print_info "Removed oh-my-opencode from OpenCode plugin list"
+			has_omo_plugin=true
+		fi
+	fi
+
+	if [[ "$has_omo_config" == "true" ]] || [[ "$has_omo_plugin" == "true" ]]; then
+		local remove_omo="n"
+		if [[ "$NON_INTERACTIVE" != "true" ]] && [[ "$INTERACTIVE_MODE" == "true" ]]; then
+			print_info "Found oh-my-opencode config. aidevops no longer bundles oh-my-opencode."
+			echo -n -e "${GREEN}Remove oh-my-opencode config and plugin entry? [y/N]: ${NC}"
+			read -r remove_omo
+			remove_omo=$(echo "$remove_omo" | tr '[:upper:]' '[:lower:]')
+		fi
+
+		if [[ "$remove_omo" == "y" ]] || [[ "$remove_omo" == "yes" ]]; then
+			if [[ "$has_omo_config" == "true" ]]; then
+				rm -f "$omo_config"
+				print_info "Removed oh-my-opencode config"
+			fi
+			if [[ "$has_omo_plugin" == "true" ]] && [[ -n "$opencode_config" ]]; then
+				local tmp_file
+				tmp_file=$(mktemp)
+				trap 'rm -f "${tmp_file:-}"' RETURN
+				jq '.plugin = [.plugin[] | select(. != "oh-my-opencode")]' "$opencode_config" >"$tmp_file" && mv "$tmp_file" "$opencode_config"
+				print_info "Removed oh-my-opencode from OpenCode plugin list"
+			fi
+		else
+			if [[ "$NON_INTERACTIVE" != "true" ]]; then
+				print_info "Keeping oh-my-opencode config (skipped)"
+			fi
 		fi
 	fi
 
