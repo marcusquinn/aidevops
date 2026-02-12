@@ -738,6 +738,121 @@ Generate all 5 keyframes in a single session:
 4. Score all outputs, regenerate any below 7.5
 5. Assemble into a visual shot list for review before committing to video generation
 
+## Post-Processing Enhancement with Enhancor AI
+
+After generating images with Nanobanana, Midjourney, or Freepik, use **Enhancor AI** for professional-grade post-processing enhancement, especially for portrait and headshot content.
+
+### When to Use Enhancor
+
+**Portrait Enhancement**:
+- Professional headshots and team photos
+- Social media profile pictures
+- Dating app photos
+- Corporate photography
+- Event photography
+
+**Image Upscaling**:
+- Print-ready enlargements
+- High-resolution displays
+- Archival restoration
+- Low-quality source recovery
+
+**AI Generation** (Kora Pro):
+- Marketing visuals
+- Social media content
+- Concept art
+- Product mockups
+
+### Enhancor Workflow Integration
+
+**Standard Pipeline**:
+
+1. **Generate** base image (Nanobanana/Midjourney/Freepik)
+2. **Enhance** with Enhancor (skin refinement, upscaling)
+3. **Optimize** for web delivery (compression, format conversion)
+4. **Distribute** to target platforms
+
+**CLI Usage**:
+
+```bash
+# Professional headshot enhancement
+enhancor-helper.sh enhance --img-url https://example.com/headshot.jpg \
+    --model enhancorv3 \
+    --type face \
+    --skin-refinement 60 \
+    --skin-realism 1.2 \
+    --portrait-depth 0.25 \
+    --resolution 2048 \
+    --area-background \
+    --sync -o professional_headshot.png
+
+# Portrait upscale (professional mode)
+enhancor-helper.sh upscale --img-url https://example.com/portrait.jpg \
+    --mode professional --sync -o upscaled.png
+
+# Batch portrait processing
+cat > photoshoot.txt <<EOF
+https://example.com/photo1.jpg
+https://example.com/photo2.jpg
+https://example.com/photo3.jpg
+EOF
+
+enhancor-helper.sh batch --command enhance --input photoshoot.txt \
+    --output-dir enhanced_photoshoot/ \
+    --model enhancorv3 \
+    --skin-refinement 50 \
+    --resolution 2048
+```
+
+### Enhancor Capabilities
+
+**1. Realistic Skin Enhancement** (`/realistic-skin/v1`):
+- v1/v3 models with face/body modes
+- Granular area control (eyes, nose, mouth, hair, background)
+- Skin refinement 0-100
+- Portrait depth control
+- Mask support (v3)
+
+**2. Portrait Upscaler** (`/upscaler/v1`):
+- Fast/professional modes
+- Facial feature optimization
+- Resolution upscaling
+
+**3. General Image Upscaler** (`/general-upscaler/v1`):
+- Universal upscaling for all image types
+
+**4. Detailed API** (`/detailed/v1`):
+- Upscaling + detailed enhancement
+- Professional work
+
+**5. Kora Pro** (`/kora/v1`):
+- AI image generation from text prompts
+- Cinematic models (kora_pro, kora_pro_cinema)
+- Generation modes: normal, 2k_pro, 4k_ultra
+
+### Best Practices
+
+**Skin Enhancement**:
+- Start with `skin_refinement_level` 40-60 for natural results
+- Use `skin_realism_Level` 1.0-2.0 for v1, 0.1-0.5 for v3
+- Enable area control for background/hair to preserve non-skin areas
+- Use v3 with masks for selective enhancement
+
+**Upscaling**:
+- Use `professional` mode for final deliverables
+- Use `fast` mode for testing and iteration
+- Portrait upscaler is optimized for faces (better than general upscaler)
+
+**Cost Optimization**:
+- Use `enhancorv1` for basic enhancement (lower cost)
+- Use `enhancorv3` for advanced features (mask support, higher resolution)
+- Only enhance images that passed initial quality checks
+- Batch process multiple images in one session
+
+### Full Documentation
+
+See `tools/video/enhancor.md` for complete API reference, examples, and integration details.
+
 ## Cross-References
 
 - **Model comparison**: `tools/vision/image-generation.md` — detailed comparison of DALL-E 3, Midjourney, FLUX, SD XL
@@ -747,6 +862,7 @@ Generate all 5 keyframes in a single session:
 - **Distribution**: `content/distribution/` — platform-specific formatting for YouTube, social, blog
 - **UGC storyboard**: `content/story.md` — UGC Brief Storyboard template (generates the shot list this template visualises)
 - **Video prompts**: `tools/video/video-prompt-design.md` — 7-component format for video generation from keyframes
+- **Enhancor AI**: `tools/video/enhancor.md` — Portrait enhancement, upscaling, and AI generation post-processing
 
 ## See Also
 
