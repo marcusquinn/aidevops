@@ -56,152 +56,153 @@ readonly MIN_PIPECAT_VERSION="0.0.80"
 # Usage: load_api_key "SONIOX_API_KEY"
 # Sets the variable in the current shell. Never prints the value.
 load_api_key() {
-    local key_name="$1"
+	local key_name="$1"
 
-    # 1. Already in environment
-    local current_val="${!key_name:-}"
-    if [[ -n "${current_val}" ]]; then
-        return 0
-    fi
+	# 1. Already in environment
+	local current_val="${!key_name:-}"
+	if [[ -n "${current_val}" ]]; then
+		return 0
+	fi
 
-    # 2. Try gopass (encrypted)
-    if command -v gopass &>/dev/null; then
-        local key
-        key=$(gopass show -o "aidevops/${key_name}" 2>/dev/null) || true
-        if [[ -n "${key:-}" ]]; then
-            export "${key_name}=${key}"
-            return 0
-        fi
-    fi
+	# 2. Try gopass (encrypted)
+	if command -v gopass &>/dev/null; then
+		local key
+		key=$(gopass show -o "aidevops/${key_name}" 2>/dev/null) || true
+		if [[ -n "${key:-}" ]]; then
+			export "${key_name}=${key}"
+			return 0
+		fi
+	fi
 
-    # 3. Try credentials.sh (plaintext fallback)
-    local cred_file="${HOME}/.config/aidevops/credentials.sh"
-    if [[ -f "${cred_file}" ]]; then
-        local key
-        key=$(bash -c "source '${cred_file}' 2>/dev/null && echo \"\${${key_name}:-}\"") || true
-        if [[ -n "${key:-}" ]]; then
-            export "${key_name}=${key}"
-            return 0
-        fi
-    fi
+	# 3. Try credentials.sh (plaintext fallback)
+	local cred_file="${HOME}/.config/aidevops/credentials.sh"
+	if [[ -f "${cred_file}" ]]; then
+		local key
+		key=$(bash -c "source '${cred_file}' 2>/dev/null && echo \"\${${key_name}:-}\"") || true
+		if [[ -n "${key:-}" ]]; then
+			export "${key_name}=${key}"
+			return 0
+		fi
+	fi
 
-    # 4. Try tenant credentials
-    local tenant_file="${HOME}/.config/aidevops/tenants/default/credentials.sh"
-    if [[ -f "${tenant_file}" ]]; then
-        local key
-        key=$(bash -c "source '${tenant_file}' 2>/dev/null && echo \"\${${key_name}:-}\"") || true
-        if [[ -n "${key:-}" ]]; then
-            export "${key_name}=${key}"
-            return 0
-        fi
-    fi
+	# 4. Try tenant credentials
+	local tenant_file="${HOME}/.config/aidevops/tenants/default/credentials.sh"
+	if [[ -f "${tenant_file}" ]]; then
+		local key
+		key=$(bash -c "source '${tenant_file}' 2>/dev/null && echo \"\${${key_name}:-}\"") || true
+		if [[ -n "${key:-}" ]]; then
+			export "${key_name}=${key}"
+			return 0
+		fi
+	fi
 
-    return 1
+	return 1
 }
 
 # Check if a key is available (without printing it)
 has_api_key() {
-    local key_name="$1"
-    load_api_key "${key_name}" 2>/dev/null
+	local key_name="$1"
+	load_api_key "${key_name}" 2>/dev/null
 }
 
 # ─── Dependency Checks ────────────────────────────────────────────────
 
 check_python() {
-    local python_cmd="${1:-${DEFAULT_PYTHON}}"
+	local python_cmd="${1:-${DEFAULT_PYTHON}}"
 
-    if command -v "${python_cmd}" &>/dev/null; then
-        local version
-        version=$("${python_cmd}" --version 2>&1 | awk '{print $2}')
-        local major minor
-        major=$(echo "${version}" | cut -d. -f1)
-        minor=$(echo "${version}" | cut -d. -f2)
-        if [[ "${major}" -ge 3 ]] && [[ "${minor}" -ge 10 ]]; then
-            return 0
-        fi
-        print_error "Python ${version} found but 3.10+ required"
-        return 1
-    fi
+	if command -v "${python_cmd}" &>/dev/null; then
+		local version
+		version=$("${python_cmd}" --version 2>&1 | awk '{print $2}')
+		local major minor
+		major=$(echo "${version}" | cut -d. -f1)
+		minor=$(echo "${version}" | cut -d. -f2)
+		if [[ "${major}" -ge 3 ]] && [[ "${minor}" -ge 10 ]]; then
+			return 0
+		fi
+		print_error "Python ${version} found but 3.10+ required"
+		return 1
+	fi
 
-    # Fallback to python3
-    if command -v python3 &>/dev/null; then
-        local version
-        version=$(python3 --version 2>&1 | awk '{print $2}')
-        local major minor
-        major=$(echo "${version}" | cut -d. -f1)
-        minor=$(echo "${version}" | cut -d. -f2)
-        if [[ "${major}" -ge 3 ]] && [[ "${minor}" -ge 10 ]]; then
-            return 0
-        fi
-    fi
+	# Fallback to python3
+	if command -v python3 &>/dev/null; then
+		local version
+		version=$(python3 --version 2>&1 | awk '{print $2}')
+		local major minor
+		major=$(echo "${version}" | cut -d. -f1)
+		minor=$(echo "${version}" | cut -d. -f2)
+		if [[ "${major}" -ge 3 ]] && [[ "${minor}" -ge 10 ]]; then
+			return 0
+		fi
+	fi
 
-    print_error "Python 3.10+ is required but not found"
-    print_info "Install: brew install python@3.12 (macOS) or apt install python3.12 (Linux)"
-    return 1
+	print_error "Python 3.10+ is required but not found"
+	print_info "Install: brew install python@3.12 (macOS) or apt install python3.12 (Linux)"
+	return 1
 }
 
 find_python() {
-    if command -v "${DEFAULT_PYTHON}" &>/dev/null; then
-        echo "${DEFAULT_PYTHON}"
-    elif command -v python3.12 &>/dev/null; then
-        echo "python3.12"
-    elif command -v python3.11 &>/dev/null; then
-        echo "python3.11"
-    elif command -v python3.10 &>/dev/null; then
-        echo "python3.10"
-    elif command -v python3 &>/dev/null; then
-        echo "python3"
-    else
-        echo "python3"
-    fi
+	if command -v "${DEFAULT_PYTHON}" &>/dev/null; then
+		echo "${DEFAULT_PYTHON}"
+	elif command -v python3.12 &>/dev/null; then
+		echo "python3.12"
+	elif command -v python3.11 &>/dev/null; then
+		echo "python3.11"
+	elif command -v python3.10 &>/dev/null; then
+		echo "python3.10"
+	elif command -v python3 &>/dev/null; then
+		echo "python3"
+	else
+		echo "python3"
+	fi
 }
 
 check_node() {
-    if ! command -v node &>/dev/null; then
-        print_error "Node.js is required for the web client"
-        print_info "Install: brew install node (macOS) or see https://nodejs.org/"
-        return 1
-    fi
-    return 0
+	if ! command -v node &>/dev/null; then
+		print_error "Node.js is required for the web client"
+		print_info "Install: brew install node (macOS) or see https://nodejs.org/"
+		return 1
+	fi
+	return 0
 }
 
 check_npm() {
-    if ! command -v npm &>/dev/null; then
-        print_error "npm is required for the web client"
-        return 1
-    fi
-    return 0
+	if ! command -v npm &>/dev/null; then
+		print_error "npm is required for the web client"
+		return 1
+	fi
+	return 0
 }
 
 check_venv() {
-    if [[ ! -d "${PIPECAT_VENV}" ]]; then
-        print_error "Pipecat virtual environment not found at ${PIPECAT_VENV}"
-        print_info "Run: pipecat-helper.sh setup"
-        return 1
-    fi
-    return 0
+	if [[ ! -d "${PIPECAT_VENV}" ]]; then
+		print_error "Pipecat virtual environment not found at ${PIPECAT_VENV}"
+		print_info "Run: pipecat-helper.sh setup"
+		return 1
+	fi
+	return 0
 }
 
 check_pipecat_installed() {
-    if ! "${PIPECAT_VENV}/bin/python" -c "import pipecat" 2>/dev/null; then
-        print_error "Pipecat is not installed in the virtual environment"
-        print_info "Run: pipecat-helper.sh setup"
-        return 1
-    fi
-    return 0
+	if ! "${PIPECAT_VENV}/bin/python" -c "import pipecat" 2>/dev/null; then
+		print_error "Pipecat is not installed in the virtual environment"
+		print_info "Run: pipecat-helper.sh setup"
+		return 1
+	fi
+	return 0
 }
 
 # ─── Bot Template ──────────────────────────────────────────────────────
 
 # Generate the bot.py file with the specified LLM provider
 generate_bot_template() {
-    local llm_provider="${1:-${DEFAULT_LLM_PROVIDER}}"
-    local server_port="${2:-${DEFAULT_SERVER_PORT}}"
-    local voice_id="${3:-${DEFAULT_CARTESIA_VOICE_ID}}"
+	local llm_provider="${1:-${DEFAULT_LLM_PROVIDER}}"
+	# $2 (server_port) is accepted for API compatibility but not used in the template
+	# (the heredoc uses single-quoted delimiter, so the bot reads --port from argparse)
+	local voice_id="${3:-${DEFAULT_CARTESIA_VOICE_ID}}"
 
-    mkdir -p "$(dirname "${PIPECAT_BOT}")"
+	mkdir -p "$(dirname "${PIPECAT_BOT}")"
 
-    cat > "${PIPECAT_BOT}" << 'BOTEOF'
+	cat >"${PIPECAT_BOT}" <<'BOTEOF'
 """Pipecat local voice agent with Soniox STT + LLM + Cartesia TTS.
 
 Pipeline: Mic -> SmallWebRTC -> Soniox STT -> LLM -> Cartesia TTS -> Speaker
@@ -487,93 +488,97 @@ if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=args.port, log_level="warning")
 BOTEOF
 
-    # Patch the default values based on arguments
-    if [[ "${llm_provider}" != "anthropic" ]]; then
-        sed -i '' "s/DEFAULT_LLM = \"anthropic\"/DEFAULT_LLM = \"${llm_provider}\"/" "${PIPECAT_BOT}" 2>/dev/null || true
-    fi
-    if [[ "${voice_id}" != "${DEFAULT_CARTESIA_VOICE_ID}" ]]; then
-        sed -i '' "s/${DEFAULT_CARTESIA_VOICE_ID}/${voice_id}/g" "${PIPECAT_BOT}" 2>/dev/null || true
-    fi
+	# Patch the default values based on arguments (portable sed in-place)
+	if [[ "${llm_provider}" != "anthropic" ]]; then
+		local tmp_bot
+		tmp_bot="$(mktemp)"
+		sed "s/DEFAULT_LLM = \"anthropic\"/DEFAULT_LLM = \"${llm_provider}\"/" "${PIPECAT_BOT}" >"$tmp_bot" && mv "$tmp_bot" "${PIPECAT_BOT}"
+	fi
+	if [[ "${voice_id}" != "${DEFAULT_CARTESIA_VOICE_ID}" ]]; then
+		local tmp_bot2
+		tmp_bot2="$(mktemp)"
+		sed "s/${DEFAULT_CARTESIA_VOICE_ID}/${voice_id}/g" "${PIPECAT_BOT}" >"$tmp_bot2" && mv "$tmp_bot2" "${PIPECAT_BOT}"
+	fi
 
-    print_success "Bot template generated: ${PIPECAT_BOT}"
-    return 0
+	print_success "Bot template generated: ${PIPECAT_BOT}"
+	return 0
 }
 
 # ─── Commands ──────────────────────────────────────────────────────────
 
 cmd_setup() {
-    local llm_provider="${1:-${DEFAULT_LLM_PROVIDER}}"
-    local with_client="${2:-true}"
+	local llm_provider="${1:-${DEFAULT_LLM_PROVIDER}}"
+	local with_client="${2:-true}"
 
-    echo ""
-    echo "=== Pipecat Voice Agent Setup ==="
-    echo ""
+	echo ""
+	echo "=== Pipecat Voice Agent Setup ==="
+	echo ""
 
-    # Check Python
-    local python_cmd
-    python_cmd=$(find_python)
-    check_python "${python_cmd}" || return 1
-    print_success "Python: $(${python_cmd} --version 2>&1)"
+	# Check Python
+	local python_cmd
+	python_cmd=$(find_python)
+	check_python "${python_cmd}" || return 1
+	print_success "Python: $(${python_cmd} --version 2>&1)"
 
-    # Create project directory
-    mkdir -p "${PIPECAT_DIR}"
-    mkdir -p "$(dirname "${PIPECAT_PID_FILE}")"
-    mkdir -p "$(dirname "${PIPECAT_LOG_FILE}")"
+	# Create project directory
+	mkdir -p "${PIPECAT_DIR}"
+	mkdir -p "$(dirname "${PIPECAT_PID_FILE}")"
+	mkdir -p "$(dirname "${PIPECAT_LOG_FILE}")"
 
-    # Create virtual environment
-    if [[ ! -d "${PIPECAT_VENV}" ]]; then
-        print_info "Creating virtual environment..."
-        "${python_cmd}" -m venv "${PIPECAT_VENV}"
-        print_success "Virtual environment created: ${PIPECAT_VENV}"
-    else
-        print_success "Virtual environment exists: ${PIPECAT_VENV}"
-    fi
+	# Create virtual environment
+	if [[ ! -d "${PIPECAT_VENV}" ]]; then
+		print_info "Creating virtual environment..."
+		"${python_cmd}" -m venv "${PIPECAT_VENV}"
+		print_success "Virtual environment created: ${PIPECAT_VENV}"
+	else
+		print_success "Virtual environment exists: ${PIPECAT_VENV}"
+	fi
 
-    # Upgrade pip
-    "${PIPECAT_VENV}/bin/python" -m pip install --upgrade pip --quiet 2>&1 | tail -1
+	# Upgrade pip
+	"${PIPECAT_VENV}/bin/python" -m pip install --upgrade pip --quiet 2>&1 | tail -1
 
-    # Install Pipecat with required services
-    print_info "Installing Pipecat with Soniox STT, Cartesia TTS, Silero VAD, WebRTC..."
-    local pip_extras="soniox,cartesia,silero,webrtc"
+	# Install Pipecat with required services
+	print_info "Installing Pipecat with Soniox STT, Cartesia TTS, Silero VAD, WebRTC..."
+	local pip_extras="soniox,cartesia,silero,webrtc"
 
-    # Add LLM provider
-    case "${llm_provider}" in
-        anthropic)
-            pip_extras="${pip_extras},anthropic"
-            ;;
-        openai)
-            pip_extras="${pip_extras},openai"
-            ;;
-        local)
-            pip_extras="${pip_extras},openai"  # OpenAI-compatible API
-            ;;
-        both)
-            pip_extras="${pip_extras},anthropic,openai"
-            ;;
-        *)
-            print_warning "Unknown LLM provider: ${llm_provider}, installing both"
-            pip_extras="${pip_extras},anthropic,openai"
-            ;;
-    esac
+	# Add LLM provider
+	case "${llm_provider}" in
+	anthropic)
+		pip_extras="${pip_extras},anthropic"
+		;;
+	openai)
+		pip_extras="${pip_extras},openai"
+		;;
+	local)
+		pip_extras="${pip_extras},openai" # OpenAI-compatible API
+		;;
+	both)
+		pip_extras="${pip_extras},anthropic,openai"
+		;;
+	*)
+		print_warning "Unknown LLM provider: ${llm_provider}, installing both"
+		pip_extras="${pip_extras},anthropic,openai"
+		;;
+	esac
 
-    "${PIPECAT_VENV}/bin/python" -m pip install "pipecat-ai[${pip_extras}]" --quiet 2>&1 | tail -3
+	"${PIPECAT_VENV}/bin/python" -m pip install "pipecat-ai[${pip_extras}]" --quiet 2>&1 | tail -3
 
-    # Install additional dependencies
-    "${PIPECAT_VENV}/bin/python" -m pip install \
-        python-dotenv uvicorn fastapi --quiet 2>&1 | tail -1
+	# Install additional dependencies
+	"${PIPECAT_VENV}/bin/python" -m pip install \
+		python-dotenv uvicorn fastapi --quiet 2>&1 | tail -1
 
-    # Verify installation
-    local pipecat_version
-    pipecat_version=$("${PIPECAT_VENV}/bin/python" -c "import pipecat; print(pipecat.__version__)" 2>/dev/null || echo "unknown")
-    print_success "Pipecat installed: v${pipecat_version}"
+	# Verify installation
+	local pipecat_version
+	pipecat_version=$("${PIPECAT_VENV}/bin/python" -c "import pipecat; print(pipecat.__version__)" 2>/dev/null || echo "unknown")
+	print_success "Pipecat installed: v${pipecat_version}"
 
-    # Generate bot template
-    print_info "Generating bot template..."
-    generate_bot_template "${llm_provider}" "${DEFAULT_SERVER_PORT}" "${DEFAULT_CARTESIA_VOICE_ID}"
+	# Generate bot template
+	print_info "Generating bot template..."
+	generate_bot_template "${llm_provider}" "${DEFAULT_SERVER_PORT}" "${DEFAULT_CARTESIA_VOICE_ID}"
 
-    # Create .env template (without actual keys)
-    if [[ ! -f "${PIPECAT_DIR}/.env" ]]; then
-        cat > "${PIPECAT_DIR}/.env" << 'ENVEOF'
+	# Create .env template (without actual keys)
+	if [[ ! -f "${PIPECAT_DIR}/.env" ]]; then
+		cat >"${PIPECAT_DIR}/.env" <<'ENVEOF'
 # Pipecat Voice Agent Configuration
 # Store actual keys via: aidevops secret set <KEY_NAME>
 # Or uncomment and fill in below (less secure)
@@ -591,47 +596,47 @@ cmd_setup() {
 # PIPECAT_ANTHROPIC_MODEL=claude-sonnet-4-20250514
 # PIPECAT_OPENAI_MODEL=gpt-4o
 ENVEOF
-        print_success "Environment template created: ${PIPECAT_DIR}/.env"
-    fi
+		print_success "Environment template created: ${PIPECAT_DIR}/.env"
+	fi
 
-    # Setup web client
-    if [[ "${with_client}" == "true" ]]; then
-        cmd_setup_client
-    fi
+	# Setup web client
+	if [[ "${with_client}" == "true" ]]; then
+		cmd_setup_client
+	fi
 
-    echo ""
-    echo "=== Setup Complete ==="
-    echo ""
-    echo "Next steps:"
-    echo "  1. Store API keys:  aidevops secret set SONIOX_API_KEY"
-    echo "                      aidevops secret set CARTESIA_API_KEY"
-    echo "                      aidevops secret set ANTHROPIC_API_KEY"
-    echo "  2. Start agent:     pipecat-helper.sh start"
-    echo "  3. Open client:     http://localhost:${DEFAULT_CLIENT_PORT}"
-    echo ""
+	echo ""
+	echo "=== Setup Complete ==="
+	echo ""
+	echo "Next steps:"
+	echo "  1. Store API keys:  aidevops secret set SONIOX_API_KEY"
+	echo "                      aidevops secret set CARTESIA_API_KEY"
+	echo "                      aidevops secret set ANTHROPIC_API_KEY"
+	echo "  2. Start agent:     pipecat-helper.sh start"
+	echo "  3. Open client:     http://localhost:${DEFAULT_CLIENT_PORT}"
+	echo ""
 
-    return 0
+	return 0
 }
 
 cmd_setup_client() {
-    echo ""
-    echo "--- Web Client Setup ---"
+	echo ""
+	echo "--- Web Client Setup ---"
 
-    check_node || return 1
-    check_npm || return 1
+	check_node || return 1
+	check_npm || return 1
 
-    if [[ -d "${CLIENT_DIR}/node_modules" ]]; then
-        print_success "Web client already installed: ${CLIENT_DIR}"
-        return 0
-    fi
+	if [[ -d "${CLIENT_DIR}/node_modules" ]]; then
+		print_success "Web client already installed: ${CLIENT_DIR}"
+		return 0
+	fi
 
-    mkdir -p "${CLIENT_DIR}"
+	mkdir -p "${CLIENT_DIR}"
 
-    # Create a minimal Next.js client using voice-ui-kit
-    if [[ ! -f "${CLIENT_DIR}/package.json" ]]; then
-        print_info "Creating web client with voice-ui-kit..."
+	# Create a minimal Next.js client using voice-ui-kit
+	if [[ ! -f "${CLIENT_DIR}/package.json" ]]; then
+		print_info "Creating web client with voice-ui-kit..."
 
-        cat > "${CLIENT_DIR}/package.json" << 'PKGEOF'
+		cat >"${CLIENT_DIR}/package.json" <<'PKGEOF'
 {
   "name": "pipecat-voice-client",
   "version": "1.0.0",
@@ -658,8 +663,8 @@ cmd_setup_client() {
 }
 PKGEOF
 
-        # Create Next.js config
-        cat > "${CLIENT_DIR}/next.config.ts" << 'NEXTEOF'
+		# Create Next.js config
+		cat >"${CLIENT_DIR}/next.config.ts" <<'NEXTEOF'
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
@@ -676,8 +681,8 @@ const nextConfig: NextConfig = {
 export default nextConfig;
 NEXTEOF
 
-        # Create tsconfig
-        cat > "${CLIENT_DIR}/tsconfig.json" << 'TSEOF'
+		# Create tsconfig
+		cat >"${CLIENT_DIR}/tsconfig.json" <<'TSEOF'
 {
   "compilerOptions": {
     "target": "ES2017",
@@ -701,11 +706,11 @@ NEXTEOF
 }
 TSEOF
 
-        # Create app directory
-        mkdir -p "${CLIENT_DIR}/src/app"
+		# Create app directory
+		mkdir -p "${CLIENT_DIR}/src/app"
 
-        # Create layout
-        cat > "${CLIENT_DIR}/src/app/layout.tsx" << 'LAYOUTEOF'
+		# Create layout
+		cat >"${CLIENT_DIR}/src/app/layout.tsx" <<'LAYOUTEOF'
 import type { Metadata } from "next";
 import "@pipecat-ai/voice-ui-kit/styles";
 
@@ -727,8 +732,8 @@ export default function RootLayout({
 }
 LAYOUTEOF
 
-        # Create main page with ConsoleTemplate
-        cat > "${CLIENT_DIR}/src/app/page.tsx" << 'PAGEEOF'
+		# Create main page with ConsoleTemplate
+		cat >"${CLIENT_DIR}/src/app/page.tsx" <<'PAGEEOF'
 "use client";
 
 import { ConsoleTemplate, ThemeProvider } from "@pipecat-ai/voice-ui-kit";
@@ -746,395 +751,395 @@ export default function Home() {
   );
 }
 PAGEEOF
-    fi
+	fi
 
-    # Install dependencies
-    print_info "Installing client dependencies (this may take a moment)..."
-    (cd "${CLIENT_DIR}" && npm install --silent 2>&1 | tail -3)
+	# Install dependencies
+	print_info "Installing client dependencies (this may take a moment)..."
+	(cd "${CLIENT_DIR}" && npm install --silent 2>&1 | tail -3)
 
-    if [[ -d "${CLIENT_DIR}/node_modules" ]]; then
-        print_success "Web client installed: ${CLIENT_DIR}"
-    else
-        print_warning "Web client installation may have issues — check ${CLIENT_DIR}"
-    fi
+	if [[ -d "${CLIENT_DIR}/node_modules" ]]; then
+		print_success "Web client installed: ${CLIENT_DIR}"
+	else
+		print_warning "Web client installation may have issues — check ${CLIENT_DIR}"
+	fi
 
-    return 0
+	return 0
 }
 
 cmd_start() {
-    local llm_provider="${1:-${DEFAULT_LLM_PROVIDER}}"
-    local server_port="${2:-${DEFAULT_SERVER_PORT}}"
-    local voice_id="${3:-${DEFAULT_CARTESIA_VOICE_ID}}"
-    local with_client="${4:-true}"
+	local llm_provider="${1:-${DEFAULT_LLM_PROVIDER}}"
+	local server_port="${2:-${DEFAULT_SERVER_PORT}}"
+	local voice_id="${3:-${DEFAULT_CARTESIA_VOICE_ID}}"
+	local with_client="${4:-true}"
 
-    check_venv || return 1
-    check_pipecat_installed || return 1
+	check_venv || return 1
+	check_pipecat_installed || return 1
 
-    # Check if already running
-    if [[ -f "${PIPECAT_PID_FILE}" ]]; then
-        local existing_pid
-        existing_pid=$(cat "${PIPECAT_PID_FILE}")
-        if kill -0 "${existing_pid}" 2>/dev/null; then
-            print_warning "Pipecat agent already running (PID: ${existing_pid})"
-            print_info "Stop it first: pipecat-helper.sh stop"
-            return 1
-        fi
-        rm -f "${PIPECAT_PID_FILE}"
-    fi
+	# Check if already running
+	if [[ -f "${PIPECAT_PID_FILE}" ]]; then
+		local existing_pid
+		existing_pid=$(cat "${PIPECAT_PID_FILE}")
+		if kill -0 "${existing_pid}" 2>/dev/null; then
+			print_warning "Pipecat agent already running (PID: ${existing_pid})"
+			print_info "Stop it first: pipecat-helper.sh stop"
+			return 1
+		fi
+		rm -f "${PIPECAT_PID_FILE}"
+	fi
 
-    # Load API keys from secure storage
-    local keys_ok=true
-    if ! has_api_key "SONIOX_API_KEY"; then
-        print_error "SONIOX_API_KEY not found"
-        print_info "Set it: aidevops secret set SONIOX_API_KEY"
-        keys_ok=false
-    fi
-    if ! has_api_key "CARTESIA_API_KEY"; then
-        print_error "CARTESIA_API_KEY not found"
-        print_info "Set it: aidevops secret set CARTESIA_API_KEY"
-        keys_ok=false
-    fi
+	# Load API keys from secure storage
+	local keys_ok=true
+	if ! has_api_key "SONIOX_API_KEY"; then
+		print_error "SONIOX_API_KEY not found"
+		print_info "Set it: aidevops secret set SONIOX_API_KEY"
+		keys_ok=false
+	fi
+	if ! has_api_key "CARTESIA_API_KEY"; then
+		print_error "CARTESIA_API_KEY not found"
+		print_info "Set it: aidevops secret set CARTESIA_API_KEY"
+		keys_ok=false
+	fi
 
-    case "${llm_provider}" in
-        anthropic)
-            if ! has_api_key "ANTHROPIC_API_KEY"; then
-                print_error "ANTHROPIC_API_KEY not found"
-                print_info "Set it: aidevops secret set ANTHROPIC_API_KEY"
-                keys_ok=false
-            fi
-            ;;
-        openai)
-            if ! has_api_key "OPENAI_API_KEY"; then
-                print_error "OPENAI_API_KEY not found"
-                print_info "Set it: aidevops secret set OPENAI_API_KEY"
-                keys_ok=false
-            fi
-            ;;
-        local)
-            print_info "Using local LLM — ensure it's running at ${PIPECAT_LOCAL_LLM_URL:-http://127.0.0.1:1234/v1}"
-            ;;
-    esac
+	case "${llm_provider}" in
+	anthropic)
+		if ! has_api_key "ANTHROPIC_API_KEY"; then
+			print_error "ANTHROPIC_API_KEY not found"
+			print_info "Set it: aidevops secret set ANTHROPIC_API_KEY"
+			keys_ok=false
+		fi
+		;;
+	openai)
+		if ! has_api_key "OPENAI_API_KEY"; then
+			print_error "OPENAI_API_KEY not found"
+			print_info "Set it: aidevops secret set OPENAI_API_KEY"
+			keys_ok=false
+		fi
+		;;
+	local)
+		print_info "Using local LLM — ensure it's running at ${PIPECAT_LOCAL_LLM_URL:-http://127.0.0.1:1234/v1}"
+		;;
+	esac
 
-    if [[ "${keys_ok}" != "true" ]]; then
-        print_error "Missing API keys — cannot start"
-        return 1
-    fi
+	if [[ "${keys_ok}" != "true" ]]; then
+		print_error "Missing API keys — cannot start"
+		return 1
+	fi
 
-    # Regenerate bot if needed
-    if [[ ! -f "${PIPECAT_BOT}" ]]; then
-        generate_bot_template "${llm_provider}" "${server_port}" "${voice_id}"
-    fi
+	# Regenerate bot if needed
+	if [[ ! -f "${PIPECAT_BOT}" ]]; then
+		generate_bot_template "${llm_provider}" "${server_port}" "${voice_id}"
+	fi
 
-    echo ""
-    echo "=== Starting Pipecat Voice Agent ==="
-    echo ""
-    echo "  Pipeline: Soniox STT -> ${llm_provider} LLM -> Cartesia TTS"
-    echo "  Server:   http://localhost:${server_port}"
-    echo "  Signaling: http://localhost:${server_port}/api/offer"
-    echo ""
+	echo ""
+	echo "=== Starting Pipecat Voice Agent ==="
+	echo ""
+	echo "  Pipeline: Soniox STT -> ${llm_provider} LLM -> Cartesia TTS"
+	echo "  Server:   http://localhost:${server_port}"
+	echo "  Signaling: http://localhost:${server_port}/api/offer"
+	echo ""
 
-    # Start the bot server
-    "${PIPECAT_VENV}/bin/python" "${PIPECAT_BOT}" \
-        --port "${server_port}" \
-        --llm "${llm_provider}" \
-        --voice-id "${voice_id}" \
-        >> "${PIPECAT_LOG_FILE}" 2>&1 &
+	# Start the bot server
+	"${PIPECAT_VENV}/bin/python" "${PIPECAT_BOT}" \
+		--port "${server_port}" \
+		--llm "${llm_provider}" \
+		--voice-id "${voice_id}" \
+		>>"${PIPECAT_LOG_FILE}" 2>&1 &
 
-    local bot_pid=$!
-    echo "${bot_pid}" > "${PIPECAT_PID_FILE}"
+	local bot_pid=$!
+	echo "${bot_pid}" >"${PIPECAT_PID_FILE}"
 
-    # Wait for server to be ready
-    local attempts=0
-    while [[ ${attempts} -lt 20 ]]; do
-        if curl -s --max-time 1 "http://127.0.0.1:${server_port}/api/status" >/dev/null 2>&1; then
-            print_success "Voice agent started (PID: ${bot_pid})"
-            break
-        fi
-        sleep 0.5
-        attempts=$((attempts + 1))
-    done
+	# Wait for server to be ready
+	local attempts=0
+	while [[ ${attempts} -lt 20 ]]; do
+		if curl -s --max-time 1 "http://127.0.0.1:${server_port}/api/status" >/dev/null 2>&1; then
+			print_success "Voice agent started (PID: ${bot_pid})"
+			break
+		fi
+		sleep 0.5
+		attempts=$((attempts + 1))
+	done
 
-    if [[ ${attempts} -ge 20 ]]; then
-        print_warning "Server slow to start — check logs: pipecat-helper.sh logs"
-    fi
+	if [[ ${attempts} -ge 20 ]]; then
+		print_warning "Server slow to start — check logs: pipecat-helper.sh logs"
+	fi
 
-    # Start web client
-    if [[ "${with_client}" == "true" ]] && [[ -d "${CLIENT_DIR}/node_modules" ]]; then
-        cmd_start_client "${DEFAULT_CLIENT_PORT}"
-    fi
+	# Start web client
+	if [[ "${with_client}" == "true" ]] && [[ -d "${CLIENT_DIR}/node_modules" ]]; then
+		cmd_start_client "${DEFAULT_CLIENT_PORT}"
+	fi
 
-    echo ""
-    echo "Voice agent is running. Open http://localhost:${DEFAULT_CLIENT_PORT} to talk."
-    echo "Stop with: pipecat-helper.sh stop"
-    echo ""
+	echo ""
+	echo "Voice agent is running. Open http://localhost:${DEFAULT_CLIENT_PORT} to talk."
+	echo "Stop with: pipecat-helper.sh stop"
+	echo ""
 
-    return 0
+	return 0
 }
 
 cmd_start_client() {
-    local client_port="${1:-${DEFAULT_CLIENT_PORT}}"
+	local client_port="${1:-${DEFAULT_CLIENT_PORT}}"
 
-    if [[ ! -d "${CLIENT_DIR}/node_modules" ]]; then
-        print_warning "Web client not installed — run: pipecat-helper.sh setup"
-        return 1
-    fi
+	if [[ ! -d "${CLIENT_DIR}/node_modules" ]]; then
+		print_warning "Web client not installed — run: pipecat-helper.sh setup"
+		return 1
+	fi
 
-    # Check if client already running
-    if [[ -f "${CLIENT_PID_FILE}" ]]; then
-        local existing_pid
-        existing_pid=$(cat "${CLIENT_PID_FILE}")
-        if kill -0 "${existing_pid}" 2>/dev/null; then
-            print_success "Web client already running (PID: ${existing_pid})"
-            return 0
-        fi
-        rm -f "${CLIENT_PID_FILE}"
-    fi
+	# Check if client already running
+	if [[ -f "${CLIENT_PID_FILE}" ]]; then
+		local existing_pid
+		existing_pid=$(cat "${CLIENT_PID_FILE}")
+		if kill -0 "${existing_pid}" 2>/dev/null; then
+			print_success "Web client already running (PID: ${existing_pid})"
+			return 0
+		fi
+		rm -f "${CLIENT_PID_FILE}"
+	fi
 
-    print_info "Starting web client on port ${client_port}..."
-    (cd "${CLIENT_DIR}" && npm run dev -- --port "${client_port}" >> "${PIPECAT_LOG_FILE}" 2>&1 &)
-    local client_pid=$!
-    echo "${client_pid}" > "${CLIENT_PID_FILE}"
+	print_info "Starting web client on port ${client_port}..."
+	(cd "${CLIENT_DIR}" && npm run dev -- --port "${client_port}" >>"${PIPECAT_LOG_FILE}" 2>&1 &)
+	local client_pid=$!
+	echo "${client_pid}" >"${CLIENT_PID_FILE}"
 
-    # Wait briefly for client to start
-    sleep 2
-    if kill -0 "${client_pid}" 2>/dev/null; then
-        print_success "Web client started: http://localhost:${client_port} (PID: ${client_pid})"
-    else
-        print_warning "Web client may have failed to start — check logs"
-    fi
+	# Wait briefly for client to start
+	sleep 2
+	if kill -0 "${client_pid}" 2>/dev/null; then
+		print_success "Web client started: http://localhost:${client_port} (PID: ${client_pid})"
+	else
+		print_warning "Web client may have failed to start — check logs"
+	fi
 
-    return 0
+	return 0
 }
 
 cmd_stop() {
-    echo "=== Stopping Pipecat Voice Agent ==="
-    echo ""
+	echo "=== Stopping Pipecat Voice Agent ==="
+	echo ""
 
-    local stopped=false
+	local stopped=false
 
-    # Stop bot server
-    if [[ -f "${PIPECAT_PID_FILE}" ]]; then
-        local pid
-        pid=$(cat "${PIPECAT_PID_FILE}")
-        if kill -0 "${pid}" 2>/dev/null; then
-            kill "${pid}" 2>/dev/null || true
-            sleep 1
-            if kill -0 "${pid}" 2>/dev/null; then
-                kill -9 "${pid}" 2>/dev/null || true
-            fi
-            print_success "Voice agent stopped (PID: ${pid})"
-            stopped=true
-        fi
-        rm -f "${PIPECAT_PID_FILE}"
-    fi
+	# Stop bot server
+	if [[ -f "${PIPECAT_PID_FILE}" ]]; then
+		local pid
+		pid=$(cat "${PIPECAT_PID_FILE}")
+		if kill -0 "${pid}" 2>/dev/null; then
+			kill "${pid}" 2>/dev/null || true
+			sleep 1
+			if kill -0 "${pid}" 2>/dev/null; then
+				kill -9 "${pid}" 2>/dev/null || true
+			fi
+			print_success "Voice agent stopped (PID: ${pid})"
+			stopped=true
+		fi
+		rm -f "${PIPECAT_PID_FILE}"
+	fi
 
-    # Stop web client
-    if [[ -f "${CLIENT_PID_FILE}" ]]; then
-        local pid
-        pid=$(cat "${CLIENT_PID_FILE}")
-        if kill -0 "${pid}" 2>/dev/null; then
-            kill "${pid}" 2>/dev/null || true
-            print_success "Web client stopped (PID: ${pid})"
-            stopped=true
-        fi
-        rm -f "${CLIENT_PID_FILE}"
-    fi
+	# Stop web client
+	if [[ -f "${CLIENT_PID_FILE}" ]]; then
+		local pid
+		pid=$(cat "${CLIENT_PID_FILE}")
+		if kill -0 "${pid}" 2>/dev/null; then
+			kill "${pid}" 2>/dev/null || true
+			print_success "Web client stopped (PID: ${pid})"
+			stopped=true
+		fi
+		rm -f "${CLIENT_PID_FILE}"
+	fi
 
-    if [[ "${stopped}" != "true" ]]; then
-        print_info "No running Pipecat processes found"
-    fi
+	if [[ "${stopped}" != "true" ]]; then
+		print_info "No running Pipecat processes found"
+	fi
 
-    echo ""
-    return 0
+	echo ""
+	return 0
 }
 
 cmd_status() {
-    echo ""
-    echo "=== Pipecat Voice Agent Status ==="
-    echo ""
+	echo ""
+	echo "=== Pipecat Voice Agent Status ==="
+	echo ""
 
-    # Check venv and Pipecat
-    echo "--- Installation ---"
-    if [[ -d "${PIPECAT_VENV}" ]]; then
-        print_success "Virtual environment: ${PIPECAT_VENV}"
-        if "${PIPECAT_VENV}/bin/python" -c "import pipecat" 2>/dev/null; then
-            local version
-            version=$("${PIPECAT_VENV}/bin/python" -c "import pipecat; print(pipecat.__version__)" 2>/dev/null || echo "unknown")
-            print_success "Pipecat: v${version}"
-        else
-            print_error "Pipecat: not installed"
-        fi
-    else
-        print_error "Virtual environment: not found"
-        print_info "Run: pipecat-helper.sh setup"
-    fi
+	# Check venv and Pipecat
+	echo "--- Installation ---"
+	if [[ -d "${PIPECAT_VENV}" ]]; then
+		print_success "Virtual environment: ${PIPECAT_VENV}"
+		if "${PIPECAT_VENV}/bin/python" -c "import pipecat" 2>/dev/null; then
+			local version
+			version=$("${PIPECAT_VENV}/bin/python" -c "import pipecat; print(pipecat.__version__)" 2>/dev/null || echo "unknown")
+			print_success "Pipecat: v${version}"
+		else
+			print_error "Pipecat: not installed"
+		fi
+	else
+		print_error "Virtual environment: not found"
+		print_info "Run: pipecat-helper.sh setup"
+	fi
 
-    # Check bot template
-    if [[ -f "${PIPECAT_BOT}" ]]; then
-        print_success "Bot template: ${PIPECAT_BOT}"
-    else
-        print_warning "Bot template: not generated"
-    fi
+	# Check bot template
+	if [[ -f "${PIPECAT_BOT}" ]]; then
+		print_success "Bot template: ${PIPECAT_BOT}"
+	else
+		print_warning "Bot template: not generated"
+	fi
 
-    # Check web client
-    if [[ -d "${CLIENT_DIR}/node_modules" ]]; then
-        print_success "Web client: installed"
-    else
-        print_warning "Web client: not installed"
-    fi
+	# Check web client
+	if [[ -d "${CLIENT_DIR}/node_modules" ]]; then
+		print_success "Web client: installed"
+	else
+		print_warning "Web client: not installed"
+	fi
 
-    echo ""
+	echo ""
 
-    # Check running processes
-    echo "--- Processes ---"
-    if [[ -f "${PIPECAT_PID_FILE}" ]]; then
-        local pid
-        pid=$(cat "${PIPECAT_PID_FILE}")
-        if kill -0 "${pid}" 2>/dev/null; then
-            print_success "Voice agent: running (PID: ${pid})"
+	# Check running processes
+	echo "--- Processes ---"
+	if [[ -f "${PIPECAT_PID_FILE}" ]]; then
+		local pid
+		pid=$(cat "${PIPECAT_PID_FILE}")
+		if kill -0 "${pid}" 2>/dev/null; then
+			print_success "Voice agent: running (PID: ${pid})"
 
-            # Check API endpoint
-            local status_response
-            status_response=$(curl -s --max-time 2 "http://127.0.0.1:${DEFAULT_SERVER_PORT}/api/status" 2>/dev/null || echo "")
-            if [[ -n "${status_response}" ]]; then
-                local connections llm_prov
-                connections=$(echo "${status_response}" | python3 -c "import sys,json; print(json.load(sys.stdin).get('connections',0))" 2>/dev/null || echo "?")
-                llm_prov=$(echo "${status_response}" | python3 -c "import sys,json; print(json.load(sys.stdin).get('llm_provider','?'))" 2>/dev/null || echo "?")
-                echo "  Connections: ${connections}"
-                echo "  LLM provider: ${llm_prov}"
-            fi
-        else
-            print_warning "Voice agent: stale PID file (not running)"
-            rm -f "${PIPECAT_PID_FILE}"
-        fi
-    else
-        print_info "Voice agent: not running"
-    fi
+			# Check API endpoint
+			local status_response
+			status_response=$(curl -s --max-time 2 "http://127.0.0.1:${DEFAULT_SERVER_PORT}/api/status" 2>/dev/null || echo "")
+			if [[ -n "${status_response}" ]]; then
+				local connections llm_prov
+				connections=$(echo "${status_response}" | python3 -c "import sys,json; print(json.load(sys.stdin).get('connections',0))" 2>/dev/null || echo "?")
+				llm_prov=$(echo "${status_response}" | python3 -c "import sys,json; print(json.load(sys.stdin).get('llm_provider','?'))" 2>/dev/null || echo "?")
+				echo "  Connections: ${connections}"
+				echo "  LLM provider: ${llm_prov}"
+			fi
+		else
+			print_warning "Voice agent: stale PID file (not running)"
+			rm -f "${PIPECAT_PID_FILE}"
+		fi
+	else
+		print_info "Voice agent: not running"
+	fi
 
-    if [[ -f "${CLIENT_PID_FILE}" ]]; then
-        local pid
-        pid=$(cat "${CLIENT_PID_FILE}")
-        if kill -0 "${pid}" 2>/dev/null; then
-            print_success "Web client: running (PID: ${pid})"
-        else
-            print_warning "Web client: stale PID file (not running)"
-            rm -f "${CLIENT_PID_FILE}"
-        fi
-    else
-        print_info "Web client: not running"
-    fi
+	if [[ -f "${CLIENT_PID_FILE}" ]]; then
+		local pid
+		pid=$(cat "${CLIENT_PID_FILE}")
+		if kill -0 "${pid}" 2>/dev/null; then
+			print_success "Web client: running (PID: ${pid})"
+		else
+			print_warning "Web client: stale PID file (not running)"
+			rm -f "${CLIENT_PID_FILE}"
+		fi
+	else
+		print_info "Web client: not running"
+	fi
 
-    echo ""
+	echo ""
 
-    # Check API keys
-    cmd_keys
+	# Check API keys
+	cmd_keys
 
-    # Check services
-    echo "--- Service Availability ---"
-    if [[ -d "${PIPECAT_VENV}" ]]; then
-        # Check Soniox
-        if "${PIPECAT_VENV}/bin/python" -c "from pipecat.services.soniox.stt import SonioxSTTService" 2>/dev/null; then
-            print_success "Soniox STT: module available"
-        else
-            print_warning "Soniox STT: module not installed"
-        fi
+	# Check services
+	echo "--- Service Availability ---"
+	if [[ -d "${PIPECAT_VENV}" ]]; then
+		# Check Soniox
+		if "${PIPECAT_VENV}/bin/python" -c "from pipecat.services.soniox.stt import SonioxSTTService" 2>/dev/null; then
+			print_success "Soniox STT: module available"
+		else
+			print_warning "Soniox STT: module not installed"
+		fi
 
-        # Check Cartesia
-        if "${PIPECAT_VENV}/bin/python" -c "from pipecat.services.cartesia.tts import CartesiaTTSService" 2>/dev/null; then
-            print_success "Cartesia TTS: module available"
-        else
-            print_warning "Cartesia TTS: module not installed"
-        fi
+		# Check Cartesia
+		if "${PIPECAT_VENV}/bin/python" -c "from pipecat.services.cartesia.tts import CartesiaTTSService" 2>/dev/null; then
+			print_success "Cartesia TTS: module available"
+		else
+			print_warning "Cartesia TTS: module not installed"
+		fi
 
-        # Check Anthropic
-        if "${PIPECAT_VENV}/bin/python" -c "from pipecat.services.anthropic.llm import AnthropicLLMService" 2>/dev/null; then
-            print_success "Anthropic LLM: module available"
-        else
-            print_warning "Anthropic LLM: module not installed"
-        fi
+		# Check Anthropic
+		if "${PIPECAT_VENV}/bin/python" -c "from pipecat.services.anthropic.llm import AnthropicLLMService" 2>/dev/null; then
+			print_success "Anthropic LLM: module available"
+		else
+			print_warning "Anthropic LLM: module not installed"
+		fi
 
-        # Check OpenAI
-        if "${PIPECAT_VENV}/bin/python" -c "from pipecat.services.openai.llm import OpenAILLMService" 2>/dev/null; then
-            print_success "OpenAI LLM: module available"
-        else
-            print_warning "OpenAI LLM: module not installed"
-        fi
+		# Check OpenAI
+		if "${PIPECAT_VENV}/bin/python" -c "from pipecat.services.openai.llm import OpenAILLMService" 2>/dev/null; then
+			print_success "OpenAI LLM: module available"
+		else
+			print_warning "OpenAI LLM: module not installed"
+		fi
 
-        # Check WebRTC transport
-        if "${PIPECAT_VENV}/bin/python" -c "from pipecat.transports.network.small_webrtc import SmallWebRTCTransport" 2>/dev/null; then
-            print_success "SmallWebRTC: module available"
-        else
-            print_warning "SmallWebRTC: module not installed"
-        fi
-    fi
+		# Check WebRTC transport
+		if "${PIPECAT_VENV}/bin/python" -c "from pipecat.transports.network.small_webrtc import SmallWebRTCTransport" 2>/dev/null; then
+			print_success "SmallWebRTC: module available"
+		else
+			print_warning "SmallWebRTC: module not installed"
+		fi
+	fi
 
-    echo ""
-    return 0
+	echo ""
+	return 0
 }
 
 cmd_keys() {
-    echo "--- API Keys ---"
+	echo "--- API Keys ---"
 
-    if has_api_key "SONIOX_API_KEY"; then
-        print_success "SONIOX_API_KEY: configured"
-    else
-        print_error "SONIOX_API_KEY: not found"
-    fi
+	if has_api_key "SONIOX_API_KEY"; then
+		print_success "SONIOX_API_KEY: configured"
+	else
+		print_error "SONIOX_API_KEY: not found"
+	fi
 
-    if has_api_key "CARTESIA_API_KEY"; then
-        print_success "CARTESIA_API_KEY: configured"
-    else
-        print_error "CARTESIA_API_KEY: not found"
-    fi
+	if has_api_key "CARTESIA_API_KEY"; then
+		print_success "CARTESIA_API_KEY: configured"
+	else
+		print_error "CARTESIA_API_KEY: not found"
+	fi
 
-    if has_api_key "ANTHROPIC_API_KEY"; then
-        print_success "ANTHROPIC_API_KEY: configured"
-    else
-        print_warning "ANTHROPIC_API_KEY: not found (needed for Anthropic LLM)"
-    fi
+	if has_api_key "ANTHROPIC_API_KEY"; then
+		print_success "ANTHROPIC_API_KEY: configured"
+	else
+		print_warning "ANTHROPIC_API_KEY: not found (needed for Anthropic LLM)"
+	fi
 
-    if has_api_key "OPENAI_API_KEY"; then
-        print_success "OPENAI_API_KEY: configured"
-    else
-        print_warning "OPENAI_API_KEY: not found (needed for OpenAI LLM)"
-    fi
+	if has_api_key "OPENAI_API_KEY"; then
+		print_success "OPENAI_API_KEY: configured"
+	else
+		print_warning "OPENAI_API_KEY: not found (needed for OpenAI LLM)"
+	fi
 
-    echo ""
-    return 0
+	echo ""
+	return 0
 }
 
 cmd_logs() {
-    local lines="${1:-50}"
+	local lines="${1:-50}"
 
-    if [[ ! -f "${PIPECAT_LOG_FILE}" ]]; then
-        print_info "No log file found at ${PIPECAT_LOG_FILE}"
-        return 0
-    fi
+	if [[ ! -f "${PIPECAT_LOG_FILE}" ]]; then
+		print_info "No log file found at ${PIPECAT_LOG_FILE}"
+		return 0
+	fi
 
-    echo "=== Pipecat Agent Logs (last ${lines} lines) ==="
-    echo ""
-    tail -n "${lines}" "${PIPECAT_LOG_FILE}"
-    echo ""
+	echo "=== Pipecat Agent Logs (last ${lines} lines) ==="
+	echo ""
+	tail -n "${lines}" "${PIPECAT_LOG_FILE}"
+	echo ""
 
-    return 0
+	return 0
 }
 
 cmd_client() {
-    local client_port="${1:-${DEFAULT_CLIENT_PORT}}"
+	local client_port="${1:-${DEFAULT_CLIENT_PORT}}"
 
-    if [[ ! -d "${CLIENT_DIR}/node_modules" ]]; then
-        print_info "Web client not installed. Setting up..."
-        cmd_setup_client || return 1
-    fi
+	if [[ ! -d "${CLIENT_DIR}/node_modules" ]]; then
+		print_info "Web client not installed. Setting up..."
+		cmd_setup_client || return 1
+	fi
 
-    cmd_start_client "${client_port}"
-    return 0
+	cmd_start_client "${client_port}"
+	return 0
 }
 
 # ─── Help ──────────────────────────────────────────────────────────────
 
 cmd_help() {
-    cat <<'EOF'
+	cat <<'EOF'
 Pipecat Helper - Local voice agent with Soniox STT + LLM + Cartesia TTS
 
 Usage: pipecat-helper.sh <command> [options]
@@ -1196,46 +1201,46 @@ See also:
   voice-helper.sh                    Simple terminal voice bridge
   voice-pipeline-helper.sh           Audio production pipeline
 EOF
-    return 0
+	return 0
 }
 
 # ─── Main ──────────────────────────────────────────────────────────────
 
 main() {
-    local command="${1:-help}"
-    shift || true
+	local command="${1:-help}"
+	shift || true
 
-    case "${command}" in
-        setup|install)
-            cmd_setup "$@"
-            ;;
-        start|run)
-            cmd_start "$@"
-            ;;
-        stop|kill)
-            cmd_stop
-            ;;
-        status|check)
-            cmd_status
-            ;;
-        client|ui)
-            cmd_client "$@"
-            ;;
-        keys|api-keys)
-            cmd_keys
-            ;;
-        logs|log)
-            cmd_logs "$@"
-            ;;
-        help|--help|-h)
-            cmd_help
-            ;;
-        *)
-            print_error "${ERROR_UNKNOWN_COMMAND}: ${command}"
-            cmd_help
-            return 1
-            ;;
-    esac
+	case "${command}" in
+	setup | install)
+		cmd_setup "$@"
+		;;
+	start | run)
+		cmd_start "$@"
+		;;
+	stop | kill)
+		cmd_stop
+		;;
+	status | check)
+		cmd_status
+		;;
+	client | ui)
+		cmd_client "$@"
+		;;
+	keys | api-keys)
+		cmd_keys
+		;;
+	logs | log)
+		cmd_logs "$@"
+		;;
+	help | --help | -h)
+		cmd_help
+		;;
+	*)
+		print_error "${ERROR_UNKNOWN_COMMAND}: ${command}"
+		cmd_help
+		return 1
+		;;
+	esac
 }
 
 main "$@"

@@ -112,28 +112,24 @@ detect_backend() {
 	local backend="ncnn" # Default fallback
 
 	# Check for NVIDIA GPU (CUDA)
-	if command -v nvidia-smi &>/dev/null; then
-		if nvidia-smi &>/dev/null; then
-			# Check for TensorRT
-			if python3 -c "import tensorrt" &>/dev/null 2>&1; then
-				backend="tensorrt"
-			else
-				backend="pytorch"
-			fi
-			print_info "Detected NVIDIA GPU - using ${backend} backend"
-			echo "$backend"
-			return 0
+	if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null; then
+		# Check for TensorRT
+		if python3 -c "import tensorrt" &>/dev/null 2>&1; then
+			backend="tensorrt"
+		else
+			backend="pytorch"
 		fi
+		print_info "Detected NVIDIA GPU - using ${backend} backend"
+		echo "$backend"
+		return 0
 	fi
 
 	# Check for AMD GPU (ROCm)
-	if command -v rocm-smi &>/dev/null; then
-		if rocm-smi &>/dev/null 2>&1; then
-			backend="pytorch"
-			print_info "Detected AMD GPU - using PyTorch ROCm backend"
-			echo "$backend"
-			return 0
-		fi
+	if command -v rocm-smi &>/dev/null && rocm-smi &>/dev/null 2>&1; then
+		backend="pytorch"
+		print_info "Detected AMD GPU - using PyTorch ROCm backend"
+		echo "$backend"
+		return 0
 	fi
 
 	# Check for Apple Silicon
