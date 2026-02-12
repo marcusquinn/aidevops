@@ -438,70 +438,101 @@ cmd_create() {
             continue
         fi
 
-        # Build task description
-        local task_desc
-        task_desc=$(build_task_description "$group_by" "$group_key" "$finding_count" "$max_severity" "$sources")
+		# Build task description
+		local task_desc
+		task_desc=$(build_task_description "$group_by" "$group_key" "$finding_count" "$max_severity" "$sources")
 
-        local task_line="- [ ] ${task_desc}"
+		if [[ "$dry_run" == "true" ]]; then
+			echo "- [ ] ${task_desc}"
+		else
+			# Allocate task ID via claim-task-id.sh (t319.3)
+			local claim_script="${SCRIPT_DIR}/claim-task-id.sh"
+			local task_id="" gh_ref=""
+			if [[ -x "$claim_script" ]]; then
+				local task_title="${task_desc:0:80}"
+				local claim_output
+				if claim_output=$("$claim_script" --title "$task_title" --description "Auto-created from quality sweep finding group: ${group_by}=${group_key}" --labels "quality,auto-dispatch" --repo-path "$repo" 2>&1); then
+					task_id=$(echo "$claim_output" | grep "^task_id=" | cut -d= -f2)
+					gh_ref=$(echo "$claim_output" | grep "^ref=" | cut -d= -f2)
+				else
+					print_warning "Failed to allocate task ID for ${group_by}=${group_key}: $claim_output"
+					print_info "Skipping (will retry on next run)"
+					i=$((i + 1))
+					continue
+				fi
+			fi
 
-        if [[ "$dry_run" == "true" ]]; then
-            echo "$task_line"
-        else
-            task_lines="${task_lines}${task_line}"$'\n'
+			if [[ -z "$task_id" ]]; then
+				print_warning "No task_id returned for ${group_by}=${group_key}, skipping"
+				i=$((i + 1))
+				continue
+			fi
 
-            # Record in task DB
-            local escaped_key escaped_line
-            escaped_key=$(echo "$group_key" | sed "s/'/''/g")
-            escaped_line=$(echo "$task_line" | sed "s/'/''/g")
-            db "$TASK_DB" "INSERT OR REPLACE INTO generated_tasks (group_key, group_by, task_line, finding_count, max_severity, sources) VALUES ('$escaped_key', '$group_by', '$escaped_line', $finding_count, '$max_severity', '$(echo "$sources" | sed "s/'/''/g")');"
+			local task_line="- [ ] ${task_id} ${task_desc}"
+			# Add GitHub issue reference if available
+			if [[ -n "$gh_ref" && "$gh_ref" != "offline" ]]; then
+				task_line="${task_line} ref:${gh_ref}"
+			fi
+			task_line="${task_line} logged:$(date +%Y-%m-%d)"
 
-            # Record individual findings linked to this task
-            local task_row_id
-            task_row_id=$(db "$TASK_DB" "SELECT id FROM generated_tasks WHERE group_key='$escaped_key' AND group_by='$group_by';")
+			task_lines="${task_lines}${task_line}"$'\n'
 
-            local findings_sql
-            case "$group_by" in
-                file)
-                    findings_sql="SELECT id, source, file, line, severity, rule, message FROM findings $where AND file='$escaped_key';"
-                    ;;
-                rule)
-                    findings_sql="SELECT id, source, file, line, severity, rule, message FROM findings $where AND rule='$escaped_key';"
-                    ;;
-            esac
+			# Record in task DB with allocated task ID
+			local escaped_key escaped_line
+			escaped_key=$(echo "$group_key" | sed "s/'/''/g")
+			escaped_line=$(echo "$task_line" | sed "s/'/''/g")
+			db "$TASK_DB" "INSERT OR REPLACE INTO generated_tasks (group_key, group_by, task_line, finding_count, max_severity, sources, todo_task_id) VALUES ('$escaped_key', '$group_by', '$escaped_line', $finding_count, '$max_severity', '$(echo "$sources" | sed "s/'/''/g")', '$task_id');"
 
-            db "$SWEEP_DB" -json "$findings_sql" 2>/dev/null | jq -r '.[] | "INSERT OR IGNORE INTO task_findings (task_id, finding_id, source, file, line, severity, rule, message) VALUES ('"$task_row_id"', \(.id), '"'"'\(.source)'"'"', '"'"'\(.file | gsub("'"'"'"; "'"'"''"'"'"))'"'"', \(.line), '"'"'\(.severity)'"'"', '"'"'\(.rule | gsub("'"'"'"; "'"'"''"'"'"))'"'"', '"'"'\(.message | gsub("'"'"'"; "'"'"''"'"'"))'"'"');"' 2>/dev/null | db "$TASK_DB" 2>/dev/null || true
-        fi
+			# Record individual findings linked to this task
+			local task_row_id
+			task_row_id=$(db "$TASK_DB" "SELECT id FROM generated_tasks WHERE group_key='$escaped_key' AND group_by='$group_by';")
 
-        created=$((created + 1))
-        i=$((i + 1))
-    done
+			local findings_sql
+			case "$group_by" in
+				file)
+					findings_sql="SELECT id, source, file, line, severity, rule, message FROM findings $where AND file='$escaped_key';"
+					;;
+				rule)
+					findings_sql="SELECT id, source, file, line, severity, rule, message FROM findings $where AND rule='$escaped_key';"
+					;;
+			esac
 
-    if [[ "$dry_run" == "true" ]]; then
-        echo ""
-        print_info "Dry run: $created tasks would be created ($skipped_existing already in TODO, $skipped_processed already processed)"
-        return 0
-    fi
+			db "$SWEEP_DB" -json "$findings_sql" 2>/dev/null | jq -r '.[] | "INSERT OR IGNORE INTO task_findings (task_id, finding_id, source, file, line, severity, rule, message) VALUES ('"$task_row_id"', \(.id), '"'"'\(.source)'"'"', '"'"'\(.file | gsub("'"'"'"; "'"'"''"'"'"))'"'"', \(.line), '"'"'\(.severity)'"'"', '"'"'\(.rule | gsub("'"'"'"; "'"'"''"'"'"))'"'"', '"'"'\(.message | gsub("'"'"'"; "'"'"''"'"'"))'"'"');"' 2>/dev/null | db "$TASK_DB" 2>/dev/null || true
+		fi
 
-    if [[ $created -eq 0 ]]; then
-        print_info "No new tasks to create ($skipped_existing already in TODO, $skipped_processed already processed)"
-        return 0
-    fi
+		created=$((created + 1))
+		i=$((i + 1))
+	done
 
-    # Output the generated task lines
-    echo ""
-    print_success "Generated $created task lines ($skipped_existing skipped — already in TODO, $skipped_processed skipped — already processed):"
-    echo ""
-    echo "$task_lines"
-    echo ""
-    print_info "These task lines need task IDs (tNNN) assigned before adding to TODO.md."
-    print_info "The supervisor or a human should insert them with proper IDs."
+	if [[ "$dry_run" == "true" ]]; then
+		echo ""
+		print_info "Dry run: $created tasks would be created ($skipped_existing already in TODO, $skipped_processed already processed)"
+		return 0
+	fi
 
-    # Auto-dispatch: trigger supervisor auto-pickup
-    if [[ "$auto_dispatch" == "true" ]]; then
-        dispatch_tasks "$repo"
-    fi
+	if [[ $created -eq 0 ]]; then
+		print_info "No new tasks to create ($skipped_existing already in TODO, $skipped_processed already processed)"
+		return 0
+	fi
 
-    return 0
+	# Output the generated task lines with allocated IDs
+	echo ""
+	print_success "Generated $created task(s) with allocated IDs ($skipped_existing skipped — already in TODO, $skipped_processed skipped — already processed):"
+	echo ""
+	echo "=== Task Lines (for TODO.md) ==="
+	echo ""
+	echo "$task_lines"
+	echo "================================"
+	echo ""
+	print_info "To add these to TODO.md, copy the lines above into the appropriate section."
+	print_info "Tasks tagged #auto-dispatch will be picked up by supervisor auto-pickup."
+
+	# Auto-dispatch: trigger supervisor auto-pickup
+	if [[ "$auto_dispatch" == "true" ]]; then
+		dispatch_tasks "$repo"
+	fi
+
+	return 0
 }
 
 # =============================================================================

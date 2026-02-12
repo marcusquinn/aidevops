@@ -10885,6 +10885,9 @@ cmd_pulse() {
 				local tasks_added=0
 
 				# 1. CodeRabbit findings → tasks
+				# coderabbit-task-creator-helper.sh already allocates IDs via
+				# claim-task-id.sh (t319.3). We use the IDs it returns directly
+				# instead of re-assigning with grep-based max_id (collision-prone).
 				local cr_output
 				cr_output=$(bash "$task_creator_script" create 2>>"$SUPERVISOR_LOG" || echo "")
 				if [[ -n "$cr_output" ]]; then
@@ -10892,17 +10895,37 @@ cmd_pulse() {
 					local cr_tasks
 					cr_tasks=$(echo "$cr_output" | sed -n '/=== Task Lines/,/===$/p' | grep -E '^\s*- \[ \]' || true)
 					if [[ -n "$cr_tasks" ]]; then
-						# Find next task ID
-						local max_id
-						max_id=$(grep -oE 't[0-9]+' "$todo_file" | grep -oE '[0-9]+' | sort -n | tail -1 || echo "0")
-						max_id=$((10#$max_id))
+						local claim_script="${SCRIPT_DIR}/claim-task-id.sh"
 
-						# Append each task with a unique ID
+						# Append each task line to TODO.md
 						while IFS= read -r task_line; do
-							max_id=$((max_id + 1))
-							# Replace placeholder or add task ID
-							local new_line
-							new_line=$(echo "$task_line" | sed -E "s/^(\s*- \[ \] )/\1t${max_id} /")
+							local new_line="$task_line"
+
+							# If the task line already has a tNNN ID (from claim-task-id.sh
+							# inside coderabbit-task-creator), use it as-is.
+							# Otherwise, allocate a new ID via claim-task-id.sh.
+							if ! echo "$new_line" | grep -qE '^\s*- \[ \] t[0-9]+'; then
+								local claim_output claimed_id
+								if [[ -x "$claim_script" ]]; then
+									local task_desc
+									task_desc=$(echo "$new_line" | sed -E 's/^\s*- \[ \] //')
+									claim_output=$("$claim_script" --title "${task_desc:0:80}" --repo-path "$task_repo" 2>>"$SUPERVISOR_LOG") || claim_output=""
+									claimed_id=$(echo "$claim_output" | grep "^task_id=" | cut -d= -f2)
+								fi
+								if [[ -n "${claimed_id:-}" ]]; then
+									new_line=$(echo "$new_line" | sed -E "s/^(\s*- \[ \] )/\1${claimed_id} /")
+									# Add ref if available
+									local claimed_ref
+									claimed_ref=$(echo "$claim_output" | grep "^ref=" | cut -d= -f2)
+									if [[ -n "$claimed_ref" && "$claimed_ref" != "offline" ]]; then
+										new_line="$new_line ref:${claimed_ref}"
+									fi
+								else
+									log_warn "    Failed to allocate task ID via claim-task-id.sh, skipping line"
+									continue
+								fi
+							fi
+
 							# Ensure #auto-dispatch tag and source tag
 							if ! echo "$new_line" | grep -q '#auto-dispatch'; then
 								new_line="$new_line #auto-dispatch"
@@ -10910,11 +10933,16 @@ cmd_pulse() {
 							if ! echo "$new_line" | grep -q '#auto-review'; then
 								new_line="$new_line #auto-review"
 							fi
-							new_line="$new_line logged:$(date +%Y-%m-%d)"
-							# Append after the last open task line
+							if ! echo "$new_line" | grep -q 'logged:'; then
+								new_line="$new_line logged:$(date +%Y-%m-%d)"
+							fi
+							# Append to TODO.md
 							echo "$new_line" >>"$todo_file"
 							tasks_added=$((tasks_added + 1))
-							log_info "    Created t${max_id} from CodeRabbit finding"
+							# Extract task ID for logging
+							local logged_id
+							logged_id=$(echo "$new_line" | grep -oE 't[0-9]+' | head -1 || echo "unknown")
+							log_info "    Created ${logged_id} from CodeRabbit finding"
 						done <<<"$cr_tasks"
 					fi
 				fi
