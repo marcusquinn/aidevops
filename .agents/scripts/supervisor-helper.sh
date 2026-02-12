@@ -8095,10 +8095,107 @@ get_sibling_tasks() {
     return 0
 }
 
+
 #######################################
-# Rebase a single PR branch onto updated main (t225)
+# AI-assisted merge conflict resolution during rebase (t302)
+# When a rebase hits conflicts, uses the AI CLI to resolve each
+# conflicting file, then continues the rebase.
+#
+# Args:
+#   $1: git_dir — the git working directory (repo or worktree)
+#   $2: task_id — for logging
+#
+# Returns: 0 if all conflicts resolved, 1 if resolution failed
+#######################################
+resolve_rebase_conflicts() {
+    local git_dir="$1"
+    local task_id="$2"
+
+    # Get list of conflicting files
+    local conflicting_files
+    conflicting_files=$(git -C "$git_dir" diff --name-only --diff-filter=U 2>/dev/null || true)
+
+    if [[ -z "$conflicting_files" ]]; then
+        log_warn "resolve_rebase_conflicts: no conflicting files found for $task_id"
+        return 1
+    fi
+
+    local file_count
+    file_count=$(echo "$conflicting_files" | wc -l | tr -d ' ')
+    log_info "resolve_rebase_conflicts: $file_count conflicting file(s) for $task_id"
+
+    # Resolve AI CLI
+    local ai_cli
+    ai_cli=$(resolve_ai_cli 2>/dev/null || echo "")
+    if [[ -z "$ai_cli" ]]; then
+        log_warn "resolve_rebase_conflicts: AI CLI not available — cannot resolve conflicts"
+        return 1
+    fi
+
+    # Process each conflicting file
+    local resolved_count=0
+    local failed_files=""
+    while IFS= read -r conflict_file; do
+        [[ -z "$conflict_file" ]] && continue
+
+        local full_path="$git_dir/$conflict_file"
+        if [[ ! -f "$full_path" ]]; then
+            log_warn "resolve_rebase_conflicts: file not found: $conflict_file"
+            failed_files="${failed_files}${failed_files:+, }${conflict_file}"
+            continue
+        fi
+
+        log_info "  Resolving: $conflict_file"
+
+        # Use AI CLI to resolve the conflict
+        local resolve_prompt
+        resolve_prompt="You are resolving a git rebase merge conflict in: $full_path
+
+RULES:
+1. Read the file — it contains git conflict markers (<<<<<<<, =======, >>>>>>>)
+2. Resolve ALL conflict blocks by combining both sides' intent intelligently
+3. For code: keep both sides' changes if they don't contradict; if they do, prefer the feature branch (theirs/HEAD) for new functionality and main (upstream) for structural changes
+4. For config/docs: merge both additions
+5. Remove ALL conflict markers — the file must be clean
+6. Write the resolved file back to the SAME path
+7. Do NOT modify any code outside conflict markers
+8. Do NOT add comments explaining the resolution
+9. After writing, run: git -C \"$git_dir\" add \"$conflict_file\"
+10. Output ONLY 'RESOLVED' if successful or 'FAILED: reason' if not"
+
+        # Run AI CLI — output is not used directly; the CLI writes the resolved file
+        $ai_cli run --format json --title "resolve-conflict-${task_id}-$(basename "$conflict_file")" "$resolve_prompt" 2>>"$SUPERVISOR_LOG" || true
+
+        # Check if the file was resolved (no more conflict markers)
+        if git -C "$git_dir" diff --check -- "$conflict_file" 2>/dev/null; then
+            # diff --check returns 0 if no conflict markers remain
+            resolved_count=$((resolved_count + 1))
+            log_info "  Resolved: $conflict_file"
+        elif ! grep -q '<<<<<<<' "$full_path" 2>/dev/null; then
+            # Fallback check: no conflict markers in file
+            # Ensure it is staged
+            git -C "$git_dir" add "$conflict_file" 2>>"$SUPERVISOR_LOG" || true
+            resolved_count=$((resolved_count + 1))
+            log_info "  Resolved: $conflict_file"
+        else
+            log_warn "  Failed to resolve: $conflict_file (conflict markers remain)"
+            failed_files="${failed_files}${failed_files:+, }${conflict_file}"
+        fi
+    done <<< "$conflicting_files"
+
+    if [[ -n "$failed_files" ]]; then
+        log_warn "resolve_rebase_conflicts: failed to resolve: $failed_files"
+        return 1
+    fi
+
+    log_success "resolve_rebase_conflicts: resolved $resolved_count/$file_count file(s) for $task_id"
+    return 0
+}
+#######################################
+# Rebase a single PR branch onto updated main (t225, t302)
 # Used after merging a sibling's PR to prevent cascading conflicts.
-# Operates on the worktree if available, otherwise uses the main repo.
+# Operates on the worktree if available, otherwise creates a temp worktree.
+# On conflict, uses escalating resolution: plain -> -Xtheirs -> AI CLI (t302).
 # Args: task_id
 # Returns: 0 on success, 1 on rebase failure, 2 on force-push failure
 #######################################
@@ -8148,34 +8245,149 @@ rebase_sibling_pr() {
         return 1
     fi
 
+    # Clean up stale state in the working directory (t302)
+    # Previous failed rebase attempts may leave the worktree in a bad state:
+    # - Rebase in progress (detached HEAD mid-rebase)
+    # - Detached HEAD from aborted rebase
+    if [[ "$use_worktree" == "true" ]]; then
+        # Abort any in-progress rebase
+        if git -C "$git_dir" rebase --abort 2>/dev/null; then
+            log_info "rebase_sibling_pr: aborted stale rebase in $git_dir"
+        fi
+
+        # If detached HEAD, checkout the branch
+        local current_head
+        current_head=$(git -C "$git_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+        if [[ "$current_head" == "HEAD" ]]; then
+            log_info "rebase_sibling_pr: worktree detached, checking out $tbranch"
+            if ! git -C "$git_dir" checkout "$tbranch" 2>>"$SUPERVISOR_LOG"; then
+                log_warn "rebase_sibling_pr: cannot checkout $tbranch in worktree for $task_id"
+                return 1
+            fi
+        fi
+
+        # Reset to remote branch state to ensure clean starting point
+        git -C "$git_dir" reset --hard "origin/$tbranch" 2>>"$SUPERVISOR_LOG" || true
+    fi
+
+    # Helper: attempt rebase with escalating conflict resolution (t302)
+    # Strategy: 1) plain rebase, 2) rebase -Xtheirs (feature wins conflicts),
+    # 3) AI-assisted resolution for complex cases
+    # $1: git_dir to operate in
+    _do_rebase() {
+        local rdir="$1"
+
+        # Strategy 1: Plain rebase (no conflicts)
+        if git -C "$rdir" rebase origin/main 2>>"$SUPERVISOR_LOG"; then
+            return 0
+        fi
+        git -C "$rdir" rebase --abort 2>>"$SUPERVISOR_LOG" || true
+
+        # Strategy 2: Rebase with -Xtheirs (feature branch wins on conflicts)
+        # During rebase, "theirs" = the commit being replayed (feature branch).
+        # This is correct for most cases: the feature branch has the intended
+        # change, and main has moved forward with unrelated changes.
+        # -Xtheirs only affects conflicting hunks — non-conflicting main changes
+        # are still merged normally.
+        log_info "rebase_sibling_pr: retrying with -Xtheirs for $task_id..."
+        if git -C "$rdir" rebase -Xtheirs origin/main 2>>"$SUPERVISOR_LOG"; then
+            log_success "rebase_sibling_pr: -Xtheirs resolved conflicts for $task_id"
+            return 0
+        fi
+        git -C "$rdir" rebase --abort 2>>"$SUPERVISOR_LOG" || true
+
+        # Strategy 3: AI-assisted conflict resolution
+        # Only reached for complex conflicts that -Xtheirs can't handle
+        # (e.g., both sides modified the same lines with different intent)
+        log_info "rebase_sibling_pr: attempting AI conflict resolution for $task_id..."
+
+        # Start a fresh rebase for AI resolution
+        if git -C "$rdir" rebase origin/main 2>>"$SUPERVISOR_LOG"; then
+            # Unexpectedly succeeded (race condition or transient issue)
+            return 0
+        fi
+
+        # Check if it's actually a conflict
+        if ! git -C "$rdir" diff --name-only --diff-filter=U 2>/dev/null | grep -q .; then
+            log_warn "rebase_sibling_pr: rebase failed (not a conflict) for $task_id"
+            git -C "$rdir" rebase --abort 2>>"$SUPERVISOR_LOG" || true
+            return 1
+        fi
+
+        if resolve_rebase_conflicts "$rdir" "$task_id"; then
+            # Conflicts resolved — continue the rebase
+            # There may be multiple commits to rebase; loop until done
+            local max_continues=10
+            local continue_count=0
+            while [[ "$continue_count" -lt "$max_continues" ]]; do
+                if git -C "$rdir" rebase --continue 2>>"$SUPERVISOR_LOG"; then
+                    # Rebase complete
+                    return 0
+                fi
+
+                # Another commit may have conflicts
+                if git -C "$rdir" diff --name-only --diff-filter=U 2>/dev/null | grep -q .; then
+                    log_info "rebase_sibling_pr: resolving conflicts in next commit for $task_id..."
+                    if ! resolve_rebase_conflicts "$rdir" "$task_id"; then
+                        log_warn "rebase_sibling_pr: AI resolution failed on subsequent commit for $task_id"
+                        git -C "$rdir" rebase --abort 2>>"$SUPERVISOR_LOG" || true
+                        return 1
+                    fi
+                else
+                    # rebase --continue failed but no conflicts — unexpected state
+                    log_warn "rebase_sibling_pr: rebase --continue failed without conflicts for $task_id"
+                    git -C "$rdir" rebase --abort 2>>"$SUPERVISOR_LOG" || true
+                    return 1
+                fi
+                continue_count=$((continue_count + 1))
+            done
+
+            log_warn "rebase_sibling_pr: exceeded max rebase continues ($max_continues) for $task_id"
+            git -C "$rdir" rebase --abort 2>>"$SUPERVISOR_LOG" || true
+            return 1
+        else
+            # AI resolution failed — abort
+            log_warn "rebase_sibling_pr: AI conflict resolution failed for $task_id — aborting"
+            git -C "$rdir" rebase --abort 2>>"$SUPERVISOR_LOG" || true
+            return 1
+        fi
+    }
+
     if [[ "$use_worktree" == "true" ]]; then
         # Worktree is already on the branch — rebase in place
-        if ! git -C "$git_dir" rebase origin/main 2>>"$SUPERVISOR_LOG"; then
-            log_warn "rebase_sibling_pr: rebase conflict for $task_id — aborting"
-            git -C "$git_dir" rebase --abort 2>>"$SUPERVISOR_LOG" || true
+        if ! _do_rebase "$git_dir"; then
             return 1
         fi
     else
-        # No worktree — checkout branch in main repo temporarily
-        # This is less ideal but handles edge cases where worktree was cleaned up
-        local current_branch
-        current_branch=$(git -C "$git_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+        # No worktree — create a temporary worktree for the rebase (t302)
+        # This avoids dirty working tree issues in the main repo
+        local tmp_worktree="${trepo}-rebase-${task_id}"
+        log_info "rebase_sibling_pr: creating temporary worktree at $tmp_worktree"
 
-        if ! git -C "$git_dir" checkout "$tbranch" 2>>"$SUPERVISOR_LOG"; then
-            log_warn "rebase_sibling_pr: cannot checkout $tbranch for $task_id"
+        if ! git -C "$trepo" worktree add "$tmp_worktree" "$tbranch" 2>>"$SUPERVISOR_LOG"; then
+            log_warn "rebase_sibling_pr: cannot create worktree for $tbranch ($task_id)"
+            # Cleanup in case of partial creation
+            git -C "$trepo" worktree remove --force "$tmp_worktree" 2>/dev/null || true
             return 1
         fi
 
-        if ! git -C "$git_dir" rebase origin/main 2>>"$SUPERVISOR_LOG"; then
-            log_warn "rebase_sibling_pr: rebase conflict for $task_id — aborting"
-            git -C "$git_dir" rebase --abort 2>>"$SUPERVISOR_LOG" || true
-            # Return to original branch
-            git -C "$git_dir" checkout "${current_branch:-main}" 2>>"$SUPERVISOR_LOG" || true
+        if ! _do_rebase "$tmp_worktree"; then
+            # Clean up temporary worktree
+            git -C "$trepo" worktree remove --force "$tmp_worktree" 2>>"$SUPERVISOR_LOG" || true
             return 1
         fi
 
-        # Return to original branch
-        git -C "$git_dir" checkout "${current_branch:-main}" 2>>"$SUPERVISOR_LOG" || true
+        # Push from the temporary worktree before cleaning up
+        if ! git -C "$tmp_worktree" push --force-with-lease origin "$tbranch" 2>>"$SUPERVISOR_LOG"; then
+            log_warn "rebase_sibling_pr: force-push failed for $task_id ($tbranch)"
+            git -C "$trepo" worktree remove --force "$tmp_worktree" 2>>"$SUPERVISOR_LOG" || true
+            return 2
+        fi
+
+        # Clean up temporary worktree
+        git -C "$trepo" worktree remove --force "$tmp_worktree" 2>>"$SUPERVISOR_LOG" || true
+        log_success "rebase_sibling_pr: $task_id ($tbranch) rebased onto main and pushed"
+        return 0
     fi
 
     # Force-push the rebased branch (required after rebase)
@@ -8819,8 +9031,8 @@ cmd_pr_lifecycle() {
                 tstatus="merged"
                 ;;
             ci_pending)
-                # t298: Auto-rebase BEHIND/DIRTY PRs to unblock CI
-                if [[ "$merge_state_status" == "BEHIND" || "$merge_state_status" == "DIRTY" ]]; then
+                # t298/t302: Auto-rebase BEHIND/DIRTY/CONFLICTING PRs to unblock CI
+                if [[ "$merge_state_status" == "BEHIND" || "$merge_state_status" == "DIRTY" || "$merge_state_status" == "CONFLICTING" ]]; then
                     # Check rebase attempt counter to prevent infinite loops
                     local rebase_attempts
                     rebase_attempts=$(db "$SUPERVISOR_DB" "SELECT rebase_attempts FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "0")
@@ -10150,6 +10362,64 @@ cmd_pulse() {
         cmd_reconcile_todo ${batch_id:+--batch "$batch_id"} 2>>"$SUPERVISOR_LOG" || true
     fi
 
+
+    # Phase 7b: Retry merge-conflict-blocked tasks with AI resolution (t302)
+    # When rebase_sibling_pr gains escalating conflict resolution, blocked tasks
+    # that failed due to merge conflicts can be retried automatically.
+    # Throttled to every 30 minutes to avoid excessive retries.
+    if [[ "$total_running" -eq 0 && "$total_queued" -eq 0 ]]; then
+        local conflict_retry_interval=1800 # seconds (30 min)
+        local conflict_retry_stamp="$SUPERVISOR_DIR/conflict-retry-last-run"
+        local now_epoch_cr
+        now_epoch_cr=$(date +%s)
+        local last_run_cr=0
+        if [[ -f "$conflict_retry_stamp" ]]; then
+            last_run_cr=$(cat "$conflict_retry_stamp" 2>/dev/null || echo 0)
+        fi
+        local elapsed_cr=$((now_epoch_cr - last_run_cr))
+        if [[ "$elapsed_cr" -ge "$conflict_retry_interval" ]]; then
+            # Find tasks blocked with merge conflict errors that have PRs
+            local conflict_blocked
+            conflict_blocked=$(db -separator '|' "$SUPERVISOR_DB" "
+                SELECT id, rebase_attempts FROM tasks
+                WHERE status = 'blocked'
+                AND error LIKE '%merge_conflict%'
+                AND pr_url IS NOT NULL
+                AND pr_url != ''
+                AND pr_url != 'no_pr'
+                AND rebase_attempts < 3
+                ORDER BY id;
+            " 2>/dev/null || echo "")
+
+            if [[ -n "$conflict_blocked" ]]; then
+                local retry_count=0
+                while IFS='|' read -r cb_id cb_attempts; do
+                    [[ -z "$cb_id" ]] && continue
+                    log_info "  Phase 7b: Retrying merge-conflict resolution for $cb_id (attempt $((cb_attempts + 1))/3)"
+
+                    # Transition back to pr_review so advance_task_lifecycle picks it up
+                    local cb_escaped
+                    cb_escaped=$(sql_escape "$cb_id")
+                    db "$SUPERVISOR_DB" "UPDATE tasks SET status = 'pr_review', error = NULL WHERE id = '$cb_escaped';"
+
+                    # Attempt rebase with escalating resolution directly
+                    if rebase_sibling_pr "$cb_id"; then
+                        log_success "  Phase 7b: Conflict resolved for $cb_id — PR updated"
+                        db "$SUPERVISOR_DB" "UPDATE tasks SET rebase_attempts = $((cb_attempts + 1)) WHERE id = '$cb_escaped';"
+                        retry_count=$((retry_count + 1))
+                    else
+                        log_warn "  Phase 7b: Conflict resolution failed for $cb_id"
+                        db "$SUPERVISOR_DB" "UPDATE tasks SET status = 'blocked', error = 'Merge conflict — AI resolution failed', rebase_attempts = $((cb_attempts + 1)) WHERE id = '$cb_escaped';"
+                    fi
+                done <<< "$conflict_blocked"
+
+                if [[ "$retry_count" -gt 0 ]]; then
+                    log_success "  Phase 7b: Resolved conflicts for $retry_count task(s)"
+                fi
+            fi
+            echo "$now_epoch_cr" > "$conflict_retry_stamp"
+        fi
+    fi
     # Phase 8: Issue-sync reconciliation (t179.3)
     # Close stale GitHub issues and fix ref:GH# drift.
     # Runs periodically (every ~50 min) when no workers active, to avoid
