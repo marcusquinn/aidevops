@@ -2220,7 +2220,9 @@ setup_rosetta_audit() {
     local total=$((x86_only_count + dup_count))
 
     if [[ "$total" -eq 0 ]]; then
-        print_success "No x86 Homebrew packages found — clean ARM setup"
+        print_success "No x86 Homebrew packages remaining"
+        echo "  x86 Homebrew is empty. You can remove it to reclaim disk space:"
+        echo "    sudo rm -rf /usr/local/Homebrew /usr/local/bin/brew /usr/local/Cellar"
         return 0
     fi
 
