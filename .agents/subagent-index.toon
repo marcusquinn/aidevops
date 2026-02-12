@@ -87,7 +87,7 @@ feature-development,workflows/feature-development.md,Feature development workflo
 conversation-starter,workflows/conversation-starter.md,Session greeting and auto-recall
 -->
 
-<!--TOON:scripts[75]{name,purpose}:
+<!--TOON:scripts[77]{name,purpose}:
 accessibility-helper.sh,Accessibility and contrast testing (WCAG compliance WAVE API for websites and emails)
 accessibility-audit-helper.sh,Accessibility audit CLI wrapping axe-core WAVE API WebAIM contrast and Lighthouse a11y
 auto-update-helper.sh,Automatic update polling daemon (enable disable status check logs)
@@ -168,4 +168,6 @@ real-video-enhancer-helper.sh,REAL Video Enhancer CLI - AI video upscaling inter
 runway-helper.sh,Runway API CLI for video image and audio generation (video image tts sts sfx dub isolate status wait cancel credits usage)
 wavespeed-helper.sh,WaveSpeed AI REST API client - unified generation for 200+ models (generate status models upload balance usage)
 plugin-loader-helper.sh,Plugin agent loader - discover validate load unload agents hooks index status
+claim-task-id.sh,Distributed task ID allocation with collision prevention (online GH/GL issue lock or offline +100 offset)
+planning-commit-helper.sh,Planning file auto-commit helper (next-id complete commit check status)
 -->
