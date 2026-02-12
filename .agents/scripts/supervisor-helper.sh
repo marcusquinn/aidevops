@@ -10216,7 +10216,7 @@ cmd_pulse() {
     # Converts CodeRabbit and quality-sweep findings into TODO.md tasks.
     # Self-throttles with 24h cooldown. Only runs if task creator script exists.
     local task_creator_script="${SCRIPT_DIR}/coderabbit-task-creator-helper.sh"
-    local task_creation_cooldown_file="${SUPERVISOR_STATE_DIR}/task-creation-last-run"
+    local task_creation_cooldown_file="${SUPERVISOR_DIR}/task-creation-last-run"
     local task_creation_cooldown=86400  # 24 hours
     if [[ -x "$task_creator_script" ]]; then
         local should_run_task_creation=true
