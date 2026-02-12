@@ -3163,9 +3163,13 @@ update_queue_health_issue() {
 		fi
 	fi
 
-	# Find or create the health issue
-	local health_issue_file="${SUPERVISOR_DIR}/queue-health-issue"
-	local health_comment_file="${SUPERVISOR_DIR}/queue-health-comment-id"
+	# Per-runner health issue: each supervisor instance owns its own issue
+	local runner_user
+	runner_user=$(gh api user --jq '.login' 2>/dev/null || whoami)
+	local runner_prefix="[Supervisor:${runner_user}]"
+
+	local health_issue_file="${SUPERVISOR_DIR}/queue-health-issue-${runner_user}"
+	local health_comment_file="${SUPERVISOR_DIR}/queue-health-comment-id-${runner_user}"
 	local health_issue_number=""
 
 	# Try cached issue number first
@@ -3183,19 +3187,22 @@ update_queue_health_issue() {
 		fi
 	fi
 
-	# Search for existing health issue by title if not cached
+	# Search for this runner's existing health issue
 	if [[ -z "$health_issue_number" ]]; then
 		health_issue_number=$(gh issue list --repo "$repo_slug" \
-			--search "in:title [Supervisor] Queue Health" \
-			--state open --json number --jq '.[0].number' 2>/dev/null || echo "")
+			--search "in:title ${runner_prefix}" \
+			--state open --json number,title \
+			--jq "[.[] | select(.title | startswith(\"${runner_prefix}\"))][0].number" 2>/dev/null || echo "")
 	fi
 
 	# Create the issue if it doesn't exist
 	if [[ -z "$health_issue_number" ]]; then
+		# Ensure username label exists
+		gh label create "$runner_user" --repo "$repo_slug" --color "0E8A16" --description "Supervisor runner: ${runner_user}" 2>/dev/null || true
 		health_issue_number=$(gh issue create --repo "$repo_slug" \
-			--title "[Supervisor] Queue Health" \
-			--body "Live supervisor queue status. Updated every pulse cycle. Pin this issue for at-a-glance monitoring." \
-			--label "supervisor" 2>/dev/null | grep -oE '[0-9]+$' || echo "")
+			--title "${runner_prefix} starting..." \
+			--body "Live supervisor queue status for **${runner_user}**. Updated when stats change. Pin this issue for at-a-glance monitoring." \
+			--label "supervisor" --label "$runner_user" 2>/dev/null | grep -oE '[0-9]+$' || echo "")
 		if [[ -z "$health_issue_number" ]]; then
 			log_verbose "  Phase 8c: Could not create health issue"
 			return 0
@@ -3207,7 +3214,7 @@ update_queue_health_issue() {
 					issue { number }
 				}
 			}" >/dev/null 2>&1 || true
-		log_info "  Phase 8c: Created and pinned health issue #$health_issue_number"
+		log_info "  Phase 8c: Created and pinned health issue #$health_issue_number for ${runner_user}"
 	fi
 
 	# Cache the issue number
@@ -3596,47 +3603,35 @@ _Auto-updated by supervisor pulse (t1013). Do not edit manually._"
 		fi
 	fi
 
-	# Update issue title with operational stats at a glance
+	# Build title with operational stats from this runner's perspective
+	local cnt_working
+	cnt_working=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('running','dispatched','evaluating');" 2>/dev/null || echo "0")
+	local cnt_in_review
+	cnt_in_review=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('pr_review','review_triage','merging','merged','deploying','retrying');" 2>/dev/null || echo "0")
+	local cnt_failed_total=$((${cnt_blocked:-0} + ${cnt_verify_failed:-0} + ${cnt_failed:-0}))
+
+	local title_parts="${cnt_queued:-0} queued, ${cnt_working} working"
+	if [[ "${cnt_in_review}" -gt 0 ]]; then
+		title_parts="${title_parts}, ${cnt_in_review} in review"
+	fi
+	if [[ "${cnt_failed_total}" -gt 0 ]]; then
+		title_parts="${title_parts}, ${cnt_failed_total} need attention"
+	fi
+
 	local title_time
 	title_time=$(date -u +"%H:%M")
+	local health_title="${runner_prefix} ${title_parts} at ${title_time} UTC"
 
-	# Register this runner via a label on the health issue (cross-machine, via gh)
-	local runner_user
-	runner_user=$(gh api user --jq '.login' 2>/dev/null || whoami)
-	local runner_label="runner:${runner_user}"
-	# Ensure the label exists (create if needed, ignore errors if it already exists)
-	gh label create "$runner_label" --repo "$repo_slug" --color "0E8A16" --description "Active supervisor runner" 2>/dev/null || true
-	# Add label to health issue (idempotent)
-	gh issue edit "$health_issue_number" --repo "$repo_slug" --add-label "$runner_label" >/dev/null 2>&1 || true
-
-	# Count active runners from runner:* labels on the health issue
-	local cnt_runners
-	cnt_runners=$(gh issue view "$health_issue_number" --repo "$repo_slug" --json labels --jq '[.labels[].name | select(startswith("runner:"))] | length' 2>/dev/null || echo "0")
-
-	# Available: queued tasks (ready to pick up by any runner)
-	local cnt_available="${cnt_queued:-0}"
-
-	# Claimed: tasks actively being worked on (running/dispatched/in-review pipeline)
-	local cnt_claimed
-	cnt_claimed=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('running','dispatched','pr_review','review_triage','merging','merged','deploying','evaluating','retrying');" 2>/dev/null || echo "0")
-
-	# Build title parts
-	local title_parts="${cnt_available} available, ${cnt_claimed} claimed"
-	if [[ "${cnt_blocked:-0}" -gt 0 ]]; then
-		title_parts="${title_parts}, ${cnt_blocked} blocked"
+	# Only update title if stats changed (avoid unnecessary GH API calls)
+	local current_title
+	current_title=$(gh issue view "$health_issue_number" --repo "$repo_slug" --json title --jq '.title' 2>/dev/null || echo "")
+	# Strip timestamp for comparison (everything before " at HH:MM UTC")
+	local current_stats="${current_title% at [0-9][0-9]:[0-9][0-9] UTC}"
+	local new_stats="${health_title% at [0-9][0-9]:[0-9][0-9] UTC}"
+	if [[ "$current_stats" != "$new_stats" ]]; then
+		gh issue edit "$health_issue_number" --repo "$repo_slug" --title "$health_title" >/dev/null 2>&1 || true
+		log_verbose "  Phase 8c: Updated health issue title (stats changed)"
 	fi
-	if [[ "${cnt_verify_failed:-0}" -gt 0 ]]; then
-		title_parts="${title_parts}, ${cnt_verify_failed} failed"
-	fi
-
-	local health_title="[Supervisor] ${title_parts} at ${title_time} UTC"
-	gh issue edit "$health_issue_number" --repo "$repo_slug" --title "$health_title" >/dev/null 2>&1 || true
-
-	# Daily cleanup: remove runner:* labels not refreshed in 24h
-	# (Each pulse re-adds its own label, so stale ones are from offline runners)
-	# This runs cheaply — just checks if any runner labels exist beyond our own
-	# Actual 24h staleness check would need label timestamps which GH doesn't provide,
-	# so we rely on the cron pulse re-adding the label each cycle to keep it alive
 
 	log_verbose "  Phase 8c: Updated queue health issue #$health_issue_number"
 	return 0
@@ -12226,33 +12221,33 @@ cmd_cleanup() {
 		# Get list of repos from tasks
 		local repos
 		repos=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks WHERE repo IS NOT NULL AND repo != '';" 2>/dev/null || echo "")
-		
+
 		if [[ -n "$repos" ]]; then
 			while IFS= read -r repo_path; do
 				[[ -z "$repo_path" ]] && continue
 				[[ ! -d "$repo_path" ]] && continue
-				
+
 				# Count stashes before cleanup
 				local before_count
 				before_count=$(cd "$repo_path" && git stash list 2>/dev/null | wc -l || echo "0")
-				
+
 				if [[ "$dry_run" == "true" ]]; then
 					log_info "  [dry-run] Would audit stashes in: $repo_path"
 				else
 					# Run auto-clean (non-interactive)
 					"${SCRIPT_DIR}/stash-audit-helper.sh" auto-clean --repo "$repo_path" >/dev/null 2>&1 || true
-					
+
 					# Count stashes after cleanup
 					local after_count
 					after_count=$(cd "$repo_path" && git stash list 2>/dev/null | wc -l || echo "0")
-					
+
 					local dropped=$((before_count - after_count))
 					if [[ "$dropped" -gt 0 ]]; then
 						stash_cleaned=$((stash_cleaned + dropped))
 						log_info "  Cleaned $dropped stash(es) in: $repo_path"
 					fi
 				fi
-			done <<< "$repos"
+			done <<<"$repos"
 		fi
 	fi
 
