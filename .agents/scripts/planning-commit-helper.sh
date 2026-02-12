@@ -270,6 +270,147 @@ complete_task() {
 	return 0
 }
 
+# Allocate the next task ID via claim-task-id.sh
+# Wrapper that calls claim-task-id.sh, parses its output, and returns
+# machine-readable variables for use in TODO.md entries.
+#
+# Usage:
+#   next_task_id --title "Task description"
+#   next_task_id --title "Task description" --labels "bug,priority"
+#   next_task_id --title "Task description" --offline
+#   next_task_id --title "Task description" --dry-run
+#
+# Output (stdout, machine-readable):
+#   TASK_ID=tNNN
+#   TASK_REF=GH#NNN        (or GL#NNN, or offline)
+#   TASK_ISSUE_URL=https://...  (empty if offline)
+#   TASK_OFFLINE=false      (true if offline fallback was used)
+#
+# Exit codes:
+#   0 - Success (online allocation)
+#   2 - Success with offline fallback
+#   1 - Error
+next_task_id() {
+	local title=""
+	local labels=""
+	local description=""
+	local offline_flag=""
+	local dry_run_flag=""
+
+	# Parse arguments
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--title)
+			title="$2"
+			shift 2
+			;;
+		--labels)
+			labels="$2"
+			shift 2
+			;;
+		--description)
+			description="$2"
+			shift 2
+			;;
+		--offline)
+			offline_flag="--offline"
+			shift
+			;;
+		--dry-run)
+			dry_run_flag="--dry-run"
+			shift
+			;;
+		*)
+			log_error "next_task_id: unknown option: $1"
+			return 1
+			;;
+		esac
+	done
+
+	if [[ -z "$title" ]]; then
+		log_error "next_task_id: --title is required"
+		echo "Usage: next_task_id --title \"Task description\" [--labels \"l1,l2\"] [--offline] [--dry-run]"
+		return 1
+	fi
+
+	# Locate claim-task-id.sh relative to this script
+	local claim_script="${SCRIPT_DIR}/claim-task-id.sh"
+	if [[ ! -x "$claim_script" ]]; then
+		log_error "claim-task-id.sh not found at: $claim_script"
+		return 1
+	fi
+
+	# Determine repo path (use git root of current directory)
+	local repo_path
+	repo_path=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
+
+	# Build claim-task-id.sh arguments
+	local -a claim_args=(--title "$title" --repo-path "$repo_path")
+	[[ -n "$labels" ]] && claim_args+=(--labels "$labels")
+	[[ -n "$description" ]] && claim_args+=(--description "$description")
+	[[ -n "$offline_flag" ]] && claim_args+=("$offline_flag")
+	[[ -n "$dry_run_flag" ]] && claim_args+=("$dry_run_flag")
+
+	# Run claim-task-id.sh and capture output + exit code
+	local claim_output
+	local claim_rc=0
+	claim_output=$("$claim_script" "${claim_args[@]}" 2>/dev/null) || claim_rc=$?
+
+	# Exit code 1 = hard error
+	if [[ $claim_rc -eq 1 ]]; then
+		log_error "claim-task-id.sh failed"
+		# Re-run with stderr visible for diagnostics
+		"$claim_script" "${claim_args[@]}" >/dev/null || true
+		return 1
+	fi
+
+	# Parse output lines: task_id=tNNN, ref=GH#NNN, issue_url=..., reconcile=true
+	local task_id="" task_ref="" issue_url="" is_offline="false"
+
+	while IFS= read -r line; do
+		case "$line" in
+		task_id=*)
+			task_id="${line#task_id=}"
+			;;
+		ref=*)
+			task_ref="${line#ref=}"
+			;;
+		issue_url=*)
+			issue_url="${line#issue_url=}"
+			;;
+		reconcile=*)
+			# Offline mode indicator
+			;;
+		esac
+	done <<<"$claim_output"
+
+	# Determine if offline fallback was used
+	if [[ $claim_rc -eq 2 ]] || [[ "$task_ref" == "offline" ]]; then
+		is_offline="true"
+	fi
+
+	# Validate we got a task ID
+	if [[ -z "$task_id" ]]; then
+		log_error "claim-task-id.sh returned no task_id"
+		return 1
+	fi
+
+	# Output machine-readable variables
+	echo "TASK_ID=${task_id}"
+	echo "TASK_REF=${task_ref}"
+	echo "TASK_ISSUE_URL=${issue_url}"
+	echo "TASK_OFFLINE=${is_offline}"
+
+	# Log summary to stderr for human visibility
+	if [[ "$is_offline" == "true" ]]; then
+		log_warning "Allocated ${task_id} (offline — reconcile when back online)"
+	else
+		log_success "Allocated ${task_id} (${task_ref})"
+	fi
+
+	return "$claim_rc"
+}
+
 # Main commit function
 # Uses todo_commit_push() from shared-constants.sh for serialized locking
 # to prevent race conditions when multiple actors push to TODO.md on main.
@@ -307,6 +448,11 @@ commit_planning_files() {
 # Main
 main() {
 	case "${1:-}" in
+	next-id)
+		shift
+		next_task_id "$@"
+		exit $?
+		;;
 	complete)
 		shift
 		complete_task "$@"
@@ -329,14 +475,26 @@ main() {
 	--help | -h)
 		echo "Usage: planning-commit-helper.sh [OPTIONS] [COMMIT_MESSAGE]"
 		echo ""
+		echo "Commands:"
+		echo "  next-id --title \"...\"              Allocate next task ID (via claim-task-id.sh)"
+		echo "  complete <task_id> --pr <number>   Mark task complete with PR proof"
+		echo "  complete <task_id> --verified      Mark task complete with manual verification"
+		echo ""
 		echo "Options:"
-		echo "  complete <task_id> --pr <number>  Mark task complete with PR proof"
-		echo "  complete <task_id> --verified     Mark task complete with manual verification"
-		echo "  --check                           Check if planning files have changes"
-		echo "  --status                          Show planning file status"
-		echo "  --help                            Show this help"
+		echo "  --check                            Check if planning files have changes"
+		echo "  --status                           Show planning file status"
+		echo "  --help                             Show this help"
+		echo ""
+		echo "next-id options:"
+		echo "  --title \"Task title\"               Task title (required)"
+		echo "  --labels \"label1,label2\"           Comma-separated labels"
+		echo "  --description \"Details\"            Task description"
+		echo "  --offline                          Force offline mode"
+		echo "  --dry-run                          Preview without creating issue"
 		echo ""
 		echo "Examples:"
+		echo "  planning-commit-helper.sh next-id --title \"Add CSV export\""
+		echo "  planning-commit-helper.sh next-id --title \"Fix bug\" --labels \"bug\""
 		echo "  planning-commit-helper.sh 'plan: add new task'"
 		echo "  planning-commit-helper.sh complete t123 --pr 456"
 		echo "  planning-commit-helper.sh complete t123 --verified"

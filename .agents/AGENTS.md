@@ -107,7 +107,7 @@ Use `/save-todo` after planning. Auto-detects complexity:
 - **Simple** → TODO.md only
 - **Complex** → PLANS.md + TODO.md reference
 
-**Key commands**: `/save-todo`, `/ready`, `/sync-beads`, `/plan-status`, `/create-prd`, `/generate-tasks`
+**Key commands**: `/new-task`, `/save-todo`, `/ready`, `/sync-beads`, `/plan-status`, `/create-prd`, `/generate-tasks`
 
 **Task format**: `- [ ] t001 Description @owner #tag ~4h (ai:2h test:1h) started:ISO blocked-by:t002`
 
@@ -129,7 +129,15 @@ Use `/save-todo` after planning. Auto-detects complexity:
 
 **PR required for ALL non-planning changes** (MANDATORY): Every change to scripts, agents, configs, workflows, or any file outside `TODO.md`, `todo/`, and `VERIFY.md` MUST go through a worktree + PR + CI pipeline — no matter how small. "It's just one line" is not a valid reason to skip CI. The pre-edit-check script enforces this; never bypass it by editing directly on main.
 
-**Task ID collision prevention**: When assigning a new task ID, if `git push` fails and you `git pull --rebase`, you MUST re-read TODO.md and verify your assigned ID is still unique before pushing again. Parallel sessions may have claimed the same ID. If a collision exists, renumber to the next available ID.
+**Task ID allocation** (MANDATORY): Use `/new-task` or `claim-task-id.sh` to allocate task IDs. NEVER manually scan TODO.md with grep to determine the next ID — this causes collisions in parallel sessions. The allocation flow:
+
+1. `/new-task "Task title"` — interactive slash command (preferred in sessions)
+2. `planning-commit-helper.sh next-id --title "Task title"` — wrapper function
+3. `claim-task-id.sh --title "Task title" --repo-path "$(pwd)"` — direct script
+
+Online mode creates a GitHub/GitLab issue as a distributed lock, then allocates `t(N+1)`. Offline fallback allocates `t(N+100)` to avoid collisions (reconcile when back online). Output format: `TASK_ID=tNNN TASK_REF=GH#NNN TASK_OFFLINE=false`.
+
+**Task ID collision prevention**: If `git push` fails after adding a task, `git pull --rebase` and re-read TODO.md to verify your ID is still unique. If a collision exists, re-run `claim-task-id.sh` to get a fresh ID.
 
 **Full docs**: `workflows/plans.md`, `tools/task-management/beads.md`
 
