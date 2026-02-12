@@ -466,6 +466,34 @@ Mark the reference task done:
 
 Add entry following `workflows/changelog.md` format.
 
+## Task Completion Rules
+
+**CRITICAL**: These rules prevent false completion cascades that auto-close GitHub issues prematurely.
+
+### Proof-Log Requirements
+
+Every task marked `[x]` MUST have one of:
+- `pr:#NNN` - Merged PR number with real deliverables
+- `verified:YYYY-MM-DD` - Manual verification timestamp
+
+### Enforcement Layers
+
+1. **Interactive sessions**: Use `task-complete-helper.sh <task-id> --pr <number>` or `task-complete-helper.sh <task-id> --verified`
+2. **Autonomous workers**: Supervisor `update_todo_on_complete()` enforces proof-log before marking `[x]`
+3. **Pre-commit hook**: Warns when `[ ] -> [x]` without proof-log (warning only, commit proceeds)
+4. **Issue-sync pipeline**: Auto-closes GitHub issues when tasks are marked `[x]` - requires proof-log to prevent false closures
+
+### What NOT to Do
+
+- NEVER mark `[x]` just because a file exists - verify the PR was merged with substantive changes
+- NEVER close GitHub issues manually with `gh issue close` - let issue-sync verify deliverables first
+- If a worker completes with `no_pr` or `task_only`, task stays `[ ]` until verified
+- Checking file existence is NOT sufficient - verify merged PR contains real deliverables
+
+### Worker Restrictions
+
+Workers (headless autonomous agents) MUST NOT edit TODO.md. The supervisor owns all TODO.md updates. Workers report status via exit code, log output, and PR creation only. Task notes go in commit messages or PR body, never in TODO.md.
+
 ## PRD and Task Generation
 
 For complex work that needs detailed planning:
