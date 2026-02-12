@@ -646,13 +646,22 @@ function registerMcpServers(config) {
       }
       registered++;
     } else {
-      // Enforce loading policy on existing MCPs
-      config.mcp[mcp.name].enabled = mcp.eager;
+      // Respect explicit enabled:false from worker configs (t221).
+      // The supervisor generates per-worker configs with heavy indexers
+      // disabled. Don't override that — only set enabled when it's
+      // currently undefined (missing from config).
+      if (config.mcp[mcp.name].enabled === undefined) {
+        config.mcp[mcp.name].enabled = mcp.eager;
+      }
     }
 
-    // Set global tool permissions
+    // Set global tool permissions — but respect explicit false from worker configs
     if (mcp.toolPattern) {
-      config.tools[mcp.toolPattern] = mcp.globallyEnabled;
+      if (config.tools[mcp.toolPattern] === false) {
+        // Worker config explicitly disabled this tool pattern — don't override
+      } else {
+        config.tools[mcp.toolPattern] = mcp.globallyEnabled;
+      }
     }
   }
 
