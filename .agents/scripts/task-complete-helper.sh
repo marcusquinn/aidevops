@@ -151,6 +151,49 @@ complete_task() {
 		fi
 	fi
 
+	# t1003: Guard against marking parent tasks complete when subtasks are still open
+	# Check for explicit subtask IDs (e.g., t123.1, t123.2 are children of t123)
+	local explicit_subtasks
+	explicit_subtasks=$(grep -E "^[[:space:]]*- \[ \] ${task_id}\.[0-9]+( |$)" "$todo_file" || true)
+
+	if [[ -n "$explicit_subtasks" ]]; then
+		local open_count
+		open_count=$(echo "$explicit_subtasks" | wc -l | tr -d ' ')
+		log_error "Task $task_id has $open_count open subtask(s) by ID — cannot mark complete"
+		log_error "  Complete all subtasks first: $(echo "$explicit_subtasks" | grep -oE "t[0-9]+\.[0-9]+" | tr '\n' ' ')"
+		return 1
+	fi
+
+	# Check for indentation-based subtasks
+	local task_line
+	task_line=$(grep -E "^[[:space:]]*- \[ \] ${task_id}( |$)" "$todo_file" | head -1)
+	local task_indent
+	task_indent=$(echo "$task_line" | sed -E 's/^([[:space:]]*).*/\1/' | wc -c)
+	task_indent=$((task_indent - 1)) # wc -c counts newline
+
+	local open_subtasks
+	open_subtasks=$(awk -v tid="$task_id" -v tindent="$task_indent" '
+		BEGIN { found=0 }
+		/- \[ \] '"$task_id"'( |$)/ { found=1; next }
+		found && /^[[:space:]]*- \[/ {
+			match($0, /^[[:space:]]*/);
+			line_indent = RLENGTH;
+			if (line_indent > tindent) {
+				if ($0 ~ /- \[ \]/) { print $0 }
+			} else { found=0 }
+		}
+		found && /^[[:space:]]*$/ { next }
+		found && !/^[[:space:]]*- / && !/^[[:space:]]*$/ { found=0 }
+	' "$todo_file")
+
+	if [[ -n "$open_subtasks" ]]; then
+		local open_count
+		open_count=$(echo "$open_subtasks" | wc -l | tr -d ' ')
+		log_error "Task $task_id has $open_count open subtask(s) by indentation — cannot mark complete"
+		log_error "  Complete all indented subtasks first"
+		return 1
+	fi
+
 	local today
 	today=$(date +%Y-%m-%d)
 
