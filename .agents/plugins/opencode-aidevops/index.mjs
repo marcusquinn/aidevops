@@ -381,8 +381,10 @@ function loadAgentsRecursive(dirPath, relBase, agents) {
       if (!content) continue;
 
       const { data } = parseFrontmatter(content);
-      // Use relative path without .md extension to avoid collisions
+      // Use relative path without .md extension to avoid name collisions (t1015)
       // e.g., tools/git/github-cli.md → tools/git/github-cli
+      //       services/git/github-cli.md → services/git/github-cli
+      // This ensures agents with the same filename in different directories don't collide
       const relPath = join(relBase, entry.name);
       const agentName = relPath.replace(/\.md$/, "");
       agents.push({
