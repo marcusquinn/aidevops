@@ -432,9 +432,19 @@ update_todo_on_complete() {
 		return 0
 	fi
 
-	# Mark as complete: [ ] -> [x], append completed:date
+	# Extract PR number from pr_url for proof-log (t1004)
+	local pr_number=""
+	if [[ -n "$tpr_url" && "$tpr_url" =~ /pull/([0-9]+) ]]; then
+		pr_number="${BASH_REMATCH[1]}"
+	fi
+
+	# Mark as complete: [ ] -> [x], append pr:#NNN (if available) and completed:date
 	# Use sed to match the line and transform it
-	local sed_pattern="s/^([[:space:]]*- )\[ \] (${task_id} .*)$/\1[x] \2 completed:${today}/"
+	local proof_log=""
+	if [[ -n "$pr_number" ]]; then
+		proof_log=" pr:#${pr_number}"
+	fi
+	local sed_pattern="s/^([[:space:]]*- )\[ \] (${task_id} .*)$/\1[x] \2${proof_log} completed:${today}/"
 
 	sed_inplace -E "$sed_pattern" "$todo_file"
 
