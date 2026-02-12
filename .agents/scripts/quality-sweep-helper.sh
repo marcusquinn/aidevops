@@ -1452,9 +1452,11 @@ cmd_sweep_summary() {
 }
 
 # Generate task suggestions from findings (dry-run by default).
+# When --create is used, allocates task IDs via claim-task-id.sh (t319.3)
+# and outputs TODO-compatible task lines with proper tNNN IDs.
 # Arguments (via flags):
 #   --dry-run          Show tasks without creating them (default)
-#   --create           Actually create tasks (future)
+#   --create           Create tasks with allocated IDs via claim-task-id.sh
 #   --findings FILE    Use specific findings file
 cmd_tasks() {
     local dry_run="true"
@@ -1488,20 +1490,129 @@ cmd_tasks() {
     fi
 
     # Group findings by rule and suggest tasks
-    if [[ -f "$SWEEP_DB" ]]; then
+    if [[ ! -f "$SWEEP_DB" ]]; then
+        echo "No database available — showing findings file summary only."
+        jq -r '.findings | group_by(.rule) | sort_by(-length) | .[:10][] | "  \(.[0].rule) (\(.[0].severity)): \(length) findings"' "$findings_file" 2>/dev/null || true
+        return 0
+    fi
+
+    # Query grouped findings (top 10 rules with OPEN status)
+    local grouped_json
+    grouped_json=$(db "$SWEEP_DB" -json \
+        "SELECT rule, severity, count(*) as count,
+                'Fix ' || count(*) || ' ' || rule || ' quality findings' as suggested_task
+         FROM findings
+         WHERE status='OPEN'
+         GROUP BY rule
+         ORDER BY CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END, count DESC
+         LIMIT 10;" 2>/dev/null || echo "[]")
+
+    local group_count
+    group_count=$(echo "$grouped_json" | jq 'length' 2>/dev/null || echo "0")
+
+    if [[ "$group_count" -eq 0 ]]; then
+        print_info "No open findings to create tasks from."
+        return 0
+    fi
+
+    if [[ "$dry_run" == "true" ]]; then
         echo "Suggested tasks by rule (top 10 most frequent):"
         echo ""
         db "$SWEEP_DB" -header -column \
             "SELECT rule, severity, count(*) as count,
-                    'fix: resolve ' || count(*) || ' ' || rule || ' findings' as suggested_task
+                    'Fix ' || count(*) || ' ' || rule || ' quality findings' as suggested_task
              FROM findings
              WHERE status='OPEN'
              GROUP BY rule
              ORDER BY CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END, count DESC
              LIMIT 10;"
+        return 0
+    fi
+
+    # --create mode: allocate IDs via claim-task-id.sh and output task lines (t319.3)
+    local claim_script="${SCRIPT_DIR}/claim-task-id.sh"
+    if [[ ! -x "$claim_script" ]]; then
+        print_error "claim-task-id.sh not found or not executable at: $claim_script"
+        return 1
+    fi
+
+    local repo_path
+    repo_path=$(git rev-parse --show-toplevel 2>/dev/null || echo ".")
+    local tasks_created=0
+    local task_lines=""
+
+    _save_cleanup_scope
+    trap '_run_cleanups' RETURN
+    local tmp_groups
+    tmp_groups=$(mktemp)
+    push_cleanup "rm -f '${tmp_groups}'"
+    echo "$grouped_json" | jq -c '.[]' >"$tmp_groups"
+
+    while IFS= read -r group; do
+        local rule severity count suggested_task
+        rule=$(echo "$group" | jq -r '.rule')
+        severity=$(echo "$group" | jq -r '.severity')
+        count=$(echo "$group" | jq -r '.count')
+        suggested_task=$(echo "$group" | jq -r '.suggested_task')
+
+        # Map severity to priority tag
+        local priority_tag
+        case "$severity" in
+            critical) priority_tag="#critical" ;;
+            high)     priority_tag="#high" ;;
+            medium)   priority_tag="#medium" ;;
+            *)        priority_tag="#low" ;;
+        esac
+
+        # Estimate effort based on finding count
+        local estimate="~30m"
+        if [[ "$count" -gt 10 ]]; then
+            estimate="~2h"
+        elif [[ "$count" -gt 5 ]]; then
+            estimate="~1h"
+        fi
+
+        # Allocate task ID via claim-task-id.sh
+        local task_title="${suggested_task} (${severity})"
+        local claim_output task_id gh_ref
+        if claim_output=$("$claim_script" --title "${task_title:0:80}" --description "Auto-created from quality sweep: ${count} ${rule} findings" --labels "quality,auto-dispatch" --repo-path "$repo_path" 2>&1); then
+            task_id=$(echo "$claim_output" | grep "^task_id=" | cut -d= -f2)
+            gh_ref=$(echo "$claim_output" | grep "^ref=" | cut -d= -f2)
+        else
+            print_warning "Failed to allocate task ID for rule ${rule}: $claim_output"
+            print_info "Skipping (will retry on next run)"
+            continue
+        fi
+
+        if [[ -z "$task_id" ]]; then
+            print_warning "No task_id returned for rule ${rule}, skipping"
+            continue
+        fi
+
+        # Build task line
+        local task_line="- [ ] ${task_id} ${suggested_task} ${priority_tag} #quality #auto-dispatch ${estimate}"
+        if [[ -n "$gh_ref" && "$gh_ref" != "offline" ]]; then
+            task_line="${task_line} ref:${gh_ref}"
+        fi
+        task_line="${task_line} logged:$(date +%Y-%m-%d)"
+
+        task_lines="${task_lines}${task_line}\n"
+        tasks_created=$((tasks_created + 1))
+    done <"$tmp_groups"
+
+    if [[ -n "$task_lines" ]]; then
+        echo ""
+        print_success "Generated $tasks_created task(s) with allocated IDs"
+        echo ""
+        echo "=== Task Lines (for TODO.md) ==="
+        echo ""
+        echo -e "$task_lines"
+        echo "================================"
+        echo ""
+        print_info "To add these to TODO.md, copy the lines above into the appropriate section."
+        print_info "Tasks tagged #auto-dispatch will be picked up by supervisor auto-pickup."
     else
-        echo "No database available — showing findings file summary only."
-        jq -r '.findings | group_by(.rule) | sort_by(-length) | .[:10][] | "  \(.[0].rule) (\(.[0].severity)): \(length) findings"' "$findings_file" 2>/dev/null || true
+        print_info "No tasks created."
     fi
 
     return 0
