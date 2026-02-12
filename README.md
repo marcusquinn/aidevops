@@ -549,13 +549,13 @@ OpenCode Server (opencode serve)
 
 **Example runner templates:** [code-reviewer](.agents/tools/ai-assistants/runners/code-reviewer.md), [seo-analyst](.agents/tools/ai-assistants/runners/seo-analyst.md) - copy and customize for your own runners.
 
-**Matrix bot dispatch** (optional): Bridge Matrix chat rooms to runners for chat-triggered AI.
+**Matrix bot dispatch** (optional): Bridge Matrix chat rooms to runners for chat-triggered AI. Each room maintains persistent conversation context via SQLite -- on idle timeout, the session is compacted (summarised) and stored, so the next message resumes with full context.
 
 ```bash
 # Setup Matrix bot (interactive wizard)
 matrix-dispatch-helper.sh setup
 
-# Map rooms to runners
+# Map rooms to runners (each room = separate session)
 matrix-dispatch-helper.sh map '!dev-room:server' code-reviewer
 matrix-dispatch-helper.sh map '!seo-room:server' seo-analyst
 
@@ -563,9 +563,13 @@ matrix-dispatch-helper.sh map '!seo-room:server' seo-analyst
 matrix-dispatch-helper.sh start --daemon
 
 # In Matrix room: "!ai Review src/auth.ts for security issues"
+
+# Manage sessions
+matrix-dispatch-helper.sh sessions list
+matrix-dispatch-helper.sh sessions stats
 ```
 
-**See:** [headless-dispatch.md](.agents/tools/ai-assistants/headless-dispatch.md) for full documentation including parallel vs sequential decision guide, SDK examples, CI/CD integration, and custom agent configuration. [matrix-bot.md](.agents/services/communications/matrix-bot.md) for Matrix bot setup including Cloudron Synapse guide.
+**See:** [headless-dispatch.md](.agents/tools/ai-assistants/headless-dispatch.md) for full documentation including parallel vs sequential decision guide, SDK examples, CI/CD integration, and custom agent configuration. [matrix-bot.md](.agents/services/communications/matrix-bot.md) for Matrix bot setup including Cloudron Synapse guide and session persistence.
 
 ### Self-Improving Agent System
 

@@ -19,10 +19,11 @@ tools:
 ## Quick Reference
 
 - **Purpose**: Bridge Matrix chat rooms to aidevops runners via OpenCode
-- **Script**: `matrix-dispatch-helper.sh [setup|start|stop|status|map|unmap|mappings|test|logs]`
+- **Script**: `matrix-dispatch-helper.sh [setup|start|stop|status|map|unmap|mappings|sessions|test|logs]`
 - **Config**: `~/.config/aidevops/matrix-bot.json` (600 permissions)
 - **Data**: `~/.aidevops/.agent-workspace/matrix-bot/`
-- **SDK**: `matrix-bot-sdk` (npm, TypeScript, MIT, 245 stars)
+- **Session DB**: `~/.aidevops/.agent-workspace/matrix-bot/sessions.db` (SQLite, WAL mode)
+- **SDK**: `matrix-bot-sdk`, `better-sqlite3` (npm)
 - **Requires**: Node.js >= 18, jq, OpenCode server, Matrix homeserver
 
 **Quick start**:
@@ -54,10 +55,21 @@ matrix-dispatch-helper.sh start --daemon
 2. Bot receives message via Matrix sync
 3. Bot checks user permissions (allowedUsers config)
 4. Bot looks up room-to-runner mapping
-5. Bot dispatches prompt to runner via `runner-helper.sh`
-6. Runner executes via OpenCode (headless or warm server)
-7. Bot posts response back to the Matrix room
-8. Bot adds reaction emoji (hourglass while processing, checkmark on success, X on failure)
+5. Bot loads conversation context (compacted summary + recent messages) from SQLite
+6. Bot dispatches contextual prompt to runner via `runner-helper.sh`
+7. Runner executes via OpenCode (headless or warm server)
+8. Bot records both user message and AI response in the session store
+9. Bot posts response back to the Matrix room
+10. Bot adds reaction emoji (hourglass while processing, checkmark on success, X on failure)
+
+**Session lifecycle**:
+
+1. First message in a room creates a session in SQLite
+2. Subsequent messages include conversation history as context
+3. After `sessionIdleTimeout` seconds of inactivity, the bot compacts the session (asks the AI to summarise the conversation)
+4. The compacted summary is stored; the detailed message log is pruned
+5. Next message in that room primes a new session with the compacted context
+6. On graceful shutdown (SIGINT/SIGTERM), all active sessions are compacted before exit
 
 ## Setup
 
@@ -143,7 +155,8 @@ curl -X POST "https://matrix.example.com/_matrix/client/v3/login" \
   "botPrefix": "!ai",
   "ignoreOwnMessages": true,
   "maxPromptLength": 4000,
-  "responseTimeout": 600
+  "responseTimeout": 600,
+  "sessionIdleTimeout": 300
 }
 ```
 
@@ -160,6 +173,7 @@ curl -X POST "https://matrix.example.com/_matrix/client/v3/login" \
 | `ignoreOwnMessages` | `true` | Ignore messages from the bot itself |
 | `maxPromptLength` | `4000` | Max response length before truncation |
 | `responseTimeout` | `600` | Max seconds to wait for runner response |
+| `sessionIdleTimeout` | `300` | Seconds of inactivity before compacting a session |
 
 ## Room-to-Runner Mapping
 
@@ -205,6 +219,47 @@ matrix-dispatch-helper.sh unmap '!dev-room:server'
 - **Concurrency**: One dispatch per room at a time (prevents flooding)
 - **Truncation**: Long responses are truncated with a note about full logs
 - **Auto-join**: Bot automatically joins rooms when invited
+- **Session persistence**: Each room maintains conversation context across messages
+
+## Session Persistence
+
+Each Matrix room maintains a persistent conversation session backed by SQLite. This gives a continuous conversation feel without keeping AI sessions alive indefinitely.
+
+### How It Works
+
+1. **Message arrives** in room -- bot checks for existing session context
+2. **Context loaded** -- compacted summary + recent messages prepended to prompt
+3. **Response received** -- both user message and AI response recorded in SQLite
+4. **Idle timeout** (default 300s) -- bot asks the AI to summarise the conversation
+5. **Summary stored** -- compacted context saved, detailed message log pruned
+6. **Next message** -- new session primed with the compacted summary
+
+### Session Management
+
+```bash
+# List all sessions with stats
+matrix-dispatch-helper.sh sessions list
+
+# View session statistics
+matrix-dispatch-helper.sh sessions stats
+
+# Clear a specific room's session
+matrix-dispatch-helper.sh sessions clear '!room:server'
+
+# Clear all sessions
+matrix-dispatch-helper.sh sessions clear-all
+```
+
+### Graceful Shutdown
+
+When the bot receives SIGINT or SIGTERM, it compacts all active sessions before exiting. This ensures no conversation context is lost on restart.
+
+### Storage
+
+- **Database**: `~/.aidevops/.agent-workspace/matrix-bot/sessions.db`
+- **Mode**: SQLite WAL (concurrent reads, single writer)
+- **Tables**: `sessions` (per-room state), `message_log` (conversation history)
+- **Compaction**: Summarises conversation, stores summary, prunes message log
 
 ## Operations
 
