@@ -2123,6 +2123,116 @@ setup_file_discovery_tools() {
     return 0
 }
 
+
+# Setup shell linting tools (shellcheck, shfmt)
+setup_shell_linting_tools() {
+    print_info "Setting up shell linting tools..."
+
+    local missing_tools=()
+    local pkg_manager
+    pkg_manager=$(detect_package_manager)
+
+    # Check shellcheck
+    if command -v shellcheck >/dev/null 2>&1; then
+        local sc_path sc_arch
+        sc_path=$(command -v shellcheck)
+        # Prefer arm64 if present (universal/fat binaries report both architectures)
+        local sc_file_output
+        sc_file_output=$(file "$sc_path" 2>/dev/null)
+        if echo "$sc_file_output" | grep -q 'arm64'; then
+            sc_arch="arm64"
+        else
+            sc_arch=$(echo "$sc_file_output" | grep -oE '(x86_64)' | head -1)
+        fi
+        if [[ "$(uname -m)" == "arm64" ]] && [[ "$sc_arch" == "x86_64" ]]; then
+            print_warning "shellcheck found but running under Rosetta (x86_64)"
+            print_info "  Run 'rosetta-audit-helper.sh migrate' to fix"
+        else
+            print_success "shellcheck found ($(shellcheck --version 2>/dev/null | grep 'version:' | awk '{print $2}'))"
+        fi
+    else
+        missing_tools+=("shellcheck")
+    fi
+
+    # Check shfmt
+    if command -v shfmt >/dev/null 2>&1; then
+        print_success "shfmt found ($(shfmt --version 2>/dev/null))"
+    else
+        missing_tools+=("shfmt")
+    fi
+
+    if [[ ${#missing_tools[@]} -gt 0 ]]; then
+        print_warning "Missing shell linting tools: ${missing_tools[*]}"
+        echo "  shellcheck - static analysis for shell scripts"
+        echo "  shfmt      - shell script formatter (fast syntax checks)"
+
+        if [[ "$pkg_manager" != "unknown" ]]; then
+            local install_linters
+            if [[ "${NON_INTERACTIVE:-}" == "true" ]]; then
+                install_linters="Y"
+            else
+                read -r -p "Install missing shell linting tools using $pkg_manager? [Y/n]: " install_linters
+            fi
+
+            if [[ "$install_linters" =~ ^[Yy]?$ ]]; then
+                if install_packages "$pkg_manager" "${missing_tools[@]}"; then
+                    print_success "Shell linting tools installed"
+                else
+                    print_warning "Failed to install some shell linting tools"
+                fi
+            else
+                print_info "Skipped shell linting tools"
+            fi
+        else
+            echo "  Install manually:"
+            echo "    macOS: brew install ${missing_tools[*]}"
+            echo "    Linux: apt install ${missing_tools[*]}"
+        fi
+    fi
+
+    return 0
+}
+
+# Rosetta audit - detect x86 Homebrew packages on Apple Silicon
+setup_rosetta_audit() {
+    # Skip on non-Apple-Silicon or non-macOS
+    if [[ "$(uname)" != "Darwin" ]] || [[ "$(uname -m)" != "arm64" ]]; then
+        print_info "Rosetta audit: not applicable (Intel Mac or non-macOS)"
+        return 0
+    fi
+
+    # Skip if no dual-brew setup
+    if [[ ! -x "/usr/local/bin/brew" ]] || [[ ! -x "/opt/homebrew/bin/brew" ]]; then
+        print_success "Rosetta audit: clean Homebrew setup (no x86 brew detected)"
+        return 0
+    fi
+
+    print_info "Detected dual Homebrew (x86 + ARM) — checking for Rosetta overhead..."
+
+    local x86_only_count dup_count
+    dup_count=$(comm -12 \
+        <(/usr/local/bin/brew list --formula 2>/dev/null | sort) \
+        <(/opt/homebrew/bin/brew list --formula 2>/dev/null | sort) | wc -l | tr -d ' ')
+    x86_only_count=$(comm -23 \
+        <(/usr/local/bin/brew list --formula 2>/dev/null | sort) \
+        <(/opt/homebrew/bin/brew list --formula 2>/dev/null | sort) | wc -l | tr -d ' ')
+
+    local total=$((x86_only_count + dup_count))
+
+    if [[ "$total" -eq 0 ]]; then
+        print_success "No x86 Homebrew packages found — clean ARM setup"
+        return 0
+    fi
+
+    print_warning "Found $total x86 Homebrew packages ($x86_only_count x86-only, $dup_count duplicates)"
+    echo "  These run under Rosetta 2 emulation with ~30% performance overhead"
+    echo ""
+    echo "  To audit:   rosetta-audit-helper.sh scan"
+    echo "  To migrate: rosetta-audit-helper.sh migrate --dry-run"
+    echo "  To fix:     rosetta-audit-helper.sh migrate"
+
+    return 0
+}
 # Setup Worktrunk - Git worktree management for parallel AI agent workflows
 setup_worktrunk() {
     print_info "Setting up Worktrunk (git worktree management)..."
@@ -5326,6 +5436,8 @@ main() {
         confirm_step "Setup MiniSim (iOS/Android emulator launcher)" && setup_minisim
         confirm_step "Setup Git CLIs (gh, glab, tea)" && setup_git_clis
         confirm_step "Setup file discovery tools (fd, ripgrep)" && setup_file_discovery_tools
+        confirm_step "Setup shell linting tools (shellcheck, shfmt)" && setup_shell_linting_tools
+        confirm_step "Rosetta audit (Apple Silicon x86 migration)" && setup_rosetta_audit
         confirm_step "Setup Worktrunk (git worktree management)" && setup_worktrunk
         confirm_step "Setup SSH key" && setup_ssh_key
         confirm_step "Setup configuration files" && setup_configs

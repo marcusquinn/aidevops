@@ -94,7 +94,8 @@ auto-update-helper.sh,Automatic update polling daemon (enable disable status che
 list-keys-helper.sh,List all API keys with storage locations
 list-verify-helper.sh,List verification queue entries with filtering (pending passed failed)
 verify-run-helper.sh,Execute verification checks with proof logging to verify-proof-log.md
-linters-local.sh,Run local linting (ShellCheck secretlint patterns)
+linters-local.sh,Run local linting (shfmt ShellCheck secretlint patterns)
+rosetta-audit-helper.sh,Detect and migrate x86 Homebrew packages on Apple Silicon
 code-audit-helper.sh,Run remote auditing (CodeRabbit Codacy SonarCloud)
 version-manager.sh,Version bumps and releases
 linter-manager.sh,Install and manage linters

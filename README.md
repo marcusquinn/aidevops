@@ -1616,7 +1616,7 @@ Configure time tracking per-repo via `.aidevops.json`.
 | `/feature` | Start a new feature branch workflow |
 | `/bugfix` | Start a bugfix branch workflow |
 | `/hotfix` | Start an urgent hotfix workflow |
-| `/linters-local` | Run local linting (ShellCheck, secretlint) |
+| `/linters-local` | Run local linting (shfmt, ShellCheck, secretlint) |
 | `/code-audit-remote` | Run remote auditing (CodeRabbit, Codacy, SonarCloud) |
 | `/code-standards` | Check against documented quality standards |
 | `/code-simplifier` | Simplify and refine code for clarity and maintainability |
