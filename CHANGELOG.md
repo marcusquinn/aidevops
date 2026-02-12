@@ -7,9 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.110.14] - 2026-02-12
+
+### Added
+
+- create supervisor module skeleton (t311.2) (#1218)
+- auto-escalate model to opus on worker failure + extend timeouts (t314) (#1215)
+- add pre-dispatch staleness check to prevent wasting worker tokens (t312) (#1211)
+- add Phase 10b to auto-create TODO tasks from quality findings (t299) (#1206)
+
+### Changed
+
+- Documentation: add t315 changelog entry for oh-my-opencode fix
+- Documentation: add supervisor module map — catalogue 155 functions across 17 domains (t311.1) (#1207)
+
 ### Fixed
 
-- make oh-my-opencode removal optional, default to keeping it (t315) (#1221)
+- make oh-my-opencode removal optional, default to keeping it (#1221)
+- add SUPERVISOR_SKIP_STALENESS env var to bypass staleness check (#1217)
+- narrow t313 queue priority to cmd_next() dispatch queries only (#1213)
 
 ## [2.110.13] - 2026-02-12
 
