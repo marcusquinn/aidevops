@@ -21,6 +21,98 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-02-12] Modularise Oversized Shell Scripts
+
+**Status:** Planning
+**Estimate:** ~8h (ai:6h test:2h)
+**TODO:** t311
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p029,Modularise Oversized Shell Scripts,planning,0,5,,refactor|quality|architecture|shell,8h,6h,2h,30m,2026-02-12T02:30Z,
+-->
+
+#### Purpose
+
+Split oversized shell scripts into logical modules to improve maintainability, reduce ShellCheck noise, and prevent terminal rendering crashes in tools like OpenCode when linting produces thousands of warnings against a single file.
+
+#### Context
+
+**Problem:** `supervisor-helper.sh` has grown to 14,644 lines — a single shell script larger than many entire projects. Running ShellCheck against it produces thousands of warnings that flood terminal UIs (observed crashing OpenCode's renderer). Other scripts are also growing beyond comfortable single-file size.
+
+**Scripts by size (500+ lines):**
+
+| Script | Lines | Priority | Notes |
+|--------|-------|----------|-------|
+| supervisor-helper.sh | 14,644 | Critical | Crashes linter UIs, impossible to review |
+| memory-helper.sh | 2,505 | High | Growing, clear domain boundaries |
+| issue-sync-helper.sh | 1,971 | Medium | Moderate size, self-contained |
+| keyword-research-helper.sh | 1,809 | Low | Domain-specific, less churn |
+| generate-opencode-commands.sh | 1,625 | Low | Codegen, rarely edited |
+| quality-sweep-helper.sh | 1,603 | Low | Stable |
+| 15+ scripts at 1,100-1,500 | — | Low | Monitor, split if they grow |
+
+#### Approach: Source-Based Module Architecture
+
+Shell doesn't have native modules, but `source` provides a clean equivalent. The pattern:
+
+```text
+scripts/
+├── supervisor-helper.sh          # Entry point: arg parsing, dispatch
+├── supervisor/
+│   ├── _common.sh                # Shared constants, logging, DB helpers
+│   ├── batch.sh                  # Batch management (create, status, cancel)
+│   ├── dispatch.sh               # Worker dispatch, claiming, prompt building
+│   ├── lifecycle.sh              # PR lifecycle, merge, deploy states
+│   ├── pulse.sh                  # Pulse phases 0-11
+│   ├── recovery.sh               # Auto-recovery, orphan cleanup, respawn
+│   ├── release.sh                # Batch release, version management
+│   └── todo-sync.sh              # TODO.md read/write, commit_and_push_todo
+├── memory-helper.sh              # Entry point
+├── memory/
+│   ├── _common.sh
+│   ├── store.sh
+│   ├── recall.sh
+│   └── maintenance.sh            # Prune, consolidate, graduate
+```
+
+**Key design decisions:**
+
+1. **Entry point stays the same** — `supervisor-helper.sh` remains the CLI interface. No breaking changes to callers.
+2. **Source at top** — entry point sources all modules at startup (not lazy-load). Simpler, avoids path resolution bugs.
+3. **Shared state via globals** — modules share `SUPERVISOR_DB`, `SUPERVISOR_LOG`, etc. already defined as globals. No change needed.
+4. **One function per concern** — each module owns a clear set of functions. No function spans modules.
+5. **`_common.sh` convention** — underscore prefix = internal, sourced by siblings only.
+
+#### Risks
+
+- **Path resolution**: `source` paths must be relative to the entry point, not the module. Use `SCRIPT_DIR` pattern.
+- **Function name collisions**: Currently no namespacing. Audit for collisions before splitting.
+- **ShellCheck per-module**: Each module needs its own ShellCheck pass. May need `# shellcheck source=` directives.
+- **Testing**: Existing tests (if any) call the entry point. Should still work since the interface doesn't change.
+- **Deployment**: `setup.sh` copies scripts/ — needs to also copy subdirectories.
+
+#### Phases
+
+- [ ] **Phase 1: Audit & map** — catalogue every function in supervisor-helper.sh, group by domain, identify dependencies between groups. Produce a module assignment table. ~1h
+- [ ] **Phase 2: Create module skeleton** — create `supervisor/` directory, `_common.sh` with shared helpers, empty module files with function stubs. Wire `source` into entry point. Verify script still works identically. ~1h
+- [ ] **Phase 3: Extract modules** — move functions into modules one group at a time, running ShellCheck + syntax check after each move. Start with the most self-contained group (likely release or todo-sync). ~3h
+- [ ] **Phase 4: Repeat for memory-helper.sh** — same pattern, smaller scope. ~1h
+- [ ] **Phase 5: Update tooling** — update setup.sh to deploy subdirectories, update linters-local.sh to handle module structure, update any hardcoded paths. Verify end-to-end. ~1h
+
+#### Decision Log
+
+| Date | Decision | Rationale |
+|------|----------|-----------|
+| 2026-02-12 | Source-based modules, not separate executables | Preserves single CLI interface, avoids IPC complexity, globals work naturally |
+| 2026-02-12 | Start with supervisor-helper.sh only | Highest impact, others can wait |
+| 2026-02-12 | Eager source (not lazy) | Simpler, shell startup cost is negligible for CLI tools |
+
+#### Surprises & Discoveries
+
+(none yet)
+
+---
+
 ### [2026-02-10] Email Testing Suite
 
 **Status:** Planning
