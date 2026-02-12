@@ -7,8 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.112.0] - 2026-02-12
-
 ### Added
 
 - DB-TODO reconciliation pulse phase (Phase 7b) auto-transitions stale supervisor states (t1001) (#1275)
