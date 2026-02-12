@@ -275,7 +275,7 @@ create_backup_with_rotation() {
 
 		# Delete oldest backups (sorted by name = sorted by date)
 		find "$backup_base" -maxdepth 1 -type d -name "20*" 2>/dev/null | sort | head -n "$to_delete" | while read -r old_backup; do
-			[[ -n "$old_backup" ]] && rm -rf "$old_backup"
+			rm -rf "$old_backup"
 		done
 	fi
 
@@ -304,7 +304,6 @@ validate_namespace() {
 # This ensures clean upgrades when agents are reorganized
 cleanup_deprecated_paths() {
 	local agents_dir="$HOME/.aidevops/agents"
-	[[ -z "$agents_dir" ]] && return 1
 	local cleaned=0
 
 	# List of deprecated paths (add new ones here when reorganizing)
@@ -332,7 +331,7 @@ cleanup_deprecated_paths() {
 	)
 
 	for path in "${deprecated_paths[@]}"; do
-		if [[ -e "$path" && -n "$path" ]]; then
+		if [[ -e "$path" ]]; then
 			rm -rf "$path"
 			((cleaned++)) || true
 		fi
@@ -886,7 +885,7 @@ migrate_old_backups() {
 
 	if [[ $old_count -eq 0 ]]; then
 		# Empty directory, just remove it
-		rm -rf "${old_backup_dir:?}"
+		rm -rf "$old_backup_dir"
 		return 0
 	fi
 
@@ -915,7 +914,7 @@ migrate_old_backups() {
 	done
 
 	# Remove remaining old backups and the old directory
-	rm -rf "${old_backup_dir:?}"
+	rm -rf "$old_backup_dir"
 
 	if [[ $migrated -gt 0 ]]; then
 		print_success "Migrated $migrated recent backups, removed $((old_count - migrated)) old backups"
@@ -996,7 +995,7 @@ migrate_loop_state_directories() {
 			# Move all files from old to new
 			if [[ -n "$(ls -A "$legacy_state_dir" 2>/dev/null)" ]]; then
 				cp -R "$legacy_state_dir"/* "$new_state_dir/" 2>/dev/null || true
-				rm -rf "${legacy_state_dir:?}"
+				rm -rf "$legacy_state_dir"
 				print_info "  Migrated .agents/loop-state/ -> .agents/loop-state/"
 				((migrated++)) || true
 			fi
@@ -1443,68 +1442,68 @@ check_requirements() {
 # Check for quality/linting tools (shellcheck, shfmt)
 # These are optional but recommended for development
 check_quality_tools() {
-    print_info "Checking quality tools..."
-    
-    local missing_tools=()
-    
-    # Check for shellcheck
-    if command -v shellcheck >/dev/null 2>&1; then
-        print_success "shellcheck: $(shellcheck --version | head -1)"
-    else
-        missing_tools+=("shellcheck")
-    fi
-    
-    # Check for shfmt
-    if command -v shfmt >/dev/null 2>&1; then
-        print_success "shfmt: $(shfmt --version)"
-    else
-        missing_tools+=("shfmt")
-    fi
-    
-    # If all tools present, return early
-    if [[ ${#missing_tools[@]} -eq 0 ]]; then
-        print_success "All quality tools installed"
-        return 0
-    fi
-    
-    # Show missing tools
-    print_warning "Missing quality tools: ${missing_tools[*]}"
-    print_info "These tools are used by linters-local.sh for code quality checks"
-    
-    # In non-interactive mode, just warn and continue
-    if [[ "$NON_INTERACTIVE" == "true" ]]; then
-        print_info "Install later: brew install ${missing_tools[*]}"
-        return 0
-    fi
-    
-    # Offer to install
-    local pkg_manager
-    pkg_manager=$(detect_package_manager)
-    
-    if [[ "$pkg_manager" == "unknown" ]]; then
-        print_info "Install manually:"
-        echo "  macOS: brew install ${missing_tools[*]}"
-        echo "  Ubuntu/Debian: sudo apt-get install ${missing_tools[*]}"
-        echo "  Fedora: sudo dnf install ${missing_tools[*]}"
-        return 0
-    fi
-    
-    echo ""
-    read -r -p "Install quality tools using $pkg_manager? [Y/n]: " install_quality
-    
-    if [[ "$install_quality" =~ ^[Yy]?$ ]]; then
-        print_info "Installing ${missing_tools[*]}..."
-        if install_packages "$pkg_manager" "${missing_tools[@]}"; then
-            print_success "Quality tools installed successfully"
-        else
-            print_warning "Failed to install some quality tools - continuing anyway"
-        fi
-    else
-        print_info "Skipped quality tools installation"
-        print_info "Install later: $pkg_manager install ${missing_tools[*]}"
-    fi
-    
-    return 0
+	print_info "Checking quality tools..."
+
+	local missing_tools=()
+
+	# Check for shellcheck
+	if command -v shellcheck >/dev/null 2>&1; then
+		print_success "shellcheck: $(shellcheck --version | head -1)"
+	else
+		missing_tools+=("shellcheck")
+	fi
+
+	# Check for shfmt
+	if command -v shfmt >/dev/null 2>&1; then
+		print_success "shfmt: $(shfmt --version)"
+	else
+		missing_tools+=("shfmt")
+	fi
+
+	# If all tools present, return early
+	if [[ ${#missing_tools[@]} -eq 0 ]]; then
+		print_success "All quality tools installed"
+		return 0
+	fi
+
+	# Show missing tools
+	print_warning "Missing quality tools: ${missing_tools[*]}"
+	print_info "These tools are used by linters-local.sh for code quality checks"
+
+	# In non-interactive mode, just warn and continue
+	if [[ "$NON_INTERACTIVE" == "true" ]]; then
+		print_info "Install later: brew install ${missing_tools[*]}"
+		return 0
+	fi
+
+	# Offer to install
+	local pkg_manager
+	pkg_manager=$(detect_package_manager)
+
+	if [[ "$pkg_manager" == "unknown" ]]; then
+		print_info "Install manually:"
+		echo "  macOS: brew install ${missing_tools[*]}"
+		echo "  Ubuntu/Debian: sudo apt-get install ${missing_tools[*]}"
+		echo "  Fedora: sudo dnf install ${missing_tools[*]}"
+		return 0
+	fi
+
+	echo ""
+	read -r -p "Install quality tools using $pkg_manager? [Y/n]: " install_quality
+
+	if [[ "$install_quality" =~ ^[Yy]?$ ]]; then
+		print_info "Installing ${missing_tools[*]}..."
+		if install_packages "$pkg_manager" "${missing_tools[@]}"; then
+			print_success "Quality tools installed successfully"
+		else
+			print_warning "Failed to install some quality tools - continuing anyway"
+		fi
+	else
+		print_info "Skipped quality tools installation"
+		print_info "Install later: $pkg_manager install ${missing_tools[*]}"
+	fi
+
+	return 0
 }
 
 # Detect the current running shell (not $SHELL which is the login default)
@@ -2142,161 +2141,114 @@ setup_file_discovery_tools() {
 	return 0
 }
 
-
 # Setup shell linting tools (shellcheck, shfmt)
 setup_shell_linting_tools() {
-    print_info "Setting up shell linting tools..."
+	print_info "Setting up shell linting tools..."
 
-    local missing_tools=()
-    local pkg_manager
-    pkg_manager=$(detect_package_manager)
+	local missing_tools=()
+	local pkg_manager
+	pkg_manager=$(detect_package_manager)
 
-    # Check shellcheck
-    if command -v shellcheck >/dev/null 2>&1; then
-        local sc_path sc_arch
-        sc_path=$(command -v shellcheck)
-        # Prefer arm64 if present (universal/fat binaries report both architectures)
-        local sc_file_output
-        sc_file_output=$(file "$sc_path" 2>/dev/null)
-        if echo "$sc_file_output" | grep -q 'arm64'; then
-            sc_arch="arm64"
-        else
-            sc_arch=$(echo "$sc_file_output" | grep -oE '(x86_64)' | head -1)
-        fi
-        if [[ "$(uname -m)" == "arm64" ]] && [[ "$sc_arch" == "x86_64" ]]; then
-            print_warning "shellcheck found but running under Rosetta (x86_64)"
-            print_info "  Run 'rosetta-audit-helper.sh migrate' to fix"
-        else
-            print_success "shellcheck found ($(shellcheck --version 2>/dev/null | grep 'version:' | awk '{print $2}'))"
-        fi
-    else
-        missing_tools+=("shellcheck")
-    fi
+	# Check shellcheck
+	if command -v shellcheck >/dev/null 2>&1; then
+		local sc_path sc_arch
+		sc_path=$(command -v shellcheck)
+		# Prefer arm64 if present (universal/fat binaries report both architectures)
+		local sc_file_output
+		sc_file_output=$(file "$sc_path" 2>/dev/null)
+		if echo "$sc_file_output" | grep -q 'arm64'; then
+			sc_arch="arm64"
+		else
+			sc_arch=$(echo "$sc_file_output" | grep -oE '(x86_64)' | head -1)
+		fi
+		if [[ "$(uname -m)" == "arm64" ]] && [[ "$sc_arch" == "x86_64" ]]; then
+			print_warning "shellcheck found but running under Rosetta (x86_64)"
+			print_info "  Run 'rosetta-audit-helper.sh migrate' to fix"
+		else
+			print_success "shellcheck found ($(shellcheck --version 2>/dev/null | grep 'version:' | awk '{print $2}'))"
+		fi
+	else
+		missing_tools+=("shellcheck")
+	fi
 
-    # Check shfmt
-    if command -v shfmt >/dev/null 2>&1; then
-        print_success "shfmt found ($(shfmt --version 2>/dev/null))"
-    else
-        missing_tools+=("shfmt")
-    fi
+	# Check shfmt
+	if command -v shfmt >/dev/null 2>&1; then
+		print_success "shfmt found ($(shfmt --version 2>/dev/null))"
+	else
+		missing_tools+=("shfmt")
+	fi
 
-    if [[ ${#missing_tools[@]} -gt 0 ]]; then
-        print_warning "Missing shell linting tools: ${missing_tools[*]}"
-        echo "  shellcheck - static analysis for shell scripts"
-        echo "  shfmt      - shell script formatter (fast syntax checks)"
+	if [[ ${#missing_tools[@]} -gt 0 ]]; then
+		print_warning "Missing shell linting tools: ${missing_tools[*]}"
+		echo "  shellcheck - static analysis for shell scripts"
+		echo "  shfmt      - shell script formatter (fast syntax checks)"
 
-        if [[ "$pkg_manager" != "unknown" ]]; then
-            local install_linters
-            if [[ "${NON_INTERACTIVE:-}" == "true" ]]; then
-                install_linters="Y"
-            else
-                read -r -p "Install missing shell linting tools using $pkg_manager? [Y/n]: " install_linters
-            fi
+		if [[ "$pkg_manager" != "unknown" ]]; then
+			local install_linters
+			if [[ "${NON_INTERACTIVE:-}" == "true" ]]; then
+				install_linters="Y"
+			else
+				read -r -p "Install missing shell linting tools using $pkg_manager? [Y/n]: " install_linters
+			fi
 
-            if [[ "$install_linters" =~ ^[Yy]?$ ]]; then
-                if install_packages "$pkg_manager" "${missing_tools[@]}"; then
-                    print_success "Shell linting tools installed"
-                else
-                    print_warning "Failed to install some shell linting tools"
-                fi
-            else
-                print_info "Skipped shell linting tools"
-            fi
-        else
-            echo "  Install manually:"
-            echo "    macOS: brew install ${missing_tools[*]}"
-            echo "    Linux: apt install ${missing_tools[*]}"
-        fi
-    fi
+			if [[ "$install_linters" =~ ^[Yy]?$ ]]; then
+				if install_packages "$pkg_manager" "${missing_tools[@]}"; then
+					print_success "Shell linting tools installed"
+				else
+					print_warning "Failed to install some shell linting tools"
+				fi
+			else
+				print_info "Skipped shell linting tools"
+			fi
+		else
+			echo "  Install manually:"
+			echo "    macOS: brew install ${missing_tools[*]}"
+			echo "    Linux: apt install ${missing_tools[*]}"
+		fi
+	fi
 
-    return 0
+	return 0
 }
 
 # Rosetta audit - detect x86 Homebrew packages on Apple Silicon
 setup_rosetta_audit() {
-    # Skip on non-Apple-Silicon or non-macOS
-    if [[ "$(uname)" != "Darwin" ]] || [[ "$(uname -m)" != "arm64" ]]; then
-        print_info "Rosetta audit: not applicable (Intel Mac or non-macOS)"
-        return 0
-    fi
+	# Skip on non-Apple-Silicon or non-macOS
+	if [[ "$(uname)" != "Darwin" ]] || [[ "$(uname -m)" != "arm64" ]]; then
+		print_info "Rosetta audit: not applicable (Intel Mac or non-macOS)"
+		return 0
+	fi
 
-    # --- Part 1: Homebrew audit ---
-    if [[ -x "/usr/local/bin/brew" ]] && [[ -x "/opt/homebrew/bin/brew" ]]; then
-        print_info "Detected dual Homebrew (x86 + ARM) — checking for Rosetta overhead..."
+	# Skip if no dual-brew setup
+	if [[ ! -x "/usr/local/bin/brew" ]] || [[ ! -x "/opt/homebrew/bin/brew" ]]; then
+		print_success "Rosetta audit: clean Homebrew setup (no x86 brew detected)"
+		return 0
+	fi
 
-        local x86_only_count dup_count
-        dup_count=$(comm -12 \
-            <(/usr/local/bin/brew list --formula 2>/dev/null | sort) \
-            <(/opt/homebrew/bin/brew list --formula 2>/dev/null | sort) | wc -l | tr -d ' ')
-        x86_only_count=$(comm -23 \
-            <(/usr/local/bin/brew list --formula 2>/dev/null | sort) \
-            <(/opt/homebrew/bin/brew list --formula 2>/dev/null | sort) | wc -l | tr -d ' ')
+	print_info "Detected dual Homebrew (x86 + ARM) — checking for Rosetta overhead..."
 
-        local total=$((x86_only_count + dup_count))
+	local x86_only_count dup_count
+	dup_count=$(comm -12 \
+		<(/usr/local/bin/brew list --formula 2>/dev/null | sort) \
+		<(/opt/homebrew/bin/brew list --formula 2>/dev/null | sort) | wc -l | tr -d ' ')
+	x86_only_count=$(comm -23 \
+		<(/usr/local/bin/brew list --formula 2>/dev/null | sort) \
+		<(/opt/homebrew/bin/brew list --formula 2>/dev/null | sort) | wc -l | tr -d ' ')
 
-        if [[ "$total" -eq 0 ]]; then
-            print_success "No x86 Homebrew packages remaining"
-            echo "  x86 Homebrew is empty. You can remove it to reclaim disk space:"
-            echo "    sudo rm -rf /usr/local/Homebrew /usr/local/bin/brew /usr/local/Cellar"
-        else
-            print_warning "Found $total x86 Homebrew packages ($x86_only_count x86-only, $dup_count duplicates)"
-            echo "  These run under Rosetta 2 emulation with ~30% performance overhead."
-            echo "  Migrating to ARM-native gives ~30% speed boost and ~60% less kernel overhead."
-            echo ""
-            echo "  To audit:   rosetta-audit-helper.sh scan           (~2-3 min)"
-            echo "  To preview: rosetta-audit-helper.sh migrate --dry-run"
-            echo "  To fix:     rosetta-audit-helper.sh migrate        (~5-10 min)"
-        fi
-    fi
+	local total=$((x86_only_count + dup_count))
 
-    # --- Part 2: Scan /usr/local/bin for x86-only binaries ---
-    if [[ -d "/usr/local/bin" ]]; then
-        local x86_bins=()
-        local f arch
-        for f in /usr/local/bin/*; do
-            [[ -f "$f" ]] && [[ -x "$f" ]] || continue
-            arch=$(file "$f" 2>/dev/null)
-            if [[ "$arch" == *x86_64* ]] && [[ "$arch" != *arm64* ]]; then
-                x86_bins+=("$(basename "$f")")
-            fi
-        done
+	if [[ "$total" -eq 0 ]]; then
+		print_success "No x86 Homebrew packages found — clean ARM setup"
+		return 0
+	fi
 
-        if [[ ${#x86_bins[@]} -gt 0 ]]; then
-            echo ""
-            print_warning "Found ${#x86_bins[@]} x86-only binaries in /usr/local/bin:"
-            local bin
-            for bin in "${x86_bins[@]}"; do
-                echo "    $bin"
-            done
-            echo ""
-            echo "  These run under Rosetta emulation. Check for ARM updates or remove if unused."
-        fi
-    fi
+	print_warning "Found $total x86 Homebrew packages ($x86_only_count x86-only, $dup_count duplicates)"
+	echo "  These run under Rosetta 2 emulation with ~30% performance overhead"
+	echo ""
+	echo "  To audit:   rosetta-audit-helper.sh scan"
+	echo "  To migrate: rosetta-audit-helper.sh migrate --dry-run"
+	echo "  To fix:     rosetta-audit-helper.sh migrate"
 
-    # --- Part 3: Count x86 .app bundles ---
-    local x86_app_count=0
-    local app_exe binary
-    for app_exe in /Applications/*.app; do
-        binary=$(defaults read "$app_exe/Contents/Info.plist" CFBundleExecutable 2>/dev/null) || continue
-        [[ -f "$app_exe/Contents/MacOS/$binary" ]] || continue
-        arch=$(file "$app_exe/Contents/MacOS/$binary" 2>/dev/null)
-        if [[ "$arch" == *x86_64* ]] && [[ "$arch" != *arm64* ]]; then
-            ((x86_app_count++))
-        fi
-    done
-
-    if [[ "$x86_app_count" -gt 0 ]]; then
-        echo ""
-        print_info "$x86_app_count applications in /Applications are x86-only (running under Rosetta)"
-        echo "  Check for ARM updates for apps you use frequently."
-        echo "  Run: rosetta-audit-helper.sh scan   for the full list"
-    fi
-
-    if [[ "${x86_app_count:-0}" -eq 0 ]] && [[ "${#x86_bins[@]}" -eq 0 ]] && [[ ! -x "/usr/local/bin/brew" ]]; then
-        print_success "Rosetta audit: fully ARM-native — no x86 overhead detected"
-    fi
-
-    return 0
+	return 0
 }
 # Setup Worktrunk - Git worktree management for parallel AI agent workflows
 setup_worktrunk() {
@@ -3093,29 +3045,6 @@ check_opencode_prompt_drift() {
 	return 0
 }
 
-# Validate plugin namespace to prevent path traversal attacks
-# Returns 0 if valid, 1 if invalid
-validate_plugin_namespace() {
-	local ns="$1"
-
-	# Reject empty namespace
-	[[ -z "$ns" ]] && return 1
-
-	# Reject absolute paths
-	[[ "$ns" =~ ^/ ]] && return 1
-
-	# Reject path traversal attempts (../, .., etc.)
-	[[ "$ns" =~ \.\. ]] && return 1
-
-	# Reject paths with slashes (namespace should be a single directory name)
-	[[ "$ns" =~ / ]] && return 1
-
-	# Only allow safe characters: alphanumeric, hyphen, underscore, dot
-	[[ ! "$ns" =~ ^[A-Za-z0-9_.-]+$ ]] && return 1
-
-	return 0
-}
-
 # Deploy aidevops agents to user location
 deploy_aidevops_agents() {
 	print_info "Deploying aidevops agents to ~/.aidevops/agents/..."
@@ -3140,13 +3069,11 @@ deploy_aidevops_agents() {
 	# Collect plugin namespace directories to preserve during deployment
 	local -a plugin_namespaces=()
 	if [[ -f "$plugins_file" ]] && command -v jq &>/dev/null; then
+		local ns
+		local safe_ns
 		while IFS= read -r ns; do
-			if [[ -n "$ns" ]]; then
-				if validate_plugin_namespace "$ns"; then
-					plugin_namespaces+=("$ns")
-				else
-					print_warning "Skipping invalid plugin namespace: $ns (path traversal risk)"
-				fi
+			if [[ -n "$ns" ]] && safe_ns=$(sanitize_plugin_namespace "$ns" 2>/dev/null); then
+				plugin_namespaces+=("$safe_ns")
 			fi
 		done < <(jq -r '.plugins[].namespace // empty' "$plugins_file" 2>/dev/null)
 	fi
@@ -3186,7 +3113,7 @@ deploy_aidevops_agents() {
 		done
 		if [[ "$preserve_failed" == "true" ]]; then
 			print_error "Failed to preserve user/plugin agents; aborting clean"
-			rm -rf "${tmp_preserve:?}"
+			rm -rf "$tmp_preserve"
 			return 1
 		fi
 		rm -rf "${target_dir:?}"/*
@@ -3196,7 +3123,7 @@ deploy_aidevops_agents() {
 				cp -R "$tmp_preserve/$pdir" "$target_dir/$pdir"
 			fi
 		done
-		rm -rf "${tmp_preserve:?}"
+		rm -rf "$tmp_preserve"
 	fi
 
 	# Copy all agent files and folders, excluding:
@@ -3312,6 +3239,27 @@ deploy_aidevops_agents() {
 	return 0
 }
 
+# Sanitize plugin namespace to prevent path traversal
+# Arguments: namespace string from plugins.json
+# Returns: sanitized namespace (basename only, no ../ or absolute paths)
+# Exit: 0 on success, 1 if namespace is invalid/suspicious
+sanitize_plugin_namespace() {
+	local ns="$1"
+	# Strip any path components, keep only the final directory name
+	# This prevents ../../../etc/passwd and /absolute/paths
+	ns=$(basename "$ns")
+	# Additional safety: reject if it starts with . or contains suspicious chars
+	if [[ "$ns" =~ ^\.|\.\.|[[:space:]]|[\\/] ]]; then
+		return 1
+	fi
+	# Reject empty result
+	if [[ -z "$ns" ]]; then
+		return 1
+	fi
+	echo "$ns"
+	return 0
+}
+
 # Deploy enabled plugins from plugins.json
 # Arguments: target_dir, plugins_file
 deploy_plugins() {
@@ -3342,16 +3290,17 @@ deploy_plugins() {
 
 	# Remove directories for disabled plugins (cleanup)
 	local disabled_ns
+	local safe_ns
 	while IFS= read -r disabled_ns; do
 		[[ -z "$disabled_ns" ]] && continue
-		# Validate namespace to prevent path traversal
-		if ! validate_plugin_namespace "$disabled_ns"; then
-			print_warning "Skipping removal of invalid plugin namespace: $disabled_ns (path traversal risk)"
+		# Sanitize namespace to prevent path traversal
+		if ! safe_ns=$(sanitize_plugin_namespace "$disabled_ns"); then
+			print_warning "  Skipping invalid plugin namespace: $disabled_ns"
 			continue
 		fi
-		if [[ -d "$target_dir/$disabled_ns" ]]; then
-			rm -rf "${target_dir:?}/${disabled_ns:?}"
-			print_info "  Removed disabled plugin directory: $disabled_ns"
+		if [[ -d "$target_dir/$safe_ns" ]]; then
+			rm -rf "${target_dir:?}/${safe_ns:?}"
+			print_info "  Removed disabled plugin directory: $safe_ns"
 		fi
 	done < <(jq -r '.plugins[] | select(.enabled == false) | .namespace // empty' "$plugins_file" 2>/dev/null)
 
@@ -3362,16 +3311,19 @@ deploy_plugins() {
 	local skipped=0
 
 	# Process each enabled plugin
+	local safe_pns
 	while IFS=$'\t' read -r pname prepo pns pbranch; do
 		[[ -z "$pname" ]] && continue
-		# Validate namespace to prevent path traversal
-		if ! validate_plugin_namespace "$pns"; then
-			print_warning "Skipping plugin '$pname' with invalid namespace: $pns (path traversal risk)"
+		pbranch="${pbranch:-main}"
+
+		# Sanitize namespace to prevent path traversal
+		if ! safe_pns=$(sanitize_plugin_namespace "$pns"); then
+			print_warning "  Skipping plugin '$pname' with invalid namespace: $pns"
 			failed=$((failed + 1))
 			continue
 		fi
-		pbranch="${pbranch:-main}"
-		local clone_dir="$target_dir/$pns"
+
+		local clone_dir="$target_dir/$safe_pns"
 
 		if [[ -d "$clone_dir" ]]; then
 			# Plugin directory exists — skip re-clone during setup
@@ -3647,7 +3599,7 @@ scan_imported_skills() {
 				print_success "Cisco Skill Scanner installed via venv ($venv_dir)"
 				installed=true
 			else
-				[[ -n "$venv_dir" ]] && rm -rf "$venv_dir" 2>/dev/null || true
+				rm -rf "$venv_dir" 2>/dev/null || true
 			fi
 		fi
 
@@ -5522,6 +5474,9 @@ main() {
 		verify_location
 		check_requirements
 
+		# Quality tools check (optional but recommended)
+		confirm_step "Check quality tools (shellcheck, shfmt)" && check_quality_tools
+
 		# Core runtime setup (early - many later steps depend on these)
 		confirm_step "Setup Node.js runtime (required for OpenCode and tools)" && setup_nodejs
 
@@ -5538,6 +5493,8 @@ main() {
 		confirm_step "Setup MiniSim (iOS/Android emulator launcher)" && setup_minisim
 		confirm_step "Setup Git CLIs (gh, glab, tea)" && setup_git_clis
 		confirm_step "Setup file discovery tools (fd, ripgrep)" && setup_file_discovery_tools
+		confirm_step "Setup shell linting tools (shellcheck, shfmt)" && setup_shell_linting_tools
+		confirm_step "Rosetta audit (Apple Silicon x86 migration)" && setup_rosetta_audit
 		confirm_step "Setup Worktrunk (git worktree management)" && setup_worktrunk
 		confirm_step "Setup SSH key" && setup_ssh_key
 		confirm_step "Setup configuration files" && setup_configs
