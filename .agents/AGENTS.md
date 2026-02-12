@@ -75,7 +75,7 @@ Never skip testing. Never declare work "done" without verification. The full-loo
 
 ## Terminal Capabilities
 
-Full PTY access: run any CLI (`vim`, `psql`, `ssh`, `htop`, dev servers, `Claude -p "subtask"`). Long-running: use `&`/`nohup`/`tmux`. Parallel AI: `tools/ai-assistants/Claude-server.md`.
+Full PTY access: run any CLI (`vim`, `psql`, `ssh`, `htop`, dev servers, `Claude -p "subtask"`). Long-running: use `&`/`nohup`/`tmux`. Parallel AI: `tools/ai-assistants/opencode-server.md`.
 
 ---
 
