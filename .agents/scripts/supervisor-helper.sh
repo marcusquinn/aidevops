@@ -21,6 +21,7 @@
 #   supervisor-helper.sh respawn-history [N]        Show last N respawn events (default: 20)
 #   supervisor-helper.sh update-todo <task_id>         Update TODO.md for completed/blocked task
 #   supervisor-helper.sh reconcile-todo [--batch id] [--dry-run]  Bulk-fix stale TODO.md entries
+#   supervisor-helper.sh reconcile-db-todo [--batch id] [--dry-run]  Bidirectional DB<->TODO.md sync
 #   supervisor-helper.sh notify <task_id>              Send notification about task state
 #   supervisor-helper.sh recall <task_id>              Recall memories relevant to a task
 #   supervisor-helper.sh release [batch_id] [options]  Trigger or configure batch release (t128.10)
@@ -10786,6 +10787,16 @@ cmd_pulse() {
 		cmd_reconcile_todo ${batch_id:+--batch "$batch_id"} 2>>"$SUPERVISOR_LOG" || true
 	fi
 
+	# Phase 7b: Bidirectional DB<->TODO.md reconciliation (t1001)
+	# Fills gaps not covered by Phase 7:
+	#   - DB failed/blocked tasks with no TODO.md annotation
+	#   - Tasks marked [x] in TODO.md but DB still in non-terminal state
+	#   - DB orphans with no TODO.md entry (logged as warnings)
+	# Runs when nothing is actively running/queued to avoid mid-flight interference.
+	if [[ "$total_running" -eq 0 && "$total_queued" -eq 0 ]]; then
+		cmd_reconcile_db_todo ${batch_id:+--batch "$batch_id"} 2>>"$SUPERVISOR_LOG" || true
+	fi
+
 	# Phase 8: Issue-sync reconciliation (t179.3)
 	# Close stale GitHub issues and fix ref:GH# drift.
 	# Runs periodically (every ~50 min) when no workers active, to avoid
@@ -14138,6 +14149,7 @@ Usage:
   supervisor-helper.sh respawn-history [N]          Show last N respawn events (t264.1)
   supervisor-helper.sh update-todo <task_id>         Update TODO.md for completed/blocked task
   supervisor-helper.sh reconcile-todo [--batch id] [--dry-run]  Bulk-fix stale TODO.md entries
+  supervisor-helper.sh reconcile-db-todo [--batch id] [--dry-run]  Bidirectional DB<->TODO.md sync (t1001)
   supervisor-helper.sh notify <task_id>              Send notification about task state
   supervisor-helper.sh recall <task_id>              Recall memories relevant to a task
   supervisor-helper.sh release [batch_id] [options]  Trigger or configure batch release
@@ -14468,6 +14480,7 @@ main() {
 	respawn-history) cmd_respawn_history "$@" ;;
 	update-todo) cmd_update_todo "$@" ;;
 	reconcile-todo) cmd_reconcile_todo "$@" ;;
+	reconcile-db-todo) cmd_reconcile_db_todo "$@" ;;
 	notify) cmd_notify "$@" ;;
 	auto-pickup) cmd_auto_pickup "$@" ;;
 	cron) cmd_cron "$@" ;;
