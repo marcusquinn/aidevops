@@ -48,12 +48,7 @@ All development work MUST follow this lifecycle:
 
 1. **Create a TODO entry** in `TODO.md` before starting any work
 2. **Ask the user**: implement now (full-loop) or queue for runner orchestration?
-3. **If implementing now**, follow the full-loop development lifecycle:
-   - Create branch/worktree
-   - Implement changes
-   - Run tests (syntax, shellcheck, Docker tests, integration tests as applicable)
-   - Verify the changes work end-to-end
-   - Only then offer to commit/PR
+3. **If implementing now**, follow full-loop: branch/worktree → implement → test → verify → commit/PR
 4. **If queuing**, add the task to `TODO.md` with appropriate metadata (`~estimate`, `#tags`, dependencies) so the supervisor can dispatch it to a runner when orchestration next runs
 
 Never skip testing. Never declare work "done" without verification. The full-loop means: plan -> implement -> test -> verify -> deliver.
@@ -92,8 +87,7 @@ Full PTY access: run any CLI (`vim`, `psql`, `ssh`, `htop`, dev servers, `Claude
 **Critical Rules**:
 - Git check before edits (see above)
 - File discovery via Bash (see above)
-- **ALWAYS Read before Edit/Write** - Edit and Write tools FAIL if the file hasn't been Read in this conversation. Read the file first, then edit. No exceptions.
-- Re-read files immediately before editing (stale reads cause errors)
+- **ALWAYS Read before Edit/Write** - Re-read immediately before editing (stale reads cause errors)
 - Context budget: Never >100K tokens per operation
 - NEVER create files in `~/` root - use `~/.aidevops/.agent-workspace/work/[project]/`
 - NEVER expose credentials in output/logs
@@ -103,9 +97,7 @@ Full PTY access: run any CLI (`vim`, `psql`, `ssh`, `htop`, dev servers, `Claude
 
 ## Planning & Tasks
 
-Use `/save-todo` after planning. Auto-detects complexity:
-- **Simple** → TODO.md only
-- **Complex** → PLANS.md + TODO.md reference
+Use `/save-todo` after planning. Auto-detects complexity (simple → TODO.md only, complex → PLANS.md + TODO.md reference).
 
 **Key commands**: `/new-task`, `/save-todo`, `/ready`, `/sync-beads`, `/plan-status`, `/create-prd`, `/generate-tasks`
 
@@ -113,7 +105,7 @@ Use `/save-todo` after planning. Auto-detects complexity:
 
 **Dependencies**: `blocked-by:t001`, `blocks:t002`, `t001.1` (subtask)
 
-**Auto-dispatch**: Add `#auto-dispatch` to tasks that can run autonomously (clear spec, bounded scope, no user input needed). Default to including it — only omit when a specific exclusion applies. See `workflows/plans.md` "Auto-Dispatch Tagging" for full criteria. The supervisor's Phase 0 picks these up automatically every 2 minutes and auto-creates batches (`auto-YYYYMMDD-HHMMSS`, concurrency = cores/2, min 2) when no active batch exists.
+**Auto-dispatch**: Add `#auto-dispatch` to tasks that can run autonomously. See `workflows/plans.md` "Auto-Dispatch Tagging" for criteria.
 
 **Task completion rules** (CRITICAL - prevents false completion cascade):
 - NEVER mark `[x]` unless merged PR exists with real deliverables (or `verified:YYYY-MM-DD`)
@@ -122,9 +114,9 @@ Use `/save-todo` after planning. Auto-detects complexity:
 
 See `workflows/plans.md` "Task Completion Rules" for full enforcement layers and what NOT to do.
 
-**After ANY TODO/planning edit** (interactive sessions only, NOT workers): Commit and push immediately. Planning-only files (TODO.md, todo/) go directly to main -- no branch, no PR. Mixed changes (planning + non-exception files) use a worktree. NEVER `git checkout -b` in the main repo.
+**After TODO/planning edit**: Commit and push immediately. Planning files (TODO.md, todo/) go to main. Mixed changes use worktree. NEVER `git checkout -b` in main repo.
 
-**PR required for ALL non-planning changes** (MANDATORY): Every change to scripts, agents, configs, workflows, or any file outside `TODO.md`, `todo/`, and `VERIFY.md` MUST go through a worktree + PR + CI pipeline — no matter how small. "It's just one line" is not a valid reason to skip CI. The pre-edit-check script enforces this; never bypass it by editing directly on main.
+**PR required** (MANDATORY): ALL non-planning changes MUST go through worktree + PR + CI. No exceptions. See `workflows/git-workflow.md`.
 
 **Task ID allocation** (MANDATORY): Use `/new-task` or `claim-task-id.sh` to allocate task IDs. NEVER manually scan TODO.md with grep — causes collisions in parallel sessions.
 
@@ -166,13 +158,7 @@ Cross-session SQLite FTS5 memory. Commands: `/remember {content}`, `/recall {que
 
 **Namespaces**: Runners can have isolated memory via `--namespace <name>`. Use `--shared` to also search global memory. List with `memory-helper.sh namespaces`.
 
-**Auto-recall**: Memories are automatically recalled at key entry points:
-- **Interactive session start**: Recent memories (last 5) surface via conversation-starter.md
-- **Session resume**: After loading checkpoint, recent memories provide context
-- **Runner dispatch**: Before task execution, runners recall recent + task-specific memories
-- **Objective runner**: On first step, recalls recent + objective-specific + failure pattern memories
-
-Auto-recall is silent (no output if no memories found) and uses namespace isolation for runners.
+**Auto-recall**: Memories automatically recalled at session start, resume, and runner dispatch. Silent if none found. See `memory/README.md`.
 
 **Full docs**: `memory/README.md`
 
@@ -234,13 +220,13 @@ worktree-helper.sh add feature/x  # Fallback
 
 **After completing changes**, offer: 1) Preflight checks 2) Skip preflight 3) Continue editing
 
-**PR title format** (MANDATORY): All PRs MUST include task ID from TODO.md: `{task-id}: {description}`. For unplanned work (hotfix, quick fix), create TODO entry first with `~15m` estimate, then create PR. No work should be untraceable. See `workflows/git-workflow.md` "PR Title Requirements" for full guidance.
+**PR title format** (MANDATORY): All PRs MUST include task ID: `{task-id}: {description}`. See `workflows/git-workflow.md` "PR Title Requirements".
 
 **Branch types**: `feature/`, `bugfix/`, `hotfix/`, `refactor/`, `chore/`, `experiment/`, `release/`
 
 **Worktree ownership** (CRITICAL): NEVER remove a worktree unless you created it, it's your completed task, or user asks — parallel sessions may be using it. See `workflows/git-workflow.md` "Worktree Ownership" for ownership registry and safe cleanup workflow.
 
-**Safety hooks** (Claude Code only): Destructive commands (`git reset --hard`, `rm -rf`, etc.) are blocked by a PreToolUse hook. Run `install-hooks.sh --test` to verify. See `workflows/git-workflow.md` "Destructive Command Safety Hooks" section.
+**Safety hooks**: Destructive commands blocked by PreToolUse hook. See `workflows/git-workflow.md` "Destructive Command Safety Hooks".
 
 **Full docs**: `workflows/git-workflow.md`, `tools/git/worktrunk.md`
 
@@ -264,13 +250,7 @@ Run `/session-review` before ending. Suggest new sessions after PR merge, domain
 
 When context is compacted (long sessions, autonomous loops), operational state is lost unless persisted to disk. Use `/checkpoint` to save and restore session state.
 
-**Commands**:
-
-- `/checkpoint` or `session-checkpoint-helper.sh save --task <id> --next <ids>` — save current state
-- `session-checkpoint-helper.sh load` — reload state after compaction
-- `session-checkpoint-helper.sh continuation` — generate a full continuation prompt for new sessions
-
-**When to checkpoint**: After each task completion, before large operations, after PR creation/merge.
+**Commands**: `/checkpoint` (save), `session-checkpoint-helper.sh load` (restore), `continuation` (new session prompt). Checkpoint after task completion, before large ops, after PR.
 
 **Compaction survival rule**: When summarizing this conversation for compaction, ALWAYS preserve: current task IDs and states, active batch ID, worktree path, open PR numbers, and the next 3 action items. This operational state is more important than conversation history details.
 
