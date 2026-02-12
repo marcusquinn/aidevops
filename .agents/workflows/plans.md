@@ -40,6 +40,23 @@ tools:
 | `tNNN.N` | `t001.1` | Subtask |
 | `tNNN.N.N` | `t001.1.1` | Sub-subtask |
 
+**Task ID Allocation**:
+
+Use `/new-task` or `claim-task-id.sh` to allocate task IDs. NEVER manually scan TODO.md with grep to determine the next ID — this causes collisions in parallel sessions.
+
+**Allocation flow**:
+1. `/new-task "Task title"` — interactive slash command (preferred in sessions)
+2. `planning-commit-helper.sh next-id --title "Task title"` — wrapper function
+3. `claim-task-id.sh --title "Task title" --repo-path "$(pwd)"` — direct script
+
+**Online mode**: Creates a GitHub/GitLab issue as a distributed lock, then allocates `t(N+1)`.
+
+**Offline fallback**: Allocates `t(N+100)` to avoid collisions (reconcile when back online).
+
+**Output format**: `TASK_ID=tNNN TASK_REF=GH#NNN TASK_OFFLINE=false`
+
+**Collision prevention**: If `git push` fails after adding a task, `git pull --rebase` and re-read TODO.md to verify your ID is still unique. If a collision exists, re-run `claim-task-id.sh` to get a fresh ID.
+
 **Dependency Syntax**:
 
 | Field | Example | Meaning |
