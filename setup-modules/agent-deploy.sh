@@ -54,9 +54,10 @@ check_opencode_prompt_drift() {
 deploy_aidevops_agents() {
 	print_info "Deploying aidevops agents to ~/.aidevops/agents/..."
 
-	local script_dir
-	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-	local source_dir="$script_dir/.agents"
+	# Use INSTALL_DIR (set by setup.sh) — BASH_SOURCE[0] points to setup-modules/
+	# which is not the repo root, so we can't derive .agents/ from it
+	local repo_dir="${INSTALL_DIR:?INSTALL_DIR must be set by setup.sh}"
+	local source_dir="$repo_dir/.agents"
 	local target_dir="$HOME/.aidevops/agents"
 	local plugins_file="$HOME/.config/aidevops/plugins.json"
 
@@ -177,8 +178,8 @@ deploy_aidevops_agents() {
 		print_info "Deployed $agent_count agent files and $script_count scripts"
 
 		# Copy VERSION file from repo root to deployed agents
-		if [[ -f "$script_dir/VERSION" ]]; then
-			if cp "$script_dir/VERSION" "$target_dir/VERSION"; then
+		if [[ -f "$repo_dir/VERSION" ]]; then
+			if cp "$repo_dir/VERSION" "$target_dir/VERSION"; then
 				print_info "Copied VERSION file to deployed agents"
 			else
 				print_warning "Failed to copy VERSION file (Plan+ may not read version correctly)"
@@ -596,10 +597,8 @@ setup_safety_hooks() {
 
 	local helper_script="$HOME/.aidevops/agents/scripts/install-hooks-helper.sh"
 	if [[ ! -f "$helper_script" ]]; then
-		# Fall back to repo copy
-		local script_dir
-		script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-		helper_script="$script_dir/.agents/scripts/install-hooks-helper.sh"
+		# Fall back to repo copy (INSTALL_DIR set by setup.sh)
+		helper_script="${INSTALL_DIR:-.}/.agents/scripts/install-hooks-helper.sh"
 	fi
 
 	if [[ ! -f "$helper_script" ]]; then
