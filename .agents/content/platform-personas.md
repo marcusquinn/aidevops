@@ -23,6 +23,7 @@ Adapt your core brand voice for each platform. The base voice comes from `conten
 - **Perspective**: First-person ("I" for personal brands, "We" for company pages)
 - **Tone shift**: More formal than blog, less formal than whitepaper
 - **Reader**: Decision-makers, peers, potential clients
+- **Posting cadence**: 3-5x/week, Tuesday-Thursday mornings perform best
 
 ### Structure
 
@@ -71,8 +72,9 @@ Adapt your core brand voice for each platform. The base voice comes from `conten
 - Lead with the visual -- caption supports, not replaces
 - First line is the hook (visible before "more" truncation)
 - Use emoji sparingly as visual breaks, not decoration
-- Hashtags: 5-15 relevant ones (mix niche + broad)
+- Hashtags: 5-15 relevant ones (mix niche + broad), rotate sets
 - Alt text on every image (accessibility + SEO)
+- Place hashtags in first comment or end of caption (test both for reach)
 - Avoid: walls of text, hard-sell language, stock photo aesthetics
 - Optimal posting: Monday-Friday, 11am-1pm and 7-9pm local time
 
@@ -108,7 +110,7 @@ Adapt your core brand voice for each platform. The base voice comes from `conten
 - Chapters: add timestamps for videos over 5 minutes
 - CTA: subscribe prompt at natural break, not forced intro
 - Avoid: clickbait that doesn't deliver, long intros, "don't forget to like and subscribe" as opener
-- Tags: 5-10 relevant keywords
+- Tags: 5-10 relevant keywords (include common misspellings)
 
 ### Script Tone Guide
 
@@ -187,13 +189,15 @@ YouTube: "So we coat these with marine-grade finish -- the same stuff
 
 ### Structure
 
-See `content/guidelines.md` for full blog formatting standards. Key differences from social:
+See `content/guidelines.md` for full blog formatting standards. See `tools/social-media/bird.md` for X/Twitter API integration and `tools/social-media/linkedin.md` for LinkedIn automation. Key differences from social:
 
 - Longer form (1,500-3,000 words for pillar content)
 - H2/H3 hierarchy for scannability
 - Internal links (3-5 per article)
-- Meta title and description optimised for search
+- Meta title and description optimised for search (150-160 chars, include primary keyword)
 - One sentence per paragraph (per guidelines.md)
+- Structured data: Article schema, FAQ schema where applicable, breadcrumbs
+- SEO: Primary keyword in title + H1 + first 100 words + meta. Secondary keywords in H2s. Image alt text with keywords. URL slug under 60 chars.
 
 ## Adapting Your Core Voice
 
