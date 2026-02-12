@@ -372,7 +372,7 @@ cleanup_deprecated_paths() {
 				rm -f "$omo_config"
 				print_info "Removed oh-my-opencode config"
 			fi
-			if [[ "$has_omo_plugin" == "true" ]] && [[ -n "$opencode_config" ]]; then
+			if [[ "$has_omo_plugin" == "true" ]]; then
 				local tmp_file
 				tmp_file=$(mktemp)
 				trap 'rm -f "${tmp_file:-}"' RETURN
