@@ -26,6 +26,35 @@ UPDATE_TOOLS_MODE=false
 REPO_URL="https://github.com/marcusquinn/aidevops.git"
 INSTALL_DIR="$HOME/Git/aidevops"
 
+# Source modular setup functions (t316.2)
+# These modules are sourced only when setup.sh is run from the repo directory
+# (not during bootstrap from curl, which re-execs after cloning)
+SETUP_MODULES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.agents/scripts/setup" 2>/dev/null && pwd)"
+if [[ -d "$SETUP_MODULES_DIR" ]]; then
+	# shellcheck source=.agents/scripts/setup/_common.sh
+	source "$SETUP_MODULES_DIR/_common.sh"
+	# shellcheck source=.agents/scripts/setup/_backup.sh
+	source "$SETUP_MODULES_DIR/_backup.sh"
+	# shellcheck source=.agents/scripts/setup/_validation.sh
+	source "$SETUP_MODULES_DIR/_validation.sh"
+	# shellcheck source=.agents/scripts/setup/_migration.sh
+	source "$SETUP_MODULES_DIR/_migration.sh"
+	# shellcheck source=.agents/scripts/setup/_shell.sh
+	source "$SETUP_MODULES_DIR/_shell.sh"
+	# shellcheck source=.agents/scripts/setup/_installation.sh
+	source "$SETUP_MODULES_DIR/_installation.sh"
+	# shellcheck source=.agents/scripts/setup/_deployment.sh
+	source "$SETUP_MODULES_DIR/_deployment.sh"
+	# shellcheck source=.agents/scripts/setup/_opencode.sh
+	source "$SETUP_MODULES_DIR/_opencode.sh"
+	# shellcheck source=.agents/scripts/setup/_tools.sh
+	source "$SETUP_MODULES_DIR/_tools.sh"
+	# shellcheck source=.agents/scripts/setup/_services.sh
+	source "$SETUP_MODULES_DIR/_services.sh"
+	# shellcheck source=.agents/scripts/setup/_bootstrap.sh
+	source "$SETUP_MODULES_DIR/_bootstrap.sh"
+fi
+
 print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
