@@ -81,3 +81,30 @@ close_completed_issue() {
 get_issue_for_task() {
 	:
 }
+
+#######################################
+# Map supervisor state to GitHub issue status label (t1009)
+# Arguments:
+#   $1 - supervisor state
+# Returns:
+#   Label name on stdout, empty for terminal states
+# Real implementation: supervisor-helper.sh state_to_status_label()
+#######################################
+state_to_status_label() {
+	:
+}
+
+#######################################
+# Sync GitHub issue status label on state transition (t1009)
+# Called from cmd_transition() after each state change.
+# Removes all status:* labels, adds the one matching the new state.
+# For terminal states (verified, deployed, cancelled), closes the issue.
+# Arguments:
+#   $1 - task ID
+#   $2 - new state
+#   $3 - old state (for logging)
+# Real implementation: supervisor-helper.sh sync_issue_status_label()
+#######################################
+sync_issue_status_label() {
+	:
+}
