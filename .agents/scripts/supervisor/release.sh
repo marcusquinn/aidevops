@@ -220,8 +220,8 @@ cmd_release() {
 		return 1
 	fi
 
-	local bid bname bstatus brelease_flag brelease_type
-	IFS='|' read -r bid bname bstatus brelease_flag brelease_type <<<"$batch_row"
+	local bid bname bstatus _brelease_flag brelease_type
+	IFS='|' read -r bid bname bstatus _brelease_flag brelease_type <<<"$batch_row"
 	escaped_batch=$(sql_escape "$bid")
 
 	# Handle enable/disable mode
