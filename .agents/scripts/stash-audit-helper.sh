@@ -35,7 +35,29 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 set -euo pipefail
 
 readonly BOLD='\033[1m'
+readonly RESET="$NC"  # Alias for NC from shared-constants.sh
 readonly STASH_AGE_THRESHOLD=30  # days
+
+# Color constants are defined in shared-constants.sh
+
+#######################################
+# Logging functions
+#######################################
+log_info() {
+    echo -e "${BLUE}[INFO]${NC} $*"
+}
+
+log_success() {
+    echo -e "${GREEN}[OK]${NC} $*"
+}
+
+log_warn() {
+    echo -e "${YELLOW}[WARN]${NC} $*"
+}
+
+log_error() {
+    echo -e "${RED}[ERROR]${NC} $*" >&2
+}
 
 #######################################
 # Show help message
@@ -148,51 +170,34 @@ get_stash_age() {
 stash_changes_in_head() {
     local stash_ref="$1"
     
-    # Get the diff between stash and HEAD
-    # If the diff is empty, all stash changes are in HEAD
-    local diff_output
-    diff_output=$(git diff "$stash_ref" HEAD 2>/dev/null)
-    
-    if [[ -z "$diff_output" ]]; then
-        return 0
-    fi
-    
-    # Check if stash contains only changes that are already in HEAD
-    # by comparing stash content with HEAD
+    # Get files changed in the stash
     local stash_files
-    stash_files=$(git diff --name-only "$stash_ref^!" 2>/dev/null)
+    stash_files=$(git stash show --name-only "$stash_ref" 2>/dev/null || echo "")
     
     if [[ -z "$stash_files" ]]; then
+        # Empty stash, safe to drop
         return 0
     fi
     
-    # For each file in stash, check if the changes are in HEAD
-    local all_in_head=true
+    # For each file in stash, compare content with HEAD
     while IFS= read -r file; do
-        if [[ ! -f "$file" ]]; then
-            # File doesn't exist in HEAD, stash has unique content
-            all_in_head=false
-            break
-        fi
+        [[ -z "$file" ]] && continue
         
-        # Compare file content in stash vs HEAD
+        # Get file content from stash and HEAD
         local stash_content
         local head_content
         
-        stash_content=$(git show "$stash_ref:$file" 2>/dev/null || echo "")
-        head_content=$(git show "HEAD:$file" 2>/dev/null || echo "")
+        stash_content=$(git show "$stash_ref:$file" 2>/dev/null || echo "__STASH_FILE_NOT_FOUND__")
+        head_content=$(git show "HEAD:$file" 2>/dev/null || echo "__HEAD_FILE_NOT_FOUND__")
         
+        # If content differs, stash has unique changes
         if [[ "$stash_content" != "$head_content" ]]; then
-            all_in_head=false
-            break
+            return 1
         fi
     done <<< "$stash_files"
     
-    if [[ "$all_in_head" == "true" ]]; then
-        return 0
-    fi
-    
-    return 1
+    # All files match HEAD
+    return 0
 }
 
 #######################################
