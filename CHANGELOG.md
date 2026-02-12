@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.110.13] - 2026-02-12
+
+### Added
+
+- auto-resolve merge conflicts with escalating strategy (t302) (#1203)
+- auto-decompose t311 from PLANS.md (2026-02-12-modularise-oversized-shell-scripts)
+- extend Rosetta audit to scan /usr/local/bin and /Applications for x86 binaries
+- enhance Rosetta audit with migrate/dry-run, shell linting setup (t301)
+- add supervisor Phase 10b — auto-create TODO tasks from quality findings (t299) (#1170)
+
+### Changed
+
+- Documentation: add missing [namespace] argument to plugin init help text (t308) (#1191)
+- Documentation: add proof-log for Homebrew/Beads Linux install (OrbStack Ubuntu test)
+
+### Fixed
+
+- add path traversal sanitization to plugin namespaces in setup.sh (t305) (#1188)
+- add namespace validation to prevent path traversal in plugin deployment (t306) (#1190)
+- reorder migration phases — install ARM before removing x86 (t301)
+- add validate_namespace call in plugin init command (t307) (#1189)
+- replace undefined SUPERVISOR_STATE_DIR with SUPERVISOR_DIR in Phase 10b (t300) (#1174)
+
 ## [2.110.12] - 2026-02-11
 
 ### Added
