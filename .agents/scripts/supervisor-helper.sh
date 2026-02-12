@@ -3229,6 +3229,11 @@ update_queue_health_issue() {
 	cnt_pr_review=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('pr_review','review_triage','merging','merged','deploying');" 2>/dev/null || echo "0")
 	cnt_complete=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('complete','deployed','verified');" 2>/dev/null || echo "0")
 	cnt_total=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks;" 2>/dev/null || echo "0")
+	# Actionable total excludes cancelled/skipped tasks for accurate progress
+	local cnt_cancelled cnt_skipped cnt_actionable
+	cnt_cancelled=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status = 'cancelled';" 2>/dev/null || echo "0")
+	cnt_skipped=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status = 'skipped';" 2>/dev/null || echo "0")
+	cnt_actionable=$((cnt_total - cnt_cancelled - cnt_skipped))
 
 	# Active batch info
 	local active_batch_name=""
@@ -3463,8 +3468,8 @@ update_queue_health_issue() {
 
 	# Progress bar
 	local progress_pct=0
-	if [[ "${cnt_total:-0}" -gt 0 ]]; then
-		progress_pct=$(((cnt_complete * 100) / cnt_total))
+	if [[ "${cnt_actionable:-0}" -gt 0 ]]; then
+		progress_pct=$(((cnt_complete * 100) / cnt_actionable))
 	fi
 	local progress_filled=$((progress_pct / 5))
 	local progress_empty=$((20 - progress_filled))
@@ -3512,7 +3517,7 @@ update_queue_health_issue() {
 ### Summary
 
 \`\`\`
-[${progress_bar}] ${progress_pct}% (${cnt_complete}/${cnt_total})
+[${progress_bar}] ${progress_pct}% (${cnt_complete}/${cnt_actionable} actionable)
 \`\`\`
 
 | Status | Count |
@@ -3525,7 +3530,8 @@ update_queue_health_issue() {
 | Blocked | ${cnt_blocked} |
 | Failed | ${cnt_failed} |
 | Complete | ${cnt_complete} |
-| **Total** | **${cnt_total}** |
+| Cancelled | ${cnt_cancelled} |
+| **Actionable** | **${cnt_actionable}** |
 
 ### Active Workers
 
@@ -3605,7 +3611,7 @@ _Auto-updated by supervisor pulse (t1013). Do not edit manually._"
 	if [[ -z "$title_status" ]]; then
 		title_status="idle"
 	fi
-	local health_title="[Supervisor] ${progress_pct}% done (${cnt_complete}/${cnt_total}) | ${title_status} | ${title_time} UTC"
+	local health_title="[Supervisor] ${progress_pct}% done (${cnt_complete}/${cnt_actionable} actionable) | ${title_status} | ${title_time} UTC"
 	gh issue edit "$health_issue_number" --repo "$repo_slug" --title "$health_title" >/dev/null 2>&1 || true
 
 	log_verbose "  Phase 8c: Updated queue health issue #$health_issue_number"
