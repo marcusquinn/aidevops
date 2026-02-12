@@ -275,7 +275,7 @@ create_backup_with_rotation() {
 
 		# Delete oldest backups (sorted by name = sorted by date)
 		find "$backup_base" -maxdepth 1 -type d -name "20*" 2>/dev/null | sort | head -n "$to_delete" | while read -r old_backup; do
-			rm -rf "$old_backup"
+			[[ -n "$old_backup" ]] && rm -rf "$old_backup"
 		done
 	fi
 
@@ -304,6 +304,7 @@ validate_namespace() {
 # This ensures clean upgrades when agents are reorganized
 cleanup_deprecated_paths() {
 	local agents_dir="$HOME/.aidevops/agents"
+	[[ -z "$agents_dir" ]] && return 1
 	local cleaned=0
 
 	# List of deprecated paths (add new ones here when reorganizing)
@@ -885,7 +886,7 @@ migrate_old_backups() {
 
 	if [[ $old_count -eq 0 ]]; then
 		# Empty directory, just remove it
-		rm -rf "$old_backup_dir"
+		rm -rf "${old_backup_dir:?}"
 		return 0
 	fi
 
@@ -914,7 +915,7 @@ migrate_old_backups() {
 	done
 
 	# Remove remaining old backups and the old directory
-	rm -rf "$old_backup_dir"
+	rm -rf "${old_backup_dir:?}"
 
 	if [[ $migrated -gt 0 ]]; then
 		print_success "Migrated $migrated recent backups, removed $((old_count - migrated)) old backups"
@@ -995,7 +996,7 @@ migrate_loop_state_directories() {
 			# Move all files from old to new
 			if [[ -n "$(ls -A "$legacy_state_dir" 2>/dev/null)" ]]; then
 				cp -R "$legacy_state_dir"/* "$new_state_dir/" 2>/dev/null || true
-				rm -rf "$legacy_state_dir"
+				rm -rf "${legacy_state_dir:?}"
 				print_info "  Migrated .agents/loop-state/ -> .agents/loop-state/"
 				((migrated++)) || true
 			fi
@@ -3185,7 +3186,7 @@ deploy_aidevops_agents() {
 		done
 		if [[ "$preserve_failed" == "true" ]]; then
 			print_error "Failed to preserve user/plugin agents; aborting clean"
-			rm -rf "$tmp_preserve"
+			rm -rf "${tmp_preserve:?}"
 			return 1
 		fi
 		rm -rf "${target_dir:?}"/*
@@ -3195,7 +3196,7 @@ deploy_aidevops_agents() {
 				cp -R "$tmp_preserve/$pdir" "$target_dir/$pdir"
 			fi
 		done
-		rm -rf "$tmp_preserve"
+		rm -rf "${tmp_preserve:?}"
 	fi
 
 	# Copy all agent files and folders, excluding:
