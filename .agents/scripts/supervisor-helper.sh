@@ -3505,6 +3505,86 @@ check_task_already_done() {
 
 	return 1
 }
+
+#######################################
+# was_previously_worked() — detect tasks that had prior dispatch cycles (t1008)
+# Checks the state_log for evidence that a task was previously dispatched,
+# ran, and then returned to queued (via retry, blocked->queued, failed->queued,
+# or quality-gate escalation). These tasks should get a lightweight verification
+# worker instead of a full implementation worker, saving ~$0.80 per dispatch.
+#
+# Returns:
+#   0 = previously worked (should use verify dispatch)
+#   1 = fresh task (use normal dispatch)
+#
+# Output (stdout): reason string if previously worked, empty if fresh
+#######################################
+was_previously_worked() {
+	local task_id="${1:-}"
+
+	if [[ -z "$task_id" ]]; then
+		return 1
+	fi
+
+	ensure_db
+
+	local escaped_id
+	escaped_id=$(sql_escape "$task_id")
+
+	# Check 1: Has this task been dispatched before?
+	# A task that was dispatched at least once has a state_log entry for
+	# queued->dispatched. If it's back in queued now, it was re-queued.
+	local prior_dispatch_count=0
+	prior_dispatch_count=$(db "$SUPERVISOR_DB" "
+		SELECT COUNT(*) FROM state_log
+		WHERE task_id = '$escaped_id'
+		AND to_state = 'dispatched';
+	" 2>/dev/null) || prior_dispatch_count=0
+
+	if [[ "$prior_dispatch_count" -gt 0 ]]; then
+		# Check 2: Does the task have retries > 0? (direct evidence of re-queue)
+		local retry_count=0
+		retry_count=$(db "$SUPERVISOR_DB" "
+			SELECT COALESCE(retries, 0) FROM tasks WHERE id = '$escaped_id';
+		" 2>/dev/null) || retry_count=0
+
+		if [[ "$retry_count" -gt 0 ]]; then
+			echo "retry_count:$retry_count,prior_dispatches:$prior_dispatch_count"
+			return 0
+		fi
+
+		# Check 3: Was it ever in a terminal-ish state (evaluating, blocked, failed)
+		# before being re-queued? This catches quality-gate escalations and manual resets.
+		local prior_eval_count=0
+		prior_eval_count=$(db "$SUPERVISOR_DB" "
+			SELECT COUNT(*) FROM state_log
+			WHERE task_id = '$escaped_id'
+			AND to_state IN ('evaluating', 'blocked', 'failed', 'retrying');
+		" 2>/dev/null) || prior_eval_count=0
+
+		if [[ "$prior_eval_count" -gt 0 ]]; then
+			echo "prior_dispatches:$prior_dispatch_count,prior_evaluations:$prior_eval_count"
+			return 0
+		fi
+	fi
+
+	# Check 4: Does a branch with commits already exist for this task?
+	# This catches cases where a worker created commits but the session died
+	# before the supervisor could evaluate it (orphaned work).
+	local task_branch="feature/${task_id}"
+	local repo
+	repo=$(db "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$escaped_id';" 2>/dev/null) || repo="."
+	local branch_commits=0
+	branch_commits=$(git -C "${repo:-.}" log --oneline "origin/$task_branch" --not origin/main 2>/dev/null | wc -l | tr -d ' ') || branch_commits=0
+
+	if [[ "$branch_commits" -gt 0 ]]; then
+		echo "existing_branch_commits:$branch_commits"
+		return 0
+	fi
+
+	return 1
+}
+
 #######################################
 # check_task_staleness() — pre-dispatch staleness detection (t312)
 # Analyses a task description against the current codebase to detect
@@ -5177,6 +5257,121 @@ $memory_context"
 }
 
 #######################################
+# build_verify_dispatch_cmd() — lightweight verification prompt (t1008)
+# Instead of a full implementation prompt, this builds a focused verification
+# prompt that checks whether prior work is complete and functional.
+# Cost: ~$0.10-0.20 (sonnet, small context) vs ~$1.00 for full implementation.
+#
+# Arguments:
+#   $1 = task_id
+#   $2 = worktree_path
+#   $3 = log_file
+#   $4 = ai_cli (opencode or claude)
+#   $5 = memory_context (optional)
+#   $6 = model (resolved model string — overridden to sonnet tier)
+#   $7 = description
+#   $8 = verify_reason (from was_previously_worked)
+#
+# Output: NUL-delimited command array (same format as build_dispatch_cmd)
+#######################################
+build_verify_dispatch_cmd() {
+	local task_id="$1"
+	local worktree_path="$2"
+	local log_file="$3"
+	local ai_cli="$4"
+	local memory_context="${5:-}"
+	local model="${6:-}"
+	local description="${7:-}"
+	local verify_reason="${8:-}"
+
+	local prompt="/full-loop $task_id --headless --verify"
+	if [[ -n "$description" ]]; then
+		prompt="/full-loop $task_id --headless --verify -- $description"
+	fi
+
+	# Verification-specific prompt — much shorter than full implementation
+	prompt="$prompt
+
+## VERIFICATION MODE (t1008)
+This task was previously worked on ($verify_reason). You are a lightweight
+verification worker — your job is to CHECK whether the prior work is complete
+and functional, NOT to reimplement from scratch.
+
+**Your verification checklist:**
+1. Check if the feature/fix described in the task already exists in the codebase
+2. Run relevant tests (unit tests, ShellCheck for .sh files, syntax checks)
+3. Verify integration — does the code work with its callers/dependencies?
+4. Check for any partial work that needs completion
+
+**Outcomes — emit exactly ONE of these signals:**
+- If work is COMPLETE and verified: emit \`VERIFY_COMPLETE\` in your final output,
+  then create a short verification PR (title: '$task_id: Verify — <description>')
+  documenting what you verified and the test results. If no code changes needed,
+  just report \`VERIFY_COMPLETE\` with evidence in your output.
+- If work is INCOMPLETE but salvageable: emit \`VERIFY_INCOMPLETE\` with a summary
+  of what's done and what remains. Then continue implementation from where the
+  prior worker left off. Commit early and create a PR.
+- If work is NOT STARTED or fundamentally broken: emit \`VERIFY_NOT_STARTED\`.
+  Then proceed with full implementation as a normal worker would.
+
+**Cost-saving rules:**
+- Do NOT read files you don't need — focus on the specific deliverables
+- Do NOT refactor or improve code beyond what the task requires
+- If verification takes <5 minutes of checks, that's ideal
+- Commit and push any changes immediately
+
+## MANDATORY Worker Restrictions (t173)
+- Do NOT edit, commit, or push TODO.md — the supervisor owns all TODO.md updates.
+- Do NOT edit todo/PLANS.md or todo/tasks/* — these are supervisor-managed.
+- Report status via exit code, log output, and PR creation only.
+- Put task notes in commit messages or PR body, never in TODO.md."
+
+	if [[ -n "$memory_context" ]]; then
+		prompt="$prompt
+
+$memory_context"
+	fi
+
+	# Use NUL-delimited output so multi-line prompts stay as single arguments
+	if [[ "$ai_cli" == "opencode" ]]; then
+		printf '%s\0' "opencode"
+		printf '%s\0' "run"
+		printf '%s\0' "--format"
+		printf '%s\0' "json"
+		if [[ -n "$model" ]]; then
+			printf '%s\0' "-m"
+			printf '%s\0' "$model"
+		fi
+		printf '%s\0' "--title"
+		local session_title="${task_id}-verify"
+		if [[ -n "$description" ]]; then
+			local short_desc="${description%% -- *}"
+			short_desc="${short_desc%% #*}"
+			short_desc="${short_desc%% ~*}"
+			if [[ ${#short_desc} -gt 30 ]]; then
+				short_desc="${short_desc:0:27}..."
+			fi
+			session_title="${task_id}-verify: ${short_desc}"
+		fi
+		printf '%s\0' "$session_title"
+		printf '%s\0' "$prompt"
+	else
+		# claude CLI
+		printf '%s\0' "claude"
+		printf '%s\0' "-p"
+		printf '%s\0' "$prompt"
+		if [[ -n "$model" ]]; then
+			printf '%s\0' "--model"
+			printf '%s\0' "$model"
+		fi
+		printf '%s\0' "--output-format"
+		printf '%s\0' "json"
+	fi
+
+	return 0
+}
+
+#######################################
 # Create a worktree for a task
 # Returns the worktree path on stdout
 #######################################
@@ -5758,6 +5953,29 @@ cmd_dispatch() {
 		return 0
 	fi
 
+	# Pre-dispatch reverification: detect previously-worked tasks (t1008)
+	# If a task was dispatched before (dead worker, unclaimed, re-queued, quality
+	# escalation), dispatch a lightweight verify worker instead of full implementation.
+	# Cost: ~$0.10-0.20 (sonnet) vs ~$1.00 (full session). The verify worker checks
+	# if deliverables exist and work; if incomplete, it continues implementation.
+	local verify_mode="" verify_reason=""
+	if [[ "${SUPERVISOR_SKIP_VERIFY_MODE:-false}" != "true" ]]; then
+		# Skip verify mode if the last error was verify_not_started_needs_full —
+		# the verify worker already confirmed no prior work exists, so a full
+		# implementation dispatch is needed (avoids infinite verify loop).
+		local last_error=""
+		last_error=$(db "$SUPERVISOR_DB" "SELECT COALESCE(error, '') FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null) || last_error=""
+		if [[ "$last_error" == "verify_not_started_needs_full" || "$last_error" == "verify_incomplete_no_pr" ]]; then
+			log_info "Task $task_id: skipping verify mode (last error: $last_error) — using full dispatch"
+		else
+			verify_reason=$(was_previously_worked "$task_id" 2>/dev/null) || true
+			if [[ -n "$verify_reason" ]]; then
+				verify_mode="true"
+				log_info "Task $task_id was previously worked ($verify_reason) — using verify dispatch mode (t1008)"
+			fi
+		fi
+	fi
+
 	# Check if task is claimed by someone else via TODO.md assignee: field (t165)
 	local claimed_by=""
 	claimed_by=$(check_task_claimed "$task_id" "${trepo:-.}" 2>/dev/null) || true
@@ -5907,6 +6125,8 @@ cmd_dispatch() {
 		echo "model=${resolved_model:-${tmodel:-default}}"
 		echo "ai_cli=$(resolve_ai_cli 2>/dev/null || echo unknown)"
 		echo "dispatch_mode=$(detect_dispatch_mode 2>/dev/null || echo unknown)"
+		echo "dispatch_type=${verify_mode:+verify}"
+		echo "verify_reason=${verify_reason:-}"
 		echo "=== END DISPATCH METADATA ==="
 		echo ""
 	} >"$log_file" 2>/dev/null || true
@@ -5929,8 +6149,16 @@ cmd_dispatch() {
 	fi
 
 	# Resolve model via frontmatter + fallback chain (t132.5)
+	# t1008: For verify-mode dispatches, prefer sonnet tier (cheaper, sufficient for
+	# verification checks). The verify worker can escalate to full implementation if
+	# it discovers the work is incomplete, but starts cheap.
 	local resolved_model
-	resolved_model=$(resolve_task_model "$task_id" "$tmodel" "${trepo:-.}" "$ai_cli")
+	if [[ "$verify_mode" == "true" ]]; then
+		resolved_model=$(resolve_model "coding" "$ai_cli" 2>/dev/null) || resolved_model=""
+		log_info "Verify mode: using coding-tier model ($resolved_model) instead of task-specific model"
+	else
+		resolved_model=$(resolve_task_model "$task_id" "$tmodel" "${trepo:-.}" "$ai_cli")
+	fi
 
 	# Secondary availability check: verify the resolved model's provider (t233)
 	# The initial health check uses the "health" tier (typically anthropic).
@@ -5963,17 +6191,28 @@ cmd_dispatch() {
 		fi
 	fi
 
-	log_info "Dispatching $task_id via $ai_cli ($dispatch_mode mode)"
+	local dispatch_type="full"
+	if [[ "$verify_mode" == "true" ]]; then
+		dispatch_type="verify"
+	fi
+	log_info "Dispatching $task_id via $ai_cli ($dispatch_mode mode, $dispatch_type dispatch)"
 	log_info "Worktree: $worktree_path"
 	log_info "Model: $resolved_model"
 	log_info "Log: $log_file"
 
 	# Build and execute dispatch command
+	# t1008: Use verify dispatch for previously-worked tasks (cheaper, focused)
 	# Use NUL-delimited read to preserve multi-line prompts as single arguments
 	local -a cmd_parts=()
-	while IFS= read -r -d '' part; do
-		cmd_parts+=("$part")
-	done < <(build_dispatch_cmd "$task_id" "$worktree_path" "$log_file" "$ai_cli" "$memory_context" "$resolved_model" "$tdesc")
+	if [[ "$verify_mode" == "true" ]]; then
+		while IFS= read -r -d '' part; do
+			cmd_parts+=("$part")
+		done < <(build_verify_dispatch_cmd "$task_id" "$worktree_path" "$log_file" "$ai_cli" "$memory_context" "$resolved_model" "$tdesc" "$verify_reason")
+	else
+		while IFS= read -r -d '' part; do
+			cmd_parts+=("$part")
+		done < <(build_dispatch_cmd "$task_id" "$worktree_path" "$log_file" "$ai_cli" "$memory_context" "$resolved_model" "$tdesc")
+	fi
 
 	# Ensure PID directory exists before dispatch
 	mkdir -p "$SUPERVISOR_DIR/pids"
@@ -6242,9 +6481,15 @@ extract_log_metadata() {
 		echo "dispatch_error="
 	fi
 
-	# Completion signals
+	# Completion signals (t1008: added VERIFY_* signals for verify-mode workers)
 	if grep -q 'FULL_LOOP_COMPLETE' "$log_file" 2>/dev/null; then
 		echo "signal=FULL_LOOP_COMPLETE"
+	elif grep -q 'VERIFY_COMPLETE' "$log_file" 2>/dev/null; then
+		echo "signal=VERIFY_COMPLETE"
+	elif grep -q 'VERIFY_INCOMPLETE' "$log_file" 2>/dev/null; then
+		echo "signal=VERIFY_INCOMPLETE"
+	elif grep -q 'VERIFY_NOT_STARTED' "$log_file" 2>/dev/null; then
+		echo "signal=VERIFY_NOT_STARTED"
 	elif grep -q 'TASK_COMPLETE' "$log_file" 2>/dev/null; then
 		echo "signal=TASK_COMPLETE"
 	else
@@ -7005,6 +7250,40 @@ evaluate_worker() {
 	# FULL_LOOP_COMPLETE = definitive success
 	if [[ "$meta_signal" == "FULL_LOOP_COMPLETE" ]]; then
 		echo "complete:${meta_pr_url:-no_pr}"
+		return 0
+	fi
+
+	# t1008: Verify-mode worker signals
+	# VERIFY_COMPLETE = verification confirmed prior work is done
+	if [[ "$meta_signal" == "VERIFY_COMPLETE" ]]; then
+		log_info "Verify worker confirmed $task_id is complete"
+		echo "complete:${meta_pr_url:-verified_complete}"
+		return 0
+	fi
+
+	# VERIFY_INCOMPLETE = prior work exists but needs more; worker continued implementation
+	if [[ "$meta_signal" == "VERIFY_INCOMPLETE" ]]; then
+		if [[ -n "$meta_pr_url" ]]; then
+			log_info "Verify worker found incomplete work for $task_id, continued and created PR"
+			echo "complete:${meta_pr_url}"
+			return 0
+		fi
+		# No PR = worker found incomplete work but couldn't finish
+		log_info "Verify worker found incomplete work for $task_id but no PR created"
+		echo "retry:verify_incomplete_no_pr"
+		return 0
+	fi
+
+	# VERIFY_NOT_STARTED = no prior work found; worker should have done full implementation
+	if [[ "$meta_signal" == "VERIFY_NOT_STARTED" ]]; then
+		if [[ -n "$meta_pr_url" ]]; then
+			log_info "Verify worker found no prior work for $task_id, did full implementation"
+			echo "complete:${meta_pr_url}"
+			return 0
+		fi
+		# No PR = verify worker couldn't complete full implementation (expected — it's lightweight)
+		log_info "Verify worker found no prior work for $task_id and couldn't complete — re-queue for full dispatch"
+		echo "retry:verify_not_started_needs_full"
 		return 0
 	fi
 
