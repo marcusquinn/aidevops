@@ -2978,17 +2978,18 @@ model_to_tier() {
 	if [[ -z "$model_str" ]]; then
 		return 0
 	fi
+	# Order matters: specific patterns before generic ones (ShellCheck SC2221/SC2222)
 	case "$model_str" in
+	*gpt-4.1-mini*) echo "flash" ;;
+	*gpt-4.1*) echo "sonnet" ;;
+	*gemini-2.5-flash*) echo "flash" ;;
+	*gemini-2.5-pro*) echo "pro" ;;
 	*haiku*) echo "haiku" ;;
 	*flash*) echo "flash" ;;
 	*sonnet*) echo "sonnet" ;;
 	*opus*) echo "opus" ;;
 	*pro*) echo "pro" ;;
 	*o3*) echo "opus" ;;
-	*gpt-4.1-mini*) echo "flash" ;;
-	*gpt-4.1*) echo "sonnet" ;;
-	*gemini-2.5-flash*) echo "flash" ;;
-	*gemini-2.5-pro*) echo "pro" ;;
 	*) echo "" ;;
 	esac
 	return 0
