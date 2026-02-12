@@ -438,11 +438,13 @@ update_todo_on_complete() {
 		pr_number="${BASH_REMATCH[1]}"
 	fi
 
-	# Mark as complete: [ ] -> [x], append pr:#NNN (if available) and completed:date
-	# Use sed to match the line and transform it
+	# Mark as complete: [ ] -> [x], append proof-log and completed:date
+	# Proof-log: pr:#NNN if PR found, otherwise verified:date (t1004)
 	local proof_log=""
 	if [[ -n "$pr_number" ]]; then
 		proof_log=" pr:#${pr_number}"
+	else
+		proof_log=" verified:${today}"
 	fi
 	local sed_pattern="s/^([[:space:]]*- )\[ \] (${task_id} .*)$/\1[x] \2${proof_log} completed:${today}/"
 
