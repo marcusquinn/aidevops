@@ -3587,6 +3587,27 @@ _Auto-updated by supervisor pulse (t1013). Do not edit manually._"
 		fi
 	fi
 
+	# Update issue title with live stats so the pinned issue is useful at a glance
+	local title_time
+	title_time=$(date -u +"%H:%M")
+	local title_status=""
+	if [[ "${cnt_running:-0}" -gt 0 ]]; then
+		title_status="${cnt_running} running"
+	fi
+	if [[ "${cnt_queued:-0}" -gt 0 ]]; then
+		[[ -n "$title_status" ]] && title_status="${title_status}, "
+		title_status="${title_status}${cnt_queued} queued"
+	fi
+	if [[ "${cnt_blocked:-0}" -gt 0 ]]; then
+		[[ -n "$title_status" ]] && title_status="${title_status}, "
+		title_status="${title_status}${cnt_blocked} blocked"
+	fi
+	if [[ -z "$title_status" ]]; then
+		title_status="idle"
+	fi
+	local health_title="[Supervisor] ${progress_pct}% done (${cnt_complete}/${cnt_total}) | ${title_status} | ${title_time} UTC"
+	gh issue edit "$health_issue_number" --repo "$repo_slug" --title "$health_title" >/dev/null 2>&1 || true
+
 	log_verbose "  Phase 8c: Updated queue health issue #$health_issue_number"
 	return 0
 }
@@ -3823,15 +3844,18 @@ cmd_unclaim() {
 	# Parse arguments (t1017: support --force flag)
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-			--force) force=true ;;
-			-*) log_error "Unknown option: $1"; return 1 ;;
-			*)
-				if [[ -z "$task_id" ]]; then
-					task_id="$1"
-				elif [[ -z "$explicit_root" ]]; then
-					explicit_root="$1"
-				fi
-				;;
+		--force) force=true ;;
+		-*)
+			log_error "Unknown option: $1"
+			return 1
+			;;
+		*)
+			if [[ -z "$task_id" ]]; then
+				task_id="$1"
+			elif [[ -z "$explicit_root" ]]; then
+				explicit_root="$1"
+			fi
+			;;
 		esac
 		shift
 	done
