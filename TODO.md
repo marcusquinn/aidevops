@@ -69,6 +69,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 <<<<<<< Updated upstream
 - [ ] t1005 Automated git stash audit and cleanup with safety checks — git stashes accumulate from `git pull --rebase --autostash` cycles, aborted edits, and manual saves. Most become obsolete as their changes land in HEAD. Create a `stash-audit-helper.sh` that classifies each stash as safe-to-drop, obsolete, or needs-review, and optionally auto-drops safe ones. Integrate into supervisor pulse cleanup phase. Must never drop stashes containing user work that isn't in HEAD. #feature #quality #workflow #auto-dispatch ~45m (ai:30m test:15m) model:sonnet ref:GH#1287 assignee:marcusquinn started:2026-02-12T20:35:54Z logged:2026-02-12
+  - Notes: BLOCKED by supervisor: PR closed without merge
 
 - [x] t1006 Fix cron PATH: supervisor cron install should add user PATH to crontab — `opencode CLI not found` in cron because crontab uses minimal PATH. `supervisor-helper.sh cron install` should detect current `$PATH` and add it as a crontab env var. Also add `GH_TOKEN` auto-detection from `gh auth token`. #bugfix #supervisor #auto-dispatch ~30m (ai:20m test:10m) model:sonnet ref:GH#1289 logged:2026-02-12 pr:#1291 completed:2026-02-12
 
