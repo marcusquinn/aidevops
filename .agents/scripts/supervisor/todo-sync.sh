@@ -906,3 +906,188 @@ dedup_todo_task_ids() {
 
 	return 0
 }
+
+#######################################
+# Command: reconcile-db-todo - bidirectional DB<->TODO.md reconciliation (t1001)
+# Fills gaps not covered by cmd_reconcile_todo (Phase 7):
+#   1. DB failed/blocked tasks with no annotation in TODO.md
+#   2. Tasks marked [x] in TODO.md but DB still in non-terminal state
+#   3. DB orphans: tasks in DB with no corresponding TODO.md entry
+# Runs as Phase 7b in the supervisor pulse cycle.
+# Arguments:
+#   --repo <path>   - repo path (default: from DB or pwd)
+#   --batch <id>    - filter to batch
+#   --dry-run       - report only, don't modify
+# Returns: 0 on success
+#######################################
+cmd_reconcile_db_todo() {
+	local repo_path=""
+	local dry_run="false"
+	local batch_id=""
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--repo)
+			repo_path="$2"
+			shift 2
+			;;
+		--batch)
+			batch_id="$2"
+			shift 2
+			;;
+		--dry-run)
+			dry_run="true"
+			shift
+			;;
+		*) shift ;;
+		esac
+	done
+
+	ensure_db
+
+	# Determine repo path
+	if [[ -z "$repo_path" ]]; then
+		repo_path=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks LIMIT 1;" 2>/dev/null || echo "")
+		if [[ -z "$repo_path" ]]; then
+			repo_path="$(pwd)"
+		fi
+	fi
+
+	local todo_file="$repo_path/TODO.md"
+	if [[ ! -f "$todo_file" ]]; then
+		log_verbose "Phase 7b: Skipped (no TODO.md at $repo_path)"
+		return 0
+	fi
+
+	local batch_filter=""
+	if [[ -n "$batch_id" ]]; then
+		local escaped_batch
+		escaped_batch=$(sql_escape "$batch_id")
+		batch_filter="AND EXISTS (SELECT 1 FROM batch_tasks bt WHERE bt.task_id = t.id AND bt.batch_id = '$escaped_batch')"
+	fi
+
+	local fixed_count=0
+	local issue_count=0
+
+	# --- Gap 1: DB failed/blocked but TODO.md has no annotation ---
+	local failed_tasks
+	failed_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
+		SELECT t.id, t.status, t.error FROM tasks t
+		WHERE t.status IN ('failed', 'blocked')
+		$batch_filter
+		ORDER BY t.id;
+	")
+
+	if [[ -n "$failed_tasks" ]]; then
+		while IFS='|' read -r tid tstatus terror; do
+			[[ -z "$tid" ]] && continue
+
+			# Check if task is open in TODO.md with no Notes annotation
+			local line_num
+			line_num=$(grep -nE "^[[:space:]]*- \[ \] ${tid}( |$)" "$todo_file" | head -1 | cut -d: -f1)
+			[[ -z "$line_num" ]] && continue
+
+			# Check if a Notes line already exists below
+			local next_line_num=$((line_num + 1))
+			local next_line
+			next_line=$(sed -n "${next_line_num}p" "$todo_file" 2>/dev/null || echo "")
+
+			if echo "$next_line" | grep -qE "^[[:space:]]*- Notes:"; then
+				# Notes already present — skip
+				continue
+			fi
+
+			issue_count=$((issue_count + 1))
+
+			if [[ "$dry_run" == "true" ]]; then
+				log_warn "[dry-run] $tid: DB status=$tstatus but TODO.md has no annotation"
+			else
+				log_info "Phase 7b: Annotating $tid ($tstatus) in TODO.md"
+				local reason="${terror:-no error details}"
+				update_todo_on_blocked "$tid" "$reason" 2>>"${SUPERVISOR_LOG:-/dev/null}" || {
+					log_warn "Phase 7b: Failed to annotate $tid"
+					continue
+				}
+				fixed_count=$((fixed_count + 1))
+			fi
+		done <<<"$failed_tasks"
+	fi
+
+	# --- Gap 2: TODO.md [x] but DB still in non-terminal state ---
+	# Terminal states: complete, deployed, verified, failed, blocked, cancelled
+	# Non-terminal: queued, dispatched, running, evaluating, retrying,
+	#   pr_review, review_triage, merging, merged, deploying, verifying, verify_failed
+	local all_db_tasks
+	all_db_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
+		SELECT t.id, t.status FROM tasks t
+		WHERE t.status NOT IN ('complete', 'deployed', 'verified', 'failed', 'blocked', 'cancelled')
+		$batch_filter
+		ORDER BY t.id;
+	")
+
+	if [[ -n "$all_db_tasks" ]]; then
+		while IFS='|' read -r tid tstatus; do
+			[[ -z "$tid" ]] && continue
+
+			# Check if this task is marked [x] in TODO.md
+			if grep -qE "^[[:space:]]*- \[x\] ${tid}( |$)" "$todo_file"; then
+				issue_count=$((issue_count + 1))
+
+				if [[ "$dry_run" == "true" ]]; then
+					log_warn "[dry-run] $tid: marked [x] in TODO.md but DB status=$tstatus"
+				else
+					log_info "Phase 7b: Transitioning $tid from $tstatus to complete (TODO.md shows [x])"
+					cmd_transition "$tid" "complete" \
+						--reason "Reconciled: TODO.md marked [x] but DB was $tstatus (t1001)" \
+						2>>"${SUPERVISOR_LOG:-/dev/null}" || {
+						log_warn "Phase 7b: Failed to transition $tid to complete"
+						continue
+					}
+					fixed_count=$((fixed_count + 1))
+				fi
+			fi
+		done <<<"$all_db_tasks"
+	fi
+
+	# --- Gap 3: DB orphans — tasks in DB with no TODO.md entry at all ---
+	local orphan_tasks
+	orphan_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
+		SELECT t.id, t.status FROM tasks t
+		WHERE t.status NOT IN ('cancelled')
+		$batch_filter
+		ORDER BY t.id;
+	")
+
+	local orphan_count=0
+	local orphan_ids=""
+
+	if [[ -n "$orphan_tasks" ]]; then
+		while IFS='|' read -r tid tstatus; do
+			[[ -z "$tid" ]] && continue
+
+			# Check if task ID appears anywhere in TODO.md (open, closed, or in notes)
+			if ! grep -qE "(^|[[:space:]])${tid}([[:space:]]|$)" "$todo_file"; then
+				orphan_count=$((orphan_count + 1))
+				orphan_ids="${orphan_ids}${orphan_ids:+, }${tid}(${tstatus})"
+			fi
+		done <<<"$orphan_tasks"
+	fi
+
+	if [[ "$orphan_count" -gt 0 ]]; then
+		issue_count=$((issue_count + orphan_count))
+		log_warn "Phase 7b: $orphan_count DB orphan(s) with no TODO.md entry: $orphan_ids"
+		# Orphans are logged but not auto-fixed — they may be from other repos
+		# or manually managed tasks. The warning enables human review.
+	fi
+
+	# Summary
+	if [[ "$issue_count" -eq 0 ]]; then
+		log_verbose "Phase 7b: DB and TODO.md are in sync (no drift detected)"
+	elif [[ "$dry_run" == "true" ]]; then
+		log_warn "Phase 7b: $issue_count inconsistency(ies) found (dry-run, no changes made)"
+	else
+		log_success "Phase 7b: Fixed $fixed_count/$issue_count inconsistency(ies)"
+	fi
+
+	return 0
+}
