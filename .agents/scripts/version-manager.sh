@@ -679,9 +679,11 @@ find_pr_for_task_from_commits() {
 	local pr_number=""
 	while IFS= read -r commit; do
 		[[ -z "$commit" ]] && continue
-		if [[ "$commit" == *"$task_id"* ]] && [[ "$commit" =~ \(#([0-9]+)\) ]]; then
-			pr_number="${BASH_REMATCH[1]}"
-			break
+		if [[ "$commit" == *"$task_id"* ]]; then
+			pr_number=$(echo "$commit" | grep -oE '#[0-9]+' | head -1 | tr -d '#')
+			if [[ -n "$pr_number" ]]; then
+				break
+			fi
 		fi
 	done <<<"$commits"
 
