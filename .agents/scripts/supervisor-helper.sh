@@ -3283,6 +3283,11 @@ check_task_already_done() {
 # Output (stdout): staleness reason if stale/uncertain, empty if current
 #######################################
 check_task_staleness() {
+    # Allow bypassing staleness check via env var (t314: for create tasks that reference non-existent files)
+    if [[ "${SUPERVISOR_SKIP_STALENESS:-false}" == "true" ]]; then
+        return 1  # Assume current
+    fi
+
 	local task_id="${1:-}"
 	local task_description="${2:-}"
 	local project_root="${3:-.}"
@@ -15064,6 +15069,7 @@ Environment:
   SUPERVISOR_SELF_HEAL        Enable/disable self-healing (default: true)
   SUPERVISOR_AUTO_ISSUE       Enable/disable GitHub issue creation (default: false)
   SUPERVISOR_SKIP_REVIEW_TRIAGE Skip review triage before merge (default: false)
+  SUPERVISOR_SKIP_STALENESS    Skip pre-dispatch staleness check (default: false)
   SUPERVISOR_WORKER_TIMEOUT   Seconds before a hung worker is killed (default: 3600)
   SUPERVISOR_SELF_MEM_LIMIT   MB before supervisor respawns after batch (default: 8192)
   AIDEVOPS_SUPERVISOR_DIR     Override supervisor data directory
