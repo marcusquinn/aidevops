@@ -139,15 +139,15 @@ cmd_audit() {
 			;;
 		esac
 
-		printf "${color}%-15s${RESET} ${BOLD}%s${RESET} ${DIM}(%s)${RESET} %s\n" \
+		printf "${color}%-15s${NC} ${BOLD}%s${NC} ${DIM}(%s)${NC} %s\n" \
 			"$classification" "$stash_ref" "$age" "$message"
 	done < <(git stash list --format="%gd|%cr|%gs")
 
 	echo ""
 	print_info "Summary:"
-	echo "  ${GREEN}Safe to drop:${RESET} $safe_count"
-	echo "  ${YELLOW}Obsolete:${RESET} $obsolete_count"
-	echo "  ${BLUE}Needs review:${RESET} $review_count"
+	echo "  ${GREEN}Safe to drop:${NC} $safe_count"
+	echo "  ${YELLOW}Obsolete:${NC} $obsolete_count"
+	echo "  ${BLUE}Needs review:${NC} $review_count"
 }
 
 # Clean safe stashes
