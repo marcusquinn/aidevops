@@ -7,10 +7,18 @@
 # Use this for pre-commit checks and fast feedback during development.
 #
 # Checks performed:
-#   - ShellCheck for shell scripts
+#   - shfmt for shell script formatting (pre-pass, non-blocking)
+#   - ShellCheck for shell scripts (batch mode for speed)
 #   - Secretlint for exposed secrets
 #   - Pattern validation (return statements, positional parameters)
 #   - Markdown formatting
+#
+# Environment variables:
+#   LINTERS_DIFF_ONLY=true    - Only check modified files (faster for large repos)
+#
+# Usage:
+#   ./linters-local.sh                    # Full check
+#   LINTERS_DIFF_ONLY=true ./linters-local.sh  # Check only modified files
 #
 # For remote auditing (CodeRabbit, Codacy, SonarCloud), use:
 #   /code-audit-remote or code-audit-helper.sh
@@ -226,29 +234,151 @@ check_string_literals() {
     return 0
 }
 
+run_shfmt() {
+    echo -e "${BLUE}Running shfmt Format Check...${NC}"
+    
+    local violations=0
+    local diff_only="${LINTERS_DIFF_ONLY:-false}"
+    local files_to_check=()
+    
+    # Check if shfmt is installed
+    if ! command -v shfmt &> /dev/null; then
+        print_warning "shfmt not installed - skipping format check"
+        print_info "Install: brew install shfmt"
+        return 0
+    fi
+    
+    # Determine which files to check
+    if [[ "$diff_only" == "true" ]] && git rev-parse --git-dir > /dev/null 2>&1; then
+        # Diff-only mode: check only modified .sh files
+        print_info "Diff-only mode: checking modified .sh files"
+        
+        local changed_files
+        changed_files=$(git diff --name-only --diff-filter=ACMR HEAD -- '*.sh' 2>/dev/null || echo "")
+        
+        if [[ -z "$changed_files" ]]; then
+            local base_branch
+            base_branch=$(git merge-base HEAD main 2>/dev/null || git merge-base HEAD master 2>/dev/null || echo "")
+            if [[ -n "$base_branch" ]]; then
+                changed_files=$(git diff --name-only "$base_branch" HEAD -- '*.sh' 2>/dev/null || echo "")
+            fi
+        fi
+        
+        while IFS= read -r file; do
+            [[ -n "$file" ]] && [[ -f "$file" ]] && files_to_check+=("$file")
+        done <<< "$changed_files"
+        
+        if [[ ${#files_to_check[@]} -eq 0 ]]; then
+            print_success "shfmt: No modified .sh files to check"
+            return 0
+        fi
+    else
+        # Full mode: check all .sh files in .agents/scripts/
+        while IFS= read -r file; do
+            [[ -f "$file" ]] && files_to_check+=("$file")
+        done < <(find .agents/scripts/ -name "*.sh" -type f 2>/dev/null)
+    fi
+    
+    if [[ ${#files_to_check[@]} -eq 0 ]]; then
+        print_success "shfmt: No files to check"
+        return 0
+    fi
+    
+    print_info "Checking ${#files_to_check[@]} file(s) for formatting..."
+    
+    # Run shfmt in diff mode to check formatting
+    local unformatted_files=()
+    for file in "${files_to_check[@]}"; do
+        if ! shfmt -d "$file" > /dev/null 2>&1; then
+            unformatted_files+=("$file")
+        fi
+    done
+    
+    if [[ ${#unformatted_files[@]} -gt 0 ]]; then
+        violations=${#unformatted_files[@]}
+        print_warning "shfmt: $violations file(s) need formatting"
+        for file in "${unformatted_files[@]}"; do
+            echo "  - $file"
+        done
+        print_info "Fix with: shfmt -w ${unformatted_files[*]}"
+        # Don't fail on formatting issues, just warn
+        return 0
+    else
+        print_success "shfmt: All files properly formatted"
+    fi
+    
+    return 0
+}
+
 run_shellcheck() {
     echo -e "${BLUE}Running ShellCheck Validation...${NC}"
 
     local violations=0
-
-    for file in .agents/scripts/*.sh; do
-        if [[ -f "$file" ]]; then
-            # Only count errors and warnings, not info-level (SC1091, SC2329, etc.)
-            # Use severity filter to exclude info-level messages
-            local result
-            result=$(shellcheck --severity=warning "$file" 2>&1) || true
-            if [[ -n "$result" ]]; then
-                ((violations++))
-                print_warning "ShellCheck violations in $file"
+    local diff_only="${LINTERS_DIFF_ONLY:-false}"
+    local files_to_check=()
+    
+    # Determine which files to check
+    if [[ "$diff_only" == "true" ]] && git rev-parse --git-dir > /dev/null 2>&1; then
+        # Diff-only mode: check only modified .sh files
+        print_info "Diff-only mode: checking modified .sh files"
+        
+        # Get uncommitted changes (staged + unstaged)
+        local changed_files
+        changed_files=$(git diff --name-only --diff-filter=ACMR HEAD -- '*.sh' 2>/dev/null || echo "")
+        
+        # If no uncommitted changes, check branch diff vs main
+        if [[ -z "$changed_files" ]]; then
+            local base_branch
+            base_branch=$(git merge-base HEAD main 2>/dev/null || git merge-base HEAD master 2>/dev/null || echo "")
+            if [[ -n "$base_branch" ]]; then
+                changed_files=$(git diff --name-only "$base_branch" HEAD -- '*.sh' 2>/dev/null || echo "")
             fi
         fi
-    done
-
-    if [[ $violations -eq 0 ]]; then
-        print_success "ShellCheck: No violations found"
+        
+        # Convert to array
+        while IFS= read -r file; do
+            [[ -n "$file" ]] && [[ -f "$file" ]] && files_to_check+=("$file")
+        done <<< "$changed_files"
+        
+        if [[ ${#files_to_check[@]} -eq 0 ]]; then
+            print_success "ShellCheck: No modified .sh files to check"
+            return 0
+        fi
     else
-        print_error "ShellCheck: $violations files with violations"
-        return 1
+        # Full mode: check all .sh files in .agents/scripts/
+        while IFS= read -r file; do
+            [[ -f "$file" ]] && files_to_check+=("$file")
+        done < <(find .agents/scripts/ -name "*.sh" -type f 2>/dev/null)
+    fi
+    
+    if [[ ${#files_to_check[@]} -eq 0 ]]; then
+        print_success "ShellCheck: No files to check"
+        return 0
+    fi
+    
+    print_info "Checking ${#files_to_check[@]} file(s)..."
+    
+    # Batch shellcheck: pass all files at once for faster execution
+    # shellcheck disable=SC2086
+    if command -v shellcheck &> /dev/null; then
+        local result
+        result=$(shellcheck --severity=warning -x "${files_to_check[@]}" 2>&1) || true
+        
+        if [[ -n "$result" ]]; then
+            # Count files with violations
+            violations=$(echo "$result" | grep -c "^In " || echo "0")
+            print_error "ShellCheck: $violations file(s) with violations"
+            echo "$result" | head -20
+            if [[ $(echo "$result" | wc -l) -gt 20 ]]; then
+                echo "... (output truncated, run shellcheck directly for full results)"
+            fi
+            return 1
+        else
+            print_success "ShellCheck: No violations found"
+        fi
+    else
+        print_warning "ShellCheck not installed - skipping"
+        print_info "Install: brew install shellcheck"
     fi
 
     return 0
@@ -556,6 +686,9 @@ main() {
     echo ""
 
     check_string_literals || exit_code=1
+    echo ""
+
+    run_shfmt || exit_code=1
     echo ""
 
     run_shellcheck || exit_code=1

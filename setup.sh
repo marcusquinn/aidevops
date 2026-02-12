@@ -1421,6 +1421,73 @@ check_requirements() {
     print_success "All required dependencies found"
 }
 
+# Check for quality/linting tools (shellcheck, shfmt)
+# These are optional but recommended for development
+check_quality_tools() {
+    print_info "Checking quality tools..."
+    
+    local missing_tools=()
+    
+    # Check for shellcheck
+    if command -v shellcheck >/dev/null 2>&1; then
+        print_success "shellcheck: $(shellcheck --version | head -1)"
+    else
+        missing_tools+=("shellcheck")
+    fi
+    
+    # Check for shfmt
+    if command -v shfmt >/dev/null 2>&1; then
+        print_success "shfmt: $(shfmt --version)"
+    else
+        missing_tools+=("shfmt")
+    fi
+    
+    # If all tools present, return early
+    if [[ ${#missing_tools[@]} -eq 0 ]]; then
+        print_success "All quality tools installed"
+        return 0
+    fi
+    
+    # Show missing tools
+    print_warning "Missing quality tools: ${missing_tools[*]}"
+    print_info "These tools are used by linters-local.sh for code quality checks"
+    
+    # In non-interactive mode, just warn and continue
+    if [[ "$NON_INTERACTIVE" == "true" ]]; then
+        print_info "Install later: brew install ${missing_tools[*]}"
+        return 0
+    fi
+    
+    # Offer to install
+    local pkg_manager
+    pkg_manager=$(detect_package_manager)
+    
+    if [[ "$pkg_manager" == "unknown" ]]; then
+        print_info "Install manually:"
+        echo "  macOS: brew install ${missing_tools[*]}"
+        echo "  Ubuntu/Debian: sudo apt-get install ${missing_tools[*]}"
+        echo "  Fedora: sudo dnf install ${missing_tools[*]}"
+        return 0
+    fi
+    
+    echo ""
+    read -r -p "Install quality tools using $pkg_manager? [Y/n]: " install_quality
+    
+    if [[ "$install_quality" =~ ^[Yy]?$ ]]; then
+        print_info "Installing ${missing_tools[*]}..."
+        if install_packages "$pkg_manager" "${missing_tools[@]}"; then
+            print_success "Quality tools installed successfully"
+        else
+            print_warning "Failed to install some quality tools - continuing anyway"
+        fi
+    else
+        print_info "Skipped quality tools installation"
+        print_info "Install later: $pkg_manager install ${missing_tools[*]}"
+    fi
+    
+    return 0
+}
+
 # Detect the current running shell (not $SHELL which is the login default)
 # On a fresh Mac, $SHELL is /bin/zsh but setup may be run via bash <(curl ...)
 # Returns: "bash" or "zsh" or the shell name
@@ -5239,6 +5306,9 @@ main() {
         # Required steps (always run)
         verify_location
         check_requirements
+        
+        # Quality tools check (optional but recommended)
+        confirm_step "Check quality tools (shellcheck, shfmt)" && check_quality_tools
         
         # Core runtime setup (early - many later steps depend on these)
         confirm_step "Setup Node.js runtime (required for OpenCode and tools)" && setup_nodejs
