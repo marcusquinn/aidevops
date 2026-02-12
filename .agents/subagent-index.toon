@@ -45,7 +45,7 @@ tools/document/,Document extraction - conversion structured data extraction sche
 tools/ocr/,OCR and text extraction - local document processing via Ollama,glm-ocr
 tools/accounts/,Accounting tools - receipt OCR subscription audit,receipt-ocr|subscription-audit
 tools/ai-generation/,AI generation management - ComfyUI install nodes models workflows via comfy-cli,comfy-cli
-tools/video/,Video creation and generation - programmatic editing and AI generation APIs,remotion|higgsfield|runway|wavespeed|yt-dlp|video-prompt-design
+tools/video/,Video creation and generation - programmatic editing and AI generation APIs,remotion|higgsfield|runway|wavespeed|yt-dlp|video-prompt-design|real-video-enhancer
 tools/vision/,Vision AI - image generation understanding and editing with local and cloud models,overview|image-generation|image-understanding|image-editing
 tools/voice/,Voice AI - TTS/STT/S2S model catalog voice bridge Pipecat pipeline and cloud voice agents,voice-models|voice-ai-models|speech-to-speech|cloud-voice-agents|voice-bridge|hyprwhspr|pipecat-opencode|transcription|buzz
 tools/data-extraction/,Data extraction - scraping business data,outscraper
@@ -87,7 +87,7 @@ feature-development,workflows/feature-development.md,Feature development workflo
 conversation-starter,workflows/conversation-starter.md,Session greeting and auto-recall
 -->
 
-<!--TOON:scripts[74]{name,purpose}:
+<!--TOON:scripts[75]{name,purpose}:
 accessibility-helper.sh,Accessibility and contrast testing (WCAG compliance WAVE API for websites and emails)
 accessibility-audit-helper.sh,Accessibility audit CLI wrapping axe-core WAVE API WebAIM contrast and Lighthouse a11y
 auto-update-helper.sh,Automatic update polling daemon (enable disable status check logs)
@@ -164,6 +164,7 @@ video-gen-helper.sh,Unified AI video generation CLI (generate status download li
 thumbnail-helper.sh,Thumbnail A/B testing pipeline (generate score batch-score upload ab-test analyze templates) for YouTube thumbnails
 stale-pr-helper.sh,Stale PR detection and notification - scan for open PRs older than 24h not linked to active tasks (scan report help)
 comfy-cli-helper.sh,ComfyUI management via comfy-cli (status install setup launch node-install node-list model-download model-list snapshot-save snapshot-restore workflow-deps)
+real-video-enhancer-helper.sh,REAL Video Enhancer CLI - AI video upscaling interpolation denoising and decompression (install enhance upscale interpolate denoise batch models backends gui)
 runway-helper.sh,Runway API CLI for video image and audio generation (video image tts sts sfx dub isolate status wait cancel credits usage)
 wavespeed-helper.sh,WaveSpeed AI REST API client - unified generation for 200+ models (generate status models upload balance usage)
 plugin-loader-helper.sh,Plugin agent loader - discover validate load unload agents hooks index status

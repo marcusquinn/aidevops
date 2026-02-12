@@ -330,7 +330,7 @@ Orchestration agents can create drafts in `draft/` for reusable parallel process
 | WordPress | `tools/wordpress/wp-dev.md`, `tools/wordpress/mainwp.md` |
 | SEO | `seo/dataforseo.md`, `seo/google-search-console.md` |
 | Content | `content.md` (orchestrator), `content/research.md`, `content/story.md`, `content/production/`, `content/distribution/`, `content/optimization.md` |
-| Video | `tools/video/video-prompt-design.md`, `tools/video/remotion.md`, `tools/video/higgsfield.md`, `tools/video/runway.md`, `tools/video/wavespeed.md` (200+ models), `wavespeed-helper.sh` |
+| Video | `tools/video/video-prompt-design.md`, `tools/video/remotion.md`, `tools/video/higgsfield.md`, `tools/video/runway.md`, `tools/video/wavespeed.md` (200+ models), `wavespeed-helper.sh`, `tools/video/real-video-enhancer.md` (upscale/interpolate/denoise), `real-video-enhancer-helper.sh` |
 | YouTube | `content/distribution/youtube/` (migrated from root, see content.md) |
 | Vision | `tools/vision/overview.md` (decision tree, then `image-generation.md`, `image-understanding.md`, `image-editing.md`) |
 | ComfyUI | `tools/ai-generation/comfy-cli.md`, `comfy-cli-helper.sh` |
