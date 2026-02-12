@@ -10508,11 +10508,11 @@ cmd_pulse() {
 	fi
 
 	# Phase 4: Worker health checks - detect dead, hung, and orphaned workers
-	local worker_timeout_seconds="${SUPERVISOR_WORKER_TIMEOUT:-1800}" # 30 min default
+	local worker_timeout_seconds="${SUPERVISOR_WORKER_TIMEOUT:-3600}" # 1 hour default (t314: restored after merge overwrite)
 	# Absolute max runtime: kill workers regardless of log activity.
 	# Prevents runaway workers (e.g., shellcheck on huge files) from accumulating
 	# and exhausting system memory. Default 2 hours.
-	local worker_max_runtime_seconds="${SUPERVISOR_WORKER_MAX_RUNTIME:-7200}" # 2 hour default
+	local worker_max_runtime_seconds="${SUPERVISOR_WORKER_MAX_RUNTIME:-14400}" # 4 hour default (t314: restored after merge overwrite)
 
 	if [[ -d "$SUPERVISOR_DIR/pids" ]]; then
 		for pid_file in "$SUPERVISOR_DIR/pids"/*.pid; do
