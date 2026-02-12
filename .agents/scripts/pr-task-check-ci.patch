@@ -1,0 +1,144 @@
+diff --git a/.github/workflows/code-quality.yml b/.github/workflows/code-quality.yml
+index b4a1f41b..8db3a441 100644
+--- a/.github/workflows/code-quality.yml
++++ b/.github/workflows/code-quality.yml
+@@ -130,6 +130,139 @@ jobs:
+         echo ""
+         echo "All shell scripts passed ShellCheck"
+ 
++  pr-task-check:
++    name: PR Task ID Check
++    if: github.event_name == 'pull_request'
++    runs-on: ubuntu-latest
++
++    steps:
++    - name: Checkout base branch TODO.md
++      uses: actions/checkout@v4
++      with:
++        ref: ${{ github.event.pull_request.base.ref }}
++        sparse-checkout: TODO.md
++
++    - name: Validate PR has task ID in TODO.md
++      env:
++        PR_TITLE: ${{ github.event.pull_request.title }}
++        PR_BRANCH: ${{ github.event.pull_request.head.ref }}
++        PR_NUMBER: ${{ github.event.pull_request.number }}
++        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
++      run: |
++        echo "PR Task ID Validation"
++        echo "====================="
++        echo "PR #${PR_NUMBER}: ${PR_TITLE}"
++        echo "Branch: ${PR_BRANCH}"
++        echo ""
++
++        # Exempted branch patterns — these don't need task IDs
++        exempt_patterns=(
++          "^dependabot/"
++          "^auto-fix/"
++          "^release/"
++          "^hotfix/.*-emergency-"
++        )
++
++        for pattern in "${exempt_patterns[@]}"; do
++          if [[ "$PR_BRANCH" =~ $pattern ]]; then
++            echo "EXEMPT: Branch '${PR_BRANCH}' matches exemption pattern '${pattern}'"
++            echo "Skipping task ID check."
++            exit 0
++          fi
++        done
++
++        # Extract task ID (tNNN or tNNN.N or tNNN.N.N) from PR title or branch
++        task_id=""
++
++        # Try PR title first (most explicit)
++        if [[ "$PR_TITLE" =~ (t[0-9]+(\.[0-9]+)*) ]]; then
++          task_id="${BASH_REMATCH[1]}"
++          echo "Found task ID '${task_id}' in PR title"
++        # Fall back to branch name
++        elif [[ "$PR_BRANCH" =~ (t[0-9]+(\.[0-9]+)*) ]]; then
++          task_id="${BASH_REMATCH[1]}"
++          echo "Found task ID '${task_id}' in branch name"
++        fi
++
++        if [[ -z "$task_id" ]]; then
++          echo ""
++          echo "FAILED: No task ID found in PR title or branch name."
++          echo ""
++          echo "Every PR must reference a task ID (e.g., t001, t001.1) in its title"
++          echo "or branch name. The task must exist in TODO.md."
++          echo ""
++          echo "How to fix:"
++          echo "  1. Add a TODO entry: '- [ ] tNNN Description' in TODO.md"
++          echo "  2. Include the task ID in your PR title: 'tNNN: Fix the thing'"
++          echo "  3. Or use a branch name like 'feature/tNNN-fix-thing'"
++          echo ""
++          echo "Exempted branches: dependabot/*, auto-fix/*, release/*, hotfix/*-emergency-*"
++
++          # Post comment on PR with fix instructions
++          gh pr comment "$PR_NUMBER" --body "## PR Task ID Check Failed
++
++        This PR does not reference a task ID (\`tNNN\`) in its title or branch name.
++
++        Every PR must be traceable to a planned task in TODO.md. This ensures:
++        - All work is planned before implementation
++        - Every PR can be traced back to its task
++        - Every task can be traced forward to its PR
++
++        **How to fix:**
++        1. If a task exists, add its ID to the PR title (e.g., \`t001: Fix the thing\`)
++        2. If no task exists, create one in TODO.md first
++        3. Then update the PR title to include the task ID
++
++        **Exempted branches:** \`dependabot/*\`, \`auto-fix/*\`, \`release/*\`, \`hotfix/*-emergency-*\`" || echo "Warning: Could not post PR comment"
++
++          exit 1
++        fi
++
++        # Verify task exists in TODO.md (on the base branch)
++        if [[ ! -f "TODO.md" ]]; then
++          echo "WARNING: TODO.md not found on base branch. Skipping task existence check."
++          exit 0
++        fi
++
++        # Check for declined task first ([-] marker)
++        # Use space after task_id to prevent t31 matching t318
++        if grep -qE "^[[:space:]]*- \[-\] ${task_id} " TODO.md; then
++          echo ""
++          echo "FAILED: Task '${task_id}' is declined (marked [-]) in TODO.md."
++          echo "Declined tasks should not have PRs. Create a new task if needed."
++          exit 1
++        fi
++
++        # Match task ID in TODO.md: - [ ] tNNN or - [x] tNNN
++        if grep -qE "^[[:space:]]*- \[[ x]\] ${task_id} " TODO.md; then
++          echo "Task '${task_id}' found in TODO.md"
++          echo ""
++          echo "PR Task ID Check: PASSED"
++        else
++          echo ""
++          echo "FAILED: Task '${task_id}' not found in TODO.md."
++          echo ""
++          echo "The task ID '${task_id}' was found in the PR title/branch but does not"
++          echo "exist in TODO.md on the base branch."
++          echo ""
++          echo "How to fix:"
++          echo "  1. Add '- [ ] ${task_id} Description' to TODO.md on main"
++          echo "  2. Then re-run this check"
++
++          # Post comment on PR
++          gh pr comment "$PR_NUMBER" --body "## PR Task ID Check Failed
++
++        Task \`${task_id}\` was found in the PR title/branch but does not exist in TODO.md.
++
++        Please add the task to TODO.md on the main branch:
++        \`\`\`
++        - [ ] ${task_id} Description of the work
++        \`\`\`
++        Then re-run this check." || echo "Warning: Could not post PR comment"
++
++          exit 1
++        fi
++
+   sonarcloud:
+     name: SonarCloud Analysis
+     runs-on: ubuntu-latest
