@@ -92,10 +92,12 @@ section "2. ShellCheck"
 # ============================================================
 
 if command -v shellcheck &>/dev/null; then
-	if shellcheck -x -S warning "$HELPER" 2>/dev/null; then
+	# Run without -x to avoid following source includes into large files (causes hangs)
+	sc_output=$(shellcheck -S warning --format=gcc "$HELPER" 2>&1 || true)
+	if [[ -z "$sc_output" ]]; then
 		pass "ShellCheck passes with no warnings"
 	else
-		fail "ShellCheck found issues" "Run: shellcheck -x -S warning $HELPER"
+		fail "ShellCheck found issues" "$sc_output"
 	fi
 else
 	skip "ShellCheck not installed"
