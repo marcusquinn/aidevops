@@ -233,6 +233,8 @@ worktree-helper.sh add feature/x  # Fallback
 
 **After completing changes**, offer: 1) Preflight checks 2) Skip preflight 3) Continue editing
 
+**PR title format** (MANDATORY): All PRs MUST include task ID from TODO.md: `{task-id}: {description}`. For unplanned work (hotfix, quick fix), create TODO entry first with `~15m` estimate, then create PR. No work should be untraceable. See `workflows/git-workflow.md` "PR Title Requirements" for full guidance.
+
 **Branch types**: `feature/`, `bugfix/`, `hotfix/`, `refactor/`, `chore/`, `experiment/`, `release/`
 
 **Worktree ownership** (CRITICAL): NEVER remove a worktree unless (a) you created it in this session, (b) it belongs to a task in your active batch, AND the task is deployed/complete, or (c) the user explicitly asks. Worktrees may belong to parallel sessions — removing them destroys another agent's working directory mid-work. When cleaning up, only touch worktrees for tasks you personally merged. Use `git worktree list` to see all worktrees but do NOT assume unrecognized ones are safe to remove. The ownership registry (`worktree-helper.sh registry list`) tracks which PID owns each worktree — `remove` and `clean` commands automatically refuse to touch worktrees owned by other live processes.
