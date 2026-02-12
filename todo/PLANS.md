@@ -21,6 +21,72 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-02-12] Automated Git Stash Audit and Cleanup
+
+**Status:** Planning
+**Estimate:** ~45m (ai:30m test:15m)
+**TODO:** t1005
+
+#### Purpose
+
+Automate the detection and cleanup of obsolete git stashes that accumulate from `git pull --rebase --autostash` cycles, supervisor operations, and aborted edits. Must never drop stashes containing user work that isn't already in HEAD.
+
+#### Context
+
+**Problem:** Over time, stashes accumulate silently (9 found in this session). Most are autostashes from rebase cycles containing single-line TODO.md changes that have long since been superseded. Manually auditing each stash is tedious — you have to `git stash show` each one, cross-reference with HEAD, and decide. This is exactly the kind of routine maintenance that should be automated.
+
+**Safety constraint:** Users may have intentionally stashed work-in-progress. The tool must distinguish between:
+- **Autostashes** (from `--autostash`) — safe to drop if content is in HEAD
+- **Superseded changes** — files modified more recently in git history
+- **User-created stashes** — named stashes or stashes with non-planning files that aren't in HEAD
+
+#### Design
+
+**Classification algorithm** for each stash:
+
+1. **SAFE** (auto-drop):
+   - Message contains "autostash" AND all changed files' diffs are empty against HEAD (content already in HEAD)
+   - All files in the stash are unchanged vs HEAD (zero diff)
+   - Stash only contains 0-byte file changes (empty permission/mode changes from worktree operations)
+
+2. **OBSOLETE** (auto-drop with `--force`, otherwise report):
+   - Message contains "autostash" but some diffs remain vs HEAD (partial supersede)
+   - All files in the stash have been modified more recently in `git log` (newer commits exist)
+   - Stash is older than 7 days AND only touches TODO.md/VERIFY.md (planning churn)
+
+3. **REVIEW** (never auto-drop):
+   - Named stash (user-created with `-m`)
+   - Contains files not in HEAD (new files the user created)
+   - Contains diffs against HEAD in non-planning files (potential user work)
+   - Stash is less than 24h old (might be actively used)
+
+**Commands:**
+
+```text
+stash-audit-helper.sh status          # Classify all stashes, show report
+stash-audit-helper.sh clean           # Drop SAFE stashes only
+stash-audit-helper.sh clean --force   # Drop SAFE + OBSOLETE stashes
+stash-audit-helper.sh clean --dry-run # Show what would be dropped
+```
+
+**Integration points:**
+- Supervisor pulse Phase 6 (cleanup) — call `stash-audit-helper.sh clean` after worktree cleanup
+- `session-review` workflow — show stash status as part of session end checklist
+- `worktree-helper.sh clean` — audit stashes after removing merged worktrees
+
+**Safety nets:**
+- `git fsck --unreachable` can recover dropped stashes for ~30 days (document this)
+- `--dry-run` is the default for any automated invocation (supervisor must pass `--auto` to actually drop)
+- Log every drop to `~/.aidevops/logs/stash-audit.log` with stash content summary
+
+#### Implementation
+
+- [ ] Create `stash-audit-helper.sh` with classify/clean/status commands
+- [ ] Add stash classification logic (SAFE/OBSOLETE/REVIEW)
+- [ ] Integrate into supervisor pulse Phase 6 cleanup
+- [ ] Add to session-review checklist
+- [ ] Test: create known stash types, verify classification, verify no false drops
+
 ### [2026-02-12] Modularise Oversized Shell Scripts
 
 **Status:** Planning
