@@ -13079,13 +13079,22 @@ cmd_auto_pickup() {
 					log_success "Auto-batch: added $added_count tasks to active batch $active_batch_id"
 				fi
 			else
-				# Create a new auto-batch
+				# Create a new auto-batch with resource-aware concurrency
 				local auto_batch_name
 				auto_batch_name="auto-$(date +%Y%m%d-%H%M%S)"
 				local task_csv
 				task_csv=$(echo "$unbatched_queued" | tr '\n' ',' | sed 's/,$//')
+				# Derive base concurrency from CPU cores (cores / 2, min 2)
+				# A 10-core Mac gets 5, a 32-core server gets 16, etc.
+				# The adaptive scaling in calculate_adaptive_concurrency() then
+				# adjusts up/down from this base depending on actual load.
+				local auto_cores="$(get_cpu_cores)"
+				local auto_base_concurrency=$((auto_cores / 2))
+				if [[ "$auto_base_concurrency" -lt 2 ]]; then
+					auto_base_concurrency=2
+				fi
 				local auto_batch_id
-				auto_batch_id=$(cmd_batch "$auto_batch_name" --concurrency 3 --tasks "$task_csv" 2>/dev/null)
+				auto_batch_id=$(cmd_batch "$auto_batch_name" --concurrency "$auto_base_concurrency" --tasks "$task_csv" 2>/dev/null)
 				if [[ -n "$auto_batch_id" ]]; then
 					log_success "Auto-batch: created '$auto_batch_name' ($auto_batch_id) with $picked_up tasks"
 				fi
@@ -14264,10 +14273,13 @@ Cron Integration & Auto-Pickup (t128.5, t296):
     2. Tasks listed under a "## Dispatch Queue" section header
   Both strategies skip tasks already tracked by the supervisor.
 
-  Auto-batching (t296): When new tasks are picked up, they are automatically
+  Auto-batching (t296, t321): When new tasks are picked up, they are automatically
   assigned to a batch. If an active batch exists, tasks are added to it.
   Otherwise, a new batch named 'auto-YYYYMMDD-HHMMSS' is created with
-  concurrency 3. This ensures all auto-dispatched tasks get batch-level
+  base concurrency derived from CPU cores (cores / 2, min 2). A 10-core
+  machine gets base 5, a 32-core server gets 16, etc. The adaptive scaling
+  then adjusts up/down from this base depending on actual CPU load.
+  This ensures all auto-dispatched tasks get batch-level
   concurrency control, completion tracking, and lifecycle management.
 
   Cron scheduling runs pulse (which includes auto-pickup) every N minutes:
