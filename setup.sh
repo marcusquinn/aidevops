@@ -332,7 +332,7 @@ cleanup_deprecated_paths() {
 	)
 
 	for path in "${deprecated_paths[@]}"; do
-		if [[ -e "$path" ]]; then
+		if [[ -e "$path" && -n "$path" ]]; then
 			rm -rf "$path"
 			((cleaned++)) || true
 		fi
@@ -3647,7 +3647,7 @@ scan_imported_skills() {
 				print_success "Cisco Skill Scanner installed via venv ($venv_dir)"
 				installed=true
 			else
-				rm -rf "$venv_dir" 2>/dev/null || true
+				[[ -n "$venv_dir" ]] && rm -rf "$venv_dir" 2>/dev/null || true
 			fi
 		fi
 
