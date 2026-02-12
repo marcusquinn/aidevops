@@ -7,22 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.112.0] - 2026-02-12
+
 ### Added
 
-- DB-TODO reconciliation pulse phase (Phase 7b) auto-transitions stale supervisor states (t1001) (#1275)
-- block parent task completion when any subtask is open, not just #plan tasks (t1003) (#1281)
-- Matrix bot SQLite session store with per-channel compaction (t1000) (#1273)
-
-### Fixed
-
-- octal parsing bug in claim-task-id.sh — base-10 arithmetic for task IDs 008/009+ (t1002) (#1278)
-- stat -f unbound variable on Linux blocks supervisor dispatch (#1267)
-- INSTALL_DIR path in deploy_aidevops_agents after setup.sh modularisation (t316.4) (#1269)
+- enforce task ID in PR titles for audit traceability (t318.2) (#1283)
+- add DB-TODO reconciliation pulse phase (t1001) (#1275)
 
 ### Changed
 
-- setup.sh fully modularised into source-based modules (t316 complete)
-- wire claim-task-id.sh into supervisor task creation paths (t319.3) (#1270)
+- Documentation: move changelog entries to [Unreleased] for version-manager
+- Documentation: add v2.112.0 changelog entries
+
+### Fixed
+
+- use base-10 arithmetic for task ID comparison to prevent octal parsing errors
+- use INSTALL_DIR instead of BASH_SOURCE in deploy_aidevops_agents (t316.4) (#1269)
+- use stat -c (Linux) before stat -f (macOS) to prevent unbound variable error on Linux (#1267)
 
 ## [2.111.0] - 2026-02-12
 
