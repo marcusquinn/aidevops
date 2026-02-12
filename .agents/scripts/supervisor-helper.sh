@@ -3206,7 +3206,7 @@ update_queue_health_issue() {
 				pinIssue(input: {issueId: \"$(gh issue view "$health_issue_number" --repo "$repo_slug" --json id --jq '.id' 2>/dev/null || echo "")\"}) {
 					issue { number }
 				}
-			}" 2>/dev/null || true
+			}" >/dev/null 2>&1 || true
 		log_info "  Phase 8c: Created and pinned health issue #$health_issue_number"
 	fi
 
@@ -3333,26 +3333,62 @@ update_queue_health_issue() {
 		completions_md="_No recent completions_"
 	fi
 
-	# System resources
+	# System resources — use lightweight metrics to avoid blocking the pulse
+	# (check_system_load uses top -l 2 which takes ~2s and can hang)
 	local sys_md=""
-	local resource_output
-	resource_output=$(check_system_load 2>/dev/null || echo "")
-	if [[ -n "$resource_output" ]]; then
-		local h_load_ratio h_memory h_cpu_cores h_load_1m h_load_5m h_proc_count
-		h_load_ratio=$(echo "$resource_output" | grep '^load_ratio=' | cut -d= -f2)
-		h_memory=$(echo "$resource_output" | grep '^memory_pressure=' | cut -d= -f2)
-		h_cpu_cores=$(echo "$resource_output" | grep '^cpu_cores=' | cut -d= -f2)
-		h_load_1m=$(echo "$resource_output" | grep '^load_1m=' | cut -d= -f2)
-		h_load_5m=$(echo "$resource_output" | grep '^load_5m=' | cut -d= -f2)
-		h_proc_count=$(echo "$resource_output" | grep '^process_count=' | cut -d= -f2)
-		sys_md="| Metric | Value |
+	local h_cpu_cores h_load_1m h_load_5m h_proc_count h_memory
+	h_cpu_cores=$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo "?")
+	if [[ "$(uname)" == "Darwin" ]]; then
+		local load_str
+		load_str=$(sysctl -n vm.loadavg 2>/dev/null || echo "{ 0 0 0 }")
+		h_load_1m=$(echo "$load_str" | awk '{print $2}')
+		h_load_5m=$(echo "$load_str" | awk '{print $3}')
+	elif [[ -f /proc/loadavg ]]; then
+		read -r h_load_1m h_load_5m _ </proc/loadavg
+	fi
+	h_proc_count=$(ps aux 2>/dev/null | wc -l | tr -d ' ')
+	# Memory pressure — use vm_stat (instant) instead of memory_pressure (slow/hangs)
+	h_memory="unknown"
+	if [[ "$(uname)" == "Darwin" ]]; then
+		local vm_free vm_inactive vm_speculative page_size_bytes
+		page_size_bytes=$(sysctl -n hw.pagesize 2>/dev/null || echo "4096")
+		vm_free=$(vm_stat 2>/dev/null | awk '/Pages free/ {gsub(/\./,"",$3); print $3}')
+		vm_inactive=$(vm_stat 2>/dev/null | awk '/Pages inactive/ {gsub(/\./,"",$3); print $3}')
+		vm_speculative=$(vm_stat 2>/dev/null | awk '/Pages speculative/ {gsub(/\./,"",$3); print $3}')
+		if [[ -n "$vm_free" ]]; then
+			local avail_pages=$((${vm_free:-0} + ${vm_inactive:-0} + ${vm_speculative:-0}))
+			local avail_mb=$((avail_pages * page_size_bytes / 1048576))
+			if [[ "$avail_mb" -lt 1024 ]]; then
+				h_memory="high (${avail_mb}MB free)"
+			elif [[ "$avail_mb" -lt 4096 ]]; then
+				h_memory="medium (${avail_mb}MB free)"
+			else
+				h_memory="low (${avail_mb}MB free)"
+			fi
+		fi
+	elif [[ -f /proc/meminfo ]]; then
+		local mem_avail
+		mem_avail=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo "")
+		if [[ -n "$mem_avail" ]]; then
+			if [[ "$mem_avail" -lt 1024 ]]; then
+				h_memory="high (${mem_avail}MB free)"
+			elif [[ "$mem_avail" -lt 4096 ]]; then
+				h_memory="medium (${mem_avail}MB free)"
+			else
+				h_memory="low (${mem_avail}MB free)"
+			fi
+		fi
+	fi
+	# Compute load ratio from load average
+	local h_load_ratio="?"
+	if [[ -n "${h_load_1m:-}" && -n "${h_cpu_cores:-}" && "${h_cpu_cores}" != "?" && "${h_cpu_cores:-0}" -gt 0 ]]; then
+		h_load_ratio=$(awk "BEGIN {printf \"%d\", (${h_load_1m} / ${h_cpu_cores}) * 100}" 2>/dev/null || echo "?")
+	fi
+	sys_md="| Metric | Value |
 | --- | --- |
-| CPU | ${h_load_ratio:-?}% used (${h_cpu_cores:-?} cores, load: ${h_load_1m:-?}/${h_load_5m:-?}) |
+| CPU | ${h_load_ratio}% used (${h_cpu_cores:-?} cores, load: ${h_load_1m:-?}/${h_load_5m:-?}) |
 | Memory | ${h_memory:-unknown} |
 | Processes | ${h_proc_count:-?} |"
-	else
-		sys_md="_System metrics unavailable_"
-	fi
 
 	# Alerts section
 	local alerts_md=""
@@ -3410,9 +3446,11 @@ update_queue_health_issue() {
 		alert_count=$((alert_count + 1))
 	fi
 
-	# Alert: system overload
-	local h_overloaded
-	h_overloaded=$(echo "$resource_output" | grep '^overloaded=' | cut -d= -f2)
+	# Alert: system overload (load ratio > 200% of cores)
+	local h_overloaded="false"
+	if [[ "${h_load_ratio:-0}" != "?" && "${h_load_ratio:-0}" -gt 200 ]] 2>/dev/null; then
+		h_overloaded="true"
+	fi
 	if [[ "$h_overloaded" == "true" ]]; then
 		alerts_md="${alerts_md}- **System overloaded** — adaptive throttling active
 "
@@ -3531,7 +3569,7 @@ _Auto-updated by supervisor pulse (t1013). Do not edit manually._"
 	if [[ -n "$comment_id" ]]; then
 		# Update existing comment in-place
 		gh api -X PATCH "repos/${repo_slug}/issues/comments/${comment_id}" \
-			-f body="$body" 2>/dev/null || {
+			-f body="$body" >/dev/null 2>&1 || {
 			log_verbose "  Phase 8c: Failed to update comment $comment_id"
 			return 0
 		}
