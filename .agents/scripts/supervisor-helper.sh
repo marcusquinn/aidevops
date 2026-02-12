@@ -5073,16 +5073,45 @@ The CI pipeline and supervisor both validate this. PRs without task IDs fail the
 If you used \`gh pr create --draft --title '<task-id>: <description>'\` as instructed above,
 this is already handled. This note reinforces: NEVER omit the task ID from the PR title.
 
-**4. Offload research to Task sub-agents (saves context for implementation)**
+**4. Offload research to ai_research tool (saves context for implementation)**
 Reading large files (500+ lines) consumes your context budget fast. Instead of reading
-entire files yourself, spawn a Task sub-agent with a focused question:
+entire files yourself, call the \`ai_research\` MCP tool with a focused question:
 \`\`\`
-Task(description='Find dispatch points', prompt='In .agents/scripts/supervisor-helper.sh,
-find all functions that dispatch workers. Return: function name, line number, and the
-key variables/patterns used. Do NOT return full code — just the summary.')
+ai_research(prompt: \"Find all functions that dispatch workers in supervisor-helper.sh. Return: function name, line number, key variables.\", domain: \"orchestration\")
 \`\`\`
-The sub-agent gets its own fresh context window. You get a concise answer that costs
-~100 tokens instead of ~5000 tokens from reading the file directly.
+The tool spawns a sub-worker via the Anthropic API with its own context window.
+You get a concise answer that costs ~100 tokens instead of ~5000 from reading directly.
+Rate limit: 10 calls per session. Default model: haiku (cheapest).
+
+**Domain shorthand** — auto-resolves to relevant agent files:
+| Domain | Agents loaded |
+|--------|--------------|
+| git | git-workflow, github-cli, conflict-resolution |
+| planning | plans, beads |
+| code | code-standards, code-simplifier |
+| seo | seo, dataforseo, google-search-console |
+| content | content, research, writing |
+| wordpress | wp-dev, mainwp |
+| browser | browser-automation, playwright |
+| deploy | coolify, coolify-cli, vercel |
+| security | tirith, encryption-stack |
+| mcp | build-mcp, server-patterns |
+| agent | build-agent, agent-review |
+| framework | architecture, setup |
+| release | release, version-bump |
+| pr | pr, preflight |
+| orchestration | headless-dispatch |
+| context | model-routing, toon, mcp-discovery |
+| video | video-prompt-design, remotion, wavespeed |
+| voice | speech-to-speech, voice-bridge |
+| mobile | agent-device, maestro |
+| hosting | hostinger, cloudflare, hetzner |
+| email | email-testing, email-delivery-test |
+| accessibility | accessibility, accessibility-audit |
+| containers | orbstack |
+| vision | overview, image-generation |
+
+**Parameters**: \`prompt\` (required), \`domain\` (shorthand above), \`agents\` (comma-separated paths relative to ~/.aidevops/agents/), \`files\` (paths with optional line ranges e.g. \"src/foo.ts:10-50\"), \`model\` (haiku|sonnet|opus), \`max_tokens\` (default 500, max 4096).
 
 **When to offload**: Any time you would read >200 lines of a file you don't plan to edit,
 or when you need to understand a codebase pattern across multiple files.
@@ -5090,31 +5119,15 @@ or when you need to understand a codebase pattern across multiple files.
 **When NOT to offload**: When you need to edit the file (you must read it yourself for
 the Edit tool to work), or when the answer is a simple grep/rg query.
 
-**5. Parallel sub-work with Task tool (MANDATORY when applicable)**
+**5. Parallel sub-work (MANDATORY when applicable)**
 After creating your TodoWrite subtasks, check: do any two subtasks modify DIFFERENT files?
-If yes, you MUST spawn the independent subtask via the Task tool — do NOT execute sequentially.
+If yes, you SHOULD parallelise where possible. Use \`ai_research\` for read-only research
+tasks that don't require file edits.
 
 **Decision heuristic**: If your TodoWrite has 3+ subtasks and any two don't modify the same
-files, spawn the independent one via Task tool. Common parallelisable pairs:
-- Writing tests (test files) while implementing the feature (source files)
-- Updating docs/subagent-index while writing the main script
-- Creating a new helper script while updating an existing one that won't import it yet
-
-**Worked example** — task: 'add retry logic to API client + tests + docs':
-\`\`\`
-# TodoWrite subtasks:
-# 1. Implement retry logic in src/client.ts        (modifies: src/client.ts)
-# 2. Write unit tests in tests/client.test.ts      (modifies: tests/client.test.ts)
-# 3. Update API docs in docs/client.md             (modifies: docs/client.md)
-# 4. Push and create PR
-
-# Subtask 1 modifies different files from subtasks 2 and 3.
-# After completing subtask 1, git add && git commit immediately.
-# Then spawn TWO Task tool calls simultaneously:
-#   Task(description='Write retry tests', prompt='Write unit tests for retry logic in tests/client.test.ts...')
-#   Task(description='Update API docs', prompt='Update docs/client.md to document retry behaviour...')
-# Wait for both to complete, commit their work, then push + create PR.
-\`\`\`
+files, the independent ones can run in parallel. Common parallelisable patterns:
+- Use \`ai_research\` to understand a codebase pattern while you implement in another file
+- Run \`ai_research(domain: \"code\")\` to check conventions while writing new code
 
 **Do NOT parallelise when**: subtasks modify the same file, or subtask B depends on
 subtask A's output (e.g., B imports a function A creates). When in doubt, run sequentially.
