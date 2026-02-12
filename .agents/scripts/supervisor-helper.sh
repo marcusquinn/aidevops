@@ -41,6 +41,7 @@
 #   supervisor-helper.sh pr-merge <task_id> [--dry-run]  Merge PR (squash)
 #   supervisor-helper.sh verify <task_id>               Run post-merge verification checks (t180)
 #   supervisor-helper.sh self-heal <task_id>            Create diagnostic subtask for failed/blocked task
+#   supervisor-helper.sh contest <subcommand> [args]    Model contest mode (t1011)
 #   supervisor-helper.sh backup [reason]               Backup supervisor database (t162)
 #   supervisor-helper.sh restore [backup_file]         Restore from backup (lists if no file) (t162)
 #   supervisor-helper.sh db [sql]                      Direct SQLite access
@@ -1699,6 +1700,64 @@ MIGRATE_T218
 		log_info "Migrating tasks table: adding rebase_attempts column (t298)..."
 		db "$SUPERVISOR_DB" "ALTER TABLE tasks ADD COLUMN rebase_attempts INTEGER NOT NULL DEFAULT 0;" 2>/dev/null || true
 		log_success "Added rebase_attempts column to tasks (t298)"
+	fi
+
+	# Migrate: create contest tables if missing (t1011)
+	local has_contests
+	has_contests=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='contests';" 2>/dev/null || echo "0")
+	if [[ "$has_contests" -eq 0 ]]; then
+		log_info "Creating contest tables (t1011)..."
+		local contest_helper="${SCRIPT_DIR}/contest-helper.sh"
+		if [[ -x "$contest_helper" ]]; then
+			"$contest_helper" help >/dev/null 2>&1 || true
+			# contest-helper.sh ensure_contest_tables creates them on first use
+			# but we can also create them here for immediate availability
+			db "$SUPERVISOR_DB" <<'CONTEST_SQL'
+CREATE TABLE IF NOT EXISTS contests (
+    id              TEXT PRIMARY KEY,
+    task_id         TEXT NOT NULL,
+    description     TEXT,
+    status          TEXT NOT NULL DEFAULT 'pending'
+                    CHECK(status IN ('pending','dispatching','running','evaluating','scoring','complete','failed','cancelled')),
+    winner_model    TEXT,
+    winner_entry_id TEXT,
+    winner_score    REAL,
+    models          TEXT NOT NULL,
+    batch_id        TEXT,
+    repo            TEXT,
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    completed_at    TEXT,
+    metadata        TEXT
+);
+CREATE TABLE IF NOT EXISTS contest_entries (
+    id              TEXT PRIMARY KEY,
+    contest_id      TEXT NOT NULL,
+    model           TEXT NOT NULL,
+    task_id         TEXT,
+    worktree        TEXT,
+    branch          TEXT,
+    log_file        TEXT,
+    pr_url          TEXT,
+    status          TEXT NOT NULL DEFAULT 'pending'
+                    CHECK(status IN ('pending','dispatched','running','complete','failed','cancelled')),
+    output_summary  TEXT,
+    score_correctness   REAL DEFAULT 0,
+    score_completeness  REAL DEFAULT 0,
+    score_code_quality  REAL DEFAULT 0,
+    score_clarity       REAL DEFAULT 0,
+    weighted_score      REAL DEFAULT 0,
+    cross_rank_scores   TEXT,
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    completed_at    TEXT,
+    FOREIGN KEY (contest_id) REFERENCES contests(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_contests_task ON contests(task_id);
+CREATE INDEX IF NOT EXISTS idx_contests_status ON contests(status);
+CREATE INDEX IF NOT EXISTS idx_contest_entries_contest ON contest_entries(contest_id);
+CREATE INDEX IF NOT EXISTS idx_contest_entries_status ON contest_entries(status);
+CONTEST_SQL
+			log_success "Created contest tables (t1011)"
+		fi
 	fi
 
 	# Ensure WAL mode for existing databases created before t135.3
@@ -4166,13 +4225,14 @@ classify_task_complexity() {
 }
 
 #######################################
-# Resolve the model for a task (t132.5, t246)
-# Priority: 1) Task's explicit model (if not default) — from --model or model: in TODO.md
+# Resolve the model for a task (t132.5, t246, t1011)
+# Priority: 0) Contest mode (model:contest) — dispatch to top-3 models (t1011)
+#           1) Task's explicit model (if not default) — from --model or model: in TODO.md
 #           2) Subagent frontmatter model:
 #           3) Pattern-tracker recommendation (data-driven, requires 3+ samples)
 #           4) Task complexity classification (auto-route from description + tags)
 #           5) resolve_model() with tier/fallback chain
-# Returns the resolved provider/model string
+# Returns the resolved provider/model string (or "CONTEST" for contest mode)
 #######################################
 resolve_task_model() {
 	local task_id="$1"
@@ -4181,6 +4241,14 @@ resolve_task_model() {
 	local ai_cli="${4:-opencode}"
 
 	local default_model="anthropic/claude-opus-4-6"
+
+	# 0) Contest mode detection (t1011)
+	# If task has explicit model:contest, signal the caller to use contest dispatch
+	if [[ "$task_model" == "contest" ]]; then
+		log_info "Model for $task_id: CONTEST mode (explicit model:contest)"
+		echo "CONTEST"
+		return 0
+	fi
 
 	# 1) If task has an explicit non-default model, use it
 	if [[ -n "$task_model" && "$task_model" != "$default_model" ]]; then
@@ -4263,6 +4331,23 @@ resolve_task_model() {
 			log_info "Model for $task_id: $resolved (auto-classified as $suggested_tier)"
 			echo "$resolved"
 			return 0
+		fi
+	fi
+
+	# 4.5) Auto-contest detection (t1011): if we reached here (no strong signal),
+	# check if contest mode should be triggered. Only for genuinely uncertain cases
+	# where pattern data is insufficient or inconclusive.
+	# Env var SUPERVISOR_CONTEST_AUTO=true enables this (default: false to avoid 3x cost)
+	if [[ "${SUPERVISOR_CONTEST_AUTO:-false}" == "true" ]]; then
+		local contest_helper="${SCRIPT_DIR}/contest-helper.sh"
+		if [[ -x "$contest_helper" ]]; then
+			local contest_reason
+			contest_reason=$("$contest_helper" should-contest "$task_id" 2>/dev/null) || true
+			if [[ -n "$contest_reason" && "$contest_reason" != "strong_signal" ]]; then
+				log_info "Model for $task_id: CONTEST mode (auto-detected: $contest_reason)"
+				echo "CONTEST"
+				return 0
+			fi
 		fi
 	fi
 
@@ -5770,6 +5855,36 @@ cmd_dispatch() {
 	# Resolve model via frontmatter + fallback chain (t132.5)
 	local resolved_model
 	resolved_model=$(resolve_task_model "$task_id" "$tmodel" "${trepo:-.}" "$ai_cli")
+
+	# Contest mode intercept (t1011): if model resolves to CONTEST, delegate to
+	# contest-helper.sh which dispatches the same task to top-3 models in parallel.
+	# The original task stays in 'running' state while contest entries execute.
+	if [[ "$resolved_model" == "CONTEST" ]]; then
+		log_info "Contest mode activated for $task_id — delegating to contest-helper.sh"
+		local contest_helper="${SCRIPT_DIR}/contest-helper.sh"
+		if [[ -x "$contest_helper" ]]; then
+			local contest_id
+			contest_id=$("$contest_helper" create "$task_id" ${batch_id:+--batch "$batch_id"} 2>/dev/null)
+			if [[ -n "$contest_id" ]]; then
+				"$contest_helper" dispatch "$contest_id" 2>/dev/null || {
+					log_error "Contest dispatch failed for $task_id"
+					cmd_transition "$task_id" "failed" --error "Contest dispatch failed"
+					return 1
+				}
+				# Keep original task in running state — pulse Phase 2.5 will check contest completion
+				db "$SUPERVISOR_DB" "UPDATE tasks SET error = 'contest:${contest_id}' WHERE id = '$(sql_escape "$task_id")';"
+				log_success "Contest $contest_id dispatched for $task_id"
+				echo "contest:${contest_id}"
+				return 0
+			else
+				log_error "Failed to create contest for $task_id — falling back to default model"
+				resolved_model=$(resolve_model "coding" "$ai_cli")
+			fi
+		else
+			log_warn "contest-helper.sh not found — falling back to default model"
+			resolved_model=$(resolve_model "coding" "$ai_cli")
+		fi
+	fi
 
 	# Secondary availability check: verify the resolved model's provider (t233)
 	# The initial health check uses the "health" tier (typically anthropic).
@@ -10399,6 +10514,26 @@ cmd_pulse() {
 		fi
 	fi
 
+	# Phase 2.5: Contest mode — check running contests for completion (t1011)
+	# If any contest has all entries complete, evaluate cross-rankings and apply winner
+	local contest_helper="${SCRIPT_DIR}/contest-helper.sh"
+	if [[ -x "$contest_helper" ]]; then
+		local has_contests
+		has_contests=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='contests';" 2>/dev/null || echo "0")
+		if [[ "$has_contests" -gt 0 ]]; then
+			local running_contests
+			running_contests=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM contests WHERE status IN ('running','evaluating');" 2>/dev/null || echo "0")
+			if [[ "$running_contests" -gt 0 ]]; then
+				log_info "Phase 2.5: Checking $running_contests running contest(s)..."
+				local evaluated_count
+				evaluated_count=$("$contest_helper" pulse-check 2>/dev/null || echo "0")
+				if [[ "$evaluated_count" -gt 0 ]]; then
+					log_success "Phase 2.5: Evaluated $evaluated_count contest(s)"
+				fi
+			fi
+		fi
+	fi
+
 	# Phase 3: Post-PR lifecycle (t128.8)
 	# Process tasks that workers completed (PR created) but still need merge/deploy
 	# t265: Redirect stderr to log and capture errors before || true suppresses them
@@ -13190,16 +13325,16 @@ cmd_cron() {
 	local script_path
 	script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/supervisor-helper.sh"
 	local cron_marker="# aidevops-supervisor-pulse"
-	
+
 	# Detect current PATH for cron environment (t1006)
 	local user_path="${PATH}"
-	
+
 	# Detect GH_TOKEN from gh CLI if available (t1006)
 	local gh_token=""
 	if command -v gh &>/dev/null; then
 		gh_token=$(gh auth token 2>/dev/null || true)
 	fi
-	
+
 	# Build cron command with environment variables
 	local env_vars=""
 	if [[ -n "$user_path" ]]; then
@@ -13208,7 +13343,7 @@ cmd_cron() {
 	if [[ -n "$gh_token" ]]; then
 		env_vars="${env_vars:+${env_vars} }GH_TOKEN=${gh_token}"
 	fi
-	
+
 	local cron_cmd="*/${interval} * * * * ${env_vars:+${env_vars} }${script_path} pulse ${batch_arg} >> ${SUPERVISOR_DIR}/cron.log 2>&1 ${cron_marker}"
 
 	case "$action" in
@@ -14478,6 +14613,21 @@ EOF
 }
 
 #######################################
+# Contest mode — delegate to contest-helper.sh (t1011)
+# Usage: supervisor-helper.sh contest <subcommand> [args...]
+# Subcommands: create, dispatch, status, evaluate, apply, list, should-contest, pulse-check
+#######################################
+cmd_contest() {
+	local contest_helper="${SCRIPT_DIR}/contest-helper.sh"
+	if [[ ! -x "$contest_helper" ]]; then
+		log_error "contest-helper.sh not found at $contest_helper"
+		return 1
+	fi
+	"$contest_helper" "$@"
+	return $?
+}
+
+#######################################
 # Main
 #######################################
 main() {
@@ -14527,6 +14677,7 @@ main() {
 	backup) cmd_backup "$@" ;;
 	restore) cmd_restore "$@" ;;
 	db) cmd_db "$@" ;;
+	contest) cmd_contest "$@" ;;
 	help | --help | -h) show_usage ;;
 	*)
 		log_error "Unknown command: $command"
