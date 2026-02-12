@@ -117,8 +117,10 @@ Use `/save-todo` after planning. Auto-detects complexity:
 
 **Task completion rules** (CRITICAL - prevents false completion cascade):
 - NEVER mark a task `[x]` unless a merged PR exists with real deliverables for that task
-- The supervisor `update_todo_on_complete()` is the ONLY path to mark tasks done - it requires a merged PR URL or `verified:YYYY-MM-DD` field
-- **Interactive sessions**: Use `complete_task()` or manually add `pr:#NNN` or `verified:YYYY-MM-DD` to the task line BEFORE marking `[x]`. The pre-commit hook (`validate_todo_completions()`) will warn if completion evidence is missing.
+- Use `task-complete-helper.sh <task-id> --pr <number>` or `task-complete-helper.sh <task-id> --verified` to mark tasks complete in interactive sessions
+- The helper enforces proof-log requirements: every completion MUST have `pr:#NNN` or `verified:YYYY-MM-DD`
+- The supervisor `update_todo_on_complete()` enforces the same requirement for autonomous workers
+- The pre-commit hook rejects TODO.md commits where `[ ] -> [x]` without proof-log
 - Checking that a file exists is NOT sufficient - verify the PR was merged and contains substantive changes
 - If a worker completes with `no_pr` or `task_only`, the task stays `[ ]` until a human or the supervisor verifies the deliverable
 - The `issue-sync` GitHub Action auto-closes issues when tasks are marked `[x]` - false completions cascade into closed issues
