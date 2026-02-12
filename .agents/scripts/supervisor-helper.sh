@@ -1978,14 +1978,14 @@ cmd_add() {
 		fi
 	fi
 
-	# Model routing safeguard: warn if explicit model:sonnet conflicts with complexity classifier
-	# This catches tasks that are tagged model:sonnet but are actually complex enough for opus.
-	# The warning is logged but the explicit model is respected (user intent takes priority).
+	# Model routing safeguard: auto-upgrade when explicit model conflicts with complexity classifier
+	# This catches tasks tagged model:sonnet that are actually complex enough for opus.
+	# Complex tasks on weak models waste compute and fail — auto-upgrade is mandatory.
 	if [[ -n "$description" && "$model" != "anthropic/claude-opus-4-6" && "$model" != "opus" ]]; then
 		local auto_tier
-		auto_tier=$(classify_task_complexity "$description" "" 2>/dev/null || echo "")
+		auto_tier=$(classify_task_complexity "$description" "" 2>>"$SUPERVISOR_LOG" || echo "")
 		if [[ "$auto_tier" == "opus" ]]; then
-			log_warn "Task $task_id: explicit model:$model but classifier recommends opus — consider upgrading for complex tasks"
+			log_warn "Task $task_id: explicit model:$model but classifier recommends opus — auto-upgrading"
 			# Auto-upgrade to opus when classifier disagrees with explicit sonnet (safety-first)
 			model="opus"
 			log_info "Task $task_id: auto-upgraded to model:opus (classifier override)"
@@ -10494,9 +10494,9 @@ cmd_pulse() {
 				cmd_evaluate "$orphan_id" --no-ai 2>>"$SUPERVISOR_LOG" || {
 					cmd_transition "$orphan_id" "failed" --error "No worker process found (DB orphan)" 2>>"$SUPERVISOR_LOG" || true
 					failed_count=$((failed_count + 1))
-					attempt_self_heal "$orphan_id" "failed" "No worker process found" "${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
-					# Auto-escalate model on failure before self-heal retry (t314 wiring)
+					# Auto-escalate model on failure so self-heal retry uses stronger model (t314 wiring)
 					escalate_model_on_failure "$orphan_id" 2>>"$SUPERVISOR_LOG" || true
+					attempt_self_heal "$orphan_id" "failed" "No worker process found" "${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
 				}
 			fi
 		done <<<"$db_orphans"
