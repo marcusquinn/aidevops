@@ -1257,3 +1257,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 <!--TOON:summary{total,pending,in_progress,in_review,done,declined,total_est,total_actual,blocked_count,ready_count}:
 184,98,2,0,84,2,~5d,~24h,5,86
 -->
+- [x] t999 Test task for proof-log validation #test
