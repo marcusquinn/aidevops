@@ -10264,11 +10264,11 @@ cmd_pulse() {
     fi
 
     # Phase 4: Worker health checks - detect dead, hung, and orphaned workers
-    local worker_timeout_seconds="${SUPERVISOR_WORKER_TIMEOUT:-1800}"  # 30 min default
+    local worker_timeout_seconds="${SUPERVISOR_WORKER_TIMEOUT:-3600}"  # 1 hour default (t314: increased from 30min)
     # Absolute max runtime: kill workers regardless of log activity.
     # Prevents runaway workers (e.g., shellcheck on huge files) from accumulating
     # and exhausting system memory. Default 2 hours.
-    local worker_max_runtime_seconds="${SUPERVISOR_WORKER_MAX_RUNTIME:-7200}"  # 2 hour default
+    local worker_max_runtime_seconds="${SUPERVISOR_WORKER_MAX_RUNTIME:-14400}"  # 4 hour default (t314: increased from 2h)
 
     if [[ -d "$SUPERVISOR_DIR/pids" ]]; then
         for pid_file in "$SUPERVISOR_DIR/pids"/*.pid; do
@@ -12733,6 +12733,12 @@ attempt_self_heal() {
         return 1
     fi
 
+    # Auto-escalate model to next tier on failure (t314)
+    # Do this before creating diagnostic subtask so the re-queued task uses a better model
+    if escalate_model_on_failure "$task_id"; then
+        log_info "Self-heal: model escalated for $task_id before diagnostic"
+    fi
+
     local diag_id
     diag_id=$(create_diagnostic_subtask "$task_id" "$failure_reason" "$batch_id") || return 1
 
@@ -12745,6 +12751,87 @@ attempt_self_heal() {
             --type "ERROR_FIX" \
             --content "Supervisor self-heal: created $diag_id to diagnose $task_id ($failure_reason)" \
             --tags "supervisor,self-heal,$task_id,$diag_id" \
+            2>/dev/null || true
+    fi
+
+    return 0
+}
+
+#######################################
+# Auto-escalate task model on failure (t314)
+# When a worker fails (hung, crashed, max runtime), escalate the task's model
+# to the next tier via get_next_tier() before re-queuing. This ensures retries
+# use a more capable model instead of repeating with the same underpowered one.
+#
+# Args: task_id
+# Returns: 0 if escalated, 1 if already at max tier or not applicable
+#######################################
+escalate_model_on_failure() {
+    local task_id="$1"
+
+    ensure_db
+
+    local escaped_id
+    escaped_id=$(sql_escape "$task_id")
+
+    # Get current model and escalation state
+    local task_data
+    task_data=$(db -separator '|' "$SUPERVISOR_DB" "
+        SELECT model, escalation_depth, max_escalation
+        FROM tasks WHERE id = '$escaped_id';
+    " 2>/dev/null || echo "")
+
+    if [[ -z "$task_data" ]]; then
+        return 1
+    fi
+
+    local current_model current_depth max_depth
+    IFS='|' read -r current_model current_depth max_depth <<< "$task_data"
+
+    # Already at max escalation depth
+    if [[ "$current_depth" -ge "$max_depth" ]]; then
+        log_info "Model escalation: $task_id already at max depth ($current_depth/$max_depth)"
+        return 1
+    fi
+
+    # Get next tier
+    local next_tier
+    next_tier=$(get_next_tier "$current_model")
+
+    if [[ -z "$next_tier" ]]; then
+        log_info "Model escalation: $task_id already at max tier ($current_model)"
+        return 1
+    fi
+
+    # Resolve to full model string
+    local ai_cli
+    ai_cli=$(resolve_ai_cli 2>/dev/null || echo "opencode")
+    local next_model
+    next_model=$(resolve_model "$next_tier" "$ai_cli")
+
+    if [[ -z "$next_model" || "$next_model" == "$current_model" ]]; then
+        log_info "Model escalation: no higher model available for $task_id"
+        return 1
+    fi
+
+    # Update model and escalation depth in DB
+    db "$SUPERVISOR_DB" "
+        UPDATE tasks SET
+            model = '$(sql_escape "$next_model")',
+            escalation_depth = $((current_depth + 1))
+        WHERE id = '$escaped_id';
+    "
+
+    log_warn "Model escalation (t314): $task_id escalated from $current_model to $next_model (depth $((current_depth + 1))/$max_depth)"
+
+    # Record pattern for future routing decisions
+    local pattern_helper="${SCRIPT_DIR}/pattern-tracker-helper.sh"
+    if [[ -x "$pattern_helper" ]]; then
+        "$pattern_helper" record \
+            --type "FAILURE_PATTERN" \
+            --task "$task_id" \
+            --model "$current_model" \
+            --detail "Auto-escalated to $next_model after failure" \
             2>/dev/null || true
     fi
 
@@ -14977,7 +15064,7 @@ Environment:
   SUPERVISOR_SELF_HEAL        Enable/disable self-healing (default: true)
   SUPERVISOR_AUTO_ISSUE       Enable/disable GitHub issue creation (default: false)
   SUPERVISOR_SKIP_REVIEW_TRIAGE Skip review triage before merge (default: false)
-  SUPERVISOR_WORKER_TIMEOUT   Seconds before a hung worker is killed (default: 1800)
+  SUPERVISOR_WORKER_TIMEOUT   Seconds before a hung worker is killed (default: 3600)
   SUPERVISOR_SELF_MEM_LIMIT   MB before supervisor respawns after batch (default: 8192)
   AIDEVOPS_SUPERVISOR_DIR     Override supervisor data directory
 
