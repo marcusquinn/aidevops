@@ -4912,10 +4912,10 @@ task_id="<task-id>"  # Replace with actual task ID from your prompt
 pr_title="<your-pr-title>"  # The title you're about to use
 
 # Validate task ID is in the title
-if ! echo "\$pr_title" | grep -qE "\\bt[0-9]+(\\.[0-9]+)*\\b"; then
-  echo "WARNING: PR title does not contain task ID (tNNN format)"
-  echo "Current title: \$pr_title"
-  echo "Expected format: '\${task_id}: <description>' or 'feat: <description> (\${task_id})'"
+if ! echo \"\$pr_title\" | grep -qE '\\bt[0-9]+(\\.[0-9]+)*\\b'; then
+  echo \"WARNING: PR title does not contain task ID (tNNN format)\"
+  echo \"Current title: \$pr_title\"
+  echo \"Expected format: '\${task_id}: <description>' or 'feat: <description> (\${task_id})'\"
   echo "Fix the title before creating the PR to ensure traceability."
   # DO NOT proceed with gh pr create until title is fixed
 fi
