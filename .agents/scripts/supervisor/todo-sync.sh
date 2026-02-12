@@ -808,3 +808,101 @@ cmd_reconcile_todo() {
 
 	return 0
 }
+
+#######################################
+# Phase 0.5b: Deduplicate task IDs in TODO.md (t319.4)
+# Scans TODO.md for duplicate task IDs on multiple open `- [ ]` lines.
+# Keeps the first occurrence, renames duplicates to t(max+1).
+# Commits and pushes changes if any duplicates were resolved.
+# Arguments:
+#   $1 - repo path containing TODO.md
+# Returns:
+#   0 on success (including no duplicates found), 1 on error
+#######################################
+dedup_todo_task_ids() {
+	local repo_path="$1"
+	local todo_file="$repo_path/TODO.md"
+
+	if [[ ! -f "$todo_file" ]]; then
+		log_verbose "dedup_todo_task_ids: no TODO.md at $todo_file"
+		return 0
+	fi
+
+	# Extract all open task IDs from lines matching: - [ ] tNNN ...
+	# Captures: line_number|full_task_id (e.g. "42|t319" or "43|t319.4")
+	local task_lines
+	task_lines=$(grep -nE '^[[:space:]]*- \[ \] t[0-9]+' "$todo_file" | while IFS=: read -r lnum line_content; do
+		if [[ "$line_content" =~ ^[[:space:]]*-[[:space:]]\[[[:space:]]\][[:space:]](t[0-9]+(\.[0-9]+)*) ]]; then
+			echo "${lnum}|${BASH_REMATCH[1]}"
+		fi
+	done)
+
+	if [[ -z "$task_lines" ]]; then
+		return 0
+	fi
+
+	# Find duplicate task IDs (same tNNN or tNNN.N appearing multiple times)
+	local dup_ids
+	dup_ids=$(echo "$task_lines" | awk -F'|' '{print $2}' | sort | uniq -d)
+
+	if [[ -z "$dup_ids" ]]; then
+		return 0
+	fi
+
+	log_warn "Phase 0.5b: Duplicate task IDs found in TODO.md, resolving..."
+
+	# Find the current highest top-level task number for renaming
+	local max_num
+	max_num=$(grep -oE '(^|[[:space:]])t([0-9]+)' "$todo_file" | grep -oE '[0-9]+' | sort -n | tail -1 || echo "0")
+	max_num=$((10#${max_num}))
+
+	local changes_made=0
+
+	while IFS= read -r dup_id; do
+		[[ -z "$dup_id" ]] && continue
+
+		log_warn "  Duplicate task ID: $dup_id"
+
+		# Get all line numbers for this task ID (in order of appearance)
+		local occurrences
+		occurrences=$(echo "$task_lines" | awk -F'|' -v id="$dup_id" '$2 == id {print $1}')
+
+		local first=true
+		while IFS= read -r line_num; do
+			[[ -z "$line_num" ]] && continue
+
+			if [[ "$first" == "true" ]]; then
+				log_info "    Keeping: line $line_num ($dup_id)"
+				first=false
+				continue
+			fi
+
+			# Allocate next available ID
+			max_num=$((max_num + 1))
+			local new_id="t${max_num}"
+
+			# For subtask duplicates (tNNN.M), create new_id as tMAX.M
+			if [[ "$dup_id" =~ ^t([0-9]+)\.([0-9]+)$ ]]; then
+				local old_base="${BASH_REMATCH[1]}"
+				local old_sub="${BASH_REMATCH[2]}"
+				new_id="t${max_num}.${old_sub}"
+				log_warn "    Renaming: line $line_num ($dup_id -> $new_id)"
+				sed_inplace "${line_num}s/t${old_base}\.${old_sub}/${new_id}/" "$todo_file"
+			else
+				local old_num="${dup_id#t}"
+				log_warn "    Renaming: line $line_num ($dup_id -> $new_id)"
+				# Use word-boundary-like matching: tNNN followed by space or end-of-field
+				sed_inplace -E "${line_num}s/t${old_num}( |$)/${new_id}\1/" "$todo_file"
+			fi
+
+			changes_made=$((changes_made + 1))
+		done <<<"$occurrences"
+	done <<<"$dup_ids"
+
+	if [[ "$changes_made" -gt 0 ]]; then
+		log_success "Phase 0.5b: Renamed $changes_made duplicate task ID(s) in TODO.md"
+		commit_and_push_todo "$repo_path" "chore: dedup $changes_made duplicate task ID(s) in TODO.md (t319.4)"
+	fi
+
+	return 0
+}
