@@ -2044,6 +2044,10 @@ cmd_add() {
 		create_github_issue "$task_id" "$description" "$repo"
 	fi
 
+	# t1009: Set status:queued label on the GitHub issue (if it exists)
+	# This is the initial state — cmd_transition() handles subsequent transitions.
+	sync_issue_status_label "$task_id" "queued" "" 2>>"${SUPERVISOR_LOG:-/dev/null}" || true
+
 	return 0
 }
 
@@ -3847,16 +3851,22 @@ sync_claim_to_github() {
 	ensure_status_labels "$repo_slug"
 
 	if [[ "$action" == "claim" ]]; then
+		# t1009: Remove all status labels, add status:claimed
 		gh issue edit "$issue_number" --repo "$repo_slug" \
 			--add-assignee "@me" \
-			--add-label "status:claimed" --remove-label "status:available" 2>/dev/null || true
+			--add-label "status:claimed" \
+			--remove-label "status:available" --remove-label "status:queued" \
+			--remove-label "status:blocked" --remove-label "status:verify-failed" 2>/dev/null || true
 	elif [[ "$action" == "unclaim" ]]; then
 		local my_login
 		my_login=$(gh api user --jq '.login' 2>/dev/null || echo "")
 		if [[ -n "$my_login" ]]; then
+			# t1009: Remove all status labels, add status:available
 			gh issue edit "$issue_number" --repo "$repo_slug" \
 				--remove-assignee "$my_login" \
-				--add-label "status:available" --remove-label "status:claimed" 2>/dev/null || true
+				--add-label "status:available" \
+				--remove-label "status:claimed" --remove-label "status:queued" \
+				--remove-label "status:blocked" --remove-label "status:verify-failed" 2>/dev/null || true
 		fi
 	fi
 	return 0
@@ -10991,6 +11001,61 @@ cmd_pulse() {
 		else
 			local remaining=$((issue_sync_interval - elapsed))
 			log_verbose "  Phase 8: Skipped (${remaining}s until next run)"
+		fi
+
+		# Phase 8b: Status label reconciliation sweep (t1009)
+		# Checks all tasks in the DB and ensures their GitHub issue labels match
+		# the current supervisor state. Catches drift from missed transitions,
+		# manual label changes, or failed API calls.
+		# Piggybacks on the same interval/idle check as Phase 8.
+		if [[ "$elapsed" -ge "$issue_sync_interval" ]]; then
+			# Derive repo_slug from sync_repo (set in Phase 8 above)
+			local rec_repo_slug
+			rec_repo_slug=$(detect_repo_slug "${sync_repo:-.}" 2>/dev/null || echo "")
+			if [[ -n "$rec_repo_slug" ]]; then
+				log_info "  Phase 8b: Status label reconciliation sweep"
+				ensure_status_labels "$rec_repo_slug"
+				local reconcile_count=0
+				local reconcile_tasks
+				reconcile_tasks=$(db "$SUPERVISOR_DB" "SELECT id, status FROM tasks WHERE status NOT IN ('verified','deployed','cancelled','failed');" 2>/dev/null || echo "")
+				while IFS='|' read -r rec_tid rec_status; do
+					[[ -z "$rec_tid" ]] && continue
+					local rec_issue
+					rec_issue=$(find_task_issue_number "$rec_tid" "${sync_repo:-.}")
+					[[ -z "$rec_issue" ]] && continue
+
+					local expected_label
+					expected_label=$(state_to_status_label "$rec_status")
+					[[ -z "$expected_label" ]] && continue
+
+					# Check if the issue already has the correct label
+					local current_labels
+					current_labels=$(gh issue view "$rec_issue" --repo "$rec_repo_slug" --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null || echo "")
+					if [[ "$current_labels" != *"$expected_label"* ]]; then
+						# Build remove args for all status labels except the expected one
+						local -a rec_remove_args=()
+						local rec_label
+						while IFS=',' read -ra rec_labels; do
+							for rec_label in "${rec_labels[@]}"; do
+								if [[ "$rec_label" != "$expected_label" ]]; then
+									rec_remove_args+=("--remove-label" "$rec_label")
+								fi
+							done
+						done <<<"$ALL_STATUS_LABELS"
+						gh issue edit "$rec_issue" --repo "$rec_repo_slug" \
+							--add-label "$expected_label" "${rec_remove_args[@]}" 2>/dev/null || true
+						log_verbose "  Phase 8b: Fixed #$rec_issue ($rec_tid): -> $expected_label"
+						reconcile_count=$((reconcile_count + 1))
+					fi
+				done <<<"$reconcile_tasks"
+				if [[ "$reconcile_count" -gt 0 ]]; then
+					log_info "  Phase 8b: Reconciled $reconcile_count issue label(s)"
+				else
+					log_verbose "  Phase 8b: All labels in sync"
+				fi
+			else
+				log_verbose "  Phase 8b: Skipped (could not detect repo slug)"
+			fi
 		fi
 	fi
 
