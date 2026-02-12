@@ -11002,6 +11002,60 @@ cmd_pulse() {
 		log_warn "  Phase 11: Memory exceeds threshold but tasks still active — monitoring"
 	fi
 
+	# Phase 12: Regenerate MODELS.md leaderboard (t1012)
+	# Throttled to once per hour — only regenerates when pattern data may have changed.
+	# Iterates over known repos and updates MODELS.md in each repo root.
+	local models_md_interval=3600 # seconds (1 hour)
+	local models_md_stamp="$SUPERVISOR_DIR/models-md-last-regen"
+	local models_md_now
+	models_md_now=$(date +%s)
+	local models_md_last=0
+	if [[ -f "$models_md_stamp" ]]; then
+		models_md_last=$(cat "$models_md_stamp" 2>/dev/null || echo 0)
+	fi
+	local models_md_elapsed=$((models_md_now - models_md_last))
+	if [[ "$models_md_elapsed" -ge "$models_md_interval" ]]; then
+		local generate_script="${SCRIPT_DIR}/generate-models-md.sh"
+		if [[ -x "$generate_script" ]]; then
+			local models_repos
+			models_repos=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks;" 2>/dev/null || true)
+			if [[ -n "$models_repos" ]]; then
+				while IFS= read -r models_repo_path; do
+					[[ -n "$models_repo_path" && -d "$models_repo_path" ]] || continue
+					local models_repo_root
+					models_repo_root=$(git -C "$models_repo_path" rev-parse --show-toplevel 2>/dev/null) || continue
+					log_verbose "  Phase 12: Regenerating MODELS.md in $models_repo_root"
+					if "$generate_script" --output "${models_repo_root}/MODELS.md" --quiet 2>/dev/null; then
+						if git -C "$models_repo_root" diff --quiet -- MODELS.md 2>/dev/null; then
+							log_verbose "  Phase 12: MODELS.md unchanged in $models_repo_root"
+						else
+							git -C "$models_repo_root" add MODELS.md 2>/dev/null \
+								&& git -C "$models_repo_root" commit -m "chore: regenerate MODELS.md leaderboard (t1012)" --no-verify 2>/dev/null \
+								&& git -C "$models_repo_root" push 2>/dev/null \
+								&& log_info "  Phase 12: MODELS.md updated and pushed ($models_repo_root)" \
+								|| log_warn "  Phase 12: MODELS.md regenerated but commit/push failed ($models_repo_root)"
+						fi
+					else
+						log_warn "  Phase 12: MODELS.md generation failed for $models_repo_root"
+					fi
+				done <<<"$models_repos"
+			fi
+		fi
+		echo "$models_md_now" > "$models_md_stamp" 2>/dev/null || true
+	else
+		local models_md_remaining=$((models_md_interval - models_md_elapsed))
+		log_verbose "  Phase 12: MODELS.md regen skipped (${models_md_remaining}s until next run)"
+	fi
+				else
+					log_warn "  Phase 12: MODELS.md generation failed"
+				fi
+			fi
+		fi
+		record_throttle "$models_md_throttle_key" 2>/dev/null || true
+	else
+		log_verbose "  Phase 12: MODELS.md regen skipped (throttled)"
+	fi
+
 	# Release pulse dispatch lock (t159)
 	release_pulse_lock
 	# Reset trap to avoid interfering with other commands in the same process
@@ -13190,16 +13244,16 @@ cmd_cron() {
 	local script_path
 	script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/supervisor-helper.sh"
 	local cron_marker="# aidevops-supervisor-pulse"
-	
+
 	# Detect current PATH for cron environment (t1006)
 	local user_path="${PATH}"
-	
+
 	# Detect GH_TOKEN from gh CLI if available (t1006)
 	local gh_token=""
 	if command -v gh &>/dev/null; then
 		gh_token=$(gh auth token 2>/dev/null || true)
 	fi
-	
+
 	# Build cron command with environment variables
 	local env_vars=""
 	if [[ -n "$user_path" ]]; then
@@ -13208,7 +13262,7 @@ cmd_cron() {
 	if [[ -n "$gh_token" ]]; then
 		env_vars="${env_vars:+${env_vars} }GH_TOKEN=${gh_token}"
 	fi
-	
+
 	local cron_cmd="*/${interval} * * * * ${env_vars:+${env_vars} }${script_path} pulse ${batch_arg} >> ${SUPERVISOR_DIR}/cron.log 2>&1 ${cron_marker}"
 
 	case "$action" in
