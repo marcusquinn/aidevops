@@ -244,3 +244,57 @@
     - setup_beads() full chain: no brew/go -> binary download -> success
     - ensure_homebrew() decline path: prompted, user said "n", returned 1 cleanly
     - All 11 CI checks passed on PR #1168
+
+- [ ] v025 t300 Verify Phase 10b self-improvement loop works end-to-end �... | PR #1174 | merged:2026-02-12
+  files: .agents/scripts/supervisor-helper.sh
+  check: shellcheck .agents/scripts/supervisor-helper.sh
+  check: file-exists .agents/scripts/supervisor-helper.sh
+
+- [ ] v026 t301 Rosetta audit + shell linter optimisation — detect x86 ... | PR #1185 | merged:2026-02-12
+  files: .agents/scripts/linters-local.sh, .agents/scripts/rosetta-audit-helper.sh, setup.sh
+  check: shellcheck .agents/scripts/linters-local.sh
+  check: file-exists .agents/scripts/linters-local.sh
+  check: shellcheck .agents/scripts/rosetta-audit-helper.sh
+  check: file-exists .agents/scripts/rosetta-audit-helper.sh
+  check: shellcheck setup.sh
+  check: file-exists setup.sh
+
+- [ ] v027 t307 Fix missing validate_namespace call in aidevops.sh — re... | PR #1189 | merged:2026-02-12
+  files: aidevops.sh
+  check: shellcheck aidevops.sh
+  check: file-exists aidevops.sh
+
+- [ ] v028 t310 Enhancor AI agent — create enhancor.md subagent under t... | PR #1194 | merged:2026-02-12
+  files: .agents/content/production/image.md, .agents/scripts/enhancor-helper.sh, .agents/tools/video/enhancor.md
+  check: file-exists .agents/content/production/image.md
+  check: shellcheck .agents/scripts/enhancor-helper.sh
+  check: file-exists .agents/scripts/enhancor-helper.sh
+  check: file-exists .agents/tools/video/enhancor.md
+  check: rg "enhancor" .agents/subagent-index.toon
+
+- [ ] v029 t309 REAL Video Enhancer agent — create a real-video-enhance... | PR #1193 | merged:2026-02-12
+  files: .agents/AGENTS.md, .agents/content/production/video.md, .agents/scripts/real-video-enhancer-helper.sh, .agents/subagent-index.toon, .agents/tools/video/real-video-enhancer.md, .agents/tools/video/video-prompt-design.md
+  check: file-exists .agents/AGENTS.md
+  check: file-exists .agents/content/production/video.md
+  check: shellcheck .agents/scripts/real-video-enhancer-helper.sh
+  check: file-exists .agents/scripts/real-video-enhancer-helper.sh
+  check: file-exists .agents/subagent-index.toon
+  check: file-exists .agents/tools/video/real-video-enhancer.md
+  check: file-exists .agents/tools/video/video-prompt-design.md
+  check: rg "real-video-enhancer" .agents/subagent-index.toon
+  check: rg "video-prompt-design" .agents/subagent-index.toon
+
+- [ ] v030 t306 Fix namespace validation in setup.sh — namespace collec... | PR #1190 | merged:2026-02-12
+  files: setup.sh
+  check: shellcheck setup.sh
+  check: file-exists setup.sh
+
+- [ ] v031 t304 Fix rm -rf on potentially empty variable in setup.sh — ... | PR #1187 | merged:2026-02-12
+  files: setup.sh
+  check: shellcheck setup.sh
+  check: file-exists setup.sh
+
+- [ ] v032 t308 Fix help text in aidevops.sh — help text omits the `[na... | PR #1191 | merged:2026-02-12
+  files: aidevops.sh
+  check: shellcheck aidevops.sh
+  check: file-exists aidevops.sh
