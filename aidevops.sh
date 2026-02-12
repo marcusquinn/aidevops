@@ -2473,11 +2473,6 @@ cmd_plugin() {
 		local plugin_name="${2:-my-plugin}"
 		local namespace="${3:-$plugin_name}"
 
-		# Validate namespace
-		if ! validate_namespace "$namespace"; then
-			return 1
-		fi
-
 		if [[ "$target_dir" != "." && -d "$target_dir" ]]; then
 			local existing_count
 			existing_count=$(find "$target_dir" -maxdepth 1 -type f | wc -l | tr -d ' ')
@@ -2578,7 +2573,7 @@ cmd_plugin() {
 		echo "  enable <name>      Enable a disabled plugin (redeploys files)"
 		echo "  disable <name>     Disable a plugin (removes files, keeps config)"
 		echo "  remove <name>      Remove a plugin entirely"
-		echo "  init [dir] [name]  Scaffold a new plugin from template"
+		echo "  init [dir] [name] [namespace]  Scaffold a new plugin from template"
 		echo ""
 		echo "Options for 'add':"
 		echo "  --namespace <name>   Directory name under ~/.aidevops/agents/"
@@ -2594,7 +2589,7 @@ cmd_plugin() {
 		echo "  aidevops plugin disable pro"
 		echo "  aidevops plugin enable pro"
 		echo "  aidevops plugin remove pro"
-		echo "  aidevops plugin init ./my-plugin my-plugin"
+		echo "  aidevops plugin init ./my-plugin my-plugin my-plugin"
 		echo ""
 		echo "Plugin docs: ~/.aidevops/agents/aidevops/plugins.md"
 		;;
