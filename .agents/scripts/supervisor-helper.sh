@@ -13233,7 +13233,26 @@ cmd_cron() {
 	local script_path
 	script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/supervisor-helper.sh"
 	local cron_marker="# aidevops-supervisor-pulse"
-	local cron_cmd="*/${interval} * * * * ${script_path} pulse ${batch_arg} >> ${SUPERVISOR_DIR}/cron.log 2>&1 ${cron_marker}"
+	
+	# Detect current PATH for cron environment (t1006)
+	local user_path="${PATH}"
+	
+	# Detect GH_TOKEN from gh CLI if available (t1006)
+	local gh_token=""
+	if command -v gh &>/dev/null; then
+		gh_token=$(gh auth token 2>/dev/null || true)
+	fi
+	
+	# Build cron command with environment variables
+	local env_vars=""
+	if [[ -n "$user_path" ]]; then
+		env_vars="PATH=${user_path}"
+	fi
+	if [[ -n "$gh_token" ]]; then
+		env_vars="${env_vars:+${env_vars} }GH_TOKEN=${gh_token}"
+	fi
+	
+	local cron_cmd="*/${interval} * * * * ${env_vars:+${env_vars} }${script_path} pulse ${batch_arg} >> ${SUPERVISOR_DIR}/cron.log 2>&1 ${cron_marker}"
 
 	case "$action" in
 	install)
