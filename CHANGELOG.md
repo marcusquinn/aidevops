@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- make oh-my-opencode removal optional, default to keeping it (t315) (#1221)
+
 ## [2.110.13] - 2026-02-12
 
 ### Added
