@@ -152,7 +152,7 @@ get_highest_task_id() {
 	while IFS= read -r line; do
 		if [[ "$line" =~ ^[[:space:]]*-[[:space:]]\[[[:space:]xX]\][[:space:]]t([0-9]+) ]]; then
 			local task_num="${BASH_REMATCH[1]}"
-			if [[ "$task_num" -gt "$highest" ]]; then
+			if ((10#$task_num > 10#$highest)); then
 				highest="$task_num"
 			fi
 		fi
