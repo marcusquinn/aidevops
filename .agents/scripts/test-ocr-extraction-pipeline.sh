@@ -75,11 +75,10 @@ find_python() {
 	)
 
 	for candidate in "${candidates[@]}"; do
-		if command -v "$candidate" &>/dev/null || [[ -x "$candidate" ]]; then
-			if "$candidate" -c "from pydantic import BaseModel" 2>/dev/null; then
-				PYTHON_CMD="$candidate"
-				return 0
-			fi
+		if { command -v "$candidate" &>/dev/null || [[ -x "$candidate" ]]; } &&
+			"$candidate" -c "from pydantic import BaseModel" 2>/dev/null; then
+			PYTHON_CMD="$candidate"
+			return 0
 		fi
 	done
 
