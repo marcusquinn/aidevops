@@ -247,6 +247,117 @@ validate_todo_completions() {
 	return 0
 }
 
+# t1003: Validate that parent tasks with open subtasks are not marked complete
+validate_parent_subtask_blocking() {
+	# Only check if TODO.md is staged
+	if ! git diff --cached --name-only | grep -q '^TODO\.md$'; then
+		return 0
+	fi
+
+	print_info "Validating parent task completion (subtask blocking check)..."
+
+	# Get the staged version of TODO.md
+	local staged_todo
+	staged_todo=$(git show :TODO.md 2>/dev/null || true)
+	if [[ -z "$staged_todo" ]]; then
+		return 0
+	fi
+
+	# Find tasks that changed from [ ] to [x]
+	local newly_completed
+	newly_completed=$(git diff --cached -U0 TODO.md | grep -E '^\+.*- \[x\] t[0-9]+' | sed 's/^\+//' || true)
+
+	if [[ -z "$newly_completed" ]]; then
+		return 0
+	fi
+
+	# Also get lines that were already [x] (to skip them)
+	local already_completed
+	already_completed=$(git diff --cached -U0 TODO.md | grep -E '^\-.*- \[x\] t[0-9]+' | sed 's/^\-//' || true)
+
+	local fail_count=0
+	local failed_tasks=()
+
+	while IFS= read -r line; do
+		local task_id
+		task_id=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
+		if [[ -z "$task_id" ]]; then
+			continue
+		fi
+
+		# Skip if this task was already [x] (not a transition)
+		if echo "$already_completed" | grep -q "$task_id"; then
+			continue
+		fi
+
+		# Skip subtasks (tNNN.M format) — only check parent tasks
+		if [[ "$task_id" =~ \.[0-9]+$ ]]; then
+			continue
+		fi
+
+		# Check for explicit subtask IDs (e.g., t123.1, t123.2 are children of t123)
+		local explicit_subtasks
+		explicit_subtasks=$(echo "$staged_todo" | grep -E "^[[:space:]]*- \[ \] ${task_id}\.[0-9]+( |$)" || true)
+
+		if [[ -n "$explicit_subtasks" ]]; then
+			local open_count
+			open_count=$(echo "$explicit_subtasks" | wc -l | tr -d ' ')
+			failed_tasks+=("$task_id (has $open_count open subtask(s) by ID)")
+			((fail_count++))
+			continue
+		fi
+
+		# Check for indentation-based subtasks
+		local task_line
+		task_line=$(echo "$staged_todo" | grep -E "^[[:space:]]*- \[x\] ${task_id}( |$)" | head -1 || true)
+		if [[ -z "$task_line" ]]; then
+			continue
+		fi
+
+		local task_indent
+		task_indent=$(echo "$task_line" | sed -E 's/^([[:space:]]*).*/\1/' | wc -c)
+		task_indent=$((task_indent - 1))
+
+		local open_subtasks
+		open_subtasks=$(echo "$staged_todo" | awk -v tid="$task_id" -v tindent="$task_indent" '
+			BEGIN { found=0 }
+			/- \[x\] '"$task_id"'( |$)/ { found=1; next }
+			found && /^[[:space:]]*- \[/ {
+				match($0, /^[[:space:]]*/);
+				line_indent = RLENGTH;
+				if (line_indent > tindent) {
+					if ($0 ~ /- \[ \]/) { print $0 }
+				} else { found=0 }
+			}
+			found && /^[[:space:]]*$/ { next }
+			found && !/^[[:space:]]*- / && !/^[[:space:]]*$/ { found=0 }
+		')
+
+		if [[ -n "$open_subtasks" ]]; then
+			local open_count
+			open_count=$(echo "$open_subtasks" | wc -l | tr -d ' ')
+			failed_tasks+=("$task_id (has $open_count open subtask(s) by indentation)")
+			((fail_count++))
+		fi
+	done <<<"$newly_completed"
+
+	if [[ "$fail_count" -gt 0 ]]; then
+		print_error "Parent task completion check FAILED"
+		print_error ""
+		print_error "The following parent tasks were marked [x] with open subtasks:"
+		for task in "${failed_tasks[@]}"; do
+			print_error "  - $task"
+		done
+		print_error ""
+		print_error "Parent tasks should only be completed when ALL subtasks are done."
+		print_error ""
+		print_info "To fix: Complete all subtasks first, then retry commit"
+		return 1
+	fi
+
+	return 0
+}
+
 main() {
 	echo -e "${BLUE}Pre-commit Quality Validation${NC}"
 	echo -e "${BLUE}================================${NC}"
@@ -259,6 +370,12 @@ main() {
 	echo ""
 
 	validate_todo_completions || true
+	echo ""
+
+	validate_parent_subtask_blocking || {
+		print_error "Commit rejected: parent tasks with open subtasks"
+		exit 1
+	}
 	echo ""
 
 	# Get modified shell files
