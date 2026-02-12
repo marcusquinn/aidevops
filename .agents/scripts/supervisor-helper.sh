@@ -3354,15 +3354,18 @@ cmd_unclaim() {
 	# Parse arguments (t1017: support --force flag)
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-			--force) force=true ;;
-			-*) log_error "Unknown option: $1"; return 1 ;;
-			*)
-				if [[ -z "$task_id" ]]; then
-					task_id="$1"
-				elif [[ -z "$explicit_root" ]]; then
-					explicit_root="$1"
-				fi
-				;;
+		--force) force=true ;;
+		-*)
+			log_error "Unknown option: $1"
+			return 1
+			;;
+		*)
+			if [[ -z "$task_id" ]]; then
+				task_id="$1"
+			elif [[ -z "$explicit_root" ]]; then
+				explicit_root="$1"
+			fi
+			;;
 		esac
 		shift
 	done
@@ -14035,20 +14038,21 @@ cmd_dashboard() {
 			load_output=$(check_system_load 2>/dev/null || echo "")
 
 			if [[ -n "$load_output" ]]; then
-				local sys_cores sys_load1 sys_load5 sys_load15 sys_procs sys_sup_procs sys_mem sys_overloaded
+				local sys_cores sys_load1 sys_load5 sys_load15 sys_procs sys_sup_procs sys_mem sys_overloaded sys_load_ratio
 				sys_cores=$(echo "$load_output" | grep '^cpu_cores=' | cut -d= -f2)
 				sys_load1=$(echo "$load_output" | grep '^load_1m=' | cut -d= -f2)
 				sys_load5=$(echo "$load_output" | grep '^load_5m=' | cut -d= -f2)
 				sys_load15=$(echo "$load_output" | grep '^load_15m=' | cut -d= -f2)
+				sys_load_ratio=$(echo "$load_output" | grep '^load_ratio=' | cut -d= -f2)
 				sys_procs=$(echo "$load_output" | grep '^process_count=' | cut -d= -f2)
 				sys_sup_procs=$(echo "$load_output" | grep '^supervisor_process_count=' | cut -d= -f2)
 				sys_mem=$(echo "$load_output" | grep '^memory_pressure=' | cut -d= -f2)
 				sys_overloaded=$(echo "$load_output" | grep '^overloaded=' | cut -d= -f2)
 
 				printf ' %sSYSTEM%s  ' "${c_bold}" "${c_reset}"
-				printf 'Load: %s%s%s %s %s (%s cores)  ' \
+				printf 'CPU: %s%s%%%s (%s cores, load avg: %s/%s/%s)  ' \
 					"$([[ "$sys_overloaded" == "true" ]] && printf '%s' "${c_red}${c_bold}" || printf '%s' "${c_green}")" \
-					"$sys_load1" "${c_reset}" "$sys_load5" "$sys_load15" "$sys_cores"
+					"$sys_load_ratio" "${c_reset}" "$sys_cores" "$sys_load1" "$sys_load5" "$sys_load15"
 				printf 'Procs: %s (%s supervisor)  ' "$sys_procs" "$sys_sup_procs"
 				printf 'Mem: %s%s%s' \
 					"$([[ "$sys_mem" == "high" ]] && printf '%s' "${c_red}" || ([[ "$sys_mem" == "medium" ]] && printf '%s' "${c_yellow}" || printf '%s' "${c_green}"))" \
