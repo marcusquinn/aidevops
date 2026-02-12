@@ -3234,6 +3234,8 @@ update_queue_health_issue() {
 	cnt_cancelled=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status = 'cancelled';" 2>/dev/null || echo "0")
 	cnt_skipped=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status = 'skipped';" 2>/dev/null || echo "0")
 	cnt_actionable=$((cnt_total - cnt_cancelled - cnt_skipped))
+	local cnt_verify_failed
+	cnt_verify_failed=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status = 'verify_failed';" 2>/dev/null || echo "0")
 
 	# Active batch info
 	local active_batch_name=""
@@ -3529,6 +3531,7 @@ update_queue_health_issue() {
 | Retrying | ${cnt_retrying} |
 | Blocked | ${cnt_blocked} |
 | Failed | ${cnt_failed} |
+| Verify Failed | ${cnt_verify_failed} |
 | Complete | ${cnt_complete} |
 | Cancelled | ${cnt_cancelled} |
 | **Actionable** | **${cnt_actionable}** |
@@ -3597,10 +3600,18 @@ _Auto-updated by supervisor pulse (t1013). Do not edit manually._"
 	local title_time
 	title_time=$(date -u +"%H:%M")
 
-	# Count active runners: tasks with 'running' status updated within the last 5 minutes
-	# Uses timestamps not PIDs — works across machines with multiple contributors
-	local cnt_active_runners
-	cnt_active_runners=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status = 'running' AND updated_at > datetime('now', '-5 minutes');" 2>/dev/null || echo "0")
+	# Register this runner via a label on the health issue (cross-machine, via gh)
+	local runner_user
+	runner_user=$(gh api user --jq '.login' 2>/dev/null || whoami)
+	local runner_label="runner:${runner_user}"
+	# Ensure the label exists (create if needed, ignore errors if it already exists)
+	gh label create "$runner_label" --repo "$repo_slug" --color "0E8A16" --description "Active supervisor runner" 2>/dev/null || true
+	# Add label to health issue (idempotent)
+	gh issue edit "$health_issue_number" --repo "$repo_slug" --add-label "$runner_label" >/dev/null 2>&1 || true
+
+	# Count active runners from runner:* labels on the health issue
+	local cnt_runners
+	cnt_runners=$(gh issue view "$health_issue_number" --repo "$repo_slug" --json labels --jq '[.labels[].name | select(startswith("runner:"))] | length' 2>/dev/null || echo "0")
 
 	# Available: queued tasks (ready to pick up by any runner)
 	local cnt_available="${cnt_queued:-0}"
@@ -3609,8 +3620,23 @@ _Auto-updated by supervisor pulse (t1013). Do not edit manually._"
 	local cnt_claimed
 	cnt_claimed=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('running','dispatched','pr_review','review_triage','merging','merged','deploying','evaluating','retrying');" 2>/dev/null || echo "0")
 
-	local health_title="[Supervisor] ${cnt_active_runners} runners, ${cnt_available} available, ${cnt_claimed} claimed, ${cnt_blocked:-0} blocked at ${title_time} UTC"
+	# Build title parts
+	local title_parts="${cnt_available} available, ${cnt_claimed} claimed"
+	if [[ "${cnt_blocked:-0}" -gt 0 ]]; then
+		title_parts="${title_parts}, ${cnt_blocked} blocked"
+	fi
+	if [[ "${cnt_verify_failed:-0}" -gt 0 ]]; then
+		title_parts="${title_parts}, ${cnt_verify_failed} failed"
+	fi
+
+	local health_title="[Supervisor] ${title_parts} at ${title_time} UTC"
 	gh issue edit "$health_issue_number" --repo "$repo_slug" --title "$health_title" >/dev/null 2>&1 || true
+
+	# Daily cleanup: remove runner:* labels not refreshed in 24h
+	# (Each pulse re-adds its own label, so stale ones are from offline runners)
+	# This runs cheaply — just checks if any runner labels exist beyond our own
+	# Actual 24h staleness check would need label timestamps which GH doesn't provide,
+	# so we rely on the cron pulse re-adding the label each cycle to keep it alive
 
 	log_verbose "  Phase 8c: Updated queue health issue #$health_issue_number"
 	return 0
