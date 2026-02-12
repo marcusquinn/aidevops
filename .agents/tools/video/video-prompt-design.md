@@ -203,6 +203,7 @@ ffprobe final.mp4  # Check resolution and frame rate
 ### Enhancement Options
 
 **Upscaling** (improve resolution):
+
 ```bash
 # 2x upscale (720p → 1080p or 1080p → 4K)
 real-video-enhancer-helper.sh upscale input.mp4 output.mp4 --scale 2
@@ -212,6 +213,7 @@ real-video-enhancer-helper.sh upscale input.mp4 output.mp4 --scale 4
 ```
 
 **Frame Interpolation** (increase frame rate):
+
 ```bash
 # 24fps → 60fps (cinematic to social)
 real-video-enhancer-helper.sh interpolate input.mp4 output.mp4 --fps 60
@@ -221,12 +223,14 @@ real-video-enhancer-helper.sh interpolate input.mp4 output.mp4 --fps 48
 ```
 
 **Denoising** (remove compression artifacts):
+
 ```bash
 # Clean up noisy/compressed video
 real-video-enhancer-helper.sh denoise input.mp4 output.mp4
 ```
 
 **Full Pipeline** (upscale + interpolate + denoise):
+
 ```bash
 # Maximum quality enhancement
 real-video-enhancer-helper.sh enhance input.mp4 output.mp4 \
