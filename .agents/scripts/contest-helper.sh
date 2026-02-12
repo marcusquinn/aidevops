@@ -23,6 +23,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SUPERVISOR_DIR="${AIDEVOPS_SUPERVISOR_DIR:-$HOME/.aidevops/.agent-workspace/supervisor}"
 SUPERVISOR_DB="${SUPERVISOR_DIR}/supervisor.db"
+# shellcheck disable=SC2034 # SCORING_DB used by _record_contest_scores
 SCORING_DB="${HOME}/.aidevops/.agent-workspace/response-scoring.db"
 
 # Colours
@@ -172,9 +173,6 @@ cmd_should_contest() {
 		return 1
 	fi
 
-	local task_desc
-	task_desc=$(db "$SUPERVISOR_DB" "SELECT description FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo "")
-
 	# Get recommendation JSON
 	local pattern_json
 	pattern_json=$("$pattern_helper" recommend --json 2>/dev/null || echo "")
@@ -300,8 +298,8 @@ cmd_create() {
 		return 1
 	fi
 
-	local tid trepo tdesc tstatus
-	IFS=$'\t' read -r tid trepo tdesc tstatus <<<"$task_row"
+	local _tid trepo tdesc _tstatus
+	IFS=$'\t' read -r _tid trepo tdesc _tstatus <<<"$task_row"
 
 	# Check for existing active contest
 	local existing_contest
@@ -322,7 +320,8 @@ cmd_create() {
 	log_info "Contest models: $models"
 
 	# Generate contest ID
-	local contest_id="contest-${task_id}-$(date +%Y%m%d%H%M%S)"
+	local contest_id
+	contest_id="contest-${task_id}-$(date +%Y%m%d%H%M%S)"
 
 	# Create contest record
 	db "$SUPERVISOR_DB" "
@@ -634,7 +633,7 @@ cmd_evaluate() {
 	local label_index=0
 	local labels=("A" "B" "C" "D" "E")
 
-	while IFS=$'\t' read -r eid emodel etask ewt ebranch elog epr; do
+	while IFS=$'\t' read -r eid emodel _etask ewt _ebranch elog _epr; do
 		[[ -z "$eid" ]] && continue
 		entry_ids+=("$eid")
 		entry_models+=("$emodel")
@@ -703,12 +702,7 @@ Now score each implementation. Output ONLY the JSON lines, nothing else."
 	db "$SUPERVISOR_DB" "UPDATE contests SET status = 'scoring' WHERE id = '$escaped_cid';"
 
 	# Cross-rank: have each model score all outputs
-	# For efficiency, use a single evaluator model (sonnet — good balance of cost/quality)
-	local scoring_helper="${SCRIPT_DIR}/response-scoring-helper.sh"
-	local ai_cli
-	ai_cli=$("${SCRIPT_DIR}/supervisor-helper.sh" db "SELECT 'opencode';" 2>/dev/null || echo "opencode")
-
-	# Use multiple judges for robustness — each contest model + a neutral judge
+	# Use multiple judges for robustness — each contest model scores all entries
 	local -a judges=()
 	for model in "${entry_models[@]}"; do
 		judges+=("$model")
@@ -948,7 +942,7 @@ _record_contest_scores() {
 		WHERE contest_id = '$escaped_cid' AND status = 'complete';
 	")
 
-	while IFS=$'\t' read -r emodel esummary ecorrect ecomplete equality eclarity eweighted; do
+	while IFS=$'\t' read -r emodel esummary ecorrect ecomplete equality eclarity _eweighted; do
 		[[ -z "$emodel" ]] && continue
 
 		# Record response
@@ -1035,12 +1029,6 @@ cmd_apply() {
 		WHERE id = '$(sql_escape "$cwinner_entry")';
 	")
 
-	local winner_task
-	winner_task=$(db "$SUPERVISOR_DB" "
-		SELECT task_id FROM contest_entries
-		WHERE id = '$(sql_escape "$cwinner_entry")';
-	")
-
 	if [[ -n "$winner_pr" && "$winner_pr" != "no_pr" && "$winner_pr" != "task_only" ]]; then
 		log_info "Winner PR: $winner_pr — promoting to the original task"
 
@@ -1082,7 +1070,7 @@ cmd_apply() {
 		AND status = 'complete';
 	")
 
-	while IFS=$'\t' read -r loser_task loser_wt; do
+	while IFS=$'\t' read -r loser_task _loser_wt; do
 		[[ -z "$loser_task" ]] && continue
 		log_info "Cancelling losing entry task: $loser_task"
 		"${SCRIPT_DIR}/supervisor-helper.sh" cancel "$loser_task" 2>/dev/null || true
