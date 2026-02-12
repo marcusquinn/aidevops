@@ -286,18 +286,18 @@ create_backup_with_rotation() {
 # Returns 0 if valid, 1 if invalid
 # Valid: alphanumeric, dash, underscore, forward slash (no .., no shell metacharacters)
 validate_namespace() {
-    local ns="$1"
-    # Reject empty
-    [[ -z "$ns" ]] && return 1
-    # Reject path traversal
-    [[ "$ns" == *".."* ]] && return 1
-    # Reject shell metacharacters and dangerous characters
-    [[ "$ns" =~ [^a-zA-Z0-9/_-] ]] && return 1
-    # Reject absolute paths
-    [[ "$ns" == /* ]] && return 1
-    # Reject trailing slash (causes issues with rsync/tar exclusions)
-    [[ "$ns" == */ ]] && return 1
-    return 0
+	local ns="$1"
+	# Reject empty
+	[[ -z "$ns" ]] && return 1
+	# Reject path traversal
+	[[ "$ns" == *".."* ]] && return 1
+	# Reject shell metacharacters and dangerous characters
+	[[ "$ns" =~ [^a-zA-Z0-9/_-] ]] && return 1
+	# Reject absolute paths
+	[[ "$ns" == /* ]] && return 1
+	# Reject trailing slash (causes issues with rsync/tar exclusions)
+	[[ "$ns" == */ ]] && return 1
+	return 0
 }
 
 # Remove deprecated agent paths that have been moved
@@ -2713,6 +2713,8 @@ set_permissions() {
 	# Make scripts executable (suppress errors for missing paths)
 	chmod +x ./*.sh 2>/dev/null || true
 	chmod +x .agents/scripts/*.sh 2>/dev/null || true
+	# Also handle modularised subdirectories (e.g. memory/, supervisor-modules/)
+	find .agents/scripts -mindepth 2 -name "*.sh" -exec chmod +x {} + 2>/dev/null || true
 	chmod +x ssh/*.sh 2>/dev/null || true
 
 	# Secure configuration files
@@ -3159,8 +3161,9 @@ deploy_aidevops_agents() {
 	if [[ "$deploy_ok" == "true" ]]; then
 		print_success "Deployed agents to $target_dir"
 
-		# Set permissions on scripts
+		# Set permissions on scripts (top-level and modularised subdirectories)
 		chmod +x "$target_dir/scripts/"*.sh 2>/dev/null || true
+		find "$target_dir/scripts" -mindepth 2 -name "*.sh" -exec chmod +x {} + 2>/dev/null || true
 
 		# Count what was deployed
 		local agent_count
