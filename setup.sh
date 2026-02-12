@@ -2201,38 +2201,81 @@ setup_rosetta_audit() {
         return 0
     fi
 
-    # Skip if no dual-brew setup
-    if [[ ! -x "/usr/local/bin/brew" ]] || [[ ! -x "/opt/homebrew/bin/brew" ]]; then
-        print_success "Rosetta audit: clean Homebrew setup (no x86 brew detected)"
-        return 0
+    # --- Part 1: Homebrew audit ---
+    if [[ -x "/usr/local/bin/brew" ]] && [[ -x "/opt/homebrew/bin/brew" ]]; then
+        print_info "Detected dual Homebrew (x86 + ARM) — checking for Rosetta overhead..."
+
+        local x86_only_count dup_count
+        dup_count=$(comm -12 \
+            <(/usr/local/bin/brew list --formula 2>/dev/null | sort) \
+            <(/opt/homebrew/bin/brew list --formula 2>/dev/null | sort) | wc -l | tr -d ' ')
+        x86_only_count=$(comm -23 \
+            <(/usr/local/bin/brew list --formula 2>/dev/null | sort) \
+            <(/opt/homebrew/bin/brew list --formula 2>/dev/null | sort) | wc -l | tr -d ' ')
+
+        local total=$((x86_only_count + dup_count))
+
+        if [[ "$total" -eq 0 ]]; then
+            print_success "No x86 Homebrew packages remaining"
+            echo "  x86 Homebrew is empty. You can remove it to reclaim disk space:"
+            echo "    sudo rm -rf /usr/local/Homebrew /usr/local/bin/brew /usr/local/Cellar"
+        else
+            print_warning "Found $total x86 Homebrew packages ($x86_only_count x86-only, $dup_count duplicates)"
+            echo "  These run under Rosetta 2 emulation with ~30% performance overhead."
+            echo "  Migrating to ARM-native gives ~30% speed boost and ~60% less kernel overhead."
+            echo ""
+            echo "  To audit:   rosetta-audit-helper.sh scan           (~2-3 min)"
+            echo "  To preview: rosetta-audit-helper.sh migrate --dry-run"
+            echo "  To fix:     rosetta-audit-helper.sh migrate        (~5-10 min)"
+        fi
     fi
 
-    print_info "Detected dual Homebrew (x86 + ARM) — checking for Rosetta overhead..."
+    # --- Part 2: Scan /usr/local/bin for x86-only binaries ---
+    if [[ -d "/usr/local/bin" ]]; then
+        local x86_bins=()
+        local f arch
+        for f in /usr/local/bin/*; do
+            [[ -f "$f" ]] && [[ -x "$f" ]] || continue
+            arch=$(file "$f" 2>/dev/null)
+            if [[ "$arch" == *x86_64* ]] && [[ "$arch" != *arm64* ]]; then
+                x86_bins+=("$(basename "$f")")
+            fi
+        done
 
-    local x86_only_count dup_count
-    dup_count=$(comm -12 \
-        <(/usr/local/bin/brew list --formula 2>/dev/null | sort) \
-        <(/opt/homebrew/bin/brew list --formula 2>/dev/null | sort) | wc -l | tr -d ' ')
-    x86_only_count=$(comm -23 \
-        <(/usr/local/bin/brew list --formula 2>/dev/null | sort) \
-        <(/opt/homebrew/bin/brew list --formula 2>/dev/null | sort) | wc -l | tr -d ' ')
-
-    local total=$((x86_only_count + dup_count))
-
-    if [[ "$total" -eq 0 ]]; then
-        print_success "No x86 Homebrew packages remaining"
-        echo "  x86 Homebrew is empty. You can remove it to reclaim disk space:"
-        echo "    sudo rm -rf /usr/local/Homebrew /usr/local/bin/brew /usr/local/Cellar"
-        return 0
+        if [[ ${#x86_bins[@]} -gt 0 ]]; then
+            echo ""
+            print_warning "Found ${#x86_bins[@]} x86-only binaries in /usr/local/bin:"
+            local bin
+            for bin in "${x86_bins[@]}"; do
+                echo "    $bin"
+            done
+            echo ""
+            echo "  These run under Rosetta emulation. Check for ARM updates or remove if unused."
+        fi
     fi
 
-    print_warning "Found $total x86 Homebrew packages ($x86_only_count x86-only, $dup_count duplicates)"
-    echo "  These run under Rosetta 2 emulation with ~30% performance overhead."
-    echo "  Migrating to ARM-native gives ~30% speed boost and ~60% less kernel overhead."
-    echo ""
-    echo "  To audit:   rosetta-audit-helper.sh scan           (~2-3 min)"
-    echo "  To preview: rosetta-audit-helper.sh migrate --dry-run"
-    echo "  To fix:     rosetta-audit-helper.sh migrate        (~5-10 min)"
+    # --- Part 3: Count x86 .app bundles ---
+    local x86_app_count=0
+    local app_exe binary
+    for app_exe in /Applications/*.app; do
+        binary=$(defaults read "$app_exe/Contents/Info.plist" CFBundleExecutable 2>/dev/null) || continue
+        [[ -f "$app_exe/Contents/MacOS/$binary" ]] || continue
+        arch=$(file "$app_exe/Contents/MacOS/$binary" 2>/dev/null)
+        if [[ "$arch" == *x86_64* ]] && [[ "$arch" != *arm64* ]]; then
+            ((x86_app_count++))
+        fi
+    done
+
+    if [[ "$x86_app_count" -gt 0 ]]; then
+        echo ""
+        print_info "$x86_app_count applications in /Applications are x86-only (running under Rosetta)"
+        echo "  Check for ARM updates for apps you use frequently."
+        echo "  Run: rosetta-audit-helper.sh scan   for the full list"
+    fi
+
+    if [[ "${x86_app_count:-0}" -eq 0 ]] && [[ "${#x86_bins[@]}" -eq 0 ]] && [[ ! -x "/usr/local/bin/brew" ]]; then
+        print_success "Rosetta audit: fully ARM-native — no x86 overhead detected"
+    fi
 
     return 0
 }
