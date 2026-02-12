@@ -3690,7 +3690,7 @@ cmd_next() {
             WHERE bt.batch_id = '$escaped_batch'
             AND t.status = 'queued'
             AND t.retries < t.max_retries
-            ORDER BY bt.position
+            ORDER BY t.retries ASC, bt.position
             LIMIT $limit;
         "
     else
@@ -3699,7 +3699,7 @@ cmd_next() {
             FROM tasks
             WHERE status = 'queued'
             AND retries < max_retries
-            ORDER BY created_at ASC
+            ORDER BY retries ASC, created_at ASC
             LIMIT $limit;
         "
     fi
