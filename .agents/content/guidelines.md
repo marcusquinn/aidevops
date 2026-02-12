@@ -110,4 +110,4 @@ For HTML content fields (especially WordPress content areas), use these HTML tag
 
 ## Platform-Specific Adaptations
 
-These guidelines define the core voice for website and blog content. When writing for social media or video platforms, see `content/platform-personas.md` for channel-specific adaptations of this voice (LinkedIn, Instagram, YouTube, X, Facebook).
+These guidelines define the core voice for website and blog content. When writing for social media or video platforms, see `tools/content/platform-personas.md` for channel-specific adaptations of this voice (LinkedIn, Instagram, YouTube, X, Facebook).

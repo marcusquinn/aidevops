@@ -129,4 +129,4 @@ tea login list
 ## Related
 
 - **CLI usage**: `tools/git.md`
-- **Security practices**: `git/security.md`
+- **Security practices**: `git/git-security.md`

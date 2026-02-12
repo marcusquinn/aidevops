@@ -110,6 +110,21 @@ Only refine code that has been recently modified or touched in the current sessi
 /code-simplifier --all        # Review entire codebase (use sparingly)
 ```
 
+### Scope Detection
+
+If no target specified:
+
+```bash
+# Find recently modified files (last commit or staged)
+git diff --name-only HEAD~1
+git diff --name-only --staged
+```
+
+If target specified:
+- Directory path: Simplify all code files in directory
+- File path: Simplify specific file
+- `--all`: Review entire codebase (use sparingly)
+
 ### Proactive Mode
 
 This agent can operate autonomously and proactively, refining code immediately after it's written or modified without requiring explicit requests. Enable by including in your workflow:

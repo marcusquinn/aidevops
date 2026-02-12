@@ -34,7 +34,7 @@ tools:
 - `git/gitea-cli.md` - Gitea CLI details
 - `git/github-actions.md` - CI/CD workflows
 - `git/authentication.md` - Token setup
-- `git/security.md` - Security practices
+- `git/git-security.md` - Security practices
 - `git/opencode-github.md` - OpenCode GitHub App integration
 - `git/opencode-gitlab.md` - OpenCode GitLab CI integration
 
@@ -202,6 +202,6 @@ See `git/opencode-gitlab.md` for full details.
 - **Version management**: `workflows/version-bump.md`
 - **Releases**: `workflows/release.md`
 - **CI/CD**: `git/github-actions.md`
-- **Security**: `git/security.md`
+- **Security**: `git/git-security.md`
 - **OpenCode GitHub**: `git/opencode-github.md`
 - **OpenCode GitLab**: `git/opencode-gitlab.md`

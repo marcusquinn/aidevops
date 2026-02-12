@@ -152,9 +152,22 @@ git diff --name-only HEAD~5 | grep -q "TODO.md" && echo "OK: TODO.md updated" ||
 - {specific improvement for next session}
 ```
 
-### Step 4: Knowledge Capture Assessment
+### Step 4: Auto-Distill Session Learnings
 
-Identify learnings that should be preserved:
+**MANDATORY**: Run session distillation to automatically extract and store learnings:
+
+```bash
+~/.aidevops/agents/scripts/session-distill-helper.sh auto
+```
+
+This will:
+1. Analyze git commits for patterns (fixes, features, refactors)
+2. Extract learnings with appropriate types (ERROR_FIX, WORKING_SOLUTION, etc.)
+3. Store them to memory automatically
+
+### Step 5: Knowledge Capture Assessment
+
+Identify learnings that should be preserved beyond what auto-distill captured:
 
 | Knowledge Type | Capture Location | Priority |
 |----------------|------------------|----------|
@@ -188,7 +201,7 @@ Identify learnings that should be preserved:
 - {preference to remember for future sessions}
 ```
 
-### Step 5: Session Health Assessment
+### Step 6: Session Health Assessment
 
 Determine if session should continue or end:
 

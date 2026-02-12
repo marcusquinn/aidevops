@@ -151,7 +151,6 @@ Use discovery output to filter `/compare-models` to only show models the user ca
 
 ## Related
 
-- `scripts/commands/compare-models.md` - `/compare-models` slash command handler
 - `scripts/commands/compare-models-free.md` - `/compare-models-free` slash command handler
 - `scripts/commands/score-responses.md` - `/score-responses` slash command handler
 - `tools/ai-assistants/response-scoring.md` - Evaluate actual model response quality
