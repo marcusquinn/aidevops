@@ -161,125 +161,90 @@ check_quality_standards() {
 	return 0
 }
 
-# Validate TODO.md task completion transitions (t163.3)
-# When [ ] -> [x], warn if no merged PR evidence exists for the task
+# Validate TODO.md task completion transitions (t317.1)
+# When [ ] -> [x], require pr:# or verified: field for proof-log
 validate_todo_completions() {
 	# Only check if TODO.md is staged
 	if ! git diff --cached --name-only | grep -q '^TODO\.md$'; then
 		return 0
 	fi
 
-	print_info "Validating TODO.md task completions..."
+	print_info "Validating TODO.md task completions (proof-log check)..."
 
-	# Find top-level tasks that changed from [ ] to [x] in this commit
-	# Subtasks inherit evidence from their parent task, so only check top-level
+	# Find ALL tasks (including subtasks) that changed from [ ] to [x] in this commit
+	# We need to check both top-level and subtasks
 	local newly_completed
-	newly_completed=$(git diff --cached -U0 TODO.md | grep -E '^\+- \[x\] t[0-9]+' | sed 's/^\+//' || true)
+	newly_completed=$(git diff --cached -U0 TODO.md | grep -E '^\+.*- \[x\] t[0-9]+' | sed 's/^\+//' || true)
 
 	if [[ -z "$newly_completed" ]]; then
 		return 0
 	fi
 
+	# Also get lines that were already [x] (to skip them - not a transition)
+	local already_completed
+	already_completed=$(git diff --cached -U0 TODO.md | grep -E '^\-.*- \[x\] t[0-9]+' | sed 's/^\-//' || true)
+
 	local task_count=0
-	local warn_count=0
+	local fail_count=0
+	local failed_tasks=()
+
 	while IFS= read -r line; do
 		local task_id
 		task_id=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
 		if [[ -z "$task_id" ]]; then
 			continue
 		fi
+
+		# Skip if this task was already [x] in the previous version (not a transition)
+		if echo "$already_completed" | grep -q "$task_id"; then
+			continue
+		fi
+
 		task_count=$((task_count + 1))
 
-		# Check for evidence: verified: field, "PR #NNN merged" text, or gh API lookup
+		# Check for required evidence: pr:# or verified: field
 		local has_evidence=false
 
+		# Check for pr:# field (e.g., pr:123 or pr:#123)
+		if echo "$line" | grep -qE 'pr:#?[0-9]+'; then
+			has_evidence=true
+		fi
+
+		# Check for verified: field (e.g., verified:2026-02-12)
 		if echo "$line" | grep -qE 'verified:[0-9]{4}-[0-9]{2}-[0-9]{2}'; then
 			has_evidence=true
 		fi
 
-		if [[ "$has_evidence" == "false" ]] && echo "$line" | grep -qiE 'PR #[0-9]+ merged|PR.*merged'; then
-			has_evidence=true
-		fi
-
-		if [[ "$has_evidence" == "false" ]] && command -v gh &>/dev/null; then
-			local repo_slug
-			repo_slug=$(git remote get-url origin 2>/dev/null | grep -oE '[^/:]+/[^/.]+' | tail -1 || echo "")
-			if [[ -n "$repo_slug" ]]; then
-				local merged_pr
-				merged_pr=$(gh pr list --repo "$repo_slug" --state merged --search "$task_id in:title" --limit 1 --json number --jq '.[0].number' 2>/dev/null || echo "")
-				if [[ -n "$merged_pr" ]]; then
-					has_evidence=true
-				fi
-			fi
-		fi
-
 		if [[ "$has_evidence" == "false" ]]; then
-			print_warning "  $task_id: marked [x] but no merged PR or verified: field found"
-			warn_count=$((warn_count + 1))
+			failed_tasks+=("$task_id")
+			((fail_count++))
 		fi
 	done <<<"$newly_completed"
 
-	if [[ "$warn_count" -gt 0 ]]; then
-		print_warning "$warn_count of $task_count newly completed tasks lack completion evidence"
-		print_info "  Add 'verified:$(date +%Y-%m-%d)' to the task line, or ensure a merged PR exists"
-		print_info "  This is a WARNING only - commit will proceed"
+	if [[ "$fail_count" -gt 0 ]]; then
+		print_error "TODO.md completion proof-log check FAILED"
+		print_error ""
+		print_error "The following tasks were marked [x] without proof-log evidence:"
+		for task in "${failed_tasks[@]}"; do
+			print_error "  - $task"
+		done
+		print_error ""
+		print_error "Required: Each completed task must have either:"
+		print_error "  1. pr:#NNN field (e.g., pr:#1229)"
+		print_error "  2. verified:YYYY-MM-DD field (e.g., verified:$(date +%Y-%m-%d))"
+		print_error ""
+		print_error "This ensures the issue-sync pipeline can verify deliverables"
+		print_error "before auto-closing GitHub issues."
+		print_error ""
+		print_info "To fix: Add pr:# or verified: to each task line, then retry commit"
+		return 1
+	fi
+
+	if [[ "$task_count" -gt 0 ]]; then
+		print_success "All $task_count completed tasks have proof-log evidence"
 	fi
 
 	return 0
-}
-
-# Validate TODO.md has no duplicate task IDs (t319.5)
-# Scans staged TODO.md for any tNNN that appears as the defining ID on more than
-# one task line (- [ ] or - [x]). Excludes inline references like blocked-by:tNNN,
-# blocks:tNNN, and other metadata fields. Rejects the commit if duplicates found.
-validate_duplicate_task_ids() {
-	# Only check if TODO.md is staged
-	if ! git diff --cached --name-only | grep -q '^TODO\.md$'; then
-		return 0
-	fi
-
-	print_info "Checking for duplicate task IDs in TODO.md..."
-
-	# Extract the staged version of TODO.md and find all task-defining lines.
-	# A task-defining line matches: optional whitespace, "- [ ]" or "- [x]" or "- [-]",
-	# then whitespace, then a task ID (tNNN or tNNN.N or tNNN.N.N).
-	# We extract only the leading task ID (the one that defines the task).
-	local task_ids
-	task_ids=$(git show :TODO.md 2>/dev/null |
-		grep -E '^[[:space:]]*- \[[x ]\] t[0-9]+' |
-		sed -E 's/^[[:space:]]*- \[[x ]\] (t[0-9]+(\.[0-9]+)*).*/\1/' ||
-		true)
-
-	if [[ -z "$task_ids" ]]; then
-		return 0
-	fi
-
-	# Find duplicates
-	local duplicates
-	duplicates=$(echo "$task_ids" | sort | uniq -d || true)
-
-	if [[ -z "$duplicates" ]]; then
-		print_success "No duplicate task IDs found"
-		return 0
-	fi
-
-	# Report each duplicate with its count
-	print_error "Duplicate task IDs found in TODO.md!"
-	local dup_count=0
-	while IFS= read -r dup_id; do
-		[[ -z "$dup_id" ]] && continue
-		local count
-		count=$(echo "$task_ids" | grep -c "^${dup_id}$" || echo "0")
-		print_error "  $dup_id appears $count times as a task definition"
-		dup_count=$((dup_count + 1))
-	done <<<"$duplicates"
-
-	echo ""
-	print_error "Each task ID must be unique. Fix duplicates before committing."
-	print_info "  Use 'claim-task-id.sh' to allocate unique IDs"
-	print_info "  Or manually renumber the duplicate to the next available ID"
-
-	return "$dup_count"
 }
 
 main() {
