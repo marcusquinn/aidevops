@@ -1524,10 +1524,13 @@ cmd_close() {
 		fi
 
 		if gh issue close "$issue_number" --repo "$repo_slug" --comment "$close_comment" 2>/dev/null; then
-			# Update status label to status:done (t212)
+			# Update status label to status:done, remove all other status labels (t212, t1009)
 			gh label create "status:done" --repo "$repo_slug" --color "6F42C1" --description "Task is complete" --force 2>/dev/null || true
 			gh issue edit "$issue_number" --repo "$repo_slug" \
-				--add-label "status:done" --remove-label "status:available" --remove-label "status:claimed" --remove-label "status:in-review" 2>/dev/null || true
+				--add-label "status:done" \
+				--remove-label "status:available" --remove-label "status:queued" \
+				--remove-label "status:claimed" --remove-label "status:in-review" \
+				--remove-label "status:blocked" --remove-label "status:verify-failed" 2>/dev/null || true
 			print_success "Closed #$issue_number ($task_id)"
 			closed=$((closed + 1))
 		else
@@ -1617,9 +1620,13 @@ _close_single_task() {
 	fi
 
 	if gh issue close "$issue_number" --repo "$repo_slug" --comment "$close_comment" 2>/dev/null; then
+		# Update status label to status:done, remove all other status labels (t212, t1009)
 		gh label create "status:done" --repo "$repo_slug" --color "6F42C1" --description "Task is complete" --force 2>/dev/null || true
 		gh issue edit "$issue_number" --repo "$repo_slug" \
-			--add-label "status:done" --remove-label "status:available" --remove-label "status:claimed" --remove-label "status:in-review" 2>/dev/null || true
+			--add-label "status:done" \
+			--remove-label "status:available" --remove-label "status:queued" \
+			--remove-label "status:claimed" --remove-label "status:in-review" \
+			--remove-label "status:blocked" --remove-label "status:verify-failed" 2>/dev/null || true
 		print_success "Closed #$issue_number ($task_id)"
 	else
 		print_error "Failed to close #$issue_number ($task_id)"
