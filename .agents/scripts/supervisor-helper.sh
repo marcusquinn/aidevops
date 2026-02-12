@@ -163,6 +163,27 @@ unset _gh_token_cache
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
 
+# Source all supervisor module files
+SUPERVISOR_MODULE_DIR="${SCRIPT_DIR}/supervisor"
+source "${SUPERVISOR_MODULE_DIR}/_common.sh"
+source "${SUPERVISOR_MODULE_DIR}/database.sh"
+source "${SUPERVISOR_MODULE_DIR}/state.sh"
+source "${SUPERVISOR_MODULE_DIR}/batch.sh"
+source "${SUPERVISOR_MODULE_DIR}/dispatch.sh"
+source "${SUPERVISOR_MODULE_DIR}/evaluate.sh"
+source "${SUPERVISOR_MODULE_DIR}/pulse.sh"
+source "${SUPERVISOR_MODULE_DIR}/cleanup.sh"
+source "${SUPERVISOR_MODULE_DIR}/cron.sh"
+source "${SUPERVISOR_MODULE_DIR}/lifecycle.sh"
+source "${SUPERVISOR_MODULE_DIR}/deploy.sh"
+source "${SUPERVISOR_MODULE_DIR}/self-heal.sh"
+source "${SUPERVISOR_MODULE_DIR}/release.sh"
+source "${SUPERVISOR_MODULE_DIR}/utility.sh"
+source "${SUPERVISOR_MODULE_DIR}/git-ops.sh"
+source "${SUPERVISOR_MODULE_DIR}/issue-sync.sh"
+source "${SUPERVISOR_MODULE_DIR}/memory-integration.sh"
+source "${SUPERVISOR_MODULE_DIR}/todo-sync.sh"
+
 readonly SCRIPT_DIR
 readonly SUPERVISOR_DIR="${AIDEVOPS_SUPERVISOR_DIR:-$HOME/.aidevops/.agent-workspace/supervisor}"
 readonly SUPERVISOR_DB="$SUPERVISOR_DIR/supervisor.db"
