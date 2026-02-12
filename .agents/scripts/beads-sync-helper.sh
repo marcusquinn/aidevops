@@ -576,7 +576,7 @@ main() {
             --force) force=true ;;
             --dry-run) dry_run=true ;;
             --verbose) verbose=true ;;
-            *) log_error "Unknown option: $opt"; show_help; return 1 ;;
+            *) break ;;  # Ignore positional args (project root discovered via git)
         esac
         shift
     done
