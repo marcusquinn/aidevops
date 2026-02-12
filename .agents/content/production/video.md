@@ -548,7 +548,29 @@ seed_range: 2000-2999 (action) or 3000-3999 (environment)
 
 ### Upscaling
 
-**Topaz Video AI** is the industry standard for AI upscaling.
+**REAL Video Enhancer** (open-source, GPU-accelerated) and **Topaz Video AI** (commercial) are the primary upscaling tools.
+
+**REAL Video Enhancer** (recommended for AI-generated content):
+
+```bash
+# 2x upscale (720p → 1080p or 1080p → 4K)
+real-video-enhancer-helper.sh upscale input.mp4 output.mp4 --scale 2
+
+# 4x upscale (540p → 1080p or 720p → 4K)
+real-video-enhancer-helper.sh upscale input.mp4 output.mp4 --scale 4
+
+# Custom model selection
+real-video-enhancer-helper.sh upscale input.mp4 output.mp4 \
+  --scale 2 \
+  --model realesrgan  # or 'span', 'animejanai'
+```
+
+**Models**:
+- `span`: Fast, general-purpose (default)
+- `realesrgan`: Slower, photo-realistic content
+- `animejanai`: Anime/animation content
+
+**Topaz Video AI** (commercial alternative):
 
 **Rules**:
 - Maximum 1.25-1.75x upscale (beyond this introduces artifacts)
@@ -584,17 +606,81 @@ color_variation: 2-5%
 
 ### Frame Rate Conversion
 
-**60fps**: ONLY for high-action content (sports, fast motion)
+**60fps**: ONLY for high-action content (sports, fast motion) or social media platforms
 
 **24fps**: Cinematic standard, use for narrative/commercial
 **30fps**: Broadcast/web standard, use for UGC/documentary
 
-**Conversion Tools**:
+**REAL Video Enhancer** (AI-based interpolation):
+
+```bash
+# 24fps → 60fps (cinematic to social media)
+real-video-enhancer-helper.sh interpolate input.mp4 output.mp4 --fps 60
+
+# 24fps → 48fps (balanced smoothness)
+real-video-enhancer-helper.sh interpolate input.mp4 output.mp4 --fps 48
+
+# Custom model selection
+real-video-enhancer-helper.sh interpolate input.mp4 output.mp4 \
+  --fps 60 \
+  --model gmfss  # or 'rife', 'ifrnet'
+```
+
+**Models**:
+- `rife`: Fast, high quality (default)
+- `gmfss`: Slower, very high quality, complex motion
+- `ifrnet`: Very fast, medium quality, low-end hardware
+
+**Alternative Tools**:
 - DaVinci Resolve: Optical Flow (best quality)
 - Adobe Premiere: Frame Blending (fast, lower quality)
 - Topaz Video AI: Chronos (AI-based, good for complex motion)
 
-**CRITICAL**: Never upconvert 24fps → 60fps for non-action content (creates soap opera effect)
+**CRITICAL**: Never upconvert 24fps → 60fps for non-action content (creates soap opera effect) unless targeting social media platforms where 60fps is preferred
+
+### Denoising and Artifact Removal
+
+**REAL Video Enhancer** provides AI-powered denoising and H.264 decompression:
+
+```bash
+# Remove noise from compressed/low-quality video
+real-video-enhancer-helper.sh denoise input.mp4 output.mp4
+
+# Custom model selection
+real-video-enhancer-helper.sh denoise input.mp4 output.mp4 \
+  --model drunet  # or 'dncnn'
+```
+
+**Models**:
+- `drunet`: Medium speed, high quality (default)
+- `dncnn`: Fast, medium quality
+
+**Full Enhancement Pipeline** (upscale + interpolate + denoise):
+
+```bash
+# All-in-one enhancement for social media delivery
+real-video-enhancer-helper.sh enhance input.mp4 output.mp4 \
+  --scale 2 \
+  --fps 60 \
+  --denoise
+
+# Maximum quality (slower)
+real-video-enhancer-helper.sh enhance input.mp4 output.mp4 \
+  --scale 2 \
+  --fps 60 \
+  --denoise \
+  --upscale-model realesrgan \
+  --interpolate-model gmfss \
+  --denoise-model drunet
+```
+
+**When to Use**:
+- AI-generated video with compression artifacts
+- Low-quality source material
+- Social media delivery (upscale + interpolate + denoise)
+- Batch processing video libraries
+
+See `tools/video/real-video-enhancer.md` for full documentation.
 
 ## Shot Type Reference
 

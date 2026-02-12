@@ -169,3 +169,81 @@ looks very film-like. [He/She] says: "[DIALOGUE_8S_MAX]"
 - Text/subtitles appear unless negated
 - Hand/finger details need careful negative prompting
 - 16:9 landscape is the primary supported aspect ratio
+
+## Post-Processing Enhancement
+
+After generating video with AI models (Veo, Sora, Runway), enhance output quality through upscaling, frame interpolation, and denoising using **REAL Video Enhancer**.
+
+### When to Use Post-Processing
+
+| Use Case | Enhancement | Result |
+|----------|-------------|--------|
+| **Social Media Delivery** | 720p → 1080p upscale + 24fps → 60fps interpolation | Smooth, high-quality social content |
+| **Cinematic to Social** | 24fps → 48/60fps interpolation | Cinematic footage adapted for social platforms |
+| **Low-Quality Source** | Denoise + upscale | Clean, professional output from compressed sources |
+| **4K Delivery** | 1080p → 4K upscale | High-resolution output for premium platforms |
+| **Artifact Removal** | H.264 decompression | Remove compression artifacts from AI-generated video |
+
+### Quick Enhancement Workflow
+
+```bash
+# After generating with Veo/Sora/Runway
+video-gen-helper.sh generate "your prompt" --model veo-3 --output raw.mp4
+
+# Enhance for social media (1080p, 60fps)
+real-video-enhancer-helper.sh enhance raw.mp4 final.mp4 \
+  --scale 2 \
+  --fps 60 \
+  --denoise
+
+# Verify output
+ffprobe final.mp4  # Check resolution and frame rate
+```
+
+### Enhancement Options
+
+**Upscaling** (improve resolution):
+```bash
+# 2x upscale (720p → 1080p or 1080p → 4K)
+real-video-enhancer-helper.sh upscale input.mp4 output.mp4 --scale 2
+
+# 4x upscale (540p → 1080p or 720p → 4K)
+real-video-enhancer-helper.sh upscale input.mp4 output.mp4 --scale 4
+```
+
+**Frame Interpolation** (increase frame rate):
+```bash
+# 24fps → 60fps (cinematic to social)
+real-video-enhancer-helper.sh interpolate input.mp4 output.mp4 --fps 60
+
+# 24fps → 48fps (balanced smoothness)
+real-video-enhancer-helper.sh interpolate input.mp4 output.mp4 --fps 48
+```
+
+**Denoising** (remove compression artifacts):
+```bash
+# Clean up noisy/compressed video
+real-video-enhancer-helper.sh denoise input.mp4 output.mp4
+```
+
+**Full Pipeline** (upscale + interpolate + denoise):
+```bash
+# Maximum quality enhancement
+real-video-enhancer-helper.sh enhance input.mp4 output.mp4 \
+  --scale 2 \
+  --fps 60 \
+  --denoise \
+  --upscale-model realesrgan \
+  --interpolate-model gmfss
+```
+
+### Integration with Video Production
+
+See `content/production/video.md` for full production pipeline integration and `tools/video/real-video-enhancer.md` for detailed documentation.
+
+**Typical workflow**:
+1. **Prompt Design** (this guide) → Craft optimal prompts
+2. **Generation** (`video-gen-helper.sh`) → Generate with Sora/Veo/Runway
+3. **Enhancement** (`real-video-enhancer-helper.sh`) → Upscale, interpolate, denoise
+4. **Post-Production** (color grading, audio mixing) → Final polish
+5. **Distribution** (platform-specific encoding) → Deliver to platforms
