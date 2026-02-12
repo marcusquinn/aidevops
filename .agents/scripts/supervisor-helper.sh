@@ -3593,25 +3593,23 @@ _Auto-updated by supervisor pulse (t1013). Do not edit manually._"
 		fi
 	fi
 
-	# Update issue title with live stats so the pinned issue is useful at a glance
+	# Update issue title with operational stats at a glance
 	local title_time
 	title_time=$(date -u +"%H:%M")
-	local title_status=""
-	if [[ "${cnt_running:-0}" -gt 0 ]]; then
-		title_status="${cnt_running} running"
-	fi
-	if [[ "${cnt_queued:-0}" -gt 0 ]]; then
-		[[ -n "$title_status" ]] && title_status="${title_status}, "
-		title_status="${title_status}${cnt_queued} queued"
-	fi
-	if [[ "${cnt_blocked:-0}" -gt 0 ]]; then
-		[[ -n "$title_status" ]] && title_status="${title_status}, "
-		title_status="${title_status}${cnt_blocked} blocked"
-	fi
-	if [[ -z "$title_status" ]]; then
-		title_status="idle"
-	fi
-	local health_title="[Supervisor] ${progress_pct}% done (${cnt_complete}/${cnt_actionable} actionable) | ${title_status} | ${title_time} UTC"
+
+	# Count active runners: tasks with 'running' status updated within the last 5 minutes
+	# Uses timestamps not PIDs — works across machines with multiple contributors
+	local cnt_active_runners
+	cnt_active_runners=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status = 'running' AND updated_at > datetime('now', '-5 minutes');" 2>/dev/null || echo "0")
+
+	# Available: queued tasks (ready to pick up by any runner)
+	local cnt_available="${cnt_queued:-0}"
+
+	# Claimed: tasks actively being worked on (running/dispatched/in-review pipeline)
+	local cnt_claimed
+	cnt_claimed=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('running','dispatched','pr_review','review_triage','merging','merged','deploying','evaluating','retrying');" 2>/dev/null || echo "0")
+
+	local health_title="[Supervisor] ${cnt_active_runners} runners, ${cnt_available} available, ${cnt_claimed} claimed, ${cnt_blocked:-0} blocked at ${title_time} UTC"
 	gh issue edit "$health_issue_number" --repo "$repo_slug" --title "$health_title" >/dev/null 2>&1 || true
 
 	log_verbose "  Phase 8c: Updated queue health issue #$health_issue_number"
