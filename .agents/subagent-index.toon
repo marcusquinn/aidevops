@@ -87,7 +87,7 @@ feature-development,workflows/feature-development.md,Feature development workflo
 conversation-starter,workflows/conversation-starter.md,Session greeting and auto-recall
 -->
 
-<!--TOON:scripts[77]{name,purpose}:
+<!--TOON:scripts[78]{name,purpose}:
 accessibility-helper.sh,Accessibility and contrast testing (WCAG compliance WAVE API for websites and emails)
 accessibility-audit-helper.sh,Accessibility audit CLI wrapping axe-core WAVE API WebAIM contrast and Lighthouse a11y
 auto-update-helper.sh,Automatic update polling daemon (enable disable status check logs)
@@ -163,6 +163,7 @@ seed-bracket-helper.sh,Seed bracketing for AI video generation (generate status 
 video-gen-helper.sh,Unified AI video generation CLI (generate status download list models bracket) for Sora 2 Veo 3.1 and Nanobanana Pro
 thumbnail-helper.sh,Thumbnail A/B testing pipeline (generate score batch-score upload ab-test analyze templates) for YouTube thumbnails
 stale-pr-helper.sh,Stale PR detection and notification - scan for open PRs older than 24h not linked to active tasks (scan report help)
+stash-audit-helper.sh,Git stash audit and cleanup - classify stashes as safe-to-drop obsolete or needs-review (audit clean auto-clean list)
 comfy-cli-helper.sh,ComfyUI management via comfy-cli (status install setup launch node-install node-list model-download model-list snapshot-save snapshot-restore workflow-deps)
 real-video-enhancer-helper.sh,REAL Video Enhancer CLI - AI video upscaling interpolation denoising and decompression (install enhance upscale interpolate denoise batch models backends gui)
 runway-helper.sh,Runway API CLI for video image and audio generation (video image tts sts sfx dub isolate status wait cancel credits usage)

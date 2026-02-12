@@ -12192,7 +12192,50 @@ cmd_cleanup() {
 	# Prune stale registry entries (t189)
 	if [[ "$dry_run" == "false" ]]; then
 		prune_worktree_registry
-		log_success "Cleaned up $cleaned worktrees, $process_cleaned worker processes"
+	fi
+
+	# Auto-clean safe-to-drop stashes (t1005)
+	local stash_cleaned=0
+	if [[ -f "${SCRIPT_DIR}/stash-audit-helper.sh" ]]; then
+		# Get list of repos from tasks
+		local repos
+		repos=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks WHERE repo IS NOT NULL AND repo != '';" 2>/dev/null || echo "")
+		
+		if [[ -n "$repos" ]]; then
+			while IFS= read -r repo_path; do
+				[[ -z "$repo_path" ]] && continue
+				[[ ! -d "$repo_path" ]] && continue
+				
+				# Count stashes before cleanup
+				local before_count
+				before_count=$(cd "$repo_path" && git stash list 2>/dev/null | wc -l || echo "0")
+				
+				if [[ "$dry_run" == "true" ]]; then
+					log_info "  [dry-run] Would audit stashes in: $repo_path"
+				else
+					# Run auto-clean (non-interactive)
+					"${SCRIPT_DIR}/stash-audit-helper.sh" auto-clean --repo "$repo_path" >/dev/null 2>&1 || true
+					
+					# Count stashes after cleanup
+					local after_count
+					after_count=$(cd "$repo_path" && git stash list 2>/dev/null | wc -l || echo "0")
+					
+					local dropped=$((before_count - after_count))
+					if [[ "$dropped" -gt 0 ]]; then
+						stash_cleaned=$((stash_cleaned + dropped))
+						log_info "  Cleaned $dropped stash(es) in: $repo_path"
+					fi
+				fi
+			done <<< "$repos"
+		fi
+	fi
+
+	if [[ "$dry_run" == "false" ]]; then
+		if [[ "$stash_cleaned" -gt 0 ]]; then
+			log_success "Cleaned up $cleaned worktrees, $process_cleaned worker processes, $stash_cleaned stashes"
+		else
+			log_success "Cleaned up $cleaned worktrees, $process_cleaned worker processes"
+		fi
 	fi
 
 	return 0
