@@ -3268,6 +3268,275 @@ check_task_already_done() {
 
     return 1
 }
+#######################################
+# check_task_staleness() — pre-dispatch staleness detection (t312)
+# Analyses a task description against the current codebase to detect
+# tasks whose premise is no longer valid (removed features, renamed
+# files, contradicting commits).
+#
+# Returns:
+#   0 = STALE — task is clearly outdated (cancel it)
+#   1 = CURRENT — task appears valid (safe to dispatch)
+#   2 = UNCERTAIN — staleness signals present but inconclusive
+#       (comment on GH issue, remove #auto-dispatch, await human review)
+#
+# Output (stdout): staleness reason if stale/uncertain, empty if current
+#######################################
+check_task_staleness() {
+	local task_id="${1:-}"
+	local task_description="${2:-}"
+	local project_root="${3:-.}"
+
+	if [[ -z "$task_id" || -z "$task_description" ]]; then
+		return 1 # Can't check without description — assume current
+	fi
+
+	local staleness_signals=0
+	local staleness_reasons=""
+
+	# --- Signal 1: Extract feature/tool names and check for removal commits ---
+	# Pattern: hyphenated names with 2+ segments (widget-helper, oh-my-opencode, etc.)
+	local feature_names=""
+	feature_names=$(printf '%s' "$task_description" |
+		grep -oE '[a-zA-Z][a-zA-Z0-9]*-[a-zA-Z][a-zA-Z0-9]+(-[a-zA-Z][a-zA-Z0-9]+)*' |
+		sort -u) || true
+
+	# Also extract quoted terms
+	local quoted_terms=""
+	quoted_terms=$(printf '%s' "$task_description" |
+		grep -oE '"[^"]{3,}"' | tr -d '"' | sort -u) || true
+
+	local all_terms=""
+	all_terms=$(printf '%s\n%s' "$feature_names" "$quoted_terms" |
+		grep -v '^$' | sort -u) || true
+
+	if [[ -n "$all_terms" ]]; then
+		while IFS= read -r term; do
+			[[ -z "$term" ]] && continue
+
+			local removal_commits=""
+			removal_commits=$(git -C "$project_root" log --oneline -200 \
+				--grep="$term" 2>/dev/null |
+				grep -iE "remov|delet|drop|deprecat|clean.?up|refactor.*remov" |
+				head -3) || true
+
+			if [[ -n "$removal_commits" ]]; then
+				local codebase_refs=0
+				codebase_refs=$(git -C "$project_root" grep -rl "$term" \
+					-- '*.sh' '*.md' '*.mjs' '*.ts' '*.json' 2>/dev/null |
+					grep -cv 'TODO.md\|CHANGELOG.md\|VERIFY.md\|PLANS.md\|verification\|todo/' \
+						2>/dev/null) || true
+
+				local newest_commit_is_removal=false
+				local newest_commit=""
+				newest_commit=$(git -C "$project_root" log --oneline -1 \
+					--grep="$term" 2>/dev/null) || true
+
+				if [[ -n "$newest_commit" ]]; then
+					if printf '%s' "$newest_commit" |
+						grep -qiE "remov|delet|drop|deprecat|clean.?up"; then
+						newest_commit_is_removal=true
+					fi
+				fi
+
+				local active_refs=0
+				if [[ "$codebase_refs" -gt 0 ]]; then
+					active_refs=$(git -C "$project_root" grep -rn "$term" \
+						-- '*.sh' '*.md' '*.mjs' '*.ts' '*.json' 2>/dev/null |
+						grep -v 'TODO.md\|CHANGELOG.md\|VERIFY.md\|PLANS.md\|verification\|todo/' |
+						grep -icv 'remov\|delet\|deprecat\|clean.up\|no longer\|was removed\|dropped\|legacy\|historical\|formerly\|previously\|used to\|compat\|detect\|OMOC\|Phase 0' \
+							2>/dev/null) || true
+				fi
+
+				local first_removal=""
+				first_removal=$(printf '%s' "$removal_commits" | head -1)
+
+				if [[ "$newest_commit_is_removal" == "true" && "$active_refs" -eq 0 ]]; then
+					staleness_signals=$((staleness_signals + 3))
+					staleness_reasons="${staleness_reasons}REMOVED: '$term' — most recent commit is a removal (${first_removal}), 0 active refs. "
+				elif [[ "$active_refs" -eq 0 ]]; then
+					staleness_signals=$((staleness_signals + 3))
+					staleness_reasons="${staleness_reasons}REMOVED: '$term' was removed (${first_removal}) with 0 active codebase references. "
+				elif [[ "$newest_commit_is_removal" == "true" ]]; then
+					staleness_signals=$((staleness_signals + 2))
+					staleness_reasons="${staleness_reasons}LIKELY_REMOVED: '$term' — most recent commit is removal (${first_removal}) but $active_refs active refs remain. "
+				elif [[ "$active_refs" -le 2 ]]; then
+					staleness_signals=$((staleness_signals + 1))
+					staleness_reasons="${staleness_reasons}MINIMAL: '$term' has removal commits and only $active_refs active references. "
+				fi
+			fi
+		done <<<"$all_terms"
+	fi
+
+	# --- Signal 2: Extract file paths and check existence ---
+	local file_refs=""
+	file_refs=$(printf '%s' "$task_description" |
+		grep -oE '[a-zA-Z0-9_/-]+\.[a-z]{1,4}' |
+		grep -vE '^\.' |
+		sort -u) || true
+
+	if [[ -n "$file_refs" ]]; then
+		local missing_files=0
+		local total_files=0
+		while IFS= read -r file_ref; do
+			[[ -z "$file_ref" ]] && continue
+			total_files=$((total_files + 1))
+
+			if ! git -C "$project_root" ls-files --error-unmatch "$file_ref" \
+				&>/dev/null 2>&1; then
+				local found=false
+				for prefix in ".agents/" ".agents/scripts/" ".agents/tools/" ""; do
+					if git -C "$project_root" ls-files --error-unmatch \
+						"${prefix}${file_ref}" &>/dev/null 2>&1; then
+						found=true
+						break
+					fi
+				done
+				if [[ "$found" == "false" ]]; then
+					missing_files=$((missing_files + 1))
+				fi
+			fi
+		done <<<"$file_refs"
+
+		if [[ "$total_files" -gt 0 && "$missing_files" -gt 0 ]]; then
+			local missing_pct=$((missing_files * 100 / total_files))
+			if [[ "$missing_pct" -ge 50 ]]; then
+				staleness_signals=$((staleness_signals + 2))
+				staleness_reasons="${staleness_reasons}MISSING_FILES: $missing_files/$total_files referenced files not found. "
+			fi
+		fi
+	fi
+
+	# --- Signal 3: Check if task's parent feature was already removed ---
+	local parent_id=""
+	if [[ "$task_id" =~ ^(t[0-9]+)\.[0-9]+$ ]]; then
+		parent_id="${BASH_REMATCH[1]}"
+		local parent_removal=""
+		parent_removal=$(git -C "$project_root" log --oneline -200 \
+			--grep="$parent_id" 2>/dev/null |
+			grep -iE "remov|delet|drop|deprecat" |
+			head -1) || true
+
+		if [[ -n "$parent_removal" ]]; then
+			staleness_signals=$((staleness_signals + 1))
+			staleness_reasons="${staleness_reasons}PARENT_REMOVED: Parent $parent_id has removal commits: $parent_removal. "
+		fi
+	fi
+
+	# --- Signal 4: Check for contradicting "already done" patterns ---
+	local task_verb=""
+	task_verb=$(printf '%s' "$task_description" |
+		grep -oE '^(add|create|implement|build|set up|integrate|fix|resolve)' |
+		head -1) || true
+
+	if [[ "$task_verb" =~ ^(add|create|implement|build|integrate) ]]; then
+		local subject=""
+		subject=$(printf '%s' "$task_description" |
+			sed -E "s/^(add|create|implement|build|set up|integrate) //i" |
+			cut -d' ' -f1-3) || true
+
+		if [[ -n "$subject" ]]; then
+			local existing_refs=0
+			existing_refs=$(git -C "$project_root" log --oneline -50 \
+				--grep="$subject" 2>/dev/null |
+				grep -icE "add|creat|implement|built|integrat" 2>/dev/null) || true
+
+			if [[ "$existing_refs" -ge 2 ]]; then
+				staleness_signals=$((staleness_signals + 1))
+				staleness_reasons="${staleness_reasons}POSSIBLY_DONE: '$subject' has $existing_refs existing implementation commits. "
+			fi
+		fi
+	fi
+
+	# --- Decision: three-tier threshold ---
+	if [[ "$staleness_signals" -ge 3 ]]; then
+		printf '%s' "$staleness_reasons"
+		return 0 # STALE
+	elif [[ "$staleness_signals" -eq 2 ]]; then
+		printf '%s' "$staleness_reasons"
+		return 2 # UNCERTAIN
+	fi
+
+	return 1 # CURRENT
+}
+
+#######################################
+# handle_stale_task() — act on staleness detection result (t312)
+# For STALE tasks: cancel in DB
+# For UNCERTAIN tasks: comment on GH issue, remove #auto-dispatch from TODO.md
+#######################################
+handle_stale_task() {
+	local task_id="${1:-}"
+	local staleness_exit="${2:-1}"
+	local staleness_reason="${3:-}"
+	local project_root="${4:-.}"
+
+	local escaped_id
+	escaped_id=$(sql_escape "$task_id")
+
+	if [[ "$staleness_exit" -eq 0 ]]; then
+		# STALE — cancel the task
+		log_warn "Task $task_id is STALE — cancelling: $staleness_reason"
+		db "$SUPERVISOR_DB" "UPDATE tasks SET status='cancelled', error='Pre-dispatch staleness: ${staleness_reason:0:200}' WHERE id='$escaped_id';"
+		return 0
+
+	elif [[ "$staleness_exit" -eq 2 ]]; then
+		# UNCERTAIN — comment on GH issue and remove #auto-dispatch
+		log_warn "Task $task_id has UNCERTAIN staleness — pausing for review: $staleness_reason"
+
+		# Remove #auto-dispatch from TODO.md
+		local todo_file="$project_root/TODO.md"
+		if [[ -f "$todo_file" ]]; then
+			if grep -q "^[[:space:]]*- \[ \] ${task_id}[[:space:]].*#auto-dispatch" "$todo_file" 2>/dev/null; then
+				sed -i.bak "s/\(- \[ \] ${task_id}[[:space:]].*\) #auto-dispatch/\1/" "$todo_file"
+				rm -f "${todo_file}.bak"
+				log_info "Removed #auto-dispatch from $task_id in TODO.md"
+
+				# Commit the change
+				if git -C "$project_root" diff --quiet "$todo_file" 2>/dev/null; then
+					log_info "No TODO.md changes to commit"
+				else
+					git -C "$project_root" add "$todo_file" 2>/dev/null || true
+					git -C "$project_root" commit -q -m "chore: pause $task_id — staleness check uncertain, removed #auto-dispatch" 2>/dev/null || true
+					git -C "$project_root" push -q 2>/dev/null || true
+				fi
+			fi
+		fi
+
+		# Comment on GitHub issue if ref:GH# exists
+		local gh_issue=""
+		gh_issue=$(grep "^[[:space:]]*- \[.\] ${task_id}[[:space:]]" "$todo_file" 2>/dev/null |
+			grep -oE 'ref:GH#[0-9]+' | grep -oE '[0-9]+' | head -1) || true
+
+		if [[ -n "$gh_issue" ]] && command -v gh &>/dev/null; then
+			local repo_slug=""
+			repo_slug=$(detect_repo_slug "$project_root" 2>/dev/null) || true
+			if [[ -n "$repo_slug" ]]; then
+				local comment_body
+				comment_body=$(
+					cat <<STALENESS_EOF
+**Staleness check (t312)**: This task may be outdated. Removing \`#auto-dispatch\` until reviewed.
+
+**Signals detected:**
+${staleness_reason}
+
+**Action needed:** Please review whether this task is still relevant. If yes, re-add \`#auto-dispatch\` to the TODO.md entry. If not, mark as \`[-]\` (declined).
+STALENESS_EOF
+				)
+
+				gh issue comment "$gh_issue" --repo "$repo_slug" \
+					--body "$comment_body" 2>/dev/null || true
+				log_info "Posted staleness comment on GH#$gh_issue"
+			fi
+		fi
+
+		# Mark as blocked in DB so it's not re-dispatched
+		db "$SUPERVISOR_DB" "UPDATE tasks SET status='blocked', error='Staleness uncertain — awaiting review: ${staleness_reason:0:200}' WHERE id='$escaped_id';" 2>/dev/null || true
+		return 0
+	fi
+
+	return 1 # CURRENT — no action needed
+}
 
 check_task_claimed() {
     local task_id="${1:-}"
@@ -5191,6 +5460,15 @@ cmd_dispatch() {
     if check_task_already_done "$task_id" "${trepo:-.}"; then
         log_warn "Task $task_id appears already completed in git history — cancelling"
         db "$SUPERVISOR_DB" "UPDATE tasks SET status='cancelled', error='Pre-dispatch: already completed in git history' WHERE id='$(sql_escape "$task_id")';"
+        return 0
+    fi
+    # Pre-dispatch staleness check (t312): detect tasks whose premise is outdated.
+    # STALE (exit 0) = cancel. UNCERTAIN (exit 2) = comment on GH issue + remove
+    # #auto-dispatch + block until human reviews. CURRENT (exit 1) = proceed.
+    local staleness_reason="" staleness_exit=0
+    staleness_reason=$(check_task_staleness "$task_id" "$tdesc" "${trepo:-.}") || staleness_exit=$?
+    if [[ "$staleness_exit" -eq 0 || "$staleness_exit" -eq 2 ]]; then
+        handle_stale_task "$task_id" "$staleness_exit" "$staleness_reason" "${trepo:-.}"
         return 0
     fi
 
