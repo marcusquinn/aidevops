@@ -303,4 +303,4 @@ git commit -m "📄 Add converted documentation for AI processing"
 
 ---
 
-**Transform any document into AI-ready markdown with the AI DevOps Pandoc integration!**
+**See also**: `tools/document/document-creation.md` for the unified document creation agent that routes to pandoc, LibreOffice, odfpy, and other tools based on format pair and availability.
