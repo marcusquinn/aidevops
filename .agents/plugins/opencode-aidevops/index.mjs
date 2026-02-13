@@ -1,6 +1,7 @@
 import { execSync } from "child_process";
 import {
   readFileSync,
+  readdirSync,
   existsSync,
   appendFileSync,
   mkdirSync,
@@ -299,13 +300,28 @@ function isHookManagedByOmoc(hookName) {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 1: Lightweight Agent Index (t1040)
+// Phase 1: Lightweight Agent Discovery (t1040)
 // ---------------------------------------------------------------------------
 // Previously scanned 500+ .md files at startup (readFileSync + parseFrontmatter
-// each), causing TUI display glitches and slow launches. Now reads a single
-// pre-built index file (subagent-index.toon, ~177 lines) and injects only the
-// leaf agent names as minimal config entries for @mention discovery.
-// The index is generated at setup time by generate-opencode-agents.sh.
+// each), causing TUI display glitches and slow launches.
+//
+// Strategy (cheapest first):
+//   1. Read subagent-index.toon (1 file, ~177 lines) — pre-built index
+//   2. Fallback: directory-only scan (readdirSync for filenames, no file reads)
+//
+// The index is manually maintained in the repo. The fallback ensures new agents
+// are still discoverable even if the index is stale or missing.
+
+/** Names to skip when discovering agents. */
+const SKIP_NAMES = new Set([
+  "README",
+  "AGENTS",
+  "SKILL",
+  "SKILL-SCAN-RESULTS",
+  "node_modules",
+  "references",
+  "loop-state",
+]);
 
 /**
  * Parse subagent-index.toon and return leaf agent names with descriptions.
@@ -316,36 +332,103 @@ function isHookManagedByOmoc(hookName) {
 function loadAgentIndex() {
   const indexPath = join(AGENTS_DIR, "subagent-index.toon");
   const content = readIfExists(indexPath);
-  if (!content) return [];
+  if (!content) return loadAgentsFallback();
 
   const agents = [];
+  const seen = new Set();
 
   // Parse the subagents TOON block: folder, purpose, key_files
   // e.g.: seo/,Search optimization - keywords and rankings,dataforseo|serper|semrush|...
   const subagentMatch = content.match(
     /<!--TOON:subagents\[\d+\]\{[^}]+\}:\n([\s\S]*?)-->/,
   );
-  if (subagentMatch) {
-    for (const line of subagentMatch[1].split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
+  if (!subagentMatch) return loadAgentsFallback();
 
-      const parts = trimmed.split(",");
-      if (parts.length < 3) continue;
+  for (const line of subagentMatch[1].split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
 
-      const purpose = parts[1] || "";
-      const keyFiles = parts.slice(2).join(","); // rejoin in case purpose had commas
+    const parts = trimmed.split(",");
+    if (parts.length < 3) continue;
 
-      // Extract leaf agent names from key_files (pipe-separated)
-      for (const leaf of keyFiles.split("|")) {
-        const name = leaf.trim();
-        if (!name || name === "README" || name === "AGENTS") continue;
-        agents.push({ name, description: purpose });
-      }
+    const purpose = parts[1] || "";
+    const keyFiles = parts.slice(2).join(",");
+
+    for (const leaf of keyFiles.split("|")) {
+      const name = leaf.trim();
+      if (!name || SKIP_NAMES.has(name) || name.endsWith("-skill")) continue;
+      if (seen.has(name)) continue;
+      seen.add(name);
+      agents.push({ name, description: purpose });
     }
   }
 
   return agents;
+}
+
+/**
+ * Fallback: discover agents from directory names only (no file reads).
+ * Lists .md filenames in known subdirectories — O(n) readdirSync calls
+ * where n = number of subdirectories (~11), NOT number of files.
+ * Each readdirSync returns filenames without reading file contents.
+ * @returns {Array<{name: string, description: string}>}
+ */
+function loadAgentsFallback() {
+  if (!existsSync(AGENTS_DIR)) return [];
+
+  const subdirs = [
+    "aidevops",
+    "content",
+    "seo",
+    "tools",
+    "services",
+    "workflows",
+    "memory",
+    "custom",
+    "draft",
+  ];
+
+  const agents = [];
+  const seen = new Set();
+
+  for (const subdir of subdirs) {
+    scanDirNames(join(AGENTS_DIR, subdir), subdir, agents, seen);
+  }
+
+  return agents;
+}
+
+/**
+ * Recursively collect .md filenames from a directory tree.
+ * Only calls readdirSync (directory listing) — never reads file contents.
+ * @param {string} dirPath
+ * @param {string} folderDesc - used as description fallback
+ * @param {Array} agents
+ * @param {Set} seen - dedup set
+ */
+function scanDirNames(dirPath, folderDesc, agents, seen) {
+  let entries;
+  try {
+    entries = readdirSync(dirPath, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      if (SKIP_NAMES.has(entry.name)) continue;
+      scanDirNames(join(dirPath, entry.name), folderDesc, agents, seen);
+    } else if (entry.isFile() && entry.name.endsWith(".md")) {
+      const name = entry.name.replace(/\.md$/, "");
+      if (SKIP_NAMES.has(name) || name.endsWith("-skill")) continue;
+      if (seen.has(name)) continue;
+      seen.add(name);
+      agents.push({
+        name,
+        description: `aidevops subagent: ${folderDesc}`,
+      });
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
