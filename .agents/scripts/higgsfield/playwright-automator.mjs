@@ -269,6 +269,62 @@ async function clickHistoryTab(page, { waitMs = 2000 } = {}) {
   return historyTab;
 }
 
+// Click the Generate/Create/Apply button and log it.
+async function clickGenerate(page, label = '') {
+  const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Create"), button:has-text("Apply")');
+  if (await generateBtn.count() > 0) {
+    await generateBtn.last().click({ force: true });
+    console.log(`Clicked Generate${label ? ` for ${label}` : ''}`);
+    return true;
+  }
+  return false;
+}
+
+// Wait for a generation result, take screenshot, and optionally download.
+// opts: { selector, screenshotName, label, outputSubdir, defaultTimeout, isVideo, useHistoryPoll }
+async function waitForGenerationResult(page, options, opts = {}) {
+  const {
+    selector = `${GENERATED_IMAGE_SELECTOR}, video`,
+    screenshotName = 'result',
+    label = 'generation',
+    outputSubdir = 'output',
+    defaultTimeout = 180000,
+    isVideo = false,
+    useHistoryPoll = false,
+  } = opts;
+  const timeout = options.timeout || defaultTimeout;
+  console.log(`Waiting up to ${timeout / 1000}s for ${label} result...`);
+
+  if (useHistoryPoll) {
+    const historyTab = page.locator('[role="tab"]:has-text("History")');
+    if (await historyTab.count() > 0) {
+      await page.waitForTimeout(10000);
+      await historyTab.click();
+      await page.waitForTimeout(3000);
+    }
+  }
+
+  try {
+    await page.waitForSelector(selector, { timeout, state: 'visible' });
+  } catch {
+    console.log(`Timeout waiting for ${label} result`);
+  }
+
+  await page.waitForTimeout(3000);
+  await dismissAllModals(page);
+  await debugScreenshot(page, screenshotName);
+
+  if (options.wait !== false) {
+    const baseOutput = options.output || getDefaultOutputDir(options);
+    const outputDir = resolveOutputDir(baseOutput, options, outputSubdir);
+    if (isVideo) {
+      await downloadVideoFromHistory(page, outputDir, {}, options);
+    } else {
+      await downloadLatestResult(page, outputDir, true, options);
+    }
+  }
+}
+
 // --- Credit guard: check available credits before expensive operations ---
 function getCachedCredits() {
   try {
@@ -2615,6 +2671,63 @@ async function generateVideo(options = {}) {
 }
 
 // Generate lipsync video via UI
+// Upload a character image for lipsync, trying file input first then upload button.
+async function uploadLipsyncCharacter(page, imageFile) {
+  console.log(`Uploading character image: ${imageFile}`);
+  const fileInput = page.locator('input[type="file"]');
+  if (await fileInput.count() > 0) {
+    await fileInput.first().setInputFiles(imageFile);
+    await page.waitForTimeout(3000);
+    console.log('Character image uploaded');
+    return true;
+  }
+  // Try clicking an upload button first
+  const uploadBtn = page.locator('button:has-text("Upload"), [class*="upload"]');
+  if (await uploadBtn.count() > 0) {
+    await uploadBtn.first().click({ force: true });
+    await page.waitForTimeout(1000);
+    const fileInput2 = page.locator('input[type="file"]');
+    if (await fileInput2.count() > 0) {
+      await fileInput2.first().setInputFiles(imageFile);
+      await page.waitForTimeout(3000);
+      console.log('Character image uploaded (after clicking upload button)');
+      return true;
+    }
+  }
+  return false;
+}
+
+// Poll History tab for a new lipsync result (item count increase).
+async function pollLipsyncHistory(page, historyTab, existingHistoryCount, options) {
+  const timeout = options.timeout || 600000;
+  console.log(`Waiting up to ${timeout / 1000}s for lipsync generation...`);
+  const startTime = Date.now();
+
+  if (await historyTab.count() > 0) {
+    await historyTab.click({ force: true });
+    await page.waitForTimeout(1000);
+  }
+
+  const pollInterval = 10000;
+  while (Date.now() - startTime < timeout) {
+    await page.waitForTimeout(pollInterval);
+    await dismissAllModals(page);
+
+    const currentCount = await page.locator('main li').count();
+    if (currentCount > existingHistoryCount) {
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      console.log(`Lipsync result detected! (${elapsed}s)`);
+      return true;
+    }
+
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
+    console.log(`  ${elapsed}s: waiting for lipsync result...`);
+  }
+
+  console.log('Timeout waiting for lipsync generation.');
+  return false;
+}
+
 // Requires an image (--image-file) and text prompt or audio file
 async function generateLipsync(options = {}) {
   const { browser, context, page } = await launchBrowser(options);
@@ -2628,33 +2741,12 @@ async function generateLipsync(options = {}) {
     await dismissAllModals(page);
     await debugScreenshot(page, 'lipsync-page');
 
-    // Upload character image
-    if (options.imageFile) {
-      console.log(`Uploading character image: ${options.imageFile}`);
-      const fileInput = page.locator('input[type="file"]');
-      if (await fileInput.count() > 0) {
-        await fileInput.first().setInputFiles(options.imageFile);
-        await page.waitForTimeout(3000);
-        console.log('Character image uploaded');
-      } else {
-        // Try clicking an upload button first
-        const uploadBtn = page.locator('button:has-text("Upload"), [class*="upload"]');
-        if (await uploadBtn.count() > 0) {
-          await uploadBtn.first().click({ force: true });
-          await page.waitForTimeout(1000);
-          const fileInput2 = page.locator('input[type="file"]');
-          if (await fileInput2.count() > 0) {
-            await fileInput2.first().setInputFiles(options.imageFile);
-            await page.waitForTimeout(3000);
-            console.log('Character image uploaded (after clicking upload button)');
-          }
-        }
-      }
-    } else {
+    if (!options.imageFile) {
       console.log('WARNING: Lipsync requires a character image (--image-file)');
       await browser.close();
       return { success: false, error: 'Character image required. Use --image-file to provide one.' };
     }
+    await uploadLipsyncCharacter(page, options.imageFile);
 
     // Select model if specified
     if (options.model) {
@@ -2672,7 +2764,7 @@ async function generateLipsync(options = {}) {
       }
     }
 
-    // Fill the text prompt (for text-to-speech lipsync)
+    // Fill the text prompt
     const textInput = page.locator('textarea, input[placeholder*="text" i], input[placeholder*="speak" i], input[placeholder*="say" i]');
     if (await textInput.count() > 0) {
       await textInput.first().click({ force: true });
@@ -2689,7 +2781,6 @@ async function generateLipsync(options = {}) {
       await page.waitForTimeout(1500);
       existingHistoryCount = await page.locator('main li').count();
       console.log(`Existing History items: ${existingHistoryCount}`);
-      // Switch back
       const createTab = page.locator('[role="tab"]:has-text("Create"), [role="tab"]:first-child');
       if (await createTab.count() > 0) {
         await createTab.first().click({ force: true });
@@ -2697,54 +2788,16 @@ async function generateLipsync(options = {}) {
       }
     }
 
-    // Click generate
-    const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Create")');
-    if (await generateBtn.count() > 0) {
-      await generateBtn.last().click({ force: true });
-      console.log('Clicked Generate button');
-    }
-
+    await clickGenerate(page, 'lipsync');
     await page.waitForTimeout(3000);
     await debugScreenshot(page, 'lipsync-generate-clicked');
 
-    // Wait for result in History tab
-    const timeout = options.timeout || 600000; // 10 min default
-    console.log(`Waiting up to ${timeout / 1000}s for lipsync generation...`);
-    const startTime = Date.now();
-
-    if (await historyTab.count() > 0) {
-      await historyTab.click({ force: true });
-      await page.waitForTimeout(1000);
-    }
-
-    let generationComplete = false;
-    const pollInterval = 10000;
-
-    while (Date.now() - startTime < timeout) {
-      await page.waitForTimeout(pollInterval);
-      await dismissAllModals(page);
-
-      const currentCount = await page.locator('main li').count();
-      if (currentCount > existingHistoryCount) {
-        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-        console.log(`Lipsync result detected! (${elapsed}s)`);
-        generationComplete = true;
-        break;
-      }
-
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
-      console.log(`  ${elapsed}s: waiting for lipsync result...`);
-    }
-
-    if (!generationComplete) {
-      console.log('Timeout waiting for lipsync generation.');
-    }
+    const generationComplete = await pollLipsyncHistory(page, historyTab, existingHistoryCount, options);
 
     await page.waitForTimeout(2000);
     await dismissAllModals(page);
     await debugScreenshot(page, 'lipsync-result');
 
-    // Download from History (t269: always attempt when wait is enabled — polling handles processing)
     if (options.wait !== false) {
       const baseOutput = options.output || getDefaultOutputDir(options);
       const outputDir = resolveOutputDir(baseOutput, options, 'lipsync');
@@ -3461,98 +3514,99 @@ async function seedBracket(options = {}) {
 
 // Submit a video generation job on an already-open page (no browser open/close).
 // Used by the parallel pipeline to submit multiple jobs before waiting.
+// Remove existing start frame and upload a new one via file chooser.
+async function uploadJobStartFrame(page, imageFile, promptSnippet) {
+  // Remove existing start frame if present
+  const existingFrame = page.getByRole('button', { name: 'Uploaded image' });
+  if (await existingFrame.count() > 0) {
+    const smallButtons = await page.evaluate(() => {
+      const btns = [...document.querySelectorAll('main button')];
+      return btns
+        .filter(b => { const r = b.getBoundingClientRect(); return r.width <= 24 && r.height <= 24 && r.y > 200 && r.y < 300; })
+        .map(b => ({ x: b.getBoundingClientRect().x + 10, y: b.getBoundingClientRect().y + 10 }));
+    });
+    if (smallButtons.length > 0) {
+      await page.mouse.click(smallButtons[0].x, smallButtons[0].y);
+      await page.waitForTimeout(1500);
+    }
+  }
+
+  // Upload via file chooser — try "Upload image" button first, then "Start frame"
+  let uploaded = false;
+  const uploadBtn = page.getByRole('button', { name: /Upload image/ });
+  if (await uploadBtn.count() > 0) {
+    try {
+      const [fileChooser] = await Promise.all([
+        page.waitForEvent('filechooser', { timeout: 10000 }),
+        uploadBtn.click({ force: true }),
+      ]);
+      await fileChooser.setFiles(imageFile);
+      await page.waitForTimeout(3000);
+      uploaded = true;
+    } catch {}
+  }
+  if (!uploaded) {
+    const startFrameBtn = page.locator('text=Start frame').first();
+    if (await startFrameBtn.count() > 0) {
+      try {
+        const [fileChooser] = await Promise.all([
+          page.waitForEvent('filechooser', { timeout: 10000 }),
+          startFrameBtn.click({ force: true }),
+        ]);
+        await fileChooser.setFiles(imageFile);
+        await page.waitForTimeout(3000);
+        uploaded = true;
+      } catch {}
+    }
+  }
+  if (!uploaded) {
+    console.log(`  WARNING: Could not upload start frame for: "${promptSnippet}"`);
+  }
+  return uploaded;
+}
+
+// Select a video model from the dropdown by clicking the Model button.
+async function selectJobVideoModel(page, model) {
+  const uiModelName = VIDEO_MODEL_NAME_MAP[model] || model;
+  const modelSelector = page.getByRole('button', { name: 'Model' });
+  if (await modelSelector.count() > 0) {
+    const currentModel = await modelSelector.textContent().catch(() => '');
+    if (!currentModel.includes(uiModelName)) {
+      await modelSelector.click({ force: true });
+      await page.waitForTimeout(1500);
+      const matchingBtns = await page.evaluate((mn) => {
+        return [...document.querySelectorAll('button')]
+          .filter(b => b.textContent?.includes(mn) && b.offsetParent !== null)
+          .map(b => { const r = b.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; })
+          .filter(b => b.x < 800 && b.x > 100);
+      }, uiModelName);
+      if (matchingBtns.length > 0) {
+        await page.mouse.click(matchingBtns[0].x + matchingBtns[0].w / 2, matchingBtns[0].y + matchingBtns[0].h / 2);
+        await page.waitForTimeout(1500);
+      } else {
+        await page.keyboard.press('Escape');
+      }
+    }
+  }
+}
+
 // Returns the submitted prompt prefix for tracking, or null on failure.
 async function submitVideoJobOnPage(page, sceneOptions) {
   const prompt = sceneOptions.prompt || '';
   const model = sceneOptions.model || 'kling-2.6';
 
   try {
-    // Navigate to video creation page
     await page.goto(`${BASE_URL}/create/video`, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForTimeout(4000);
     await dismissAllModals(page);
 
-    // Upload start frame if provided
     if (sceneOptions.imageFile) {
-      // Remove existing start frame if present
-      const existingFrame = page.getByRole('button', { name: 'Uploaded image' });
-      if (await existingFrame.count() > 0) {
-        const smallButtons = await page.evaluate(() => {
-          const btns = [...document.querySelectorAll('main button')];
-          return btns
-            .filter(b => { const r = b.getBoundingClientRect(); return r.width <= 24 && r.height <= 24 && r.y > 200 && r.y < 300; })
-            .map(b => ({ x: b.getBoundingClientRect().x + 10, y: b.getBoundingClientRect().y + 10 }));
-        });
-        if (smallButtons.length > 0) {
-          await page.mouse.click(smallButtons[0].x, smallButtons[0].y);
-          await page.waitForTimeout(1500);
-        }
-      }
-
-      // Upload via file chooser
-      let uploaded = false;
-      const uploadBtn = page.getByRole('button', { name: /Upload image/ });
-      if (!uploaded && await uploadBtn.count() > 0) {
-        try {
-          const [fileChooser] = await Promise.all([
-            page.waitForEvent('filechooser', { timeout: 10000 }),
-            uploadBtn.click({ force: true }),
-          ]);
-          await fileChooser.setFiles(sceneOptions.imageFile);
-          await page.waitForTimeout(3000);
-          uploaded = true;
-        } catch {}
-      }
-      if (!uploaded) {
-        const startFrameBtn = page.locator('text=Start frame').first();
-        if (await startFrameBtn.count() > 0) {
-          try {
-            const [fileChooser] = await Promise.all([
-              page.waitForEvent('filechooser', { timeout: 10000 }),
-              startFrameBtn.click({ force: true }),
-            ]);
-            await fileChooser.setFiles(sceneOptions.imageFile);
-            await page.waitForTimeout(3000);
-            uploaded = true;
-          } catch {}
-        }
-      }
-      if (!uploaded) {
-        console.log(`  WARNING: Could not upload start frame for: "${prompt.substring(0, 40)}..."`);
-      }
+      await uploadJobStartFrame(page, sceneOptions.imageFile, prompt.substring(0, 40));
     }
 
     await page.waitForTimeout(2000);
     await dismissAllModals(page);
-
-    // Select model
-    const modelNameMap = {
-      'kling-3.0': 'Kling 3.0', 'kling-2.6': 'Kling 2.6', 'kling-2.5': 'Kling 2.5',
-      'kling-2.1': 'Kling 2.1', 'kling-motion': 'Kling Motion Control',
-      'seedance': 'Seedance', 'grok': 'Grok Imagine', 'minimax': 'Minimax Hailuo',
-      'wan-2.1': 'Wan 2.1', 'sora': 'Sora', 'veo': 'Veo', 'veo-3': 'Veo 3',
-    };
-    const uiModelName = modelNameMap[model] || model;
-    const modelSelector = page.getByRole('button', { name: 'Model' });
-    if (await modelSelector.count() > 0) {
-      const currentModel = await modelSelector.textContent().catch(() => '');
-      if (!currentModel.includes(uiModelName)) {
-        await modelSelector.click({ force: true });
-        await page.waitForTimeout(1500);
-        const matchingBtns = await page.evaluate((mn) => {
-          return [...document.querySelectorAll('button')]
-            .filter(b => b.textContent?.includes(mn) && b.offsetParent !== null)
-            .map(b => { const r = b.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; })
-            .filter(b => b.x < 800 && b.x > 100);
-        }, uiModelName);
-        if (matchingBtns.length > 0) {
-          await page.mouse.click(matchingBtns[0].x + matchingBtns[0].w / 2, matchingBtns[0].y + matchingBtns[0].h / 2);
-          await page.waitForTimeout(1500);
-        } else {
-          await page.keyboard.press('Escape');
-        }
-      }
-    }
+    await selectJobVideoModel(page, model);
 
     // Enable unlimited mode
     const unlimitedSwitch = page.getByRole('switch', { name: 'Unlimited mode' });
@@ -4203,33 +4257,10 @@ async function cinemaStudio(options = {}) {
     }
 
     await debugScreenshot(page, 'cinema-studio-configured');
-
-    // Click Generate
-    const generateBtn = page.locator('button:has-text("Generate")');
-    if (await generateBtn.count() > 0) {
-      await generateBtn.first().click({ force: true });
-      console.log('Clicked Generate in Cinema Studio');
-    }
-
-    // Wait for result
-    const timeout = options.timeout || 180000;
-    console.log(`Waiting up to ${timeout / 1000}s for Cinema Studio result...`);
-
-    try {
-      await page.waitForSelector(`${GENERATED_IMAGE_SELECTOR}, video`, { timeout, state: 'visible' });
-    } catch {
-      console.log('Timeout waiting for Cinema Studio result');
-    }
-
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
-    await debugScreenshot(page, 'cinema-studio-result');
-
-    if (options.wait !== false) {
-      const baseOutput = options.output || getDefaultOutputDir(options);
-      const outputDir = resolveOutputDir(baseOutput, options, 'cinema');
-      await downloadLatestResult(page, outputDir, true, options);
-    }
+    await clickGenerate(page, 'Cinema Studio');
+    await waitForGenerationResult(page, options, {
+      screenshotName: 'cinema-studio-result', label: 'Cinema Studio', outputSubdir: 'cinema',
+    });
 
     await context.storageState({ path: STATE_FILE });
     await browser.close();
@@ -4296,41 +4327,11 @@ async function motionControl(options = {}) {
     }
 
     await debugScreenshot(page, 'motion-control-configured');
-
-    // Click Generate
-    const generateBtn = page.locator('button:has-text("Generate")');
-    if (await generateBtn.count() > 0) {
-      await generateBtn.first().click({ force: true });
-      console.log('Clicked Generate in Motion Control');
-    }
-
-    // Wait for result — motion control videos take longer
-    const timeout = options.timeout || 300000;
-    console.log(`Waiting up to ${timeout / 1000}s for Motion Control result...`);
-
-    // Poll History tab for completion
-    const historyTab = page.locator('[role="tab"]:has-text("History")');
-    if (await historyTab.count() > 0) {
-      await page.waitForTimeout(10000);
-      await historyTab.click();
-      await page.waitForTimeout(3000);
-    }
-
-    try {
-      await page.waitForSelector('video', { timeout, state: 'visible' });
-    } catch {
-      console.log('Timeout waiting for Motion Control result');
-    }
-
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
-    await debugScreenshot(page, 'motion-control-result');
-
-    if (options.wait !== false) {
-      const baseOutput = options.output || getDefaultOutputDir(options);
-      const outputDir = resolveOutputDir(baseOutput, options, 'videos');
-      await downloadVideoFromHistory(page, outputDir, {}, options);
-    }
+    await clickGenerate(page, 'Motion Control');
+    await waitForGenerationResult(page, options, {
+      selector: 'video', screenshotName: 'motion-control-result', label: 'Motion Control',
+      outputSubdir: 'videos', defaultTimeout: 300000, isVideo: true, useHistoryPoll: true,
+    });
 
     await context.storageState({ path: STATE_FILE });
     await browser.close();
@@ -4386,33 +4387,11 @@ async function editImage(options = {}) {
     }
 
     await debugScreenshot(page, `edit-${model}-configured`);
-
-    // Click Generate/Apply
-    const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Apply"), button:has-text("Edit")').first();
-    if (await generateBtn.count() > 0) {
-      await generateBtn.click();
-      console.log('Clicked Generate/Apply for edit');
-    }
-
-    // Wait for result
-    const timeout = options.timeout || 120000;
-    console.log(`Waiting up to ${timeout / 1000}s for edit result...`);
-
-    try {
-      await page.waitForSelector(GENERATED_IMAGE_SELECTOR, { timeout, state: 'visible' });
-    } catch {
-      console.log('Timeout waiting for edit result');
-    }
-
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
-    await debugScreenshot(page, `edit-${model}-result`);
-
-    if (options.wait !== false) {
-      const baseOutput = options.output || getDefaultOutputDir(options);
-      const outputDir = resolveOutputDir(baseOutput, options, 'edits');
-      await downloadLatestResult(page, outputDir, true, options);
-    }
+    await clickGenerate(page, 'edit');
+    await waitForGenerationResult(page, options, {
+      selector: GENERATED_IMAGE_SELECTOR, screenshotName: `edit-${model}-result`,
+      label: 'edit', outputSubdir: 'edits', defaultTimeout: 120000,
+    });
 
     await context.storageState({ path: STATE_FILE });
     await browser.close();
@@ -4454,25 +4433,10 @@ async function upscale(options = {}) {
       console.log('Clicked Upscale');
     }
 
-    // Wait for result
-    const timeout = options.timeout || 180000;
-    console.log(`Waiting up to ${timeout / 1000}s for upscale result...`);
-
-    try {
-      await page.waitForSelector(`${GENERATED_IMAGE_SELECTOR}, a[download]`, { timeout, state: 'visible' });
-    } catch {
-      console.log('Timeout waiting for upscale result');
-    }
-
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
-    await debugScreenshot(page, 'upscale-result');
-
-    if (options.wait !== false) {
-      const baseOutput = options.output || getDefaultOutputDir(options);
-      const outputDir = resolveOutputDir(baseOutput, options, 'upscaled');
-      await downloadLatestResult(page, outputDir, true, options);
-    }
+    await waitForGenerationResult(page, options, {
+      selector: `${GENERATED_IMAGE_SELECTOR}, a[download]`, screenshotName: 'upscale-result',
+      label: 'upscale', outputSubdir: 'upscaled',
+    });
 
     await context.storageState({ path: STATE_FILE });
     await browser.close();
@@ -5004,33 +4968,10 @@ async function mixedMediaPreset(options = {}) {
     }
 
     await debugScreenshot(page, `mixed-media-${presetKey}-configured`);
-
-    // Click Generate
-    const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Apply"), button:has-text("Create")');
-    if (await generateBtn.count() > 0) {
-      await generateBtn.first().click({ force: true });
-      console.log('Clicked Generate for mixed media preset');
-    }
-
-    // Wait for result
-    const timeout = options.timeout || 180000;
-    console.log(`Waiting up to ${timeout / 1000}s for mixed media result...`);
-
-    try {
-      await page.waitForSelector(`${GENERATED_IMAGE_SELECTOR}, video`, { timeout, state: 'visible' });
-    } catch {
-      console.log('Timeout waiting for mixed media result');
-    }
-
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
-    await debugScreenshot(page, `mixed-media-${presetKey}-result`);
-
-    if (options.wait !== false) {
-      const baseOutput = options.output || getDefaultOutputDir(options);
-      const outputDir = resolveOutputDir(baseOutput, options, 'mixed-media');
-      await downloadLatestResult(page, outputDir, true, options);
-    }
+    await clickGenerate(page, 'mixed media preset');
+    await waitForGenerationResult(page, options, {
+      screenshotName: `mixed-media-${presetKey}-result`, label: 'mixed media', outputSubdir: 'mixed-media',
+    });
 
     await context.storageState({ path: STATE_FILE });
     await browser.close();
@@ -5129,33 +5070,11 @@ async function motionPreset(options = {}) {
     }
 
     await debugScreenshot(page, 'motion-preset-configured');
-
-    // Click Generate
-    const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Apply"), button:has-text("Create")');
-    if (await generateBtn.count() > 0) {
-      await generateBtn.first().click({ force: true });
-      console.log('Clicked Generate for motion preset');
-    }
-
-    // Wait for result (motion presets produce videos, which take longer)
-    const timeout = options.timeout || 300000;
-    console.log(`Waiting up to ${timeout / 1000}s for motion preset result...`);
-
-    try {
-      await page.waitForSelector(`video, ${GENERATED_IMAGE_SELECTOR}`, { timeout, state: 'visible' });
-    } catch {
-      console.log('Timeout waiting for motion preset result');
-    }
-
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
-    await debugScreenshot(page, 'motion-preset-result');
-
-    if (options.wait !== false) {
-      const baseOutput = options.output || getDefaultOutputDir(options);
-      const outputDir = resolveOutputDir(baseOutput, options, 'motion-presets');
-      await downloadVideoFromHistory(page, outputDir, {}, options);
-    }
+    await clickGenerate(page, 'motion preset');
+    await waitForGenerationResult(page, options, {
+      selector: `video, ${GENERATED_IMAGE_SELECTOR}`, screenshotName: 'motion-preset-result',
+      label: 'motion preset', outputSubdir: 'motion-presets', defaultTimeout: 300000, isVideo: true,
+    });
 
     await context.storageState({ path: STATE_FILE });
     await browser.close();
@@ -5214,40 +5133,11 @@ async function editVideo(options = {}) {
 
     await debugScreenshot(page, 'video-edit-configured');
 
-    // Click Generate
-    const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Apply"), button:has-text("Edit")');
-    if (await generateBtn.count() > 0) {
-      await generateBtn.first().click({ force: true });
-      console.log('Clicked Generate for video edit');
-    }
-
-    // Wait for result
-    const timeout = options.timeout || 300000;
-    console.log(`Waiting up to ${timeout / 1000}s for video edit result...`);
-
-    // Poll History tab
-    const historyTab = page.locator('[role="tab"]:has-text("History")');
-    if (await historyTab.count() > 0) {
-      await page.waitForTimeout(10000);
-      await historyTab.click();
-      await page.waitForTimeout(3000);
-    }
-
-    try {
-      await page.waitForSelector('video', { timeout, state: 'visible' });
-    } catch {
-      console.log('Timeout waiting for video edit result');
-    }
-
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
-    await debugScreenshot(page, 'video-edit-result');
-
-    if (options.wait !== false) {
-      const baseOutput = options.output || getDefaultOutputDir(options);
-      const outputDir = resolveOutputDir(baseOutput, options, 'videos');
-      await downloadVideoFromHistory(page, outputDir, {}, options);
-    }
+    await clickGenerate(page, 'video edit');
+    await waitForGenerationResult(page, options, {
+      selector: 'video', screenshotName: 'video-edit-result', label: 'video edit',
+      outputSubdir: 'videos', defaultTimeout: 300000, isVideo: true, useHistoryPoll: true,
+    });
 
     await context.storageState({ path: STATE_FILE });
     await browser.close();
@@ -5308,33 +5198,12 @@ async function storyboard(options = {}) {
     }
 
     await debugScreenshot(page, 'storyboard-configured');
-
-    // Click Generate
-    const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Create"), button:has-text("Build")');
-    if (await generateBtn.count() > 0) {
-      await generateBtn.first().click({ force: true });
-      console.log('Clicked Generate for storyboard');
-    }
-
-    // Wait for result — storyboards may take longer due to multiple panels
-    const timeout = options.timeout || 300000;
-    console.log(`Waiting up to ${timeout / 1000}s for storyboard result...`);
-
-    try {
-      await page.waitForSelector(`${GENERATED_IMAGE_SELECTOR}, .storyboard-panel, [class*="storyboard"]`, { timeout, state: 'visible' });
-    } catch {
-      console.log('Timeout waiting for storyboard result');
-    }
-
-    await page.waitForTimeout(5000);
-    await dismissAllModals(page);
-    await debugScreenshot(page, 'storyboard-result', { fullPage: true });
-
-    if (options.wait !== false) {
-      const baseOutput = options.output || getDefaultOutputDir(options);
-      const outputDir = resolveOutputDir(baseOutput, options, 'storyboards');
-      await downloadLatestResult(page, outputDir, true, options);
-    }
+    await clickGenerate(page, 'storyboard');
+    await waitForGenerationResult(page, options, {
+      selector: `${GENERATED_IMAGE_SELECTOR}, .storyboard-panel, [class*="storyboard"]`,
+      screenshotName: 'storyboard-result', label: 'storyboard',
+      outputSubdir: 'storyboards', defaultTimeout: 300000,
+    });
 
     await context.storageState({ path: STATE_FILE });
     await browser.close();
@@ -5426,33 +5295,11 @@ async function vibeMotion(options = {}) {
     }
 
     await debugScreenshot(page, 'vibe-motion-configured');
-
-    // Click Generate
-    const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Create"), button:has-text("Build")');
-    if (await generateBtn.count() > 0) {
-      await generateBtn.first().click({ force: true });
-      console.log('Clicked Generate for Vibe Motion');
-    }
-
-    // Wait for result — Vibe Motion produces videos
-    const timeout = options.timeout || 300000;
-    console.log(`Waiting up to ${timeout / 1000}s for Vibe Motion result...`);
-
-    try {
-      await page.waitForSelector('video', { timeout, state: 'visible' });
-    } catch {
-      console.log('Timeout waiting for Vibe Motion result');
-    }
-
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
-    await debugScreenshot(page, 'vibe-motion-result');
-
-    if (options.wait !== false) {
-      const baseOutput = options.output || getDefaultOutputDir(options);
-      const outputDir = resolveOutputDir(baseOutput, options, 'videos');
-      await downloadVideoFromHistory(page, outputDir, {}, options);
-    }
+    await clickGenerate(page, 'Vibe Motion');
+    await waitForGenerationResult(page, options, {
+      selector: 'video', screenshotName: 'vibe-motion-result', label: 'Vibe Motion',
+      outputSubdir: 'videos', defaultTimeout: 300000, isVideo: true,
+    });
 
     await context.storageState({ path: STATE_FILE });
     await browser.close();
@@ -5504,32 +5351,11 @@ async function aiInfluencer(options = {}) {
     }
 
     await debugScreenshot(page, 'ai-influencer-configured');
-
-    // Click Generate/Create
-    const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Create"), button:has-text("Build")');
-    if (await generateBtn.count() > 0) {
-      await generateBtn.first().click({ force: true });
-      console.log('Clicked Generate for AI Influencer');
-    }
-
-    const timeout = options.timeout || 180000;
-    console.log(`Waiting up to ${timeout / 1000}s for AI Influencer result...`);
-
-    try {
-      await page.waitForSelector(GENERATED_IMAGE_SELECTOR, { timeout, state: 'visible' });
-    } catch {
-      console.log('Timeout waiting for AI Influencer result');
-    }
-
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
-    await debugScreenshot(page, 'ai-influencer-result');
-
-    if (options.wait !== false) {
-      const baseOutput = options.output || getDefaultOutputDir(options);
-      const outputDir = resolveOutputDir(baseOutput, options, 'characters');
-      await downloadLatestResult(page, outputDir, true, options);
-    }
+    await clickGenerate(page, 'AI Influencer');
+    await waitForGenerationResult(page, options, {
+      selector: GENERATED_IMAGE_SELECTOR, screenshotName: 'ai-influencer-result',
+      label: 'AI Influencer', outputSubdir: 'characters',
+    });
 
     await context.storageState({ path: STATE_FILE });
     await browser.close();
@@ -5577,32 +5403,11 @@ async function createCharacter(options = {}) {
     }
 
     await debugScreenshot(page, 'character-configured');
-
-    // Click Create/Save
-    const createBtn = page.locator('button:has-text("Create"), button:has-text("Save"), button:has-text("Generate")');
-    if (await createBtn.count() > 0) {
-      await createBtn.first().click();
-      console.log('Clicked Create for character');
-    }
-
-    const timeout = options.timeout || 120000;
-    console.log(`Waiting up to ${timeout / 1000}s for character creation...`);
-
-    try {
-      await page.waitForSelector(`${GENERATED_IMAGE_SELECTOR}, [class*="character"]`, { timeout, state: 'visible' });
-    } catch {
-      console.log('Timeout waiting for character creation');
-    }
-
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
-    await debugScreenshot(page, 'character-result');
-
-    if (options.wait !== false) {
-      const baseOutput = options.output || getDefaultOutputDir(options);
-      const outputDir = resolveOutputDir(baseOutput, options, 'characters');
-      await downloadLatestResult(page, outputDir, true, options);
-    }
+    await clickGenerate(page, 'character');
+    await waitForGenerationResult(page, options, {
+      selector: `${GENERATED_IMAGE_SELECTOR}, [class*="character"]`, screenshotName: 'character-result',
+      label: 'character creation', outputSubdir: 'characters', defaultTimeout: 120000,
+    });
 
     await context.storageState({ path: STATE_FILE });
     await browser.close();
@@ -5691,32 +5496,10 @@ async function featurePage(options = {}) {
     }
 
     await debugScreenshot(page, `feature-${featureKey}-configured`);
-
-    // Click Generate/Create/Apply
-    const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Create"), button:has-text("Apply"), button[type="submit"]:visible');
-    if (await generateBtn.count() > 0) {
-      await generateBtn.first().click({ force: true });
-      console.log('Clicked Generate');
-    }
-
-    const timeout = options.timeout || 180000;
-    console.log(`Waiting up to ${timeout / 1000}s for ${feature.name} result...`);
-
-    try {
-      await page.waitForSelector(`${GENERATED_IMAGE_SELECTOR}, video`, { timeout, state: 'visible' });
-    } catch {
-      console.log(`Timeout waiting for ${feature.name} result`);
-    }
-
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
-    await debugScreenshot(page, `feature-${featureKey}-result`);
-
-    if (options.wait !== false) {
-      const baseOutput = options.output || getDefaultOutputDir(options);
-      const outputDir = resolveOutputDir(baseOutput, options, 'features');
-      await downloadLatestResult(page, outputDir, true, options);
-    }
+    await clickGenerate(page, feature.name);
+    await waitForGenerationResult(page, options, {
+      screenshotName: `feature-${featureKey}-result`, label: feature.name, outputSubdir: 'features',
+    });
 
     await context.storageState({ path: STATE_FILE });
     await browser.close();
