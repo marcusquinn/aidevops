@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.113.0] - 2026-02-13
+
+### Added
+
+- add E2E audit pipeline verification test (t1032.8) (#1381)
+- add document creation agent with OCR support (t1042) (#1405)
+- wire Phase 10b to unified audit orchestrator with fallback (t1032.5) (#1377)
+- add Phase 3.5 auto-retry for merge-conflict tasks (t1029) (#1355)
+- add issue title update with task ID prefix after allocation (t1028) (#1353)
+- add action:model issue label tracking to supervisor (t1010) (#1342)
+- auto-unclaim stale worker assignments after 2h timeout (t1024) (#1340)
+- per-repo health issues — stats filtered by repo for privacy (#1335)
+- per-runner health issues + update only on stats change (#1332)
+- runner labels on health issue + verify_failed in title (#1330)
+- operational health issue title with runner/available/claimed/blocked counts (#1324)
+- update pinned health issue title with live queue stats on each pulse (#1321)
+- show CPU% as primary in TUI dashboard (t1020) (#1320)
+- add pre-dispatch reverification for previously-claimed tasks (t1008) (#1316)
+- protect assignee ownership in supervisor (t1017, t1019) (#1315)
+- PR task ID validation — test harness + CI workflow patch (t318.5) (#1260)
+
+### Changed
+
+- Documentation: align README philosophy with build.txt mission principles (#1360)
+- Documentation: expand build.txt mission statement with broader dev scope, resource utilisation, root-cause fixing, and gap awareness (#1358)
+- Refactor: update health issue description directly, remove comment machinery (#1333)
+- Documentation: add PR task ID check implementation notes (t318.1) (#1284)
+
+### Fixed
+
+- resolve bot review threads and fix triage severity logic (t1041) (#1401)
+- Phase 3c must not close issues for no_pr/task_only deployments (#1391)
+- add Phase 3c to reconcile terminal DB states with GitHub issues (#1390)
+- use correct column names (from_state/to_state) in fix-cycle count query (#1388)
+- guard complete->deployed transition to require PR merge when pr_url exists (t1030) (#1385)
+- migrate legacy [Supervisor] health issue to [Supervisor:username] format (t1036) (#1383)
+- restore ALL_STATUS_LABELS constant lost in t1031 modularisation (t1035) (#1375)
+- resolve TODO.md merge conflict markers (t1010/t1025 duplicate)
+- use relative path as agent name to prevent collisions (t1015) (#1336)
+- health issue progress uses actionable count, excluding cancelled/skipped (#1323)
+- wire resolve_rebase_conflicts() into rebase_sibling_pr() for AI-assisted conflict resolution (t1021) (#1322)
+- plugin config hook overrides worker osgrep disabled setting (#1296)
+- add PATH and GH_TOKEN detection to supervisor cron install (t1006) (#1291)
+- beads-sync-helper.sh accept positional args (t1007) (#1292)
+- coderabbit pulse gh auth fails in cron (no keyring access) (#1288)
+- resolve SonarCloud quality gate failure and all 16 code smells (#1286)
+
 ## [2.112.0] - 2026-02-12
 
 ### Added
