@@ -216,8 +216,7 @@ collect_issues() {
 		while IFS= read -r issue; do
 			[[ -z "$issue" ]] && continue
 
-			local key severity rule message component line
-			key=$(echo "$issue" | jq -r '.key // ""')
+			local severity rule message component line
 			severity=$(echo "$issue" | jq -r '.severity // "INFO"')
 			rule=$(echo "$issue" | jq -r '.rule // ""')
 			message=$(echo "$issue" | jq -r '.message // ""')
@@ -232,8 +231,8 @@ collect_issues() {
 			local mapped_severity
 			mapped_severity=$(map_severity "$severity")
 
-			# Store in database (run_id, severity, category, rule_id, description, path, line, finding_key)
-			store_finding "$run_id" "$mapped_severity" "issue" "$rule" "$message" "$path" "$line" "$key"
+			# Store in database (run_id, severity, category, rule_id, description, path, line)
+			store_finding "$run_id" "$mapped_severity" "issue" "$rule" "$message" "$path" "$line"
 
 			((total_collected++))
 		done <<<"$issues"
@@ -292,8 +291,7 @@ collect_hotspots() {
 		while IFS= read -r hotspot; do
 			[[ -z "$hotspot" ]] && continue
 
-			local key severity rule message component line
-			key=$(echo "$hotspot" | jq -r '.key // ""')
+			local severity rule message component line
 			severity=$(echo "$hotspot" | jq -r '.vulnerabilityProbability // "LOW"')
 			rule=$(echo "$hotspot" | jq -r '.ruleKey // ""')
 			message=$(echo "$hotspot" | jq -r '.message // ""')
@@ -321,8 +319,8 @@ collect_hotspots() {
 				;;
 			esac
 
-			# Store in database (run_id, severity, category, rule_id, description, path, line, finding_key)
-			store_finding "$run_id" "$mapped_severity" "security_hotspot" "$rule" "$message" "$path" "$line" "$key"
+			# Store in database (run_id, severity, category, rule_id, description, path, line)
+			store_finding "$run_id" "$mapped_severity" "security_hotspot" "$rule" "$message" "$path" "$line"
 
 			((total_collected++))
 		done <<<"$hotspots"
@@ -351,7 +349,6 @@ store_finding() {
 	local description="$5"
 	local path="$6"
 	local line="$7"
-	local finding_key="$8"
 
 	# Escape single quotes for SQL
 	description=$(echo "$description" | sed "s/'/''/g")
