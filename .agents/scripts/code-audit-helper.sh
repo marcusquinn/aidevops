@@ -15,14 +15,17 @@ AUDIT_DB="${AUDIT_DB:-$HOME/.aidevops/.agent-workspace/work/code-audit/audit.db}
 # Logging functions
 log_info() {
 	echo -e "\033[0;32m[INFO]\033[0m $*" >&2
+	return 0
 }
 
 log_warn() {
 	echo -e "\033[1;33m[WARN]\033[0m $*" >&2
+	return 0
 }
 
 log_error() {
 	echo -e "\033[0;31m[ERROR]\033[0m $*" >&2
+	return 0
 }
 
 # Ensure database directory exists
@@ -32,6 +35,7 @@ ensure_db_dir() {
 	if [[ ! -d "$db_dir" ]]; then
 		mkdir -p "$db_dir"
 	fi
+	return 0
 }
 
 # Initialize or migrate database schema
@@ -45,6 +49,9 @@ init_db() {
 	if [[ -z "$table_exists" ]]; then
 		log_info "Creating audit_snapshots table..."
 		sqlite3 "$AUDIT_DB" <<-'SQL'
+			PRAGMA journal_mode=WAL;
+			PRAGMA busy_timeout=5000;
+
 			CREATE TABLE IF NOT EXISTS audit_snapshots (
 			    id                INTEGER PRIMARY KEY AUTOINCREMENT,
 			    date              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
@@ -127,9 +134,13 @@ cmd_snapshot() {
 
 	init_db
 
+	# Escape single quotes in source to prevent SQL injection
+	local escaped_source
+	escaped_source=$(printf "%s" "$source" | sed "s/'/''/g")
+
 	sqlite3 "$AUDIT_DB" <<-SQL
 		INSERT INTO audit_snapshots (source, total_findings, critical_count, high_count, medium_count, low_count, false_positives, tasks_created)
-		VALUES ('$source', $total, $critical, $high, $medium, $low, $false_positives, $tasks);
+		VALUES ('$escaped_source', $total, $critical, $high, $medium, $low, $false_positives, $tasks);
 	SQL
 
 	log_info "Snapshot recorded for source: $source (total: $total, critical: $critical, high: $high, medium: $medium, low: $low)"
@@ -158,7 +169,10 @@ cmd_trend() {
 
 	local source_filter=""
 	if [[ -n "$source" ]]; then
-		source_filter="WHERE source = '$source'"
+		# Escape single quotes in source to prevent SQL injection
+		local escaped_source
+		escaped_source=$(printf "%s" "$source" | sed "s/'/''/g")
+		source_filter="WHERE source = '$escaped_source'"
 	fi
 
 	# Get current snapshot (most recent)
@@ -176,6 +190,8 @@ cmd_trend() {
 		return 0
 	fi
 
+	# Initialize variables to default values before read to handle missing columns
+	local current_date="" current_source="" current_total=0 current_critical=0 current_high=0 current_medium=0 current_low=0
 	IFS='|' read -r current_date current_source current_total current_critical current_high current_medium current_low <<<"$current"
 
 	# Get week-ago snapshot (7 days ago)
@@ -223,6 +239,8 @@ cmd_trend() {
 
 	# Week-over-week delta
 	if [[ -n "$week_ago" ]]; then
+		# Initialize variables to default values before read to handle missing columns
+		local week_total=0 week_critical=0 week_high=0 week_medium=0 week_low=0
 		IFS='|' read -r week_total week_critical week_high week_medium week_low <<<"$week_ago"
 
 		local wow_total_delta=$((current_total - week_total))
@@ -245,6 +263,8 @@ cmd_trend() {
 
 	# Month-over-month delta
 	if [[ -n "$month_ago" ]]; then
+		# Initialize variables to default values before read to handle missing columns
+		local month_total=0 month_critical=0 month_high=0 month_medium=0 month_low=0
 		IFS='|' read -r month_total month_critical month_high month_medium month_low <<<"$month_ago"
 
 		local mom_total_delta=$((current_total - month_total))
@@ -307,6 +327,9 @@ cmd_check_regression() {
 		current_line=$(echo "$snapshots" | head -1)
 		previous_line=$(echo "$snapshots" | tail -1)
 
+		# Initialize variables to default values before read to handle missing columns
+		local current_date="" current_total=0 current_critical=0 current_high=0
+		local _previous_date="" previous_total=0 previous_critical=0 previous_high=0
 		IFS='|' read -r current_date current_total current_critical current_high <<<"$current_line"
 		IFS='|' read -r _previous_date previous_total previous_critical previous_high <<<"$previous_line"
 
