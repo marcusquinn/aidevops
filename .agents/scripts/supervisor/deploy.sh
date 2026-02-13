@@ -2644,7 +2644,11 @@ run_verify_checks() {
 			;;
 		shellcheck)
 			if command -v shellcheck &>/dev/null; then
-				if shellcheck "$repo/$check_arg" 2>>"$SUPERVISOR_LOG"; then
+				# t1041: Use -S warning -x to match CI severity threshold.
+				# CI uses -S error; verify uses -S warning (catches warnings+errors
+				# but not info/style like SC2016/SC1091 which are pre-existing noise).
+				# -x follows source directives so sourced files don't cause SC1091.
+				if shellcheck -S warning -x "$repo/$check_arg" 2>>"$SUPERVISOR_LOG"; then
 					log_success "    PASS: shellcheck $check_arg"
 				else
 					log_error "    FAIL: shellcheck $check_arg"

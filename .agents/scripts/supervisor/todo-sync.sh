@@ -1038,13 +1038,15 @@ cmd_reconcile_db_todo() {
 	fi
 
 	# --- Gap 2: TODO.md [x] but DB still in non-terminal state ---
-	# Terminal states: complete, deployed, verified, failed, blocked, cancelled
+	# Terminal states: complete, deployed, verified, failed, blocked, cancelled, verify_failed
 	# Non-terminal: queued, dispatched, running, evaluating, retrying,
-	#   pr_review, review_triage, merging, merged, deploying, verifying, verify_failed
+	#   pr_review, review_triage, merging, merged, deploying, verifying
+	# t1041: verify_failed is excluded — it's a meaningful state (PR merged+deployed
+	# but post-merge checks failed). Re-verification handles these, not reconciliation.
 	local all_db_tasks
 	all_db_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
 		SELECT t.id, t.status FROM tasks t
-		WHERE t.status NOT IN ('complete', 'deployed', 'verified', 'failed', 'blocked', 'cancelled')
+		WHERE t.status NOT IN ('complete', 'deployed', 'verified', 'verify_failed', 'failed', 'blocked', 'cancelled')
 		$batch_filter
 		ORDER BY t.id;
 	")
