@@ -3216,20 +3216,12 @@ async function downloadSpecificImages(page, outputDir, indices, options = {}) {
 
 // Use a specific app/effect
 async function useApp(options = {}) {
-  const { browser, context, page } = await launchBrowser(options);
-
-  try {
+  return withBrowser(options, async (page) => {
     const appSlug = options.effect || 'face-swap';
     console.log(`Navigating to app: ${appSlug}...`);
-    await page.goto(`${BASE_URL}/app/${appSlug}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(3000);
+    await navigateTo(page, `/app/${appSlug}`);
+    await debugScreenshot(page, `app-${appSlug}`);
 
-    // Dismiss any promo modals
-    await dismissAllModals(page);
-
-    await page.screenshot({ path: join(STATE_DIR, `app-${appSlug}.png`), fullPage: false });
-
-    // Upload image if provided
     if (options.imageFile) {
       const fileInput = page.locator('input[type="file"]');
       if (await fileInput.count() > 0) {
@@ -3239,7 +3231,6 @@ async function useApp(options = {}) {
       }
     }
 
-    // Fill prompt if available
     if (options.prompt) {
       const promptInput = page.locator('textarea, input[placeholder*="prompt" i]');
       if (await promptInput.count() > 0) {
@@ -3248,29 +3239,23 @@ async function useApp(options = {}) {
       }
     }
 
-    // Click generate/create
     const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Create"), button:has-text("Apply"), button[type="submit"]:visible');
     if (await generateBtn.count() > 0) {
       await generateBtn.first().click({ force: true });
       console.log('Clicked generate/apply button');
     }
 
-    // Wait for result
     const timeout = options.timeout || 180000;
     console.log(`Waiting up to ${timeout / 1000}s for result...`);
-
     try {
-      await page.waitForSelector(`${GENERATED_IMAGE_SELECTOR}, video`, {
-        timeout,
-        state: 'visible'
-      });
+      await page.waitForSelector(`${GENERATED_IMAGE_SELECTOR}, video`, { timeout, state: 'visible' });
     } catch {
       console.log('Timeout waiting for app result');
     }
 
     await page.waitForTimeout(3000);
     await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, `app-${appSlug}-result.png`), fullPage: false });
+    await debugScreenshot(page, `app-${appSlug}-result`);
 
     if (options.wait !== false) {
       const baseOutput = options.output || getDefaultOutputDir(options);
@@ -3278,22 +3263,16 @@ async function useApp(options = {}) {
       await downloadLatestResult(page, outputDir, true, options);
     }
 
-    await context.storageState({ path: STATE_FILE });
-    await browser.close();
     return { success: true };
-
-  } catch (error) {
+  }).catch(error => {
     console.error('Error using app:', error.message);
-    await browser.close();
     return { success: false, error: error.message };
-  }
+  });
 }
 
 // Take a screenshot of any Higgsfield page
 async function screenshot(options = {}) {
-  const { browser, context, page } = await launchBrowser(options);
-
-  try {
+  return withBrowser(options, async (page) => {
     const url = options.prompt || `${BASE_URL}/asset/all`;
     console.log(`Navigating to ${url}...`);
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
@@ -3303,20 +3282,15 @@ async function screenshot(options = {}) {
     await page.screenshot({ path: outputPath, fullPage: false });
     console.log(`Screenshot saved to: ${outputPath}`);
 
-    // Also get ARIA snapshot for AI understanding
     const ariaSnapshot = await page.locator('body').ariaSnapshot();
     console.log('\n--- ARIA Snapshot ---');
     console.log(ariaSnapshot.substring(0, 3000));
 
-    await context.storageState({ path: STATE_FILE });
-    await browser.close();
     return { success: true, path: outputPath };
-
-  } catch (error) {
+  }).catch(error => {
     console.error('Screenshot error:', error.message);
-    await browser.close();
     return { success: false, error: error.message };
-  }
+  });
 }
 
 // Check account credits/status via the subscription settings page
@@ -6648,28 +6622,21 @@ async function runWithApiFallback(apiFn, browserFn, options, retryOpts) {
 async function downloadFromHistory(options) {
   const dlModel = options.model || 'soul';
   const isVideoDownload = dlModel === 'video' || options.duration;
-  const { browser: dlBrowser, context: dlCtx, page: dlPage } = await launchBrowser(options);
 
-  if (isVideoDownload) {
-    console.log('Navigating to video page to download from History...');
-    await dlPage.goto(`${BASE_URL}/create/video`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await dlPage.waitForTimeout(5000);
-    await dismissAllModals(dlPage);
-    const dlDir = resolveOutputDir(options.output || getDefaultOutputDir(options), options, 'videos');
-    await downloadVideoFromHistory(dlPage, dlDir, {}, options);
-  } else {
-    const dlUrl = `${BASE_URL}/image/${dlModel}`;
-    const count = options.count !== undefined ? options.count : 4;
-    console.log(`Navigating to ${dlUrl} to download ${count === 0 ? 'all' : count} latest generation(s)...`);
-    await dlPage.goto(dlUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await dlPage.waitForTimeout(5000);
-    await dismissAllModals(dlPage);
-    const dlDir = resolveOutputDir(options.output || getDefaultOutputDir(options), options, 'images');
-    await downloadLatestResult(dlPage, dlDir, count, options);
-  }
-
-  await dlCtx.storageState({ path: STATE_FILE });
-  await dlBrowser.close();
+  return withBrowser(options, async (page) => {
+    if (isVideoDownload) {
+      console.log('Navigating to video page to download from History...');
+      await navigateTo(page, '/create/video', { waitMs: 5000 });
+      const dlDir = resolveOutputDir(options.output || getDefaultOutputDir(options), options, 'videos');
+      await downloadVideoFromHistory(page, dlDir, {}, options);
+    } else {
+      const count = options.count !== undefined ? options.count : 4;
+      console.log(`Navigating to image/${dlModel} to download ${count === 0 ? 'all' : count} latest generation(s)...`);
+      await navigateTo(page, `/image/${dlModel}`, { waitMs: 5000 });
+      const dlDir = resolveOutputDir(options.output || getDefaultOutputDir(options), options, 'images');
+      await downloadLatestResult(page, dlDir, count, options);
+    }
+  });
 }
 
 // Command registry: maps CLI command names to handler functions.
