@@ -7,6 +7,9 @@ backups/
 *.bak
 *.tmp
 
+# Archived scripts - one-off migration/fix utilities, not production code
+.agents/scripts/_archive/
+
 # Development utility scripts - not production code  
 .agent/scripts/development/
 

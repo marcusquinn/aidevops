@@ -1,0 +1,9 @@
+# CodeFactor configuration
+# https://support.codefactor.io/i44-how-to-configure-codefactor
+
+exclude_paths:
+  - ".agents/scripts/_archive/**"
+  - "backups/**"
+  - "node_modules/**"
+  - "dist/**"
+  - "build/**"
