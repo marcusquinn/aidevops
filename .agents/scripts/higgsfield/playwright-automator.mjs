@@ -3888,88 +3888,63 @@ function assembleWithFfmpeg(validVideos, finalPath, brief, outputDir, pipelineSt
   pipelineState.steps.push({ step: 'assembly', success: true, method: 'ffmpeg', path: finalPath });
 }
 
-async function pipeline(options = {}) {
-  // Load brief from file or construct from CLI options
-  let brief;
+// Load or construct a pipeline brief from options.
+function loadPipelineBrief(options) {
   if (options.brief) {
     if (!existsSync(options.brief)) {
       console.error(`ERROR: Brief file not found: ${options.brief}`);
       process.exit(1);
     }
-    brief = JSON.parse(readFileSync(options.brief, 'utf-8'));
-  } else {
-    // Construct minimal brief from CLI options
-    brief = {
-      title: 'Quick Pipeline',
-      character: {
-        description: options.prompt || 'A friendly young person',
-        image: options.characterImage || options.imageFile || null,
-      },
-      scenes: [{
-        prompt: options.prompt || 'Character speaks to camera with warm expression',
-        duration: parseInt(options.duration, 10) || 5,
-        dialogue: options.dialogue || null,
-      }],
-      imageModel: options.model || (options.preferUnlimited !== false && getUnlimitedModelForCommand('image')?.slug) || 'soul',
-      videoModel: (options.preferUnlimited !== false && getUnlimitedModelForCommand('video')?.slug) || 'kling-2.6',
-      aspect: options.aspect || '9:16',
-    };
+    return JSON.parse(readFileSync(options.brief, 'utf-8'));
   }
-
-  const outputDir = options.output || join(getDefaultOutputDir(options), `pipeline-${Date.now()}`);
-  if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
-
-  console.log(`\n=== Video Production Pipeline ===`);
-  console.log(`Title: ${brief.title}`);
-  console.log(`Scenes: ${brief.scenes.length}`);
-  console.log(`Image model: ${brief.imageModel}`);
-  console.log(`Video model: ${brief.videoModel}`);
-  console.log(`Aspect: ${brief.aspect}`);
-  console.log(`Output: ${outputDir}`);
-
-  const pipelineState = {
-    brief,
-    outputDir,
-    steps: [],
-    startTime: Date.now(),
+  return {
+    title: 'Quick Pipeline',
+    character: {
+      description: options.prompt || 'A friendly young person',
+      image: options.characterImage || options.imageFile || null,
+    },
+    scenes: [{
+      prompt: options.prompt || 'Character speaks to camera with warm expression',
+      duration: parseInt(options.duration, 10) || 5,
+      dialogue: options.dialogue || null,
+    }],
+    imageModel: options.model || (options.preferUnlimited !== false && getUnlimitedModelForCommand('image')?.slug) || 'soul',
+    videoModel: (options.preferUnlimited !== false && getUnlimitedModelForCommand('video')?.slug) || 'kling-2.6',
+    aspect: options.aspect || '9:16',
   };
+}
 
-  // Step 1: Generate character image if not provided
+// Pipeline Step 1: Generate or use provided character image.
+async function pipelineCharacterImage(brief, options, outputDir, pipelineState) {
   let characterImagePath = brief.character?.image;
-  if (!characterImagePath) {
-    console.log(`\n--- Step 1: Generate character image ---`);
-    const charPrompt = brief.character?.description || 'A photorealistic portrait of a friendly young person, neutral expression, studio lighting, high quality';
-    console.log(`Prompt: "${charPrompt.substring(0, 80)}..."`);
-
-    const charResult = await generateImage({
-      ...options,
-      prompt: charPrompt,
-      model: brief.imageModel,
-      aspect: '1:1', // Square for character portraits
-      batch: 1,
-      output: outputDir,
-    });
-
-    if (charResult?.success) {
-      // Find the most recently created file in outputDir
-      const files = existsSync(outputDir) ? readdirSync(outputDir)
-        .filter(f => f.endsWith('.png') || f.endsWith('.jpg') || f.endsWith('.webp'))
-        .map(f => ({ name: f, time: statSync(join(outputDir, f)).mtimeMs }))
-        .sort((a, b) => b.time - a.time) : [];
-      characterImagePath = files.length > 0 ? join(outputDir, files[0].name) : null;
-      console.log(`Character image: ${characterImagePath || 'NOT FOUND'}`);
-      pipelineState.steps.push({ step: 'character-image', success: true, path: characterImagePath });
-    } else {
-      console.log('WARNING: Character image generation failed, continuing without it');
-      pipelineState.steps.push({ step: 'character-image', success: false });
-    }
-  } else {
+  if (characterImagePath) {
     console.log(`\n--- Step 1: Using provided character image: ${characterImagePath} ---`);
     pipelineState.steps.push({ step: 'character-image', success: true, path: characterImagePath, provided: true });
+    return characterImagePath;
   }
 
-  // Step 2: Generate scene images (one per scene)
-  // If brief.imagePrompts[] exists, use those for image generation (separate from video prompts)
+  console.log(`\n--- Step 1: Generate character image ---`);
+  const charPrompt = brief.character?.description || 'A photorealistic portrait of a friendly young person, neutral expression, studio lighting, high quality';
+  console.log(`Prompt: "${charPrompt.substring(0, 80)}..."`);
+
+  const charResult = await generateImage({
+    ...options, prompt: charPrompt, model: brief.imageModel,
+    aspect: '1:1', batch: 1, output: outputDir,
+  });
+
+  if (charResult?.success) {
+    characterImagePath = findNewestFile(outputDir, ['.png', '.jpg', '.webp']);
+    console.log(`Character image: ${characterImagePath || 'NOT FOUND'}`);
+    pipelineState.steps.push({ step: 'character-image', success: true, path: characterImagePath });
+  } else {
+    console.log('WARNING: Character image generation failed, continuing without it');
+    pipelineState.steps.push({ step: 'character-image', success: false });
+  }
+  return characterImagePath;
+}
+
+// Pipeline Step 2: Generate scene images (one per scene).
+async function pipelineSceneImages(brief, options, outputDir, pipelineState) {
   console.log(`\n--- Step 2: Generate scene images (${brief.scenes.length} scenes) ---`);
   if (brief.imagePrompts?.length > 0) {
     console.log(`Using separate imagePrompts for start frame generation`);
@@ -3977,26 +3952,16 @@ async function pipeline(options = {}) {
   const sceneImages = [];
 
   for (let i = 0; i < brief.scenes.length; i++) {
-    const scene = brief.scenes[i];
-    const imagePrompt = brief.imagePrompts?.[i] || scene.prompt;
+    const imagePrompt = brief.imagePrompts?.[i] || brief.scenes[i].prompt;
     console.log(`\nScene ${i + 1}/${brief.scenes.length}: "${imagePrompt?.substring(0, 60)}..."`);
 
     const sceneResult = await generateImage({
-      ...options,
-      prompt: imagePrompt,
-      model: brief.imageModel,
-      aspect: brief.aspect,
-      batch: 1,
-      output: outputDir,
+      ...options, prompt: imagePrompt, model: brief.imageModel,
+      aspect: brief.aspect, batch: 1, output: outputDir,
     });
 
     if (sceneResult?.success) {
-      // Find the newest image file
-      const files = readdirSync(outputDir)
-        .filter(f => (f.endsWith('.png') || f.endsWith('.jpg') || f.endsWith('.webp')) && f.includes('hf_'))
-        .map(f => ({ name: f, time: statSync(join(outputDir, f)).mtimeMs }))
-        .sort((a, b) => b.time - a.time);
-      const scenePath = files.length > 0 ? join(outputDir, files[0].name) : null;
+      const scenePath = findNewestFileMatching(outputDir, ['.png', '.jpg', '.webp'], 'hf_');
       sceneImages.push(scenePath);
       console.log(`Scene ${i + 1} image: ${scenePath || 'NOT FOUND'}`);
     } else {
@@ -4005,13 +3970,11 @@ async function pipeline(options = {}) {
     }
   }
   pipelineState.steps.push({ step: 'scene-images', count: sceneImages.filter(Boolean).length, total: brief.scenes.length });
+  return sceneImages;
+}
 
-  // Step 3: Animate scene images into video clips (PARALLEL submission)
-  // Instead of sequential generate-wait-generate-wait, we:
-  //   3a. Submit ALL video jobs in one browser session (fast, ~30s each)
-  //   3b. Poll History tab for ALL prompts simultaneously
-  //   3c. Download all completed videos via API interception
-  // This cuts N*4min to ~4min for N scenes.
+// Pipeline Step 3: Submit video jobs and poll for results (parallel).
+async function pipelineAnimateScenes(brief, sceneImages, options, outputDir, pipelineState) {
   const validScenes = brief.scenes
     .map((scene, i) => ({ scene, index: i, image: sceneImages[i] }))
     .filter(s => s.image);
@@ -4023,25 +3986,16 @@ async function pipeline(options = {}) {
 
   if (validScenes.length > 0) {
     const { browser: videoBrowser, context: videoCtx, page: videoPage } = await launchBrowser(options);
-
     try {
       const submittedJobs = [];
-
       for (const { scene, index, image } of validScenes) {
         console.log(`\n  Submitting scene ${index + 1}/${brief.scenes.length}...`);
         const promptPrefix = await submitVideoJobOnPage(videoPage, {
-          prompt: scene.prompt,
-          imageFile: image,
-          model: brief.videoModel,
-          duration: String(scene.duration || 5),
+          prompt: scene.prompt, imageFile: image,
+          model: brief.videoModel, duration: String(scene.duration || 5),
         });
-
         if (promptPrefix) {
-          submittedJobs.push({
-            sceneIndex: index,
-            promptPrefix,
-            model: brief.videoModel,
-          });
+          submittedJobs.push({ sceneIndex: index, promptPrefix, model: brief.videoModel });
         }
       }
 
@@ -4050,13 +4004,10 @@ async function pipeline(options = {}) {
         const videoResults = await pollAndDownloadVideos(
           videoPage, submittedJobs, outputDir, options.timeout || 600000
         );
-
-        // Map results back to scene order
         for (const [sceneIndex, path] of videoResults) {
           sceneVideos[sceneIndex] = path;
         }
       }
-
       await videoCtx.storageState({ path: STATE_FILE });
     } catch (err) {
       console.error('Error during parallel video generation:', err.message);
@@ -4067,38 +4018,34 @@ async function pipeline(options = {}) {
   const videoCount = sceneVideos.filter(Boolean).length;
   console.log(`\nVideo generation: ${videoCount}/${brief.scenes.length} scenes completed`);
   pipelineState.steps.push({ step: 'scene-videos', count: videoCount, total: brief.scenes.length });
+  return sceneVideos;
+}
 
-  // Step 4: Add lipsync dialogue to scenes that have it
+// Pipeline Step 4: Add lipsync dialogue to scenes that have it.
+async function pipelineLipsync(brief, sceneVideos, characterImagePath, options, outputDir, pipelineState) {
   console.log(`\n--- Step 4: Add lipsync dialogue ---`);
-  const scenesWithDialogue = brief.scenes.filter(s => s.dialogue);
   const lipsyncVideos = [];
+  const scenesWithDialogue = brief.scenes.filter(s => s.dialogue);
 
   if (scenesWithDialogue.length > 0 && characterImagePath) {
     for (let i = 0; i < brief.scenes.length; i++) {
       const scene = brief.scenes[i];
       if (!scene.dialogue) {
-        lipsyncVideos.push(sceneVideos[i]); // Keep original video
+        lipsyncVideos.push(sceneVideos[i]);
         continue;
       }
 
       console.log(`\nLipsync scene ${i + 1}: "${scene.dialogue.substring(0, 60)}..."`);
       const lipsyncResult = await generateLipsync({
-        ...options,
-        prompt: scene.dialogue,
-        imageFile: characterImagePath,
-        output: outputDir,
+        ...options, prompt: scene.dialogue, imageFile: characterImagePath, output: outputDir,
       });
 
       if (lipsyncResult?.success) {
-        const files = readdirSync(outputDir)
-          .filter(f => f.endsWith('.mp4'))
-          .map(f => ({ name: f, time: statSync(join(outputDir, f)).mtimeMs }))
-          .sort((a, b) => b.time - a.time);
-        const lipsyncPath = files.length > 0 ? join(outputDir, files[0].name) : null;
+        const lipsyncPath = findNewestFile(outputDir, ['.mp4']);
         lipsyncVideos.push(lipsyncPath);
         console.log(`Lipsync video: ${lipsyncPath || 'NOT FOUND'}`);
       } else {
-        lipsyncVideos.push(sceneVideos[i]); // Fall back to non-lipsync video
+        lipsyncVideos.push(sceneVideos[i]);
         console.log(`Lipsync failed, using original video for scene ${i + 1}`);
       }
     }
@@ -4107,96 +4054,103 @@ async function pipeline(options = {}) {
     lipsyncVideos.push(...sceneVideos);
   }
   pipelineState.steps.push({ step: 'lipsync', count: lipsyncVideos.filter(Boolean).length });
+  return lipsyncVideos;
+}
 
-  // Step 5: Assemble final video with Remotion (captions + transitions)
-  // Falls back to ffmpeg concat if Remotion is not installed
+// Pipeline Step 5: Assemble final video with Remotion or ffmpeg fallback.
+function pipelineAssemble(brief, validVideos, outputDir, pipelineState) {
   console.log(`\n--- Step 5: Assemble final video ---`);
-  const validVideos = lipsyncVideos.filter(Boolean);
 
-  if (validVideos.length > 0) {
-    const finalPath = join(outputDir, `${brief.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-final.mp4`);
-    const __dirname = dirname(fileURLToPath(import.meta.url));
-    const remotionDir = join(__dirname, 'remotion');
-    const remotionInstalled = existsSync(join(remotionDir, 'node_modules', 'remotion'));
-    const hasCaptions = brief.captions && brief.captions.length > 0;
-
-    if (remotionInstalled && (hasCaptions || validVideos.length > 1)) {
-      // Remotion render: captions + transitions + assembly in one pass
-      console.log(`Using Remotion for assembly (${validVideos.length} scenes, ${brief.captions?.length || 0} captions)`);
-
-      // Copy scene videos into Remotion public/ dir so staticFile() can find them
-      // Note: symlinks don't survive Remotion's webpack bundling (copies public/ to temp dir)
-      const publicDir = join(remotionDir, 'public');
-      if (!existsSync(publicDir)) mkdirSync(publicDir, { recursive: true });
-      const staticVideoNames = [];
-      for (let i = 0; i < validVideos.length; i++) {
-        const staticName = `scene-${i}.mp4`;
-        const destPath = join(publicDir, staticName);
-        try { if (existsSync(destPath)) unlinkSync(destPath); } catch (e) { /* ignore */ }
-        copyFileSync(validVideos[i], destPath);
-        staticVideoNames.push(staticName);
-      }
-
-      const remotionProps = {
-        title: brief.title || 'Untitled',
-        scenes: brief.scenes || [],
-        aspect: brief.aspect || '9:16',
-        captions: brief.captions || [],
-        sceneVideos: staticVideoNames, // staticFile() names, not absolute paths
-        transitionStyle: brief.transitionStyle || 'fade',
-        transitionDuration: brief.transitionDuration || 15,
-        musicPath: brief.music && existsSync(brief.music) ? brief.music : undefined,
-      };
-
-      const propsJson = JSON.stringify(remotionProps);
-      // Write props to file to avoid shell escaping issues
-      const propsFile = join(outputDir, 'remotion-props.json');
-      writeFileSync(propsFile, propsJson);
-
-      // calculateMetadata in Root.tsx dynamically computes duration/dimensions from props
-      const remotionArgs = [
-        'remotion', 'render',
-        'src/index.ts',
-        'FullVideo',
-        finalPath,
-        `--props=${propsFile}`,
-        '--codec=h264',
-        '--log=warn',
-      ];
-
-      try {
-        execFileSync('npx', remotionArgs, {
-          cwd: remotionDir,
-          stdio: 'inherit',
-          timeout: 600000, // 10 min
-        });
-        console.log(`Final video (Remotion, ${validVideos.length} scenes + captions): ${finalPath}`);
-        pipelineState.steps.push({ step: 'assembly', success: true, method: 'remotion', path: finalPath });
-      } catch (remotionErr) {
-        console.log(`Remotion render failed: ${remotionErr.message}`);
-        console.log('Falling back to ffmpeg concat...');
-        // Fall through to ffmpeg fallback below
-        assembleWithFfmpeg(validVideos, finalPath, brief, outputDir, pipelineState);
-      }
-    } else if (validVideos.length === 1 && !hasCaptions) {
-      // Single video, no captions - just copy
-      copyFileSync(validVideos[0], finalPath);
-      console.log(`Final video (single scene): ${finalPath}`);
-      pipelineState.steps.push({ step: 'assembly', success: true, method: 'copy', path: finalPath });
-    } else {
-      // ffmpeg fallback (no Remotion installed)
-      if (!remotionInstalled) {
-        console.log('Remotion not installed - using ffmpeg concat (no captions/transitions)');
-        console.log(`Install with: cd ${remotionDir} && npm install`);
-      }
-      assembleWithFfmpeg(validVideos, finalPath, brief, outputDir, pipelineState);
-    }
-  } else {
+  if (validVideos.length === 0) {
     console.log('No valid video clips to assemble');
     pipelineState.steps.push({ step: 'assembly', success: false, reason: 'no valid clips' });
+    return;
   }
 
-  // Save pipeline state
+  const finalPath = join(outputDir, `${brief.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-final.mp4`);
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+  const remotionDir = join(__dirname, 'remotion');
+  const remotionInstalled = existsSync(join(remotionDir, 'node_modules', 'remotion'));
+  const hasCaptions = brief.captions && brief.captions.length > 0;
+
+  if (remotionInstalled && (hasCaptions || validVideos.length > 1)) {
+    assembleWithRemotion(validVideos, finalPath, brief, remotionDir, outputDir, pipelineState);
+  } else if (validVideos.length === 1 && !hasCaptions) {
+    copyFileSync(validVideos[0], finalPath);
+    console.log(`Final video (single scene): ${finalPath}`);
+    pipelineState.steps.push({ step: 'assembly', success: true, method: 'copy', path: finalPath });
+  } else {
+    if (!remotionInstalled) {
+      console.log('Remotion not installed - using ffmpeg concat (no captions/transitions)');
+      console.log(`Install with: cd ${remotionDir} && npm install`);
+    }
+    assembleWithFfmpeg(validVideos, finalPath, brief, outputDir, pipelineState);
+  }
+}
+
+// Assemble video using Remotion (captions + transitions).
+function assembleWithRemotion(validVideos, finalPath, brief, remotionDir, outputDir, pipelineState) {
+  console.log(`Using Remotion for assembly (${validVideos.length} scenes, ${brief.captions?.length || 0} captions)`);
+
+  const publicDir = join(remotionDir, 'public');
+  ensureDir(publicDir);
+  const staticVideoNames = [];
+  for (let i = 0; i < validVideos.length; i++) {
+    const staticName = `scene-${i}.mp4`;
+    const destPath = join(publicDir, staticName);
+    try { if (existsSync(destPath)) unlinkSync(destPath); } catch { /* ignore */ }
+    copyFileSync(validVideos[i], destPath);
+    staticVideoNames.push(staticName);
+  }
+
+  const remotionProps = {
+    title: brief.title || 'Untitled', scenes: brief.scenes || [],
+    aspect: brief.aspect || '9:16', captions: brief.captions || [],
+    sceneVideos: staticVideoNames, transitionStyle: brief.transitionStyle || 'fade',
+    transitionDuration: brief.transitionDuration || 15,
+    musicPath: brief.music && existsSync(brief.music) ? brief.music : undefined,
+  };
+
+  const propsFile = join(outputDir, 'remotion-props.json');
+  writeFileSync(propsFile, JSON.stringify(remotionProps));
+
+  const remotionArgs = [
+    'remotion', 'render', 'src/index.ts', 'FullVideo', finalPath,
+    `--props=${propsFile}`, '--codec=h264', '--log=warn',
+  ];
+
+  try {
+    execFileSync('npx', remotionArgs, { cwd: remotionDir, stdio: 'inherit', timeout: 600000 });
+    console.log(`Final video (Remotion, ${validVideos.length} scenes + captions): ${finalPath}`);
+    pipelineState.steps.push({ step: 'assembly', success: true, method: 'remotion', path: finalPath });
+  } catch (remotionErr) {
+    console.log(`Remotion render failed: ${remotionErr.message}`);
+    console.log('Falling back to ffmpeg concat...');
+    assembleWithFfmpeg(validVideos, finalPath, brief, outputDir, pipelineState);
+  }
+}
+
+async function pipeline(options = {}) {
+  const brief = loadPipelineBrief(options);
+  const outputDir = options.output || join(getDefaultOutputDir(options), `pipeline-${Date.now()}`);
+  ensureDir(outputDir);
+
+  console.log(`\n=== Video Production Pipeline ===`);
+  console.log(`Title: ${brief.title}`);
+  console.log(`Scenes: ${brief.scenes.length}`);
+  console.log(`Image model: ${brief.imageModel}`);
+  console.log(`Video model: ${brief.videoModel}`);
+  console.log(`Aspect: ${brief.aspect}`);
+  console.log(`Output: ${outputDir}`);
+
+  const pipelineState = { brief, outputDir, steps: [], startTime: Date.now() };
+
+  const characterImagePath = await pipelineCharacterImage(brief, options, outputDir, pipelineState);
+  const sceneImages = await pipelineSceneImages(brief, options, outputDir, pipelineState);
+  const sceneVideos = await pipelineAnimateScenes(brief, sceneImages, options, outputDir, pipelineState);
+  const lipsyncVideos = await pipelineLipsync(brief, sceneVideos, characterImagePath, options, outputDir, pipelineState);
+  pipelineAssemble(brief, lipsyncVideos.filter(Boolean), outputDir, pipelineState);
+
   const elapsed = ((Date.now() - pipelineState.startTime) / 1000).toFixed(0);
   pipelineState.elapsed = `${elapsed}s`;
   writeFileSync(join(outputDir, 'pipeline-state.json'), JSON.stringify(pipelineState, null, 2));
