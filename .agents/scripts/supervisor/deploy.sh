@@ -968,11 +968,21 @@ triage_review_feedback() {
 	low=$(echo "$classified" | jq '[.[] | select(.severity == "low")] | length' 2>/dev/null || echo "0")
 	dismiss=$(echo "$classified" | jq '[.[] | select(.severity == "dismiss")] | length' 2>/dev/null || echo "0")
 
+	# t1037: Separate bot-sourced criticals from human-sourced criticals.
+	# Bot reviewers (Gemini, CodeRabbit, etc.) often flag internal CLI tools
+	# for "SQL injection" or "credential leak" using keyword heuristics that
+	# lack threat-model context. These are fixable by a worker, not blocking.
+	# Only human-sourced critical threads should hard-block for human review.
+	local human_critical bot_critical
+	human_critical=$(echo "$classified" | jq '[.[] | select(.severity == "critical" and .isBot != true)] | length' 2>/dev/null || echo "0")
+	bot_critical=$(echo "$classified" | jq '[.[] | select(.severity == "critical" and .isBot == true)] | length' 2>/dev/null || echo "0")
+
 	# Determine action based on severity distribution
 	local action="merge"
-	if [[ "$critical" -gt 0 ]]; then
+	if [[ "$human_critical" -gt 0 ]]; then
 		action="block"
-	elif [[ "$high" -gt 0 ]]; then
+	elif [[ "$bot_critical" -gt 0 || "$high" -gt 0 ]]; then
+		# Bot criticals are treated as fixable — dispatch a worker to address them
 		action="fix"
 	elif [[ "$medium" -gt 2 ]]; then
 		action="fix"
@@ -988,10 +998,12 @@ triage_review_feedback() {
 		--argjson medium "$medium" \
 		--argjson low "$low" \
 		--argjson dismiss "$dismiss" \
+		--argjson human_critical "$human_critical" \
+		--argjson bot_critical "$bot_critical" \
 		--arg action "$action" \
 		'{
             threads: $threads,
-            summary: {critical: $critical, high: $high, medium: $medium, low: $low, dismiss: $dismiss},
+            summary: {critical: $critical, high: $high, medium: $medium, low: $low, dismiss: $dismiss, human_critical: $human_critical, bot_critical: $bot_critical},
             action: $action
         }' 2>/dev/null || echo '{"threads":[],"summary":{},"action":"merge"}')
 
