@@ -1202,6 +1202,17 @@ cmd_pulse() {
 		fi
 	fi
 
+	# Phase 10c: Audit regression detection (t1032.6)
+	# Checks for >20% increase in audit findings vs previous run.
+	# Logs warnings to pulse log when regressions are detected.
+	local audit_helper="${SCRIPT_DIR}/code-audit-helper.sh"
+	if [[ -x "$audit_helper" ]]; then
+		log_verbose "  Phase 10c: Checking for audit regressions"
+		if ! bash "$audit_helper" check-regression 2>>"$SUPERVISOR_LOG"; then
+			log_warn "  Phase 10c: Audit regressions detected (see warnings above)"
+		fi
+	fi
+
 	# Phase 11: Supervisor session memory monitoring + respawn (t264, t264.1)
 	# OpenCode/Bun processes accumulate WebKit malloc dirty pages that are never
 	# returned to the OS. Over long sessions, a single process can grow to 25GB+.
