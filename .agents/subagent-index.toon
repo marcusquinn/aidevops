@@ -157,7 +157,7 @@ fallback-chain-helper.sh,Fallback chain configuration - per-agent and global mod
 response-scoring-helper.sh,Response scoring - evaluate AI model responses side-by-side (prompt record score compare leaderboard export)
 generate-models-md.sh,Generate MODELS.md leaderboard from pattern-tracker and response-scoring data (--output --quiet help)
 contest-helper.sh,Model contest mode - dispatch same task to top-3 models in parallel and cross-rank results (create dispatch status evaluate apply list should-contest pulse-check)
-coderabbit-task-creator-helper.sh,Auto-create tasks from CodeRabbit findings with false positive filtering (scan create filter status)
+audit-task-creator-helper.sh,Auto-create tasks from multi-source audit findings with false positive filtering (scan create verify stats help) — replaces coderabbit-task-creator-helper.sh
 sops-helper.sh,SOPS encrypted config file management (init encrypt decrypt edit rotate status install)
 gocryptfs-helper.sh,gocryptfs encrypted filesystem overlay (init mount unmount create open close list status install)
 youtube-helper.sh,YouTube Data API v3 wrapper (auth channel videos competitors search quota)
