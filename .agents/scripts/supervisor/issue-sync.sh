@@ -700,11 +700,13 @@ update_queue_health_issue() {
 
 	# Audit Health section (t1032.7)
 	local audit_md=""
-	local audit_db="${SUPERVISOR_DIR}/../.agent-workspace/audit/audit.db"
+	# Define audit DB path relative to workspace root (not SUPERVISOR_DIR)
+	local -r AUDIT_DB_PATH="${SUPERVISOR_DIR%/supervisor}/audit/audit.db"
+	local audit_db="$AUDIT_DB_PATH"
 	if [[ -f "$audit_db" ]]; then
 		# Last audit timestamp
 		local last_audit
-		last_audit=$(db "$audit_db" "SELECT MAX(created_at) FROM audit_findings;" 2>/dev/null || echo "")
+		last_audit=$(db "$audit_db" "SELECT MAX(created_at) FROM audit_findings;" || echo "")
 		if [[ -z "$last_audit" ]]; then
 			last_audit="Never"
 		else
@@ -718,7 +720,7 @@ update_queue_health_issue() {
 			SELECT source, COUNT(*) as count
 			FROM audit_findings
 			GROUP BY source
-			ORDER BY count DESC;" 2>/dev/null || echo "")
+			ORDER BY count DESC;" || echo "")
 
 		# Finding counts by severity
 		local severity_counts
@@ -733,7 +735,7 @@ update_queue_health_issue() {
 					WHEN 'medium' THEN 3
 					WHEN 'low' THEN 4
 					ELSE 5
-				END;" 2>/dev/null || echo "")
+				END;" || echo "")
 
 		# Count open fix tasks from audit findings (tasks with #auto-review or #quality tags)
 		local audit_fix_tasks
@@ -742,25 +744,28 @@ update_queue_health_issue() {
 			FROM tasks
 			WHERE ${repo_filter}
 			  AND status IN ('queued', 'running', 'dispatched', 'blocked', 'retrying')
-			  AND (description LIKE '%#auto-review%' OR description LIKE '%#quality%');" 2>/dev/null || echo "0")
+			  AND (description LIKE '%#auto-review%' OR description LIKE '%#quality%');" || echo "0")
 
 		# Trend calculation (compare last 7 days vs previous 7 days)
 		local trend_arrow="→"
 		local now_epoch
 		now_epoch=$(date +%s)
+		local -r SEVEN_DAYS_IN_SECONDS=$((7 * 24 * 60 * 60))
+		local -r FOURTEEN_DAYS_IN_SECONDS=$((14 * 24 * 60 * 60))
 		local seven_days_ago
-		seven_days_ago=$(date -u -r $((now_epoch - 604800)) +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d "@$((now_epoch - 604800))" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "")
+		seven_days_ago=$(date -u -r $((now_epoch - SEVEN_DAYS_IN_SECONDS)) +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d "@$((now_epoch - SEVEN_DAYS_IN_SECONDS))" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "")
 		local fourteen_days_ago
-		fourteen_days_ago=$(date -u -r $((now_epoch - 1209600)) +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d "@$((now_epoch - 1209600))" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "")
+		fourteen_days_ago=$(date -u -r $((now_epoch - FOURTEEN_DAYS_IN_SECONDS)) +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d "@$((now_epoch - FOURTEEN_DAYS_IN_SECONDS))" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "")
 
 		if [[ -n "$seven_days_ago" && -n "$fourteen_days_ago" ]]; then
 			local recent_count previous_count
-			recent_count=$(db "$audit_db" "SELECT COUNT(*) FROM audit_findings WHERE created_at >= '$seven_days_ago';" 2>/dev/null || echo "0")
-			previous_count=$(db "$audit_db" "SELECT COUNT(*) FROM audit_findings WHERE created_at >= '$fourteen_days_ago' AND created_at < '$seven_days_ago';" 2>/dev/null || echo "0")
+			# Note: Date strings are internally generated (safe from SQL injection)
+			recent_count=$(db "$audit_db" "SELECT COUNT(*) FROM audit_findings WHERE created_at >= '$seven_days_ago';" || echo "0")
+			previous_count=$(db "$audit_db" "SELECT COUNT(*) FROM audit_findings WHERE created_at >= '$fourteen_days_ago' AND created_at < '$seven_days_ago';" || echo "0")
 
-			if [[ "${recent_count:-0}" -lt "${previous_count:-0}" ]]; then
+			if [[ "$recent_count" -lt "$previous_count" ]]; then
 				trend_arrow="↓ improving"
-			elif [[ "${recent_count:-0}" -gt "${previous_count:-0}" ]]; then
+			elif [[ "$recent_count" -gt "$previous_count" ]]; then
 				trend_arrow="↑ regressing"
 			else
 				trend_arrow="→ stable"
