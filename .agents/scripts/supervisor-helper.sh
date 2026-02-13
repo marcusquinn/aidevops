@@ -11029,11 +11029,11 @@ cmd_pulse() {
 						if git -C "$models_repo_root" diff --quiet -- MODELS.md 2>/dev/null; then
 							log_verbose "  Phase 12: MODELS.md unchanged in $models_repo_root"
 						else
-							git -C "$models_repo_root" add MODELS.md 2>/dev/null \
-								&& git -C "$models_repo_root" commit -m "chore: regenerate MODELS.md leaderboard (t1012)" --no-verify 2>/dev/null \
-								&& git -C "$models_repo_root" push 2>/dev/null \
-								&& log_info "  Phase 12: MODELS.md updated and pushed ($models_repo_root)" \
-								|| log_warn "  Phase 12: MODELS.md regenerated but commit/push failed ($models_repo_root)"
+							git -C "$models_repo_root" add MODELS.md 2>/dev/null &&
+								git -C "$models_repo_root" commit -m "chore: regenerate MODELS.md leaderboard (t1012)" --no-verify 2>/dev/null &&
+								git -C "$models_repo_root" push 2>/dev/null &&
+								log_info "  Phase 12: MODELS.md updated and pushed ($models_repo_root)" ||
+								log_warn "  Phase 12: MODELS.md regenerated but commit/push failed ($models_repo_root)"
 						fi
 					else
 						log_warn "  Phase 12: MODELS.md generation failed for $models_repo_root"
@@ -11041,19 +11041,10 @@ cmd_pulse() {
 				done <<<"$models_repos"
 			fi
 		fi
-		echo "$models_md_now" > "$models_md_stamp" 2>/dev/null || true
+		echo "$models_md_now" >"$models_md_stamp" 2>/dev/null || true
 	else
 		local models_md_remaining=$((models_md_interval - models_md_elapsed))
 		log_verbose "  Phase 12: MODELS.md regen skipped (${models_md_remaining}s until next run)"
-	fi
-				else
-					log_warn "  Phase 12: MODELS.md generation failed"
-				fi
-			fi
-		fi
-		record_throttle "$models_md_throttle_key" 2>/dev/null || true
-	else
-		log_verbose "  Phase 12: MODELS.md regen skipped (throttled)"
 	fi
 
 	# Release pulse dispatch lock (t159)

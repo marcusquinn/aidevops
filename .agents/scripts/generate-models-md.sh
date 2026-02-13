@@ -337,22 +337,28 @@ generate_contest_results() {
             SELECT
                 r.model_id,
                 COUNT(DISTINCT r.response_id),
-                printf('%.2f',
-                    AVG(CASE WHEN s.criterion='correctness' THEN s.score * 0.30
-                             WHEN s.criterion='completeness' THEN s.score * 0.25
-                             WHEN s.criterion='code_quality' THEN s.score * 0.25
-                             WHEN s.criterion='clarity' THEN s.score * 0.20
-                             ELSE 0 END) * (1.0 / 0.25)
-                ),
+                printf('%.2f', AVG(ws.weighted_score)),
                 printf('%.1f', AVG(r.response_time))
             FROM responses r
-            JOIN scores s ON r.response_id = s.response_id
+            JOIN (
+                SELECT response_id,
+                       SUM(CASE criterion
+                           WHEN 'correctness'  THEN score * 0.30
+                           WHEN 'completeness' THEN score * 0.25
+                           WHEN 'code_quality' THEN score * 0.25
+                           WHEN 'clarity'      THEN score * 0.20
+                           ELSE 0 END) / NULLIF(
+                           SUM(CASE criterion
+                               WHEN 'correctness'  THEN 0.30
+                               WHEN 'completeness' THEN 0.25
+                               WHEN 'code_quality' THEN 0.25
+                               WHEN 'clarity'      THEN 0.20
+                               ELSE 0 END), 0) * 5.0 AS weighted_score
+                FROM scores
+                GROUP BY response_id
+            ) ws ON r.response_id = ws.response_id
             GROUP BY r.model_id
-            ORDER BY AVG(CASE WHEN s.criterion='correctness' THEN s.score * 0.30
-                              WHEN s.criterion='completeness' THEN s.score * 0.25
-                              WHEN s.criterion='code_quality' THEN s.score * 0.25
-                              WHEN s.criterion='clarity' THEN s.score * 0.20
-                              ELSE 0 END) DESC;
+            ORDER BY AVG(ws.weighted_score) DESC;
         " 2>/dev/null | while IFS='|' read -r model responses avg_score avg_time; do
 			echo "| $model | $responses | $avg_score/5.0 | $avg_time |"
 		done
@@ -492,6 +498,10 @@ cmd_help() {
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--output)
+		if [[ $# -lt 2 ]]; then
+			log_error "--output requires a value"
+			exit 1
+		fi
 		OUTPUT_PATH="$2"
 		shift 2
 		;;
