@@ -7,9 +7,9 @@ import {
   appendFileSync,
   mkdirSync,
 } from "fs";
-import { join, relative, basename } from "path";
-import { homedir } from "os";
-import { platform } from "os";
+import { join, basename } from "path";
+import { homedir, platform } from "os";
+import { createTools } from "./tools.mjs";
 
 const HOME = homedir();
 const AGENTS_DIR = join(HOME, ".aidevops", "agents");
@@ -128,6 +128,109 @@ const OMOC_HOOK_NAMES = [
 ];
 
 /**
+ * Strip JSONC comments (// and /* *​/) and parse as JSON.
+ * @param {string} content - Raw JSONC content
+ * @returns {object|null} Parsed object or null on failure
+ */
+function parseJsonc(content) {
+  try {
+    const cleaned = content.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    return JSON.parse(cleaned);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Check OpenCode config files for OMOC in the plugin array.
+ * @returns {boolean} Whether OMOC was found in OpenCode config
+ */
+function detectOmocInOpenCodeConfig() {
+  const configPaths = [
+    join(HOME, ".config", "opencode", "opencode.json"),
+    join(HOME, ".config", "opencode", "opencode.jsonc"),
+  ];
+
+  for (const configPath of configPaths) {
+    const content = readIfExists(configPath);
+    if (!content) continue;
+
+    const config = parseJsonc(content);
+    if (config && Array.isArray(config.plugin) && config.plugin.includes("oh-my-opencode")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Parse OMOC config file to discover active MCPs and hooks.
+ * @param {string} configPath - Path to oh-my-opencode.json
+ * @param {object} state - Mutable OMOC state object
+ */
+function parseOmocConfig(configPath, state) {
+  const content = readIfExists(configPath);
+  if (!content) return;
+
+  const omocConfig = parseJsonc(content);
+  if (!omocConfig) {
+    state.mcps = Object.keys(OMOC_MANAGED_MCPS);
+    state.hooks = [...OMOC_HOOK_NAMES];
+    return;
+  }
+
+  const disabledHooks = omocConfig.disabled_hooks || [];
+  state.hooks = OMOC_HOOK_NAMES.filter((h) => !disabledHooks.includes(h));
+
+  const mcpConfig = omocConfig.mcp || {};
+  state.mcps = Object.keys(OMOC_MANAGED_MCPS).filter((name) => {
+    const mcpEntry = mcpConfig[name];
+    return !mcpEntry || mcpEntry.enabled !== false;
+  });
+}
+
+/**
+ * Check OMOC config files (project-level, then user-level).
+ * @param {string} [directory] - Project directory
+ * @param {object} state - Mutable OMOC state object
+ * @returns {boolean} Whether an OMOC config file was found
+ */
+function detectOmocConfigFiles(directory, state) {
+  const omocConfigPaths = [
+    directory ? join(directory, ".opencode", "oh-my-opencode.json") : "",
+    join(HOME, ".config", "opencode", "oh-my-opencode.json"),
+  ].filter(Boolean);
+
+  for (const configPath of omocConfigPaths) {
+    if (existsSync(configPath)) {
+      state.detected = true;
+      state.configPath = configPath;
+      parseOmocConfig(configPath, state);
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Populate default MCPs, hooks, and version for a detected OMOC installation.
+ * @param {object} state - Mutable OMOC state object
+ */
+function finalizeOmocState(state) {
+  const version = run("npm view oh-my-opencode version 2>/dev/null", 5000);
+  if (version) state.version = version;
+
+  if (state.mcps.length === 0) state.mcps = Object.keys(OMOC_MANAGED_MCPS);
+  if (state.hooks.length === 0) state.hooks = [...OMOC_HOOK_NAMES];
+
+  console.error(
+    `[aidevops] oh-my-opencode detected${state.version ? ` (v${state.version})` : ""}: ` +
+    `${state.mcps.length} MCPs, ${state.hooks.length} hooks active — ` +
+    `aidevops will complement (not duplicate) OMOC features`,
+  );
+}
+
+/**
  * Detect oh-my-opencode presence and capabilities.
  *
  * Detection strategy (ordered by reliability):
@@ -151,70 +254,9 @@ function detectOhMyOpenCode(directory) {
     configPath: "",
   };
 
-  // 1. Check OpenCode config for OMOC in plugin array
-  const ocConfigPaths = [
-    join(HOME, ".config", "opencode", "opencode.json"),
-    join(HOME, ".config", "opencode", "opencode.jsonc"),
-  ];
+  _omocState.detected = detectOmocInOpenCodeConfig();
+  detectOmocConfigFiles(directory, _omocState);
 
-  for (const configPath of ocConfigPaths) {
-    const content = readIfExists(configPath);
-    if (!content) continue;
-
-    try {
-      // Strip JSONC comments for parsing
-      const cleaned = content.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
-      const config = JSON.parse(cleaned);
-
-      if (Array.isArray(config.plugin) && config.plugin.includes("oh-my-opencode")) {
-        _omocState.detected = true;
-        break;
-      }
-    } catch {
-      // JSON parse error — try next config
-    }
-  }
-
-  // 2. Check for OMOC config files
-  const omocConfigPaths = [
-    directory ? join(directory, ".opencode", "oh-my-opencode.json") : "",
-    join(HOME, ".config", "opencode", "oh-my-opencode.json"),
-  ].filter(Boolean);
-
-  for (const configPath of omocConfigPaths) {
-    if (existsSync(configPath)) {
-      _omocState.detected = true;
-      _omocState.configPath = configPath;
-
-      // Parse OMOC config to discover disabled hooks and MCP overrides
-      const content = readIfExists(configPath);
-      if (content) {
-        try {
-          const cleaned = content.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
-          const omocConfig = JSON.parse(cleaned);
-
-          // Discover which hooks are active (all enabled unless in disabled_hooks)
-          const disabledHooks = omocConfig.disabled_hooks || [];
-          _omocState.hooks = OMOC_HOOK_NAMES.filter((h) => !disabledHooks.includes(h));
-
-          // Discover which MCPs are active (all enabled unless explicitly disabled)
-          const mcpConfig = omocConfig.mcp || {};
-          _omocState.mcps = Object.keys(OMOC_MANAGED_MCPS).filter((name) => {
-            const mcpEntry = mcpConfig[name];
-            // MCP is active unless explicitly disabled in OMOC config
-            return !mcpEntry || mcpEntry.enabled !== false;
-          });
-        } catch {
-          // Parse error — assume defaults (all MCPs and hooks active)
-          _omocState.mcps = Object.keys(OMOC_MANAGED_MCPS);
-          _omocState.hooks = [...OMOC_HOOK_NAMES];
-        }
-      }
-      break;
-    }
-  }
-
-  // 3. If not yet detected, check npm for OMOC installation
   if (!_omocState.detected) {
     const npmCheck = run("npm ls oh-my-opencode --json 2>/dev/null", 5000);
     if (npmCheck && npmCheck.includes("oh-my-opencode")) {
@@ -222,26 +264,8 @@ function detectOhMyOpenCode(directory) {
     }
   }
 
-  // 4. Get OMOC version if detected
   if (_omocState.detected) {
-    const version = run("npm view oh-my-opencode version 2>/dev/null", 5000);
-    if (version) {
-      _omocState.version = version;
-    }
-
-    // Default MCPs and hooks if not populated from config
-    if (_omocState.mcps.length === 0) {
-      _omocState.mcps = Object.keys(OMOC_MANAGED_MCPS);
-    }
-    if (_omocState.hooks.length === 0) {
-      _omocState.hooks = [...OMOC_HOOK_NAMES];
-    }
-
-    console.error(
-      `[aidevops] oh-my-opencode detected${_omocState.version ? ` (v${_omocState.version})` : ""}: ` +
-      `${_omocState.mcps.length} MCPs, ${_omocState.hooks.length} hooks active — ` +
-      `aidevops will complement (not duplicate) OMOC features`,
-    );
+    finalizeOmocState(_omocState);
   }
 
   return _omocState;
@@ -601,6 +625,89 @@ const AGENT_MCP_TOOLS = {
 const OMO_DISABLED_PATTERNS = ["grep_app_*", "websearch_*", "gh_grep_*"];
 
 /**
+ * Check if an MCP entry should be skipped (OMOC-managed, wrong platform, missing binary).
+ * @param {object} mcp - MCP registry entry
+ * @param {object} tools - Config tools object (mutable — disables pattern if binary missing)
+ * @returns {boolean} true if the MCP should be skipped
+ */
+function shouldSkipMcp(mcp, tools) {
+  if (isMcpManagedByOmoc(mcp.name)) {
+    console.error(`[aidevops] Skipping MCP '${mcp.name}' — managed by oh-my-opencode`);
+    return true;
+  }
+
+  if (mcp.macOnly && !IS_MACOS) return true;
+
+  if (mcp.requiresBinary) {
+    const binaryPath = run(`which ${mcp.requiresBinary}`);
+    if (!binaryPath) {
+      if (mcp.toolPattern) tools[mcp.toolPattern] = false;
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Build the MCP config entry (remote or local).
+ * @param {object} mcp - MCP registry entry
+ * @returns {object} Config entry for config.mcp[name]
+ */
+function buildMcpConfigEntry(mcp) {
+  if (mcp.type === "remote" && mcp.url) {
+    return { type: "remote", url: mcp.url, enabled: mcp.eager };
+  }
+  return { type: "local", command: mcp.command, enabled: mcp.eager };
+}
+
+/**
+ * Register a single MCP server in the config. Returns true if newly registered.
+ * @param {object} mcp - MCP registry entry
+ * @param {object} config - OpenCode Config object (mutable)
+ * @returns {boolean} Whether a new registration was made
+ */
+function registerSingleMcp(mcp, config) {
+  if (!config.mcp[mcp.name] || mcp.alwaysOverwrite) {
+    config.mcp[mcp.name] = buildMcpConfigEntry(mcp);
+    return true;
+  }
+
+  // Respect explicit enabled:false from worker configs (t221).
+  if (config.mcp[mcp.name].enabled === undefined) {
+    config.mcp[mcp.name].enabled = mcp.eager;
+  }
+  return false;
+}
+
+/**
+ * Set global tool permissions for an MCP, respecting worker config overrides.
+ * @param {object} mcp - MCP registry entry
+ * @param {object} tools - Config tools object (mutable)
+ */
+function applyMcpToolPermissions(mcp, tools) {
+  if (!mcp.toolPattern) return;
+  if (tools[mcp.toolPattern] !== false) {
+    tools[mcp.toolPattern] = mcp.globallyEnabled;
+  }
+}
+
+/**
+ * Disable stale Oh-My-OpenCode tool patterns when OMOC is NOT active.
+ * @param {object} tools - Config tools object (mutable)
+ */
+function disableStaleOmocPatterns(tools) {
+  const omoc = detectOhMyOpenCode();
+  if (omoc.detected) return;
+
+  for (const pattern of OMO_DISABLED_PATTERNS) {
+    if (!(pattern in tools)) {
+      tools[pattern] = false;
+    }
+  }
+}
+
+/**
  * Register MCP servers in the OpenCode config.
  * Complements generate-opencode-agents.sh by ensuring MCPs are always
  * registered even without re-running setup.sh.
@@ -616,74 +723,13 @@ function registerMcpServers(config) {
   let registered = 0;
 
   for (const mcp of registry) {
-    // Skip MCPs managed by oh-my-opencode to avoid duplicates (t008.4)
-    if (isMcpManagedByOmoc(mcp.name)) {
-      console.error(`[aidevops] Skipping MCP '${mcp.name}' — managed by oh-my-opencode`);
-      continue;
-    }
+    if (shouldSkipMcp(mcp, config.tools)) continue;
 
-    // Skip macOS-only MCPs on other platforms
-    if (mcp.macOnly && !IS_MACOS) continue;
-
-    // Skip local MCPs whose binary isn't installed
-    if (mcp.requiresBinary) {
-      const binaryPath = run(`which ${mcp.requiresBinary}`);
-      if (!binaryPath) {
-        // Disable tools if binary not available
-        if (mcp.toolPattern) {
-          config.tools[mcp.toolPattern] = false;
-        }
-        continue;
-      }
-    }
-
-    // Register MCP server if not already configured (or if alwaysOverwrite)
-    if (!config.mcp[mcp.name] || mcp.alwaysOverwrite) {
-      if (mcp.type === "remote" && mcp.url) {
-        config.mcp[mcp.name] = {
-          type: "remote",
-          url: mcp.url,
-          enabled: mcp.eager,
-        };
-      } else {
-        config.mcp[mcp.name] = {
-          type: "local",
-          command: mcp.command,
-          enabled: mcp.eager,
-        };
-      }
-      registered++;
-    } else {
-      // Respect explicit enabled:false from worker configs (t221).
-      // The supervisor generates per-worker configs with heavy indexers
-      // disabled. Don't override that — only set enabled when it's
-      // currently undefined (missing from config).
-      if (config.mcp[mcp.name].enabled === undefined) {
-        config.mcp[mcp.name].enabled = mcp.eager;
-      }
-    }
-
-    // Set global tool permissions — but respect explicit false from worker configs
-    if (mcp.toolPattern) {
-      if (config.tools[mcp.toolPattern] === false) {
-        // Worker config explicitly disabled this tool pattern — don't override
-      } else {
-        config.tools[mcp.toolPattern] = mcp.globallyEnabled;
-      }
-    }
+    if (registerSingleMcp(mcp, config)) registered++;
+    applyMcpToolPermissions(mcp, config.tools);
   }
 
-  // Disable stale Oh-My-OpenCode tool patterns — but only when OMOC is NOT active.
-  // When OMOC is detected, it manages its own tool permissions.
-  const omoc = detectOhMyOpenCode();
-  if (!omoc.detected) {
-    for (const pattern of OMO_DISABLED_PATTERNS) {
-      if (!(pattern in config.tools)) {
-        config.tools[pattern] = false;
-      }
-    }
-  }
-
+  disableStaleOmocPatterns(config.tools);
   return registered;
 }
 
@@ -789,6 +835,58 @@ function qualityLog(level, message) {
 }
 
 /**
+ * Try to match a shell function definition on a line.
+ * @param {string} trimmed - Trimmed line content
+ * @returns {string|null} Function name if matched, null otherwise
+ */
+function matchFunctionDef(trimmed) {
+  const funcMatch = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*\(\)\s*\{/);
+  if (funcMatch) return funcMatch[1];
+
+  const funcMatch2 = trimmed.match(/^function\s+([a-zA-Z_][a-zA-Z0-9_]*)/);
+  if (funcMatch2) return funcMatch2[1];
+
+  return null;
+}
+
+/**
+ * Count brace depth change in a line.
+ * @param {string} trimmed - Trimmed line content
+ * @returns {number} Net brace depth change
+ */
+function braceDepthDelta(trimmed) {
+  let delta = 0;
+  for (const ch of trimmed) {
+    if (ch === "{") delta++;
+    else if (ch === "}") delta--;
+  }
+  return delta;
+}
+
+/**
+ * Check if a line contains a shell return statement.
+ * @param {string} trimmed - Trimmed line content
+ * @returns {boolean}
+ */
+function hasReturnStatement(trimmed) {
+  return /\breturn\s+[0-9]/.test(trimmed) || /\breturn\s*$/.test(trimmed);
+}
+
+/**
+ * Record a missing-return violation.
+ * @param {string[]} details - Mutable details array
+ * @param {number} functionStart - 1-based line number
+ * @param {string} functionName
+ * @returns {number} 1 (violation count increment)
+ */
+function recordMissingReturn(details, functionStart, functionName) {
+  details.push(
+    `  Line ${functionStart}: function '${functionName}' missing explicit return`,
+  );
+  return 1;
+}
+
+/**
  * Validate shell script return statements.
  * Checks that functions have explicit return statements (aidevops convention).
  * @param {string} filePath
@@ -802,7 +900,6 @@ function validateReturnStatements(filePath) {
     const content = readFileSync(filePath, "utf-8");
     const lines = content.split("\n");
 
-    // Find function definitions and check for return statements
     let inFunction = false;
     let functionName = "";
     let functionStart = 0;
@@ -810,61 +907,36 @@ function validateReturnStatements(filePath) {
     let hasReturn = false;
 
     for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      const trimmed = line.trim();
+      const trimmed = lines[i].trim();
+      const name = matchFunctionDef(trimmed);
 
-      // Detect function definition: name() { or function name {
-      const funcMatch = trimmed.match(
-        /^([a-zA-Z_][a-zA-Z0-9_]*)\s*\(\)\s*\{/,
-      );
-      const funcMatch2 = trimmed.match(/^function\s+([a-zA-Z_][a-zA-Z0-9_]*)/);
-
-      if (funcMatch || funcMatch2) {
+      if (name) {
         if (inFunction && !hasReturn) {
-          details.push(
-            `  Line ${functionStart}: function '${functionName}' missing explicit return`,
-          );
-          violations++;
+          violations += recordMissingReturn(details, functionStart, functionName);
         }
         inFunction = true;
-        functionName = funcMatch ? funcMatch[1] : funcMatch2[1];
+        functionName = name;
         functionStart = i + 1;
         braceDepth = trimmed.includes("{") ? 1 : 0;
         hasReturn = false;
         continue;
       }
 
-      if (inFunction) {
-        // Track brace depth
-        for (const ch of trimmed) {
-          if (ch === "{") braceDepth++;
-          else if (ch === "}") braceDepth--;
-        }
+      if (!inFunction) continue;
 
-        // Check for return statement
-        if (/\breturn\s+[0-9]/.test(trimmed) || /\breturn\s*$/.test(trimmed)) {
-          hasReturn = true;
-        }
+      braceDepth += braceDepthDelta(trimmed);
+      if (hasReturnStatement(trimmed)) hasReturn = true;
 
-        // Function ended
-        if (braceDepth <= 0) {
-          if (!hasReturn) {
-            details.push(
-              `  Line ${functionStart}: function '${functionName}' missing explicit return`,
-            );
-            violations++;
-          }
-          inFunction = false;
+      if (braceDepth <= 0) {
+        if (!hasReturn) {
+          violations += recordMissingReturn(details, functionStart, functionName);
         }
+        inFunction = false;
       }
     }
 
-    // Handle last function if file ends inside it
     if (inFunction && !hasReturn) {
-      details.push(
-        `  Line ${functionStart}: function '${functionName}' missing explicit return`,
-      );
-      violations++;
+      violations += recordMissingReturn(details, functionStart, functionName);
     }
   } catch {
     // File read error — skip validation
@@ -1078,6 +1150,33 @@ function runMarkdownQualityPipeline(filePath) {
 }
 
 /**
+ * Check if a tool name is a Write or Edit operation.
+ * @param {string} tool
+ * @returns {boolean}
+ */
+function isWriteOrEditTool(tool) {
+  return tool === "Write" || tool === "Edit" || tool === "write" || tool === "edit";
+}
+
+/**
+ * Log a quality gate result (violations or pass).
+ * @param {string} label - e.g. "Shell quality", "Markdown quality"
+ * @param {string} filePath
+ * @param {number} totalViolations
+ * @param {string} report
+ * @param {string} [errorLevel="WARN"]
+ */
+function logQualityGateResult(label, filePath, totalViolations, report, errorLevel = "WARN") {
+  if (totalViolations > 0) {
+    const plural = totalViolations !== 1 ? "s" : "";
+    console.error(`[aidevops] ${label}: ${totalViolations} issue${plural} in ${filePath}:\n${report}`);
+    qualityLog(errorLevel, `${label}: ${totalViolations} violations in ${filePath}`);
+  } else {
+    qualityLog("INFO", `${label}: PASS for ${filePath}`);
+  }
+}
+
+/**
  * Pre-tool-use hook: Comprehensive quality gate for Write/Edit operations.
  * Runs the full quality pipeline matching pre-commit-hook.sh checks:
  * - Shell scripts (.sh): ShellCheck, return statements, positional params, secrets
@@ -1087,66 +1186,72 @@ function runMarkdownQualityPipeline(filePath) {
  * @param {object} output - { args } (mutable)
  */
 async function toolExecuteBefore(input, output) {
-  const { tool } = input;
-
-  // Only intercept Write and Edit tools
-  if (
-    tool !== "Write" &&
-    tool !== "Edit" &&
-    tool !== "write" &&
-    tool !== "edit"
-  ) {
-    return;
-  }
+  if (!isWriteOrEditTool(input.tool)) return;
 
   const filePath = output.args?.filePath || output.args?.file_path || "";
   if (!filePath) return;
 
-  // Shell script quality pipeline
   if (filePath.endsWith(".sh")) {
-    const { totalViolations, report } = runShellQualityPipeline(filePath);
-    if (totalViolations > 0) {
-      console.error(
-        `[aidevops] Quality gate: ${totalViolations} issue${totalViolations !== 1 ? "s" : ""} in ${filePath}:\n${report}`,
-      );
-      qualityLog(
-        "WARN",
-        `Shell quality: ${totalViolations} violations in ${filePath}`,
-      );
-    } else {
-      qualityLog("INFO", `Shell quality: PASS for ${filePath}`);
-    }
+    const result = runShellQualityPipeline(filePath);
+    logQualityGateResult("Quality gate", filePath, result.totalViolations, result.report);
     return;
   }
 
-  // Markdown quality pipeline
   if (filePath.endsWith(".md")) {
-    const { totalViolations, report } = runMarkdownQualityPipeline(filePath);
-    if (totalViolations > 0) {
-      console.error(
-        `[aidevops] Markdown quality: ${totalViolations} issue${totalViolations !== 1 ? "s" : ""} in ${filePath}:\n${report}`,
-      );
-      qualityLog(
-        "WARN",
-        `Markdown quality: ${totalViolations} violations in ${filePath}`,
-      );
-    }
+    const result = runMarkdownQualityPipeline(filePath);
+    logQualityGateResult("Markdown quality", filePath, result.totalViolations, result.report);
     return;
   }
 
-  // Secrets scan for all other file types
   const writeContent = output.args?.content || output.args?.newString || "";
   if (writeContent) {
     const secretResult = scanForSecrets(filePath, writeContent);
-    if (secretResult.violations > 0) {
-      console.error(
-        `[aidevops] SECURITY: ${secretResult.violations} potential secret${secretResult.violations !== 1 ? "s" : ""} in ${filePath}:\n${secretResult.details.join("\n")}`,
-      );
-      qualityLog(
-        "ERROR",
-        `Secrets detected: ${secretResult.violations} in ${filePath}`,
-      );
-    }
+    logQualityGateResult("SECURITY", filePath, secretResult.violations,
+      secretResult.details.join("\n"), "ERROR");
+  }
+}
+
+/**
+ * Check if a tool name is a Bash operation.
+ * @param {string} tool
+ * @returns {boolean}
+ */
+function isBashTool(tool) {
+  return tool === "Bash" || tool === "bash";
+}
+
+/**
+ * Record a git operation pattern via pattern-tracker-helper.sh.
+ * @param {string} title - Operation title
+ * @param {string} outputText - Command output
+ */
+function recordGitPattern(title, outputText) {
+  const patternTracker = join(SCRIPTS_DIR, "pattern-tracker-helper.sh");
+  if (!existsSync(patternTracker)) return;
+
+  const success = !outputText.includes("error") && !outputText.includes("fatal");
+  const patternType = success ? "SUCCESS_PATTERN" : "FAILURE_PATTERN";
+  run(
+    `bash "${patternTracker}" record "${patternType}" "git operation: ${title.substring(0, 100)}" --tag "quality-hook" 2>/dev/null`,
+    5000,
+  );
+}
+
+/**
+ * Track Bash tool operations (git, lint) for pattern recording.
+ * @param {string} title - Operation title
+ * @param {string} outputText - Command output
+ */
+function trackBashOperation(title, outputText) {
+  if (title.includes("git commit") || title.includes("git push")) {
+    console.error(`[aidevops] Git operation detected: ${title}`);
+    qualityLog("INFO", `Git operation: ${title}`);
+    recordGitPattern(title, outputText);
+  }
+
+  if (title.includes("shellcheck") || title.includes("linters-local")) {
+    const passed = !outputText.includes("error") && !outputText.includes("violation");
+    qualityLog(passed ? "INFO" : "WARN", `Lint run: ${title} — ${passed ? "PASS" : "issues found"}`);
   }
 }
 
@@ -1158,47 +1263,12 @@ async function toolExecuteBefore(input, output) {
  */
 async function toolExecuteAfter(input, output) {
   const toolName = input.tool || "";
-  const title = output.title || "";
-  const outputText = output.output || "";
 
-  // Track git operations for pattern recording
-  if (toolName === "Bash" || toolName === "bash") {
-    if (title.includes("git commit") || title.includes("git push")) {
-      console.error(`[aidevops] Git operation detected: ${title}`);
-      qualityLog("INFO", `Git operation: ${title}`);
-
-      // Record pattern if pattern-tracker-helper.sh is available
-      const patternTracker = join(SCRIPTS_DIR, "pattern-tracker-helper.sh");
-      if (existsSync(patternTracker)) {
-        const success = !outputText.includes("error") && !outputText.includes("fatal");
-        const patternType = success ? "SUCCESS_PATTERN" : "FAILURE_PATTERN";
-        run(
-          `bash "${patternTracker}" record "${patternType}" "git operation: ${title.substring(0, 100)}" --tag "quality-hook" 2>/dev/null`,
-          5000,
-        );
-      }
-    }
-
-    // Track ShellCheck/lint runs in Bash commands
-    if (
-      title.includes("shellcheck") ||
-      title.includes("linters-local")
-    ) {
-      const passed = !outputText.includes("error") && !outputText.includes("violation");
-      qualityLog(
-        passed ? "INFO" : "WARN",
-        `Lint run: ${title} — ${passed ? "PASS" : "issues found"}`,
-      );
-    }
+  if (isBashTool(toolName)) {
+    trackBashOperation(output.title || "", output.output || "");
   }
 
-  // Track Write/Edit operations for quality metrics
-  if (
-    toolName === "Write" ||
-    toolName === "Edit" ||
-    toolName === "write" ||
-    toolName === "edit"
-  ) {
+  if (isWriteOrEditTool(toolName)) {
     const filePath = output.metadata?.filePath || "";
     if (filePath) {
       qualityLog("INFO", `File modified: ${filePath} via ${toolName}`);
@@ -1437,202 +1507,7 @@ async function compactingHook(_input, output, directory) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Tool Definitions
-// ---------------------------------------------------------------------------
-
-/**
- * Create tool definitions for the plugin.
- *
- * NOTE: opencode 1.1.56+ uses Zod v4 to validate tool args schemas.
- * Plain `{ type: "string" }` objects are NOT valid Zod schemas and cause:
- *   TypeError: undefined is not an object (evaluating 'schema._zod.def')
- * Fix: omit `args` entirely and document parameters in `description`.
- * The LLM passes args as a plain object; we extract fields defensively.
- *
- * @returns {Record<string, object>}
- */
-function createTools() {
-  return {
-    aidevops: {
-      description:
-        'Run aidevops CLI commands (status, repos, features, secret, etc.). Pass command as string e.g. "status", "repos", "features"',
-      async execute(args) {
-        const cmd = `aidevops ${args.command || args}`;
-        const result = run(cmd, 15000);
-        return result || `Command completed: ${cmd}`;
-      },
-    },
-
-    aidevops_memory_recall: {
-      description:
-        'Recall memories from the aidevops cross-session memory system. Args: query (string), limit (string, default "5")',
-      async execute(args) {
-        const memoryHelper = join(SCRIPTS_DIR, "memory-helper.sh");
-        if (!existsSync(memoryHelper)) {
-          return "Memory system not available (memory-helper.sh not found)";
-        }
-        const limit = args.limit || "5";
-        const result = run(
-          `bash "${memoryHelper}" recall "${args.query}" --limit ${limit} 2>/dev/null`,
-          10000,
-        );
-        return result || "No memories found for this query.";
-      },
-    },
-
-    aidevops_memory_store: {
-      description:
-        'Store a new memory in the aidevops cross-session memory. Args: content (string), confidence (string: low/medium/high, default "medium")',
-      async execute(args) {
-        const memoryHelper = join(SCRIPTS_DIR, "memory-helper.sh");
-        if (!existsSync(memoryHelper)) {
-          return "Memory system not available (memory-helper.sh not found)";
-        }
-        const confidence = args.confidence || "medium";
-        const result = run(
-          `bash "${memoryHelper}" store "${args.content}" --confidence ${confidence} 2>/dev/null`,
-          10000,
-        );
-        return result || "Memory stored successfully.";
-      },
-    },
-
-    aidevops_pre_edit_check: {
-      description:
-        'Run the pre-edit git safety check before modifying files. Returns exit code and guidance. Args: task (optional string for loop mode)',
-      async execute(args) {
-        const script = join(SCRIPTS_DIR, "pre-edit-check.sh");
-        if (!existsSync(script)) {
-          return "pre-edit-check.sh not found — cannot verify git safety";
-        }
-        const taskFlag = args.task
-          ? ` --loop-mode --task "${args.task}"`
-          : "";
-        try {
-          const result = execSync(`bash "${script}"${taskFlag}`, {
-            encoding: "utf-8",
-            timeout: 10000,
-            stdio: ["pipe", "pipe", "pipe"],
-          });
-          return `Pre-edit check PASSED (exit 0):\n${result.trim()}`;
-        } catch (err) {
-          const code = err.status || 1;
-          const cmdOutput = (err.stdout || "") + (err.stderr || "");
-          const guidance = {
-            1: "STOP — you are on main/master branch. Create a worktree first.",
-            2: "Create a worktree before proceeding with edits.",
-            3: "WARNING — proceed with caution.",
-          };
-          return `Pre-edit check exit ${code}: ${guidance[code] || "Unknown"}\n${cmdOutput.trim()}`;
-        }
-      },
-    },
-
-    aidevops_quality_check: {
-      description:
-        'Run quality checks on a file or the full pre-commit pipeline. Args: file (string, path to check) OR command "pre-commit" to run full pipeline on staged files',
-      async execute(args) {
-        const file = args.file || args.command || args;
-
-        // Full pre-commit pipeline
-        if (file === "pre-commit" || file === "staged") {
-          const hookScript = join(SCRIPTS_DIR, "pre-commit-hook.sh");
-          if (!existsSync(hookScript)) {
-            return "pre-commit-hook.sh not found — run aidevops update";
-          }
-          try {
-            const result = execSync(`bash "${hookScript}"`, {
-              encoding: "utf-8",
-              timeout: 30000,
-              stdio: ["pipe", "pipe", "pipe"],
-            });
-            return `Pre-commit quality checks PASSED:\n${result.trim()}`;
-          } catch (err) {
-            const cmdOutput = (err.stdout || "") + (err.stderr || "");
-            return `Pre-commit quality checks FAILED:\n${cmdOutput.trim()}`;
-          }
-        }
-
-        // Single file check
-        if (typeof file === "string" && file.endsWith(".sh")) {
-          const { totalViolations, report } = runShellQualityPipeline(file);
-          return totalViolations > 0
-            ? `Quality check: ${totalViolations} issue(s) found:\n${report}`
-            : "Quality check: all checks passed.";
-        }
-
-        if (typeof file === "string" && file.endsWith(".md")) {
-          const { totalViolations, report } = runMarkdownQualityPipeline(file);
-          return totalViolations > 0
-            ? `Markdown check: ${totalViolations} issue(s) found:\n${report}`
-            : "Markdown check: all checks passed.";
-        }
-
-        // Generic secrets scan
-        if (typeof file === "string" && existsSync(file)) {
-          const secretResult = scanForSecrets(file);
-          return secretResult.violations > 0
-            ? `Secrets scan: ${secretResult.violations} potential issue(s):\n${secretResult.details.join("\n")}`
-            : "Secrets scan: no issues found.";
-        }
-
-        return `Usage: pass a file path (.sh or .md) or "pre-commit" for full pipeline`;
-      },
-    },
-
-    aidevops_install_hooks: {
-      description:
-        'Install or manage git pre-commit quality hooks. Args: action (string: "install", "uninstall", "status", "test")',
-      async execute(args) {
-        const action = args.action || args || "install";
-        const helperScript = join(SCRIPTS_DIR, "install-hooks-helper.sh");
-
-        // Try install-hooks-helper.sh first (Claude Code hooks)
-        if (existsSync(helperScript)) {
-          try {
-            const result = execSync(
-              `bash "${helperScript}" ${action}`,
-              {
-                encoding: "utf-8",
-                timeout: 15000,
-                stdio: ["pipe", "pipe", "pipe"],
-              },
-            );
-            return result.trim();
-          } catch (err) {
-            const cmdOutput = (err.stdout || "") + (err.stderr || "");
-            return `Hook ${action} failed:\n${cmdOutput.trim()}`;
-          }
-        }
-
-        // Fallback: install git pre-commit hook directly
-        if (action === "install") {
-          const preCommitHook = join(SCRIPTS_DIR, "pre-commit-hook.sh");
-          if (!existsSync(preCommitHook)) {
-            return "pre-commit-hook.sh not found — run aidevops update";
-          }
-          const gitHookDir = run("git rev-parse --git-dir 2>/dev/null");
-          if (!gitHookDir) {
-            return "Not in a git repository — cannot install pre-commit hook";
-          }
-          const hookDest = join(gitHookDir, "hooks", "pre-commit");
-          try {
-            execSync(`cp "${preCommitHook}" "${hookDest}" && chmod +x "${hookDest}"`, {
-              encoding: "utf-8",
-              timeout: 5000,
-            });
-            return `Git pre-commit hook installed at ${hookDest}`;
-          } catch (err) {
-            return `Failed to install hook: ${err.message}`;
-          }
-        }
-
-        return `install-hooks-helper.sh not found. Available actions: install, uninstall, status, test`;
-      },
-    },
-  };
-}
+// Tool definitions extracted to tools.mjs — imported at top of file
 
 // ---------------------------------------------------------------------------
 // Main Plugin Export
@@ -1675,8 +1550,12 @@ export async function AidevopsPlugin({ directory }) {
     // Phase 1+2: Dynamic agent and config injection
     config: async (config) => configHook(config),
 
-    // Phase 1: Custom tools
-    tool: createTools(),
+    // Phase 1: Custom tools (extracted to tools.mjs)
+    tool: createTools(SCRIPTS_DIR, run, {
+      runShellQualityPipeline,
+      runMarkdownQualityPipeline,
+      scanForSecrets,
+    }),
 
     // Phase 3: Quality hooks (complementary to OMOC — no overlap)
     "tool.execute.before": toolExecuteBefore,
