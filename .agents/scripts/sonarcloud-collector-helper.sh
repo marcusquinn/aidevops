@@ -87,51 +87,9 @@ ensure_db() {
 }
 
 init_db() {
-	db "$COLLECTOR_DB" <<'SQL' >/dev/null
-PRAGMA journal_mode=WAL;
-
--- Unified audit findings table (shared across all collectors)
-CREATE TABLE IF NOT EXISTS audit_findings (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    source          TEXT NOT NULL,
-    repo            TEXT NOT NULL,
-    branch          TEXT,
-    project_key     TEXT,
-    finding_key     TEXT UNIQUE,
-    severity        TEXT NOT NULL,
-    category        TEXT,
-    rule            TEXT,
-    message         TEXT NOT NULL,
-    path            TEXT,
-    line            INTEGER,
-    component       TEXT,
-    status          TEXT,
-    created_at      TEXT,
-    updated_at      TEXT,
-    collected_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
-);
-
--- Collection runs tracking
-CREATE TABLE IF NOT EXISTS collection_runs (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    source          TEXT NOT NULL,
-    repo            TEXT NOT NULL,
-    project_key     TEXT,
-    branch          TEXT,
-    collected_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
-    finding_count   INTEGER DEFAULT 0,
-    status          TEXT NOT NULL DEFAULT 'complete'
-);
-
-CREATE INDEX IF NOT EXISTS idx_findings_source ON audit_findings(source);
-CREATE INDEX IF NOT EXISTS idx_findings_severity ON audit_findings(severity);
-CREATE INDEX IF NOT EXISTS idx_findings_repo ON audit_findings(repo);
-CREATE INDEX IF NOT EXISTS idx_findings_path ON audit_findings(path);
-CREATE INDEX IF NOT EXISTS idx_findings_key ON audit_findings(finding_key);
-CREATE INDEX IF NOT EXISTS idx_runs_source ON collection_runs(source);
-SQL
-
-	log_info "Database initialized: $COLLECTOR_DB"
+	# Database schema is managed by code-audit-helper.sh (t1032.1)
+	# This function is a no-op since the schema already exists
+	log_info "Using existing audit database: $COLLECTOR_DB"
 	return 0
 }
 
@@ -219,8 +177,9 @@ call_sonar_api() {
 # =============================================================================
 
 collect_issues() {
-	local project_key="$1"
-	local branch="${2:-}"
+	local run_id="$1"
+	local project_key="$2"
+	local branch="${3:-}"
 	local page=1
 	local page_size=500
 	local total_collected=0
@@ -257,16 +216,13 @@ collect_issues() {
 		while IFS= read -r issue; do
 			[[ -z "$issue" ]] && continue
 
-			local key severity rule message component line status created updated
+			local key severity rule message component line
 			key=$(echo "$issue" | jq -r '.key // ""')
 			severity=$(echo "$issue" | jq -r '.severity // "INFO"')
 			rule=$(echo "$issue" | jq -r '.rule // ""')
 			message=$(echo "$issue" | jq -r '.message // ""')
 			component=$(echo "$issue" | jq -r '.component // ""')
-			line=$(echo "$issue" | jq -r '.line // "null"')
-			status=$(echo "$issue" | jq -r '.status // ""')
-			created=$(echo "$issue" | jq -r '.creationDate // ""')
-			updated=$(echo "$issue" | jq -r '.updateDate // ""')
+			line=$(echo "$issue" | jq -r '.line // 0')
 
 			# Extract file path from component (remove project key prefix)
 			local path
@@ -276,10 +232,8 @@ collect_issues() {
 			local mapped_severity
 			mapped_severity=$(map_severity "$severity")
 
-			# Store in database
-			store_finding "sonarcloud" "$project_key" "$branch" "$key" "$mapped_severity" \
-				"issue" "$rule" "$message" "$path" "$line" "$component" "$status" \
-				"$created" "$updated"
+			# Store in database (run_id, severity, category, rule_id, description, path, line, finding_key)
+			store_finding "$run_id" "$mapped_severity" "issue" "$rule" "$message" "$path" "$line" "$key"
 
 			((total_collected++))
 		done <<<"$issues"
@@ -299,8 +253,9 @@ collect_issues() {
 }
 
 collect_hotspots() {
-	local project_key="$1"
-	local branch="${2:-}"
+	local run_id="$1"
+	local project_key="$2"
+	local branch="${3:-}"
 	local page=1
 	local page_size=500
 	local total_collected=0
@@ -337,16 +292,13 @@ collect_hotspots() {
 		while IFS= read -r hotspot; do
 			[[ -z "$hotspot" ]] && continue
 
-			local key severity rule message component line status created updated
+			local key severity rule message component line
 			key=$(echo "$hotspot" | jq -r '.key // ""')
 			severity=$(echo "$hotspot" | jq -r '.vulnerabilityProbability // "LOW"')
 			rule=$(echo "$hotspot" | jq -r '.ruleKey // ""')
 			message=$(echo "$hotspot" | jq -r '.message // ""')
 			component=$(echo "$hotspot" | jq -r '.component // ""')
-			line=$(echo "$hotspot" | jq -r '.line // "null"')
-			status=$(echo "$hotspot" | jq -r '.status // ""')
-			created=$(echo "$hotspot" | jq -r '.creationDate // ""')
-			updated=$(echo "$hotspot" | jq -r '.updateDate // ""')
+			line=$(echo "$hotspot" | jq -r '.line // 0')
 
 			# Extract file path from component
 			local path
@@ -369,10 +321,8 @@ collect_hotspots() {
 				;;
 			esac
 
-			# Store in database
-			store_finding "sonarcloud" "$project_key" "$branch" "$key" "$mapped_severity" \
-				"security_hotspot" "$rule" "$message" "$path" "$line" "$component" "$status" \
-				"$created" "$updated"
+			# Store in database (run_id, severity, category, rule_id, description, path, line, finding_key)
+			store_finding "$run_id" "$mapped_severity" "security_hotspot" "$rule" "$message" "$path" "$line" "$key"
 
 			((total_collected++))
 		done <<<"$hotspots"
@@ -394,33 +344,28 @@ collect_hotspots() {
 }
 
 store_finding() {
-	local source="$1"
-	local repo="$2"
-	local branch="$3"
-	local finding_key="$4"
-	local severity="$5"
-	local category="$6"
-	local rule="$7"
-	local message="$8"
-	local path="$9"
-	local line="${10}"
-	local component="${11}"
-	local status="${12}"
-	local created="${13}"
-	local updated="${14}"
+	local run_id="$1"
+	local severity="$2"
+	local category="$3"
+	local rule_id="$4"
+	local description="$5"
+	local path="$6"
+	local line="$7"
+	local finding_key="$8"
 
 	# Escape single quotes for SQL
-	message=$(echo "$message" | sed "s/'/''/g")
+	description=$(echo "$description" | sed "s/'/''/g")
 	path=$(echo "$path" | sed "s/'/''/g")
-	component=$(echo "$component" | sed "s/'/''/g")
+	rule_id=$(echo "$rule_id" | sed "s/'/''/g")
+
+	# Create dedup key from path:line:rule
+	local dedup_key="${path}:${line}:${rule_id}"
 
 	db "$COLLECTOR_DB" <<SQL >/dev/null
-INSERT OR REPLACE INTO audit_findings (
-    source, repo, branch, project_key, finding_key, severity, category, rule,
-    message, path, line, component, status, created_at, updated_at
+INSERT INTO audit_findings (
+    run_id, source, severity, path, line, description, category, rule_id, dedup_key
 ) VALUES (
-    '$source', '$repo', '$branch', '$repo', '$finding_key', '$severity', '$category', '$rule',
-    '$message', '$path', $line, '$component', '$status', '$created', '$updated'
+    $run_id, 'sonarcloud', '$severity', '$path', $line, '$description', '$category', '$rule_id', '$dedup_key'
 );
 SQL
 
@@ -468,12 +413,12 @@ cmd_collect() {
 
 	log_info "Starting collection for project: $project_key"
 
-	# Create collection run
+	# Create audit run (using existing schema from t1032.1)
 	local run_id
 	run_id=$(
 		db "$COLLECTOR_DB" <<SQL
-INSERT INTO collection_runs (source, repo, project_key, branch)
-VALUES ('sonarcloud', '$repo', '$project_key', '$branch');
+INSERT INTO audit_runs (repo, pr_number, head_sha, services_run, status)
+VALUES ('$repo', 0, '', 'sonarcloud', 'running');
 SELECT last_insert_rowid();
 SQL
 	)
@@ -481,22 +426,23 @@ SQL
 	# Collect issues and hotspots
 	local total_findings=0
 
-	if collect_issues "$project_key" "$branch"; then
+	if collect_issues "$run_id" "$project_key" "$branch"; then
 		local issue_count
-		issue_count=$(db "$COLLECTOR_DB" "SELECT COUNT(*) FROM audit_findings WHERE source='sonarcloud' AND category='issue' AND project_key='$project_key';")
+		issue_count=$(db "$COLLECTOR_DB" "SELECT COUNT(*) FROM audit_findings WHERE run_id=$run_id AND category='issue';")
 		total_findings=$((total_findings + issue_count))
 	fi
 
-	if collect_hotspots "$project_key" "$branch"; then
+	if collect_hotspots "$run_id" "$project_key" "$branch"; then
 		local hotspot_count
-		hotspot_count=$(db "$COLLECTOR_DB" "SELECT COUNT(*) FROM audit_findings WHERE source='sonarcloud' AND category='security_hotspot' AND project_key='$project_key';")
+		hotspot_count=$(db "$COLLECTOR_DB" "SELECT COUNT(*) FROM audit_findings WHERE run_id=$run_id AND category='security_hotspot';")
 		total_findings=$((total_findings + hotspot_count))
 	fi
 
 	# Update run status
 	db "$COLLECTOR_DB" <<SQL >/dev/null
-UPDATE collection_runs
-SET finding_count = $total_findings
+UPDATE audit_runs
+SET status = 'complete',
+    completed_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
 WHERE id = $run_id;
 SQL
 
@@ -538,11 +484,10 @@ SELECT json_group_array(
         'id', id,
         'severity', severity,
         'category', category,
-        'rule', rule,
-        'message', message,
+        'rule_id', rule_id,
+        'description', description,
         'path', path,
-        'line', line,
-        'status', status
+        'line', line
     )
 )
 FROM audit_findings
@@ -550,7 +495,7 @@ WHERE source='sonarcloud' $where_clause;
 SQL
 	else
 		db "$COLLECTOR_DB" <<SQL
-SELECT severity, category, path, line, message
+SELECT severity, category, path, line, description
 FROM audit_findings
 WHERE source='sonarcloud' $where_clause
 ORDER BY severity, path, line;
@@ -581,13 +526,15 @@ cmd_summary() {
 
 	db "$COLLECTOR_DB" <<SQL
 SELECT
-    collected_at,
-    project_key,
-    finding_count,
-    status
-FROM collection_runs
-WHERE source='sonarcloud'
-ORDER BY collected_at DESC
+    r.started_at,
+    r.repo,
+    COUNT(f.id) as finding_count,
+    r.status
+FROM audit_runs r
+LEFT JOIN audit_findings f ON f.run_id = r.id AND f.source = 'sonarcloud'
+WHERE r.services_run LIKE '%sonarcloud%'
+GROUP BY r.id
+ORDER BY r.started_at DESC
 LIMIT $last_n;
 SQL
 
@@ -621,7 +568,7 @@ cmd_status() {
 	total_findings=$(db "$COLLECTOR_DB" "SELECT COUNT(*) FROM audit_findings WHERE source='sonarcloud';")
 
 	local last_run
-	last_run=$(db "$COLLECTOR_DB" "SELECT collected_at FROM collection_runs WHERE source='sonarcloud' ORDER BY collected_at DESC LIMIT 1;")
+	last_run=$(db "$COLLECTOR_DB" "SELECT started_at FROM audit_runs WHERE services_run LIKE '%sonarcloud%' ORDER BY started_at DESC LIMIT 1;")
 
 	log_info "Total findings: $total_findings"
 	log_info "Last collection: ${last_run:-never}"
@@ -657,15 +604,14 @@ SQL
 SELECT json_group_array(
     json_object(
         'id', id,
+        'run_id', run_id,
         'source', source,
-        'repo', repo,
         'severity', severity,
         'category', category,
-        'rule', rule,
-        'message', message,
+        'rule_id', rule_id,
+        'description', description,
         'path', path,
         'line', line,
-        'status', status,
         'collected_at', collected_at
     )
 )
