@@ -1,13 +1,11 @@
 import { execSync } from "child_process";
 import {
   readFileSync,
-  readdirSync,
   existsSync,
-  statSync,
   appendFileSync,
   mkdirSync,
 } from "fs";
-import { join, basename } from "path";
+import { join } from "path";
 import { homedir, platform } from "os";
 import { createTools } from "./tools.mjs";
 
@@ -301,125 +299,16 @@ function isHookManagedByOmoc(hookName) {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 1: Agent Loader
+// Phase 1: Agent Loader — REMOVED (t1040)
 // ---------------------------------------------------------------------------
-
-/**
- * Load agent definitions from ~/.aidevops/agents/ by reading markdown files
- * and parsing their YAML frontmatter.
- * @returns {Array<{name: string, description: string, mode: string, relPath: string}>}
- */
-function loadAgentDefinitions() {
-  if (!existsSync(AGENTS_DIR)) return [];
-
-  const agents = [];
-
-  // Load primary agents (root *.md files)
-  try {
-    const rootFiles = readdirSync(AGENTS_DIR).filter(
-      (f) =>
-        f.endsWith(".md") &&
-        !f.startsWith("AGENTS") &&
-        !f.startsWith("SKILL") &&
-        !f.startsWith("README"),
-    );
-
-    for (const file of rootFiles) {
-      const filepath = join(AGENTS_DIR, file);
-      if (!statSync(filepath).isFile()) continue;
-
-      const content = readIfExists(filepath);
-      if (!content) continue;
-
-      const { data } = parseFrontmatter(content);
-      agents.push({
-        name: basename(file, ".md"), // Root files keep simple names (no collision risk)
-        description: data.description || "",
-        mode: data.mode || "primary",
-        relPath: file,
-      });
-    }
-  } catch {
-    // ignore read errors
-  }
-
-  // Load subagents from known subdirectories
-  const subdirs = [
-    "aidevops",
-    "content",
-    "seo",
-    "tools",
-    "services",
-    "workflows",
-    "memory",
-    "custom",
-    "draft",
-    "scripts",
-    "templates",
-  ];
-
-  for (const subdir of subdirs) {
-    const dirPath = join(AGENTS_DIR, subdir);
-    if (!existsSync(dirPath)) continue;
-
-    try {
-      loadAgentsRecursive(dirPath, subdir, agents);
-    } catch {
-      // ignore
-    }
-  }
-
-  return agents;
-}
-
-/**
- * Recursively load agent markdown files from a directory.
- * @param {string} dirPath
- * @param {string} relBase
- * @param {Array} agents
- */
-function loadAgentsRecursive(dirPath, relBase, agents) {
-  let entries;
-  try {
-    entries = readdirSync(dirPath, { withFileTypes: true });
-  } catch {
-    return;
-  }
-
-  for (const entry of entries) {
-    const fullPath = join(dirPath, entry.name);
-
-    if (entry.isDirectory()) {
-      // Skip references/ and node_modules/
-      if (entry.name === "references" || entry.name === "node_modules") {
-        continue;
-      }
-      loadAgentsRecursive(fullPath, join(relBase, entry.name), agents);
-    } else if (
-      entry.isFile() &&
-      entry.name.endsWith(".md") &&
-      !entry.name.startsWith("README") &&
-      !entry.name.endsWith("-skill.md")
-    ) {
-      const content = readIfExists(fullPath);
-      if (!content) continue;
-
-      const { data } = parseFrontmatter(content);
-      // Use relative path without .md extension to avoid name collisions (t1015)
-      // e.g., tools/git/github-cli.md → tools/git/github-cli
-      //       services/git/github-cli.md → services/git/github-cli
-      // This ensures agents with the same filename in different directories don't collide
-      const relPath = join(relBase, entry.name);
-      const agentName = relPath.replace(/\.md$/, "");
-      agents.push({
-        name: agentName,
-        description: data.description || "",
-        mode: data.mode || "subagent",
-        relPath: relPath,
-      });
-    }
-  }
-}
+// Agent registration is now handled entirely by generate-opencode-agents.sh
+// at setup time. The shell script creates lightweight .md stubs in
+// ~/.config/opencode/agent/ that act as pointers ("Read ~/.aidevops/agents/X").
+// The previous runtime approach scanned 500+ files on every OpenCode startup,
+// reading and parsing frontmatter from each, which caused TUI display glitches
+// and slow launches. Progressive disclosure means agents are loaded on-demand
+// when the AI reads the relevant .md file — they don't need to be pre-registered
+// in OpenCode's config.agent object.
 
 // ---------------------------------------------------------------------------
 // Phase 2: MCP Server Registry + Config Hook
@@ -778,40 +667,29 @@ function applyAgentMcpTools(config) {
 
 /**
  * Modify OpenCode config to register aidevops agents and MCP servers.
- * This complements generate-opencode-agents.sh by ensuring agents and
- * MCPs are always up-to-date even without re-running setup.sh.
+ * Registers MCP servers and applies per-agent tool permissions.
+ *
+ * Agent registration is handled by generate-opencode-agents.sh at setup time
+ * (lightweight .md stubs in ~/.config/opencode/agent/). The plugin no longer
+ * injects agents at runtime — scanning 500+ files on every startup caused
+ * display glitches and slow launches in OpenCode's TUI. (t1040)
+ *
  * @param {object} config - OpenCode Config object (mutable)
  */
 async function configHook(config) {
-  // --- Agent registration (Phase 1) ---
   if (!config.agent) config.agent = {};
 
-  const agents = loadAgentDefinitions();
-  let agentsInjected = 0;
-
-  for (const agent of agents) {
-    if (config.agent[agent.name]) continue;
-    if (agent.mode !== "subagent") continue;
-
-    config.agent[agent.name] = {
-      description: agent.description || `aidevops subagent: ${agent.relPath}`,
-      mode: "subagent",
-    };
-    agentsInjected++;
-  }
-
-  // --- MCP registration (Phase 2) ---
+  // --- MCP registration ---
   const mcpsRegistered = registerMcpServers(config);
   const agentToolsUpdated = applyAgentMcpTools(config);
 
-  // Log summary for debugging (visible in OpenCode logs)
+  // Silent unless something was actually changed (avoids TUI flash on startup)
   const parts = [];
-  if (agentsInjected > 0) parts.push(`${agentsInjected} agents`);
   if (mcpsRegistered > 0) parts.push(`${mcpsRegistered} MCPs`);
   if (agentToolsUpdated > 0) parts.push(`${agentToolsUpdated} agent tool perms`);
 
   if (parts.length > 0) {
-    console.error(`[aidevops] Config hook: injected ${parts.join(", ")}`);
+    console.error(`[aidevops] Config hook: ${parts.join(", ")}`);
   }
 }
 
@@ -1547,7 +1425,7 @@ export async function AidevopsPlugin({ directory }) {
   detectOhMyOpenCode(directory);
 
   return {
-    // Phase 1+2: Dynamic agent and config injection
+    // Phase 2: MCP registration and per-agent tool permissions
     config: async (config) => configHook(config),
 
     // Phase 1: Custom tools (extracted to tools.mjs)
