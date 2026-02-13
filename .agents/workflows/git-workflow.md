@@ -658,6 +658,38 @@ git remote prune origin
 | Unmerged + stale (>30 days) | Ask user about status |
 | Unmerged + active | Keep |
 
+### Worktree Ownership
+
+**CRITICAL**: NEVER remove a worktree unless you meet ALL of these conditions:
+
+1. **You created it in this session**, OR
+2. **It belongs to a task in your active batch** AND the task is deployed/complete, OR
+3. **The user explicitly asks**
+
+**Why this matters**: Worktrees may belong to parallel sessions. Removing them destroys another agent's working directory mid-work.
+
+**Safe cleanup workflow**:
+
+```bash
+# 1. Check ownership registry
+worktree-helper.sh registry list
+
+# 2. Only remove worktrees you personally merged
+# The registry tracks which PID owns each worktree
+
+# 3. Use helper commands (they enforce ownership checks)
+worktree-helper.sh remove feature/my-feature  # Refuses if owned by another live process
+worktree-helper.sh clean                      # Only removes worktrees you own
+```
+
+**What NOT to do**:
+
+- NEVER assume unrecognized worktrees are safe to remove
+- NEVER use `git worktree remove` directly (bypasses ownership checks)
+- NEVER remove worktrees for tasks you didn't personally merge
+
+**Ownership registry**: `worktree-helper.sh registry list` shows which PID owns each worktree. The `remove` and `clean` commands automatically refuse to touch worktrees owned by other live processes.
+
 ## User Experience Levels
 
 These workflows support all skill levels:

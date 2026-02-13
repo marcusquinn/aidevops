@@ -48,12 +48,7 @@ All development work MUST follow this lifecycle:
 
 1. **Create a TODO entry** in `TODO.md` before starting any work
 2. **Ask the user**: implement now (full-loop) or queue for runner orchestration?
-3. **If implementing now**, follow the full-loop development lifecycle:
-   - Create branch/worktree
-   - Implement changes
-   - Run tests (syntax, shellcheck, Docker tests, integration tests as applicable)
-   - Verify the changes work end-to-end
-   - Only then offer to commit/PR
+3. **If implementing now**, follow full-loop: branch/worktree → implement → test → verify → commit/PR
 4. **If queuing**, add the task to `TODO.md` with appropriate metadata (`~estimate`, `#tags`, dependencies) so the supervisor can dispatch it to a runner when orchestration next runs
 
 Never skip testing. Never declare work "done" without verification. The full-loop means: plan -> implement -> test -> verify -> deliver.
@@ -92,8 +87,7 @@ Full PTY access: run any CLI (`vim`, `psql`, `ssh`, `htop`, dev servers, `Claude
 **Critical Rules**:
 - Git check before edits (see above)
 - File discovery via Bash (see above)
-- **ALWAYS Read before Edit/Write** - Edit and Write tools FAIL if the file hasn't been Read in this conversation. Read the file first, then edit. No exceptions.
-- Re-read files immediately before editing (stale reads cause errors)
+- **ALWAYS Read before Edit/Write** - Re-read immediately before editing (stale reads cause errors)
 - Context budget: Never >100K tokens per operation
 - NEVER create files in `~/` root - use `~/.aidevops/.agent-workspace/work/[project]/`
 - NEVER expose credentials in output/logs
@@ -103,9 +97,7 @@ Full PTY access: run any CLI (`vim`, `psql`, `ssh`, `htop`, dev servers, `Claude
 
 ## Planning & Tasks
 
-Use `/save-todo` after planning. Auto-detects complexity:
-- **Simple** → TODO.md only
-- **Complex** → PLANS.md + TODO.md reference
+Use `/save-todo` after planning. Auto-detects complexity (simple → TODO.md only, complex → PLANS.md + TODO.md reference).
 
 **Key commands**: `/new-task`, `/save-todo`, `/ready`, `/sync-beads`, `/plan-status`, `/create-prd`, `/generate-tasks`
 
@@ -113,33 +105,22 @@ Use `/save-todo` after planning. Auto-detects complexity:
 
 **Dependencies**: `blocked-by:t001`, `blocks:t002`, `t001.1` (subtask)
 
-**Auto-dispatch**: Add `#auto-dispatch` to tasks that can run autonomously (clear spec, bounded scope, no user input needed). Default to including it — only omit when a specific exclusion applies. See `workflows/plans.md` "Auto-Dispatch Tagging" for full criteria. The supervisor's Phase 0 picks these up automatically every 2 minutes and auto-creates batches (`auto-YYYYMMDD-HHMMSS`, concurrency = cores/2, min 2) when no active batch exists.
+**Auto-dispatch**: Add `#auto-dispatch` to tasks that can run autonomously. See `workflows/plans.md` "Auto-Dispatch Tagging" for criteria.
 
 **Task completion rules** (CRITICAL - prevents false completion cascade):
-- NEVER mark a task `[x]` unless a merged PR exists with real deliverables for that task
-- Use `task-complete-helper.sh <task-id> --pr <number>` or `task-complete-helper.sh <task-id> --verified` to mark tasks complete in interactive sessions
-- The helper enforces proof-log requirements: every completion MUST have `pr:#NNN` or `verified:YYYY-MM-DD`
-- The supervisor `update_todo_on_complete()` enforces the same requirement for autonomous workers
-- The pre-commit hook rejects TODO.md commits where `[ ] -> [x]` without proof-log
-- Checking that a file exists is NOT sufficient - verify the PR was merged and contains substantive changes
-- If a worker completes with `no_pr` or `task_only`, the task stays `[ ]` until a human or the supervisor verifies the deliverable
-- The `issue-sync` GitHub Action auto-closes issues when tasks are marked `[x]` - false completions cascade into closed issues
-- NEVER close GitHub issues manually with `gh issue close` — let the issue-sync pipeline verify deliverables (`pr:` or `verified:` field) before closing. Manual closure bypasses the proof-log safety check
-- **Pre-commit enforcement**: The pre-commit hook checks TODO.md for newly completed tasks (`[ ]` → `[x]`) and warns if no `verified:` field or merged PR evidence exists. This is a warning only (commit proceeds) but serves as a reminder to add completion evidence.
+- NEVER mark `[x]` unless merged PR exists with real deliverables (or `verified:YYYY-MM-DD`)
+- Use `task-complete-helper.sh <task-id> --pr <number>` or `--verified` (enforces proof-log)
+- Workers MUST NOT edit TODO.md (supervisor owns all TODO.md updates)
 
-**After ANY TODO/planning edit** (interactive sessions only, NOT workers): Commit and push immediately. Planning-only files (TODO.md, todo/) go directly to main -- no branch, no PR. Mixed changes (planning + non-exception files) use a worktree. NEVER `git checkout -b` in the main repo.
+See `workflows/plans.md` "Task Completion Rules" for full enforcement layers and what NOT to do.
 
-**PR required for ALL non-planning changes** (MANDATORY): Every change to scripts, agents, configs, workflows, or any file outside `TODO.md`, `todo/`, and `VERIFY.md` MUST go through a worktree + PR + CI pipeline — no matter how small. "It's just one line" is not a valid reason to skip CI. The pre-edit-check script enforces this; never bypass it by editing directly on main.
+**After TODO/planning edit**: Commit and push immediately. Planning files (TODO.md, todo/) go to main. Mixed changes use worktree. NEVER `git checkout -b` in main repo.
 
-**Task ID allocation** (MANDATORY): Use `/new-task` or `claim-task-id.sh` to allocate task IDs. NEVER manually scan TODO.md with grep to determine the next ID — this causes collisions in parallel sessions. The allocation flow:
+**PR required** (MANDATORY): ALL non-planning changes MUST go through worktree + PR + CI. No exceptions. See `workflows/git-workflow.md`.
 
-1. `/new-task "Task title"` — interactive slash command (preferred in sessions)
-2. `planning-commit-helper.sh next-id --title "Task title"` — wrapper function
-3. `claim-task-id.sh --title "Task title" --repo-path "$(pwd)"` — direct script
+**Task ID allocation** (MANDATORY): Use `/new-task` or `claim-task-id.sh` to allocate task IDs. NEVER manually scan TODO.md with grep — causes collisions in parallel sessions.
 
-Online mode creates a GitHub/GitLab issue as a distributed lock, then allocates `t(N+1)`. Offline fallback allocates `t(N+100)` to avoid collisions (reconcile when back online). Output format: `TASK_ID=tNNN TASK_REF=GH#NNN TASK_OFFLINE=false`.
-
-**Task ID collision prevention**: If `git push` fails after adding a task, `git pull --rebase` and re-read TODO.md to verify your ID is still unique. If a collision exists, re-run `claim-task-id.sh` to get a fresh ID.
+See `workflows/plans.md` "Task ID Allocation" for allocation flow, online/offline modes, and collision prevention.
 
 **Full docs**: `workflows/plans.md`, `tools/task-management/beads.md`
 
@@ -177,13 +158,7 @@ Cross-session SQLite FTS5 memory. Commands: `/remember {content}`, `/recall {que
 
 **Namespaces**: Runners can have isolated memory via `--namespace <name>`. Use `--shared` to also search global memory. List with `memory-helper.sh namespaces`.
 
-**Auto-recall**: Memories are automatically recalled at key entry points:
-- **Interactive session start**: Recent memories (last 5) surface via conversation-starter.md
-- **Session resume**: After loading checkpoint, recent memories provide context
-- **Runner dispatch**: Before task execution, runners recall recent + task-specific memories
-- **Objective runner**: On first step, recalls recent + objective-specific + failure pattern memories
-
-Auto-recall is silent (no output if no memories found) and uses namespace isolation for runners.
+**Auto-recall**: Memories automatically recalled at session start, resume, and runner dispatch. Silent if none found. See `memory/README.md`.
 
 **Full docs**: `memory/README.md`
 
@@ -245,52 +220,23 @@ worktree-helper.sh add feature/x  # Fallback
 
 **After completing changes**, offer: 1) Preflight checks 2) Skip preflight 3) Continue editing
 
-**PR title format** (MANDATORY): All PRs MUST include task ID from TODO.md: `{task-id}: {description}`. For unplanned work (hotfix, quick fix), create TODO entry first with `~15m` estimate, then create PR. No work should be untraceable. See `workflows/git-workflow.md` "PR Title Requirements" for full guidance.
+**PR title format** (MANDATORY): All PRs MUST include task ID: `{task-id}: {description}`. See `workflows/git-workflow.md` "PR Title Requirements".
 
 **Branch types**: `feature/`, `bugfix/`, `hotfix/`, `refactor/`, `chore/`, `experiment/`, `release/`
 
-**Worktree ownership** (CRITICAL): NEVER remove a worktree unless (a) you created it in this session, (b) it belongs to a task in your active batch, AND the task is deployed/complete, or (c) the user explicitly asks. Worktrees may belong to parallel sessions — removing them destroys another agent's working directory mid-work. When cleaning up, only touch worktrees for tasks you personally merged. Use `git worktree list` to see all worktrees but do NOT assume unrecognized ones are safe to remove. The ownership registry (`worktree-helper.sh registry list`) tracks which PID owns each worktree — `remove` and `clean` commands automatically refuse to touch worktrees owned by other live processes.
+**Worktree ownership** (CRITICAL): NEVER remove a worktree unless you created it, it's your completed task, or user asks — parallel sessions may be using it. See `workflows/git-workflow.md` "Worktree Ownership" for ownership registry and safe cleanup workflow.
 
-**Safety hooks** (Claude Code only): Destructive commands (`git reset --hard`, `rm -rf`, etc.) are blocked by a PreToolUse hook. Run `install-hooks.sh --test` to verify. See `workflows/git-workflow.md` "Destructive Command Safety Hooks" section.
+**Safety hooks**: Destructive commands blocked by PreToolUse hook. See `workflows/git-workflow.md` "Destructive Command Safety Hooks".
 
 **Full docs**: `workflows/git-workflow.md`, `tools/git/worktrunk.md`
 
 ## Autonomous Orchestration
 
-**CLI**: `Claude` is the ONLY supported CLI for worker dispatch. Never use `claude` CLI.
+**Supervisor** (`supervisor-helper.sh`): Manages parallel task execution with SQLite state machine. Cron pulse (every 2 min) is MANDATORY for autonomous operation.
 
-**Supervisor** (`supervisor-helper.sh`): Manages parallel task execution with SQLite state machine.
+**Assignee ownership** (t1017): NEVER remove or change `assignee:` on a task without explicit user confirmation — may be a contributor on another host.
 
-```bash
-# Add tasks and create batch
-supervisor-helper.sh add t001 --repo "$(pwd)" --description "Task description"
-supervisor-helper.sh batch "my-batch" --concurrency 3 --tasks "t001,t002,t003"
-
-# Task claiming (t165 — provider-agnostic, TODO.md primary)
-supervisor-helper.sh claim t001     # Adds assignee: to TODO.md, optional GH sync
-supervisor-helper.sh unclaim t001   # Releases claim (removes assignee:)
-# Claiming is automatic during dispatch. Manual claim/unclaim for coordination.
-
-# Install cron pulse (REQUIRED for autonomous operation)
-supervisor-helper.sh cron install
-
-# Manual pulse (cron does this automatically every 2 minutes)
-supervisor-helper.sh pulse --batch <batch-id>
-
-# Monitor
-supervisor-helper.sh dashboard --batch <batch-id>
-supervisor-helper.sh status <batch-id>
-```
-
-**Task claiming** (t165): TODO.md `assignee:` field is the authoritative claim source. Works offline, with any git host. GitHub Issue sync is optional best-effort (requires `gh` CLI + `ref:GH#` in TODO.md). GH Issue creation is opt-in: use `--with-issue` flag or `SUPERVISOR_AUTO_ISSUE=true`.
-
-**Assignee ownership** (t1017): NEVER remove or change `assignee:` on a task without explicit user confirmation. The assignee may be a contributor on another host whose work you cannot see. `unclaim` requires `--force` to release a task claimed by someone else. The full-loop claims the task automatically before starting work — if the task is already claimed by another, the loop stops.
-
-**Cron pulse is mandatory** for autonomous operation. Without it, the supervisor is passive and requires manual `pulse` calls. The pulse cycle: check workers -> evaluate outcomes -> dispatch next -> cleanup.
-
-**Session memory monitoring + respawn** (t264, t264.1): Long-running Claude Code/Bun sessions accumulate WebKit malloc dirty pages that are never returned to the OS (25GB+ observed). Phase 11 of the pulse cycle checks the parent session's `phys_footprint` when a batch wave completes (no running/queued tasks). If memory exceeds `SUPERVISOR_SELF_MEM_LIMIT` (default: 8192MB), it saves a checkpoint, logs the respawn event to `~/.aidevops/logs/respawn-history.log`, and exits cleanly for the next cron pulse to start fresh. Use `supervisor-helper.sh mem-check` to inspect memory and `supervisor-helper.sh respawn-history` to review respawn patterns.
-
-**Full docs**: `tools/ai-assistants/headless-dispatch.md`, `supervisor-helper.sh help`
+See `tools/ai-assistants/headless-dispatch.md` "Supervisor CLI" for batch creation, task claiming, monitoring, and session memory respawn.
 
 ## Session Completion
 
@@ -304,13 +250,7 @@ Run `/session-review` before ending. Suggest new sessions after PR merge, domain
 
 When context is compacted (long sessions, autonomous loops), operational state is lost unless persisted to disk. Use `/checkpoint` to save and restore session state.
 
-**Commands**:
-
-- `/checkpoint` or `session-checkpoint-helper.sh save --task <id> --next <ids>` — save current state
-- `session-checkpoint-helper.sh load` — reload state after compaction
-- `session-checkpoint-helper.sh continuation` — generate a full continuation prompt for new sessions
-
-**When to checkpoint**: After each task completion, before large operations, after PR creation/merge.
+**Commands**: `/checkpoint` (save), `session-checkpoint-helper.sh load` (restore), `continuation` (new session prompt). Checkpoint after task completion, before large ops, after PR.
 
 **Compaction survival rule**: When summarizing this conversation for compaction, ALWAYS preserve: current task IDs and states, active batch ID, worktree path, open PR numbers, and the next 3 action items. This operational state is more important than conversation history details.
 
