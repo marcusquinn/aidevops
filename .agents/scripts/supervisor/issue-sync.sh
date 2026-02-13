@@ -698,6 +698,109 @@ update_queue_health_issue() {
 		completions_md="_No recent completions_"
 	fi
 
+	# Audit Health section (t1032.7)
+	local audit_md=""
+	local audit_db="${SUPERVISOR_DIR}/../.agent-workspace/audit/audit.db"
+	if [[ -f "$audit_db" ]]; then
+		# Last audit timestamp
+		local last_audit
+		last_audit=$(db "$audit_db" "SELECT MAX(created_at) FROM audit_findings;" 2>/dev/null || echo "")
+		if [[ -z "$last_audit" ]]; then
+			last_audit="Never"
+		else
+			# Format timestamp (show date and time)
+			last_audit="${last_audit:0:16}"
+		fi
+
+		# Finding counts by source
+		local source_counts
+		source_counts=$(db -separator '|' "$audit_db" "
+			SELECT source, COUNT(*) as count
+			FROM audit_findings
+			GROUP BY source
+			ORDER BY count DESC;" 2>/dev/null || echo "")
+
+		# Finding counts by severity
+		local severity_counts
+		severity_counts=$(db -separator '|' "$audit_db" "
+			SELECT severity, COUNT(*) as count
+			FROM audit_findings
+			GROUP BY severity
+			ORDER BY
+				CASE severity
+					WHEN 'critical' THEN 1
+					WHEN 'high' THEN 2
+					WHEN 'medium' THEN 3
+					WHEN 'low' THEN 4
+					ELSE 5
+				END;" 2>/dev/null || echo "")
+
+		# Count open fix tasks from audit findings (tasks with #auto-review or #quality tags)
+		local audit_fix_tasks
+		audit_fix_tasks=$(db "$SUPERVISOR_DB" "
+			SELECT COUNT(*)
+			FROM tasks
+			WHERE ${repo_filter}
+			  AND status IN ('queued', 'running', 'dispatched', 'blocked', 'retrying')
+			  AND (description LIKE '%#auto-review%' OR description LIKE '%#quality%');" 2>/dev/null || echo "0")
+
+		# Trend calculation (compare last 7 days vs previous 7 days)
+		local trend_arrow="→"
+		local now_epoch
+		now_epoch=$(date +%s)
+		local seven_days_ago
+		seven_days_ago=$(date -u -r $((now_epoch - 604800)) +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d "@$((now_epoch - 604800))" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "")
+		local fourteen_days_ago
+		fourteen_days_ago=$(date -u -r $((now_epoch - 1209600)) +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d "@$((now_epoch - 1209600))" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "")
+
+		if [[ -n "$seven_days_ago" && -n "$fourteen_days_ago" ]]; then
+			local recent_count previous_count
+			recent_count=$(db "$audit_db" "SELECT COUNT(*) FROM audit_findings WHERE created_at >= '$seven_days_ago';" 2>/dev/null || echo "0")
+			previous_count=$(db "$audit_db" "SELECT COUNT(*) FROM audit_findings WHERE created_at >= '$fourteen_days_ago' AND created_at < '$seven_days_ago';" 2>/dev/null || echo "0")
+
+			if [[ "${recent_count:-0}" -lt "${previous_count:-0}" ]]; then
+				trend_arrow="↓ improving"
+			elif [[ "${recent_count:-0}" -gt "${previous_count:-0}" ]]; then
+				trend_arrow="↑ regressing"
+			else
+				trend_arrow="→ stable"
+			fi
+		fi
+
+		# Build audit markdown
+		audit_md="| Metric | Value |
+| --- | --- |
+| Last Audit | ${last_audit} |
+| Trend | ${trend_arrow} |
+| Open Fix Tasks | ${audit_fix_tasks} |"
+
+		if [[ -n "$source_counts" ]]; then
+			audit_md="${audit_md}
+| **By Source** | |"
+			while IFS='|' read -r src cnt; do
+				[[ -z "$src" ]] && continue
+				audit_md="${audit_md}
+| ${src} | ${cnt} |"
+			done <<<"$source_counts"
+		fi
+
+		if [[ -n "$severity_counts" ]]; then
+			audit_md="${audit_md}
+| **By Severity** | |"
+			while IFS='|' read -r sev cnt; do
+				[[ -z "$sev" ]] && continue
+				audit_md="${audit_md}
+| ${sev} | ${cnt} |"
+			done <<<"$severity_counts"
+		fi
+
+		audit_md="${audit_md}
+
+[Full CodeRabbit review history →](https://github.com/${repo_slug}/issues/753)"
+	else
+		audit_md="_Audit database not found_"
+	fi
+
 	# System resources — use lightweight metrics to avoid blocking the pulse
 	# (check_system_load uses top -l 2 which takes ~2s and can hang)
 	local sys_md=""
@@ -905,6 +1008,10 @@ ${queued_md:-_Queue empty_}
 ### Recent Completions
 
 ${completions_md}
+
+### Audit Health
+
+${audit_md}
 
 ### System Resources
 
