@@ -3619,244 +3619,212 @@ async function submitVideoJobOnPage(page, sceneOptions) {
 
 // Poll History tab for multiple submitted video prompts and download all via API.
 // Returns an array of { sceneIndex, path } for successfully downloaded videos.
+// Scrape History tab items with prompt text and processing status.
+async function scrapeHistoryItems(page) {
+  return page.evaluate(() => {
+    const items = document.querySelectorAll('main li');
+    return [...items].map((item, i) => {
+      const textbox = item.querySelector('[role="textbox"], textarea');
+      const promptText = textbox?.textContent?.trim()?.substring(0, 80) || '';
+      const itemText = item.textContent || '';
+      const isProcessing = itemText.includes('In queue') || itemText.includes('Processing') || itemText.includes('Cancel');
+      return { index: i, promptText, isProcessing };
+    });
+  });
+}
+
+// Count completed and processing jobs by matching History items to submitted jobs.
+function countJobStatuses(submittedJobs, historyItems, results) {
+  let completedThisPoll = 0;
+  let processingCount = 0;
+
+  for (const job of submittedJobs) {
+    if (results.has(job.sceneIndex)) continue;
+    const match = historyItems.find(h =>
+      h.promptText.substring(0, 40).includes(job.promptPrefix.substring(0, 40)) ||
+      job.promptPrefix.substring(0, 40).includes(h.promptText.substring(0, 40))
+    );
+    if (match && !match.isProcessing) completedThisPoll++;
+    else if (match && match.isProcessing) processingCount++;
+  }
+
+  return { completedThisPoll, processingCount };
+}
+
+// Intercept API responses and/or direct-fetch to get video job data.
+async function interceptVideoApiData(page) {
+  let projectApiData = null;
+  const apiHandler = async (response) => {
+    const url = response.url();
+    if (url.includes('fnf.higgsfield.ai/project') ||
+        url.includes('fnf.higgsfield.ai/job') ||
+        url.includes('higgsfield.ai/api/')) {
+      try {
+        const data = await response.json();
+        if (data?.job_sets?.length > 0) projectApiData = data;
+      } catch {}
+    }
+  };
+  page.on('response', apiHandler);
+
+  await page.goto(`${BASE_URL}/create/video`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await page.waitForTimeout(4000);
+  await clickHistoryTab(page, { waitMs: 4000 });
+
+  if (!projectApiData) {
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(6000);
+  }
+  page.off('response', apiHandler);
+
+  // Fallback: direct fetch using the page's auth context
+  if (!projectApiData) {
+    console.log(`  API interception missed. Trying direct fetch...`);
+    try {
+      projectApiData = await page.evaluate(async () => {
+        const resp = await fetch('https://fnf.higgsfield.ai/project?job_set_type=image2video&limit=20&offset=0', {
+          credentials: 'include',
+          headers: { 'Accept': 'application/json' },
+        });
+        return resp.ok ? await resp.json() : null;
+      });
+      if (projectApiData?.job_sets?.length > 0) {
+        console.log(`  Direct fetch got ${projectApiData.job_sets.length} job set(s)`);
+      }
+    } catch (fetchErr) {
+      console.log(`  Direct fetch failed: ${fetchErr.message}`);
+    }
+  }
+
+  return projectApiData;
+}
+
+// Score how well two prompt strings match by comparing their prefix characters.
+function scorePromptMatch(promptA, promptB) {
+  let score = 0;
+  const minLen = Math.min(promptA.length, promptB.length, 60);
+  for (let c = 0; c < minLen; c++) {
+    if (promptA[c] === promptB[c]) score++;
+    else break;
+  }
+  return score;
+}
+
+// Match API job_sets to submitted jobs by prompt text (Strategy 1) and order (Strategy 2).
+// Returns nothing — mutates jobs by setting _matchedJobSet and _matchMethod.
+function matchJobSetsToSubmittedJobs(submittedJobs, completedJobSets, results) {
+  const matchedJobSetIds = new Set();
+
+  // Strategy 1: Prompt-based matching
+  for (const job of submittedJobs) {
+    if (results.has(job.sceneIndex)) continue;
+    let bestMatch = null;
+    let bestScore = 0;
+
+    for (const jobSet of completedJobSets) {
+      const jobSetId = jobSet.id || jobSet.prompt;
+      if (matchedJobSetIds.has(jobSetId)) continue;
+      const score = scorePromptMatch(jobSet.prompt || '', job.promptPrefix || '');
+      if (score >= 20 && score > bestScore) {
+        bestMatch = jobSet;
+        bestScore = score;
+      }
+    }
+
+    if (bestMatch) {
+      matchedJobSetIds.add(bestMatch.id || bestMatch.prompt);
+      job._matchedJobSet = bestMatch;
+      job._matchMethod = 'prompt';
+    }
+  }
+
+  // Strategy 2: Order-based fallback for models with empty prompts (e.g. Seedance)
+  const unmatchedJobs = submittedJobs.filter(j => !results.has(j.sceneIndex) && !j._matchedJobSet);
+  if (unmatchedJobs.length > 0) {
+    const unmatchedJobSets = completedJobSets.filter(js => !matchedJobSetIds.has(js.id || js.prompt));
+    const reversedJobSets = [...unmatchedJobSets].reverse();
+
+    for (let i = 0; i < unmatchedJobs.length && i < reversedJobSets.length; i++) {
+      const job = unmatchedJobs[i];
+      const jobSet = reversedJobSets[i];
+      matchedJobSetIds.add(jobSet.id || jobSet.prompt);
+      job._matchedJobSet = jobSet;
+      job._matchMethod = 'order';
+      console.log(`  Scene ${job.sceneIndex + 1}: order-based match (empty prompt fallback)`);
+    }
+  }
+}
+
+// Download matched videos for submitted jobs from their matched API jobSets.
+function downloadMatchedVideos(submittedJobs, outputDir, results) {
+  for (const job of submittedJobs) {
+    if (results.has(job.sceneIndex)) continue;
+    const bestMatch = job._matchedJobSet;
+    if (!bestMatch) continue;
+    const matchMethod = job._matchMethod || 'prompt';
+    delete job._matchedJobSet;
+    delete job._matchMethod;
+
+    for (const j of (bestMatch.jobs || [])) {
+      if (j.status !== 'completed' || !j.results?.raw?.url?.includes('cloudfront.net')) continue;
+      const videoUrl = j.results.raw.url;
+      const meta = { model: job.model, promptSnippet: job.promptPrefix };
+      const filename = buildDescriptiveFilename(meta, `scene-${job.sceneIndex + 1}-${Date.now()}.mp4`, job.sceneIndex);
+      const savePath = join(outputDir, filename);
+      try {
+        const { httpCode, size } = curlDownload(videoUrl, savePath, { withHttpCode: true });
+        if (httpCode === '200' && size > 10000) {
+          writeJsonSidecar(savePath, {
+            command: 'pipeline', type: 'video', ...meta,
+            sceneIndex: job.sceneIndex, strategy: 'api-interception',
+            cloudFrontUrl: videoUrl,
+          });
+          console.log(`  Scene ${job.sceneIndex + 1}: downloaded (${(size / 1024 / 1024).toFixed(1)}MB) ${filename}`);
+          console.log(`    Match method: ${matchMethod}, prompt: "${(bestMatch.prompt || '(empty)').substring(0, 60)}"`);
+          results.set(job.sceneIndex, savePath);
+        }
+      } catch {}
+      break;
+    }
+  }
+}
+
 async function pollAndDownloadVideos(page, submittedJobs, outputDir, timeout = 600000) {
-  const results = new Map(); // sceneIndex -> path
+  const results = new Map();
   const startTime = Date.now();
   const pollInterval = 15000;
 
   console.log(`Polling for ${submittedJobs.length} video(s) (timeout: ${timeout / 1000}s)...`);
-
-  // Switch to History tab
-  const historyTab = page.locator('[role="tab"]:has-text("History")');
-  if (await historyTab.count() > 0) {
-    await historyTab.click({ force: true });
-    await page.waitForTimeout(2000);
-  }
+  const historyTab = await clickHistoryTab(page);
 
   while (Date.now() - startTime < timeout && results.size < submittedJobs.length) {
     await page.waitForTimeout(pollInterval);
     await dismissAllModals(page);
 
-    // Get all History items with their prompt text and processing status
-    const historyItems = await page.evaluate(() => {
-      const items = document.querySelectorAll('main li');
-      return [...items].map((item, i) => {
-        const textbox = item.querySelector('[role="textbox"], textarea');
-        const promptText = textbox?.textContent?.trim()?.substring(0, 80) || '';
-        const itemText = item.textContent || '';
-        const isProcessing = itemText.includes('In queue') || itemText.includes('Processing') || itemText.includes('Cancel');
-        return { index: i, promptText, isProcessing };
-      });
-    });
-
+    const historyItems = await scrapeHistoryItems(page);
     const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(0);
-    let completedThisPoll = 0;
-    let processingCount = 0;
-
-    for (const job of submittedJobs) {
-      if (results.has(job.sceneIndex)) continue; // Already downloaded
-
-      // Find matching History item by prompt prefix
-      const match = historyItems.find(h =>
-        h.promptText.substring(0, 40).includes(job.promptPrefix.substring(0, 40)) ||
-        job.promptPrefix.substring(0, 40).includes(h.promptText.substring(0, 40))
-      );
-
-      if (match && !match.isProcessing) {
-        completedThisPoll++;
-      } else if (match && match.isProcessing) {
-        processingCount++;
-      }
-    }
-
+    const { completedThisPoll, processingCount } = countJobStatuses(submittedJobs, historyItems, results);
     const pendingCount = submittedJobs.length - results.size;
     console.log(`  ${elapsedSec}s: ${results.size} done, ${processingCount} processing, ${pendingCount - processingCount - completedThisPoll} waiting`);
 
-    // If any new completions detected, download them via API
     if (completedThisPoll > 0) {
       console.log(`  ${completedThisPoll} new completion(s) detected, downloading via API...`);
-
-      // Intercept API to get all video URLs — try multiple approaches
-      let projectApiData = null;
-      const apiHandler = async (response) => {
-        const url = response.url();
-        // Catch project API, job_sets API, or any Higgsfield API with video data
-        if (url.includes('fnf.higgsfield.ai/project') ||
-            url.includes('fnf.higgsfield.ai/job') ||
-            url.includes('higgsfield.ai/api/')) {
-          try {
-            const data = await response.json();
-            // Accept any response that has job_sets with video URLs
-            if (data?.job_sets?.length > 0) {
-              projectApiData = data;
-            }
-          } catch {}
-        }
-      };
-      page.on('response', apiHandler);
-
-      // Navigate to video creation page to trigger API call (reload may not fire it)
-      await page.goto(`${BASE_URL}/create/video`, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      await page.waitForTimeout(4000);
-
-      // Click History tab to load job data
-      const histTab = page.locator('[role="tab"]:has-text("History")');
-      if (await histTab.count() > 0) {
-        await histTab.click({ force: true });
-        await page.waitForTimeout(4000);
-      }
-
-      // If no API data yet, try a page reload as fallback
-      if (!projectApiData) {
-        await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
-        await page.waitForTimeout(6000);
-      }
-
-      page.off('response', apiHandler);
-
-      // Fallback: Direct API fetch using the page's auth context.
-      // The API interception can miss responses if they arrive before the listener
-      // is attached or if the page caches the data. Fetching directly is more reliable.
-      if (!projectApiData) {
-        console.log(`  API interception missed. Trying direct fetch...`);
-        try {
-          projectApiData = await page.evaluate(async () => {
-            // The Higgsfield API endpoint for video history
-            const resp = await fetch('https://fnf.higgsfield.ai/project?job_set_type=image2video&limit=20&offset=0', {
-              credentials: 'include',
-              headers: { 'Accept': 'application/json' },
-            });
-            if (resp.ok) return await resp.json();
-            return null;
-          });
-          if (projectApiData?.job_sets?.length > 0) {
-            console.log(`  Direct fetch got ${projectApiData.job_sets.length} job set(s)`);
-          }
-        } catch (fetchErr) {
-          console.log(`  Direct fetch failed: ${fetchErr.message}`);
-        }
-      }
+      const projectApiData = await interceptVideoApiData(page);
 
       if (!projectApiData) {
         console.log(`  WARNING: No API data captured. API interception may need updating.`);
       }
 
       if (projectApiData?.job_sets?.length > 0) {
-        if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
-
-        // Match API job_sets to our submitted jobs by prompt text.
-        // CRITICAL: Track matched jobSets to prevent the same video being
-        // downloaded for multiple scenes (each jobSet matches exactly one scene).
-        const matchedJobSetIds = new Set();
-
-        // Pre-filter to only completed jobSets with downloadable videos
+        ensureDir(outputDir);
         const completedJobSets = projectApiData.job_sets.filter(js =>
           (js.jobs || []).some(j => j.status === 'completed' && j.results?.raw?.url?.includes('cloudfront.net'))
         );
-
-        // Strategy 1: Prompt-based matching (works for most models)
-        for (const job of submittedJobs) {
-          if (results.has(job.sceneIndex)) continue;
-
-          let bestMatch = null;
-          let bestScore = 0;
-
-          for (const jobSet of completedJobSets) {
-            const jobSetId = jobSet.id || jobSet.prompt;
-            if (matchedJobSetIds.has(jobSetId)) continue;
-
-            const jobPrompt = jobSet.prompt || '';
-            const submittedPrompt = job.promptPrefix || '';
-
-            // Score the match: longer matching prefix = better match
-            let score = 0;
-            const minLen = Math.min(jobPrompt.length, submittedPrompt.length, 60);
-            for (let c = 0; c < minLen; c++) {
-              if (jobPrompt[c] === submittedPrompt[c]) score++;
-              else break;
-            }
-
-            if (score >= 20 && score > bestScore) {
-              bestMatch = jobSet;
-              bestScore = score;
-            }
-          }
-
-          if (bestMatch) {
-            const bestId = bestMatch.id || bestMatch.prompt;
-            matchedJobSetIds.add(bestId);
-            job._matchedJobSet = bestMatch;
-            job._matchMethod = 'prompt';
-          }
-        }
-
-        // Strategy 2: Order-based fallback for models with empty prompts (e.g. Seedance).
-        // The API returns job_sets newest-first. Our submittedJobs are in scene order
-        // (oldest submission first). So we reverse-match: the Nth unmatched submitted
-        // job corresponds to the Nth-from-last unmatched completed jobSet.
-        const unmatchedJobs = submittedJobs.filter(j => !results.has(j.sceneIndex) && !j._matchedJobSet);
-        if (unmatchedJobs.length > 0) {
-          const unmatchedJobSets = completedJobSets.filter(js => {
-            const jsId = js.id || js.prompt;
-            return !matchedJobSetIds.has(jsId);
-          });
-
-          // API returns newest first; submitted jobs are in chronological order.
-          // Reverse the unmatched jobSets so index 0 = oldest = first submitted.
-          const reversedJobSets = [...unmatchedJobSets].reverse();
-
-          for (let i = 0; i < unmatchedJobs.length && i < reversedJobSets.length; i++) {
-            const job = unmatchedJobs[i];
-            const jobSet = reversedJobSets[i];
-            const jsId = jobSet.id || jobSet.prompt;
-            matchedJobSetIds.add(jsId);
-            job._matchedJobSet = jobSet;
-            job._matchMethod = 'order';
-            console.log(`  Scene ${job.sceneIndex + 1}: order-based match (empty prompt fallback)`);
-          }
-        }
-
-        for (const job of submittedJobs) {
-          if (results.has(job.sceneIndex)) continue;
-          const bestMatch = job._matchedJobSet;
-          if (!bestMatch) continue;
-          delete job._matchedJobSet;
-
-          // Download the completed video (jobSet already claimed above)
-          for (const j of (bestMatch.jobs || [])) {
-            if (j.status === 'completed' && j.results?.raw?.url?.includes('cloudfront.net')) {
-              const videoUrl = j.results.raw.url;
-              const meta = { model: job.model, promptSnippet: job.promptPrefix };
-              const filename = buildDescriptiveFilename(meta, `scene-${job.sceneIndex + 1}-${Date.now()}.mp4`, job.sceneIndex);
-              const savePath = join(outputDir, filename);
-              try {
-                const curlResult = execFileSync('curl', ['-sL', '-w', '%{http_code}', '-o', savePath, videoUrl], { timeout: 120000, encoding: 'utf-8' });
-                const httpCode = curlResult.trim();
-                if (httpCode === '200' && existsSync(savePath) && statSync(savePath).size > 10000) {
-                  const fileSize = statSync(savePath).size;
-                  // Write JSON sidecar for pipeline scene video
-                  writeJsonSidecar(savePath, {
-                    command: 'pipeline', type: 'video', ...meta,
-                    sceneIndex: job.sceneIndex, strategy: 'api-interception',
-                    cloudFrontUrl: videoUrl, matchScore: bestScore,
-                  });
-                  const matchMethod = job._matchMethod || 'prompt';
-                  console.log(`  Scene ${job.sceneIndex + 1}: downloaded (${(fileSize / 1024 / 1024).toFixed(1)}MB) ${filename}`);
-                  console.log(`    Match method: ${matchMethod}, prompt: "${(bestMatch.prompt || '(empty)').substring(0, 60)}"`);
-                  results.set(job.sceneIndex, savePath);
-                }
-              } catch {}
-              break;
-            }
-          }
-        }
+        matchJobSetsToSubmittedJobs(submittedJobs, completedJobSets, results);
+        downloadMatchedVideos(submittedJobs, outputDir, results);
       }
 
-      // Re-click History tab after reload for continued polling
-      if (await historyTab.count() > 0) {
-        await historyTab.click({ force: true });
-        await page.waitForTimeout(2000);
-      }
+      await clickHistoryTab(page);
     }
   }
 
