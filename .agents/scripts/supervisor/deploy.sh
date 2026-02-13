@@ -4,7 +4,6 @@
 # Functions for PR review, merge, postflight, deployment,
 # verification, and rebase operations
 
-
 #######################################
 # Run postflight checks after merge
 # Lightweight: just verifies the merge landed on main
@@ -272,7 +271,7 @@ cmd_pr_lifecycle() {
 
 	# Step 1: Transition to pr_review if still in complete
 	if [[ "$tstatus" == "complete" ]]; then
-		if [[ -z "$tpr" || "$tpr" == "no_pr" || "$tpr" == "task_only" ]]; then
+		if [[ -z "$tpr" || "$tpr" == "no_pr" || "$tpr" == "task_only" || "$tpr" == "verified_complete" ]]; then
 			# Discover PR via centralized link_pr_to_task() (t232, t223)
 			local found_pr=""
 			if [[ "$dry_run" == "false" ]]; then

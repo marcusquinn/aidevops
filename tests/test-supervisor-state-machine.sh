@@ -28,29 +28,29 @@ SKIP_COUNT=0
 TOTAL_COUNT=0
 
 pass() {
-    PASS_COUNT=$((PASS_COUNT + 1))
-    TOTAL_COUNT=$((TOTAL_COUNT + 1))
-    printf "  \033[0;32mPASS\033[0m %s\n" "$1"
+	PASS_COUNT=$((PASS_COUNT + 1))
+	TOTAL_COUNT=$((TOTAL_COUNT + 1))
+	printf "  \033[0;32mPASS\033[0m %s\n" "$1"
 }
 
 fail() {
-    FAIL_COUNT=$((FAIL_COUNT + 1))
-    TOTAL_COUNT=$((TOTAL_COUNT + 1))
-    printf "  \033[0;31mFAIL\033[0m %s\n" "$1"
-    if [[ -n "${2:-}" ]]; then
-        printf "       %s\n" "$2"
-    fi
+	FAIL_COUNT=$((FAIL_COUNT + 1))
+	TOTAL_COUNT=$((TOTAL_COUNT + 1))
+	printf "  \033[0;31mFAIL\033[0m %s\n" "$1"
+	if [[ -n "${2:-}" ]]; then
+		printf "       %s\n" "$2"
+	fi
 }
 
 skip() {
-    SKIP_COUNT=$((SKIP_COUNT + 1))
-    TOTAL_COUNT=$((TOTAL_COUNT + 1))
-    printf "  \033[0;33mSKIP\033[0m %s\n" "$1"
+	SKIP_COUNT=$((SKIP_COUNT + 1))
+	TOTAL_COUNT=$((TOTAL_COUNT + 1))
+	printf "  \033[0;33mSKIP\033[0m %s\n" "$1"
 }
 
 section() {
-    echo ""
-    printf "\033[1m=== %s ===\033[0m\n" "$1"
+	echo ""
+	printf "\033[1m=== %s ===\033[0m\n" "$1"
 }
 
 # --- Test DB Setup ---
@@ -60,22 +60,22 @@ trap 'rm -rf "$TEST_DIR"' EXIT
 
 # Helper: run supervisor command with isolated DB
 sup() {
-    bash "$SUPERVISOR_SCRIPT" "$@" 2>&1
+	bash "$SUPERVISOR_SCRIPT" "$@" 2>&1
 }
 
 # Helper: query the test DB directly
 test_db() {
-    sqlite3 -cmd ".timeout 5000" "$TEST_DIR/supervisor.db" "$@"
+	sqlite3 -cmd ".timeout 5000" "$TEST_DIR/supervisor.db" "$@"
 }
 
 # Helper: get task status
 get_status() {
-    test_db "SELECT status FROM tasks WHERE id = '$1';"
+	test_db "SELECT status FROM tasks WHERE id = '$1';"
 }
 
 # Helper: get task field
 get_field() {
-    test_db "SELECT $2 FROM tasks WHERE id = '$1';"
+	test_db "SELECT $2 FROM tasks WHERE id = '$1';"
 }
 
 # ============================================================
@@ -86,25 +86,25 @@ section "Database Initialization"
 # Test: init creates database
 sup init >/dev/null
 if [[ -f "$TEST_DIR/supervisor.db" ]]; then
-    pass "init creates supervisor.db"
+	pass "init creates supervisor.db"
 else
-    fail "init did not create supervisor.db"
+	fail "init did not create supervisor.db"
 fi
 
 # Test: tables exist
 tables=$(test_db "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;" | tr '\n' ',')
 if [[ "$tables" == *"tasks"* && "$tables" == *"batches"* && "$tables" == *"state_log"* ]]; then
-    pass "Required tables exist (tasks, batches, state_log, batch_tasks)"
+	pass "Required tables exist (tasks, batches, state_log, batch_tasks)"
 else
-    fail "Missing required tables" "Found: $tables"
+	fail "Missing required tables" "Found: $tables"
 fi
 
 # Test: WAL mode is set
 journal_mode=$(test_db "PRAGMA journal_mode;")
 if [[ "$journal_mode" == "wal" ]]; then
-    pass "WAL journal mode is set"
+	pass "WAL journal mode is set"
 else
-    fail "Journal mode is '$journal_mode', expected 'wal'"
+	fail "Journal mode is '$journal_mode', expected 'wal'"
 fi
 
 # ============================================================
@@ -116,25 +116,25 @@ section "Task Addition"
 sup add test-t001 --repo /tmp/test --description "Test task 1" >/dev/null
 status=$(get_status "test-t001")
 if [[ "$status" == "queued" ]]; then
-    pass "Added task starts in 'queued' state"
+	pass "Added task starts in 'queued' state"
 else
-    fail "Added task has status '$status', expected 'queued'"
+	fail "Added task has status '$status', expected 'queued'"
 fi
 
 # Test: duplicate task rejected
 dup_output=$(sup add test-t001 --repo /tmp/test 2>&1 || true)
 if echo "$dup_output" | grep -qi "already exists"; then
-    pass "Duplicate task ID is rejected"
+	pass "Duplicate task ID is rejected"
 else
-    fail "Duplicate task was not rejected" "$dup_output"
+	fail "Duplicate task was not rejected" "$dup_output"
 fi
 
 # Test: state_log records initial state
 log_entry=$(test_db "SELECT to_state FROM state_log WHERE task_id = 'test-t001' ORDER BY id LIMIT 1;")
 if [[ "$log_entry" == "queued" ]]; then
-    pass "State log records initial 'queued' entry"
+	pass "State log records initial 'queued' entry"
 else
-    fail "State log initial entry is '$log_entry', expected 'queued'"
+	fail "State log initial entry is '$log_entry', expected 'queued'"
 fi
 
 # ============================================================
@@ -145,49 +145,49 @@ section "Valid State Transitions (Happy Path)"
 # queued -> dispatched
 sup transition test-t001 dispatched >/dev/null
 if [[ "$(get_status test-t001)" == "dispatched" ]]; then
-    pass "queued -> dispatched"
+	pass "queued -> dispatched"
 else
-    fail "queued -> dispatched failed"
+	fail "queued -> dispatched failed"
 fi
 
 # Test: started_at is set on first dispatch
 started=$(get_field "test-t001" "started_at")
 if [[ -n "$started" ]]; then
-    pass "started_at set on first dispatch"
+	pass "started_at set on first dispatch"
 else
-    fail "started_at not set on dispatch"
+	fail "started_at not set on dispatch"
 fi
 
 # dispatched -> running
 sup transition test-t001 running >/dev/null
 if [[ "$(get_status test-t001)" == "running" ]]; then
-    pass "dispatched -> running"
+	pass "dispatched -> running"
 else
-    fail "dispatched -> running failed"
+	fail "dispatched -> running failed"
 fi
 
 # running -> evaluating
 sup transition test-t001 evaluating >/dev/null
 if [[ "$(get_status test-t001)" == "evaluating" ]]; then
-    pass "running -> evaluating"
+	pass "running -> evaluating"
 else
-    fail "running -> evaluating failed"
+	fail "running -> evaluating failed"
 fi
 
 # evaluating -> complete
 sup transition test-t001 complete >/dev/null
 if [[ "$(get_status test-t001)" == "complete" ]]; then
-    pass "evaluating -> complete"
+	pass "evaluating -> complete"
 else
-    fail "evaluating -> complete failed"
+	fail "evaluating -> complete failed"
 fi
 
 # Test: completed_at is set
 completed=$(get_field "test-t001" "completed_at")
 if [[ -n "$completed" ]]; then
-    pass "completed_at set on terminal state"
+	pass "completed_at set on terminal state"
 else
-    fail "completed_at not set on complete"
+	fail "completed_at not set on complete"
 fi
 
 # ============================================================
@@ -198,41 +198,41 @@ section "Post-PR Lifecycle Transitions"
 # complete -> pr_review
 sup transition test-t001 pr_review >/dev/null
 if [[ "$(get_status test-t001)" == "pr_review" ]]; then
-    pass "complete -> pr_review"
+	pass "complete -> pr_review"
 else
-    fail "complete -> pr_review failed"
+	fail "complete -> pr_review failed"
 fi
 
 # pr_review -> merging
 sup transition test-t001 merging >/dev/null
 if [[ "$(get_status test-t001)" == "merging" ]]; then
-    pass "pr_review -> merging"
+	pass "pr_review -> merging"
 else
-    fail "pr_review -> merging failed"
+	fail "pr_review -> merging failed"
 fi
 
 # merging -> merged
 sup transition test-t001 merged >/dev/null
 if [[ "$(get_status test-t001)" == "merged" ]]; then
-    pass "merging -> merged"
+	pass "merging -> merged"
 else
-    fail "merging -> merged failed"
+	fail "merging -> merged failed"
 fi
 
 # merged -> deploying
 sup transition test-t001 deploying >/dev/null
 if [[ "$(get_status test-t001)" == "deploying" ]]; then
-    pass "merged -> deploying"
+	pass "merged -> deploying"
 else
-    fail "merged -> deploying failed"
+	fail "merged -> deploying failed"
 fi
 
 # deploying -> deployed
 sup transition test-t001 deployed >/dev/null
 if [[ "$(get_status test-t001)" == "deployed" ]]; then
-    pass "deploying -> deployed"
+	pass "deploying -> deployed"
 else
-    fail "deploying -> deployed failed"
+	fail "deploying -> deployed failed"
 fi
 
 # ============================================================
@@ -251,17 +251,17 @@ sup transition test-t148a pr_review >/dev/null
 # pr_review -> review_triage
 sup transition test-t148a review_triage >/dev/null
 if [[ "$(get_status test-t148a)" == "review_triage" ]]; then
-    pass "pr_review -> review_triage"
+	pass "pr_review -> review_triage"
 else
-    fail "pr_review -> review_triage failed"
+	fail "pr_review -> review_triage failed"
 fi
 
 # review_triage -> merging (no issues found, proceed to merge)
 sup transition test-t148a merging >/dev/null
 if [[ "$(get_status test-t148a)" == "merging" ]]; then
-    pass "review_triage -> merging (clean triage)"
+	pass "review_triage -> merging (clean triage)"
 else
-    fail "review_triage -> merging failed"
+	fail "review_triage -> merging failed"
 fi
 
 # Test review_triage -> blocked (critical review threads)
@@ -274,9 +274,9 @@ sup transition test-t148b pr_review >/dev/null
 sup transition test-t148b review_triage >/dev/null
 sup transition test-t148b blocked --error "Critical review thread requires human review" >/dev/null
 if [[ "$(get_status test-t148b)" == "blocked" ]]; then
-    pass "review_triage -> blocked (critical threads)"
+	pass "review_triage -> blocked (critical threads)"
 else
-    fail "review_triage -> blocked failed"
+	fail "review_triage -> blocked failed"
 fi
 
 # Test review_triage -> dispatched (fix worker dispatched)
@@ -289,9 +289,9 @@ sup transition test-t148c pr_review >/dev/null
 sup transition test-t148c review_triage >/dev/null
 sup transition test-t148c dispatched >/dev/null
 if [[ "$(get_status test-t148c)" == "dispatched" ]]; then
-    pass "review_triage -> dispatched (fix worker)"
+	pass "review_triage -> dispatched (fix worker)"
 else
-    fail "review_triage -> dispatched failed"
+	fail "review_triage -> dispatched failed"
 fi
 
 # Test review_triage -> cancelled
@@ -304,9 +304,9 @@ sup transition test-t148d pr_review >/dev/null
 sup transition test-t148d review_triage >/dev/null
 sup transition test-t148d cancelled >/dev/null
 if [[ "$(get_status test-t148d)" == "cancelled" ]]; then
-    pass "review_triage -> cancelled"
+	pass "review_triage -> cancelled"
 else
-    fail "review_triage -> cancelled failed"
+	fail "review_triage -> cancelled failed"
 fi
 
 # Test invalid: review_triage -> complete (not a valid transition)
@@ -319,16 +319,16 @@ sup transition test-t148e pr_review >/dev/null
 sup transition test-t148e review_triage >/dev/null
 invalid_triage=$(sup transition test-t148e complete 2>&1 || true)
 if echo "$invalid_triage" | grep -qi "invalid transition"; then
-    pass "review_triage -> complete rejected (invalid)"
+	pass "review_triage -> complete rejected (invalid)"
 else
-    fail "review_triage -> complete was not rejected" "$invalid_triage"
+	fail "review_triage -> complete was not rejected" "$invalid_triage"
 fi
 
 # Verify state unchanged after invalid transition
 if [[ "$(get_status test-t148e)" == "review_triage" ]]; then
-    pass "State unchanged after invalid review_triage transition"
+	pass "State unchanged after invalid review_triage transition"
 else
-    fail "State changed despite invalid transition: $(get_status test-t148e)"
+	fail "State changed despite invalid transition: $(get_status test-t148e)"
 fi
 
 # ============================================================
@@ -342,40 +342,40 @@ sup add test-t002 --repo /tmp/test --description "Invalid transition test" >/dev
 # queued -> running (must go through dispatched first)
 invalid_output=$(sup transition test-t002 running 2>&1 || true)
 if echo "$invalid_output" | grep -qi "invalid transition"; then
-    pass "queued -> running rejected (must go through dispatched)"
+	pass "queued -> running rejected (must go through dispatched)"
 else
-    fail "queued -> running was not rejected" "$invalid_output"
+	fail "queued -> running was not rejected" "$invalid_output"
 fi
 
 # Verify state didn't change
 if [[ "$(get_status test-t002)" == "queued" ]]; then
-    pass "State unchanged after invalid transition"
+	pass "State unchanged after invalid transition"
 else
-    fail "State changed despite invalid transition: $(get_status test-t002)"
+	fail "State changed despite invalid transition: $(get_status test-t002)"
 fi
 
 # queued -> complete (skipping intermediate states)
 invalid_output2=$(sup transition test-t002 complete 2>&1 || true)
 if echo "$invalid_output2" | grep -qi "invalid transition"; then
-    pass "queued -> complete rejected (skipping intermediate states)"
+	pass "queued -> complete rejected (skipping intermediate states)"
 else
-    fail "queued -> complete was not rejected"
+	fail "queued -> complete was not rejected"
 fi
 
 # queued -> deployed (skipping all states)
 invalid_output3=$(sup transition test-t002 deployed 2>&1 || true)
 if echo "$invalid_output3" | grep -qi "invalid transition"; then
-    pass "queued -> deployed rejected"
+	pass "queued -> deployed rejected"
 else
-    fail "queued -> deployed was not rejected"
+	fail "queued -> deployed was not rejected"
 fi
 
 # Invalid state name
 invalid_output4=$(sup transition test-t002 nonexistent_state 2>&1 || true)
 if echo "$invalid_output4" | grep -qi "invalid state"; then
-    pass "Nonexistent state name rejected"
+	pass "Nonexistent state name rejected"
 else
-    fail "Nonexistent state name was not rejected"
+	fail "Nonexistent state name was not rejected"
 fi
 
 # ============================================================
@@ -392,25 +392,25 @@ sup transition test-t003 evaluating >/dev/null
 # evaluating -> retrying
 sup transition test-t003 retrying >/dev/null
 if [[ "$(get_status test-t003)" == "retrying" ]]; then
-    pass "evaluating -> retrying"
+	pass "evaluating -> retrying"
 else
-    fail "evaluating -> retrying failed"
+	fail "evaluating -> retrying failed"
 fi
 
 # Test: retries counter incremented
 retries=$(get_field "test-t003" "retries")
 if [[ "$retries" -eq 1 ]]; then
-    pass "Retry counter incremented to 1"
+	pass "Retry counter incremented to 1"
 else
-    fail "Retry counter is $retries, expected 1"
+	fail "Retry counter is $retries, expected 1"
 fi
 
 # retrying -> dispatched (re-dispatch)
 sup transition test-t003 dispatched >/dev/null
 if [[ "$(get_status test-t003)" == "dispatched" ]]; then
-    pass "retrying -> dispatched (re-dispatch)"
+	pass "retrying -> dispatched (re-dispatch)"
 else
-    fail "retrying -> dispatched failed"
+	fail "retrying -> dispatched failed"
 fi
 
 # Second retry cycle
@@ -419,9 +419,9 @@ sup transition test-t003 evaluating >/dev/null
 sup transition test-t003 retrying >/dev/null
 retries2=$(get_field "test-t003" "retries")
 if [[ "$retries2" -eq 2 ]]; then
-    pass "Retry counter incremented to 2 on second retry"
+	pass "Retry counter incremented to 2 on second retry"
 else
-    fail "Retry counter is $retries2, expected 2"
+	fail "Retry counter is $retries2, expected 2"
 fi
 
 # ============================================================
@@ -437,33 +437,33 @@ sup transition test-t004 running >/dev/null
 # running -> failed with error message
 sup transition test-t004 failed --error "Timeout after 30 minutes" >/dev/null
 if [[ "$(get_status test-t004)" == "failed" ]]; then
-    pass "running -> failed with error"
+	pass "running -> failed with error"
 else
-    fail "running -> failed transition failed"
+	fail "running -> failed transition failed"
 fi
 
 # Test: error message stored
 error_msg=$(get_field "test-t004" "error")
 if [[ "$error_msg" == "Timeout after 30 minutes" ]]; then
-    pass "Error message stored correctly"
+	pass "Error message stored correctly"
 else
-    fail "Error message is '$error_msg', expected 'Timeout after 30 minutes'"
+	fail "Error message is '$error_msg', expected 'Timeout after 30 minutes'"
 fi
 
 # Test: completed_at set on failure
 completed_fail=$(get_field "test-t004" "completed_at")
 if [[ -n "$completed_fail" ]]; then
-    pass "completed_at set on failed state"
+	pass "completed_at set on failed state"
 else
-    fail "completed_at not set on failed state"
+	fail "completed_at not set on failed state"
 fi
 
 # Test: failed -> queued (re-queue after failure)
 sup transition test-t004 queued >/dev/null
 if [[ "$(get_status test-t004)" == "queued" ]]; then
-    pass "failed -> queued (re-queue)"
+	pass "failed -> queued (re-queue)"
 else
-    fail "failed -> queued failed"
+	fail "failed -> queued failed"
 fi
 
 # ============================================================
@@ -475,9 +475,9 @@ section "Cancellation"
 sup add test-t005 --repo /tmp/test --description "Cancel test" >/dev/null
 sup transition test-t005 cancelled >/dev/null
 if [[ "$(get_status test-t005)" == "cancelled" ]]; then
-    pass "queued -> cancelled"
+	pass "queued -> cancelled"
 else
-    fail "queued -> cancelled failed"
+	fail "queued -> cancelled failed"
 fi
 
 # dispatched -> cancelled
@@ -485,9 +485,9 @@ sup add test-t006 --repo /tmp/test --description "Cancel dispatched" >/dev/null
 sup transition test-t006 dispatched >/dev/null
 sup transition test-t006 cancelled >/dev/null
 if [[ "$(get_status test-t006)" == "cancelled" ]]; then
-    pass "dispatched -> cancelled"
+	pass "dispatched -> cancelled"
 else
-    fail "dispatched -> cancelled failed"
+	fail "dispatched -> cancelled failed"
 fi
 
 # running -> cancelled
@@ -496,9 +496,9 @@ sup transition test-t007 dispatched >/dev/null
 sup transition test-t007 running >/dev/null
 sup transition test-t007 cancelled >/dev/null
 if [[ "$(get_status test-t007)" == "cancelled" ]]; then
-    pass "running -> cancelled"
+	pass "running -> cancelled"
 else
-    fail "running -> cancelled failed"
+	fail "running -> cancelled failed"
 fi
 
 # ============================================================
@@ -513,17 +513,17 @@ sup transition test-t008 running >/dev/null
 sup transition test-t008 evaluating >/dev/null
 sup transition test-t008 blocked >/dev/null
 if [[ "$(get_status test-t008)" == "blocked" ]]; then
-    pass "evaluating -> blocked"
+	pass "evaluating -> blocked"
 else
-    fail "evaluating -> blocked failed"
+	fail "evaluating -> blocked failed"
 fi
 
 # blocked -> queued (unblock)
 sup transition test-t008 queued >/dev/null
 if [[ "$(get_status test-t008)" == "queued" ]]; then
-    pass "blocked -> queued (unblock)"
+	pass "blocked -> queued (unblock)"
 else
-    fail "blocked -> queued failed"
+	fail "blocked -> queued failed"
 fi
 
 # blocked -> cancelled
@@ -534,9 +534,9 @@ sup transition test-t009 evaluating >/dev/null
 sup transition test-t009 blocked >/dev/null
 sup transition test-t009 cancelled >/dev/null
 if [[ "$(get_status test-t009)" == "cancelled" ]]; then
-    pass "blocked -> cancelled"
+	pass "blocked -> cancelled"
 else
-    fail "blocked -> cancelled failed"
+	fail "blocked -> cancelled failed"
 fi
 
 # ============================================================
@@ -547,17 +547,17 @@ section "State Log Audit Trail"
 # Count state log entries for test-t001 (went through full lifecycle)
 log_count=$(test_db "SELECT count(*) FROM state_log WHERE task_id = 'test-t001';")
 if [[ "$log_count" -ge 8 ]]; then
-    pass "State log has $log_count entries for full lifecycle task"
+	pass "State log has $log_count entries for full lifecycle task"
 else
-    fail "State log has only $log_count entries, expected >= 8"
+	fail "State log has only $log_count entries, expected >= 8"
 fi
 
 # Verify log entries are in order
 first_transition=$(test_db "SELECT from_state || '->' || to_state FROM state_log WHERE task_id = 'test-t001' ORDER BY id LIMIT 1;")
 if [[ "$first_transition" == "->queued" ]]; then
-    pass "First state log entry is initial queued"
+	pass "First state log entry is initial queued"
 else
-    fail "First state log entry is '$first_transition', expected '->queued'"
+	fail "First state log entry is '$first_transition', expected '->queued'"
 fi
 
 # ============================================================
@@ -574,21 +574,21 @@ branch=$(get_field "test-t010" "branch")
 worktree=$(get_field "test-t010" "worktree")
 
 if [[ "$session_id" == "ses_abc123" ]]; then
-    pass "session_id stored on transition"
+	pass "session_id stored on transition"
 else
-    fail "session_id is '$session_id', expected 'ses_abc123'"
+	fail "session_id is '$session_id', expected 'ses_abc123'"
 fi
 
 if [[ "$branch" == "feature/test" ]]; then
-    pass "branch stored on transition"
+	pass "branch stored on transition"
 else
-    fail "branch is '$branch', expected 'feature/test'"
+	fail "branch is '$branch', expected 'feature/test'"
 fi
 
 if [[ "$worktree" == "/tmp/wt" ]]; then
-    pass "worktree stored on transition"
+	pass "worktree stored on transition"
 else
-    fail "worktree is '$worktree', expected '/tmp/wt'"
+	fail "worktree is '$worktree', expected '/tmp/wt'"
 fi
 
 # ============================================================
@@ -604,37 +604,37 @@ sup batch test-batch --tasks "test-b001,test-b002" >/dev/null 2>&1 || true
 # Check if batch was created
 batch_status=$(test_db "SELECT status FROM batches WHERE name = 'test-batch';" 2>/dev/null || echo "")
 if [[ "$batch_status" == "active" ]]; then
-    pass "Batch created in 'active' state"
+	pass "Batch created in 'active' state"
 
-    # Complete first task
-    sup transition test-b001 dispatched >/dev/null
-    sup transition test-b001 running >/dev/null
-    sup transition test-b001 evaluating >/dev/null
-    sup transition test-b001 complete >/dev/null
+	# Complete first task
+	sup transition test-b001 dispatched >/dev/null
+	sup transition test-b001 running >/dev/null
+	sup transition test-b001 evaluating >/dev/null
+	sup transition test-b001 complete >/dev/null
 
-    # Batch should still be active (one task remaining)
-    batch_after_one=$(test_db "SELECT status FROM batches WHERE name = 'test-batch';")
-    if [[ "$batch_after_one" == "active" ]]; then
-        pass "Batch stays active with incomplete tasks"
-    else
-        fail "Batch status is '$batch_after_one' after one task complete, expected 'active'"
-    fi
+	# Batch should still be active (one task remaining)
+	batch_after_one=$(test_db "SELECT status FROM batches WHERE name = 'test-batch';")
+	if [[ "$batch_after_one" == "active" ]]; then
+		pass "Batch stays active with incomplete tasks"
+	else
+		fail "Batch status is '$batch_after_one' after one task complete, expected 'active'"
+	fi
 
-    # Complete second task
-    sup transition test-b002 dispatched >/dev/null
-    sup transition test-b002 running >/dev/null
-    sup transition test-b002 evaluating >/dev/null
-    sup transition test-b002 complete >/dev/null
+	# Complete second task
+	sup transition test-b002 dispatched >/dev/null
+	sup transition test-b002 running >/dev/null
+	sup transition test-b002 evaluating >/dev/null
+	sup transition test-b002 complete >/dev/null
 
-    # Batch should now be complete
-    batch_after_all=$(test_db "SELECT status FROM batches WHERE name = 'test-batch';")
-    if [[ "$batch_after_all" == "complete" ]]; then
-        pass "Batch auto-completes when all tasks finish"
-    else
-        fail "Batch status is '$batch_after_all' after all tasks complete, expected 'complete'"
-    fi
+	# Batch should now be complete
+	batch_after_all=$(test_db "SELECT status FROM batches WHERE name = 'test-batch';")
+	if [[ "$batch_after_all" == "complete" ]]; then
+		pass "Batch auto-completes when all tasks finish"
+	else
+		fail "Batch status is '$batch_after_all' after all tasks complete, expected 'complete'"
+	fi
 else
-    skip "Batch creation may require different syntax (status: '$batch_status')"
+	skip "Batch creation may require different syntax (status: '$batch_status')"
 fi
 
 # ============================================================
@@ -645,17 +645,17 @@ section "Edge Cases"
 # Transition on nonexistent task
 nonexist_output=$(sup transition nonexistent-task dispatched 2>&1 || true)
 if echo "$nonexist_output" | grep -qi "not found"; then
-    pass "Transition on nonexistent task returns error"
+	pass "Transition on nonexistent task returns error"
 else
-    fail "Transition on nonexistent task did not return error" "$nonexist_output"
+	fail "Transition on nonexistent task did not return error" "$nonexist_output"
 fi
 
 # Missing arguments
 missing_output=$(sup transition 2>&1 || true)
 if echo "$missing_output" | grep -qiE "usage|requires"; then
-    pass "Missing arguments shows usage"
+	pass "Missing arguments shows usage"
 else
-    fail "Missing arguments did not show usage"
+	fail "Missing arguments did not show usage"
 fi
 
 # ============================================================
@@ -669,73 +669,73 @@ PULSE_LOCK_DIR="$TEST_DIR/pulse.lock"
 # Test: lock can be acquired
 mkdir "$PULSE_LOCK_DIR" 2>/dev/null
 if [[ -d "$PULSE_LOCK_DIR" ]]; then
-    pass "Pulse lock directory can be created (mkdir is atomic)"
-    rmdir "$PULSE_LOCK_DIR"
+	pass "Pulse lock directory can be created (mkdir is atomic)"
+	rmdir "$PULSE_LOCK_DIR"
 else
-    fail "Could not create pulse lock directory"
+	fail "Could not create pulse lock directory"
 fi
 
 # Test: second mkdir fails when lock is held
 mkdir "$PULSE_LOCK_DIR" 2>/dev/null
 if ! mkdir "$PULSE_LOCK_DIR" 2>/dev/null; then
-    pass "Second lock acquisition fails when lock is held"
+	pass "Second lock acquisition fails when lock is held"
 else
-    fail "Second lock acquisition should have failed"
+	fail "Second lock acquisition should have failed"
 fi
 rm -rf "$PULSE_LOCK_DIR"
 
 # Test: lock with PID file
 mkdir "$PULSE_LOCK_DIR" 2>/dev/null
-echo $$ > "$PULSE_LOCK_DIR/pid"
+echo $$ >"$PULSE_LOCK_DIR/pid"
 holder_pid=$(cat "$PULSE_LOCK_DIR/pid" 2>/dev/null || echo "")
 if [[ "$holder_pid" == "$$" ]]; then
-    pass "PID file written correctly inside lock directory"
+	pass "PID file written correctly inside lock directory"
 else
-    fail "PID file content is '$holder_pid', expected '$$'"
+	fail "PID file content is '$holder_pid', expected '$$'"
 fi
 rm -rf "$PULSE_LOCK_DIR"
 
 # Test: stale lock detection (lock older than timeout)
 mkdir "$PULSE_LOCK_DIR" 2>/dev/null
-echo "99999999" > "$PULSE_LOCK_DIR/pid"  # Non-existent PID
+echo "99999999" >"$PULSE_LOCK_DIR/pid" # Non-existent PID
 # Touch the lock dir to make it appear old (10+ minutes ago)
 if [[ "$(uname)" == "Darwin" ]]; then
-    touch -t "$(date -v-15M +%Y%m%d%H%M.%S)" "$PULSE_LOCK_DIR"
+	touch -t "$(date -v-15M +%Y%m%d%H%M.%S)" "$PULSE_LOCK_DIR"
 else
-    touch -d "15 minutes ago" "$PULSE_LOCK_DIR"
+	touch -d "15 minutes ago" "$PULSE_LOCK_DIR"
 fi
 lock_mtime=0
 if [[ "$(uname)" == "Darwin" ]]; then
-    lock_mtime=$(stat -f %m "$PULSE_LOCK_DIR" 2>/dev/null || echo "0")
+	lock_mtime=$(stat -f %m "$PULSE_LOCK_DIR" 2>/dev/null || echo "0")
 else
-    lock_mtime=$(stat -c %Y "$PULSE_LOCK_DIR" 2>/dev/null || echo "0")
+	lock_mtime=$(stat -c %Y "$PULSE_LOCK_DIR" 2>/dev/null || echo "0")
 fi
 now_epoch=$(date +%s)
-lock_age=$(( now_epoch - lock_mtime ))
+lock_age=$((now_epoch - lock_mtime))
 if [[ "$lock_age" -gt 600 ]]; then
-    pass "Stale lock detected (age: ${lock_age}s > 600s timeout)"
+	pass "Stale lock detected (age: ${lock_age}s > 600s timeout)"
 else
-    fail "Lock age is ${lock_age}s, expected > 600s for stale detection"
+	fail "Lock age is ${lock_age}s, expected > 600s for stale detection"
 fi
 rm -rf "$PULSE_LOCK_DIR"
 
 # Test: dead process lock detection
 mkdir "$PULSE_LOCK_DIR" 2>/dev/null
-echo "99999999" > "$PULSE_LOCK_DIR/pid"  # PID that doesn't exist
+echo "99999999" >"$PULSE_LOCK_DIR/pid" # PID that doesn't exist
 if ! kill -0 99999999 2>/dev/null; then
-    pass "Dead process detected (PID 99999999 not running)"
+	pass "Dead process detected (PID 99999999 not running)"
 else
-    skip "PID 99999999 unexpectedly exists on this system"
+	skip "PID 99999999 unexpectedly exists on this system"
 fi
 rm -rf "$PULSE_LOCK_DIR"
 
 # Test: concurrent pulse protection via supervisor-helper.sh
 # Source the lock functions and test them directly
 (
-    export AIDEVOPS_SUPERVISOR_DIR="$TEST_DIR"
-    # Source just the functions we need by running in a subshell
-    # that sources the script's function definitions
-    source_output=$(bash -c "
+	export AIDEVOPS_SUPERVISOR_DIR="$TEST_DIR"
+	# Source just the functions we need by running in a subshell
+	# that sources the script's function definitions
+	source_output=$(bash -c "
         export AIDEVOPS_SUPERVISOR_DIR='$TEST_DIR'
         source '$SUPERVISOR_SCRIPT' --source-only 2>/dev/null || true
         # If --source-only isn't supported, the functions are still defined
@@ -748,64 +748,64 @@ rm -rf "$PULSE_LOCK_DIR"
         fi
     " 2>/dev/null || echo "SCRIPT_ERROR")
 
-    if echo "$source_output" | grep -q "ACQUIRED"; then
-        echo "LOCK_TEST_PASS"
-    elif echo "$source_output" | grep -q "FUNCTIONS_NOT_AVAILABLE"; then
-        echo "LOCK_TEST_SKIP"
-    else
-        echo "LOCK_TEST_FAIL"
-    fi
-) > "$TEST_DIR/lock_test_result" 2>/dev/null || true
+	if echo "$source_output" | grep -q "ACQUIRED"; then
+		echo "LOCK_TEST_PASS"
+	elif echo "$source_output" | grep -q "FUNCTIONS_NOT_AVAILABLE"; then
+		echo "LOCK_TEST_SKIP"
+	else
+		echo "LOCK_TEST_FAIL"
+	fi
+) >"$TEST_DIR/lock_test_result" 2>/dev/null || true
 
 lock_result=$(cat "$TEST_DIR/lock_test_result" 2>/dev/null || echo "LOCK_TEST_SKIP")
 case "$lock_result" in
-    LOCK_TEST_PASS) pass "acquire_pulse_lock/release_pulse_lock cycle works" ;;
-    LOCK_TEST_SKIP) skip "Lock functions not directly testable (script exits on source)" ;;
-    *) skip "Lock function test inconclusive ($lock_result)" ;;
+LOCK_TEST_PASS) pass "acquire_pulse_lock/release_pulse_lock cycle works" ;;
+LOCK_TEST_SKIP) skip "Lock functions not directly testable (script exits on source)" ;;
+*) skip "Lock function test inconclusive ($lock_result)" ;;
 esac
 
 # Test: lock directory is cleaned up after release
 if [[ ! -d "$PULSE_LOCK_DIR" ]]; then
-    pass "Lock directory cleaned up after tests"
+	pass "Lock directory cleaned up after tests"
 else
-    fail "Lock directory still exists after cleanup"
-    rm -rf "$PULSE_LOCK_DIR"
+	fail "Lock directory still exists after cleanup"
+	rm -rf "$PULSE_LOCK_DIR"
 fi
 
 # Test: atomic rename for stale lock breaking (t172)
 # When a stale/dead lock is detected, mv (rename) is used instead of rm+mkdir
 # to prevent two processes from both breaking the lock simultaneously
 mkdir "$PULSE_LOCK_DIR" 2>/dev/null
-echo "99999999" > "$PULSE_LOCK_DIR/pid"  # Dead PID
+echo "99999999" >"$PULSE_LOCK_DIR/pid" # Dead PID
 stale_dir="${PULSE_LOCK_DIR}.stale.$$"
 if mv "$PULSE_LOCK_DIR" "$stale_dir" 2>/dev/null; then
-    pass "Atomic rename (mv) succeeds for stale lock breaking (t172)"
-    # After rename, original dir is gone — mkdir should succeed
-    if mkdir "$PULSE_LOCK_DIR" 2>/dev/null; then
-        pass "Lock re-acquisition after atomic rename succeeds (t172)"
-        rmdir "$PULSE_LOCK_DIR"
-    else
-        fail "Lock re-acquisition after atomic rename failed"
-    fi
-    rm -rf "$stale_dir"
+	pass "Atomic rename (mv) succeeds for stale lock breaking (t172)"
+	# After rename, original dir is gone — mkdir should succeed
+	if mkdir "$PULSE_LOCK_DIR" 2>/dev/null; then
+		pass "Lock re-acquisition after atomic rename succeeds (t172)"
+		rmdir "$PULSE_LOCK_DIR"
+	else
+		fail "Lock re-acquisition after atomic rename failed"
+	fi
+	rm -rf "$stale_dir"
 else
-    fail "Atomic rename (mv) failed for stale lock"
+	fail "Atomic rename (mv) failed for stale lock"
 fi
 
 # Test: second process loses the rename race (t172)
 # Simulate: lock exists, process A renames it, process B tries to rename — fails
 mkdir "$PULSE_LOCK_DIR" 2>/dev/null
-echo "99999999" > "$PULSE_LOCK_DIR/pid"
+echo "99999999" >"$PULSE_LOCK_DIR/pid"
 # Process A wins the rename
 stale_dir_a="${PULSE_LOCK_DIR}.stale.a"
 mv "$PULSE_LOCK_DIR" "$stale_dir_a" 2>/dev/null
 # Process B tries to rename — lock dir is gone, mv should fail
 stale_dir_b="${PULSE_LOCK_DIR}.stale.b"
 if ! mv "$PULSE_LOCK_DIR" "$stale_dir_b" 2>/dev/null; then
-    pass "Second rename fails (race loser cannot break lock) (t172)"
+	pass "Second rename fails (race loser cannot break lock) (t172)"
 else
-    fail "Second rename should have failed (lock already renamed)"
-    rm -rf "$stale_dir_b"
+	fail "Second rename should have failed (lock already renamed)"
+	rm -rf "$stale_dir_b"
 fi
 rm -rf "$stale_dir_a"
 
@@ -829,29 +829,29 @@ batch_output=$(sup batch test-t172-batch --concurrency 1 --tasks "test-t172a,tes
 batch_t172_id=$(echo "$batch_output" | grep -oE 'batch-[0-9]+-[0-9]+' | head -1)
 
 if [[ -n "$batch_t172_id" ]]; then
-    # Simulate one task already running
-    sup transition test-t172a dispatched >/dev/null
-    sup transition test-t172a running >/dev/null
+	# Simulate one task already running
+	sup transition test-t172a dispatched >/dev/null
+	sup transition test-t172a running >/dev/null
 
-    # cmd_next should still return queued tasks (it no longer checks concurrency)
-    next_output=$(sup next "$batch_t172_id" 5 2>&1)
-    next_count=$(echo "$next_output" | grep -c "test-t172" || echo "0")
+	# cmd_next should still return queued tasks (it no longer checks concurrency)
+	next_output=$(sup next "$batch_t172_id" 5 2>&1)
+	next_count=$(echo "$next_output" | grep -c "test-t172" || echo "0")
 
-    if [[ "$next_count" -ge 1 ]]; then
-        pass "cmd_next returns queued tasks regardless of concurrency (t172)"
-    else
-        fail "cmd_next returned no tasks, expected queued tasks to be returned" "Output: $next_output"
-    fi
+	if [[ "$next_count" -ge 1 ]]; then
+		pass "cmd_next returns queued tasks regardless of concurrency (t172)"
+	else
+		fail "cmd_next returned no tasks, expected queued tasks to be returned" "Output: $next_output"
+	fi
 
-    # Verify running_count still works correctly
-    running=$(sup running-count "$batch_t172_id" 2>&1 | tail -1)
-    if [[ "$running" == "1" ]]; then
-        pass "running-count correctly reports 1 active task"
-    else
-        fail "running-count is '$running', expected '1'"
-    fi
+	# Verify running_count still works correctly
+	running=$(sup running-count "$batch_t172_id" 2>&1 | tail -1)
+	if [[ "$running" == "1" ]]; then
+		pass "running-count correctly reports 1 active task"
+	else
+		fail "running-count is '$running', expected '1'"
+	fi
 else
-    skip "Could not create batch for concurrency delegation test"
+	skip "Could not create batch for concurrency delegation test"
 fi
 
 # ============================================================
@@ -861,24 +861,24 @@ section "Evaluate Worker (t161)"
 
 # Helper: create a task with a mock log file for evaluate testing
 create_eval_task() {
-    local task_id="$1"
-    local log_content="$2"
-    local branch="${3:-}"
+	local task_id="$1"
+	local log_content="$2"
+	local branch="${3:-}"
 
-    # Add task
-    sup add "$task_id" --repo /tmp/test --description "Eval test: $task_id" >/dev/null 2>&1 || true
+	# Add task
+	sup add "$task_id" --repo /tmp/test --description "Eval test: $task_id" >/dev/null 2>&1 || true
 
-    # Create log file
-    local log_file="$TEST_DIR/${task_id}.log"
-    echo "$log_content" > "$log_file"
+	# Create log file
+	local log_file="$TEST_DIR/${task_id}.log"
+	echo "$log_content" >"$log_file"
 
-    # Set log_file and status in DB (simulate a completed worker)
-    test_db "UPDATE tasks SET log_file = '$log_file', status = 'running' WHERE id = '$task_id';"
+	# Set log_file and status in DB (simulate a completed worker)
+	test_db "UPDATE tasks SET log_file = '$log_file', status = 'running' WHERE id = '$task_id';"
 
-    # Set branch if provided
-    if [[ -n "$branch" ]]; then
-        test_db "UPDATE tasks SET branch = '$branch' WHERE id = '$task_id';"
-    fi
+	# Set branch if provided
+	if [[ -n "$branch" ]]; then
+		test_db "UPDATE tasks SET branch = '$branch' WHERE id = '$task_id';"
+	fi
 }
 
 # Test: FULL_LOOP_COMPLETE signal = definitive success
@@ -887,9 +887,9 @@ FULL_LOOP_COMPLETE
 EXIT:0"
 eval_result=$(sup evaluate eval-t001 --no-ai 2>&1 | grep "^Verdict:" || echo "")
 if echo "$eval_result" | grep -q "complete"; then
-    pass "FULL_LOOP_COMPLETE signal -> complete"
+	pass "FULL_LOOP_COMPLETE signal -> complete"
 else
-    fail "FULL_LOOP_COMPLETE signal should be complete" "Got: $eval_result"
+	fail "FULL_LOOP_COMPLETE signal should be complete" "Got: $eval_result"
 fi
 
 # Test: TASK_COMPLETE with exit 0 = partial success
@@ -898,9 +898,9 @@ TASK_COMPLETE
 EXIT:0"
 eval_result=$(sup evaluate eval-t002 --no-ai 2>&1 | grep "^Verdict:" || echo "")
 if echo "$eval_result" | grep -q "complete.*task_only"; then
-    pass "TASK_COMPLETE + exit 0 -> complete:task_only"
+	pass "TASK_COMPLETE + exit 0 -> complete:task_only"
 else
-    fail "TASK_COMPLETE + exit 0 should be complete:task_only" "Got: $eval_result"
+	fail "TASK_COMPLETE + exit 0 should be complete:task_only" "Got: $eval_result"
 fi
 
 # Test: Exit 0 with no signal and no PR = retry:clean_exit_no_signal
@@ -910,9 +910,9 @@ create_eval_task "eval-t003" "Some work output
 EXIT:0"
 eval_result=$(sup evaluate eval-t003 --no-ai 2>&1 | grep "^Verdict:" || echo "")
 if echo "$eval_result" | grep -q "retry.*clean_exit_no_signal"; then
-    pass "Exit 0 + no signal + no PR -> retry:clean_exit_no_signal"
+	pass "Exit 0 + no signal + no PR -> retry:clean_exit_no_signal"
 else
-    fail "Exit 0 + no signal + no PR should be retry:clean_exit_no_signal" "Got: $eval_result"
+	fail "Exit 0 + no signal + no PR should be retry:clean_exit_no_signal" "Got: $eval_result"
 fi
 
 # Test: Non-zero exit with auth error = blocked
@@ -921,9 +921,9 @@ permission denied
 EXIT:1"
 eval_result=$(sup evaluate eval-t004 --no-ai 2>&1 | grep "^Verdict:" || echo "")
 if echo "$eval_result" | grep -q "blocked.*auth_error"; then
-    pass "Non-zero exit + auth error -> blocked:auth_error"
+	pass "Non-zero exit + auth error -> blocked:auth_error"
 else
-    fail "Non-zero exit + auth error should be blocked:auth_error" "Got: $eval_result"
+	fail "Non-zero exit + auth error should be blocked:auth_error" "Got: $eval_result"
 fi
 
 # Test: Non-zero exit with rate limit = retry
@@ -932,9 +932,9 @@ create_eval_task "eval-t005" "Some work output
 EXIT:1"
 eval_result=$(sup evaluate eval-t005 --no-ai 2>&1 | grep "^Verdict:" || echo "")
 if echo "$eval_result" | grep -q "retry.*rate_limited"; then
-    pass "Non-zero exit + rate limit -> retry:rate_limited"
+	pass "Non-zero exit + rate limit -> retry:rate_limited"
 else
-    fail "Non-zero exit + rate limit should be retry:rate_limited" "Got: $eval_result"
+	fail "Non-zero exit + rate limit should be retry:rate_limited" "Got: $eval_result"
 fi
 
 # Test: Exit 130 (SIGINT) = retry
@@ -942,9 +942,9 @@ create_eval_task "eval-t006" "Some work output
 EXIT:130"
 eval_result=$(sup evaluate eval-t006 --no-ai 2>&1 | grep "^Verdict:" || echo "")
 if echo "$eval_result" | grep -q "retry.*interrupted_sigint"; then
-    pass "Exit 130 (SIGINT) -> retry:interrupted_sigint"
+	pass "Exit 130 (SIGINT) -> retry:interrupted_sigint"
 else
-    fail "Exit 130 should be retry:interrupted_sigint" "Got: $eval_result"
+	fail "Exit 130 should be retry:interrupted_sigint" "Got: $eval_result"
 fi
 
 # Test: No log file = failed
@@ -952,9 +952,9 @@ sup add eval-t007 --repo /tmp/test --description "No log test" >/dev/null 2>&1 |
 test_db "UPDATE tasks SET status = 'running' WHERE id = 'eval-t007';"
 eval_result=$(sup evaluate eval-t007 --no-ai 2>&1 | grep "^Verdict:" || echo "")
 if echo "$eval_result" | grep -q "failed.*no_log_file"; then
-    pass "No log file -> failed:no_log_file"
+	pass "No log file -> failed:no_log_file"
 else
-    fail "No log file should be failed:no_log_file" "Got: $eval_result"
+	fail "No log file should be failed:no_log_file" "Got: $eval_result"
 fi
 
 # Test: Non-zero exit with merge conflict = blocked
@@ -963,9 +963,9 @@ CONFLICT (content): Merge conflict in file.txt
 EXIT:1"
 eval_result=$(sup evaluate eval-t008 --no-ai 2>&1 | grep "^Verdict:" || echo "")
 if echo "$eval_result" | grep -q "blocked.*merge_conflict"; then
-    pass "Non-zero exit + merge conflict -> blocked:merge_conflict"
+	pass "Non-zero exit + merge conflict -> blocked:merge_conflict"
 else
-    fail "Non-zero exit + merge conflict should be blocked:merge_conflict" "Got: $eval_result"
+	fail "Non-zero exit + merge conflict should be blocked:merge_conflict" "Got: $eval_result"
 fi
 
 # Test: Backend infrastructure error with non-zero exit = retry
@@ -974,9 +974,9 @@ HTTP 503 Service Unavailable
 EXIT:1"
 eval_result=$(sup evaluate eval-t009 --no-ai 2>&1 | grep "^Verdict:" || echo "")
 if echo "$eval_result" | grep -q "retry.*backend_infrastructure_error"; then
-    pass "Non-zero exit + backend error -> retry:backend_infrastructure_error"
+	pass "Non-zero exit + backend error -> retry:backend_infrastructure_error"
 else
-    fail "Non-zero exit + backend error should be retry:backend_infrastructure_error" "Got: $eval_result"
+	fail "Non-zero exit + backend error should be retry:backend_infrastructure_error" "Got: $eval_result"
 fi
 
 # Test: Exit 0 with error strings in log = NOT treated as error (content discussion)
@@ -987,9 +987,9 @@ permission denied errors should be handled gracefully
 EXIT:0"
 eval_result=$(sup evaluate eval-t010 --no-ai 2>&1 | grep "^Verdict:" || echo "")
 if echo "$eval_result" | grep -q "retry.*clean_exit_no_signal"; then
-    pass "Exit 0 + error strings in content -> retry:clean_exit_no_signal (not blocked)"
+	pass "Exit 0 + error strings in content -> retry:clean_exit_no_signal (not blocked)"
 else
-    fail "Exit 0 with error strings should NOT be blocked" "Got: $eval_result"
+	fail "Exit 0 with error strings should NOT be blocked" "Got: $eval_result"
 fi
 
 # Test: PR URL extracted from final "type":"text" JSON entry (t192)
@@ -1004,9 +1004,9 @@ create_eval_task "eval-t192a" '{"type":"step_start","timestamp":1770606000000}
 EXIT:0'
 eval_result=$(sup evaluate eval-t192a --no-ai 2>&1 | grep "^Verdict:" || echo "")
 if echo "$eval_result" | grep -q "complete.*https://github.com/marcusquinn/aidevops/pull/718"; then
-    pass "PR URL from final text entry -> complete:<pr_url> (t192)"
+	pass "PR URL from final text entry -> complete:<pr_url> (t192)"
 else
-    fail "PR URL in final text should yield complete, not retry" "Got: $eval_result"
+	fail "PR URL in final text should yield complete, not retry" "Got: $eval_result"
 fi
 
 # Test: PR URL from earlier text entry is NOT used when final entry has no PR (t192/t151)
@@ -1022,14 +1022,14 @@ create_eval_task "eval-t192b" 'WORKER_STARTED task_id=eval-t192b pid=12345 times
 EXIT:0'
 eval_result=$(sup evaluate eval-t192b --no-ai 2>&1 | grep "^Verdict:" || echo "")
 if echo "$eval_result" | grep -q "retry.*clean_exit_no_signal"; then
-    pass "No PR in final text + exit 0 -> retry:clean_exit_no_signal (t192 safe)"
+	pass "No PR in final text + exit 0 -> retry:clean_exit_no_signal (t192 safe)"
 else
-    # Also acceptable: complete:task_only if git heuristic finds commits
-    if echo "$eval_result" | grep -q "complete.*task_only\|retry"; then
-        pass "No PR in final text -> retry or task_only (t192 safe, no false PR)"
-    else
-        fail "Should not extract PR from earlier text entries" "Got: $eval_result"
-    fi
+	# Also acceptable: complete:task_only if git heuristic finds commits
+	if echo "$eval_result" | grep -q "complete.*task_only\|retry"; then
+		pass "No PR in final text -> retry or task_only (t192 safe, no false PR)"
+	else
+		fail "Should not extract PR from earlier text entries" "Got: $eval_result"
+	fi
 fi
 
 # ============================================================
@@ -1054,9 +1054,9 @@ WORKER_STARTED task_id=eval-t198a retry=3 pid=$$ timestamp=2026-02-09T23:30:27Z
 EXIT:0'
 eval_result=$(sup evaluate eval-t198a --no-ai 2>&1 | grep "^Verdict:" || echo "")
 if echo "$eval_result" | grep -q "retry.*backend_quota_error"; then
-    pass "Backend error + REPROMPT METADATA -> retry:backend_quota_error (t198 fix)"
+	pass "Backend error + REPROMPT METADATA -> retry:backend_quota_error (t198 fix)"
 else
-    fail "Backend error in retry log should be backend_quota_error, not clean_exit_no_signal" "Got: $eval_result"
+	fail "Backend error in retry log should be backend_quota_error, not clean_exit_no_signal" "Got: $eval_result"
 fi
 
 # Test: Task obsolete detection — worker says "already done" in final text
@@ -1068,9 +1068,9 @@ create_eval_task "eval-t198b" 'WORKER_STARTED task_id=eval-t198b pid=12345 times
 EXIT:0'
 eval_result=$(sup evaluate eval-t198b --no-ai 2>&1 | grep "^Verdict:" || echo "")
 if echo "$eval_result" | grep -q "complete.*task_obsolete"; then
-    pass "Worker says 'already done' -> complete:task_obsolete (t198 fix)"
+	pass "Worker says 'already done' -> complete:task_obsolete (t198 fix)"
 else
-    fail "Worker saying 'already done' should be complete:task_obsolete" "Got: $eval_result"
+	fail "Worker saying 'already done' should be complete:task_obsolete" "Got: $eval_result"
 fi
 
 # Test: Task obsolete with "no changes needed" phrasing
@@ -1081,9 +1081,9 @@ create_eval_task "eval-t198c" 'WORKER_STARTED task_id=eval-t198c pid=12345 times
 EXIT:0'
 eval_result=$(sup evaluate eval-t198c --no-ai 2>&1 | grep "^Verdict:" || echo "")
 if echo "$eval_result" | grep -q "complete.*task_obsolete"; then
-    pass "Worker says 'no changes needed' -> complete:task_obsolete (t198 fix)"
+	pass "Worker says 'no changes needed' -> complete:task_obsolete (t198 fix)"
 else
-    fail "Worker saying 'no changes needed' should be complete:task_obsolete" "Got: $eval_result"
+	fail "Worker saying 'no changes needed' should be complete:task_obsolete" "Got: $eval_result"
 fi
 
 # Test: Normal clean_exit_no_signal still works (worker didn't say task is done)
@@ -1094,9 +1094,9 @@ create_eval_task "eval-t198d" 'WORKER_STARTED task_id=eval-t198d pid=12345 times
 EXIT:0'
 eval_result=$(sup evaluate eval-t198d --no-ai 2>&1 | grep "^Verdict:" || echo "")
 if echo "$eval_result" | grep -q "retry.*clean_exit_no_signal"; then
-    pass "Normal incomplete exit -> retry:clean_exit_no_signal (unchanged)"
+	pass "Normal incomplete exit -> retry:clean_exit_no_signal (unchanged)"
 else
-    fail "Normal incomplete exit should still be clean_exit_no_signal" "Got: $eval_result"
+	fail "Normal incomplete exit should still be clean_exit_no_signal" "Got: $eval_result"
 fi
 
 # ============================================================
@@ -1136,25 +1136,25 @@ worktree_output=$(bash -c "
 # Count lines — should be exactly 1 (the path)
 line_count=$(echo "$worktree_output" | wc -l | tr -d ' ')
 if [[ "$line_count" -eq 1 ]]; then
-    pass "create_task_worktree returns exactly 1 line (no stdout pollution)"
+	pass "create_task_worktree returns exactly 1 line (no stdout pollution)"
 else
-    fail "create_task_worktree returned $line_count lines (stdout pollution detected)" \
-        "Output: $(echo "$worktree_output" | head -3)"
+	fail "create_task_worktree returned $line_count lines (stdout pollution detected)" \
+		"Output: $(echo "$worktree_output" | head -3)"
 fi
 
 # Verify the returned path is a real directory
 if [[ -d "$worktree_output" ]]; then
-    pass "create_task_worktree returns a valid directory path"
+	pass "create_task_worktree returns a valid directory path"
 else
-    fail "create_task_worktree path is not a directory" "Got: '$worktree_output'"
+	fail "create_task_worktree path is not a directory" "Got: '$worktree_output'"
 fi
 
 # Verify path doesn't contain "Deleted branch" (the specific pollution we fixed)
 if echo "$worktree_output" | grep -qi "deleted branch"; then
-    fail "create_task_worktree output contains 'Deleted branch' pollution" \
-        "Got: '$worktree_output'"
+	fail "create_task_worktree output contains 'Deleted branch' pollution" \
+		"Got: '$worktree_output'"
 else
-    pass "create_task_worktree output is free of 'Deleted branch' pollution"
+	pass "create_task_worktree output is free of 'Deleted branch' pollution"
 fi
 
 # Clean up the test worktree
@@ -1181,25 +1181,25 @@ sup transition test-v001 deployed >/dev/null
 # deployed -> verifying
 sup transition test-v001 verifying >/dev/null
 if [[ "$(get_status test-v001)" == "verifying" ]]; then
-    pass "deployed -> verifying"
+	pass "deployed -> verifying"
 else
-    fail "deployed -> verifying failed: $(get_status test-v001)"
+	fail "deployed -> verifying failed: $(get_status test-v001)"
 fi
 
 # verifying -> verified
 sup transition test-v001 verified >/dev/null
 if [[ "$(get_status test-v001)" == "verified" ]]; then
-    pass "verifying -> verified"
+	pass "verifying -> verified"
 else
-    fail "verifying -> verified failed: $(get_status test-v001)"
+	fail "verifying -> verified failed: $(get_status test-v001)"
 fi
 
 # Test: completed_at is set on verified (terminal state)
 verified_completed=$(get_field "test-v001" "completed_at")
 if [[ -n "$verified_completed" ]]; then
-    pass "completed_at set on verified state"
+	pass "completed_at set on verified state"
 else
-    fail "completed_at not set on verified state"
+	fail "completed_at not set on verified state"
 fi
 
 # Test: verify_failed path
@@ -1214,26 +1214,26 @@ sup transition test-v002 verifying >/dev/null
 # verifying -> verify_failed
 sup transition test-v002 verify_failed >/dev/null
 if [[ "$(get_status test-v002)" == "verify_failed" ]]; then
-    pass "verifying -> verify_failed"
+	pass "verifying -> verify_failed"
 else
-    fail "verifying -> verify_failed failed: $(get_status test-v002)"
+	fail "verifying -> verify_failed failed: $(get_status test-v002)"
 fi
 
 # verify_failed -> verifying (retry verification)
 sup transition test-v002 verifying >/dev/null
 if [[ "$(get_status test-v002)" == "verifying" ]]; then
-    pass "verify_failed -> verifying (retry)"
+	pass "verify_failed -> verifying (retry)"
 else
-    fail "verify_failed -> verifying failed: $(get_status test-v002)"
+	fail "verify_failed -> verifying failed: $(get_status test-v002)"
 fi
 
 # verify_failed -> cancelled
 sup transition test-v002 verify_failed >/dev/null
 sup transition test-v002 cancelled >/dev/null
 if [[ "$(get_status test-v002)" == "cancelled" ]]; then
-    pass "verify_failed -> cancelled"
+	pass "verify_failed -> cancelled"
 else
-    fail "verify_failed -> cancelled failed: $(get_status test-v002)"
+	fail "verify_failed -> cancelled failed: $(get_status test-v002)"
 fi
 
 # verified -> cancelled
@@ -1246,9 +1246,9 @@ sup transition test-v003 deployed >/dev/null
 sup transition test-v003 verified >/dev/null
 sup transition test-v003 cancelled >/dev/null
 if [[ "$(get_status test-v003)" == "cancelled" ]]; then
-    pass "verified -> cancelled"
+	pass "verified -> cancelled"
 else
-    fail "verified -> cancelled failed: $(get_status test-v003)"
+	fail "verified -> cancelled failed: $(get_status test-v003)"
 fi
 
 # Test: deployed -> verified (direct skip for tasks without VERIFY.md entries)
@@ -1260,18 +1260,18 @@ sup transition test-v004 complete >/dev/null
 sup transition test-v004 deployed >/dev/null
 sup transition test-v004 verified >/dev/null
 if [[ "$(get_status test-v004)" == "verified" ]]; then
-    pass "deployed -> verified (direct, no VERIFY.md entry)"
+	pass "deployed -> verified (direct, no VERIFY.md entry)"
 else
-    fail "deployed -> verified direct failed: $(get_status test-v004)"
+	fail "deployed -> verified direct failed: $(get_status test-v004)"
 fi
 
 # Test: invalid transition — queued -> verifying (must go through deployed)
 sup add test-v005 --repo /tmp/test --description "Invalid verify test" >/dev/null
 invalid_verify=$(sup transition test-v005 verifying 2>&1 || true)
 if echo "$invalid_verify" | grep -qi "invalid transition"; then
-    pass "queued -> verifying rejected (invalid)"
+	pass "queued -> verifying rejected (invalid)"
 else
-    fail "queued -> verifying was not rejected" "$invalid_verify"
+	fail "queued -> verifying was not rejected" "$invalid_verify"
 fi
 
 # Test: run_verify_checks with a real VERIFY.md
@@ -1280,11 +1280,11 @@ mkdir -p "$VERIFY_TEST_DIR/todo"
 mkdir -p "$VERIFY_TEST_DIR/.agents/scripts"
 
 # Create a test file to verify
-echo '#!/bin/bash' > "$VERIFY_TEST_DIR/.agents/scripts/test-script.sh"
-echo 'echo "hello"' >> "$VERIFY_TEST_DIR/.agents/scripts/test-script.sh"
+echo '#!/bin/bash' >"$VERIFY_TEST_DIR/.agents/scripts/test-script.sh"
+echo 'echo "hello"' >>"$VERIFY_TEST_DIR/.agents/scripts/test-script.sh"
 
 # Create VERIFY.md with a pending entry
-cat > "$VERIFY_TEST_DIR/todo/VERIFY.md" << 'VERIFYEOF'
+cat >"$VERIFY_TEST_DIR/todo/VERIFY.md" <<'VERIFYEOF'
 # Verification Queue
 
 <!-- VERIFY-QUEUE-START -->
@@ -1309,21 +1309,21 @@ verify_output=$(bash -c "
 " 2>/dev/null || echo "VERIFY_FAILED")
 
 if echo "$verify_output" | grep -qi "PASS"; then
-    pass "run_verify_checks passes for existing file"
+	pass "run_verify_checks passes for existing file"
 else
-    # Check if the function ran at all
-    if echo "$verify_output" | grep -qi "FAIL\|error"; then
-        fail "run_verify_checks failed unexpectedly" "Output: $verify_output"
-    else
-        skip "run_verify_checks output inconclusive (may need source support)"
-    fi
+	# Check if the function ran at all
+	if echo "$verify_output" | grep -qi "FAIL\|error"; then
+		fail "run_verify_checks failed unexpectedly" "Output: $verify_output"
+	else
+		skip "run_verify_checks output inconclusive (may need source support)"
+	fi
 fi
 
 # Check VERIFY.md was updated
 if grep -q '\[x\].*test-v010' "$VERIFY_TEST_DIR/todo/VERIFY.md" 2>/dev/null; then
-    pass "VERIFY.md entry marked [x] after passing checks"
+	pass "VERIFY.md entry marked [x] after passing checks"
 else
-    skip "VERIFY.md marking may require direct function access"
+	skip "VERIFY.md marking may require direct function access"
 fi
 
 rm -rf "$VERIFY_TEST_DIR"
@@ -1340,7 +1340,7 @@ git -C "$CLAIM_TEST_DIR" init --quiet 2>/dev/null || true
 git -C "$CLAIM_TEST_DIR" config user.email "test@test.com" 2>/dev/null || true
 git -C "$CLAIM_TEST_DIR" config user.name "Test" 2>/dev/null || true
 
-cat > "$CLAIM_TEST_DIR/TODO.md" << 'CLAIM_TODO'
+cat >"$CLAIM_TEST_DIR/TODO.md" <<'CLAIM_TODO'
 # Test TODO
 
 ## Tasks
@@ -1361,9 +1361,9 @@ sup add t902 --repo "$CLAIM_TEST_DIR" --description "Pre-claimed task" --no-issu
 
 # Test: system identity is available for claiming
 if [[ -n "$(whoami 2>/dev/null)" ]]; then
-    pass "System identity available (whoami: $(whoami))"
+	pass "System identity available (whoami: $(whoami))"
 else
-    fail "Cannot determine system identity"
+	fail "Cannot determine system identity"
 fi
 
 # Test: get_task_assignee returns empty for unclaimed task
@@ -1385,9 +1385,9 @@ assignee_output=$(bash -c "
     get_task_assignee 't900' '$CLAIM_TEST_DIR/TODO.md'
 " 2>/dev/null)
 if [[ -z "$assignee_output" ]]; then
-    pass "get_task_assignee returns empty for unclaimed task t900"
+	pass "get_task_assignee returns empty for unclaimed task t900"
 else
-    fail "get_task_assignee should return empty for unclaimed task" "Got: $assignee_output"
+	fail "get_task_assignee should return empty for unclaimed task" "Got: $assignee_output"
 fi
 
 # Test: get_task_assignee returns assignee for pre-claimed task
@@ -1406,25 +1406,25 @@ assignee_output=$(bash -c "
     get_task_assignee 't902' '$CLAIM_TEST_DIR/TODO.md'
 " 2>/dev/null)
 if [[ "$assignee_output" == "otheruser" ]]; then
-    pass "get_task_assignee returns 'otheruser' for pre-claimed task t902"
+	pass "get_task_assignee returns 'otheruser' for pre-claimed task t902"
 else
-    fail "get_task_assignee should return 'otheruser' for t902" "Got: '$assignee_output'"
+	fail "get_task_assignee should return 'otheruser' for t902" "Got: '$assignee_output'"
 fi
 
 # Test: cmd_add with --no-issue does not require gh CLI
 add_output=$(sup add t904 --repo "$CLAIM_TEST_DIR" --description "No issue task" --no-issue 2>&1)
 if echo "$add_output" | grep -qi "Added task.*t904"; then
-    pass "cmd_add --no-issue succeeds without GitHub"
+	pass "cmd_add --no-issue succeeds without GitHub"
 else
-    fail "cmd_add --no-issue should succeed" "Output: $add_output"
+	fail "cmd_add --no-issue should succeed" "Output: $add_output"
 fi
 
 # Test: cmd_add with --with-issue flag is accepted (even if gh fails)
 add_issue_output=$(sup add t905 --repo "$CLAIM_TEST_DIR" --description "With issue task" --with-issue 2>&1 || true)
 if echo "$add_issue_output" | grep -qi "Added task.*t905\|skipped"; then
-    pass "cmd_add --with-issue flag is accepted"
+	pass "cmd_add --with-issue flag is accepted"
 else
-    fail "cmd_add --with-issue should be accepted" "Output: $add_issue_output"
+	fail "cmd_add --with-issue should be accepted" "Output: $add_issue_output"
 fi
 
 # Test: find_project_root finds TODO.md
@@ -1446,9 +1446,9 @@ find_root_output=$(bash -c "
     find_project_root
 " 2>/dev/null)
 if [[ "$find_root_output" == "$CLAIM_TEST_DIR" ]]; then
-    pass "find_project_root locates TODO.md directory"
+	pass "find_project_root locates TODO.md directory"
 else
-    fail "find_project_root should find $CLAIM_TEST_DIR" "Got: '$find_root_output'"
+	fail "find_project_root should find $CLAIM_TEST_DIR" "Got: '$find_root_output'"
 fi
 
 # Test: claiming modifies TODO.md with assignee: field
@@ -1458,33 +1458,33 @@ cp "$CLAIM_TEST_DIR/TODO.md" "$claim_test_file"
 # Simulate claiming t900 by adding assignee: field
 line_num=$(grep -nE "^- \[ \] t900 " "$claim_test_file" | head -1 | cut -d: -f1)
 if [[ -n "$line_num" ]]; then
-    task_line=$(sed -n "${line_num}p" "$claim_test_file")
-    new_line="${task_line} assignee:testuser started:2026-01-01T00:00:00Z"
-    if [[ "$(uname)" == "Darwin" ]]; then
-        sed -i '' "${line_num}s|.*|${new_line}|" "$claim_test_file"
-    else
-        sed -i "${line_num}s|.*|${new_line}|" "$claim_test_file"
-    fi
-    if grep -q "assignee:testuser" "$claim_test_file"; then
-        pass "Claiming adds assignee: field to TODO.md task line"
-    else
-        fail "Claiming should add assignee: field"
-    fi
+	task_line=$(sed -n "${line_num}p" "$claim_test_file")
+	new_line="${task_line} assignee:testuser started:2026-01-01T00:00:00Z"
+	if [[ "$(uname)" == "Darwin" ]]; then
+		sed -i '' "${line_num}s|.*|${new_line}|" "$claim_test_file"
+	else
+		sed -i "${line_num}s|.*|${new_line}|" "$claim_test_file"
+	fi
+	if grep -q "assignee:testuser" "$claim_test_file"; then
+		pass "Claiming adds assignee: field to TODO.md task line"
+	else
+		fail "Claiming should add assignee: field"
+	fi
 else
-    fail "Could not find t900 in test TODO.md"
+	fail "Could not find t900 in test TODO.md"
 fi
 
 # Test: unclaiming removes assignee: and started: fields
 unclaim_line=$(grep "t900" "$claim_test_file" | head -1)
 unclaimed_line=$(echo "$unclaim_line" | sed -E "s/ ?assignee:[A-Za-z0-9._@-]+//; s/ ?started:[0-9T:Z-]+//")
 if echo "$unclaimed_line" | grep -q "assignee:"; then
-    fail "Unclaiming should remove assignee: field"
+	fail "Unclaiming should remove assignee: field"
 else
-    if echo "$unclaimed_line" | grep -q "started:"; then
-        fail "Unclaiming should remove started: field"
-    else
-        pass "Unclaiming removes assignee: and started: fields"
-    fi
+	if echo "$unclaimed_line" | grep -q "started:"; then
+		fail "Unclaiming should remove started: field"
+	else
+		pass "Unclaiming removes assignee: and started: fields"
+	fi
 fi
 
 # Test: check_task_claimed returns empty (free) for unclaimed task
@@ -1508,9 +1508,9 @@ check_output=$(bash -c "
     fi
 " 2>/dev/null)
 if [[ "$check_output" == "FREE" ]]; then
-    pass "check_task_claimed: unclaimed task t901 is free"
+	pass "check_task_claimed: unclaimed task t901 is free"
 else
-    fail "Unclaimed task should be free" "Got: '$check_output'"
+	fail "Unclaimed task should be free" "Got: '$check_output'"
 fi
 
 # Test: check_task_claimed detects task claimed by another user
@@ -1534,17 +1534,17 @@ check_other_output=$(bash -c "
     fi
 " 2>/dev/null)
 if [[ "$check_other_output" == "otheruser" ]]; then
-    pass "check_task_claimed: t902 claimed by 'otheruser' detected"
+	pass "check_task_claimed: t902 claimed by 'otheruser' detected"
 else
-    fail "Should detect t902 claimed by otheruser" "Got: '$check_other_output'"
+	fail "Should detect t902 claimed by otheruser" "Got: '$check_other_output'"
 fi
 
 # Test: SUPERVISOR_AUTO_ISSUE default is now false (t165)
 auto_issue_default="${SUPERVISOR_AUTO_ISSUE:-false}"
 if [[ "$auto_issue_default" == "false" ]]; then
-    pass "SUPERVISOR_AUTO_ISSUE defaults to false (GH Issues opt-in)"
+	pass "SUPERVISOR_AUTO_ISSUE defaults to false (GH Issues opt-in)"
 else
-    fail "SUPERVISOR_AUTO_ISSUE should default to false" "Got: $auto_issue_default"
+	fail "SUPERVISOR_AUTO_ISSUE should default to false" "Got: $auto_issue_default"
 fi
 
 # Test: task line with logged: field — assignee inserted before logged:
@@ -1552,25 +1552,25 @@ logged_line="- [ ] t910 Task with logged field #test ~1h logged:2026-01-01"
 expected_pattern="assignee:.*started:.*logged:"
 insert_result=$(echo "$logged_line" | sed -E "s/( logged:)/ assignee:testuser started:2026-01-01T00:00:00Z\1/")
 if echo "$insert_result" | grep -qE "$expected_pattern"; then
-    pass "Claiming inserts assignee: before logged: field"
+	pass "Claiming inserts assignee: before logged: field"
 else
-    fail "Should insert assignee: before logged:" "Got: $insert_result"
+	fail "Should insert assignee: before logged:" "Got: $insert_result"
 fi
 
 # Test: detect_repo_slug parses HTTPS remote
 slug_test=$(echo "https://github.com/owner/repo.git" | sed -E 's|.*[:/]([^/]+/[^/]+)$|\1|; s|\.git$||')
 if [[ "$slug_test" == "owner/repo" ]]; then
-    pass "detect_repo_slug parses HTTPS remote correctly"
+	pass "detect_repo_slug parses HTTPS remote correctly"
 else
-    fail "detect_repo_slug HTTPS parsing" "Got: '$slug_test'"
+	fail "detect_repo_slug HTTPS parsing" "Got: '$slug_test'"
 fi
 
 # Test: detect_repo_slug parses SSH remote
 slug_test_ssh=$(echo "git@github.com:owner/repo.git" | sed -E 's|.*[:/]([^/]+/[^/]+)$|\1|; s|\.git$||')
 if [[ "$slug_test_ssh" == "owner/repo" ]]; then
-    pass "detect_repo_slug parses SSH remote correctly"
+	pass "detect_repo_slug parses SSH remote correctly"
 else
-    fail "detect_repo_slug SSH parsing" "Got: '$slug_test_ssh'"
+	fail "detect_repo_slug SSH parsing" "Got: '$slug_test_ssh'"
 fi
 
 rm -rf "$CLAIM_TEST_DIR"
@@ -1593,17 +1593,17 @@ sup transition test-t222a deploying >/dev/null
 
 # Verify task is in deploying state
 if [[ "$(get_status test-t222a)" == "deploying" ]]; then
-    pass "Task reaches deploying state correctly"
+	pass "Task reaches deploying state correctly"
 else
-    fail "Task should be in deploying state: $(get_status test-t222a)"
+	fail "Task should be in deploying state: $(get_status test-t222a)"
 fi
 
 # Simulate recovery: deploying -> deployed
 sup transition test-t222a deployed >/dev/null
 if [[ "$(get_status test-t222a)" == "deployed" ]]; then
-    pass "deploying -> deployed recovery transition succeeds (t222)"
+	pass "deploying -> deployed recovery transition succeeds (t222)"
 else
-    fail "deploying -> deployed recovery failed: $(get_status test-t222a)"
+	fail "deploying -> deployed recovery failed: $(get_status test-t222a)"
 fi
 
 # Test: deploying -> failed is also valid (deploy failure path)
@@ -1618,17 +1618,17 @@ sup transition test-t222b merged >/dev/null
 sup transition test-t222b deploying >/dev/null
 sup transition test-t222b failed --error "Deploy failed during recovery" >/dev/null
 if [[ "$(get_status test-t222b)" == "failed" ]]; then
-    pass "deploying -> failed transition succeeds (deploy failure path)"
+	pass "deploying -> failed transition succeeds (deploy failure path)"
 else
-    fail "deploying -> failed transition failed: $(get_status test-t222b)"
+	fail "deploying -> failed transition failed: $(get_status test-t222b)"
 fi
 
 # Test: state_log records deploying recovery transitions
 log_entries=$(test_db "SELECT from_state || '->' || to_state FROM state_log WHERE task_id = 'test-t222a' AND from_state = 'deploying';")
 if echo "$log_entries" | grep -q "deploying->deployed"; then
-    pass "State log records deploying -> deployed recovery (t222)"
+	pass "State log records deploying -> deployed recovery (t222)"
 else
-    fail "State log missing deploying -> deployed entry" "Got: $log_entries"
+	fail "State log missing deploying -> deployed entry" "Got: $log_entries"
 fi
 
 # Test: cmd_pr_lifecycle handles deploying state via sourced function
@@ -1653,14 +1653,14 @@ lifecycle_output=$(bash -c "
 
 recovered_status=$(get_status test-t222c)
 if [[ "$recovered_status" == "deployed" ]]; then
-    pass "cmd_pr_lifecycle auto-recovers stuck deploying -> deployed (t222)"
+	pass "cmd_pr_lifecycle auto-recovers stuck deploying -> deployed (t222)"
 else
-    # Also acceptable: failed (if recovery transition was rejected for some reason)
-    if [[ "$recovered_status" == "failed" ]]; then
-        pass "cmd_pr_lifecycle handles stuck deploying (transitioned to failed)"
-    else
-        fail "cmd_pr_lifecycle did not recover stuck deploying task" "Status: $recovered_status, Output: $(echo "$lifecycle_output" | tail -3)"
-    fi
+	# Also acceptable: failed (if recovery transition was rejected for some reason)
+	if [[ "$recovered_status" == "failed" ]]; then
+		pass "cmd_pr_lifecycle handles stuck deploying (transitioned to failed)"
+	else
+		fail "cmd_pr_lifecycle did not recover stuck deploying task" "Status: $recovered_status, Output: $(echo "$lifecycle_output" | tail -3)"
+	fi
 fi
 
 # Test: invalid transition from deploying (e.g., deploying -> queued)
@@ -1675,16 +1675,91 @@ sup transition test-t222d merged >/dev/null
 sup transition test-t222d deploying >/dev/null
 invalid_deploying=$(sup transition test-t222d queued 2>&1 || true)
 if echo "$invalid_deploying" | grep -qi "invalid transition"; then
-    pass "deploying -> queued rejected (invalid transition)"
+	pass "deploying -> queued rejected (invalid transition)"
 else
-    fail "deploying -> queued should be rejected" "$invalid_deploying"
+	fail "deploying -> queued should be rejected" "$invalid_deploying"
 fi
 
 # Verify state unchanged after invalid transition
 if [[ "$(get_status test-t222d)" == "deploying" ]]; then
-    pass "State unchanged after invalid deploying transition (t222)"
+	pass "State unchanged after invalid deploying transition (t222)"
 else
-    fail "State changed despite invalid transition: $(get_status test-t222d)"
+	fail "State changed despite invalid transition: $(get_status test-t222d)"
+fi
+
+# ============================================================
+# SECTION: complete->deployed PR merge guard (t1030)
+# ============================================================
+section "complete->deployed PR merge guard (t1030)"
+
+# Test: complete->deployed allowed when no pr_url is set (no-PR task)
+sup add test-t1030a --repo /tmp/test --description "No-PR deployed test" >/dev/null
+sup transition test-t1030a dispatched >/dev/null
+sup transition test-t1030a running >/dev/null
+sup transition test-t1030a evaluating >/dev/null
+sup transition test-t1030a complete >/dev/null
+sup transition test-t1030a deployed >/dev/null
+if [[ "$(get_status test-t1030a)" == "deployed" ]]; then
+	pass "complete->deployed allowed when no pr_url (t1030)"
+else
+	fail "complete->deployed should be allowed when no pr_url" "Status: $(get_status test-t1030a)"
+fi
+
+# Test: complete->deployed allowed when pr_url is "no_pr"
+sup add test-t1030b --repo /tmp/test --description "no_pr deployed test" >/dev/null
+sup transition test-t1030b dispatched >/dev/null
+sup transition test-t1030b running >/dev/null
+sup transition test-t1030b evaluating >/dev/null
+sup transition test-t1030b complete --pr-url "no_pr" >/dev/null
+sup transition test-t1030b deployed >/dev/null
+if [[ "$(get_status test-t1030b)" == "deployed" ]]; then
+	pass "complete->deployed allowed when pr_url=no_pr (t1030)"
+else
+	fail "complete->deployed should be allowed when pr_url=no_pr" "Status: $(get_status test-t1030b)"
+fi
+
+# Test: complete->deployed allowed when pr_url is "task_only"
+sup add test-t1030c --repo /tmp/test --description "task_only deployed test" >/dev/null
+sup transition test-t1030c dispatched >/dev/null
+sup transition test-t1030c running >/dev/null
+sup transition test-t1030c evaluating >/dev/null
+sup transition test-t1030c complete --pr-url "task_only" >/dev/null
+sup transition test-t1030c deployed >/dev/null
+if [[ "$(get_status test-t1030c)" == "deployed" ]]; then
+	pass "complete->deployed allowed when pr_url=task_only (t1030)"
+else
+	fail "complete->deployed should be allowed when pr_url=task_only" "Status: $(get_status test-t1030c)"
+fi
+
+# Test: complete->deployed allowed when pr_url is "verified_complete"
+sup add test-t1030d --repo /tmp/test --description "verified_complete deployed test" >/dev/null
+sup transition test-t1030d dispatched >/dev/null
+sup transition test-t1030d running >/dev/null
+sup transition test-t1030d evaluating >/dev/null
+sup transition test-t1030d complete --pr-url "verified_complete" >/dev/null
+sup transition test-t1030d deployed >/dev/null
+if [[ "$(get_status test-t1030d)" == "deployed" ]]; then
+	pass "complete->deployed allowed when pr_url=verified_complete (t1030)"
+else
+	fail "complete->deployed should be allowed when pr_url=verified_complete" "Status: $(get_status test-t1030d)"
+fi
+
+# Test: complete->deployed BLOCKED when pr_url is a real URL (PR not merged)
+# We use a fake URL that gh will fail to query — the guard should block the transition
+# because it can't confirm the PR is MERGED (gh returns UNKNOWN/error).
+sup add test-t1030e --repo /tmp/test --description "Real PR guard test" >/dev/null
+sup transition test-t1030e dispatched >/dev/null
+sup transition test-t1030e running >/dev/null
+sup transition test-t1030e evaluating >/dev/null
+sup transition test-t1030e complete --pr-url "https://github.com/nonexistent-org/nonexistent-repo/pull/99999" >/dev/null
+blocked_output=$(sup transition test-t1030e deployed 2>&1 || true)
+if echo "$blocked_output" | grep -qi "t1030.*blocked\|not MERGED"; then
+	pass "complete->deployed BLOCKED when pr_url is real URL and PR not merged (t1030)"
+elif [[ "$(get_status test-t1030e)" == "complete" ]]; then
+	# State didn't change = transition was blocked (even if error message differs)
+	pass "complete->deployed blocked — state stayed 'complete' (t1030)"
+else
+	fail "complete->deployed should be blocked when pr_url is a real URL" "Output: $blocked_output, Status: $(get_status test-t1030e)"
 fi
 
 # ============================================================
@@ -1693,15 +1768,15 @@ fi
 echo ""
 echo "========================================"
 printf "  \033[1mResults: %d total, \033[0;32m%d passed\033[0m, \033[0;31m%d failed\033[0m, \033[0;33m%d skipped\033[0m\n" \
-    "$TOTAL_COUNT" "$PASS_COUNT" "$FAIL_COUNT" "$SKIP_COUNT"
+	"$TOTAL_COUNT" "$PASS_COUNT" "$FAIL_COUNT" "$SKIP_COUNT"
 echo "========================================"
 
 if [[ "$FAIL_COUNT" -gt 0 ]]; then
-    echo ""
-    printf "\033[0;31mFAILURES DETECTED - review output above\033[0m\n"
-    exit 1
+	echo ""
+	printf "\033[0;31mFAILURES DETECTED - review output above\033[0m\n"
+	exit 1
 else
-    echo ""
-    printf "\033[0;32mAll tests passed.\033[0m\n"
-    exit 0
+	echo ""
+	printf "\033[0;32mAll tests passed.\033[0m\n"
+	exit 0
 fi

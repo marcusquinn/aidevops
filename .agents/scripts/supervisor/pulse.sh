@@ -3,7 +3,6 @@
 #
 # Functions for the main pulse loop and post-PR lifecycle processing
 
-
 #######################################
 # Supervisor pulse - stateless check and dispatch cycle
 # Designed to run via cron every 5 minutes
@@ -1322,7 +1321,11 @@ process_post_pr_lifecycle() {
 
 	while IFS='|' read -r tid tstatus tpr; do
 		# Skip tasks without PRs that are already complete
-		if [[ "$tstatus" == "complete" && (-z "$tpr" || "$tpr" == "no_pr" || "$tpr" == "task_only") ]]; then
+		# t1030: Defense-in-depth — cmd_transition() also guards complete->deployed
+		# when a real PR URL exists, but this fast path should only fire for genuinely
+		# PR-less tasks. The "|| $tpr == verified_complete" case is a verify-mode
+		# worker that confirmed prior work without creating a new PR.
+		if [[ "$tstatus" == "complete" && (-z "$tpr" || "$tpr" == "no_pr" || "$tpr" == "task_only" || "$tpr" == "verified_complete") ]]; then
 			# t240: Clean up worktree even for no-PR tasks before marking deployed
 			cleanup_after_merge "$tid" 2>>"$SUPERVISOR_LOG" || log_warn "Worktree cleanup issue for $tid (no-PR batch path, non-blocking)"
 			# No PR - transition directly to deployed
