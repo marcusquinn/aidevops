@@ -13,6 +13,7 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HELPER="$REPO_DIR/.agents/scripts/contest-helper.sh"
+# shellcheck disable=SC2034 # SUPERVISOR_HELPER reserved for future integration tests
 SUPERVISOR_HELPER="$REPO_DIR/.agents/scripts/supervisor-helper.sh"
 VERBOSE="${1:-}"
 
@@ -259,7 +260,7 @@ section "8. Duplicate Contest Prevention"
 # ============================================================
 
 # Try creating another contest for the same task
-dup_output=$("$HELPER" create t999 --models "model-x,model-y,model-z" 2>/dev/null || echo "FAILED")
+"$HELPER" create t999 --models "model-x,model-y,model-z" >/dev/null 2>&1 || true
 dup_count=$(sqlite3 "$SUPERVISOR_DB" "SELECT count(*) FROM contests WHERE task_id = 't999';" 2>/dev/null || echo "0")
 if [[ "$dup_count" -eq 1 ]]; then
 	pass "Duplicate contest prevented (still 1 contest)"
