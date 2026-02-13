@@ -60,7 +60,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
-- [ ] t1026 Refactor playwright-automator.mjs — 33 qlty smells, 1593 total complexity. Split mega-functions: pollAndDownloadVideos(174), assetChain(145), pipeline(98), downloadVideoFromHistory(79). Extract shared patterns into utility modules. Target: <20 complexity per function, <500 total. CodeFactor D hotspot → B+. #refactor #quality #auto-dispatch ~4h (ai:3h test:1h) ref:GH#1346 logged:2026-02-13
+- [ ] t1026 Refactor playwright-automator.mjs — 33 qlty smells, 1593 total complexity. Split mega-functions: pollAndDownloadVideos(174), assetChain(145), pipeline(98), downloadVideoFromHistory(79). Extract shared patterns into utility modules. Target: <20 complexity per function, <500 total. CodeFactor D hotspot → B+. #refactor #quality #auto-dispatch ~4h (ai:3h test:1h) ref:GH#1346 assignee:marcusquinn started:2026-02-13T11:32:06Z logged:2026-02-13
 - [ ] t1027 Refactor opencode-aidevops/index.mjs — 14 qlty smells, 377 total complexity. Deduplicate memory_recall/memory_store tool patterns (16 lines each). Reduce complexity in registerMcpServers(44), validateReturnStatements(39), detectOhMyOpenCode(37), createTools(32). Extract tool definitions into separate module. Target: <20 complexity per function, <200 total. #refactor #quality #auto-dispatch ~3h (ai:2h test:1h) ref:GH#1347 logged:2026-02-13
 
 - [-] t1022 REJECTED: Make AGENTS.md tool-agnostic — reverted (PR #1329 merged then reverted). Wrong approach: replaced OpenCode with Claude Code instead of making tool-agnostic. OpenCode is the canonical tool for aidevops. ref:GH#1326 logged:2026-02-13
