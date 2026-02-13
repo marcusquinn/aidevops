@@ -528,14 +528,27 @@ cmd_pulse() {
 	fi
 
 	if [[ "$should_reconcile" == "true" ]] && command -v gh &>/dev/null; then
+		# Two queries: (1) cancelled/failed are always safe to close,
+		# (2) deployed/verified only if they have a real PR (not no_pr/task_only/empty).
+		# This prevents closing issues for false completions from the no_pr cascade.
 		local terminal_tasks
 		terminal_tasks=$(db "$SUPERVISOR_DB" "
 			SELECT id, status, repo FROM tasks
-			WHERE status IN ('cancelled', 'failed', 'verified', 'deployed')
-			  AND id IN (
+			WHERE (
+				status IN ('cancelled', 'failed')
+				OR (
+					status IN ('verified', 'deployed')
+					AND pr_url IS NOT NULL
+					AND pr_url != ''
+					AND pr_url != 'no_pr'
+					AND pr_url != 'task_only'
+					AND pr_url != 'verified_complete'
+				)
+			)
+			AND id IN (
 				SELECT DISTINCT task_id FROM state_log
 				WHERE timestamp > datetime('now', '-7 days')
-			  )
+			)
 		;" 2>/dev/null || echo "")
 
 		if [[ -n "$terminal_tasks" ]]; then
