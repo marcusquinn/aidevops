@@ -196,7 +196,13 @@ readonly SESSION_DISTILL_HELPER="${SCRIPT_DIR}/session-distill-helper.sh"       
 readonly MEMORY_AUDIT_HELPER="${SCRIPT_DIR}/memory-audit-pulse.sh"              # Used by pulse Phase 9 (t185)
 readonly SESSION_CHECKPOINT_HELPER="${SCRIPT_DIR}/session-checkpoint-helper.sh" # Used by respawn (t264.1)
 readonly RESPAWN_LOG="${HOME}/.aidevops/logs/respawn-history.log"               # Persistent respawn log (t264.1)
+SUPERVISOR_LOG_DIR="${HOME}/.aidevops/logs"
+mkdir -p "$SUPERVISOR_LOG_DIR" 2>/dev/null || true
+SUPERVISOR_LOG="${SUPERVISOR_LOG_DIR}/supervisor.log"
+readonly PULSE_LOCK_DIR="${SUPERVISOR_DIR}/pulse.lock"
+readonly PULSE_LOCK_TIMEOUT="${SUPERVISOR_PULSE_LOCK_TIMEOUT:-600}"
 export MAIL_HELPER MEMORY_HELPER SESSION_REVIEW_HELPER SESSION_DISTILL_HELPER MEMORY_AUDIT_HELPER SESSION_CHECKPOINT_HELPER
+export SUPERVISOR_LOG SUPERVISOR_LOG_DIR PULSE_LOCK_DIR PULSE_LOCK_TIMEOUT
 
 # Valid states for the state machine
 readonly VALID_STATES="queued dispatched running evaluating retrying complete pr_review review_triage merging merged deploying deployed verifying verified verify_failed blocked failed cancelled"
@@ -260,12 +266,10 @@ readonly DIM='\033[2m'
 # log_info, log_success, log_warn, log_error, log_verbose, sql_escape, db, log_cmd
 # are defined in supervisor/_common.sh (sourced above)
 
-
 # ============================================================
 # Functions below are kept in the monolith as glue/router/UI.
 # All domain functions have been moved to supervisor/ modules.
 # ============================================================
-
 
 #######################################
 # Show usage
