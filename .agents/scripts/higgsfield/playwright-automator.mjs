@@ -188,6 +188,87 @@ async function withRetry(fn, { maxRetries = 2, baseDelay = 3000, label = 'operat
   throw lastError;
 }
 
+// --- Shared utility functions (extracted to reduce complexity) ---
+
+// Ensure a directory exists, creating it recursively if needed.
+function ensureDir(dir) {
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+// Find the newest file in a directory matching given extensions.
+// Returns the full path or null if no matching files exist.
+function findNewestFile(dir, extensions = ['.png', '.jpg', '.webp']) {
+  if (!existsSync(dir)) return null;
+  const extSet = new Set(extensions.map(e => e.startsWith('.') ? e : `.${e}`));
+  const files = readdirSync(dir)
+    .filter(f => extSet.has(extname(f).toLowerCase()))
+    .map(f => ({ name: f, time: statSync(join(dir, f)).mtimeMs }))
+    .sort((a, b) => b.time - a.time);
+  return files.length > 0 ? join(dir, files[0].name) : null;
+}
+
+// Find the newest file matching extensions AND a name filter.
+function findNewestFileMatching(dir, extensions, nameFilter) {
+  if (!existsSync(dir)) return null;
+  const extSet = new Set(extensions.map(e => e.startsWith('.') ? e : `.${e}`));
+  const files = readdirSync(dir)
+    .filter(f => extSet.has(extname(f).toLowerCase()) && (!nameFilter || f.includes(nameFilter)))
+    .map(f => ({ name: f, time: statSync(join(dir, f)).mtimeMs }))
+    .sort((a, b) => b.time - a.time);
+  return files.length > 0 ? join(dir, files[0].name) : null;
+}
+
+// Download a file via curl. Returns { httpCode, size } on success, throws on failure.
+// Options: { withHttpCode: bool, timeout: ms }
+function curlDownload(url, savePath, { withHttpCode = false, timeout = 120000 } = {}) {
+  const args = withHttpCode
+    ? ['-sL', '-w', '%{http_code}', '-o', savePath, url]
+    : ['-sL', '-o', savePath, url];
+  const result = execFileSync('curl', args, { timeout, encoding: 'utf-8' });
+  const httpCode = withHttpCode ? result.trim() : '200';
+  const size = existsSync(savePath) ? statSync(savePath).size : 0;
+  return { httpCode, size };
+}
+
+// Navigate to a Higgsfield page, wait for load, and dismiss modals.
+async function navigateTo(page, path, { waitMs = 3000, timeout = 60000 } = {}) {
+  const url = path.startsWith('http') ? path : `${BASE_URL}${path}`;
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout });
+  await page.waitForTimeout(waitMs);
+  await dismissAllModals(page);
+}
+
+// Run a function with a browser session, handling launch/close/state-save lifecycle.
+// Usage: await withBrowser(options, async (page, context) => { ... });
+async function withBrowser(options, fn) {
+  const { browser, context, page } = await launchBrowser(options);
+  try {
+    const result = await fn(page, context);
+    await context.storageState({ path: STATE_FILE });
+    await browser.close();
+    return result;
+  } catch (error) {
+    try { await browser.close(); } catch {}
+    throw error;
+  }
+}
+
+// Take a debug screenshot to STATE_DIR.
+async function debugScreenshot(page, name, { fullPage = false } = {}) {
+  await page.screenshot({ path: join(STATE_DIR, `${name}.png`), fullPage });
+}
+
+// Click the History tab if present and wait for it to load.
+async function clickHistoryTab(page, { waitMs = 2000 } = {}) {
+  const historyTab = page.locator('[role="tab"]:has-text("History")');
+  if (await historyTab.count() > 0) {
+    await historyTab.click({ force: true });
+    await page.waitForTimeout(waitMs);
+  }
+  return historyTab;
+}
+
 // --- Credit guard: check available credits before expensive operations ---
 function getCachedCredits() {
   try {
@@ -1830,165 +1911,152 @@ async function generateImage(options = {}) {
 // or the timeout is reached. This prevents the silent empty-return that occurred when
 // downloadLatestResult was called immediately after generation submission.
 // Controlled by options.wait (default: true) and options.timeout (default: 300000ms).
+// Extract model/prompt metadata from the newest History list item via page.evaluate.
+async function extractVideoMetadata(page) {
+  return page.evaluate(() => {
+    const firstItem = document.querySelector('main li');
+    if (!firstItem) return null;
+
+    const textbox = firstItem.querySelector('[role="textbox"], textarea');
+    const promptText = textbox?.textContent?.trim() || '';
+
+    const actionWords = /^(cancel|rerun|retry|download|delete|remove|share|copy|edit)$/i;
+    const buttons = [...firstItem.querySelectorAll('button')];
+    let modelText = '';
+    for (const btn of buttons) {
+      const text = btn.textContent?.trim();
+      const hasIcon = btn.querySelector('img, svg[class*="icon"]');
+      const looksLikeModel = /kling|wan|sora|minimax|veo|flux|soul|nano|seedream|gpt|higgsfield|popcorn/i.test(text);
+      const isAction = actionWords.test(text) || text.length <= 2;
+      if ((hasIcon || looksLikeModel) && !isAction && text.length > 0) {
+        modelText = text;
+        break;
+      }
+    }
+    if (!modelText) {
+      const candidates = buttons
+        .map(b => b.textContent?.trim())
+        .filter(t => t && t.length > 3 && !actionWords.test(t));
+      if (candidates.length > 0) {
+        modelText = candidates.sort((a, b) => b.length - a.length)[0];
+      }
+    }
+
+    return { promptText, modelText };
+  });
+}
+
+// Download the newest completed video from API data (CloudFront full-quality URL).
+// Returns the downloaded file path or null.
+function downloadVideoFromApiData(projectApiData, outputDir, combinedMeta, options) {
+  for (const jobSet of projectApiData.job_sets) {
+    for (const job of (jobSet.jobs || [])) {
+      if (job.status !== 'completed' || !job.results?.raw?.url) continue;
+      const videoUrl = job.results.raw.url;
+      if (!videoUrl.includes('cloudfront.net')) continue;
+
+      const filename = buildDescriptiveFilename(combinedMeta, `higgsfield-video-${Date.now()}.mp4`, 0);
+      const savePath = join(outputDir, filename);
+      try {
+        const { httpCode, size } = curlDownload(videoUrl, savePath, { withHttpCode: true });
+        if (httpCode === '200' && size > 10000) {
+          const result = finalizeDownload(savePath, {
+            command: 'video', type: 'video', ...combinedMeta,
+            strategy: 'api-interception', cloudFrontUrl: videoUrl,
+          }, outputDir, options);
+          if (!result.skipped) {
+            console.log(`Downloaded full-quality video (${(size / 1024 / 1024).toFixed(1)}MB, HTTP ${httpCode}): ${savePath}`);
+          }
+          return result.path;
+        } else if (httpCode === '200') {
+          console.log(`CloudFront returned ${httpCode} but file too small (${size}B), skipping: ${videoUrl.substring(videoUrl.lastIndexOf('/') + 1)}`);
+        } else {
+          console.log(`CloudFront HTTP ${httpCode} for: ${videoUrl.substring(videoUrl.lastIndexOf('/') + 1)}`);
+        }
+      } catch (curlErr) {
+        console.log(`CloudFront download error: ${curlErr.stderr || curlErr.message}`);
+      }
+      return null; // Only attempt the newest video
+    }
+  }
+  return null;
+}
+
+// Fallback: extract <video src> from the DOM and download via CDN.
+async function downloadVideoViaCdnFallback(page, outputDir, combinedMeta, options) {
+  console.log('Falling back to CDN video src (motion template quality)...');
+  await clickHistoryTab(page);
+
+  const videoSrc = await page.evaluate(() => {
+    const firstItem = document.querySelector('main li');
+    const video = firstItem?.querySelector('video');
+    return video?.src || video?.querySelector('source')?.src || null;
+  });
+
+  if (!videoSrc) return null;
+
+  const filename = buildDescriptiveFilename(combinedMeta, `higgsfield-video-${Date.now()}.mp4`, 0);
+  const savePath = join(outputDir, filename);
+  try {
+    curlDownload(videoSrc, savePath);
+    const result = finalizeDownload(savePath, {
+      command: 'video', type: 'video', ...combinedMeta,
+      strategy: 'cdn-fallback', cdnUrl: videoSrc,
+    }, outputDir, options);
+    if (!result.skipped) {
+      console.log(`Downloaded video (CDN fallback): ${savePath}`);
+    }
+    return result.path;
+  } catch (curlErr) {
+    console.log(`CDN video download failed: ${curlErr.message}`);
+    return null;
+  }
+}
+
 async function downloadVideoFromHistory(page, outputDir, metadata = {}, options = {}) {
   const downloaded = [];
   const shouldWait = options.wait !== false;
-  const maxWaitMs = options.timeout || 300000; // 5 minutes default
+  const maxWaitMs = options.timeout || 300000;
 
   try {
-    // Switch to History tab if not already there
-    const historyTab = page.locator('[role="tab"]:has-text("History")');
-    if (await historyTab.count() > 0) {
-      await historyTab.click({ force: true });
-      await page.waitForTimeout(2000);
-    }
-
+    await clickHistoryTab(page);
     await dismissAllModals(page);
 
-    const historyListItems = page.locator('main li');
-    const listCount = await historyListItems.count();
+    const listCount = await page.locator('main li').count();
     console.log(`Found ${listCount} item(s) in History tab`);
-
     if (listCount === 0) {
       console.log('No history items found to download');
       return downloaded;
     }
 
-    // Extract model/prompt metadata from the first (newest) list item
-    const videoInfo = await page.evaluate(() => {
-      const firstItem = document.querySelector('main li');
-      if (!firstItem) return null;
-
-      const textbox = firstItem.querySelector('[role="textbox"], textarea');
-      const promptText = textbox?.textContent?.trim() || '';
-
-      const actionWords = /^(cancel|rerun|retry|download|delete|remove|share|copy|edit)$/i;
-      const buttons = [...firstItem.querySelectorAll('button')];
-      let modelText = '';
-      for (const btn of buttons) {
-        const text = btn.textContent?.trim();
-        const hasIcon = btn.querySelector('img, svg[class*="icon"]');
-        const looksLikeModel = /kling|wan|sora|minimax|veo|flux|soul|nano|seedream|gpt|higgsfield|popcorn/i.test(text);
-        const isAction = actionWords.test(text) || text.length <= 2;
-        if ((hasIcon || looksLikeModel) && !isAction && text.length > 0) {
-          modelText = text;
-          break;
-        }
-      }
-      if (!modelText) {
-        const candidates = buttons
-          .map(b => b.textContent?.trim())
-          .filter(t => t && t.length > 3 && !actionWords.test(t));
-        if (candidates.length > 0) {
-          modelText = candidates.sort((a, b) => b.length - a.length)[0];
-        }
-      }
-
-      return { promptText, modelText };
-    });
-
+    const videoInfo = await extractVideoMetadata(page);
     const combinedMeta = {
       ...metadata,
       model: videoInfo?.modelText || metadata.model,
       promptSnippet: videoInfo?.promptText?.substring(0, 80) || metadata.promptSnippet,
     };
 
-    // Strategy 1 (PRIMARY): Fetch the project API to get the full-quality CloudFront URL.
-    // The API at fnf.higgsfield.ai/project returns job data with results.raw.url containing
-    // the actual video at d8j0ntlcm91z4.cloudfront.net (1920x1080 full quality).
-    // The <video src> in the DOM is just a shared motion template URL (same for all items).
-    //
-    // If the newest job is still processing, poll until it completes (t269 fix).
+    // Strategy 1: Full-quality CloudFront URL via project API
     console.log('Extracting full-quality video URL from API data...');
-
-    // Fetch project API data (with polling for still-processing videos)
     const projectApiData = await fetchProjectApiWithPolling(page, { shouldWait, maxWaitMs });
 
     if (projectApiData?.job_sets?.length > 0) {
-      // Ensure output directory exists
-      if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
-
-      // Find the newest completed job with a video result
-      for (const jobSet of projectApiData.job_sets) {
-        for (const job of (jobSet.jobs || [])) {
-          if (job.status === 'completed' && job.results?.raw?.url) {
-            const videoUrl = job.results.raw.url;
-            // Only use CloudFront URLs (the actual generated videos)
-            if (videoUrl.includes('cloudfront.net')) {
-              const filename = buildDescriptiveFilename(combinedMeta, `higgsfield-video-${Date.now()}.mp4`, 0);
-              const savePath = join(outputDir, filename);
-              try {
-                const curlResult = execFileSync('curl', ['-sL', '-w', '%{http_code}', '-o', savePath, videoUrl], { timeout: 120000, encoding: 'utf-8' });
-                const httpCode = curlResult.trim();
-                if (httpCode === '200' && existsSync(savePath)) {
-                    const fileSize = statSync(savePath).size;
-                    if (fileSize > 10000) { // Sanity check: real videos are >10KB
-                      const result = finalizeDownload(savePath, {
-                        command: 'video', type: 'video', ...combinedMeta,
-                        strategy: 'api-interception', cloudFrontUrl: videoUrl,
-                      }, outputDir, options);
-                      if (!result.skipped) {
-                        console.log(`Downloaded full-quality video (${(fileSize / 1024 / 1024).toFixed(1)}MB, HTTP ${httpCode}): ${savePath}`);
-                      }
-                      downloaded.push(result.path);
-                    } else {
-                    console.log(`CloudFront returned ${httpCode} but file too small (${fileSize}B), skipping: ${videoUrl.substring(videoUrl.lastIndexOf('/') + 1)}`);
-                  }
-                } else {
-                  console.log(`CloudFront HTTP ${httpCode} for: ${videoUrl.substring(videoUrl.lastIndexOf('/') + 1)}`);
-                }
-              } catch (curlErr) {
-                console.log(`CloudFront download error: ${curlErr.stderr || curlErr.message}`);
-              }
-              break; // Only download the newest video
-            }
-          }
-        }
-        if (downloaded.length > 0) break;
-      }
+      ensureDir(outputDir);
+      const path = downloadVideoFromApiData(projectApiData, outputDir, combinedMeta, options);
+      if (path) downloaded.push(path);
     }
 
     if (downloaded.length === 0) {
       console.log('API interception did not yield a video URL');
     }
 
-    // Strategy 2 (FALLBACK): Extract <video src> from the list item directly.
-    // This gives the motion template URL (shared across all items, lower quality).
+    // Strategy 2: CDN fallback (lower quality motion template)
     if (downloaded.length === 0) {
-      console.log('Falling back to CDN video src (motion template quality)...');
-
-      // Re-click History tab after reload
-      if (await historyTab.count() > 0) {
-        await historyTab.click({ force: true });
-        await page.waitForTimeout(2000);
-      }
-
-      const videoSrc = await page.evaluate(() => {
-        const firstItem = document.querySelector('main li');
-        const video = firstItem?.querySelector('video');
-        return video?.src || video?.querySelector('source')?.src || null;
-      });
-
-      if (videoSrc) {
-        const filename = buildDescriptiveFilename(combinedMeta, `higgsfield-video-${Date.now()}.mp4`, 0);
-        const savePath = join(outputDir, filename);
-        try {
-          execFileSync('curl', ['-sL', '-o', savePath, videoSrc], { timeout: 120000 });
-          const result = finalizeDownload(savePath, {
-            command: 'video', type: 'video', ...combinedMeta,
-            strategy: 'cdn-fallback', cdnUrl: videoSrc,
-          }, outputDir, options);
-          if (!result.skipped) {
-            console.log(`Downloaded video (CDN fallback): ${savePath}`);
-          }
-          downloaded.push(result.path);
-        } catch (curlErr) {
-          console.log(`CDN video download failed: ${curlErr.message}`);
-        }
-      }
+      const path = await downloadVideoViaCdnFallback(page, outputDir, combinedMeta, options);
+      if (path) downloaded.push(path);
     }
 
-    await page.screenshot({ path: join(STATE_DIR, 'video-download-result.png'), fullPage: false });
+    await debugScreenshot(page, 'video-download-result');
   } catch (error) {
     console.log(`Video download error: ${error.message}`);
   }
