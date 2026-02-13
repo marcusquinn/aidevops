@@ -1150,6 +1150,33 @@ function runMarkdownQualityPipeline(filePath) {
 }
 
 /**
+ * Check if a tool name is a Write or Edit operation.
+ * @param {string} tool
+ * @returns {boolean}
+ */
+function isWriteOrEditTool(tool) {
+  return tool === "Write" || tool === "Edit" || tool === "write" || tool === "edit";
+}
+
+/**
+ * Log a quality gate result (violations or pass).
+ * @param {string} label - e.g. "Shell quality", "Markdown quality"
+ * @param {string} filePath
+ * @param {number} totalViolations
+ * @param {string} report
+ * @param {string} [errorLevel="WARN"]
+ */
+function logQualityGateResult(label, filePath, totalViolations, report, errorLevel = "WARN") {
+  if (totalViolations > 0) {
+    const plural = totalViolations !== 1 ? "s" : "";
+    console.error(`[aidevops] ${label}: ${totalViolations} issue${plural} in ${filePath}:\n${report}`);
+    qualityLog(errorLevel, `${label}: ${totalViolations} violations in ${filePath}`);
+  } else {
+    qualityLog("INFO", `${label}: PASS for ${filePath}`);
+  }
+}
+
+/**
  * Pre-tool-use hook: Comprehensive quality gate for Write/Edit operations.
  * Runs the full quality pipeline matching pre-commit-hook.sh checks:
  * - Shell scripts (.sh): ShellCheck, return statements, positional params, secrets
@@ -1159,66 +1186,72 @@ function runMarkdownQualityPipeline(filePath) {
  * @param {object} output - { args } (mutable)
  */
 async function toolExecuteBefore(input, output) {
-  const { tool } = input;
-
-  // Only intercept Write and Edit tools
-  if (
-    tool !== "Write" &&
-    tool !== "Edit" &&
-    tool !== "write" &&
-    tool !== "edit"
-  ) {
-    return;
-  }
+  if (!isWriteOrEditTool(input.tool)) return;
 
   const filePath = output.args?.filePath || output.args?.file_path || "";
   if (!filePath) return;
 
-  // Shell script quality pipeline
   if (filePath.endsWith(".sh")) {
-    const { totalViolations, report } = runShellQualityPipeline(filePath);
-    if (totalViolations > 0) {
-      console.error(
-        `[aidevops] Quality gate: ${totalViolations} issue${totalViolations !== 1 ? "s" : ""} in ${filePath}:\n${report}`,
-      );
-      qualityLog(
-        "WARN",
-        `Shell quality: ${totalViolations} violations in ${filePath}`,
-      );
-    } else {
-      qualityLog("INFO", `Shell quality: PASS for ${filePath}`);
-    }
+    const result = runShellQualityPipeline(filePath);
+    logQualityGateResult("Quality gate", filePath, result.totalViolations, result.report);
     return;
   }
 
-  // Markdown quality pipeline
   if (filePath.endsWith(".md")) {
-    const { totalViolations, report } = runMarkdownQualityPipeline(filePath);
-    if (totalViolations > 0) {
-      console.error(
-        `[aidevops] Markdown quality: ${totalViolations} issue${totalViolations !== 1 ? "s" : ""} in ${filePath}:\n${report}`,
-      );
-      qualityLog(
-        "WARN",
-        `Markdown quality: ${totalViolations} violations in ${filePath}`,
-      );
-    }
+    const result = runMarkdownQualityPipeline(filePath);
+    logQualityGateResult("Markdown quality", filePath, result.totalViolations, result.report);
     return;
   }
 
-  // Secrets scan for all other file types
   const writeContent = output.args?.content || output.args?.newString || "";
   if (writeContent) {
     const secretResult = scanForSecrets(filePath, writeContent);
-    if (secretResult.violations > 0) {
-      console.error(
-        `[aidevops] SECURITY: ${secretResult.violations} potential secret${secretResult.violations !== 1 ? "s" : ""} in ${filePath}:\n${secretResult.details.join("\n")}`,
-      );
-      qualityLog(
-        "ERROR",
-        `Secrets detected: ${secretResult.violations} in ${filePath}`,
-      );
-    }
+    logQualityGateResult("SECURITY", filePath, secretResult.violations,
+      secretResult.details.join("\n"), "ERROR");
+  }
+}
+
+/**
+ * Check if a tool name is a Bash operation.
+ * @param {string} tool
+ * @returns {boolean}
+ */
+function isBashTool(tool) {
+  return tool === "Bash" || tool === "bash";
+}
+
+/**
+ * Record a git operation pattern via pattern-tracker-helper.sh.
+ * @param {string} title - Operation title
+ * @param {string} outputText - Command output
+ */
+function recordGitPattern(title, outputText) {
+  const patternTracker = join(SCRIPTS_DIR, "pattern-tracker-helper.sh");
+  if (!existsSync(patternTracker)) return;
+
+  const success = !outputText.includes("error") && !outputText.includes("fatal");
+  const patternType = success ? "SUCCESS_PATTERN" : "FAILURE_PATTERN";
+  run(
+    `bash "${patternTracker}" record "${patternType}" "git operation: ${title.substring(0, 100)}" --tag "quality-hook" 2>/dev/null`,
+    5000,
+  );
+}
+
+/**
+ * Track Bash tool operations (git, lint) for pattern recording.
+ * @param {string} title - Operation title
+ * @param {string} outputText - Command output
+ */
+function trackBashOperation(title, outputText) {
+  if (title.includes("git commit") || title.includes("git push")) {
+    console.error(`[aidevops] Git operation detected: ${title}`);
+    qualityLog("INFO", `Git operation: ${title}`);
+    recordGitPattern(title, outputText);
+  }
+
+  if (title.includes("shellcheck") || title.includes("linters-local")) {
+    const passed = !outputText.includes("error") && !outputText.includes("violation");
+    qualityLog(passed ? "INFO" : "WARN", `Lint run: ${title} — ${passed ? "PASS" : "issues found"}`);
   }
 }
 
@@ -1230,47 +1263,12 @@ async function toolExecuteBefore(input, output) {
  */
 async function toolExecuteAfter(input, output) {
   const toolName = input.tool || "";
-  const title = output.title || "";
-  const outputText = output.output || "";
 
-  // Track git operations for pattern recording
-  if (toolName === "Bash" || toolName === "bash") {
-    if (title.includes("git commit") || title.includes("git push")) {
-      console.error(`[aidevops] Git operation detected: ${title}`);
-      qualityLog("INFO", `Git operation: ${title}`);
-
-      // Record pattern if pattern-tracker-helper.sh is available
-      const patternTracker = join(SCRIPTS_DIR, "pattern-tracker-helper.sh");
-      if (existsSync(patternTracker)) {
-        const success = !outputText.includes("error") && !outputText.includes("fatal");
-        const patternType = success ? "SUCCESS_PATTERN" : "FAILURE_PATTERN";
-        run(
-          `bash "${patternTracker}" record "${patternType}" "git operation: ${title.substring(0, 100)}" --tag "quality-hook" 2>/dev/null`,
-          5000,
-        );
-      }
-    }
-
-    // Track ShellCheck/lint runs in Bash commands
-    if (
-      title.includes("shellcheck") ||
-      title.includes("linters-local")
-    ) {
-      const passed = !outputText.includes("error") && !outputText.includes("violation");
-      qualityLog(
-        passed ? "INFO" : "WARN",
-        `Lint run: ${title} — ${passed ? "PASS" : "issues found"}`,
-      );
-    }
+  if (isBashTool(toolName)) {
+    trackBashOperation(output.title || "", output.output || "");
   }
 
-  // Track Write/Edit operations for quality metrics
-  if (
-    toolName === "Write" ||
-    toolName === "Edit" ||
-    toolName === "write" ||
-    toolName === "edit"
-  ) {
+  if (isWriteOrEditTool(toolName)) {
     const filePath = output.metadata?.filePath || "";
     if (filePath) {
       qualityLog("INFO", `File modified: ${filePath} via ${toolName}`);
