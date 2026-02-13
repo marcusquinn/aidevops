@@ -461,3 +461,20 @@
   check: file-exists .agents/scripts/supervisor-helper.sh
   check: shellcheck .agents/scripts/supervisor/issue-sync.sh
   check: file-exists .agents/scripts/supervisor/issue-sync.sh
+
+- [!] v055 t1013 Pinned queue health issue — live supervisor status upda... | PR #1312 | merged:2026-02-12 failed:2026-02-12 reason:shellcheck: .agents/scripts/supervisor-helper.sh has violations
+  files: .agents/scripts/supervisor-helper.sh, .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/supervisor-helper.sh
+  check: file-exists .agents/scripts/supervisor-helper.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
+
+- [!] v056 t1008 Pre-dispatch reverification for previously-claimed tasks | PR #1316 | merged:2026-02-12 failed:2026-02-12 reason:shellcheck: .agents/scripts/supervisor-helper.sh has violations
+  files: .agents/scripts/supervisor-helper.sh
+  check: shellcheck .agents/scripts/supervisor-helper.sh
+  check: file-exists .agents/scripts/supervisor-helper.sh
+
+- [!] v057 t1021 Wire resolve_rebase_conflicts() into rebase_sibling_pr() ... | PR #1322 | merged:2026-02-12 failed:2026-02-12 reason:shellcheck: .agents/scripts/supervisor-helper.sh has violations
+  files: .agents/scripts/supervisor-helper.sh
+  check: shellcheck .agents/scripts/supervisor-helper.sh
+  check: file-exists .agents/scripts/supervisor-helper.sh
