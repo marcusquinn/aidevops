@@ -606,7 +606,7 @@
   check: shellcheck .agents/scripts/supervisor/issue-sync.sh
   check: file-exists .agents/scripts/supervisor/issue-sync.sh
 
-- [ ] v075 t1032.1 Implement code-audit-helper.sh — unified audit orchestr... | PR #1376 | merged:2026-02-13
+- [x] v075 t1032.1 Implement code-audit-helper.sh — unified audit orchestr... | PR #1376 | merged:2026-02-13 verified:2026-02-13
   files: .agents/scripts/code-audit-helper.sh
   check: shellcheck .agents/scripts/code-audit-helper.sh
   check: file-exists .agents/scripts/code-audit-helper.sh
