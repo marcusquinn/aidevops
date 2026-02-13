@@ -714,6 +714,109 @@ _show_model_hint() {
 }
 
 #######################################
+# Query model usage from GitHub issue labels (t1010)
+# Correlates label data with memory patterns for richer analysis.
+# Delegates to supervisor-helper.sh labels for the actual GitHub query,
+# then enriches with success rates from the pattern database.
+#######################################
+cmd_label_stats() {
+    local repo_slug="" action_filter="" model_filter=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        --repo)
+            repo_slug="$2"
+            shift 2
+            ;;
+        --action)
+            action_filter="$2"
+            shift 2
+            ;;
+        --model)
+            model_filter="$2"
+            shift 2
+            ;;
+        *) shift ;;
+        esac
+    done
+
+    local supervisor_helper="${SCRIPT_DIR}/supervisor-helper.sh"
+    if [[ ! -x "$supervisor_helper" ]]; then
+        log_error "supervisor-helper.sh not found at: $supervisor_helper"
+        return 1
+    fi
+
+    echo -e "${BOLD}Model Usage Analysis${NC} (labels + patterns)"
+    echo "════════════════════════════════════════"
+
+    # Get label data from supervisor as JSON
+    local label_args=("labels" "--json")
+    [[ -n "$repo_slug" ]] && label_args+=("--repo" "$repo_slug")
+    [[ -n "$action_filter" ]] && label_args+=("--action" "$action_filter")
+    [[ -n "$model_filter" ]] && label_args+=("--model" "$model_filter")
+
+    local label_json
+    label_json=$("$supervisor_helper" "${label_args[@]}" 2>/dev/null || echo "[]")
+
+    if [[ "$label_json" == "[]" ]]; then
+        echo ""
+        echo "No model usage labels found on GitHub issues."
+        echo "Labels are added automatically during supervisor dispatch and evaluation."
+        echo ""
+        echo "Showing memory-based pattern data instead:"
+        echo ""
+        cmd_report
+        return 0
+    fi
+
+    # Display label summary
+    echo ""
+    echo -e "${BOLD}GitHub Issue Labels:${NC}"
+
+    # Parse JSON entries (simple line-by-line since format is known)
+    echo "$label_json" | tr ',' '\n' | tr -d '[]{}' | while IFS= read -r line; do
+        local label count
+        label=$(echo "$line" | grep -o '"label":"[^"]*"' | cut -d'"' -f4 || true)
+        count=$(echo "$line" | grep -o '"count":[0-9]*' | cut -d: -f2 || true)
+        if [[ -n "$label" && -n "$count" ]]; then
+            printf "  %-25s %d issues\n" "$label" "$count"
+        fi
+    done
+
+    # Enrich with pattern-tracker success rates
+    echo ""
+    echo -e "${BOLD}Memory Pattern Success Rates:${NC}"
+
+    if ! ensure_db; then
+        echo "  (no memory database — pattern data unavailable)"
+        return 0
+    fi
+
+    for tier in haiku flash sonnet pro opus; do
+        if [[ -n "$model_filter" && "$tier" != "$model_filter" ]]; then
+            continue
+        fi
+
+        local success_count failure_count total rate
+        success_count=$(sqlite3 "$MEMORY_DB" \
+            "SELECT COUNT(*) FROM learnings WHERE type IN ('SUCCESS_PATTERN','WORKING_SOLUTION') AND (tags LIKE '%model:${tier}%' OR content LIKE '%[model:${tier}]%');" \
+            2>/dev/null || echo "0")
+        failure_count=$(sqlite3 "$MEMORY_DB" \
+            "SELECT COUNT(*) FROM learnings WHERE type IN ('FAILURE_PATTERN','FAILED_APPROACH','ERROR_FIX') AND (tags LIKE '%model:${tier}%' OR content LIKE '%[model:${tier}]%');" \
+            2>/dev/null || echo "0")
+        total=$((success_count + failure_count))
+
+        if [[ "$total" -gt 0 ]]; then
+            rate=$((success_count * 100 / total))
+            printf "  %-10s %d/%d (%d%% success)\n" "$tier" "$success_count" "$total" "$rate"
+        fi
+    done
+
+    echo ""
+    return 0
+}
+
+#######################################
 # Show help
 #######################################
 cmd_help() {
@@ -731,6 +834,7 @@ COMMANDS:
     stats       Show pattern statistics (includes supervisor patterns)
     export      Export patterns as JSON or CSV
     report      Generate a comprehensive pattern report
+    label-stats Correlate GitHub issue labels with pattern data (t1010)
     help        Show this help
 
 RECORD OPTIONS:
@@ -805,6 +909,7 @@ main() {
         stats) cmd_stats ;;
         export) cmd_export "$@" ;;
         report) cmd_report ;;
+        label-stats) cmd_label_stats "$@" ;;
         help|--help|-h) cmd_help ;;
         *)
             log_error "Unknown command: $command"

@@ -2980,6 +2980,290 @@ ensure_status_labels() {
 }
 
 #######################################
+# Extract model tier name from a full model string (t1010)
+# Maps provider/model strings to tier names (haiku, flash, sonnet, pro, opus).
+# $1: model string (e.g. "anthropic/claude-opus-4-6")
+# Outputs tier name on stdout, empty if unrecognised.
+#######################################
+model_to_tier() {
+	local model_str="${1:-}"
+	if [[ -z "$model_str" ]]; then
+		return 0
+	fi
+	# Order matters: specific patterns before generic ones (ShellCheck SC2221/SC2222)
+	case "$model_str" in
+	*gpt-4.1-mini*) echo "flash" ;;
+	*gpt-4.1*) echo "sonnet" ;;
+	*gemini-2.5-flash*) echo "flash" ;;
+	*gemini-2.5-pro*) echo "pro" ;;
+	*haiku*) echo "haiku" ;;
+	*flash*) echo "flash" ;;
+	*sonnet*) echo "sonnet" ;;
+	*opus*) echo "opus" ;;
+	*pro*) echo "pro" ;;
+	*o3*) echo "opus" ;;
+	*) echo "" ;;
+	esac
+	return 0
+}
+
+#######################################
+# Add an action:model label to a GitHub issue (t1010)
+# Labels track which model was used for each lifecycle action.
+# Format: "action:tier" (e.g. "implemented:opus", "failed:sonnet")
+# Labels are append-only (history, not state) — never removed.
+# Created on-demand via gh label create --force (idempotent).
+#
+# Valid actions: dispatched, implemented, reviewed, verified,
+#   documented, failed, retried, escalated, planned, researched
+#
+# $1: task_id
+# $2: action (e.g. "implemented", "failed", "retried")
+# $3: model_tier (e.g. "opus", "sonnet") — or full model string (auto-extracted)
+# $4: project_root (optional)
+#
+# Fails silently if: gh not available, no auth, no issue ref, or API error.
+# This is best-effort — label failures must never block task processing.
+#######################################
+add_model_label() {
+	local task_id="${1:-}"
+	local action="${2:-}"
+	local model_input="${3:-}"
+	local project_root="${4:-}"
+
+	# Validate required params
+	if [[ -z "$task_id" || -z "$action" || -z "$model_input" ]]; then
+		return 0
+	fi
+
+	# Skip if gh CLI not available or not authenticated
+	command -v gh &>/dev/null || return 0
+	check_gh_auth || return 0
+
+	# Resolve model tier from full model string if needed
+	local tier="$model_input"
+	case "$model_input" in
+	haiku | flash | sonnet | pro | opus) ;; # Already a tier name
+	*)
+		tier=$(model_to_tier "$model_input")
+		if [[ -z "$tier" ]]; then
+			return 0
+		fi
+		;;
+	esac
+
+	# Find the GitHub issue number
+	local issue_number
+	issue_number=$(find_task_issue_number "$task_id" "$project_root")
+	if [[ -z "$issue_number" ]]; then
+		return 0
+	fi
+
+	# Detect repo slug
+	if [[ -z "$project_root" ]]; then
+		project_root=$(find_project_root 2>/dev/null || echo ".")
+	fi
+	local repo_slug
+	repo_slug=$(detect_repo_slug "$project_root" 2>/dev/null || echo "")
+	if [[ -z "$repo_slug" ]]; then
+		return 0
+	fi
+
+	local label_name="${action}:${tier}"
+
+	# Color scheme by action category:
+	#   dispatch/implement = blue shades (productive work)
+	#   review/verify/document = green shades (quality work)
+	#   fail/retry/escalate = red/orange shades (problems)
+	#   plan/research = purple shades (preparation)
+	local label_color label_desc
+	case "$action" in
+	dispatched)
+		label_color="1D76DB"
+		label_desc="Task dispatched to $tier model"
+		;;
+	implemented)
+		label_color="0075CA"
+		label_desc="Task implemented by $tier model"
+		;;
+	reviewed)
+		label_color="0E8A16"
+		label_desc="Task reviewed by $tier model"
+		;;
+	verified)
+		label_color="2EA44F"
+		label_desc="Task verified by $tier model"
+		;;
+	documented)
+		label_color="A2EEEF"
+		label_desc="Task documented by $tier model"
+		;;
+	failed)
+		label_color="D93F0B"
+		label_desc="Task failed with $tier model"
+		;;
+	retried)
+		label_color="E4E669"
+		label_desc="Task retried with $tier model"
+		;;
+	escalated)
+		label_color="FBCA04"
+		label_desc="Task escalated from $tier model"
+		;;
+	planned)
+		label_color="D4C5F9"
+		label_desc="Task planned with $tier model"
+		;;
+	researched)
+		label_color="C5DEF5"
+		label_desc="Task researched with $tier model"
+		;;
+	*)
+		label_color="BFDADC"
+		label_desc="Model $tier used for $action"
+		;;
+	esac
+
+	# Create label on-demand (idempotent — --force updates if exists)
+	gh label create "$label_name" --repo "$repo_slug" \
+		--color "$label_color" --description "$label_desc" \
+		--force 2>/dev/null || true
+
+	# Add label to issue (append-only — never remove model labels)
+	gh issue edit "$issue_number" --repo "$repo_slug" \
+		--add-label "$label_name" 2>/dev/null || true
+
+	log_info "Added label '$label_name' to issue #$issue_number for $task_id (t1010)"
+	return 0
+}
+
+#######################################
+# Query model usage labels for analysis (t1010)
+# Lists all action:model labels on issues in the repo.
+# Supports filtering by action, model tier, or both.
+#
+# Usage: cmd_labels [--action ACTION] [--model TIER] [--repo SLUG] [--json]
+#######################################
+cmd_labels() {
+	local action_filter="" model_filter="" repo_slug="" json_output="false"
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--action)
+			action_filter="$2"
+			shift 2
+			;;
+		--model)
+			model_filter="$2"
+			shift 2
+			;;
+		--repo)
+			repo_slug="$2"
+			shift 2
+			;;
+		--json)
+			json_output="true"
+			shift
+			;;
+		*)
+			shift
+			;;
+		esac
+	done
+
+	# Detect repo if not provided
+	if [[ -z "$repo_slug" ]]; then
+		local project_root
+		project_root=$(find_project_root 2>/dev/null || echo ".")
+		repo_slug=$(detect_repo_slug "$project_root" 2>/dev/null || echo "")
+	fi
+
+	if [[ -z "$repo_slug" ]]; then
+		log_error "Cannot detect repo slug. Use --repo owner/repo"
+		return 1
+	fi
+
+	# Skip if gh CLI not available
+	if ! command -v gh &>/dev/null; then
+		log_error "gh CLI not available"
+		return 1
+	fi
+
+	# Build label search pattern
+	local label_pattern=""
+	if [[ -n "$action_filter" && -n "$model_filter" ]]; then
+		label_pattern="${action_filter}:${model_filter}"
+	elif [[ -n "$action_filter" ]]; then
+		label_pattern="${action_filter}:"
+	elif [[ -n "$model_filter" ]]; then
+		label_pattern=":${model_filter}"
+	fi
+
+	# Valid actions for model tracking
+	local valid_actions="dispatched implemented reviewed verified documented failed retried escalated planned researched"
+
+	if [[ "$json_output" == "true" ]]; then
+		# JSON output: list all model labels with issue counts
+		local first_entry="true"
+		printf '['
+		for act in $valid_actions; do
+			for tier in haiku flash sonnet pro opus; do
+				local lbl="${act}:${tier}"
+				# Skip if doesn't match filter
+				if [[ -n "$label_pattern" && "$lbl" != *"$label_pattern"* ]]; then
+					continue
+				fi
+				local count
+				count=$(gh issue list --repo "$repo_slug" --label "$lbl" --state all --json number --jq 'length' 2>/dev/null || echo "0")
+				if [[ "$count" -gt 0 ]]; then
+					if [[ "$first_entry" == "true" ]]; then
+						first_entry="false"
+					else
+						printf ','
+					fi
+					printf '{"label":"%s","action":"%s","model":"%s","count":%d}' "$lbl" "$act" "$tier" "$count"
+				fi
+			done
+		done
+		printf ']\n'
+	else
+		# Human-readable output
+		echo -e "${BOLD}Model Usage Labels${NC} ($repo_slug)"
+		echo "─────────────────────────────────────"
+
+		local found=0
+		for act in $valid_actions; do
+			local act_found=0
+			for tier in haiku flash sonnet pro opus; do
+				local lbl="${act}:${tier}"
+				if [[ -n "$label_pattern" && "$lbl" != *"$label_pattern"* ]]; then
+					continue
+				fi
+				local count
+				count=$(gh issue list --repo "$repo_slug" --label "$lbl" --state all --json number --jq 'length' 2>/dev/null || echo "0")
+				if [[ "$count" -gt 0 ]]; then
+					if [[ "$act_found" -eq 0 ]]; then
+						echo ""
+						echo -e "${BOLD}${act}${NC}:"
+						act_found=1
+					fi
+					printf "  %-10s %d issues\n" "$tier" "$count"
+					found=1
+				fi
+			done
+		done
+
+		if [[ "$found" -eq 0 ]]; then
+			echo ""
+			echo "No model usage labels found."
+			echo "Labels are added automatically during supervisor dispatch and evaluation."
+		fi
+		echo ""
+	fi
+	return 0
+}
+
+#######################################
 # Map supervisor state to GitHub issue status label (t1009)
 # Returns the label name for a given state, empty if no label applies
 # (terminal states that close the issue return empty).
@@ -6897,6 +7181,9 @@ cmd_dispatch() {
 
 	# Transition to running
 	cmd_transition "$task_id" "running" --session "pid:$worker_pid"
+
+	# Add dispatched:model label to GitHub issue (t1010)
+	add_model_label "$task_id" "dispatched" "$resolved_model" "${trepo:-.}" 2>>"$SUPERVISOR_LOG" || true
 
 	log_success "Dispatched $task_id (PID: $worker_pid)"
 	echo "$worker_pid"
@@ -11157,6 +11444,11 @@ cmd_pulse() {
 			local tid_desc
 			tid_desc=$(db "$SUPERVISOR_DB" "SELECT description FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "")
 
+			# Get task model and repo for model label tracking (t1010)
+			local tid_model tid_repo
+			tid_model=$(db "$SUPERVISOR_DB" "SELECT model FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "")
+			tid_repo=$(db "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "")
+
 			# Skip AI eval for stuck tasks (it already timed out once)
 			local skip_ai="false"
 			if [[ "$current_task_state" == "evaluating" ]]; then
@@ -11217,6 +11509,8 @@ cmd_pulse() {
 					# Clean up worker process tree before re-dispatch (t128.7)
 					cleanup_worker_processes "$tid"
 					store_failure_pattern "$tid" "escalated" "Quality gate -> $escalated_model" "$tid_desc" 2>>"$SUPERVISOR_LOG" || true
+					# Add escalated:model label (original model that failed quality gate) (t1010)
+					add_model_label "$tid" "escalated" "$tid_model" "${tid_repo:-.}" 2>>"$SUPERVISOR_LOG" || true
 					send_task_notification "$tid" "escalated" "Re-queued with $escalated_model" 2>>"$SUPERVISOR_LOG" || true
 					continue
 				fi
@@ -11237,6 +11531,8 @@ cmd_pulse() {
 				send_task_notification "$tid" "complete" "$outcome_detail" 2>>"$SUPERVISOR_LOG" || true
 				# Store success pattern in memory (t128.6)
 				store_success_pattern "$tid" "$outcome_detail" "$tid_desc" 2>>"$SUPERVISOR_LOG" || true
+				# Add implemented:model label to GitHub issue (t1010)
+				add_model_label "$tid" "implemented" "$tid_model" "${tid_repo:-.}" 2>>"$SUPERVISOR_LOG" || true
 				# Self-heal: if this was a diagnostic task, re-queue the parent (t150)
 				handle_diagnostic_completion "$tid" 2>>"$SUPERVISOR_LOG" || true
 				;;
@@ -11251,6 +11547,8 @@ cmd_pulse() {
 				cleanup_worker_processes "$tid"
 				# Store failure pattern in memory (t128.6)
 				store_failure_pattern "$tid" "retry" "$outcome_detail" "$tid_desc" 2>>"$SUPERVISOR_LOG" || true
+				# Add retried:model label to GitHub issue (t1010)
+				add_model_label "$tid" "retried" "$tid_model" "${tid_repo:-.}" 2>>"$SUPERVISOR_LOG" || true
 				# Auto-escalate model on retry so re-prompt uses stronger model (t314 wiring)
 				escalate_model_on_failure "$tid" 2>>"$SUPERVISOR_LOG" || true
 				# Backend quota errors: defer re-prompt to next pulse (t095-diag-1).
@@ -11284,6 +11582,8 @@ cmd_pulse() {
 						send_task_notification "$tid" "blocked" "Max retries exceeded: $outcome_detail" 2>>"$SUPERVISOR_LOG" || true
 						# Store failure pattern in memory (t128.6)
 						store_failure_pattern "$tid" "blocked" "Max retries exceeded: $outcome_detail" "$tid_desc" 2>>"$SUPERVISOR_LOG" || true
+						# Add failed:model label to GitHub issue (t1010)
+						add_model_label "$tid" "failed" "$tid_model" "${tid_repo:-.}" 2>>"$SUPERVISOR_LOG" || true
 						# Self-heal: attempt diagnostic subtask (t150)
 						attempt_self_heal "$tid" "blocked" "$outcome_detail" "${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
 					else
@@ -11295,6 +11595,8 @@ cmd_pulse() {
 						send_task_notification "$tid" "failed" "Re-prompt dispatch failed: $outcome_detail" 2>>"$SUPERVISOR_LOG" || true
 						# Store failure pattern in memory (t128.6)
 						store_failure_pattern "$tid" "failed" "Re-prompt dispatch failed: $outcome_detail" "$tid_desc" 2>>"$SUPERVISOR_LOG" || true
+						# Add failed:model label to GitHub issue (t1010)
+						add_model_label "$tid" "failed" "$tid_model" "${tid_repo:-.}" 2>>"$SUPERVISOR_LOG" || true
 						# Self-heal: attempt diagnostic subtask (t150)
 						attempt_self_heal "$tid" "failed" "$outcome_detail" "${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
 					fi
@@ -11314,6 +11616,8 @@ cmd_pulse() {
 				send_task_notification "$tid" "blocked" "$outcome_detail" 2>>"$SUPERVISOR_LOG" || true
 				# Store failure pattern in memory (t128.6)
 				store_failure_pattern "$tid" "blocked" "$outcome_detail" "$tid_desc" 2>>"$SUPERVISOR_LOG" || true
+				# Add failed:model label to GitHub issue (t1010)
+				add_model_label "$tid" "failed" "$tid_model" "${tid_repo:-.}" 2>>"$SUPERVISOR_LOG" || true
 				# Self-heal: attempt diagnostic subtask (t150)
 				attempt_self_heal "$tid" "blocked" "$outcome_detail" "${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
 				;;
@@ -11332,6 +11636,8 @@ cmd_pulse() {
 				send_task_notification "$tid" "failed" "$outcome_detail" 2>>"$SUPERVISOR_LOG" || true
 				# Store failure pattern in memory (t128.6)
 				store_failure_pattern "$tid" "failed" "$outcome_detail" "$tid_desc" 2>>"$SUPERVISOR_LOG" || true
+				# Add failed:model label to GitHub issue (t1010)
+				add_model_label "$tid" "failed" "$tid_model" "${tid_repo:-.}" 2>>"$SUPERVISOR_LOG" || true
 				# Self-heal: attempt diagnostic subtask (t150)
 				attempt_self_heal "$tid" "failed" "$outcome_detail" "${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
 				;;
@@ -13044,19 +13350,12 @@ store_failure_pattern() {
 		return 0
 	fi
 
-	# Look up model tier from task record for pattern routing (t102.3)
+	# Look up model tier from task record for pattern routing (t102.3, t1010)
 	local model_tier=""
 	local task_model
 	task_model=$(db "$SUPERVISOR_DB" "SELECT model FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo "")
 	if [[ -n "$task_model" ]]; then
-		# Extract tier name from model string (e.g., "anthropic/claude-opus-4-6" -> "opus")
-		case "$task_model" in
-		*haiku*) model_tier="haiku" ;;
-		*flash*) model_tier="flash" ;;
-		*sonnet*) model_tier="sonnet" ;;
-		*opus*) model_tier="opus" ;;
-		*pro*) model_tier="pro" ;;
-		esac
+		model_tier=$(model_to_tier "$task_model")
 	fi
 
 	# Build structured content for pattern-tracker compatibility
@@ -13116,15 +13415,9 @@ store_success_pattern() {
 		fi
 	fi
 
-	# Extract tier name from model string
+	# Extract tier name from model string (t1010: use shared model_to_tier)
 	if [[ -n "$task_model" ]]; then
-		case "$task_model" in
-		*haiku*) model_tier="haiku" ;;
-		*flash*) model_tier="flash" ;;
-		*sonnet*) model_tier="sonnet" ;;
-		*opus*) model_tier="opus" ;;
-		*pro*) model_tier="pro" ;;
-		esac
+		model_tier=$(model_to_tier "$task_model")
 	fi
 
 	# Build structured content for pattern-tracker compatibility
@@ -15433,6 +15726,7 @@ Usage:
   supervisor-helper.sh watch [--repo path]            Watch TODO.md for changes (fswatch)
   supervisor-helper.sh dashboard [--batch id] [--interval N] Live TUI dashboard
   supervisor-helper.sh queue-health [--batch id]     Update pinned queue health issue (t1013)
+  supervisor-helper.sh labels [--action X] [--model Y] [--json]  Query model usage labels (t1010)
   supervisor-helper.sh db [sql]                      Direct SQLite access
   supervisor-helper.sh help                          Show this help
 
@@ -15768,6 +16062,7 @@ main() {
 	backup) cmd_backup "$@" ;;
 	restore) cmd_restore "$@" ;;
 	db) cmd_db "$@" ;;
+	labels) cmd_labels "$@" ;;
 	help | --help | -h) show_usage ;;
 	*)
 		log_error "Unknown command: $command"
