@@ -8,7 +8,7 @@ on:
       - 'todo/PLANS.md'
       - 'todo/tasks/**'
   issues:
-    types: [opened, closed, reopened, edited, labeled]
+    types: [opened]
   workflow_dispatch:
     inputs:
       command:
@@ -32,7 +32,7 @@ jobs:
     timeout-minutes: 10
     concurrency:
       group: issue-sync-push-${{ github.ref }}
-      cancel-in-progress: false
+      cancel-in-progress: true
     permissions:
       contents: write
       issues: write
@@ -179,30 +179,8 @@ jobs:
         run: |
           chmod +x .agents/scripts/issue-sync-helper.sh
           chmod +x .agents/scripts/shared-constants.sh
-
-          TASK_ID="${{ steps.check-issue.outputs.task_id }}"
-          ISSUE_NUM="${{ github.event.issue.number }}"
-          ACTION="${{ github.event.action }}"
-
-          echo "=== Issue event: $ACTION for $TASK_ID (#$ISSUE_NUM) ==="
-
-          case "$ACTION" in
-            opened)
-              # Pull the new issue ref into TODO.md
-              bash .agents/scripts/issue-sync-helper.sh pull --verbose || true
-              ;;
-            closed)
-              # If issue was closed, check if TODO.md task should be marked done
-              echo "Issue #$ISSUE_NUM closed. Run 'issue-sync-helper.sh status' to check drift."
-              ;;
-            reopened)
-              echo "Issue #$ISSUE_NUM reopened. Manual TODO.md update may be needed."
-              ;;
-            edited|labeled)
-              # Re-enrich if the issue was edited (might need label sync)
-              echo "Issue #$ISSUE_NUM edited/labeled. No automatic TODO.md update."
-              ;;
-          esac
+          echo "=== New issue opened: ${{ steps.check-issue.outputs.task_id }} (#${{ github.event.issue.number }}) ==="
+          bash .agents/scripts/issue-sync-helper.sh pull --verbose || true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
