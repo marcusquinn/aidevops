@@ -351,6 +351,10 @@ function loadAgentIndex() {
     const parts = trimmed.split(",");
     if (parts.length < 3) continue;
 
+    const folder = parts[0] || "";
+    // Skip reference/skill directories (not real agents)
+    if (folder.includes("references/") || folder.includes("loop-state/")) continue;
+
     const purpose = parts[1] || "";
     const keyFiles = parts.slice(2).join(",");
 

@@ -64,6 +64,11 @@ generate_subagents_block() {
         if (filename ~ /^(README|AGENTS|SKILL|SKILL-SCAN-RESULTS)$/) next
         if (filename ~ /-skill$/) next
 
+        # Skip paths containing filtered directories
+        if ($0 ~ /\/references\//) next
+        if ($0 ~ /\/node_modules\//) next
+        if ($0 ~ /\/loop-state\//) next
+
         # Get directory relative to agents_dir
         dir_rel = $0
         idx = index(dir_rel, agents_dir "/")
@@ -109,25 +114,38 @@ cmd_generate() {
 		return 1
 	fi
 
-	local tmpfile
+	local tmpfile new_block_file result_file
 	tmpfile=$(mktemp)
-	local new_subagents
-	new_subagents=$(generate_subagents_block "$AGENTS_DIR")
+	new_block_file=$(mktemp)
+	result_file=$(mktemp)
+
+	generate_subagents_block "$AGENTS_DIR" >"$new_block_file"
 
 	if [[ -f "$INDEX_FILE" ]]; then
 		# Preserve existing sections (agents, model_tiers, workflows, scripts)
 		# and replace only the subagents block
-		awk -v new_block="$new_subagents" '
-        /^<!--TOON:subagents\[/ { in_block = 1; print new_block; next }
-        in_block && /^-->/ { in_block = 0; next }
-        !in_block { print }
-        ' "$INDEX_FILE" >"$tmpfile"
+		# Uses sed to delete old block, then inserts new block from file
+		local in_block=0
+		while IFS= read -r line; do
+			if [[ "$line" == "<!--TOON:subagents["* ]]; then
+				in_block=1
+				cat "$new_block_file"
+				continue
+			fi
+			if [[ "$in_block" -eq 1 ]]; then
+				[[ "$line" == "-->" ]] && in_block=0
+				continue
+			fi
+			echo "$line"
+		done <"$INDEX_FILE" >"$result_file"
+		mv "$result_file" "$tmpfile"
 	else
 		# No existing file — generate minimal index with just subagents
-		echo "$new_subagents" >"$tmpfile"
+		mv "$new_block_file" "$tmpfile"
 	fi
 
 	mv "$tmpfile" "$INDEX_FILE"
+	rm -f "$new_block_file" "$result_file" 2>/dev/null
 
 	# Count entries for summary
 	local entry_count
