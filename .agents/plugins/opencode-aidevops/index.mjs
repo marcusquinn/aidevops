@@ -700,20 +700,29 @@ function applyAgentMcpTools(config) {
 
   let updated = 0;
 
-  for (const [agentName, toolPatterns] of Object.entries(AGENT_MCP_TOOLS)) {
-    if (!config.agent[agentName]) continue;
+  for (const [mcpAgentName, toolPatterns] of Object.entries(AGENT_MCP_TOOLS)) {
     if (toolPatterns.length === 0) continue;
 
-    // Ensure agent has a tools section
-    if (!config.agent[agentName].tools) {
-      config.agent[agentName].tools = {};
-    }
+    // Find matching agent(s) — check both exact name and path-based names
+    // ending with the basename (t1015: agents now use path-based names like
+    // "tools/wordpress/mainwp" instead of just "mainwp")
+    const matchingKeys = Object.keys(config.agent).filter(
+      (key) => key === mcpAgentName || key.endsWith("/" + mcpAgentName),
+    );
+    if (matchingKeys.length === 0) continue;
 
-    for (const pattern of toolPatterns) {
-      // Only set if not already configured (shell script takes precedence)
-      if (!(pattern in config.agent[agentName].tools)) {
-        config.agent[agentName].tools[pattern] = true;
-        updated++;
+    for (const matchKey of matchingKeys) {
+      // Ensure agent has a tools section
+      if (!config.agent[matchKey].tools) {
+        config.agent[matchKey].tools = {};
+      }
+
+      for (const pattern of toolPatterns) {
+        // Only set if not already configured (shell script takes precedence)
+        if (!(pattern in config.agent[matchKey].tools)) {
+          config.agent[matchKey].tools[pattern] = true;
+          updated++;
+        }
       }
     }
   }
