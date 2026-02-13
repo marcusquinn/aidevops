@@ -65,6 +65,7 @@ log_error() {
 
 db() {
 	sqlite3 -cmd ".timeout 5000" "$@"
+	return $?
 }
 
 # =============================================================================
@@ -184,9 +185,8 @@ get_head_sha() {
 # =============================================================================
 
 sql_escape() {
-	local val="$1"
-	val="${val//\\\'/\'}"
-	val="${val//\\\"/\"}"
+	local val
+	val="$1"
 	val="${val//\'/\'\'}"
 	echo "$val"
 	return 0
@@ -251,7 +251,7 @@ import_coderabbit_findings() {
         ORDER BY collected_at DESC;
     " 2>/dev/null | while IFS=$'\x1f' read -r path line severity category body; do
 		local desc
-		desc=$(echo "$body" | head -c 500)
+		desc=$(echo "$body" | cut -c1-500)
 		local dedup_key="${path}:${line}"
 		echo "INSERT INTO audit_findings (run_id, source, severity, path, line, description, category, dedup_key)
               VALUES ($run_id, 'coderabbit', '$(sql_escape "$severity")', '$(sql_escape "$path")', ${line:-0},
@@ -622,6 +622,12 @@ cmd_audit() {
 		esac
 	done
 
+	# Validate numeric inputs to prevent SQL injection
+	if [[ "$pr_number" != "0" ]] && ! [[ "$pr_number" =~ ^[0-9]+$ ]]; then
+		log_error "Invalid PR number: $pr_number"
+		return 1
+	fi
+
 	# Auto-detect repo if not specified
 	if [[ -z "$repo" ]]; then
 		repo=$(get_repo)
@@ -662,7 +668,9 @@ cmd_audit() {
 	local total_findings=0
 
 	# Iterate configured services and call each collector
-	for service in $services; do
+	local services_array
+	read -ra services_array <<<"$services"
+	for service in "${services_array[@]}"; do
 		local count=0
 		case "$service" in
 		coderabbit)
@@ -884,6 +892,16 @@ cmd_report() {
 		esac
 	done
 
+	# Validate numeric inputs to prevent SQL injection
+	if [[ -n "$run_id" ]] && ! [[ "$run_id" =~ ^[0-9]+$ ]]; then
+		log_error "Invalid run ID: $run_id"
+		return 1
+	fi
+	if ! [[ "$limit" =~ ^[0-9]+$ ]]; then
+		log_error "Invalid limit: $limit"
+		return 1
+	fi
+
 	ensure_db
 
 	# Default to latest run
@@ -1023,6 +1041,16 @@ cmd_summary() {
 			;;
 		esac
 	done
+
+	# Validate numeric inputs to prevent SQL injection
+	if [[ -n "$pr_number" ]] && ! [[ "$pr_number" =~ ^[0-9]+$ ]]; then
+		log_error "Invalid PR number: $pr_number"
+		return 1
+	fi
+	if [[ -n "$run_id" ]] && ! [[ "$run_id" =~ ^[0-9]+$ ]]; then
+		log_error "Invalid run ID: $run_id"
+		return 1
+	fi
 
 	ensure_db
 
