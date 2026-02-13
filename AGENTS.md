@@ -9,7 +9,7 @@
 - **Repo**: `~/Git/aidevops/`
 
 **AI Tool Config Paths**:
-- Primary: `~/.config/Claude/Claude.json`, `~/.config/Claude/agent/`
+- Primary: `~/.config/opencode/opencode.json`, `~/.config/opencode/agent/`
 - Companion CLI: `~/.claude/`, `~/.claude/settings.json`
 
 **Development Commands**:
