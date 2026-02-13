@@ -308,7 +308,7 @@ cmd_check_regression() {
 		previous_line=$(echo "$snapshots" | tail -1)
 
 		IFS='|' read -r current_date current_total current_critical current_high <<<"$current_line"
-		IFS='|' read -r previous_date previous_total previous_critical previous_high <<<"$previous_line"
+		IFS='|' read -r _previous_date previous_total previous_critical previous_high <<<"$previous_line"
 
 		# Skip if previous total is 0 (avoid division by zero)
 		if [[ "$previous_total" -eq 0 ]]; then
