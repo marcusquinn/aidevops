@@ -3566,42 +3566,11 @@ ${alerts_md}
 ---
 _Auto-updated by supervisor pulse (t1013). Do not edit manually._"
 
-	# Find or create the status comment
-	local comment_id=""
-	if [[ -f "$health_comment_file" ]]; then
-		comment_id=$(cat "$health_comment_file" 2>/dev/null || echo "")
-	fi
-
-	# Validate cached comment still exists
-	if [[ -n "$comment_id" ]]; then
-		local comment_check
-		comment_check=$(gh api "repos/${repo_slug}/issues/comments/${comment_id}" --jq '.id' 2>/dev/null || echo "")
-		if [[ -z "$comment_check" ]]; then
-			comment_id=""
-			rm -f "$health_comment_file" 2>/dev/null || true
-		fi
-	fi
-
-	if [[ -n "$comment_id" ]]; then
-		# Update existing comment in-place
-		gh api -X PATCH "repos/${repo_slug}/issues/comments/${comment_id}" \
-			-f body="$body" >/dev/null 2>&1 || {
-			log_verbose "  Phase 8c: Failed to update comment $comment_id"
-			return 0
-		}
-	else
-		# Create new comment and cache its ID
-		local create_response
-		create_response=$(gh api "repos/${repo_slug}/issues/${health_issue_number}/comments" \
-			-f body="$body" --jq '.id' 2>/dev/null || echo "")
-		if [[ -n "$create_response" ]]; then
-			echo "$create_response" >"$health_comment_file"
-			comment_id="$create_response"
-		else
-			log_verbose "  Phase 8c: Failed to create health comment"
-			return 0
-		fi
-	fi
+	# Update the issue description (body) directly — no comments needed
+	gh issue edit "$health_issue_number" --repo "$repo_slug" --body "$body" >/dev/null 2>&1 || {
+		log_verbose "  Phase 8c: Failed to update issue body"
+		return 0
+	}
 
 	# Build title with operational stats from this runner's perspective
 	local cnt_working
