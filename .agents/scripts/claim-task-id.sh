@@ -312,6 +312,25 @@ allocate_online() {
 	local next_id=$((highest_id + 1))
 	log_success "Allocated task ID: t${next_id}"
 
+	# Step 5: Update issue title with task ID prefix
+	local prefixed_title="t${next_id}: ${TASK_TITLE}"
+	case "$platform" in
+	github)
+		if gh issue edit "$issue_num" --title "$prefixed_title" --repo "$(cd "$repo_path" && gh repo view --json nameWithOwner -q .nameWithOwner)" 2>/dev/null; then
+			log_success "Updated issue title: ${prefixed_title}"
+		else
+			log_warn "Failed to update issue title (issue created without task ID prefix)"
+		fi
+		;;
+	gitlab)
+		if (cd "$repo_path" && glab issue update "$issue_num" --title "$prefixed_title") 2>/dev/null; then
+			log_success "Updated issue title: ${prefixed_title}"
+		else
+			log_warn "Failed to update issue title (issue created without task ID prefix)"
+		fi
+		;;
+	esac
+
 	# Output in machine-readable format
 	echo "task_id=t${next_id}"
 	echo "ref=${ref_prefix}#${issue_num}"
