@@ -4650,34 +4650,293 @@ async function manageAssets(options = {}) {
 // Asset Chaining — "Open in" menu from asset detail dialog
 // Allows chaining operations without download/re-upload round-trip
 // Actions: animate, inpaint, upscale, relight, angles, shots, ai-stylist, skin-enhancer, multishot
+// Resolve the chain action label from its slug.
+const CHAIN_ACTION_MAP = {
+  animate: 'Animate', inpaint: 'Inpaint', upscale: 'Upscale', relight: 'Relight',
+  angles: 'Angles', shots: 'Shots', 'ai-stylist': 'AI Stylist',
+  'skin-enhancer': 'Skin Enhancer', multishot: 'Multishot',
+};
+
+// Resolve the tool URL for a chain action.
+const CHAIN_TOOL_URL_MAP = {
+  animate: '/create/video', inpaint: '/edit?model=soul_inpaint', upscale: '/upscale',
+  relight: '/app/relight', angles: '/app/angles', shots: '/app/shots',
+  'ai-stylist': '/app/ai-stylist', 'skin-enhancer': '/app/skin-enhancer', multishot: '/app/shots',
+};
+
+// Find and select an asset on the page, handling lazy loading and fallback selectors.
+// Returns { assetImg, assetCount } or throws if no assets found.
+async function findAssetOnPage(page) {
+  try {
+    await page.waitForSelector('main img', { timeout: 15000, state: 'visible' });
+  } catch {
+    console.log('No images appeared after 15s, scrolling to trigger lazy load...');
+  }
+
+  for (let i = 0; i < 3; i++) {
+    await page.evaluate(() => window.scrollBy(0, 800));
+    await page.waitForTimeout(1000);
+  }
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(1000);
+
+  let assetImg = page.locator('main img');
+  let assetCount = await assetImg.count();
+  if (assetCount === 0) {
+    assetImg = page.locator(GENERATED_IMAGE_SELECTOR);
+    assetCount = await assetImg.count();
+  }
+  if (assetCount === 0) {
+    console.log('No assets found yet, waiting for lazy load...');
+    await page.waitForTimeout(5000);
+    assetImg = page.locator('main img');
+    assetCount = await assetImg.count();
+  }
+
+  return { assetImg, assetCount };
+}
+
+// Try multiple click strategies to open an asset dialog.
+async function openAssetDialog(page, targetAsset) {
+  const clickStrategies = [
+    { name: 'normal click', fn: () => targetAsset.click({ timeout: 5000 }) },
+    { name: 'center-click', fn: async () => {
+      const box = await targetAsset.boundingBox();
+      if (box) await page.mouse.click(box.x + box.width * 0.5, box.y + box.height * 0.5);
+      else throw new Error('no bounding box');
+    }},
+    { name: 'force click', fn: () => targetAsset.click({ force: true }) },
+  ];
+
+  for (const strategy of clickStrategies) {
+    try {
+      await strategy.fn();
+      await page.waitForTimeout(2500);
+      await dismissInterruptions(page);
+      const isOpen = await page.locator('[role="dialog"], dialog').count() > 0;
+      if (isOpen) {
+        console.log(`Dialog opened via ${strategy.name}`);
+        return true;
+      }
+    } catch {
+      console.log(`${strategy.name} failed, trying next...`);
+    }
+  }
+  return false;
+}
+
+// Try to click the target action inside an asset dialog using 3 strategies.
+async function clickAssetAction(page, actionLabel) {
+  const dialog = page.locator('[role="dialog"], dialog');
+
+  // Strategy 1: "Open in" menu
+  const openInBtn = dialog.locator('button:has-text("Open in")');
+  if (await openInBtn.count() > 0) {
+    await openInBtn.first().click({ force: true });
+    await page.waitForTimeout(1000);
+    console.log('Opened "Open in" menu');
+    await debugScreenshot(page, 'asset-chain-openin-menu');
+
+    const actionBtn = page.locator(`[role="menuitem"]:has-text("${actionLabel}"), [role="option"]:has-text("${actionLabel}"), [data-radix-popper-content-wrapper] button:has-text("${actionLabel}"), [data-radix-popper-content-wrapper] a:has-text("${actionLabel}")`);
+    if (await actionBtn.count() > 0) {
+      await actionBtn.first().click({ force: true });
+      await page.waitForTimeout(3000);
+      console.log(`Clicked "${actionLabel}" from Open in menu`);
+      return true;
+    }
+  }
+
+  // Strategy 2: Direct button/link inside dialog
+  const directBtn = dialog.locator(`button:has-text("${actionLabel}"), a:has-text("${actionLabel}")`);
+  if (await directBtn.count() > 0) {
+    await directBtn.first().click({ force: true });
+    await page.waitForTimeout(3000);
+    console.log(`Clicked "${actionLabel}" inside dialog`);
+    return true;
+  }
+
+  // Strategy 3: Overflow/more menu
+  const moreBtn = dialog.locator('button[aria-label*="more" i], button[aria-label*="menu" i], button:has(svg[class*="dots"]), button:has(svg[class*="ellipsis"])');
+  for (let m = 0; m < await moreBtn.count(); m++) {
+    await moreBtn.nth(m).click({ force: true });
+    await page.waitForTimeout(1000);
+    const menuAction = page.locator(`[role="menuitem"]:has-text("${actionLabel}"), [role="option"]:has-text("${actionLabel}")`);
+    if (await menuAction.count() > 0) {
+      await menuAction.first().click({ force: true });
+      await page.waitForTimeout(3000);
+      console.log(`Clicked "${actionLabel}" from overflow menu`);
+      return true;
+    }
+  }
+
+  return false;
+}
+
+// Fallback: download asset, navigate to tool page, upload it there.
+async function assetChainFallbackUpload(page, action, options) {
+  console.log(`"${CHAIN_ACTION_MAP[action] || action}" not found in dialog. Downloading asset and navigating to tool...`);
+  await debugScreenshot(page, 'asset-chain-fallback');
+
+  const dlOutputDir = options.output || getDefaultOutputDir(options);
+  const downloadedFiles = await downloadLatestResult(page, dlOutputDir, false, options);
+  const downloadedFile = Array.isArray(downloadedFiles) ? downloadedFiles[0] : downloadedFiles;
+
+  await forceCloseDialogs(page);
+
+  const toolUrl = CHAIN_TOOL_URL_MAP[action] || `/app/${action}`;
+  console.log(`Navigating to ${toolUrl}...`);
+  await navigateTo(page, toolUrl);
+
+  if (downloadedFile) {
+    const fileInput = page.locator('input[type="file"]').first();
+    if (await fileInput.count() > 0) {
+      await fileInput.setInputFiles(downloadedFile);
+      await page.waitForTimeout(3000);
+      console.log(`Uploaded asset to ${action} tool: ${basename(downloadedFile)}`);
+    }
+  }
+}
+
+// Dismiss "Media upload agreement" modal (React needs synthetic click events).
+async function dismissMediaUploadAgreement(page) {
+  const agreeBtn = page.locator('button:has-text("I agree, continue")');
+  if (await agreeBtn.count() > 0) {
+    await agreeBtn.first().click({ force: true });
+    await page.waitForTimeout(2000);
+    console.log('Dismissed "Media upload agreement" modal');
+    return true;
+  }
+  return false;
+}
+
+// Click the generate/action button on a tool page.
+async function clickToolActionButton(page) {
+  const actionLabels = ['Generate', 'Apply', 'Create', 'Upscale', 'Enhance', 'Start', 'Submit'];
+  const actionSelector = actionLabels.map(l => `button:has-text("${l}")`).join(', ');
+  const generateBtn = page.locator(actionSelector);
+  if (await generateBtn.count() > 0) {
+    await generateBtn.last().click({ force: true });
+    console.log(`Clicked action button on target tool`);
+  }
+}
+
+// Poll for chained result completion (progress indicators, download buttons, etc.).
+async function waitForChainedResult(page, action, timeout = 300000) {
+  console.log(`Waiting up to ${timeout / 1000}s for chained result...`);
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < timeout) {
+    await page.waitForTimeout(5000);
+
+    const hasProgress = await page.locator('progress, [role="progressbar"], .animate-spin, [class*="loading"], [class*="spinner"]').count() > 0;
+    if (hasProgress) {
+      console.log(`Still processing... (${Math.round((Date.now() - startTime) / 1000)}s)`);
+      continue;
+    }
+
+    const hasDownload = await page.locator('button:has-text("Download"), a:has-text("Download")').count() > 0;
+    const hasCompare = await page.locator('button:has-text("Compare"), [class*="compare"]').count() > 0;
+    const hasNewResult = await page.locator('img[alt*="upscal"], img[alt*="result"], [data-testid*="result"]').count() > 0;
+
+    if (hasDownload || hasCompare || hasNewResult) {
+      console.log('Result ready');
+      return true;
+    }
+
+    if (Date.now() - startTime > 30000) {
+      await debugScreenshot(page, `asset-chain-${action}-waiting`);
+      if (await dismissMediaUploadAgreement(page)) {
+        console.log('Late media upload agreement dismissed, continuing...');
+        continue;
+      }
+      if (Date.now() - startTime > 60000) {
+        console.log('No progress detected after 60s, checking result...');
+        return false;
+      }
+    }
+  }
+  return false;
+}
+
+// Extract the largest visible image URL from the page (CDN extraction fallback).
+async function extractLargestImageSrc(page) {
+  return page.evaluate(() => {
+    const imgs = [...document.querySelectorAll('main img, img')];
+    let best = null;
+    let bestArea = 0;
+    for (const img of imgs) {
+      const rect = img.getBoundingClientRect();
+      const area = rect.width * rect.height;
+      if (area > bestArea && rect.width > 200 && img.src?.startsWith('http')) {
+        bestArea = area;
+        best = img.src;
+      }
+    }
+    if (best) {
+      const cfMatch = best.match(/(https:\/\/d8j0ntlcm91z4\.cloudfront\.net\/[^\s]+)/);
+      return cfMatch ? cfMatch[1] : best;
+    }
+    return null;
+  });
+}
+
+// Download chained result via icon buttons or CDN extraction fallback.
+async function downloadChainedImageResult(page, outputDir, action, options) {
+  const downloaded = await downloadLatestResult(page, outputDir, true, options);
+  const hasDownloaded = Array.isArray(downloaded) ? downloaded.length > 0 : !!downloaded;
+  if (hasDownloaded) return;
+
+  // Try download icon buttons (upscale/edit pages use icon buttons)
+  console.log('Standard download failed, trying download icon...');
+  const dlIcon = page.locator('button:has(svg), a[download]').filter({ has: page.locator('svg') });
+
+  for (let di = 0; di < Math.min(await dlIcon.count(), 5); di++) {
+    const btn = dlIcon.nth(di);
+    const ariaLabel = await btn.getAttribute('aria-label').catch(() => '');
+    const title = await btn.getAttribute('title').catch(() => '');
+    if (ariaLabel?.toLowerCase().includes('download') || title?.toLowerCase().includes('download')) {
+      const [dl] = await Promise.all([
+        page.waitForEvent('download', { timeout: 10000 }).catch(() => null),
+        btn.click({ force: true }),
+      ]);
+      if (dl) {
+        const savePath = join(outputDir, dl.suggestedFilename() || `chained-${action}-${Date.now()}.png`);
+        await dl.saveAs(savePath);
+        console.log(`Downloaded via icon: ${savePath}`);
+        return;
+      }
+    }
+  }
+
+  // Final fallback: CDN extraction
+  console.log('Icon download failed, trying CDN extraction...');
+  const imgSrc = await extractLargestImageSrc(page);
+  if (imgSrc) {
+    const ext = imgSrc.includes('.png') ? 'png' : 'webp';
+    const savePath = join(outputDir, `chained-${action}-${Date.now()}.${ext}`);
+    try {
+      curlDownload(imgSrc, savePath, { timeout: 60000 });
+      console.log(`Downloaded via CDN: ${savePath}`);
+    } catch (curlErr) {
+      console.log(`CDN download failed: ${curlErr.message}`);
+    }
+  }
+}
+
 async function assetChain(options = {}) {
   const { browser, context, page } = await launchBrowser(options);
 
   try {
     const action = options.chainAction || 'animate';
-    const actionMap = {
-      animate: 'Animate',
-      inpaint: 'Inpaint',
-      upscale: 'Upscale',
-      relight: 'Relight',
-      angles: 'Angles',
-      shots: 'Shots',
-      'ai-stylist': 'AI Stylist',
-      'skin-enhancer': 'Skin Enhancer',
-      multishot: 'Multishot',
-    };
-    const actionLabel = actionMap[action] || action;
+    const actionLabel = CHAIN_ACTION_MAP[action] || action;
     console.log(`Asset Chain: ${actionLabel}...`);
 
-    // Navigate to asset source — either a specific page or the asset library
+    // Navigate to asset source
     const sourceUrl = options.prompt || `${BASE_URL}/asset/all`;
-    await page.goto(sourceUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
+    await navigateTo(page, sourceUrl);
 
-    // If an image file is provided, navigate to the image model page and generate first
+    // Upload source image if provided
     if (options.imageFile) {
-      // Upload to the current page if there is a file input
       const fileInput = page.locator('input[type="file"]').first();
       if (await fileInput.count() > 0) {
         await fileInput.setInputFiles(options.imageFile);
@@ -4686,80 +4945,21 @@ async function assetChain(options = {}) {
       }
     }
 
-    // Wait for asset images to appear (SPA may load them asynchronously)
-    try {
-      await page.waitForSelector('main img', { timeout: 15000, state: 'visible' });
-    } catch {
-      console.log('No images appeared after 15s, scrolling to trigger lazy load...');
-    }
-
-    // Scroll to trigger lazy loading, then scroll back to top
-    for (let i = 0; i < 3; i++) {
-      await page.evaluate(() => window.scrollBy(0, 800));
-      await page.waitForTimeout(1000);
-    }
-    await page.evaluate(() => window.scrollTo(0, 0));
-    await page.waitForTimeout(1000);
-
-    // Click on the target asset (first/latest or by index)
-    const targetIndex = options.assetIndex || 0;
-    // Use broad 'main img' selector (matches manageAssets which works reliably)
-    let assetImg = page.locator('main img');
-    let assetCount = await assetImg.count();
-    // Fallback to alt-based selector if main img finds nothing
-    if (assetCount === 0) {
-      assetImg = page.locator(GENERATED_IMAGE_SELECTOR);
-      assetCount = await assetImg.count();
-    }
-    // Final fallback: wait longer for lazy-loaded content
-    if (assetCount === 0) {
-      console.log('No assets found yet, waiting for lazy load...');
-      await page.waitForTimeout(5000);
-      assetImg = page.locator('main img');
-      assetCount = await assetImg.count();
-    }
-
+    // Find and click target asset
+    const { assetImg, assetCount } = await findAssetOnPage(page);
     if (assetCount === 0) {
       console.error('No assets found on page');
-      await page.screenshot({ path: join(STATE_DIR, 'asset-chain-no-assets.png'), fullPage: false });
+      await debugScreenshot(page, 'asset-chain-no-assets');
       await browser.close();
       return { success: false, error: 'No assets found' };
     }
 
+    const targetIndex = options.assetIndex || 0;
     console.log(`Found ${assetCount} assets, clicking index ${targetIndex}...`);
-    const targetAsset = assetImg.nth(targetIndex);
+    const dialogOpen = await openAssetDialog(page, assetImg.nth(targetIndex));
+    await debugScreenshot(page, 'asset-chain-dialog');
 
-    // Try multiple click strategies — overlays (play buttons, checkboxes) can intercept
-    let dialogOpen = false;
-    const clickStrategies = [
-      { name: 'normal click', fn: () => targetAsset.click({ timeout: 5000 }) },
-      { name: 'center-click', fn: async () => {
-        const box = await targetAsset.boundingBox();
-        if (box) await page.mouse.click(box.x + box.width * 0.5, box.y + box.height * 0.5);
-        else throw new Error('no bounding box');
-      }},
-      { name: 'force click', fn: () => targetAsset.click({ force: true }) },
-    ];
-
-    for (const strategy of clickStrategies) {
-      if (dialogOpen) break;
-      try {
-        await strategy.fn();
-        await page.waitForTimeout(2500);
-        await dismissInterruptions(page);
-        dialogOpen = await page.locator('[role="dialog"], dialog').count() > 0;
-        if (dialogOpen) {
-          console.log(`Dialog opened via ${strategy.name}`);
-        }
-      } catch {
-        console.log(`${strategy.name} failed, trying next...`);
-      }
-    }
-
-    // Screenshot the dialog state for debugging
-    await page.screenshot({ path: join(STATE_DIR, 'asset-chain-dialog.png'), fullPage: false });
-
-    // Remove any overlays that intercept pointer events inside the dialog
+    // Remove overlay pointer-event interceptors
     if (dialogOpen) {
       await page.evaluate(() => {
         document.querySelectorAll('.absolute.top-0.left-0.w-full').forEach(el => {
@@ -4768,99 +4968,14 @@ async function assetChain(options = {}) {
       });
     }
 
-    // Strategy 1: Look for "Open in" button strictly inside the dialog
-    let actionClicked = false;
-    const dialog = page.locator('[role="dialog"], dialog');
-    const openInBtn = dialog.locator('button:has-text("Open in")');
-    if (await openInBtn.count() > 0) {
-      await openInBtn.first().click({ force: true });
-      await page.waitForTimeout(1000);
-      console.log('Opened "Open in" menu');
-      await page.screenshot({ path: join(STATE_DIR, 'asset-chain-openin-menu.png'), fullPage: false });
-
-      // The menu items may appear as a popover outside the dialog
-      const actionBtn = page.locator(`[role="menuitem"]:has-text("${actionLabel}"), [role="option"]:has-text("${actionLabel}"), [data-radix-popper-content-wrapper] button:has-text("${actionLabel}"), [data-radix-popper-content-wrapper] a:has-text("${actionLabel}")`);
-      if (await actionBtn.count() > 0) {
-        await actionBtn.first().click({ force: true });
-        await page.waitForTimeout(3000);
-        console.log(`Clicked "${actionLabel}" from Open in menu`);
-        actionClicked = true;
-      }
-    }
-
-    // Strategy 2: Look for action buttons/links strictly inside the dialog
+    // Try to click the action in the dialog, fall back to download+navigate+upload
+    const actionClicked = await clickAssetAction(page, actionLabel);
     if (!actionClicked) {
-      const directBtn = dialog.locator(`button:has-text("${actionLabel}"), a:has-text("${actionLabel}")`);
-      if (await directBtn.count() > 0) {
-        await directBtn.first().click({ force: true });
-        await page.waitForTimeout(3000);
-        console.log(`Clicked "${actionLabel}" inside dialog`);
-        actionClicked = true;
-      }
+      await assetChainFallbackUpload(page, action, options);
     }
 
-    // Strategy 3: Look for overflow/more menu inside the dialog
-    if (!actionClicked) {
-      const moreBtn = dialog.locator('button[aria-label*="more" i], button[aria-label*="menu" i], button:has(svg[class*="dots"]), button:has(svg[class*="ellipsis"])');
-      for (let m = 0; m < await moreBtn.count() && !actionClicked; m++) {
-        await moreBtn.nth(m).click({ force: true });
-        await page.waitForTimeout(1000);
-        const menuAction = page.locator(`[role="menuitem"]:has-text("${actionLabel}"), [role="option"]:has-text("${actionLabel}")`);
-        if (await menuAction.count() > 0) {
-          await menuAction.first().click({ force: true });
-          await page.waitForTimeout(3000);
-          console.log(`Clicked "${actionLabel}" from overflow menu`);
-          actionClicked = true;
-        }
-      }
-    }
+    await debugScreenshot(page, `asset-chain-${action}`);
 
-    // Strategy 4: Fallback — download the asset, close dialog, navigate to tool, upload
-    if (!actionClicked) {
-      console.log(`"${actionLabel}" not found in dialog. Downloading asset and navigating to tool...`);
-      await page.screenshot({ path: join(STATE_DIR, 'asset-chain-fallback.png'), fullPage: false });
-
-      // Download the asset from the dialog first
-      const outputDir = options.output || getDefaultOutputDir(options);
-      const downloadedFiles = await downloadLatestResult(page, outputDir, false, options);
-      const downloadedFile = Array.isArray(downloadedFiles) ? downloadedFiles[0] : downloadedFiles;
-
-      // Close dialog
-      await forceCloseDialogs(page);
-
-      // Navigate to the target tool directly
-      const toolUrlMap = {
-        animate: '/create/video',
-        inpaint: '/edit?model=soul_inpaint',
-        upscale: '/upscale',
-        relight: '/app/relight',
-        angles: '/app/angles',
-        shots: '/app/shots',
-        'ai-stylist': '/app/ai-stylist',
-        'skin-enhancer': '/app/skin-enhancer',
-        multishot: '/app/shots',
-      };
-      const toolUrl = toolUrlMap[action] || `/app/${action}`;
-      console.log(`Navigating to ${toolUrl}...`);
-      await page.goto(`${BASE_URL}${toolUrl}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-      await page.waitForTimeout(3000);
-      await dismissAllModals(page);
-
-      // Upload the downloaded asset to the tool
-      if (downloadedFile) {
-        const fileInput = page.locator('input[type="file"]').first();
-        if (await fileInput.count() > 0) {
-          await fileInput.setInputFiles(downloadedFile);
-          await page.waitForTimeout(3000);
-          console.log(`Uploaded asset to ${action} tool: ${basename(downloadedFile)}`);
-        }
-      }
-      actionClicked = true;
-    }
-
-    await page.screenshot({ path: join(STATE_DIR, `asset-chain-${action}.png`), fullPage: false });
-
-    // Now we should be on the target tool page with the asset pre-loaded
     // Fill additional prompt if provided
     if (options.prompt && !options.prompt.startsWith('http')) {
       const promptInput = page.locator('textarea').first();
@@ -4870,164 +4985,30 @@ async function assetChain(options = {}) {
       }
     }
 
-    // Helper: dismiss "Media upload agreement" modal via Playwright click (React needs synthetic events)
-    async function dismissMediaUploadAgreement() {
-      const agreeBtn = page.locator('button:has-text("I agree, continue")');
-      if (await agreeBtn.count() > 0) {
-        await agreeBtn.first().click({ force: true });
-        await page.waitForTimeout(2000);
-        console.log('Dismissed "Media upload agreement" modal');
-        return true;
-      }
-      return false;
-    }
-
-    // Check for media upload agreement before clicking Generate (may appear after upload)
+    // Dismiss agreement, click generate, dismiss again if needed
     await page.waitForTimeout(2000);
-    await dismissMediaUploadAgreement();
-
-    // Click the action button on the target tool page
-    // Different tools use different button labels: Generate, Apply, Create, Upscale, Enhance, etc.
+    await dismissMediaUploadAgreement(page);
     await page.waitForTimeout(1000);
-    const actionLabels = ['Generate', 'Apply', 'Create', 'Upscale', 'Enhance', 'Start', 'Submit'];
-    const actionSelector = actionLabels.map(l => `button:has-text("${l}")`).join(', ');
-    const generateBtn = page.locator(actionSelector);
-    if (await generateBtn.count() > 0) {
-      // Click the last matching button (usually the primary CTA at the bottom)
-      await generateBtn.last().click({ force: true });
-      console.log(`Clicked action button on target tool`);
-    }
-
-    // Check for media upload agreement after clicking action button (appears as confirmation)
+    await clickToolActionButton(page);
     await page.waitForTimeout(3000);
-    const dismissed = await dismissMediaUploadAgreement();
+    const dismissed = await dismissMediaUploadAgreement(page);
+    if (dismissed) await page.waitForTimeout(2000);
 
-    // If we dismissed the agreement, the generation should now start — wait a moment
-    if (dismissed) {
-      await page.waitForTimeout(2000);
-    }
-
-    // Wait for result — poll for completion indicators
-    const timeout = options.timeout || 300000;
-    console.log(`Waiting up to ${timeout / 1000}s for chained result...`);
-
-    const startTime = Date.now();
-    let resultReady = false;
-    while (Date.now() - startTime < timeout && !resultReady) {
-      await page.waitForTimeout(5000);
-
-      // Check for progress indicators (still processing)
-      const hasProgress = await page.locator('progress, [role="progressbar"], .animate-spin, [class*="loading"], [class*="spinner"]').count() > 0;
-      if (hasProgress) {
-        const elapsed = Math.round((Date.now() - startTime) / 1000);
-        console.log(`Still processing... (${elapsed}s)`);
-        continue;
-      }
-
-      // Check for completion: download button appears, or result image changes
-      const hasDownload = await page.locator('button:has-text("Download"), a:has-text("Download")').count() > 0;
-      const hasCompare = await page.locator('button:has-text("Compare"), [class*="compare"]').count() > 0;
-      const hasNewResult = await page.locator('img[alt*="upscal"], img[alt*="result"], [data-testid*="result"]').count() > 0;
-
-      if (hasDownload || hasCompare || hasNewResult) {
-        resultReady = true;
-        console.log('Result ready');
-      }
-
-      // If no progress and no result after 30s, check if the page changed at all
-      if (!hasProgress && !resultReady && (Date.now() - startTime > 30000)) {
-        // Take a screenshot to see current state
-        await page.screenshot({ path: join(STATE_DIR, `asset-chain-${action}-waiting.png`), fullPage: false });
-        // Check if maybe the media upload agreement is still blocking
-        const dismissed2 = await dismissMediaUploadAgreement();
-        if (dismissed2) {
-          console.log('Late media upload agreement dismissed, continuing...');
-          continue;
-        }
-        // If nothing is happening after 60s, break
-        if (Date.now() - startTime > 60000) {
-          console.log('No progress detected after 60s, checking result...');
-          break;
-        }
-      }
-    }
+    // Wait for result
+    await waitForChainedResult(page, action, options.timeout || 300000);
 
     await page.waitForTimeout(3000);
     await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, `asset-chain-${action}-result.png`), fullPage: false });
+    await debugScreenshot(page, `asset-chain-${action}-result`);
 
+    // Download result
     if (options.wait !== false) {
       const baseOutput = options.output || getDefaultOutputDir(options);
       const outputDir = resolveOutputDir(baseOutput, options, 'chained');
-      const isVideoAction = ['animate'].includes(action);
-      if (isVideoAction) {
+      if (action === 'animate') {
         await downloadVideoFromHistory(page, outputDir, {}, options);
       } else {
-        // Try standard download first
-        const downloaded = await downloadLatestResult(page, outputDir, true, options);
-        const hasDownloaded = Array.isArray(downloaded) ? downloaded.length > 0 : !!downloaded;
-
-        // If standard download failed, try the download icon button (upscale/edit pages use icon buttons)
-        if (!hasDownloaded) {
-          console.log('Standard download failed, trying download icon...');
-          // Look for download icon buttons (SVG icons without text labels)
-          const dlIcon = page.locator('button:has(svg), a[download]').filter({ has: page.locator('svg') });
-          let iconDownloaded = false;
-
-          // Try each potential download icon
-          for (let di = 0; di < Math.min(await dlIcon.count(), 5) && !iconDownloaded; di++) {
-            const btn = dlIcon.nth(di);
-            const ariaLabel = await btn.getAttribute('aria-label').catch(() => '');
-            const title = await btn.getAttribute('title').catch(() => '');
-            if (ariaLabel?.toLowerCase().includes('download') || title?.toLowerCase().includes('download')) {
-              const [dl] = await Promise.all([
-                page.waitForEvent('download', { timeout: 10000 }).catch(() => null),
-                btn.click({ force: true }),
-              ]);
-              if (dl) {
-                const savePath = join(outputDir, dl.suggestedFilename() || `chained-${action}-${Date.now()}.png`);
-                await dl.saveAs(savePath);
-                console.log(`Downloaded via icon: ${savePath}`);
-                iconDownloaded = true;
-              }
-            }
-          }
-
-          // Final fallback: extract the largest image src from the page and download via curl
-          if (!iconDownloaded) {
-            console.log('Icon download failed, trying CDN extraction...');
-            const imgSrc = await page.evaluate(() => {
-              // Find the largest visible image on the page (likely the result)
-              const imgs = [...document.querySelectorAll('main img, img')];
-              let best = null;
-              let bestArea = 0;
-              for (const img of imgs) {
-                const rect = img.getBoundingClientRect();
-                const area = rect.width * rect.height;
-                if (area > bestArea && rect.width > 200 && img.src?.startsWith('http')) {
-                  bestArea = area;
-                  best = img.src;
-                }
-              }
-              // Extract raw CloudFront URL if wrapped in cdn-cgi
-              if (best) {
-                const cfMatch = best.match(/(https:\/\/d8j0ntlcm91z4\.cloudfront\.net\/[^\s]+)/);
-                return cfMatch ? cfMatch[1] : best;
-              }
-              return null;
-            });
-            if (imgSrc) {
-              const ext = imgSrc.includes('.png') ? 'png' : 'webp';
-              const savePath = join(outputDir, `chained-${action}-${Date.now()}.${ext}`);
-              try {
-                execFileSync('curl', ['-sL', '-o', savePath, imgSrc], { timeout: 60000 });
-                console.log(`Downloaded via CDN: ${savePath}`);
-              } catch (curlErr) {
-                console.log(`CDN download failed: ${curlErr.message}`);
-              }
-            }
-          }
-        }
+        await downloadChainedImageResult(page, outputDir, action, options);
       }
     }
 
