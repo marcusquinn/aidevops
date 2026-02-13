@@ -3,7 +3,6 @@
 #
 # Functions for state transitions, status queries, and task lifecycle
 
-
 #######################################
 # Validate a state transition
 # Returns 0 if valid, 1 if invalid
@@ -131,6 +130,34 @@ cmd_transition() {
 			fi
 		done
 		return 1
+	fi
+
+	# t1030: Guard complete->deployed when a real PR URL exists.
+	# If the task has a PR that isn't no_pr/task_only, the PR must be merged
+	# before allowing the deployed transition. This prevents tasks from being
+	# marked deployed while their PR is still open (e.g., t1011 incident).
+	if [[ "$current_state" == "complete" && "$new_state" == "deployed" ]]; then
+		local existing_pr
+		existing_pr=$(db "$SUPERVISOR_DB" "SELECT pr_url FROM tasks WHERE id = '$escaped_id';")
+		if [[ -n "$existing_pr" && "$existing_pr" != "no_pr" && "$existing_pr" != "task_only" && "$existing_pr" != "verified_complete" ]]; then
+			# Real PR URL exists — check if it's actually merged
+			local parsed_guard pr_number_guard repo_slug_guard
+			parsed_guard=$(parse_pr_url "$existing_pr" 2>/dev/null) || parsed_guard=""
+			if [[ -n "$parsed_guard" ]]; then
+				repo_slug_guard="${parsed_guard%%|*}"
+				pr_number_guard="${parsed_guard##*|}"
+				if [[ -n "$pr_number_guard" && -n "$repo_slug_guard" ]]; then
+					local pr_state_guard
+					pr_state_guard=$(gh pr view "$pr_number_guard" --repo "$repo_slug_guard" --json state --jq '.state' 2>/dev/null || echo "UNKNOWN")
+					if [[ "$pr_state_guard" != "MERGED" ]]; then
+						log_error "t1030: Blocked complete->deployed for $task_id — PR $existing_pr is '$pr_state_guard', not MERGED"
+						log_error "Task must go through pr_review->merging->merged->deployed lifecycle"
+						return 1
+					fi
+					log_info "t1030: PR $existing_pr is MERGED — allowing complete->deployed for $task_id"
+				fi
+			fi
+		fi
 	fi
 
 	# Build UPDATE query with optional fields
