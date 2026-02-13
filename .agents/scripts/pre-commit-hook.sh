@@ -522,8 +522,10 @@ main() {
 	echo ""
 
 	# Get modified shell files
-	local modified_files
-	mapfile -t modified_files < <(get_modified_shell_files)
+	local modified_files=()
+	while IFS= read -r file; do
+		[[ -n "$file" ]] && modified_files+=("$file")
+	done < <(get_modified_shell_files)
 
 	if [[ ${#modified_files[@]} -eq 0 ]]; then
 		print_info "No shell files modified, skipping quality checks"
