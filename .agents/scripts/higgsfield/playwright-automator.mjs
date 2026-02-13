@@ -2917,8 +2917,7 @@ function resolveOutputDir(baseOutput, options = {}, type = 'misc') {
     dir = join(baseOutput, projectSlug, type);
   }
 
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  return dir;
+  return ensureDir(dir);
 }
 
 // Infer the output type from the command/context
@@ -3400,8 +3399,7 @@ async function seedBracket(options = {}) {
   console.log(`Seeds: ${seeds.join(', ')}`);
 
   const model = options.model || (options.preferUnlimited !== false && getUnlimitedModelForCommand('image')?.slug) || 'soul';
-  const outputDir = options.output || join(getDefaultOutputDir(options), `seed-bracket-${Date.now()}`);
-  if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
+  const outputDir = ensureDir(options.output || join(getDefaultOutputDir(options), `seed-bracket-${Date.now()}`));
 
   const results = [];
 
@@ -6251,7 +6249,7 @@ async function batchImage(options = {}) {
   const { jobs, defaults } = loadBatchManifest(manifestPath);
   const concurrency = options.concurrency || 2;
   const outputDir = options.output || join(getDefaultOutputDir(options), `batch-image-${Date.now()}`);
-  if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
+  ensureDir(outputDir);
 
   console.log(`\n=== Batch Image Generation ===`);
   console.log(`Jobs: ${jobs.length}`);
@@ -6361,7 +6359,7 @@ async function batchVideo(options = {}) {
   const { jobs, defaults } = loadBatchManifest(manifestPath);
   const concurrency = options.concurrency || 3; // How many to submit before polling
   const outputDir = options.output || join(getDefaultOutputDir(options), `batch-video-${Date.now()}`);
-  if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
+  ensureDir(outputDir);
 
   console.log(`\n=== Batch Video Generation ===`);
   console.log(`Jobs: ${jobs.length}`);
@@ -6508,7 +6506,7 @@ async function batchLipsync(options = {}) {
   const { jobs, defaults } = loadBatchManifest(manifestPath);
   const concurrency = options.concurrency || 1; // Lipsync is slow, default sequential
   const outputDir = options.output || join(getDefaultOutputDir(options), `batch-lipsync-${Date.now()}`);
-  if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
+  ensureDir(outputDir);
 
   console.log(`\n=== Batch Lipsync Generation ===`);
   console.log(`Jobs: ${jobs.length}`);
