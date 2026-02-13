@@ -577,14 +577,31 @@ cmd_pr_lifecycle() {
 
 				case "$triage_action" in
 				merge)
-					# Only low/dismiss threads - safe to merge
 					log_info "Review threads are low-severity/dismissible - proceeding to merge"
 					cmd_transition "$task_id" "merging" 2>>"$SUPERVISOR_LOG" || true
 					tstatus="merging"
 					;;
 				fix)
 					# High/medium threads need fixing - dispatch a worker
-					log_info "Dispatching review fix worker for $task_id ($triage_summary)"
+					# t1037: Guard against infinite fix-worker loops. Count how many
+					# review_triage→dispatched cycles this task has been through.
+					# Cap at 3 fix cycles — after that, block for human review.
+					local fix_cycle_count=0
+					fix_cycle_count=$(db "$SUPERVISOR_DB" "
+						SELECT COUNT(*) FROM state_log
+						WHERE task_id = '$escaped_id'
+						  AND old_state = 'review_triage'
+						  AND new_state = 'dispatched';
+					" 2>/dev/null || echo "0")
+					local max_fix_cycles=3
+					if [[ "$fix_cycle_count" -ge "$max_fix_cycles" ]]; then
+						log_warn "Fix worker cycle limit reached ($fix_cycle_count/$max_fix_cycles) for $task_id — blocking"
+						cmd_transition "$task_id" "blocked" --error "Fix worker exhausted ($fix_cycle_count cycles): $triage_summary" 2>>"$SUPERVISOR_LOG" || true
+						send_task_notification "$task_id" "blocked" "Review fix worker exhausted $fix_cycle_count cycles without resolving threads" 2>>"$SUPERVISOR_LOG" || true
+						return 1
+					fi
+
+					log_info "Dispatching review fix worker for $task_id ($triage_summary) [cycle $((fix_cycle_count + 1))/$max_fix_cycles]"
 					if dispatch_review_fix_worker "$task_id" "$triage_result" 2>>"$SUPERVISOR_LOG"; then
 						# Worker dispatched - task is now running again
 						# When it completes, it will go through evaluate -> complete -> pr_review -> triage again
@@ -968,11 +985,21 @@ triage_review_feedback() {
 	low=$(echo "$classified" | jq '[.[] | select(.severity == "low")] | length' 2>/dev/null || echo "0")
 	dismiss=$(echo "$classified" | jq '[.[] | select(.severity == "dismiss")] | length' 2>/dev/null || echo "0")
 
+	# t1037: Separate bot-sourced criticals from human-sourced criticals.
+	# Bot reviewers (Gemini, CodeRabbit, etc.) often flag internal CLI tools
+	# for "SQL injection" or "credential leak" using keyword heuristics that
+	# lack threat-model context. These are fixable by a worker, not blocking.
+	# Only human-sourced critical threads should hard-block for human review.
+	local human_critical bot_critical
+	human_critical=$(echo "$classified" | jq '[.[] | select(.severity == "critical" and .isBot != true)] | length' 2>/dev/null || echo "0")
+	bot_critical=$(echo "$classified" | jq '[.[] | select(.severity == "critical" and .isBot == true)] | length' 2>/dev/null || echo "0")
+
 	# Determine action based on severity distribution
 	local action="merge"
-	if [[ "$critical" -gt 0 ]]; then
+	if [[ "$human_critical" -gt 0 ]]; then
 		action="block"
-	elif [[ "$high" -gt 0 ]]; then
+	elif [[ "$bot_critical" -gt 0 || "$high" -gt 0 ]]; then
+		# Bot criticals are treated as fixable — dispatch a worker to address them
 		action="fix"
 	elif [[ "$medium" -gt 2 ]]; then
 		action="fix"
@@ -988,10 +1015,12 @@ triage_review_feedback() {
 		--argjson medium "$medium" \
 		--argjson low "$low" \
 		--argjson dismiss "$dismiss" \
+		--argjson human_critical "$human_critical" \
+		--argjson bot_critical "$bot_critical" \
 		--arg action "$action" \
 		'{
             threads: $threads,
-            summary: {critical: $critical, high: $high, medium: $medium, low: $low, dismiss: $dismiss},
+            summary: {critical: $critical, high: $high, medium: $medium, low: $low, dismiss: $dismiss, human_critical: $human_critical, bot_critical: $bot_critical},
             action: $action
         }' 2>/dev/null || echo '{"threads":[],"summary":{},"action":"merge"}')
 
@@ -1127,11 +1156,18 @@ Instructions:
 	log_info "Working dir: $work_dir"
 
 	# Build and execute dispatch command
+	# t1037: Resolve tier name to full model string (e.g. "opus" → "anthropic/claude-opus-4-6")
+	# The DB stores tier names but OpenCode CLI needs provider/model format.
+	local resolved_model=""
+	if [[ -n "$tmodel" ]]; then
+		resolved_model=$(resolve_model "$tmodel" "$ai_cli")
+	fi
+
 	local -a cmd_parts=()
 	if [[ "$ai_cli" == "opencode" ]]; then
 		cmd_parts=(opencode run --format json)
-		if [[ -n "$tmodel" ]]; then
-			cmd_parts+=(-m "$tmodel")
+		if [[ -n "$resolved_model" ]]; then
+			cmd_parts+=(-m "$resolved_model")
 		fi
 		# t262: Include truncated description in review-fix session title
 		local fix_title="${task_id}-review-fix"
