@@ -787,8 +787,8 @@ export AGENTS_DIR
 export OPENCODE_AGENT_DIR
 
 # Process files in parallel (use nproc/2 or 4, whichever is larger)
-subagent_count=$(find "$AGENTS_DIR" -mindepth 2 -name "*.md" -type f -not -path "*/loop-state/*" -not -name "*-skill.md" |
-	xargs -P "$(($(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4) / 2))" -I {} bash -c 'generate_subagent_stub "$@"' _ {} |
+subagent_count=$(find "$AGENTS_DIR" -mindepth 2 -name "*.md" -type f -not -path "*/loop-state/*" -not -name "*-skill.md" -print0 |
+	xargs -0 -P "$(($(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4) / 2))" -I {} bash -c 'generate_subagent_stub "$@"' _ {} |
 	awk '{sum+=$1} END {print sum+0}')
 
 echo -e "  ${GREEN}✓${NC} Generated $subagent_count subagent files"
