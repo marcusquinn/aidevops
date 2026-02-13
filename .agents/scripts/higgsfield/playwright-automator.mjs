@@ -1209,7 +1209,7 @@ async function login(options = {}) {
   await dismissAllModals(page);
 
   // Take a screenshot to see what we're working with
-  await page.screenshot({ path: join(STATE_DIR, 'login-page.png'), fullPage: true });
+  await debugScreenshot(page, 'login-page', { fullPage: true });
   console.log('Login page screenshot saved');
 
   // Get ARIA snapshot for understanding the page structure
@@ -1354,7 +1354,7 @@ async function login(options = {}) {
     console.log('Login successful! Redirected to:', page.url());
   } catch {
     console.log('Still on auth page. Current URL:', page.url());
-    await page.screenshot({ path: join(STATE_DIR, 'login-result.png'), fullPage: true });
+    await debugScreenshot(page, 'login-result', { fullPage: true });
 
     // Check if there's an error message
     const errorText = await page.evaluate(() => {
@@ -1834,7 +1834,7 @@ async function generateImage(options = {}) {
     await page.waitForTimeout(3000);
 
     await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, 'image-page.png'), fullPage: false });
+    await debugScreenshot(page, 'image-page');
 
     // Wait for page content to fully load and remove loading overlays
     await page.waitForTimeout(2000);
@@ -1847,7 +1847,7 @@ async function generateImage(options = {}) {
     // Fill prompt
     const promptFilled = await fillPromptInput(page, prompt);
     if (!promptFilled) {
-      await page.screenshot({ path: join(STATE_DIR, 'no-prompt-field.png'), fullPage: true });
+      await debugScreenshot(page, 'no-prompt-field', { fullPage: true });
       await browser.close();
       return null;
     }
@@ -1867,7 +1867,7 @@ async function generateImage(options = {}) {
     // Dry-run mode: stop before clicking Generate
     if (options.dryRun) {
       console.log('[DRY-RUN] Configuration complete. Skipping Generate click.');
-      await page.screenshot({ path: join(STATE_DIR, 'dry-run-configured.png'), fullPage: false });
+      await debugScreenshot(page, 'dry-run-configured');
       await context.storageState({ path: STATE_FILE });
       await browser.close();
       return { success: true, dryRun: true };
@@ -1879,7 +1879,7 @@ async function generateImage(options = {}) {
     // Allow images to fully load
     await page.waitForTimeout(3000);
     await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, 'generation-result.png'), fullPage: false });
+    await debugScreenshot(page, 'generation-result');
 
     await downloadNewImages(page, options, existingImageCount, generationComplete);
 
@@ -1890,7 +1890,7 @@ async function generateImage(options = {}) {
 
   } catch (error) {
     console.error('Error during image generation:', error.message);
-    try { await page.screenshot({ path: join(STATE_DIR, 'error.png'), fullPage: true }); } catch {}
+    try { await debugScreenshot(page, 'error', { fullPage: true }); } catch {}
     try { await browser.close(); } catch {}
     return { success: false, error: error.message };
   }
@@ -2534,7 +2534,7 @@ async function generateVideo(options = {}) {
     await page.goto(`${BASE_URL}/create/video`, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForTimeout(4000);
     await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, 'video-page.png'), fullPage: false });
+    await debugScreenshot(page, 'video-page');
 
     // Upload start frame if provided
     if (options.imageFile) {
@@ -2546,7 +2546,7 @@ async function generateVideo(options = {}) {
 
     await page.waitForTimeout(3000);
     await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, 'video-after-upload.png'), fullPage: false });
+    await debugScreenshot(page, 'video-after-upload');
 
     await selectVideoModelFromDropdown(page, model);
     await enableVideoUnlimitedMode(page);
@@ -2558,7 +2558,7 @@ async function generateVideo(options = {}) {
     // Dry-run mode
     if (options.dryRun) {
       console.log('[DRY-RUN] Configuration complete. Skipping Generate click.');
-      await page.screenshot({ path: join(STATE_DIR, 'dry-run-configured.png'), fullPage: false });
+      await debugScreenshot(page, 'dry-run-configured');
       await context.storageState({ path: STATE_FILE });
       await browser.close();
       return { success: true, dryRun: true };
@@ -2571,17 +2571,17 @@ async function generateVideo(options = {}) {
       console.log('Clicked Generate button');
     } else {
       console.log('WARNING: Generate button not found');
-      await page.screenshot({ path: join(STATE_DIR, 'video-no-generate-btn.png'), fullPage: false });
+      await debugScreenshot(page, 'video-no-generate-btn');
     }
 
     await page.waitForTimeout(3000);
-    await page.screenshot({ path: join(STATE_DIR, 'video-generate-clicked.png'), fullPage: false });
+    await debugScreenshot(page, 'video-generate-clicked');
 
     const generationComplete = await waitForVideoGeneration(page, historyState, prompt, options);
 
     await page.waitForTimeout(2000);
     await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, 'video-result.png'), fullPage: false });
+    await debugScreenshot(page, 'video-result');
 
     // Download the video from History.
     // Always attempt download when wait is enabled (t269): even if waitForVideoGeneration
@@ -2608,7 +2608,7 @@ async function generateVideo(options = {}) {
 
   } catch (error) {
     console.error('Error during video generation:', error.message);
-    try { await page.screenshot({ path: join(STATE_DIR, 'error.png'), fullPage: true }); } catch {}
+    try { await debugScreenshot(page, 'error', { fullPage: true }); } catch {}
     try { await browser.close(); } catch {}
     return { success: false, error: error.message };
   }
@@ -2626,7 +2626,7 @@ async function generateLipsync(options = {}) {
     await page.goto(`${BASE_URL}/lipsync-studio`, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForTimeout(4000);
     await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, 'lipsync-page.png'), fullPage: false });
+    await debugScreenshot(page, 'lipsync-page');
 
     // Upload character image
     if (options.imageFile) {
@@ -2705,7 +2705,7 @@ async function generateLipsync(options = {}) {
     }
 
     await page.waitForTimeout(3000);
-    await page.screenshot({ path: join(STATE_DIR, 'lipsync-generate-clicked.png'), fullPage: false });
+    await debugScreenshot(page, 'lipsync-generate-clicked');
 
     // Wait for result in History tab
     const timeout = options.timeout || 600000; // 10 min default
@@ -2742,7 +2742,7 @@ async function generateLipsync(options = {}) {
 
     await page.waitForTimeout(2000);
     await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, 'lipsync-result.png'), fullPage: false });
+    await debugScreenshot(page, 'lipsync-result');
 
     // Download from History (t269: always attempt when wait is enabled — polling handles processing)
     if (options.wait !== false) {
@@ -2764,7 +2764,7 @@ async function generateLipsync(options = {}) {
 
   } catch (error) {
     console.error('Error during lipsync generation:', error.message);
-    try { await page.screenshot({ path: join(STATE_DIR, 'error.png'), fullPage: true }); } catch {}
+    try { await debugScreenshot(page, 'error', { fullPage: true }); } catch {}
     try { await browser.close(); } catch {}
     return { success: false, error: error.message };
   }
@@ -2779,7 +2779,7 @@ async function listAssets(options = {}) {
     await page.goto(`${BASE_URL}/asset/all`, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForTimeout(3000);
 
-    await page.screenshot({ path: join(STATE_DIR, 'assets-page.png'), fullPage: false });
+    await debugScreenshot(page, 'assets-page');
 
     // Extract asset information
     const assets = await page.evaluate(() => {
@@ -3363,7 +3363,7 @@ async function checkCredits(options = {}) {
     // Cache credit info for credit guard checks
     saveCreditCache(creditInfo);
 
-    await page.screenshot({ path: join(STATE_DIR, 'subscription.png'), fullPage: true });
+    await debugScreenshot(page, 'subscription', { fullPage: true });
     await context.storageState({ path: STATE_FILE });
     await browser.close();
     return creditInfo;
@@ -4202,7 +4202,7 @@ async function cinemaStudio(options = {}) {
       }
     }
 
-    await page.screenshot({ path: join(STATE_DIR, 'cinema-studio-configured.png'), fullPage: false });
+    await debugScreenshot(page, 'cinema-studio-configured');
 
     // Click Generate
     const generateBtn = page.locator('button:has-text("Generate")');
@@ -4223,7 +4223,7 @@ async function cinemaStudio(options = {}) {
 
     await page.waitForTimeout(3000);
     await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, 'cinema-studio-result.png'), fullPage: false });
+    await debugScreenshot(page, 'cinema-studio-result');
 
     if (options.wait !== false) {
       const baseOutput = options.output || getDefaultOutputDir(options);
@@ -4295,7 +4295,7 @@ async function motionControl(options = {}) {
       }
     }
 
-    await page.screenshot({ path: join(STATE_DIR, 'motion-control-configured.png'), fullPage: false });
+    await debugScreenshot(page, 'motion-control-configured');
 
     // Click Generate
     const generateBtn = page.locator('button:has-text("Generate")');
@@ -4324,7 +4324,7 @@ async function motionControl(options = {}) {
 
     await page.waitForTimeout(3000);
     await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, 'motion-control-result.png'), fullPage: false });
+    await debugScreenshot(page, 'motion-control-result');
 
     if (options.wait !== false) {
       const baseOutput = options.output || getDefaultOutputDir(options);
@@ -4385,7 +4385,7 @@ async function editImage(options = {}) {
       }
     }
 
-    await page.screenshot({ path: join(STATE_DIR, `edit-${model}-configured.png`), fullPage: false });
+    await debugScreenshot(page, `edit-${model}-configured`);
 
     // Click Generate/Apply
     const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Apply"), button:has-text("Edit")').first();
@@ -4406,7 +4406,7 @@ async function editImage(options = {}) {
 
     await page.waitForTimeout(3000);
     await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, `edit-${model}-result.png`), fullPage: false });
+    await debugScreenshot(page, `edit-${model}-result`);
 
     if (options.wait !== false) {
       const baseOutput = options.output || getDefaultOutputDir(options);
@@ -4445,7 +4445,7 @@ async function upscale(options = {}) {
       }
     }
 
-    await page.screenshot({ path: join(STATE_DIR, 'upscale-configured.png'), fullPage: false });
+    await debugScreenshot(page, 'upscale-configured');
 
     // Click Upscale/Generate
     const upscaleBtn = page.locator('button:has-text("Upscale"), button:has-text("Generate"), button:has-text("Enhance")');
@@ -4466,7 +4466,7 @@ async function upscale(options = {}) {
 
     await page.waitForTimeout(3000);
     await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, 'upscale-result.png'), fullPage: false });
+    await debugScreenshot(page, 'upscale-result');
 
     if (options.wait !== false) {
       const baseOutput = options.output || getDefaultOutputDir(options);
@@ -4519,7 +4519,7 @@ async function manageAssets(options = {}) {
     console.log(`Assets loaded: ${assetCount}`);
 
     if (action === 'list') {
-      await page.screenshot({ path: join(STATE_DIR, 'asset-library.png'), fullPage: false });
+      await debugScreenshot(page, 'asset-library');
       console.log(`Asset library screenshot saved. ${assetCount} assets visible.`);
       await context.storageState({ path: STATE_FILE });
       await browser.close();
@@ -4533,7 +4533,7 @@ async function manageAssets(options = {}) {
       if (await assetImg.isVisible({ timeout: 3000 }).catch(() => false)) {
         await assetImg.click();
         await page.waitForTimeout(2500);
-        await page.screenshot({ path: join(STATE_DIR, 'asset-detail.png'), fullPage: false });
+        await debugScreenshot(page, 'asset-detail');
 
         // Try to download via the asset detail view
         const baseOutput = options.output || getDefaultOutputDir(options);
@@ -5003,7 +5003,7 @@ async function mixedMediaPreset(options = {}) {
       }
     }
 
-    await page.screenshot({ path: join(STATE_DIR, `mixed-media-${presetKey}-configured.png`), fullPage: false });
+    await debugScreenshot(page, `mixed-media-${presetKey}-configured`);
 
     // Click Generate
     const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Apply"), button:has-text("Create")');
@@ -5024,7 +5024,7 @@ async function mixedMediaPreset(options = {}) {
 
     await page.waitForTimeout(3000);
     await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, `mixed-media-${presetKey}-result.png`), fullPage: false });
+    await debugScreenshot(page, `mixed-media-${presetKey}-result`);
 
     if (options.wait !== false) {
       const baseOutput = options.output || getDefaultOutputDir(options);
@@ -5128,7 +5128,7 @@ async function motionPreset(options = {}) {
       }
     }
 
-    await page.screenshot({ path: join(STATE_DIR, 'motion-preset-configured.png'), fullPage: false });
+    await debugScreenshot(page, 'motion-preset-configured');
 
     // Click Generate
     const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Apply"), button:has-text("Create")');
@@ -5149,7 +5149,7 @@ async function motionPreset(options = {}) {
 
     await page.waitForTimeout(3000);
     await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, 'motion-preset-result.png'), fullPage: false });
+    await debugScreenshot(page, 'motion-preset-result');
 
     if (options.wait !== false) {
       const baseOutput = options.output || getDefaultOutputDir(options);
@@ -5212,7 +5212,7 @@ async function editVideo(options = {}) {
       }
     }
 
-    await page.screenshot({ path: join(STATE_DIR, 'video-edit-configured.png'), fullPage: false });
+    await debugScreenshot(page, 'video-edit-configured');
 
     // Click Generate
     const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Apply"), button:has-text("Edit")');
@@ -5241,7 +5241,7 @@ async function editVideo(options = {}) {
 
     await page.waitForTimeout(3000);
     await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, 'video-edit-result.png'), fullPage: false });
+    await debugScreenshot(page, 'video-edit-result');
 
     if (options.wait !== false) {
       const baseOutput = options.output || getDefaultOutputDir(options);
@@ -5307,7 +5307,7 @@ async function storyboard(options = {}) {
       }
     }
 
-    await page.screenshot({ path: join(STATE_DIR, 'storyboard-configured.png'), fullPage: false });
+    await debugScreenshot(page, 'storyboard-configured');
 
     // Click Generate
     const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Create"), button:has-text("Build")');
@@ -5328,7 +5328,7 @@ async function storyboard(options = {}) {
 
     await page.waitForTimeout(5000);
     await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, 'storyboard-result.png'), fullPage: true });
+    await debugScreenshot(page, 'storyboard-result', { fullPage: true });
 
     if (options.wait !== false) {
       const baseOutput = options.output || getDefaultOutputDir(options);
@@ -5425,7 +5425,7 @@ async function vibeMotion(options = {}) {
       }
     }
 
-    await page.screenshot({ path: join(STATE_DIR, 'vibe-motion-configured.png'), fullPage: false });
+    await debugScreenshot(page, 'vibe-motion-configured');
 
     // Click Generate
     const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Create"), button:has-text("Build")');
@@ -5446,7 +5446,7 @@ async function vibeMotion(options = {}) {
 
     await page.waitForTimeout(3000);
     await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, 'vibe-motion-result.png'), fullPage: false });
+    await debugScreenshot(page, 'vibe-motion-result');
 
     if (options.wait !== false) {
       const baseOutput = options.output || getDefaultOutputDir(options);
@@ -5503,7 +5503,7 @@ async function aiInfluencer(options = {}) {
       }
     }
 
-    await page.screenshot({ path: join(STATE_DIR, 'ai-influencer-configured.png'), fullPage: false });
+    await debugScreenshot(page, 'ai-influencer-configured');
 
     // Click Generate/Create
     const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Create"), button:has-text("Build")');
@@ -5523,7 +5523,7 @@ async function aiInfluencer(options = {}) {
 
     await page.waitForTimeout(3000);
     await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, 'ai-influencer-result.png'), fullPage: false });
+    await debugScreenshot(page, 'ai-influencer-result');
 
     if (options.wait !== false) {
       const baseOutput = options.output || getDefaultOutputDir(options);
@@ -5576,7 +5576,7 @@ async function createCharacter(options = {}) {
       }
     }
 
-    await page.screenshot({ path: join(STATE_DIR, 'character-configured.png'), fullPage: false });
+    await debugScreenshot(page, 'character-configured');
 
     // Click Create/Save
     const createBtn = page.locator('button:has-text("Create"), button:has-text("Save"), button:has-text("Generate")');
@@ -5596,7 +5596,7 @@ async function createCharacter(options = {}) {
 
     await page.waitForTimeout(3000);
     await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, 'character-result.png'), fullPage: false });
+    await debugScreenshot(page, 'character-result');
 
     if (options.wait !== false) {
       const baseOutput = options.output || getDefaultOutputDir(options);
@@ -5690,7 +5690,7 @@ async function featurePage(options = {}) {
       }
     }
 
-    await page.screenshot({ path: join(STATE_DIR, `feature-${featureKey}-configured.png`), fullPage: false });
+    await debugScreenshot(page, `feature-${featureKey}-configured`);
 
     // Click Generate/Create/Apply
     const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Create"), button:has-text("Apply"), button[type="submit"]:visible');
@@ -5710,7 +5710,7 @@ async function featurePage(options = {}) {
 
     await page.waitForTimeout(3000);
     await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, `feature-${featureKey}-result.png`), fullPage: false });
+    await debugScreenshot(page, `feature-${featureKey}-result`);
 
     if (options.wait !== false) {
       const baseOutput = options.output || getDefaultOutputDir(options);
