@@ -244,13 +244,16 @@ codacy_api_request() {
 	local attempt=0
 	local response=""
 	local http_code=""
+	local tmp_response tmp_headers
 
-	while [[ $attempt -lt $MAX_RETRIES ]]; do
+	tmp_response=$(mktemp)
+	tmp_headers=$(mktemp)
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	push_cleanup "rm -f '${tmp_response}' '${tmp_headers}'"
+
+	while [[ $attempt -lt ${MAX_RETRIES:-3} ]]; do
 		attempt=$((attempt + 1))
-
-		local tmp_response tmp_headers
-		tmp_response=$(mktemp)
-		tmp_headers=$(mktemp)
 
 		local curl_args=(
 			-s
@@ -269,15 +272,13 @@ codacy_api_request() {
 		fi
 
 		http_code=$(curl "${curl_args[@]}" "${CODACY_BASE_URL}${endpoint}" 2>/dev/null) || {
-			rm -f "$tmp_response" "$tmp_headers"
 			local wait_time=$((CODACY_RETRY_BACKOFF_BASE ** attempt))
-			log_warn "API request failed (attempt ${attempt}/${MAX_RETRIES}), retrying in ${wait_time}s..."
+			log_warn "API request failed (attempt ${attempt}/${MAX_RETRIES:-3}), retrying in ${wait_time}s..."
 			sleep "$wait_time"
 			continue
 		}
 
 		response=$(cat "$tmp_response" 2>/dev/null || echo "")
-		rm -f "$tmp_response" "$tmp_headers"
 
 		case "$http_code" in
 		200)
@@ -305,12 +306,12 @@ codacy_api_request() {
 			;;
 		500 | 502 | 503 | 504)
 			local wait_time=$((CODACY_RETRY_BACKOFF_BASE ** attempt))
-			log_warn "Server error (${http_code}), retrying in ${wait_time}s (attempt ${attempt}/${MAX_RETRIES})..."
+			log_warn "Server error (${http_code}), retrying in ${wait_time}s (attempt ${attempt}/${MAX_RETRIES:-3})..."
 			sleep "$wait_time"
 			continue
 			;;
 		*)
-			log_warn "Unexpected HTTP ${http_code} (attempt ${attempt}/${MAX_RETRIES})"
+			log_warn "Unexpected HTTP ${http_code} (attempt ${attempt}/${MAX_RETRIES:-3})"
 			local wait_time=$((CODACY_RETRY_BACKOFF_BASE ** attempt))
 			sleep "$wait_time"
 			continue
@@ -318,7 +319,7 @@ codacy_api_request() {
 		esac
 	done
 
-	log_error "API request failed after ${MAX_RETRIES} attempts: ${endpoint}"
+	log_error "API request failed after ${MAX_RETRIES:-3} attempts: ${endpoint}"
 	return 1
 }
 
@@ -624,13 +625,29 @@ cmd_query() {
 
 	ensure_db
 
-	# Build WHERE clause
+	# Build WHERE clause with input validation
 	local where="WHERE source = 'codacy' AND is_duplicate = 0"
 	if [[ -n "$severity" ]]; then
-		where="${where} AND severity = '$(sql_escape "$severity")'"
+		case "$severity" in
+		critical | high | medium | low | info)
+			where="${where} AND severity = '$(sql_escape "$severity")'"
+			;;
+		*)
+			log_error "Invalid severity value: $severity (must be: critical, high, medium, low, info)"
+			return 1
+			;;
+		esac
 	fi
 	if [[ -n "$category" ]]; then
-		where="${where} AND category = '$(sql_escape "$category")'"
+		case "$category" in
+		security | bug | performance | style | documentation | refactoring | general)
+			where="${where} AND category = '$(sql_escape "$category")'"
+			;;
+		*)
+			log_error "Invalid category value: $category (must be: security, bug, performance, style, documentation, refactoring, general)"
+			return 1
+			;;
+		esac
 	fi
 
 	if [[ "$format" == "json" ]]; then
@@ -1067,7 +1084,7 @@ main() {
 	export) cmd_export "$@" ;;
 	help | --help | -h) show_help ;;
 	*)
-		log_error "$ERROR_UNKNOWN_COMMAND $command"
+		log_error "${ERROR_UNKNOWN_COMMAND:-Unknown command:} $command"
 		echo ""
 		show_help
 		return 1
