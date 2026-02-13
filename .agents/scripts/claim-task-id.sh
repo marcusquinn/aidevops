@@ -223,6 +223,26 @@ create_github_issue() {
 	return 0
 }
 
+# Update GitHub issue title with task ID prefix
+update_github_issue_title() {
+	local issue_num="$1"
+	local task_id="$2"
+	local original_title="$3"
+	local repo_path="$4"
+
+	cd "$repo_path" || return 1
+
+	local new_title="${task_id}: ${original_title}"
+
+	if ! gh issue edit "$issue_num" --title "$new_title" 2>&1; then
+		log_warn "Failed to update GitHub issue #${issue_num} title to: $new_title"
+		return 1
+	fi
+
+	log_success "Updated GitHub issue #${issue_num} title to: $new_title"
+	return 0
+}
+
 # Create GitLab issue
 create_gitlab_issue() {
 	local title="$1"
@@ -261,6 +281,26 @@ create_gitlab_issue() {
 	fi
 
 	echo "$issue_num"
+	return 0
+}
+
+# Update GitLab issue title with task ID prefix
+update_gitlab_issue_title() {
+	local issue_num="$1"
+	local task_id="$2"
+	local original_title="$3"
+	local repo_path="$4"
+
+	cd "$repo_path" || return 1
+
+	local new_title="${task_id}: ${original_title}"
+
+	if ! glab issue update "$issue_num" --title "$new_title" 2>&1; then
+		log_warn "Failed to update GitLab issue #${issue_num} title to: $new_title"
+		return 1
+	fi
+
+	log_success "Updated GitLab issue #${issue_num} title to: $new_title"
 	return 0
 }
 
@@ -311,6 +351,16 @@ allocate_online() {
 	# Step 4: Allocate next ID
 	local next_id=$((highest_id + 1))
 	log_success "Allocated task ID: t${next_id}"
+
+	# Step 5: Update issue title with task ID prefix
+	case "$platform" in
+	github)
+		update_github_issue_title "$issue_num" "t${next_id}" "$TASK_TITLE" "$repo_path" || log_warn "Issue title update failed (non-fatal)"
+		;;
+	gitlab)
+		update_gitlab_issue_title "$issue_num" "t${next_id}" "$TASK_TITLE" "$repo_path" || log_warn "Issue title update failed (non-fatal)"
+		;;
+	esac
 
 	# Output in machine-readable format
 	echo "task_id=t${next_id}"
