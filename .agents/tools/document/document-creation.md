@@ -105,6 +105,24 @@ availability at runtime and selects automatically.
 | HTML | DOCX | pandoc | -- | |
 | HTML | PDF | pandoc | wkhtmltopdf, LibreOffice | |
 
+### Email Formats
+
+| From | To | Preferred | Fallback | Notes |
+|------|----|-----------|----------|-------|
+| EML | MD | email-to-markdown.py | -- | Parses MIME structure, converts HTML body to markdown, extracts attachments |
+| MSG | MD | email-to-markdown.py | -- | Uses extract-msg library, converts HTML body to markdown, extracts attachments |
+
+**Email conversion features**:
+- Parses MIME structure using Python's email library (.eml) or extract-msg (.msg)
+- Converts HTML email body to markdown using html2text
+- Extracts all attachments to a subfolder (`{filename}_attachments/`)
+- Preserves email metadata (From, To, Subject, Date) in markdown frontmatter
+- Outputs: `email.md` + `email_attachments/` folder
+
+**Dependencies**:
+- `.eml` files: Python stdlib (email module) + html2text
+- `.msg` files: extract-msg library (auto-installed on first use)
+
 ### PDF Extraction (PDF as source)
 
 | From | To | Preferred | Fallback | Notes |
@@ -317,6 +335,10 @@ document-creation-helper.sh convert report.md --to docx
 document-creation-helper.sh convert letter.odt --to pdf
 document-creation-helper.sh convert slides.pptx --to pdf
 document-creation-helper.sh convert data.xlsx --to csv
+
+# Email conversions (extracts attachments automatically)
+document-creation-helper.sh convert email.eml --to md
+document-creation-helper.sh convert message.msg --to md
 
 # With options
 document-creation-helper.sh convert report.md --to pdf --engine xelatex
