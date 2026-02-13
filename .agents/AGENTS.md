@@ -339,6 +339,7 @@ Orchestration agents can create drafts in `draft/` for reusable parallel process
 | Planning | `workflows/plans.md`, `tools/task-management/beads.md` |
 | Accessibility | `services/accessibility/accessibility-audit.md`, `tools/accessibility/accessibility.md`, `accessibility-helper.sh` |
 | Code quality | `tools/code-review/code-standards.md` |
+| Documents | `tools/document/document-creation.md` (conversion, creation, templates), `document-creation-helper.sh`, `tools/pdf/overview.md`, `tools/conversion/pandoc.md`, `tools/conversion/mineru.md`, `tools/document/document-extraction.md` |
 | Git/PRs | `workflows/git-workflow.md`, `tools/git/github-cli.md`, `tools/git/conflict-resolution.md`, `tools/git/lumen.md` |
 | Releases | `workflows/release.md`, `workflows/version-bump.md` |
 | Browser | `tools/browser/browser-automation.md` (decision tree, then tool-specific subagent) |

@@ -140,6 +140,7 @@ const { bytes: signed } = await pdf.sign({
 ## Related
 
 - `libpdf.md` - Detailed LibPDF usage guide
+- `tools/document/document-creation.md` - Unified document format conversion and creation
 - `tools/conversion/mineru.md` - PDF to markdown/JSON (layout-aware, OCR)
 - `tools/conversion/pandoc.md` - General document format conversion
 - `tools/browser/playwright.md` - For PDF rendering/screenshots

@@ -820,6 +820,7 @@ The setup script offers to install these tools automatically.
 
 ### **Document Processing & OCR**
 
+- **Document Creation Agent** (`document-creation-helper.sh`): Unified document format conversion, template-based creation, and OCR for scanned PDFs/images. Routes to the best available tool (pandoc, odfpy, LibreOffice, Tesseract, EasyOCR, GLM-OCR) based on format pair and availability. Supports 13+ formats (ODT, DOCX, PDF, MD, HTML, EPUB, PPTX, ODP, XLSX, ODS, RTF, CSV, TSV).
 - **[LibPDF](https://libpdf.dev/)**: PDF form filling, digital signatures (PAdES B-B/T/LT/LTA), encryption, merge/split, text extraction
 - **[MinerU](https://github.com/opendatalab/MinerU)**: Layout-aware PDF-to-markdown/JSON conversion with OCR (109 languages), formula-to-LaTeX, and table extraction (53k+ stars, AGPL-3.0)
 - **[Unstract](https://github.com/Zipstack/unstract)**: LLM-powered structured data extraction from unstructured documents (PDF, images, DOCX)
@@ -829,16 +830,26 @@ The setup script offers to install these tools automatically.
 
 | Need | Tool | Why |
 |------|------|-----|
+| **Format conversion** | Document Creation Agent | Auto-selects best tool, 13+ formats |
 | **Complex PDF to markdown** | MinerU | Layout-aware, formulas, tables, 109-language OCR |
 | **Quick text extraction** | GLM-OCR | Local, fast, no API keys, privacy-first |
 | **Structured JSON output** | Unstract | Schema-based extraction, complex documents |
 | **Screen/window OCR** | Peekaboo + GLM-OCR | `peekaboo image --analyze --model ollama/glm-ocr` |
 | **PDF text extraction** | LibPDF | Native PDF parsing, no AI needed |
 | **Simple format conversion** | Pandoc | Lightweight, broad format support |
+| **Scanned PDF OCR** | Document Creation Agent | Auto-detects, routes to Tesseract/EasyOCR/GLM-OCR |
 
 **Quick start:**
 
 ```bash
+# Document creation agent
+document-creation-helper.sh status                          # Check available tools
+document-creation-helper.sh install --standard              # Install core tools
+document-creation-helper.sh convert report.pdf --to odt     # Convert formats
+document-creation-helper.sh convert scan.pdf --to md --ocr  # OCR scanned PDF
+document-creation-helper.sh template draft --type letter     # Generate template
+
+# GLM-OCR direct
 ollama pull glm-ocr
 ollama run glm-ocr "Extract all text" --images /path/to/document.png
 ```
