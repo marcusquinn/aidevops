@@ -155,6 +155,7 @@ model-registry-helper.sh,Provider/model registry with periodic sync (sync list s
 model-availability-helper.sh,Model availability checker - probe before dispatch (check probe status cache clear)
 fallback-chain-helper.sh,Fallback chain configuration - per-agent and global model fallbacks (list get set test status validate)
 response-scoring-helper.sh,Response scoring - evaluate AI model responses side-by-side (prompt record score compare leaderboard export)
+generate-models-md.sh,Generate MODELS.md leaderboard from pattern-tracker and response-scoring data (--output --quiet help)
 coderabbit-task-creator-helper.sh,Auto-create tasks from CodeRabbit findings with false positive filtering (scan create filter status)
 sops-helper.sh,SOPS encrypted config file management (init encrypt decrypt edit rotate status install)
 gocryptfs-helper.sh,gocryptfs encrypted filesystem overlay (init mount unmount create open close list status install)
