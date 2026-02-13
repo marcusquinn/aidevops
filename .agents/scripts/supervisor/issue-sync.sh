@@ -523,6 +523,29 @@ update_queue_health_issue() {
 			--jq "[.[] | select(.title | startswith(\"${runner_prefix}\"))][0].number" 2>/dev/null || echo "")
 	fi
 
+	# Migrate legacy [Supervisor] health issue to [Supervisor:username] format (t1036)
+	# Older versions used "[Supervisor]" without a username suffix. If we didn't find
+	# the new format above, check for the legacy prefix and adopt it.
+	if [[ -z "$health_issue_number" ]]; then
+		local legacy_prefix="[Supervisor]"
+		local legacy_issue
+		legacy_issue=$(gh issue list --repo "$repo_slug" \
+			--search "in:title ${legacy_prefix}" \
+			--state open --json number,title \
+			--jq "[.[] | select(.title | startswith(\"${legacy_prefix}\"))][0].number" 2>/dev/null || echo "")
+		if [[ -n "$legacy_issue" ]]; then
+			health_issue_number="$legacy_issue"
+			# Rename to new format so future lookups find it directly
+			local legacy_title
+			legacy_title=$(gh issue view "$legacy_issue" --repo "$repo_slug" --json title --jq '.title' 2>/dev/null || echo "")
+			if [[ -n "$legacy_title" ]]; then
+				local migrated_title="${legacy_title/\[Supervisor\]/${runner_prefix}}"
+				gh issue edit "$legacy_issue" --repo "$repo_slug" --title "$migrated_title" >/dev/null 2>&1 || true
+				log_info "  Phase 8c: Migrated legacy health issue #$legacy_issue to ${runner_prefix} format (t1036)"
+			fi
+		fi
+	fi
+
 	# Create the issue if it doesn't exist
 	if [[ -z "$health_issue_number" ]]; then
 		# Ensure username label exists
