@@ -53,7 +53,11 @@ log_verbose() {
 #######################################
 sql_escape() {
 	local input="$1"
-	echo "${input//\'/\'\'}"
+	# t1040: Use printf+sed for reliable single-quote escaping.
+	# Bash parameter expansion ${input//\'/\'\'} fails in some quoting
+	# contexts, causing SQLite INSERT errors for task descriptions
+	# containing apostrophes (e.g. "supervisor's", "don't").
+	printf '%s' "$input" | sed "s/'/''/g"
 }
 
 #######################################
