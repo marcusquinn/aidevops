@@ -478,3 +478,22 @@
   files: .agents/scripts/supervisor-helper.sh
   check: shellcheck .agents/scripts/supervisor-helper.sh
   check: file-exists .agents/scripts/supervisor-helper.sh
+
+- [!] v058 t1025 Track model usage per task via GitHub issue labels — ad... | PR #1345 | merged:2026-02-13 failed:2026-02-13 reason:shellcheck: .agents/scripts/model-label-helper.sh has violations
+  files: .agents/scripts/model-label-helper.sh
+  check: shellcheck .agents/scripts/model-label-helper.sh
+  check: file-exists .agents/scripts/model-label-helper.sh
+
+- [x] v059 t1027 Refactor opencode-aidevops/index.mjs — 14 qlty smells, ... | PR #1349 | merged:2026-02-13 verified:2026-02-13
+  files: .agents/plugins/opencode-aidevops/index.mjs, .agents/plugins/opencode-aidevops/tools.mjs
+  check: file-exists .agents/plugins/opencode-aidevops/index.mjs
+  check: file-exists .agents/plugins/opencode-aidevops/tools.mjs
+
+- [x] v060 t1026 Refactor playwright-automator.mjs — 33 qlty smells, 159... | PR #1350 | merged:2026-02-13 verified:2026-02-13
+  files: .agents/scripts/higgsfield/playwright-automator.mjs
+  check: file-exists .agents/scripts/higgsfield/playwright-automator.mjs
+
+- [!] v061 t1028 Fix claim-task-id.sh to prefix GitHub/GitLab issue titles... | PR #1353 | merged:2026-02-13 failed:2026-02-13 reason:shellcheck: .agents/scripts/claim-task-id.sh has violations
+  files: .agents/scripts/claim-task-id.sh
+  check: shellcheck .agents/scripts/claim-task-id.sh
+  check: file-exists .agents/scripts/claim-task-id.sh
