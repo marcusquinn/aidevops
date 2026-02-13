@@ -188,6 +188,143 @@ async function withRetry(fn, { maxRetries = 2, baseDelay = 3000, label = 'operat
   throw lastError;
 }
 
+// --- Shared utility functions (extracted to reduce complexity) ---
+
+// Ensure a directory exists, creating it recursively if needed.
+function ensureDir(dir) {
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+// Find the newest file in a directory matching given extensions.
+// Returns the full path or null if no matching files exist.
+function findNewestFile(dir, extensions = ['.png', '.jpg', '.webp']) {
+  if (!existsSync(dir)) return null;
+  const extSet = new Set(extensions.map(e => e.startsWith('.') ? e : `.${e}`));
+  const files = readdirSync(dir)
+    .filter(f => extSet.has(extname(f).toLowerCase()))
+    .map(f => ({ name: f, time: statSync(join(dir, f)).mtimeMs }))
+    .sort((a, b) => b.time - a.time);
+  return files.length > 0 ? join(dir, files[0].name) : null;
+}
+
+// Find the newest file matching extensions AND a name filter.
+function findNewestFileMatching(dir, extensions, nameFilter) {
+  if (!existsSync(dir)) return null;
+  const extSet = new Set(extensions.map(e => e.startsWith('.') ? e : `.${e}`));
+  const files = readdirSync(dir)
+    .filter(f => extSet.has(extname(f).toLowerCase()) && (!nameFilter || f.includes(nameFilter)))
+    .map(f => ({ name: f, time: statSync(join(dir, f)).mtimeMs }))
+    .sort((a, b) => b.time - a.time);
+  return files.length > 0 ? join(dir, files[0].name) : null;
+}
+
+// Download a file via curl. Returns { httpCode, size } on success, throws on failure.
+// Options: { withHttpCode: bool, timeout: ms }
+function curlDownload(url, savePath, { withHttpCode = false, timeout = 120000 } = {}) {
+  const args = withHttpCode
+    ? ['-sL', '-w', '%{http_code}', '-o', savePath, url]
+    : ['-sL', '-o', savePath, url];
+  const result = execFileSync('curl', args, { timeout, encoding: 'utf-8' });
+  const httpCode = withHttpCode ? result.trim() : '200';
+  const size = existsSync(savePath) ? statSync(savePath).size : 0;
+  return { httpCode, size };
+}
+
+// Navigate to a Higgsfield page, wait for load, and dismiss modals.
+async function navigateTo(page, path, { waitMs = 3000, timeout = 60000 } = {}) {
+  const url = path.startsWith('http') ? path : `${BASE_URL}${path}`;
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout });
+  await page.waitForTimeout(waitMs);
+  await dismissAllModals(page);
+}
+
+// Run a function with a browser session, handling launch/close/state-save lifecycle.
+// Usage: await withBrowser(options, async (page, context) => { ... });
+async function withBrowser(options, fn) {
+  const { browser, context, page } = await launchBrowser(options);
+  try {
+    const result = await fn(page, context);
+    await context.storageState({ path: STATE_FILE });
+    await browser.close();
+    return result;
+  } catch (error) {
+    try { await browser.close(); } catch {}
+    throw error;
+  }
+}
+
+// Take a debug screenshot to STATE_DIR.
+async function debugScreenshot(page, name, { fullPage = false } = {}) {
+  await page.screenshot({ path: join(STATE_DIR, `${name}.png`), fullPage });
+}
+
+// Click the History tab if present and wait for it to load.
+async function clickHistoryTab(page, { waitMs = 2000 } = {}) {
+  const historyTab = page.locator('[role="tab"]:has-text("History")');
+  if (await historyTab.count() > 0) {
+    await historyTab.click({ force: true });
+    await page.waitForTimeout(waitMs);
+  }
+  return historyTab;
+}
+
+// Click the Generate/Create/Apply button and log it.
+async function clickGenerate(page, label = '') {
+  const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Create"), button:has-text("Apply")');
+  if (await generateBtn.count() > 0) {
+    await generateBtn.last().click({ force: true });
+    console.log(`Clicked Generate${label ? ` for ${label}` : ''}`);
+    return true;
+  }
+  return false;
+}
+
+// Wait for a generation result, take screenshot, and optionally download.
+// opts: { selector, screenshotName, label, outputSubdir, defaultTimeout, isVideo, useHistoryPoll }
+async function waitForGenerationResult(page, options, opts = {}) {
+  const {
+    selector = `${GENERATED_IMAGE_SELECTOR}, video`,
+    screenshotName = 'result',
+    label = 'generation',
+    outputSubdir = 'output',
+    defaultTimeout = 180000,
+    isVideo = false,
+    useHistoryPoll = false,
+  } = opts;
+  const timeout = options.timeout || defaultTimeout;
+  console.log(`Waiting up to ${timeout / 1000}s for ${label} result...`);
+
+  if (useHistoryPoll) {
+    const historyTab = page.locator('[role="tab"]:has-text("History")');
+    if (await historyTab.count() > 0) {
+      await page.waitForTimeout(10000);
+      await historyTab.click();
+      await page.waitForTimeout(3000);
+    }
+  }
+
+  try {
+    await page.waitForSelector(selector, { timeout, state: 'visible' });
+  } catch {
+    console.log(`Timeout waiting for ${label} result`);
+  }
+
+  await page.waitForTimeout(3000);
+  await dismissAllModals(page);
+  await debugScreenshot(page, screenshotName);
+
+  if (options.wait !== false) {
+    const baseOutput = options.output || getDefaultOutputDir(options);
+    const outputDir = resolveOutputDir(baseOutput, options, outputSubdir);
+    if (isVideo) {
+      await downloadVideoFromHistory(page, outputDir, {}, options);
+    } else {
+      await downloadLatestResult(page, outputDir, true, options);
+    }
+  }
+}
+
 // --- Credit guard: check available credits before expensive operations ---
 function getCachedCredits() {
   try {
@@ -1128,7 +1265,7 @@ async function login(options = {}) {
   await dismissAllModals(page);
 
   // Take a screenshot to see what we're working with
-  await page.screenshot({ path: join(STATE_DIR, 'login-page.png'), fullPage: true });
+  await debugScreenshot(page, 'login-page', { fullPage: true });
   console.log('Login page screenshot saved');
 
   // Get ARIA snapshot for understanding the page structure
@@ -1273,7 +1410,7 @@ async function login(options = {}) {
     console.log('Login successful! Redirected to:', page.url());
   } catch {
     console.log('Still on auth page. Current URL:', page.url());
-    await page.screenshot({ path: join(STATE_DIR, 'login-result.png'), fullPage: true });
+    await debugScreenshot(page, 'login-result', { fullPage: true });
 
     // Check if there's an error message
     const errorText = await page.evaluate(() => {
@@ -1753,7 +1890,7 @@ async function generateImage(options = {}) {
     await page.waitForTimeout(3000);
 
     await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, 'image-page.png'), fullPage: false });
+    await debugScreenshot(page, 'image-page');
 
     // Wait for page content to fully load and remove loading overlays
     await page.waitForTimeout(2000);
@@ -1766,7 +1903,7 @@ async function generateImage(options = {}) {
     // Fill prompt
     const promptFilled = await fillPromptInput(page, prompt);
     if (!promptFilled) {
-      await page.screenshot({ path: join(STATE_DIR, 'no-prompt-field.png'), fullPage: true });
+      await debugScreenshot(page, 'no-prompt-field', { fullPage: true });
       await browser.close();
       return null;
     }
@@ -1786,7 +1923,7 @@ async function generateImage(options = {}) {
     // Dry-run mode: stop before clicking Generate
     if (options.dryRun) {
       console.log('[DRY-RUN] Configuration complete. Skipping Generate click.');
-      await page.screenshot({ path: join(STATE_DIR, 'dry-run-configured.png'), fullPage: false });
+      await debugScreenshot(page, 'dry-run-configured');
       await context.storageState({ path: STATE_FILE });
       await browser.close();
       return { success: true, dryRun: true };
@@ -1798,7 +1935,7 @@ async function generateImage(options = {}) {
     // Allow images to fully load
     await page.waitForTimeout(3000);
     await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, 'generation-result.png'), fullPage: false });
+    await debugScreenshot(page, 'generation-result');
 
     await downloadNewImages(page, options, existingImageCount, generationComplete);
 
@@ -1809,7 +1946,7 @@ async function generateImage(options = {}) {
 
   } catch (error) {
     console.error('Error during image generation:', error.message);
-    try { await page.screenshot({ path: join(STATE_DIR, 'error.png'), fullPage: true }); } catch {}
+    try { await debugScreenshot(page, 'error', { fullPage: true }); } catch {}
     try { await browser.close(); } catch {}
     return { success: false, error: error.message };
   }
@@ -1830,165 +1967,152 @@ async function generateImage(options = {}) {
 // or the timeout is reached. This prevents the silent empty-return that occurred when
 // downloadLatestResult was called immediately after generation submission.
 // Controlled by options.wait (default: true) and options.timeout (default: 300000ms).
+// Extract model/prompt metadata from the newest History list item via page.evaluate.
+async function extractVideoMetadata(page) {
+  return page.evaluate(() => {
+    const firstItem = document.querySelector('main li');
+    if (!firstItem) return null;
+
+    const textbox = firstItem.querySelector('[role="textbox"], textarea');
+    const promptText = textbox?.textContent?.trim() || '';
+
+    const actionWords = /^(cancel|rerun|retry|download|delete|remove|share|copy|edit)$/i;
+    const buttons = [...firstItem.querySelectorAll('button')];
+    let modelText = '';
+    for (const btn of buttons) {
+      const text = btn.textContent?.trim();
+      const hasIcon = btn.querySelector('img, svg[class*="icon"]');
+      const looksLikeModel = /kling|wan|sora|minimax|veo|flux|soul|nano|seedream|gpt|higgsfield|popcorn/i.test(text);
+      const isAction = actionWords.test(text) || text.length <= 2;
+      if ((hasIcon || looksLikeModel) && !isAction && text.length > 0) {
+        modelText = text;
+        break;
+      }
+    }
+    if (!modelText) {
+      const candidates = buttons
+        .map(b => b.textContent?.trim())
+        .filter(t => t && t.length > 3 && !actionWords.test(t));
+      if (candidates.length > 0) {
+        modelText = candidates.sort((a, b) => b.length - a.length)[0];
+      }
+    }
+
+    return { promptText, modelText };
+  });
+}
+
+// Download the newest completed video from API data (CloudFront full-quality URL).
+// Returns the downloaded file path or null.
+function downloadVideoFromApiData(projectApiData, outputDir, combinedMeta, options) {
+  for (const jobSet of projectApiData.job_sets) {
+    for (const job of (jobSet.jobs || [])) {
+      if (job.status !== 'completed' || !job.results?.raw?.url) continue;
+      const videoUrl = job.results.raw.url;
+      if (!videoUrl.includes('cloudfront.net')) continue;
+
+      const filename = buildDescriptiveFilename(combinedMeta, `higgsfield-video-${Date.now()}.mp4`, 0);
+      const savePath = join(outputDir, filename);
+      try {
+        const { httpCode, size } = curlDownload(videoUrl, savePath, { withHttpCode: true });
+        if (httpCode === '200' && size > 10000) {
+          const result = finalizeDownload(savePath, {
+            command: 'video', type: 'video', ...combinedMeta,
+            strategy: 'api-interception', cloudFrontUrl: videoUrl,
+          }, outputDir, options);
+          if (!result.skipped) {
+            console.log(`Downloaded full-quality video (${(size / 1024 / 1024).toFixed(1)}MB, HTTP ${httpCode}): ${savePath}`);
+          }
+          return result.path;
+        } else if (httpCode === '200') {
+          console.log(`CloudFront returned ${httpCode} but file too small (${size}B), skipping: ${videoUrl.substring(videoUrl.lastIndexOf('/') + 1)}`);
+        } else {
+          console.log(`CloudFront HTTP ${httpCode} for: ${videoUrl.substring(videoUrl.lastIndexOf('/') + 1)}`);
+        }
+      } catch (curlErr) {
+        console.log(`CloudFront download error: ${curlErr.stderr || curlErr.message}`);
+      }
+      return null; // Only attempt the newest video
+    }
+  }
+  return null;
+}
+
+// Fallback: extract <video src> from the DOM and download via CDN.
+async function downloadVideoViaCdnFallback(page, outputDir, combinedMeta, options) {
+  console.log('Falling back to CDN video src (motion template quality)...');
+  await clickHistoryTab(page);
+
+  const videoSrc = await page.evaluate(() => {
+    const firstItem = document.querySelector('main li');
+    const video = firstItem?.querySelector('video');
+    return video?.src || video?.querySelector('source')?.src || null;
+  });
+
+  if (!videoSrc) return null;
+
+  const filename = buildDescriptiveFilename(combinedMeta, `higgsfield-video-${Date.now()}.mp4`, 0);
+  const savePath = join(outputDir, filename);
+  try {
+    curlDownload(videoSrc, savePath);
+    const result = finalizeDownload(savePath, {
+      command: 'video', type: 'video', ...combinedMeta,
+      strategy: 'cdn-fallback', cdnUrl: videoSrc,
+    }, outputDir, options);
+    if (!result.skipped) {
+      console.log(`Downloaded video (CDN fallback): ${savePath}`);
+    }
+    return result.path;
+  } catch (curlErr) {
+    console.log(`CDN video download failed: ${curlErr.message}`);
+    return null;
+  }
+}
+
 async function downloadVideoFromHistory(page, outputDir, metadata = {}, options = {}) {
   const downloaded = [];
   const shouldWait = options.wait !== false;
-  const maxWaitMs = options.timeout || 300000; // 5 minutes default
+  const maxWaitMs = options.timeout || 300000;
 
   try {
-    // Switch to History tab if not already there
-    const historyTab = page.locator('[role="tab"]:has-text("History")');
-    if (await historyTab.count() > 0) {
-      await historyTab.click({ force: true });
-      await page.waitForTimeout(2000);
-    }
-
+    await clickHistoryTab(page);
     await dismissAllModals(page);
 
-    const historyListItems = page.locator('main li');
-    const listCount = await historyListItems.count();
+    const listCount = await page.locator('main li').count();
     console.log(`Found ${listCount} item(s) in History tab`);
-
     if (listCount === 0) {
       console.log('No history items found to download');
       return downloaded;
     }
 
-    // Extract model/prompt metadata from the first (newest) list item
-    const videoInfo = await page.evaluate(() => {
-      const firstItem = document.querySelector('main li');
-      if (!firstItem) return null;
-
-      const textbox = firstItem.querySelector('[role="textbox"], textarea');
-      const promptText = textbox?.textContent?.trim() || '';
-
-      const actionWords = /^(cancel|rerun|retry|download|delete|remove|share|copy|edit)$/i;
-      const buttons = [...firstItem.querySelectorAll('button')];
-      let modelText = '';
-      for (const btn of buttons) {
-        const text = btn.textContent?.trim();
-        const hasIcon = btn.querySelector('img, svg[class*="icon"]');
-        const looksLikeModel = /kling|wan|sora|minimax|veo|flux|soul|nano|seedream|gpt|higgsfield|popcorn/i.test(text);
-        const isAction = actionWords.test(text) || text.length <= 2;
-        if ((hasIcon || looksLikeModel) && !isAction && text.length > 0) {
-          modelText = text;
-          break;
-        }
-      }
-      if (!modelText) {
-        const candidates = buttons
-          .map(b => b.textContent?.trim())
-          .filter(t => t && t.length > 3 && !actionWords.test(t));
-        if (candidates.length > 0) {
-          modelText = candidates.sort((a, b) => b.length - a.length)[0];
-        }
-      }
-
-      return { promptText, modelText };
-    });
-
+    const videoInfo = await extractVideoMetadata(page);
     const combinedMeta = {
       ...metadata,
       model: videoInfo?.modelText || metadata.model,
       promptSnippet: videoInfo?.promptText?.substring(0, 80) || metadata.promptSnippet,
     };
 
-    // Strategy 1 (PRIMARY): Fetch the project API to get the full-quality CloudFront URL.
-    // The API at fnf.higgsfield.ai/project returns job data with results.raw.url containing
-    // the actual video at d8j0ntlcm91z4.cloudfront.net (1920x1080 full quality).
-    // The <video src> in the DOM is just a shared motion template URL (same for all items).
-    //
-    // If the newest job is still processing, poll until it completes (t269 fix).
+    // Strategy 1: Full-quality CloudFront URL via project API
     console.log('Extracting full-quality video URL from API data...');
-
-    // Fetch project API data (with polling for still-processing videos)
     const projectApiData = await fetchProjectApiWithPolling(page, { shouldWait, maxWaitMs });
 
     if (projectApiData?.job_sets?.length > 0) {
-      // Ensure output directory exists
-      if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
-
-      // Find the newest completed job with a video result
-      for (const jobSet of projectApiData.job_sets) {
-        for (const job of (jobSet.jobs || [])) {
-          if (job.status === 'completed' && job.results?.raw?.url) {
-            const videoUrl = job.results.raw.url;
-            // Only use CloudFront URLs (the actual generated videos)
-            if (videoUrl.includes('cloudfront.net')) {
-              const filename = buildDescriptiveFilename(combinedMeta, `higgsfield-video-${Date.now()}.mp4`, 0);
-              const savePath = join(outputDir, filename);
-              try {
-                const curlResult = execFileSync('curl', ['-sL', '-w', '%{http_code}', '-o', savePath, videoUrl], { timeout: 120000, encoding: 'utf-8' });
-                const httpCode = curlResult.trim();
-                if (httpCode === '200' && existsSync(savePath)) {
-                    const fileSize = statSync(savePath).size;
-                    if (fileSize > 10000) { // Sanity check: real videos are >10KB
-                      const result = finalizeDownload(savePath, {
-                        command: 'video', type: 'video', ...combinedMeta,
-                        strategy: 'api-interception', cloudFrontUrl: videoUrl,
-                      }, outputDir, options);
-                      if (!result.skipped) {
-                        console.log(`Downloaded full-quality video (${(fileSize / 1024 / 1024).toFixed(1)}MB, HTTP ${httpCode}): ${savePath}`);
-                      }
-                      downloaded.push(result.path);
-                    } else {
-                    console.log(`CloudFront returned ${httpCode} but file too small (${fileSize}B), skipping: ${videoUrl.substring(videoUrl.lastIndexOf('/') + 1)}`);
-                  }
-                } else {
-                  console.log(`CloudFront HTTP ${httpCode} for: ${videoUrl.substring(videoUrl.lastIndexOf('/') + 1)}`);
-                }
-              } catch (curlErr) {
-                console.log(`CloudFront download error: ${curlErr.stderr || curlErr.message}`);
-              }
-              break; // Only download the newest video
-            }
-          }
-        }
-        if (downloaded.length > 0) break;
-      }
+      ensureDir(outputDir);
+      const path = downloadVideoFromApiData(projectApiData, outputDir, combinedMeta, options);
+      if (path) downloaded.push(path);
     }
 
     if (downloaded.length === 0) {
       console.log('API interception did not yield a video URL');
     }
 
-    // Strategy 2 (FALLBACK): Extract <video src> from the list item directly.
-    // This gives the motion template URL (shared across all items, lower quality).
+    // Strategy 2: CDN fallback (lower quality motion template)
     if (downloaded.length === 0) {
-      console.log('Falling back to CDN video src (motion template quality)...');
-
-      // Re-click History tab after reload
-      if (await historyTab.count() > 0) {
-        await historyTab.click({ force: true });
-        await page.waitForTimeout(2000);
-      }
-
-      const videoSrc = await page.evaluate(() => {
-        const firstItem = document.querySelector('main li');
-        const video = firstItem?.querySelector('video');
-        return video?.src || video?.querySelector('source')?.src || null;
-      });
-
-      if (videoSrc) {
-        const filename = buildDescriptiveFilename(combinedMeta, `higgsfield-video-${Date.now()}.mp4`, 0);
-        const savePath = join(outputDir, filename);
-        try {
-          execFileSync('curl', ['-sL', '-o', savePath, videoSrc], { timeout: 120000 });
-          const result = finalizeDownload(savePath, {
-            command: 'video', type: 'video', ...combinedMeta,
-            strategy: 'cdn-fallback', cdnUrl: videoSrc,
-          }, outputDir, options);
-          if (!result.skipped) {
-            console.log(`Downloaded video (CDN fallback): ${savePath}`);
-          }
-          downloaded.push(result.path);
-        } catch (curlErr) {
-          console.log(`CDN video download failed: ${curlErr.message}`);
-        }
-      }
+      const path = await downloadVideoViaCdnFallback(page, outputDir, combinedMeta, options);
+      if (path) downloaded.push(path);
     }
 
-    await page.screenshot({ path: join(STATE_DIR, 'video-download-result.png'), fullPage: false });
+    await debugScreenshot(page, 'video-download-result');
   } catch (error) {
     console.log(`Video download error: ${error.message}`);
   }
@@ -2466,7 +2590,7 @@ async function generateVideo(options = {}) {
     await page.goto(`${BASE_URL}/create/video`, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForTimeout(4000);
     await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, 'video-page.png'), fullPage: false });
+    await debugScreenshot(page, 'video-page');
 
     // Upload start frame if provided
     if (options.imageFile) {
@@ -2478,7 +2602,7 @@ async function generateVideo(options = {}) {
 
     await page.waitForTimeout(3000);
     await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, 'video-after-upload.png'), fullPage: false });
+    await debugScreenshot(page, 'video-after-upload');
 
     await selectVideoModelFromDropdown(page, model);
     await enableVideoUnlimitedMode(page);
@@ -2490,7 +2614,7 @@ async function generateVideo(options = {}) {
     // Dry-run mode
     if (options.dryRun) {
       console.log('[DRY-RUN] Configuration complete. Skipping Generate click.');
-      await page.screenshot({ path: join(STATE_DIR, 'dry-run-configured.png'), fullPage: false });
+      await debugScreenshot(page, 'dry-run-configured');
       await context.storageState({ path: STATE_FILE });
       await browser.close();
       return { success: true, dryRun: true };
@@ -2503,17 +2627,17 @@ async function generateVideo(options = {}) {
       console.log('Clicked Generate button');
     } else {
       console.log('WARNING: Generate button not found');
-      await page.screenshot({ path: join(STATE_DIR, 'video-no-generate-btn.png'), fullPage: false });
+      await debugScreenshot(page, 'video-no-generate-btn');
     }
 
     await page.waitForTimeout(3000);
-    await page.screenshot({ path: join(STATE_DIR, 'video-generate-clicked.png'), fullPage: false });
+    await debugScreenshot(page, 'video-generate-clicked');
 
     const generationComplete = await waitForVideoGeneration(page, historyState, prompt, options);
 
     await page.waitForTimeout(2000);
     await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, 'video-result.png'), fullPage: false });
+    await debugScreenshot(page, 'video-result');
 
     // Download the video from History.
     // Always attempt download when wait is enabled (t269): even if waitForVideoGeneration
@@ -2540,13 +2664,70 @@ async function generateVideo(options = {}) {
 
   } catch (error) {
     console.error('Error during video generation:', error.message);
-    try { await page.screenshot({ path: join(STATE_DIR, 'error.png'), fullPage: true }); } catch {}
+    try { await debugScreenshot(page, 'error', { fullPage: true }); } catch {}
     try { await browser.close(); } catch {}
     return { success: false, error: error.message };
   }
 }
 
 // Generate lipsync video via UI
+// Upload a character image for lipsync, trying file input first then upload button.
+async function uploadLipsyncCharacter(page, imageFile) {
+  console.log(`Uploading character image: ${imageFile}`);
+  const fileInput = page.locator('input[type="file"]');
+  if (await fileInput.count() > 0) {
+    await fileInput.first().setInputFiles(imageFile);
+    await page.waitForTimeout(3000);
+    console.log('Character image uploaded');
+    return true;
+  }
+  // Try clicking an upload button first
+  const uploadBtn = page.locator('button:has-text("Upload"), [class*="upload"]');
+  if (await uploadBtn.count() > 0) {
+    await uploadBtn.first().click({ force: true });
+    await page.waitForTimeout(1000);
+    const fileInput2 = page.locator('input[type="file"]');
+    if (await fileInput2.count() > 0) {
+      await fileInput2.first().setInputFiles(imageFile);
+      await page.waitForTimeout(3000);
+      console.log('Character image uploaded (after clicking upload button)');
+      return true;
+    }
+  }
+  return false;
+}
+
+// Poll History tab for a new lipsync result (item count increase).
+async function pollLipsyncHistory(page, historyTab, existingHistoryCount, options) {
+  const timeout = options.timeout || 600000;
+  console.log(`Waiting up to ${timeout / 1000}s for lipsync generation...`);
+  const startTime = Date.now();
+
+  if (await historyTab.count() > 0) {
+    await historyTab.click({ force: true });
+    await page.waitForTimeout(1000);
+  }
+
+  const pollInterval = 10000;
+  while (Date.now() - startTime < timeout) {
+    await page.waitForTimeout(pollInterval);
+    await dismissAllModals(page);
+
+    const currentCount = await page.locator('main li').count();
+    if (currentCount > existingHistoryCount) {
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      console.log(`Lipsync result detected! (${elapsed}s)`);
+      return true;
+    }
+
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
+    console.log(`  ${elapsed}s: waiting for lipsync result...`);
+  }
+
+  console.log('Timeout waiting for lipsync generation.');
+  return false;
+}
+
 // Requires an image (--image-file) and text prompt or audio file
 async function generateLipsync(options = {}) {
   const { browser, context, page } = await launchBrowser(options);
@@ -2558,35 +2739,14 @@ async function generateLipsync(options = {}) {
     await page.goto(`${BASE_URL}/lipsync-studio`, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForTimeout(4000);
     await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, 'lipsync-page.png'), fullPage: false });
+    await debugScreenshot(page, 'lipsync-page');
 
-    // Upload character image
-    if (options.imageFile) {
-      console.log(`Uploading character image: ${options.imageFile}`);
-      const fileInput = page.locator('input[type="file"]');
-      if (await fileInput.count() > 0) {
-        await fileInput.first().setInputFiles(options.imageFile);
-        await page.waitForTimeout(3000);
-        console.log('Character image uploaded');
-      } else {
-        // Try clicking an upload button first
-        const uploadBtn = page.locator('button:has-text("Upload"), [class*="upload"]');
-        if (await uploadBtn.count() > 0) {
-          await uploadBtn.first().click({ force: true });
-          await page.waitForTimeout(1000);
-          const fileInput2 = page.locator('input[type="file"]');
-          if (await fileInput2.count() > 0) {
-            await fileInput2.first().setInputFiles(options.imageFile);
-            await page.waitForTimeout(3000);
-            console.log('Character image uploaded (after clicking upload button)');
-          }
-        }
-      }
-    } else {
+    if (!options.imageFile) {
       console.log('WARNING: Lipsync requires a character image (--image-file)');
       await browser.close();
       return { success: false, error: 'Character image required. Use --image-file to provide one.' };
     }
+    await uploadLipsyncCharacter(page, options.imageFile);
 
     // Select model if specified
     if (options.model) {
@@ -2604,7 +2764,7 @@ async function generateLipsync(options = {}) {
       }
     }
 
-    // Fill the text prompt (for text-to-speech lipsync)
+    // Fill the text prompt
     const textInput = page.locator('textarea, input[placeholder*="text" i], input[placeholder*="speak" i], input[placeholder*="say" i]');
     if (await textInput.count() > 0) {
       await textInput.first().click({ force: true });
@@ -2621,7 +2781,6 @@ async function generateLipsync(options = {}) {
       await page.waitForTimeout(1500);
       existingHistoryCount = await page.locator('main li').count();
       console.log(`Existing History items: ${existingHistoryCount}`);
-      // Switch back
       const createTab = page.locator('[role="tab"]:has-text("Create"), [role="tab"]:first-child');
       if (await createTab.count() > 0) {
         await createTab.first().click({ force: true });
@@ -2629,54 +2788,16 @@ async function generateLipsync(options = {}) {
       }
     }
 
-    // Click generate
-    const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Create")');
-    if (await generateBtn.count() > 0) {
-      await generateBtn.last().click({ force: true });
-      console.log('Clicked Generate button');
-    }
-
+    await clickGenerate(page, 'lipsync');
     await page.waitForTimeout(3000);
-    await page.screenshot({ path: join(STATE_DIR, 'lipsync-generate-clicked.png'), fullPage: false });
+    await debugScreenshot(page, 'lipsync-generate-clicked');
 
-    // Wait for result in History tab
-    const timeout = options.timeout || 600000; // 10 min default
-    console.log(`Waiting up to ${timeout / 1000}s for lipsync generation...`);
-    const startTime = Date.now();
-
-    if (await historyTab.count() > 0) {
-      await historyTab.click({ force: true });
-      await page.waitForTimeout(1000);
-    }
-
-    let generationComplete = false;
-    const pollInterval = 10000;
-
-    while (Date.now() - startTime < timeout) {
-      await page.waitForTimeout(pollInterval);
-      await dismissAllModals(page);
-
-      const currentCount = await page.locator('main li').count();
-      if (currentCount > existingHistoryCount) {
-        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-        console.log(`Lipsync result detected! (${elapsed}s)`);
-        generationComplete = true;
-        break;
-      }
-
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
-      console.log(`  ${elapsed}s: waiting for lipsync result...`);
-    }
-
-    if (!generationComplete) {
-      console.log('Timeout waiting for lipsync generation.');
-    }
+    const generationComplete = await pollLipsyncHistory(page, historyTab, existingHistoryCount, options);
 
     await page.waitForTimeout(2000);
     await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, 'lipsync-result.png'), fullPage: false });
+    await debugScreenshot(page, 'lipsync-result');
 
-    // Download from History (t269: always attempt when wait is enabled — polling handles processing)
     if (options.wait !== false) {
       const baseOutput = options.output || getDefaultOutputDir(options);
       const outputDir = resolveOutputDir(baseOutput, options, 'lipsync');
@@ -2696,7 +2817,7 @@ async function generateLipsync(options = {}) {
 
   } catch (error) {
     console.error('Error during lipsync generation:', error.message);
-    try { await page.screenshot({ path: join(STATE_DIR, 'error.png'), fullPage: true }); } catch {}
+    try { await debugScreenshot(page, 'error', { fullPage: true }); } catch {}
     try { await browser.close(); } catch {}
     return { success: false, error: error.message };
   }
@@ -2711,7 +2832,7 @@ async function listAssets(options = {}) {
     await page.goto(`${BASE_URL}/asset/all`, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForTimeout(3000);
 
-    await page.screenshot({ path: join(STATE_DIR, 'assets-page.png'), fullPage: false });
+    await debugScreenshot(page, 'assets-page');
 
     // Extract asset information
     const assets = await page.evaluate(() => {
@@ -2849,8 +2970,7 @@ function resolveOutputDir(baseOutput, options = {}, type = 'misc') {
     dir = join(baseOutput, projectSlug, type);
   }
 
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  return dir;
+  return ensureDir(dir);
 }
 
 // Infer the output type from the command/context
@@ -3148,20 +3268,12 @@ async function downloadSpecificImages(page, outputDir, indices, options = {}) {
 
 // Use a specific app/effect
 async function useApp(options = {}) {
-  const { browser, context, page } = await launchBrowser(options);
-
-  try {
+  return withBrowser(options, async (page) => {
     const appSlug = options.effect || 'face-swap';
     console.log(`Navigating to app: ${appSlug}...`);
-    await page.goto(`${BASE_URL}/app/${appSlug}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(3000);
+    await navigateTo(page, `/app/${appSlug}`);
+    await debugScreenshot(page, `app-${appSlug}`);
 
-    // Dismiss any promo modals
-    await dismissAllModals(page);
-
-    await page.screenshot({ path: join(STATE_DIR, `app-${appSlug}.png`), fullPage: false });
-
-    // Upload image if provided
     if (options.imageFile) {
       const fileInput = page.locator('input[type="file"]');
       if (await fileInput.count() > 0) {
@@ -3171,7 +3283,6 @@ async function useApp(options = {}) {
       }
     }
 
-    // Fill prompt if available
     if (options.prompt) {
       const promptInput = page.locator('textarea, input[placeholder*="prompt" i]');
       if (await promptInput.count() > 0) {
@@ -3180,29 +3291,23 @@ async function useApp(options = {}) {
       }
     }
 
-    // Click generate/create
     const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Create"), button:has-text("Apply"), button[type="submit"]:visible');
     if (await generateBtn.count() > 0) {
       await generateBtn.first().click({ force: true });
       console.log('Clicked generate/apply button');
     }
 
-    // Wait for result
     const timeout = options.timeout || 180000;
     console.log(`Waiting up to ${timeout / 1000}s for result...`);
-
     try {
-      await page.waitForSelector(`${GENERATED_IMAGE_SELECTOR}, video`, {
-        timeout,
-        state: 'visible'
-      });
+      await page.waitForSelector(`${GENERATED_IMAGE_SELECTOR}, video`, { timeout, state: 'visible' });
     } catch {
       console.log('Timeout waiting for app result');
     }
 
     await page.waitForTimeout(3000);
     await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, `app-${appSlug}-result.png`), fullPage: false });
+    await debugScreenshot(page, `app-${appSlug}-result`);
 
     if (options.wait !== false) {
       const baseOutput = options.output || getDefaultOutputDir(options);
@@ -3210,22 +3315,16 @@ async function useApp(options = {}) {
       await downloadLatestResult(page, outputDir, true, options);
     }
 
-    await context.storageState({ path: STATE_FILE });
-    await browser.close();
     return { success: true };
-
-  } catch (error) {
+  }).catch(error => {
     console.error('Error using app:', error.message);
-    await browser.close();
     return { success: false, error: error.message };
-  }
+  });
 }
 
 // Take a screenshot of any Higgsfield page
 async function screenshot(options = {}) {
-  const { browser, context, page } = await launchBrowser(options);
-
-  try {
+  return withBrowser(options, async (page) => {
     const url = options.prompt || `${BASE_URL}/asset/all`;
     console.log(`Navigating to ${url}...`);
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
@@ -3235,20 +3334,15 @@ async function screenshot(options = {}) {
     await page.screenshot({ path: outputPath, fullPage: false });
     console.log(`Screenshot saved to: ${outputPath}`);
 
-    // Also get ARIA snapshot for AI understanding
     const ariaSnapshot = await page.locator('body').ariaSnapshot();
     console.log('\n--- ARIA Snapshot ---');
     console.log(ariaSnapshot.substring(0, 3000));
 
-    await context.storageState({ path: STATE_FILE });
-    await browser.close();
     return { success: true, path: outputPath };
-
-  } catch (error) {
+  }).catch(error => {
     console.error('Screenshot error:', error.message);
-    await browser.close();
     return { success: false, error: error.message };
-  }
+  });
 }
 
 // Check account credits/status via the subscription settings page
@@ -3322,7 +3416,7 @@ async function checkCredits(options = {}) {
     // Cache credit info for credit guard checks
     saveCreditCache(creditInfo);
 
-    await page.screenshot({ path: join(STATE_DIR, 'subscription.png'), fullPage: true });
+    await debugScreenshot(page, 'subscription', { fullPage: true });
     await context.storageState({ path: STATE_FILE });
     await browser.close();
     return creditInfo;
@@ -3358,8 +3452,7 @@ async function seedBracket(options = {}) {
   console.log(`Seeds: ${seeds.join(', ')}`);
 
   const model = options.model || (options.preferUnlimited !== false && getUnlimitedModelForCommand('image')?.slug) || 'soul';
-  const outputDir = options.output || join(getDefaultOutputDir(options), `seed-bracket-${Date.now()}`);
-  if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
+  const outputDir = ensureDir(options.output || join(getDefaultOutputDir(options), `seed-bracket-${Date.now()}`));
 
   const results = [];
 
@@ -3421,98 +3514,99 @@ async function seedBracket(options = {}) {
 
 // Submit a video generation job on an already-open page (no browser open/close).
 // Used by the parallel pipeline to submit multiple jobs before waiting.
+// Remove existing start frame and upload a new one via file chooser.
+async function uploadJobStartFrame(page, imageFile, promptSnippet) {
+  // Remove existing start frame if present
+  const existingFrame = page.getByRole('button', { name: 'Uploaded image' });
+  if (await existingFrame.count() > 0) {
+    const smallButtons = await page.evaluate(() => {
+      const btns = [...document.querySelectorAll('main button')];
+      return btns
+        .filter(b => { const r = b.getBoundingClientRect(); return r.width <= 24 && r.height <= 24 && r.y > 200 && r.y < 300; })
+        .map(b => ({ x: b.getBoundingClientRect().x + 10, y: b.getBoundingClientRect().y + 10 }));
+    });
+    if (smallButtons.length > 0) {
+      await page.mouse.click(smallButtons[0].x, smallButtons[0].y);
+      await page.waitForTimeout(1500);
+    }
+  }
+
+  // Upload via file chooser — try "Upload image" button first, then "Start frame"
+  let uploaded = false;
+  const uploadBtn = page.getByRole('button', { name: /Upload image/ });
+  if (await uploadBtn.count() > 0) {
+    try {
+      const [fileChooser] = await Promise.all([
+        page.waitForEvent('filechooser', { timeout: 10000 }),
+        uploadBtn.click({ force: true }),
+      ]);
+      await fileChooser.setFiles(imageFile);
+      await page.waitForTimeout(3000);
+      uploaded = true;
+    } catch {}
+  }
+  if (!uploaded) {
+    const startFrameBtn = page.locator('text=Start frame').first();
+    if (await startFrameBtn.count() > 0) {
+      try {
+        const [fileChooser] = await Promise.all([
+          page.waitForEvent('filechooser', { timeout: 10000 }),
+          startFrameBtn.click({ force: true }),
+        ]);
+        await fileChooser.setFiles(imageFile);
+        await page.waitForTimeout(3000);
+        uploaded = true;
+      } catch {}
+    }
+  }
+  if (!uploaded) {
+    console.log(`  WARNING: Could not upload start frame for: "${promptSnippet}"`);
+  }
+  return uploaded;
+}
+
+// Select a video model from the dropdown by clicking the Model button.
+async function selectJobVideoModel(page, model) {
+  const uiModelName = VIDEO_MODEL_NAME_MAP[model] || model;
+  const modelSelector = page.getByRole('button', { name: 'Model' });
+  if (await modelSelector.count() > 0) {
+    const currentModel = await modelSelector.textContent().catch(() => '');
+    if (!currentModel.includes(uiModelName)) {
+      await modelSelector.click({ force: true });
+      await page.waitForTimeout(1500);
+      const matchingBtns = await page.evaluate((mn) => {
+        return [...document.querySelectorAll('button')]
+          .filter(b => b.textContent?.includes(mn) && b.offsetParent !== null)
+          .map(b => { const r = b.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; })
+          .filter(b => b.x < 800 && b.x > 100);
+      }, uiModelName);
+      if (matchingBtns.length > 0) {
+        await page.mouse.click(matchingBtns[0].x + matchingBtns[0].w / 2, matchingBtns[0].y + matchingBtns[0].h / 2);
+        await page.waitForTimeout(1500);
+      } else {
+        await page.keyboard.press('Escape');
+      }
+    }
+  }
+}
+
 // Returns the submitted prompt prefix for tracking, or null on failure.
 async function submitVideoJobOnPage(page, sceneOptions) {
   const prompt = sceneOptions.prompt || '';
   const model = sceneOptions.model || 'kling-2.6';
 
   try {
-    // Navigate to video creation page
     await page.goto(`${BASE_URL}/create/video`, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForTimeout(4000);
     await dismissAllModals(page);
 
-    // Upload start frame if provided
     if (sceneOptions.imageFile) {
-      // Remove existing start frame if present
-      const existingFrame = page.getByRole('button', { name: 'Uploaded image' });
-      if (await existingFrame.count() > 0) {
-        const smallButtons = await page.evaluate(() => {
-          const btns = [...document.querySelectorAll('main button')];
-          return btns
-            .filter(b => { const r = b.getBoundingClientRect(); return r.width <= 24 && r.height <= 24 && r.y > 200 && r.y < 300; })
-            .map(b => ({ x: b.getBoundingClientRect().x + 10, y: b.getBoundingClientRect().y + 10 }));
-        });
-        if (smallButtons.length > 0) {
-          await page.mouse.click(smallButtons[0].x, smallButtons[0].y);
-          await page.waitForTimeout(1500);
-        }
-      }
-
-      // Upload via file chooser
-      let uploaded = false;
-      const uploadBtn = page.getByRole('button', { name: /Upload image/ });
-      if (!uploaded && await uploadBtn.count() > 0) {
-        try {
-          const [fileChooser] = await Promise.all([
-            page.waitForEvent('filechooser', { timeout: 10000 }),
-            uploadBtn.click({ force: true }),
-          ]);
-          await fileChooser.setFiles(sceneOptions.imageFile);
-          await page.waitForTimeout(3000);
-          uploaded = true;
-        } catch {}
-      }
-      if (!uploaded) {
-        const startFrameBtn = page.locator('text=Start frame').first();
-        if (await startFrameBtn.count() > 0) {
-          try {
-            const [fileChooser] = await Promise.all([
-              page.waitForEvent('filechooser', { timeout: 10000 }),
-              startFrameBtn.click({ force: true }),
-            ]);
-            await fileChooser.setFiles(sceneOptions.imageFile);
-            await page.waitForTimeout(3000);
-            uploaded = true;
-          } catch {}
-        }
-      }
-      if (!uploaded) {
-        console.log(`  WARNING: Could not upload start frame for: "${prompt.substring(0, 40)}..."`);
-      }
+      await uploadJobStartFrame(page, sceneOptions.imageFile, prompt.substring(0, 40));
     }
 
     await page.waitForTimeout(2000);
     await dismissAllModals(page);
-
-    // Select model
-    const modelNameMap = {
-      'kling-3.0': 'Kling 3.0', 'kling-2.6': 'Kling 2.6', 'kling-2.5': 'Kling 2.5',
-      'kling-2.1': 'Kling 2.1', 'kling-motion': 'Kling Motion Control',
-      'seedance': 'Seedance', 'grok': 'Grok Imagine', 'minimax': 'Minimax Hailuo',
-      'wan-2.1': 'Wan 2.1', 'sora': 'Sora', 'veo': 'Veo', 'veo-3': 'Veo 3',
-    };
-    const uiModelName = modelNameMap[model] || model;
-    const modelSelector = page.getByRole('button', { name: 'Model' });
-    if (await modelSelector.count() > 0) {
-      const currentModel = await modelSelector.textContent().catch(() => '');
-      if (!currentModel.includes(uiModelName)) {
-        await modelSelector.click({ force: true });
-        await page.waitForTimeout(1500);
-        const matchingBtns = await page.evaluate((mn) => {
-          return [...document.querySelectorAll('button')]
-            .filter(b => b.textContent?.includes(mn) && b.offsetParent !== null)
-            .map(b => { const r = b.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; })
-            .filter(b => b.x < 800 && b.x > 100);
-        }, uiModelName);
-        if (matchingBtns.length > 0) {
-          await page.mouse.click(matchingBtns[0].x + matchingBtns[0].w / 2, matchingBtns[0].y + matchingBtns[0].h / 2);
-          await page.waitForTimeout(1500);
-        } else {
-          await page.keyboard.press('Escape');
-        }
-      }
-    }
+    await selectJobVideoModel(page, model);
 
     // Enable unlimited mode
     const unlimitedSwitch = page.getByRole('switch', { name: 'Unlimited mode' });
@@ -3551,244 +3645,212 @@ async function submitVideoJobOnPage(page, sceneOptions) {
 
 // Poll History tab for multiple submitted video prompts and download all via API.
 // Returns an array of { sceneIndex, path } for successfully downloaded videos.
+// Scrape History tab items with prompt text and processing status.
+async function scrapeHistoryItems(page) {
+  return page.evaluate(() => {
+    const items = document.querySelectorAll('main li');
+    return [...items].map((item, i) => {
+      const textbox = item.querySelector('[role="textbox"], textarea');
+      const promptText = textbox?.textContent?.trim()?.substring(0, 80) || '';
+      const itemText = item.textContent || '';
+      const isProcessing = itemText.includes('In queue') || itemText.includes('Processing') || itemText.includes('Cancel');
+      return { index: i, promptText, isProcessing };
+    });
+  });
+}
+
+// Count completed and processing jobs by matching History items to submitted jobs.
+function countJobStatuses(submittedJobs, historyItems, results) {
+  let completedThisPoll = 0;
+  let processingCount = 0;
+
+  for (const job of submittedJobs) {
+    if (results.has(job.sceneIndex)) continue;
+    const match = historyItems.find(h =>
+      h.promptText.substring(0, 40).includes(job.promptPrefix.substring(0, 40)) ||
+      job.promptPrefix.substring(0, 40).includes(h.promptText.substring(0, 40))
+    );
+    if (match && !match.isProcessing) completedThisPoll++;
+    else if (match && match.isProcessing) processingCount++;
+  }
+
+  return { completedThisPoll, processingCount };
+}
+
+// Intercept API responses and/or direct-fetch to get video job data.
+async function interceptVideoApiData(page) {
+  let projectApiData = null;
+  const apiHandler = async (response) => {
+    const url = response.url();
+    if (url.includes('fnf.higgsfield.ai/project') ||
+        url.includes('fnf.higgsfield.ai/job') ||
+        url.includes('higgsfield.ai/api/')) {
+      try {
+        const data = await response.json();
+        if (data?.job_sets?.length > 0) projectApiData = data;
+      } catch {}
+    }
+  };
+  page.on('response', apiHandler);
+
+  await page.goto(`${BASE_URL}/create/video`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await page.waitForTimeout(4000);
+  await clickHistoryTab(page, { waitMs: 4000 });
+
+  if (!projectApiData) {
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(6000);
+  }
+  page.off('response', apiHandler);
+
+  // Fallback: direct fetch using the page's auth context
+  if (!projectApiData) {
+    console.log(`  API interception missed. Trying direct fetch...`);
+    try {
+      projectApiData = await page.evaluate(async () => {
+        const resp = await fetch('https://fnf.higgsfield.ai/project?job_set_type=image2video&limit=20&offset=0', {
+          credentials: 'include',
+          headers: { 'Accept': 'application/json' },
+        });
+        return resp.ok ? await resp.json() : null;
+      });
+      if (projectApiData?.job_sets?.length > 0) {
+        console.log(`  Direct fetch got ${projectApiData.job_sets.length} job set(s)`);
+      }
+    } catch (fetchErr) {
+      console.log(`  Direct fetch failed: ${fetchErr.message}`);
+    }
+  }
+
+  return projectApiData;
+}
+
+// Score how well two prompt strings match by comparing their prefix characters.
+function scorePromptMatch(promptA, promptB) {
+  let score = 0;
+  const minLen = Math.min(promptA.length, promptB.length, 60);
+  for (let c = 0; c < minLen; c++) {
+    if (promptA[c] === promptB[c]) score++;
+    else break;
+  }
+  return score;
+}
+
+// Match API job_sets to submitted jobs by prompt text (Strategy 1) and order (Strategy 2).
+// Returns nothing — mutates jobs by setting _matchedJobSet and _matchMethod.
+function matchJobSetsToSubmittedJobs(submittedJobs, completedJobSets, results) {
+  const matchedJobSetIds = new Set();
+
+  // Strategy 1: Prompt-based matching
+  for (const job of submittedJobs) {
+    if (results.has(job.sceneIndex)) continue;
+    let bestMatch = null;
+    let bestScore = 0;
+
+    for (const jobSet of completedJobSets) {
+      const jobSetId = jobSet.id || jobSet.prompt;
+      if (matchedJobSetIds.has(jobSetId)) continue;
+      const score = scorePromptMatch(jobSet.prompt || '', job.promptPrefix || '');
+      if (score >= 20 && score > bestScore) {
+        bestMatch = jobSet;
+        bestScore = score;
+      }
+    }
+
+    if (bestMatch) {
+      matchedJobSetIds.add(bestMatch.id || bestMatch.prompt);
+      job._matchedJobSet = bestMatch;
+      job._matchMethod = 'prompt';
+    }
+  }
+
+  // Strategy 2: Order-based fallback for models with empty prompts (e.g. Seedance)
+  const unmatchedJobs = submittedJobs.filter(j => !results.has(j.sceneIndex) && !j._matchedJobSet);
+  if (unmatchedJobs.length > 0) {
+    const unmatchedJobSets = completedJobSets.filter(js => !matchedJobSetIds.has(js.id || js.prompt));
+    const reversedJobSets = [...unmatchedJobSets].reverse();
+
+    for (let i = 0; i < unmatchedJobs.length && i < reversedJobSets.length; i++) {
+      const job = unmatchedJobs[i];
+      const jobSet = reversedJobSets[i];
+      matchedJobSetIds.add(jobSet.id || jobSet.prompt);
+      job._matchedJobSet = jobSet;
+      job._matchMethod = 'order';
+      console.log(`  Scene ${job.sceneIndex + 1}: order-based match (empty prompt fallback)`);
+    }
+  }
+}
+
+// Download matched videos for submitted jobs from their matched API jobSets.
+function downloadMatchedVideos(submittedJobs, outputDir, results) {
+  for (const job of submittedJobs) {
+    if (results.has(job.sceneIndex)) continue;
+    const bestMatch = job._matchedJobSet;
+    if (!bestMatch) continue;
+    const matchMethod = job._matchMethod || 'prompt';
+    delete job._matchedJobSet;
+    delete job._matchMethod;
+
+    for (const j of (bestMatch.jobs || [])) {
+      if (j.status !== 'completed' || !j.results?.raw?.url?.includes('cloudfront.net')) continue;
+      const videoUrl = j.results.raw.url;
+      const meta = { model: job.model, promptSnippet: job.promptPrefix };
+      const filename = buildDescriptiveFilename(meta, `scene-${job.sceneIndex + 1}-${Date.now()}.mp4`, job.sceneIndex);
+      const savePath = join(outputDir, filename);
+      try {
+        const { httpCode, size } = curlDownload(videoUrl, savePath, { withHttpCode: true });
+        if (httpCode === '200' && size > 10000) {
+          writeJsonSidecar(savePath, {
+            command: 'pipeline', type: 'video', ...meta,
+            sceneIndex: job.sceneIndex, strategy: 'api-interception',
+            cloudFrontUrl: videoUrl,
+          });
+          console.log(`  Scene ${job.sceneIndex + 1}: downloaded (${(size / 1024 / 1024).toFixed(1)}MB) ${filename}`);
+          console.log(`    Match method: ${matchMethod}, prompt: "${(bestMatch.prompt || '(empty)').substring(0, 60)}"`);
+          results.set(job.sceneIndex, savePath);
+        }
+      } catch {}
+      break;
+    }
+  }
+}
+
 async function pollAndDownloadVideos(page, submittedJobs, outputDir, timeout = 600000) {
-  const results = new Map(); // sceneIndex -> path
+  const results = new Map();
   const startTime = Date.now();
   const pollInterval = 15000;
 
   console.log(`Polling for ${submittedJobs.length} video(s) (timeout: ${timeout / 1000}s)...`);
-
-  // Switch to History tab
-  const historyTab = page.locator('[role="tab"]:has-text("History")');
-  if (await historyTab.count() > 0) {
-    await historyTab.click({ force: true });
-    await page.waitForTimeout(2000);
-  }
+  const historyTab = await clickHistoryTab(page);
 
   while (Date.now() - startTime < timeout && results.size < submittedJobs.length) {
     await page.waitForTimeout(pollInterval);
     await dismissAllModals(page);
 
-    // Get all History items with their prompt text and processing status
-    const historyItems = await page.evaluate(() => {
-      const items = document.querySelectorAll('main li');
-      return [...items].map((item, i) => {
-        const textbox = item.querySelector('[role="textbox"], textarea');
-        const promptText = textbox?.textContent?.trim()?.substring(0, 80) || '';
-        const itemText = item.textContent || '';
-        const isProcessing = itemText.includes('In queue') || itemText.includes('Processing') || itemText.includes('Cancel');
-        return { index: i, promptText, isProcessing };
-      });
-    });
-
+    const historyItems = await scrapeHistoryItems(page);
     const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(0);
-    let completedThisPoll = 0;
-    let processingCount = 0;
-
-    for (const job of submittedJobs) {
-      if (results.has(job.sceneIndex)) continue; // Already downloaded
-
-      // Find matching History item by prompt prefix
-      const match = historyItems.find(h =>
-        h.promptText.substring(0, 40).includes(job.promptPrefix.substring(0, 40)) ||
-        job.promptPrefix.substring(0, 40).includes(h.promptText.substring(0, 40))
-      );
-
-      if (match && !match.isProcessing) {
-        completedThisPoll++;
-      } else if (match && match.isProcessing) {
-        processingCount++;
-      }
-    }
-
+    const { completedThisPoll, processingCount } = countJobStatuses(submittedJobs, historyItems, results);
     const pendingCount = submittedJobs.length - results.size;
     console.log(`  ${elapsedSec}s: ${results.size} done, ${processingCount} processing, ${pendingCount - processingCount - completedThisPoll} waiting`);
 
-    // If any new completions detected, download them via API
     if (completedThisPoll > 0) {
       console.log(`  ${completedThisPoll} new completion(s) detected, downloading via API...`);
-
-      // Intercept API to get all video URLs — try multiple approaches
-      let projectApiData = null;
-      const apiHandler = async (response) => {
-        const url = response.url();
-        // Catch project API, job_sets API, or any Higgsfield API with video data
-        if (url.includes('fnf.higgsfield.ai/project') ||
-            url.includes('fnf.higgsfield.ai/job') ||
-            url.includes('higgsfield.ai/api/')) {
-          try {
-            const data = await response.json();
-            // Accept any response that has job_sets with video URLs
-            if (data?.job_sets?.length > 0) {
-              projectApiData = data;
-            }
-          } catch {}
-        }
-      };
-      page.on('response', apiHandler);
-
-      // Navigate to video creation page to trigger API call (reload may not fire it)
-      await page.goto(`${BASE_URL}/create/video`, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      await page.waitForTimeout(4000);
-
-      // Click History tab to load job data
-      const histTab = page.locator('[role="tab"]:has-text("History")');
-      if (await histTab.count() > 0) {
-        await histTab.click({ force: true });
-        await page.waitForTimeout(4000);
-      }
-
-      // If no API data yet, try a page reload as fallback
-      if (!projectApiData) {
-        await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
-        await page.waitForTimeout(6000);
-      }
-
-      page.off('response', apiHandler);
-
-      // Fallback: Direct API fetch using the page's auth context.
-      // The API interception can miss responses if they arrive before the listener
-      // is attached or if the page caches the data. Fetching directly is more reliable.
-      if (!projectApiData) {
-        console.log(`  API interception missed. Trying direct fetch...`);
-        try {
-          projectApiData = await page.evaluate(async () => {
-            // The Higgsfield API endpoint for video history
-            const resp = await fetch('https://fnf.higgsfield.ai/project?job_set_type=image2video&limit=20&offset=0', {
-              credentials: 'include',
-              headers: { 'Accept': 'application/json' },
-            });
-            if (resp.ok) return await resp.json();
-            return null;
-          });
-          if (projectApiData?.job_sets?.length > 0) {
-            console.log(`  Direct fetch got ${projectApiData.job_sets.length} job set(s)`);
-          }
-        } catch (fetchErr) {
-          console.log(`  Direct fetch failed: ${fetchErr.message}`);
-        }
-      }
+      const projectApiData = await interceptVideoApiData(page);
 
       if (!projectApiData) {
         console.log(`  WARNING: No API data captured. API interception may need updating.`);
       }
 
       if (projectApiData?.job_sets?.length > 0) {
-        if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
-
-        // Match API job_sets to our submitted jobs by prompt text.
-        // CRITICAL: Track matched jobSets to prevent the same video being
-        // downloaded for multiple scenes (each jobSet matches exactly one scene).
-        const matchedJobSetIds = new Set();
-
-        // Pre-filter to only completed jobSets with downloadable videos
+        ensureDir(outputDir);
         const completedJobSets = projectApiData.job_sets.filter(js =>
           (js.jobs || []).some(j => j.status === 'completed' && j.results?.raw?.url?.includes('cloudfront.net'))
         );
-
-        // Strategy 1: Prompt-based matching (works for most models)
-        for (const job of submittedJobs) {
-          if (results.has(job.sceneIndex)) continue;
-
-          let bestMatch = null;
-          let bestScore = 0;
-
-          for (const jobSet of completedJobSets) {
-            const jobSetId = jobSet.id || jobSet.prompt;
-            if (matchedJobSetIds.has(jobSetId)) continue;
-
-            const jobPrompt = jobSet.prompt || '';
-            const submittedPrompt = job.promptPrefix || '';
-
-            // Score the match: longer matching prefix = better match
-            let score = 0;
-            const minLen = Math.min(jobPrompt.length, submittedPrompt.length, 60);
-            for (let c = 0; c < minLen; c++) {
-              if (jobPrompt[c] === submittedPrompt[c]) score++;
-              else break;
-            }
-
-            if (score >= 20 && score > bestScore) {
-              bestMatch = jobSet;
-              bestScore = score;
-            }
-          }
-
-          if (bestMatch) {
-            const bestId = bestMatch.id || bestMatch.prompt;
-            matchedJobSetIds.add(bestId);
-            job._matchedJobSet = bestMatch;
-            job._matchMethod = 'prompt';
-          }
-        }
-
-        // Strategy 2: Order-based fallback for models with empty prompts (e.g. Seedance).
-        // The API returns job_sets newest-first. Our submittedJobs are in scene order
-        // (oldest submission first). So we reverse-match: the Nth unmatched submitted
-        // job corresponds to the Nth-from-last unmatched completed jobSet.
-        const unmatchedJobs = submittedJobs.filter(j => !results.has(j.sceneIndex) && !j._matchedJobSet);
-        if (unmatchedJobs.length > 0) {
-          const unmatchedJobSets = completedJobSets.filter(js => {
-            const jsId = js.id || js.prompt;
-            return !matchedJobSetIds.has(jsId);
-          });
-
-          // API returns newest first; submitted jobs are in chronological order.
-          // Reverse the unmatched jobSets so index 0 = oldest = first submitted.
-          const reversedJobSets = [...unmatchedJobSets].reverse();
-
-          for (let i = 0; i < unmatchedJobs.length && i < reversedJobSets.length; i++) {
-            const job = unmatchedJobs[i];
-            const jobSet = reversedJobSets[i];
-            const jsId = jobSet.id || jobSet.prompt;
-            matchedJobSetIds.add(jsId);
-            job._matchedJobSet = jobSet;
-            job._matchMethod = 'order';
-            console.log(`  Scene ${job.sceneIndex + 1}: order-based match (empty prompt fallback)`);
-          }
-        }
-
-        for (const job of submittedJobs) {
-          if (results.has(job.sceneIndex)) continue;
-          const bestMatch = job._matchedJobSet;
-          if (!bestMatch) continue;
-          delete job._matchedJobSet;
-
-          // Download the completed video (jobSet already claimed above)
-          for (const j of (bestMatch.jobs || [])) {
-            if (j.status === 'completed' && j.results?.raw?.url?.includes('cloudfront.net')) {
-              const videoUrl = j.results.raw.url;
-              const meta = { model: job.model, promptSnippet: job.promptPrefix };
-              const filename = buildDescriptiveFilename(meta, `scene-${job.sceneIndex + 1}-${Date.now()}.mp4`, job.sceneIndex);
-              const savePath = join(outputDir, filename);
-              try {
-                const curlResult = execFileSync('curl', ['-sL', '-w', '%{http_code}', '-o', savePath, videoUrl], { timeout: 120000, encoding: 'utf-8' });
-                const httpCode = curlResult.trim();
-                if (httpCode === '200' && existsSync(savePath) && statSync(savePath).size > 10000) {
-                  const fileSize = statSync(savePath).size;
-                  // Write JSON sidecar for pipeline scene video
-                  writeJsonSidecar(savePath, {
-                    command: 'pipeline', type: 'video', ...meta,
-                    sceneIndex: job.sceneIndex, strategy: 'api-interception',
-                    cloudFrontUrl: videoUrl, matchScore: bestScore,
-                  });
-                  const matchMethod = job._matchMethod || 'prompt';
-                  console.log(`  Scene ${job.sceneIndex + 1}: downloaded (${(fileSize / 1024 / 1024).toFixed(1)}MB) ${filename}`);
-                  console.log(`    Match method: ${matchMethod}, prompt: "${(bestMatch.prompt || '(empty)').substring(0, 60)}"`);
-                  results.set(job.sceneIndex, savePath);
-                }
-              } catch {}
-              break;
-            }
-          }
-        }
+        matchJobSetsToSubmittedJobs(submittedJobs, completedJobSets, results);
+        downloadMatchedVideos(submittedJobs, outputDir, results);
       }
 
-      // Re-click History tab after reload for continued polling
-      if (await historyTab.count() > 0) {
-        await historyTab.click({ force: true });
-        await page.waitForTimeout(2000);
-      }
+      await clickHistoryTab(page);
     }
   }
 
@@ -3852,88 +3914,63 @@ function assembleWithFfmpeg(validVideos, finalPath, brief, outputDir, pipelineSt
   pipelineState.steps.push({ step: 'assembly', success: true, method: 'ffmpeg', path: finalPath });
 }
 
-async function pipeline(options = {}) {
-  // Load brief from file or construct from CLI options
-  let brief;
+// Load or construct a pipeline brief from options.
+function loadPipelineBrief(options) {
   if (options.brief) {
     if (!existsSync(options.brief)) {
       console.error(`ERROR: Brief file not found: ${options.brief}`);
       process.exit(1);
     }
-    brief = JSON.parse(readFileSync(options.brief, 'utf-8'));
-  } else {
-    // Construct minimal brief from CLI options
-    brief = {
-      title: 'Quick Pipeline',
-      character: {
-        description: options.prompt || 'A friendly young person',
-        image: options.characterImage || options.imageFile || null,
-      },
-      scenes: [{
-        prompt: options.prompt || 'Character speaks to camera with warm expression',
-        duration: parseInt(options.duration, 10) || 5,
-        dialogue: options.dialogue || null,
-      }],
-      imageModel: options.model || (options.preferUnlimited !== false && getUnlimitedModelForCommand('image')?.slug) || 'soul',
-      videoModel: (options.preferUnlimited !== false && getUnlimitedModelForCommand('video')?.slug) || 'kling-2.6',
-      aspect: options.aspect || '9:16',
-    };
+    return JSON.parse(readFileSync(options.brief, 'utf-8'));
   }
-
-  const outputDir = options.output || join(getDefaultOutputDir(options), `pipeline-${Date.now()}`);
-  if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
-
-  console.log(`\n=== Video Production Pipeline ===`);
-  console.log(`Title: ${brief.title}`);
-  console.log(`Scenes: ${brief.scenes.length}`);
-  console.log(`Image model: ${brief.imageModel}`);
-  console.log(`Video model: ${brief.videoModel}`);
-  console.log(`Aspect: ${brief.aspect}`);
-  console.log(`Output: ${outputDir}`);
-
-  const pipelineState = {
-    brief,
-    outputDir,
-    steps: [],
-    startTime: Date.now(),
+  return {
+    title: 'Quick Pipeline',
+    character: {
+      description: options.prompt || 'A friendly young person',
+      image: options.characterImage || options.imageFile || null,
+    },
+    scenes: [{
+      prompt: options.prompt || 'Character speaks to camera with warm expression',
+      duration: parseInt(options.duration, 10) || 5,
+      dialogue: options.dialogue || null,
+    }],
+    imageModel: options.model || (options.preferUnlimited !== false && getUnlimitedModelForCommand('image')?.slug) || 'soul',
+    videoModel: (options.preferUnlimited !== false && getUnlimitedModelForCommand('video')?.slug) || 'kling-2.6',
+    aspect: options.aspect || '9:16',
   };
+}
 
-  // Step 1: Generate character image if not provided
+// Pipeline Step 1: Generate or use provided character image.
+async function pipelineCharacterImage(brief, options, outputDir, pipelineState) {
   let characterImagePath = brief.character?.image;
-  if (!characterImagePath) {
-    console.log(`\n--- Step 1: Generate character image ---`);
-    const charPrompt = brief.character?.description || 'A photorealistic portrait of a friendly young person, neutral expression, studio lighting, high quality';
-    console.log(`Prompt: "${charPrompt.substring(0, 80)}..."`);
-
-    const charResult = await generateImage({
-      ...options,
-      prompt: charPrompt,
-      model: brief.imageModel,
-      aspect: '1:1', // Square for character portraits
-      batch: 1,
-      output: outputDir,
-    });
-
-    if (charResult?.success) {
-      // Find the most recently created file in outputDir
-      const files = existsSync(outputDir) ? readdirSync(outputDir)
-        .filter(f => f.endsWith('.png') || f.endsWith('.jpg') || f.endsWith('.webp'))
-        .map(f => ({ name: f, time: statSync(join(outputDir, f)).mtimeMs }))
-        .sort((a, b) => b.time - a.time) : [];
-      characterImagePath = files.length > 0 ? join(outputDir, files[0].name) : null;
-      console.log(`Character image: ${characterImagePath || 'NOT FOUND'}`);
-      pipelineState.steps.push({ step: 'character-image', success: true, path: characterImagePath });
-    } else {
-      console.log('WARNING: Character image generation failed, continuing without it');
-      pipelineState.steps.push({ step: 'character-image', success: false });
-    }
-  } else {
+  if (characterImagePath) {
     console.log(`\n--- Step 1: Using provided character image: ${characterImagePath} ---`);
     pipelineState.steps.push({ step: 'character-image', success: true, path: characterImagePath, provided: true });
+    return characterImagePath;
   }
 
-  // Step 2: Generate scene images (one per scene)
-  // If brief.imagePrompts[] exists, use those for image generation (separate from video prompts)
+  console.log(`\n--- Step 1: Generate character image ---`);
+  const charPrompt = brief.character?.description || 'A photorealistic portrait of a friendly young person, neutral expression, studio lighting, high quality';
+  console.log(`Prompt: "${charPrompt.substring(0, 80)}..."`);
+
+  const charResult = await generateImage({
+    ...options, prompt: charPrompt, model: brief.imageModel,
+    aspect: '1:1', batch: 1, output: outputDir,
+  });
+
+  if (charResult?.success) {
+    characterImagePath = findNewestFile(outputDir, ['.png', '.jpg', '.webp']);
+    console.log(`Character image: ${characterImagePath || 'NOT FOUND'}`);
+    pipelineState.steps.push({ step: 'character-image', success: true, path: characterImagePath });
+  } else {
+    console.log('WARNING: Character image generation failed, continuing without it');
+    pipelineState.steps.push({ step: 'character-image', success: false });
+  }
+  return characterImagePath;
+}
+
+// Pipeline Step 2: Generate scene images (one per scene).
+async function pipelineSceneImages(brief, options, outputDir, pipelineState) {
   console.log(`\n--- Step 2: Generate scene images (${brief.scenes.length} scenes) ---`);
   if (brief.imagePrompts?.length > 0) {
     console.log(`Using separate imagePrompts for start frame generation`);
@@ -3941,26 +3978,16 @@ async function pipeline(options = {}) {
   const sceneImages = [];
 
   for (let i = 0; i < brief.scenes.length; i++) {
-    const scene = brief.scenes[i];
-    const imagePrompt = brief.imagePrompts?.[i] || scene.prompt;
+    const imagePrompt = brief.imagePrompts?.[i] || brief.scenes[i].prompt;
     console.log(`\nScene ${i + 1}/${brief.scenes.length}: "${imagePrompt?.substring(0, 60)}..."`);
 
     const sceneResult = await generateImage({
-      ...options,
-      prompt: imagePrompt,
-      model: brief.imageModel,
-      aspect: brief.aspect,
-      batch: 1,
-      output: outputDir,
+      ...options, prompt: imagePrompt, model: brief.imageModel,
+      aspect: brief.aspect, batch: 1, output: outputDir,
     });
 
     if (sceneResult?.success) {
-      // Find the newest image file
-      const files = readdirSync(outputDir)
-        .filter(f => (f.endsWith('.png') || f.endsWith('.jpg') || f.endsWith('.webp')) && f.includes('hf_'))
-        .map(f => ({ name: f, time: statSync(join(outputDir, f)).mtimeMs }))
-        .sort((a, b) => b.time - a.time);
-      const scenePath = files.length > 0 ? join(outputDir, files[0].name) : null;
+      const scenePath = findNewestFileMatching(outputDir, ['.png', '.jpg', '.webp'], 'hf_');
       sceneImages.push(scenePath);
       console.log(`Scene ${i + 1} image: ${scenePath || 'NOT FOUND'}`);
     } else {
@@ -3969,13 +3996,11 @@ async function pipeline(options = {}) {
     }
   }
   pipelineState.steps.push({ step: 'scene-images', count: sceneImages.filter(Boolean).length, total: brief.scenes.length });
+  return sceneImages;
+}
 
-  // Step 3: Animate scene images into video clips (PARALLEL submission)
-  // Instead of sequential generate-wait-generate-wait, we:
-  //   3a. Submit ALL video jobs in one browser session (fast, ~30s each)
-  //   3b. Poll History tab for ALL prompts simultaneously
-  //   3c. Download all completed videos via API interception
-  // This cuts N*4min to ~4min for N scenes.
+// Pipeline Step 3: Submit video jobs and poll for results (parallel).
+async function pipelineAnimateScenes(brief, sceneImages, options, outputDir, pipelineState) {
   const validScenes = brief.scenes
     .map((scene, i) => ({ scene, index: i, image: sceneImages[i] }))
     .filter(s => s.image);
@@ -3987,25 +4012,16 @@ async function pipeline(options = {}) {
 
   if (validScenes.length > 0) {
     const { browser: videoBrowser, context: videoCtx, page: videoPage } = await launchBrowser(options);
-
     try {
       const submittedJobs = [];
-
       for (const { scene, index, image } of validScenes) {
         console.log(`\n  Submitting scene ${index + 1}/${brief.scenes.length}...`);
         const promptPrefix = await submitVideoJobOnPage(videoPage, {
-          prompt: scene.prompt,
-          imageFile: image,
-          model: brief.videoModel,
-          duration: String(scene.duration || 5),
+          prompt: scene.prompt, imageFile: image,
+          model: brief.videoModel, duration: String(scene.duration || 5),
         });
-
         if (promptPrefix) {
-          submittedJobs.push({
-            sceneIndex: index,
-            promptPrefix,
-            model: brief.videoModel,
-          });
+          submittedJobs.push({ sceneIndex: index, promptPrefix, model: brief.videoModel });
         }
       }
 
@@ -4014,13 +4030,10 @@ async function pipeline(options = {}) {
         const videoResults = await pollAndDownloadVideos(
           videoPage, submittedJobs, outputDir, options.timeout || 600000
         );
-
-        // Map results back to scene order
         for (const [sceneIndex, path] of videoResults) {
           sceneVideos[sceneIndex] = path;
         }
       }
-
       await videoCtx.storageState({ path: STATE_FILE });
     } catch (err) {
       console.error('Error during parallel video generation:', err.message);
@@ -4031,38 +4044,34 @@ async function pipeline(options = {}) {
   const videoCount = sceneVideos.filter(Boolean).length;
   console.log(`\nVideo generation: ${videoCount}/${brief.scenes.length} scenes completed`);
   pipelineState.steps.push({ step: 'scene-videos', count: videoCount, total: brief.scenes.length });
+  return sceneVideos;
+}
 
-  // Step 4: Add lipsync dialogue to scenes that have it
+// Pipeline Step 4: Add lipsync dialogue to scenes that have it.
+async function pipelineLipsync(brief, sceneVideos, characterImagePath, options, outputDir, pipelineState) {
   console.log(`\n--- Step 4: Add lipsync dialogue ---`);
-  const scenesWithDialogue = brief.scenes.filter(s => s.dialogue);
   const lipsyncVideos = [];
+  const scenesWithDialogue = brief.scenes.filter(s => s.dialogue);
 
   if (scenesWithDialogue.length > 0 && characterImagePath) {
     for (let i = 0; i < brief.scenes.length; i++) {
       const scene = brief.scenes[i];
       if (!scene.dialogue) {
-        lipsyncVideos.push(sceneVideos[i]); // Keep original video
+        lipsyncVideos.push(sceneVideos[i]);
         continue;
       }
 
       console.log(`\nLipsync scene ${i + 1}: "${scene.dialogue.substring(0, 60)}..."`);
       const lipsyncResult = await generateLipsync({
-        ...options,
-        prompt: scene.dialogue,
-        imageFile: characterImagePath,
-        output: outputDir,
+        ...options, prompt: scene.dialogue, imageFile: characterImagePath, output: outputDir,
       });
 
       if (lipsyncResult?.success) {
-        const files = readdirSync(outputDir)
-          .filter(f => f.endsWith('.mp4'))
-          .map(f => ({ name: f, time: statSync(join(outputDir, f)).mtimeMs }))
-          .sort((a, b) => b.time - a.time);
-        const lipsyncPath = files.length > 0 ? join(outputDir, files[0].name) : null;
+        const lipsyncPath = findNewestFile(outputDir, ['.mp4']);
         lipsyncVideos.push(lipsyncPath);
         console.log(`Lipsync video: ${lipsyncPath || 'NOT FOUND'}`);
       } else {
-        lipsyncVideos.push(sceneVideos[i]); // Fall back to non-lipsync video
+        lipsyncVideos.push(sceneVideos[i]);
         console.log(`Lipsync failed, using original video for scene ${i + 1}`);
       }
     }
@@ -4071,96 +4080,103 @@ async function pipeline(options = {}) {
     lipsyncVideos.push(...sceneVideos);
   }
   pipelineState.steps.push({ step: 'lipsync', count: lipsyncVideos.filter(Boolean).length });
+  return lipsyncVideos;
+}
 
-  // Step 5: Assemble final video with Remotion (captions + transitions)
-  // Falls back to ffmpeg concat if Remotion is not installed
+// Pipeline Step 5: Assemble final video with Remotion or ffmpeg fallback.
+function pipelineAssemble(brief, validVideos, outputDir, pipelineState) {
   console.log(`\n--- Step 5: Assemble final video ---`);
-  const validVideos = lipsyncVideos.filter(Boolean);
 
-  if (validVideos.length > 0) {
-    const finalPath = join(outputDir, `${brief.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-final.mp4`);
-    const __dirname = dirname(fileURLToPath(import.meta.url));
-    const remotionDir = join(__dirname, 'remotion');
-    const remotionInstalled = existsSync(join(remotionDir, 'node_modules', 'remotion'));
-    const hasCaptions = brief.captions && brief.captions.length > 0;
-
-    if (remotionInstalled && (hasCaptions || validVideos.length > 1)) {
-      // Remotion render: captions + transitions + assembly in one pass
-      console.log(`Using Remotion for assembly (${validVideos.length} scenes, ${brief.captions?.length || 0} captions)`);
-
-      // Copy scene videos into Remotion public/ dir so staticFile() can find them
-      // Note: symlinks don't survive Remotion's webpack bundling (copies public/ to temp dir)
-      const publicDir = join(remotionDir, 'public');
-      if (!existsSync(publicDir)) mkdirSync(publicDir, { recursive: true });
-      const staticVideoNames = [];
-      for (let i = 0; i < validVideos.length; i++) {
-        const staticName = `scene-${i}.mp4`;
-        const destPath = join(publicDir, staticName);
-        try { if (existsSync(destPath)) unlinkSync(destPath); } catch (e) { /* ignore */ }
-        copyFileSync(validVideos[i], destPath);
-        staticVideoNames.push(staticName);
-      }
-
-      const remotionProps = {
-        title: brief.title || 'Untitled',
-        scenes: brief.scenes || [],
-        aspect: brief.aspect || '9:16',
-        captions: brief.captions || [],
-        sceneVideos: staticVideoNames, // staticFile() names, not absolute paths
-        transitionStyle: brief.transitionStyle || 'fade',
-        transitionDuration: brief.transitionDuration || 15,
-        musicPath: brief.music && existsSync(brief.music) ? brief.music : undefined,
-      };
-
-      const propsJson = JSON.stringify(remotionProps);
-      // Write props to file to avoid shell escaping issues
-      const propsFile = join(outputDir, 'remotion-props.json');
-      writeFileSync(propsFile, propsJson);
-
-      // calculateMetadata in Root.tsx dynamically computes duration/dimensions from props
-      const remotionArgs = [
-        'remotion', 'render',
-        'src/index.ts',
-        'FullVideo',
-        finalPath,
-        `--props=${propsFile}`,
-        '--codec=h264',
-        '--log=warn',
-      ];
-
-      try {
-        execFileSync('npx', remotionArgs, {
-          cwd: remotionDir,
-          stdio: 'inherit',
-          timeout: 600000, // 10 min
-        });
-        console.log(`Final video (Remotion, ${validVideos.length} scenes + captions): ${finalPath}`);
-        pipelineState.steps.push({ step: 'assembly', success: true, method: 'remotion', path: finalPath });
-      } catch (remotionErr) {
-        console.log(`Remotion render failed: ${remotionErr.message}`);
-        console.log('Falling back to ffmpeg concat...');
-        // Fall through to ffmpeg fallback below
-        assembleWithFfmpeg(validVideos, finalPath, brief, outputDir, pipelineState);
-      }
-    } else if (validVideos.length === 1 && !hasCaptions) {
-      // Single video, no captions - just copy
-      copyFileSync(validVideos[0], finalPath);
-      console.log(`Final video (single scene): ${finalPath}`);
-      pipelineState.steps.push({ step: 'assembly', success: true, method: 'copy', path: finalPath });
-    } else {
-      // ffmpeg fallback (no Remotion installed)
-      if (!remotionInstalled) {
-        console.log('Remotion not installed - using ffmpeg concat (no captions/transitions)');
-        console.log(`Install with: cd ${remotionDir} && npm install`);
-      }
-      assembleWithFfmpeg(validVideos, finalPath, brief, outputDir, pipelineState);
-    }
-  } else {
+  if (validVideos.length === 0) {
     console.log('No valid video clips to assemble');
     pipelineState.steps.push({ step: 'assembly', success: false, reason: 'no valid clips' });
+    return;
   }
 
-  // Save pipeline state
+  const finalPath = join(outputDir, `${brief.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-final.mp4`);
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+  const remotionDir = join(__dirname, 'remotion');
+  const remotionInstalled = existsSync(join(remotionDir, 'node_modules', 'remotion'));
+  const hasCaptions = brief.captions && brief.captions.length > 0;
+
+  if (remotionInstalled && (hasCaptions || validVideos.length > 1)) {
+    assembleWithRemotion(validVideos, finalPath, brief, remotionDir, outputDir, pipelineState);
+  } else if (validVideos.length === 1 && !hasCaptions) {
+    copyFileSync(validVideos[0], finalPath);
+    console.log(`Final video (single scene): ${finalPath}`);
+    pipelineState.steps.push({ step: 'assembly', success: true, method: 'copy', path: finalPath });
+  } else {
+    if (!remotionInstalled) {
+      console.log('Remotion not installed - using ffmpeg concat (no captions/transitions)');
+      console.log(`Install with: cd ${remotionDir} && npm install`);
+    }
+    assembleWithFfmpeg(validVideos, finalPath, brief, outputDir, pipelineState);
+  }
+}
+
+// Assemble video using Remotion (captions + transitions).
+function assembleWithRemotion(validVideos, finalPath, brief, remotionDir, outputDir, pipelineState) {
+  console.log(`Using Remotion for assembly (${validVideos.length} scenes, ${brief.captions?.length || 0} captions)`);
+
+  const publicDir = join(remotionDir, 'public');
+  ensureDir(publicDir);
+  const staticVideoNames = [];
+  for (let i = 0; i < validVideos.length; i++) {
+    const staticName = `scene-${i}.mp4`;
+    const destPath = join(publicDir, staticName);
+    try { if (existsSync(destPath)) unlinkSync(destPath); } catch { /* ignore */ }
+    copyFileSync(validVideos[i], destPath);
+    staticVideoNames.push(staticName);
+  }
+
+  const remotionProps = {
+    title: brief.title || 'Untitled', scenes: brief.scenes || [],
+    aspect: brief.aspect || '9:16', captions: brief.captions || [],
+    sceneVideos: staticVideoNames, transitionStyle: brief.transitionStyle || 'fade',
+    transitionDuration: brief.transitionDuration || 15,
+    musicPath: brief.music && existsSync(brief.music) ? brief.music : undefined,
+  };
+
+  const propsFile = join(outputDir, 'remotion-props.json');
+  writeFileSync(propsFile, JSON.stringify(remotionProps));
+
+  const remotionArgs = [
+    'remotion', 'render', 'src/index.ts', 'FullVideo', finalPath,
+    `--props=${propsFile}`, '--codec=h264', '--log=warn',
+  ];
+
+  try {
+    execFileSync('npx', remotionArgs, { cwd: remotionDir, stdio: 'inherit', timeout: 600000 });
+    console.log(`Final video (Remotion, ${validVideos.length} scenes + captions): ${finalPath}`);
+    pipelineState.steps.push({ step: 'assembly', success: true, method: 'remotion', path: finalPath });
+  } catch (remotionErr) {
+    console.log(`Remotion render failed: ${remotionErr.message}`);
+    console.log('Falling back to ffmpeg concat...');
+    assembleWithFfmpeg(validVideos, finalPath, brief, outputDir, pipelineState);
+  }
+}
+
+async function pipeline(options = {}) {
+  const brief = loadPipelineBrief(options);
+  const outputDir = options.output || join(getDefaultOutputDir(options), `pipeline-${Date.now()}`);
+  ensureDir(outputDir);
+
+  console.log(`\n=== Video Production Pipeline ===`);
+  console.log(`Title: ${brief.title}`);
+  console.log(`Scenes: ${brief.scenes.length}`);
+  console.log(`Image model: ${brief.imageModel}`);
+  console.log(`Video model: ${brief.videoModel}`);
+  console.log(`Aspect: ${brief.aspect}`);
+  console.log(`Output: ${outputDir}`);
+
+  const pipelineState = { brief, outputDir, steps: [], startTime: Date.now() };
+
+  const characterImagePath = await pipelineCharacterImage(brief, options, outputDir, pipelineState);
+  const sceneImages = await pipelineSceneImages(brief, options, outputDir, pipelineState);
+  const sceneVideos = await pipelineAnimateScenes(brief, sceneImages, options, outputDir, pipelineState);
+  const lipsyncVideos = await pipelineLipsync(brief, sceneVideos, characterImagePath, options, outputDir, pipelineState);
+  pipelineAssemble(brief, lipsyncVideos.filter(Boolean), outputDir, pipelineState);
+
   const elapsed = ((Date.now() - pipelineState.startTime) / 1000).toFixed(0);
   pipelineState.elapsed = `${elapsed}s`;
   writeFileSync(join(outputDir, 'pipeline-state.json'), JSON.stringify(pipelineState, null, 2));
@@ -4240,34 +4256,11 @@ async function cinemaStudio(options = {}) {
       }
     }
 
-    await page.screenshot({ path: join(STATE_DIR, 'cinema-studio-configured.png'), fullPage: false });
-
-    // Click Generate
-    const generateBtn = page.locator('button:has-text("Generate")');
-    if (await generateBtn.count() > 0) {
-      await generateBtn.first().click({ force: true });
-      console.log('Clicked Generate in Cinema Studio');
-    }
-
-    // Wait for result
-    const timeout = options.timeout || 180000;
-    console.log(`Waiting up to ${timeout / 1000}s for Cinema Studio result...`);
-
-    try {
-      await page.waitForSelector(`${GENERATED_IMAGE_SELECTOR}, video`, { timeout, state: 'visible' });
-    } catch {
-      console.log('Timeout waiting for Cinema Studio result');
-    }
-
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, 'cinema-studio-result.png'), fullPage: false });
-
-    if (options.wait !== false) {
-      const baseOutput = options.output || getDefaultOutputDir(options);
-      const outputDir = resolveOutputDir(baseOutput, options, 'cinema');
-      await downloadLatestResult(page, outputDir, true, options);
-    }
+    await debugScreenshot(page, 'cinema-studio-configured');
+    await clickGenerate(page, 'Cinema Studio');
+    await waitForGenerationResult(page, options, {
+      screenshotName: 'cinema-studio-result', label: 'Cinema Studio', outputSubdir: 'cinema',
+    });
 
     await context.storageState({ path: STATE_FILE });
     await browser.close();
@@ -4333,42 +4326,12 @@ async function motionControl(options = {}) {
       }
     }
 
-    await page.screenshot({ path: join(STATE_DIR, 'motion-control-configured.png'), fullPage: false });
-
-    // Click Generate
-    const generateBtn = page.locator('button:has-text("Generate")');
-    if (await generateBtn.count() > 0) {
-      await generateBtn.first().click({ force: true });
-      console.log('Clicked Generate in Motion Control');
-    }
-
-    // Wait for result — motion control videos take longer
-    const timeout = options.timeout || 300000;
-    console.log(`Waiting up to ${timeout / 1000}s for Motion Control result...`);
-
-    // Poll History tab for completion
-    const historyTab = page.locator('[role="tab"]:has-text("History")');
-    if (await historyTab.count() > 0) {
-      await page.waitForTimeout(10000);
-      await historyTab.click();
-      await page.waitForTimeout(3000);
-    }
-
-    try {
-      await page.waitForSelector('video', { timeout, state: 'visible' });
-    } catch {
-      console.log('Timeout waiting for Motion Control result');
-    }
-
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, 'motion-control-result.png'), fullPage: false });
-
-    if (options.wait !== false) {
-      const baseOutput = options.output || getDefaultOutputDir(options);
-      const outputDir = resolveOutputDir(baseOutput, options, 'videos');
-      await downloadVideoFromHistory(page, outputDir, {}, options);
-    }
+    await debugScreenshot(page, 'motion-control-configured');
+    await clickGenerate(page, 'Motion Control');
+    await waitForGenerationResult(page, options, {
+      selector: 'video', screenshotName: 'motion-control-result', label: 'Motion Control',
+      outputSubdir: 'videos', defaultTimeout: 300000, isVideo: true, useHistoryPoll: true,
+    });
 
     await context.storageState({ path: STATE_FILE });
     await browser.close();
@@ -4423,34 +4386,12 @@ async function editImage(options = {}) {
       }
     }
 
-    await page.screenshot({ path: join(STATE_DIR, `edit-${model}-configured.png`), fullPage: false });
-
-    // Click Generate/Apply
-    const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Apply"), button:has-text("Edit")').first();
-    if (await generateBtn.count() > 0) {
-      await generateBtn.click();
-      console.log('Clicked Generate/Apply for edit');
-    }
-
-    // Wait for result
-    const timeout = options.timeout || 120000;
-    console.log(`Waiting up to ${timeout / 1000}s for edit result...`);
-
-    try {
-      await page.waitForSelector(GENERATED_IMAGE_SELECTOR, { timeout, state: 'visible' });
-    } catch {
-      console.log('Timeout waiting for edit result');
-    }
-
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, `edit-${model}-result.png`), fullPage: false });
-
-    if (options.wait !== false) {
-      const baseOutput = options.output || getDefaultOutputDir(options);
-      const outputDir = resolveOutputDir(baseOutput, options, 'edits');
-      await downloadLatestResult(page, outputDir, true, options);
-    }
+    await debugScreenshot(page, `edit-${model}-configured`);
+    await clickGenerate(page, 'edit');
+    await waitForGenerationResult(page, options, {
+      selector: GENERATED_IMAGE_SELECTOR, screenshotName: `edit-${model}-result`,
+      label: 'edit', outputSubdir: 'edits', defaultTimeout: 120000,
+    });
 
     await context.storageState({ path: STATE_FILE });
     await browser.close();
@@ -4483,7 +4424,7 @@ async function upscale(options = {}) {
       }
     }
 
-    await page.screenshot({ path: join(STATE_DIR, 'upscale-configured.png'), fullPage: false });
+    await debugScreenshot(page, 'upscale-configured');
 
     // Click Upscale/Generate
     const upscaleBtn = page.locator('button:has-text("Upscale"), button:has-text("Generate"), button:has-text("Enhance")');
@@ -4492,25 +4433,10 @@ async function upscale(options = {}) {
       console.log('Clicked Upscale');
     }
 
-    // Wait for result
-    const timeout = options.timeout || 180000;
-    console.log(`Waiting up to ${timeout / 1000}s for upscale result...`);
-
-    try {
-      await page.waitForSelector(`${GENERATED_IMAGE_SELECTOR}, a[download]`, { timeout, state: 'visible' });
-    } catch {
-      console.log('Timeout waiting for upscale result');
-    }
-
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, 'upscale-result.png'), fullPage: false });
-
-    if (options.wait !== false) {
-      const baseOutput = options.output || getDefaultOutputDir(options);
-      const outputDir = resolveOutputDir(baseOutput, options, 'upscaled');
-      await downloadLatestResult(page, outputDir, true, options);
-    }
+    await waitForGenerationResult(page, options, {
+      selector: `${GENERATED_IMAGE_SELECTOR}, a[download]`, screenshotName: 'upscale-result',
+      label: 'upscale', outputSubdir: 'upscaled',
+    });
 
     await context.storageState({ path: STATE_FILE });
     await browser.close();
@@ -4557,7 +4483,7 @@ async function manageAssets(options = {}) {
     console.log(`Assets loaded: ${assetCount}`);
 
     if (action === 'list') {
-      await page.screenshot({ path: join(STATE_DIR, 'asset-library.png'), fullPage: false });
+      await debugScreenshot(page, 'asset-library');
       console.log(`Asset library screenshot saved. ${assetCount} assets visible.`);
       await context.storageState({ path: STATE_FILE });
       await browser.close();
@@ -4571,7 +4497,7 @@ async function manageAssets(options = {}) {
       if (await assetImg.isVisible({ timeout: 3000 }).catch(() => false)) {
         await assetImg.click();
         await page.waitForTimeout(2500);
-        await page.screenshot({ path: join(STATE_DIR, 'asset-detail.png'), fullPage: false });
+        await debugScreenshot(page, 'asset-detail');
 
         // Try to download via the asset detail view
         const baseOutput = options.output || getDefaultOutputDir(options);
@@ -4614,34 +4540,293 @@ async function manageAssets(options = {}) {
 // Asset Chaining — "Open in" menu from asset detail dialog
 // Allows chaining operations without download/re-upload round-trip
 // Actions: animate, inpaint, upscale, relight, angles, shots, ai-stylist, skin-enhancer, multishot
+// Resolve the chain action label from its slug.
+const CHAIN_ACTION_MAP = {
+  animate: 'Animate', inpaint: 'Inpaint', upscale: 'Upscale', relight: 'Relight',
+  angles: 'Angles', shots: 'Shots', 'ai-stylist': 'AI Stylist',
+  'skin-enhancer': 'Skin Enhancer', multishot: 'Multishot',
+};
+
+// Resolve the tool URL for a chain action.
+const CHAIN_TOOL_URL_MAP = {
+  animate: '/create/video', inpaint: '/edit?model=soul_inpaint', upscale: '/upscale',
+  relight: '/app/relight', angles: '/app/angles', shots: '/app/shots',
+  'ai-stylist': '/app/ai-stylist', 'skin-enhancer': '/app/skin-enhancer', multishot: '/app/shots',
+};
+
+// Find and select an asset on the page, handling lazy loading and fallback selectors.
+// Returns { assetImg, assetCount } or throws if no assets found.
+async function findAssetOnPage(page) {
+  try {
+    await page.waitForSelector('main img', { timeout: 15000, state: 'visible' });
+  } catch {
+    console.log('No images appeared after 15s, scrolling to trigger lazy load...');
+  }
+
+  for (let i = 0; i < 3; i++) {
+    await page.evaluate(() => window.scrollBy(0, 800));
+    await page.waitForTimeout(1000);
+  }
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(1000);
+
+  let assetImg = page.locator('main img');
+  let assetCount = await assetImg.count();
+  if (assetCount === 0) {
+    assetImg = page.locator(GENERATED_IMAGE_SELECTOR);
+    assetCount = await assetImg.count();
+  }
+  if (assetCount === 0) {
+    console.log('No assets found yet, waiting for lazy load...');
+    await page.waitForTimeout(5000);
+    assetImg = page.locator('main img');
+    assetCount = await assetImg.count();
+  }
+
+  return { assetImg, assetCount };
+}
+
+// Try multiple click strategies to open an asset dialog.
+async function openAssetDialog(page, targetAsset) {
+  const clickStrategies = [
+    { name: 'normal click', fn: () => targetAsset.click({ timeout: 5000 }) },
+    { name: 'center-click', fn: async () => {
+      const box = await targetAsset.boundingBox();
+      if (box) await page.mouse.click(box.x + box.width * 0.5, box.y + box.height * 0.5);
+      else throw new Error('no bounding box');
+    }},
+    { name: 'force click', fn: () => targetAsset.click({ force: true }) },
+  ];
+
+  for (const strategy of clickStrategies) {
+    try {
+      await strategy.fn();
+      await page.waitForTimeout(2500);
+      await dismissInterruptions(page);
+      const isOpen = await page.locator('[role="dialog"], dialog').count() > 0;
+      if (isOpen) {
+        console.log(`Dialog opened via ${strategy.name}`);
+        return true;
+      }
+    } catch {
+      console.log(`${strategy.name} failed, trying next...`);
+    }
+  }
+  return false;
+}
+
+// Try to click the target action inside an asset dialog using 3 strategies.
+async function clickAssetAction(page, actionLabel) {
+  const dialog = page.locator('[role="dialog"], dialog');
+
+  // Strategy 1: "Open in" menu
+  const openInBtn = dialog.locator('button:has-text("Open in")');
+  if (await openInBtn.count() > 0) {
+    await openInBtn.first().click({ force: true });
+    await page.waitForTimeout(1000);
+    console.log('Opened "Open in" menu');
+    await debugScreenshot(page, 'asset-chain-openin-menu');
+
+    const actionBtn = page.locator(`[role="menuitem"]:has-text("${actionLabel}"), [role="option"]:has-text("${actionLabel}"), [data-radix-popper-content-wrapper] button:has-text("${actionLabel}"), [data-radix-popper-content-wrapper] a:has-text("${actionLabel}")`);
+    if (await actionBtn.count() > 0) {
+      await actionBtn.first().click({ force: true });
+      await page.waitForTimeout(3000);
+      console.log(`Clicked "${actionLabel}" from Open in menu`);
+      return true;
+    }
+  }
+
+  // Strategy 2: Direct button/link inside dialog
+  const directBtn = dialog.locator(`button:has-text("${actionLabel}"), a:has-text("${actionLabel}")`);
+  if (await directBtn.count() > 0) {
+    await directBtn.first().click({ force: true });
+    await page.waitForTimeout(3000);
+    console.log(`Clicked "${actionLabel}" inside dialog`);
+    return true;
+  }
+
+  // Strategy 3: Overflow/more menu
+  const moreBtn = dialog.locator('button[aria-label*="more" i], button[aria-label*="menu" i], button:has(svg[class*="dots"]), button:has(svg[class*="ellipsis"])');
+  for (let m = 0; m < await moreBtn.count(); m++) {
+    await moreBtn.nth(m).click({ force: true });
+    await page.waitForTimeout(1000);
+    const menuAction = page.locator(`[role="menuitem"]:has-text("${actionLabel}"), [role="option"]:has-text("${actionLabel}")`);
+    if (await menuAction.count() > 0) {
+      await menuAction.first().click({ force: true });
+      await page.waitForTimeout(3000);
+      console.log(`Clicked "${actionLabel}" from overflow menu`);
+      return true;
+    }
+  }
+
+  return false;
+}
+
+// Fallback: download asset, navigate to tool page, upload it there.
+async function assetChainFallbackUpload(page, action, options) {
+  console.log(`"${CHAIN_ACTION_MAP[action] || action}" not found in dialog. Downloading asset and navigating to tool...`);
+  await debugScreenshot(page, 'asset-chain-fallback');
+
+  const dlOutputDir = options.output || getDefaultOutputDir(options);
+  const downloadedFiles = await downloadLatestResult(page, dlOutputDir, false, options);
+  const downloadedFile = Array.isArray(downloadedFiles) ? downloadedFiles[0] : downloadedFiles;
+
+  await forceCloseDialogs(page);
+
+  const toolUrl = CHAIN_TOOL_URL_MAP[action] || `/app/${action}`;
+  console.log(`Navigating to ${toolUrl}...`);
+  await navigateTo(page, toolUrl);
+
+  if (downloadedFile) {
+    const fileInput = page.locator('input[type="file"]').first();
+    if (await fileInput.count() > 0) {
+      await fileInput.setInputFiles(downloadedFile);
+      await page.waitForTimeout(3000);
+      console.log(`Uploaded asset to ${action} tool: ${basename(downloadedFile)}`);
+    }
+  }
+}
+
+// Dismiss "Media upload agreement" modal (React needs synthetic click events).
+async function dismissMediaUploadAgreement(page) {
+  const agreeBtn = page.locator('button:has-text("I agree, continue")');
+  if (await agreeBtn.count() > 0) {
+    await agreeBtn.first().click({ force: true });
+    await page.waitForTimeout(2000);
+    console.log('Dismissed "Media upload agreement" modal');
+    return true;
+  }
+  return false;
+}
+
+// Click the generate/action button on a tool page.
+async function clickToolActionButton(page) {
+  const actionLabels = ['Generate', 'Apply', 'Create', 'Upscale', 'Enhance', 'Start', 'Submit'];
+  const actionSelector = actionLabels.map(l => `button:has-text("${l}")`).join(', ');
+  const generateBtn = page.locator(actionSelector);
+  if (await generateBtn.count() > 0) {
+    await generateBtn.last().click({ force: true });
+    console.log(`Clicked action button on target tool`);
+  }
+}
+
+// Poll for chained result completion (progress indicators, download buttons, etc.).
+async function waitForChainedResult(page, action, timeout = 300000) {
+  console.log(`Waiting up to ${timeout / 1000}s for chained result...`);
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < timeout) {
+    await page.waitForTimeout(5000);
+
+    const hasProgress = await page.locator('progress, [role="progressbar"], .animate-spin, [class*="loading"], [class*="spinner"]').count() > 0;
+    if (hasProgress) {
+      console.log(`Still processing... (${Math.round((Date.now() - startTime) / 1000)}s)`);
+      continue;
+    }
+
+    const hasDownload = await page.locator('button:has-text("Download"), a:has-text("Download")').count() > 0;
+    const hasCompare = await page.locator('button:has-text("Compare"), [class*="compare"]').count() > 0;
+    const hasNewResult = await page.locator('img[alt*="upscal"], img[alt*="result"], [data-testid*="result"]').count() > 0;
+
+    if (hasDownload || hasCompare || hasNewResult) {
+      console.log('Result ready');
+      return true;
+    }
+
+    if (Date.now() - startTime > 30000) {
+      await debugScreenshot(page, `asset-chain-${action}-waiting`);
+      if (await dismissMediaUploadAgreement(page)) {
+        console.log('Late media upload agreement dismissed, continuing...');
+        continue;
+      }
+      if (Date.now() - startTime > 60000) {
+        console.log('No progress detected after 60s, checking result...');
+        return false;
+      }
+    }
+  }
+  return false;
+}
+
+// Extract the largest visible image URL from the page (CDN extraction fallback).
+async function extractLargestImageSrc(page) {
+  return page.evaluate(() => {
+    const imgs = [...document.querySelectorAll('main img, img')];
+    let best = null;
+    let bestArea = 0;
+    for (const img of imgs) {
+      const rect = img.getBoundingClientRect();
+      const area = rect.width * rect.height;
+      if (area > bestArea && rect.width > 200 && img.src?.startsWith('http')) {
+        bestArea = area;
+        best = img.src;
+      }
+    }
+    if (best) {
+      const cfMatch = best.match(/(https:\/\/d8j0ntlcm91z4\.cloudfront\.net\/[^\s]+)/);
+      return cfMatch ? cfMatch[1] : best;
+    }
+    return null;
+  });
+}
+
+// Download chained result via icon buttons or CDN extraction fallback.
+async function downloadChainedImageResult(page, outputDir, action, options) {
+  const downloaded = await downloadLatestResult(page, outputDir, true, options);
+  const hasDownloaded = Array.isArray(downloaded) ? downloaded.length > 0 : !!downloaded;
+  if (hasDownloaded) return;
+
+  // Try download icon buttons (upscale/edit pages use icon buttons)
+  console.log('Standard download failed, trying download icon...');
+  const dlIcon = page.locator('button:has(svg), a[download]').filter({ has: page.locator('svg') });
+
+  for (let di = 0; di < Math.min(await dlIcon.count(), 5); di++) {
+    const btn = dlIcon.nth(di);
+    const ariaLabel = await btn.getAttribute('aria-label').catch(() => '');
+    const title = await btn.getAttribute('title').catch(() => '');
+    if (ariaLabel?.toLowerCase().includes('download') || title?.toLowerCase().includes('download')) {
+      const [dl] = await Promise.all([
+        page.waitForEvent('download', { timeout: 10000 }).catch(() => null),
+        btn.click({ force: true }),
+      ]);
+      if (dl) {
+        const savePath = join(outputDir, dl.suggestedFilename() || `chained-${action}-${Date.now()}.png`);
+        await dl.saveAs(savePath);
+        console.log(`Downloaded via icon: ${savePath}`);
+        return;
+      }
+    }
+  }
+
+  // Final fallback: CDN extraction
+  console.log('Icon download failed, trying CDN extraction...');
+  const imgSrc = await extractLargestImageSrc(page);
+  if (imgSrc) {
+    const ext = imgSrc.includes('.png') ? 'png' : 'webp';
+    const savePath = join(outputDir, `chained-${action}-${Date.now()}.${ext}`);
+    try {
+      curlDownload(imgSrc, savePath, { timeout: 60000 });
+      console.log(`Downloaded via CDN: ${savePath}`);
+    } catch (curlErr) {
+      console.log(`CDN download failed: ${curlErr.message}`);
+    }
+  }
+}
+
 async function assetChain(options = {}) {
   const { browser, context, page } = await launchBrowser(options);
 
   try {
     const action = options.chainAction || 'animate';
-    const actionMap = {
-      animate: 'Animate',
-      inpaint: 'Inpaint',
-      upscale: 'Upscale',
-      relight: 'Relight',
-      angles: 'Angles',
-      shots: 'Shots',
-      'ai-stylist': 'AI Stylist',
-      'skin-enhancer': 'Skin Enhancer',
-      multishot: 'Multishot',
-    };
-    const actionLabel = actionMap[action] || action;
+    const actionLabel = CHAIN_ACTION_MAP[action] || action;
     console.log(`Asset Chain: ${actionLabel}...`);
 
-    // Navigate to asset source — either a specific page or the asset library
+    // Navigate to asset source
     const sourceUrl = options.prompt || `${BASE_URL}/asset/all`;
-    await page.goto(sourceUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
+    await navigateTo(page, sourceUrl);
 
-    // If an image file is provided, navigate to the image model page and generate first
+    // Upload source image if provided
     if (options.imageFile) {
-      // Upload to the current page if there is a file input
       const fileInput = page.locator('input[type="file"]').first();
       if (await fileInput.count() > 0) {
         await fileInput.setInputFiles(options.imageFile);
@@ -4650,80 +4835,21 @@ async function assetChain(options = {}) {
       }
     }
 
-    // Wait for asset images to appear (SPA may load them asynchronously)
-    try {
-      await page.waitForSelector('main img', { timeout: 15000, state: 'visible' });
-    } catch {
-      console.log('No images appeared after 15s, scrolling to trigger lazy load...');
-    }
-
-    // Scroll to trigger lazy loading, then scroll back to top
-    for (let i = 0; i < 3; i++) {
-      await page.evaluate(() => window.scrollBy(0, 800));
-      await page.waitForTimeout(1000);
-    }
-    await page.evaluate(() => window.scrollTo(0, 0));
-    await page.waitForTimeout(1000);
-
-    // Click on the target asset (first/latest or by index)
-    const targetIndex = options.assetIndex || 0;
-    // Use broad 'main img' selector (matches manageAssets which works reliably)
-    let assetImg = page.locator('main img');
-    let assetCount = await assetImg.count();
-    // Fallback to alt-based selector if main img finds nothing
-    if (assetCount === 0) {
-      assetImg = page.locator(GENERATED_IMAGE_SELECTOR);
-      assetCount = await assetImg.count();
-    }
-    // Final fallback: wait longer for lazy-loaded content
-    if (assetCount === 0) {
-      console.log('No assets found yet, waiting for lazy load...');
-      await page.waitForTimeout(5000);
-      assetImg = page.locator('main img');
-      assetCount = await assetImg.count();
-    }
-
+    // Find and click target asset
+    const { assetImg, assetCount } = await findAssetOnPage(page);
     if (assetCount === 0) {
       console.error('No assets found on page');
-      await page.screenshot({ path: join(STATE_DIR, 'asset-chain-no-assets.png'), fullPage: false });
+      await debugScreenshot(page, 'asset-chain-no-assets');
       await browser.close();
       return { success: false, error: 'No assets found' };
     }
 
+    const targetIndex = options.assetIndex || 0;
     console.log(`Found ${assetCount} assets, clicking index ${targetIndex}...`);
-    const targetAsset = assetImg.nth(targetIndex);
+    const dialogOpen = await openAssetDialog(page, assetImg.nth(targetIndex));
+    await debugScreenshot(page, 'asset-chain-dialog');
 
-    // Try multiple click strategies — overlays (play buttons, checkboxes) can intercept
-    let dialogOpen = false;
-    const clickStrategies = [
-      { name: 'normal click', fn: () => targetAsset.click({ timeout: 5000 }) },
-      { name: 'center-click', fn: async () => {
-        const box = await targetAsset.boundingBox();
-        if (box) await page.mouse.click(box.x + box.width * 0.5, box.y + box.height * 0.5);
-        else throw new Error('no bounding box');
-      }},
-      { name: 'force click', fn: () => targetAsset.click({ force: true }) },
-    ];
-
-    for (const strategy of clickStrategies) {
-      if (dialogOpen) break;
-      try {
-        await strategy.fn();
-        await page.waitForTimeout(2500);
-        await dismissInterruptions(page);
-        dialogOpen = await page.locator('[role="dialog"], dialog').count() > 0;
-        if (dialogOpen) {
-          console.log(`Dialog opened via ${strategy.name}`);
-        }
-      } catch {
-        console.log(`${strategy.name} failed, trying next...`);
-      }
-    }
-
-    // Screenshot the dialog state for debugging
-    await page.screenshot({ path: join(STATE_DIR, 'asset-chain-dialog.png'), fullPage: false });
-
-    // Remove any overlays that intercept pointer events inside the dialog
+    // Remove overlay pointer-event interceptors
     if (dialogOpen) {
       await page.evaluate(() => {
         document.querySelectorAll('.absolute.top-0.left-0.w-full').forEach(el => {
@@ -4732,99 +4858,14 @@ async function assetChain(options = {}) {
       });
     }
 
-    // Strategy 1: Look for "Open in" button strictly inside the dialog
-    let actionClicked = false;
-    const dialog = page.locator('[role="dialog"], dialog');
-    const openInBtn = dialog.locator('button:has-text("Open in")');
-    if (await openInBtn.count() > 0) {
-      await openInBtn.first().click({ force: true });
-      await page.waitForTimeout(1000);
-      console.log('Opened "Open in" menu');
-      await page.screenshot({ path: join(STATE_DIR, 'asset-chain-openin-menu.png'), fullPage: false });
-
-      // The menu items may appear as a popover outside the dialog
-      const actionBtn = page.locator(`[role="menuitem"]:has-text("${actionLabel}"), [role="option"]:has-text("${actionLabel}"), [data-radix-popper-content-wrapper] button:has-text("${actionLabel}"), [data-radix-popper-content-wrapper] a:has-text("${actionLabel}")`);
-      if (await actionBtn.count() > 0) {
-        await actionBtn.first().click({ force: true });
-        await page.waitForTimeout(3000);
-        console.log(`Clicked "${actionLabel}" from Open in menu`);
-        actionClicked = true;
-      }
-    }
-
-    // Strategy 2: Look for action buttons/links strictly inside the dialog
+    // Try to click the action in the dialog, fall back to download+navigate+upload
+    const actionClicked = await clickAssetAction(page, actionLabel);
     if (!actionClicked) {
-      const directBtn = dialog.locator(`button:has-text("${actionLabel}"), a:has-text("${actionLabel}")`);
-      if (await directBtn.count() > 0) {
-        await directBtn.first().click({ force: true });
-        await page.waitForTimeout(3000);
-        console.log(`Clicked "${actionLabel}" inside dialog`);
-        actionClicked = true;
-      }
+      await assetChainFallbackUpload(page, action, options);
     }
 
-    // Strategy 3: Look for overflow/more menu inside the dialog
-    if (!actionClicked) {
-      const moreBtn = dialog.locator('button[aria-label*="more" i], button[aria-label*="menu" i], button:has(svg[class*="dots"]), button:has(svg[class*="ellipsis"])');
-      for (let m = 0; m < await moreBtn.count() && !actionClicked; m++) {
-        await moreBtn.nth(m).click({ force: true });
-        await page.waitForTimeout(1000);
-        const menuAction = page.locator(`[role="menuitem"]:has-text("${actionLabel}"), [role="option"]:has-text("${actionLabel}")`);
-        if (await menuAction.count() > 0) {
-          await menuAction.first().click({ force: true });
-          await page.waitForTimeout(3000);
-          console.log(`Clicked "${actionLabel}" from overflow menu`);
-          actionClicked = true;
-        }
-      }
-    }
+    await debugScreenshot(page, `asset-chain-${action}`);
 
-    // Strategy 4: Fallback — download the asset, close dialog, navigate to tool, upload
-    if (!actionClicked) {
-      console.log(`"${actionLabel}" not found in dialog. Downloading asset and navigating to tool...`);
-      await page.screenshot({ path: join(STATE_DIR, 'asset-chain-fallback.png'), fullPage: false });
-
-      // Download the asset from the dialog first
-      const outputDir = options.output || getDefaultOutputDir(options);
-      const downloadedFiles = await downloadLatestResult(page, outputDir, false, options);
-      const downloadedFile = Array.isArray(downloadedFiles) ? downloadedFiles[0] : downloadedFiles;
-
-      // Close dialog
-      await forceCloseDialogs(page);
-
-      // Navigate to the target tool directly
-      const toolUrlMap = {
-        animate: '/create/video',
-        inpaint: '/edit?model=soul_inpaint',
-        upscale: '/upscale',
-        relight: '/app/relight',
-        angles: '/app/angles',
-        shots: '/app/shots',
-        'ai-stylist': '/app/ai-stylist',
-        'skin-enhancer': '/app/skin-enhancer',
-        multishot: '/app/shots',
-      };
-      const toolUrl = toolUrlMap[action] || `/app/${action}`;
-      console.log(`Navigating to ${toolUrl}...`);
-      await page.goto(`${BASE_URL}${toolUrl}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-      await page.waitForTimeout(3000);
-      await dismissAllModals(page);
-
-      // Upload the downloaded asset to the tool
-      if (downloadedFile) {
-        const fileInput = page.locator('input[type="file"]').first();
-        if (await fileInput.count() > 0) {
-          await fileInput.setInputFiles(downloadedFile);
-          await page.waitForTimeout(3000);
-          console.log(`Uploaded asset to ${action} tool: ${basename(downloadedFile)}`);
-        }
-      }
-      actionClicked = true;
-    }
-
-    await page.screenshot({ path: join(STATE_DIR, `asset-chain-${action}.png`), fullPage: false });
-
-    // Now we should be on the target tool page with the asset pre-loaded
     // Fill additional prompt if provided
     if (options.prompt && !options.prompt.startsWith('http')) {
       const promptInput = page.locator('textarea').first();
@@ -4834,164 +4875,30 @@ async function assetChain(options = {}) {
       }
     }
 
-    // Helper: dismiss "Media upload agreement" modal via Playwright click (React needs synthetic events)
-    async function dismissMediaUploadAgreement() {
-      const agreeBtn = page.locator('button:has-text("I agree, continue")');
-      if (await agreeBtn.count() > 0) {
-        await agreeBtn.first().click({ force: true });
-        await page.waitForTimeout(2000);
-        console.log('Dismissed "Media upload agreement" modal');
-        return true;
-      }
-      return false;
-    }
-
-    // Check for media upload agreement before clicking Generate (may appear after upload)
+    // Dismiss agreement, click generate, dismiss again if needed
     await page.waitForTimeout(2000);
-    await dismissMediaUploadAgreement();
-
-    // Click the action button on the target tool page
-    // Different tools use different button labels: Generate, Apply, Create, Upscale, Enhance, etc.
+    await dismissMediaUploadAgreement(page);
     await page.waitForTimeout(1000);
-    const actionLabels = ['Generate', 'Apply', 'Create', 'Upscale', 'Enhance', 'Start', 'Submit'];
-    const actionSelector = actionLabels.map(l => `button:has-text("${l}")`).join(', ');
-    const generateBtn = page.locator(actionSelector);
-    if (await generateBtn.count() > 0) {
-      // Click the last matching button (usually the primary CTA at the bottom)
-      await generateBtn.last().click({ force: true });
-      console.log(`Clicked action button on target tool`);
-    }
-
-    // Check for media upload agreement after clicking action button (appears as confirmation)
+    await clickToolActionButton(page);
     await page.waitForTimeout(3000);
-    const dismissed = await dismissMediaUploadAgreement();
+    const dismissed = await dismissMediaUploadAgreement(page);
+    if (dismissed) await page.waitForTimeout(2000);
 
-    // If we dismissed the agreement, the generation should now start — wait a moment
-    if (dismissed) {
-      await page.waitForTimeout(2000);
-    }
-
-    // Wait for result — poll for completion indicators
-    const timeout = options.timeout || 300000;
-    console.log(`Waiting up to ${timeout / 1000}s for chained result...`);
-
-    const startTime = Date.now();
-    let resultReady = false;
-    while (Date.now() - startTime < timeout && !resultReady) {
-      await page.waitForTimeout(5000);
-
-      // Check for progress indicators (still processing)
-      const hasProgress = await page.locator('progress, [role="progressbar"], .animate-spin, [class*="loading"], [class*="spinner"]').count() > 0;
-      if (hasProgress) {
-        const elapsed = Math.round((Date.now() - startTime) / 1000);
-        console.log(`Still processing... (${elapsed}s)`);
-        continue;
-      }
-
-      // Check for completion: download button appears, or result image changes
-      const hasDownload = await page.locator('button:has-text("Download"), a:has-text("Download")').count() > 0;
-      const hasCompare = await page.locator('button:has-text("Compare"), [class*="compare"]').count() > 0;
-      const hasNewResult = await page.locator('img[alt*="upscal"], img[alt*="result"], [data-testid*="result"]').count() > 0;
-
-      if (hasDownload || hasCompare || hasNewResult) {
-        resultReady = true;
-        console.log('Result ready');
-      }
-
-      // If no progress and no result after 30s, check if the page changed at all
-      if (!hasProgress && !resultReady && (Date.now() - startTime > 30000)) {
-        // Take a screenshot to see current state
-        await page.screenshot({ path: join(STATE_DIR, `asset-chain-${action}-waiting.png`), fullPage: false });
-        // Check if maybe the media upload agreement is still blocking
-        const dismissed2 = await dismissMediaUploadAgreement();
-        if (dismissed2) {
-          console.log('Late media upload agreement dismissed, continuing...');
-          continue;
-        }
-        // If nothing is happening after 60s, break
-        if (Date.now() - startTime > 60000) {
-          console.log('No progress detected after 60s, checking result...');
-          break;
-        }
-      }
-    }
+    // Wait for result
+    await waitForChainedResult(page, action, options.timeout || 300000);
 
     await page.waitForTimeout(3000);
     await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, `asset-chain-${action}-result.png`), fullPage: false });
+    await debugScreenshot(page, `asset-chain-${action}-result`);
 
+    // Download result
     if (options.wait !== false) {
       const baseOutput = options.output || getDefaultOutputDir(options);
       const outputDir = resolveOutputDir(baseOutput, options, 'chained');
-      const isVideoAction = ['animate'].includes(action);
-      if (isVideoAction) {
+      if (action === 'animate') {
         await downloadVideoFromHistory(page, outputDir, {}, options);
       } else {
-        // Try standard download first
-        const downloaded = await downloadLatestResult(page, outputDir, true, options);
-        const hasDownloaded = Array.isArray(downloaded) ? downloaded.length > 0 : !!downloaded;
-
-        // If standard download failed, try the download icon button (upscale/edit pages use icon buttons)
-        if (!hasDownloaded) {
-          console.log('Standard download failed, trying download icon...');
-          // Look for download icon buttons (SVG icons without text labels)
-          const dlIcon = page.locator('button:has(svg), a[download]').filter({ has: page.locator('svg') });
-          let iconDownloaded = false;
-
-          // Try each potential download icon
-          for (let di = 0; di < Math.min(await dlIcon.count(), 5) && !iconDownloaded; di++) {
-            const btn = dlIcon.nth(di);
-            const ariaLabel = await btn.getAttribute('aria-label').catch(() => '');
-            const title = await btn.getAttribute('title').catch(() => '');
-            if (ariaLabel?.toLowerCase().includes('download') || title?.toLowerCase().includes('download')) {
-              const [dl] = await Promise.all([
-                page.waitForEvent('download', { timeout: 10000 }).catch(() => null),
-                btn.click({ force: true }),
-              ]);
-              if (dl) {
-                const savePath = join(outputDir, dl.suggestedFilename() || `chained-${action}-${Date.now()}.png`);
-                await dl.saveAs(savePath);
-                console.log(`Downloaded via icon: ${savePath}`);
-                iconDownloaded = true;
-              }
-            }
-          }
-
-          // Final fallback: extract the largest image src from the page and download via curl
-          if (!iconDownloaded) {
-            console.log('Icon download failed, trying CDN extraction...');
-            const imgSrc = await page.evaluate(() => {
-              // Find the largest visible image on the page (likely the result)
-              const imgs = [...document.querySelectorAll('main img, img')];
-              let best = null;
-              let bestArea = 0;
-              for (const img of imgs) {
-                const rect = img.getBoundingClientRect();
-                const area = rect.width * rect.height;
-                if (area > bestArea && rect.width > 200 && img.src?.startsWith('http')) {
-                  bestArea = area;
-                  best = img.src;
-                }
-              }
-              // Extract raw CloudFront URL if wrapped in cdn-cgi
-              if (best) {
-                const cfMatch = best.match(/(https:\/\/d8j0ntlcm91z4\.cloudfront\.net\/[^\s]+)/);
-                return cfMatch ? cfMatch[1] : best;
-              }
-              return null;
-            });
-            if (imgSrc) {
-              const ext = imgSrc.includes('.png') ? 'png' : 'webp';
-              const savePath = join(outputDir, `chained-${action}-${Date.now()}.${ext}`);
-              try {
-                execFileSync('curl', ['-sL', '-o', savePath, imgSrc], { timeout: 60000 });
-                console.log(`Downloaded via CDN: ${savePath}`);
-              } catch (curlErr) {
-                console.log(`CDN download failed: ${curlErr.message}`);
-              }
-            }
-          }
-        }
+        await downloadChainedImageResult(page, outputDir, action, options);
       }
     }
 
@@ -5060,34 +4967,11 @@ async function mixedMediaPreset(options = {}) {
       }
     }
 
-    await page.screenshot({ path: join(STATE_DIR, `mixed-media-${presetKey}-configured.png`), fullPage: false });
-
-    // Click Generate
-    const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Apply"), button:has-text("Create")');
-    if (await generateBtn.count() > 0) {
-      await generateBtn.first().click({ force: true });
-      console.log('Clicked Generate for mixed media preset');
-    }
-
-    // Wait for result
-    const timeout = options.timeout || 180000;
-    console.log(`Waiting up to ${timeout / 1000}s for mixed media result...`);
-
-    try {
-      await page.waitForSelector(`${GENERATED_IMAGE_SELECTOR}, video`, { timeout, state: 'visible' });
-    } catch {
-      console.log('Timeout waiting for mixed media result');
-    }
-
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, `mixed-media-${presetKey}-result.png`), fullPage: false });
-
-    if (options.wait !== false) {
-      const baseOutput = options.output || getDefaultOutputDir(options);
-      const outputDir = resolveOutputDir(baseOutput, options, 'mixed-media');
-      await downloadLatestResult(page, outputDir, true, options);
-    }
+    await debugScreenshot(page, `mixed-media-${presetKey}-configured`);
+    await clickGenerate(page, 'mixed media preset');
+    await waitForGenerationResult(page, options, {
+      screenshotName: `mixed-media-${presetKey}-result`, label: 'mixed media', outputSubdir: 'mixed-media',
+    });
 
     await context.storageState({ path: STATE_FILE });
     await browser.close();
@@ -5185,34 +5069,12 @@ async function motionPreset(options = {}) {
       }
     }
 
-    await page.screenshot({ path: join(STATE_DIR, 'motion-preset-configured.png'), fullPage: false });
-
-    // Click Generate
-    const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Apply"), button:has-text("Create")');
-    if (await generateBtn.count() > 0) {
-      await generateBtn.first().click({ force: true });
-      console.log('Clicked Generate for motion preset');
-    }
-
-    // Wait for result (motion presets produce videos, which take longer)
-    const timeout = options.timeout || 300000;
-    console.log(`Waiting up to ${timeout / 1000}s for motion preset result...`);
-
-    try {
-      await page.waitForSelector(`video, ${GENERATED_IMAGE_SELECTOR}`, { timeout, state: 'visible' });
-    } catch {
-      console.log('Timeout waiting for motion preset result');
-    }
-
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, 'motion-preset-result.png'), fullPage: false });
-
-    if (options.wait !== false) {
-      const baseOutput = options.output || getDefaultOutputDir(options);
-      const outputDir = resolveOutputDir(baseOutput, options, 'motion-presets');
-      await downloadVideoFromHistory(page, outputDir, {}, options);
-    }
+    await debugScreenshot(page, 'motion-preset-configured');
+    await clickGenerate(page, 'motion preset');
+    await waitForGenerationResult(page, options, {
+      selector: `video, ${GENERATED_IMAGE_SELECTOR}`, screenshotName: 'motion-preset-result',
+      label: 'motion preset', outputSubdir: 'motion-presets', defaultTimeout: 300000, isVideo: true,
+    });
 
     await context.storageState({ path: STATE_FILE });
     await browser.close();
@@ -5269,42 +5131,13 @@ async function editVideo(options = {}) {
       }
     }
 
-    await page.screenshot({ path: join(STATE_DIR, 'video-edit-configured.png'), fullPage: false });
+    await debugScreenshot(page, 'video-edit-configured');
 
-    // Click Generate
-    const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Apply"), button:has-text("Edit")');
-    if (await generateBtn.count() > 0) {
-      await generateBtn.first().click({ force: true });
-      console.log('Clicked Generate for video edit');
-    }
-
-    // Wait for result
-    const timeout = options.timeout || 300000;
-    console.log(`Waiting up to ${timeout / 1000}s for video edit result...`);
-
-    // Poll History tab
-    const historyTab = page.locator('[role="tab"]:has-text("History")');
-    if (await historyTab.count() > 0) {
-      await page.waitForTimeout(10000);
-      await historyTab.click();
-      await page.waitForTimeout(3000);
-    }
-
-    try {
-      await page.waitForSelector('video', { timeout, state: 'visible' });
-    } catch {
-      console.log('Timeout waiting for video edit result');
-    }
-
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, 'video-edit-result.png'), fullPage: false });
-
-    if (options.wait !== false) {
-      const baseOutput = options.output || getDefaultOutputDir(options);
-      const outputDir = resolveOutputDir(baseOutput, options, 'videos');
-      await downloadVideoFromHistory(page, outputDir, {}, options);
-    }
+    await clickGenerate(page, 'video edit');
+    await waitForGenerationResult(page, options, {
+      selector: 'video', screenshotName: 'video-edit-result', label: 'video edit',
+      outputSubdir: 'videos', defaultTimeout: 300000, isVideo: true, useHistoryPoll: true,
+    });
 
     await context.storageState({ path: STATE_FILE });
     await browser.close();
@@ -5364,34 +5197,13 @@ async function storyboard(options = {}) {
       }
     }
 
-    await page.screenshot({ path: join(STATE_DIR, 'storyboard-configured.png'), fullPage: false });
-
-    // Click Generate
-    const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Create"), button:has-text("Build")');
-    if (await generateBtn.count() > 0) {
-      await generateBtn.first().click({ force: true });
-      console.log('Clicked Generate for storyboard');
-    }
-
-    // Wait for result — storyboards may take longer due to multiple panels
-    const timeout = options.timeout || 300000;
-    console.log(`Waiting up to ${timeout / 1000}s for storyboard result...`);
-
-    try {
-      await page.waitForSelector(`${GENERATED_IMAGE_SELECTOR}, .storyboard-panel, [class*="storyboard"]`, { timeout, state: 'visible' });
-    } catch {
-      console.log('Timeout waiting for storyboard result');
-    }
-
-    await page.waitForTimeout(5000);
-    await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, 'storyboard-result.png'), fullPage: true });
-
-    if (options.wait !== false) {
-      const baseOutput = options.output || getDefaultOutputDir(options);
-      const outputDir = resolveOutputDir(baseOutput, options, 'storyboards');
-      await downloadLatestResult(page, outputDir, true, options);
-    }
+    await debugScreenshot(page, 'storyboard-configured');
+    await clickGenerate(page, 'storyboard');
+    await waitForGenerationResult(page, options, {
+      selector: `${GENERATED_IMAGE_SELECTOR}, .storyboard-panel, [class*="storyboard"]`,
+      screenshotName: 'storyboard-result', label: 'storyboard',
+      outputSubdir: 'storyboards', defaultTimeout: 300000,
+    });
 
     await context.storageState({ path: STATE_FILE });
     await browser.close();
@@ -5482,34 +5294,12 @@ async function vibeMotion(options = {}) {
       }
     }
 
-    await page.screenshot({ path: join(STATE_DIR, 'vibe-motion-configured.png'), fullPage: false });
-
-    // Click Generate
-    const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Create"), button:has-text("Build")');
-    if (await generateBtn.count() > 0) {
-      await generateBtn.first().click({ force: true });
-      console.log('Clicked Generate for Vibe Motion');
-    }
-
-    // Wait for result — Vibe Motion produces videos
-    const timeout = options.timeout || 300000;
-    console.log(`Waiting up to ${timeout / 1000}s for Vibe Motion result...`);
-
-    try {
-      await page.waitForSelector('video', { timeout, state: 'visible' });
-    } catch {
-      console.log('Timeout waiting for Vibe Motion result');
-    }
-
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, 'vibe-motion-result.png'), fullPage: false });
-
-    if (options.wait !== false) {
-      const baseOutput = options.output || getDefaultOutputDir(options);
-      const outputDir = resolveOutputDir(baseOutput, options, 'videos');
-      await downloadVideoFromHistory(page, outputDir, {}, options);
-    }
+    await debugScreenshot(page, 'vibe-motion-configured');
+    await clickGenerate(page, 'Vibe Motion');
+    await waitForGenerationResult(page, options, {
+      selector: 'video', screenshotName: 'vibe-motion-result', label: 'Vibe Motion',
+      outputSubdir: 'videos', defaultTimeout: 300000, isVideo: true,
+    });
 
     await context.storageState({ path: STATE_FILE });
     await browser.close();
@@ -5560,33 +5350,12 @@ async function aiInfluencer(options = {}) {
       }
     }
 
-    await page.screenshot({ path: join(STATE_DIR, 'ai-influencer-configured.png'), fullPage: false });
-
-    // Click Generate/Create
-    const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Create"), button:has-text("Build")');
-    if (await generateBtn.count() > 0) {
-      await generateBtn.first().click({ force: true });
-      console.log('Clicked Generate for AI Influencer');
-    }
-
-    const timeout = options.timeout || 180000;
-    console.log(`Waiting up to ${timeout / 1000}s for AI Influencer result...`);
-
-    try {
-      await page.waitForSelector(GENERATED_IMAGE_SELECTOR, { timeout, state: 'visible' });
-    } catch {
-      console.log('Timeout waiting for AI Influencer result');
-    }
-
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, 'ai-influencer-result.png'), fullPage: false });
-
-    if (options.wait !== false) {
-      const baseOutput = options.output || getDefaultOutputDir(options);
-      const outputDir = resolveOutputDir(baseOutput, options, 'characters');
-      await downloadLatestResult(page, outputDir, true, options);
-    }
+    await debugScreenshot(page, 'ai-influencer-configured');
+    await clickGenerate(page, 'AI Influencer');
+    await waitForGenerationResult(page, options, {
+      selector: GENERATED_IMAGE_SELECTOR, screenshotName: 'ai-influencer-result',
+      label: 'AI Influencer', outputSubdir: 'characters',
+    });
 
     await context.storageState({ path: STATE_FILE });
     await browser.close();
@@ -5633,33 +5402,12 @@ async function createCharacter(options = {}) {
       }
     }
 
-    await page.screenshot({ path: join(STATE_DIR, 'character-configured.png'), fullPage: false });
-
-    // Click Create/Save
-    const createBtn = page.locator('button:has-text("Create"), button:has-text("Save"), button:has-text("Generate")');
-    if (await createBtn.count() > 0) {
-      await createBtn.first().click();
-      console.log('Clicked Create for character');
-    }
-
-    const timeout = options.timeout || 120000;
-    console.log(`Waiting up to ${timeout / 1000}s for character creation...`);
-
-    try {
-      await page.waitForSelector(`${GENERATED_IMAGE_SELECTOR}, [class*="character"]`, { timeout, state: 'visible' });
-    } catch {
-      console.log('Timeout waiting for character creation');
-    }
-
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, 'character-result.png'), fullPage: false });
-
-    if (options.wait !== false) {
-      const baseOutput = options.output || getDefaultOutputDir(options);
-      const outputDir = resolveOutputDir(baseOutput, options, 'characters');
-      await downloadLatestResult(page, outputDir, true, options);
-    }
+    await debugScreenshot(page, 'character-configured');
+    await clickGenerate(page, 'character');
+    await waitForGenerationResult(page, options, {
+      selector: `${GENERATED_IMAGE_SELECTOR}, [class*="character"]`, screenshotName: 'character-result',
+      label: 'character creation', outputSubdir: 'characters', defaultTimeout: 120000,
+    });
 
     await context.storageState({ path: STATE_FILE });
     await browser.close();
@@ -5747,33 +5495,11 @@ async function featurePage(options = {}) {
       }
     }
 
-    await page.screenshot({ path: join(STATE_DIR, `feature-${featureKey}-configured.png`), fullPage: false });
-
-    // Click Generate/Create/Apply
-    const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Create"), button:has-text("Apply"), button[type="submit"]:visible');
-    if (await generateBtn.count() > 0) {
-      await generateBtn.first().click({ force: true });
-      console.log('Clicked Generate');
-    }
-
-    const timeout = options.timeout || 180000;
-    console.log(`Waiting up to ${timeout / 1000}s for ${feature.name} result...`);
-
-    try {
-      await page.waitForSelector(`${GENERATED_IMAGE_SELECTOR}, video`, { timeout, state: 'visible' });
-    } catch {
-      console.log(`Timeout waiting for ${feature.name} result`);
-    }
-
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
-    await page.screenshot({ path: join(STATE_DIR, `feature-${featureKey}-result.png`), fullPage: false });
-
-    if (options.wait !== false) {
-      const baseOutput = options.output || getDefaultOutputDir(options);
-      const outputDir = resolveOutputDir(baseOutput, options, 'features');
-      await downloadLatestResult(page, outputDir, true, options);
-    }
+    await debugScreenshot(page, `feature-${featureKey}-configured`);
+    await clickGenerate(page, feature.name);
+    await waitForGenerationResult(page, options, {
+      screenshotName: `feature-${featureKey}-result`, label: feature.name, outputSubdir: 'features',
+    });
 
     await context.storageState({ path: STATE_FILE });
     await browser.close();
@@ -6294,27 +6020,20 @@ async function runWithConcurrency(tasks, concurrency) {
 // Batch Image Generation
 // Processes multiple image prompts with concurrency control.
 // Concurrency for images means running N sequential browser sessions in parallel.
-// Default concurrency: 2 (Higgsfield can handle 2-3 concurrent image generations).
-async function batchImage(options = {}) {
+// Shared batch infrastructure: setup, resume, run tasks, summarize.
+// taskFactory(job, index, jobOptions, batchState) => Promise<result>
+function initBatch(type, options, defaultConcurrency) {
   const manifestPath = options.batchFile;
   if (!manifestPath) {
-    console.error('ERROR: --batch-file is required for batch-image');
-    console.error('Usage: batch-image --batch-file manifest.json [--concurrency 2] [--output dir]');
+    console.error(`ERROR: --batch-file is required for ${type}`);
+    console.error(`Usage: ${type} --batch-file manifest.json [--concurrency ${defaultConcurrency}] [--output dir]`);
     process.exit(1);
   }
 
   const { jobs, defaults } = loadBatchManifest(manifestPath);
-  const concurrency = options.concurrency || 2;
-  const outputDir = options.output || join(getDefaultOutputDir(options), `batch-image-${Date.now()}`);
-  if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
+  const concurrency = options.concurrency || defaultConcurrency;
+  const outputDir = ensureDir(options.output || join(getDefaultOutputDir(options), `${type}-${Date.now()}`));
 
-  console.log(`\n=== Batch Image Generation ===`);
-  console.log(`Jobs: ${jobs.length}`);
-  console.log(`Concurrency: ${concurrency}`);
-  console.log(`Output: ${outputDir}`);
-  console.log(`Defaults: ${JSON.stringify(defaults)}`);
-
-  // Check for resume state
   let completedIndices = new Set();
   if (options.resume) {
     const prevState = loadBatchState(outputDir);
@@ -6324,33 +6043,56 @@ async function batchImage(options = {}) {
     }
   }
 
-  const startTime = Date.now();
   const batchState = {
-    type: 'batch-image',
-    total: jobs.length,
-    concurrency,
-    completed: [...completedIndices],
-    failed: [],
-    results: [],
+    type, total: jobs.length, concurrency,
+    completed: [...completedIndices], failed: [], results: [],
     startTime: new Date().toISOString(),
   };
 
-  // Create tasks for each job
+  return { jobs, defaults, concurrency, outputDir, completedIndices, batchState };
+}
+
+function finalizeBatch(type, batchState, results, startTime, outputDir, jobCount) {
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
+  const succeeded = results.filter(r => r?.success).length;
+  const failed = results.filter(r => r && !r.success).length;
+
+  batchState.elapsed = `${elapsed}s`;
+  batchState.results = results.map(r => ({ success: r?.success, index: r?.index }));
+  saveBatchState(outputDir, batchState);
+
+  const label = type.replace('batch-', '').charAt(0).toUpperCase() + type.replace('batch-', '').slice(1);
+  console.log(`\n=== Batch ${label} Complete ===`);
+  console.log(`Duration: ${elapsed}s`);
+  console.log(`Results: ${succeeded} succeeded, ${failed} failed, ${jobCount} total`);
+  console.log(`Output: ${outputDir}`);
+
+  if (failed > 0) {
+    console.log(`\nFailed jobs:`);
+    batchState.failed.forEach(f => console.log(`  [${f.index + 1}] ${f.error}`));
+    console.log(`\nTo retry failed jobs: add --resume flag`);
+  }
+
+  return batchState;
+}
+
+// Default concurrency: 2 (Higgsfield can handle 2-3 concurrent image generations).
+async function batchImage(options = {}) {
+  const { jobs, defaults, concurrency, outputDir, completedIndices, batchState } =
+    initBatch('batch-image', options, 2);
+
+  console.log(`\n=== Batch Image Generation ===`);
+  console.log(`Jobs: ${jobs.length}, Concurrency: ${concurrency}, Output: ${outputDir}`);
+  console.log(`Defaults: ${JSON.stringify(defaults)}`);
+
+  const startTime = Date.now();
   const tasks = jobs.map((job, index) => async () => {
     if (completedIndices.has(index)) {
       console.log(`[${index + 1}/${jobs.length}] Skipping (already completed)`);
       return { success: true, skipped: true, index };
     }
 
-    const jobOptions = {
-      ...options,
-      ...defaults,
-      ...job,
-      output: outputDir,
-      // Don't pass batch-file to individual jobs
-      batchFile: undefined,
-    };
-
+    const jobOptions = { ...options, ...defaults, ...job, output: outputDir, batchFile: undefined };
     console.log(`[${index + 1}/${jobs.length}] Generating: "${(job.prompt || '').substring(0, 60)}..." (model: ${jobOptions.model || 'soul'})`);
 
     try {
@@ -6358,7 +6100,6 @@ async function batchImage(options = {}) {
         () => generateImage(jobOptions),
         { maxRetries: 1, baseDelay: 5000, label: `batch-image[${index}]` }
       );
-
       batchState.completed.push(index);
       saveBatchState(outputDir, batchState);
       console.log(`[${index + 1}/${jobs.length}] Complete`);
@@ -6371,30 +6112,8 @@ async function batchImage(options = {}) {
     }
   });
 
-  // Run with concurrency control
   const results = await runWithConcurrency(tasks, concurrency);
-
-  // Summary
-  const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
-  const succeeded = results.filter(r => r?.success).length;
-  const failed = results.filter(r => r && !r.success).length;
-
-  batchState.elapsed = `${elapsed}s`;
-  batchState.results = results.map(r => ({ success: r?.success, index: r?.index }));
-  saveBatchState(outputDir, batchState);
-
-  console.log(`\n=== Batch Image Complete ===`);
-  console.log(`Duration: ${elapsed}s`);
-  console.log(`Results: ${succeeded} succeeded, ${failed} failed, ${jobs.length} total`);
-  console.log(`Output: ${outputDir}`);
-
-  if (failed > 0) {
-    console.log(`\nFailed jobs:`);
-    batchState.failed.forEach(f => console.log(`  [${f.index + 1}] ${f.error}`));
-    console.log(`\nTo retry failed jobs: add --resume flag`);
-  }
-
-  return batchState;
+  return finalizeBatch('batch-image', batchState, results, startTime, outputDir, jobs.length);
 }
 
 // Batch Video Generation
@@ -6406,43 +6125,13 @@ async function batchImage(options = {}) {
 // For video, the bottleneck is generation time (4-10 min), not submission.
 // So we submit all jobs first, then poll for all results together.
 async function batchVideo(options = {}) {
-  const manifestPath = options.batchFile;
-  if (!manifestPath) {
-    console.error('ERROR: --batch-file is required for batch-video');
-    console.error('Usage: batch-video --batch-file manifest.json [--concurrency 3] [--output dir]');
-    process.exit(1);
-  }
-
-  const { jobs, defaults } = loadBatchManifest(manifestPath);
-  const concurrency = options.concurrency || 3; // How many to submit before polling
-  const outputDir = options.output || join(getDefaultOutputDir(options), `batch-video-${Date.now()}`);
-  if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
+  const { jobs, defaults, concurrency, outputDir, completedIndices, batchState } =
+    initBatch('batch-video', options, 3);
 
   console.log(`\n=== Batch Video Generation ===`);
-  console.log(`Jobs: ${jobs.length}`);
-  console.log(`Concurrency (submit batch size): ${concurrency}`);
-  console.log(`Output: ${outputDir}`);
-
-  // Check for resume state
-  let completedIndices = new Set();
-  if (options.resume) {
-    const prevState = loadBatchState(outputDir);
-    if (prevState?.completed) {
-      completedIndices = new Set(prevState.completed);
-      console.log(`Resuming: ${completedIndices.size}/${jobs.length} already completed`);
-    }
-  }
+  console.log(`Jobs: ${jobs.length}, Concurrency (submit batch size): ${concurrency}, Output: ${outputDir}`);
 
   const startTime = Date.now();
-  const batchState = {
-    type: 'batch-video',
-    total: jobs.length,
-    concurrency,
-    completed: [...completedIndices],
-    failed: [],
-    results: [],
-    startTime: new Date().toISOString(),
-  };
 
   // Filter out already-completed jobs
   const pendingJobs = jobs
@@ -6522,89 +6211,30 @@ async function batchVideo(options = {}) {
     try { await browser.close(); } catch {}
   }
 
-  // Summary
-  const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
-  batchState.elapsed = `${elapsed}s`;
-  batchState.results = jobs.map((_, i) => ({
-    index: i,
+  // batchVideo uses a different results format (completed/failed tracked in batchState directly)
+  const results = jobs.map((_, i) => ({
     success: batchState.completed.includes(i),
+    index: i,
   }));
-  saveBatchState(outputDir, batchState);
-
-  const succeeded = batchState.completed.length;
-  const failed = batchState.failed.length;
-
-  console.log(`\n=== Batch Video Complete ===`);
-  console.log(`Duration: ${elapsed}s`);
-  console.log(`Results: ${succeeded} succeeded, ${failed} failed, ${jobs.length} total`);
-  console.log(`Output: ${outputDir}`);
-
-  if (failed > 0) {
-    console.log(`\nFailed jobs:`);
-    batchState.failed.forEach(f => console.log(`  [${f.index + 1}] ${f.error}`));
-    console.log(`\nTo retry failed jobs: add --resume flag`);
-  }
-
-  return batchState;
+  return finalizeBatch('batch-video', batchState, results, startTime, outputDir, jobs.length);
 }
 
-// Batch Lipsync Generation
-// Processes multiple lipsync jobs with concurrency control.
-// Each job needs: text (prompt), imageFile (character face).
-// Concurrency: sequential browser sessions (lipsync is slower, default 1).
+// Batch Lipsync Generation — each job needs: text (prompt), imageFile (character face).
 async function batchLipsync(options = {}) {
-  const manifestPath = options.batchFile;
-  if (!manifestPath) {
-    console.error('ERROR: --batch-file is required for batch-lipsync');
-    console.error('Usage: batch-lipsync --batch-file manifest.json [--concurrency 1] [--output dir]');
-    process.exit(1);
-  }
-
-  const { jobs, defaults } = loadBatchManifest(manifestPath);
-  const concurrency = options.concurrency || 1; // Lipsync is slow, default sequential
-  const outputDir = options.output || join(getDefaultOutputDir(options), `batch-lipsync-${Date.now()}`);
-  if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
+  const { jobs, defaults, concurrency, outputDir, completedIndices, batchState } =
+    initBatch('batch-lipsync', options, 1);
 
   console.log(`\n=== Batch Lipsync Generation ===`);
-  console.log(`Jobs: ${jobs.length}`);
-  console.log(`Concurrency: ${concurrency}`);
-  console.log(`Output: ${outputDir}`);
-
-  // Check for resume state
-  let completedIndices = new Set();
-  if (options.resume) {
-    const prevState = loadBatchState(outputDir);
-    if (prevState?.completed) {
-      completedIndices = new Set(prevState.completed);
-      console.log(`Resuming: ${completedIndices.size}/${jobs.length} already completed`);
-    }
-  }
+  console.log(`Jobs: ${jobs.length}, Concurrency: ${concurrency}, Output: ${outputDir}`);
 
   const startTime = Date.now();
-  const batchState = {
-    type: 'batch-lipsync',
-    total: jobs.length,
-    concurrency,
-    completed: [...completedIndices],
-    failed: [],
-    results: [],
-    startTime: new Date().toISOString(),
-  };
-
-  // Create tasks for each job
   const tasks = jobs.map((job, index) => async () => {
     if (completedIndices.has(index)) {
       console.log(`[${index + 1}/${jobs.length}] Skipping (already completed)`);
       return { success: true, skipped: true, index };
     }
 
-    const jobOptions = {
-      ...options,
-      ...defaults,
-      ...job,
-      output: outputDir,
-      batchFile: undefined,
-    };
+    const jobOptions = { ...options, ...defaults, ...job, output: outputDir, batchFile: undefined };
 
     if (!jobOptions.imageFile) {
       const msg = `Job ${index + 1} missing imageFile (character face required for lipsync)`;
@@ -6621,7 +6251,6 @@ async function batchLipsync(options = {}) {
         () => generateLipsync(jobOptions),
         { maxRetries: 1, baseDelay: 5000, label: `batch-lipsync[${index}]` }
       );
-
       batchState.completed.push(index);
       saveBatchState(outputDir, batchState);
       console.log(`[${index + 1}/${jobs.length}] Complete`);
@@ -6634,30 +6263,8 @@ async function batchLipsync(options = {}) {
     }
   });
 
-  // Run with concurrency control
   const results = await runWithConcurrency(tasks, concurrency);
-
-  // Summary
-  const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
-  const succeeded = results.filter(r => r?.success).length;
-  const failed = results.filter(r => r && !r.success).length;
-
-  batchState.elapsed = `${elapsed}s`;
-  batchState.results = results.map(r => ({ success: r?.success, index: r?.index }));
-  saveBatchState(outputDir, batchState);
-
-  console.log(`\n=== Batch Lipsync Complete ===`);
-  console.log(`Duration: ${elapsed}s`);
-  console.log(`Results: ${succeeded} succeeded, ${failed} failed, ${jobs.length} total`);
-  console.log(`Output: ${outputDir}`);
-
-  if (failed > 0) {
-    console.log(`\nFailed jobs:`);
-    batchState.failed.forEach(f => console.log(`  [${f.index + 1}] ${f.error}`));
-    console.log(`\nTo retry failed jobs: add --resume flag`);
-  }
-
-  return batchState;
+  return finalizeBatch('batch-lipsync', batchState, results, startTime, outputDir, jobs.length);
 }
 
 // Run a command with API-first fallback to Playwright browser automation.
@@ -6677,28 +6284,21 @@ async function runWithApiFallback(apiFn, browserFn, options, retryOpts) {
 async function downloadFromHistory(options) {
   const dlModel = options.model || 'soul';
   const isVideoDownload = dlModel === 'video' || options.duration;
-  const { browser: dlBrowser, context: dlCtx, page: dlPage } = await launchBrowser(options);
 
-  if (isVideoDownload) {
-    console.log('Navigating to video page to download from History...');
-    await dlPage.goto(`${BASE_URL}/create/video`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await dlPage.waitForTimeout(5000);
-    await dismissAllModals(dlPage);
-    const dlDir = resolveOutputDir(options.output || getDefaultOutputDir(options), options, 'videos');
-    await downloadVideoFromHistory(dlPage, dlDir, {}, options);
-  } else {
-    const dlUrl = `${BASE_URL}/image/${dlModel}`;
-    const count = options.count !== undefined ? options.count : 4;
-    console.log(`Navigating to ${dlUrl} to download ${count === 0 ? 'all' : count} latest generation(s)...`);
-    await dlPage.goto(dlUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await dlPage.waitForTimeout(5000);
-    await dismissAllModals(dlPage);
-    const dlDir = resolveOutputDir(options.output || getDefaultOutputDir(options), options, 'images');
-    await downloadLatestResult(dlPage, dlDir, count, options);
-  }
-
-  await dlCtx.storageState({ path: STATE_FILE });
-  await dlBrowser.close();
+  return withBrowser(options, async (page) => {
+    if (isVideoDownload) {
+      console.log('Navigating to video page to download from History...');
+      await navigateTo(page, '/create/video', { waitMs: 5000 });
+      const dlDir = resolveOutputDir(options.output || getDefaultOutputDir(options), options, 'videos');
+      await downloadVideoFromHistory(page, dlDir, {}, options);
+    } else {
+      const count = options.count !== undefined ? options.count : 4;
+      console.log(`Navigating to image/${dlModel} to download ${count === 0 ? 'all' : count} latest generation(s)...`);
+      await navigateTo(page, `/image/${dlModel}`, { waitMs: 5000 });
+      const dlDir = resolveOutputDir(options.output || getDefaultOutputDir(options), options, 'images');
+      await downloadLatestResult(page, dlDir, count, options);
+    }
+  });
 }
 
 // Command registry: maps CLI command names to handler functions.
