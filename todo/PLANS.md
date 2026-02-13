@@ -21,6 +21,189 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-02-13] Continual Improvement Audit Loop
+
+**Status:** Planning
+**Estimate:** ~6h (ai:4h test:2h)
+**TODO:** t1032
+
+#### Purpose
+
+Close the loop between daily code audits and automated fixes so that all quality badges trend toward maximum scores every day:
+
+| Badge | Current | Target | Source |
+|-------|---------|--------|--------|
+| Code Quality Analysis | failing | passing | GitHub Actions CI (SonarCloud scan) |
+| Quality Gate | passed | passed | SonarCloud |
+| CodeFactor | A | A | CodeFactor |
+| Maintainability | D | A | Codacy |
+| Code Quality | A | A | Qlty |
+| CodeRabbit | AI Reviews | AI Reviews | CodeRabbit (issue #753) |
+
+The **Maintainability D** is the primary gap. The CI failure is a SonarCloud PR analysis error (not a code quality issue).
+
+#### Context
+
+**What exists today (working):**
+
+1. **Phase 10** — `coderabbit-pulse-helper.sh` triggers a daily full codebase review on GitHub issue #753 via `@coderabbitai` comment. Self-throttles with 24h cooldown.
+2. **Phase 10b** — `coderabbit-task-creator-helper.sh create` scans CodeRabbit findings from the collector SQLite DB, filters false positives, reclassifies severity, deduplicates, allocates task IDs via `claim-task-id.sh`, appends to TODO.md with `#auto-dispatch`, commits and pushes.
+3. **Phase 0** — supervisor auto-pickup dispatches `#auto-dispatch` tasks to workers.
+4. Workers create PRs that fix findings, PRs go through CI, get merged.
+
+**What's missing (the gaps):**
+
+1. **Only CodeRabbit is wired in.** Codacy, SonarCloud, and CodeFactor have API configs, documentation, and even a config template (`code-audit-config.json.txt`), but `code-audit-helper.sh` is a 6-line placeholder stub. No collector exists for these services.
+2. **No unified findings schema.** CodeRabbit findings live in `reviews.db`, pulse findings in JSON files. There's no common table that all sources write to.
+3. **No trend tracking.** We can't answer "are we improving?" — there's no historical record of finding counts over time.
+4. **No regression detection.** If a merge introduces 10 new Codacy issues, nothing notices until the next manual check.
+5. **No audit visibility.** The pinned queue health issue (t1013) shows task status but nothing about code quality scores or audit findings.
+6. **Maintainability D is unaddressed.** Codacy's maintainability grade is the worst badge. Without collecting Codacy findings and creating fix tasks, it stays D.
+
+**The closed loop (target state):**
+
+```text
+Daily pulse
+  → Phase 10: Trigger reviews (CodeRabbit, Codacy, SonarCloud, CodeFactor)
+  → Phase 10a: Collect findings from all services into unified SQLite
+  → Phase 10b: Filter FPs, classify, dedup, create TODO tasks (#auto-dispatch)
+  → Phase 0: Auto-dispatch fix tasks to workers
+  → Workers: Create PRs that fix findings
+  → CI: Verify fixes pass all quality gates
+  → Merge: Scores improve
+  → Next daily pulse: Trend tracking confirms improvement, surfaces regressions
+  → Queue health issue: Shows audit health section with scores and trends
+```
+
+#### Design
+
+**Unified audit findings schema** (new table in `~/.aidevops/.agent-workspace/work/code-audit/audit.db`):
+
+```sql
+CREATE TABLE audit_findings (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    source          TEXT NOT NULL,  -- 'coderabbit', 'codacy', 'sonarcloud', 'codefactor'
+    source_id       TEXT NOT NULL,  -- Service-specific finding ID
+    repo            TEXT NOT NULL,
+    path            TEXT,
+    line            INTEGER,
+    severity        TEXT NOT NULL,  -- critical/high/medium/low/info (normalised)
+    original_severity TEXT,         -- As reported by the service
+    category        TEXT,           -- bug/vulnerability/smell/duplication/style/security
+    rule_id         TEXT,           -- Service-specific rule (e.g. 'S1192', 'SC2086')
+    description     TEXT NOT NULL,
+    is_false_positive INTEGER DEFAULT 0,
+    fp_reason       TEXT,
+    is_duplicate    INTEGER DEFAULT 0,
+    duplicate_of    INTEGER,
+    task_id         TEXT,
+    task_created    INTEGER DEFAULT 0,
+    collected_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    UNIQUE(source, source_id)
+);
+
+CREATE TABLE audit_snapshots (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    date            TEXT NOT NULL,
+    source          TEXT NOT NULL,
+    total_findings  INTEGER NOT NULL,
+    critical        INTEGER DEFAULT 0,
+    high            INTEGER DEFAULT 0,
+    medium          INTEGER DEFAULT 0,
+    low             INTEGER DEFAULT 0,
+    info            INTEGER DEFAULT 0,
+    false_positives INTEGER DEFAULT 0,
+    tasks_created   INTEGER DEFAULT 0,
+    delta_vs_prev   INTEGER,  -- positive = regression, negative = improvement
+    UNIQUE(date, source)
+);
+```
+
+**Severity mapping across services:**
+
+| Our Scale | CodeRabbit | Codacy | SonarCloud | CodeFactor |
+|-----------|-----------|--------|------------|------------|
+| critical | Critical (emoji) | Critical | BLOCKER | — |
+| high | Major (emoji) | Error | CRITICAL | Major |
+| medium | Minor (emoji) | Warning | MAJOR | Minor |
+| low | Suggestion | Info | MINOR | Style |
+| info | — | — | INFO | — |
+
+**Service API endpoints:**
+
+- **Codacy**: `GET /analysis/organizations/{org}/repositories/{repo}/issues` (paginated, filter by severity)
+- **SonarCloud**: `GET /issues/search?componentKeys={key}&resolved=false` + `GET /hotspots/search`
+- **CodeFactor**: `GET /repos/{owner}/{repo}/issues` (via CodeFactor API)
+- **CodeRabbit**: Already collected via existing `coderabbit-collector-helper.sh`
+
+#### Phases
+
+**Phase 1: Unified orchestrator + schema (t1032.1) ~1h**
+
+- Replace `code-audit-helper.sh` stub with real implementation
+- Create `audit.db` with unified schema
+- Implement `collect` command that iterates configured services
+- Implement `report` command that queries unified DB
+- Implement `trend` command (Phase 4 populates data)
+
+**Phase 2: Service collectors (t1032.2, t1032.3) ~1.5h**
+
+- Codacy collector: API polling, severity mapping, pagination, store in audit_findings
+- SonarCloud collector: issues + hotspots, severity mapping, store in audit_findings
+- CodeFactor: defer (already A-grade, lowest priority)
+- Each collector is a function in code-audit-helper.sh, not a separate script
+
+**Phase 3: Generalise task creator (t1032.4) ~1h**
+
+- Refactor `coderabbit-task-creator-helper.sh` to read from unified `audit_findings` table
+- Keep all existing FP filtering, severity reclassification, dedup logic
+- Add source-aware task descriptions (e.g. "Fix Codacy maintainability issue: ...")
+- Rename to `audit-task-creator-helper.sh`, symlink old name
+
+**Phase 4: Wire into supervisor pulse (t1032.5) ~30m**
+
+- Phase 10: Keep CodeRabbit pulse trigger (it's async — comment on #753)
+- Phase 10a (new): Run `code-audit-helper.sh collect` for Codacy + SonarCloud
+- Phase 10b: Call `audit-task-creator-helper.sh create` instead of CodeRabbit-only version
+- Keep 24h cooldown on collection, task creation runs every pulse if new findings exist
+
+**Phase 5: Trend tracking + regression detection (t1032.6) ~45m**
+
+- After each collection run, snapshot finding counts into `audit_snapshots`
+- `code-audit-helper.sh trend` shows week-over-week and month-over-month
+- Regression detection: if findings increased >20% vs previous snapshot, log warning
+- Pattern tracker integration: record quality trends as patterns
+
+**Phase 6: Dashboard integration (t1032.7) ~30m**
+
+- Add "Audit Health" section to pinned queue health issue
+- Show: last audit time, finding counts by source/severity, trend arrows, open fix task count
+- Link to issue #753 for CodeRabbit review history
+
+**Phase 7: End-to-end verification (t1032.8) ~30m**
+
+- Manual trigger of full cycle
+- Verify all services polled, findings stored, tasks created, dispatched, PRs created
+- Verify trend tracking records the run
+- Document any remaining gaps
+
+#### Decision Log
+
+| Date | Decision | Rationale |
+|------|----------|-----------|
+| 2026-02-13 | Unified SQLite DB, not per-service DBs | Single query point for dedup, trend, and dashboard. CodeRabbit collector keeps its own DB for backward compat but also writes to unified. |
+| 2026-02-13 | Collectors as functions in code-audit-helper.sh, not separate scripts | Reduces file proliferation. Each collector is ~100-150 lines. The orchestrator calls them. |
+| 2026-02-13 | Defer CodeFactor collector | Already A-grade. Focus on Codacy (D maintainability) and SonarCloud (CI failure) first. |
+| 2026-02-13 | Keep CodeRabbit pulse on issue #753 | Async model works well. CodeRabbit reviews via GitHub comments, collector picks up results. No change needed. |
+| 2026-02-13 | Rename task-creator to audit-task-creator | Reflects multi-source scope. Symlink preserves backward compat for any scripts referencing old name. |
+
+#### Surprises & Discoveries
+
+- The SonarCloud CI failure is not a code quality issue — it's `Something went wrong while trying to get the pullrequest with key '1361'` (a SonarCloud API error on PR analysis). This is a transient/config issue, not a findings problem.
+- The Maintainability D badge is the highest-impact target. Codacy maintainability issues are typically: long functions, high complexity, code duplication — exactly what the existing refactoring tasks (t1026, t1027, t1031) address. Wiring Codacy findings into the auto-dispatch pipeline would have caught these earlier.
+
+---
+
 ### [2026-02-12] Automated Git Stash Audit and Cleanup
 
 **Status:** Planning
