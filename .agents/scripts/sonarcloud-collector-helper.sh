@@ -62,6 +62,7 @@ log_error() {
 
 db() {
 	sqlite3 -cmd ".timeout 5000" "$@"
+	return $?
 }
 
 # =============================================================================
@@ -98,7 +99,8 @@ init_db() {
 # =============================================================================
 
 map_severity() {
-	local sonar_severity="$1"
+	local sonar_severity
+	sonar_severity="$1"
 
 	case "$sonar_severity" in
 	BLOCKER)
@@ -152,24 +154,30 @@ get_sonar_token() {
 	fi
 
 	echo "$token"
+	return 0
 }
 
 get_project_key() {
-	local repo="$1"
+	local repo
+	repo="$1"
 	# SonarCloud project key is typically org_repo format
 	# Example: marcusquinn_aidevops
 	echo "$repo" | tr '/' '_'
+	return 0
 }
 
 call_sonar_api() {
-	local endpoint="$1"
+	local endpoint
+	endpoint="$1"
 	shift
 	local token
 	token=$(get_sonar_token) || return 1
 
-	local url="${SONARCLOUD_API_BASE}${endpoint}"
+	local url
+	url="${SONARCLOUD_API_BASE}${endpoint}"
 
 	curl -s -u "${token}:" "$url" "$@"
+	return $?
 }
 
 # =============================================================================
@@ -177,12 +185,18 @@ call_sonar_api() {
 # =============================================================================
 
 collect_issues() {
-	local run_id="$1"
-	local project_key="$2"
-	local branch="${3:-}"
-	local page=1
-	local page_size=500
-	local total_collected=0
+	local run_id
+	run_id="$1"
+	local project_key
+	project_key="$2"
+	local branch
+	branch="${3:-}"
+	local page
+	page=1
+	local page_size
+	page_size=500
+	local total_collected
+	total_collected=0
 
 	log_info "Collecting issues for project: $project_key"
 
@@ -252,12 +266,18 @@ collect_issues() {
 }
 
 collect_hotspots() {
-	local run_id="$1"
-	local project_key="$2"
-	local branch="${3:-}"
-	local page=1
-	local page_size=500
-	local total_collected=0
+	local run_id
+	run_id="$1"
+	local project_key
+	project_key="$2"
+	local branch
+	branch="${3:-}"
+	local page
+	page=1
+	local page_size
+	page_size=500
+	local total_collected
+	total_collected=0
 
 	log_info "Collecting security hotspots for project: $project_key"
 
@@ -342,29 +362,29 @@ collect_hotspots() {
 }
 
 store_finding() {
-	local run_id="$1"
-	local severity="$2"
-	local category="$3"
-	local rule_id="$4"
-	local description="$5"
-	local path="$6"
-	local line="$7"
-
-	# Escape single quotes for SQL
-	description=$(echo "$description" | sed "s/'/''/g")
-	path=$(echo "$path" | sed "s/'/''/g")
-	rule_id=$(echo "$rule_id" | sed "s/'/''/g")
+	local run_id
+	run_id="$1"
+	local severity
+	severity="$2"
+	local category
+	category="$3"
+	local rule_id
+	rule_id="$4"
+	local description
+	description="$5"
+	local path
+	path="$6"
+	local line
+	line="$7"
 
 	# Create dedup key from path:line:rule
-	local dedup_key="${path}:${line}:${rule_id}"
+	local dedup_key
+	dedup_key="${path}:${line}:${rule_id}"
 
-	db "$COLLECTOR_DB" <<SQL >/dev/null
-INSERT INTO audit_findings (
-    run_id, source, severity, path, line, description, category, rule_id, dedup_key
-) VALUES (
-    $run_id, 'sonarcloud', '$severity', '$path', $line, '$description', '$category', '$rule_id', '$dedup_key'
-);
-SQL
+	# Use parameterized query to prevent SQL injection
+	db "$COLLECTOR_DB" \
+		"INSERT INTO audit_findings (run_id, source, severity, path, line, description, category, rule_id, dedup_key) VALUES (?, 'sonarcloud', ?, ?, ?, ?, ?, ?, ?);" \
+		"$run_id" "$severity" "$path" "$line" "$description" "$category" "$rule_id" "$dedup_key" >/dev/null
 
 	return 0
 }
@@ -374,8 +394,10 @@ SQL
 # =============================================================================
 
 cmd_collect() {
-	local project_key=""
-	local branch=""
+	local project_key
+	project_key=""
+	local branch
+	branch=""
 	local repo
 
 	# Parse arguments
@@ -448,8 +470,10 @@ SQL
 }
 
 cmd_query() {
-	local severity=""
-	local format="text"
+	local severity
+	severity=""
+	local format
+	format="text"
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -503,7 +527,8 @@ SQL
 }
 
 cmd_summary() {
-	local last_n=1
+	local last_n
+	last_n=1
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -574,7 +599,8 @@ cmd_status() {
 }
 
 cmd_export() {
-	local format="json"
+	local format
+	format="json"
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
