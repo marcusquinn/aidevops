@@ -588,6 +588,7 @@ cmd_formats() {
 
 	printf "${BOLD}Input formats:${NC}\n"
 	printf "  Documents:      md, odt, docx, rtf, html, epub, latex/tex\n"
+	printf "  Email:          eml, msg (with attachment extraction)\n"
 	printf "  PDF:            pdf (text extraction + image extraction)\n"
 	printf "  Spreadsheets:   xlsx, ods, csv, tsv\n"
 	printf "  Presentations:  pptx, odp\n"
@@ -600,6 +601,7 @@ cmd_formats() {
 	printf "  Presentations:  pptx, odp\n"
 
 	printf "\n${BOLD}Best quality paths:${NC}\n"
+	printf "  eml/msg -> md:    email-to-markdown.py (extracts attachments)\n"
 	printf "  odt/docx -> pdf:  LibreOffice headless (preserves layout)\n"
 	printf "  md -> docx/odt:   pandoc (excellent)\n"
 	printf "  pdf -> md:        MinerU (complex) or pandoc (simple)\n"
@@ -662,6 +664,19 @@ select_tool() {
 			;;
 		*)
 			die "Unsupported conversion: pdf -> ${to_ext}"
+			;;
+		esac
+		return 0
+	fi
+
+	# Email source requires special handling
+	if [[ "${from_ext}" =~ ^(eml|msg)$ ]]; then
+		case "${to_ext}" in
+		md | markdown)
+			printf 'email-parser'
+			;;
+		*)
+			die "Email files can only be converted to markdown. Use: --to md"
 			;;
 		esac
 		return 0
@@ -866,6 +881,65 @@ convert_pdf_to_odt() {
 	return 0
 }
 
+convert_email() {
+	local input="$1"
+	local output="$2"
+
+	log_info "Converting email with email-to-markdown.py: $(basename "$input") -> $(basename "$output")"
+
+	# Determine attachments directory
+	local attachments_dir
+	attachments_dir="$(dirname "$output")/$(basename "${output%.md}")_attachments"
+
+	# Check if Python script exists
+	local script_path
+	script_path="$(dirname "${BASH_SOURCE[0]}")/email-to-markdown.py"
+	if [[ ! -f "${script_path}" ]]; then
+		die "Email parser script not found: ${script_path}"
+	fi
+
+	# Activate venv and run the parser
+	if ! activate_venv 2>/dev/null; then
+		die "Python venv required. Run: install --standard"
+	fi
+
+	# Check for required Python packages
+	if ! python3 -c "import html2text" 2>/dev/null; then
+		log_info "Installing html2text..."
+		pip install --quiet html2text
+	fi
+
+	# Check if input is .msg and install extract-msg if needed
+	local ext
+	ext=$(get_ext "$input")
+	if [[ "${ext}" == "msg" ]]; then
+		if ! python3 -c "import extract_msg" 2>/dev/null; then
+			log_info "Installing extract-msg for .msg file support..."
+			pip install --quiet extract-msg
+		fi
+	fi
+
+	# Run the parser
+	python3 "${script_path}" "$input" --output "$output" --attachments-dir "$attachments_dir"
+
+	if [[ -f "$output" ]]; then
+		local size
+		size=$(ls -lh "$output" | awk '{print $5}')
+		log_ok "Created: ${output} (${size})"
+		if [[ -d "$attachments_dir" ]]; then
+			local att_count
+			att_count=$(find "$attachments_dir" -type f 2>/dev/null | wc -l | tr -d ' ')
+			if [[ "${att_count}" -gt 0 ]]; then
+				log_ok "Extracted ${att_count} attachment(s) to: ${attachments_dir}"
+			fi
+		fi
+	else
+		die "Email conversion failed: output file not created"
+	fi
+
+	return 0
+}
+
 cmd_convert() {
 	local input=""
 	local to_ext=""
@@ -1027,6 +1101,9 @@ cmd_convert() {
 		log_info "Converting with pdftohtml"
 		pdftohtml -s "$input" "$output"
 		log_ok "Created: ${output}"
+		;;
+	email-parser)
+		convert_email "$input" "$output"
 		;;
 	*)
 		die "Unknown tool: ${tool}"
