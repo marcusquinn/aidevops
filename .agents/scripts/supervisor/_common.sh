@@ -58,6 +58,7 @@ sql_escape() {
 	# contexts, causing SQLite INSERT errors for task descriptions
 	# containing apostrophes (e.g. "supervisor's", "don't").
 	printf '%s' "$input" | sed "s/'/''/g"
+	return 0
 }
 
 #######################################
