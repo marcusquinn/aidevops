@@ -100,7 +100,7 @@ availability at runtime and selects automatically.
 | DOCX | HTML | pandoc | -- | |
 | RTF | MD | pandoc | -- | |
 | RTF | ODT | pandoc | LibreOffice headless | |
-| HTML | MD | pandoc | -- | |
+| HTML | MD | Reader-LM (Ollama) | pandoc | Reader-LM preserves tables better than pandoc |
 | HTML | ODT | pandoc | LibreOffice headless | |
 | HTML | DOCX | pandoc | -- | |
 | HTML | PDF | pandoc | wkhtmltopdf, LibreOffice | |
@@ -109,7 +109,7 @@ availability at runtime and selects automatically.
 
 | From | To | Preferred | Fallback | Notes |
 |------|----|-----------|----------|-------|
-| PDF | MD | MinerU | pandoc, pdftotext | MinerU for complex layouts; pandoc for simple text |
+| PDF | MD | RolmOCR (GPU) | MinerU, pdftotext | RolmOCR for GPU-accelerated table preservation; MinerU for complex layouts; pdftotext for simple text |
 | PDF | ODT | odfpy + pdftotext + pdfimages | pandoc (lossy) | Programmatic: extract text/images, build ODT |
 | PDF | DOCX | LibreOffice headless | pandoc (lossy) | LO does reasonable PDF import |
 | PDF | HTML | pandoc | pdftohtml (poppler) | |
@@ -171,6 +171,28 @@ These have their own agents. This agent routes to them when the task matches.
 | DocStrange | `tools/document/docstrange.md` | Structured data extraction from documents |
 | Docling+ExtractThinker | `tools/document/document-extraction.md` | Schema-based extraction with PII redaction |
 | LibPDF | `tools/pdf/overview.md` | PDF form filling, digital signatures |
+
+### Advanced Conversion Providers
+
+AI-powered conversion tools for enhanced quality and table preservation.
+
+| Provider | Model | Install | Best For |
+|----------|-------|---------|----------|
+| Reader-LM | Jina, 1.5B | `ollama pull reader-lm` | HTML to markdown with table preservation |
+| RolmOCR | Reducto, 7B | vLLM server with RolmOCR model | PDF page images to markdown with table preservation (GPU-accelerated) |
+
+**Reader-LM** (Jina AI, 1.5B parameters):
+- Runs locally via Ollama
+- Converts HTML to markdown while preserving complex table structures
+- Replaces pandoc for HTML->md when available
+- Usage: `document-creation-helper.sh convert page.html --to md`
+
+**RolmOCR** (Reducto, 7B parameters):
+- Runs via vLLM server (requires GPU)
+- Converts PDF page images to markdown with table preservation
+- Replaces pdftotext for PDF->md when GPU available
+- Requires vLLM server running on port 8000 with RolmOCR model
+- Usage: `document-creation-helper.sh convert document.pdf --to md`
 
 ## Document Creation from Templates
 

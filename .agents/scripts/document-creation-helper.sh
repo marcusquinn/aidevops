@@ -94,6 +94,33 @@ has_python_pkg() {
 }
 
 # ============================================================================
+# Advanced conversion provider detection
+# ============================================================================
+
+# Check if Reader-LM is available via Ollama
+has_reader_lm() {
+	if has_cmd ollama; then
+		ollama list 2>/dev/null | grep -q "reader-lm"
+		return $?
+	fi
+	return 1
+}
+
+# Check if RolmOCR is available via vLLM
+has_rolm_ocr() {
+	# Check if vLLM server is running with RolmOCR model
+	# vLLM typically runs on port 8000 by default
+	if command -v curl &>/dev/null; then
+		local response
+		response=$(curl -s http://localhost:8000/v1/models 2>/dev/null || echo "")
+		if [[ -n "$response" ]] && echo "$response" | grep -q "rolm"; then
+			return 0
+		fi
+	fi
+	return 1
+}
+
+# ============================================================================
 # OCR functions
 # ============================================================================
 
@@ -341,6 +368,19 @@ detect_tools() {
 		tools_missing+=("mineru")
 	fi
 
+	# Advanced conversion providers
+	if has_reader_lm; then
+		tools_available+=("reader-lm")
+	else
+		tools_missing+=("reader-lm")
+	fi
+
+	if has_rolm_ocr; then
+		tools_available+=("rolm-ocr")
+	else
+		tools_missing+=("rolm-ocr")
+	fi
+
 	printf '%s\n' "AVAILABLE:${tools_available[*]:-none}"
 	printf '%s\n' "MISSING:${tools_missing[*]:-none}"
 }
@@ -419,6 +459,18 @@ cmd_status() {
 		log_ok "MinerU (layout-aware PDF to markdown)"
 	else
 		log_info "MinerU - not installed (optional: pip install 'mineru[all]')"
+	fi
+
+	printf "\n${BOLD}Advanced conversion providers:${NC}\n"
+	if has_reader_lm; then
+		log_ok "Reader-LM (Jina, 1.5B via Ollama - HTML to markdown with table preservation)"
+	else
+		log_info "Reader-LM - not installed (ollama pull reader-lm)"
+	fi
+	if has_rolm_ocr; then
+		log_ok "RolmOCR (Reducto, 7B via vLLM - PDF page images to markdown with table preservation)"
+	else
+		log_info "RolmOCR - not available (requires vLLM server with RolmOCR model)"
 	fi
 
 	printf "\n${BOLD}Template directory:${NC} %s\n" "${TEMPLATE_DIR}"
@@ -628,7 +680,10 @@ select_tool() {
 	if [[ "${from_ext}" == "pdf" ]]; then
 		case "${to_ext}" in
 		md | markdown)
-			if has_cmd mineru; then
+			# Prefer RolmOCR for GPU-accelerated PDF->md with table preservation
+			if has_rolm_ocr; then
+				printf 'rolm-ocr'
+			elif has_cmd mineru; then
 				printf 'mineru'
 			elif has_cmd pdftotext; then
 				printf 'pdftotext'
@@ -717,6 +772,18 @@ select_tool() {
 		return 0
 	fi
 
+	# HTML to markdown: prefer Reader-LM for table preservation
+	if [[ "${from_ext}" == "html" ]] && [[ "${to_ext}" =~ ^(md|markdown)$ ]]; then
+		if has_reader_lm; then
+			printf 'reader-lm'
+		elif has_cmd pandoc; then
+			printf 'pandoc'
+		else
+			die "No tool available for html->md. Run: install --minimal (pandoc) or ollama pull reader-lm"
+		fi
+		return 0
+	fi
+
 	# Default: pandoc handles most text format conversions
 	if has_cmd pandoc; then
 		printf 'pandoc'
@@ -796,6 +863,117 @@ convert_with_libreoffice() {
 		log_ok "Created: ${output_file} (${size})"
 	else
 		die "LibreOffice conversion failed"
+	fi
+
+	return 0
+}
+
+convert_with_reader_lm() {
+	local input="$1"
+	local output="$2"
+
+	log_info "Converting with Reader-LM: $(basename "$input") -> markdown"
+
+	if ! has_reader_lm; then
+		die "Reader-LM not available. Run: ollama pull reader-lm"
+	fi
+
+	# Read HTML content
+	local html_content
+	html_content=$(cat "$input")
+
+	# Use Ollama API to convert HTML to markdown
+	local response
+	response=$(curl -s http://localhost:11434/api/generate \
+		-d "{\"model\":\"reader-lm\",\"prompt\":\"Convert this HTML to markdown, preserving tables and structure:\n\n${html_content}\",\"stream\":false}" 2>/dev/null)
+
+	if [[ -z "$response" ]]; then
+		die "Reader-LM conversion failed: no response from Ollama"
+	fi
+
+	# Extract markdown from response
+	printf '%s' "$response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('response',''))" >"$output" 2>/dev/null
+
+	if [[ -f "$output" ]] && [[ -s "$output" ]]; then
+		local size
+		size=$(ls -lh "$output" | awk '{print $5}')
+		log_ok "Created: ${output} (${size})"
+	else
+		die "Reader-LM conversion failed: output file empty or not created"
+	fi
+
+	return 0
+}
+
+convert_with_rolm_ocr() {
+	local input="$1"
+	local output="$2"
+
+	log_info "Converting with RolmOCR: $(basename "$input") -> markdown"
+
+	if ! has_rolm_ocr; then
+		die "RolmOCR not available. Ensure vLLM server is running with RolmOCR model on port 8000"
+	fi
+
+	# Use workspace dir for temp files
+	local tmp_dir="${HOME}/.aidevops/.agent-workspace/tmp/rolm-$$"
+	mkdir -p "${tmp_dir}"
+	local img_dir="${tmp_dir}/pages"
+	mkdir -p "${img_dir}"
+
+	# Extract page images from PDF
+	log_info "Extracting page images from PDF..."
+	pdfimages -png "$input" "${img_dir}/page" 2>/dev/null
+
+	local img_count
+	img_count=$(find "${img_dir}" -name "*.png" -type f 2>/dev/null | wc -l | tr -d ' ')
+
+	if [[ "${img_count}" -eq 0 ]]; then
+		die "No images extracted from PDF. File may be empty or text-based (use pdftotext instead)."
+	fi
+
+	log_info "Processing ${img_count} page images with RolmOCR..."
+
+	# Process each image and combine
+	: >"$output"
+	local img_file
+	for img_file in "${img_dir}"/page-*.png; do
+		[[ -f "$img_file" ]] || continue
+		log_info "  RolmOCR: $(basename "$img_file")"
+
+		# Convert image to base64
+		local b64
+		b64=$(base64 <"$img_file")
+
+		# Call vLLM API with RolmOCR model
+		local response
+		response=$(curl -s http://localhost:8000/v1/chat/completions \
+			-H "Content-Type: application/json" \
+			-d "{\"model\":\"rolm-ocr\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,${b64}\"}},{\"type\":\"text\",\"text\":\"Convert this page to markdown, preserving tables and structure.\"}]}]}" 2>/dev/null)
+
+		if [[ -n "$response" ]]; then
+			# Extract markdown from response
+			local page_md
+			page_md=$(printf '%s' "$response" | python3 -c "import sys,json; r=json.load(sys.stdin); print(r.get('choices',[{}])[0].get('message',{}).get('content',''))" 2>/dev/null)
+			printf '%s\n\n' "$page_md" >>"$output"
+		else
+			log_warn "  RolmOCR failed for $(basename "$img_file"), skipping"
+		fi
+	done
+
+	local text_len
+	text_len=$(wc -c <"$output" | tr -d ' ')
+	log_ok "RolmOCR complete: ${text_len} bytes extracted"
+
+	# Clean up
+	rm -rf "${tmp_dir}"
+
+	if [[ -f "$output" ]] && [[ -s "$output" ]]; then
+		local size
+		size=$(ls -lh "$output" | awk '{print $5}')
+		log_ok "Created: ${output} (${size})"
+	else
+		die "RolmOCR conversion failed: output file empty or not created"
 	fi
 
 	return 0
@@ -1027,6 +1205,12 @@ cmd_convert() {
 		log_info "Converting with pdftohtml"
 		pdftohtml -s "$input" "$output"
 		log_ok "Created: ${output}"
+		;;
+	reader-lm)
+		convert_with_reader_lm "$input" "$output"
+		;;
+	rolm-ocr)
+		convert_with_rolm_ocr "$input" "$output"
 		;;
 	*)
 		die "Unknown tool: ${tool}"
