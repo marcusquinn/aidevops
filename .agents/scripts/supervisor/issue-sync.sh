@@ -336,6 +336,13 @@ state_to_status_label() {
 }
 
 #######################################
+# All status labels that can be set on an issue (t1009)
+# Used to remove stale labels before applying the new one.
+# Restored from pre-modularisation supervisor-helper.sh (t1035).
+#######################################
+ALL_STATUS_LABELS="status:available,status:queued,status:claimed,status:in-review,status:blocked,status:verify-failed,status:done"
+
+#######################################
 # Sync GitHub issue status label on state transition (t1009)
 # Called from cmd_transition() after each state change.
 # Removes all status:* labels, then adds the one matching the new state.
