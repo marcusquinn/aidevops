@@ -299,16 +299,54 @@ function isHookManagedByOmoc(hookName) {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 1: Agent Loader — REMOVED (t1040)
+// Phase 1: Lightweight Agent Index (t1040)
 // ---------------------------------------------------------------------------
-// Agent registration is now handled entirely by generate-opencode-agents.sh
-// at setup time. The shell script creates lightweight .md stubs in
-// ~/.config/opencode/agent/ that act as pointers ("Read ~/.aidevops/agents/X").
-// The previous runtime approach scanned 500+ files on every OpenCode startup,
-// reading and parsing frontmatter from each, which caused TUI display glitches
-// and slow launches. Progressive disclosure means agents are loaded on-demand
-// when the AI reads the relevant .md file — they don't need to be pre-registered
-// in OpenCode's config.agent object.
+// Previously scanned 500+ .md files at startup (readFileSync + parseFrontmatter
+// each), causing TUI display glitches and slow launches. Now reads a single
+// pre-built index file (subagent-index.toon, ~177 lines) and injects only the
+// leaf agent names as minimal config entries for @mention discovery.
+// The index is generated at setup time by generate-opencode-agents.sh.
+
+/**
+ * Parse subagent-index.toon and return leaf agent names with descriptions.
+ * Reads ONE file instead of 500+. Returns entries like:
+ *   { name: "dataforseo", description: "Search optimization - keywords..." }
+ * @returns {Array<{name: string, description: string}>}
+ */
+function loadAgentIndex() {
+  const indexPath = join(AGENTS_DIR, "subagent-index.toon");
+  const content = readIfExists(indexPath);
+  if (!content) return [];
+
+  const agents = [];
+
+  // Parse the subagents TOON block: folder, purpose, key_files
+  // e.g.: seo/,Search optimization - keywords and rankings,dataforseo|serper|semrush|...
+  const subagentMatch = content.match(
+    /<!--TOON:subagents\[\d+\]\{[^}]+\}:\n([\s\S]*?)-->/,
+  );
+  if (subagentMatch) {
+    for (const line of subagentMatch[1].split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
+      const parts = trimmed.split(",");
+      if (parts.length < 3) continue;
+
+      const purpose = parts[1] || "";
+      const keyFiles = parts.slice(2).join(","); // rejoin in case purpose had commas
+
+      // Extract leaf agent names from key_files (pipe-separated)
+      for (const leaf of keyFiles.split("|")) {
+        const name = leaf.trim();
+        if (!name || name === "README" || name === "AGENTS") continue;
+        agents.push({ name, description: purpose });
+      }
+    }
+  }
+
+  return agents;
+}
 
 // ---------------------------------------------------------------------------
 // Phase 2: MCP Server Registry + Config Hook
@@ -666,18 +704,31 @@ function applyAgentMcpTools(config) {
 }
 
 /**
- * Modify OpenCode config to register aidevops agents and MCP servers.
- * Registers MCP servers and applies per-agent tool permissions.
+ * Modify OpenCode config to register aidevops subagents, MCP servers,
+ * and per-agent tool permissions.
  *
- * Agent registration is handled by generate-opencode-agents.sh at setup time
- * (lightweight .md stubs in ~/.config/opencode/agent/). The plugin no longer
- * injects agents at runtime — scanning 500+ files on every startup caused
- * display glitches and slow launches in OpenCode's TUI. (t1040)
+ * Subagent discovery uses subagent-index.toon (1 file, ~177 lines) instead
+ * of scanning 500+ .md files. This ensures @mention works on any repo while
+ * keeping startup fast. (t1040)
  *
  * @param {object} config - OpenCode Config object (mutable)
  */
 async function configHook(config) {
   if (!config.agent) config.agent = {};
+
+  // --- Lightweight agent registration from pre-built index ---
+  const indexAgents = loadAgentIndex();
+  let agentsInjected = 0;
+
+  for (const agent of indexAgents) {
+    if (config.agent[agent.name]) continue;
+
+    config.agent[agent.name] = {
+      description: agent.description,
+      mode: "subagent",
+    };
+    agentsInjected++;
+  }
 
   // --- MCP registration ---
   const mcpsRegistered = registerMcpServers(config);
@@ -685,6 +736,7 @@ async function configHook(config) {
 
   // Silent unless something was actually changed (avoids TUI flash on startup)
   const parts = [];
+  if (agentsInjected > 0) parts.push(`${agentsInjected} agents`);
   if (mcpsRegistered > 0) parts.push(`${mcpsRegistered} MCPs`);
   if (agentToolsUpdated > 0) parts.push(`${agentToolsUpdated} agent tool perms`);
 
@@ -1396,7 +1448,7 @@ async function compactingHook(_input, output, directory) {
  *
  * Provides:
  * 0. oh-my-opencode detection — detects OMOC presence and deduplicates (t008.4)
- * 1. Config hook — dynamic agent loading + MCP server registration from ~/.aidevops/agents/
+ * 1. Config hook — lightweight agent index + MCP server registration (t1040)
  * 2. Custom tools — aidevops CLI, memory, pre-edit check, quality check, hook installer
  * 3. Quality hooks — full pre-commit pipeline (ShellCheck, return statements,
  *    positional params, secrets scan, markdown lint) on Write/Edit operations
@@ -1425,7 +1477,7 @@ export async function AidevopsPlugin({ directory }) {
   detectOhMyOpenCode(directory);
 
   return {
-    // Phase 2: MCP registration and per-agent tool permissions
+    // Phase 1+2: Lightweight agent index + MCP registration
     config: async (config) => configHook(config),
 
     // Phase 1: Custom tools (extracted to tools.mjs)
