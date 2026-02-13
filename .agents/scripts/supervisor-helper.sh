@@ -3139,29 +3139,23 @@ sync_issue_status_label() {
 # Graceful degradation: never breaks the pulse if gh fails.
 #
 # $1: batch_id (optional)
-# $2: repo_slug (optional, auto-detected if empty)
+# $2: repo_slug (required — caller provides)
+# $3: repo_path (required — local path for DB filtering)
 # Returns: 0 always (best-effort)
 #######################################
 update_queue_health_issue() {
 	local batch_id="${1:-}"
 	local repo_slug="${2:-}"
+	local repo_path="${3:-}"
 
-	# Require gh CLI and authentication
+	# Require gh CLI, authentication, and repo info
 	command -v gh &>/dev/null || return 0
 	check_gh_auth 2>/dev/null || return 0
+	[[ -z "$repo_slug" ]] && return 0
+	[[ -z "$repo_path" ]] && return 0
 
-	# Auto-detect repo slug if not provided
-	if [[ -z "$repo_slug" ]]; then
-		local health_repo
-		health_repo=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks LIMIT 1;" 2>/dev/null || echo "")
-		if [[ -z "$health_repo" ]]; then
-			health_repo="$(pwd)"
-		fi
-		repo_slug=$(detect_repo_slug "$health_repo" 2>/dev/null || echo "")
-		if [[ -z "$repo_slug" ]]; then
-			return 0
-		fi
-	fi
+	# SQL filter for this repo
+	local repo_filter="repo = '${repo_path}'"
 
 	# Per-runner health issue: each supervisor instance owns its own issue
 	local runner_user
@@ -3227,22 +3221,22 @@ update_queue_health_issue() {
 	# Counts
 	local cnt_running cnt_queued cnt_blocked cnt_failed cnt_complete cnt_total
 	local cnt_pr_review cnt_retrying cnt_dispatched
-	cnt_running=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status = 'running';" 2>/dev/null || echo "0")
-	cnt_dispatched=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status = 'dispatched';" 2>/dev/null || echo "0")
-	cnt_queued=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status = 'queued';" 2>/dev/null || echo "0")
-	cnt_blocked=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status = 'blocked';" 2>/dev/null || echo "0")
-	cnt_failed=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status = 'failed';" 2>/dev/null || echo "0")
-	cnt_retrying=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status = 'retrying';" 2>/dev/null || echo "0")
-	cnt_pr_review=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('pr_review','review_triage','merging','merged','deploying');" 2>/dev/null || echo "0")
-	cnt_complete=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('complete','deployed','verified');" 2>/dev/null || echo "0")
-	cnt_total=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks;" 2>/dev/null || echo "0")
+	cnt_running=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE ${repo_filter} AND status = 'running';" 2>/dev/null || echo "0")
+	cnt_dispatched=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE ${repo_filter} AND status = 'dispatched';" 2>/dev/null || echo "0")
+	cnt_queued=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE ${repo_filter} AND status = 'queued';" 2>/dev/null || echo "0")
+	cnt_blocked=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE ${repo_filter} AND status = 'blocked';" 2>/dev/null || echo "0")
+	cnt_failed=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE ${repo_filter} AND status = 'failed';" 2>/dev/null || echo "0")
+	cnt_retrying=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE ${repo_filter} AND status = 'retrying';" 2>/dev/null || echo "0")
+	cnt_pr_review=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE ${repo_filter} AND status IN ('pr_review','review_triage','merging','merged','deploying');" 2>/dev/null || echo "0")
+	cnt_complete=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE ${repo_filter} AND status IN ('complete','deployed','verified');" 2>/dev/null || echo "0")
+	cnt_total=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE ${repo_filter};" 2>/dev/null || echo "0")
 	# Actionable total excludes cancelled/skipped tasks for accurate progress
 	local cnt_cancelled cnt_skipped cnt_actionable
-	cnt_cancelled=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status = 'cancelled';" 2>/dev/null || echo "0")
-	cnt_skipped=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status = 'skipped';" 2>/dev/null || echo "0")
+	cnt_cancelled=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE ${repo_filter} AND status = 'cancelled';" 2>/dev/null || echo "0")
+	cnt_skipped=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE ${repo_filter} AND status = 'skipped';" 2>/dev/null || echo "0")
 	cnt_actionable=$((cnt_total - cnt_cancelled - cnt_skipped))
 	local cnt_verify_failed
-	cnt_verify_failed=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status = 'verify_failed';" 2>/dev/null || echo "0")
+	cnt_verify_failed=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE ${repo_filter} AND status = 'verify_failed';" 2>/dev/null || echo "0")
 
 	# Active batch info
 	local active_batch_name=""
@@ -3260,7 +3254,7 @@ update_queue_health_issue() {
 	active_workers=$(db -separator '|' "$SUPERVISOR_DB" "
 		SELECT id, status, description, model, started_at, retries, pr_url
 		FROM tasks
-		WHERE status IN ('running', 'dispatched', 'evaluating')
+		WHERE ${repo_filter} AND status IN ('running', 'dispatched', 'evaluating')
 		ORDER BY started_at ASC;" 2>/dev/null || echo "")
 
 	if [[ -n "$active_workers" ]]; then
@@ -3318,7 +3312,7 @@ update_queue_health_issue() {
 	recent_completions=$(db -separator '|' "$SUPERVISOR_DB" "
 		SELECT id, status, description, completed_at, pr_url
 		FROM tasks
-		WHERE status IN ('complete', 'deployed', 'verified', 'merged')
+		WHERE ${repo_filter} AND status IN ('complete', 'deployed', 'verified', 'merged')
 		ORDER BY completed_at DESC
 		LIMIT 5;" 2>/dev/null || echo "")
 
@@ -3411,7 +3405,7 @@ update_queue_health_issue() {
 	# Alert: failed tasks
 	if [[ "${cnt_failed:-0}" -gt 0 ]]; then
 		local failed_list
-		failed_list=$(db -separator '|' "$SUPERVISOR_DB" "SELECT id, error FROM tasks WHERE status = 'failed' LIMIT 5;" 2>/dev/null || echo "")
+		failed_list=$(db -separator '|' "$SUPERVISOR_DB" "SELECT id, error FROM tasks WHERE ${repo_filter} AND status = 'failed' LIMIT 5;" 2>/dev/null || echo "")
 		alerts_md="${alerts_md}- **${cnt_failed} failed task(s)**:"
 		while IFS='|' read -r f_id f_err; do
 			[[ -z "$f_id" ]] && continue
@@ -3441,7 +3435,7 @@ update_queue_health_issue() {
 
 	# Alert: stale batch (no dispatches in 10+ pulses)
 	local last_dispatch_ts
-	last_dispatch_ts=$(db "$SUPERVISOR_DB" "SELECT MAX(started_at) FROM tasks WHERE status IN ('running','dispatched','evaluating');" 2>/dev/null || echo "")
+	last_dispatch_ts=$(db "$SUPERVISOR_DB" "SELECT MAX(started_at) FROM tasks WHERE ${repo_filter} AND status IN ('running','dispatched','evaluating');" 2>/dev/null || echo "")
 	if [[ -n "$last_dispatch_ts" && "$last_dispatch_ts" != "" ]]; then
 		local ld_epoch ld_now ld_age_min
 		ld_epoch=$(date -jf "%Y-%m-%dT%H:%M:%S" "${last_dispatch_ts%%Z*}" +%s 2>/dev/null || date -d "$last_dispatch_ts" +%s 2>/dev/null || echo "0")
@@ -3497,7 +3491,7 @@ update_queue_health_issue() {
 	queued_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
 		SELECT id, description, model
 		FROM tasks
-		WHERE status = 'queued'
+		WHERE ${repo_filter} AND status = 'queued'
 		ORDER BY created_at ASC
 		LIMIT 5;" 2>/dev/null || echo "")
 
@@ -3574,9 +3568,9 @@ _Auto-updated by supervisor pulse (t1013). Do not edit manually._"
 
 	# Build title with operational stats from this runner's perspective
 	local cnt_working
-	cnt_working=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('running','dispatched','evaluating');" 2>/dev/null || echo "0")
+	cnt_working=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE ${repo_filter} AND status IN ('running','dispatched','evaluating');" 2>/dev/null || echo "0")
 	local cnt_in_review
-	cnt_in_review=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('pr_review','review_triage','merging','merged','deploying','retrying');" 2>/dev/null || echo "0")
+	cnt_in_review=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE ${repo_filter} AND status IN ('pr_review','review_triage','merging','merged','deploying','retrying');" 2>/dev/null || echo "0")
 	local cnt_failed_total=$((${cnt_blocked:-0} + ${cnt_verify_failed:-0} + ${cnt_failed:-0}))
 
 	local title_parts="${cnt_queued:-0} queued, ${cnt_working} working"
@@ -11898,12 +11892,20 @@ cmd_pulse() {
 		fi
 	fi
 
-	# Phase 8c: Pinned queue health issue — live status dashboard (t1013)
-	# Updates a single comment in-place on a pinned GitHub issue with live
-	# supervisor status: counts, active workers, recent completions, resources,
-	# and alerts. Runs every pulse (not just idle) so the timestamp stays fresh.
+	# Phase 8c: Per-repo pinned health issues — live status dashboard (t1013)
+	# Each repo gets its own pinned issue with stats filtered to that repo.
 	# Graceful degradation — never breaks the pulse if gh fails.
-	update_queue_health_issue "${batch_id:-}" "" 2>>"$SUPERVISOR_LOG" || true
+	local health_repos
+	health_repos=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks WHERE repo IS NOT NULL AND repo != '';" 2>/dev/null || echo "")
+	if [[ -n "$health_repos" ]]; then
+		while IFS= read -r health_repo; do
+			[[ -z "$health_repo" ]] && continue
+			local health_slug
+			health_slug=$(detect_repo_slug "$health_repo" 2>/dev/null || echo "")
+			[[ -z "$health_slug" ]] && continue
+			update_queue_health_issue "${batch_id:-}" "$health_slug" "$health_repo" 2>>"$SUPERVISOR_LOG" || true
+		done <<<"$health_repos"
+	fi
 
 	# Phase 9: Memory audit pulse (t185)
 	# Runs dedup, prune, graduate, and opportunity scan.
@@ -14508,9 +14510,19 @@ cmd_queue_health() {
 	done
 
 	ensure_db
-	log_info "Updating queue health issue..."
-	update_queue_health_issue "$batch_id" ""
-	log_success "Queue health issue updated"
+	log_info "Updating queue health issues..."
+	local health_repos
+	health_repos=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks WHERE repo IS NOT NULL AND repo != '';" 2>/dev/null || echo "")
+	if [[ -n "$health_repos" ]]; then
+		while IFS= read -r health_repo; do
+			[[ -z "$health_repo" ]] && continue
+			local health_slug
+			health_slug=$(detect_repo_slug "$health_repo" 2>/dev/null || echo "")
+			[[ -z "$health_slug" ]] && continue
+			update_queue_health_issue "$batch_id" "$health_slug" "$health_repo"
+		done <<<"$health_repos"
+	fi
+	log_success "Queue health issues updated"
 	return 0
 }
 
