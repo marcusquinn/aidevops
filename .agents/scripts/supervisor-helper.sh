@@ -6506,8 +6506,51 @@ cmd_dispatch() {
 	local claimed_by=""
 	claimed_by=$(check_task_claimed "$task_id" "${trepo:-.}" 2>/dev/null) || true
 	if [[ -n "$claimed_by" ]]; then
-		log_warn "Task $task_id is claimed by assignee:$claimed_by — skipping dispatch"
-		return 0
+		# t1024: Check if the claim is stale (no active worker, claimed >2h ago)
+		# This prevents tasks from being stuck forever when a worker dies
+		local stale_threshold_seconds=7200 # 2 hours
+		local is_stale="false"
+
+		# Check if there's an active worker process for this task
+		local active_session=""
+		local escaped_id
+		escaped_id=$(sql_escape "$task_id")
+		active_session=$(db "$SUPERVISOR_DB" "SELECT session_id FROM tasks WHERE id = '$escaped_id' AND session_id IS NOT NULL AND status IN ('dispatched','running');" 2>/dev/null) || active_session=""
+
+		if [[ -z "$active_session" ]]; then
+			# No active worker — check how long the claim has been held
+			local todo_file="${trepo:-.}/TODO.md"
+			local task_line=""
+			task_line=$(grep -m1 "^[[:space:]]*- \[ \] $task_id " "$todo_file" 2>/dev/null) || task_line=""
+			if [[ -n "$task_line" ]]; then
+				local started_ts=""
+				started_ts=$(echo "$task_line" | sed -n 's/.*started:\([0-9T:Z-]*\).*/\1/p' 2>/dev/null) || started_ts=""
+				if [[ -n "$started_ts" ]]; then
+					local started_epoch now_epoch
+					started_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$started_ts" "+%s" 2>/dev/null) ||
+						started_epoch=$(date -d "$started_ts" "+%s" 2>/dev/null) || started_epoch=0
+					now_epoch=$(date "+%s")
+					if [[ "$started_epoch" -gt 0 ]] && ((now_epoch - started_epoch > stale_threshold_seconds)); then
+						is_stale="true"
+					fi
+				else
+					# No started: timestamp but claimed — treat as stale if task is queued in DB
+					local db_status=""
+					db_status=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$escaped_id';" 2>/dev/null) || db_status=""
+					if [[ "$db_status" == "queued" ]]; then
+						is_stale="true"
+					fi
+				fi
+			fi
+		fi
+
+		if [[ "$is_stale" == "true" ]]; then
+			log_warn "Task $task_id: stale claim by assignee:$claimed_by (no active worker, >2h) — auto-unclaiming (t1024)"
+			cmd_unclaim "$task_id" "${trepo:-.}" --force 2>/dev/null || true
+		else
+			log_warn "Task $task_id is claimed by assignee:$claimed_by — skipping dispatch"
+			return 0
+		fi
 	fi
 
 	# Claim the task before dispatching (t165 — TODO.md primary, GH Issue sync optional)
