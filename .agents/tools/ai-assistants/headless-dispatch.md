@@ -517,51 +517,6 @@ BLOCKED: Task says 'update the auth endpoint' but there are 3 auth endpoints
 Need clarification on which one(s) to update.
 ```
 
-## Supervisor CLI
-
-The supervisor (`supervisor-helper.sh`) manages parallel task execution with a SQLite state machine.
-
-### Basic Commands
-
-```bash
-# Add tasks and create batch
-supervisor-helper.sh add t001 --repo "$(pwd)" --description "Task description"
-supervisor-helper.sh batch "my-batch" --concurrency 3 --tasks "t001,t002,t003"
-
-# Task claiming (t165 — provider-agnostic, TODO.md primary)
-supervisor-helper.sh claim t001     # Adds assignee: to TODO.md, optional GH sync
-supervisor-helper.sh unclaim t001   # Releases claim (removes assignee:)
-# Claiming is automatic during dispatch. Manual claim/unclaim for coordination.
-
-# Install cron pulse (REQUIRED for autonomous operation)
-supervisor-helper.sh cron install
-
-# Manual pulse (cron does this automatically every 2 minutes)
-supervisor-helper.sh pulse --batch <batch-id>
-
-# Monitor
-supervisor-helper.sh dashboard --batch <batch-id>
-supervisor-helper.sh status <batch-id>
-```
-
-### Task Claiming
-
-**TODO.md `assignee:` field** is the authoritative claim source. Works offline, with any git host. GitHub Issue sync is optional best-effort (requires `gh` CLI + `ref:GH#` in TODO.md). GH Issue creation is opt-in: use `--with-issue` flag or `SUPERVISOR_AUTO_ISSUE=true`.
-
-### Assignee Ownership
-
-**NEVER remove or change `assignee:` on a task without explicit user confirmation.** The assignee may be a contributor on another host whose work you cannot see. `unclaim` requires `--force` to release a task claimed by someone else. The full-loop claims the task automatically before starting work — if the task is already claimed by another, the loop stops.
-
-### Cron Pulse
-
-**Cron pulse is mandatory** for autonomous operation. Without it, the supervisor is passive and requires manual `pulse` calls. The pulse cycle: check workers -> evaluate outcomes -> dispatch next -> cleanup.
-
-### Session Memory Monitoring
-
-Long-running OpenCode/Bun sessions accumulate WebKit malloc dirty pages that are never returned to the OS (25GB+ observed). Phase 11 of the pulse cycle checks the parent session's `phys_footprint` when a batch wave completes (no running/queued tasks). If memory exceeds `SUPERVISOR_SELF_MEM_LIMIT` (default: 8192MB), it saves a checkpoint, logs the respawn event to `~/.aidevops/logs/respawn-history.log`, and exits cleanly for the next cron pulse to start fresh.
-
-**Commands**: `supervisor-helper.sh mem-check` (inspect memory), `supervisor-helper.sh respawn-history` (review respawn patterns)
-
 ### Integration with Supervisor
 
 The supervisor uses worker exit behavior to drive the self-improvement loop:

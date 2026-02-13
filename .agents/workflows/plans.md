@@ -40,23 +40,6 @@ tools:
 | `tNNN.N` | `t001.1` | Subtask |
 | `tNNN.N.N` | `t001.1.1` | Sub-subtask |
 
-**Task ID Allocation**:
-
-Use `/new-task` or `claim-task-id.sh` to allocate task IDs. NEVER manually scan TODO.md with grep to determine the next ID — this causes collisions in parallel sessions.
-
-**Allocation flow**:
-1. `/new-task "Task title"` — interactive slash command (preferred in sessions)
-2. `planning-commit-helper.sh next-id --title "Task title"` — wrapper function
-3. `claim-task-id.sh --title "Task title" --repo-path "$(pwd)"` — direct script
-
-**Online mode**: Creates a GitHub/GitLab issue as a distributed lock, then allocates `t(N+1)`.
-
-**Offline fallback**: Allocates `t(N+100)` to avoid collisions (reconcile when back online).
-
-**Output format**: `TASK_ID=tNNN TASK_REF=GH#NNN TASK_OFFLINE=false`
-
-**Collision prevention**: If `git push` fails after adding a task, `git pull --rebase` and re-read TODO.md to verify your ID is still unique. If a collision exists, re-run `claim-task-id.sh` to get a fresh ID.
-
 **Dependency Syntax**:
 
 | Field | Example | Meaning |
@@ -482,34 +465,6 @@ Mark the reference task done:
 ### 5. Update CHANGELOG.md
 
 Add entry following `workflows/changelog.md` format.
-
-## Task Completion Rules
-
-**CRITICAL**: These rules prevent false completion cascades that auto-close GitHub issues prematurely.
-
-### Proof-Log Requirements
-
-Every task marked `[x]` MUST have one of:
-- `pr:#NNN` - Merged PR number with real deliverables
-- `verified:YYYY-MM-DD` - Manual verification timestamp
-
-### Enforcement Layers
-
-1. **Interactive sessions**: Use `task-complete-helper.sh <task-id> --pr <number>` or `task-complete-helper.sh <task-id> --verified`
-2. **Autonomous workers**: Supervisor `update_todo_on_complete()` enforces proof-log before marking `[x]`
-3. **Pre-commit hook**: Warns when `[ ] -> [x]` without proof-log (warning only, commit proceeds)
-4. **Issue-sync pipeline**: Auto-closes GitHub issues when tasks are marked `[x]` - requires proof-log to prevent false closures
-
-### What NOT to Do
-
-- NEVER mark `[x]` just because a file exists - verify the PR was merged with substantive changes
-- NEVER close GitHub issues manually with `gh issue close` - let issue-sync verify deliverables first
-- If a worker completes with `no_pr` or `task_only`, task stays `[ ]` until verified
-- Checking file existence is NOT sufficient - verify merged PR contains real deliverables
-
-### Worker Restrictions
-
-Workers (headless autonomous agents) MUST NOT edit TODO.md. The supervisor owns all TODO.md updates. Workers report status via exit code, log output, and PR creation only. Task notes go in commit messages or PR body, never in TODO.md.
 
 ## PRD and Task Generation
 
