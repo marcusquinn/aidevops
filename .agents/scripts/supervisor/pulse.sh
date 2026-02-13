@@ -3,7 +3,6 @@
 #
 # Functions for the main pulse loop and post-PR lifecycle processing
 
-
 #######################################
 # Supervisor pulse - stateless check and dispatch cycle
 # Designed to run via cron every 5 minutes
@@ -1200,6 +1199,17 @@ cmd_pulse() {
 					log_verbose "  Phase 10b: No new tasks to create"
 				fi
 			fi
+		fi
+	fi
+
+	# Phase 10c: Audit regression detection (t1032.6)
+	# Checks for >20% increase in audit findings vs previous run.
+	# Logs warnings to pulse log when regressions are detected.
+	local audit_helper="${SCRIPT_DIR}/code-audit-helper.sh"
+	if [[ -x "$audit_helper" ]]; then
+		log_verbose "  Phase 10c: Checking for audit regressions"
+		if ! bash "$audit_helper" check-regression 2>>"$SUPERVISOR_LOG"; then
+			log_warn "  Phase 10c: Audit regressions detected (see warnings above)"
 		fi
 	fi
 
