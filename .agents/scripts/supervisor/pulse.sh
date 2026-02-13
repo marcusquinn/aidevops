@@ -509,6 +509,67 @@ cmd_pulse() {
 		log_error "Phase 3b (process_verify_queue) failed — see $SUPERVISOR_LOG for details"
 	fi
 
+	# Phase 3c: Reconcile terminal DB states with GitHub issues (t1038)
+	# Tasks can reach terminal states (cancelled, failed, verified) via direct DB
+	# updates or manual intervention, bypassing cmd_transition and its issue sync.
+	# This sweep finds tasks in terminal states whose GitHub issues are still open
+	# and syncs them. Runs at most once per 10 minutes to avoid API rate limits.
+	local reconcile_cooldown_file="${SUPERVISOR_DIR}/reconcile-issues-last-run"
+	local reconcile_cooldown=600 # 10 minutes
+	local should_reconcile=true
+	if [[ -f "$reconcile_cooldown_file" ]]; then
+		local last_reconcile
+		last_reconcile=$(cat "$reconcile_cooldown_file" 2>/dev/null || echo "0")
+		local now_epoch
+		now_epoch=$(date +%s)
+		if [[ $((now_epoch - last_reconcile)) -lt "$reconcile_cooldown" ]]; then
+			should_reconcile=false
+		fi
+	fi
+
+	if [[ "$should_reconcile" == "true" ]] && command -v gh &>/dev/null; then
+		local terminal_tasks
+		terminal_tasks=$(db "$SUPERVISOR_DB" "
+			SELECT id, status, repo FROM tasks
+			WHERE status IN ('cancelled', 'failed', 'verified', 'deployed')
+			  AND id IN (
+				SELECT DISTINCT task_id FROM state_log
+				WHERE timestamp > datetime('now', '-7 days')
+			  )
+		;" 2>/dev/null || echo "")
+
+		if [[ -n "$terminal_tasks" ]]; then
+			local reconciled=0
+			while IFS='|' read -r rec_id rec_status rec_repo; do
+				[[ -z "$rec_id" ]] && continue
+
+				# Find the GitHub issue number
+				local rec_issue
+				rec_issue=$(find_task_issue_number "$rec_id" "$rec_repo" 2>/dev/null || echo "")
+				[[ -z "$rec_issue" ]] && continue
+
+				local rec_slug
+				rec_slug=$(detect_repo_slug "$rec_repo" 2>/dev/null || echo "")
+				[[ -z "$rec_slug" ]] && continue
+
+				# Check if the issue is still open
+				local issue_state
+				issue_state=$(gh issue view "$rec_issue" --repo "$rec_slug" --json state -q .state 2>/dev/null || echo "")
+				if [[ "$issue_state" == "OPEN" ]]; then
+					log_info "  Phase 3c: Reconciling $rec_id ($rec_status) — issue #$rec_issue still open"
+					sync_issue_status_label "$rec_id" "$rec_status" "reconcile" 2>>"$SUPERVISOR_LOG" || true
+					reconciled=$((reconciled + 1))
+				fi
+			done <<<"$terminal_tasks"
+
+			if [[ "$reconciled" -gt 0 ]]; then
+				log_success "  Phase 3c: Reconciled $reconciled issue(s)"
+			fi
+		fi
+
+		date +%s >"$reconcile_cooldown_file" 2>/dev/null || true
+	fi
+
 	# Phase 3.5: Auto-retry blocked merge-conflict tasks (t1029)
 	# When a task is blocked with "Merge conflict — auto-rebase failed", periodically
 	# re-attempt the rebase after main advances. Other PRs merging often resolve conflicts.
