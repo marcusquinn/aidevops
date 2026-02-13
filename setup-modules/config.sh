@@ -110,6 +110,15 @@ update_opencode_config() {
 		print_warning "OpenCode agent generator not found at $generator_script"
 	fi
 
+	# Regenerate subagent index for plugin startup (t1040)
+	local index_script=".agents/scripts/subagent-index-helper.sh"
+	if [[ -f "$index_script" ]]; then
+		if bash "$index_script" generate; then
+			print_success "Subagent index regenerated"
+		else
+			print_warning "Subagent index generation encountered issues"
+		fi
+	fi
+
 	return 0
 }
-

@@ -3,11 +3,10 @@ import {
   readFileSync,
   readdirSync,
   existsSync,
-  statSync,
   appendFileSync,
   mkdirSync,
 } from "fs";
-import { join, basename } from "path";
+import { join } from "path";
 import { homedir, platform } from "os";
 import { createTools } from "./tools.mjs";
 
@@ -301,49 +300,86 @@ function isHookManagedByOmoc(hookName) {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 1: Agent Loader
+// Phase 1: Lightweight Agent Discovery (t1040)
 // ---------------------------------------------------------------------------
+// Previously scanned 500+ .md files at startup (readFileSync + parseFrontmatter
+// each), causing TUI display glitches and slow launches.
+//
+// Strategy (cheapest first):
+//   1. Read subagent-index.toon (1 file, ~177 lines) — pre-built index
+//   2. Fallback: directory-only scan (readdirSync for filenames, no file reads)
+//
+// The index is manually maintained in the repo. The fallback ensures new agents
+// are still discoverable even if the index is stale or missing.
+
+/** Names to skip when discovering agents. */
+const SKIP_NAMES = new Set([
+  "README",
+  "AGENTS",
+  "SKILL",
+  "SKILL-SCAN-RESULTS",
+  "node_modules",
+  "references",
+  "loop-state",
+]);
 
 /**
- * Load agent definitions from ~/.aidevops/agents/ by reading markdown files
- * and parsing their YAML frontmatter.
- * @returns {Array<{name: string, description: string, mode: string, relPath: string}>}
+ * Parse subagent-index.toon and return leaf agent names with descriptions.
+ * Reads ONE file instead of 500+. Returns entries like:
+ *   { name: "dataforseo", description: "Search optimization - keywords..." }
+ * @returns {Array<{name: string, description: string}>}
  */
-function loadAgentDefinitions() {
-  if (!existsSync(AGENTS_DIR)) return [];
+function loadAgentIndex() {
+  const indexPath = join(AGENTS_DIR, "subagent-index.toon");
+  const content = readIfExists(indexPath);
+  if (!content) return loadAgentsFallback();
 
   const agents = [];
+  const seen = new Set();
 
-  // Load primary agents (root *.md files)
-  try {
-    const rootFiles = readdirSync(AGENTS_DIR).filter(
-      (f) =>
-        f.endsWith(".md") &&
-        !f.startsWith("AGENTS") &&
-        !f.startsWith("SKILL") &&
-        !f.startsWith("README"),
-    );
+  // Parse the subagents TOON block: folder, purpose, key_files
+  // e.g.: seo/,Search optimization - keywords and rankings,dataforseo|serper|semrush|...
+  const subagentMatch = content.match(
+    /<!--TOON:subagents\[\d+\]\{[^}]+\}:\n([\s\S]*?)-->/,
+  );
+  if (!subagentMatch) return loadAgentsFallback();
 
-    for (const file of rootFiles) {
-      const filepath = join(AGENTS_DIR, file);
-      if (!statSync(filepath).isFile()) continue;
+  for (const line of subagentMatch[1].split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
 
-      const content = readIfExists(filepath);
-      if (!content) continue;
+    const parts = trimmed.split(",");
+    if (parts.length < 3) continue;
 
-      const { data } = parseFrontmatter(content);
-      agents.push({
-        name: basename(file, ".md"), // Root files keep simple names (no collision risk)
-        description: data.description || "",
-        mode: data.mode || "primary",
-        relPath: file,
-      });
+    const folder = parts[0] || "";
+    // Skip reference/skill directories (not real agents)
+    if (folder.includes("references/") || folder.includes("loop-state/")) continue;
+
+    const purpose = parts[1] || "";
+    const keyFiles = parts.slice(2).join(",");
+
+    for (const leaf of keyFiles.split("|")) {
+      const name = leaf.trim();
+      if (!name || SKIP_NAMES.has(name) || name.endsWith("-skill")) continue;
+      if (seen.has(name)) continue;
+      seen.add(name);
+      agents.push({ name, description: purpose });
     }
-  } catch {
-    // ignore read errors
   }
 
-  // Load subagents from known subdirectories
+  return agents;
+}
+
+/**
+ * Fallback: discover agents from directory names only (no file reads).
+ * Lists .md filenames in known subdirectories — O(n) readdirSync calls
+ * where n = number of subdirectories (~11), NOT number of files.
+ * Each readdirSync returns filenames without reading file contents.
+ * @returns {Array<{name: string, description: string}>}
+ */
+function loadAgentsFallback() {
+  if (!existsSync(AGENTS_DIR)) return [];
+
   const subdirs = [
     "aidevops",
     "content",
@@ -354,31 +390,27 @@ function loadAgentDefinitions() {
     "memory",
     "custom",
     "draft",
-    "scripts",
-    "templates",
   ];
 
-  for (const subdir of subdirs) {
-    const dirPath = join(AGENTS_DIR, subdir);
-    if (!existsSync(dirPath)) continue;
+  const agents = [];
+  const seen = new Set();
 
-    try {
-      loadAgentsRecursive(dirPath, subdir, agents);
-    } catch {
-      // ignore
-    }
+  for (const subdir of subdirs) {
+    scanDirNames(join(AGENTS_DIR, subdir), subdir, agents, seen);
   }
 
   return agents;
 }
 
 /**
- * Recursively load agent markdown files from a directory.
+ * Recursively collect .md filenames from a directory tree.
+ * Only calls readdirSync (directory listing) — never reads file contents.
  * @param {string} dirPath
- * @param {string} relBase
+ * @param {string} folderDesc - used as description fallback
  * @param {Array} agents
+ * @param {Set} seen - dedup set
  */
-function loadAgentsRecursive(dirPath, relBase, agents) {
+function scanDirNames(dirPath, folderDesc, agents, seen) {
   let entries;
   try {
     entries = readdirSync(dirPath, { withFileTypes: true });
@@ -387,35 +419,17 @@ function loadAgentsRecursive(dirPath, relBase, agents) {
   }
 
   for (const entry of entries) {
-    const fullPath = join(dirPath, entry.name);
-
     if (entry.isDirectory()) {
-      // Skip references/ and node_modules/
-      if (entry.name === "references" || entry.name === "node_modules") {
-        continue;
-      }
-      loadAgentsRecursive(fullPath, join(relBase, entry.name), agents);
-    } else if (
-      entry.isFile() &&
-      entry.name.endsWith(".md") &&
-      !entry.name.startsWith("README") &&
-      !entry.name.endsWith("-skill.md")
-    ) {
-      const content = readIfExists(fullPath);
-      if (!content) continue;
-
-      const { data } = parseFrontmatter(content);
-      // Use relative path without .md extension to avoid name collisions (t1015)
-      // e.g., tools/git/github-cli.md → tools/git/github-cli
-      //       services/git/github-cli.md → services/git/github-cli
-      // This ensures agents with the same filename in different directories don't collide
-      const relPath = join(relBase, entry.name);
-      const agentName = relPath.replace(/\.md$/, "");
+      if (SKIP_NAMES.has(entry.name)) continue;
+      scanDirNames(join(dirPath, entry.name), folderDesc, agents, seen);
+    } else if (entry.isFile() && entry.name.endsWith(".md")) {
+      const name = entry.name.replace(/\.md$/, "");
+      if (SKIP_NAMES.has(name) || name.endsWith("-skill")) continue;
+      if (seen.has(name)) continue;
+      seen.add(name);
       agents.push({
-        name: agentName,
-        description: data.description || "",
-        mode: data.mode || "subagent",
-        relPath: relPath,
+        name,
+        description: `aidevops subagent: ${folderDesc}`,
       });
     }
   }
@@ -777,41 +791,44 @@ function applyAgentMcpTools(config) {
 }
 
 /**
- * Modify OpenCode config to register aidevops agents and MCP servers.
- * This complements generate-opencode-agents.sh by ensuring agents and
- * MCPs are always up-to-date even without re-running setup.sh.
+ * Modify OpenCode config to register aidevops subagents, MCP servers,
+ * and per-agent tool permissions.
+ *
+ * Subagent discovery uses subagent-index.toon (1 file, ~177 lines) instead
+ * of scanning 500+ .md files. This ensures @mention works on any repo while
+ * keeping startup fast. (t1040)
+ *
  * @param {object} config - OpenCode Config object (mutable)
  */
 async function configHook(config) {
-  // --- Agent registration (Phase 1) ---
   if (!config.agent) config.agent = {};
 
-  const agents = loadAgentDefinitions();
+  // --- Lightweight agent registration from pre-built index ---
+  const indexAgents = loadAgentIndex();
   let agentsInjected = 0;
 
-  for (const agent of agents) {
+  for (const agent of indexAgents) {
     if (config.agent[agent.name]) continue;
-    if (agent.mode !== "subagent") continue;
 
     config.agent[agent.name] = {
-      description: agent.description || `aidevops subagent: ${agent.relPath}`,
+      description: agent.description,
       mode: "subagent",
     };
     agentsInjected++;
   }
 
-  // --- MCP registration (Phase 2) ---
+  // --- MCP registration ---
   const mcpsRegistered = registerMcpServers(config);
   const agentToolsUpdated = applyAgentMcpTools(config);
 
-  // Log summary for debugging (visible in OpenCode logs)
+  // Silent unless something was actually changed (avoids TUI flash on startup)
   const parts = [];
   if (agentsInjected > 0) parts.push(`${agentsInjected} agents`);
   if (mcpsRegistered > 0) parts.push(`${mcpsRegistered} MCPs`);
   if (agentToolsUpdated > 0) parts.push(`${agentToolsUpdated} agent tool perms`);
 
   if (parts.length > 0) {
-    console.error(`[aidevops] Config hook: injected ${parts.join(", ")}`);
+    console.error(`[aidevops] Config hook: ${parts.join(", ")}`);
   }
 }
 
@@ -1518,7 +1535,7 @@ async function compactingHook(_input, output, directory) {
  *
  * Provides:
  * 0. oh-my-opencode detection — detects OMOC presence and deduplicates (t008.4)
- * 1. Config hook — dynamic agent loading + MCP server registration from ~/.aidevops/agents/
+ * 1. Config hook — lightweight agent index + MCP server registration (t1040)
  * 2. Custom tools — aidevops CLI, memory, pre-edit check, quality check, hook installer
  * 3. Quality hooks — full pre-commit pipeline (ShellCheck, return statements,
  *    positional params, secrets scan, markdown lint) on Write/Edit operations
@@ -1547,7 +1564,7 @@ export async function AidevopsPlugin({ directory }) {
   detectOhMyOpenCode(directory);
 
   return {
-    // Phase 1+2: Dynamic agent and config injection
+    // Phase 1+2: Lightweight agent index + MCP registration
     config: async (config) => configHook(config),
 
     // Phase 1: Custom tools (extracted to tools.mjs)

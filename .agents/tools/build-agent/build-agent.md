@@ -58,6 +58,12 @@ opencode run "Test query" --agent Build+
 
 See `agent-testing.md` for the full testing framework.
 
+**After creating or promoting agents**: Regenerate the subagent index so the OpenCode plugin discovers them at startup:
+
+```bash
+~/.aidevops/agents/scripts/subagent-index-helper.sh generate
+```
+
 <!-- AI-CONTEXT-END -->
 
 ## Detailed Guidance
