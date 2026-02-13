@@ -1221,7 +1221,24 @@ cmd_pulse() {
 								if [[ -x "$claim_script" ]]; then
 									local task_desc
 									task_desc=$(echo "$new_line" | sed -E 's/^\s*- \[ \] //')
-									claim_output=$("$claim_script" --title "${task_desc:0:80}" --repo-path "$task_repo" 2>>"$SUPERVISOR_LOG") || claim_output=""
+
+									# Extract hashtags from task description for labels
+									local labels=""
+									local tag_list=()
+									local task_desc_copy="$task_desc"
+									while [[ "$task_desc_copy" =~ \#([a-zA-Z0-9_-]+) ]]; do
+										local tag="${BASH_REMATCH[1]}"
+										tag_list+=("$tag")
+										task_desc_copy="${task_desc_copy#*#${tag}}"
+									done
+									if [[ ${#tag_list[@]} -gt 0 ]]; then
+										labels=$(
+											IFS=,
+											echo "${tag_list[*]}"
+										)
+									fi
+
+									claim_output=$("$claim_script" --title "${task_desc:0:80}" --labels "$labels" --repo-path "$task_repo" 2>>"$SUPERVISOR_LOG") || claim_output=""
 									claimed_id=$(echo "$claim_output" | grep "^task_id=" | cut -d= -f2)
 								fi
 								if [[ -n "${claimed_id:-}" ]]; then
