@@ -1,438 +1,1301 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1091
 set -euo pipefail
 
-# Code Audit Helper - Audit trend tracking and regression detection
+# =============================================================================
+# Code Audit Helper - Unified Audit Orchestrator (t1032.1)
+# =============================================================================
+# Calls each service collector (CodeRabbit, Codacy, SonarCloud, CodeFactor),
+# aggregates findings into a common SQLite schema, deduplicates cross-service
+# findings on same file+line, and outputs a unified report.
 #
 # Usage:
-#   code-audit-helper.sh init                    # Initialize audit database
-#   code-audit-helper.sh snapshot <source>       # Record snapshot after audit run
-#   code-audit-helper.sh trend [--source <src>]  # Show WoW/MoM trends
-#   code-audit-helper.sh check-regression        # Check for regressions (>20% increase)
+#   code-audit-helper.sh audit [--repo REPO] [--pr NUMBER] [--services LIST]
+#   code-audit-helper.sh report [--format json|text|csv] [--severity LEVEL]
+#   code-audit-helper.sh summary [--pr NUMBER]
+#   code-audit-helper.sh status
+#   code-audit-helper.sh reset
+#   code-audit-helper.sh help
+#
+# Author: AI DevOps Framework
+# Version: 1.0.0
+# License: MIT
+# =============================================================================
 
-# Database location
-AUDIT_DB="${AUDIT_DB:-$HOME/.aidevops/.agent-workspace/work/code-audit/audit.db}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+init_log_file
 
-# Logging functions
+# =============================================================================
+# Constants
+# =============================================================================
+
+readonly AUDIT_DATA_DIR="${HOME}/.aidevops/.agent-workspace/work/code-audit"
+readonly AUDIT_DB="${AUDIT_DATA_DIR}/audit.db"
+readonly AUDIT_CONFIG_TEMPLATE="configs/code-audit-config.json.txt"
+readonly AUDIT_CONFIG="configs/code-audit-config.json"
+
+# Known services (used by get_configured_services fallback)
+readonly KNOWN_SERVICES="coderabbit codacy sonarcloud codefactor"
+
+# =============================================================================
+# Logging
+# =============================================================================
+
 log_info() {
-	echo -e "\033[0;32m[INFO]\033[0m $*" >&2
+	echo -e "${BLUE}[AUDIT]${NC} $*" >&2
 	return 0
 }
-
+log_success() {
+	echo -e "${GREEN}[AUDIT]${NC} $*" >&2
+	return 0
+}
 log_warn() {
-	echo -e "\033[1;33m[WARN]\033[0m $*" >&2
+	echo -e "${YELLOW}[AUDIT]${NC} $*" >&2
 	return 0
 }
-
 log_error() {
-	echo -e "\033[0;31m[ERROR]\033[0m $*" >&2
+	echo -e "${RED}[AUDIT]${NC} $*" >&2
 	return 0
 }
 
-# Ensure database directory exists
-ensure_db_dir() {
-	local db_dir
-	db_dir="$(dirname "$AUDIT_DB")"
-	if [[ ! -d "$db_dir" ]]; then
-		mkdir -p "$db_dir"
+# =============================================================================
+# SQLite wrapper: sets busy_timeout on every connection (t135.3 pattern)
+# =============================================================================
+
+db() {
+	sqlite3 -cmd ".timeout 5000" "$@"
+	return $?
+}
+
+# =============================================================================
+# Database Initialization
+# =============================================================================
+
+ensure_db() {
+	mkdir -p "$AUDIT_DATA_DIR" 2>/dev/null || true
+
+	if [[ ! -f "$AUDIT_DB" ]]; then
+		init_db
+		return 0
 	fi
+
+	# Ensure WAL mode for existing databases
+	local current_mode
+	current_mode=$(db "$AUDIT_DB" "PRAGMA journal_mode;" 2>/dev/null || echo "")
+	if [[ "$current_mode" != "wal" ]]; then
+		db "$AUDIT_DB" "PRAGMA journal_mode=WAL;" 2>/dev/null || log_warn "Failed to enable WAL mode"
+	fi
+
 	return 0
 }
 
-# Initialize or migrate database schema
 init_db() {
-	ensure_db_dir
+	db "$AUDIT_DB" <<'SQL' >/dev/null
+PRAGMA journal_mode=WAL;
 
-	# Check if audit_snapshots table exists
-	local table_exists
-	table_exists=$(sqlite3 "$AUDIT_DB" "SELECT name FROM sqlite_master WHERE type='table' AND name='audit_snapshots';" 2>/dev/null || echo "")
+-- Audit runs: one row per orchestrated audit invocation
+CREATE TABLE IF NOT EXISTS audit_runs (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    repo         TEXT NOT NULL,
+    pr_number    INTEGER DEFAULT 0,
+    head_sha     TEXT DEFAULT '',
+    started_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    completed_at TEXT DEFAULT '',
+    services_run TEXT DEFAULT '',
+    status       TEXT NOT NULL DEFAULT 'running'
+);
 
-	if [[ -z "$table_exists" ]]; then
-		log_info "Creating audit_snapshots table..."
-		sqlite3 "$AUDIT_DB" <<-'SQL'
-			PRAGMA journal_mode=WAL;
-			PRAGMA busy_timeout=5000;
+-- Unified findings from all services
+CREATE TABLE IF NOT EXISTS audit_findings (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id       INTEGER REFERENCES audit_runs(id),
+    source       TEXT NOT NULL,
+    severity     TEXT NOT NULL DEFAULT 'info',
+    path         TEXT DEFAULT '',
+    line         INTEGER DEFAULT 0,
+    description  TEXT NOT NULL,
+    category     TEXT DEFAULT 'general',
+    rule_id      TEXT DEFAULT '',
+    dedup_key    TEXT DEFAULT '',
+    is_duplicate INTEGER DEFAULT 0,
+    collected_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
 
-			CREATE TABLE IF NOT EXISTS audit_snapshots (
-			    id                INTEGER PRIMARY KEY AUTOINCREMENT,
-			    date              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
-			    source            TEXT NOT NULL,
-			    total_findings    INTEGER NOT NULL DEFAULT 0,
-			    critical_count    INTEGER NOT NULL DEFAULT 0,
-			    high_count        INTEGER NOT NULL DEFAULT 0,
-			    medium_count      INTEGER NOT NULL DEFAULT 0,
-			    low_count         INTEGER NOT NULL DEFAULT 0,
-			    false_positives   INTEGER NOT NULL DEFAULT 0,
-			    tasks_created     INTEGER NOT NULL DEFAULT 0
-			);
-			CREATE INDEX IF NOT EXISTS idx_snapshots_date ON audit_snapshots(date);
-			CREATE INDEX IF NOT EXISTS idx_snapshots_source ON audit_snapshots(source);
-		SQL
-		log_info "audit_snapshots table created successfully"
-	else
-		log_info "audit_snapshots table already exists"
-	fi
+CREATE INDEX IF NOT EXISTS idx_findings_run ON audit_findings(run_id);
+CREATE INDEX IF NOT EXISTS idx_findings_source ON audit_findings(source);
+CREATE INDEX IF NOT EXISTS idx_findings_severity ON audit_findings(severity);
+CREATE INDEX IF NOT EXISTS idx_findings_path ON audit_findings(path);
+CREATE INDEX IF NOT EXISTS idx_findings_dedup ON audit_findings(dedup_key);
+CREATE INDEX IF NOT EXISTS idx_findings_dup_flag ON audit_findings(is_duplicate);
+SQL
 
+	log_info "Database initialized: $AUDIT_DB"
 	return 0
 }
 
-# Record a snapshot after an audit run
-# Usage: snapshot <source> [--total N] [--critical N] [--high N] [--medium N] [--low N] [--false-positives N] [--tasks N]
-cmd_snapshot() {
-	local source=""
-	local total=0
-	local critical=0
-	local high=0
-	local medium=0
-	local low=0
-	local false_positives=0
-	local tasks=0
+# =============================================================================
+# Configuration Loading
+# =============================================================================
 
-	if [[ $# -lt 1 ]]; then
-		log_error "Usage: snapshot <source> [--total N] [--critical N] [--high N] [--medium N] [--low N] [--false-positives N] [--tasks N]"
+# Get the list of enabled services from config or defaults
+get_configured_services() {
+	local config_file=""
+
+	# Try working config first, then template
+	if [[ -f "$AUDIT_CONFIG" ]]; then
+		config_file="$AUDIT_CONFIG"
+	elif [[ -f "$AUDIT_CONFIG_TEMPLATE" ]]; then
+		config_file="$AUDIT_CONFIG_TEMPLATE"
+	fi
+
+	if [[ -n "$config_file" ]] && command -v jq &>/dev/null; then
+		jq -r '.services | keys[]' "$config_file" 2>/dev/null || echo "$KNOWN_SERVICES"
+	else
+		echo "$KNOWN_SERVICES"
+	fi
+	return 0
+}
+
+# =============================================================================
+# Repository Info
+# =============================================================================
+
+get_repo() {
+	local repo
+	repo="${GITHUB_REPOSITORY:-}"
+	if [[ -z "$repo" ]]; then
+		repo=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) || {
+			log_warn "Not in a GitHub repository or gh CLI not configured"
+			echo "unknown/unknown"
+			return 0
+		}
+	fi
+	echo "$repo"
+	return 0
+}
+
+get_head_sha() {
+	git rev-parse --short HEAD 2>/dev/null || echo "unknown"
+	return 0
+}
+
+# =============================================================================
+# SQL Escape Helper
+# =============================================================================
+
+sql_escape() {
+	local val
+	val="$1"
+	val="${val//\'/\'\'}"
+	echo "$val"
+	return 0
+}
+
+# =============================================================================
+# Service Collectors
+# =============================================================================
+
+# Collect findings from CodeRabbit via its collector helper
+collect_coderabbit() {
+	local run_id="$1"
+	local repo="$2"
+	local pr_number="$3"
+	local count=0
+
+	local collector="${SCRIPT_DIR}/coderabbit-collector-helper.sh"
+	if [[ ! -x "$collector" ]]; then
+		log_warn "CodeRabbit collector not found: $collector"
+		return 0
+	fi
+
+	# If we have a PR, collect from it
+	if [[ "$pr_number" -gt 0 ]]; then
+		log_info "Collecting CodeRabbit findings for PR #${pr_number}..."
+		"$collector" collect --pr "$pr_number" 2>/dev/null || {
+			log_warn "CodeRabbit collection failed for PR #${pr_number}"
+			echo "0"
+			return 0
+		}
+
+		# Import from CodeRabbit's own DB into unified audit_findings
+		local cr_db="${HOME}/.aidevops/.agent-workspace/work/coderabbit-reviews/reviews.db"
+		if [[ -f "$cr_db" ]]; then
+			count=$(import_coderabbit_findings "$run_id" "$cr_db" "$pr_number")
+		fi
+	else
+		log_info "No PR specified — skipping CodeRabbit (requires PR context)"
+	fi
+
+	echo "$count"
+	return 0
+}
+
+# Import CodeRabbit findings from its native DB into audit_findings
+import_coderabbit_findings() {
+	local run_id="$1"
+	local cr_db="$2"
+	local pr_number="$3"
+
+	# Extract comments from CodeRabbit DB and insert into audit_findings
+	local sql_file
+	sql_file=$(mktemp)
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	push_cleanup "rm -f '${sql_file}'"
+
+	db "$cr_db" -separator $'\x1f' "
+        SELECT path, line, severity, category, body
+        FROM comments
+        WHERE pr_number = $pr_number
+        ORDER BY collected_at DESC;
+    " 2>/dev/null | while IFS=$'\x1f' read -r path line severity category body; do
+		local desc
+		desc=$(echo "$body" | cut -c1-500)
+		local dedup_key="${path}:${line}"
+		echo "INSERT INTO audit_findings (run_id, source, severity, path, line, description, category, dedup_key)
+              VALUES ($run_id, 'coderabbit', '$(sql_escape "$severity")', '$(sql_escape "$path")', ${line:-0},
+                      '$(sql_escape "$desc")', '$(sql_escape "$category")', '$(sql_escape "$dedup_key")');" >>"$sql_file"
+	done
+
+	if [[ -s "$sql_file" ]]; then
+		db "$AUDIT_DB" <"$sql_file" 2>/dev/null || log_warn "Some CodeRabbit imports may have failed"
+	fi
+
+	local count
+	count=$(db "$AUDIT_DB" "SELECT COUNT(*) FROM audit_findings WHERE run_id = $run_id AND source = 'coderabbit';")
+	echo "${count:-0}"
+	return 0
+}
+
+# Collect findings from SonarCloud via API
+collect_sonarcloud() {
+	local run_id="$1"
+	local repo="$2"
+	local _pr_number="$3"
+	local count=0
+
+	if [[ -z "${SONAR_TOKEN:-}" ]]; then
+		log_warn "SONAR_TOKEN not set — skipping SonarCloud"
+		echo "0"
+		return 0
+	fi
+
+	log_info "Collecting SonarCloud findings..."
+
+	local project_key="${SONAR_PROJECT_KEY:-}"
+	if [[ -z "$project_key" ]]; then
+		# Try to derive from repo name
+		project_key=$(echo "$repo" | tr '/' '_')
+	fi
+
+	local api_url="https://sonarcloud.io/api/issues/search"
+	local params="componentKeys=${project_key}&resolved=false&ps=100&statuses=OPEN,CONFIRMED,REOPENED"
+
+	local response
+	response=$(curl -s -u "${SONAR_TOKEN}:" "${api_url}?${params}" 2>/dev/null) || {
+		log_warn "SonarCloud API request failed"
+		echo "0"
+		return 0
+	}
+
+	if ! command -v jq &>/dev/null; then
+		log_warn "jq not available — cannot parse SonarCloud response"
+		echo "0"
+		return 0
+	fi
+
+	# Parse issues and insert into audit_findings
+	local sql_file
+	sql_file=$(mktemp)
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	push_cleanup "rm -f '${sql_file}'"
+
+	local jq_filter_file
+	jq_filter_file=$(mktemp)
+	push_cleanup "rm -f '${jq_filter_file}'"
+
+	cat >"$jq_filter_file" <<'JQ_EOF'
+def sql_str: gsub("'"; "''") | "'" + . + "'";
+def map_severity:
+    if . == "BLOCKER" then "critical"
+    elif . == "CRITICAL" then "critical"
+    elif . == "MAJOR" then "high"
+    elif . == "MINOR" then "medium"
+    elif . == "INFO" then "low"
+    else "info"
+    end;
+def map_type:
+    if . == "BUG" then "bug"
+    elif . == "VULNERABILITY" then "security"
+    elif . == "SECURITY_HOTSPOT" then "security"
+    elif . == "CODE_SMELL" then "style"
+    else "general"
+    end;
+(.issues // [])[] |
+(.component // "" | split(":") | if length > 1 then .[1:] | join(":") else "" end) as $path |
+((.line // 0) | tostring) as $line |
+($path + ":" + $line) as $dedup_key |
+"INSERT INTO audit_findings (run_id, source, severity, path, line, description, category, rule_id, dedup_key) VALUES (" +
+$run_id + ", 'sonarcloud', " +
+((.severity // "INFO") | map_severity | sql_str) + ", " +
+($path | sql_str) + ", " +
+$line + ", " +
+((.message // "") | sql_str) + ", " +
+((.type // "CODE_SMELL") | map_type | sql_str) + ", " +
+((.rule // "") | sql_str) + ", " +
+($dedup_key | sql_str) +
+");"
+JQ_EOF
+
+	echo "$response" | jq -r \
+		--arg run_id "$run_id" \
+		-f "$jq_filter_file" >"$sql_file" 2>/dev/null || true
+
+	if [[ -s "$sql_file" ]]; then
+		db "$AUDIT_DB" <"$sql_file" 2>/dev/null || log_warn "Some SonarCloud imports may have failed"
+	fi
+
+	count=$(db "$AUDIT_DB" "SELECT COUNT(*) FROM audit_findings WHERE run_id = $run_id AND source = 'sonarcloud';")
+	echo "${count:-0}"
+	return 0
+}
+
+# Collect findings from Codacy via API
+collect_codacy() {
+	local run_id="$1"
+	local repo="$2"
+	local _pr_number="$3"
+	local count=0
+
+	local api_token="${CODACY_API_TOKEN:-${CODACY_PROJECT_TOKEN:-}}"
+	if [[ -z "$api_token" ]]; then
+		log_warn "CODACY_API_TOKEN not set — skipping Codacy"
+		echo "0"
+		return 0
+	fi
+
+	log_info "Collecting Codacy findings..."
+
+	local org username repo_name
+	org="${CODACY_ORGANIZATION:-}"
+	username="${CODACY_USERNAME:-}"
+	repo_name=$(echo "$repo" | cut -d'/' -f2)
+	local provider="${org:-$username}"
+
+	if [[ -z "$provider" ]]; then
+		# Try to derive from repo
+		provider=$(echo "$repo" | cut -d'/' -f1)
+	fi
+
+	local api_url="https://app.codacy.com/api/v3/analysis/organizations/gh/${provider}/repositories/${repo_name}/issues/search"
+
+	local response
+	response=$(curl -s -H "api-token: ${api_token}" \
+		-H "Content-Type: application/json" \
+		-d '{"limit": 100}' \
+		"$api_url" 2>/dev/null) || {
+		log_warn "Codacy API request failed"
+		echo "0"
+		return 0
+	}
+
+	if ! command -v jq &>/dev/null; then
+		log_warn "jq not available — cannot parse Codacy response"
+		echo "0"
+		return 0
+	fi
+
+	local sql_file
+	sql_file=$(mktemp)
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	push_cleanup "rm -f '${sql_file}'"
+
+	local jq_filter_file
+	jq_filter_file=$(mktemp)
+	push_cleanup "rm -f '${jq_filter_file}'"
+
+	cat >"$jq_filter_file" <<'JQ_EOF'
+def sql_str: gsub("'"; "''") | "'" + . + "'";
+def map_severity:
+    if . == "Error" then "critical"
+    elif . == "Warning" then "high"
+    elif . == "Info" then "medium"
+    else "info"
+    end;
+def map_category:
+    if . == "Security" then "security"
+    elif . == "ErrorProne" then "bug"
+    elif . == "Performance" then "performance"
+    elif . == "CodeStyle" then "style"
+    elif . == "Compatibility" then "general"
+    elif . == "UnusedCode" then "style"
+    elif . == "Complexity" then "refactoring"
+    elif . == "Documentation" then "documentation"
+    else "general"
+    end;
+(.data // [])[] |
+((.filePath // "") | tostring) as $path |
+((.lineNumber // 0) | tostring) as $line |
+($path + ":" + $line) as $dedup_key |
+"INSERT INTO audit_findings (run_id, source, severity, path, line, description, category, rule_id, dedup_key) VALUES (" +
+$run_id + ", 'codacy', " +
+((.level // "Info") | map_severity | sql_str) + ", " +
+($path | sql_str) + ", " +
+$line + ", " +
+((.message // "") | sql_str) + ", " +
+((.patternInfo.category // "general") | map_category | sql_str) + ", " +
+((.patternInfo.id // "") | sql_str) + ", " +
+($dedup_key | sql_str) +
+");"
+JQ_EOF
+
+	echo "$response" | jq -r \
+		--arg run_id "$run_id" \
+		-f "$jq_filter_file" >"$sql_file" 2>/dev/null || true
+
+	if [[ -s "$sql_file" ]]; then
+		db "$AUDIT_DB" <"$sql_file" 2>/dev/null || log_warn "Some Codacy imports may have failed"
+	fi
+
+	count=$(db "$AUDIT_DB" "SELECT COUNT(*) FROM audit_findings WHERE run_id = $run_id AND source = 'codacy';")
+	echo "${count:-0}"
+	return 0
+}
+
+# Collect findings from CodeFactor via API
+collect_codefactor() {
+	local run_id="$1"
+	local repo="$2"
+	local _pr_number="$3"
+	local count=0
+
+	local api_token="${CODEFACTOR_API_TOKEN:-}"
+	if [[ -z "$api_token" ]]; then
+		log_warn "CODEFACTOR_API_TOKEN not set — skipping CodeFactor"
+		echo "0"
+		return 0
+	fi
+
+	log_info "Collecting CodeFactor findings..."
+
+	local api_url="https://www.codefactor.io/api/v1/repos/github/${repo}/issues"
+
+	local response
+	response=$(curl -s -H "Authorization: Bearer ${api_token}" \
+		-H "Accept: application/json" \
+		"$api_url" 2>/dev/null) || {
+		log_warn "CodeFactor API request failed"
+		echo "0"
+		return 0
+	}
+
+	if ! command -v jq &>/dev/null; then
+		log_warn "jq not available — cannot parse CodeFactor response"
+		echo "0"
+		return 0
+	fi
+
+	local sql_file
+	sql_file=$(mktemp)
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	push_cleanup "rm -f '${sql_file}'"
+
+	local jq_filter_file
+	jq_filter_file=$(mktemp)
+	push_cleanup "rm -f '${jq_filter_file}'"
+
+	cat >"$jq_filter_file" <<'JQ_EOF'
+def sql_str: gsub("'"; "''") | "'" + . + "'";
+def map_severity:
+    if . == "Critical" or . == "Major" then "critical"
+    elif . == "Minor" then "medium"
+    elif . == "Issue" then "high"
+    else "info"
+    end;
+(.[] // empty) |
+((.filePath // "") | tostring) as $path |
+((.startLine // 0) | tostring) as $line |
+($path + ":" + $line) as $dedup_key |
+"INSERT INTO audit_findings (run_id, source, severity, path, line, description, category, rule_id, dedup_key) VALUES (" +
+$run_id + ", 'codefactor', " +
+((.severity // "Info") | map_severity | sql_str) + ", " +
+($path | sql_str) + ", " +
+$line + ", " +
+((.message // .description // "") | sql_str) + ", 'general', " +
+((.ruleId // "") | sql_str) + ", " +
+($dedup_key | sql_str) +
+");"
+JQ_EOF
+
+	echo "$response" | jq -r \
+		--arg run_id "$run_id" \
+		-f "$jq_filter_file" >"$sql_file" 2>/dev/null || true
+
+	if [[ -s "$sql_file" ]]; then
+		db "$AUDIT_DB" <"$sql_file" 2>/dev/null || log_warn "Some CodeFactor imports may have failed"
+	fi
+
+	count=$(db "$AUDIT_DB" "SELECT COUNT(*) FROM audit_findings WHERE run_id = $run_id AND source = 'codefactor';")
+	echo "${count:-0}"
+	return 0
+}
+
+# =============================================================================
+# Deduplication
+# =============================================================================
+
+# Mark duplicate findings: same file+line across different services.
+# The first finding (lowest id) is kept as primary; others are marked duplicate.
+deduplicate_findings() {
+	local run_id="$1"
+
+	log_info "Deduplicating cross-service findings..."
+
+	db "$AUDIT_DB" "
+        UPDATE audit_findings
+        SET is_duplicate = 1
+        WHERE run_id = $run_id
+          AND dedup_key != ''
+          AND dedup_key != ':0'
+          AND id NOT IN (
+              SELECT MIN(id)
+              FROM audit_findings
+              WHERE run_id = $run_id
+                AND dedup_key != ''
+                AND dedup_key != ':0'
+              GROUP BY dedup_key
+          );
+    " 2>/dev/null || log_warn "Deduplication query may have partially failed"
+
+	local dup_count
+	dup_count=$(db "$AUDIT_DB" "SELECT COUNT(*) FROM audit_findings WHERE run_id = $run_id AND is_duplicate = 1;")
+	local total
+	total=$(db "$AUDIT_DB" "SELECT COUNT(*) FROM audit_findings WHERE run_id = $run_id;")
+
+	log_info "Deduplication: ${dup_count} duplicates found out of ${total} total findings"
+	return 0
+}
+
+# =============================================================================
+# Audit Command (Main Orchestrator)
+# =============================================================================
+
+cmd_audit() {
+	local repo=""
+	local pr_number=0
+	local services_filter=""
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--repo)
+			[[ -z "${2:-}" || "$2" == --* ]] && {
+				log_error "Missing value for --repo"
+				return 1
+			}
+			repo="$2"
+			shift 2
+			;;
+		--pr)
+			[[ -z "${2:-}" || "$2" == --* ]] && {
+				log_error "Missing value for --pr"
+				return 1
+			}
+			pr_number="$2"
+			shift 2
+			;;
+		--services)
+			[[ -z "${2:-}" || "$2" == --* ]] && {
+				log_error "Missing value for --services"
+				return 1
+			}
+			services_filter="$2"
+			shift 2
+			;;
+		*)
+			log_warn "Unknown option: $1"
+			shift
+			;;
+		esac
+	done
+
+	# Validate numeric inputs to prevent SQL injection
+	if [[ "$pr_number" != "0" ]] && ! [[ "$pr_number" =~ ^[0-9]+$ ]]; then
+		log_error "Invalid PR number: $pr_number"
 		return 1
 	fi
 
-	source="$1"
-	shift
+	# Auto-detect repo if not specified
+	if [[ -z "$repo" ]]; then
+		repo=$(get_repo)
+	fi
+
+	# Auto-detect PR if not specified
+	if [[ "$pr_number" -eq 0 ]]; then
+		pr_number=$(gh pr view --json number -q .number 2>/dev/null || echo "0")
+	fi
+
+	local head_sha
+	head_sha=$(get_head_sha)
+
+	ensure_db
+
+	log_info "Starting unified code audit for ${repo}"
+	[[ "$pr_number" -gt 0 ]] && log_info "PR: #${pr_number} (SHA: ${head_sha})"
+
+	# Create audit run
+	local run_id
+	run_id=$(db "$AUDIT_DB" "
+        INSERT INTO audit_runs (repo, pr_number, head_sha)
+        VALUES ('$(sql_escape "$repo")', $pr_number, '$(sql_escape "$head_sha")');
+        SELECT last_insert_rowid();
+    ")
+
+	log_info "Audit run #${run_id} started"
+
+	# Determine which services to run
+	local services
+	if [[ -n "$services_filter" ]]; then
+		services="$services_filter"
+	else
+		services=$(get_configured_services)
+	fi
+
+	local services_run=""
+	local total_findings=0
+
+	# Iterate configured services and call each collector
+	local services_array
+	read -ra services_array <<<"$services"
+	for service in "${services_array[@]}"; do
+		local count=0
+		case "$service" in
+		coderabbit)
+			count=$(collect_coderabbit "$run_id" "$repo" "$pr_number")
+			;;
+		sonarcloud)
+			count=$(collect_sonarcloud "$run_id" "$repo" "$pr_number")
+			;;
+		codacy)
+			count=$(collect_codacy "$run_id" "$repo" "$pr_number")
+			;;
+		codefactor)
+			count=$(collect_codefactor "$run_id" "$repo" "$pr_number")
+			;;
+		*)
+			log_warn "Unknown service: $service — skipping"
+			continue
+			;;
+		esac
+
+		log_info "${service}: ${count} finding(s) collected"
+		total_findings=$((total_findings + count))
+
+		if [[ -n "$services_run" ]]; then
+			services_run="${services_run},${service}"
+		else
+			services_run="$service"
+		fi
+	done
+
+	# Deduplicate cross-service findings
+	deduplicate_findings "$run_id"
+
+	# Update audit run as completed
+	db "$AUDIT_DB" "
+        UPDATE audit_runs
+        SET completed_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+            services_run = '$(sql_escape "$services_run")',
+            status = 'complete'
+        WHERE id = $run_id;
+    "
+
+	# Output summary
+	echo ""
+	print_summary "$run_id"
+
+	log_success "Audit run #${run_id} complete: ${total_findings} total findings from ${services_run}"
+	return 0
+}
+
+# =============================================================================
+# Summary Output
+# =============================================================================
+
+print_summary() {
+	local run_id="$1"
+
+	echo "============================================"
+	echo "  Unified Code Audit Report (Run #${run_id})"
+	echo "============================================"
+	echo ""
+
+	# Run metadata
+	local run_info
+	run_info=$(db "$AUDIT_DB" -separator '|' "
+        SELECT repo, pr_number, head_sha, started_at, completed_at, services_run
+        FROM audit_runs WHERE id = $run_id;
+    ")
+
+	if [[ -n "$run_info" ]]; then
+		local repo pr sha started completed services
+		IFS='|' read -r repo pr sha started completed services <<<"$run_info"
+		echo "  Repository:  $repo"
+		[[ "$pr" -gt 0 ]] && echo "  PR:          #${pr}"
+		echo "  SHA:         $sha"
+		echo "  Started:     $started"
+		echo "  Completed:   $completed"
+		echo "  Services:    $services"
+		echo ""
+	fi
+
+	# Findings by source (excluding duplicates)
+	echo "  Findings by Source:"
+	db "$AUDIT_DB" -separator '|' "
+        SELECT source, COUNT(*) as cnt
+        FROM audit_findings
+        WHERE run_id = $run_id AND is_duplicate = 0
+        GROUP BY source
+        ORDER BY cnt DESC;
+    " | while IFS='|' read -r source cnt; do
+		printf "    %-15s %s\n" "$source" "$cnt"
+	done
+
+	echo ""
+
+	# Findings by severity (excluding duplicates)
+	echo "  Findings by Severity:"
+	db "$AUDIT_DB" -separator '|' "
+        SELECT severity, COUNT(*) as cnt
+        FROM audit_findings
+        WHERE run_id = $run_id AND is_duplicate = 0
+        GROUP BY severity
+        ORDER BY
+            CASE severity
+                WHEN 'critical' THEN 1
+                WHEN 'high' THEN 2
+                WHEN 'medium' THEN 3
+                WHEN 'low' THEN 4
+                ELSE 5
+            END;
+    " | while IFS='|' read -r sev cnt; do
+		local color="$NC"
+		case "$sev" in
+		critical) color="$RED" ;;
+		high) color="$RED" ;;
+		medium) color="$YELLOW" ;;
+		low) color="$BLUE" ;;
+		*) color="$NC" ;;
+		esac
+		printf "    ${color}%-10s${NC} %s\n" "$sev" "$cnt"
+	done
+
+	echo ""
+
+	# Findings by category (excluding duplicates)
+	echo "  Findings by Category:"
+	db "$AUDIT_DB" -separator '|' "
+        SELECT category, COUNT(*) as cnt
+        FROM audit_findings
+        WHERE run_id = $run_id AND is_duplicate = 0
+        GROUP BY category
+        ORDER BY cnt DESC;
+    " | while IFS='|' read -r cat cnt; do
+		printf "    %-15s %s\n" "$cat" "$cnt"
+	done
+
+	echo ""
+
+	# Most affected files (top 10, excluding duplicates)
+	echo "  Most Affected Files (top 10):"
+	db "$AUDIT_DB" -separator '|' "
+        SELECT path, COUNT(*) as cnt,
+               GROUP_CONCAT(DISTINCT source) as sources,
+               GROUP_CONCAT(DISTINCT severity) as severities
+        FROM audit_findings
+        WHERE run_id = $run_id AND is_duplicate = 0 AND path != ''
+        GROUP BY path
+        ORDER BY cnt DESC
+        LIMIT 10;
+    " | while IFS='|' read -r path cnt sources severities; do
+		printf "    %-45s %3s  [%s] (%s)\n" "$path" "$cnt" "$sources" "$severities"
+	done
+
+	echo ""
+
+	# Deduplication stats
+	local total_raw unique_count dup_count
+	total_raw=$(db "$AUDIT_DB" "SELECT COUNT(*) FROM audit_findings WHERE run_id = $run_id;")
+	unique_count=$(db "$AUDIT_DB" "SELECT COUNT(*) FROM audit_findings WHERE run_id = $run_id AND is_duplicate = 0;")
+	dup_count=$(db "$AUDIT_DB" "SELECT COUNT(*) FROM audit_findings WHERE run_id = $run_id AND is_duplicate = 1;")
+
+	echo "  Deduplication:"
+	echo "    Total raw findings:  $total_raw"
+	echo "    Unique findings:     $unique_count"
+	echo "    Duplicates removed:  $dup_count"
+	echo ""
+
+	return 0
+}
+
+# =============================================================================
+# Report Command
+# =============================================================================
+
+cmd_report() {
+	local format="text"
+	local severity=""
+	local run_id=""
+	local limit=100
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-		--total)
-			total="$2"
+		--format)
+			[[ -z "${2:-}" || "$2" == --* ]] && {
+				log_error "Missing value for --format"
+				return 1
+			}
+			format="$2"
 			shift 2
 			;;
-		--critical)
-			critical="$2"
+		--severity)
+			[[ -z "${2:-}" || "$2" == --* ]] && {
+				log_error "Missing value for --severity"
+				return 1
+			}
+			severity="$2"
 			shift 2
 			;;
-		--high)
-			high="$2"
+		--run)
+			[[ -z "${2:-}" || "$2" == --* ]] && {
+				log_error "Missing value for --run"
+				return 1
+			}
+			run_id="$2"
 			shift 2
 			;;
-		--medium)
-			medium="$2"
-			shift 2
-			;;
-		--low)
-			low="$2"
-			shift 2
-			;;
-		--false-positives)
-			false_positives="$2"
-			shift 2
-			;;
-		--tasks)
-			tasks="$2"
+		--limit)
+			[[ -z "${2:-}" || "$2" == --* ]] && {
+				log_error "Missing value for --limit"
+				return 1
+			}
+			limit="$2"
 			shift 2
 			;;
 		*)
-			log_error "Unknown option: $1"
-			return 1
+			log_warn "Unknown option: $1"
+			shift
 			;;
 		esac
 	done
 
-	init_db
+	# Validate numeric inputs to prevent SQL injection
+	if [[ -n "$run_id" ]] && ! [[ "$run_id" =~ ^[0-9]+$ ]]; then
+		log_error "Invalid run ID: $run_id"
+		return 1
+	fi
+	if ! [[ "$limit" =~ ^[0-9]+$ ]]; then
+		log_error "Invalid limit: $limit"
+		return 1
+	fi
 
-	# Escape single quotes in source to prevent SQL injection
-	local escaped_source
-	escaped_source=$(printf "%s" "$source" | sed "s/'/''/g")
+	ensure_db
 
-	sqlite3 "$AUDIT_DB" <<-SQL
-		INSERT INTO audit_snapshots (source, total_findings, critical_count, high_count, medium_count, low_count, false_positives, tasks_created)
-		VALUES ('$escaped_source', $total, $critical, $high, $medium, $low, $false_positives, $tasks);
-	SQL
+	# Default to latest run
+	if [[ -z "$run_id" ]]; then
+		run_id=$(db "$AUDIT_DB" "SELECT id FROM audit_runs ORDER BY id DESC LIMIT 1;" 2>/dev/null || echo "")
+		if [[ -z "$run_id" ]]; then
+			log_error "No audit runs found. Run 'code-audit-helper.sh audit' first."
+			return 1
+		fi
+	fi
 
-	log_info "Snapshot recorded for source: $source (total: $total, critical: $critical, high: $high, medium: $medium, low: $low)"
+	# Build WHERE clause
+	local where="WHERE run_id = $run_id AND is_duplicate = 0"
+	if [[ -n "$severity" ]]; then
+		where="${where} AND severity = '$(sql_escape "$severity")'"
+	fi
+
+	case "$format" in
+	json)
+		db "$AUDIT_DB" -json "
+                SELECT id, source, severity, path, line, description, category, rule_id
+                FROM audit_findings
+                $where
+                ORDER BY
+                    CASE severity
+                        WHEN 'critical' THEN 1
+                        WHEN 'high' THEN 2
+                        WHEN 'medium' THEN 3
+                        WHEN 'low' THEN 4
+                        ELSE 5
+                    END,
+                    path, line
+                LIMIT $limit;
+            "
+		;;
+	csv)
+		echo "id,source,severity,path,line,description,category,rule_id"
+		db "$AUDIT_DB" -csv "
+                SELECT id, source, severity, path, line,
+                       substr(replace(description, char(10), ' '), 1, 200),
+                       category, rule_id
+                FROM audit_findings
+                $where
+                ORDER BY
+                    CASE severity
+                        WHEN 'critical' THEN 1
+                        WHEN 'high' THEN 2
+                        WHEN 'medium' THEN 3
+                        WHEN 'low' THEN 4
+                        ELSE 5
+                    END,
+                    path, line
+                LIMIT $limit;
+            "
+		;;
+	text | *)
+		echo ""
+		echo "Audit Findings (Run #${run_id})"
+		echo "==============================="
+		echo ""
+
+		db "$AUDIT_DB" -separator $'\x1f' "
+                SELECT source, severity, path, line,
+                       substr(replace(replace(description, char(10), ' '), char(13), ''), 1, 120)
+                FROM audit_findings
+                $where
+                ORDER BY
+                    CASE severity
+                        WHEN 'critical' THEN 1
+                        WHEN 'high' THEN 2
+                        WHEN 'medium' THEN 3
+                        WHEN 'low' THEN 4
+                        ELSE 5
+                    END,
+                    path, line
+                LIMIT $limit;
+            " | while IFS=$'\x1f' read -r source sev path line desc; do
+			local color="$NC"
+			case "$sev" in
+			critical) color="$RED" ;;
+			high) color="$RED" ;;
+			medium) color="$YELLOW" ;;
+			low) color="$BLUE" ;;
+			*) color="$NC" ;;
+			esac
+
+			local location=""
+			if [[ -n "$path" && "$path" != "" ]]; then
+				location="${path}:${line}"
+			else
+				location="(general)"
+			fi
+
+			printf "  ${color}[%-8s]${NC} %-12s %s\n" "$sev" "$source" "$location"
+			echo "    ${desc}"
+			echo ""
+		done
+
+		local total
+		total=$(db "$AUDIT_DB" "SELECT COUNT(*) FROM audit_findings $where;")
+		echo "Total unique findings: ${total}"
+		;;
+	esac
+
 	return 0
 }
 
-# Calculate trend deltas (WoW and MoM)
-# Usage: trend [--source <source>]
-cmd_trend() {
-	local source=""
+# =============================================================================
+# Summary Command
+# =============================================================================
+
+cmd_summary() {
+	local pr_number=""
+	local run_id=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-		--source)
-			source="$2"
+		--pr)
+			[[ -z "${2:-}" || "$2" == --* ]] && {
+				log_error "Missing value for --pr"
+				return 1
+			}
+			pr_number="$2"
+			shift 2
+			;;
+		--run)
+			[[ -z "${2:-}" || "$2" == --* ]] && {
+				log_error "Missing value for --run"
+				return 1
+			}
+			run_id="$2"
 			shift 2
 			;;
 		*)
-			log_error "Unknown option: $1"
-			return 1
+			log_warn "Unknown option: $1"
+			shift
 			;;
 		esac
 	done
 
-	init_db
-
-	local source_filter=""
-	if [[ -n "$source" ]]; then
-		# Escape single quotes in source to prevent SQL injection
-		local escaped_source
-		escaped_source=$(printf "%s" "$source" | sed "s/'/''/g")
-		source_filter="WHERE source = '$escaped_source'"
+	# Validate numeric inputs to prevent SQL injection
+	if [[ -n "$pr_number" ]] && ! [[ "$pr_number" =~ ^[0-9]+$ ]]; then
+		log_error "Invalid PR number: $pr_number"
+		return 1
+	fi
+	if [[ -n "$run_id" ]] && ! [[ "$run_id" =~ ^[0-9]+$ ]]; then
+		log_error "Invalid run ID: $run_id"
+		return 1
 	fi
 
-	# Get current snapshot (most recent)
-	local current
-	current=$(sqlite3 -separator '|' "$AUDIT_DB" "
-		SELECT date, source, total_findings, critical_count, high_count, medium_count, low_count
-		FROM audit_snapshots
-		$source_filter
-		ORDER BY date DESC
-		LIMIT 1;
-	" 2>/dev/null || echo "")
+	ensure_db
 
-	if [[ -z "$current" ]]; then
-		log_warn "No snapshots found"
-		return 0
+	# Find the run
+	if [[ -z "$run_id" ]]; then
+		if [[ -n "$pr_number" ]]; then
+			run_id=$(db "$AUDIT_DB" "SELECT id FROM audit_runs WHERE pr_number = $pr_number ORDER BY id DESC LIMIT 1;" 2>/dev/null || echo "")
+		else
+			run_id=$(db "$AUDIT_DB" "SELECT id FROM audit_runs ORDER BY id DESC LIMIT 1;" 2>/dev/null || echo "")
+		fi
 	fi
 
-	# Initialize variables to default values before read to handle missing columns
-	local current_date="" current_source="" current_total=0 current_critical=0 current_high=0 current_medium=0 current_low=0
-	IFS='|' read -r current_date current_source current_total current_critical current_high current_medium current_low <<<"$current"
-
-	# Get week-ago snapshot (7 days ago)
-	local week_ago_date
-	week_ago_date=$(date -u -v-7d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
-
-	local week_ago=""
-	if [[ -n "$week_ago_date" ]]; then
-		week_ago=$(sqlite3 -separator '|' "$AUDIT_DB" "
-			SELECT total_findings, critical_count, high_count, medium_count, low_count
-			FROM audit_snapshots
-			WHERE source = '$current_source' AND date <= '$week_ago_date'
-			ORDER BY date DESC
-			LIMIT 1;
-		" 2>/dev/null || echo "")
+	if [[ -z "$run_id" ]]; then
+		log_error "No audit runs found. Run 'code-audit-helper.sh audit' first."
+		return 1
 	fi
 
-	# Get month-ago snapshot (30 days ago)
-	local month_ago_date
-	month_ago_date=$(date -u -v-30d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '30 days ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
-
-	local month_ago=""
-	if [[ -n "$month_ago_date" ]]; then
-		month_ago=$(sqlite3 -separator '|' "$AUDIT_DB" "
-			SELECT total_findings, critical_count, high_count, medium_count, low_count
-			FROM audit_snapshots
-			WHERE source = '$current_source' AND date <= '$month_ago_date'
-			ORDER BY date DESC
-			LIMIT 1;
-		" 2>/dev/null || echo "")
-	fi
-
-	# Display current state
-	echo "=== Audit Trend Report ==="
-	echo "Source: $current_source"
-	echo "Date: $current_date"
-	echo ""
-	echo "Current Findings:"
-	echo "  Total: $current_total"
-	echo "  Critical: $current_critical"
-	echo "  High: $current_high"
-	echo "  Medium: $current_medium"
-	echo "  Low: $current_low"
-	echo ""
-
-	# Week-over-week delta
-	if [[ -n "$week_ago" ]]; then
-		# Initialize variables to default values before read to handle missing columns
-		local week_total=0 week_critical=0 week_high=0 week_medium=0 week_low=0
-		IFS='|' read -r week_total week_critical week_high week_medium week_low <<<"$week_ago"
-
-		local wow_total_delta=$((current_total - week_total))
-		local wow_critical_delta=$((current_critical - week_critical))
-		local wow_high_delta=$((current_high - week_high))
-		local wow_medium_delta=$((current_medium - week_medium))
-		local wow_low_delta=$((current_low - week_low))
-
-		echo "Week-over-Week Change:"
-		echo "  Total: $wow_total_delta (was: $week_total)"
-		echo "  Critical: $wow_critical_delta (was: $week_critical)"
-		echo "  High: $wow_high_delta (was: $week_high)"
-		echo "  Medium: $wow_medium_delta (was: $week_medium)"
-		echo "  Low: $wow_low_delta (was: $week_low)"
-		echo ""
-	else
-		echo "Week-over-Week Change: No data from 7 days ago"
-		echo ""
-	fi
-
-	# Month-over-month delta
-	if [[ -n "$month_ago" ]]; then
-		# Initialize variables to default values before read to handle missing columns
-		local month_total=0 month_critical=0 month_high=0 month_medium=0 month_low=0
-		IFS='|' read -r month_total month_critical month_high month_medium month_low <<<"$month_ago"
-
-		local mom_total_delta=$((current_total - month_total))
-		local mom_critical_delta=$((current_critical - month_critical))
-		local mom_high_delta=$((current_high - month_high))
-		local mom_medium_delta=$((current_medium - month_medium))
-		local mom_low_delta=$((current_low - month_low))
-
-		echo "Month-over-Month Change:"
-		echo "  Total: $mom_total_delta (was: $month_total)"
-		echo "  Critical: $mom_critical_delta (was: $month_critical)"
-		echo "  High: $mom_high_delta (was: $month_high)"
-		echo "  Medium: $mom_medium_delta (was: $month_medium)"
-		echo "  Low: $mom_low_delta (was: $month_low)"
-	else
-		echo "Month-over-Month Change: No data from 30 days ago"
-	fi
-
+	print_summary "$run_id"
 	return 0
 }
 
-# Check for regressions (>20% increase in findings)
-# Returns exit code 1 if regression detected, 0 otherwise
-cmd_check_regression() {
-	init_db
+# =============================================================================
+# Status Command
+# =============================================================================
 
-	# Get all sources with snapshots
-	local sources
-	sources=$(sqlite3 "$AUDIT_DB" "SELECT DISTINCT source FROM audit_snapshots ORDER BY source;" 2>/dev/null || echo "")
+cmd_status() {
+	ensure_db
 
-	if [[ -z "$sources" ]]; then
-		log_info "No snapshots found for regression check"
-		return 0
+	echo ""
+	echo "Code Audit Orchestrator Status"
+	echo "=============================="
+	echo ""
+
+	# Check dependencies
+	if command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
+		log_success "GitHub CLI: authenticated"
+	else
+		log_warn "GitHub CLI: not available or not authenticated"
 	fi
 
-	local regression_found=0
-
-	while IFS= read -r source; do
-		[[ -z "$source" ]] && continue
-
-		# Get current and previous snapshot
-		local snapshots
-		snapshots=$(sqlite3 -separator '|' "$AUDIT_DB" "
-			SELECT date, total_findings, critical_count, high_count
-			FROM audit_snapshots
-			WHERE source = '$source'
-			ORDER BY date DESC
-			LIMIT 2;
-		" 2>/dev/null || echo "")
-
-		local line_count
-		line_count=$(echo "$snapshots" | wc -l | tr -d ' ')
-
-		if [[ "$line_count" -lt 2 ]]; then
-			continue
-		fi
-
-		local current_line
-		local previous_line
-		current_line=$(echo "$snapshots" | head -1)
-		previous_line=$(echo "$snapshots" | tail -1)
-
-		# Initialize variables to default values before read to handle missing columns
-		local current_date="" current_total=0 current_critical=0 current_high=0
-		local _previous_date="" previous_total=0 previous_critical=0 previous_high=0
-		IFS='|' read -r current_date current_total current_critical current_high <<<"$current_line"
-		IFS='|' read -r _previous_date previous_total previous_critical previous_high <<<"$previous_line"
-
-		# Skip if previous total is 0 (avoid division by zero)
-		if [[ "$previous_total" -eq 0 ]]; then
-			continue
-		fi
-
-		# Calculate percentage increase
-		local delta=$((current_total - previous_total))
-		local percent_increase=$((delta * 100 / previous_total))
-
-		# Check for >20% increase
-		if [[ "$percent_increase" -gt 20 ]]; then
-			log_warn "REGRESSION DETECTED: $source - findings increased by ${percent_increase}% (${previous_total} -> ${current_total})"
-			regression_found=1
-		fi
-
-		# Also check critical/high severity increases
-		if [[ "$previous_critical" -gt 0 ]]; then
-			local critical_delta=$((current_critical - previous_critical))
-			local critical_percent=$((critical_delta * 100 / previous_critical))
-			if [[ "$critical_percent" -gt 20 ]]; then
-				log_warn "REGRESSION DETECTED: $source - critical findings increased by ${critical_percent}% (${previous_critical} -> ${current_critical})"
-				regression_found=1
-			fi
-		elif [[ "$current_critical" -gt 0 && "$previous_critical" -eq 0 ]]; then
-			log_warn "REGRESSION DETECTED: $source - new critical findings appeared: $current_critical"
-			regression_found=1
-		fi
-
-		if [[ "$previous_high" -gt 0 ]]; then
-			local high_delta=$((current_high - previous_high))
-			local high_percent=$((high_delta * 100 / previous_high))
-			if [[ "$high_percent" -gt 20 ]]; then
-				log_warn "REGRESSION DETECTED: $source - high severity findings increased by ${high_percent}% (${previous_high} -> ${current_high})"
-				regression_found=1
-			fi
-		elif [[ "$current_high" -gt 0 && "$previous_high" -eq 0 ]]; then
-			log_warn "REGRESSION DETECTED: $source - new high severity findings appeared: $current_high"
-			regression_found=1
-		fi
-
-	done <<<"$sources"
-
-	if [[ "$regression_found" -eq 0 ]]; then
-		log_info "No regressions detected"
+	if command -v jq &>/dev/null; then
+		log_success "jq: installed"
+	else
+		log_warn "jq: not installed (required for API parsing)"
 	fi
 
-	return "$regression_found"
+	if command -v sqlite3 &>/dev/null; then
+		log_success "sqlite3: installed"
+	else
+		log_error "sqlite3: not installed (required)"
+	fi
+
+	echo ""
+
+	# Service availability
+	echo "Service Availability:"
+	if [[ -n "${SONAR_TOKEN:-}" ]]; then
+		log_success "  SonarCloud: token set"
+	else
+		log_warn "  SonarCloud: SONAR_TOKEN not set"
+	fi
+	if [[ -n "${CODACY_API_TOKEN:-}${CODACY_PROJECT_TOKEN:-}" ]]; then
+		log_success "  Codacy: token set"
+	else
+		log_warn "  Codacy: CODACY_API_TOKEN not set"
+	fi
+	if [[ -n "${CODEFACTOR_API_TOKEN:-}" ]]; then
+		log_success "  CodeFactor: token set"
+	else
+		log_warn "  CodeFactor: CODEFACTOR_API_TOKEN not set"
+	fi
+
+	local cr_collector="${SCRIPT_DIR}/coderabbit-collector-helper.sh"
+	if [[ -x "$cr_collector" ]]; then
+		log_success "  CodeRabbit: collector available"
+	else
+		log_warn "  CodeRabbit: collector not found"
+	fi
+
+	echo ""
+
+	# Config file
+	if [[ -f "$AUDIT_CONFIG" ]]; then
+		log_success "Config: $AUDIT_CONFIG"
+	elif [[ -f "$AUDIT_CONFIG_TEMPLATE" ]]; then
+		log_warn "Config: using template ($AUDIT_CONFIG_TEMPLATE)"
+		log_info "  Copy to $AUDIT_CONFIG and add your tokens"
+	else
+		log_warn "Config: not found"
+	fi
+
+	echo ""
+
+	# Database stats
+	if [[ -f "$AUDIT_DB" ]]; then
+		local run_count finding_count
+		run_count=$(db "$AUDIT_DB" "SELECT COUNT(*) FROM audit_runs;" 2>/dev/null || echo "0")
+		finding_count=$(db "$AUDIT_DB" "SELECT COUNT(*) FROM audit_findings;" 2>/dev/null || echo "0")
+
+		echo "Database: $AUDIT_DB"
+		echo "  Audit runs:     $run_count"
+		echo "  Total findings: $finding_count"
+
+		local last_run
+		last_run=$(db "$AUDIT_DB" "
+            SELECT completed_at || ' (Run #' || id || ', ' || services_run || ')'
+            FROM audit_runs ORDER BY id DESC LIMIT 1;
+        " 2>/dev/null || echo "never")
+		echo "  Last audit:     $last_run"
+
+		local db_size
+		if [[ "$(uname)" == "Darwin" ]]; then
+			db_size=$(stat -f %z "$AUDIT_DB" 2>/dev/null || echo "0")
+		else
+			db_size=$(stat -c %s "$AUDIT_DB" 2>/dev/null || echo "0")
+		fi
+		echo "  DB size:        $((db_size / 1024)) KB"
+	else
+		echo "Database: not created yet"
+		echo "  Run 'code-audit-helper.sh audit' to start"
+	fi
+
+	echo ""
+	return 0
 }
 
-# Main command dispatcher
+# =============================================================================
+# Reset Command
+# =============================================================================
+
+cmd_reset() {
+	if [[ -f "$AUDIT_DB" ]]; then
+		local backup
+		backup=$(backup_sqlite_db "$AUDIT_DB" "pre-reset" 2>/dev/null || echo "")
+		if [[ -n "$backup" ]]; then
+			log_info "Backup created: $backup"
+		fi
+		rm -f "$AUDIT_DB" "${AUDIT_DB}-wal" "${AUDIT_DB}-shm"
+		log_success "Audit database reset"
+	else
+		log_info "No database to reset"
+	fi
+	return 0
+}
+
+# =============================================================================
+# Help
+# =============================================================================
+
+show_help() {
+	cat <<'HELP_EOF'
+Code Audit Helper - Unified Audit Orchestrator (t1032.1)
+
+USAGE:
+  code-audit-helper.sh <command> [options]
+
+COMMANDS:
+  audit       Run unified audit across all configured services
+  report      Output detailed findings from the latest audit run
+  summary     Show summary statistics for an audit run
+  status      Show orchestrator status, dependencies, and DB info
+  reset       Reset the audit database (creates backup first)
+  help        Show this help
+
+AUDIT OPTIONS:
+  --repo OWNER/REPO   Repository (default: auto-detect from git)
+  --pr NUMBER         PR number (default: auto-detect from branch)
+  --services LIST     Comma-separated services to run (default: all configured)
+                      Available: coderabbit, codacy, sonarcloud, codefactor
+
+REPORT OPTIONS:
+  --format FORMAT     Output: text (default), json, csv
+  --severity LEVEL    Filter: critical, high, medium, low, info
+  --run ID            Audit run ID (default: latest)
+  --limit N           Max results (default: 100)
+
+SUMMARY OPTIONS:
+  --pr NUMBER         Filter by PR number
+  --run ID            Audit run ID (default: latest)
+
+EXAMPLES:
+  # Run full audit (auto-detect repo and PR)
+  code-audit-helper.sh audit
+
+  # Audit specific repo and PR
+  code-audit-helper.sh audit --repo owner/repo --pr 42
+
+  # Audit only SonarCloud and Codacy
+  code-audit-helper.sh audit --services "sonarcloud codacy"
+
+  # View findings as JSON
+  code-audit-helper.sh report --format json
+
+  # View only critical findings
+  code-audit-helper.sh report --severity critical
+
+  # Show summary of latest audit
+  code-audit-helper.sh summary
+
+  # Check orchestrator status
+  code-audit-helper.sh status
+
+SERVICES:
+  coderabbit   - AI-powered code review (requires PR, uses gh CLI)
+  codacy       - Code quality analysis (requires CODACY_API_TOKEN)
+  sonarcloud   - Security & maintainability (requires SONAR_TOKEN)
+  codefactor   - Code quality grading (requires CODEFACTOR_API_TOKEN)
+
+DATABASE:
+  SQLite database at: ~/.aidevops/.agent-workspace/work/code-audit/audit.db
+  Tables: audit_runs, audit_findings
+  Direct query: sqlite3 ~/.aidevops/.agent-workspace/work/code-audit/audit.db "SELECT ..."
+
+DEDUPLICATION:
+  Findings from multiple services on the same file:line are deduplicated.
+  The first finding (by insertion order) is kept; others are marked as duplicates.
+  Reports and summaries exclude duplicates by default.
+
+HELP_EOF
+	return 0
+}
+
+# =============================================================================
+# Main
+# =============================================================================
+
 main() {
-	if [[ $# -lt 1 ]]; then
-		cat <<-'USAGE'
-			Usage: code-audit-helper.sh <command> [options]
+	local command="${1:-help}"
+	shift || true
 
-			Commands:
-			  init                                  Initialize audit database
-			  snapshot <source> [options]           Record snapshot after audit run
-			  trend [--source <source>]             Show WoW/MoM trends
-			  check-regression                      Check for regressions (>20% increase)
-
-			Snapshot Options:
-			  --total N              Total findings count
-			  --critical N           Critical severity count
-			  --high N               High severity count
-			  --medium N             Medium severity count
-			  --low N                Low severity count
-			  --false-positives N    False positive count
-			  --tasks N              Tasks created count
-
-			Examples:
-			  code-audit-helper.sh init
-			  code-audit-helper.sh snapshot sonarcloud --total 42 --critical 2 --high 5 --medium 15 --low 20
-			  code-audit-helper.sh trend --source sonarcloud
-			  code-audit-helper.sh check-regression
-		USAGE
-		return 0
-	fi
-
-	local cmd="$1"
-	shift
-
-	case "$cmd" in
-	init)
-		init_db
-		;;
-	snapshot)
-		cmd_snapshot "$@"
-		;;
-	trend)
-		cmd_trend "$@"
-		;;
-	check-regression)
-		cmd_check_regression
-		;;
+	case "$command" in
+	audit) cmd_audit "$@" ;;
+	report) cmd_report "$@" ;;
+	summary) cmd_summary "$@" ;;
+	status) cmd_status "$@" ;;
+	reset) cmd_reset "$@" ;;
+	help | --help | -h) show_help ;;
 	*)
-		log_error "Unknown command: $cmd"
+		log_error "$ERROR_UNKNOWN_COMMAND $command"
+		echo ""
+		show_help
 		return 1
 		;;
 	esac
+	return 0
 }
 
 main "$@"
