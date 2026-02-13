@@ -1160,13 +1160,25 @@ cmd_pulse() {
 		bash "$coderabbit_pulse_script" run --repo "$pulse_repo" --quiet 2>>"$SUPERVISOR_LOG" || true
 	fi
 
-	# Phase 10b: Auto-create TODO tasks from quality findings (t299)
-	# Converts CodeRabbit and quality-sweep findings into TODO.md tasks.
-	# Self-throttles with 24h cooldown. Only runs if task creator script exists.
-	local task_creator_script="${SCRIPT_DIR}/coderabbit-task-creator-helper.sh"
+	# Phase 10b: Auto-create TODO tasks from quality findings (t299, t1032.5)
+	# Unified audit orchestrator: collects findings from all configured services
+	# (CodeRabbit, Codacy, SonarCloud, CodeFactor) via code-audit-helper.sh, then
+	# creates tasks via audit-task-creator-helper.sh. Falls back to CodeRabbit-only
+	# coderabbit-task-creator-helper.sh if the unified scripts are not yet available.
+	# Self-throttles with 24h cooldown.
+	local audit_collect_script="${SCRIPT_DIR}/code-audit-helper.sh"
+	local unified_task_creator="${SCRIPT_DIR}/audit-task-creator-helper.sh"
+	local legacy_task_creator="${SCRIPT_DIR}/coderabbit-task-creator-helper.sh"
+	local task_creator_script=""
+	# Prefer unified task creator (t1032.4), fall back to legacy CodeRabbit-only
+	if [[ -x "$unified_task_creator" ]]; then
+		task_creator_script="$unified_task_creator"
+	elif [[ -x "$legacy_task_creator" ]]; then
+		task_creator_script="$legacy_task_creator"
+	fi
 	local task_creation_cooldown_file="${SUPERVISOR_DIR}/task-creation-last-run"
 	local task_creation_cooldown=86400 # 24 hours
-	if [[ -x "$task_creator_script" ]]; then
+	if [[ -n "$task_creator_script" ]]; then
 		local should_run_task_creation=true
 		if [[ -f "$task_creation_cooldown_file" ]]; then
 			local last_run
@@ -1196,10 +1208,33 @@ cmd_pulse() {
 			if [[ -f "$todo_file" ]]; then
 				local tasks_added=0
 
-				# 1. CodeRabbit findings → tasks
-				# coderabbit-task-creator-helper.sh already allocates IDs via
-				# claim-task-id.sh (t319.3). We use the IDs it returns directly
-				# instead of re-assigning with grep-based max_id (collision-prone).
+				# Step 1: Collect findings from all audit services (t1032.5)
+				# code-audit-helper.sh aggregates CodeRabbit, Codacy, SonarCloud,
+				# CodeFactor findings into a unified audit_findings table.
+				# Skip if the script is a stub or not yet implemented.
+				if [[ -x "$audit_collect_script" ]]; then
+					local collect_size
+					collect_size=$(wc -c <"$audit_collect_script" 2>/dev/null || echo "0")
+					# Only run if the script has substantive content (>100 bytes, not a stub)
+					if [[ "$collect_size" -gt 100 ]]; then
+						log_info "    Phase 10b: Collecting findings from all audit services"
+						bash "$audit_collect_script" collect --repo "$task_repo" 2>>"$SUPERVISOR_LOG" || {
+							log_warn "    Phase 10b: Audit collection returned non-zero (continuing with task creation)"
+						}
+					else
+						log_verbose "    Phase 10b: code-audit-helper.sh is a stub, skipping collection"
+					fi
+				fi
+
+				# Step 2: Create tasks from findings (t1032.5)
+				# The task creator (unified or legacy) scans findings, filters
+				# false positives, deduplicates, and outputs TODO-compatible lines.
+				local creator_label="unified"
+				if [[ "$task_creator_script" == "$legacy_task_creator" ]]; then
+					creator_label="CodeRabbit-only (legacy)"
+				fi
+				log_info "    Phase 10b: Running task creator ($creator_label)"
+
 				local cr_output
 				cr_output=$(bash "$task_creator_script" create 2>>"$SUPERVISOR_LOG" || echo "")
 				if [[ -n "$cr_output" ]]; then
@@ -1214,7 +1249,7 @@ cmd_pulse() {
 							local new_line="$task_line"
 
 							# If the task line already has a tNNN ID (from claim-task-id.sh
-							# inside coderabbit-task-creator), use it as-is.
+							# inside the task creator), use it as-is.
 							# Otherwise, allocate a new ID via claim-task-id.sh.
 							if ! echo "$new_line" | grep -qE '^\s*- \[ \] t[0-9]+'; then
 								local claim_output claimed_id
@@ -1271,16 +1306,16 @@ cmd_pulse() {
 							# Extract task ID for logging
 							local logged_id
 							logged_id=$(echo "$new_line" | grep -oE 't[0-9]+' | head -1 || echo "unknown")
-							log_info "    Created ${logged_id} from CodeRabbit finding"
+							log_info "    Created ${logged_id} from audit finding"
 						done <<<"$cr_tasks"
 					fi
 				fi
 
-				# 2. Commit and push if tasks were added
+				# Step 3: Commit and push if tasks were added
 				if [[ $tasks_added -gt 0 ]]; then
 					log_info "  Phase 10b: Added $tasks_added task(s) to TODO.md"
 					if git -C "$task_repo" add TODO.md 2>>"$SUPERVISOR_LOG" &&
-						git -C "$task_repo" commit -m "chore: auto-create $tasks_added task(s) from quality findings (Phase 10b)" 2>>"$SUPERVISOR_LOG" &&
+						git -C "$task_repo" commit -m "chore: auto-create $tasks_added task(s) from audit findings (Phase 10b)" 2>>"$SUPERVISOR_LOG" &&
 						git -C "$task_repo" push 2>>"$SUPERVISOR_LOG"; then
 						log_success "  Phase 10b: Committed and pushed $tasks_added new task(s)"
 					else
