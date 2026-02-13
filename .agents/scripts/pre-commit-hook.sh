@@ -16,6 +16,38 @@ get_modified_shell_files() {
 	return 0
 }
 
+# Validate that TODO.md doesn't have duplicate task IDs
+validate_duplicate_task_ids() {
+	# Only check if TODO.md is staged
+	if ! git diff --cached --name-only | grep -q '^TODO\.md$'; then
+		return 0
+	fi
+
+	local staged_todo
+	staged_todo=$(git show :TODO.md 2>/dev/null || true)
+	if [[ -z "$staged_todo" ]]; then
+		return 0
+	fi
+
+	# Extract all task IDs (including subtasks like t123.1)
+	local task_ids
+	task_ids=$(echo "$staged_todo" | grep -oE '\bt[0-9]+(\.[0-9]+)*\b' | sort)
+
+	# Check for duplicates
+	local duplicates
+	duplicates=$(echo "$task_ids" | uniq -d)
+
+	if [[ -n "$duplicates" ]]; then
+		print_error "Duplicate task IDs found in TODO.md:"
+		echo "$duplicates" | while read -r dup; do
+			print_error "  - $dup"
+		done
+		return 1
+	fi
+
+	return 0
+}
+
 validate_return_statements() {
 	local violations=0
 
@@ -358,6 +390,111 @@ validate_parent_subtask_blocking() {
 	return 0
 }
 
+# t1039: Validate that new files in repo root are in the allowlist
+# Prevents workers from committing ephemeral artifacts (TEST-REPORT.md, VERIFY-*.md, etc.)
+validate_repo_root_files() {
+	print_info "Validating repo root files (allowlist check)..."
+
+	# Allowlist of permitted root-level files
+	local -a allowlist=(
+		# Documentation
+		"README.md"
+		"TODO.md"
+		"AGENTS.md"
+		"AGENT.md"
+		"CLAUDE.md"
+		"GEMINI.md"
+		"CHANGELOG.md"
+		"LICENSE"
+		"CODE_OF_CONDUCT.md"
+		"CONTRIBUTING.md"
+		"SECURITY.md"
+		"TERMS.md"
+		"MODELS.md"
+		"VERSION"
+		# Config files (dotfiles)
+		".gitignore"
+		".codacy.yml"
+		".codefactor.yml"
+		".coderabbit.yaml"
+		".markdownlint-cli2.jsonc"
+		".markdownlint.json"
+		".markdownlintignore"
+		".qlty.toml"
+		".qltyignore"
+		".repomixignore"
+		".secretlintignore"
+		".secretlintrc.json"
+		# Build/package files
+		"package.json"
+		"bun.lock"
+		"requirements.txt"
+		"requirements-lock.txt"
+		# Scripts
+		"setup.sh"
+		"aidevops.sh"
+		# Tool configs
+		"sonar-project.properties"
+		"repomix.config.json"
+		"repomix-instruction.md"
+		# Test scripts (temporary - should be moved to .agents/scripts/)
+		"test-proof-log-final.sh"
+	)
+
+	# Get newly added root-level files (not in subdirectories)
+	local new_root_files
+	new_root_files=$(git diff --cached --name-only --diff-filter=A | grep -E '^[^/]+$' || true)
+
+	if [[ -z "$new_root_files" ]]; then
+		return 0
+	fi
+
+	local violations=0
+	local -a rejected_files=()
+
+	while IFS= read -r file; do
+		if [[ -z "$file" ]]; then
+			continue
+		fi
+
+		# Check if file is in allowlist
+		local allowed=false
+		for allowed_file in "${allowlist[@]}"; do
+			if [[ "$file" == "$allowed_file" ]]; then
+				allowed=true
+				break
+			fi
+		done
+
+		if [[ "$allowed" == "false" ]]; then
+			rejected_files+=("$file")
+			((violations++))
+		fi
+	done <<<"$new_root_files"
+
+	if [[ "$violations" -gt 0 ]]; then
+		print_error "Repo root file validation FAILED"
+		print_error ""
+		print_error "The following new files in repo root are not allowlisted:"
+		for file in "${rejected_files[@]}"; do
+			print_error "  - $file"
+		done
+		print_error ""
+		print_error "Ephemeral artifacts (reports, verification files, etc.) should NOT"
+		print_error "be committed to the repo root. Move them to an appropriate subdirectory:"
+		print_error "  - Test reports → .agents/scripts/ or tests/"
+		print_error "  - Verification files → .agents/scripts/ or docs/"
+		print_error "  - Temporary files → should not be committed at all"
+		print_error ""
+		print_error "If this file is a legitimate new root-level file, add it to the"
+		print_error "allowlist in .agents/scripts/pre-commit-hook.sh (validate_repo_root_files)"
+		print_error ""
+		return 1
+	fi
+
+	return 0
+}
+
 main() {
 	echo -e "${BLUE}Pre-commit Quality Validation${NC}"
 	echo -e "${BLUE}================================${NC}"
@@ -378,9 +515,17 @@ main() {
 	}
 	echo ""
 
+	validate_repo_root_files || {
+		print_error "Commit rejected: new repo root files not in allowlist"
+		exit 1
+	}
+	echo ""
+
 	# Get modified shell files
-	local modified_files
-	mapfile -t modified_files < <(get_modified_shell_files)
+	local modified_files=()
+	while IFS= read -r file; do
+		[[ -n "$file" ]] && modified_files+=("$file")
+	done < <(get_modified_shell_files)
 
 	if [[ ${#modified_files[@]} -eq 0 ]]; then
 		print_info "No shell files modified, skipping quality checks"
