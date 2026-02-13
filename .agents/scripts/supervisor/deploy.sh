@@ -590,8 +590,8 @@ cmd_pr_lifecycle() {
 					fix_cycle_count=$(db "$SUPERVISOR_DB" "
 						SELECT COUNT(*) FROM state_log
 						WHERE task_id = '$escaped_id'
-						  AND old_state = 'review_triage'
-						  AND new_state = 'dispatched';
+						  AND from_state = 'review_triage'
+						  AND to_state = 'dispatched';
 					" 2>/dev/null || echo "0")
 					local max_fix_cycles=3
 					if [[ "$fix_cycle_count" -ge "$max_fix_cycles" ]]; then
