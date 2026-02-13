@@ -497,3 +497,34 @@
   files: .agents/scripts/claim-task-id.sh
   check: shellcheck .agents/scripts/claim-task-id.sh
   check: file-exists .agents/scripts/claim-task-id.sh
+
+- [!] v062 t1031 Modularize supervisor-helper.sh — move functions from 1... | PR #1359 | merged:2026-02-13 failed:2026-02-13 reason:shellcheck: .agents/scripts/supervisor-helper.sh has violations; shellcheck: .agents/scripts/supervisor/cron.sh has violations; shellcheck: .agents/scripts/supervisor/deploy.sh has violations;
+  files: .agents/scripts/supervisor-helper.sh, .agents/scripts/supervisor/batch.sh, .agents/scripts/supervisor/cleanup.sh, .agents/scripts/supervisor/cron.sh, .agents/scripts/supervisor/database.sh, .agents/scripts/supervisor/deploy.sh, .agents/scripts/supervisor/dispatch.sh, .agents/scripts/supervisor/evaluate.sh, .agents/scripts/supervisor/issue-sync.sh, .agents/scripts/supervisor/memory-integration.sh, .agents/scripts/supervisor/pulse.sh, .agents/scripts/supervisor/self-heal.sh, .agents/scripts/supervisor/state.sh, .agents/scripts/supervisor/utility.sh
+  check: shellcheck .agents/scripts/supervisor-helper.sh
+  check: file-exists .agents/scripts/supervisor-helper.sh
+  check: shellcheck .agents/scripts/supervisor/batch.sh
+  check: file-exists .agents/scripts/supervisor/batch.sh
+  check: shellcheck .agents/scripts/supervisor/cleanup.sh
+  check: file-exists .agents/scripts/supervisor/cleanup.sh
+  check: shellcheck .agents/scripts/supervisor/cron.sh
+  check: file-exists .agents/scripts/supervisor/cron.sh
+  check: shellcheck .agents/scripts/supervisor/database.sh
+  check: file-exists .agents/scripts/supervisor/database.sh
+  check: shellcheck .agents/scripts/supervisor/deploy.sh
+  check: file-exists .agents/scripts/supervisor/deploy.sh
+  check: shellcheck .agents/scripts/supervisor/dispatch.sh
+  check: file-exists .agents/scripts/supervisor/dispatch.sh
+  check: shellcheck .agents/scripts/supervisor/evaluate.sh
+  check: file-exists .agents/scripts/supervisor/evaluate.sh
+  check: shellcheck .agents/scripts/supervisor/issue-sync.sh
+  check: file-exists .agents/scripts/supervisor/issue-sync.sh
+  check: shellcheck .agents/scripts/supervisor/memory-integration.sh
+  check: file-exists .agents/scripts/supervisor/memory-integration.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/supervisor/self-heal.sh
+  check: file-exists .agents/scripts/supervisor/self-heal.sh
+  check: shellcheck .agents/scripts/supervisor/state.sh
+  check: file-exists .agents/scripts/supervisor/state.sh
+  check: shellcheck .agents/scripts/supervisor/utility.sh
+  check: file-exists .agents/scripts/supervisor/utility.sh
