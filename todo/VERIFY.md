@@ -528,3 +528,80 @@
   check: file-exists .agents/scripts/supervisor/state.sh
   check: shellcheck .agents/scripts/supervisor/utility.sh
   check: file-exists .agents/scripts/supervisor/utility.sh
+
+- [x] v063 t1032.4 Generalise task-creator to accept multi-source findings �... | PR #1379 | merged:2026-02-13 verified:2026-02-13
+  files: .agents/scripts/audit-task-creator-helper.sh, .agents/scripts/coderabbit-task-creator-helper.sh, .agents/scripts/coderabbit-task-creator-helper.sh, .agents/subagent-index.toon
+  check: shellcheck .agents/scripts/audit-task-creator-helper.sh
+  check: file-exists .agents/scripts/audit-task-creator-helper.sh
+  check: shellcheck .agents/scripts/coderabbit-task-creator-helper.sh
+  check: file-exists .agents/scripts/coderabbit-task-creator-helper.sh
+  check: shellcheck .agents/scripts/coderabbit-task-creator-helper.sh
+  check: file-exists .agents/scripts/coderabbit-task-creator-helper.sh
+  check: file-exists .agents/subagent-index.toon
+
+- [!] v064 t1030 Guard complete-deployed transition to require PR merge wh... | PR #1385 | merged:2026-02-13 failed:2026-02-13 reason:shellcheck: .agents/scripts/supervisor/deploy.sh has violations; shellcheck: .agents/scripts/supervisor/pulse.sh has violations; shellcheck: tests/test-supervisor-state-machine.sh has violation
+  files: .agents/scripts/supervisor/deploy.sh, .agents/scripts/supervisor/pulse.sh, .agents/scripts/supervisor/state.sh, tests/test-supervisor-state-machine.sh
+  check: shellcheck .agents/scripts/supervisor/deploy.sh
+  check: file-exists .agents/scripts/supervisor/deploy.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/supervisor/state.sh
+  check: file-exists .agents/scripts/supervisor/state.sh
+  check: shellcheck tests/test-supervisor-state-machine.sh
+  check: file-exists tests/test-supervisor-state-machine.sh
+
+- [!] v065 t1036 Migrate legacy [Supervisor] health issue to [Supervisor:u... | PR #1383 | merged:2026-02-13 failed:2026-02-13 reason:shellcheck: .agents/scripts/supervisor/issue-sync.sh has violations
+  files: .agents/scripts/supervisor/issue-sync.sh
+  check: shellcheck .agents/scripts/supervisor/issue-sync.sh
+  check: file-exists .agents/scripts/supervisor/issue-sync.sh
+
+- [!] v066 t1032.6 Add audit trend tracking — create an `audit_snapshots` ... | PR #1378 | merged:2026-02-13 failed:2026-02-13 reason:shellcheck: .agents/scripts/supervisor/pulse.sh has violations
+  files: .agents/scripts/code-audit-helper.sh, .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/code-audit-helper.sh
+  check: file-exists .agents/scripts/code-audit-helper.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
+
+- [x] v067 t1039 CI/pre-commit: reject PRs that add new files to repo root... | PR #1393 | merged:2026-02-13 verified:2026-02-13
+  files: .agents/scripts/pre-commit-hook.sh
+  check: shellcheck .agents/scripts/pre-commit-hook.sh
+  check: file-exists .agents/scripts/pre-commit-hook.sh
+
+- [x] v068 t1032.2 Add Codacy collector — poll Codacy API (`/analysis/orga... | PR #1384 | merged:2026-02-13 verified:2026-02-13
+  files: .agents/scripts/codacy-collector-helper.sh
+  check: shellcheck .agents/scripts/codacy-collector-helper.sh
+  check: file-exists .agents/scripts/codacy-collector-helper.sh
+
+- [!] v069 t1033 claim-task-id.sh should accept --labels or parse #tags fr... | PR #1398 | merged:2026-02-13 failed:2026-02-13 reason:shellcheck: .agents/scripts/claim-task-id.sh has violations; shellcheck: .agents/scripts/supervisor/pulse.sh has violations
+  files: .agents/scripts/audit-task-creator-helper.sh, .agents/scripts/claim-task-id.sh, .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/audit-task-creator-helper.sh
+  check: file-exists .agents/scripts/audit-task-creator-helper.sh
+  check: shellcheck .agents/scripts/claim-task-id.sh
+  check: file-exists .agents/scripts/claim-task-id.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
+
+- [!] v070 t1032.3 Add SonarCloud collector — poll SonarCloud API (`/issue... | PR #1380 | merged:2026-02-13 failed:2026-02-13 reason:shellcheck: .agents/scripts/sonarcloud-collector-helper.sh has violations
+  files: .agents/scripts/sonarcloud-collector-helper.sh
+  check: shellcheck .agents/scripts/sonarcloud-collector-helper.sh
+  check: file-exists .agents/scripts/sonarcloud-collector-helper.sh
+
+- [!] v071 t1041 Fix generate-opencode-agents.sh subagent stub generation ... | PR #1402 | merged:2026-02-13 failed:2026-02-13 reason:shellcheck: .agents/scripts/generate-opencode-agents.sh has violations
+  files: .agents/scripts/generate-opencode-agents.sh
+  check: shellcheck .agents/scripts/generate-opencode-agents.sh
+  check: file-exists .agents/scripts/generate-opencode-agents.sh
+
+- [!] v072 t1032.5 Wire Phase 10b to run unified audit orchestrator — repl... | PR #1377 | merged:2026-02-13 failed:2026-02-13 reason:shellcheck: .agents/scripts/supervisor/pulse.sh has violations
+  files: .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
+
+- [x] v073 t1032.8 Verify end-to-end — trigger a full audit cycle manually... | PR #1381 | merged:2026-02-13 verified:2026-02-13
+  files: tests/test-audit-e2e.sh
+  check: shellcheck tests/test-audit-e2e.sh
+  check: file-exists tests/test-audit-e2e.sh
+
+- [!] v074 t1032.7 Add audit section to pinned queue health issue — extend... | PR #1399 | merged:2026-02-13 failed:2026-02-13 reason:shellcheck: .agents/scripts/supervisor/issue-sync.sh has violations
+  files: .agents/scripts/supervisor/issue-sync.sh
+  check: shellcheck .agents/scripts/supervisor/issue-sync.sh
+  check: file-exists .agents/scripts/supervisor/issue-sync.sh
