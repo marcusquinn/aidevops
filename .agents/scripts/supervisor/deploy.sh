@@ -577,14 +577,31 @@ cmd_pr_lifecycle() {
 
 				case "$triage_action" in
 				merge)
-					# Only low/dismiss threads - safe to merge
 					log_info "Review threads are low-severity/dismissible - proceeding to merge"
 					cmd_transition "$task_id" "merging" 2>>"$SUPERVISOR_LOG" || true
 					tstatus="merging"
 					;;
 				fix)
 					# High/medium threads need fixing - dispatch a worker
-					log_info "Dispatching review fix worker for $task_id ($triage_summary)"
+					# t1037: Guard against infinite fix-worker loops. Count how many
+					# review_triage→dispatched cycles this task has been through.
+					# Cap at 3 fix cycles — after that, block for human review.
+					local fix_cycle_count=0
+					fix_cycle_count=$(db "$SUPERVISOR_DB" "
+						SELECT COUNT(*) FROM state_log
+						WHERE task_id = '$escaped_id'
+						  AND old_state = 'review_triage'
+						  AND new_state = 'dispatched';
+					" 2>/dev/null || echo "0")
+					local max_fix_cycles=3
+					if [[ "$fix_cycle_count" -ge "$max_fix_cycles" ]]; then
+						log_warn "Fix worker cycle limit reached ($fix_cycle_count/$max_fix_cycles) for $task_id — blocking"
+						cmd_transition "$task_id" "blocked" --error "Fix worker exhausted ($fix_cycle_count cycles): $triage_summary" 2>>"$SUPERVISOR_LOG" || true
+						send_task_notification "$task_id" "blocked" "Review fix worker exhausted $fix_cycle_count cycles without resolving threads" 2>>"$SUPERVISOR_LOG" || true
+						return 1
+					fi
+
+					log_info "Dispatching review fix worker for $task_id ($triage_summary) [cycle $((fix_cycle_count + 1))/$max_fix_cycles]"
 					if dispatch_review_fix_worker "$task_id" "$triage_result" 2>>"$SUPERVISOR_LOG"; then
 						# Worker dispatched - task is now running again
 						# When it completes, it will go through evaluate -> complete -> pr_review -> triage again
@@ -1139,11 +1156,18 @@ Instructions:
 	log_info "Working dir: $work_dir"
 
 	# Build and execute dispatch command
+	# t1037: Resolve tier name to full model string (e.g. "opus" → "anthropic/claude-opus-4-6")
+	# The DB stores tier names but OpenCode CLI needs provider/model format.
+	local resolved_model=""
+	if [[ -n "$tmodel" ]]; then
+		resolved_model=$(resolve_model "$tmodel" "$ai_cli")
+	fi
+
 	local -a cmd_parts=()
 	if [[ "$ai_cli" == "opencode" ]]; then
 		cmd_parts=(opencode run --format json)
-		if [[ -n "$tmodel" ]]; then
-			cmd_parts+=(-m "$tmodel")
+		if [[ -n "$resolved_model" ]]; then
+			cmd_parts+=(-m "$resolved_model")
 		fi
 		# t262: Include truncated description in review-fix session title
 		local fix_title="${task_id}-review-fix"
