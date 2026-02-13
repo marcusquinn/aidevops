@@ -221,6 +221,7 @@ readonly -a VALID_TRANSITIONS=(
 	"retrying:failed"
 	"retrying:cancelled"
 	"blocked:queued"
+	"blocked:pr_review"
 	"blocked:cancelled"
 	"failed:queued"
 	# Post-PR lifecycle transitions (t128.8)
@@ -1758,6 +1759,15 @@ CREATE INDEX IF NOT EXISTS idx_contest_entries_status ON contest_entries(status)
 CONTEST_SQL
 			log_success "Created contest tables (t1011)"
 		fi
+	fi
+
+	# Migrate: add last_main_sha column to tasks (t1029)
+	local has_last_main_sha
+	has_last_main_sha=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('tasks') WHERE name='last_main_sha';" 2>/dev/null || echo "0")
+	if [[ "$has_last_main_sha" -eq 0 ]]; then
+		log_info "Migrating tasks table: adding last_main_sha column (t1029)..."
+		db "$SUPERVISOR_DB" "ALTER TABLE tasks ADD COLUMN last_main_sha TEXT;" 2>/dev/null || true
+		log_success "Added last_main_sha column to tasks (t1029)"
 	fi
 
 	# Ensure WAL mode for existing databases created before t135.3
@@ -11889,6 +11899,60 @@ cmd_pulse() {
 	# t265: Redirect stderr to log and capture errors before || true suppresses them
 	if ! process_verify_queue "${batch_id:-}" 2>>"$SUPERVISOR_LOG"; then
 		log_error "Phase 3b (process_verify_queue) failed — see $SUPERVISOR_LOG for details"
+	fi
+
+	# Phase 3.5: Auto-retry blocked merge-conflict tasks (t1029)
+	# When a task is blocked with "Merge conflict — auto-rebase failed", periodically
+	# re-attempt the rebase after main advances. Other PRs merging often resolve conflicts.
+	local blocked_tasks
+	blocked_tasks=$(db "$SUPERVISOR_DB" "SELECT id, repo, error, rebase_attempts, last_main_sha FROM tasks WHERE status = 'blocked' AND error LIKE '%Merge conflict%auto-rebase failed%';" 2>/dev/null || echo "")
+
+	if [[ -n "$blocked_tasks" ]]; then
+		while IFS='|' read -r blocked_id blocked_repo blocked_error blocked_rebase_attempts blocked_last_main_sha; do
+			[[ -z "$blocked_id" ]] && continue
+
+			# Cap at 3 total retry cycles to prevent infinite loops
+			local max_retry_cycles=3
+			if [[ "${blocked_rebase_attempts:-0}" -ge "$max_retry_cycles" ]]; then
+				log_info "  Skipping $blocked_id — max retry cycles ($max_retry_cycles) reached"
+				continue
+			fi
+
+			# Get current main SHA
+			local current_main_sha
+			current_main_sha=$(git -C "$blocked_repo" rev-parse origin/main 2>/dev/null || echo "")
+			if [[ -z "$current_main_sha" ]]; then
+				log_warn "  Failed to get origin/main SHA for $blocked_id in $blocked_repo"
+				continue
+			fi
+
+			# Check if main has advanced since last attempt
+			if [[ -n "$blocked_last_main_sha" && "$current_main_sha" == "$blocked_last_main_sha" ]]; then
+				# Main hasn't advanced — skip retry
+				continue
+			fi
+
+			# Main has advanced (or this is first retry) — reset counter and retry
+			log_info "  Main advanced for $blocked_id — retrying rebase (attempt $((blocked_rebase_attempts + 1))/$max_retry_cycles)"
+
+			# Update last_main_sha before attempting rebase
+			local escaped_blocked_id
+			escaped_blocked_id=$(sql_escape "$blocked_id")
+			db "$SUPERVISOR_DB" "UPDATE tasks SET last_main_sha = '$current_main_sha' WHERE id = '$escaped_blocked_id';" 2>/dev/null || true
+
+			# Attempt rebase
+			if rebase_sibling_pr "$blocked_id" 2>>"$SUPERVISOR_LOG"; then
+				log_success "  Auto-rebase retry succeeded for $blocked_id — transitioning to pr_review"
+				# Increment rebase_attempts counter
+				db "$SUPERVISOR_DB" "UPDATE tasks SET rebase_attempts = $((blocked_rebase_attempts + 1)) WHERE id = '$escaped_blocked_id';" 2>/dev/null || true
+				# Transition back to pr_review so CI can run
+				cmd_transition "$blocked_id" "pr_review" --error "" 2>>"$SUPERVISOR_LOG" || true
+			else
+				# Rebase still failed — increment counter and stay blocked
+				log_warn "  Auto-rebase retry failed for $blocked_id — staying blocked"
+				db "$SUPERVISOR_DB" "UPDATE tasks SET rebase_attempts = $((blocked_rebase_attempts + 1)) WHERE id = '$escaped_blocked_id';" 2>/dev/null || true
+			fi
+		done <<<"$blocked_tasks"
 	fi
 
 	# Phase 4: Worker health checks - detect dead, hung, and orphaned workers
