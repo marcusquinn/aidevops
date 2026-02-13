@@ -1184,7 +1184,7 @@ cmd_create() {
 			local tag="${BASH_REMATCH[1]}"
 			tag_list+=("$tag")
 			# Remove matched tag to find next one
-			task_desc_tmp="${task_desc#*#${tag}}"
+			task_desc_tmp="${task_desc#*#"${tag}"}"
 			task_desc="$task_desc_tmp"
 		done
 		# Rebuild task_desc (it was consumed by the loop)

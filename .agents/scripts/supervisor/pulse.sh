@@ -1229,7 +1229,7 @@ cmd_pulse() {
 									while [[ "$task_desc_copy" =~ \#([a-zA-Z0-9_-]+) ]]; do
 										local tag="${BASH_REMATCH[1]}"
 										tag_list+=("$tag")
-										task_desc_copy="${task_desc_copy#*#${tag}}"
+										task_desc_copy="${task_desc_copy#*#"${tag}"}"
 									done
 									if [[ ${#tag_list[@]} -gt 0 ]]; then
 										labels=$(

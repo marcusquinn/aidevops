@@ -71,7 +71,7 @@ extract_hashtags() {
 			tags="$tag"
 		fi
 		# Remove matched tag to find next one
-		text="${text#*#${tag}}"
+		text="${text#*#"${tag}"}"
 	done
 
 	echo "$tags"
