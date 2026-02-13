@@ -1174,6 +1174,29 @@ cmd_create() {
 			source_tag=" #${source_tool}"
 		fi
 
+		# Build task description first (needed for label extraction)
+		local task_desc="Fix ${category} issue (${severity}): ${description}${location}${pr_ref} ${priority_tag}${source_tag} #quality #auto-review #auto-dispatch ~30m"
+
+		# Extract labels from task description hashtags
+		local labels=""
+		local tag_list=()
+		while [[ "$task_desc" =~ \#([a-zA-Z0-9_-]+) ]]; do
+			local tag="${BASH_REMATCH[1]}"
+			tag_list+=("$tag")
+			# Remove matched tag to find next one
+			task_desc_tmp="${task_desc#*#"${tag}"}"
+			task_desc="$task_desc_tmp"
+		done
+		# Rebuild task_desc (it was consumed by the loop)
+		task_desc="Fix ${category} issue (${severity}): ${description}${location}${pr_ref} ${priority_tag}${source_tag} #quality #auto-review #auto-dispatch ~30m"
+		# Join tags with commas
+		if [[ ${#tag_list[@]} -gt 0 ]]; then
+			labels=$(
+				IFS=,
+				echo "${tag_list[*]}"
+			)
+		fi
+
 		# Allocate task ID via claim-task-id.sh
 		local task_id=""
 		local gh_ref=""
@@ -1181,7 +1204,7 @@ cmd_create() {
 
 		local task_title="Fix ${category} issue (${severity}): ${description:0:80}"
 
-		if claim_output=$("${SCRIPT_DIR}/claim-task-id.sh" --title "$task_title" --description "Auto-created from ${source_tool} finding #${finding_id}" --labels "quality,auto-review" 2>&1); then
+		if claim_output=$("${SCRIPT_DIR}/claim-task-id.sh" --title "$task_title" --description "Auto-created from ${source_tool} finding #${finding_id}" --labels "$labels" 2>&1); then
 			task_id=$(echo "$claim_output" | grep "^task_id=" | cut -d= -f2)
 			gh_ref=$(echo "$claim_output" | grep "^ref=" | cut -d= -f2)
 
@@ -1194,9 +1217,6 @@ cmd_create() {
 			log_info "Skipping this finding (will retry on next run)"
 			continue
 		fi
-
-		# Build task description
-		local task_desc="Fix ${category} issue (${severity}): ${description}${location}${pr_ref} ${priority_tag}${source_tag} #quality #auto-review #auto-dispatch ~30m"
 
 		# Add GitHub issue reference if available
 		if [[ -n "$gh_ref" && "$gh_ref" != "offline" ]]; then

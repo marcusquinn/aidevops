@@ -57,6 +57,26 @@ log_success() { echo -e "${GREEN}[OK]${NC} $*" >&2; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $*" >&2; }
 log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 
+# Extract hashtags from text and convert to comma-separated labels
+extract_hashtags() {
+	local text="$1"
+	local tags=""
+
+	# Extract all #hashtags (word characters after #)
+	while [[ "$text" =~ \#([a-zA-Z0-9_-]+) ]]; do
+		local tag="${BASH_REMATCH[1]}"
+		if [[ -n "$tags" ]]; then
+			tags="${tags},${tag}"
+		else
+			tags="$tag"
+		fi
+		# Remove matched tag to find next one
+		text="${text#*#"${tag}"}"
+	done
+
+	echo "$tags"
+}
+
 # Parse arguments
 parse_args() {
 	while [[ $# -gt 0 ]]; do
@@ -99,6 +119,16 @@ parse_args() {
 	if [[ -z "$TASK_TITLE" ]]; then
 		log_error "Missing required argument: --title"
 		exit 1
+	fi
+
+	# Auto-extract hashtags from title if no labels provided
+	if [[ -z "$TASK_LABELS" ]]; then
+		local extracted_tags
+		extracted_tags=$(extract_hashtags "$TASK_TITLE")
+		if [[ -n "$extracted_tags" ]]; then
+			TASK_LABELS="$extracted_tags"
+			log_info "Auto-extracted labels from title: $TASK_LABELS"
+		fi
 	fi
 }
 
