@@ -16,6 +16,38 @@ get_modified_shell_files() {
 	return 0
 }
 
+# Validate that TODO.md doesn't have duplicate task IDs
+validate_duplicate_task_ids() {
+	# Only check if TODO.md is staged
+	if ! git diff --cached --name-only | grep -q '^TODO\.md$'; then
+		return 0
+	fi
+
+	local staged_todo
+	staged_todo=$(git show :TODO.md 2>/dev/null || true)
+	if [[ -z "$staged_todo" ]]; then
+		return 0
+	fi
+
+	# Extract all task IDs (including subtasks like t123.1)
+	local task_ids
+	task_ids=$(echo "$staged_todo" | grep -oE '\bt[0-9]+(\.[0-9]+)*\b' | sort)
+
+	# Check for duplicates
+	local duplicates
+	duplicates=$(echo "$task_ids" | uniq -d)
+
+	if [[ -n "$duplicates" ]]; then
+		print_error "Duplicate task IDs found in TODO.md:"
+		echo "$duplicates" | while read -r dup; do
+			print_error "  - $dup"
+		done
+		return 1
+	fi
+
+	return 0
+}
+
 validate_return_statements() {
 	local violations=0
 
