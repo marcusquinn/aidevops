@@ -33,7 +33,7 @@ echo -e "${BLUE}Generating OpenCode agent configuration...${NC}"
 mkdir -p "$OPENCODE_AGENT_DIR"
 
 # Always update AGENTS.md with version check (ensures updates get deployed)
-cat > "$OPENCODE_CONFIG_DIR/AGENTS.md" << 'EOF'
+cat >"$OPENCODE_CONFIG_DIR/AGENTS.md" <<'EOF'
 Add ~/.aidevops/agents/AGENTS.md to context for AI DevOps capabilities.
 
 ## aidevops Framework Status
@@ -57,13 +57,13 @@ echo -e "  ${GREEN}✓${NC} Updated AGENTS.md with version check"
 # Also removes demoted agents that are now subagents
 # Plan+ and AI-DevOps consolidated into Build+ as of v2.50.0
 for f in Accounts.md Accounting.md accounting.md AI-DevOps.md Build+.md Content.md Health.md Legal.md Marketing.md Research.md Sales.md SEO.md WordPress.md Plan+.md Build-Agent.md Build-MCP.md build-agent.md build-mcp.md plan-plus.md aidevops.md; do
-    rm -f "$OPENCODE_AGENT_DIR/$f"
+	rm -f "$OPENCODE_AGENT_DIR/$f"
 done
 
 # Remove loop-state files that were incorrectly created as agents
 # These are runtime state files, not agents
 for f in ralph-loop.local.md quality-loop.local.md full-loop.local.md loop-state.md re-anchor.md postflight-loop.md; do
-    rm -f "$OPENCODE_AGENT_DIR/$f"
+	rm -f "$OPENCODE_AGENT_DIR/$f"
 done
 
 # =============================================================================
@@ -74,13 +74,13 @@ echo -e "${BLUE}Configuring primary agents in opencode.json...${NC}"
 
 # Check if opencode.json exists
 if [[ ! -f "$OPENCODE_CONFIG" ]]; then
-    echo -e "${YELLOW}Warning: $OPENCODE_CONFIG not found. Creating minimal config.${NC}"
-    # shellcheck disable=SC2016
-    echo '{"$schema": "https://opencode.ai/config.json"}' > "$OPENCODE_CONFIG"
+	echo -e "${YELLOW}Warning: $OPENCODE_CONFIG not found. Creating minimal config.${NC}"
+	# shellcheck disable=SC2016
+	echo '{"$schema": "https://opencode.ai/config.json"}' >"$OPENCODE_CONFIG"
 fi
 
 # Use Python to auto-discover and configure primary agents
-python3 << 'PYEOF'
+python3 <<'PYEOF'
 import json
 import os
 import glob
@@ -685,69 +685,70 @@ echo -e "${BLUE}Generating subagent markdown files...${NC}"
 # Remove existing subagent files (regenerate fresh)
 find "$OPENCODE_AGENT_DIR" -name "*.md" -type f -delete 2>/dev/null || true
 
-subagent_count=0
-
 # Generate SUBAGENT files from subfolders
 # Some subagents need specific MCP tools enabled
-while IFS= read -r f; do
-    name=$(basename "$f" .md)
-    [[ "$name" == "AGENTS" || "$name" == "README" ]] && continue
-    
-    rel_path="${f#"$AGENTS_DIR"/}"
-    
-    # Extract description from source file frontmatter (t255)
-    # Falls back to "Read <path>" if no description found
-    src_desc=$(sed -n '/^---$/,/^---$/{ /^description:/{s/^description: *//p; q} }' "$f" 2>/dev/null)
-    if [[ -z "$src_desc" ]]; then
-        src_desc="Read ~/.aidevops/agents/${rel_path}"
-    fi
-    
-    # Determine additional tools based on subagent name/path
-    extra_tools=""
-    case "$name" in
-        outscraper)
-            extra_tools=$'  outscraper_*: true\n  webfetch: true'
-            ;;
-        mainwp|localwp)
-            extra_tools=$'  localwp_*: true'
-            ;;
-        quickfile)
-            extra_tools=$'  quickfile_*: true'
-            ;;
-        google-search-console)
-            extra_tools=$'  gsc_*: true'
-            ;;
-        dataforseo)
-            extra_tools=$'  dataforseo_*: true\n  webfetch: true'
-            ;;
-        claude-code)
-            extra_tools=$'  claude-code-mcp_*: true'
-            ;;
-        # serper - REMOVED: Uses curl subagent now, no MCP tools
-        playwriter)
-            extra_tools=$'  playwriter_*: true'
-            ;;
-        shadcn)
-            extra_tools=$'  shadcn_*: true\n  write: true\n  edit: true'
-            ;;
-        macos-automator|mac)
-            # Only enable macos-automator tools on macOS
-            if [[ "$(uname -s)" == "Darwin" ]]; then
-                extra_tools=$'  macos-automator_*: true\n  webfetch: true'
-            fi
-            ;;
-        ios-simulator-mcp)
-            # Only enable ios-simulator tools on macOS
-            if [[ "$(uname -s)" == "Darwin" ]]; then
-                extra_tools=$'  ios-simulator_*: true'
-            fi
-            ;;
-        *)
-            ;;  # No extra tools for other agents
-    esac
-    
-    if [[ -n "$extra_tools" ]]; then
-        cat > "$OPENCODE_AGENT_DIR/$name.md" << EOF
+# t1041: Use parallel processing to handle 907+ files efficiently
+generate_subagent_stub() {
+	local f="$1"
+	local name
+	name=$(basename "$f" .md)
+	[[ "$name" == "AGENTS" || "$name" == "README" ]] && return 0
+
+	local rel_path="${f#"$AGENTS_DIR"/}"
+
+	# Extract description from source file frontmatter (t255)
+	# Falls back to "Read <path>" if no description found
+	local src_desc
+	src_desc=$(sed -n '/^---$/,/^---$/{ /^description:/{s/^description: *//p; q} }' "$f" 2>/dev/null)
+	if [[ -z "$src_desc" ]]; then
+		src_desc="Read ~/.aidevops/agents/${rel_path}"
+	fi
+
+	# Determine additional tools based on subagent name/path
+	local extra_tools=""
+	case "$name" in
+	outscraper)
+		extra_tools=$'  outscraper_*: true\n  webfetch: true'
+		;;
+	mainwp | localwp)
+		extra_tools=$'  localwp_*: true'
+		;;
+	quickfile)
+		extra_tools=$'  quickfile_*: true'
+		;;
+	google-search-console)
+		extra_tools=$'  gsc_*: true'
+		;;
+	dataforseo)
+		extra_tools=$'  dataforseo_*: true\n  webfetch: true'
+		;;
+	claude-code)
+		extra_tools=$'  claude-code-mcp_*: true'
+		;;
+	# serper - REMOVED: Uses curl subagent now, no MCP tools
+	playwriter)
+		extra_tools=$'  playwriter_*: true'
+		;;
+	shadcn)
+		extra_tools=$'  shadcn_*: true\n  write: true\n  edit: true'
+		;;
+	macos-automator | mac)
+		# Only enable macos-automator tools on macOS
+		if [[ "$(uname -s)" == "Darwin" ]]; then
+			extra_tools=$'  macos-automator_*: true\n  webfetch: true'
+		fi
+		;;
+	ios-simulator-mcp)
+		# Only enable ios-simulator tools on macOS
+		if [[ "$(uname -s)" == "Darwin" ]]; then
+			extra_tools=$'  ios-simulator_*: true'
+		fi
+		;;
+	*) ;; # No extra tools for other agents
+	esac
+
+	if [[ -n "$extra_tools" ]]; then
+		cat >"$OPENCODE_AGENT_DIR/$name.md" <<EOF
 ---
 description: ${src_desc}
 mode: subagent
@@ -762,8 +763,8 @@ $extra_tools
 
 **MANDATORY**: Your first action MUST be to read ~/.aidevops/agents/${rel_path} and follow ALL rules within it.
 EOF
-    else
-        cat > "$OPENCODE_AGENT_DIR/$name.md" << EOF
+	else
+		cat >"$OPENCODE_AGENT_DIR/$name.md" <<EOF
 ---
 description: ${src_desc}
 mode: subagent
@@ -777,9 +778,18 @@ tools:
 
 **MANDATORY**: Your first action MUST be to read ~/.aidevops/agents/${rel_path} and follow ALL rules within it.
 EOF
-    fi
-    subagent_count=$((subagent_count + 1))
-done < <(find "$AGENTS_DIR" -mindepth 2 -name "*.md" -type f -not -path "*/loop-state/*" -not -name "*-skill.md" | sort)
+	fi
+	echo 1 # Return 1 for counting
+}
+
+export -f generate_subagent_stub
+export AGENTS_DIR
+export OPENCODE_AGENT_DIR
+
+# Process files in parallel (use nproc/2 or 4, whichever is larger)
+subagent_count=$(find "$AGENTS_DIR" -mindepth 2 -name "*.md" -type f -not -path "*/loop-state/*" -not -name "*-skill.md" |
+	xargs -P "$(($(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4) / 2))" -I {} bash -c 'generate_subagent_stub "$@"' _ {} |
+	awk '{sum+=$1} END {print sum+0}')
 
 echo -e "  ${GREEN}✓${NC} Generated $subagent_count subagent files"
 
@@ -791,10 +801,10 @@ echo -e "${BLUE}Syncing MCP tool index for on-demand discovery...${NC}"
 
 MCP_INDEX_HELPER="$AGENTS_DIR/scripts/mcp-index-helper.sh"
 if [[ -x "$MCP_INDEX_HELPER" ]]; then
-    "$MCP_INDEX_HELPER" sync 2>/dev/null || echo -e "  ${YELLOW}⚠${NC} MCP index sync skipped (non-critical)"
-    echo -e "  ${GREEN}✓${NC} MCP tool index updated"
+	"$MCP_INDEX_HELPER" sync 2>/dev/null || echo -e "  ${YELLOW}⚠${NC} MCP index sync skipped (non-critical)"
+	echo -e "  ${GREEN}✓${NC} MCP tool index updated"
 else
-    echo -e "  ${YELLOW}⚠${NC} MCP index helper not found (install with setup.sh)"
+	echo -e "  ${YELLOW}⚠${NC} MCP index helper not found (install with setup.sh)"
 fi
 
 # =============================================================================
