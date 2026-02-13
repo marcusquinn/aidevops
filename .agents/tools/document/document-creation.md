@@ -119,6 +119,23 @@ availability at runtime and selects automatically.
 - Preserves email metadata (From, To, Subject, Date) in markdown frontmatter
 - Outputs: `email.md` + `email_attachments/` folder
 
+**Converting extracted attachments**:
+After extracting attachments from an email, you can convert them to markdown using the same tool:
+
+```bash
+# Extract email and attachments
+document-creation-helper.sh convert email.eml --to md
+
+# Convert PDF attachment to markdown
+document-creation-helper.sh convert email_attachments/report.pdf --to md
+
+# Convert DOCX attachment to markdown
+document-creation-helper.sh convert email_attachments/document.docx --to md
+
+# OCR image attachment to markdown
+document-creation-helper.sh convert email_attachments/scan.jpg --to md --ocr auto
+```
+
 **Dependencies**:
 - `.eml` files: Python stdlib (email module) + html2text
 - `.msg` files: extract-msg library (auto-installed on first use)
