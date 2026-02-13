@@ -536,6 +536,27 @@ cmd_pr_lifecycle() {
 			fi
 			tstatus="merging"
 		else
+			# t1041: If this is a return from a fix worker (not the first triage),
+			# resolve bot review threads before re-checking. This prevents the
+			# infinite loop where fix workers address feedback but threads stay
+			# unresolved because only the author/admin can resolve them.
+			local prior_fix_cycles=0
+			prior_fix_cycles=$(db "$SUPERVISOR_DB" "
+				SELECT COUNT(*) FROM state_log
+				WHERE task_id = '$escaped_id'
+				  AND from_state = 'review_triage'
+				  AND to_state = 'dispatched';
+			" 2>/dev/null || echo "0")
+
+			if [[ "$prior_fix_cycles" -gt 0 ]]; then
+				log_info "Fix cycle $prior_fix_cycles for $task_id — resolving bot threads before re-triage"
+				local resolved_count
+				resolved_count=$(resolve_bot_review_threads "$repo_slug_triage" "$pr_number_triage" 2>>"$SUPERVISOR_LOG") || resolved_count="0"
+				if [[ "$resolved_count" -gt 0 ]]; then
+					log_success "Resolved $resolved_count bot thread(s) for $task_id"
+				fi
+			fi
+
 			log_info "Checking unresolved review threads for $task_id (PR #$pr_number_triage)..."
 
 			local threads_json
@@ -929,6 +950,107 @@ check_review_threads() {
 }
 
 #######################################
+# Resolve bot review threads on a PR via GitHub GraphQL API (t1041)
+#
+# After a fix worker addresses review feedback, the review threads remain
+# unresolved on GitHub because only the thread author or admin can resolve
+# them. This function resolves all bot-sourced threads to prevent infinite
+# fix-worker loops where the same threads are re-triaged every pulse.
+#
+# $1: repo_slug (owner/repo)
+# $2: pr_number
+# Returns: number of threads resolved (on stdout), 0 on error
+#######################################
+resolve_bot_review_threads() {
+	local repo_slug="$1"
+	local pr_number="$2"
+
+	if ! command -v gh &>/dev/null; then
+		log_warn "gh CLI not found, cannot resolve review threads"
+		echo "0"
+		return 1
+	fi
+
+	local owner repo
+	owner="${repo_slug%%/*}"
+	repo="${repo_slug##*/}"
+
+	# Fetch all unresolved threads with author info
+	local graphql_query
+	graphql_query='query($owner: String!, $repo: String!, $pr: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $pr) {
+      reviewThreads(first: 100) {
+        nodes {
+          id
+          isResolved
+          isOutdated
+          comments(first: 1) {
+            nodes {
+              author {
+                login
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}'
+
+	local result
+	result=$(gh api graphql -f query="$graphql_query" \
+		-F owner="$owner" -F repo="$repo" -F pr="$pr_number" \
+		2>>"$SUPERVISOR_LOG" || echo "")
+
+	if [[ -z "$result" ]]; then
+		log_warn "GraphQL query failed for thread resolution on $repo_slug#$pr_number"
+		echo "0"
+		return 1
+	fi
+
+	# Extract unresolved bot thread IDs
+	local bot_thread_ids
+	bot_thread_ids=$(echo "$result" | jq -r '
+		[.data.repository.pullRequest.reviewThreads.nodes[]
+		 | select(.isResolved == false)
+		 | select((.comments.nodes[0].author.login // "") | test("bot$|\\[bot\\]$|gemini|coderabbit|copilot|codacy|sonar"; "i"))
+		 | .id
+		] | .[]' 2>/dev/null || echo "")
+
+	if [[ -z "$bot_thread_ids" ]]; then
+		log_info "No unresolved bot threads to resolve on $repo_slug#$pr_number"
+		echo "0"
+		return 0
+	fi
+
+	# Resolve each bot thread via GraphQL mutation
+	local resolved_count=0
+	local thread_id
+	while IFS= read -r thread_id; do
+		[[ -z "$thread_id" ]] && continue
+		local resolve_mutation
+		resolve_mutation='mutation($threadId: ID!) {
+  resolveReviewThread(input: {threadId: $threadId}) {
+    thread {
+      isResolved
+    }
+  }
+}'
+		if gh api graphql -f query="$resolve_mutation" -F threadId="$thread_id" \
+			>>"$SUPERVISOR_LOG" 2>&1; then
+			resolved_count=$((resolved_count + 1))
+		else
+			log_warn "Failed to resolve thread $thread_id on $repo_slug#$pr_number"
+		fi
+	done <<<"$bot_thread_ids"
+
+	log_info "Resolved $resolved_count bot review thread(s) on $repo_slug#$pr_number"
+	echo "$resolved_count"
+	return 0
+}
+
+#######################################
 # Triage review feedback by severity (t148.2)
 #
 # Classifies each unresolved review thread into severity levels:
@@ -994,17 +1116,33 @@ triage_review_feedback() {
 	human_critical=$(echo "$classified" | jq '[.[] | select(.severity == "critical" and .isBot != true)] | length' 2>/dev/null || echo "0")
 	bot_critical=$(echo "$classified" | jq '[.[] | select(.severity == "critical" and .isBot == true)] | length' 2>/dev/null || echo "0")
 
+	# t1041: Count human-sourced high/medium separately from bot-sourced.
+	# Bot reviewers routinely leave 3+ medium threads (style guide nits,
+	# 2>/dev/null complaints, busy_timeout reminders) that are valid but
+	# not merge-blockers. Only human feedback should gate merging.
+	local human_high human_medium bot_high bot_medium
+	human_high=$(echo "$classified" | jq '[.[] | select(.severity == "high" and .isBot != true)] | length' 2>/dev/null || echo "0")
+	human_medium=$(echo "$classified" | jq '[.[] | select(.severity == "medium" and .isBot != true)] | length' 2>/dev/null || echo "0")
+	bot_high=$(echo "$classified" | jq '[.[] | select(.severity == "high" and .isBot == true)] | length' 2>/dev/null || echo "0")
+	bot_medium=$(echo "$classified" | jq '[.[] | select(.severity == "medium" and .isBot == true)] | length' 2>/dev/null || echo "0")
+
 	# Determine action based on severity distribution
 	local action="merge"
 	if [[ "$human_critical" -gt 0 ]]; then
 		action="block"
-	elif [[ "$bot_critical" -gt 0 || "$high" -gt 0 ]]; then
-		# Bot criticals are treated as fixable — dispatch a worker to address them
+	elif [[ "$human_high" -gt 0 ]]; then
+		# Human-sourced high severity — needs fixing
 		action="fix"
-	elif [[ "$medium" -gt 2 ]]; then
+	elif [[ "$human_medium" -gt 2 ]]; then
+		# Many human-sourced medium threads — needs fixing
+		action="fix"
+	elif [[ "$bot_critical" -gt 0 ]]; then
+		# Bot criticals (e.g. "SQL injection" on internal tools) — one fix attempt
 		action="fix"
 	fi
-	# low-only or dismiss-only threads: safe to merge
+	# Bot-only high/medium/low threads: safe to merge after one fix attempt.
+	# The fix worker will address what it can; remaining bot threads get
+	# resolved automatically by resolve_bot_review_threads().
 
 	# Build result JSON
 	local result
@@ -1017,10 +1155,14 @@ triage_review_feedback() {
 		--argjson dismiss "$dismiss" \
 		--argjson human_critical "$human_critical" \
 		--argjson bot_critical "$bot_critical" \
+		--argjson human_high "$human_high" \
+		--argjson human_medium "$human_medium" \
+		--argjson bot_high "$bot_high" \
+		--argjson bot_medium "$bot_medium" \
 		--arg action "$action" \
 		'{
             threads: $threads,
-            summary: {critical: $critical, high: $high, medium: $medium, low: $low, dismiss: $dismiss, human_critical: $human_critical, bot_critical: $bot_critical},
+            summary: {critical: $critical, high: $high, medium: $medium, low: $low, dismiss: $dismiss, human_critical: $human_critical, bot_critical: $bot_critical, human_high: $human_high, human_medium: $human_medium, bot_high: $bot_high, bot_medium: $bot_medium},
             action: $action
         }' 2>/dev/null || echo '{"threads":[],"summary":{},"action":"merge"}')
 
