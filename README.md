@@ -1,23 +1,25 @@
 # AI DevOps Framework
 
-**[aidevops.sh](https://aidevops.sh)** — Unleash your AI assistant's true potential with specialist DevOps agents, designed to manage all your infrastructure and services with security and reliability guidance on every decision.
+**[aidevops.sh](https://aidevops.sh)** — Maximise development and operations efficiency across everything you do. "Dev" means all development: personal, business, and technical. AI agents that handle the automatable work so your time is preserved for real-world discovery and decisions that AI cannot yet reach.
 
-*"List all my servers and websites, and check each for theme and plugin update needs, SEO and page loading performance scores, and give me a list of recommended priorities"* - **One conversation, complete infrastructure management.**
+*"List all my servers and websites, and check each for theme and plugin update needs, SEO and page loading performance scores, and give me a list of recommended priorities"* - **One conversation, complete operations management.**
 
 ## **The Philosophy**
 
-**Sane vibe-coding through git workflow best practices.** **[aidevops](https://aidevops.sh)** brings structure to AI-assisted development:
+**Maximum value for your time and money.** **[aidevops](https://aidevops.sh)** is built on these principles:
 
-- **Git-first workflow** - Protected branches, PR reviews, quality gates before merge
+- **Resource efficiency** - Use the right model tier, avoid redundant work, minimise waste. Then maximise utilisation — idle capacity is wasted potential
+- **Self-healing** - When something breaks, diagnose the root cause, create tasks, and fix it. Every error is a live test case for a permanent solution
+- **Self-improving** - When patterns of failure or inefficiency emerge, improve the framework itself
+- **Gap awareness** - Every session is an opportunity to identify what's missing — gaps in automation, documentation, coverage, or processes — and create tasks to fill them
+- **Git-first workflow** - Protected branches, PR reviews, quality gates before merge. Sane vibe-coding through structure
 - **Parallel agents** - Multiple AI sessions running full [Ralph loops](#ralph-loop---iterative-ai-development) on separate branches via [git worktrees](#git-worktrees---parallel-branch-development)
 - **Progressive discovery** - `/slash` commands and `@subagent` mentions load knowledge into context only when needed
-- **Guided development** - Build your AI team incrementally, with specialists for every online need
+- **Open-source ready** - Contribute to any project the same way you work on your own. Clone a repo, develop solutions to issues locally, and submit pull requests — the same full-loop workflow works everywhere
 
-The result: AI agents that work *with* your development process, not around it.
+The result: AI agents that work *with* your development process, not around it — absorbing everything automatable so you can focus on what matters.
 
 **Built on proven patterns**: aidevops implements [industry-standard agent design patterns](#agent-design-patterns) - including multi-layer action spaces, context isolation, and iterative execution loops.
-
-**[aidevops](https://aidevops.sh)** knows what you need to know.
 
 ## **Why This Framework?**
 
