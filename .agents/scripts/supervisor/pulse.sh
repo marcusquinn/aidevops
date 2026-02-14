@@ -586,6 +586,7 @@ cmd_pulse() {
 	# Phase 3.5: Auto-retry blocked merge-conflict tasks (t1029)
 	# When a task is blocked with "Merge conflict — auto-rebase failed", periodically
 	# re-attempt the rebase after main advances. Other PRs merging often resolve conflicts.
+	local max_retry_cycles=3
 	local blocked_tasks
 	blocked_tasks=$(db "$SUPERVISOR_DB" "SELECT id, repo, error, rebase_attempts, last_main_sha FROM tasks WHERE status = 'blocked' AND error LIKE '%Merge conflict%auto-rebase failed%';" 2>/dev/null || echo "")
 
@@ -593,8 +594,7 @@ cmd_pulse() {
 		while IFS='|' read -r blocked_id blocked_repo blocked_error blocked_rebase_attempts blocked_last_main_sha; do
 			[[ -z "$blocked_id" ]] && continue
 
-			# Cap at 3 total retry cycles to prevent infinite loops
-			local max_retry_cycles=3
+			# Cap at max_retry_cycles total retry cycles to prevent infinite loops
 			if [[ "${blocked_rebase_attempts:-0}" -ge "$max_retry_cycles" ]]; then
 				log_info "  Skipping $blocked_id — max retry cycles ($max_retry_cycles) reached"
 				continue
