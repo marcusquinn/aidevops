@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# claim-task-id.sh - Distributed task ID allocation with collision prevention
+# claim-task-id.sh - Atomic task ID allocation via .task-counter file
 # Part of aidevops framework: https://aidevops.sh
 #
 # Usage:
@@ -9,33 +9,39 @@
 #   --title "Task title"       Task title for GitHub/GitLab issue (required)
 #   --description "Details"    Task description (optional)
 #   --labels "label1,label2"   Comma-separated labels (optional)
-#   --offline                  Force offline mode (skip remote issue creation)
-#   --dry-run                  Show what would be allocated without creating issue
+#   --count N                  Allocate N consecutive IDs (default: 1)
+#   --offline                  Force offline mode (skip remote push)
+#   --no-issue                 Skip GitHub/GitLab issue creation
+#   --dry-run                  Show what would be allocated without changes
 #   --repo-path PATH           Path to git repository (default: current directory)
 #
 # Exit codes:
 #   0 - Success (outputs: task_id=tNNN ref=GH#NNN or GL#NNN)
 #   1 - Error (network failure, git error, etc.)
-#   2 - Offline fallback used (outputs: task_id=tNNN+100 ref=offline)
+#   2 - Offline fallback used (outputs: task_id=tNNN ref=offline)
 #
-# Algorithm:
-#   1. Online mode (default):
-#      - Create GitHub/GitLab issue first (distributed lock)
-#      - Fetch origin/main:TODO.md
-#      - Scan for highest tNNN
-#      - Allocate t(N+1)
-#      - Output: task_id=tNNN ref=GH#NNN
+# Algorithm (CAS loop — compare-and-swap via git push):
+#   1. git fetch origin main
+#   2. Read origin/main:.task-counter → current value (e.g. 1048)
+#   3. Claim IDs: 1048 to 1048+count-1
+#   4. Write 1048+count to .task-counter
+#   5. git commit .task-counter && git push origin HEAD:main
+#   6. If push fails (conflict) → retry from step 1 (max 10 attempts)
+#   7. On success, create GitHub/GitLab issue (optional, non-blocking)
 #
-#   2. Offline fallback:
-#      - Scan local TODO.md for highest tNNN
-#      - Allocate t(N+100) to avoid collisions
-#      - Output: task_id=tNNN+100 ref=offline
-#      - Reconciliation: manual review when back online
+# The .task-counter file is the single source of truth for the next
+# available task ID. It contains one integer. Every allocation atomically
+# increments it via a git push, which fails on conflict — guaranteeing
+# no two sessions can claim the same ID.
+#
+# Offline fallback:
+#   - Reads local .task-counter + 100 offset to avoid collisions
+#   - Reconciliation required when back online
 #
 # Platform detection:
 #   - Checks git remote URL for github.com, gitlab.com, gitea
 #   - Uses gh CLI for GitHub, glab CLI for GitLab
-#   - Falls back to offline if CLI not available
+#   - Falls back to --no-issue if CLI not available
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
@@ -45,13 +51,17 @@ set -euo pipefail
 # Configuration
 OFFLINE_MODE=false
 DRY_RUN=false
+NO_ISSUE=false
 TASK_TITLE=""
 TASK_DESCRIPTION=""
 TASK_LABELS=""
 REPO_PATH="$PWD"
+ALLOC_COUNT=1
 OFFLINE_OFFSET=100
+CAS_MAX_RETRIES=10
+COUNTER_FILE=".task-counter"
 
-# Logging
+# Logging (all to stderr so stdout is machine-readable)
 log_info() { echo -e "${BLUE}[INFO]${NC} $*" >&2; }
 log_success() { echo -e "${GREEN}[OK]${NC} $*" >&2; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $*" >&2; }
@@ -62,7 +72,6 @@ extract_hashtags() {
 	local text="$1"
 	local tags=""
 
-	# Extract all #hashtags (word characters after #)
 	while [[ "$text" =~ \#([a-zA-Z0-9_-]+) ]]; do
 		local tag="${BASH_REMATCH[1]}"
 		if [[ -n "$tags" ]]; then
@@ -70,7 +79,6 @@ extract_hashtags() {
 		else
 			tags="$tag"
 		fi
-		# Remove matched tag to find next one
 		text="${text#*#"${tag}"}"
 	done
 
@@ -93,8 +101,20 @@ parse_args() {
 			TASK_LABELS="$2"
 			shift 2
 			;;
+		--count)
+			ALLOC_COUNT="$2"
+			if ! [[ "$ALLOC_COUNT" =~ ^[0-9]+$ ]] || [[ "$ALLOC_COUNT" -lt 1 ]]; then
+				log_error "--count must be a positive integer"
+				exit 1
+			fi
+			shift 2
+			;;
 		--offline)
 			OFFLINE_MODE=true
+			shift
+			;;
+		--no-issue)
+			NO_ISSUE=true
 			shift
 			;;
 		--dry-run)
@@ -159,60 +179,207 @@ check_cli() {
 
 	case "$platform" in
 	github)
-		if command -v gh &>/dev/null; then
-			return 0
-		fi
+		command -v gh &>/dev/null && return 0
 		;;
 	gitlab)
-		if command -v glab &>/dev/null; then
-			return 0
-		fi
+		command -v glab &>/dev/null && return 0
 		;;
 	esac
 
 	return 1
 }
 
-# Get highest task ID from TODO.md content
-get_highest_task_id() {
-	local todo_content="$1"
-	local highest=0
-
-	# Extract all task IDs (tNNN or tNNN.N format)
-	while IFS= read -r line; do
-		if [[ "$line" =~ ^[[:space:]]*-[[:space:]]\[[[:space:]xX]\][[:space:]]t([0-9]+) ]]; then
-			local task_num="${BASH_REMATCH[1]}"
-			if ((10#$task_num > 10#$highest)); then
-				highest="$task_num"
-			fi
-		fi
-	done <<<"$todo_content"
-
-	echo "$highest"
-}
-
-# Fetch TODO.md from origin/main
-fetch_remote_todo() {
+# Read .task-counter from origin/main (fetches first)
+read_remote_counter() {
 	local repo_path="$1"
 
 	cd "$repo_path" || return 1
 
-	# Fetch latest from origin
 	if ! git fetch origin main 2>/dev/null; then
 		log_warn "Failed to fetch origin/main"
 		return 1
 	fi
 
-	# Get TODO.md content from origin/main
-	if ! git show origin/main:TODO.md 2>/dev/null; then
-		log_warn "Failed to read origin/main:TODO.md"
+	local counter_value
+	counter_value=$(git show "origin/main:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]')
+
+	if [[ -z "$counter_value" ]] || ! [[ "$counter_value" =~ ^[0-9]+$ ]]; then
+		log_warn "Invalid or missing ${COUNTER_FILE} on origin/main"
 		return 1
 	fi
 
+	echo "$counter_value"
 	return 0
 }
 
-# Create GitHub issue
+# Read .task-counter from local working tree
+read_local_counter() {
+	local repo_path="$1"
+	local counter_path="${repo_path}/${COUNTER_FILE}"
+
+	if [[ ! -f "$counter_path" ]]; then
+		log_warn "${COUNTER_FILE} not found at: $counter_path"
+		return 1
+	fi
+
+	local counter_value
+	counter_value=$(tr -d '[:space:]' <"$counter_path")
+
+	if [[ -z "$counter_value" ]] || ! [[ "$counter_value" =~ ^[0-9]+$ ]]; then
+		log_warn "Invalid ${COUNTER_FILE} content: $counter_value"
+		return 1
+	fi
+
+	echo "$counter_value"
+	return 0
+}
+
+# Atomic CAS allocation: fetch → read → increment → commit → push
+# Returns 0 on success, 1 on hard error, 2 on retriable conflict
+allocate_counter_cas() {
+	local repo_path="$1"
+	local count="$2"
+
+	cd "$repo_path" || return 1
+
+	# Step 1: Read current counter from origin/main
+	local current_value
+	if ! current_value=$(read_remote_counter "$repo_path"); then
+		return 1
+	fi
+
+	local first_id="$current_value"
+	local last_id=$((current_value + count - 1))
+	local new_counter=$((current_value + count))
+
+	log_info "Counter at ${current_value}, claiming t${first_id}..t${last_id}, new counter: ${new_counter}"
+
+	# Step 2: Build a commit directly on origin/main using plumbing commands.
+	# This is safe from any branch — we never touch HEAD or the working tree index.
+	cd "$repo_path" || return 1
+
+	local commit_msg="chore: claim task ID"
+	if [[ "$count" -eq 1 ]]; then
+		commit_msg="chore: claim t${first_id}"
+	else
+		commit_msg="chore: claim t${first_id}..t${last_id}"
+	fi
+
+	# Create a blob with the new counter value
+	local blob_sha
+	blob_sha=$(echo "$new_counter" | git hash-object -w --stdin 2>/dev/null) || {
+		log_warn "Failed to create blob"
+		return 1
+	}
+
+	# Read origin/main's tree, replace .task-counter with our new blob
+	local tree_sha
+	tree_sha=$(git ls-tree origin/main | sed "s|[0-9a-f]\{40,64\}	${COUNTER_FILE}$|${blob_sha}	${COUNTER_FILE}|" | git mktree 2>/dev/null) || {
+		log_warn "Failed to create tree"
+		return 1
+	}
+
+	# Create a commit on top of origin/main
+	local parent_sha
+	parent_sha=$(git rev-parse origin/main 2>/dev/null) || {
+		log_warn "Failed to resolve origin/main"
+		return 1
+	}
+
+	local commit_sha
+	commit_sha=$(git commit-tree "$tree_sha" -p "$parent_sha" -m "$commit_msg" 2>/dev/null) || {
+		log_warn "Failed to create commit"
+		return 1
+	}
+
+	# Step 3: Push the exact commit to main — this is the atomic gate.
+	# If another session pushed between our fetch and now, this fails (non-fast-forward).
+	# Safe from any branch: we push a specific SHA, not HEAD.
+	if ! git push origin "${commit_sha}:refs/heads/main" 2>/dev/null; then
+		log_warn "Push failed (conflict — another session claimed an ID)"
+		# Fetch latest for next retry attempt
+		git fetch origin main 2>/dev/null || true
+		return 2
+	fi
+
+	# Update local ref so subsequent fetches see our commit
+	git fetch origin main 2>/dev/null || true
+
+	# Success — output the claimed IDs
+	echo "$first_id"
+	return 0
+}
+
+# Online allocation with CAS retry loop
+allocate_online() {
+	local repo_path="$1"
+	local count="$2"
+	local attempt=0
+	local first_id=""
+
+	while [[ $attempt -lt $CAS_MAX_RETRIES ]]; do
+		attempt=$((attempt + 1))
+
+		if [[ $attempt -gt 1 ]]; then
+			log_info "Retry attempt ${attempt}/${CAS_MAX_RETRIES}..."
+			# Brief backoff: 0.1s * attempt, capped at 1.0s
+			local capped=$((attempt > 10 ? 10 : attempt))
+			local backoff
+			backoff=$(awk "BEGIN {printf \"%.1f\", $capped * 0.1}")
+			sleep "$backoff" 2>/dev/null || true
+		fi
+
+		local cas_result=0
+		first_id=$(allocate_counter_cas "$repo_path" "$count") || cas_result=$?
+
+		case $cas_result in
+		0)
+			log_success "Claimed t${first_id} (attempt ${attempt})"
+			echo "$first_id"
+			return 0
+			;;
+		2)
+			# Retriable conflict — loop continues
+			continue
+			;;
+		*)
+			log_error "Hard error during allocation"
+			return 1
+			;;
+		esac
+	done
+
+	log_error "Failed to allocate after ${CAS_MAX_RETRIES} attempts"
+	return 1
+}
+
+# Offline allocation (with safety offset)
+allocate_offline() {
+	local repo_path="$1"
+	local count="$2"
+
+	log_warn "Using offline mode with +${OFFLINE_OFFSET} offset"
+
+	local current_value
+	if ! current_value=$(read_local_counter "$repo_path"); then
+		log_error "Cannot read local ${COUNTER_FILE}"
+		return 1
+	fi
+
+	local first_id=$((current_value + OFFLINE_OFFSET))
+	local last_id=$((first_id + count - 1))
+	local new_counter=$((first_id + count))
+
+	# Update local counter (no push)
+	echo "$new_counter" >"${repo_path}/${COUNTER_FILE}"
+
+	log_warn "Allocated t${first_id} with offset (reconcile when back online)"
+
+	echo "$first_id"
+	return 0
+}
+
+# Create GitHub issue (post-allocation, non-blocking)
 create_github_issue() {
 	local title="$1"
 	local description="$2"
@@ -233,19 +400,17 @@ create_github_issue() {
 		gh_args+=(--label "$labels")
 	fi
 
-	# Create issue and extract number from URL
 	local issue_url
 	if ! issue_url=$(gh "${gh_args[@]}" 2>&1); then
-		log_error "Failed to create GitHub issue: $issue_url"
+		log_warn "Failed to create GitHub issue: $issue_url"
 		return 1
 	fi
 
-	# Extract issue number from URL (e.g., https://github.com/user/repo/issues/123)
 	local issue_num
 	issue_num=$(echo "$issue_url" | grep -oE '[0-9]+$')
 
 	if [[ -z "$issue_num" ]]; then
-		log_error "Failed to extract issue number from: $issue_url"
+		log_warn "Failed to extract issue number from: $issue_url"
 		return 1
 	fi
 
@@ -253,27 +418,7 @@ create_github_issue() {
 	return 0
 }
 
-# Update GitHub issue title with task ID prefix
-update_github_issue_title() {
-	local issue_num="$1"
-	local task_id="$2"
-	local original_title="$3"
-	local repo_path="$4"
-
-	cd "$repo_path" || return 1
-
-	local new_title="${task_id}: ${original_title}"
-
-	if ! gh issue edit "$issue_num" --title "$new_title" 2>&1; then
-		log_warn "Failed to update GitHub issue #${issue_num} title to: $new_title"
-		return 1
-	fi
-
-	log_success "Updated GitHub issue #${issue_num} title to: $new_title"
-	return 0
-}
-
-# Create GitLab issue
+# Create GitLab issue (post-allocation, non-blocking)
 create_gitlab_issue() {
 	local title="$1"
 	local description="$2"
@@ -294,144 +439,22 @@ create_gitlab_issue() {
 		glab_args+=(--label "$labels")
 	fi
 
-	# Create issue and extract number
 	local issue_output
 	if ! issue_output=$(glab "${glab_args[@]}" 2>&1); then
-		log_error "Failed to create GitLab issue: $issue_output"
+		log_warn "Failed to create GitLab issue: $issue_output"
 		return 1
 	fi
 
-	# Extract issue number (glab outputs: #123 or similar)
 	local issue_num
 	issue_num=$(echo "$issue_output" | grep -oE '#[0-9]+' | head -1 | tr -d '#')
 
 	if [[ -z "$issue_num" ]]; then
-		log_error "Failed to extract issue number from: $issue_output"
+		log_warn "Failed to extract issue number from: $issue_output"
 		return 1
 	fi
 
 	echo "$issue_num"
 	return 0
-}
-
-# Update GitLab issue title with task ID prefix
-update_gitlab_issue_title() {
-	local issue_num="$1"
-	local task_id="$2"
-	local original_title="$3"
-	local repo_path="$4"
-
-	cd "$repo_path" || return 1
-
-	local new_title="${task_id}: ${original_title}"
-
-	if ! glab issue update "$issue_num" --title "$new_title" 2>&1; then
-		log_warn "Failed to update GitLab issue #${issue_num} title to: $new_title"
-		return 1
-	fi
-
-	log_success "Updated GitLab issue #${issue_num} title to: $new_title"
-	return 0
-}
-
-# Online allocation (with remote issue as distributed lock)
-allocate_online() {
-	local platform="$1"
-	local repo_path="$2"
-
-	log_info "Using online mode with platform: $platform"
-
-	# Step 1: Create remote issue first (distributed lock)
-	local issue_num
-	case "$platform" in
-	github)
-		if ! issue_num=$(create_github_issue "$TASK_TITLE" "$TASK_DESCRIPTION" "$TASK_LABELS" "$repo_path"); then
-			log_error "Failed to create GitHub issue"
-			return 1
-		fi
-		local ref_prefix="GH"
-		;;
-	gitlab)
-		if ! issue_num=$(create_gitlab_issue "$TASK_TITLE" "$TASK_DESCRIPTION" "$TASK_LABELS" "$repo_path"); then
-			log_error "Failed to create GitLab issue"
-			return 1
-		fi
-		local ref_prefix="GL"
-		;;
-	*)
-		log_error "Unsupported platform: $platform"
-		return 1
-		;;
-	esac
-
-	log_success "Created issue: ${ref_prefix}#${issue_num}"
-
-	# Step 2: Fetch origin/main:TODO.md
-	local todo_content
-	if ! todo_content=$(fetch_remote_todo "$repo_path"); then
-		log_error "Failed to fetch remote TODO.md"
-		return 1
-	fi
-
-	# Step 3: Find highest task ID
-	local highest_id
-	highest_id=$(get_highest_task_id "$todo_content")
-	log_info "Highest task ID in origin/main: t${highest_id}"
-
-	# Step 4: Allocate next ID
-	local next_id=$((highest_id + 1))
-	log_success "Allocated task ID: t${next_id}"
-
-	# Step 5: Update issue title with task ID prefix
-	case "$platform" in
-	github)
-		update_github_issue_title "$issue_num" "t${next_id}" "$TASK_TITLE" "$repo_path" || log_warn "Issue title update failed (non-fatal)"
-		;;
-	gitlab)
-		update_gitlab_issue_title "$issue_num" "t${next_id}" "$TASK_TITLE" "$repo_path" || log_warn "Issue title update failed (non-fatal)"
-		;;
-	esac
-
-	# Output in machine-readable format
-	echo "task_id=t${next_id}"
-	echo "ref=${ref_prefix}#${issue_num}"
-	echo "issue_url=$(cd "$repo_path" && git remote get-url origin | sed 's/\.git$//')/issues/${issue_num}"
-
-	return 0
-}
-
-# Offline allocation (with safety offset)
-allocate_offline() {
-	local repo_path="$1"
-
-	log_warn "Using offline mode with +${OFFLINE_OFFSET} offset"
-
-	# Read local TODO.md
-	local todo_path="${repo_path}/TODO.md"
-	if [[ ! -f "$todo_path" ]]; then
-		log_error "TODO.md not found at: $todo_path"
-		return 1
-	fi
-
-	local todo_content
-	todo_content=$(cat "$todo_path")
-
-	# Find highest task ID
-	local highest_id
-	highest_id=$(get_highest_task_id "$todo_content")
-	log_info "Highest task ID in local TODO.md: t${highest_id}"
-
-	# Allocate with offset
-	local next_id=$((highest_id + OFFLINE_OFFSET))
-	log_warn "Allocated task ID with offset: t${next_id}"
-	log_warn "Reconciliation required when back online"
-
-	# Output in machine-readable format
-	echo "task_id=t${next_id}"
-	echo "ref=offline"
-	echo "reconcile=true"
-
-	return 2 # Exit code 2 indicates offline fallback
 }
 
 # Main execution
@@ -442,42 +465,114 @@ main() {
 		log_info "DRY RUN mode - no changes will be made"
 	fi
 
-	# Detect platform
 	local platform
 	platform=$(detect_platform)
 	log_info "Detected platform: $platform"
 
-	# Check if we should use online mode
-	if [[ "$OFFLINE_MODE" == "false" ]] && [[ "$platform" != "unknown" ]]; then
-		if check_cli "$platform"; then
-			if [[ "$DRY_RUN" == "true" ]]; then
-				log_info "Would create ${platform} issue and allocate task ID"
-				local platform_upper
-				platform_upper=$(echo "$platform" | tr '[:lower:]' '[:upper:]')
-				echo "task_id=tDRY_RUN"
-				echo "ref=${platform_upper}#DRY_RUN"
-				return 0
-			fi
+	# --- Allocate the ID(s) first (the critical atomic step) ---
 
-			if allocate_online "$platform" "$REPO_PATH"; then
-				return 0
+	local first_id=""
+	local is_offline="false"
+
+	if [[ "$OFFLINE_MODE" == "false" ]]; then
+		if [[ "$DRY_RUN" == "true" ]]; then
+			local current
+			current=$(read_remote_counter "$REPO_PATH" 2>/dev/null || read_local_counter "$REPO_PATH" 2>/dev/null || echo "?")
+			if [[ "$current" =~ ^[0-9]+$ ]]; then
+				log_info "Would allocate t${current}..t$((current + ALLOC_COUNT - 1)) (counter at ${current})"
 			else
-				log_warn "Online allocation failed, falling back to offline mode"
+				log_info "Would allocate task ID (counter unreadable: ${current})"
 			fi
+			echo "task_id=tDRY_RUN"
+			echo "ref=DRY_RUN"
+			return 0
+		fi
+
+		if first_id=$(allocate_online "$REPO_PATH" "$ALLOC_COUNT"); then
+			log_success "Allocated task ID: t${first_id}"
 		else
-			log_warn "CLI tool not available for ${platform}, using offline mode"
+			log_warn "Online allocation failed, falling back to offline mode"
+			is_offline="true"
+		fi
+	else
+		is_offline="true"
+	fi
+
+	if [[ "$is_offline" == "true" ]]; then
+		if [[ "$DRY_RUN" == "true" ]]; then
+			log_info "Would allocate task ID in offline mode"
+			echo "task_id=tDRY_RUN"
+			echo "ref=offline"
+			return 2
+		fi
+
+		if ! first_id=$(allocate_offline "$REPO_PATH" "$ALLOC_COUNT"); then
+			log_error "Offline allocation failed"
+			return 1
 		fi
 	fi
 
-	# Fallback to offline mode
-	if [[ "$DRY_RUN" == "true" ]]; then
-		log_info "Would allocate task ID in offline mode"
-		echo "task_id=tDRY_RUN+${OFFLINE_OFFSET}"
+	# --- Create issue AFTER ID is secured (optional, non-blocking) ---
+
+	local issue_num=""
+	local ref_prefix=""
+
+	if [[ "$NO_ISSUE" == "false" ]] && [[ "$is_offline" == "false" ]] && [[ "$platform" != "unknown" ]]; then
+		if check_cli "$platform"; then
+			local issue_title="t${first_id}: ${TASK_TITLE}"
+
+			case "$platform" in
+			github)
+				ref_prefix="GH"
+				issue_num=$(create_github_issue "$issue_title" "$TASK_DESCRIPTION" "$TASK_LABELS" "$REPO_PATH") || true
+				;;
+			gitlab)
+				ref_prefix="GL"
+				issue_num=$(create_gitlab_issue "$issue_title" "$TASK_DESCRIPTION" "$TASK_LABELS" "$REPO_PATH") || true
+				;;
+			esac
+
+			if [[ -n "$issue_num" ]]; then
+				log_success "Created issue: ${ref_prefix}#${issue_num}"
+			else
+				log_warn "Issue creation failed (non-fatal — ID t${first_id} is secured)"
+			fi
+		else
+			log_warn "CLI for $platform not found — skipping issue creation"
+		fi
+	fi
+
+	# --- Output machine-readable results ---
+
+	if [[ "$ALLOC_COUNT" -eq 1 ]]; then
+		echo "task_id=t${first_id}"
+	else
+		# Batch mode: output all claimed IDs
+		local last_id=$((first_id + ALLOC_COUNT - 1))
+		echo "task_id=t${first_id}"
+		echo "task_id_last=t${last_id}"
+		echo "task_count=${ALLOC_COUNT}"
+	fi
+
+	if [[ -n "$issue_num" ]]; then
+		echo "ref=${ref_prefix}#${issue_num}"
+		local remote_url
+		remote_url=$(cd "$REPO_PATH" && git remote get-url origin 2>/dev/null | sed 's/\.git$//' || echo "")
+		if [[ -n "$remote_url" ]]; then
+			echo "issue_url=${remote_url}/issues/${issue_num}"
+		fi
+	elif [[ "$is_offline" == "true" ]]; then
 		echo "ref=offline"
+		echo "reconcile=true"
+	else
+		echo "ref=none"
+	fi
+
+	if [[ "$is_offline" == "true" ]]; then
 		return 2
 	fi
 
-	allocate_offline "$REPO_PATH"
+	return 0
 }
 
 main "$@"
