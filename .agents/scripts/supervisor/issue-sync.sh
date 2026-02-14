@@ -1441,9 +1441,6 @@ check_task_already_done() {
 
 	# Check 2: Are there merged commits referencing this task ID?
 	# IMPORTANT: Use word-boundary matching to prevent t020 matching t020.6.
-	# Escaped task_id for regex: dots become literal dots.
-	local escaped_task_regex
-	escaped_task_regex=$(printf '%s' "$task_id" | sed 's/\./\\./g')
 	# grep -w uses word boundaries but dots aren't word chars, so for subtask IDs
 	# like t020.1 we need a custom boundary: task_id followed by non-digit or EOL.
 	# This prevents t020 from matching t020.1, t020.2, etc.

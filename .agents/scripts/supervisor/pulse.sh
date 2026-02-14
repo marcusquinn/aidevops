@@ -142,7 +142,7 @@ cmd_pulse() {
 	local dispatched_count=0
 
 	if [[ -n "$running_tasks" ]]; then
-		while IFS='|' read -r tid tlog; do
+		while IFS='|' read -r tid _; do
 			# Check if worker process is still alive
 			local pid_file="$SUPERVISOR_DIR/pids/${tid}.pid"
 			local is_alive=false
@@ -424,7 +424,7 @@ cmd_pulse() {
 		next_tasks=$(cmd_next "$batch_id" 10)
 
 		if [[ -n "$next_tasks" ]]; then
-			while IFS=$'\t' read -r tid trepo tdesc tmodel; do
+			while IFS=$'\t' read -r tid _ _ _; do
 				# Guard: skip malformed task IDs (e.g., from embedded newlines
 				# in diagnostic task descriptions containing EXIT:0 or markers)
 				if [[ -z "$tid" || "$tid" =~ [[:space:]:] || ! "$tid" =~ ^[a-zA-Z0-9._-]+$ ]]; then
@@ -452,7 +452,7 @@ cmd_pulse() {
 		next_tasks=$(cmd_next "" 10)
 
 		if [[ -n "$next_tasks" ]]; then
-			while IFS=$'\t' read -r tid trepo tdesc tmodel; do
+			while IFS=$'\t' read -r tid _ _ _; do
 				# Guard: skip malformed task IDs (same as batch dispatch above)
 				if [[ -z "$tid" || "$tid" =~ [[:space:]:] || ! "$tid" =~ ^[a-zA-Z0-9._-]+$ ]]; then
 					log_warn "Skipping malformed task ID in cmd_next output: '${tid:0:40}'"
@@ -591,7 +591,7 @@ cmd_pulse() {
 	blocked_tasks=$(db "$SUPERVISOR_DB" "SELECT id, repo, error, rebase_attempts, last_main_sha FROM tasks WHERE status = 'blocked' AND error LIKE '%Merge conflict%auto-rebase failed%';" 2>/dev/null || echo "")
 
 	if [[ -n "$blocked_tasks" ]]; then
-		while IFS='|' read -r blocked_id blocked_repo blocked_error blocked_rebase_attempts blocked_last_main_sha; do
+		while IFS='|' read -r blocked_id blocked_repo _ blocked_rebase_attempts blocked_last_main_sha; do
 			[[ -z "$blocked_id" ]] && continue
 
 			# Cap at max_retry_cycles total retry cycles to prevent infinite loops
