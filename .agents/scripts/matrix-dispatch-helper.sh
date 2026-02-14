@@ -1527,6 +1527,221 @@ extract_server_name() {
 }
 
 #######################################
+# Synapse Admin API: Register bot user
+#######################################
+# Usage: synapse_register_bot_user <homeserver_url> <admin_token> <user_id> <password> [display_name]
+# Example: synapse_register_bot_user "https://matrix.example.com" "syt_..." "@bot:example.com" "secret123" "My Bot"
+synapse_register_bot_user() {
+	local homeserver_url="$1"
+	local admin_token="$2"
+	local user_id="$3"
+	local password="$4"
+	local display_name="${5:-}"
+
+	if [[ -z "$homeserver_url" || -z "$admin_token" || -z "$user_id" || -z "$password" ]]; then
+		log_error "Usage: synapse_register_bot_user <homeserver_url> <admin_token> <user_id> <password> [display_name]"
+		return 1
+	fi
+
+	# URL-encode the user ID for the path
+	local encoded_user_id
+	encoded_user_id=$(printf '%s' "$user_id" | jq -sRr @uri)
+
+	local endpoint="${homeserver_url}/_synapse/admin/v2/users/${encoded_user_id}"
+
+	local json_body
+	json_body=$(jq -n \
+		--arg password "$password" \
+		--arg displayname "$display_name" \
+		--argjson admin false \
+		'{
+			password: $password,
+			admin: $admin,
+			displayname: (if $displayname != "" then $displayname else null end)
+		}')
+
+	log_info "Registering bot user: $user_id"
+
+	local response
+	response=$(curl -sf -X PUT "$endpoint" \
+		-H "Authorization: Bearer $admin_token" \
+		-H "Content-Type: application/json" \
+		-d "$json_body" 2>&1)
+
+	local exit_code=$?
+
+	if [[ $exit_code -eq 0 ]]; then
+		log_success "Bot user registered successfully"
+		echo "$response" | jq '.'
+		return 0
+	else
+		log_error "Failed to register bot user"
+		echo "$response"
+		return 1
+	fi
+}
+
+#######################################
+# Matrix Client API: Login and get access token
+#######################################
+# Usage: matrix_login <homeserver_url> <user_id> <password>
+# Example: matrix_login "https://matrix.example.com" "@bot:example.com" "secret123"
+matrix_login() {
+	local homeserver_url="$1"
+	local user_id="$2"
+	local password="$3"
+
+	if [[ -z "$homeserver_url" || -z "$user_id" || -z "$password" ]]; then
+		log_error "Usage: matrix_login <homeserver_url> <user_id> <password>"
+		return 1
+	fi
+
+	local endpoint="${homeserver_url}/_matrix/client/v3/login"
+
+	local json_body
+	json_body=$(jq -n \
+		--arg type "m.login.password" \
+		--arg user "$user_id" \
+		--arg password "$password" \
+		'{
+			type: $type,
+			identifier: {
+				type: "m.id.user",
+				user: $user
+			},
+			password: $password
+		}')
+
+	log_info "Logging in as: $user_id"
+
+	local response
+	response=$(curl -sf -X POST "$endpoint" \
+		-H "Content-Type: application/json" \
+		-d "$json_body" 2>&1)
+
+	local exit_code=$?
+
+	if [[ $exit_code -eq 0 ]]; then
+		log_success "Login successful"
+		echo "$response" | jq '.'
+		return 0
+	else
+		log_error "Login failed"
+		echo "$response"
+		return 1
+	fi
+}
+
+#######################################
+# Matrix Client API: Create room
+#######################################
+# Usage: matrix_create_room <homeserver_url> <access_token> <room_name> [room_alias] [is_public]
+# Example: matrix_create_room "https://matrix.example.com" "syt_..." "My Room" "myroom" "false"
+matrix_create_room() {
+	local homeserver_url="$1"
+	local access_token="$2"
+	local room_name="$3"
+	local room_alias="${4:-}"
+	local is_public="${5:-false}"
+
+	if [[ -z "$homeserver_url" || -z "$access_token" || -z "$room_name" ]]; then
+		log_error "Usage: matrix_create_room <homeserver_url> <access_token> <room_name> [room_alias] [is_public]"
+		return 1
+	fi
+
+	local endpoint="${homeserver_url}/_matrix/client/v3/createRoom"
+
+	local preset
+	if [[ "$is_public" == "true" ]]; then
+		preset="public_chat"
+	else
+		preset="private_chat"
+	fi
+
+	local json_body
+	json_body=$(jq -n \
+		--arg name "$room_name" \
+		--arg alias "$room_alias" \
+		--arg preset "$preset" \
+		'{
+			name: $name,
+			room_alias_name: (if $alias != "" then $alias else null end),
+			preset: $preset,
+			visibility: (if $preset == "public_chat" then "public" else "private" end)
+		}')
+
+	log_info "Creating room: $room_name"
+
+	local response
+	response=$(curl -sf -X POST "$endpoint" \
+		-H "Authorization: Bearer $access_token" \
+		-H "Content-Type: application/json" \
+		-d "$json_body" 2>&1)
+
+	local exit_code=$?
+
+	if [[ $exit_code -eq 0 ]]; then
+		log_success "Room created successfully"
+		echo "$response" | jq '.'
+		return 0
+	else
+		log_error "Failed to create room"
+		echo "$response"
+		return 1
+	fi
+}
+
+#######################################
+# Matrix Client API: Invite user to room
+#######################################
+# Usage: matrix_invite_user <homeserver_url> <access_token> <room_id> <user_id>
+# Example: matrix_invite_user "https://matrix.example.com" "syt_..." "!abc:example.com" "@user:example.com"
+matrix_invite_user() {
+	local homeserver_url="$1"
+	local access_token="$2"
+	local room_id="$3"
+	local user_id="$4"
+
+	if [[ -z "$homeserver_url" || -z "$access_token" || -z "$room_id" || -z "$user_id" ]]; then
+		log_error "Usage: matrix_invite_user <homeserver_url> <access_token> <room_id> <user_id>"
+		return 1
+	fi
+
+	# URL-encode the room ID for the path
+	local encoded_room_id
+	encoded_room_id=$(printf '%s' "$room_id" | jq -sRr @uri)
+
+	local endpoint="${homeserver_url}/_matrix/client/v3/rooms/${encoded_room_id}/invite"
+
+	local json_body
+	json_body=$(jq -n \
+		--arg user_id "$user_id" \
+		'{
+			user_id: $user_id
+		}')
+
+	log_info "Inviting $user_id to room $room_id"
+
+	local response
+	response=$(curl -sf -X POST "$endpoint" \
+		-H "Authorization: Bearer $access_token" \
+		-H "Content-Type: application/json" \
+		-d "$json_body" 2>&1)
+
+	local exit_code=$?
+
+	if [[ $exit_code -eq 0 ]]; then
+		log_success "User invited successfully"
+		echo "$response" | jq '.'
+		return 0
+	else
+		log_error "Failed to invite user"
+		echo "$response"
+		return 1
+	fi
+}
+
+#######################################
 # Non-interactive setup (writes config without prompts)
 #######################################
 cmd_setup_noninteractive() {
@@ -2042,6 +2257,26 @@ COMMANDS:
     test <room|runner> "msg"    Test dispatch without Matrix
     logs [--tail N] [--follow]  View bot logs
     help                        Show this help
+
+SYNAPSE ADMIN API FUNCTIONS (for scripting):
+    Source this script to use these functions in your own scripts:
+        source matrix-dispatch-helper.sh
+
+    synapse_register_bot_user <homeserver_url> <admin_token> <user_id> <password> [display_name]
+        Register a new bot user via Synapse Admin API
+        Example: synapse_register_bot_user "https://matrix.example.com" "syt_..." "@bot:example.com" "secret123" "My Bot"
+
+    matrix_login <homeserver_url> <user_id> <password>
+        Login and get access token via Matrix Client API
+        Example: matrix_login "https://matrix.example.com" "@bot:example.com" "secret123"
+
+    matrix_create_room <homeserver_url> <access_token> <room_name> [room_alias] [is_public]
+        Create a new Matrix room
+        Example: matrix_create_room "https://matrix.example.com" "syt_..." "My Room" "myroom" "false"
+
+    matrix_invite_user <homeserver_url> <access_token> <room_id> <user_id>
+        Invite a user to a room
+        Example: matrix_invite_user "https://matrix.example.com" "syt_..." "!abc:example.com" "@user:example.com"
 
 SETUP:
     1. Create a Matrix bot account on your homeserver
