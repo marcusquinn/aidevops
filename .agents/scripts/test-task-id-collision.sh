@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
-# Test script for t319.6: End-to-end task ID collision prevention
+# Test script for task ID collision prevention (t319.6, t1047)
 #
 # Tests:
-#   1. Parallel claim-task-id.sh calls get different IDs
-#   2. Offline fallback uses +100 offset
+#   1. Parallel claim-task-id.sh calls get different IDs (via .task-counter CAS)
+#   2. Offline fallback uses +100 offset from .task-counter
 #   3. Supervisor dedup Phase 0.5 resolves duplicates in DB
 #   4. Supervisor dedup Phase 0.5b resolves duplicates in TODO.md
 #   5. Pre-commit hook rejects duplicate task IDs
 #   6. coderabbit-task-creator-helper.sh references claim-task-id.sh correctly
+#   7. claim-task-id.sh basic functionality
+#   8. get_highest_task_id accuracy (legacy, kept for regression)
+#   9. Edge cases
+#  10. Batch allocation (--count N)
+#  11. .task-counter file validation
 #
 # All tests use isolated temp directories — no side effects on real data.
 
@@ -59,43 +64,36 @@ info() {
 test_parallel_claim() {
 	echo ""
 	echo "=== Test 1: Parallel claim-task-id.sh (offline mode) ==="
-	info "Two concurrent calls should get different task IDs"
+	info "Two sequential offline calls should get different task IDs (counter increments locally)"
 
 	local test_repo="$TEST_DIR/test-repo-parallel"
 	mkdir -p "$test_repo"
 
-	# Initialize a git repo with a TODO.md
+	# Initialize a git repo with .task-counter
 	(
 		cd "$test_repo"
 		git init -q
 		git config user.email "test@test.com"
 		git config user.name "Test"
+		echo "100" >.task-counter
 		cat >TODO.md <<'EOF'
 # TODO
 
 ## Active Tasks
 
-- [ ] t100 First task
-- [ ] t101 Second task
-- [x] t99 Completed task
+- [ ] t99 First task
 EOF
-		git add TODO.md
+		git add TODO.md .task-counter
 		git commit -q -m "init"
 	)
 
-	# Run two claim-task-id.sh calls in parallel (offline mode to avoid GitHub API)
+	# Run two claim-task-id.sh calls sequentially in offline mode
+	# (offline mode updates local .task-counter, so sequential calls get different IDs)
 	local out1="$TEST_DIR/claim1.out"
 	local out2="$TEST_DIR/claim2.out"
 
-	"$SCRIPT_DIR/claim-task-id.sh" --title "Parallel test 1" --offline --repo-path "$test_repo" >"$out1" 2>/dev/null &
-	local pid1=$!
-
-	"$SCRIPT_DIR/claim-task-id.sh" --title "Parallel test 2" --offline --repo-path "$test_repo" >"$out2" 2>/dev/null &
-	local pid2=$!
-
-	# Wait for both
-	wait "$pid1" || true
-	wait "$pid2" || true
+	"$SCRIPT_DIR/claim-task-id.sh" --title "Parallel test 1" --offline --no-issue --repo-path "$test_repo" >"$out1" 2>/dev/null || true
+	"$SCRIPT_DIR/claim-task-id.sh" --title "Parallel test 2" --offline --no-issue --repo-path "$test_repo" >"$out2" 2>/dev/null || true
 
 	local id1 id2
 	id1=$(grep "^task_id=" "$out1" 2>/dev/null | cut -d= -f2 || echo "")
@@ -105,19 +103,24 @@ EOF
 	info "Call 2 got: $id2"
 
 	if [[ -n "$id1" && -n "$id2" ]]; then
-		# In offline mode, both read the same local TODO.md, so they may get the same ID.
-		# This is expected — offline mode is a fallback, not collision-proof.
-		# The +100 offset is designed to avoid collisions with ONLINE allocations.
-		# Two offline calls from the same TODO.md WILL get the same ID — that's a known
-		# limitation documented in the script. The safety net is Phase 0.5 dedup.
-		if [[ "$id1" == "$id2" ]]; then
-			pass "Both offline calls got same ID ($id1) — expected (offline reads same local state)"
-			info "Phase 0.5 dedup is the safety net for this scenario"
+		if [[ "$id1" != "$id2" ]]; then
+			pass "Sequential offline calls got different IDs: $id1 vs $id2"
 		else
-			pass "Parallel offline calls got different IDs: $id1 vs $id2"
+			fail "Sequential offline calls got same ID ($id1) — counter should have incremented"
 		fi
 	else
 		fail "One or both calls failed to produce a task_id (id1='$id1', id2='$id2')"
+	fi
+
+	# Verify counter file was updated
+	local final_counter
+	final_counter=$(cat "$test_repo/.task-counter" 2>/dev/null | tr -d '[:space:]')
+	info "Final .task-counter value: $final_counter"
+
+	if [[ "$final_counter" -gt 200 ]]; then
+		pass "Counter file incremented correctly (now $final_counter)"
+	else
+		fail "Counter file not incremented as expected (value: $final_counter)"
 	fi
 }
 
@@ -126,18 +129,19 @@ EOF
 # =============================================================================
 test_offline_fallback() {
 	echo ""
-	echo "=== Test 2: Offline fallback (+100 offset) ==="
-	info "Offline mode should allocate t(highest + 100)"
+	echo "=== Test 2: Offline fallback (+100 offset from .task-counter) ==="
+	info "Offline mode should allocate t(counter_value + 100)"
 
 	local test_repo="$TEST_DIR/test-repo-offline"
 	mkdir -p "$test_repo"
 
-	# Initialize a git repo with known highest task ID
+	# Initialize a git repo with .task-counter at 80
 	(
 		cd "$test_repo"
 		git init -q
 		git config user.email "test@test.com"
 		git config user.name "Test"
+		echo "80" >.task-counter
 		cat >TODO.md <<'EOF'
 # TODO
 
@@ -145,25 +149,24 @@ test_offline_fallback() {
 
 - [ ] t50 Some task
 - [ ] t75 Another task
-- [x] t80 Completed task
+- [x] t79 Completed task
 EOF
-		git add TODO.md
+		git add TODO.md .task-counter
 		git commit -q -m "init"
 	)
 
 	local output
-	output=$("$SCRIPT_DIR/claim-task-id.sh" --title "Offline test" --offline --repo-path "$test_repo" 2>/dev/null) || true
+	output=$("$SCRIPT_DIR/claim-task-id.sh" --title "Offline test" --offline --no-issue --repo-path "$test_repo" 2>/dev/null) || true
 
-	local task_id ref reconcile
+	local task_id ref
 	task_id=$(echo "$output" | grep "^task_id=" | cut -d= -f2 || echo "")
 	ref=$(echo "$output" | grep "^ref=" | cut -d= -f2 || echo "")
-	reconcile=$(echo "$output" | grep "^reconcile=" | cut -d= -f2 || echo "")
 
-	info "Output: task_id=$task_id ref=$ref reconcile=$reconcile"
+	info "Output: task_id=$task_id ref=$ref"
 
-	# Highest is t80, so offline should give t180 (80 + 100)
+	# Counter is 80, so offline should give t180 (80 + 100)
 	if [[ "$task_id" == "t180" ]]; then
-		pass "Offline fallback correctly allocated t180 (80 + 100)"
+		pass "Offline fallback correctly allocated t180 (counter 80 + offset 100)"
 	else
 		fail "Expected t180, got '$task_id'"
 	fi
@@ -174,10 +177,13 @@ EOF
 		fail "Expected ref=offline, got '$ref'"
 	fi
 
-	if [[ "$reconcile" == "true" ]]; then
-		pass "Reconcile flag correctly set to true"
+	# Verify counter was updated locally
+	local new_counter
+	new_counter=$(cat "$test_repo/.task-counter" 2>/dev/null | tr -d '[:space:]')
+	if [[ "$new_counter" == "181" ]]; then
+		pass "Local counter updated to 181 (next available after t180)"
 	else
-		fail "Expected reconcile=true, got '$reconcile'"
+		fail "Expected counter=181, got '$new_counter'"
 	fi
 }
 
@@ -626,11 +632,12 @@ test_claim_basic() {
 		git init -q
 		git config user.email "test@test.com"
 		git config user.name "Test"
+		echo "10" >.task-counter
 		cat >TODO.md <<'EOF'
 # TODO
-- [ ] t10 Task
+- [ ] t9 Task
 EOF
-		git add TODO.md
+		git add TODO.md .task-counter
 		git commit -q -m "init"
 	)
 
@@ -805,11 +812,133 @@ test_edge_cases() {
 }
 
 # =============================================================================
+# Test 10: Batch allocation (--count N)
+# =============================================================================
+test_batch_allocation() {
+	echo ""
+	echo "=== Test 10: Batch allocation (--count N) ==="
+	info "Allocating multiple IDs in one atomic operation"
+
+	local test_repo="$TEST_DIR/test-repo-batch"
+	mkdir -p "$test_repo"
+
+	(
+		cd "$test_repo"
+		git init -q
+		git config user.email "test@test.com"
+		git config user.name "Test"
+		echo "500" >.task-counter
+		cat >TODO.md <<'EOF'
+# TODO
+- [ ] t499 Task
+EOF
+		git add TODO.md .task-counter
+		git commit -q -m "init"
+	)
+
+	local output
+	output=$("$SCRIPT_DIR/claim-task-id.sh" --title "Batch test" --count 5 --offline --no-issue --repo-path "$test_repo" 2>/dev/null) || true
+
+	local task_id task_id_last task_count
+	task_id=$(echo "$output" | grep "^task_id=" | cut -d= -f2 || echo "")
+	task_id_last=$(echo "$output" | grep "^task_id_last=" | cut -d= -f2 || echo "")
+	task_count=$(echo "$output" | grep "^task_count=" | cut -d= -f2 || echo "")
+
+	info "Output: task_id=$task_id task_id_last=$task_id_last task_count=$task_count"
+
+	# Counter starts at 500, offline offset +100 = 600, batch of 5 = t600..t604
+	if [[ "$task_id" == "t600" ]]; then
+		pass "Batch first ID correct: t600"
+	else
+		fail "Expected first ID t600, got '$task_id'"
+	fi
+
+	if [[ "$task_id_last" == "t604" ]]; then
+		pass "Batch last ID correct: t604"
+	else
+		fail "Expected last ID t604, got '$task_id_last'"
+	fi
+
+	if [[ "$task_count" == "5" ]]; then
+		pass "Batch count correct: 5"
+	else
+		fail "Expected count 5, got '$task_count'"
+	fi
+
+	# Verify counter was updated
+	local new_counter
+	new_counter=$(cat "$test_repo/.task-counter" 2>/dev/null | tr -d '[:space:]')
+	if [[ "$new_counter" == "605" ]]; then
+		pass "Counter updated to 605 after batch allocation"
+	else
+		fail "Expected counter=605, got '$new_counter'"
+	fi
+}
+
+# =============================================================================
+# Test 11: .task-counter file validation
+# =============================================================================
+test_counter_validation() {
+	echo ""
+	echo "=== Test 11: .task-counter file validation ==="
+	info "Testing invalid counter file handling"
+
+	local test_repo="$TEST_DIR/test-repo-validate"
+	mkdir -p "$test_repo"
+
+	# Test with missing .task-counter
+	(
+		cd "$test_repo"
+		git init -q
+		git config user.email "test@test.com"
+		git config user.name "Test"
+		cat >TODO.md <<'EOF'
+# TODO
+- [ ] t1 Task
+EOF
+		git add TODO.md
+		git commit -q -m "init"
+	)
+
+	local output
+	output=$("$SCRIPT_DIR/claim-task-id.sh" --title "No counter test" --offline --no-issue --repo-path "$test_repo" 2>&1) || true
+
+	if echo "$output" | grep -qi "not found\|invalid\|missing\|error"; then
+		pass "Missing .task-counter correctly produces error"
+	else
+		fail "Missing .task-counter did not produce expected error"
+	fi
+
+	# Test with non-numeric .task-counter
+	echo "abc" >"$test_repo/.task-counter"
+	output=$("$SCRIPT_DIR/claim-task-id.sh" --title "Bad counter test" --offline --no-issue --repo-path "$test_repo" 2>&1) || true
+
+	if echo "$output" | grep -qi "invalid\|error"; then
+		pass "Non-numeric .task-counter correctly produces error"
+	else
+		fail "Non-numeric .task-counter did not produce expected error"
+	fi
+
+	# Test with valid .task-counter
+	echo "42" >"$test_repo/.task-counter"
+	output=$("$SCRIPT_DIR/claim-task-id.sh" --title "Valid counter test" --offline --no-issue --repo-path "$test_repo" 2>/dev/null) || true
+
+	local task_id
+	task_id=$(echo "$output" | grep "^task_id=" | cut -d= -f2 || echo "")
+
+	if [[ "$task_id" == "t142" ]]; then
+		pass "Valid .task-counter (42) correctly allocates t142 (42 + 100 offset)"
+	else
+		fail "Expected t142, got '$task_id'"
+	fi
+}
+
+# =============================================================================
 # Run all tests
 # =============================================================================
 
 echo "============================================="
-echo "  t319.6: Task ID Collision Prevention Tests"
+echo "  Task ID Collision Prevention Tests (t319.6, t1047)"
 echo "============================================="
 echo ""
 echo "Test environment: $TEST_DIR"
@@ -825,6 +954,8 @@ test_coderabbit_path
 test_claim_basic
 test_highest_task_id
 test_edge_cases
+test_batch_allocation
+test_counter_validation
 
 # =============================================================================
 # Summary

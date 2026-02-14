@@ -137,9 +137,9 @@ Use `/save-todo` after planning. Auto-detects complexity:
 2. `planning-commit-helper.sh next-id --title "Task title"` — wrapper function
 3. `claim-task-id.sh --title "Task title" --repo-path "$(pwd)"` — direct script
 
-Online mode creates a GitHub/GitLab issue as a distributed lock, then allocates `t(N+1)`. Offline fallback allocates `t(N+100)` to avoid collisions (reconcile when back online). Output format: `TASK_ID=tNNN TASK_REF=GH#NNN TASK_OFFLINE=false`.
+**Atomic counter** (t1047): Task IDs are allocated from `.task-counter` — a single file in the repo root containing the next available integer. The allocation uses a CAS (compare-and-swap) loop: fetch counter from `origin/main`, increment, commit, push. If push fails (another session grabbed an ID), retry from fetch. This guarantees no two sessions can claim the same ID. Batch allocation: `--count N` claims N consecutive IDs in one atomic push. GitHub/GitLab issue creation happens after the ID is secured (optional, non-blocking). Offline fallback reads local `.task-counter` + 100 offset (reconcile when back online). Output format: `TASK_ID=tNNN TASK_REF=GH#NNN TASK_OFFLINE=false`.
 
-**Task ID collision prevention**: If `git push` fails after adding a task, `git pull --rebase` and re-read TODO.md to verify your ID is still unique. If a collision exists, re-run `claim-task-id.sh` to get a fresh ID.
+**Task ID collision prevention**: The `.task-counter` CAS loop handles this automatically. If push fails, the script retries (up to 10 attempts with backoff). No manual intervention needed.
 
 **Full docs**: `workflows/plans.md`, `tools/task-management/beads.md`
 
