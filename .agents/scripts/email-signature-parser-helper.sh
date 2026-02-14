@@ -113,10 +113,10 @@ extract_emails() {
 # Extract phone numbers from text
 extract_phones() {
 	local text="$1"
-	# International formats: +1 (555) 123-4567, +44 20 7946 0958, etc.
-	# Also: (555) 123-4567, 555-123-4567, 555.123.4567
-	echo "$text" | grep -oE '(\+?[0-9]{1,3}[-. ]?)?\(?[0-9]{2,4}\)?[-. ]?[0-9]{3,4}[-. ]?[0-9]{3,4}' |
-		grep -E '[0-9]{7,}' |
+	# Strip common labels first, then extract phone-like patterns
+	# Matches: +1 (555) 123-4567, +44 20 7946 0958, (555) 123-4567, 555-123-4567
+	echo "$text" | sed -E 's/^[[:space:]]*(Phone|Tel|Mobile|Cell|Fax|Office|Direct)[[:space:]]*:[[:space:]]*//' |
+		grep -oE '[+]?[0-9][0-9 .()\-]{6,}[0-9]' |
 		head -3 || true
 	return 0
 }
@@ -124,11 +124,11 @@ extract_phones() {
 # Extract URLs/websites from text
 extract_websites() {
 	local text="$1"
-	# Match http(s) URLs and www. prefixed domains
-	echo "$text" | grep -oEi 'https?://[a-zA-Z0-9._~:/?#\[\]@!$&'"'"'()*+,;=%-]+' |
+	# Match http(s) URLs
+	echo "$text" | grep -oEi 'https?://[a-zA-Z0-9._~:/?#@!$&()*+,;=%-]+' |
 		head -5 || true
 	# Also match www. without protocol
-	echo "$text" | grep -oEi 'www\.[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}[/a-zA-Z0-9._~:/?#\[\]@!$&'"'"'()*+,;=-]*' |
+	echo "$text" | grep -oEi 'www\.[a-zA-Z0-9.-]+\.[a-zA-Z][a-zA-Z]+[/a-zA-Z0-9._~:/?#@!$&()*+,;=-]*' |
 		sed 's/^/https:\/\//' |
 		head -3 || true
 	return 0
@@ -143,35 +143,39 @@ extract_name() {
 	local label_re='^(Phone|Tel|Fax|Email|E-mail|Web|Website|Address|Mobile|Cell|Office|Direct|LinkedIn|Twitter|Facebook|Instagram):?'
 
 	while IFS= read -r line; do
+		# Trim leading/trailing whitespace for comparison
+		local trimmed_line
+		trimmed_line="${line#"${line%%[![:space:]]*}"}"
+		trimmed_line="${trimmed_line%"${trimmed_line##*[![:space:]]}"}"
 		# Skip empty lines
-		[[ -z "${line// /}" ]] && continue
-		# Skip delimiter lines
-		[[ "$line" =~ ^[-_=]{2,}$ ]] && continue
+		[[ -z "$trimmed_line" ]] && continue
+		# Skip delimiter lines (dashes, underscores, equals — with optional trailing space)
+		[[ "$trimmed_line" =~ ^[-_=]{2,}$ ]] && continue
 		# Skip lines that are greetings/closings
-		[[ "$line" =~ ^(Best|Kind|Warm|Regards|Sincerely|Cheers|Thanks|Thank|Many|All|With|Yours|Sent|Get) ]] && continue
+		[[ "$trimmed_line" =~ ^(Best|Kind|Warm|Regards|Sincerely|Cheers|Thanks|Thank|Many|All|With|Yours|Sent|Get) ]] && continue
 		# Skip lines with email addresses
-		[[ "$line" =~ @ ]] && continue
+		[[ "$trimmed_line" =~ @ ]] && continue
 		# Skip lines with phone numbers (start with + or contain mostly digits)
-		[[ "$line" =~ $phone_re ]] && continue
+		[[ "$trimmed_line" =~ $phone_re ]] && continue
 		# Skip lines with URLs
-		[[ "$line" =~ ^(http|www\.) ]] && continue
+		[[ "$trimmed_line" =~ ^(http|www\.) ]] && continue
 		# Skip lines that are just labels
-		[[ "$line" =~ $label_re ]] && continue
+		[[ "$trimmed_line" =~ $label_re ]] && continue
 
 		# A name line typically has 2-5 words, mostly alphabetic
 		local word_count
-		word_count=$(echo "$line" | wc -w | tr -d ' ')
+		word_count=$(echo "$trimmed_line" | wc -w | tr -d ' ')
 		if [[ "$word_count" -ge 1 && "$word_count" -le 6 ]]; then
 			# Check the line is mostly alphabetic (allow periods, hyphens)
 			local alpha_ratio
 			local alpha_chars
 			local total_chars
-			alpha_chars=$(echo "$line" | tr -cd 'a-zA-Z .\-' | wc -c | tr -d ' ')
-			total_chars=$(echo "$line" | wc -c | tr -d ' ')
+			alpha_chars=$(echo "$trimmed_line" | tr -cd 'a-zA-Z .\-' | wc -c | tr -d ' ')
+			total_chars=$(echo "$trimmed_line" | wc -c | tr -d ' ')
 			if [[ "$total_chars" -gt 0 ]]; then
 				alpha_ratio=$((alpha_chars * 100 / total_chars))
 				if [[ "$alpha_ratio" -ge 70 ]]; then
-					echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+					echo "$trimmed_line"
 					return 0
 				fi
 			fi
@@ -310,7 +314,7 @@ extract_address() {
 		# - Zip/postal codes: 12345, 12345-6789, SW1A 1AA
 		# - State abbreviations with zip: CA 90210
 		# - City, State patterns
-		if echo "$trimmed" | grep -qEi '([0-9]+[[:space:]]+(Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Boulevard|Blvd|Lane|Ln|Way|Court|Ct|Place|Pl|Suite|Ste|Floor|Fl)|P\.?O\.?\s*Box|[0-9]{5}(-[0-9]{4})?|[A-Z]{1,2}[0-9][A-Z0-9]?\s*[0-9][A-Z]{2})'; then
+		if echo "$trimmed" | grep -qEi '([0-9]+[[:space:]]+[a-zA-Z]+.*(Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Boulevard|Blvd|Lane|Ln|Way|Court|Ct|Place|Pl|Suite|Ste|Floor|Fl)|P\.?O\.?[[:space:]]*Box|[0-9]{5}(-[0-9]{4})?|[A-Z]{1,2}[0-9][A-Z0-9]?[[:space:]]*[0-9][A-Z]{2})'; then
 			if [[ -n "$address_lines" ]]; then
 				address_lines="${address_lines}, ${trimmed}"
 			else
@@ -434,9 +438,23 @@ llm_extract_signature() {
 	local sig_block="$1"
 	local result=""
 
+	# Skip LLM if explicitly disabled
+	if [[ "${EMAIL_PARSER_NO_LLM:-}" == "true" ]]; then
+		print_info "LLM extraction disabled via EMAIL_PARSER_NO_LLM"
+		return 1
+	fi
+
 	# Check for Claude CLI (headless subagent)
-	if command -v claude &>/dev/null; then
-		result=$(claude -p "Extract contact information from this email signature. Return ONLY key=value pairs, one per line, for these fields: name, title, company, phone, email, website, address. If a field is not found, omit it. No explanations, no markdown.
+	# Use gtimeout (coreutils) or timeout if available, otherwise skip CLI fallback
+	local timeout_cmd=""
+	if command -v gtimeout &>/dev/null; then
+		timeout_cmd="gtimeout 30"
+	elif command -v timeout &>/dev/null; then
+		timeout_cmd="timeout 30"
+	fi
+
+	if command -v claude &>/dev/null && [[ -n "$timeout_cmd" ]]; then
+		result=$($timeout_cmd claude -p "Extract contact information from this email signature. Return ONLY key=value pairs, one per line, for these fields: name, title, company, phone, email, website, address. If a field is not found, omit it. No explanations, no markdown.
 
 Signature:
 ${sig_block}" 2>/dev/null) || true
