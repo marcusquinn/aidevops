@@ -6,7 +6,7 @@
 #   claim-task-id.sh [options]
 #
 # Options:
-#   --title "Task title"       Task title for GitHub/GitLab issue (required)
+#   --title "Task title"       Task title for GitHub/GitLab issue (required unless --batch)
 #   --description "Details"    Task description (optional)
 #   --labels "label1,label2"   Comma-separated labels (optional)
 #   --count N                  Allocate N consecutive IDs (default: 1)
@@ -37,6 +37,10 @@
 # Offline fallback:
 #   - Reads local .task-counter + 100 offset to avoid collisions
 #   - Reconciliation required when back online
+#
+# Migration from TODO.md scanning:
+#   - If .task-counter doesn't exist, initialize from TODO.md highest ID
+#   - First run creates .task-counter and commits to origin/main
 #
 # Platform detection:
 #   - Checks git remote URL for github.com, gitlab.com, gitea
@@ -136,13 +140,20 @@ parse_args() {
 		esac
 	done
 
-	if [[ -z "$TASK_TITLE" ]]; then
-		log_error "Missing required argument: --title"
+	# Validate batch size
+	if [[ "$ALLOC_COUNT" -lt 1 ]]; then
+		log_error "Allocation count must be >= 1"
+		exit 1
+	fi
+
+	# Title is required unless batch mode
+	if [[ -z "$TASK_TITLE" ]] && [[ "$ALLOC_COUNT" -eq 1 ]]; then
+		log_error "Missing required argument: --title (or use --count N for bulk allocation)"
 		exit 1
 	fi
 
 	# Auto-extract hashtags from title if no labels provided
-	if [[ -z "$TASK_LABELS" ]]; then
+	if [[ -n "$TASK_TITLE" ]] && [[ -z "$TASK_LABELS" ]]; then
 		local extracted_tags
 		extracted_tags=$(extract_hashtags "$TASK_TITLE")
 		if [[ -n "$extracted_tags" ]]; then
@@ -187,6 +198,24 @@ check_cli() {
 	esac
 
 	return 1
+}
+
+# Get highest task ID from TODO.md content (used for migration only)
+get_highest_task_id() {
+	local todo_content="$1"
+	local highest=0
+
+	# Extract all task IDs (tNNN or tNNN.N format)
+	while IFS= read -r line; do
+		if [[ "$line" =~ ^[[:space:]]*-[[:space:]]\[[[:space:]xX]\][[:space:]]t([0-9]+) ]]; then
+			local task_num="${BASH_REMATCH[1]}"
+			if ((10#$task_num > 10#$highest)); then
+				highest="$task_num"
+			fi
+		fi
+	done <<<"$todo_content"
+
+	echo "$highest"
 }
 
 # Read .task-counter from origin/main (fetches first)
