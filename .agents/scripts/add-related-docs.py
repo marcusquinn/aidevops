@@ -82,7 +82,7 @@ def find_thread_siblings(md_file: Path, frontmatter: Dict, all_docs: Dict[Path, 
     
     Returns: {'previous': path_or_none, 'next': path_or_none}
     """
-    siblings = {'previous': None, 'next': None}
+    siblings: Dict[str, Optional[str]] = {'previous': None, 'next': None}
     
     thread_id = frontmatter.get('thread_id')
     thread_position = frontmatter.get('thread_position')
