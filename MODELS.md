@@ -53,8 +53,6 @@ Success rates from autonomous task execution (pattern-tracker data):
 | sonnet | 104 | 104 | 0 | 100% | 2026-02-14 |
 | haiku | 1 | 0 | 1 | 0% | 2026-02-05 |
 
--05 |
-
 ### By Task Type
 
 | Task Type | Tasks | Successes | Failures | Success Rate |
@@ -64,6 +62,7 @@ Success rates from autonomous task execution (pattern-tracker data):
 | refactor | 1 | 0 | 1 | 0% |
 | testing | 1 | 1 | 0 | 100% |
 | security | 1 | 1 | 0 | 100% |
+| architecture | 2 | 2 | 0 | 100% |
 | research | 1 | 1 | 0 | 100% |
 | content | 6 | 6 | 0 | 100% |
 
