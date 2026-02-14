@@ -1,0 +1,14 @@
+From: alice@example.com
+To: bob@example.com
+Subject: Meeting tomorrow
+Date: Mon, 10 Feb 2026 09:15:00 +0000
+Message-ID: <short-001@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+
+Hi Bob,
+
+Can we meet at 3pm tomorrow to discuss the Q1 budget? I have the spreadsheet ready.
+
+Thanks,
+Alice
