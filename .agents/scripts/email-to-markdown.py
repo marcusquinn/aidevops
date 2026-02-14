@@ -4,6 +4,10 @@ email-to-markdown.py - Convert .eml/.msg files to markdown with attachment extra
 Part of aidevops framework: https://aidevops.sh
 
 Usage: email-to-markdown.py <input-file> [--output <file>] [--attachments-dir <dir>]
+
+Output format: YAML frontmatter with visible headers (from, to, cc, bcc, date_sent,
+date_received, subject, size, message_id, in_reply_to, attachment_count, attachments),
+markdown.new convention fields (title, description), and tokens_estimate for LLM context.
 """
 
 import sys
@@ -16,6 +20,7 @@ import html2text
 import argparse
 from pathlib import Path
 import mimetypes
+import re
 
 
 def parse_eml(file_path):
@@ -120,10 +125,137 @@ def format_size(size_bytes):
     return f"{size_bytes:.1f} TB"
 
 
+def estimate_tokens(text):
+    """Estimate token count using word-based heuristic (words * 1.3).
+
+    This approximates GPT/Claude tokenization without requiring tiktoken.
+    The 1.3 multiplier accounts for subword tokenization of punctuation,
+    numbers, and multi-syllable words.
+    """
+    if not text:
+        return 0
+    words = len(text.split())
+    return int(words * 1.3)
+
+
+def yaml_escape(value):
+    """Escape a string value for safe YAML output.
+
+    Wraps in double quotes if the value contains characters that could
+    break YAML parsing (colons, quotes, newlines, leading special chars).
+    """
+    if value is None:
+        return '""'
+    value = str(value)
+    if not value:
+        return '""'
+    # Quote if contains YAML-special characters or starts with special chars
+    needs_quoting = any(c in value for c in [':', '#', '{', '}', '[', ']', ',', '&', '*', '?', '|', '-', '<', '>', '=', '!', '%', '@', '`', '\n', '\r', '"', "'"])
+    needs_quoting = needs_quoting or value.startswith((' ', '\t'))
+    if needs_quoting:
+        # Escape backslashes and double quotes for YAML double-quoted strings
+        value = value.replace('\\', '\\\\').replace('"', '\\"')
+        # Replace newlines with spaces
+        value = value.replace('\n', ' ').replace('\r', '')
+        return f'"{value}"'
+    return value
+
+
+def make_description(body, max_len=160):
+    """Extract first max_len chars of body as description (markdown.new convention).
+
+    Strips markdown formatting, collapses whitespace, and truncates with
+    ellipsis if the text exceeds max_len.
+    """
+    if not body:
+        return ""
+    # Strip markdown links, images, emphasis
+    text = re.sub(r'!\[([^\]]*)\]\([^)]*\)', r'\1', body)  # images
+    text = re.sub(r'\[([^\]]*)\]\([^)]*\)', r'\1', text)    # links
+    text = re.sub(r'[*_]{1,3}', '', text)                    # emphasis
+    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)  # headings
+    text = re.sub(r'\n+', ' ', text)                          # newlines
+    text = re.sub(r'\s+', ' ', text).strip()                  # whitespace
+    if len(text) > max_len:
+        # Truncate at word boundary
+        text = text[:max_len].rsplit(' ', 1)[0] + '...'
+    return text
+
+
+def get_file_size(file_path):
+    """Get file size in bytes."""
+    try:
+        return os.path.getsize(file_path)
+    except OSError:
+        return 0
+
+
+def extract_header_safe(msg, header, default=''):
+    """Safely extract an email header, handling both eml and msg formats."""
+    if hasattr(msg, 'sender'):  # extract_msg object
+        header_map = {
+            'From': getattr(msg, 'sender', default),
+            'To': getattr(msg, 'to', default),
+            'Cc': getattr(msg, 'cc', default),
+            'Bcc': getattr(msg, 'bcc', default),
+            'Subject': getattr(msg, 'subject', default),
+            'Date': getattr(msg, 'date', default),
+            'Message-ID': getattr(msg, 'messageId', default),
+            'In-Reply-To': getattr(msg, 'inReplyTo', default),
+        }
+        return header_map.get(header, default) or default
+    else:  # email.message.EmailMessage
+        return msg.get(header, default) or default
+
+
+def parse_date_safe(date_str):
+    """Parse a date string to ISO format, returning original on failure."""
+    if not date_str or date_str == 'Unknown':
+        return ''
+    try:
+        dt = parsedate_to_datetime(date_str)
+        return dt.strftime('%Y-%m-%dT%H:%M:%S%z')
+    except Exception:
+        return str(date_str)
+
+
+def build_frontmatter(metadata):
+    """Build YAML frontmatter string from metadata dict.
+
+    Handles scalar values, lists of dicts (attachments), and proper
+    YAML escaping for all string values.
+    """
+    lines = ['---']
+    for key, value in metadata.items():
+        if key == 'attachments' and isinstance(value, list):
+            if not value:
+                lines.append(f'{key}: []')
+            else:
+                lines.append(f'{key}:')
+                for att in value:
+                    lines.append(f'  - filename: {yaml_escape(att["filename"])}')
+                    lines.append(f'    size: {yaml_escape(att["size"])}')
+        elif isinstance(value, (int, float)):
+            lines.append(f'{key}: {value}')
+        else:
+            lines.append(f'{key}: {yaml_escape(value)}')
+    lines.append('---')
+    return '\n'.join(lines)
+
+
 def email_to_markdown(input_file, output_file=None, attachments_dir=None):
-    """Convert email file to markdown with attachment extraction."""
+    """Convert email file to markdown with YAML frontmatter and attachment extraction.
+
+    Output includes:
+    - YAML frontmatter with visible email headers (from, to, cc, bcc, date_sent,
+      date_received, subject, size, message_id, in_reply_to, attachment_count,
+      attachments list)
+    - markdown.new convention fields (title = subject, description = first 160 chars)
+    - tokens_estimate for LLM context budgeting
+    - Body as markdown content
+    """
     input_path = Path(input_file)
-    
+
     # Determine file type
     ext = input_path.suffix.lower()
     if ext == '.eml':
@@ -134,58 +266,88 @@ def email_to_markdown(input_file, output_file=None, attachments_dir=None):
         print(f"ERROR: Unsupported file type: {ext}", file=sys.stderr)
         print("Supported: .eml, .msg", file=sys.stderr)
         sys.exit(1)
-    
+
     # Set default output paths
     if output_file is None:
         output_file = input_path.with_suffix('.md')
-    
+
     if attachments_dir is None:
         attachments_dir = input_path.parent / f"{input_path.stem}_attachments"
-    
-    # Extract metadata
-    if hasattr(msg, 'sender'):  # extract_msg
-        from_addr = msg.sender
-        to_addr = msg.to
-        subject = msg.subject
-        date = msg.date
-    else:  # email.message
-        from_addr = msg.get('From', 'Unknown')
-        to_addr = msg.get('To', 'Unknown')
-        subject = msg.get('Subject', 'No Subject')
-        date_str = msg.get('Date', '')
-        try:
-            date = parsedate_to_datetime(date_str).strftime('%Y-%m-%d %H:%M:%S') if date_str else 'Unknown'
-        except:
-            date = date_str or 'Unknown'
-    
+
+    # Extract all visible headers
+    from_addr = extract_header_safe(msg, 'From', 'Unknown')
+    to_addr = extract_header_safe(msg, 'To', 'Unknown')
+    cc_addr = extract_header_safe(msg, 'Cc')
+    bcc_addr = extract_header_safe(msg, 'Bcc')
+    subject = extract_header_safe(msg, 'Subject', 'No Subject')
+    message_id = extract_header_safe(msg, 'Message-ID')
+    in_reply_to = extract_header_safe(msg, 'In-Reply-To')
+
+    # Parse dates
+    date_sent_raw = extract_header_safe(msg, 'Date')
+    date_received_raw = extract_header_safe(msg, 'Received')
+    # The Received header contains routing info; extract the date portion
+    if date_received_raw and ';' in date_received_raw:
+        date_received_raw = date_received_raw.rsplit(';', 1)[-1].strip()
+    date_sent = parse_date_safe(date_sent_raw)
+    date_received = parse_date_safe(date_received_raw)
+
+    # Get file size
+    file_size = get_file_size(input_file)
+
     # Extract body
     body = get_email_body(msg)
-    
+
     # Extract attachments
     attachments = extract_attachments(msg, attachments_dir)
-    
-    # Build markdown
-    md_content = f"""# {subject}
 
-**From:** {from_addr}  
-**To:** {to_addr}  
-**Date:** {date}
+    # Build attachment metadata for frontmatter
+    attachment_meta = []
+    for att in attachments:
+        attachment_meta.append({
+            'filename': att['filename'],
+            'size': format_size(att['size']),
+        })
 
----
+    # markdown.new convention fields
+    description = make_description(body)
 
-{body}
-"""
-    
-    # Add attachments section if any
-    if attachments:
-        md_content += "\n\n---\n\n## Attachments\n\n"
-        for att in attachments:
-            md_content += f"- [{att['filename']}]({att['path']}) ({format_size(att['size'])})\n"
-    
+    # Token estimate for the full converted content (body + frontmatter)
+    tokens_estimate = estimate_tokens(body)
+
+    # Build ordered metadata for frontmatter
+    from collections import OrderedDict
+    metadata = OrderedDict()
+    # markdown.new convention
+    metadata['title'] = subject
+    metadata['description'] = description
+    # Email headers
+    metadata['from'] = from_addr
+    metadata['to'] = to_addr
+    if cc_addr:
+        metadata['cc'] = cc_addr
+    if bcc_addr:
+        metadata['bcc'] = bcc_addr
+    metadata['date_sent'] = date_sent
+    if date_received:
+        metadata['date_received'] = date_received
+    metadata['subject'] = subject
+    metadata['size'] = format_size(file_size)
+    metadata['message_id'] = message_id
+    if in_reply_to:
+        metadata['in_reply_to'] = in_reply_to
+    metadata['attachment_count'] = len(attachments)
+    metadata['attachments'] = attachment_meta
+    metadata['tokens_estimate'] = tokens_estimate
+
+    # Build markdown with YAML frontmatter
+    frontmatter = build_frontmatter(metadata)
+    md_content = f"{frontmatter}\n\n{body}"
+
     # Write markdown file
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write(md_content)
-    
+
     return {
         'markdown': str(output_file),
         'attachments': attachments,
