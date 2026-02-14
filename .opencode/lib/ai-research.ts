@@ -9,7 +9,9 @@
  * - Domain shorthand auto-resolves to relevant agents via subagent-index.toon
  * - Extracts AI-CONTEXT-START/END sections to minimise tokens
  * - Rate-limited to 10 calls per session
- * - Calls Anthropic API directly (no CLI overhead)
+ * - Auth: reads OAuth token from ~/.local/share/opencode/auth.json (primary),
+ *   falls back to ANTHROPIC_API_KEY env var. OAuth uses the anthropic-beta
+ *   header (oauth-2025-04-20) for direct API access.
  */
 
 // ---------------------------------------------------------------------------
@@ -40,7 +42,7 @@ export interface ResearchResult {
 const AGENTS_BASE = `${process.env.HOME || "~"}/.aidevops/agents`
 
 const MODEL_MAP: Record<string, string> = {
-  haiku: "claude-3-5-haiku-20241022",
+  haiku: "claude-3-haiku-20240307",
   sonnet: "claude-sonnet-4-20250514",
   opus: "claude-opus-4-20250514",
 }
@@ -281,46 +283,166 @@ async function buildSystemPrompt(
 }
 
 // ---------------------------------------------------------------------------
-// Anthropic API call
+// OAuth token management
 // ---------------------------------------------------------------------------
 
-function getApiKey(): string {
-  // Check environment variable first
-  const key = process.env.ANTHROPIC_API_KEY
-  if (key) return key
+const AUTH_FILE = `${process.env.HOME || "~"}/.local/share/opencode/auth.json`
+const OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+
+interface OAuthAuth {
+  type: "oauth"
+  refresh: string
+  access: string
+  expires: number
+}
+
+interface ApiAuth {
+  type: "api"
+  key: string
+}
+
+type AuthEntry = OAuthAuth | ApiAuth
+
+/**
+ * Read the Anthropic auth entry from OpenCode's auth.json.
+ * Returns null if the file doesn't exist or has no anthropic entry.
+ */
+async function readAuthFile(): Promise<AuthEntry | null> {
+  try {
+    const file = Bun.file(AUTH_FILE)
+    if (!(await file.exists())) return null
+    const data = await file.json()
+    return data.anthropic || null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Refresh an expired OAuth access token using the refresh token.
+ * Updates auth.json with the new tokens.
+ */
+async function refreshOAuthToken(auth: OAuthAuth): Promise<string> {
+  const response = await fetch(
+    "https://console.anthropic.com/v1/oauth/token",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        grant_type: "refresh_token",
+        refresh_token: auth.refresh,
+        client_id: OAUTH_CLIENT_ID,
+      }),
+    }
+  )
+
+  if (!response.ok) {
+    throw new Error(`OAuth token refresh failed (${response.status})`)
+  }
+
+  const json = (await response.json()) as {
+    access_token: string
+    refresh_token: string
+    expires_in: number
+  }
+
+  // Update auth.json with new tokens
+  try {
+    const file = Bun.file(AUTH_FILE)
+    const data = await file.json()
+    data.anthropic = {
+      type: "oauth",
+      refresh: json.refresh_token,
+      access: json.access_token,
+      expires: Date.now() + json.expires_in * 1000,
+    }
+    await Bun.write(AUTH_FILE, JSON.stringify(data, null, 2))
+  } catch {
+    // Non-fatal: token still works for this request even if we can't persist
+  }
+
+  return json.access_token
+}
+
+// ---------------------------------------------------------------------------
+// Auth resolution
+// ---------------------------------------------------------------------------
+
+interface ResolvedAuth {
+  method: "oauth" | "api-key"
+  token: string
+}
+
+/**
+ * Resolve authentication. Priority:
+ * 1. OAuth from auth.json (primary — no API key needed)
+ * 2. ANTHROPIC_API_KEY env var (fallback)
+ */
+async function resolveAuth(): Promise<ResolvedAuth> {
+  // Try OAuth from auth.json first
+  const auth = await readAuthFile()
+
+  if (auth?.type === "oauth") {
+    let accessToken = auth.access
+    if (!accessToken || auth.expires < Date.now()) {
+      accessToken = await refreshOAuthToken(auth)
+    }
+    return { method: "oauth", token: accessToken }
+  }
+
+  // auth.json has an API key entry
+  if (auth?.type === "api" && (auth as ApiAuth).key) {
+    return { method: "api-key", token: (auth as ApiAuth).key }
+  }
+
+  // Fall back to env var
+  const envKey = process.env.ANTHROPIC_API_KEY
+  if (envKey) {
+    return { method: "api-key", token: envKey }
+  }
 
   throw new Error(
-    "ANTHROPIC_API_KEY not found. Set it via: aidevops secret set ANTHROPIC_API_KEY"
+    "No Anthropic auth found. Either:\n" +
+      "  1. Run `opencode auth` to set up OAuth (recommended)\n" +
+      "  2. Set ANTHROPIC_API_KEY environment variable"
   )
 }
 
-export async function research(req: ResearchRequest): Promise<ResearchResult> {
-  checkRateLimit()
+// ---------------------------------------------------------------------------
+// Anthropic API call
+// ---------------------------------------------------------------------------
 
-  const modelTier = req.model || "haiku"
-  const modelId = MODEL_MAP[modelTier]
-  if (!modelId) {
-    throw new Error(
-      `Unknown model tier: ${modelTier}. Use: haiku, sonnet, or opus`
-    )
+/**
+ * Call the Anthropic Messages API with resolved auth.
+ * OAuth uses Bearer token + anthropic-beta header.
+ * API key uses x-api-key header.
+ */
+async function callAnthropic(
+  req: ResearchRequest,
+  auth: ResolvedAuth,
+  modelId: string,
+  systemPrompt: string
+): Promise<ResearchResult> {
+  const maxTokens = req.max_tokens || 500
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "anthropic-version": "2023-06-01",
   }
 
-  const maxTokens = req.max_tokens || 500
-  const systemPrompt = await buildSystemPrompt(
-    req.agents,
-    req.domain,
-    req.files
-  )
+  let url = "https://api.anthropic.com/v1/messages"
 
-  const apiKey = getApiKey()
+  if (auth.method === "oauth") {
+    headers["authorization"] = `Bearer ${auth.token}`
+    headers["anthropic-beta"] = "oauth-2025-04-20"
+    url += "?beta=true"
+  } else {
+    headers["x-api-key"] = auth.token
+  }
 
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
+  const response = await fetch(url, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    },
+    headers,
     body: JSON.stringify({
       model: modelId,
       max_tokens: maxTokens,
@@ -351,4 +473,29 @@ export async function research(req: ResearchRequest): Promise<ResearchResult> {
     output_tokens: data.usage.output_tokens,
     calls_remaining: getCallsRemaining(),
   }
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+export async function research(req: ResearchRequest): Promise<ResearchResult> {
+  checkRateLimit()
+
+  const modelTier = req.model || "haiku"
+  const modelId = MODEL_MAP[modelTier]
+  if (!modelId) {
+    throw new Error(
+      `Unknown model tier: ${modelTier}. Use: haiku, sonnet, or opus`
+    )
+  }
+
+  const systemPrompt = await buildSystemPrompt(
+    req.agents,
+    req.domain,
+    req.files
+  )
+
+  const auth = await resolveAuth()
+  return callAnthropic(req, auth, modelId, systemPrompt)
 }
