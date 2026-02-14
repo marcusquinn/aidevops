@@ -4,7 +4,6 @@
 # Functions for proof-logs, system monitoring, concurrency,
 # dashboard, notifications, and misc helpers
 
-
 #######################################
 # Write a structured proof-log entry (t218)
 #
@@ -218,12 +217,10 @@ check_gh_auth() {
 	fi
 
 	# If GH_TOKEN is set, verify it works with a lightweight API call
-	if [[ -n "${GH_TOKEN:-}" ]]; then
-		if gh api user --jq '.login' >/dev/null 2>&1; then
-			mkdir -p "$(dirname "$cache_file")" 2>/dev/null || true
-			echo "ok" >"$cache_file" 2>/dev/null || true
-			return 0
-		fi
+	if [[ -n "${GH_TOKEN:-}" ]] && gh api user --jq '.login' >/dev/null 2>&1; then
+		mkdir -p "$(dirname "$cache_file")" 2>/dev/null || true
+		echo "ok" >"$cache_file" 2>/dev/null || true
+		return 0
 	fi
 	# Fall back to gh auth status (works interactively with keyring)
 	if gh auth status >/dev/null 2>&1; then
@@ -1179,7 +1176,7 @@ cmd_dashboard() {
 	trap _dashboard_cleanup EXIT INT TERM
 
 	# Color helpers using tput for portability
-	local c_reset c_bold c_dim c_red c_green c_yellow c_blue c_cyan c_magenta c_white c_bg_black
+	local c_reset c_bold c_dim c_red c_green c_yellow c_blue c_cyan c_white
 	c_reset=$(tput sgr0 2>/dev/null || printf '\033[0m')
 	c_bold=$(tput bold 2>/dev/null || printf '\033[1m')
 	c_dim=$(tput dim 2>/dev/null || printf '\033[2m')
@@ -1819,8 +1816,8 @@ send_task_notification() {
         SELECT description, repo, pr_url, error FROM tasks WHERE id = '$escaped_id';
     ")
 
-	local tdesc trepo tpr terror
-	IFS='|' read -r tdesc trepo tpr terror <<<"$task_row"
+	local tdesc _trepo tpr terror
+	IFS='|' read -r tdesc _trepo tpr terror <<<"$task_row"
 
 	local message=""
 	case "$event_type" in
@@ -1888,7 +1885,7 @@ notify_batch_progress() {
 	local completed="$1"
 	local total="$2"
 	local failed="${3:-0}"
-	local batch_name="${4:-batch}"
+	local _batch_name="${4:-batch}" # reserved for future notification context
 
 	[[ "$(uname)" != "Darwin" ]] && return 0
 

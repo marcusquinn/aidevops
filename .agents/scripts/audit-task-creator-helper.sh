@@ -172,12 +172,10 @@ detect_db_mode() {
 get_active_task_db() {
 	local mode
 	mode=$(detect_db_mode)
-	if [[ "$mode" == "legacy" ]]; then
+	if [[ "$mode" == "legacy" ]] && [[ -f "$LEGACY_TASK_DB" ]]; then
 		# Use legacy path if it exists, otherwise use new path
-		if [[ -f "$LEGACY_TASK_DB" ]]; then
-			echo "$LEGACY_TASK_DB"
-			return 0
-		fi
+		echo "$LEGACY_TASK_DB"
+		return 0
 	fi
 	echo "$TASK_CREATOR_DB"
 	return 0

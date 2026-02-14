@@ -701,8 +701,8 @@ update_queue_health_issue() {
 	# Audit Health section (t1032.7)
 	local audit_md=""
 	# Define audit DB path relative to workspace root (not SUPERVISOR_DIR)
-	local -r AUDIT_DB_PATH="${SUPERVISOR_DIR%/supervisor}/audit/audit.db"
-	local audit_db="$AUDIT_DB_PATH"
+	local -r audit_db_path="${SUPERVISOR_DIR%/supervisor}/audit/audit.db"
+	local audit_db="$audit_db_path"
 	if [[ -f "$audit_db" ]]; then
 		# Last audit timestamp
 		local last_audit
@@ -750,12 +750,12 @@ update_queue_health_issue() {
 		local trend_arrow="→"
 		local now_epoch
 		now_epoch=$(date +%s)
-		local -r SEVEN_DAYS_IN_SECONDS=$((7 * 24 * 60 * 60))
-		local -r FOURTEEN_DAYS_IN_SECONDS=$((14 * 24 * 60 * 60))
+		local -r seven_days_in_seconds=$((7 * 24 * 60 * 60))
+		local -r fourteen_days_in_seconds=$((14 * 24 * 60 * 60))
 		local seven_days_ago
-		seven_days_ago=$(date -u -r $((now_epoch - SEVEN_DAYS_IN_SECONDS)) +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d "@$((now_epoch - SEVEN_DAYS_IN_SECONDS))" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "")
+		seven_days_ago=$(date -u -r $((now_epoch - seven_days_in_seconds)) +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d "@$((now_epoch - seven_days_in_seconds))" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "")
 		local fourteen_days_ago
-		fourteen_days_ago=$(date -u -r $((now_epoch - FOURTEEN_DAYS_IN_SECONDS)) +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d "@$((now_epoch - FOURTEEN_DAYS_IN_SECONDS))" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "")
+		fourteen_days_ago=$(date -u -r $((now_epoch - fourteen_days_in_seconds)) +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d "@$((now_epoch - fourteen_days_in_seconds))" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "")
 
 		if [[ -n "$seven_days_ago" && -n "$fourteen_days_ago" ]]; then
 			local recent_count previous_count
@@ -1636,11 +1636,9 @@ check_task_staleness() {
 				newest_commit=$(git -C "$project_root" log --oneline -1 \
 					--grep="$term" 2>/dev/null) || true
 
-				if [[ -n "$newest_commit" ]]; then
-					if printf '%s' "$newest_commit" |
-						grep -qiE "remov|delet|drop|deprecat|clean.?up"; then
-						newest_commit_is_removal=true
-					fi
+				if [[ -n "$newest_commit" ]] && printf '%s' "$newest_commit" |
+					grep -qiE "remov|delet|drop|deprecat|clean.?up"; then
+					newest_commit_is_removal=true
 				fi
 
 				local active_refs=0
@@ -1790,20 +1788,18 @@ handle_stale_task() {
 
 		# Remove #auto-dispatch from TODO.md
 		local todo_file="$project_root/TODO.md"
-		if [[ -f "$todo_file" ]]; then
-			if grep -q "^[[:space:]]*- \[ \] ${task_id}[[:space:]].*#auto-dispatch" "$todo_file" 2>/dev/null; then
-				sed -i.bak "s/\(- \[ \] ${task_id}[[:space:]].*\) #auto-dispatch/\1/" "$todo_file"
-				rm -f "${todo_file}.bak"
-				log_info "Removed #auto-dispatch from $task_id in TODO.md"
+		if [[ -f "$todo_file" ]] && grep -q "^[[:space:]]*- \[ \] ${task_id}[[:space:]].*#auto-dispatch" "$todo_file" 2>/dev/null; then
+			sed -i.bak "s/\(- \[ \] ${task_id}[[:space:]].*\) #auto-dispatch/\1/" "$todo_file"
+			rm -f "${todo_file}.bak"
+			log_info "Removed #auto-dispatch from $task_id in TODO.md"
 
-				# Commit the change
-				if git -C "$project_root" diff --quiet "$todo_file" 2>/dev/null; then
-					log_info "No TODO.md changes to commit"
-				else
-					git -C "$project_root" add "$todo_file" 2>/dev/null || true
-					git -C "$project_root" commit -q -m "chore: pause $task_id — staleness check uncertain, removed #auto-dispatch" 2>/dev/null || true
-					git -C "$project_root" push -q 2>/dev/null || true
-				fi
+			# Commit the change
+			if git -C "$project_root" diff --quiet "$todo_file" 2>/dev/null; then
+				log_info "No TODO.md changes to commit"
+			else
+				git -C "$project_root" add "$todo_file" 2>/dev/null || true
+				git -C "$project_root" commit -q -m "chore: pause $task_id — staleness check uncertain, removed #auto-dispatch" 2>/dev/null || true
+				git -C "$project_root" push -q 2>/dev/null || true
 			fi
 		fi
 
@@ -1943,7 +1939,7 @@ sync_claim_to_github() {
 #######################################
 create_github_issue() {
 	local task_id="$1"
-	local description="$2"
+	local _description="$2" # unused: issue-sync-helper.sh parses TODO.md directly
 	local repo_path="$3"
 
 	# t165: Callers are responsible for gating (cmd_add uses --with-issue flag).

@@ -312,11 +312,9 @@ cmd_auto_pickup() {
 			fi
 		fi
 
-		if [[ "$in_dispatch_section" == "true" ]]; then
+		if [[ "$in_dispatch_section" == "true" ]] && echo "$line" | grep -qE '^[[:space:]]*- \[ \] t[0-9]+'; then
 			# Match open task lines
-			if echo "$line" | grep -qE '^[[:space:]]*- \[ \] t[0-9]+'; then
-				section_tasks+="$line"$'\n'
-			fi
+			section_tasks+="$line"$'\n'
 		fi
 	done <"$todo_file"
 
