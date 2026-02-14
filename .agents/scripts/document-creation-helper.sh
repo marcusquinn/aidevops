@@ -3777,6 +3777,7 @@ cmd_help() {
 	printf "  extract-entities  Extract named entities from markdown (t1044.6)\n"
 	printf "  generate-manifest Generate collection manifest (_index.toon) (t1044.9)\n"
 	printf "  add-related-docs  Add related_docs frontmatter and navigation links (t1044.11)\n"
+	printf "  enforce-frontmatter Enforce YAML frontmatter on markdown files\n"
 	printf "  install           Install conversion tools (--minimal, --standard, --full, --ocr)\n"
 	printf "  formats           Show supported format conversions\n"
 	printf "  status            Show installed tools and availability\n"
@@ -3830,6 +3831,7 @@ main() {
 	extract-entities) cmd_extract_entities "$@" ;;
 	pageindex) cmd_pageindex "$@" ;;
 	add-related-docs) cmd_add_related_docs "$@" ;;
+	enforce-frontmatter | frontmatter) "$(dirname "${BASH_SOURCE[0]}")/frontmatter-helper.sh" "$@" ;;
 	install) cmd_install "$@" ;;
 	formats) cmd_formats ;;
 	status) cmd_status ;;
