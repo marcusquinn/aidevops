@@ -15,10 +15,9 @@ Also generates a thread index file listing all emails in chronological order per
 """
 
 import sys
-import os
 import re
 from pathlib import Path
-from collections import defaultdict, OrderedDict
+from collections import defaultdict
 from datetime import datetime
 import argparse
 
@@ -61,6 +60,30 @@ def parse_frontmatter(md_file):
     return metadata
 
 
+def _format_field(key, value):
+    """Format a YAML frontmatter field as 'key: value' string."""
+    if isinstance(value, str):
+        return f'{key}: "{value}"'
+    return f'{key}: {value}'
+
+
+def _find_insert_point(lines):
+    """Find insertion point for new fields (after tokens_estimate or at end)."""
+    for i, line in enumerate(lines):
+        if line.startswith('tokens_estimate:'):
+            return i + 1
+    return len(lines)
+
+
+def _update_existing_field(lines, key, value):
+    """Update an existing field in frontmatter lines. Returns True if found."""
+    for i, line in enumerate(lines):
+        if line.startswith(f'{key}:'):
+            lines[i] = _format_field(key, value)
+            return True
+    return False
+
+
 def update_frontmatter(md_file, new_fields):
     """Update frontmatter in a markdown file with new fields.
     
@@ -81,36 +104,14 @@ def update_frontmatter(md_file, new_fields):
     frontmatter_text = content[4:4 + end_match.start()]
     body = content[frontmatter_end:]
     
-    # Parse existing frontmatter to preserve order
     lines = frontmatter_text.split('\n')
+    insert_idx = _find_insert_point(lines)
     
-    # Find insertion point (after tokens_estimate or at end)
-    insert_idx = len(lines)
-    for i, line in enumerate(lines):
-        if line.startswith('tokens_estimate:'):
-            insert_idx = i + 1
-            break
-    
-    # Build new lines for thread fields
+    # Update existing fields or collect new ones
     new_lines = []
     for key, value in new_fields.items():
-        # Check if field already exists
-        field_exists = False
-        for i, line in enumerate(lines):
-            if line.startswith(f'{key}:'):
-                # Update existing field
-                if isinstance(value, str):
-                    lines[i] = f'{key}: "{value}"'
-                else:
-                    lines[i] = f'{key}: {value}'
-                field_exists = True
-                break
-        
-        if not field_exists:
-            if isinstance(value, str):
-                new_lines.append(f'{key}: "{value}"')
-            else:
-                new_lines.append(f'{key}: {value}')
+        if not _update_existing_field(lines, key, value):
+            new_lines.append(_format_field(key, value))
     
     # Insert new lines at the insertion point
     if new_lines:
@@ -291,7 +292,7 @@ def reconstruct_threads(directory, output_index=None):
     
     # Update frontmatter in all files
     updated_count = 0
-    for thread_id, thread_emails in threads.items():
+    for _tid, thread_emails in threads.items():
         for email in thread_emails:
             new_fields = {
                 'thread_id': email['thread_id'],
