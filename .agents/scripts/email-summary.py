@@ -126,9 +126,12 @@ def _strip_signature(text: str) -> str:
     for pattern in sig_patterns:
         match = re.search(pattern, text, re.IGNORECASE)
         if match:
-            # Only strip if the signature is in the last 40% of the text
-            if match.start() > len(text) * 0.6:
-                text = text[:match.start()].strip()
+            before = text[:match.start()].strip()
+            # Strip signature if there's meaningful content before it (>20 chars)
+            # and the signature isn't in the very first 20% of a long text
+            # (which would indicate it's part of the content, not a sign-off)
+            if len(before) >= 20 and (len(text) < 500 or match.start() > len(text) * 0.2):
+                text = before
                 break
 
     return text
@@ -231,6 +234,8 @@ def summarise_heuristic(body: str) -> str:
     3. Extract the first 1-2 sentences
     4. Truncate to MAX_DESCRIPTION_LEN if needed
     """
+    if not body:
+        return ""
     text = _strip_signature(body)
     cleaned = _strip_markdown(text)
     if not cleaned:
