@@ -3676,6 +3676,84 @@ print(count_nodes(data.get('tree', {})))
 }
 
 # ============================================================================
+# Add related docs (t1044.11)
+# ============================================================================
+
+cmd_add_related_docs() {
+	local input="${1:-}"
+	local directory=""
+	local update_all=false
+	local dry_run=false
+
+	# Parse arguments
+	shift || true
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--directory | -d)
+			directory="$2"
+			shift 2
+			;;
+		--update-all)
+			update_all=true
+			shift
+			;;
+		--dry-run)
+			dry_run=true
+			shift
+			;;
+		*)
+			log_error "Unknown option: $1"
+			die "Usage: ${SCRIPT_NAME} add-related-docs <file|directory> [--directory <dir>] [--update-all] [--dry-run]"
+			;;
+		esac
+	done
+
+	local script_dir
+	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	local linker="${script_dir}/add-related-docs.py"
+
+	if [[ ! -f "$linker" ]]; then
+		die "Related docs script not found: ${linker}"
+	fi
+
+	# Determine Python interpreter (prefer venv)
+	local python_cmd="python3"
+	if activate_venv 2>/dev/null; then
+		python_cmd="python3"
+	fi
+
+	# Check for PyYAML
+	if ! "$python_cmd" -c "import yaml" 2>/dev/null; then
+		log_warn "PyYAML not installed. Installing..."
+		if [[ ! -d "${VENV_DIR}" ]]; then
+			mkdir -p "$(dirname "${VENV_DIR}")"
+			python3 -m venv "${VENV_DIR}"
+		fi
+		activate_venv
+		pip install --quiet PyYAML
+	fi
+
+	local args=()
+	if [[ -n "$input" ]]; then
+		args+=("$input")
+	fi
+	if [[ -n "$directory" ]]; then
+		args+=("--directory" "$directory")
+	fi
+	if [[ "$update_all" == true ]]; then
+		args+=("--update-all")
+	fi
+	if [[ "$dry_run" == true ]]; then
+		args+=("--dry-run")
+	fi
+
+	log_info "Adding related_docs to markdown files..."
+	"$python_cmd" "$linker" "${args[@]}"
+
+	return 0
+}
+
+# ============================================================================
 # Help
 # ============================================================================
 
@@ -3691,6 +3769,7 @@ cmd_help() {
 	printf "  pageindex         Generate .pageindex.json tree from markdown headings\n"
 	printf "  extract-entities  Extract named entities from markdown (t1044.6)\n"
 	printf "  generate-manifest Generate collection manifest (_index.toon) (t1044.9)\n"
+	printf "  add-related-docs  Add related_docs frontmatter and navigation links (t1044.11)\n"
 	printf "  install           Install conversion tools (--minimal, --standard, --full, --ocr)\n"
 	printf "  formats           Show supported format conversions\n"
 	printf "  status            Show installed tools and availability\n"
@@ -3716,6 +3795,8 @@ cmd_help() {
 	printf "  %s extract-entities email.md --method spacy --json\n" "${SCRIPT_NAME}"
 	printf "  %s generate-manifest ./imported-emails\n" "${SCRIPT_NAME}"
 	printf "  %s generate-manifest ./emails -o manifest.toon\n" "${SCRIPT_NAME}"
+	printf "  %s add-related-docs email.md\n" "${SCRIPT_NAME}"
+	printf "  %s add-related-docs --directory ./emails --update-all\n" "${SCRIPT_NAME}"
 	printf "  %s install --standard\n" "${SCRIPT_NAME}"
 	printf "  %s install --ocr\n" "${SCRIPT_NAME}"
 	printf "\nSee: tools/document/document-creation.md for full documentation.\n"
@@ -3741,6 +3822,7 @@ main() {
 	normalise | normalize) cmd_normalise "$@" ;;
 	extract-entities) cmd_extract_entities "$@" ;;
 	pageindex) cmd_pageindex "$@" ;;
+	add-related-docs) cmd_add_related_docs "$@" ;;
 	install) cmd_install "$@" ;;
 	formats) cmd_formats ;;
 	status) cmd_status ;;
