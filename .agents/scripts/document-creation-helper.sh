@@ -2339,6 +2339,348 @@ cmd_generate_manifest() {
 }
 
 # ============================================================================
+# Import-emails command (batch email processing)
+# ============================================================================
+
+# Split an mbox file into individual .eml files
+split_mbox() {
+	local mbox_file="$1"
+	local output_dir="$2"
+
+	log_info "Splitting mbox file: $(basename "$mbox_file")"
+
+	python3 - "$mbox_file" "$output_dir" <<'PYEOF'
+import sys
+import os
+import mailbox
+
+mbox_path = sys.argv[1]
+output_dir = sys.argv[2]
+
+os.makedirs(output_dir, exist_ok=True)
+
+mbox = mailbox.mbox(mbox_path)
+count = 0
+
+for message in mbox:
+    count += 1
+    eml_path = os.path.join(output_dir, f"msg-{count:06d}.eml")
+    with open(eml_path, 'wb') as f:
+        f.write(message.as_bytes())
+
+print(f"MBOX_COUNT={count}")
+PYEOF
+
+	return 0
+}
+
+# Extract contact info from an email body (signature parsing)
+# Produces TOON-format contact records in contacts/ directory
+extract_contact_from_email() {
+	local md_file="$1"
+	local contacts_dir="$2"
+
+	python3 - "$md_file" "$contacts_dir" <<'PYEOF'
+import sys
+import os
+import re
+from datetime import datetime
+
+md_file = sys.argv[1]
+contacts_dir = sys.argv[2]
+
+os.makedirs(contacts_dir, exist_ok=True)
+
+with open(md_file, 'r', encoding='utf-8', errors='replace') as f:
+    content = f.read()
+
+# Extract sender email from frontmatter/header
+from_match = re.search(r'\*\*From:\*\*\s*(.+?)(?:<(.+?)>)?$', content, re.MULTILINE)
+if not from_match:
+    sys.exit(0)
+
+sender_name = (from_match.group(1) or '').strip()
+sender_email = (from_match.group(2) or '').strip()
+
+if not sender_email:
+    # Try extracting email from the name field
+    email_in_name = re.search(r'[\w.+-]+@[\w.-]+\.\w+', sender_name)
+    if email_in_name:
+        sender_email = email_in_name.group(0)
+        sender_name = sender_name.replace(sender_email, '').strip()
+
+if not sender_email:
+    sys.exit(0)
+
+# Extract date
+date_match = re.search(r'\*\*Date:\*\*\s*(.+)$', content, re.MULTILINE)
+email_date = date_match.group(1).strip() if date_match else datetime.now().isoformat()
+
+# Detect signature block
+sig_patterns = [
+    r'\n--\s*\n',
+    r'\nBest regards,?\s*\n',
+    r'\nKind regards,?\s*\n',
+    r'\nRegards,?\s*\n',
+    r'\nSincerely,?\s*\n',
+    r'\nCheers,?\s*\n',
+    r'\nThanks,?\s*\n',
+    r'\nThank you,?\s*\n',
+    r'\nBest,?\s*\n',
+    r'\nWarm regards,?\s*\n',
+]
+
+signature = ""
+for pattern in sig_patterns:
+    match = re.search(pattern, content, re.IGNORECASE)
+    if match:
+        signature = content[match.start():]
+        break
+
+# Extract contact fields from signature
+phone_match = re.search(r'(?:(?:tel|phone|mob|cell|fax)[:\s]*)?(\+?[\d\s\-().]{7,20})', signature, re.IGNORECASE)
+website_match = re.search(r'(?:https?://)?(?:www\.)?[\w.-]+\.\w{2,}(?:/[\w.-]*)*', signature, re.IGNORECASE)
+title_match = re.search(r'^([A-Z][\w\s&,]+(?:Manager|Director|Engineer|Developer|Designer|Analyst|Consultant|Officer|Lead|Head|VP|CEO|CTO|CFO|COO|President|Founder|Partner))', signature, re.MULTILINE | re.IGNORECASE)
+company_match = re.search(r'(?:at|@)\s+(.+?)(?:\n|$)', signature, re.IGNORECASE)
+
+phone = phone_match.group(1).strip() if phone_match else ""
+website = website_match.group(0).strip() if website_match else ""
+title = title_match.group(1).strip() if title_match else ""
+company = company_match.group(1).strip() if company_match else ""
+
+# Build TOON record
+email_safe = sender_email.replace('@', '-at-').replace('.', '-')
+toon_file = os.path.join(contacts_dir, f"{email_safe}.toon")
+
+now = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+
+# Check if contact file exists (merge/update)
+if os.path.exists(toon_file):
+    with open(toon_file, 'r', encoding='utf-8') as f:
+        existing = f.read()
+    # Update last_seen
+    existing = re.sub(r'last_seen\t[^\n]+', f'last_seen\t{now}', existing)
+    with open(toon_file, 'w', encoding='utf-8') as f:
+        f.write(existing)
+else:
+    with open(toon_file, 'w', encoding='utf-8') as f:
+        f.write("contact\n")
+        f.write(f"\temail\t{sender_email}\n")
+        f.write(f"\tname\t{sender_name}\n")
+        if title:
+            f.write(f"\ttitle\t{title}\n")
+        if company:
+            f.write(f"\tcompany\t{company}\n")
+        if phone:
+            f.write(f"\tphone\t{phone}\n")
+        if website:
+            f.write(f"\twebsite\t{website}\n")
+        f.write(f"\tsource\temail-import\n")
+        f.write(f"\tfirst_seen\t{now}\n")
+        f.write(f"\tlast_seen\t{now}\n")
+        f.write(f"\tconfidence\tlow\n")
+
+PYEOF
+
+	return 0
+}
+
+# Batch import emails from a directory of .eml files or an mbox file
+cmd_import_emails() {
+	local input_path=""
+	local output_dir=""
+	local skip_contacts=false
+
+	# Parse arguments
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--output | -o)
+			output_dir="$2"
+			shift 2
+			;;
+		--skip-contacts)
+			skip_contacts=true
+			shift
+			;;
+		--*)
+			log_warn "Unknown option: $1"
+			shift
+			;;
+		*)
+			if [[ -z "${input_path}" ]]; then
+				input_path="$1"
+			fi
+			shift
+			;;
+		esac
+	done
+
+	# Validate input
+	if [[ -z "${input_path}" ]]; then
+		die "Usage: import-emails <dir|mbox-file> --output <dir> [--skip-contacts]"
+	fi
+
+	if [[ ! -e "${input_path}" ]]; then
+		die "Input not found: ${input_path}"
+	fi
+
+	if [[ -z "${output_dir}" ]]; then
+		die "Output directory required. Use --output <dir>"
+	fi
+
+	mkdir -p "${output_dir}"
+
+	local eml_dir=""
+	local tmp_eml_dir=""
+
+	# Determine input type: directory of .eml files or mbox file
+	if [[ -d "${input_path}" ]]; then
+		eml_dir="${input_path}"
+		log_info "Input: directory of .eml files"
+	elif [[ -f "${input_path}" ]]; then
+		local ext
+		ext=$(get_ext "${input_path}")
+		if [[ "${ext}" == "mbox" ]] || file "${input_path}" 2>/dev/null | grep -qi "mail\|mbox\|text"; then
+			tmp_eml_dir="${HOME}/.aidevops/.agent-workspace/tmp/mbox-split-$$"
+			mkdir -p "${tmp_eml_dir}"
+
+			local split_output
+			split_output=$(split_mbox "${input_path}" "${tmp_eml_dir}")
+			local mbox_count
+			mbox_count=$(printf '%s' "$split_output" | grep -oE 'MBOX_COUNT=[0-9]+' | cut -d= -f2)
+			mbox_count="${mbox_count:-0}"
+
+			if [[ "${mbox_count}" -eq 0 ]]; then
+				rm -rf "${tmp_eml_dir}"
+				die "No emails found in mbox file: ${input_path}"
+			fi
+
+			log_info "Extracted ${mbox_count} emails from mbox"
+			eml_dir="${tmp_eml_dir}"
+		else
+			die "Input file is not a recognized mbox format: ${input_path}"
+		fi
+	else
+		die "Input must be a directory or mbox file: ${input_path}"
+	fi
+
+	# Count .eml files
+	local eml_files=()
+	while IFS= read -r -d '' f; do
+		eml_files+=("$f")
+	done < <(find "${eml_dir}" -maxdepth 1 -type f \( -name "*.eml" -o -name "*.msg" \) -print0 2>/dev/null | sort -z)
+
+	local total="${#eml_files[@]}"
+
+	if [[ "${total}" -eq 0 ]]; then
+		if [[ -n "${tmp_eml_dir}" ]]; then
+			rm -rf "${tmp_eml_dir}"
+		fi
+		die "No .eml or .msg files found in: ${eml_dir}"
+	fi
+
+	log_info "Found ${total} email(s) to process"
+	log_info "Output directory: ${output_dir}"
+
+	# Create contacts directory
+	local contacts_dir="${output_dir}/contacts"
+	if [[ "${skip_contacts}" != true ]]; then
+		mkdir -p "${contacts_dir}"
+	fi
+
+	# Process each email with progress reporting
+	local processed=0
+	local failed=0
+	local start_time
+	start_time=$(date +%s)
+
+	local eml_file
+	for eml_file in "${eml_files[@]}"; do
+		processed=$((processed + 1))
+
+		# Progress reporting
+		local pct=$((processed * 100 / total))
+		local elapsed=$(($(date +%s) - start_time))
+		local rate="0"
+		if [[ "${elapsed}" -gt 0 ]]; then
+			rate=$((processed / elapsed))
+			if [[ "${rate}" -eq 0 ]]; then
+				rate="<1"
+			fi
+		fi
+		local remaining=$((total - processed))
+		local eta="calculating..."
+		if [[ "${elapsed}" -gt 0 ]] && [[ "${processed}" -gt 0 ]]; then
+			local secs_per_email=$((elapsed / processed))
+			local eta_secs=$((remaining * secs_per_email))
+			if [[ "${eta_secs}" -ge 60 ]]; then
+				eta="$((eta_secs / 60))m $((eta_secs % 60))s"
+			else
+				eta="${eta_secs}s"
+			fi
+		fi
+
+		printf "${BLUE}[%d/%d %d%%]${NC} Processing: %s (ETA: %s)\n" \
+			"${processed}" "${total}" "${pct}" "$(basename "${eml_file}")" "${eta}"
+
+		# Convert email to markdown using t1044.1's convert_eml_to_md
+		if ! convert_eml_to_md "${eml_file}" "${output_dir}" 2>/dev/null; then
+			log_warn "Failed to process: $(basename "${eml_file}")"
+			failed=$((failed + 1))
+			continue
+		fi
+
+		# Extract contacts from the generated markdown (if not skipped)
+		if [[ "${skip_contacts}" != true ]]; then
+			# Find the most recently created .md file in output_dir
+			local latest_md
+			latest_md=$(find "${output_dir}" -maxdepth 2 -name "*.md" -not -name "*-raw-headers.md" -newer "${eml_file}" -type f 2>/dev/null | head -1)
+			if [[ -n "${latest_md}" ]]; then
+				extract_contact_from_email "${latest_md}" "${contacts_dir}" 2>/dev/null || true
+			fi
+		fi
+	done
+
+	# Clean up temp mbox split directory
+	if [[ -n "${tmp_eml_dir}" ]]; then
+		rm -rf "${tmp_eml_dir}"
+	fi
+
+	# Summary
+	local end_time
+	end_time=$(date +%s)
+	local total_time=$((end_time - start_time))
+	local total_time_fmt
+	if [[ "${total_time}" -ge 60 ]]; then
+		total_time_fmt="$((total_time / 60))m $((total_time % 60))s"
+	else
+		total_time_fmt="${total_time}s"
+	fi
+
+	printf "\n"
+	log_ok "Batch import complete"
+	printf "${BOLD}Summary:${NC}\n"
+	printf "  Processed:  %d / %d emails\n" "$((processed - failed))" "${total}"
+	if [[ "${failed}" -gt 0 ]]; then
+		printf "  ${RED}Failed:     %d${NC}\n" "${failed}"
+	fi
+	printf "  Duration:   %s\n" "${total_time_fmt}"
+	printf "  Output:     %s\n" "${output_dir}"
+
+	if [[ "${skip_contacts}" != true ]]; then
+		local contact_count
+		contact_count=$(find "${contacts_dir}" -name "*.toon" -type f 2>/dev/null | wc -l | tr -d ' ')
+		printf "  Contacts:   %s unique contact(s) in %s\n" "${contact_count}" "${contacts_dir}"
+	fi
+
+	if [[ "${failed}" -gt 0 ]]; then
+		return 1
+	fi
+
+	return 0
+}
+
+# ============================================================================
 # Help
 # ============================================================================
 
@@ -2347,6 +2689,7 @@ cmd_help() {
 	printf "Usage: %s <command> [options]\n\n" "${SCRIPT_NAME}"
 	printf "${BOLD}Commands:${NC}\n"
 	printf "  convert           Convert between document formats\n"
+	printf "  import-emails     Batch import .eml directory or mbox file to markdown\n"
 	printf "  create            Create a document from a template + data\n"
 	printf "  template          Manage document templates (list, draft)\n"
 	printf "  extract-entities  Extract named entities from markdown (t1044.6)\n"
@@ -2361,6 +2704,8 @@ cmd_help() {
 	printf "  %s convert notes.md --to docx\n" "${SCRIPT_NAME}"
 	printf "  %s convert email.eml --to md\n" "${SCRIPT_NAME}"
 	printf "  %s convert message.msg --to md\n" "${SCRIPT_NAME}"
+	printf "  %s import-emails ~/Mail/inbox/ --output ./imported\n" "${SCRIPT_NAME}"
+	printf "  %s import-emails archive.mbox --output ./imported\n" "${SCRIPT_NAME}"
 	printf "  %s convert scanned.pdf --to odt --ocr tesseract\n" "${SCRIPT_NAME}"
 	printf "  %s convert screenshot.png --to md --ocr auto\n" "${SCRIPT_NAME}"
 	printf "  %s convert report.pdf --to md --no-normalise\n" "${SCRIPT_NAME}"
@@ -2388,6 +2733,7 @@ main() {
 
 	case "${cmd}" in
 	convert) cmd_convert "$@" ;;
+	import-emails) cmd_import_emails "$@" ;;
 	create) cmd_create "$@" ;;
 	template) cmd_template "$@" ;;
 	extract-entities) cmd_extract_entities "$@" ;;
