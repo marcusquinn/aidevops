@@ -2175,13 +2175,22 @@ rebase_sibling_pr() {
 		return 1
 	fi
 
-	# t1049: Abort any stale rebase state from a prior crash before starting
-	# a new rebase. Without this, git refuses with "already a rebase-merge directory".
+	# t1049: Clean up stale state from prior failed rebases before starting.
+	# 1. Abort any in-progress rebase (prevents "already a rebase-merge directory")
+	# 2. Reset index and restore working tree (prevents "uncommitted changes" errors
+	#    left by the AI conflict resolver's git-add on a subsequently aborted rebase)
 	local pre_git_state_dir
 	pre_git_state_dir="$(git -C "$git_dir" rev-parse --git-dir 2>/dev/null)"
 	if [[ -d "$pre_git_state_dir/rebase-merge" || -d "$pre_git_state_dir/rebase-apply" ]]; then
 		log_warn "rebase_sibling_pr: aborting stale rebase state for $task_id"
 		git -C "$git_dir" rebase --abort 2>>"$SUPERVISOR_LOG" || true
+	fi
+	# Stash dirty index/worktree — failed AI resolution can leave staged
+	# changes even after rebase --abort clears the rebase state.
+	# Uses stash (not reset) so changes are recoverable via `git stash list`.
+	if [[ -n "$(git -C "$git_dir" status --porcelain 2>/dev/null)" ]]; then
+		log_warn "rebase_sibling_pr: stashing dirty worktree for $task_id"
+		git -C "$git_dir" stash push -m "auto-stash before rebase ($task_id)" 2>>"$SUPERVISOR_LOG" || true
 	fi
 
 	if [[ "$use_worktree" == "true" ]]; then
