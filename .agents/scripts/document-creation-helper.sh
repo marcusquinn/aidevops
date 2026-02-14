@@ -2693,10 +2693,305 @@ cmd_import_emails() {
 		printf "  Contacts:   %s unique contact(s) in %s\n" "${contact_count}" "${contacts_dir}"
 	fi
 
+	# Generate collection manifest (_index.toon)
+	cmd_generate_manifest "${output_dir}" || log_warn "Manifest generation failed (non-fatal)"
+
 	if [[ "${failed}" -gt 0 ]]; then
 		return 1
 	fi
 
+	return 0
+}
+
+# ============================================================================
+# Collection manifest (_index.toon) generation
+# ============================================================================
+
+# Generate _index.toon collection manifest for an email import output directory.
+# Scans .md files for YAML frontmatter, .toon contact files, and builds three
+# TOON indexes: documents, threads, contacts.
+cmd_generate_manifest() {
+	local output_dir=""
+
+	# Parse arguments
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--*)
+			log_warn "Unknown option: $1"
+			shift
+			;;
+		*)
+			if [[ -z "${output_dir}" ]]; then
+				output_dir="$1"
+			fi
+			shift
+			;;
+		esac
+	done
+
+	if [[ -z "${output_dir}" ]]; then
+		die "Usage: generate-manifest <output-dir>"
+	fi
+
+	if [[ ! -d "${output_dir}" ]]; then
+		die "Directory not found: ${output_dir}"
+	fi
+
+	local index_file="${output_dir}/_index.toon"
+
+	log_info "Generating collection manifest: ${index_file}"
+
+	# Use Python for reliable YAML frontmatter parsing and TOON generation
+	python3 - "${output_dir}" "${index_file}" <<'PYEOF'
+import sys
+import os
+import re
+import glob
+from collections import OrderedDict
+from datetime import datetime
+
+output_dir = sys.argv[1]
+index_file = sys.argv[2]
+
+
+def parse_frontmatter(md_path):
+    """Extract YAML frontmatter fields from a markdown file."""
+    fields = {}
+    try:
+        with open(md_path, 'r', encoding='utf-8', errors='replace') as f:
+            content = f.read(8192)  # Read enough for frontmatter
+    except (OSError, IOError):
+        return fields
+
+    if not content.startswith('---'):
+        return fields
+
+    end = content.find('\n---', 3)
+    if end == -1:
+        return fields
+
+    fm_block = content[4:end]
+    for line in fm_block.split('\n'):
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        # Handle top-level key: value pairs (skip nested/list items)
+        if line.startswith('- ') or line.startswith('  '):
+            continue
+        colon_pos = line.find(':')
+        if colon_pos > 0:
+            key = line[:colon_pos].strip()
+            value = line[colon_pos + 1:].strip()
+            # Strip surrounding quotes
+            if len(value) >= 2 and value[0] in ('"', "'") and value[-1] == value[0]:
+                value = value[1:-1]
+            fields[key] = value
+
+    return fields
+
+
+def escape_toon_value(val):
+    """Escape a value for TOON format — quote if it contains commas or quotes."""
+    val = str(val)
+    if ',' in val or '"' in val or '\n' in val:
+        return '"' + val.replace('"', '""') + '"'
+    return val
+
+
+def parse_contact_toon(toon_path):
+    """Parse a contact .toon file into a dict."""
+    contact = {}
+    try:
+        with open(toon_path, 'r', encoding='utf-8', errors='replace') as f:
+            for line in f:
+                line = line.strip()
+                if line == 'contact' or not line:
+                    continue
+                parts = line.split('\t', 1)
+                if len(parts) == 2:
+                    contact[parts[0]] = parts[1]
+    except (OSError, IOError):
+        pass
+    return contact
+
+
+# --- Collect documents ---
+md_files = sorted(glob.glob(os.path.join(output_dir, '*.md')))
+documents = []
+# Track threads: message_id -> doc info, in_reply_to chains
+msg_id_map = {}  # message_id -> index in documents
+thread_map = {}  # thread_id -> list of doc indices (if thread_id exists)
+reply_chains = {}  # message_id -> in_reply_to
+
+for md_path in md_files:
+    basename = os.path.basename(md_path)
+    if basename.startswith('_'):
+        continue  # Skip index files
+
+    fm = parse_frontmatter(md_path)
+    if not fm:
+        continue
+
+    doc = OrderedDict()
+    doc['file'] = basename
+    doc['subject'] = fm.get('subject', fm.get('title', ''))
+    doc['from'] = fm.get('from', '')
+    doc['to'] = fm.get('to', '')
+    doc['date_sent'] = fm.get('date_sent', '')
+    doc['message_id'] = fm.get('message_id', '')
+    doc['in_reply_to'] = fm.get('in_reply_to', '')
+    doc['attachment_count'] = fm.get('attachment_count', '0')
+    doc['tokens_estimate'] = fm.get('tokens_estimate', '0')
+    doc['size'] = fm.get('size', '')
+
+    # Thread fields (from t1044.8 if available)
+    doc['thread_id'] = fm.get('thread_id', '')
+    doc['thread_position'] = fm.get('thread_position', '')
+
+    idx = len(documents)
+    documents.append(doc)
+
+    # Index by message_id for thread reconstruction
+    mid = doc['message_id']
+    if mid:
+        msg_id_map[mid] = idx
+
+    irt = doc['in_reply_to']
+    if irt and mid:
+        reply_chains[mid] = irt
+
+    # If thread_id exists (t1044.8), group by it
+    tid = doc['thread_id']
+    if tid:
+        thread_map.setdefault(tid, []).append(idx)
+
+
+# --- Reconstruct threads from in_reply_to chains (fallback if no thread_id) ---
+def find_thread_root(mid):
+    """Walk in_reply_to chain to find the root message_id."""
+    visited = set()
+    current = mid
+    while current in reply_chains and current not in visited:
+        visited.add(current)
+        current = reply_chains[current]
+    return current
+
+
+if not thread_map:
+    # No t1044.8 thread_id data — reconstruct from in_reply_to chains
+    root_groups = {}  # root_message_id -> list of doc indices
+    for mid, idx in msg_id_map.items():
+        root = find_thread_root(mid)
+        root_groups.setdefault(root, []).append(idx)
+    # Only include groups with >1 message as threads
+    for root_mid, indices in root_groups.items():
+        if len(indices) > 1:
+            thread_map[root_mid] = sorted(indices, key=lambda i: documents[i].get('date_sent', ''))
+
+# Build thread records
+threads = []
+for tid, indices in sorted(thread_map.items(), key=lambda x: x[0]):
+    thread_docs = [documents[i] for i in indices]
+    # Collect unique participants
+    participants = set()
+    for d in thread_docs:
+        for addr in (d.get('from', ''), d.get('to', '')):
+            for part in addr.split(','):
+                part = part.strip()
+                if part:
+                    # Extract email from "Name <email>" format
+                    email_match = re.search(r'<([^>]+)>', part)
+                    if email_match:
+                        participants.add(email_match.group(1).lower())
+                    elif '@' in part:
+                        participants.add(part.lower())
+
+    thread = OrderedDict()
+    thread['thread_id'] = tid
+    thread['subject'] = thread_docs[0].get('subject', '') if thread_docs else ''
+    thread['message_count'] = str(len(indices))
+    thread['participants'] = '; '.join(sorted(participants))
+    thread['first_date'] = thread_docs[0].get('date_sent', '') if thread_docs else ''
+    thread['last_date'] = thread_docs[-1].get('date_sent', '') if thread_docs else ''
+    threads.append(thread)
+
+
+# --- Collect contacts ---
+contacts_dir = os.path.join(output_dir, 'contacts')
+contacts = []
+if os.path.isdir(contacts_dir):
+    toon_files = sorted(glob.glob(os.path.join(contacts_dir, '*.toon')))
+    for toon_path in toon_files:
+        c = parse_contact_toon(toon_path)
+        if not c.get('email'):
+            continue
+
+        # Count emails from/to this contact in the documents
+        email_addr = c['email'].lower()
+        email_count = 0
+        for doc in documents:
+            from_field = doc.get('from', '').lower()
+            to_field = doc.get('to', '').lower()
+            if email_addr in from_field or email_addr in to_field:
+                email_count += 1
+
+        contact = OrderedDict()
+        contact['email'] = c.get('email', '')
+        contact['name'] = c.get('name', '')
+        contact['title'] = c.get('title', '')
+        contact['company'] = c.get('company', '')
+        contact['email_count'] = str(email_count)
+        contact['first_seen'] = c.get('first_seen', '')
+        contact['last_seen'] = c.get('last_seen', '')
+        contact['confidence'] = c.get('confidence', 'low')
+        contacts.append(contact)
+
+
+# --- Write _index.toon ---
+with open(index_file, 'w', encoding='utf-8') as f:
+    now = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+
+    # Documents index
+    doc_fields = 'file,subject,from,to,date_sent,message_id,in_reply_to,attachment_count,tokens_estimate,size'
+    f.write(f'documents[{len(documents)}]{{{doc_fields}}}:\n')
+    for doc in documents:
+        vals = [escape_toon_value(doc.get(k, '')) for k in doc_fields.split(',')]
+        f.write(f'  {",".join(vals)}\n')
+
+    # Threads index
+    thread_fields = 'thread_id,subject,message_count,participants,first_date,last_date'
+    f.write(f'threads[{len(threads)}]{{{thread_fields}}}:\n')
+    for t in threads:
+        vals = [escape_toon_value(t.get(k, '')) for k in thread_fields.split(',')]
+        f.write(f'  {",".join(vals)}\n')
+
+    # Contacts index
+    contact_fields = 'email,name,title,company,email_count,first_seen,last_seen,confidence'
+    f.write(f'contacts[{len(contacts)}]{{{contact_fields}}}:\n')
+    for c in contacts:
+        vals = [escape_toon_value(c.get(k, '')) for k in contact_fields.split(',')]
+        f.write(f'  {",".join(vals)}\n')
+
+    # Summary metadata
+    f.write('metadata:\n')
+    f.write(f'  total_documents: {len(documents)}\n')
+    f.write(f'  total_threads: {len(threads)}\n')
+    f.write(f'  total_contacts: {len(contacts)}\n')
+    f.write(f'  generated: "{now}"\n')
+    f.write(f'  source: email-import\n')
+
+print(f'MANIFEST_DOCS={len(documents)}')
+print(f'MANIFEST_THREADS={len(threads)}')
+print(f'MANIFEST_CONTACTS={len(contacts)}')
+PYEOF
+
+	local manifest_result=$?
+	if [[ "${manifest_result}" -ne 0 ]]; then
+		log_error "Failed to generate collection manifest"
+		return 1
+	fi
+
+	log_ok "Collection manifest generated: ${index_file}"
 	return 0
 }
 
@@ -2726,6 +3021,7 @@ cmd_help() {
 	printf "  %s convert message.msg --to md\n" "${SCRIPT_NAME}"
 	printf "  %s import-emails ~/Mail/inbox/ --output ./imported\n" "${SCRIPT_NAME}"
 	printf "  %s import-emails archive.mbox --output ./imported\n" "${SCRIPT_NAME}"
+	printf "  %s generate-manifest ./imported\n" "${SCRIPT_NAME}"
 	printf "  %s convert scanned.pdf --to odt --ocr tesseract\n" "${SCRIPT_NAME}"
 	printf "  %s convert screenshot.png --to md --ocr auto\n" "${SCRIPT_NAME}"
 	printf "  %s convert report.pdf --to md --no-normalise\n" "${SCRIPT_NAME}"
@@ -2754,6 +3050,7 @@ main() {
 	case "${cmd}" in
 	convert) cmd_convert "$@" ;;
 	import-emails) cmd_import_emails "$@" ;;
+	generate-manifest) cmd_generate_manifest "$@" ;;
 	create) cmd_create "$@" ;;
 	template) cmd_template "$@" ;;
 	extract-entities) cmd_extract_entities "$@" ;;
