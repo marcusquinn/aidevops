@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.113.1] - 2026-02-14
+
+### Added
+
+- add Reader-LM and RolmOCR conversion providers (t1043) (#1411)
+
+### Fixed
+
+- resolve symlink in npm global install CLI wrapper
+- implement check-regression subcommand, fix 24 SonarCloud findings, rate-limit Phase 10c (#1437)
+- align verify ShellCheck with CI severity and fix Phase 7b reconciliation (#1406)
+
 ## [2.113.0] - 2026-02-13
 
 ### Added
