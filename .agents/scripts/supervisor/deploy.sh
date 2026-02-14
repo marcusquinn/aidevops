@@ -2175,6 +2175,15 @@ rebase_sibling_pr() {
 		return 1
 	fi
 
+	# t1049: Abort any stale rebase state from a prior crash before starting
+	# a new rebase. Without this, git refuses with "already a rebase-merge directory".
+	local pre_git_state_dir
+	pre_git_state_dir="$(git -C "$git_dir" rev-parse --git-dir 2>/dev/null)"
+	if [[ -d "$pre_git_state_dir/rebase-merge" || -d "$pre_git_state_dir/rebase-apply" ]]; then
+		log_warn "rebase_sibling_pr: aborting stale rebase state for $task_id"
+		git -C "$git_dir" rebase --abort 2>>"$SUPERVISOR_LOG" || true
+	fi
+
 	if [[ "$use_worktree" == "true" ]]; then
 		# Worktree is already on the branch — rebase in place
 		if ! git -C "$git_dir" rebase origin/main 2>>"$SUPERVISOR_LOG"; then
