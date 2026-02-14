@@ -683,11 +683,16 @@ cmd_formats() {
 convert_eml_to_md() {
 	local input="$1"
 	local output_dir="$2"
+	local no_normalise="${3:-false}"
 
 	log_info "Parsing email: $(basename "$input")"
 
+	# Capture Python output to temp file for md path extraction
+	local eml_output_log
+	eml_output_log=$(mktemp)
+
 	# Use Python email stdlib to parse MIME
-	python3 - "$input" "$output_dir" <<'PYEOF'
+	python3 - "$input" "$output_dir" <<'PYEOF' | tee "${eml_output_log}"
 import sys
 import os
 import email
@@ -831,6 +836,17 @@ print(f"Raw headers: {raw_headers_file}")
 print(f"Attachments: {attachment_count}")
 print(f"Output directory: {email_dir}")
 PYEOF
+
+	# Extract markdown file path from captured output and run normalise
+	if [[ "${no_normalise}" != true ]] && [[ -f "${eml_output_log}" ]]; then
+		local md_path
+		md_path=$(grep '^Email converted: ' "${eml_output_log}" | sed 's/^Email converted: //')
+		if [[ -n "${md_path}" ]] && [[ -f "${md_path}" ]]; then
+			log_info "Running email normalisation on: $(basename "${md_path}")"
+			cmd_normalise "${md_path}" --inplace --email
+		fi
+	fi
+	rm -f "${eml_output_log}"
 
 	return 0
 }
@@ -1350,7 +1366,7 @@ cmd_convert() {
 				shift
 			fi
 			;;
-		--no-normalise)
+		--no-normalise | --no-normalize)
 			run_normalise=false
 			shift
 			;;
@@ -3011,6 +3027,7 @@ cmd_normalise() {
 	local output=""
 	local inplace=false
 	local generate_pageindex=false
+	local email_mode=false
 
 	# Parse arguments
 	while [[ $# -gt 0 ]]; do
@@ -3027,6 +3044,10 @@ cmd_normalise() {
 			generate_pageindex=true
 			shift
 			;;
+		--email | -e)
+			email_mode=true
+			shift
+			;;
 		--*)
 			shift
 			;;
@@ -3041,7 +3062,7 @@ cmd_normalise() {
 
 	# Validate
 	if [[ -z "${input}" ]]; then
-		die "Usage: normalise <input.md> [--output <file>] [--inplace] [--pageindex]"
+		die "Usage: normalise <input.md> [--output <file>] [--inplace] [--pageindex] [--email]"
 	fi
 
 	if [[ ! -f "${input}" ]]; then
@@ -3056,14 +3077,18 @@ cmd_normalise() {
 		output="${basename_noext}-normalised.md"
 	fi
 
-	log_info "Normalising markdown: $(basename "$input")"
+	if [[ "${email_mode}" == true ]]; then
+		log_info "Normalising email markdown: $(basename "$input")"
+	else
+		log_info "Normalising markdown: $(basename "$input")"
+	fi
 
 	# Create temp file for processing
 	local tmp_file
 	tmp_file=$(mktemp)
 
 	# Process the markdown file with Python
-	python3 - "$input" "$tmp_file" <<'PYEOF'
+	python3 - "$input" "$tmp_file" "${email_mode}" <<'PYEOF'
 import sys
 import re
 from typing import List, Tuple
@@ -3242,19 +3267,144 @@ def align_table(table_lines: List[str]) -> List[str]:
     
     return result
 
+def detect_email_sections(lines: List[str]) -> List[str]:
+    """
+    Detect and structure email-specific sections:
+    - Quoted replies (lines starting with >)
+    - Signature blocks (lines after --)
+    - Forwarded message headers (---------- Forwarded message ----------)
+    """
+    result = []
+    in_quote_block = False
+    in_signature = False
+    in_forwarded = False
+    quote_depth = 0
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+
+        # Detect forwarded message headers
+        if re.match(r'^-{3,}\s*(Forwarded|Original)\s+(message|Message)\s*-{3,}$', stripped):
+            # Close any open quote block
+            if in_quote_block:
+                result.append('')
+                in_quote_block = False
+            if in_signature:
+                in_signature = False
+            in_forwarded = True
+            result.append('')
+            result.append('## Forwarded Message')
+            result.append('')
+            continue
+
+        # Detect "Begin forwarded message:" variant
+        if re.match(r'^Begin forwarded message\s*:', stripped, re.IGNORECASE):
+            if in_quote_block:
+                result.append('')
+                in_quote_block = False
+            in_forwarded = True
+            result.append('')
+            result.append('## Forwarded Message')
+            result.append('')
+            continue
+
+        # Detect forwarded header fields (From:, Date:, Subject:, To:)
+        if in_forwarded and re.match(r'^(From|Date|Subject|To|Cc|Sent|Reply-To)\s*:', stripped):
+            result.append(f'**{stripped}**')
+            continue
+
+        # End forwarded header block on first non-header, non-blank line
+        if in_forwarded and stripped and not re.match(r'^(From|Date|Subject|To|Cc|Sent|Reply-To)\s*:', stripped):
+            in_forwarded = False
+            result.append('')
+
+        # Detect signature block: line is exactly "-- " or "--"
+        if stripped == '--' or stripped == '-- ':
+            if in_quote_block:
+                result.append('')
+                in_quote_block = False
+            in_signature = True
+            result.append('')
+            result.append('## Signature')
+            result.append('')
+            continue
+
+        # Lines in signature block
+        if in_signature:
+            # End signature if we hit a quoted reply or forwarded message
+            if stripped.startswith('>') or re.match(r'^-{3,}\s*(Forwarded|Original)', stripped):
+                in_signature = False
+                # Re-process this line
+            else:
+                result.append(line)
+                continue
+
+        # Detect quoted reply lines (starting with >)
+        if stripped.startswith('>'):
+            # Count quote depth
+            new_depth = 0
+            temp = stripped
+            while temp.startswith('>'):
+                new_depth += 1
+                temp = temp[1:].lstrip()
+
+            # Start a new quote section if transitioning from non-quoted
+            if not in_quote_block:
+                in_quote_block = True
+                quote_depth = new_depth
+                # Check if previous line has "On ... wrote:" pattern
+                prev_wrote = False
+                if i > 0:
+                    prev = lines[i - 1].strip()
+                    if re.match(r'^On\s+.+wrote\s*:\s*$', prev):
+                        prev_wrote = True
+                    elif re.match(r'^On\s+.+wrote\s*:\s*$', prev.rstrip('>').strip()):
+                        prev_wrote = True
+                if not prev_wrote:
+                    result.append('')
+                    result.append('## Quoted Reply')
+                    result.append('')
+
+            # Preserve the quoted line as-is (blockquote syntax)
+            result.append(line)
+            continue
+
+        # Transition out of quote block
+        if in_quote_block and not stripped.startswith('>'):
+            in_quote_block = False
+            quote_depth = 0
+            # Check if this line is "On ... wrote:" (attribution for next quote)
+            if re.match(r'^On\s+.+wrote\s*:\s*$', stripped):
+                result.append('')
+                result.append('## Quoted Reply')
+                result.append('')
+                result.append(f'*{stripped}*')
+                continue
+
+        # Regular line
+        result.append(line)
+
+    return result
+
+
 def main():
     input_file = sys.argv[1]
     output_file = sys.argv[2]
-    
+    email_mode = sys.argv[3].lower() == 'true' if len(sys.argv) > 3 else False
+
     with open(input_file, 'r', encoding='utf-8') as f:
         lines = f.read().splitlines()
-    
+
+    # Step 0 (email only): Detect and structure email-specific sections
+    if email_mode:
+        lines = detect_email_sections(lines)
+
     # Step 1: Normalise heading hierarchy
     lines = normalise_heading_hierarchy(lines)
-    
+
     # Step 2: Align table pipes
     lines = align_table_pipes(lines)
-    
+
     # Write output
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write('\n'.join(lines))
@@ -3796,6 +3946,7 @@ cmd_help() {
 	printf "  %s convert report.pdf --to md --no-normalise\n" "${SCRIPT_NAME}"
 	printf "  %s normalise document.md --output clean.md\n" "${SCRIPT_NAME}"
 	printf "  %s normalise document.md --inplace --pageindex\n" "${SCRIPT_NAME}"
+	printf "  %s normalise email.md --inplace --email\n" "${SCRIPT_NAME}"
 	printf "  %s pageindex document.md --source-pdf original.pdf\n" "${SCRIPT_NAME}"
 	printf "  %s create template.odt --data fields.json -o letter.odt\n" "${SCRIPT_NAME}"
 	printf "  %s template draft --type letter --format odt\n" "${SCRIPT_NAME}"
