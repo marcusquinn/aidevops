@@ -3078,15 +3078,19 @@ def detect_heading_from_structure(line: str, prev_line: str, next_line: str) -> 
     # 2. Title Case with blank lines before/after
     # 3. Short lines (<60 chars) that are capitalized with blank lines around them
     
-    is_all_caps = stripped.isupper() and len(stripped.split()) >= 2
+    is_all_caps = stripped.isupper() and len(stripped.split()) >= 1
     is_title_case = stripped[0].isupper() and not stripped.endswith(('.', '!', '?', ':'))
     is_short = len(stripped) < 60
     has_blank_before = not prev_line.strip()
     has_blank_after = not next_line.strip()
     
-    # ALL CAPS = likely heading level 2
-    if is_all_caps and has_blank_before:
-        return (2, stripped.title())
+    # ALL CAPS = likely heading (level 2 if has blank before, else level 3)
+    if is_all_caps and is_short:
+        if has_blank_before:
+            return (2, stripped.title())
+        # Even without blank before, if it's ALL CAPS and short, likely a heading
+        elif has_blank_after:
+            return (3, stripped.title())
     
     # Title case, short, surrounded by blanks = likely heading level 3
     if is_title_case and is_short and has_blank_before and has_blank_after:
