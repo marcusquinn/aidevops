@@ -81,13 +81,44 @@ matrix-dispatch-helper.sh start --daemon
 4. **OpenCode server** - Running locally or remotely
 5. **Runners** - At least one runner created via `runner-helper.sh`
 
+### Auto-Setup Wizard
+
+The interactive setup wizard guides you through configuration with validation and defaults.
+
+```bash
+# Test configuration without saving (dry-run mode)
+matrix-dispatch-helper.sh setup --dry-run
+
+# Run full setup (saves configuration)
+matrix-dispatch-helper.sh setup
+```
+
+**Dry-run mode** is useful for:
+- Testing configuration before committing to a live server
+- Previewing settings without installing dependencies
+- Validating homeserver URL and token format
+- Training or documentation purposes
+
+The wizard will prompt for:
+1. **Homeserver URL** - Your Matrix server (e.g., `https://matrix.example.com`)
+2. **Access token** - Bot account token (securely stored with 600 permissions)
+3. **Allowed users** - Optional comma-separated list of Matrix user IDs
+4. **Default runner** - Optional fallback runner for unmapped rooms
+5. **Session idle timeout** - Seconds before compacting conversation context (default: 300)
+
+After setup, the wizard automatically:
+- Installs Node.js dependencies (`matrix-bot-sdk`, `better-sqlite3`)
+- Generates session store and bot scripts
+- Creates necessary directories with secure permissions
+
 ### Cloudron Setup (Recommended for Self-Hosted)
 
-Cloudron provides one-click Synapse installation with automatic SSL and updates.
+Cloudron provides one-click Synapse installation with automatic SSL and updates. See `services/hosting/cloudron.md` for the `install-app` command reference.
 
 ```bash
 # 1. Install Synapse on Cloudron
 # Dashboard > App Store > Matrix Synapse > Install
+# Or via CLI: cloudron-helper.sh install-app production matrix synapse.yourdomain.com
 
 # 2. Create bot user
 # Synapse Admin Console > Users > Create User
@@ -100,9 +131,10 @@ Cloudron provides one-click Synapse installation with automatic SSL and updates.
 # Settings > Help & About > Advanced > Access Token
 # Copy the token (starts with syt_)
 
-# 4. Configure the bot
-matrix-dispatch-helper.sh setup
-# Enter: https://matrix.yourdomain.com
+# 4. Configure the bot (use --dry-run to test first)
+matrix-dispatch-helper.sh setup --dry-run  # Preview configuration
+matrix-dispatch-helper.sh setup            # Apply configuration
+# Enter: https://synapse.yourdomain.com
 # Enter: syt_your_access_token_here
 # Enter allowed users (optional)
 # Enter default runner (optional)
