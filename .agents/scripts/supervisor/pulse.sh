@@ -647,13 +647,27 @@ cmd_pulse() {
 	# Check if an escalation is already running or recently completed
 	local should_escalate=true
 	if [[ -f "$escalation_lock" ]]; then
-		local lock_age
+		local lock_pid lock_age
+		lock_pid=$(head -1 "$escalation_lock" 2>/dev/null || echo "")
 		lock_age=$(($(date +%s) - $(stat -f %m "$escalation_lock" 2>/dev/null || stat -c %Y "$escalation_lock" 2>/dev/null || echo "0")))
-		if [[ "$lock_age" -lt "$escalation_cooldown" ]]; then
+		# Check if the lock holder is still alive
+		if [[ -n "$lock_pid" ]] && kill -0 "$lock_pid" 2>/dev/null; then
+			# Lock holder alive — respect cooldown
+			if [[ "$lock_age" -lt "$escalation_cooldown" ]]; then
+				should_escalate=false
+				log_verbose "  Phase 3.6: escalation in progress (PID $lock_pid, ${lock_age}s/${escalation_cooldown}s)"
+			else
+				# Running too long — stale, remove
+				log_warn "  Phase 3.6: escalation lock stale (PID $lock_pid alive but ${lock_age}s old), removing"
+				rm -f "$escalation_lock" 2>/dev/null || true
+			fi
+		elif [[ "$lock_age" -lt "$escalation_cooldown" ]]; then
+			# Lock holder dead but within cooldown — likely just finished
 			should_escalate=false
 			log_verbose "  Phase 3.6: escalation cooldown (${lock_age}s/${escalation_cooldown}s)"
 		else
-			# Stale lock — remove it
+			# Lock holder dead and past cooldown — stale lock from crashed pulse
+			log_info "  Phase 3.6: removing stale escalation lock (PID $lock_pid dead, ${lock_age}s old)"
 			rm -f "$escalation_lock" 2>/dev/null || true
 		fi
 	fi
@@ -679,15 +693,11 @@ cmd_pulse() {
 			if [[ -n "$esc_id" ]]; then
 				log_info "  Phase 3.6: escalating $esc_id to opus worker (rebase_attempts=$esc_attempts, pr=$esc_pr)"
 
-				# Create lock file
-				date +%s >"$escalation_lock" 2>/dev/null || true
-
 				# Resolve AI CLI
 				local esc_ai_cli
 				esc_ai_cli=$(resolve_ai_cli 2>/dev/null || echo "")
 				if [[ -z "$esc_ai_cli" ]]; then
 					log_warn "  Phase 3.6: no AI CLI available for escalation"
-					rm -f "$escalation_lock" 2>/dev/null || true
 				else
 					# Find the worktree path
 					local esc_worktree=""
@@ -764,6 +774,9 @@ RULES:
 						worker_pid = $esc_pid,
 						updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
 					WHERE id = '$(sql_escape "$esc_id")';" 2>/dev/null || true
+
+					# Create lock file AFTER successful dispatch (stores worker PID for stale detection)
+					echo "$esc_pid" >"$escalation_lock" 2>/dev/null || true
 
 					log_success "  Phase 3.6: dispatched opus worker PID $esc_pid for $esc_id"
 					send_task_notification "$esc_id" "escalated" "Opus rebase worker dispatched (PID $esc_pid)" 2>>"$SUPERVISOR_LOG" || true
