@@ -4,7 +4,6 @@
 # Functions for automatic failure diagnosis, model escalation,
 # and diagnostic subtask creation
 
-
 #######################################
 # Self-healing: determine if a failed/blocked task is eligible for
 # automatic diagnostic subtask creation (t150)
@@ -161,7 +160,7 @@ create_diagnostic_subtask() {
 #######################################
 attempt_self_heal() {
 	local task_id="$1"
-	local outcome_type="$2"
+	local _outcome_type="$2" # kept for API compatibility (blocked/failed)
 	local failure_reason="$3"
 	local batch_id="${4:-}"
 

@@ -4,7 +4,6 @@
 # Functions for evaluating worker outcomes, PR discovery,
 # and AI-assisted evaluation
 
-
 #######################################
 # Extract the last N lines from a log file (for AI eval context)
 # Avoids sending entire multi-MB logs to the evaluator
@@ -97,10 +96,8 @@ extract_log_metadata() {
 	# the supervisor retries them as clean_exit_no_signal, wasting retries.
 	# Only check the final text entry (authoritative, same as PR URL extraction).
 	local task_obsolete="false"
-	if [[ -n "$last_text_line" ]]; then
-		if echo "$last_text_line" | grep -qiE 'already done|already complete[d]?|task.*(obsolete|no longer needed)|no (changes|PR) needed|nothing to (change|fix|do)|no work (needed|required|to do)'; then
-			task_obsolete="true"
-		fi
+	if [[ -n "$last_text_line" ]] && echo "$last_text_line" | grep -qiE 'already done|already complete[d]?|task.*(obsolete|no longer needed)|no (changes|PR) needed|nothing to (change|fix|do)|no work (needed|required|to do)'; then
+		task_obsolete="true"
 	fi
 	echo "task_obsolete=$task_obsolete"
 
@@ -691,8 +688,8 @@ evaluate_worker() {
 		return 1
 	fi
 
-	local tstatus tlog tretries tmax_retries tsession tpr_url
-	IFS='|' read -r tstatus tlog tretries tmax_retries tsession tpr_url <<<"$task_row"
+	local _tstatus tlog tretries tmax_retries _tsession tpr_url
+	IFS='|' read -r _tstatus tlog tretries tmax_retries _tsession tpr_url <<<"$task_row"
 
 	# Enhanced no_log_file diagnostics (t183)
 	# Instead of a bare "failed:no_log_file", gather context about why the log

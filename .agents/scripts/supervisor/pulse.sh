@@ -1328,14 +1328,29 @@ cmd_pulse() {
 		fi
 	fi
 
-	# Phase 10c: Audit regression detection (t1032.6)
-	# Checks for >20% increase in audit findings vs previous run.
-	# Logs warnings to pulse log when regressions are detected.
+	# Phase 10c: Audit regression detection (t1032.6, t1045)
+	# Queries SonarCloud API for current findings, compares against last snapshot.
+	# On regression: logs warning. On improvement: logs success.
+	# Runs at most once per hour to avoid API rate limits.
 	local audit_helper="${SCRIPT_DIR}/code-audit-helper.sh"
 	if [[ -x "$audit_helper" ]]; then
-		log_verbose "  Phase 10c: Checking for audit regressions"
-		if ! bash "$audit_helper" check-regression 2>>"$SUPERVISOR_LOG"; then
-			log_warn "  Phase 10c: Audit regressions detected (see warnings above)"
+		local regression_cache="${HOME}/.aidevops/.agent-workspace/tmp/regression-last-check"
+		local now_epoch
+		now_epoch=$(date +%s)
+		local last_check=0
+		if [[ -f "$regression_cache" ]]; then
+			last_check=$(cat "$regression_cache" 2>/dev/null) || last_check=0
+		fi
+		local elapsed=$((now_epoch - last_check))
+		if [[ "$elapsed" -ge 3600 ]]; then
+			log_verbose "  Phase 10c: Checking for audit regressions"
+			mkdir -p "$(dirname "$regression_cache")" 2>/dev/null || true
+			echo "$now_epoch" >"$regression_cache"
+			if ! bash "$audit_helper" check-regression 2>>"$SUPERVISOR_LOG"; then
+				log_warn "  Phase 10c: Audit regressions detected — review SonarCloud dashboard"
+			fi
+		else
+			log_verbose "  Phase 10c: Skipping (last check $((elapsed / 60))m ago, interval=60m)"
 		fi
 	fi
 
@@ -1477,15 +1492,12 @@ process_post_pr_lifecycle() {
 		# pulse, defer it to the next cycle (after rebase completes).
 		local parent_id
 		parent_id=$(extract_parent_id "$tid")
-		if [[ -n "$parent_id" ]]; then
-			# Check if a sibling already merged in this pulse
-			if [[ "$merged_parents" == *"|${parent_id}|"* ]]; then
-				# A sibling already merged — defer this task to next pulse
-				# so the rebase can land first and CI can re-run
-				log_info "  $tid: deferred (sibling under $parent_id already merged this pulse — serial merge strategy)"
-				deferred_count=$((deferred_count + 1))
-				continue
-			fi
+		if [[ -n "$parent_id" ]] && [[ "$merged_parents" == *"|${parent_id}|"* ]]; then
+			# A sibling already merged — defer this task to next pulse
+			# so the rebase can land first and CI can re-run
+			log_info "  $tid: deferred (sibling under $parent_id already merged this pulse — serial merge strategy)"
+			deferred_count=$((deferred_count + 1))
+			continue
 		fi
 
 		log_info "  $tid: processing post-PR lifecycle (status: $tstatus)"

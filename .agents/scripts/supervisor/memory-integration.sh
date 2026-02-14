@@ -4,7 +4,6 @@
 # Functions for task memory recall, failure/success pattern storage,
 # batch retrospectives, and session reviews
 
-
 #######################################
 # Recall relevant memories for a task before dispatch
 # Returns memory context as text (empty string if none found)
@@ -154,7 +153,7 @@ store_success_pattern() {
 	local escaped_id
 	escaped_id=$(sql_escape "$task_id")
 	local model_tier=""
-	local task_model duration_info retries
+	local task_model retries
 	task_model=$(db "$SUPERVISOR_DB" "SELECT model FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
 	retries=$(db "$SUPERVISOR_DB" "SELECT retries FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "0")
 

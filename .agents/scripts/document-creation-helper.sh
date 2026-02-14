@@ -997,7 +997,7 @@ convert_with_rolm_ocr() {
 convert_pdf_to_odt() {
 	local input="$1"
 	local output="$2"
-	local template="${3:-}"
+	local _template="${3:-}" # reserved for future template-based conversion
 
 	log_info "Converting PDF to ODT (programmatic pipeline)"
 

@@ -4,7 +4,6 @@
 # Functions for creating/cleaning worktrees, killing workers,
 # and post-merge cleanup
 
-
 #######################################
 # Create a worktree for a task
 # Returns the worktree path on stdout
@@ -170,13 +169,11 @@ create_task_worktree() {
 	fi
 
 	# Try wt first (redirect its verbose output to stderr)
-	if command -v wt &>/dev/null; then
-		if wt switch -c "$branch_name" -C "$repo" >&2 2>&1; then
-			# Register ownership (t189)
-			register_worktree "$worktree_path" "$branch_name" --task "$task_id"
-			echo "$worktree_path"
-			return 0
-		fi
+	if command -v wt &>/dev/null && wt switch -c "$branch_name" -C "$repo" >&2 2>&1; then
+		# Register ownership (t189)
+		register_worktree "$worktree_path" "$branch_name" --task "$task_id"
+		echo "$worktree_path"
+		return 0
 	fi
 
 	# Fallback: raw git worktree add (quiet, reliable)
@@ -230,11 +227,9 @@ cleanup_task_worktree() {
 	rmdir "$worktree_path/.agents" 2>/dev/null || true
 
 	# Try wt remove first (worktrunk CLI)
-	if command -v wt &>/dev/null; then
-		if wt remove "$worktree_path" 2>>"$SUPERVISOR_LOG"; then
-			unregister_worktree "$worktree_path"
-			return 0
-		fi
+	if command -v wt &>/dev/null && wt remove "$worktree_path" 2>>"$SUPERVISOR_LOG"; then
+		unregister_worktree "$worktree_path"
+		return 0
 	fi
 
 	# Fallback: git worktree remove
