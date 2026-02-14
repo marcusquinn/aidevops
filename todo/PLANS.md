@@ -21,6 +21,108 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-02-14] PageIndex-Ready Markdown Normalisation
+
+**Status:** Planning
+**Estimate:** ~3h (ai:2h test:1h)
+**TODO:** t1046
+**Logged:** 2026-02-14
+
+#### Purpose
+
+All document converters in the pipeline (pdftotext, pandoc, Reader-LM, RolmOCR, OCR providers, email MIME extraction) produce markdown with inconsistent or absent heading structure. PageIndex (VectifyAI) builds hierarchical tree indexes from heading levels (`#`, `##`, `###`) for reasoning-based RAG — flat or poorly-structured markdown produces useless trees.
+
+This plan adds a shared post-conversion normalisation step that transforms any raw converter output into well-structured, PageIndex-optimised markdown. It benefits:
+
+- **Document conversion** (t1042): PDF, DOCX, ODT, HTML all get consistent heading hierarchy
+- **AI conversion providers** (t1043): Reader-LM and RolmOCR output gets normalised
+- **Email pipeline** (t1044): Email bodies, which rarely have headings, get logical section structure
+- **Future converters**: Any new `*→md` path automatically benefits
+
+#### Context
+
+**Current state:**
+
+- `pdftotext` → flat text, no headings
+- `pandoc` → preserves source headings (if any), doesn't normalise
+- Reader-LM → prompt says "preserving structure" but no heading hierarchy enforcement
+- RolmOCR → same as Reader-LM
+- OCR providers (tesseract, easyocr, glm-ocr) → raw text, no structure
+- Email MIME → body text with no semantic sections
+
+**Target state:**
+
+Every `*→md` conversion produces markdown with:
+
+1. Single `#` root heading (document title)
+2. Sequential heading nesting (no skipped levels)
+3. Logical sections detected and marked (for flat text sources)
+4. YAML frontmatter with standard fields
+5. Optional `.pageindex.json` sidecar with hierarchical tree
+
+#### Design
+
+**Normalisation pipeline** (runs after any converter):
+
+```text
+Raw markdown (from any converter)
+    |
+[1. Frontmatter enforcement]
+    |  - Add/merge YAML frontmatter
+    |  - title, source_file, converter, content_hash, tokens_estimate
+    |
+[2. Heading hierarchy]
+    |  - Detect existing headings, fix skipped levels
+    |  - For flat text: infer sections from structural cues
+    |    - Capitalised lines followed by blank lines → headings
+    |    - Short lines (<60 chars) followed by longer paragraphs → headings
+    |    - Known patterns: "Dear...", "--" (signature), ">" (quotes)
+    |  - Ensure single # root
+    |
+[3. Table cleanup]
+    |  - Fix pipe alignment in markdown tables
+    |  - Detect tab-separated data and convert to tables
+    |
+[4. Email-specific sections] (when source is email)
+    |  - Quoted replies (>) → ### Quoted Reply
+    |  - Signature block (after --) → ### Signature
+    |  - Forwarded headers → ### Forwarded Message
+    |
+[5. PageIndex tree] (optional, when --pageindex flag)
+    |  - Generate .pageindex.json from heading hierarchy
+    |  - Node summaries: first sentence of each section (or LLM if available)
+    |  - Page references from source PDF metadata
+    |
+Output: normalised markdown + optional .pageindex.json
+```
+
+**Implementation approach:**
+
+- Add `normalise` subcommand to `document-creation-helper.sh` (keeps pipeline unified)
+- Python script for the heavy lifting (heading inference, frontmatter YAML, tree generation)
+- Shell wrapper for CLI interface and integration with existing convert flow
+- Auto-runs after `*→md` conversions by default, `--no-normalise` to skip
+
+#### Subtasks
+
+- [ ] t1046.1 `normalise` subcommand — heading hierarchy, section detection, table cleanup (~1h)
+- [ ] t1046.2 Frontmatter enforcement — standard YAML fields on all output (~30m)
+- [ ] t1046.3 Convert pipeline integration — auto-normalise after `*→md` (~30m, blocked-by:t1046.1,t1046.2)
+- [ ] t1046.4 Email pipeline integration — email-specific section detection (~30m, blocked-by:t1046.1,t1044.1)
+- [ ] t1046.5 PageIndex tree generation — `.pageindex.json` sidecar (~30m, blocked-by:t1046.1)
+
+#### Decision Log
+
+| Date | Decision | Rationale |
+|------|----------|-----------|
+| 2026-02-14 | Post-conversion step, not per-converter | Applies uniformly to all converters; avoids duplicating logic in each converter function |
+| 2026-02-14 | Subcommand in document-creation-helper.sh, not separate script | Keeps document pipeline unified; reuses existing Python venv |
+| 2026-02-14 | Auto-enabled by default with --no-normalise opt-out | Normalised output is always better; users who need raw output can skip |
+
+#### Surprises & Discoveries
+
+*(none yet)*
+
 ### [2026-02-13] Continual Improvement Audit Loop
 
 **Status:** Planning
