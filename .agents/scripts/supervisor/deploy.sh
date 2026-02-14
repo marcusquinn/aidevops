@@ -380,6 +380,8 @@ cmd_pr_lifecycle() {
 				rebase_attempts=$(db "$SUPERVISOR_DB" "SELECT rebase_attempts FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "0")
 				rebase_attempts=${rebase_attempts:-0}
 
+				# t1048: Increased from 2 to 5 — with 10+ sibling PRs merging
+				# sequentially, a branch can fall behind multiple times
 				local max_rebase_attempts=5
 				if [[ "$rebase_attempts" -lt "$max_rebase_attempts" ]]; then
 					log_info "PR is $merge_state_status for $task_id — attempting auto-rebase (attempt $((rebase_attempts + 1))/$max_rebase_attempts)"
@@ -2179,10 +2181,13 @@ rebase_sibling_pr() {
 			log_warn "rebase_sibling_pr: rebase conflict for $task_id — attempting AI resolution"
 			# Try AI-assisted conflict resolution before aborting
 			if resolve_rebase_conflicts "$git_dir" "$task_id"; then
-				log_info "rebase_sibling_pr: AI resolved conflicts for $task_id — continuing rebase"
-				# Check if rebase is still in progress (AI may have already completed it)
-				if git -C "$git_dir" rev-parse --verify REBASE_HEAD &>/dev/null; then
-					# Rebase still in progress — continue it
+				# t1048: Check if rebase is still in progress — the AI agent
+				# may have already run `git rebase --continue` itself, leaving
+				# no rebase in progress for us to continue.
+				local git_state_dir
+				git_state_dir="$(git -C "$git_dir" rev-parse --git-dir 2>/dev/null)"
+				if [[ -d "$git_state_dir/rebase-merge" || -d "$git_state_dir/rebase-apply" ]]; then
+					log_info "rebase_sibling_pr: AI resolved conflicts for $task_id — continuing rebase"
 					if git -C "$git_dir" rebase --continue 2>>"$SUPERVISOR_LOG"; then
 						log_success "rebase_sibling_pr: rebase completed after AI resolution for $task_id"
 					else
@@ -2191,8 +2196,8 @@ rebase_sibling_pr() {
 						return 1
 					fi
 				else
-					# Rebase already completed by AI agent
-					log_success "rebase_sibling_pr: rebase already completed by AI agent for $task_id"
+					# AI agent already completed the rebase — treat as success
+					log_success "rebase_sibling_pr: rebase completed (AI resolved and continued) for $task_id"
 				fi
 			else
 				log_warn "rebase_sibling_pr: AI resolution failed for $task_id — aborting"
@@ -2215,10 +2220,11 @@ rebase_sibling_pr() {
 			log_warn "rebase_sibling_pr: rebase conflict for $task_id — attempting AI resolution"
 			# Try AI-assisted conflict resolution before aborting
 			if resolve_rebase_conflicts "$git_dir" "$task_id"; then
-				log_info "rebase_sibling_pr: AI resolved conflicts for $task_id — continuing rebase"
-				# Check if rebase is still in progress (AI may have already completed it)
-				if git -C "$git_dir" rev-parse --verify REBASE_HEAD &>/dev/null; then
-					# Rebase still in progress — continue it
+				# t1048: Check if rebase is still in progress (see worktree path above)
+				local git_state_dir
+				git_state_dir="$(git -C "$git_dir" rev-parse --git-dir 2>/dev/null)"
+				if [[ -d "$git_state_dir/rebase-merge" || -d "$git_state_dir/rebase-apply" ]]; then
+					log_info "rebase_sibling_pr: AI resolved conflicts for $task_id — continuing rebase"
 					if git -C "$git_dir" rebase --continue 2>>"$SUPERVISOR_LOG"; then
 						log_success "rebase_sibling_pr: rebase completed after AI resolution for $task_id"
 					else
@@ -2229,8 +2235,8 @@ rebase_sibling_pr() {
 						return 1
 					fi
 				else
-					# Rebase already completed by AI agent
-					log_success "rebase_sibling_pr: rebase already completed by AI agent for $task_id"
+					# AI agent already completed the rebase — treat as success
+					log_success "rebase_sibling_pr: rebase completed (AI resolved and continued) for $task_id"
 				fi
 			else
 				log_warn "rebase_sibling_pr: AI resolution failed for $task_id — aborting"
