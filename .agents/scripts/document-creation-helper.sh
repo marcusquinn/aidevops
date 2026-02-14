@@ -1800,6 +1800,359 @@ cmd_extract_entities() {
 }
 
 # ============================================================================
+# Collection Manifest Generation (t1044.9 / t1055.9)
+# ============================================================================
+
+# Parse YAML frontmatter from a markdown file.
+# Outputs key=value pairs to stdout, one per line.
+# Args: markdown_file
+parse_frontmatter() {
+	local file="$1"
+	local in_frontmatter=false
+	local line_num=0
+
+	while IFS= read -r line; do
+		line_num=$((line_num + 1))
+		if [[ "$line" == "---" ]]; then
+			if [[ "$in_frontmatter" == true ]]; then
+				# End of frontmatter
+				return 0
+			elif [[ "$line_num" -eq 1 ]]; then
+				in_frontmatter=true
+				continue
+			fi
+		fi
+		if [[ "$in_frontmatter" == true ]]; then
+			# Only emit top-level scalar key: value pairs (skip lists/nested)
+			if [[ "$line" =~ ^([a-z_]+):\ (.+)$ ]]; then
+				printf '%s=%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+			fi
+		fi
+	done <"$file"
+	return 0
+}
+
+# Escape a value for safe inclusion in TOON output.
+# Replaces commas with semicolons to avoid delimiter conflicts.
+# Args: value
+toon_escape() {
+	local val="$1"
+	# Replace commas with semicolons to avoid TOON delimiter conflicts
+	printf '%s' "${val//,/;}"
+	return 0
+}
+
+# Build the documents index section of the manifest.
+# Scans for .md files with YAML frontmatter and extracts metadata.
+# Args: collection_dir
+build_documents_index() {
+	local collection_dir="$1"
+	local doc_count=0
+	local doc_rows=""
+
+	while IFS= read -r -d '' md_file; do
+		# Skip _index files and non-email markdown
+		local basename
+		basename=$(basename "$md_file")
+		[[ "$basename" == _index* ]] && continue
+
+		# Check for frontmatter marker
+		local first_line
+		first_line=$(head -1 "$md_file" 2>/dev/null || true)
+		[[ "$first_line" != "---" ]] && continue
+
+		# Parse frontmatter fields
+		local title="" from="" to="" date_sent="" subject="" message_id=""
+		local in_reply_to="" attachment_count="0" tokens_estimate="0" size=""
+		local thread_id="" thread_position="" thread_length=""
+
+		while IFS='=' read -r key val; do
+			case "$key" in
+			title) title="$val" ;;
+			from) from="$val" ;;
+			to) to="$val" ;;
+			date_sent) date_sent="$val" ;;
+			subject) subject="$val" ;;
+			message_id) message_id="$val" ;;
+			in_reply_to) in_reply_to="$val" ;;
+			attachment_count) attachment_count="$val" ;;
+			tokens_estimate) tokens_estimate="$val" ;;
+			size) size="$val" ;;
+			thread_id) thread_id="$val" ;;
+			thread_position) thread_position="$val" ;;
+			thread_length) thread_length="$val" ;;
+			esac
+		done < <(parse_frontmatter "$md_file")
+
+		# Use relative path from collection dir
+		local rel_path
+		rel_path="${md_file#"${collection_dir}"/}"
+
+		doc_count=$((doc_count + 1))
+		doc_rows+="  $(toon_escape "$rel_path"),$(toon_escape "$title"),$(toon_escape "$from"),$(toon_escape "$to"),$(toon_escape "$date_sent"),$(toon_escape "$message_id"),$(toon_escape "$in_reply_to"),${attachment_count},${tokens_estimate},$(toon_escape "$size"),$(toon_escape "$thread_id"),$(toon_escape "$thread_position"),$(toon_escape "$thread_length")"
+		doc_rows+=$'\n'
+	done < <(find "$collection_dir" -name "*.md" -type f -print0 2>/dev/null | sort -z)
+
+	if [[ "$doc_count" -gt 0 ]]; then
+		printf 'documents[%d]{path,title,from,to,date_sent,message_id,in_reply_to,attachment_count,tokens_estimate,size,thread_id,thread_position,thread_length}:\n' "$doc_count"
+		printf '%s' "$doc_rows"
+	else
+		printf 'documents[0]{path,title,from,to,date_sent,message_id,in_reply_to,attachment_count,tokens_estimate,size,thread_id,thread_position,thread_length}:\n'
+	fi
+	return 0
+}
+
+# Build the threads index section of the manifest.
+# Groups documents by thread_id and lists participants.
+# Args: collection_dir
+build_threads_index() {
+	local collection_dir="$1"
+
+	# Collect thread data: thread_id -> list of (message_id, from, date_sent, subject, position)
+	# Use temp files for thread aggregation since bash associative arrays are limited
+	local tmp_dir
+	tmp_dir=$(mktemp -d)
+
+	local has_threads=false
+
+	while IFS= read -r -d '' md_file; do
+		local basename
+		basename=$(basename "$md_file")
+		[[ "$basename" == _index* ]] && continue
+
+		local first_line
+		first_line=$(head -1 "$md_file" 2>/dev/null || true)
+		[[ "$first_line" != "---" ]] && continue
+
+		local thread_id="" message_id="" from="" date_sent="" subject="" thread_length=""
+
+		while IFS='=' read -r key val; do
+			case "$key" in
+			thread_id) thread_id="$val" ;;
+			message_id) message_id="$val" ;;
+			from) from="$val" ;;
+			date_sent) date_sent="$val" ;;
+			subject) subject="$val" ;;
+			thread_length) thread_length="$val" ;;
+			esac
+		done < <(parse_frontmatter "$md_file")
+
+		# Skip documents without thread_id (not yet threaded)
+		[[ -z "$thread_id" ]] && continue
+		has_threads=true
+
+		# Sanitise thread_id for use as filename
+		local safe_tid
+		safe_tid=$(printf '%s' "$thread_id" | tr -c '[:alnum:]._-' '_')
+
+		# Append participant to thread file
+		printf '%s\t%s\t%s\t%s\n' "$from" "$date_sent" "$message_id" "$subject" >>"${tmp_dir}/${safe_tid}.thread"
+		# Store thread metadata
+		if [[ ! -f "${tmp_dir}/${safe_tid}.meta" ]]; then
+			printf '%s\t%s\n' "$thread_id" "$thread_length" >"${tmp_dir}/${safe_tid}.meta"
+		fi
+	done < <(find "$collection_dir" -name "*.md" -type f -print0 2>/dev/null | sort -z)
+
+	if [[ "$has_threads" == false ]]; then
+		printf 'threads[0]{thread_id,subject,message_count,thread_length,participants}:\n'
+		rm -rf "$tmp_dir"
+		return 0
+	fi
+
+	# Count threads and build rows
+	local thread_count=0
+	local thread_rows=""
+
+	while IFS= read -r -d '' thread_file; do
+		[[ "$thread_file" == *.meta ]] && continue
+		thread_count=$((thread_count + 1))
+
+		local safe_tid
+		safe_tid=$(basename "$thread_file" .thread)
+		local meta_file="${tmp_dir}/${safe_tid}.meta"
+
+		local tid="" tlen=""
+		if [[ -f "$meta_file" ]]; then
+			IFS=$'\t' read -r tid tlen <"$meta_file"
+		fi
+
+		# Count messages in this thread
+		local msg_count
+		msg_count=$(wc -l <"$thread_file" | tr -d ' ')
+
+		# Extract unique participants
+		local participants
+		participants=$(cut -f1 "$thread_file" | sort -u | tr '\n' '|' | sed 's/|$//')
+
+		# Get subject from first message
+		local first_subject
+		first_subject=$(head -1 "$thread_file" | cut -f4)
+
+		thread_rows+="  $(toon_escape "$tid"),$(toon_escape "$first_subject"),${msg_count},$(toon_escape "$tlen"),$(toon_escape "$participants")"
+		thread_rows+=$'\n'
+	done < <(find "$tmp_dir" -name "*.thread" -type f -print0 2>/dev/null | sort -z)
+
+	printf 'threads[%d]{thread_id,subject,message_count,thread_length,participants}:\n' "$thread_count"
+	printf '%s' "$thread_rows"
+
+	rm -rf "$tmp_dir"
+	return 0
+}
+
+# Build the contacts index section of the manifest.
+# Scans contacts/*.toon files and extracts metadata with email counts.
+# Args: collection_dir
+build_contacts_index() {
+	local collection_dir="$1"
+	local contacts_dir="${collection_dir}/contacts"
+	local contact_count=0
+	local contact_rows=""
+
+	if [[ ! -d "$contacts_dir" ]]; then
+		printf 'contacts[0]{email,name,title,company,first_seen,last_seen,confidence,email_count}:\n'
+		return 0
+	fi
+
+	while IFS= read -r -d '' toon_file; do
+		local email="" name="" title="" company="" first_seen="" last_seen="" confidence=""
+
+		# Parse TOON contact record (key: value format under contact:)
+		while IFS= read -r line; do
+			# Strip leading whitespace
+			local trimmed
+			trimmed="${line#"${line%%[![:space:]]*}"}"
+			if [[ "$trimmed" =~ ^([a-z_]+):\ (.+)$ ]]; then
+				local key="${BASH_REMATCH[1]}"
+				local val="${BASH_REMATCH[2]}"
+				case "$key" in
+				email) email="$val" ;;
+				name) name="$val" ;;
+				title) title="$val" ;;
+				company) company="$val" ;;
+				first_seen) first_seen="$val" ;;
+				last_seen) last_seen="$val" ;;
+				confidence) confidence="$val" ;;
+				esac
+			fi
+		done <"$toon_file"
+
+		[[ -z "$email" ]] && continue
+
+		# Count how many emails reference this contact's email address
+		local email_count=0
+		if [[ -n "$email" ]]; then
+			email_count=$(grep -rl "from:.*${email}\|to:.*${email}\|cc:.*${email}" "$collection_dir"/*.md 2>/dev/null | wc -l | tr -d ' ') || email_count=0
+		fi
+
+		contact_count=$((contact_count + 1))
+		contact_rows+="  $(toon_escape "$email"),$(toon_escape "$name"),$(toon_escape "$title"),$(toon_escape "$company"),$(toon_escape "$first_seen"),$(toon_escape "$last_seen"),$(toon_escape "$confidence"),${email_count}"
+		contact_rows+=$'\n'
+	done < <(find "$contacts_dir" -name "*.toon" -type f -print0 2>/dev/null | sort -z)
+
+	printf 'contacts[%d]{email,name,title,company,first_seen,last_seen,confidence,email_count}:\n' "$contact_count"
+	printf '%s' "$contact_rows"
+	return 0
+}
+
+# Generate collection manifest (_index.toon) for a batch import output directory.
+# Indexes all converted documents, threads, and contacts.
+# Args: collection_dir [--output path]
+cmd_generate_manifest() {
+	local collection_dir=""
+	local output_file=""
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--output | -o)
+			output_file="$2"
+			shift 2
+			;;
+		--help | -h)
+			printf "Generate collection manifest (_index.toon)\n\n"
+			printf "Usage: %s generate-manifest <collection-dir> [--output path]\n\n" "${SCRIPT_NAME}"
+			printf "Scans a batch import output directory and generates _index.toon with:\n"
+			printf "  - documents: all converted .md files with frontmatter metadata\n"
+			printf "  - threads: conversation threads with participant lists\n"
+			printf "  - contacts: all contacts from contacts/*.toon with email counts\n\n"
+			printf "Options:\n"
+			printf "  --output, -o   Output file path (default: <collection-dir>/_index.toon)\n"
+			printf "  --help, -h     Show this help\n"
+			return 0
+			;;
+		-*)
+			die "Unknown option: $1"
+			;;
+		*)
+			if [[ -z "$collection_dir" ]]; then
+				collection_dir="$1"
+			else
+				die "Unexpected argument: $1"
+			fi
+			shift
+			;;
+		esac
+	done
+
+	if [[ -z "$collection_dir" ]]; then
+		die "Usage: ${SCRIPT_NAME} generate-manifest <collection-dir> [--output path]"
+	fi
+
+	if [[ ! -d "$collection_dir" ]]; then
+		die "Collection directory not found: ${collection_dir}"
+	fi
+
+	# Default output path
+	if [[ -z "$output_file" ]]; then
+		output_file="${collection_dir}/_index.toon"
+	fi
+
+	log_info "Generating collection manifest: ${output_file}"
+
+	# Build manifest header
+	local manifest=""
+	local now
+	now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+	manifest+="# Collection manifest generated by ${SCRIPT_NAME}"
+	manifest+=$'\n'
+	manifest+="# Generated: ${now}"
+	manifest+=$'\n'
+	manifest+="# Source: ${collection_dir}"
+	manifest+=$'\n'
+	manifest+=$'\n'
+
+	# Build each index section
+	log_info "Indexing documents..."
+	manifest+=$(build_documents_index "$collection_dir")
+	manifest+=$'\n'
+	manifest+=$'\n'
+
+	log_info "Indexing threads..."
+	manifest+=$(build_threads_index "$collection_dir")
+	manifest+=$'\n'
+	manifest+=$'\n'
+
+	log_info "Indexing contacts..."
+	manifest+=$(build_contacts_index "$collection_dir")
+	manifest+=$'\n'
+
+	# Write manifest
+	printf '%s' "$manifest" >"$output_file"
+
+	# Report stats
+	local doc_count thread_count contact_count
+	doc_count=$(grep -oP 'documents\[\K[0-9]+' "$output_file" 2>/dev/null || echo "0")
+	thread_count=$(grep -oP 'threads\[\K[0-9]+' "$output_file" 2>/dev/null || echo "0")
+	contact_count=$(grep -oP 'contacts\[\K[0-9]+' "$output_file" 2>/dev/null || echo "0")
+
+	log_ok "Manifest generated: ${output_file}"
+	log_info "  Documents: ${doc_count}"
+	log_info "  Threads:   ${thread_count}"
+	log_info "  Contacts:  ${contact_count}"
+
+	return 0
+}
+
+# ============================================================================
 # Help
 # ============================================================================
 
@@ -1811,6 +2164,7 @@ cmd_help() {
 	printf "  create            Create a document from a template + data\n"
 	printf "  template          Manage document templates (list, draft)\n"
 	printf "  extract-entities  Extract named entities from markdown (t1044.6)\n"
+	printf "  generate-manifest Generate collection manifest (_index.toon) (t1044.9)\n"
 	printf "  install           Install conversion tools (--minimal, --standard, --full, --ocr)\n"
 	printf "  formats           Show supported format conversions\n"
 	printf "  status            Show installed tools and availability\n"
@@ -1826,6 +2180,8 @@ cmd_help() {
 	printf "  %s template draft --type letter --format odt\n" "${SCRIPT_NAME}"
 	printf "  %s extract-entities email.md --update-frontmatter\n" "${SCRIPT_NAME}"
 	printf "  %s extract-entities email.md --method spacy --json\n" "${SCRIPT_NAME}"
+	printf "  %s generate-manifest ./imported-emails\n" "${SCRIPT_NAME}"
+	printf "  %s generate-manifest ./emails -o manifest.toon\n" "${SCRIPT_NAME}"
 	printf "  %s install --standard\n" "${SCRIPT_NAME}"
 	printf "  %s install --ocr\n" "${SCRIPT_NAME}"
 	printf "\nSee: tools/document/document-creation.md for full documentation.\n"
@@ -1847,6 +2203,7 @@ main() {
 	create) cmd_create "$@" ;;
 	template) cmd_template "$@" ;;
 	extract-entities) cmd_extract_entities "$@" ;;
+	generate-manifest) cmd_generate_manifest "$@" ;;
 	install) cmd_install "$@" ;;
 	formats) cmd_formats ;;
 	status) cmd_status ;;
