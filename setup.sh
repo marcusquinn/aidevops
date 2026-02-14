@@ -9,7 +9,7 @@ set -euo pipefail
 # Quick Install:
 #   npm install -g aidevops && aidevops update          (recommended)
 #   brew install marcusquinn/tap/aidevops && aidevops update  (Homebrew)
-#   curl -fsSL https://aidevops.sh -o /tmp/aidevops-setup.sh && bash /tmp/aidevops-setup.sh  (manual)
+#   bash <(curl -fsSL https://aidevops.sh/install)                     (manual)
 
 # Colors for output
 GREEN='\033[0;32m'

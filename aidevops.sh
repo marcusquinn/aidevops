@@ -2673,7 +2673,7 @@ cmd_help() {
 	echo "Installation:"
 	echo "  npm install -g aidevops && aidevops update      # via npm (recommended)"
 	echo "  brew install marcusquinn/tap/aidevops && aidevops update  # via Homebrew"
-	echo "  curl -fsSL https://aidevops.sh -o /tmp/aidevops-setup.sh && bash /tmp/aidevops-setup.sh  # manual"
+	echo "  bash <(curl -fsSL https://aidevops.sh/install)                     # manual"
 	echo ""
 	echo "Documentation: https://github.com/marcusquinn/aidevops"
 }

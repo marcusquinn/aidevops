@@ -900,7 +900,7 @@ npm install -g aidevops && aidevops update
 brew install marcusquinn/tap/aidevops && aidevops update
 
 # curl
-bash <(curl -fsSL https://aidevops.sh)
+bash <(curl -fsSL https://aidevops.sh/install)
 \`\`\`
 
 ### What's New
