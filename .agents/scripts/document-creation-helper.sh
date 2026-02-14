@@ -3831,7 +3831,7 @@ main() {
 	extract-entities) cmd_extract_entities "$@" ;;
 	pageindex) cmd_pageindex "$@" ;;
 	add-related-docs) cmd_add_related_docs "$@" ;;
-	enforce-frontmatter | frontmatter) "$(dirname "${BASH_SOURCE[0]}")/frontmatter-helper.sh" "$@" ;;
+	enforce-frontmatter | frontmatter) "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/frontmatter-helper.sh" "$@" ;;
 	install) cmd_install "$@" ;;
 	formats) cmd_formats ;;
 	status) cmd_status ;;
