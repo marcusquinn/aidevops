@@ -1,0 +1,19 @@
+From: marketing@example.com
+To: subscriber@example.com
+Subject: Your weekly digest
+Date: Thu, 13 Feb 2026 10:00:00 +0000
+Message-ID: <html-001@example.com>
+MIME-Version: 1.0
+Content-Type: text/html; charset="utf-8"
+
+<html>
+<body>
+<h1>Weekly Digest</h1>
+<p>Here are the <strong>top stories</strong> from this week:</p>
+<ul>
+<li>New product launch scheduled for March 15th.</li>
+<li>Customer satisfaction scores reached an all-time high of 94%.</li>
+</ul>
+<p>Visit <a href="https://example.com">our website</a> for more details.</p>
+</body>
+</html>

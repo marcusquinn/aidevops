@@ -1,0 +1,31 @@
+From: carol@example.com
+To: team@example.com
+Subject: Project Alpha - Phase 2 Status Update and Next Steps
+Date: Tue, 11 Feb 2026 14:30:00 +0000
+Message-ID: <long-001@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+
+Dear Team,
+
+I wanted to provide a comprehensive update on Project Alpha Phase 2 progress and outline the next steps we need to take before the end of the quarter.
+
+First, regarding the backend migration: we have successfully completed the database schema changes and the new API endpoints are now deployed to the staging environment. The performance benchmarks show a 40% improvement in query response times compared to the previous architecture. However, we discovered an edge case in the pagination logic that affects queries with more than 10,000 results. David is working on a fix that should be ready by Thursday.
+
+On the frontend side, the new dashboard components are approximately 80% complete. The main remaining work involves the real-time data visualisation charts and the export functionality. Sarah has been coordinating with the design team to finalise the colour palette and accessibility requirements. We expect the frontend work to be completed by the end of next week.
+
+The QA team has been running automated regression tests against the staging environment. So far, they have identified 12 issues, of which 8 have been resolved. The remaining 4 are low-priority cosmetic issues that will not block the release. We are on track for the beta release scheduled for March 1st.
+
+Budget-wise, we are currently 5% under the allocated budget for Phase 2. This gives us some flexibility to bring in an additional contractor if needed to help with the documentation and training materials.
+
+Action items for this week:
+1. David to fix the pagination edge case by Thursday
+2. Sarah to complete the dashboard charts by Friday
+3. QA team to run the full regression suite on Monday
+4. I will schedule a stakeholder demo for next Wednesday
+
+Please let me know if you have any questions or concerns about the timeline.
+
+Best regards,
+Carol Henderson
+Project Manager, Engineering Division
