@@ -3,8 +3,9 @@
 email-to-markdown.py - Convert .eml/.msg files to markdown with attachment extraction
 Part of aidevops framework: https://aidevops.sh
 
-Usage: 
+Usage:
   Single file:  email-to-markdown.py <input-file> [--output <file>] [--attachments-dir <dir>]
+                [--summarize [auto|ollama|heuristic]]
   Batch mode:   email-to-markdown.py <directory> --batch [--threads-index]
 
 Output format: YAML frontmatter with visible headers (from, to, cc, bcc, date_sent,
@@ -12,8 +13,11 @@ date_received, subject, size, message_id, in_reply_to, attachment_count, attachm
 thread reconstruction fields (thread_id, thread_position, thread_length),
 markdown.new convention fields (title, description), and tokens_estimate for LLM context.
 
-Auto-summary (t1052.7): With --auto-summary, the description field uses intelligent
-summarisation — heuristic extraction for short emails, LLM via Ollama for long ones.
+Auto-summary (t1053.7): With --summarize (or --auto-summary), the description field uses
+intelligent summarisation — heuristic extraction for short emails, LLM via Ollama for long
+ones. When --summarize is used, the description field contains an auto-generated 1-2 sentence
+summary instead of a simple truncation. Short emails (<100 words) use a heuristic
+summariser; long emails use LLM summarisation via Ollama (with heuristic fallback).
 
 Thread reconstruction:
 - Parses message_id and in_reply_to headers to build conversation threads
@@ -434,7 +438,7 @@ def run_entity_extraction(body, method='auto'):
 
 
 def run_auto_summary(body, method='auto'):
-    """Run auto-summary generation on email body text.
+    """Run auto-summary generation on email body text (t1053.7).
 
     Imports email-summary.py from the same directory and runs summarisation.
     Returns a 1-2 sentence summary string, or empty string on failure.
@@ -464,7 +468,7 @@ def run_auto_summary(body, method='auto'):
 def email_to_markdown(input_file, output_file=None, attachments_dir=None,
                       extract_entities=False, entity_method='auto',
                       auto_summary=False, summary_method='auto',
-                      thread_map=None):
+                      summarize=False, thread_map=None):
     """Convert email file to markdown with YAML frontmatter and attachment extraction.
 
     Output includes:
@@ -473,8 +477,8 @@ def email_to_markdown(input_file, output_file=None, attachments_dir=None,
       attachments list)
     - Thread reconstruction fields (thread_id, thread_position, thread_length)
     - markdown.new convention fields (title = subject, description)
-    - description: auto-summary (1-2 sentences) when auto_summary=True,
-      otherwise first 160 chars of body
+    - description: auto-summary (1-2 sentences) when auto_summary=True or
+      summarize=True, otherwise first 160 chars of body
     - tokens_estimate for LLM context budgeting
     - entities (when extract_entities=True): people, organisations, properties,
       locations, dates extracted via spaCy/Ollama/regex
@@ -484,9 +488,15 @@ def email_to_markdown(input_file, output_file=None, attachments_dir=None,
         input_file: Path to .eml or .msg file
         output_file: Optional output path for markdown file
         attachments_dir: Optional directory for extracted attachments
+        auto_summary: Enable auto-summary (legacy flag name)
+        summarize: Enable auto-summary (new flag name, same effect)
+        summary_method: Summary method ('auto', 'heuristic', 'ollama')
         thread_map: Optional pre-built thread map for thread reconstruction.
                    If None, thread fields will be empty.
     """
+    # Support both flag names
+    use_summary = auto_summary or summarize
+
     input_path = Path(input_file)
 
     # Determine file type
@@ -542,8 +552,8 @@ def email_to_markdown(input_file, output_file=None, attachments_dir=None,
             'size': format_size(att['size']),
         })
 
-    # markdown.new convention fields
-    if auto_summary:
+    # markdown.new convention fields — auto-summary (t1053.7) or truncation
+    if use_summary:
         description = run_auto_summary(body, method=summary_method)
     else:
         description = make_description(body)
@@ -623,6 +633,9 @@ def main():
     parser.add_argument('--auto-summary', action='store_true',
                         help='Generate intelligent summary for description field '
                              '(heuristic for short emails, LLM for long ones)')
+    parser.add_argument('--summarize', action='store_true',
+                        help='Generate auto-summary for description field (t1053.7) '
+                             '(alias for --auto-summary)')
     parser.add_argument('--summary-method', choices=['auto', 'heuristic', 'ollama'],
                         default='auto', help='Summary method (default: auto — word-count decides)')
     parser.add_argument('--batch', action='store_true', 
@@ -633,6 +646,9 @@ def main():
     args = parser.parse_args()
     
     input_path = Path(args.input)
+
+    # Support both --auto-summary and --summarize flags
+    use_summary = args.auto_summary or args.summarize
     
     # Batch processing mode
     if args.batch or input_path.is_dir():
@@ -655,7 +671,7 @@ def main():
                     output_file=email_file.with_suffix('.md'),
                     extract_entities=args.extract_entities,
                     entity_method=args.entity_method,
-                    auto_summary=args.auto_summary,
+                    auto_summary=use_summary,
                     summary_method=args.summary_method,
                     thread_map=thread_map
                 )
@@ -692,7 +708,7 @@ def main():
             args.input, args.output, args.attachments_dir,
             extract_entities=args.extract_entities,
             entity_method=args.entity_method,
-            auto_summary=args.auto_summary,
+            auto_summary=use_summary,
             summary_method=args.summary_method,
             thread_map=thread_map
         )
