@@ -3,7 +3,7 @@
 # Part of aidevops framework: https://aidevops.sh
 #
 # Usage: document-creation-helper.sh <command> [options]
-# Commands: convert, create, template, install, formats, status, help
+# Commands: convert, create, template, normalise, install, formats, status, help
 
 set -euo pipefail
 
