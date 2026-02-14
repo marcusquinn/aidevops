@@ -24,6 +24,9 @@ import argparse
 from pathlib import Path
 import mimetypes
 import re
+import json
+from typing import Dict, List, Optional, Tuple
+from collections import defaultdict
 
 
 def parse_eml(file_path):
@@ -162,6 +165,143 @@ def yaml_escape(value):
         value = value.replace('\n', ' ').replace('\r', '')
         return f'"{value}"'
     return value
+
+
+def build_thread_map(emails_dir: Path) -> Dict[str, Dict]:
+    """Build a map of all emails by message-id for thread reconstruction.
+    
+    Returns a dict mapping message_id -> {file_path, in_reply_to, date_sent, subject}
+    """
+    thread_map = {}
+    
+    # Find all .eml and .msg files
+    for ext in ['.eml', '.msg']:
+        for email_file in emails_dir.glob(f'**/*{ext}'):
+            try:
+                # Parse just the headers we need
+                if ext == '.eml':
+                    msg = parse_eml(email_file)
+                else:
+                    msg = parse_msg(email_file)
+                
+                message_id = extract_header_safe(msg, 'Message-ID')
+                in_reply_to = extract_header_safe(msg, 'In-Reply-To')
+                date_sent_raw = extract_header_safe(msg, 'Date')
+                subject = extract_header_safe(msg, 'Subject', 'No Subject')
+                
+                if message_id:
+                    thread_map[message_id] = {
+                        'file_path': str(email_file),
+                        'in_reply_to': in_reply_to,
+                        'date_sent': parse_date_safe(date_sent_raw),
+                        'subject': subject
+                    }
+            except Exception as e:
+                print(f"Warning: Failed to parse {email_file}: {e}", file=sys.stderr)
+                continue
+    
+    return thread_map
+
+
+def reconstruct_thread(message_id: str, thread_map: Dict[str, Dict]) -> Tuple[str, int, int]:
+    """Reconstruct thread information for a given message.
+    
+    Returns: (thread_id, thread_position, thread_length)
+    - thread_id: message-id of the root message (first in thread)
+    - thread_position: 1-based position in thread (1 = root)
+    - thread_length: total number of messages in thread
+    """
+    if not message_id or message_id not in thread_map:
+        return ('', 0, 0)
+    
+    # Walk backwards to find root
+    current_id = message_id
+    chain = [current_id]
+    visited = {current_id}
+    
+    while True:
+        current_info = thread_map.get(current_id)
+        if not current_info:
+            break
+        
+        in_reply_to = current_info.get('in_reply_to', '')
+        if not in_reply_to or in_reply_to not in thread_map:
+            break
+        
+        # Prevent infinite loops
+        if in_reply_to in visited:
+            break
+        
+        chain.insert(0, in_reply_to)
+        visited.add(in_reply_to)
+        current_id = in_reply_to
+    
+    # Root is first in chain
+    thread_id = chain[0]
+    
+    # Position is where our message appears in the chain
+    thread_position = chain.index(message_id) + 1
+    
+    # Walk forwards from root to find all descendants
+    def count_descendants(msg_id: str, visited_desc: set) -> int:
+        if msg_id in visited_desc:
+            return 0
+        visited_desc.add(msg_id)
+        
+        count = 1
+        # Find all messages that reply to this one
+        for mid, info in thread_map.items():
+            if info.get('in_reply_to') == msg_id and mid not in visited_desc:
+                count += count_descendants(mid, visited_desc)
+        return count
+    
+    thread_length = count_descendants(thread_id, set())
+    
+    return (thread_id, thread_position, thread_length)
+
+
+def generate_thread_index(thread_map: Dict[str, Dict], output_dir: Path) -> Dict[str, List[Dict]]:
+    """Generate thread index files grouped by thread_id.
+    
+    Returns a dict mapping thread_id -> list of email metadata in chronological order.
+    Writes one index file per thread to output_dir/threads/
+    """
+    # Group emails by thread
+    threads = defaultdict(list)
+    
+    for message_id, info in thread_map.items():
+        thread_id, position, length = reconstruct_thread(message_id, thread_map)
+        if thread_id:
+            threads[thread_id].append({
+                'message_id': message_id,
+                'file_path': info['file_path'],
+                'subject': info['subject'],
+                'date_sent': info['date_sent'],
+                'thread_position': position,
+                'thread_length': length
+            })
+    
+    # Sort each thread by date
+    for thread_id in threads:
+        threads[thread_id].sort(key=lambda x: x['date_sent'] or '')
+    
+    # Write thread index files
+    threads_dir = output_dir / 'threads'
+    threads_dir.mkdir(parents=True, exist_ok=True)
+    
+    for thread_id, emails in threads.items():
+        # Sanitize thread_id for filename (remove angle brackets, slashes)
+        safe_thread_id = re.sub(r'[<>:/\\|?*]', '_', thread_id)
+        index_file = threads_dir / f'{safe_thread_id}.json'
+        
+        with open(index_file, 'w', encoding='utf-8') as f:
+            json.dump({
+                'thread_id': thread_id,
+                'thread_length': len(emails),
+                'emails': emails
+            }, f, indent=2, ensure_ascii=False)
+    
+    return dict(threads)
 
 
 def make_description(body, max_len=160):
@@ -313,13 +453,15 @@ def run_auto_summary(body, method='auto'):
 
 def email_to_markdown(input_file, output_file=None, attachments_dir=None,
                       extract_entities=False, entity_method='auto',
-                      auto_summary=False, summary_method='auto'):
+                      auto_summary=False, summary_method='auto',
+                      thread_map=None):
     """Convert email file to markdown with YAML frontmatter and attachment extraction.
 
     Output includes:
     - YAML frontmatter with visible email headers (from, to, cc, bcc, date_sent,
       date_received, subject, size, message_id, in_reply_to, attachment_count,
       attachments list)
+    - Thread reconstruction fields (thread_id, thread_position, thread_length)
     - markdown.new convention fields (title = subject, description)
     - description: auto-summary (1-2 sentences) when auto_summary=True,
       otherwise first 160 chars of body
@@ -327,6 +469,13 @@ def email_to_markdown(input_file, output_file=None, attachments_dir=None,
     - entities (when extract_entities=True): people, organisations, properties,
       locations, dates extracted via spaCy/Ollama/regex
     - Body as markdown content
+    
+    Args:
+        input_file: Path to .eml or .msg file
+        output_file: Optional output path for markdown file
+        attachments_dir: Optional directory for extracted attachments
+        thread_map: Optional pre-built thread map for thread reconstruction.
+                   If None, thread fields will be empty.
     """
     input_path = Path(input_file)
 
@@ -392,6 +541,13 @@ def email_to_markdown(input_file, output_file=None, attachments_dir=None,
     # Token estimate for the full converted content (body + frontmatter)
     tokens_estimate = estimate_tokens(body)
 
+    # Thread reconstruction
+    thread_id = ''
+    thread_position = 0
+    thread_length = 0
+    if thread_map and message_id:
+        thread_id, thread_position, thread_length = reconstruct_thread(message_id, thread_map)
+
     # Build ordered metadata for frontmatter
     from collections import OrderedDict
     metadata = OrderedDict()
@@ -413,6 +569,11 @@ def email_to_markdown(input_file, output_file=None, attachments_dir=None,
     metadata['message_id'] = message_id
     if in_reply_to:
         metadata['in_reply_to'] = in_reply_to
+    # Thread reconstruction fields
+    if thread_id:
+        metadata['thread_id'] = thread_id
+        metadata['thread_position'] = thread_position
+        metadata['thread_length'] = thread_length
     metadata['attachment_count'] = len(attachments)
     metadata['attachments'] = attachment_meta
     metadata['tokens_estimate'] = tokens_estimate
@@ -440,9 +601,9 @@ def email_to_markdown(input_file, output_file=None, attachments_dir=None,
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Convert .eml/.msg email files to markdown with attachment extraction'
+        description='Convert .eml/.msg email files to markdown with attachment extraction and thread reconstruction'
     )
-    parser.add_argument('input', help='Input email file (.eml or .msg)')
+    parser.add_argument('input', help='Input email file (.eml or .msg) or directory for batch processing')
     parser.add_argument('--output', '-o', help='Output markdown file (default: input.md)')
     parser.add_argument('--attachments-dir', help='Directory for attachments (default: input_attachments/)')
     parser.add_argument('--extract-entities', action='store_true',
@@ -454,22 +615,83 @@ def main():
                              '(heuristic for short emails, LLM for long ones)')
     parser.add_argument('--summary-method', choices=['auto', 'heuristic', 'ollama'],
                         default='auto', help='Summary method (default: auto — word-count decides)')
+    parser.add_argument('--batch', action='store_true', 
+                       help='Process all .eml/.msg files in input directory with thread reconstruction')
+    parser.add_argument('--threads-index', action='store_true',
+                       help='Generate thread index files (requires --batch)')
     
     args = parser.parse_args()
     
-    result = email_to_markdown(
-        args.input, args.output, args.attachments_dir,
-        extract_entities=args.extract_entities,
-        entity_method=args.entity_method,
-        auto_summary=args.auto_summary,
-        summary_method=args.summary_method
-    )
+    input_path = Path(args.input)
     
-    print(f"Created: {result['markdown']}")
-    if result['attachments']:
-        print(f"Extracted {len(result['attachments'])} attachment(s) to: {result['attachments_dir']}")
-        for att in result['attachments']:
-            print(f"  - {att['filename']} ({format_size(att['size'])})")
+    # Batch processing mode
+    if args.batch or input_path.is_dir():
+        if not input_path.is_dir():
+            print("ERROR: --batch requires input to be a directory", file=sys.stderr)
+            sys.exit(1)
+        
+        # Build thread map for all emails
+        print("Building thread map...")
+        thread_map = build_thread_map(input_path)
+        print(f"Found {len(thread_map)} emails")
+        
+        # Process each email
+        processed = 0
+        for message_id, info in thread_map.items():
+            email_file = Path(info['file_path'])
+            try:
+                result = email_to_markdown(
+                    email_file,
+                    output_file=email_file.with_suffix('.md'),
+                    extract_entities=args.extract_entities,
+                    entity_method=args.entity_method,
+                    auto_summary=args.auto_summary,
+                    summary_method=args.summary_method,
+                    thread_map=thread_map
+                )
+                processed += 1
+                print(f"Processed: {email_file.name} -> {result['markdown']}")
+            except Exception as e:
+                print(f"ERROR processing {email_file}: {e}", file=sys.stderr)
+        
+        print(f"\nProcessed {processed}/{len(thread_map)} emails")
+        
+        # Generate thread index if requested
+        if args.threads_index:
+            print("\nGenerating thread index files...")
+            threads = generate_thread_index(thread_map, input_path)
+            print(f"Created {len(threads)} thread index files in {input_path}/threads/")
+    
+    # Single file mode
+    else:
+        if not input_path.is_file():
+            print(f"ERROR: Input file not found: {input_path}", file=sys.stderr)
+            sys.exit(1)
+        
+        # For single file, optionally build thread map if parent dir has other emails
+        thread_map = None
+        if input_path.parent.exists():
+            try:
+                thread_map = build_thread_map(input_path.parent)
+                if thread_map:
+                    print(f"Found {len(thread_map)} emails in directory for thread reconstruction")
+            except Exception:
+                pass  # Thread reconstruction is optional
+        
+        result = email_to_markdown(
+            args.input, args.output, args.attachments_dir,
+            extract_entities=args.extract_entities,
+            entity_method=args.entity_method,
+            auto_summary=args.auto_summary,
+            summary_method=args.summary_method,
+            thread_map=thread_map
+        )
+        
+        print(f"Created: {result['markdown']}")
+        if result['attachments']:
+            print(f"Extracted {len(result['attachments'])} attachment(s) to: {result['attachments_dir']}")
+            for att in result['attachments']:
+                print(f"  - {att['filename']} ({format_size(att['size'])})")
 
 
 if __name__ == '__main__':
