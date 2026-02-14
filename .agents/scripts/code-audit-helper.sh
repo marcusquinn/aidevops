@@ -1386,6 +1386,7 @@ main() {
 	audit) cmd_audit "$@" ;;
 	report) cmd_report "$@" ;;
 	summary) cmd_summary "$@" ;;
+	check-regression) cmd_check_regression "$@" ;;
 	status) cmd_status "$@" ;;
 	reset) cmd_reset "$@" ;;
 	check-regression) cmd_check_regression "$@" ;;
