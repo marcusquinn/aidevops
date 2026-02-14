@@ -1476,11 +1476,12 @@ RULES:
 		fi
 	fi
 
-	# Phase 10c: Audit regression detection (t1032.6, t1045)
+	# Phase 10c: Audit regression detection + auto-remediation (t1032.6, t1045)
 	# Queries SonarCloud API for current findings, compares against last snapshot.
-	# On regression: logs warning. On improvement: logs success.
+	# On regression: logs warning, auto-creates tasks for new findings.
 	# Runs at most once per hour to avoid API rate limits.
 	local audit_helper="${SCRIPT_DIR}/code-audit-helper.sh"
+	local task_creator="${SCRIPT_DIR}/audit-task-creator-helper.sh"
 	if [[ -x "$audit_helper" ]]; then
 		local regression_cache="${HOME}/.aidevops/.agent-workspace/tmp/regression-last-check"
 		local now_epoch
@@ -1496,6 +1497,15 @@ RULES:
 			echo "$now_epoch" >"$regression_cache"
 			if ! bash "$audit_helper" check-regression 2>>"$SUPERVISOR_LOG"; then
 				log_warn "  Phase 10c: Audit regressions detected — review SonarCloud dashboard"
+				# Auto-create tasks for new findings (t1045)
+				if [[ -x "$task_creator" ]]; then
+					log_info "  Phase 10c: Auto-creating tasks for new findings"
+					if bash "$task_creator" create --severity high --dispatch 2>>"$SUPERVISOR_LOG"; then
+						log_success "  Phase 10c: Tasks created and dispatched"
+					else
+						log_warn "  Phase 10c: Task creation failed (see log)"
+					fi
+				fi
 			fi
 		else
 			log_verbose "  Phase 10c: Skipping (last check $((elapsed / 60))m ago, interval=60m)"
