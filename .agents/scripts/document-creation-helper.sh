@@ -2771,12 +2771,12 @@ def parse_frontmatter(md_path):
         return fields
 
     fm_block = content[4:end]
-    for line in fm_block.split('\n'):
-        line = line.strip()
-        if not line or line.startswith('#'):
+    for raw_line in fm_block.split('\n'):
+        # Skip indented lines (nested YAML: list items, sub-keys)
+        if raw_line.startswith(' ') or raw_line.startswith('\t'):
             continue
-        # Handle top-level key: value pairs (skip nested/list items)
-        if line.startswith('- ') or line.startswith('  '):
+        line = raw_line.strip()
+        if not line or line.startswith('#') or line.startswith('- '):
             continue
         colon_pos = line.find(':')
         if colon_pos > 0:
