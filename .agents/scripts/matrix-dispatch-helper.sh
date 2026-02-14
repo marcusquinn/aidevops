@@ -1713,9 +1713,23 @@ cmd_auto_setup() {
 		return 1
 	fi
 
-	local cloudron_config="${SCRIPT_DIR}/../configs/cloudron-config.json"
-	if [[ ! -f "$cloudron_config" ]]; then
-		log_error "Cloudron config not found: $cloudron_config"
+	# Try multiple config locations: repo root configs/, relative to script, CWD-relative
+	local cloudron_config=""
+	local -a config_paths=(
+		"${SCRIPT_DIR}/../../configs/cloudron-config.json"
+		"${SCRIPT_DIR}/../configs/cloudron-config.json"
+		"configs/cloudron-config.json"
+		"../configs/cloudron-config.json"
+	)
+	for candidate in "${config_paths[@]}"; do
+		if [[ -f "$candidate" ]]; then
+			cloudron_config="$candidate"
+			break
+		fi
+	done
+
+	if [[ -z "$cloudron_config" ]]; then
+		log_error "Cloudron config not found"
 		log_info "Copy and customize: cp configs/cloudron-config.json.txt configs/cloudron-config.json"
 		return 1
 	fi
