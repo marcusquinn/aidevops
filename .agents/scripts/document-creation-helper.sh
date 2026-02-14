@@ -73,6 +73,18 @@ get_ext() {
 	printf '%s' "$ext" | tr '[:upper:]' '[:lower:]'
 }
 
+# Sanitize string for filename (remove/replace unsafe chars)
+sanitize_filename() {
+	local str="$1"
+	# Remove leading/trailing whitespace
+	str=$(printf '%s' "$str" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+	# Replace unsafe chars with dash
+	str=$(printf '%s' "$str" | tr -c '[:alnum:]._-' '-' | tr -s '-')
+	# Limit length to 100 chars
+	str=$(printf '%s' "$str" | cut -c1-100)
+	printf '%s' "$str"
+}
+
 # Activate Python venv if it exists
 activate_venv() {
 	if [[ -f "${VENV_DIR}/bin/activate" ]]; then
@@ -640,7 +652,7 @@ cmd_formats() {
 
 	printf "${BOLD}Input formats:${NC}\n"
 	printf "  Documents:      md, odt, docx, rtf, html, epub, latex/tex\n"
-	printf "  Email:          eml, msg (with attachment extraction)\n"
+	printf "  Email:          eml, msg (MIME parsing with attachments)\n"
 	printf "  PDF:            pdf (text extraction + image extraction)\n"
 	printf "  Spreadsheets:   xlsx, ods, csv, tsv\n"
 	printf "  Presentations:  pptx, odp\n"
@@ -664,6 +676,166 @@ cmd_formats() {
 }
 
 # ============================================================================
+# MIME/Email conversion functions
+# ============================================================================
+
+# Convert .eml or .msg file to markdown with attachments
+convert_eml_to_md() {
+	local input="$1"
+	local output_dir="$2"
+
+	log_info "Parsing email: $(basename "$input")"
+
+	# Use Python email stdlib to parse MIME
+	python3 - "$input" "$output_dir" <<'PYEOF'
+import sys
+import os
+import email
+import email.policy
+from email import message_from_binary_file
+from email.utils import parsedate_to_datetime, parseaddr
+from datetime import datetime
+import re
+
+input_file = sys.argv[1]
+output_dir = sys.argv[2]
+
+# Read email
+with open(input_file, 'rb') as f:
+    msg = message_from_binary_file(f, policy=email.policy.default)
+
+# Extract metadata
+subject = msg.get('Subject', 'no-subject')
+from_header = msg.get('From', '')
+date_header = msg.get('Date', '')
+
+# Parse sender
+sender_name, sender_email = parseaddr(from_header)
+if not sender_email:
+    sender_email = 'unknown'
+if not sender_name:
+    sender_name = 'unknown'
+
+# Parse date
+try:
+    dt = parsedate_to_datetime(date_header)
+    timestamp = dt.strftime('%Y-%m-%d-%H%M%S')
+except:
+    timestamp = datetime.now().strftime('%Y-%m-%d-%H%M%S')
+
+# Sanitize components for filename
+def sanitize(s):
+    s = re.sub(r'[^\w\s.-]', '', s)
+    s = re.sub(r'\s+', '-', s)
+    s = s[:50]  # Limit length
+    return s
+
+subject_safe = sanitize(subject)
+sender_email_safe = sanitize(sender_email.replace('@', '-at-'))
+sender_name_safe = sanitize(sender_name)
+
+# Build base filename
+base_name = f"{timestamp}-{subject_safe}-{sender_email_safe}-{sender_name_safe}"
+
+# Create output directory for this email
+email_dir = os.path.join(output_dir, base_name)
+os.makedirs(email_dir, exist_ok=True)
+
+# Write main markdown file
+md_file = os.path.join(email_dir, f"{base_name}.md")
+raw_headers_file = os.path.join(email_dir, f"{base_name}-raw-headers.md")
+
+# Extract body
+body_text = ""
+body_html = ""
+
+if msg.is_multipart():
+    for part in msg.walk():
+        content_type = part.get_content_type()
+        content_disposition = str(part.get("Content-Disposition", ""))
+        
+        # Skip attachments in body extraction
+        if "attachment" in content_disposition:
+            continue
+            
+        if content_type == "text/plain":
+            try:
+                body_text = part.get_content()
+            except:
+                pass
+        elif content_type == "text/html":
+            try:
+                body_html = part.get_content()
+            except:
+                pass
+else:
+    content_type = msg.get_content_type()
+    if content_type == "text/plain":
+        try:
+            body_text = msg.get_content()
+        except:
+            pass
+    elif content_type == "text/html":
+        try:
+            body_html = msg.get_content()
+        except:
+            pass
+
+# Prefer plain text, fallback to HTML
+body = body_text if body_text else body_html
+
+# Write markdown
+with open(md_file, 'w', encoding='utf-8') as f:
+    f.write(f"# Email: {subject}\n\n")
+    f.write(f"**From:** {sender_name} <{sender_email}>\n")
+    f.write(f"**Date:** {date_header}\n")
+    
+    to_header = msg.get('To', '')
+    if to_header:
+        f.write(f"**To:** {to_header}\n")
+    
+    cc_header = msg.get('Cc', '')
+    if cc_header:
+        f.write(f"**Cc:** {cc_header}\n")
+    
+    f.write(f"\n---\n\n")
+    f.write(body)
+
+# Write raw headers
+with open(raw_headers_file, 'w', encoding='utf-8') as f:
+    f.write("# Raw Email Headers\n\n")
+    f.write("```\n")
+    for key, value in msg.items():
+        f.write(f"{key}: {value}\n")
+    f.write("```\n")
+
+# Extract attachments
+attachment_count = 0
+if msg.is_multipart():
+    for part in msg.walk():
+        content_disposition = str(part.get("Content-Disposition", ""))
+        
+        if "attachment" in content_disposition:
+            filename = part.get_filename()
+            if filename:
+                attachment_count += 1
+                # Save attachment
+                attachment_path = os.path.join(email_dir, filename)
+                with open(attachment_path, 'wb') as f:
+                    f.write(part.get_payload(decode=True))
+                
+                print(f"  Extracted attachment: {filename}")
+
+print(f"Email converted: {md_file}")
+print(f"Raw headers: {raw_headers_file}")
+print(f"Attachments: {attachment_count}")
+print(f"Output directory: {email_dir}")
+PYEOF
+
+	return 0
+}
+
+# ============================================================================
 # Convert command
 # ============================================================================
 
@@ -675,6 +847,12 @@ select_tool() {
 	# If user forced a tool, use it
 	if [[ -n "${force_tool}" ]]; then
 		printf '%s' "${force_tool}"
+		return 0
+	fi
+
+	# Email formats (.eml, .msg) to markdown
+	if [[ "${from_ext}" =~ ^(eml|msg)$ ]] && [[ "${to_ext}" =~ ^(md|markdown)$ ]]; then
+		printf 'email-parser'
 		return 0
 	fi
 
@@ -1253,6 +1431,11 @@ cmd_convert() {
 
 	# Execute conversion
 	case "${tool}" in
+	email-parser)
+		local output_dir
+		output_dir=$(dirname "$output")
+		convert_eml_to_md "$input" "${output_dir}"
+		;;
 	pandoc)
 		convert_with_pandoc "$input" "$output" "$extra_args"
 		;;
@@ -2176,6 +2359,8 @@ cmd_help() {
 	printf "  %s convert report.pdf --to odt\n" "${SCRIPT_NAME}"
 	printf "  %s convert letter.odt --to pdf\n" "${SCRIPT_NAME}"
 	printf "  %s convert notes.md --to docx\n" "${SCRIPT_NAME}"
+	printf "  %s convert email.eml --to md\n" "${SCRIPT_NAME}"
+	printf "  %s convert message.msg --to md\n" "${SCRIPT_NAME}"
 	printf "  %s convert scanned.pdf --to odt --ocr tesseract\n" "${SCRIPT_NAME}"
 	printf "  %s convert screenshot.png --to md --ocr auto\n" "${SCRIPT_NAME}"
 	printf "  %s convert report.pdf --to md --no-normalise\n" "${SCRIPT_NAME}"
