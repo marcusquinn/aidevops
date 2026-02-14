@@ -2437,11 +2437,29 @@ for pattern in sig_patterns:
         signature = content[match.start():]
         break
 
-# Extract contact fields from signature
-phone_match = re.search(r'(?:(?:tel|phone|mob|cell|fax)[:\s]*)?(\+?[\d\s\-().]{7,20})', signature, re.IGNORECASE)
-website_match = re.search(r'(?:https?://)?(?:www\.)?[\w.-]+\.\w{2,}(?:/[\w.-]*)*', signature, re.IGNORECASE)
-title_match = re.search(r'^([A-Z][\w\s&,]+(?:Manager|Director|Engineer|Developer|Designer|Analyst|Consultant|Officer|Lead|Head|VP|CEO|CTO|CFO|COO|President|Founder|Partner))', signature, re.MULTILINE | re.IGNORECASE)
-company_match = re.search(r'(?:at|@)\s+(.+?)(?:\n|$)', signature, re.IGNORECASE)
+# Strip the greeting line and sender name from signature for field extraction
+sig_lines = signature.strip().split('\n')
+# Remove greeting lines (Best regards, --, etc.) and blank lines at start
+sig_body_lines = []
+skip_header = True
+for line in sig_lines:
+    stripped = line.strip()
+    if skip_header:
+        if not stripped or re.match(r'^(--|Best regards|Kind regards|Regards|Sincerely|Cheers|Thanks|Thank you|Best|Warm regards),?\s*$', stripped, re.IGNORECASE):
+            continue
+        # Skip the sender's own name line
+        if sender_name and stripped.lower() == sender_name.lower():
+            continue
+        skip_header = False
+    sig_body_lines.append(line)
+sig_body = '\n'.join(sig_body_lines)
+
+# Extract contact fields from signature body (after greeting + name)
+phone_match = re.search(r'(?:(?:tel|phone|mob|cell|fax)[:\s]*)?(\+?[\d\s\-().]{7,20})', sig_body, re.IGNORECASE)
+website_match = re.search(r'(?:https?://)?(?:www\.)?[\w.-]+\.\w{2,}(?:/[\w.-]*)*', sig_body, re.IGNORECASE)
+title_roles = r'(?:Manager|Director|Engineer|Developer|Designer|Analyst|Consultant|Officer|Lead|Head|VP|CEO|CTO|CFO|COO|President|Founder|Partner|Architect|Coordinator|Specialist|Administrator|Supervisor|Executive|Associate|Assistant|Advisor|Strategist)'
+title_match = re.search(r'^([A-Z][\w\s&,]{2,40}' + title_roles + r')\s*$', sig_body, re.MULTILINE | re.IGNORECASE)
+company_match = re.search(r'(?:at|@)\s+(.+?)(?:\n|$)', sig_body, re.IGNORECASE)
 
 phone = phone_match.group(1).strip() if phone_match else ""
 website = website_match.group(0).strip() if website_match else ""
@@ -2624,7 +2642,9 @@ cmd_import_emails() {
 			"${processed}" "${total}" "${pct}" "$(basename "${eml_file}")" "${eta}"
 
 		# Convert email to markdown using t1044.1's convert_eml_to_md
-		if ! convert_eml_to_md "${eml_file}" "${output_dir}" 2>/dev/null; then
+		# Capture output to extract the md file path
+		local convert_output
+		if ! convert_output=$(convert_eml_to_md "${eml_file}" "${output_dir}" 2>/dev/null); then
 			log_warn "Failed to process: $(basename "${eml_file}")"
 			failed=$((failed + 1))
 			continue
@@ -2632,11 +2652,11 @@ cmd_import_emails() {
 
 		# Extract contacts from the generated markdown (if not skipped)
 		if [[ "${skip_contacts}" != true ]]; then
-			# Find the most recently created .md file in output_dir
-			local latest_md
-			latest_md=$(find "${output_dir}" -maxdepth 2 -name "*.md" -not -name "*-raw-headers.md" -newer "${eml_file}" -type f 2>/dev/null | head -1)
-			if [[ -n "${latest_md}" ]]; then
-				extract_contact_from_email "${latest_md}" "${contacts_dir}" 2>/dev/null || true
+			# Parse md file path from convert_eml_to_md output
+			local converted_md
+			converted_md=$(printf '%s' "$convert_output" | grep '^Email converted:' | sed 's/^Email converted: //')
+			if [[ -n "${converted_md}" ]] && [[ -f "${converted_md}" ]]; then
+				extract_contact_from_email "${converted_md}" "${contacts_dir}" 2>/dev/null || true
 			fi
 		fi
 	done
