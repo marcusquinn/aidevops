@@ -71,7 +71,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
   - [ ] t1044.6 Entity extraction from email bodies — extract people, organisations, properties, locations, dates from converted markdown. Use spaCy NER if available, fall back to LLM extraction via Ollama. Store entities in frontmatter `entities:` field (grouped by type). ~45m #auto-dispatch model:sonnet blocked-by:t1044.1 ref:GH#1425 assignee:marcusquinn
-  - [ ] t1044.7 Auto-summary generation — generate 1-2 sentence summary for each converted email, stored in frontmatter `description:` field. Use word-count heuristic for short emails, LLM summarisation for long ones. ~30m #auto-dispatch model:sonnet blocked-by:t1044.1 ref:GH#1426
+  - [ ] t1044.7 Auto-summary generation — generate 1-2 sentence summary for each converted email, stored in frontmatter `description:` field. Use word-count heuristic for short emails, LLM summarisation for long ones. ~30m #auto-dispatch model:sonnet blocked-by:t1044.1 ref:GH#1426 assignee:marcusquinn
 =======
   - [ ] t1044.6 Entity extraction from email bodies — extract people, organisations, properties, locations, dates from converted markdown. Use spaCy NER if available, fall back to LLM extraction via Ollama. Store entities in frontmatter `entities:` field (grouped by type). ~45m #auto-dispatch model:sonnet blocked-by:t1044.1 ref:GH#1425
   - [ ] t1044.7 Auto-summary generation — generate 1-2 sentence summary for each converted email, stored in frontmatter `description:` field. Use word-count heuristic for short emails, LLM summarisation for long ones. ~30m #auto-dispatch model:sonnet blocked-by:t1044.1 ref:GH#1426 assignee:marcusquinn started:2026-02-14T00:46:04Z
