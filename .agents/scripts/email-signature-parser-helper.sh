@@ -8,10 +8,16 @@ set -euo pipefail
 # Strategy: Rule-based regex extraction first, LLM fallback for messy signatures.
 # Output: contacts/{email-address}.toon files with contact schema.
 #
-# TOON schema: contact{email,name,title,company,phone,website,address,source,first_seen,last_seen,confidence}
+# TOON schema: contact{email,name,title,company,phone,website,address,source,first_seen,last_seen,confidence,history}
+#
+# t1044.4 enhancements:
+# - Contact deduplication: check if contact file exists before creating
+# - Field change detection: compare old vs new values, append to history[]
+# - Name collision handling: append -001, -002 to filename if different emails share same name
+# - Cross-reference: track all email addresses a person has used
 #
 # Author: AI DevOps Framework
-# Version: 1.0.0
+# Version: 1.1.0 (t1044.4)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
@@ -21,7 +27,7 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 # =============================================================================
 
 readonly DEFAULT_CONTACTS_DIR="contacts"
-readonly TOON_SCHEMA="contact{email,name,title,company,phone,website,address,source,first_seen,last_seen,confidence}"
+readonly TOON_SCHEMA="contact{email,name,title,company,phone,website,address,source,first_seen,last_seen,confidence,history}"
 
 # Signature delimiter patterns (order matters — most specific first)
 # These mark the beginning of a signature block
@@ -125,10 +131,10 @@ extract_phones() {
 extract_websites() {
 	local text="$1"
 	# Match http(s) URLs
-	echo "$text" | grep -oEi 'https?://[a-zA-Z0-9._~:/?#@!$&()*+,;=%-]+' |
+	echo "$text" | grep -oEi 'https?://[a-zA-Z0-9._~:/?#\[\]@!$&'"'"'()*+,;=%-]+' |
 		head -5 || true
 	# Also match www. without protocol
-	echo "$text" | grep -oEi 'www\.[a-zA-Z0-9.-]+\.[a-zA-Z][a-zA-Z]+[/a-zA-Z0-9._~:/?#@!$&()*+,;=-]*' |
+	echo "$text" | grep -oEi 'www\.[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}[/a-zA-Z0-9._~:/?#\[\]@!$&'"'"'()*+,;=-]*' |
 		sed 's/^/https:\/\//' |
 		head -3 || true
 	return 0
@@ -332,11 +338,10 @@ extract_address() {
 }
 
 # =============================================================================
-# TOON Output Generation
+# TOON Generation and Merging (t1044.4 Enhanced)
 # =============================================================================
 
-# Generate a TOON contact record from extracted fields.
-# Args: email name title company phone website address source confidence
+# Generate a new TOON contact record
 generate_toon_record() {
 	local email="$1"
 	local name="${2:-}"
@@ -347,10 +352,11 @@ generate_toon_record() {
 	local address="${7:-}"
 	local source="${8:-email-signature}"
 	local confidence="${9:-high}"
+
 	local now
 	now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-	cat <<EOF
+	cat <<TOON
 contact:
   email: ${email}
   name: ${name}
@@ -363,13 +369,17 @@ contact:
   first_seen: ${now}
   last_seen: ${now}
   confidence: ${confidence}
-EOF
-	return 0
+TOON
 }
 
+# t1044.4: Enhanced merge with field change detection and history tracking
 # Merge a new contact record into an existing TOON file.
-# If the file exists, updates last_seen and merges non-empty fields.
-# If the file has a different primary email, adds the new email as additional.
+# If the file exists:
+#   - Updates last_seen
+#   - Detects field changes (title, company, phone)
+#   - Appends to history[] section with date/field/old/new/source
+#   - Merges non-empty fields
+# If the file doesn't exist, creates a new record.
 merge_toon_contact() {
 	local toon_file="$1"
 	local email="$2"
@@ -382,48 +392,171 @@ merge_toon_contact() {
 	local source="${9:-email-signature}"
 	local confidence="${10:-high}"
 
+	local now
+	now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+	# If file doesn't exist, create new record
 	if [[ ! -f "$toon_file" ]]; then
 		generate_toon_record "$email" "$name" "$title" "$company" "$phone" "$website" "$address" "$source" "$confidence" >"$toon_file"
 		return 0
 	fi
 
-	# File exists — update last_seen and merge non-empty fields
-	local now
-	now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+	# File exists — update last_seen and detect field changes
 	local existing
 	existing=$(cat "$toon_file")
 
+	# Extract existing field values
+	local existing_name existing_title existing_company existing_phone existing_website existing_address
+	existing_name=$(echo "$existing" | grep -E "^  name: " | sed 's/^  name: //' || true)
+	existing_title=$(echo "$existing" | grep -E "^  title: " | sed 's/^  title: //' || true)
+	existing_company=$(echo "$existing" | grep -E "^  company: " | sed 's/^  company: //' || true)
+	existing_phone=$(echo "$existing" | grep -E "^  phone: " | sed 's/^  phone: //' || true)
+	existing_website=$(echo "$existing" | grep -E "^  website: " | sed 's/^  website: //' || true)
+	existing_address=$(echo "$existing" | grep -E "^  address: " | sed 's/^  address: //' || true)
+
 	# Update last_seen
-	existing=$(echo "$existing" | sed "s/last_seen: .*/last_seen: ${now}/")
+	existing=$(echo "$existing" | sed "s/^  last_seen: .*/  last_seen: ${now}/")
 
-	# Merge fields: only overwrite if existing field is empty and new value is non-empty
-	local field_name new_val existing_val
-	local -A field_map=(
-		[name]="$name"
-		[title]="$title"
-		[company]="$company"
-		[phone]="$phone"
-		[website]="$website"
-		[address]="$address"
-	)
-	for field_name in name title company phone website address; do
-		new_val="${field_map[$field_name]}"
-		[[ -z "$new_val" ]] && continue
+	# Detect field changes and build history entries
+	local history_entries=""
 
-		existing_val=$(echo "$existing" | grep -E "^  ${field_name}: " | sed "s/^  ${field_name}: //" || true)
-		if [[ -z "$existing_val" ]]; then
-			existing=$(echo "$existing" | sed "s/^  ${field_name}: $/  ${field_name}: ${new_val}/")
+	# Helper function to check and update a field
+	check_and_update_field() {
+		local field_name="$1"
+		local new_val="$2"
+		local old_val="$3"
+
+		# Skip if new value is empty
+		[[ -z "$new_val" ]] && return 0
+
+		# Detect change: new value differs from old value and old value is not empty
+		if [[ -n "$old_val" && "$new_val" != "$old_val" ]]; then
+			# Append to history
+			history_entries="${history_entries}    - date: ${now}
+      field: ${field_name}
+      old: ${old_val}
+      new: ${new_val}
+      source: ${source}
+"
+			# Update the field in the existing record
+			existing=$(echo "$existing" | sed "s|^  ${field_name}: .*|  ${field_name}: ${new_val}|")
+		elif [[ -z "$old_val" ]]; then
+			# Fill empty field
+			existing=$(echo "$existing" | sed "s|^  ${field_name}: $|  ${field_name}: ${new_val}|")
 		fi
-	done
+		return 0
+	}
+
+	# Check each field for changes
+	check_and_update_field "name" "$name" "$existing_name"
+	check_and_update_field "title" "$title" "$existing_title"
+	check_and_update_field "company" "$company" "$existing_company"
+	check_and_update_field "phone" "$phone" "$existing_phone"
+	check_and_update_field "website" "$website" "$existing_website"
+	check_and_update_field "address" "$address" "$existing_address"
+
+	# Append history entries if any changes detected
+	if [[ -n "$history_entries" ]]; then
+		# Check if history section exists
+		if ! echo "$existing" | grep -q "^  history:"; then
+			# Add history section
+			existing="${existing}
+  history:
+${history_entries}"
+		else
+			# Append to existing history section
+			existing="${existing}
+${history_entries}"
+		fi
+	fi
 
 	# Upgrade confidence if new is higher
 	local existing_conf
 	existing_conf=$(echo "$existing" | grep -E "^  confidence: " | sed "s/^  confidence: //" || true)
 	if [[ "$confidence" == "high" && "$existing_conf" != "high" ]]; then
-		existing=$(echo "$existing" | sed "s/confidence: .*/confidence: ${confidence}/")
+		existing=$(echo "$existing" | sed "s/^  confidence: .*/  confidence: ${confidence}/")
 	fi
 
 	echo "$existing" >"$toon_file"
+	return 0
+}
+
+# t1044.4: Handle name collisions
+# If two different email addresses share the same name, append -001, -002 to the filename.
+# Returns the safe filename to use.
+resolve_contact_filename() {
+	local contacts_dir="$1"
+	local email="$2"
+	local name="$3"
+
+	# Default: use email as filename
+	local safe_email
+	safe_email=$(echo "$email" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9@._-]/_/g')
+	local base_file="${contacts_dir}/${safe_email}.toon"
+
+	# If file doesn't exist, use it
+	if [[ ! -f "$base_file" ]]; then
+		echo "$base_file"
+		return 0
+	fi
+
+	# File exists — check if it's the same person (same email or same name)
+	local existing_email existing_name
+	existing_email=$(grep -E "^  email: " "$base_file" | sed 's/^  email: //' || true)
+	existing_name=$(grep -E "^  name: " "$base_file" | sed 's/^  name: //' || true)
+
+	# Same email = same person, use existing file
+	if [[ "$existing_email" == "$email" ]]; then
+		echo "$base_file"
+		return 0
+	fi
+
+	# Different email but same name = name collision
+	# Check if name matches (case-insensitive)
+	if [[ -n "$name" && -n "$existing_name" ]]; then
+		local name_lower existing_name_lower
+		name_lower=$(echo "$name" | tr '[:upper:]' '[:lower:]')
+		existing_name_lower=$(echo "$existing_name" | tr '[:upper:]' '[:lower:]')
+
+		if [[ "$name_lower" == "$existing_name_lower" ]]; then
+			# Name collision detected — find next available suffix
+			local suffix=1
+			local collision_file
+			while true; do
+				collision_file="${contacts_dir}/${safe_email}-$(printf '%03d' $suffix).toon"
+				if [[ ! -f "$collision_file" ]]; then
+					echo "$collision_file"
+					return 0
+				fi
+				suffix=$((suffix + 1))
+			done
+		fi
+	fi
+
+	# No collision, use base file
+	echo "$base_file"
+	return 0
+}
+
+# t1044.4: Cross-reference all email addresses a person has used
+# Adds additional_emails section to the TOON file if multiple emails are found.
+add_email_cross_reference() {
+	local toon_file="$1"
+	local new_email="$2"
+
+	# Check if this email is already in the file
+	if grep -qF "$new_email" "$toon_file" 2>/dev/null; then
+		return 0
+	fi
+
+	# Add to additional_emails section
+	if ! grep -q "^  additional_emails:" "$toon_file" 2>/dev/null; then
+		# Create additional_emails section
+		echo "  additional_emails:" >>"$toon_file"
+	fi
+
+	# Append the new email
+	echo "    - ${new_email}" >>"$toon_file"
 	return 0
 }
 
@@ -540,7 +673,7 @@ parse_llm_output() {
 }
 
 # =============================================================================
-# Main Parse Pipeline
+# Main Parsing Logic
 # =============================================================================
 
 # Parse an email (text or file) and extract contact info to TOON.
@@ -573,6 +706,11 @@ parse_email_signature() {
 	# Extract signature block
 	local sig_block
 	sig_block=$(extract_signature_block "$email_text")
+
+	if [[ -z "$sig_block" ]]; then
+		print_warning "No signature block detected"
+		return 1
+	fi
 
 	# Rule-based extraction
 	local emails_raw phones_raw websites_raw
@@ -665,30 +803,24 @@ parse_email_signature() {
 		source_label="${source_label}+llm"
 	fi
 
-	# Save contact records — one file per email, all emails for same person in same file
+	# t1044.4: Resolve contact filename (handle name collisions)
 	local primary_email
 	primary_email=$(echo "$emails_raw" | head -1)
-	local safe_filename
-	safe_filename=$(echo "$primary_email" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9@._-]/_/g')
-	local toon_file="${contacts_dir}/${safe_filename}.toon"
+	local toon_file
+	toon_file=$(resolve_contact_filename "$contacts_dir" "$primary_email" "$name")
 
+	# t1044.4: Merge contact with field change detection and history tracking
 	merge_toon_contact "$toon_file" "$primary_email" "$name" "$title" "$company" "$phone" "$website" "$address" "$source_label" "$confidence"
 
-	# If multiple emails, add additional emails as a list in the file
+	# t1044.4: Cross-reference additional emails
 	local email_count
 	email_count=$(echo "$emails_raw" | wc -l | tr -d ' ')
 	if [[ "$email_count" -gt 1 ]]; then
-		local additional_emails
-		additional_emails=$(echo "$emails_raw" | tail -n +2)
-		# Append additional_emails section if not already present
-		if ! grep -q "additional_emails" "$toon_file" 2>/dev/null; then
-			{
-				echo "  additional_emails[$((email_count - 1))]:"
-				while IFS= read -r extra_email; do
-					echo "    - ${extra_email}"
-				done <<<"$additional_emails"
-			} >>"$toon_file"
-		fi
+		local additional_email
+		while IFS= read -r additional_email; do
+			[[ "$additional_email" == "$primary_email" ]] && continue
+			add_email_cross_reference "$toon_file" "$additional_email"
+		done <<<"$emails_raw"
 	fi
 
 	print_success "Contact saved: ${toon_file}"
@@ -819,7 +951,13 @@ Options:
   contacts_dir    Output directory (default: contacts/)
 
 TOON Schema:
-  contact{email,name,title,company,phone,website,address,source,first_seen,last_seen,confidence}
+  contact{email,name,title,company,phone,website,address,source,first_seen,last_seen,confidence,history}
+
+t1044.4 Enhancements:
+  - Contact deduplication: checks if contact file exists before creating
+  - Field change detection: compares old vs new values, appends to history[]
+  - Name collision handling: appends -001, -002 to filename if different emails share same name
+  - Cross-reference: tracks all email addresses a person has used
 
 Examples:
   # Parse a single email file
@@ -841,8 +979,11 @@ Strategy:
   1. Detect signature block (after --, Best regards, etc.)
   2. Rule-based regex extraction for structured fields
   3. LLM fallback (Claude API) for messy/unstructured signatures
-  4. Save to contacts/{email-address}.toon
-  5. Multiple emails per person merged into same file
+  4. Check if contact file exists (deduplication)
+  5. Detect field changes and append to history[] section
+  6. Handle name collisions with numeric suffixes
+  7. Cross-reference all email addresses per person
+  8. Save to contacts/{email-address}.toon
 HELP
 	return 0
 }
