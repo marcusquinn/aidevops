@@ -2996,6 +2996,288 @@ PYEOF
 }
 
 # ============================================================================
+# Normalise command - Fix markdown heading hierarchy and structure
+# ============================================================================
+
+cmd_normalise() {
+	local input=""
+	local output=""
+	local inplace=false
+
+	# Parse arguments
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--output | -o)
+			output="$2"
+			shift 2
+			;;
+		--inplace | -i)
+			inplace=true
+			shift
+			;;
+		--*)
+			shift
+			;;
+		*)
+			if [[ -z "${input}" ]]; then
+				input="$1"
+			fi
+			shift
+			;;
+		esac
+	done
+
+	# Validate
+	if [[ -z "${input}" ]]; then
+		die "Usage: normalise <input.md> [--output <file>] [--inplace]"
+	fi
+
+	if [[ ! -f "${input}" ]]; then
+		die "Input file not found: ${input}"
+	fi
+
+	# Determine output path
+	if [[ "${inplace}" == true ]]; then
+		output="${input}"
+	elif [[ -z "${output}" ]]; then
+		local basename_noext="${input%.*}"
+		output="${basename_noext}-normalised.md"
+	fi
+
+	log_info "Normalising markdown: $(basename "$input")"
+
+	# Create temp file for processing
+	local tmp_file
+	tmp_file=$(mktemp)
+
+	# Process the markdown file with Python
+	python3 - "$input" "$tmp_file" <<'PYEOF'
+import sys
+import re
+from typing import List, Tuple
+
+def detect_heading_from_structure(line: str, prev_line: str, next_line: str) -> Tuple[int, str]:
+    """
+    Detect if a line should be a heading based on structural cues.
+    Returns (heading_level, cleaned_text) or (0, line) if not a heading.
+    """
+    stripped = line.strip()
+    
+    # Already a markdown heading
+    if stripped.startswith('#'):
+        level = len(re.match(r'^#+', stripped).group())
+        text = stripped.lstrip('#').strip()
+        return (level, text)
+    
+    # Empty line
+    if not stripped:
+        return (0, line)
+    
+    # Detect heading patterns:
+    # 1. ALL CAPS lines (likely headings)
+    # 2. Title Case with blank lines before/after
+    # 3. Short lines (<60 chars) that are capitalized with blank lines around them
+    
+    is_all_caps = stripped.isupper() and len(stripped.split()) >= 1
+    is_title_case = stripped[0].isupper() and not stripped.endswith(('.', '!', '?', ':'))
+    is_short = len(stripped) < 60
+    has_blank_before = not prev_line.strip()
+    has_blank_after = not next_line.strip()
+    
+    # ALL CAPS = likely heading (level 2 if has blank before, else level 3)
+    if is_all_caps and is_short:
+        if has_blank_before:
+            return (2, stripped.title())
+        # Even without blank before, if it's ALL CAPS and short, likely a heading
+        elif has_blank_after:
+            return (3, stripped.title())
+    
+    # Title case, short, surrounded by blanks = likely heading level 3
+    if is_title_case and is_short and has_blank_before and has_blank_after:
+        # Check if it looks like a sentence (ends with punctuation)
+        if not re.search(r'[.!?]$', stripped):
+            return (3, stripped)
+    
+    return (0, line)
+
+def normalise_heading_hierarchy(lines: List[str]) -> List[str]:
+    """
+    Ensure heading hierarchy is valid:
+    - Single # root heading
+    - Sequential nesting (no skipped levels)
+    """
+    result = []
+    heading_stack = []
+    has_h1 = False
+    
+    for i, line in enumerate(lines):
+        prev_line = lines[i-1] if i > 0 else ""
+        next_line = lines[i+1] if i < len(lines)-1 else ""
+        
+        level, text = detect_heading_from_structure(line, prev_line, next_line)
+        
+        if level > 0:
+            # Ensure we have an H1
+            if not has_h1:
+                if level == 1:
+                    has_h1 = True
+                else:
+                    # Promote first heading to H1
+                    level = 1
+                    has_h1 = True
+            
+            # Ensure sequential nesting
+            if heading_stack:
+                last_level = heading_stack[-1]
+                # Can't skip levels (e.g., H2 -> H4)
+                if level > last_level + 1:
+                    level = last_level + 1
+            
+            # Update stack
+            while heading_stack and heading_stack[-1] >= level:
+                heading_stack.pop()
+            heading_stack.append(level)
+            
+            result.append('#' * level + ' ' + text)
+        else:
+            result.append(line)
+    
+    return result
+
+def align_table_pipes(lines: List[str]) -> List[str]:
+    """
+    Align markdown table pipes for readability.
+    """
+    result = []
+    in_table = False
+    table_lines = []
+    
+    for line in lines:
+        stripped = line.strip()
+        
+        # Detect table rows (contain |)
+        if '|' in stripped and stripped.count('|') >= 2:
+            in_table = True
+            table_lines.append(line)
+        else:
+            # End of table
+            if in_table and table_lines:
+                # Process and align the table
+                result.extend(align_table(table_lines))
+                table_lines = []
+                in_table = False
+            result.append(line)
+    
+    # Handle table at end of file
+    if table_lines:
+        result.extend(align_table(table_lines))
+    
+    return result
+
+def align_table(table_lines: List[str]) -> List[str]:
+    """
+    Align a single table's pipes.
+    """
+    if not table_lines:
+        return []
+    
+    # Parse table cells
+    rows = []
+    for line in table_lines:
+        # Split by | and strip whitespace
+        cells = [cell.strip() for cell in line.split('|')]
+        # Remove empty first/last cells (from leading/trailing |)
+        if cells and not cells[0]:
+            cells = cells[1:]
+        if cells and not cells[-1]:
+            cells = cells[:-1]
+        rows.append(cells)
+    
+    if not rows:
+        return table_lines
+    
+    # Find max width for each column
+    num_cols = max(len(row) for row in rows)
+    col_widths = [0] * num_cols
+    
+    for row in rows:
+        for i, cell in enumerate(row):
+            if i < num_cols:
+                col_widths[i] = max(col_widths[i], len(cell))
+    
+    # Rebuild table with aligned pipes
+    result = []
+    for row in rows:
+        # Pad cells to column width
+        padded = []
+        for i in range(num_cols):
+            cell = row[i] if i < len(row) else ''
+            # Check if this is a separator row (contains only -, :, and spaces)
+            if re.match(r'^[\s:-]+$', cell):
+                # Preserve alignment markers
+                if cell.startswith(':') and cell.endswith(':'):
+                    padded.append(':' + '-' * (col_widths[i] - 2) + ':')
+                elif cell.startswith(':'):
+                    padded.append(':' + '-' * (col_widths[i] - 1))
+                elif cell.endswith(':'):
+                    padded.append('-' * (col_widths[i] - 1) + ':')
+                else:
+                    padded.append('-' * col_widths[i])
+            else:
+                padded.append(cell.ljust(col_widths[i]))
+        
+        result.append('| ' + ' | '.join(padded) + ' |')
+    
+    return result
+
+def main():
+    input_file = sys.argv[1]
+    output_file = sys.argv[2]
+    
+    with open(input_file, 'r', encoding='utf-8') as f:
+        lines = f.read().splitlines()
+    
+    # Step 1: Normalise heading hierarchy
+    lines = normalise_heading_hierarchy(lines)
+    
+    # Step 2: Align table pipes
+    lines = align_table_pipes(lines)
+    
+    # Write output
+    with open(output_file, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(lines))
+        # Ensure file ends with newline
+        if lines and lines[-1]:
+            f.write('\n')
+
+if __name__ == '__main__':
+    main()
+PYEOF
+
+	# Check if processing succeeded
+	if [[ ! -f "${tmp_file}" ]]; then
+		die "Normalisation failed: temp file not created"
+	fi
+
+	# Move temp file to output
+	mv "${tmp_file}" "${output}"
+
+	if [[ -f "${output}" ]]; then
+		local size
+		size=$(ls -lh "${output}" | awk '{print $5}')
+		log_ok "Normalised: ${output} (${size})"
+
+		if [[ "${inplace}" == true ]]; then
+			log_info "File updated in place"
+		fi
+	else
+		die "Normalisation failed: output file not created"
+	fi
+
+	return 0
+}
+
+# ============================================================================
 # Help
 # ============================================================================
 
@@ -3007,6 +3289,7 @@ cmd_help() {
 	printf "  import-emails     Batch import .eml directory or mbox file to markdown\n"
 	printf "  create            Create a document from a template + data\n"
 	printf "  template          Manage document templates (list, draft)\n"
+	printf "  normalise         Fix markdown heading hierarchy and structure\n"
 	printf "  extract-entities  Extract named entities from markdown (t1044.6)\n"
 	printf "  generate-manifest Generate collection manifest (_index.toon) (t1044.9)\n"
 	printf "  install           Install conversion tools (--minimal, --standard, --full, --ocr)\n"
@@ -3025,6 +3308,8 @@ cmd_help() {
 	printf "  %s convert scanned.pdf --to odt --ocr tesseract\n" "${SCRIPT_NAME}"
 	printf "  %s convert screenshot.png --to md --ocr auto\n" "${SCRIPT_NAME}"
 	printf "  %s convert report.pdf --to md --no-normalise\n" "${SCRIPT_NAME}"
+	printf "  %s normalise document.md --output clean.md\n" "${SCRIPT_NAME}"
+	printf "  %s normalise document.md --inplace\n" "${SCRIPT_NAME}"
 	printf "  %s create template.odt --data fields.json -o letter.odt\n" "${SCRIPT_NAME}"
 	printf "  %s template draft --type letter --format odt\n" "${SCRIPT_NAME}"
 	printf "  %s extract-entities email.md --update-frontmatter\n" "${SCRIPT_NAME}"
@@ -3053,8 +3338,8 @@ main() {
 	generate-manifest) cmd_generate_manifest "$@" ;;
 	create) cmd_create "$@" ;;
 	template) cmd_template "$@" ;;
+	normalise | normalize) cmd_normalise "$@" ;;
 	extract-entities) cmd_extract_entities "$@" ;;
-	generate-manifest) cmd_generate_manifest "$@" ;;
 	install) cmd_install "$@" ;;
 	formats) cmd_formats ;;
 	status) cmd_status ;;
