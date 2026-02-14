@@ -639,3 +639,10 @@
   check: file-exists tests/email-signature-test-fixtures/with-address.txt
   check: shellcheck tests/test-email-signature-parser.sh
   check: file-exists tests/test-email-signature-parser.sh
+
+- [x] v079 t1044.6 Entity extraction from email bodies — extract people, o... | PR #1438 | merged:2026-02-14 verified:2026-02-14
+  files: .agents/scripts/document-creation-helper.sh, .agents/scripts/email-to-markdown.py, .agents/scripts/entity-extraction.py
+  check: shellcheck .agents/scripts/document-creation-helper.sh
+  check: file-exists .agents/scripts/document-creation-helper.sh
+  check: file-exists .agents/scripts/email-to-markdown.py
+  check: file-exists .agents/scripts/entity-extraction.py
