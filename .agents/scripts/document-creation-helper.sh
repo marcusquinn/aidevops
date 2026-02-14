@@ -2038,10 +2038,13 @@ build_contacts_index() {
 
 		[[ -z "$email" ]] && continue
 
-		# Count how many emails reference this contact's email address
+		# Count how many .md files reference this contact's email address
+		# Uses -E for extended regex (portable across macOS/Linux)
 		local email_count=0
 		if [[ -n "$email" ]]; then
-			email_count=$(grep -rl "from:.*${email}\|to:.*${email}\|cc:.*${email}" "$collection_dir"/*.md 2>/dev/null | wc -l | tr -d ' ') || email_count=0
+			email_count=$(find "$collection_dir" -maxdepth 1 -name "*.md" -type f -print0 2>/dev/null |
+				xargs -0 grep -lE "(from|to|cc|bcc):.*${email}" 2>/dev/null |
+				wc -l | tr -d ' ') || email_count=0
 		fi
 
 		contact_count=$((contact_count + 1))
@@ -2138,11 +2141,11 @@ cmd_generate_manifest() {
 	# Write manifest
 	printf '%s' "$manifest" >"$output_file"
 
-	# Report stats
+	# Report stats (use sed for macOS compatibility — no grep -P)
 	local doc_count thread_count contact_count
-	doc_count=$(grep -oP 'documents\[\K[0-9]+' "$output_file" 2>/dev/null || echo "0")
-	thread_count=$(grep -oP 'threads\[\K[0-9]+' "$output_file" 2>/dev/null || echo "0")
-	contact_count=$(grep -oP 'contacts\[\K[0-9]+' "$output_file" 2>/dev/null || echo "0")
+	doc_count=$(sed -n 's/^documents\[\([0-9]*\)\].*/\1/p' "$output_file" 2>/dev/null || echo "0")
+	thread_count=$(sed -n 's/^threads\[\([0-9]*\)\].*/\1/p' "$output_file" 2>/dev/null || echo "0")
+	contact_count=$(sed -n 's/^contacts\[\([0-9]*\)\].*/\1/p' "$output_file" 2>/dev/null || echo "0")
 
 	log_ok "Manifest generated: ${output_file}"
 	log_info "  Documents: ${doc_count}"
