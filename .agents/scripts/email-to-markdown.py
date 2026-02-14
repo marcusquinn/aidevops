@@ -3,14 +3,24 @@
 email-to-markdown.py - Convert .eml/.msg files to markdown with attachment extraction
 Part of aidevops framework: https://aidevops.sh
 
-Usage: email-to-markdown.py <input-file> [--output <file>] [--attachments-dir <dir>]
+Usage: 
+  Single file:  email-to-markdown.py <input-file> [--output <file>] [--attachments-dir <dir>]
+  Batch mode:   email-to-markdown.py <directory> --batch [--threads-index]
 
 Output format: YAML frontmatter with visible headers (from, to, cc, bcc, date_sent,
 date_received, subject, size, message_id, in_reply_to, attachment_count, attachments),
+thread reconstruction fields (thread_id, thread_position, thread_length),
 markdown.new convention fields (title, description), and tokens_estimate for LLM context.
 
 Auto-summary (t1052.7): With --auto-summary, the description field uses intelligent
 summarisation — heuristic extraction for short emails, LLM via Ollama for long ones.
+
+Thread reconstruction:
+- Parses message_id and in_reply_to headers to build conversation threads
+- thread_id: message-id of the root message (first in thread)
+- thread_position: 1-based position in thread (1 = root)
+- thread_length: total number of messages in thread
+- --threads-index: generates JSON index files per thread in threads/ directory
 """
 
 import sys
