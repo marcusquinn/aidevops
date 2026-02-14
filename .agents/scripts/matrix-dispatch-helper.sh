@@ -6,7 +6,7 @@
 # prompts dispatched to the runner, with responses posted back.
 #
 # Usage:
-#   matrix-dispatch-helper.sh setup                    # Interactive setup wizard
+#   matrix-dispatch-helper.sh setup [--dry-run]        # Interactive setup wizard
 #   matrix-dispatch-helper.sh start [--daemon]         # Start the bot
 #   matrix-dispatch-helper.sh stop                     # Stop the bot
 #   matrix-dispatch-helper.sh status                   # Show bot status
@@ -160,10 +160,19 @@ check_opencode_server() {
 # Interactive setup wizard
 #######################################
 cmd_setup() {
+	local dry_run=false
+	if [[ "${1:-}" == "--dry-run" ]]; then
+		dry_run=true
+		shift
+	fi
+
 	check_deps || return 1
 	ensure_dirs
 
 	echo -e "${BOLD}Matrix Bot Setup${NC}"
+	if [[ "$dry_run" == "true" ]]; then
+		echo -e "${YELLOW}[DRY RUN MODE - No changes will be saved]${NC}"
+	fi
 	echo "──────────────────────────────────"
 	echo ""
 	echo "This wizard configures a Matrix bot that dispatches messages to AI runners."
@@ -275,31 +284,56 @@ cmd_setup() {
 	fi
 
 	# Save config
-	local temp_file
-	temp_file=$(mktemp)
-	_save_cleanup_scope
-	trap '_run_cleanups' RETURN
-	push_cleanup "rm -f '${temp_file}'"
-	jq -n \
-		--arg homeserverUrl "$homeserver" \
-		--arg accessToken "$access_token" \
-		--arg allowedUsers "$allowed_users" \
-		--arg defaultRunner "$default_runner" \
-		--argjson sessionIdleTimeout "$idle_timeout" \
-		'{
-            homeserverUrl: $homeserverUrl,
-            accessToken: $accessToken,
-            allowedUsers: $allowedUsers,
-            defaultRunner: $defaultRunner,
-            roomMappings: (input.roomMappings // {}),
-            botPrefix: "!ai",
-            ignoreOwnMessages: true,
-            maxPromptLength: 4000,
-            responseTimeout: 600,
-            sessionIdleTimeout: $sessionIdleTimeout
-        }' --jsonargs < <(if [[ -f "$CONFIG_FILE" ]]; then cat "$CONFIG_FILE"; else echo '{}'; fi) >"$temp_file"
-	mv "$temp_file" "$CONFIG_FILE"
-	chmod 600 "$CONFIG_FILE"
+	if [[ "$dry_run" == "true" ]]; then
+		log_info "Dry-run: Would save configuration to $CONFIG_FILE"
+		echo ""
+		echo "Configuration preview:"
+		jq -n \
+			--arg homeserverUrl "$homeserver" \
+			--arg accessToken "****${access_token: -8}" \
+			--arg allowedUsers "$allowed_users" \
+			--arg defaultRunner "$default_runner" \
+			--argjson sessionIdleTimeout "$idle_timeout" \
+			'{
+				homeserverUrl: $homeserverUrl,
+				accessToken: $accessToken,
+				allowedUsers: $allowedUsers,
+				defaultRunner: $defaultRunner,
+				roomMappings: {},
+				botPrefix: "!ai",
+				ignoreOwnMessages: true,
+				maxPromptLength: 4000,
+				responseTimeout: 600,
+				sessionIdleTimeout: $sessionIdleTimeout
+			}'
+		echo ""
+	else
+		local temp_file
+		temp_file=$(mktemp)
+		_save_cleanup_scope
+		trap '_run_cleanups' RETURN
+		push_cleanup "rm -f '${temp_file}'"
+		jq -n \
+			--arg homeserverUrl "$homeserver" \
+			--arg accessToken "$access_token" \
+			--arg allowedUsers "$allowed_users" \
+			--arg defaultRunner "$default_runner" \
+			--argjson sessionIdleTimeout "$idle_timeout" \
+			'{
+				homeserverUrl: $homeserverUrl,
+				accessToken: $accessToken,
+				allowedUsers: $allowedUsers,
+				defaultRunner: $defaultRunner,
+				roomMappings: (input.roomMappings // {}),
+				botPrefix: "!ai",
+				ignoreOwnMessages: true,
+				maxPromptLength: 4000,
+				responseTimeout: 600,
+				sessionIdleTimeout: $sessionIdleTimeout
+			}' --jsonargs < <(if [[ -f "$CONFIG_FILE" ]]; then cat "$CONFIG_FILE"; else echo '{}'; fi) >"$temp_file"
+		mv "$temp_file" "$CONFIG_FILE"
+		chmod 600 "$CONFIG_FILE"
+	fi
 
 	# Install matrix-bot-sdk and better-sqlite3 if needed
 	local needs_install=false
@@ -311,31 +345,46 @@ cmd_setup() {
 	fi
 
 	if [[ "$needs_install" == "true" ]]; then
-		log_info "Installing dependencies (matrix-bot-sdk, better-sqlite3)..."
-		npm install --prefix "$DATA_DIR" matrix-bot-sdk better-sqlite3 2>/dev/null || {
-			log_error "Failed to install dependencies"
-			echo "Install manually: npm install --prefix $DATA_DIR matrix-bot-sdk better-sqlite3"
-			return 1
-		}
-		log_success "Dependencies installed"
+		if [[ "$dry_run" == "true" ]]; then
+			log_info "Dry-run: Would install dependencies (matrix-bot-sdk, better-sqlite3)"
+		else
+			log_info "Installing dependencies (matrix-bot-sdk, better-sqlite3)..."
+			npm install --prefix "$DATA_DIR" matrix-bot-sdk better-sqlite3 2>/dev/null || {
+				log_error "Failed to install dependencies"
+				echo "Install manually: npm install --prefix $DATA_DIR matrix-bot-sdk better-sqlite3"
+				return 1
+			}
+			log_success "Dependencies installed"
+		fi
 	fi
 
 	# Generate session store and bot scripts
-	generate_session_store_script
-	generate_bot_script
+	if [[ "$dry_run" == "true" ]]; then
+		log_info "Dry-run: Would generate session store and bot scripts"
+	else
+		generate_session_store_script
+		generate_bot_script
+	fi
 
 	echo ""
-	log_success "Setup complete!"
-	echo ""
-	echo "Next steps:"
-	echo "  1. Map rooms to runners:"
-	echo "     matrix-dispatch-helper.sh map '!roomid:server' my-runner"
-	echo ""
-	echo "  2. Start the bot:"
-	echo "     matrix-dispatch-helper.sh start"
-	echo ""
-	echo "  3. In a mapped Matrix room, type:"
-	echo "     !ai Review the auth module for security issues"
+	if [[ "$dry_run" == "true" ]]; then
+		log_success "Dry-run complete! No changes were made."
+		echo ""
+		echo "To apply these settings, run:"
+		echo "  matrix-dispatch-helper.sh setup"
+	else
+		log_success "Setup complete!"
+		echo ""
+		echo "Next steps:"
+		echo "  1. Map rooms to runners:"
+		echo "     matrix-dispatch-helper.sh map '!roomid:server' my-runner"
+		echo ""
+		echo "  2. Start the bot:"
+		echo "     matrix-dispatch-helper.sh start"
+		echo ""
+		echo "  3. In a mapped Matrix room, type:"
+		echo "     !ai Review the auth module for security issues"
+	fi
 
 	return 0
 }
@@ -2245,7 +2294,7 @@ USAGE:
     matrix-dispatch-helper.sh <command> [options]
 
 COMMANDS:
-    setup                       Interactive setup wizard
+    setup [--dry-run]           Interactive setup wizard (--dry-run to preview without saving)
     auto-setup <server> [opts]  Full automated provisioning (Cloudron + Synapse)
     start [--daemon]            Start the bot (foreground or daemon)
     stop                        Stop the bot (compacts all active sessions first)
