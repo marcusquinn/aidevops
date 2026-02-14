@@ -625,3 +625,17 @@
   check: file-exists .agents/scripts/email-to-markdown.py
   check: file-exists .agents/tools/document/document-creation.md
   check: rg "document-creation" .agents/subagent-index.toon
+
+- [x] v078 t1044.3 Email signature parsing to contact TOON records — detec... | PR #1424 | merged:2026-02-14 verified:2026-02-14
+  files: .agents/scripts/email-signature-parser-helper.sh, tests/email-signature-test-fixtures/best-regards.txt, tests/email-signature-test-fixtures/company-keywords.txt, tests/email-signature-test-fixtures/minimal.txt, tests/email-signature-test-fixtures/multiple-emails.txt, tests/email-signature-test-fixtures/no-signature.txt, tests/email-signature-test-fixtures/standard-business.txt, tests/email-signature-test-fixtures/with-address.txt, tests/test-email-signature-parser.sh
+  check: shellcheck .agents/scripts/email-signature-parser-helper.sh
+  check: file-exists .agents/scripts/email-signature-parser-helper.sh
+  check: file-exists tests/email-signature-test-fixtures/best-regards.txt
+  check: file-exists tests/email-signature-test-fixtures/company-keywords.txt
+  check: file-exists tests/email-signature-test-fixtures/minimal.txt
+  check: file-exists tests/email-signature-test-fixtures/multiple-emails.txt
+  check: file-exists tests/email-signature-test-fixtures/no-signature.txt
+  check: file-exists tests/email-signature-test-fixtures/standard-business.txt
+  check: file-exists tests/email-signature-test-fixtures/with-address.txt
+  check: shellcheck tests/test-email-signature-parser.sh
+  check: file-exists tests/test-email-signature-parser.sh
