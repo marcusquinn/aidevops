@@ -1721,6 +1721,70 @@ PYEOF
 }
 
 # ============================================================================
+# Entity extraction (t1044.6)
+# ============================================================================
+
+cmd_extract_entities() {
+	local input=""
+	local method="auto"
+	local update_frontmatter=false
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--method)
+			method="${2:-auto}"
+			shift 2
+			;;
+		--update-frontmatter)
+			update_frontmatter=true
+			shift
+			;;
+		-*)
+			die "Unknown option: $1"
+			;;
+		*)
+			input="$1"
+			shift
+			;;
+		esac
+	done
+
+	if [[ -z "$input" ]]; then
+		die "Usage: ${SCRIPT_NAME} extract-entities <markdown-file> [--method auto|spacy|ollama|regex] [--update-frontmatter]"
+	fi
+
+	if [[ ! -f "$input" ]]; then
+		die "File not found: ${input}"
+	fi
+
+	local script_dir
+	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	local extractor="${script_dir}/entity-extraction.py"
+
+	if [[ ! -f "$extractor" ]]; then
+		die "Entity extraction script not found: ${extractor}"
+	fi
+
+	# Determine Python interpreter (prefer venv)
+	local python_cmd="python3"
+	if activate_venv 2>/dev/null; then
+		python_cmd="python3"
+	fi
+
+	local args=("$input" "--method" "$method")
+	if [[ "$update_frontmatter" == true ]]; then
+		args+=("--update-frontmatter")
+	else
+		args+=("--json")
+	fi
+
+	log_info "Extracting entities from: ${input} (method: ${method})"
+	"$python_cmd" "$extractor" "${args[@]}"
+
+	return $?
+}
+
+# ============================================================================
 # Help
 # ============================================================================
 
@@ -1728,13 +1792,14 @@ cmd_help() {
 	printf "${BOLD}%s${NC} - Document format conversion and creation\n\n" "${SCRIPT_NAME}"
 	printf "Usage: %s <command> [options]\n\n" "${SCRIPT_NAME}"
 	printf "${BOLD}Commands:${NC}\n"
-	printf "  convert    Convert between document formats\n"
-	printf "  create     Create a document from a template + data\n"
-	printf "  template   Manage document templates (list, draft)\n"
-	printf "  install    Install conversion tools (--minimal, --standard, --full, --ocr)\n"
-	printf "  formats    Show supported format conversions\n"
-	printf "  status     Show installed tools and availability\n"
-	printf "  help       Show this help\n"
+	printf "  convert           Convert between document formats\n"
+	printf "  create            Create a document from a template + data\n"
+	printf "  template          Manage document templates (list, draft)\n"
+	printf "  extract-entities  Extract named entities from markdown (t1044.6)\n"
+	printf "  install           Install conversion tools (--minimal, --standard, --full, --ocr)\n"
+	printf "  formats           Show supported format conversions\n"
+	printf "  status            Show installed tools and availability\n"
+	printf "  help              Show this help\n"
 	printf "\n${BOLD}Examples:${NC}\n"
 	printf "  %s convert report.pdf --to odt\n" "${SCRIPT_NAME}"
 	printf "  %s convert letter.odt --to pdf\n" "${SCRIPT_NAME}"
@@ -1743,6 +1808,8 @@ cmd_help() {
 	printf "  %s convert screenshot.png --to md --ocr auto\n" "${SCRIPT_NAME}"
 	printf "  %s create template.odt --data fields.json -o letter.odt\n" "${SCRIPT_NAME}"
 	printf "  %s template draft --type letter --format odt\n" "${SCRIPT_NAME}"
+	printf "  %s extract-entities email.md --update-frontmatter\n" "${SCRIPT_NAME}"
+	printf "  %s extract-entities email.md --method spacy --json\n" "${SCRIPT_NAME}"
 	printf "  %s install --standard\n" "${SCRIPT_NAME}"
 	printf "  %s install --ocr\n" "${SCRIPT_NAME}"
 	printf "\nSee: tools/document/document-creation.md for full documentation.\n"
@@ -1762,6 +1829,7 @@ main() {
 	convert) cmd_convert "$@" ;;
 	create) cmd_create "$@" ;;
 	template) cmd_template "$@" ;;
+	extract-entities) cmd_extract_entities "$@" ;;
 	install) cmd_install "$@" ;;
 	formats) cmd_formats ;;
 	status) cmd_status ;;
