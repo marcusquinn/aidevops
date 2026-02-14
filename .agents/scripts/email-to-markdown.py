@@ -8,6 +8,9 @@ Usage: email-to-markdown.py <input-file> [--output <file>] [--attachments-dir <d
 Output format: YAML frontmatter with visible headers (from, to, cc, bcc, date_sent,
 date_received, subject, size, message_id, in_reply_to, attachment_count, attachments),
 markdown.new convention fields (title, description), and tokens_estimate for LLM context.
+
+Auto-summary (t1052.7): With --auto-summary, the description field uses intelligent
+summarisation — heuristic extraction for short emails, LLM via Ollama for long ones.
 """
 
 import sys
@@ -280,15 +283,46 @@ def run_entity_extraction(body, method='auto'):
         return {}
 
 
+def run_auto_summary(body, method='auto'):
+    """Run auto-summary generation on email body text.
+
+    Imports email-summary.py from the same directory and runs summarisation.
+    Returns a 1-2 sentence summary string, or empty string on failure.
+    Falls back to make_description() if the summary module is unavailable.
+    """
+    if not body or not body.strip():
+        return ""
+
+    try:
+        script_dir = Path(__file__).parent
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "email_summary",
+            script_dir / "email-summary.py"
+        )
+        if spec is None or spec.loader is None:
+            return make_description(body)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        summary = mod.generate_summary(body, method=method)
+        return summary if summary else make_description(body)
+    except Exception as e:
+        print(f"WARNING: Auto-summary failed: {e}", file=sys.stderr)
+        return make_description(body)
+
+
 def email_to_markdown(input_file, output_file=None, attachments_dir=None,
-                      extract_entities=False, entity_method='auto'):
+                      extract_entities=False, entity_method='auto',
+                      auto_summary=False, summary_method='auto'):
     """Convert email file to markdown with YAML frontmatter and attachment extraction.
 
     Output includes:
     - YAML frontmatter with visible email headers (from, to, cc, bcc, date_sent,
       date_received, subject, size, message_id, in_reply_to, attachment_count,
       attachments list)
-    - markdown.new convention fields (title = subject, description = first 160 chars)
+    - markdown.new convention fields (title = subject, description)
+    - description: auto-summary (1-2 sentences) when auto_summary=True,
+      otherwise first 160 chars of body
     - tokens_estimate for LLM context budgeting
     - entities (when extract_entities=True): people, organisations, properties,
       locations, dates extracted via spaCy/Ollama/regex
@@ -350,7 +384,10 @@ def email_to_markdown(input_file, output_file=None, attachments_dir=None,
         })
 
     # markdown.new convention fields
-    description = make_description(body)
+    if auto_summary:
+        description = run_auto_summary(body, method=summary_method)
+    else:
+        description = make_description(body)
 
     # Token estimate for the full converted content (body + frontmatter)
     tokens_estimate = estimate_tokens(body)
@@ -412,13 +449,20 @@ def main():
                         help='Extract named entities (people, orgs, locations, dates) into frontmatter')
     parser.add_argument('--entity-method', choices=['auto', 'spacy', 'ollama', 'regex'],
                         default='auto', help='Entity extraction method (default: auto)')
+    parser.add_argument('--auto-summary', action='store_true',
+                        help='Generate intelligent summary for description field '
+                             '(heuristic for short emails, LLM for long ones)')
+    parser.add_argument('--summary-method', choices=['auto', 'heuristic', 'ollama'],
+                        default='auto', help='Summary method (default: auto — word-count decides)')
     
     args = parser.parse_args()
     
     result = email_to_markdown(
         args.input, args.output, args.attachments_dir,
         extract_entities=args.extract_entities,
-        entity_method=args.entity_method
+        entity_method=args.entity_method,
+        auto_summary=args.auto_summary,
+        summary_method=args.summary_method
     )
     
     print(f"Created: {result['markdown']}")
