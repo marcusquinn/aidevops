@@ -21,6 +21,137 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-02-14] Automated Matrix+Cloudron Setup
+
+**Status:** Planning
+**Estimate:** ~4h (ai:3h test:1h)
+**TODO:** t1056
+**Logged:** 2026-02-14
+
+#### Purpose
+
+The Matrix bot integration (t1000) has full session persistence and multi-channel support, but setup requires manual steps across three systems: Cloudron dashboard (install Synapse), Element web client (get access token), and CLI (configure bot). A user with a Cloudron VPS should be able to run a single command to provision the entire stack.
+
+#### Context
+
+**Current state:**
+
+- `matrix-dispatch-helper.sh setup` — interactive wizard, requires homeserver URL and access token already obtained manually
+- `cloudron-helper.sh` — can list servers, list apps, exec commands, check status, but **cannot install apps** via the API
+- Cloudron REST API supports `POST /api/v1/apps/install` with appStoreId, subdomain, domain
+- Synapse Admin API supports user registration, room creation, and invites
+- Matrix Client API supports login (to get access token)
+- All the pieces exist but aren't wired together
+
+**Target state:**
+
+```bash
+# One command provisions everything
+matrix-dispatch-helper.sh auto-setup production
+# → Installs Synapse on Cloudron server "production"
+# → Creates bot user @aibot:matrix.yourdomain.com
+# → Gets access token via Matrix login API
+# → Configures matrix-bot.json
+# → Creates rooms (#dev, #seo, #ops, etc.) per runner mappings
+# → Invites bot to all rooms
+# → Maps rooms to runners
+# → Ready to start: matrix-dispatch-helper.sh start --daemon
+```
+
+#### Design
+
+**Phase 1: Cloudron install-app (t1056.1)**
+
+Add to `cloudron-helper.sh`:
+
+```bash
+# Install an app from the Cloudron App Store
+cloudron-helper.sh install-app <server> <appstore-id> <subdomain>
+# e.g.: cloudron-helper.sh install-app production io.element.synapse matrix
+
+# Wait for app to be ready (polls status)
+cloudron-helper.sh wait-ready <server> <app-id>
+
+# Get app info by subdomain
+cloudron-helper.sh app-info <server> <subdomain>
+
+# Uninstall an app
+cloudron-helper.sh uninstall-app <server> <app-id>
+```
+
+API calls:
+- `POST /api/v1/apps/install` — `{ "appStoreId": "io.element.synapse", "subdomain": "matrix", "domain": "yourdomain.com" }`
+- `GET /api/v1/apps/:id` — poll until `installationState === "installed"` and `runState === "running"`
+- `DELETE /api/v1/apps/:id/uninstall`
+
+**Phase 2: Synapse Admin API helpers (t1056.2)**
+
+Add to `matrix-dispatch-helper.sh`:
+
+```bash
+# These are internal functions, not user-facing commands
+
+# Register bot user (uses Synapse Admin API, requires admin token)
+synapse_create_user <homeserver> <admin_token> <username> <password>
+# PUT /_synapse/admin/v2/users/@username:server
+
+# Login as bot to get access token
+matrix_login <homeserver> <username> <password>
+# POST /_matrix/client/v3/login → returns access_token
+
+# Create a room
+matrix_create_room <homeserver> <access_token> <room_alias> <room_name>
+# POST /_matrix/client/v3/createRoom
+
+# Invite user to room
+matrix_invite <homeserver> <access_token> <room_id> <user_id>
+# POST /_matrix/client/v3/rooms/:roomId/invite
+```
+
+Synapse admin token: obtained from Cloudron app environment variables via `cloudron-helper.sh exec-app <server> <synapse-app-id> 'cat /app/data/homeserver.yaml'` or via the Cloudron API app secrets endpoint.
+
+**Phase 3: auto-setup orchestration (t1056.3)**
+
+```text
+auto-setup <cloudron-server> [--runners "code-reviewer,seo-analyst,ops-monitor"]
+    │
+    ├─ 1. Read cloudron-config.json for server details
+    ├─ 2. Check if Synapse already installed (cloudron-helper.sh apps | grep synapse)
+    │     └─ If yes: skip install, get existing app details
+    │     └─ If no: install-app io.element.synapse matrix → wait-ready
+    ├─ 3. Get Synapse admin token from Cloudron app env
+    ├─ 4. Create bot user via Synapse Admin API
+    ├─ 5. Login as bot → get access token
+    ├─ 6. Store access token via aidevops secret set MATRIX_BOT_TOKEN
+    ├─ 7. Write matrix-bot.json config (non-interactive)
+    ├─ 8. For each runner in --runners:
+    │     ├─ Create room with alias #runner-name:server
+    │     ├─ Invite bot to room
+    │     └─ Map room to runner in config
+    ├─ 9. Generate bot scripts (session-store.mjs + bot.mjs)
+    └─ 10. Print summary and "start with: matrix-dispatch-helper.sh start --daemon"
+```
+
+**Phase 4: Documentation and tests (t1056.4)**
+
+- Update matrix-bot.md: add "Automated Setup" section before manual Cloudron section
+- Update cloudron.md: reference install-app command
+- Add `--dry-run` flag to auto-setup that prints what it would do without executing
+- Test: `matrix-dispatch-helper.sh auto-setup production --dry-run`
+
+#### Decision Log
+
+- **2026-02-14**: Chose to extend existing cloudron-helper.sh rather than create a new script — the install-app capability is generally useful beyond Matrix
+- **2026-02-14**: Synapse admin token retrieval via Cloudron app env rather than requiring manual input — keeps the flow fully automated
+- **2026-02-14**: Store bot credentials via `aidevops secret set` (gopass) rather than plaintext — follows framework security conventions
+
+#### Dependencies
+
+- Requires a configured Cloudron server in `configs/cloudron-config.json`
+- Requires Cloudron API token with app install permissions
+- Requires the Synapse app to be available in the Cloudron App Store (it is: `io.element.synapse`)
+- t1000 (Matrix bot SQLite session store) — completed
+
 ### [2026-02-14] PageIndex-Ready Markdown Normalisation
 
 **Status:** Planning
