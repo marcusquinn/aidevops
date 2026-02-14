@@ -122,6 +122,10 @@ cp configs/cloudron-config.json.txt configs/cloudron-config.json
 # Install new app
 ./.agents/scripts/cloudron-helper.sh install-app production wordpress blog.yourdomain.com
 
+# Install Matrix Synapse (for Matrix bot integration)
+./.agents/scripts/cloudron-helper.sh install-app production matrix synapse.yourdomain.com
+# See services/communications/matrix-bot.md for bot setup after Synapse installation
+
 # Update app
 ./.agents/scripts/cloudron-helper.sh update-app production app-id
 
