@@ -254,12 +254,9 @@ allocate_counter_cas() {
 
 	log_info "Counter at ${current_value}, claiming t${first_id}..t${last_id}, new counter: ${new_counter}"
 
-	# Step 2: Update local .task-counter file
-	echo "$new_counter" >"${repo_path}/${COUNTER_FILE}"
-
-	# Step 3: Commit the counter change
+	# Step 2: Build a commit directly on origin/main using plumbing commands.
+	# This is safe from any branch — we never touch HEAD or the working tree index.
 	cd "$repo_path" || return 1
-	git add "$COUNTER_FILE" 2>/dev/null
 
 	local commit_msg="chore: claim task ID"
 	if [[ "$count" -eq 1 ]]; then
@@ -268,22 +265,45 @@ allocate_counter_cas() {
 		commit_msg="chore: claim t${first_id}..t${last_id}"
 	fi
 
-	if ! git commit -m "$commit_msg" --no-verify 2>/dev/null; then
-		log_warn "Nothing to commit (counter unchanged?)"
+	# Create a blob with the new counter value
+	local blob_sha
+	blob_sha=$(echo "$new_counter" | git hash-object -w --stdin 2>/dev/null) || {
+		log_warn "Failed to create blob"
 		return 1
-	fi
+	}
 
-	# Step 4: Push — this is the atomic gate
-	# If another session pushed between our fetch and now, this fails
-	if ! git push origin HEAD:main 2>/dev/null; then
+	# Read origin/main's tree, replace .task-counter with our new blob
+	local tree_sha
+	tree_sha=$(git ls-tree origin/main | sed "s|[0-9a-f]\{40,64\}	${COUNTER_FILE}$|${blob_sha}	${COUNTER_FILE}|" | git mktree 2>/dev/null) || {
+		log_warn "Failed to create tree"
+		return 1
+	}
+
+	# Create a commit on top of origin/main
+	local parent_sha
+	parent_sha=$(git rev-parse origin/main 2>/dev/null) || {
+		log_warn "Failed to resolve origin/main"
+		return 1
+	}
+
+	local commit_sha
+	commit_sha=$(git commit-tree "$tree_sha" -p "$parent_sha" -m "$commit_msg" 2>/dev/null) || {
+		log_warn "Failed to create commit"
+		return 1
+	}
+
+	# Step 3: Push the exact commit to main — this is the atomic gate.
+	# If another session pushed between our fetch and now, this fails (non-fast-forward).
+	# Safe from any branch: we push a specific SHA, not HEAD.
+	if ! git push origin "${commit_sha}:refs/heads/main" 2>/dev/null; then
 		log_warn "Push failed (conflict — another session claimed an ID)"
-		# Reset our commit so we can retry cleanly
-		git reset --soft HEAD~1 2>/dev/null || true
-		git checkout -- "$COUNTER_FILE" 2>/dev/null || true
-		# Pull the latest so next attempt has fresh state
-		git pull --rebase origin main 2>/dev/null || true
+		# Fetch latest for next retry attempt
+		git fetch origin main 2>/dev/null || true
 		return 2
 	fi
+
+	# Update local ref so subsequent fetches see our commit
+	git fetch origin main 2>/dev/null || true
 
 	# Success — output the claimed IDs
 	echo "$first_id"
@@ -302,9 +322,10 @@ allocate_online() {
 
 		if [[ $attempt -gt 1 ]]; then
 			log_info "Retry attempt ${attempt}/${CAS_MAX_RETRIES}..."
-			# Brief backoff: 0.1s * attempt (max 1s)
+			# Brief backoff: 0.1s * attempt, capped at 1.0s
+			local capped=$((attempt > 10 ? 10 : attempt))
 			local backoff
-			backoff=$(printf "0.%d" "$((attempt > 10 ? 10 : attempt))")
+			backoff=$(awk "BEGIN {printf \"%.1f\", $capped * 0.1}")
 			sleep "$backoff" 2>/dev/null || true
 		fi
 
@@ -457,7 +478,11 @@ main() {
 		if [[ "$DRY_RUN" == "true" ]]; then
 			local current
 			current=$(read_remote_counter "$REPO_PATH" 2>/dev/null || read_local_counter "$REPO_PATH" 2>/dev/null || echo "?")
-			log_info "Would allocate t${current}..t$((current + ALLOC_COUNT - 1)) (counter at ${current})"
+			if [[ "$current" =~ ^[0-9]+$ ]]; then
+				log_info "Would allocate t${current}..t$((current + ALLOC_COUNT - 1)) (counter at ${current})"
+			else
+				log_info "Would allocate task ID (counter unreadable: ${current})"
+			fi
 			echo "task_id=tDRY_RUN"
 			echo "ref=DRY_RUN"
 			return 0
@@ -512,6 +537,8 @@ main() {
 			else
 				log_warn "Issue creation failed (non-fatal — ID t${first_id} is secured)"
 			fi
+		else
+			log_warn "CLI for $platform not found — skipping issue creation"
 		fi
 	fi
 

@@ -61,9 +61,9 @@ info() {
 # =============================================================================
 # Test 1: Parallel claim-task-id.sh — two concurrent calls get different IDs
 # =============================================================================
-test_parallel_claim() {
+test_sequential_offline_claim() {
 	echo ""
-	echo "=== Test 1: Parallel claim-task-id.sh (offline mode) ==="
+	echo "=== Test 1: Sequential claim-task-id.sh (offline mode) ==="
 	info "Two sequential offline calls should get different task IDs (counter increments locally)"
 
 	local test_repo="$TEST_DIR/test-repo-parallel"
@@ -945,7 +945,7 @@ echo "Test environment: $TEST_DIR"
 echo "Script directory: $SCRIPT_DIR"
 echo ""
 
-test_parallel_claim
+test_sequential_offline_claim
 test_offline_fallback
 test_supervisor_dedup_db
 test_supervisor_dedup_todo
