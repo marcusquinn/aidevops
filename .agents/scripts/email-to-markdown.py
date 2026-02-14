@@ -5,7 +5,7 @@ Part of aidevops framework: https://aidevops.sh
 
 Usage:
   Single file:  email-to-markdown.py <input-file> [--output <file>] [--attachments-dir <dir>]
-                [--summarize [auto|ollama|heuristic]]
+                [--summary-mode auto|heuristic|llm|off]
   Batch mode:   email-to-markdown.py <directory> --batch [--threads-index]
 
 Output format: YAML frontmatter with visible headers (from, to, cc, bcc, date_sent,
@@ -13,11 +13,9 @@ date_received, subject, size, message_id, in_reply_to, attachment_count, attachm
 thread reconstruction fields (thread_id, thread_position, thread_length),
 markdown.new convention fields (title, description), and tokens_estimate for LLM context.
 
-Auto-summary (t1053.7): With --summarize (or --auto-summary), the description field uses
-intelligent summarisation — heuristic extraction for short emails, LLM via Ollama for long
-ones. When --summarize is used, the description field contains an auto-generated 1-2 sentence
-summary instead of a simple truncation. Short emails (<100 words) use a heuristic
-summariser; long emails use LLM summarisation via Ollama (with heuristic fallback).
+Summary generation (t1044.7): The description field contains a 1-2 sentence summary.
+Short emails (<=100 words) use sentence extraction heuristic. Long emails use LLM
+summarisation via Ollama (local) or Anthropic API (cloud fallback).
 
 Thread reconstruction:
 - Parses message_id and in_reply_to headers to build conversation threads
@@ -41,6 +39,24 @@ import re
 import json
 from typing import Dict, List, Optional, Tuple
 from collections import defaultdict
+import subprocess
+import urllib.request
+import urllib.error
+
+# Word count threshold: emails with <= this many words use heuristic summary
+SUMMARY_WORD_THRESHOLD = 100
+
+# Ollama API endpoint (local LLM)
+OLLAMA_API_URL = os.environ.get('OLLAMA_API_URL', 'http://localhost:11434/api/generate')
+
+# Ollama model for summarisation
+OLLAMA_MODEL = os.environ.get('OLLAMA_MODEL', 'llama3.2')
+
+# Anthropic API endpoint (cloud fallback)
+ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages'
+
+# Anthropic model for summarisation (cheapest tier)
+ANTHROPIC_MODEL = 'claude-haiku-4-20250414'
 
 
 def parse_eml(file_path):
@@ -318,25 +334,236 @@ def generate_thread_index(thread_map: Dict[str, Dict], output_dir: Path) -> Dict
     return dict(threads)
 
 
-def make_description(body, max_len=160):
-    """Extract first max_len chars of body as description (markdown.new convention).
+def strip_markdown(text):
+    """Strip markdown formatting from text, returning plain text.
 
-    Strips markdown formatting, collapses whitespace, and truncates with
-    ellipsis if the text exceeds max_len.
+    Removes links, images, emphasis, headings, and collapses whitespace.
     """
-    if not body:
+    if not text:
         return ""
-    # Strip markdown links, images, emphasis
-    text = re.sub(r'!\[([^\]]*)\]\([^)]*\)', r'\1', body)  # images
+    text = re.sub(r'!\[([^\]]*)\]\([^)]*\)', r'\1', text)  # images
     text = re.sub(r'\[([^\]]*)\]\([^)]*\)', r'\1', text)    # links
     text = re.sub(r'[*_]{1,3}', '', text)                    # emphasis
     text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)  # headings
     text = re.sub(r'\n+', ' ', text)                          # newlines
     text = re.sub(r'\s+', ' ', text).strip()                  # whitespace
+    return text
+
+
+def make_description(body, max_len=160):
+    """Extract first max_len chars of body as description (markdown.new convention).
+
+    Strips markdown formatting, collapses whitespace, and truncates with
+    ellipsis if the text exceeds max_len. Used as fallback when summary
+    generation is disabled.
+    """
+    text = strip_markdown(body)
+    if not text:
+        return ""
     if len(text) > max_len:
         # Truncate at word boundary
         text = text[:max_len].rsplit(' ', 1)[0] + '...'
     return text
+
+
+def extract_sentences(text, max_sentences=2):
+    """Extract the first N complete sentences from plain text.
+
+    Uses sentence-boundary detection (period/exclamation/question followed
+    by space or end-of-string). Returns up to max_sentences sentences,
+    capped at 200 characters for frontmatter readability.
+    """
+    if not text:
+        return ""
+    # Split on sentence boundaries: .!? followed by space or end
+    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+    # Filter out very short fragments (< 5 chars) that aren't real sentences
+    sentences = [s for s in sentences if len(s.strip()) >= 5]
+    if not sentences:
+        # No sentence boundaries found — truncate at word boundary
+        if len(text) > 200:
+            return text[:200].rsplit(' ', 1)[0] + '...'
+        return text
+    result = ' '.join(sentences[:max_sentences])
+    if len(result) > 200:
+        result = result[:200].rsplit(' ', 1)[0] + '...'
+    return result
+
+
+def _get_anthropic_api_key():
+    """Retrieve Anthropic API key from gopass, credentials file, or environment.
+
+    Returns the key string or None if unavailable. Never prints the key.
+    """
+    # Try gopass first (encrypted)
+    try:
+        result = subprocess.run(
+            ['gopass', 'show', '-o', 'aidevops/anthropic-api-key'],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    # Try credentials file
+    creds_file = Path.home() / '.config' / 'aidevops' / 'credentials.sh'
+    if creds_file.is_file():
+        try:
+            for line in creds_file.read_text().splitlines():
+                if line.startswith('ANTHROPIC_API_KEY='):
+                    key = line.split('=', 1)[1].strip().strip('"').strip("'")
+                    if key:
+                        return key
+        except OSError:
+            pass
+
+    # Try environment variable
+    return os.environ.get('ANTHROPIC_API_KEY')
+
+
+def _summarise_with_ollama(plain_text, subject):
+    """Summarise email body using local Ollama LLM.
+
+    Returns summary string or None if Ollama is unavailable.
+    """
+    prompt = (
+        "Summarise this email in 1-2 sentences. Be concise and factual. "
+        "Return ONLY the summary, no preamble or explanation.\n\n"
+        f"Subject: {subject}\n\n"
+        f"Body:\n{plain_text[:3000]}"  # Cap input to avoid context overflow
+    )
+    payload = json.dumps({
+        'model': OLLAMA_MODEL,
+        'prompt': prompt,
+        'stream': False,
+        'options': {'temperature': 0.3, 'num_predict': 100}
+    }).encode('utf-8')
+
+    req = urllib.request.Request(
+        OLLAMA_API_URL,
+        data=payload,
+        headers={'Content-Type': 'application/json'},
+        method='POST'
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            summary = data.get('response', '').strip()
+            if summary:
+                # Clean up: remove quotes, leading "Summary:", etc.
+                summary = re.sub(r'^(Summary:\s*|"|\')', '', summary)
+                summary = summary.rstrip('"\'')
+                return summary
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError,
+            json.JSONDecodeError, KeyError):
+        pass
+    return None
+
+
+def _summarise_with_anthropic(plain_text, subject):
+    """Summarise email body using Anthropic API (cloud fallback).
+
+    Returns summary string or None if API is unavailable.
+    """
+    api_key = _get_anthropic_api_key()
+    if not api_key:
+        return None
+
+    prompt = (
+        "Summarise this email in 1-2 sentences. Be concise and factual. "
+        "Return ONLY the summary, no preamble or explanation.\n\n"
+        f"Subject: {subject}\n\n"
+        f"Body:\n{plain_text[:3000]}"
+    )
+    payload = json.dumps({
+        'model': ANTHROPIC_MODEL,
+        'max_tokens': 150,
+        'messages': [{'role': 'user', 'content': prompt}]
+    }).encode('utf-8')
+
+    req = urllib.request.Request(
+        ANTHROPIC_API_URL,
+        data=payload,
+        headers={
+            'Content-Type': 'application/json',
+            'x-api-key': api_key,
+            'anthropic-version': '2023-06-01'
+        },
+        method='POST'
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            content = data.get('content', [])
+            if content and isinstance(content, list):
+                summary = content[0].get('text', '').strip()
+                if summary:
+                    return summary
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError,
+            json.JSONDecodeError, KeyError, IndexError):
+        pass
+    return None
+
+
+def generate_summary(body, subject='', summary_mode='auto'):
+    """Generate a 1-2 sentence summary for the email description field.
+
+    Routing logic (summary_mode='auto'):
+    - Empty body: returns empty string
+    - Short emails (<=SUMMARY_WORD_THRESHOLD words): sentence extraction heuristic
+    - Long emails (>SUMMARY_WORD_THRESHOLD words): LLM summarisation
+      (Ollama local first, Anthropic API fallback, heuristic last resort)
+
+    Args:
+        body: Raw email body (may contain markdown formatting)
+        subject: Email subject line (provides context for LLM)
+        summary_mode: 'auto' (default), 'heuristic', 'llm', or 'off'
+
+    Returns:
+        Tuple of (summary_text, method_used) where method_used is one of:
+        'heuristic', 'ollama', 'anthropic', 'truncated', or 'off'
+    """
+    if summary_mode == 'off':
+        return make_description(body), 'off'
+
+    plain_text = strip_markdown(body)
+    if not plain_text:
+        return '', 'heuristic'
+
+    word_count = len(plain_text.split())
+
+    # Force heuristic mode
+    if summary_mode == 'heuristic':
+        return extract_sentences(plain_text), 'heuristic'
+
+    # Force LLM mode
+    if summary_mode == 'llm':
+        summary = _summarise_with_ollama(plain_text, subject)
+        if summary:
+            return summary, 'ollama'
+        summary = _summarise_with_anthropic(plain_text, subject)
+        if summary:
+            return summary, 'anthropic'
+        # LLM unavailable — fall back to heuristic with warning
+        print("WARNING: LLM unavailable, falling back to heuristic summary",
+              file=sys.stderr)
+        return extract_sentences(plain_text), 'heuristic'
+
+    # Auto mode: route based on word count
+    if word_count <= SUMMARY_WORD_THRESHOLD:
+        return extract_sentences(plain_text), 'heuristic'
+
+    # Long email — try LLM summarisation
+    summary = _summarise_with_ollama(plain_text, subject)
+    if summary:
+        return summary, 'ollama'
+    summary = _summarise_with_anthropic(plain_text, subject)
+    if summary:
+        return summary, 'anthropic'
+
+    # No LLM available — fall back to heuristic
+    return extract_sentences(plain_text), 'heuristic'
 
 
 def get_file_size(file_path):
@@ -437,38 +664,9 @@ def run_entity_extraction(body, method='auto'):
         return {}
 
 
-def run_auto_summary(body, method='auto'):
-    """Run auto-summary generation on email body text (t1053.7).
-
-    Imports email-summary.py from the same directory and runs summarisation.
-    Returns a 1-2 sentence summary string, or empty string on failure.
-    Falls back to make_description() if the summary module is unavailable.
-    """
-    if not body or not body.strip():
-        return ""
-
-    try:
-        script_dir = Path(__file__).parent
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "email_summary",
-            script_dir / "email-summary.py"
-        )
-        if spec is None or spec.loader is None:
-            return make_description(body)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        summary = mod.generate_summary(body, method=method)
-        return summary if summary else make_description(body)
-    except Exception as e:
-        print(f"WARNING: Auto-summary failed: {e}", file=sys.stderr)
-        return make_description(body)
-
-
 def email_to_markdown(input_file, output_file=None, attachments_dir=None,
                       extract_entities=False, entity_method='auto',
-                      auto_summary=False, summary_method='auto',
-                      summarize=False, thread_map=None):
+                      summary_mode='auto', thread_map=None):
     """Convert email file to markdown with YAML frontmatter and attachment extraction.
 
     Output includes:
@@ -476,9 +674,8 @@ def email_to_markdown(input_file, output_file=None, attachments_dir=None,
       date_received, subject, size, message_id, in_reply_to, attachment_count,
       attachments list)
     - Thread reconstruction fields (thread_id, thread_position, thread_length)
-    - markdown.new convention fields (title = subject, description)
-    - description: auto-summary (1-2 sentences) when auto_summary=True or
-      summarize=True, otherwise first 160 chars of body
+    - markdown.new convention fields (title = subject, description = auto-summary)
+    - summary_method field indicating how the description was generated
     - tokens_estimate for LLM context budgeting
     - entities (when extract_entities=True): people, organisations, properties,
       locations, dates extracted via spaCy/Ollama/regex
@@ -488,15 +685,10 @@ def email_to_markdown(input_file, output_file=None, attachments_dir=None,
         input_file: Path to .eml or .msg file
         output_file: Optional output path for markdown file
         attachments_dir: Optional directory for extracted attachments
-        auto_summary: Enable auto-summary (legacy flag name)
-        summarize: Enable auto-summary (new flag name, same effect)
-        summary_method: Summary method ('auto', 'heuristic', 'ollama')
+        summary_mode: Summary generation mode ('auto', 'heuristic', 'llm', 'off')
         thread_map: Optional pre-built thread map for thread reconstruction.
                    If None, thread fields will be empty.
     """
-    # Support both flag names
-    use_summary = auto_summary or summarize
-
     input_path = Path(input_file)
 
     # Determine file type
@@ -552,11 +744,8 @@ def email_to_markdown(input_file, output_file=None, attachments_dir=None,
             'size': format_size(att['size']),
         })
 
-    # markdown.new convention fields — auto-summary (t1053.7) or truncation
-    if use_summary:
-        description = run_auto_summary(body, method=summary_method)
-    else:
-        description = make_description(body)
+    # Generate summary for description field (t1044.7)
+    description, summary_method_used = generate_summary(body, subject, summary_mode)
 
     # Token estimate for the full converted content (body + frontmatter)
     tokens_estimate = estimate_tokens(body)
@@ -574,6 +763,7 @@ def email_to_markdown(input_file, output_file=None, attachments_dir=None,
     # markdown.new convention
     metadata['title'] = subject
     metadata['description'] = description
+    metadata['summary_method'] = summary_method_used
     # Email headers
     metadata['from'] = from_addr
     metadata['to'] = to_addr
@@ -630,14 +820,10 @@ def main():
                         help='Extract named entities (people, orgs, locations, dates) into frontmatter')
     parser.add_argument('--entity-method', choices=['auto', 'spacy', 'ollama', 'regex'],
                         default='auto', help='Entity extraction method (default: auto)')
-    parser.add_argument('--auto-summary', action='store_true',
-                        help='Generate intelligent summary for description field '
-                             '(heuristic for short emails, LLM for long ones)')
-    parser.add_argument('--summarize', action='store_true',
-                        help='Generate auto-summary for description field (t1053.7) '
-                             '(alias for --auto-summary)')
-    parser.add_argument('--summary-method', choices=['auto', 'heuristic', 'ollama'],
-                        default='auto', help='Summary method (default: auto — word-count decides)')
+    parser.add_argument('--summary-mode', choices=['auto', 'heuristic', 'llm', 'off'],
+                        default='auto',
+                        help='Summary generation mode: auto (default) routes by word count, '
+                             'heuristic (sentence extraction), llm (force LLM), off (160-char truncation)')
     parser.add_argument('--batch', action='store_true', 
                        help='Process all .eml/.msg files in input directory with thread reconstruction')
     parser.add_argument('--threads-index', action='store_true',
@@ -647,9 +833,6 @@ def main():
     
     input_path = Path(args.input)
 
-    # Support both --auto-summary and --summarize flags
-    use_summary = args.auto_summary or args.summarize
-    
     # Batch processing mode
     if args.batch or input_path.is_dir():
         if not input_path.is_dir():
@@ -671,8 +854,7 @@ def main():
                     output_file=email_file.with_suffix('.md'),
                     extract_entities=args.extract_entities,
                     entity_method=args.entity_method,
-                    auto_summary=use_summary,
-                    summary_method=args.summary_method,
+                    summary_mode=args.summary_mode,
                     thread_map=thread_map
                 )
                 processed += 1
@@ -708,8 +890,7 @@ def main():
             args.input, args.output, args.attachments_dir,
             extract_entities=args.extract_entities,
             entity_method=args.entity_method,
-            auto_summary=use_summary,
-            summary_method=args.summary_method,
+            summary_mode=args.summary_mode,
             thread_map=thread_map
         )
         
