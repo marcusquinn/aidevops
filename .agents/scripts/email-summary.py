@@ -114,7 +114,7 @@ def _extract_first_sentences(text: str, max_sentences: int = 2) -> str:
 
     Skips greeting lines (Hi, Hello, Dear) and empty lines.
     """
-    # Split into lines first to skip greetings
+    # Split into lines first to skip greetings, lists, and signatures
     lines = text.split('\n')
     meaningful_lines = []
     for line in lines:
@@ -125,6 +125,9 @@ def _extract_first_sentences(text: str, max_sentences: int = 2) -> str:
         if re.match(r'^(hi|hello|hey|dear|good\s+(morning|afternoon|evening))\b',
                      stripped, re.IGNORECASE):
             continue
+        # Skip numbered/bulleted list items (detail, not summary)
+        if re.match(r'^(\d+[.)]\s+|[-*+]\s+)', stripped):
+            continue
         # Skip signature indicators
         if re.match(r'^(--|best\s+regards|kind\s+regards|regards|thanks|cheers|sincerely)',
                      stripped, re.IGNORECASE):
@@ -133,8 +136,9 @@ def _extract_first_sentences(text: str, max_sentences: int = 2) -> str:
 
     # Rejoin and split into sentences
     text_block = ' '.join(meaningful_lines)
-    # Split on sentence boundaries (period/exclamation/question followed by space or end)
-    sentences = re.split(r'(?<=[.!?])\s+', text_block)
+    # Split on sentence boundaries: period/exclamation/question followed by space+uppercase
+    # Avoids splitting on numbered lists (1. 2. 3.) and abbreviations (Dr. Mr. etc.)
+    sentences = re.split(r'(?<=[.!?])\s+(?=[A-Z])', text_block)
 
     result_sentences = []
     for sent in sentences:
