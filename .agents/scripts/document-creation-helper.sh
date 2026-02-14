@@ -3093,10 +3093,14 @@ import sys
 import re
 from typing import List, Tuple
 
-def detect_heading_from_structure(line: str, prev_line: str, next_line: str) -> Tuple[int, str]:
+def detect_heading_from_structure(line: str, prev_line: str, next_line: str,
+                                  email_mode: bool = False) -> Tuple[int, str]:
     """
     Detect if a line should be a heading based on structural cues.
     Returns (heading_level, cleaned_text) or (0, line) if not a heading.
+    In email mode, only explicit markdown headings (#) are detected —
+    heuristic detection is skipped since email section detection already
+    inserts proper headings for quoted replies, signatures, and forwards.
     """
     stripped = line.strip()
     
@@ -3108,6 +3112,11 @@ def detect_heading_from_structure(line: str, prev_line: str, next_line: str) -> 
     
     # Empty line
     if not stripped:
+        return (0, line)
+    
+    # In email mode, skip heuristic heading detection — email section
+    # detection (quoted replies, signatures, forwards) already adds headings
+    if email_mode:
         return (0, line)
     
     # Detect heading patterns:
@@ -3137,7 +3146,8 @@ def detect_heading_from_structure(line: str, prev_line: str, next_line: str) -> 
     
     return (0, line)
 
-def normalise_heading_hierarchy(lines: List[str]) -> List[str]:
+def normalise_heading_hierarchy(lines: List[str],
+                                email_mode: bool = False) -> List[str]:
     """
     Ensure heading hierarchy is valid:
     - Single # root heading
@@ -3151,7 +3161,8 @@ def normalise_heading_hierarchy(lines: List[str]) -> List[str]:
         prev_line = lines[i-1] if i > 0 else ""
         next_line = lines[i+1] if i < len(lines)-1 else ""
         
-        level, text = detect_heading_from_structure(line, prev_line, next_line)
+        level, text = detect_heading_from_structure(line, prev_line, next_line,
+                                                    email_mode=email_mode)
         
         if level > 0:
             # Ensure we have an H1
@@ -3400,7 +3411,7 @@ def main():
         lines = detect_email_sections(lines)
 
     # Step 1: Normalise heading hierarchy
-    lines = normalise_heading_hierarchy(lines)
+    lines = normalise_heading_hierarchy(lines, email_mode=email_mode)
 
     # Step 2: Align table pipes
     lines = align_table_pipes(lines)
