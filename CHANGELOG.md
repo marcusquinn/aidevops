@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.114.0] - 2026-02-14
+
+### Added
+
+- integrate normalise with convert pipeline (#1456)
+
 ## [2.113.1] - 2026-02-14
 
 ### Added
