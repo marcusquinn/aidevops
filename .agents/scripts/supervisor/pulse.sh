@@ -637,6 +637,141 @@ cmd_pulse() {
 		done <<<"$blocked_tasks"
 	fi
 
+	# Phase 3.6: Escalate rebase-blocked PRs to opus worker (t1050)
+	# When auto-rebase fails max_retry_cycles times, dispatch an opus worker to
+	# manually rebase, resolve conflicts, and merge the PR. Only ONE escalation
+	# runs at a time (sequential) so each subsequent rebase has a clean base.
+	local escalation_lock="${SUPERVISOR_DIR}/rebase-escalation.lock"
+	local escalation_cooldown=300 # 5 minutes between escalations
+
+	# Check if an escalation is already running or recently completed
+	local should_escalate=true
+	if [[ -f "$escalation_lock" ]]; then
+		local lock_age
+		lock_age=$(($(date +%s) - $(stat -f %m "$escalation_lock" 2>/dev/null || stat -c %Y "$escalation_lock" 2>/dev/null || echo "0")))
+		if [[ "$lock_age" -lt "$escalation_cooldown" ]]; then
+			should_escalate=false
+			log_verbose "  Phase 3.6: escalation cooldown (${lock_age}s/${escalation_cooldown}s)"
+		else
+			# Stale lock — remove it
+			rm -f "$escalation_lock" 2>/dev/null || true
+		fi
+	fi
+
+	if [[ "$should_escalate" == "true" ]]; then
+		# Find ONE task that has exhausted auto-rebase retries
+		local escalation_candidate
+		escalation_candidate=$(db "$SUPERVISOR_DB" "
+			SELECT t.id, t.repo, t.pr_url, t.branch, t.rebase_attempts
+			FROM tasks t
+			WHERE t.status = 'blocked'
+			  AND t.error LIKE '%Merge conflict%auto-rebase failed%'
+			  AND t.rebase_attempts >= $max_retry_cycles
+			  AND t.pr_url IS NOT NULL AND t.pr_url != '' AND t.pr_url != 'no_pr'
+			ORDER BY t.rebase_attempts ASC, t.id ASC
+			LIMIT 1;
+		" 2>/dev/null || echo "")
+
+		if [[ -n "$escalation_candidate" ]]; then
+			local esc_id esc_repo esc_pr esc_branch esc_attempts
+			IFS='|' read -r esc_id esc_repo esc_pr esc_branch esc_attempts <<<"$escalation_candidate"
+
+			if [[ -n "$esc_id" ]]; then
+				log_info "  Phase 3.6: escalating $esc_id to opus worker (rebase_attempts=$esc_attempts, pr=$esc_pr)"
+
+				# Create lock file
+				date +%s >"$escalation_lock" 2>/dev/null || true
+
+				# Resolve AI CLI
+				local esc_ai_cli
+				esc_ai_cli=$(resolve_ai_cli 2>/dev/null || echo "")
+				if [[ -z "$esc_ai_cli" ]]; then
+					log_warn "  Phase 3.6: no AI CLI available for escalation"
+					rm -f "$escalation_lock" 2>/dev/null || true
+				else
+					# Find the worktree path
+					local esc_worktree=""
+					local esc_wt_row
+					esc_wt_row=$(db "$SUPERVISOR_DB" "SELECT worktree FROM tasks WHERE id = '$(sql_escape "$esc_id")';" 2>/dev/null || echo "")
+					if [[ -n "$esc_wt_row" && -d "$esc_wt_row" ]]; then
+						esc_worktree="$esc_wt_row"
+					fi
+
+					# Build the escalation prompt
+					local esc_prompt="You are resolving a merge conflict that automated tools could not handle.
+
+TASK: $esc_id
+BRANCH: $esc_branch
+PR: $esc_pr
+REPO: $esc_repo
+WORKTREE: ${esc_worktree:-$esc_repo}
+
+STEPS:
+1. cd to the worktree (or repo if no worktree)
+2. Run: git fetch origin main
+3. Abort any in-progress rebase: git rebase --abort (ignore errors)
+4. Clean any dirty state: git stash push -m 'pre-escalation' (ignore errors)
+5. Run: git rebase origin/main
+6. If conflicts occur, resolve ALL of them:
+   - Read each conflicting file
+   - Understand both sides' intent
+   - Merge intelligently (keep both sides' changes where possible)
+   - Remove ALL conflict markers
+   - git add each resolved file
+   - git rebase --continue
+   - Repeat for each commit in the rebase
+7. After rebase completes: git push --force-with-lease origin $esc_branch
+8. Verify the PR is no longer in conflict: gh pr view $esc_pr --json mergeStateStatus
+9. If CI passes, merge: gh pr merge $esc_pr --squash
+10. Output ONLY: 'ESCALATION_MERGED: $esc_id' if merged, 'ESCALATION_REBASED: $esc_id' if rebased but not merged, or 'ESCALATION_FAILED: reason' if failed
+
+RULES:
+- Do NOT modify the intent of any code — only resolve conflicts
+- Prefer the feature branch for new functionality, main for structural changes
+- If a file has been deleted on main but modified on the branch, keep the branch version
+- Do NOT create new commits beyond what the rebase produces"
+
+					# Resolve model — use opus for complex conflict resolution
+					local esc_model
+					esc_model=$(resolve_model "opus" "$esc_ai_cli" 2>/dev/null || echo "")
+
+					# Dispatch the worker
+					local esc_log_dir="${SUPERVISOR_DIR}/logs"
+					mkdir -p "$esc_log_dir" 2>/dev/null || true
+					local esc_log_file
+					esc_log_file="${esc_log_dir}/escalation-${esc_id}-$(date +%Y%m%d-%H%M%S).log"
+
+					local esc_workdir="${esc_worktree:-$esc_repo}"
+					if [[ "$esc_ai_cli" == "opencode" ]]; then
+						(cd "$esc_workdir" && $esc_ai_cli run \
+							${esc_model:+--model "$esc_model"} \
+							--format json \
+							--title "escalation-rebase-${esc_id}" \
+							"$esc_prompt" \
+							>"$esc_log_file" 2>&1) &
+						local esc_pid=$!
+					else
+						(cd "$esc_workdir" && $esc_ai_cli -p "$esc_prompt" \
+							${esc_model:+--model "$esc_model"} \
+							>"$esc_log_file" 2>&1) &
+						local esc_pid=$!
+					fi
+
+					# Record the escalation in the DB
+					db "$SUPERVISOR_DB" "UPDATE tasks SET
+						status = 'running',
+						error = 'Escalation: opus rebase worker (PID $esc_pid)',
+						worker_pid = $esc_pid,
+						updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+					WHERE id = '$(sql_escape "$esc_id")';" 2>/dev/null || true
+
+					log_success "  Phase 3.6: dispatched opus worker PID $esc_pid for $esc_id"
+					send_task_notification "$esc_id" "escalated" "Opus rebase worker dispatched (PID $esc_pid)" 2>>"$SUPERVISOR_LOG" || true
+				fi
+			fi
+		fi
+	fi
+
 	# Phase 4: Worker health checks - detect dead, hung, and orphaned workers
 	local worker_timeout_seconds="${SUPERVISOR_WORKER_TIMEOUT:-3600}" # 1 hour default (t314: restored after merge overwrite)
 	# Absolute max runtime: kill workers regardless of log activity.
