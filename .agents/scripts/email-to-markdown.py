@@ -222,8 +222,8 @@ def parse_date_safe(date_str):
 def build_frontmatter(metadata):
     """Build YAML frontmatter string from metadata dict.
 
-    Handles scalar values, lists of dicts (attachments), and proper
-    YAML escaping for all string values.
+    Handles scalar values, lists of dicts (attachments), nested dicts
+    of lists (entities), and proper YAML escaping for all string values.
     """
     lines = ['---']
     for key, value in metadata.items():
@@ -235,6 +235,16 @@ def build_frontmatter(metadata):
                 for att in value:
                     lines.append(f'  - filename: {yaml_escape(att["filename"])}')
                     lines.append(f'    size: {yaml_escape(att["size"])}')
+        elif key == 'entities' and isinstance(value, dict):
+            if not value:
+                lines.append(f'{key}: {{}}')
+            else:
+                lines.append(f'{key}:')
+                for entity_type, entity_list in value.items():
+                    if entity_list:
+                        lines.append(f'  {entity_type}:')
+                        for entity in entity_list:
+                            lines.append(f'    - {yaml_escape(entity)}')
         elif isinstance(value, (int, float)):
             lines.append(f'{key}: {value}')
         else:
@@ -243,7 +253,35 @@ def build_frontmatter(metadata):
     return '\n'.join(lines)
 
 
-def email_to_markdown(input_file, output_file=None, attachments_dir=None):
+def run_entity_extraction(body, method='auto'):
+    """Run entity extraction on email body text.
+
+    Imports entity-extraction.py from the same directory and runs extraction.
+    Returns dict of entities grouped by type, or empty dict on failure.
+    """
+    if not body or not body.strip():
+        return {}
+
+    try:
+        script_dir = Path(__file__).parent
+        # Import entity-extraction module dynamically (filename has hyphens)
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "entity_extraction",
+            script_dir / "entity-extraction.py"
+        )
+        if spec is None or spec.loader is None:
+            return {}
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.extract_entities(body, method=method)
+    except Exception as e:
+        print(f"WARNING: Entity extraction failed: {e}", file=sys.stderr)
+        return {}
+
+
+def email_to_markdown(input_file, output_file=None, attachments_dir=None,
+                      extract_entities=False, entity_method='auto'):
     """Convert email file to markdown with YAML frontmatter and attachment extraction.
 
     Output includes:
@@ -252,6 +290,8 @@ def email_to_markdown(input_file, output_file=None, attachments_dir=None):
       attachments list)
     - markdown.new convention fields (title = subject, description = first 160 chars)
     - tokens_estimate for LLM context budgeting
+    - entities (when extract_entities=True): people, organisations, properties,
+      locations, dates extracted via spaCy/Ollama/regex
     - Body as markdown content
     """
     input_path = Path(input_file)
@@ -340,6 +380,12 @@ def email_to_markdown(input_file, output_file=None, attachments_dir=None):
     metadata['attachments'] = attachment_meta
     metadata['tokens_estimate'] = tokens_estimate
 
+    # Entity extraction (t1044.6)
+    if extract_entities:
+        entities = run_entity_extraction(body, method=entity_method)
+        if entities:
+            metadata['entities'] = entities
+
     # Build markdown with YAML frontmatter
     frontmatter = build_frontmatter(metadata)
     md_content = f"{frontmatter}\n\n{body}"
@@ -362,10 +408,18 @@ def main():
     parser.add_argument('input', help='Input email file (.eml or .msg)')
     parser.add_argument('--output', '-o', help='Output markdown file (default: input.md)')
     parser.add_argument('--attachments-dir', help='Directory for attachments (default: input_attachments/)')
+    parser.add_argument('--extract-entities', action='store_true',
+                        help='Extract named entities (people, orgs, locations, dates) into frontmatter')
+    parser.add_argument('--entity-method', choices=['auto', 'spacy', 'ollama', 'regex'],
+                        default='auto', help='Entity extraction method (default: auto)')
     
     args = parser.parse_args()
     
-    result = email_to_markdown(args.input, args.output, args.attachments_dir)
+    result = email_to_markdown(
+        args.input, args.output, args.attachments_dir,
+        extract_entities=args.extract_entities,
+        entity_method=args.entity_method
+    )
     
     print(f"Created: {result['markdown']}")
     if result['attachments']:
