@@ -610,3 +610,18 @@
   files: .agents/scripts/code-audit-helper.sh
   check: shellcheck .agents/scripts/code-audit-helper.sh
   check: file-exists .agents/scripts/code-audit-helper.sh
+
+- [!] v076 t1043 Add Reader-LM and RolmOCR as conversion providers in docu... | PR #1411 | merged:2026-02-13 failed:2026-02-13 reason:rg: "document-creation" not found in .agents/subagent-index.toon
+  files: .agents/scripts/document-creation-helper.sh, .agents/tools/document/document-creation.md
+  check: shellcheck .agents/scripts/document-creation-helper.sh
+  check: file-exists .agents/scripts/document-creation-helper.sh
+  check: file-exists .agents/tools/document/document-creation.md
+  check: rg "document-creation" .agents/subagent-index.toon
+
+- [!] v077 t1044.2 Visible headers as YAML frontmatter — from, to, cc, bcc... | PR #1421 | merged:2026-02-14 failed:2026-02-14 reason:rg: "document-creation" not found in .agents/subagent-index.toon
+  files: .agents/scripts/document-creation-helper.sh, .agents/scripts/email-to-markdown.py, .agents/tools/document/document-creation.md
+  check: shellcheck .agents/scripts/document-creation-helper.sh
+  check: file-exists .agents/scripts/document-creation-helper.sh
+  check: file-exists .agents/scripts/email-to-markdown.py
+  check: file-exists .agents/tools/document/document-creation.md
+  check: rg "document-creation" .agents/subagent-index.toon
