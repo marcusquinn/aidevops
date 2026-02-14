@@ -1126,6 +1126,7 @@ cmd_convert() {
 	local template=""
 	local extra_args=""
 	local ocr_provider=""
+	local run_normalise=true
 
 	# Parse arguments
 	while [[ $# -gt 0 ]]; do
@@ -1158,6 +1159,10 @@ cmd_convert() {
 				ocr_provider="$1"
 				shift
 			fi
+			;;
+		--no-normalise)
+			run_normalise=false
+			shift
 			;;
 		--*)
 			extra_args="${extra_args} $1"
@@ -1293,6 +1298,16 @@ cmd_convert() {
 		die "Unknown tool: ${tool}"
 		;;
 	esac
+
+	# Auto-run normalise after *→md conversions (unless --no-normalise flag is set)
+	if [[ "${run_normalise}" == "true" ]] && [[ "${to_ext}" =~ ^(md|markdown)$ ]] && [[ -f "$output" ]]; then
+		log_info "Running normalisation on converted markdown..."
+		if "${BASH_SOURCE[0]}" normalise "$output"; then
+			log_ok "Normalisation complete"
+		else
+			log_warn "Normalisation failed (non-fatal)"
+		fi
+	fi
 
 	return 0
 }
@@ -1741,11 +1756,13 @@ cmd_help() {
 	printf "  %s convert notes.md --to docx\n" "${SCRIPT_NAME}"
 	printf "  %s convert scanned.pdf --to odt --ocr tesseract\n" "${SCRIPT_NAME}"
 	printf "  %s convert screenshot.png --to md --ocr auto\n" "${SCRIPT_NAME}"
+	printf "  %s convert report.pdf --to md --no-normalise\n" "${SCRIPT_NAME}"
 	printf "  %s create template.odt --data fields.json -o letter.odt\n" "${SCRIPT_NAME}"
 	printf "  %s template draft --type letter --format odt\n" "${SCRIPT_NAME}"
 	printf "  %s install --standard\n" "${SCRIPT_NAME}"
 	printf "  %s install --ocr\n" "${SCRIPT_NAME}"
 	printf "\nSee: tools/document/document-creation.md for full documentation.\n"
+	printf "\nNote: Markdown conversions are automatically normalised unless --no-normalise is specified.\n"
 
 	return 0
 }
