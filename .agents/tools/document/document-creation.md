@@ -140,6 +140,47 @@ document-creation-helper.sh convert email_attachments/scan.jpg --to md --ocr aut
 - `.eml` files: Python stdlib (email module) + html2text
 - `.msg` files: extract-msg library (auto-installed on first use)
 
+**Thread reconstruction** (t1054.8):
+
+After converting multiple emails to markdown, reconstruct conversation threads from `message_id` and `in_reply_to` headers:
+
+```bash
+# Batch convert emails and reconstruct threads
+email-batch-convert-helper.sh batch ./emails
+
+# Or run steps separately:
+# 1. Convert emails
+email-batch-convert-helper.sh convert ./emails
+
+# 2. Reconstruct threads
+email-batch-convert-helper.sh threads ./emails
+
+# Or use Python scripts directly:
+python3 email-thread-reconstruction.py ./emails
+```
+
+**Thread metadata added to frontmatter**:
+- `thread_id`: Root message-id of the conversation thread
+- `thread_position`: Position in thread (0 = root, 1+ = replies)
+- `thread_length`: Total messages in thread
+
+**Thread index file** (`thread-index.md`):
+- Lists all emails grouped by thread
+- Chronological ordering within each thread
+- Indented to show reply hierarchy
+- Links to individual email markdown files
+
+Example thread index output:
+```markdown
+## Thread: Project kickoff meeting (4 messages)
+Thread ID: `<msg-001@example.com>`
+
+1. [Project kickoff meeting](email1.md) - alice@example.com - 2026-02-10T09:00:00+0000
+  2. [Re: Project kickoff meeting](email2.md) - bob@example.com - 2026-02-10T10:30:00+0000
+  3. [Re: Project kickoff meeting](email3.md) - charlie@example.com - 2026-02-10T11:00:00+0000
+    4. [Re: Project kickoff meeting](email4.md) - alice@example.com - 2026-02-10T12:00:00+0000
+```
+
 ### PDF Extraction (PDF as source)
 
 | From | To | Preferred | Fallback | Notes |
