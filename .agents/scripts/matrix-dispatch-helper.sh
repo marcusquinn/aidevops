@@ -1500,6 +1500,526 @@ cmd_sessions() {
 }
 
 #######################################
+# Generate a random password (alphanumeric, 32 chars)
+#######################################
+generate_password() {
+	local length="${1:-32}"
+	LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c "$length"
+	return 0
+}
+
+#######################################
+# Extract the Matrix server name from a homeserver URL
+# e.g., https://matrix.example.com -> example.com
+#######################################
+extract_server_name() {
+	local homeserver_url="$1"
+	local domain
+	domain=$(echo "$homeserver_url" | sed -E 's|https?://||' | sed 's|/.*||')
+
+	# If domain starts with "matrix.", strip it for the server name
+	if [[ "$domain" == matrix.* ]]; then
+		echo "${domain#matrix.}"
+	else
+		echo "$domain"
+	fi
+	return 0
+}
+
+#######################################
+# Non-interactive setup (writes config without prompts)
+#######################################
+cmd_setup_noninteractive() {
+	local homeserver_url="$1"
+	local access_token="$2"
+	local allowed_users="${3:-}"
+	local default_runner="${4:-}"
+	local idle_timeout="${5:-300}"
+
+	if [[ -z "$homeserver_url" || -z "$access_token" ]]; then
+		log_error "Usage: cmd_setup_noninteractive <homeserver_url> <access_token> [allowed_users] [default_runner] [idle_timeout]"
+		return 1
+	fi
+
+	check_deps || return 1
+	ensure_dirs
+
+	# Write config
+	local temp_file
+	temp_file=$(mktemp)
+	trap 'rm -f "$temp_file"' RETURN
+
+	local existing_mappings='{}'
+	if [[ -f "$CONFIG_FILE" ]]; then
+		existing_mappings=$(jq -r '.roomMappings // {}' "$CONFIG_FILE" 2>/dev/null || echo '{}')
+	fi
+
+	jq -n \
+		--arg homeserverUrl "$homeserver_url" \
+		--arg accessToken "$access_token" \
+		--arg allowedUsers "$allowed_users" \
+		--arg defaultRunner "$default_runner" \
+		--argjson sessionIdleTimeout "$idle_timeout" \
+		--argjson roomMappings "$existing_mappings" \
+		'{
+			homeserverUrl: $homeserverUrl,
+			accessToken: $accessToken,
+			allowedUsers: $allowedUsers,
+			defaultRunner: $defaultRunner,
+			roomMappings: $roomMappings,
+			botPrefix: "!ai",
+			ignoreOwnMessages: true,
+			maxPromptLength: 4000,
+			responseTimeout: 600,
+			sessionIdleTimeout: $sessionIdleTimeout
+		}' >"$temp_file"
+	mv "$temp_file" "$CONFIG_FILE"
+	chmod 600 "$CONFIG_FILE"
+
+	# Install dependencies if needed
+	local needs_install=false
+	if [[ ! -d "$DATA_DIR/node_modules/matrix-bot-sdk" ]]; then
+		needs_install=true
+	fi
+	if [[ ! -d "$DATA_DIR/node_modules/better-sqlite3" ]]; then
+		needs_install=true
+	fi
+
+	if [[ "$needs_install" == "true" ]]; then
+		log_info "Installing dependencies (matrix-bot-sdk, better-sqlite3)..."
+		npm install --prefix "$DATA_DIR" matrix-bot-sdk better-sqlite3 2>/dev/null || {
+			log_error "Failed to install dependencies"
+			return 1
+		}
+		log_success "Dependencies installed"
+	fi
+
+	# Generate scripts
+	generate_session_store_script
+	generate_bot_script
+
+	log_success "Non-interactive setup complete"
+	return 0
+}
+
+#######################################
+# Auto-setup: Full end-to-end provisioning
+#
+# Orchestrates: Cloudron Synapse install -> bot user creation ->
+# access token -> bot config -> room creation -> room mapping
+#
+# Usage:
+#   matrix-dispatch-helper.sh auto-setup <cloudron-server> [options]
+#
+# Options:
+#   --subdomain <name>     Synapse subdomain (default: matrix)
+#   --bot-user <name>      Bot username (default: aibot)
+#   --bot-display <name>   Bot display name (default: AI DevOps Bot)
+#   --runners <list>       Comma-separated runner names for room creation
+#   --allowed-users <list> Comma-separated Matrix user IDs to allow
+#   --dry-run              Show what would be done without executing
+#   --skip-install         Skip Synapse installation (already installed)
+#   --admin-token <token>  Use existing Synapse admin token instead of auto-detecting
+#######################################
+cmd_auto_setup() {
+	local cloudron_server=""
+	local subdomain="matrix"
+	local bot_user="aibot"
+	local bot_display="AI DevOps Bot"
+	local runners=""
+	local allowed_users=""
+	local dry_run=false
+	local skip_install=false
+	local admin_token=""
+
+	# Parse arguments
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--subdomain)
+			subdomain="$2"
+			shift 2
+			;;
+		--bot-user)
+			bot_user="$2"
+			shift 2
+			;;
+		--bot-display)
+			bot_display="$2"
+			shift 2
+			;;
+		--runners)
+			runners="$2"
+			shift 2
+			;;
+		--allowed-users)
+			allowed_users="$2"
+			shift 2
+			;;
+		--dry-run)
+			dry_run=true
+			shift
+			;;
+		--skip-install)
+			skip_install=true
+			shift
+			;;
+		--admin-token)
+			admin_token="$2"
+			shift 2
+			;;
+		-*)
+			log_error "Unknown option: $1"
+			return 1
+			;;
+		*)
+			if [[ -z "$cloudron_server" ]]; then
+				cloudron_server="$1"
+			else
+				log_error "Unexpected argument: $1"
+				return 1
+			fi
+			shift
+			;;
+		esac
+	done
+
+	if [[ -z "$cloudron_server" ]]; then
+		log_error "Cloudron server name is required"
+		echo ""
+		echo "Usage: matrix-dispatch-helper.sh auto-setup <cloudron-server> [options]"
+		echo ""
+		echo "Options:"
+		echo "  --subdomain <name>     Synapse subdomain (default: matrix)"
+		echo "  --bot-user <name>      Bot username (default: aibot)"
+		echo "  --bot-display <name>   Bot display name (default: AI DevOps Bot)"
+		echo "  --runners <list>       Comma-separated runner names for room creation"
+		echo "  --allowed-users <list> Comma-separated allowed Matrix user IDs"
+		echo "  --dry-run              Show plan without executing"
+		echo "  --skip-install         Skip Synapse installation (already installed)"
+		echo "  --admin-token <token>  Use existing Synapse admin token"
+		echo ""
+		echo "Example:"
+		echo "  matrix-dispatch-helper.sh auto-setup cloudron01 --runners code-reviewer,seo-analyst,ops-monitor"
+		return 1
+	fi
+
+	check_deps || return 1
+	ensure_dirs
+
+	# Resolve Cloudron server config
+	local cloudron_helper="${SCRIPT_DIR}/cloudron-helper.sh"
+	if [[ ! -x "$cloudron_helper" ]]; then
+		log_error "cloudron-helper.sh not found at $cloudron_helper"
+		return 1
+	fi
+
+	# Try multiple config locations: repo root configs/, relative to script, CWD-relative
+	local cloudron_config=""
+	local -a config_paths=(
+		"${SCRIPT_DIR}/../../configs/cloudron-config.json"
+		"${SCRIPT_DIR}/../configs/cloudron-config.json"
+		"configs/cloudron-config.json"
+		"../configs/cloudron-config.json"
+	)
+	for candidate in "${config_paths[@]}"; do
+		if [[ -f "$candidate" ]]; then
+			cloudron_config="$candidate"
+			break
+		fi
+	done
+
+	if [[ -z "$cloudron_config" ]]; then
+		log_error "Cloudron config not found"
+		log_info "Copy and customize: cp configs/cloudron-config.json.txt configs/cloudron-config.json"
+		return 1
+	fi
+
+	local server_domain
+	server_domain=$(jq -r ".servers.\"$cloudron_server\".domain" "$cloudron_config" 2>/dev/null)
+	local server_token
+	server_token=$(jq -r ".servers.\"$cloudron_server\".api_token" "$cloudron_config" 2>/dev/null)
+
+	if [[ "$server_domain" == "null" || -z "$server_domain" ]]; then
+		log_error "Server '$cloudron_server' not found in Cloudron config"
+		log_info "Available servers:"
+		jq -r '.servers | keys[]' "$cloudron_config" 2>/dev/null | while read -r s; do
+			echo "  - $s"
+		done
+		return 1
+	fi
+
+	if [[ "$server_token" == "null" || -z "$server_token" || "$server_token" == *"YOUR_"* ]]; then
+		log_error "API token not configured for server '$cloudron_server'"
+		log_info "Set it in: configs/cloudron-config.json"
+		return 1
+	fi
+
+	local homeserver_url="https://${subdomain}.${server_domain}"
+	local server_name
+	server_name=$(extract_server_name "$homeserver_url")
+	local bot_user_id="@${bot_user}:${server_name}"
+	local bot_password
+	bot_password=$(generate_password 32)
+
+	# Synapse app store ID on Cloudron
+	local synapse_app_id="org.matrix.synapse.cloudronapp"
+
+	echo -e "${BOLD}Matrix Bot Auto-Setup${NC}"
+	echo "──────────────────────────────────"
+	echo ""
+	echo "Cloudron server:  $cloudron_server ($server_domain)"
+	echo "Synapse URL:      $homeserver_url"
+	echo "Bot user:         $bot_user_id"
+	echo "Bot display name: $bot_display"
+	echo "Runners:          ${runners:-none (add later with 'map' command)}"
+	echo "Allowed users:    ${allowed_users:-all}"
+	echo ""
+
+	if [[ "$dry_run" == "true" ]]; then
+		echo -e "${YELLOW}[DRY RUN]${NC} The following steps would be executed:"
+		echo ""
+		if [[ "$skip_install" != "true" ]]; then
+			echo "  1. Install Synapse on Cloudron at $subdomain.$server_domain"
+			echo "  2. Wait for Synapse to be ready"
+		else
+			echo "  1-2. (skipped — Synapse already installed)"
+		fi
+		echo "  3. Register bot user: $bot_user_id"
+		echo "  4. Login as bot to get access token"
+		echo "  5. Store credentials via aidevops secret"
+		echo "  6. Configure matrix-dispatch-helper.sh"
+		if [[ -n "$runners" ]]; then
+			echo "  7. Create rooms and map to runners:"
+			IFS=',' read -ra runner_list <<<"$runners"
+			for runner in "${runner_list[@]}"; do
+				runner=$(echo "$runner" | tr -d ' ')
+				echo "     - Room: #${runner}:${server_name} -> runner: $runner"
+			done
+		else
+			echo "  7. (no runners specified — skip room creation)"
+		fi
+		echo "  8. Install npm dependencies and generate bot scripts"
+		echo ""
+		echo "Run without --dry-run to execute."
+		return 0
+	fi
+
+	# ── Step 1: Install Synapse on Cloudron ──
+	local app_id=""
+	if [[ "$skip_install" != "true" ]]; then
+		log_info "Step 1/8: Installing Synapse on Cloudron..."
+
+		app_id=$("$cloudron_helper" install-app "$cloudron_server" "$synapse_app_id" "$subdomain" 2>&1)
+		local install_exit=$?
+
+		if [[ $install_exit -ne 0 ]]; then
+			# Check if already installed
+			local existing_app
+			existing_app=$("$cloudron_helper" app-info "$cloudron_server" "$subdomain" 2>/dev/null)
+			if [[ -n "$existing_app" ]]; then
+				log_warn "Synapse appears to already be installed at $subdomain.$server_domain"
+				app_id=$(echo "$existing_app" | jq -r '.id')
+			else
+				log_error "Failed to install Synapse: $app_id"
+				return 1
+			fi
+		fi
+
+		# Extract just the app ID (last line of output from install_app)
+		app_id=$(echo "$app_id" | tail -1 | tr -d '[:space:]')
+		log_success "Synapse installation initiated (app ID: $app_id)"
+
+		# ── Step 2: Wait for Synapse to be ready ──
+		log_info "Step 2/8: Waiting for Synapse to be ready..."
+		if ! "$cloudron_helper" wait-ready "$cloudron_server" "$app_id" 600; then
+			log_error "Synapse failed to become ready within 10 minutes"
+			return 1
+		fi
+		log_success "Synapse is ready"
+	else
+		log_info "Step 1-2/8: Skipping Synapse installation (--skip-install)"
+
+		# Verify Synapse is accessible
+		local health_check
+		health_check=$(curl -sf "${homeserver_url}/_matrix/client/versions" 2>/dev/null)
+		if [[ -z "$health_check" ]]; then
+			log_error "Synapse not responding at $homeserver_url"
+			log_info "Verify Synapse is installed and running on Cloudron"
+			return 1
+		fi
+		log_success "Synapse is accessible at $homeserver_url"
+	fi
+
+	# ── Step 3: Get admin token and register bot user ──
+	log_info "Step 3/8: Registering bot user..."
+
+	if [[ -z "$admin_token" ]]; then
+		# Try to get admin token from aidevops secrets
+		local secret_name="SYNAPSE_ADMIN_TOKEN_${cloudron_server}"
+		admin_token=$(gopass show "aidevops/${secret_name}" 2>/dev/null || true)
+
+		if [[ -z "$admin_token" ]]; then
+			log_error "Synapse admin token not found"
+			echo ""
+			echo "To get the admin token:"
+			echo "  1. Create an admin user on Synapse (via Cloudron dashboard or register_new_matrix_user)"
+			echo "  2. Login via the Matrix API to get an access token"
+			echo "  3. Store it: aidevops secret set ${secret_name}"
+			echo ""
+			echo "Or pass it directly: --admin-token <token>"
+			return 1
+		fi
+	fi
+
+	local register_result
+	register_result=$(synapse_register_bot_user "$homeserver_url" "$admin_token" "$bot_user_id" "$bot_password" "$bot_display" 2>&1)
+	local register_exit=$?
+
+	if [[ $register_exit -ne 0 ]]; then
+		log_error "Failed to register bot user: $register_result"
+		return 1
+	fi
+	log_success "Bot user registered: $bot_user_id"
+
+	# ── Step 4: Login as bot to get access token ──
+	log_info "Step 4/8: Logging in as bot user..."
+
+	local login_result
+	login_result=$(matrix_login "$homeserver_url" "$bot_user_id" "$bot_password" 2>&1)
+	local login_exit=$?
+
+	if [[ $login_exit -ne 0 ]]; then
+		log_error "Failed to login as bot: $login_result"
+		return 1
+	fi
+
+	local bot_access_token
+	bot_access_token=$(echo "$login_result" | jq -r '.access_token // empty' 2>/dev/null)
+
+	if [[ -z "$bot_access_token" ]]; then
+		log_error "Failed to extract access token from login response"
+		return 1
+	fi
+	log_success "Bot access token obtained"
+
+	# ── Step 5: Store credentials securely ──
+	log_info "Step 5/8: Storing credentials..."
+
+	# Store bot password and token via gopass if available
+	local secret_prefix="MATRIX_BOT_${cloudron_server}"
+	if command -v gopass &>/dev/null; then
+		echo "$bot_password" | gopass insert -f "aidevops/${secret_prefix}_PASSWORD" 2>/dev/null || {
+			log_warn "Failed to store bot password in gopass"
+		}
+		echo "$bot_access_token" | gopass insert -f "aidevops/${secret_prefix}_TOKEN" 2>/dev/null || {
+			log_warn "Failed to store bot token in gopass"
+		}
+		log_success "Credentials stored in gopass (aidevops/${secret_prefix}_*)"
+	else
+		log_warn "gopass not available — credentials stored only in config file"
+		log_info "Install gopass for encrypted credential storage: aidevops secret set"
+	fi
+
+	# ── Step 6: Configure the bot non-interactively ──
+	log_info "Step 6/8: Configuring bot..."
+
+	cmd_setup_noninteractive "$homeserver_url" "$bot_access_token" "$allowed_users" "" "$DEFAULT_TIMEOUT"
+	log_success "Bot configured"
+
+	# ── Step 7: Create rooms and map to runners ──
+	if [[ -n "$runners" ]]; then
+		log_info "Step 7/8: Creating rooms and mapping to runners..."
+
+		IFS=',' read -ra runner_list <<<"$runners"
+		for runner in "${runner_list[@]}"; do
+			runner=$(echo "$runner" | tr -d ' ')
+			local room_name="AI: ${runner}"
+			local room_alias="${runner}"
+
+			log_info "Creating room for runner: $runner"
+
+			local room_result
+			room_result=$(matrix_create_room "$homeserver_url" "$bot_access_token" "$room_name" "$room_alias" "false" 2>&1)
+			local room_exit=$?
+
+			if [[ $room_exit -ne 0 ]]; then
+				log_warn "Failed to create room for $runner: $room_result"
+				continue
+			fi
+
+			local room_id
+			room_id=$(echo "$room_result" | jq -r '.room_id // empty' 2>/dev/null)
+
+			if [[ -z "$room_id" ]]; then
+				log_warn "Failed to extract room ID for $runner"
+				continue
+			fi
+
+			log_success "Room created: $room_id ($room_name)"
+
+			# Map room to runner
+			cmd_map "$room_id" "$runner"
+
+			# Invite the admin user(s) to the room
+			if [[ -n "$allowed_users" ]]; then
+				IFS=',' read -ra user_list <<<"$allowed_users"
+				for user in "${user_list[@]}"; do
+					user=$(echo "$user" | tr -d ' ')
+					log_info "Inviting $user to room $room_id"
+					matrix_invite_user "$homeserver_url" "$bot_access_token" "$room_id" "$user" 2>/dev/null || {
+						log_warn "Failed to invite $user to $room_id"
+					}
+				done
+			fi
+		done
+
+		log_success "Room creation and mapping complete"
+	else
+		log_info "Step 7/8: No runners specified — skipping room creation"
+		log_info "Map rooms later with: matrix-dispatch-helper.sh map '<room_id>' <runner>"
+	fi
+
+	# ── Step 8: Summary ──
+	log_info "Step 8/8: Finalizing..."
+
+	echo ""
+	echo -e "${BOLD}Auto-Setup Complete!${NC}"
+	echo "──────────────────────────────────"
+	echo ""
+	echo "Homeserver:    $homeserver_url"
+	echo "Bot user:      $bot_user_id"
+	echo "Config:        $CONFIG_FILE"
+	echo ""
+
+	if [[ -n "$runners" ]]; then
+		echo "Room mappings:"
+		jq -r '.roomMappings // {} | to_entries[] | "  \(.key) -> \(.value)"' "$CONFIG_FILE" 2>/dev/null
+		echo ""
+	fi
+
+	echo "Next steps:"
+	echo "  1. Start the bot:"
+	echo "     matrix-dispatch-helper.sh start --daemon"
+	echo ""
+	if [[ -z "$runners" ]]; then
+		echo "  2. Map rooms to runners:"
+		echo "     matrix-dispatch-helper.sh map '!roomid:server' my-runner"
+		echo ""
+	fi
+	echo "  3. In a mapped Matrix room, type:"
+	echo "     !ai Review the auth module for security issues"
+	echo ""
+
+	if command -v gopass &>/dev/null; then
+		echo "Credentials stored in gopass:"
+		echo "  aidevops/${secret_prefix}_PASSWORD"
+		echo "  aidevops/${secret_prefix}_TOKEN"
+	fi
+
+	return 0
+}
+
+#######################################
 # Show help
 #######################################
 cmd_help() {
@@ -1511,6 +2031,7 @@ USAGE:
 
 COMMANDS:
     setup                       Interactive setup wizard
+    auto-setup <server> [opts]  Full automated provisioning (Cloudron + Synapse)
     start [--daemon]            Start the bot (foreground or daemon)
     stop                        Stop the bot (compacts all active sessions first)
     status                      Show bot status and configuration
@@ -1546,7 +2067,33 @@ ARCHITECTURE:
     │ AI response   │     │              │     │                  │
     └──────────────┘     └──────────────┘     └──────────────────┘
 
-CLOUDRON SETUP:
+AUTO-SETUP (Cloudron + Synapse):
+    Fully automated provisioning — installs Synapse, creates bot user,
+    obtains access token, configures the bot, creates rooms, and maps runners.
+
+    matrix-dispatch-helper.sh auto-setup <cloudron-server> [options]
+
+    Options:
+      --subdomain <name>     Synapse subdomain (default: matrix)
+      --bot-user <name>      Bot username (default: aibot)
+      --bot-display <name>   Bot display name (default: AI DevOps Bot)
+      --runners <list>       Comma-separated runner names for room creation
+      --allowed-users <list> Comma-separated allowed Matrix user IDs
+      --dry-run              Show plan without executing
+      --skip-install         Skip Synapse installation (already installed)
+      --admin-token <token>  Use existing Synapse admin token
+
+    Prerequisites:
+      - Cloudron server configured in configs/cloudron-config.json
+      - Cloudron API token set for the server
+      - Synapse admin token stored via: aidevops secret set SYNAPSE_ADMIN_TOKEN_<server>
+
+    Example:
+      matrix-dispatch-helper.sh auto-setup cloudron01 \
+        --runners code-reviewer,seo-analyst,ops-monitor \
+        --allowed-users @admin:example.com
+
+MANUAL CLOUDRON SETUP:
     1. Install Synapse on Cloudron (Matrix homeserver)
     2. Create bot user via Synapse Admin Console
     3. Login as bot via Element to get access token
@@ -1566,7 +2113,15 @@ CONFIGURATION:
     Logs:   ~/.aidevops/.agent-workspace/matrix-bot/logs/
 
 EXAMPLES:
-    # Full setup flow
+    # Automated setup (recommended)
+    matrix-dispatch-helper.sh auto-setup cloudron01 \
+      --runners code-reviewer,seo-analyst,ops-monitor \
+      --allowed-users @admin:example.com
+
+    # Dry run (preview without executing)
+    matrix-dispatch-helper.sh auto-setup cloudron01 --dry-run
+
+    # Manual setup flow
     matrix-dispatch-helper.sh setup
     runner-helper.sh create code-reviewer --description "Code review bot"
     matrix-dispatch-helper.sh map '!abc:matrix.example.com' code-reviewer
@@ -1592,6 +2147,7 @@ main() {
 
 	case "$command" in
 	setup) cmd_setup "$@" ;;
+	auto-setup) cmd_auto_setup "$@" ;;
 	start) cmd_start "$@" ;;
 	stop) cmd_stop "$@" ;;
 	status) cmd_status "$@" ;;
