@@ -31,6 +31,8 @@ import email
 import email.policy
 from email import message_from_binary_file
 from email.utils import parsedate_to_datetime
+import hashlib
+import json
 import html2text
 import argparse
 from pathlib import Path
@@ -114,41 +116,118 @@ def get_email_body(msg, prefer_html=True):
     return body_text
 
 
-def extract_attachments(msg, output_dir):
-    """Extract attachments from email message."""
+def compute_content_hash(data):
+    """Compute SHA-256 hash of binary data.
+
+    Returns the hex digest string for use as a content-addressable key.
+    """
+    return hashlib.sha256(data).hexdigest()
+
+
+def load_dedup_registry(registry_path):
+    """Load the deduplication registry from a JSON file.
+
+    The registry maps content_hash -> first occurrence path, enabling
+    symlink-based deduplication across batch email imports.
+    Returns an empty dict if the file doesn't exist.
+    """
+    if registry_path and os.path.isfile(registry_path):
+        with open(registry_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {}
+
+
+def save_dedup_registry(registry, registry_path):
+    """Persist the deduplication registry to a JSON file."""
+    if registry_path:
+        os.makedirs(os.path.dirname(registry_path) or '.', exist_ok=True)
+        with open(registry_path, 'w', encoding='utf-8') as f:
+            json.dump(registry, f, indent=2)
+
+
+def _save_attachment(filepath, data, content_hash, dedup_registry):
+    """Save an attachment, deduplicating via symlink if hash already seen.
+
+    Returns a dict with 'deduplicated_from' set when a duplicate is detected.
+    The original file is symlinked rather than copied to save disk space.
+    """
+    dedup_info = {}
+
+    if dedup_registry is not None and content_hash in dedup_registry:
+        # Duplicate detected — create symlink to first occurrence
+        original_path = dedup_registry[content_hash]
+        if os.path.exists(original_path):
+            # Use relative symlink for portability
+            try:
+                rel_target = os.path.relpath(original_path, os.path.dirname(str(filepath)))
+                os.symlink(rel_target, str(filepath))
+            except OSError:
+                # Fallback: absolute symlink if relative fails
+                os.symlink(original_path, str(filepath))
+            dedup_info['deduplicated_from'] = original_path
+        else:
+            # Original no longer exists — write normally and become new canonical
+            with open(filepath, 'wb') as f:
+                f.write(data)
+            dedup_registry[content_hash] = str(filepath)
+    else:
+        # First occurrence — write file and register
+        with open(filepath, 'wb') as f:
+            f.write(data)
+        if dedup_registry is not None:
+            dedup_registry[content_hash] = str(filepath)
+
+    return dedup_info
+
+
+def extract_attachments(msg, output_dir, dedup_registry=None):
+    """Extract attachments from email message with content-hash deduplication.
+
+    Each attachment gets a SHA-256 content_hash. When dedup_registry is provided,
+    duplicate attachments are symlinked to the first occurrence instead of being
+    written again, and a 'deduplicated_from' field is added to their metadata.
+    """
     attachments = []
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
-    
+
     if hasattr(msg, 'attachments'):  # extract_msg Message object
         for attachment in msg.attachments:
             filename = attachment.longFilename or attachment.shortFilename or "attachment"
             filepath = output_path / filename
-            with open(filepath, 'wb') as f:
-                f.write(attachment.data)
-            attachments.append({
+            data = attachment.data
+            content_hash = compute_content_hash(data)
+            dedup_info = _save_attachment(filepath, data, content_hash, dedup_registry)
+            att_meta = {
                 'filename': filename,
                 'path': str(filepath),
-                'size': len(attachment.data)
-            })
+                'size': len(data),
+                'content_hash': content_hash,
+            }
+            att_meta.update(dedup_info)
+            attachments.append(att_meta)
     else:  # email.message.Message object
         for part in msg.walk():
             if part.get_content_maintype() == 'multipart':
                 continue
             if part.get('Content-Disposition') is None:
                 continue
-            
+
             filename = part.get_filename()
             if filename:
                 filepath = output_path / filename
-                with open(filepath, 'wb') as f:
-                    f.write(part.get_payload(decode=True))
-                attachments.append({
+                data = part.get_payload(decode=True)
+                content_hash = compute_content_hash(data)
+                dedup_info = _save_attachment(filepath, data, content_hash, dedup_registry)
+                att_meta = {
                     'filename': filename,
                     'path': str(filepath),
-                    'size': len(part.get_payload(decode=True))
-                })
-    
+                    'size': len(data),
+                    'content_hash': content_hash,
+                }
+                att_meta.update(dedup_info)
+                attachments.append(att_meta)
+
     return attachments
 
 
@@ -606,8 +685,9 @@ def parse_date_safe(date_str):
 def build_frontmatter(metadata):
     """Build YAML frontmatter string from metadata dict.
 
-    Handles scalar values, lists of dicts (attachments), nested dicts
-    of lists (entities), and proper YAML escaping for all string values.
+    Handles scalar values, lists of dicts (attachments with content_hash
+    and optional deduplicated_from), nested dicts of lists (entities),
+    and proper YAML escaping for all string values.
     """
     lines = ['---']
     for key, value in metadata.items():
@@ -619,6 +699,10 @@ def build_frontmatter(metadata):
                 for att in value:
                     lines.append(f'  - filename: {yaml_escape(att["filename"])}')
                     lines.append(f'    size: {yaml_escape(att["size"])}')
+                    if 'content_hash' in att:
+                        lines.append(f'    content_hash: {att["content_hash"]}')
+                    if 'deduplicated_from' in att:
+                        lines.append(f'    deduplicated_from: {yaml_escape(att["deduplicated_from"])}')
         elif key == 'entities' and isinstance(value, dict):
             if not value:
                 lines.append(f'{key}: {{}}')
@@ -666,13 +750,14 @@ def run_entity_extraction(body, method='auto'):
 
 def email_to_markdown(input_file, output_file=None, attachments_dir=None,
                       extract_entities=False, entity_method='auto',
-                      summary_mode='auto', thread_map=None):
+                      summary_mode='auto', thread_map=None,
+                      dedup_registry=None):
     """Convert email file to markdown with YAML frontmatter and attachment extraction.
 
     Output includes:
     - YAML frontmatter with visible email headers (from, to, cc, bcc, date_sent,
       date_received, subject, size, message_id, in_reply_to, attachment_count,
-      attachments list)
+      attachments list with content_hash per attachment)
     - Thread reconstruction fields (thread_id, thread_position, thread_length)
     - markdown.new convention fields (title = subject, description = auto-summary)
     - summary_method field indicating how the description was generated
@@ -680,7 +765,7 @@ def email_to_markdown(input_file, output_file=None, attachments_dir=None,
     - entities (when extract_entities=True): people, organisations, properties,
       locations, dates extracted via spaCy/Ollama/regex
     - Body as markdown content
-    
+
     Args:
         input_file: Path to .eml or .msg file
         output_file: Optional output path for markdown file
@@ -688,6 +773,10 @@ def email_to_markdown(input_file, output_file=None, attachments_dir=None,
         summary_mode: Summary generation mode ('auto', 'heuristic', 'llm', 'off')
         thread_map: Optional pre-built thread map for thread reconstruction.
                    If None, thread fields will be empty.
+        dedup_registry: Optional dict mapping content_hash -> first path.
+                       When provided, duplicate attachments are symlinked instead
+                       of written, and their frontmatter includes a
+                       deduplicated_from field pointing to the canonical copy.
     """
     input_path = Path(input_file)
 
@@ -733,16 +822,20 @@ def email_to_markdown(input_file, output_file=None, attachments_dir=None,
     # Extract body
     body = get_email_body(msg)
 
-    # Extract attachments
-    attachments = extract_attachments(msg, attachments_dir)
+    # Extract attachments (with deduplication if registry provided)
+    attachments = extract_attachments(msg, attachments_dir, dedup_registry)
 
-    # Build attachment metadata for frontmatter
+    # Build attachment metadata for frontmatter (includes content_hash + dedup info)
     attachment_meta = []
     for att in attachments:
-        attachment_meta.append({
+        meta = {
             'filename': att['filename'],
             'size': format_size(att['size']),
-        })
+            'content_hash': att['content_hash'],
+        }
+        if 'deduplicated_from' in att:
+            meta['deduplicated_from'] = att['deduplicated_from']
+        attachment_meta.append(meta)
 
     # Generate summary for description field (t1044.7)
     description, summary_method_used = generate_summary(body, subject, summary_mode)
@@ -824,13 +917,19 @@ def main():
                         default='auto',
                         help='Summary generation mode: auto (default) routes by word count, '
                              'heuristic (sentence extraction), llm (force LLM), off (160-char truncation)')
-    parser.add_argument('--batch', action='store_true', 
+    parser.add_argument('--batch', action='store_true',
                        help='Process all .eml/.msg files in input directory with thread reconstruction')
     parser.add_argument('--threads-index', action='store_true',
                        help='Generate thread index files (requires --batch)')
-    
+    parser.add_argument('--dedup-registry', help='Path to JSON dedup registry for cross-email attachment deduplication')
+
     args = parser.parse_args()
-    
+
+    # Load or create dedup registry for batch processing
+    registry = None
+    if args.dedup_registry:
+        registry = load_dedup_registry(args.dedup_registry)
+
     input_path = Path(args.input)
 
     # Batch processing mode
@@ -838,12 +937,12 @@ def main():
         if not input_path.is_dir():
             print("ERROR: --batch requires input to be a directory", file=sys.stderr)
             sys.exit(1)
-        
+
         # Build thread map for all emails
         print("Building thread map...")
         thread_map = build_thread_map(input_path)
         print(f"Found {len(thread_map)} emails")
-        
+
         # Process each email
         processed = 0
         for message_id, info in thread_map.items():
@@ -855,27 +954,28 @@ def main():
                     extract_entities=args.extract_entities,
                     entity_method=args.entity_method,
                     summary_mode=args.summary_mode,
-                    thread_map=thread_map
+                    thread_map=thread_map,
+                    dedup_registry=registry
                 )
                 processed += 1
                 print(f"Processed: {email_file.name} -> {result['markdown']}")
             except Exception as e:
                 print(f"ERROR processing {email_file}: {e}", file=sys.stderr)
-        
+
         print(f"\nProcessed {processed}/{len(thread_map)} emails")
-        
+
         # Generate thread index if requested
         if args.threads_index:
             print("\nGenerating thread index files...")
             threads = generate_thread_index(thread_map, input_path)
             print(f"Created {len(threads)} thread index files in {input_path}/threads/")
-    
+
     # Single file mode
     else:
         if not input_path.is_file():
             print(f"ERROR: Input file not found: {input_path}", file=sys.stderr)
             sys.exit(1)
-        
+
         # For single file, optionally build thread map if parent dir has other emails
         thread_map = None
         if input_path.parent.exists():
@@ -885,20 +985,29 @@ def main():
                     print(f"Found {len(thread_map)} emails in directory for thread reconstruction")
             except Exception:
                 pass  # Thread reconstruction is optional
-        
+
         result = email_to_markdown(
             args.input, args.output, args.attachments_dir,
             extract_entities=args.extract_entities,
             entity_method=args.entity_method,
             summary_mode=args.summary_mode,
-            thread_map=thread_map
+            thread_map=thread_map,
+            dedup_registry=registry
         )
-        
+
         print(f"Created: {result['markdown']}")
         if result['attachments']:
+            deduped = sum(1 for a in result['attachments'] if 'deduplicated_from' in a)
             print(f"Extracted {len(result['attachments'])} attachment(s) to: {result['attachments_dir']}")
+            if deduped:
+                print(f"  ({deduped} deduplicated via symlink)")
             for att in result['attachments']:
-                print(f"  - {att['filename']} ({format_size(att['size'])})")
+                suffix = " [dedup]" if 'deduplicated_from' in att else ""
+                print(f"  - {att['filename']} ({format_size(att['size'])}){suffix}")
+
+    # Persist updated registry after processing
+    if args.dedup_registry and registry is not None:
+        save_dedup_registry(registry, args.dedup_registry)
 
 
 if __name__ == '__main__':
