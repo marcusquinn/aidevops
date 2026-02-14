@@ -1325,7 +1325,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 ## In Progress
 
-- [ ] t1047 Fix task ID race condition: replace TODO.md scanning with atomic .task-counter file and CAS push loop — current claim-task-id.sh has TOCTOU race where parallel sessions all read same TODO.md, compute same t(N+1), creating duplicate IDs (t1032 duplicated 10x, t132 8x, etc). New approach: single counter file on origin, fetch→read→increment→commit→push with retry on conflict. Batch allocation support for audit/sweep callers. #bugfix #orchestration #auto-dispatch ~2h (ai:1.5h test:30m) ref:GH#1440 started:2026-02-14 assignee:marcusquinn started:2026-02-14T01:07:59Z
+- [x] t1047 Fix task ID race condition: replace TODO.md scanning with atomic .task-counter file and CAS push loop — current claim-task-id.sh has TOCTOU race where parallel sessions all read same TODO.md, compute same t(N+1), creating duplicate IDs (t1032 duplicated 10x, t132 8x, etc). New approach: single counter file on origin, fetch→read→increment→commit→push with retry on conflict. Batch allocation support for audit/sweep callers. #bugfix #orchestration #auto-dispatch ~2h (ai:1.5h test:30m) ref:GH#1440 started:2026-02-14 assignee:marcusquinn started:2026-02-14T01:07:59Z pr:#1458 completed:2026-02-14
   - Notes: BLOCKED by supervisor: Merge conflict — auto-rebase failed
 
 - [x] t192 Fix verify-run-helper.sh bash flag handling — `bash -n` parsed as file path instead of flag #bugfix #verify ~30m actual:15m (ai:10m test:5m) logged:2026-02-09 completed:2026-02-09 PR #771 merged pr:#771
