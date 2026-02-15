@@ -142,7 +142,7 @@ cmd_pulse() {
 	local dispatched_count=0
 
 	if [[ -n "$running_tasks" ]]; then
-		while IFS='|' read -r tid tlog; do
+		while IFS='|' read -r tid _; do
 			# Check if worker process is still alive
 			local pid_file="$SUPERVISOR_DIR/pids/${tid}.pid"
 			local is_alive=false
@@ -424,7 +424,7 @@ cmd_pulse() {
 		next_tasks=$(cmd_next "$batch_id" 10)
 
 		if [[ -n "$next_tasks" ]]; then
-			while IFS=$'\t' read -r tid trepo tdesc tmodel; do
+			while IFS=$'\t' read -r tid _ _ _; do
 				# Guard: skip malformed task IDs (e.g., from embedded newlines
 				# in diagnostic task descriptions containing EXIT:0 or markers)
 				if [[ -z "$tid" || "$tid" =~ [[:space:]:] || ! "$tid" =~ ^[a-zA-Z0-9._-]+$ ]]; then
@@ -452,7 +452,7 @@ cmd_pulse() {
 		next_tasks=$(cmd_next "" 10)
 
 		if [[ -n "$next_tasks" ]]; then
-			while IFS=$'\t' read -r tid trepo tdesc tmodel; do
+			while IFS=$'\t' read -r tid _ _ _; do
 				# Guard: skip malformed task IDs (same as batch dispatch above)
 				if [[ -z "$tid" || "$tid" =~ [[:space:]:] || ! "$tid" =~ ^[a-zA-Z0-9._-]+$ ]]; then
 					log_warn "Skipping malformed task ID in cmd_next output: '${tid:0:40}'"
@@ -591,7 +591,7 @@ cmd_pulse() {
 	blocked_tasks=$(db "$SUPERVISOR_DB" "SELECT id, repo, error, rebase_attempts, last_main_sha FROM tasks WHERE status = 'blocked' AND error LIKE '%Merge conflict%auto-rebase failed%';" 2>/dev/null || echo "")
 
 	if [[ -n "$blocked_tasks" ]]; then
-		while IFS='|' read -r blocked_id blocked_repo blocked_error blocked_rebase_attempts blocked_last_main_sha; do
+		while IFS='|' read -r blocked_id blocked_repo _ blocked_rebase_attempts blocked_last_main_sha; do
 			[[ -z "$blocked_id" ]] && continue
 
 			# Cap at max_retry_cycles total retry cycles to prevent infinite loops
@@ -1476,11 +1476,12 @@ RULES:
 		fi
 	fi
 
-	# Phase 10c: Audit regression detection (t1032.6, t1045)
+	# Phase 10c: Audit regression detection + auto-remediation (t1032.6, t1045)
 	# Queries SonarCloud API for current findings, compares against last snapshot.
-	# On regression: logs warning. On improvement: logs success.
+	# On regression: logs warning, auto-creates tasks for new findings.
 	# Runs at most once per hour to avoid API rate limits.
 	local audit_helper="${SCRIPT_DIR}/code-audit-helper.sh"
+	local task_creator="${SCRIPT_DIR}/audit-task-creator-helper.sh"
 	if [[ -x "$audit_helper" ]]; then
 		local regression_cache="${HOME}/.aidevops/.agent-workspace/tmp/regression-last-check"
 		local now_epoch
@@ -1496,6 +1497,15 @@ RULES:
 			echo "$now_epoch" >"$regression_cache"
 			if ! bash "$audit_helper" check-regression 2>>"$SUPERVISOR_LOG"; then
 				log_warn "  Phase 10c: Audit regressions detected — review SonarCloud dashboard"
+				# Auto-create tasks for new findings (t1045)
+				if [[ -x "$task_creator" ]]; then
+					log_info "  Phase 10c: Auto-creating tasks for new findings"
+					if bash "$task_creator" create --severity high --dispatch 2>>"$SUPERVISOR_LOG"; then
+						log_success "  Phase 10c: Tasks created and dispatched"
+					else
+						log_warn "  Phase 10c: Task creation failed (see log)"
+					fi
+				fi
 			fi
 		else
 			log_verbose "  Phase 10c: Skipping (last check $((elapsed / 60))m ago, interval=60m)"
