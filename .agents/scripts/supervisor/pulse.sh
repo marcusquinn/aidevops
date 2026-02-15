@@ -583,30 +583,47 @@ cmd_pulse() {
 				pr_merged_at=$(echo "$pr_json" | grep -o '"mergedAt":"[^"]*"' | cut -d'"' -f4)
 
 				if [[ "$pr_state" == "MERGED" ]]; then
-					log_success "  Phase 3b2: $stale_id ($stale_status) — PR #$pr_number already MERGED ($pr_merged_at), advancing to deployed"
-					# Direct DB update: bypass state machine since we've verified
-					# the PR is merged on GitHub (blocked->deployed isn't a valid
-					# transition, but the ground truth is the PR is merged)
 					local escaped_stale_id
 					escaped_stale_id=$(sql_escape "$stale_id")
-					db "$SUPERVISOR_DB" "UPDATE tasks SET
-						status = 'deployed',
-						error = NULL,
-						completed_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
-						updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-					WHERE id = '$escaped_stale_id';" 2>/dev/null || true
-					# Log the state transition manually
-					db "$SUPERVISOR_DB" "INSERT INTO state_log (task_id, from_state, to_state, timestamp, details)
-					VALUES ('$escaped_stale_id', '$stale_status', 'deployed',
-						strftime('%Y-%m-%dT%H:%M:%SZ','now'),
-						'Phase 3b2 reconciliation: PR #$pr_number merged at $pr_merged_at');" 2>/dev/null || true
-					# Clean up worktree if it exists
-					cleanup_after_merge "$stale_id" 2>>"$SUPERVISOR_LOG" || log_warn "  Worktree cleanup issue for $stale_id (non-blocking)"
-					# Update TODO.md
-					update_todo_on_complete "$stale_id" 2>>"$SUPERVISOR_LOG" || true
-					# Sync GitHub issue status
-					sync_issue_status_label "$stale_id" "deployed" "phase_3b2" 2>>"$SUPERVISOR_LOG" || true
-					# Proof-log
+
+					if [[ "$stale_status" == "verify_failed" ]]; then
+						# verify_failed: PR was already merged and deployed, but
+						# post-merge verification failed. Put back to 'deployed'
+						# so Phase 3b (verify queue) can re-run verification.
+						# Do NOT mark complete — the quality check still needs to pass.
+						log_info "  Phase 3b2: $stale_id (verify_failed) — PR #$pr_number merged, resetting to deployed for re-verification"
+						db "$SUPERVISOR_DB" "UPDATE tasks SET
+							status = 'deployed',
+							error = NULL,
+							updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+						WHERE id = '$escaped_stale_id';" 2>/dev/null || true
+						db "$SUPERVISOR_DB" "INSERT INTO state_log (task_id, from_state, to_state, timestamp, reason)
+						VALUES ('$escaped_stale_id', 'verify_failed', 'deployed',
+							strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+							'Phase 3b2: reset for re-verification (PR #$pr_number merged)');" 2>/dev/null || true
+						sync_issue_status_label "$stale_id" "deployed" "phase_3b2" 2>>"$SUPERVISOR_LOG" || true
+					else
+						# blocked: PR merged but task stuck in blocked state.
+						# Advance to deployed and mark complete.
+						log_success "  Phase 3b2: $stale_id ($stale_status) — PR #$pr_number already MERGED ($pr_merged_at), advancing to deployed"
+						db "$SUPERVISOR_DB" "UPDATE tasks SET
+							status = 'deployed',
+							error = NULL,
+							completed_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+							updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+						WHERE id = '$escaped_stale_id';" 2>/dev/null || true
+						db "$SUPERVISOR_DB" "INSERT INTO state_log (task_id, from_state, to_state, timestamp, reason)
+						VALUES ('$escaped_stale_id', '$stale_status', 'deployed',
+							strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+							'Phase 3b2 reconciliation: PR #$pr_number merged at $pr_merged_at');" 2>/dev/null || true
+						# Clean up worktree if it exists
+						cleanup_after_merge "$stale_id" 2>>"$SUPERVISOR_LOG" || log_warn "  Worktree cleanup issue for $stale_id (non-blocking)"
+						# Update TODO.md
+						update_todo_on_complete "$stale_id" 2>>"$SUPERVISOR_LOG" || true
+						# Sync GitHub issue status
+						sync_issue_status_label "$stale_id" "deployed" "phase_3b2" 2>>"$SUPERVISOR_LOG" || true
+					fi
+					# Proof-log for both paths
 					write_proof_log --task "$stale_id" --event "reconcile_merged" --stage "phase_3b2" \
 						--decision "$stale_status->deployed (PR already merged)" \
 						--evidence "pr=#$pr_number merged_at=$pr_merged_at prev_status=$stale_status" \
@@ -630,7 +647,7 @@ cmd_pulse() {
 						updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
 					WHERE id = '$escaped_stale_id';" 2>/dev/null || true
 					# Log the state transition
-					db "$SUPERVISOR_DB" "INSERT INTO state_log (task_id, from_state, to_state, timestamp, details)
+					db "$SUPERVISOR_DB" "INSERT INTO state_log (task_id, from_state, to_state, timestamp, reason)
 					VALUES ('$escaped_stale_id', '$stale_status', 'queued',
 						strftime('%Y-%m-%dT%H:%M:%SZ','now'),
 						'Phase 3b2 reconciliation: PR #$pr_number closed without merge');" 2>/dev/null || true
@@ -2009,22 +2026,37 @@ cmd_triage() {
 		log_info "Resolving merged-but-stuck tasks..."
 		while IFS='|' read -r cid cstatus _cdetail; do
 			[[ -z "$cid" ]] && continue
-			log_info "  $cid: advancing to deployed (was $cstatus)"
-			# Direct DB update: bypass state machine since PR is verified merged
 			local escaped_cid
 			escaped_cid=$(sql_escape "$cid")
-			db "$SUPERVISOR_DB" "UPDATE tasks SET
-				status = 'deployed', error = NULL,
-				completed_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
-				updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-			WHERE id = '$escaped_cid';" 2>/dev/null || true
-			db "$SUPERVISOR_DB" "INSERT INTO state_log (task_id, from_state, to_state, timestamp, details)
-			VALUES ('$escaped_cid', '$cstatus', 'deployed',
-				strftime('%Y-%m-%dT%H:%M:%SZ','now'),
-				'Triage auto-resolve: PR merged on GitHub');" 2>/dev/null || true
-			cleanup_after_merge "$cid" 2>>"$SUPERVISOR_LOG" || true
-			update_todo_on_complete "$cid" 2>>"$SUPERVISOR_LOG" || true
-			sync_issue_status_label "$cid" "deployed" "triage" 2>>"$SUPERVISOR_LOG" || true
+
+			if [[ "$cstatus" == "verify_failed" ]]; then
+				# verify_failed: reset to deployed for re-verification, do NOT mark complete
+				log_info "  $cid: resetting to deployed for re-verification (was verify_failed)"
+				db "$SUPERVISOR_DB" "UPDATE tasks SET
+					status = 'deployed', error = NULL,
+					updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+				WHERE id = '$escaped_cid';" 2>/dev/null || true
+				db "$SUPERVISOR_DB" "INSERT INTO state_log (task_id, from_state, to_state, timestamp, reason)
+				VALUES ('$escaped_cid', 'verify_failed', 'deployed',
+					strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+					'Triage: reset for re-verification (PR merged)');" 2>/dev/null || true
+				sync_issue_status_label "$cid" "deployed" "triage" 2>>"$SUPERVISOR_LOG" || true
+			else
+				# blocked: advance to deployed and mark complete
+				log_info "  $cid: advancing to deployed (was $cstatus)"
+				db "$SUPERVISOR_DB" "UPDATE tasks SET
+					status = 'deployed', error = NULL,
+					completed_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+					updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+				WHERE id = '$escaped_cid';" 2>/dev/null || true
+				db "$SUPERVISOR_DB" "INSERT INTO state_log (task_id, from_state, to_state, timestamp, reason)
+				VALUES ('$escaped_cid', '$cstatus', 'deployed',
+					strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+					'Triage auto-resolve: PR merged on GitHub');" 2>/dev/null || true
+				cleanup_after_merge "$cid" 2>>"$SUPERVISOR_LOG" || true
+				update_todo_on_complete "$cid" 2>>"$SUPERVISOR_LOG" || true
+				sync_issue_status_label "$cid" "deployed" "triage" 2>>"$SUPERVISOR_LOG" || true
+			fi
 			resolve_count=$((resolve_count + 1))
 		done <<<"$(echo -e "$cat_merged_stuck")"
 	fi
