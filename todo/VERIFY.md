@@ -646,3 +646,50 @@
   check: file-exists .agents/scripts/document-creation-helper.sh
   check: file-exists .agents/scripts/email-to-markdown.py
   check: file-exists .agents/scripts/entity-extraction.py
+
+- [x] v080 t1046.3 Integration with convert pipeline — auto-run normalise ... | PR #1456 | merged:2026-02-14 verified:2026-02-14
+  files: .agents/scripts/document-creation-helper.sh
+  check: shellcheck .agents/scripts/document-creation-helper.sh
+  check: file-exists .agents/scripts/document-creation-helper.sh
+
+- [x] v081 t1052.7 Auto-summary generation — generate 1-2 sentence summary... | PR #1459 | merged:2026-02-14 verified:2026-02-14
+  files: .agents/scripts/email-summary.py, .agents/scripts/email-to-markdown.py
+  check: file-exists .agents/scripts/email-summary.py
+  check: file-exists .agents/scripts/email-to-markdown.py
+
+- [x] v082 t1055.9 Collection manifest — generate `_index.toon` with doc/t... | PR #1468 | merged:2026-02-14 verified:2026-02-14
+  files: .agents/scripts/document-creation-helper.sh, tests/test-collection-manifest.sh
+  check: shellcheck .agents/scripts/document-creation-helper.sh
+  check: file-exists .agents/scripts/document-creation-helper.sh
+  check: shellcheck tests/test-collection-manifest.sh
+  check: file-exists tests/test-collection-manifest.sh
+
+- [x] v083 t1056.1 Add `install-app` and `uninstall-app` commands to cloudro... | PR #1470 | merged:2026-02-14 verified:2026-02-14
+  files: .agents/scripts/cloudron-helper.sh
+  check: shellcheck .agents/scripts/cloudron-helper.sh
+  check: file-exists .agents/scripts/cloudron-helper.sh
+
+- [x] v084 t1056.3 Implement `auto-setup` command — Orchestrates the full ... | PR #1474 | merged:2026-02-14 verified:2026-02-14
+  files: .agents/scripts/matrix-dispatch-helper.sh
+  check: shellcheck .agents/scripts/matrix-dispatch-helper.sh
+  check: file-exists .agents/scripts/matrix-dispatch-helper.sh
+
+- [!] v085 t1048 Fix auto-rebase: handle AI-completed rebase and increase ... | PR #1478 | merged:2026-02-14 failed:2026-02-14 reason:shellcheck: .agents/scripts/supervisor/deploy.sh has violations
+  files: .agents/scripts/supervisor/deploy.sh
+  check: shellcheck .agents/scripts/supervisor/deploy.sh
+  check: file-exists .agents/scripts/supervisor/deploy.sh
+
+- [!] v086 t1049 Fix auto-rebase: abort stale rebase state before retrying... | PR #1480 | merged:2026-02-14 failed:2026-02-14 reason:shellcheck: .agents/scripts/supervisor/deploy.sh has violations
+  files: .agents/scripts/supervisor/deploy.sh
+  check: shellcheck .agents/scripts/supervisor/deploy.sh
+  check: file-exists .agents/scripts/supervisor/deploy.sh
+
+- [!] v087 t1050 Escalate rebase-blocked PRs to opus worker for sequential... | PR #1484 | merged:2026-02-14 failed:2026-02-14 reason:shellcheck: .agents/scripts/supervisor/pulse.sh has violations
+  files: .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
+
+- [x] v088 t1047 Fix task ID race condition: replace TODO.md scanning with... | PR #1458 | merged:2026-02-14 verified:2026-02-14
+  files: .agents/scripts/claim-task-id.sh
+  check: shellcheck .agents/scripts/claim-task-id.sh
+  check: file-exists .agents/scripts/claim-task-id.sh
