@@ -5,6 +5,9 @@ import {
   existsSync,
   appendFileSync,
   mkdirSync,
+  statSync,
+  writeFileSync,
+  renameSync,
 } from "fs";
 import { join } from "path";
 import { homedir, platform } from "os";
@@ -16,6 +19,9 @@ const SCRIPTS_DIR = join(AGENTS_DIR, "scripts");
 const WORKSPACE_DIR = join(HOME, ".aidevops", ".agent-workspace");
 const LOGS_DIR = join(HOME, ".aidevops", "logs");
 const QUALITY_LOG = join(LOGS_DIR, "quality-hooks.log");
+const QUALITY_DETAIL_LOG = join(LOGS_DIR, "quality-details.log");
+const QUALITY_DETAIL_MAX_BYTES = 2 * 1024 * 1024; // 2 MB
+const CONSOLE_MAX_DETAIL_LINES = 10;
 const IS_MACOS = platform() === "darwin";
 
 /**
@@ -852,6 +858,47 @@ function qualityLog(level, message) {
 }
 
 /**
+ * Rotate a log file if it exceeds maxBytes.
+ * Keeps one .1 backup and truncates the current file.
+ * @param {string} logPath - Path to the log file
+ * @param {number} maxBytes - Maximum size before rotation
+ */
+function rotateLogIfNeeded(logPath, maxBytes) {
+  try {
+    if (!existsSync(logPath)) return;
+    const stats = statSync(logPath);
+    if (stats.size <= maxBytes) return;
+    const backup = `${logPath}.1`;
+    // renameSync atomically replaces the destination on POSIX
+    renameSync(logPath, backup);
+    writeFileSync(logPath, `[${new Date().toISOString()}] [INFO] Log rotated (previous: ${stats.size} bytes)\n`);
+  } catch (e) {
+    console.error(`[aidevops] Log rotation failed: ${e.message}`);
+  }
+}
+
+/**
+ * Write full quality violation details to the detail log file.
+ * Rotates the log if it exceeds QUALITY_DETAIL_MAX_BYTES.
+ * @param {string} label - e.g. "Shell quality", "Markdown quality"
+ * @param {string} filePath
+ * @param {string} report - Full violation report
+ */
+function qualityDetailLog(label, filePath, report) {
+  try {
+    mkdirSync(LOGS_DIR, { recursive: true });
+    rotateLogIfNeeded(QUALITY_DETAIL_LOG, QUALITY_DETAIL_MAX_BYTES);
+    const timestamp = new Date().toISOString();
+    appendFileSync(
+      QUALITY_DETAIL_LOG,
+      `[${timestamp}] ${label} — ${filePath}\n${report}\n\n`,
+    );
+  } catch (e) {
+    console.error(`[aidevops] Quality detail logging failed: ${e.message}`);
+  }
+}
+
+/**
  * Try to match a shell function definition on a line.
  * @param {string} trimmed - Trimmed line content
  * @returns {string|null} Function name if matched, null otherwise
@@ -1186,8 +1233,20 @@ function isWriteOrEditTool(tool) {
 function logQualityGateResult(label, filePath, totalViolations, report, errorLevel = "WARN") {
   if (totalViolations > 0) {
     const plural = totalViolations !== 1 ? "s" : "";
-    console.error(`[aidevops] ${label}: ${totalViolations} issue${plural} in ${filePath}:\n${report}`);
+    const reportLines = report.split("\n");
+    // Cap console output to avoid flooding the TUI
+    let consoleReport;
+    if (reportLines.length > CONSOLE_MAX_DETAIL_LINES) {
+      const shown = reportLines.slice(0, CONSOLE_MAX_DETAIL_LINES).join("\n");
+      const omitted = reportLines.length - CONSOLE_MAX_DETAIL_LINES;
+      consoleReport = `${shown}\n  ... and ${omitted} more (see ${QUALITY_DETAIL_LOG})`;
+    } else {
+      consoleReport = report;
+    }
+    console.error(`[aidevops] ${label}: ${totalViolations} issue${plural} in ${filePath}:\n${consoleReport}`);
     qualityLog(errorLevel, `${label}: ${totalViolations} violations in ${filePath}`);
+    // Write full details to the detail log (rotated to prevent disk bloat)
+    qualityDetailLog(label, filePath, report);
   } else {
     qualityLog("INFO", `${label}: PASS for ${filePath}`);
   }
