@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.115.2] - 2026-02-15
+
+### Fixed
+
+- auto-verify deployed tasks without VERIFY.md entries (t1051) (#1494)
+
 ## [2.115.1] - 2026-02-15
 
 ### Added
