@@ -3922,6 +3922,68 @@ cmd_add_related_docs() {
 }
 
 # ============================================================================
+# Cross-document linking (t1049.11)
+# ============================================================================
+
+cmd_link_documents() {
+	local directory=""
+	local dry_run=false
+	local min_shared=2
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--dry-run)
+			dry_run=true
+			shift
+			;;
+		--min-shared-entities)
+			min_shared="${2:-2}"
+			shift 2
+			;;
+		-*)
+			die "Unknown option: $1"
+			;;
+		*)
+			directory="$1"
+			shift
+			;;
+		esac
+	done
+
+	if [[ -z "$directory" ]]; then
+		die "Usage: ${SCRIPT_NAME} link-documents <directory> [--dry-run] [--min-shared-entities N]"
+	fi
+
+	if [[ ! -d "$directory" ]]; then
+		die "Directory not found: ${directory}"
+	fi
+
+	local script_dir
+	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	local linker="${script_dir}/cross-document-linking.py"
+
+	if [[ ! -f "$linker" ]]; then
+		die "Cross-document linking script not found: ${linker}"
+	fi
+
+	# Determine Python interpreter (prefer venv)
+	local python_cmd="python3"
+	if activate_venv 2>/dev/null; then
+		python_cmd="python3"
+	fi
+
+	local args=("$directory" "--min-shared-entities" "$min_shared")
+	if [[ "$dry_run" == true ]]; then
+		args+=("--dry-run")
+	fi
+
+	log_info "Building cross-document links in: ${directory}"
+	"$python_cmd" "$linker" "${args[@]}"
+
+	return $?
+}
+
+# ============================================================================
 # Help
 # ============================================================================
 
@@ -3939,6 +4001,7 @@ cmd_help() {
 	printf "  generate-manifest Generate collection manifest (_index.toon) (t1044.9)\n"
 	printf "  add-related-docs  Add related_docs frontmatter and navigation links (t1044.11)\n"
 	printf "  enforce-frontmatter Enforce YAML frontmatter on markdown files\n"
+	printf "  link-documents    Add cross-document links to email collection (t1049.11)\n"
 	printf "  install           Install conversion tools (--minimal, --standard, --full, --ocr)\n"
 	printf "  formats           Show supported format conversions\n"
 	printf "  status            Show installed tools and availability\n"
@@ -3967,6 +4030,8 @@ cmd_help() {
 	printf "  %s generate-manifest ./emails -o manifest.toon\n" "${SCRIPT_NAME}"
 	printf "  %s add-related-docs email.md\n" "${SCRIPT_NAME}"
 	printf "  %s add-related-docs --directory ./emails --update-all\n" "${SCRIPT_NAME}"
+	printf "  %s link-documents ./emails --min-shared-entities 3\n" "${SCRIPT_NAME}"
+	printf "  %s link-documents ./emails --dry-run\n" "${SCRIPT_NAME}"
 	printf "  %s install --standard\n" "${SCRIPT_NAME}"
 	printf "  %s install --ocr\n" "${SCRIPT_NAME}"
 	printf "\nSee: tools/document/document-creation.md for full documentation.\n"
@@ -3994,6 +4059,7 @@ main() {
 	pageindex) cmd_pageindex "$@" ;;
 	add-related-docs) cmd_add_related_docs "$@" ;;
 	enforce-frontmatter | frontmatter) "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/frontmatter-helper.sh" "$@" ;;
+	link-documents) cmd_link_documents "$@" ;;
 	install) cmd_install "$@" ;;
 	formats) cmd_formats ;;
 	status) cmd_status ;;
