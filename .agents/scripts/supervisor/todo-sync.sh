@@ -646,10 +646,6 @@ generate_verify_entry() {
 			# Generate check directives based on file types
 			for fpath in "${substantive_files[@]}"; do
 				case "$fpath" in
-				tests/*.sh | tests/test-*.sh)
-					check_lines+=("  check: shellcheck $fpath")
-					check_lines+=("  check: file-exists $fpath")
-					;;
 				*.sh)
 					check_lines+=("  check: shellcheck $fpath")
 					check_lines+=("  check: file-exists $fpath")
