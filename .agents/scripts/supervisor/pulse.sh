@@ -557,10 +557,11 @@ cmd_pulse() {
 			while IFS='|' read -r stale_id stale_status stale_pr _stale_repo; do
 				[[ -z "$stale_id" ]] && continue
 
-				# Extract PR number from URL
-				local pr_number=""
-				if [[ "$stale_pr" =~ /pull/([0-9]+)$ ]]; then
-					pr_number="${BASH_REMATCH[1]}"
+				# Extract PR number and repo slug from URL
+				local pr_number="" pr_repo_slug=""
+				if [[ "$stale_pr" =~ github\.com/([^/]+/[^/]+)/pull/([0-9]+)$ ]]; then
+					pr_repo_slug="${BASH_REMATCH[1]}"
+					pr_number="${BASH_REMATCH[2]}"
 				fi
 				if [[ -z "$pr_number" ]]; then
 					# Non-standard PR URL or obsolete marker — mark as cancelled
@@ -570,9 +571,9 @@ cmd_pulse() {
 					continue
 				fi
 
-				# Query GitHub for actual PR state
+				# Query GitHub for actual PR state (use --repo for cron compatibility)
 				local pr_json
-				pr_json=$(gh pr view "$pr_number" --json state,mergedAt 2>/dev/null || echo "")
+				pr_json=$(gh pr view "$pr_number" --repo "$pr_repo_slug" --json state,mergedAt 2>/dev/null || echo "")
 				if [[ -z "$pr_json" ]]; then
 					log_warn "  Phase 3b2: $stale_id PR #$pr_number unreachable — skipping"
 					continue
@@ -1945,19 +1946,20 @@ cmd_triage() {
 			continue
 		fi
 
-		# Extract PR number
-		local pr_num=""
-		if [[ "$tpr" =~ /pull/([0-9]+)$ ]]; then
-			pr_num="${BASH_REMATCH[1]}"
+		# Extract PR number and repo slug from URL
+		local pr_num="" triage_repo_slug=""
+		if [[ "$tpr" =~ github\.com/([^/]+/[^/]+)/pull/([0-9]+)$ ]]; then
+			triage_repo_slug="${BASH_REMATCH[1]}"
+			pr_num="${BASH_REMATCH[2]}"
 		fi
 		if [[ -z "$pr_num" ]]; then
 			cat_obsolete="${cat_obsolete}${tid}|${tstatus}|unparseable:${tpr}\n"
 			continue
 		fi
 
-		# Query GitHub
+		# Query GitHub (use --repo for cron compatibility)
 		local pr_json
-		pr_json=$(gh pr view "$pr_num" --json state,mergedAt 2>/dev/null || echo "")
+		pr_json=$(gh pr view "$pr_num" --repo "$triage_repo_slug" --json state,mergedAt 2>/dev/null || echo "")
 		if [[ -z "$pr_json" ]]; then
 			cat_no_pr="${cat_no_pr}${tid}|${tstatus}|PR #${pr_num} unreachable\n"
 			continue
