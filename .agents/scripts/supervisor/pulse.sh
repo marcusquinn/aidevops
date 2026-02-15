@@ -629,6 +629,11 @@ cmd_pulse() {
 						rebase_attempts = 0,
 						updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
 					WHERE id = '$escaped_stale_id';" 2>/dev/null || true
+					# Log the state transition
+					db "$SUPERVISOR_DB" "INSERT INTO state_log (task_id, from_state, to_state, timestamp, details)
+					VALUES ('$escaped_stale_id', '$stale_status', 'queued',
+						strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+						'Phase 3b2 reconciliation: PR #$pr_number closed without merge');" 2>/dev/null || true
 					# Clean up old worktree if it exists
 					cleanup_after_merge "$stale_id" 2>>"$SUPERVISOR_LOG" || true
 					write_proof_log --task "$stale_id" --event "reconcile_closed" --stage "phase_3b2" \
