@@ -269,40 +269,53 @@ process_verify_queue() {
 
 	local verified_count=0
 	local failed_count=0
+	local auto_verified_count=0
+	local max_auto_verify_per_pulse=50
 
 	while IFS='|' read -r tid trepo _tpr; do
 		[[ -z "$tid" ]] && continue
 
 		local verify_file="$trepo/todo/VERIFY.md"
-		if [[ ! -f "$verify_file" ]]; then
-			continue
+		local has_entry=false
+
+		if [[ -f "$verify_file" ]] && grep -q "^- \[ \] v[0-9]* $tid " "$verify_file" 2>/dev/null; then
+			has_entry=true
 		fi
 
-		# Check if there's a pending verify entry for this task
-		if ! grep -q "^- \[ \] v[0-9]* $tid " "$verify_file" 2>/dev/null; then
-			continue
-		fi
+		if [[ "$has_entry" == "true" ]]; then
+			# Has VERIFY.md entry — run the defined checks
+			log_info "  $tid: running verification checks"
+			cmd_transition "$tid" "verifying" 2>>"$SUPERVISOR_LOG" || {
+				log_warn "  $tid: failed to transition to verifying"
+				continue
+			}
 
-		log_info "  $tid: running verification checks"
-		cmd_transition "$tid" "verifying" 2>>"$SUPERVISOR_LOG" || {
-			log_warn "  $tid: failed to transition to verifying"
-			continue
-		}
-
-		if run_verify_checks "$tid" "$trepo"; then
-			cmd_transition "$tid" "verified" 2>>"$SUPERVISOR_LOG" || true
-			verified_count=$((verified_count + 1))
-			log_success "  $tid: VERIFIED"
+			if run_verify_checks "$tid" "$trepo"; then
+				cmd_transition "$tid" "verified" 2>>"$SUPERVISOR_LOG" || true
+				verified_count=$((verified_count + 1))
+				log_success "  $tid: VERIFIED"
+			else
+				cmd_transition "$tid" "verify_failed" 2>>"$SUPERVISOR_LOG" || true
+				failed_count=$((failed_count + 1))
+				log_warn "  $tid: VERIFY FAILED"
+				send_task_notification "$tid" "verify_failed" "Post-merge verification failed" 2>>"$SUPERVISOR_LOG" || true
+			fi
 		else
-			cmd_transition "$tid" "verify_failed" 2>>"$SUPERVISOR_LOG" || true
-			failed_count=$((failed_count + 1))
-			log_warn "  $tid: VERIFY FAILED"
-			send_task_notification "$tid" "verify_failed" "Post-merge verification failed" 2>>"$SUPERVISOR_LOG" || true
+			# No VERIFY.md entry — auto-verify (PR merged + CI passed is sufficient)
+			# Rate-limit to avoid overwhelming the state machine in one pulse
+			if [[ "$auto_verified_count" -ge "$max_auto_verify_per_pulse" ]]; then
+				continue
+			fi
+			cmd_transition "$tid" "verified" 2>>"$SUPERVISOR_LOG" || {
+				log_warn "  $tid: failed to auto-verify"
+				continue
+			}
+			auto_verified_count=$((auto_verified_count + 1))
 		fi
 	done <<<"$deployed_tasks"
 
-	if [[ $((verified_count + failed_count)) -gt 0 ]]; then
-		log_info "Verification: $verified_count passed, $failed_count failed"
+	if [[ $((verified_count + failed_count + auto_verified_count)) -gt 0 ]]; then
+		log_info "Verification: $verified_count passed, $failed_count failed, $auto_verified_count auto-verified (no VERIFY.md entry)"
 	fi
 
 	return 0
