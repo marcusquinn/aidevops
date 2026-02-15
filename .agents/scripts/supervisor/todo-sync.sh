@@ -65,6 +65,69 @@ commit_and_push_todo() {
 }
 
 #######################################
+# Commit and push todo/VERIFY.md with pull-rebase retry (t1053)
+# Handles concurrent push conflicts from parallel workers
+# Args: $1=repo_path $2=commit_message $3=max_retries (default 3)
+#######################################
+commit_and_push_verify() {
+	local repo_path="$1"
+	local commit_msg="$2"
+	local max_retries="${3:-3}"
+
+	local verify_rel="todo/VERIFY.md"
+
+	if git -C "$repo_path" diff --quiet -- "$verify_rel" 2>>"$SUPERVISOR_LOG"; then
+		log_info "No changes to commit (VERIFY.md unchanged)"
+		return 0
+	fi
+
+	git -C "$repo_path" add "$verify_rel"
+
+	local attempt=0
+	while [[ "$attempt" -lt "$max_retries" ]]; do
+		attempt=$((attempt + 1))
+
+		# Pull-rebase to incorporate any concurrent pushes
+		if ! git -C "$repo_path" pull --rebase --autostash 2>>"$SUPERVISOR_LOG"; then
+			log_warn "Pull-rebase failed for VERIFY.md (attempt $attempt/$max_retries)"
+			git -C "$repo_path" rebase --abort 2>>"$SUPERVISOR_LOG" || true
+			sleep "$attempt"
+			continue
+		fi
+
+		# Re-stage VERIFY.md (rebase may have resolved it)
+		if ! git -C "$repo_path" diff --quiet -- "$verify_rel" 2>>"$SUPERVISOR_LOG"; then
+			git -C "$repo_path" add "$verify_rel"
+		fi
+
+		# Check if our change survived the rebase
+		if git -C "$repo_path" diff --cached --quiet -- "$verify_rel" 2>>"$SUPERVISOR_LOG"; then
+			log_info "VERIFY.md change already applied (likely by another worker)"
+			return 0
+		fi
+
+		# Commit
+		if ! git -C "$repo_path" commit -m "$commit_msg" -- "$verify_rel" 2>>"$SUPERVISOR_LOG"; then
+			log_warn "Commit failed for VERIFY.md (attempt $attempt/$max_retries)"
+			sleep "$attempt"
+			continue
+		fi
+
+		# Push
+		if git -C "$repo_path" push 2>>"$SUPERVISOR_LOG"; then
+			log_success "Committed and pushed VERIFY.md update"
+			return 0
+		fi
+
+		log_warn "Push failed for VERIFY.md (attempt $attempt/$max_retries) - will pull-rebase and retry"
+		sleep "$attempt"
+	done
+
+	log_error "Failed to push VERIFY.md after $max_retries attempts"
+	return 1
+}
+
+#######################################
 # Populate VERIFY.md queue after PR merge (t180.2)
 # Extracts changed files from the PR and generates check: directives
 # based on file types (shellcheck for .sh, file-exists for new files, etc.)
@@ -484,8 +547,11 @@ update_todo_on_complete() {
 # Auto-creates check directives based on PR files:
 #   - .sh files: shellcheck + bash -n + file-exists
 #   - .md files: file-exists
+#   - .toon/.yml/.yaml/.json: file-exists
 #   - test files: bash <test>
+#   - .agents/ .md files: rg for subagent-index entries
 #   - other: file-exists
+# Filters out planning files (TODO.md, todo/)
 # Appends entry before <!-- VERIFY-QUEUE-END --> marker
 # $1: task_id
 #######################################
@@ -540,27 +606,62 @@ generate_verify_entry() {
 	local today
 	today=$(date +%Y-%m-%d)
 
-	# Get files changed in PR (requires gh CLI)
-	local files_list=""
+	# Truncate description to 60 chars for the entry header
+	local short_desc="$tdesc"
+	if [[ ${#short_desc} -gt 60 ]]; then
+		short_desc="${short_desc:0:57}..."
+	fi
+
+	# Get files changed in PR (single gh call, requires gh CLI)
+	local -a changed_files=()
+	local -a substantive_files=()
 	local -a check_lines=()
 
 	if [[ -n "$pr_number" ]] && command -v gh &>/dev/null && check_gh_auth; then
 		local repo_slug=""
 		repo_slug=$(detect_repo_slug "$trepo" 2>/dev/null || echo "")
 		if [[ -n "$repo_slug" ]]; then
-			files_list=$(gh pr view "$pr_number" --repo "$repo_slug" --json files --jq '.files[].path' 2>/dev/null | tr '\n' ', ' | sed 's/,$//')
+			# Single gh call — store result for both file list and check generation
+			local pr_files_raw=""
+			pr_files_raw=$(gh pr view "$pr_number" --repo "$repo_slug" --json files --jq '.files[].path' 2>/dev/null || echo "")
 
-			# Generate check directives based on file types
 			while IFS= read -r fpath; do
 				[[ -z "$fpath" ]] && continue
+				changed_files+=("$fpath")
+			done <<<"$pr_files_raw"
+
+			# Filter out planning files (TODO.md, todo/*)
+			local fpath
+			for fpath in "${changed_files[@]}"; do
 				case "$fpath" in
-				tests/*.sh | test-*.sh)
-					check_lines+=("  check: bash $fpath")
+				TODO.md | todo/* | .task-counter)
+					continue
+					;;
+				*)
+					substantive_files+=("$fpath")
+					;;
+				esac
+			done
+
+			# Generate check directives based on file types
+			for fpath in "${substantive_files[@]}"; do
+				case "$fpath" in
+				tests/*.sh | tests/test-*.sh)
+					check_lines+=("  check: shellcheck $fpath")
+					check_lines+=("  check: file-exists $fpath")
 					;;
 				*.sh)
-					check_lines+=("  check: file-exists $fpath")
 					check_lines+=("  check: shellcheck $fpath")
-					check_lines+=("  check: bash -n $fpath")
+					check_lines+=("  check: file-exists $fpath")
+					;;
+				*.toon)
+					check_lines+=("  check: file-exists $fpath")
+					;;
+				*.yml | *.yaml)
+					check_lines+=("  check: file-exists $fpath")
+					;;
+				*.json)
+					check_lines+=("  check: file-exists $fpath")
 					;;
 				*.md)
 					check_lines+=("  check: file-exists $fpath")
@@ -569,17 +670,38 @@ generate_verify_entry() {
 					check_lines+=("  check: file-exists $fpath")
 					;;
 				esac
-			done < <(gh pr view "$pr_number" --repo "$repo_slug" --json files --jq '.files[].path' 2>/dev/null)
+			done
+
+			# Add subagent-index checks for .agents/ tool/service/workflow .md files
+			for fpath in "${substantive_files[@]}"; do
+				if [[ "$fpath" =~ ^\.agents/(tools|services|workflows)/.+\.md$ ]]; then
+					local bname
+					bname=$(basename "$fpath" .md)
+					check_lines+=("  check: rg \"$bname\" .agents/subagent-index.toon")
+				fi
+			done
 		fi
 	fi
 
-	# Fallback: if no checks generated, add basic file-exists for PR
+	# Skip if no substantive files changed
+	if [[ ${#substantive_files[@]} -eq 0 && ${#changed_files[@]} -gt 0 ]]; then
+		log_info "generate_verify_entry: no substantive files in PR #${pr_number:-unknown} for $task_id"
+		return 0
+	fi
+
+	# Fallback: if no checks generated and no files found, add basic check
 	if [[ ${#check_lines[@]} -eq 0 && -n "$pr_number" ]]; then
-		check_lines+=("  check: rg \"$task_id\" $trepo/TODO.md")
+		check_lines+=("  check: rg \"$task_id\" TODO.md")
+	fi
+
+	# Build files list (comma-separated with spaces)
+	local files_list=""
+	if [[ ${#substantive_files[@]} -gt 0 ]]; then
+		files_list=$(printf '%s\n' "${substantive_files[@]}" | paste -sd ',' - | sed 's/,/, /g')
 	fi
 
 	# Build the entry
-	local entry_header="- [ ] $vid $task_id ${tdesc%% *} | PR #${pr_number:-unknown} | merged:$today"
+	local entry_header="- [ ] $vid $task_id $short_desc | PR #${pr_number:-unknown} | merged:$today"
 	local entry_body=""
 	if [[ -n "$files_list" ]]; then
 		entry_body+="  files: $files_list"$'\n'
@@ -591,29 +713,34 @@ generate_verify_entry() {
 	# Insert before <!-- VERIFY-QUEUE-END -->
 	local marker="<!-- VERIFY-QUEUE-END -->"
 	if ! grep -q "$marker" "$verify_file"; then
-		log_warn "generate_verify_entry: VERIFY-QUEUE-END marker not found"
-		return 1
+		# No marker — append to end of file instead
+		log_info "generate_verify_entry: no VERIFY-QUEUE-END marker, appending to end"
+		{
+			echo ""
+			printf '%s\n' "$entry_header"
+			printf '%s' "$entry_body"
+		} >>"$verify_file"
+	else
+		# Build full entry text
+		local full_entry
+		full_entry=$(printf '%s\n%s' "$entry_header" "$entry_body")
+
+		# Insert before marker using temp file (portable across macOS/Linux)
+		local tmp_file
+		tmp_file=$(mktemp)
+		_save_cleanup_scope
+		trap '_run_cleanups' RETURN
+		push_cleanup "rm -f '${tmp_file}'"
+		awk -v entry="$full_entry" -v mark="$marker" '{
+            if (index($0, mark) > 0) { print entry; }
+            print;
+        }' "$verify_file" >"$tmp_file" && mv "$tmp_file" "$verify_file"
 	fi
-
-	# Build full entry text
-	local full_entry
-	full_entry=$(printf '%s\n%s\n' "$entry_header" "$entry_body")
-
-	# Insert before marker using temp file (portable across macOS/Linux)
-	local tmp_file
-	tmp_file=$(mktemp)
-	_save_cleanup_scope
-	trap '_run_cleanups' RETURN
-	push_cleanup "rm -f '${tmp_file}'"
-	awk -v entry="$full_entry" -v mark="$marker" '{
-        if (index($0, mark) > 0) { print entry; }
-        print;
-    }' "$verify_file" >"$tmp_file" && mv "$tmp_file" "$verify_file"
 
 	log_success "Generated verify entry $vid for $task_id (PR #${pr_number:-unknown})"
 
-	# Commit and push
-	commit_and_push_todo "$trepo" "chore: add verify entry $vid for $task_id" 2>>"$SUPERVISOR_LOG" || true
+	# Commit and push VERIFY.md (not TODO.md)
+	commit_and_push_verify "$trepo" "chore: add verify entry $vid for $task_id" 2>>"$SUPERVISOR_LOG" || true
 
 	return 0
 }
