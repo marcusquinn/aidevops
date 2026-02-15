@@ -191,7 +191,7 @@ fetch_merged_prs() {
     # Use cache if less than 5 minutes old
     if [[ -f "$cache_file" ]]; then
         local cache_age
-        cache_age=$(( $(date +%s) - $(stat -f %m "$cache_file" 2>/dev/null || stat -c %Y "$cache_file" 2>/dev/null || echo 0) ))
+        cache_age=$(( $(date +%s) - $(stat -c %Y "$cache_file" 2>/dev/null || stat -f %m "$cache_file" 2>/dev/null || echo 0) ))
         if (( cache_age < 300 )); then
             log "Using cached PR list (${cache_age}s old)"
             cat "$cache_file"
