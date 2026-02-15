@@ -32,7 +32,7 @@ tools/build-agent/,Agent design - composing efficient agents,build-agent|agent-r
 tools/build-mcp/,MCP development - creating MCP servers and plugins,build-mcp|server-patterns|api-wrapper|transports|deployment|aidevops-plugin
 tools/ai-assistants/,AI tool integration - OpenCode headless dispatch model comparison and response scoring,agno|capsolver|claude-code|compare-models|response-scoring|overview|openclaw|opencode-server|headless-dispatch
 tools/ai-orchestration/,AI orchestration - visual builders and multi-agent,overview|langflow|crewai|autogen|openprose
-tools/browser/,Browser automation - scraping and testing,agent-browser|stagehand|playwright|playwright-cli|playwright-emulation|playwriter|crawl4ai|watercrawl|pagespeed|peekaboo|curl-copy
+tools/browser/,Browser automation - scraping and testing,agent-browser|stagehand|playwright|playwright-cli|playwright-emulation|playwriter|crawl4ai|watercrawl|pagespeed|peekaboo|curl-copy|chrome-webstore-release
 tools/mobile/,Mobile development - iOS/macOS build test simulator and emulator automation,agent-device|xcodebuild-mcp|ios-simulator-mcp|maestro|axe-cli|minisim
 tools/pdf/,PDF processing - form filling and digital signatures,overview|libpdf
 tools/accessibility/,Accessibility and contrast testing - WCAG compliance for websites and emails,accessibility
@@ -97,6 +97,7 @@ verify-run-helper.sh,Execute verification checks with proof logging to verify-pr
 linters-local.sh,Run local linting (shfmt ShellCheck secretlint patterns)
 rosetta-audit-helper.sh,Detect and migrate x86 Homebrew packages on Apple Silicon
 code-audit-helper.sh,Run remote auditing (CodeRabbit Codacy SonarCloud)
+chrome-webstore-helper.sh,Chrome Web Store release automation (setup publish status upload-secrets)
 version-manager.sh,Version bumps and releases
 linter-manager.sh,Install and manage linters
 github-cli-helper.sh,GitHub operations
