@@ -509,6 +509,147 @@ cmd_pulse() {
 		log_error "Phase 3b (process_verify_queue) failed — see $SUPERVISOR_LOG for details"
 	fi
 
+	# Phase 3b2: Reconcile stale blocked/verify_failed tasks against GitHub PR state
+	# Tasks can get stuck in 'blocked' or 'verify_failed' when the supervisor
+	# encounters an error (merge conflict, rebase failure, verify check failure)
+	# but the PR is subsequently merged by a later pulse or manual action.
+	# This phase queries GitHub for the actual PR state and advances tasks
+	# whose PRs have already been merged. Also handles PRs closed without merge
+	# (cancels the task) and tasks with obsolete/unreachable PR URLs.
+	# First: cancel tasks with obsolete/sentinel PR URLs
+	local obsolete_tasks
+	obsolete_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
+		SELECT id, status, pr_url FROM tasks
+		WHERE status IN ('blocked', 'verify_failed')
+		  AND pr_url IN ('task_obsolete')
+		ORDER BY id;
+	" 2>/dev/null || echo "")
+
+	if [[ -n "$obsolete_tasks" ]]; then
+		while IFS='|' read -r obs_id obs_status obs_pr; do
+			[[ -z "$obs_id" ]] && continue
+			log_warn "  Phase 3b2: $obs_id ($obs_status) has obsolete PR marker '$obs_pr' — cancelling"
+			cmd_transition "$obs_id" "cancelled" --error "Task obsolete (PR marker: $obs_pr)" 2>>"$SUPERVISOR_LOG" || true
+			cleanup_after_merge "$obs_id" 2>>"$SUPERVISOR_LOG" || true
+		done <<<"$obsolete_tasks"
+	fi
+
+	# Then: reconcile tasks with real PR URLs against GitHub
+	if command -v gh &>/dev/null; then
+		local stale_tasks
+		stale_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
+			SELECT id, status, pr_url, repo FROM tasks
+			WHERE status IN ('blocked', 'verify_failed')
+			  AND pr_url IS NOT NULL
+			  AND pr_url != ''
+			  AND pr_url != 'no_pr'
+			  AND pr_url != 'task_only'
+			  AND pr_url != 'task_obsolete'
+			  AND pr_url != 'verified_complete'
+			ORDER BY id;
+		" 2>/dev/null || echo "")
+
+		if [[ -n "$stale_tasks" ]]; then
+			local reconciled_merged=0
+			local reconciled_closed=0
+			local reconciled_obsolete=0
+
+			while IFS='|' read -r stale_id stale_status stale_pr _stale_repo; do
+				[[ -z "$stale_id" ]] && continue
+
+				# Extract PR number from URL
+				local pr_number=""
+				if [[ "$stale_pr" =~ /pull/([0-9]+)$ ]]; then
+					pr_number="${BASH_REMATCH[1]}"
+				fi
+				if [[ -z "$pr_number" ]]; then
+					# Non-standard PR URL or obsolete marker — mark as cancelled
+					log_warn "  Phase 3b2: $stale_id has non-parseable PR URL '$stale_pr' — cancelling"
+					cmd_transition "$stale_id" "cancelled" --error "PR URL not parseable: $stale_pr" 2>>"$SUPERVISOR_LOG" || true
+					reconciled_obsolete=$((reconciled_obsolete + 1))
+					continue
+				fi
+
+				# Query GitHub for actual PR state
+				local pr_json
+				pr_json=$(gh pr view "$pr_number" --json state,mergedAt 2>/dev/null || echo "")
+				if [[ -z "$pr_json" ]]; then
+					log_warn "  Phase 3b2: $stale_id PR #$pr_number unreachable — skipping"
+					continue
+				fi
+
+				local pr_state pr_merged_at
+				pr_state=$(echo "$pr_json" | grep -o '"state":"[^"]*"' | cut -d'"' -f4)
+				pr_merged_at=$(echo "$pr_json" | grep -o '"mergedAt":"[^"]*"' | cut -d'"' -f4)
+
+				if [[ "$pr_state" == "MERGED" ]]; then
+					log_success "  Phase 3b2: $stale_id ($stale_status) — PR #$pr_number already MERGED ($pr_merged_at), advancing to deployed"
+					# Direct DB update: bypass state machine since we've verified
+					# the PR is merged on GitHub (blocked->deployed isn't a valid
+					# transition, but the ground truth is the PR is merged)
+					local escaped_stale_id
+					escaped_stale_id=$(sql_escape "$stale_id")
+					db "$SUPERVISOR_DB" "UPDATE tasks SET
+						status = 'deployed',
+						error = NULL,
+						completed_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+						updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+					WHERE id = '$escaped_stale_id';" 2>/dev/null || true
+					# Log the state transition manually
+					db "$SUPERVISOR_DB" "INSERT INTO state_log (task_id, from_state, to_state, timestamp, details)
+					VALUES ('$escaped_stale_id', '$stale_status', 'deployed',
+						strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+						'Phase 3b2 reconciliation: PR #$pr_number merged at $pr_merged_at');" 2>/dev/null || true
+					# Clean up worktree if it exists
+					cleanup_after_merge "$stale_id" 2>>"$SUPERVISOR_LOG" || log_warn "  Worktree cleanup issue for $stale_id (non-blocking)"
+					# Update TODO.md
+					update_todo_on_complete "$stale_id" 2>>"$SUPERVISOR_LOG" || true
+					# Sync GitHub issue status
+					sync_issue_status_label "$stale_id" "deployed" "phase_3b2" 2>>"$SUPERVISOR_LOG" || true
+					# Proof-log
+					write_proof_log --task "$stale_id" --event "reconcile_merged" --stage "phase_3b2" \
+						--decision "$stale_status->deployed (PR already merged)" \
+						--evidence "pr=#$pr_number merged_at=$pr_merged_at prev_status=$stale_status" \
+						--maker "pulse:phase_3b2" 2>/dev/null || true
+					reconciled_merged=$((reconciled_merged + 1))
+
+				elif [[ "$pr_state" == "CLOSED" ]]; then
+					# PR was closed without merge — the work was abandoned or superseded
+					log_warn "  Phase 3b2: $stale_id ($stale_status) — PR #$pr_number CLOSED without merge, resetting to queued for re-dispatch"
+					# Reset to queued so it can be re-dispatched with a fresh worktree
+					local escaped_stale_id
+					escaped_stale_id=$(sql_escape "$stale_id")
+					db "$SUPERVISOR_DB" "UPDATE tasks SET
+						status = 'queued',
+						error = NULL,
+						pr_url = NULL,
+						worktree = NULL,
+						branch = NULL,
+						retries = 0,
+						rebase_attempts = 0,
+						updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+					WHERE id = '$escaped_stale_id';" 2>/dev/null || true
+					# Clean up old worktree if it exists
+					cleanup_after_merge "$stale_id" 2>>"$SUPERVISOR_LOG" || true
+					write_proof_log --task "$stale_id" --event "reconcile_closed" --stage "phase_3b2" \
+						--decision "blocked->queued (PR closed without merge)" \
+						--evidence "pr=#$pr_number prev_status=$stale_status" \
+						--maker "pulse:phase_3b2" 2>/dev/null || true
+					reconciled_closed=$((reconciled_closed + 1))
+
+				else
+					# PR is still OPEN — leave the task in its current state
+					# Phase 3.5 (rebase retry) or Phase 3.6 (escalation) will handle it
+					:
+				fi
+			done <<<"$stale_tasks"
+
+			if [[ $((reconciled_merged + reconciled_closed + reconciled_obsolete)) -gt 0 ]]; then
+				log_success "  Phase 3b2: Reconciled $reconciled_merged merged, $reconciled_closed closed, $reconciled_obsolete obsolete"
+			fi
+		fi
+	fi
+
 	# Phase 3c: Reconcile terminal DB states with GitHub issues (t1038)
 	# Tasks can reach terminal states (cancelled, failed, verified) via direct DB
 	# updates or manual intervention, bypassing cmd_transition and its issue sync.
@@ -1695,5 +1836,225 @@ extract_parent_id() {
 		echo "${BASH_REMATCH[1]}"
 	fi
 	# No output for non-subtasks (intentional)
+	return 0
+}
+
+#######################################
+# Triage command — bulk diagnose and resolve stuck tasks
+# Provides a summary of all blocked/verify_failed/failed tasks,
+# categorizes them by root cause, and optionally resolves them.
+#
+# Usage:
+#   supervisor-helper.sh triage [--dry-run] [--auto-resolve]
+#
+# Categories:
+#   merged-but-stuck: PR merged on GitHub but DB still blocked/verify_failed
+#   closed-no-merge:  PR closed without merge — needs re-dispatch
+#   obsolete-pr:      PR URL is a sentinel (task_obsolete) — cancel
+#   changes-requested: Review requested changes but PR since merged — advance
+#   rebase-exhausted: Auto-rebase retries exhausted — needs escalation
+#   no-pr:            Blocked with no PR URL — needs investigation
+#######################################
+cmd_triage() {
+	local dry_run=false
+	local auto_resolve=false
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--dry-run)
+			dry_run=true
+			shift
+			;;
+		--auto-resolve)
+			auto_resolve=true
+			shift
+			;;
+		*)
+			log_error "Unknown option: $1"
+			return 1
+			;;
+		esac
+	done
+
+	ensure_db
+
+	if ! command -v gh &>/dev/null; then
+		log_error "gh CLI required for triage — install with: brew install gh"
+		return 1
+	fi
+
+	echo ""
+	log_info "=== Queue Triage Report ==="
+	echo ""
+
+	# Gather all stuck tasks
+	local stuck_tasks
+	stuck_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
+		SELECT id, status, pr_url, error, repo, rebase_attempts FROM tasks
+		WHERE status IN ('blocked', 'verify_failed', 'failed')
+		ORDER BY status, id;
+	" 2>/dev/null || echo "")
+
+	if [[ -z "$stuck_tasks" ]]; then
+		log_success "No stuck tasks found — queue is healthy"
+		return 0
+	fi
+
+	# Categorize
+	local cat_merged_stuck=""
+	local cat_closed_no_merge=""
+	local cat_obsolete=""
+	local cat_rebase_exhausted=""
+	local cat_no_pr=""
+	local cat_open_pr=""
+	local total_stuck=0
+
+	while IFS='|' read -r tid tstatus tpr terror _trepo trebase; do
+		[[ -z "$tid" ]] && continue
+		total_stuck=$((total_stuck + 1))
+
+		# No PR or sentinel
+		if [[ -z "$tpr" || "$tpr" == "no_pr" || "$tpr" == "task_only" ]]; then
+			cat_no_pr="${cat_no_pr}${tid}|${tstatus}|${terror}\n"
+			continue
+		fi
+		if [[ "$tpr" == "task_obsolete" ]]; then
+			cat_obsolete="${cat_obsolete}${tid}|${tstatus}|${tpr}\n"
+			continue
+		fi
+
+		# Extract PR number
+		local pr_num=""
+		if [[ "$tpr" =~ /pull/([0-9]+)$ ]]; then
+			pr_num="${BASH_REMATCH[1]}"
+		fi
+		if [[ -z "$pr_num" ]]; then
+			cat_obsolete="${cat_obsolete}${tid}|${tstatus}|unparseable:${tpr}\n"
+			continue
+		fi
+
+		# Query GitHub
+		local pr_json
+		pr_json=$(gh pr view "$pr_num" --json state,mergedAt 2>/dev/null || echo "")
+		if [[ -z "$pr_json" ]]; then
+			cat_no_pr="${cat_no_pr}${tid}|${tstatus}|PR #${pr_num} unreachable\n"
+			continue
+		fi
+
+		local pr_state
+		pr_state=$(echo "$pr_json" | grep -o '"state":"[^"]*"' | cut -d'"' -f4)
+
+		case "$pr_state" in
+		MERGED)
+			cat_merged_stuck="${cat_merged_stuck}${tid}|${tstatus}|PR #${pr_num} MERGED\n"
+			;;
+		CLOSED)
+			cat_closed_no_merge="${cat_closed_no_merge}${tid}|${tstatus}|PR #${pr_num} CLOSED\n"
+			;;
+		OPEN)
+			if [[ "${trebase:-0}" -ge 3 ]]; then
+				cat_rebase_exhausted="${cat_rebase_exhausted}${tid}|${tstatus}|PR #${pr_num} rebase_attempts=${trebase}\n"
+			else
+				cat_open_pr="${cat_open_pr}${tid}|${tstatus}|PR #${pr_num} OPEN (${terror})\n"
+			fi
+			;;
+		esac
+	done <<<"$stuck_tasks"
+
+	# Print report
+	local resolve_count=0
+
+	_print_category() {
+		local label="$1"
+		local data="$2"
+		local action="$3"
+		if [[ -n "$data" ]]; then
+			echo -e "${YELLOW}${label}${NC} (action: ${action}):"
+			echo -e "$data" | while IFS='|' read -r cid cstatus cdetail; do
+				[[ -z "$cid" ]] && continue
+				echo "  $cid [$cstatus] — $cdetail"
+			done
+			echo ""
+		fi
+	}
+
+	_print_category "MERGED BUT STUCK" "$cat_merged_stuck" "advance to deployed"
+	_print_category "CLOSED WITHOUT MERGE" "$cat_closed_no_merge" "reset to queued for re-dispatch"
+	_print_category "OBSOLETE PR" "$cat_obsolete" "cancel"
+	_print_category "REBASE EXHAUSTED" "$cat_rebase_exhausted" "escalate to opus worker"
+	_print_category "OPEN PR (in progress)" "$cat_open_pr" "wait for Phase 3.5/3.6"
+	_print_category "NO PR / UNREACHABLE" "$cat_no_pr" "investigate manually"
+
+	log_info "Total stuck: $total_stuck"
+	echo ""
+
+	if [[ "$dry_run" == "true" ]]; then
+		log_info "[DRY RUN] No changes made"
+		return 0
+	fi
+
+	if [[ "$auto_resolve" != "true" ]]; then
+		log_info "Run with --auto-resolve to fix resolvable categories automatically"
+		log_info "Or run 'supervisor-helper.sh pulse' to let Phase 3b2 handle it on next cycle"
+		return 0
+	fi
+
+	# Auto-resolve: merged-but-stuck
+	if [[ -n "$cat_merged_stuck" ]]; then
+		log_info "Resolving merged-but-stuck tasks..."
+		while IFS='|' read -r cid cstatus _cdetail; do
+			[[ -z "$cid" ]] && continue
+			log_info "  $cid: advancing to deployed (was $cstatus)"
+			# Direct DB update: bypass state machine since PR is verified merged
+			local escaped_cid
+			escaped_cid=$(sql_escape "$cid")
+			db "$SUPERVISOR_DB" "UPDATE tasks SET
+				status = 'deployed', error = NULL,
+				completed_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+				updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+			WHERE id = '$escaped_cid';" 2>/dev/null || true
+			db "$SUPERVISOR_DB" "INSERT INTO state_log (task_id, from_state, to_state, timestamp, details)
+			VALUES ('$escaped_cid', '$cstatus', 'deployed',
+				strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+				'Triage auto-resolve: PR merged on GitHub');" 2>/dev/null || true
+			cleanup_after_merge "$cid" 2>>"$SUPERVISOR_LOG" || true
+			update_todo_on_complete "$cid" 2>>"$SUPERVISOR_LOG" || true
+			sync_issue_status_label "$cid" "deployed" "triage" 2>>"$SUPERVISOR_LOG" || true
+			resolve_count=$((resolve_count + 1))
+		done <<<"$(echo -e "$cat_merged_stuck")"
+	fi
+
+	# Auto-resolve: closed-no-merge
+	if [[ -n "$cat_closed_no_merge" ]]; then
+		log_info "Resolving closed-without-merge tasks..."
+		while IFS='|' read -r cid _cstatus _cdetail; do
+			[[ -z "$cid" ]] && continue
+			log_info "  $cid: resetting to queued"
+			local escaped_cid
+			escaped_cid=$(sql_escape "$cid")
+			db "$SUPERVISOR_DB" "UPDATE tasks SET
+				status = 'queued', error = NULL, pr_url = NULL,
+				worktree = NULL, branch = NULL, retries = 0,
+				rebase_attempts = 0,
+				updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+			WHERE id = '$escaped_cid';" 2>/dev/null || true
+			cleanup_after_merge "$cid" 2>>"$SUPERVISOR_LOG" || true
+			resolve_count=$((resolve_count + 1))
+		done <<<"$(echo -e "$cat_closed_no_merge")"
+	fi
+
+	# Auto-resolve: obsolete
+	if [[ -n "$cat_obsolete" ]]; then
+		log_info "Resolving obsolete tasks..."
+		while IFS='|' read -r cid _cstatus cdetail; do
+			[[ -z "$cid" ]] && continue
+			log_info "  $cid: cancelling"
+			cmd_transition "$cid" "cancelled" --error "Triage: obsolete PR ($cdetail)" 2>>"$SUPERVISOR_LOG" || true
+			cleanup_after_merge "$cid" 2>>"$SUPERVISOR_LOG" || true
+			resolve_count=$((resolve_count + 1))
+		done <<<"$(echo -e "$cat_obsolete")"
+	fi
+
+	log_success "Resolved $resolve_count task(s)"
 	return 0
 }
