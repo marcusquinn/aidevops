@@ -813,7 +813,7 @@ cmd_pulse() {
 	if [[ -f "$escalation_lock" ]]; then
 		local lock_pid lock_age
 		lock_pid=$(head -1 "$escalation_lock" 2>/dev/null || echo "")
-		lock_age=$(($(date +%s) - $(stat -f %m "$escalation_lock" 2>/dev/null || stat -c %Y "$escalation_lock" 2>/dev/null || echo "0")))
+		lock_age=$(($(date +%s) - $(stat -c %Y "$escalation_lock" 2>/dev/null || stat -f %m "$escalation_lock" 2>/dev/null || echo "0")))
 		# Check if the lock holder is still alive
 		if [[ -n "$lock_pid" ]] && kill -0 "$lock_pid" 2>/dev/null; then
 			# Lock holder alive — respect cooldown

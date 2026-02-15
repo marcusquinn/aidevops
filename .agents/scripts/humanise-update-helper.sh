@@ -57,7 +57,7 @@ fetch_upstream() {
     # Check cache freshness
     if [[ -f "$CACHE_FILE" && -f "$CACHE_VERSION_FILE" ]]; then
         local cache_age
-        cache_age=$(( $(date +%s) - $(stat -f %m "$CACHE_FILE" 2>/dev/null || stat -c %Y "$CACHE_FILE" 2>/dev/null || echo 0) ))
+        cache_age=$(( $(date +%s) - $(stat -c %Y "$CACHE_FILE" 2>/dev/null || stat -f %m "$CACHE_FILE" 2>/dev/null || echo 0) ))
         if [[ $cache_age -lt $CACHE_TTL ]]; then
             echo "Using cached upstream ($(( cache_age / 60 )) minutes old)"
             return 0

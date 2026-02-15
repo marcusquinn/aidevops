@@ -65,7 +65,7 @@ should_run() {
     fi
 
     local last_run
-    last_run=$(stat -f %m "$AUDIT_MARKER" 2>/dev/null || stat -c %Y "$AUDIT_MARKER" 2>/dev/null || echo "0")
+    last_run=$(stat -c %Y "$AUDIT_MARKER" 2>/dev/null || stat -f %m "$AUDIT_MARKER" 2>/dev/null || echo "0")
     local now
     now=$(date +%s)
     local elapsed=$((now - last_run))
@@ -447,7 +447,7 @@ cmd_status() {
     # Last audit
     if [[ -f "$AUDIT_MARKER" ]]; then
         local last_run
-        last_run=$(stat -f %m "$AUDIT_MARKER" 2>/dev/null || stat -c %Y "$AUDIT_MARKER" 2>/dev/null || echo "0")
+        last_run=$(stat -c %Y "$AUDIT_MARKER" 2>/dev/null || stat -f %m "$AUDIT_MARKER" 2>/dev/null || echo "0")
         local now
         now=$(date +%s)
         local elapsed=$(( (now - last_run) / 3600 ))

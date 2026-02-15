@@ -74,7 +74,7 @@ is_cache_valid() {
     fi
     
     local cache_time
-    cache_time=$(stat -f %m "$CACHE_FILE" 2>/dev/null || stat -c %Y "$CACHE_FILE" 2>/dev/null || echo 0)
+    cache_time=$(stat -c %Y "$CACHE_FILE" 2>/dev/null || stat -f %m "$CACHE_FILE" 2>/dev/null || echo 0)
     local current_time
     current_time=$(date +%s)
     local age=$((current_time - cache_time))

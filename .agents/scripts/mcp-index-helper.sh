@@ -120,7 +120,7 @@ needs_refresh() {
     # Check if opencode.json is newer than last sync
     if [[ -f "$OPENCODE_CONFIG" ]]; then
         local config_mtime
-        config_mtime=$(stat -f %m "$OPENCODE_CONFIG" 2>/dev/null || stat -c %Y "$OPENCODE_CONFIG" 2>/dev/null || echo "0")
+        config_mtime=$(stat -c %Y "$OPENCODE_CONFIG" 2>/dev/null || stat -f %m "$OPENCODE_CONFIG" 2>/dev/null || echo "0")
         local sync_epoch
         sync_epoch=$(date -j -f "%Y-%m-%d %H:%M:%S" "$last_sync" +%s 2>/dev/null || date -d "$last_sync" +%s 2>/dev/null || echo "0")
         

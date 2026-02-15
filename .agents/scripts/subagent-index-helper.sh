@@ -160,13 +160,9 @@ cmd_check() {
 		return 1
 	fi
 
-	# macOS stat vs GNU stat
+	# Cross-platform file mtime: Linux (stat -c) first, macOS (stat -f) fallback
 	local index_mtime
-	if stat -f %m "$INDEX_FILE" >/dev/null 2>&1; then
-		index_mtime=$(stat -f %m "$INDEX_FILE")
-	else
-		index_mtime=$(stat -c %Y "$INDEX_FILE")
-	fi
+	index_mtime=$(stat -c %Y "$INDEX_FILE" 2>/dev/null || stat -f %m "$INDEX_FILE" 2>/dev/null || echo "0")
 	local index_age=$(($(date +%s) - index_mtime))
 
 	echo "Index: ${INDEX_FILE}"
