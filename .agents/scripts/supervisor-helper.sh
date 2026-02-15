@@ -40,6 +40,7 @@
 #   supervisor-helper.sh scan-orphaned-prs [batch_id]   Scan for PRs workers created but supervisor missed (t210)
 #   supervisor-helper.sh pr-merge <task_id> [--dry-run]  Merge PR (squash)
 #   supervisor-helper.sh verify <task_id>               Run post-merge verification checks (t180)
+#   supervisor-helper.sh triage [--dry-run] [--auto-resolve]  Diagnose and resolve stuck tasks
 #   supervisor-helper.sh self-heal <task_id>            Create diagnostic subtask for failed/blocked task
 #   supervisor-helper.sh contest <subcommand> [args]    Model contest mode (t1011)
 #   supervisor-helper.sh backup [reason]               Backup supervisor database (t162)
@@ -297,6 +298,7 @@ Usage:
   supervisor-helper.sh pr-merge <task_id> [--dry-run]  Merge PR (squash)
   supervisor-helper.sh verify <task_id>               Run post-merge verification checks (t180)
   supervisor-helper.sh proof-log <task_id> [options]  Query structured proof-logs (t218)
+  supervisor-helper.sh triage [--dry-run] [--auto-resolve]  Diagnose and resolve stuck tasks
   supervisor-helper.sh self-heal <task_id>            Create diagnostic subtask for failed/blocked task
   supervisor-helper.sh worker-status <task_id>       Check worker process status
   supervisor-helper.sh cleanup [--dry-run]           Clean up completed worktrees
@@ -644,6 +646,7 @@ main() {
 	pr-merge) cmd_pr_merge "$@" ;;
 	verify) cmd_verify "$@" ;;
 	proof-log) cmd_proof_log "$@" ;;
+	triage) cmd_triage "$@" ;;
 	self-heal) cmd_self_heal "$@" ;;
 	worker-status) cmd_worker_status "$@" ;;
 	cleanup) cmd_cleanup "$@" ;;
