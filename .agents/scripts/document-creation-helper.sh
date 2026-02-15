@@ -1240,6 +1240,7 @@ convert_pdf_to_odt() {
 convert_email() {
 	local input="$1"
 	local output="$2"
+	local dedup_registry="${3:-}"
 
 	log_info "Converting email with email-to-markdown.py: $(basename "$input") -> $(basename "$output")"
 
@@ -1275,8 +1276,14 @@ convert_email() {
 		fi
 	fi
 
+	# Build parser command with optional dedup registry
+	local parser_args=("$input" --output "$output" --attachments-dir "$attachments_dir")
+	if [[ -n "${dedup_registry}" ]]; then
+		parser_args+=(--dedup-registry "$dedup_registry")
+	fi
+
 	# Run the parser
-	python3 "${script_path}" "$input" --output "$output" --attachments-dir "$attachments_dir"
+	python3 "${script_path}" "${parser_args[@]}"
 
 	if [[ -f "$output" ]]; then
 		local size
@@ -1284,7 +1291,7 @@ convert_email() {
 		log_ok "Created: ${output} (${size})"
 		if [[ -d "$attachments_dir" ]]; then
 			local att_count
-			att_count=$(find "$attachments_dir" -type f 2>/dev/null | wc -l | tr -d ' ')
+			att_count=$(find "$attachments_dir" -type f -o -type l 2>/dev/null | wc -l | tr -d ' ')
 			if [[ "${att_count}" -gt 0 ]]; then
 				log_ok "Extracted ${att_count} attachment(s) to: ${attachments_dir}"
 			fi
@@ -1305,6 +1312,7 @@ cmd_convert() {
 	local extra_args=""
 	local ocr_provider=""
 	local run_normalise=true
+	local dedup_registry=""
 
 	# Parse arguments
 	while [[ $# -gt 0 ]]; do
@@ -1327,6 +1335,10 @@ cmd_convert() {
 			;;
 		--engine)
 			extra_args="--pdf-engine=$2"
+			shift 2
+			;;
+		--dedup-registry)
+			dedup_registry="$2"
 			shift 2
 			;;
 		--ocr)
@@ -1432,9 +1444,7 @@ cmd_convert() {
 	# Execute conversion
 	case "${tool}" in
 	email-parser)
-		local output_dir
-		output_dir=$(dirname "$output")
-		convert_eml_to_md "$input" "${output_dir}"
+		convert_email "$input" "$output" "$dedup_registry"
 		;;
 	pandoc)
 		convert_with_pandoc "$input" "$output" "$extra_args"
@@ -1473,9 +1483,6 @@ cmd_convert() {
 		;;
 	rolm-ocr)
 		convert_with_rolm_ocr "$input" "$output"
-		;;
-	email-parser)
-		convert_email "$input" "$output"
 		;;
 	*)
 		die "Unknown tool: ${tool}"
