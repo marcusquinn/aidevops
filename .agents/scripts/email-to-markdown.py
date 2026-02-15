@@ -276,6 +276,112 @@ def yaml_escape(value):
     return value
 
 
+def normalise_email_sections(body):
+    """Detect and structure email-specific sections in the body text.
+
+    Handles:
+    - Quoted replies (lines starting with >)
+    - Signature blocks (lines after --)
+    - Forwarded message headers (---------- Forwarded message ----------)
+    """
+    lines = body.splitlines()
+    result = []
+    in_quote_block = False
+    in_signature = False
+    in_forwarded = False
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+
+        # Detect forwarded message headers
+        if re.match(r'^-{3,}\s*(Forwarded|Original)\s+(message|Message)\s*-{3,}$', stripped):
+            if in_quote_block:
+                result.append('')
+                in_quote_block = False
+            if in_signature:
+                in_signature = False
+            in_forwarded = True
+            result.append('')
+            result.append('## Forwarded Message')
+            result.append('')
+            continue
+
+        # Detect "Begin forwarded message:" variant
+        if re.match(r'^Begin forwarded message\s*:', stripped, re.IGNORECASE):
+            if in_quote_block:
+                result.append('')
+                in_quote_block = False
+            in_forwarded = True
+            result.append('')
+            result.append('## Forwarded Message')
+            result.append('')
+            continue
+
+        # Detect forwarded header fields (From:, Date:, Subject:, To:)
+        if in_forwarded and re.match(
+                r'^(From|Date|Subject|To|Cc|Sent|Reply-To)\s*:', stripped):
+            result.append(f'**{stripped}**')
+            continue
+
+        # End forwarded header block on first non-header, non-blank line
+        if in_forwarded and stripped and not re.match(
+                r'^(From|Date|Subject|To|Cc|Sent|Reply-To)\s*:', stripped):
+            in_forwarded = False
+            result.append('')
+
+        # Detect signature block: line is exactly "-- " or "--"
+        if stripped == '--' or stripped == '-- ':
+            if in_quote_block:
+                result.append('')
+                in_quote_block = False
+            in_signature = True
+            result.append('')
+            result.append('## Signature')
+            result.append('')
+            continue
+
+        # Lines in signature block
+        if in_signature:
+            if stripped.startswith('>') or re.match(
+                    r'^-{3,}\s*(Forwarded|Original)', stripped):
+                in_signature = False
+            else:
+                result.append(line)
+                continue
+
+        # Detect quoted reply lines (starting with >)
+        if stripped.startswith('>'):
+            if not in_quote_block:
+                in_quote_block = True
+                # Check if previous line has "On ... wrote:" pattern
+                prev_wrote = False
+                if i > 0:
+                    prev = lines[i - 1].strip()
+                    if re.match(r'^On\s+.+wrote\s*:\s*$', prev):
+                        prev_wrote = True
+                if not prev_wrote:
+                    result.append('')
+                    result.append('## Quoted Reply')
+                    result.append('')
+            result.append(line)
+            continue
+
+        # Transition out of quote block
+        if in_quote_block and not stripped.startswith('>'):
+            in_quote_block = False
+            if re.match(r'^On\s+.+wrote\s*:\s*$', stripped):
+                result.append('')
+                result.append('## Quoted Reply')
+                result.append('')
+                result.append(f'*{stripped}*')
+                continue
+
+        # Regular line
+        result.append(line)
+
+    return '\n'.join(result)
+
+
 def build_thread_map(emails_dir: Path) -> Dict[str, Dict]:
     """Build a map of all emails by message-id for thread reconstruction.
     
@@ -751,7 +857,7 @@ def run_entity_extraction(body, method='auto'):
 def email_to_markdown(input_file, output_file=None, attachments_dir=None,
                       extract_entities=False, entity_method='auto',
                       summary_mode='auto', thread_map=None,
-                      dedup_registry=None):
+                      dedup_registry=None, no_normalise=False):
     """Convert email file to markdown with YAML frontmatter and attachment extraction.
 
     Output includes:
@@ -819,8 +925,10 @@ def email_to_markdown(input_file, output_file=None, attachments_dir=None,
     # Get file size
     file_size = get_file_size(input_file)
 
-    # Extract body
+    # Extract body and normalise email-specific sections
     body = get_email_body(msg)
+    if not no_normalise:
+        body = normalise_email_sections(body)
 
     # Extract attachments (with deduplication if registry provided)
     attachments = extract_attachments(msg, attachments_dir, dedup_registry)
@@ -922,6 +1030,8 @@ def main():
     parser.add_argument('--threads-index', action='store_true',
                        help='Generate thread index files (requires --batch)')
     parser.add_argument('--dedup-registry', help='Path to JSON dedup registry for cross-email attachment deduplication')
+    parser.add_argument('--no-normalise', '--no-normalize', action='store_true',
+                        help='Skip email section normalisation (quoted replies, signatures, forwards)')
 
     args = parser.parse_args()
 
@@ -955,7 +1065,8 @@ def main():
                     entity_method=args.entity_method,
                     summary_mode=args.summary_mode,
                     thread_map=thread_map,
-                    dedup_registry=registry
+                    dedup_registry=registry,
+                    no_normalise=args.no_normalise
                 )
                 processed += 1
                 print(f"Processed: {email_file.name} -> {result['markdown']}")
@@ -992,7 +1103,8 @@ def main():
             entity_method=args.entity_method,
             summary_mode=args.summary_mode,
             thread_map=thread_map,
-            dedup_registry=registry
+            dedup_registry=registry,
+            no_normalise=args.no_normalise
         )
 
         print(f"Created: {result['markdown']}")
