@@ -767,42 +767,122 @@ check_batch_completion() {
         ")
 
 		if [[ "$incomplete" -eq 0 ]]; then
-			db "$SUPERVISOR_DB" "
+			# Mark batch as complete in DB (idempotent — AND status = 'active')
+			local rows_changed
+			rows_changed=$(db "$SUPERVISOR_DB" "
                 UPDATE batches SET status = 'complete', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
                 WHERE id = '$escaped_batch' AND status = 'active';
-            "
-			log_success "Batch $batch_id is now complete"
-			# Run batch retrospective and store insights (t128.6)
-			run_batch_retrospective "$batch_id" 2>>"$SUPERVISOR_LOG" || true
+                SELECT changes();
+            ")
 
-			# Run session review and distillation (t128.9)
-			run_session_review "$batch_id" 2>>"$SUPERVISOR_LOG" || true
+			# Only process if we actually changed the status (first caller wins)
+			if [[ "${rows_changed:-0}" -gt 0 ]]; then
+				log_success "Batch $batch_id is now complete"
 
-			# Trigger automatic release if configured (t128.10)
-			local batch_release_flag
-			batch_release_flag=$(db "$SUPERVISOR_DB" "SELECT release_on_complete FROM batches WHERE id = '$escaped_batch';" 2>/dev/null || echo "0")
-			if [[ "$batch_release_flag" -eq 1 ]]; then
-				local batch_release_type
-				batch_release_type=$(db "$SUPERVISOR_DB" "SELECT release_type FROM batches WHERE id = '$escaped_batch';" 2>/dev/null || echo "patch")
-				# Get repo from the first task in the batch
-				local batch_repo
-				batch_repo=$(db "$SUPERVISOR_DB" "
-                    SELECT t.repo FROM batch_tasks bt
-                    JOIN tasks t ON bt.task_id = t.id
-                    WHERE bt.batch_id = '$escaped_batch'
-                    ORDER BY bt.position LIMIT 1;
-                " 2>/dev/null || echo "")
-				if [[ -n "$batch_repo" ]]; then
-					log_info "Batch $batch_id has release_on_complete enabled ($batch_release_type)"
-					trigger_batch_release "$batch_id" "$batch_release_type" "$batch_repo" 2>>"$SUPERVISOR_LOG" || {
-						log_error "Automatic release failed for batch $batch_id (non-blocking)"
-					}
+				# t1052: Defer expensive post-completion actions during pulse.
+				# When _PULSE_DEFER_BATCH_COMPLETION is set, record the batch ID
+				# for later processing by flush_deferred_batch_completions().
+				# This avoids running retrospective + session review + distillation
+				# after EACH task transition — instead they run once per batch at
+				# the end of the pulse cycle. Reduces overhead from O(tasks) to O(batches).
+				if [[ "${_PULSE_DEFER_BATCH_COMPLETION:-}" == "true" ]]; then
+					# Append to deferred list (space-separated, deduped at flush time)
+					_PULSE_DEFERRED_BATCH_IDS="${_PULSE_DEFERRED_BATCH_IDS:-} ${batch_id}"
+					log_info "  Batch $batch_id post-completion actions deferred to end of pulse (t1052)"
 				else
-					log_warn "Cannot trigger release for batch $batch_id: no repo found"
+					# Not in pulse context — run immediately (interactive use, manual transition)
+					_run_batch_post_completion "$batch_id"
 				fi
 			fi
 		fi
 	done <<<"$batch_ids"
+
+	return 0
+}
+
+#######################################
+# Run expensive post-completion actions for a batch (t1052)
+# Extracted from check_batch_completion() so it can be called
+# either inline (interactive) or deferred (during pulse).
+#
+# Actions: retrospective, session review, distillation, auto-release
+#######################################
+_run_batch_post_completion() {
+	local batch_id="$1"
+	local escaped_batch
+	escaped_batch=$(sql_escape "$batch_id")
+
+	# Run batch retrospective and store insights (t128.6)
+	run_batch_retrospective "$batch_id" 2>>"$SUPERVISOR_LOG" || true
+
+	# Run session review and distillation (t128.9)
+	run_session_review "$batch_id" 2>>"$SUPERVISOR_LOG" || true
+
+	# Trigger automatic release if configured (t128.10)
+	local batch_release_flag
+	batch_release_flag=$(db "$SUPERVISOR_DB" "SELECT release_on_complete FROM batches WHERE id = '$escaped_batch';" 2>/dev/null || echo "0")
+	if [[ "$batch_release_flag" -eq 1 ]]; then
+		local batch_release_type
+		batch_release_type=$(db "$SUPERVISOR_DB" "SELECT release_type FROM batches WHERE id = '$escaped_batch';" 2>/dev/null || echo "patch")
+		# Get repo from the first task in the batch
+		local batch_repo
+		batch_repo=$(db "$SUPERVISOR_DB" "
+            SELECT t.repo FROM batch_tasks bt
+            JOIN tasks t ON bt.task_id = t.id
+            WHERE bt.batch_id = '$escaped_batch'
+            ORDER BY bt.position LIMIT 1;
+        " 2>/dev/null || echo "")
+		if [[ -n "$batch_repo" ]]; then
+			log_info "Batch $batch_id has release_on_complete enabled ($batch_release_type)"
+			trigger_batch_release "$batch_id" "$batch_release_type" "$batch_repo" 2>>"$SUPERVISOR_LOG" || {
+				log_error "Automatic release failed for batch $batch_id (non-blocking)"
+			}
+		else
+			log_warn "Cannot trigger release for batch $batch_id: no repo found"
+		fi
+	fi
+
+	return 0
+}
+
+#######################################
+# Flush deferred batch completions (t1052)
+# Called at the end of the pulse cycle to run post-completion actions
+# once per batch that became complete during this pulse, instead of
+# once per task transition.
+#
+# Uses _PULSE_DEFERRED_BATCH_IDS (space-separated list of batch IDs)
+# set by check_batch_completion() during the pulse.
+#######################################
+flush_deferred_batch_completions() {
+	local deferred_ids="${_PULSE_DEFERRED_BATCH_IDS:-}"
+
+	if [[ -z "$deferred_ids" ]]; then
+		return 0
+	fi
+
+	# Deduplicate batch IDs (a batch might appear multiple times if
+	# multiple tasks in the same batch transitioned in one pulse)
+	local seen_batches="" unique_count=0
+	for bid in $deferred_ids; do
+		[[ -z "$bid" ]] && continue
+		# Skip if already seen (simple string search, bash 3.2 compatible)
+		if [[ " $seen_batches " == *" $bid "* ]]; then
+			continue
+		fi
+		seen_batches="$seen_batches $bid"
+		unique_count=$((unique_count + 1))
+
+		log_info "Running deferred post-completion actions for batch $bid (t1052)"
+		_run_batch_post_completion "$bid"
+	done
+
+	if [[ "$unique_count" -gt 0 ]]; then
+		log_success "Processed $unique_count deferred batch completion(s) (t1052)"
+	fi
+
+	# Clear the deferred list
+	_PULSE_DEFERRED_BATCH_IDS=""
 
 	return 0
 }

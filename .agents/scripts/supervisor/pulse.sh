@@ -49,6 +49,13 @@ cmd_pulse() {
 	# skip subsequent checks to avoid 8-second probes per task
 	_PULSE_HEALTH_VERIFIED=""
 
+	# t1052: Defer batch post-completion actions (retrospective, session review,
+	# distillation) until the end of the pulse cycle. Without this, when multiple
+	# tasks auto-verify in a single pulse, check_batch_completion() runs expensive
+	# actions after EACH task transition instead of once per batch.
+	_PULSE_DEFER_BATCH_COMPLETION="true"
+	_PULSE_DEFERRED_BATCH_IDS=""
+
 	# Phase 0: Auto-pickup new tasks from TODO.md (t128.5)
 	# Scans for #auto-dispatch tags and Dispatch Queue section
 	local all_repos
@@ -949,6 +956,13 @@ RULES:
 		fi
 	fi
 
+	# t1052: Flush deferred batch completions after all lifecycle phases.
+	# Runs retrospective, session review, distillation, and auto-release
+	# once per batch that became complete during this pulse, instead of
+	# once per task transition. This is the key performance fix — reduces
+	# overhead from O(tasks_per_batch) to O(1) per batch.
+	flush_deferred_batch_completions 2>>"$SUPERVISOR_LOG" || true
+
 	# Phase 4: Worker health checks - detect dead, hung, and orphaned workers
 	local worker_timeout_seconds="${SUPERVISOR_WORKER_TIMEOUT:-3600}" # 1 hour default (t314: restored after merge overwrite)
 	# Absolute max runtime: kill workers regardless of log activity.
@@ -1740,6 +1754,11 @@ RULES:
 		local models_md_remaining=$((models_md_interval - models_md_elapsed))
 		log_verbose "  Phase 12: MODELS.md regen skipped (${models_md_remaining}s until next run)"
 	fi
+
+	# t1052: Clear deferred batch completion flag to avoid leaking state
+	# if the supervisor process is reused for non-pulse commands
+	_PULSE_DEFER_BATCH_COMPLETION=""
+	_PULSE_DEFERRED_BATCH_IDS=""
 
 	# Release pulse dispatch lock (t159)
 	release_pulse_lock
