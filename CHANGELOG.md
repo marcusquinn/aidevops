@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.115.0] - 2026-02-15
+
+### Added
+
+- Add cross-document linking for email collections (#1472)
+- add MIME parsing for .eml/.msg to document-creation-helper.sh (t1044.1) (#1420)
+- add Synapse Admin API helpers to matrix-dispatch-helper.sh (t1056.2) (#1471)
+- add contact deduplication and update-on-discovery (t1044.4) (#1436)
+- implement atomic task ID allocation with CAS push loop (t1047) (#1458)
+- add comprehensive test suite for entity extraction (t1051.6) (#1462)
+- add Phase 3.6 — escalate rebase-blocked PRs to opus worker (#1483)
+
+### Fixed
+
+- cap quality hook console output to prevent TUI flooding (#1486)
+- improve escalation lock with PID tracking and post-dispatch creation (#1485)
+- hoist max_retry_cycles to function scope for Phase 3.6 access (#1484)
+- stash dirty worktree before rebase to prevent 'uncommitted changes' error (#1481)
+- abort stale rebase state before retrying (#1480)
+- handle AI-completed rebase and increase max attempts (#1477)
+- detect AI-completed rebase and increase max attempts (t1048) (#1478)
+- ai-research tool uses OAuth from auth.json instead of requiring ANTHROPIC_API_KEY (#1475)
+
 ## [2.114.0] - 2026-02-14
 
 ### Added
