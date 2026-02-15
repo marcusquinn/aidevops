@@ -404,19 +404,44 @@ sync_issue_status_label() {
 	# Handle terminal states that close the issue
 	case "$new_state" in
 	verified | deployed)
-		# Close the issue with a completion comment
+		# Build proof-log comment with PR reference and changed files
+		local close_comment
+		close_comment="Task $task_id reached state: $new_state (from $old_state)"
+		local pr_url=""
+		pr_url=$(db "$SUPERVISOR_DB" "SELECT pr_url FROM tasks WHERE id='$(sql_escape "$task_id")';" 2>/dev/null || echo "")
+		if [[ -n "$pr_url" && "$pr_url" != "null" ]]; then
+			local pr_number=""
+			pr_number=$(echo "$pr_url" | grep -oE '[0-9]+$' || echo "")
+			if [[ -n "$pr_number" ]]; then
+				local pr_state=""
+				pr_state=$(gh pr view "$pr_number" --repo "$repo_slug" --json state,mergedAt,changedFiles \
+					--jq '"state:\(.state) merged:\(.mergedAt // "n/a") files:\(.changedFiles)"' 2>/dev/null || echo "")
+				close_comment="Verified: PR #$pr_number ($pr_state). Task $task_id: $old_state -> $new_state"
+			fi
+		fi
+		if [[ -z "$pr_url" || "$pr_url" == "null" ]]; then
+			close_comment="Task $task_id reached state: $new_state (from $old_state). No PR on record — verify deliverables manually."
+		fi
+		# Close the issue with proof-log comment
 		gh issue close "$issue_number" --repo "$repo_slug" \
-			--comment "Task $task_id reached state: $new_state (from $old_state)" 2>/dev/null || true
+			--comment "$close_comment" 2>/dev/null || true
 		# Add status:done and remove all other status labels
 		gh issue edit "$issue_number" --repo "$repo_slug" \
 			--add-label "status:done" "${remove_args[@]}" 2>/dev/null || true
-		log_verbose "sync_issue_status_label: closed #$issue_number ($task_id -> $new_state)"
+		log_verbose "sync_issue_status_label: closed #$issue_number ($task_id -> $new_state) proof: ${pr_url:-none}"
 		return 0
 		;;
 	cancelled)
+		# Build cancellation comment with reason from DB
+		local cancel_comment="Task $task_id cancelled (was: $old_state)"
+		local cancel_error=""
+		cancel_error=$(db "$SUPERVISOR_DB" "SELECT error FROM tasks WHERE id='$(sql_escape "$task_id")';" 2>/dev/null || echo "")
+		if [[ -n "$cancel_error" && "$cancel_error" != "null" ]]; then
+			cancel_comment="Task $task_id cancelled (was: $old_state). Reason: $cancel_error"
+		fi
 		# Close as not-planned
 		gh issue close "$issue_number" --repo "$repo_slug" --reason "not planned" \
-			--comment "Task $task_id cancelled (was: $old_state)" 2>/dev/null || true
+			--comment "$cancel_comment" 2>/dev/null || true
 		# Remove all status labels
 		gh issue edit "$issue_number" --repo "$repo_slug" \
 			"${remove_args[@]}" 2>/dev/null || true
@@ -424,9 +449,16 @@ sync_issue_status_label() {
 		return 0
 		;;
 	failed)
+		# Build failure comment with error from DB
+		local fail_comment="Task $task_id failed (was: $old_state)"
+		local fail_error=""
+		fail_error=$(db "$SUPERVISOR_DB" "SELECT error FROM tasks WHERE id='$(sql_escape "$task_id")';" 2>/dev/null || echo "")
+		if [[ -n "$fail_error" && "$fail_error" != "null" ]]; then
+			fail_comment="Task $task_id failed (was: $old_state). Error: $fail_error"
+		fi
 		# Close with failure comment but don't add status:done
 		gh issue close "$issue_number" --repo "$repo_slug" \
-			--comment "Task $task_id failed (was: $old_state)" 2>/dev/null || true
+			--comment "$fail_comment" 2>/dev/null || true
 		gh issue edit "$issue_number" --repo "$repo_slug" \
 			"${remove_args[@]}" 2>/dev/null || true
 		log_verbose "sync_issue_status_label: closed #$issue_number as failed ($task_id)"
