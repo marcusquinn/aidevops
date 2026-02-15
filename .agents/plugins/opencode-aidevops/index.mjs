@@ -1233,20 +1233,23 @@ function isWriteOrEditTool(tool) {
 function logQualityGateResult(label, filePath, totalViolations, report, errorLevel = "WARN") {
   if (totalViolations > 0) {
     const plural = totalViolations !== 1 ? "s" : "";
-    const reportLines = report.split("\n");
-    // Cap console output to avoid flooding the TUI
-    let consoleReport;
-    if (reportLines.length > CONSOLE_MAX_DETAIL_LINES) {
-      const shown = reportLines.slice(0, CONSOLE_MAX_DETAIL_LINES).join("\n");
-      const omitted = reportLines.length - CONSOLE_MAX_DETAIL_LINES;
-      consoleReport = `${shown}\n  ... and ${omitted} more (see ${QUALITY_DETAIL_LOG})`;
-    } else {
-      consoleReport = report;
-    }
-    console.error(`[aidevops] ${label}: ${totalViolations} issue${plural} in ${filePath}:\n${consoleReport}`);
     qualityLog(errorLevel, `${label}: ${totalViolations} violations in ${filePath}`);
     // Write full details to the detail log (rotated to prevent disk bloat)
     qualityDetailLog(label, filePath, report);
+    // Only show console output for security issues (secrets) — quality warnings
+    // go to the log file only. The pre-commit hook catches them at commit time.
+    if (errorLevel === "ERROR") {
+      const reportLines = report.split("\n");
+      let consoleReport;
+      if (reportLines.length > CONSOLE_MAX_DETAIL_LINES) {
+        const shown = reportLines.slice(0, CONSOLE_MAX_DETAIL_LINES).join("\n");
+        const omitted = reportLines.length - CONSOLE_MAX_DETAIL_LINES;
+        consoleReport = `${shown}\n  ... and ${omitted} more (see ${QUALITY_DETAIL_LOG})`;
+      } else {
+        consoleReport = report;
+      }
+      console.error(`[aidevops] ${label}: ${totalViolations} issue${plural} in ${filePath}:\n${consoleReport}`);
+    }
   } else {
     qualityLog("INFO", `${label}: PASS for ${filePath}`);
   }
