@@ -701,9 +701,17 @@
   check: shellcheck .agents/scripts/supervisor/todo-sync.sh
   check: file-exists .agents/scripts/supervisor/todo-sync.sh
 
-- [ ] v090 t1052 Batch post-completion actions to reduce auto-verification... | PR #1498 | merged:2026-02-15
+- [x] v090 t1052 Batch post-completion actions to reduce auto-verification... | PR #1498 | merged:2026-02-15 verified:2026-02-15
   files: .agents/scripts/supervisor/pulse.sh, .agents/scripts/supervisor/state.sh
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
   check: shellcheck .agents/scripts/supervisor/state.sh
   check: file-exists .agents/scripts/supervisor/state.sh
+
+- [ ] v091 t1054 Import chrome-webstore-release-blueprint skill into aidev... | PR #1500 | merged:2026-02-15
+  files: .agents/scripts/chrome-webstore-helper.sh, .agents/subagent-index.toon, .agents/tools/browser/chrome-webstore-release.md
+  check: shellcheck .agents/scripts/chrome-webstore-helper.sh
+  check: file-exists .agents/scripts/chrome-webstore-helper.sh
+  check: file-exists .agents/subagent-index.toon
+  check: file-exists .agents/tools/browser/chrome-webstore-release.md
+  check: rg "chrome-webstore-release" .agents/subagent-index.toon
