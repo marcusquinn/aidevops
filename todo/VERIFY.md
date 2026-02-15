@@ -693,3 +693,17 @@
   files: .agents/scripts/claim-task-id.sh
   check: shellcheck .agents/scripts/claim-task-id.sh
   check: file-exists .agents/scripts/claim-task-id.sh
+
+- [!] v089 t1053 Auto-generate VERIFY.md entries during deploy phase — w... | PR #1497 | merged:2026-02-15 failed:2026-02-15 reason:shellcheck: .agents/scripts/supervisor/deploy.sh has violations
+  files: .agents/scripts/supervisor/deploy.sh, .agents/scripts/supervisor/todo-sync.sh
+  check: shellcheck .agents/scripts/supervisor/deploy.sh
+  check: file-exists .agents/scripts/supervisor/deploy.sh
+  check: shellcheck .agents/scripts/supervisor/todo-sync.sh
+  check: file-exists .agents/scripts/supervisor/todo-sync.sh
+
+- [ ] v090 t1052 Batch post-completion actions to reduce auto-verification... | PR #1498 | merged:2026-02-15
+  files: .agents/scripts/supervisor/pulse.sh, .agents/scripts/supervisor/state.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/supervisor/state.sh
+  check: file-exists .agents/scripts/supervisor/state.sh
