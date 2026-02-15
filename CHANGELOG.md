@@ -7,17 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.115.1] - 2026-02-15
+
 ### Added
 
-- Add Phase 3b2 reconciliation and triage command to supervisor (#1488)
+- add Phase 3b2 reconciliation and triage command to supervisor (#1488)
 
 ### Fixed
 
-- Swap stat -f %m to Linux-first order for cross-platform compat (#1491) (#1492)
-- Phase 3b2 gh pr view fails from cron due to missing --repo flag (#1490)
-- Phase 3b2 must not skip verification for verify_failed tasks (#1489)
-- Revert 5 falsely completed verify_failed tasks (t1043, t1044.2, t1048, t1049, t1050)
-- Suppress quality gate console noise, keep secrets-only TUI alerts (#1487)
+- swap stat -f %m to Linux-first order for cross-platform compat (#1491) (#1492)
+- Phase 3b2 and triage gh pr view fails from cron (missing --repo) (#1490)
+- Phase 3b2 and triage must not skip verification for verify_failed tasks (#1489)
+- revert 5 falsely completed verify_failed tasks (t1043, t1044.2, t1048, t1049, t1050)
+- suppress quality gate console noise, keep secrets-only TUI alerts (#1487)
 
 ## [2.115.0] - 2026-02-15
 
