@@ -869,13 +869,11 @@ function rotateLogIfNeeded(logPath, maxBytes) {
     const stats = statSync(logPath);
     if (stats.size <= maxBytes) return;
     const backup = `${logPath}.1`;
-    if (existsSync(backup)) {
-      writeFileSync(backup, ""); // clear old backup
-    }
+    // renameSync atomically replaces the destination on POSIX
     renameSync(logPath, backup);
     writeFileSync(logPath, `[${new Date().toISOString()}] [INFO] Log rotated (previous: ${stats.size} bytes)\n`);
-  } catch {
-    // Rotation failure should never break the hook
+  } catch (e) {
+    console.error(`[aidevops] Log rotation failed: ${e.message}`);
   }
 }
 
@@ -895,8 +893,8 @@ function qualityDetailLog(label, filePath, report) {
       QUALITY_DETAIL_LOG,
       `[${timestamp}] ${label} — ${filePath}\n${report}\n\n`,
     );
-  } catch {
-    // Logging should never break the hook
+  } catch (e) {
+    console.error(`[aidevops] Quality detail logging failed: ${e.message}`);
   }
 }
 
