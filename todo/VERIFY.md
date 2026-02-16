@@ -747,3 +747,12 @@
 - [ ] v096 t1063.3 Add `/tech-stack` slash command — `tech-stack <url>` fo... | PR #1530 | merged:2026-02-16
   files: .agents/scripts/commands/tech-stack.md
   check: file-exists .agents/scripts/commands/tech-stack.md
+
+- [ ] v097 t1067 Wappalyzer OSS provider agent — create `tools/research/... | PR #1536 | merged:2026-02-16
+  files: .agents/scripts/package.json, .agents/scripts/wappalyzer-detect.mjs, .agents/scripts/wappalyzer-helper.sh, .agents/tools/research/providers/wappalyzer.md
+  check: file-exists .agents/scripts/package.json
+  check: file-exists .agents/scripts/wappalyzer-detect.mjs
+  check: shellcheck .agents/scripts/wappalyzer-helper.sh
+  check: file-exists .agents/scripts/wappalyzer-helper.sh
+  check: file-exists .agents/tools/research/providers/wappalyzer.md
+  check: rg "wappalyzer" .agents/subagent-index.toon
