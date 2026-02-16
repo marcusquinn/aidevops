@@ -10,7 +10,9 @@ set -euo pipefail
 #        tech-stack-helper.sh providers
 #        tech-stack-helper.sh compare <url>
 
+# Source shared constants (SC2034: shared-constants.sh exports vars used by other scripts)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+# shellcheck disable=SC2034
 source "${SCRIPT_DIR}/shared-constants.sh"
 
 # Configuration
@@ -476,16 +478,15 @@ check_unbuilt() {
 
 # Check if Playwright Chromium is available for local analysis
 check_playwright() {
-	local pw_browsers
-	pw_browsers="${HOME}/Library/Caches/ms-playwright"
-	if [[ -d "$pw_browsers" ]] && ls "$pw_browsers"/chromium-* &>/dev/null; then
-		return 0
-	fi
-	# Linux path
-	pw_browsers="${HOME}/.cache/ms-playwright"
-	if [[ -d "$pw_browsers" ]] && ls "$pw_browsers"/chromium-* &>/dev/null; then
-		return 0
-	fi
+	local pw_path
+	for pw_path in "${PLAYWRIGHT_BROWSERS_PATH:-}" "${HOME}/Library/Caches/ms-playwright" "${HOME}/.cache/ms-playwright"; do
+		if [[ -z "$pw_path" ]]; then
+			continue
+		fi
+		if [[ -d "$pw_path" ]] && ls "$pw_path"/chromium-* &>/dev/null; then
+			return 0
+		fi
+	done
 	return 1
 }
 
@@ -577,7 +578,7 @@ run_unbuilt() {
 	if [[ "$use_json" == "true" ]]; then
 		# JSON mode: capture output for potential post-processing
 		local raw_output
-		raw_output=$($unbuilt_cmd "$url" "${cmd_args[@]}" 2>/dev/null) || {
+		raw_output=$($unbuilt_cmd "$url" "${cmd_args[@]}") || {
 			print_error "Unbuilt analysis failed for: ${url}"
 			return 1
 		}
@@ -621,7 +622,7 @@ normalise_unbuilt() {
             transpiler:       ((.technologies.transpilers // []) | join(", ")),
             module_system:    ((.technologies.moduleSystems // []) | join(", "))
         }
-    } | .detected |= with_entries(select(.value != ""))' 2>/dev/null || {
+    } | .detected |= with_entries(select(.value != ""))' || {
 		print_error "Failed to normalise Unbuilt JSON output"
 		return 1
 	}
