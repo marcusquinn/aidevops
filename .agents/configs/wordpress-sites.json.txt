@@ -41,7 +41,7 @@
       "ssh_host": "cloudways.example.com",
       "ssh_port": 22,
       "ssh_user": "master_user",
-      "wp_path": "/home/master_user/applications/app_name/public_html",
+      "wp_path": "/home/master/applications/app_name/public_html",
       "mainwp_connected": true,
       "mainwp_site_id": 456,
       "category": "lead-gen"
@@ -64,7 +64,7 @@
     "localwp": "Local by Flywheel - no SSH, direct path access",
     "hostinger": "Hostinger - sshpass with password file, custom port 65002",
     "hetzner": "Hetzner VPS - SSH key auth",
-    "cloudways": "Cloudways - SSH key auth, master_user pattern",
+    "cloudways": "Cloudways - SSH key auth, home dir is always /home/master/ regardless of ssh_user",
     "closte": "Closte - sshpass with password file",
     "cloudron": "Cloudron - SSH key auth or Cloudron CLI"
   },
