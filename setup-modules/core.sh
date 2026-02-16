@@ -367,6 +367,7 @@ check_requirements() {
 			# Only modify rc files during interactive setup (not updates)
 			if [[ "$NON_INTERACTIVE" != "true" ]]; then
 				local intel_brew_line='eval "$(/usr/local/bin/brew shellenv)"'
+				local intel_fixed_rc=false
 				local intel_rc
 				while IFS= read -r intel_rc; do
 					[[ -z "$intel_rc" ]] && continue
@@ -375,8 +376,16 @@ check_requirements() {
 						echo "# Homebrew Intel Mac (added by aidevops setup)" >>"$intel_rc"
 						echo "$intel_brew_line" >>"$intel_rc"
 						print_success "Added Homebrew to PATH in $intel_rc"
+						intel_fixed_rc=true
 					fi
 				done < <(get_all_shell_rcs)
+
+				if [[ "$intel_fixed_rc" == "false" ]]; then
+					echo ""
+					echo "  To fix permanently, add to your shell rc file:"
+					echo "    $intel_brew_line"
+					echo ""
+				fi
 			fi
 		fi
 	fi
