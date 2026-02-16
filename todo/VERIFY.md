@@ -757,7 +757,14 @@
   check: file-exists .agents/tools/research/providers/wappalyzer.md
   check: rg "wappalyzer" .agents/subagent-index.toon
 
-- [ ] v098 t1069 Fix dedup_todo_task_ids() — rename-on-duplicate creates... | PR #1549 | merged:2026-02-16
+- [x] v098 t1069 Fix dedup_todo_task_ids() — rename-on-duplicate creates... | PR #1549 | merged:2026-02-16 verified:2026-02-16
   files: .agents/scripts/supervisor/todo-sync.sh
   check: shellcheck .agents/scripts/supervisor/todo-sync.sh
   check: file-exists .agents/scripts/supervisor/todo-sync.sh
+
+- [ ] v099 t1070 Post blocked reason comment on GitHub issues when status:... | PR #1551 | merged:2026-02-16
+  files: .agents/scripts/supervisor/backfill-blocked-comments.sh, .agents/scripts/supervisor/issue-sync.sh
+  check: shellcheck .agents/scripts/supervisor/backfill-blocked-comments.sh
+  check: file-exists .agents/scripts/supervisor/backfill-blocked-comments.sh
+  check: shellcheck .agents/scripts/supervisor/issue-sync.sh
+  check: file-exists .agents/scripts/supervisor/issue-sync.sh
