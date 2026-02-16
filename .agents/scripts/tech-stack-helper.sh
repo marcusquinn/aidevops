@@ -16,8 +16,6 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 # Configuration
 readonly CACHE_DIR="$HOME/.aidevops/.agent-workspace/tmp/tech-stack-cache"
 readonly CACHE_TTL=3600 # 1 hour cache
-readonly OPENEXPLORER_WEB_URL="https://openexplorer.tech"
-
 mkdir -p "$CACHE_DIR"
 
 # =============================================================================
@@ -173,15 +171,9 @@ openexplorer_search() {
 
 	print_info "Searching OpenExplorer for: $normalised"
 
-	# Try the web UI scraping approach since the API requires Supabase auth
-	local response
-	response="$(curl -sS --max-time 15 \
-		-H "User-Agent: Mozilla/5.0 (compatible; aidevops-tech-stack/1.0)" \
-		"${OPENEXPLORER_WEB_URL}" 2>/dev/null)" || true
-
-	# The site is a React SPA - we cannot parse results from curl.
-	# Fall back to documenting that Playwright is needed for live analysis.
-	# For now, output a structured message indicating the limitation.
+	# OpenExplorer.tech is a React SPA with a Supabase backend.
+	# The API requires auth credentials, so curl-based scraping is not viable.
+	# Return structured guidance pointing to Playwright analysis or the web UI.
 	local result
 	result="$(jq -n \
 		--arg url "$normalised" \
