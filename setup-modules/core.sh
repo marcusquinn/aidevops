@@ -327,45 +327,58 @@ check_requirements() {
 		eval "$(/opt/homebrew/bin/brew shellenv)"
 		print_warning "Homebrew not in PATH - added for this session"
 
-		# Auto-fix: add Homebrew to all existing shell rc files
-		local brew_line='eval "$(/opt/homebrew/bin/brew shellenv)"'
-		local fixed_rc=false
-		local rc_file
-		while IFS= read -r rc_file; do
-			[[ -z "$rc_file" ]] && continue
-			if ! grep -q '/opt/homebrew/bin/brew' "$rc_file" 2>/dev/null; then
-				echo "" >>"$rc_file"
-				echo "# Homebrew (added by aidevops setup)" >>"$rc_file"
-				echo "$brew_line" >>"$rc_file"
-				print_success "Added Homebrew to PATH in $rc_file"
-				fixed_rc=true
-			fi
-		done < <(get_all_shell_rcs)
+		# Only modify rc files during interactive setup (not updates)
+		# Users may intentionally remove these lines; re-adding on every update is harmful
+		if [[ "$NON_INTERACTIVE" != "true" ]]; then
+			local brew_line='eval "$(/opt/homebrew/bin/brew shellenv)"'
+			local fixed_rc=false
+			local rc_file
+			while IFS= read -r rc_file; do
+				[[ -z "$rc_file" ]] && continue
+				if ! grep -q '/opt/homebrew/bin/brew' "$rc_file" 2>/dev/null; then
+					echo "" >>"$rc_file"
+					echo "# Homebrew (added by aidevops setup)" >>"$rc_file"
+					echo "$brew_line" >>"$rc_file"
+					print_success "Added Homebrew to PATH in $rc_file"
+					fixed_rc=true
+				fi
+			done < <(get_all_shell_rcs)
 
-		if [[ "$fixed_rc" == "false" ]]; then
-			echo ""
-			echo "  To fix permanently, add to your shell rc file:"
-			echo "    $brew_line"
-			echo ""
+			if [[ "$fixed_rc" == "false" ]]; then
+				echo ""
+				echo "  To fix permanently, add to your shell rc file:"
+				echo "    $brew_line"
+				echo ""
+			fi
 		fi
 	fi
 
 	# Also check Intel Mac Homebrew location
+	# Skip entirely on Apple Silicon (ARM brew exists) — Intel brew shellenv prepends
+	# /usr/local/bin to PATH, causing x86 binaries to shadow ARM ones (GH#1510)
 	if [[ -x "/usr/local/bin/brew" ]] && ! echo "$PATH" | grep -q "/usr/local/bin"; then
-		eval "$(/usr/local/bin/brew shellenv)"
-		print_warning "Homebrew (/usr/local/bin) not in PATH - added for this session"
+		# On Apple Silicon with dual brew, do NOT add Intel brew to PATH — it breaks ARM brew
+		if [[ -x "/opt/homebrew/bin/brew" ]]; then
+			print_info "Intel Homebrew found but skipped (Apple Silicon uses /opt/homebrew)"
+		else
+			eval "$(/usr/local/bin/brew shellenv)"
+			print_warning "Homebrew (/usr/local/bin) not in PATH - added for this session"
 
-		local intel_brew_line='eval "$(/usr/local/bin/brew shellenv)"'
-		local intel_rc
-		while IFS= read -r intel_rc; do
-			[[ -z "$intel_rc" ]] && continue
-			if ! grep -q '/usr/local/bin/brew' "$intel_rc" 2>/dev/null; then
-				echo "" >>"$intel_rc"
-				echo "# Homebrew Intel Mac (added by aidevops setup)" >>"$intel_rc"
-				echo "$intel_brew_line" >>"$intel_rc"
-				print_success "Added Homebrew to PATH in $intel_rc"
+			# Only modify rc files during interactive setup (not updates)
+			if [[ "$NON_INTERACTIVE" != "true" ]]; then
+				local intel_brew_line='eval "$(/usr/local/bin/brew shellenv)"'
+				local intel_rc
+				while IFS= read -r intel_rc; do
+					[[ -z "$intel_rc" ]] && continue
+					if ! grep -q '/usr/local/bin/brew' "$intel_rc" 2>/dev/null; then
+						echo "" >>"$intel_rc"
+						echo "# Homebrew Intel Mac (added by aidevops setup)" >>"$intel_rc"
+						echo "$intel_brew_line" >>"$intel_rc"
+						print_success "Added Homebrew to PATH in $intel_rc"
+					fi
+				done < <(get_all_shell_rcs)
 			fi
-		done < <(get_all_shell_rcs)
+		fi
 	fi
 
 	local missing_deps=()
