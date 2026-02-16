@@ -286,6 +286,14 @@ cmd_auto_pickup() {
 				continue
 			fi
 
+			# Skip tasks already claimed or being worked on interactively (t1062).
+			# assignee: means someone claimed it; started: means work has begun.
+			# Without this check, the supervisor races with interactive sessions.
+			if echo "$line" | grep -qE ' (assignee|started):'; then
+				log_info "  $task_id: already claimed/started — skipping auto-pickup"
+				continue
+			fi
+
 			# Add to supervisor
 			if cmd_add "$task_id" --repo "$repo"; then
 				picked_up=$((picked_up + 1))
@@ -340,6 +348,12 @@ cmd_auto_pickup() {
 			# Pre-pickup check: skip tasks with merged PRs (t224).
 			if check_task_already_done "$task_id" "$repo"; then
 				log_info "  $task_id: already completed (merged PR) — skipping auto-pickup"
+				continue
+			fi
+
+			# Skip tasks already claimed or being worked on interactively (t1062).
+			if echo "$line" | grep -qE ' (assignee|started):'; then
+				log_info "  $task_id: already claimed/started — skipping auto-pickup"
 				continue
 			fi
 
