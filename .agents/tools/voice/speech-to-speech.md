@@ -93,6 +93,7 @@ API keys: Store `OPENAI_API_KEY` via `aidevops secret set OPENAI_API_KEY` (gopas
 | Kokoro | `--tts kokoro` | macOS default, quality |
 | FacebookMMS | `--tts facebookMMS` | 1000+ languages |
 | Pocket TTS | `--tts pocket` | Lightweight |
+| Qwen3-TTS | `--tts qwen3-tts` | 10 langs, voice cloning, 97ms latency |
 
 ## Deployment Modes
 
@@ -321,6 +322,7 @@ The full S2S pipeline above is for advanced use cases (custom LLMs, server/clien
 - `tools/voice/cloud-voice-agents.md` - Cloud voice agents (GPT-4o Realtime, MiniCPM-o, NVIDIA Nemotron Speech)
 - `tools/voice/voice-ai-models.md` - Complete model comparison (TTS, STT, S2S)
 - `tools/voice/pipecat-opencode.md` - Pipecat real-time voice pipeline
+- `tools/voice/qwen3-tts.md` - Qwen3-TTS setup and usage (voice cloning, voice design, multi-language)
 - `tools/infrastructure/cloud-gpu.md` - Cloud GPU deployment guide (provider comparison, setup, cost optimization)
 - `services/communications/twilio.md` - Phone integration
 - `tools/video/remotion.md` - Video narration
