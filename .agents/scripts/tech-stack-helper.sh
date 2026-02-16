@@ -674,52 +674,55 @@ domain_to_slug() {
 	return 0
 }
 
-# Fetch a CRFT gallery report page and extract data
+# Fetch a CRFT gallery report page to a file
+# Arguments: $1=domain, $2=output_file
+# Returns 0 if valid report fetched, 1 otherwise
 fetch_gallery_report() {
 	local domain="$1"
+	local output_file="$2"
 	local slug
 	slug=$(domain_to_slug "$domain")
 
 	local gallery_url="${CRFT_GALLERY_URL}/${slug}"
-	local response
 
 	print_info "Fetching report from: $gallery_url"
 
-	response=$(curl -sL \
+	if ! curl -sL \
 		-H "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36" \
 		-H "Accept: text/html" \
 		--max-time "$CRFT_SCAN_TIMEOUT" \
-		"$gallery_url" 2>/dev/null) || {
+		-o "$output_file" \
+		"$gallery_url" 2>/dev/null; then
 		print_warning "Could not fetch gallery page for: $domain"
-		echo ""
 		return 1
-	}
+	fi
 
 	# Check if we got a valid report page (not a 404)
-	if echo "$response" | grep -q "Technology Stack\|Performance\|Lighthouse" 2>/dev/null; then
-		echo "$response"
+	if grep -q "Technology Stack" "$output_file" 2>/dev/null; then
 		return 0
 	fi
 
 	print_warning "No existing report found for: $domain"
-	echo ""
 	return 1
 }
 
-# Parse technologies from HTML report
+# Parse technologies from HTML report file
+# Arguments: $1=html_file, $2=json_output (true/false)
 parse_technologies() {
-	local html="$1"
+	local html_file="$1"
 	local json_output="${2:-false}"
 
-	if [[ -z "$html" ]]; then
+	if [[ ! -s "$html_file" ]]; then
 		print_warning "No HTML content to parse"
 		return 1
 	fi
 
 	# Extract technology names from icon filenames in the gallery page HTML
 	# Icons appear as /icons/React.svg, /icons/Next.js.svg, etc.
+	# Stop before "Featured reports" section to avoid picking up other sites' techs
 	local techs_raw
-	techs_raw=$(echo "$html" | grep -oE '/icons/[^."]+' 2>/dev/null |
+	techs_raw=$(awk '{split($0, a, "Featured reports"); print a[1]}' "$html_file" 2>/dev/null |
+		grep -oE '/icons/[^."]+' |
 		sed 's|/icons/||' |
 		grep -v "Open Graph" |
 		sort -u) || true
@@ -751,35 +754,40 @@ parse_technologies() {
 	return 0
 }
 
-# Parse Lighthouse scores from HTML report
+# Parse Lighthouse scores from HTML report file
+# Arguments: $1=html_file, $2=json_output (true/false)
 parse_lighthouse() {
-	local html="$1"
+	local html_file="$1"
 	local json_output="${2:-false}"
 
-	if [[ -z "$html" ]]; then
+	if [[ ! -s "$html_file" ]]; then
 		print_warning "No HTML content to parse"
 		return 1
 	fi
 
 	# Extract Lighthouse scores from the HTML
-	# Scores appear near category labels as plain numbers (0-100)
-	# The page has Desktop scores first, then Mobile scores
+	# Pattern: Label</div> <div class="text-center text-3xl ..."> 98 </div>
+	# The first two occurrences per label are the main report (desktop, mobile)
+	# Later occurrences are from the "Featured reports" section
 	local performance accessibility best_practices seo
 
-	# Helper: extract number following a label (portable, no grep -P)
+	# Helper: extract score number that follows a label in the specific HTML pattern
+	# Uses the "text-3xl" class as anchor (only appears in score divs, not featured cards)
 	_extract_score() {
 		local label="$1"
 		local occurrence="${2:-1}"
-		echo "$html" | sed -n "s/.*${label}[^0-9]*\([0-9]\{1,3\}\).*/\1/p" | sed -n "${occurrence}p"
+		grep -o "${label}</div>[^<]*<div[^>]*text-3xl[^>]*>[^<]*" "$html_file" 2>/dev/null |
+			sed 's/.*> *\([0-9]\{1,3\}\) *$/\1/' |
+			sed -n "${occurrence}p"
 	}
 
-	# Desktop scores (first occurrence)
+	# Desktop scores (first occurrence with text-3xl class)
 	performance=$(_extract_score "Performance" 1) || performance=""
 	accessibility=$(_extract_score "Accessibility" 1) || accessibility=""
 	best_practices=$(_extract_score "Best Practices" 1) || best_practices=""
 	seo=$(_extract_score "SEO" 1) || seo=""
 
-	# Mobile scores (second occurrence)
+	# Mobile scores (second occurrence with text-3xl class)
 	local m_performance m_accessibility m_best_practices m_seo
 	m_performance=$(_extract_score "Performance" 2) || m_performance=""
 	m_accessibility=$(_extract_score "Accessibility" 2) || m_accessibility=""
@@ -822,23 +830,23 @@ ENDJSON
 	return 0
 }
 
-# Parse meta tags from HTML report
+# Parse meta tags from HTML report file
+# Arguments: $1=html_file, $2=json_output (true/false)
 parse_meta() {
-	local html="$1"
+	local html_file="$1"
 	local json_output="${2:-false}"
 
-	if [[ -z "$html" ]]; then
+	if [[ ! -s "$html_file" ]]; then
 		print_warning "No HTML content to parse"
 		return 1
 	fi
 
-	# Extract meta information from the report page
+	# Extract meta information from the report page (portable sed extraction)
 	local title description og_image
 
-	# The report page includes the scanned site's meta info (portable sed extraction)
-	title=$(echo "$html" | sed -n 's/.*<meta property="og:title" content="\([^"]*\)".*/\1/p' | head -1) || title=""
-	description=$(echo "$html" | sed -n 's/.*<meta property="og:description" content="\([^"]*\)".*/\1/p' | head -1) || description=""
-	og_image=$(echo "$html" | sed -n 's/.*<meta property="og:image" content="\([^"]*\)".*/\1/p' | head -1) || og_image=""
+	title=$(sed -n 's/.*<meta property="og:title" content="\([^"]*\)".*/\1/p' "$html_file" | head -1) || title=""
+	description=$(sed -n 's/.*<meta property="og:description" content="\([^"]*\)".*/\1/p' "$html_file" | head -1) || description=""
+	og_image=$(sed -n 's/.*<meta property="og:image" content="\([^"]*\)".*/\1/p' "$html_file" | head -1) || og_image=""
 
 	if [[ "$json_output" == "true" ]]; then
 		local escaped_title escaped_desc
@@ -876,15 +884,18 @@ crft_scan() {
 	print_info "Report URL: $report_url"
 	echo ""
 
-	local html
-	html=$(fetch_gallery_report "$domain") || {
+	local tmp_file
+	tmp_file=$(mktemp)
+	trap 'rm -f "${tmp_file:-}"' RETURN
+
+	if ! fetch_gallery_report "$domain" "$tmp_file"; then
 		print_error "Could not fetch report for: $domain"
 		print_info "Try scanning manually at: ${CRFT_LOOKUP_URL}"
 		print_info "Then re-run this command after the report generates (~20s)"
 		return 1
-	}
+	fi
 
-	if [[ -z "$html" ]]; then
+	if [[ ! -s "$tmp_file" ]]; then
 		print_error "Empty report for: $domain"
 		print_info "The site may not have been scanned yet."
 		print_info "Visit ${CRFT_LOOKUP_URL} and submit the URL first."
@@ -893,9 +904,9 @@ crft_scan() {
 
 	if [[ "$json_output" == "true" ]]; then
 		local techs_json lighthouse_json meta_json
-		techs_json=$(parse_technologies "$html" "true")
-		lighthouse_json=$(parse_lighthouse "$html" "true")
-		meta_json=$(parse_meta "$html" "true")
+		techs_json=$(parse_technologies "$tmp_file" "true")
+		lighthouse_json=$(parse_lighthouse "$tmp_file" "true")
+		meta_json=$(parse_meta "$tmp_file" "true")
 
 		jq -n \
 			--arg url "$domain" \
@@ -905,11 +916,11 @@ crft_scan() {
 			--argjson meta "$meta_json" \
 			'{url: $url, report_url: $report_url, technologies: $technologies, lighthouse: $lighthouse, meta: $meta}'
 	else
-		parse_technologies "$html" "false"
+		parse_technologies "$tmp_file" "false"
 		echo ""
-		parse_lighthouse "$html" "false"
+		parse_lighthouse "$tmp_file" "false"
 		echo ""
-		parse_meta "$html" "false"
+		parse_meta "$tmp_file" "false"
 		echo ""
 		print_info "Full report: $report_url"
 	fi
@@ -917,7 +928,7 @@ crft_scan() {
 	# Cache the report
 	local cache_file
 	cache_file="${REPORTS_DIR}/${slug}-$(date -u +%Y%m%d).html"
-	echo "$html" >"$cache_file" 2>/dev/null || true
+	cp "$tmp_file" "$cache_file" 2>/dev/null || true
 
 	return 0
 }
@@ -932,18 +943,16 @@ crft_techs() {
 	print_header "Tech Stack: $domain"
 	echo ""
 
-	local html
-	html=$(fetch_gallery_report "$domain") || {
-		print_error "Could not fetch report for: $domain"
-		return 1
-	}
+	local tmp_file
+	tmp_file=$(mktemp)
+	trap 'rm -f "${tmp_file:-}"' RETURN
 
-	if [[ -z "$html" ]]; then
-		print_error "Empty report for: $domain"
+	if ! fetch_gallery_report "$domain" "$tmp_file"; then
+		print_error "Could not fetch report for: $domain"
 		return 1
 	fi
 
-	parse_technologies "$html" "$json_output"
+	parse_technologies "$tmp_file" "$json_output"
 	return 0
 }
 
@@ -954,18 +963,16 @@ crft_lighthouse() {
 
 	domain=$(normalize_domain "$domain")
 
-	local html
-	html=$(fetch_gallery_report "$domain") || {
-		print_error "Could not fetch report for: $domain"
-		return 1
-	}
+	local tmp_file
+	tmp_file=$(mktemp)
+	trap 'rm -f "${tmp_file:-}"' RETURN
 
-	if [[ -z "$html" ]]; then
-		print_error "Empty report for: $domain"
+	if ! fetch_gallery_report "$domain" "$tmp_file"; then
+		print_error "Could not fetch report for: $domain"
 		return 1
 	fi
 
-	parse_lighthouse "$html" "$json_output"
+	parse_lighthouse "$tmp_file" "$json_output"
 	return 0
 }
 
@@ -976,18 +983,16 @@ crft_meta() {
 
 	domain=$(normalize_domain "$domain")
 
-	local html
-	html=$(fetch_gallery_report "$domain") || {
-		print_error "Could not fetch report for: $domain"
-		return 1
-	}
+	local tmp_file
+	tmp_file=$(mktemp)
+	trap 'rm -f "${tmp_file:-}"' RETURN
 
-	if [[ -z "$html" ]]; then
-		print_error "Empty report for: $domain"
+	if ! fetch_gallery_report "$domain" "$tmp_file"; then
+		print_error "Could not fetch report for: $domain"
 		return 1
 	fi
 
-	parse_meta "$html" "$json_output"
+	parse_meta "$tmp_file" "$json_output"
 	return 0
 }
 
@@ -1003,26 +1008,31 @@ crft_compare() {
 	print_header "Comparing: $domain1 vs $domain2"
 	echo ""
 
-	local html1 html2
-	html1=$(fetch_gallery_report "$domain1") || true
-	html2=$(fetch_gallery_report "$domain2") || true
+	local tmp1 tmp2
+	tmp1=$(mktemp)
+	tmp2=$(mktemp)
+	trap 'rm -f "${tmp1:-}" "${tmp2:-}"' RETURN
 
-	if [[ -z "$html1" ]]; then
+	local ok1=true ok2=true
+	fetch_gallery_report "$domain1" "$tmp1" || ok1=false
+	fetch_gallery_report "$domain2" "$tmp2" || ok2=false
+
+	if [[ "$ok1" == "false" ]]; then
 		print_error "Could not fetch report for: $domain1"
 		return 1
 	fi
 
-	if [[ -z "$html2" ]]; then
+	if [[ "$ok2" == "false" ]]; then
 		print_error "Could not fetch report for: $domain2"
 		return 1
 	fi
 
 	if [[ "$json_output" == "true" ]]; then
 		local techs1 techs2 lh1 lh2
-		techs1=$(parse_technologies "$html1" "true")
-		techs2=$(parse_technologies "$html2" "true")
-		lh1=$(parse_lighthouse "$html1" "true")
-		lh2=$(parse_lighthouse "$html2" "true")
+		techs1=$(parse_technologies "$tmp1" "true")
+		techs2=$(parse_technologies "$tmp2" "true")
+		lh1=$(parse_lighthouse "$tmp1" "true")
+		lh2=$(parse_lighthouse "$tmp2" "true")
 
 		jq -n \
 			--arg site1 "$domain1" \
@@ -1034,14 +1044,14 @@ crft_compare() {
 			'{site1: $site1, site2: $site2, technologies: {site1: $techs1, site2: $techs2}, lighthouse: {site1: $lighthouse1, site2: $lighthouse2}}'
 	else
 		echo "--- $domain1 ---"
-		parse_technologies "$html1" "false"
+		parse_technologies "$tmp1" "false"
 		echo ""
-		parse_lighthouse "$html1" "false"
+		parse_lighthouse "$tmp1" "false"
 		echo ""
 		echo "--- $domain2 ---"
-		parse_technologies "$html2" "false"
+		parse_technologies "$tmp2" "false"
 		echo ""
-		parse_lighthouse "$html2" "false"
+		parse_lighthouse "$tmp2" "false"
 	fi
 
 	return 0
