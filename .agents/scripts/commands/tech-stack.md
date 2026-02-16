@@ -1,10 +1,10 @@
 ---
-description: Detect tech stack of websites or find sites using specific technologies
+description: Detect technology stacks and find sites using specific technologies
 agent: Build+
 mode: subagent
 ---
 
-Analyse website technology stacks or perform reverse lookups to find sites using specific technologies.
+Detect the full tech stack of a URL or find sites using specific technologies. Orchestrates multiple open-source detection tools (Wappalyzer, httpx, nuclei) and optional BuiltWith API.
 
 Arguments: $ARGUMENTS
 
@@ -12,124 +12,209 @@ Arguments: $ARGUMENTS
 
 ### Step 1: Determine Operation Mode
 
-Parse `$ARGUMENTS` to determine the operation:
+Parse `$ARGUMENTS` to determine what to run:
 
-- If argument starts with "reverse": reverse lookup mode (find sites using a technology)
-- If argument is a URL: single-site lookup mode (detect tech stack)
+- If argument is a URL: run single-site tech stack lookup
+- If argument starts with "reverse": run reverse lookup to find sites using a technology
+- If argument is "cache-stats" or "cache-clear": run cache management
 - If argument is "help" or empty: show available commands
 
 ### Step 2: Run Appropriate Command
 
-**For single-site lookup (detect tech stack):**
+**Single-site lookup:**
 
 ```bash
 ~/.aidevops/agents/scripts/tech-stack-helper.sh lookup "$ARGUMENTS"
 ```
 
-**For reverse lookup (find sites using a technology):**
-
-Extract technology name and optional filters from arguments:
+**Reverse lookup:**
 
 ```bash
-# Parse: tech-stack reverse <tech> [--region X] [--industry Y]
-tech_name=$(echo "$ARGUMENTS" | sed 's/^reverse //' | awk '{print $1}')
-region=$(echo "$ARGUMENTS" | grep -oP '(?<=--region )\S+' || echo "")
-industry=$(echo "$ARGUMENTS" | grep -oP '(?<=--industry )\S+' || echo "")
-
-# Build command array with optional filters
-cmd_array=("~/.aidevops/agents/scripts/tech-stack-helper.sh" "reverse" "$tech_name")
-[[ -n "$region" ]] && cmd_array+=(--region "$region")
-[[ -n "$industry" ]] && cmd_array+=(--industry "$industry")
-
-"${cmd_array[@]}"
+~/.aidevops/agents/scripts/tech-stack-helper.sh reverse "$ARGUMENTS"
 ```
 
-**For cached report:**
+**Cache management:**
 
 ```bash
-~/.aidevops/agents/scripts/tech-stack-helper.sh report "$ARGUMENTS"
+~/.aidevops/agents/scripts/tech-stack-helper.sh cache-stats
+~/.aidevops/agents/scripts/tech-stack-helper.sh cache-clear --older-than 7
 ```
 
 ### Step 3: Present Results
 
 Format the output as a clear report with:
 
-- Detected technologies (frameworks, CMS, analytics, CDN, hosting, etc.)
-- Confidence scores for each detection
-- Technology versions where available
-- Links to technology documentation
-
-For reverse lookups:
-- List of sites using the specified technology
-- Site metadata (traffic tier, region, industry)
-- Technology usage patterns
+- **Single-site lookup**: Technologies grouped by category (Frontend, Backend, Analytics, CDN, etc.) with confidence scores and provider counts
+- **Reverse lookup**: List of sites using the technology with traffic tier, industry, and related technologies
+- **Cache stats**: Total entries, cache size, hit rate, top cached domains
 
 ### Step 4: Offer Follow-up Actions
 
 ```text
 Actions:
-1. Analyse another URL
-2. Reverse lookup for a specific technology
-3. View cached report
-4. Export results to JSON
-5. Compare tech stacks across multiple sites
+1. Export results to JSON/CSV
+2. Run reverse lookup for detected technologies
+3. Compare with competitor sites
+4. Schedule periodic monitoring
+5. View detailed provider reports
 ```
 
 ## Options
 
 | Command | Purpose |
 |---------|---------|
-| `/tech-stack https://example.com` | Detect tech stack of a single site |
-| `/tech-stack reverse react` | Find sites using React |
-| `/tech-stack reverse wordpress --region US` | Find WordPress sites in US |
-| `/tech-stack reverse nextjs --industry ecommerce` | Find Next.js sites in e-commerce |
-| `/tech-stack reverse tailwind --region EU --industry saas` | Find Tailwind sites in EU SaaS |
-| `/tech-stack report https://example.com` | View cached report |
+| `/tech-stack https://vercel.com` | Detect tech stack for URL |
+| `/tech-stack vercel.com --format json` | Get JSON output |
+| `/tech-stack reverse "Next.js" --traffic high` | Find high-traffic sites using Next.js |
+| `/tech-stack reverse "React" --region us --industry ecommerce` | Find US ecommerce sites using React |
+| `/tech-stack cache-stats` | Show cache statistics |
+| `/tech-stack cache-clear --older-than 7` | Clear cache older than 7 days |
 
 ## Examples
 
 **Single-site lookup:**
 
 ```text
-User: /tech-stack https://example.com
-AI: Detecting tech stack for https://example.com...
+User: /tech-stack https://vercel.com
+AI: Analyzing tech stack for https://vercel.com...
 
-    Frontend Framework: React 18.2.0 (high confidence)
-    UI Library: Tailwind CSS 3.3.0 (high confidence)
-    State Management: Redux 4.2.0 (medium confidence)
-    Build Tool: Webpack 5.88.0 (high confidence)
-    CDN: Cloudflare (high confidence)
-    Analytics: Google Analytics 4 (high confidence)
-    Hosting: Vercel (medium confidence)
-
-    Full report cached. Use `/tech-stack report https://example.com` to view again.
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    
+    Frontend Frameworks
+      React 18.2.0                    ████████████████████ 100% (4 sources)
+      Next.js 13.4.1                  ████████████████████ 100% (3 sources)
+    
+    UI Libraries
+      Tailwind CSS 3.3.0              ████████████████████ 100% (4 sources)
+      Radix UI 1.0.0                  ███████████████░░░░░  75% (3 sources)
+    
+    Analytics
+      Google Analytics 4              ████████████████████ 100% (4 sources)
+      Vercel Analytics                ███████████████░░░░░  75% (3 sources)
+    
+    CDN & Hosting
+      Vercel                          ████████████████████ 100% (4 sources)
+      Cloudflare                      ████████████████████ 100% (4 sources)
+    
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    Total: 15 technologies detected
+    Cache: Stored for 24h
+    
+    Actions:
+    1. Export to JSON: /tech-stack vercel.com --format json
+    2. Find similar sites: /tech-stack reverse "Next.js"
+    3. Compare with competitor
 ```
 
 **Reverse lookup:**
 
 ```text
-User: /tech-stack reverse nextjs --region US --industry saas
-AI: Finding sites using Next.js in US SaaS sector...
+User: /tech-stack reverse "Next.js" --traffic high
+AI: Finding high-traffic sites using Next.js...
 
-    Found 1,247 sites using Next.js:
-
-    Top Sites:
-    1. vercel.com - High traffic, US, SaaS
-    2. notion.so - High traffic, US, SaaS
-    3. linear.app - Medium traffic, US, SaaS
-    4. cal.com - Medium traffic, US, SaaS
-    5. resend.com - Low traffic, US, SaaS
-
-    Filters applied:
-    - Region: US
-    - Industry: SaaS
-    - Technology: Next.js
-
-    Use `/tech-stack <url>` to analyse specific sites.
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    
+    Sites using Next.js (filtered: traffic=high)
+    
+    1. vercel.com
+       Traffic: Very High (10M+ monthly)
+       Industry: Developer Tools
+       Also uses: React, Tailwind CSS, Vercel Analytics
+    
+    2. hulu.com
+       Traffic: Very High (100M+ monthly)
+       Industry: Streaming Media
+       Also uses: React, GraphQL, AWS
+    
+    3. nike.com
+       Traffic: Very High (500M+ monthly)
+       Industry: E-commerce
+       Also uses: React, Redux, Cloudflare
+    
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    Total: 1,247 sites found (showing top 3)
+    
+    Top industries: E-commerce (23%), SaaS (18%), Media (15%)
+    Top regions: US (45%), EU (28%), Asia (20%)
 ```
+
+**JSON output:**
+
+```text
+User: /tech-stack vercel.com --format json
+AI: {
+      "url": "https://vercel.com",
+      "technologies": [
+        {
+          "name": "React",
+          "version": "18.2.0",
+          "category": "Frontend Framework",
+          "confidence": 100,
+          "providers": 4
+        },
+        {
+          "name": "Next.js",
+          "version": "13.4.1",
+          "category": "Frontend Framework",
+          "confidence": 100,
+          "providers": 3
+        }
+      ],
+      "cached": false,
+      "timestamp": "2026-02-16T20:30:00Z"
+    }
+```
+
+**Cache stats:**
+
+```text
+User: /tech-stack cache-stats
+AI: Cache statistics:
+
+    Total entries: 342
+    Cache size: 2.4 MB
+    Oldest entry: 14 days ago
+    Newest entry: 2 hours ago
+    
+    Top cached domains:
+    1. github.com (15 lookups)
+    2. vercel.com (12 lookups)
+    3. netlify.com (8 lookups)
+```
+
+## Provider Configuration
+
+### Wappalyzer (Free, Open Source)
+
+No API key needed. Install via npm:
+
+```bash
+npm install -g wappalyzer
+```
+
+### httpx + nuclei (Free, Open Source)
+
+No API key needed. Install via go:
+
+```bash
+go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest
+go install -v github.com/projectdiscovery/nuclei/v2/cmd/nuclei@latest
+```
+
+### BuiltWith API (Commercial, Optional)
+
+For reverse lookup and historical data:
+
+```bash
+aidevops secret set BUILTWITH_API_KEY
+```
+
+Pricing: $295/month for API access. Free tier: 100 lookups/month.
 
 ## Related
 
-- `tools/research/tech-stack-lookup.md` - Full documentation
-- `services/research/builtwith.md` - BuiltWith API integration
-- `services/research/wappalyzer.md` - Wappalyzer integration
+- `tools/research/tech-stack-lookup.md` - Full agent documentation
+- `tools/research/wappalyzer.md` - Wappalyzer CLI integration (t1064)
+- `tools/research/whatruns.md` - WhatRuns browser automation (t1065)
+- `tools/research/builtwith.md` - BuiltWith API integration (t1066)
+- `tools/research/httpx-nuclei.md` - HTTP fingerprinting (t1067)
