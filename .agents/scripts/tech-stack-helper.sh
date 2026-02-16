@@ -16,6 +16,8 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 # Configuration
 readonly CACHE_DIR="$HOME/.aidevops/.agent-workspace/tmp/tech-stack-cache"
 readonly CACHE_TTL=3600 # 1 hour cache
+SCRIPT_NAME="$(basename "$0")" || true
+readonly SCRIPT_NAME
 readonly UNBUILT_PKG="@unbuilt/cli"
 readonly UNBUILT_TIMEOUT="${UNBUILT_TIMEOUT:-120}"
 mkdir -p "$CACHE_DIR"
