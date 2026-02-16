@@ -732,7 +732,14 @@
   check: shellcheck .agents/scripts/supervisor/cron.sh
   check: file-exists .agents/scripts/supervisor/cron.sh
 
-- [ ] v094 t1063.2 Create tools/research/tech-stack-lookup.md agent — prog... | PR #1531 | merged:2026-02-16
+- [!] v094 t1063.2 Create tools/research/tech-stack-lookup.md agent — prog... | PR #1531 | merged:2026-02-16 failed:2026-02-16 reason:rg: "tech-stack-lookup" not found in .agents/subagent-index.toon
   files: .agents/tools/research/tech-stack-lookup.md
   check: file-exists .agents/tools/research/tech-stack-lookup.md
   check: rg "tech-stack-lookup" .agents/subagent-index.toon
+
+- [ ] v095 t1066 Open Tech Explorer provider agent — create `tools/resea... | PR #1544 | merged:2026-02-16
+  files: .agents/scripts/tech-stack-helper.sh, .agents/tools/research/providers/openexplorer.md
+  check: shellcheck .agents/scripts/tech-stack-helper.sh
+  check: file-exists .agents/scripts/tech-stack-helper.sh
+  check: file-exists .agents/tools/research/providers/openexplorer.md
+  check: rg "openexplorer" .agents/subagent-index.toon
