@@ -1,96 +1,121 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2154
+# shellcheck disable=SC2034
 set -euo pipefail
 
-# Tech Stack Discovery Helper Script
-# Multi-provider website technology detection with common schema output.
-# Providers: openexplorer (free, open-source), wappalyzer, httpx+nuclei
+# Tech Stack Helper — orchestrates multiple tech detection providers
+# to replicate BuiltWith.com capabilities for single-site lookup,
+# reverse lookup, reporting, and cached results.
 #
-# Usage: tech-stack-helper.sh <command> [options]
-#        tech-stack-helper.sh providers
-#        tech-stack-helper.sh compare <url>
+# Usage:
+#   tech-stack-helper.sh lookup <url>                  Detect tech stack of a URL
+#   tech-stack-helper.sh reverse <technology>           Find sites using a technology
+#   tech-stack-helper.sh report <url>                   Generate full markdown report
+#   tech-stack-helper.sh cache [stats|clear|get <url>]  Manage SQLite cache
+#   tech-stack-helper.sh providers                      List available providers
+#   tech-stack-helper.sh help                           Show this help
 #
-# Dependencies:
-#   Required: curl, jq, sqlite3
-#   Optional: wappalyzer (npm), httpx (go), nuclei (go), npx (for Playwright)
+# Options:
+#   --json          Output raw JSON
+#   --markdown      Output markdown report
+#   --no-cache      Skip cache for this request
+#   --provider <p>  Use only specified provider (unbuilt|crft|openexplorer|wappalyzer)
+#   --parallel      Run providers in parallel (default)
+#   --sequential    Run providers sequentially
+#   --timeout <s>   Per-provider timeout in seconds (default: 60)
+#   --cache-ttl <h> Cache TTL in hours (default: 168 = 7 days)
 #
-# BuiltWith API credentials (optional, for reverse lookup):
-#   aidevops secret set BUILTWITH_API_KEY
-#   Or set in ~/.config/aidevops/credentials.sh:
-#     BUILTWITH_API_KEY="your-api-key"
+# Providers (t1064-t1067):
+#   unbuilt       — Unbuilt.app CLI (frontend/JS detection)
+#   crft          — CRFT Lookup (Wappalyzer-fork, Lighthouse scores)
+#   openexplorer  — Open Tech Explorer (general detection)
+#   wappalyzer    — Wappalyzer OSS fork (self-hosted fallback)
+#
+# Environment:
+#   TECH_STACK_CACHE_DIR   Override cache directory
+#   TECH_STACK_CACHE_TTL   Cache TTL in hours (default: 168)
+#   TECH_STACK_TIMEOUT     Per-provider timeout in seconds (default: 60)
 
+# Source shared constants
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
-source "${SCRIPT_DIR}/shared-constants.sh"
-
+source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
 init_log_file
 
-# Common message constants
-readonly HELP_SHOW_MESSAGE="Show this help"
-readonly HELP_USAGE_INFO="Use '$0 help' for usage information"
+# =============================================================================
+# Configuration
+# =============================================================================
 
-# Cache constants
-readonly CACHE_DIR="${HOME}/.aidevops/.agent-workspace/work/tech-stack"
+readonly VERSION="1.0.0"
+readonly CACHE_DIR="${TECH_STACK_CACHE_DIR:-${HOME}/.aidevops/.agent-workspace/work/tech-stack}"
 readonly CACHE_DB="${CACHE_DIR}/cache.db"
-readonly CACHE_TTL_HOURS=24
+readonly TS_DEFAULT_CACHE_TTL="${TECH_STACK_CACHE_TTL:-168}" # hours
+readonly TS_DEFAULT_TIMEOUT="${TECH_STACK_TIMEOUT:-60}"      # seconds
 
-# Provider constants
-readonly WAPPALYZER_TIMEOUT=30
-readonly HTTPX_TIMEOUT=10
-readonly NUCLEI_TIMEOUT=30
+# Provider list (bash 3.2 compatible — no associative arrays)
+readonly PROVIDERS="unbuilt crft openexplorer wappalyzer"
 
-# =============================================================================
-# Credential Management
-# =============================================================================
-
-# Load BuiltWith API credentials from aidevops secret store or credentials.sh
-load_builtwith_credentials() {
-	local api_key=""
-
-	# Try gopass first (encrypted)
-	if command -v gopass &>/dev/null; then
-		api_key=$(gopass show -o "aidevops/BUILTWITH_API_KEY" 2>/dev/null || echo "")
-	fi
-
-	# Fallback to credentials.sh
-	if [[ -z "$api_key" ]]; then
-		local creds_file="${HOME}/.config/aidevops/credentials.sh"
-		if [[ -f "$creds_file" ]]; then
-			# shellcheck source=/dev/null
-			source "$creds_file" 2>/dev/null || true
-			api_key="${BUILTWITH_API_KEY:-$api_key}"
-		fi
-	fi
-
-	# Environment variable override
-	api_key="${BUILTWITH_API_KEY:-$api_key}"
-
-	if [[ -z "$api_key" ]]; then
-		return 1
-	fi
-
-	# Export for use by API functions
-	BUILTWITH_API_KEY="$api_key"
-	export BUILTWITH_API_KEY
+# Map provider name to helper script filename
+provider_script() {
+	local provider="$1"
+	case "$provider" in
+	unbuilt) echo "unbuilt-provider-helper.sh" ;;
+	crft) echo "crft-provider-helper.sh" ;;
+	openexplorer) echo "openexplorer-provider-helper.sh" ;;
+	wappalyzer) echo "wappalyzer-provider-helper.sh" ;;
+	*) echo "" ;;
+	esac
 	return 0
 }
 
+# Map provider name to display name
+provider_display_name() {
+	local provider="$1"
+	case "$provider" in
+	unbuilt) echo "Unbuilt.app" ;;
+	crft) echo "CRFT Lookup" ;;
+	openexplorer) echo "Open Tech Explorer" ;;
+	wappalyzer) echo "Wappalyzer OSS" ;;
+	*) echo "$provider" ;;
+	esac
+	return 0
+}
+
+# Technology categories for structured output
+readonly TECH_CATEGORIES="frameworks,cms,analytics,cdn,hosting,bundlers,ui-libs,state-management,styling,languages,databases,monitoring,security,seo,performance"
+
 # =============================================================================
-# Utility Functions
+# Logging
 # =============================================================================
 
-print_header() {
+log_info() {
 	local msg="$1"
-	echo ""
-	echo -e "${BLUE}=== $msg ===${NC}"
+	echo -e "${BLUE}[tech-stack]${NC} ${msg}" >&2
 	return 0
 }
+
+log_success() {
+	local msg="$1"
+	echo -e "${GREEN}[OK]${NC} ${msg}" >&2
+	return 0
+}
+
+log_warning() {
+	local msg="$1"
+	echo -e "${YELLOW}[WARN]${NC} ${msg}" >&2
+	return 0
+}
+
+log_error() {
+	local msg="$1"
+	echo -e "${RED}[ERROR]${NC} ${msg}" >&2
+	return 0
+}
+
+# =============================================================================
+# Dependencies
+# =============================================================================
 
 check_dependencies() {
 	local missing=()
-
-	if ! command -v curl &>/dev/null; then
-		missing+=("curl")
-	fi
 
 	if ! command -v jq &>/dev/null; then
 		missing+=("jq")
@@ -100,789 +125,312 @@ check_dependencies() {
 		missing+=("sqlite3")
 	fi
 
+	if ! command -v curl &>/dev/null; then
+		missing+=("curl")
+	fi
+
 	if [[ ${#missing[@]} -gt 0 ]]; then
-		print_error "Missing required tools: ${missing[*]}"
-		print_info "Install with: brew install ${missing[*]}"
+		log_error "Missing required tools: ${missing[*]}"
+		log_info "Install with: brew install ${missing[*]}"
 		return 1
 	fi
 
 	return 0
 }
 
-# Normalise URL: strip protocol, trailing slash, www prefix
-normalise_url() {
+# =============================================================================
+# URL Normalization
+# =============================================================================
+
+normalize_url() {
 	local url="$1"
-	url="${url#https://}"
-	url="${url#http://}"
-	url="${url#www.}"
+
+	# Add https:// if no protocol specified
+	if [[ ! "$url" =~ ^https?:// ]]; then
+		url="https://${url}"
+	fi
+
+	# Remove trailing slash
 	url="${url%/}"
+
 	echo "$url"
 	return 0
 }
 
-# Cache key from provider + command + args
-cache_key() {
-	local provider="$1"
-	local command="$2"
-	local args="$3"
-	echo "${provider}_${command}_$(echo "$args" | tr -c '[:alnum:]' '_')"
-	return 0
-}
-
-# Check cache freshness (legacy file-based cache for OpenExplorer)
-cache_get() {
-	local key="$1"
-	local cache_file="${CACHE_DIR}/${key}.json"
-
-	if [[ -f "$cache_file" ]]; then
-		local file_age
-		file_age=$(($(date +%s) - $(stat -f %m "$cache_file" 2>/dev/null || stat -c %Y "$cache_file" 2>/dev/null || echo 0)))
-		if [[ "$file_age" -lt $((CACHE_TTL_HOURS * 3600)) ]]; then
-			cat "$cache_file"
-			return 0
-		fi
-	fi
-
-	return 1
-}
-
-# Store in cache (legacy file-based cache for OpenExplorer)
-cache_set() {
-	local key="$1"
-	local data="$2"
-	mkdir -p "$CACHE_DIR"
-	echo "$data" >"${CACHE_DIR}/${key}.json"
-	return 0
-}
-
-# Normalise category from OpenExplorer to common schema
-normalise_category() {
-	local category="$1"
-	local lower
-	lower="$(echo "$category" | tr '[:upper:]' '[:lower:]')"
-
-	case "$lower" in
-	"frontend framework" | "frontend" | "ui framework")
-		echo "frontend-framework"
-		;;
-	"backend" | "backend framework" | "server")
-		echo "backend-framework"
-		;;
-	"analytics" | "tracking")
-		echo "analytics"
-		;;
-	"cms" | "content management")
-		echo "cms"
-		;;
-	"cdn" | "content delivery")
-		echo "cdn"
-		;;
-	"payment" | "payments" | "billing")
-		echo "payment"
-		;;
-	"performance" | "optimization")
-		echo "performance"
-		;;
-	"security" | "authentication")
-		echo "security"
-		;;
-	"database" | "data store")
-		echo "database"
-		;;
-	"hosting" | "infrastructure")
-		echo "hosting"
-		;;
-	"build tool" | "build tools" | "bundler")
-		echo "build-tool"
-		;;
-	"css framework" | "css" | "styling")
-		echo "css-framework"
-		;;
-	"javascript library" | "js library" | "library")
-		echo "js-library"
-		;;
-	*)
-		echo "other"
-		;;
-	esac
-	return 0
-}
-
-# =============================================================================
-# SQLite Cache Management (for multi-provider lookup)
-# =============================================================================
-
-# Initialize SQLite cache database
-init_cache() {
-	mkdir -p "$CACHE_DIR"
-
-	if [[ ! -f "$CACHE_DB" ]]; then
-		sqlite3 "$CACHE_DB" <<EOF
-PRAGMA journal_mode=WAL;
-PRAGMA busy_timeout=5000;
-CREATE TABLE IF NOT EXISTS lookups (
-    url TEXT PRIMARY KEY,
-    technologies TEXT,
-    providers TEXT,
-    timestamp INTEGER,
-    ttl_hours INTEGER DEFAULT 24
-);
-
-CREATE INDEX IF NOT EXISTS idx_timestamp ON lookups(timestamp);
-CREATE INDEX IF NOT EXISTS idx_url ON lookups(url);
-EOF
-	fi
-	return 0
-}
-
-# Get cached result for URL
-get_cached_result() {
+# Extract domain from URL for cache key
+extract_domain() {
 	local url="$1"
-	local now
-	now=$(date +%s)
-	local cutoff=$((now - CACHE_TTL_HOURS * 3600))
 
-	init_cache
+	# Remove protocol
+	local domain="${url#*://}"
+	# Remove path
+	domain="${domain%%/*}"
+	# Remove port
+	domain="${domain%%:*}"
 
-	# Escape single quotes to prevent SQL injection (sqlite3 CLI lacks parameterized queries)
-	local safe_url="${url//\'/\'\'}"
+	echo "$domain"
+	return 0
+}
+
+# =============================================================================
+# SQLite Cache
+# =============================================================================
+
+init_cache_db() {
+	mkdir -p "$CACHE_DIR" 2>/dev/null || true
+
+	log_stderr "cache init" sqlite3 "$CACHE_DB" "
+        CREATE TABLE IF NOT EXISTS tech_cache (
+            url           TEXT NOT NULL,
+            domain        TEXT NOT NULL,
+            provider      TEXT NOT NULL,
+            results_json  TEXT NOT NULL,
+            detected_at   TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+            expires_at    TEXT NOT NULL,
+            PRIMARY KEY (url, provider)
+        );
+
+        CREATE TABLE IF NOT EXISTS merged_cache (
+            url           TEXT PRIMARY KEY,
+            domain        TEXT NOT NULL,
+            merged_json   TEXT NOT NULL,
+            providers     TEXT NOT NULL,
+            detected_at   TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+            expires_at    TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS reverse_cache (
+            technology    TEXT NOT NULL,
+            filters_hash  TEXT NOT NULL,
+            results_json  TEXT NOT NULL,
+            detected_at   TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+            expires_at    TEXT NOT NULL,
+            PRIMARY KEY (technology, filters_hash)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_tech_cache_domain ON tech_cache(domain);
+        CREATE INDEX IF NOT EXISTS idx_tech_cache_expires ON tech_cache(expires_at);
+        CREATE INDEX IF NOT EXISTS idx_merged_cache_domain ON merged_cache(domain);
+        CREATE INDEX IF NOT EXISTS idx_reverse_cache_tech ON reverse_cache(technology);
+    " 2>/dev/null || {
+		log_warning "Failed to initialize cache database"
+		return 1
+	}
+
+	return 0
+}
+
+# Store provider results in cache
+cache_store() {
+	local url="$1"
+	local provider="$2"
+	local results_json="$3"
+	local ttl_hours="${4:-$TS_DEFAULT_CACHE_TTL}"
+
+	local domain
+	domain=$(extract_domain "$url")
+
+	local escaped_json
+	escaped_json="${results_json//\'/\'\'}"
+
+	log_stderr "cache store" sqlite3 "$CACHE_DB" "
+        INSERT OR REPLACE INTO tech_cache (url, domain, provider, results_json, expires_at)
+        VALUES (
+            '${url//\'/\'\'}',
+            '${domain//\'/\'\'}',
+            '${provider//\'/\'\'}',
+            '${escaped_json}',
+            strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '+${ttl_hours} hours')
+        );
+    " 2>/dev/null || true
+
+	return 0
+}
+
+# Store merged results in cache
+cache_store_merged() {
+	local url="$1"
+	local merged_json="$2"
+	local providers="$3"
+	local ttl_hours="${4:-$TS_DEFAULT_CACHE_TTL}"
+
+	local domain
+	domain=$(extract_domain "$url")
+
+	local escaped_json
+	escaped_json="${merged_json//\'/\'\'}"
+
+	log_stderr "cache store merged" sqlite3 "$CACHE_DB" "
+        INSERT OR REPLACE INTO merged_cache (url, domain, merged_json, providers, expires_at)
+        VALUES (
+            '${url//\'/\'\'}',
+            '${domain//\'/\'\'}',
+            '${escaped_json}',
+            '${providers//\'/\'\'}',
+            strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '+${ttl_hours} hours')
+        );
+    " 2>/dev/null || true
+
+	return 0
+}
+
+# Retrieve cached merged results (returns empty if expired)
+cache_get_merged() {
+	local url="$1"
+
+	[[ ! -f "$CACHE_DB" ]] && return 1
 
 	local result
-	result=$(sqlite3 "$CACHE_DB" "SELECT technologies, providers FROM lookups WHERE url = '${safe_url}' AND timestamp > $cutoff LIMIT 1" 2>/dev/null || echo "")
+	result=$(sqlite3 "$CACHE_DB" "
+        SELECT merged_json FROM merged_cache
+        WHERE url = '${url//\'/\'\'}'
+          AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now');
+    " 2>/dev/null || echo "")
 
 	if [[ -n "$result" ]]; then
 		echo "$result"
 		return 0
 	fi
+
 	return 1
 }
 
-# Store result in cache
-store_cached_result() {
+# Retrieve cached provider results
+cache_get_provider() {
 	local url="$1"
-	local technologies="$2"
-	local providers="$3"
-	local now
-	now=$(date +%s)
+	local provider="$2"
 
-	init_cache
+	[[ ! -f "$CACHE_DB" ]] && return 1
 
-	# Escape single quotes to prevent SQL injection
-	local safe_url="${url//\'/\'\'}"
-	local safe_technologies="${technologies//\'/\'\'}"
-	local safe_providers="${providers//\'/\'\'}"
+	local result
+	result=$(sqlite3 "$CACHE_DB" "
+        SELECT results_json FROM tech_cache
+        WHERE url = '${url//\'/\'\'}'
+          AND provider = '${provider//\'/\'\'}'
+          AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now');
+    " 2>/dev/null || echo "")
 
-	sqlite3 "$CACHE_DB" <<EOF
-INSERT OR REPLACE INTO lookups (url, technologies, providers, timestamp, ttl_hours)
-VALUES ('${safe_url}', '${safe_technologies}', '${safe_providers}', $now, $CACHE_TTL_HOURS);
-EOF
-	return 0
+	if [[ -n "$result" ]]; then
+		echo "$result"
+		return 0
+	fi
+
+	return 1
 }
 
-# Clear cache entries older than N days
-cmd_clear_cache() {
-	local days="${1:-30}"
-	local cutoff
-	cutoff=$(date -v-"${days}"d +%s 2>/dev/null || date -d "${days} days ago" +%s)
+# Cache statistics
+cache_stats() {
+	if [[ ! -f "$CACHE_DB" ]]; then
+		log_info "No cache database found"
+		return 0
+	fi
 
-	init_cache
-
-	local deleted
-	deleted=$(sqlite3 "$CACHE_DB" "DELETE FROM lookups WHERE timestamp < $cutoff; SELECT changes();" | tail -1)
-
-	echo "Deleted $deleted cache entries older than $days days"
-	return 0
-}
-
-# Show cache statistics
-cmd_cache_stats() {
-	init_cache
-
-	local total
-	total=$(sqlite3 "$CACHE_DB" "SELECT COUNT(*) FROM lookups;" 2>/dev/null || echo "0")
-
-	local size
-	size=$(du -h "$CACHE_DB" 2>/dev/null | cut -f1 || echo "0")
-
-	local oldest
-	oldest=$(sqlite3 "$CACHE_DB" "SELECT datetime(MIN(timestamp), 'unixepoch') FROM lookups;" 2>/dev/null || echo "N/A")
-
-	local newest
-	newest=$(sqlite3 "$CACHE_DB" "SELECT datetime(MAX(timestamp), 'unixepoch') FROM lookups;" 2>/dev/null || echo "N/A")
-
-	print_header "Cache Statistics"
-	echo "Total entries: $total"
-	echo "Cache size: $size"
-	echo "Oldest entry: $oldest"
-	echo "Newest entry: $newest"
+	echo -e "${CYAN}=== Tech Stack Cache Statistics ===${NC}"
 	echo ""
-	echo "Top cached domains:"
-	sqlite3 "$CACHE_DB" "SELECT url, COUNT(*) as cnt FROM lookups GROUP BY url ORDER BY cnt DESC LIMIT 5;" 2>/dev/null || echo "No data"
+
+	local total_lookups expired_lookups active_lookups
+	total_lookups=$(sqlite3 "$CACHE_DB" "SELECT count(*) FROM tech_cache;" 2>/dev/null || echo "0")
+	expired_lookups=$(sqlite3 "$CACHE_DB" "SELECT count(*) FROM tech_cache WHERE expires_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now');" 2>/dev/null || echo "0")
+	active_lookups=$((total_lookups - expired_lookups))
+
+	local total_merged expired_merged active_merged
+	total_merged=$(sqlite3 "$CACHE_DB" "SELECT count(*) FROM merged_cache;" 2>/dev/null || echo "0")
+	expired_merged=$(sqlite3 "$CACHE_DB" "SELECT count(*) FROM merged_cache WHERE expires_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now');" 2>/dev/null || echo "0")
+	active_merged=$((total_merged - expired_merged))
+
+	local total_reverse expired_reverse active_reverse
+	total_reverse=$(sqlite3 "$CACHE_DB" "SELECT count(*) FROM reverse_cache;" 2>/dev/null || echo "0")
+	expired_reverse=$(sqlite3 "$CACHE_DB" "SELECT count(*) FROM reverse_cache WHERE expires_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now');" 2>/dev/null || echo "0")
+	active_reverse=$((total_reverse - expired_reverse))
+
+	echo "Provider lookups:  ${active_lookups} active / ${expired_lookups} expired / ${total_lookups} total"
+	echo "Merged results:    ${active_merged} active / ${expired_merged} expired / ${total_merged} total"
+	echo "Reverse lookups:   ${active_reverse} active / ${expired_reverse} expired / ${total_reverse} total"
+	echo ""
+
+	# Show recent lookups
+	local recent
+	recent=$(sqlite3 -separator ' | ' "$CACHE_DB" "
+        SELECT domain, providers, detected_at
+        FROM merged_cache
+        ORDER BY detected_at DESC
+        LIMIT 5;
+    " 2>/dev/null || echo "")
+
+	if [[ -n "$recent" ]]; then
+		echo "Recent lookups:"
+		echo "$recent" | while IFS= read -r line; do
+			echo "  $line"
+		done
+	fi
+
+	# DB file size
+	local db_size
+	db_size=$(du -h "$CACHE_DB" 2>/dev/null | cut -f1 || echo "unknown")
+	echo ""
+	echo "Cache DB size: ${db_size}"
+	echo "Cache location: ${CACHE_DB}"
 
 	return 0
 }
 
-# =============================================================================
-# OpenExplorer Provider
-# =============================================================================
+# Clear cache (all or expired only)
+cache_clear() {
+	local mode="${1:-expired}"
 
-# Search OpenExplorer by URL query
-openexplorer_search() {
-	local query="$1"
-	local page="${2:-1}"
-	local limit="${3:-20}"
-
-	local normalised
-	normalised="$(normalise_url "$query")"
-
-	local key
-	key="$(cache_key "openexplorer" "search" "${normalised}_${page}_${limit}")"
-
-	# Check cache
-	local cached
-	if cached="$(cache_get "$key")"; then
-		echo "$cached"
+	if [[ ! -f "$CACHE_DB" ]]; then
+		log_info "No cache database to clear"
 		return 0
 	fi
 
-	print_info "Searching OpenExplorer for: $normalised"
-
-	# OpenExplorer.tech is a React SPA with a Supabase backend.
-	# The API requires auth credentials, so curl-based scraping is not viable.
-	# Return structured guidance pointing to Playwright analysis or the web UI.
-	local result
-	result="$(jq -n \
-		--arg url "$normalised" \
-		--arg provider "openexplorer" \
-		--arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-		'{
-            url: $url,
-            provider: $provider,
-            timestamp: $ts,
-            technologies: [],
-            metadata: {},
-            note: "OpenExplorer.tech is a React SPA. Use Playwright for live analysis or install the Chrome extension for community data collection. See: tech-stack-helper.sh openexplorer analyse <url>"
-        }')"
-
-	cache_set "$key" "$result"
-	echo "$result"
-	return 0
-}
-
-# Search OpenExplorer by technology name
-openexplorer_tech() {
-	local tech_name="$1"
-	local page="${2:-1}"
-	local limit="${3:-20}"
-
-	local key
-	key="$(cache_key "openexplorer" "tech" "${tech_name}_${page}_${limit}")"
-
-	local cached
-	if cached="$(cache_get "$key")"; then
-		echo "$cached"
-		return 0
-	fi
-
-	print_info "Searching OpenExplorer for technology: $tech_name"
-
-	# Same SPA limitation applies
-	local result
-	result="$(jq -n \
-		--arg tech "$tech_name" \
-		--arg provider "openexplorer" \
-		--arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-		'{
-            query: $tech,
-            provider: $provider,
-            timestamp: $ts,
-            results: [],
-            note: "OpenExplorer.tech requires Playwright for search. The Supabase API needs authentication credentials. Use the web UI at https://openexplorer.tech or the Chrome extension."
-        }')"
-
-	cache_set "$key" "$result"
-	echo "$result"
-	return 0
-}
-
-# Search OpenExplorer by category
-openexplorer_category() {
-	local category="$1"
-	local page="${2:-1}"
-	local limit="${3:-20}"
-
-	local key
-	key="$(cache_key "openexplorer" "category" "${category}_${page}_${limit}")"
-
-	local cached
-	if cached="$(cache_get "$key")"; then
-		echo "$cached"
-		return 0
-	fi
-
-	print_info "Searching OpenExplorer for category: $category"
-
-	local result
-	result="$(jq -n \
-		--arg cat "$category" \
-		--arg provider "openexplorer" \
-		--arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-		'{
-            query: $cat,
-            provider: $provider,
-            timestamp: $ts,
-            results: [],
-            note: "OpenExplorer.tech requires Playwright for category search. Use the web UI at https://openexplorer.tech"
-        }')"
-
-	cache_set "$key" "$result"
-	echo "$result"
-	return 0
-}
-
-# Analyse a URL using Playwright (requires npx playwright)
-openexplorer_analyse() {
-	local url="$1"
-	local normalised
-	normalised="$(normalise_url "$url")"
-
-	local key
-	key="$(cache_key "openexplorer" "analyse" "$normalised")"
-
-	local cached
-	if cached="$(cache_get "$key")"; then
-		echo "$cached"
-		return 0
-	fi
-
-	# Check if Playwright is available
-	if ! command -v npx &>/dev/null; then
-		print_error "npx is required for Playwright analysis"
-		print_info "Install Node.js from: https://nodejs.org/"
+	case "$mode" in
+	all)
+		sqlite3 "$CACHE_DB" "
+                DELETE FROM tech_cache;
+                DELETE FROM merged_cache;
+                DELETE FROM reverse_cache;
+            " 2>/dev/null || true
+		log_success "Cache cleared (all entries)"
+		;;
+	expired)
+		local now_clause="strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"
+		sqlite3 "$CACHE_DB" "
+                DELETE FROM tech_cache WHERE expires_at <= ${now_clause};
+                DELETE FROM merged_cache WHERE expires_at <= ${now_clause};
+                DELETE FROM reverse_cache WHERE expires_at <= ${now_clause};
+            " 2>/dev/null || true
+		log_success "Cache cleared (expired entries only)"
+		;;
+	*)
+		log_error "Unknown cache clear mode: ${mode}. Use 'all' or 'expired'"
 		return 1
-	fi
-
-	print_info "Analysing $normalised via OpenExplorer.tech (Playwright)..."
-
-	# Create a temporary Playwright script
-	local tmp_script
-	tmp_script="$(mktemp /tmp/oe-analyse-XXXXXX.mjs)"
-
-	cat >"$tmp_script" <<'PLAYWRIGHT_SCRIPT'
-import { chromium } from 'playwright';
-
-const url = process.argv[2];
-if (!url) {
-    console.error('Usage: node script.mjs <url>');
-    process.exit(1);
-}
-
-(async () => {
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
-
-    try {
-        await page.goto('https://openexplorer.tech', { waitUntil: 'networkidle', timeout: 30000 });
-
-        // Find the search input and enter the URL
-        const input = await page.locator('input[type="text"], input[type="search"], input[placeholder*="search" i], input[placeholder*="url" i], input[placeholder*="website" i]').first();
-        await input.fill(url);
-
-        // Submit the search (press Enter or click search button)
-        await input.press('Enter');
-
-        // Wait for results to load
-        await page.waitForTimeout(5000);
-
-        // Extract technology results from the page
-        const results = await page.evaluate(() => {
-            const technologies = [];
-            // Look for technology badges/cards/list items
-            const techElements = document.querySelectorAll(
-                '[class*="tech"], [class*="badge"], [class*="tag"], [class*="chip"], [data-tech], [class*="technology"]'
-            );
-
-            techElements.forEach(el => {
-                const name = el.textContent?.trim();
-                if (name && name.length > 0 && name.length < 100) {
-                    technologies.push({
-                        name: name,
-                        category: el.getAttribute('data-category') || 'other',
-                        confidence: 'community'
-                    });
-                }
-            });
-
-            // Also try table rows if results are in a table
-            const rows = document.querySelectorAll('table tbody tr, [class*="result"]');
-            rows.forEach(row => {
-                const cells = row.querySelectorAll('td, [class*="cell"]');
-                if (cells.length >= 2) {
-                    const name = cells[0]?.textContent?.trim();
-                    const category = cells[1]?.textContent?.trim();
-                    if (name && name.length > 0 && name.length < 100) {
-                        technologies.push({
-                            name: name,
-                            category: category || 'other',
-                            confidence: 'community'
-                        });
-                    }
-                }
-            });
-
-            return technologies;
-        });
-
-        // Deduplicate by name
-        const seen = new Set();
-        const unique = results.filter(t => {
-            if (seen.has(t.name)) return false;
-            seen.add(t.name);
-            return true;
-        });
-
-        const output = {
-            url: url,
-            provider: 'openexplorer',
-            timestamp: new Date().toISOString(),
-            technologies: unique,
-            metadata: {},
-            method: 'playwright'
-        };
-
-        console.log(JSON.stringify(output, null, 2));
-    } catch (err) {
-        const output = {
-            url: url,
-            provider: 'openexplorer',
-            timestamp: new Date().toISOString(),
-            technologies: [],
-            metadata: {},
-            error: err.message,
-            method: 'playwright'
-        };
-        console.log(JSON.stringify(output, null, 2));
-    } finally {
-        await browser.close();
-    }
-})();
-PLAYWRIGHT_SCRIPT
-
-	local result
-	if result="$(
-		npx --yes playwright test --reporter=list 2>/dev/null
-		node "$tmp_script" "$normalised" 2>/dev/null
-	)"; then
-		# Normalise categories in the result
-		if echo "$result" | jq -e '.technologies' &>/dev/null; then
-			local normalised_result
-			normalised_result="$(echo "$result" | jq '
-                .technologies = [.technologies[] | .category = (
-                    if (.category | ascii_downcase) == "frontend framework" then "frontend-framework"
-                    elif (.category | ascii_downcase) == "backend" then "backend-framework"
-                    elif (.category | ascii_downcase) == "analytics" then "analytics"
-                    elif (.category | ascii_downcase) == "cms" then "cms"
-                    elif (.category | ascii_downcase) == "cdn" then "cdn"
-                    elif (.category | ascii_downcase) == "payment" then "payment"
-                    elif (.category | ascii_downcase) == "performance" then "performance"
-                    elif (.category | ascii_downcase) == "security" then "security"
-                    else "other"
-                    end
-                )]
-            ')"
-			cache_set "$key" "$normalised_result"
-			echo "$normalised_result"
-		else
-			cache_set "$key" "$result"
-			echo "$result"
-		fi
-	else
-		print_warning "Playwright analysis failed. Ensure Playwright browsers are installed:"
-		print_info "  npx playwright install chromium"
-
-		local fallback
-		fallback="$(jq -n \
-			--arg url "$normalised" \
-			--arg provider "openexplorer" \
-			--arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-			'{
-                url: $url,
-                provider: $provider,
-                timestamp: $ts,
-                technologies: [],
-                metadata: {},
-                error: "Playwright analysis failed. Install browsers with: npx playwright install chromium",
-                method: "playwright"
-            }')"
-		echo "$fallback"
-	fi
-
-	rm -f "$tmp_script"
-	return 0
-}
-
-# =============================================================================
-# Multi-Provider Detection Functions
-# =============================================================================
-
-# Detect technologies using Wappalyzer CLI
-detect_wappalyzer() {
-	local url="$1"
-
-	if ! command -v wappalyzer &>/dev/null; then
-		log_warn "Wappalyzer not installed. Install: npm install -g wappalyzer"
-		echo "[]"
-		return 0
-	fi
-
-	local result
-	result=$(timeout "$WAPPALYZER_TIMEOUT" wappalyzer "$url" --pretty 2>/dev/null || echo "[]")
-
-	echo "$result"
-	return 0
-}
-
-# Detect technologies using httpx + nuclei
-detect_httpx_nuclei() {
-	local url="$1"
-
-	if ! command -v httpx &>/dev/null || ! command -v nuclei &>/dev/null; then
-		log_warn "httpx or nuclei not installed. Install: go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest && go install -v github.com/projectdiscovery/nuclei/v2/cmd/nuclei@latest"
-		echo "[]"
-		return 0
-	fi
-
-	# Use httpx for basic fingerprinting
-	local httpx_result
-	httpx_result=$(echo "$url" | httpx -silent -tech-detect -json -timeout "$HTTPX_TIMEOUT" 2>/dev/null || echo "{}")
-
-	# Use nuclei for template-based detection
-	local nuclei_result
-	nuclei_result=$(echo "$url" | nuclei -silent -t technologies/ -json -timeout "$NUCLEI_TIMEOUT" 2>/dev/null || echo "[]")
-
-	# Merge results into common object schema ({name, version, ...})
-	local merged
-	merged=$(jq -s '
-		(.[0].technologies // [] | map(if type == "string" then {name: .} else . end))
-		+ (.[1] // [] | map(if .info.name then {name: .info.name} else {name: .} end))
-		| unique_by(.name)
-	' <(echo "$httpx_result") <(echo "$nuclei_result") 2>/dev/null || echo "[]")
-
-	echo "$merged"
-	return 0
-}
-
-# Merge results from multiple providers
-merge_provider_results() {
-	local wappalyzer_result="$1"
-	local httpx_result="$2"
-
-	# Merge and deduplicate
-	local merged
-	merged=$(jq -s 'add | group_by(.name) | map({name: .[0].name, version: .[0].version, confidence: (. | length), providers: (. | length)})' <(echo "$wappalyzer_result") <(echo "$httpx_result") 2>/dev/null || echo "[]")
-
-	echo "$merged"
-	return 0
-}
-
-# =============================================================================
-# Single-Site Lookup
-# =============================================================================
-
-# Perform single-site tech stack lookup
-cmd_lookup() {
-	local url="$1"
-	local format="${2:-table}"
-
-	# Normalize URL
-	if [[ ! "$url" =~ ^https?:// ]]; then
-		url="https://$url"
-	fi
-
-	print_header "Analyzing tech stack for $url"
-
-	# Check cache first
-	local cached
-	if cached=$(get_cached_result "$url"); then
-		log_info "Using cached result (< ${CACHE_TTL_HOURS}h old)"
-		local technologies
-		technologies=$(echo "$cached" | cut -d'|' -f1)
-		local providers
-		providers=$(echo "$cached" | cut -d'|' -f2)
-
-		format_output "$technologies" "$format"
-		return 0
-	fi
-
-	# Run providers in parallel
-	log_info "Running detection providers..."
-
-	local wappalyzer_result
-	wappalyzer_result=$(detect_wappalyzer "$url")
-
-	local httpx_result
-	httpx_result=$(detect_httpx_nuclei "$url")
-
-	# Merge results
-	local merged
-	merged=$(merge_provider_results "$wappalyzer_result" "$httpx_result")
-
-	# Store in cache
-	local providers_used=0
-	[[ "$wappalyzer_result" != "[]" ]] && { ((providers_used++)) || true; }
-	[[ "$httpx_result" != "[]" ]] && { ((providers_used++)) || true; }
-
-	store_cached_result "$url" "$merged" "$providers_used"
-
-	# Format output
-	format_output "$merged" "$format"
-
-	return 0
-}
-
-# Format output based on requested format
-format_output() {
-	local technologies="$1"
-	local format="$2"
-
-	case "$format" in
-	json)
-		echo "$technologies" | jq '.'
-		;;
-	markdown)
-		format_markdown "$technologies"
-		;;
-	table | *)
-		format_table "$technologies"
 		;;
 	esac
 
-	return 0
-}
-
-# Format as terminal table
-format_table() {
-	local technologies="$1"
-
-	echo ""
-	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-	# Group by category (simplified - would need category mapping in real implementation)
-	echo "$technologies" | jq -r '.[] | "  \(.name) \(.version // "")    \(.confidence * 25)% (\(.providers) sources)"' 2>/dev/null || echo "No technologies detected"
-
-	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-	local total
-	total=$(echo "$technologies" | jq 'length' 2>/dev/null || echo "0")
-	echo "Total: $total technologies detected"
-	echo ""
+	# Vacuum to reclaim space
+	sqlite3 "$CACHE_DB" "VACUUM;" 2>/dev/null || true
 
 	return 0
 }
 
-# Format as markdown report
-format_markdown() {
-	local technologies="$1"
+# Get cached result for a specific URL
+cache_get() {
+	local url="$1"
 
-	echo "# Tech Stack Report"
-	echo ""
-	echo "## Detected Technologies"
-	echo ""
-	echo "$technologies" | jq -r '.[] | "- **\(.name)** \(.version // "") (Confidence: \(.confidence * 25)%, \(.providers) sources)"' 2>/dev/null || echo "No technologies detected"
-	echo ""
+	url=$(normalize_url "$url")
 
-	return 0
-}
-
-# =============================================================================
-# Reverse Lookup
-# =============================================================================
-
-# Perform reverse lookup to find sites using a technology
-cmd_reverse_lookup() {
-	local technology="$1"
-	shift
-
-	local region=""
-	local industry=""
-	local traffic=""
-	local keywords=""
-
-	# Parse optional filters
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--region)
-			region="$2"
-			shift 2
-			;;
-		--industry)
-			industry="$2"
-			shift 2
-			;;
-		--traffic)
-			traffic="$2"
-			shift 2
-			;;
-		--keywords)
-			keywords="$2"
-			shift 2
-			;;
-		*)
-			shift
-			;;
-		esac
-	done
-
-	print_header "Finding sites using $technology"
-
-	# Try BuiltWith API first
-	if load_builtwith_credentials; then
-		reverse_lookup_builtwith "$technology" "$region" "$industry" "$traffic" "$keywords"
-		return 0
+	if [[ ! -f "$CACHE_DB" ]]; then
+		log_error "No cache database found"
+		return 1
 	fi
 
-	# Fallback to PublicWWW (free, limited)
-	log_warn "BuiltWith API not configured. Using PublicWWW (limited results)"
-	reverse_lookup_publicwww "$technology" "$keywords"
-
-	return 0
-}
-
-# Reverse lookup using BuiltWith API
-reverse_lookup_builtwith() {
-	local technology="$1"
-	local region="$2"
-	local industry="$3"
-	local traffic="$4"
-	local keywords="$5"
-
-	local api_url="https://api.builtwith.com/v20/api.json"
-
-	# URL-encode technology name to handle special characters (e.g., "Next.js", "Google Analytics")
-	local encoded_tech
-	encoded_tech=$(jq -rn --arg tech "$technology" '$tech | @uri')
-	local params="KEY=${BUILTWITH_API_KEY}&LOOKUP=${encoded_tech}"
-
-	[[ -n "$region" ]] && params="${params}&REGION=${region}"
-	[[ -n "$industry" ]] && params="${params}&INDUSTRY=${industry}"
-	[[ -n "$traffic" ]] && params="${params}&TRAFFIC=${traffic}"
-
 	local result
-	result=$(curl -s "${api_url}?${params}" 2>/dev/null || echo "{}")
+	result=$(cache_get_merged "$url") || {
+		log_info "No cached results for: ${url}"
+		return 1
+	}
 
-	echo "$result" | jq -r '.Results[] | "  \(.Domain)    Traffic: \(.Traffic // "Unknown")    Industry: \(.Industry // "Unknown")"' 2>/dev/null || echo "No results found"
-
-	return 0
-}
-
-# Reverse lookup using PublicWWW (free alternative)
-reverse_lookup_publicwww() {
-	local technology="$1"
-	local keywords="$2"
-
-	log_warn "PublicWWW integration not yet implemented. Use BuiltWith API for reverse lookup."
-	echo "To configure BuiltWith API: aidevops secret set BUILTWITH_API_KEY"
-
+	echo "$result"
 	return 0
 }
 
@@ -890,41 +438,743 @@ reverse_lookup_publicwww() {
 # Provider Management
 # =============================================================================
 
-# List available providers
-cmd_list_providers() {
-	print_header "Available Tech Stack Providers"
+# List available providers and their status
+list_providers() {
+	echo -e "${CYAN}=== Tech Stack Providers ===${NC}"
 	echo ""
-	echo "  openexplorer  Free, open-source community-driven detection (~72 techs)"
-	echo "                https://openexplorer.tech"
-	echo "                Commands: search, tech, category, analyse"
+
+	local provider
+	for provider in $PROVIDERS; do
+		local script
+		script=$(provider_script "$provider")
+		local name
+		name=$(provider_display_name "$provider")
+		local script_path="${SCRIPT_DIR}/${script}"
+		local status
+
+		if [[ -x "$script_path" ]]; then
+			status="${GREEN}available${NC}"
+		elif [[ -f "$script_path" ]]; then
+			status="${YELLOW}not executable${NC}"
+		else
+			status="${RED}not installed${NC}"
+		fi
+
+		printf "  %-15s %-25s %b\n" "$provider" "$name" "$status"
+	done
+
 	echo ""
-	echo "  wappalyzer    NPM-based detection (requires: npm install -g wappalyzer)"
-	echo "                Detects 1000+ technologies"
-	echo ""
-	echo "  httpx+nuclei  Go-based detection (requires: go install httpx, nuclei)"
-	echo "                Template-based fingerprinting"
-	echo ""
-	print_info "Usage: tech-stack-helper.sh <command> [options]"
+	echo "Provider helpers are installed by tasks t1064-t1067."
+	echo "Each provider implements: lookup <url> --json"
+
 	return 0
 }
 
-# Compare results across providers for a URL
-cmd_compare_providers() {
+# Check if a specific provider is available
+is_provider_available() {
+	local provider="$1"
+
+	local script
+	script=$(provider_script "$provider")
+	if [[ -z "$script" ]]; then
+		return 1
+	fi
+
+	local script_path="${SCRIPT_DIR}/${script}"
+	if [[ -x "$script_path" ]]; then
+		return 0
+	fi
+
+	return 1
+}
+
+# Get list of available providers
+get_available_providers() {
+	local available=()
+	local provider
+
+	for provider in $PROVIDERS; do
+		if is_provider_available "$provider"; then
+			available+=("$provider")
+		fi
+	done
+
+	if [[ ${#available[@]} -eq 0 ]]; then
+		echo ""
+		return 1
+	fi
+
+	echo "${available[*]}"
+	return 0
+}
+
+# Run a single provider lookup
+run_provider() {
+	local provider="$1"
+	local url="$2"
+	local timeout_secs="$3"
+
+	local script
+	script=$(provider_script "$provider")
+	local script_path="${SCRIPT_DIR}/${script}"
+
+	if [[ ! -x "$script_path" ]]; then
+		log_warning "Provider '${provider}' not available: ${script_path}"
+		echo '{"error":"provider_not_available","provider":"'"$provider"'"}'
+		return 1
+	fi
+
+	local result
+	if result=$(timeout "$timeout_secs" "$script_path" lookup "$url" --json 2>/dev/null); then
+		# Validate JSON
+		if echo "$result" | jq empty 2>/dev/null; then
+			echo "$result"
+			return 0
+		else
+			log_warning "Provider '${provider}' returned invalid JSON"
+			echo '{"error":"invalid_json","provider":"'"$provider"'"}'
+			return 1
+		fi
+	else
+		local exit_code=$?
+		if [[ $exit_code -eq 124 ]]; then
+			log_warning "Provider '${provider}' timed out after ${timeout_secs}s"
+			echo '{"error":"timeout","provider":"'"$provider"'"}'
+		else
+			log_warning "Provider '${provider}' failed with exit code ${exit_code}"
+			echo '{"error":"provider_failed","provider":"'"$provider"'","exit_code":'"$exit_code"'}'
+		fi
+		return 1
+	fi
+}
+
+# =============================================================================
+# Result Merging
+# =============================================================================
+
+# Merge results from multiple providers into a unified report
+# Strategy: union of all detected technologies, with confidence scores
+# based on how many providers detected each technology
+merge_results() {
 	local url="$1"
-	local normalised
-	normalised="$(normalise_url "$url")"
+	shift
+	# Remaining args are provider:json pairs passed via temp files
+	local -a result_files=("$@")
 
-	print_header "Comparing tech stack providers for: $normalised"
+	local domain
+	domain=$(extract_domain "$url")
+
+	# Build merged JSON using jq
+	# Each provider result should follow the schema:
+	# {
+	#   "provider": "name",
+	#   "url": "...",
+	#   "technologies": [
+	#     {"name": "React", "category": "ui-libs", "version": "18.2", "confidence": 0.9}
+	#   ],
+	#   "meta": { ... }
+	# }
+
+	local merge_script
+	merge_script=$(
+		cat <<'JQSCRIPT'
+# Input: array of provider results
+# Output: merged result with confidence scores
+
+def normalize_name: ascii_downcase | gsub("[^a-z0-9]"; "");
+
+# Collect all technologies across providers
+[.[].technologies // [] | .[]] as $all_techs |
+
+# Group by normalized name
+($all_techs | group_by(.name | normalize_name)) |
+
+# For each group, merge into a single entry
+map({
+    name: (.[0].name),
+    category: (.[0].category // "unknown"),
+    version: ([.[] | .version // empty] | if length > 0 then sort | last else null end),
+    confidence: (length / (input_length // 1)),
+    detected_by: [.[] | .detected_by // .provider] | unique,
+    provider_count: length
+}) |
+
+# Sort by confidence (desc), then name
+sort_by(-.confidence, .name) |
+
+# Build final output
+{
+    url: $url,
+    domain: $domain,
+    scan_time: now | strftime("%Y-%m-%dT%H:%M:%SZ"),
+    provider_count: ($providers | length),
+    providers: $providers,
+    technology_count: length,
+    technologies: .,
+    categories: (group_by(.category) | map({
+        category: .[0].category,
+        count: length,
+        technologies: [.[] | .name]
+    }) | sort_by(.category))
+}
+JQSCRIPT
+	)
+
+	# Collect all provider results into a JSON array
+	local combined="["
+	local first=true
+	local providers_list=""
+	local file
+
+	for file in "${result_files[@]}"; do
+		if [[ -f "$file" ]]; then
+			local content
+			content=$(cat "$file")
+
+			# Skip error results
+			if echo "$content" | jq -e '.error' &>/dev/null; then
+				continue
+			fi
+
+			if [[ "$first" == "true" ]]; then
+				first=false
+			else
+				combined+=","
+			fi
+			combined+="$content"
+
+			# Track provider names
+			local pname
+			pname=$(echo "$content" | jq -r '.provider // "unknown"' 2>/dev/null || echo "unknown")
+			if [[ -n "$providers_list" ]]; then
+				providers_list+=",${pname}"
+			else
+				providers_list="$pname"
+			fi
+		fi
+	done
+	combined+="]"
+
+	# If no valid results, return empty
+	if [[ "$first" == "true" ]]; then
+		jq -n \
+			--arg url "$url" \
+			--arg domain "$domain" \
+			'{
+                url: $url,
+                domain: $domain,
+                scan_time: (now | strftime("%Y-%m-%dT%H:%M:%SZ")),
+                provider_count: 0,
+                providers: [],
+                technology_count: 0,
+                technologies: [],
+                categories: [],
+                error: "no_providers_returned_results"
+            }'
+		return 1
+	fi
+
+	# Use jq to merge — simpler approach that handles the actual provider output format
+	echo "$combined" | jq \
+		--arg url "$url" \
+		--arg domain "$domain" \
+		--arg providers "$providers_list" \
+		'
+        ($providers | split(",")) as $prov_list |
+
+        # Flatten all technologies from all providers
+        [.[] | (.provider // "unknown") as $prov |
+            (.technologies // [])[] |
+            . + {detected_by: $prov}
+        ] |
+
+        # Group by lowercase name
+        group_by(.name | ascii_downcase) |
+
+        # Merge each group
+        map({
+            name: .[0].name,
+            category: .[0].category // "unknown",
+            version: ([.[] | .version // empty] | if length > 0 then sort | last else null end),
+            confidence: ((length / ($prov_list | length)) * 100 | round / 100),
+            detected_by: [.[] | .detected_by] | unique,
+            provider_count: ([.[] | .detected_by] | unique | length)
+        }) |
+
+        sort_by(-.confidence, .name) |
+
+        {
+            url: $url,
+            domain: $domain,
+            scan_time: (now | strftime("%Y-%m-%dT%H:%M:%SZ")),
+            provider_count: ($prov_list | length),
+            providers: $prov_list,
+            technology_count: length,
+            technologies: .,
+            categories: (group_by(.category) | map({
+                category: .[0].category,
+                count: length,
+                technologies: [.[] | .name]
+            }) | sort_by(.category))
+        }
+        ' 2>/dev/null || {
+		log_error "Failed to merge provider results"
+		echo '{"error":"merge_failed"}'
+		return 1
+	}
+
+	return 0
+}
+
+# =============================================================================
+# Output Formatting
+# =============================================================================
+
+# Format merged results as a terminal table
+format_table() {
+	local json="$1"
+
+	local url domain tech_count provider_count scan_time
+	url=$(echo "$json" | jq -r '.url' 2>/dev/null)
+	domain=$(echo "$json" | jq -r '.domain' 2>/dev/null)
+	tech_count=$(echo "$json" | jq -r '.technology_count' 2>/dev/null)
+	provider_count=$(echo "$json" | jq -r '.provider_count' 2>/dev/null)
+	scan_time=$(echo "$json" | jq -r '.scan_time' 2>/dev/null)
+
+	echo ""
+	echo -e "${CYAN}=== Tech Stack: ${domain} ===${NC}"
+	echo -e "URL: ${url}"
+	echo -e "Scanned: ${scan_time} | Providers: ${provider_count} | Technologies: ${tech_count}"
 	echo ""
 
-	# OpenExplorer
-	echo "--- OpenExplorer ---"
-	openexplorer_search "$normalised"
+	# Print by category
+	echo "$json" | jq -r '.categories[] | "\(.category)|\(.count)"' 2>/dev/null | while IFS='|' read -r category count; do
+		echo -e "${GREEN}${category}${NC} (${count}):"
+
+		echo "$json" | jq -r --arg cat "$category" '
+            .technologies[] | select(.category == $cat) |
+            "  \(.name)\t\(.version // "-")\t\(.confidence * 100 | round)%\t[\(.detected_by | join(", "))]"
+        ' 2>/dev/null | while IFS= read -r line; do
+			echo -e "$line"
+		done
+
+		echo ""
+	done
+
+	return 0
+}
+
+# Format merged results as markdown
+format_markdown() {
+	local json="$1"
+
+	local url domain tech_count provider_count scan_time
+	url=$(echo "$json" | jq -r '.url' 2>/dev/null)
+	domain=$(echo "$json" | jq -r '.domain' 2>/dev/null)
+	tech_count=$(echo "$json" | jq -r '.technology_count' 2>/dev/null)
+	provider_count=$(echo "$json" | jq -r '.provider_count' 2>/dev/null)
+	scan_time=$(echo "$json" | jq -r '.scan_time' 2>/dev/null)
+
+	echo "# Tech Stack Report: ${domain}"
+	echo ""
+	echo "- **URL**: ${url}"
+	echo "- **Scanned**: ${scan_time}"
+	echo "- **Providers**: ${provider_count}"
+	echo "- **Technologies detected**: ${tech_count}"
 	echo ""
 
-	# Multi-provider lookup
-	echo "--- Multi-Provider Lookup ---"
-	cmd_lookup "$url" "table"
+	echo "## Technologies by Category"
+	echo ""
+
+	echo "$json" | jq -r '.categories[] | "### \(.category) (\(.count))\n"' 2>/dev/null | while IFS= read -r line; do
+		echo "$line"
+	done
+
+	echo "| Technology | Version | Confidence | Detected By |"
+	echo "|------------|---------|------------|-------------|"
+
+	echo "$json" | jq -r '
+        .technologies[] |
+        "| \(.name) | \(.version // "-") | \(.confidence * 100 | round)% | \(.detected_by | join(", ")) |"
+    ' 2>/dev/null
+
+	echo ""
+	echo "---"
+	echo "*Generated by tech-stack-helper.sh v${VERSION}*"
+
+	return 0
+}
+
+# =============================================================================
+# Core Commands
+# =============================================================================
+
+# Lookup: detect tech stack of a URL
+cmd_lookup() {
+	local url="$1"
+	local use_cache="$2"
+	local output_format="$3"
+	local specific_provider="$4"
+	local run_parallel="$5"
+	local timeout_secs="$6"
+	local cache_ttl="$7"
+
+	url=$(normalize_url "$url")
+	log_info "Looking up tech stack for: ${url}"
+
+	# Check cache first
+	if [[ "$use_cache" == "true" ]]; then
+		local cached
+		if cached=$(cache_get_merged "$url"); then
+			log_success "Cache hit for ${url}"
+			output_results "$cached" "$output_format"
+			return 0
+		fi
+	fi
+
+	# Determine which providers to use
+	local -a providers_to_run=()
+	if [[ -n "$specific_provider" ]]; then
+		if is_provider_available "$specific_provider"; then
+			providers_to_run+=("$specific_provider")
+		else
+			log_error "Provider '${specific_provider}' is not available"
+			list_providers
+			return 1
+		fi
+	else
+		local available
+		available=$(get_available_providers) || {
+			log_error "No providers available. Install provider helpers (t1064-t1067)."
+			list_providers
+			return 1
+		}
+		read -ra providers_to_run <<<"$available"
+	fi
+
+	log_info "Using providers: ${providers_to_run[*]}"
+
+	# Create temp directory for provider results
+	local tmp_dir
+	tmp_dir=$(mktemp -d)
+	trap 'rm -rf "${tmp_dir:-}"' RETURN
+
+	# Run providers
+	local -a result_files=()
+	local -a pids=()
+
+	if [[ "$run_parallel" == "true" && ${#providers_to_run[@]} -gt 1 ]]; then
+		# Parallel execution
+		local provider
+		for provider in "${providers_to_run[@]}"; do
+			local result_file="${tmp_dir}/${provider}.json"
+			result_files+=("$result_file")
+
+			# Check provider cache first
+			if [[ "$use_cache" == "true" ]]; then
+				local provider_cached
+				if provider_cached=$(cache_get_provider "$url" "$provider"); then
+					echo "$provider_cached" >"$result_file"
+					log_info "Provider cache hit: ${provider}"
+					continue
+				fi
+			fi
+
+			(
+				local result
+				result=$(run_provider "$provider" "$url" "$timeout_secs")
+				echo "$result" >"$result_file"
+
+				# Cache individual provider result
+				if echo "$result" | jq -e '.error' &>/dev/null; then
+					: # Don't cache errors
+				else
+					cache_store "$url" "$provider" "$result" "$cache_ttl"
+				fi
+			) &
+			pids+=($!)
+		done
+
+		# Wait for all providers
+		local pid
+		for pid in "${pids[@]}"; do
+			wait "$pid" 2>/dev/null || true
+		done
+	else
+		# Sequential execution
+		local provider
+		for provider in "${providers_to_run[@]}"; do
+			local result_file="${tmp_dir}/${provider}.json"
+			result_files+=("$result_file")
+
+			# Check provider cache first
+			if [[ "$use_cache" == "true" ]]; then
+				local provider_cached
+				if provider_cached=$(cache_get_provider "$url" "$provider"); then
+					echo "$provider_cached" >"$result_file"
+					log_info "Provider cache hit: ${provider}"
+					continue
+				fi
+			fi
+
+			local result
+			result=$(run_provider "$provider" "$url" "$timeout_secs")
+			echo "$result" >"$result_file"
+
+			# Cache individual provider result
+			if echo "$result" | jq -e '.error' &>/dev/null; then
+				: # Don't cache errors
+			else
+				cache_store "$url" "$provider" "$result" "$cache_ttl"
+			fi
+		done
+	fi
+
+	# Merge results
+	local merged
+	merged=$(merge_results "$url" "${result_files[@]}") || {
+		log_error "Failed to merge results"
+		return 1
+	}
+
+	# Cache merged result
+	if [[ "$use_cache" == "true" ]]; then
+		local providers_str
+		providers_str=$(echo "$merged" | jq -r '.providers | join(",")' 2>/dev/null || echo "")
+		cache_store_merged "$url" "$merged" "$providers_str" "$cache_ttl"
+	fi
+
+	# Output
+	output_results "$merged" "$output_format"
+
+	return 0
+}
+
+# Reverse lookup: find sites using a technology
+cmd_reverse() {
+	local technology="$1"
+	local output_format="$2"
+	local use_cache="$3"
+	local cache_ttl="$4"
+	shift 4
+	local -a filters=("$@")
+
+	log_info "Reverse lookup for technology: ${technology}"
+
+	# Build filters hash for cache key
+	local filters_hash
+	filters_hash=$(echo "${technology}|${filters[*]:-}" | shasum -a 256 | cut -d' ' -f1)
+
+	# Check cache
+	if [[ "$use_cache" == "true" && -f "$CACHE_DB" ]]; then
+		local cached
+		cached=$(sqlite3 "$CACHE_DB" "
+            SELECT results_json FROM reverse_cache
+            WHERE technology = '${technology//\'/\'\'}'
+              AND filters_hash = '${filters_hash}'
+              AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now');
+        " 2>/dev/null || echo "")
+
+		if [[ -n "$cached" ]]; then
+			log_success "Cache hit for reverse lookup: ${technology}"
+			output_results "$cached" "$output_format"
+			return 0
+		fi
+	fi
+
+	# Check which providers support reverse lookup
+	local -a reverse_providers=()
+	local provider
+	for provider in $PROVIDERS; do
+		local script
+		script=$(provider_script "$provider")
+		local script_path="${SCRIPT_DIR}/${script}"
+		if [[ -x "$script_path" ]]; then
+			# Check if provider supports reverse command
+			if "$script_path" help 2>/dev/null | grep -q "reverse"; then
+				reverse_providers+=("$provider")
+			fi
+		fi
+	done
+
+	if [[ ${#reverse_providers[@]} -eq 0 ]]; then
+		log_warning "No providers support reverse lookup yet."
+		log_info "Reverse lookup will be fully implemented by t1068."
+
+		# Return a placeholder result
+		local placeholder
+		placeholder=$(jq -n \
+			--arg tech "$technology" \
+			'{
+                technology: $tech,
+                scan_time: (now | strftime("%Y-%m-%dT%H:%M:%SZ")),
+                sites: [],
+                total_count: 0,
+                note: "Reverse lookup requires provider support (t1068). No providers currently implement this."
+            }')
+
+		output_results "$placeholder" "$output_format"
+		return 0
+	fi
+
+	# Run reverse lookup on available providers
+	local tmp_dir
+	tmp_dir=$(mktemp -d)
+	trap 'rm -rf "${tmp_dir:-}"' RETURN
+
+	local -a result_files=()
+	for provider in "${reverse_providers[@]}"; do
+		local script
+		script=$(provider_script "$provider")
+		local script_path="${SCRIPT_DIR}/${script}"
+		local result_file="${tmp_dir}/${provider}.json"
+		result_files+=("$result_file")
+
+		local result
+		result=$(timeout "$TS_DEFAULT_TIMEOUT" "$script_path" reverse "$technology" --json ${filters[@]+"${filters[@]}"} 2>/dev/null) || true
+		echo "${result:-{}}" >"$result_file"
+	done
+
+	# Merge reverse results
+	local merged
+	merged=$(jq -s '
+        {
+            technology: .[0].technology,
+            scan_time: (now | strftime("%Y-%m-%dT%H:%M:%SZ")),
+            sites: [.[].sites // [] | .[]] | unique_by(.url),
+            total_count: ([.[].sites // [] | .[]] | unique_by(.url) | length)
+        }
+    ' "${result_files[@]}" 2>/dev/null) || {
+		log_error "Failed to merge reverse lookup results"
+		return 1
+	}
+
+	# Cache result
+	if [[ "$use_cache" == "true" ]]; then
+		local escaped_merged
+		escaped_merged="${merged//\'/\'\'}"
+		log_stderr "cache reverse" sqlite3 "$CACHE_DB" "
+            INSERT OR REPLACE INTO reverse_cache (technology, filters_hash, results_json, expires_at)
+            VALUES (
+                '${technology//\'/\'\'}',
+                '${filters_hash}',
+                '${escaped_merged}',
+                strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '+${cache_ttl} hours')
+            );
+        " 2>/dev/null || true
+	fi
+
+	output_results "$merged" "$output_format"
+
+	return 0
+}
+
+# Report: generate full markdown report for a URL
+cmd_report() {
+	local url="$1"
+	local use_cache="$2"
+	local specific_provider="$3"
+	local timeout_secs="$4"
+	local cache_ttl="$5"
+
+	# Run lookup with markdown output
+	cmd_lookup "$url" "$use_cache" "markdown" "$specific_provider" "true" "$timeout_secs" "$cache_ttl"
+
+	return $?
+}
+
+# Output results in the requested format
+output_results() {
+	local json="$1"
+	local format="$2"
+
+	# Detect result type (lookup vs reverse)
+	local is_reverse="false"
+	if echo "$json" | jq -e '.technology' &>/dev/null; then
+		is_reverse="true"
+	fi
+
+	case "$format" in
+	json)
+		echo "$json" | jq '.' 2>/dev/null || echo "$json"
+		;;
+	markdown)
+		if [[ "$is_reverse" == "true" ]]; then
+			format_reverse_markdown "$json"
+		else
+			format_markdown "$json"
+		fi
+		;;
+	table | *)
+		if [[ "$is_reverse" == "true" ]]; then
+			format_reverse_table "$json"
+		else
+			format_table "$json"
+		fi
+		;;
+	esac
+
+	return 0
+}
+
+# Format reverse lookup results as terminal table
+format_reverse_table() {
+	local json="$1"
+
+	local technology total_count scan_time note
+	technology=$(echo "$json" | jq -r '.technology' 2>/dev/null)
+	total_count=$(echo "$json" | jq -r '.total_count' 2>/dev/null)
+	scan_time=$(echo "$json" | jq -r '.scan_time' 2>/dev/null)
+	note=$(echo "$json" | jq -r '.note // empty' 2>/dev/null)
+
+	echo ""
+	echo -e "${CYAN}=== Reverse Lookup: ${technology} ===${NC}"
+	echo -e "Scanned: ${scan_time} | Sites found: ${total_count}"
+
+	if [[ -n "$note" ]]; then
+		echo ""
+		echo -e "${YELLOW}Note:${NC} ${note}"
+	fi
+
+	if [[ "$total_count" != "0" ]]; then
+		echo ""
+		echo "$json" | jq -r '.sites[] | "  \(.url)\t\(.traffic_tier // "-")\t\(.region // "-")"' 2>/dev/null
+	fi
+
+	echo ""
+	return 0
+}
+
+# Format reverse lookup results as markdown
+format_reverse_markdown() {
+	local json="$1"
+
+	local technology total_count scan_time note
+	technology=$(echo "$json" | jq -r '.technology' 2>/dev/null)
+	total_count=$(echo "$json" | jq -r '.total_count' 2>/dev/null)
+	scan_time=$(echo "$json" | jq -r '.scan_time' 2>/dev/null)
+	note=$(echo "$json" | jq -r '.note // empty' 2>/dev/null)
+
+	echo "# Reverse Lookup: ${technology}"
+	echo ""
+	echo "- **Scanned**: ${scan_time}"
+	echo "- **Sites found**: ${total_count}"
+
+	if [[ -n "$note" ]]; then
+		echo ""
+		echo "> ${note}"
+	fi
+
+	if [[ "$total_count" != "0" ]]; then
+		echo ""
+		echo "| URL | Traffic | Region |"
+		echo "|-----|---------|--------|"
+		echo "$json" | jq -r '.sites[] | "| \(.url) | \(.traffic_tier // "-") | \(.region // "-") |"' 2>/dev/null
+	fi
+
+	echo ""
+	echo "---"
+	echo "*Generated by tech-stack-helper.sh v${VERSION}*"
 
 	return 0
 }
@@ -933,78 +1183,77 @@ cmd_compare_providers() {
 # Help
 # =============================================================================
 
-show_help() {
-	cat <<EOF
-Tech Stack Discovery Helper
+print_usage() {
+	cat <<'EOF'
+Tech Stack Helper — Open-source BuiltWith alternative
 
-${HELP_LABEL_USAGE}
-  tech-stack-helper.sh <command> [options]
+USAGE:
+    tech-stack-helper.sh <command> [options]
 
-${HELP_LABEL_COMMANDS}
-  lookup <url> [--format <format>]
-      Detect tech stack for a single URL using multiple providers
-      Formats: table (default), json, markdown
+COMMANDS:
+    lookup <url>                  Detect the full tech stack of a URL
+    reverse <technology>          Find sites using a specific technology
+    report <url>                  Generate a full markdown report
+    cache [stats|clear|get <url>] Manage the SQLite result cache
+    providers                     List available detection providers
+    help                          Show this help message
 
-  reverse <technology> [--region <region>] [--industry <industry>] [--traffic <tier>] [--keywords <keywords>]
-      Find sites using a specific technology (requires BuiltWith API)
-      Filters: region (us, eu, asia), industry (ecommerce, saas), traffic (high, medium, low)
+OPTIONS:
+    --json              Output raw JSON
+    --markdown          Output markdown report
+    --no-cache          Skip cache for this request
+    --provider <name>   Use only the specified provider
+    --parallel          Run providers in parallel (default)
+    --sequential        Run providers sequentially
+    --timeout <secs>    Per-provider timeout (default: 60)
+    --cache-ttl <hours> Cache TTL in hours (default: 168 = 7 days)
 
-  providers
-      List available providers
+PROVIDERS:
+    unbuilt       Unbuilt.app — frontend/JS detection (t1064)
+    crft          CRFT Lookup — Wappalyzer-fork + Lighthouse (t1065)
+    openexplorer  Open Tech Explorer — general detection (t1066)
+    wappalyzer    Wappalyzer OSS — self-hosted fallback (t1067)
 
-  compare <url>
-      Compare results across all providers
+EXAMPLES:
+    tech-stack-helper.sh lookup example.com
+    tech-stack-helper.sh lookup https://github.com --json
+    tech-stack-helper.sh lookup example.com --provider unbuilt
+    tech-stack-helper.sh reverse "React" --json
+    tech-stack-helper.sh report example.com > report.md
+    tech-stack-helper.sh cache stats
+    tech-stack-helper.sh cache clear expired
+    tech-stack-helper.sh cache get example.com
+    tech-stack-helper.sh providers
 
-  openexplorer search <url>
-      Search by URL (OpenExplorer)
+PROVIDER INTERFACE:
+    Each provider helper must implement:
+      <provider>-provider-helper.sh lookup <url> --json
+    
+    Expected JSON output schema:
+      {
+        "provider": "<name>",
+        "url": "<scanned-url>",
+        "technologies": [
+          {
+            "name": "React",
+            "category": "ui-libs",
+            "version": "18.2",
+            "confidence": 0.9
+          }
+        ],
+        "meta": { ... }
+      }
 
-  openexplorer tech <name>
-      Search by technology name (OpenExplorer)
+    Categories: frameworks, cms, analytics, cdn, hosting, bundlers,
+    ui-libs, state-management, styling, languages, databases,
+    monitoring, security, seo, performance
 
-  openexplorer category <name>
-      Search by category (OpenExplorer)
-
-  openexplorer analyse <url>
-      Full analysis via Playwright (OpenExplorer)
-
-  cache-stats
-      Show cache statistics
-
-  cache-clear [--older-than <days>]
-      Clear cache entries older than N days (default: 30)
-
-  help
-      $HELP_SHOW_MESSAGE
-
-${HELP_LABEL_OPTIONS}
-  --page <n>                    Page number (default: 1)
-  --limit <n>                   Results per page (default: 20)
-  --format <format>             Output format: table, json, markdown
-  --region <region>             Filter by region (us, eu, asia)
-  --industry <industry>         Filter by industry (ecommerce, saas)
-  --traffic <tier>              Filter by traffic (high, medium, low)
-  --keywords <keywords>         Additional search keywords
-  --older-than <days>           Cache clear threshold (default: 30)
-
-${HELP_LABEL_EXAMPLES}
-  tech-stack-helper.sh lookup https://vercel.com
-  tech-stack-helper.sh lookup vercel.com --format json
-  tech-stack-helper.sh reverse "Next.js" --traffic high --region us
-  tech-stack-helper.sh openexplorer search github.com
-  tech-stack-helper.sh openexplorer analyse https://example.com
-  tech-stack-helper.sh providers
-  tech-stack-helper.sh compare github.com
-  tech-stack-helper.sh cache-stats
-  tech-stack-helper.sh cache-clear --older-than 7
-
-Dependencies:
-  Required: curl, jq, sqlite3
-  Optional: wappalyzer (npm), httpx (go), nuclei (go), npx (for Playwright)
-
-Configuration:
-  BuiltWith API (optional, for reverse lookup):
-    aidevops secret set BUILTWITH_API_KEY
+CACHE:
+    Results are cached in SQLite at:
+      ~/.aidevops/.agent-workspace/work/tech-stack/cache.db
+    Default TTL: 7 days. Override with --cache-ttl or TECH_STACK_CACHE_TTL.
 EOF
+
 	return 0
 }
 
@@ -1013,82 +1262,135 @@ EOF
 # =============================================================================
 
 main() {
-	check_dependencies || exit 1
-
 	local command="${1:-help}"
 	shift || true
 
-	case "$command" in
-	help | --help | -h)
-		show_help
-		;;
-	providers)
-		cmd_list_providers
-		;;
-	compare)
-		local url="${1:?URL required for compare}"
-		cmd_compare_providers "$url"
-		;;
-	lookup)
-		if [[ $# -lt 1 ]]; then
-			log_error "URL required for lookup command"
-			echo "$HELP_USAGE_INFO"
-			return 1
-		fi
-		cmd_lookup "$@"
-		;;
-	reverse)
-		if [[ $# -lt 1 ]]; then
-			log_error "Technology name required for reverse command"
-			echo "$HELP_USAGE_INFO"
-			return 1
-		fi
-		cmd_reverse_lookup "$@"
-		;;
-	cache-stats)
-		cmd_cache_stats
-		;;
-	cache-clear)
-		local days=30
-		if [[ "$1" == "--older-than" ]]; then
-			days="$2"
-		fi
-		cmd_clear_cache "$days"
-		;;
-	openexplorer)
-		local subcommand="${1:-help}"
-		shift || true
+	# Parse global options
+	local output_format="table"
+	local use_cache="true"
+	local specific_provider=""
+	local run_parallel="true"
+	local timeout_secs="$TS_DEFAULT_TIMEOUT"
+	local cache_ttl="$TS_DEFAULT_CACHE_TTL"
+	local -a positional=()
 
-		case "$subcommand" in
-		search)
-			local query="${1:?URL or query required}"
-			openexplorer_search "$query" "${2:-1}" "${3:-20}"
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--json)
+			output_format="json"
+			shift
 			;;
-		tech)
-			local tech_name="${1:?Technology name required}"
-			openexplorer_tech "$tech_name" "${2:-1}" "${3:-20}"
+		--markdown)
+			output_format="markdown"
+			shift
 			;;
-		category)
-			local category="${1:?Category name required}"
-			openexplorer_category "$category" "${2:-1}" "${3:-20}"
+		--no-cache)
+			use_cache="false"
+			shift
 			;;
-		analyse | analyze)
-			local url="${1:?URL required for analysis}"
-			openexplorer_analyse "$url"
+		--provider)
+			specific_provider="${2:-}"
+			shift 2
 			;;
-		help | --help | -h)
-			show_help
+		--parallel)
+			run_parallel="true"
+			shift
+			;;
+		--sequential)
+			run_parallel="false"
+			shift
+			;;
+		--timeout)
+			timeout_secs="${2:-$TS_DEFAULT_TIMEOUT}"
+			shift 2
+			;;
+		--cache-ttl)
+			cache_ttl="${2:-$TS_DEFAULT_CACHE_TTL}"
+			shift 2
+			;;
+		-h | --help)
+			print_usage
+			return 0
 			;;
 		*)
-			print_error "Unknown openexplorer command: $subcommand"
-			show_help
+			positional+=("$1")
+			shift
+			;;
+		esac
+	done
+
+	# Check dependencies
+	check_dependencies || return 1
+
+	# Initialize cache
+	init_cache_db || true
+
+	case "$command" in
+	lookup)
+		local url="${positional[0]:-}"
+		if [[ -z "$url" ]]; then
+			log_error "URL is required. Usage: tech-stack-helper.sh lookup <url>"
+			return 1
+		fi
+		cmd_lookup "$url" "$use_cache" "$output_format" "$specific_provider" "$run_parallel" "$timeout_secs" "$cache_ttl"
+		;;
+	reverse)
+		local technology="${positional[0]:-}"
+		if [[ -z "$technology" ]]; then
+			log_error "Technology name is required. Usage: tech-stack-helper.sh reverse <technology>"
+			return 1
+		fi
+		# Pass remaining positional args as filters
+		local -a filters=()
+		if [[ ${#positional[@]} -gt 1 ]]; then
+			filters=("${positional[@]:1}")
+		fi
+		cmd_reverse "$technology" "$output_format" "$use_cache" "$cache_ttl" ${filters[@]+"${filters[@]}"}
+		;;
+	report)
+		local url="${positional[0]:-}"
+		if [[ -z "$url" ]]; then
+			log_error "URL is required. Usage: tech-stack-helper.sh report <url>"
+			return 1
+		fi
+		cmd_report "$url" "$use_cache" "$specific_provider" "$timeout_secs" "$cache_ttl"
+		;;
+	cache)
+		local subcmd="${positional[0]:-stats}"
+		case "$subcmd" in
+		stats)
+			cache_stats
+			;;
+		clear)
+			local mode="${positional[1]:-expired}"
+			cache_clear "$mode"
+			;;
+		get)
+			local url="${positional[1]:-}"
+			if [[ -z "$url" ]]; then
+				log_error "URL is required. Usage: tech-stack-helper.sh cache get <url>"
+				return 1
+			fi
+			cache_get "$url"
+			;;
+		*)
+			log_error "Unknown cache command: ${subcmd}. Use: stats, clear, get"
 			return 1
 			;;
 		esac
 		;;
+	providers)
+		list_providers
+		;;
+	help | -h | --help)
+		print_usage
+		;;
+	version)
+		echo "tech-stack-helper.sh v${VERSION}"
+		;;
 	*)
-		log_error "Unknown command: $command"
-		echo "$HELP_USAGE_INFO"
+		log_error "Unknown command: ${command}"
+		print_usage
 		return 1
 		;;
 	esac
