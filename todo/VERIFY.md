@@ -726,8 +726,13 @@
   check: rg "qwen3-tts" .agents/subagent-index.toon
   check: rg "speech-to-speech" .agents/subagent-index.toon
 
-- [ ] v093 t1062 Supervisor auto-pickup should skip tasks with assignee: o... | PR #1520 | merged:2026-02-16
+- [x] v093 t1062 Supervisor auto-pickup should skip tasks with assignee: o... | PR #1520 | merged:2026-02-16 verified:2026-02-16
   files: .agents/AGENTS.md, .agents/scripts/supervisor/cron.sh
   check: file-exists .agents/AGENTS.md
   check: shellcheck .agents/scripts/supervisor/cron.sh
   check: file-exists .agents/scripts/supervisor/cron.sh
+
+- [ ] v094 t1063.2 Create tools/research/tech-stack-lookup.md agent — prog... | PR #1531 | merged:2026-02-16
+  files: .agents/tools/research/tech-stack-lookup.md
+  check: file-exists .agents/tools/research/tech-stack-lookup.md
+  check: rg "tech-stack-lookup" .agents/subagent-index.toon
