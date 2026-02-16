@@ -1292,7 +1292,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 ## In Progress
 
-- [ ] t1056 Fix: stop re-adding Intel brew shellenv to rc files on Apple Silicon — check_requirements() unconditionally re-adds Intel brew shellenv to all rc files on every update, breaking ARM brew on dual-brew Apple Silicon Macs. Skip Intel brew rc writes when ARM brew exists; skip all brew rc writes in non-interactive mode. #bugfix #setup ~30m ref:GH#1511 started:2026-02-16
+- [ ] t1057 Fix: stop re-adding Intel brew shellenv to rc files on Apple Silicon — check_requirements() unconditionally re-adds Intel brew shellenv to all rc files on every update, breaking ARM brew on dual-brew Apple Silicon Macs. Skip Intel brew rc writes when ARM brew exists; skip all brew rc writes in non-interactive mode. #bugfix #setup ~30m ref:GH#1511 started:2026-02-16
 
 - [x] t1047 Fix task ID race condition: replace TODO.md scanning with atomic .task-counter file and CAS push loop — current claim-task-id.sh has TOCTOU race where parallel sessions all read same TODO.md, compute same t(N+1), creating duplicate IDs (t1032 duplicated 10x, t132 8x, etc). New approach: single counter file on origin, fetch→read→increment→commit→push with retry on conflict. Batch allocation support for audit/sweep callers. #bugfix #orchestration #auto-dispatch ~2h (ai:1.5h test:30m) ref:GH#1440 started:2026-02-14 assignee:marcusquinn started:2026-02-14T01:07:59Z pr:#1458 completed:2026-02-14
   - Notes: BLOCKED by supervisor: Merge conflict — auto-rebase failed
