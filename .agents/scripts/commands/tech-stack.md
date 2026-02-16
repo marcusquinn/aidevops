@@ -36,12 +36,12 @@ tech_name=$(echo "$ARGUMENTS" | sed 's/^reverse //' | awk '{print $1}')
 region=$(echo "$ARGUMENTS" | grep -oP '(?<=--region )\S+' || echo "")
 industry=$(echo "$ARGUMENTS" | grep -oP '(?<=--industry )\S+' || echo "")
 
-# Build command with optional filters
-cmd="~/.aidevops/agents/scripts/tech-stack-helper.sh reverse \"$tech_name\""
-[[ -n "$region" ]] && cmd="$cmd --region \"$region\""
-[[ -n "$industry" ]] && cmd="$cmd --industry \"$industry\""
+# Build command array with optional filters
+cmd_array=("~/.aidevops/agents/scripts/tech-stack-helper.sh" "reverse" "$tech_name")
+[[ -n "$region" ]] && cmd_array+=(--region "$region")
+[[ -n "$industry" ]] && cmd_array+=(--industry "$industry")
 
-eval "$cmd"
+"${cmd_array[@]}"
 ```
 
 **For cached report:**
