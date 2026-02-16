@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2034
 set -euo pipefail
 
 # Tech Stack Helper — orchestrates multiple tech detection providers
@@ -44,6 +43,7 @@ init_log_file
 # Configuration
 # =============================================================================
 
+# shellcheck disable=SC2034 # VERSION used in format_markdown/format_reverse_markdown output
 readonly VERSION="1.0.0"
 readonly CACHE_DIR="${TECH_STACK_CACHE_DIR:-${HOME}/.aidevops/.agent-workspace/work/tech-stack}"
 readonly CACHE_DB="${CACHE_DIR}/cache.db"
@@ -79,36 +79,30 @@ provider_display_name() {
 	return 0
 }
 
-# Technology categories for structured output
+# Technology categories for structured output (referenced by provider helpers)
+# shellcheck disable=SC2034 # exported for provider helper scripts
 readonly TECH_CATEGORIES="frameworks,cms,analytics,cdn,hosting,bundlers,ui-libs,state-management,styling,languages,databases,monitoring,security,seo,performance"
 
 # =============================================================================
-# Logging
+# Logging — thin wrappers over shared print_* (all output to stderr for logging)
 # =============================================================================
 
 log_info() {
-	local msg="$1"
-	echo -e "${BLUE}[tech-stack]${NC} ${msg}" >&2
+	print_info "$1" >&2
 	return 0
 }
-
 log_success() {
-	local msg="$1"
-	echo -e "${GREEN}[OK]${NC} ${msg}" >&2
+	print_success "$1" >&2
 	return 0
 }
-
 log_warning() {
-	local msg="$1"
-	echo -e "${YELLOW}[WARN]${NC} ${msg}" >&2
+	print_warning "$1" >&2
 	return 0
 }
-
 log_error() {
-	local msg="$1"
-	echo -e "${RED}[ERROR]${NC} ${msg}" >&2
+	print_error "$1"
 	return 0
-}
+} # print_error already writes to stderr
 
 # =============================================================================
 # Dependencies
@@ -176,10 +170,37 @@ extract_domain() {
 # SQLite Cache
 # =============================================================================
 
+# Safe parameterized sqlite3 query helper.
+# Usage: sqlite3_param "$db" "SQL with :params" ":param1" "value1" ":param2" "value2" ...
+# Uses .param set for safe binding — prevents SQL injection.
+sqlite3_param() {
+	local db="$1"
+	local sql="$2"
+	shift 2
+
+	local param_cmds=""
+	while [[ $# -ge 2 ]]; do
+		local pname="$1"
+		local pval="$2"
+		shift 2
+		# Double-quote values for .param set — sqlite3 handles escaping internally
+		param_cmds+=".param set ${pname} \"${pval//\"/\\\"}\""$'\n'
+	done
+
+	sqlite3 "$db" <<EOSQL
+${param_cmds}
+${sql}
+EOSQL
+	return $?
+}
+
 init_cache_db() {
 	mkdir -p "$CACHE_DIR" 2>/dev/null || true
 
 	log_stderr "cache init" sqlite3 "$CACHE_DB" "
+        PRAGMA journal_mode=WAL;
+        PRAGMA busy_timeout=5000;
+
         CREATE TABLE IF NOT EXISTS tech_cache (
             url           TEXT NOT NULL,
             domain        TEXT NOT NULL,
@@ -230,19 +251,16 @@ cache_store() {
 	local domain
 	domain=$(extract_domain "$url")
 
-	local escaped_json
-	escaped_json="${results_json//\'/\'\'}"
-
-	log_stderr "cache store" sqlite3 "$CACHE_DB" "
-        INSERT OR REPLACE INTO tech_cache (url, domain, provider, results_json, expires_at)
-        VALUES (
-            '${url//\'/\'\'}',
-            '${domain//\'/\'\'}',
-            '${provider//\'/\'\'}',
-            '${escaped_json}',
-            strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '+${ttl_hours} hours')
-        );
-    " 2>/dev/null || true
+	log_stderr "cache store" sqlite3_param "$CACHE_DB" \
+		"INSERT OR REPLACE INTO tech_cache (url, domain, provider, results_json, expires_at)
+		VALUES (:url, :domain, :provider, :json,
+			strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '+' || :ttl || ' hours'));" \
+		":url" "$url" \
+		":domain" "$domain" \
+		":provider" "$provider" \
+		":json" "$results_json" \
+		":ttl" "$ttl_hours" \
+		2>/dev/null || true
 
 	return 0
 }
@@ -257,19 +275,16 @@ cache_store_merged() {
 	local domain
 	domain=$(extract_domain "$url")
 
-	local escaped_json
-	escaped_json="${merged_json//\'/\'\'}"
-
-	log_stderr "cache store merged" sqlite3 "$CACHE_DB" "
-        INSERT OR REPLACE INTO merged_cache (url, domain, merged_json, providers, expires_at)
-        VALUES (
-            '${url//\'/\'\'}',
-            '${domain//\'/\'\'}',
-            '${escaped_json}',
-            '${providers//\'/\'\'}',
-            strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '+${ttl_hours} hours')
-        );
-    " 2>/dev/null || true
+	log_stderr "cache store merged" sqlite3_param "$CACHE_DB" \
+		"INSERT OR REPLACE INTO merged_cache (url, domain, merged_json, providers, expires_at)
+		VALUES (:url, :domain, :json, :providers,
+			strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '+' || :ttl || ' hours'));" \
+		":url" "$url" \
+		":domain" "$domain" \
+		":json" "$merged_json" \
+		":providers" "$providers" \
+		":ttl" "$ttl_hours" \
+		2>/dev/null || true
 
 	return 0
 }
@@ -281,11 +296,12 @@ cache_get_merged() {
 	[[ ! -f "$CACHE_DB" ]] && return 1
 
 	local result
-	result=$(sqlite3 "$CACHE_DB" "
-        SELECT merged_json FROM merged_cache
-        WHERE url = '${url//\'/\'\'}'
-          AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now');
-    " 2>/dev/null || echo "")
+	result=$(sqlite3_param "$CACHE_DB" \
+		"SELECT merged_json FROM merged_cache
+		WHERE url = :url
+		  AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now');" \
+		":url" "$url" \
+		2>/dev/null || echo "")
 
 	if [[ -n "$result" ]]; then
 		echo "$result"
@@ -303,12 +319,14 @@ cache_get_provider() {
 	[[ ! -f "$CACHE_DB" ]] && return 1
 
 	local result
-	result=$(sqlite3 "$CACHE_DB" "
-        SELECT results_json FROM tech_cache
-        WHERE url = '${url//\'/\'\'}'
-          AND provider = '${provider//\'/\'\'}'
-          AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now');
-    " 2>/dev/null || echo "")
+	result=$(sqlite3_param "$CACHE_DB" \
+		"SELECT results_json FROM tech_cache
+		WHERE url = :url
+		  AND provider = :provider
+		  AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now');" \
+		":url" "$url" \
+		":provider" "$provider" \
+		2>/dev/null || echo "")
 
 	if [[ -n "$result" ]]; then
 		echo "$result"
@@ -328,19 +346,24 @@ cache_stats() {
 	echo -e "${CYAN}=== Tech Stack Cache Statistics ===${NC}"
 	echo ""
 
+	# Single query to gather all statistics efficiently
+	local stats_output
+	stats_output=$(sqlite3 -separator '|' "$CACHE_DB" "
+		SELECT
+			(SELECT count(*) FROM tech_cache),
+			(SELECT count(*) FROM tech_cache WHERE expires_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+			(SELECT count(*) FROM merged_cache),
+			(SELECT count(*) FROM merged_cache WHERE expires_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+			(SELECT count(*) FROM reverse_cache),
+			(SELECT count(*) FROM reverse_cache WHERE expires_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
+	" 2>/dev/null || echo "0|0|0|0|0|0")
+
 	local total_lookups expired_lookups active_lookups
-	total_lookups=$(sqlite3 "$CACHE_DB" "SELECT count(*) FROM tech_cache;" 2>/dev/null || echo "0")
-	expired_lookups=$(sqlite3 "$CACHE_DB" "SELECT count(*) FROM tech_cache WHERE expires_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now');" 2>/dev/null || echo "0")
-	active_lookups=$((total_lookups - expired_lookups))
-
 	local total_merged expired_merged active_merged
-	total_merged=$(sqlite3 "$CACHE_DB" "SELECT count(*) FROM merged_cache;" 2>/dev/null || echo "0")
-	expired_merged=$(sqlite3 "$CACHE_DB" "SELECT count(*) FROM merged_cache WHERE expires_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now');" 2>/dev/null || echo "0")
-	active_merged=$((total_merged - expired_merged))
-
 	local total_reverse expired_reverse active_reverse
-	total_reverse=$(sqlite3 "$CACHE_DB" "SELECT count(*) FROM reverse_cache;" 2>/dev/null || echo "0")
-	expired_reverse=$(sqlite3 "$CACHE_DB" "SELECT count(*) FROM reverse_cache WHERE expires_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now');" 2>/dev/null || echo "0")
+	IFS='|' read -r total_lookups expired_lookups total_merged expired_merged total_reverse expired_reverse <<<"$stats_output"
+	active_lookups=$((total_lookups - expired_lookups))
+	active_merged=$((total_merged - expired_merged))
 	active_reverse=$((total_reverse - expired_reverse))
 
 	echo "Provider lookups:  ${active_lookups} active / ${expired_lookups} expired / ${total_lookups} total"
@@ -563,62 +586,6 @@ merge_results() {
 
 	local domain
 	domain=$(extract_domain "$url")
-
-	# Build merged JSON using jq
-	# Each provider result should follow the schema:
-	# {
-	#   "provider": "name",
-	#   "url": "...",
-	#   "technologies": [
-	#     {"name": "React", "category": "ui-libs", "version": "18.2", "confidence": 0.9}
-	#   ],
-	#   "meta": { ... }
-	# }
-
-	local merge_script
-	merge_script=$(
-		cat <<'JQSCRIPT'
-# Input: array of provider results
-# Output: merged result with confidence scores
-
-def normalize_name: ascii_downcase | gsub("[^a-z0-9]"; "");
-
-# Collect all technologies across providers
-[.[].technologies // [] | .[]] as $all_techs |
-
-# Group by normalized name
-($all_techs | group_by(.name | normalize_name)) |
-
-# For each group, merge into a single entry
-map({
-    name: (.[0].name),
-    category: (.[0].category // "unknown"),
-    version: ([.[] | .version // empty] | if length > 0 then sort | last else null end),
-    confidence: (length / (input_length // 1)),
-    detected_by: [.[] | .detected_by // .provider] | unique,
-    provider_count: length
-}) |
-
-# Sort by confidence (desc), then name
-sort_by(-.confidence, .name) |
-
-# Build final output
-{
-    url: $url,
-    domain: $domain,
-    scan_time: now | strftime("%Y-%m-%dT%H:%M:%SZ"),
-    provider_count: ($providers | length),
-    providers: $providers,
-    technology_count: length,
-    technologies: .,
-    categories: (group_by(.category) | map({
-        category: .[0].category,
-        count: length,
-        technologies: [.[] | .name]
-    }) | sort_by(.category))
-}
-JQSCRIPT
-	)
 
 	# Collect all provider results into a JSON array
 	local combined="["
@@ -968,12 +935,14 @@ cmd_reverse() {
 	# Check cache
 	if [[ "$use_cache" == "true" && -f "$CACHE_DB" ]]; then
 		local cached
-		cached=$(sqlite3 "$CACHE_DB" "
-            SELECT results_json FROM reverse_cache
-            WHERE technology = '${technology//\'/\'\'}'
-              AND filters_hash = '${filters_hash}'
-              AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now');
-        " 2>/dev/null || echo "")
+		cached=$(sqlite3_param "$CACHE_DB" \
+			"SELECT results_json FROM reverse_cache
+			WHERE technology = :tech
+			  AND filters_hash = :hash
+			  AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now');" \
+			":tech" "$technology" \
+			":hash" "$filters_hash" \
+			2>/dev/null || echo "")
 
 		if [[ -n "$cached" ]]; then
 			log_success "Cache hit for reverse lookup: ${technology}"
@@ -1051,17 +1020,15 @@ cmd_reverse() {
 
 	# Cache result
 	if [[ "$use_cache" == "true" ]]; then
-		local escaped_merged
-		escaped_merged="${merged//\'/\'\'}"
-		log_stderr "cache reverse" sqlite3 "$CACHE_DB" "
-            INSERT OR REPLACE INTO reverse_cache (technology, filters_hash, results_json, expires_at)
-            VALUES (
-                '${technology//\'/\'\'}',
-                '${filters_hash}',
-                '${escaped_merged}',
-                strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '+${cache_ttl} hours')
-            );
-        " 2>/dev/null || true
+		log_stderr "cache reverse" sqlite3_param "$CACHE_DB" \
+			"INSERT OR REPLACE INTO reverse_cache (technology, filters_hash, results_json, expires_at)
+			VALUES (:tech, :hash, :json,
+				strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '+' || :ttl || ' hours'));" \
+			":tech" "$technology" \
+			":hash" "$filters_hash" \
+			":json" "$merged" \
+			":ttl" "$cache_ttl" \
+			2>/dev/null || true
 	fi
 
 	output_results "$merged" "$output_format"
