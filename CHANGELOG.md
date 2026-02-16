@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Stop re-adding Intel brew shellenv to rc files on Apple Silicon — skip Intel brew entirely when ARM brew exists, only write brew lines to rc files during interactive setup (#1512, closes #1510)
+
 ## [2.115.21] - 2026-02-15
 
 ### Changed
