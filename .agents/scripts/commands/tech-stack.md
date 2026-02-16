@@ -133,4 +133,3 @@ AI: Finding sites using Next.js in US SaaS sector...
 - `tools/research/tech-stack-lookup.md` - Full documentation
 - `services/research/builtwith.md` - BuiltWith API integration
 - `services/research/wappalyzer.md` - Wappalyzer integration
-
