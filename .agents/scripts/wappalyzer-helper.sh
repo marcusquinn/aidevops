@@ -25,11 +25,26 @@ mkdir -p "$WAPPALYZER_CACHE_DIR"
 # ============================================================================
 
 check_wappalyzer() {
-	if ! command -v wappalyzer &>/dev/null; then
-		print_warning "Wappalyzer CLI not found"
-		print_info "Install: npm install -g wappalyzer"
+	local wrapper_script="$SCRIPT_DIR/wappalyzer-detect.mjs"
+
+	if [[ ! -f "$wrapper_script" ]]; then
+		print_error "Wappalyzer wrapper script not found: $wrapper_script"
 		return 1
 	fi
+
+	if ! command -v node &>/dev/null; then
+		print_error "Node.js is required"
+		print_info "Install: brew install node"
+		return 1
+	fi
+
+	# Check if @ryntab/wappalyzer-node is installed
+	if ! npm list -g @ryntab/wappalyzer-node &>/dev/null; then
+		print_warning "@ryntab/wappalyzer-node not found"
+		print_info "Install: $0 install"
+		return 1
+	fi
+
 	return 0
 }
 
@@ -54,12 +69,23 @@ install_deps() {
 		fi
 	fi
 
-	if ! command -v wappalyzer &>/dev/null; then
-		if command -v npm &>/dev/null; then
-			print_info "Installing Wappalyzer CLI..."
-			npm install -g wappalyzer
+	if ! command -v node &>/dev/null; then
+		if command -v brew &>/dev/null; then
+			print_info "Installing Node.js..."
+			brew install node
 		else
-			print_error "npm required to install Wappalyzer"
+			print_error "Please install Node.js manually"
+			return 1
+		fi
+	fi
+
+	# Install @ryntab/wappalyzer-node
+	if ! npm list -g @ryntab/wappalyzer-node &>/dev/null; then
+		if command -v npm &>/dev/null; then
+			print_info "Installing @ryntab/wappalyzer-node..."
+			npm install -g @ryntab/wappalyzer-node
+		else
+			print_error "npm required to install @ryntab/wappalyzer-node"
 			return 1
 		fi
 	fi
@@ -75,6 +101,7 @@ install_deps() {
 wappalyzer_detect() {
 	local url="$1"
 	local output_file="${2:-}"
+	local wrapper_script="$SCRIPT_DIR/wappalyzer-detect.js"
 
 	if ! check_wappalyzer; then
 		print_error "Wappalyzer not installed. Run: $0 install"
@@ -83,15 +110,14 @@ wappalyzer_detect() {
 
 	print_info "Analyzing $url with Wappalyzer..."
 
-	# Run Wappalyzer with JSON output
+	# Run Wappalyzer wrapper script
 	local temp_output
 	temp_output=$(mktemp)
+	local global_modules
+	global_modules="$(npm root -g)"
 
-	if timeout "$WAPPALYZER_TIMEOUT" wappalyzer "$url" \
-		--format=json \
-		--max-wait="$WAPPALYZER_MAX_WAIT" \
-		--probe \
-		>"$temp_output" 2>/dev/null; then
+	if timeout "$WAPPALYZER_TIMEOUT" NODE_PATH="$global_modules" node "$wrapper_script" "$url" \
+		>"$temp_output" 2>&1; then
 
 		if [[ -n "$output_file" ]]; then
 			cp "$temp_output" "$output_file"
@@ -110,55 +136,8 @@ wappalyzer_detect() {
 	fi
 }
 
-wappalyzer_normalize() {
-	local input_file="$1"
-
-	if ! check_jq; then
-		print_error "jq not installed"
-		return 1
-	fi
-
-	if [[ ! -f "$input_file" ]]; then
-		print_error "Input file not found: $input_file"
-		return 1
-	fi
-
-	# Transform Wappalyzer output to common schema
-	jq '{
-        provider: "wappalyzer",
-        url: (.urls | keys[0]),
-        timestamp: (now | strftime("%Y-%m-%dT%H:%M:%SZ")),
-        technologies: [
-            (.urls | to_entries[0].value.technologies[] | {
-                name: .name,
-                slug: .slug,
-                version: (.version // null),
-                category: (.categories[0].name // "Unknown"),
-                confidence: .confidence,
-                description: (.description // null),
-                website: (.website // null),
-                source: "wappalyzer"
-            })
-        ]
-    }' "$input_file"
-}
-
-wappalyzer_detect_and_normalize() {
-	local url="$1"
-
-	local temp_raw
-	temp_raw=$(mktemp)
-
-	if wappalyzer_detect "$url" "$temp_raw"; then
-		wappalyzer_normalize "$temp_raw"
-		local result=$?
-		rm -f "$temp_raw"
-		return $result
-	else
-		rm -f "$temp_raw"
-		return 1
-	fi
-}
+# Output is already in common schema from wrapper script
+# No normalization needed
 
 # ============================================================================
 # Cache Management
@@ -214,7 +193,7 @@ cmd_detect() {
 		return 1
 	fi
 
-	wappalyzer_detect_and_normalize "$url"
+	wappalyzer_detect "$url"
 }
 
 cmd_detect_cached() {
@@ -233,7 +212,7 @@ cmd_detect_cached() {
 
 	# Detect and cache
 	local result
-	if result=$(wappalyzer_detect_and_normalize "$url"); then
+	if result=$(wappalyzer_detect "$url"); then
 		cache_set "$url" "$result"
 		echo "$result"
 		return 0
@@ -252,10 +231,10 @@ cmd_status() {
 
 	if check_wappalyzer; then
 		local version
-		version=$(wappalyzer --version 2>/dev/null || echo "unknown")
-		print_success "Wappalyzer CLI: installed (version: $version)"
+		version=$(npm list -g @ryntab/wappalyzer-node 2>/dev/null | grep @ryntab/wappalyzer-node@ | sed 's/.*@//' || echo "unknown")
+		print_success "@ryntab/wappalyzer-node: installed (version: $version)"
 	else
-		print_error "Wappalyzer CLI: not installed"
+		print_error "@ryntab/wappalyzer-node: not installed"
 	fi
 
 	if check_jq; then
