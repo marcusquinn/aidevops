@@ -737,9 +737,13 @@
   check: file-exists .agents/tools/research/tech-stack-lookup.md
   check: rg "tech-stack-lookup" .agents/subagent-index.toon
 
-- [ ] v095 t1066 Open Tech Explorer provider agent — create `tools/resea... | PR #1544 | merged:2026-02-16
+- [!] v095 t1066 Open Tech Explorer provider agent — create `tools/resea... | PR #1544 | merged:2026-02-16 failed:2026-02-16 reason:rg: "openexplorer" not found in .agents/subagent-index.toon
   files: .agents/scripts/tech-stack-helper.sh, .agents/tools/research/providers/openexplorer.md
   check: shellcheck .agents/scripts/tech-stack-helper.sh
   check: file-exists .agents/scripts/tech-stack-helper.sh
   check: file-exists .agents/tools/research/providers/openexplorer.md
   check: rg "openexplorer" .agents/subagent-index.toon
+
+- [ ] v096 t1063.3 Add `/tech-stack` slash command — `tech-stack <url>` fo... | PR #1530 | merged:2026-02-16
+  files: .agents/scripts/commands/tech-stack.md
+  check: file-exists .agents/scripts/commands/tech-stack.md
