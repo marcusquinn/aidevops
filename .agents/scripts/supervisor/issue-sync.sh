@@ -465,6 +465,18 @@ sync_issue_status_label() {
 		log_verbose "sync_issue_status_label: closed #$issue_number as failed ($task_id)"
 		return 0
 		;;
+	blocked)
+		# Read the error/blocked reason from DB
+		local blocked_error=""
+		blocked_error=$(db "$SUPERVISOR_DB" "SELECT error FROM tasks WHERE id='$(sql_escape "$task_id")';" 2>/dev/null || echo "")
+		if [[ -z "$blocked_error" || "$blocked_error" == "null" ]]; then
+			blocked_error="Task blocked — reason not specified"
+		fi
+		# Post blocked comment with actionable next steps
+		post_blocked_comment_to_github "$task_id" "$blocked_error" "$repo_path"
+		# Apply status:blocked label (handled by non-terminal state logic below)
+		# Don't return here — let the label application happen
+		;;
 	esac
 
 	# Non-terminal state: apply the new label, remove all others
