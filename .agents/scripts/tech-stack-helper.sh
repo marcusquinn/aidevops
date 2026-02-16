@@ -38,6 +38,7 @@ readonly CACHE_DB="${CACHE_DIR}/cache.db"
 readonly DEFAULT_TTL=604800  # 7 days in seconds
 readonly REVERSE_TTL=2592000 # 30 days for reverse lookups
 readonly PROVIDER_TIMEOUT=30 # seconds per provider
+# shellcheck disable=SC2034  # Used by future batch-lookup feature
 readonly MAX_PARALLEL_PROVIDERS=4
 
 # Provider helper scripts (created by t1064-t1067)
@@ -339,12 +340,14 @@ list_available_providers() {
 #   $1 - provider name
 #   $2 - URL to look up
 #   $3 - output file for results
+#   $4 - timeout override (optional, default: PROVIDER_TIMEOUT)
 # Returns: 0 on success, 1 on failure/timeout
 #######################################
 dispatch_provider() {
 	local provider="$1"
 	local url="$2"
 	local output_file="$3"
+	local provider_timeout="${4:-$PROVIDER_TIMEOUT}"
 
 	local script_path
 	script_path=$(get_provider_script "$provider") || return 1
@@ -353,7 +356,7 @@ dispatch_provider() {
 	start_ms=$(date +%s%3N 2>/dev/null || date +%s)
 
 	# Run provider with timeout, capture JSON output
-	if timeout "$PROVIDER_TIMEOUT" "$script_path" lookup "$url" --format json >"$output_file" 2>/dev/null; then
+	if timeout "$provider_timeout" "$script_path" lookup "$url" --format json >"$output_file" 2>/dev/null; then
 		local end_ms
 		end_ms=$(date +%s%3N 2>/dev/null || date +%s)
 		local duration_ms=$((end_ms - start_ms))
@@ -662,7 +665,7 @@ cmd_lookup() {
 	for p in "${available_providers[@]}"; do
 		local result_file="${tmp_dir}/${p}.json"
 		result_files+=("$result_file")
-		dispatch_provider "$p" "$url" "$result_file" &
+		dispatch_provider "$p" "$url" "$result_file" "$timeout_override" &
 		pids+=($!)
 	done
 
