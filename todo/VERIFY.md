@@ -715,3 +715,13 @@
   check: file-exists .agents/subagent-index.toon
   check: file-exists .agents/tools/browser/chrome-webstore-release.md
   check: rg "chrome-webstore-release" .agents/subagent-index.toon
+
+- [ ] v092 t1061 Add Qwen3-TTS as TTS provider in voice agent — Qwen3-TT... | PR #1517 | merged:2026-02-16
+  files: .agents/scripts/voice-helper.sh, .agents/subagent-index.toon, .agents/tools/voice/qwen3-tts.md, .agents/tools/voice/speech-to-speech.md
+  check: shellcheck .agents/scripts/voice-helper.sh
+  check: file-exists .agents/scripts/voice-helper.sh
+  check: file-exists .agents/subagent-index.toon
+  check: file-exists .agents/tools/voice/qwen3-tts.md
+  check: file-exists .agents/tools/voice/speech-to-speech.md
+  check: rg "qwen3-tts" .agents/subagent-index.toon
+  check: rg "speech-to-speech" .agents/subagent-index.toon
