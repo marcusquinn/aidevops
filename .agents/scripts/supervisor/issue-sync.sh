@@ -6,7 +6,7 @@
 
 #######################################
 # Ensure status labels exist in the repo (t164)
-# Creates status:available, status:claimed, status:in-review, status:done
+# Creates status:available, status:claimed, status:in-review, status:needs-testing, status:done
 # if they don't already exist. Idempotent — safe to call repeatedly.
 # $1: repo_slug (e.g. "owner/repo")
 #######################################
@@ -24,6 +24,7 @@ ensure_status_labels() {
 	gh label create "status:in-review" --repo "$repo_slug" --color "FBCA04" --description "Task PR is in review" --force 2>/dev/null || true
 	gh label create "status:blocked" --repo "$repo_slug" --color "B60205" --description "Task is blocked" --force 2>/dev/null || true
 	gh label create "status:verify-failed" --repo "$repo_slug" --color "E4E669" --description "Task verification failed" --force 2>/dev/null || true
+	gh label create "status:needs-testing" --repo "$repo_slug" --color "FBCA04" --description "Code merged, needs manual or integration testing" --force 2>/dev/null || true
 	gh label create "status:done" --repo "$repo_slug" --color "6F42C1" --description "Task is complete" --force 2>/dev/null || true
 	return 0
 }
@@ -340,7 +341,7 @@ state_to_status_label() {
 # Used to remove stale labels before applying the new one.
 # Restored from pre-modularisation supervisor-helper.sh (t1035).
 #######################################
-ALL_STATUS_LABELS="status:available,status:queued,status:claimed,status:in-review,status:blocked,status:verify-failed,status:done"
+ALL_STATUS_LABELS="status:available,status:queued,status:claimed,status:in-review,status:blocked,status:verify-failed,status:needs-testing,status:done"
 
 #######################################
 # Sync GitHub issue status label on state transition (t1009)
