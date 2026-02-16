@@ -268,6 +268,13 @@ cmd_auto_pickup() {
 				continue
 			fi
 
+			# Skip tasks with assignee: or started: fields (t1062)
+			# These indicate someone is already working on the task
+			if echo "$line" | grep -qE '(assignee:|started:)'; then
+				log_info "  $task_id: already claimed or in progress — skipping auto-pickup"
+				continue
+			fi
+
 			# Check if already in supervisor
 			local existing
 			existing=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || true)
@@ -324,6 +331,13 @@ cmd_auto_pickup() {
 			local task_id
 			task_id=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1)
 			if [[ -z "$task_id" ]]; then
+				continue
+			fi
+
+			# Skip tasks with assignee: or started: fields (t1062)
+			# These indicate someone is already working on the task
+			if echo "$line" | grep -qE '(assignee:|started:)'; then
+				log_info "  $task_id: already claimed or in progress — skipping auto-pickup"
 				continue
 			fi
 
