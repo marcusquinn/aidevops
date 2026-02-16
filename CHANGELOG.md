@@ -7,9 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.115.22] - 2026-02-16
+
+### Added
+
+- add status:needs-testing label for tasks awaiting manual/integration testing (#1505)
+
+### Changed
+
+- Documentation: add changelog entry for t1056 Intel brew fix
+
 ### Fixed
 
-- Stop re-adding Intel brew shellenv to rc files on Apple Silicon — skip Intel brew entirely when ARM brew exists, only write brew lines to rc files during interactive setup (#1512, closes #1510)
+- issue-sync includes PR proof-log and error context when closing issues (t1055) (#1504)
+- defer batch post-completion actions to end of pulse cycle (t1052) (#1498)
 
 ## [2.115.21] - 2026-02-15
 
