@@ -970,10 +970,11 @@ cmd_reconcile_todo() {
 }
 
 #######################################
-# Phase 0.5b: Deduplicate task IDs in TODO.md (t319.4)
+# Phase 0.5b: Deduplicate task IDs in TODO.md (t319.4, t1069)
 # Scans TODO.md for duplicate task IDs on multiple open `- [ ]` lines.
-# Keeps the first occurrence, renames duplicates to t(max+1).
-# Commits and pushes changes if any duplicates were resolved.
+# Keeps the first occurrence, removes subsequent duplicates.
+# Never renames — renaming created ghost task IDs that polluted tracking.
+# Commits and pushes changes if any duplicates were removed.
 # Arguments:
 #   $1 - repo path containing TODO.md
 # Returns:
@@ -1009,13 +1010,10 @@ dedup_todo_task_ids() {
 		return 0
 	fi
 
-	log_warn "Phase 0.5b: Duplicate task IDs found in TODO.md, resolving..."
+	log_warn "Phase 0.5b: Duplicate task IDs found in TODO.md, removing duplicates..."
 
-	# Find the current highest top-level task number for renaming
-	local max_num
-	max_num=$(grep -oE '(^|[[:space:]])t([0-9]+)' "$todo_file" | grep -oE '[0-9]+' | sort -n | tail -1 || echo "0")
-	max_num=$((10#${max_num}))
-
+	# Collect line numbers to delete (all duplicate occurrences except the first)
+	local lines_to_delete=""
 	local changes_made=0
 
 	while IFS= read -r dup_id; do
@@ -1037,31 +1035,25 @@ dedup_todo_task_ids() {
 				continue
 			fi
 
-			# Allocate next available ID
-			max_num=$((max_num + 1))
-			local new_id="t${max_num}"
-
-			# For subtask duplicates (tNNN.M), create new_id as tMAX.M
-			if [[ "$dup_id" =~ ^t([0-9]+)\.([0-9]+)$ ]]; then
-				local old_base="${BASH_REMATCH[1]}"
-				local old_sub="${BASH_REMATCH[2]}"
-				new_id="t${max_num}.${old_sub}"
-				log_warn "    Renaming: line $line_num ($dup_id -> $new_id)"
-				sed_inplace "${line_num}s/t${old_base}\.${old_sub}/${new_id}/" "$todo_file"
-			else
-				local old_num="${dup_id#t}"
-				log_warn "    Renaming: line $line_num ($dup_id -> $new_id)"
-				# Use word-boundary-like matching: tNNN followed by space or end-of-field
-				sed_inplace -E "${line_num}s/t${old_num}( |$)/${new_id}\1/" "$todo_file"
-			fi
-
+			log_warn "    Removing: line $line_num ($dup_id) — duplicate of kept line"
+			lines_to_delete="${lines_to_delete} ${line_num}"
 			changes_made=$((changes_made + 1))
 		done <<<"$occurrences"
 	done <<<"$dup_ids"
 
-	if [[ "$changes_made" -gt 0 ]]; then
-		log_success "Phase 0.5b: Renamed $changes_made duplicate task ID(s) in TODO.md"
-		commit_and_push_todo "$repo_path" "chore: dedup $changes_made duplicate task ID(s) in TODO.md (t319.4)"
+	# Delete lines in reverse order so line numbers remain valid
+	if [[ "$changes_made" -gt 0 && -n "$lines_to_delete" ]]; then
+		# Sort line numbers in descending order for safe deletion
+		local sorted_lines
+		sorted_lines=$(echo "$lines_to_delete" | tr ' ' '\n' | sort -rn | grep -v '^$')
+
+		while IFS= read -r line_num; do
+			[[ -z "$line_num" ]] && continue
+			sed_inplace "${line_num}d" "$todo_file"
+		done <<<"$sorted_lines"
+
+		log_success "Phase 0.5b: Removed $changes_made duplicate task line(s) from TODO.md"
+		commit_and_push_todo "$repo_path" "chore: remove $changes_made duplicate task line(s) from TODO.md (t1069)"
 	fi
 
 	return 0
