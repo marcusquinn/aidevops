@@ -130,6 +130,18 @@ check_stale_remote_branch() {
 	return 0
 }
 
+# Delete a stale remote ref and prune local tracking ref
+# Internal helper to avoid repeating the same 3-line pattern
+_delete_stale_remote_ref() {
+	local branch="$1"
+	local message="$2"
+
+	echo -e "${BLUE}${message}${NC}"
+	git push origin --delete "$branch" 2>/dev/null || true
+	git fetch --prune origin 2>/dev/null || true
+	echo -e "${GREEN}Deleted origin/$branch${NC}"
+}
+
 # Handle stale remote branch before creating a new local branch (t1060)
 # In interactive mode: warns user and offers to delete.
 # In headless mode (no tty): auto-deletes if merged, warns and proceeds if unmerged.
@@ -158,10 +170,7 @@ handle_stale_remote_branch() {
 			choice="${choice:-1}"
 			case "$choice" in
 			1)
-				echo -e "${BLUE}Deleting stale remote ref...${NC}"
-				git push origin --delete "$branch" 2>/dev/null || true
-				git fetch --prune origin 2>/dev/null || true
-				echo -e "${GREEN}Deleted origin/$branch${NC}"
+				_delete_stale_remote_ref "$branch" "Deleting stale remote ref..."
 				;;
 			2)
 				echo -e "${YELLOW}Proceeding without deleting stale remote${NC}"
@@ -177,10 +186,7 @@ handle_stale_remote_branch() {
 			esac
 		else
 			# Headless: auto-delete merged stale refs
-			echo -e "${BLUE}Headless mode: auto-deleting merged stale remote ref...${NC}"
-			git push origin --delete "$branch" 2>/dev/null || true
-			git fetch --prune origin 2>/dev/null || true
-			echo -e "${GREEN}Deleted origin/$branch${NC}"
+			_delete_stale_remote_ref "$branch" "Headless mode: auto-deleting merged stale remote ref..."
 		fi
 	else
 		# Unmerged stale remote
@@ -198,10 +204,7 @@ handle_stale_remote_branch() {
 			choice="${choice:-3}"
 			case "$choice" in
 			1)
-				echo -e "${BLUE}Deleting stale remote ref...${NC}"
-				git push origin --delete "$branch" 2>/dev/null || true
-				git fetch --prune origin 2>/dev/null || true
-				echo -e "${GREEN}Deleted origin/$branch${NC}"
+				_delete_stale_remote_ref "$branch" "Deleting stale remote ref..."
 				;;
 			2)
 				echo -e "${YELLOW}Proceeding without deleting stale remote${NC}"
