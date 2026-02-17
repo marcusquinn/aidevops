@@ -879,7 +879,7 @@
   check: shellcheck .agents/scripts/test-orphan-cleanup.sh
   check: file-exists .agents/scripts/test-orphan-cleanup.sh
 
-- [ ] v110 t1078 Add explicit return statements to 21 shell scripts missin... | PR #1575 | merged:2026-02-17
+- [x] v110 t1078 Add explicit return statements to 21 shell scripts missin... | PR #1575 | merged:2026-02-17 verified:2026-02-17
   files: .agents/scripts/cron-dispatch.sh, .agents/scripts/list-verify-helper.sh, .agents/scripts/session-distill-helper.sh, .agents/scripts/setup/_backup.sh, .agents/scripts/setup/_bootstrap.sh, .agents/scripts/setup/_deployment.sh, .agents/scripts/setup/_installation.sh, .agents/scripts/setup/_migration.sh, .agents/scripts/setup/_opencode.sh, .agents/scripts/setup/_services.sh, .agents/scripts/setup/_shell.sh, .agents/scripts/setup/_tools.sh, .agents/scripts/setup/_validation.sh, .agents/scripts/show-plan-helper.sh, .agents/scripts/subagent-index-helper.sh, .agents/scripts/supervisor/_common.sh, .agents/scripts/supervisor/git-ops.sh, .agents/scripts/supervisor/lifecycle.sh, .agents/scripts/test-orphan-cleanup.sh, .agents/scripts/test-pr-task-check.sh, .agents/scripts/test-task-id-collision.sh
   check: shellcheck .agents/scripts/cron-dispatch.sh
   check: file-exists .agents/scripts/cron-dispatch.sh
@@ -923,3 +923,8 @@
   check: file-exists .agents/scripts/test-pr-task-check.sh
   check: shellcheck .agents/scripts/test-task-id-collision.sh
   check: file-exists .agents/scripts/test-task-id-collision.sh
+
+- [ ] v111 t1081 Daily skill auto-update pipeline — add daily skill fres... | PR #1591 | merged:2026-02-17
+  files: .agents/scripts/auto-update-helper.sh
+  check: shellcheck .agents/scripts/auto-update-helper.sh
+  check: file-exists .agents/scripts/auto-update-helper.sh
