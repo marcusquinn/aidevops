@@ -42,9 +42,9 @@ export interface ResearchResult {
 const AGENTS_BASE = `${process.env.HOME || "~"}/.aidevops/agents`
 
 const MODEL_MAP: Record<string, string> = {
-  haiku: "claude-3-haiku-20240307",
-  sonnet: "claude-sonnet-4-20250514",
-  opus: "claude-opus-4-20250514",
+  haiku: "claude-haiku-4-5",
+  sonnet: "claude-sonnet-4-6",
+  opus: "claude-opus-4-6",
 }
 
 const MAX_CALLS_PER_SESSION = 10

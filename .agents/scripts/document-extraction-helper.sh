@@ -527,7 +527,7 @@ resolve_llm_backend() {
 		elif [[ -n "${OPENAI_API_KEY:-}" ]]; then
 			llm_backend="openai/gpt-4o"
 		elif [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
-			llm_backend="anthropic/claude-sonnet-4-20250514"
+			llm_backend="anthropic/claude-sonnet-4-6"
 		else
 			print_warning "No cloud API key found, falling back to local"
 			if command -v ollama &>/dev/null; then

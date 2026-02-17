@@ -173,7 +173,7 @@ async def run_agent(webrtc_connection: SmallWebRTCConnection):
     )
     llm = AnthropicLLMService(
         api_key=os.getenv("ANTHROPIC_API_KEY"),
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
     )
 
     # System prompt for voice interaction
@@ -322,7 +322,7 @@ tools = [
 
 llm = AnthropicLLMService(
     api_key=os.getenv("ANTHROPIC_API_KEY"),
-    model="claude-sonnet-4-20250514",
+    model="claude-sonnet-4-6",
     tools=tools,
 )
 ```

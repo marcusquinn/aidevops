@@ -117,11 +117,11 @@ get_tier_models() {
         case "$tier" in
             haiku)  echo "opencode/claude-3-5-haiku|opencode/gemini-3-flash" ;;
             flash)  echo "google/gemini-2.5-flash|opencode/gemini-3-flash" ;;
-            sonnet) echo "opencode/claude-sonnet-4|anthropic/claude-sonnet-4-20250514" ;;
+            sonnet) echo "opencode/claude-sonnet-4|anthropic/claude-sonnet-4-6" ;;
             pro)    echo "google/gemini-2.5-pro|opencode/gemini-3-pro" ;;
             opus)   echo "opencode/claude-opus-4-6|anthropic/claude-opus-4-6" ;;
-            health) echo "opencode/claude-sonnet-4-5|google/gemini-2.5-flash" ;;
-            eval)   echo "opencode/claude-sonnet-4-5|google/gemini-2.5-flash" ;;
+            health) echo "opencode/claude-sonnet-4-6|google/gemini-2.5-flash" ;;
+            eval)   echo "opencode/claude-sonnet-4-6|google/gemini-2.5-flash" ;;
             coding) echo "opencode/claude-opus-4-6|anthropic/claude-opus-4-6" ;;
             *) return 1 ;;
         esac
@@ -129,11 +129,11 @@ get_tier_models() {
         case "$tier" in
             haiku)  echo "anthropic/claude-3-5-haiku-20241022|google/gemini-2.5-flash" ;;
             flash)  echo "google/gemini-2.5-flash|openai/gpt-4.1-mini" ;;
-            sonnet) echo "anthropic/claude-sonnet-4-20250514|openai/gpt-4.1" ;;
-            pro)    echo "google/gemini-2.5-pro|anthropic/claude-sonnet-4-20250514" ;;
+            sonnet) echo "anthropic/claude-sonnet-4-6|openai/gpt-4.1" ;;
+            pro)    echo "google/gemini-2.5-pro|anthropic/claude-sonnet-4-6" ;;
             opus)   echo "anthropic/claude-opus-4-6|openai/o3" ;;
-            health) echo "anthropic/claude-sonnet-4-5|google/gemini-2.5-flash" ;;
-            eval)   echo "anthropic/claude-sonnet-4-5|google/gemini-2.5-flash" ;;
+            health) echo "anthropic/claude-sonnet-4-6|google/gemini-2.5-flash" ;;
+            eval)   echo "anthropic/claude-sonnet-4-6|google/gemini-2.5-flash" ;;
             coding) echo "anthropic/claude-opus-4-6|openai/o3" ;;
             *) return 1 ;;
         esac
@@ -1378,7 +1378,7 @@ cmd_help() {
     echo "  model-availability-helper.sh check anthropic"
     echo "  model-availability-helper.sh check opencode"
     echo "  model-availability-helper.sh check opencode/claude-sonnet-4"
-    echo "  model-availability-helper.sh check anthropic/claude-sonnet-4-20250514"
+    echo "  model-availability-helper.sh check anthropic/claude-sonnet-4-6"
     echo "  model-availability-helper.sh check sonnet"
     echo "  model-availability-helper.sh probe --all"
     echo "  model-availability-helper.sh resolve opus --json"

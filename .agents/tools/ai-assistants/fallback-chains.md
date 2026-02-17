@@ -51,14 +51,14 @@ Add `fallback-chain:` to any model tier file's YAML frontmatter:
 
 ```yaml
 ---
-model: anthropic/claude-sonnet-4-20250514
+model: anthropic/claude-sonnet-4-6
 model-tier: sonnet
 model-fallback: openai/gpt-4.1
 fallback-chain:
-  - anthropic/claude-sonnet-4-20250514
+  - anthropic/claude-sonnet-4-6
   - openai/gpt-4.1
   - google/gemini-2.5-pro
-  - openrouter/anthropic/claude-sonnet-4-20250514
+  - openrouter/anthropic/claude-sonnet-4-6
 ---
 ```
 
@@ -70,10 +70,10 @@ Edit `configs/fallback-chain-config.json` (copy from `.json.txt` template):
 {
   "chains": {
     "sonnet": [
-      "anthropic/claude-sonnet-4-20250514",
+      "anthropic/claude-sonnet-4-6",
       "openai/gpt-4.1",
       "google/gemini-2.5-pro",
-      "openrouter/anthropic/claude-sonnet-4-20250514"
+      "openrouter/anthropic/claude-sonnet-4-6"
     ]
   }
 }
@@ -83,9 +83,9 @@ Edit `configs/fallback-chain-config.json` (copy from `.json.txt` template):
 
 | Format | Example | Description |
 |--------|---------|-------------|
-| `provider/model` | `anthropic/claude-sonnet-4-20250514` | Direct provider API |
-| `openrouter/provider/model` | `openrouter/anthropic/claude-sonnet-4-20250514` | Via OpenRouter gateway |
-| `gateway/cf/provider/model` | `gateway/cf/anthropic/claude-sonnet-4-20250514` | Via Cloudflare AI Gateway |
+| `provider/model` | `anthropic/claude-sonnet-4-6` | Direct provider API |
+| `openrouter/provider/model` | `openrouter/anthropic/claude-sonnet-4-6` | Via OpenRouter gateway |
+| `gateway/cf/provider/model` | `gateway/cf/anthropic/claude-sonnet-4-6` | Via Cloudflare AI Gateway |
 
 ## Trigger Types
 
@@ -130,7 +130,7 @@ fallback-chain-helper.sh gateway openrouter
 
 # Models routed via OpenRouter use the format:
 # openrouter/provider/model
-# e.g., openrouter/anthropic/claude-sonnet-4-20250514
+# e.g., openrouter/anthropic/claude-sonnet-4-6
 ```
 
 **Setup**: Set `OPENROUTER_API_KEY` environment variable or store via `aidevops secret set OPENROUTER_API_KEY`.
@@ -145,7 +145,7 @@ fallback-chain-helper.sh gateway cloudflare
 
 # Models routed via CF AI Gateway use the format:
 # gateway/cf/provider/model
-# e.g., gateway/cf/anthropic/claude-sonnet-4-20250514
+# e.g., gateway/cf/anthropic/claude-sonnet-4-6
 ```
 
 **Setup**: Configure `account_id` and `gateway_id` in `configs/fallback-chain-config.json`. Set `CF_AIG_TOKEN` for authenticated gateways.

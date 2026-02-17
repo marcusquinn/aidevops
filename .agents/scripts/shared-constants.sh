@@ -1071,7 +1071,7 @@ resolve_model_tier() {
             echo "anthropic/claude-opus-4-6"
             ;;
         sonnet|eval)
-            echo "anthropic/claude-sonnet-4-20250514"
+            echo "anthropic/claude-sonnet-4-6"
             ;;
         haiku|health)
             echo "anthropic/claude-3-5-haiku-20241022"

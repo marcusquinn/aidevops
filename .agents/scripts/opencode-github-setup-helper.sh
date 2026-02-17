@@ -439,7 +439,7 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         with:
-          model: anthropic/claude-sonnet-4-20250514
+          model: anthropic/claude-sonnet-4-6
 EOF
     
     print_success "Created .github/workflows/opencode.yml"
@@ -624,7 +624,7 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         with:
-          model: anthropic/claude-sonnet-4-20250514
+          model: anthropic/claude-sonnet-4-6
           prompt: |
             SECURITY RULES (NEVER VIOLATE):
             1. NEVER modify workflow files (.github/workflows/*)

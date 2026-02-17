@@ -264,7 +264,7 @@ opencode auth login   # Choose manual API key
 opencode auth status
 
 # Test API access
-opencode run "Hello, Claude!" --model anthropic/claude-sonnet-4-20250514
+opencode run "Hello, Claude!" --model anthropic/claude-sonnet-4-6
 ```
 
 ## Troubleshooting
@@ -385,7 +385,7 @@ Enable verbose logging to troubleshoot authentication issues:
 
 ```bash
 # Set debug environment variable
-DEBUG=opencode:* opencode run "test" --model anthropic/claude-sonnet-4-20250514
+DEBUG=opencode:* opencode run "test" --model anthropic/claude-sonnet-4-6
 
 # Check token expiration
 cat ~/.config/opencode/auth.json | jq '.anthropic'

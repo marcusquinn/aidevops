@@ -49,7 +49,7 @@ jobs:
           # GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
         with:
           # Required: AI model to use
-          model: anthropic/claude-sonnet-4-20250514
+          model: anthropic/claude-sonnet-4-6
           
           # Optional: Specify agent (defaults to "build")
           # agent: build

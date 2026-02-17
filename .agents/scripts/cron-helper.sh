@@ -34,7 +34,7 @@ readonly SCRIPTS_DIR="$HOME/.aidevops/agents/scripts"
 readonly OPENCODE_PORT="${OPENCODE_PORT:-4096}"
 readonly OPENCODE_HOST="${OPENCODE_HOST:-127.0.0.1}"
 readonly OPENCODE_INSECURE="${OPENCODE_INSECURE:-}"
-readonly DEFAULT_MODEL="anthropic/claude-sonnet-4-20250514"
+readonly DEFAULT_MODEL="anthropic/claude-sonnet-4-6"
 
 # shellcheck disable=SC2034  # CYAN reserved for future use
 readonly BOLD='\033[1m'

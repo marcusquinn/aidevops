@@ -3770,7 +3770,7 @@ Document and implement patterns for running parallel OpenCode sessions locally, 
 opencode auth login
 
 # Or override per-dispatch
-opencode run -m openrouter/anthropic/claude-sonnet-4-20250514 "task"
+opencode run -m openrouter/anthropic/claude-sonnet-4-6 "task"
 ```
 
 Users can choose any provider supported by OpenCode via `opencode auth login`.

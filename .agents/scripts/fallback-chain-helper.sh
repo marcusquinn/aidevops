@@ -259,12 +259,12 @@ get_chain_for_tier() {
     case "$tier" in
         haiku)  tier_spec='["anthropic/claude-haiku-4-5"]' ;;
         flash)  tier_spec='["anthropic/claude-haiku-4-5"]' ;;
-        sonnet) tier_spec='["anthropic/claude-sonnet-4-5"]' ;;
-        pro)    tier_spec='["anthropic/claude-sonnet-4-5"]' ;;
+        sonnet) tier_spec='["anthropic/claude-sonnet-4-6"]' ;;
+        pro)    tier_spec='["anthropic/claude-sonnet-4-6"]' ;;
         opus)   tier_spec='["anthropic/claude-opus-4-6"]' ;;
-        coding) tier_spec='["anthropic/claude-opus-4-6","anthropic/claude-sonnet-4-5"]' ;;
-        eval)   tier_spec='["anthropic/claude-sonnet-4-5"]' ;;
-        health) tier_spec='["anthropic/claude-sonnet-4-5"]' ;;
+        coding) tier_spec='["anthropic/claude-opus-4-6","anthropic/claude-sonnet-4-6"]' ;;
+        eval)   tier_spec='["anthropic/claude-sonnet-4-6"]' ;;
+        health) tier_spec='["anthropic/claude-sonnet-4-6"]' ;;
         *)
             print_error "Unknown tier: $tier"
             return 1
