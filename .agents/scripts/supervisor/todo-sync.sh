@@ -313,6 +313,35 @@ process_verify_queue() {
 
 	ensure_db
 
+	# Recover tasks stuck in 'verifying' state (t1075)
+	# If a pulse crashes mid-verification, tasks stay in 'verifying' forever.
+	# Reset any task that has been in 'verifying' for more than 5 minutes back to 'deployed'.
+	local stuck_verifying
+	stuck_verifying=$(db -separator '|' "$SUPERVISOR_DB" "
+		SELECT id FROM tasks
+		WHERE status = 'verifying'
+		  AND updated_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-5 minutes')
+		ORDER BY id;
+	" 2>/dev/null || echo "")
+
+	if [[ -n "$stuck_verifying" ]]; then
+		while IFS='|' read -r stuck_id; do
+			[[ -z "$stuck_id" ]] && continue
+			log_warn "  $stuck_id: stuck in 'verifying' for >5min — resetting to 'deployed'"
+			local escaped_stuck_id
+			escaped_stuck_id=$(sql_escape "$stuck_id")
+			db "$SUPERVISOR_DB" "UPDATE tasks SET
+				status = 'deployed',
+				error = NULL,
+				updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+			WHERE id = '$escaped_stuck_id';" 2>/dev/null || true
+			db "$SUPERVISOR_DB" "INSERT INTO state_log (task_id, from_state, to_state, timestamp, reason)
+			VALUES ('$escaped_stuck_id', 'verifying', 'deployed',
+				strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+				'process_verify_queue: recovered from stuck verifying state (>5min timeout)');" 2>/dev/null || true
+		done <<<"$stuck_verifying"
+	fi
+
 	# Find deployed tasks that need verification
 	local deployed_tasks
 	local where_clause="t.status = 'deployed'"

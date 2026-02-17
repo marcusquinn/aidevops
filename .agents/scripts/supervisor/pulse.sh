@@ -598,18 +598,41 @@ cmd_pulse() {
 						# verify_failed: PR was already merged and deployed, but
 						# post-merge verification failed. Put back to 'deployed'
 						# so Phase 3b (verify queue) can re-run verification.
-						# Do NOT mark complete — the quality check still needs to pass.
-						log_info "  Phase 3b2: $stale_id (verify_failed) — PR #$pr_number merged, resetting to deployed for re-verification"
-						db "$SUPERVISOR_DB" "UPDATE tasks SET
-							status = 'deployed',
-							error = NULL,
-							updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-						WHERE id = '$escaped_stale_id';" 2>/dev/null || true
-						db "$SUPERVISOR_DB" "INSERT INTO state_log (task_id, from_state, to_state, timestamp, reason)
-						VALUES ('$escaped_stale_id', 'verify_failed', 'deployed',
-							strftime('%Y-%m-%dT%H:%M:%SZ','now'),
-							'Phase 3b2: reset for re-verification (PR #$pr_number merged)');" 2>/dev/null || true
-						sync_issue_status_label "$stale_id" "deployed" "phase_3b2" 2>>"$SUPERVISOR_LOG" || true
+						# Cap retries to prevent infinite deployed→verify_failed loop (t1075).
+						local verify_reset_count
+						verify_reset_count=$(db "$SUPERVISOR_DB" "
+							SELECT COUNT(*) FROM state_log
+							WHERE task_id = '$escaped_stale_id'
+							  AND from_state = 'verify_failed'
+							  AND to_state = 'deployed';" 2>/dev/null || echo "0")
+						local max_verify_retries=3
+
+						if [[ "$verify_reset_count" -ge "$max_verify_retries" ]]; then
+							# Exhausted verification retries — mark permanently failed
+							log_error "  Phase 3b2: $stale_id exhausted $max_verify_retries verification retries — marking failed"
+							db "$SUPERVISOR_DB" "UPDATE tasks SET
+								status = 'failed',
+								error = 'Verification failed after $max_verify_retries retries — manual fix needed',
+								updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+							WHERE id = '$escaped_stale_id';" 2>/dev/null || true
+							db "$SUPERVISOR_DB" "INSERT INTO state_log (task_id, from_state, to_state, timestamp, reason)
+							VALUES ('$escaped_stale_id', 'verify_failed', 'failed',
+								strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+								'Phase 3b2: verification exhausted ($verify_reset_count/$max_verify_retries retries)');" 2>/dev/null || true
+							sync_issue_status_label "$stale_id" "failed" "phase_3b2" 2>>"$SUPERVISOR_LOG" || true
+						else
+							log_info "  Phase 3b2: $stale_id (verify_failed) — PR #$pr_number merged, resetting to deployed for re-verification (attempt $((verify_reset_count + 1))/$max_verify_retries)"
+							db "$SUPERVISOR_DB" "UPDATE tasks SET
+								status = 'deployed',
+								error = NULL,
+								updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+							WHERE id = '$escaped_stale_id';" 2>/dev/null || true
+							db "$SUPERVISOR_DB" "INSERT INTO state_log (task_id, from_state, to_state, timestamp, reason)
+							VALUES ('$escaped_stale_id', 'verify_failed', 'deployed',
+								strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+								'Phase 3b2: reset for re-verification attempt $((verify_reset_count + 1))/$max_verify_retries (PR #$pr_number merged)');" 2>/dev/null || true
+							sync_issue_status_label "$stale_id" "deployed" "phase_3b2" 2>>"$SUPERVISOR_LOG" || true
+						fi
 					else
 						# blocked: PR merged but task stuck in blocked state.
 						# Advance to deployed and mark complete.

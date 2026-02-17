@@ -1440,7 +1440,7 @@ dismiss_bot_reviews() {
 
 	# Find bot reviews with CHANGES_REQUESTED state
 	local bot_reviews
-	bot_reviews=$(echo "$reviews_json" | jq -r '.[] | select(.state == "CHANGES_REQUESTED" and (.user.login == "coderabbitai" or .user.login == "gemini-code-assist[bot]")) | .id' 2>/dev/null || echo "")
+	bot_reviews=$(echo "$reviews_json" | jq -r '.[] | select(.state == "CHANGES_REQUESTED" and (.user.login | test("^(coderabbitai|gemini-code-assist|copilot)"))) | .id' 2>/dev/null || echo "")
 
 	if [[ -z "$bot_reviews" ]]; then
 		log_debug "dismiss_bot_reviews: no blocking bot reviews found for PR #${pr_number}"
