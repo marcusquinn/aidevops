@@ -821,3 +821,39 @@
   files: .agents/scripts/worktree-helper.sh
   check: shellcheck .agents/scripts/worktree-helper.sh
   check: file-exists .agents/scripts/worktree-helper.sh
+
+- [ ] v108 t1080 Delete archived scripts in `.agents/scripts/_archive/` â€... | PR #1574 | merged:2026-02-17
+  files: .agents/scripts/_archive/README.md, .agents/scripts/_archive/add-missing-returns.sh, .agents/scripts/_archive/comprehensive-quality-fix.sh, .agents/scripts/_archive/efficient-return-fix.sh, .agents/scripts/_archive/find-missing-returns.sh, .agents/scripts/_archive/fix-auth-headers.sh, .agents/scripts/_archive/fix-common-strings.sh, .agents/scripts/_archive/fix-content-type.sh, .agents/scripts/_archive/fix-error-messages.sh, .agents/scripts/_archive/fix-misplaced-returns.sh, .agents/scripts/_archive/fix-remaining-literals.sh, .agents/scripts/_archive/fix-return-statements.sh, .agents/scripts/_archive/fix-s131-default-cases.sh, .agents/scripts/_archive/fix-sc2155-simple.sh, .agents/scripts/_archive/fix-shellcheck-critical.sh, .agents/scripts/_archive/fix-string-literals.sh, .agents/scripts/_archive/mass-fix-returns.sh
+  check: file-exists .agents/scripts/_archive/README.md
+  check: shellcheck .agents/scripts/_archive/add-missing-returns.sh
+  check: file-exists .agents/scripts/_archive/add-missing-returns.sh
+  check: shellcheck .agents/scripts/_archive/comprehensive-quality-fix.sh
+  check: file-exists .agents/scripts/_archive/comprehensive-quality-fix.sh
+  check: shellcheck .agents/scripts/_archive/efficient-return-fix.sh
+  check: file-exists .agents/scripts/_archive/efficient-return-fix.sh
+  check: shellcheck .agents/scripts/_archive/find-missing-returns.sh
+  check: file-exists .agents/scripts/_archive/find-missing-returns.sh
+  check: shellcheck .agents/scripts/_archive/fix-auth-headers.sh
+  check: file-exists .agents/scripts/_archive/fix-auth-headers.sh
+  check: shellcheck .agents/scripts/_archive/fix-common-strings.sh
+  check: file-exists .agents/scripts/_archive/fix-common-strings.sh
+  check: shellcheck .agents/scripts/_archive/fix-content-type.sh
+  check: file-exists .agents/scripts/_archive/fix-content-type.sh
+  check: shellcheck .agents/scripts/_archive/fix-error-messages.sh
+  check: file-exists .agents/scripts/_archive/fix-error-messages.sh
+  check: shellcheck .agents/scripts/_archive/fix-misplaced-returns.sh
+  check: file-exists .agents/scripts/_archive/fix-misplaced-returns.sh
+  check: shellcheck .agents/scripts/_archive/fix-remaining-literals.sh
+  check: file-exists .agents/scripts/_archive/fix-remaining-literals.sh
+  check: shellcheck .agents/scripts/_archive/fix-return-statements.sh
+  check: file-exists .agents/scripts/_archive/fix-return-statements.sh
+  check: shellcheck .agents/scripts/_archive/fix-s131-default-cases.sh
+  check: file-exists .agents/scripts/_archive/fix-s131-default-cases.sh
+  check: shellcheck .agents/scripts/_archive/fix-sc2155-simple.sh
+  check: file-exists .agents/scripts/_archive/fix-sc2155-simple.sh
+  check: shellcheck .agents/scripts/_archive/fix-shellcheck-critical.sh
+  check: file-exists .agents/scripts/_archive/fix-shellcheck-critical.sh
+  check: shellcheck .agents/scripts/_archive/fix-string-literals.sh
+  check: file-exists .agents/scripts/_archive/fix-string-literals.sh
+  check: shellcheck .agents/scripts/_archive/mass-fix-returns.sh
+  check: file-exists .agents/scripts/_archive/mass-fix-returns.sh
