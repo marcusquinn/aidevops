@@ -800,7 +800,13 @@
   check: shellcheck .agents/scripts/supervisor/state.sh
   check: file-exists .agents/scripts/supervisor/state.sh
 
-- [ ] v104 t1063.1 Create tech-stack-helper.sh with `lookup <url>`, `reverse... | PR #1545 | merged:2026-02-17
+- [x] v104 t1063.1 Create tech-stack-helper.sh with `lookup <url>`, `reverse... | PR #1545 | merged:2026-02-17 verified:2026-02-17
   files: .agents/scripts/tech-stack-helper.sh
   check: shellcheck .agents/scripts/tech-stack-helper.sh
   check: file-exists .agents/scripts/tech-stack-helper.sh
+
+- [ ] v105 t1068 Reverse tech stack lookup with filtering — extend tech-... | PR #1546 | merged:2026-02-17
+  files: .agents/scripts/tech-stack-helper.sh, .agents/seo/tech-stack.md
+  check: shellcheck .agents/scripts/tech-stack-helper.sh
+  check: file-exists .agents/scripts/tech-stack-helper.sh
+  check: file-exists .agents/seo/tech-stack.md
