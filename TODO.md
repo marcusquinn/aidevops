@@ -61,9 +61,9 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 ## Backlog
 
 - [ ] t1083 Update model references for Claude Sonnet 4.6 — Anthropic released claude-sonnet-4-6 (training data cutoff Jan 2026, 64K max output, 1M context beta, same $3/$15 pricing as Sonnet 4/4.5). Update all sonnet tier references: model IDs in scripts (fallback-chain-helper.sh, model-availability-helper.sh, supervisor/dispatch.sh, etc.), model docs (models/sonnet.md, models/README.md, fallback-chains.md), and headless dispatch configs. ~40 files affected. #enhancement #models #auto-dispatch ~2h (ai:1.5h test:30m) model:sonnet ref:GH#1578 assignee:marcusquinn started:2026-02-17T23:46:32Z logged:2026-02-17 pr:#1592
-  - [ ] t1083.1 Update sonnet tier primary model in scripts — 16 .sh files. Change claude-sonnet-4-5 -> claude-sonnet-4-6 and claude-sonnet-4-20250514 -> claude-sonnet-4-6. ~1h
-  - [ ] t1083.2 Update model docs — 18 .md files + configs + templates. ~30m
-  - [ ] t1083.3 Verify fallback chains still resolve correctly — shellcheck passes, hardcoded fallbacks correct. ~15m
+  - [ ] t1083.1 Update sonnet tier primary model in scripts — 16 .sh files. Change claude-sonnet-4-5 -> claude-sonnet-4-6 and claude-sonnet-4-20250514 -> claude-sonnet-4-6. ~1h ref:GH#1579
+  - [ ] t1083.2 Update model docs — 18 .md files + configs + templates. ~30m ref:GH#1580
+  - [ ] t1083.3 Verify fallback chains still resolve correctly — shellcheck passes, hardcoded fallbacks correct. ~15m ref:GH#1581
 - [ ] t1081 Daily skill auto-update pipeline — add daily skill freshness check to auto-update-helper.sh (24h gate), call skill-update-helper.sh --auto-update --quiet to pull upstream changes for all imported skills. Layer 1: all users get fresh skill docs locally within 24h. Layer 2 (t1082): maintainer PR pipeline for repo-level updates. #enhancement #skills #auto-dispatch ~3h (ai:2h test:1h) model:sonnet ref:GH#1577 assignee:marcusquinn started:2026-02-17T23:47:15Z logged:2026-02-17
   - [ ] t1081.1 Add daily skill check to auto-update-helper.sh cmd_check() — after existing version check + setup.sh, call skill-update-helper.sh --auto-update --quiet. Gate with last_skill_check timestamp in state file, skip if <24h. ~1h ref:GH#1582
   - [ ] t1081.2 Add --non-interactive support to skill-update-helper.sh — ensure --auto-update --quiet works headlessly without prompts, handles errors gracefully, logs to auto-update.log. ~30m ref:GH#1583
