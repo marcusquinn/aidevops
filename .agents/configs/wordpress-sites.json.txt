@@ -3,6 +3,36 @@
   "_docs": "See .agents/tools/wordpress/wp-admin.md for usage",
   "_setup": "Copy to ~/.config/aidevops/wordpress-sites.json and fill in your sites",
 
+  "_tenant_setup": {
+    "_note": "For multi-tenant (freelancer managing multiple clients), use per-tenant configs:",
+    "_global": "~/.config/aidevops/wordpress-sites.json",
+    "_per_tenant": "~/.config/aidevops/tenants/{tenant}/wordpress-sites.json",
+    "_resolution": "Tenant resolved from: .aidevops-tenant > active-tenant > 'default'",
+    "_servers_note": "The 'servers' section is infrastructure config — keep it in the global config or per-tenant as needed"
+  },
+
+  "servers": {
+    "_note": "DRY server definitions — reference from sites using 'server_ref'. Site-level fields override server defaults.",
+    "hetzner-vps-1": {
+      "type": "hetzner",
+      "ssh_host": "123.45.67.89",
+      "ssh_port": 22,
+      "ssh_user": "root"
+    },
+    "hostinger-shared-1": {
+      "type": "hostinger",
+      "ssh_host": "ssh.example.com",
+      "ssh_port": 65002,
+      "ssh_user": "u123456789"
+    },
+    "cloudways-master": {
+      "type": "cloudways",
+      "ssh_host": "cloudways.example.com",
+      "ssh_port": 22,
+      "ssh_user": "master_user"
+    }
+  },
+
   "sites": {
     "local-dev": {
       "name": "Local Development",
@@ -15,9 +45,8 @@
       "name": "Production Site",
       "type": "hostinger",
       "url": "https://example.com",
-      "ssh_host": "ssh.example.com",
-      "ssh_port": 65002,
-      "ssh_user": "u123456789",
+      "server_ref": "hostinger-shared-1",
+      "_note": "server_ref inherits ssh_host, ssh_port, ssh_user from servers.hostinger-shared-1",
       "wp_path": "/domains/example.com/public_html",
       "mainwp_connected": true,
       "mainwp_site_id": 123,
@@ -27,9 +56,18 @@
       "name": "Staging Site",
       "type": "hetzner",
       "url": "https://staging.example.com",
-      "ssh_host": "123.45.67.89",
-      "ssh_port": 22,
-      "ssh_user": "root",
+      "server_ref": "hetzner-vps-1",
+      "_note": "server_ref inherits ssh_host, ssh_port, ssh_user from servers.hetzner-vps-1",
+      "wp_path": "/var/www/staging/public",
+      "mainwp_connected": false,
+      "category": "internal"
+    },
+    "staging-ssh-alias": {
+      "name": "Staging via SSH Config Alias",
+      "type": "hetzner",
+      "url": "https://staging.example.com",
+      "ssh_host": "my-vps",
+      "_note": "ssh_host 'my-vps' matches a Host alias in ~/.ssh/config — User, Port, IdentityFile are inherited automatically",
       "wp_path": "/var/www/staging/public",
       "mainwp_connected": false,
       "category": "internal"
@@ -38,9 +76,7 @@
       "name": "Cloudways Site",
       "type": "cloudways",
       "url": "https://cloudways.example.com",
-      "ssh_host": "cloudways.example.com",
-      "ssh_port": 22,
-      "ssh_user": "master_user",
+      "server_ref": "cloudways-master",
       "wp_path": "/home/master/applications/app_name/public_html",
       "mainwp_connected": true,
       "mainwp_site_id": 456,
@@ -75,5 +111,16 @@
     "lead-gen",
     "ecommerce",
     "blog"
-  ]
+  ],
+
+  "_ssh_config_integration": {
+    "_note": "If ssh_host matches a Host alias in ~/.ssh/config, wp-helper.sh inherits User, Port, IdentityFile automatically",
+    "_example_ssh_config": [
+      "Host my-vps",
+      "  HostName 123.45.67.89",
+      "  User root",
+      "  IdentityFile ~/.ssh/my-vps-key"
+    ],
+    "_priority": "Site fields > server_ref fields > SSH config values"
+  }
 }
