@@ -769,10 +769,18 @@
   check: shellcheck .agents/scripts/supervisor/issue-sync.sh
   check: file-exists .agents/scripts/supervisor/issue-sync.sh
 
-- [ ] v100 t1064 Unbuilt.app provider agent — create `tools/research/pro... | PR #1542 | merged:2026-02-17
+- [!] v100 t1064 Unbuilt.app provider agent — create `tools/research/pro... | PR #1542 | merged:2026-02-17 failed:2026-02-17 reason:shellcheck: .agents/scripts/tech-stack-helper.sh has violations
   files: .agents/scripts/tech-stack-helper.sh, .agents/subagent-index.toon, .agents/tools/research/providers/unbuilt.md
   check: shellcheck .agents/scripts/tech-stack-helper.sh
   check: file-exists .agents/scripts/tech-stack-helper.sh
   check: file-exists .agents/subagent-index.toon
   check: file-exists .agents/tools/research/providers/unbuilt.md
   check: rg "unbuilt" .agents/subagent-index.toon
+
+- [ ] v101 t1065 CRFT Lookup provider agent — create `tools/research/pro... | PR #1543 | merged:2026-02-17
+  files: .agents/scripts/tech-stack-helper.sh, .agents/subagent-index.toon, .agents/tools/research/providers/crft-lookup.md
+  check: shellcheck .agents/scripts/tech-stack-helper.sh
+  check: file-exists .agents/scripts/tech-stack-helper.sh
+  check: file-exists .agents/subagent-index.toon
+  check: file-exists .agents/tools/research/providers/crft-lookup.md
+  check: rg "crft-lookup" .agents/subagent-index.toon
