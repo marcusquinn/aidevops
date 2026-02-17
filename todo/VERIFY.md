@@ -805,8 +805,14 @@
   check: shellcheck .agents/scripts/tech-stack-helper.sh
   check: file-exists .agents/scripts/tech-stack-helper.sh
 
-- [ ] v105 t1068 Reverse tech stack lookup with filtering — extend tech-... | PR #1546 | merged:2026-02-17
+- [!] v105 t1068 Reverse tech stack lookup with filtering — extend tech-... | PR #1546 | merged:2026-02-17 failed:2026-02-17 reason:shellcheck: .agents/scripts/tech-stack-helper.sh has violations
   files: .agents/scripts/tech-stack-helper.sh, .agents/seo/tech-stack.md
   check: shellcheck .agents/scripts/tech-stack-helper.sh
   check: file-exists .agents/scripts/tech-stack-helper.sh
   check: file-exists .agents/seo/tech-stack.md
+
+- [ ] v106 t1059 wp-helper.sh tenant-aware server reference resolution + S... | PR #1568 | merged:2026-02-17
+  files: .agents/configs/wordpress-sites.json.txt, .agents/scripts/wp-helper.sh
+  check: file-exists .agents/configs/wordpress-sites.json.txt
+  check: shellcheck .agents/scripts/wp-helper.sh
+  check: file-exists .agents/scripts/wp-helper.sh
