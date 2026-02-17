@@ -588,7 +588,7 @@ cmd_pulse() {
 
 				local pr_state pr_merged_at
 				pr_state=$(echo "$pr_json" | grep -o '"state":"[^"]*"' | cut -d'"' -f4)
-				pr_merged_at=$(echo "$pr_json" | grep -o '"mergedAt":"[^"]*"' | cut -d'"' -f4)
+				pr_merged_at=$(echo "$pr_json" | grep -o '"mergedAt":"[^"]*"' | cut -d'"' -f4 || true)
 
 				if [[ "$pr_state" == "MERGED" ]]; then
 					local escaped_stale_id
