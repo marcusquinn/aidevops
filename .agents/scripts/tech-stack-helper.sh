@@ -64,9 +64,6 @@ readonly DEFAULT_LIMIT=25
 readonly MAX_LIMIT=1000
 readonly DEFAULT_CLIENT="desktop"
 readonly REPORTS_DIR="${HOME}/.aidevops/.agent-workspace/work/tech-stack/reports"
-SCRIPT_NAME="$(basename "$0")" || true
-readonly SCRIPT_NAME
-readonly UNBUILT_PKG="@unbuilt/cli"
 readonly UNBUILT_TIMEOUT="${UNBUILT_TIMEOUT:-120}"
 
 # BigQuery configuration
@@ -80,18 +77,9 @@ readonly BQ_TABLE_CATEGORIES="categories"
 
 # BuiltWith configuration
 readonly BUILTWITH_API_BASE="https://api.builtwith.com"
-readonly BUILTWITH_FREE_BASE="https://trends.builtwith.com"
-
-# CRFT Lookup Configuration
-readonly CRFT_BASE_URL="https://crft.studio"
-readonly CRFT_LOOKUP_URL="${CRFT_BASE_URL}/lookup"
-readonly CRFT_GALLERY_URL="${CRFT_BASE_URL}/lookup/gallery"
-readonly CRFT_SCAN_TIMEOUT=60
 
 # Common message constants
 readonly HELP_SHOW_MESSAGE="Show this help"
-readonly USAGE_COMMAND_OPTIONS="Usage: $0 <command> [options]"
-readonly HELP_USAGE_INFO="Use '$0 help' for usage information"
 
 # Technology categories for structured output (referenced by provider helpers)
 # shellcheck disable=SC2034 # exported for provider helper scripts
@@ -2414,7 +2402,7 @@ main() {
 			log_error "Technology name is required. Usage: tech-stack-helper.sh info <technology>"
 			return 1
 		fi
-		cmd_info "$technology" ${positional[@]:1+"${positional[@]:1}"}
+		cmd_info "$technology" "${positional[@]:1}"
 		;;
 	help | -h | --help)
 		print_usage

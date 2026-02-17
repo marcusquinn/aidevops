@@ -1389,7 +1389,6 @@ main() {
 	check-regression) cmd_check_regression "$@" ;;
 	status) cmd_status "$@" ;;
 	reset) cmd_reset "$@" ;;
-	check-regression) cmd_check_regression "$@" ;;
 	help | --help | -h) show_help ;;
 	*)
 		log_error "$ERROR_UNKNOWN_COMMAND $command"
