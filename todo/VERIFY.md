@@ -762,9 +762,17 @@
   check: shellcheck .agents/scripts/supervisor/todo-sync.sh
   check: file-exists .agents/scripts/supervisor/todo-sync.sh
 
-- [ ] v099 t1070 Post blocked reason comment on GitHub issues when status:... | PR #1551 | merged:2026-02-16
+- [x] v099 t1070 Post blocked reason comment on GitHub issues when status:... | PR #1551 | merged:2026-02-16 verified:2026-02-16
   files: .agents/scripts/supervisor/backfill-blocked-comments.sh, .agents/scripts/supervisor/issue-sync.sh
   check: shellcheck .agents/scripts/supervisor/backfill-blocked-comments.sh
   check: file-exists .agents/scripts/supervisor/backfill-blocked-comments.sh
   check: shellcheck .agents/scripts/supervisor/issue-sync.sh
   check: file-exists .agents/scripts/supervisor/issue-sync.sh
+
+- [ ] v100 t1064 Unbuilt.app provider agent — create `tools/research/pro... | PR #1542 | merged:2026-02-17
+  files: .agents/scripts/tech-stack-helper.sh, .agents/subagent-index.toon, .agents/tools/research/providers/unbuilt.md
+  check: shellcheck .agents/scripts/tech-stack-helper.sh
+  check: file-exists .agents/scripts/tech-stack-helper.sh
+  check: file-exists .agents/subagent-index.toon
+  check: file-exists .agents/tools/research/providers/unbuilt.md
+  check: rg "unbuilt" .agents/subagent-index.toon
