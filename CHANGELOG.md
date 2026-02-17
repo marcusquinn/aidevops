@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.116.0] - 2026-02-17
+
+### Added
+
+- Tech stack lookup system — open-source BuiltWith alternative with multiple providers (t1063-t1068)
+  - Unbuilt.app provider agent (t1064)
+  - CRFT Lookup provider agent (t1065)
+  - Open Tech Explorer provider agent (t1066)
+  - Wappalyzer OSS provider agent (t1067)
+  - Reverse tech stack lookup with filtering (t1068)
+  - `/tech-stack` slash command (t1063.3)
+  - tech-stack-lookup.md orchestrator agent (t1063.2)
+- Qwen3-TTS as TTS provider in voice agent — Apache-2.0, 10 languages, 97ms streaming latency (t1061)
+- Post blocked reason comments on GitHub issues when status:blocked is applied (t1070)
+
+### Fixed
+
+- **Critical**: Pulse crash on `mergedAt:null` — `grep -o` returned exit 1 under `set -euo pipefail`, killing the entire pulse and preventing Phase 3.5 rebase retry and Phase 3.6 opus escalation from ever running (t1071)
+- **Critical**: `git rebase --continue` failed in headless/cron — `TERM` unset caused nano editor error, aborting all AI-resolved rebases (t1071)
+- Multi-commit rebase loop — branches with multiple conflicting commits are now fully rebased instead of aborting after the first conflict (t1072)
+- Sequential subtask dispatch — subtasks (e.g., t1063.1, t1063.2) now dispatch in order instead of in parallel, preventing merge conflicts from sibling tasks modifying the same files (t1073)
+- Auto-retry timed-out workers — Phase 4 now checks retries remaining before marking failed; workers with existing PRs transition to pr_review instead (t1074)
+- dedup_todo_task_ids() now deletes merge-conflict duplicates instead of renaming them to ghost task IDs (t1069)
+- wp-helper.sh SSH stdin consumption fix (t1057)
+- Cloudways template path fix (t1058)
+
 ## [2.115.22] - 2026-02-16
 
 ### Added
