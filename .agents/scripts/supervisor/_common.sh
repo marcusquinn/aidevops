@@ -18,6 +18,8 @@ set -euo pipefail
 #######################################
 db() {
 	sqlite3 -cmd ".timeout 5000" "$@"
+	local rc=$?
+	return $rc
 }
 
 #######################################
@@ -26,22 +28,27 @@ db() {
 #######################################
 log_info() {
 	echo -e "${BLUE}[SUPERVISOR]${NC} $*" >&2
+	return 0
 }
 
 log_success() {
 	echo -e "${GREEN}[SUPERVISOR]${NC} $*" >&2
+	return 0
 }
 
 log_warn() {
 	echo -e "${YELLOW}[SUPERVISOR]${NC} $*" >&2
+	return 0
 }
 
 log_error() {
 	echo -e "${RED}[SUPERVISOR]${NC} $*" >&2
+	return 0
 }
 
 log_verbose() {
 	[[ "${SUPERVISOR_VERBOSE:-}" == "true" ]] && echo -e "${BLUE}[SUPERVISOR]${NC} $*" >&2 || true
+	return 0
 }
 
 #######################################

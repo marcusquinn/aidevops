@@ -26,6 +26,7 @@ SKIP=0
 
 cleanup_test() {
 	rm -rf "$TEST_DIR"
+	return 0
 }
 
 trap cleanup_test EXIT
@@ -42,20 +43,24 @@ NC='\033[0m'
 pass() {
 	echo -e "${GREEN}[PASS]${NC} $1"
 	PASS=$((PASS + 1))
+	return 0
 }
 
 fail() {
 	echo -e "${RED}[FAIL]${NC} $1"
 	FAIL=$((FAIL + 1))
+	return 0
 }
 
 skip() {
 	echo -e "${YELLOW}[SKIP]${NC} $1"
 	SKIP=$((SKIP + 1))
+	return 0
 }
 
 info() {
 	echo -e "${BLUE}[INFO]${NC} $1"
+	return 0
 }
 
 # =============================================================================
@@ -122,6 +127,7 @@ EOF
 	else
 		fail "Counter file not incremented as expected (value: $final_counter)"
 	fi
+	return 0
 }
 
 # =============================================================================
@@ -185,6 +191,7 @@ EOF
 	else
 		fail "Expected counter=181, got '$new_counter'"
 	fi
+	return 0
 }
 
 # =============================================================================
@@ -302,6 +309,7 @@ SQL
 	else
 		fail "Expected 3 queued tasks, got $queued_count"
 	fi
+	return 0
 }
 
 # =============================================================================
@@ -417,6 +425,7 @@ EOF
 	else
 		fail "Expected 3 renames, got $changes_made"
 	fi
+	return 0
 }
 
 # =============================================================================
@@ -525,6 +534,7 @@ EOF
 	else
 		fail "Pre-commit logic incorrectly flags clean TODO.md"
 	fi
+	return 0
 }
 
 # =============================================================================
@@ -594,6 +604,7 @@ test_coderabbit_path() {
 	else
 		fail "Scripts are in different directories: $coderabbit_dir vs $claim_dir"
 	fi
+	return 0
 }
 
 # =============================================================================
@@ -649,6 +660,7 @@ EOF
 	else
 		fail "--dry-run did not output expected DRY_RUN placeholder"
 	fi
+	return 0
 }
 
 # =============================================================================
@@ -729,6 +741,7 @@ No tasks yet."
 	else
 		fail "Expected highest=0 for empty TODO, got $highest"
 	fi
+	return 0
 }
 
 # =============================================================================
@@ -809,6 +822,7 @@ test_edge_cases() {
 	else
 		fail "Inline references incorrectly counted as task definitions: $ref_dups"
 	fi
+	return 0
 }
 
 # =============================================================================
@@ -873,6 +887,7 @@ EOF
 	else
 		fail "Expected counter=605, got '$new_counter'"
 	fi
+	return 0
 }
 
 # =============================================================================
@@ -931,6 +946,7 @@ EOF
 	else
 		fail "Expected t142, got '$task_id'"
 	fi
+	return 0
 }
 
 # =============================================================================

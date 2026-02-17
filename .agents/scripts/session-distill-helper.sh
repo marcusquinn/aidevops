@@ -41,7 +41,8 @@ log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 # Ensure session directory exists
 #######################################
 init_session_dir() {
-    mkdir -p "$SESSION_DIR"
+	mkdir -p "$SESSION_DIR"
+	return 0
 }
 
 #######################################
@@ -49,44 +50,44 @@ init_session_dir() {
 # Gathers data from git, TODO.md, and recent activity
 #######################################
 analyze_session() {
-    init_session_dir
-    
-    log_info "Analyzing session context..."
-    
-    local analysis_file="$SESSION_DIR/session-analysis.json"
-    
-    # Gather git context
-    local branch commits_today files_changed
-    branch=$(git branch --show-current 2>/dev/null || echo "unknown")
-    commits_today=$(git log --oneline --since="midnight" 2>/dev/null | wc -l | tr -d ' ')
-    files_changed=$(git diff --name-only HEAD~5 2>/dev/null | wc -l | tr -d ' ' || echo "0")
-    
-    # Get recent commit messages for pattern extraction
-    local recent_commits
-    recent_commits=$(git log --oneline -10 --format="%s" 2>/dev/null | head -10 || echo "")
-    
-    # Check for error patterns in recent commits
-    local error_fixes
-    error_fixes=$(echo "$recent_commits" | grep -ci "fix\|error\|bug\|issue" || echo "0")
-    
-    # Check TODO.md for completed tasks
-    local completed_tasks
-    if [[ -f "TODO.md" ]]; then
-        completed_tasks=$(grep -c "^\- \[x\]" TODO.md 2>/dev/null || echo "0")
-    else
-        completed_tasks="0"
-    fi
-    
-    # Build analysis JSON safely using jq to prevent JSON injection
-    jq -n \
-        --arg timestamp "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
-        --arg branch "$branch" \
-        --argjson commits_today "$commits_today" \
-        --argjson files_changed "$files_changed" \
-        --argjson error_fixes "$error_fixes" \
-        --argjson completed_tasks "$completed_tasks" \
-        --arg recent_commits "$recent_commits" \
-        '{
+	init_session_dir
+
+	log_info "Analyzing session context..."
+
+	local analysis_file="$SESSION_DIR/session-analysis.json"
+
+	# Gather git context
+	local branch commits_today files_changed
+	branch=$(git branch --show-current 2>/dev/null || echo "unknown")
+	commits_today=$(git log --oneline --since="midnight" 2>/dev/null | wc -l | tr -d ' ')
+	files_changed=$(git diff --name-only HEAD~5 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+
+	# Get recent commit messages for pattern extraction
+	local recent_commits
+	recent_commits=$(git log --oneline -10 --format="%s" 2>/dev/null | head -10 || echo "")
+
+	# Check for error patterns in recent commits
+	local error_fixes
+	error_fixes=$(echo "$recent_commits" | grep -ci "fix\|error\|bug\|issue" || echo "0")
+
+	# Check TODO.md for completed tasks
+	local completed_tasks
+	if [[ -f "TODO.md" ]]; then
+		completed_tasks=$(grep -c "^\- \[x\]" TODO.md 2>/dev/null || echo "0")
+	else
+		completed_tasks="0"
+	fi
+
+	# Build analysis JSON safely using jq to prevent JSON injection
+	jq -n \
+		--arg timestamp "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+		--arg branch "$branch" \
+		--argjson commits_today "$commits_today" \
+		--argjson files_changed "$files_changed" \
+		--argjson error_fixes "$error_fixes" \
+		--argjson completed_tasks "$completed_tasks" \
+		--arg recent_commits "$recent_commits" \
+		'{
             timestamp: $timestamp,
             branch: $branch,
             commits_today: $commits_today,
@@ -94,11 +95,11 @@ analyze_session() {
             error_fixes: $error_fixes,
             completed_tasks: $completed_tasks,
             recent_commits: ($recent_commits | split("\n") | map(select(length > 0)))
-        }' > "$analysis_file"
-    
-    log_success "Session analysis saved to $analysis_file"
-    cat "$analysis_file"
-    return 0
+        }' >"$analysis_file"
+
+	log_success "Session analysis saved to $analysis_file"
+	cat "$analysis_file"
+	return 0
 }
 
 #######################################
@@ -106,173 +107,173 @@ analyze_session() {
 # Identifies patterns worth remembering
 #######################################
 extract_learnings() {
-    init_session_dir
-    
-    log_info "Extracting learnings from session..."
-    
-    local analysis_file="$SESSION_DIR/session-analysis.json"
-    local learnings_file="$SESSION_DIR/extracted-learnings.json"
-    
-    if [[ ! -f "$analysis_file" ]]; then
-        log_warn "No session analysis found. Running analyze first..."
-        analyze_session
-    fi
-    
-    # Read analysis
-    local branch commits_today error_fixes
-    branch=$(jq -r '.branch' "$analysis_file" 2>/dev/null || echo "unknown")
-    commits_today=$(jq -r '.commits_today' "$analysis_file" 2>/dev/null || echo "0")
-    error_fixes=$(jq -r '.error_fixes' "$analysis_file" 2>/dev/null || echo "0")
-    
-    # Extract learnings based on patterns
-    local learnings=()
-    
-    # Pattern 1: Error fixes → WORKING_SOLUTION or ERROR_FIX
-    if [[ "$error_fixes" -gt 0 ]]; then
-        # Get the fix commit messages
-        local fix_commits
-        fix_commits=$(git log --oneline -10 --format="%s" 2>/dev/null | grep -i "fix\|error\|bug" | head -3 || echo "")
-        
-        if [[ -n "$fix_commits" ]]; then
-            while IFS= read -r commit_msg; do
-                if [[ -n "$commit_msg" ]]; then
-                    # Use jq to safely build JSON and prevent injection
-                    local learning_json
-                    learning_json=$(jq -n --arg type "ERROR_FIX" --arg content "$commit_msg" --arg tags "session,auto-distill,$branch" \
-                        '{type: $type, content: $content, tags: $tags}')
-                    learnings+=("$learning_json")
-                fi
-            done <<< "$fix_commits"
-        fi
-    fi
-    
-    # Pattern 2: Feature branch completion → WORKING_SOLUTION
-    if [[ "$branch" == feature/* ]] && [[ "$commits_today" -gt 2 ]]; then
-        local feature_name="${branch#feature/}"
-        local learning_json
-        learning_json=$(jq -n --arg type "WORKING_SOLUTION" --arg content "Implemented feature: $feature_name" --arg tags "session,feature,$feature_name" \
-            '{type: $type, content: $content, tags: $tags}')
-        learnings+=("$learning_json")
-    fi
-    
-    # Pattern 3: Refactor patterns → CODEBASE_PATTERN
-    local refactor_commits
-    refactor_commits=$(git log --oneline -10 --format="%s" 2>/dev/null | grep -i "refactor\|restructure\|reorganize" | head -2 || echo "")
-    if [[ -n "$refactor_commits" ]]; then
-        while IFS= read -r commit_msg; do
-            if [[ -n "$commit_msg" ]]; then
-                local learning_json
-                learning_json=$(jq -n --arg type "CODEBASE_PATTERN" --arg content "$commit_msg" --arg tags "session,refactor,$branch" \
-                    '{type: $type, content: $content, tags: $tags}')
-                learnings+=("$learning_json")
-            fi
-        done <<< "$refactor_commits"
-    fi
-    
-    # Pattern 4: Documentation updates → CONTEXT
-    local doc_commits
-    doc_commits=$(git log --oneline -10 --format="%s" 2>/dev/null | grep -i "doc\|readme\|comment" | head -2 || echo "")
-    if [[ -n "$doc_commits" ]]; then
-        while IFS= read -r commit_msg; do
-            if [[ -n "$commit_msg" ]]; then
-                local learning_json
-                learning_json=$(jq -n --arg type "CONTEXT" --arg content "$commit_msg" --arg tags "session,documentation,$branch" \
-                    '{type: $type, content: $content, tags: $tags}')
-                learnings+=("$learning_json")
-            fi
-        done <<< "$doc_commits"
-    fi
-    
-    # Build learnings JSON
-    local learnings_json="["
-    local first=true
-    for learning in "${learnings[@]}"; do
-        if [[ "$first" == "true" ]]; then
-            first=false
-        else
-            learnings_json+=","
-        fi
-        learnings_json+="$learning"
-    done
-    learnings_json+="]"
-    
-    echo "$learnings_json" | jq '.' > "$learnings_file"
-    
-    local count
-    count=$(echo "$learnings_json" | jq 'length')
-    log_success "Extracted $count learnings to $learnings_file"
-    
-    cat "$learnings_file"
-    return 0
+	init_session_dir
+
+	log_info "Extracting learnings from session..."
+
+	local analysis_file="$SESSION_DIR/session-analysis.json"
+	local learnings_file="$SESSION_DIR/extracted-learnings.json"
+
+	if [[ ! -f "$analysis_file" ]]; then
+		log_warn "No session analysis found. Running analyze first..."
+		analyze_session
+	fi
+
+	# Read analysis
+	local branch commits_today error_fixes
+	branch=$(jq -r '.branch' "$analysis_file" 2>/dev/null || echo "unknown")
+	commits_today=$(jq -r '.commits_today' "$analysis_file" 2>/dev/null || echo "0")
+	error_fixes=$(jq -r '.error_fixes' "$analysis_file" 2>/dev/null || echo "0")
+
+	# Extract learnings based on patterns
+	local learnings=()
+
+	# Pattern 1: Error fixes → WORKING_SOLUTION or ERROR_FIX
+	if [[ "$error_fixes" -gt 0 ]]; then
+		# Get the fix commit messages
+		local fix_commits
+		fix_commits=$(git log --oneline -10 --format="%s" 2>/dev/null | grep -i "fix\|error\|bug" | head -3 || echo "")
+
+		if [[ -n "$fix_commits" ]]; then
+			while IFS= read -r commit_msg; do
+				if [[ -n "$commit_msg" ]]; then
+					# Use jq to safely build JSON and prevent injection
+					local learning_json
+					learning_json=$(jq -n --arg type "ERROR_FIX" --arg content "$commit_msg" --arg tags "session,auto-distill,$branch" \
+						'{type: $type, content: $content, tags: $tags}')
+					learnings+=("$learning_json")
+				fi
+			done <<<"$fix_commits"
+		fi
+	fi
+
+	# Pattern 2: Feature branch completion → WORKING_SOLUTION
+	if [[ "$branch" == feature/* ]] && [[ "$commits_today" -gt 2 ]]; then
+		local feature_name="${branch#feature/}"
+		local learning_json
+		learning_json=$(jq -n --arg type "WORKING_SOLUTION" --arg content "Implemented feature: $feature_name" --arg tags "session,feature,$feature_name" \
+			'{type: $type, content: $content, tags: $tags}')
+		learnings+=("$learning_json")
+	fi
+
+	# Pattern 3: Refactor patterns → CODEBASE_PATTERN
+	local refactor_commits
+	refactor_commits=$(git log --oneline -10 --format="%s" 2>/dev/null | grep -i "refactor\|restructure\|reorganize" | head -2 || echo "")
+	if [[ -n "$refactor_commits" ]]; then
+		while IFS= read -r commit_msg; do
+			if [[ -n "$commit_msg" ]]; then
+				local learning_json
+				learning_json=$(jq -n --arg type "CODEBASE_PATTERN" --arg content "$commit_msg" --arg tags "session,refactor,$branch" \
+					'{type: $type, content: $content, tags: $tags}')
+				learnings+=("$learning_json")
+			fi
+		done <<<"$refactor_commits"
+	fi
+
+	# Pattern 4: Documentation updates → CONTEXT
+	local doc_commits
+	doc_commits=$(git log --oneline -10 --format="%s" 2>/dev/null | grep -i "doc\|readme\|comment" | head -2 || echo "")
+	if [[ -n "$doc_commits" ]]; then
+		while IFS= read -r commit_msg; do
+			if [[ -n "$commit_msg" ]]; then
+				local learning_json
+				learning_json=$(jq -n --arg type "CONTEXT" --arg content "$commit_msg" --arg tags "session,documentation,$branch" \
+					'{type: $type, content: $content, tags: $tags}')
+				learnings+=("$learning_json")
+			fi
+		done <<<"$doc_commits"
+	fi
+
+	# Build learnings JSON
+	local learnings_json="["
+	local first=true
+	for learning in "${learnings[@]}"; do
+		if [[ "$first" == "true" ]]; then
+			first=false
+		else
+			learnings_json+=","
+		fi
+		learnings_json+="$learning"
+	done
+	learnings_json+="]"
+
+	echo "$learnings_json" | jq '.' >"$learnings_file"
+
+	local count
+	count=$(echo "$learnings_json" | jq 'length')
+	log_success "Extracted $count learnings to $learnings_file"
+
+	cat "$learnings_file"
+	return 0
 }
 
 #######################################
 # Store extracted learnings to memory
 #######################################
 store_learnings() {
-    init_session_dir
-    
-    log_info "Storing learnings to memory..."
-    
-    local learnings_file="$SESSION_DIR/extracted-learnings.json"
-    
-    if [[ ! -f "$learnings_file" ]]; then
-        log_warn "No extracted learnings found. Running extract first..."
-        extract_learnings
-    fi
-    
-    if [[ ! -f "$MEMORY_HELPER" ]]; then
-        log_error "Memory helper not found: $MEMORY_HELPER"
-        return 1
-    fi
-    
-    # Read and store each learning
-    local count=0
-    local stored=0
-    
-    while IFS= read -r learning; do
-        local type content tags
-        type=$(echo "$learning" | jq -r '.type')
-        content=$(echo "$learning" | jq -r '.content')
-        tags=$(echo "$learning" | jq -r '.tags')
-        
-        if [[ -n "$content" && "$content" != "null" ]]; then
-            # Store to memory
-            if "$MEMORY_HELPER" store --content "$content" --type "$type" --tags "$tags" 2>/dev/null; then
-                stored=$((stored + 1))
-            fi
-            count=$((count + 1))
-        fi
-    done < <(jq -c '.[]' "$learnings_file" 2>/dev/null)
-    
-    log_success "Stored $stored of $count learnings to memory"
-    
-    # Clean up session files
-    rm -f "$SESSION_DIR/session-analysis.json" "$SESSION_DIR/extracted-learnings.json"
-    return 0
+	init_session_dir
+
+	log_info "Storing learnings to memory..."
+
+	local learnings_file="$SESSION_DIR/extracted-learnings.json"
+
+	if [[ ! -f "$learnings_file" ]]; then
+		log_warn "No extracted learnings found. Running extract first..."
+		extract_learnings
+	fi
+
+	if [[ ! -f "$MEMORY_HELPER" ]]; then
+		log_error "Memory helper not found: $MEMORY_HELPER"
+		return 1
+	fi
+
+	# Read and store each learning
+	local count=0
+	local stored=0
+
+	while IFS= read -r learning; do
+		local type content tags
+		type=$(echo "$learning" | jq -r '.type')
+		content=$(echo "$learning" | jq -r '.content')
+		tags=$(echo "$learning" | jq -r '.tags')
+
+		if [[ -n "$content" && "$content" != "null" ]]; then
+			# Store to memory
+			if "$MEMORY_HELPER" store --content "$content" --type "$type" --tags "$tags" 2>/dev/null; then
+				stored=$((stored + 1))
+			fi
+			count=$((count + 1))
+		fi
+	done < <(jq -c '.[]' "$learnings_file" 2>/dev/null)
+
+	log_success "Stored $stored of $count learnings to memory"
+
+	# Clean up session files
+	rm -f "$SESSION_DIR/session-analysis.json" "$SESSION_DIR/extracted-learnings.json"
+	return 0
 }
 
 #######################################
 # Full auto pipeline
 #######################################
 auto_distill() {
-    log_info "Running full session distillation pipeline..."
-    echo ""
-    
-    analyze_session
-    echo ""
-    
-    extract_learnings
-    echo ""
-    
-    store_learnings
-    echo ""
-    
-    emit_checkpoint
-    echo ""
-    
-    log_success "Session distillation complete (learnings + operational state)"
-    return 0
+	log_info "Running full session distillation pipeline..."
+	echo ""
+
+	analyze_session
+	echo ""
+
+	extract_learnings
+	echo ""
+
+	store_learnings
+	echo ""
+
+	emit_checkpoint
+	echo ""
+
+	log_success "Session distillation complete (learnings + operational state)"
+	return 0
 }
 
 #######################################
@@ -281,41 +282,41 @@ auto_distill() {
 # Complements learnings (what we learned) with state (where we are)
 #######################################
 emit_checkpoint() {
-    init_session_dir
-    
-    log_info "Capturing operational state..."
-    
-    local checkpoint_helper="$SCRIPT_DIR/session-checkpoint-helper.sh"
-    
-    if [[ -x "$checkpoint_helper" ]]; then
-        # Generate continuation prompt (captures git, supervisor, PR, TODO state)
-        local continuation_output
-        continuation_output="$(bash "$checkpoint_helper" continuation 2>/dev/null || echo "Checkpoint helper unavailable")"
-        
-        # Save to session dir for inclusion in distill output
-        local checkpoint_file="$SESSION_DIR/operational-state.md"
-        echo "$continuation_output" > "$checkpoint_file"
-        
-        log_success "Operational state saved to $checkpoint_file"
-        echo "$continuation_output"
-    else
-        log_warn "session-checkpoint-helper.sh not found at $checkpoint_helper"
-        
-        # Fallback: gather minimal state directly
-        local branch
-        branch=$(git branch --show-current 2>/dev/null || echo "unknown")
-        local open_prs
-        open_prs=$(gh pr list --state open --json number,title --jq '.[] | "#\(.number) \(.title)"' 2>/dev/null || echo "none")
-        
-        cat <<FALLBACK_EOF
+	init_session_dir
+
+	log_info "Capturing operational state..."
+
+	local checkpoint_helper="$SCRIPT_DIR/session-checkpoint-helper.sh"
+
+	if [[ -x "$checkpoint_helper" ]]; then
+		# Generate continuation prompt (captures git, supervisor, PR, TODO state)
+		local continuation_output
+		continuation_output="$(bash "$checkpoint_helper" continuation 2>/dev/null || echo "Checkpoint helper unavailable")"
+
+		# Save to session dir for inclusion in distill output
+		local checkpoint_file="$SESSION_DIR/operational-state.md"
+		echo "$continuation_output" >"$checkpoint_file"
+
+		log_success "Operational state saved to $checkpoint_file"
+		echo "$continuation_output"
+	else
+		log_warn "session-checkpoint-helper.sh not found at $checkpoint_helper"
+
+		# Fallback: gather minimal state directly
+		local branch
+		branch=$(git branch --show-current 2>/dev/null || echo "unknown")
+		local open_prs
+		open_prs=$(gh pr list --state open --json number,title --jq '.[] | "#\(.number) \(.title)"' 2>/dev/null || echo "none")
+
+		cat <<FALLBACK_EOF
 ## Operational State (fallback)
 
 **Branch**: $branch
 **Open PRs**: $open_prs
 **Uncommitted**: $(git status --short 2>/dev/null || echo "unknown")
 FALLBACK_EOF
-    fi
-    return 0
+	fi
+	return 0
 }
 
 #######################################
@@ -323,14 +324,14 @@ FALLBACK_EOF
 # Returns a prompt the AI can use to reflect on the session
 #######################################
 generate_prompt() {
-    init_session_dir
-    
-    # Gather context
-    local branch commits_today
-    branch=$(git branch --show-current 2>/dev/null || echo "unknown")
-    commits_today=$(git log --oneline --since="midnight" 2>/dev/null || echo "")
-    
-    cat << EOF
+	init_session_dir
+
+	# Gather context
+	local branch commits_today
+	branch=$(git branch --show-current 2>/dev/null || echo "unknown")
+	commits_today=$(git log --oneline --since="midnight" 2>/dev/null || echo "")
+
+	cat <<EOF
 ## Session Reflection Prompt
 
 Review this session and identify learnings worth remembering:
@@ -359,14 +360,14 @@ For each learning, use:
 Or use the /remember command:
 \`/remember Fixed CORS issue by adding proxy_set_header in nginx config\`
 EOF
-    return 0
+	return 0
 }
 
 #######################################
 # Show help
 #######################################
 show_help() {
-    cat << 'EOF'
+	cat <<'EOF'
 Session Distill Helper - Extract learnings from session for memory storage
 
 Usage:
@@ -411,43 +412,45 @@ Examples:
   session-distill-helper.sh extract
   session-distill-helper.sh store
 EOF
+	return 0
 }
 
 #######################################
 # Main
 #######################################
 main() {
-    local command="${1:-help}"
-    shift || true
-    
-    case "$command" in
-        analyze)
-            analyze_session
-            ;;
-        extract)
-            extract_learnings
-            ;;
-        store)
-            store_learnings
-            ;;
-        checkpoint)
-            emit_checkpoint
-            ;;
-        auto)
-            auto_distill
-            ;;
-        prompt)
-            generate_prompt
-            ;;
-        help|--help|-h)
-            show_help
-            ;;
-        *)
-            log_error "Unknown command: $command"
-            show_help
-            return 1
-            ;;
-    esac
+	local command="${1:-help}"
+	shift || true
+
+	case "$command" in
+	analyze)
+		analyze_session
+		;;
+	extract)
+		extract_learnings
+		;;
+	store)
+		store_learnings
+		;;
+	checkpoint)
+		emit_checkpoint
+		;;
+	auto)
+		auto_distill
+		;;
+	prompt)
+		generate_prompt
+		;;
+	help | --help | -h)
+		show_help
+		;;
+	*)
+		log_error "Unknown command: $command"
+		show_help
+		return 1
+		;;
+	esac
+	return 0
 }
 
 main "$@"

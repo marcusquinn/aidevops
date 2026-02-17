@@ -5,28 +5,33 @@
 bootstrap_repo() {
 	# TODO: Extract from setup.sh lines 1049-1230
 	:
+	return 0
 }
 
 # Set permissions on scripts
 set_permissions() {
 	# TODO: Extract from setup.sh lines 2735-2750
 	:
+	return 0
 }
 
 # Install aidevops CLI
 install_aidevops_cli() {
 	# TODO: Extract from setup.sh lines 2803-2843
 	:
+	return 0
 }
 
 # Parse command line arguments
 parse_args() {
 	# TODO: Extract from setup.sh lines 5403-5447
 	:
+	return 0
 }
 
 # Main entry point
 main() {
 	# TODO: Extract from setup.sh lines 5450-5696
 	:
+	return 0
 }

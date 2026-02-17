@@ -7,7 +7,8 @@ set -euo pipefail
 TEST_DIR="/tmp/t253-test-$$"
 
 cleanup_test() {
-    rm -rf "$TEST_DIR"
+	rm -rf "$TEST_DIR"
+	return 0
 }
 
 trap cleanup_test EXIT
@@ -19,7 +20,7 @@ echo ""
 
 # Test 1: Normal exit (EXIT trap)
 echo "Test 1: Normal exit (EXIT trap)"
-cat > "$TEST_DIR/test-wrapper-exit.sh" <<'EOF'
+cat >"$TEST_DIR/test-wrapper-exit.sh" <<'EOF'
 #!/usr/bin/env bash
 cleanup_children() {
   local wrapper_pid=$$
@@ -49,23 +50,23 @@ EOF
 chmod +x "$TEST_DIR/test-wrapper-exit.sh"
 
 # Run the test wrapper in background
-"$TEST_DIR/test-wrapper-exit.sh" > "$TEST_DIR/test1.log" 2>&1 &
+"$TEST_DIR/test-wrapper-exit.sh" >"$TEST_DIR/test1.log" 2>&1 &
 test_pid=$!
 sleep 2
 
 # Check if child was cleaned up
 child_pid=$(grep "Spawned child:" "$TEST_DIR/test1.log" | awk '{print $3}')
 if kill -0 "$child_pid" 2>/dev/null; then
-    echo "❌ FAIL: Child process $child_pid still alive after normal exit"
-    kill -9 "$child_pid" 2>/dev/null || true
+	echo "❌ FAIL: Child process $child_pid still alive after normal exit"
+	kill -9 "$child_pid" 2>/dev/null || true
 else
-    echo "✅ PASS: Child process cleaned up on normal exit"
+	echo "✅ PASS: Child process cleaned up on normal exit"
 fi
 echo ""
 
 # Test 2: SIGTERM (INT trap)
 echo "Test 2: SIGTERM (INT trap)"
-cat > "$TEST_DIR/test-wrapper-term.sh" <<'EOF'
+cat >"$TEST_DIR/test-wrapper-term.sh" <<'EOF'
 #!/usr/bin/env bash
 cleanup_children() {
   local wrapper_pid=$$
@@ -93,7 +94,7 @@ sleep 300
 EOF
 chmod +x "$TEST_DIR/test-wrapper-term.sh"
 
-"$TEST_DIR/test-wrapper-term.sh" > "$TEST_DIR/test2.log" 2>&1 &
+"$TEST_DIR/test-wrapper-term.sh" >"$TEST_DIR/test2.log" 2>&1 &
 test_pid=$!
 sleep 2
 
@@ -106,16 +107,16 @@ sleep 2
 
 # Check if child was cleaned up
 if kill -0 "$child_pid" 2>/dev/null; then
-    echo "❌ FAIL: Child process $child_pid still alive after SIGTERM"
-    kill -9 "$child_pid" 2>/dev/null || true
+	echo "❌ FAIL: Child process $child_pid still alive after SIGTERM"
+	kill -9 "$child_pid" 2>/dev/null || true
 else
-    echo "✅ PASS: Child process cleaned up on SIGTERM"
+	echo "✅ PASS: Child process cleaned up on SIGTERM"
 fi
 echo ""
 
 # Test 3: SIGKILL (cannot be trapped - this is the limitation)
 echo "Test 3: SIGKILL (cannot be trapped - expected to leave orphans)"
-cat > "$TEST_DIR/test-wrapper-kill.sh" <<'EOF'
+cat >"$TEST_DIR/test-wrapper-kill.sh" <<'EOF'
 #!/usr/bin/env bash
 cleanup_children() {
   local wrapper_pid=$$
@@ -143,7 +144,7 @@ sleep 300
 EOF
 chmod +x "$TEST_DIR/test-wrapper-kill.sh"
 
-"$TEST_DIR/test-wrapper-kill.sh" > "$TEST_DIR/test3.log" 2>&1 &
+"$TEST_DIR/test-wrapper-kill.sh" >"$TEST_DIR/test3.log" 2>&1 &
 test_pid=$!
 sleep 2
 
@@ -156,18 +157,18 @@ sleep 2
 
 # Check if child became orphaned (expected behavior for SIGKILL)
 if kill -0 "$child_pid" 2>/dev/null; then
-    echo "⚠️  EXPECTED: Child process $child_pid orphaned after SIGKILL (cannot trap SIGKILL)"
-    echo "   Note: This is a known limitation - SIGKILL cannot be trapped"
-    echo "   The supervisor's _kill_descendants function handles this case"
-    kill -9 "$child_pid" 2>/dev/null || true
+	echo "⚠️  EXPECTED: Child process $child_pid orphaned after SIGKILL (cannot trap SIGKILL)"
+	echo "   Note: This is a known limitation - SIGKILL cannot be trapped"
+	echo "   The supervisor's _kill_descendants function handles this case"
+	kill -9 "$child_pid" 2>/dev/null || true
 else
-    echo "✅ Child process cleaned up (unexpected but good)"
+	echo "✅ Child process cleaned up (unexpected but good)"
 fi
 echo ""
 
 # Test 4: Process group isolation with setsid
 echo "Test 4: Process group isolation with setsid"
-cat > "$TEST_DIR/test-setsid.sh" <<'EOF'
+cat >"$TEST_DIR/test-setsid.sh" <<'EOF'
 #!/usr/bin/env bash
 # Spawn a worker with setsid (like the supervisor does)
 setsid bash -c 'sleep 300 & echo "Worker PID: $$ PGID: $(ps -o pgid= -p $$) Child: $!"' > /tmp/t253-setsid-$$.log 2>&1 &
