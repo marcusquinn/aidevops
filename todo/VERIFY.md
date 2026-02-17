@@ -811,8 +811,13 @@
   check: file-exists .agents/scripts/tech-stack-helper.sh
   check: file-exists .agents/seo/tech-stack.md
 
-- [ ] v106 t1059 wp-helper.sh tenant-aware server reference resolution + S... | PR #1568 | merged:2026-02-17
+- [x] v106 t1059 wp-helper.sh tenant-aware server reference resolution + S... | PR #1568 | merged:2026-02-17 verified:2026-02-17
   files: .agents/configs/wordpress-sites.json.txt, .agents/scripts/wp-helper.sh
   check: file-exists .agents/configs/wordpress-sites.json.txt
   check: shellcheck .agents/scripts/wp-helper.sh
   check: file-exists .agents/scripts/wp-helper.sh
+
+- [ ] v107 t1060 worktree-helper.sh detect stale remote branches before cr... | PR #1567 | merged:2026-02-17
+  files: .agents/scripts/worktree-helper.sh
+  check: shellcheck .agents/scripts/worktree-helper.sh
+  check: file-exists .agents/scripts/worktree-helper.sh
