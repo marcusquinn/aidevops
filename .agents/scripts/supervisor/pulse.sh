@@ -587,8 +587,8 @@ cmd_pulse() {
 				fi
 
 				local pr_state pr_merged_at
-				pr_state=$(echo "$pr_json" | grep -o '"state":"[^"]*"' | cut -d'"' -f4)
-				pr_merged_at=$(echo "$pr_json" | grep -o '"mergedAt":"[^"]*"' | cut -d'"' -f4)
+				pr_state=$(echo "$pr_json" | grep -o '"state":"[^"]*"' | cut -d'"' -f4 || echo "")
+				pr_merged_at=$(echo "$pr_json" | grep -o '"mergedAt":"[^"]*"' | cut -d'"' -f4 || echo "")
 
 				if [[ "$pr_state" == "MERGED" ]]; then
 					local escaped_stale_id
@@ -1985,7 +1985,7 @@ cmd_triage() {
 		fi
 
 		local pr_state
-		pr_state=$(echo "$pr_json" | grep -o '"state":"[^"]*"' | cut -d'"' -f4)
+		pr_state=$(echo "$pr_json" | grep -o '"state":"[^"]*"' | cut -d'"' -f4 || echo "")
 
 		case "$pr_state" in
 		MERGED)
