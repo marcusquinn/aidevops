@@ -37,6 +37,7 @@ tools/mobile/,Mobile development - iOS/macOS build test simulator and emulator a
 tools/pdf/,PDF processing - form filling and digital signatures,overview|libpdf
 tools/accessibility/,Accessibility and contrast testing - WCAG compliance for websites and emails,accessibility
 tools/performance/,Web performance - Core Web Vitals and network analysis,performance|webpagetest
+tools/research/,Technology research - tech stack detection and reverse lookup,tech-stack-lookup
 tools/ui/,UI components - design systems and debugging,shadcn|ui-skills|frontend-debugging
 tools/code-review/,Code quality - linting and security scanning,code-standards|code-simplifier|codacy|coderabbit|qlty|snyk|secretlint|security-analysis
 tools/context/,Context optimization - semantic search and indexing,osgrep|augment-context-engine|context-builder|context7|toon|mcp-discovery|github-search|model-routing
@@ -109,7 +110,7 @@ stagehand-helper.sh,Browser automation with Stagehand
 crawl4ai-helper.sh,Web crawling and extraction
 watercrawl-helper.sh,WaterCrawl cloud API for web crawling and search
 domain-research-helper.sh,DNS intelligence (rDNS subdomains CNAMEs)
-tech-stack-helper.sh,Website tech stack detection via CRFT Lookup (scan techs lighthouse meta compare)
+tech-stack-helper.sh,Tech stack detection and reverse lookup with frontend technology analysis (lookup reverse cache-stats cache-clear unbuilt analyse normalise install providers)
 toon-helper.sh,TOON format conversion
 sonarcloud-cli.sh,SonarCloud analysis
 quality-sweep-helper.sh,Unified quality debt sweep (SonarCloud Codacy CodeFactor findings)
@@ -178,5 +179,4 @@ wavespeed-helper.sh,WaveSpeed AI REST API client - unified generation for 200+ m
 plugin-loader-helper.sh,Plugin agent loader - discover validate load unload agents hooks index status
 claim-task-id.sh,Distributed task ID allocation with collision prevention (online GH/GL issue lock or offline +100 offset)
 planning-commit-helper.sh,Planning file auto-commit helper (next-id complete commit check status)
-tech-stack-helper.sh,Frontend technology detection (unbuilt analyse normalise install providers)
 -->
