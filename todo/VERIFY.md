@@ -799,3 +799,8 @@
   check: file-exists .agents/scripts/supervisor/deploy.sh
   check: shellcheck .agents/scripts/supervisor/state.sh
   check: file-exists .agents/scripts/supervisor/state.sh
+
+- [ ] v104 t1063.1 Create tech-stack-helper.sh with `lookup <url>`, `reverse... | PR #1545 | merged:2026-02-17
+  files: .agents/scripts/tech-stack-helper.sh
+  check: shellcheck .agents/scripts/tech-stack-helper.sh
+  check: file-exists .agents/scripts/tech-stack-helper.sh
