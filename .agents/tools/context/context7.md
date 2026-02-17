@@ -19,20 +19,29 @@ tools:
 ## Quick Reference
 
 - **Purpose**: Real-time access to latest library/framework documentation
-- **Command**: `npx -y @context7/mcp-server@latest`
-- **Built into Augment**: No setup needed, tools available directly
+- **Package**: `@upstash/context7-mcp` (formerly `@context7/mcp-server`)
+- **CLI**: `npx ctx7` for skills and setup commands
+- **Telemetry**: Disable with `export CTX7_TELEMETRY_DISABLED=1`
 
 **MCP Tools**:
-- `resolve-library-id("next.js")` → Returns "/vercel/next.js"
-- `get-library-docs("/vercel/next.js")` → Returns documentation
-- `get-library-docs("/vercel/next.js", topic="routing")` → Topic-specific
-- `get-library-docs("/vercel/next.js", tokens=15000)` → More detail
+- `resolve-library-id` → Resolves library name to Context7 ID (e.g., "next.js" → "/vercel/next.js")
+- `query-docs` → Retrieves documentation for a library ID with a query
 
 **Common Library IDs**:
 - Frontend: `/vercel/next.js`, `/facebook/react`, `/vuejs/vue`
 - Backend: `/expressjs/express`, `/nestjs/nest`
 - DB/ORM: `/prisma/prisma`, `/supabase/supabase`, `/drizzle-team/drizzle-orm`
 - Tools: `/vitejs/vite`, `/typescript-eslint/typescript-eslint`
+
+**Skills Registry**: Context7 hosts a searchable skills registry at [context7.com/skills](https://context7.com/skills). Search, install, and suggest skills for your project:
+
+```bash
+npx ctx7 skills search react        # Search registry
+npx ctx7 skills suggest             # Auto-suggest from project deps
+npx ctx7 skills install /anthropics/skills pdf  # Install a skill
+```
+
+Skills found in the Context7 registry can be imported into aidevops using `/add-skill`. See "Skill Discovery and Import" section below.
 
 **Config Location**: `~/Library/Application Support/Claude/claude_desktop_config.json`
 <!-- AI-CONTEXT-END -->
@@ -71,20 +80,26 @@ Context7 MCP is a Model Context Protocol server that gives AI assistants access 
 
 - **Node.js 18+** installed
 - **npm or npx** available
-- **AI assistant** that supports MCP (OpenCode recommended)
+- **AI assistant** that supports MCP (Claude Code recommended)
 
 ### **1. Test Context7 MCP Server:**
 
 ```bash
 # Test the server (no installation needed with npx)
-npx -y @context7/mcp-server@latest --help
+npx -y @upstash/context7-mcp --help
 
 # This should show the Context7 MCP server help
 ```
 
 ### **2. Add to Your AI Assistant Configuration:**
 
-> **Note**: aidevops configures Context7 for OpenCode automatically via `setup.sh`. The sections below document config formats for other tools as MCP reference.
+> **Note**: aidevops configures Context7 automatically via `setup.sh`. The sections below document config formats for other tools as MCP reference.
+
+#### **For Claude Code:**
+
+```bash
+claude mcp add --scope user context7 -- npx -y @upstash/context7-mcp
+```
 
 #### **For Claude Desktop:**
 
@@ -95,36 +110,33 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
   "mcpServers": {
     "context7": {
       "command": "npx",
-      "args": ["-y", "@context7/mcp-server@latest"],
-      "env": {
-        "DEBUG": "false"
-      }
+      "args": ["-y", "@upstash/context7-mcp"]
     }
   }
 }
 ```
 
-#### **For Cursor IDE:**
+#### **Remote Server Connection (recommended):**
 
-Create/edit `.cursor/mcp.json` in your project:
+For any MCP client that supports remote servers:
 
 ```json
 {
   "mcpServers": {
     "context7": {
-      "command": "npx",
-      "args": ["-y", "@context7/mcp-server@latest"]
+      "url": "https://mcp.context7.com/mcp"
     }
   }
 }
 ```
 
-#### **For Augment Agent:**
+#### **Automated Setup:**
 
-Context7 tools are **built-in** - no additional setup required!
-
-- Use `resolve-library-id` tool to find library IDs
-- Use `get-library-docs` tool to fetch documentation
+```bash
+# Auto-configures MCP server and rule for your AI assistant
+npx ctx7 setup
+# Use --cursor, --claude, or --opencode to target a specific agent
+```
 
 ### **3. Framework Configuration:**
 
@@ -294,7 +306,7 @@ resolve-library-id("new-library-name")
 
 ```bash
 # Test the server directly
-npx -y @context7/mcp-server@latest --version
+npx -y @upstash/context7-mcp --help
 
 # Check your AI assistant's MCP configuration
 # Restart your AI assistant
@@ -363,15 +375,105 @@ get-library-docs("/facebook/react", tokens=15000)
 get-library-docs("/facebook/react", tokens=2000)
 ```
 
-## 📈 **Benefits for Your Development**
+## Skill Discovery and Import
 
-✅ **Always Current** - Documentation is continuously updated
-✅ **Version Aware** - Access docs for specific versions you're using
-✅ **AI Optimized** - Content formatted for better AI understanding
-✅ **Comprehensive** - Covers thousands of popular development tools
-✅ **Fast Access** - Real-time retrieval without manual searching
-✅ **Context Aware** - AI understands your specific development context
+Context7 maintains a searchable [skills registry](https://context7.com/skills) with trust scores, install counts, and prompt injection scanning. Skills follow the [Agent Skills](https://agentskills.io) open standard (`SKILL.md` format).
 
----
+### Searching for Skills
 
-**Transform your AI-assisted development with real-time access to the latest documentation!** 🚀📚
+```bash
+# Search the Context7 registry
+npx ctx7 skills search react
+npx ctx7 skills search "typescript testing"
+
+# Auto-suggest skills based on project dependencies
+npx ctx7 skills suggest
+
+# View details about a repository's skills
+npx ctx7 skills info /anthropics/skills
+```
+
+### Installing Skills via Context7
+
+```bash
+# Interactive selection from a repository
+npx ctx7 skills install /anthropics/skills
+
+# Install a specific skill
+npx ctx7 skills install /anthropics/skills pdf
+
+# Install globally (available in all projects)
+npx ctx7 skills install /anthropics/skills pdf --global
+
+# Target a specific client
+npx ctx7 skills install /anthropics/skills pdf --claude
+```
+
+### Importing Skills into aidevops
+
+Skills discovered in the Context7 registry can be imported into the aidevops framework using the `/add-skill` system. This converts them to aidevops subagent format with frontmatter, registers them for update tracking, and places them in the appropriate `.agents/` directory.
+
+**Workflow:**
+
+1. **Search** the Context7 registry: `npx ctx7 skills search <query>`
+2. **Evaluate** trust score (7+ = high, 3-6.9 = medium, <3 = review carefully)
+3. **Import** into aidevops: `/add-skill <github-repo>` (e.g., `/add-skill anthropics/skills`)
+4. **Verify** the imported skill passes security scanning (Cisco Skill Scanner)
+5. **Deploy** with `./setup.sh` to create symlinks for all AI assistants
+
+**Example -- importing a skill found via Context7:**
+
+```bash
+# 1. Search Context7 for Supabase skills
+npx ctx7 skills search supabase
+# Found: /supabase-community/supabase-custom-claims (trust: 7.2)
+
+# 2. Import into aidevops
+/add-skill supabase-community/supabase-custom-claims
+
+# 3. The skill is placed in .agents/ with -skill suffix
+# → .agents/services/database/supabase-custom-claims-skill.md
+```
+
+**Key differences between Context7 install and aidevops import:**
+
+| Aspect | `ctx7 skills install` | `/add-skill` |
+|--------|----------------------|--------------|
+| Format | SKILL.md (as-is) | Converted to aidevops subagent |
+| Location | Client skill dirs (`.claude/skills/`) | `.agents/` directory |
+| Tracking | None | `skill-sources.json` with update checks |
+| Security | Context7 trust score | Cisco Skill Scanner + trust score |
+| Cross-tool | Single client | All AI assistants via `setup.sh` |
+
+### Managing Skills
+
+```bash
+# List installed Context7 skills
+npx ctx7 skills list
+
+# List aidevops-imported skills
+/add-skill list
+
+# Check for upstream updates
+/add-skill check-updates
+
+# Remove a skill
+npx ctx7 skills remove pdf
+/add-skill remove <name>
+```
+
+**Related**: `scripts/commands/add-skill.md`, `tools/build-agent/add-skill.md`, `tools/deployment/agent-skills.md`
+
+## Disabling Telemetry
+
+The Context7 CLI (`ctx7`) collects anonymous usage data. To disable:
+
+```bash
+# For a single command
+CTX7_TELEMETRY_DISABLED=1 npx ctx7 skills search pdf
+
+# Permanent -- add to shell profile (~/.bashrc, ~/.zshrc, etc.)
+export CTX7_TELEMETRY_DISABLED=1
+```
+
+aidevops recommends disabling telemetry in automated/CI environments. Add the export to `~/.config/aidevops/credentials.sh` or your shell profile.
