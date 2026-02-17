@@ -4,7 +4,6 @@
 # Functions for dispatching tasks to workers, resolving models,
 # quality gates, and building dispatch commands
 
-
 #######################################
 # Detect terminal environment for dispatch mode
 # Returns: "tabby", "headless", or "interactive"
@@ -584,8 +583,8 @@ check_output_quality() {
 		return 0
 	fi
 
-	local tlog tworktree tbranch trepo tpr_url
-	IFS='|' read -r tlog tworktree tbranch trepo tpr_url <<<"$task_row"
+	local tlog tworktree _tbranch trepo tpr_url
+	IFS='|' read -r tlog tworktree _tbranch trepo tpr_url <<<"$task_row"
 
 	# Check 1: Log file size — very small logs suggest trivial/empty output
 	if [[ -n "$tlog" && -f "$tlog" ]]; then
@@ -1431,8 +1430,8 @@ cmd_dispatch() {
 		return 1
 	fi
 
-	local tid trepo tdesc tstatus tmodel tretries tmax_retries
-	IFS=$'\t' read -r tid trepo tdesc tstatus tmodel tretries tmax_retries <<<"$task_row"
+	local _tid trepo tdesc tstatus tmodel tretries tmax_retries
+	IFS=$'\t' read -r _tid trepo tdesc tstatus tmodel tretries tmax_retries <<<"$task_row"
 
 	# Validate task is in dispatchable state
 	if [[ "$tstatus" != "queued" ]]; then
@@ -2050,8 +2049,8 @@ cmd_reprompt() {
 		return 1
 	fi
 
-	local tid trepo tdesc tstatus tsession tworktree tlog tretries tmax_retries terror
-	IFS='|' read -r tid trepo tdesc tstatus tsession tworktree tlog tretries tmax_retries terror <<<"$task_row"
+	local _tid trepo tdesc tstatus tsession tworktree tlog tretries tmax_retries terror
+	IFS='|' read -r _tid trepo tdesc tstatus tsession tworktree tlog tretries tmax_retries terror <<<"$task_row"
 
 	# Validate state - must be in retrying state
 	if [[ "$tstatus" != "retrying" ]]; then

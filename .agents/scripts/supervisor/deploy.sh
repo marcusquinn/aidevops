@@ -2318,7 +2318,7 @@ rebase_sibling_prs_after_merge() {
 	local fail_count=0
 	local skip_count=0
 
-	while IFS='|' read -r sid sstatus spr sbranch sworktree srepo; do
+	while IFS='|' read -r sid sstatus _spr sbranch _sworktree _srepo; do
 		# Only rebase siblings that have open PRs and are in states where
 		# their branch is still active (not yet merged/deployed/cancelled)
 		case "$sstatus" in

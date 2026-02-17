@@ -173,6 +173,7 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 # but left the globals defined after the source block, causing
 # "PULSE_LOCK_DIR: unbound variable" errors in cron pulse (t1031 regression).
 readonly SUPERVISOR_DIR="${AIDEVOPS_SUPERVISOR_DIR:-$HOME/.aidevops/.agent-workspace/supervisor}"
+# shellcheck disable=SC2034 # Used by sourced supervisor/ modules
 readonly SUPERVISOR_DB="$SUPERVISOR_DIR/supervisor.db"
 readonly MAIL_HELPER="${SCRIPT_DIR}/mail-helper.sh"                             # Used by pulse command (t128.2)
 readonly MEMORY_HELPER="${SCRIPT_DIR}/memory-helper.sh"                         # Used by pulse command (t128.6)
@@ -180,7 +181,8 @@ readonly SESSION_REVIEW_HELPER="${SCRIPT_DIR}/session-review-helper.sh"         
 readonly SESSION_DISTILL_HELPER="${SCRIPT_DIR}/session-distill-helper.sh"       # Used by batch completion (t128.9)
 readonly MEMORY_AUDIT_HELPER="${SCRIPT_DIR}/memory-audit-pulse.sh"              # Used by pulse Phase 9 (t185)
 readonly SESSION_CHECKPOINT_HELPER="${SCRIPT_DIR}/session-checkpoint-helper.sh" # Used by respawn (t264.1)
-readonly RESPAWN_LOG="${HOME}/.aidevops/logs/respawn-history.log"               # Persistent respawn log (t264.1)
+# shellcheck disable=SC2034 # Used by supervisor/utility.sh
+readonly RESPAWN_LOG="${HOME}/.aidevops/logs/respawn-history.log" # Persistent respawn log (t264.1)
 SUPERVISOR_LOG_DIR="${HOME}/.aidevops/logs"
 mkdir -p "$SUPERVISOR_LOG_DIR" 2>/dev/null || true
 SUPERVISOR_LOG="${SUPERVISOR_LOG_DIR}/supervisor.log"
@@ -211,10 +213,12 @@ source "${SUPERVISOR_MODULE_DIR}/memory-integration.sh"
 source "${SUPERVISOR_MODULE_DIR}/todo-sync.sh"
 
 # Valid states for the state machine
+# shellcheck disable=SC2034 # Used by supervisor/state.sh
 readonly VALID_STATES="queued dispatched running evaluating retrying complete pr_review review_triage merging merged deploying deployed verifying verified verify_failed blocked failed cancelled"
 
 # Valid state transitions (from:to pairs)
 # Format: "from_state:to_state" - checked by validate_transition()
+# shellcheck disable=SC2034 # Used by supervisor/state.sh
 readonly -a VALID_TRANSITIONS=(
 	"queued:dispatched"
 	"queued:cancelled"
@@ -266,7 +270,9 @@ readonly -a VALID_TRANSITIONS=(
 	"verified:cancelled"
 )
 
+# shellcheck disable=SC2034 # Used by sourced supervisor/ modules
 readonly BOLD='\033[1m'
+# shellcheck disable=SC2034 # Used by supervisor/utility.sh
 readonly DIM='\033[2m'
 
 # log_info, log_success, log_warn, log_error, log_verbose, sql_escape, db, log_cmd
