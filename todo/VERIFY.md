@@ -817,7 +817,7 @@
   check: shellcheck .agents/scripts/wp-helper.sh
   check: file-exists .agents/scripts/wp-helper.sh
 
-- [ ] v107 t1060 worktree-helper.sh detect stale remote branches before cr... | PR #1567 | merged:2026-02-17
+- [x] v107 t1060 worktree-helper.sh detect stale remote branches before cr... | PR #1567 | merged:2026-02-17 verified:2026-02-17
   files: .agents/scripts/worktree-helper.sh
   check: shellcheck .agents/scripts/worktree-helper.sh
   check: file-exists .agents/scripts/worktree-helper.sh
