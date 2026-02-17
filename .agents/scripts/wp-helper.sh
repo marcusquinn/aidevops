@@ -4,6 +4,8 @@
 # WordPress CLI Helper Script
 # Runs WP-CLI commands on sites configured in wordpress-sites.json
 # Supports multiple hosting types: LocalWP, Hostinger, Hetzner, Cloudways, Closte
+# Supports per-tenant configs: ~/.config/aidevops/tenants/{tenant}/wordpress-sites.json
+# Tenant resolution: project (.aidevops-tenant) > active-tenant > "default" > global
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
@@ -18,9 +20,151 @@ readonly ERROR_SITE_NOT_FOUND="Site not found in configuration"
 readonly ERROR_SITE_REQUIRED="Site identifier is required"
 readonly ERROR_COMMAND_REQUIRED="WP-CLI command is required"
 
-# Configuration file location
-CONFIG_FILE="${HOME}/.config/aidevops/wordpress-sites.json"
+# Configuration paths
+readonly WP_CONFIG_DIR="${HOME}/.config/aidevops"
+readonly WP_TENANTS_DIR="${WP_CONFIG_DIR}/tenants"
+readonly WP_ACTIVE_TENANT_FILE="${WP_CONFIG_DIR}/active-tenant"
+readonly WP_PROJECT_TENANT_FILE=".aidevops-tenant"
+readonly WP_GLOBAL_CONFIG="${WP_CONFIG_DIR}/wordpress-sites.json"
 TEMPLATE_FILE="${HOME}/.aidevops/agents/configs/wordpress-sites.json.txt"
+
+# Resolved config file (set by resolve_config_file)
+CONFIG_FILE=""
+
+# Get the active tenant name using the same priority chain as credential-helper.sh
+# Priority: 1) Project override (.aidevops-tenant), 2) Global active-tenant, 3) "default"
+get_wp_active_tenant() {
+	if [[ -f "$WP_PROJECT_TENANT_FILE" ]]; then
+		local project_tenant
+		project_tenant=$(tr -d '[:space:]' <"$WP_PROJECT_TENANT_FILE" 2>/dev/null)
+		if [[ -n "$project_tenant" ]]; then
+			echo "$project_tenant"
+			return 0
+		fi
+	fi
+
+	if [[ -f "$WP_ACTIVE_TENANT_FILE" ]]; then
+		local active
+		active=$(tr -d '[:space:]' <"$WP_ACTIVE_TENANT_FILE" 2>/dev/null)
+		if [[ -n "$active" ]]; then
+			echo "$active"
+			return 0
+		fi
+	fi
+
+	echo "default"
+	return 0
+}
+
+# Resolve the wordpress-sites.json config file path using tenant priority chain
+# Sets CONFIG_FILE to the first existing config found:
+#   1) ~/.config/aidevops/tenants/{tenant}/wordpress-sites.json
+#   2) ~/.config/aidevops/wordpress-sites.json (global fallback)
+resolve_config_file() {
+	local tenant
+	tenant=$(get_wp_active_tenant)
+
+	local tenant_config="${WP_TENANTS_DIR}/${tenant}/wordpress-sites.json"
+	if [[ -f "$tenant_config" ]]; then
+		CONFIG_FILE="$tenant_config"
+		return 0
+	fi
+
+	# Fallback to global config
+	CONFIG_FILE="$WP_GLOBAL_CONFIG"
+	return 0
+}
+
+# Resolve a server reference from the servers section of the config.
+# Sites can use "server_ref": "my-server" to inherit shared server config.
+# SSH config host aliases (~/.ssh/config Host entries) are also supported:
+#   if ssh_host matches a Host entry in ~/.ssh/config, connection params are
+#   inherited from there (user, port, identity file) unless overridden in the site.
+#
+# Usage: resolve_server_ref <site_config_json>
+# Returns: merged JSON with server fields applied (ssh_host, ssh_port, ssh_user, wp_path)
+resolve_server_ref() {
+	local site_config="$1"
+
+	local server_ref
+	server_ref=$(echo "$site_config" | jq -r '.server_ref // empty')
+
+	if [[ -z "$server_ref" ]]; then
+		echo "$site_config"
+		return 0
+	fi
+
+	# Look up server definition in config file
+	local server_def
+	server_def=$(jq -r --arg ref "$server_ref" '.servers[$ref] // empty' "$CONFIG_FILE" 2>/dev/null)
+
+	if [[ -z "$server_def" ]]; then
+		print_warning "server_ref '$server_ref' not found in servers section — using site config as-is"
+		echo "$site_config"
+		return 0
+	fi
+
+	# Merge: server_def provides defaults, site_config fields override
+	# Site-level fields take precedence over server-level fields
+	local merged
+	merged=$(echo "$server_def $site_config" | jq -s '.[0] * .[1]')
+
+	# SSH config host integration: if ssh_host matches a Host alias in ~/.ssh/config,
+	# extract HostName, User, Port, IdentityFile from it as additional defaults.
+	# Site and server fields still take precedence over SSH config values.
+	local ssh_host
+	ssh_host=$(echo "$merged" | jq -r '.ssh_host // empty')
+
+	if [[ -n "$ssh_host" ]] && command -v ssh &>/dev/null; then
+		local ssh_hostname ssh_user ssh_port ssh_identity
+		ssh_hostname=$(ssh -G "$ssh_host" 2>/dev/null | awk '/^hostname / {print $2; exit}')
+		ssh_user=$(ssh -G "$ssh_host" 2>/dev/null | awk '/^user / {print $2; exit}')
+		ssh_port=$(ssh -G "$ssh_host" 2>/dev/null | awk '/^port / {print $2; exit}')
+		ssh_identity=$(ssh -G "$ssh_host" 2>/dev/null | awk '/^identityfile / {print $2; exit}')
+
+		# Build SSH config defaults object (only non-empty values)
+		local ssh_defaults="{}"
+		[[ -n "$ssh_hostname" && "$ssh_hostname" != "$ssh_host" ]] &&
+			ssh_defaults=$(echo "$ssh_defaults" | jq --arg v "$ssh_hostname" '. + {ssh_resolved_host: $v}')
+		[[ -n "$ssh_user" ]] &&
+			ssh_defaults=$(echo "$ssh_defaults" | jq --arg v "$ssh_user" '. + {_ssh_config_user: $v}')
+		[[ -n "$ssh_port" && "$ssh_port" != "22" ]] &&
+			ssh_defaults=$(echo "$ssh_defaults" | jq --arg v "$ssh_port" '. + {_ssh_config_port: $v}')
+		[[ -n "$ssh_identity" ]] &&
+			ssh_defaults=$(echo "$ssh_defaults" | jq --arg v "$ssh_identity" '. + {ssh_identity_file: $v}')
+
+		# Apply SSH config defaults only where site/server didn't already set values
+		# ssh_user: use SSH config user if not set in site or server
+		local current_user
+		current_user=$(echo "$merged" | jq -r '.ssh_user // empty')
+		if [[ -z "$current_user" ]]; then
+			local cfg_user
+			cfg_user=$(echo "$ssh_defaults" | jq -r '._ssh_config_user // empty')
+			[[ -n "$cfg_user" ]] && merged=$(echo "$merged" | jq --arg v "$cfg_user" '.ssh_user = $v')
+		fi
+
+		# ssh_port: use SSH config port if not set in site or server
+		local current_port
+		current_port=$(echo "$merged" | jq -r '.ssh_port // empty')
+		if [[ -z "$current_port" ]]; then
+			local cfg_port
+			cfg_port=$(echo "$ssh_defaults" | jq -r '._ssh_config_port // empty')
+			[[ -n "$cfg_port" ]] && merged=$(echo "$merged" | jq --arg v "$cfg_port" '.ssh_port = ($v | tonumber)')
+		fi
+
+		# ssh_identity_file: apply if SSH config provides one and site doesn't override
+		local current_identity
+		current_identity=$(echo "$merged" | jq -r '.ssh_identity_file // empty')
+		if [[ -z "$current_identity" ]]; then
+			local cfg_identity
+			cfg_identity=$(echo "$ssh_defaults" | jq -r '.ssh_identity_file // empty')
+			[[ -n "$cfg_identity" ]] && merged=$(echo "$merged" | jq --arg v "$cfg_identity" '.ssh_identity_file = $v')
+		fi
+	fi
+
+	echo "$merged"
+	return 0
+}
 
 # Check dependencies
 check_dependencies() {
@@ -49,13 +193,26 @@ check_sshpass() {
 	return 0
 }
 
-# Load configuration
+# Load configuration — resolves tenant-aware config path on first call
 load_config() {
+	# Resolve config file path if not already done
+	if [[ -z "$CONFIG_FILE" ]]; then
+		resolve_config_file
+	fi
+
 	if [[ ! -f "$CONFIG_FILE" ]]; then
+		local tenant
+		tenant=$(get_wp_active_tenant)
 		print_error "$ERROR_CONFIG_NOT_FOUND: $CONFIG_FILE"
-		print_info "Copy and customize the template:"
-		print_info "  mkdir -p ~/.config/aidevops"
-		print_info "  cp $TEMPLATE_FILE $CONFIG_FILE"
+		if [[ "$tenant" != "default" ]]; then
+			print_info "Tenant '$tenant' has no wordpress-sites.json. Create one at:"
+			print_info "  mkdir -p ${WP_TENANTS_DIR}/${tenant}"
+			print_info "  cp $TEMPLATE_FILE ${WP_TENANTS_DIR}/${tenant}/wordpress-sites.json"
+		else
+			print_info "Copy and customize the template:"
+			print_info "  mkdir -p ${WP_CONFIG_DIR}"
+			print_info "  cp $TEMPLATE_FILE ${WP_GLOBAL_CONFIG}"
+		fi
 		exit 1
 	fi
 	return 0
@@ -107,9 +264,13 @@ list_sites_by_category() {
 
 # Execute WP-CLI command via SSH based on hosting type
 # Directly executes instead of building a string for eval
+# Applies server_ref resolution and SSH config host integration before connecting
 execute_wp_via_ssh() {
 	local site_config="$1"
 	local wp_command="$2"
+
+	# Resolve server_ref and SSH config host aliases
+	site_config=$(resolve_server_ref "$site_config")
 
 	local site_type
 	site_type=$(echo "$site_config" | jq -r '.type')
@@ -125,6 +286,15 @@ execute_wp_via_ssh() {
 	local_path=$(echo "$site_config" | jq -r '.path // empty')
 	local password_file
 	password_file=$(echo "$site_config" | jq -r '.password_file // empty')
+	local ssh_identity_file
+	ssh_identity_file=$(echo "$site_config" | jq -r '.ssh_identity_file // empty')
+
+	# Build optional SSH identity flag
+	local ssh_identity_flag=()
+	if [[ -n "$ssh_identity_file" ]]; then
+		local expanded_identity="${ssh_identity_file/#\~/$HOME}"
+		ssh_identity_flag=(-i "$expanded_identity")
+	fi
 
 	case "$site_type" in
 	localwp)
@@ -154,12 +324,12 @@ execute_wp_via_ssh() {
 		fi
 
 		# Use array for sshpass + ssh command (-n prevents stdin consumption in loops)
-		sshpass -f "$expanded_password_file" ssh -n -p "$ssh_port" "${ssh_user}@${ssh_host}" "cd $(printf %q "$wp_path") && wp $wp_command"
+		sshpass -f "$expanded_password_file" ssh -n "${ssh_identity_flag[@]}" -p "$ssh_port" "${ssh_user}@${ssh_host}" "cd $(printf %q "$wp_path") && wp $wp_command"
 		return $?
 		;;
 	hetzner | cloudways | cloudron)
 		# SSH key-based authentication (preferred, -n prevents stdin consumption in loops)
-		ssh -n -p "$ssh_port" "${ssh_user}@${ssh_host}" "cd $(printf %q "$wp_path") && wp $wp_command"
+		ssh -n "${ssh_identity_flag[@]}" -p "$ssh_port" "${ssh_user}@${ssh_host}" "cd $(printf %q "$wp_path") && wp $wp_command"
 		return $?
 		;;
 	*)
@@ -307,12 +477,59 @@ list_categories() {
 	return 0
 }
 
+# Show active config file and tenant resolution
+show_config() {
+	local tenant
+	tenant=$(get_wp_active_tenant)
+	# Only resolve if not already set (e.g. by --tenant flag)
+	local tenant_overridden=false
+	if [[ -z "$CONFIG_FILE" ]]; then
+		resolve_config_file
+	else
+		tenant_overridden=true
+	fi
+
+	if [[ "$tenant_overridden" == "true" ]]; then
+		print_info "Active tenant: $tenant (config overridden via --tenant)"
+	else
+		print_info "Active tenant: $tenant"
+	fi
+	print_info "Config file:   $CONFIG_FILE"
+
+	if [[ -f "$CONFIG_FILE" ]]; then
+		local site_count server_count
+		site_count=$(jq -r '.sites | length' "$CONFIG_FILE" 2>/dev/null || echo "0")
+		server_count=$(jq -r 'if .servers then (.servers | to_entries | map(select(.key | startswith("_") | not)) | length) else 0 end' "$CONFIG_FILE" 2>/dev/null || echo "0")
+		print_info "Sites:         $site_count"
+		print_info "Servers:       $server_count"
+	else
+		print_warning "Config file not found"
+	fi
+
+	# Show tenant resolution chain
+	echo ""
+	print_info "Tenant resolution chain:"
+	if [[ -f "$WP_PROJECT_TENANT_FILE" ]]; then
+		echo "  [active] .aidevops-tenant = $(tr -d '[:space:]' <"$WP_PROJECT_TENANT_FILE")"
+	else
+		echo "  [skip]   .aidevops-tenant (not found)"
+	fi
+	if [[ -f "$WP_ACTIVE_TENANT_FILE" ]]; then
+		echo "  [found]  active-tenant = $(tr -d '[:space:]' <"$WP_ACTIVE_TENANT_FILE")"
+	else
+		echo "  [skip]   active-tenant (not set)"
+	fi
+	echo "  [default] 'default'"
+	return 0
+}
+
 # Show help
 show_help() {
 	cat <<'EOF'
 WordPress CLI Helper Script
 
-Runs WP-CLI commands on sites configured in ~/.config/aidevops/wordpress-sites.json
+Runs WP-CLI commands on sites configured in wordpress-sites.json
+Supports per-tenant configs with shared server definitions and SSH config integration.
 
 Usage: wp-helper.sh [command] [options]
 
@@ -321,10 +538,14 @@ Commands:
   --list-category <category>          List sites in a category
   --categories                        List available categories
   --info <site>                       Show site configuration
+  --config                            Show active config file and tenant
   --all <wp-cli-command>              Run command on ALL sites
   --category <cat> <wp-cli-command>   Run command on sites in category
   <site> <wp-cli-command>             Run command on specific site
   help                                Show this help
+
+Global Options (must come before command):
+  --tenant <name>                     Override active tenant for this invocation
 
 Examples:
   # List all sites
@@ -349,14 +570,57 @@ Examples:
   wp-helper.sh --all core version
   wp-helper.sh --all plugin list --status=active
 
-Configuration:
-  Config file: ~/.config/aidevops/wordpress-sites.json
+Configuration (tenant-aware, resolved in priority order):
+  1. ~/.config/aidevops/tenants/{tenant}/wordpress-sites.json  (per-tenant)
+  2. ~/.config/aidevops/wordpress-sites.json                   (global fallback)
+
+  Active tenant is resolved from (same chain as credential-helper.sh):
+    1. .aidevops-tenant  (project-level override)
+    2. ~/.config/aidevops/active-tenant  (global active)
+    3. "default"
+
   Template: ~/.aidevops/agents/configs/wordpress-sites.json.txt
 
-Setup:
+Setup (global):
   mkdir -p ~/.config/aidevops
   cp ~/.aidevops/agents/configs/wordpress-sites.json.txt ~/.config/aidevops/wordpress-sites.json
-  # Edit the file with your site details
+
+Setup (per-tenant, e.g. "acme"):
+  mkdir -p ~/.config/aidevops/tenants/acme
+  cp ~/.aidevops/agents/configs/wordpress-sites.json.txt \
+     ~/.config/aidevops/tenants/acme/wordpress-sites.json
+
+Server References (DRY server config):
+  Define shared server infrastructure in the "servers" section and reference
+  it from sites using "server_ref". Site-level fields override server defaults.
+
+  "servers": {
+    "hetzner-vps-1": {
+      "ssh_host": "123.45.67.89",
+      "ssh_user": "root",
+      "ssh_port": 22
+    }
+  },
+  "sites": {
+    "my-site": {
+      "server_ref": "hetzner-vps-1",
+      "wp_path": "/var/www/my-site/public"
+    }
+  }
+
+SSH Config Integration:
+  If ssh_host matches a Host alias in ~/.ssh/config, connection parameters
+  (User, Port, IdentityFile) are inherited automatically. Site and server
+  fields take precedence over SSH config values.
+
+  Example ~/.ssh/config:
+    Host my-vps
+      HostName 123.45.67.89
+      User root
+      IdentityFile ~/.ssh/my-vps-key
+
+  Then in wordpress-sites.json:
+    "my-site": { "ssh_host": "my-vps", "wp_path": "/var/www/html" }
 
 Hosting Types:
   localwp   - Local by Flywheel (direct path access)
@@ -369,17 +633,32 @@ Hosting Types:
 Related:
   mainwp-helper.sh - For MainWP fleet management
   wordpress-mcp-helper.sh - For WordPress MCP adapter
+  credential-helper.sh - For tenant management
 EOF
 	return 0
 }
 
 # Main script logic
 main() {
+	# Handle --tenant flag before command dispatch (sets CONFIG_FILE override)
+	if [[ "${1:-}" == "--tenant" ]]; then
+		if [[ -z "${2:-}" ]]; then
+			print_error "--tenant requires a tenant name"
+			exit 1
+		fi
+		local tenant_override="$2"
+		CONFIG_FILE="${WP_TENANTS_DIR}/${tenant_override}/wordpress-sites.json"
+		shift 2
+	fi
+
 	local command="${1:-help}"
 
 	check_dependencies
 
 	case "$command" in
+	--config)
+		show_config
+		;;
 	--list)
 		list_sites
 		;;
