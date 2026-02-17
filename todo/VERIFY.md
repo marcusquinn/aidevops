@@ -245,7 +245,7 @@
     - ensure_homebrew() decline path: prompted, user said "n", returned 1 cleanly
     - All 11 CI checks passed on PR #1168
 
-- [!] v025 t300 Verify Phase 10b self-improvement loop works end-to-end â... | PR #1174 | merged:2026-02-12 failed:2026-02-12 reason:shellcheck: .agents/scripts/supervisor-helper.sh has violations
+- [!] v025 t300 Verify Phase 10b self-improvement loop works end-to-end ï¿½... | PR #1174 | merged:2026-02-12 failed:2026-02-12 reason:shellcheck: .agents/scripts/supervisor-helper.sh has violations
   files: .agents/scripts/supervisor-helper.sh
   check: shellcheck .agents/scripts/supervisor-helper.sh
   check: file-exists .agents/scripts/supervisor-helper.sh
@@ -299,12 +299,12 @@
   check: shellcheck aidevops.sh
   check: file-exists aidevops.sh
 
-- [!] v033 t305 Fix path traversal risk in setup.sh plugin clone paths â€... | PR #1188 | merged:2026-02-12 failed:2026-02-12 reason:shellcheck: setup.sh has violations
+- [!] v033 t305 Fix path traversal risk in setup.sh plugin clone paths ï¿½... | PR #1188 | merged:2026-02-12 failed:2026-02-12 reason:shellcheck: setup.sh has violations
   files: setup.sh
   check: shellcheck setup.sh
   check: file-exists setup.sh
 
-- [!] v034 t305 Fix path traversal risk in setup.sh plugin clone paths â€... | PR #1188 | merged:2026-02-12 failed:2026-02-12 reason:shellcheck: setup.sh has violations
+- [!] v034 t305 Fix path traversal risk in setup.sh plugin clone paths ï¿½... | PR #1188 | merged:2026-02-12 failed:2026-02-12 reason:shellcheck: setup.sh has violations
   files: setup.sh
   check: shellcheck setup.sh
   check: file-exists setup.sh
@@ -314,7 +314,7 @@
   check: shellcheck .agents/scripts/supervisor-helper.sh
   check: file-exists .agents/scripts/supervisor-helper.sh
 
-- [x] v036 t311.1 Audit and map supervisor-helper.sh functions by domain â€... | PR #1207 | merged:2026-02-12 verified:2026-02-12
+- [x] v036 t311.1 Audit and map supervisor-helper.sh functions by domain ï¿½... | PR #1207 | merged:2026-02-12 verified:2026-02-12
   files: .agents/aidevops/supervisor-module-map.md
   check: file-exists .agents/aidevops/supervisor-module-map.md
 
@@ -529,7 +529,7 @@
   check: shellcheck .agents/scripts/supervisor/utility.sh
   check: file-exists .agents/scripts/supervisor/utility.sh
 
-- [x] v063 t1032.4 Generalise task-creator to accept multi-source findings â... | PR #1379 | merged:2026-02-13 verified:2026-02-13
+- [x] v063 t1032.4 Generalise task-creator to accept multi-source findings ï¿½... | PR #1379 | merged:2026-02-13 verified:2026-02-13
   files: .agents/scripts/audit-task-creator-helper.sh, .agents/scripts/coderabbit-task-creator-helper.sh, .agents/scripts/coderabbit-task-creator-helper.sh, .agents/subagent-index.toon
   check: shellcheck .agents/scripts/audit-task-creator-helper.sh
   check: file-exists .agents/scripts/audit-task-creator-helper.sh
@@ -732,12 +732,12 @@
   check: shellcheck .agents/scripts/supervisor/cron.sh
   check: file-exists .agents/scripts/supervisor/cron.sh
 
-- [!] v094 t1063.2 Create tools/research/tech-stack-lookup.md agent â€” prog... | PR #1531 | merged:2026-02-16 failed:2026-02-16 reason:rg: "tech-stack-lookup" not found in .agents/subagent-index.toon
+- [ ] v094 t1063.2 Create tools/research/tech-stack-lookup.md agent â€” prog... | PR #1531 | merged:2026-02-16
   files: .agents/tools/research/tech-stack-lookup.md
   check: file-exists .agents/tools/research/tech-stack-lookup.md
   check: rg "tech-stack-lookup" .agents/subagent-index.toon
 
-- [!] v095 t1066 Open Tech Explorer provider agent â€” create `tools/resea... | PR #1544 | merged:2026-02-16 failed:2026-02-16 reason:rg: "openexplorer" not found in .agents/subagent-index.toon
+- [ ] v095 t1066 Open Tech Explorer provider agent â€” create `tools/resea... | PR #1544 | merged:2026-02-16
   files: .agents/scripts/tech-stack-helper.sh, .agents/tools/research/providers/openexplorer.md
   check: shellcheck .agents/scripts/tech-stack-helper.sh
   check: file-exists .agents/scripts/tech-stack-helper.sh
@@ -748,7 +748,7 @@
   files: .agents/scripts/commands/tech-stack.md
   check: file-exists .agents/scripts/commands/tech-stack.md
 
-- [!] v097 t1067 Wappalyzer OSS provider agent â€” create `tools/research/... | PR #1536 | merged:2026-02-16 failed:2026-02-16 reason:rg: "wappalyzer" not found in .agents/subagent-index.toon
+- [ ] v097 t1067 Wappalyzer OSS provider agent â€” create `tools/research/... | PR #1536 | merged:2026-02-16
   files: .agents/scripts/package.json, .agents/scripts/wappalyzer-detect.mjs, .agents/scripts/wappalyzer-helper.sh, .agents/tools/research/providers/wappalyzer.md
   check: file-exists .agents/scripts/package.json
   check: file-exists .agents/scripts/wappalyzer-detect.mjs
@@ -793,7 +793,7 @@
   check: file-exists .agents/scripts/tech-stack-helper.sh
   check: file-exists .agents/subagent-index.toon
 
-- [ ] v103 t1072 Add rebase loop for multi-commit conflict resolution in r... | PR #1558 | merged:2026-02-17
+- [!] v103 t1072 Add rebase loop for multi-commit conflict resolution in r... | PR #1558 | merged:2026-02-17 failed:2026-02-17 reason:shellcheck: .agents/scripts/supervisor/deploy.sh has violations
   files: .agents/scripts/supervisor/deploy.sh, .agents/scripts/supervisor/state.sh
   check: shellcheck .agents/scripts/supervisor/deploy.sh
   check: file-exists .agents/scripts/supervisor/deploy.sh
