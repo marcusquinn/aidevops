@@ -11,6 +11,9 @@ set -euo pipefail
 #   tech-stack-helper.sh report <url>                   Generate full markdown report
 #   tech-stack-helper.sh cache [stats|clear|get <url>]  Manage SQLite cache
 #   tech-stack-helper.sh providers                      List available providers
+#   tech-stack-helper.sh categories                     List technology categories (BigQuery)
+#   tech-stack-helper.sh trending                       Show trending technologies (BigQuery)
+#   tech-stack-helper.sh info <technology>              Get technology metadata (BigQuery)
 #   tech-stack-helper.sh help                           Show this help
 #
 # Options:
@@ -36,6 +39,7 @@ set -euo pipefail
 
 # Source shared constants
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+# shellcheck disable=SC2034
 source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
 init_log_file
 
@@ -52,6 +56,49 @@ readonly TS_DEFAULT_TIMEOUT="${TECH_STACK_TIMEOUT:-60}"      # seconds
 
 # Provider list (bash 3.2 compatible — no associative arrays)
 readonly PROVIDERS="unbuilt crft openexplorer wappalyzer"
+
+# File-based cache for BigQuery results
+readonly BQ_CACHE_DIR="${CACHE_DIR}/bq"
+CACHE_TTL_DAYS=30
+readonly DEFAULT_LIMIT=25
+readonly MAX_LIMIT=1000
+readonly DEFAULT_CLIENT="desktop"
+readonly REPORTS_DIR="${HOME}/.aidevops/.agent-workspace/work/tech-stack/reports"
+SCRIPT_NAME="$(basename "$0")" || true
+readonly SCRIPT_NAME
+readonly UNBUILT_PKG="@unbuilt/cli"
+readonly UNBUILT_TIMEOUT="${UNBUILT_TIMEOUT:-120}"
+
+# BigQuery configuration
+readonly BQ_PROJECT_HTTPARCHIVE="httparchive"
+readonly BQ_DATASET_CRAWL="crawl"
+readonly BQ_TABLE_PAGES="pages"
+readonly BQ_DATASET_WAPPALYZER="wappalyzer"
+readonly BQ_TABLE_TECH_DETECTIONS="tech_detections"
+readonly BQ_TABLE_TECHNOLOGIES="technologies"
+readonly BQ_TABLE_CATEGORIES="categories"
+
+# BuiltWith configuration
+readonly BUILTWITH_API_BASE="https://api.builtwith.com"
+readonly BUILTWITH_FREE_BASE="https://trends.builtwith.com"
+
+# CRFT Lookup Configuration
+readonly CRFT_BASE_URL="https://crft.studio"
+readonly CRFT_LOOKUP_URL="${CRFT_BASE_URL}/lookup"
+readonly CRFT_GALLERY_URL="${CRFT_BASE_URL}/lookup/gallery"
+readonly CRFT_SCAN_TIMEOUT=60
+
+# Common message constants
+readonly HELP_SHOW_MESSAGE="Show this help"
+readonly USAGE_COMMAND_OPTIONS="Usage: $0 <command> [options]"
+readonly HELP_USAGE_INFO="Use '$0 help' for usage information"
+
+# Technology categories for structured output (referenced by provider helpers)
+# shellcheck disable=SC2034 # exported for provider helper scripts
+readonly TECH_CATEGORIES="frameworks,cms,analytics,cdn,hosting,bundlers,ui-libs,state-management,styling,languages,databases,monitoring,security,seo,performance"
+
+# Ensure directories exist
+mkdir -p "$CACHE_DIR" "$BQ_CACHE_DIR" "$REPORTS_DIR" 2>/dev/null || true
 
 # Map provider name to helper script filename
 provider_script() {
@@ -78,10 +125,6 @@ provider_display_name() {
 	esac
 	return 0
 }
-
-# Technology categories for structured output (referenced by provider helpers)
-# shellcheck disable=SC2034 # exported for provider helper scripts
-readonly TECH_CATEGORIES="frameworks,cms,analytics,cdn,hosting,bundlers,ui-libs,state-management,styling,languages,databases,monitoring,security,seo,performance"
 
 # =============================================================================
 # Logging — thin wrappers over shared print_* (all output to stderr for logging)
@@ -163,6 +206,58 @@ extract_domain() {
 	domain="${domain%%:*}"
 
 	echo "$domain"
+	return 0
+}
+
+# =============================================================================
+# File-based cache helpers (for BigQuery results)
+# =============================================================================
+
+ensure_cache_dir() {
+	mkdir -p "$BQ_CACHE_DIR"
+	return 0
+}
+
+get_cache_path() {
+	local key="$1"
+	local safe_key
+	safe_key=$(echo "$key" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_-]/_/g')
+	echo "${BQ_CACHE_DIR}/${safe_key}.json"
+	return 0
+}
+
+is_cache_valid() {
+	local cache_file="$1"
+	local ttl_days="${2:-$CACHE_TTL_DAYS}"
+
+	if [[ ! -f "$cache_file" ]]; then
+		return 1
+	fi
+
+	local file_age_days
+	if [[ "$(uname)" == "Darwin" ]]; then
+		local file_mod
+		file_mod=$(stat -f %m "$cache_file")
+		local now
+		now=$(date +%s)
+		file_age_days=$(((now - file_mod) / 86400))
+	else
+		file_age_days=$((($(date +%s) - $(stat -c %Y "$cache_file")) / 86400))
+	fi
+
+	if [[ "$file_age_days" -lt "$ttl_days" ]]; then
+		return 0
+	fi
+
+	return 1
+}
+
+# Cache key from provider + command + args
+cache_key() {
+	local provider="$1"
+	local command="$2"
+	local args="$3"
+	echo "${provider}_${command}_$(echo "$args" | tr -c '[:alnum:]' '_')"
 	return 0
 }
 
@@ -458,6 +553,577 @@ cache_get() {
 }
 
 # =============================================================================
+# BigQuery Helpers
+# =============================================================================
+
+check_bq_available() {
+	if ! command -v bq &>/dev/null; then
+		print_error "BigQuery CLI (bq) not found. Install: brew install google-cloud-sdk"
+		return 1
+	fi
+	return 0
+}
+
+check_gcloud_auth() {
+	local project
+	project=$(gcloud config get-value project 2>/dev/null || true)
+	if [[ -z "$project" ]]; then
+		print_error "No GCP project configured. Run: gcloud config set project YOUR_PROJECT"
+		print_info "You need a GCP project with BigQuery API enabled (free tier: 1TB/month)"
+		return 1
+	fi
+	return 0
+}
+
+get_latest_crawl_date() {
+	local cache_file
+	cache_file=$(get_cache_path "latest_crawl_date")
+
+	if is_cache_valid "$cache_file" 7; then
+		cat "$cache_file"
+		return 0
+	fi
+
+	local result
+	result=$(bq query \
+		--nouse_legacy_sql \
+		--format=csv \
+		--max_rows=1 \
+		--quiet \
+		"SELECT MAX(date) as latest_date FROM \`${BQ_PROJECT_HTTPARCHIVE}.${BQ_DATASET_CRAWL}.${BQ_TABLE_PAGES}\` WHERE date >= DATE_SUB(CURRENT_DATE(), INTERVAL 6 MONTH)" 2>/dev/null) || {
+		print_warning "Could not determine latest crawl date, using fallback"
+		date -v-1m +%Y-%m-01 2>/dev/null || date -d "1 month ago" +%Y-%m-01
+		return 0
+	}
+
+	local latest_date
+	latest_date=$(echo "$result" | tail -1 | tr -d '[:space:]')
+
+	if [[ -n "$latest_date" && "$latest_date" != "latest_date" ]]; then
+		ensure_cache_dir
+		echo "$latest_date" >"$cache_file"
+		echo "$latest_date"
+	else
+		date -v-1m +%Y-%m-01 2>/dev/null || date -d "1 month ago" +%Y-%m-01
+	fi
+
+	return 0
+}
+
+# Sanitize a string for safe use in BigQuery SQL (strip injection characters)
+sanitize_sql_value() {
+	local value="$1"
+	value="${value//\'/}"
+	value="${value//\\/}"
+	value="${value//;/}"
+	echo "$value"
+}
+
+load_builtwith_api_key() {
+	if [[ -n "${BUILTWITH_API_KEY:-}" ]]; then
+		echo "$BUILTWITH_API_KEY"
+		return 0
+	fi
+
+	local config_file="$HOME/.config/aidevops/credentials.sh"
+	if [[ -f "$config_file" ]]; then
+		local key
+		key=$(grep -E "^export BUILTWITH_API_KEY=" "$config_file" 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+		if [[ -n "$key" ]]; then
+			echo "$key"
+			return 0
+		fi
+	fi
+
+	echo ""
+	return 1
+}
+
+# =============================================================================
+# BigQuery Provider — HTTP Archive crawl.pages
+# =============================================================================
+
+bq_reverse_lookup() {
+	local technology
+	technology=$(sanitize_sql_value "$1")
+	local limit="${2:-$DEFAULT_LIMIT}"
+	local client="${3:-$DEFAULT_CLIENT}"
+	local rank_filter="${4:-}"
+	local keywords="${5:-}"
+	local crawl_date="${6:-}"
+	local format="${7:-json}"
+
+	if [[ -z "$crawl_date" ]]; then
+		crawl_date=$(get_latest_crawl_date)
+	fi
+
+	local cache_key="reverse_bq_${technology}_${client}_${rank_filter}_${keywords}_${crawl_date}_${limit}"
+	local cache_file
+	cache_file=$(get_cache_path "$cache_key")
+
+	if is_cache_valid "$cache_file"; then
+		print_info "Using cached results (age < ${CACHE_TTL_DAYS}d)"
+		format_output "$cache_file" "$format"
+		return 0
+	fi
+
+	print_info "Querying HTTP Archive via BigQuery..."
+	print_info "Technology: $technology | Date: $crawl_date | Client: $client | Limit: $limit"
+
+	local rank_clause=""
+	if [[ -n "$rank_filter" ]]; then
+		case "$rank_filter" in
+		top1k | 1k) rank_clause="AND rank <= 1000" ;;
+		top10k | 10k) rank_clause="AND rank <= 10000" ;;
+		top100k | 100k) rank_clause="AND rank <= 100000" ;;
+		top1m | 1m) rank_clause="AND rank <= 1000000" ;;
+		*)
+			if [[ "$rank_filter" =~ ^[0-9]+$ ]]; then
+				rank_clause="AND rank <= ${rank_filter}"
+			else
+				print_warning "Unknown traffic tier: $rank_filter (ignoring)"
+			fi
+			;;
+		esac
+	fi
+
+	local keyword_clause=""
+	if [[ -n "$keywords" ]]; then
+		local kw_conditions=""
+		local IFS=','
+		for kw in $keywords; do
+			kw=$(echo "$kw" | xargs)
+			# Sanitize: strip single quotes and backslashes to prevent SQL injection
+			kw="${kw//\'/}"
+			kw="${kw//\\/}"
+			if [[ -z "$kw" ]]; then
+				continue
+			fi
+			if [[ -n "$kw_conditions" ]]; then
+				kw_conditions="${kw_conditions} OR "
+			fi
+			kw_conditions="${kw_conditions}LOWER(page) LIKE '%${kw}%'"
+		done
+		keyword_clause="AND (${kw_conditions})"
+	fi
+
+	local query
+	query=$(
+		cat <<EOSQL
+SELECT
+  page AS url,
+  rank,
+  t.technology AS tech_name,
+  ARRAY_TO_STRING(t.categories, ', ') AS categories,
+  ARRAY_TO_STRING(t.info, ', ') AS version_info
+FROM \`${BQ_PROJECT_HTTPARCHIVE}.${BQ_DATASET_CRAWL}.${BQ_TABLE_PAGES}\`,
+  UNNEST(technologies) AS t
+WHERE date = '${crawl_date}'
+  AND client = '${client}'
+  AND is_root_page = TRUE
+  AND LOWER(t.technology) = LOWER('${technology}')
+  ${rank_clause}
+  ${keyword_clause}
+ORDER BY rank ASC NULLS LAST
+LIMIT ${limit}
+EOSQL
+	)
+
+	local result
+	result=$(bq query \
+		--nouse_legacy_sql \
+		--format=prettyjson \
+		--max_rows="$limit" \
+		--quiet \
+		"$query" 2>&1) || {
+		print_error "BigQuery query failed: $result"
+		return 1
+	}
+
+	if [[ -z "$result" || "$result" == "[]" ]]; then
+		print_warning "No results found for technology: $technology"
+		echo "[]"
+		return 0
+	fi
+
+	ensure_cache_dir
+	echo "$result" >"$cache_file"
+	format_output "$cache_file" "$format"
+	return 0
+}
+
+# =============================================================================
+# BigQuery Provider — Wappalyzer tech_detections (aggregated adoption data)
+# =============================================================================
+
+bq_tech_detections() {
+	local technology
+	technology=$(sanitize_sql_value "$1")
+	local limit="${2:-10}"
+	local format="${3:-json}"
+
+	local cache_key="detections_${technology}_${limit}"
+	local cache_file
+	cache_file=$(get_cache_path "$cache_key")
+
+	if is_cache_valid "$cache_file"; then
+		print_info "Using cached tech detection data"
+		format_output "$cache_file" "$format"
+		return 0
+	fi
+
+	print_info "Querying Wappalyzer tech_detections for: $technology"
+
+	local query
+	query=$(
+		cat <<EOSQL
+SELECT
+  date,
+  technology,
+  total_origins_persisted AS active_sites,
+  total_origins_adopted_new AS new_adoptions,
+  total_origins_adopted_existing AS existing_adoptions,
+  total_origins_deprecated_existing AS deprecations,
+  total_origins_deprecated_gone AS sites_gone,
+  sample_origins_adopted_existing AS sample_adopters
+FROM \`${BQ_PROJECT_HTTPARCHIVE}.${BQ_DATASET_WAPPALYZER}.${BQ_TABLE_TECH_DETECTIONS}\`
+WHERE LOWER(technology) = LOWER('${technology}')
+ORDER BY date DESC
+LIMIT ${limit}
+EOSQL
+	)
+
+	local result
+	result=$(bq query \
+		--nouse_legacy_sql \
+		--format=prettyjson \
+		--max_rows="$limit" \
+		--quiet \
+		"$query" 2>&1) || {
+		print_error "BigQuery query failed: $result"
+		return 1
+	}
+
+	if [[ -z "$result" || "$result" == "[]" ]]; then
+		print_warning "No detection data found for: $technology"
+		echo "[]"
+		return 0
+	fi
+
+	ensure_cache_dir
+	echo "$result" >"$cache_file"
+	format_output "$cache_file" "$format"
+	return 0
+}
+
+# =============================================================================
+# BigQuery Provider — Categories listing
+# =============================================================================
+
+bq_list_categories() {
+	local format="${1:-json}"
+
+	local cache_key="categories_list"
+	local cache_file
+	cache_file=$(get_cache_path "$cache_key")
+
+	if is_cache_valid "$cache_file"; then
+		print_info "Using cached categories"
+		format_output "$cache_file" "$format"
+		return 0
+	fi
+
+	print_info "Querying Wappalyzer categories..."
+
+	local query
+	query=$(
+		cat <<EOSQL
+SELECT name, description
+FROM \`${BQ_PROJECT_HTTPARCHIVE}.${BQ_DATASET_WAPPALYZER}.${BQ_TABLE_CATEGORIES}\`
+ORDER BY name
+EOSQL
+	)
+
+	local result
+	result=$(bq query \
+		--nouse_legacy_sql \
+		--format=prettyjson \
+		--max_rows=500 \
+		--quiet \
+		"$query" 2>&1) || {
+		print_error "BigQuery query failed: $result"
+		return 1
+	}
+
+	ensure_cache_dir
+	echo "$result" >"$cache_file"
+	format_output "$cache_file" "$format"
+	return 0
+}
+
+# =============================================================================
+# BigQuery Provider — Technology metadata
+# =============================================================================
+
+bq_tech_info() {
+	local technology
+	technology=$(sanitize_sql_value "$1")
+	local format="${2:-json}"
+
+	local cache_key="tech_info_${technology}"
+	local cache_file
+	cache_file=$(get_cache_path "$cache_key")
+
+	if is_cache_valid "$cache_file"; then
+		format_output "$cache_file" "$format"
+		return 0
+	fi
+
+	local query
+	query=$(
+		cat <<EOSQL
+SELECT
+  name,
+  categories,
+  website,
+  description,
+  saas,
+  oss
+FROM \`${BQ_PROJECT_HTTPARCHIVE}.${BQ_DATASET_WAPPALYZER}.${BQ_TABLE_TECHNOLOGIES}\`
+WHERE LOWER(name) = LOWER('${technology}')
+EOSQL
+	)
+
+	local result
+	result=$(bq query \
+		--nouse_legacy_sql \
+		--format=prettyjson \
+		--max_rows=1 \
+		--quiet \
+		"$query" 2>&1) || {
+		print_error "BigQuery query failed: $result"
+		return 1
+	}
+
+	ensure_cache_dir
+	echo "$result" >"$cache_file"
+	format_output "$cache_file" "$format"
+	return 0
+}
+
+# =============================================================================
+# BigQuery Provider — Trending technologies
+# =============================================================================
+
+bq_trending() {
+	local direction="${1:-adopted}"
+	local limit="${2:-20}"
+	local format="${3:-json}"
+
+	local cache_key="trending_${direction}_${limit}"
+	local cache_file
+	cache_file=$(get_cache_path "$cache_key")
+
+	if is_cache_valid "$cache_file" 7; then
+		print_info "Using cached trending data"
+		format_output "$cache_file" "$format"
+		return 0
+	fi
+
+	print_info "Querying trending ${direction} technologies..."
+
+	local order_col
+	case "$direction" in
+	adopted | growing) order_col="total_origins_adopted_new" ;;
+	deprecated | declining) order_col="total_origins_deprecated_existing" ;;
+	*) order_col="total_origins_adopted_new" ;;
+	esac
+
+	local query
+	query=$(
+		cat <<EOSQL
+SELECT
+  technology,
+  total_origins_persisted AS active_sites,
+  total_origins_adopted_new AS new_adoptions,
+  total_origins_deprecated_existing AS deprecations,
+  SAFE_DIVIDE(total_origins_adopted_new, GREATEST(total_origins_deprecated_existing, 1)) AS growth_ratio
+FROM \`${BQ_PROJECT_HTTPARCHIVE}.${BQ_DATASET_WAPPALYZER}.${BQ_TABLE_TECH_DETECTIONS}\`
+WHERE date = (
+  SELECT MAX(date)
+  FROM \`${BQ_PROJECT_HTTPARCHIVE}.${BQ_DATASET_WAPPALYZER}.${BQ_TABLE_TECH_DETECTIONS}\`
+)
+  AND total_origins_persisted > 100
+ORDER BY ${order_col} DESC
+LIMIT ${limit}
+EOSQL
+	)
+
+	local result
+	result=$(bq query \
+		--nouse_legacy_sql \
+		--format=prettyjson \
+		--max_rows="$limit" \
+		--quiet \
+		"$query" 2>&1) || {
+		print_error "BigQuery query failed: $result"
+		return 1
+	}
+
+	ensure_cache_dir
+	echo "$result" >"$cache_file"
+	format_output "$cache_file" "$format"
+	return 0
+}
+
+# =============================================================================
+# BuiltWith Fallback Provider
+# =============================================================================
+
+builtwith_reverse_lookup() {
+	local technology="$1"
+	local limit="${2:-$DEFAULT_LIMIT}"
+	local format="${3:-json}"
+
+	local api_key
+	api_key=$(load_builtwith_api_key)
+
+	if [[ -z "$api_key" ]]; then
+		print_warning "No BuiltWith API key configured"
+		print_info "Set via: aidevops secret set BUILTWITH_API_KEY"
+		print_info "Or add to ~/.config/aidevops/credentials.sh:"
+		print_info "  export BUILTWITH_API_KEY=\"your-key\""
+		return 1
+	fi
+
+	local cache_key="builtwith_reverse_${technology}_${limit}"
+	local cache_file
+	cache_file=$(get_cache_path "$cache_key")
+
+	if is_cache_valid "$cache_file"; then
+		print_info "Using cached BuiltWith results"
+		format_output "$cache_file" "$format"
+		return 0
+	fi
+
+	print_info "Querying BuiltWith API for: $technology"
+
+	local encoded_tech
+	encoded_tech=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$technology'))" 2>/dev/null || echo "$technology")
+
+	local result curl_stderr
+	curl_stderr=$(mktemp)
+	result=$(curl -s -f \
+		"${BUILTWITH_API_BASE}/v21/api.json?KEY=${api_key}&TECH=${encoded_tech}&AMOUNT=${limit}" \
+		2>"$curl_stderr") || {
+		local err_msg
+		err_msg=$(cat "$curl_stderr")
+		rm -f "$curl_stderr"
+		print_error "BuiltWith API request failed${err_msg:+: $err_msg}"
+		return 1
+	}
+	rm -f "$curl_stderr"
+
+	if echo "$result" | jq -e '.Errors' &>/dev/null; then
+		local error_msg
+		error_msg=$(echo "$result" | jq -r '.Errors[0].Message // "Unknown error"')
+		print_error "BuiltWith API error: $error_msg"
+		return 1
+	fi
+
+	ensure_cache_dir
+	echo "$result" >"$cache_file"
+	format_output "$cache_file" "$format"
+	return 0
+}
+
+# =============================================================================
+# Output Formatting (file-based, for BigQuery results)
+# =============================================================================
+
+format_output() {
+	local file="$1"
+	local format="${2:-json}"
+
+	case "$format" in
+	json)
+		if command -v jq &>/dev/null; then
+			jq '.' "$file"
+		else
+			cat "$file"
+		fi
+		;;
+	table)
+		if command -v jq &>/dev/null; then
+			format_as_table "$file"
+		else
+			cat "$file"
+		fi
+		;;
+	csv)
+		if command -v jq &>/dev/null; then
+			format_as_csv "$file"
+		else
+			cat "$file"
+		fi
+		;;
+	*)
+		cat "$file"
+		;;
+	esac
+	return 0
+}
+
+format_as_table() {
+	local file="$1"
+
+	local keys
+	keys=$(jq -r '.[0] // {} | keys[]' "$file" 2>/dev/null)
+
+	if [[ -z "$keys" ]]; then
+		print_warning "No data to display or invalid JSON structure"
+		return 0
+	fi
+
+	# Print header
+	local header=""
+	while IFS= read -r key; do
+		if [[ -n "$header" ]]; then
+			header="${header}\t"
+		fi
+		header="${header}${key}"
+	done <<<"$keys"
+	echo -e "${CYAN}${header}${NC}"
+
+	# Print separator
+	echo -e "${CYAN}$(echo "$header" | sed 's/[^\t]/-/g; s/\t/\t/g')${NC}"
+
+	# Print rows
+	jq -r '.[] | [.[]] | @tsv' "$file" 2>/dev/null || cat "$file"
+	return 0
+}
+
+format_as_csv() {
+	local file="$1"
+
+	# Header
+	local header_output
+	header_output=$(jq -r '.[0] // {} | keys | @csv' "$file" 2>/dev/null)
+	if [[ -n "$header_output" ]]; then
+		echo "$header_output"
+	fi
+	# Rows
+	local rows_output
+	rows_output=$(jq -r '.[] | [.[]] | @csv' "$file" 2>/dev/null)
+	if [[ -n "$rows_output" ]]; then
+		echo "$rows_output"
+	else
+		print_warning "Could not format data as CSV or no data available"
+	fi
+	return 0
+}
+
+# =============================================================================
 # Provider Management
 # =============================================================================
 
@@ -694,7 +1360,7 @@ merge_results() {
 }
 
 # =============================================================================
-# Output Formatting
+# Output Formatting (JSON-based, for multi-provider results)
 # =============================================================================
 
 # Format merged results as a terminal table
@@ -918,122 +1584,245 @@ cmd_lookup() {
 }
 
 # Reverse lookup: find sites using a technology
+# Supports both multi-provider orchestration (provider helpers) and BigQuery/BuiltWith direct
 cmd_reverse() {
-	local technology="$1"
-	local output_format="$2"
-	local use_cache="$3"
-	local cache_ttl="$4"
-	shift 4
-	local -a filters=("$@")
+	local technology=""
+	local limit="$DEFAULT_LIMIT"
+	local client="$DEFAULT_CLIENT"
+	local traffic=""
+	local keywords=""
+	local region=""
+	local industry=""
+	local format="json"
+	local provider="auto"
+	local crawl_date=""
+	local output_format="table"
+	local use_cache="true"
+	local cache_ttl="$TS_DEFAULT_CACHE_TTL"
+	local -a filters=()
 
-	log_info "Reverse lookup for technology: ${technology}"
-
-	# Build filters hash for cache key
-	local filters_hash
-	filters_hash=$(echo "${technology}|${filters[*]:-}" | shasum -a 256 | cut -d' ' -f1)
-
-	# Check cache
-	if [[ "$use_cache" == "true" && -f "$CACHE_DB" ]]; then
-		local cached
-		cached=$(sqlite3_param "$CACHE_DB" \
-			"SELECT results_json FROM reverse_cache
-			WHERE technology = :tech
-			  AND filters_hash = :hash
-			  AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now');" \
-			":tech" "$technology" \
-			":hash" "$filters_hash" \
-			2>/dev/null || echo "")
-
-		if [[ -n "$cached" ]]; then
-			log_success "Cache hit for reverse lookup: ${technology}"
-			output_results "$cached" "$output_format"
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--limit | -n)
+			limit="$2"
+			shift 2
+			;;
+		--traffic | -t)
+			traffic="$2"
+			shift 2
+			;;
+		--keywords | -k)
+			keywords="$2"
+			shift 2
+			;;
+		--region | -r)
+			region="$2"
+			shift 2
+			;;
+		--industry | -i)
+			industry="$2"
+			shift 2
+			;;
+		--format | -f)
+			format="$2"
+			output_format="$2"
+			shift 2
+			;;
+		--json)
+			format="json"
+			output_format="json"
+			shift
+			;;
+		--markdown)
+			format="json"
+			output_format="markdown"
+			shift
+			;;
+		--provider | -p)
+			provider="$2"
+			shift 2
+			;;
+		--client)
+			client="$2"
+			shift 2
+			;;
+		--date)
+			crawl_date="$2"
+			shift 2
+			;;
+		--no-cache)
+			use_cache="false"
+			CACHE_TTL_DAYS=0
+			shift
+			;;
+		--cache-ttl)
+			cache_ttl="${2:-$TS_DEFAULT_CACHE_TTL}"
+			shift 2
+			;;
+		--help | -h)
+			usage_reverse
 			return 0
+			;;
+		-*)
+			print_error "Unknown option: $1"
+			usage_reverse
+			return 1
+			;;
+		*)
+			if [[ -z "$technology" ]]; then
+				technology="$1"
+			else
+				filters+=("$1")
+			fi
+			shift
+			;;
+		esac
+	done
+
+	if [[ -z "$technology" ]]; then
+		print_error "Technology name is required"
+		usage_reverse
+		return 1
+	fi
+
+	if [[ "$limit" -gt "$MAX_LIMIT" ]]; then
+		print_warning "Limit capped at $MAX_LIMIT (requested: $limit)"
+		limit="$MAX_LIMIT"
+	fi
+
+	# Region/industry filtering via keywords (HTTP Archive doesn't have structured region data)
+	if [[ -n "$region" ]]; then
+		local region_tld
+		region_tld=$(region_to_tld "$region")
+		if [[ -n "$region_tld" ]]; then
+			if [[ -n "$keywords" ]]; then
+				keywords="${keywords},${region_tld}"
+			else
+				keywords="$region_tld"
+			fi
+			print_info "Filtering by region: $region (TLD: $region_tld)"
+		else
+			print_warning "Unknown region '$region' — region filter ignored"
 		fi
 	fi
 
-	# Check which providers support reverse lookup
+	if [[ -n "$industry" ]]; then
+		if [[ -n "$keywords" ]]; then
+			keywords="${keywords},${industry}"
+		else
+			keywords="$industry"
+		fi
+		print_info "Filtering by industry keyword: $industry"
+	fi
+
+	# Check if provider helpers support reverse lookup
 	local -a reverse_providers=()
-	local provider
-	for provider in $PROVIDERS; do
+	local p
+	for p in $PROVIDERS; do
 		local script
-		script=$(provider_script "$provider")
+		script=$(provider_script "$p")
 		local script_path="${SCRIPT_DIR}/${script}"
 		if [[ -x "$script_path" ]]; then
-			# Check if provider supports reverse command
 			if "$script_path" help 2>/dev/null | grep -q "reverse"; then
-				reverse_providers+=("$provider")
+				reverse_providers+=("$p")
 			fi
 		fi
 	done
 
-	if [[ ${#reverse_providers[@]} -eq 0 ]]; then
-		log_warning "No providers support reverse lookup yet."
-		log_info "Reverse lookup will be fully implemented by t1068."
+	# If provider helpers support reverse, use them; otherwise fall back to BigQuery/BuiltWith
+	if [[ ${#reverse_providers[@]} -gt 0 && "$provider" == "auto" ]]; then
+		log_info "Reverse lookup for technology: ${technology}"
 
-		# Return a placeholder result
-		local placeholder
-		placeholder=$(jq -n \
-			--arg tech "$technology" \
-			'{
-                technology: $tech,
+		# Build filters hash for SQLite cache key
+		local filters_hash
+		filters_hash=$(echo "${technology}|${filters[*]:-}" | shasum -a 256 | cut -d' ' -f1)
+
+		# Check SQLite cache
+		if [[ "$use_cache" == "true" && -f "$CACHE_DB" ]]; then
+			local cached
+			cached=$(sqlite3_param "$CACHE_DB" \
+				"SELECT results_json FROM reverse_cache
+				WHERE technology = :tech
+				  AND filters_hash = :hash
+				  AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now');" \
+				":tech" "$technology" \
+				":hash" "$filters_hash" \
+				2>/dev/null || echo "")
+
+			if [[ -n "$cached" ]]; then
+				log_success "Cache hit for reverse lookup: ${technology}"
+				output_results "$cached" "$output_format"
+				return 0
+			fi
+		fi
+
+		local tmp_dir
+		tmp_dir=$(mktemp -d)
+		trap 'rm -rf "${tmp_dir:-}"' RETURN
+
+		local -a result_files=()
+		for p in "${reverse_providers[@]}"; do
+			local script
+			script=$(provider_script "$p")
+			local script_path="${SCRIPT_DIR}/${script}"
+			local result_file="${tmp_dir}/${p}.json"
+			result_files+=("$result_file")
+
+			local result
+			result=$(timeout "$TS_DEFAULT_TIMEOUT" "$script_path" reverse "$technology" --json ${filters[@]+"${filters[@]}"} 2>/dev/null) || true
+			echo "${result:-{}}" >"$result_file"
+		done
+
+		local merged
+		merged=$(jq -s '
+            {
+                technology: .[0].technology,
                 scan_time: (now | strftime("%Y-%m-%dT%H:%M:%SZ")),
-                sites: [],
-                total_count: 0,
-                note: "Reverse lookup requires provider support (t1068). No providers currently implement this."
-            }')
+                sites: [.[].sites // [] | .[]] | unique_by(.url),
+                total_count: ([.[].sites // [] | .[]] | unique_by(.url) | length)
+            }
+        ' "${result_files[@]}" 2>/dev/null) || {
+			log_error "Failed to merge reverse lookup results"
+			return 1
+		}
 
-		output_results "$placeholder" "$output_format"
+		if [[ "$use_cache" == "true" ]]; then
+			log_stderr "cache reverse" sqlite3_param "$CACHE_DB" \
+				"INSERT OR REPLACE INTO reverse_cache (technology, filters_hash, results_json, expires_at)
+				VALUES (:tech, :hash, :json,
+					strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '+' || :ttl || ' hours'));" \
+				":tech" "$technology" \
+				":hash" "$filters_hash" \
+				":json" "$merged" \
+				":ttl" "$cache_ttl" \
+				2>/dev/null || true
+		fi
+
+		output_results "$merged" "$output_format"
 		return 0
 	fi
 
-	# Run reverse lookup on available providers
-	local tmp_dir
-	tmp_dir=$(mktemp -d)
-	trap 'rm -rf "${tmp_dir:-}"' RETURN
-
-	local -a result_files=()
-	for provider in "${reverse_providers[@]}"; do
-		local script
-		script=$(provider_script "$provider")
-		local script_path="${SCRIPT_DIR}/${script}"
-		local result_file="${tmp_dir}/${provider}.json"
-		result_files+=("$result_file")
-
-		local result
-		result=$(timeout "$TS_DEFAULT_TIMEOUT" "$script_path" reverse "$technology" --json ${filters[@]+"${filters[@]}"} 2>/dev/null) || true
-		echo "${result:-{}}" >"$result_file"
-	done
-
-	# Merge reverse results
-	local merged
-	merged=$(jq -s '
-        {
-            technology: .[0].technology,
-            scan_time: (now | strftime("%Y-%m-%dT%H:%M:%SZ")),
-            sites: [.[].sites // [] | .[]] | unique_by(.url),
-            total_count: ([.[].sites // [] | .[]] | unique_by(.url) | length)
-        }
-    ' "${result_files[@]}" 2>/dev/null) || {
-		log_error "Failed to merge reverse lookup results"
+	# BigQuery / BuiltWith path
+	case "$provider" in
+	auto | httparchive | bq)
+		if check_bq_available && check_gcloud_auth; then
+			print_info "Using provider: HTTP Archive (BigQuery)"
+			bq_reverse_lookup "$technology" "$limit" "$client" "$traffic" "$keywords" "$crawl_date" "$format"
+		else
+			print_warning "BigQuery not available, falling back to BuiltWith API..."
+			builtwith_reverse_lookup "$technology" "$limit" "$format"
+		fi
+		;;
+	builtwith)
+		builtwith_reverse_lookup "$technology" "$limit" "$format"
+		;;
+	*)
+		print_error "Unknown provider: $provider (use: auto, httparchive, builtwith)"
 		return 1
-	}
+		;;
+	esac
 
-	# Cache result
-	if [[ "$use_cache" == "true" ]]; then
-		log_stderr "cache reverse" sqlite3_param "$CACHE_DB" \
-			"INSERT OR REPLACE INTO reverse_cache (technology, filters_hash, results_json, expires_at)
-			VALUES (:tech, :hash, :json,
-				strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '+' || :ttl || ' hours'));" \
-			":tech" "$technology" \
-			":hash" "$filters_hash" \
-			":json" "$merged" \
-			":ttl" "$cache_ttl" \
-			2>/dev/null || true
-	fi
-
-	output_results "$merged" "$output_format"
-
-	return 0
+	return $?
 }
 
 # Report: generate full markdown report for a URL
@@ -1147,6 +1936,174 @@ format_reverse_markdown() {
 }
 
 # =============================================================================
+# Command: categories
+# =============================================================================
+
+cmd_categories() {
+	local format="json"
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--format | -f)
+			format="$2"
+			shift 2
+			;;
+		--help | -h)
+			usage_categories
+			return 0
+			;;
+		*) shift ;;
+		esac
+	done
+
+	if ! check_bq_available || ! check_gcloud_auth; then
+		print_error "BigQuery required for categories listing"
+		return 1
+	fi
+
+	bq_list_categories "$format"
+	return $?
+}
+
+# =============================================================================
+# Command: trending
+# =============================================================================
+
+cmd_trending() {
+	local direction="adopted"
+	local limit=20
+	local format="json"
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--direction | -d)
+			direction="$2"
+			shift 2
+			;;
+		--limit | -n)
+			limit="$2"
+			shift 2
+			;;
+		--format | -f)
+			format="$2"
+			shift 2
+			;;
+		--help | -h)
+			usage_trending
+			return 0
+			;;
+		*) shift ;;
+		esac
+	done
+
+	if ! check_bq_available || ! check_gcloud_auth; then
+		print_error "BigQuery required for trending data"
+		return 1
+	fi
+
+	bq_trending "$direction" "$limit" "$format"
+	return $?
+}
+
+# =============================================================================
+# Command: info
+# =============================================================================
+
+cmd_info() {
+	local technology=""
+	local format="json"
+	local show_detections=false
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--format | -f)
+			format="$2"
+			shift 2
+			;;
+		--detections)
+			show_detections=true
+			shift
+			;;
+		--help | -h)
+			usage_info
+			return 0
+			;;
+		-*)
+			print_error "Unknown option: $1"
+			return 1
+			;;
+		*)
+			if [[ -z "$technology" ]]; then
+				technology="$1"
+			fi
+			shift
+			;;
+		esac
+	done
+
+	if [[ -z "$technology" ]]; then
+		print_error "Technology name is required"
+		usage_info
+		return 1
+	fi
+
+	if ! check_bq_available || ! check_gcloud_auth; then
+		print_error "BigQuery required for technology info"
+		return 1
+	fi
+
+	bq_tech_info "$technology" "$format"
+
+	if [[ "$show_detections" == true ]]; then
+		echo ""
+		print_info "Adoption/deprecation history:"
+		bq_tech_detections "$technology" 6 "$format"
+	fi
+
+	return 0
+}
+
+# =============================================================================
+# Region to TLD Mapping
+# =============================================================================
+
+region_to_tld() {
+	local region="$1"
+	local tld=""
+
+	case "$(echo "$region" | tr '[:upper:]' '[:lower:]')" in
+	uk | gb | "united kingdom") tld=".co.uk" ;;
+	us | usa | "united states") tld=".com" ;;
+	de | germany) tld=".de" ;;
+	fr | france) tld=".fr" ;;
+	jp | japan) tld=".jp" ;;
+	cn | china) tld=".cn" ;;
+	au | australia) tld=".com.au" ;;
+	ca | canada) tld=".ca" ;;
+	br | brazil) tld=".com.br" ;;
+	in | india) tld=".in" ;;
+	it | italy) tld=".it" ;;
+	es | spain) tld=".es" ;;
+	nl | netherlands) tld=".nl" ;;
+	se | sweden) tld=".se" ;;
+	no | norway) tld=".no" ;;
+	dk | denmark) tld=".dk" ;;
+	fi | finland) tld=".fi" ;;
+	pl | poland) tld=".pl" ;;
+	ru | russia) tld=".ru" ;;
+	kr | "south korea") tld=".kr" ;;
+	*)
+		if [[ ${#region} -le 3 ]]; then
+			tld=".${region}"
+		fi
+		;;
+	esac
+
+	echo "$tld"
+	return 0
+}
+
+# =============================================================================
 # Help
 # =============================================================================
 
@@ -1163,6 +2120,9 @@ COMMANDS:
     report <url>                  Generate a full markdown report
     cache [stats|clear|get <url>] Manage the SQLite result cache
     providers                     List available detection providers
+    categories                    List technology categories (BigQuery)
+    trending                      Show trending technologies (BigQuery)
+    info <technology>             Get technology metadata (BigQuery)
     help                          Show this help message
 
 OPTIONS:
@@ -1186,11 +2146,16 @@ EXAMPLES:
     tech-stack-helper.sh lookup https://github.com --json
     tech-stack-helper.sh lookup example.com --provider unbuilt
     tech-stack-helper.sh reverse "React" --json
+    tech-stack-helper.sh reverse WordPress --limit 50 --traffic top10k
+    tech-stack-helper.sh reverse React --region uk --format table
     tech-stack-helper.sh report example.com > report.md
     tech-stack-helper.sh cache stats
     tech-stack-helper.sh cache clear expired
     tech-stack-helper.sh cache get example.com
     tech-stack-helper.sh providers
+    tech-stack-helper.sh categories --format table
+    tech-stack-helper.sh trending --direction adopted --limit 30
+    tech-stack-helper.sh info WordPress --detections
 
 PROVIDER INTERFACE:
     Each provider helper must implement:
@@ -1219,8 +2184,96 @@ CACHE:
     Results are cached in SQLite at:
       ~/.aidevops/.agent-workspace/work/tech-stack/cache.db
     Default TTL: 7 days. Override with --cache-ttl or TECH_STACK_CACHE_TTL.
+
+DATA SOURCES (reverse lookup):
+    Primary:  HTTP Archive via BigQuery (crawl.pages + Wappalyzer detection)
+    Fallback: BuiltWith API (requires API key)
+    Prerequisites for BigQuery:
+      - Google Cloud SDK (brew install google-cloud-sdk)
+      - GCP project with BigQuery API enabled (free tier: 1TB/month)
+      - gcloud auth login && gcloud config set project YOUR_PROJECT
 EOF
 
+	return 0
+}
+
+usage() {
+	print_usage
+	return 0
+}
+
+usage_reverse() {
+	cat <<EOF
+${CYAN}reverse${NC} — Find websites using a specific technology
+
+${HELP_LABEL_USAGE}
+  $0 reverse <technology> [options]
+
+${HELP_LABEL_OPTIONS}
+  --limit, -n <num>       Max results (default: $DEFAULT_LIMIT, max: $MAX_LIMIT)
+  --traffic, -t <tier>    Filter by traffic rank: top1k, top10k, top100k, top1m, or number
+  --keywords, -k <terms>  Filter URLs containing terms (comma-separated)
+  --region, -r <region>   Filter by region (maps to TLD: uk, de, fr, jp, etc.)
+  --industry, -i <term>   Filter by industry keyword in URL
+  --format, -f <fmt>      Output format: json (default), table, csv
+  --provider, -p <name>   Data provider: auto (default), httparchive, builtwith
+  --client <type>         HTTP Archive client: desktop (default), mobile
+  --date <YYYY-MM-DD>     Specific crawl date (default: latest)
+  --no-cache              Skip cache, force fresh query
+  --help, -h              ${HELP_SHOW_MESSAGE}
+
+${HELP_LABEL_EXAMPLES}
+  $0 reverse WordPress
+  $0 reverse React --traffic top10k --format table
+  $0 reverse Shopify --region uk --limit 50
+  $0 reverse "Next.js" --keywords blog,news --format csv
+  $0 reverse Cloudflare --traffic top1k --provider httparchive
+EOF
+	return 0
+}
+
+usage_categories() {
+	cat <<EOF
+${CYAN}categories${NC} — List available technology categories
+
+${HELP_LABEL_USAGE}
+  $0 categories [options]
+
+${HELP_LABEL_OPTIONS}
+  --format, -f <fmt>   Output format: json (default), table
+  --help, -h           ${HELP_SHOW_MESSAGE}
+EOF
+	return 0
+}
+
+usage_trending() {
+	cat <<EOF
+${CYAN}trending${NC} — Show trending technology adoptions/deprecations
+
+${HELP_LABEL_USAGE}
+  $0 trending [options]
+
+${HELP_LABEL_OPTIONS}
+  --direction, -d <dir>  Direction: adopted (default), deprecated
+  --limit, -n <num>      Max results (default: 20)
+  --format, -f <fmt>     Output format: json (default), table
+  --help, -h             ${HELP_SHOW_MESSAGE}
+EOF
+	return 0
+}
+
+usage_info() {
+	cat <<EOF
+${CYAN}info${NC} — Get technology metadata and adoption trends
+
+${HELP_LABEL_USAGE}
+  $0 info <technology> [options]
+
+${HELP_LABEL_OPTIONS}
+  --detections         Include adoption/deprecation history
+  --format, -f <fmt>   Output format: json (default), table
+  --help, -h           ${HELP_SHOW_MESSAGE}
+EOF
 	return 0
 }
 
@@ -1312,7 +2365,7 @@ main() {
 		if [[ ${#positional[@]} -gt 1 ]]; then
 			filters=("${positional[@]:1}")
 		fi
-		cmd_reverse "$technology" "$output_format" "$use_cache" "$cache_ttl" ${filters[@]+"${filters[@]}"}
+		cmd_reverse "$technology" ${filters[@]+"${filters[@]}"}
 		;;
 	report)
 		local url="${positional[0]:-}"
@@ -1349,6 +2402,20 @@ main() {
 	providers)
 		list_providers
 		;;
+	categories)
+		cmd_categories ${positional[@]+"${positional[@]}"}
+		;;
+	trending)
+		cmd_trending ${positional[@]+"${positional[@]}"}
+		;;
+	info)
+		local technology="${positional[0]:-}"
+		if [[ -z "$technology" ]]; then
+			log_error "Technology name is required. Usage: tech-stack-helper.sh info <technology>"
+			return 1
+		fi
+		cmd_info "$technology" ${positional[@]:1+"${positional[@]:1}"}
+		;;
 	help | -h | --help)
 		print_usage
 		;;
@@ -1365,7 +2432,4 @@ main() {
 	return 0
 }
 
-# Run main if executed directly
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-	main "$@"
-fi
+main "$@"
