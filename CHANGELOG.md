@@ -11,6 +11,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- add t1070 — post blocked reason comments on GitHub issues
+- create tech-stack-lookup.md orchestrator agent (t1063.2) (#1531)
+- add tech stack lookup agent tasks t1063-t1068 — open-source BuiltWith alternative
+
+### Changed
+
+- Documentation: add v2.116.0 changelog entries
+
+### Fixed
+
+- auto-retry timed-out workers before marking failed (t1074) (#1560)
+- multi-commit rebase loop + sequential subtask dispatch (t1072, t1073) (#1558)
+- prevent pulse crash when PR mergedAt is null (t1071) (#1553)
+- add t1071 — pulse Phase 3b2 crash on mergedAt:null kills rebase retry
+- dedup_todo_task_ids removes duplicates instead of renaming (t1069) (#1549)
+- remove duplicate task entries t1069-t1077 and merge conflict markers, add t1069 dedup fix task
+- wp-helper.sh SSH stdin consumption and Cloudways template path (t1057, t1058) (#1513)
+
+## [2.116.0] - 2026-02-17
+
+### Added
+
 - Tech stack lookup system — open-source BuiltWith alternative with multiple providers (t1063-t1068)
   - Unbuilt.app provider agent (t1064)
   - CRFT Lookup provider agent (t1065)
