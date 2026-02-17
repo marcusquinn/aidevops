@@ -610,6 +610,15 @@ get_latest_crawl_date() {
 	return 0
 }
 
+# Sanitize a string for safe use in BigQuery SQL (strip injection characters)
+sanitize_sql_value() {
+	local value="$1"
+	value="${value//\'/}"
+	value="${value//\\/}"
+	value="${value//;/}"
+	echo "$value"
+}
+
 load_builtwith_api_key() {
 	if [[ -n "${BUILTWITH_API_KEY:-}" ]]; then
 		echo "$BUILTWITH_API_KEY"
@@ -627,7 +636,7 @@ load_builtwith_api_key() {
 	fi
 
 	echo ""
-	return 0
+	return 1
 }
 
 # =============================================================================
@@ -635,7 +644,8 @@ load_builtwith_api_key() {
 # =============================================================================
 
 bq_reverse_lookup() {
-	local technology="$1"
+	local technology
+	technology=$(sanitize_sql_value "$1")
 	local limit="${2:-$DEFAULT_LIMIT}"
 	local client="${3:-$DEFAULT_CLIENT}"
 	local rank_filter="${4:-}"
@@ -683,6 +693,12 @@ bq_reverse_lookup() {
 		local IFS=','
 		for kw in $keywords; do
 			kw=$(echo "$kw" | xargs)
+			# Sanitize: strip single quotes and backslashes to prevent SQL injection
+			kw="${kw//\'/}"
+			kw="${kw//\\/}"
+			if [[ -z "$kw" ]]; then
+				continue
+			fi
 			if [[ -n "$kw_conditions" ]]; then
 				kw_conditions="${kw_conditions} OR "
 			fi
@@ -741,7 +757,8 @@ EOSQL
 # =============================================================================
 
 bq_tech_detections() {
-	local technology="$1"
+	local technology
+	technology=$(sanitize_sql_value "$1")
 	local limit="${2:-10}"
 	local format="${3:-json}"
 
@@ -849,7 +866,8 @@ EOSQL
 # =============================================================================
 
 bq_tech_info() {
-	local technology="$1"
+	local technology
+	technology=$(sanitize_sql_value "$1")
 	local format="${2:-json}"
 
 	local cache_key="tech_info_${technology}"
@@ -993,13 +1011,18 @@ builtwith_reverse_lookup() {
 	local encoded_tech
 	encoded_tech=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$technology'))" 2>/dev/null || echo "$technology")
 
-	local result
+	local result curl_stderr
+	curl_stderr=$(mktemp)
 	result=$(curl -s -f \
 		"${BUILTWITH_API_BASE}/v21/api.json?KEY=${api_key}&TECH=${encoded_tech}&AMOUNT=${limit}" \
-		2>/dev/null) || {
-		print_error "BuiltWith API request failed"
+		2>"$curl_stderr") || {
+		local err_msg
+		err_msg=$(cat "$curl_stderr")
+		rm -f "$curl_stderr"
+		print_error "BuiltWith API request failed${err_msg:+: $err_msg}"
 		return 1
 	}
+	rm -f "$curl_stderr"
 
 	if echo "$result" | jq -e '.Errors' &>/dev/null; then
 		local error_msg
@@ -1055,13 +1078,10 @@ format_as_table() {
 	local file="$1"
 
 	local keys
-	keys=$(jq -r '.[0] // {} | keys[]' "$file" 2>/dev/null) || {
-		cat "$file"
-		return 0
-	}
+	keys=$(jq -r '.[0] // {} | keys[]' "$file" 2>/dev/null)
 
 	if [[ -z "$keys" ]]; then
-		print_warning "No data to display"
+		print_warning "No data to display or invalid JSON structure"
 		return 0
 	fi
 
@@ -1087,9 +1107,19 @@ format_as_csv() {
 	local file="$1"
 
 	# Header
-	jq -r '.[0] // {} | keys | @csv' "$file" 2>/dev/null || true
+	local header_output
+	header_output=$(jq -r '.[0] // {} | keys | @csv' "$file" 2>/dev/null)
+	if [[ -n "$header_output" ]]; then
+		echo "$header_output"
+	fi
 	# Rows
-	jq -r '.[] | [.[]] | @csv' "$file" 2>/dev/null || cat "$file"
+	local rows_output
+	rows_output=$(jq -r '.[] | [.[]] | @csv' "$file" 2>/dev/null)
+	if [[ -n "$rows_output" ]]; then
+		echo "$rows_output"
+	else
+		print_warning "Could not format data as CSV or no data available"
+	fi
 	return 0
 }
 
@@ -1671,6 +1701,8 @@ cmd_reverse() {
 				keywords="$region_tld"
 			fi
 			print_info "Filtering by region: $region (TLD: $region_tld)"
+		else
+			print_warning "Unknown region '$region' — region filter ignored"
 		fi
 	fi
 
@@ -1774,9 +1806,10 @@ cmd_reverse() {
 	case "$provider" in
 	auto | httparchive | bq)
 		if check_bq_available && check_gcloud_auth; then
+			print_info "Using provider: HTTP Archive (BigQuery)"
 			bq_reverse_lookup "$technology" "$limit" "$client" "$traffic" "$keywords" "$crawl_date" "$format"
 		else
-			print_warning "BigQuery not available, trying BuiltWith fallback..."
+			print_warning "BigQuery not available, falling back to BuiltWith API..."
 			builtwith_reverse_lookup "$technology" "$limit" "$format"
 		fi
 		;;

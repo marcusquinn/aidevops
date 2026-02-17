@@ -126,3 +126,7 @@ The `--region` flag maps country codes/names to TLDs for URL filtering:
 | br | .com.br | in | .in |
 | it | .it | es | .es |
 | nl | .nl | se | .se |
+| no | .no | dk | .dk |
+| fi | .fi | pl | .pl |
+| ru | .ru | kr | .kr |
+| cn | .cn | us | .com |
