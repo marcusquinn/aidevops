@@ -219,6 +219,8 @@ init_cache() {
 
 	if [[ ! -f "$CACHE_DB" ]]; then
 		sqlite3 "$CACHE_DB" <<EOF
+PRAGMA journal_mode=WAL;
+PRAGMA busy_timeout=5000;
 CREATE TABLE IF NOT EXISTS lookups (
     url TEXT PRIMARY KEY,
     technologies TEXT,
@@ -243,8 +245,11 @@ get_cached_result() {
 
 	init_cache
 
+	# Escape single quotes to prevent SQL injection (sqlite3 CLI lacks parameterized queries)
+	local safe_url="${url//\'/\'\'}"
+
 	local result
-	result=$(sqlite3 "$CACHE_DB" "SELECT technologies, providers FROM lookups WHERE url = '$url' AND timestamp > $cutoff LIMIT 1" 2>/dev/null || echo "")
+	result=$(sqlite3 "$CACHE_DB" "SELECT technologies, providers FROM lookups WHERE url = '${safe_url}' AND timestamp > $cutoff LIMIT 1" 2>/dev/null || echo "")
 
 	if [[ -n "$result" ]]; then
 		echo "$result"
@@ -263,15 +268,20 @@ store_cached_result() {
 
 	init_cache
 
+	# Escape single quotes to prevent SQL injection
+	local safe_url="${url//\'/\'\'}"
+	local safe_technologies="${technologies//\'/\'\'}"
+	local safe_providers="${providers//\'/\'\'}"
+
 	sqlite3 "$CACHE_DB" <<EOF
 INSERT OR REPLACE INTO lookups (url, technologies, providers, timestamp, ttl_hours)
-VALUES ('$url', '$technologies', '$providers', $now, $CACHE_TTL_HOURS);
+VALUES ('${safe_url}', '${safe_technologies}', '${safe_providers}', $now, $CACHE_TTL_HOURS);
 EOF
 	return 0
 }
 
 # Clear cache entries older than N days
-clear_cache() {
+cmd_clear_cache() {
 	local days="${1:-30}"
 	local cutoff
 	cutoff=$(date -v-"${days}"d +%s 2>/dev/null || date -d "${days} days ago" +%s)
@@ -286,7 +296,7 @@ clear_cache() {
 }
 
 # Show cache statistics
-cache_stats() {
+cmd_cache_stats() {
 	init_cache
 
 	local total
@@ -651,9 +661,13 @@ detect_httpx_nuclei() {
 	local nuclei_result
 	nuclei_result=$(echo "$url" | nuclei -silent -t technologies/ -json -timeout "$NUCLEI_TIMEOUT" 2>/dev/null || echo "[]")
 
-	# Merge results
+	# Merge results into common object schema ({name, version, ...})
 	local merged
-	merged=$(jq -s '.[0].technologies // [] + (.[1] | map(.info.name) // []) | unique' <(echo "$httpx_result") <(echo "$nuclei_result") 2>/dev/null || echo "[]")
+	merged=$(jq -s '
+		(.[0].technologies // [] | map(if type == "string" then {name: .} else . end))
+		+ (.[1] // [] | map(if .info.name then {name: .info.name} else {name: .} end))
+		| unique_by(.name)
+	' <(echo "$httpx_result") <(echo "$nuclei_result") 2>/dev/null || echo "[]")
 
 	echo "$merged"
 	return 0
@@ -677,7 +691,7 @@ merge_provider_results() {
 # =============================================================================
 
 # Perform single-site tech stack lookup
-lookup() {
+cmd_lookup() {
 	local url="$1"
 	local format="${2:-table}"
 
@@ -716,8 +730,8 @@ lookup() {
 
 	# Store in cache
 	local providers_used=0
-	[[ "$wappalyzer_result" != "[]" ]] && ((providers_used++))
-	[[ "$httpx_result" != "[]" ]] && ((providers_used++))
+	[[ "$wappalyzer_result" != "[]" ]] && { ((providers_used++)) || true; }
+	[[ "$httpx_result" != "[]" ]] && { ((providers_used++)) || true; }
 
 	store_cached_result "$url" "$merged" "$providers_used"
 
@@ -786,7 +800,7 @@ format_markdown() {
 # =============================================================================
 
 # Perform reverse lookup to find sites using a technology
-reverse_lookup() {
+cmd_reverse_lookup() {
 	local technology="$1"
 	shift
 
@@ -844,7 +858,11 @@ reverse_lookup_builtwith() {
 	local keywords="$5"
 
 	local api_url="https://api.builtwith.com/v20/api.json"
-	local params="KEY=${BUILTWITH_API_KEY}&LOOKUP=${technology}"
+
+	# URL-encode technology name to handle special characters (e.g., "Next.js", "Google Analytics")
+	local encoded_tech
+	encoded_tech=$(jq -rn --arg tech "$technology" '$tech | @uri')
+	local params="KEY=${BUILTWITH_API_KEY}&LOOKUP=${encoded_tech}"
 
 	[[ -n "$region" ]] && params="${params}&REGION=${region}"
 	[[ -n "$industry" ]] && params="${params}&INDUSTRY=${industry}"
@@ -874,7 +892,7 @@ reverse_lookup_publicwww() {
 # =============================================================================
 
 # List available providers
-list_providers() {
+cmd_list_providers() {
 	print_header "Available Tech Stack Providers"
 	echo ""
 	echo "  openexplorer  Free, open-source community-driven detection (~72 techs)"
@@ -892,7 +910,7 @@ list_providers() {
 }
 
 # Compare results across providers for a URL
-compare_providers() {
+cmd_compare_providers() {
 	local url="$1"
 	local normalised
 	normalised="$(normalise_url "$url")"
@@ -907,7 +925,7 @@ compare_providers() {
 
 	# Multi-provider lookup
 	echo "--- Multi-Provider Lookup ---"
-	lookup "$url" "table"
+	cmd_lookup "$url" "table"
 
 	return 0
 }
@@ -1006,11 +1024,11 @@ main() {
 		show_help
 		;;
 	providers)
-		list_providers
+		cmd_list_providers
 		;;
 	compare)
 		local url="${1:?URL required for compare}"
-		compare_providers "$url"
+		cmd_compare_providers "$url"
 		;;
 	lookup)
 		if [[ $# -lt 1 ]]; then
@@ -1018,7 +1036,7 @@ main() {
 			echo "$HELP_USAGE_INFO"
 			return 1
 		fi
-		lookup "$@"
+		cmd_lookup "$@"
 		;;
 	reverse)
 		if [[ $# -lt 1 ]]; then
@@ -1026,17 +1044,17 @@ main() {
 			echo "$HELP_USAGE_INFO"
 			return 1
 		fi
-		reverse_lookup "$@"
+		cmd_reverse_lookup "$@"
 		;;
 	cache-stats)
-		cache_stats
+		cmd_cache_stats
 		;;
 	cache-clear)
 		local days=30
 		if [[ "$1" == "--older-than" ]]; then
 			days="$2"
 		fi
-		clear_cache "$days"
+		cmd_clear_cache "$days"
 		;;
 	openexplorer)
 		local subcommand="${1:-help}"
