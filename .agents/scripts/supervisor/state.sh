@@ -926,11 +926,12 @@ cmd_next() {
 
 	ensure_db
 
+	local candidates
 	if [[ -n "$batch_id" ]]; then
 		local escaped_batch
 		escaped_batch=$(sql_escape "$batch_id")
 
-		db -separator $'\t' "$SUPERVISOR_DB" "
+		candidates=$(db -separator $'\t' "$SUPERVISOR_DB" "
             SELECT t.id, t.repo, t.description, t.model
             FROM batch_tasks bt
             JOIN tasks t ON bt.task_id = t.id
@@ -938,18 +939,53 @@ cmd_next() {
             AND t.status = 'queued'
             AND t.retries < t.max_retries
             ORDER BY t.retries ASC, bt.position
-            LIMIT $limit;
-        "
+            LIMIT $((limit * 3));
+        ")
 	else
-		db -separator $'\t' "$SUPERVISOR_DB" "
+		candidates=$(db -separator $'\t' "$SUPERVISOR_DB" "
             SELECT id, repo, description, model
             FROM tasks
             WHERE status = 'queued'
             AND retries < max_retries
             ORDER BY retries ASC, created_at ASC
-            LIMIT $limit;
-        "
+            LIMIT $((limit * 3));
+        ")
 	fi
+
+	[[ -z "$candidates" ]] && return 0
+
+	# t1073: Filter out subtasks whose earlier siblings are still in-flight.
+	# Subtasks (IDs like t1063.2) should run sequentially — dispatching them
+	# in parallel causes merge conflicts because they modify the same files.
+	# Skip a subtask if any sibling with a lower suffix is not yet terminal.
+	local count=0
+	while IFS=$'\t' read -r cid crepo cdesc cmodel; do
+		[[ "$count" -ge "$limit" ]] && break
+
+		# Check if this is a subtask (contains a dot)
+		if [[ "$cid" == *.* ]]; then
+			local parent_id="${cid%.*}"
+			local suffix="${cid##*.}"
+
+			# Check if any earlier sibling (same parent, lower suffix) is non-terminal
+			local earlier_active
+			earlier_active=$(db "$SUPERVISOR_DB" "
+				SELECT count(*) FROM tasks
+				WHERE id LIKE '$(sql_escape "$parent_id").%'
+				  AND id != '$(sql_escape "$cid")'
+				  AND CAST(REPLACE(id, '$(sql_escape "$parent_id").', '') AS INTEGER) < $suffix
+				  AND status NOT IN ('verified','cancelled','deployed','complete');
+			" 2>/dev/null || echo "0")
+
+			if [[ "$earlier_active" -gt 0 ]]; then
+				log_info "  cmd_next: deferring $cid — earlier sibling(s) of $parent_id still active"
+				continue
+			fi
+		fi
+
+		printf '%s\t%s\t%s\t%s\n' "$cid" "$crepo" "$cdesc" "$cmodel"
+		count=$((count + 1))
+	done <<<"$candidates"
 
 	return 0
 }
