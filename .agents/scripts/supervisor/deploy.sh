@@ -2129,6 +2129,66 @@ RULES:
 # Args: task_id
 # Returns: 0 on success, 1 on rebase failure, 2 on force-push failure
 #######################################
+
+#######################################
+# t1072: Resolve rebase conflicts in a loop for multi-commit branches.
+# When a branch has N commits and multiple conflict with main, we need
+# to resolve each one and continue until the rebase completes.
+# Args: git_dir task_id
+# Returns: 0 on success, 1 on failure (rebase aborted)
+#######################################
+_resolve_rebase_loop() {
+	local git_dir="$1"
+	local task_id="$2"
+	local max_iterations=10
+	local iteration=0
+
+	while ((iteration < max_iterations)); do
+		iteration=$((iteration + 1))
+		log_warn "rebase_sibling_pr: rebase conflict for $task_id — attempting AI resolution (commit $iteration/$max_iterations)"
+
+		if ! resolve_rebase_conflicts "$git_dir" "$task_id"; then
+			log_warn "rebase_sibling_pr: AI resolution failed for $task_id at commit $iteration — aborting"
+			git -C "$git_dir" rebase --abort 2>>"$SUPERVISOR_LOG" || true
+			return 1
+		fi
+
+		# t1048: Check if rebase is still in progress — the AI agent
+		# may have already run `git rebase --continue` itself
+		local git_state_dir
+		git_state_dir="$(git -C "$git_dir" rev-parse --git-dir 2>/dev/null)"
+		if [[ ! -d "$git_state_dir/rebase-merge" && ! -d "$git_state_dir/rebase-apply" ]]; then
+			# AI agent already completed the entire rebase
+			log_success "rebase_sibling_pr: rebase completed (AI resolved all commits) for $task_id"
+			return 0
+		fi
+
+		log_info "rebase_sibling_pr: AI resolved commit $iteration for $task_id — continuing rebase"
+		if git -C "$git_dir" rebase --continue 2>>"$SUPERVISOR_LOG"; then
+			# Rebase completed successfully — no more conflicts
+			log_success "rebase_sibling_pr: rebase completed after resolving $iteration conflict(s) for $task_id"
+			return 0
+		fi
+
+		# rebase --continue failed — check if it's another conflict or a real error
+		git_state_dir="$(git -C "$git_dir" rev-parse --git-dir 2>/dev/null)"
+		if [[ -d "$git_state_dir/rebase-merge" || -d "$git_state_dir/rebase-apply" ]]; then
+			# Still in rebase state — another commit has conflicts, loop continues
+			log_info "rebase_sibling_pr: commit $iteration resolved but next commit also conflicts for $task_id"
+			continue
+		fi
+
+		# rebase --continue failed and no rebase in progress — unexpected state
+		log_warn "rebase_sibling_pr: rebase --continue failed unexpectedly for $task_id at commit $iteration"
+		return 1
+	done
+
+	# Exhausted max iterations
+	log_warn "rebase_sibling_pr: exhausted $max_iterations conflict resolution attempts for $task_id — aborting"
+	git -C "$git_dir" rebase --abort 2>>"$SUPERVISOR_LOG" || true
+	return 1
+}
+
 rebase_sibling_pr() {
 	local task_id="$1"
 
@@ -2201,30 +2261,7 @@ rebase_sibling_pr() {
 	if [[ "$use_worktree" == "true" ]]; then
 		# Worktree is already on the branch — rebase in place
 		if ! git -C "$git_dir" rebase origin/main 2>>"$SUPERVISOR_LOG"; then
-			log_warn "rebase_sibling_pr: rebase conflict for $task_id — attempting AI resolution"
-			# Try AI-assisted conflict resolution before aborting
-			if resolve_rebase_conflicts "$git_dir" "$task_id"; then
-				# t1048: Check if rebase is still in progress — the AI agent
-				# may have already run `git rebase --continue` itself, leaving
-				# no rebase in progress for us to continue.
-				local git_state_dir
-				git_state_dir="$(git -C "$git_dir" rev-parse --git-dir 2>/dev/null)"
-				if [[ -d "$git_state_dir/rebase-merge" || -d "$git_state_dir/rebase-apply" ]]; then
-					log_info "rebase_sibling_pr: AI resolved conflicts for $task_id — continuing rebase"
-					if git -C "$git_dir" rebase --continue 2>>"$SUPERVISOR_LOG"; then
-						log_success "rebase_sibling_pr: rebase completed after AI resolution for $task_id"
-					else
-						log_warn "rebase_sibling_pr: rebase --continue failed after AI resolution for $task_id"
-						git -C "$git_dir" rebase --abort 2>>"$SUPERVISOR_LOG" || true
-						return 1
-					fi
-				else
-					# AI agent already completed the rebase — treat as success
-					log_success "rebase_sibling_pr: rebase completed (AI resolved and continued) for $task_id"
-				fi
-			else
-				log_warn "rebase_sibling_pr: AI resolution failed for $task_id — aborting"
-				git -C "$git_dir" rebase --abort 2>>"$SUPERVISOR_LOG" || true
+			if ! _resolve_rebase_loop "$git_dir" "$task_id"; then
 				return 1
 			fi
 		fi
@@ -2240,31 +2277,7 @@ rebase_sibling_pr() {
 		fi
 
 		if ! git -C "$git_dir" rebase origin/main 2>>"$SUPERVISOR_LOG"; then
-			log_warn "rebase_sibling_pr: rebase conflict for $task_id — attempting AI resolution"
-			# Try AI-assisted conflict resolution before aborting
-			if resolve_rebase_conflicts "$git_dir" "$task_id"; then
-				# t1048: Check if rebase is still in progress (see worktree path above)
-				local git_state_dir
-				git_state_dir="$(git -C "$git_dir" rev-parse --git-dir 2>/dev/null)"
-				if [[ -d "$git_state_dir/rebase-merge" || -d "$git_state_dir/rebase-apply" ]]; then
-					log_info "rebase_sibling_pr: AI resolved conflicts for $task_id — continuing rebase"
-					if git -C "$git_dir" rebase --continue 2>>"$SUPERVISOR_LOG"; then
-						log_success "rebase_sibling_pr: rebase completed after AI resolution for $task_id"
-					else
-						log_warn "rebase_sibling_pr: rebase --continue failed after AI resolution for $task_id"
-						git -C "$git_dir" rebase --abort 2>>"$SUPERVISOR_LOG" || true
-						# Return to original branch
-						git -C "$git_dir" checkout "${current_branch:-main}" 2>>"$SUPERVISOR_LOG" || true
-						return 1
-					fi
-				else
-					# AI agent already completed the rebase — treat as success
-					log_success "rebase_sibling_pr: rebase completed (AI resolved and continued) for $task_id"
-				fi
-			else
-				log_warn "rebase_sibling_pr: AI resolution failed for $task_id — aborting"
-				git -C "$git_dir" rebase --abort 2>>"$SUPERVISOR_LOG" || true
-				# Return to original branch
+			if ! _resolve_rebase_loop "$git_dir" "$task_id"; then
 				git -C "$git_dir" checkout "${current_branch:-main}" 2>>"$SUPERVISOR_LOG" || true
 				return 1
 			fi
