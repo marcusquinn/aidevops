@@ -26,7 +26,6 @@ init_log_file
 
 # Common message constants
 readonly HELP_SHOW_MESSAGE="Show this help"
-readonly USAGE_COMMAND_OPTIONS="Usage: $0 [command] [options]"
 readonly HELP_USAGE_INFO="Use '$0 help' for usage information"
 
 # Cache constants
