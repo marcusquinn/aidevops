@@ -4,7 +4,7 @@ set -euo pipefail
 
 # Tech Stack Discovery Helper Script
 # Multi-provider website technology detection with common schema output.
-# Providers: openexplorer (free, open-source), unbuilt (Unbuilt.app CLI)
+# Providers: openexplorer (free, open-source), unbuilt (Unbuilt.app CLI), crft (CRFT Lookup)
 #
 # Usage: tech-stack-helper.sh <provider> <command> [options]
 #        tech-stack-helper.sh providers
@@ -18,11 +18,20 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 # Configuration
 readonly CACHE_DIR="$HOME/.aidevops/.agent-workspace/tmp/tech-stack-cache"
 readonly CACHE_TTL=3600 # 1 hour cache
+readonly REPORTS_DIR="${HOME}/.aidevops/.agent-workspace/work/tech-stack/reports"
 SCRIPT_NAME="$(basename "$0")" || true
 readonly SCRIPT_NAME
 readonly UNBUILT_PKG="@unbuilt/cli"
 readonly UNBUILT_TIMEOUT="${UNBUILT_TIMEOUT:-120}"
-mkdir -p "$CACHE_DIR"
+
+# CRFT Lookup Configuration
+readonly CRFT_BASE_URL="https://crft.studio"
+readonly CRFT_LOOKUP_URL="${CRFT_BASE_URL}/lookup"
+readonly CRFT_GALLERY_URL="${CRFT_BASE_URL}/lookup/gallery"
+readonly CRFT_SCAN_TIMEOUT=60
+
+# Ensure directories exist
+mkdir -p "$CACHE_DIR" "$REPORTS_DIR" 2>/dev/null || true
 
 # =============================================================================
 # Utility Functions
@@ -62,6 +71,23 @@ normalise_url() {
 	url="${url#www.}"
 	url="${url%/}"
 	echo "$url"
+	return 0
+}
+
+# Normalize domain: strip protocol, trailing slash, www prefix
+normalize_domain() {
+	local url="$1"
+	local domain
+
+	# Strip protocol
+	domain="${url#http://}"
+	domain="${domain#https://}"
+	# Strip trailing slash and path
+	domain="${domain%%/*}"
+	# Strip port
+	domain="${domain%%:*}"
+
+	echo "$domain"
 	return 0
 }
 
@@ -631,6 +657,417 @@ normalise_unbuilt() {
 }
 
 # =============================================================================
+# CRFT Lookup Provider
+# =============================================================================
+
+# Convert domain to gallery slug (e.g., basecamp.com -> basecamp)
+domain_to_slug() {
+	local domain="$1"
+
+	# Strip www. prefix
+	domain="${domain#www.}"
+	# Take the part before the TLD for simple domains
+	# e.g., basecamp.com -> basecamp, linear.app -> linear
+	local slug="${domain%%.*}"
+
+	echo "$slug"
+	return 0
+}
+
+# Fetch a CRFT gallery report page to a file
+# Arguments: $1=domain, $2=output_file
+# Returns 0 if valid report fetched, 1 otherwise
+fetch_gallery_report() {
+	local domain="$1"
+	local output_file="$2"
+	local slug
+	slug=$(domain_to_slug "$domain")
+
+	local gallery_url="${CRFT_GALLERY_URL}/${slug}"
+
+	print_info "Fetching report from: $gallery_url"
+
+	if ! curl -sL \
+		-H "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36" \
+		-H "Accept: text/html" \
+		--max-time "$CRFT_SCAN_TIMEOUT" \
+		-o "$output_file" \
+		"$gallery_url" 2>/dev/null; then
+		print_warning "Could not fetch gallery page for: $domain"
+		return 1
+	fi
+
+	# Check if we got a valid report page (not a 404)
+	if grep -q "Technology Stack" "$output_file" 2>/dev/null; then
+		return 0
+	fi
+
+	print_warning "No existing report found for: $domain"
+	return 1
+}
+
+# Parse technologies from HTML report file
+# Arguments: $1=html_file, $2=json_output (true/false)
+parse_technologies() {
+	local html_file="$1"
+	local json_output="${2:-false}"
+
+	if [[ ! -s "$html_file" ]]; then
+		print_warning "No HTML content to parse"
+		return 1
+	fi
+
+	# Extract technology names from icon filenames in the gallery page HTML
+	# Icons appear as /icons/React.svg, /icons/Next.js.svg, etc.
+	# Stop before "Featured reports" section to avoid picking up other sites' techs
+	local techs_raw
+	techs_raw=$(awk '{split($0, a, "Featured reports"); print a[1]}' "$html_file" 2>/dev/null |
+		grep -oE '/icons/[^."]+' |
+		sed 's|/icons/||' |
+		grep -v "Open Graph" |
+		sort -u) || true
+
+	if [[ "$json_output" == "true" ]]; then
+		local json_array="["
+		local first=true
+		while IFS= read -r tech; do
+			[[ -z "$tech" ]] && continue
+			if [[ "$first" == "true" ]]; then
+				first=false
+			else
+				json_array+=","
+			fi
+			local escaped_tech
+			escaped_tech=$(echo "$tech" | sed 's/"/\\"/g')
+			json_array+="{\"name\":\"$escaped_tech\"}"
+		done <<<"$techs_raw"
+		json_array+="]"
+		echo "$json_array"
+	else
+		if [[ -n "$techs_raw" ]]; then
+			echo "$techs_raw"
+		else
+			print_warning "Could not extract technologies from report"
+		fi
+	fi
+
+	return 0
+}
+
+# Parse Lighthouse scores from HTML report file
+# Arguments: $1=html_file, $2=json_output (true/false)
+parse_lighthouse() {
+	local html_file="$1"
+	local json_output="${2:-false}"
+
+	if [[ ! -s "$html_file" ]]; then
+		print_warning "No HTML content to parse"
+		return 1
+	fi
+
+	# Extract Lighthouse scores from the HTML
+	# Pattern: Label</div> <div class="text-center text-3xl ..."> 98 </div>
+	# The first two occurrences per label are the main report (desktop, mobile)
+	# Later occurrences are from the "Featured reports" section
+	local performance accessibility best_practices seo
+
+	# Helper: extract score number that follows a label in the specific HTML pattern
+	# Uses the "text-3xl" class as anchor (only appears in score divs, not featured cards)
+	_extract_score() {
+		local label="$1"
+		local occurrence="${2:-1}"
+		grep -o "${label}</div>[^<]*<div[^>]*text-3xl[^>]*>[^<]*" "$html_file" 2>/dev/null |
+			sed 's/.*> *\([0-9]\{1,3\}\) *$/\1/' |
+			sed -n "${occurrence}p"
+	}
+
+	# Desktop scores (first occurrence with text-3xl class)
+	performance=$(_extract_score "Performance" 1) || performance=""
+	accessibility=$(_extract_score "Accessibility" 1) || accessibility=""
+	best_practices=$(_extract_score "Best Practices" 1) || best_practices=""
+	seo=$(_extract_score "SEO" 1) || seo=""
+
+	# Mobile scores (second occurrence with text-3xl class)
+	local m_performance m_accessibility m_best_practices m_seo
+	m_performance=$(_extract_score "Performance" 2) || m_performance=""
+	m_accessibility=$(_extract_score "Accessibility" 2) || m_accessibility=""
+	m_best_practices=$(_extract_score "Best Practices" 2) || m_best_practices=""
+	m_seo=$(_extract_score "SEO" 2) || m_seo=""
+
+	if [[ "$json_output" == "true" ]]; then
+		cat <<ENDJSON
+{
+  "desktop": {
+    "performance": ${performance:-null},
+    "accessibility": ${accessibility:-null},
+    "best_practices": ${best_practices:-null},
+    "seo": ${seo:-null}
+  },
+  "mobile": {
+    "performance": ${m_performance:-null},
+    "accessibility": ${m_accessibility:-null},
+    "best_practices": ${m_best_practices:-null},
+    "seo": ${m_seo:-null}
+  }
+}
+ENDJSON
+	else
+		print_header "Lighthouse Scores"
+		echo ""
+		echo "  Desktop:"
+		echo "    Performance:    ${performance:-N/A}"
+		echo "    Accessibility:  ${accessibility:-N/A}"
+		echo "    Best Practices: ${best_practices:-N/A}"
+		echo "    SEO:            ${seo:-N/A}"
+		echo ""
+		echo "  Mobile:"
+		echo "    Performance:    ${m_performance:-N/A}"
+		echo "    Accessibility:  ${m_accessibility:-N/A}"
+		echo "    Best Practices: ${m_best_practices:-N/A}"
+		echo "    SEO:            ${m_seo:-N/A}"
+	fi
+
+	return 0
+}
+
+# Parse meta tags from HTML report file
+# Arguments: $1=html_file, $2=json_output (true/false)
+parse_meta() {
+	local html_file="$1"
+	local json_output="${2:-false}"
+
+	if [[ ! -s "$html_file" ]]; then
+		print_warning "No HTML content to parse"
+		return 1
+	fi
+
+	# Extract meta information from the report page (portable sed extraction)
+	local title description og_image
+
+	title=$(sed -n 's/.*<meta property="og:title" content="\([^"]*\)".*/\1/p' "$html_file" | head -1) || title=""
+	description=$(sed -n 's/.*<meta property="og:description" content="\([^"]*\)".*/\1/p' "$html_file" | head -1) || description=""
+	og_image=$(sed -n 's/.*<meta property="og:image" content="\([^"]*\)".*/\1/p' "$html_file" | head -1) || og_image=""
+
+	if [[ "$json_output" == "true" ]]; then
+		local escaped_title escaped_desc
+		escaped_title=$(echo "$title" | sed 's/"/\\"/g')
+		escaped_desc=$(echo "$description" | sed 's/"/\\"/g')
+		cat <<ENDJSON
+{
+  "title": "$escaped_title",
+  "description": "$escaped_desc",
+  "og_image": "$og_image"
+}
+ENDJSON
+	else
+		print_header "Meta Tags"
+		echo ""
+		echo "  Title:       ${title:-N/A}"
+		echo "  Description: ${description:-N/A}"
+		echo "  OG Image:    ${og_image:-N/A}"
+	fi
+
+	return 0
+}
+
+# Full scan: tech stack + Lighthouse + meta tags
+crft_scan() {
+	local domain="$1"
+	local json_output="${2:-false}"
+
+	domain=$(normalize_domain "$domain")
+	local slug
+	slug=$(domain_to_slug "$domain")
+	local report_url="${CRFT_GALLERY_URL}/${slug}"
+
+	print_header "CRFT Lookup: $domain"
+	print_info "Report URL: $report_url"
+	echo ""
+
+	local tmp_file
+	tmp_file=$(mktemp)
+	trap 'rm -f "${tmp_file:-}"' RETURN
+
+	if ! fetch_gallery_report "$domain" "$tmp_file"; then
+		print_error "Could not fetch report for: $domain"
+		print_info "Try scanning manually at: ${CRFT_LOOKUP_URL}"
+		print_info "Then re-run this command after the report generates (~20s)"
+		return 1
+	fi
+
+	if [[ ! -s "$tmp_file" ]]; then
+		print_error "Empty report for: $domain"
+		print_info "The site may not have been scanned yet."
+		print_info "Visit ${CRFT_LOOKUP_URL} and submit the URL first."
+		return 1
+	fi
+
+	if [[ "$json_output" == "true" ]]; then
+		local techs_json lighthouse_json meta_json
+		techs_json=$(parse_technologies "$tmp_file" "true")
+		lighthouse_json=$(parse_lighthouse "$tmp_file" "true")
+		meta_json=$(parse_meta "$tmp_file" "true")
+
+		jq -n \
+			--arg url "$domain" \
+			--arg report_url "$report_url" \
+			--argjson technologies "$techs_json" \
+			--argjson lighthouse "$lighthouse_json" \
+			--argjson meta "$meta_json" \
+			'{url: $url, report_url: $report_url, technologies: $technologies, lighthouse: $lighthouse, meta: $meta}'
+	else
+		parse_technologies "$tmp_file" "false"
+		echo ""
+		parse_lighthouse "$tmp_file" "false"
+		echo ""
+		parse_meta "$tmp_file" "false"
+		echo ""
+		print_info "Full report: $report_url"
+	fi
+
+	# Cache the report
+	local cache_file
+	cache_file="${REPORTS_DIR}/${slug}-$(date -u +%Y%m%d).html"
+	cp "$tmp_file" "$cache_file" 2>/dev/null || true
+
+	return 0
+}
+
+# Technology detection only
+crft_techs() {
+	local domain="$1"
+	local json_output="${2:-false}"
+
+	domain=$(normalize_domain "$domain")
+
+	print_header "Tech Stack: $domain"
+	echo ""
+
+	local tmp_file
+	tmp_file=$(mktemp)
+	trap 'rm -f "${tmp_file:-}"' RETURN
+
+	if ! fetch_gallery_report "$domain" "$tmp_file"; then
+		print_error "Could not fetch report for: $domain"
+		return 1
+	fi
+
+	parse_technologies "$tmp_file" "$json_output"
+	return 0
+}
+
+# Lighthouse scores only
+crft_lighthouse() {
+	local domain="$1"
+	local json_output="${2:-false}"
+
+	domain=$(normalize_domain "$domain")
+
+	local tmp_file
+	tmp_file=$(mktemp)
+	trap 'rm -f "${tmp_file:-}"' RETURN
+
+	if ! fetch_gallery_report "$domain" "$tmp_file"; then
+		print_error "Could not fetch report for: $domain"
+		return 1
+	fi
+
+	parse_lighthouse "$tmp_file" "$json_output"
+	return 0
+}
+
+# Meta tags only
+crft_meta() {
+	local domain="$1"
+	local json_output="${2:-false}"
+
+	domain=$(normalize_domain "$domain")
+
+	local tmp_file
+	tmp_file=$(mktemp)
+	trap 'rm -f "${tmp_file:-}"' RETURN
+
+	if ! fetch_gallery_report "$domain" "$tmp_file"; then
+		print_error "Could not fetch report for: $domain"
+		return 1
+	fi
+
+	parse_meta "$tmp_file" "$json_output"
+	return 0
+}
+
+# Compare two sites
+crft_compare() {
+	local domain1="$1"
+	local domain2="$2"
+	local json_output="${3:-false}"
+
+	domain1=$(normalize_domain "$domain1")
+	domain2=$(normalize_domain "$domain2")
+
+	print_header "Comparing: $domain1 vs $domain2"
+	echo ""
+
+	local tmp1 tmp2
+	tmp1=$(mktemp)
+	tmp2=$(mktemp)
+	trap 'rm -f "${tmp1:-}" "${tmp2:-}"' RETURN
+
+	local ok1=true ok2=true
+	fetch_gallery_report "$domain1" "$tmp1" || ok1=false
+	fetch_gallery_report "$domain2" "$tmp2" || ok2=false
+
+	if [[ "$ok1" == "false" ]]; then
+		print_error "Could not fetch report for: $domain1"
+		return 1
+	fi
+
+	if [[ "$ok2" == "false" ]]; then
+		print_error "Could not fetch report for: $domain2"
+		return 1
+	fi
+
+	if [[ "$json_output" == "true" ]]; then
+		local techs1 techs2 lh1 lh2
+		techs1=$(parse_technologies "$tmp1" "true")
+		techs2=$(parse_technologies "$tmp2" "true")
+		lh1=$(parse_lighthouse "$tmp1" "true")
+		lh2=$(parse_lighthouse "$tmp2" "true")
+
+		jq -n \
+			--arg site1 "$domain1" \
+			--arg site2 "$domain2" \
+			--argjson techs1 "$techs1" \
+			--argjson techs2 "$techs2" \
+			--argjson lighthouse1 "$lh1" \
+			--argjson lighthouse2 "$lh2" \
+			'{site1: $site1, site2: $site2, technologies: {site1: $techs1, site2: $techs2}, lighthouse: {site1: $lighthouse1, site2: $lighthouse2}}'
+	else
+		echo "--- $domain1 ---"
+		parse_technologies "$tmp1" "false"
+		echo ""
+		parse_lighthouse "$tmp1" "false"
+		echo ""
+		echo "--- $domain2 ---"
+		parse_technologies "$tmp2" "false"
+		echo ""
+		parse_lighthouse "$tmp2" "false"
+	fi
+
+	return 0
+}
+
+# Show report URL for a domain
+crft_report_url() {
+	local domain="$1"
+	domain=$(normalize_domain "$domain")
+	local slug
+	slug=$(domain_to_slug "$domain")
+	echo "${CRFT_GALLERY_URL}/${slug}"
+	return 0
+}
+
+# =============================================================================
 # Provider Management
 # =============================================================================
 
@@ -643,7 +1080,7 @@ install_provider() {
 		;;
 	*)
 		print_error "Unknown provider: ${provider}"
-		print_info "Available providers: openexplorer, unbuilt"
+		print_info "Available providers: openexplorer, unbuilt, crft"
 		return 1
 		;;
 	esac
@@ -663,6 +1100,10 @@ list_providers() {
 	echo "                Detects: bundlers, frameworks, UI libs, styling, state, analytics, monitoring"
 	echo "                CLI: npm install -g @unbuilt/cli"
 	echo "                Requires: Node.js 16+, Playwright Chromium (or --remote)"
+	echo ""
+	echo "  crft          CRFT Lookup - free, no API key required (2500+ techs)"
+	echo "                https://crft.studio/lookup"
+	echo "                Commands: scan, techs, lighthouse, meta, compare, report-url"
 	echo ""
 
 	# Show installation status
@@ -701,6 +1142,11 @@ compare_providers() {
 	run_unbuilt "$normalised" --json 2>/dev/null || echo "Unbuilt analysis unavailable"
 	echo ""
 
+	# CRFT Lookup
+	echo "--- CRFT Lookup ---"
+	crft_scan "$normalised" "false"
+	echo ""
+
 	print_info "Add more providers to tech-stack-helper.sh for cross-reference."
 	return 0
 }
@@ -723,13 +1169,23 @@ show_help() {
 	echo "  compare <url>                 Compare results across all providers"
 	echo "  install <provider>            Install a provider CLI"
 	echo ""
-	echo "  openexplorer search <url>     Search by URL"
-	echo "  openexplorer tech <name>      Search by technology name"
-	echo "  openexplorer category <name>  Search by category"
-	echo "  openexplorer analyse <url>    Full analysis via Playwright"
+	echo "  OpenExplorer Commands:"
+	echo "    openexplorer search <url>     Search by URL"
+	echo "    openexplorer tech <name>      Search by technology name"
+	echo "    openexplorer category <name>  Search by category"
+	echo "    openexplorer analyse <url>    Full analysis via Playwright"
 	echo ""
-	echo "  unbuilt <url> [flags]         Analyse a URL with Unbuilt.app CLI"
-	echo "  normalise                     Normalise unbuilt JSON (stdin) to common schema (stdout)"
+	echo "  Unbuilt Commands:"
+	echo "    unbuilt <url> [flags]         Analyse a URL with Unbuilt.app CLI"
+	echo "    normalise                     Normalise unbuilt JSON (stdin) to common schema (stdout)"
+	echo ""
+	echo "  CRFT Lookup Commands:"
+	echo "    crft scan <domain>            Full analysis (tech + Lighthouse + meta)"
+	echo "    crft techs <domain>           Technology detection only"
+	echo "    crft lighthouse <domain>      Lighthouse scores only"
+	echo "    crft meta <domain>            Meta tag preview only"
+	echo "    crft compare <domain1> <domain2>  Compare two sites"
+	echo "    crft report-url <domain>      Show report URL"
 	echo ""
 	echo "${HELP_LABEL_OPTIONS}"
 	echo "  --page <n>                    Page number (default: 1)"
@@ -740,6 +1196,7 @@ show_help() {
 	echo "  --timeout, -t <secs>          Max wait time (default: 120)"
 	echo "  --session                     Use local Chrome profile for auth"
 	echo "  --refresh                     Force fresh analysis (bypass cache)"
+	echo "  --category <cat>              Filter techs by category"
 	echo ""
 	echo "${HELP_LABEL_EXAMPLES}"
 	echo "  tech-stack-helper.sh openexplorer search github.com"
@@ -747,6 +1204,9 @@ show_help() {
 	echo "  tech-stack-helper.sh openexplorer analyse https://example.com"
 	echo "  tech-stack-helper.sh unbuilt https://example.com"
 	echo "  tech-stack-helper.sh unbuilt https://example.com --json | tech-stack-helper.sh normalise"
+	echo "  tech-stack-helper.sh crft scan basecamp.com"
+	echo "  tech-stack-helper.sh crft techs linear.app --json"
+	echo "  tech-stack-helper.sh crft compare basecamp.com notion.com"
 	echo "  tech-stack-helper.sh providers"
 	echo "  tech-stack-helper.sh compare github.com"
 	echo "  tech-stack-helper.sh install unbuilt"
@@ -818,6 +1278,102 @@ main() {
 		;;
 	unbuilt)
 		run_unbuilt "$@"
+		;;
+	crft)
+		local command="${1:-help}"
+		shift || true
+
+		# Parse arguments
+		local target=""
+		local target2=""
+		local json_output=false
+		local category=""
+
+		local opt
+		while [[ $# -gt 0 ]]; do
+			opt="$1"
+			case "$opt" in
+			--json | -j)
+				json_output=true
+				shift
+				;;
+			--category | -c)
+				category="${2:-}"
+				shift 2
+				;;
+			-*)
+				print_error "Unknown option: $opt"
+				return 1
+				;;
+			*)
+				if [[ -z "$target" ]]; then
+					target="$opt"
+				elif [[ -z "$target2" ]]; then
+					target2="$opt"
+				fi
+				shift
+				;;
+			esac
+		done
+
+		case "$command" in
+		"scan" | "analyze" | "check")
+			if [[ -z "$target" ]]; then
+				print_error "Domain required"
+				print_info "Usage: tech-stack-helper.sh crft scan <domain>"
+				return 1
+			fi
+			crft_scan "$target" "$json_output"
+			;;
+		"techs" | "technologies" | "tech" | "stack")
+			if [[ -z "$target" ]]; then
+				print_error "Domain required"
+				print_info "Usage: tech-stack-helper.sh crft techs <domain>"
+				return 1
+			fi
+			crft_techs "$target" "$json_output"
+			;;
+		"lighthouse" | "lh" | "scores" | "performance")
+			if [[ -z "$target" ]]; then
+				print_error "Domain required"
+				print_info "Usage: tech-stack-helper.sh crft lighthouse <domain>"
+				return 1
+			fi
+			crft_lighthouse "$target" "$json_output"
+			;;
+		"meta" | "metatags" | "og")
+			if [[ -z "$target" ]]; then
+				print_error "Domain required"
+				print_info "Usage: tech-stack-helper.sh crft meta <domain>"
+				return 1
+			fi
+			crft_meta "$target" "$json_output"
+			;;
+		"compare" | "diff" | "vs")
+			if [[ -z "$target" || -z "$target2" ]]; then
+				print_error "Two domains required"
+				print_info "Usage: tech-stack-helper.sh crft compare <domain1> <domain2>"
+				return 1
+			fi
+			crft_compare "$target" "$target2" "$json_output"
+			;;
+		"report-url" | "url" | "link")
+			if [[ -z "$target" ]]; then
+				print_error "Domain required"
+				print_info "Usage: tech-stack-helper.sh crft report-url <domain>"
+				return 1
+			fi
+			crft_report_url "$target"
+			;;
+		"help" | "-h" | "--help" | "")
+			show_help
+			;;
+		*)
+			print_error "Unknown crft command: $command"
+			print_info "Use 'tech-stack-helper.sh help' for usage information"
+			return 1
+			;;
+		esac
 		;;
 	*)
 		print_error "Unknown provider: $provider"

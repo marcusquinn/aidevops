@@ -48,6 +48,7 @@ tools/ai-generation/,AI generation management - ComfyUI install nodes models wor
 tools/video/,Video creation and generation - programmatic editing and AI generation APIs,remotion|higgsfield|runway|wavespeed|yt-dlp|video-prompt-design|real-video-enhancer
 tools/vision/,Vision AI - image generation understanding and editing with local and cloud models,overview|image-generation|image-understanding|image-editing
 tools/voice/,Voice AI - TTS/STT/S2S model catalog voice bridge Pipecat pipeline and cloud voice agents,voice-models|voice-ai-models|speech-to-speech|cloud-voice-agents|voice-bridge|hyprwhspr|pipecat-opencode|transcription|buzz|qwen3-tts
+tools/research/,Website research - tech stack detection and analysis providers,providers/crft-lookup
 tools/data-extraction/,Data extraction - scraping business data,outscraper
 tools/deployment/,Deployment automation - self-hosted PaaS and orchestration,coolify|coolify-cli|vercel|cloudron-app-packaging|uncloud
 tools/git/,Git operations - GitHub/GitLab/Gitea CLIs and diff tools,github-cli|gitlab-cli|gitea-cli|github-actions|worktrunk|lumen|jujutsu|conflict-resolution
@@ -108,6 +109,7 @@ stagehand-helper.sh,Browser automation with Stagehand
 crawl4ai-helper.sh,Web crawling and extraction
 watercrawl-helper.sh,WaterCrawl cloud API for web crawling and search
 domain-research-helper.sh,DNS intelligence (rDNS subdomains CNAMEs)
+tech-stack-helper.sh,Website tech stack detection via CRFT Lookup (scan techs lighthouse meta compare)
 toon-helper.sh,TOON format conversion
 sonarcloud-cli.sh,SonarCloud analysis
 quality-sweep-helper.sh,Unified quality debt sweep (SonarCloud Codacy CodeFactor findings)
