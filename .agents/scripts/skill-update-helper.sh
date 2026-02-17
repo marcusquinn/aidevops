@@ -688,6 +688,15 @@ cmd_pr() {
 			continue
 		fi
 
+		# Skip non-GitHub sources (ClawdHub, etc.) — no git commit to compare
+		if [[ "$upstream_url" != *"github.com"* && "$upstream_url" != *"github.com/"* ]]; then
+			if [[ "$QUIET" != true ]]; then
+				log_info "Skipping $name (non-GitHub source: ${upstream_url})"
+			fi
+			((prs_skipped++)) || true
+			continue
+		fi
+
 		# Parse owner/repo from URL
 		local owner_repo
 		owner_repo=$(parse_github_url "$upstream_url")
