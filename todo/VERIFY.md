@@ -785,10 +785,17 @@
   check: file-exists .agents/tools/research/providers/crft-lookup.md
   check: rg "crft-lookup" .agents/subagent-index.toon
 
-- [ ] v102 t1063 Tech stack lookup orchestrator agent and command — crea... | PR #1541 | merged:2026-02-17
+- [!] v102 t1063 Tech stack lookup orchestrator agent and command — crea... | PR #1541 | merged:2026-02-17 failed:2026-02-17 reason:shellcheck: .agents/scripts/tech-stack-helper.sh has violations
   files: .agents/AGENTS.md, .agents/scripts/commands/tech-stack.md, .agents/scripts/tech-stack-helper.sh, .agents/subagent-index.toon
   check: file-exists .agents/AGENTS.md
   check: file-exists .agents/scripts/commands/tech-stack.md
   check: shellcheck .agents/scripts/tech-stack-helper.sh
   check: file-exists .agents/scripts/tech-stack-helper.sh
   check: file-exists .agents/subagent-index.toon
+
+- [ ] v103 t1072 Add rebase loop for multi-commit conflict resolution in r... | PR #1558 | merged:2026-02-17
+  files: .agents/scripts/supervisor/deploy.sh, .agents/scripts/supervisor/state.sh
+  check: shellcheck .agents/scripts/supervisor/deploy.sh
+  check: file-exists .agents/scripts/supervisor/deploy.sh
+  check: shellcheck .agents/scripts/supervisor/state.sh
+  check: file-exists .agents/scripts/supervisor/state.sh
