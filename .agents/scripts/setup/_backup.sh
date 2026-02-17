@@ -11,4 +11,5 @@ BACKUP_KEEP_COUNT=10
 create_backup_with_rotation() {
 	# TODO: Extract from setup.sh lines 246-283
 	:
+	return 0
 }

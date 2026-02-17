@@ -6,6 +6,7 @@
 sanitize_plugin_namespace() {
 	# TODO: Extract from setup.sh lines 3274-3289
 	:
+	return 0
 }
 
 # Verify location (check if running from correct directory)
@@ -13,4 +14,5 @@ sanitize_plugin_namespace() {
 verify_location() {
 	# TODO: Extract from setup.sh lines 3793-3812
 	:
+	return 0
 }

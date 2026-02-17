@@ -6,12 +6,14 @@
 detect_running_shell() {
 	# TODO: Extract from setup.sh lines 1537-1546
 	:
+	return 0
 }
 
 # Detect the user's preferred/default shell (what they'll use day-to-day)
 detect_default_shell() {
 	# TODO: Extract from setup.sh lines 1550-1553
 	:
+	return 0
 }
 
 # Get the appropriate shell rc file for a given shell
@@ -19,34 +21,40 @@ detect_default_shell() {
 get_shell_rc() {
 	# TODO: Extract from setup.sh lines 1557-1590
 	:
+	return 0
 }
 
 # Get all shell rc files that exist on the system
 get_all_shell_rcs() {
 	# TODO: Extract from setup.sh lines 1595-1620
 	:
+	return 0
 }
 
 # Setup oh-my-zsh if not already installed
 setup_oh_my_zsh() {
 	# TODO: Extract from setup.sh lines 1626-1690
 	:
+	return 0
 }
 
 # Setup shell compatibility (bash 3.2 on macOS, etc.)
 setup_shell_compatibility() {
 	# TODO: Extract from setup.sh lines 1698-1915
 	:
+	return 0
 }
 
 # Add ~/.local/bin to PATH if not already present
 add_local_bin_to_path() {
 	# TODO: Extract from setup.sh lines 2754-2800
 	:
+	return 0
 }
 
 # Setup shell aliases for aidevops
 setup_aliases() {
 	# TODO: Extract from setup.sh lines 2847-2948
 	:
+	return 0
 }

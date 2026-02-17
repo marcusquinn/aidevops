@@ -47,7 +47,7 @@ generate_subagents_block() {
 	if [[ -z "$search_dirs" ]]; then
 		echo "<!--TOON:subagents[0]{folder,purpose,key_files}:"
 		echo "-->"
-		return
+		return 0
 	fi
 
 	# Single find + awk pipeline: no shell loops, no per-file reads
@@ -102,6 +102,7 @@ generate_subagents_block() {
         for (i = 0; i < count; i++) print lines[i]
         print "-->"
     }'
+	return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -151,6 +152,7 @@ cmd_generate() {
 	local entry_count
 	entry_count=$(grep -c '|' "$INDEX_FILE" 2>/dev/null || echo "0")
 	echo "Generated ${INDEX_FILE} (${entry_count} entries with key_files)"
+	return 0
 }
 
 cmd_check() {
@@ -193,6 +195,7 @@ cmd_check() {
 		echo ""
 		echo "Warning: Index is over 24h old. Run: subagent-index-helper.sh generate"
 	fi
+	return 0
 }
 
 cmd_help() {
@@ -211,6 +214,7 @@ Called automatically by:
   - setup.sh / aidevops update
   - build-agent workflow (after agent create/promote)
 EOF
+	return 0
 }
 
 # ---------------------------------------------------------------------------
