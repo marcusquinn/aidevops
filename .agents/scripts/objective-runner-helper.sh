@@ -23,7 +23,7 @@
 #   --allowed-paths "p1,p2" Comma-separated path whitelist (default: cwd)
 #   --allowed-tools "t1,t2" Comma-separated tool whitelist (default: all)
 #   --workdir PATH          Working directory (default: cwd)
-#   --model PROVIDER/MODEL  AI model (default: anthropic/claude-sonnet-4-20250514)
+#   --model PROVIDER/MODEL  AI model (default: anthropic/claude-sonnet-4-6)
 #   --runner NAME           Use existing runner identity (optional)
 #   --dry-run               Show config without executing
 #
@@ -57,7 +57,7 @@ readonly OBJECTIVES_DIR="${AIDEVOPS_OBJECTIVES_DIR:-$HOME/.aidevops/.agent-works
 readonly MEMORY_HELPER="$HOME/.aidevops/agents/scripts/memory-helper.sh"
 # Used by future runner identity integration
 export RUNNER_HELPER="$HOME/.aidevops/agents/scripts/runner-helper.sh"
-readonly DEFAULT_MODEL="anthropic/claude-sonnet-4-20250514"
+readonly DEFAULT_MODEL="anthropic/claude-sonnet-4-6"
 readonly DEFAULT_MAX_STEPS=50
 readonly DEFAULT_MAX_COST="5.00"
 readonly DEFAULT_MAX_TOKENS=500000
@@ -1208,7 +1208,7 @@ START OPTIONS:
     --allowed-paths "p,p"   Comma-separated path whitelist (default: cwd)
     --allowed-tools "t,t"   Comma-separated tool whitelist (default: all)
     --workdir PATH          Working directory (default: cwd)
-    --model PROVIDER/MODEL  AI model (default: anthropic/claude-sonnet-4-20250514)
+    --model PROVIDER/MODEL  AI model (default: anthropic/claude-sonnet-4-6)
     --runner NAME           Use existing runner identity (optional)
     --dry-run               Show config without executing
 

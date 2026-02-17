@@ -273,7 +273,7 @@ main() {
 	task=$(echo "$job" | jq -r '.task')
 	workdir=$(echo "$job" | jq -r '.workdir')
 	timeout=$(echo "$job" | jq -r '.timeout // 600')
-	model=$(echo "$job" | jq -r '.model // "anthropic/claude-sonnet-4-20250514"')
+	model=$(echo "$job" | jq -r '.model // "anthropic/claude-sonnet-4-6"')
 	notify=$(echo "$job" | jq -r '.notify // "none"')
 
 	# Resolve tier names to full model strings (t132.7)

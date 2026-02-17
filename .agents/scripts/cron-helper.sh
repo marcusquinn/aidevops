@@ -34,7 +34,7 @@ readonly SCRIPTS_DIR="$HOME/.aidevops/agents/scripts"
 readonly OPENCODE_PORT="${OPENCODE_PORT:-4096}"
 readonly OPENCODE_HOST="${OPENCODE_HOST:-127.0.0.1}"
 readonly OPENCODE_INSECURE="${OPENCODE_INSECURE:-}"
-readonly DEFAULT_MODEL="anthropic/claude-sonnet-4-20250514"
+readonly DEFAULT_MODEL="anthropic/claude-sonnet-4-6"
 
 # shellcheck disable=SC2034  # CYAN reserved for future use
 readonly BOLD='\033[1m'
@@ -51,37 +51,37 @@ log_error() { echo -e "${RED}[CRON]${NC} $*" >&2; }
 # Ensure directories and config exist
 #######################################
 ensure_setup() {
-    mkdir -p "$CONFIG_DIR" "$CRON_LOG_DIR"
-    
-    if [[ ! -f "$CONFIG_FILE" ]]; then
-        cat > "$CONFIG_FILE" << 'EOF'
+	mkdir -p "$CONFIG_DIR" "$CRON_LOG_DIR"
+
+	if [[ ! -f "$CONFIG_FILE" ]]; then
+		cat >"$CONFIG_FILE" <<'EOF'
 {
   "version": "1.0",
   "jobs": []
 }
 EOF
-        log_info "Created config file: $CONFIG_FILE"
-    fi
+		log_info "Created config file: $CONFIG_FILE"
+	fi
 }
 
 #######################################
 # Generate unique job ID
 #######################################
 generate_job_id() {
-    local count
-    count=$(jq '.jobs | length' "$CONFIG_FILE" 2>/dev/null || echo "0")
-    printf "job-%03d" $((count + 1))
+	local count
+	count=$(jq '.jobs | length' "$CONFIG_FILE" 2>/dev/null || echo "0")
+	printf "job-%03d" $((count + 1))
 }
 
 #######################################
 # Check if jq is available
 #######################################
 check_jq() {
-    if ! command -v jq &>/dev/null; then
-        log_error "jq is required but not installed. Install with: brew install jq"
-        return 1
-    fi
-    return 0
+	if ! command -v jq &>/dev/null; then
+		log_error "jq is required but not installed. Install with: brew install jq"
+		return 1
+	fi
+	return 0
 }
 
 #######################################
@@ -89,200 +89,264 @@ check_jq() {
 # Localhost uses HTTP, remote uses HTTPS
 #######################################
 get_protocol() {
-    local host="$1"
-    # Use HTTP only for localhost/127.0.0.1, HTTPS for everything else
-    if [[ "$host" == "localhost" || "$host" == "127.0.0.1" || "$host" == "::1" ]]; then
-        echo "http"
-    else
-        echo "https"
-    fi
+	local host="$1"
+	# Use HTTP only for localhost/127.0.0.1, HTTPS for everything else
+	if [[ "$host" == "localhost" || "$host" == "127.0.0.1" || "$host" == "::1" ]]; then
+		echo "http"
+	else
+		echo "https"
+	fi
 }
 
 #######################################
 # Build curl arguments array for secure requests
 #######################################
 build_curl_args() {
-    CURL_ARGS=(-sf)
-    
-    # Add authentication if configured
-    if [[ -n "${OPENCODE_SERVER_PASSWORD:-}" ]]; then
-        local user="${OPENCODE_SERVER_USERNAME:-admin}"
-        CURL_ARGS+=(-u "${user}:${OPENCODE_SERVER_PASSWORD}")
-    fi
-    
-    # Add SSL options for HTTPS
-    local protocol
-    protocol=$(get_protocol "$OPENCODE_HOST")
-    if [[ "$protocol" == "https" ]] && [[ -n "$OPENCODE_INSECURE" ]]; then
-        # Allow insecure connections (self-signed certs) - use with caution
-        CURL_ARGS+=(-k)
-    fi
+	CURL_ARGS=(-sf)
+
+	# Add authentication if configured
+	if [[ -n "${OPENCODE_SERVER_PASSWORD:-}" ]]; then
+		local user="${OPENCODE_SERVER_USERNAME:-admin}"
+		CURL_ARGS+=(-u "${user}:${OPENCODE_SERVER_PASSWORD}")
+	fi
+
+	# Add SSL options for HTTPS
+	local protocol
+	protocol=$(get_protocol "$OPENCODE_HOST")
+	if [[ "$protocol" == "https" ]] && [[ -n "$OPENCODE_INSECURE" ]]; then
+		# Allow insecure connections (self-signed certs) - use with caution
+		CURL_ARGS+=(-k)
+	fi
 }
 
 #######################################
 # Check OpenCode server health
 #######################################
 check_server() {
-    local protocol
-    protocol=$(get_protocol "$OPENCODE_HOST")
-    local url="${protocol}://${OPENCODE_HOST}:${OPENCODE_PORT}/global/health"
-    
-    build_curl_args
-    
-    if curl "${CURL_ARGS[@]}" "$url" &>/dev/null; then
-        return 0
-    else
-        return 1
-    fi
+	local protocol
+	protocol=$(get_protocol "$OPENCODE_HOST")
+	local url="${protocol}://${OPENCODE_HOST}:${OPENCODE_PORT}/global/health"
+
+	build_curl_args
+
+	if curl "${CURL_ARGS[@]}" "$url" &>/dev/null; then
+		return 0
+	else
+		return 1
+	fi
 }
 
 #######################################
 # Get job by ID
 #######################################
 get_job() {
-    local job_id="$1"
-    jq -r --arg id "$job_id" '.jobs[] | select(.id == $id)' "$CONFIG_FILE"
+	local job_id="$1"
+	jq -r --arg id "$job_id" '.jobs[] | select(.id == $id)' "$CONFIG_FILE"
 }
 
 #######################################
 # Update crontab with active jobs
 #######################################
 sync_crontab() {
-    local temp_cron
-    temp_cron=$(mktemp)
-    _save_cleanup_scope; trap '_run_cleanups' RETURN
-    push_cleanup "rm -f '${temp_cron}'"
-    
-    # Get existing crontab (excluding our managed entries)
-    crontab -l 2>/dev/null | grep -v "cron-dispatch.sh" > "$temp_cron" || true
-    
-    # Add active jobs
-    local jobs
-    jobs=$(jq -r '.jobs[] | select(.status == "active") | "\(.schedule) \(.id)"' "$CONFIG_FILE" 2>/dev/null || echo "")
-    
-    while IFS= read -r line; do
-        [[ -z "$line" ]] && continue
-        local schedule job_id
-        schedule=$(echo "$line" | rev | cut -d' ' -f2- | rev)
-        job_id=$(echo "$line" | awk '{print $NF}')
-        echo "$schedule $SCRIPTS_DIR/cron-dispatch.sh $job_id >> $CRON_LOG_DIR/${job_id}.log 2>&1" >> "$temp_cron"
-    done <<< "$jobs"
-    
-    # Install new crontab
-    crontab "$temp_cron"
-    rm -f "$temp_cron"
+	local temp_cron
+	temp_cron=$(mktemp)
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	push_cleanup "rm -f '${temp_cron}'"
+
+	# Get existing crontab (excluding our managed entries)
+	crontab -l 2>/dev/null | grep -v "cron-dispatch.sh" >"$temp_cron" || true
+
+	# Add active jobs
+	local jobs
+	jobs=$(jq -r '.jobs[] | select(.status == "active") | "\(.schedule) \(.id)"' "$CONFIG_FILE" 2>/dev/null || echo "")
+
+	while IFS= read -r line; do
+		[[ -z "$line" ]] && continue
+		local schedule job_id
+		schedule=$(echo "$line" | rev | cut -d' ' -f2- | rev)
+		job_id=$(echo "$line" | awk '{print $NF}')
+		echo "$schedule $SCRIPTS_DIR/cron-dispatch.sh $job_id >> $CRON_LOG_DIR/${job_id}.log 2>&1" >>"$temp_cron"
+	done <<<"$jobs"
+
+	# Install new crontab
+	crontab "$temp_cron"
+	rm -f "$temp_cron"
 }
 
 #######################################
 # List all jobs
 #######################################
 cmd_list() {
-    check_jq || return 1
-    ensure_setup
-    
-    local jobs
-    jobs=$(jq -r '.jobs | length' "$CONFIG_FILE")
-    
-    if [[ "$jobs" -eq 0 ]]; then
-        log_info "No cron jobs configured"
-        echo ""
-        echo "Add a job with:"
-        echo "  cron-helper.sh add --schedule \"0 9 * * *\" --task \"Your task description\""
-        return 0
-    fi
-    
-    printf "${BOLD}%-12s %-18s %-35s %s${NC}\n" "ID" "Schedule" "Name" "Status"
-    printf "%-12s %-18s %-35s %s\n" "──────────" "────────────────" "─────────────────────────────────" "──────"
-    
-    jq -r '.jobs[] | "\(.id)|\(.schedule)|\(.name)|\(.status)"' "$CONFIG_FILE" | while IFS='|' read -r id schedule name status; do
-        local status_color="$NC"
-        case "$status" in
-            active) status_color="$GREEN" ;;
-            paused) status_color="$YELLOW" ;;
-            failed) status_color="$RED" ;;
-        esac
-        printf "%-12s %-18s %-35s ${status_color}%s${NC}\n" "$id" "$schedule" "${name:0:35}" "$status"
-    done
+	check_jq || return 1
+	ensure_setup
+
+	local jobs
+	jobs=$(jq -r '.jobs | length' "$CONFIG_FILE")
+
+	if [[ "$jobs" -eq 0 ]]; then
+		log_info "No cron jobs configured"
+		echo ""
+		echo "Add a job with:"
+		echo "  cron-helper.sh add --schedule \"0 9 * * *\" --task \"Your task description\""
+		return 0
+	fi
+
+	printf "${BOLD}%-12s %-18s %-35s %s${NC}\n" "ID" "Schedule" "Name" "Status"
+	printf "%-12s %-18s %-35s %s\n" "──────────" "────────────────" "─────────────────────────────────" "──────"
+
+	jq -r '.jobs[] | "\(.id)|\(.schedule)|\(.name)|\(.status)"' "$CONFIG_FILE" | while IFS='|' read -r id schedule name status; do
+		local status_color="$NC"
+		case "$status" in
+		active) status_color="$GREEN" ;;
+		paused) status_color="$YELLOW" ;;
+		failed) status_color="$RED" ;;
+		esac
+		printf "%-12s %-18s %-35s ${status_color}%s${NC}\n" "$id" "$schedule" "${name:0:35}" "$status"
+	done
 }
 
 #######################################
 # Add a new job
 #######################################
 cmd_add() {
-    check_jq || return 1
-    ensure_setup
-    
-    local schedule="" task="" name="" notify="none" timeout="$DEFAULT_TIMEOUT"
-    local workdir="" model="$DEFAULT_MODEL" paused=false provider=""
-    
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --schedule) [[ $# -lt 2 ]] && { log_error "--schedule requires a value"; return 1; }; schedule="$2"; shift 2 ;;
-            --task) [[ $# -lt 2 ]] && { log_error "--task requires a value"; return 1; }; task="$2"; shift 2 ;;
-            --name) [[ $# -lt 2 ]] && { log_error "--name requires a value"; return 1; }; name="$2"; shift 2 ;;
-            --notify) [[ $# -lt 2 ]] && { log_error "--notify requires a value"; return 1; }; notify="$2"; shift 2 ;;
-            --timeout) [[ $# -lt 2 ]] && { log_error "--timeout requires a value"; return 1; }; timeout="$2"; shift 2 ;;
-            --workdir) [[ $# -lt 2 ]] && { log_error "--workdir requires a value"; return 1; }; workdir="$2"; shift 2 ;;
-            --model) [[ $# -lt 2 ]] && { log_error "--model requires a value"; return 1; }; model="$2"; shift 2 ;;
-            --provider) [[ $# -lt 2 ]] && { log_error "--provider requires a value"; return 1; }; provider="$2"; shift 2 ;;
-            --paused) paused=true; shift ;;
-            *) log_error "Unknown option: $1"; return 1 ;;
-        esac
-    done
+	check_jq || return 1
+	ensure_setup
 
-    # Resolve tier names to full model strings (t132.7)
-    model=$(resolve_model_tier "$model")
+	local schedule="" task="" name="" notify="none" timeout="$DEFAULT_TIMEOUT"
+	local workdir="" model="$DEFAULT_MODEL" paused=false provider=""
 
-    # Apply provider override if specified (t132.7)
-    if [[ -n "$provider" && "$model" == *"/"* ]]; then
-        local model_id="${model#*/}"
-        model="${provider}/${model_id}"
-    fi
-    
-    # Validate required fields
-    if [[ -z "$schedule" ]]; then
-        log_error "--schedule is required (e.g., \"0 9 * * *\")"
-        return 1
-    fi
-    
-    if [[ -z "$task" ]]; then
-        log_error "--task is required (description of what the AI should do)"
-        return 1
-    fi
-    
-    # Generate name if not provided
-    if [[ -z "$name" ]]; then
-        name=$(echo "$task" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | cut -c1-30)
-    fi
-    
-    # Set workdir to current if not specified
-    if [[ -z "$workdir" ]]; then
-        workdir="$(pwd)"
-    fi
-    
-    local job_id
-    job_id=$(generate_job_id)
-    local timestamp
-    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    local status="active"
-    [[ "$paused" == "true" ]] && status="paused"
-    
-    # Add job to config
-    local temp_file
-    temp_file=$(mktemp)
-    _save_cleanup_scope; trap '_run_cleanups' RETURN
-    push_cleanup "rm -f '${temp_file}'"
-    jq --arg id "$job_id" \
-       --arg name "$name" \
-       --arg schedule "$schedule" \
-       --arg task "$task" \
-       --arg workdir "$workdir" \
-       --argjson timeout "$timeout" \
-       --arg notify "$notify" \
-       --arg model "$model" \
-       --arg status "$status" \
-       --arg created "$timestamp" \
-       '.jobs += [{
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--schedule)
+			[[ $# -lt 2 ]] && {
+				log_error "--schedule requires a value"
+				return 1
+			}
+			schedule="$2"
+			shift 2
+			;;
+		--task)
+			[[ $# -lt 2 ]] && {
+				log_error "--task requires a value"
+				return 1
+			}
+			task="$2"
+			shift 2
+			;;
+		--name)
+			[[ $# -lt 2 ]] && {
+				log_error "--name requires a value"
+				return 1
+			}
+			name="$2"
+			shift 2
+			;;
+		--notify)
+			[[ $# -lt 2 ]] && {
+				log_error "--notify requires a value"
+				return 1
+			}
+			notify="$2"
+			shift 2
+			;;
+		--timeout)
+			[[ $# -lt 2 ]] && {
+				log_error "--timeout requires a value"
+				return 1
+			}
+			timeout="$2"
+			shift 2
+			;;
+		--workdir)
+			[[ $# -lt 2 ]] && {
+				log_error "--workdir requires a value"
+				return 1
+			}
+			workdir="$2"
+			shift 2
+			;;
+		--model)
+			[[ $# -lt 2 ]] && {
+				log_error "--model requires a value"
+				return 1
+			}
+			model="$2"
+			shift 2
+			;;
+		--provider)
+			[[ $# -lt 2 ]] && {
+				log_error "--provider requires a value"
+				return 1
+			}
+			provider="$2"
+			shift 2
+			;;
+		--paused)
+			paused=true
+			shift
+			;;
+		*)
+			log_error "Unknown option: $1"
+			return 1
+			;;
+		esac
+	done
+
+	# Resolve tier names to full model strings (t132.7)
+	model=$(resolve_model_tier "$model")
+
+	# Apply provider override if specified (t132.7)
+	if [[ -n "$provider" && "$model" == *"/"* ]]; then
+		local model_id="${model#*/}"
+		model="${provider}/${model_id}"
+	fi
+
+	# Validate required fields
+	if [[ -z "$schedule" ]]; then
+		log_error "--schedule is required (e.g., \"0 9 * * *\")"
+		return 1
+	fi
+
+	if [[ -z "$task" ]]; then
+		log_error "--task is required (description of what the AI should do)"
+		return 1
+	fi
+
+	# Generate name if not provided
+	if [[ -z "$name" ]]; then
+		name=$(echo "$task" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | cut -c1-30)
+	fi
+
+	# Set workdir to current if not specified
+	if [[ -z "$workdir" ]]; then
+		workdir="$(pwd)"
+	fi
+
+	local job_id
+	job_id=$(generate_job_id)
+	local timestamp
+	timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	local status="active"
+	[[ "$paused" == "true" ]] && status="paused"
+
+	# Add job to config
+	local temp_file
+	temp_file=$(mktemp)
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	push_cleanup "rm -f '${temp_file}'"
+	jq --arg id "$job_id" \
+		--arg name "$name" \
+		--arg schedule "$schedule" \
+		--arg task "$task" \
+		--arg workdir "$workdir" \
+		--argjson timeout "$timeout" \
+		--arg notify "$notify" \
+		--arg model "$model" \
+		--arg status "$status" \
+		--arg created "$timestamp" \
+		'.jobs += [{
          id: $id,
          name: $name,
          schedule: $schedule,
@@ -295,376 +359,415 @@ cmd_add() {
          created: $created,
          lastRun: null,
          lastStatus: null
-       }]' "$CONFIG_FILE" > "$temp_file"
-    mv "$temp_file" "$CONFIG_FILE"
-    
-    # Sync crontab
-    sync_crontab
-    
-    log_success "Created job: $job_id ($name)"
-    echo ""
-    echo "Schedule: $schedule"
-    echo "Task: $task"
-    echo "Status: $status"
-    
-    if [[ "$status" == "active" ]]; then
-        echo ""
-        echo "Job will run according to schedule. Test with:"
-        echo "  cron-helper.sh run $job_id"
-    fi
-    
-    return 0
+       }]' "$CONFIG_FILE" >"$temp_file"
+	mv "$temp_file" "$CONFIG_FILE"
+
+	# Sync crontab
+	sync_crontab
+
+	log_success "Created job: $job_id ($name)"
+	echo ""
+	echo "Schedule: $schedule"
+	echo "Task: $task"
+	echo "Status: $status"
+
+	if [[ "$status" == "active" ]]; then
+		echo ""
+		echo "Job will run according to schedule. Test with:"
+		echo "  cron-helper.sh run $job_id"
+	fi
+
+	return 0
 }
 
 #######################################
 # Remove a job
 #######################################
 cmd_remove() {
-    check_jq || return 1
-    ensure_setup
-    
-    local job_id="" force=false
-    
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --force) force=true; shift ;;
-            -*) log_error "Unknown option: $1"; return 1 ;;
-            *) job_id="$1"; shift ;;
-        esac
-    done
-    
-    if [[ -z "$job_id" ]]; then
-        log_error "Job ID required"
-        return 1
-    fi
-    
-    local job
-    job=$(get_job "$job_id")
-    if [[ -z "$job" ]]; then
-        log_error "Job not found: $job_id"
-        return 1
-    fi
-    
-    local name
-    name=$(echo "$job" | jq -r '.name')
-    
-    if [[ "$force" != "true" ]]; then
-        echo -n "Remove job $job_id ($name)? [y/N] "
-        read -r confirm
-        if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
-            log_info "Cancelled"
-            return 0
-        fi
-    fi
-    
-    # Remove from config
-    local temp_file
-    temp_file=$(mktemp)
-    _save_cleanup_scope; trap '_run_cleanups' RETURN
-    push_cleanup "rm -f '${temp_file}'"
-    jq --arg id "$job_id" '.jobs = [.jobs[] | select(.id != $id)]' "$CONFIG_FILE" > "$temp_file"
-    mv "$temp_file" "$CONFIG_FILE"
-    
-    # Sync crontab
-    sync_crontab
-    
-    log_success "Removed job: $job_id ($name)"
-    return 0
+	check_jq || return 1
+	ensure_setup
+
+	local job_id="" force=false
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--force)
+			force=true
+			shift
+			;;
+		-*)
+			log_error "Unknown option: $1"
+			return 1
+			;;
+		*)
+			job_id="$1"
+			shift
+			;;
+		esac
+	done
+
+	if [[ -z "$job_id" ]]; then
+		log_error "Job ID required"
+		return 1
+	fi
+
+	local job
+	job=$(get_job "$job_id")
+	if [[ -z "$job" ]]; then
+		log_error "Job not found: $job_id"
+		return 1
+	fi
+
+	local name
+	name=$(echo "$job" | jq -r '.name')
+
+	if [[ "$force" != "true" ]]; then
+		echo -n "Remove job $job_id ($name)? [y/N] "
+		read -r confirm
+		if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+			log_info "Cancelled"
+			return 0
+		fi
+	fi
+
+	# Remove from config
+	local temp_file
+	temp_file=$(mktemp)
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	push_cleanup "rm -f '${temp_file}'"
+	jq --arg id "$job_id" '.jobs = [.jobs[] | select(.id != $id)]' "$CONFIG_FILE" >"$temp_file"
+	mv "$temp_file" "$CONFIG_FILE"
+
+	# Sync crontab
+	sync_crontab
+
+	log_success "Removed job: $job_id ($name)"
+	return 0
 }
 
 #######################################
 # Pause a job
 #######################################
 cmd_pause() {
-    check_jq || return 1
-    ensure_setup
-    
-    local job_id="$1"
-    
-    if [[ -z "$job_id" ]]; then
-        log_error "Job ID required"
-        return 1
-    fi
-    
-    local job
-    job=$(get_job "$job_id")
-    if [[ -z "$job" ]]; then
-        log_error "Job not found: $job_id"
-        return 1
-    fi
-    
-    # Update status
-    local temp_file
-    temp_file=$(mktemp)
-    _save_cleanup_scope; trap '_run_cleanups' RETURN
-    push_cleanup "rm -f '${temp_file}'"
-    jq --arg id "$job_id" '(.jobs[] | select(.id == $id)).status = "paused"' "$CONFIG_FILE" > "$temp_file"
-    mv "$temp_file" "$CONFIG_FILE"
-    
-    # Sync crontab
-    sync_crontab
-    
-    local name
-    name=$(echo "$job" | jq -r '.name')
-    log_success "Paused job: $job_id ($name)"
-    return 0
+	check_jq || return 1
+	ensure_setup
+
+	local job_id="$1"
+
+	if [[ -z "$job_id" ]]; then
+		log_error "Job ID required"
+		return 1
+	fi
+
+	local job
+	job=$(get_job "$job_id")
+	if [[ -z "$job" ]]; then
+		log_error "Job not found: $job_id"
+		return 1
+	fi
+
+	# Update status
+	local temp_file
+	temp_file=$(mktemp)
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	push_cleanup "rm -f '${temp_file}'"
+	jq --arg id "$job_id" '(.jobs[] | select(.id == $id)).status = "paused"' "$CONFIG_FILE" >"$temp_file"
+	mv "$temp_file" "$CONFIG_FILE"
+
+	# Sync crontab
+	sync_crontab
+
+	local name
+	name=$(echo "$job" | jq -r '.name')
+	log_success "Paused job: $job_id ($name)"
+	return 0
 }
 
 #######################################
 # Resume a job
 #######################################
 cmd_resume() {
-    check_jq || return 1
-    ensure_setup
-    
-    local job_id="$1"
-    
-    if [[ -z "$job_id" ]]; then
-        log_error "Job ID required"
-        return 1
-    fi
-    
-    local job
-    job=$(get_job "$job_id")
-    if [[ -z "$job" ]]; then
-        log_error "Job not found: $job_id"
-        return 1
-    fi
-    
-    # Update status
-    local temp_file
-    temp_file=$(mktemp)
-    _save_cleanup_scope; trap '_run_cleanups' RETURN
-    push_cleanup "rm -f '${temp_file}'"
-    jq --arg id "$job_id" '(.jobs[] | select(.id == $id)).status = "active"' "$CONFIG_FILE" > "$temp_file"
-    mv "$temp_file" "$CONFIG_FILE"
-    
-    # Sync crontab
-    sync_crontab
-    
-    local name
-    name=$(echo "$job" | jq -r '.name')
-    log_success "Resumed job: $job_id ($name)"
-    return 0
+	check_jq || return 1
+	ensure_setup
+
+	local job_id="$1"
+
+	if [[ -z "$job_id" ]]; then
+		log_error "Job ID required"
+		return 1
+	fi
+
+	local job
+	job=$(get_job "$job_id")
+	if [[ -z "$job" ]]; then
+		log_error "Job not found: $job_id"
+		return 1
+	fi
+
+	# Update status
+	local temp_file
+	temp_file=$(mktemp)
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	push_cleanup "rm -f '${temp_file}'"
+	jq --arg id "$job_id" '(.jobs[] | select(.id == $id)).status = "active"' "$CONFIG_FILE" >"$temp_file"
+	mv "$temp_file" "$CONFIG_FILE"
+
+	# Sync crontab
+	sync_crontab
+
+	local name
+	name=$(echo "$job" | jq -r '.name')
+	log_success "Resumed job: $job_id ($name)"
+	return 0
 }
 
 #######################################
 # View logs
 #######################################
 cmd_logs() {
-    ensure_setup
-    
-    local job_id="" tail_lines=50 follow=false
-    local since=""  # TODO: Implement --since date filtering
-    
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --job) [[ $# -lt 2 ]] && { log_error "--job requires a value"; return 1; }; job_id="$2"; shift 2 ;;
-            --tail) [[ $# -lt 2 ]] && { log_error "--tail requires a value"; return 1; }; tail_lines="$2"; shift 2 ;;
-            --follow|-f) follow=true; shift ;;
-            --since) [[ $# -lt 2 ]] && { log_error "--since requires a value"; return 1; }; since="$2"; shift 2 ;;
-            *) log_error "Unknown option: $1"; return 1 ;;
-        esac
-    done
-    
-    # Use since to suppress shellcheck warning (future: filter logs by date)
-    : "${since:=}"
-    
-    if [[ -n "$job_id" ]]; then
-        local log_file="$CRON_LOG_DIR/${job_id}.log"
-        if [[ ! -f "$log_file" ]]; then
-            log_info "No logs found for job: $job_id"
-            return 0
-        fi
-        
-        if [[ "$follow" == "true" ]]; then
-            tail -f "$log_file"
-        else
-            tail -n "$tail_lines" "$log_file"
-        fi
-    else
-        # Show combined logs from all jobs
-        local log_files
-        log_files=$(find "$CRON_LOG_DIR" -name "*.log" -type f 2>/dev/null | sort)
-        
-        if [[ -z "$log_files" ]]; then
-            log_info "No logs found"
-            return 0
-        fi
-        
-        if [[ "$follow" == "true" ]]; then
-            # shellcheck disable=SC2086
-            tail -f $log_files
-        else
-            for log_file in $log_files; do
-                local job_name
-                job_name=$(basename "$log_file" .log)
-                echo -e "${BOLD}=== $job_name ===${NC}"
-                tail -n "$tail_lines" "$log_file"
-                echo ""
-            done
-        fi
-    fi
-    
-    return 0
+	ensure_setup
+
+	local job_id="" tail_lines=50 follow=false
+	local since="" # TODO: Implement --since date filtering
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--job)
+			[[ $# -lt 2 ]] && {
+				log_error "--job requires a value"
+				return 1
+			}
+			job_id="$2"
+			shift 2
+			;;
+		--tail)
+			[[ $# -lt 2 ]] && {
+				log_error "--tail requires a value"
+				return 1
+			}
+			tail_lines="$2"
+			shift 2
+			;;
+		--follow | -f)
+			follow=true
+			shift
+			;;
+		--since)
+			[[ $# -lt 2 ]] && {
+				log_error "--since requires a value"
+				return 1
+			}
+			since="$2"
+			shift 2
+			;;
+		*)
+			log_error "Unknown option: $1"
+			return 1
+			;;
+		esac
+	done
+
+	# Use since to suppress shellcheck warning (future: filter logs by date)
+	: "${since:=}"
+
+	if [[ -n "$job_id" ]]; then
+		local log_file="$CRON_LOG_DIR/${job_id}.log"
+		if [[ ! -f "$log_file" ]]; then
+			log_info "No logs found for job: $job_id"
+			return 0
+		fi
+
+		if [[ "$follow" == "true" ]]; then
+			tail -f "$log_file"
+		else
+			tail -n "$tail_lines" "$log_file"
+		fi
+	else
+		# Show combined logs from all jobs
+		local log_files
+		log_files=$(find "$CRON_LOG_DIR" -name "*.log" -type f 2>/dev/null | sort)
+
+		if [[ -z "$log_files" ]]; then
+			log_info "No logs found"
+			return 0
+		fi
+
+		if [[ "$follow" == "true" ]]; then
+			# shellcheck disable=SC2086
+			tail -f $log_files
+		else
+			for log_file in $log_files; do
+				local job_name
+				job_name=$(basename "$log_file" .log)
+				echo -e "${BOLD}=== $job_name ===${NC}"
+				tail -n "$tail_lines" "$log_file"
+				echo ""
+			done
+		fi
+	fi
+
+	return 0
 }
 
 #######################################
 # Debug a job
 #######################################
 cmd_debug() {
-    check_jq || return 1
-    ensure_setup
-    
-    local job_id="$1"
-    
-    if [[ -z "$job_id" ]]; then
-        log_error "Job ID required"
-        return 1
-    fi
-    
-    local job
-    job=$(get_job "$job_id")
-    if [[ -z "$job" ]]; then
-        log_error "Job not found: $job_id"
-        return 1
-    fi
-    
-    local name schedule last_run last_status task
-    name=$(echo "$job" | jq -r '.name')
-    schedule=$(echo "$job" | jq -r '.schedule')
-    last_run=$(echo "$job" | jq -r '.lastRun // "never"')
-    last_status=$(echo "$job" | jq -r '.lastStatus // "unknown"')
-    task=$(echo "$job" | jq -r '.task')
-    
-    echo -e "${BOLD}Job Debug: $job_id${NC}"
-    echo "────────────────────────────────────"
-    echo "Name: $name"
-    echo "Schedule: $schedule"
-    echo "Task: $task"
-    echo ""
-    echo "Last run: $last_run"
-    echo "Last status: $last_status"
-    echo ""
-    
-    # Check OpenCode server
-    echo -e "${BOLD}OpenCode Server:${NC}"
-    if check_server; then
-        echo -e "  Status: ${GREEN}running${NC} (port $OPENCODE_PORT)"
-    else
-        echo -e "  Status: ${RED}not responding${NC}"
-        echo ""
-        echo -e "${YELLOW}Suggestions:${NC}"
-        echo "  1. Start server: opencode serve --port $OPENCODE_PORT"
-        echo "  2. Check if port is in use: lsof -i :$OPENCODE_PORT"
-        echo "  3. View server logs: tail -f /tmp/opencode-server.log"
-        return 1
-    fi
-    
-    # Check log file
-    local log_file="$CRON_LOG_DIR/${job_id}.log"
-    echo ""
-    echo -e "${BOLD}Recent Log Output:${NC}"
-    if [[ -f "$log_file" ]]; then
-        tail -n 20 "$log_file"
-    else
-        echo "  No log file found"
-    fi
-    
-    # Check crontab entry
-    echo ""
-    echo -e "${BOLD}Crontab Entry:${NC}"
-    local cron_entry
-    cron_entry=$(crontab -l 2>/dev/null | grep "$job_id" || echo "")
-    if [[ -n "$cron_entry" ]]; then
-        echo "  $cron_entry"
-    else
-        echo -e "  ${YELLOW}Not found in crontab${NC}"
-        echo "  Run: cron-helper.sh resume $job_id"
-    fi
-    
-    return 0
+	check_jq || return 1
+	ensure_setup
+
+	local job_id="$1"
+
+	if [[ -z "$job_id" ]]; then
+		log_error "Job ID required"
+		return 1
+	fi
+
+	local job
+	job=$(get_job "$job_id")
+	if [[ -z "$job" ]]; then
+		log_error "Job not found: $job_id"
+		return 1
+	fi
+
+	local name schedule last_run last_status task
+	name=$(echo "$job" | jq -r '.name')
+	schedule=$(echo "$job" | jq -r '.schedule')
+	last_run=$(echo "$job" | jq -r '.lastRun // "never"')
+	last_status=$(echo "$job" | jq -r '.lastStatus // "unknown"')
+	task=$(echo "$job" | jq -r '.task')
+
+	echo -e "${BOLD}Job Debug: $job_id${NC}"
+	echo "────────────────────────────────────"
+	echo "Name: $name"
+	echo "Schedule: $schedule"
+	echo "Task: $task"
+	echo ""
+	echo "Last run: $last_run"
+	echo "Last status: $last_status"
+	echo ""
+
+	# Check OpenCode server
+	echo -e "${BOLD}OpenCode Server:${NC}"
+	if check_server; then
+		echo -e "  Status: ${GREEN}running${NC} (port $OPENCODE_PORT)"
+	else
+		echo -e "  Status: ${RED}not responding${NC}"
+		echo ""
+		echo -e "${YELLOW}Suggestions:${NC}"
+		echo "  1. Start server: opencode serve --port $OPENCODE_PORT"
+		echo "  2. Check if port is in use: lsof -i :$OPENCODE_PORT"
+		echo "  3. View server logs: tail -f /tmp/opencode-server.log"
+		return 1
+	fi
+
+	# Check log file
+	local log_file="$CRON_LOG_DIR/${job_id}.log"
+	echo ""
+	echo -e "${BOLD}Recent Log Output:${NC}"
+	if [[ -f "$log_file" ]]; then
+		tail -n 20 "$log_file"
+	else
+		echo "  No log file found"
+	fi
+
+	# Check crontab entry
+	echo ""
+	echo -e "${BOLD}Crontab Entry:${NC}"
+	local cron_entry
+	cron_entry=$(crontab -l 2>/dev/null | grep "$job_id" || echo "")
+	if [[ -n "$cron_entry" ]]; then
+		echo "  $cron_entry"
+	else
+		echo -e "  ${YELLOW}Not found in crontab${NC}"
+		echo "  Run: cron-helper.sh resume $job_id"
+	fi
+
+	return 0
 }
 
 #######################################
 # Show status
 #######################################
 cmd_status() {
-    check_jq || return 1
-    ensure_setup
-    
-    local total active paused failed
-    total=$(jq '.jobs | length' "$CONFIG_FILE")
-    active=$(jq '[.jobs[] | select(.status == "active")] | length' "$CONFIG_FILE")
-    paused=$(jq '[.jobs[] | select(.status == "paused")] | length' "$CONFIG_FILE")
-    failed=$(jq '[.jobs[] | select(.lastStatus == "failed")] | length' "$CONFIG_FILE")
-    
-    echo -e "${BOLD}Cron Agent Status${NC}"
-    echo "─────────────────────"
-    echo "Jobs defined: $total"
-    echo -e "Jobs active: ${GREEN}$active${NC}"
-    echo -e "Jobs paused: ${YELLOW}$paused${NC}"
-    echo ""
-    
-    # Check OpenCode server
-    echo -n "OpenCode Server: "
-    if check_server; then
-        echo -e "${GREEN}running${NC} (port $OPENCODE_PORT)"
-    else
-        echo -e "${RED}not responding${NC}"
-    fi
-    
-    # Recent failures
-    if [[ "$failed" -gt 0 ]]; then
-        echo ""
-        echo -e "${RED}Failed jobs:${NC}"
-        jq -r '.jobs[] | select(.lastStatus == "failed") | "  \(.id) (\(.name)) - last run: \(.lastRun)"' "$CONFIG_FILE"
-    fi
-    
-    # Upcoming jobs (simplified - just show active jobs)
-    if [[ "$active" -gt 0 ]]; then
-        echo ""
-        echo -e "${BOLD}Active jobs:${NC}"
-        jq -r '.jobs[] | select(.status == "active") | "  \(.id) (\(.name)) - \(.schedule)"' "$CONFIG_FILE"
-    fi
-    
-    return 0
+	check_jq || return 1
+	ensure_setup
+
+	local total active paused failed
+	total=$(jq '.jobs | length' "$CONFIG_FILE")
+	active=$(jq '[.jobs[] | select(.status == "active")] | length' "$CONFIG_FILE")
+	paused=$(jq '[.jobs[] | select(.status == "paused")] | length' "$CONFIG_FILE")
+	failed=$(jq '[.jobs[] | select(.lastStatus == "failed")] | length' "$CONFIG_FILE")
+
+	echo -e "${BOLD}Cron Agent Status${NC}"
+	echo "─────────────────────"
+	echo "Jobs defined: $total"
+	echo -e "Jobs active: ${GREEN}$active${NC}"
+	echo -e "Jobs paused: ${YELLOW}$paused${NC}"
+	echo ""
+
+	# Check OpenCode server
+	echo -n "OpenCode Server: "
+	if check_server; then
+		echo -e "${GREEN}running${NC} (port $OPENCODE_PORT)"
+	else
+		echo -e "${RED}not responding${NC}"
+	fi
+
+	# Recent failures
+	if [[ "$failed" -gt 0 ]]; then
+		echo ""
+		echo -e "${RED}Failed jobs:${NC}"
+		jq -r '.jobs[] | select(.lastStatus == "failed") | "  \(.id) (\(.name)) - last run: \(.lastRun)"' "$CONFIG_FILE"
+	fi
+
+	# Upcoming jobs (simplified - just show active jobs)
+	if [[ "$active" -gt 0 ]]; then
+		echo ""
+		echo -e "${BOLD}Active jobs:${NC}"
+		jq -r '.jobs[] | select(.status == "active") | "  \(.id) (\(.name)) - \(.schedule)"' "$CONFIG_FILE"
+	fi
+
+	return 0
 }
 
 #######################################
 # Manually run a job (for testing)
 #######################################
 cmd_run() {
-    check_jq || return 1
-    ensure_setup
-    
-    local job_id="$1"
-    
-    if [[ -z "$job_id" ]]; then
-        log_error "Job ID required"
-        return 1
-    fi
-    
-    local job
-    job=$(get_job "$job_id")
-    if [[ -z "$job" ]]; then
-        log_error "Job not found: $job_id"
-        return 1
-    fi
-    
-    log_info "Manually triggering job: $job_id"
-    
-    # Call the dispatch script directly
-    "$SCRIPTS_DIR/cron-dispatch.sh" "$job_id"
-    
-    return $?
+	check_jq || return 1
+	ensure_setup
+
+	local job_id="$1"
+
+	if [[ -z "$job_id" ]]; then
+		log_error "Job ID required"
+		return 1
+	fi
+
+	local job
+	job=$(get_job "$job_id")
+	if [[ -z "$job" ]]; then
+		log_error "Job not found: $job_id"
+		return 1
+	fi
+
+	log_info "Manually triggering job: $job_id"
+
+	# Call the dispatch script directly
+	"$SCRIPTS_DIR/cron-dispatch.sh" "$job_id"
+
+	return $?
 }
 
 #######################################
 # Show help
 #######################################
 cmd_help() {
-    cat << 'EOF'
+	cat <<'EOF'
 cron-helper.sh - Manage cron jobs that dispatch AI agents
 
 USAGE:
@@ -731,22 +834,26 @@ EOF
 # Main
 #######################################
 main() {
-    local command="${1:-help}"
-    shift || true
-    
-    case "$command" in
-        list) cmd_list "$@" ;;
-        add) cmd_add "$@" ;;
-        remove) cmd_remove "$@" ;;
-        pause) cmd_pause "$@" ;;
-        resume) cmd_resume "$@" ;;
-        logs) cmd_logs "$@" ;;
-        debug) cmd_debug "$@" ;;
-        status) cmd_status "$@" ;;
-        run) cmd_run "$@" ;;
-        help|--help|-h) cmd_help ;;
-        *) log_error "Unknown command: $command"; cmd_help; return 1 ;;
-    esac
+	local command="${1:-help}"
+	shift || true
+
+	case "$command" in
+	list) cmd_list "$@" ;;
+	add) cmd_add "$@" ;;
+	remove) cmd_remove "$@" ;;
+	pause) cmd_pause "$@" ;;
+	resume) cmd_resume "$@" ;;
+	logs) cmd_logs "$@" ;;
+	debug) cmd_debug "$@" ;;
+	status) cmd_status "$@" ;;
+	run) cmd_run "$@" ;;
+	help | --help | -h) cmd_help ;;
+	*)
+		log_error "Unknown command: $command"
+		cmd_help
+		return 1
+		;;
+	esac
 }
 
 main "$@"

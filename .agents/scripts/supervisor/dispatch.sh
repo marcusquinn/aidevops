@@ -112,13 +112,13 @@ resolve_model() {
 		echo "anthropic/claude-opus-4-6"
 		;;
 	sonnet | eval | health)
-		echo "anthropic/claude-sonnet-4-5"
+		echo "anthropic/claude-sonnet-4-6"
 		;;
 	haiku | flash)
 		echo "anthropic/claude-haiku-4-5"
 		;;
 	pro)
-		echo "anthropic/claude-sonnet-4-5"
+		echo "anthropic/claude-sonnet-4-6"
 		;;
 	*)
 		# Unknown tier — treat as coding tier default
