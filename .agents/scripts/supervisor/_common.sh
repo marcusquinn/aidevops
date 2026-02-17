@@ -18,7 +18,8 @@ set -euo pipefail
 #######################################
 db() {
 	sqlite3 -cmd ".timeout 5000" "$@"
-	return 0
+	local rc=$?
+	return $rc
 }
 
 #######################################

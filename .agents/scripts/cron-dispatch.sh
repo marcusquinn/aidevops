@@ -109,7 +109,8 @@ check_server() {
 get_job() {
 	local job_id="$1"
 	jq -r --arg id "$job_id" '.jobs[] | select(.id == $id)' "$CONFIG_FILE"
-	return 0
+	local rc=$?
+	return $rc
 }
 
 #######################################
@@ -148,7 +149,8 @@ create_session() {
 	curl "${CURL_ARGS[@]}" -X POST "$url" \
 		-H "Content-Type: application/json" \
 		-d "{\"title\": \"$title\"}" | jq -r '.id'
-	return 0
+	local rc=$?
+	return $rc
 }
 
 #######################################
@@ -188,7 +190,8 @@ send_prompt() {
 	timeout "$cmd_timeout" curl "${CURL_ARGS[@]}" -X POST "$url" \
 		-H "Content-Type: application/json" \
 		-d "$body"
-	return 0
+	local rc=$?
+	return $rc
 }
 
 #######################################
