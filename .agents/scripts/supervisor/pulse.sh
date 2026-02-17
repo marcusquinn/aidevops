@@ -1042,11 +1042,34 @@ RULES:
 							kill -9 "$health_pid" 2>/dev/null || true
 						fi
 						rm -f "$pid_file"
-						cmd_transition "$health_task" "failed" --error "$kill_reason" 2>>"$SUPERVISOR_LOG" || true
-						failed_count=$((failed_count + 1))
-						# Auto-escalate model on failure so retry uses stronger model (t314 wiring)
-						escalate_model_on_failure "$health_task" 2>>"$SUPERVISOR_LOG" || true
-						attempt_self_heal "$health_task" "failed" "$kill_reason" "${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
+
+						# t1074: Auto-retry timed-out workers up to max_retries before marking failed.
+						# Check if the task has a PR already (worker may have created one before timeout).
+						# If so, transition to pr_review instead of re-queuing from scratch.
+						local task_retries task_max_retries task_pr_url
+						task_retries=$(db "$SUPERVISOR_DB" "SELECT retries FROM tasks WHERE id = '$(sql_escape "$health_task")';" 2>/dev/null || echo "0")
+						task_max_retries=$(db "$SUPERVISOR_DB" "SELECT max_retries FROM tasks WHERE id = '$(sql_escape "$health_task")';" 2>/dev/null || echo "3")
+						task_pr_url=$(db "$SUPERVISOR_DB" "SELECT pr_url FROM tasks WHERE id = '$(sql_escape "$health_task")';" 2>/dev/null || echo "")
+
+						if [[ -n "$task_pr_url" && "$task_pr_url" != "null" ]]; then
+							# Worker created a PR before timing out — let the PR lifecycle handle it
+							log_info "  $health_task has PR ($task_pr_url) — transitioning to pr_review instead of failed"
+							cmd_transition "$health_task" "pr_review" --error "" 2>>"$SUPERVISOR_LOG" || true
+						elif [[ "$task_retries" -lt "$task_max_retries" ]]; then
+							# Retries remaining — increment and re-queue
+							local new_retries=$((task_retries + 1))
+							log_info "  $health_task timed out — re-queuing (retry $new_retries/$task_max_retries)"
+							db "$SUPERVISOR_DB" "UPDATE tasks SET retries = $new_retries WHERE id = '$(sql_escape "$health_task")';" 2>/dev/null || true
+							cmd_transition "$health_task" "queued" --error "Retry $new_retries: $kill_reason" 2>>"$SUPERVISOR_LOG" || true
+							# Auto-escalate model so retry uses stronger model (t314 wiring)
+							escalate_model_on_failure "$health_task" 2>>"$SUPERVISOR_LOG" || true
+						else
+							# Retries exhausted — mark as failed
+							cmd_transition "$health_task" "failed" --error "$kill_reason (retries exhausted: $task_retries/$task_max_retries)" 2>>"$SUPERVISOR_LOG" || true
+							failed_count=$((failed_count + 1))
+							escalate_model_on_failure "$health_task" 2>>"$SUPERVISOR_LOG" || true
+							attempt_self_heal "$health_task" "failed" "$kill_reason" "${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
+						fi
 					fi
 				fi
 			fi
