@@ -2169,6 +2169,11 @@ rebase_sibling_pr() {
 
 	log_info "rebase_sibling_pr: rebasing $task_id ($tbranch) onto main..."
 
+	# Prevent git rebase --continue from opening an editor (nano/vim) for
+	# commit messages — in cron/headless environments TERM is unset, causing
+	# "error: there was a problem with the editor 'nano'" and aborting the rebase.
+	export GIT_EDITOR=true
+
 	# Fetch latest main
 	if ! git -C "$trepo" fetch origin main 2>>"$SUPERVISOR_LOG"; then
 		log_warn "rebase_sibling_pr: failed to fetch origin main for $task_id"
