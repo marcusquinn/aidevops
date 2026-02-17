@@ -21,6 +21,50 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-02-17] Daily Skill Auto-Update Pipeline
+
+**Status:** Planning
+**Estimate:** ~7h (ai:5h test:2h)
+**TODO:** t1081, t1082
+**Logged:** 2026-02-17
+
+**Problem:** Imported skills (e.g., cloudflare-platform from dmmulroy/cloudflare-skill) are checked for upstream updates during interactive `setup.sh` runs but never auto-pulled. Users run stale skill docs until a maintainer manually re-imports. The Cloudflare skill is already 3 commits behind upstream.
+
+**Design:**
+
+Two-layer approach:
+
+**Layer 1 (t1081): User-side daily refresh**
+- `auto-update-helper.sh cmd_check()` already runs every 10 min via cron
+- After the existing version check + `setup.sh --non-interactive`, add a daily skill check
+- Gate: check `last_skill_check` timestamp in `auto-update-state.json`, skip if <24h
+- Call `skill-update-helper.sh check --auto-update --quiet` to pull upstream changes
+- Updates the deployed copy at `~/.aidevops/agents/` for that user's local sessions
+- Repo version wins on next `aidevops update` (no conflict risk)
+
+**Layer 2 (t1082): Maintainer PR pipeline**
+- New `skill-update-helper.sh pr` subcommand
+- For each skill with upstream changes: create worktree, re-import via `add-skill-helper.sh add <url> --force`, commit, open PR
+- PR goes through normal pr-loop (CI, review, merge)
+- Optional supervisor phase (configurable schedule, default daily)
+- One PR per skill for independent review (configurable)
+
+**Key decisions:**
+- [2026-02-17] Daily frequency (not hourly) to respect GitHub API rate limits and avoid churn
+- [2026-02-17] User auto-update is a "preview" -- repo version is authoritative
+- [2026-02-17] One PR per skill (not batched) for independent review cycles
+- [2026-02-17] Supervisor phase is opt-in, not default (maintainers enable explicitly)
+
+**Implementation order:**
+1. t1081.2 -- Ensure skill-update-helper.sh works headlessly
+2. t1081.1 -- Wire daily check into auto-update-helper.sh
+3. t1081.3 -- State file schema update
+4. t1081.4 -- Documentation
+5. t1082.1 -- PR subcommand
+6. t1082.2 -- Supervisor phase
+7. t1082.3 -- Multi-skill batching config
+8. t1082.4 -- PR template
+
 ### [2026-02-14] Automated Matrix+Cloudron Setup
 
 **Status:** Planning
