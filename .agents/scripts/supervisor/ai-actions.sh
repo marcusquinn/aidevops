@@ -1649,7 +1649,6 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 			echo "No supervisor database found at $SUPERVISOR_DB" >&2
 			exit 1
 		fi
-		local has_table
 		has_table=$(sqlite3 "$SUPERVISOR_DB" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='action_dedup_log';" 2>/dev/null || echo "0")
 		if [[ "$has_table" -eq 0 ]]; then
 			echo "action_dedup_log table not found — run a pulse cycle first" >&2
@@ -1688,12 +1687,11 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 		" 2>/dev/null || echo "(none — no repeated state hashes found)"
 		echo ""
 		echo "--- Cooldown savings estimate ---"
-		local total_executed cooldown_count
 		total_executed=$(sqlite3 "$SUPERVISOR_DB" "SELECT COUNT(*) FROM action_dedup_log WHERE status = 'executed';" 2>/dev/null || echo "0")
 		cooldown_count=$(sqlite3 "$SUPERVISOR_DB" "SELECT COUNT(*) FROM action_dedup_log WHERE status = 'cooldown_suppressed';" 2>/dev/null || echo "0")
-		local total=$((total_executed + cooldown_count))
+		total=$((total_executed + cooldown_count))
 		if [[ "$total" -gt 0 ]]; then
-			local pct=$((cooldown_count * 100 / total))
+			pct=$((cooldown_count * 100 / total))
 			echo "Executed: $total_executed | Cooldown suppressed: $cooldown_count | Savings: ${pct}%"
 		else
 			echo "No action data yet"
