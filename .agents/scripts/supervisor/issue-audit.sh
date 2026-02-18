@@ -28,6 +28,101 @@ AUDIT_BLOCKED_TASK_HOURS="${AUDIT_BLOCKED_TASK_HOURS:-48}"
 AUDIT_MAX_ISSUES="${AUDIT_MAX_ISSUES:-200}"
 
 #######################################
+# Query supervisor DB for task verification status and PR URL (t1156)
+# Checks tasks table (pr_url, status) and proof_logs (deliverable_verified events)
+# to determine if a task has been verified in the supervisor pipeline.
+#
+# Arguments:
+#   $1 - task_id (e.g., "t1141")
+# Outputs:
+#   JSON object: {verified: bool, pr_url: string, status: string, source: string}
+#   to stdout. Returns empty JSON object on DB unavailable.
+# Returns:
+#   0 always (non-fatal — DB absence is not an error)
+#######################################
+query_supervisor_db_for_task() {
+	local task_id="$1"
+
+	# Resolve DB path: use SUPERVISOR_DB global if set, else default location
+	local sup_db="${SUPERVISOR_DB:-$HOME/.aidevops/.agent-workspace/supervisor/supervisor.db}"
+
+	if [[ ! -f "$sup_db" ]]; then
+		log_verbose "query_supervisor_db_for_task: supervisor DB not found at $sup_db"
+		echo '{"verified":false,"pr_url":"","status":"","source":"db_unavailable"}'
+		return 0
+	fi
+
+	if ! command -v sqlite3 &>/dev/null; then
+		log_verbose "query_supervisor_db_for_task: sqlite3 not available"
+		echo '{"verified":false,"pr_url":"","status":"","source":"sqlite3_unavailable"}'
+		return 0
+	fi
+
+	# Query tasks table for status and pr_url
+	local task_row=""
+	task_row=$(sqlite3 "$sup_db" \
+		"SELECT status, COALESCE(pr_url,'') FROM tasks WHERE id = '$(sql_escape "$task_id")' LIMIT 1;" \
+		2>/dev/null || echo "")
+
+	local db_status=""
+	local db_pr_url=""
+	if [[ -n "$task_row" ]]; then
+		db_status="${task_row%%|*}"
+		db_pr_url="${task_row#*|}"
+	fi
+
+	# Query proof_logs for deliverable_verified events (strongest evidence)
+	local proof_pr_url=""
+	proof_pr_url=$(sqlite3 "$sup_db" \
+		"SELECT COALESCE(pr_url,'') FROM proof_logs
+		 WHERE task_id = '$(sql_escape "$task_id")'
+		   AND event = 'deliverable_verified'
+		   AND pr_url IS NOT NULL AND pr_url != ''
+		 ORDER BY timestamp DESC LIMIT 1;" \
+		2>/dev/null || echo "")
+
+	# Also check verify_pass events as secondary evidence
+	local verify_pass=""
+	verify_pass=$(sqlite3 "$sup_db" \
+		"SELECT COUNT(*) FROM proof_logs
+		 WHERE task_id = '$(sql_escape "$task_id")'
+		   AND event = 'verify_pass';" \
+		2>/dev/null || echo "0")
+
+	# Determine if task is verified in supervisor pipeline
+	local is_verified=false
+	local effective_pr_url=""
+	local evidence_source=""
+
+	# Priority: proof_logs deliverable_verified > tasks.pr_url + verified status > verify_pass
+	if [[ -n "$proof_pr_url" ]]; then
+		is_verified=true
+		effective_pr_url="$proof_pr_url"
+		evidence_source="proof_log_deliverable_verified"
+	elif [[ -n "$db_pr_url" && "$db_status" =~ ^(verified|deployed|merged|complete)$ ]]; then
+		is_verified=true
+		effective_pr_url="$db_pr_url"
+		evidence_source="tasks_table_verified_status"
+	elif [[ "$verify_pass" -gt 0 && -n "$db_pr_url" ]]; then
+		is_verified=true
+		effective_pr_url="$db_pr_url"
+		evidence_source="proof_log_verify_pass"
+	elif [[ -n "$db_pr_url" ]]; then
+		# Has a PR URL but not in a terminal verified state — partial evidence
+		effective_pr_url="$db_pr_url"
+		evidence_source="tasks_table_pr_url_only"
+	fi
+
+	jq -n \
+		--argjson verified "$is_verified" \
+		--arg pr_url "$effective_pr_url" \
+		--arg status "${db_status:-}" \
+		--arg source "${evidence_source:-not_found}" \
+		'{verified: $verified, pr_url: $pr_url, status: $status, source: $source}'
+	return 0
+}
+
+#######################################
 # Audit 1: Closed Issue Audit
 # Checks issues closed in the last N hours for:
 #   - Missing PR linkage (no closing PR referenced)
@@ -120,6 +215,23 @@ audit_closed_issues() {
 			continue
 		fi
 
+		# Check 0 (t1156): Query supervisor DB first — most reliable source of truth.
+		# The DB has pr_url and verified status from the autonomous pipeline, which
+		# is often populated before TODO.md or GitHub issue timeline is updated.
+		local sup_db_result=""
+		local sup_db_verified=false
+		local sup_db_pr_url=""
+		local sup_db_source=""
+		if [[ -n "$task_id" ]]; then
+			sup_db_result=$(query_supervisor_db_for_task "$task_id" 2>/dev/null || echo '{"verified":false,"pr_url":"","status":"","source":"error"}')
+			sup_db_verified=$(printf '%s' "$sup_db_result" | jq -r '.verified' 2>/dev/null || echo "false")
+			sup_db_pr_url=$(printf '%s' "$sup_db_result" | jq -r '.pr_url' 2>/dev/null || echo "")
+			sup_db_source=$(printf '%s' "$sup_db_result" | jq -r '.source' 2>/dev/null || echo "")
+			if [[ "$sup_db_verified" == "true" ]]; then
+				log_verbose "audit_closed_issues: task $task_id verified in supervisor DB (source: $sup_db_source, pr: $sup_db_pr_url)"
+			fi
+		fi
+
 		# Check 1: Does the closed issue have a linked/closing PR?
 		local linked_prs=""
 		linked_prs=$(gh api "repos/${repo_slug}/issues/${issue_number}/timeline" \
@@ -149,6 +261,19 @@ audit_closed_issues() {
 			if [[ -n "$pr_info" ]]; then
 				merged_pr="${pr_info%%|*}"
 			fi
+		fi
+
+		# Supplement checks with supervisor DB evidence (t1156)
+		# If DB has a verified PR, treat it as equivalent to linked PR + completion evidence.
+		if [[ "$sup_db_verified" == "true" && -n "$sup_db_pr_url" ]]; then
+			# Extract PR number from URL for consistency with merged_pr format
+			local sup_pr_number=""
+			sup_pr_number=$(printf '%s' "$sup_db_pr_url" | grep -oE '[0-9]+$' || echo "")
+			if [[ -n "$sup_pr_number" ]]; then
+				[[ -z "$merged_pr" ]] && merged_pr="$sup_pr_number"
+				linked_pr_count=$((linked_pr_count + 1))
+			fi
+			has_evidence=true
 		fi
 
 		# Generate findings based on checks
@@ -188,6 +313,9 @@ audit_closed_issues() {
 				--argjson linked_pr_count "$linked_pr_count" \
 				--arg merged_pr "${merged_pr:-none}" \
 				--argjson has_evidence "$has_evidence" \
+				--argjson sup_db_verified "$sup_db_verified" \
+				--arg sup_db_pr_url "${sup_db_pr_url:-}" \
+				--arg sup_db_source "${sup_db_source:-}" \
 				--argjson issues "$issues_json" \
 				'{
 					source: $source,
@@ -200,6 +328,11 @@ audit_closed_issues() {
 					linked_pr_count: $linked_pr_count,
 					merged_pr: $merged_pr,
 					has_evidence: $has_evidence,
+					supervisor_db: {
+						verified: $sup_db_verified,
+						pr_url: $sup_db_pr_url,
+						source: $sup_db_source
+					},
 					issues: $issues,
 					suggested_action: (
 						if ($severity == "high") then "reopen_and_investigate"
