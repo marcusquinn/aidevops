@@ -19,6 +19,74 @@ _was_prompt_repeat_attempted() {
 }
 
 #######################################
+# Get per-task-type hang timeout in seconds (t1196)
+# Args: $1 = task description (used to infer task type from tags/keywords)
+# Returns: timeout in seconds via stdout
+# Env overrides (all in seconds):
+#   SUPERVISOR_TIMEOUT_TESTING    (default: 7200  — 2h, tests can be slow)
+#   SUPERVISOR_TIMEOUT_REFACTOR   (default: 7200  — 2h, large refactors)
+#   SUPERVISOR_TIMEOUT_FEATURE    (default: 5400  — 90m, typical feature work)
+#   SUPERVISOR_TIMEOUT_BUGFIX     (default: 3600  — 1h, focused fixes)
+#   SUPERVISOR_TIMEOUT_DOCS       (default: 1800  — 30m, documentation)
+#   SUPERVISOR_TIMEOUT_SECURITY   (default: 5400  — 90m, security work)
+#   SUPERVISOR_TIMEOUT_ARCHITECTURE (default: 7200 — 2h, architecture tasks)
+#   SUPERVISOR_WORKER_TIMEOUT     (default: 3600  — fallback for unclassified tasks)
+#######################################
+get_task_timeout() {
+	local task_desc="${1:-}"
+	local desc_lower
+	desc_lower=$(echo "$task_desc" | tr '[:upper:]' '[:lower:]')
+	local tags
+	tags=$(echo "$task_desc" | grep -oE '#[a-zA-Z][a-zA-Z0-9_-]*' | tr '[:upper:]' '[:lower:]' | tr '\n' ' ' || echo "")
+
+	# Testing tasks: integration tests, unit tests, e2e — can be legitimately slow
+	if [[ "$tags" == *"#test"* || "$desc_lower" =~ add.*test|write.*test|run.*test|integration.*test|e2e ]]; then
+		echo "${SUPERVISOR_TIMEOUT_TESTING:-7200}"
+		return 0
+	fi
+
+	# Architecture tasks: large-scale design work
+	if [[ "$tags" == *"#architecture"* || "$desc_lower" =~ architect ]]; then
+		echo "${SUPERVISOR_TIMEOUT_ARCHITECTURE:-7200}"
+		return 0
+	fi
+
+	# Refactor tasks: large code changes
+	if [[ "$tags" == *"#refactor"* || "$desc_lower" =~ refactor ]]; then
+		echo "${SUPERVISOR_TIMEOUT_REFACTOR:-7200}"
+		return 0
+	fi
+
+	# Security tasks: audits, pentesting
+	if [[ "$tags" == *"#security"* || "$desc_lower" =~ security ]]; then
+		echo "${SUPERVISOR_TIMEOUT_SECURITY:-5400}"
+		return 0
+	fi
+
+	# Feature/enhancement tasks: typical implementation work
+	if [[ "$tags" == *"#feature"* || "$tags" == *"#enhancement"* || "$tags" == *"#self-improvement"* || "$desc_lower" =~ implement|add.*feature|new.*feature ]]; then
+		echo "${SUPERVISOR_TIMEOUT_FEATURE:-5400}"
+		return 0
+	fi
+
+	# Bugfix tasks: focused, should be faster
+	if [[ "$tags" == *"#bugfix"* || "$tags" == *"#fix"* || "$desc_lower" =~ fix.*bug|bugfix|hotfix ]]; then
+		echo "${SUPERVISOR_TIMEOUT_BUGFIX:-3600}"
+		return 0
+	fi
+
+	# Docs tasks: documentation updates — fastest
+	if [[ "$tags" == *"#docs"* || "$desc_lower" =~ update.*doc|add.*doc|documentation ]]; then
+		echo "${SUPERVISOR_TIMEOUT_DOCS:-1800}"
+		return 0
+	fi
+
+	# Default: use global SUPERVISOR_WORKER_TIMEOUT
+	echo "${SUPERVISOR_WORKER_TIMEOUT:-3600}"
+	return 0
+}
+
+#######################################
 # Supervisor pulse - stateless check and dispatch cycle
 # Designed to run via cron every 5 minutes
 #######################################
@@ -1492,10 +1560,10 @@ RULES:
 	flush_deferred_batch_completions 2>>"$SUPERVISOR_LOG" || true
 
 	# Phase 4: Worker health checks - detect dead, hung, and orphaned workers
-	local worker_timeout_seconds="${SUPERVISOR_WORKER_TIMEOUT:-3600}" # 1 hour default (t314: restored after merge overwrite)
+	# t1196: Per-task-type hang timeout via get_task_timeout() — replaces single global value.
 	# Absolute max runtime: kill workers regardless of log activity.
 	# Prevents runaway workers (e.g., shellcheck on huge files) from accumulating
-	# and exhausting system memory. Default 2 hours.
+	# and exhausting system memory. Default 4 hours.
 	local worker_max_runtime_seconds="${SUPERVISOR_WORKER_MAX_RUNTIME:-14400}" # 4 hour default (t314: restored after merge overwrite)
 
 	if [[ -d "$SUPERVISOR_DIR/pids" ]]; then
@@ -1526,6 +1594,12 @@ RULES:
 					local should_kill=false
 					local kill_reason=""
 
+					# t1196: Resolve per-task-type hang timeout from description/tags
+					local health_task_desc
+					health_task_desc=$(db "$SUPERVISOR_DB" "SELECT description FROM tasks WHERE id = '$(sql_escape "$health_task")';" 2>/dev/null || echo "")
+					local worker_timeout_seconds
+					worker_timeout_seconds=$(get_task_timeout "$health_task_desc")
+
 					# Check 1: Absolute max runtime (prevents indefinite accumulation)
 					local started_at
 					started_at=$(db "$SUPERVISOR_DB" "SELECT started_at FROM tasks WHERE id = '$(sql_escape "$health_task")';" 2>/dev/null || echo "")
@@ -1542,6 +1616,7 @@ RULES:
 					fi
 
 					# Check 2: Hung state (no log output for timeout period)
+					# t1196: Uses per-task-type timeout from get_task_timeout()
 					if [[ "$should_kill" == "false" ]]; then
 						local log_file
 						log_file=$(db "$SUPERVISOR_DB" "SELECT log_file FROM tasks WHERE id = '$(sql_escape "$health_task")';" 2>/dev/null || echo "")
