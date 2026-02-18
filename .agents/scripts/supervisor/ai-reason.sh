@@ -307,9 +307,60 @@ ${user_prompt}"
 	local action_plan
 	action_plan=$(extract_action_plan "$ai_result")
 
+	# Retry once if parse failed on a non-empty response (t1187)
+	# The AI model occasionally produces malformed or truncated JSON on the first
+	# attempt. A single retry resolves most transient failures without adding
+	# significant latency (the retry only fires when the first attempt fails).
 	if [[ -z "$action_plan" || "$action_plan" == "null" ]]; then
-		log_warn "AI Reasoning: no parseable action plan in response"
-		# Debug diagnostics for intermittent parse failures (t1182)
+		log_warn "AI Reasoning: parse failed on first attempt — retrying AI call once (t1187)"
+		{
+			echo "## Parse Attempt 1"
+			echo ""
+			echo "Status: FAILED — retrying AI call"
+		} >>"$reason_log"
+
+		local ai_result_retry=""
+		if [[ "$ai_cli" == "opencode" ]]; then
+			ai_result_retry=$(portable_timeout "$ai_timeout" opencode run \
+				-m "$ai_model" \
+				--format default \
+				--title "ai-supervisor-${timestamp}-retry" \
+				"$full_prompt" 2>/dev/null || echo "")
+			ai_result_retry=$(printf '%s' "$ai_result_retry" | sed 's/\x1b\[[0-9;]*[mGKHF]//g; s/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b\]//g; s/\x07//g')
+		else
+			local claude_model_retry="${ai_model#*/}"
+			ai_result_retry=$(portable_timeout "$ai_timeout" claude \
+				-p "$full_prompt" \
+				--model "$claude_model_retry" \
+				--output-format text 2>/dev/null || echo "")
+		fi
+
+		local ai_result_retry_trimmed
+		ai_result_retry_trimmed=$(printf '%s' "$ai_result_retry" | tr -d '[:space:]')
+		if [[ -n "$ai_result_retry_trimmed" ]]; then
+			action_plan=$(extract_action_plan "$ai_result_retry")
+			{
+				echo ""
+				echo "## Parse Attempt 2 (retry)"
+				echo ""
+				echo "Response length: $(printf '%s' "$ai_result_retry" | wc -c | tr -d ' ') bytes"
+				echo "Parse result: $([ -n "$action_plan" ] && echo "SUCCESS" || echo "FAILED")"
+			} >>"$reason_log"
+		else
+			log_info "AI Reasoning: retry also returned empty response"
+			{
+				echo ""
+				echo "## Parse Attempt 2 (retry)"
+				echo ""
+				echo "Response length: 0 bytes (empty)"
+				echo "Parse result: EMPTY — treating as empty action plan []"
+			} >>"$reason_log"
+		fi
+	fi
+
+	if [[ -z "$action_plan" || "$action_plan" == "null" ]]; then
+		log_warn "AI Reasoning: no parseable action plan after retry — treating as empty action plan"
+		# Debug diagnostics for intermittent parse failures (t1182, t1187)
 		local response_len json_block_count first_bytes last_bytes raw_hex_head
 		response_len=$(printf '%s' "$ai_result" | wc -c | tr -d ' ')
 		json_block_count=$(printf '%s' "$ai_result" | grep -c '^```json' 2>/dev/null || echo 0)
@@ -319,7 +370,7 @@ ${user_prompt}"
 		{
 			echo "## Parsing Result"
 			echo ""
-			echo "Status: FAILED - no parseable JSON action plan"
+			echo "Status: FAILED after retry — returning empty action plan (rc=0)"
 			echo ""
 			echo "### Debug Diagnostics"
 			echo "- Response length: $response_len bytes"
@@ -336,9 +387,9 @@ ${user_prompt}"
 			echo '```'
 		} >>"$reason_log"
 		log_warn "AI Reasoning: raw response logged to $reason_log (${response_len} bytes, ${json_block_count} json blocks)"
-		echo '{"error":"no_action_plan","actions":[]}'
+		printf '%s' "[]"
 		_release_ai_lock
-		return 1
+		return 0
 	fi
 
 	# Step 9: Validate the action plan
