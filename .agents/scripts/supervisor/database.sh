@@ -134,6 +134,28 @@ restore_db() {
 }
 
 #######################################
+# Create the action_dedup_log table and indexes (t1138)
+# Single source of truth for the schema — called by both init_db
+# (fresh databases) and ensure_db (migration of existing databases).
+#######################################
+_create_action_dedup_log_schema() {
+	db "$SUPERVISOR_DB" <<'DEDUP_SCHEMA'
+CREATE TABLE IF NOT EXISTS action_dedup_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    cycle_id        TEXT NOT NULL,
+    action_type     TEXT NOT NULL,
+    target          TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'executed'
+                    CHECK(status IN ('executed', 'dedup_suppressed')),
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_action_dedup_type_target ON action_dedup_log(action_type, target);
+CREATE INDEX IF NOT EXISTS idx_action_dedup_cycle ON action_dedup_log(cycle_id);
+CREATE INDEX IF NOT EXISTS idx_action_dedup_created ON action_dedup_log(created_at);
+DEDUP_SCHEMA
+}
+
+#######################################
 # Ensure supervisor directory and DB exist
 #######################################
 ensure_db() {
@@ -598,20 +620,7 @@ CONTEST_SQL
 	has_action_dedup_log=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='action_dedup_log';" 2>/dev/null || echo "0")
 	if [[ "$has_action_dedup_log" -eq 0 ]]; then
 		log_info "Creating action_dedup_log table (t1138)..."
-		db "$SUPERVISOR_DB" <<'MIGRATE_T1138'
-CREATE TABLE IF NOT EXISTS action_dedup_log (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    cycle_id        TEXT NOT NULL,
-    action_type     TEXT NOT NULL,
-    target          TEXT NOT NULL,
-    status          TEXT NOT NULL DEFAULT 'executed'
-                    CHECK(status IN ('executed', 'dedup_suppressed')),
-    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
-);
-CREATE INDEX IF NOT EXISTS idx_action_dedup_type_target ON action_dedup_log(action_type, target);
-CREATE INDEX IF NOT EXISTS idx_action_dedup_cycle ON action_dedup_log(cycle_id);
-CREATE INDEX IF NOT EXISTS idx_action_dedup_created ON action_dedup_log(created_at);
-MIGRATE_T1138
+		_create_action_dedup_log_schema
 		log_success "Created action_dedup_log table (t1138)"
 	fi
 
@@ -741,26 +750,10 @@ CREATE TABLE IF NOT EXISTS proof_logs (
 CREATE INDEX IF NOT EXISTS idx_proof_logs_task ON proof_logs(task_id);
 CREATE INDEX IF NOT EXISTS idx_proof_logs_event ON proof_logs(event);
 CREATE INDEX IF NOT EXISTS idx_proof_logs_timestamp ON proof_logs(timestamp);
-
--- Action dedup log: rolling window of executed actions to prevent repeated
--- actions on the same targets across supervisor AI reasoning cycles (t1138).
--- Before executing an action, the executor checks if the same (action_type, target)
--- pair was executed in the last N cycles. If so, the action is skipped and logged
--- as 'dedup_suppressed'. The window is pruned automatically during ensure_db.
-CREATE TABLE IF NOT EXISTS action_dedup_log (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    cycle_id        TEXT NOT NULL,
-    action_type     TEXT NOT NULL,
-    target          TEXT NOT NULL,
-    status          TEXT NOT NULL DEFAULT 'executed'
-                    CHECK(status IN ('executed', 'dedup_suppressed')),
-    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_action_dedup_type_target ON action_dedup_log(action_type, target);
-CREATE INDEX IF NOT EXISTS idx_action_dedup_cycle ON action_dedup_log(cycle_id);
-CREATE INDEX IF NOT EXISTS idx_action_dedup_created ON action_dedup_log(created_at);
 SQL
+
+	# Action dedup log — schema defined in _create_action_dedup_log_schema() (t1138)
+	_create_action_dedup_log_schema
 
 	log_success "Initialized supervisor database: $SUPERVISOR_DB"
 	return 0

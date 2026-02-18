@@ -47,12 +47,7 @@ _extract_action_target() {
 	local action_type="$2"
 
 	case "$action_type" in
-	comment_on_issue | flag_for_review | request_info)
-		local issue_number
-		issue_number=$(printf '%s' "$action" | jq -r '.issue_number // "unknown"')
-		echo "issue:${issue_number}"
-		;;
-	close_verified)
+	comment_on_issue | flag_for_review | request_info | close_verified)
 		local issue_number
 		issue_number=$(printf '%s' "$action" | jq -r '.issue_number // "unknown"')
 		echo "issue:${issue_number}"
@@ -114,7 +109,7 @@ _is_duplicate_action() {
 		WHERE status = 'executed'
 		ORDER BY created_at DESC
 		LIMIT $AI_ACTION_DEDUP_WINDOW;
-	" 2>/dev/null || echo "")
+	" 2>>"${SUPERVISOR_LOG:-/dev/null}" || echo "")
 
 	if [[ -z "$recent_cycles" ]]; then
 		return 1
@@ -140,7 +135,7 @@ _is_duplicate_action() {
 		  AND target = '$escaped_target'
 		  AND status = 'executed'
 		  AND cycle_id IN ($in_clause);
-	" 2>/dev/null || echo "0")
+	" 2>>"${SUPERVISOR_LOG:-/dev/null}" || echo "0")
 
 	if [[ "$match_count" -gt 0 ]]; then
 		return 0
@@ -164,7 +159,8 @@ _record_action_dedup() {
 	local status="${4:-executed}"
 
 	if [[ -z "${SUPERVISOR_DB:-}" || ! -f "${SUPERVISOR_DB:-}" ]]; then
-		return 0
+		log_warn "AI Actions: SUPERVISOR_DB not found, cannot record action for dedup."
+		return 1
 	fi
 
 	local escaped_cycle escaped_type escaped_target
@@ -175,7 +171,10 @@ _record_action_dedup() {
 	db "$SUPERVISOR_DB" "
 		INSERT INTO action_dedup_log (cycle_id, action_type, target, status)
 		VALUES ('$escaped_cycle', '$escaped_type', '$escaped_target', '$status');
-	" 2>/dev/null || true
+	" 2>>"${SUPERVISOR_LOG:-/dev/null}" || {
+		log_warn "AI Actions: failed to record dedup entry for $action_type on $target"
+		return 1
+	}
 
 	return 0
 }
