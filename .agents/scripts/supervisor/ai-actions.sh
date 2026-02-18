@@ -712,21 +712,18 @@ validate_action_fields() {
 			echo "missing required field: task_id"
 			return 0
 		fi
-		# new_priority is required — the AI prompt documents this explicitly (t1126, t1201).
-		# The executor can infer from reasoning text as a fallback, but the field must be
-		# present to ensure the AI is producing structured output as intended.
-		if [[ -z "$new_priority" || "$new_priority" == "null" ]]; then
-			echo "missing required field: new_priority (must be high|medium|low|critical)"
-			return 0
+		# Validate new_priority when provided — must be one of the known values.
+		# The executor infers priority from reasoning text when the field is absent,
+		# but if the field IS present it must be a valid value (t1197).
+		if [[ -n "$new_priority" && "$new_priority" != "null" ]]; then
+			case "$new_priority" in
+			high | medium | low | critical) ;;
+			*)
+				echo "invalid new_priority: $new_priority (must be high|medium|low|critical)"
+				return 0
+				;;
+			esac
 		fi
-		# Validate new_priority value — must be one of the known values (t1197, t1201)
-		case "$new_priority" in
-		high | medium | low | critical) ;;
-		*)
-			echo "invalid new_priority: $new_priority (must be high|medium|low|critical)"
-			return 0
-			;;
-		esac
 		;;
 	close_verified)
 		local issue_number pr_number
