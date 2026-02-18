@@ -32,6 +32,14 @@ AI_ACTIONS_DRY_RUN="${AI_ACTIONS_DRY_RUN:-false}"
 # within this many recent cycles. Set to 0 to disable dedup.
 AI_ACTION_DEDUP_WINDOW="${AI_ACTION_DEDUP_WINDOW:-5}"
 
+# Cycle-aware dedup: skip targets whose state hasn't changed since last action (t1179)
+# When enabled (default), dedup also checks a state fingerprint for each target.
+# If the same (action_type, target) was acted on AND the target's state hasn't
+# changed, the action is suppressed. If state changed, the action is allowed
+# through even if it was recently executed.
+# Set to "false" to fall back to basic (action_type, target) dedup only.
+AI_ACTION_CYCLE_AWARE_DEDUP="${AI_ACTION_CYCLE_AWARE_DEDUP:-true}"
+
 #######################################
 # Extract the dedup target key from an action based on its type (t1138)
 # Each action type has a natural "target" — the entity it acts on.
@@ -75,18 +83,143 @@ _extract_action_target() {
 }
 
 #######################################
-# Check if an action was recently executed (dedup check) (t1138)
+# Compute a state fingerprint for a dedup target (t1179)
+# The fingerprint captures the target's current state so that cycle-aware
+# dedup can detect when a target has changed since the last action.
+# Returns a short hash string; "unknown" if state cannot be determined.
+#
+# State sources by target type:
+#   issue:N  → GitHub issue state + label count + comment count + updated_at
+#   task:tN  → TODO.md checkbox state + assignee + started/blocked fields
+#   title:X  → "static" (creation targets don't have mutable state)
+#
+# Arguments:
+#   $1 - target key (from _extract_action_target)
+#   $2 - repo path
+#   $3 - repo slug (owner/repo)
+# Outputs:
+#   State fingerprint string (md5 truncated to 12 chars)
+#######################################
+_compute_target_state_hash() {
+	local target="$1"
+	local repo_path="${2:-}"
+	local repo_slug="${3:-}"
+
+	local target_type="${target%%:*}"
+	local target_id="${target#*:}"
+	local state_data=""
+
+	case "$target_type" in
+	issue)
+		# Query GitHub issue state if gh CLI is available
+		if [[ -n "$repo_slug" ]] && command -v gh &>/dev/null; then
+			state_data=$(gh issue view "$target_id" --repo "$repo_slug" \
+				--json state,labels,comments,updatedAt \
+				--jq '[.state, (.labels | length | tostring), (.comments | length | tostring), .updatedAt] | join("|")' \
+				2>/dev/null || echo "")
+		fi
+		# Fallback: check DB for task state if issue maps to a task
+		if [[ -z "$state_data" && -n "${SUPERVISOR_DB:-}" && -f "${SUPERVISOR_DB:-}" ]]; then
+			state_data=$(db "$SUPERVISOR_DB" "
+				SELECT status || '|' || COALESCE(pr_url,'') || '|' || COALESCE(updated_at,'')
+				FROM tasks WHERE issue_url LIKE '%/$target_id' OR issue_url LIKE '%issues/$target_id'
+				LIMIT 1;
+			" 2>/dev/null || echo "")
+		fi
+		;;
+	task)
+		# Check TODO.md for task state
+		if [[ -n "$repo_path" && -f "$repo_path/TODO.md" ]]; then
+			local task_line
+			task_line=$(grep -E "^\s*- \[.\] ${target_id}(\s|\.|$)" "$repo_path/TODO.md" 2>/dev/null | head -1 || echo "")
+			if [[ -n "$task_line" ]]; then
+				# Extract: checkbox state, assignee, started, blocked-by, pr: fields
+				local checkbox
+				checkbox=$(printf '%s' "$task_line" | grep -oE '\[.\]' | head -1 || echo "")
+				local assignee
+				assignee=$(printf '%s' "$task_line" | grep -oE 'assignee:[^ ]+' || echo "")
+				local started
+				started=$(printf '%s' "$task_line" | grep -oE 'started:[^ ]+' || echo "")
+				local blocked
+				blocked=$(printf '%s' "$task_line" | grep -oE 'blocked-by:[^ ]+' || echo "")
+				local pr_field
+				pr_field=$(printf '%s' "$task_line" | grep -oE 'pr:#[0-9]+' || echo "")
+				state_data="${checkbox}|${assignee}|${started}|${blocked}|${pr_field}"
+			fi
+		fi
+		# Also check DB state
+		if [[ -n "${SUPERVISOR_DB:-}" && -f "${SUPERVISOR_DB:-}" ]]; then
+			local db_state
+			db_state=$(db "$SUPERVISOR_DB" "
+				SELECT status || '|' || COALESCE(pr_url,'') || '|' || retries || '|' || COALESCE(updated_at,'')
+				FROM tasks WHERE id = '$(sql_escape "$target_id")'
+				LIMIT 1;
+			" 2>/dev/null || echo "")
+			if [[ -n "$db_state" ]]; then
+				state_data="${state_data}|db:${db_state}"
+			fi
+		fi
+		;;
+	title)
+		# Creation targets (create_task, create_improvement) — check if title
+		# already exists in TODO.md to detect if it was already created
+		if [[ -n "$repo_path" && -f "$repo_path/TODO.md" ]]; then
+			local title_exists
+			title_exists=$(grep -cF "$target_id" "$repo_path/TODO.md" 2>/dev/null || echo "0")
+			state_data="exists:${title_exists}"
+		else
+			state_data="static"
+		fi
+		;;
+	*)
+		state_data="unknown"
+		;;
+	esac
+
+	# If we couldn't determine state, return "unknown" — dedup will fall back
+	# to basic (action_type, target) matching without state awareness
+	if [[ -z "$state_data" ]]; then
+		echo "unknown"
+		return 0
+	fi
+
+	# Hash the state data to a short fingerprint
+	local hash
+	if command -v md5sum &>/dev/null; then
+		hash=$(printf '%s' "$state_data" | md5sum | cut -c1-12)
+	elif command -v md5 &>/dev/null; then
+		hash=$(printf '%s' "$state_data" | md5 | cut -c1-12)
+	else
+		# Fallback: use the raw data (truncated)
+		hash=$(printf '%s' "$state_data" | cut -c1-32)
+	fi
+
+	echo "$hash"
+	return 0
+}
+
+#######################################
+# Check if an action was recently executed (dedup check) (t1138, t1179)
 # Queries the action_dedup_log for matching (action_type, target) pairs
 # within the configured rolling window of recent cycles.
+#
+# Cycle-aware mode (t1179): When AI_ACTION_CYCLE_AWARE_DEDUP is true,
+# also compares the target's current state hash against the hash stored
+# when the action was last executed. If the state has changed, the action
+# is allowed through (returns 1 = not duplicate) even if the same
+# (action_type, target) was recently executed.
+#
 # Arguments:
 #   $1 - action type
 #   $2 - target key
+#   $3 - (optional) current state hash for cycle-aware comparison (t1179)
 # Returns:
 #   0 if duplicate found (should skip), 1 if no duplicate (safe to execute)
 #######################################
 _is_duplicate_action() {
 	local action_type="$1"
 	local target="$2"
+	local current_state_hash="${3:-}"
 
 	# Dedup disabled
 	if [[ "${AI_ACTION_DEDUP_WINDOW:-0}" -eq 0 ]]; then
@@ -137,40 +270,77 @@ _is_duplicate_action() {
 		  AND cycle_id IN ($in_clause);
 	" 2>>"${SUPERVISOR_LOG:-/dev/null}" || echo "0")
 
-	if [[ "$match_count" -gt 0 ]]; then
+	if [[ "$match_count" -eq 0 ]]; then
+		# No prior execution found — not a duplicate
+		return 1
+	fi
+
+	# Basic dedup says this is a duplicate. Now check cycle-aware state (t1179).
+	if [[ "${AI_ACTION_CYCLE_AWARE_DEDUP:-true}" != "true" ]]; then
+		# Cycle-aware dedup disabled — use basic dedup result
 		return 0
 	fi
 
-	return 1
+	# If we have a current state hash, compare against the most recent stored hash
+	if [[ -n "$current_state_hash" && "$current_state_hash" != "unknown" ]]; then
+		local last_state_hash
+		last_state_hash=$(db "$SUPERVISOR_DB" "
+			SELECT state_hash FROM action_dedup_log
+			WHERE action_type = '$escaped_type'
+			  AND target = '$escaped_target'
+			  AND status = 'executed'
+			  AND state_hash IS NOT NULL
+			  AND state_hash != ''
+			  AND state_hash != 'unknown'
+			  AND cycle_id IN ($in_clause)
+			ORDER BY created_at DESC
+			LIMIT 1;
+		" 2>>"${SUPERVISOR_LOG:-/dev/null}" || echo "")
+
+		if [[ -n "$last_state_hash" && "$last_state_hash" != "$current_state_hash" ]]; then
+			# State has changed since last action — allow the action through
+			log_info "AI Actions: cycle-aware dedup: $action_type on $target — state changed ($last_state_hash -> $current_state_hash), allowing"
+			return 1
+		fi
+
+		# State unchanged (or no prior hash) — suppress as duplicate
+		return 0
+	fi
+
+	# No state hash available — fall back to basic dedup (suppress)
+	return 0
 }
 
 #######################################
-# Record an executed or suppressed action in the dedup log (t1138)
+# Record an executed or suppressed action in the dedup log (t1138, t1179)
 # Arguments:
 #   $1 - cycle ID
 #   $2 - action type
 #   $3 - target key
 #   $4 - status ("executed" or "dedup_suppressed")
+#   $5 - (optional) state hash for cycle-aware dedup (t1179)
 #######################################
 _record_action_dedup() {
 	local cycle_id="$1"
 	local action_type="$2"
 	local target="$3"
 	local status="${4:-executed}"
+	local state_hash="${5:-}"
 
 	if [[ -z "${SUPERVISOR_DB:-}" || ! -f "${SUPERVISOR_DB:-}" ]]; then
 		log_warn "AI Actions: SUPERVISOR_DB not found, cannot record action for dedup."
 		return 1
 	fi
 
-	local escaped_cycle escaped_type escaped_target
+	local escaped_cycle escaped_type escaped_target escaped_hash
 	escaped_cycle=$(sql_escape "$cycle_id")
 	escaped_type=$(sql_escape "$action_type")
 	escaped_target=$(sql_escape "$target")
+	escaped_hash=$(sql_escape "${state_hash:-}")
 
 	db "$SUPERVISOR_DB" "
-		INSERT INTO action_dedup_log (cycle_id, action_type, target, status)
-		VALUES ('$escaped_cycle', '$escaped_type', '$escaped_target', '$status');
+		INSERT INTO action_dedup_log (cycle_id, action_type, target, status, state_hash)
+		VALUES ('$escaped_cycle', '$escaped_type', '$escaped_target', '$status', '$escaped_hash');
 	" 2>>"${SUPERVISOR_LOG:-/dev/null}" || {
 		log_warn "AI Actions: failed to record dedup entry for $action_type on $target"
 		return 1
@@ -240,6 +410,7 @@ execute_action_plan() {
 		echo "Actions: $action_count"
 		echo "Repo: $repo_path"
 		echo "Dedup window: ${AI_ACTION_DEDUP_WINDOW:-0} cycles"
+		echo "Cycle-aware dedup: ${AI_ACTION_CYCLE_AWARE_DEDUP:-true}"
 		echo ""
 	} >"$action_log"
 
@@ -299,22 +470,30 @@ execute_action_plan() {
 		fi
 
 		# Step 2b: Dedup check — skip if same (action_type, target) was
-		# executed in the last N cycles (t1138)
+		# executed in the last N cycles (t1138, t1179 cycle-aware)
 		local dedup_target
 		dedup_target=$(_extract_action_target "$action" "$action_type")
-		if [[ "${AI_ACTION_DEDUP_WINDOW:-0}" -gt 0 ]] && _is_duplicate_action "$action_type" "$dedup_target"; then
-			log_info "AI Actions: [$((i + 1))/$action_count] $action_type on $dedup_target — dedup_suppressed (acted on in last $AI_ACTION_DEDUP_WINDOW cycles)"
+
+		# Compute state hash for cycle-aware dedup (t1179)
+		local state_hash=""
+		if [[ "${AI_ACTION_CYCLE_AWARE_DEDUP:-true}" == "true" && "${AI_ACTION_DEDUP_WINDOW:-0}" -gt 0 ]]; then
+			state_hash=$(_compute_target_state_hash "$dedup_target" "$repo_path" "$repo_slug")
+		fi
+
+		if [[ "${AI_ACTION_DEDUP_WINDOW:-0}" -gt 0 ]] && _is_duplicate_action "$action_type" "$dedup_target" "$state_hash"; then
+			log_info "AI Actions: [$((i + 1))/$action_count] $action_type on $dedup_target — dedup_suppressed (acted on in last $AI_ACTION_DEDUP_WINDOW cycles, state unchanged)"
 			skipped=$((skipped + 1))
 			dedup_suppressed=$((dedup_suppressed + 1))
-			_record_action_dedup "$cycle_id" "$action_type" "$dedup_target" "dedup_suppressed"
+			_record_action_dedup "$cycle_id" "$action_type" "$dedup_target" "dedup_suppressed" "$state_hash"
 			local escaped_dedup_reason
-			escaped_dedup_reason=$(printf '%s' "dedup_suppressed: $action_type on $dedup_target already executed in last $AI_ACTION_DEDUP_WINDOW cycles" | jq -Rs '.')
-			results=$(printf '%s' "$results" | jq ". + [{\"index\":$i,\"type\":\"$action_type\",\"status\":\"dedup_suppressed\",\"target\":\"$dedup_target\",\"reason\":$escaped_dedup_reason}]")
+			escaped_dedup_reason=$(printf '%s' "dedup_suppressed: $action_type on $dedup_target already executed in last $AI_ACTION_DEDUP_WINDOW cycles (state_hash=$state_hash)" | jq -Rs '.')
+			results=$(printf '%s' "$results" | jq ". + [{\"index\":$i,\"type\":\"$action_type\",\"status\":\"dedup_suppressed\",\"target\":\"$dedup_target\",\"state_hash\":\"$state_hash\",\"reason\":$escaped_dedup_reason}]")
 			{
-				echo "## Action $((i + 1)): $action_type — DEDUP SUPPRESSED"
+				echo "## Action $((i + 1)): $action_type — DEDUP SUPPRESSED (cycle-aware)"
 				echo "Target: $dedup_target"
+				echo "State hash: $state_hash"
 				echo "Reasoning: $reasoning"
-				echo "Suppression: same (action_type, target) executed in last $AI_ACTION_DEDUP_WINDOW cycles"
+				echo "Suppression: same (action_type, target) executed in last $AI_ACTION_DEDUP_WINDOW cycles, target state unchanged"
 				echo ""
 			} >>"$action_log"
 			continue
@@ -378,7 +557,7 @@ execute_action_plan() {
 				--arg type "$action_type" \
 				--argjson r "$exec_result_json" \
 				'. + [{"index": $idx, "type": $type, "status": "executed", "result": $r}]')
-			_record_action_dedup "$cycle_id" "$action_type" "$dedup_target" "executed"
+			_record_action_dedup "$cycle_id" "$action_type" "$dedup_target" "executed" "$state_hash"
 		else
 			failed=$((failed + 1))
 			log_warn "AI Actions: [$((i + 1))/$action_count] $action_type — failed"
@@ -1410,7 +1589,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 	if [[ "$subcommand" == "pipeline" ]]; then
 		run_ai_actions_pipeline "$repo_path" "$mode"
 	elif [[ "$subcommand" == "dedup-stats" ]]; then
-		# Show dedup statistics (t1138)
+		# Show dedup statistics (t1138, t1179)
 		if [[ ! -f "$SUPERVISOR_DB" ]]; then
 			echo "No supervisor database found at $SUPERVISOR_DB" >&2
 			exit 1
@@ -1420,7 +1599,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 			echo "action_dedup_log table not found — run a pulse cycle first" >&2
 			exit 1
 		fi
-		echo "=== Action Dedup Statistics (t1138) ==="
+		echo "=== Action Dedup Statistics (t1138, t1179 cycle-aware) ==="
 		echo ""
 		echo "--- Total entries ---"
 		sqlite3 -column -header "$SUPERVISOR_DB" "
@@ -1440,15 +1619,35 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 			LIMIT 10;
 		" 2>/dev/null || echo "(none)"
 		echo ""
+		echo "--- Cycle-aware state changes (targets allowed through despite prior action) ---"
+		sqlite3 -column -header "$SUPERVISOR_DB" "
+			SELECT a1.target, a1.action_type,
+			       a1.state_hash as prev_hash, a2.state_hash as new_hash,
+			       a1.created_at as prev_action, a2.created_at as new_action
+			FROM action_dedup_log a1
+			JOIN action_dedup_log a2
+			  ON a1.target = a2.target
+			  AND a1.action_type = a2.action_type
+			  AND a1.status = 'executed'
+			  AND a2.status = 'executed'
+			  AND a1.state_hash != ''
+			  AND a2.state_hash != ''
+			  AND a1.state_hash != a2.state_hash
+			  AND a1.created_at < a2.created_at
+			ORDER BY a2.created_at DESC
+			LIMIT 10;
+		" 2>/dev/null || echo "(none — cycle-aware dedup not yet active or no state changes detected)"
+		echo ""
 		echo "--- Recent dedup log (last 20 entries) ---"
 		sqlite3 -column -header "$SUPERVISOR_DB" "
-			SELECT cycle_id, action_type, target, status, created_at
+			SELECT cycle_id, action_type, target, status, state_hash, created_at
 			FROM action_dedup_log
 			ORDER BY created_at DESC
 			LIMIT 20;
 		" 2>/dev/null || echo "(empty)"
 		echo ""
 		echo "--- Dedup window: ${AI_ACTION_DEDUP_WINDOW:-5} cycles ---"
+		echo "--- Cycle-aware dedup: ${AI_ACTION_CYCLE_AWARE_DEDUP:-true} ---"
 	elif [[ -n "$plan" ]]; then
 		execute_action_plan "$plan" "$repo_path" "$mode"
 	else
