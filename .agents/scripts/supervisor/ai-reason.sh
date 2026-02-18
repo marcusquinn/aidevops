@@ -352,7 +352,7 @@ You can propose these action types:
 2. **create_task** — Add a new task to TODO.md (with title, description, tags, estimate, model tier)
 3. **create_subtasks** — Break down an existing task into subtasks
 4. **flag_for_review** — Flag an issue for human review with a reason
-5. **adjust_priority** — Suggest reordering tasks with reasoning
+5. **adjust_priority** — Suggest reordering tasks with reasoning. Required fields: `task_id` (string), `new_priority` (string: must be exactly `"high"`, `"medium"`, or `"low"`), `reasoning` (string)
 6. **close_verified** — Close an issue that has been verified complete (only if PR merged + evidence exists)
 7. **request_info** — Ask for clarification on an issue
 8. **create_improvement** — Create a self-improvement task to fix an efficiency gap, missing automation, or process weakness
@@ -417,6 +417,12 @@ Respond with ONLY a JSON array of actions. Each action is an object with:
     "reasoning": "This task is blocking 3 others and should be dispatched next"
   },
   {
+    "type": "adjust_priority",
+    "task_id": "t5678",
+    "new_priority": "low",
+    "reasoning": "This task has no active blockers and lower business value than queued work"
+  },
+  {
     "type": "flag_for_review",
     "issue_number": 456,
     "reason": "Why human review is needed",
@@ -445,6 +451,7 @@ Respond with ONLY a JSON array of actions. Each action is an object with:
 - For escalate_model: only recommend when pattern data shows repeated failures at the current tier, or when the task description clearly requires capabilities beyond the current tier.
 - For create_improvement: focus on changes that reduce future token spend or manual intervention. Quantify the expected benefit when possible (e.g., "saves ~500 tokens/task" or "eliminates manual step that fails 30% of the time").
 - Self-improvement tasks should be tagged with `#self-improvement` and `#auto-dispatch` so they flow through the normal pipeline.
+- For adjust_priority: `new_priority` is REQUIRED and must be exactly one of `"high"`, `"medium"`, or `"low"`. Actions missing this field will be skipped by the executor.
 
 Respond with ONLY the JSON array. No markdown fencing, no explanation outside the JSON.
 SYSTEM_PROMPT

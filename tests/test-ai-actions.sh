@@ -288,6 +288,20 @@ _test_field_validation() {
 			failures=$((failures + 1))
 		fi
 
+		# adjust_priority: missing new_priority
+		result=$(validate_action_fields '{"type":"adjust_priority","task_id":"t100"}' "adjust_priority")
+		if [[ -z "$result" ]]; then
+			echo "FAIL: adjust_priority without new_priority accepted"
+			failures=$((failures + 1))
+		fi
+
+		# adjust_priority: invalid new_priority value
+		result=$(validate_action_fields '{"type":"adjust_priority","task_id":"t100","new_priority":"urgent"}' "adjust_priority")
+		if [[ -z "$result" ]]; then
+			echo "FAIL: adjust_priority with invalid new_priority value accepted"
+			failures=$((failures + 1))
+		fi
+
 		# close_verified: valid
 		result=$(validate_action_fields '{"type":"close_verified","issue_number":10,"pr_number":20}' "close_verified")
 		if [[ -n "$result" ]]; then
