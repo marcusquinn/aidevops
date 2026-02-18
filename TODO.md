@@ -1524,3 +1524,12 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
   - Running `issue-sync-helper.sh enrich` (without specific task) fails at line 528 with `IFS: unbound variable`
   - Likely a `set -u` issue where IFS is used before being set in a read loop
   - Quick fix: add `local IFS` or use `IFS='' read` pattern
+
+- [ ] t1124 Skip markdown code-fenced lines in TODO.md parser #bugfix #git #sync #auto-dispatch ~30m model:sonnet ref:GH#1682 logged:2026-02-18
+  - issue-sync-helper.sh grep patterns (`^\s*- \[ \] t[0-9]+`) match task-like lines inside markdown code blocks (` ` ```)
+  - This creates phantom issues from format examples in TODO.md (e.g. `- [ ] t001 Task description @owner`)
+  - Discovered in awardsapp repo: format section had example tasks that collided with real task IDs, creating duplicate/wrong GitHub issues
+  - Workaround applied in awardsapp: renamed examples to `tXXX`/`tYYY`/`tZZZ` placeholders
+  - Proper fix: add a code-fence-aware filter before task extraction — track ``` state and skip lines inside fenced blocks
+  - Affects: `cmd_push`, `cmd_close`, `cmd_pull`, `cmd_enrich`, `cmd_status`, `cmd_reconcile` — all use the same grep pattern
+  - Simplest approach: a shared `extract_tasks()` function that pipes TODO.md through an awk filter stripping code blocks before grep
