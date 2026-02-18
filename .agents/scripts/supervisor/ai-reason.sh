@@ -282,10 +282,22 @@ ${user_prompt}"
 
 	if [[ -z "$action_plan" || "$action_plan" == "null" ]]; then
 		log_warn "AI Reasoning: no parseable action plan in response"
+		# Debug diagnostics for intermittent parse failures
+		local response_len json_block_count first_bytes last_bytes
+		response_len=$(printf '%s' "$ai_result" | wc -c | tr -d ' ')
+		json_block_count=$(printf '%s' "$ai_result" | grep -c '^```json' || echo 0)
+		first_bytes=$(printf '%s' "$ai_result" | head -c 100 | tr '\n' ' ')
+		last_bytes=$(printf '%s' "$ai_result" | tail -c 100 | tr '\n' ' ')
 		{
 			echo "## Parsing Result"
 			echo ""
 			echo "Status: FAILED - no parseable JSON action plan"
+			echo ""
+			echo "### Debug Diagnostics"
+			echo "- Response length: $response_len bytes"
+			echo "- \`\`\`json blocks found: $json_block_count"
+			echo "- First 100 bytes: \`$first_bytes\`"
+			echo "- Last 100 bytes: \`$last_bytes\`"
 		} >>"$reason_log"
 		echo '{"error":"no_action_plan","actions":[]}'
 		_release_ai_lock
@@ -511,6 +523,30 @@ extract_action_plan() {
 	')
 	if [[ -n "$bracket_json" ]]; then
 		parsed=$(printf '%s' "$bracket_json" | jq '.' 2>/dev/null)
+		if [[ $? -eq 0 && -n "$parsed" ]]; then
+			printf '%s' "$parsed"
+			return 0
+		fi
+	fi
+
+	# Try 5: Write response to temp file and parse from file
+	# This handles edge cases where the shell variable may have lost data
+	# (e.g., null bytes, very long lines, or subshell truncation)
+	local tmpfile
+	tmpfile=$(mktemp "${TMPDIR:-/tmp}/ai-parse-XXXXXX")
+	printf '%s' "$response" >"$tmpfile"
+
+	# Try file-based extraction of last ```json block
+	json_block=$(awk '
+		/^```json/ { capture=1; block=""; next }
+		/^```$/ && capture { capture=0; last_block=block; next }
+		capture { block = block (block ? "\n" : "") $0 }
+		END { if (capture && block) print block; else if (last_block) print last_block }
+	' "$tmpfile")
+	rm -f "$tmpfile"
+
+	if [[ -n "$json_block" ]]; then
+		parsed=$(printf '%s' "$json_block" | jq '.' 2>/dev/null)
 		if [[ $? -eq 0 && -n "$parsed" ]]; then
 			printf '%s' "$parsed"
 			return 0
