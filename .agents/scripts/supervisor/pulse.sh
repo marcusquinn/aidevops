@@ -2232,8 +2232,6 @@ RULES:
 					fi
 
 					# Step 3: Generate per-repo MODELS-PERFORMANCE.md
-					local repo_name
-					repo_name=$(basename "$models_repo_root")
 					if "$generate_script" --mode performance --repo-path "$models_repo_root" \
 						--output "${models_repo_root}/MODELS-PERFORMANCE.md" --quiet 2>/dev/null; then
 						if ! git -C "$models_repo_root" diff --quiet -- MODELS-PERFORMANCE.md 2>/dev/null; then
@@ -2250,10 +2248,12 @@ RULES:
 					# Commit and push if anything changed
 					if [[ "$models_changed" -eq 1 ]]; then
 						git -C "$models_repo_root" add MODELS.md MODELS-PERFORMANCE.md 2>/dev/null
-						git -C "$models_repo_root" commit -m "docs: update model files from aidevops (t1133)" --no-verify 2>/dev/null &&
-							git -C "$models_repo_root" push 2>/dev/null &&
-							log_info "  Phase 12: MODELS.md + MODELS-PERFORMANCE.md updated ($models_repo_root)" ||
+						if git -C "$models_repo_root" commit -m "docs: update model files from aidevops (t1133)" --no-verify 2>/dev/null &&
+							git -C "$models_repo_root" push 2>/dev/null; then
+							log_info "  Phase 12: MODELS.md + MODELS-PERFORMANCE.md updated ($models_repo_root)"
+						else
 							log_warn "  Phase 12: Model files regenerated but commit/push failed ($models_repo_root)"
+						fi
 					else
 						log_verbose "  Phase 12: Model files unchanged in $models_repo_root"
 					fi
