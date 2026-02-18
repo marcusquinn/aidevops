@@ -61,6 +61,7 @@ Success rates from autonomous task execution (pattern-tracker data):
 | feature | 541 | 522 | 19 | 96% |
 | bugfix | 10 | 7 | 3 | 70% |
 | refactor | 1 | 0 | 1 | 0% |
+| testing | 1 | 1 | 0 | 100% |
 | security | 1 | 1 | 0 | 100% |
 | architecture | 2 | 2 | 0 | 100% |
 | research | 1 | 1 | 0 | 100% |
