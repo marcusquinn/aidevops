@@ -50,6 +50,9 @@ readonly PATTERN_TRACKER="${SCRIPT_DIR}/pattern-tracker-helper.sh"
 # Set SCORING_NO_PATTERN_SYNC=1 to disable automatic pattern sync
 SCORING_NO_PATTERN_SYNC="${SCORING_NO_PATTERN_SYNC:-0}"
 
+# Threshold for success/failure classification (score * 100, so 350 = 3.5/5.0)
+readonly SUCCESS_THRESHOLD_SCORE_X100=350
+
 # Scoring criteria definitions (name|weight|description|rubric_1|rubric_3|rubric_5)
 readonly SCORING_CRITERIA="correctness|0.30|Factual accuracy and technical correctness|Major errors or incorrect approach|Mostly correct with minor issues|Fully correct, no errors
 completeness|0.25|Coverage of all requirements and edge cases|Missing major requirements|Covers main requirements, misses edge cases|Comprehensive coverage including edge cases
@@ -326,30 +329,20 @@ cmd_record() {
 # Syncs scoring results to the shared pattern tracker DB for model routing.
 # =============================================================================
 
-# Sync a scored response to the pattern tracker as a SUCCESS_PATTERN entry.
-# This enables /route and /patterns to use A/B comparison data.
-#
-# Args:
-#   $1 - response_id
-#
-# Reads model_id, prompt category, and weighted average from the scoring DB,
-# then records a pattern with structured metadata.
-_sync_score_to_patterns() {
-	local response_id="$1"
-
-	# Skip if pattern sync is disabled or tracker not available
-	if [[ "$SCORING_NO_PATTERN_SYNC" == "1" ]]; then
+# Validate that a value is a positive integer (for safe SQL interpolation).
+# Returns 0 if valid, 1 if not.
+_validate_integer() {
+	local value="$1"
+	if [[ "$value" =~ ^[0-9]+$ ]]; then
 		return 0
 	fi
-	if [[ ! -x "$PATTERN_TRACKER" ]]; then
-		return 0
-	fi
+	return 1
+}
 
-	# Get response metadata
-	local result
-	result=$(sqlite3 -separator '|' "$SCORING_DB" "
-        SELECT r.model_id, p.category, p.difficulty,
-               COALESCE((
+# Reusable SQL fragment for computing weighted average score from the scores table.
+# Use with a correlated subquery: replace the outer response_id reference as needed.
+# shellcheck disable=SC2034
+readonly WEIGHTED_AVG_SQL="COALESCE((
                    SELECT ROUND(
                        SUM(CASE s.criterion
                            WHEN 'correctness' THEN s.score * 0.30
@@ -367,11 +360,42 @@ _sync_score_to_patterns() {
                        END), 0)
                    , 2)
                    FROM scores s WHERE s.response_id = r.response_id
-               ), 0) as weighted_avg
+               ), 0)"
+
+# Sync a scored response to the pattern tracker as a SUCCESS_PATTERN entry.
+# This enables /route and /patterns to use A/B comparison data.
+#
+# Args:
+#   $1 - response_id
+#
+# Reads model_id, prompt category, and weighted average from the scoring DB,
+# then records a pattern with structured metadata.
+_sync_score_to_patterns() {
+	local response_id="$1"
+
+	# Validate response_id is a safe integer before SQL interpolation
+	if ! _validate_integer "$response_id"; then
+		print_error "Invalid response_id: must be a positive integer"
+		return 1
+	fi
+
+	# Skip if pattern sync is disabled or tracker not available
+	if [[ "$SCORING_NO_PATTERN_SYNC" == "1" ]]; then
+		return 0
+	fi
+	if [[ ! -x "$PATTERN_TRACKER" ]]; then
+		return 0
+	fi
+
+	# Get response metadata
+	local result
+	result=$(sqlite3 -separator '|' "$SCORING_DB" "
+        SELECT r.model_id, p.category, p.difficulty,
+               ${WEIGHTED_AVG_SQL} as weighted_avg
         FROM responses r
         JOIN prompts p ON r.prompt_id = p.prompt_id
         WHERE r.response_id = ${response_id};
-    " 2>/dev/null) || return 0
+    ") || return 0
 
 	if [[ -z "$result" ]]; then
 		return 0
@@ -389,7 +413,7 @@ _sync_score_to_patterns() {
 	local outcome="success"
 	local avg_int
 	avg_int=$(awk "BEGIN{printf \"%d\", $weighted_avg * 100}")
-	if [[ "$avg_int" -lt 350 ]]; then
+	if [[ "$avg_int" -lt "$SUCCESS_THRESHOLD_SCORE_X100" ]]; then
 		outcome="failure"
 	fi
 
@@ -423,6 +447,11 @@ _sync_comparison_to_patterns() {
 	local winner_avg="$3"
 	local compared_count="$4"
 
+	# Validate prompt_id is a safe integer before SQL interpolation
+	if ! _validate_integer "$prompt_id"; then
+		return 1
+	fi
+
 	if [[ "$SCORING_NO_PATTERN_SYNC" == "1" ]]; then
 		return 0
 	fi
@@ -432,7 +461,7 @@ _sync_comparison_to_patterns() {
 
 	local category
 	category=$(sqlite3 "$SCORING_DB" \
-		"SELECT category FROM prompts WHERE prompt_id = ${prompt_id};" 2>/dev/null) || return 0
+		"SELECT category FROM prompts WHERE prompt_id = ${prompt_id};") || return 0
 
 	local model_tier
 	model_tier=$(_model_to_tier "$winner_model")
@@ -678,31 +707,13 @@ cmd_compare() {
 	local responses
 	responses=$(sqlite3 -separator '|' "$SCORING_DB" "
         SELECT r.response_id, r.model_id, r.response_time, r.token_count, r.cost_estimate,
-               COALESCE((
-                   SELECT ROUND(
-                       SUM(CASE s.criterion
-                           WHEN 'correctness' THEN s.score * 0.30
-                           WHEN 'completeness' THEN s.score * 0.25
-                           WHEN 'code_quality' THEN s.score * 0.25
-                           WHEN 'clarity' THEN s.score * 0.20
-                           ELSE s.score * 0.25
-                       END)
-                       / NULLIF(SUM(CASE s.criterion
-                           WHEN 'correctness' THEN 0.30
-                           WHEN 'completeness' THEN 0.25
-                           WHEN 'code_quality' THEN 0.25
-                           WHEN 'clarity' THEN 0.20
-                           ELSE 0.25
-                       END), 0)
-                   , 2)
-                   FROM scores s WHERE s.response_id = r.response_id
-               ), 0) as weighted_avg,
+               ${WEIGHTED_AVG_SQL} as weighted_avg,
                (SELECT GROUP_CONCAT(s2.criterion || ':' || s2.score, ',')
                 FROM scores s2 WHERE s2.response_id = r.response_id) as score_detail
         FROM responses r
         WHERE r.prompt_id = ${prompt_id}
         ORDER BY weighted_avg DESC;
-    " 2>/dev/null)
+    ")
 
 	if [[ -z "$responses" ]]; then
 		print_warning "No responses recorded for prompt #${prompt_id}"
@@ -1115,31 +1126,13 @@ cmd_sync() {
 	local scored_responses
 	scored_responses=$(sqlite3 -separator '|' "$SCORING_DB" "
 		SELECT DISTINCT r.response_id, r.model_id,
-			   COALESCE((
-				   SELECT ROUND(
-					   SUM(CASE s.criterion
-						   WHEN 'correctness' THEN s.score * 0.30
-						   WHEN 'completeness' THEN s.score * 0.25
-						   WHEN 'code_quality' THEN s.score * 0.25
-						   WHEN 'clarity' THEN s.score * 0.20
-						   ELSE s.score * 0.25
-					   END)
-					   / NULLIF(SUM(CASE s.criterion
-						   WHEN 'correctness' THEN 0.30
-						   WHEN 'completeness' THEN 0.25
-						   WHEN 'code_quality' THEN 0.25
-						   WHEN 'clarity' THEN 0.20
-						   ELSE 0.25
-					   END), 0)
-				   , 2)
-				   FROM scores s WHERE s.response_id = r.response_id
-			   ), 0) as weighted_avg,
+			   ${WEIGHTED_AVG_SQL} as weighted_avg,
 			   p.category, p.difficulty
 		FROM responses r
 		JOIN prompts p ON r.prompt_id = p.prompt_id
 		WHERE EXISTS (SELECT 1 FROM scores s WHERE s.response_id = r.response_id)
 		ORDER BY r.response_id;
-	" 2>/dev/null)
+	")
 
 	if [[ -z "$scored_responses" ]]; then
 		print_warning "No scored responses to sync"
@@ -1157,7 +1150,7 @@ cmd_sync() {
 		local outcome="success"
 		local avg_int
 		avg_int=$(awk "BEGIN{printf \"%d\", $wavg * 100}")
-		if [[ "$avg_int" -lt 350 ]]; then
+		if [[ "$avg_int" -lt "$SUCCESS_THRESHOLD_SCORE_X100" ]]; then
 			outcome="failure"
 		fi
 
