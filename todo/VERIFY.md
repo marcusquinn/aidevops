@@ -1162,3 +1162,8 @@
   check: file-exists .agents/scripts/supervisor/memory-integration.sh
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
+
+- [ ] v135 t1141 Fix duplicate GitHub issues in issue-sync push — replac... | PR #1715 | merged:2026-02-18
+  files: .agents/scripts/issue-sync-helper.sh
+  check: shellcheck .agents/scripts/issue-sync-helper.sh
+  check: file-exists .agents/scripts/issue-sync-helper.sh
