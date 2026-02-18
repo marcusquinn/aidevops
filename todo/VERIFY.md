@@ -1388,7 +1388,7 @@
   check: shellcheck tests/test-ai-actions.sh
   check: file-exists tests/test-ai-actions.sh
 
-- [ ] v165 t1197 Harden AI actions pipeline against empty/malformed model ... | PR #1823 | merged:2026-02-18
+- [x] v165 t1197 Harden AI actions pipeline against empty/malformed model ... | PR #1823 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/supervisor/ai-actions.sh, .agents/scripts/supervisor/ai-reason.sh, tests/test-ai-actions.sh
   check: shellcheck .agents/scripts/supervisor/ai-actions.sh
   check: file-exists .agents/scripts/supervisor/ai-actions.sh
@@ -1397,11 +1397,16 @@
   check: shellcheck tests/test-ai-actions.sh
   check: file-exists tests/test-ai-actions.sh
 
-- [ ] v166 t1199 Add worker hung timeout tuning based on task estimate #en... | PR #1826 | merged:2026-02-18
+- [x] v166 t1199 Add worker hung timeout tuning based on task estimate #en... | PR #1826 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/supervisor/_common.sh, .agents/scripts/supervisor/dispatch.sh, .agents/scripts/supervisor/pulse.sh
   check: shellcheck .agents/scripts/supervisor/_common.sh
   check: file-exists .agents/scripts/supervisor/_common.sh
   check: shellcheck .agents/scripts/supervisor/dispatch.sh
   check: file-exists .agents/scripts/supervisor/dispatch.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
+
+- [ ] v167 t1208 Reconcile supervisor DB status inconsistencies (running/e... | PR #1837 | merged:2026-02-18
+  files: .agents/scripts/supervisor/pulse.sh
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
