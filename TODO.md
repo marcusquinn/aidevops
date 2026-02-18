@@ -1525,7 +1525,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
   - Likely a `set -u` issue where IFS is used before being set in a read loop
   - Quick fix: add `local IFS` or use `IFS='' read` pattern
 
-- [ ] t1124 Skip markdown code-fenced lines in TODO.md parser #bugfix #git #sync #auto-dispatch ~30m model:sonnet ref:GH#1682 assignee:marcusquinn started:2026-02-18T16:28:50Z logged:2026-02-18
+- [x] t1124 Skip markdown code-fenced lines in TODO.md parser #bugfix #git #sync #auto-dispatch ~30m model:sonnet ref:GH#1682 assignee:marcusquinn started:2026-02-18T16:28:50Z logged:2026-02-18 pr:#1692 verified:2026-02-18
   - issue-sync-helper.sh grep patterns (`^\s*- \[ \] t[0-9]+`) match task-like lines inside markdown code blocks (` ` ```)
   - This creates phantom issues from format examples in TODO.md (e.g. `- [ ] t001 Task description @owner`)
   - Discovered in awardsapp repo: format section had example tasks that collided with real task IDs, creating duplicate/wrong GitHub issues
