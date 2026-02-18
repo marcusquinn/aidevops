@@ -64,6 +64,15 @@ See `agent-testing.md` for the full testing framework.
 ~/.aidevops/agents/scripts/subagent-index-helper.sh generate
 ```
 
+**Model tier in frontmatter**: Use evidence, not just rules. Before setting `model:`, check pattern data:
+
+```bash
+pattern-tracker-helper.sh recommend "task type"  # data-driven tier recommendation
+/route "task description"                          # rules + pattern history combined
+```
+
+Static rules (`haiku` → formatting, `sonnet` → code, `opus` → architecture) are starting points. Pattern data overrides when >75% success rate with 3+ samples. See "Model Tier Selection: Evidence-Based Routing" section below.
+
 <!-- AI-CONTEXT-END -->
 
 ## Detailed Guidance
@@ -376,6 +385,73 @@ If not found, search for `api_error` or `error handling` patterns.
 2. Unique string literals in the code
 3. Comment markers (e.g., `# ERROR HANDLING SECTION`)
 4. Broader pattern search if specific not found
+
+### Model Tier Selection: Evidence-Based Routing
+
+When designing an agent that dispatches workers or recommends a model tier, use pattern data — not just static rules.
+
+**Static rules** (from `tools/context/model-routing.md`) are a starting point:
+
+```text
+haiku → classification, formatting
+sonnet → code, most dev tasks (default)
+opus  → architecture, novel problems
+```
+
+**Pattern data** overrides static rules when evidence is strong (>75% success rate, 3+ samples). Before hardcoding a `model:` in frontmatter or dispatching a worker, check:
+
+```bash
+# What has worked for this task type before?
+pattern-tracker-helper.sh suggest "shell script agent"
+# → "pattern data shows sonnet with prompt-repeat is optimal for shell-script agents (87% success, 14 samples)"
+
+# Get a data-driven tier recommendation
+pattern-tracker-helper.sh recommend "code review"
+# → "sonnet: 85% success rate from 12 samples (vs opus: 60% from 5 samples)"
+
+# Or use the /route command (combines rules + pattern history)
+/route "write unit tests for a bash helper script"
+```
+
+**When to trust pattern data over static rules:**
+
+| Situation | Action |
+|-----------|--------|
+| Pattern data: >75% success, 3+ samples | Use model from pattern data (overrides static rule) |
+| Pattern data: sparse or inconclusive | Fall back to routing rules |
+| Pattern data contradicts routing rules | Note the conflict, explain in agent docs |
+| No pattern data yet | Use routing rules, record outcomes to build data |
+
+**Recording outcomes** (the supervisor does this automatically; agents can also record manually):
+
+```bash
+# After a successful task
+pattern-tracker-helper.sh record --outcome success \
+    --task-type "shell script agent" --model sonnet \
+    --description "Prompt-repeat pattern resolved ambiguous instructions"
+
+# After a failure
+pattern-tracker-helper.sh record --outcome failure \
+    --task-type "architecture design" --model sonnet \
+    --description "Needed opus — sonnet missed cross-service dependency trade-offs"
+```
+
+**In agent frontmatter**, document the evidence behind your `model:` choice:
+
+```yaml
+---
+description: Shell script quality checker
+mode: subagent
+model: sonnet  # pattern data: 87% success rate from 14 samples for shell-script tasks
+tools:
+  bash: true
+  read: true
+---
+```
+
+**Why this matters**: Static rules are educated guesses. Pattern data is empirical evidence from your actual workload. An agent that says "use opus for architecture" is applying a rule; an agent that says "pattern data shows opus succeeds 91% of the time on architecture tasks vs 54% for sonnet (from 22 samples)" is applying evidence. The latter is more trustworthy and self-correcting as patterns accumulate.
+
+**Full docs**: `tools/context/model-routing.md`, `memory/README.md` "Pattern Tracking", `scripts/commands/route.md`
 
 ### Quality Checking: Linters First
 
