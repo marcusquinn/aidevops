@@ -1289,7 +1289,7 @@
   check: file-exists .agents/scripts/supervisor/pulse.sh
   check: file-exists MODELS.md
 
-- [ ] v152 t1182 Fix AI actions pipeline 'expected array' parsing errors #... | PR #1792 | merged:2026-02-18
+- [x] v152 t1182 Fix AI actions pipeline 'expected array' parsing errors #... | PR #1792 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/supervisor/ai-actions.sh, .agents/scripts/supervisor/ai-reason.sh, tests/test-ai-supervisor-e2e.sh
   check: shellcheck .agents/scripts/supervisor/ai-actions.sh
   check: file-exists .agents/scripts/supervisor/ai-actions.sh
