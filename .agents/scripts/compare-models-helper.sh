@@ -33,7 +33,7 @@ set -euo pipefail
 # Same DB as pattern-tracker-helper.sh — no duplication of storage.
 
 readonly PATTERN_DB="${AIDEVOPS_MEMORY_DIR:-$HOME/.aidevops/.agent-workspace/memory}/memory.db"
-readonly PATTERN_VALID_MODELS="haiku flash sonnet pro opus"
+readonly -a PATTERN_VALID_MODELS=(haiku flash sonnet pro opus)
 
 # Check if pattern data is available
 has_pattern_data() {
@@ -44,13 +44,16 @@ has_pattern_data() {
 	return 1
 }
 
-# Get success rate for a model tier
-# Usage: get_tier_success_rate "sonnet" [task_type]
-# Output: "85|47" (rate|sample_count) or "" if no data
-get_tier_success_rate() {
+# Internal helper: get raw success/failure counts for a tier
+# Usage: _get_tier_pattern_counts "sonnet" [task_type]
+# Output: "successes|failures" (e.g. "12|3") or "0|0" if no data
+_get_tier_pattern_counts() {
 	local tier="$1"
 	local task_type="${2:-}"
-	[[ -f "$PATTERN_DB" ]] || return 0
+	[[ -f "$PATTERN_DB" ]] || {
+		echo "0|0"
+		return 0
+	}
 
 	local filter=""
 	if [[ -n "$task_type" ]]; then
@@ -62,6 +65,22 @@ get_tier_success_rate() {
 	local successes failures
 	successes=$(sqlite3 "$PATTERN_DB" "SELECT COUNT(*) FROM learnings WHERE type IN ('SUCCESS_PATTERN', 'WORKING_SOLUTION') $model_filter $filter;" 2>/dev/null || echo "0")
 	failures=$(sqlite3 "$PATTERN_DB" "SELECT COUNT(*) FROM learnings WHERE type IN ('FAILURE_PATTERN', 'FAILED_APPROACH', 'ERROR_FIX') $model_filter $filter;" 2>/dev/null || echo "0")
+
+	echo "${successes}|${failures}"
+	return 0
+}
+
+# Get success rate for a model tier
+# Usage: get_tier_success_rate "sonnet" [task_type]
+# Output: "85|47" (rate|sample_count) or "" if no data
+get_tier_success_rate() {
+	local tier="$1"
+	local task_type="${2:-}"
+	[[ -f "$PATTERN_DB" ]] || return 0
+
+	local counts successes failures
+	counts=$(_get_tier_pattern_counts "$tier" "$task_type")
+	IFS='|' read -r successes failures <<<"$counts"
 
 	local total=$((successes + failures))
 	if [[ "$total" -gt 0 ]]; then
@@ -110,7 +129,7 @@ get_all_tier_patterns() {
 	local task_type="${1:-}"
 	[[ -f "$PATTERN_DB" ]] || return 0
 
-	for tier in $PATTERN_VALID_MODELS; do
+	for tier in "${PATTERN_VALID_MODELS[@]}"; do
 		local data
 		data=$(get_tier_success_rate "$tier" "$task_type")
 		if [[ -n "$data" ]]; then
@@ -283,7 +302,7 @@ cmd_list() {
 		echo ""
 		echo "Live Success Rates (from pattern tracker):"
 		local pattern_found=false
-		for ptier in $PATTERN_VALID_MODELS; do
+		for ptier in "${PATTERN_VALID_MODELS[@]}"; do
 			local badge
 			badge=$(format_pattern_badge "$ptier")
 			if [[ -n "$badge" ]]; then
@@ -909,16 +928,10 @@ cmd_patterns() {
 			output_price="-"
 		fi
 
-		# Get pattern data
-		local filter=""
-		if [[ -n "$task_type" ]]; then
-			filter="AND (tags LIKE '%${task_type}%' OR content LIKE '%task:${task_type}%')"
-		fi
-		local model_filter="AND (tags LIKE '%model:${tier}%' OR content LIKE '%model:${tier}%')"
-
-		local successes failures
-		successes=$(sqlite3 "$PATTERN_DB" "SELECT COUNT(*) FROM learnings WHERE type IN ('SUCCESS_PATTERN', 'WORKING_SOLUTION') $model_filter $filter;" 2>/dev/null || echo "0")
-		failures=$(sqlite3 "$PATTERN_DB" "SELECT COUNT(*) FROM learnings WHERE type IN ('FAILURE_PATTERN', 'FAILED_APPROACH', 'ERROR_FIX') $model_filter $filter;" 2>/dev/null || echo "0")
+		# Get pattern data via shared helper
+		local counts successes failures
+		counts=$(_get_tier_pattern_counts "$tier" "$task_type")
+		IFS='|' read -r successes failures <<<"$counts"
 
 		local total=$((successes + failures))
 		if [[ "$total" -gt 0 ]]; then
