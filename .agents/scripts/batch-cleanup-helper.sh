@@ -32,6 +32,7 @@ readonly SCRIPT_DIR
 # Source supervisor constants and helpers
 source "${SCRIPT_DIR}/shared-constants.sh"
 source "${SCRIPT_DIR}/supervisor/_common.sh"
+source "${SCRIPT_DIR}/supervisor/dispatch.sh"
 
 readonly SUPERVISOR_DIR="${AIDEVOPS_SUPERVISOR_DIR:-$HOME/.aidevops/.agent-workspace/supervisor}"
 readonly SUPERVISOR_DB="$SUPERVISOR_DIR/supervisor.db"
