@@ -239,7 +239,8 @@ PROMPT
 	log_info "AI Reasoning: using $ai_model via $ai_cli"
 
 	# Step 6: Spawn AI session
-	local ai_timeout="${SUPERVISOR_AI_TIMEOUT:-120}"
+	# Default 300s (5 min) — opus needs time to analyze 15KB+ context and produce structured JSON
+	local ai_timeout="${SUPERVISOR_AI_TIMEOUT:-300}"
 	local ai_result=""
 
 	local full_prompt="${system_prompt}
