@@ -894,6 +894,19 @@ cmd_push() {
 			gh_args+=("--assignee" "$assignee")
 		fi
 
+		# Double-check: re-verify no issue was created by a concurrent workflow run
+		# between our first check and now (t1142 — guards against race conditions
+		# when multiple pushes trigger the workflow in rapid succession).
+		local existing_recheck
+		existing_recheck=$(gh issue list --repo "$repo_slug" --state all --limit 50 \
+			--json number,title --jq "[.[] | select(.title | startswith(\"${task_id}:\"))][0].number" 2>/dev/null || echo "")
+		if [[ -n "$existing_recheck" && "$existing_recheck" != "null" ]]; then
+			log_verbose "$task_id issue created by concurrent run (#$existing_recheck) — skipping"
+			add_gh_ref_to_todo "$task_id" "$existing_recheck" "$todo_file"
+			skipped=$((skipped + 1))
+			continue
+		fi
+
 		local issue_url
 		issue_url=$(gh "${gh_args[@]}" 2>/dev/null || echo "")
 		if [[ -z "$issue_url" ]]; then
