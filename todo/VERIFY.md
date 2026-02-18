@@ -1235,7 +1235,7 @@
   check: shellcheck tests/test-ai-actions.sh
   check: file-exists tests/test-ai-actions.sh
 
-- [ ] v145 t1180 Add dispatchable-queue reconciliation between supervisor ... | PR #1783 | merged:2026-02-18
+- [x] v145 t1180 Add dispatchable-queue reconciliation between supervisor ... | PR #1783 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/supervisor-helper.sh, .agents/scripts/supervisor/pulse.sh, .agents/scripts/supervisor/todo-sync.sh
   check: shellcheck .agents/scripts/supervisor-helper.sh
   check: file-exists .agents/scripts/supervisor-helper.sh
@@ -1244,7 +1244,7 @@
   check: shellcheck .agents/scripts/supervisor/todo-sync.sh
   check: file-exists .agents/scripts/supervisor/todo-sync.sh
 
-- [ ] v146 t1134 Add auto-dispatch eligibility assessment to supervisor AI... | PR #1782 | merged:2026-02-18
+- [x] v146 t1134 Add auto-dispatch eligibility assessment to supervisor AI... | PR #1782 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/supervisor/ai-actions.sh, .agents/scripts/supervisor/ai-context.sh, .agents/scripts/supervisor/ai-reason.sh
   check: shellcheck .agents/scripts/supervisor/ai-actions.sh
   check: file-exists .agents/scripts/supervisor/ai-actions.sh
@@ -1252,3 +1252,10 @@
   check: file-exists .agents/scripts/supervisor/ai-context.sh
   check: shellcheck .agents/scripts/supervisor/ai-reason.sh
   check: file-exists .agents/scripts/supervisor/ai-reason.sh
+
+- [ ] v147 t1133 Split MODELS.md into global + per-repo files and propagat... | PR #1786 | merged:2026-02-18
+  files: .agents/scripts/generate-models-md.sh, .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/generate-models-md.sh
+  check: file-exists .agents/scripts/generate-models-md.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
