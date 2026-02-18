@@ -520,7 +520,8 @@ build_autodispatch_eligibility_context() {
 
 	output+="### Eligibility Criteria\n\n"
 	output+="- **Eligible**: Clear spec, bounded scope (~30m-~4h), no unresolved blockers, no assignee\n"
-	output+="- **Ineligible**: Vague description, >~4h estimate, has assignee, has unresolved blocked-by, or has a blocker status\n"
+	output+="- **Needs subtasking**: Estimate >~4h with no existing subtasks — use \`create_subtasks\` to break down before dispatch\n"
+	output+="- **Ineligible**: Vague description, has assignee, has unresolved blocked-by, or has a blocker status\n"
 	output+="- **Blocker statuses** (human action required): account-needed, hosting-needed, login-needed, api-key-needed, clarification-needed, resources-needed, payment-needed, approval-needed, decision-needed, design-needed, content-needed, dns-needed, domain-needed, testing-needed\n\n"
 
 	local all_repos
@@ -589,8 +590,16 @@ build_autodispatch_eligibility_context() {
 				est_raw=$(echo "$line" | grep -oE '~[0-9]+(h|d)' | head -1)
 				local est_num="${est_raw//[^0-9]/}"
 				if [[ "$est_raw" == *"d"* ]] || [[ "$est_num" -gt 4 ]]; then
-					status="needs-breakdown"
-					reason="estimate ${est_raw} exceeds ~4h — break into subtasks first"
+					# Check if subtasks already exist for this task (t1188.2)
+					local has_subtasks
+					has_subtasks=$(grep -c "^\s*- \[.\] ${task_id}\." "$repo_path/TODO.md" 2>/dev/null || echo 0)
+					if [[ "$has_subtasks" -gt 0 ]]; then
+						status="has-subtasks"
+						reason="parent task (${has_subtasks} subtasks exist) — dispatch subtasks instead"
+					else
+						status="needs-subtasking"
+						reason="estimate ${est_raw} exceeds ~4h — use create_subtasks to break down"
+					fi
 				fi
 			fi
 
