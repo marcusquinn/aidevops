@@ -32,6 +32,7 @@
 #   supervisor-helper.sh reset <task_id>               Reset task to queued state
 #   supervisor-helper.sh cancel <task_id|batch_id>     Cancel task or batch
 #   supervisor-helper.sh auto-pickup [--repo path]      Scan TODO.md for #auto-dispatch tasks
+#   supervisor-helper.sh batch-cleanup [scan|dispatch|status] [--repo path] [--dry-run]  Batch simple #chore tasks (t1146)
 #   supervisor-helper.sh cron [install|uninstall|status] Manage cron-based pulse scheduling
 #   supervisor-helper.sh watch [--repo path]            Watch TODO.md for changes (fswatch)
 #   supervisor-helper.sh dashboard [--batch id] [--interval N] Live TUI dashboard (t068.8)
@@ -332,6 +333,7 @@ Usage:
   supervisor-helper.sh backup [reason]               Backup supervisor database
   supervisor-helper.sh restore [backup_file]         Restore from backup (lists if no file)
   supervisor-helper.sh auto-pickup [--repo path]      Scan TODO.md for auto-dispatch tasks
+  supervisor-helper.sh batch-cleanup [scan|dispatch|status] [--repo path] [--dry-run]  Batch simple #chore tasks (t1146)
   supervisor-helper.sh cron [install|uninstall|status] Manage cron-based pulse scheduling
   supervisor-helper.sh watch [--repo path]            Watch TODO.md for changes (fswatch)
   supervisor-helper.sh dashboard [--batch id] [--interval N] Live TUI dashboard
@@ -491,6 +493,9 @@ Cron Integration & Auto-Pickup (t128.5, t296, t1085.4):
     3. Tasks tagged with #plan that have PLANS.md references (decomposition)
     4. Subtasks (tXXX.N) of #auto-dispatch parents — inherits dispatch eligibility
        and propagates parent model tier when subtask has no explicit model: field
+    5. Batch-cleanup: #chore tasks with ~<=15m estimates grouped into a single
+       dispatch (t1146). Reduces N*(worktree+PR+CI+merge) to 1 for simple cleanups.
+       Triggers when >=2 eligible tasks found. See batch-cleanup-helper.sh.
   All strategies skip tasks already tracked by the supervisor.
   All strategies respect blocked-by: dependencies — tasks with unresolved
   blockers are skipped until their dependencies are completed ([x] in TODO.md
@@ -577,6 +582,17 @@ Options for 'proof-log' (t218):
 
 Options for 'auto-pickup':
   --repo <path>          Repository with TODO.md (default: current directory)
+
+Options for 'batch-cleanup' (t1146):
+  scan                   Find and list eligible tasks without dispatching
+  dispatch               Scan and dispatch a single worker for all eligible tasks
+  status                 Show current batch-cleanup worker status
+  --repo <path>          Repository with TODO.md (default: current directory)
+  --dry-run              Show what would happen without executing
+  --force                Dispatch even if fewer than minimum tasks (2) found
+
+  Eligibility: #chore tag + ~<=15m estimate + unclaimed + unblocked
+  Savings: N*(worktree+PR+CI+merge) → 1*(worktree+PR+CI+merge) (~80% reduction)
 
 Options for 'cron':
   install                Install cron entry for periodic pulse
@@ -682,6 +698,15 @@ main() {
 	reconcile-db-todo) cmd_reconcile_db_todo "$@" ;;
 	notify) cmd_notify "$@" ;;
 	auto-pickup) cmd_auto_pickup "$@" ;;
+	batch-cleanup)
+		local _bc_helper="${SCRIPT_DIR}/batch-cleanup-helper.sh"
+		if [[ ! -x "$_bc_helper" ]]; then
+			log_error "batch-cleanup-helper.sh not found or not executable at $_bc_helper"
+			return 1
+		fi
+		"$_bc_helper" "$@"
+		return $?
+		;;
 	cron) cmd_cron "$@" ;;
 	watch) cmd_watch "$@" ;;
 	dashboard) cmd_dashboard "$@" ;;
