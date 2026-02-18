@@ -32,6 +32,12 @@ AI_ACTIONS_DRY_RUN="${AI_ACTIONS_DRY_RUN:-false}"
 # within this many recent cycles. Set to 0 to disable dedup.
 AI_ACTION_DEDUP_WINDOW="${AI_ACTION_DEDUP_WINDOW:-5}"
 
+# Cooldown window: number of recent cycles to check for state-unchanged actions (t1181)
+# If the same (action_type, target) was executed in the last N cycles AND the
+# target's state hash hasn't changed, the action is suppressed. This prevents
+# repeated actions on targets that haven't progressed. Set to 0 to disable.
+AI_ACTION_COOLDOWN_WINDOW="${AI_ACTION_COOLDOWN_WINDOW:-2}"
+
 #######################################
 # Extract the dedup target key from an action based on its type (t1138)
 # Each action type has a natural "target" — the entity it acts on.
@@ -168,15 +174,162 @@ _record_action_dedup() {
 	escaped_type=$(sql_escape "$action_type")
 	escaped_target=$(sql_escape "$target")
 
+	local escaped_hash
+	escaped_hash=$(sql_escape "${5:-}")
+
 	db "$SUPERVISOR_DB" "
-		INSERT INTO action_dedup_log (cycle_id, action_type, target, status)
-		VALUES ('$escaped_cycle', '$escaped_type', '$escaped_target', '$status');
+		INSERT INTO action_dedup_log (cycle_id, action_type, target, status, target_state_hash)
+		VALUES ('$escaped_cycle', '$escaped_type', '$escaped_target', '$status', '$escaped_hash');
 	" 2>>"${SUPERVISOR_LOG:-/dev/null}" || {
 		log_warn "AI Actions: failed to record dedup entry for $action_type on $target"
 		return 1
 	}
 
 	return 0
+}
+
+#######################################
+# Compute a lightweight state hash for a target (t1181)
+# Used by cooldown logic to detect whether a target's state has changed
+# since the last action. Returns a short hash string.
+# Arguments:
+#   $1 - target key (e.g., "issue:123", "task:t456", "title:...")
+#   $2 - repo path
+#   $3 - repo slug (owner/repo)
+# Outputs:
+#   State hash string (or empty if state cannot be determined)
+#######################################
+_compute_target_state_hash() {
+	local target="$1"
+	local repo_path="${2:-}"
+	local repo_slug="${3:-}"
+
+	local state_str=""
+
+	case "$target" in
+	issue:*)
+		local issue_num="${target#issue:}"
+		if [[ -n "$repo_slug" ]] && command -v gh &>/dev/null; then
+			# Capture issue state + labels + comment count as state fingerprint
+			state_str=$(gh issue view "$issue_num" --repo "$repo_slug" \
+				--json state,labels,comments \
+				--jq '[.state, (.labels | map(.name) | sort | join(",")), (.comments | length | tostring)] | join("|")' \
+				2>/dev/null || echo "")
+		fi
+		;;
+	task:*)
+		local task_id="${target#task:}"
+		if [[ -n "$repo_path" && -f "$repo_path/TODO.md" ]]; then
+			# Capture the task line from TODO.md as state fingerprint
+			state_str=$(grep -E "^\s*- \[.\] ${task_id}[ .]" "$repo_path/TODO.md" 2>/dev/null | head -1 || echo "")
+		fi
+		;;
+	title:*)
+		# For task creation targets, check if a task with this title already exists
+		local title="${target#title:}"
+		if [[ -n "$repo_path" && -f "$repo_path/TODO.md" ]]; then
+			local match_count
+			match_count=$(grep -cF "$title" "$repo_path/TODO.md" 2>/dev/null || echo "0")
+			state_str="exists:${match_count}"
+		fi
+		;;
+	*)
+		state_str=""
+		;;
+	esac
+
+	# Return a short hash (first 16 chars of md5) for compact storage
+	if [[ -n "$state_str" ]]; then
+		printf '%s' "$state_str" | md5sum 2>/dev/null | cut -c1-16 ||
+			printf '%s' "$state_str" | md5 2>/dev/null | cut -c1-16 ||
+			printf '%s' "$state_str"
+	fi
+
+	return 0
+}
+
+#######################################
+# Check if an action is in cooldown (t1181)
+# An action is in cooldown if the same (action_type, target) was executed
+# in the last N cycles AND the target's state hash hasn't changed.
+# This is a stricter check than dedup — dedup blocks any repeat regardless
+# of state change; cooldown only blocks repeats with unchanged state.
+# Arguments:
+#   $1 - action type
+#   $2 - target key
+#   $3 - current state hash
+# Returns:
+#   0 if in cooldown (should skip), 1 if not in cooldown (safe to execute)
+#######################################
+_is_action_in_cooldown() {
+	local action_type="$1"
+	local target="$2"
+	local current_hash="$3"
+
+	# Cooldown disabled
+	if [[ "${AI_ACTION_COOLDOWN_WINDOW:-0}" -eq 0 ]]; then
+		return 1
+	fi
+
+	# No state hash means we can't determine state — skip cooldown check
+	if [[ -z "$current_hash" ]]; then
+		return 1
+	fi
+
+	# Check if DB exists
+	if [[ -z "${SUPERVISOR_DB:-}" || ! -f "${SUPERVISOR_DB:-}" ]]; then
+		return 1
+	fi
+
+	local escaped_type escaped_target escaped_hash
+	escaped_type=$(sql_escape "$action_type")
+	escaped_target=$(sql_escape "$target")
+	escaped_hash=$(sql_escape "$current_hash")
+
+	# Find the most recent executed action for this (type, target) within
+	# the cooldown window of recent cycles
+	local recent_cycles
+	recent_cycles=$(db "$SUPERVISOR_DB" "
+		SELECT DISTINCT cycle_id FROM action_dedup_log
+		WHERE status = 'executed'
+		ORDER BY created_at DESC
+		LIMIT $AI_ACTION_COOLDOWN_WINDOW;
+	" 2>>"${SUPERVISOR_LOG:-/dev/null}" || echo "")
+
+	if [[ -z "$recent_cycles" ]]; then
+		return 1
+	fi
+
+	# Build IN clause
+	local in_clause=""
+	while IFS= read -r cid; do
+		[[ -z "$cid" ]] && continue
+		local escaped_cid
+		escaped_cid=$(sql_escape "$cid")
+		if [[ -z "$in_clause" ]]; then
+			in_clause="'$escaped_cid'"
+		else
+			in_clause="$in_clause,'$escaped_cid'"
+		fi
+	done <<<"$recent_cycles"
+
+	# Check if same (type, target) was executed with the same state hash
+	local match_count
+	match_count=$(db "$SUPERVISOR_DB" "
+		SELECT COUNT(*) FROM action_dedup_log
+		WHERE action_type = '$escaped_type'
+		  AND target = '$escaped_target'
+		  AND status = 'executed'
+		  AND target_state_hash = '$escaped_hash'
+		  AND target_state_hash != ''
+		  AND cycle_id IN ($in_clause);
+	" 2>>"${SUPERVISOR_LOG:-/dev/null}" || echo "0")
+
+	if [[ "$match_count" -gt 0 ]]; then
+		return 0
+	fi
+
+	return 1
 }
 
 #######################################
@@ -240,6 +393,7 @@ execute_action_plan() {
 		echo "Actions: $action_count"
 		echo "Repo: $repo_path"
 		echo "Dedup window: ${AI_ACTION_DEDUP_WINDOW:-0} cycles"
+		echo "Cooldown window: ${AI_ACTION_COOLDOWN_WINDOW:-0} cycles"
 		echo ""
 	} >"$action_log"
 
@@ -252,6 +406,7 @@ execute_action_plan() {
 	local failed=0
 	local skipped=0
 	local dedup_suppressed=0
+	local cooldown_suppressed=0
 	local results="[]"
 	local i
 
@@ -306,7 +461,7 @@ execute_action_plan() {
 			log_info "AI Actions: [$((i + 1))/$action_count] $action_type on $dedup_target — dedup_suppressed (acted on in last $AI_ACTION_DEDUP_WINDOW cycles)"
 			skipped=$((skipped + 1))
 			dedup_suppressed=$((dedup_suppressed + 1))
-			_record_action_dedup "$cycle_id" "$action_type" "$dedup_target" "dedup_suppressed"
+			_record_action_dedup "$cycle_id" "$action_type" "$dedup_target" "dedup_suppressed" ""
 			local escaped_dedup_reason
 			escaped_dedup_reason=$(printf '%s' "dedup_suppressed: $action_type on $dedup_target already executed in last $AI_ACTION_DEDUP_WINDOW cycles" | jq -Rs '.')
 			results=$(printf '%s' "$results" | jq ". + [{\"index\":$i,\"type\":\"$action_type\",\"status\":\"dedup_suppressed\",\"target\":\"$dedup_target\",\"reason\":$escaped_dedup_reason}]")
@@ -318,6 +473,31 @@ execute_action_plan() {
 				echo ""
 			} >>"$action_log"
 			continue
+		fi
+
+		# Step 2c: Cooldown check — skip if same (action_type, target) was
+		# executed in the last N cycles with unchanged target state (t1181)
+		if [[ "${AI_ACTION_COOLDOWN_WINDOW:-0}" -gt 0 ]]; then
+			local target_state_hash
+			target_state_hash=$(_compute_target_state_hash "$dedup_target" "$repo_path" "$repo_slug")
+			if [[ -n "$target_state_hash" ]] && _is_action_in_cooldown "$action_type" "$dedup_target" "$target_state_hash"; then
+				log_info "AI Actions: [$((i + 1))/$action_count] $action_type on $dedup_target — cooldown_suppressed (state unchanged in last $AI_ACTION_COOLDOWN_WINDOW cycles)"
+				skipped=$((skipped + 1))
+				cooldown_suppressed=$((cooldown_suppressed + 1))
+				_record_action_dedup "$cycle_id" "$action_type" "$dedup_target" "cooldown_suppressed" "$target_state_hash"
+				local escaped_cooldown_reason
+				escaped_cooldown_reason=$(printf '%s' "cooldown_suppressed: $action_type on $dedup_target — target state unchanged since last action (hash: $target_state_hash)" | jq -Rs '.')
+				results=$(printf '%s' "$results" | jq ". + [{\"index\":$i,\"type\":\"$action_type\",\"status\":\"cooldown_suppressed\",\"target\":\"$dedup_target\",\"state_hash\":\"$target_state_hash\",\"reason\":$escaped_cooldown_reason}]")
+				{
+					echo "## Action $((i + 1)): $action_type — COOLDOWN SUPPRESSED"
+					echo "Target: $dedup_target"
+					echo "State hash: $target_state_hash"
+					echo "Reasoning: $reasoning"
+					echo "Suppression: target state unchanged since last action in $AI_ACTION_COOLDOWN_WINDOW cycles"
+					echo ""
+				} >>"$action_log"
+				continue
+			fi
 		fi
 
 		# Step 3: Execute (or simulate in dry-run/validate-only mode)
@@ -378,7 +558,12 @@ execute_action_plan() {
 				--arg type "$action_type" \
 				--argjson r "$exec_result_json" \
 				'. + [{"index": $idx, "type": $type, "status": "executed", "result": $r}]')
-			_record_action_dedup "$cycle_id" "$action_type" "$dedup_target" "executed"
+			# Record with state hash for cooldown tracking (t1181)
+			local exec_state_hash=""
+			if [[ "${AI_ACTION_COOLDOWN_WINDOW:-0}" -gt 0 ]]; then
+				exec_state_hash=$(_compute_target_state_hash "$dedup_target" "$repo_path" "$repo_slug")
+			fi
+			_record_action_dedup "$cycle_id" "$action_type" "$dedup_target" "executed" "$exec_state_hash"
 		else
 			failed=$((failed + 1))
 			log_warn "AI Actions: [$((i + 1))/$action_count] $action_type — failed"
@@ -404,8 +589,9 @@ execute_action_plan() {
 		--argjson failed "$failed" \
 		--argjson skipped "$skipped" \
 		--argjson dedup_suppressed "$dedup_suppressed" \
+		--argjson cooldown_suppressed "$cooldown_suppressed" \
 		--argjson actions "$results" \
-		'{executed: $executed, failed: $failed, skipped: $skipped, dedup_suppressed: $dedup_suppressed, actions: $actions}')
+		'{executed: $executed, failed: $failed, skipped: $skipped, dedup_suppressed: $dedup_suppressed, cooldown_suppressed: $cooldown_suppressed, actions: $actions}')
 
 	{
 		echo "## Summary"
@@ -414,16 +600,17 @@ execute_action_plan() {
 		echo "- Failed: $failed"
 		echo "- Skipped: $skipped"
 		echo "- Dedup suppressed: $dedup_suppressed"
+		echo "- Cooldown suppressed: $cooldown_suppressed"
 		echo ""
 	} >>"$action_log"
 
-	log_info "AI Actions: complete (executed=$executed failed=$failed skipped=$skipped dedup_suppressed=$dedup_suppressed log=$action_log)"
+	log_info "AI Actions: complete (executed=$executed failed=$failed skipped=$skipped dedup_suppressed=$dedup_suppressed cooldown_suppressed=$cooldown_suppressed log=$action_log)"
 
 	# Store execution event in DB
 	db "$SUPERVISOR_DB" "
 		INSERT INTO state_log (task_id, from_state, to_state, reason)
 		VALUES ('ai-supervisor', 'actions', 'complete',
-				'$(sql_escape "AI actions: $executed executed, $failed failed, $skipped skipped, $dedup_suppressed dedup_suppressed")');
+				'$(sql_escape "AI actions: $executed executed, $failed failed, $skipped skipped, $dedup_suppressed dedup_suppressed, $cooldown_suppressed cooldown_suppressed")');
 	" 2>/dev/null || true
 
 	printf '%s' "$summary"
@@ -1381,10 +1568,15 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 			mode="dry-run"
 			shift
 			;;
+		cooldown-stats)
+			subcommand="cooldown-stats"
+			shift
+			;;
 		--help | -h)
 			echo "Usage: ai-actions.sh [--mode execute|dry-run|validate-only] [--repo /path] [--plan <json>]"
 			echo "       ai-actions.sh pipeline [--mode full|dry-run] [--repo /path]"
 			echo "       ai-actions.sh dedup-stats"
+			echo "       ai-actions.sh cooldown-stats"
 			echo ""
 			echo "Execute AI supervisor action plans."
 			echo ""
@@ -1398,6 +1590,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 			echo "Subcommands:"
 			echo "  pipeline                               Run full reasoning + execution pipeline"
 			echo "  dedup-stats                            Show action dedup statistics (t1138)"
+			echo "  cooldown-stats                         Show action cooldown statistics (t1181)"
 			exit 0
 			;;
 		*)
@@ -1449,10 +1642,70 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 		" 2>/dev/null || echo "(empty)"
 		echo ""
 		echo "--- Dedup window: ${AI_ACTION_DEDUP_WINDOW:-5} cycles ---"
+		echo "--- Cooldown window: ${AI_ACTION_COOLDOWN_WINDOW:-2} cycles ---"
+	elif [[ "$subcommand" == "cooldown-stats" ]]; then
+		# Show cooldown statistics (t1181)
+		if [[ ! -f "$SUPERVISOR_DB" ]]; then
+			echo "No supervisor database found at $SUPERVISOR_DB" >&2
+			exit 1
+		fi
+		local has_table
+		has_table=$(sqlite3 "$SUPERVISOR_DB" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='action_dedup_log';" 2>/dev/null || echo "0")
+		if [[ "$has_table" -eq 0 ]]; then
+			echo "action_dedup_log table not found — run a pulse cycle first" >&2
+			exit 1
+		fi
+		echo "=== Action Cooldown Statistics (t1181) ==="
+		echo ""
+		echo "--- Suppression breakdown ---"
+		sqlite3 -column -header "$SUPERVISOR_DB" "
+			SELECT status, COUNT(*) as count
+			FROM action_dedup_log
+			GROUP BY status
+			ORDER BY count DESC;
+		" 2>/dev/null || echo "(empty)"
+		echo ""
+		echo "--- Cooldown-suppressed targets (top 10) ---"
+		sqlite3 -column -header "$SUPERVISOR_DB" "
+			SELECT action_type, target, COUNT(*) as cooldown_count
+			FROM action_dedup_log
+			WHERE status = 'cooldown_suppressed'
+			GROUP BY action_type, target
+			ORDER BY cooldown_count DESC
+			LIMIT 10;
+		" 2>/dev/null || echo "(none)"
+		echo ""
+		echo "--- Targets with unchanged state (repeated hash, top 10) ---"
+		sqlite3 -column -header "$SUPERVISOR_DB" "
+			SELECT action_type, target, target_state_hash, COUNT(*) as repeat_count
+			FROM action_dedup_log
+			WHERE status = 'executed'
+			  AND target_state_hash != ''
+			GROUP BY action_type, target, target_state_hash
+			HAVING COUNT(*) > 1
+			ORDER BY repeat_count DESC
+			LIMIT 10;
+		" 2>/dev/null || echo "(none — no repeated state hashes found)"
+		echo ""
+		echo "--- Cooldown savings estimate ---"
+		local total_executed cooldown_count
+		total_executed=$(sqlite3 "$SUPERVISOR_DB" "SELECT COUNT(*) FROM action_dedup_log WHERE status = 'executed';" 2>/dev/null || echo "0")
+		cooldown_count=$(sqlite3 "$SUPERVISOR_DB" "SELECT COUNT(*) FROM action_dedup_log WHERE status = 'cooldown_suppressed';" 2>/dev/null || echo "0")
+		local total=$((total_executed + cooldown_count))
+		if [[ "$total" -gt 0 ]]; then
+			local pct=$((cooldown_count * 100 / total))
+			echo "Executed: $total_executed | Cooldown suppressed: $cooldown_count | Savings: ${pct}%"
+		else
+			echo "No action data yet"
+		fi
+		echo ""
+		echo "--- Config ---"
+		echo "Cooldown window: ${AI_ACTION_COOLDOWN_WINDOW:-2} cycles"
+		echo "Dedup window: ${AI_ACTION_DEDUP_WINDOW:-5} cycles"
 	elif [[ -n "$plan" ]]; then
 		execute_action_plan "$plan" "$repo_path" "$mode"
 	else
-		echo "Error: --plan <json> is required (or use 'pipeline' or 'dedup-stats' subcommand)" >&2
+		echo "Error: --plan <json> is required (or use 'pipeline', 'dedup-stats', or 'cooldown-stats' subcommand)" >&2
 		exit 1
 	fi
 fi
