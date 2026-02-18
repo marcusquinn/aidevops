@@ -1265,7 +1265,7 @@
   check: shellcheck .agents/scripts/issue-sync-helper.sh
   check: file-exists .agents/scripts/issue-sync-helper.sh
 
-- [ ] v149 t1181 Add action-target cooldown to supervisor reasoning to pre... | PR #1785 | merged:2026-02-18
+- [x] v149 t1181 Add action-target cooldown to supervisor reasoning to pre... | PR #1785 | merged:2026-02-18 verified:2026-02-18
   files: VERIFY.md
   check: file-exists VERIFY.md
 
@@ -1278,3 +1278,13 @@
   files: .agents/scripts/supervisor/ai-context.sh
   check: shellcheck .agents/scripts/supervisor/ai-context.sh
   check: file-exists .agents/scripts/supervisor/ai-context.sh
+
+- [ ] v151 t1145 Resolve supervisor DB inconsistency — 4 running + 3 eva... | PR #1771 | merged:2026-02-18
+  files: .agents/scripts/supervisor-helper.sh, .agents/scripts/supervisor/cleanup.sh, .agents/scripts/supervisor/pulse.sh, MODELS.md
+  check: shellcheck .agents/scripts/supervisor-helper.sh
+  check: file-exists .agents/scripts/supervisor-helper.sh
+  check: shellcheck .agents/scripts/supervisor/cleanup.sh
+  check: file-exists .agents/scripts/supervisor/cleanup.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
+  check: file-exists MODELS.md
