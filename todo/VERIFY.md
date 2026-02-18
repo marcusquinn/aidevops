@@ -1042,9 +1042,16 @@
   check: shellcheck .agents/scripts/skill-update-helper.sh
   check: file-exists .agents/scripts/skill-update-helper.sh
 
-- [ ] v119 t1085.4 Subtask auto-dispatch enhancement — Phase 0 auto-pickup... | PR #1616 | merged:2026-02-18
+- [x] v119 t1085.4 Subtask auto-dispatch enhancement — Phase 0 auto-pickup... | PR #1616 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/supervisor-helper.sh, .agents/scripts/supervisor/cron.sh
   check: shellcheck .agents/scripts/supervisor-helper.sh
   check: file-exists .agents/scripts/supervisor-helper.sh
   check: shellcheck .agents/scripts/supervisor/cron.sh
   check: file-exists .agents/scripts/supervisor/cron.sh
+
+- [ ] v120 t1082.3 Handle multi-skill batching — if multiple skills have u... | PR #1613 | merged:2026-02-18
+  files: .agents/scripts/skill-update-helper.sh, .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/skill-update-helper.sh
+  check: file-exists .agents/scripts/skill-update-helper.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
