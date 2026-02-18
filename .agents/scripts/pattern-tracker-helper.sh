@@ -551,12 +551,17 @@ cmd_suggest() {
 cmd_recommend() {
 	local task_type=""
 	local task_desc=""
+	local json_mode=false
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--task-type)
 			task_type="$2"
 			shift 2
+			;;
+		--json)
+			json_mode=true
+			shift
 			;;
 		*)
 			if [[ -z "$task_desc" ]]; then
@@ -570,18 +575,18 @@ cmd_recommend() {
 	done
 
 	ensure_db || {
-		echo ""
-		echo -e "${CYAN}=== Model Recommendation ===${NC}"
-		echo ""
-		echo "  No pattern data available. Default recommendation: sonnet"
-		echo "  Record patterns to enable data-driven routing."
-		echo ""
+		if [[ "$json_mode" == true ]]; then
+			echo "{}"
+		else
+			echo ""
+			echo -e "${CYAN}=== Model Recommendation ===${NC}"
+			echo ""
+			echo "  No pattern data available. Default recommendation: sonnet"
+			echo "  Record patterns to enable data-driven routing."
+			echo ""
+		fi
 		return 0
 	}
-
-	echo ""
-	echo -e "${CYAN}=== Model Recommendation ===${NC}"
-	echo ""
 
 	# Build filter clause
 	local filter=""
@@ -589,20 +594,12 @@ cmd_recommend() {
 		local escaped_type
 		escaped_type=$(sql_escape "$task_type")
 		filter="AND (tags LIKE '%${escaped_type}%' OR content LIKE '%task:${escaped_type}%')"
-		echo -e "  Task type: ${WHITE}$task_type${NC}"
 	fi
-	if [[ -n "$task_desc" ]]; then
-		echo -e "  Description: ${WHITE}$task_desc${NC}"
-	fi
-	echo ""
 
 	# Query success/failure counts per model tier
-	echo -e "${CYAN}Model Performance (from pattern history):${NC}"
-	echo ""
-	printf "  %-10s %8s %8s %10s\n" "Model" "Success" "Failure" "Rate"
-	printf "  %-10s %8s %8s %10s\n" "-----" "-------" "-------" "----"
-
 	local best_model="" best_rate=0 has_data=false
+	# Collect per-tier data for JSON output
+	local tier_json_entries=""
 
 	for model_tier in $VALID_MODELS; do
 		local model_filter="AND (tags LIKE '%model:${model_tier}%' OR content LIKE '%model:${model_tier}%')"
@@ -616,13 +613,60 @@ cmd_recommend() {
 			has_data=true
 			local rate
 			rate=$(((successes * 100) / total))
-			printf "  %-10s %8d %8d %9d%%\n" "$model_tier" "$successes" "$failures" "$rate"
 
 			# Track best model (prefer higher success rate, break ties with more data)
 			if [[ "$rate" -gt "$best_rate" ]] || { [[ "$rate" -eq "$best_rate" ]] && [[ "$total" -gt 0 ]]; }; then
 				best_rate=$rate
 				best_model=$model_tier
 			fi
+
+			if [[ "$json_mode" == true ]]; then
+				[[ -n "$tier_json_entries" ]] && tier_json_entries="${tier_json_entries},"
+				tier_json_entries="${tier_json_entries}\"${model_tier}\":{\"successes\":${successes},\"failures\":${failures},\"rate\":${rate},\"total\":${total}}"
+			fi
+		fi
+	done
+
+	if [[ "$json_mode" == true ]]; then
+		if [[ "$has_data" == true && -n "$best_model" ]]; then
+			local total_samples
+			total_samples=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE type IN ('SUCCESS_PATTERN', 'WORKING_SOLUTION', 'FAILURE_PATTERN', 'FAILED_APPROACH', 'ERROR_FIX') $filter;" 2>/dev/null || echo "0")
+			echo "{\"recommended_tier\":\"${best_model}\",\"success_rate\":${best_rate},\"total_samples\":${total_samples},\"tiers\":{${tier_json_entries}}}"
+		else
+			echo "{}"
+		fi
+		return 0
+	fi
+
+	echo ""
+	echo -e "${CYAN}=== Model Recommendation ===${NC}"
+	echo ""
+
+	if [[ -n "$task_type" ]]; then
+		echo -e "  Task type: ${WHITE}$task_type${NC}"
+	fi
+	if [[ -n "$task_desc" ]]; then
+		echo -e "  Description: ${WHITE}$task_desc${NC}"
+	fi
+	echo ""
+
+	echo -e "${CYAN}Model Performance (from pattern history):${NC}"
+	echo ""
+	printf "  %-10s %8s %8s %10s\n" "Model" "Success" "Failure" "Rate"
+	printf "  %-10s %8s %8s %10s\n" "-----" "-------" "-------" "----"
+
+	for model_tier in $VALID_MODELS; do
+		local model_filter="AND (tags LIKE '%model:${model_tier}%' OR content LIKE '%model:${model_tier}%')"
+
+		local successes failures
+		successes=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE type IN ('SUCCESS_PATTERN', 'WORKING_SOLUTION') $model_filter $filter;" 2>/dev/null || echo "0")
+		failures=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE type IN ('FAILURE_PATTERN', 'FAILED_APPROACH', 'ERROR_FIX') $model_filter $filter;" 2>/dev/null || echo "0")
+
+		local total=$((successes + failures))
+		if [[ "$total" -gt 0 ]]; then
+			local rate
+			rate=$(((successes * 100) / total))
+			printf "  %-10s %8d %8d %9d%%\n" "$model_tier" "$successes" "$failures" "$rate"
 		else
 			printf "  %-10s %8s %8s %10s\n" "$model_tier" "-" "-" "no data"
 		fi
