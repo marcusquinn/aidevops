@@ -1375,7 +1375,7 @@ t165,Provider-agnostic task claiming via TODO.md,marcusquinn,orchestration archi
 
 <!-- Tasks with open PRs awaiting merge -->
 
-- [ ] t1141 Fix duplicate GitHub issues in issue-sync push — replace `gh issue list --search` (eventually consistent) with API list + jq title filter (immediately consistent) #bugfix #sync ~15m ref:GH#1714 assignee:marcusquinn started:2026-02-18
+- [x] t1141 Fix duplicate GitHub issues in issue-sync push — replace `gh issue list --search` (eventually consistent) with API list + jq title filter (immediately consistent) #bugfix #sync ~15m ref:GH#1714 assignee:marcusquinn started:2026-02-18 pr:#1715 completed:2026-02-18
 
 <!--TOON:in_review[0]{id,desc,owner,tags,est,pr_url,started,pr_created,status}:
 -->
