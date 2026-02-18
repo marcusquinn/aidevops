@@ -33,6 +33,8 @@ AUTO_UPDATE=false
 QUIET=false
 JSON_OUTPUT=false
 DRY_RUN=false
+# Batch mode for PR creation: one-per-skill (default) or single-pr
+BATCH_MODE="${SKILL_UPDATE_BATCH_MODE:-one-per-skill}"
 
 # Worktree helper
 WORKTREE_HELPER="${SCRIPT_DIR}/worktree-helper.sh"
@@ -79,10 +81,16 @@ COMMANDS:
     pr [name]          Create PRs for skills with upstream updates
 
 OPTIONS:
-    --auto-update      Automatically update skills with changes
-    --quiet            Suppress non-essential output
-    --json             Output results in JSON format
-    --dry-run          Show what would be done without making changes
+    --auto-update                Automatically update skills with changes
+    --quiet                      Suppress non-essential output
+    --json                       Output results in JSON format
+    --dry-run                    Show what would be done without making changes
+    --batch-mode <mode>          PR batching strategy (default: one-per-skill)
+                                   one-per-skill  One PR per updated skill (independent review)
+                                   single-pr      All updated skills in one PR (batch review)
+
+ENVIRONMENT:
+    SKILL_UPDATE_BATCH_MODE      Set default batch mode (one-per-skill|single-pr)
 
 EXAMPLES:
     # Check for updates
@@ -100,8 +108,11 @@ EXAMPLES:
     # Get status in JSON (for scripting)
     skill-update-helper.sh status --json
 
-    # Create PRs for all skills with updates
+    # Create PRs for all skills with updates (one PR per skill, default)
     skill-update-helper.sh pr
+
+    # Create a single PR for all updated skills
+    skill-update-helper.sh pr --batch-mode single-pr
 
     # Create PR for a specific skill
     skill-update-helper.sh pr cloudflare
@@ -856,8 +867,15 @@ _cleanup_worktree() {
 	return 0
 }
 
-# Orchestrator: check all skills and create PRs for those with updates
-cmd_pr() {
+# =============================================================================
+# Batch PR Pipeline — collect all updated skills into a single PR (t1082.3)
+# =============================================================================
+
+# Create one PR containing updates for all skills that have upstream changes.
+# Arguments:
+#   $1 - target skill name (optional; empty = all skills)
+# Returns: 0 on success, 1 on failure
+cmd_pr_batch() {
 	local target_skill="${1:-}"
 
 	require_jq
@@ -865,7 +883,344 @@ cmd_pr() {
 	local skill_count
 	skill_count=$(check_skill_sources)
 
-	log_info "Checking $skill_count imported skill(s) for upstream updates..."
+	log_info "Checking $skill_count imported skill(s) for upstream updates (batch mode)..."
+	echo ""
+
+	# Require gh CLI for PR creation (unless dry-run)
+	if [[ "$DRY_RUN" != true ]] && ! command -v gh &>/dev/null; then
+		log_error "gh CLI is required for PR creation"
+		log_info "Install with: brew install gh (macOS) or see https://cli.github.com/"
+		return 1
+	fi
+
+	local repo_root
+	repo_root=$(get_repo_root)
+	if [[ -z "$repo_root" ]]; then
+		log_error "Not in a git repository"
+		return 1
+	fi
+
+	local default_branch
+	default_branch=$(get_default_branch)
+
+	# Collect skills that need updates
+	local skills_to_update=()
+	local skill_urls=()
+	local skill_current_commits=()
+	local skill_latest_commits=()
+
+	while IFS= read -r skill_json; do
+		local name upstream_url current_commit
+		name=$(echo "$skill_json" | jq -r '.name')
+		upstream_url=$(echo "$skill_json" | jq -r '.upstream_url')
+		current_commit=$(echo "$skill_json" | jq -r '.upstream_commit // empty')
+
+		# Filter to specific skill if requested
+		if [[ -n "$target_skill" && "$name" != "$target_skill" ]]; then
+			continue
+		fi
+
+		# Skip non-GitHub sources
+		if [[ "$upstream_url" != *"github.com"* ]]; then
+			if [[ "$QUIET" != true ]]; then
+				log_info "Skipping $name (non-GitHub source: ${upstream_url})"
+			fi
+			continue
+		fi
+
+		# Parse owner/repo from URL
+		local owner_repo
+		owner_repo=$(parse_github_url "$upstream_url")
+		owner_repo=$(echo "$owner_repo" | cut -d'/' -f1-2)
+
+		if [[ -z "$owner_repo" || "$owner_repo" == "/" ]]; then
+			log_warning "Could not parse URL for $name: $upstream_url — skipping"
+			continue
+		fi
+
+		# Get latest commit
+		local latest_commit
+		if ! latest_commit=$(get_latest_commit "$owner_repo"); then
+			log_warning "Could not fetch latest commit for $name ($owner_repo) — skipping"
+			continue
+		fi
+
+		# Update last_checked timestamp
+		update_last_checked "$name"
+
+		# Skip if up to date
+		if [[ -n "$current_commit" && "$latest_commit" == "$current_commit" ]]; then
+			if [[ "$QUIET" != true ]]; then
+				echo -e "${GREEN}Up to date${NC}: $name"
+			fi
+			continue
+		fi
+
+		log_info "Update available: $name (${current_commit:0:7} → ${latest_commit:0:7})"
+		skills_to_update+=("$name")
+		skill_urls+=("$upstream_url")
+		skill_current_commits+=("$current_commit")
+		skill_latest_commits+=("$latest_commit")
+
+	done < <(jq -c '.skills[]' "$SKILL_SOURCES")
+
+	local update_count="${#skills_to_update[@]}"
+
+	if [[ "$update_count" -eq 0 ]]; then
+		log_info "No skills require updates — no PR needed"
+		return 0
+	fi
+
+	log_info "Found $update_count skill(s) with updates"
+	echo ""
+
+	# Branch name: chore/skill-update-batch-YYYYMMDD
+	local timestamp
+	timestamp=$(date -u +"%Y%m%d")
+	local branch_name="chore/skill-update-batch-${timestamp}"
+
+	if [[ "$DRY_RUN" == true ]]; then
+		log_info "DRY RUN: Would create single batch PR for $update_count skill(s)"
+		echo "  Branch: $branch_name"
+		for i in "${!skills_to_update[@]}"; do
+			echo "  - ${skills_to_update[$i]}: ${skill_current_commits[$i]:0:7} → ${skill_latest_commits[$i]:0:7}"
+		done
+		echo ""
+		return 0
+	fi
+
+	# Check if a PR already exists for this branch
+	if command -v gh &>/dev/null; then
+		local existing_pr
+		existing_pr=$(gh pr list --head "$branch_name" --state open --json number --jq '.[0].number' 2>/dev/null || echo "")
+		if [[ -n "$existing_pr" ]]; then
+			log_warning "PR #${existing_pr} already open for batch branch $branch_name — skipping"
+			return 0
+		fi
+	fi
+
+	# Create worktree for the batch branch
+	local worktree_path=""
+	if [[ -x "$WORKTREE_HELPER" ]]; then
+		local wt_output
+		wt_output=$("$WORKTREE_HELPER" add "$branch_name" 2>&1) || {
+			if echo "$wt_output" | grep -q "already exists"; then
+				worktree_path=$(echo "$wt_output" | grep -oE '/[^ ]+' | head -1)
+				log_info "Using existing worktree: $worktree_path"
+			else
+				log_error "Failed to create worktree for batch: $wt_output"
+				return 1
+			fi
+		}
+		if [[ -z "${worktree_path:-}" ]]; then
+			worktree_path=$(echo "$wt_output" | grep "^Path:" | sed 's/^Path: *//' | head -1)
+			worktree_path=$(echo "$worktree_path" | sed 's/\x1b\[[0-9;]*m//g')
+		fi
+	fi
+
+	# Fallback: create worktree directly
+	if [[ -z "${worktree_path:-}" ]]; then
+		local parent_dir
+		parent_dir=$(dirname "$repo_root")
+		local repo_name
+		repo_name=$(basename "$repo_root")
+		local slug
+		slug=$(echo "$branch_name" | tr '/' '-' | tr '[:upper:]' '[:lower:]')
+		worktree_path="${parent_dir}/${repo_name}-${slug}"
+
+		if [[ -d "$worktree_path" ]]; then
+			log_info "Using existing worktree: $worktree_path"
+		else
+			log_info "Creating batch worktree at: $worktree_path"
+			local wt_add_output
+			if git show-ref --verify --quiet "refs/heads/$branch_name" 2>/dev/null; then
+				wt_add_output=$(git worktree add "$worktree_path" "$branch_name" 2>&1) || {
+					log_error "Failed to create batch worktree: ${wt_add_output}"
+					return 1
+				}
+			else
+				wt_add_output=$(git worktree add -b "$branch_name" "$worktree_path" 2>&1) || {
+					log_error "Failed to create batch worktree: ${wt_add_output}"
+					return 1
+				}
+			fi
+			register_worktree "$worktree_path" "$branch_name"
+		fi
+	fi
+
+	if [[ ! -d "$worktree_path" ]]; then
+		log_error "Batch worktree path does not exist: $worktree_path"
+		return 1
+	fi
+
+	# Re-import each skill in the worktree
+	local imported_skills=()
+	local failed_skills=()
+
+	for i in "${!skills_to_update[@]}"; do
+		local skill_name="${skills_to_update[$i]}"
+		local upstream_url="${skill_urls[$i]}"
+
+		log_info "Re-importing $skill_name in batch worktree..."
+		local add_skill_in_wt="${worktree_path}/.agents/scripts/add-skill-helper.sh"
+		if [[ ! -x "$add_skill_in_wt" ]]; then
+			add_skill_in_wt="$ADD_SKILL_HELPER"
+		fi
+
+		if (cd "$worktree_path" && "$add_skill_in_wt" add "$upstream_url" --force --skip-security 2>&1); then
+			log_success "Re-imported $skill_name"
+			imported_skills+=("$skill_name")
+		else
+			log_error "Failed to re-import $skill_name — skipping"
+			failed_skills+=("$skill_name")
+		fi
+	done
+
+	if [[ "${#imported_skills[@]}" -eq 0 ]]; then
+		log_error "No skills were successfully imported — aborting batch PR"
+		_cleanup_worktree "$worktree_path" "$branch_name"
+		return 1
+	fi
+
+	# Check if there are actual changes
+	if git -C "$worktree_path" diff --quiet && git -C "$worktree_path" diff --cached --quiet; then
+		local untracked
+		untracked=$(git -C "$worktree_path" ls-files --others --exclude-standard 2>/dev/null || echo "")
+		if [[ -z "$untracked" ]]; then
+			log_info "No changes detected after re-importing all skills — skipping"
+			_cleanup_worktree "$worktree_path" "$branch_name"
+			return 0
+		fi
+	fi
+
+	# Stage and commit all changes
+	git -C "$worktree_path" add -A
+
+	# Build commit message listing all updated skills
+	local commit_msg="chore: batch update ${#imported_skills[@]} skill(s) from upstream (t1082.3)"$'\n'$'\n'
+	for i in "${!skills_to_update[@]}"; do
+		local sname="${skills_to_update[$i]}"
+		# Only include successfully imported skills
+		local found=false
+		for imp in "${imported_skills[@]}"; do
+			[[ "$imp" == "$sname" ]] && found=true && break
+		done
+		if [[ "$found" == true ]]; then
+			commit_msg+="- ${sname}: ${skill_current_commits[$i]:0:12} → ${skill_latest_commits[$i]:0:12}"$'\n'
+		fi
+	done
+	commit_msg+="Updated: ${timestamp}"
+
+	local commit_output
+	commit_output=$(git -C "$worktree_path" commit -m "$commit_msg" --no-verify 2>&1) || {
+		log_error "Failed to commit batch changes: ${commit_output}"
+		_cleanup_worktree "$worktree_path" "$branch_name"
+		return 1
+	}
+
+	log_success "Committed batch skill updates"
+
+	# Push the branch
+	local push_output
+	push_output=$(git -C "$worktree_path" push -u origin "$branch_name" 2>&1) || {
+		log_error "Failed to push batch branch: ${push_output}"
+		return 1
+	}
+
+	log_success "Pushed batch branch: $branch_name"
+
+	# Create PR via gh CLI
+	if ! command -v gh &>/dev/null; then
+		log_warning "gh CLI not available — branch pushed but PR not created"
+		log_info "Create PR manually: gh pr create --head $branch_name"
+		return 0
+	fi
+
+	# Build PR body with table of all updated skills
+	local pr_title="chore: batch update ${#imported_skills[@]} skill(s) from upstream"
+	local skill_table="| Skill | Previous | Latest | Source |"$'\n'
+	skill_table+="|-------|----------|--------|--------|"$'\n'
+	for i in "${!skills_to_update[@]}"; do
+		local sname="${skills_to_update[$i]}"
+		local found=false
+		for imp in "${imported_skills[@]}"; do
+			[[ "$imp" == "$sname" ]] && found=true && break
+		done
+		if [[ "$found" == true ]]; then
+			skill_table+="| \`${sname}\` | \`${skill_current_commits[$i]:0:12}\` | \`${skill_latest_commits[$i]:0:12}\` | ${skill_urls[$i]} |"$'\n'
+		fi
+	done
+
+	local failed_note=""
+	if [[ "${#failed_skills[@]}" -gt 0 ]]; then
+		failed_note=$'\n'"**Note**: The following skills failed to re-import and are NOT included in this PR: ${failed_skills[*]}"$'\n'
+	fi
+
+	local pr_body
+	pr_body="## Batch Skill Update
+
+Automated batch update of ${#imported_skills[@]} skill(s) from upstream sources.
+
+${skill_table}
+${failed_note}
+### Review checklist
+
+- [ ] Verify each updated skill content is correct
+- [ ] Check for breaking changes in skill formats
+- [ ] Confirm security scan passes (re-run if needed)
+
+---
+*Generated by \`skill-update-helper.sh pr --batch-mode single-pr\`*"
+
+	local repo_name_with_owner
+	repo_name_with_owner=$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || true)
+	local pr_create_args=("--head" "$branch_name" "--base" "$default_branch" "--title" "$pr_title" "--body" "$pr_body")
+	if [[ -n "$repo_name_with_owner" ]]; then
+		pr_create_args+=("--repo" "$repo_name_with_owner")
+	fi
+	local pr_create_output
+	pr_create_output=$(gh pr create "${pr_create_args[@]}" 2>&1) || {
+		log_error "Failed to create batch PR: ${pr_create_output}"
+		log_info "Branch is pushed — create PR manually: gh pr create --head $branch_name"
+		return 1
+	}
+
+	log_success "Batch PR created: $pr_create_output"
+
+	echo ""
+	echo "Batch PR Summary:"
+	echo "  Skills updated: ${#imported_skills[@]}"
+	if [[ "${#failed_skills[@]}" -gt 0 ]]; then
+		echo "  Skills failed:  ${#failed_skills[@]} (${failed_skills[*]})"
+	fi
+	echo "  PR: $pr_create_output"
+
+	if [[ "${#failed_skills[@]}" -gt 0 ]]; then
+		return 1
+	fi
+	return 0
+}
+
+# Orchestrator: check all skills and create PRs for those with updates.
+# Dispatches to cmd_pr_batch (single-pr mode) or iterates cmd_pr_single
+# (one-per-skill mode, default) based on BATCH_MODE.
+cmd_pr() {
+	local target_skill="${1:-}"
+
+	# Dispatch to batch mode if configured
+	if [[ "$BATCH_MODE" == "single-pr" ]]; then
+		log_info "Batch mode: single-pr — all updated skills will be combined into one PR"
+		cmd_pr_batch "$target_skill"
+		return $?
+	fi
+
+	# Default: one-per-skill
+	require_jq
+
+	local skill_count
+	skill_count=$(check_skill_sources)
+
+	log_info "Checking $skill_count imported skill(s) for upstream updates (one PR per skill)..."
 	echo ""
 
 	# Require gh CLI for PR creation (unless dry-run)
@@ -997,6 +1352,18 @@ main() {
 		--dry-run)
 			DRY_RUN=true
 			shift
+			;;
+		--batch-mode)
+			if [[ $# -lt 2 ]]; then
+				log_error "--batch-mode requires a value: one-per-skill or single-pr"
+				exit 1
+			fi
+			BATCH_MODE="$2"
+			if [[ "$BATCH_MODE" != "one-per-skill" && "$BATCH_MODE" != "single-pr" ]]; then
+				log_error "Invalid --batch-mode value: $BATCH_MODE (must be one-per-skill or single-pr)"
+				exit 1
+			fi
+			shift 2
 			;;
 		--help | -h)
 			show_help
