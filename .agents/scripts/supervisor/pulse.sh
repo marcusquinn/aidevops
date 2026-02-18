@@ -472,16 +472,22 @@ cmd_pulse() {
 				fi
 
 				log_success "  $tid: COMPLETE ($outcome_detail)"
+				# t1183 Bug 2: Persist transition IMMEDIATELY after quality gate passes.
+				# This is the crash-safe checkpoint — if the pulse is killed after this
+				# line, the task is safely in 'complete' state and Phase 3 will pick it up.
+				# All subsequent operations (proof-log, patterns, notifications) are
+				# non-critical and can be lost without affecting correctness.
+				cmd_transition "$tid" "complete" --pr-url "$outcome_detail" 2>>"$SUPERVISOR_LOG" || true
+				completed_count=$((completed_count + 1))
+				# Clean up worker process tree and PID file (t128.7)
+				cleanup_worker_processes "$tid"
+				# --- Non-critical post-processing below (safe to lose on kill) ---
 				# Proof-log: task completion (t218)
 				write_proof_log --task "$tid" --event "complete" --stage "evaluate" \
 					--decision "complete:$outcome_detail" \
 					--evidence "gate=$gate_result" \
 					--maker "pulse:phase1" \
 					--pr-url "$outcome_detail" 2>/dev/null || true
-				cmd_transition "$tid" "complete" --pr-url "$outcome_detail" 2>>"$SUPERVISOR_LOG" || true
-				completed_count=$((completed_count + 1))
-				# Clean up worker process tree and PID file (t128.7)
-				cleanup_worker_processes "$tid"
 				# Auto-update TODO.md and send notification (t128.4)
 				update_todo_on_complete "$tid" 2>>"$SUPERVISOR_LOG" || true
 				send_task_notification "$tid" "complete" "$outcome_detail" 2>>"$SUPERVISOR_LOG" || true
@@ -722,22 +728,34 @@ cmd_pulse() {
 				continue
 			fi
 
-			log_warn "  Phase 1c: $stuck_id stuck in evaluating since $stuck_updated (worker dead) — force-transitioning to failed"
+			log_warn "  Phase 1c: $stuck_id stuck in evaluating since $stuck_updated (worker dead)"
 
-			# Check retry count
-			local stuck_retries stuck_max_retries
-			stuck_retries=$(db "$SUPERVISOR_DB" "SELECT retries FROM tasks WHERE id = '$(sql_escape "$stuck_id")';" 2>/dev/null || echo 0)
-			stuck_max_retries=$(db "$SUPERVISOR_DB" "SELECT max_retries FROM tasks WHERE id = '$(sql_escape "$stuck_id")';" 2>/dev/null || echo 3)
-
-			if [[ "$stuck_retries" -lt "$stuck_max_retries" ]]; then
-				# Transition to retrying so it gets re-dispatched
-				cmd_transition "$stuck_id" "retrying" --error "Auto-reaped: stuck in evaluating >10min with dead worker (Phase 1c)" 2>>"$SUPERVISOR_LOG" || true
-				db "$SUPERVISOR_DB" "UPDATE tasks SET retries = retries + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = '$(sql_escape "$stuck_id")';" 2>/dev/null || true
-				log_info "  Phase 1c: $stuck_id → retrying (retry $((stuck_retries + 1))/$stuck_max_retries)"
+			# t1183 Bug 1: Check if task already has a PR before retrying.
+			# If a PR exists, the worker succeeded but evaluation was lost —
+			# send to pr_review (Phase 3) instead of retrying (which would
+			# dispatch a duplicate worker and potentially create a duplicate PR).
+			local stuck_pr_url
+			stuck_pr_url=$(db "$SUPERVISOR_DB" "SELECT pr_url FROM tasks WHERE id = '$(sql_escape "$stuck_id")';" 2>/dev/null || echo "")
+			if [[ -n "$stuck_pr_url" && "$stuck_pr_url" != "no_pr" && "$stuck_pr_url" != "task_only" ]]; then
+				cmd_transition "$stuck_id" "pr_review" 2>>"$SUPERVISOR_LOG" || true
+				log_info "  Phase 1c: $stuck_id → pr_review (has PR: $stuck_pr_url, skipping retry)"
 			else
-				# Max retries exhausted — mark as failed
-				cmd_transition "$stuck_id" "failed" --error "Auto-reaped: stuck in evaluating >10min, max retries exhausted (Phase 1c)" 2>>"$SUPERVISOR_LOG" || true
-				log_warn "  Phase 1c: $stuck_id → failed (max retries exhausted)"
+				# No PR — use original retry/fail logic
+				# Check retry count
+				local stuck_retries stuck_max_retries
+				stuck_retries=$(db "$SUPERVISOR_DB" "SELECT retries FROM tasks WHERE id = '$(sql_escape "$stuck_id")';" 2>/dev/null || echo 0)
+				stuck_max_retries=$(db "$SUPERVISOR_DB" "SELECT max_retries FROM tasks WHERE id = '$(sql_escape "$stuck_id")';" 2>/dev/null || echo 3)
+
+				if [[ "$stuck_retries" -lt "$stuck_max_retries" ]]; then
+					# Transition to retrying so it gets re-dispatched
+					cmd_transition "$stuck_id" "retrying" --error "Auto-reaped: stuck in evaluating >10min with dead worker (Phase 1c)" 2>>"$SUPERVISOR_LOG" || true
+					db "$SUPERVISOR_DB" "UPDATE tasks SET retries = retries + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = '$(sql_escape "$stuck_id")';" 2>/dev/null || true
+					log_info "  Phase 1c: $stuck_id → retrying (retry $((stuck_retries + 1))/$stuck_max_retries)"
+				else
+					# Max retries exhausted — mark as failed
+					cmd_transition "$stuck_id" "failed" --error "Auto-reaped: stuck in evaluating >10min, max retries exhausted (Phase 1c)" 2>>"$SUPERVISOR_LOG" || true
+					log_warn "  Phase 1c: $stuck_id → failed (max retries exhausted)"
+				fi
 			fi
 
 			# Clean up PID file
@@ -2629,12 +2647,24 @@ process_post_pr_lifecycle() {
 	local deployed_count=0
 	local deferred_count=0
 
+	# t1183 Bug 3: Cap merges per pulse to prevent runaway merge loops.
+	# Each merge dirties remaining PRs (main moves forward), so unlimited
+	# merges can cause cascading rebase failures. Default: 5 per pulse.
+	local max_merges_per_pulse="${SUPERVISOR_MAX_MERGES_PER_PULSE:-5}"
+
 	# t225: Track which parent IDs have already had a sibling merge in this pulse.
 	# Only one sibling per parent group is allowed to merge per cycle.
 	# Use a simple string list (bash 3.2 compatible — no associative arrays).
 	local merged_parents=""
 
 	while IFS='|' read -r tid tstatus tpr; do
+		# t1183 Bug 3: Stop processing if we've hit the merge cap.
+		# Remaining tasks will be picked up in the next pulse cycle.
+		if [[ "$merged_count" -ge "$max_merges_per_pulse" ]]; then
+			log_info "  Phase 3: reached max merges per pulse ($max_merges_per_pulse), deferring rest to next cycle"
+			break
+		fi
+
 		# Skip tasks without PRs that are already complete
 		# t1030: Defense-in-depth — cmd_transition() also guards complete->deployed
 		# when a real PR URL exists, but this fast path should only fire for genuinely
@@ -2673,6 +2703,16 @@ process_post_pr_lifecycle() {
 				# t225: Record that this parent group had a merge
 				if [[ -n "$parent_id" ]]; then
 					merged_parents="${merged_parents}|${parent_id}|"
+				fi
+				# t1183 Bug 3: After a successful merge, pull main in the task's
+				# repo so subsequent PRs in this pulse can rebase cleanly against
+				# the updated main. Without this, each merge dirties remaining PRs
+				# and they fail rebase until the next pulse.
+				local merge_repo
+				merge_repo=$(db "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "")
+				if [[ -n "$merge_repo" && -d "$merge_repo" ]]; then
+					git -C "$merge_repo" pull --rebase origin main 2>>"$SUPERVISOR_LOG" ||
+						log_warn "  $tid: failed to pull main in $merge_repo after merge (non-blocking)"
 				fi
 				;;
 			esac
