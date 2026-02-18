@@ -1203,3 +1203,10 @@
   check: file-exists .agents/scripts/supervisor-helper.sh
   check: shellcheck .agents/scripts/supervisor/cron.sh
   check: file-exists .agents/scripts/supervisor/cron.sh
+
+- [ ] v141 t1148 Add completed-task exclusion list to supervisor AI contex... | PR #1768 | merged:2026-02-18
+  files: .agents/scripts/supervisor/ai-context.sh, .agents/scripts/supervisor/ai-reason.sh
+  check: shellcheck .agents/scripts/supervisor/ai-context.sh
+  check: file-exists .agents/scripts/supervisor/ai-context.sh
+  check: shellcheck .agents/scripts/supervisor/ai-reason.sh
+  check: file-exists .agents/scripts/supervisor/ai-reason.sh
