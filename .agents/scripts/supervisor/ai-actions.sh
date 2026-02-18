@@ -333,10 +333,8 @@ validate_action_fields() {
 			echo "missing required field: task_id"
 			return 0
 		fi
-		if [[ -z "$new_priority" ]]; then
-			echo "missing required field: new_priority"
-			return 0
-		fi
+		# new_priority is no longer strictly required — the executor infers it
+		# from reasoning text if missing (see _exec_adjust_priority)
 		;;
 	close_verified)
 		local issue_number pr_number
@@ -715,8 +713,24 @@ _exec_adjust_priority() {
 
 	local task_id new_priority reasoning
 	task_id=$(printf '%s' "$action" | jq -r '.task_id')
-	new_priority=$(printf '%s' "$action" | jq -r '.new_priority')
+	new_priority=$(printf '%s' "$action" | jq -r '.new_priority // empty')
 	reasoning=$(printf '%s' "$action" | jq -r '.reasoning // "No reasoning provided"')
+
+	# Infer priority from reasoning if the AI omitted the field (common pattern —
+	# the AI has omitted new_priority in 13+ actions across 5+ cycles)
+	if [[ -z "$new_priority" || "$new_priority" == "null" ]]; then
+		if printf '%s' "$reasoning" | grep -qi 'critical\|urgent\|blocker\|blocking'; then
+			new_priority="critical"
+		elif printf '%s' "$reasoning" | grep -qi 'high\|important\|prioriti'; then
+			new_priority="high"
+		elif printf '%s' "$reasoning" | grep -qi 'low\|minor\|defer'; then
+			new_priority="low"
+		else
+			# Default to high — the AI is recommending a change, usually an escalation
+			new_priority="high"
+		fi
+		log_warn "AI Actions: adjust_priority inferred new_priority='$new_priority' from reasoning (field was missing)"
+	fi
 
 	# Find the task's GitHub issue number
 	local issue_number=""
