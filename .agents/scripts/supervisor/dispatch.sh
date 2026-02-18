@@ -2214,7 +2214,7 @@ cmd_dispatch() {
 	# tmodel is the raw model: tag from TODO.md (requested_tier source)
 	# resolved_model is the final model after all resolution steps (actual_tier source)
 	if [[ "$resolved_model" != "CONTEST" ]]; then
-		record_dispatch_model_tiers "$task_id" "$tmodel" "$resolved_model" 2>/dev/null || true
+		record_dispatch_model_tiers "$task_id" "$tmodel" "$resolved_model"
 	fi
 
 	# Contest mode intercept (t1011): if model resolves to CONTEST, delegate to
