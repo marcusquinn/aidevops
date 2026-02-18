@@ -1373,3 +1373,12 @@
   check: file-exists .agents/scripts/supervisor/ai-reason.sh
   check: shellcheck tests/test-ai-actions.sh
   check: file-exists tests/test-ai-actions.sh
+
+- [ ] v163 t1202 Add stale 'evaluating' and 'running' state garbage collec... | PR #1828 | merged:2026-02-18
+  files: .agents/scripts/supervisor-helper.sh, .agents/scripts/supervisor/database.sh, .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/supervisor-helper.sh
+  check: file-exists .agents/scripts/supervisor-helper.sh
+  check: shellcheck .agents/scripts/supervisor/database.sh
+  check: file-exists .agents/scripts/supervisor/database.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
