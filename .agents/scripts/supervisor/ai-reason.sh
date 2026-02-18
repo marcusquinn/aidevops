@@ -313,8 +313,8 @@ ${user_prompt}"
 		local response_len json_block_count first_bytes last_bytes raw_hex_head
 		response_len=$(printf '%s' "$ai_result" | wc -c | tr -d ' ')
 		json_block_count=$(printf '%s' "$ai_result" | grep -c '^```json' 2>/dev/null || echo 0)
-		first_bytes=$(printf '%s' "$ai_result" | head -c 100 | tr '\n' ' ')
-		last_bytes=$(printf '%s' "$ai_result" | tail -c 100 | tr '\n' ' ')
+		first_bytes=$(printf '%s' "$ai_result" | head -c 200 | tr '\n' ' ')
+		last_bytes=$(printf '%s' "$ai_result" | tail -c 200 | tr '\n' ' ')
 		raw_hex_head=$(printf '%s' "$ai_result" | head -c 32 | od -An -tx1 | tr -d ' \n' | head -c 64)
 		{
 			echo "## Parsing Result"
@@ -324,16 +324,18 @@ ${user_prompt}"
 			echo "### Debug Diagnostics"
 			echo "- Response length: $response_len bytes"
 			echo "- \`\`\`json blocks found: $json_block_count"
-			echo "- First 100 bytes: \`$first_bytes\`"
-			echo "- Last 100 bytes: \`$last_bytes\`"
+			echo "- First 200 bytes: \`$first_bytes\`"
+			echo "- Last 200 bytes: \`$last_bytes\`"
 			echo "- First 32 bytes (hex): \`$raw_hex_head\`"
 			echo ""
-			echo "### Raw Response (first 500 bytes)"
+			echo "### Raw Response (for debugging)"
+			echo ""
 			echo '```'
-			printf '%s' "$ai_result" | head -c 500
+			printf '%s' "$ai_result"
 			echo ""
 			echo '```'
 		} >>"$reason_log"
+		log_warn "AI Reasoning: raw response logged to $reason_log (${response_len} bytes, ${json_block_count} json blocks)"
 		echo '{"error":"no_action_plan","actions":[]}'
 		_release_ai_lock
 		return 1
@@ -519,6 +521,14 @@ extract_action_plan() {
 		return 0
 	fi
 
+	# Handle whitespace-only responses (e.g., model returned only newlines/spaces)
+	local trimmed
+	trimmed=$(printf '%s' "$response" | tr -d '[:space:]')
+	if [[ -z "$trimmed" ]]; then
+		echo ""
+		return 0
+	fi
+
 	# Try 1: Direct JSON parse (response is pure JSON)
 	local parsed
 	parsed=$(printf '%s' "$response" | jq '.' 2>/dev/null)
@@ -551,6 +561,7 @@ extract_action_plan() {
 	fi
 
 	# Try 3: Extract from any generic code block (last one, handles unclosed)
+	# Only accept if the extracted content is a valid JSON array.
 	json_block=$(printf '%s' "$response" | awk '
 		/^```/ && !capture { capture=1; block=""; next }
 		/^```$/ && capture { capture=0; last_block=block; next }
@@ -560,24 +571,33 @@ extract_action_plan() {
 	if [[ -n "$json_block" ]]; then
 		parsed=$(printf '%s' "$json_block" | jq '.' 2>/dev/null)
 		if [[ $? -eq 0 && -n "$parsed" ]]; then
-			printf '%s' "$parsed"
-			return 0
+			local block_type
+			block_type=$(printf '%s' "$parsed" | jq 'type' 2>/dev/null || echo "")
+			if [[ "$block_type" == '"array"' ]]; then
+				printf '%s' "$parsed"
+				return 0
+			fi
 		fi
 	fi
 
 	# Try 4: Find the last JSON array in the response (between [ and ])
+	# Handles both column-0 and indented arrays.
 	local bracket_json
 	bracket_json=$(printf '%s' "$response" | awk '
-		/^\[/ { capture=1; block="" }
+		/^[[:space:]]*\[/ { capture=1; block="" }
 		capture { block = block (block ? "\n" : "") $0 }
-		/^\]/ && capture { capture=0; last_block=block }
+		/^[[:space:]]*\]/ && capture { capture=0; last_block=block }
 		END { if (last_block) print last_block }
 	')
 	if [[ -n "$bracket_json" ]]; then
 		parsed=$(printf '%s' "$bracket_json" | jq '.' 2>/dev/null)
 		if [[ $? -eq 0 && -n "$parsed" ]]; then
-			printf '%s' "$parsed"
-			return 0
+			local arr_type
+			arr_type=$(printf '%s' "$parsed" | jq 'type' 2>/dev/null || echo "")
+			if [[ "$arr_type" == '"array"' ]]; then
+				printf '%s' "$parsed"
+				return 0
+			fi
 		fi
 	fi
 
