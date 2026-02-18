@@ -8,7 +8,6 @@
 # Decision signals used:
 #   - Consecutive zero-findings runs (skip audit if clean for N days)
 #   - Open critical issues (prioritize bug fixes over maintenance routines)
-#   - API budget pressure (defer non-critical routines when budget is high)
 #   - Recent task failure rate (prioritize self-healing over cosmetic updates)
 #   - Time since last run (minimum interval still enforced as a floor)
 #
@@ -171,7 +170,7 @@ routine_refresh_signals() {
 			sed -E 's#.*[:/]([^/]+/[^/]+?)(\.git)?$#\1#' || echo "")
 		if [[ -n "$gh_repo" ]]; then
 			critical_count=$(gh issue list --repo "$gh_repo" --state open \
-				--label "bug,critical,P0,P1,severity:critical,severity:high" \
+				--search 'label:bug,critical,P0,P1,"severity:critical","severity:high"' \
 				--limit 50 --json number --jq 'length' 2>/dev/null || echo 0)
 		fi
 	fi
@@ -181,7 +180,7 @@ routine_refresh_signals() {
 	if [[ -f "${SUPERVISOR_DB:-}" ]]; then
 		failure_count=$(db "$SUPERVISOR_DB" "
 			SELECT COUNT(*) FROM tasks
-			WHERE status IN ('failed', 'error')
+			WHERE status = 'failed'
 			  AND updated_at > datetime('now', '-24 hours');
 		" 2>/dev/null || echo 0)
 	fi
@@ -205,7 +204,7 @@ routine_refresh_signals() {
 # Outputs:
 #   "run"    — routine should run now
 #   "skip"   — routine should be skipped this cycle (with reason to stdout)
-#   "defer"  — routine should be deferred (skip_until set in state)
+#   "defer"  — routine should be deferred this cycle (signal-driven; re-evaluated each pulse)
 # Returns:
 #   0 if should run, 1 if should skip/defer
 #######################################
@@ -263,7 +262,7 @@ should_run_routine() {
 			# Still run weekly even if clean (reset check)
 			local weekly_interval=604800
 			if [[ "$elapsed" -lt "$weekly_interval" ]]; then
-				log_info "  Phase 14: coderabbit deferred — ${consecutive_zero} consecutive clean runs (next forced run in $((weekly_interval - elapsed))s)"
+				log_info "  Phase 14: coderabbit skipped — ${consecutive_zero} consecutive clean runs (next forced run in $((weekly_interval - elapsed))s)"
 				echo "skip"
 				return 1
 			fi
@@ -440,7 +439,7 @@ routine_scheduler_status() {
 #######################################
 # Phase 14: Intelligent routine scheduling
 # Wraps Phases 9-13 with AI-driven scheduling decisions.
-# Called from cmd_pulse() after Phase 13.
+# Called from cmd_pulse() during Phase 14 (runs before Phases 9–13).
 # Arguments: none (uses globals)
 # Returns: 0 on success
 #######################################
@@ -463,39 +462,36 @@ run_phase14_routine_scheduler() {
 	# Results are stored in state for use by the individual phases
 	# This phase runs BEFORE phases 9-13 to pre-compute decisions
 
-	local now
-	now=$(date +%s)
-
 	# Evaluate memory_audit (Phase 9)
 	local mem_decision
-	mem_decision=$(should_run_routine "memory_audit" "$ROUTINE_MIN_INTERVAL_MEMORY_AUDIT" 2>/dev/null || echo "run")
-	export ROUTINE_DECISION_MEMORY_AUDIT="$mem_decision"
+	mem_decision=$(should_run_routine "memory_audit" "$ROUTINE_MIN_INTERVAL_MEMORY_AUDIT" 2>/dev/null || true)
+	export ROUTINE_DECISION_MEMORY_AUDIT="${mem_decision:-run}"
 
 	# Evaluate coderabbit (Phase 10)
 	local cr_decision
-	cr_decision=$(should_run_routine "coderabbit" "$ROUTINE_MIN_INTERVAL_CODERABBIT" 2>/dev/null || echo "run")
-	export ROUTINE_DECISION_CODERABBIT="$cr_decision"
+	cr_decision=$(should_run_routine "coderabbit" "$ROUTINE_MIN_INTERVAL_CODERABBIT" 2>/dev/null || true)
+	export ROUTINE_DECISION_CODERABBIT="${cr_decision:-run}"
 
 	# Evaluate task_creation (Phase 10b)
 	local tc_decision
-	tc_decision=$(should_run_routine "task_creation" "$ROUTINE_MIN_INTERVAL_TASK_CREATION" 2>/dev/null || echo "run")
-	export ROUTINE_DECISION_TASK_CREATION="$tc_decision"
+	tc_decision=$(should_run_routine "task_creation" "$ROUTINE_MIN_INTERVAL_TASK_CREATION" 2>/dev/null || true)
+	export ROUTINE_DECISION_TASK_CREATION="${tc_decision:-run}"
 
 	# Evaluate models_md (Phase 12)
 	local mm_decision
-	mm_decision=$(should_run_routine "models_md" "$ROUTINE_MIN_INTERVAL_MODELS_MD" 2>/dev/null || echo "run")
-	export ROUTINE_DECISION_MODELS_MD="$mm_decision"
+	mm_decision=$(should_run_routine "models_md" "$ROUTINE_MIN_INTERVAL_MODELS_MD" 2>/dev/null || true)
+	export ROUTINE_DECISION_MODELS_MD="${mm_decision:-run}"
 
 	# Evaluate skill_update (Phase 13)
 	local su_decision
-	su_decision=$(should_run_routine "skill_update" "$ROUTINE_MIN_INTERVAL_SKILL_UPDATE" 2>/dev/null || echo "run")
-	export ROUTINE_DECISION_SKILL_UPDATE="$su_decision"
+	su_decision=$(should_run_routine "skill_update" "$ROUTINE_MIN_INTERVAL_SKILL_UPDATE" 2>/dev/null || true)
+	export ROUTINE_DECISION_SKILL_UPDATE="${su_decision:-run}"
 
-	log_verbose "  Phase 14: Decisions — memory_audit=${mem_decision} coderabbit=${cr_decision} task_creation=${tc_decision} models_md=${mm_decision} skill_update=${su_decision}"
+	log_verbose "  Phase 14: Decisions — memory_audit=${ROUTINE_DECISION_MEMORY_AUDIT} coderabbit=${ROUTINE_DECISION_CODERABBIT} task_creation=${ROUTINE_DECISION_TASK_CREATION} models_md=${ROUTINE_DECISION_MODELS_MD} skill_update=${ROUTINE_DECISION_SKILL_UPDATE}"
 
 	# Log summary to supervisor log
 	local skip_count=0
-	for decision in "$mem_decision" "$cr_decision" "$tc_decision" "$mm_decision" "$su_decision"; do
+	for decision in "$ROUTINE_DECISION_MEMORY_AUDIT" "$ROUTINE_DECISION_CODERABBIT" "$ROUTINE_DECISION_TASK_CREATION" "$ROUTINE_DECISION_MODELS_MD" "$ROUTINE_DECISION_SKILL_UPDATE"; do
 		[[ "$decision" != "run" ]] && skip_count=$((skip_count + 1))
 	done
 
@@ -510,7 +506,7 @@ run_phase14_routine_scheduler() {
 		db "$SUPERVISOR_DB" "
 			INSERT INTO state_log (task_id, from_state, to_state, reason)
 			VALUES ('routine-scheduler', 'evaluated', 'complete',
-					'Phase 14: mem=${mem_decision} cr=${cr_decision} tc=${tc_decision} mm=${mm_decision} su=${su_decision} skipped=${skip_count}/5');
+					'Phase 14: mem=${ROUTINE_DECISION_MEMORY_AUDIT} cr=${ROUTINE_DECISION_CODERABBIT} tc=${ROUTINE_DECISION_TASK_CREATION} mm=${ROUTINE_DECISION_MODELS_MD} su=${ROUTINE_DECISION_SKILL_UPDATE} skipped=${skip_count}/5');
 		" 2>/dev/null || true
 	fi
 

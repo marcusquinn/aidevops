@@ -1528,7 +1528,7 @@ RULES:
 		if [[ "$_phase9_decision" == "run" ]]; then
 			log_verbose "  Phase 9: Memory audit pulse"
 			"$audit_script" run --quiet 2>>"$SUPERVISOR_LOG" || true
-			routine_record_run "memory_audit" -1 2>/dev/null || true
+			routine_record_run "memory_audit" 0 2>/dev/null || true
 		else
 			log_verbose "  Phase 9: Memory audit pulse skipped by Phase 14 (decision: ${_phase9_decision})"
 		fi
@@ -1549,7 +1549,7 @@ RULES:
 				pulse_repo="$(pwd)"
 			fi
 			bash "$coderabbit_pulse_script" run --repo "$pulse_repo" --quiet 2>>"$SUPERVISOR_LOG" || true
-			routine_record_run "coderabbit" -1 2>/dev/null || true
+			routine_record_run "coderabbit" 0 2>/dev/null || true
 		else
 			log_verbose "  Phase 10: CodeRabbit pulse skipped by Phase 14 (decision: ${_phase10_decision})"
 		fi
@@ -1724,6 +1724,7 @@ RULES:
 				else
 					log_verbose "  Phase 10b: No new tasks to create"
 				fi
+				routine_record_run "task_creation" "$tasks_added" 2>/dev/null || true
 			fi
 		fi
 	fi
@@ -1828,6 +1829,7 @@ RULES:
 			fi
 		fi
 		echo "$models_md_now" >"$models_md_stamp" 2>/dev/null || true
+		routine_record_run "models_md" -1 2>/dev/null || true
 	else
 		local models_md_remaining=$((models_md_interval - models_md_elapsed))
 		log_verbose "  Phase 12: MODELS.md regen skipped (${models_md_remaining}s until next run)"
@@ -1892,6 +1894,7 @@ RULES:
 				log_verbose "  Phase 13: Skipped (skill-update-helper.sh not found)"
 			fi
 			echo "$skill_update_now" >"$skill_update_stamp" 2>/dev/null || true
+			routine_record_run "skill_update" -1 2>/dev/null || true
 		else
 			local skill_update_remaining=$((skill_update_interval - skill_update_elapsed))
 			log_verbose "  Phase 13: Skill update PR skipped (${skill_update_remaining}s until next run)"
