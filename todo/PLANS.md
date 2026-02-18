@@ -21,6 +21,238 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-02-18] Dual-CLI Architecture: OpenCode Primary + Claude Code Fallback
+
+**Status:** Planning
+**Estimate:** ~20h (ai:14h test:4h read:2h)
+**TODO:** t1160, t1161, t1162, t1163, t1164, t1165
+**Logged:** 2026-02-18
+
+**Problem:** The supervisor dispatch stack is built exclusively around OpenCode CLI. Claude Code CLI (`claude`) has matured into a viable headless dispatch tool with OAuth subscription billing, built-in cost caps (`--max-budget-usd`), native model fallback (`--fallback-model`), inline agent definitions (`--agents JSON`), and system prompt injection (`--append-system-prompt`). Anthropic is pushing OAuth-based usage for Claude Code CLI, which means workers dispatched via `claude -p` can run on a Max subscription (effectively free within plan limits) rather than paying per-token via API keys through OpenCode.
+
+The framework already has 12+ duplicated `if [[ "$ai_cli" == "opencode" ]]` branches across supervisor modules, plus 3 scripts hardcoded to OpenCode-only and 1 hardcoded to Claude-only. The config parity gap is large: OpenCode gets 494 subagent stubs, 82 slash commands, full MCP config, per-agent model routing. Claude Code gets 1 AGENTS.md pointer, safety hooks, and 1 MCP.
+
+**Current state:**
+
+```text
+OpenCode (primary, fully configured):
+  ~/.config/opencode/opencode.json     # 494 agents, MCPs, tools, model routing
+  ~/.config/opencode/agent/*.md        # 494 subagent stubs
+  ~/.config/opencode/command/*.md      # 82 slash commands
+  ~/.config/opencode/AGENTS.md         # Session greeting + pre-edit rules
+
+Claude Code (minimal):
+  ~/.claude/settings.json              # Safety hooks ONLY
+  ~/.claude/commands/AGENTS.md         # 1 reference pointer
+  ~/.claude/skills/                    # SKILL.md symlinks
+  1 MCP registered (auggie-mcp)
+```
+
+**Target state:**
+
+```text
+OpenCode (primary — unchanged):
+  [all existing config preserved, no regressions]
+
+Claude Code (first-class fallback):
+  ~/.claude/settings.json              # Safety hooks + tool permissions
+  ~/.claude/commands/*.md              # Slash commands (parity with OpenCode)
+  ~/.claude/skills/                    # SKILL.md symlinks (already done)
+  MCPs registered via claude mcp add   # Parity with OpenCode MCP config
+  OAuth dispatch for Anthropic models  # Subscription billing, not per-token
+
+Supervisor dispatch:
+  resolve_ai_cli() → opencode (primary) | claude (fallback/OAuth)
+  build_cli_cmd()  → semantic args → CLI-specific command array
+  SUPERVISOR_CLI   → env var override for explicit CLI selection
+  SUPERVISOR_PREFER_OAUTH → prefer claude for Anthropic when OAuth available
+
+Container pool (Phase 5):
+  OrbStack/Docker containers with individual OAuth tokens
+  Round-robin dispatch across container pool
+  Per-container rate limit tracking and health checks
+  Remote container support via SSH/Tailscale
+```
+
+**CLI flag mapping (reference):**
+
+| Concept | OpenCode | Claude Code |
+|---------|----------|-------------|
+| Run one-shot | `opencode run "prompt"` | `claude -p "prompt"` |
+| Model selection | `-m provider/model` | `--model alias` (strips provider prefix) |
+| Output format | `--format json` | `--output-format json` |
+| Session title | `--title "name"` | N/A (no equivalent) |
+| Autonomous mode | `OPENCODE_PERMISSION='{"*":"allow"}'` | `--permission-mode bypassPermissions` |
+| Agent selection | `--agent name` | `--agent name` |
+| Inline agents | N/A | `--agents '{"name": {...}}'` |
+| System prompt | Per-agent in config | `--append-system-prompt "text"` |
+| MCP injection | Config in opencode.json | `--mcp-config file --strict-mcp-config` |
+| Cost cap | N/A (our budget-tracker) | `--max-budget-usd N` |
+| Fallback model | N/A (our fallback-chain) | `--fallback-model alias` |
+| Continue session | `-s SESSION_ID` | `--resume ID` |
+| Prompt position | Positional (last arg) | Named (`-p "prompt"`) |
+
+**Accepted limitations (no Claude Code equivalent):**
+
+| Feature | Impact | Mitigation |
+|---------|--------|------------|
+| Warm server mode (`opencode serve`) | Workers cold-boot (~2-3s each) | Acceptable for task-level dispatch |
+| Tab-switchable agents | Workers get one task, don't need switching | N/A |
+| Session titles | Cosmetic — we track by PID/task-ID | N/A |
+| OpenCode SDK/HTTP API | Supervisor is bash-based, doesn't use SDK | N/A |
+| On-demand MCP loading | `--strict-mcp-config` per invocation | Different mechanism, same outcome |
+
+**OAuth and containerization details:**
+
+- `claude setup-token` generates a long-lived OAuth token for headless/CI use
+- `CLAUDE_CODE_OAUTH_TOKEN` env var injects the token into any Claude CLI instance
+- Each container gets its own token from a separate subscription account
+- This enables N parallel workers across N subscriptions, each with their own rate limits
+- OrbStack (our container runtime, v2.0.5) supports local containers + remote VMs
+- Container image needs: claude CLI, git, node/bun, aidevops agents (volume mount)
+- Repo access via bind mount from host or git clone inside container
+
+#### Phases
+
+**Phase 0: No-Regression Refactor (t1160.1-t1160.7) ~5.5h**
+
+Pure refactoring of the dispatch stack. No behavior change. All existing OpenCode dispatch continues to work identically.
+
+- [x] Audit complete: 12+ CLI branches identified across 6 supervisor modules
+- [ ] t1160.1 Create `build_cli_cmd()` abstraction — single function replaces all duplicated branches
+- [ ] t1160.2 Add `SUPERVISOR_CLI` env var — explicit override, default auto-detect
+- [ ] t1160.3 Claude CLI branching in runner-helper.sh (currently OpenCode-only)
+- [ ] t1160.4 Claude CLI branching in contest-helper.sh (currently OpenCode-only)
+- [ ] t1160.5 Fix email-signature-parser-helper.sh (currently Claude-only, should use resolve_ai_cli)
+- [ ] t1160.6 Add `claude` to orphan process detection in pulse.sh Phase 5
+- [ ] t1160.7 Integration test: `SUPERVISOR_CLI=claude` full dispatch cycle
+
+**Verification gate:** Run existing supervisor test suite + manual pulse with both `SUPERVISOR_CLI=opencode` and `SUPERVISOR_CLI=claude`. Both must produce identical outcomes for the same task.
+
+**Phase 1: Claude Code Config Parity in setup.sh (t1161) ~4h**
+
+Make `aidevops setup` and `aidevops update` deploy equivalent configuration to Claude Code.
+
+- [ ] t1161.1 `generate-claude-commands.sh` — slash commands to `~/.claude/commands/`
+- [ ] t1161.2 Automated MCP registration via `claude mcp add-json`
+- [ ] t1161.3 Enhanced `~/.claude/settings.json` with tool permissions (merge, don't overwrite hooks)
+- [ ] t1161.4 Wire `update_claude_config()` into setup.sh (conditional on `claude` binary)
+
+**Key design decisions:**
+- Slash commands generated from same source as OpenCode commands, with minor format adaptation (OpenCode `agent: Build+` frontmatter ignored by Claude Code)
+- MCP registration uses existing `configs/mcp-templates/` `claude_code_command` entries
+- `settings.json` merge strategy: read existing, deep-merge new permissions, preserve hooks
+- Entire phase conditional on `command -v claude` — no-op if Claude Code not installed
+
+**Verification gate:** Fresh `aidevops setup` on a machine with both CLIs produces working configs for both. Claude Code interactive session has slash commands and MCPs available.
+
+**Phase 2: Worker MCP Isolation for Claude CLI (t1162) ~2h**
+
+When dispatching workers via `claude -p`, provide equivalent MCP isolation to OpenCode's `generate_worker_mcp_config()`.
+
+- [ ] t1162 Create `generate_worker_mcp_config_claude()` — builds temporary JSON for `--mcp-config`
+- [ ] Use `--strict-mcp-config` to prevent workers from using user's global MCP config
+- [ ] Cleanup: remove temp config files after worker exits
+
+**Verification gate:** Worker dispatched via Claude CLI gets exactly the MCPs specified, not the user's full set.
+
+**Phase 3: OAuth-Aware Dispatch (t1163) ~2h**
+
+The value proposition: workers on Max subscription = no per-token cost for Anthropic models.
+
+- [ ] t1163 Detect OAuth: `claude -p "OK" --output-format text` succeeds without `ANTHROPIC_API_KEY`
+- [ ] `SUPERVISOR_PREFER_OAUTH` env var (default: true)
+- [ ] When true + dispatching Anthropic models + OAuth available → use `claude` CLI
+- [ ] When dispatching non-Anthropic models (OpenRouter, Groq, etc.) → always use `opencode`
+- [ ] Budget tracker: record Claude CLI dispatches as `subscription` billing type
+- [ ] Leverage `--max-budget-usd` for per-worker cost caps
+- [ ] Leverage `--fallback-model` for native fallback
+- [ ] Auth failure detection: if Claude CLI returns auth error, fall back to OpenCode + API key
+
+**Verification gate:** Mixed batch with Anthropic + non-Anthropic tasks routes correctly. Anthropic tasks go via Claude CLI (OAuth), non-Anthropic via OpenCode. Auth failure triggers automatic fallback.
+
+**Phase 4: End-to-End Verification (t1164) ~2h**
+
+Comprehensive testing of the complete dual-CLI architecture before proceeding to containerization.
+
+- [ ] t1164 Full regression suite:
+  - Pure OpenCode batch (existing behavior, must be identical)
+  - Pure Claude CLI batch (all Anthropic models)
+  - Mixed batch (Anthropic via Claude, non-Anthropic via OpenCode)
+  - OAuth failure scenario (Claude CLI auth expires mid-batch → fallback to OpenCode)
+  - Config parity check (both CLIs have equivalent slash commands, MCPs)
+  - Cost tracking verification (subscription vs token billing recorded correctly)
+
+**Verification gate:** All scenarios pass. No regressions to existing workflows. Cost tracking accurate.
+
+**Phase 5: Containerized Multi-Subscription Scaling (t1165) ~6h**
+
+Scale beyond a single subscription's rate limits by running Claude Code CLI instances in containers, each with its own OAuth token.
+
+- [ ] t1165.1 Container image design:
+  - Base: Node.js LTS (Claude CLI requires Node)
+  - Install: `claude` CLI, `git`, `gh`, core unix tools
+  - Volume mounts: repo checkout (read-write), `~/.aidevops/agents/` (read-only)
+  - Token injection: `CLAUDE_CODE_OAUTH_TOKEN` env var from `claude setup-token`
+  - Permissions: `--permission-mode bypassPermissions` (trusted container)
+  - No MCP servers inside container (injected via `--mcp-config` per dispatch)
+
+- [ ] t1165.2 Container pool manager:
+  - `container-pool-helper.sh [create|destroy|list|dispatch|health|scale]`
+  - Pool config: `~/.config/aidevops/container-pool.json` (image, count, tokens, hosts)
+  - Dispatch strategy: round-robin across healthy containers, skip rate-limited ones
+  - Health checks: periodic `claude -p "OK"` inside each container
+  - Rate limit tracking: per-container request count + 429 detection
+  - Auto-scaling: spawn new containers when all existing ones are rate-limited
+
+- [ ] t1165.3 Remote container support:
+  - OrbStack remote VMs or SSH to any Docker host
+  - Tailscale for secure networking between hosts
+  - Credential forwarding: OAuth tokens via encrypted env vars, never in image
+  - Log collection: `docker logs` piped to supervisor log directory
+  - Worktree sync: git push from host, git pull inside container (or bind mount for local)
+
+- [ ] t1165.4 Integration test: multi-container batch
+
+**Verification gate:** Batch of 6+ tasks dispatched across 3+ containers. Each container uses its own OAuth token. Rate-limited containers are skipped. Logs aggregated correctly. Workers produce valid PRs.
+
+#### Decision Log
+
+| Date | Decision | Rationale |
+|------|----------|-----------|
+| 2026-02-18 | OpenCode stays primary, Claude Code is fallback | OpenCode supports multi-provider routing (OpenRouter, Groq, DeepSeek). Claude CLI is Anthropic-only. Keep the broader capability as primary. |
+| 2026-02-18 | Phase 0 is pure refactor with no behavior change | The 12+ duplicated CLI branches are a maintenance burden and bug risk. Centralizing into `build_cli_cmd()` is valuable regardless of Claude CLI support. |
+| 2026-02-18 | `SUPERVISOR_CLI` env var for explicit override | Auto-detection is the default, but operators need a way to force a specific CLI for testing or when both are installed but one is preferred. |
+| 2026-02-18 | Config parity is conditional on `command -v claude` | Users without Claude Code installed should not see errors or slowdowns. The entire Claude Code config path is a no-op if the binary is absent. |
+| 2026-02-18 | `--strict-mcp-config` for worker MCP isolation | Prevents workers from accidentally using the user's full MCP set. Each worker gets exactly the MCPs it needs, nothing more. |
+| 2026-02-18 | OAuth detection via test invocation, not token file inspection | Claude Code stores OAuth in the macOS keychain (not a file we can inspect). The only reliable test is whether `claude -p` succeeds without `ANTHROPIC_API_KEY`. Cache the result for the pulse cycle. |
+| 2026-02-18 | Containerization as Phase 5 (after everything else is tested) | Containers add complexity (networking, volume mounts, token management). Only pursue after the single-host dual-CLI path is proven stable. |
+| 2026-02-18 | `CLAUDE_CODE_OAUTH_TOKEN` env var for container auth | `claude setup-token` generates long-lived tokens specifically for headless/CI use. Each container gets a unique token from a separate subscription account. |
+| 2026-02-18 | OrbStack as container runtime | Already installed (v2.0.5), supports both local containers and remote VMs, lighter than Docker Desktop on macOS. |
+| 2026-02-18 | All tasks model:opus | Sensitive infrastructure work touching the dispatch core. Wrong decisions here break all autonomous orchestration. Opus-tier reasoning is warranted. |
+
+#### Risks
+
+| Risk | Likelihood | Impact | Mitigation |
+|------|-----------|--------|------------|
+| Claude CLI behavior differs from OpenCode in subtle ways | Medium | High | Phase 0.7 integration test catches differences before production use |
+| OAuth token expires mid-batch | Medium | Medium | Auth failure detection + automatic fallback to OpenCode + API key |
+| Claude Code updates break our generated config | Low | Medium | `update_claude_config()` is idempotent, re-runs on every `aidevops update` |
+| Claude Code rewrites "OpenCode" in AGENTS.md at load time | Confirmed | Low | Cosmetic only — doesn't affect functionality. Documented as known behavior. |
+| Container networking issues (DNS, port conflicts) | Medium | Medium | OrbStack handles networking; fallback to host-only dispatch |
+| Multiple subscriptions = multiple billing accounts to manage | Low | Low | Container pool config tracks which token belongs to which account |
+| Rate limit changes by Anthropic | Low | High | Per-container rate tracking adapts automatically; pool manager skips limited containers |
+
+#### Surprises & Discoveries
+
+- Claude Code CLI already supports inline agent definitions via `--agents JSON --agent name` — this is more flexible than OpenCode's file-based agent config for worker dispatch.
+- `--output-format json` returns `total_cost_usd` and full `modelUsage` breakdown per invocation — better cost tracking than OpenCode provides natively.
+- Claude Code rewrites "OpenCode" references to "Claude Code" when loading AGENTS.md files. This is a Claude Code behavior, not something in our codebase. The deployed file at `~/.aidevops/agents/AGENTS.md` correctly says "OpenCode". Confirmed by comparing on-disk content vs system prompt content.
+- The t1022 revert (PR #1329) left a residual "Claude Code" reference in `.agents/aidevops/architecture.md:44` that should be corrected.
+- `claude setup-token` is the key to containerized auth — generates long-lived tokens specifically for headless/CI environments, injected via `CLAUDE_CODE_OAUTH_TOKEN` env var.
+
+---
+
 ### [2026-02-18] Supervisor Intelligence Upgrade
 
 **Status:** Planning
