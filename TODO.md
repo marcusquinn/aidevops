@@ -1510,17 +1510,17 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
   - Add `ref:GT#` for Gitea and `ref:GL#` for GitLab alongside existing `ref:GH#`
   - Tested working prototype in awardsapp repo: gitea-issue-sync.sh (separate script, ~600 lines)
   - Key findings from testing: (1) `set -euo pipefail` + grep in pipelines needs `{ grep ... || true; }` guard, (2) macOS sed `\s` doesn't work — use `[[:space:]]`, (3) dots in task IDs (t007.1) need escaping in sed patterns, (4) Gitea label API returns IDs not names (need ID array in create payload)
-  - [ ] t1120.1 Extract platform-agnostic functions from issue-sync-helper.sh (parse, compose, ref management) ~1h
-  - [ ] t1120.2 Add Gitea API adapter functions (create/close/edit/list/search/labels) ~1h
-  - [ ] t1120.3 Add platform detection from git remote URL + multi-platform push/pull/close ~1h
-  - [ ] t1120.4 Test with awardsapp repo (dual GitHub + Gitea sync) ~30m
+  - [ ] t1120.1 Extract platform-agnostic functions from issue-sync-helper.sh (parse, compose, ref management) ~1h ref:GH#1676
+  - [ ] t1120.2 Add Gitea API adapter functions (create/close/edit/list/search/labels) ~1h ref:GH#1677
+  - [ ] t1120.3 Add platform detection from git remote URL + multi-platform push/pull/close ~1h ref:GH#1678
+  - [ ] t1120.4 Test with awardsapp repo (dual GitHub + Gitea sync) ~30m ref:GH#1679
 
-- [ ] t1121 Fix tea CLI TTY requirement in non-interactive mode #bugfix #git ~30m model:haiku logged:2026-02-18
+- [ ] t1121 Fix tea CLI TTY requirement in non-interactive mode #bugfix #git ~30m model:haiku ref:GH#1680 logged:2026-02-18
   - `tea issues list` fails with `huh: could not open a new TTY: open /dev/tty: device not configured` when run from scripts/CI
   - gitea-cli-helper.sh uses tea CLI but it can't work in headless dispatch or GitHub Actions
   - Either: (1) report upstream to tea project, (2) add `--non-interactive` flag detection, or (3) migrate gitea-cli-helper.sh to use REST API directly (like the gitea-issue-sync.sh prototype does)
 
-- [ ] t1122 Fix issue-sync-helper.sh IFS unbound variable error in cmd_enrich #bugfix #git #sync ~15m model:haiku logged:2026-02-18
+- [ ] t1122 Fix issue-sync-helper.sh IFS unbound variable error in cmd_enrich #bugfix #git #sync ~15m model:haiku ref:GH#1681 logged:2026-02-18
   - Running `issue-sync-helper.sh enrich` (without specific task) fails at line 528 with `IFS: unbound variable`
   - Likely a `set -u` issue where IFS is used before being set in a read loop
   - Quick fix: add `local IFS` or use `IFS='' read` pattern
