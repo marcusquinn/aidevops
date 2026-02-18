@@ -88,3 +88,47 @@ log_cmd() {
 	[[ $rc -ne 0 ]] && echo "[$ts] [$context] exit=$rc" >>"${SUPERVISOR_LOG:-/dev/null}" 2>/dev/null || true
 	return $rc
 }
+
+#######################################
+# Portable timeout — works on macOS (no GNU coreutils) and Linux
+# Uses background process + kill pattern when `timeout` is unavailable.
+# Arguments:
+#   $1 - timeout in seconds
+#   $@ - command to run
+# Returns:
+#   Command exit code, or 124 on timeout (matches GNU timeout convention)
+#######################################
+portable_timeout() {
+	local secs="$1"
+	shift
+
+	# If GNU timeout is available, use it (faster, handles signals better)
+	if command -v timeout &>/dev/null; then
+		timeout "$secs" "$@"
+		return $?
+	fi
+
+	# Fallback: background the command, sleep, kill if still running
+	"$@" &
+	local cmd_pid=$!
+
+	(
+		sleep "$secs"
+		kill "$cmd_pid" 2>/dev/null
+	) &
+	local watchdog_pid=$!
+
+	wait "$cmd_pid" 2>/dev/null
+	local exit_code=$?
+
+	# Clean up watchdog if command finished before timeout
+	kill "$watchdog_pid" 2>/dev/null
+	wait "$watchdog_pid" 2>/dev/null
+
+	# If killed by our watchdog, return 124 (GNU timeout convention)
+	if [[ $exit_code -eq 137 || $exit_code -eq 143 ]]; then
+		return 124
+	fi
+
+	return "$exit_code"
+}

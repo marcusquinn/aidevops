@@ -17,6 +17,34 @@
 # AI reasoning log directory
 AI_REASON_LOG_DIR="${AI_REASON_LOG_DIR:-$HOME/.aidevops/logs/ai-supervisor}"
 
+# Portable timeout alias — uses portable_timeout from _common.sh when sourced,
+# or defines a local fallback for standalone execution.
+if ! declare -f portable_timeout &>/dev/null; then
+	portable_timeout() {
+		local secs="$1"
+		shift
+		if command -v timeout &>/dev/null; then
+			timeout "$secs" "$@"
+			return $?
+		fi
+		"$@" &
+		local cmd_pid=$!
+		(
+			sleep "$secs"
+			kill "$cmd_pid" 2>/dev/null
+		) &
+		local watchdog_pid=$!
+		wait "$cmd_pid" 2>/dev/null
+		local exit_code=$?
+		kill "$watchdog_pid" 2>/dev/null
+		wait "$watchdog_pid" 2>/dev/null
+		if [[ $exit_code -eq 137 || $exit_code -eq 143 ]]; then
+			return 124
+		fi
+		return "$exit_code"
+	}
+fi
+
 #######################################
 # Check if there is actionable work worth reasoning about
 # Avoids spawning an expensive opus session when nothing needs attention.
@@ -219,14 +247,14 @@ PROMPT
 ${user_prompt}"
 
 	if [[ "$ai_cli" == "opencode" ]]; then
-		ai_result=$(timeout "$ai_timeout" opencode run \
+		ai_result=$(portable_timeout "$ai_timeout" opencode run \
 			-m "$ai_model" \
 			--format text \
 			--title "ai-supervisor-${timestamp}" \
 			"$full_prompt" 2>/dev/null || echo "")
 	else
 		local claude_model="${ai_model#*/}"
-		ai_result=$(timeout "$ai_timeout" claude \
+		ai_result=$(portable_timeout "$ai_timeout" claude \
 			-p "$full_prompt" \
 			--model "$claude_model" \
 			--output-format text 2>/dev/null || echo "")
