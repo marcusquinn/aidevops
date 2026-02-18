@@ -150,6 +150,58 @@ cmd_pulse() {
 		fi
 	fi
 
+	# Phase 0.5c: DB→TODO.md cancelled/verified consistency check (t1139)
+	# When the supervisor cancels tasks (e.g., Phase 0.5 dedup, Phase 3b2 obsolete PR),
+	# the DB is updated but TODO.md still shows [ ]. This creates a persistent
+	# inconsistency where cancelled tasks appear dispatchable, wasting reasoning cycles.
+	# This phase proactively annotates TODO.md for any DB-cancelled tasks that are
+	# still open in TODO.md. Runs every pulse (not gated on idle) because cancelled
+	# tasks can appear mid-flight and should be cleaned up promptly.
+	local repos_for_cancel_sync
+	repos_for_cancel_sync=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks WHERE status = 'cancelled';" 2>/dev/null || true)
+	if [[ -n "$repos_for_cancel_sync" ]]; then
+		local cancel_synced=0
+		while IFS= read -r repo_path; do
+			[[ -z "$repo_path" ]] && continue
+			local todo_path="$repo_path/TODO.md"
+			[[ ! -f "$todo_path" ]] && continue
+
+			# Find cancelled tasks in DB that are still open in TODO.md
+			local cancelled_tasks
+			cancelled_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
+				SELECT id, error FROM tasks
+				WHERE status = 'cancelled'
+				AND repo = '$(sql_escape "$repo_path")';
+			" 2>/dev/null || true)
+
+			if [[ -z "$cancelled_tasks" ]]; then
+				continue
+			fi
+
+			while IFS='|' read -r ctid cerror; do
+				[[ -z "$ctid" ]] && continue
+				# Only act if task is still open ([ ]) in TODO.md
+				if grep -qE "^[[:space:]]*- \[ \] ${ctid}( |$)" "$todo_path"; then
+					log_info "  Phase 0.5c: $ctid cancelled in DB but open in TODO.md — annotating"
+					update_todo_on_cancelled "$ctid" "${cerror:-cancelled by supervisor}" \
+						2>>"$SUPERVISOR_LOG" || {
+						log_warn "  Phase 0.5c: Failed to annotate $ctid"
+						continue
+					}
+					cancel_synced=$((cancel_synced + 1))
+				fi
+			done <<<"$cancelled_tasks"
+		done <<<"$repos_for_cancel_sync"
+
+		if [[ "$cancel_synced" -gt 0 ]]; then
+			log_success "Phase 0.5c: Synced $cancel_synced cancelled task(s) to TODO.md"
+		else
+			log_verbose "Phase 0.5c: No cancelled/TODO.md drift detected"
+		fi
+	else
+		log_verbose "Phase 0.5c: No cancelled tasks in DB"
+	fi
+
 	# Phase 0.7: Stale-state detection (t1132)
 	# Detect tasks in active states (running/dispatched/evaluating) that have no
 	# live worker process. This catches stale state from previous crashes, stuck

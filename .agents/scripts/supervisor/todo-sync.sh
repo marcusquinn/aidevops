@@ -771,14 +771,13 @@ generate_verify_entry() {
 }
 
 #######################################
-# Update TODO.md when a task is cancelled (t1131)
-# Marks [ ] -> [-], appends cancelled:YYYY-MM-DD
-# Then commits and pushes the change
-# Args: $1=task_id $2=reason (optional)
+# Update TODO.md when a task is cancelled by the supervisor
+# Adds Notes line with cancellation reason (does NOT mark [x] — cancelled != done)
+# Then commits and pushes the change (t1139)
 #######################################
-update_todo_on_cancel() {
+update_todo_on_cancelled() {
 	local task_id="$1"
-	local reason="${2:-Manual cancellation}"
+	local reason="${2:-cancelled by supervisor}"
 
 	ensure_db
 
@@ -788,38 +787,58 @@ update_todo_on_cancel() {
 	trepo=$(db "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$escaped_id';")
 
 	if [[ -z "$trepo" ]]; then
-		log_warn "update_todo_on_cancel: task not found in DB: $task_id"
+		log_error "Task not found: $task_id"
 		return 1
 	fi
 
 	local todo_file="$trepo/TODO.md"
 	if [[ ! -f "$todo_file" ]]; then
-		log_warn "update_todo_on_cancel: TODO.md not found at $todo_file"
+		log_warn "TODO.md not found at $todo_file"
 		return 1
 	fi
 
-	# Only update if task is currently open ([ ]) — skip if already [-] or [x]
-	if ! grep -qE "^[[:space:]]*- \[ \] ${task_id}( |$)" "$todo_file"; then
-		log_info "update_todo_on_cancel: $task_id not found as open in TODO.md (may already be cancelled/completed)"
+	# Find the task line number (open checkbox only — already-closed tasks are fine)
+	local line_num
+	line_num=$(grep -nE "^[[:space:]]*- \[ \] ${task_id}( |$)" "$todo_file" | head -1 | cut -d: -f1)
+
+	if [[ -z "$line_num" ]]; then
+		log_verbose "Task $task_id not found as open in $todo_file (already annotated or closed)"
 		return 0
 	fi
 
-	local today
-	today=$(date +%Y-%m-%d)
+	# Detect indentation of the task line for proper Notes alignment
+	local task_line
+	task_line=$(sed -n "${line_num}p" "$todo_file")
+	local indent=""
+	indent=$(echo "$task_line" | sed -E 's/^([[:space:]]*).*/\1/')
 
-	# Mark as cancelled: [ ] -> [-], append cancelled:date
-	local sed_pattern="s/^([[:space:]]*- )\[ \] (${task_id} .*)$/\1[-] \2 cancelled:${today}/"
-	sed_inplace -E "$sed_pattern" "$todo_file"
+	# Check if a Notes line already exists below the task
+	local next_line_num=$((line_num + 1))
+	local next_line
+	next_line=$(sed -n "${next_line_num}p" "$todo_file" 2>/dev/null || echo "")
 
-	# Verify the change was made
-	if ! grep -qE "^[[:space:]]*- \[-\] ${task_id}( |$)" "$todo_file"; then
-		log_error "update_todo_on_cancel: failed to update TODO.md for $task_id"
-		return 1
+	# Sanitize reason for safe insertion (escape special sed chars)
+	local safe_reason
+	safe_reason=$(echo "$reason" | sed 's/[&/\]/\\&/g' | head -c 200)
+
+	if echo "$next_line" | grep -qE "^[[:space:]]*- Notes:"; then
+		# Check if CANCELLED annotation already present — avoid duplicates
+		if echo "$next_line" | grep -q "CANCELLED:"; then
+			log_verbose "Task $task_id already has CANCELLED annotation — skipping"
+			return 0
+		fi
+		# Append to existing Notes line
+		local append_text=" CANCELLED: ${safe_reason}"
+		sed_inplace "${next_line_num}s/$/${append_text}/" "$todo_file"
+	else
+		# Insert a new Notes line after the task
+		local notes_line="${indent}  - Notes: CANCELLED by supervisor: ${safe_reason}"
+		sed_append_after "$line_num" "$notes_line" "$todo_file"
 	fi
 
-	log_success "Updated TODO.md: $task_id marked cancelled ($today)"
+	log_success "Updated TODO.md: $task_id annotated as cancelled ($reason)"
 
-	commit_and_push_todo "$trepo" "chore: mark $task_id cancelled in TODO.md [skip ci]"
+	commit_and_push_todo "$trepo" "chore: annotate $task_id cancelled in TODO.md (t1139)"
 	return $?
 }
 
@@ -936,8 +955,13 @@ cmd_update_todo() {
 		terror=$(db "$SUPERVISOR_DB" "SELECT error FROM tasks WHERE id = '$escaped_id';")
 		update_todo_on_blocked "$task_id" "FAILED: ${terror:-unknown}"
 		;;
+	cancelled)
+		local terror
+		terror=$(db "$SUPERVISOR_DB" "SELECT error FROM tasks WHERE id = '$escaped_id';")
+		update_todo_on_cancelled "$task_id" "${terror:-cancelled by supervisor}"
+		;;
 	*)
-		log_warn "Task $task_id is in '$tstatus' state - TODO update only applies to complete/deployed/merged/blocked/failed tasks"
+		log_warn "Task $task_id is in '$tstatus' state - TODO update only applies to complete/deployed/merged/blocked/failed/cancelled tasks"
 		return 1
 		;;
 	esac
@@ -1203,11 +1227,12 @@ cmd_reconcile_db_todo() {
 	local fixed_count=0
 	local issue_count=0
 
-	# --- Gap 1a: DB failed/blocked but TODO.md has no annotation ---
+	# --- Gap 1: DB failed/blocked/cancelled but TODO.md has no annotation ---
+	# t1139: Extended to include 'cancelled' — previously only failed/blocked were covered.
 	local failed_tasks
 	failed_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
 		SELECT t.id, t.status, t.error FROM tasks t
-		WHERE t.status IN ('failed', 'blocked')
+		WHERE t.status IN ('failed', 'blocked', 'cancelled')
 		$batch_filter
 		ORDER BY t.id;
 	")
@@ -1238,10 +1263,17 @@ cmd_reconcile_db_todo() {
 			else
 				log_info "Phase 7b: Annotating $tid ($tstatus) in TODO.md"
 				local reason="${terror:-no error details}"
-				update_todo_on_blocked "$tid" "$reason" 2>>"${SUPERVISOR_LOG:-/dev/null}" || {
-					log_warn "Phase 7b: Failed to annotate $tid"
-					continue
-				}
+				if [[ "$tstatus" == "cancelled" ]]; then
+					update_todo_on_cancelled "$tid" "$reason" 2>>"${SUPERVISOR_LOG:-/dev/null}" || {
+						log_warn "Phase 7b: Failed to annotate $tid"
+						continue
+					}
+				else
+					update_todo_on_blocked "$tid" "$reason" 2>>"${SUPERVISOR_LOG:-/dev/null}" || {
+						log_warn "Phase 7b: Failed to annotate $tid"
+						continue
+					}
+				fi
 				fixed_count=$((fixed_count + 1))
 			fi
 		done <<<"$failed_tasks"
@@ -1271,7 +1303,7 @@ cmd_reconcile_db_todo() {
 				log_warn "[dry-run] $tid: DB status=cancelled but TODO.md still shows [ ]"
 			else
 				log_info "Phase 7b: Marking $tid cancelled in TODO.md (t1131)"
-				update_todo_on_cancel "$tid" "Retroactive sync from DB" 2>>"${SUPERVISOR_LOG:-/dev/null}" || {
+				update_todo_on_cancelled "$tid" "Retroactive sync from DB" 2>>"${SUPERVISOR_LOG:-/dev/null}" || {
 					log_warn "Phase 7b: Failed to mark $tid cancelled in TODO.md"
 					continue
 				}
