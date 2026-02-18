@@ -189,7 +189,7 @@ The model availability checker (`model-availability-helper.sh`) provides lightwe
 model-availability-helper.sh check anthropic
 
 # Check a specific model
-model-availability-helper.sh check anthropic/claude-sonnet-4-20250514
+model-availability-helper.sh check anthropic/claude-sonnet-4-6
 
 # Resolve best available model for a tier (with automatic fallback)
 model-availability-helper.sh resolve opus

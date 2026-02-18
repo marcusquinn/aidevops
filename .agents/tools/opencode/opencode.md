@@ -311,7 +311,7 @@ opencode run "List your available tools" --agent SEO
 opencode run "Use dataforseo to get SERP for 'test query'" --agent SEO
 
 # Test with different model
-opencode run "Quick test" --agent Build+ --model anthropic/claude-sonnet-4-20250514
+opencode run "Quick test" --agent Build+ --model anthropic/claude-sonnet-4-6
 
 # Capture errors for debugging
 opencode run "Test the serper MCP" --agent SEO 2>&1

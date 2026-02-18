@@ -1,14 +1,14 @@
 ---
 description: Balanced model for code implementation, review, and most development tasks
 mode: subagent
-model: anthropic/claude-sonnet-4-20250514
+model: anthropic/claude-sonnet-4-6
 model-tier: sonnet
 model-fallback: openai/gpt-4.1
 fallback-chain:
-  - anthropic/claude-sonnet-4-20250514
+  - anthropic/claude-sonnet-4-6
   - openai/gpt-4.1
   - google/gemini-2.5-pro
-  - openrouter/anthropic/claude-sonnet-4-20250514
+  - openrouter/anthropic/claude-sonnet-4-6
 tools:
   read: true
   write: true
@@ -45,8 +45,10 @@ You are a capable AI assistant optimized for software development tasks. This is
 | Field | Value |
 |-------|-------|
 | Provider | Anthropic |
-| Model | claude-sonnet-4 |
-| Context | 200K tokens |
+| Model | claude-sonnet-4-6 |
+| Context | 200K tokens (1M beta) |
+| Max output | 64K tokens |
+| Training cutoff | January 2026 |
 | Input cost | $3.00/1M tokens |
 | Output cost | $15.00/1M tokens |
 | Tier | sonnet (default, balanced) |

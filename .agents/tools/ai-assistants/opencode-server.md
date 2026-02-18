@@ -105,7 +105,7 @@ const { client, server } = await createOpencode({
   port: 4096,
   hostname: "127.0.0.1",
   config: {
-    model: "anthropic/claude-sonnet-4-20250514",
+    model: "anthropic/claude-sonnet-4-6",
   },
 })
 
@@ -146,7 +146,7 @@ const result = await client.session.prompt({
   body: {
     model: {
       providerID: "anthropic",
-      modelID: "claude-sonnet-4-20250514",
+      modelID: "claude-sonnet-4-6",
     },
     parts: [{ type: "text", text: "Explain this codebase structure" }],
   },
@@ -222,7 +222,7 @@ curl -X POST http://localhost:4096/session/{session_id}/message \
   -d '{
     "model": {
       "providerID": "anthropic",
-      "modelID": "claude-sonnet-4-20250514"
+      "modelID": "claude-sonnet-4-6"
     },
     "parts": [{"type": "text", "text": "Hello!"}]
   }'

@@ -105,7 +105,7 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         with:
-          model: anthropic/claude-sonnet-4-20250514
+          model: anthropic/claude-sonnet-4-6
 ```
 
 #### 3. Add Secrets
@@ -178,7 +178,7 @@ This function needs better validation. /oc add input validation
 ```yaml
 - uses: sst/opencode/github@latest
   with:
-    model: anthropic/claude-sonnet-4-20250514  # Required
+    model: anthropic/claude-sonnet-4-6  # Required
     agent: build                                # Optional: agent to use
     share: true                                 # Optional: share session (default: true for public repos)
     prompt: |                                   # Optional: custom prompt
@@ -201,7 +201,7 @@ To use `GITHUB_TOKEN` instead of the app:
 ```yaml
 - uses: sst/opencode/github@latest
   with:
-    model: anthropic/claude-sonnet-4-20250514
+    model: anthropic/claude-sonnet-4-6
     token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
