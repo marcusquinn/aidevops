@@ -214,8 +214,8 @@ get_model_pricing() {
 	*sonnet-4*) echo "3.0|15.0" ;;
 	*haiku-4*) echo "0.80|4.0" ;;
 	*haiku-3*) echo "0.25|1.25" ;;
-	*gpt-4.1*) echo "2.0|8.0" ;;
 	*gpt-4.1-mini*) echo "0.40|1.60" ;;
+	*gpt-4.1*) echo "2.0|8.0" ;;
 	*o3*) echo "10.0|40.0" ;;
 	*o4-mini*) echo "1.10|4.40" ;;
 	*gemini-2.5-pro*) echo "1.25|10.0" ;;
