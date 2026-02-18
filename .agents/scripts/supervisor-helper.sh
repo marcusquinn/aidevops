@@ -22,6 +22,7 @@
 #   supervisor-helper.sh update-todo <task_id>         Update TODO.md for completed/blocked task
 #   supervisor-helper.sh reconcile-todo [--batch id] [--dry-run]  Bulk-fix stale TODO.md entries
 #   supervisor-helper.sh reconcile-db-todo [--batch id] [--dry-run]  Bidirectional DB<->TODO.md sync
+#   supervisor-helper.sh reconcile-queue [--batch id] [--dry-run]  Sync DB queue with TODO.md dispatchability (t1180)
 #   supervisor-helper.sh notify <task_id>              Send notification about task state
 #   supervisor-helper.sh recall <task_id>              Recall memories relevant to a task
 #   supervisor-helper.sh release [batch_id] [options]  Trigger or configure batch release (t128.10)
@@ -319,6 +320,7 @@ Usage:
   supervisor-helper.sh update-todo <task_id>         Update TODO.md for completed/blocked task
   supervisor-helper.sh reconcile-todo [--batch id] [--dry-run]  Bulk-fix stale TODO.md entries
   supervisor-helper.sh reconcile-db-todo [--batch id] [--dry-run]  Bidirectional DB<->TODO.md sync (t1001)
+  supervisor-helper.sh reconcile-queue [--batch id] [--dry-run]  Sync DB queue with TODO.md dispatchability (t1180)
   supervisor-helper.sh notify <task_id>              Send notification about task state
   supervisor-helper.sh recall <task_id>              Recall memories relevant to a task
   supervisor-helper.sh release [batch_id] [options]  Trigger or configure batch release
@@ -696,6 +698,7 @@ main() {
 	update-todo) cmd_update_todo "$@" ;;
 	reconcile-todo) cmd_reconcile_todo "$@" ;;
 	reconcile-db-todo) cmd_reconcile_db_todo "$@" ;;
+	reconcile-queue) cmd_reconcile_queue_dispatchability "$@" ;;
 	notify) cmd_notify "$@" ;;
 	auto-pickup) cmd_auto_pickup "$@" ;;
 	batch-cleanup)
