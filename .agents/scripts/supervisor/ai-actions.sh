@@ -1589,7 +1589,17 @@ run_ai_actions_pipeline() {
 	local reason_rc=$?
 
 	if [[ $reason_rc -ne 0 ]]; then
-		log_warn "AI Actions Pipeline: reasoning failed (rc=$reason_rc)"
+		# Distinguish hard errors (no CLI, context failure) from soft parse failures.
+		# A parse failure after retry is not actionable but should not cascade into
+		# a pipeline error — return rc=0 with empty action set (t1187).
+		local error_type
+		error_type=$(printf '%s' "$action_plan" | jq -r '.error // ""' 2>/dev/null || echo "")
+		if [[ "$error_type" == "no_action_plan" ]]; then
+			log_warn "AI Actions Pipeline: reasoning parse failed — treating as empty action set (t1187)"
+			echo '{"executed":0,"failed":0,"skipped":0,"actions":[]}'
+			return 0
+		fi
+		log_warn "AI Actions Pipeline: reasoning failed (rc=$reason_rc, error=${error_type:-unknown})"
 		echo '{"error":"reasoning_failed","actions":[]}'
 		return 1
 	fi
@@ -1630,13 +1640,15 @@ run_ai_actions_pipeline() {
 	local plan_type
 	plan_type=$(printf '%s' "$action_plan" | jq 'type' 2>/dev/null || echo "")
 	if [[ "$plan_type" != '"array"' ]]; then
-		# Log raw content for debugging (t1182/t1184: helps diagnose parse failures)
+		# Log raw content for debugging (t1182/t1184, t1187: helps diagnose parse failures)
 		local plan_len plan_head
 		plan_len=$(printf '%s' "$action_plan" | wc -c | tr -d ' ')
 		plan_head=$(printf '%s' "$action_plan" | head -c 200 | tr '\n' ' ')
-		log_warn "AI Actions Pipeline: expected array, got ${plan_type:-<invalid JSON>} (len=${plan_len} head='${plan_head}')"
-		echo '{"error":"invalid_plan_type","actions":[]}'
-		return 1
+		log_warn "AI Actions Pipeline: expected array, got ${plan_type:-<empty>} (len=${plan_len} head='${plan_head}')"
+		# Return rc=0 with empty action set — a non-array response is not actionable
+		# but should not cascade into a pipeline error (t1187)
+		echo '{"executed":0,"failed":0,"skipped":0,"actions":[]}'
+		return 0
 	fi
 
 	local plan_count
