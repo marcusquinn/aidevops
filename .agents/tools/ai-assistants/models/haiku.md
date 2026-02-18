@@ -1,7 +1,7 @@
 ---
 description: Lightweight model for triage, classification, and simple transforms
 mode: subagent
-model: anthropic/claude-3-5-haiku-20241022
+model: anthropic/claude-haiku-4-5-20251001
 model-tier: haiku
 model-fallback: google/gemini-2.5-flash-preview-05-20
 tools:
@@ -39,8 +39,9 @@ You are a lightweight, fast AI assistant optimized for simple tasks.
 | Field | Value |
 |-------|-------|
 | Provider | Anthropic |
-| Model | claude-3-5-haiku |
+| Model | claude-haiku-4-5 |
 | Context | 200K tokens |
-| Input cost | $0.80/1M tokens |
-| Output cost | $4.00/1M tokens |
+| Max output | 64K tokens |
+| Input cost | $1.00/1M tokens |
+| Output cost | $5.00/1M tokens |
 | Tier | haiku (lowest cost) |
