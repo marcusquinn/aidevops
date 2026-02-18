@@ -1037,7 +1037,14 @@
   check: shellcheck tests/test-ai-actions.sh
   check: file-exists tests/test-ai-actions.sh
 
-- [ ] v118 t1082.4 Add skill update PR template — conventional commit mess... | PR #1615 | merged:2026-02-18
+- [x] v118 t1082.4 Add skill update PR template — conventional commit mess... | PR #1615 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/skill-update-helper.sh
   check: shellcheck .agents/scripts/skill-update-helper.sh
   check: file-exists .agents/scripts/skill-update-helper.sh
+
+- [ ] v119 t1085.4 Subtask auto-dispatch enhancement — Phase 0 auto-pickup... | PR #1616 | merged:2026-02-18
+  files: .agents/scripts/supervisor-helper.sh, .agents/scripts/supervisor/cron.sh
+  check: shellcheck .agents/scripts/supervisor-helper.sh
+  check: file-exists .agents/scripts/supervisor-helper.sh
+  check: shellcheck .agents/scripts/supervisor/cron.sh
+  check: file-exists .agents/scripts/supervisor/cron.sh
