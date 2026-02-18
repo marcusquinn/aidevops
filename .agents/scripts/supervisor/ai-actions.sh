@@ -1594,8 +1594,10 @@ run_ai_actions_pipeline() {
 		return 1
 	fi
 
-	# Handle empty output — concurrency guard or other silent skip
-	if [[ -z "$action_plan" ]]; then
+	# Handle empty or whitespace-only output — concurrency guard or other silent skip
+	local _trimmed_plan
+	_trimmed_plan=$(printf '%s' "$action_plan" | tr -d '[:space:]')
+	if [[ -z "$action_plan" || -z "$_trimmed_plan" ]]; then
 		log_info "AI Actions Pipeline: reasoning returned empty output (skipped)"
 		echo '{"executed":0,"failed":0,"skipped":0,"actions":[]}'
 		return 0
@@ -1628,11 +1630,11 @@ run_ai_actions_pipeline() {
 	local plan_type
 	plan_type=$(printf '%s' "$action_plan" | jq 'type' 2>/dev/null || echo "")
 	if [[ "$plan_type" != '"array"' ]]; then
-		# Log raw content for debugging (t1182: helps diagnose parse failures)
+		# Log raw content for debugging (t1182/t1184: helps diagnose parse failures)
 		local plan_len plan_head
 		plan_len=$(printf '%s' "$action_plan" | wc -c | tr -d ' ')
 		plan_head=$(printf '%s' "$action_plan" | head -c 200 | tr '\n' ' ')
-		log_warn "AI Actions Pipeline: expected array, got $plan_type (len=${plan_len} head='${plan_head}')"
+		log_warn "AI Actions Pipeline: expected array, got ${plan_type:-<invalid JSON>} (len=${plan_len} head='${plan_head}')"
 		echo '{"error":"invalid_plan_type","actions":[]}'
 		return 1
 	fi
