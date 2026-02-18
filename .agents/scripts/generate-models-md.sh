@@ -157,11 +157,11 @@ generate_routing_tiers() {
             sm.tier,
             sm.model_id,
             CASE sm.tier
-                WHEN 'haiku' THEN '~0.25x'
+                WHEN 'haiku' THEN '~0.33x'
                 WHEN 'flash' THEN '~0.20x'
                 WHEN 'sonnet' THEN '1x (baseline)'
                 WHEN 'pro' THEN '~1.5x'
-                WHEN 'opus' THEN '~3x'
+                WHEN 'opus' THEN '~1.7x'
                 ELSE '?'
             END
         FROM subagent_models sm
