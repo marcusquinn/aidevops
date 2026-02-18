@@ -208,6 +208,9 @@ cmd_pulse() {
 				--maker "evaluate_worker" \
 				${_eval_duration:+--duration "$_eval_duration"} 2>/dev/null || true
 
+			# Budget tracking: record spend from worker log (t1100)
+			record_worker_spend "$tid" "$tid_model" 2>>"$SUPERVISOR_LOG" || true
+
 			# Eager orphaned PR scan (t216): if evaluation didn't find a PR,
 			# immediately check GitHub before retrying/failing. This catches
 			# PRs that evaluate_worker() missed (API timeout, non-standard

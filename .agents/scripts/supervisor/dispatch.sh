@@ -376,12 +376,13 @@ classify_task_complexity() {
 }
 
 #######################################
-# Resolve the model for a task (t132.5, t246, t1011)
+# Resolve the model for a task (t132.5, t246, t1011, t1100)
 # Priority: 0) Contest mode (model:contest) — dispatch to top-3 models (t1011)
 #           1) Task's explicit model (if not default) — from --model or model: in TODO.md
 #           2) Subagent frontmatter model:
 #           3) Pattern-tracker recommendation (data-driven, requires 3+ samples)
 #           4) Task complexity classification (auto-route from description + tags)
+#           4.7) Budget-aware tier adjustment (t1100) — degrade if approaching budget cap
 #           5) resolve_model() with tier/fallback chain
 # Returns the resolved provider/model string (or "CONTEST" for contest mode)
 #######################################
@@ -499,6 +500,38 @@ resolve_task_model() {
 				echo "CONTEST"
 				return 0
 			fi
+		fi
+	fi
+
+	# 4.7) Budget-aware tier adjustment (t1100)
+	# Check budget state and potentially degrade the tier to stay within budget.
+	# Token-billed: degrade opus->sonnet when approaching daily cap.
+	# Subscription: prefer subscription providers when allowance is available.
+	local budget_helper="${SCRIPT_DIR}/../budget-tracker-helper.sh"
+	if [[ -x "$budget_helper" ]]; then
+		# Determine the tier we're about to use (default: coding/opus)
+		local pre_budget_tier="coding"
+
+		# Check if a subscription provider has allowance (zero marginal cost)
+		local preferred_provider
+		preferred_provider=$("$budget_helper" budget-preferred-provider "$pre_budget_tier" 2>/dev/null) || preferred_provider=""
+		if [[ -n "$preferred_provider" ]]; then
+			local resolved
+			resolved=$(resolve_model "$pre_budget_tier" "$ai_cli")
+			log_info "Model for $task_id: $resolved (budget: preferred provider $preferred_provider has allowance)"
+			echo "$resolved"
+			return 0
+		fi
+
+		# Check if the default provider's budget requires tier degradation
+		local adjusted_tier
+		adjusted_tier=$("$budget_helper" budget-check-tier "anthropic" "$pre_budget_tier" 2>/dev/null) || adjusted_tier="$pre_budget_tier"
+		if [[ "$adjusted_tier" != "$pre_budget_tier" ]]; then
+			local resolved
+			resolved=$(resolve_model "$adjusted_tier" "$ai_cli")
+			log_info "Model for $task_id: $resolved (budget: degraded from $pre_budget_tier to $adjusted_tier)"
+			echo "$resolved"
+			return 0
 		fi
 	fi
 
