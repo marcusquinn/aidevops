@@ -628,10 +628,11 @@ should_prompt_repeat() {
 	local pattern_helper="${SCRIPT_DIR}/pattern-tracker-helper.sh"
 	if [[ -x "$pattern_helper" ]]; then
 		# Query success/failure counts for prompt_repeat patterns
-		local pr_success pr_failure
-		pr_success=$("$pattern_helper" stats 2>/dev/null |
+		local stats_output pr_success pr_failure
+		stats_output=$("$pattern_helper" stats 2>/dev/null)
+		pr_success=$(echo "$stats_output" |
 			grep -c 'prompt_repeat.*SUCCESS\|SUCCESS.*prompt_repeat' 2>/dev/null || echo "0")
-		pr_failure=$("$pattern_helper" stats 2>/dev/null |
+		pr_failure=$(echo "$stats_output" |
 			grep -c 'prompt_repeat.*FAILURE\|FAILURE.*prompt_repeat' 2>/dev/null || echo "0")
 
 		local pr_total=$((pr_success + pr_failure))

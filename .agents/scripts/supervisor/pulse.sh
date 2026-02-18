@@ -4,6 +4,21 @@
 # Functions for the main pulse loop and post-PR lifecycle processing
 
 #######################################
+# Check if a task has had a prompt-repeat attempt (t1097)
+# Args: $1 = task_id
+# Returns: 0 if attempted, 1 if not
+#######################################
+_was_prompt_repeat_attempted() {
+	local task_id="$1"
+	local prompt_repeat_done
+	prompt_repeat_done=$(db "$SUPERVISOR_DB" "SELECT COALESCE(prompt_repeat_done, 0) FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo "0")
+	if [[ "$prompt_repeat_done" -ge 1 ]]; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
 # Supervisor pulse - stateless check and dispatch cycle
 # Designed to run via cron every 5 minutes
 #######################################
@@ -272,9 +287,7 @@ cmd_pulse() {
 				# Store success pattern in memory (t128.6)
 				store_success_pattern "$tid" "$outcome_detail" "$tid_desc" 2>>"$SUPERVISOR_LOG" || true
 				# Track prompt-repeat outcome for pattern data (t1097)
-				local tid_pr_done
-				tid_pr_done=$(db "$SUPERVISOR_DB" "SELECT COALESCE(prompt_repeat_done, 0) FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "0")
-				if [[ "$tid_pr_done" -ge 1 ]]; then
+				if _was_prompt_repeat_attempted "$tid"; then
 					local pr_pattern_helper="${SCRIPT_DIR}/pattern-tracker-helper.sh"
 					if [[ -x "$pr_pattern_helper" ]]; then
 						"$pr_pattern_helper" record \
@@ -305,9 +318,7 @@ cmd_pulse() {
 				# Track prompt-repeat failure for pattern data (t1097)
 				# If this task already had a prompt-repeat attempt and is failing again,
 				# record that prompt-repeat didn't help for this task type.
-				local tid_pr_done_retry
-				tid_pr_done_retry=$(db "$SUPERVISOR_DB" "SELECT COALESCE(prompt_repeat_done, 0) FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "0")
-				if [[ "$tid_pr_done_retry" -ge 1 ]]; then
+				if _was_prompt_repeat_attempted "$tid"; then
 					local pr_pattern_helper_retry="${SCRIPT_DIR}/pattern-tracker-helper.sh"
 					if [[ -x "$pr_pattern_helper_retry" ]]; then
 						"$pr_pattern_helper_retry" record \
