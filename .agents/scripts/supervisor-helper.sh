@@ -212,6 +212,7 @@ source "${SUPERVISOR_MODULE_DIR}/issue-sync.sh"
 source "${SUPERVISOR_MODULE_DIR}/memory-integration.sh"
 source "${SUPERVISOR_MODULE_DIR}/todo-sync.sh"
 source "${SUPERVISOR_MODULE_DIR}/ai-context.sh"
+source "${SUPERVISOR_MODULE_DIR}/ai-reason.sh"
 
 # Valid states for the state machine
 # shellcheck disable=SC2034 # Used by supervisor/state.sh
@@ -687,6 +688,19 @@ main() {
 	labels) cmd_labels "$@" ;;
 	contest) cmd_contest "$@" ;;
 	ai-context) build_ai_context "${REPO_PATH:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}" "${1:-full}" ;;
+	ai-reason) run_ai_reasoning "${REPO_PATH:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}" "${1:-full}" ;;
+	ai-status)
+		local last_run_ts
+		last_run_ts=$(db "$SUPERVISOR_DB" "SELECT MAX(timestamp) FROM state_log WHERE task_id = 'ai-supervisor' AND to_state = 'complete';" 2>/dev/null || echo "never")
+		local run_count
+		run_count=$(db "$SUPERVISOR_DB" "SELECT COUNT(*) FROM state_log WHERE task_id = 'ai-supervisor' AND to_state = 'complete';" 2>/dev/null || echo 0)
+		echo "AI Supervisor Status"
+		echo "  Last run: ${last_run_ts:-never}"
+		echo "  Total runs: $run_count"
+		echo "  Enabled: ${SUPERVISOR_AI_ENABLED:-true}"
+		echo "  Interval: ${SUPERVISOR_AI_INTERVAL:-15} pulses (~$((${SUPERVISOR_AI_INTERVAL:-15} * 2))min)"
+		echo "  Log dir: ${AI_REASON_LOG_DIR:-$HOME/.aidevops/logs/ai-supervisor}"
+		;;
 	help | --help | -h) show_usage ;;
 	*)
 		log_error "Unknown command: $command"
