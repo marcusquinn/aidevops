@@ -199,35 +199,51 @@ cmd_pulse() {
 			# No live worker — this is stale state. Transition based on retry eligibility.
 			log_warn "  Phase 0.7: Stale $stale_status task $stale_id (updated: $stale_updated, no live worker)"
 
-			local stale_retries stale_max_retries
+			local stale_retries stale_max_retries stale_pr_url
 			stale_retries=$(db "$SUPERVISOR_DB" "SELECT retries FROM tasks WHERE id = '$(sql_escape "$stale_id")';" 2>/dev/null || echo "0")
 			stale_max_retries=$(db "$SUPERVISOR_DB" "SELECT max_retries FROM tasks WHERE id = '$(sql_escape "$stale_id")';" 2>/dev/null || echo "3")
+			stale_pr_url=$(db "$SUPERVISOR_DB" "SELECT pr_url FROM tasks WHERE id = '$(sql_escape "$stale_id")';" 2>/dev/null || echo "")
 
 			# Clean up any stale PID file
 			if [[ -f "$stale_pid_file" ]]; then
 				rm -f "$stale_pid_file" 2>/dev/null || true
 			fi
 
-			if [[ "$stale_retries" -lt "$stale_max_retries" ]]; then
+			# t1145: If the stale task is in 'evaluating' and already has a PR, route to
+			# pr_review instead of re-queuing — the work is done, only evaluation died.
+			if [[ "$stale_status" == "evaluating" && -n "$stale_pr_url" ]]; then
+				log_info "  Phase 0.7: $stale_id → pr_review (has PR, evaluation process died)"
+				cmd_transition "$stale_id" "pr_review" --pr-url "$stale_pr_url" --error "Stale evaluating recovery (Phase 0.7/t1145): evaluation process died, PR exists" 2>>"$SUPERVISOR_LOG" || true
+				db "$SUPERVISOR_DB" "
+					INSERT INTO state_log (task_id, from_state, to_state, reason)
+					VALUES ('$(sql_escape "$stale_id")', '$(sql_escape "$stale_status")',
+						'pr_review',
+						'Phase 0.7 stale-state recovery (t1145): evaluating with dead worker but PR exists — routed to pr_review');
+				" 2>/dev/null || true
+			elif [[ "$stale_retries" -lt "$stale_max_retries" ]]; then
 				# Retries remaining — re-queue for dispatch
 				local new_retries=$((stale_retries + 1))
 				log_info "  Phase 0.7: $stale_id → queued (retry $new_retries/$stale_max_retries, was $stale_status)"
 				db "$SUPERVISOR_DB" "UPDATE tasks SET retries = $new_retries WHERE id = '$(sql_escape "$stale_id")';" 2>/dev/null || true
 				cmd_transition "$stale_id" "queued" --error "Stale state recovery (Phase 0.7/t1132): was $stale_status with no live worker for >${stale_grace_seconds}s" 2>>"$SUPERVISOR_LOG" || true
+				db "$SUPERVISOR_DB" "
+					INSERT INTO state_log (task_id, from_state, to_state, reason)
+					VALUES ('$(sql_escape "$stale_id")', '$(sql_escape "$stale_status")',
+						'queued',
+						'Phase 0.7 stale-state recovery (t1132): no live worker for >${stale_grace_seconds}s');
+				" 2>/dev/null || true
 			else
 				# Retries exhausted — mark as failed
 				log_warn "  Phase 0.7: $stale_id → failed (retries exhausted $stale_retries/$stale_max_retries, was $stale_status)"
 				cmd_transition "$stale_id" "failed" --error "Stale state recovery (Phase 0.7/t1132): was $stale_status with no live worker, retries exhausted ($stale_retries/$stale_max_retries)" 2>>"$SUPERVISOR_LOG" || true
 				attempt_self_heal "$stale_id" "failed" "Stale state: $stale_status with no live worker" "${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
+				db "$SUPERVISOR_DB" "
+					INSERT INTO state_log (task_id, from_state, to_state, reason)
+					VALUES ('$(sql_escape "$stale_id")', '$(sql_escape "$stale_status")',
+						'failed',
+						'Phase 0.7 stale-state recovery (t1132): no live worker for >${stale_grace_seconds}s, retries exhausted');
+				" 2>/dev/null || true
 			fi
-
-			# Log the state transition for audit trail
-			db "$SUPERVISOR_DB" "
-				INSERT INTO state_log (task_id, from_state, to_state, reason)
-				VALUES ('$(sql_escape "$stale_id")', '$(sql_escape "$stale_status")', 
-					CASE WHEN $stale_retries < $stale_max_retries THEN 'queued' ELSE 'failed' END,
-					'Phase 0.7 stale-state recovery (t1132): no live worker for >${stale_grace_seconds}s');
-			" 2>/dev/null || true
 
 			# Clean up worker process tree (in case of zombie children)
 			cleanup_worker_processes "$stale_id" 2>>"$SUPERVISOR_LOG" || true

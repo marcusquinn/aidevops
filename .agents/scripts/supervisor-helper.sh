@@ -234,6 +234,7 @@ readonly -a VALID_TRANSITIONS=(
 	"running:failed"
 	"running:cancelled"
 	"evaluating:complete"
+	"evaluating:pr_review"
 	"evaluating:queued"
 	"evaluating:retrying"
 	"evaluating:blocked"
