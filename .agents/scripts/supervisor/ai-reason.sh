@@ -468,9 +468,16 @@ extract_action_plan() {
 		fi
 	fi
 
-	# Try 2: Extract JSON from markdown code block
+	# Try 2: Extract the LAST ```json code block (AI often includes analysis
+	# in earlier code blocks before the actual JSON action plan).
+	# Also handles unclosed blocks (response ends without closing ```).
 	local json_block
-	json_block=$(printf '%s' "$response" | sed -n '/^```json/,/^```$/p' | sed '1d;$d')
+	json_block=$(printf '%s' "$response" | awk '
+		/^```json/ { capture=1; block=""; next }
+		/^```$/ && capture { capture=0; last_block=block; next }
+		capture { block = block (block ? "\n" : "") $0 }
+		END { if (capture && block) print block; else if (last_block) print last_block }
+	')
 	if [[ -n "$json_block" ]]; then
 		parsed=$(printf '%s' "$json_block" | jq '.' 2>/dev/null)
 		if [[ $? -eq 0 && -n "$parsed" ]]; then
@@ -479,8 +486,13 @@ extract_action_plan() {
 		fi
 	fi
 
-	# Try 3: Extract JSON from generic code block
-	json_block=$(printf '%s' "$response" | sed -n '/^```/,/^```$/p' | sed '1d;$d')
+	# Try 3: Extract from any generic code block (last one, handles unclosed)
+	json_block=$(printf '%s' "$response" | awk '
+		/^```/ && !capture { capture=1; block=""; next }
+		/^```$/ && capture { capture=0; last_block=block; next }
+		capture { block = block (block ? "\n" : "") $0 }
+		END { if (capture && block) print block; else if (last_block) print last_block }
+	')
 	if [[ -n "$json_block" ]]; then
 		parsed=$(printf '%s' "$json_block" | jq '.' 2>/dev/null)
 		if [[ $? -eq 0 && -n "$parsed" ]]; then
@@ -489,9 +501,14 @@ extract_action_plan() {
 		fi
 	fi
 
-	# Try 4: Find first [ and last ] in the response
+	# Try 4: Find the last JSON array in the response (between [ and ])
 	local bracket_json
-	bracket_json=$(printf '%s' "$response" | sed -n '/\[/,/\]/p')
+	bracket_json=$(printf '%s' "$response" | awk '
+		/^\[/ { capture=1; block="" }
+		capture { block = block (block ? "\n" : "") $0 }
+		/^\]/ && capture { capture=0; last_block=block }
+		END { if (last_block) print last_block }
+	')
 	if [[ -n "$bracket_json" ]]; then
 		parsed=$(printf '%s' "$bracket_json" | jq '.' 2>/dev/null)
 		if [[ $? -eq 0 && -n "$parsed" ]]; then
