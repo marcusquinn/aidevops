@@ -1763,6 +1763,53 @@ else
 fi
 
 # ============================================================
+# Phase 0.8: Stale running task recovery (t1193)
+# ============================================================
+section "Phase 0.8: Stale running task recovery (t1193)"
+
+# Test 1: running task with no PID file and old started_at → pulse recovers it
+sup add test-t1193a --repo /tmp/test --description "Stale running no PID" >/dev/null
+sup transition test-t1193a dispatched >/dev/null
+sup transition test-t1193a running >/dev/null
+# Backdate started_at to 2 hours ago to trigger Phase 0.8 (default 1h timeout)
+test_db "UPDATE tasks SET started_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-7200 seconds') WHERE id = 'test-t1193a';"
+# No PID file exists (worker died without cleanup)
+# Run pulse with zero-second timeout to force immediate detection
+SUPERVISOR_RUNNING_STALE_SECONDS=0 sup pulse 2>/dev/null || true
+t1193a_status=$(get_status test-t1193a)
+if [[ "$t1193a_status" == "failed" || "$t1193a_status" == "queued" ]]; then
+	pass "Phase 0.8: stale running task (no PID, old started_at) recovered from running (t1193)"
+else
+	fail "Phase 0.8: stale running task not recovered" "status=$t1193a_status (expected failed or queued)"
+fi
+
+# Test 2: running task with a PR and no PID → routed to pr_review
+sup add test-t1193b --repo /tmp/test --description "Stale running with PR" >/dev/null
+sup transition test-t1193b dispatched >/dev/null
+sup transition test-t1193b running >/dev/null
+test_db "UPDATE tasks SET started_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-7200 seconds'), pr_url = 'https://github.com/test/repo/pull/42' WHERE id = 'test-t1193b';"
+SUPERVISOR_RUNNING_STALE_SECONDS=0 sup pulse 2>/dev/null || true
+t1193b_status=$(get_status test-t1193b)
+if [[ "$t1193b_status" == "pr_review" ]]; then
+	pass "Phase 0.8: stale running task with PR routed to pr_review (t1193)"
+else
+	fail "Phase 0.8: stale running task with PR not routed to pr_review" "status=$t1193b_status (expected pr_review)"
+fi
+
+# Test 3: recently started running task (within timeout) is NOT recovered
+sup add test-t1193c --repo /tmp/test --description "Recent running task" >/dev/null
+sup transition test-t1193c dispatched >/dev/null
+sup transition test-t1193c running >/dev/null
+# started_at is recent (default) — should NOT be touched by Phase 0.8
+SUPERVISOR_RUNNING_STALE_SECONDS=3600 sup pulse 2>/dev/null || true
+t1193c_status=$(get_status test-t1193c)
+if [[ "$t1193c_status" == "running" ]]; then
+	pass "Phase 0.8: recently started running task not falsely recovered (t1193)"
+else
+	fail "Phase 0.8: recently started running task was incorrectly recovered" "status=$t1193c_status (expected running)"
+fi
+
+# ============================================================
 # SUMMARY
 # ============================================================
 echo ""
