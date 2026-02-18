@@ -19,7 +19,7 @@
 AI_ACTIONS_LOG_DIR="${AI_ACTIONS_LOG_DIR:-$HOME/.aidevops/logs/ai-supervisor}"
 
 # Valid action types — any action not in this list is rejected
-readonly AI_VALID_ACTION_TYPES="comment_on_issue create_task create_subtasks flag_for_review adjust_priority close_verified request_info"
+readonly AI_VALID_ACTION_TYPES="comment_on_issue create_task create_subtasks flag_for_review adjust_priority close_verified request_info create_improvement escalate_model"
 
 # Maximum actions per execution cycle (safety limit)
 AI_MAX_ACTIONS_PER_CYCLE="${AI_MAX_ACTIONS_PER_CYCLE:-10}"
@@ -366,6 +366,28 @@ validate_action_fields() {
 			return 0
 		fi
 		;;
+	create_improvement)
+		local title
+		title=$(printf '%s' "$action" | jq -r '.title // empty')
+		if [[ -z "$title" ]]; then
+			echo "missing required field: title"
+			return 0
+		fi
+		;;
+	escalate_model)
+		local task_id from_tier to_tier
+		task_id=$(printf '%s' "$action" | jq -r '.task_id // empty')
+		from_tier=$(printf '%s' "$action" | jq -r '.from_tier // empty')
+		to_tier=$(printf '%s' "$action" | jq -r '.to_tier // empty')
+		if [[ -z "$task_id" ]]; then
+			echo "missing required field: task_id"
+			return 0
+		fi
+		if [[ -z "$to_tier" ]]; then
+			echo "missing required field: to_tier"
+			return 0
+		fi
+		;;
 	*)
 		echo "unhandled action type: $action_type"
 		return 0
@@ -403,6 +425,8 @@ execute_single_action() {
 	adjust_priority) _exec_adjust_priority "$action" "$repo_path" ;;
 	close_verified) _exec_close_verified "$action" "$repo_slug" ;;
 	request_info) _exec_request_info "$action" "$repo_slug" ;;
+	create_improvement) _exec_create_improvement "$action" "$repo_path" ;;
+	escalate_model) _exec_escalate_model "$action" "$repo_path" ;;
 	*)
 		echo '{"error":"unhandled_action_type"}'
 		return 1
@@ -851,6 +875,128 @@ Please provide the requested details so we can proceed.
 		echo "{\"error\":\"comment_failed\",\"issue_number\":$issue_number}"
 		return 1
 	fi
+}
+
+#######################################
+# Action: create_improvement
+# Creates a self-improvement task in TODO.md (like create_task but
+# ensures #self-improvement tag and category metadata)
+#######################################
+_exec_create_improvement() {
+	local action="$1"
+	local repo_path="$2"
+
+	local title description tags estimate model category
+	title=$(printf '%s' "$action" | jq -r '.title')
+	description=$(printf '%s' "$action" | jq -r '.description // ""')
+	tags=$(printf '%s' "$action" | jq -r '(.tags // []) | join(" ")')
+	estimate=$(printf '%s' "$action" | jq -r '.estimate // "~1h"')
+	model=$(printf '%s' "$action" | jq -r '.model // "sonnet"')
+	category=$(printf '%s' "$action" | jq -r '.category // "general"')
+
+	# Ensure #self-improvement and #auto-dispatch tags are present
+	if [[ "$tags" != *"#self-improvement"* ]]; then
+		tags="$tags #self-improvement"
+	fi
+	if [[ "$tags" != *"#auto-dispatch"* ]]; then
+		tags="$tags #auto-dispatch"
+	fi
+
+	local todo_file="$repo_path/TODO.md"
+	if [[ ! -f "$todo_file" ]]; then
+		echo '{"error":"todo_file_not_found"}'
+		return 1
+	fi
+
+	# Allocate task ID via claim-task-id.sh
+	local claim_script="${SCRIPT_DIR}/claim-task-id.sh"
+	local task_id=""
+
+	if [[ -x "$claim_script" ]]; then
+		local claim_output
+		claim_output=$("$claim_script" --title "$title" --repo-path "$repo_path" 2>/dev/null || echo "")
+		task_id=$(printf '%s' "$claim_output" | grep -oE 'task_id=t[0-9]+' | head -1 | sed 's/task_id=//')
+	fi
+
+	if [[ -z "$task_id" ]]; then
+		task_id="t$(date +%s | tail -c 5)"
+		log_warn "AI Actions: claim-task-id.sh unavailable, using fallback ID $task_id"
+	fi
+
+	# Build the task line with category metadata
+	local task_line="- [ ] $task_id $title $tags $estimate model:$model"
+	if [[ -n "$category" && "$category" != "general" ]]; then
+		task_line="$task_line category:$category"
+	fi
+	if [[ -n "$description" ]]; then
+		task_line="$task_line — $description"
+	fi
+
+	printf '\n%s\n' "$task_line" >>"$todo_file"
+
+	if declare -f commit_and_push_todo &>/dev/null; then
+		commit_and_push_todo "$repo_path" "chore: AI supervisor created improvement task $task_id" 2>/dev/null || true
+	fi
+
+	echo "{\"created\":true,\"task_id\":\"$task_id\",\"title\":$(printf '%s' "$title" | jq -Rs '.'),\"category\":\"$category\"}"
+	return 0
+}
+
+#######################################
+# Action: escalate_model
+# Updates a task's model tier in the supervisor DB and TODO.md
+#######################################
+_exec_escalate_model() {
+	local action="$1"
+	local repo_path="$2"
+
+	local task_id from_tier to_tier reasoning
+	task_id=$(printf '%s' "$action" | jq -r '.task_id')
+	from_tier=$(printf '%s' "$action" | jq -r '.from_tier // "unknown"')
+	to_tier=$(printf '%s' "$action" | jq -r '.to_tier')
+	reasoning=$(printf '%s' "$action" | jq -r '.reasoning // ""')
+
+	# Update model tier in supervisor DB if task exists there
+	if [[ -n "$SUPERVISOR_DB" && -f "$SUPERVISOR_DB" ]]; then
+		local db_task_exists
+		db_task_exists=$(db "$SUPERVISOR_DB" "SELECT COUNT(*) FROM tasks WHERE task_id = '$task_id';" 2>/dev/null || echo 0)
+		if [[ "$db_task_exists" -gt 0 ]]; then
+			db "$SUPERVISOR_DB" "UPDATE tasks SET model = '$to_tier' WHERE task_id = '$task_id';" 2>/dev/null || true
+			log_info "AI Actions: escalated $task_id model in DB: $from_tier -> $to_tier"
+		fi
+	fi
+
+	# Update model:X in TODO.md if present
+	local todo_file="$repo_path/TODO.md"
+	if [[ -f "$todo_file" ]]; then
+		if grep -q "^\s*- \[.\] $task_id " "$todo_file" 2>/dev/null; then
+			# Replace model:old with model:new on the task line
+			if grep "^\s*- \[.\] $task_id " "$todo_file" | grep -q "model:"; then
+				sed -i.bak "s/\(- \[.\] $task_id .*\)model:[a-z]*/\1model:$to_tier/" "$todo_file"
+				rm -f "${todo_file}.bak"
+			else
+				# No model: field — append it
+				sed -i.bak "s/\(- \[.\] $task_id .*\)/\1 model:$to_tier/" "$todo_file"
+				rm -f "${todo_file}.bak"
+			fi
+
+			if declare -f commit_and_push_todo &>/dev/null; then
+				commit_and_push_todo "$repo_path" "chore: AI supervisor escalated $task_id model $from_tier -> $to_tier" 2>/dev/null || true
+			fi
+		fi
+	fi
+
+	# Log the escalation event in state_log
+	if [[ -n "$SUPERVISOR_DB" && -f "$SUPERVISOR_DB" ]]; then
+		db "$SUPERVISOR_DB" "
+			INSERT INTO state_log (task_id, from_state, to_state, reason)
+			VALUES ('$task_id', 'model:$from_tier', 'model:$to_tier',
+					'AI escalation: $reasoning');
+		" 2>/dev/null || true
+	fi
+
+	echo "{\"escalated\":true,\"task_id\":\"$task_id\",\"from_tier\":\"$from_tier\",\"to_tier\":\"$to_tier\"}"
+	return 0
 }
 
 #######################################
