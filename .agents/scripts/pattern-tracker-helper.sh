@@ -66,8 +66,8 @@ calc_estimated_cost() {
 	output_rate=$(echo "$pricing_entry" | cut -d: -f3)
 
 	# Calculate: (tokens_in * input_rate + tokens_out * output_rate) / 1_000_000
-	awk -v ti="$tokens_in" -v to="$tokens_out" -v ir="$input_rate" -v or="$output_rate" \
-		'BEGIN { printf "%.6f", (ti * ir + to * or) / 1000000 }'
+	awk -v ti="$tokens_in" -v to="$tokens_out" -v ir="$input_rate" -v outr="$output_rate" \
+		'BEGIN { printf "%.6f", (ti * ir + to * outr) / 1000000 }'
 	return 0
 }
 
