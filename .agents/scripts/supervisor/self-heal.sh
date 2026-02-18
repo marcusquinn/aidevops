@@ -204,10 +204,10 @@ escalate_model_on_failure() {
 	local escaped_id
 	escaped_id=$(sql_escape "$task_id")
 
-	# Get current model and escalation state
+	# Get current model, escalation state, and error reason
 	local task_data
 	task_data=$(db -separator '|' "$SUPERVISOR_DB" "
-        SELECT model, escalation_depth, max_escalation
+        SELECT model, escalation_depth, max_escalation, error
         FROM tasks WHERE id = '$escaped_id';
     " 2>/dev/null || echo "")
 
@@ -215,8 +215,24 @@ escalate_model_on_failure() {
 		return 1
 	fi
 
-	local current_model current_depth max_depth
-	IFS='|' read -r current_model current_depth max_depth <<<"$task_data"
+	local current_model current_depth max_depth task_error
+	IFS='|' read -r current_model current_depth max_depth task_error <<<"$task_data"
+
+	# t1186: Skip escalation for infrastructure failures.
+	# These are supervisor/lifecycle issues (stale state, dead evaluator, supervisor
+	# crash/respawn), NOT model capability failures. Escalating wastes budget — the
+	# task succeeded at the original tier, only the evaluation/lifecycle management
+	# failed. The task should be retried at the SAME tier.
+	case "${task_error:-}" in
+	*"Stale state recovery"* | *"Stale evaluating recovery"* | \
+		*"Manual recovery"* | *"evaluation process died"* | \
+		*"no live worker"* | *"DB orphan"* | \
+		*"supervisor restart"* | *"respawn"* | \
+		*"Phase 0.7"*)
+		log_info "Model escalation: $task_id skipped — infrastructure failure, not model capability issue (error: ${task_error:0:80})"
+		return 1
+		;;
+	esac
 
 	# Already at max escalation depth
 	if [[ "$current_depth" -ge "$max_depth" ]]; then

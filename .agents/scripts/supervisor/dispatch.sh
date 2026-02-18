@@ -2630,7 +2630,7 @@ cmd_reprompt() {
 	escaped_id=$(sql_escape "$task_id")
 	local task_row
 	task_row=$(db -separator '|' "$SUPERVISOR_DB" "
-        SELECT id, repo, description, status, session_id, worktree, log_file, retries, max_retries, error
+        SELECT id, repo, description, status, session_id, worktree, log_file, retries, max_retries, error, model
         FROM tasks WHERE id = '$escaped_id';
     ")
 
@@ -2639,8 +2639,8 @@ cmd_reprompt() {
 		return 1
 	fi
 
-	local _tid trepo tdesc tstatus tsession tworktree tlog tretries tmax_retries terror
-	IFS='|' read -r _tid trepo tdesc tstatus tsession tworktree tlog tretries tmax_retries terror <<<"$task_row"
+	local _tid trepo tdesc tstatus tsession tworktree tlog tretries tmax_retries terror tmodel
+	IFS='|' read -r _tid trepo tdesc tstatus tsession tworktree tlog tretries tmax_retries terror tmodel <<<"$task_row"
 
 	# Validate state - must be in retrying state
 	if [[ "$tstatus" != "retrying" ]]; then
@@ -2787,6 +2787,17 @@ Task description: ${tdesc:-$task_id}"
 	log_info "Working dir: $work_dir"
 	log_info "Log: $new_log_file"
 
+	# Resolve model for retry dispatch (t1186: was missing, causing all retries to
+	# use opencode's default model — opus — regardless of the task's requested tier)
+	local resolved_model=""
+	if [[ -n "$tmodel" ]]; then
+		resolved_model=$(resolve_model "$tmodel" "$ai_cli" 2>/dev/null) || true
+	fi
+	# Record tier delta for retry dispatch (t1186)
+	if [[ -n "$resolved_model" && "$resolved_model" != "CONTEST" ]]; then
+		record_dispatch_model_tiers "$task_id" "$tmodel" "$resolved_model"
+	fi
+
 	# Dispatch the re-prompt
 	local -a cmd_parts=()
 	if [[ "$ai_cli" == "opencode" ]]; then
@@ -2801,9 +2812,21 @@ Task description: ${tdesc:-$task_id}"
 			fi
 			retry_title="${task_id}-r${tretries}: ${short_desc}"
 		fi
-		cmd_parts=(opencode run --format json --title "$retry_title" "$reprompt_msg")
+		cmd_parts=(opencode run --format json)
+		# t1186: Pass task model to opencode — without this, retries default to
+		# opencode's configured model (opus), wasting budget on tasks that only
+		# need sonnet. This was the root cause of the sonnet→opus tier escalation.
+		if [[ -n "$resolved_model" ]]; then
+			cmd_parts+=(-m "$resolved_model")
+		fi
+		cmd_parts+=(--title "$retry_title" "$reprompt_msg")
 	else
-		cmd_parts=(claude -p "$reprompt_msg" --output-format json)
+		cmd_parts=(claude -p "$reprompt_msg")
+		if [[ -n "$resolved_model" ]]; then
+			local claude_model="${resolved_model#*/}"
+			cmd_parts+=(--model "$claude_model")
+		fi
+		cmd_parts+=(--output-format json)
 	fi
 
 	# Ensure PID directory exists
