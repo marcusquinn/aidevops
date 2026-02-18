@@ -159,6 +159,26 @@ Cost-aware routing matches task complexity to the optimal model tier. Use the ch
 
 **Fallback chains**: Each tier has a primary model and cross-provider fallback (e.g., opus: claude-opus-4 → o3). The supervisor and `fallback-chain-helper.sh` handle this automatically.
 
+**Budget-aware routing** (t1100): Two strategies based on billing model:
+
+- **Token-billed APIs** (Anthropic direct, OpenRouter): Track daily spend per provider. Proactively degrade to cheaper tier when approaching budget cap (e.g., 80% of daily opus budget spent → route remaining to sonnet unless critical).
+- **Subscription APIs** (OAuth with periodic allowances): Maximise utilisation within period. Prefer subscription providers when allowance is available to avoid token costs. Alert when approaching period limit.
+
+**CLI**: `budget-tracker-helper.sh [record|check|recommend|status|configure|burn-rate]`
+
+**Quick setup**:
+
+```bash
+# Configure Anthropic with $50/day budget
+budget-tracker-helper.sh configure anthropic --billing-type token --daily-budget 50
+
+# Configure OpenCode as subscription with monthly allowance
+budget-tracker-helper.sh configure opencode --billing-type subscription
+budget-tracker-helper.sh configure-period opencode --start 2026-02-01 --end 2026-03-01 --allowance 200
+```
+
+**Integration**: Dispatch.sh checks budget state before model selection. Spend is recorded automatically after each worker evaluation.
+
 **Full docs**: `tools/context/model-routing.md`, `tools/ai-assistants/compare-models.md`
 
 ## Memory
@@ -362,7 +382,7 @@ Orchestration agents can create drafts in `draft/` for reusable parallel process
 | Networking | `services/networking/tailscale.md` |
 | Personal AI | `tools/ai-assistants/openclaw.md` (deployment tiers, security, channels) |
 | Research | `tools/research/tech-stack-lookup.md`, `tech-stack-helper.sh`, `/tech-stack` (tech stack detection, reverse lookup) |
-| Model routing | `tools/context/model-routing.md`, `model-registry-helper.sh`, `fallback-chain-helper.sh`, `model-availability-helper.sh` |
+| Model routing | `tools/context/model-routing.md`, `model-registry-helper.sh`, `fallback-chain-helper.sh`, `model-availability-helper.sh`, `budget-tracker-helper.sh` |
 | Model comparison | `tools/ai-assistants/compare-models.md`, `tools/ai-assistants/response-scoring.md`, `/compare-models`, `/compare-models-free`, `/score-responses` |
 | Pattern tracking | `memory/README.md` "Pattern Tracking", `pattern-tracker-helper.sh`, `scripts/commands/patterns.md` |
 | Self-improvement | `aidevops/self-improving-agents.md`, `self-improve-helper.sh` (analyze → refine → test → pr) |

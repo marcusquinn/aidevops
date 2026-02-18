@@ -1234,3 +1234,111 @@ cmd_evaluate() {
 	echo -e "Verdict: ${color}${outcome_type}${NC}: $outcome_detail"
 	return 0
 }
+
+#######################################
+# Record worker spend in budget tracker (t1100)
+# Extracts token usage from worker log (OpenCode JSON format) and records
+# the spend event for budget-aware routing decisions.
+#
+# OpenCode JSON output includes usage data like:
+#   "usage":{"input_tokens":50000,"output_tokens":10000}
+# or in the session summary at the end of the log.
+#
+# Falls back to estimating from log size if no structured usage data found.
+#######################################
+record_worker_spend() {
+	local task_id="$1"
+	local model="${2:-}"
+
+	local budget_helper="${SCRIPT_DIR}/../budget-tracker-helper.sh"
+	if [[ ! -x "$budget_helper" ]]; then
+		return 0
+	fi
+
+	ensure_db
+
+	local escaped_id
+	escaped_id=$(sql_escape "$task_id")
+	local task_row
+	task_row=$(db -separator '|' "$SUPERVISOR_DB" "
+		SELECT log_file, model, repo FROM tasks WHERE id = '$escaped_id';
+	" 2>/dev/null) || return 0
+
+	if [[ -z "$task_row" ]]; then
+		return 0
+	fi
+
+	local tlog tmodel trepo
+	IFS='|' read -r tlog tmodel trepo <<<"$task_row"
+
+	# Use task model if not passed
+	model="${model:-$tmodel}"
+	if [[ -z "$model" ]]; then
+		return 0
+	fi
+
+	# Extract provider from model string
+	local provider=""
+	if [[ "$model" == *"/"* ]]; then
+		provider="${model%%/*}"
+	else
+		provider="anthropic"
+	fi
+
+	# Determine tier from model name
+	local tier=""
+	case "$model" in
+	*opus*) tier="opus" ;;
+	*sonnet*) tier="sonnet" ;;
+	*haiku*) tier="haiku" ;;
+	*flash*) tier="flash" ;;
+	*pro*) tier="pro" ;;
+	*) tier="unknown" ;;
+	esac
+
+	local input_tokens=0 output_tokens=0
+
+	# Try to extract token usage from log file
+	if [[ -n "$tlog" && -f "$tlog" ]]; then
+		# OpenCode JSON format: look for usage summary
+		local usage_line
+		usage_line=$(grep -o '"input_tokens":[0-9]*' "$tlog" 2>/dev/null | tail -1 || true)
+		if [[ -n "$usage_line" ]]; then
+			input_tokens=$(echo "$usage_line" | grep -o '[0-9]*' || echo "0")
+		fi
+
+		usage_line=$(grep -o '"output_tokens":[0-9]*' "$tlog" 2>/dev/null | tail -1 || true)
+		if [[ -n "$usage_line" ]]; then
+			output_tokens=$(echo "$usage_line" | grep -o '[0-9]*' || echo "0")
+		fi
+
+		# Fallback: estimate from log size if no structured data
+		# Rough heuristic: 1 byte of log ~ 0.5 tokens (conservative)
+		if [[ "$input_tokens" -eq 0 && "$output_tokens" -eq 0 ]]; then
+			local log_size
+			log_size=$(wc -c <"$tlog" 2>/dev/null | tr -d ' ')
+			if [[ "$log_size" -gt 1000 ]]; then
+				# Estimate: typical worker session uses ~50K input, ~10K output
+				# Scale by log size relative to typical 100KB log
+				local scale
+				scale=$(awk "BEGIN { s = $log_size / 100000.0; if (s < 0.1) s = 0.1; if (s > 10) s = 10; printf \"%.2f\", s }")
+				input_tokens=$(awk "BEGIN { printf \"%d\", 50000 * $scale }")
+				output_tokens=$(awk "BEGIN { printf \"%d\", 10000 * $scale }")
+			fi
+		fi
+	fi
+
+	# Record the spend event
+	if [[ "$input_tokens" -gt 0 || "$output_tokens" -gt 0 ]]; then
+		"$budget_helper" record \
+			--provider "$provider" \
+			--model "$model" \
+			--tier "$tier" \
+			--task "$task_id" \
+			--input-tokens "$input_tokens" \
+			--output-tokens "$output_tokens" 2>/dev/null || true
+		log_verbose "Budget: recorded spend for $task_id ($provider/$tier: ${input_tokens}in/${output_tokens}out)"
+	fi
+
+	return 0
+}
