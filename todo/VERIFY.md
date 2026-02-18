@@ -1406,7 +1406,16 @@
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
 
-- [ ] v167 t1208 Reconcile supervisor DB status inconsistencies (running/e... | PR #1837 | merged:2026-02-18
+- [x] v167 t1208 Reconcile supervisor DB status inconsistencies (running/e... | PR #1837 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
+
+- [ ] v168 t1206 Add dispatch deduplication guard for repeated task failur... | PR #1835 | merged:2026-02-18
+  files: .agents/scripts/supervisor/database.sh, .agents/scripts/supervisor/dispatch.sh, .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/supervisor/database.sh
+  check: file-exists .agents/scripts/supervisor/database.sh
+  check: shellcheck .agents/scripts/supervisor/dispatch.sh
+  check: file-exists .agents/scripts/supervisor/dispatch.sh
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
