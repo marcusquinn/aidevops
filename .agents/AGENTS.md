@@ -117,6 +117,10 @@ Use `/save-todo` after planning. Auto-detects complexity:
 
 **Blocker statuses**: Add these tags to tasks that need human action before they can proceed. The supervisor's eligibility assessment detects them and skips dispatch: `account-needed`, `hosting-needed`, `login-needed`, `api-key-needed`, `clarification-needed`, `resources-needed`, `payment-needed`, `approval-needed`, `decision-needed`, `design-needed`, `content-needed`, `dns-needed`, `domain-needed`, `testing-needed`.
 
+**Auto-subtasking** (t1188.2): Tasks with estimates >4h that have no existing subtasks are flagged as `needs-subtasking` in the eligibility assessment. The AI reasoner uses `create_subtasks` to break them into dispatchable units (~30m-4h each) before attempting dispatch. Tasks that already have subtasks are flagged as `has-subtasks` — the supervisor dispatches the subtasks instead.
+
+**Cross-repo concurrency fairness** (t1188.2): When multiple repos have queued tasks, each repo gets at least 1 dispatch slot, then remaining slots are distributed proportionally by queued task count. This prevents one repo's large backlog from starving other repos.
+
 **Working on #auto-dispatch tasks interactively** (t1062): When you start working on a task tagged with `#auto-dispatch`, immediately add `assignee:` to the TODO entry before pushing. This prevents the supervisor from racing and dispatching a worker for the same task. The supervisor's auto-pickup skips tasks with `assignee:` or `started:` fields.
 
 **Task completion rules** (CRITICAL - prevents false completion cascade):

@@ -939,6 +939,11 @@ cmd_running_count() {
 # running count at dispatch time. This avoids a TOCTOU race where cmd_next()
 # computes available slots based on a stale count, then cmd_dispatch() sees
 # a different count after prior dispatches in the same pulse loop (t172).
+#
+# Cross-repo fairness (t1188.2): When multiple repos have queued tasks,
+# each repo gets at least 1 slot, then remaining slots are distributed
+# proportionally by queued task count. This prevents one repo from
+# starving others when it has a large backlog.
 #######################################
 cmd_next() {
 	local batch_id="${1:-}" limit="${2:-1}"
@@ -958,7 +963,7 @@ cmd_next() {
             AND t.status = 'queued'
             AND t.retries < t.max_retries
             ORDER BY t.retries ASC, bt.position
-            LIMIT $((limit * 3));
+            LIMIT $((limit * 5));
         ")
 	else
 		candidates=$(db -separator $'\t' "$SUPERVISOR_DB" "
@@ -967,7 +972,7 @@ cmd_next() {
             WHERE status = 'queued'
             AND retries < max_retries
             ORDER BY retries ASC, created_at ASC
-            LIMIT $((limit * 3));
+            LIMIT $((limit * 5));
         ")
 	fi
 
@@ -977,10 +982,13 @@ cmd_next() {
 	# Subtasks (IDs like t1063.2) should run sequentially — dispatching them
 	# in parallel causes merge conflicts because they modify the same files.
 	# Skip a subtask if any sibling with a lower suffix is not yet terminal.
-	local count=0
+	# Also builds per-repo candidate lists for fair dispatch (t1188.2).
+	#
+	# We collect eligible candidates into a flat list first, then apply
+	# repo-fair interleaving below.
+	local eligible_candidates=""
+	local eligible_count=0
 	while IFS=$'\t' read -r cid crepo cdesc cmodel; do
-		[[ "$count" -ge "$limit" ]] && break
-
 		# Check if this is a subtask (contains a dot)
 		if [[ "$cid" == *.* ]]; then
 			local parent_id="${cid%.*}"
@@ -1002,9 +1010,150 @@ cmd_next() {
 			fi
 		fi
 
-		printf '%s\t%s\t%s\t%s\n' "$cid" "$crepo" "$cdesc" "$cmodel"
-		count=$((count + 1))
+		if [[ -n "$eligible_candidates" ]]; then
+			eligible_candidates+=$'\n'
+		fi
+		eligible_candidates+=$(printf '%s\t%s\t%s\t%s' "$cid" "$crepo" "$cdesc" "$cmodel")
+		eligible_count=$((eligible_count + 1))
 	done <<<"$candidates"
+
+	[[ -z "$eligible_candidates" ]] && return 0
+
+	# Cross-repo fair dispatch (t1188.2)
+	# Algorithm: min 1 per repo, then distribute remaining slots proportionally
+	# by each repo's share of total queued tasks.
+	#
+	# Count distinct repos in eligible candidates
+	local repo_list
+	repo_list=$(printf '%s\n' "$eligible_candidates" | cut -f2 | sort -u)
+	local repo_count=0
+	while IFS= read -r _r; do
+		[[ -n "$_r" ]] && repo_count=$((repo_count + 1))
+	done <<<"$repo_list"
+
+	# Single repo or limit <= 1: no fairness needed, just emit in order
+	if [[ "$repo_count" -le 1 || "$limit" -le 1 ]]; then
+		local count=0
+		while IFS=$'\t' read -r cid crepo cdesc cmodel; do
+			[[ "$count" -ge "$limit" ]] && break
+			printf '%s\t%s\t%s\t%s\n' "$cid" "$crepo" "$cdesc" "$cmodel"
+			count=$((count + 1))
+		done <<<"$eligible_candidates"
+		return 0
+	fi
+
+	# Multiple repos: allocate slots fairly
+	# Step 1: Count candidates per repo
+	local total_eligible="$eligible_count"
+	local remaining_slots="$limit"
+
+	# Step 2: Give each repo min(1, its_candidate_count) guaranteed slot
+	# Step 3: Distribute remaining slots proportionally
+	# We implement this as round-robin weighted by candidate count:
+	# sort repos by candidate count descending, then interleave picks.
+	#
+	# Build per-repo queues using line-number indexing (bash 3.2 compatible)
+	local repo_allocs="" # "repo\tallocation" lines
+	local guaranteed_total=0
+
+	# First pass: count per repo and assign guaranteed minimum of 1
+	while IFS= read -r repo; do
+		[[ -z "$repo" ]] && continue
+		local rcount
+		rcount=$(printf '%s\n' "$eligible_candidates" | awk -F'\t' -v r="$repo" '$2 == r' | wc -l | tr -d ' ')
+		[[ "$rcount" -eq 0 ]] && continue
+		guaranteed_total=$((guaranteed_total + 1))
+		if [[ -n "$repo_allocs" ]]; then
+			repo_allocs+=$'\n'
+		fi
+		repo_allocs+=$(printf '%s\t%s' "$repo" "$rcount")
+	done <<<"$repo_list"
+
+	# Calculate remaining slots after guarantees
+	local bonus_slots=0
+	if [[ "$remaining_slots" -gt "$guaranteed_total" ]]; then
+		bonus_slots=$((remaining_slots - guaranteed_total))
+	else
+		# More repos than slots — each repo gets at most 1, cap at limit
+		guaranteed_total="$remaining_slots"
+	fi
+
+	# Emit tasks with fair interleaving: round-robin across repos,
+	# each repo gets its guaranteed 1 + proportional bonus
+	local output_count=0
+	local round=0
+
+	while [[ "$output_count" -lt "$limit" ]]; do
+		local emitted_this_round=0
+		while IFS= read -r repo; do
+			[[ -z "$repo" ]] && continue
+			[[ "$output_count" -ge "$limit" ]] && break
+
+			# Count how many we've already emitted for this repo
+			local repo_emitted=0
+			if [[ -n "${_repo_emitted_counts:-}" ]]; then
+				repo_emitted=$(printf '%s\n' "$_repo_emitted_counts" | awk -F'\t' -v r="$repo" '$1 == r {print $2}')
+				repo_emitted="${repo_emitted:-0}"
+			fi
+
+			# Calculate this repo's allocation
+			local rcount
+			rcount=$(printf '%s\n' "$repo_allocs" | awk -F'\t' -v r="$repo" '$1 == r {print $2}')
+			rcount="${rcount:-0}"
+			local repo_allocation=1 # guaranteed minimum
+			if [[ "$bonus_slots" -gt 0 && "$total_eligible" -gt 0 ]]; then
+				# Proportional bonus: (repo_candidates / total) * bonus_slots
+				repo_allocation=$((1 + (rcount * bonus_slots + total_eligible - 1) / total_eligible))
+			fi
+			# Cap at repo's actual candidate count
+			if [[ "$repo_allocation" -gt "$rcount" ]]; then
+				repo_allocation="$rcount"
+			fi
+
+			# Skip if this repo has reached its allocation
+			if [[ "$repo_emitted" -ge "$repo_allocation" ]]; then
+				continue
+			fi
+
+			# Find the next unemitted candidate for this repo
+			local pick_index=$((repo_emitted + 1)) # 1-based
+			local picked_line
+			picked_line=$(printf '%s\n' "$eligible_candidates" | awk -F'\t' -v r="$repo" -v idx="$pick_index" '
+				$2 == r { n++; if (n == idx) { print; exit } }
+			')
+
+			if [[ -z "$picked_line" ]]; then
+				continue
+			fi
+
+			printf '%s\n' "$picked_line"
+			output_count=$((output_count + 1))
+			emitted_this_round=$((emitted_this_round + 1))
+
+			# Track per-repo emission count
+			local new_emitted=$((repo_emitted + 1))
+			if [[ -z "${_repo_emitted_counts:-}" ]]; then
+				_repo_emitted_counts=$(printf '%s\t%s' "$repo" "$new_emitted")
+			elif printf '%s\n' "$_repo_emitted_counts" | grep -q "^${repo}	"; then
+				_repo_emitted_counts=$(printf '%s\n' "$_repo_emitted_counts" | awk -F'\t' -v r="$repo" -v n="$new_emitted" 'BEGIN{OFS="\t"} $1 == r {$2 = n} {print}')
+			else
+				_repo_emitted_counts+=$'\n'
+				_repo_emitted_counts+=$(printf '%s\t%s' "$repo" "$new_emitted")
+			fi
+		done <<<"$repo_list"
+
+		# If nothing was emitted this round, we've exhausted all repos
+		if [[ "$emitted_this_round" -eq 0 ]]; then
+			break
+		fi
+
+		round=$((round + 1))
+		# Safety: prevent infinite loops
+		if [[ "$round" -gt 50 ]]; then
+			log_warn "cmd_next: repo-fair interleave exceeded 50 rounds, breaking"
+			break
+		fi
+	done
 
 	return 0
 }
