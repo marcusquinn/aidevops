@@ -1297,3 +1297,10 @@
   check: file-exists .agents/scripts/supervisor/ai-reason.sh
   check: shellcheck tests/test-ai-supervisor-e2e.sh
   check: file-exists tests/test-ai-supervisor-e2e.sh
+
+- [ ] v153 t1184 Fix AI supervisor pipeline 'expected array, got empty' er... | PR #1797 | merged:2026-02-18
+  files: .agents/scripts/supervisor/ai-actions.sh, .agents/scripts/supervisor/ai-reason.sh
+  check: shellcheck .agents/scripts/supervisor/ai-actions.sh
+  check: file-exists .agents/scripts/supervisor/ai-actions.sh
+  check: shellcheck .agents/scripts/supervisor/ai-reason.sh
+  check: file-exists .agents/scripts/supervisor/ai-reason.sh
