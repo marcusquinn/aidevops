@@ -1225,6 +1225,242 @@ else
 	fail "adjust_priority new_priority validation has errors"
 fi
 
+# ─── Test 20: Pipeline handles empty model response (t1204) ─────────
+echo "Test 20: Pipeline — empty model response returns rc=0 with empty actions"
+
+_test_pipeline_empty_response() {
+	(
+		set +e
+		BLUE='' GREEN='' YELLOW='' RED='' NC=''
+		SUPERVISOR_DB="/tmp/test-pipeline-empty-$$.db"
+		SUPERVISOR_LOG="/dev/null"
+		SCRIPT_DIR="$REPO_DIR/.agents/scripts"
+		REPO_PATH="$REPO_DIR"
+		AI_ACTIONS_LOG_DIR="/tmp/test-ai-actions-logs-$$"
+		mkdir -p "$AI_ACTIONS_LOG_DIR"
+		db() { sqlite3 -cmd ".timeout 5000" "$@" 2>/dev/null || true; }
+		log_info() { :; }
+		log_success() { :; }
+		log_warn() { :; }
+		log_error() { :; }
+		log_verbose() { :; }
+		sql_escape() { printf '%s' "$1" | sed "s/'/''/g"; }
+		detect_repo_slug() { echo "test/repo"; }
+		commit_and_push_todo() { :; }
+		find_task_issue_number() { echo ""; }
+		build_ai_context() { echo "# test"; }
+
+		# Stub run_ai_reasoning to simulate empty model response (the failure mode
+		# observed in the 8 consecutive rc=1 failures on Feb 18: 'expected array, got ')
+		run_ai_reasoning() {
+			echo ""
+			return 0
+		}
+		export -f run_ai_reasoning
+
+		source "$ACTIONS_SCRIPT"
+
+		local result rc
+		result=$(run_ai_actions_pipeline "$REPO_DIR" "dry-run" 2>/dev/null)
+		rc=$?
+
+		local failures=0
+
+		# rc must be 0 — empty response is not a hard error (t1187, t1197)
+		if [[ $rc -ne 0 ]]; then
+			echo "FAIL: empty model response should return rc=0, got rc=$rc"
+			failures=$((failures + 1))
+		fi
+
+		# Result must be valid JSON with executed=0
+		local executed
+		executed=$(printf '%s' "$result" | jq -r '.executed // "MISSING"' 2>/dev/null || echo "PARSE_ERROR")
+		if [[ "$executed" != "0" ]]; then
+			echo "FAIL: empty response should produce executed=0, got executed=$executed (result=$result)"
+			failures=$((failures + 1))
+		fi
+
+		# Actions array must be empty
+		local action_count
+		action_count=$(printf '%s' "$result" | jq '.actions | length' 2>/dev/null || echo -1)
+		if [[ "$action_count" != "0" ]]; then
+			echo "FAIL: empty response should produce 0 actions, got $action_count"
+			failures=$((failures + 1))
+		fi
+
+		rm -rf "/tmp/test-ai-actions-logs-$$" "$SUPERVISOR_DB"
+		exit "$failures"
+	)
+}
+
+if _test_pipeline_empty_response 2>/dev/null; then
+	pass "pipeline: empty model response returns rc=0 with empty actions (t1204)"
+else
+	fail "pipeline: empty model response handling broken (t1204)"
+fi
+
+# ─── Test 21: Pipeline handles malformed JSON response (t1204) ───────
+echo "Test 21: Pipeline — malformed JSON response returns rc=0 with empty actions"
+
+_test_pipeline_malformed_json() {
+	(
+		set +e
+		BLUE='' GREEN='' YELLOW='' RED='' NC=''
+		SUPERVISOR_DB="/tmp/test-pipeline-malformed-$$.db"
+		SUPERVISOR_LOG="/dev/null"
+		SCRIPT_DIR="$REPO_DIR/.agents/scripts"
+		REPO_PATH="$REPO_DIR"
+		AI_ACTIONS_LOG_DIR="/tmp/test-ai-actions-logs-$$"
+		mkdir -p "$AI_ACTIONS_LOG_DIR"
+		db() { sqlite3 -cmd ".timeout 5000" "$@" 2>/dev/null || true; }
+		log_info() { :; }
+		log_success() { :; }
+		log_warn() { :; }
+		log_error() { :; }
+		log_verbose() { :; }
+		sql_escape() { printf '%s' "$1" | sed "s/'/''/g"; }
+		detect_repo_slug() { echo "test/repo"; }
+		commit_and_push_todo() { :; }
+		find_task_issue_number() { echo ""; }
+		build_ai_context() { echo "# test"; }
+
+		# Stub run_ai_reasoning to simulate malformed/non-JSON model response
+		# (the exact failure mode: model returns prose instead of JSON array)
+		run_ai_reasoning() {
+			echo "I cannot provide a JSON response at this time. The system is experiencing issues."
+			return 0
+		}
+		export -f run_ai_reasoning
+
+		source "$ACTIONS_SCRIPT"
+
+		local result rc
+		result=$(run_ai_actions_pipeline "$REPO_DIR" "dry-run" 2>/dev/null)
+		rc=$?
+
+		local failures=0
+
+		# rc must be 0 — non-JSON response is treated as empty plan, not hard error (t1189, t1197)
+		if [[ $rc -ne 0 ]]; then
+			echo "FAIL: malformed JSON response should return rc=0, got rc=$rc"
+			failures=$((failures + 1))
+		fi
+
+		# Result must be valid JSON with executed=0
+		local executed
+		executed=$(printf '%s' "$result" | jq -r '.executed // "MISSING"' 2>/dev/null || echo "PARSE_ERROR")
+		if [[ "$executed" != "0" ]]; then
+			echo "FAIL: malformed JSON should produce executed=0, got executed=$executed (result=$result)"
+			failures=$((failures + 1))
+		fi
+
+		# Actions array must be empty
+		local action_count
+		action_count=$(printf '%s' "$result" | jq '.actions | length' 2>/dev/null || echo -1)
+		if [[ "$action_count" != "0" ]]; then
+			echo "FAIL: malformed JSON should produce 0 actions, got $action_count"
+			failures=$((failures + 1))
+		fi
+
+		rm -rf "/tmp/test-ai-actions-logs-$$" "$SUPERVISOR_DB"
+		exit "$failures"
+	)
+}
+
+if _test_pipeline_malformed_json 2>/dev/null; then
+	pass "pipeline: malformed JSON response returns rc=0 with empty actions (t1204)"
+else
+	fail "pipeline: malformed JSON response handling broken (t1204)"
+fi
+
+# ─── Test 22: Pipeline handles valid empty-actions response (t1204) ──
+echo "Test 22: Pipeline — valid empty-actions response '[]' passes through cleanly"
+
+_test_pipeline_valid_empty_array() {
+	(
+		set +e
+		BLUE='' GREEN='' YELLOW='' RED='' NC=''
+		SUPERVISOR_DB="/tmp/test-pipeline-empty-array-$$.db"
+		SUPERVISOR_LOG="/dev/null"
+		SCRIPT_DIR="$REPO_DIR/.agents/scripts"
+		REPO_PATH="$REPO_DIR"
+		AI_ACTIONS_LOG_DIR="/tmp/test-ai-actions-logs-$$"
+		mkdir -p "$AI_ACTIONS_LOG_DIR"
+		db() { sqlite3 -cmd ".timeout 5000" "$@" 2>/dev/null || true; }
+		log_info() { :; }
+		log_success() { :; }
+		log_warn() { :; }
+		log_error() { :; }
+		log_verbose() { :; }
+		sql_escape() { printf '%s' "$1" | sed "s/'/''/g"; }
+		detect_repo_slug() { echo "test/repo"; }
+		commit_and_push_todo() { :; }
+		find_task_issue_number() { echo ""; }
+		build_ai_context() { echo "# test"; }
+
+		# Stub run_ai_reasoning to return a valid empty JSON array
+		# (the correct model response when no actions are needed)
+		run_ai_reasoning() {
+			echo "[]"
+			return 0
+		}
+		export -f run_ai_reasoning
+
+		source "$ACTIONS_SCRIPT"
+
+		local result rc
+		result=$(run_ai_actions_pipeline "$REPO_DIR" "dry-run" 2>/dev/null)
+		rc=$?
+
+		local failures=0
+
+		# rc must be 0
+		if [[ $rc -ne 0 ]]; then
+			echo "FAIL: valid empty-actions response should return rc=0, got rc=$rc"
+			failures=$((failures + 1))
+		fi
+
+		# Result must be valid JSON
+		if ! printf '%s' "$result" | jq . >/dev/null 2>&1; then
+			echo "FAIL: result is not valid JSON: $result"
+			failures=$((failures + 1))
+		fi
+
+		# executed must be 0 (no actions to execute)
+		local executed
+		executed=$(printf '%s' "$result" | jq -r '.executed // "MISSING"' 2>/dev/null || echo "PARSE_ERROR")
+		if [[ "$executed" != "0" ]]; then
+			echo "FAIL: empty-actions response should produce executed=0, got executed=$executed"
+			failures=$((failures + 1))
+		fi
+
+		# failed must be 0
+		local failed
+		failed=$(printf '%s' "$result" | jq -r '.failed // "MISSING"' 2>/dev/null || echo "PARSE_ERROR")
+		if [[ "$failed" != "0" ]]; then
+			echo "FAIL: empty-actions response should produce failed=0, got failed=$failed"
+			failures=$((failures + 1))
+		fi
+
+		# actions array must exist and be empty
+		local action_count
+		action_count=$(printf '%s' "$result" | jq '.actions | length' 2>/dev/null || echo -1)
+		if [[ "$action_count" != "0" ]]; then
+			echo "FAIL: empty-actions response should produce 0 actions, got $action_count"
+			failures=$((failures + 1))
+		fi
+
+		rm -rf "/tmp/test-ai-actions-logs-$$" "$SUPERVISOR_DB"
+		exit "$failures"
+	)
+}
+
+if _test_pipeline_valid_empty_array 2>/dev/null; then
+	pass "pipeline: valid empty-actions '[]' response passes through cleanly (t1204)"
+else
+	fail "pipeline: valid empty-actions '[]' response handling broken (t1204)"
+fi
+
 # ─── Summary ────────────────────────────────────────────────────────
 echo ""
 echo "=== Results: $PASS/$TOTAL passed, $FAIL failed ==="
