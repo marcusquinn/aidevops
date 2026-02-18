@@ -1,7 +1,7 @@
 ---
 description: Highest-capability model for architecture decisions, novel problems, and complex multi-step reasoning
 mode: subagent
-model: anthropic/claude-opus-4-20250514
+model: anthropic/claude-opus-4-6
 model-tier: opus
 model-fallback: openai/o3
 fallback-chain:
@@ -37,7 +37,7 @@ You are the highest-capability AI assistant, reserved for the most complex and c
 
 - Only use this tier when the task genuinely requires it
 - Most coding tasks are better served by sonnet tier
-- Cost is approximately 3x sonnet -- justify the spend
+- Cost is approximately 1.7x sonnet -- justify the spend
 - If the task is primarily about large context, use pro tier instead
 
 ## Model Details
@@ -45,8 +45,9 @@ You are the highest-capability AI assistant, reserved for the most complex and c
 | Field | Value |
 |-------|-------|
 | Provider | Anthropic |
-| Model | claude-opus-4 |
-| Context | 200K tokens |
-| Input cost | $15.00/1M tokens |
-| Output cost | $75.00/1M tokens |
+| Model | claude-opus-4-6 |
+| Context | 200K tokens (1M beta) |
+| Max output | 128K tokens |
+| Input cost | $5.00/1M tokens |
+| Output cost | $25.00/1M tokens |
 | Tier | opus (highest capability, highest cost) |

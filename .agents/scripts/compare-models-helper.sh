@@ -143,12 +143,12 @@ get_all_tier_patterns() {
 # Model Database (embedded reference data)
 # =============================================================================
 # Format: model_id|provider|display_name|context_window|input_price_per_1m|output_price_per_1m|tier|capabilities|best_for
-# Prices in USD per 1M tokens. Last updated: 2025-02-08.
+# Prices in USD per 1M tokens. Last updated: 2026-02-18.
 # Sources: Anthropic, OpenAI, Google official pricing pages.
 
-readonly MODEL_DATA="claude-opus-4|Anthropic|Claude Opus 4|200000|15.00|75.00|high|code,reasoning,architecture,vision,tools|Architecture decisions, novel problems, complex multi-step reasoning
-claude-sonnet-4|Anthropic|Claude Sonnet 4|200000|3.00|15.00|medium|code,reasoning,vision,tools|Code implementation, review, most development tasks
-claude-haiku-3.5|Anthropic|Claude 3.5 Haiku|200000|0.80|4.00|low|code,reasoning,vision,tools|Triage, classification, simple transforms, formatting
+readonly MODEL_DATA="claude-opus-4-6|Anthropic|Claude Opus 4.6|200000|5.00|25.00|high|code,reasoning,architecture,vision,tools|Architecture decisions, novel problems, complex multi-step reasoning
+claude-sonnet-4-6|Anthropic|Claude Sonnet 4.6|200000|3.00|15.00|medium|code,reasoning,vision,tools|Code implementation, review, most development tasks
+claude-haiku-4-5|Anthropic|Claude Haiku 4.5|200000|1.00|5.00|low|code,reasoning,vision,tools|Triage, classification, simple transforms, formatting
 gpt-4.1|OpenAI|GPT-4.1|1048576|2.00|8.00|medium|code,reasoning,vision,tools,search|Coding, instruction following, long context
 gpt-4.1-mini|OpenAI|GPT-4.1 Mini|1048576|0.40|1.60|low|code,reasoning,vision,tools|Cost-efficient coding and general tasks
 gpt-4.1-nano|OpenAI|GPT-4.1 Nano|1048576|0.10|0.40|low|code,reasoning,tools|Fast classification, simple transforms
@@ -169,31 +169,31 @@ llama-4-scout|Meta|Llama 4 Scout|512000|0.15|0.40|low|code,reasoning,vision,tool
 # =============================================================================
 # Maps aidevops internal tiers to recommended models
 
-readonly TIER_MAP="haiku|claude-haiku-3.5|Triage, classification, simple transforms
+readonly TIER_MAP="haiku|claude-haiku-4-5|Triage, classification, simple transforms
 flash|gemini-2.5-flash|Large context reads, summarization, bulk processing
-sonnet|claude-sonnet-4|Code implementation, review, most development tasks
+sonnet|claude-sonnet-4-6|Code implementation, review, most development tasks
 pro|gemini-2.5-pro|Large codebase analysis, complex reasoning with big context
-opus|claude-opus-4|Architecture decisions, complex multi-step reasoning"
+opus|claude-opus-4-6|Architecture decisions, complex multi-step reasoning"
 
 # =============================================================================
 # Task-to-Model Recommendations
 # =============================================================================
 
-readonly TASK_RECOMMENDATIONS="code review|claude-sonnet-4|o4-mini|gemini-2.5-flash
-code implementation|claude-sonnet-4|gpt-4.1|gemini-2.5-pro
-architecture design|claude-opus-4|o3|gemini-2.5-pro
-bug fixing|claude-sonnet-4|gpt-4.1|o4-mini
-refactoring|claude-sonnet-4|gpt-4.1|gemini-2.5-pro
-documentation|claude-sonnet-4|gpt-4o|gemini-2.5-flash
-testing|claude-sonnet-4|gpt-4.1|o4-mini
-classification|claude-haiku-3.5|gpt-4.1-nano|gemini-2.5-flash
-summarization|gemini-2.5-flash|gpt-4o-mini|claude-haiku-3.5
-large codebase analysis|gemini-2.5-pro|gpt-4.1|claude-sonnet-4
+readonly TASK_RECOMMENDATIONS="code review|claude-sonnet-4-6|o4-mini|gemini-2.5-flash
+code implementation|claude-sonnet-4-6|gpt-4.1|gemini-2.5-pro
+architecture design|claude-opus-4-6|o3|gemini-2.5-pro
+bug fixing|claude-sonnet-4-6|gpt-4.1|o4-mini
+refactoring|claude-sonnet-4-6|gpt-4.1|gemini-2.5-pro
+documentation|claude-sonnet-4-6|gpt-4o|gemini-2.5-flash
+testing|claude-sonnet-4-6|gpt-4.1|o4-mini
+classification|claude-haiku-4-5|gpt-4.1-nano|gemini-2.5-flash
+summarization|gemini-2.5-flash|gpt-4o-mini|claude-haiku-4-5
+large codebase analysis|gemini-2.5-pro|gpt-4.1|claude-sonnet-4-6
 math reasoning|o3|deepseek-r1|gemini-2.5-pro
-security audit|claude-opus-4|o3|claude-sonnet-4
-data extraction|gemini-2.5-flash|gpt-4o-mini|claude-haiku-3.5
-commit messages|claude-haiku-3.5|gpt-4.1-nano|gemini-2.5-flash
-pr description|claude-sonnet-4|gpt-4o|gemini-2.5-flash"
+security audit|claude-opus-4-6|o3|claude-sonnet-4-6
+data extraction|gemini-2.5-flash|gpt-4o-mini|claude-haiku-4-5
+commit messages|claude-haiku-4-5|gpt-4.1-nano|gemini-2.5-flash
+pr description|claude-sonnet-4-6|gpt-4o|gemini-2.5-flash"
 
 # =============================================================================
 # Helper Functions
@@ -480,8 +480,8 @@ cmd_recommend() {
 	if [[ "$found" != "true" ]]; then
 		echo "No exact task match. Showing general recommendations:"
 		echo ""
-		echo "  High capability: claude-opus-4 or o3"
-		echo "  Balanced:        claude-sonnet-4 or gpt-4.1"
+		echo "  High capability: claude-opus-4-6 or o3"
+		echo "  Balanced:        claude-sonnet-4-6 or gpt-4.1"
 		echo "  Budget:          gemini-2.5-flash or gpt-4.1-nano"
 		echo "  Large context:   gemini-2.5-pro or gpt-4.1 (1M tokens)"
 		echo ""
@@ -1003,9 +1003,9 @@ cmd_help() {
 	echo ""
 	echo "Scoring examples:"
 	echo "  compare-models-helper.sh score --task 'fix React bug' --type code \\"
-	echo "    --model claude-sonnet-4 --correctness 9 --completeness 8 --quality 8 --clarity 9 --adherence 9 \\"
+	echo "    --model claude-sonnet-4-6 --correctness 9 --completeness 8 --quality 8 --clarity 9 --adherence 9 \\"
 	echo "    --model gpt-4.1 --correctness 8 --completeness 7 --quality 7 --clarity 8 --adherence 8 \\"
-	echo "    --winner claude-sonnet-4"
+	echo "    --winner claude-sonnet-4-6"
 	echo "  compare-models-helper.sh results"
 	echo "  compare-models-helper.sh results --model sonnet --limit 5"
 	echo ""
@@ -1441,8 +1441,8 @@ SQL
 }
 
 # Record a comparison result
-# Usage: cmd_score --task "description" --type "code" --evaluator "claude-opus-4" \
-#        --model "claude-sonnet-4" --correctness 9 --completeness 8 --quality 7 \
+# Usage: cmd_score --task "description" --type "code" --evaluator "claude-opus-4-6" \
+#        --model "claude-sonnet-4-6" --correctness 9 --completeness 8 --quality 7 \
 #        --clarity 8 --adherence 9 --latency 1200 --tokens 500 \
 #        --strengths "Fast, accurate" --weaknesses "Verbose" \
 #        [--model "gpt-4.1" --correctness 8 ...]
