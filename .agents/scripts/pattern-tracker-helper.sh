@@ -26,6 +26,51 @@ readonly SCRIPT_DIR
 readonly MEMORY_HELPER="$SCRIPT_DIR/memory-helper.sh"
 readonly MEMORY_DB="${AIDEVOPS_MEMORY_DIR:-$HOME/.aidevops/.agent-workspace/memory}/memory.db"
 
+# Model tier pricing (USD per 1M tokens) — input/output rates (t1114)
+# Sources: Anthropic, OpenAI, Google official pricing pages (Feb 2026)
+# Format: tier:input_per_1m:output_per_1m
+readonly TIER_PRICING="haiku:0.80:4.00 flash:0.15:0.60 sonnet:3.00:15.00 pro:3.50:10.50 opus:15.00:75.00"
+
+#######################################
+# Calculate estimated cost in USD from token counts and model tier (t1114)
+# $1: model_tier (haiku|flash|sonnet|pro|opus)
+# $2: tokens_in (integer)
+# $3: tokens_out (integer)
+# Outputs: cost as decimal string (e.g. "0.012345") or empty if unknown
+#######################################
+calc_estimated_cost() {
+	local tier="$1"
+	local tokens_in="${2:-0}"
+	local tokens_out="${3:-0}"
+
+	if [[ -z "$tier" || "$tokens_in" -eq 0 && "$tokens_out" -eq 0 ]]; then
+		return 0
+	fi
+
+	local pricing_entry=""
+	local t
+	for t in $TIER_PRICING; do
+		if [[ "$t" == "${tier}:"* ]]; then
+			pricing_entry="$t"
+			break
+		fi
+	done
+
+	if [[ -z "$pricing_entry" ]]; then
+		return 0
+	fi
+
+	# Parse input_rate and output_rate from "tier:in:out"
+	local input_rate output_rate
+	input_rate=$(echo "$pricing_entry" | cut -d: -f2)
+	output_rate=$(echo "$pricing_entry" | cut -d: -f3)
+
+	# Calculate: (tokens_in * input_rate + tokens_out * output_rate) / 1_000_000
+	awk -v ti="$tokens_in" -v to="$tokens_out" -v ir="$input_rate" -v or="$output_rate" \
+		'BEGIN { printf "%.6f", (ti * ir + to * or) / 1000000 }'
+	return 0
+}
+
 # All pattern-related memory types — sourced from shared-constants.sh
 # Use via: local types_sql="$PATTERN_TYPES" then sqlite3 ... "$types_sql" ...
 # Or inline in single-line sqlite3 calls where variable expansion works correctly
@@ -93,6 +138,7 @@ cmd_record() {
 	local failure_mode=""
 	local tokens_in=""
 	local tokens_out=""
+	local estimated_cost=""
 	local quality_score=""
 
 	while [[ $# -gt 0 ]]; do
@@ -149,6 +195,10 @@ cmd_record() {
 			tokens_out="$2"
 			shift 2
 			;;
+		--estimated-cost)
+			estimated_cost="$2"
+			shift 2
+			;; # t1114: explicit cost override (USD)
 		--quality-score)
 			quality_score="$2"
 			shift 2
@@ -254,6 +304,17 @@ cmd_record() {
 		return 1
 	fi
 
+	# Auto-calculate estimated_cost from token counts + model tier if not provided (t1114)
+	if [[ -z "$estimated_cost" && -n "$model" && (-n "$tokens_in" || -n "$tokens_out") ]]; then
+		estimated_cost=$(calc_estimated_cost "$model" "${tokens_in:-0}" "${tokens_out:-0}" 2>/dev/null || true)
+	fi
+
+	# Validate estimated_cost if provided
+	if [[ -n "$estimated_cost" ]] && ! echo "$estimated_cost" | grep -qE '^[0-9]+(\.[0-9]+)?$'; then
+		log_warn "estimated_cost must be a non-negative number — ignoring: $estimated_cost"
+		estimated_cost=""
+	fi
+
 	# Build tags
 	local all_tags="pattern"
 	[[ -n "$task_type" ]] && all_tags="$all_tags,$task_type"
@@ -289,19 +350,21 @@ cmd_record() {
 		--confidence "high" 2>/dev/null) || true
 	mem_id=$(echo "$store_output" | grep -oE '^mem_[0-9]{14}_[0-9a-f]+$' | tail -1)
 
-	# Store extended metadata in pattern_metadata table (t1095)
+	# Store extended metadata in pattern_metadata table (t1095, t1114)
 	if [[ -n "$mem_id" ]] && [[ "$mem_id" == mem_* ]]; then
 		local sql_strategy="${strategy:-normal}"
 		local sql_quality="NULL"
 		local sql_failure_mode="NULL"
 		local sql_tokens_in="NULL"
 		local sql_tokens_out="NULL"
+		local sql_estimated_cost="NULL"
 		[[ -n "$quality" ]] && sql_quality="'$quality'"
 		[[ -n "$failure_mode" ]] && sql_failure_mode="'$failure_mode'"
 		[[ -n "$tokens_in" ]] && sql_tokens_in="$tokens_in"
 		[[ -n "$tokens_out" ]] && sql_tokens_out="$tokens_out"
+		[[ -n "$estimated_cost" ]] && sql_estimated_cost="$estimated_cost"
 
-		sqlite3 "$MEMORY_DB" "INSERT OR REPLACE INTO pattern_metadata (id, strategy, quality, failure_mode, tokens_in, tokens_out) VALUES ('$mem_id', '$sql_strategy', $sql_quality, $sql_failure_mode, $sql_tokens_in, $sql_tokens_out);" 2>/dev/null || log_warn "Failed to store pattern metadata for $mem_id"
+		sqlite3 "$MEMORY_DB" "INSERT OR REPLACE INTO pattern_metadata (id, strategy, quality, failure_mode, tokens_in, tokens_out, estimated_cost) VALUES ('$mem_id', '$sql_strategy', $sql_quality, $sql_failure_mode, $sql_tokens_in, $sql_tokens_out, $sql_estimated_cost);" 2>/dev/null || log_warn "Failed to store pattern metadata for $mem_id"
 	fi
 
 	log_success "Recorded $outcome pattern: $description"
@@ -704,16 +767,19 @@ cmd_stats() {
 				echo "      (none recorded)"
 			fi
 
-			# Token usage summary
+			# Token usage and cost summary (t1114)
 			local token_stats
-			token_stats=$(sqlite3 -separator '|' "$MEMORY_DB" "SELECT COUNT(*), COALESCE(SUM(tokens_in),0), COALESCE(SUM(tokens_out),0), COALESCE(AVG(tokens_in),0), COALESCE(AVG(tokens_out),0) FROM pattern_metadata WHERE tokens_in IS NOT NULL OR tokens_out IS NOT NULL;" 2>/dev/null || echo "")
+			token_stats=$(sqlite3 -separator '|' "$MEMORY_DB" "SELECT COUNT(*), COALESCE(SUM(tokens_in),0), COALESCE(SUM(tokens_out),0), COALESCE(AVG(tokens_in),0), COALESCE(AVG(tokens_out),0), COALESCE(SUM(estimated_cost),0), COALESCE(AVG(estimated_cost),0) FROM pattern_metadata WHERE tokens_in IS NOT NULL OR tokens_out IS NOT NULL;" 2>/dev/null || echo "")
 			if [[ -n "$token_stats" ]]; then
-				local tk_count tk_in_sum tk_out_sum tk_in_avg tk_out_avg
-				IFS='|' read -r tk_count tk_in_sum tk_out_sum tk_in_avg tk_out_avg <<<"$token_stats"
+				local tk_count tk_in_sum tk_out_sum tk_in_avg tk_out_avg tk_cost_sum tk_cost_avg
+				IFS='|' read -r tk_count tk_in_sum tk_out_sum tk_in_avg tk_out_avg tk_cost_sum tk_cost_avg <<<"$token_stats"
 				if [[ "$tk_count" -gt 0 ]]; then
 					echo "    Token usage ($tk_count records with data):"
 					printf "      Total in:  %d  |  Total out: %d\n" "$tk_in_sum" "$tk_out_sum"
 					printf "      Avg in:    %.0f  |  Avg out:   %.0f\n" "$tk_in_avg" "$tk_out_avg"
+					if awk "BEGIN{exit !($tk_cost_sum > 0)}" 2>/dev/null; then
+						printf "      Total cost: \$%.4f  |  Avg cost: \$%.4f\n" "$tk_cost_sum" "$tk_cost_avg"
+					fi
 				fi
 			fi
 			echo ""
@@ -752,7 +818,7 @@ cmd_export() {
 	json)
 		local query
 		if [[ "$has_pm_table" -gt 0 ]]; then
-			query="SELECT l.id, l.type, l.content, l.tags, l.confidence, l.created_at, COALESCE(a.access_count, 0) as access_count, pm.strategy, pm.quality, pm.failure_mode, pm.tokens_in, pm.tokens_out FROM learnings l LEFT JOIN learning_access a ON l.id = a.id LEFT JOIN pattern_metadata pm ON l.id = pm.id WHERE l.type IN ($types_sql) ORDER BY l.created_at DESC;"
+			query="SELECT l.id, l.type, l.content, l.tags, l.confidence, l.created_at, COALESCE(a.access_count, 0) as access_count, pm.strategy, pm.quality, pm.failure_mode, pm.tokens_in, pm.tokens_out, pm.estimated_cost FROM learnings l LEFT JOIN learning_access a ON l.id = a.id LEFT JOIN pattern_metadata pm ON l.id = pm.id WHERE l.type IN ($types_sql) ORDER BY l.created_at DESC;"
 		else
 			query="SELECT l.id, l.type, l.content, l.tags, l.confidence, l.created_at, COALESCE(a.access_count, 0) as access_count FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.type IN ($types_sql) ORDER BY l.created_at DESC;"
 		fi
@@ -761,8 +827,8 @@ cmd_export() {
 	csv)
 		local csv_query
 		if [[ "$has_pm_table" -gt 0 ]]; then
-			echo "id,type,content,tags,confidence,created_at,access_count,strategy,quality,failure_mode,tokens_in,tokens_out"
-			csv_query="SELECT l.id, l.type, l.content, l.tags, l.confidence, l.created_at, COALESCE(a.access_count, 0), pm.strategy, pm.quality, pm.failure_mode, pm.tokens_in, pm.tokens_out FROM learnings l LEFT JOIN learning_access a ON l.id = a.id LEFT JOIN pattern_metadata pm ON l.id = pm.id WHERE l.type IN ($types_sql) ORDER BY l.created_at DESC;"
+			echo "id,type,content,tags,confidence,created_at,access_count,strategy,quality,failure_mode,tokens_in,tokens_out,estimated_cost"
+			csv_query="SELECT l.id, l.type, l.content, l.tags, l.confidence, l.created_at, COALESCE(a.access_count, 0), pm.strategy, pm.quality, pm.failure_mode, pm.tokens_in, pm.tokens_out, pm.estimated_cost FROM learnings l LEFT JOIN learning_access a ON l.id = a.id LEFT JOIN pattern_metadata pm ON l.id = pm.id WHERE l.type IN ($types_sql) ORDER BY l.created_at DESC;"
 		else
 			echo "id,type,content,tags,confidence,created_at,access_count"
 			csv_query="SELECT l.id, l.type, l.content, l.tags, l.confidence, l.created_at, COALESCE(a.access_count, 0) FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.type IN ($types_sql) ORDER BY l.created_at DESC;"
@@ -1090,6 +1156,196 @@ cmd_label_stats() {
 }
 
 #######################################
+# ROI analysis: cost-per-task-type and tier comparison (t1114)
+# Answers: does opus's higher success rate justify 10-15x cost for chore tasks?
+#######################################
+cmd_roi() {
+	local task_type=""
+	local min_samples=3
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--task-type)
+			task_type="$2"
+			shift 2
+			;;
+		--min-samples)
+			min_samples="$2"
+			shift 2
+			;;
+		*) shift ;;
+		esac
+	done
+
+	ensure_db || {
+		echo ""
+		echo -e "${CYAN}=== ROI Analysis ===${NC}"
+		echo ""
+		echo "  No pattern data available. Record patterns with --tokens-in/--tokens-out to enable ROI analysis."
+		echo ""
+		return 0
+	}
+
+	# Check if estimated_cost column exists
+	local has_cost_col
+	has_cost_col=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM pragma_table_info('pattern_metadata') WHERE name='estimated_cost';" 2>/dev/null || echo "0")
+	if [[ "$has_cost_col" == "0" ]]; then
+		echo ""
+		echo -e "${YELLOW}[WARN]${NC} estimated_cost column not yet in pattern_metadata. Run 'memory-helper.sh store' to trigger migration."
+		echo ""
+		return 0
+	fi
+
+	echo ""
+	echo -e "${CYAN}=== ROI Analysis: Cost vs Success Rate by Model Tier ===${NC}"
+	[[ -n "$task_type" ]] && echo -e "  Task type: ${WHITE}$task_type${NC}"
+	echo ""
+
+	# Build task type filter
+	local type_filter=""
+	if [[ -n "$task_type" ]]; then
+		local escaped_type
+		escaped_type=$(sql_escape "$task_type")
+		type_filter="AND (l.tags LIKE '%${escaped_type}%' OR l.content LIKE '%task:${escaped_type}%')"
+	fi
+
+	# Per-tier ROI table
+	printf "  %-10s %8s %8s %8s %10s %12s %14s\n" \
+		"Tier" "Success" "Failure" "Rate%" "Avg Cost" "Total Cost" "Cost/Success"
+	printf "  %-10s %8s %8s %8s %10s %12s %14s\n" \
+		"----" "-------" "-------" "-----" "--------" "----------" "------------"
+
+	local has_any_data=false
+
+	for tier in $VALID_MODELS; do
+		local tier_filter="AND (l.tags LIKE '%model:${tier}%' OR l.content LIKE '%model:${tier}%')"
+
+		local successes failures avg_cost total_cost
+		successes=$(sqlite3 "$MEMORY_DB" "
+			SELECT COUNT(*) FROM learnings l
+			WHERE l.type IN ('SUCCESS_PATTERN', 'WORKING_SOLUTION')
+			$tier_filter $type_filter;" 2>/dev/null || echo "0")
+		failures=$(sqlite3 "$MEMORY_DB" "
+			SELECT COUNT(*) FROM learnings l
+			WHERE l.type IN ('FAILURE_PATTERN', 'FAILED_APPROACH', 'ERROR_FIX')
+			$tier_filter $type_filter;" 2>/dev/null || echo "0")
+		avg_cost=$(sqlite3 "$MEMORY_DB" "
+			SELECT COALESCE(AVG(pm.estimated_cost), 0)
+			FROM learnings l
+			LEFT JOIN pattern_metadata pm ON l.id = pm.id
+			WHERE l.type IN ('SUCCESS_PATTERN','WORKING_SOLUTION','FAILURE_PATTERN','FAILED_APPROACH','ERROR_FIX')
+			AND pm.estimated_cost IS NOT NULL
+			$tier_filter $type_filter;" 2>/dev/null || echo "0")
+		total_cost=$(sqlite3 "$MEMORY_DB" "
+			SELECT COALESCE(SUM(pm.estimated_cost), 0)
+			FROM learnings l
+			LEFT JOIN pattern_metadata pm ON l.id = pm.id
+			WHERE l.type IN ('SUCCESS_PATTERN','WORKING_SOLUTION','FAILURE_PATTERN','FAILED_APPROACH','ERROR_FIX')
+			AND pm.estimated_cost IS NOT NULL
+			$tier_filter $type_filter;" 2>/dev/null || echo "0")
+
+		local total=$((successes + failures))
+		if [[ "$total" -lt "$min_samples" ]]; then
+			continue
+		fi
+
+		has_any_data=true
+		local rate
+		rate=$(((successes * 100) / total))
+
+		# Cost per successful task (avoid division by zero)
+		local cost_per_success="N/A"
+		if [[ "$successes" -gt 0 ]] && awk "BEGIN{exit !($total_cost > 0)}" 2>/dev/null; then
+			cost_per_success=$(awk -v tc="$total_cost" -v s="$successes" 'BEGIN{printf "$%.4f", tc/s}')
+		fi
+
+		local avg_cost_fmt="N/A"
+		if awk "BEGIN{exit !($avg_cost > 0)}" 2>/dev/null; then
+			avg_cost_fmt=$(awk -v c="$avg_cost" 'BEGIN{printf "$%.4f", c}')
+		fi
+
+		local total_cost_fmt="N/A"
+		if awk "BEGIN{exit !($total_cost > 0)}" 2>/dev/null; then
+			total_cost_fmt=$(awk -v c="$total_cost" 'BEGIN{printf "$%.4f", c}')
+		fi
+
+		printf "  %-10s %8d %8d %7d%% %10s %12s %14s\n" \
+			"$tier" "$successes" "$failures" "$rate" \
+			"$avg_cost_fmt" "$total_cost_fmt" "$cost_per_success"
+	done
+
+	if [[ "$has_any_data" == false ]]; then
+		echo "  No data with cost information yet (min $min_samples samples per tier required)."
+		echo ""
+		echo "  Cost data is populated when patterns are recorded with:"
+		echo "    --tokens-in N --tokens-out N --model <tier>"
+		echo "  or explicitly with --estimated-cost N.NNNN"
+		echo ""
+		echo "  The supervisor auto-populates this from worker evaluation logs."
+		echo ""
+		return 0
+	fi
+
+	echo ""
+
+	# Tier pricing reference table
+	echo -e "${CYAN}Model Tier Pricing Reference (USD per 1M tokens):${NC}"
+	printf "  %-10s %12s %13s\n" "Tier" "Input/1M" "Output/1M"
+	printf "  %-10s %12s %13s\n" "----" "--------" "---------"
+	for t in $TIER_PRICING; do
+		local t_name t_in t_out
+		t_name=$(echo "$t" | cut -d: -f1)
+		t_in=$(echo "$t" | cut -d: -f2)
+		t_out=$(echo "$t" | cut -d: -f3)
+		printf "  %-10s %12s %13s\n" "$t_name" "\$$t_in" "\$$t_out"
+	done
+	echo ""
+
+	# ROI verdict: compare sonnet vs opus cost-per-success
+	local sonnet_cps opus_cps
+	sonnet_cps=$(sqlite3 "$MEMORY_DB" "
+		SELECT CASE WHEN COUNT(*) > 0 AND SUM(pm.estimated_cost) > 0
+			THEN SUM(pm.estimated_cost) / COUNT(*)
+			ELSE 0 END
+		FROM learnings l
+		LEFT JOIN pattern_metadata pm ON l.id = pm.id
+		WHERE l.type IN ('SUCCESS_PATTERN', 'WORKING_SOLUTION')
+		AND pm.estimated_cost IS NOT NULL
+		AND (l.tags LIKE '%model:sonnet%' OR l.content LIKE '%model:sonnet%')
+		$type_filter;" 2>/dev/null || echo "0")
+	opus_cps=$(sqlite3 "$MEMORY_DB" "
+		SELECT CASE WHEN COUNT(*) > 0 AND SUM(pm.estimated_cost) > 0
+			THEN SUM(pm.estimated_cost) / COUNT(*)
+			ELSE 0 END
+		FROM learnings l
+		LEFT JOIN pattern_metadata pm ON l.id = pm.id
+		WHERE l.type IN ('SUCCESS_PATTERN', 'WORKING_SOLUTION')
+		AND pm.estimated_cost IS NOT NULL
+		AND (l.tags LIKE '%model:opus%' OR l.content LIKE '%model:opus%')
+		$type_filter;" 2>/dev/null || echo "0")
+
+	if awk "BEGIN{exit !($sonnet_cps > 0 && $opus_cps > 0)}" 2>/dev/null; then
+		echo -e "${CYAN}Sonnet vs Opus ROI Verdict:${NC}"
+		local ratio
+		ratio=$(awk -v o="$opus_cps" -v s="$sonnet_cps" 'BEGIN{printf "%.1f", o/s}')
+		local sonnet_fmt opus_fmt
+		sonnet_fmt=$(awk -v c="$sonnet_cps" 'BEGIN{printf "$%.4f", c}')
+		opus_fmt=$(awk -v c="$opus_cps" 'BEGIN{printf "$%.4f", c}')
+		echo "  Sonnet cost/success: $sonnet_fmt"
+		echo "  Opus cost/success:   $opus_fmt"
+		echo "  Opus is ${ratio}x more expensive per successful task"
+		if awk "BEGIN{exit !($ratio > 5)}" 2>/dev/null; then
+			echo -e "  ${YELLOW}Verdict: Opus costs ${ratio}x more per success — use sonnet for routine tasks${NC}"
+		else
+			echo -e "  ${GREEN}Verdict: Opus premium is ${ratio}x — may be justified for complex tasks${NC}"
+		fi
+		echo ""
+	fi
+
+	return 0
+}
+
+#######################################
 # Show help
 #######################################
 cmd_help() {
@@ -1107,6 +1363,7 @@ COMMANDS:
     stats       Show pattern statistics (includes supervisor patterns)
     export      Export patterns as JSON or CSV
     report      Generate a comprehensive pattern report
+    roi         Cost-per-task-type and tier ROI analysis (t1114)
     label-stats Correlate GitHub issue labels with pattern data (t1010)
     help        Show this help
 
@@ -1127,6 +1384,7 @@ RECORD OPTIONS:
                                   TRANSIENT, RESOURCE, LOGIC, BLOCKED, AMBIGUOUS, NONE (t1096)
     --tokens-in <count>           Input token count (t1095)
     --tokens-out <count>          Output token count (t1095)
+    --estimated-cost <usd>        Explicit cost in USD (t1114; auto-calculated from tokens+model if omitted)
 
 ANALYZE OPTIONS:
     --task-type <type>            Filter by task type
@@ -1135,6 +1393,10 @@ ANALYZE OPTIONS:
 
 RECOMMEND OPTIONS:
     --task-type <type>            Filter recommendation by task type
+
+ROI OPTIONS:
+    --task-type <type>            Filter ROI analysis by task type
+    --min-samples <n>             Minimum samples per tier to include (default: 3)
 
 EXPORT OPTIONS:
     --format <json|csv>           Output format (default: json)
@@ -1185,6 +1447,17 @@ EXAMPLES:
 
     # View statistics
     pattern-tracker-helper.sh stats
+
+    # ROI analysis: cost vs success rate across model tiers (t1114)
+    pattern-tracker-helper.sh roi
+    pattern-tracker-helper.sh roi --task-type feature
+    pattern-tracker-helper.sh roi --task-type chore --min-samples 5
+
+    # Record with cost data (auto-calculated from tokens + model tier)
+    pattern-tracker-helper.sh record --outcome success \
+        --task-type feature --model sonnet --task-id t200 \
+        --tokens-in 15000 --tokens-out 8000 \
+        --description "Clean implementation, CI passed on first push"
 EOF
 	return 0
 }
@@ -1204,6 +1477,7 @@ main() {
 	stats) cmd_stats ;;
 	export) cmd_export "$@" ;;
 	report) cmd_report ;;
+	roi) cmd_roi "$@" ;;
 	label-stats) cmd_label_stats "$@" ;;
 	help | --help | -h) cmd_help ;;
 	*)

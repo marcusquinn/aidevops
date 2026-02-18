@@ -174,7 +174,8 @@ CREATE TABLE IF NOT EXISTS pattern_metadata (
     quality TEXT DEFAULT NULL CHECK(quality IS NULL OR quality IN ('ci-pass-first-try', 'ci-pass-after-fix', 'needs-human')),
     failure_mode TEXT DEFAULT NULL CHECK(failure_mode IS NULL OR failure_mode IN ('hallucination', 'context-miss', 'incomplete', 'wrong-file', 'timeout')),
     tokens_in INTEGER DEFAULT NULL,
-    tokens_out INTEGER DEFAULT NULL
+    tokens_out INTEGER DEFAULT NULL,
+    estimated_cost REAL DEFAULT NULL
 );
 EOF
 		# Backfill existing pattern records with default strategy='normal'
@@ -186,6 +187,14 @@ EOF
 			log_success "Backfilled $backfill_count existing pattern records into pattern_metadata"
 		fi
 		log_success "pattern_metadata table created (t1095)"
+	fi
+
+	# Add estimated_cost column to pattern_metadata if missing (t1114 migration)
+	local has_estimated_cost
+	has_estimated_cost=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM pragma_table_info('pattern_metadata') WHERE name='estimated_cost';" 2>/dev/null || echo "0")
+	if [[ "$has_estimated_cost" == "0" ]]; then
+		db "$MEMORY_DB" "ALTER TABLE pattern_metadata ADD COLUMN estimated_cost REAL DEFAULT NULL;" 2>/dev/null ||
+			echo "[WARN] Failed to add estimated_cost column (may already exist)" >&2
 	fi
 
 	return 0
@@ -283,15 +292,16 @@ CREATE TABLE IF NOT EXISTS learning_relations (
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
--- Extended pattern metadata (t1095) — companion table for pattern records
--- Stores structured fields that can't go in FTS5 (strategy, quality, failure_mode, tokens)
+-- Extended pattern metadata (t1095, t1114) — companion table for pattern records
+-- Stores structured fields that can't go in FTS5 (strategy, quality, failure_mode, tokens, cost)
 CREATE TABLE IF NOT EXISTS pattern_metadata (
     id TEXT PRIMARY KEY,
     strategy TEXT DEFAULT 'normal' CHECK(strategy IN ('normal', 'prompt-repeat', 'escalated')),
     quality TEXT DEFAULT NULL CHECK(quality IS NULL OR quality IN ('ci-pass-first-try', 'ci-pass-after-fix', 'needs-human')),
     failure_mode TEXT DEFAULT NULL CHECK(failure_mode IS NULL OR failure_mode IN ('hallucination', 'context-miss', 'incomplete', 'wrong-file', 'timeout')),
     tokens_in INTEGER DEFAULT NULL,
-    tokens_out INTEGER DEFAULT NULL
+    tokens_out INTEGER DEFAULT NULL,
+    estimated_cost REAL DEFAULT NULL
 );
 EOF
 		log_success "Database initialized with relational versioning support"
