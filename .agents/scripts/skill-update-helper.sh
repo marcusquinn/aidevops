@@ -501,14 +501,15 @@ cmd_pr_single() {
 			log_info "Using existing worktree: $worktree_path"
 		else
 			log_info "Creating worktree at: $worktree_path"
+			local wt_add_output
 			if git show-ref --verify --quiet "refs/heads/$branch_name" 2>/dev/null; then
-				git worktree add "$worktree_path" "$branch_name" 2>/dev/null || {
-					log_error "Failed to create worktree for $skill_name"
+				wt_add_output=$(git worktree add "$worktree_path" "$branch_name" 2>&1) || {
+					log_error "Failed to create worktree for $skill_name: ${wt_add_output}"
 					return 1
 				}
 			else
-				git worktree add -b "$branch_name" "$worktree_path" 2>/dev/null || {
-					log_error "Failed to create worktree for $skill_name"
+				wt_add_output=$(git worktree add -b "$branch_name" "$worktree_path" 2>&1) || {
+					log_error "Failed to create worktree for $skill_name: ${wt_add_output}"
 					return 1
 				}
 			fi
@@ -558,8 +559,9 @@ Previous: ${current_commit:0:12}
 Latest:   ${latest_commit:0:12}
 Updated:  ${timestamp}"
 
-	git -C "$worktree_path" commit -m "$commit_msg" --no-verify 2>/dev/null || {
-		log_error "Failed to commit changes for $skill_name"
+	local commit_output
+	commit_output=$(git -C "$worktree_path" commit -m "$commit_msg" --no-verify 2>&1) || {
+		log_error "Failed to commit changes for $skill_name: ${commit_output}"
 		_cleanup_worktree "$worktree_path" "$branch_name"
 		return 1
 	}
@@ -567,8 +569,9 @@ Updated:  ${timestamp}"
 	log_success "Committed skill update for $skill_name"
 
 	# Push the branch
-	git -C "$worktree_path" push -u origin "$branch_name" 2>/dev/null || {
-		log_error "Failed to push branch for $skill_name"
+	local push_output
+	push_output=$(git -C "$worktree_path" push -u origin "$branch_name" 2>&1) || {
+		log_error "Failed to push branch for $skill_name: ${push_output}"
 		return 1
 	}
 
@@ -608,17 +611,19 @@ PREOF
 	)
 
 	local pr_url
-	pr_url=$(gh pr create \
+	local pr_create_output
+	pr_create_output=$(gh pr create \
 		--head "$branch_name" \
 		--base "$default_branch" \
 		--title "$pr_title" \
 		--body "$pr_body" \
 		--repo "$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || echo '')" \
-		2>/dev/null) || {
-		log_error "Failed to create PR for $skill_name"
+		2>&1) || {
+		log_error "Failed to create PR for $skill_name: ${pr_create_output}"
 		log_info "Branch is pushed — create PR manually: gh pr create --head $branch_name"
 		return 1
 	}
+	pr_url="$pr_create_output"
 
 	log_success "PR created for $skill_name: $pr_url"
 	return 0
@@ -689,7 +694,7 @@ cmd_pr() {
 		fi
 
 		# Skip non-GitHub sources (ClawdHub, etc.) — no git commit to compare
-		if [[ "$upstream_url" != *"github.com"* && "$upstream_url" != *"github.com/"* ]]; then
+		if [[ "$upstream_url" != *"github.com"* ]]; then
 			if [[ "$QUIET" != true ]]; then
 				log_info "Skipping $name (non-GitHub source: ${upstream_url})"
 			fi
