@@ -134,9 +134,12 @@ restore_db() {
 }
 
 #######################################
-# Create the action_dedup_log table and indexes (t1138)
+# Create the action_dedup_log table and indexes (t1138, t1179)
 # Single source of truth for the schema — called by both init_db
 # (fresh databases) and ensure_db (migration of existing databases).
+# The state_hash column (t1179) stores a fingerprint of the target's state
+# at the time of action execution, enabling cycle-aware dedup that allows
+# re-execution when the target's state has changed.
 #######################################
 _create_action_dedup_log_schema() {
 	db "$SUPERVISOR_DB" <<'DEDUP_SCHEMA'
@@ -147,6 +150,7 @@ CREATE TABLE IF NOT EXISTS action_dedup_log (
     target          TEXT NOT NULL,
     status          TEXT NOT NULL DEFAULT 'executed'
                     CHECK(status IN ('executed', 'dedup_suppressed')),
+    state_hash      TEXT DEFAULT '',
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_action_dedup_type_target ON action_dedup_log(action_type, target);
@@ -622,6 +626,17 @@ CONTEST_SQL
 		log_info "Creating action_dedup_log table (t1138)..."
 		_create_action_dedup_log_schema
 		log_success "Created action_dedup_log table (t1138)"
+	fi
+
+	# Migrate: add state_hash column to action_dedup_log if missing (t1179)
+	# Enables cycle-aware dedup — tracks target state fingerprint so actions
+	# are only suppressed when the target's state hasn't changed.
+	local has_state_hash
+	has_state_hash=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('action_dedup_log') WHERE name='state_hash';" 2>/dev/null || echo "0")
+	if [[ "$has_state_hash" -eq 0 ]]; then
+		log_info "Migrating action_dedup_log: adding state_hash column (t1179)..."
+		db "$SUPERVISOR_DB" "ALTER TABLE action_dedup_log ADD COLUMN state_hash TEXT DEFAULT '';" 2>/dev/null || true
+		log_success "Added state_hash column to action_dedup_log (t1179)"
 	fi
 
 	# Prune old action_dedup_log entries (keep last 7 days)
