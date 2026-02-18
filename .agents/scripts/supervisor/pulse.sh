@@ -2224,8 +2224,9 @@ RULES:
 
 					# Step 2: Propagate global MODELS.md
 					if [[ "$global_generated" -eq 1 && -f "$global_models_tmp" ]]; then
-						cp "$global_models_tmp" "${models_repo_root}/MODELS.md" 2>/dev/null || true
-						if ! git -C "$models_repo_root" diff --quiet -- MODELS.md 2>/dev/null; then
+						if ! cp "$global_models_tmp" "${models_repo_root}/MODELS.md" 2>/dev/null; then
+							log_warn "  Phase 12: Failed to copy global MODELS.md to $models_repo_root"
+						elif ! git -C "$models_repo_root" diff --quiet -- MODELS.md 2>/dev/null; then
 							models_changed=1
 						fi
 					fi
@@ -2233,7 +2234,7 @@ RULES:
 					# Step 3: Generate per-repo MODELS-PERFORMANCE.md
 					local repo_name
 					repo_name=$(basename "$models_repo_root")
-					if "$generate_script" --mode performance --repo-filter "$repo_name" \
+					if "$generate_script" --mode performance --repo-path "$models_repo_root" \
 						--output "${models_repo_root}/MODELS-PERFORMANCE.md" --quiet 2>/dev/null; then
 						if ! git -C "$models_repo_root" diff --quiet -- MODELS-PERFORMANCE.md 2>/dev/null; then
 							models_changed=1
@@ -2249,7 +2250,7 @@ RULES:
 					# Commit and push if anything changed
 					if [[ "$models_changed" -eq 1 ]]; then
 						git -C "$models_repo_root" add MODELS.md MODELS-PERFORMANCE.md 2>/dev/null
-						git -C "$models_repo_root" commit -m "docs: update MODELS.md from aidevops (t1133)" --no-verify 2>/dev/null &&
+						git -C "$models_repo_root" commit -m "docs: update model files from aidevops (t1133)" --no-verify 2>/dev/null &&
 							git -C "$models_repo_root" push 2>/dev/null &&
 							log_info "  Phase 12: MODELS.md + MODELS-PERFORMANCE.md updated ($models_repo_root)" ||
 							log_warn "  Phase 12: Model files regenerated but commit/push failed ($models_repo_root)"
