@@ -307,17 +307,45 @@ ${user_prompt}"
 	local action_plan
 	action_plan=$(extract_action_plan "$ai_result")
 
-	# Retry once if parse failed on a non-empty response (t1187)
+	# Retry once if parse failed on a non-empty response (t1187, t1201)
 	# The AI model occasionally produces malformed or truncated JSON on the first
-	# attempt. A single retry resolves most transient failures without adding
-	# significant latency (the retry only fires when the first attempt fails).
+	# attempt (e.g., markdown-fenced JSON, empty response, preamble text before the
+	# array). A single retry with a simplified prompt resolves most transient failures
+	# without adding significant latency (the retry only fires when the first attempt
+	# fails). The simplified prompt strips the large context and explicitly reinforces
+	# "respond with ONLY a JSON array, no markdown fencing" (t1201).
 	if [[ -z "$action_plan" || "$action_plan" == "null" ]]; then
-		log_warn "AI Reasoning: parse failed on first attempt — retrying AI call once (t1187)"
+		log_warn "AI Reasoning: parse failed on first attempt — retrying with simplified JSON-only prompt (t1187, t1201)"
 		{
 			echo "## Parse Attempt 1"
 			echo ""
-			echo "Status: FAILED — retrying AI call"
+			echo "Status: FAILED — retrying with simplified JSON-only prompt"
 		} >>"$reason_log"
+
+		# Simplified retry prompt: strip the large context, keep only the output
+		# format requirement with explicit reinforcement against markdown fencing.
+		# This is more likely to produce clean JSON when the model returned empty
+		# output or markdown-wrapped JSON on the first attempt (t1201).
+		local simplified_retry_prompt
+		simplified_retry_prompt="$(
+			cat <<'SIMPLIFIED_PROMPT'
+You are an AI Engineering Manager. Your previous response could not be parsed as a JSON array.
+
+Respond with ONLY a JSON array of actions. No markdown fencing (no ```json or ```), no explanation, no preamble — just the raw JSON array starting with [ and ending with ].
+
+If you have no actions to propose, respond with exactly: []
+
+Valid action types: comment_on_issue, create_task, create_subtasks, flag_for_review, adjust_priority, close_verified, request_info, create_improvement, escalate_model, propose_auto_dispatch
+
+Example of correct output (raw JSON, no fencing):
+[{"type":"comment_on_issue","issue_number":123,"body":"Status update","reasoning":"Issue needs acknowledgment"}]
+
+Or if nothing needs attention:
+[]
+
+Respond with ONLY the JSON array. No markdown, no explanation, no code fences.
+SIMPLIFIED_PROMPT
+		)"
 
 		local ai_result_retry=""
 		if [[ "$ai_cli" == "opencode" ]]; then
@@ -325,12 +353,12 @@ ${user_prompt}"
 				-m "$ai_model" \
 				--format default \
 				--title "ai-supervisor-${timestamp}-retry" \
-				"$full_prompt" 2>/dev/null || echo "")
+				"$simplified_retry_prompt" 2>/dev/null || echo "")
 			ai_result_retry=$(printf '%s' "$ai_result_retry" | sed 's/\x1b\[[0-9;]*[mGKHF]//g; s/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b\]//g; s/\x07//g')
 		else
 			local claude_model_retry="${ai_model#*/}"
 			ai_result_retry=$(portable_timeout "$ai_timeout" claude \
-				-p "$full_prompt" \
+				-p "$simplified_retry_prompt" \
 				--model "$claude_model_retry" \
 				--output-format text 2>/dev/null || echo "")
 		fi
@@ -341,7 +369,7 @@ ${user_prompt}"
 			action_plan=$(extract_action_plan "$ai_result_retry")
 			{
 				echo ""
-				echo "## Parse Attempt 2 (retry)"
+				echo "## Parse Attempt 2 (simplified JSON-only prompt retry, t1201)"
 				echo ""
 				echo "Response length: $(printf '%s' "$ai_result_retry" | wc -c | tr -d ' ') bytes"
 				echo "Parse result: $([ -n "$action_plan" ] && echo "SUCCESS" || echo "FAILED")"
@@ -350,7 +378,7 @@ ${user_prompt}"
 			log_info "AI Reasoning: retry also returned empty response"
 			{
 				echo ""
-				echo "## Parse Attempt 2 (retry)"
+				echo "## Parse Attempt 2 (simplified JSON-only prompt retry, t1201)"
 				echo ""
 				echo "Response length: 0 bytes (empty)"
 				echo "Parse result: EMPTY — treating as empty action plan []"
@@ -631,7 +659,24 @@ extract_action_plan() {
 		fi
 	fi
 
-	# Try 4: Find the last JSON array in the response (between [ and ])
+	# Try 4a: Single-line JSON array — grep for lines starting with [ and parse directly.
+	# This handles the common case where the AI returns a single-line array possibly
+	# surrounded by preamble/postamble text (t1201).
+	local single_line_json
+	single_line_json=$(printf '%s' "$response" | grep -E '^[[:space:]]*\[' | tail -1)
+	if [[ -n "$single_line_json" ]]; then
+		parsed=$(printf '%s' "$single_line_json" | jq '.' 2>/dev/null)
+		if [[ $? -eq 0 && -n "$parsed" ]]; then
+			local sl_type
+			sl_type=$(printf '%s' "$parsed" | jq 'type' 2>/dev/null || echo "")
+			if [[ "$sl_type" == '"array"' ]]; then
+				printf '%s' "$parsed"
+				return 0
+			fi
+		fi
+	fi
+
+	# Try 4b: Find the last multi-line JSON array in the response (between [ and ])
 	# Handles both column-0 and indented arrays.
 	local bracket_json
 	bracket_json=$(printf '%s' "$response" | awk '
