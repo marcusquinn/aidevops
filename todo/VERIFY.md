@@ -1049,9 +1049,16 @@
   check: shellcheck .agents/scripts/supervisor/cron.sh
   check: file-exists .agents/scripts/supervisor/cron.sh
 
-- [ ] v120 t1082.3 Handle multi-skill batching — if multiple skills have u... | PR #1613 | merged:2026-02-18
+- [x] v120 t1082.3 Handle multi-skill batching — if multiple skills have u... | PR #1613 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/skill-update-helper.sh, .agents/scripts/supervisor/pulse.sh
   check: shellcheck .agents/scripts/skill-update-helper.sh
   check: file-exists .agents/scripts/skill-update-helper.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
+
+- [ ] v121 t1085.5 Pulse integration + scheduling — wire Phase 13 into pul... | PR #1617 | merged:2026-02-18
+  files: .agents/scripts/supervisor-helper.sh, .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/supervisor-helper.sh
+  check: file-exists .agents/scripts/supervisor-helper.sh
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
