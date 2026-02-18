@@ -884,6 +884,40 @@ record_evaluation_metadata() {
 
 	"$pattern_helper" record "${record_args[@]}" 2>/dev/null || true
 
+	# Record tier delta to budget-tracker for cost analysis (t1191)
+	# Only records when we have token data AND tier information, so the
+	# budget-tracker can calculate the cost difference between tiers.
+	if [[ -n "$tokens_in" || -n "$tokens_out" ]] && [[ -n "$actual_tier" ]]; then
+		local budget_helper="${SCRIPT_DIR}/../budget-tracker-helper.sh"
+		if [[ ! -x "$budget_helper" ]]; then
+			budget_helper="$HOME/.aidevops/agents/scripts/budget-tracker-helper.sh"
+		fi
+		if [[ -x "$budget_helper" ]]; then
+			# Look up the model string from DB for accurate cost calculation
+			local budget_model=""
+			if [[ -n "${SUPERVISOR_DB:-}" ]]; then
+				budget_model=$(db "$SUPERVISOR_DB" "SELECT model FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo "")
+			fi
+			[[ -z "$budget_model" ]] && budget_model="anthropic/claude-${actual_tier}-4"
+
+			local budget_provider="${budget_model%%/*}"
+			[[ -z "$budget_provider" ]] && budget_provider="anthropic"
+
+			local budget_args=(
+				--provider "$budget_provider"
+				--model "$budget_model"
+				--tier "$actual_tier"
+				--task "$task_id"
+			)
+			[[ -n "$tokens_in" ]] && budget_args+=(--input-tokens "$tokens_in")
+			[[ -n "$tokens_out" ]] && budget_args+=(--output-tokens "$tokens_out")
+			[[ -n "$requested_tier" ]] && budget_args+=(--requested-tier "$requested_tier")
+			[[ -n "$actual_tier" ]] && budget_args+=(--actual-tier "$actual_tier")
+
+			"$budget_helper" record "${budget_args[@]}" 2>/dev/null || true
+		fi
+	fi
+
 	return 0
 }
 

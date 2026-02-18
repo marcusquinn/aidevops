@@ -2288,6 +2288,57 @@ RULES:
 		log_verbose "  Phase 12: MODELS.md regen skipped (${models_md_remaining}s until next run)"
 	fi
 
+	# Phase 12b: Tier drift detection (t1191)
+	# Checks if tasks are consistently running at higher tiers than requested.
+	# Throttled to once per hour (same cadence as MODELS.md regen).
+	# Logs a warning when escalation rate exceeds 25%, error when >50%.
+	local tier_drift_interval=3600
+	local tier_drift_stamp="$SUPERVISOR_DIR/tier-drift-last-check"
+	local tier_drift_now
+	tier_drift_now=$(date +%s)
+	local tier_drift_last=0
+	if [[ -f "$tier_drift_stamp" ]]; then
+		tier_drift_last=$(cat "$tier_drift_stamp" 2>/dev/null || echo 0)
+	fi
+	local tier_drift_elapsed=$((tier_drift_now - tier_drift_last))
+	if [[ "$tier_drift_elapsed" -ge "$tier_drift_interval" ]]; then
+		local pattern_drift_helper="${SCRIPT_DIR}/../pattern-tracker-helper.sh"
+		local budget_drift_helper="${SCRIPT_DIR}/../budget-tracker-helper.sh"
+
+		# Pattern-tracker tier drift (memory-based)
+		if [[ -x "$pattern_drift_helper" ]]; then
+			local drift_summary
+			drift_summary=$("$pattern_drift_helper" tier-drift --summary --days 7 2>/dev/null) || drift_summary=""
+			if [[ -n "$drift_summary" ]]; then
+				# Extract escalation percentage
+				local drift_pct
+				drift_pct=$(echo "$drift_summary" | grep -oE '[0-9]+%' | head -1 | tr -d '%') || drift_pct="0"
+				if [[ "$drift_pct" -gt 50 ]]; then
+					log_warn "  Phase 12b: HIGH tier drift — $drift_summary"
+					log_warn "  Phase 12b: >50% of tasks escalating tier. Check SUPERVISOR_MODEL and model routing."
+				elif [[ "$drift_pct" -gt 25 ]]; then
+					log_info "  Phase 12b: Moderate tier drift — $drift_summary"
+				else
+					log_verbose "  Phase 12b: Tier drift normal — $drift_summary"
+				fi
+			fi
+		fi
+
+		# Budget-tracker tier drift (cost-based)
+		if [[ -x "$budget_drift_helper" ]]; then
+			local budget_drift_summary
+			budget_drift_summary=$("$budget_drift_helper" tier-drift --summary --days 7 2>/dev/null) || budget_drift_summary=""
+			if [[ -n "$budget_drift_summary" ]]; then
+				log_verbose "  Phase 12b: $budget_drift_summary"
+			fi
+		fi
+
+		echo "$tier_drift_now" >"$tier_drift_stamp" 2>/dev/null || true
+	else
+		local tier_drift_remaining=$((tier_drift_interval - tier_drift_elapsed))
+		log_verbose "  Phase 12b: Tier drift check skipped (${tier_drift_remaining}s until next run)"
+	fi
+
 	# Phase 13: Skill update PR pipeline (t1082.2, t1082.3)
 	# Optional phase — disabled by default. Enable via SUPERVISOR_SKILL_UPDATE_PR=true.
 	# Runs skill-update-helper.sh pr on a configurable schedule (default: daily).

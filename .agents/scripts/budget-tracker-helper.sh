@@ -161,6 +161,13 @@ init_db() {
 		print_error "Failed to initialize budget tracker database"
 		return 1
 	}
+
+	# Schema migration: add tier tracking columns (t1191)
+	# SQLite ALTER TABLE ADD COLUMN is idempotent-safe (errors if exists, which we suppress)
+	sqlite3 "$BUDGET_DB" "ALTER TABLE spend_events ADD COLUMN requested_tier TEXT DEFAULT '';" 2>/dev/null || true
+	sqlite3 "$BUDGET_DB" "ALTER TABLE spend_events ADD COLUMN actual_tier TEXT DEFAULT '';" 2>/dev/null || true
+	sqlite3 "$BUDGET_DB" "CREATE INDEX IF NOT EXISTS idx_spend_events_tier_drift ON spend_events(requested_tier, actual_tier) WHERE requested_tier != '' AND actual_tier != '' AND requested_tier != actual_tier;" 2>/dev/null || true
+
 	return 0
 }
 
@@ -289,6 +296,7 @@ get_billing_type() {
 cmd_record() {
 	local provider="" model="" tier="" task_id=""
 	local input_tokens=0 output_tokens=0 cost_override=""
+	local requested_tier="" actual_tier=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -320,6 +328,14 @@ cmd_record() {
 			cost_override="${2:-}"
 			shift 2
 			;;
+		--requested-tier)
+			requested_tier="${2:-}"
+			shift 2
+			;; # t1191: tier from TODO.md model: tag
+		--actual-tier)
+			actual_tier="${2:-}"
+			shift 2
+			;; # t1191: tier actually used after resolution
 		*)
 			shift
 			;;
@@ -347,9 +363,9 @@ cmd_record() {
 	local today
 	today=$(date -u +%Y-%m-%d)
 
-	# Insert spend event
+	# Insert spend event (t1191: includes requested/actual tier for drift tracking)
 	db_query "
-		INSERT INTO spend_events (provider, model, tier, task_id, input_tokens, output_tokens, cost_usd)
+		INSERT INTO spend_events (provider, model, tier, task_id, input_tokens, output_tokens, cost_usd, requested_tier, actual_tier)
 		VALUES (
 			'$(sql_escape "$provider")',
 			'$(sql_escape "$model")',
@@ -357,7 +373,9 @@ cmd_record() {
 			'$(sql_escape "$task_id")',
 			$input_tokens,
 			$output_tokens,
-			$cost_usd
+			$cost_usd,
+			'$(sql_escape "$requested_tier")',
+			'$(sql_escape "$actual_tier")'
 		);
 	"
 
@@ -1322,6 +1340,187 @@ budget_preferred_provider() {
 }
 
 # =============================================================================
+# Tier drift cost analysis (t1191)
+# =============================================================================
+
+#######################################
+# Analyze cost impact of tier escalation from spend_events.
+# Shows how much extra was spent due to tasks running at a higher tier
+# than originally requested.
+#
+# Options:
+#   --days <n>     Look back N days (default: 30)
+#   --json         Output as JSON
+#   --summary      One-line summary for pulse cycle
+#######################################
+cmd_tier_drift() {
+	local days=30
+	local json_output=false
+	local summary_only=false
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--days)
+			days="${2:-30}"
+			shift 2
+			;;
+		--json)
+			json_output=true
+			shift
+			;;
+		--summary)
+			summary_only=true
+			shift
+			;;
+		*)
+			shift
+			;;
+		esac
+	done
+
+	local cutoff_date
+	cutoff_date=$(date -u -v-"${days}d" +%Y-%m-%d 2>/dev/null) ||
+		cutoff_date=$(date -u -d "${days} days ago" +%Y-%m-%d 2>/dev/null) ||
+		cutoff_date="2000-01-01"
+
+	# Total events with tier tracking
+	local total_tracked
+	total_tracked=$(db_query "
+		SELECT COUNT(*) FROM spend_events
+		WHERE actual_tier != '' AND recorded_at >= '${cutoff_date}';
+	")
+	total_tracked="${total_tracked:-0}"
+
+	# Events where tier escalated
+	local escalated_count
+	escalated_count=$(db_query "
+		SELECT COUNT(*) FROM spend_events
+		WHERE requested_tier != '' AND actual_tier != ''
+		AND requested_tier != actual_tier
+		AND recorded_at >= '${cutoff_date}';
+	")
+	escalated_count="${escalated_count:-0}"
+
+	# Total cost of escalated events
+	local escalated_cost
+	escalated_cost=$(db_query "
+		SELECT COALESCE(ROUND(SUM(cost_usd), 2), 0) FROM spend_events
+		WHERE requested_tier != '' AND actual_tier != ''
+		AND requested_tier != actual_tier
+		AND recorded_at >= '${cutoff_date}';
+	")
+	escalated_cost="${escalated_cost:-0}"
+
+	# Estimate what the cost WOULD have been at the requested tier
+	# Uses the pricing ratios: opus=$15+$75/1M, sonnet=$3+$15/1M, haiku=$0.80+$4/1M
+	local estimated_savings
+	estimated_savings=$(db_query "
+		SELECT COALESCE(ROUND(SUM(
+			cost_usd - (cost_usd *
+				CASE requested_tier
+					WHEN 'haiku' THEN (0.80 + 4.00)
+					WHEN 'flash' THEN (0.15 + 0.60)
+					WHEN 'sonnet' THEN (3.00 + 15.00)
+					WHEN 'pro' THEN (3.50 + 10.50)
+					WHEN 'opus' THEN (15.00 + 75.00)
+					ELSE (3.00 + 15.00)
+				END /
+				CASE actual_tier
+					WHEN 'haiku' THEN (0.80 + 4.00)
+					WHEN 'flash' THEN (0.15 + 0.60)
+					WHEN 'sonnet' THEN (3.00 + 15.00)
+					WHEN 'pro' THEN (3.50 + 10.50)
+					WHEN 'opus' THEN (15.00 + 75.00)
+					ELSE (15.00 + 75.00)
+				END
+			)
+		), 2), 0)
+		FROM spend_events
+		WHERE requested_tier != '' AND actual_tier != ''
+		AND requested_tier != actual_tier
+		AND recorded_at >= '${cutoff_date}';
+	")
+	estimated_savings="${estimated_savings:-0}"
+
+	# Breakdown by drift direction
+	local drift_breakdown
+	drift_breakdown=$(db_query "
+		SELECT requested_tier || '->' || actual_tier, COUNT(*), ROUND(SUM(cost_usd), 2)
+		FROM spend_events
+		WHERE requested_tier != '' AND actual_tier != ''
+		AND requested_tier != actual_tier
+		AND recorded_at >= '${cutoff_date}'
+		GROUP BY requested_tier, actual_tier
+		ORDER BY COUNT(*) DESC;
+	")
+
+	# Escalation rate
+	local escalation_pct=0
+	if [[ "$total_tracked" -gt 0 ]]; then
+		escalation_pct=$(awk -v e="$escalated_count" -v t="$total_tracked" 'BEGIN { printf "%.0f", (e / t) * 100 }')
+	fi
+
+	if [[ "$summary_only" == true ]]; then
+		echo "budget_tier_drift: ${escalated_count}/${total_tracked} escalated (${escalation_pct}%) in ${days}d, extra_cost=\$${estimated_savings}"
+		return 0
+	fi
+
+	if [[ "$json_output" == true ]]; then
+		local drift_json="[]"
+		if [[ -n "$drift_breakdown" ]]; then
+			drift_json="["
+			local first=true
+			while IFS='|' read -r delta cnt cost; do
+				[[ -z "$delta" ]] && continue
+				[[ "$first" == true ]] && first=false || drift_json="${drift_json},"
+				drift_json="${drift_json}{\"delta\":\"${delta}\",\"count\":${cnt},\"cost_usd\":${cost}}"
+			done <<<"$drift_breakdown"
+			drift_json="${drift_json}]"
+		fi
+
+		cat <<ENDJSON
+{
+  "period_days": $days,
+  "total_tracked": $total_tracked,
+  "escalated_count": $escalated_count,
+  "escalation_pct": $escalation_pct,
+  "escalated_cost_usd": $escalated_cost,
+  "estimated_savings_usd": $estimated_savings,
+  "drift_breakdown": $drift_json
+}
+ENDJSON
+		return 0
+	fi
+
+	echo "=== Budget Tier Drift Analysis (last ${days} days) ==="
+	echo ""
+	echo "Total spend events with tier tracking: $total_tracked"
+	echo "Escalated (requested != actual):       $escalated_count (${escalation_pct}%)"
+	echo "Cost of escalated events:              \$${escalated_cost}"
+	echo "Estimated savings at requested tier:   \$${estimated_savings}"
+	echo ""
+
+	if [[ -n "$drift_breakdown" ]]; then
+		echo "Escalation breakdown:"
+		printf "  %-20s %-8s %s\n" "Direction" "Count" "Cost"
+		while IFS='|' read -r delta cnt cost; do
+			[[ -z "$delta" ]] && continue
+			printf "  %-20s %-8s \$%s\n" "$delta" "$cnt" "$cost"
+		done <<<"$drift_breakdown"
+		echo ""
+	fi
+
+	if [[ "$escalation_pct" -gt 50 ]]; then
+		echo "WARNING: >50% tier escalation rate — significant cost drift detected."
+		echo "  Check SUPERVISOR_MODEL env var and resolve_task_model() priority chain."
+	elif [[ "$escalation_pct" -gt 25 ]]; then
+		echo "NOTICE: >25% tier escalation rate — review model routing configuration."
+	fi
+
+	return 0
+}
+
+# =============================================================================
 # Help
 # =============================================================================
 
@@ -1341,6 +1540,7 @@ cmd_help() {
 	echo "  configure-period    Set subscription period for a provider"
 	echo "  reset [provider]    Reset daily counters"
 	echo "  burn-rate [prov]    Calculate burn rate and time-to-exhaustion"
+	echo "  tier-drift          Analyze cost impact of tier escalation (t1191)"
 	echo "  help                Show this help"
 	echo ""
 	echo "Record options:"
@@ -1351,6 +1551,8 @@ cmd_help() {
 	echo "  --input-tokens N    Input token count"
 	echo "  --output-tokens N   Output token count"
 	echo "  --cost N            Override calculated cost (USD)"
+	echo "  --requested-tier X  Tier originally requested (t1191)"
+	echo "  --actual-tier X     Tier actually used after resolution (t1191)"
 	echo ""
 	echo "Configure options:"
 	echo "  --billing-type X    token or subscription"
@@ -1384,6 +1586,11 @@ cmd_help() {
 	echo ""
 	echo "  # Show burn rate"
 	echo "  budget-tracker-helper.sh burn-rate anthropic"
+	echo ""
+	echo "  # Tier drift cost analysis (t1191)"
+	echo "  budget-tracker-helper.sh tier-drift"
+	echo "  budget-tracker-helper.sh tier-drift --days 7 --json"
+	echo "  budget-tracker-helper.sh tier-drift --summary"
 	echo ""
 	echo "Dispatch integration:"
 	echo "  # In dispatch.sh, before model resolution:"
@@ -1438,6 +1645,9 @@ main() {
 		;;
 	budget-preferred-provider | budget_preferred_provider)
 		budget_preferred_provider "$@"
+		;;
+	tier-drift | tier_drift)
+		cmd_tier_drift "$@"
 		;;
 	prune)
 		_prune_old_data
