@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2034,SC1090
+# SC2034: Variables set for sourced scripts (BLUE, SUPERVISOR_DB, etc.)
+# SC1090: Non-constant source paths (test harness pattern)
+#
 # test-ai-actions.sh - Unit tests for AI supervisor action executor (t1085.3)
 #
 # Tests validation logic, field checking, and action type handling
