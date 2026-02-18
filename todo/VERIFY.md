@@ -1181,3 +1181,9 @@
   check: file-exists .agents/scripts/supervisor/ai-actions.sh
   check: shellcheck .agents/scripts/supervisor/issue-audit.sh
   check: file-exists .agents/scripts/supervisor/issue-audit.sh
+
+- [ ] v138 t1132 Add stale-state detection for supervisor DB running/evalu... | PR #1733 | merged:2026-02-18
+  files: .agents/scripts/supervisor/pulse.sh, MODELS.md
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
+  check: file-exists MODELS.md
