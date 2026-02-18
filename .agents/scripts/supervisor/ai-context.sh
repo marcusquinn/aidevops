@@ -76,6 +76,11 @@ build_ai_context() {
 		context+="$(build_self_reflection_context)\n\n"
 	fi
 
+	# Section 11: Auto-dispatch eligibility assessment (t1134)
+	if [[ "$scope" == "full" ]]; then
+		context+="$(build_auto_dispatch_eligibility_context "$repo_path")\n\n"
+	fi
+
 	printf '%b' "$context"
 	return 0
 }
@@ -951,6 +956,259 @@ build_self_reflection_context() {
 			output+="If these are recurring, create a \`create_improvement\` task to fix the root cause.\n"
 		fi
 	fi
+
+	printf '%b' "$output"
+	return 0
+}
+
+#######################################
+# Section 11: Auto-dispatch eligibility assessment (t1134)
+# Scans open TODO.md tasks across all registered repos and evaluates
+# each for auto-dispatch eligibility. Provides the AI reasoning engine
+# with pre-computed eligibility data so it can propose #auto-dispatch
+# tagging with recommended model tiers.
+#
+# Eligibility criteria:
+#   1. Task has a clear, bounded description (not vague research)
+#   2. No blocked-by with unresolved dependencies
+#   3. No assignee already set
+#   4. Estimated effort within worker capability (~30m to ~4h)
+#   5. Task type matches patterns with >70% autonomous success rate
+#
+# Arguments:
+#   $1 - primary repo path
+# Outputs:
+#   Markdown section to stdout
+#######################################
+build_auto_dispatch_eligibility_context() {
+	local repo_path="${1:-$REPO_PATH}"
+	local output="## Auto-Dispatch Eligibility Assessment (t1134)\n\n"
+	output+="Open tasks evaluated for autonomous dispatch eligibility.\n"
+	output+="Use \`propose_auto_dispatch\` action to recommend tagging eligible tasks.\n\n"
+
+	# Collect all repos from DB + primary repo
+	local all_repos=""
+	if [[ -f "$SUPERVISOR_DB" ]]; then
+		all_repos=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks WHERE repo IS NOT NULL AND repo != '';" 2>/dev/null || echo "")
+	fi
+	# Ensure primary repo is included
+	if [[ -n "$repo_path" && -d "$repo_path" ]]; then
+		if [[ -z "$all_repos" ]] || ! echo "$all_repos" | grep -qF "$repo_path"; then
+			all_repos="${all_repos:+$all_repos
+}$repo_path"
+		fi
+	fi
+
+	if [[ -z "$all_repos" ]]; then
+		output+="No repos found to scan.\n"
+		printf '%b' "$output"
+		return 0
+	fi
+
+	# Query pattern tracker for success rates by task type (if available)
+	local pattern_db="${AIDEVOPS_MEMORY_DIR:-$HOME/.aidevops/.agent-workspace/memory}/memory.db"
+	local pattern_data=""
+	if [[ -f "$pattern_db" ]]; then
+		# Get success rates per task type keyword from pattern data
+		# Look at tags containing common task type keywords
+		pattern_data=$(sqlite3 "$pattern_db" "
+			SELECT
+				CASE
+					WHEN tags LIKE '%feature%' OR content LIKE '%task:feature%' THEN 'feature'
+					WHEN tags LIKE '%bugfix%' OR content LIKE '%task:bugfix%' THEN 'bugfix'
+					WHEN tags LIKE '%refactor%' OR content LIKE '%task:refactor%' THEN 'refactor'
+					WHEN tags LIKE '%docs%' OR content LIKE '%task:docs%' THEN 'docs'
+					WHEN tags LIKE '%testing%' OR content LIKE '%task:testing%' THEN 'testing'
+					WHEN tags LIKE '%code-review%' OR content LIKE '%task:code-review%' THEN 'code-review'
+					WHEN tags LIKE '%enhancement%' THEN 'enhancement'
+					WHEN tags LIKE '%automation%' THEN 'automation'
+					ELSE 'other'
+				END as task_type,
+				SUM(CASE WHEN type IN ('SUCCESS_PATTERN', 'WORKING_SOLUTION') THEN 1 ELSE 0 END) as successes,
+				SUM(CASE WHEN type IN ('FAILURE_PATTERN', 'FAILED_APPROACH', 'ERROR_FIX') THEN 1 ELSE 0 END) as failures,
+				COUNT(*) as total
+			FROM learnings
+			WHERE type IN ('SUCCESS_PATTERN', 'FAILURE_PATTERN', 'WORKING_SOLUTION', 'FAILED_APPROACH', 'ERROR_FIX')
+			GROUP BY task_type
+			HAVING total >= 3
+			ORDER BY task_type;
+		" 2>/dev/null || echo "")
+	fi
+
+	if [[ -n "$pattern_data" ]]; then
+		output+="### Pattern Tracker Success Rates\n\n"
+		output+="| Task Type | Successes | Failures | Total | Rate |\n"
+		output+="|-----------|-----------|----------|-------|------|\n"
+		while IFS='|' read -r ptype psuccess pfailure ptotal; do
+			[[ -z "$ptype" ]] && continue
+			local prate=0
+			if [[ "$ptotal" -gt 0 ]]; then
+				prate=$(((psuccess * 100) / ptotal))
+			fi
+			local rate_marker=""
+			if [[ "$prate" -ge 70 ]]; then
+				rate_marker=" (eligible)"
+			fi
+			output+="| $ptype | $psuccess | $pfailure | $ptotal | ${prate}%${rate_marker} |\n"
+		done <<<"$pattern_data"
+		output+="\nTask types with >=70% success rate are eligible for auto-dispatch.\n\n"
+	else
+		output+="### Pattern Tracker Success Rates\n\n"
+		output+="No pattern data available yet. Default to allowing auto-dispatch for clear, bounded tasks.\n\n"
+	fi
+
+	# Scan each repo's TODO.md for eligible tasks
+	local eligible_count=0
+	local ineligible_count=0
+	local already_tagged=0
+
+	output+="### Task Eligibility\n\n"
+	output+="| Repo | Task ID | Description | Estimate | Eligible | Reason | Recommended Model |\n"
+	output+="|------|---------|-------------|----------|----------|--------|-------------------|\n"
+
+	while IFS= read -r scan_repo; do
+		[[ -z "$scan_repo" || ! -d "$scan_repo" ]] && continue
+		local scan_todo="$scan_repo/TODO.md"
+		[[ ! -f "$scan_todo" ]] && continue
+
+		local repo_name
+		repo_name=$(basename "$scan_repo")
+
+		# Find open tasks without #auto-dispatch
+		local open_tasks
+		open_tasks=$(grep -E '^[[:space:]]*- \[ \] t[0-9]+' "$scan_todo" 2>/dev/null || true)
+		[[ -z "$open_tasks" ]] && continue
+
+		while IFS= read -r task_line; do
+			[[ -z "$task_line" ]] && continue
+
+			local tid
+			tid=$(echo "$task_line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1)
+			[[ -z "$tid" ]] && continue
+
+			# Skip already tagged tasks
+			if echo "$task_line" | grep -q '#auto-dispatch'; then
+				already_tagged=$((already_tagged + 1))
+				continue
+			fi
+
+			# Skip tasks already in supervisor DB (already being managed)
+			if [[ -f "$SUPERVISOR_DB" ]]; then
+				local db_status
+				db_status=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "")
+				if [[ -n "$db_status" ]]; then
+					continue
+				fi
+			fi
+
+			# Extract description (strip task ID and metadata)
+			local desc
+			desc=$(echo "$task_line" | sed -E 's/^[[:space:]]*- \[ \] t[0-9]+(\.[0-9]+)* //' | sed -E 's/ (model:|~[0-9]+[mh]|#[a-zA-Z0-9_-]+|ref:|logged:|blocked-by:|assignee:|started:|category:)[^ ]*//g' | head -c 80)
+
+			# Extract estimate
+			local estimate
+			estimate=$(echo "$task_line" | grep -oE '~[0-9]+[mh]' | head -1 || echo "")
+
+			# === Eligibility checks ===
+			local eligible="yes"
+			local reason=""
+			local recommended_model="sonnet"
+
+			# Check 1: Has assignee already set
+			if echo "$task_line" | grep -qE 'assignee:'; then
+				eligible="no"
+				reason="has assignee"
+			fi
+
+			# Check 2: Has unresolved blocked-by dependencies
+			if [[ "$eligible" == "yes" ]] && echo "$task_line" | grep -qE 'blocked-by:'; then
+				local blocked_by
+				blocked_by=$(echo "$task_line" | grep -oE 'blocked-by:t[0-9]+(\.[0-9]+)*' | sed 's/blocked-by://')
+				if [[ -n "$blocked_by" ]]; then
+					# Check if the blocking task is still open
+					local blocker_done=true
+					while IFS= read -r blocker_id; do
+						[[ -z "$blocker_id" ]] && continue
+						if grep -qE "^[[:space:]]*- \[ \] ${blocker_id}( |$)" "$scan_todo" 2>/dev/null; then
+							blocker_done=false
+							break
+						fi
+					done <<<"$blocked_by"
+					if [[ "$blocker_done" == "false" ]]; then
+						eligible="no"
+						reason="blocked-by unresolved"
+					fi
+				fi
+			fi
+
+			# Check 3: Estimate within worker capability (~30m to ~4h)
+			if [[ "$eligible" == "yes" && -n "$estimate" ]]; then
+				local est_minutes=0
+				if [[ "$estimate" =~ ~([0-9]+)h ]]; then
+					est_minutes=$((${BASH_REMATCH[1]} * 60))
+				elif [[ "$estimate" =~ ~([0-9]+)m ]]; then
+					est_minutes=${BASH_REMATCH[1]}
+				fi
+				if [[ "$est_minutes" -gt 0 ]]; then
+					if [[ "$est_minutes" -lt 30 ]]; then
+						eligible="no"
+						reason="estimate too small (<30m)"
+					elif [[ "$est_minutes" -gt 240 ]]; then
+						eligible="no"
+						reason="estimate too large (>4h)"
+					fi
+				fi
+			fi
+
+			# Check 4: Description clarity — reject vague/research tasks
+			if [[ "$eligible" == "yes" ]]; then
+				local lower_desc
+				lower_desc=$(echo "$desc" | tr '[:upper:]' '[:lower:]')
+				if echo "$lower_desc" | grep -qE '^(research|investigate|explore|look into|think about|consider|evaluate options)'; then
+					eligible="no"
+					reason="vague/research task"
+				elif [[ ${#desc} -lt 10 ]]; then
+					eligible="no"
+					reason="description too short"
+				fi
+			fi
+
+			# Check 5: Model recommendation based on estimate and task type
+			if [[ "$eligible" == "yes" ]]; then
+				# Extract model: field if present
+				local existing_model
+				existing_model=$(echo "$task_line" | grep -oE 'model:[a-z]+' | head -1 | sed 's/model://')
+				if [[ -n "$existing_model" ]]; then
+					recommended_model="$existing_model"
+				else
+					# Infer from estimate
+					local est_minutes=0
+					if [[ "$estimate" =~ ~([0-9]+)h ]]; then
+						est_minutes=$((${BASH_REMATCH[1]} * 60))
+					elif [[ "$estimate" =~ ~([0-9]+)m ]]; then
+						est_minutes=${BASH_REMATCH[1]}
+					fi
+					if [[ "$est_minutes" -le 60 ]]; then
+						recommended_model="sonnet"
+					elif [[ "$est_minutes" -le 120 ]]; then
+						recommended_model="sonnet"
+					else
+						recommended_model="opus"
+					fi
+				fi
+				reason="clear spec, bounded scope"
+				eligible_count=$((eligible_count + 1))
+			else
+				ineligible_count=$((ineligible_count + 1))
+			fi
+
+			output+="| $repo_name | $tid | ${desc:0:50} | ${estimate:-n/a} | $eligible | $reason | $recommended_model |\n"
+		done <<<"$open_tasks"
+	done <<<"$all_repos"
+
+	output+="\n**Summary**: $eligible_count eligible, $ineligible_count ineligible, $already_tagged already tagged\n"
+	output+="\nFor eligible tasks, use \`propose_auto_dispatch\` action with the task_id and recommended model.\n"
+	output+="The executor adds a \`[proposed]\` prefix that requires one pulse cycle confirmation before actual tagging.\n"
 
 	printf '%b' "$output"
 	return 0
