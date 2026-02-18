@@ -44,8 +44,28 @@ build_ai_context() {
 	# Section 2: Recent PRs
 	context+="$(build_prs_context "$repo_path" "$scope")\n\n"
 
-	# Section 3: TODO.md State
-	context+="$(build_todo_context "$repo_path")\n\n"
+	# Section 3: TODO.md State (multi-repo, t1188)
+	# Include TODO.md from all registered repos, not just the primary one.
+	# This enables the AI reasoner to see and assess tasks across all projects.
+	local all_context_repos
+	all_context_repos=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks WHERE repo IS NOT NULL AND repo != '';" 2>/dev/null || echo "")
+	if [[ -n "$all_context_repos" ]]; then
+		local repo_count=0
+		while IFS= read -r ctx_repo; do
+			[[ -z "$ctx_repo" || ! -d "$ctx_repo" ]] && continue
+			context+="$(build_todo_context "$ctx_repo")\n\n"
+			repo_count=$((repo_count + 1))
+		done <<<"$all_context_repos"
+		# If primary repo wasn't in the DB list, include it too
+		if ! echo "$all_context_repos" | grep -qF "$repo_path"; then
+			context+="$(build_todo_context "$repo_path")\n\n"
+		fi
+	else
+		context+="$(build_todo_context "$repo_path")\n\n"
+	fi
+
+	# Section 3b: Auto-Dispatch Eligibility Assessment (t1188)
+	context+="$(build_autodispatch_eligibility_context)\n\n"
 
 	# Section 4: Supervisor DB State
 	context+="$(build_db_context)\n\n"
@@ -360,8 +380,10 @@ _get_db_completed_task_ids() {
 build_todo_context() {
 	local repo_path="$1"
 	local todo_file="$repo_path/TODO.md"
+	local repo_name
+	repo_name=$(basename "$repo_path")
 
-	local output="## TODO.md State\n\n"
+	local output="## TODO.md State — $repo_name\n\n"
 
 	if [[ ! -f "$todo_file" ]]; then
 		output+="*TODO.md not found*\n"
@@ -469,6 +491,121 @@ build_todo_context() {
 		else
 			output+="Total dispatchable: $disp_count\n"
 		fi
+	fi
+
+	printf '%b' "$output"
+	return 0
+}
+
+#######################################
+# Section 3b: Auto-Dispatch Eligibility Assessment (t1188)
+# Scans all registered repos for open tasks without #auto-dispatch
+# and assesses whether they could be candidates.
+# Also detects common blocker statuses that prevent dispatch.
+#
+# Blocker statuses (user-defined, non-dispatchable reasons):
+#   account-needed, hosting-needed, login-needed, api-key-needed,
+#   clarification-needed, resources-needed, payment-needed
+#######################################
+build_autodispatch_eligibility_context() {
+	local output="## Auto-Dispatch Eligibility Assessment\n\n"
+	output+="Tasks from all registered repos that are open but NOT tagged #auto-dispatch.\n"
+	output+="Assess each for auto-dispatch candidacy. Use \`propose_auto_dispatch\` for eligible tasks.\n\n"
+
+	# Known blocker statuses that indicate a task cannot be auto-dispatched
+	# These are human-action-required blockers, not technical dependencies
+	local blocker_pattern="account-needed\|hosting-needed\|login-needed\|api-key-needed\|clarification-needed\|resources-needed\|payment-needed"
+
+	output+="### Eligibility Criteria\n\n"
+	output+="- **Eligible**: Clear spec, bounded scope (~30m-~4h), no unresolved blockers, no assignee\n"
+	output+="- **Ineligible**: Vague description, >~4h estimate, has assignee, has unresolved blocked-by, or has a blocker status\n"
+	output+="- **Blocker statuses** (human action required): account-needed, hosting-needed, login-needed, api-key-needed, clarification-needed, resources-needed, payment-needed\n\n"
+
+	local all_repos
+	all_repos=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks WHERE repo IS NOT NULL AND repo != '';" 2>/dev/null || echo "")
+
+	if [[ -z "$all_repos" ]]; then
+		output+="No registered repos found.\n"
+		printf '%b' "$output"
+		return 0
+	fi
+
+	# Fetch DB-verified/cancelled task IDs for filtering
+	local db_completed_ids=""
+	db_completed_ids=$(_get_db_completed_task_ids)
+	declare -A _elig_done_ids
+	if [[ -n "$db_completed_ids" ]]; then
+		while IFS= read -r tid; do
+			tid="${tid// /}"
+			[[ -n "$tid" ]] && _elig_done_ids["$tid"]=1
+		done <<<"$db_completed_ids"
+	fi
+
+	local total_candidates=0
+
+	while IFS= read -r repo_path; do
+		[[ -z "$repo_path" || ! -f "$repo_path/TODO.md" ]] && continue
+		local repo_name
+		repo_name=$(basename "$repo_path")
+
+		# Find open tasks WITHOUT #auto-dispatch, WITHOUT assignee/started
+		local candidates
+		candidates=$(grep -E '^- \[ \] t[0-9]+' "$repo_path/TODO.md" 2>/dev/null |
+			grep -v '#auto-dispatch' |
+			grep -v 'assignee:\|started:' || true)
+
+		[[ -z "$candidates" ]] && continue
+
+		output+="### $repo_name\n\n"
+
+		while IFS= read -r line; do
+			local task_id
+			task_id=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1)
+			[[ -z "$task_id" ]] && continue
+
+			# Skip DB-verified tasks
+			if [[ -n "${_elig_done_ids[$task_id]+x}" ]]; then
+				continue
+			fi
+
+			local status="eligible"
+			local reason=""
+
+			# Check for blocker statuses
+			if echo "$line" | grep -qE "$blocker_pattern"; then
+				local blocker
+				blocker=$(echo "$line" | grep -oE "(account|hosting|login|api-key|clarification|resources|payment)-needed" | head -1)
+				status="blocked"
+				reason="$blocker"
+			# Check for blocked-by dependency
+			elif echo "$line" | grep -q 'blocked-by:'; then
+				status="blocked"
+				reason="has dependency"
+			# Check for large estimates (>4h)
+			elif echo "$line" | grep -qE '~[0-9]+(h|d)'; then
+				local est_raw
+				est_raw=$(echo "$line" | grep -oE '~[0-9]+(h|d)' | head -1)
+				local est_num="${est_raw//[^0-9]/}"
+				if [[ "$est_raw" == *"d"* ]] || [[ "$est_num" -gt 4 ]]; then
+					status="needs-breakdown"
+					reason="estimate ${est_raw} exceeds ~4h — break into subtasks first"
+				fi
+			fi
+
+			local short_desc="${line:0:100}"
+			[[ ${#line} -gt 100 ]] && short_desc+="..."
+
+			output+="- **$task_id** [$status${reason:+: $reason}]: $short_desc\n"
+			total_candidates=$((total_candidates + 1))
+		done <<<"$candidates"
+
+		output+="\n"
+	done <<<"$all_repos"
+
+	if [[ "$total_candidates" -eq 0 ]]; then
+		output+="No untagged open tasks found across registered repos.\n"
+	else
+		output+="**Total candidates assessed**: $total_candidates\n"
 	fi
 
 	printf '%b' "$output"
