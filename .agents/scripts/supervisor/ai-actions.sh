@@ -1594,8 +1594,10 @@ run_ai_actions_pipeline() {
 		return 1
 	fi
 
-	# Handle empty output — concurrency guard or other silent skip
-	if [[ -z "$action_plan" ]]; then
+	# Handle empty or whitespace-only output — treat as no actions (t1185)
+	local action_plan_trimmed
+	action_plan_trimmed=$(printf '%s' "$action_plan" | tr -d '[:space:]')
+	if [[ -z "$action_plan_trimmed" ]]; then
 		log_info "AI Actions Pipeline: reasoning returned empty output (skipped)"
 		echo '{"executed":0,"failed":0,"skipped":0,"actions":[]}'
 		return 0
@@ -1624,15 +1626,32 @@ run_ai_actions_pipeline() {
 		fi
 	fi
 
-	# Verify we got an array
+	# Verify we got an array — with ANSI-strip fallback (t1185)
+	# jq 'type' returns empty string if action_plan contains ANSI codes or is
+	# otherwise unparseable. Strip ANSI codes and retry before giving up.
 	local plan_type
 	plan_type=$(printf '%s' "$action_plan" | jq 'type' 2>/dev/null || echo "")
 	if [[ "$plan_type" != '"array"' ]]; then
-		# Log raw content for debugging (t1182: helps diagnose parse failures)
-		local plan_len plan_head
+		# Attempt ANSI-strip recovery before failing
+		local clean_plan
+		clean_plan=$(printf '%s' "$action_plan" | sed 's/\x1b\[[0-9;]*[mGKHF]//g; s/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b\]//g; s/\x07//g')
+		if [[ "$clean_plan" != "$action_plan" ]]; then
+			local clean_type
+			clean_type=$(printf '%s' "$clean_plan" | jq 'type' 2>/dev/null || echo "")
+			if [[ "$clean_type" == '"array"' ]]; then
+				log_info "AI Actions Pipeline: recovered array after ANSI strip (t1185)"
+				action_plan="$clean_plan"
+				plan_type="$clean_type"
+			fi
+		fi
+	fi
+	if [[ "$plan_type" != '"array"' ]]; then
+		# Log raw content for debugging (t1182/t1185: helps diagnose parse failures)
+		local plan_len plan_head plan_hex
 		plan_len=$(printf '%s' "$action_plan" | wc -c | tr -d ' ')
 		plan_head=$(printf '%s' "$action_plan" | head -c 200 | tr '\n' ' ')
-		log_warn "AI Actions Pipeline: expected array, got $plan_type (len=${plan_len} head='${plan_head}')"
+		plan_hex=$(printf '%s' "$action_plan" | head -c 32 | od -An -tx1 | tr -d ' \n' | head -c 64)
+		log_warn "AI Actions Pipeline: expected array, got $plan_type (len=${plan_len} head='${plan_head}' hex='${plan_hex}')"
 		echo '{"error":"invalid_plan_type","actions":[]}'
 		return 1
 	fi
