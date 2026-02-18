@@ -1243,3 +1243,12 @@
   check: file-exists .agents/scripts/supervisor/pulse.sh
   check: shellcheck .agents/scripts/supervisor/todo-sync.sh
   check: file-exists .agents/scripts/supervisor/todo-sync.sh
+
+- [ ] v146 t1134 Add auto-dispatch eligibility assessment to supervisor AI... | PR #1782 | merged:2026-02-18
+  files: .agents/scripts/supervisor/ai-actions.sh, .agents/scripts/supervisor/ai-context.sh, .agents/scripts/supervisor/ai-reason.sh
+  check: shellcheck .agents/scripts/supervisor/ai-actions.sh
+  check: file-exists .agents/scripts/supervisor/ai-actions.sh
+  check: shellcheck .agents/scripts/supervisor/ai-context.sh
+  check: file-exists .agents/scripts/supervisor/ai-context.sh
+  check: shellcheck .agents/scripts/supervisor/ai-reason.sh
+  check: file-exists .agents/scripts/supervisor/ai-reason.sh
