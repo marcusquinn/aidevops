@@ -1226,7 +1226,7 @@
   check: file-exists .agents/scripts/supervisor/database.sh
   check: file-exists MODELS.md
 
-- [ ] v144 t1179 Add cycle-aware dedup to supervisor — skip targets acte... | PR #1780 | merged:2026-02-18
+- [x] v144 t1179 Add cycle-aware dedup to supervisor — skip targets acte... | PR #1780 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/supervisor/ai-actions.sh, .agents/scripts/supervisor/database.sh, tests/test-ai-actions.sh
   check: shellcheck .agents/scripts/supervisor/ai-actions.sh
   check: file-exists .agents/scripts/supervisor/ai-actions.sh
@@ -1234,3 +1234,12 @@
   check: file-exists .agents/scripts/supervisor/database.sh
   check: shellcheck tests/test-ai-actions.sh
   check: file-exists tests/test-ai-actions.sh
+
+- [ ] v145 t1180 Add dispatchable-queue reconciliation between supervisor ... | PR #1783 | merged:2026-02-18
+  files: .agents/scripts/supervisor-helper.sh, .agents/scripts/supervisor/pulse.sh, .agents/scripts/supervisor/todo-sync.sh
+  check: shellcheck .agents/scripts/supervisor-helper.sh
+  check: file-exists .agents/scripts/supervisor-helper.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/supervisor/todo-sync.sh
+  check: file-exists .agents/scripts/supervisor/todo-sync.sh
