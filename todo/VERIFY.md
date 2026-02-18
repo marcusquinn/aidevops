@@ -1138,12 +1138,16 @@
   check: shellcheck .agents/scripts/skill-update-helper.sh
   check: file-exists .agents/scripts/skill-update-helper.sh
 
-- [ ] v131 t1094.1 Update build-agent to reference pattern data for model ti... | PR #1633 | merged:2026-02-18
+- [x] v131 t1094.1 Update build-agent to reference pattern data for model ti... | PR #1633 | merged:2026-02-18 verified:2026-02-18
   files: .agents/tools/build-agent/build-agent.md
   check: file-exists .agents/tools/build-agent/build-agent.md
   check: rg "build-agent" .agents/subagent-index.toon
 
-- [ ] v132 t1081.3 Update auto-update state file schema — add last_skill_c... | PR #1638 | merged:2026-02-18
+- [x] v132 t1081.3 Update auto-update state file schema — add last_skill_c... | PR #1638 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/auto-update-helper.sh
   check: shellcheck .agents/scripts/auto-update-helper.sh
   check: file-exists .agents/scripts/auto-update-helper.sh
+
+- [ ] v133 t1081.4 Update AGENTS.md and auto-update docs — document daily ... | PR #1639 | merged:2026-02-18
+  files: .agents/AGENTS.md
+  check: file-exists .agents/AGENTS.md
