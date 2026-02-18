@@ -1043,6 +1043,10 @@ ${stale_other_tasks}"
 				completed_count=$((completed_count + 1))
 				# Clean up worker process tree and PID file (t128.7)
 				cleanup_worker_processes "$tid"
+				# Reset dispatch dedup guard state on success (t1206): clear last_failure_at
+				# and consecutive_failure_count so a re-queued task is not deferred by a
+				# stale cooldown from a pre-success failure.
+				reset_failure_dedup_state "$tid" 2>>"$SUPERVISOR_LOG" || true
 				# --- Non-critical post-processing below (safe to lose on kill) ---
 				# Proof-log: task completion (t218)
 				write_proof_log --task "$tid" --event "complete" --stage "evaluate" \
@@ -1079,6 +1083,12 @@ ${stale_other_tasks}"
 				write_proof_log --task "$tid" --event "retry" --stage "evaluate" \
 					--decision "retry:$outcome_detail" \
 					--maker "pulse:phase1" 2>/dev/null || true
+				# Update dispatch dedup guard state (t1206): track failure timestamp and
+				# consecutive count so check_dispatch_dedup_guard() can enforce cooldown
+				# and block tasks that fail identically 2+ times in succession.
+				# NOTE: must run BEFORE cmd_transition so the DB error column still holds
+				# the *previous* failure's error for accurate streak comparison.
+				update_failure_dedup_state "$tid" "$outcome_detail" 2>>"$SUPERVISOR_LOG" || true
 				cmd_transition "$tid" "retrying" --error "$outcome_detail" 2>>"$SUPERVISOR_LOG" || true
 				# Clean up worker process tree before re-prompt (t128.7)
 				cleanup_worker_processes "$tid"
