@@ -249,7 +249,7 @@ ${user_prompt}"
 	if [[ "$ai_cli" == "opencode" ]]; then
 		ai_result=$(portable_timeout "$ai_timeout" opencode run \
 			-m "$ai_model" \
-			--format text \
+			--format default \
 			--title "ai-supervisor-${timestamp}" \
 			"$full_prompt" 2>/dev/null || echo "")
 	else
