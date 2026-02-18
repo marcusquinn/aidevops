@@ -1390,6 +1390,205 @@ cmd_roi() {
 }
 
 #######################################
+# Tier drift analysis (t1191)
+# Queries pattern data for tier_delta tags to show escalation frequency,
+# cost impact, and trends. Helps detect when tasks requested at cheaper
+# tiers are consistently executed at more expensive ones.
+#
+# Options:
+#   --days <n>     Look back N days (default: 30)
+#   --json         Output as JSON
+#   --summary      One-line summary for pulse cycle integration
+#######################################
+cmd_tier_drift() {
+	local days=30
+	local json_output=false
+	local summary_only=false
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--days)
+			days="${2:-30}"
+			shift 2
+			;;
+		--json)
+			json_output=true
+			shift
+			;;
+		--summary)
+			summary_only=true
+			shift
+			;;
+		*)
+			shift
+			;;
+		esac
+	done
+
+	ensure_db || return 1
+
+	local cutoff_date
+	cutoff_date=$(date -u -v-"${days}d" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) ||
+		cutoff_date=$(date -u -d "${days} days ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) ||
+		cutoff_date="2000-01-01T00:00:00Z"
+
+	# Count total dispatches with tier tracking data
+	local total_dispatches
+	total_dispatches=$(sqlite3 "$MEMORY_DB" "
+		SELECT COUNT(*) FROM learnings
+		WHERE tags LIKE '%actual_tier:%'
+		AND created_at >= '$cutoff_date';
+	" 2>/dev/null || echo "0")
+
+	# Count dispatches where tier escalated (requested != actual)
+	local escalated_count
+	escalated_count=$(sqlite3 "$MEMORY_DB" "
+		SELECT COUNT(*) FROM learnings
+		WHERE tags LIKE '%tier_delta:%'
+		AND created_at >= '$cutoff_date';
+	" 2>/dev/null || echo "0")
+
+	# Get breakdown of tier_delta patterns (e.g., sonnet->opus: 5, haiku->sonnet: 2)
+	local drift_breakdown
+	drift_breakdown=$(sqlite3 -separator '|' "$MEMORY_DB" "
+		SELECT
+			SUBSTR(tags,
+				INSTR(tags, 'tier_delta:') + 11,
+				CASE
+					WHEN INSTR(SUBSTR(tags, INSTR(tags, 'tier_delta:') + 11), ',') > 0
+					THEN INSTR(SUBSTR(tags, INSTR(tags, 'tier_delta:') + 11), ',') - 1
+					ELSE LENGTH(SUBSTR(tags, INSTR(tags, 'tier_delta:') + 11))
+				END
+			) AS delta,
+			COUNT(*) AS cnt
+		FROM learnings
+		WHERE tags LIKE '%tier_delta:%'
+		AND created_at >= '$cutoff_date'
+		GROUP BY delta
+		ORDER BY cnt DESC;
+	" 2>/dev/null || echo "")
+
+	# Calculate cost impact: for each escalation, estimate the cost difference
+	# between requested and actual tiers using TIER_PRICING
+	local cost_waste
+	cost_waste=$(sqlite3 "$MEMORY_DB" "
+		SELECT COALESCE(SUM(
+			CASE
+				WHEN pm.estimated_cost IS NOT NULL AND pm.estimated_cost > 0
+				THEN pm.estimated_cost
+				ELSE 0
+			END
+		), 0)
+		FROM learnings l
+		LEFT JOIN pattern_metadata pm ON l.id = pm.id
+		WHERE l.tags LIKE '%tier_delta:%'
+		AND l.created_at >= '$cutoff_date';
+	" 2>/dev/null || echo "0")
+
+	# Get success rate for escalated vs non-escalated tasks
+	local escalated_success
+	escalated_success=$(sqlite3 "$MEMORY_DB" "
+		SELECT COALESCE(
+			ROUND(100.0 * SUM(CASE WHEN type = 'SUCCESS_PATTERN' THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0)),
+			0
+		)
+		FROM learnings
+		WHERE tags LIKE '%tier_delta:%'
+		AND created_at >= '$cutoff_date';
+	" 2>/dev/null || echo "0")
+
+	local non_escalated_success
+	non_escalated_success=$(sqlite3 "$MEMORY_DB" "
+		SELECT COALESCE(
+			ROUND(100.0 * SUM(CASE WHEN type = 'SUCCESS_PATTERN' THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0)),
+			0
+		)
+		FROM learnings
+		WHERE tags LIKE '%actual_tier:%'
+		AND tags NOT LIKE '%tier_delta:%'
+		AND created_at >= '$cutoff_date';
+	" 2>/dev/null || echo "0")
+
+	# Calculate escalation rate
+	local escalation_pct=0
+	if [[ "$total_dispatches" -gt 0 ]]; then
+		escalation_pct=$(awk -v e="$escalated_count" -v t="$total_dispatches" 'BEGIN { printf "%.0f", (e / t) * 100 }')
+	fi
+
+	# Summary mode: single line for pulse cycle
+	if [[ "$summary_only" == true ]]; then
+		echo "tier_drift: ${escalated_count}/${total_dispatches} escalated (${escalation_pct}%) in ${days}d, cost_at_higher_tier=\$${cost_waste}"
+		return 0
+	fi
+
+	# JSON output
+	if [[ "$json_output" == true ]]; then
+		local drift_json="[]"
+		if [[ -n "$drift_breakdown" ]]; then
+			drift_json="["
+			local first=true
+			while IFS='|' read -r delta cnt; do
+				[[ -z "$delta" ]] && continue
+				[[ "$first" == true ]] && first=false || drift_json="${drift_json},"
+				drift_json="${drift_json}{\"delta\":\"${delta}\",\"count\":${cnt}}"
+			done <<<"$drift_breakdown"
+			drift_json="${drift_json}]"
+		fi
+
+		cat <<ENDJSON
+{
+  "period_days": $days,
+  "total_dispatches": $total_dispatches,
+  "escalated_count": $escalated_count,
+  "escalation_pct": $escalation_pct,
+  "cost_at_higher_tier": $cost_waste,
+  "escalated_success_pct": $escalated_success,
+  "non_escalated_success_pct": $non_escalated_success,
+  "drift_breakdown": $drift_json
+}
+ENDJSON
+		return 0
+	fi
+
+	# Human-readable output
+	echo "=== Tier Drift Analysis (last ${days} days) ==="
+	echo ""
+	echo "Total dispatches with tier tracking: $total_dispatches"
+	echo "Escalated (requested != actual):     $escalated_count (${escalation_pct}%)"
+	echo "Cost at higher tier:                 \$${cost_waste}"
+	echo ""
+
+	if [[ -n "$drift_breakdown" ]]; then
+		echo "Escalation breakdown:"
+		while IFS='|' read -r delta cnt; do
+			[[ -z "$delta" ]] && continue
+			echo "  ${delta}: ${cnt} times"
+		done <<<"$drift_breakdown"
+		echo ""
+	fi
+
+	echo "Success rates:"
+	echo "  Escalated tasks:     ${escalated_success}%"
+	echo "  Non-escalated tasks: ${non_escalated_success}%"
+	echo ""
+
+	# Actionable insights
+	if [[ "$escalation_pct" -gt 50 ]]; then
+		echo "WARNING: >50% of dispatches are escalating tier."
+		echo "  Likely cause: dispatch is defaulting to a higher tier than requested."
+		echo "  Action: Check resolve_task_model() priority chain and SUPERVISOR_MODEL env var."
+	elif [[ "$escalation_pct" -gt 25 ]]; then
+		echo "NOTICE: >25% of dispatches are escalating tier."
+		echo "  This may indicate the requested tier is insufficient for task complexity."
+		echo "  Action: Review pattern data for the escalated task types."
+	else
+		echo "Tier drift is within normal range (<25%)."
+	fi
+
+	return 0
+}
+
+#######################################
 # Show help
 #######################################
 cmd_help() {
@@ -1409,6 +1608,7 @@ COMMANDS:
     report      Generate a comprehensive pattern report
     roi         Cost-per-task-type and tier ROI analysis (t1114)
     label-stats Correlate GitHub issue labels with pattern data (t1010)
+    tier-drift  Analyze tier escalation frequency and cost impact (t1191)
     help        Show this help
 
 RECORD OPTIONS:
@@ -1441,6 +1641,11 @@ RECOMMEND OPTIONS:
 ROI OPTIONS:
     --task-type <type>            Filter ROI analysis by task type
     --min-samples <n>             Minimum samples per tier to include (default: 3)
+
+TIER-DRIFT OPTIONS (t1191):
+    --days <n>                    Look back N days (default: 30)
+    --json                        Output as JSON
+    --summary                     One-line summary for pulse cycle integration
 
 EXPORT OPTIONS:
     --format <json|csv>           Output format (default: json)
@@ -1502,6 +1707,11 @@ EXAMPLES:
         --task-type feature --model sonnet --task-id t200 \
         --tokens-in 15000 --tokens-out 8000 \
         --description "Clean implementation, CI passed on first push"
+
+    # Tier drift analysis: detect sonnet->opus escalation patterns (t1191)
+    pattern-tracker-helper.sh tier-drift
+    pattern-tracker-helper.sh tier-drift --days 7 --json
+    pattern-tracker-helper.sh tier-drift --summary  # one-line for pulse cycle
 EOF
 	return 0
 }
@@ -1523,6 +1733,7 @@ main() {
 	report) cmd_report ;;
 	roi) cmd_roi "$@" ;;
 	label-stats) cmd_label_stats "$@" ;;
+	tier-drift) cmd_tier_drift "$@" ;;
 	help | --help | -h) cmd_help ;;
 	*)
 		log_error "Unknown command: $command"
