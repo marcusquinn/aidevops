@@ -1011,7 +1011,12 @@
   check: rg "image-understanding" .agents/subagent-index.toon
   check: rg "pipecat-opencode" .agents/subagent-index.toon
 
-- [ ] v114 t1084 Fix auto-update-helper.sh CodeRabbit feedback from PR #15... | PR #1597 | merged:2026-02-18
+- [x] v114 t1084 Fix auto-update-helper.sh CodeRabbit feedback from PR #15... | PR #1597 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/auto-update-helper.sh
   check: shellcheck .agents/scripts/auto-update-helper.sh
   check: file-exists .agents/scripts/auto-update-helper.sh
+
+- [ ] v115 t1082.1 Add skill-update-helper.sh pr subcommand — for each ski... | PR #1608 | merged:2026-02-18
+  files: .agents/scripts/skill-update-helper.sh
+  check: shellcheck .agents/scripts/skill-update-helper.sh
+  check: file-exists .agents/scripts/skill-update-helper.sh
