@@ -47,6 +47,8 @@ Target: $ARGUMENTS
    - Per-criterion breakdown
    - Cost-effectiveness analysis (score per dollar)
 
+6. Scores automatically sync to the pattern tracker (t1099), feeding into `/route` and `/patterns` for data-driven model selection. Disable with `SCORING_NO_PATTERN_SYNC=1`. Bulk sync existing data with `response-scoring-helper.sh sync`.
+
 ## Scoring Criteria
 
 | Criterion | Weight | Description |

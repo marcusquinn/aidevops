@@ -193,6 +193,25 @@ The response scoring framework complements the model comparison tools:
 3. Use `response-scoring-helper.sh` to evaluate actual outputs
 4. Use leaderboard data to inform `model-routing.md` tier assignments
 
+## Pattern Tracker Integration (t1099)
+
+Scoring results automatically feed into the shared pattern tracker database. This closes the loop between response evaluation and model routing:
+
+- **On score**: Each scored response is recorded as a `SUCCESS_PATTERN` (weighted avg >= 3.5/5.0) or `FAILURE_PATTERN` (< 3.5/5.0) in the pattern tracker, tagged with the model tier and task category.
+- **On compare**: When a comparison has a winner among 2+ models, the winner is recorded as a `SUCCESS_PATTERN` with comparison metadata.
+- **Bulk sync**: Use `response-scoring-helper.sh sync` to backfill existing scores into the pattern tracker. Use `--dry-run` to preview.
+
+This enables:
+
+- `/route <task>` to use real A/B comparison data for model selection
+- `/patterns recommend --task-type <type>` to show which models perform best per category
+- Data-driven model routing that improves over time as more evaluations are recorded
+
+### Configuration
+
+- **Disable sync**: Set `SCORING_NO_PATTERN_SYNC=1` environment variable
+- **Model tier mapping**: Full model names (e.g., `claude-sonnet-4`) are automatically mapped to routing tiers (`sonnet`)
+
 ## Database Schema
 
 ```sql
@@ -206,5 +225,6 @@ comparisons -- Comparison records with winner tracking
 
 - `tools/ai-assistants/compare-models.md` - Model spec comparison
 - `tools/context/model-routing.md` - Cost-aware model routing
+- `scripts/pattern-tracker-helper.sh` - Pattern tracking and model recommendations
 - `scripts/model-availability-helper.sh` - Provider health checks
 - `scripts/model-registry-helper.sh` - Model version tracking
