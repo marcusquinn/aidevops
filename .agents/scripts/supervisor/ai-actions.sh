@@ -1637,6 +1637,8 @@ run_ai_actions_pipeline() {
 	fi
 
 	# Verify we got an array
+	# t1189: If plan_type is empty (jq parse failed) or non-array, treat as warning + empty
+	# plan rather than a hard error. This prevents rc=1 cascade from non-JSON AI responses.
 	local plan_type
 	plan_type=$(printf '%s' "$action_plan" | jq 'type' 2>/dev/null || echo "")
 	if [[ "$plan_type" != '"array"' ]]; then
@@ -1644,7 +1646,7 @@ run_ai_actions_pipeline() {
 		local plan_len plan_head
 		plan_len=$(printf '%s' "$action_plan" | wc -c | tr -d ' ')
 		plan_head=$(printf '%s' "$action_plan" | head -c 200 | tr '\n' ' ')
-		log_warn "AI Actions Pipeline: expected array, got ${plan_type:-<empty>} (len=${plan_len} head='${plan_head}')"
+		log_warn "AI Actions Pipeline: expected array, got ${plan_type:-<empty>} (len=${plan_len} head='${plan_head}') — treating as empty plan"
 		# Return rc=0 with empty action set — a non-array response is not actionable
 		# but should not cascade into a pipeline error (t1187)
 		echo '{"executed":0,"failed":0,"skipped":0,"actions":[]}'

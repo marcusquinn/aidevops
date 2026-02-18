@@ -415,6 +415,87 @@ else
 	fail "full pipeline dry-run broken"
 fi
 
+# Test 2.3b: Pipeline with empty/non-JSON AI response returns rc=0 (t1189)
+echo "Test 2.3b: Pipeline with non-JSON AI response returns rc=0 (t1189)"
+_test_pipeline_nonjson_response() {
+	(
+		BLUE='' GREEN='' YELLOW='' RED='' NC=''
+		SUPERVISOR_DB="$TEST_TMP/db/test-pipeline-nonjson.db"
+		SUPERVISOR_LOG="/dev/null"
+		SCRIPT_DIR="$SCRIPTS_DIR"
+		REPO_PATH="$REPO_DIR"
+		AI_REASON_LOG_DIR="$TEST_TMP/logs"
+		AI_ACTIONS_LOG_DIR="$TEST_TMP/logs"
+
+		sqlite3 "$SUPERVISOR_DB" "
+			CREATE TABLE IF NOT EXISTS tasks (
+				id TEXT PRIMARY KEY, status TEXT, description TEXT,
+				batch_id TEXT, repo TEXT, pr_url TEXT, error TEXT,
+				retries INTEGER DEFAULT 0, updated_at TEXT DEFAULT (datetime('now'))
+			);
+			CREATE TABLE IF NOT EXISTS state_log (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				task_id TEXT, from_state TEXT, to_state TEXT,
+				reason TEXT, timestamp TEXT DEFAULT (datetime('now'))
+			);
+		"
+
+		source "$SUPERVISOR_DIR/_common.sh"
+		source "$SUPERVISOR_DIR/ai-context.sh"
+		source "$SUPERVISOR_DIR/ai-reason.sh"
+		source "$SUPERVISOR_DIR/ai-actions.sh"
+
+		# Stub run_ai_reasoning to return non-JSON plain text (simulates t1189 failure)
+		run_ai_reasoning() {
+			echo "I analyzed the project and everything looks good. No actions needed."
+			return 0
+		}
+		detect_repo_slug() {
+			echo "test/repo"
+			return 0
+		}
+		commit_and_push_todo() { return 0; }
+		find_task_issue_number() {
+			echo ""
+			return 0
+		}
+
+		local result
+		result=$(run_ai_actions_pipeline "$REPO_DIR" "full" 2>/dev/null)
+		local rc=$?
+
+		# t1189: non-JSON AI response must return rc=0 (no pipeline error cascade)
+		if [[ $rc -ne 0 ]]; then
+			echo "FAIL: non-JSON AI response should return rc=0, got rc=$rc"
+			exit 1
+		fi
+
+		# Result should be a valid JSON object with executed=0
+		local executed
+		executed=$(printf '%s' "$result" | jq -r '.executed // "MISSING"' 2>/dev/null)
+		if [[ "$executed" != "0" ]]; then
+			echo "FAIL: expected executed=0, got: $result"
+			exit 1
+		fi
+
+		# Result must NOT contain an error key
+		local has_error
+		has_error=$(printf '%s' "$result" | jq 'has("error")' 2>/dev/null || echo "false")
+		if [[ "$has_error" == "true" ]]; then
+			echo "FAIL: result should not contain error key, got: $result"
+			exit 1
+		fi
+
+		exit 0
+	)
+}
+
+if _test_pipeline_nonjson_response 2>/dev/null; then
+	pass "pipeline with non-JSON AI response returns rc=0 (t1189)"
+else
+	fail "pipeline non-JSON response handling broken (t1189)"
+fi
+
 # Test 2.4: Actions dry-run with mock action plan
 echo "Test 2.4: Action executor dry-run with mock action plan"
 _test_actions_dry_run_mock() {
