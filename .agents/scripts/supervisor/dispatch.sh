@@ -1350,6 +1350,137 @@ run_quality_gate() {
 }
 
 #######################################
+# Dispatch deduplication guard (t1206)
+# Prevents re-dispatching tasks that failed with the same error in a short window.
+# Guards against token waste from repeated identical failures (e.g., t1032.1 failed
+# twice within 2 minutes with the same error; t1030 failed twice within 22 minutes).
+#
+# Rules enforced:
+#   1. 10-minute cooldown after any failure before re-dispatch of the same task
+#   2. After 2 consecutive identical failures, move task to 'blocked' with diagnostic note
+#   3. Log a warning when the same task fails with the same error code twice in succession
+#
+# Usage: check_dispatch_dedup_guard <task_id>
+# Returns:
+#   0 = proceed with dispatch
+#   1 = blocked (task transitioned to blocked state, caller should return 1)
+#   2 = cooldown active (defer dispatch, caller should return 3 to pulse)
+#######################################
+check_dispatch_dedup_guard() {
+	local task_id="$1"
+	local escaped_id
+	escaped_id=$(sql_escape "$task_id")
+
+	# Fetch dedup guard fields from DB
+	local guard_row
+	guard_row=$(db -separator '|' "$SUPERVISOR_DB" "
+		SELECT COALESCE(last_failure_at, ''),
+		       COALESCE(consecutive_failure_count, 0),
+		       COALESCE(error, '')
+		FROM tasks WHERE id = '$escaped_id';
+	" 2>/dev/null) || guard_row=""
+
+	if [[ -z "$guard_row" ]]; then
+		return 0
+	fi
+
+	local last_failure_at consecutive_count last_error
+	IFS='|' read -r last_failure_at consecutive_count last_error <<<"$guard_row"
+
+	# No prior failure recorded — proceed
+	if [[ -z "$last_failure_at" ]]; then
+		return 0
+	fi
+
+	# Calculate seconds since last failure
+	local now_epoch last_failure_epoch elapsed_secs
+	now_epoch=$(date -u +%s 2>/dev/null) || now_epoch=0
+	# Convert ISO timestamp to epoch (macOS/BSD compatible)
+	last_failure_epoch=$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$last_failure_at" '+%s' 2>/dev/null ||
+		date -u -d "$last_failure_at" '+%s' 2>/dev/null ||
+		echo 0)
+	elapsed_secs=$((now_epoch - last_failure_epoch))
+
+	local cooldown_secs="${SUPERVISOR_FAILURE_COOLDOWN_SECS:-600}" # 10 minutes default
+	local max_consecutive="${SUPERVISOR_MAX_CONSECUTIVE_FAILURES:-2}"
+
+	# Rule 2: Block after max_consecutive identical failures
+	if [[ "$consecutive_count" -ge "$max_consecutive" ]]; then
+		local block_reason="Dispatch dedup guard: $consecutive_count consecutive identical failures (error: ${last_error:-unknown}) — manual intervention required (t1206)"
+		log_warn "  $task_id: BLOCKED by dedup guard — $consecutive_count consecutive identical failures with error '${last_error:-unknown}'"
+		cmd_transition "$task_id" "blocked" --error "$block_reason" 2>/dev/null || true
+		update_todo_on_blocked "$task_id" "$block_reason" 2>/dev/null || true
+		send_task_notification "$task_id" "blocked" "$block_reason" 2>/dev/null || true
+		store_failure_pattern "$task_id" "blocked" "$block_reason" "dispatch-dedup-guard" 2>/dev/null || true
+		return 1
+	fi
+
+	# Rule 1: Enforce cooldown window
+	if [[ "$elapsed_secs" -lt "$cooldown_secs" ]]; then
+		local remaining=$((cooldown_secs - elapsed_secs))
+		log_warn "  $task_id: dispatch dedup cooldown active — last failure ${elapsed_secs}s ago (cooldown: ${cooldown_secs}s, ${remaining}s remaining, error: ${last_error:-unknown}) (t1206)"
+		return 2
+	fi
+
+	return 0
+}
+
+#######################################
+# Update dispatch dedup guard fields after a failure (t1206)
+# Called from pulse.sh retry handler to track failure timestamps and counts.
+# Increments consecutive_failure_count if error matches previous error,
+# resets to 1 if error changed (different failure mode = fresh start).
+#
+# Usage: update_failure_dedup_state <task_id> <error_detail>
+#######################################
+update_failure_dedup_state() {
+	local task_id="$1"
+	local error_detail="${2:-}"
+	local escaped_id
+	escaped_id=$(sql_escape "$task_id")
+
+	# Fetch current state
+	local current_row
+	current_row=$(db -separator '|' "$SUPERVISOR_DB" "
+		SELECT COALESCE(consecutive_failure_count, 0),
+		       COALESCE(error, '')
+		FROM tasks WHERE id = '$escaped_id';
+	" 2>/dev/null) || current_row="0|"
+
+	local current_count current_error
+	IFS='|' read -r current_count current_error <<<"$current_row"
+
+	# Normalise error strings for comparison (strip trailing detail after first colon)
+	local new_error_key current_error_key
+	new_error_key="${error_detail%%:*}"
+	current_error_key="${current_error%%:*}"
+
+	local new_count
+	if [[ "$new_error_key" == "$current_error_key" && -n "$current_error_key" ]]; then
+		# Same error type — increment consecutive count
+		new_count=$((current_count + 1))
+		if [[ "$new_count" -ge 2 ]]; then
+			log_warn "  $task_id: consecutive failure #${new_count} with same error '${new_error_key}' — dedup guard will block next dispatch (t1206)"
+		fi
+	else
+		# Different error — reset counter (new failure mode)
+		new_count=1
+	fi
+
+	local now_iso
+	now_iso=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+	db "$SUPERVISOR_DB" "
+		UPDATE tasks
+		SET last_failure_at = '$(sql_escape "$now_iso")',
+		    consecutive_failure_count = $new_count
+		WHERE id = '$escaped_id';
+	" 2>/dev/null || true
+
+	return 0
+}
+
+#######################################
 # Pre-dispatch model health check (t132.3, t233)
 # Two-tier probe strategy:
 #   1. Fast path: model-availability-helper.sh (direct HTTP, ~1-2s, cached)
@@ -2166,6 +2297,18 @@ cmd_dispatch() {
 		log_error "Task $task_id has exceeded max retries ($tretries/$tmax_retries)"
 		cmd_transition "$task_id" "failed" --error "Max retries exceeded"
 		return 1
+	fi
+
+	# Dispatch deduplication guard (t1206): prevent re-dispatch of tasks that failed
+	# with the same error within a short window. Avoids token waste on repeating failures.
+	local dedup_rc=0
+	check_dispatch_dedup_guard "$task_id" || dedup_rc=$?
+	if [[ "$dedup_rc" -eq 1 ]]; then
+		# Task was transitioned to blocked by the guard — abort dispatch
+		return 1
+	elif [[ "$dedup_rc" -eq 2 ]]; then
+		# Cooldown active — defer to next pulse (return 3 = provider-style deferral)
+		return 3
 	fi
 
 	# Resolve AI CLI

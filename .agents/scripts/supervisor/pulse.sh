@@ -1082,6 +1082,10 @@ ${stale_other_tasks}"
 				cmd_transition "$tid" "retrying" --error "$outcome_detail" 2>>"$SUPERVISOR_LOG" || true
 				# Clean up worker process tree before re-prompt (t128.7)
 				cleanup_worker_processes "$tid"
+				# Update dispatch dedup guard state (t1206): track failure timestamp and
+				# consecutive count so check_dispatch_dedup_guard() can enforce cooldown
+				# and block tasks that fail identically 2+ times in succession.
+				update_failure_dedup_state "$tid" "$outcome_detail" 2>>"$SUPERVISOR_LOG" || true
 				# Store failure pattern in memory (t128.6)
 				store_failure_pattern "$tid" "retry" "$outcome_detail" "$tid_desc" 2>>"$SUPERVISOR_LOG" || true
 				# Track prompt-repeat failure for pattern data (t1097)

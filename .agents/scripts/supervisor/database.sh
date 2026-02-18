@@ -651,6 +651,20 @@ CONTEST_SQL
 		log_success "Added requested_tier and actual_tier columns to tasks (t1117)"
 	fi
 
+	# Migrate: add dispatch deduplication guard columns to tasks (t1206)
+	# last_failure_at: ISO timestamp of the most recent failure (retry/blocked/failed)
+	# consecutive_failure_count: number of consecutive failures with the same error code
+	# Used by check_dispatch_dedup_guard() to enforce 10-min cooldown and block after
+	# 2 identical consecutive failures (prevents token waste on repeating failures).
+	local has_last_failure_at
+	has_last_failure_at=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('tasks') WHERE name='last_failure_at';" 2>/dev/null || echo "0")
+	if [[ "$has_last_failure_at" -eq 0 ]]; then
+		log_info "Migrating tasks table: adding dispatch dedup guard columns (t1206)..."
+		db "$SUPERVISOR_DB" "ALTER TABLE tasks ADD COLUMN last_failure_at TEXT;" 2>/dev/null || true
+		db "$SUPERVISOR_DB" "ALTER TABLE tasks ADD COLUMN consecutive_failure_count INTEGER NOT NULL DEFAULT 0;" 2>/dev/null || true
+		log_success "Added last_failure_at and consecutive_failure_count columns to tasks (t1206)"
+	fi
+
 	# Migrate: create stale_recovery_log table if missing (t1202)
 	local has_stale_recovery_log
 	has_stale_recovery_log=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='stale_recovery_log';" 2>/dev/null || echo "0")
@@ -731,6 +745,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     prompt_repeat_done INTEGER NOT NULL DEFAULT 0,
     requested_tier  TEXT,
     actual_tier     TEXT,
+    last_failure_at TEXT,
+    consecutive_failure_count INTEGER NOT NULL DEFAULT 0,
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
     started_at      TEXT,
     completed_at    TEXT,
