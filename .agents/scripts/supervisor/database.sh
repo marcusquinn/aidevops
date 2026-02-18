@@ -146,7 +146,8 @@ CREATE TABLE IF NOT EXISTS action_dedup_log (
     action_type     TEXT NOT NULL,
     target          TEXT NOT NULL,
     status          TEXT NOT NULL DEFAULT 'executed'
-                    CHECK(status IN ('executed', 'dedup_suppressed')),
+                    CHECK(status IN ('executed', 'dedup_suppressed', 'cooldown_suppressed')),
+    target_state_hash TEXT DEFAULT '',
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_action_dedup_type_target ON action_dedup_log(action_type, target);
@@ -622,6 +623,60 @@ CONTEST_SQL
 		log_info "Creating action_dedup_log table (t1138)..."
 		_create_action_dedup_log_schema
 		log_success "Created action_dedup_log table (t1138)"
+	fi
+
+	# Migrate: add target_state_hash column and cooldown_suppressed status (t1181)
+	# Enables cooldown logic: suppress actions when target state hasn't changed
+	local has_target_state_hash
+	has_target_state_hash=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('action_dedup_log') WHERE name='target_state_hash';" 2>/dev/null || echo "0")
+	if [[ "$has_target_state_hash" -eq 0 ]]; then
+		log_info "Migrating action_dedup_log: adding target_state_hash column (t1181)..."
+		db "$SUPERVISOR_DB" "ALTER TABLE action_dedup_log ADD COLUMN target_state_hash TEXT DEFAULT '';" 2>/dev/null || true
+		log_success "Added target_state_hash column to action_dedup_log (t1181)"
+	fi
+
+	# Migrate: update CHECK constraint to include cooldown_suppressed status (t1181)
+	local dedup_check_sql
+	dedup_check_sql=$(db "$SUPERVISOR_DB" "SELECT sql FROM sqlite_master WHERE type='table' AND name='action_dedup_log';" 2>/dev/null || echo "")
+	if [[ -n "$dedup_check_sql" ]] && ! printf '%s' "$dedup_check_sql" | grep -q 'cooldown_suppressed'; then
+		log_info "Migrating action_dedup_log: updating CHECK constraint for cooldown_suppressed (t1181)..."
+		local t1181_backup
+		t1181_backup=$(backup_sqlite_db "$SUPERVISOR_DB" "pre-migrate-t1181")
+		if [[ $? -ne 0 || -z "$t1181_backup" ]]; then
+			log_warn "Backup failed for t1181 migration — proceeding (non-critical)"
+		fi
+		db "$SUPERVISOR_DB" <<'MIGRATE_T1181'
+PRAGMA foreign_keys=OFF;
+BEGIN TRANSACTION;
+ALTER TABLE action_dedup_log RENAME TO action_dedup_log_old_t1181;
+CREATE TABLE action_dedup_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    cycle_id        TEXT NOT NULL,
+    action_type     TEXT NOT NULL,
+    target          TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'executed'
+                    CHECK(status IN ('executed', 'dedup_suppressed', 'cooldown_suppressed')),
+    target_state_hash TEXT DEFAULT '',
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+INSERT INTO action_dedup_log (id, cycle_id, action_type, target, status, target_state_hash, created_at)
+SELECT id, cycle_id, action_type, target, status,
+       COALESCE(target_state_hash, ''),
+       created_at
+FROM action_dedup_log_old_t1181;
+DROP TABLE action_dedup_log_old_t1181;
+CREATE INDEX IF NOT EXISTS idx_action_dedup_type_target ON action_dedup_log(action_type, target);
+CREATE INDEX IF NOT EXISTS idx_action_dedup_cycle ON action_dedup_log(cycle_id);
+CREATE INDEX IF NOT EXISTS idx_action_dedup_created ON action_dedup_log(created_at);
+COMMIT;
+PRAGMA foreign_keys=ON;
+MIGRATE_T1181
+		if [[ -n "${t1181_backup:-}" ]] && ! verify_migration_rowcounts "$SUPERVISOR_DB" "$t1181_backup" "action_dedup_log"; then
+			log_error "t1181 migration VERIFICATION FAILED — rolling back"
+			rollback_sqlite_db "$SUPERVISOR_DB" "$t1181_backup"
+		else
+			log_success "Updated action_dedup_log CHECK constraint for cooldown_suppressed (t1181)"
+		fi
 	fi
 
 	# Prune old action_dedup_log entries (keep last 7 days)
