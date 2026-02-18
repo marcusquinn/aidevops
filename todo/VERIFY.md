@@ -1175,15 +1175,22 @@
   check: shellcheck tests/test-ai-actions.sh
   check: file-exists tests/test-ai-actions.sh
 
-- [ ] v137 t1125 Fix jq JSON parsing errors in supervisor action executor ... | PR #1702 | merged:2026-02-18
+- [x] v137 t1125 Fix jq JSON parsing errors in supervisor action executor ... | PR #1702 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/supervisor/ai-actions.sh, .agents/scripts/supervisor/issue-audit.sh
   check: shellcheck .agents/scripts/supervisor/ai-actions.sh
   check: file-exists .agents/scripts/supervisor/ai-actions.sh
   check: shellcheck .agents/scripts/supervisor/issue-audit.sh
   check: file-exists .agents/scripts/supervisor/issue-audit.sh
 
-- [ ] v138 t1132 Add stale-state detection for supervisor DB running/evalu... | PR #1733 | merged:2026-02-18
+- [x] v138 t1132 Add stale-state detection for supervisor DB running/evalu... | PR #1733 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/supervisor/pulse.sh, MODELS.md
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
   check: file-exists MODELS.md
+
+- [ ] v139 t1139 Add supervisor DB consistency check — sync cancelled/ve... | PR #1735 | merged:2026-02-18
+  files: .agents/scripts/supervisor/pulse.sh, .agents/scripts/supervisor/todo-sync.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/supervisor/todo-sync.sh
+  check: file-exists .agents/scripts/supervisor/todo-sync.sh
