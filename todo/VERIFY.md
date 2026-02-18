@@ -1365,7 +1365,7 @@
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
 
-- [ ] v162 t1201 Fix AI supervisor pipeline 'expected array' parsing error... | PR #1829 | merged:2026-02-18
+- [x] v162 t1201 Fix AI supervisor pipeline 'expected array' parsing error... | PR #1829 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/supervisor/ai-actions.sh, .agents/scripts/supervisor/ai-reason.sh, tests/test-ai-actions.sh
   check: shellcheck .agents/scripts/supervisor/ai-actions.sh
   check: file-exists .agents/scripts/supervisor/ai-actions.sh
@@ -1374,7 +1374,7 @@
   check: shellcheck tests/test-ai-actions.sh
   check: file-exists tests/test-ai-actions.sh
 
-- [ ] v163 t1202 Add stale 'evaluating' and 'running' state garbage collec... | PR #1828 | merged:2026-02-18
+- [x] v163 t1202 Add stale 'evaluating' and 'running' state garbage collec... | PR #1828 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/supervisor-helper.sh, .agents/scripts/supervisor/database.sh, .agents/scripts/supervisor/pulse.sh
   check: shellcheck .agents/scripts/supervisor-helper.sh
   check: file-exists .agents/scripts/supervisor-helper.sh
@@ -1382,3 +1382,8 @@
   check: file-exists .agents/scripts/supervisor/database.sh
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
+
+- [ ] v164 t1204 Add pipeline empty-response resilience verification test ... | PR #1832 | merged:2026-02-18
+  files: tests/test-ai-actions.sh
+  check: shellcheck tests/test-ai-actions.sh
+  check: file-exists tests/test-ai-actions.sh
