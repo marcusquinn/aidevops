@@ -34,6 +34,10 @@ build_ai_context() {
 	context+="Repo: $(basename "$repo_path")\n"
 	context+="Scope: $scope\n\n"
 
+	# Section 0: Exclusion List (completed tasks + recently-acted-on issues)
+	# Placed first so the AI sees it before any issue/task lists.
+	context+="$(build_exclusion_context)\n\n"
+
 	# Section 1: Open GitHub Issues
 	context+="$(build_issues_context "$repo_path" "$scope")\n\n"
 
@@ -73,6 +77,103 @@ build_ai_context() {
 	fi
 
 	printf '%b' "$context"
+	return 0
+}
+
+#######################################
+# Section 0: Exclusion List (t1148)
+# Builds a deduplicated list of task IDs and issue numbers that the AI
+# should NOT act on this cycle. Sources:
+#   1. Tasks completed/verified/deployed in the last 48h (from supervisor DB)
+#   2. Issue numbers acted on in the last 5 action log cycles
+# Placed at the top of the context so the AI sees it before any issue/task
+# lists, preventing redundant actions and saving reasoning tokens.
+#######################################
+build_exclusion_context() {
+	local output="## DO NOT ACT — Exclusion List\n\n"
+	output+="**CRITICAL**: Do NOT propose any action targeting the task IDs or issue numbers\n"
+	output+="listed below. These have already been completed or acted on recently.\n"
+	output+="Proposing actions for excluded targets wastes tokens and creates duplicate work.\n\n"
+
+	local excluded_tasks=""
+	local excluded_issues=""
+
+	# Source 1: recently completed/verified/deployed tasks from supervisor DB
+	if [[ -f "$SUPERVISOR_DB" ]]; then
+		local db_completed
+		db_completed=$(db "$SUPERVISOR_DB" "
+			SELECT id FROM tasks
+			WHERE status IN ('complete', 'verified', 'deployed', 'cancelled')
+			  AND updated_at > datetime('now', '-48 hours')
+			ORDER BY updated_at DESC
+			LIMIT 30;
+		" 2>/dev/null || echo "")
+
+		if [[ -n "$db_completed" ]]; then
+			while IFS= read -r tid; do
+				tid="${tid// /}"
+				[[ -n "$tid" ]] && excluded_tasks+="$tid\n"
+			done <<<"$db_completed"
+		fi
+	fi
+
+	# Source 2: issue numbers and task IDs acted on in recent action log cycles
+	local log_dir="${AI_REASON_LOG_DIR:-$HOME/.aidevops/logs/ai-supervisor}"
+	if [[ -d "$log_dir" ]]; then
+		local action_logs
+		action_logs=$(find "$log_dir" -maxdepth 1 -name 'actions-*.md' -print0 2>/dev/null |
+			xargs -0 ls -t 2>/dev/null | head -5)
+
+		if [[ -n "$action_logs" ]]; then
+			while IFS= read -r log_file; do
+				[[ -f "$log_file" ]] || continue
+
+				# Extract issue numbers from action logs
+				local issue_nums
+				issue_nums=$(grep -oE '"issue_number":[0-9]+' "$log_file" 2>/dev/null |
+					grep -oE '[0-9]+' || true)
+				if [[ -n "$issue_nums" ]]; then
+					while IFS= read -r inum; do
+						[[ -n "$inum" ]] && excluded_issues+="$inum\n"
+					done <<<"$issue_nums"
+				fi
+
+				# Extract task IDs from action logs
+				local task_ids
+				task_ids=$(grep -oE '"task_id":"t[0-9]+"' "$log_file" 2>/dev/null |
+					grep -oE 't[0-9]+' || true)
+				if [[ -n "$task_ids" ]]; then
+					while IFS= read -r tid; do
+						[[ -n "$tid" ]] && excluded_tasks+="$tid\n"
+					done <<<"$task_ids"
+				fi
+			done <<<"$action_logs"
+		fi
+	fi
+
+	# Deduplicate and format task exclusions
+	if [[ -n "$excluded_tasks" ]]; then
+		local deduped_tasks
+		deduped_tasks=$(printf '%b' "$excluded_tasks" | sort -u | tr '\n' ' ' | sed 's/ $//')
+		output+="### Excluded Task IDs (completed or recently acted on)\n\n"
+		output+="$deduped_tasks\n\n"
+		output+="Skip any action with \`task_id\` matching the above.\n\n"
+	else
+		output+="### Excluded Task IDs\n\n_None in last 48h_\n\n"
+	fi
+
+	# Deduplicate and format issue exclusions
+	if [[ -n "$excluded_issues" ]]; then
+		local deduped_issues
+		deduped_issues=$(printf '%b' "$excluded_issues" | sort -un | tr '\n' ' ' | sed 's/ $//')
+		output+="### Excluded Issue Numbers (acted on in recent cycles)\n\n"
+		output+="$deduped_issues\n\n"
+		output+="Skip any action with \`issue_number\` matching the above.\n\n"
+	else
+		output+="### Excluded Issue Numbers\n\n_None in recent cycles_\n\n"
+	fi
+
+	printf '%b' "$output"
 	return 0
 }
 
