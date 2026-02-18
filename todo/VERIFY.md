@@ -1383,7 +1383,16 @@
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
 
-- [ ] v164 t1204 Add pipeline empty-response resilience verification test ... | PR #1832 | merged:2026-02-18
+- [x] v164 t1204 Add pipeline empty-response resilience verification test ... | PR #1832 | merged:2026-02-18 verified:2026-02-18
   files: tests/test-ai-actions.sh
+  check: shellcheck tests/test-ai-actions.sh
+  check: file-exists tests/test-ai-actions.sh
+
+- [ ] v165 t1197 Harden AI actions pipeline against empty/malformed model ... | PR #1823 | merged:2026-02-18
+  files: .agents/scripts/supervisor/ai-actions.sh, .agents/scripts/supervisor/ai-reason.sh, tests/test-ai-actions.sh
+  check: shellcheck .agents/scripts/supervisor/ai-actions.sh
+  check: file-exists .agents/scripts/supervisor/ai-actions.sh
+  check: shellcheck .agents/scripts/supervisor/ai-reason.sh
+  check: file-exists .agents/scripts/supervisor/ai-reason.sh
   check: shellcheck tests/test-ai-actions.sh
   check: file-exists tests/test-ai-actions.sh
