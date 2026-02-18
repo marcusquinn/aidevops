@@ -1194,3 +1194,12 @@
   check: file-exists .agents/scripts/supervisor/pulse.sh
   check: shellcheck .agents/scripts/supervisor/todo-sync.sh
   check: file-exists .agents/scripts/supervisor/todo-sync.sh
+
+- [ ] v140 t1146 Add batch-task-creation capability to reduce worktree/PR ... | PR #1770 | merged:2026-02-18
+  files: .agents/scripts/batch-cleanup-helper.sh, .agents/scripts/supervisor-helper.sh, .agents/scripts/supervisor/cron.sh
+  check: shellcheck .agents/scripts/batch-cleanup-helper.sh
+  check: file-exists .agents/scripts/batch-cleanup-helper.sh
+  check: shellcheck .agents/scripts/supervisor-helper.sh
+  check: file-exists .agents/scripts/supervisor-helper.sh
+  check: shellcheck .agents/scripts/supervisor/cron.sh
+  check: file-exists .agents/scripts/supervisor/cron.sh
