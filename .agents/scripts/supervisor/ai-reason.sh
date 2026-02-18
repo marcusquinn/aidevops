@@ -254,12 +254,38 @@ ${user_prompt}"
 			--format default \
 			--title "ai-supervisor-${timestamp}" \
 			"$full_prompt" 2>/dev/null || echo "")
+		# Strip ANSI escape codes — opencode --format default includes terminal
+		# colour codes that corrupt JSON parsing (t1182)
+		ai_result=$(printf '%s' "$ai_result" | sed 's/\x1b\[[0-9;]*[mGKHF]//g; s/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b\]//g; s/\x07//g')
 	else
 		local claude_model="${ai_model#*/}"
 		ai_result=$(portable_timeout "$ai_timeout" claude \
 			-p "$full_prompt" \
 			--model "$claude_model" \
 			--output-format text 2>/dev/null || echo "")
+	fi
+
+	# Handle empty or whitespace-only response — treat as empty action plan
+	# rather than a hard error (t1182: empty output is a valid "no actions" signal)
+	local ai_result_trimmed
+	ai_result_trimmed=$(printf '%s' "$ai_result" | tr -d '[:space:]')
+	if [[ -z "$ai_result_trimmed" ]]; then
+		log_info "AI Reasoning: empty response from AI CLI — treating as empty action plan"
+		{
+			echo "## AI Response"
+			echo ""
+			echo "Model: $ai_model"
+			echo "CLI: $ai_cli"
+			echo "Timeout: ${ai_timeout}s"
+			echo "Response length: 0 bytes (empty)"
+			echo ""
+			echo "## Parsing Result"
+			echo ""
+			echo "Status: EMPTY — treated as empty action plan []"
+		} >>"$reason_log"
+		printf '%s' "[]"
+		_release_ai_lock
+		return 0
 	fi
 
 	# Step 7: Log the AI response
@@ -283,12 +309,13 @@ ${user_prompt}"
 
 	if [[ -z "$action_plan" || "$action_plan" == "null" ]]; then
 		log_warn "AI Reasoning: no parseable action plan in response"
-		# Debug diagnostics for intermittent parse failures
-		local response_len json_block_count first_bytes last_bytes
+		# Debug diagnostics for intermittent parse failures (t1182)
+		local response_len json_block_count first_bytes last_bytes raw_hex_head
 		response_len=$(printf '%s' "$ai_result" | wc -c | tr -d ' ')
-		json_block_count=$(printf '%s' "$ai_result" | grep -c '^```json' || echo 0)
+		json_block_count=$(printf '%s' "$ai_result" | grep -c '^```json' 2>/dev/null || echo 0)
 		first_bytes=$(printf '%s' "$ai_result" | head -c 100 | tr '\n' ' ')
 		last_bytes=$(printf '%s' "$ai_result" | tail -c 100 | tr '\n' ' ')
+		raw_hex_head=$(printf '%s' "$ai_result" | head -c 32 | od -An -tx1 | tr -d ' \n' | head -c 64)
 		{
 			echo "## Parsing Result"
 			echo ""
@@ -299,6 +326,13 @@ ${user_prompt}"
 			echo "- \`\`\`json blocks found: $json_block_count"
 			echo "- First 100 bytes: \`$first_bytes\`"
 			echo "- Last 100 bytes: \`$last_bytes\`"
+			echo "- First 32 bytes (hex): \`$raw_hex_head\`"
+			echo ""
+			echo "### Raw Response (first 500 bytes)"
+			echo '```'
+			printf '%s' "$ai_result" | head -c 500
+			echo ""
+			echo '```'
 		} >>"$reason_log"
 		echo '{"error":"no_action_plan","actions":[]}'
 		_release_ai_lock
@@ -568,6 +602,38 @@ extract_action_plan() {
 		if [[ $? -eq 0 && -n "$parsed" ]]; then
 			printf '%s' "$parsed"
 			return 0
+		fi
+	fi
+
+	# Try 6: Strip any remaining ANSI codes and retry ```json extraction (t1182)
+	# Handles cases where ANSI stripping in run_ai_reasoning was incomplete or
+	# the function is called directly with unstripped output.
+	local clean_response
+	clean_response=$(printf '%s' "$response" | sed 's/\x1b\[[0-9;]*[mGKHF]//g; s/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b\]//g; s/\x07//g')
+	if [[ "$clean_response" != "$response" ]]; then
+		# ANSI codes were present — retry extraction on clean response
+		json_block=$(printf '%s' "$clean_response" | awk '
+			/^```json/ { capture=1; block=""; next }
+			/^```$/ && capture { capture=0; last_block=block; next }
+			capture { block = block (block ? "\n" : "") $0 }
+			END { if (capture && block) print block; else if (last_block) print last_block }
+		')
+		if [[ -n "$json_block" ]]; then
+			parsed=$(printf '%s' "$json_block" | jq '.' 2>/dev/null)
+			if [[ $? -eq 0 && -n "$parsed" ]]; then
+				printf '%s' "$parsed"
+				return 0
+			fi
+		fi
+		# Also try direct parse of clean response
+		parsed=$(printf '%s' "$clean_response" | jq '.' 2>/dev/null)
+		if [[ $? -eq 0 && -n "$parsed" ]]; then
+			local clean_type
+			clean_type=$(printf '%s' "$parsed" | jq 'type' 2>/dev/null || echo "")
+			if [[ "$clean_type" == '"array"' ]]; then
+				printf '%s' "$parsed"
+				return 0
+			fi
 		fi
 	fi
 

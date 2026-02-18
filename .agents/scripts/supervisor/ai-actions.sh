@@ -1628,7 +1628,11 @@ run_ai_actions_pipeline() {
 	local plan_type
 	plan_type=$(printf '%s' "$action_plan" | jq 'type' 2>/dev/null || echo "")
 	if [[ "$plan_type" != '"array"' ]]; then
-		log_warn "AI Actions Pipeline: expected array, got $plan_type"
+		# Log raw content for debugging (t1182: helps diagnose parse failures)
+		local plan_len plan_head
+		plan_len=$(printf '%s' "$action_plan" | wc -c | tr -d ' ')
+		plan_head=$(printf '%s' "$action_plan" | head -c 200 | tr '\n' ' ')
+		log_warn "AI Actions Pipeline: expected array, got $plan_type (len=${plan_len} head='${plan_head}')"
 		echo '{"error":"invalid_plan_type","actions":[]}'
 		return 1
 	fi

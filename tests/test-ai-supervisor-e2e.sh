@@ -1050,6 +1050,125 @@ else
 	fail "garbage input handling broken"
 fi
 
+# Test 5.5: Parse JSON from response wrapped in outer code block (t1182)
+# Reproduces the actual failure: AI wraps entire response in ``` block,
+# then includes a ```json block inside it.
+echo "Test 5.5: Parse JSON from response with outer code block wrapping inner json block"
+_test_parse_nested_code_blocks() {
+	(
+		BLUE='' GREEN='' YELLOW='' RED='' NC=''
+		SUPERVISOR_DB="/dev/null"
+		SUPERVISOR_LOG="/dev/null"
+		SCRIPT_DIR="$SCRIPTS_DIR"
+		AI_REASON_LOG_DIR="$TEST_TMP/logs"
+
+		source "$SUPERVISOR_DIR/_common.sh"
+		source "$SUPERVISOR_DIR/ai-reason.sh"
+
+		# Simulate opencode wrapping the entire response in a generic code block
+		# with a ```json block inside (the actual failure pattern from t1182)
+		local input
+		input='I will analyze the project state.
+
+Key observations:
+1. Several tasks need attention.
+
+```json
+[{"type":"create_task","title":"Fix pipeline","reasoning":"test"}]
+```'
+
+		local result
+		result=$(extract_action_plan "$input")
+
+		local count
+		count=$(printf '%s' "$result" | jq 'length' 2>/dev/null || echo -1)
+		if [[ "$count" -ne 1 ]]; then
+			echo "FAIL: expected 1 action from nested code block, got $count (result: $result)"
+			exit 1
+		fi
+
+		exit 0
+	)
+}
+
+if _test_parse_nested_code_blocks 2>/dev/null; then
+	pass "parses JSON from response with analysis text before json block"
+else
+	fail "nested code block parsing broken (t1182 regression)"
+fi
+
+# Test 5.6: Handle ANSI-coded response (t1182)
+# opencode --format default includes ANSI escape codes that corrupt JSON parsing
+echo "Test 5.6: Handle ANSI escape codes in response"
+_test_parse_ansi_response() {
+	(
+		BLUE='' GREEN='' YELLOW='' RED='' NC=''
+		SUPERVISOR_DB="/dev/null"
+		SUPERVISOR_LOG="/dev/null"
+		SCRIPT_DIR="$SCRIPTS_DIR"
+		AI_REASON_LOG_DIR="$TEST_TMP/logs"
+
+		source "$SUPERVISOR_DIR/_common.sh"
+		source "$SUPERVISOR_DIR/ai-reason.sh"
+
+		# Simulate ANSI-coded response (ESC[0m, ESC[1m etc.)
+		# shellcheck disable=SC2059
+		local ansi_prefix
+		ansi_prefix=$(printf '\033[0m\033[1m')
+		local input="${ansi_prefix}"'[{"type":"create_task","title":"Test","reasoning":"r"}]'
+
+		local result
+		result=$(extract_action_plan "$input")
+
+		local count
+		count=$(printf '%s' "$result" | jq 'length' 2>/dev/null || echo -1)
+		if [[ "$count" -ne 1 ]]; then
+			echo "FAIL: expected 1 action after ANSI stripping, got $count (result: $result)"
+			exit 1
+		fi
+
+		exit 0
+	)
+}
+
+if _test_parse_ansi_response 2>/dev/null; then
+	pass "handles ANSI escape codes in response (strips before parsing)"
+else
+	fail "ANSI code handling broken (t1182 regression)"
+fi
+
+# Test 5.7: Handle empty/whitespace-only response (t1182)
+echo "Test 5.7: Handle empty response gracefully"
+_test_parse_empty_response() {
+	(
+		BLUE='' GREEN='' YELLOW='' RED='' NC=''
+		SUPERVISOR_DB="/dev/null"
+		SUPERVISOR_LOG="/dev/null"
+		SCRIPT_DIR="$SCRIPTS_DIR"
+		AI_REASON_LOG_DIR="$TEST_TMP/logs"
+
+		source "$SUPERVISOR_DIR/_common.sh"
+		source "$SUPERVISOR_DIR/ai-reason.sh"
+
+		local result
+		result=$(extract_action_plan "")
+
+		# Empty response should return empty string (not an error)
+		if [[ -n "$result" ]]; then
+			echo "FAIL: expected empty result for empty input, got: $result"
+			exit 1
+		fi
+
+		exit 0
+	)
+}
+
+if _test_parse_empty_response 2>/dev/null; then
+	pass "handles empty response gracefully (returns empty string)"
+else
+	fail "empty response handling broken"
+fi
+
 echo ""
 
 # ─── Section 6: Concurrency and Safety ──────────────────────────────
