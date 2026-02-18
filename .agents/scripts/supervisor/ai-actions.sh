@@ -169,16 +169,26 @@ execute_action_plan() {
 		exec_result=$(execute_single_action "$action" "$action_type" "$repo_path" "$repo_slug" 2>>"$SUPERVISOR_LOG")
 		local exec_rc=$?
 
+		# Extract only the JSON portion from exec_result — git operations
+		# (commit_and_push_todo) can leak stdout noise (e.g. "Updating ...",
+		# "Fast-forward", "Created autostash") before the final JSON line.
+		local exec_result_json
+		exec_result_json=$(printf '%s' "$exec_result" | grep -E '^\{' | tail -1)
+		if [[ -z "$exec_result_json" ]] || ! printf '%s' "$exec_result_json" | jq '.' &>/dev/null; then
+			# Not valid JSON — escape the entire result as a string
+			exec_result_json=$(printf '%s' "$exec_result" | jq -Rs '.')
+		fi
+
 		if [[ $exec_rc -eq 0 ]]; then
 			executed=$((executed + 1))
 			log_info "AI Actions: [$((i + 1))/$action_count] $action_type — success"
-			results=$(printf '%s' "$results" | jq ". + [{\"index\":$i,\"type\":\"$action_type\",\"status\":\"executed\",\"result\":$exec_result}]")
+			results=$(printf '%s' "$results" | jq --argjson r "$exec_result_json" ". + [{\"index\":$i,\"type\":\"$action_type\",\"status\":\"executed\",\"result\":\$r}]")
 		else
 			failed=$((failed + 1))
 			log_warn "AI Actions: [$((i + 1))/$action_count] $action_type — failed"
 			local escaped_result
 			escaped_result=$(printf '%s' "$exec_result" | jq -Rs '.')
-			results=$(printf '%s' "$results" | jq ". + [{\"index\":$i,\"type\":\"$action_type\",\"status\":\"failed\",\"error\":$escaped_result}]")
+			results=$(printf '%s' "$results" | jq --argjson e "$escaped_result" ". + [{\"index\":$i,\"type\":\"$action_type\",\"status\":\"failed\",\"error\":\$e}]")
 		fi
 
 		{
@@ -529,9 +539,9 @@ _exec_create_task() {
 	# Find the "Backlog" or last task section and append there
 	printf '\n%s\n' "$task_line" >>"$todo_file"
 
-	# Commit and push
+	# Commit and push (redirect stdout to log — git operations leak noise)
 	if declare -f commit_and_push_todo &>/dev/null; then
-		commit_and_push_todo "$repo_path" "chore: AI supervisor created task $task_id" 2>/dev/null || true
+		commit_and_push_todo "$repo_path" "chore: AI supervisor created task $task_id" >>"$SUPERVISOR_LOG" 2>&1 || true
 	fi
 
 	echo "{\"created\":true,\"task_id\":\"$task_id\",\"title\":$(printf '%s' "$title" | jq -Rs '.')}"
@@ -632,9 +642,9 @@ _exec_create_subtasks() {
 	} >"$temp_file"
 	mv "$temp_file" "$todo_file"
 
-	# Commit and push
+	# Commit and push (redirect stdout to log — git operations leak noise)
 	if declare -f commit_and_push_todo &>/dev/null; then
-		commit_and_push_todo "$repo_path" "chore: AI supervisor created subtasks for $parent_task_id" 2>/dev/null || true
+		commit_and_push_todo "$repo_path" "chore: AI supervisor created subtasks for $parent_task_id" >>"$SUPERVISOR_LOG" 2>&1 || true
 	fi
 
 	# Remove trailing comma from created_ids
@@ -934,8 +944,9 @@ _exec_create_improvement() {
 
 	printf '\n%s\n' "$task_line" >>"$todo_file"
 
+	# Redirect stdout to log — git operations leak noise into function output
 	if declare -f commit_and_push_todo &>/dev/null; then
-		commit_and_push_todo "$repo_path" "chore: AI supervisor created improvement task $task_id" 2>/dev/null || true
+		commit_and_push_todo "$repo_path" "chore: AI supervisor created improvement task $task_id" >>"$SUPERVISOR_LOG" 2>&1 || true
 	fi
 
 	echo "{\"created\":true,\"task_id\":\"$task_id\",\"title\":$(printf '%s' "$title" | jq -Rs '.'),\"category\":\"$category\"}"
@@ -980,8 +991,9 @@ _exec_escalate_model() {
 				rm -f "${todo_file}.bak"
 			fi
 
+			# Redirect stdout to log — git operations leak noise into function output
 			if declare -f commit_and_push_todo &>/dev/null; then
-				commit_and_push_todo "$repo_path" "chore: AI supervisor escalated $task_id model $from_tier -> $to_tier" 2>/dev/null || true
+				commit_and_push_todo "$repo_path" "chore: AI supervisor escalated $task_id model $from_tier -> $to_tier" >>"$SUPERVISOR_LOG" 2>&1 || true
 			fi
 		fi
 	fi
