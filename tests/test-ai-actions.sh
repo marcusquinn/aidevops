@@ -1051,6 +1051,180 @@ else
 	fail "dedup record state_hash storage has errors"
 fi
 
+# ─── Test 18: extract_action_plan edge cases (t1201) ────────────────
+echo "Test 18: extract_action_plan — markdown fence stripping and fallback parsing"
+
+_test_extract_action_plan() {
+	(
+		BLUE='' GREEN='' YELLOW='' RED='' NC=''
+		SUPERVISOR_DB="/tmp/test-extract-$$.db"
+		SUPERVISOR_LOG="/dev/null"
+		SCRIPT_DIR="$REPO_DIR/.agents/scripts"
+		REPO_PATH="$REPO_DIR"
+		AI_ACTIONS_LOG_DIR="/tmp/test-ai-actions-logs-$$"
+		db() { :; }
+		log_info() { :; }
+		log_success() { :; }
+		log_warn() { :; }
+		log_error() { :; }
+		log_verbose() { :; }
+		sql_escape() { printf '%s' "$1" | sed "s/'/''/g"; }
+		# extract_action_plan is defined in ai-reason.sh — source it for this test
+		# shellcheck source=../.agents/scripts/supervisor/ai-reason.sh
+		source "$REPO_DIR/.agents/scripts/supervisor/ai-reason.sh"
+
+		source "$ACTIONS_SCRIPT"
+
+		local failures=0
+
+		# Empty response
+		result=$(extract_action_plan "")
+		if [[ -n "$result" ]]; then
+			echo "FAIL: empty response should return empty string, got: $result"
+			failures=$((failures + 1))
+		fi
+
+		# Whitespace-only response
+		result=$(extract_action_plan "   
+	")
+		if [[ -n "$result" ]]; then
+			echo "FAIL: whitespace-only response should return empty string, got: $result"
+			failures=$((failures + 1))
+		fi
+
+		# Pure JSON array (no fencing)
+		result=$(extract_action_plan '[{"type":"comment_on_issue","issue_number":1,"body":"test","reasoning":"r"}]')
+		if [[ -z "$result" ]]; then
+			echo "FAIL: pure JSON array should be parsed successfully"
+			failures=$((failures + 1))
+		fi
+
+		# Markdown-fenced JSON (```json ... ```)
+		result=$(extract_action_plan '```json
+[{"type":"comment_on_issue","issue_number":1,"body":"test","reasoning":"r"}]
+```')
+		if [[ -z "$result" ]]; then
+			echo "FAIL: markdown-fenced JSON should be extracted and parsed"
+			failures=$((failures + 1))
+		fi
+
+		# Non-JSON response (preamble text)
+		result=$(extract_action_plan "Here is my analysis of the project state...")
+		if [[ -n "$result" ]]; then
+			echo "FAIL: non-JSON response should return empty string, got: $result"
+			failures=$((failures + 1))
+		fi
+
+		# Empty array (valid — model has no actions)
+		result=$(extract_action_plan '[]')
+		if [[ "$result" != "[]" ]]; then
+			echo "FAIL: empty array should parse to '[]', got: $result"
+			failures=$((failures + 1))
+		fi
+
+		# Array embedded in preamble text
+		result=$(extract_action_plan 'Here is my action plan:
+[{"type":"comment_on_issue","issue_number":1,"body":"test","reasoning":"r"}]
+That is all.')
+		if [[ -z "$result" ]]; then
+			echo "FAIL: array embedded in text should be extracted via bracket fallback"
+			failures=$((failures + 1))
+		fi
+
+		rm -rf "/tmp/test-ai-actions-logs-$$" "$SUPERVISOR_DB"
+		exit "$failures"
+	)
+}
+
+if _test_extract_action_plan 2>/dev/null; then
+	pass "extract_action_plan handles empty, whitespace, fenced, and embedded JSON"
+else
+	fail "extract_action_plan edge case handling has errors"
+fi
+
+# ─── Test 19: adjust_priority new_priority validation (t1126, t1201) ─
+echo "Test 19: adjust_priority — new_priority required and validated"
+
+_test_adjust_priority_validation() {
+	(
+		BLUE='' GREEN='' YELLOW='' RED='' NC=''
+		SUPERVISOR_DB="/tmp/test-adj-$$.db"
+		SUPERVISOR_LOG="/dev/null"
+		SCRIPT_DIR="$REPO_DIR/.agents/scripts"
+		REPO_PATH="$REPO_DIR"
+		AI_ACTIONS_LOG_DIR="/tmp/test-ai-actions-logs-$$"
+		db() { :; }
+		log_info() { :; }
+		log_success() { :; }
+		log_warn() { :; }
+		log_error() { :; }
+		log_verbose() { :; }
+		sql_escape() { printf '%s' "$1" | sed "s/'/''/g"; }
+
+		source "$ACTIONS_SCRIPT"
+
+		local failures=0
+
+		# Valid: high
+		result=$(validate_action_fields '{"type":"adjust_priority","task_id":"t100","new_priority":"high"}' "adjust_priority")
+		if [[ -n "$result" ]]; then
+			echo "FAIL: valid adjust_priority (high) rejected: $result"
+			failures=$((failures + 1))
+		fi
+
+		# Valid: medium
+		result=$(validate_action_fields '{"type":"adjust_priority","task_id":"t100","new_priority":"medium"}' "adjust_priority")
+		if [[ -n "$result" ]]; then
+			echo "FAIL: valid adjust_priority (medium) rejected: $result"
+			failures=$((failures + 1))
+		fi
+
+		# Valid: low
+		result=$(validate_action_fields '{"type":"adjust_priority","task_id":"t100","new_priority":"low"}' "adjust_priority")
+		if [[ -n "$result" ]]; then
+			echo "FAIL: valid adjust_priority (low) rejected: $result"
+			failures=$((failures + 1))
+		fi
+
+		# Valid: critical
+		result=$(validate_action_fields '{"type":"adjust_priority","task_id":"t100","new_priority":"critical"}' "adjust_priority")
+		if [[ -n "$result" ]]; then
+			echo "FAIL: valid adjust_priority (critical) rejected: $result"
+			failures=$((failures + 1))
+		fi
+
+		# Invalid: missing new_priority (must be rejected — t1126, t1201)
+		result=$(validate_action_fields '{"type":"adjust_priority","task_id":"t100"}' "adjust_priority")
+		if [[ -z "$result" ]]; then
+			echo "FAIL: adjust_priority without new_priority should be rejected"
+			failures=$((failures + 1))
+		fi
+
+		# Invalid: invalid new_priority value
+		result=$(validate_action_fields '{"type":"adjust_priority","task_id":"t100","new_priority":"urgent"}' "adjust_priority")
+		if [[ -z "$result" ]]; then
+			echo "FAIL: adjust_priority with invalid new_priority 'urgent' should be rejected"
+			failures=$((failures + 1))
+		fi
+
+		# Invalid: missing task_id
+		result=$(validate_action_fields '{"type":"adjust_priority","new_priority":"high"}' "adjust_priority")
+		if [[ -z "$result" ]]; then
+			echo "FAIL: adjust_priority without task_id should be rejected"
+			failures=$((failures + 1))
+		fi
+
+		rm -rf "/tmp/test-ai-actions-logs-$$" "$SUPERVISOR_DB"
+		exit "$failures"
+	)
+}
+
+if _test_adjust_priority_validation 2>/dev/null; then
+	pass "adjust_priority new_priority validation works correctly"
+else
+	fail "adjust_priority new_priority validation has errors"
+fi
+
 # ─── Summary ────────────────────────────────────────────────────────
 echo ""
 echo "=== Results: $PASS/$TOTAL passed, $FAIL failed ==="
