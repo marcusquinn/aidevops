@@ -1,3 +1,49 @@
+# Verification Log
+
+## t1181 Verification — Action-Target Cooldown (Superseded by t1179)
+
+### Status: COMPLETE (superseded)
+
+t1181 requested a cooldown mechanism to prevent the supervisor from acting on the same
+target within N cycles when the target's state hasn't changed. This requirement is fully
+satisfied by t1179 (cycle-aware dedup), which was merged in PR #1779.
+
+### Evidence
+
+t1179 delivers every capability t1181 specified:
+
+| t1181 Requirement | t1179 Implementation | Location |
+|---|---|---|
+| `last_acted` map in supervisor DB | `state_hash` column in `action_dedup_log` | database.sh:153 |
+| Compute target state fingerprint | `_compute_target_state_hash()` | ai-actions.sh:103-199 |
+| Skip if same (target, action_type) with no state change | `_is_duplicate_action()` cycle-aware check | ai-actions.sh:278-311 |
+| Allow action if state changed | State hash comparison, return 1 if changed | ai-actions.sh:300-303 |
+| Configurable window | `AI_ACTION_DEDUP_WINDOW` (default 5 cycles) | ai-actions.sh:33 |
+| Stats/reporting | `dedup-stats` subcommand with state change tracking | ai-actions.sh:1774-1833 |
+
+### Why a separate cooldown layer is unnecessary
+
+t1181 proposed a "third safety net" with a 2-cycle window alongside the 5-cycle dedup
+window. Since the dedup window (5 cycles) is a superset of the cooldown window (2 cycles),
+any action suppressed by a 2-cycle cooldown would already be suppressed by the 5-cycle
+dedup. The cycle-aware dedup IS the cooldown mechanism — it just uses a single, wider
+window instead of two overlapping windows.
+
+### ShellCheck verification
+
+```
+ai-actions.sh: 0 errors, 0 warnings (5 info-level SC2016/SC1091 — intentional)
+database.sh: 0 errors, 0 warnings, 0 info
+```
+
+### Conclusion
+
+VERIFY_COMPLETE — t1179 (PR #1779) fully satisfies the t1181 requirement. No additional
+code changes needed. The prior t1181 branch commits (3 commits on origin/feature/t1181)
+are superseded and should not be merged.
+
+---
+
 # t1081 Verification — Daily Skill Auto-Update Pipeline
 
 ## Status: COMPLETE
