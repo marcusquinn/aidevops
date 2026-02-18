@@ -1068,15 +1068,34 @@ run_ai_actions_pipeline() {
 		return 1
 	fi
 
-	# Check if the result is an error object rather than an action array
-	local is_error
-	is_error=$(printf '%s' "$action_plan" | jq 'has("error")' 2>/dev/null || echo "false")
-	if [[ "$is_error" == "true" ]]; then
-		local error_msg
-		error_msg=$(printf '%s' "$action_plan" | jq -r '.error // "unknown"')
-		log_warn "AI Actions Pipeline: reasoning returned error: $error_msg"
-		echo "$action_plan"
-		return 1
+	# Handle empty output — concurrency guard or other silent skip
+	if [[ -z "$action_plan" ]]; then
+		log_info "AI Actions Pipeline: reasoning returned empty output (skipped)"
+		echo '{"executed":0,"failed":0,"skipped":0,"actions":[]}'
+		return 0
+	fi
+
+	# Check if the result is a skip/error object rather than an action array
+	local plan_obj_type
+	plan_obj_type=$(printf '%s' "$action_plan" | jq 'type' 2>/dev/null || echo "")
+	if [[ "$plan_obj_type" == '"object"' ]]; then
+		local is_skipped is_error
+		is_skipped=$(printf '%s' "$action_plan" | jq 'has("skipped")' 2>/dev/null || echo "false")
+		is_error=$(printf '%s' "$action_plan" | jq 'has("error")' 2>/dev/null || echo "false")
+		if [[ "$is_skipped" == "true" ]]; then
+			local skip_reason
+			skip_reason=$(printf '%s' "$action_plan" | jq -r '.skipped // "unknown"')
+			log_info "AI Actions Pipeline: reasoning skipped ($skip_reason)"
+			echo '{"executed":0,"failed":0,"skipped":0,"actions":[]}'
+			return 0
+		fi
+		if [[ "$is_error" == "true" ]]; then
+			local error_msg
+			error_msg=$(printf '%s' "$action_plan" | jq -r '.error // "unknown"')
+			log_warn "AI Actions Pipeline: reasoning returned error: $error_msg"
+			echo "$action_plan"
+			return 1
+		fi
 	fi
 
 	# Verify we got an array
