@@ -18,6 +18,80 @@
 AI_REASON_LOG_DIR="${AI_REASON_LOG_DIR:-$HOME/.aidevops/logs/ai-supervisor}"
 
 #######################################
+# Check if there is actionable work worth reasoning about
+# Avoids spawning an expensive opus session when nothing needs attention.
+# Arguments:
+#   $1 - repo path
+# Returns:
+#   0 if actionable work exists, 1 if nothing to reason about
+#######################################
+has_actionable_work() {
+	local repo_path="${1:-$REPO_PATH}"
+	local actionable=0
+
+	# Resolve GitHub owner/repo from git remote (gh --repo needs owner/repo, not path)
+	local gh_repo=""
+	if command -v gh &>/dev/null; then
+		gh_repo=$(git -C "$repo_path" remote get-url origin 2>/dev/null |
+			sed -E 's#.*[:/]([^/]+/[^/]+?)(\.git)?$#\1#' || echo "")
+	fi
+
+	# 1. Open GitHub issues (excluding supervisor/logging noise)
+	local open_issues=0
+	if [[ -n "$gh_repo" ]]; then
+		open_issues=$(gh issue list --repo "$gh_repo" --state open --limit 100 --json number,title \
+			--jq '[.[] | select(.title | test("^\\[(Supervisor|Auditor|Auto-|Cron)"; "i") | not) | select(.title | test("Daily CodeRabbit"; "i") | not)] | length' 2>/dev/null || echo 0)
+	fi
+	if [[ "$open_issues" -gt 0 ]]; then
+		actionable=$((actionable + open_issues))
+		log_verbose "AI Reasoning: $open_issues actionable open issues"
+	fi
+
+	# 2. Open PRs needing attention (not yet approved or merged)
+	local open_prs=0
+	if [[ -n "$gh_repo" ]]; then
+		open_prs=$(gh pr list --repo "$gh_repo" --state open --limit 50 --json number \
+			--jq 'length' 2>/dev/null || echo 0)
+	fi
+	if [[ "$open_prs" -gt 0 ]]; then
+		actionable=$((actionable + open_prs))
+		log_verbose "AI Reasoning: $open_prs open PRs"
+	fi
+
+	# 3. Open tasks that are blocked (might be unblockable)
+	local blocked_tasks=0
+	if [[ -f "$repo_path/TODO.md" ]]; then
+		blocked_tasks=$(grep -c '^\- \[ \].*blocked-by:' "$repo_path/TODO.md" 2>/dev/null || echo 0)
+	fi
+	if [[ "$blocked_tasks" -gt 0 ]]; then
+		actionable=$((actionable + blocked_tasks))
+		log_verbose "AI Reasoning: $blocked_tasks blocked tasks"
+	fi
+
+	# 4. Recently failed workers (last 24h) — may need intervention
+	local recent_failures=0
+	if [[ -f "$SUPERVISOR_DB" ]]; then
+		recent_failures=$(db "$SUPERVISOR_DB" "
+			SELECT COUNT(*) FROM tasks
+			WHERE status IN ('failed', 'error')
+			  AND updated_at > datetime('now', '-24 hours');
+		" 2>/dev/null || echo 0)
+	fi
+	if [[ "$recent_failures" -gt 0 ]]; then
+		actionable=$((actionable + recent_failures))
+		log_verbose "AI Reasoning: $recent_failures recent worker failures"
+	fi
+
+	if [[ "$actionable" -eq 0 ]]; then
+		log_info "AI Reasoning: nothing actionable — skipping reasoning cycle"
+		return 1
+	fi
+
+	log_verbose "AI Reasoning: $actionable actionable items found"
+	return 0
+}
+
+#######################################
 # Run the AI reasoning cycle
 # Arguments:
 #   $1 - repo path
@@ -35,6 +109,27 @@ run_ai_reasoning() {
 	# Ensure log directory exists
 	mkdir -p "$AI_REASON_LOG_DIR"
 
+	# Concurrency guard — prevent overlapping AI reasoning sessions
+	local lock_file="$AI_REASON_LOG_DIR/.ai-reason.lock"
+	if [[ -f "$lock_file" ]]; then
+		local lock_pid lock_age
+		lock_pid=$(head -1 "$lock_file" 2>/dev/null || echo 0)
+		lock_age=$(($(date +%s) - $(stat -f %m "$lock_file" 2>/dev/null || stat -c %Y "$lock_file" 2>/dev/null || echo 0)))
+		# If lock holder is still alive and lock is not stale (< 5 min), skip
+		if kill -0 "$lock_pid" 2>/dev/null && [[ "$lock_age" -lt 300 ]]; then
+			log_info "AI Reasoning: already running (PID $lock_pid, ${lock_age}s old) — skipping"
+			return 0
+		fi
+		# Stale lock — remove and continue
+		log_info "AI Reasoning: removing stale lock (PID $lock_pid, ${lock_age}s old)"
+		rm -f "$lock_file"
+	fi
+	# Acquire lock
+	echo "$$" >"$lock_file"
+
+	# Helper to release lock — called before every return
+	_release_ai_lock() { rm -f "$lock_file"; }
+
 	local timestamp
 	timestamp=$(date -u '+%Y%m%d-%H%M%S')
 	local reason_log="$AI_REASON_LOG_DIR/reason-${timestamp}.md"
@@ -45,6 +140,7 @@ run_ai_reasoning() {
 	local context
 	context=$(build_ai_context "$repo_path" "full" 2>/dev/null) || {
 		log_error "AI Reasoning: failed to build context"
+		_release_ai_lock
 		return 1
 	}
 
@@ -88,6 +184,7 @@ PROMPT
 	# Step 4: In dry-run mode, stop here
 	if [[ "$mode" == "dry-run" ]]; then
 		log_info "AI Reasoning: dry-run complete (log: $reason_log)"
+		_release_ai_lock
 		echo '{"mode":"dry-run","actions":[]}'
 		return 0
 	fi
@@ -97,6 +194,7 @@ PROMPT
 	ai_cli=$(resolve_ai_cli 2>/dev/null) || {
 		log_error "AI Reasoning: no AI CLI available"
 		echo '{"error":"no_ai_cli","actions":[]}' >>"$reason_log"
+		_release_ai_lock
 		return 1
 	}
 
@@ -105,6 +203,7 @@ PROMPT
 		log_warn "AI Reasoning: opus model unavailable, falling back to sonnet"
 		ai_model=$(resolve_model "sonnet" "$ai_cli" 2>/dev/null) || {
 			log_error "AI Reasoning: no model available"
+			_release_ai_lock
 			return 1
 		}
 	}
@@ -160,6 +259,7 @@ ${user_prompt}"
 			echo "Status: FAILED - no parseable JSON action plan"
 		} >>"$reason_log"
 		echo '{"error":"no_action_plan","actions":[]}'
+		_release_ai_lock
 		return 1
 	fi
 
@@ -189,6 +289,7 @@ ${user_prompt}"
 
 	# Output the action plan
 	printf '%s' "$action_plan"
+	_release_ai_lock
 	return 0
 }
 
@@ -353,6 +454,7 @@ extract_action_plan() {
 #######################################
 should_run_ai_reasoning() {
 	local force="${1:-false}"
+	local repo_path="${2:-$REPO_PATH}"
 
 	if [[ "$force" == "true" ]]; then
 		return 0
@@ -361,6 +463,11 @@ should_run_ai_reasoning() {
 	# Check if AI reasoning is enabled
 	if [[ "${SUPERVISOR_AI_ENABLED:-true}" != "true" ]]; then
 		log_verbose "AI Reasoning: disabled (SUPERVISOR_AI_ENABLED=false)"
+		return 1
+	fi
+
+	# Pre-flight: is there anything worth reasoning about?
+	if ! has_actionable_work "$repo_path"; then
 		return 1
 	fi
 
