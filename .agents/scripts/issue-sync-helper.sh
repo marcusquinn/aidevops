@@ -3,23 +3,25 @@
 # =============================================================================
 # aidevops Issue Sync Helper
 # =============================================================================
-# Bi-directional sync between TODO.md/PLANS.md and GitHub issues.
+# Bi-directional sync between TODO.md/PLANS.md and platform issues.
+# Supports GitHub (gh CLI), Gitea (REST API), and GitLab (REST API).
 # Composes rich issue bodies with subtasks, plan context, and PRD links.
 #
 # Usage: issue-sync-helper.sh [command] [options]
 #
 # Commands:
-#   push [tNNN]     Create/update GitHub issues from TODO.md tasks
+#   push [tNNN]     Create/update issues from TODO.md tasks
 #   enrich [tNNN]   Update existing issue bodies with full context
-#   pull            Sync GitHub issue refs back to TODO.md + detect orphan issues
-#   close [tNNN]    Close GitHub issue when TODO.md task is [x]
+#   pull            Sync issue refs back to TODO.md + detect orphan issues
+#   close [tNNN]    Close issue when TODO.md task is [x]
 #   reconcile       Fix mismatched ref:GH# values and detect drift
-#   status          Show sync drift between TODO.md and GitHub
+#   status          Show sync drift between TODO.md and platform
 #   parse [tNNN]    Parse and display task context (dry-run)
 #   help            Show this help message
 #
 # Options:
 #   --repo SLUG     Override repo slug (default: auto-detect from git remote)
+#   --platform P    Override platform (github|gitea|gitlab, default: auto-detect)
 #   --dry-run       Show what would be done without making changes
 #   --verbose       Show detailed output
 #
@@ -38,6 +40,7 @@ VERBOSE="${VERBOSE:-false}"
 DRY_RUN="${DRY_RUN:-false}"
 FORCE_CLOSE="${FORCE_CLOSE:-false}"
 REPO_SLUG=""
+PLATFORM="" # github, gitea, gitlab — auto-detected if empty
 
 # =============================================================================
 # Utility Functions
@@ -87,6 +90,749 @@ detect_repo_slug() {
 	fi
 	echo "$slug"
 	return 0
+}
+
+# =============================================================================
+# Platform Detection (t1120.3)
+# =============================================================================
+
+# Detect git platform from remote URL.
+# Returns: github, gitea, gitlab, or unknown.
+# Detection strategy:
+#   1. Explicit --platform flag (PLATFORM variable)
+#   2. Known hostnames (github.com, gitlab.com)
+#   3. Gitea API probe (GET /api/v1/version — Gitea-specific endpoint)
+#   4. GitLab API probe (GET /api/v4/version — GitLab-specific endpoint)
+#   5. Fallback to github (most common)
+detect_platform() {
+	local project_root="$1"
+
+	# If explicitly set, use it
+	if [[ -n "$PLATFORM" ]]; then
+		echo "$PLATFORM"
+		return 0
+	fi
+
+	local remote_url
+	remote_url=$(git -C "$project_root" remote get-url origin 2>/dev/null || echo "")
+	if [[ -z "$remote_url" ]]; then
+		echo "github"
+		return 0
+	fi
+
+	# Extract hostname from remote URL
+	local hostname=""
+	if [[ "$remote_url" == git@* ]]; then
+		# SSH: git@hostname:owner/repo.git
+		hostname="${remote_url#git@}"
+		hostname="${hostname%%:*}"
+	elif [[ "$remote_url" == ssh://* ]]; then
+		# SSH: ssh://git@hostname/owner/repo.git
+		hostname="${remote_url#ssh://}"
+		hostname="${hostname#*@}"
+		hostname="${hostname%%/*}"
+		hostname="${hostname%%:*}"
+	elif [[ "$remote_url" == http* ]]; then
+		# HTTPS: https://hostname/owner/repo.git
+		hostname="${remote_url#*://}"
+		hostname="${hostname%%/*}"
+		hostname="${hostname%%:*}"
+	fi
+
+	# Known hostnames
+	case "$hostname" in
+	github.com | *.github.com)
+		echo "github"
+		return 0
+		;;
+	gitlab.com | *.gitlab.com)
+		echo "gitlab"
+		return 0
+		;;
+	esac
+
+	# Probe for Gitea (GET /api/v1/version returns {"version":"..."})
+	local base_url="https://${hostname}"
+	local probe_result
+	probe_result=$(curl -s --max-time 3 "${base_url}/api/v1/version" 2>/dev/null || echo "")
+	if echo "$probe_result" | grep -q '"version"'; then
+		echo "gitea"
+		return 0
+	fi
+
+	# Probe for GitLab (GET /api/v4/version returns {"version":"...","revision":"..."})
+	probe_result=$(curl -s --max-time 3 "${base_url}/api/v4/version" 2>/dev/null || echo "")
+	if echo "$probe_result" | grep -q '"revision"'; then
+		echo "gitlab"
+		return 0
+	fi
+
+	# Default to github
+	echo "github"
+	return 0
+}
+
+# Extract base URL for API calls from git remote.
+# For GitHub: not needed (uses gh CLI).
+# For Gitea/GitLab: returns https://hostname
+detect_platform_base_url() {
+	local project_root="$1"
+
+	local remote_url
+	remote_url=$(git -C "$project_root" remote get-url origin 2>/dev/null || echo "")
+
+	local hostname=""
+	if [[ "$remote_url" == git@* ]]; then
+		hostname="${remote_url#git@}"
+		hostname="${hostname%%:*}"
+	elif [[ "$remote_url" == ssh://* ]]; then
+		hostname="${remote_url#ssh://}"
+		hostname="${hostname#*@}"
+		hostname="${hostname%%/*}"
+		hostname="${hostname%%:*}"
+	elif [[ "$remote_url" == http* ]]; then
+		hostname="${remote_url#*://}"
+		hostname="${hostname%%/*}"
+		hostname="${hostname%%:*}"
+	fi
+
+	if [[ -n "$hostname" ]]; then
+		echo "https://${hostname}"
+	fi
+	return 0
+}
+
+# Get API token for a platform.
+# Checks platform-specific env vars, then falls back to credential helper.
+# NEVER echoes the token to stdout in verbose/log output.
+get_platform_token() {
+	local platform="$1"
+
+	case "$platform" in
+	github)
+		# gh CLI handles its own auth; return token for API fallback
+		echo "${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+		;;
+	gitea)
+		echo "${GITEA_TOKEN:-}"
+		;;
+	gitlab)
+		echo "${GITLAB_TOKEN:-}"
+		;;
+	esac
+	return 0
+}
+
+# Verify platform CLI/credentials are available
+verify_platform_auth() {
+	local platform="$1"
+
+	case "$platform" in
+	github)
+		verify_gh_cli
+		return $?
+		;;
+	gitea)
+		local token
+		token=$(get_platform_token "gitea")
+		if [[ -z "$token" ]]; then
+			print_error "GITEA_TOKEN not set. Export GITEA_TOKEN=<your-token>"
+			return 1
+		fi
+		if ! command -v curl &>/dev/null; then
+			print_error "curl is required for Gitea API"
+			return 1
+		fi
+		return 0
+		;;
+	gitlab)
+		local token
+		token=$(get_platform_token "gitlab")
+		if [[ -z "$token" ]]; then
+			print_error "GITLAB_TOKEN not set. Export GITLAB_TOKEN=<your-token>"
+			return 1
+		fi
+		if ! command -v curl &>/dev/null; then
+			print_error "curl is required for GitLab API"
+			return 1
+		fi
+		return 0
+		;;
+	*)
+		print_error "Unknown platform: $platform"
+		return 1
+		;;
+	esac
+}
+
+# =============================================================================
+# Platform API Adapters (t1120.3)
+# =============================================================================
+# Each adapter implements the same interface:
+#   platform_create_issue <repo_slug> <title> <body> <labels_csv> [assignee]
+#   platform_close_issue <repo_slug> <issue_number> <comment>
+#   platform_edit_issue <repo_slug> <issue_number> <title> <body>
+#   platform_list_issues <repo_slug> <state> <limit>
+#   platform_add_labels <repo_slug> <issue_number> <labels_csv>
+#   platform_create_label <repo_slug> <label_name> <color> <description>
+#   platform_view_issue <repo_slug> <issue_number>
+
+# --- GitHub Adapter (uses gh CLI) ---
+
+github_create_issue() {
+	local repo_slug="$1" title="$2" body="$3" labels="$4" assignee="${5:-}"
+	local -a args=("issue" "create" "--repo" "$repo_slug" "--title" "$title" "--body" "$body")
+	if [[ -n "$labels" ]]; then
+		args+=("--label" "$labels")
+	fi
+	if [[ -n "$assignee" ]]; then
+		args+=("--assignee" "$assignee")
+	fi
+	gh "${args[@]}" 2>/dev/null || echo ""
+	return 0
+}
+
+github_close_issue() {
+	local repo_slug="$1" issue_number="$2" comment="$3"
+	gh issue close "$issue_number" --repo "$repo_slug" --comment "$comment" 2>/dev/null
+	return $?
+}
+
+github_edit_issue() {
+	local repo_slug="$1" issue_number="$2" title="$3" body="$4"
+	gh issue edit "$issue_number" --repo "$repo_slug" --title "$title" --body "$body" 2>/dev/null
+	return $?
+}
+
+github_list_issues() {
+	local repo_slug="$1" state="$2" limit="$3"
+	gh issue list --repo "$repo_slug" --state "$state" --limit "$limit" \
+		--json number,title,assignees,state 2>/dev/null || echo "[]"
+	return 0
+}
+
+github_add_labels() {
+	local repo_slug="$1" issue_number="$2" labels="$3"
+	local -a label_args=()
+	local IFS=','
+	for lbl in $labels; do
+		[[ -n "$lbl" ]] && label_args+=("--add-label" "$lbl")
+	done
+	unset IFS
+	if [[ ${#label_args[@]} -gt 0 ]]; then
+		gh issue edit "$issue_number" --repo "$repo_slug" "${label_args[@]}" 2>/dev/null || true
+	fi
+	return 0
+}
+
+github_remove_labels() {
+	local repo_slug="$1" issue_number="$2" labels="$3"
+	local -a label_args=()
+	local IFS=','
+	for lbl in $labels; do
+		[[ -n "$lbl" ]] && label_args+=("--remove-label" "$lbl")
+	done
+	unset IFS
+	if [[ ${#label_args[@]} -gt 0 ]]; then
+		gh issue edit "$issue_number" --repo "$repo_slug" "${label_args[@]}" 2>/dev/null || true
+	fi
+	return 0
+}
+
+github_create_label() {
+	local repo_slug="$1" label_name="$2" color="$3" description="$4"
+	gh label create "$label_name" --repo "$repo_slug" --color "$color" \
+		--description "$description" --force 2>/dev/null || true
+	return 0
+}
+
+github_view_issue() {
+	local repo_slug="$1" issue_number="$2"
+	gh issue view "$issue_number" --repo "$repo_slug" --json number,title,state,assignees 2>/dev/null || echo "{}"
+	return 0
+}
+
+github_find_issue_by_title() {
+	local repo_slug="$1" title_prefix="$2" state="${3:-all}" limit="${4:-50}"
+	gh issue list --repo "$repo_slug" --state "$state" --limit "$limit" \
+		--json number,title --jq "[.[] | select(.title | startswith(\"${title_prefix}\"))][0].number" 2>/dev/null || echo ""
+	return 0
+}
+
+# --- Gitea Adapter (uses curl + REST API v1) ---
+
+gitea_api() {
+	local method="$1" endpoint="$2" data="${3:-}"
+	local base_url="$_PLATFORM_BASE_URL"
+	local token
+	token=$(get_platform_token "gitea")
+	local -a curl_args=("-s" "--max-time" "30" "-H" "Authorization: token ${token}" "-H" "Content-Type: application/json")
+	if [[ "$method" != "GET" ]]; then
+		curl_args+=("-X" "$method")
+	fi
+	if [[ -n "$data" ]]; then
+		curl_args+=("-d" "$data")
+	fi
+	curl "${curl_args[@]}" "${base_url}/api/v1/${endpoint}"
+	return 0
+}
+
+gitea_create_issue() {
+	local repo_slug="$1" title="$2" body="$3" labels="$4" assignee="${5:-}"
+	# Gitea expects owner/repo in the URL path
+	local owner="${repo_slug%%/*}"
+	local repo="${repo_slug#*/}"
+
+	# Resolve label names to IDs (Gitea requires label IDs)
+	local label_ids_json="[]"
+	if [[ -n "$labels" ]]; then
+		local label_ids=""
+		local IFS=','
+		for lbl in $labels; do
+			[[ -z "$lbl" ]] && continue
+			# Search for label by name
+			local label_id
+			label_id=$(gitea_api "GET" "repos/${owner}/${repo}/labels" | jq -r ".[] | select(.name == \"${lbl}\") | .id" 2>/dev/null || echo "")
+			if [[ -n "$label_id" ]]; then
+				label_ids="${label_ids:+${label_ids},}${label_id}"
+			fi
+		done
+		unset IFS
+		if [[ -n "$label_ids" ]]; then
+			label_ids_json="[${label_ids}]"
+		fi
+	fi
+
+	local assignees_json="null"
+	if [[ -n "$assignee" ]]; then
+		assignees_json="[\"${assignee}\"]"
+	fi
+
+	local payload
+	payload=$(jq -n \
+		--arg title "$title" \
+		--arg body "$body" \
+		--argjson labels "$label_ids_json" \
+		--argjson assignees "${assignees_json}" \
+		'{title: $title, body: $body, labels: $labels, assignees: $assignees}')
+
+	local response
+	response=$(gitea_api "POST" "repos/${owner}/${repo}/issues" "$payload")
+	# Return the issue URL (similar to gh output)
+	local issue_number
+	issue_number=$(echo "$response" | jq -r '.number // empty' 2>/dev/null || echo "")
+	if [[ -n "$issue_number" ]]; then
+		echo "${_PLATFORM_BASE_URL}/${repo_slug}/issues/${issue_number}"
+	fi
+	return 0
+}
+
+gitea_close_issue() {
+	local repo_slug="$1" issue_number="$2" comment="$3"
+	local owner="${repo_slug%%/*}"
+	local repo="${repo_slug#*/}"
+
+	# Add closing comment
+	if [[ -n "$comment" ]]; then
+		local comment_payload
+		comment_payload=$(jq -n --arg body "$comment" '{body: $body}')
+		gitea_api "POST" "repos/${owner}/${repo}/issues/${issue_number}/comments" "$comment_payload" >/dev/null
+	fi
+
+	# Close the issue
+	local close_payload='{"state":"closed"}'
+	gitea_api "PATCH" "repos/${owner}/${repo}/issues/${issue_number}" "$close_payload" >/dev/null
+	return $?
+}
+
+gitea_edit_issue() {
+	local repo_slug="$1" issue_number="$2" title="$3" body="$4"
+	local owner="${repo_slug%%/*}"
+	local repo="${repo_slug#*/}"
+	local payload
+	payload=$(jq -n --arg title "$title" --arg body "$body" '{title: $title, body: $body}')
+	gitea_api "PATCH" "repos/${owner}/${repo}/issues/${issue_number}" "$payload" >/dev/null
+	return $?
+}
+
+gitea_list_issues() {
+	local repo_slug="$1" state="$2" limit="$3"
+	local owner="${repo_slug%%/*}"
+	local repo="${repo_slug#*/}"
+	# Gitea uses "open"/"closed" for state
+	local response
+	response=$(gitea_api "GET" "repos/${owner}/${repo}/issues?state=${state}&limit=${limit}&type=issues")
+	# Normalize to same JSON shape as GitHub: [{number, title, assignees: [{login}], state}]
+	echo "$response" | jq '[.[] | {number: .number, title: .title, state: .state, assignees: [.assignees[]? | {login: .login}]}]' 2>/dev/null || echo "[]"
+	return 0
+}
+
+gitea_add_labels() {
+	local repo_slug="$1" issue_number="$2" labels="$3"
+	local owner="${repo_slug%%/*}"
+	local repo="${repo_slug#*/}"
+	# Resolve label names to IDs
+	local label_ids=""
+	local IFS=','
+	for lbl in $labels; do
+		[[ -z "$lbl" ]] && continue
+		local label_id
+		label_id=$(gitea_api "GET" "repos/${owner}/${repo}/labels" | jq -r ".[] | select(.name == \"${lbl}\") | .id" 2>/dev/null || echo "")
+		if [[ -n "$label_id" ]]; then
+			label_ids="${label_ids:+${label_ids},}${label_id}"
+		fi
+	done
+	unset IFS
+	if [[ -n "$label_ids" ]]; then
+		gitea_api "POST" "repos/${owner}/${repo}/issues/${issue_number}/labels" "{\"labels\":[${label_ids}]}" >/dev/null
+	fi
+	return 0
+}
+
+gitea_remove_labels() {
+	local repo_slug="$1" issue_number="$2" labels="$3"
+	local owner="${repo_slug%%/*}"
+	local repo="${repo_slug#*/}"
+	local IFS=','
+	for lbl in $labels; do
+		[[ -z "$lbl" ]] && continue
+		local label_id
+		label_id=$(gitea_api "GET" "repos/${owner}/${repo}/labels" | jq -r ".[] | select(.name == \"${lbl}\") | .id" 2>/dev/null || echo "")
+		if [[ -n "$label_id" ]]; then
+			gitea_api "DELETE" "repos/${owner}/${repo}/issues/${issue_number}/labels/${label_id}" >/dev/null 2>/dev/null || true
+		fi
+	done
+	unset IFS
+	return 0
+}
+
+gitea_create_label() {
+	local repo_slug="$1" label_name="$2" color="$3" description="$4"
+	local owner="${repo_slug%%/*}"
+	local repo="${repo_slug#*/}"
+	# Check if label exists
+	local existing
+	existing=$(gitea_api "GET" "repos/${owner}/${repo}/labels" | jq -r ".[] | select(.name == \"${label_name}\") | .id" 2>/dev/null || echo "")
+	if [[ -n "$existing" ]]; then
+		# Update existing label
+		local payload
+		payload=$(jq -n --arg name "$label_name" --arg color "#${color}" --arg desc "$description" \
+			'{name: $name, color: $color, description: $desc}')
+		gitea_api "PATCH" "repos/${owner}/${repo}/labels/${existing}" "$payload" >/dev/null
+	else
+		# Create new label
+		local payload
+		payload=$(jq -n --arg name "$label_name" --arg color "#${color}" --arg desc "$description" \
+			'{name: $name, color: $color, description: $desc}')
+		gitea_api "POST" "repos/${owner}/${repo}/labels" "$payload" >/dev/null
+	fi
+	return 0
+}
+
+gitea_view_issue() {
+	local repo_slug="$1" issue_number="$2"
+	local owner="${repo_slug%%/*}"
+	local repo="${repo_slug#*/}"
+	local response
+	response=$(gitea_api "GET" "repos/${owner}/${repo}/issues/${issue_number}")
+	echo "$response" | jq '{number: .number, title: .title, state: .state, assignees: [.assignees[]? | {login: .login}]}' 2>/dev/null || echo "{}"
+	return 0
+}
+
+gitea_find_issue_by_title() {
+	local repo_slug="$1" title_prefix="$2" state="${3:-all}" limit="${4:-50}"
+	local owner="${repo_slug%%/*}"
+	local repo="${repo_slug#*/}"
+	# Gitea doesn't have a search-by-title API; list and filter client-side
+	local state_param=""
+	if [[ "$state" != "all" ]]; then
+		state_param="&state=${state}"
+	fi
+	local response
+	response=$(gitea_api "GET" "repos/${owner}/${repo}/issues?limit=${limit}&type=issues${state_param}")
+	echo "$response" | jq -r "[.[] | select(.title | startswith(\"${title_prefix}\"))][0].number // empty" 2>/dev/null || echo ""
+	return 0
+}
+
+# --- GitLab Adapter (uses curl + REST API v4) ---
+
+gitlab_api() {
+	local method="$1" endpoint="$2" data="${3:-}"
+	local base_url="$_PLATFORM_BASE_URL"
+	local token
+	token=$(get_platform_token "gitlab")
+	local -a curl_args=("-s" "--max-time" "30" "-H" "PRIVATE-TOKEN: ${token}" "-H" "Content-Type: application/json")
+	if [[ "$method" != "GET" ]]; then
+		curl_args+=("-X" "$method")
+	fi
+	if [[ -n "$data" ]]; then
+		curl_args+=("-d" "$data")
+	fi
+	curl "${curl_args[@]}" "${base_url}/api/v4/${endpoint}"
+	return 0
+}
+
+# GitLab uses URL-encoded project path instead of owner/repo
+_gitlab_project_path() {
+	local repo_slug="$1"
+	# URL-encode the slash: owner/repo -> owner%2Frepo
+	echo "${repo_slug/\//%2F}"
+	return 0
+}
+
+gitlab_create_issue() {
+	local repo_slug="$1" title="$2" body="$3" labels="$4" assignee="${5:-}"
+	local project_path
+	project_path=$(_gitlab_project_path "$repo_slug")
+
+	local payload
+	payload=$(jq -n \
+		--arg title "$title" \
+		--arg description "$body" \
+		--arg labels "$labels" \
+		'{title: $title, description: $description, labels: $labels}')
+
+	local response
+	response=$(gitlab_api "POST" "projects/${project_path}/issues" "$payload")
+	local issue_iid
+	issue_iid=$(echo "$response" | jq -r '.iid // empty' 2>/dev/null || echo "")
+	if [[ -n "$issue_iid" ]]; then
+		echo "${_PLATFORM_BASE_URL}/${repo_slug}/-/issues/${issue_iid}"
+	fi
+	return 0
+}
+
+gitlab_close_issue() {
+	local repo_slug="$1" issue_iid="$2" comment="$3"
+	local project_path
+	project_path=$(_gitlab_project_path "$repo_slug")
+
+	# Add closing comment (note)
+	if [[ -n "$comment" ]]; then
+		local note_payload
+		note_payload=$(jq -n --arg body "$comment" '{body: $body}')
+		gitlab_api "POST" "projects/${project_path}/issues/${issue_iid}/notes" "$note_payload" >/dev/null
+	fi
+
+	# Close the issue
+	gitlab_api "PUT" "projects/${project_path}/issues/${issue_iid}" '{"state_event":"close"}' >/dev/null
+	return $?
+}
+
+gitlab_edit_issue() {
+	local repo_slug="$1" issue_iid="$2" title="$3" body="$4"
+	local project_path
+	project_path=$(_gitlab_project_path "$repo_slug")
+	local payload
+	payload=$(jq -n --arg title "$title" --arg description "$body" '{title: $title, description: $description}')
+	gitlab_api "PUT" "projects/${project_path}/issues/${issue_iid}" "$payload" >/dev/null
+	return $?
+}
+
+gitlab_list_issues() {
+	local repo_slug="$1" state="$2" limit="$3"
+	local project_path
+	project_path=$(_gitlab_project_path "$repo_slug")
+	# GitLab uses "opened"/"closed"/"all" for state
+	local gl_state="$state"
+	[[ "$state" == "open" ]] && gl_state="opened"
+	local response
+	response=$(gitlab_api "GET" "projects/${project_path}/issues?state=${gl_state}&per_page=${limit}")
+	# Normalize to same JSON shape: [{number (=iid), title, assignees: [{login (=username)}], state}]
+	echo "$response" | jq '[.[] | {number: .iid, title: .title, state: .state, assignees: [.assignees[]? | {login: .username}]}]' 2>/dev/null || echo "[]"
+	return 0
+}
+
+gitlab_add_labels() {
+	local repo_slug="$1" issue_iid="$2" labels="$3"
+	local project_path
+	project_path=$(_gitlab_project_path "$repo_slug")
+	# GitLab: add_labels is a comma-separated string
+	gitlab_api "PUT" "projects/${project_path}/issues/${issue_iid}" "{\"add_labels\":\"${labels}\"}" >/dev/null
+	return 0
+}
+
+gitlab_remove_labels() {
+	local repo_slug="$1" issue_iid="$2" labels="$3"
+	local project_path
+	project_path=$(_gitlab_project_path "$repo_slug")
+	gitlab_api "PUT" "projects/${project_path}/issues/${issue_iid}" "{\"remove_labels\":\"${labels}\"}" >/dev/null
+	return 0
+}
+
+gitlab_create_label() {
+	local repo_slug="$1" label_name="$2" color="$3" description="$4"
+	local project_path
+	project_path=$(_gitlab_project_path "$repo_slug")
+	local payload
+	payload=$(jq -n --arg name "$label_name" --arg color "#${color}" --arg desc "$description" \
+		'{name: $name, color: $color, description: $desc}')
+	# Try create; if 409 conflict (exists), update
+	local response
+	response=$(gitlab_api "POST" "projects/${project_path}/labels" "$payload")
+	if echo "$response" | grep -q '"message".*already_exists\|Label already exists'; then
+		# URL-encode label name for the endpoint
+		local encoded_name
+		encoded_name=$(printf '%s' "$label_name" | jq -sRr @uri)
+		gitlab_api "PUT" "projects/${project_path}/labels/${encoded_name}" "$payload" >/dev/null
+	fi
+	return 0
+}
+
+gitlab_view_issue() {
+	local repo_slug="$1" issue_iid="$2"
+	local project_path
+	project_path=$(_gitlab_project_path "$repo_slug")
+	local response
+	response=$(gitlab_api "GET" "projects/${project_path}/issues/${issue_iid}")
+	echo "$response" | jq '{number: .iid, title: .title, state: .state, assignees: [.assignees[]? | {login: .username}]}' 2>/dev/null || echo "{}"
+	return 0
+}
+
+gitlab_find_issue_by_title() {
+	local repo_slug="$1" title_prefix="$2" state="${3:-all}" limit="${4:-50}"
+	local project_path
+	project_path=$(_gitlab_project_path "$repo_slug")
+	local gl_state="$state"
+	[[ "$state" == "open" ]] && gl_state="opened"
+	[[ "$state" == "all" ]] && gl_state=""
+	local state_param=""
+	[[ -n "$gl_state" ]] && state_param="&state=${gl_state}"
+	# GitLab supports search parameter for title filtering
+	local encoded_prefix
+	encoded_prefix=$(printf '%s' "$title_prefix" | jq -sRr @uri)
+	local response
+	response=$(gitlab_api "GET" "projects/${project_path}/issues?search=${encoded_prefix}&per_page=${limit}${state_param}")
+	echo "$response" | jq -r "[.[] | select(.title | startswith(\"${title_prefix}\"))][0].iid // empty" 2>/dev/null || echo ""
+	return 0
+}
+
+# =============================================================================
+# Platform Dispatch Layer (t1120.3)
+# =============================================================================
+# Routes calls to the correct platform adapter based on $_DETECTED_PLATFORM.
+# All functions follow the same interface as the platform-specific adapters.
+
+# Global state set during init
+_DETECTED_PLATFORM=""
+_PLATFORM_BASE_URL=""
+
+# Initialize platform detection for a project root.
+# Must be called before any platform_* dispatch function.
+init_platform() {
+	local project_root="$1"
+	_DETECTED_PLATFORM=$(detect_platform "$project_root")
+	_PLATFORM_BASE_URL=$(detect_platform_base_url "$project_root")
+	log_verbose "Detected platform: $_DETECTED_PLATFORM (base: ${_PLATFORM_BASE_URL:-n/a})"
+	return 0
+}
+
+platform_create_issue() {
+	case "$_DETECTED_PLATFORM" in
+	github) github_create_issue "$@" ;;
+	gitea) gitea_create_issue "$@" ;;
+	gitlab) gitlab_create_issue "$@" ;;
+	*)
+		print_error "Unsupported platform: $_DETECTED_PLATFORM"
+		return 1
+		;;
+	esac
+}
+
+platform_close_issue() {
+	case "$_DETECTED_PLATFORM" in
+	github) github_close_issue "$@" ;;
+	gitea) gitea_close_issue "$@" ;;
+	gitlab) gitlab_close_issue "$@" ;;
+	*)
+		print_error "Unsupported platform: $_DETECTED_PLATFORM"
+		return 1
+		;;
+	esac
+}
+
+platform_edit_issue() {
+	case "$_DETECTED_PLATFORM" in
+	github) github_edit_issue "$@" ;;
+	gitea) gitea_edit_issue "$@" ;;
+	gitlab) gitlab_edit_issue "$@" ;;
+	*)
+		print_error "Unsupported platform: $_DETECTED_PLATFORM"
+		return 1
+		;;
+	esac
+}
+
+platform_list_issues() {
+	case "$_DETECTED_PLATFORM" in
+	github) github_list_issues "$@" ;;
+	gitea) gitea_list_issues "$@" ;;
+	gitlab) gitlab_list_issues "$@" ;;
+	*)
+		print_error "Unsupported platform: $_DETECTED_PLATFORM"
+		return 1
+		;;
+	esac
+}
+
+platform_add_labels() {
+	case "$_DETECTED_PLATFORM" in
+	github) github_add_labels "$@" ;;
+	gitea) gitea_add_labels "$@" ;;
+	gitlab) gitlab_add_labels "$@" ;;
+	*)
+		print_error "Unsupported platform: $_DETECTED_PLATFORM"
+		return 1
+		;;
+	esac
+}
+
+platform_remove_labels() {
+	case "$_DETECTED_PLATFORM" in
+	github) github_remove_labels "$@" ;;
+	gitea) gitea_remove_labels "$@" ;;
+	gitlab) gitlab_remove_labels "$@" ;;
+	*)
+		print_error "Unsupported platform: $_DETECTED_PLATFORM"
+		return 1
+		;;
+	esac
+}
+
+platform_create_label() {
+	case "$_DETECTED_PLATFORM" in
+	github) github_create_label "$@" ;;
+	gitea) gitea_create_label "$@" ;;
+	gitlab) gitlab_create_label "$@" ;;
+	*)
+		print_error "Unsupported platform: $_DETECTED_PLATFORM"
+		return 1
+		;;
+	esac
+}
+
+platform_view_issue() {
+	case "$_DETECTED_PLATFORM" in
+	github) github_view_issue "$@" ;;
+	gitea) gitea_view_issue "$@" ;;
+	gitlab) gitlab_view_issue "$@" ;;
+	*)
+		print_error "Unsupported platform: $_DETECTED_PLATFORM"
+		return 1
+		;;
+	esac
+}
+
+platform_find_issue_by_title() {
+	case "$_DETECTED_PLATFORM" in
+	github) github_find_issue_by_title "$@" ;;
+	gitea) gitea_find_issue_by_title "$@" ;;
+	gitlab) gitlab_find_issue_by_title "$@" ;;
+	*)
+		print_error "Unsupported platform: $_DETECTED_PLATFORM"
+		return 1
+		;;
+	esac
 }
 
 # Verify gh CLI is available and authenticated
@@ -560,8 +1306,8 @@ map_tags_to_labels() {
 	return 0
 }
 
-# Ensure all labels in a comma-separated list exist on the repo.
-# Creates missing labels with a neutral colour via gh label create --force.
+# Ensure all labels in a comma-separated list exist on the repo (multi-platform).
+# Creates missing labels with a neutral colour via platform adapter.
 ensure_labels_exist() {
 	local labels="$1"
 	local repo_slug="$2"
@@ -572,9 +1318,7 @@ ensure_labels_exist() {
 	IFS=','
 	for label in $labels; do
 		[[ -z "$label" ]] && continue
-		# --force is idempotent: updates if exists, creates if not
-		gh label create "$label" --repo "$repo_slug" --color "EDEDED" \
-			--description "Auto-created from TODO.md tag" --force 2>/dev/null || true
+		platform_create_label "$repo_slug" "$label" "EDEDED" "Auto-created from TODO.md tag"
 	done
 	IFS="$_saved_ifs"
 	return 0
@@ -768,7 +1512,7 @@ compose_issue_body() {
 # Commands
 # =============================================================================
 
-# Push: create GitHub issues from TODO.md tasks
+# Push: create issues from TODO.md tasks (multi-platform)
 cmd_push() {
 	local target_task="${1:-}"
 	local project_root
@@ -776,7 +1520,8 @@ cmd_push() {
 	local repo_slug="${REPO_SLUG:-$(detect_repo_slug "$project_root")}"
 	local todo_file="$project_root/TODO.md"
 
-	verify_gh_cli || return 1
+	init_platform "$project_root"
+	verify_platform_auth "$_DETECTED_PLATFORM" || return 1
 
 	# Collect tasks to process
 	local tasks=()
@@ -798,24 +1543,19 @@ cmd_push() {
 		return 0
 	fi
 
-	print_info "Processing ${#tasks[@]} task(s) for push to $repo_slug"
+	print_info "Processing ${#tasks[@]} task(s) for push to $repo_slug ($_DETECTED_PLATFORM)"
 
 	# Ensure status:available label exists (t164 — label may not exist in new repos)
-	gh label create "status:available" --repo "$repo_slug" --color "0E8A16" --description "Task is available for claiming" --force 2>/dev/null || true
+	platform_create_label "$repo_slug" "status:available" "0E8A16" "Task is available for claiming"
 
 	local created=0
 	local skipped=0
 	for task_id in "${tasks[@]}"; do
 		log_verbose "Processing $task_id..."
 
-		# Check if issue already exists
-		# Use gh API list (not --search) to avoid GitHub search index lag.
-		# Search is eventually consistent and misses issues created seconds ago,
-		# causing duplicates when multiple pushes trigger the workflow rapidly.
-		# The API list with jq filter is immediately consistent.
+		# Check if issue already exists (platform-agnostic title search)
 		local existing
-		existing=$(gh issue list --repo "$repo_slug" --state all --limit 50 \
-			--json number,title --jq "[.[] | select(.title | startswith(\"${task_id}:\"))][0].number" 2>/dev/null || echo "")
+		existing=$(platform_find_issue_by_title "$repo_slug" "${task_id}:" "all" 50)
 		if [[ -n "$existing" && "$existing" != "null" ]]; then
 			log_verbose "$task_id already has issue #$existing"
 			# Add ref to TODO.md if missing
@@ -875,31 +1615,17 @@ cmd_push() {
 		fi
 
 		# Create the issue with appropriate status label (t164, t212)
-		# If task already has an assignee, use status:claimed instead of status:available
 		local status_label="status:available"
 		if [[ -n "$assignee" ]]; then
 			status_label="status:claimed"
-			# Ensure status:claimed label exists
-			gh label create "status:claimed" --repo "$repo_slug" --color "D93F0B" --description "Task is claimed by a worker" --force 2>/dev/null || true
+			platform_create_label "$repo_slug" "status:claimed" "D93F0B" "Task is claimed by a worker"
 		fi
-		local gh_args=("issue" "create" "--repo" "$repo_slug" "--title" "$title")
-		gh_args+=("--body" "$body")
-		if [[ -n "$labels" ]]; then
-			gh_args+=("--label" "${labels},${status_label}")
-		else
-			gh_args+=("--label" "$status_label")
-		fi
-		# Assign to the task's assignee if set
-		if [[ -n "$assignee" ]]; then
-			gh_args+=("--assignee" "$assignee")
-		fi
+		local all_labels="${labels:+${labels},}${status_label}"
 
 		# Double-check: re-verify no issue was created by a concurrent workflow run
-		# between our first check and now (t1142 — guards against race conditions
-		# when multiple pushes trigger the workflow in rapid succession).
+		# between our first check and now (t1142 — guards against race conditions)
 		local existing_recheck
-		existing_recheck=$(gh issue list --repo "$repo_slug" --state all --limit 50 \
-			--json number,title --jq "[.[] | select(.title | startswith(\"${task_id}:\"))][0].number" 2>/dev/null || echo "")
+		existing_recheck=$(platform_find_issue_by_title "$repo_slug" "${task_id}:" "all" 50)
 		if [[ -n "$existing_recheck" && "$existing_recheck" != "null" ]]; then
 			log_verbose "$task_id issue created by concurrent run (#$existing_recheck) — skipping"
 			add_gh_ref_to_todo "$task_id" "$existing_recheck" "$todo_file"
@@ -908,7 +1634,7 @@ cmd_push() {
 		fi
 
 		local issue_url
-		issue_url=$(gh "${gh_args[@]}" 2>/dev/null || echo "")
+		issue_url=$(platform_create_issue "$repo_slug" "$title" "$body" "$all_labels" "$assignee")
 		if [[ -z "$issue_url" ]]; then
 			print_error "Failed to create issue for $task_id"
 			continue
@@ -927,7 +1653,7 @@ cmd_push() {
 	return 0
 }
 
-# Enrich: update existing issue bodies with full context
+# Enrich: update existing issue bodies with full context (multi-platform)
 cmd_enrich() {
 	local target_task="${1:-}"
 	local project_root
@@ -935,7 +1661,8 @@ cmd_enrich() {
 	local repo_slug="${REPO_SLUG:-$(detect_repo_slug "$project_root")}"
 	local todo_file="$project_root/TODO.md"
 
-	verify_gh_cli || return 1
+	init_platform "$project_root"
+	verify_platform_auth "$_DETECTED_PLATFORM" || return 1
 
 	# Collect tasks to enrich
 	local tasks=()
@@ -968,12 +1695,12 @@ cmd_enrich() {
 		issue_number=$(echo "$task_line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
 
 		if [[ -z "$issue_number" ]]; then
-			# Try searching GitHub
-			issue_number=$(gh issue list --repo "$repo_slug" --search "in:title ${task_id}:" --json number --jq '.[0].number' 2>/dev/null || echo "")
+			# Try searching by title prefix (platform-agnostic)
+			issue_number=$(platform_find_issue_by_title "$repo_slug" "${task_id}:" "all" 50)
 		fi
 
 		if [[ -z "$issue_number" || "$issue_number" == "null" ]]; then
-			print_warning "$task_id: no matching GitHub issue found"
+			print_warning "$task_id: no matching issue found on $_DETECTED_PLATFORM"
 			continue
 		fi
 
@@ -1010,22 +1737,14 @@ cmd_enrich() {
 			continue
 		fi
 
-		# Ensure labels exist and sync them to the issue (t295)
+		# Ensure labels exist and sync them to the issue (t295, multi-platform)
 		if [[ -n "$labels" ]]; then
 			ensure_labels_exist "$labels" "$repo_slug"
-			local label_args=()
-			local IFS=','
-			for lbl in $labels; do
-				[[ -n "$lbl" ]] && label_args+=("--add-label" "$lbl")
-			done
-			unset IFS
-			if [[ ${#label_args[@]} -gt 0 ]]; then
-				gh issue edit "$issue_number" --repo "$repo_slug" "${label_args[@]}" 2>/dev/null || true
-			fi
+			platform_add_labels "$repo_slug" "$issue_number" "$labels"
 		fi
 
-		# Update the issue title and body
-		if gh issue edit "$issue_number" --repo "$repo_slug" --title "$title" --body "$body" 2>/dev/null; then
+		# Update the issue title and body (multi-platform)
+		if platform_edit_issue "$repo_slug" "$issue_number" "$title" "$body"; then
 			print_success "Enriched #$issue_number ($task_id)"
 			enriched=$((enriched + 1))
 		else
@@ -1037,22 +1756,23 @@ cmd_enrich() {
 	return 0
 }
 
-# Pull: sync GitHub issue refs back to TODO.md
-# Detects orphan issues (GH issues with t-number titles but no TODO.md entry),
-# adds ref:GH#NNN to tasks missing it, and syncs assignees from GH to TODO.md.
+# Pull: sync issue refs back to TODO.md (multi-platform)
+# Detects orphan issues (issues with t-number titles but no TODO.md entry),
+# adds ref:GH#NNN to tasks missing it, and syncs assignees to TODO.md.
 cmd_pull() {
 	local project_root
 	project_root=$(find_project_root) || return 1
 	local repo_slug="${REPO_SLUG:-$(detect_repo_slug "$project_root")}"
 	local todo_file="$project_root/TODO.md"
 
-	verify_gh_cli || return 1
+	init_platform "$project_root"
+	verify_platform_auth "$_DETECTED_PLATFORM" || return 1
 
-	print_info "Pulling issue refs from $repo_slug to TODO.md..."
+	print_info "Pulling issue refs from $repo_slug ($_DETECTED_PLATFORM) to TODO.md..."
 
 	# Get all open issues with t-number prefixes (include assignees for assignee: sync)
 	local issues_json
-	issues_json=$(gh issue list --repo "$repo_slug" --state open --limit 200 --json number,title,assignees 2>/dev/null || echo "[]")
+	issues_json=$(platform_list_issues "$repo_slug" "open" 200)
 
 	local synced=0
 	local orphan_open=0
@@ -1095,9 +1815,9 @@ cmd_pull() {
 		synced=$((synced + 1))
 	done < <(echo "$issues_json" | jq -c '.[]' 2>/dev/null || true)
 
-	# Also check closed issues for completed tasks
+	# Also check closed issues for completed tasks (multi-platform)
 	local closed_json
-	closed_json=$(gh issue list --repo "$repo_slug" --state closed --limit 200 --json number,title 2>/dev/null || echo "[]")
+	closed_json=$(platform_list_issues "$repo_slug" "closed" 200)
 
 	local orphan_closed=0
 	while IFS= read -r issue_line; do
@@ -1391,7 +2111,9 @@ cmd_close() {
 	project_root=$(find_project_root) || return 1
 	local repo_slug="${REPO_SLUG:-$(detect_repo_slug "$project_root")}"
 	local todo_file="$project_root/TODO.md"
-	verify_gh_cli || return 1
+
+	init_platform "$project_root"
+	verify_platform_auth "$_DETECTED_PLATFORM" || return 1
 
 	# t283: Performance optimization — pre-fetch all open issues in ONE API call,
 	# then only process completed tasks that have a matching open issue.
@@ -1411,8 +2133,7 @@ cmd_close() {
 	# Bulk mode: fetch all open issues once, build task_id -> issue_number map
 	log_verbose "Fetching all open issues from $repo_slug..."
 	local open_issues_json
-	open_issues_json=$(gh issue list --repo "$repo_slug" --state open --limit 500 \
-		--json number,title 2>/dev/null || echo "[]")
+	open_issues_json=$(platform_list_issues "$repo_slug" "open" 500)
 
 	# Build newline-delimited lookup: "task_id|issue_number" per line
 	# Avoids bash associative arrays which break under set -u on empty arrays
@@ -1549,14 +2270,11 @@ cmd_close() {
 			continue
 		fi
 
-		if gh issue close "$issue_number" --repo "$repo_slug" --comment "$close_comment" 2>/dev/null; then
+		if platform_close_issue "$repo_slug" "$issue_number" "$close_comment"; then
 			# Update status label to status:done, remove all other status labels (t212, t1009)
-			gh label create "status:done" --repo "$repo_slug" --color "6F42C1" --description "Task is complete" --force 2>/dev/null || true
-			gh issue edit "$issue_number" --repo "$repo_slug" \
-				--add-label "status:done" \
-				--remove-label "status:available" --remove-label "status:queued" \
-				--remove-label "status:claimed" --remove-label "status:in-review" \
-				--remove-label "status:blocked" --remove-label "status:verify-failed" 2>/dev/null || true
+			platform_create_label "$repo_slug" "status:done" "6F42C1" "Task is complete"
+			platform_add_labels "$repo_slug" "$issue_number" "status:done"
+			platform_remove_labels "$repo_slug" "$issue_number" "status:available,status:queued,status:claimed,status:in-review,status:blocked,status:verify-failed"
 			print_success "Closed #$issue_number ($task_id)"
 			closed=$((closed + 1))
 		else
@@ -1579,17 +2297,17 @@ _close_single_task() {
 	local issue_number
 	issue_number=$(echo "$task_line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
 
-	# Fallback: search by task ID in issue title when ref:GH# is missing
+	# Fallback: search by task ID in issue title when ref:GH# is missing (multi-platform)
 	if [[ -z "$issue_number" ]]; then
-		log_verbose "$task_id: no ref:GH# in TODO.md, searching GitHub by title..."
-		issue_number=$(gh issue list --repo "$repo_slug" --state open --search "in:title ${task_id}:" --json number --jq '.[0].number' 2>/dev/null || echo "")
+		log_verbose "$task_id: no ref:GH# in TODO.md, searching $_DETECTED_PLATFORM by title..."
+		issue_number=$(platform_find_issue_by_title "$repo_slug" "${task_id}:" "open" 50)
 		if [[ -n "$issue_number" && "$issue_number" != "null" ]]; then
 			log_verbose "$task_id: found open issue #$issue_number by title search"
 			if [[ "$DRY_RUN" != "true" ]]; then
 				add_gh_ref_to_todo "$task_id" "$issue_number" "$todo_file"
 			fi
 		else
-			print_info "$task_id: no matching open GitHub issue found"
+			print_info "$task_id: no matching open issue found on $_DETECTED_PLATFORM"
 			return 0
 		fi
 	fi
@@ -1598,10 +2316,12 @@ _close_single_task() {
 		return 0
 	fi
 
-	# Check if already closed
+	# Check if already closed (multi-platform)
 	local issue_state
-	issue_state=$(gh issue view "$issue_number" --repo "$repo_slug" --json state --jq '.state' 2>/dev/null || echo "")
-	if [[ "$issue_state" == "CLOSED" ]]; then
+	local issue_json
+	issue_json=$(platform_view_issue "$repo_slug" "$issue_number")
+	issue_state=$(echo "$issue_json" | jq -r '.state // empty' 2>/dev/null || echo "")
+	if [[ "$issue_state" == "CLOSED" || "$issue_state" == "closed" ]]; then
 		log_verbose "#$issue_number already closed"
 		return 0
 	fi
@@ -1645,14 +2365,11 @@ _close_single_task() {
 		return 0
 	fi
 
-	if gh issue close "$issue_number" --repo "$repo_slug" --comment "$close_comment" 2>/dev/null; then
+	if platform_close_issue "$repo_slug" "$issue_number" "$close_comment"; then
 		# Update status label to status:done, remove all other status labels (t212, t1009)
-		gh label create "status:done" --repo "$repo_slug" --color "6F42C1" --description "Task is complete" --force 2>/dev/null || true
-		gh issue edit "$issue_number" --repo "$repo_slug" \
-			--add-label "status:done" \
-			--remove-label "status:available" --remove-label "status:queued" \
-			--remove-label "status:claimed" --remove-label "status:in-review" \
-			--remove-label "status:blocked" --remove-label "status:verify-failed" 2>/dev/null || true
+		platform_create_label "$repo_slug" "status:done" "6F42C1" "Task is complete"
+		platform_add_labels "$repo_slug" "$issue_number" "status:done"
+		platform_remove_labels "$repo_slug" "$issue_number" "status:available,status:queued,status:claimed,status:in-review,status:blocked,status:verify-failed"
 		print_success "Closed #$issue_number ($task_id)"
 	else
 		print_error "Failed to close #$issue_number ($task_id)"
@@ -1660,16 +2377,17 @@ _close_single_task() {
 	return 0
 }
 
-# Status: show sync drift between TODO.md and GitHub
+# Status: show sync drift between TODO.md and platform (multi-platform)
 cmd_status() {
 	local project_root
 	project_root=$(find_project_root) || return 1
 	local repo_slug="${REPO_SLUG:-$(detect_repo_slug "$project_root")}"
 	local todo_file="$project_root/TODO.md"
 
-	verify_gh_cli || return 1
+	init_platform "$project_root"
+	verify_platform_auth "$_DETECTED_PLATFORM" || return 1
 
-	print_info "Checking sync status for $repo_slug..."
+	print_info "Checking sync status for $repo_slug ($_DETECTED_PLATFORM)..."
 
 	# Count tasks in TODO.md (include both top-level and indented subtasks)
 	# strip_code_fences prevents format-example lines from inflating counts
@@ -1682,11 +2400,13 @@ cmd_status() {
 	local without_ref
 	without_ref=$((total_open - with_ref))
 
-	# Count GitHub issues
-	local gh_open
-	gh_open=$(gh issue list --repo "$repo_slug" --state open --limit 500 --json number --jq 'length' 2>/dev/null || echo "0")
-	local gh_closed
-	gh_closed=$(gh issue list --repo "$repo_slug" --state closed --limit 500 --json number --jq 'length' 2>/dev/null || echo "0")
+	# Count platform issues (multi-platform)
+	local platform_open_json platform_closed_json
+	platform_open_json=$(platform_list_issues "$repo_slug" "open" 500)
+	platform_closed_json=$(platform_list_issues "$repo_slug" "closed" 500)
+	local gh_open gh_closed
+	gh_open=$(echo "$platform_open_json" | jq 'length' 2>/dev/null || echo "0")
+	gh_closed=$(echo "$platform_closed_json" | jq 'length' 2>/dev/null || echo "0")
 
 	# Count completed tasks with open issues (drift)
 	local completed_with_open_issues=0
@@ -1694,9 +2414,10 @@ cmd_status() {
 		local issue_num
 		issue_num=$(echo "$line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
 		if [[ -n "$issue_num" ]]; then
-			local state
-			state=$(gh issue view "$issue_num" --repo "$repo_slug" --json state --jq '.state' 2>/dev/null || echo "")
-			if [[ "$state" == "OPEN" ]]; then
+			local issue_json state
+			issue_json=$(platform_view_issue "$repo_slug" "$issue_num")
+			state=$(echo "$issue_json" | jq -r '.state // empty' 2>/dev/null || echo "")
+			if [[ "$state" == "OPEN" || "$state" == "open" || "$state" == "opened" ]]; then
 				completed_with_open_issues=$((completed_with_open_issues + 1))
 				print_warning "DRIFT: $line"
 			fi
@@ -1704,14 +2425,14 @@ cmd_status() {
 	done < <(strip_code_fences <"$todo_file" | grep -E '^\s*- \[x\] t[0-9]+.*ref:GH#' || true)
 
 	echo ""
-	echo "=== Sync Status ==="
+	echo "=== Sync Status ($repo_slug on $_DETECTED_PLATFORM) ==="
 	echo "TODO.md open tasks:        $total_open"
-	echo "  - with GH ref:           $with_ref"
-	echo "  - without GH ref:        $without_ref"
+	echo "  - with issue ref:        $with_ref"
+	echo "  - without issue ref:     $without_ref"
 	echo "TODO.md completed tasks:   $total_completed"
-	echo "GitHub open issues:        $gh_open"
-	echo "GitHub closed issues:      $gh_closed"
-	echo "Drift (done but open GH):  $completed_with_open_issues"
+	echo "Platform open issues:      $gh_open"
+	echo "Platform closed issues:    $gh_closed"
+	echo "Drift (done but open):     $completed_with_open_issues"
 	echo ""
 
 	if [[ $without_ref -gt 0 ]]; then
@@ -1737,9 +2458,10 @@ cmd_reconcile() {
 	local repo_slug="${REPO_SLUG:-$(detect_repo_slug "$project_root")}"
 	local todo_file="$project_root/TODO.md"
 
-	verify_gh_cli || return 1
+	init_platform "$project_root"
+	verify_platform_auth "$_DETECTED_PLATFORM" || return 1
 
-	print_info "Reconciling ref:GH# values in $repo_slug..."
+	print_info "Reconciling ref:GH# values in $repo_slug ($_DETECTED_PLATFORM)..."
 
 	local ref_fixed=0
 	local ref_ok=0
@@ -1757,9 +2479,11 @@ cmd_reconcile() {
 			continue
 		fi
 
-		# Verify the issue title matches this task ID
+		# Verify the issue title matches this task ID (multi-platform)
+		local issue_json_view
+		issue_json_view=$(platform_view_issue "$repo_slug" "$gh_ref")
 		local issue_title
-		issue_title=$(gh issue view "$gh_ref" --repo "$repo_slug" --json title --jq '.title' 2>/dev/null || echo "")
+		issue_title=$(echo "$issue_json_view" | jq -r '.title // empty' 2>/dev/null || echo "")
 		local issue_task_id
 		issue_task_id=$(echo "$issue_title" | grep -oE '^t[0-9]+(\.[0-9]+)*' || echo "")
 
@@ -1768,10 +2492,10 @@ cmd_reconcile() {
 			continue
 		fi
 
-		# Mismatch — search for the correct issue
+		# Mismatch — search for the correct issue (multi-platform)
 		print_warning "MISMATCH: $tid has ref:GH#$gh_ref but issue title is '$issue_title'"
 		local correct_number
-		correct_number=$(gh issue list --repo "$repo_slug" --state all --search "in:title ${tid}:" --json number --jq '.[0].number' 2>/dev/null || echo "")
+		correct_number=$(platform_find_issue_by_title "$repo_slug" "${tid}:" "all" 50)
 
 		if [[ -n "$correct_number" && "$correct_number" != "null" && "$correct_number" != "$gh_ref" ]]; then
 			if [[ "$DRY_RUN" == "true" ]]; then
@@ -1782,13 +2506,13 @@ cmd_reconcile() {
 			fi
 			ref_fixed=$((ref_fixed + 1))
 		elif [[ -z "$correct_number" || "$correct_number" == "null" ]]; then
-			print_warning "$tid: no matching issue found on GitHub (ref:GH#$gh_ref is stale)"
+			print_warning "$tid: no matching issue found on $_DETECTED_PLATFORM (ref:GH#$gh_ref is stale)"
 		fi
 	done < <(strip_code_fences <"$todo_file" | grep -E '^\s*- \[.\] t[0-9]+.*ref:GH#[0-9]+' || true)
 
 	# Phase 2: Find open issues for completed tasks (including those without ref:GH#)
 	local open_issues_json
-	open_issues_json=$(gh issue list --repo "$repo_slug" --state open --limit 200 --json number,title 2>/dev/null || echo "[]")
+	open_issues_json=$(platform_list_issues "$repo_slug" "open" 200)
 
 	while IFS= read -r issue_line; do
 		local issue_number
@@ -1910,38 +2634,44 @@ cmd_help() {
 	cat <<'EOF'
 aidevops Issue Sync Helper
 
-Bi-directional sync between TODO.md/PLANS.md and GitHub issues.
+Bi-directional sync between TODO.md/PLANS.md and platform issues.
+Supports GitHub (gh CLI), Gitea (REST API), and GitLab (REST API).
+Platform is auto-detected from git remote URL, or set with --platform.
 
 Usage: issue-sync-helper.sh [command] [options]
 
 Commands:
-  push [tNNN]     Create GitHub issues from TODO.md tasks (all open or specific)
+  push [tNNN]     Create issues from TODO.md tasks (all open or specific)
   enrich [tNNN]   Update existing issue bodies with full context from PLANS.md
-  pull            Sync GitHub issue refs back to TODO.md + detect orphan issues
-  close [tNNN]    Close GitHub issues for completed TODO.md tasks
+  pull            Sync issue refs back to TODO.md + detect orphan issues
+  close [tNNN]    Close issues for completed TODO.md tasks
   reconcile       Fix mismatched ref:GH# values and detect drift (t179.2)
-  status          Show sync drift between TODO.md and GitHub
+  status          Show sync drift between TODO.md and platform
   parse [tNNN]    Parse and display task context (debug/dry-run)
   help            Show this help message
 
 Options:
   --repo SLUG     Override repo slug (default: auto-detect from git remote)
+  --platform P    Override platform: github, gitea, gitlab (default: auto-detect)
   --dry-run       Show what would be done without making changes
   --verbose       Show detailed output
   --force         Force close: skip merged-PR/verified check (use with caution)
 
+Platform Authentication:
+  GitHub:  gh CLI (gh auth login) or GH_TOKEN/GITHUB_TOKEN env var
+  Gitea:   GITEA_TOKEN env var (personal access token)
+  GitLab:  GITLAB_TOKEN env var (personal access token)
+
 Examples:
   issue-sync-helper.sh push                    # Push all unsynced tasks
   issue-sync-helper.sh push t020               # Push specific task
+  issue-sync-helper.sh push --platform gitea   # Push to Gitea instance
   issue-sync-helper.sh enrich t020             # Enrich issue with plan context
-  issue-sync-helper.sh enrich                  # Enrich all open tasks with refs
-  issue-sync-helper.sh pull                    # Sync GH refs to TODO.md
+  issue-sync-helper.sh pull                    # Sync refs to TODO.md
   issue-sync-helper.sh close                   # Close issues for done tasks
-  issue-sync-helper.sh reconcile               # Fix ref:GH# mismatches
   issue-sync-helper.sh reconcile --dry-run     # Preview reconciliation
   issue-sync-helper.sh status                  # Show sync drift
   issue-sync-helper.sh parse t020              # Debug: show parsed context
-  issue-sync-helper.sh push --dry-run          # Preview without changes
 EOF
 	return 0
 }
@@ -1955,6 +2685,10 @@ main() {
 		case "$1" in
 		--repo)
 			REPO_SLUG="$2"
+			shift 2
+			;;
+		--platform)
+			PLATFORM="$2"
 			shift 2
 			;;
 		--dry-run)
