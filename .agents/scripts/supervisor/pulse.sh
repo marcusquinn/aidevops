@@ -1862,6 +1862,89 @@ RULES:
 		fi
 	fi
 
+	# Phase 14: AI Supervisor reasoning + action execution (t1085.5)
+	# Runs the full AI pipeline (ai-reason.sh -> ai-actions.sh) on a configurable
+	# pulse interval. Default: every 15 pulses (~30 min at 2-min cron cadence).
+	# Controlled by SUPERVISOR_AI_ENABLED (default: true) and
+	# SUPERVISOR_AI_INTERVAL (default: 15 pulses).
+	# Dedicated log: $SUPERVISOR_DIR/logs/ai-supervisor.log
+	local ai_enabled="${SUPERVISOR_AI_ENABLED:-true}"
+	if [[ "$ai_enabled" == "true" ]]; then
+		local ai_interval="${SUPERVISOR_AI_INTERVAL:-15}"
+		local ai_pulse_count_file="${SUPERVISOR_DIR}/ai-pulse-count"
+		local ai_last_run_file="${SUPERVISOR_DIR}/ai-supervisor-last-run"
+		local ai_log_dir="${SUPERVISOR_DIR}/logs"
+		local ai_log_file="${ai_log_dir}/ai-supervisor.log"
+
+		# Read and increment pulse counter
+		local ai_pulse_count=0
+		if [[ -f "$ai_pulse_count_file" ]]; then
+			ai_pulse_count=$(cat "$ai_pulse_count_file" 2>/dev/null || echo 0)
+		fi
+		ai_pulse_count=$((ai_pulse_count + 1))
+		echo "$ai_pulse_count" >"$ai_pulse_count_file" 2>/dev/null || true
+
+		# Check if it's time to run the AI pipeline
+		if [[ "$ai_pulse_count" -ge "$ai_interval" ]]; then
+			# Reset counter
+			echo "0" >"$ai_pulse_count_file" 2>/dev/null || true
+
+			# Determine repo path
+			local ai_repo_path=""
+			ai_repo_path=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks LIMIT 1;" 2>/dev/null || echo "")
+			if [[ -z "$ai_repo_path" ]]; then
+				ai_repo_path="$(pwd)"
+			fi
+
+			log_info "  Phase 14: AI supervisor reasoning + action execution (pulse $ai_pulse_count/$ai_interval)"
+
+			# Ensure log directory exists
+			mkdir -p "$ai_log_dir" 2>/dev/null || true
+
+			# Record start timestamp
+			local ai_start_ts
+			ai_start_ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+			{
+				echo ""
+				echo "=== AI Supervisor Run: $ai_start_ts ==="
+			} >>"$ai_log_file" 2>/dev/null || true
+
+			# Run the full AI pipeline (reasoning -> action execution)
+			local ai_result=""
+			local ai_rc=0
+			ai_result=$(run_ai_actions_pipeline "$ai_repo_path" "full" 2>>"$ai_log_file") || ai_rc=$?
+
+			# Record completion timestamp
+			local ai_end_ts
+			ai_end_ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+			echo "$ai_end_ts" >"$ai_last_run_file" 2>/dev/null || true
+
+			if [[ $ai_rc -eq 0 ]]; then
+				# Extract summary from result JSON
+				local ai_executed ai_failed ai_skipped
+				ai_executed=$(printf '%s' "$ai_result" | jq -r '.executed // 0' 2>/dev/null || echo 0)
+				ai_failed=$(printf '%s' "$ai_result" | jq -r '.failed // 0' 2>/dev/null || echo 0)
+				ai_skipped=$(printf '%s' "$ai_result" | jq -r '.skipped // 0' 2>/dev/null || echo 0)
+				log_success "  Phase 14: AI pipeline complete (executed=$ai_executed failed=$ai_failed skipped=$ai_skipped)"
+				{
+					echo "Result: executed=$ai_executed failed=$ai_failed skipped=$ai_skipped"
+					echo "=== End: $ai_end_ts ==="
+				} >>"$ai_log_file" 2>/dev/null || true
+			else
+				log_warn "  Phase 14: AI pipeline returned rc=$ai_rc (see $ai_log_file)"
+				{
+					echo "Result: rc=$ai_rc (pipeline error)"
+					echo "=== End: $ai_end_ts ==="
+				} >>"$ai_log_file" 2>/dev/null || true
+			fi
+		else
+			local ai_pulses_remaining=$((ai_interval - ai_pulse_count))
+			log_verbose "  Phase 14: AI pipeline skipped (${ai_pulses_remaining} pulses until next run, interval=${ai_interval})"
+		fi
+	else
+		log_verbose "  Phase 14: AI pipeline disabled (SUPERVISOR_AI_ENABLED=false)"
+	fi
+
 	# t1052: Clear deferred batch completion flag to avoid leaking state
 	# if the supervisor process is reused for non-pulse commands
 	_PULSE_DEFER_BATCH_COMPLETION=""
