@@ -806,21 +806,46 @@ record_evaluation_metadata() {
 	local extra_tags="failure_mode:${failure_mode},quality:${quality_score}"
 	[[ "$ai_evaluated" == "true" ]] && extra_tags="${extra_tags},ai_eval:true"
 
-	# Look up model tier from DB for routing context
-	local model_tier=""
+	# Look up model tier, requested_tier, actual_tier, and log_file from DB (t1117)
+	local model_tier="" requested_tier="" actual_tier="" task_log_file=""
 	if [[ -n "${SUPERVISOR_DB:-}" ]]; then
-		local task_model
-		task_model=$(db "$SUPERVISOR_DB" "SELECT model FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo "")
-		if [[ -n "$task_model" ]] && command -v model_to_tier &>/dev/null; then
-			model_tier=$(model_to_tier "$task_model" 2>/dev/null || echo "")
+		local task_row
+		task_row=$(db -separator '|' "$SUPERVISOR_DB" \
+			"SELECT model, requested_tier, actual_tier, log_file FROM tasks WHERE id = '$(sql_escape "$task_id")';" \
+			2>/dev/null || echo "")
+		if [[ -n "$task_row" ]]; then
+			local task_model
+			IFS='|' read -r task_model requested_tier actual_tier task_log_file <<<"$task_row"
+			if [[ -n "$task_model" ]] && command -v model_to_tier &>/dev/null; then
+				model_tier=$(model_to_tier "$task_model" 2>/dev/null || echo "")
+			fi
+			# Fall back to actual_tier if model_to_tier unavailable
+			[[ -z "$model_tier" && -n "$actual_tier" ]] && model_tier="$actual_tier"
 		fi
+	fi
+
+	# Extract token counts from worker log for cost tracking (t1114, t1117)
+	# Supports camelCase (opencode JSON) and snake_case (claude CLI JSON) formats.
+	local tokens_in="" tokens_out=""
+	if [[ -n "$task_log_file" && -f "$task_log_file" ]]; then
+		local raw_in raw_out
+		raw_in=$(grep -oE '"inputTokens":[0-9]+' "$task_log_file" 2>/dev/null | tail -1 | grep -oE '[0-9]+' || true)
+		raw_out=$(grep -oE '"outputTokens":[0-9]+' "$task_log_file" 2>/dev/null | tail -1 | grep -oE '[0-9]+' || true)
+		if [[ -z "$raw_in" ]]; then
+			raw_in=$(grep -oE '"input_tokens":[0-9]+' "$task_log_file" 2>/dev/null | tail -1 | grep -oE '[0-9]+' || true)
+		fi
+		if [[ -z "$raw_out" ]]; then
+			raw_out=$(grep -oE '"output_tokens":[0-9]+' "$task_log_file" 2>/dev/null | tail -1 | grep -oE '[0-9]+' || true)
+		fi
+		[[ -n "$raw_in" ]] && tokens_in="$raw_in"
+		[[ -n "$raw_out" ]] && tokens_out="$raw_out"
 	fi
 
 	# Look up task type from DB tags if available, fallback to "unknown"
 	# TODO(t1096): extract real task type from TODO.md tags or DB metadata
 	local task_type="unknown"
-	local task_desc=""
 	if [[ -n "${SUPERVISOR_DB:-}" ]]; then
+		local task_desc
 		task_desc=$(db "$SUPERVISOR_DB" "SELECT description FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo "")
 		# Infer type from description keywords (best-effort)
 		case "$task_desc" in
@@ -832,40 +857,26 @@ record_evaluation_metadata() {
 		esac
 	fi
 
-	# Extract token counts from worker log for cost tracking (t1114)
-	# opencode/claude --format json logs emit usage stats in the final JSON entry.
-	# Pattern: "inputTokens":N,"outputTokens":N or "input_tokens":N,"output_tokens":N
-	local tokens_in="" tokens_out=""
-	if [[ -n "${SUPERVISOR_DB:-}" ]]; then
-		local log_file
-		log_file=$(db "$SUPERVISOR_DB" "SELECT log_file FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo "")
-		if [[ -n "$log_file" && -f "$log_file" ]]; then
-			# Try camelCase format (opencode JSON output)
-			local raw_in raw_out
-			raw_in=$(grep -oE '"inputTokens":[0-9]+' "$log_file" 2>/dev/null | tail -1 | grep -oE '[0-9]+' || true)
-			raw_out=$(grep -oE '"outputTokens":[0-9]+' "$log_file" 2>/dev/null | tail -1 | grep -oE '[0-9]+' || true)
-			# Fallback: snake_case format (claude CLI JSON output)
-			if [[ -z "$raw_in" ]]; then
-				raw_in=$(grep -oE '"input_tokens":[0-9]+' "$log_file" 2>/dev/null | tail -1 | grep -oE '[0-9]+' || true)
-			fi
-			if [[ -z "$raw_out" ]]; then
-				raw_out=$(grep -oE '"output_tokens":[0-9]+' "$log_file" 2>/dev/null | tail -1 | grep -oE '[0-9]+' || true)
-			fi
-			[[ -n "$raw_in" ]] && tokens_in="$raw_in"
-			[[ -n "$raw_out" ]] && tokens_out="$raw_out"
-		fi
+	# Build tier delta tag for cost analysis (t1117, t1114, t1109)
+	# Captures whether the actual dispatch tier matched what was requested.
+	local tier_delta_tag=""
+	if [[ -n "$requested_tier" && -n "$actual_tier" && "$requested_tier" != "$actual_tier" ]]; then
+		tier_delta_tag=",tier_delta:${requested_tier}->${actual_tier}"
 	fi
 
 	# Build description
 	local description="Worker $task_id: ${outcome_type}:${outcome_detail} [fmode:${failure_mode}] [quality:${quality_score}]"
+	[[ -n "$requested_tier" ]] && description="${description} [req:${requested_tier}]"
+	[[ -n "$actual_tier" ]] && description="${description} [act:${actual_tier}]"
+	[[ -n "$tokens_in" || -n "$tokens_out" ]] && description="${description} [tokens:${tokens_in:-0}+${tokens_out:-0}]"
 
-	# Build record args — add token counts when available (t1114)
+	# Build record args — add tier and token counts when available (t1114, t1117)
 	local record_args=(
 		--outcome "$pt_outcome"
 		--task-type "$task_type"
 		--task-id "$task_id"
 		--description "$description"
-		--tags "supervisor,evaluate,${outcome_type},${extra_tags}${model_tier:+,model:${model_tier}}"
+		--tags "supervisor,evaluate,${outcome_type},${extra_tags}${model_tier:+,model:${model_tier}}${requested_tier:+,requested_tier:${requested_tier}}${actual_tier:+,actual_tier:${actual_tier}}${tier_delta_tag}"
 	)
 	[[ -n "$model_tier" ]] && record_args+=(--model "$model_tier")
 	[[ -n "$tokens_in" ]] && record_args+=(--tokens-in "$tokens_in")
@@ -1602,15 +1613,15 @@ record_worker_spend() {
 	escaped_id=$(sql_escape "$task_id")
 	local task_row
 	task_row=$(db -separator '|' "$SUPERVISOR_DB" "
-		SELECT log_file, model, repo FROM tasks WHERE id = '$escaped_id';
+		SELECT log_file, model, repo, requested_tier, actual_tier FROM tasks WHERE id = '$escaped_id';
 	" 2>/dev/null) || return 0
 
 	if [[ -z "$task_row" ]]; then
 		return 0
 	fi
 
-	local tlog tmodel trepo
-	IFS='|' read -r tlog tmodel trepo <<<"$task_row"
+	local tlog tmodel trepo trequested_tier tactual_tier
+	IFS='|' read -r tlog tmodel trepo trequested_tier tactual_tier <<<"$task_row"
 
 	# Use task model if not passed
 	model="${model:-$tmodel}"
@@ -1678,7 +1689,14 @@ record_worker_spend() {
 			--task "$task_id" \
 			--input-tokens "$input_tokens" \
 			--output-tokens "$output_tokens" 2>/dev/null || true
-		log_verbose "Budget: recorded spend for $task_id ($provider/$tier: ${input_tokens}in/${output_tokens}out)"
+
+		# Log tier delta for cost analysis (t1117): shows requested vs actual tier
+		# alongside token counts so cost waste is immediately visible in logs.
+		local tier_info="${provider}/${tier}"
+		if [[ -n "$trequested_tier" && "$trequested_tier" != "$tactual_tier" ]]; then
+			tier_info="${tier_info} [req:${trequested_tier}→act:${tactual_tier:-$tier}]"
+		fi
+		log_verbose "Budget: recorded spend for $task_id ($tier_info: ${input_tokens}in/${output_tokens}out)"
 	fi
 
 	return 0

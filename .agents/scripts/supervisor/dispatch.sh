@@ -544,6 +544,63 @@ resolve_task_model() {
 }
 
 #######################################
+# Record requested_tier and actual_tier to the tasks DB (t1117)
+# Enables post-hoc cost analysis: which tasks were dispatched at a higher
+# tier than requested (escalation waste) or lower (budget degradation).
+#
+# $1: task_id
+# $2: requested_tier — tier from TODO.md model: tag (e.g., "sonnet", "opus")
+#                      Empty string means no explicit model: tag was set.
+# $3: actual_model   — resolved provider/model string (e.g., "anthropic/claude-opus-4-6")
+#
+# Returns: 0 always (non-blocking — DB write failure must not abort dispatch)
+#######################################
+record_dispatch_model_tiers() {
+	local task_id="$1"
+	local requested_tier="$2"
+	local actual_model="$3"
+
+	# Derive actual_tier from the resolved model string
+	local actual_tier=""
+	if command -v model_to_tier &>/dev/null; then
+		actual_tier=$(model_to_tier "$actual_model" 2>/dev/null || echo "")
+	fi
+	# Fallback: inline pattern match if model_to_tier not yet available
+	if [[ -z "$actual_tier" ]]; then
+		case "$actual_model" in
+		*haiku*) actual_tier="haiku" ;;
+		*sonnet*) actual_tier="sonnet" ;;
+		*opus*) actual_tier="opus" ;;
+		*flash*) actual_tier="flash" ;;
+		*pro*) actual_tier="pro" ;;
+		*o3*) actual_tier="opus" ;;
+		*) actual_tier="unknown" ;;
+		esac
+	fi
+
+	# Normalise requested_tier: if it's a full model string, extract tier name
+	if [[ "$requested_tier" == *"/"* ]] && command -v model_to_tier &>/dev/null; then
+		requested_tier=$(model_to_tier "$requested_tier" 2>/dev/null || echo "$requested_tier")
+	fi
+
+	# Store to DB (non-blocking)
+	if [[ -n "${SUPERVISOR_DB:-}" ]]; then
+		local escaped_id
+		escaped_id=$(sql_escape "$task_id")
+		db "$SUPERVISOR_DB" "UPDATE tasks SET requested_tier = '$(sql_escape "$requested_tier")', actual_tier = '$(sql_escape "$actual_tier")' WHERE id = '$escaped_id';" 2>/dev/null || true
+	fi
+
+	# Log tier delta for immediate visibility
+	if [[ -n "$requested_tier" && "$requested_tier" != "$actual_tier" ]]; then
+		log_info "Model tiers for $task_id: requested=$requested_tier actual=$actual_tier (delta logged for t1114/t1109)"
+	else
+		log_verbose "Model tiers for $task_id: requested=${requested_tier:-default} actual=$actual_tier"
+	fi
+
+	return 0
+}
+
+#######################################
 # Get the next higher-tier model for escalation (t132.6)
 # Maps current model to the next tier in the escalation chain:
 #   haiku -> sonnet -> opus (Anthropic)
@@ -2151,6 +2208,13 @@ cmd_dispatch() {
 		log_info "Verify mode: using coding-tier model ($resolved_model) instead of task-specific model"
 	else
 		resolved_model=$(resolve_task_model "$task_id" "$tmodel" "${trepo:-.}" "$ai_cli")
+	fi
+
+	# Record requested vs actual model tiers for cost analysis (t1117)
+	# tmodel is the raw model: tag from TODO.md (requested_tier source)
+	# resolved_model is the final model after all resolution steps (actual_tier source)
+	if [[ "$resolved_model" != "CONTEST" ]]; then
+		record_dispatch_model_tiers "$task_id" "$tmodel" "$resolved_model"
 	fi
 
 	# Contest mode intercept (t1011): if model resolves to CONTEST, delegate to
