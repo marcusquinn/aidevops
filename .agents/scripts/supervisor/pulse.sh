@@ -54,9 +54,9 @@ cmd_pulse() {
 		log_warn "Another pulse is already running — skipping this invocation"
 		return 0
 	fi
-	# Ensure lock is released on exit (normal, error, or signal)
+	# Ensure lock is released and temp files cleaned on exit (normal, error, or signal)
 	# shellcheck disable=SC2064
-	trap "release_pulse_lock" EXIT INT TERM
+	trap "release_pulse_lock; rm -f '${SUPERVISOR_DIR}/MODELS.md.tmp' 2>/dev/null || true" EXIT INT TERM
 
 	log_info "=== Supervisor Pulse $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
 

@@ -663,6 +663,8 @@ while [[ $# -gt 0 ]]; do
 			exit 1
 		fi
 		REPO_FILTER="$2"
+		# Sanitize for safe SQL interpolation (escape single quotes)
+		REPO_FILTER="${REPO_FILTER//\'/\'\'}"
 		shift 2
 		;;
 	--output)
