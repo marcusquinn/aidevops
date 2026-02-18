@@ -1016,7 +1016,14 @@
   check: shellcheck .agents/scripts/auto-update-helper.sh
   check: file-exists .agents/scripts/auto-update-helper.sh
 
-- [ ] v115 t1082.1 Add skill-update-helper.sh pr subcommand — for each ski... | PR #1608 | merged:2026-02-18
+- [x] v115 t1082.1 Add skill-update-helper.sh pr subcommand — for each ski... | PR #1608 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/skill-update-helper.sh
   check: shellcheck .agents/scripts/skill-update-helper.sh
   check: file-exists .agents/scripts/skill-update-helper.sh
+
+- [ ] v116 t1082.2 Add supervisor phase for skill update PRs — optional ph... | PR #1610 | merged:2026-02-18
+  files: .agents/scripts/supervisor-helper.sh, .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/supervisor-helper.sh
+  check: file-exists .agents/scripts/supervisor-helper.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
