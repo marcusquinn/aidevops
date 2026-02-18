@@ -217,6 +217,27 @@ cmd_watch() {
 }
 
 #######################################
+# Check if a task is blocked by unresolved dependencies.
+# Returns 0 (should skip) if blocked, 1 (should not skip) otherwise.
+# Usage: _check_and_skip_if_blocked <line> <task_id> <todo_file>
+#######################################
+_check_and_skip_if_blocked() {
+	local line
+	line="$1"
+	local task_id
+	task_id="$2"
+	local todo_file
+	todo_file="$3"
+	local unresolved_blockers
+
+	if unresolved_blockers=$(is_task_blocked "$line" "$todo_file"); then
+		log_info "  $task_id: blocked by unresolved dependencies ($unresolved_blockers) — skipping"
+		return 0
+	fi
+	return 1
+}
+
+#######################################
 # Scan TODO.md for tasks tagged #auto-dispatch or in a
 # "Dispatch Queue" section. Auto-adds them to supervisor
 # if not already tracked, then queues them for dispatch.
@@ -272,6 +293,11 @@ cmd_auto_pickup() {
 			# These indicate someone is already working on the task
 			if echo "$line" | grep -qE '(assignee:|started:)'; then
 				log_info "  $task_id: already claimed or in progress — skipping auto-pickup"
+				continue
+			fi
+
+			# Skip tasks with unresolved blocked-by dependencies (t1085.4)
+			if _check_and_skip_if_blocked "$line" "$task_id" "$todo_file"; then
 				continue
 			fi
 
@@ -338,6 +364,11 @@ cmd_auto_pickup() {
 			# These indicate someone is already working on the task
 			if echo "$line" | grep -qE '(assignee:|started:)'; then
 				log_info "  $task_id: already claimed or in progress — skipping auto-pickup"
+				continue
+			fi
+
+			# Skip tasks with unresolved blocked-by dependencies (t1085.4)
+			if _check_and_skip_if_blocked "$line" "$task_id" "$todo_file"; then
 				continue
 			fi
 
@@ -422,6 +453,98 @@ cmd_auto_pickup() {
 				dispatch_decomposition_worker "$task_id" "$plan_anchor" "$repo"
 			fi
 		done <<<"$plan_tasks"
+	fi
+
+	# Strategy 4: Subtask inheritance from #auto-dispatch parents (t1085.4)
+	# Find open subtasks (tXXX.N) whose parent task (tXXX) has #auto-dispatch,
+	# even if the subtask itself doesn't have the tag. Also propagates model tier
+	# from parent when the subtask has no explicit model: field.
+	# This unblocks subtask trees like t1081.1-t1081.4 and t1082.1-t1082.4.
+
+	# Step 1: Collect parent task IDs that have #auto-dispatch
+	local parent_ids
+	parent_ids=$(grep -E '^[[:space:]]*- \[[ xX-]\] (t[0-9]+) .*#auto-dispatch' "$todo_file" 2>/dev/null |
+		grep -oE 't[0-9]+' | head -50 | sort -u || true)
+
+	if [[ -n "$parent_ids" ]]; then
+		while IFS= read -r parent_id; do
+			[[ -z "$parent_id" ]] && continue
+
+			# Extract parent's model tier for propagation
+			local parent_line
+			parent_line=$(grep -E "^[[:space:]]*- \[[ xX-]\] ${parent_id} " "$todo_file" 2>/dev/null | head -1 || true)
+			local parent_model=""
+			if [[ -n "$parent_line" ]]; then
+				parent_model=$(echo "$parent_line" | grep -oE 'model:[a-zA-Z0-9/_.-]+' | head -1 | sed 's/^model://' || true)
+			fi
+
+			# Find open subtasks of this parent (tXXX.N pattern, any nesting depth)
+			local subtasks
+			subtasks=$(grep -E "^[[:space:]]*- \[ \] ${parent_id}\.[0-9]+" "$todo_file" 2>/dev/null || true)
+			if [[ -z "$subtasks" ]]; then
+				continue
+			fi
+
+			while IFS= read -r sub_line; do
+				[[ -z "$sub_line" ]] && continue
+				local sub_id
+				sub_id=$(echo "$sub_line" | grep -oE 't[0-9]+(\.[0-9]+)+' | head -1)
+				if [[ -z "$sub_id" ]]; then
+					continue
+				fi
+
+				# Skip if already picked up by Strategy 1 (has own #auto-dispatch tag)
+				if echo "$sub_line" | grep -qE '#auto-dispatch'; then
+					continue
+				fi
+
+				# Skip tasks with assignee: or started: fields
+				if echo "$sub_line" | grep -qE '(assignee:|started:)'; then
+					log_info "  $sub_id: already claimed or in progress — skipping subtask pickup"
+					continue
+				fi
+
+				# Skip tasks with unresolved blocked-by dependencies
+				if _check_and_skip_if_blocked "$sub_line" "$sub_id" "$todo_file"; then
+					continue
+				fi
+
+				# Check if already in supervisor
+				local existing
+				existing=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$sub_id")';" 2>/dev/null || true)
+				if [[ -n "$existing" ]]; then
+					if [[ "$existing" == "complete" || "$existing" == "cancelled" ]]; then
+						continue
+					fi
+					log_info "  $sub_id: already tracked (status: $existing)"
+					continue
+				fi
+
+				# Pre-pickup check: skip tasks with merged PRs
+				if check_task_already_done "$sub_id" "$repo"; then
+					log_info "  $sub_id: already completed (merged PR) — skipping subtask pickup"
+					continue
+				fi
+
+				# Propagate parent model tier if subtask has no explicit model:
+				local model_arg=""
+				if [[ -n "$parent_model" ]]; then
+					local sub_model
+					sub_model=$(echo "$sub_line" | grep -oE 'model:[a-zA-Z0-9/_.-]+' | head -1 || true)
+					if [[ -z "$sub_model" ]]; then
+						model_arg="--model $parent_model"
+						log_info "  $sub_id: inheriting model:$parent_model from parent $parent_id"
+					fi
+				fi
+
+				# Add to supervisor (with optional model propagation)
+				# shellcheck disable=SC2086
+				if cmd_add "$sub_id" --repo "$repo" $model_arg; then
+					picked_up=$((picked_up + 1))
+					log_success "  Auto-picked: $sub_id (subtask of #auto-dispatch parent $parent_id)"
+				fi
+			done <<<"$subtasks"
+		done <<<"$parent_ids"
 	fi
 
 	if [[ "$picked_up" -eq 0 ]]; then
