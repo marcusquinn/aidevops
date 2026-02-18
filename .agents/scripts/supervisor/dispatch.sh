@@ -1096,8 +1096,20 @@ do_prompt_repeat() {
 		echo '}'
 		echo 'trap cleanup_children EXIT INT TERM'
 		echo ''
+		# t1196: Heartbeat — write a timestamped line to the log every N seconds.
+		local heartbeat_interval="${SUPERVISOR_HEARTBEAT_INTERVAL:-300}"
+		echo "# t1196: Heartbeat background process"
+		echo "_heartbeat_log='${new_log_file}'"
+		echo "_heartbeat_interval='${heartbeat_interval}'"
+		echo '( while true; do'
+		echo '    sleep "$_heartbeat_interval" || break'
+		echo '    echo "HEARTBEAT: $(date -u +%Y-%m-%dT%H:%M:%SZ) worker still running" >> "$_heartbeat_log" 2>/dev/null || true'
+		echo '  done ) &'
+		echo '_heartbeat_pid=$!'
+		echo ''
 		echo "'${dispatch_script}' >> '${new_log_file}' 2>&1"
 		echo "rc=\$?"
+		echo "kill \$_heartbeat_pid 2>/dev/null || true"
 		echo "echo \"EXIT:\${rc}\" >> '${new_log_file}'"
 		echo "if [ \$rc -ne 0 ]; then"
 		echo "  echo \"WORKER_DISPATCH_ERROR: prompt-repeat script exited with code \${rc}\" >> '${new_log_file}'"
@@ -2447,8 +2459,25 @@ cmd_dispatch() {
 		echo '# Register cleanup on EXIT, INT, TERM (KILL cannot be trapped)'
 		echo 'trap cleanup_children EXIT INT TERM'
 		echo ''
+		# t1196: Heartbeat — write a timestamped line to the log every N seconds.
+		# This keeps the log file mtime fresh during long-running operations (e.g.,
+		# large refactors, integration tests) so the supervisor hang detector does
+		# not false-positive kill a legitimately busy worker.
+		# Interval: SUPERVISOR_HEARTBEAT_INTERVAL (default 300s = 5 min).
+		# The heartbeat process is a child of the wrapper and is killed on cleanup.
+		local heartbeat_interval="${SUPERVISOR_HEARTBEAT_INTERVAL:-300}"
+		echo "# t1196: Heartbeat background process"
+		echo "_heartbeat_log='${log_file}'"
+		echo "_heartbeat_interval='${heartbeat_interval}'"
+		echo '( while true; do'
+		echo '    sleep "$_heartbeat_interval" || break'
+		echo '    echo "HEARTBEAT: $(date -u +%Y-%m-%dT%H:%M:%SZ) worker still running" >> "$_heartbeat_log" 2>/dev/null || true'
+		echo '  done ) &'
+		echo '_heartbeat_pid=$!'
+		echo ''
 		echo "'${dispatch_script}' >> '${log_file}' 2>&1"
 		echo "rc=\$?"
+		echo "kill \$_heartbeat_pid 2>/dev/null || true"
 		echo "echo \"EXIT:\${rc}\" >> '${log_file}'"
 		echo "if [ \$rc -ne 0 ]; then"
 		echo "  echo \"WORKER_DISPATCH_ERROR: dispatch script exited with code \${rc}\" >> '${log_file}'"
