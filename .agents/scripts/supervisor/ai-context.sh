@@ -505,7 +505,9 @@ build_todo_context() {
 #
 # Blocker statuses (user-defined, non-dispatchable reasons):
 #   account-needed, hosting-needed, login-needed, api-key-needed,
-#   clarification-needed, resources-needed, payment-needed
+#   clarification-needed, resources-needed, payment-needed,
+#   approval-needed, decision-needed, design-needed, content-needed,
+#   dns-needed, domain-needed, testing-needed
 #######################################
 build_autodispatch_eligibility_context() {
 	local output="## Auto-Dispatch Eligibility Assessment\n\n"
@@ -514,12 +516,12 @@ build_autodispatch_eligibility_context() {
 
 	# Known blocker statuses that indicate a task cannot be auto-dispatched
 	# These are human-action-required blockers, not technical dependencies
-	local blocker_pattern="account-needed\|hosting-needed\|login-needed\|api-key-needed\|clarification-needed\|resources-needed\|payment-needed"
+	local blocker_pattern="account-needed\|hosting-needed\|login-needed\|api-key-needed\|clarification-needed\|resources-needed\|payment-needed\|approval-needed\|decision-needed\|design-needed\|content-needed\|dns-needed\|domain-needed\|testing-needed"
 
 	output+="### Eligibility Criteria\n\n"
 	output+="- **Eligible**: Clear spec, bounded scope (~30m-~4h), no unresolved blockers, no assignee\n"
 	output+="- **Ineligible**: Vague description, >~4h estimate, has assignee, has unresolved blocked-by, or has a blocker status\n"
-	output+="- **Blocker statuses** (human action required): account-needed, hosting-needed, login-needed, api-key-needed, clarification-needed, resources-needed, payment-needed\n\n"
+	output+="- **Blocker statuses** (human action required): account-needed, hosting-needed, login-needed, api-key-needed, clarification-needed, resources-needed, payment-needed, approval-needed, decision-needed, design-needed, content-needed, dns-needed, domain-needed, testing-needed\n\n"
 
 	local all_repos
 	all_repos=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks WHERE repo IS NOT NULL AND repo != '';" 2>/dev/null || echo "")
@@ -574,7 +576,7 @@ build_autodispatch_eligibility_context() {
 			# Check for blocker statuses
 			if echo "$line" | grep -qE "$blocker_pattern"; then
 				local blocker
-				blocker=$(echo "$line" | grep -oE "(account|hosting|login|api-key|clarification|resources|payment)-needed" | head -1)
+				blocker=$(echo "$line" | grep -oE "(account|hosting|login|api-key|clarification|resources|payment|approval|decision|design|content|dns|domain|testing)-needed" | head -1)
 				status="blocked"
 				reason="$blocker"
 			# Check for blocked-by dependency
