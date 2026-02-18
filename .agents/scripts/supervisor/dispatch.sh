@@ -2251,6 +2251,11 @@ cmd_dispatch() {
 	# Pre-create log file with dispatch metadata (t183)
 	# If the worker fails to start (opencode not found, permission error, etc.),
 	# the log file still exists with context for diagnosis instead of no_log_file.
+	# Compute per-task hung timeout for logging (t1199)
+	local dispatch_hung_timeout
+	dispatch_hung_timeout=$(get_task_hung_timeout "$task_id" 2>/dev/null || echo "1800")
+	log_info "Hung timeout for $task_id: ${dispatch_hung_timeout}s (2x estimate, 4h cap, 30m default)"
+
 	{
 		echo "=== DISPATCH METADATA (t183) ==="
 		echo "task_id=$task_id"
@@ -2262,6 +2267,7 @@ cmd_dispatch() {
 		echo "dispatch_mode=$(detect_dispatch_mode 2>/dev/null || echo unknown)"
 		echo "dispatch_type=${verify_mode:+verify}"
 		echo "verify_reason=${verify_reason:-}"
+		echo "hung_timeout_seconds=${dispatch_hung_timeout}"
 		echo "=== END DISPATCH METADATA ==="
 		echo ""
 	} >"$log_file" 2>/dev/null || true
