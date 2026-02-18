@@ -1094,3 +1094,12 @@
   check: file-exists .agents/scripts/pattern-tracker-helper.sh
   check: shellcheck .agents/scripts/shared-constants.sh
   check: file-exists .agents/scripts/shared-constants.sh
+
+- [ ] v126 t1097 Add prompt-repeat retry strategy to dispatch.sh — befor... | PR #1631 | merged:2026-02-18
+  files: .agents/scripts/supervisor/database.sh, .agents/scripts/supervisor/dispatch.sh, .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/supervisor/database.sh
+  check: file-exists .agents/scripts/supervisor/database.sh
+  check: shellcheck .agents/scripts/supervisor/dispatch.sh
+  check: file-exists .agents/scripts/supervisor/dispatch.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
