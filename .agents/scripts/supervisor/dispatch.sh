@@ -376,12 +376,14 @@ classify_task_complexity() {
 }
 
 #######################################
-# Resolve the model for a task (t132.5, t246, t1011, t1100)
+# Resolve the model for a task (t132.5, t246, t1011, t1100, t1149)
 # Priority: 0) Contest mode (model:contest) — dispatch to top-3 models (t1011)
 #           1) Task's explicit model (if not default) — from --model or model: in TODO.md
 #           2) Subagent frontmatter model:
-#           3) Pattern-tracker recommendation (data-driven, requires 3+ samples)
+#           3) Pattern-tracker recommendation (data-driven, requires 3+ samples, ≥75% success)
 #           4) Task complexity classification (auto-route from description + tags)
+#           4.5) Cost-efficiency check (t1149): if classify returned opus but pattern data
+#                shows sonnet ≥80% success for this task type, downgrade to sonnet
 #           4.7) Budget-aware tier adjustment (t1100) — degrade if approaching budget cap
 #           5) resolve_model() with tier/fallback chain
 # Returns the resolved provider/model string (or "CONTEST" for contest mode)
@@ -440,13 +442,43 @@ resolve_task_model() {
 	local task_desc
 	task_desc=$(db "$SUPERVISOR_DB" "SELECT description FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo "")
 
-	# 3) Pattern-tracker recommendation (t246: data-driven routing)
-	#    If we have 3+ samples for a task type with >75% success rate on a
-	#    cheaper tier, use that tier. This learns from actual dispatch outcomes.
+	# Derive task type from tags/description — used by steps 3 and 4.5 (t1149)
 	local pattern_helper="${SCRIPT_DIR}/pattern-tracker-helper.sh"
+	local inferred_task_type=""
+	if [[ -n "$task_desc" ]]; then
+		local task_tags_for_type
+		task_tags_for_type=$(echo "$task_desc" | grep -oE '#[a-zA-Z][a-zA-Z0-9_-]*' | tr '[:upper:]' '[:lower:]' | tr '\n' ' ' || echo "")
+		local desc_lower_for_type
+		desc_lower_for_type=$(echo "$task_desc" | tr '[:upper:]' '[:lower:]')
+		# Map tags/keywords to VALID_TASK_TYPES
+		if [[ "$task_tags_for_type" == *"#feature"* || "$desc_lower_for_type" =~ add.*feature|implement.*feature|new.*feature ]]; then
+			inferred_task_type="feature"
+		elif [[ "$task_tags_for_type" == *"#bugfix"* || "$task_tags_for_type" == *"#fix"* || "$desc_lower_for_type" =~ fix.*bug|bugfix|hotfix ]]; then
+			inferred_task_type="bugfix"
+		elif [[ "$task_tags_for_type" == *"#refactor"* || "$desc_lower_for_type" =~ refactor ]]; then
+			inferred_task_type="refactor"
+		elif [[ "$task_tags_for_type" == *"#docs"* || "$desc_lower_for_type" =~ update.*doc|add.*doc ]]; then
+			inferred_task_type="docs"
+		elif [[ "$task_tags_for_type" == *"#test"* || "$desc_lower_for_type" =~ add.*test|write.*test ]]; then
+			inferred_task_type="testing"
+		elif [[ "$task_tags_for_type" == *"#architecture"* || "$desc_lower_for_type" =~ architect ]]; then
+			inferred_task_type="architecture"
+		elif [[ "$task_tags_for_type" == *"#security"* || "$desc_lower_for_type" =~ security ]]; then
+			inferred_task_type="security"
+		elif [[ "$task_tags_for_type" == *"#enhancement"* || "$task_tags_for_type" == *"#self-improvement"* ]]; then
+			inferred_task_type="feature"
+		fi
+	fi
+
+	# 3) Pattern-tracker recommendation (t246, t1149: data-driven routing)
+	#    If we have 3+ samples for a task type with ≥75% success rate on a
+	#    cheaper tier, use that tier. This learns from actual dispatch outcomes.
 	if [[ -n "$task_desc" && -x "$pattern_helper" ]]; then
+		local pattern_args=("recommend" "--json")
+		[[ -n "$inferred_task_type" ]] && pattern_args+=("--task-type" "$inferred_task_type")
+
 		local pattern_json
-		pattern_json=$("$pattern_helper" recommend --json 2>/dev/null || echo "")
+		pattern_json=$("$pattern_helper" "${pattern_args[@]}" 2>/dev/null || echo "")
 		if [[ -n "$pattern_json" && "$pattern_json" != "{}" ]]; then
 			local recommended_tier
 			recommended_tier=$(echo "$pattern_json" | sed -n 's/.*"recommended_tier"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' 2>/dev/null || echo "")
@@ -459,7 +491,7 @@ resolve_task_model() {
 				if [[ "$recommended_tier" != "opus" ]]; then
 					local resolved
 					resolved=$(resolve_model "$recommended_tier" "$ai_cli")
-					log_info "Model for $task_id: $resolved (pattern-tracker: ${recommended_tier}, ${success_rate}% success over ${sample_count} samples)"
+					log_info "Model for $task_id: $resolved (pattern-tracker: ${recommended_tier}, ${success_rate}% success over ${sample_count} samples${inferred_task_type:+, type: $inferred_task_type})"
 					echo "$resolved"
 					return 0
 				fi
@@ -484,9 +516,50 @@ resolve_task_model() {
 			echo "$resolved"
 			return 0
 		fi
+
+		# 4.5) Cost-efficiency check (t1149): classify_task_complexity returned opus,
+		#      but check if pattern data shows sonnet achieves ≥80% success for this
+		#      task type. If so, downgrade to sonnet (~5x cheaper) unless the task
+		#      contains hard architecture/novel-problem indicators that require opus.
+		#      Threshold: 80% (higher than step 3's 75% — we're overriding opus here).
+		local desc_lower_ce
+		desc_lower_ce=$(echo "$task_desc" | tr '[:upper:]' '[:lower:]')
+		local hard_opus_indicators=false
+		# Hard indicators: tasks that genuinely need opus reasoning depth
+		if [[ "$desc_lower_ce" =~ architect.*system|design.*new.*system|security.*audit|from.*scratch|novel.*algorithm|consensus.*protocol|distributed.*system ]]; then
+			hard_opus_indicators=true
+		fi
+
+		if [[ "$hard_opus_indicators" == false && -x "$pattern_helper" ]]; then
+			# Query sonnet-specific success rate for this task type
+			local sonnet_args=("recommend" "--json")
+			[[ -n "$inferred_task_type" ]] && sonnet_args+=("--task-type" "$inferred_task_type")
+
+			local ce_pattern_json
+			ce_pattern_json=$("$pattern_helper" "${sonnet_args[@]}" 2>/dev/null || echo "")
+			if [[ -n "$ce_pattern_json" && "$ce_pattern_json" != "{}" ]]; then
+				local ce_recommended_tier
+				ce_recommended_tier=$(echo "$ce_pattern_json" | sed -n 's/.*"recommended_tier"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' 2>/dev/null || echo "")
+				local ce_sample_count
+				ce_sample_count=$(echo "$ce_pattern_json" | sed -n 's/.*"total_samples"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p' 2>/dev/null || echo "0")
+				local ce_success_rate
+				ce_success_rate=$(echo "$ce_pattern_json" | sed -n 's/.*"success_rate"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p' 2>/dev/null || echo "0")
+
+				# Downgrade opus→sonnet when: ≥3 samples, ≥80% success, recommended tier is sonnet or cheaper
+				if [[ -n "$ce_recommended_tier" && "$ce_sample_count" -ge 3 && "$ce_success_rate" -ge 80 ]]; then
+					if [[ "$ce_recommended_tier" == "sonnet" || "$ce_recommended_tier" == "haiku" || "$ce_recommended_tier" == "flash" ]]; then
+						local resolved
+						resolved=$(resolve_model "$ce_recommended_tier" "$ai_cli")
+						log_info "Model for $task_id: $resolved (cost-efficiency: pattern data shows ${ce_success_rate}% success at ${ce_recommended_tier} over ${ce_sample_count} samples — downgraded from opus)"
+						echo "$resolved"
+						return 0
+					fi
+				fi
+			fi
+		fi
 	fi
 
-	# 4.5) Auto-contest detection (t1011): if we reached here (no strong signal),
+	# 4.6) Auto-contest detection (t1011): if we reached here (no strong signal),
 	# check if contest mode should be triggered. Only for genuinely uncertain cases
 	# where pattern data is insufficient or inconclusive.
 	# Env var SUPERVISOR_CONTEST_AUTO=true enables this (default: false to avoid 3x cost)
