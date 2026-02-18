@@ -26,11 +26,10 @@ readonly SCRIPT_DIR
 readonly MEMORY_HELPER="$SCRIPT_DIR/memory-helper.sh"
 readonly MEMORY_DB="${AIDEVOPS_MEMORY_DIR:-$HOME/.aidevops/.agent-workspace/memory}/memory.db"
 
-# All pattern-related memory types (dedicated + supervisor-generated)
-# All pattern-related memory types (dedicated + supervisor-generated)
-# Use via: local types_sql="$PATTERN_TYPES_SQL" then sqlite3 ... "$types_sql" ...
+# All pattern-related memory types — sourced from shared-constants.sh
+# Use via: local types_sql="$PATTERN_TYPES" then sqlite3 ... "$types_sql" ...
 # Or inline in single-line sqlite3 calls where variable expansion works correctly
-PATTERN_TYPES="'SUCCESS_PATTERN','FAILURE_PATTERN','WORKING_SOLUTION','FAILED_APPROACH','ERROR_FIX'"
+PATTERN_TYPES="$PATTERN_TYPES_SQL"
 readonly PATTERN_TYPES
 
 log_info() {
@@ -260,12 +259,15 @@ cmd_record() {
 	[[ -n "$retries" && "$retries" != "0" ]] && content="$content [retries:$retries]"
 
 	# Store via memory-helper.sh and capture the returned ID
-	local mem_id
-	mem_id=$("$MEMORY_HELPER" store \
+	# The last line of store output is the bare mem_YYYYMMDDHHMMSS_hex ID.
+	# Use grep to match the known ID format for robustness against output changes.
+	local store_output mem_id
+	store_output=$("$MEMORY_HELPER" store \
 		--content "$content" \
 		--type "$memory_type" \
 		--tags "$all_tags" \
-		--confidence "high" 2>/dev/null | tail -1)
+		--confidence "high" 2>/dev/null) || true
+	mem_id=$(echo "$store_output" | grep -oE '^mem_[0-9]{14}_[0-9a-f]+$' | tail -1)
 
 	# Store extended metadata in pattern_metadata table (t1095)
 	if [[ -n "$mem_id" ]] && [[ "$mem_id" == mem_* ]]; then

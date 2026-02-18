@@ -178,7 +178,7 @@ CREATE TABLE IF NOT EXISTS pattern_metadata (
 );
 EOF
 		# Backfill existing pattern records with default strategy='normal'
-		local pattern_types="'SUCCESS_PATTERN','FAILURE_PATTERN','WORKING_SOLUTION','FAILED_APPROACH','ERROR_FIX'"
+		local pattern_types="$PATTERN_TYPES_SQL"
 		local backfill_count
 		backfill_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE type IN ($pattern_types);" 2>/dev/null || echo "0")
 		if [[ "$backfill_count" -gt 0 ]]; then
