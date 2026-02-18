@@ -387,6 +387,222 @@ cmd_status() {
 }
 
 # =============================================================================
+# PR Template Helpers — conventional commit, changelog, diff summary (t1082.4)
+# =============================================================================
+
+# Fetch upstream commits between two SHAs from GitHub API.
+# Arguments:
+#   $1 - owner/repo (e.g. "dmmulroy/cloudflare-skill")
+#   $2 - base SHA (previous import commit, may be empty)
+#   $3 - head SHA (latest upstream commit)
+# Outputs: markdown list of commits, one per line
+# Returns: 0 always (empty output on failure)
+get_upstream_changelog() {
+	local owner_repo="$1"
+	local base_sha="$2"
+	local head_sha="$3"
+
+	if [[ -z "$owner_repo" || -z "$head_sha" ]]; then
+		return 0
+	fi
+
+	local api_url
+	local response
+
+	# If we have a base SHA, use the compare endpoint for precise range
+	if [[ -n "$base_sha" ]]; then
+		api_url="https://api.github.com/repos/${owner_repo}/compare/${base_sha}...${head_sha}"
+		response=$(curl -s --connect-timeout 10 --max-time 30 \
+			-H "Accept: application/vnd.github.v3+json" "$api_url" 2>/dev/null)
+
+		if [[ -n "$response" ]]; then
+			local commits_json
+			commits_json=$(echo "$response" | jq -r '.commits // empty' 2>/dev/null)
+			if [[ -n "$commits_json" && "$commits_json" != "null" ]]; then
+				echo "$response" | jq -r '
+					.commits[]? |
+					"- [`\(.sha[0:7])`](\(.html_url)) \(.commit.message | split("\n")[0]) — \(.commit.author.name)"
+				' 2>/dev/null || true
+				return 0
+			fi
+		fi
+	fi
+
+	# Fallback: list recent commits on the repo (up to 20)
+	api_url="https://api.github.com/repos/${owner_repo}/commits?per_page=20&sha=${head_sha}"
+	response=$(curl -s --connect-timeout 10 --max-time 30 \
+		-H "Accept: application/vnd.github.v3+json" "$api_url" 2>/dev/null)
+
+	if [[ -n "$response" ]]; then
+		echo "$response" | jq -r '
+			.[]? |
+			"- [`\(.sha[0:7])`](\(.html_url)) \(.commit.message | split("\n")[0]) — \(.commit.author.name)"
+		' 2>/dev/null | head -20 || true
+	fi
+
+	return 0
+}
+
+# Summarise file-level changes in the worktree after re-import.
+# Arguments:
+#   $1 - worktree path
+#   $2 - default branch (base for diff)
+# Outputs: markdown summary of added/modified/deleted files
+# Returns: 0 always
+get_skill_diff_summary() {
+	local worktree_path="$1"
+	local default_branch="${2:-main}"
+
+	if [[ ! -d "$worktree_path" ]]; then
+		return 0
+	fi
+
+	local diff_stat
+	diff_stat=$(git -C "$worktree_path" diff --stat "${default_branch}..HEAD" 2>/dev/null || true)
+
+	if [[ -z "$diff_stat" ]]; then
+		# Try staged diff if no committed diff yet
+		diff_stat=$(git -C "$worktree_path" diff --cached --stat 2>/dev/null || true)
+	fi
+
+	if [[ -z "$diff_stat" ]]; then
+		echo "_No file changes detected._"
+		return 0
+	fi
+
+	# Format as code block for readability
+	printf '```\n%s\n```\n' "$diff_stat"
+	return 0
+}
+
+# Generate a conventional commit message for a skill update.
+# Arguments:
+#   $1 - skill name
+#   $2 - upstream URL
+#   $3 - current (previous) commit SHA (may be empty)
+#   $4 - latest commit SHA
+#   $5 - changelog lines (multi-line string, may be empty)
+# Outputs: commit message string
+# Returns: 0 always
+generate_skill_commit_msg() {
+	local skill_name="$1"
+	local upstream_url="$2"
+	local current_commit="$3"
+	local latest_commit="$4"
+	local changelog="$5"
+
+	local timestamp
+	timestamp=$(date -u +"%Y-%m-%d")
+
+	# Conventional commit: chore(skill/<name>): update from upstream
+	local subject="chore(skill/${skill_name}): update from upstream (${latest_commit:0:7})"
+
+	local prev_short
+	prev_short="${current_commit:0:12}"
+	[[ -z "$prev_short" ]] && prev_short="(none)"
+
+	local body
+	body="Upstream: ${upstream_url}
+Previous: ${prev_short}
+Latest:   ${latest_commit:0:12}
+Updated:  ${timestamp}"
+
+	# Append changelog if available (trimmed to avoid huge commits)
+	if [[ -n "$changelog" ]]; then
+		local changelog_lines
+		changelog_lines=$(echo "$changelog" | wc -l | tr -d ' ')
+		if [[ "$changelog_lines" -gt 15 ]]; then
+			# Truncate to first 15 commits with a note
+			local truncated
+			truncated=$(echo "$changelog" | head -15)
+			body="${body}
+
+Upstream changes (first 15 of ${changelog_lines}):
+${truncated}
+... and $((changelog_lines - 15)) more commits"
+		elif [[ "$changelog_lines" -gt 0 ]]; then
+			body="${body}
+
+Upstream changes:
+${changelog}"
+		fi
+	fi
+
+	printf '%s\n\n%s\n' "$subject" "$body"
+	return 0
+}
+
+# Generate the full PR body for a skill update.
+# Arguments:
+#   $1 - skill name
+#   $2 - upstream URL
+#   $3 - current (previous) commit SHA (may be empty)
+#   $4 - latest commit SHA
+#   $5 - changelog lines (multi-line string, may be empty)
+#   $6 - diff summary (multi-line string, may be empty)
+# Outputs: PR body markdown
+# Returns: 0 always
+generate_skill_pr_body() {
+	local skill_name="$1"
+	local upstream_url="$2"
+	local current_commit="$3"
+	local latest_commit="$4"
+	local changelog="$5"
+	local diff_summary="$6"
+
+	local prev_display="${current_commit:0:12}"
+	[[ -z "$prev_display" ]] && prev_display="_(none — first import)_"
+
+	cat <<PREOF
+## Skill Update: \`${skill_name}\`
+
+Automated skill update from upstream source.
+
+| Field | Value |
+|-------|-------|
+| Skill | \`${skill_name}\` |
+| Source | ${upstream_url} |
+| Previous commit | \`${prev_display}\` |
+| Latest commit | \`${latest_commit:0:12}\` |
+
+### Upstream changelog
+
+PREOF
+
+	if [[ -n "$changelog" ]]; then
+		echo "$changelog"
+	else
+		echo "_Could not fetch upstream changelog (API unavailable or no base commit)._"
+	fi
+
+	cat <<PREOF
+
+### Diff summary
+
+PREOF
+
+	if [[ -n "$diff_summary" ]]; then
+		echo "$diff_summary"
+	else
+		echo "_No diff available._"
+	fi
+
+	cat <<PREOF
+
+### Review checklist
+
+- [ ] Verify the updated skill content is correct
+- [ ] Check for breaking changes in the skill format
+- [ ] Confirm security scan passes (re-run if needed)
+
+---
+*Generated by \`skill-update-helper.sh pr\` (t1082.4)*
+PREOF
+
+	return 0
+}
+
+# =============================================================================
 # PR Pipeline — create worktree + PR per updated skill (t1082)
 # =============================================================================
 
@@ -550,14 +766,25 @@ cmd_pr_single() {
 		fi
 	fi
 
-	# Stage and commit
-	git -C "$worktree_path" add -A
-	local commit_msg="chore: update ${skill_name} skill from upstream
+	# Fetch upstream changelog (commits between previous and latest)
+	local owner_repo_for_log
+	owner_repo_for_log=$(parse_github_url "$upstream_url")
+	owner_repo_for_log=$(echo "$owner_repo_for_log" | cut -d'/' -f1-2)
+	local changelog=""
+	if [[ -n "$owner_repo_for_log" && "$owner_repo_for_log" != "/" ]]; then
+		log_info "Fetching upstream changelog for $skill_name..."
+		changelog=$(get_upstream_changelog "$owner_repo_for_log" "$current_commit" "$latest_commit" 2>/dev/null || true)
+	fi
 
-Upstream: ${upstream_url}
-Previous: ${current_commit:0:12}
-Latest:   ${latest_commit:0:12}
-Updated:  ${timestamp}"
+	# Stage changes and capture diff summary before committing
+	git -C "$worktree_path" add -A
+	local diff_summary
+	diff_summary=$(get_skill_diff_summary "$worktree_path" "$default_branch")
+
+	# Generate conventional commit message with changelog
+	local commit_msg
+	commit_msg=$(generate_skill_commit_msg \
+		"$skill_name" "$upstream_url" "$current_commit" "$latest_commit" "$changelog")
 
 	local commit_output
 	commit_output=$(git -C "$worktree_path" commit -m "$commit_msg" --no-verify 2>&1) || {
@@ -584,31 +811,11 @@ Updated:  ${timestamp}"
 		return 0
 	fi
 
-	local pr_title="chore: update ${skill_name} skill from upstream"
+	local pr_title="chore(skill/${skill_name}): update from upstream (${latest_commit:0:7})"
 	local pr_body
-	pr_body=$(
-		cat <<PREOF
-## Skill Update: ${skill_name}
-
-Automated skill update from upstream source.
-
-| Field | Value |
-|-------|-------|
-| Skill | \`${skill_name}\` |
-| Source | ${upstream_url} |
-| Previous commit | \`${current_commit:0:12}\` |
-| Latest commit | \`${latest_commit:0:12}\` |
-
-### Review checklist
-
-- [ ] Verify the updated skill content is correct
-- [ ] Check for breaking changes in the skill format
-- [ ] Confirm security scan passes (re-run if needed)
-
----
-*Generated by \`skill-update-helper.sh pr\`*
-PREOF
-	)
+	pr_body=$(generate_skill_pr_body \
+		"$skill_name" "$upstream_url" "$current_commit" "$latest_commit" \
+		"$changelog" "$diff_summary")
 
 	local pr_url
 	local pr_create_output
