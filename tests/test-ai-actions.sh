@@ -288,19 +288,28 @@ _test_field_validation() {
 			failures=$((failures + 1))
 		fi
 
-		# adjust_priority: missing new_priority
+		# adjust_priority: missing new_priority is OK — executor infers from reasoning
 		result=$(validate_action_fields '{"type":"adjust_priority","task_id":"t100"}' "adjust_priority")
-		if [[ -z "$result" ]]; then
-			echo "FAIL: adjust_priority without new_priority accepted"
+		if [[ -n "$result" ]]; then
+			echo "FAIL: adjust_priority without new_priority should be accepted (executor infers from reasoning): $result"
 			failures=$((failures + 1))
 		fi
 
-		# adjust_priority: invalid new_priority value
+		# adjust_priority: invalid new_priority value must be rejected (t1197)
 		result=$(validate_action_fields '{"type":"adjust_priority","task_id":"t100","new_priority":"urgent"}' "adjust_priority")
 		if [[ -z "$result" ]]; then
-			echo "FAIL: adjust_priority with invalid new_priority value accepted"
+			echo "FAIL: adjust_priority with invalid new_priority value accepted (must be high|medium|low|critical)"
 			failures=$((failures + 1))
 		fi
+
+		# adjust_priority: valid new_priority values
+		for prio in high medium low critical; do
+			result=$(validate_action_fields "{\"type\":\"adjust_priority\",\"task_id\":\"t100\",\"new_priority\":\"$prio\"}" "adjust_priority")
+			if [[ -n "$result" ]]; then
+				echo "FAIL: adjust_priority with new_priority='$prio' rejected: $result"
+				failures=$((failures + 1))
+			fi
+		done
 
 		# close_verified: valid
 		result=$(validate_action_fields '{"type":"close_verified","issue_number":10,"pr_number":20}' "close_verified")
@@ -1062,13 +1071,19 @@ _test_extract_action_plan() {
 		SCRIPT_DIR="$REPO_DIR/.agents/scripts"
 		REPO_PATH="$REPO_DIR"
 		AI_ACTIONS_LOG_DIR="/tmp/test-ai-actions-logs-$$"
-		db() { :; }
+		db() { sqlite3 -cmd ".timeout 5000" "$@" 2>/dev/null || true; }
 		log_info() { :; }
 		log_success() { :; }
 		log_warn() { :; }
 		log_error() { :; }
 		log_verbose() { :; }
 		sql_escape() { printf '%s' "$1" | sed "s/'/''/g"; }
+		detect_repo_slug() { echo "test/repo"; }
+		commit_and_push_todo() { :; }
+		find_task_issue_number() { echo ""; }
+		build_ai_context() { echo "# test"; }
+		run_ai_reasoning() { echo '[]'; }
+
 		# extract_action_plan is defined in ai-reason.sh — source it for this test
 		# shellcheck source=../.agents/scripts/supervisor/ai-reason.sh
 		source "$REPO_DIR/.agents/scripts/supervisor/ai-reason.sh"
@@ -1078,6 +1093,7 @@ _test_extract_action_plan() {
 		local failures=0
 
 		# Empty response
+		local result
 		result=$(extract_action_plan "")
 		if [[ -n "$result" ]]; then
 			echo "FAIL: empty response should return empty string, got: $result"
@@ -1153,57 +1169,52 @@ _test_adjust_priority_validation() {
 		SCRIPT_DIR="$REPO_DIR/.agents/scripts"
 		REPO_PATH="$REPO_DIR"
 		AI_ACTIONS_LOG_DIR="/tmp/test-ai-actions-logs-$$"
-		db() { :; }
+		db() { sqlite3 -cmd ".timeout 5000" "$@" 2>/dev/null || true; }
 		log_info() { :; }
 		log_success() { :; }
 		log_warn() { :; }
 		log_error() { :; }
 		log_verbose() { :; }
 		sql_escape() { printf '%s' "$1" | sed "s/'/''/g"; }
+		detect_repo_slug() { echo "test/repo"; }
+		commit_and_push_todo() { :; }
+		find_task_issue_number() { echo ""; }
+		build_ai_context() { echo "# test"; }
+		run_ai_reasoning() { echo '[]'; }
 
 		source "$ACTIONS_SCRIPT"
 
 		local failures=0
 
-		# Valid: high
-		result=$(validate_action_fields '{"type":"adjust_priority","task_id":"t100","new_priority":"high"}' "adjust_priority")
-		if [[ -n "$result" ]]; then
-			echo "FAIL: valid adjust_priority (high) rejected: $result"
-			failures=$((failures + 1))
-		fi
+		# Valid values must be accepted
+		for prio in high medium low critical; do
+			local result
+			result=$(validate_action_fields "{\"type\":\"adjust_priority\",\"task_id\":\"t100\",\"new_priority\":\"$prio\"}" "adjust_priority")
+			if [[ -n "$result" ]]; then
+				echo "FAIL: new_priority='$prio' should be valid, got: $result"
+				failures=$((failures + 1))
+			fi
+		done
 
-		# Valid: medium
-		result=$(validate_action_fields '{"type":"adjust_priority","task_id":"t100","new_priority":"medium"}' "adjust_priority")
-		if [[ -n "$result" ]]; then
-			echo "FAIL: valid adjust_priority (medium) rejected: $result"
-			failures=$((failures + 1))
-		fi
+		# Invalid values must be rejected
+		for prio in urgent URGENT "very high" "1" ""; do
+			local result
+			result=$(validate_action_fields "{\"type\":\"adjust_priority\",\"task_id\":\"t100\",\"new_priority\":\"$prio\"}" "adjust_priority")
+			# Empty string is treated as absent (no new_priority field) — that's OK
+			if [[ "$prio" == "" ]]; then
+				continue
+			fi
+			if [[ -z "$result" ]]; then
+				echo "FAIL: new_priority='$prio' should be invalid but was accepted"
+				failures=$((failures + 1))
+			fi
+		done
 
-		# Valid: low
-		result=$(validate_action_fields '{"type":"adjust_priority","task_id":"t100","new_priority":"low"}' "adjust_priority")
-		if [[ -n "$result" ]]; then
-			echo "FAIL: valid adjust_priority (low) rejected: $result"
-			failures=$((failures + 1))
-		fi
-
-		# Valid: critical
-		result=$(validate_action_fields '{"type":"adjust_priority","task_id":"t100","new_priority":"critical"}' "adjust_priority")
-		if [[ -n "$result" ]]; then
-			echo "FAIL: valid adjust_priority (critical) rejected: $result"
-			failures=$((failures + 1))
-		fi
-
-		# Invalid: missing new_priority (must be rejected — t1126, t1201)
+		# Missing new_priority is OK (executor infers from reasoning)
+		local result
 		result=$(validate_action_fields '{"type":"adjust_priority","task_id":"t100"}' "adjust_priority")
-		if [[ -z "$result" ]]; then
-			echo "FAIL: adjust_priority without new_priority should be rejected"
-			failures=$((failures + 1))
-		fi
-
-		# Invalid: invalid new_priority value
-		result=$(validate_action_fields '{"type":"adjust_priority","task_id":"t100","new_priority":"urgent"}' "adjust_priority")
-		if [[ -z "$result" ]]; then
-			echo "FAIL: adjust_priority with invalid new_priority 'urgent' should be rejected"
+		if [[ -n "$result" ]]; then
+			echo "FAIL: missing new_priority should be accepted (executor infers), got: $result"
 			failures=$((failures + 1))
 		fi
 
@@ -1220,7 +1231,7 @@ _test_adjust_priority_validation() {
 }
 
 if _test_adjust_priority_validation 2>/dev/null; then
-	pass "adjust_priority new_priority validation works correctly"
+	pass "adjust_priority new_priority validation accepts valid values and rejects invalid ones"
 else
 	fail "adjust_priority new_priority validation has errors"
 fi

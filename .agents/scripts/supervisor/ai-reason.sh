@@ -375,7 +375,7 @@ SIMPLIFIED_PROMPT
 				echo "Parse result: $([ -n "$action_plan" ] && echo "SUCCESS" || echo "FAILED")"
 			} >>"$reason_log"
 		else
-			log_info "AI Reasoning: retry also returned empty response"
+			log_info "AI Reasoning: simplified retry also returned empty response — treating as empty action plan"
 			{
 				echo ""
 				echo "## Parse Attempt 2 (simplified JSON-only prompt retry, t1201)"
