@@ -689,6 +689,368 @@ else
 	bash -u "$REPO_DIR/.agents/scripts/supervisor-helper.sh" help 2>&1 | head -5
 fi
 
+# ─── Test 13: _extract_action_target returns correct keys ───────────
+echo "Test 13: Target extraction for dedup"
+
+_test_target_extraction() {
+	(
+		BLUE='' GREEN='' YELLOW='' RED='' NC=''
+		SUPERVISOR_DB="/tmp/test-$$.db"
+		SUPERVISOR_LOG="/dev/null"
+		SCRIPT_DIR="$REPO_DIR/.agents/scripts"
+		REPO_PATH="$REPO_DIR"
+		AI_ACTIONS_LOG_DIR="/tmp/test-ai-actions-logs-$$"
+		db() { sqlite3 -cmd ".timeout 5000" "$@" 2>/dev/null || true; }
+		log_info() { :; }
+		log_success() { :; }
+		log_warn() { :; }
+		log_error() { :; }
+		log_verbose() { :; }
+		sql_escape() { printf '%s' "$1" | sed "s/'/''/g"; }
+		detect_repo_slug() { echo "test/repo"; }
+		commit_and_push_todo() { :; }
+		find_task_issue_number() { echo ""; }
+		build_ai_context() { echo "# test"; }
+		run_ai_reasoning() { echo '[]'; }
+
+		source "$ACTIONS_SCRIPT"
+
+		local failures=0
+
+		# Issue-based actions
+		local target
+		target=$(_extract_action_target '{"issue_number":1572}' "comment_on_issue")
+		[[ "$target" == "issue:1572" ]] || {
+			echo "FAIL: comment_on_issue target=$target"
+			failures=$((failures + 1))
+		}
+
+		target=$(_extract_action_target '{"issue_number":42}' "flag_for_review")
+		[[ "$target" == "issue:42" ]] || {
+			echo "FAIL: flag_for_review target=$target"
+			failures=$((failures + 1))
+		}
+
+		# Task-based actions
+		target=$(_extract_action_target '{"task_id":"t1143"}' "adjust_priority")
+		[[ "$target" == "task:t1143" ]] || {
+			echo "FAIL: adjust_priority target=$target"
+			failures=$((failures + 1))
+		}
+
+		# Title-based actions
+		target=$(_extract_action_target '{"title":"Add retry logic"}' "create_task")
+		[[ "$target" == "title:Add retry logic" ]] || {
+			echo "FAIL: create_task target=$target"
+			failures=$((failures + 1))
+		}
+
+		rm -rf "/tmp/test-ai-actions-logs-$$" "/tmp/test-$$.db"
+		exit "$failures"
+	)
+}
+
+if _test_target_extraction 2>/dev/null; then
+	pass "target extraction returns correct keys for all action types"
+else
+	fail "target extraction has errors"
+fi
+
+# ─── Test 14: Cycle-aware dedup with state hash (t1179) ─────────────
+echo "Test 14: Cycle-aware dedup — state hash comparison"
+
+_test_cycle_aware_dedup() {
+	(
+		BLUE='' GREEN='' YELLOW='' RED='' NC=''
+		SUPERVISOR_DB="/tmp/test-cycle-dedup-$$.db"
+		SUPERVISOR_LOG="/dev/null"
+		SCRIPT_DIR="$REPO_DIR/.agents/scripts"
+		REPO_PATH="$REPO_DIR"
+		AI_ACTIONS_LOG_DIR="/tmp/test-ai-actions-logs-$$"
+		AI_ACTION_DEDUP_WINDOW=5
+		AI_ACTION_CYCLE_AWARE_DEDUP="true"
+		mkdir -p "$AI_ACTIONS_LOG_DIR"
+		db() { sqlite3 -cmd ".timeout 5000" "$@" 2>/dev/null || true; }
+		log_info() { :; }
+		log_success() { :; }
+		log_warn() { :; }
+		log_error() { :; }
+		log_verbose() { :; }
+		sql_escape() { printf '%s' "$1" | sed "s/'/''/g"; }
+		detect_repo_slug() { echo "test/repo"; }
+		commit_and_push_todo() { :; }
+		find_task_issue_number() { echo ""; }
+		build_ai_context() { echo "# test"; }
+		run_ai_reasoning() { echo '[]'; }
+
+		source "$ACTIONS_SCRIPT"
+
+		local failures=0
+
+		# Create the dedup table
+		sqlite3 "$SUPERVISOR_DB" "
+			CREATE TABLE IF NOT EXISTS action_dedup_log (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				cycle_id TEXT NOT NULL,
+				action_type TEXT NOT NULL,
+				target TEXT NOT NULL,
+				status TEXT NOT NULL DEFAULT 'executed',
+				state_hash TEXT DEFAULT '',
+				created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+			);
+		"
+
+		# Record an action with state_hash "abc123"
+		_record_action_dedup "cycle-001" "comment_on_issue" "issue:100" "executed" "abc123"
+
+		# Same action, same state hash → should be duplicate (return 0)
+		if ! _is_duplicate_action "comment_on_issue" "issue:100" "abc123"; then
+			echo "FAIL: same state hash should be detected as duplicate"
+			failures=$((failures + 1))
+		fi
+
+		# Same action, different state hash → should NOT be duplicate (return 1)
+		if _is_duplicate_action "comment_on_issue" "issue:100" "def456"; then
+			echo "FAIL: different state hash should allow action through"
+			failures=$((failures + 1))
+		fi
+
+		# Different target → should NOT be duplicate
+		if _is_duplicate_action "comment_on_issue" "issue:200" "abc123"; then
+			echo "FAIL: different target should not be duplicate"
+			failures=$((failures + 1))
+		fi
+
+		# Same action, "unknown" state hash → should fall back to basic dedup (duplicate)
+		if ! _is_duplicate_action "comment_on_issue" "issue:100" "unknown"; then
+			echo "FAIL: unknown state hash should fall back to basic dedup (suppress)"
+			failures=$((failures + 1))
+		fi
+
+		# Same action, empty state hash → should fall back to basic dedup (duplicate)
+		if ! _is_duplicate_action "comment_on_issue" "issue:100" ""; then
+			echo "FAIL: empty state hash should fall back to basic dedup (suppress)"
+			failures=$((failures + 1))
+		fi
+
+		rm -rf "/tmp/test-ai-actions-logs-$$" "$SUPERVISOR_DB"
+		exit "$failures"
+	)
+}
+
+if _test_cycle_aware_dedup 2>/dev/null; then
+	pass "cycle-aware dedup correctly compares state hashes"
+else
+	fail "cycle-aware dedup has errors"
+fi
+
+# ─── Test 15: Cycle-aware dedup disabled falls back to basic ────────
+echo "Test 15: Cycle-aware dedup disabled — basic dedup only"
+
+_test_cycle_aware_disabled() {
+	(
+		BLUE='' GREEN='' YELLOW='' RED='' NC=''
+		SUPERVISOR_DB="/tmp/test-cycle-disabled-$$.db"
+		SUPERVISOR_LOG="/dev/null"
+		SCRIPT_DIR="$REPO_DIR/.agents/scripts"
+		REPO_PATH="$REPO_DIR"
+		AI_ACTIONS_LOG_DIR="/tmp/test-ai-actions-logs-$$"
+		AI_ACTION_DEDUP_WINDOW=5
+		AI_ACTION_CYCLE_AWARE_DEDUP="false"
+		mkdir -p "$AI_ACTIONS_LOG_DIR"
+		db() { sqlite3 -cmd ".timeout 5000" "$@" 2>/dev/null || true; }
+		log_info() { :; }
+		log_success() { :; }
+		log_warn() { :; }
+		log_error() { :; }
+		log_verbose() { :; }
+		sql_escape() { printf '%s' "$1" | sed "s/'/''/g"; }
+		detect_repo_slug() { echo "test/repo"; }
+		commit_and_push_todo() { :; }
+		find_task_issue_number() { echo ""; }
+		build_ai_context() { echo "# test"; }
+		run_ai_reasoning() { echo '[]'; }
+
+		source "$ACTIONS_SCRIPT"
+
+		local failures=0
+
+		# Create the dedup table
+		sqlite3 "$SUPERVISOR_DB" "
+			CREATE TABLE IF NOT EXISTS action_dedup_log (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				cycle_id TEXT NOT NULL,
+				action_type TEXT NOT NULL,
+				target TEXT NOT NULL,
+				status TEXT NOT NULL DEFAULT 'executed',
+				state_hash TEXT DEFAULT '',
+				created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+			);
+		"
+
+		# Record an action with state_hash "abc123"
+		_record_action_dedup "cycle-001" "comment_on_issue" "issue:100" "executed" "abc123"
+
+		# With cycle-aware disabled, different state hash should STILL be duplicate
+		if ! _is_duplicate_action "comment_on_issue" "issue:100" "def456"; then
+			echo "FAIL: with cycle-aware disabled, different state hash should still be duplicate"
+			failures=$((failures + 1))
+		fi
+
+		rm -rf "/tmp/test-ai-actions-logs-$$" "$SUPERVISOR_DB"
+		exit "$failures"
+	)
+}
+
+if _test_cycle_aware_disabled 2>/dev/null; then
+	pass "cycle-aware dedup disabled correctly falls back to basic dedup"
+else
+	fail "cycle-aware dedup disabled mode has errors"
+fi
+
+# ─── Test 16: _compute_target_state_hash for task targets ───────────
+echo "Test 16: State hash computation for task targets"
+
+_test_state_hash_task() {
+	(
+		BLUE='' GREEN='' YELLOW='' RED='' NC=''
+		SUPERVISOR_DB="/tmp/test-hash-$$.db"
+		SUPERVISOR_LOG="/dev/null"
+		SCRIPT_DIR="$REPO_DIR/.agents/scripts"
+		REPO_PATH="$REPO_DIR"
+		AI_ACTIONS_LOG_DIR="/tmp/test-ai-actions-logs-$$"
+		db() { sqlite3 -cmd ".timeout 5000" "$@" 2>/dev/null || true; }
+		log_info() { :; }
+		log_success() { :; }
+		log_warn() { :; }
+		log_error() { :; }
+		log_verbose() { :; }
+		sql_escape() { printf '%s' "$1" | sed "s/'/''/g"; }
+		detect_repo_slug() { echo "test/repo"; }
+		commit_and_push_todo() { :; }
+		find_task_issue_number() { echo ""; }
+		build_ai_context() { echo "# test"; }
+		run_ai_reasoning() { echo '[]'; }
+
+		source "$ACTIONS_SCRIPT"
+
+		local failures=0
+
+		# Test with a task that exists in TODO.md (use a known task ID)
+		# The hash should be non-empty and deterministic
+		local hash1 hash2
+		hash1=$(_compute_target_state_hash "task:t1179" "$REPO_DIR" "")
+		hash2=$(_compute_target_state_hash "task:t1179" "$REPO_DIR" "")
+
+		if [[ -z "$hash1" ]]; then
+			echo "FAIL: state hash for existing task should not be empty"
+			failures=$((failures + 1))
+		fi
+
+		if [[ "$hash1" != "$hash2" ]]; then
+			echo "FAIL: state hash should be deterministic ($hash1 != $hash2)"
+			failures=$((failures + 1))
+		fi
+
+		# Test with a non-existent task — should return "unknown"
+		local hash_missing
+		hash_missing=$(_compute_target_state_hash "task:t99999" "$REPO_DIR" "")
+		if [[ "$hash_missing" != "unknown" ]]; then
+			echo "FAIL: non-existent task should return 'unknown', got '$hash_missing'"
+			failures=$((failures + 1))
+		fi
+
+		# Test title target — should check TODO.md for existence
+		local hash_title
+		hash_title=$(_compute_target_state_hash "title:Add cycle-aware dedup" "$REPO_DIR" "")
+		if [[ -z "$hash_title" || "$hash_title" == "unknown" ]]; then
+			echo "FAIL: title target should compute a hash, got '$hash_title'"
+			failures=$((failures + 1))
+		fi
+
+		rm -rf "/tmp/test-ai-actions-logs-$$" "$SUPERVISOR_DB"
+		exit "$failures"
+	)
+}
+
+if _test_state_hash_task 2>/dev/null; then
+	pass "state hash computation works for task and title targets"
+else
+	fail "state hash computation has errors"
+fi
+
+# ─── Test 17: _record_action_dedup stores state_hash ────────────────
+echo "Test 17: Dedup record stores state_hash"
+
+_test_record_state_hash() {
+	(
+		BLUE='' GREEN='' YELLOW='' RED='' NC=''
+		SUPERVISOR_DB="/tmp/test-record-hash-$$.db"
+		SUPERVISOR_LOG="/dev/null"
+		SCRIPT_DIR="$REPO_DIR/.agents/scripts"
+		REPO_PATH="$REPO_DIR"
+		AI_ACTIONS_LOG_DIR="/tmp/test-ai-actions-logs-$$"
+		db() { sqlite3 -cmd ".timeout 5000" "$@" 2>/dev/null || true; }
+		log_info() { :; }
+		log_success() { :; }
+		log_warn() { :; }
+		log_error() { :; }
+		log_verbose() { :; }
+		sql_escape() { printf '%s' "$1" | sed "s/'/''/g"; }
+		detect_repo_slug() { echo "test/repo"; }
+		commit_and_push_todo() { :; }
+		find_task_issue_number() { echo ""; }
+		build_ai_context() { echo "# test"; }
+		run_ai_reasoning() { echo '[]'; }
+
+		source "$ACTIONS_SCRIPT"
+
+		local failures=0
+
+		# Create the dedup table with state_hash column
+		sqlite3 "$SUPERVISOR_DB" "
+			CREATE TABLE IF NOT EXISTS action_dedup_log (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				cycle_id TEXT NOT NULL,
+				action_type TEXT NOT NULL,
+				target TEXT NOT NULL,
+				status TEXT NOT NULL DEFAULT 'executed',
+				state_hash TEXT DEFAULT '',
+				created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+			);
+		"
+
+		# Record with state hash
+		_record_action_dedup "cycle-test" "comment_on_issue" "issue:42" "executed" "hash123abc"
+
+		# Verify it was stored
+		local stored_hash
+		stored_hash=$(sqlite3 "$SUPERVISOR_DB" "SELECT state_hash FROM action_dedup_log WHERE target='issue:42' LIMIT 1;")
+		if [[ "$stored_hash" != "hash123abc" ]]; then
+			echo "FAIL: stored state_hash should be 'hash123abc', got '$stored_hash'"
+			failures=$((failures + 1))
+		fi
+
+		# Record without state hash (backward compat)
+		_record_action_dedup "cycle-test2" "create_task" "title:Test" "executed"
+		local stored_empty
+		stored_empty=$(sqlite3 "$SUPERVISOR_DB" "SELECT state_hash FROM action_dedup_log WHERE target='title:Test' LIMIT 1;")
+		if [[ "$stored_empty" != "" ]]; then
+			echo "FAIL: missing state_hash should store empty string, got '$stored_empty'"
+			failures=$((failures + 1))
+		fi
+
+		rm -rf "/tmp/test-ai-actions-logs-$$" "$SUPERVISOR_DB"
+		exit "$failures"
+	)
+}
+
+if _test_record_state_hash 2>/dev/null; then
+	pass "dedup record correctly stores state_hash"
+else
+	fail "dedup record state_hash storage has errors"
+fi
+
 # ─── Summary ────────────────────────────────────────────────────────
 echo ""
 echo "=== Results: $PASS/$TOTAL passed, $FAIL failed ==="
