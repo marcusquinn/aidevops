@@ -27,6 +27,159 @@ AI_MAX_ACTIONS_PER_CYCLE="${AI_MAX_ACTIONS_PER_CYCLE:-10}"
 # Dry-run mode — validate but don't execute (set via --dry-run flag or env)
 AI_ACTIONS_DRY_RUN="${AI_ACTIONS_DRY_RUN:-false}"
 
+# Dedup window: number of recent cycles to check for duplicate actions (t1138)
+# An action is suppressed if the same (action_type, target) pair was executed
+# within this many recent cycles. Set to 0 to disable dedup.
+AI_ACTION_DEDUP_WINDOW="${AI_ACTION_DEDUP_WINDOW:-5}"
+
+#######################################
+# Extract the dedup target key from an action based on its type (t1138)
+# Each action type has a natural "target" — the entity it acts on.
+# Returns a stable string key for dedup comparison.
+# Arguments:
+#   $1 - JSON action object
+#   $2 - action type
+# Outputs:
+#   Target key string (e.g., "issue:1572", "task:t123")
+#######################################
+_extract_action_target() {
+	local action="$1"
+	local action_type="$2"
+
+	case "$action_type" in
+	comment_on_issue | flag_for_review | request_info)
+		local issue_number
+		issue_number=$(printf '%s' "$action" | jq -r '.issue_number // "unknown"')
+		echo "issue:${issue_number}"
+		;;
+	close_verified)
+		local issue_number
+		issue_number=$(printf '%s' "$action" | jq -r '.issue_number // "unknown"')
+		echo "issue:${issue_number}"
+		;;
+	create_task | create_improvement)
+		# For task creation, use the title as target to prevent duplicate tasks
+		local title
+		title=$(printf '%s' "$action" | jq -r '.title // "unknown"')
+		echo "title:${title}"
+		;;
+	create_subtasks)
+		local parent_task_id
+		parent_task_id=$(printf '%s' "$action" | jq -r '.parent_task_id // "unknown"')
+		echo "task:${parent_task_id}"
+		;;
+	adjust_priority | escalate_model)
+		local task_id
+		task_id=$(printf '%s' "$action" | jq -r '.task_id // "unknown"')
+		echo "task:${task_id}"
+		;;
+	*)
+		echo "unknown:${action_type}"
+		;;
+	esac
+}
+
+#######################################
+# Check if an action was recently executed (dedup check) (t1138)
+# Queries the action_dedup_log for matching (action_type, target) pairs
+# within the configured rolling window of recent cycles.
+# Arguments:
+#   $1 - action type
+#   $2 - target key
+# Returns:
+#   0 if duplicate found (should skip), 1 if no duplicate (safe to execute)
+#######################################
+_is_duplicate_action() {
+	local action_type="$1"
+	local target="$2"
+
+	# Dedup disabled
+	if [[ "${AI_ACTION_DEDUP_WINDOW:-0}" -eq 0 ]]; then
+		return 1
+	fi
+
+	# Check if DB and table exist
+	if [[ -z "${SUPERVISOR_DB:-}" || ! -f "${SUPERVISOR_DB:-}" ]]; then
+		return 1
+	fi
+
+	local escaped_type escaped_target
+	escaped_type=$(sql_escape "$action_type")
+	escaped_target=$(sql_escape "$target")
+
+	# Get the N most recent distinct cycle IDs
+	local recent_cycles
+	recent_cycles=$(db "$SUPERVISOR_DB" "
+		SELECT DISTINCT cycle_id FROM action_dedup_log
+		WHERE status = 'executed'
+		ORDER BY created_at DESC
+		LIMIT $AI_ACTION_DEDUP_WINDOW;
+	" 2>/dev/null || echo "")
+
+	if [[ -z "$recent_cycles" ]]; then
+		return 1
+	fi
+
+	# Build an IN clause from recent cycle IDs
+	local in_clause=""
+	while IFS= read -r cid; do
+		[[ -z "$cid" ]] && continue
+		local escaped_cid
+		escaped_cid=$(sql_escape "$cid")
+		if [[ -z "$in_clause" ]]; then
+			in_clause="'$escaped_cid'"
+		else
+			in_clause="$in_clause,'$escaped_cid'"
+		fi
+	done <<<"$recent_cycles"
+
+	local match_count
+	match_count=$(db "$SUPERVISOR_DB" "
+		SELECT COUNT(*) FROM action_dedup_log
+		WHERE action_type = '$escaped_type'
+		  AND target = '$escaped_target'
+		  AND status = 'executed'
+		  AND cycle_id IN ($in_clause);
+	" 2>/dev/null || echo "0")
+
+	if [[ "$match_count" -gt 0 ]]; then
+		return 0
+	fi
+
+	return 1
+}
+
+#######################################
+# Record an executed or suppressed action in the dedup log (t1138)
+# Arguments:
+#   $1 - cycle ID
+#   $2 - action type
+#   $3 - target key
+#   $4 - status ("executed" or "dedup_suppressed")
+#######################################
+_record_action_dedup() {
+	local cycle_id="$1"
+	local action_type="$2"
+	local target="$3"
+	local status="${4:-executed}"
+
+	if [[ -z "${SUPERVISOR_DB:-}" || ! -f "${SUPERVISOR_DB:-}" ]]; then
+		return 0
+	fi
+
+	local escaped_cycle escaped_type escaped_target
+	escaped_cycle=$(sql_escape "$cycle_id")
+	escaped_type=$(sql_escape "$action_type")
+	escaped_target=$(sql_escape "$target")
+
+	db "$SUPERVISOR_DB" "
+		INSERT INTO action_dedup_log (cycle_id, action_type, target, status)
+		VALUES ('$escaped_cycle', '$escaped_type', '$escaped_target', '$status');
+	" 2>/dev/null || true
+
+	return 0
+}
+
 #######################################
 # Execute a validated action plan from the AI reasoning engine
 # Arguments:
@@ -75,14 +228,19 @@ execute_action_plan() {
 
 	log_info "AI Actions: processing $action_count actions ($mode mode)"
 
+	# Generate a unique cycle ID for dedup tracking (t1138)
+	local cycle_id="cycle-${timestamp}-$$"
+
 	# Start log
 	{
 		echo "# AI Supervisor Action Execution Log"
 		echo ""
 		echo "Timestamp: $timestamp"
+		echo "Cycle ID: $cycle_id"
 		echo "Mode: $mode"
 		echo "Actions: $action_count"
 		echo "Repo: $repo_path"
+		echo "Dedup window: ${AI_ACTION_DEDUP_WINDOW:-0} cycles"
 		echo ""
 	} >"$action_log"
 
@@ -94,6 +252,7 @@ execute_action_plan() {
 	local executed=0
 	local failed=0
 	local skipped=0
+	local dedup_suppressed=0
 	local results="[]"
 	local i
 
@@ -135,6 +294,28 @@ execute_action_plan() {
 				'. + [{"index": $idx, "type": $type, "status": "skipped", "reason": $reason}]')
 			{
 				echo "## Action $((i + 1)): $action_type — SKIPPED ($validation_error)"
+				echo ""
+			} >>"$action_log"
+			continue
+		fi
+
+		# Step 2b: Dedup check — skip if same (action_type, target) was
+		# executed in the last N cycles (t1138)
+		local dedup_target
+		dedup_target=$(_extract_action_target "$action" "$action_type")
+		if [[ "${AI_ACTION_DEDUP_WINDOW:-0}" -gt 0 ]] && _is_duplicate_action "$action_type" "$dedup_target"; then
+			log_info "AI Actions: [$((i + 1))/$action_count] $action_type on $dedup_target — dedup_suppressed (acted on in last $AI_ACTION_DEDUP_WINDOW cycles)"
+			skipped=$((skipped + 1))
+			dedup_suppressed=$((dedup_suppressed + 1))
+			_record_action_dedup "$cycle_id" "$action_type" "$dedup_target" "dedup_suppressed"
+			local escaped_dedup_reason
+			escaped_dedup_reason=$(printf '%s' "dedup_suppressed: $action_type on $dedup_target already executed in last $AI_ACTION_DEDUP_WINDOW cycles" | jq -Rs '.')
+			results=$(printf '%s' "$results" | jq ". + [{\"index\":$i,\"type\":\"$action_type\",\"status\":\"dedup_suppressed\",\"target\":\"$dedup_target\",\"reason\":$escaped_dedup_reason}]")
+			{
+				echo "## Action $((i + 1)): $action_type — DEDUP SUPPRESSED"
+				echo "Target: $dedup_target"
+				echo "Reasoning: $reasoning"
+				echo "Suppression: same (action_type, target) executed in last $AI_ACTION_DEDUP_WINDOW cycles"
 				echo ""
 			} >>"$action_log"
 			continue
@@ -198,6 +379,7 @@ execute_action_plan() {
 				--arg type "$action_type" \
 				--argjson r "$exec_result_json" \
 				'. + [{"index": $idx, "type": $type, "status": "executed", "result": $r}]')
+			_record_action_dedup "$cycle_id" "$action_type" "$dedup_target" "executed"
 		else
 			failed=$((failed + 1))
 			log_warn "AI Actions: [$((i + 1))/$action_count] $action_type — failed"
@@ -222,8 +404,9 @@ execute_action_plan() {
 		--argjson executed "$executed" \
 		--argjson failed "$failed" \
 		--argjson skipped "$skipped" \
+		--argjson dedup_suppressed "$dedup_suppressed" \
 		--argjson actions "$results" \
-		'{executed: $executed, failed: $failed, skipped: $skipped, actions: $actions}')
+		'{executed: $executed, failed: $failed, skipped: $skipped, dedup_suppressed: $dedup_suppressed, actions: $actions}')
 
 	{
 		echo "## Summary"
@@ -231,16 +414,17 @@ execute_action_plan() {
 		echo "- Executed: $executed"
 		echo "- Failed: $failed"
 		echo "- Skipped: $skipped"
+		echo "- Dedup suppressed: $dedup_suppressed"
 		echo ""
 	} >>"$action_log"
 
-	log_info "AI Actions: complete (executed=$executed failed=$failed skipped=$skipped log=$action_log)"
+	log_info "AI Actions: complete (executed=$executed failed=$failed skipped=$skipped dedup_suppressed=$dedup_suppressed log=$action_log)"
 
 	# Store execution event in DB
 	db "$SUPERVISOR_DB" "
 		INSERT INTO state_log (task_id, from_state, to_state, reason)
 		VALUES ('ai-supervisor', 'actions', 'complete',
-				'$(sql_escape "AI actions: $executed executed, $failed failed, $skipped skipped")');
+				'$(sql_escape "AI actions: $executed executed, $failed failed, $skipped skipped, $dedup_suppressed dedup_suppressed")');
 	" 2>/dev/null || true
 
 	printf '%s' "$summary"
@@ -1178,6 +1362,10 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 			subcommand="pipeline"
 			shift
 			;;
+		dedup-stats)
+			subcommand="dedup-stats"
+			shift
+			;;
 		--mode)
 			mode="$2"
 			shift 2
@@ -1197,6 +1385,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 		--help | -h)
 			echo "Usage: ai-actions.sh [--mode execute|dry-run|validate-only] [--repo /path] [--plan <json>]"
 			echo "       ai-actions.sh pipeline [--mode full|dry-run] [--repo /path]"
+			echo "       ai-actions.sh dedup-stats"
 			echo ""
 			echo "Execute AI supervisor action plans."
 			echo ""
@@ -1209,6 +1398,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 			echo ""
 			echo "Subcommands:"
 			echo "  pipeline                               Run full reasoning + execution pipeline"
+			echo "  dedup-stats                            Show action dedup statistics (t1138)"
 			exit 0
 			;;
 		*)
@@ -1220,10 +1410,50 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 
 	if [[ "$subcommand" == "pipeline" ]]; then
 		run_ai_actions_pipeline "$repo_path" "$mode"
+	elif [[ "$subcommand" == "dedup-stats" ]]; then
+		# Show dedup statistics (t1138)
+		if [[ ! -f "$SUPERVISOR_DB" ]]; then
+			echo "No supervisor database found at $SUPERVISOR_DB" >&2
+			exit 1
+		fi
+		has_table=$(sqlite3 "$SUPERVISOR_DB" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='action_dedup_log';" 2>/dev/null || echo "0")
+		if [[ "$has_table" -eq 0 ]]; then
+			echo "action_dedup_log table not found — run a pulse cycle first" >&2
+			exit 1
+		fi
+		echo "=== Action Dedup Statistics (t1138) ==="
+		echo ""
+		echo "--- Total entries ---"
+		sqlite3 -column -header "$SUPERVISOR_DB" "
+			SELECT status, COUNT(*) as count
+			FROM action_dedup_log
+			GROUP BY status
+			ORDER BY count DESC;
+		" 2>/dev/null || echo "(empty)"
+		echo ""
+		echo "--- Most suppressed targets (top 10) ---"
+		sqlite3 -column -header "$SUPERVISOR_DB" "
+			SELECT action_type, target, COUNT(*) as suppressed_count
+			FROM action_dedup_log
+			WHERE status = 'dedup_suppressed'
+			GROUP BY action_type, target
+			ORDER BY suppressed_count DESC
+			LIMIT 10;
+		" 2>/dev/null || echo "(none)"
+		echo ""
+		echo "--- Recent dedup log (last 20 entries) ---"
+		sqlite3 -column -header "$SUPERVISOR_DB" "
+			SELECT cycle_id, action_type, target, status, created_at
+			FROM action_dedup_log
+			ORDER BY created_at DESC
+			LIMIT 20;
+		" 2>/dev/null || echo "(empty)"
+		echo ""
+		echo "--- Dedup window: ${AI_ACTION_DEDUP_WINDOW:-5} cycles ---"
 	elif [[ -n "$plan" ]]; then
 		execute_action_plan "$plan" "$repo_path" "$mode"
 	else
-		echo "Error: --plan <json> is required (or use 'pipeline' subcommand)" >&2
+		echo "Error: --plan <json> is required (or use 'pipeline' or 'dedup-stats' subcommand)" >&2
 		exit 1
 	fi
 fi
