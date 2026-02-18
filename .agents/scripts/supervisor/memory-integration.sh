@@ -58,12 +58,21 @@ $task_memories"
 # Called when a task fails, is blocked, or retries
 # Tags with supervisor context for future recall
 # Uses FAILURE_PATTERN type for pattern-tracker integration (t102.3)
+#
+# $1: task_id
+# $2: outcome_type (blocked|failed|retry)
+# $3: outcome_detail
+# $4: description (optional)
+# $5: failure_mode (optional, t1096 — TRANSIENT|RESOURCE|LOGIC|BLOCKED|AMBIGUOUS)
+# $6: quality_score (optional, t1096 — 0|1|2)
 #######################################
 store_failure_pattern() {
 	local task_id="$1"
 	local outcome_type="$2"
 	local outcome_detail="$3"
 	local description="${4:-}"
+	local failure_mode="${5:-}"
+	local quality_score="${6:-}"
 
 	if [[ ! -x "$MEMORY_HELPER" ]]; then
 		return 0
@@ -119,10 +128,16 @@ store_failure_pattern() {
 		content="[task:feature] $content | Task: $description"
 	fi
 	[[ -n "$model_tier" ]] && content="$content [model:$model_tier]"
+	# t1096: append failure mode and quality score when provided
+	[[ -n "$failure_mode" ]] && content="$content [fmode:$failure_mode]"
+	[[ -n "$quality_score" ]] && content="$content [quality:$quality_score]"
 
 	# Build tags with model info for pattern-tracker queries
 	local tags="supervisor,pattern,$task_id,$outcome_type,$outcome_detail"
 	[[ -n "$model_tier" ]] && tags="$tags,model:$model_tier"
+	# t1096: include failure mode and quality in tags for pattern-tracker filtering
+	[[ -n "$failure_mode" ]] && tags="$tags,failure_mode:$failure_mode"
+	[[ -n "$quality_score" ]] && tags="$tags,quality:$quality_score"
 
 	"$MEMORY_HELPER" store \
 		--auto \
@@ -139,11 +154,17 @@ store_failure_pattern() {
 # Store a success pattern in memory after task completion
 # Records what worked for future reference
 # Uses SUCCESS_PATTERN type for pattern-tracker integration (t102.3)
+#
+# $1: task_id
+# $2: detail (PR URL or outcome detail)
+# $3: description (optional)
+# $4: quality_score (optional, t1096 — 0|1|2; defaults to 2 for complete)
 #######################################
 store_success_pattern() {
 	local task_id="$1"
 	local detail="${2:-}"
 	local description="${3:-}"
+	local quality_score="${4:-2}"
 
 	if [[ ! -x "$MEMORY_HELPER" ]]; then
 		return 0
@@ -201,6 +222,8 @@ store_success_pattern() {
 	if [[ "$task_tool_count" -gt 0 ]]; then
 		content="$content [task_tool:$task_tool_count]"
 	fi
+	# t1096: append quality score (always 2 for success, but caller may override)
+	content="$content [quality:${quality_score}]"
 
 	# Build tags with model and duration info for pattern-tracker queries
 	local tags="supervisor,pattern,$task_id,complete"
@@ -208,6 +231,8 @@ store_success_pattern() {
 	[[ -n "$duration_secs" ]] && tags="$tags,duration:$duration_secs"
 	[[ "$retries" -gt 0 ]] && tags="$tags,retries:$retries"
 	[[ "$task_tool_count" -gt 0 ]] && tags="$tags,task_tool:$task_tool_count"
+	# t1096: include quality in tags for pattern-tracker filtering
+	tags="$tags,quality:${quality_score},failure_mode:NONE"
 
 	"$MEMORY_HELPER" store \
 		--auto \

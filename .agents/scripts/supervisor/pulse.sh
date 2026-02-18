@@ -211,7 +211,14 @@ cmd_pulse() {
 			fi
 
 			local outcome
-			outcome=$(evaluate_worker "$tid" "$skip_ai")
+			# t1096: use evaluate_worker_with_metadata() to capture richer metadata
+			# (failure mode, output quality) and record to pattern tracker.
+			# Falls back to evaluate_worker() if the wrapper is unavailable.
+			if command -v evaluate_worker_with_metadata &>/dev/null; then
+				outcome=$(evaluate_worker_with_metadata "$tid" "$skip_ai")
+			else
+				outcome=$(evaluate_worker "$tid" "$skip_ai")
+			fi
 			local outcome_type="${outcome%%:*}"
 			local outcome_detail="${outcome#*:}"
 
@@ -220,7 +227,7 @@ cmd_pulse() {
 			_eval_duration=$(_proof_log_stage_duration "$tid" "evaluate")
 			write_proof_log --task "$tid" --event "evaluate" --stage "evaluate" \
 				--decision "$outcome" --evidence "skip_ai=$skip_ai" \
-				--maker "evaluate_worker" \
+				--maker "evaluate_worker_with_metadata" \
 				${_eval_duration:+--duration "$_eval_duration"} 2>/dev/null || true
 
 			# Budget tracking: record spend from worker log (t1100)
