@@ -1344,14 +1344,23 @@
   check: shellcheck .agents/scripts/issue-sync-helper.sh
   check: file-exists .agents/scripts/issue-sync-helper.sh
 
-- [ ] v159 t1193 Reconcile supervisor DB running count with actual worker ... | PR #1813 | merged:2026-02-18
+- [!] v159 t1193 Reconcile supervisor DB running count with actual worker ... | PR #1813 | merged:2026-02-18 failed:2026-02-18 reason:shellcheck: tests/test-supervisor-state-machine.sh has violations
   files: .agents/scripts/supervisor/pulse.sh, tests/test-supervisor-state-machine.sh
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
   check: shellcheck tests/test-supervisor-state-machine.sh
   check: file-exists tests/test-supervisor-state-machine.sh
 
-- [ ] v160 t1121 Fix tea CLI TTY requirement in non-interactive mode #bugf... | PR #1814 | merged:2026-02-18
+- [x] v160 t1121 Fix tea CLI TTY requirement in non-interactive mode #bugf... | PR #1814 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/gitea-cli-helper.sh
   check: shellcheck .agents/scripts/gitea-cli-helper.sh
   check: file-exists .agents/scripts/gitea-cli-helper.sh
+
+- [ ] v161 t1196 Add worker hang detection timeout tuning based on task ty... | PR #1819 | merged:2026-02-18
+  files: .agents/scripts/supervisor-helper.sh, .agents/scripts/supervisor/dispatch.sh, .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/supervisor-helper.sh
+  check: file-exists .agents/scripts/supervisor-helper.sh
+  check: shellcheck .agents/scripts/supervisor/dispatch.sh
+  check: file-exists .agents/scripts/supervisor/dispatch.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
