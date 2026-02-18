@@ -1110,3 +1110,13 @@
   check: file-exists .agents/scripts/compare-models-helper.sh
   check: file-exists .agents/tools/ai-assistants/compare-models.md
   check: rg "compare-models" .agents/subagent-index.toon
+
+- [ ] v128 t1099 Wire response-scoring to write back to pattern tracker â€... | PR #1634 | merged:2026-02-18
+  files: .agents/scripts/commands/score-responses.md, .agents/scripts/response-scoring-helper.sh, .agents/tools/ai-assistants/response-scoring.md, tests/test-response-scoring.sh
+  check: file-exists .agents/scripts/commands/score-responses.md
+  check: shellcheck .agents/scripts/response-scoring-helper.sh
+  check: file-exists .agents/scripts/response-scoring-helper.sh
+  check: file-exists .agents/tools/ai-assistants/response-scoring.md
+  check: shellcheck tests/test-response-scoring.sh
+  check: file-exists tests/test-response-scoring.sh
+  check: rg "response-scoring" .agents/subagent-index.toon
