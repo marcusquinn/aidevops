@@ -215,6 +215,7 @@ source "${SUPERVISOR_MODULE_DIR}/ai-context.sh"
 source "${SUPERVISOR_MODULE_DIR}/ai-reason.sh"
 source "${SUPERVISOR_MODULE_DIR}/ai-actions.sh"
 source "${SUPERVISOR_MODULE_DIR}/issue-audit.sh"
+source "${SUPERVISOR_MODULE_DIR}/routine-scheduler.sh"
 
 # Valid states for the state machine
 # shellcheck disable=SC2034 # Used by supervisor/state.sh
@@ -778,6 +779,10 @@ main() {
 		echo "  Max actions/cycle: ${AI_MAX_ACTIONS_PER_CYCLE:-10}"
 		echo "  Log file:         ${ai_log_file}"
 		echo "  Reason log dir:   ${AI_REASON_LOG_DIR:-$HOME/.aidevops/logs/ai-supervisor}"
+		;;
+	routine-status)
+		# Show Phase 14 intelligent routine scheduling state
+		routine_scheduler_status
 		;;
 	help | --help | -h) show_usage ;;
 	*)
