@@ -417,7 +417,7 @@ pattern-tracker-helper.sh recommend "code review"
 
 | Situation | Action |
 |-----------|--------|
-| Pattern data: >75% success, 3+ samples | Weight pattern data heavily |
+| Pattern data: >75% success, 3+ samples | Use model from pattern data (overrides static rule) |
 | Pattern data: sparse or inconclusive | Fall back to routing rules |
 | Pattern data contradicts routing rules | Note the conflict, explain in agent docs |
 | No pattern data yet | Use routing rules, record outcomes to build data |
@@ -427,12 +427,12 @@ pattern-tracker-helper.sh recommend "code review"
 ```bash
 # After a successful task
 pattern-tracker-helper.sh record --outcome success \
-    --task-type shell-script-agent --model sonnet \
+    --task-type "shell script agent" --model sonnet \
     --description "Prompt-repeat pattern resolved ambiguous instructions"
 
 # After a failure
 pattern-tracker-helper.sh record --outcome failure \
-    --task-type architecture-design --model sonnet \
+    --task-type "architecture design" --model sonnet \
     --description "Needed opus — sonnet missed cross-service dependency trade-offs"
 ```
 
