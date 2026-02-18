@@ -819,8 +819,8 @@ record_evaluation_metadata() {
 	# Look up task type from DB tags if available, fallback to "unknown"
 	# TODO(t1096): extract real task type from TODO.md tags or DB metadata
 	local task_type="unknown"
+	local task_desc=""
 	if [[ -n "${SUPERVISOR_DB:-}" ]]; then
-		local task_desc
 		task_desc=$(db "$SUPERVISOR_DB" "SELECT description FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo "")
 		# Infer type from description keywords (best-effort)
 		case "$task_desc" in
@@ -832,16 +832,46 @@ record_evaluation_metadata() {
 		esac
 	fi
 
+	# Extract token counts from worker log for cost tracking (t1114)
+	# opencode/claude --format json logs emit usage stats in the final JSON entry.
+	# Pattern: "inputTokens":N,"outputTokens":N or "input_tokens":N,"output_tokens":N
+	local tokens_in="" tokens_out=""
+	if [[ -n "${SUPERVISOR_DB:-}" ]]; then
+		local log_file
+		log_file=$(db "$SUPERVISOR_DB" "SELECT log_file FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo "")
+		if [[ -n "$log_file" && -f "$log_file" ]]; then
+			# Try camelCase format (opencode JSON output)
+			local raw_in raw_out
+			raw_in=$(grep -oE '"inputTokens":[0-9]+' "$log_file" 2>/dev/null | tail -1 | grep -oE '[0-9]+' || true)
+			raw_out=$(grep -oE '"outputTokens":[0-9]+' "$log_file" 2>/dev/null | tail -1 | grep -oE '[0-9]+' || true)
+			# Fallback: snake_case format (claude CLI JSON output)
+			if [[ -z "$raw_in" ]]; then
+				raw_in=$(grep -oE '"input_tokens":[0-9]+' "$log_file" 2>/dev/null | tail -1 | grep -oE '[0-9]+' || true)
+			fi
+			if [[ -z "$raw_out" ]]; then
+				raw_out=$(grep -oE '"output_tokens":[0-9]+' "$log_file" 2>/dev/null | tail -1 | grep -oE '[0-9]+' || true)
+			fi
+			[[ -n "$raw_in" ]] && tokens_in="$raw_in"
+			[[ -n "$raw_out" ]] && tokens_out="$raw_out"
+		fi
+	fi
+
 	# Build description
 	local description="Worker $task_id: ${outcome_type}:${outcome_detail} [fmode:${failure_mode}] [quality:${quality_score}]"
 
-	"$pattern_helper" record \
-		--outcome "$pt_outcome" \
-		--task-type "$task_type" \
-		--task-id "$task_id" \
-		--description "$description" \
-		--tags "supervisor,evaluate,${outcome_type},${extra_tags}${model_tier:+,model:${model_tier}}" \
-		2>/dev/null || true
+	# Build record args — add token counts when available (t1114)
+	local record_args=(
+		--outcome "$pt_outcome"
+		--task-type "$task_type"
+		--task-id "$task_id"
+		--description "$description"
+		--tags "supervisor,evaluate,${outcome_type},${extra_tags}${model_tier:+,model:${model_tier}}"
+	)
+	[[ -n "$model_tier" ]] && record_args+=(--model "$model_tier")
+	[[ -n "$tokens_in" ]] && record_args+=(--tokens-in "$tokens_in")
+	[[ -n "$tokens_out" ]] && record_args+=(--tokens-out "$tokens_out")
+
+	"$pattern_helper" record "${record_args[@]}" 2>/dev/null || true
 
 	return 0
 }

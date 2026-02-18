@@ -225,6 +225,23 @@ store_success_pattern() {
 	# t1096: append quality score (always 2 for success, but caller may override)
 	content="$content [quality:${quality_score}]"
 
+	# Extract token counts from worker log for cost tracking (t1114)
+	# opencode/claude --format json logs emit usage stats in the final JSON entry.
+	local tokens_in="" tokens_out=""
+	if [[ -n "$log_file" && -f "$log_file" ]]; then
+		local raw_in raw_out
+		raw_in=$(grep -oE '"inputTokens":[0-9]+' "$log_file" 2>/dev/null | tail -1 | grep -oE '[0-9]+' || true)
+		raw_out=$(grep -oE '"outputTokens":[0-9]+' "$log_file" 2>/dev/null | tail -1 | grep -oE '[0-9]+' || true)
+		if [[ -z "$raw_in" ]]; then
+			raw_in=$(grep -oE '"input_tokens":[0-9]+' "$log_file" 2>/dev/null | tail -1 | grep -oE '[0-9]+' || true)
+		fi
+		if [[ -z "$raw_out" ]]; then
+			raw_out=$(grep -oE '"output_tokens":[0-9]+' "$log_file" 2>/dev/null | tail -1 | grep -oE '[0-9]+' || true)
+		fi
+		[[ -n "$raw_in" ]] && tokens_in="$raw_in"
+		[[ -n "$raw_out" ]] && tokens_out="$raw_out"
+	fi
+
 	# Build tags with model and duration info for pattern-tracker queries
 	local tags="supervisor,pattern,$task_id,complete"
 	[[ -n "$model_tier" ]] && tags="$tags,model:$model_tier"
@@ -234,12 +251,34 @@ store_success_pattern() {
 	# t1096: include quality in tags for pattern-tracker filtering
 	tags="$tags,quality:${quality_score},failure_mode:NONE"
 
-	"$MEMORY_HELPER" store \
-		--auto \
-		--type "SUCCESS_PATTERN" \
-		--content "$content" \
-		--tags "$tags" \
-		2>/dev/null || true
+	# Use pattern-tracker-helper.sh directly when available for richer metadata (t1114)
+	local pattern_helper="${SCRIPT_DIR}/pattern-tracker-helper.sh"
+	if [[ ! -x "$pattern_helper" ]]; then
+		pattern_helper="$HOME/.aidevops/agents/scripts/pattern-tracker-helper.sh"
+	fi
+
+	if [[ -x "$pattern_helper" ]]; then
+		local pt_args=(
+			record
+			--outcome "success"
+			--task-id "$task_id"
+			--description "$content"
+			--tags "$tags"
+		)
+		[[ -n "$model_tier" ]] && pt_args+=(--model "$model_tier")
+		[[ -n "$duration_secs" ]] && pt_args+=(--duration "$duration_secs")
+		[[ "$retries" -gt 0 ]] && pt_args+=(--retries "$retries")
+		[[ -n "$tokens_in" ]] && pt_args+=(--tokens-in "$tokens_in")
+		[[ -n "$tokens_out" ]] && pt_args+=(--tokens-out "$tokens_out")
+		"$pattern_helper" "${pt_args[@]}" 2>/dev/null || true
+	else
+		"$MEMORY_HELPER" store \
+			--auto \
+			--type "SUCCESS_PATTERN" \
+			--content "$content" \
+			--tags "$tags" \
+			2>/dev/null || true
+	fi
 
 	log_info "Stored success pattern in memory: $task_id"
 	return 0
