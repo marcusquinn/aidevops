@@ -329,8 +329,28 @@ build_prs_context() {
 }
 
 #######################################
+# Get task IDs that are verified/cancelled/complete/deployed in the supervisor DB.
+# Used by build_todo_context() to filter stale tasks from the AI context (t1178).
+# Arguments: none
+# Outputs: newline-separated task IDs to stdout (empty if DB unavailable)
+# Returns: 0 always
+#######################################
+_get_db_completed_task_ids() {
+	if [[ ! -f "${SUPERVISOR_DB:-}" ]]; then
+		return 0
+	fi
+	db "$SUPERVISOR_DB" "
+		SELECT id FROM tasks
+		WHERE status IN ('complete', 'verified', 'deployed', 'cancelled')
+		ORDER BY updated_at DESC;
+	" 2>/dev/null || true
+	return 0
+}
+
+#######################################
 # Section 3: TODO.md State
 # Open tasks, blocked tasks, stale tasks
+# Cross-references supervisor DB to exclude verified/cancelled tasks (t1178).
 #######################################
 build_todo_context() {
 	local repo_path="$1"
@@ -344,6 +364,21 @@ build_todo_context() {
 		return 0
 	fi
 
+	# Fetch DB-verified/cancelled task IDs for context-layer filtering (t1178).
+	# This prevents the AI from seeing tasks that are already done in the DB
+	# even if TODO.md hasn't been updated yet (stale checkbox lag).
+	local db_completed_ids=""
+	db_completed_ids=$(_get_db_completed_task_ids)
+
+	# Build a fast lookup: associative array of completed task IDs
+	declare -A _db_done_ids
+	if [[ -n "$db_completed_ids" ]]; then
+		while IFS= read -r tid; do
+			tid="${tid// /}"
+			[[ -n "$tid" ]] && _db_done_ids["$tid"]=1
+		done <<<"$db_completed_ids"
+	fi
+
 	# Count open vs completed tasks (top-level only)
 	local open_count completed_count
 	open_count=$(grep -cE '^- \[ \] t[0-9]+' "$todo_file" 2>/dev/null || echo 0)
@@ -351,24 +386,38 @@ build_todo_context() {
 
 	output+="**Summary**: $open_count open, $completed_count completed\n\n"
 
-	# List open top-level tasks (not subtasks)
+	# List open top-level tasks (not subtasks), excluding DB-verified tasks
 	output+="### Open Tasks\n\n"
 	local open_tasks
 	open_tasks=$(grep -E '^- \[ \] t[0-9]+' "$todo_file" 2>/dev/null || true)
 
+	local filtered_count=0
 	if [[ -z "$open_tasks" ]]; then
 		output+="No open top-level tasks.\n"
 	else
+		local shown_any=0
 		while IFS= read -r line; do
-			# Extract task ID and first 100 chars of description
 			local task_id desc
 			task_id=$(echo "$line" | grep -oE 't[0-9]+' | head -1)
+			# Skip tasks already verified/cancelled/complete in supervisor DB (t1178)
+			if [[ -n "$task_id" && -n "${_db_done_ids[$task_id]+x}" ]]; then
+				filtered_count=$((filtered_count + 1))
+				continue
+			fi
 			desc="${line:0:120}"
 			if [[ ${#line} -gt 120 ]]; then
 				desc+="..."
 			fi
 			output+="- $desc\n"
+			shown_any=1
 		done <<<"$open_tasks"
+		if [[ "$shown_any" -eq 0 ]]; then
+			output+="No open top-level tasks.\n"
+		fi
+	fi
+
+	if [[ "$filtered_count" -gt 0 ]]; then
+		output+="\n> **Context filter (t1178)**: $filtered_count task(s) omitted — verified/cancelled in supervisor DB but checkbox not yet updated in TODO.md. Do NOT act on them.\n"
 	fi
 
 	# List tasks with blocked-by dependencies (skip format examples in header)
@@ -382,6 +431,10 @@ build_todo_context() {
 		while IFS= read -r line; do
 			local task_id blocker
 			task_id=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1)
+			# Skip DB-verified tasks from blocked list too (t1178)
+			if [[ -n "$task_id" && -n "${_db_done_ids[$task_id]+x}" ]]; then
+				continue
+			fi
 			blocker=$(echo "$line" | grep -oE 'blocked-by:[^ ]+' | head -1)
 			output+="- $task_id ($blocker)\n"
 		done <<<"$blocked_tasks"
@@ -399,10 +452,18 @@ build_todo_context() {
 		while IFS= read -r line; do
 			local task_id
 			task_id=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1)
+			# Exclude DB-verified tasks from dispatchable list (t1178)
+			if [[ -n "$task_id" && -n "${_db_done_ids[$task_id]+x}" ]]; then
+				continue
+			fi
 			output+="- $task_id\n"
 			disp_count=$((disp_count + 1))
 		done <<<"$dispatchable"
-		output+="Total dispatchable: $disp_count\n"
+		if [[ "$disp_count" -eq 0 ]]; then
+			output+="All #auto-dispatch tasks are claimed or in progress.\n"
+		else
+			output+="Total dispatchable: $disp_count\n"
+		fi
 	fi
 
 	printf '%b' "$output"
