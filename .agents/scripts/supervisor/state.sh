@@ -690,6 +690,11 @@ cmd_cancel() {
         "
 
 		log_success "Cancelled task: $target"
+
+		# t1131: Sync cancellation to TODO.md so the AI supervisor doesn't re-propose dead tasks
+		update_todo_on_cancel "$target" "Manual cancellation" 2>>"${SUPERVISOR_LOG:-/dev/null}" ||
+			log_warn "Could not update TODO.md for cancelled task $target (non-fatal)"
+
 		return 0
 	fi
 
@@ -708,14 +713,18 @@ cmd_cancel() {
             WHERE id = '$escaped_batch';
         "
 
-		# Cancel all non-terminal tasks in the batch
-		local cancelled_count
-		cancelled_count=$(db "$SUPERVISOR_DB" "
-            SELECT count(*) FROM batch_tasks bt
+		# Collect non-terminal task IDs before cancelling (for TODO.md sync)
+		local tasks_to_cancel
+		tasks_to_cancel=$(db "$SUPERVISOR_DB" "
+            SELECT t.id FROM batch_tasks bt
             JOIN tasks t ON bt.task_id = t.id
             WHERE bt.batch_id = '$escaped_batch'
             AND t.status NOT IN ('deployed', 'merged', 'failed', 'cancelled');
         ")
+
+		# Cancel all non-terminal tasks in the batch
+		local cancelled_count
+		cancelled_count=$(echo "$tasks_to_cancel" | grep -c '[a-z]' 2>/dev/null || echo 0)
 
 		db "$SUPERVISOR_DB" "
             UPDATE tasks SET
@@ -728,6 +737,16 @@ cmd_cancel() {
         "
 
 		log_success "Cancelled batch: $target ($cancelled_count tasks cancelled)"
+
+		# t1131: Sync each cancelled task to TODO.md
+		if [[ -n "$tasks_to_cancel" ]]; then
+			while IFS= read -r tid; do
+				[[ -z "$tid" ]] && continue
+				update_todo_on_cancel "$tid" "Batch $target cancelled" 2>>"${SUPERVISOR_LOG:-/dev/null}" ||
+					log_warn "Could not update TODO.md for cancelled task $tid (non-fatal)"
+			done <<<"$tasks_to_cancel"
+		fi
+
 		return 0
 	fi
 

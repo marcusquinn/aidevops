@@ -771,6 +771,59 @@ generate_verify_entry() {
 }
 
 #######################################
+# Update TODO.md when a task is cancelled (t1131)
+# Marks [ ] -> [-], appends cancelled:YYYY-MM-DD
+# Then commits and pushes the change
+# Args: $1=task_id $2=reason (optional)
+#######################################
+update_todo_on_cancel() {
+	local task_id="$1"
+	local reason="${2:-Manual cancellation}"
+
+	ensure_db
+
+	local escaped_id
+	escaped_id=$(sql_escape "$task_id")
+	local trepo
+	trepo=$(db "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$escaped_id';")
+
+	if [[ -z "$trepo" ]]; then
+		log_warn "update_todo_on_cancel: task not found in DB: $task_id"
+		return 1
+	fi
+
+	local todo_file="$trepo/TODO.md"
+	if [[ ! -f "$todo_file" ]]; then
+		log_warn "update_todo_on_cancel: TODO.md not found at $todo_file"
+		return 1
+	fi
+
+	# Only update if task is currently open ([ ]) — skip if already [-] or [x]
+	if ! grep -qE "^[[:space:]]*- \[ \] ${task_id}( |$)" "$todo_file"; then
+		log_info "update_todo_on_cancel: $task_id not found as open in TODO.md (may already be cancelled/completed)"
+		return 0
+	fi
+
+	local today
+	today=$(date +%Y-%m-%d)
+
+	# Mark as cancelled: [ ] -> [-], append cancelled:date
+	local sed_pattern="s/^([[:space:]]*- )\[ \] (${task_id} .*)$/\1[-] \2 cancelled:${today}/"
+	sed_inplace -E "$sed_pattern" "$todo_file"
+
+	# Verify the change was made
+	if ! grep -qE "^[[:space:]]*- \[-\] ${task_id}( |$)" "$todo_file"; then
+		log_error "update_todo_on_cancel: failed to update TODO.md for $task_id"
+		return 1
+	fi
+
+	log_success "Updated TODO.md: $task_id marked cancelled ($today)"
+
+	commit_and_push_todo "$trepo" "chore: mark $task_id cancelled in TODO.md [skip ci]"
+	return $?
+}
+
+#######################################
 # Update TODO.md when a task is blocked or failed
 # Adds Notes line with blocked reason
 # Then commits and pushes the change
@@ -1150,7 +1203,7 @@ cmd_reconcile_db_todo() {
 	local fixed_count=0
 	local issue_count=0
 
-	# --- Gap 1: DB failed/blocked but TODO.md has no annotation ---
+	# --- Gap 1a: DB failed/blocked but TODO.md has no annotation ---
 	local failed_tasks
 	failed_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
 		SELECT t.id, t.status, t.error FROM tasks t
@@ -1192,6 +1245,39 @@ cmd_reconcile_db_todo() {
 				fixed_count=$((fixed_count + 1))
 			fi
 		done <<<"$failed_tasks"
+	fi
+
+	# --- Gap 1b: t1131 — DB cancelled but TODO.md still shows [ ] ---
+	local cancelled_tasks
+	cancelled_tasks=$(db "$SUPERVISOR_DB" "
+		SELECT t.id FROM tasks t
+		WHERE t.status = 'cancelled'
+		$batch_filter
+		ORDER BY t.id;
+	")
+
+	if [[ -n "$cancelled_tasks" ]]; then
+		while IFS= read -r tid; do
+			[[ -z "$tid" ]] && continue
+
+			# Only act if task is still open ([ ]) in TODO.md
+			if ! grep -qE "^[[:space:]]*- \[ \] ${tid}( |$)" "$todo_file"; then
+				continue
+			fi
+
+			issue_count=$((issue_count + 1))
+
+			if [[ "$dry_run" == "true" ]]; then
+				log_warn "[dry-run] $tid: DB status=cancelled but TODO.md still shows [ ]"
+			else
+				log_info "Phase 7b: Marking $tid cancelled in TODO.md (t1131)"
+				update_todo_on_cancel "$tid" "Retroactive sync from DB" 2>>"${SUPERVISOR_LOG:-/dev/null}" || {
+					log_warn "Phase 7b: Failed to mark $tid cancelled in TODO.md"
+					continue
+				}
+				fixed_count=$((fixed_count + 1))
+			fi
+		done <<<"$cancelled_tasks"
 	fi
 
 	# --- Gap 2: TODO.md [x] but DB still in non-terminal state ---
