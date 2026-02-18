@@ -1801,6 +1801,63 @@ RULES:
 		log_verbose "  Phase 12: MODELS.md regen skipped (${models_md_remaining}s until next run)"
 	fi
 
+	# Phase 13: Skill update PR pipeline (t1082.2)
+	# Optional phase — disabled by default. Enable via SUPERVISOR_SKILL_UPDATE_PR=true.
+	# Runs skill-update-helper.sh pr on a configurable schedule (default: daily).
+	# Only runs for repos where the authenticated user has write/admin permission,
+	# ensuring PRs are only created where the user is a maintainer.
+	local skill_update_pr_enabled="${SUPERVISOR_SKILL_UPDATE_PR:-false}"
+	if [[ "$skill_update_pr_enabled" == "true" ]]; then
+		local skill_update_interval="${SUPERVISOR_SKILL_UPDATE_INTERVAL:-86400}" # seconds (24h default)
+		local skill_update_stamp="$SUPERVISOR_DIR/skill-update-pr-last-run"
+		local skill_update_now
+		skill_update_now=$(date +%s)
+		local skill_update_last=0
+		if [[ -f "$skill_update_stamp" ]]; then
+			skill_update_last=$(cat "$skill_update_stamp" 2>/dev/null || echo 0)
+		fi
+		local skill_update_elapsed=$((skill_update_now - skill_update_last))
+		if [[ "$skill_update_elapsed" -ge "$skill_update_interval" ]]; then
+			local skill_update_script="${SCRIPT_DIR}/skill-update-helper.sh"
+			if [[ -x "$skill_update_script" ]]; then
+				# Determine the repo root to check maintainer permission
+				local skill_update_repo=""
+				skill_update_repo=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks LIMIT 1;" 2>/dev/null || echo "")
+				if [[ -z "$skill_update_repo" ]]; then
+					skill_update_repo="$(pwd)"
+				fi
+				local skill_update_repo_root=""
+				skill_update_repo_root=$(git -C "$skill_update_repo" rev-parse --show-toplevel 2>/dev/null) || true
+				# Check viewer permission — only run if user is a maintainer (WRITE or ADMIN)
+				local viewer_permission=""
+				if [[ -n "$skill_update_repo_root" ]] && command -v gh &>/dev/null; then
+					viewer_permission=$(gh repo view --json viewerPermission --jq '.viewerPermission' \
+						-R "$(git -C "$skill_update_repo_root" remote get-url origin 2>/dev/null |
+							sed 's|.*github\.com[:/]\([^/]*/[^/]*\)\.git|\1|; s|.*github\.com[:/]\([^/]*/[^/]*\)$|\1|')" \
+						2>/dev/null || echo "")
+				fi
+				if [[ "$viewer_permission" == "ADMIN" || "$viewer_permission" == "WRITE" ]]; then
+					log_info "  Phase 13: Running skill update PR pipeline (permission: $viewer_permission)"
+					if "$skill_update_script" pr --quiet 2>>"$SUPERVISOR_LOG"; then
+						log_success "  Phase 13: Skill update PR pipeline complete"
+					else
+						log_warn "  Phase 13: Skill update PR pipeline finished with errors (see $SUPERVISOR_LOG)"
+					fi
+				elif [[ -z "$viewer_permission" ]]; then
+					log_verbose "  Phase 13: Skipped (could not determine repo permission — gh CLI unavailable or not a GitHub repo)"
+				else
+					log_verbose "  Phase 13: Skipped (viewer permission '$viewer_permission' — write/admin required)"
+				fi
+			else
+				log_verbose "  Phase 13: Skipped (skill-update-helper.sh not found)"
+			fi
+			echo "$skill_update_now" >"$skill_update_stamp" 2>/dev/null || true
+		else
+			local skill_update_remaining=$((skill_update_interval - skill_update_elapsed))
+			log_verbose "  Phase 13: Skill update PR skipped (${skill_update_remaining}s until next run)"
+		fi
+	fi
+
 	# t1052: Clear deferred batch completion flag to avoid leaking state
 	# if the supervisor process is reused for non-pulse commands
 	_PULSE_DEFER_BATCH_COMPLETION=""
