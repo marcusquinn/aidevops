@@ -211,6 +211,7 @@ source "${SUPERVISOR_MODULE_DIR}/git-ops.sh"
 source "${SUPERVISOR_MODULE_DIR}/issue-sync.sh"
 source "${SUPERVISOR_MODULE_DIR}/memory-integration.sh"
 source "${SUPERVISOR_MODULE_DIR}/todo-sync.sh"
+source "${SUPERVISOR_MODULE_DIR}/ai-context.sh"
 
 # Valid states for the state machine
 # shellcheck disable=SC2034 # Used by supervisor/state.sh
@@ -685,6 +686,7 @@ main() {
 	db) cmd_db "$@" ;;
 	labels) cmd_labels "$@" ;;
 	contest) cmd_contest "$@" ;;
+	ai-context) build_ai_context "${REPO_PATH:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}" "${1:-full}" ;;
 	help | --help | -h) show_usage ;;
 	*)
 		log_error "Unknown command: $command"
