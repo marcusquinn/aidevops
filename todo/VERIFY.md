@@ -1319,14 +1319,14 @@
   check: shellcheck .agents/scripts/supervisor/self-heal.sh
   check: file-exists .agents/scripts/supervisor/self-heal.sh
 
-- [ ] v156 t1189 Fix AI actions pipeline empty-response handling to preven... | PR #1807 | merged:2026-02-18
+- [x] v156 t1189 Fix AI actions pipeline empty-response handling to preven... | PR #1807 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/supervisor/ai-actions.sh, tests/test-ai-supervisor-e2e.sh
   check: shellcheck .agents/scripts/supervisor/ai-actions.sh
   check: file-exists .agents/scripts/supervisor/ai-actions.sh
   check: shellcheck tests/test-ai-supervisor-e2e.sh
   check: file-exists tests/test-ai-supervisor-e2e.sh
 
-- [ ] v157 t1191 Add sonnet-to-opus tier escalation tracking and cost anal... | PR #1808 | merged:2026-02-18
+- [x] v157 t1191 Add sonnet-to-opus tier escalation tracking and cost anal... | PR #1808 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/budget-tracker-helper.sh, .agents/scripts/pattern-tracker-helper.sh, .agents/scripts/supervisor/evaluate.sh, .agents/scripts/supervisor/pulse.sh, .agents/tools/context/model-routing.md
   check: shellcheck .agents/scripts/budget-tracker-helper.sh
   check: file-exists .agents/scripts/budget-tracker-helper.sh
@@ -1339,7 +1339,14 @@
   check: file-exists .agents/tools/context/model-routing.md
   check: rg "model-routing" .agents/subagent-index.toon
 
-- [ ] v158 t1120.3 Add platform detection from git remote URL + multi-platfo... | PR #1815 | merged:2026-02-18
+- [x] v158 t1120.3 Add platform detection from git remote URL + multi-platfo... | PR #1815 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/issue-sync-helper.sh
   check: shellcheck .agents/scripts/issue-sync-helper.sh
   check: file-exists .agents/scripts/issue-sync-helper.sh
+
+- [ ] v159 t1193 Reconcile supervisor DB running count with actual worker ... | PR #1813 | merged:2026-02-18
+  files: .agents/scripts/supervisor/pulse.sh, tests/test-supervisor-state-machine.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
+  check: shellcheck tests/test-supervisor-state-machine.sh
+  check: file-exists tests/test-supervisor-state-machine.sh
