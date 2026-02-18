@@ -1509,27 +1509,50 @@ RULES:
 		done <<<"$health_repos"
 	fi
 
+	# Phase 14: Intelligent routine scheduling (t1093)
+	# Pre-computes scheduling decisions for Phases 9-13 based on project state signals.
+	# Decisions are exported as ROUTINE_DECISION_* env vars consumed by each phase.
+	# Signals: consecutive zero-findings runs, open critical issues, recent failure rate.
+	# Routines can be skipped (interval not met), deferred (explicit hold), or approved.
+	if declare -f run_phase14_routine_scheduler &>/dev/null; then
+		run_phase14_routine_scheduler 2>>"$SUPERVISOR_LOG" || true
+	fi
+
 	# Phase 9: Memory audit pulse (t185)
 	# Runs dedup, prune, graduate, and opportunity scan.
 	# The audit script self-throttles (24h interval), so calling every pulse is safe.
+	# Phase 14 may defer this if signals indicate it's not worth running.
 	local audit_script="${SCRIPT_DIR}/memory-audit-pulse.sh"
 	if [[ -x "$audit_script" ]]; then
-		log_verbose "  Phase 9: Memory audit pulse"
-		"$audit_script" run --quiet 2>>"$SUPERVISOR_LOG" || true
+		local _phase9_decision="${ROUTINE_DECISION_MEMORY_AUDIT:-run}"
+		if [[ "$_phase9_decision" == "run" ]]; then
+			log_verbose "  Phase 9: Memory audit pulse"
+			"$audit_script" run --quiet 2>>"$SUPERVISOR_LOG" || true
+			routine_record_run "memory_audit" -1 2>/dev/null || true
+		else
+			log_verbose "  Phase 9: Memory audit pulse skipped by Phase 14 (decision: ${_phase9_decision})"
+		fi
 	fi
 
 	# Phase 10: CodeRabbit daily pulse (t166.1)
 	# Triggers a full codebase review via CodeRabbit CLI or GitHub API.
 	# The pulse script self-throttles (24h cooldown), so calling every pulse is safe.
+	# Phase 14 may defer this if 3+ consecutive zero-findings days or critical issues open.
 	local coderabbit_pulse_script="${SCRIPT_DIR}/coderabbit-pulse-helper.sh"
 	if [[ -x "$coderabbit_pulse_script" ]]; then
-		log_verbose "  Phase 10: CodeRabbit daily pulse"
-		local pulse_repo=""
-		pulse_repo=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks LIMIT 1;" 2>/dev/null || echo "")
-		if [[ -z "$pulse_repo" ]]; then
-			pulse_repo="$(pwd)"
+		local _phase10_decision="${ROUTINE_DECISION_CODERABBIT:-run}"
+		if [[ "$_phase10_decision" == "run" ]]; then
+			log_verbose "  Phase 10: CodeRabbit daily pulse"
+			local pulse_repo=""
+			pulse_repo=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks LIMIT 1;" 2>/dev/null || echo "")
+			if [[ -z "$pulse_repo" ]]; then
+				pulse_repo="$(pwd)"
+			fi
+			bash "$coderabbit_pulse_script" run --repo "$pulse_repo" --quiet 2>>"$SUPERVISOR_LOG" || true
+			routine_record_run "coderabbit" -1 2>/dev/null || true
+		else
+			log_verbose "  Phase 10: CodeRabbit pulse skipped by Phase 14 (decision: ${_phase10_decision})"
 		fi
-		bash "$coderabbit_pulse_script" run --repo "$pulse_repo" --quiet 2>>"$SUPERVISOR_LOG" || true
 	fi
 
 	# Phase 10b: Auto-create TODO tasks from quality findings (t299, t1032.5)
@@ -1537,7 +1560,7 @@ RULES:
 	# (CodeRabbit, Codacy, SonarCloud, CodeFactor) via code-audit-helper.sh, then
 	# creates tasks via audit-task-creator-helper.sh. Falls back to CodeRabbit-only
 	# coderabbit-task-creator-helper.sh if the unified scripts are not yet available.
-	# Self-throttles with 24h cooldown.
+	# Self-throttles with 24h cooldown. Phase 14 may defer if consecutive empty runs.
 	local audit_collect_script="${SCRIPT_DIR}/code-audit-helper.sh"
 	local unified_task_creator="${SCRIPT_DIR}/audit-task-creator-helper.sh"
 	local legacy_task_creator="${SCRIPT_DIR}/coderabbit-task-creator-helper.sh"
@@ -1552,7 +1575,12 @@ RULES:
 	local task_creation_cooldown=86400 # 24 hours
 	if [[ -n "$task_creator_script" ]]; then
 		local should_run_task_creation=true
-		if [[ -f "$task_creation_cooldown_file" ]]; then
+		# Phase 14 intelligent scheduling check
+		local _phase10b_decision="${ROUTINE_DECISION_TASK_CREATION:-run}"
+		if [[ "$_phase10b_decision" != "run" ]]; then
+			should_run_task_creation=false
+			log_verbose "  Phase 10b: Task creation skipped by Phase 14 (decision: ${_phase10b_decision})"
+		elif [[ -f "$task_creation_cooldown_file" ]]; then
 			local last_run
 			last_run=$(cat "$task_creation_cooldown_file" 2>/dev/null || echo "0")
 			local now
@@ -1759,6 +1787,7 @@ RULES:
 	# Phase 12: Regenerate MODELS.md leaderboard (t1012)
 	# Throttled to once per hour — only regenerates when pattern data may have changed.
 	# Iterates over known repos and updates MODELS.md in each repo root.
+	# Phase 14 may defer this when critical issues are open (cosmetic update).
 	local models_md_interval=3600 # seconds (1 hour)
 	local models_md_stamp="$SUPERVISOR_DIR/models-md-last-regen"
 	local models_md_now
@@ -1768,7 +1797,10 @@ RULES:
 		models_md_last=$(cat "$models_md_stamp" 2>/dev/null || echo 0)
 	fi
 	local models_md_elapsed=$((models_md_now - models_md_last))
-	if [[ "$models_md_elapsed" -ge "$models_md_interval" ]]; then
+	local _phase12_decision="${ROUTINE_DECISION_MODELS_MD:-run}"
+	if [[ "$_phase12_decision" != "run" ]]; then
+		log_verbose "  Phase 12: MODELS.md regen skipped by Phase 14 (decision: ${_phase12_decision})"
+	elif [[ "$models_md_elapsed" -ge "$models_md_interval" ]]; then
 		local generate_script="${SCRIPT_DIR}/generate-models-md.sh"
 		if [[ -x "$generate_script" ]]; then
 			local models_repos
@@ -1807,6 +1839,7 @@ RULES:
 	# Only runs for repos where the authenticated user has write/admin permission,
 	# ensuring PRs are only created where the user is a maintainer.
 	# Batch mode: SUPERVISOR_SKILL_UPDATE_BATCH_MODE (one-per-skill|single-pr, default: one-per-skill)
+	# Phase 14 may defer this when failure rate is high or critical issues are open.
 	local skill_update_pr_enabled="${SUPERVISOR_SKILL_UPDATE_PR:-false}"
 	if [[ "$skill_update_pr_enabled" == "true" ]]; then
 		local skill_update_interval="${SUPERVISOR_SKILL_UPDATE_INTERVAL:-86400}" # seconds (24h default)
@@ -1818,7 +1851,10 @@ RULES:
 			skill_update_last=$(cat "$skill_update_stamp" 2>/dev/null || echo 0)
 		fi
 		local skill_update_elapsed=$((skill_update_now - ${skill_update_last:-0}))
-		if [[ "$skill_update_elapsed" -ge "$skill_update_interval" ]]; then
+		local _phase13_decision="${ROUTINE_DECISION_SKILL_UPDATE:-run}"
+		if [[ "$_phase13_decision" != "run" ]]; then
+			log_verbose "  Phase 13: Skill update PR skipped by Phase 14 (decision: ${_phase13_decision})"
+		elif [[ "$skill_update_elapsed" -ge "$skill_update_interval" ]]; then
 			local skill_update_script="${SCRIPT_DIR}/skill-update-helper.sh"
 			if [[ -x "$skill_update_script" ]]; then
 				# Determine the repo root to check maintainer permission
