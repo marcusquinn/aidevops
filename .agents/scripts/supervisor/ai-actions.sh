@@ -111,7 +111,10 @@ execute_action_plan() {
 		if ! validate_action_type "$action_type"; then
 			log_warn "AI Actions: skipping invalid action type '$action_type'"
 			skipped=$((skipped + 1))
-			results=$(printf '%s' "$results" | jq ". + [{\"index\":$i,\"type\":\"$action_type\",\"status\":\"skipped\",\"reason\":\"invalid_action_type\"}]")
+			results=$(printf '%s' "$results" | jq \
+				--argjson idx "$i" \
+				--arg type "$action_type" \
+				'. + [{"index": $idx, "type": $type, "status": "skipped", "reason": "invalid_action_type"}]')
 			{
 				echo "## Action $((i + 1)): $action_type — SKIPPED (invalid type)"
 				echo ""
@@ -125,9 +128,11 @@ execute_action_plan() {
 		if [[ -n "$validation_error" ]]; then
 			log_warn "AI Actions: skipping $action_type — $validation_error"
 			skipped=$((skipped + 1))
-			local escaped_reason
-			escaped_reason=$(printf '%s' "$validation_error" | jq -Rs '.')
-			results=$(printf '%s' "$results" | jq ". + [{\"index\":$i,\"type\":\"$action_type\",\"status\":\"skipped\",\"reason\":$escaped_reason}]")
+			results=$(printf '%s' "$results" | jq \
+				--argjson idx "$i" \
+				--arg type "$action_type" \
+				--arg reason "$validation_error" \
+				'. + [{"index": $idx, "type": $type, "status": "skipped", "reason": $reason}]')
 			{
 				echo "## Action $((i + 1)): $action_type — SKIPPED ($validation_error)"
 				echo ""
@@ -139,7 +144,10 @@ execute_action_plan() {
 		if [[ "$mode" == "validate-only" ]]; then
 			log_info "AI Actions: [$((i + 1))/$action_count] $action_type — validated"
 			skipped=$((skipped + 1))
-			results=$(printf '%s' "$results" | jq ". + [{\"index\":$i,\"type\":\"$action_type\",\"status\":\"validated\"}]")
+			results=$(printf '%s' "$results" | jq \
+				--argjson idx "$i" \
+				--arg type "$action_type" \
+				'. + [{"index": $idx, "type": $type, "status": "validated"}]')
 			{
 				echo "## Action $((i + 1)): $action_type — VALIDATED"
 				echo "Reasoning: $reasoning"
@@ -151,7 +159,10 @@ execute_action_plan() {
 		if [[ "$mode" == "dry-run" || "$AI_ACTIONS_DRY_RUN" == "true" ]]; then
 			log_info "AI Actions: [$((i + 1))/$action_count] $action_type — dry-run"
 			executed=$((executed + 1))
-			results=$(printf '%s' "$results" | jq ". + [{\"index\":$i,\"type\":\"$action_type\",\"status\":\"dry_run\"}]")
+			results=$(printf '%s' "$results" | jq \
+				--argjson idx "$i" \
+				--arg type "$action_type" \
+				'. + [{"index": $idx, "type": $type, "status": "dry_run"}]')
 			{
 				echo "## Action $((i + 1)): $action_type — DRY RUN"
 				echo "Reasoning: $reasoning"
@@ -175,20 +186,26 @@ execute_action_plan() {
 		local exec_result_json
 		exec_result_json=$(printf '%s' "$exec_result" | grep -E '^\{' | tail -1)
 		if [[ -z "$exec_result_json" ]] || ! printf '%s' "$exec_result_json" | jq '.' &>/dev/null; then
-			# Not valid JSON — escape the entire result as a string
-			exec_result_json=$(printf '%s' "$exec_result" | jq -Rs '.')
+			# Not valid JSON — wrap the entire result as a JSON string value
+			exec_result_json=$(jq -Rn --arg v "$exec_result" '$v')
 		fi
 
 		if [[ $exec_rc -eq 0 ]]; then
 			executed=$((executed + 1))
 			log_info "AI Actions: [$((i + 1))/$action_count] $action_type — success"
-			results=$(printf '%s' "$results" | jq --argjson r "$exec_result_json" ". + [{\"index\":$i,\"type\":\"$action_type\",\"status\":\"executed\",\"result\":\$r}]")
+			results=$(printf '%s' "$results" | jq \
+				--argjson idx "$i" \
+				--arg type "$action_type" \
+				--argjson r "$exec_result_json" \
+				'. + [{"index": $idx, "type": $type, "status": "executed", "result": $r}]')
 		else
 			failed=$((failed + 1))
 			log_warn "AI Actions: [$((i + 1))/$action_count] $action_type — failed"
-			local escaped_result
-			escaped_result=$(printf '%s' "$exec_result" | jq -Rs '.')
-			results=$(printf '%s' "$results" | jq --argjson e "$escaped_result" ". + [{\"index\":$i,\"type\":\"$action_type\",\"status\":\"failed\",\"error\":\$e}]")
+			results=$(printf '%s' "$results" | jq \
+				--argjson idx "$i" \
+				--arg type "$action_type" \
+				--arg error "$exec_result" \
+				'. + [{"index": $idx, "type": $type, "status": "failed", "error": $error}]')
 		fi
 
 		{
@@ -542,7 +559,8 @@ _exec_create_task() {
 		commit_and_push_todo "$repo_path" "chore: AI supervisor created task $task_id" >>"$SUPERVISOR_LOG" 2>&1 || true
 	fi
 
-	echo "{\"created\":true,\"task_id\":\"$task_id\",\"title\":$(printf '%s' "$title" | jq -Rs '.')}"
+	jq -n --arg task_id "$task_id" --arg title "$title" \
+		'{"created": true, "task_id": $task_id, "title": $title}'
 	return 0
 }
 
@@ -963,7 +981,8 @@ _exec_create_improvement() {
 		commit_and_push_todo "$repo_path" "chore: AI supervisor created improvement task $task_id" >>"$SUPERVISOR_LOG" 2>&1 || true
 	fi
 
-	echo "{\"created\":true,\"task_id\":\"$task_id\",\"title\":$(printf '%s' "$title" | jq -Rs '.'),\"category\":\"$category\"}"
+	jq -n --arg task_id "$task_id" --arg title "$title" --arg category "$category" \
+		'{"created": true, "task_id": $task_id, "title": $title, "category": $category}'
 	return 0
 }
 
