@@ -499,9 +499,13 @@ extract_action_plan() {
 
 #######################################
 # Check if AI reasoning should run this pulse
-# Based on interval configuration and last run timestamp
+# Uses natural guards instead of artificial pulse counting:
+#   1. SUPERVISOR_AI_ENABLED master switch
+#   2. has_actionable_work() pre-flight (skip if nothing to reason about)
+#   3. Time-based cooldown (SUPERVISOR_AI_COOLDOWN, default 300s = 5 min)
 # Arguments:
-#   $1 - (optional) force: "true" to skip interval check
+#   $1 - (optional) force: "true" to skip cooldown check
+#   $2 - (optional) repo_path
 # Returns:
 #   0 if should run, 1 if should skip
 #######################################
@@ -524,8 +528,8 @@ should_run_ai_reasoning() {
 		return 1
 	fi
 
-	# Check interval (default: 15 pulses = ~30 minutes)
-	local interval="${SUPERVISOR_AI_INTERVAL:-15}"
+	# Time-based cooldown (default: 300 seconds = 5 minutes)
+	local cooldown="${SUPERVISOR_AI_COOLDOWN:-300}"
 
 	# Get last AI run timestamp
 	local last_run
@@ -540,15 +544,14 @@ should_run_ai_reasoning() {
 		return 0
 	fi
 
-	# Check if enough time has passed (interval * 2 minutes)
-	local interval_seconds=$((interval * 120))
+	# Check if enough time has passed since last completion
 	local last_epoch now_epoch
 	last_epoch=$(date -j -f "%Y-%m-%d %H:%M:%S" "$last_run" "+%s" 2>/dev/null || date -d "$last_run" "+%s" 2>/dev/null || echo 0)
 	now_epoch=$(date "+%s")
 	local elapsed=$((now_epoch - last_epoch))
 
-	if [[ "$elapsed" -lt "$interval_seconds" ]]; then
-		log_verbose "AI Reasoning: cooldown (${elapsed}s / ${interval_seconds}s)"
+	if [[ "$elapsed" -lt "$cooldown" ]]; then
+		log_verbose "AI Reasoning: cooldown (${elapsed}s / ${cooldown}s)"
 		return 1
 	fi
 
