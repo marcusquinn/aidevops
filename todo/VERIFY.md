@@ -1210,3 +1210,10 @@
   check: file-exists .agents/scripts/supervisor/ai-context.sh
   check: shellcheck .agents/scripts/supervisor/ai-reason.sh
   check: file-exists .agents/scripts/supervisor/ai-reason.sh
+
+- [ ] v142 t1149 Add model tier cost-efficiency check to supervisor dispat... | PR #1769 | merged:2026-02-18
+  files: .agents/scripts/pattern-tracker-helper.sh, .agents/scripts/supervisor/dispatch.sh
+  check: shellcheck .agents/scripts/pattern-tracker-helper.sh
+  check: file-exists .agents/scripts/pattern-tracker-helper.sh
+  check: shellcheck .agents/scripts/supervisor/dispatch.sh
+  check: file-exists .agents/scripts/supervisor/dispatch.sh
