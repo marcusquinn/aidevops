@@ -1472,3 +1472,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 =======
 - [ ] t1101 Verify and close t1081 parent task — all subtasks verified #chore #auto-dispatch ~15m model:sonnet — t1081 subtasks t1081.1-t1081.4 are all verified with merged PRs in the last 24h. Review whether the parent task t1081 ('Daily skill auto-update pipeline') is fully satisfied by these subtasks or if additional integration work is needed. If complete: mark t1081 [x] with proper proof-log referencing the subtask PRs. This unblocks t1082 ('Maintainer skill-update PR pipeline'). assignee:marcusquinn started:2026-02-18T14:38:17Z
 >>>>>>> Stashed changes
+
+- [ ] t1102 Mark t1079 verified and close — scripts already have set -euo pipefail #chore #auto-dispatch ~10m model:sonnet — t1079 is still open in TODO.md but investigation on GH#1572 confirmed all 8 scripts already have `set -euo pipefail`. Mark t1079 `[x]` with `verified:2026-02-18` proof-log. No PR needed since no code change was required.
