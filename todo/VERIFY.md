@@ -934,7 +934,7 @@
   check: shellcheck .agents/scripts/skill-update-helper.sh
   check: file-exists .agents/scripts/skill-update-helper.sh
 
-- [ ] v113 t1083 Update model references for Claude Sonnet 4.6 — Anthrop... | PR #1594 | merged:2026-02-18
+- [!] v113 t1083 Update model references for Claude Sonnet 4.6 — Anthrop... | PR #1594 | merged:2026-02-18 failed:2026-02-18 reason:rg: "fallback-chains" not found in .agents/subagent-index.toon; rg: "opencode-github" not found in .agents/subagent-index.toon; rg: "opencode-gitlab" not found in .agents/subagent-index.toon; rg: "
   files: .agents/configs/fallback-chain-config.json.txt, .agents/scripts/agent-test-helper.sh, .agents/scripts/contest-helper.sh, .agents/scripts/cron-dispatch.sh, .agents/scripts/cron-helper.sh, .agents/scripts/document-extraction-helper.sh, .agents/scripts/fallback-chain-helper.sh, .agents/scripts/generate-opencode-agents.sh, .agents/scripts/model-availability-helper.sh, .agents/scripts/model-label-helper.sh, .agents/scripts/model-registry-helper.sh, .agents/scripts/objective-runner-helper.sh, .agents/scripts/opencode-github-setup-helper.sh, .agents/scripts/pipecat-helper.sh, .agents/scripts/runner-helper.sh, .agents/scripts/shared-constants.sh, .agents/scripts/supervisor/dispatch.sh, .agents/services/hosting/cloudflare-platform/references/ai-gateway/README.md, .agents/subagent-index.toon, .agents/tools/ai-assistants/fallback-chains.md, .agents/tools/ai-assistants/headless-dispatch.md, .agents/tools/ai-assistants/models/README.md, .agents/tools/ai-assistants/models/opus.md, .agents/tools/ai-assistants/models/pro.md, .agents/tools/ai-assistants/models/sonnet.md, .agents/tools/ai-assistants/opencode-server.md, .agents/tools/automation/cron-agent.md, .agents/tools/build-agent/agent-testing.md, .agents/tools/content/summarize.md, .agents/tools/context/model-routing.md, .agents/tools/git/opencode-github.md, .agents/tools/git/opencode-gitlab.md, .agents/tools/opencode/opencode-anthropic-auth.md, .agents/tools/opencode/opencode.md, .agents/tools/vision/image-understanding.md, .agents/tools/voice/pipecat-opencode.md, .opencode/lib/ai-research.ts, configs/mcp-templates/opencode-github-workflow.yml, tests/test-batch-quality-hardening.sh
   check: file-exists .agents/configs/fallback-chain-config.json.txt
   check: shellcheck .agents/scripts/agent-test-helper.sh
@@ -1010,3 +1010,8 @@
   check: rg "opencode" .agents/subagent-index.toon
   check: rg "image-understanding" .agents/subagent-index.toon
   check: rg "pipecat-opencode" .agents/subagent-index.toon
+
+- [ ] v114 t1084 Fix auto-update-helper.sh CodeRabbit feedback from PR #15... | PR #1597 | merged:2026-02-18
+  files: .agents/scripts/auto-update-helper.sh
+  check: shellcheck .agents/scripts/auto-update-helper.sh
+  check: file-exists .agents/scripts/auto-update-helper.sh
