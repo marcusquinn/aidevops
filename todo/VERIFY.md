@@ -1056,9 +1056,18 @@
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
 
-- [ ] v121 t1085.5 Pulse integration + scheduling — wire Phase 13 into pul... | PR #1617 | merged:2026-02-18
+- [x] v121 t1085.5 Pulse integration + scheduling — wire Phase 13 into pul... | PR #1617 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/supervisor-helper.sh, .agents/scripts/supervisor/pulse.sh
   check: shellcheck .agents/scripts/supervisor-helper.sh
   check: file-exists .agents/scripts/supervisor-helper.sh
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
+
+- [ ] v122 t1085.6 Issue audit capabilities — closed issue audit (48h, ver... | PR #1627 | merged:2026-02-18
+  files: .agents/scripts/supervisor-helper.sh, .agents/scripts/supervisor/ai-context.sh, .agents/scripts/supervisor/issue-audit.sh
+  check: shellcheck .agents/scripts/supervisor-helper.sh
+  check: file-exists .agents/scripts/supervisor-helper.sh
+  check: shellcheck .agents/scripts/supervisor/ai-context.sh
+  check: file-exists .agents/scripts/supervisor/ai-context.sh
+  check: shellcheck .agents/scripts/supervisor/issue-audit.sh
+  check: file-exists .agents/scripts/supervisor/issue-audit.sh
