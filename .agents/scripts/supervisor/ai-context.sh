@@ -62,6 +62,11 @@ build_ai_context() {
 	# Section 8: Queue Health Metrics
 	context+="$(build_health_context)\n\n"
 
+	# Section 9: Issue Audit Findings (full scope only, t1085.6)
+	if [[ "$scope" == "full" ]]; then
+		context+="$(build_audit_context "$repo_path")\n\n"
+	fi
+
 	printf '%b' "$context"
 	return 0
 }
@@ -557,6 +562,97 @@ build_health_context() {
 	output+="| Currently queued | $queued_count |\n"
 	output+="| Currently blocked | $blocked_count |\n"
 	output+="| Avg retries (7d) | ${avg_retries:-0} |\n"
+
+	printf '%b' "$output"
+	return 0
+}
+
+#######################################
+# Section 9: Issue Audit Findings (t1085.6)
+# Runs the four audit checks and formats findings for AI context.
+# Only includes findings with medium+ severity to conserve tokens.
+#######################################
+build_audit_context() {
+	local repo_path="$1"
+
+	local output="## Issue Audit Findings\n\n"
+
+	# Check if audit functions are available (sourced from issue-audit.sh)
+	if ! declare -f run_full_audit &>/dev/null; then
+		output+="_Audit module not loaded_\n"
+		printf '%b' "$output"
+		return 0
+	fi
+
+	local audit_json=""
+	audit_json=$(run_full_audit "$repo_path" 2>/dev/null || echo '{"summary":{"total_findings":0}}')
+
+	local total=""
+	total=$(printf '%s' "$audit_json" | jq -r '.summary.total_findings' 2>/dev/null || echo "0")
+
+	if [[ "$total" -eq 0 ]]; then
+		output+="_No audit findings — all clear_\n"
+		printf '%b' "$output"
+		return 0
+	fi
+
+	local high=""
+	high=$(printf '%s' "$audit_json" | jq -r '.summary.by_severity.high' 2>/dev/null || echo "0")
+	local medium=""
+	medium=$(printf '%s' "$audit_json" | jq -r '.summary.by_severity.medium' 2>/dev/null || echo "0")
+
+	output+="**Total**: $total findings (high: $high, medium: $medium)\n\n"
+
+	# Include high-severity findings in detail
+	if [[ "$high" -gt 0 ]]; then
+		output+="### High Severity\n\n"
+		local high_findings=""
+		high_findings=$(printf '%s' "$audit_json" | jq -c '
+			[.closed_issues[], .stale_issues[], .orphan_prs[], .blocked_tasks[]]
+			| map(select(.severity == "high"))
+			| .[:10]' 2>/dev/null || echo "[]")
+
+		while IFS= read -r finding; do
+			local source=""
+			source=$(printf '%s' "$finding" | jq -r '.source' 2>/dev/null || echo "")
+			local desc=""
+			case "$source" in
+			closed_issue_audit)
+				desc=$(printf '%s' "$finding" | jq -r '"Issue #\(.issue_number) (\(.task_id)): \(.issues | join(", ")). Action: \(.suggested_action)"' 2>/dev/null || echo "")
+				;;
+			stale_issue_audit)
+				desc=$(printf '%s' "$finding" | jq -r '"Issue #\(.issue_number) (\(.task_id)): stale \(.stale_days)d, todo:\(.todo_status). Action: \(.suggested_action)"' 2>/dev/null || echo "")
+				;;
+			orphan_pr_audit)
+				desc=$(printf '%s' "$finding" | jq -r '"PR #\(.pr_number) (\(.task_id)): \(.issues | join(", ")), age \(.pr_age_days)d. Action: \(.suggested_action)"' 2>/dev/null || echo "")
+				;;
+			blocked_task_audit)
+				desc=$(printf '%s' "$finding" | jq -r '"\(.task_id): blocked \(.blocked_hours)h by \(.blocked_by), resolved \(.blockers_resolved)/\(.blockers_total). Action: \(.suggested_action)"' 2>/dev/null || echo "")
+				;;
+			esac
+			if [[ -n "$desc" ]]; then
+				output+="- $desc\n"
+			fi
+		done < <(printf '%s' "$high_findings" | jq -c '.[]' 2>/dev/null || true)
+		output+="\n"
+	fi
+
+	# Include medium-severity summary (counts only, to save tokens)
+	if [[ "$medium" -gt 0 ]]; then
+		output+="### Medium Severity ($medium findings)\n\n"
+		local med_by_source=""
+		med_by_source=$(printf '%s' "$audit_json" | jq -r '
+			[.closed_issues[], .stale_issues[], .orphan_prs[], .blocked_tasks[]]
+			| map(select(.severity == "medium"))
+			| group_by(.source)
+			| map({source: .[0].source, count: length})
+			| .[]
+			| "- \(.source): \(.count)"' 2>/dev/null || echo "")
+		if [[ -n "$med_by_source" ]]; then
+			output+="$med_by_source\n"
+		fi
+		output+="\n"
+	fi
 
 	printf '%b' "$output"
 	return 0

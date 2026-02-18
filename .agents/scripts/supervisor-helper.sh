@@ -214,6 +214,7 @@ source "${SUPERVISOR_MODULE_DIR}/todo-sync.sh"
 source "${SUPERVISOR_MODULE_DIR}/ai-context.sh"
 source "${SUPERVISOR_MODULE_DIR}/ai-reason.sh"
 source "${SUPERVISOR_MODULE_DIR}/ai-actions.sh"
+source "${SUPERVISOR_MODULE_DIR}/issue-audit.sh"
 
 # Valid states for the state machine
 # shellcheck disable=SC2034 # Used by supervisor/state.sh
