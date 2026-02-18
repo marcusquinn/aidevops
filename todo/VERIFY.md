@@ -1028,7 +1028,7 @@
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
 
-- [ ] v117 t1085.3 Action executor — implement validated action types: com... | PR #1612 | merged:2026-02-18
+- [x] v117 t1085.3 Action executor — implement validated action types: com... | PR #1612 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/supervisor-helper.sh, .agents/scripts/supervisor/ai-actions.sh, tests/test-ai-actions.sh
   check: shellcheck .agents/scripts/supervisor-helper.sh
   check: file-exists .agents/scripts/supervisor-helper.sh
@@ -1036,3 +1036,8 @@
   check: file-exists .agents/scripts/supervisor/ai-actions.sh
   check: shellcheck tests/test-ai-actions.sh
   check: file-exists tests/test-ai-actions.sh
+
+- [ ] v118 t1082.4 Add skill update PR template — conventional commit mess... | PR #1615 | merged:2026-02-18
+  files: .agents/scripts/skill-update-helper.sh
+  check: shellcheck .agents/scripts/skill-update-helper.sh
+  check: file-exists .agents/scripts/skill-update-helper.sh
