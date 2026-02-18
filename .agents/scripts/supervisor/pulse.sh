@@ -2009,13 +2009,13 @@ RULES:
 					[[ -n "$models_repo_path" && -d "$models_repo_path" ]] || continue
 					local models_repo_root
 					models_repo_root=$(git -C "$models_repo_path" rev-parse --show-toplevel 2>/dev/null) || continue
-					log_verbose "  Phase 12: Regenerating MODELS.md in $models_repo_root"
-					if "$generate_script" --output "${models_repo_root}/MODELS.md" --quiet 2>/dev/null; then
+					log_verbose "  Phase 12: Regenerating MODELS.md in $models_repo_root (per-repo filtered)"
+					if "$generate_script" --output "${models_repo_root}/MODELS.md" --repo-path "$models_repo_root" --quiet 2>/dev/null; then
 						if git -C "$models_repo_root" diff --quiet -- MODELS.md 2>/dev/null; then
 							log_verbose "  Phase 12: MODELS.md unchanged in $models_repo_root"
 						else
 							git -C "$models_repo_root" add MODELS.md 2>/dev/null &&
-								git -C "$models_repo_root" commit -m "chore: regenerate MODELS.md leaderboard (t1012)" --no-verify 2>/dev/null &&
+								git -C "$models_repo_root" commit -m "chore: regenerate MODELS.md leaderboard (t1012, t1129)" --no-verify 2>/dev/null &&
 								git -C "$models_repo_root" push 2>/dev/null &&
 								log_info "  Phase 12: MODELS.md updated and pushed ($models_repo_root)" ||
 								log_warn "  Phase 12: MODELS.md regenerated but commit/push failed ($models_repo_root)"
