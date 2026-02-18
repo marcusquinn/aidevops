@@ -1338,3 +1338,8 @@
   check: file-exists .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/tools/context/model-routing.md
   check: rg "model-routing" .agents/subagent-index.toon
+
+- [ ] v158 t1120.3 Add platform detection from git remote URL + multi-platfo... | PR #1815 | merged:2026-02-18
+  files: .agents/scripts/issue-sync-helper.sh
+  check: shellcheck .agents/scripts/issue-sync-helper.sh
+  check: file-exists .agents/scripts/issue-sync-helper.sh
