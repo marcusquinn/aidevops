@@ -1188,14 +1188,14 @@
   check: file-exists .agents/scripts/supervisor/pulse.sh
   check: file-exists MODELS.md
 
-- [ ] v139 t1139 Add supervisor DB consistency check — sync cancelled/ve... | PR #1735 | merged:2026-02-18
+- [x] v139 t1139 Add supervisor DB consistency check — sync cancelled/ve... | PR #1735 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/supervisor/pulse.sh, .agents/scripts/supervisor/todo-sync.sh
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
   check: shellcheck .agents/scripts/supervisor/todo-sync.sh
   check: file-exists .agents/scripts/supervisor/todo-sync.sh
 
-- [ ] v140 t1146 Add batch-task-creation capability to reduce worktree/PR ... | PR #1770 | merged:2026-02-18
+- [x] v140 t1146 Add batch-task-creation capability to reduce worktree/PR ... | PR #1770 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/batch-cleanup-helper.sh, .agents/scripts/supervisor-helper.sh, .agents/scripts/supervisor/cron.sh
   check: shellcheck .agents/scripts/batch-cleanup-helper.sh
   check: file-exists .agents/scripts/batch-cleanup-helper.sh
@@ -1204,16 +1204,24 @@
   check: shellcheck .agents/scripts/supervisor/cron.sh
   check: file-exists .agents/scripts/supervisor/cron.sh
 
-- [ ] v141 t1148 Add completed-task exclusion list to supervisor AI contex... | PR #1768 | merged:2026-02-18
+- [x] v141 t1148 Add completed-task exclusion list to supervisor AI contex... | PR #1768 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/supervisor/ai-context.sh, .agents/scripts/supervisor/ai-reason.sh
   check: shellcheck .agents/scripts/supervisor/ai-context.sh
   check: file-exists .agents/scripts/supervisor/ai-context.sh
   check: shellcheck .agents/scripts/supervisor/ai-reason.sh
   check: file-exists .agents/scripts/supervisor/ai-reason.sh
 
-- [ ] v142 t1149 Add model tier cost-efficiency check to supervisor dispat... | PR #1769 | merged:2026-02-18
+- [x] v142 t1149 Add model tier cost-efficiency check to supervisor dispat... | PR #1769 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/pattern-tracker-helper.sh, .agents/scripts/supervisor/dispatch.sh
   check: shellcheck .agents/scripts/pattern-tracker-helper.sh
   check: file-exists .agents/scripts/pattern-tracker-helper.sh
   check: shellcheck .agents/scripts/supervisor/dispatch.sh
   check: file-exists .agents/scripts/supervisor/dispatch.sh
+
+- [ ] v143 t1138 Add cycle-level action dedup to prevent repeated actions ... | PR #1736 | merged:2026-02-18
+  files: .agents/scripts/supervisor/ai-actions.sh, .agents/scripts/supervisor/database.sh, MODELS.md
+  check: shellcheck .agents/scripts/supervisor/ai-actions.sh
+  check: file-exists .agents/scripts/supervisor/ai-actions.sh
+  check: shellcheck .agents/scripts/supervisor/database.sh
+  check: file-exists .agents/scripts/supervisor/database.sh
+  check: file-exists MODELS.md
