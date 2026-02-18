@@ -687,6 +687,19 @@ cmd_pulse() {
 		fi
 	fi
 
+	# Phase 3a: Adopt untracked PRs into the supervisor pipeline
+	# Scans open PRs for each tracked repo and adopts any that:
+	#   1. Have a task ID in the title (tNNN: description)
+	#   2. Are not already tracked in the supervisor DB
+	#   3. Have a matching open task in TODO.md
+	# Adopted PRs get a DB entry with status=complete so Phase 3 processes them
+	# through the normal review → merge → verify lifecycle.
+	# This closes the gap where interactive sessions create PRs that the
+	# supervisor can't manage (review, merge, verify, clean up).
+	if command -v gh &>/dev/null; then
+		adopt_untracked_prs 2>>"$SUPERVISOR_LOG" || true
+	fi
+
 	# Phase 3: Post-PR lifecycle (t128.8)
 	# Process tasks that workers completed (PR created) but still need merge/deploy
 	# t265: Redirect stderr to log and capture errors before || true suppresses them
@@ -2166,6 +2179,176 @@ RULES:
 	release_pulse_lock
 	# Reset trap to avoid interfering with other commands in the same process
 	trap - EXIT INT TERM
+
+	return 0
+}
+
+#######################################
+# Phase 3a: Adopt untracked PRs into the supervisor pipeline
+# Scans open PRs for each tracked repo and creates DB entries for any
+# that have a task ID in the title but aren't tracked in the supervisor DB.
+# This allows PRs created in interactive sessions to be managed by the
+# supervisor (review, merge, verify, clean up) without manual registration.
+#
+# Adoption criteria:
+#   1. PR title matches pattern: tNNN: description (or tNNN.N: description)
+#   2. No task in the DB already has this PR URL
+#   3. The task ID exists as an open task in TODO.md
+#   4. The task is not already in the DB (avoids duplicating worker tasks)
+#
+# Adopted tasks enter the DB with status=complete and the PR URL, so
+# Phase 3 picks them up through the normal lifecycle.
+#######################################
+adopt_untracked_prs() {
+	ensure_db
+
+	# Collect all unique repos from the DB
+	local repos
+	repos=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks WHERE repo IS NOT NULL AND repo != '';" 2>/dev/null || echo "")
+
+	if [[ -z "$repos" ]]; then
+		return 0
+	fi
+
+	local adopted_count=0
+
+	while IFS= read -r repo_path; do
+		[[ -z "$repo_path" || ! -d "$repo_path" ]] && continue
+
+		# Get repo slug for gh CLI
+		local repo_slug
+		repo_slug=$(detect_repo_slug "$repo_path" 2>/dev/null || echo "")
+		if [[ -z "$repo_slug" ]]; then
+			continue
+		fi
+
+		# List open PRs (limit to 20 to avoid API rate limits)
+		local open_prs
+		open_prs=$(gh pr list --repo "$repo_slug" --state open --limit 20 \
+			--json number,title,url 2>/dev/null || echo "[]")
+
+		local pr_count
+		pr_count=$(printf '%s' "$open_prs" | jq 'length' 2>/dev/null || echo 0)
+
+		local i=0
+		while [[ "$i" -lt "$pr_count" ]]; do
+			local pr_number pr_title pr_url
+			pr_number=$(printf '%s' "$open_prs" | jq -r ".[$i].number" 2>/dev/null || echo "")
+			pr_title=$(printf '%s' "$open_prs" | jq -r ".[$i].title" 2>/dev/null || echo "")
+			pr_url=$(printf '%s' "$open_prs" | jq -r ".[$i].url" 2>/dev/null || echo "")
+			i=$((i + 1))
+
+			# Extract task ID from PR title (pattern: tNNN: or tNNN.N:)
+			local task_id=""
+			if [[ "$pr_title" =~ ^(t[0-9]+(\.[0-9]+)?):\ .* ]]; then
+				task_id="${BASH_REMATCH[1]}"
+			fi
+
+			if [[ -z "$task_id" ]]; then
+				continue
+			fi
+
+			# Check if this PR is already tracked in the DB
+			local existing_pr
+			existing_pr=$(db "$SUPERVISOR_DB" "
+				SELECT id FROM tasks
+				WHERE pr_url = '$(sql_escape "$pr_url")'
+				LIMIT 1;
+			" 2>/dev/null || echo "")
+
+			if [[ -n "$existing_pr" ]]; then
+				continue
+			fi
+
+			# Check if this task ID is already in the DB (worker-dispatched)
+			local existing_task
+			existing_task=$(db "$SUPERVISOR_DB" "
+				SELECT id, status FROM tasks
+				WHERE id = '$(sql_escape "$task_id")'
+				LIMIT 1;
+			" 2>/dev/null || echo "")
+
+			if [[ -n "$existing_task" ]]; then
+				# Task exists but doesn't have this PR URL — link it
+				local existing_status
+				existing_status=$(echo "$existing_task" | cut -d'|' -f2)
+				# Only link if the task is in a state where a PR makes sense
+				if [[ "$existing_status" =~ ^(queued|running|evaluating|retrying|complete)$ ]]; then
+					db "$SUPERVISOR_DB" "
+						UPDATE tasks
+						SET pr_url = '$(sql_escape "$pr_url")',
+						    status = 'complete',
+						    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+						WHERE id = '$(sql_escape "$task_id")';
+					" 2>/dev/null || true
+					log_info "Phase 3a: Linked PR #$pr_number to existing task $task_id (was: $existing_status)"
+					adopted_count=$((adopted_count + 1))
+				fi
+				continue
+			fi
+
+			# Task not in DB — check if it exists in TODO.md
+			local todo_file="$repo_path/TODO.md"
+			if [[ ! -f "$todo_file" ]]; then
+				continue
+			fi
+
+			local todo_line
+			todo_line=$(grep -E "^[[:space:]]*- \[( |x|-)\] $task_id " "$todo_file" 2>/dev/null | head -1 || true)
+
+			if [[ -z "$todo_line" ]]; then
+				continue
+			fi
+
+			# Extract description from TODO.md
+			local description
+			description=$(echo "$todo_line" | sed -E 's/^[[:space:]]*- \[( |x|-)\] [^ ]* //' || true)
+
+			# Adopt: create a DB entry with status=complete and the PR URL
+			# Phase 3 will then process it through review → merge → verify
+			local batch_id_for_adopt=""
+			# Find the active batch for this repo to associate the task
+			batch_id_for_adopt=$(db "$SUPERVISOR_DB" "
+				SELECT b.id FROM batches b
+				WHERE b.status IN ('active', 'running')
+				ORDER BY b.created_at DESC
+				LIMIT 1;
+			" 2>/dev/null || echo "")
+
+			db "$SUPERVISOR_DB" "
+				INSERT INTO tasks (id, status, description, repo, pr_url, model, max_retries, created_at, updated_at)
+				VALUES (
+					'$(sql_escape "$task_id")',
+					'complete',
+					'$(sql_escape "$description")',
+					'$(sql_escape "$repo_path")',
+					'$(sql_escape "$pr_url")',
+					'interactive',
+					0,
+					strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+					strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+				);
+			" 2>/dev/null || {
+				log_warn "Phase 3a: Failed to insert task $task_id (may already exist)"
+				continue
+			}
+
+			# Associate with active batch if one exists
+			if [[ -n "$batch_id_for_adopt" ]]; then
+				db "$SUPERVISOR_DB" "
+					INSERT OR IGNORE INTO batch_tasks (batch_id, task_id)
+					VALUES ('$(sql_escape "$batch_id_for_adopt")', '$(sql_escape "$task_id")');
+				" 2>/dev/null || true
+			fi
+
+			log_success "Phase 3a: Adopted PR #$pr_number ($pr_url) as task $task_id"
+			adopted_count=$((adopted_count + 1))
+		done
+	done <<<"$repos"
+
+	if [[ "$adopted_count" -gt 0 ]]; then
+		log_info "Phase 3a: Adopted $adopted_count untracked PR(s)"
+	fi
 
 	return 0
 }
