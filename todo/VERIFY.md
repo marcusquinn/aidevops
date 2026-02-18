@@ -1148,6 +1148,17 @@
   check: shellcheck .agents/scripts/auto-update-helper.sh
   check: file-exists .agents/scripts/auto-update-helper.sh
 
-- [ ] v133 t1081.4 Update AGENTS.md and auto-update docs — document daily ... | PR #1639 | merged:2026-02-18
+- [x] v133 t1081.4 Update AGENTS.md and auto-update docs — document daily ... | PR #1639 | merged:2026-02-18 verified:2026-02-18
   files: .agents/AGENTS.md
   check: file-exists .agents/AGENTS.md
+
+- [ ] v134 t1096 Update evaluate.sh to capture richer metadata — after w... | PR #1632 | merged:2026-02-18
+  files: .agents/scripts/pattern-tracker-helper.sh, .agents/scripts/supervisor/evaluate.sh, .agents/scripts/supervisor/memory-integration.sh, .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/pattern-tracker-helper.sh
+  check: file-exists .agents/scripts/pattern-tracker-helper.sh
+  check: shellcheck .agents/scripts/supervisor/evaluate.sh
+  check: file-exists .agents/scripts/supervisor/evaluate.sh
+  check: shellcheck .agents/scripts/supervisor/memory-integration.sh
+  check: file-exists .agents/scripts/supervisor/memory-integration.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
