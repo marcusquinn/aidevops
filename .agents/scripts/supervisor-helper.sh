@@ -341,6 +341,7 @@ Usage:
   supervisor-helper.sh watch [--repo path]            Watch TODO.md for changes (fswatch)
   supervisor-helper.sh dashboard [--batch id] [--interval N] Live TUI dashboard
   supervisor-helper.sh queue-health [--batch id]     Update pinned queue health issue (t1013)
+  supervisor-helper.sh stale-gc-report [--days N] [--json]  Stale state GC metrics report (t1202)
   supervisor-helper.sh labels [--action X] [--model Y] [--json]  Query model usage labels (t1010)
   supervisor-helper.sh ai-pipeline [full|dry-run]    Run AI reasoning + action pipeline manually
   supervisor-helper.sh ai-status                     Show AI supervisor status and next-run countdown
@@ -724,6 +725,7 @@ main() {
 	watch) cmd_watch "$@" ;;
 	dashboard) cmd_dashboard "$@" ;;
 	queue-health) cmd_queue_health "$@" ;;
+	stale-gc-report) cmd_stale_gc_report "$@" ;;
 	recall) cmd_recall "$@" ;;
 	release) cmd_release "$@" ;;
 	retrospective) cmd_retrospective "$@" ;;
