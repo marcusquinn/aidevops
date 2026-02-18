@@ -115,6 +115,8 @@ Use `/save-todo` after planning. Auto-detects complexity:
 
 **Auto-dispatch**: Add `#auto-dispatch` to tasks that can run autonomously (clear spec, bounded scope, no user input needed). Default to including it — only omit when a specific exclusion applies. See `workflows/plans.md` "Auto-Dispatch Tagging" for full criteria. The supervisor's Phase 0 picks these up automatically every 2 minutes and auto-creates batches (`auto-YYYYMMDD-HHMMSS`, concurrency = cores/2, min 2) when no active batch exists.
 
+**Blocker statuses**: Add these tags to tasks that need human action before they can proceed. The supervisor's eligibility assessment detects them and skips dispatch: `account-needed`, `hosting-needed`, `login-needed`, `api-key-needed`, `clarification-needed`, `resources-needed`, `payment-needed`, `approval-needed`, `decision-needed`, `design-needed`, `content-needed`, `dns-needed`, `domain-needed`, `testing-needed`.
+
 **Working on #auto-dispatch tasks interactively** (t1062): When you start working on a task tagged with `#auto-dispatch`, immediately add `assignee:` to the TODO entry before pushing. This prevents the supervisor from racing and dispatching a worker for the same task. The supervisor's auto-pickup skips tasks with `assignee:` or `started:` fields.
 
 **Task completion rules** (CRITICAL - prevents false completion cascade):
