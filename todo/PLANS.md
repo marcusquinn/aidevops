@@ -73,17 +73,30 @@ Cron (*/2) → supervisor-helper.sh pulse
 
 **AI integration points today:** Only `evaluate.sh` uses AI (to assess worker output quality). Dispatch is purely mechanical. No phase reasons about what to do next.
 
+**Existing infrastructure to leverage (not reinvent):**
+- `memory-helper.sh` — cross-session learning, pattern storage, recall
+- `pattern-tracker-helper.sh` — success/failure rates by model tier, task type
+- `mail-helper.sh` — async inter-agent communication, status reports
+- `model-registry-helper.sh` / `fallback-chain-helper.sh` — model selection + fallback
+- `self-improve-helper.sh` — analyze → refine → test → pr pipeline for framework improvements
+
 **Target architecture:**
 
 ```text
 Cron (*/2) → supervisor-helper.sh pulse
   → Phases 0-12: (unchanged — mechanical state machine, fast, reliable)
-  → Phase 13: AI Supervisor Reasoning (NEW)
-      → Runs every N pulses (configurable, default: every 15th pulse = ~30min)
-      → Spawns an opus-tier AI session with full project context
-      → AI reviews: open issues, recent PRs, TODO.md, worker outcomes, patterns
-      → AI takes actions: comment on issues, create tasks, adjust priorities
-      → AI reports: reasoning log, decisions made, actions taken
+  → Phase 13: Skill update PR pipeline (t1082.2, opt-in, daily)
+  → Phase 14: AI Supervisor Reasoning (NEW)
+      → Pre-flight: has_actionable_work() — skip if nothing to reason about
+      → Concurrency: lock file prevents overlapping sessions
+      → Feedback: check mailbox for responses to previous actions
+      → Context: project snapshot + memory recall + pattern data
+      → Reasoning: opus-tier AI analyzes 7 areas (solvability, verification,
+        linkage, communication, priority, efficiency, self-improvement)
+      → Actions: execute validated actions, store decisions in memory,
+        record outcomes in pattern tracker, send results via mailbox
+      → Self-improvement: identify efficiency gaps, create tasks to fix them,
+        recommend model tier changes based on pattern data
 ```
 
 **Design principles:**
@@ -93,10 +106,12 @@ Cron (*/2) → supervisor-helper.sh pulse
 3. **Auditable** — every AI decision is logged with reasoning. The AI cannot silently change state.
 4. **Idempotent** — if the AI phase crashes or times out, the next pulse continues normally. No state corruption.
 5. **Progressive rollout** — start with read-only analysis (Phase 13a), then add write actions (Phase 13b) after validation.
+6. **Use existing infrastructure** — mailbox for inter-agent comms, memory for cross-session learning, pattern tracker for model selection. Don't reinvent what already works.
+7. **Self-improving** — the supervisor should identify efficiency gaps (token waste, model mismatches, repeated failures, missing automation) and create tasks to fix them.
 
 #### Phases
 
-**Phase 1: AI Supervisor Context Builder (t1085.1) ~2h**
+**Phase 1: AI Supervisor Context Builder (t1085.1) ~2h** [DONE - PR #1607]
 
 Create `supervisor/ai-context.sh` module that assembles a comprehensive project snapshot for the AI:
 
@@ -104,40 +119,55 @@ Create `supervisor/ai-context.sh` module that assembles a comprehensive project 
 - Recent PRs (last 48h: state, reviews, CI status, merge status)
 - TODO.md state (open tasks, blocked tasks, stale tasks)
 - Supervisor DB state (running workers, recent completions, failure patterns)
-- Recent memory entries (last 24h)
-- Pattern tracker data (success/failure rates by model tier)
+- Recent memory entries (last 24h) — via `memory-helper.sh recall --recent`
+- Pattern tracker data (success/failure rates by model tier) — via `pattern-tracker-helper.sh stats`
 - Queue health metrics
 
 Output: a structured markdown document (< 50K tokens) that gives the AI full situational awareness.
 
-**Phase 2: AI Supervisor Reasoning Engine (t1085.2) ~3h**
+**Integration note (updated 2026-02-18):** Context builder should use existing `memory-helper.sh recall` and `pattern-tracker-helper.sh` rather than raw SQL where possible. This ensures the AI sees the same data format that workers and interactive sessions use, and benefits from any future improvements to those tools.
+
+**Phase 2: AI Supervisor Reasoning Engine (t1085.2) ~3h** [DONE - PR #1609, efficiency guards PR #1611]
 
 Create `supervisor/ai-reason.sh` module that:
 
 1. Builds context via Phase 1
 2. Spawns an AI session (opus tier) with a carefully crafted system prompt
-3. The AI reasons about 5 key questions:
+3. The AI reasons about 7 key areas:
    - **Solvability**: Which open issues can be broken into dispatchable tasks?
    - **Verification**: Have recently closed issues/PRs been properly verified?
    - **Linkage**: Do all closed issues have linked PRs with real deliverables?
    - **Communication**: Should any issues get a comment (acknowledgement, status, clarification request)?
    - **Priority**: What should be worked on next and why?
+   - **Efficiency**: Are tokens being wasted? Are models correctly sized for tasks? Are there repeated failures that indicate a systemic issue?
+   - **Self-improvement**: What automation gaps, missing tests, or process inefficiencies could be fixed to reduce future manual intervention?
 4. AI outputs a structured action plan (JSON)
 5. Module validates and executes approved actions
 
-**Phase 3: Action Executor (t1085.3) ~2h**
+Efficiency guards added: `has_actionable_work()` pre-flight skips opus session when nothing needs attention. Lock file prevents overlapping sessions.
+
+**Phase 3: Action Executor (t1085.3) ~3h**
 
 Implement the action types the AI can request:
 
 - `comment_on_issue(issue_number, body)` — post a comment on a GitHub issue
-- `create_task(title, description, tags, estimate)` — add to TODO.md via claim-task-id.sh
+- `create_task(title, description, tags, estimate, model)` — add to TODO.md via claim-task-id.sh, with correct model tier
 - `create_subtasks(parent_id, subtasks[])` — break down an issue into subtasks
 - `flag_for_review(issue_number, reason)` — add label + comment requesting human review
 - `adjust_priority(task_id, reason)` — reorder in TODO.md
 - `close_verified(issue_number, evidence)` — close with proof (only if PR merged + verified)
 - `request_info(issue_number, questions[])` — comment asking for clarification
+- `create_improvement(title, description, category)` — NEW: create self-improvement tasks (categories: efficiency, automation, testing, documentation, model-routing)
+- `escalate_model(task_id, from_tier, to_tier, reason)` — NEW: recommend model tier change for a task that's failing or underperforming at current tier
 
 Each action is validated before execution (e.g., close_verified checks PR merge status).
+
+**Integration with existing infrastructure (updated 2026-02-18):**
+
+- **Memory**: After executing actions, store decisions via `memory-helper.sh store --auto` so future reasoning cycles have continuity. Key memories: "Commented on issue #X about Y", "Created task tNNN for Z", "Escalated task tNNN from sonnet to opus because W".
+- **Pattern tracker**: Record action outcomes via `pattern-tracker-helper.sh record`. When a created task succeeds/fails, the pattern feeds back into future model tier recommendations.
+- **Mailbox**: Action results are sent via `mail-helper.sh send` to the `ai-supervisor` agent inbox. The next reasoning cycle checks inbox for feedback on previous actions (did the comment get a response? did the created task succeed?). Workers dispatched by the AI supervisor send status reports back through the existing mailbox system.
+- **Model routing**: `create_task` and `create_improvement` actions use `pattern-tracker-helper.sh recommend` to select the optimal model tier based on historical data, not just hardcoded defaults. `escalate_model` updates the TODO.md entry and records the escalation pattern for future learning.
 
 **Phase 4: Subtask Auto-Dispatch Enhancement (t1085.4) ~1h**
 
@@ -148,16 +178,18 @@ Fix the current gap where subtasks of `#auto-dispatch` parents aren't independen
 - Propagate model tier from parent to subtasks if not specified
 - This immediately unblocks t1081.1-t1081.4 and t1082.1-t1082.4
 
-**Phase 5: Pulse Integration + Scheduling (t1085.5) ~1h**
+**Phase 5: Pulse Integration + Scheduling (t1085.5) ~2h**
 
-Wire Phase 13 into pulse.sh:
+Wire Phase 14 into pulse.sh (Phase 13 is now skill update PRs from t1082.2):
 
 - Add `SUPERVISOR_AI_INTERVAL` config (default: 15 pulses = ~30min)
 - Track last AI run timestamp in DB
-- Skip if within cooldown
+- Skip if within cooldown or `has_actionable_work()` returns false
 - Run after all mechanical phases complete
 - Log AI reasoning and actions to dedicated log file
 - Add `supervisor-helper.sh ai-status` command for monitoring
+- **Feedback loop**: Before reasoning, check mailbox for responses to previous actions (`mail-helper.sh check --agent ai-supervisor`). Include unread messages in the context so the AI knows what happened since last cycle.
+- **Memory recall**: Include `memory-helper.sh recall "ai supervisor reasoning"` in context to give the AI continuity across cycles (what did it decide last time? what worked?)
 
 **Phase 6: Issue Audit Capabilities (t1085.6) ~2h**
 
@@ -168,12 +200,16 @@ Specific AI-driven audits that run as part of Phase 13:
 - **Orphan PR detection**: PRs with no linked issue or TODO task
 - **Blocked task analysis**: Tasks blocked > 48h — can the blocker be resolved? Should the task be redesigned?
 
-**Phase 7: Testing + Validation (t1085.7) ~1h**
+**Phase 7: Testing + Validation (t1085.7) ~2h**
 
 - Dry-run mode: `supervisor-helper.sh ai-pulse --dry-run` shows what AI would do without executing
 - Mock context for testing without live GitHub API calls
 - Token budget tracking and cost reporting
 - Integration test: run against current repo state, verify reasonable output
+- Verify mailbox integration: actions produce messages, next cycle reads them
+- Verify memory integration: decisions are stored, recalled in next cycle
+- Verify pattern tracking: action outcomes feed back into model recommendations
+- Verify self-improvement: AI identifies at least one real efficiency gap in test run
 
 #### Decision Log
 
@@ -185,10 +221,17 @@ Specific AI-driven audits that run as part of Phase 13:
 | 2026-02-18 | Structured JSON action output, not free-form | Enables validation before execution. AI proposes, executor validates and acts. |
 | 2026-02-18 | Read-only first (Phase 13a), write actions later (Phase 13b) | Build trust in AI reasoning before letting it modify state. |
 | 2026-02-18 | Subtask dispatch fix (t1085.4) as part of this plan | Directly addresses the stalled t1081/t1082 subtasks and is a prerequisite for AI-created subtasks. |
+| 2026-02-18 | Use mailbox + memory + patterns, don't reinvent | ai-context.sh was building its own data gathering. Existing infrastructure (memory recall, pattern tracker, mailbox) already solves cross-session learning and inter-agent comms. Wire them together instead. |
+| 2026-02-18 | AI reasoning should store decisions in memory | Without memory, each reasoning cycle is stateless — no continuity, no learning from past decisions. Memory gives the AI a "what did I do last time?" capability. |
+| 2026-02-18 | Add self-improvement as a core reasoning area | The supervisor should proactively identify efficiency gaps (token waste, model mismatches, missing automation, repeated failures) and create tasks to fix them. This is the path to maximum utility from minimal token use. |
+| 2026-02-18 | Phase 14 (not 13) for AI reasoning | t1082.2 (PR #1610) claimed Phase 13 for skill update PRs. AI reasoning becomes Phase 14. |
+| 2026-02-18 | Add escalate_model action type | When a task fails at sonnet tier, the AI should be able to recommend escalation to opus (or de-escalation from opus to sonnet for simple tasks). Pattern tracker data drives these recommendations. |
 
 #### Surprises & Discoveries
 
-*(none yet)*
+- t1082.2 runner claimed Phase 13 for skill update PRs before we wired AI reasoning. Renumbered to Phase 14 — no conflict.
+- The `has_actionable_work()` pre-flight check (efficiency guard) is critical for cost control. Without it, every 30-minute pulse would spawn an opus session even when nothing needs attention.
+- The `gh` CLI `--repo` flag needs `owner/repo` format, not filesystem paths. Fixed in efficiency guards PR.
 
 ---
 
