@@ -1120,3 +1120,15 @@
   check: shellcheck tests/test-response-scoring.sh
   check: file-exists tests/test-response-scoring.sh
   check: rg "response-scoring" .agents/subagent-index.toon
+
+- [ ] v129 t1100 Budget-aware model routing — two strategies based on bi... | PR #1636 | merged:2026-02-18
+  files: .agents/AGENTS.md, .agents/scripts/budget-tracker-helper.sh, .agents/scripts/supervisor/dispatch.sh, .agents/scripts/supervisor/evaluate.sh, .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/AGENTS.md
+  check: shellcheck .agents/scripts/budget-tracker-helper.sh
+  check: file-exists .agents/scripts/budget-tracker-helper.sh
+  check: shellcheck .agents/scripts/supervisor/dispatch.sh
+  check: file-exists .agents/scripts/supervisor/dispatch.sh
+  check: shellcheck .agents/scripts/supervisor/evaluate.sh
+  check: file-exists .agents/scripts/supervisor/evaluate.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
