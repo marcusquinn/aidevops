@@ -448,6 +448,8 @@ Environment:
   SUPERVISOR_SKIP_STALENESS    Skip pre-dispatch staleness check (default: false)
   SUPERVISOR_WORKER_TIMEOUT   Seconds before a hung worker is killed (default: 3600)
   SUPERVISOR_SELF_MEM_LIMIT   MB before supervisor respawns after batch (default: 8192)
+  SUPERVISOR_SKILL_UPDATE_PR  Enable skill update PR pipeline in pulse (default: false)
+  SUPERVISOR_SKILL_UPDATE_INTERVAL Seconds between skill update PR runs (default: 86400)
   AIDEVOPS_SUPERVISOR_DIR     Override supervisor data directory
 
 Database: ~/.aidevops/.agent-workspace/supervisor/supervisor.db
