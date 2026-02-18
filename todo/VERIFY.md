@@ -1325,3 +1325,16 @@
   check: file-exists .agents/scripts/supervisor/ai-actions.sh
   check: shellcheck tests/test-ai-supervisor-e2e.sh
   check: file-exists tests/test-ai-supervisor-e2e.sh
+
+- [ ] v157 t1191 Add sonnet-to-opus tier escalation tracking and cost anal... | PR #1808 | merged:2026-02-18
+  files: .agents/scripts/budget-tracker-helper.sh, .agents/scripts/pattern-tracker-helper.sh, .agents/scripts/supervisor/evaluate.sh, .agents/scripts/supervisor/pulse.sh, .agents/tools/context/model-routing.md
+  check: shellcheck .agents/scripts/budget-tracker-helper.sh
+  check: file-exists .agents/scripts/budget-tracker-helper.sh
+  check: shellcheck .agents/scripts/pattern-tracker-helper.sh
+  check: file-exists .agents/scripts/pattern-tracker-helper.sh
+  check: shellcheck .agents/scripts/supervisor/evaluate.sh
+  check: file-exists .agents/scripts/supervisor/evaluate.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/tools/context/model-routing.md
+  check: rg "model-routing" .agents/subagent-index.toon
