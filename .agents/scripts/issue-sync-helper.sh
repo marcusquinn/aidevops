@@ -50,6 +50,14 @@ log_verbose() {
 	return 0
 }
 
+# Strip lines inside markdown code-fenced blocks (``` ... ```) from stdin.
+# Prevents task-like lines in format examples from being parsed as real tasks.
+# Usage: strip_code_fences < file  OR  grep ... | strip_code_fences
+strip_code_fences() {
+	awk '/^[[:space:]]*```/{in_fence=!in_fence; next} !in_fence{print}'
+	return 0
+}
+
 # Find project root (contains TODO.md)
 find_project_root() {
 	local dir="$PWD"
@@ -782,7 +790,7 @@ cmd_push() {
 			if [[ -n "$tid" ]] && ! echo "$line" | grep -qE 'ref:GH#[0-9]+'; then
 				tasks+=("$tid")
 			fi
-		done < <(grep -E '^\s*- \[ \] t[0-9]+' "$todo_file" || true)
+		done < <(strip_code_fences <"$todo_file" | grep -E '^\s*- \[ \] t[0-9]+' || true)
 	fi
 
 	if [[ ${#tasks[@]} -eq 0 ]]; then
@@ -923,7 +931,7 @@ cmd_enrich() {
 			if [[ -n "$tid" ]]; then
 				tasks+=("$tid")
 			fi
-		done < <(grep -E '^\s*- \[ \] t[0-9]+.*ref:GH#[0-9]+' "$todo_file" || true)
+		done < <(strip_code_fences <"$todo_file" | grep -E '^\s*- \[ \] t[0-9]+.*ref:GH#[0-9]+' || true)
 	fi
 
 	if [[ ${#tasks[@]} -eq 0 ]]; then
@@ -1536,7 +1544,7 @@ cmd_close() {
 		else
 			print_error "Failed to close #$issue_number ($task_id)"
 		fi
-	done < <(grep -E '^\s*- \[x\] t[0-9]+' "$todo_file" || true)
+	done < <(strip_code_fences <"$todo_file" | grep -E '^\s*- \[x\] t[0-9]+' || true)
 
 	print_info "Close complete: $closed closed, $skipped skipped (no evidence), $ref_fixed refs fixed"
 	return 0
@@ -1646,12 +1654,13 @@ cmd_status() {
 	print_info "Checking sync status for $repo_slug..."
 
 	# Count tasks in TODO.md (include both top-level and indented subtasks)
+	# strip_code_fences prevents format-example lines from inflating counts
 	local total_open
-	total_open=$(grep -cE '^\s*- \[ \] t[0-9]+' "$todo_file" || echo "0")
+	total_open=$(strip_code_fences <"$todo_file" | grep -cE '^\s*- \[ \] t[0-9]+' || echo "0")
 	local total_completed
-	total_completed=$(grep -cE '^\s*- \[x\] t[0-9]+' "$todo_file" || echo "0")
+	total_completed=$(strip_code_fences <"$todo_file" | grep -cE '^\s*- \[x\] t[0-9]+' || echo "0")
 	local with_ref
-	with_ref=$(grep -cE '^\s*- \[ \] t[0-9]+.*ref:GH#' "$todo_file" || echo "0")
+	with_ref=$(strip_code_fences <"$todo_file" | grep -cE '^\s*- \[ \] t[0-9]+.*ref:GH#' || echo "0")
 	local without_ref
 	without_ref=$((total_open - with_ref))
 
@@ -1674,7 +1683,7 @@ cmd_status() {
 				print_warning "DRIFT: $line"
 			fi
 		fi
-	done < <(grep -E '^\s*- \[x\] t[0-9]+.*ref:GH#' "$todo_file" || true)
+	done < <(strip_code_fences <"$todo_file" | grep -E '^\s*- \[x\] t[0-9]+.*ref:GH#' || true)
 
 	echo ""
 	echo "=== Sync Status ==="
@@ -1757,7 +1766,7 @@ cmd_reconcile() {
 		elif [[ -z "$correct_number" || "$correct_number" == "null" ]]; then
 			print_warning "$tid: no matching issue found on GitHub (ref:GH#$gh_ref is stale)"
 		fi
-	done < <(grep -E '^\s*- \[.\] t[0-9]+.*ref:GH#[0-9]+' "$todo_file" || true)
+	done < <(strip_code_fences <"$todo_file" | grep -E '^\s*- \[.\] t[0-9]+.*ref:GH#[0-9]+' || true)
 
 	# Phase 2: Find open issues for completed tasks (including those without ref:GH#)
 	local open_issues_json
