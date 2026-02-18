@@ -1514,7 +1514,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
   - Key findings from testing: (1) `set -euo pipefail` + grep in pipelines needs `{ grep ... || true; }` guard, (2) macOS sed `\s` doesn't work — use `[[:space:]]`, (3) dots in task IDs (t007.1) need escaping in sed patterns, (4) Gitea label API returns IDs not names (need ID array in create payload)
   - [ ] t1120.1 Extract platform-agnostic functions from issue-sync-helper.sh (parse, compose, ref management) ~1h ref:GH#1676
   - [ ] t1120.2 Add Gitea API adapter functions (create/close/edit/list/search/labels) ~1h ref:GH#1677
-  - [ ] t1120.3 Add platform detection from git remote URL + multi-platform push/pull/close ~1h ref:GH#1678 #auto-dispatch model:sonnet
+  - [ ] t1120.3 Add platform detection from git remote URL + multi-platform push/pull/close ~1h ref:GH#1678 #auto-dispatch model:sonnet assignee:marcusquinn started:2026-02-18T22:07:40Z
   - [ ] t1120.4 Test with awardsapp repo (dual GitHub + Gitea sync) ~30m ref:GH#1679
 
 - [ ] t1121 Fix tea CLI TTY requirement in non-interactive mode #bugfix #git ~30m model:haiku ref:GH#1680 logged:2026-02-18 #auto-dispatch
