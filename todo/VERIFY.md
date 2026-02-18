@@ -1350,3 +1350,8 @@
   check: file-exists .agents/scripts/supervisor/pulse.sh
   check: shellcheck tests/test-supervisor-state-machine.sh
   check: file-exists tests/test-supervisor-state-machine.sh
+
+- [ ] v160 t1121 Fix tea CLI TTY requirement in non-interactive mode #bugf... | PR #1814 | merged:2026-02-18
+  files: .agents/scripts/gitea-cli-helper.sh
+  check: shellcheck .agents/scripts/gitea-cli-helper.sh
+  check: file-exists .agents/scripts/gitea-cli-helper.sh
