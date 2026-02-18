@@ -235,6 +235,35 @@ Is the task simple classification/formatting?
 | "Write unit tests for this module" | sonnet | Code generation |
 | "Evaluate 3 database options for our use case" | opus | Complex trade-off analysis |
 
+## Tier Drift Detection (t1191)
+
+When tasks are requested at one tier but executed at another (e.g., `model:sonnet` in
+TODO.md but actually dispatched to opus), this creates cost drift. The framework tracks
+this automatically via `requested_tier` and `actual_tier` fields in both the pattern
+tracker and budget tracker.
+
+**CLI**:
+
+```bash
+# Pattern-based analysis (from memory/pattern data)
+pattern-tracker-helper.sh tier-drift              # Full report
+pattern-tracker-helper.sh tier-drift --days 7     # Last 7 days
+pattern-tracker-helper.sh tier-drift --json       # Machine-readable
+pattern-tracker-helper.sh tier-drift --summary    # One-line for automation
+
+# Cost-based analysis (from budget spend events)
+budget-tracker-helper.sh tier-drift               # Full cost report
+budget-tracker-helper.sh tier-drift --json        # Machine-readable
+budget-tracker-helper.sh tier-drift --summary     # One-line for automation
+```
+
+**Automatic detection**: The supervisor pulse cycle (Phase 12b) checks tier drift hourly
+and logs warnings when escalation rate exceeds 25% (notice) or 50% (warning).
+
+**Data flow**: `dispatch.sh` records `requested_tier`/`actual_tier` to the tasks DB →
+`evaluate.sh` reads these and tags pattern entries with `tier_delta:sonnet->opus` →
+budget-tracker records spend with both tiers for cost comparison.
+
 ## Related
 
 - `tools/ai-assistants/compare-models.md` — Full model comparison subagent
