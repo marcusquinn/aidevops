@@ -12,10 +12,11 @@
 #   skill-update-helper.sh pr [name]       # Create PRs for updated skills
 #
 # Options:
-#   --auto-update    Automatically update skills with changes
-#   --quiet          Suppress non-essential output
-#   --json           Output in JSON format
-#   --dry-run        Show what would be done without making changes
+#   --auto-update        Automatically update skills with changes
+#   --quiet              Suppress non-essential output
+#   --non-interactive    Headless mode: log to auto-update.log, no prompts, graceful errors
+#   --json               Output in JSON format
+#   --dry-run            Show what would be done without making changes
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
@@ -31,10 +32,14 @@ ADD_SKILL_HELPER="${AGENTS_DIR}/scripts/add-skill-helper.sh"
 # Options
 AUTO_UPDATE=false
 QUIET=false
+NON_INTERACTIVE=false
 JSON_OUTPUT=false
 DRY_RUN=false
 # Batch mode for PR creation: one-per-skill (default) or single-pr
 BATCH_MODE="${SKILL_UPDATE_BATCH_MODE:-one-per-skill}"
+
+# Log file for non-interactive / headless mode (shared with auto-update-helper.sh)
+readonly SKILL_LOG_FILE="${HOME}/.aidevops/logs/auto-update.log"
 
 # Worktree helper
 WORKTREE_HELPER="${SCRIPT_DIR}/worktree-helper.sh"
@@ -43,27 +48,52 @@ WORKTREE_HELPER="${SCRIPT_DIR}/worktree-helper.sh"
 # Helper Functions
 # =============================================================================
 
+# Write a timestamped entry to the shared auto-update log file.
+# Used in non-interactive mode so headless callers (cron, auto-update-helper.sh)
+# can inspect results without parsing stdout.
+_log_to_file() {
+	local level="$1"
+	shift
+	local timestamp
+	timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
+	mkdir -p "$(dirname "$SKILL_LOG_FILE")" 2>/dev/null || true
+	echo "[$timestamp] [skill-update] [$level] $*" >>"$SKILL_LOG_FILE"
+	return 0
+}
+
 log_info() {
-	if [[ "$QUIET" != true ]]; then
+	if [[ "$NON_INTERACTIVE" == true ]]; then
+		_log_to_file "INFO" "$1"
+	elif [[ "$QUIET" != true ]]; then
 		echo -e "${BLUE}[skill-update]${NC} $1"
 	fi
 	return 0
 }
 
 log_success() {
-	if [[ "$QUIET" != true ]]; then
+	if [[ "$NON_INTERACTIVE" == true ]]; then
+		_log_to_file "INFO" "$1"
+	elif [[ "$QUIET" != true ]]; then
 		echo -e "${GREEN}[OK]${NC} $1"
 	fi
 	return 0
 }
 
 log_warning() {
-	echo -e "${YELLOW}[WARN]${NC} $1"
+	if [[ "$NON_INTERACTIVE" == true ]]; then
+		_log_to_file "WARN" "$1"
+	else
+		echo -e "${YELLOW}[WARN]${NC} $1"
+	fi
 	return 0
 }
 
 log_error() {
-	echo -e "${RED}[ERROR]${NC} $1"
+	if [[ "$NON_INTERACTIVE" == true ]]; then
+		_log_to_file "ERROR" "$1"
+	else
+		echo -e "${RED}[ERROR]${NC} $1"
+	fi
 	return 0
 }
 
@@ -83,6 +113,9 @@ COMMANDS:
 OPTIONS:
     --auto-update                Automatically update skills with changes
     --quiet                      Suppress non-essential output
+    --non-interactive            Headless mode: redirect all output to auto-update.log,
+                                   suppress prompts, treat errors as non-fatal (exit 0)
+                                   Implies --quiet. Designed for cron / auto-update-helper.sh.
     --json                       Output results in JSON format
     --dry-run                    Show what would be done without making changes
     --batch-mode <mode>          PR batching strategy (default: one-per-skill)
@@ -123,6 +156,9 @@ EXAMPLES:
 CRON EXAMPLE:
     # Weekly update check (Sundays at 3am)
     0 3 * * 0 ~/.aidevops/agents/scripts/skill-update-helper.sh check --quiet
+
+    # Headless auto-update (called by auto-update-helper.sh)
+    skill-update-helper.sh check --auto-update --quiet --non-interactive
 EOF
 	return 0
 }
@@ -229,7 +265,7 @@ cmd_check() {
 	skill_count=$(check_skill_sources)
 
 	log_info "Checking $skill_count imported skill(s) for updates..."
-	echo ""
+	[[ "$NON_INTERACTIVE" != true ]] && echo ""
 
 	local updates_available=0
 	local up_to_date=0
@@ -270,32 +306,48 @@ cmd_check() {
 		# Compare commits
 		if [[ -z "$current_commit" ]]; then
 			# No commit recorded, consider as update available
-			echo -e "${YELLOW}UNKNOWN${NC}: $name (no commit recorded)"
-			echo "  Source: $upstream_url"
-			echo "  Latest: ${latest_commit:0:7}"
-			echo ""
+			if [[ "$NON_INTERACTIVE" != true ]]; then
+				echo -e "${YELLOW}UNKNOWN${NC}: $name (no commit recorded)"
+				echo "  Source: $upstream_url"
+				echo "  Latest: ${latest_commit:0:7}"
+				echo ""
+			fi
+			log_info "UNKNOWN: $name (no commit recorded) latest=${latest_commit:0:7}"
 			((updates_available++)) || true
 			results+=("{\"name\":\"$name\",\"status\":\"unknown\",\"latest\":\"$latest_commit\"}")
 		elif [[ "$latest_commit" != "$current_commit" ]]; then
-			echo -e "${YELLOW}UPDATE AVAILABLE${NC}: $name"
-			echo "  Current: ${current_commit:0:7}"
-			echo "  Latest:  ${latest_commit:0:7}"
-			echo "  Run: aidevops skill update $name"
-			echo ""
+			if [[ "$NON_INTERACTIVE" != true ]]; then
+				echo -e "${YELLOW}UPDATE AVAILABLE${NC}: $name"
+				echo "  Current: ${current_commit:0:7}"
+				echo "  Latest:  ${latest_commit:0:7}"
+				echo "  Run: aidevops skill update $name"
+				echo ""
+			fi
+			log_info "UPDATE AVAILABLE: $name current=${current_commit:0:7} latest=${latest_commit:0:7}"
 			((updates_available++)) || true
 			results+=("{\"name\":\"$name\",\"status\":\"update_available\",\"current\":\"$current_commit\",\"latest\":\"$latest_commit\"}")
 
 			# Auto-update if enabled
 			if [[ "$AUTO_UPDATE" == true ]]; then
 				log_info "Auto-updating $name..."
-				if "$ADD_SKILL_HELPER" add "$upstream_url" --force; then
+				# In non-interactive mode: close stdin to prevent any prompts from add-skill-helper.sh
+				local add_exit=0
+				if [[ "$NON_INTERACTIVE" == true ]]; then
+					"$ADD_SKILL_HELPER" add "$upstream_url" --force </dev/null >>"$SKILL_LOG_FILE" 2>&1 || add_exit=$?
+				else
+					"$ADD_SKILL_HELPER" add "$upstream_url" --force || add_exit=$?
+				fi
+				if [[ "$add_exit" -eq 0 ]]; then
 					log_success "Updated $name"
 				else
-					log_error "Failed to update $name"
+					log_error "Failed to update $name (exit $add_exit)"
 				fi
 			fi
 		else
-			echo -e "${GREEN}Up to date${NC}: $name"
+			if [[ "$NON_INTERACTIVE" != true ]]; then
+				echo -e "${GREEN}Up to date${NC}: $name"
+			fi
+			log_info "Up to date: $name commit=${current_commit:0:7}"
 			((up_to_date++)) || true
 			results+=("{\"name\":\"$name\",\"status\":\"up_to_date\",\"commit\":\"$current_commit\"}")
 		fi
@@ -303,13 +355,16 @@ cmd_check() {
 	done < <(jq -c '.skills[]' "$SKILL_SOURCES")
 
 	# Summary
-	echo ""
-	echo "Summary:"
-	echo "  Up to date: $up_to_date"
-	echo "  Updates available: $updates_available"
-	if [[ $check_failed -gt 0 ]]; then
-		echo "  Check failed: $check_failed"
+	if [[ "$NON_INTERACTIVE" != true ]]; then
+		echo ""
+		echo "Summary:"
+		echo "  Up to date: $up_to_date"
+		echo "  Updates available: $updates_available"
+		if [[ $check_failed -gt 0 ]]; then
+			echo "  Check failed: $check_failed"
+		fi
 	fi
+	log_info "Summary: up_to_date=$up_to_date updates_available=$updates_available check_failed=$check_failed"
 
 	# JSON output if requested
 	if [[ "$JSON_OUTPUT" == true ]]; then
@@ -327,6 +382,7 @@ cmd_check() {
 	fi
 
 	# Return non-zero if updates available (useful for CI)
+	# In non-interactive mode, auto-update-helper.sh treats exit 1 as "updates applied" (not an error)
 	if [[ $updates_available -gt 0 ]]; then
 		return 1
 	fi
@@ -1337,6 +1393,11 @@ main() {
 			QUIET=true
 			shift
 			;;
+		--non-interactive)
+			NON_INTERACTIVE=true
+			QUIET=true
+			shift
+			;;
 		--json)
 			JSON_OUTPUT=true
 			shift
@@ -1374,6 +1435,15 @@ main() {
 		esac
 	done
 
+	# In non-interactive mode, install an ERR trap so unexpected errors are
+	# logged to auto-update.log and the process exits cleanly (exit 0) rather
+	# than crashing with no log entry.  The trap must be set after arg parsing
+	# so that NON_INTERACTIVE is already true when it fires.
+	if [[ "$NON_INTERACTIVE" == true ]]; then
+		trap '_non_interactive_error_handler $LINENO' ERR
+		log_info "Starting skill-update-helper.sh in non-interactive mode (command=$command)"
+	fi
+
 	case "$command" in
 	check)
 		cmd_check
@@ -1393,6 +1463,15 @@ main() {
 		exit 1
 		;;
 	esac
+}
+
+# Error handler for non-interactive mode — logs the failure and exits cleanly.
+# Defined at file scope so it is available when the trap fires.
+_non_interactive_error_handler() {
+	local exit_code="$?"
+	local line_no="${1:-unknown}"
+	_log_to_file "ERROR" "Unexpected error at line ${line_no} (exit ${exit_code}) — skill-update-helper.sh aborted"
+	exit 0
 }
 
 main "$@"
