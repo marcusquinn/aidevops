@@ -150,6 +150,106 @@ cmd_pulse() {
 		fi
 	fi
 
+	# Phase 0.7: Stale-state detection (t1132)
+	# Detect tasks in active states (running/dispatched/evaluating) that have no
+	# live worker process. This catches stale state from previous crashes, stuck
+	# evaluations, or supervisor restarts where PID files were cleaned up but DB
+	# state was not updated. Unlike Phase 4b (which only checks for missing PID
+	# files), this phase also checks tasks WITH PID files whose PIDs are dead,
+	# providing a comprehensive upfront consistency sweep.
+	#
+	# Grace period: tasks must have been in their current state for at least
+	# SUPERVISOR_STALE_GRACE_SECONDS (default 600 = 10 min) before being
+	# considered stale. This prevents false positives from tasks that were
+	# just dispatched and haven't written their PID file yet.
+	local stale_grace_seconds="${SUPERVISOR_STALE_GRACE_SECONDS:-600}"
+	local stale_active_tasks
+	stale_active_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
+		SELECT id, status, updated_at FROM tasks
+		WHERE status IN ('running', 'dispatched', 'evaluating')
+		AND updated_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${stale_grace_seconds} seconds')
+		ORDER BY updated_at ASC;
+	" 2>/dev/null || echo "")
+
+	if [[ -n "$stale_active_tasks" ]]; then
+		local stale_recovered=0
+		local stale_skipped=0
+
+		while IFS='|' read -r stale_id stale_status stale_updated; do
+			[[ -z "$stale_id" ]] && continue
+
+			# Check if a live worker process exists for this task
+			local stale_pid_file="$SUPERVISOR_DIR/pids/${stale_id}.pid"
+			local stale_has_live_worker=false
+
+			if [[ -f "$stale_pid_file" ]]; then
+				local stale_pid
+				stale_pid=$(cat "$stale_pid_file" 2>/dev/null || echo "")
+				if [[ -n "$stale_pid" ]] && kill -0 "$stale_pid" 2>/dev/null; then
+					stale_has_live_worker=true
+				fi
+			fi
+
+			if [[ "$stale_has_live_worker" == "true" ]]; then
+				# Worker is alive — skip (Phase 1/4 will handle normally)
+				stale_skipped=$((stale_skipped + 1))
+				continue
+			fi
+
+			# No live worker — this is stale state. Transition based on retry eligibility.
+			log_warn "  Phase 0.7: Stale $stale_status task $stale_id (updated: $stale_updated, no live worker)"
+
+			local stale_retries stale_max_retries
+			stale_retries=$(db "$SUPERVISOR_DB" "SELECT retries FROM tasks WHERE id = '$(sql_escape "$stale_id")';" 2>/dev/null || echo "0")
+			stale_max_retries=$(db "$SUPERVISOR_DB" "SELECT max_retries FROM tasks WHERE id = '$(sql_escape "$stale_id")';" 2>/dev/null || echo "3")
+
+			# Clean up any stale PID file
+			if [[ -f "$stale_pid_file" ]]; then
+				rm -f "$stale_pid_file" 2>/dev/null || true
+			fi
+
+			if [[ "$stale_retries" -lt "$stale_max_retries" ]]; then
+				# Retries remaining — re-queue for dispatch
+				local new_retries=$((stale_retries + 1))
+				log_info "  Phase 0.7: $stale_id → queued (retry $new_retries/$stale_max_retries, was $stale_status)"
+				db "$SUPERVISOR_DB" "UPDATE tasks SET retries = $new_retries WHERE id = '$(sql_escape "$stale_id")';" 2>/dev/null || true
+				cmd_transition "$stale_id" "queued" --error "Stale state recovery (Phase 0.7/t1132): was $stale_status with no live worker for >${stale_grace_seconds}s" 2>>"$SUPERVISOR_LOG" || true
+			else
+				# Retries exhausted — mark as failed
+				log_warn "  Phase 0.7: $stale_id → failed (retries exhausted $stale_retries/$stale_max_retries, was $stale_status)"
+				cmd_transition "$stale_id" "failed" --error "Stale state recovery (Phase 0.7/t1132): was $stale_status with no live worker, retries exhausted ($stale_retries/$stale_max_retries)" 2>>"$SUPERVISOR_LOG" || true
+				attempt_self_heal "$stale_id" "failed" "Stale state: $stale_status with no live worker" "${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
+			fi
+
+			# Log the state transition for audit trail
+			db "$SUPERVISOR_DB" "
+				INSERT INTO state_log (task_id, from_state, to_state, reason)
+				VALUES ('$(sql_escape "$stale_id")', '$(sql_escape "$stale_status")', 
+					CASE WHEN $stale_retries < $stale_max_retries THEN 'queued' ELSE 'failed' END,
+					'Phase 0.7 stale-state recovery (t1132): no live worker for >${stale_grace_seconds}s');
+			" 2>/dev/null || true
+
+			# Clean up worker process tree (in case of zombie children)
+			cleanup_worker_processes "$stale_id" 2>>"$SUPERVISOR_LOG" || true
+
+			stale_recovered=$((stale_recovered + 1))
+		done <<<"$stale_active_tasks"
+
+		if [[ "$stale_recovered" -gt 0 ]]; then
+			log_success "  Phase 0.7: Recovered $stale_recovered stale task(s) ($stale_skipped still alive)"
+			# Store pattern for observability
+			local pattern_helper="${SCRIPT_DIR}/pattern-tracker-helper.sh"
+			if [[ -x "$pattern_helper" ]]; then
+				"$pattern_helper" record \
+					--type "SELF_HEAL_PATTERN" \
+					--task "supervisor" \
+					--model "n/a" \
+					--detail "Phase 0.7 stale-state recovery: $stale_recovered tasks recovered (grace=${stale_grace_seconds}s)" \
+					2>/dev/null || true
+			fi
+		fi
+	fi
+
 	# Phase 1: Check running workers for completion
 	# Also check 'evaluating' tasks - AI eval may have timed out, leaving them stuck
 	local running_tasks
