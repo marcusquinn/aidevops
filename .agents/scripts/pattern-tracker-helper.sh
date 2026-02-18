@@ -93,6 +93,7 @@ cmd_record() {
 	local failure_mode=""
 	local tokens_in=""
 	local tokens_out=""
+	local quality_score=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -148,6 +149,10 @@ cmd_record() {
 			tokens_out="$2"
 			shift 2
 			;;
+		--quality-score)
+			quality_score="$2"
+			shift 2
+			;; # t1096: 0|1|2
 		*)
 			if [[ -z "$description" ]]; then
 				description="$1"
@@ -211,13 +216,30 @@ cmd_record() {
 		esac
 	fi
 
-	# Validate failure_mode if provided (t1095)
+	# Build memory type
+	local memory_type
+	if [[ "$outcome" == "success" ]]; then
+		memory_type="SUCCESS_PATTERN"
+	else
+		memory_type="FAILURE_PATTERN"
+	fi
+
+	# Validate failure_mode if provided (t1095/t1096)
 	if [[ -n "$failure_mode" ]]; then
 		case "$failure_mode" in
-		hallucination | context-miss | incomplete | wrong-file | timeout) ;;
+		hallucination | context-miss | incomplete | wrong-file | timeout | TRANSIENT | RESOURCE | LOGIC | BLOCKED | AMBIGUOUS | NONE) ;;
 		*)
-			log_error "Invalid failure_mode: $failure_mode (use hallucination, context-miss, incomplete, wrong-file, or timeout)"
-			return 1
+			log_warn "Non-standard failure_mode: $failure_mode (standard: hallucination, context-miss, incomplete, wrong-file, timeout, TRANSIENT, RESOURCE, LOGIC, BLOCKED, AMBIGUOUS, NONE)"
+			;;
+		esac
+	fi
+
+	# Validate quality_score if provided (t1096)
+	if [[ -n "$quality_score" ]]; then
+		case "$quality_score" in
+		0 | 1 | 2) ;;
+		*)
+			log_warn "Non-standard quality_score: $quality_score (standard: 0=no_output 1=partial 2=complete)"
 			;;
 		esac
 	fi
@@ -232,14 +254,6 @@ cmd_record() {
 		return 1
 	fi
 
-	# Build memory type
-	local memory_type
-	if [[ "$outcome" == "success" ]]; then
-		memory_type="SUCCESS_PATTERN"
-	else
-		memory_type="FAILURE_PATTERN"
-	fi
-
 	# Build tags
 	local all_tags="pattern"
 	[[ -n "$task_type" ]] && all_tags="$all_tags,$task_type"
@@ -248,6 +262,9 @@ cmd_record() {
 	[[ -n "$duration" ]] && all_tags="$all_tags,duration:$duration"
 	[[ -n "$retries" ]] && all_tags="$all_tags,retries:$retries"
 	[[ -n "$strategy" ]] && all_tags="$all_tags,strategy:$strategy"
+	# t1096: include failure mode and quality score in tags for filtering
+	[[ -n "$failure_mode" ]] && all_tags="$all_tags,failure_mode:$failure_mode"
+	[[ -n "$quality_score" ]] && all_tags="$all_tags,quality:$quality_score"
 	[[ -n "$tags" ]] && all_tags="$all_tags,$tags"
 
 	# Build content with structured metadata
@@ -257,6 +274,9 @@ cmd_record() {
 	[[ -n "$task_id" ]] && content="$content [id:$task_id]"
 	[[ -n "$duration" ]] && content="$content [duration:${duration}s]"
 	[[ -n "$retries" && "$retries" != "0" ]] && content="$content [retries:$retries]"
+	# t1096: append failure mode and quality score to content
+	[[ -n "$failure_mode" ]] && content="$content [fmode:$failure_mode]"
+	[[ -n "$quality_score" ]] && content="$content [quality:$quality_score]"
 
 	# Store via memory-helper.sh and capture the returned ID
 	# The last line of store output is the bare mem_YYYYMMDDHHMMSS_hex ID.
@@ -1101,8 +1121,10 @@ RECORD OPTIONS:
     --tags <tags>                 Additional comma-separated tags
     --strategy <type>             Dispatch strategy: normal, prompt-repeat, escalated (t1095)
     --quality <level>             CI quality: ci-pass-first-try, ci-pass-after-fix, needs-human (t1095)
+    --quality-score <n>           Output quality rating (t1096): 0=no_output 1=partial 2=complete
     --failure-mode <mode>         Failure classification: hallucination, context-miss,
-                                  incomplete, wrong-file, timeout (t1095)
+                                  incomplete, wrong-file, timeout (t1095) or
+                                  TRANSIENT, RESOURCE, LOGIC, BLOCKED, AMBIGUOUS, NONE (t1096)
     --tokens-in <count>           Input token count (t1095)
     --tokens-out <count>          Output token count (t1095)
 
