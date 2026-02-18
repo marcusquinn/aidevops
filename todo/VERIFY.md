@@ -1077,7 +1077,7 @@
   check: shellcheck tests/test-ai-supervisor-e2e.sh
   check: file-exists tests/test-ai-supervisor-e2e.sh
 
-- [ ] v124 t1093 Intelligent daily routine scheduling — AI reasoning (Ph... | PR #1619 | merged:2026-02-18
+- [x] v124 t1093 Intelligent daily routine scheduling — AI reasoning (Ph... | PR #1619 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/supervisor-helper.sh, .agents/scripts/supervisor/pulse.sh, .agents/scripts/supervisor/routine-scheduler.sh
   check: shellcheck .agents/scripts/supervisor-helper.sh
   check: file-exists .agents/scripts/supervisor-helper.sh
@@ -1086,7 +1086,7 @@
   check: shellcheck .agents/scripts/supervisor/routine-scheduler.sh
   check: file-exists .agents/scripts/supervisor/routine-scheduler.sh
 
-- [ ] v125 t1095 Extend pattern tracker schema — add columns: strategy (... | PR #1629 | merged:2026-02-18
+- [x] v125 t1095 Extend pattern tracker schema — add columns: strategy (... | PR #1629 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/memory/_common.sh, .agents/scripts/pattern-tracker-helper.sh, .agents/scripts/shared-constants.sh
   check: shellcheck .agents/scripts/memory/_common.sh
   check: file-exists .agents/scripts/memory/_common.sh
@@ -1095,7 +1095,7 @@
   check: shellcheck .agents/scripts/shared-constants.sh
   check: file-exists .agents/scripts/shared-constants.sh
 
-- [ ] v126 t1097 Add prompt-repeat retry strategy to dispatch.sh — befor... | PR #1631 | merged:2026-02-18
+- [x] v126 t1097 Add prompt-repeat retry strategy to dispatch.sh — befor... | PR #1631 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/supervisor/database.sh, .agents/scripts/supervisor/dispatch.sh, .agents/scripts/supervisor/pulse.sh
   check: shellcheck .agents/scripts/supervisor/database.sh
   check: file-exists .agents/scripts/supervisor/database.sh
@@ -1104,7 +1104,7 @@
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
 
-- [ ] v127 t1098 Wire compare-models to read live pattern data — /compar... | PR #1637 | merged:2026-02-18
+- [x] v127 t1098 Wire compare-models to read live pattern data — /compar... | PR #1637 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/compare-models-helper.sh, .agents/tools/ai-assistants/compare-models.md
   check: shellcheck .agents/scripts/compare-models-helper.sh
   check: file-exists .agents/scripts/compare-models-helper.sh
@@ -1137,3 +1137,8 @@
   files: .agents/scripts/skill-update-helper.sh
   check: shellcheck .agents/scripts/skill-update-helper.sh
   check: file-exists .agents/scripts/skill-update-helper.sh
+
+- [ ] v131 t1094.1 Update build-agent to reference pattern data for model ti... | PR #1633 | merged:2026-02-18
+  files: .agents/tools/build-agent/build-agent.md
+  check: file-exists .agents/tools/build-agent/build-agent.md
+  check: rg "build-agent" .agents/subagent-index.toon
