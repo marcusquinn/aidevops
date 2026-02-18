@@ -819,7 +819,12 @@ run_full_audit() {
 
 	# Count by severity across all findings
 	local all_findings=""
-	all_findings=$(printf '%s' "$closed_findings" | jq ". + $(printf '%s' "$stale_findings") + $(printf '%s' "$orphan_findings") + $(printf '%s' "$blocked_findings")")
+	all_findings=$(jq -n \
+		--argjson closed "$closed_findings" \
+		--argjson stale "$stale_findings" \
+		--argjson orphan "$orphan_findings" \
+		--argjson blocked "$blocked_findings" \
+		'$closed + $stale + $orphan + $blocked')
 	local high_count=""
 	high_count=$(printf '%s' "$all_findings" | jq '[.[] | select(.severity == "high")] | length' 2>/dev/null || echo "0")
 	local medium_count=""
