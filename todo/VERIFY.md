@@ -1253,9 +1253,14 @@
   check: shellcheck .agents/scripts/supervisor/ai-reason.sh
   check: file-exists .agents/scripts/supervisor/ai-reason.sh
 
-- [ ] v147 t1133 Split MODELS.md into global + per-repo files and propagat... | PR #1786 | merged:2026-02-18
+- [x] v147 t1133 Split MODELS.md into global + per-repo files and propagat... | PR #1786 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/generate-models-md.sh, .agents/scripts/supervisor/pulse.sh
   check: shellcheck .agents/scripts/generate-models-md.sh
   check: file-exists .agents/scripts/generate-models-md.sh
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
+
+- [ ] v148 t1142 Add concurrency guard to issue-sync GitHub Action to prev... | PR #1741 | merged:2026-02-18
+  files: .agents/scripts/issue-sync-helper.sh
+  check: shellcheck .agents/scripts/issue-sync-helper.sh
+  check: file-exists .agents/scripts/issue-sync-helper.sh
