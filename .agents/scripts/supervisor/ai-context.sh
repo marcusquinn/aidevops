@@ -1006,15 +1006,24 @@ build_self_reflection_context() {
 	# Pipeline errors from ai-supervisor.log (last 50 lines)
 	local pipeline_log="${HOME}/.aidevops/.agent-workspace/supervisor/logs/ai-supervisor.log"
 	if [[ -f "$pipeline_log" ]]; then
+		# Extract pipeline errors with surrounding timestamp context (last 500 lines = ~last 2h)
+		# Include the === AI Supervisor Run: TIMESTAMP === lines for context
 		local recent_errors
-		recent_errors=$(tail -100 "$pipeline_log" 2>/dev/null | grep -iE 'error|jq:' | tail -10 || true)
+		recent_errors=$(tail -500 "$pipeline_log" 2>/dev/null | awk '
+			/=== AI Supervisor Run:/ { ts=$0 }
+			/AI Actions Pipeline:.*error|AI Actions Pipeline:.*expected array|Result: rc=1/ {
+				if (ts) print ts
+				print $0
+				ts=""
+			}
+		' | tail -20 || true)
 		if [[ -n "$recent_errors" ]]; then
 			output+="### Pipeline Errors (recent)\n\n"
-			output+="These errors occurred in the action execution pipeline:\n\n"
+			output+="These errors occurred in the action execution pipeline (with timestamps):\n\n"
 			output+="\`\`\`\n"
 			output+="$recent_errors\n"
 			output+="\`\`\`\n\n"
-			output+="If these are recurring, create a \`create_improvement\` task to fix the root cause.\n"
+			output+="If these are recurring (same error in multiple recent runs), create a \`create_improvement\` task to fix the root cause. If timestamps show errors are >1h old and recent runs succeeded, they may be already resolved.\n"
 		fi
 	fi
 

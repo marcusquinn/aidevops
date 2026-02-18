@@ -146,6 +146,7 @@ run_ai_reasoning() {
 		# If lock holder is still alive and lock is not stale (< 5 min), skip
 		if kill -0 "$lock_pid" 2>/dev/null && [[ "$lock_age" -lt 300 ]]; then
 			log_info "AI Reasoning: already running (PID $lock_pid, ${lock_age}s old) — skipping"
+			echo '{"skipped":"concurrency_guard","actions":[]}'
 			return 0
 		fi
 		# Stale lock — remove and continue
