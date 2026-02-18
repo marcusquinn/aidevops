@@ -1167,3 +1167,10 @@
   files: .agents/scripts/issue-sync-helper.sh
   check: shellcheck .agents/scripts/issue-sync-helper.sh
   check: file-exists .agents/scripts/issue-sync-helper.sh
+
+- [ ] v136 t1126 Fix adjust_priority action schema — add new_priority fi... | PR #1703 | merged:2026-02-18
+  files: .agents/scripts/supervisor/ai-reason.sh, tests/test-ai-actions.sh
+  check: shellcheck .agents/scripts/supervisor/ai-reason.sh
+  check: file-exists .agents/scripts/supervisor/ai-reason.sh
+  check: shellcheck tests/test-ai-actions.sh
+  check: file-exists tests/test-ai-actions.sh
