@@ -1132,3 +1132,8 @@
   check: file-exists .agents/scripts/supervisor/evaluate.sh
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
+
+- [ ] v130 t1081.2 Add --non-interactive support to skill-update-helper.sh â... | PR #1630 | merged:2026-02-18
+  files: .agents/scripts/skill-update-helper.sh
+  check: shellcheck .agents/scripts/skill-update-helper.sh
+  check: file-exists .agents/scripts/skill-update-helper.sh
