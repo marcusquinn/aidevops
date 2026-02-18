@@ -275,6 +275,13 @@ cmd_auto_pickup() {
 				continue
 			fi
 
+			# Skip tasks with unresolved blocked-by dependencies (t1085.4)
+			local unresolved_blockers
+			if unresolved_blockers=$(is_task_blocked "$line" "$todo_file"); then
+				log_info "  $task_id: blocked by unresolved dependencies ($unresolved_blockers) — skipping"
+				continue
+			fi
+
 			# Check if already in supervisor
 			local existing
 			existing=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || true)
@@ -338,6 +345,13 @@ cmd_auto_pickup() {
 			# These indicate someone is already working on the task
 			if echo "$line" | grep -qE '(assignee:|started:)'; then
 				log_info "  $task_id: already claimed or in progress — skipping auto-pickup"
+				continue
+			fi
+
+			# Skip tasks with unresolved blocked-by dependencies (t1085.4)
+			local unresolved_blockers
+			if unresolved_blockers=$(is_task_blocked "$line" "$todo_file"); then
+				log_info "  $task_id: blocked by unresolved dependencies ($unresolved_blockers) — skipping"
 				continue
 			fi
 
