@@ -218,7 +218,9 @@ update_state() {
                       last_action: $action,
                       last_version: $version,
                       last_status: $status,
-                      last_timestamp: $ts
+                      last_timestamp: $ts,
+                      last_skill_check: null,
+                      skill_updates_applied: 0
                   }' >"$STATE_FILE"
 		fi
 	fi
@@ -293,21 +295,27 @@ check_skill_freshness() {
 	fi
 
 	log_info "Running daily skill freshness check..."
+	local skill_updates=0
 	if "$skill_update_script" check --auto-update --quiet >>"$LOG_FILE" 2>&1; then
-		log_info "Skill freshness check complete"
+		log_info "Skill freshness check complete (all up to date)"
 	else
 		# Exit code 1 means updates were available (and applied) — not an error
-		log_info "Skill freshness check complete (updates applied)"
+		# Count updated skills via JSON check (best-effort)
+		skill_updates=$("$skill_update_script" check --json 2>/dev/null |
+			jq -r '.updates_available // 0' 2>/dev/null || echo "1")
+		log_info "Skill freshness check complete ($skill_updates updates applied)"
 	fi
 
-	update_skill_check_timestamp
+	update_skill_check_timestamp "$skill_updates"
 	return 0
 }
 
 #######################################
-# Record last_skill_check timestamp in state file
+# Record last_skill_check timestamp and updates count in state file
+# Args: $1 = number of skill updates applied (default: 0)
 #######################################
 update_skill_check_timestamp() {
+	local updates_count="${1:-0}"
 	local timestamp
 	timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
@@ -317,10 +325,15 @@ update_skill_check_timestamp() {
 		trap 'rm -f "${tmp_state:-}"' RETURN
 
 		if [[ -f "$STATE_FILE" ]]; then
-			jq --arg ts "$timestamp" '. + {last_skill_check: $ts}' \
+			jq --arg ts "$timestamp" \
+				--argjson count "$updates_count" \
+				'. + {last_skill_check: $ts} |
+				.skill_updates_applied = ((.skill_updates_applied // 0) + $count)' \
 				"$STATE_FILE" >"$tmp_state" 2>/dev/null && mv "$tmp_state" "$STATE_FILE"
 		else
-			jq -n --arg ts "$timestamp" '{last_skill_check: $ts}' >"$STATE_FILE"
+			jq -n --arg ts "$timestamp" \
+				--argjson count "$updates_count" \
+				'{last_skill_check: $ts, skill_updates_applied: $count}' >"$STATE_FILE"
 		fi
 	fi
 	return 0
@@ -525,13 +538,14 @@ cmd_status() {
 
 	# Show state file info
 	if [[ -f "$STATE_FILE" ]] && command -v jq &>/dev/null; then
-		local last_action last_ts last_status last_update last_update_ver last_skill_check
+		local last_action last_ts last_status last_update last_update_ver last_skill_check skill_updates
 		last_action=$(jq -r '.last_action // "none"' "$STATE_FILE" 2>/dev/null)
 		last_ts=$(jq -r '.last_timestamp // "never"' "$STATE_FILE" 2>/dev/null)
 		last_status=$(jq -r '.last_status // "unknown"' "$STATE_FILE" 2>/dev/null)
 		last_update=$(jq -r '.last_update // "never"' "$STATE_FILE" 2>/dev/null)
 		last_update_ver=$(jq -r '.last_update_version // "n/a"' "$STATE_FILE" 2>/dev/null)
 		last_skill_check=$(jq -r '.last_skill_check // "never"' "$STATE_FILE" 2>/dev/null)
+		skill_updates=$(jq -r '.skill_updates_applied // 0' "$STATE_FILE" 2>/dev/null)
 
 		echo ""
 		echo "  Last check:         $last_ts ($last_action: $last_status)"
@@ -539,6 +553,7 @@ cmd_status() {
 			echo "  Last update:        $last_update (v$last_update_ver)"
 		fi
 		echo "  Last skill check:   $last_skill_check"
+		echo "  Skill updates:      $skill_updates applied (lifetime)"
 	fi
 
 	# Check env var overrides
