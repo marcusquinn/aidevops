@@ -358,6 +358,7 @@ For each analysis, consider:
 6. **Health**: Are there concerning patterns in worker outcomes? High failure rates? Recurring errors?
 7. **Efficiency**: Are tokens being wasted? Are tasks assigned to models that are too powerful (opus for simple tasks) or too weak (sonnet for complex reasoning)? Are there repeated failures that indicate a systemic issue rather than a task-specific one? Look at pattern data for model tier success rates.
 8. **Self-improvement**: What automation gaps exist? Are there manual steps that could be automated? Missing test coverage? Processes that break repeatedly? Documentation gaps that cause worker confusion? Create improvement tasks to fix these — the goal is maximum utility from minimal token use.
+9. **Self-reflection**: Review the "AI Supervisor Self-Reflection" section. Are your own actions being skipped or failing? If an action type is repeatedly skipped (e.g., missing required fields), create a `create_improvement` task to fix the prompt or executor. If you keep acting on the same targets across cycles, stop repeating those actions. If pipeline errors appear, diagnose the root cause and create a fix task. Your goal is to make yourself more effective over time.
 
 ## Output Format
 
@@ -396,6 +397,12 @@ Respond with ONLY a JSON array of actions. Each action is an object with:
     "from_tier": "sonnet",
     "to_tier": "opus",
     "reasoning": "Task failed 2/3 retries at sonnet. Pattern data shows similar tasks succeed at opus."
+  },
+  {
+    "type": "adjust_priority",
+    "task_id": "t1234",
+    "new_priority": "high",
+    "reasoning": "This task is blocking 3 others and should be dispatched next"
   },
   {
     "type": "flag_for_review",

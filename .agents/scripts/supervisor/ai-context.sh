@@ -67,6 +67,11 @@ build_ai_context() {
 		context+="$(build_audit_context "$repo_path")\n\n"
 	fi
 
+	# Section 10: AI Self-Reflection (own execution history, t1118)
+	if [[ "$scope" == "full" ]]; then
+		context+="$(build_self_reflection_context)\n\n"
+	fi
+
 	printf '%b' "$context"
 	return 0
 }
@@ -652,6 +657,198 @@ build_audit_context() {
 			output+="$med_by_source\n"
 		fi
 		output+="\n"
+	fi
+
+	printf '%b' "$output"
+	return 0
+}
+
+#######################################
+# Section 10: AI Self-Reflection (t1118)
+# Feeds the AI its own recent action execution results so it can
+# identify recurring failures, prompt issues, and deployment gaps.
+# Sources: action log files + pipeline log
+#######################################
+build_self_reflection_context() {
+	local output="## AI Supervisor Self-Reflection\n\n"
+	local log_dir="${AI_REASON_LOG_DIR:-$HOME/.aidevops/logs/ai-supervisor}"
+
+	if [[ ! -d "$log_dir" ]]; then
+		output+="*No AI supervisor logs found*\n"
+		printf '%b' "$output"
+		return 0
+	fi
+
+	# Collect recent action logs (last 5 cycles)
+	local action_logs
+	action_logs=$(find "$log_dir" -maxdepth 1 -name 'actions-*.md' -print0 2>/dev/null | xargs -0 ls -t 2>/dev/null | head -5)
+
+	if [[ -z "$action_logs" ]]; then
+		output+="*No action execution history yet*\n"
+		printf '%b' "$output"
+		return 0
+	fi
+
+	# Aggregate execution stats across recent cycles
+	local total_executed=0 total_failed=0 total_skipped=0 cycle_count=0
+	local skip_reasons=""
+	local failed_actions=""
+
+	while IFS= read -r log_file; do
+		cycle_count=$((cycle_count + 1))
+
+		# Count outcomes from action log headers
+		local executed failed skipped
+		executed=$(grep -c 'SUCCESS' "$log_file" 2>/dev/null || echo 0)
+		failed=$(grep -c 'FAILED' "$log_file" 2>/dev/null || echo 0)
+		skipped=$(grep -c 'SKIPPED' "$log_file" 2>/dev/null || echo 0)
+		# Ensure clean integers (trim whitespace/newlines)
+		executed="${executed//[^0-9]/}"
+		failed="${failed//[^0-9]/}"
+		skipped="${skipped//[^0-9]/}"
+		: "${executed:=0}" "${failed:=0}" "${skipped:=0}"
+
+		total_executed=$((total_executed + executed))
+		total_failed=$((total_failed + failed))
+		total_skipped=$((total_skipped + skipped))
+
+		# Collect skip reasons (these reveal prompt/code issues)
+		local skips
+		skips=$(grep -E 'SKIPPED' "$log_file" 2>/dev/null || true)
+		if [[ -n "$skips" ]]; then
+			while IFS= read -r skip_line; do
+				# Extract action type and reason from "## Action N: type — SKIPPED (reason)"
+				local skip_type skip_reason
+				skip_type=$(printf '%s' "$skip_line" | sed -E 's/.*: ([a-z_]+) — SKIPPED.*/\1/' 2>/dev/null || echo "unknown")
+				skip_reason=$(printf '%s' "$skip_line" | sed -E 's/.*SKIPPED \(([^)]+)\).*/\1/' 2>/dev/null || echo "unknown")
+				skip_reasons+="$skip_type: $skip_reason\n"
+			done <<<"$skips"
+		fi
+
+		# Collect failed actions
+		local fails
+		fails=$(grep -E 'FAILED' "$log_file" 2>/dev/null || true)
+		if [[ -n "$fails" ]]; then
+			while IFS= read -r fail_line; do
+				local fail_type
+				fail_type=$(printf '%s' "$fail_line" | sed -E 's/.*: ([a-z_]+) — FAILED.*/\1/' 2>/dev/null || echo "unknown")
+				failed_actions+="$fail_type\n"
+			done <<<"$fails"
+		fi
+	done <<<"$action_logs"
+
+	output+="### Execution Summary (last $cycle_count cycles)\n\n"
+	output+="| Metric | Count |\n|--------|-------|\n"
+	output+="| Executed | $total_executed |\n"
+	output+="| Failed | $total_failed |\n"
+	output+="| Skipped | $total_skipped |\n"
+
+	local total_actions=$((total_executed + total_failed + total_skipped))
+	if [[ "$total_actions" -gt 0 ]]; then
+		local exec_rate=$((total_executed * 100 / total_actions))
+		local skip_rate=$((total_skipped * 100 / total_actions))
+		output+="| Execution rate | ${exec_rate}% |\n"
+		output+="| Skip rate | ${skip_rate}% |\n"
+	fi
+	output+="\n"
+
+	# Deduplicate and count skip reasons
+	if [[ -n "$skip_reasons" ]]; then
+		output+="### Recurring Skip Reasons\n\n"
+		output+="These actions were proposed by the AI but rejected by the executor.\n"
+		output+="**Fix these by adjusting your output format or the executor code.**\n\n"
+
+		local deduped_skips
+		deduped_skips=$(printf '%b' "$skip_reasons" | sort | uniq -c | sort -rn)
+		output+="| Count | Action Type | Reason |\n|-------|-------------|--------|\n"
+		while IFS= read -r line; do
+			local count type_reason
+			count=$(printf '%s' "$line" | awk '{print $1}')
+			type_reason=$(printf '%s' "$line" | sed 's/^ *[0-9]* *//')
+			local stype sreason
+			stype=$(printf '%s' "$type_reason" | cut -d: -f1)
+			sreason=$(printf '%s' "$type_reason" | cut -d: -f2- | sed 's/^ //')
+			output+="| $count | $stype | $sreason |\n"
+		done <<<"$deduped_skips"
+		output+="\n"
+	fi
+
+	# Deduplicate and count failed actions
+	if [[ -n "$failed_actions" ]]; then
+		output+="### Recurring Failures\n\n"
+		local deduped_fails
+		deduped_fails=$(printf '%b' "$failed_actions" | sort | uniq -c | sort -rn)
+		while IFS= read -r line; do
+			local count ftype
+			count=$(printf '%s' "$line" | awk '{print $1}')
+			ftype=$(printf '%s' "$line" | sed 's/^ *[0-9]* *//')
+			output+="- $ftype: failed $count times\n"
+		done <<<"$deduped_fails"
+		output+="\n"
+	fi
+
+	# Check for repeated identical actions across cycles (dedup detection)
+	output+="### Action Repetition Detection\n\n"
+	local all_actions=""
+	while IFS= read -r log_file; do
+		# Extract issue numbers targeted by actions
+		local issue_actions
+		issue_actions=$(grep -oE '"issue_number":[0-9]+' "$log_file" 2>/dev/null |
+			sort -u || true)
+		if [[ -n "$issue_actions" ]]; then
+			while IFS= read -r ia; do
+				local inum
+				inum=$(printf '%s' "$ia" | grep -oE '[0-9]+')
+				all_actions+="issue:#$inum\n"
+			done <<<"$issue_actions"
+		fi
+		# Extract task IDs targeted by actions
+		local task_actions
+		task_actions=$(grep -oE '"task_id":"t[0-9]+"' "$log_file" 2>/dev/null |
+			sort -u || true)
+		if [[ -n "$task_actions" ]]; then
+			while IFS= read -r ta; do
+				local tid
+				tid=$(printf '%s' "$ta" | grep -oE 't[0-9]+')
+				all_actions+="task:$tid\n"
+			done <<<"$task_actions"
+		fi
+	done <<<"$action_logs"
+
+	if [[ -n "$all_actions" ]]; then
+		local repeated
+		repeated=$(printf '%b' "$all_actions" | sort | uniq -c | sort -rn | awk '$1 > 1')
+		if [[ -n "$repeated" ]]; then
+			output+="The following targets received actions in multiple cycles (possible redundant work):\n\n"
+			while IFS= read -r line; do
+				local count target
+				count=$(printf '%s' "$line" | awk '{print $1}')
+				target=$(printf '%s' "$line" | sed 's/^ *[0-9]* *//')
+				output+="- $target: acted on $count times across $cycle_count cycles\n"
+			done <<<"$repeated"
+			output+="\n"
+			output+="Consider: are these repeated actions necessary, or should you skip targets already addressed in prior cycles?\n"
+		else
+			output+="No repeated targets detected — each action targeted a unique resource.\n"
+		fi
+	else
+		output+="No action targets to analyze.\n"
+	fi
+	output+="\n"
+
+	# Pipeline errors from ai-supervisor.log (last 50 lines)
+	local pipeline_log="${HOME}/.aidevops/.agent-workspace/supervisor/logs/ai-supervisor.log"
+	if [[ -f "$pipeline_log" ]]; then
+		local recent_errors
+		recent_errors=$(tail -100 "$pipeline_log" 2>/dev/null | grep -iE 'error|jq:' | tail -10 || true)
+		if [[ -n "$recent_errors" ]]; then
+			output+="### Pipeline Errors (recent)\n\n"
+			output+="These errors occurred in the action execution pipeline:\n\n"
+			output+="\`\`\`\n"
+			output+="$recent_errors\n"
+			output+="\`\`\`\n\n"
+			output+="If these are recurring, create a \`create_improvement\` task to fix the root cause.\n"
+		fi
 	fi
 
 	printf '%b' "$output"
