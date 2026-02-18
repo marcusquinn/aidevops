@@ -1391,3 +1391,222 @@ cmd_reconcile_db_todo() {
 
 	return 0
 }
+
+#######################################
+# Command: reconcile-queue-dispatchability (t1180)
+# Syncs DB queue state with TODO.md reality to eliminate phantom queue entries.
+#
+# Problem: tasks get queued in the DB via cmd_auto_pickup but their TODO.md
+# state later diverges — they get completed, cancelled, or lose their
+# #auto-dispatch tag. These phantom entries inflate queue metrics and confuse
+# priority decisions because cmd_next() only queries DB status, not TODO.md.
+#
+# This function finds all DB tasks with status='queued' and checks each
+# against TODO.md reality:
+#   1. Task marked [x] in TODO.md → transition DB to 'complete'
+#   2. Task marked [-] in TODO.md → transition DB to 'cancelled'
+#   3. Task open [ ] but no #auto-dispatch tag AND not in Dispatch Queue
+#      section → cancel in DB (was queued without valid dispatch criteria)
+#   4. Task has assignee:/started: → skip (actively claimed, not phantom)
+#   5. Task missing from TODO.md → skip (handled by Phase 7b Gap 3 orphan check)
+#
+# Arguments:
+#   --repo <path>   - repo path (default: from DB or pwd)
+#   --batch <id>    - filter to batch
+#   --dry-run       - report only, don't modify
+# Returns: 0 on success
+#######################################
+cmd_reconcile_queue_dispatchability() {
+	local repo_path=""
+	local dry_run="false"
+	local batch_id=""
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--repo)
+			repo_path="$2"
+			shift 2
+			;;
+		--batch)
+			batch_id="$2"
+			shift 2
+			;;
+		--dry-run)
+			dry_run="true"
+			shift
+			;;
+		*) shift ;;
+		esac
+	done
+
+	ensure_db
+
+	# Determine repo path
+	if [[ -z "$repo_path" ]]; then
+		repo_path=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks LIMIT 1;" 2>/dev/null || echo "")
+		if [[ -z "$repo_path" ]]; then
+			repo_path="$(pwd)"
+		fi
+	fi
+
+	local todo_file="$repo_path/TODO.md"
+	if [[ ! -f "$todo_file" ]]; then
+		log_verbose "Phase 0.6: Skipped (no TODO.md at $repo_path)"
+		return 0
+	fi
+
+	local batch_filter=""
+	if [[ -n "$batch_id" ]]; then
+		local escaped_batch
+		escaped_batch=$(sql_escape "$batch_id")
+		batch_filter="AND EXISTS (SELECT 1 FROM batch_tasks bt WHERE bt.task_id = t.id AND bt.batch_id = '$escaped_batch')"
+	fi
+
+	# Get all queued tasks from DB
+	local queued_tasks
+	queued_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
+		SELECT t.id, t.repo FROM tasks t
+		WHERE t.status = 'queued'
+		$batch_filter
+		ORDER BY t.id;
+	" 2>/dev/null || echo "")
+
+	if [[ -z "$queued_tasks" ]]; then
+		log_verbose "Phase 0.6: No queued tasks in DB — skipping reconciliation"
+		return 0
+	fi
+
+	# Build a set of task IDs in the Dispatch Queue section of TODO.md
+	# (tasks in this section are dispatchable even without #auto-dispatch tag)
+	local dispatch_queue_ids=""
+	local in_dispatch_section=false
+	while IFS= read -r dq_line; do
+		if echo "$dq_line" | grep -qE '^#{1,3} '; then
+			if echo "$dq_line" | grep -qi 'dispatch.queue'; then
+				in_dispatch_section=true
+			else
+				in_dispatch_section=false
+			fi
+			continue
+		fi
+		if [[ "$in_dispatch_section" == "true" ]]; then
+			local dq_id
+			dq_id=$(echo "$dq_line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1)
+			if [[ -n "$dq_id" ]]; then
+				dispatch_queue_ids="${dispatch_queue_ids} ${dq_id} "
+			fi
+		fi
+	done <"$todo_file"
+
+	local cancelled_count=0
+	local completed_count=0
+	local phantom_count=0
+	local skipped_count=0
+
+	while IFS='|' read -r tid trepo; do
+		[[ -z "$tid" ]] && continue
+
+		# Use the task's own repo if available, fall back to the provided repo_path
+		local task_todo="$todo_file"
+		if [[ -n "$trepo" && "$trepo" != "$repo_path" && -f "$trepo/TODO.md" ]]; then
+			task_todo="$trepo/TODO.md"
+		fi
+
+		# --- Check 1: Task marked [x] (completed) in TODO.md ---
+		if grep -qE "^[[:space:]]*- \[x\] ${tid}( |$)" "$task_todo" 2>/dev/null; then
+			if [[ "$dry_run" == "true" ]]; then
+				log_warn "[dry-run] Phase 0.6: $tid queued in DB but [x] in TODO.md — would transition to complete"
+			else
+				log_info "Phase 0.6: $tid queued in DB but [x] in TODO.md — transitioning to complete"
+				cmd_transition "$tid" "complete" \
+					--reason "Reconciled: TODO.md marked [x] but DB was queued (t1180)" \
+					2>>"${SUPERVISOR_LOG:-/dev/null}" || {
+					log_warn "Phase 0.6: Failed to transition $tid to complete"
+					continue
+				}
+				completed_count=$((completed_count + 1))
+			fi
+			continue
+		fi
+
+		# --- Check 2: Task marked [-] (cancelled) in TODO.md ---
+		if grep -qE "^[[:space:]]*- \[-\] ${tid}( |$)" "$task_todo" 2>/dev/null; then
+			if [[ "$dry_run" == "true" ]]; then
+				log_warn "[dry-run] Phase 0.6: $tid queued in DB but [-] in TODO.md — would cancel"
+			else
+				log_info "Phase 0.6: $tid queued in DB but [-] in TODO.md — cancelling"
+				cmd_transition "$tid" "cancelled" \
+					--reason "Reconciled: TODO.md marked [-] but DB was queued (t1180)" \
+					2>>"${SUPERVISOR_LOG:-/dev/null}" || {
+					log_warn "Phase 0.6: Failed to cancel $tid"
+					continue
+				}
+				cancelled_count=$((cancelled_count + 1))
+			fi
+			continue
+		fi
+
+		# --- Check 3: Task open [ ] in TODO.md — verify it's still dispatchable ---
+		local todo_line
+		todo_line=$(grep -E "^[[:space:]]*- \[ \] ${tid}( |$)" "$task_todo" 2>/dev/null | head -1 || true)
+
+		if [[ -z "$todo_line" ]]; then
+			# Task not found in TODO.md at all — orphan, handled by Phase 7b Gap 3
+			log_verbose "Phase 0.6: $tid not found in TODO.md — skipping (Phase 7b handles orphans)"
+			skipped_count=$((skipped_count + 1))
+			continue
+		fi
+
+		# Skip tasks with assignee: or started: — they are actively claimed
+		if echo "$todo_line" | grep -qE '(assignee:|started:)'; then
+			log_verbose "Phase 0.6: $tid has assignee/started — skipping (actively claimed)"
+			skipped_count=$((skipped_count + 1))
+			continue
+		fi
+
+		# Check if task has #auto-dispatch tag
+		local has_auto_dispatch=false
+		if echo "$todo_line" | grep -qE '#auto-dispatch'; then
+			has_auto_dispatch=true
+		fi
+
+		# Check if task is in the Dispatch Queue section
+		local in_dispatch_queue=false
+		if echo "$dispatch_queue_ids" | grep -qE " ${tid} "; then
+			in_dispatch_queue=true
+		fi
+
+		# If neither condition is met, this is a phantom queue entry
+		if [[ "$has_auto_dispatch" == "false" && "$in_dispatch_queue" == "false" ]]; then
+			phantom_count=$((phantom_count + 1))
+			if [[ "$dry_run" == "true" ]]; then
+				log_warn "[dry-run] Phase 0.6: $tid queued in DB but not dispatchable in TODO.md (no #auto-dispatch, not in Dispatch Queue)"
+			else
+				log_warn "Phase 0.6: $tid queued in DB but not dispatchable in TODO.md — cancelling phantom entry"
+				cmd_transition "$tid" "cancelled" \
+					--reason "Reconciled: queued in DB but TODO.md has no #auto-dispatch tag or Dispatch Queue entry (t1180)" \
+					2>>"${SUPERVISOR_LOG:-/dev/null}" || {
+					log_warn "Phase 0.6: Failed to cancel phantom $tid"
+					continue
+				}
+				cancelled_count=$((cancelled_count + 1))
+			fi
+		else
+			log_verbose "Phase 0.6: $tid is dispatchable (has_auto_dispatch=$has_auto_dispatch, in_dispatch_queue=$in_dispatch_queue)"
+		fi
+	done <<<"$queued_tasks"
+
+	# Summary
+	local total_fixed=$((cancelled_count + completed_count))
+	if [[ "$total_fixed" -eq 0 && "$phantom_count" -eq 0 ]]; then
+		log_verbose "Phase 0.6: DB queue and TODO.md dispatchability are in sync"
+	elif [[ "$dry_run" == "true" ]]; then
+		log_warn "Phase 0.6: Found $phantom_count phantom(s), $completed_count completed, $cancelled_count cancelled (dry-run, no changes)"
+	else
+		if [[ "$total_fixed" -gt 0 ]]; then
+			log_success "Phase 0.6: Reconciled $total_fixed phantom queue entry(ies) (completed: $completed_count, cancelled: $cancelled_count)"
+		fi
+	fi
+
+	return 0
+}

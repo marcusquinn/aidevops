@@ -202,6 +202,27 @@ cmd_pulse() {
 		log_verbose "Phase 0.5c: No cancelled tasks in DB"
 	fi
 
+	# Phase 0.6: Queue-dispatchability reconciliation (t1180)
+	# Syncs DB queue state with TODO.md reality to eliminate phantom queue entries.
+	# Runs every pulse (not gated on idle) because phantom entries can appear
+	# mid-flight and should be cleaned up promptly before Phase 2 dispatch.
+	# Catches tasks that were queued in DB but whose TODO.md state diverged:
+	#   - Completed ([x]) or cancelled ([-]) tasks still queued in DB
+	#   - Tasks queued in DB but no longer tagged #auto-dispatch in TODO.md
+	if [[ -n "$all_repos" ]]; then
+		while IFS= read -r repo_path; do
+			if [[ -f "$repo_path/TODO.md" ]]; then
+				cmd_reconcile_queue_dispatchability --repo "$repo_path" \
+					${batch_id:+--batch "$batch_id"} 2>>"$SUPERVISOR_LOG" || true
+			fi
+		done <<<"$all_repos"
+	else
+		if [[ -f "$(pwd)/TODO.md" ]]; then
+			cmd_reconcile_queue_dispatchability --repo "$(pwd)" \
+				${batch_id:+--batch "$batch_id"} 2>>"$SUPERVISOR_LOG" || true
+		fi
+	fi
+
 	# Phase 0.7: Stale-state detection (t1132)
 	# Detect tasks in active states (running/dispatched/evaluating) that have no
 	# live worker process. This catches stale state from previous crashes, stuck
