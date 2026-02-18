@@ -98,6 +98,80 @@ log_cmd() {
 # Returns:
 #   Command exit code, or 124 on timeout (matches GNU timeout convention)
 #######################################
+#######################################
+# Compute per-task hung timeout from ~estimate field in TODO.md (t1199)
+# Args: $1 = task_id
+# Returns: timeout in seconds via stdout
+# Logic: 2x the estimate, capped at 4h (14400s), default 30m (1800s) if no estimate
+#######################################
+get_task_hung_timeout() {
+	local task_id="$1"
+	local default_timeout=1800 # 30 minutes
+	local max_timeout=14400    # 4 hours cap
+
+	# Query repo from DB to locate TODO.md
+	local task_repo
+	task_repo=$(db "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo "")
+	if [[ -z "$task_repo" ]]; then
+		echo "$default_timeout"
+		return 0
+	fi
+
+	local todo_file="${task_repo}/TODO.md"
+	if [[ ! -f "$todo_file" ]]; then
+		echo "$default_timeout"
+		return 0
+	fi
+
+	# Extract the TODO.md line for this task
+	local task_line
+	task_line=$(grep -m1 "^[[:space:]]*- \[.\] ${task_id}[[:space:]]" "$todo_file" 2>/dev/null || echo "")
+	if [[ -z "$task_line" ]]; then
+		echo "$default_timeout"
+		return 0
+	fi
+
+	# Parse ~estimate field: matches ~Nh (hours) or ~Nm (minutes) or ~N.Nh
+	local estimate_raw
+	estimate_raw=$(echo "$task_line" | grep -oE '~[0-9]+(\.[0-9]+)?[hm]' | head -1 || echo "")
+	if [[ -z "$estimate_raw" ]]; then
+		echo "$default_timeout"
+		return 0
+	fi
+
+	# Convert estimate to seconds
+	local estimate_seconds=0
+	if [[ "$estimate_raw" =~ ~([0-9]+(\.[0-9]+)?)h ]]; then
+		local hours="${BASH_REMATCH[1]}"
+		# Use awk for float arithmetic (e.g., ~1.5h)
+		estimate_seconds=$(awk "BEGIN { printf \"%d\", ${hours} * 3600 }" 2>/dev/null || echo "0")
+	elif [[ "$estimate_raw" =~ ~([0-9]+)m ]]; then
+		local minutes="${BASH_REMATCH[1]}"
+		estimate_seconds=$((minutes * 60))
+	fi
+
+	if [[ "$estimate_seconds" -le 0 ]]; then
+		echo "$default_timeout"
+		return 0
+	fi
+
+	# Apply 2x multiplier
+	local hung_timeout=$((estimate_seconds * 2))
+
+	# Cap at max_timeout
+	if [[ "$hung_timeout" -gt "$max_timeout" ]]; then
+		hung_timeout="$max_timeout"
+	fi
+
+	# Enforce minimum of default_timeout (30m) — don't go below the baseline
+	if [[ "$hung_timeout" -lt "$default_timeout" ]]; then
+		hung_timeout="$default_timeout"
+	fi
+
+	echo "$hung_timeout"
+	return 0
+}
+
 portable_timeout() {
 	local secs="$1"
 	shift

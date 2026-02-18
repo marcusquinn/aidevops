@@ -2052,7 +2052,7 @@ RULES:
 					fi
 
 					# Check 2: Hung state (no log output for timeout period)
-					# t1196: Uses per-task-type timeout from get_task_timeout()
+					# t1199: Use per-task hung timeout based on ~estimate (2x estimate, 4h cap, 30m default)
 					if [[ "$should_kill" == "false" ]]; then
 						local log_file
 						log_file=$(db "$SUPERVISOR_DB" "SELECT log_file FROM tasks WHERE id = '$(sql_escape "$health_task")';" 2>/dev/null || echo "")
@@ -2063,9 +2063,12 @@ RULES:
 							local now_epoch
 							now_epoch=$(date +%s)
 							log_age_seconds=$((now_epoch - log_mtime))
-							if [[ "$log_age_seconds" -gt "$worker_timeout_seconds" ]]; then
+							# Compute per-task hung timeout from ~estimate field (t1199)
+							local task_hung_timeout
+							task_hung_timeout=$(get_task_hung_timeout "$health_task" 2>/dev/null || echo "$worker_timeout_seconds")
+							if [[ "$log_age_seconds" -gt "$task_hung_timeout" ]]; then
 								should_kill=true
-								kill_reason="Worker hung (no output for ${log_age_seconds}s, timeout ${worker_timeout_seconds}s)"
+								kill_reason="Worker hung (no output for ${log_age_seconds}s, timeout ${task_hung_timeout}s)"
 							fi
 						fi
 					fi
