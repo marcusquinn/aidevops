@@ -1095,7 +1095,7 @@ resolve_model_tier() {
 		echo "anthropic/claude-sonnet-4-6"
 		;;
 	haiku | health)
-		echo "anthropic/claude-3-5-haiku-20241022"
+		echo "anthropic/claude-haiku-4-5"
 		;;
 	flash)
 		echo "google/gemini-2.5-flash-preview-05-20"
