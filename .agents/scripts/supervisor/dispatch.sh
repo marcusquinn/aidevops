@@ -1456,11 +1456,12 @@ update_failure_dedup_state() {
 	current_error_key="${current_error%%:*}"
 
 	local new_count
+	local max_consecutive="${SUPERVISOR_MAX_CONSECUTIVE_FAILURES:-2}"
 	if [[ "$new_error_key" == "$current_error_key" && -n "$current_error_key" ]]; then
 		# Same error type — increment consecutive count
 		new_count=$((current_count + 1))
-		if [[ "$new_count" -ge 2 ]]; then
-			log_warn "  $task_id: consecutive failure #${new_count} with same error '${new_error_key}' — dedup guard will block next dispatch (t1206)"
+		if [[ "$new_count" -ge "$max_consecutive" ]]; then
+			log_warn "  $task_id: consecutive failure #${new_count} with same error '${new_error_key}' — dedup guard will block next dispatch (threshold: $max_consecutive) (t1206)"
 		fi
 	else
 		# Different error — reset counter (new failure mode)
@@ -1474,6 +1475,28 @@ update_failure_dedup_state() {
 		UPDATE tasks
 		SET last_failure_at = '$(sql_escape "$now_iso")',
 		    consecutive_failure_count = $new_count
+		WHERE id = '$escaped_id';
+	" 2>/dev/null || true
+
+	return 0
+}
+
+#######################################
+# Reset dispatch dedup guard state after successful task completion (t1206)
+# Clears last_failure_at and consecutive_failure_count so a re-queued task
+# is not deferred by a stale cooldown from a pre-success failure.
+#
+# Usage: reset_failure_dedup_state <task_id>
+#######################################
+reset_failure_dedup_state() {
+	local task_id="$1"
+	local escaped_id
+	escaped_id=$(sql_escape "$task_id")
+
+	db "$SUPERVISOR_DB" "
+		UPDATE tasks
+		SET last_failure_at = NULL,
+		    consecutive_failure_count = 0
 		WHERE id = '$escaped_id';
 	" 2>/dev/null || true
 
