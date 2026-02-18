@@ -1218,10 +1218,19 @@
   check: shellcheck .agents/scripts/supervisor/dispatch.sh
   check: file-exists .agents/scripts/supervisor/dispatch.sh
 
-- [ ] v143 t1138 Add cycle-level action dedup to prevent repeated actions ... | PR #1736 | merged:2026-02-18
+- [x] v143 t1138 Add cycle-level action dedup to prevent repeated actions ... | PR #1736 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/supervisor/ai-actions.sh, .agents/scripts/supervisor/database.sh, MODELS.md
   check: shellcheck .agents/scripts/supervisor/ai-actions.sh
   check: file-exists .agents/scripts/supervisor/ai-actions.sh
   check: shellcheck .agents/scripts/supervisor/database.sh
   check: file-exists .agents/scripts/supervisor/database.sh
   check: file-exists MODELS.md
+
+- [ ] v144 t1179 Add cycle-aware dedup to supervisor — skip targets acte... | PR #1780 | merged:2026-02-18
+  files: .agents/scripts/supervisor/ai-actions.sh, .agents/scripts/supervisor/database.sh, tests/test-ai-actions.sh
+  check: shellcheck .agents/scripts/supervisor/ai-actions.sh
+  check: file-exists .agents/scripts/supervisor/ai-actions.sh
+  check: shellcheck .agents/scripts/supervisor/database.sh
+  check: file-exists .agents/scripts/supervisor/database.sh
+  check: shellcheck tests/test-ai-actions.sh
+  check: file-exists tests/test-ai-actions.sh
