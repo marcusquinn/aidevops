@@ -213,6 +213,7 @@ source "${SUPERVISOR_MODULE_DIR}/memory-integration.sh"
 source "${SUPERVISOR_MODULE_DIR}/todo-sync.sh"
 source "${SUPERVISOR_MODULE_DIR}/ai-context.sh"
 source "${SUPERVISOR_MODULE_DIR}/ai-reason.sh"
+source "${SUPERVISOR_MODULE_DIR}/ai-actions.sh"
 
 # Valid states for the state machine
 # shellcheck disable=SC2034 # Used by supervisor/state.sh
@@ -691,16 +692,55 @@ main() {
 	contest) cmd_contest "$@" ;;
 	ai-context) build_ai_context "${REPO_PATH:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}" "${1:-full}" ;;
 	ai-reason) run_ai_reasoning "${REPO_PATH:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}" "${1:-full}" ;;
+	ai-actions)
+		# Execute an action plan: supervisor-helper.sh ai-actions [--mode execute|dry-run|validate-only] --plan '<json>'
+		local _aa_mode="execute" _aa_plan="" _aa_repo=""
+		_aa_repo="${REPO_PATH:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+		while [[ $# -gt 0 ]]; do
+			case "$1" in
+			--mode)
+				_aa_mode="$2"
+				shift 2
+				;;
+			--plan)
+				_aa_plan="$2"
+				shift 2
+				;;
+			--dry-run)
+				_aa_mode="dry-run"
+				shift
+				;;
+			--repo)
+				_aa_repo="$2"
+				shift 2
+				;;
+			*) shift ;;
+			esac
+		done
+		if [[ -z "$_aa_plan" ]]; then
+			log_error "ai-actions requires --plan '<json>'"
+			return 1
+		fi
+		execute_action_plan "$_aa_plan" "$_aa_repo" "$_aa_mode"
+		;;
+	ai-pipeline)
+		# Run full reasoning + action execution: supervisor-helper.sh ai-pipeline [full|dry-run]
+		run_ai_actions_pipeline "${REPO_PATH:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}" "${1:-full}"
+		;;
 	ai-status)
 		local last_run_ts
 		last_run_ts=$(db "$SUPERVISOR_DB" "SELECT MAX(timestamp) FROM state_log WHERE task_id = 'ai-supervisor' AND to_state = 'complete';" 2>/dev/null || echo "never")
 		local run_count
 		run_count=$(db "$SUPERVISOR_DB" "SELECT COUNT(*) FROM state_log WHERE task_id = 'ai-supervisor' AND to_state = 'complete';" 2>/dev/null || echo 0)
+		local action_count
+		action_count=$(db "$SUPERVISOR_DB" "SELECT COUNT(*) FROM state_log WHERE task_id = 'ai-supervisor' AND from_state = 'actions';" 2>/dev/null || echo 0)
 		echo "AI Supervisor Status"
 		echo "  Last run: ${last_run_ts:-never}"
-		echo "  Total runs: $run_count"
+		echo "  Total reasoning runs: $run_count"
+		echo "  Total action executions: $action_count"
 		echo "  Enabled: ${SUPERVISOR_AI_ENABLED:-true}"
 		echo "  Interval: ${SUPERVISOR_AI_INTERVAL:-15} pulses (~$((${SUPERVISOR_AI_INTERVAL:-15} * 2))min)"
+		echo "  Max actions/cycle: ${AI_MAX_ACTIONS_PER_CYCLE:-10}"
 		echo "  Log dir: ${AI_REASON_LOG_DIR:-$HOME/.aidevops/logs/ai-supervisor}"
 		;;
 	help | --help | -h) show_usage ;;
