@@ -1801,11 +1801,12 @@ RULES:
 		log_verbose "  Phase 12: MODELS.md regen skipped (${models_md_remaining}s until next run)"
 	fi
 
-	# Phase 13: Skill update PR pipeline (t1082.2)
+	# Phase 13: Skill update PR pipeline (t1082.2, t1082.3)
 	# Optional phase — disabled by default. Enable via SUPERVISOR_SKILL_UPDATE_PR=true.
 	# Runs skill-update-helper.sh pr on a configurable schedule (default: daily).
 	# Only runs for repos where the authenticated user has write/admin permission,
 	# ensuring PRs are only created where the user is a maintainer.
+	# Batch mode: SUPERVISOR_SKILL_UPDATE_BATCH_MODE (one-per-skill|single-pr, default: one-per-skill)
 	local skill_update_pr_enabled="${SUPERVISOR_SKILL_UPDATE_PR:-false}"
 	if [[ "$skill_update_pr_enabled" == "true" ]]; then
 		local skill_update_interval="${SUPERVISOR_SKILL_UPDATE_INTERVAL:-86400}" # seconds (24h default)
@@ -1816,7 +1817,7 @@ RULES:
 		if [[ -f "$skill_update_stamp" ]]; then
 			skill_update_last=$(cat "$skill_update_stamp" 2>/dev/null || echo 0)
 		fi
-		local skill_update_elapsed=$((skill_update_now - skill_update_last))
+		local skill_update_elapsed=$((skill_update_now - ${skill_update_last:-0}))
 		if [[ "$skill_update_elapsed" -ge "$skill_update_interval" ]]; then
 			local skill_update_script="${SCRIPT_DIR}/skill-update-helper.sh"
 			if [[ -x "$skill_update_script" ]]; then
@@ -1837,8 +1838,11 @@ RULES:
 						2>/dev/null || echo "")
 				fi
 				if [[ "$viewer_permission" == "ADMIN" || "$viewer_permission" == "WRITE" ]]; then
-					log_info "  Phase 13: Running skill update PR pipeline (permission: $viewer_permission)"
-					if "$skill_update_script" pr --quiet 2>>"$SUPERVISOR_LOG"; then
+					# Resolve batch mode: CLI env var > supervisor env var > default
+					local skill_batch_mode="${SUPERVISOR_SKILL_UPDATE_BATCH_MODE:-one-per-skill}"
+					log_info "  Phase 13: Running skill update PR pipeline (permission: $viewer_permission, batch-mode: $skill_batch_mode)"
+					if SKILL_UPDATE_BATCH_MODE="$skill_batch_mode" \
+						"$skill_update_script" pr --quiet 2>>"$SUPERVISOR_LOG"; then
 						log_success "  Phase 13: Skill update PR pipeline complete"
 					else
 						log_warn "  Phase 13: Skill update PR pipeline finished with errors (see $SUPERVISOR_LOG)"
