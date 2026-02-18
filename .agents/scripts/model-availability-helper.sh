@@ -127,7 +127,7 @@ get_tier_models() {
 		esac
 	else
 		case "$tier" in
-		haiku) echo "anthropic/claude-3-5-haiku-20241022|google/gemini-2.5-flash" ;;
+		haiku) echo "anthropic/claude-haiku-4-5|google/gemini-2.5-flash" ;;
 		flash) echo "google/gemini-2.5-flash|openai/gpt-4.1-mini" ;;
 		sonnet) echo "anthropic/claude-sonnet-4-6|openai/gpt-4.1" ;;
 		pro) echo "google/gemini-2.5-pro|anthropic/claude-sonnet-4-6" ;;

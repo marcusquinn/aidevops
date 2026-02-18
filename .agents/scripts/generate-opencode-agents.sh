@@ -216,9 +216,9 @@ SKIP_CUSTOM_PROMPT = set()
 # Maps tier names to actual model identifiers
 # Agents declare their tier; the coordinator uses this for cost-effective routing
 MODEL_TIERS = {
-    "haiku": "claude-3-5-haiku-20241022",      # Triage, routing, simple tasks
+    "haiku": "claude-haiku-4-5",               # Triage, routing, simple tasks
     "sonnet": "claude-sonnet-4-6",             # Code, review, implementation
-    "opus": "claude-opus-4-20250514",          # Architecture, complex reasoning
+    "opus": "claude-opus-4-6",                 # Architecture, complex reasoning
     "flash": "gemini-2.5-flash",               # Fast, cheap, large context
     "pro": "gemini-2.5-pro",                   # Capable, large context
 }
