@@ -155,6 +155,157 @@ _diagnose_stale_root_cause() {
 }
 
 #######################################
+# Stale GC report — observability into stale state recovery patterns (t1202)
+# Shows frequency, root causes, and trends from stale_recovery_log.
+# Args:
+#   --days <N>    Look back N days (default: 7)
+#   --json        Output as JSON
+#######################################
+cmd_stale_gc_report() {
+	ensure_db
+
+	local days=7
+	local json_output=false
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--days)
+			days="$2"
+			shift 2
+			;;
+		--json)
+			json_output=true
+			shift
+			;;
+		*) shift ;;
+		esac
+	done
+
+	# Check if table exists
+	local has_table
+	has_table=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='stale_recovery_log';" 2>/dev/null || echo "0")
+	if [[ "$has_table" -eq 0 ]]; then
+		echo "No stale_recovery_log table found. Run a pulse cycle first to initialize."
+		return 0
+	fi
+
+	local total_events
+	total_events=$(db "$SUPERVISOR_DB" "
+		SELECT count(*) FROM stale_recovery_log
+		WHERE created_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days');
+	" 2>/dev/null || echo "0")
+
+	if [[ "$json_output" == "true" ]]; then
+		# JSON output for programmatic consumption
+		local json_result
+		json_result=$(db -json "$SUPERVISOR_DB" "
+			SELECT
+				phase,
+				from_state,
+				to_state,
+				root_cause,
+				count(*) as event_count,
+				avg(stale_seconds) as avg_stale_secs,
+				max(stale_seconds) as max_stale_secs,
+				sum(had_pr) as with_pr_count
+			FROM stale_recovery_log
+			WHERE created_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days')
+			GROUP BY phase, from_state, to_state, root_cause
+			ORDER BY event_count DESC;
+		" 2>/dev/null || echo "[]")
+		echo "$json_result"
+		return 0
+	fi
+
+	# Human-readable report
+	echo "=== Stale State GC Report (last ${days} days) ==="
+	echo ""
+	echo "Total recovery events: $total_events"
+	echo ""
+
+	if [[ "$total_events" -eq 0 ]]; then
+		echo "No stale state recoveries in the last ${days} days."
+		return 0
+	fi
+
+	# Summary by phase
+	echo "--- By Phase ---"
+	db -column -header "$SUPERVISOR_DB" "
+		SELECT
+			phase AS Phase,
+			count(*) AS Events,
+			printf('%.0f', avg(stale_seconds)) AS 'Avg Stale (s)',
+			max(stale_seconds) AS 'Max Stale (s)'
+		FROM stale_recovery_log
+		WHERE created_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days')
+		GROUP BY phase
+		ORDER BY Events DESC;
+	" 2>/dev/null || echo "(no data)"
+	echo ""
+
+	# Summary by root cause
+	echo "--- By Root Cause ---"
+	db -column -header "$SUPERVISOR_DB" "
+		SELECT
+			root_cause AS 'Root Cause',
+			count(*) AS Events,
+			printf('%.0f', avg(stale_seconds)) AS 'Avg Stale (s)'
+		FROM stale_recovery_log
+		WHERE created_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days')
+			AND root_cause != ''
+		GROUP BY root_cause
+		ORDER BY Events DESC;
+	" 2>/dev/null || echo "(no data)"
+	echo ""
+
+	# Summary by from_state → to_state transition
+	echo "--- State Transitions ---"
+	db -column -header "$SUPERVISOR_DB" "
+		SELECT
+			from_state || ' → ' || to_state AS Transition,
+			count(*) AS Events,
+			sum(had_pr) AS 'With PR'
+		FROM stale_recovery_log
+		WHERE created_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days')
+		GROUP BY from_state, to_state
+		ORDER BY Events DESC;
+	" 2>/dev/null || echo "(no data)"
+	echo ""
+
+	# Most frequently stuck tasks (repeat offenders)
+	echo "--- Repeat Offenders (tasks recovered 2+ times) ---"
+	db -column -header "$SUPERVISOR_DB" "
+		SELECT
+			task_id AS Task,
+			count(*) AS Recoveries,
+			group_concat(DISTINCT root_cause) AS 'Root Causes',
+			group_concat(DISTINCT phase) AS Phases
+		FROM stale_recovery_log
+		WHERE created_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days')
+		GROUP BY task_id
+		HAVING count(*) >= 2
+		ORDER BY Recoveries DESC
+		LIMIT 10;
+	" 2>/dev/null || echo "(none)"
+	echo ""
+
+	# Daily trend
+	echo "--- Daily Trend ---"
+	db -column -header "$SUPERVISOR_DB" "
+		SELECT
+			date(created_at) AS Date,
+			count(*) AS Events,
+			count(DISTINCT task_id) AS 'Unique Tasks'
+		FROM stale_recovery_log
+		WHERE created_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days')
+		GROUP BY date(created_at)
+		ORDER BY Date DESC;
+	" 2>/dev/null || echo "(no data)"
+
+	return 0
+}
+
+#######################################
 # Check if a task has had a prompt-repeat attempt (t1097)
 # Args: $1 = task_id
 # Returns: 0 if attempted, 1 if not
