@@ -134,6 +134,38 @@ restore_db() {
 }
 
 #######################################
+# Create the stale_recovery_log table and indexes (t1202)
+# Tracks every stale state recovery event with per-task detail for
+# observability and root-cause analysis. Records which phase detected
+# the stale state, what the original state was, how long it was stale,
+# and what root cause was identified (if any).
+# Single source of truth — called by both init_db and ensure_db.
+#######################################
+_create_stale_recovery_log_schema() {
+	db "$SUPERVISOR_DB" <<'STALE_SCHEMA'
+CREATE TABLE IF NOT EXISTS stale_recovery_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id         TEXT NOT NULL,
+    phase           TEXT NOT NULL,
+    from_state      TEXT NOT NULL,
+    to_state        TEXT NOT NULL,
+    stale_seconds   INTEGER NOT NULL DEFAULT 0,
+    root_cause      TEXT DEFAULT '',
+    had_pr          INTEGER NOT NULL DEFAULT 0,
+    had_live_worker INTEGER NOT NULL DEFAULT 0,
+    retries_at_recovery INTEGER NOT NULL DEFAULT 0,
+    max_retries     INTEGER NOT NULL DEFAULT 3,
+    batch_id        TEXT DEFAULT '',
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_stale_recovery_task ON stale_recovery_log(task_id);
+CREATE INDEX IF NOT EXISTS idx_stale_recovery_phase ON stale_recovery_log(phase);
+CREATE INDEX IF NOT EXISTS idx_stale_recovery_created ON stale_recovery_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_stale_recovery_root_cause ON stale_recovery_log(root_cause);
+STALE_SCHEMA
+}
+
+#######################################
 # Create the action_dedup_log table and indexes (t1138, t1179)
 # Single source of truth for the schema — called by both init_db
 # (fresh databases) and ensure_db (migration of existing databases).
@@ -619,6 +651,15 @@ CONTEST_SQL
 		log_success "Added requested_tier and actual_tier columns to tasks (t1117)"
 	fi
 
+	# Migrate: create stale_recovery_log table if missing (t1202)
+	local has_stale_recovery_log
+	has_stale_recovery_log=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='stale_recovery_log';" 2>/dev/null || echo "0")
+	if [[ "$has_stale_recovery_log" -eq 0 ]]; then
+		log_info "Creating stale_recovery_log table (t1202)..."
+		_create_stale_recovery_log_schema
+		log_success "Created stale_recovery_log table (t1202)"
+	fi
+
 	# Migrate: create action_dedup_log table if missing (t1138)
 	local has_action_dedup_log
 	has_action_dedup_log=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='action_dedup_log';" 2>/dev/null || echo "0")
@@ -641,6 +682,9 @@ CONTEST_SQL
 
 	# Prune old action_dedup_log entries (keep last 7 days)
 	db "$SUPERVISOR_DB" "DELETE FROM action_dedup_log WHERE created_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-7 days');" 2>/dev/null || true
+
+	# Prune old stale_recovery_log entries (keep last 30 days for trend analysis, t1202)
+	db "$SUPERVISOR_DB" "DELETE FROM stale_recovery_log WHERE created_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-30 days');" 2>/dev/null || true
 
 	# Ensure WAL mode for existing databases created before t135.3
 	local current_mode
@@ -766,6 +810,9 @@ CREATE INDEX IF NOT EXISTS idx_proof_logs_task ON proof_logs(task_id);
 CREATE INDEX IF NOT EXISTS idx_proof_logs_event ON proof_logs(event);
 CREATE INDEX IF NOT EXISTS idx_proof_logs_timestamp ON proof_logs(timestamp);
 SQL
+
+	# Stale recovery log — schema defined in _create_stale_recovery_log_schema() (t1202)
+	_create_stale_recovery_log_schema
 
 	# Action dedup log — schema defined in _create_action_dedup_log_schema() (t1138)
 	_create_action_dedup_log_schema

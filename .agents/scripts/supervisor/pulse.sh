@@ -4,6 +4,308 @@
 # Functions for the main pulse loop and post-PR lifecycle processing
 
 #######################################
+# Record a stale state recovery event to stale_recovery_log (t1202)
+# Provides per-event metrics for observability and root-cause analysis.
+# Args:
+#   --task <id>           Task ID
+#   --phase <phase>       Which phase detected it (0.7, 0.8, 1c)
+#   --from <state>        Original stale state
+#   --to <state>          State transitioned to
+#   --stale-secs <N>      How long the task was stale
+#   --root-cause <text>   Why the task got stuck (optional)
+#   --had-pr <0|1>        Whether task had a PR (optional, default 0)
+#   --retries <N>         Retry count at recovery time (optional, default 0)
+#   --max-retries <N>     Max retries configured (optional, default 3)
+#   --batch <id>          Batch ID (optional)
+#######################################
+_record_stale_recovery() {
+	local task_id="" phase="" from_state="" to_state="" stale_secs=0
+	local root_cause="" had_pr=0 retries=0 max_retries=3 batch_id=""
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--task)
+			task_id="$2"
+			shift 2
+			;;
+		--phase)
+			phase="$2"
+			shift 2
+			;;
+		--from)
+			from_state="$2"
+			shift 2
+			;;
+		--to)
+			to_state="$2"
+			shift 2
+			;;
+		--stale-secs)
+			stale_secs="$2"
+			shift 2
+			;;
+		--root-cause)
+			root_cause="$2"
+			shift 2
+			;;
+		--had-pr)
+			had_pr="$2"
+			shift 2
+			;;
+		--retries)
+			retries="$2"
+			shift 2
+			;;
+		--max-retries)
+			max_retries="$2"
+			shift 2
+			;;
+		--batch)
+			batch_id="$2"
+			shift 2
+			;;
+		*) shift ;;
+		esac
+	done
+
+	[[ -z "$task_id" || -z "$phase" || -z "$from_state" || -z "$to_state" ]] && return 0
+
+	db "$SUPERVISOR_DB" "
+		INSERT INTO stale_recovery_log
+			(task_id, phase, from_state, to_state, stale_seconds, root_cause,
+			 had_pr, had_live_worker, retries_at_recovery, max_retries, batch_id)
+		VALUES (
+			'$(sql_escape "$task_id")', '$(sql_escape "$phase")',
+			'$(sql_escape "$from_state")', '$(sql_escape "$to_state")',
+			$stale_secs, '$(sql_escape "$root_cause")',
+			$had_pr, 0, $retries, $max_retries,
+			'$(sql_escape "$batch_id")');" 2>/dev/null || true
+}
+
+#######################################
+# Diagnose root cause of a stale evaluating/running task (t1202)
+# Checks log files, PID state, and evaluate step artifacts to determine
+# why the task got stuck.
+# Args: $1 = task_id, $2 = stale_status
+# Returns: root cause string via stdout
+#######################################
+_diagnose_stale_root_cause() {
+	local task_id="$1"
+	local stale_status="$2"
+	local escaped_id
+	escaped_id=$(sql_escape "$task_id")
+
+	local log_file
+	log_file=$(db "$SUPERVISOR_DB" "SELECT log_file FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+
+	# Check 1: No log file at all — dispatch likely failed
+	if [[ -z "$log_file" || ! -f "$log_file" ]]; then
+		echo "no_log_file"
+		return 0
+	fi
+
+	# Check 2: Log file empty — worker never started
+	local log_size
+	log_size=$(wc -c <"$log_file" 2>/dev/null | tr -d ' ')
+	if [[ "$log_size" -eq 0 ]]; then
+		echo "empty_log_file"
+		return 0
+	fi
+
+	# Check 3: For evaluating tasks, check if evaluation was attempted
+	if [[ "$stale_status" == "evaluating" ]]; then
+		# Check if the evaluate step left any error indicators in the log
+		if grep -q 'WORKER_FAILED\|DISPATCH_ERROR\|command not found' "$log_file" 2>/dev/null; then
+			echo "worker_failed_before_eval"
+			return 0
+		fi
+
+		# Check if there's an AI eval timeout indicator
+		if grep -q 'evaluate_with_ai\|AI evaluation' "$log_file" 2>/dev/null; then
+			echo "ai_eval_timeout"
+			return 0
+		fi
+
+		# Check if the pulse was killed mid-evaluation (no completion marker)
+		echo "eval_process_died"
+		return 0
+	fi
+
+	# Check 4: For running tasks, check for OOM/crash indicators
+	if [[ "$stale_status" == "running" ]]; then
+		if grep -q 'Killed\|OOM\|out of memory\|Cannot allocate' "$log_file" 2>/dev/null; then
+			echo "worker_oom_killed"
+			return 0
+		fi
+		if grep -q 'rate.limit\|429\|Too Many Requests' "$log_file" 2>/dev/null; then
+			echo "worker_rate_limited"
+			return 0
+		fi
+		echo "worker_died_unknown"
+		return 0
+	fi
+
+	# Check 5: For dispatched tasks
+	if [[ "$stale_status" == "dispatched" ]]; then
+		echo "dispatch_never_started"
+		return 0
+	fi
+
+	echo "unknown"
+}
+
+#######################################
+# Stale GC report — observability into stale state recovery patterns (t1202)
+# Shows frequency, root causes, and trends from stale_recovery_log.
+# Args:
+#   --days <N>    Look back N days (default: 7)
+#   --json        Output as JSON
+#######################################
+cmd_stale_gc_report() {
+	ensure_db
+
+	local days=7
+	local json_output=false
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--days)
+			days="$2"
+			shift 2
+			;;
+		--json)
+			json_output=true
+			shift
+			;;
+		*) shift ;;
+		esac
+	done
+
+	# Check if table exists
+	local has_table
+	has_table=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='stale_recovery_log';" 2>/dev/null || echo "0")
+	if [[ "$has_table" -eq 0 ]]; then
+		echo "No stale_recovery_log table found. Run a pulse cycle first to initialize."
+		return 0
+	fi
+
+	local total_events
+	total_events=$(db "$SUPERVISOR_DB" "
+		SELECT count(*) FROM stale_recovery_log
+		WHERE created_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days');
+	" 2>/dev/null || echo "0")
+
+	if [[ "$json_output" == "true" ]]; then
+		# JSON output for programmatic consumption
+		local json_result
+		json_result=$(db -json "$SUPERVISOR_DB" "
+			SELECT
+				phase,
+				from_state,
+				to_state,
+				root_cause,
+				count(*) as event_count,
+				avg(stale_seconds) as avg_stale_secs,
+				max(stale_seconds) as max_stale_secs,
+				sum(had_pr) as with_pr_count
+			FROM stale_recovery_log
+			WHERE created_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days')
+			GROUP BY phase, from_state, to_state, root_cause
+			ORDER BY event_count DESC;
+		" 2>/dev/null || echo "[]")
+		echo "$json_result"
+		return 0
+	fi
+
+	# Human-readable report
+	echo "=== Stale State GC Report (last ${days} days) ==="
+	echo ""
+	echo "Total recovery events: $total_events"
+	echo ""
+
+	if [[ "$total_events" -eq 0 ]]; then
+		echo "No stale state recoveries in the last ${days} days."
+		return 0
+	fi
+
+	# Summary by phase
+	echo "--- By Phase ---"
+	db -column -header "$SUPERVISOR_DB" "
+		SELECT
+			phase AS Phase,
+			count(*) AS Events,
+			printf('%.0f', avg(stale_seconds)) AS 'Avg Stale (s)',
+			max(stale_seconds) AS 'Max Stale (s)'
+		FROM stale_recovery_log
+		WHERE created_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days')
+		GROUP BY phase
+		ORDER BY Events DESC;
+	" 2>/dev/null || echo "(no data)"
+	echo ""
+
+	# Summary by root cause
+	echo "--- By Root Cause ---"
+	db -column -header "$SUPERVISOR_DB" "
+		SELECT
+			root_cause AS 'Root Cause',
+			count(*) AS Events,
+			printf('%.0f', avg(stale_seconds)) AS 'Avg Stale (s)'
+		FROM stale_recovery_log
+		WHERE created_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days')
+			AND root_cause != ''
+		GROUP BY root_cause
+		ORDER BY Events DESC;
+	" 2>/dev/null || echo "(no data)"
+	echo ""
+
+	# Summary by from_state → to_state transition
+	echo "--- State Transitions ---"
+	db -column -header "$SUPERVISOR_DB" "
+		SELECT
+			from_state || ' → ' || to_state AS Transition,
+			count(*) AS Events,
+			sum(had_pr) AS 'With PR'
+		FROM stale_recovery_log
+		WHERE created_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days')
+		GROUP BY from_state, to_state
+		ORDER BY Events DESC;
+	" 2>/dev/null || echo "(no data)"
+	echo ""
+
+	# Most frequently stuck tasks (repeat offenders)
+	echo "--- Repeat Offenders (tasks recovered 2+ times) ---"
+	db -column -header "$SUPERVISOR_DB" "
+		SELECT
+			task_id AS Task,
+			count(*) AS Recoveries,
+			group_concat(DISTINCT root_cause) AS 'Root Causes',
+			group_concat(DISTINCT phase) AS Phases
+		FROM stale_recovery_log
+		WHERE created_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days')
+		GROUP BY task_id
+		HAVING count(*) >= 2
+		ORDER BY Recoveries DESC
+		LIMIT 10;
+	" 2>/dev/null || echo "(none)"
+	echo ""
+
+	# Daily trend
+	echo "--- Daily Trend ---"
+	db -column -header "$SUPERVISOR_DB" "
+		SELECT
+			date(created_at) AS Date,
+			count(*) AS Events,
+			count(DISTINCT task_id) AS 'Unique Tasks'
+		FROM stale_recovery_log
+		WHERE created_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days')
+		GROUP BY date(created_at)
+		ORDER BY Date DESC;
+	" 2>/dev/null || echo "(no data)"
+
+	return 0
+}
+
+#######################################
 # Check if a task has had a prompt-repeat attempt (t1097)
 # Args: $1 = task_id
 # Returns: 0 if attempted, 1 if not
@@ -291,7 +593,7 @@ cmd_pulse() {
 		fi
 	fi
 
-	# Phase 0.7: Stale-state detection (t1132)
+	# Phase 0.7: Stale-state detection (t1132, enhanced t1202)
 	# Detect tasks in active states (running/dispatched/evaluating) that have no
 	# live worker process. This catches stale state from previous crashes, stuck
 	# evaluations, or supervisor restarts where PID files were cleaned up but DB
@@ -299,18 +601,43 @@ cmd_pulse() {
 	# files), this phase also checks tasks WITH PID files whose PIDs are dead,
 	# providing a comprehensive upfront consistency sweep.
 	#
-	# Grace period: tasks must have been in their current state for at least
-	# SUPERVISOR_STALE_GRACE_SECONDS (default 600 = 10 min) before being
-	# considered stale. This prevents false positives from tasks that were
-	# just dispatched and haven't written their PID file yet.
+	# Grace periods (t1202): Evaluating uses a shorter grace period than
+	# running/dispatched because evaluation is a supervisor-side operation
+	# (seconds, not minutes). A task stuck in evaluating for >2min almost
+	# certainly has a dead evaluation process.
+	#   - SUPERVISOR_EVALUATING_GRACE_SECONDS (default 120 = 2 min)
+	#   - SUPERVISOR_STALE_GRACE_SECONDS (default 600 = 10 min) for running/dispatched
 	local stale_grace_seconds="${SUPERVISOR_STALE_GRACE_SECONDS:-600}"
-	local stale_active_tasks
-	stale_active_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
+	local evaluating_grace_seconds="${SUPERVISOR_EVALUATING_GRACE_SECONDS:-120}"
+
+	# Query evaluating tasks with shorter grace period
+	local stale_evaluating_tasks
+	stale_evaluating_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
 		SELECT id, status, updated_at FROM tasks
-		WHERE status IN ('running', 'dispatched', 'evaluating')
+		WHERE status = 'evaluating'
+		AND updated_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${evaluating_grace_seconds} seconds')
+		ORDER BY updated_at ASC;
+	" 2>/dev/null || echo "")
+
+	# Query running/dispatched tasks with standard grace period
+	local stale_other_tasks
+	stale_other_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
+		SELECT id, status, updated_at FROM tasks
+		WHERE status IN ('running', 'dispatched')
 		AND updated_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${stale_grace_seconds} seconds')
 		ORDER BY updated_at ASC;
 	" 2>/dev/null || echo "")
+
+	# Combine results for unified processing
+	local stale_active_tasks=""
+	if [[ -n "$stale_evaluating_tasks" && -n "$stale_other_tasks" ]]; then
+		stale_active_tasks="${stale_evaluating_tasks}
+${stale_other_tasks}"
+	elif [[ -n "$stale_evaluating_tasks" ]]; then
+		stale_active_tasks="$stale_evaluating_tasks"
+	elif [[ -n "$stale_other_tasks" ]]; then
+		stale_active_tasks="$stale_other_tasks"
+	fi
 
 	if [[ -n "$stale_active_tasks" ]]; then
 		local stale_recovered=0
@@ -337,8 +664,26 @@ cmd_pulse() {
 				continue
 			fi
 
+			# Calculate how long the task has been stale
+			local stale_secs=0
+			if [[ -n "$stale_updated" ]]; then
+				local updated_epoch
+				updated_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$stale_updated" "+%s" 2>/dev/null || date -d "$stale_updated" "+%s" 2>/dev/null || echo "0")
+				local now_epoch
+				now_epoch=$(date "+%s")
+				if [[ "$updated_epoch" -gt 0 ]]; then
+					stale_secs=$((now_epoch - updated_epoch))
+				fi
+			fi
+
+			# Diagnose root cause (t1202)
+			local root_cause
+			root_cause=$(_diagnose_stale_root_cause "$stale_id" "$stale_status")
+
 			# No live worker — this is stale state. Transition based on retry eligibility.
-			log_warn "  Phase 0.7: Stale $stale_status task $stale_id (updated: $stale_updated, no live worker)"
+			local effective_grace="$stale_grace_seconds"
+			[[ "$stale_status" == "evaluating" ]] && effective_grace="$evaluating_grace_seconds"
+			log_warn "  Phase 0.7: Stale $stale_status task $stale_id (updated: $stale_updated, ${stale_secs}s stale, grace: ${effective_grace}s, cause: $root_cause)"
 
 			local stale_retries stale_max_retries stale_pr_url
 			stale_retries=$(db "$SUPERVISOR_DB" "SELECT retries FROM tasks WHERE id = '$(sql_escape "$stale_id")';" 2>/dev/null || echo "0")
@@ -350,41 +695,56 @@ cmd_pulse() {
 				rm -f "$stale_pid_file" 2>/dev/null || true
 			fi
 
+			local had_pr_flag=0
+			[[ -n "$stale_pr_url" && "$stale_pr_url" != "no_pr" && "$stale_pr_url" != "task_only" ]] && had_pr_flag=1
+			local recovery_to_state=""
+
 			# t1145: If the stale task is in 'evaluating' and already has a PR, route to
 			# pr_review instead of re-queuing — the work is done, only evaluation died.
-			if [[ "$stale_status" == "evaluating" && -n "$stale_pr_url" ]]; then
+			if [[ "$stale_status" == "evaluating" && "$had_pr_flag" -eq 1 ]]; then
+				recovery_to_state="pr_review"
 				log_info "  Phase 0.7: $stale_id → pr_review (has PR, evaluation process died)"
-				cmd_transition "$stale_id" "pr_review" --pr-url "$stale_pr_url" --error "Stale evaluating recovery (Phase 0.7/t1145): evaluation process died, PR exists" 2>>"$SUPERVISOR_LOG" || true
+				cmd_transition "$stale_id" "pr_review" --pr-url "$stale_pr_url" --error "Stale evaluating recovery (Phase 0.7/t1145): evaluation process died, PR exists (cause: $root_cause)" 2>>"$SUPERVISOR_LOG" || true
 				db "$SUPERVISOR_DB" "
 					INSERT INTO state_log (task_id, from_state, to_state, reason)
 					VALUES ('$(sql_escape "$stale_id")', '$(sql_escape "$stale_status")',
 						'pr_review',
-						'Phase 0.7 stale-state recovery (t1145): evaluating with dead worker but PR exists — routed to pr_review');
+						'Phase 0.7 stale-state recovery (t1145/t1202): evaluating with dead worker but PR exists — routed to pr_review (cause: $(sql_escape "$root_cause"))');
 				" 2>/dev/null || true
 			elif [[ "$stale_retries" -lt "$stale_max_retries" ]]; then
 				# Retries remaining — re-queue for dispatch
+				recovery_to_state="queued"
 				local new_retries=$((stale_retries + 1))
-				log_info "  Phase 0.7: $stale_id → queued (retry $new_retries/$stale_max_retries, was $stale_status)"
+				log_info "  Phase 0.7: $stale_id → queued (retry $new_retries/$stale_max_retries, was $stale_status, cause: $root_cause)"
 				db "$SUPERVISOR_DB" "UPDATE tasks SET retries = $new_retries WHERE id = '$(sql_escape "$stale_id")';" 2>/dev/null || true
-				cmd_transition "$stale_id" "queued" --error "Stale state recovery (Phase 0.7/t1132): was $stale_status with no live worker for >${stale_grace_seconds}s" 2>>"$SUPERVISOR_LOG" || true
+				cmd_transition "$stale_id" "queued" --error "Stale state recovery (Phase 0.7/t1132): was $stale_status with no live worker for >${effective_grace}s (cause: $root_cause)" 2>>"$SUPERVISOR_LOG" || true
 				db "$SUPERVISOR_DB" "
 					INSERT INTO state_log (task_id, from_state, to_state, reason)
 					VALUES ('$(sql_escape "$stale_id")', '$(sql_escape "$stale_status")',
 						'queued',
-						'Phase 0.7 stale-state recovery (t1132): no live worker for >${stale_grace_seconds}s');
+						'Phase 0.7 stale-state recovery (t1132/t1202): no live worker for >${effective_grace}s (cause: $(sql_escape "$root_cause"))');
 				" 2>/dev/null || true
 			else
 				# Retries exhausted — mark as failed
-				log_warn "  Phase 0.7: $stale_id → failed (retries exhausted $stale_retries/$stale_max_retries, was $stale_status)"
-				cmd_transition "$stale_id" "failed" --error "Stale state recovery (Phase 0.7/t1132): was $stale_status with no live worker, retries exhausted ($stale_retries/$stale_max_retries)" 2>>"$SUPERVISOR_LOG" || true
-				attempt_self_heal "$stale_id" "failed" "Stale state: $stale_status with no live worker" "${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
+				recovery_to_state="failed"
+				log_warn "  Phase 0.7: $stale_id → failed (retries exhausted $stale_retries/$stale_max_retries, was $stale_status, cause: $root_cause)"
+				cmd_transition "$stale_id" "failed" --error "Stale state recovery (Phase 0.7/t1132): was $stale_status with no live worker, retries exhausted ($stale_retries/$stale_max_retries, cause: $root_cause)" 2>>"$SUPERVISOR_LOG" || true
+				attempt_self_heal "$stale_id" "failed" "Stale state: $stale_status with no live worker (cause: $root_cause)" "${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
 				db "$SUPERVISOR_DB" "
 					INSERT INTO state_log (task_id, from_state, to_state, reason)
 					VALUES ('$(sql_escape "$stale_id")', '$(sql_escape "$stale_status")',
 						'failed',
-						'Phase 0.7 stale-state recovery (t1132): no live worker for >${stale_grace_seconds}s, retries exhausted');
+						'Phase 0.7 stale-state recovery (t1132/t1202): no live worker for >${effective_grace}s, retries exhausted (cause: $(sql_escape "$root_cause"))');
 				" 2>/dev/null || true
 			fi
+
+			# Record metrics to stale_recovery_log (t1202)
+			_record_stale_recovery \
+				--task "$stale_id" --phase "0.7" \
+				--from "$stale_status" --to "$recovery_to_state" \
+				--stale-secs "$stale_secs" --root-cause "$root_cause" \
+				--had-pr "$had_pr_flag" --retries "$stale_retries" \
+				--max-retries "$stale_max_retries" --batch "${batch_id:-}"
 
 			# Clean up worker process tree (in case of zombie children)
 			cleanup_worker_processes "$stale_id" 2>>"$SUPERVISOR_LOG" || true
@@ -401,7 +761,7 @@ cmd_pulse() {
 					--type "SELF_HEAL_PATTERN" \
 					--task "supervisor" \
 					--model "n/a" \
-					--detail "Phase 0.7 stale-state recovery: $stale_recovered tasks recovered (grace=${stale_grace_seconds}s)" \
+					--detail "Phase 0.7 stale-state recovery (t1202): $stale_recovered tasks recovered (eval_grace=${evaluating_grace_seconds}s, other_grace=${stale_grace_seconds}s)" \
 					2>/dev/null || true
 			fi
 		fi
@@ -452,42 +812,76 @@ cmd_pulse() {
 				continue
 			fi
 
-			# No live worker — orphaned running task. Transition to failed.
-			log_warn "  Phase 0.8: Orphaned running task $sr_id (started: $sr_started, no live worker after ${running_stale_seconds}s)"
+			# No live worker — orphaned running task.
+			# Diagnose root cause (t1202)
+			local sr_root_cause
+			sr_root_cause=$(_diagnose_stale_root_cause "$sr_id" "running")
+
+			# Calculate stale duration from started_at
+			local sr_stale_secs=0
+			if [[ -n "$sr_started" ]]; then
+				local sr_started_epoch
+				sr_started_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$sr_started" "+%s" 2>/dev/null || date -d "$sr_started" "+%s" 2>/dev/null || echo "0")
+				local sr_now_epoch
+				sr_now_epoch=$(date "+%s")
+				if [[ "$sr_started_epoch" -gt 0 ]]; then
+					sr_stale_secs=$((sr_now_epoch - sr_started_epoch))
+				fi
+			fi
+
+			log_warn "  Phase 0.8: Orphaned running task $sr_id (started: $sr_started, ${sr_stale_secs}s stale, cause: $sr_root_cause)"
 
 			# Clean up stale PID file if present
 			if [[ -f "$sr_pid_file" ]]; then
 				rm -f "$sr_pid_file" 2>/dev/null || true
 			fi
 
+			local sr_had_pr=0
+			local sr_to_state=""
+			[[ -n "$sr_pr_url" && "$sr_pr_url" != "no_pr" && "$sr_pr_url" != "task_only" ]] && sr_had_pr=1
+
 			# If task has a PR, route to pr_review — work may be done
-			if [[ -n "$sr_pr_url" ]]; then
-				log_info "  Phase 0.8: $sr_id → pr_review (has PR, worker died after running)"
+			if [[ "$sr_had_pr" -eq 1 ]]; then
+				sr_to_state="pr_review"
+				log_info "  Phase 0.8: $sr_id → pr_review (has PR, worker died after running, cause: $sr_root_cause)"
 				cmd_transition "$sr_id" "pr_review" --pr-url "$sr_pr_url" \
-					--error "Stale running recovery (Phase 0.8/t1193): worker died after ${running_stale_seconds}s, PR exists" \
+					--error "Stale running recovery (Phase 0.8/t1193): worker died after ${running_stale_seconds}s, PR exists (cause: $sr_root_cause)" \
 					2>>"$SUPERVISOR_LOG" || true
 				db "$SUPERVISOR_DB" "
 					INSERT INTO state_log (task_id, from_state, to_state, reason)
 					VALUES ('$(sql_escape "$sr_id")', 'running', 'pr_review',
-						'Phase 0.8 stale_running_no_process (t1193): started_at=${sr_started}, no live worker after ${running_stale_seconds}s, PR exists');
+						'Phase 0.8 stale_running_no_process (t1193/t1202): started_at=${sr_started}, no live worker after ${running_stale_seconds}s, PR exists (cause: $(sql_escape "$sr_root_cause"))');
 				" 2>/dev/null || true
 			else
 				# No PR — mark failed with stale_running_no_process reason
+				sr_to_state="failed"
 				cmd_transition "$sr_id" "failed" \
-					--error "stale_running_no_process: worker terminated without recording exit after ${running_stale_seconds}s (Phase 0.8/t1193)" \
+					--error "stale_running_no_process: worker terminated without recording exit after ${running_stale_seconds}s (Phase 0.8/t1193, cause: $sr_root_cause)" \
 					2>>"$SUPERVISOR_LOG" || true
 				db "$SUPERVISOR_DB" "
 					INSERT INTO state_log (task_id, from_state, to_state, reason)
 					VALUES ('$(sql_escape "$sr_id")', 'running', 'failed',
-						'Phase 0.8 stale_running_no_process (t1193): started_at=${sr_started}, no live worker after ${running_stale_seconds}s');
+						'Phase 0.8 stale_running_no_process (t1193/t1202): started_at=${sr_started}, no live worker after ${running_stale_seconds}s (cause: $(sql_escape "$sr_root_cause"))');
 				" 2>/dev/null || true
 				# Clean up worker process tree (zombie children)
 				cleanup_worker_processes "$sr_id" 2>>"$SUPERVISOR_LOG" || true
 				# Attempt self-heal for retry eligibility
 				attempt_self_heal "$sr_id" "failed" \
-					"stale_running_no_process: worker terminated without recording exit" \
+					"stale_running_no_process: worker terminated without recording exit (cause: $sr_root_cause)" \
 					"${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
 			fi
+
+			# Record metrics to stale_recovery_log (t1202)
+			local sr_retries
+			sr_retries=$(db "$SUPERVISOR_DB" "SELECT retries FROM tasks WHERE id = '$(sql_escape "$sr_id")';" 2>/dev/null || echo "0")
+			local sr_max_retries
+			sr_max_retries=$(db "$SUPERVISOR_DB" "SELECT max_retries FROM tasks WHERE id = '$(sql_escape "$sr_id")';" 2>/dev/null || echo "3")
+			_record_stale_recovery \
+				--task "$sr_id" --phase "0.8" \
+				--from "running" --to "$sr_to_state" \
+				--stale-secs "$sr_stale_secs" --root-cause "$sr_root_cause" \
+				--had-pr "$sr_had_pr" --retries "$sr_retries" \
+				--max-retries "$sr_max_retries" --batch "${batch_id:-}"
 
 			sr_recovered=$((sr_recovered + 1))
 		done <<<"$stale_running_tasks"
@@ -860,19 +1254,26 @@ cmd_pulse() {
 		done <<<"$retrying_tasks"
 	fi
 
-	# Phase 1c: Auto-reap stuck evaluating tasks (self-healing)
+	# Phase 1c: Auto-reap stuck evaluating tasks (self-healing, enhanced t1202)
 	# Tasks can get stuck in 'evaluating' when the worker dies but evaluation
 	# fails or times out. Phase 1 handles tasks with dead workers that it finds
 	# in the running_tasks query, but tasks can also get stuck if:
 	#   - The evaluation itself crashed (jq error, timeout, etc.)
 	#   - The task was left in evaluating from a previous pulse that was killed
-	# This phase catches any evaluating task older than 10 minutes with no
-	# live worker process, and force-transitions it to failed for retry.
+	# This phase catches any evaluating task older than the evaluating grace
+	# period (t1202: uses SUPERVISOR_EVALUATING_GRACE_SECONDS, default 120s)
+	# with no live worker process, and force-transitions it for retry.
+	#
+	# Note: Phase 0.7 also catches stale evaluating tasks, but uses updated_at
+	# which can be refreshed by other DB operations. Phase 1c is a safety net
+	# that runs after Phase 1's evaluation attempts, catching tasks that Phase 1
+	# transitioned to evaluating but then failed to complete evaluation.
+	local phase1c_grace="${SUPERVISOR_EVALUATING_GRACE_SECONDS:-120}"
 	local stuck_evaluating
 	stuck_evaluating=$(db -separator '|' "$SUPERVISOR_DB" "
 		SELECT id, updated_at FROM tasks
 		WHERE status = 'evaluating'
-		AND updated_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-10 minutes')
+		AND updated_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${phase1c_grace} seconds')
 		ORDER BY updated_at ASC;
 	" 2>/dev/null || echo "")
 
@@ -896,7 +1297,23 @@ cmd_pulse() {
 				continue
 			fi
 
-			log_warn "  Phase 1c: $stuck_id stuck in evaluating since $stuck_updated (worker dead)"
+			# Diagnose root cause (t1202)
+			local stuck_root_cause
+			stuck_root_cause=$(_diagnose_stale_root_cause "$stuck_id" "evaluating")
+
+			# Calculate stale duration
+			local stuck_stale_secs=0
+			if [[ -n "$stuck_updated" ]]; then
+				local stuck_epoch
+				stuck_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$stuck_updated" "+%s" 2>/dev/null || date -d "$stuck_updated" "+%s" 2>/dev/null || echo "0")
+				local stuck_now
+				stuck_now=$(date "+%s")
+				if [[ "$stuck_epoch" -gt 0 ]]; then
+					stuck_stale_secs=$((stuck_now - stuck_epoch))
+				fi
+			fi
+
+			log_warn "  Phase 1c: $stuck_id stuck in evaluating since $stuck_updated (${stuck_stale_secs}s, worker dead, cause: $stuck_root_cause)"
 
 			# t1183 Bug 1: Check if task already has a PR before retrying.
 			# If a PR exists, the worker succeeded but evaluation was lost —
@@ -904,9 +1321,14 @@ cmd_pulse() {
 			# dispatch a duplicate worker and potentially create a duplicate PR).
 			local stuck_pr_url
 			stuck_pr_url=$(db "$SUPERVISOR_DB" "SELECT pr_url FROM tasks WHERE id = '$(sql_escape "$stuck_id")';" 2>/dev/null || echo "")
-			if [[ -n "$stuck_pr_url" && "$stuck_pr_url" != "no_pr" && "$stuck_pr_url" != "task_only" ]]; then
+			local stuck_had_pr=0
+			[[ -n "$stuck_pr_url" && "$stuck_pr_url" != "no_pr" && "$stuck_pr_url" != "task_only" ]] && stuck_had_pr=1
+			local stuck_to_state=""
+
+			if [[ "$stuck_had_pr" -eq 1 ]]; then
+				stuck_to_state="pr_review"
 				cmd_transition "$stuck_id" "pr_review" 2>>"$SUPERVISOR_LOG" || true
-				log_info "  Phase 1c: $stuck_id → pr_review (has PR: $stuck_pr_url, skipping retry)"
+				log_info "  Phase 1c: $stuck_id → pr_review (has PR: $stuck_pr_url, cause: $stuck_root_cause)"
 			else
 				# No PR — use original retry/fail logic
 				# Check retry count
@@ -916,15 +1338,29 @@ cmd_pulse() {
 
 				if [[ "$stuck_retries" -lt "$stuck_max_retries" ]]; then
 					# Transition to retrying so it gets re-dispatched
-					cmd_transition "$stuck_id" "retrying" --error "Auto-reaped: stuck in evaluating >10min with dead worker (Phase 1c)" 2>>"$SUPERVISOR_LOG" || true
+					stuck_to_state="retrying"
+					cmd_transition "$stuck_id" "retrying" --error "Auto-reaped: stuck in evaluating >${phase1c_grace}s with dead worker (Phase 1c/t1202, cause: $stuck_root_cause)" 2>>"$SUPERVISOR_LOG" || true
 					db "$SUPERVISOR_DB" "UPDATE tasks SET retries = retries + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = '$(sql_escape "$stuck_id")';" 2>/dev/null || true
-					log_info "  Phase 1c: $stuck_id → retrying (retry $((stuck_retries + 1))/$stuck_max_retries)"
+					log_info "  Phase 1c: $stuck_id → retrying (retry $((stuck_retries + 1))/$stuck_max_retries, cause: $stuck_root_cause)"
 				else
 					# Max retries exhausted — mark as failed
-					cmd_transition "$stuck_id" "failed" --error "Auto-reaped: stuck in evaluating >10min, max retries exhausted (Phase 1c)" 2>>"$SUPERVISOR_LOG" || true
-					log_warn "  Phase 1c: $stuck_id → failed (max retries exhausted)"
+					stuck_to_state="failed"
+					cmd_transition "$stuck_id" "failed" --error "Auto-reaped: stuck in evaluating >${phase1c_grace}s, max retries exhausted (Phase 1c/t1202, cause: $stuck_root_cause)" 2>>"$SUPERVISOR_LOG" || true
+					log_warn "  Phase 1c: $stuck_id → failed (max retries exhausted, cause: $stuck_root_cause)"
 				fi
 			fi
+
+			# Record metrics to stale_recovery_log (t1202)
+			local stuck_retries_val
+			stuck_retries_val=$(db "$SUPERVISOR_DB" "SELECT retries FROM tasks WHERE id = '$(sql_escape "$stuck_id")';" 2>/dev/null || echo 0)
+			local stuck_max_val
+			stuck_max_val=$(db "$SUPERVISOR_DB" "SELECT max_retries FROM tasks WHERE id = '$(sql_escape "$stuck_id")';" 2>/dev/null || echo 3)
+			_record_stale_recovery \
+				--task "$stuck_id" --phase "1c" \
+				--from "evaluating" --to "$stuck_to_state" \
+				--stale-secs "$stuck_stale_secs" --root-cause "$stuck_root_cause" \
+				--had-pr "$stuck_had_pr" --retries "$stuck_retries_val" \
+				--max-retries "$stuck_max_val" --batch "${batch_id:-}"
 
 			# Clean up PID file
 			cleanup_worker_processes "$stuck_id" 2>>"$SUPERVISOR_LOG" || true
