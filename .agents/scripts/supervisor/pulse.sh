@@ -1975,40 +1975,29 @@ RULES:
 	fi
 
 	# Phase 14: AI Supervisor reasoning + action execution (t1085.5)
-	# Runs the full AI pipeline (ai-reason.sh -> ai-actions.sh) on a configurable
-	# pulse interval. Default: every 15 pulses (~30 min at 2-min cron cadence).
+	# Attempts AI reasoning on EVERY pulse. Natural guards prevent waste:
+	#   - SUPERVISOR_AI_ENABLED: master switch (default: true)
+	#   - should_run_ai_reasoning(): checks has_actionable_work() + time-based cooldown
+	#   - run_ai_reasoning() lock file: prevents concurrent AI sessions
 	# Controlled by SUPERVISOR_AI_ENABLED (default: true) and
-	# SUPERVISOR_AI_INTERVAL (default: 15 pulses).
+	# SUPERVISOR_AI_COOLDOWN (default: 300 seconds = 5 min).
 	# Dedicated log: $SUPERVISOR_DIR/logs/ai-supervisor.log
 	local ai_enabled="${SUPERVISOR_AI_ENABLED:-true}"
 	if [[ "$ai_enabled" == "true" ]]; then
-		local ai_interval="${SUPERVISOR_AI_INTERVAL:-15}"
-		local ai_pulse_count_file="${SUPERVISOR_DIR}/ai-pulse-count"
 		local ai_last_run_file="${SUPERVISOR_DIR}/ai-supervisor-last-run"
 		local ai_log_dir="${SUPERVISOR_DIR}/logs"
 		local ai_log_file="${ai_log_dir}/ai-supervisor.log"
 
-		# Read and increment pulse counter
-		local ai_pulse_count=0
-		if [[ -f "$ai_pulse_count_file" ]]; then
-			ai_pulse_count=$(cat "$ai_pulse_count_file" 2>/dev/null || echo 0)
+		# Determine repo path
+		local ai_repo_path=""
+		ai_repo_path=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks LIMIT 1;" 2>/dev/null || echo "")
+		if [[ -z "$ai_repo_path" ]]; then
+			ai_repo_path="$(pwd)"
 		fi
-		ai_pulse_count=$((ai_pulse_count + 1))
-		echo "$ai_pulse_count" >"$ai_pulse_count_file" 2>/dev/null || true
 
-		# Check if it's time to run the AI pipeline
-		if [[ "$ai_pulse_count" -ge "$ai_interval" ]]; then
-			# Reset counter
-			echo "0" >"$ai_pulse_count_file" 2>/dev/null || true
-
-			# Determine repo path
-			local ai_repo_path=""
-			ai_repo_path=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks LIMIT 1;" 2>/dev/null || echo "")
-			if [[ -z "$ai_repo_path" ]]; then
-				ai_repo_path="$(pwd)"
-			fi
-
-			log_info "  Phase 14: AI supervisor reasoning + action execution (pulse $ai_pulse_count/$ai_interval)"
+		# Natural guards: actionable work check + time-based cooldown
+		if should_run_ai_reasoning "false" "$ai_repo_path"; then
+			log_info "  Phase 14: AI supervisor reasoning + action execution"
 
 			# Ensure log directory exists
 			mkdir -p "$ai_log_dir" 2>/dev/null || true
@@ -2050,8 +2039,7 @@ RULES:
 				} >>"$ai_log_file" 2>/dev/null || true
 			fi
 		else
-			local ai_pulses_remaining=$((ai_interval - ai_pulse_count))
-			log_verbose "  Phase 14: AI pipeline skipped (${ai_pulses_remaining} pulses until next run, interval=${ai_interval})"
+			log_verbose "  Phase 14: AI pipeline skipped (no actionable work or cooldown active)"
 		fi
 	else
 		log_verbose "  Phase 14: AI pipeline disabled (SUPERVISOR_AI_ENABLED=false)"
