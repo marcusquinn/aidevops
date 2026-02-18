@@ -1466,3 +1466,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 184,98,2,0,84,2,~5d,~24h,5,86
 -->
 - [x] t999 Test task for proof-log validation #test
+
+- [ ] t1101 Verify and close t1081 parent task — all subtasks verified #chore #auto-dispatch ~15m model:sonnet — t1081 subtasks t1081.1-t1081.4 are all verified with merged PRs in the last 24h. Review whether the parent task t1081 ('Daily skill auto-update pipeline') is fully satisfied by these subtasks or if additional integration work is needed. If complete: mark t1081 [x] with proper proof-log referencing the subtask PRs. This unblocks t1082 ('Maintainer skill-update PR pipeline').
