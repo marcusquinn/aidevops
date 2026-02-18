@@ -54,9 +54,9 @@ cmd_pulse() {
 		log_warn "Another pulse is already running — skipping this invocation"
 		return 0
 	fi
-	# Ensure lock is released on exit (normal, error, or signal)
+	# Ensure lock is released and temp files cleaned on exit (normal, error, or signal)
 	# shellcheck disable=SC2064
-	trap "release_pulse_lock" EXIT INT TERM
+	trap "release_pulse_lock; rm -f '${SUPERVISOR_DIR}/MODELS.md.tmp' 2>/dev/null || true" EXIT INT TERM
 
 	log_info "=== Supervisor Pulse $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
 
@@ -2172,9 +2172,11 @@ RULES:
 		log_warn "  Phase 11: Memory exceeds threshold but tasks still active — monitoring"
 	fi
 
-	# Phase 12: Regenerate MODELS.md leaderboard (t1012)
+	# Phase 12: Regenerate MODELS.md (global) + MODELS-PERFORMANCE.md (per-repo) (t1012, t1133)
 	# Throttled to once per hour — only regenerates when pattern data may have changed.
-	# Iterates over known repos and updates MODELS.md in each repo root.
+	# Step 1: Generate global MODELS.md once (catalog, tiers, pricing)
+	# Step 2: Propagate global MODELS.md to all registered repos
+	# Step 3: Generate per-repo MODELS-PERFORMANCE.md from local pattern data
 	# Phase 14 may defer this when critical issues are open (cosmetic update).
 	local models_md_interval=3600 # seconds (1 hour)
 	local models_md_stamp="$SUPERVISOR_DIR/models-md-last-regen"
@@ -2191,29 +2193,75 @@ RULES:
 	elif [[ "$models_md_elapsed" -ge "$models_md_interval" ]]; then
 		local generate_script="${SCRIPT_DIR}/generate-models-md.sh"
 		if [[ -x "$generate_script" ]]; then
+			# Step 1: Generate global MODELS.md in a temp file for propagation
+			local global_models_tmp="${SUPERVISOR_DIR}/MODELS.md.tmp"
+			local global_generated=0
+			if "$generate_script" --mode global --output "$global_models_tmp" --quiet 2>/dev/null; then
+				global_generated=1
+				log_verbose "  Phase 12: Generated global MODELS.md"
+			else
+				log_warn "  Phase 12: Global MODELS.md generation failed"
+			fi
+
+			# Step 2+3: Iterate registered repos — propagate global + generate performance
 			local models_repos
 			models_repos=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks;" 2>/dev/null || true)
 			if [[ -n "$models_repos" ]]; then
+				# Deduplicate repo roots (multiple worktree paths may resolve to same root)
+				local seen_roots=""
 				while IFS= read -r models_repo_path; do
 					[[ -n "$models_repo_path" && -d "$models_repo_path" ]] || continue
 					local models_repo_root
 					models_repo_root=$(git -C "$models_repo_path" rev-parse --show-toplevel 2>/dev/null) || continue
-					log_verbose "  Phase 12: Regenerating MODELS.md in $models_repo_root (per-repo filtered)"
-					if "$generate_script" --output "${models_repo_root}/MODELS.md" --repo-path "$models_repo_root" --quiet 2>/dev/null; then
-						if git -C "$models_repo_root" diff --quiet -- MODELS.md 2>/dev/null; then
-							log_verbose "  Phase 12: MODELS.md unchanged in $models_repo_root"
-						else
-							git -C "$models_repo_root" add MODELS.md 2>/dev/null &&
-								git -C "$models_repo_root" commit -m "chore: regenerate MODELS.md leaderboard (t1012, t1129)" --no-verify 2>/dev/null &&
-								git -C "$models_repo_root" push 2>/dev/null &&
-								log_info "  Phase 12: MODELS.md updated and pushed ($models_repo_root)" ||
-								log_warn "  Phase 12: MODELS.md regenerated but commit/push failed ($models_repo_root)"
+
+					# Skip duplicate repo roots
+					if [[ " $seen_roots " == *" $models_repo_root "* ]]; then
+						continue
+					fi
+					seen_roots="$seen_roots $models_repo_root"
+
+					local models_changed=0
+
+					# Step 2: Propagate global MODELS.md
+					if [[ "$global_generated" -eq 1 && -f "$global_models_tmp" ]]; then
+						if ! cp "$global_models_tmp" "${models_repo_root}/MODELS.md" 2>/dev/null; then
+							log_warn "  Phase 12: Failed to copy global MODELS.md to $models_repo_root"
+						elif ! git -C "$models_repo_root" diff --quiet -- MODELS.md 2>/dev/null; then
+							models_changed=1
+						fi
+					fi
+
+					# Step 3: Generate per-repo MODELS-PERFORMANCE.md
+					if "$generate_script" --mode performance --repo-path "$models_repo_root" \
+						--output "${models_repo_root}/MODELS-PERFORMANCE.md" --quiet 2>/dev/null; then
+						if ! git -C "$models_repo_root" diff --quiet -- MODELS-PERFORMANCE.md 2>/dev/null; then
+							models_changed=1
+						fi
+						# Also stage new untracked MODELS-PERFORMANCE.md
+						if git -C "$models_repo_root" ls-files --others --exclude-standard -- MODELS-PERFORMANCE.md 2>/dev/null | grep -q .; then
+							models_changed=1
 						fi
 					else
-						log_warn "  Phase 12: MODELS.md generation failed for $models_repo_root"
+						log_warn "  Phase 12: MODELS-PERFORMANCE.md generation failed for $models_repo_root"
+					fi
+
+					# Commit and push if anything changed
+					if [[ "$models_changed" -eq 1 ]]; then
+						git -C "$models_repo_root" add MODELS.md MODELS-PERFORMANCE.md 2>/dev/null
+						if git -C "$models_repo_root" commit -m "docs: update model files from aidevops (t1133)" --no-verify 2>/dev/null &&
+							git -C "$models_repo_root" push 2>/dev/null; then
+							log_info "  Phase 12: MODELS.md + MODELS-PERFORMANCE.md updated ($models_repo_root)"
+						else
+							log_warn "  Phase 12: Model files regenerated but commit/push failed ($models_repo_root)"
+						fi
+					else
+						log_verbose "  Phase 12: Model files unchanged in $models_repo_root"
 					fi
 				done <<<"$models_repos"
 			fi
+
+			# Cleanup temp file
+			rm -f "$global_models_tmp" 2>/dev/null || true
 		fi
 		echo "$models_md_now" >"$models_md_stamp" 2>/dev/null || true
 		routine_record_run "models_md" -1 2>/dev/null || true
