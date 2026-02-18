@@ -1474,3 +1474,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 >>>>>>> Stashed changes
 
 - [ ] t1102 Mark t1079 verified and close — scripts already have set -euo pipefail #chore #auto-dispatch ~10m model:sonnet — t1079 is still open in TODO.md but investigation on GH#1572 confirmed all 8 scripts already have `set -euo pipefail`. Mark t1079 `[x]` with `verified:2026-02-18` proof-log. No PR needed since no code change was required.
+
+- [ ] t1103 Deduplicate t1101 in TODO.md — appears twice at lines 1471 and 1473 #bugfix #auto-dispatch ~10m model:sonnet — t1101 ('Verify and close t1081 parent task') appears twice in TODO.md. Line 1471 has no assignee, line 1473 has `assignee:marcusquinn`. Remove the duplicate (line 1471) keeping the claimed version. This is likely from a merge conflict or race condition in planning commits. Also verify the dedup_todo_task_ids() function handles this case — the same bug that created issues #1533-#1540.
