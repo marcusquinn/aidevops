@@ -477,11 +477,17 @@ GitHub Issue Auto-Creation (t149):
   (dedup by title search). Requires: gh CLI authenticated.
    Enable: --with-issue flag on add, or SUPERVISOR_AUTO_ISSUE=true globally.
 
-Cron Integration & Auto-Pickup (t128.5, t296):
+Cron Integration & Auto-Pickup (t128.5, t296, t1085.4):
   Auto-pickup scans TODO.md for tasks to automatically queue:
     1. Tasks tagged with #auto-dispatch anywhere in the line
     2. Tasks listed under a "## Dispatch Queue" section header
-  Both strategies skip tasks already tracked by the supervisor.
+    3. Tasks tagged with #plan that have PLANS.md references (decomposition)
+    4. Subtasks (tXXX.N) of #auto-dispatch parents — inherits dispatch eligibility
+       and propagates parent model tier when subtask has no explicit model: field
+  All strategies skip tasks already tracked by the supervisor.
+  All strategies respect blocked-by: dependencies — tasks with unresolved
+  blockers are skipped until their dependencies are completed ([x] in TODO.md
+  or terminal state in supervisor DB).
 
   Auto-batching (t296, t321): When new tasks are picked up, they are automatically
   assigned to a batch. If an active batch exists, tasks are added to it.
