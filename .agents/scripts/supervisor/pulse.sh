@@ -497,6 +497,65 @@ cmd_pulse() {
 		done <<<"$retrying_tasks"
 	fi
 
+	# Phase 1c: Auto-reap stuck evaluating tasks (self-healing)
+	# Tasks can get stuck in 'evaluating' when the worker dies but evaluation
+	# fails or times out. Phase 1 handles tasks with dead workers that it finds
+	# in the running_tasks query, but tasks can also get stuck if:
+	#   - The evaluation itself crashed (jq error, timeout, etc.)
+	#   - The task was left in evaluating from a previous pulse that was killed
+	# This phase catches any evaluating task older than 10 minutes with no
+	# live worker process, and force-transitions it to failed for retry.
+	local stuck_evaluating
+	stuck_evaluating=$(db -separator '|' "$SUPERVISOR_DB" "
+		SELECT id, updated_at FROM tasks
+		WHERE status = 'evaluating'
+		AND updated_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-10 minutes')
+		ORDER BY updated_at ASC;
+	" 2>/dev/null || echo "")
+
+	if [[ -n "$stuck_evaluating" ]]; then
+		while IFS='|' read -r stuck_id stuck_updated; do
+			[[ -z "$stuck_id" ]] && continue
+
+			# Double-check: is the worker actually dead?
+			local stuck_pid_file="$SUPERVISOR_DIR/pids/${stuck_id}.pid"
+			local stuck_alive=false
+			if [[ -f "$stuck_pid_file" ]]; then
+				local stuck_pid
+				stuck_pid=$(cat "$stuck_pid_file" 2>/dev/null || echo "")
+				if [[ -n "$stuck_pid" ]] && kill -0 "$stuck_pid" 2>/dev/null; then
+					stuck_alive=true
+				fi
+			fi
+
+			if [[ "$stuck_alive" == "true" ]]; then
+				log_info "  Phase 1c: $stuck_id evaluating since $stuck_updated but worker still alive — skipping"
+				continue
+			fi
+
+			log_warn "  Phase 1c: $stuck_id stuck in evaluating since $stuck_updated (worker dead) — force-transitioning to failed"
+
+			# Check retry count
+			local stuck_retries stuck_max_retries
+			stuck_retries=$(db "$SUPERVISOR_DB" "SELECT retries FROM tasks WHERE id = '$(sql_escape "$stuck_id")';" 2>/dev/null || echo 0)
+			stuck_max_retries=$(db "$SUPERVISOR_DB" "SELECT max_retries FROM tasks WHERE id = '$(sql_escape "$stuck_id")';" 2>/dev/null || echo 3)
+
+			if [[ "$stuck_retries" -lt "$stuck_max_retries" ]]; then
+				# Transition to retrying so it gets re-dispatched
+				cmd_transition "$stuck_id" "retrying" --error "Auto-reaped: stuck in evaluating >10min with dead worker (Phase 1c)" 2>>"$SUPERVISOR_LOG" || true
+				db "$SUPERVISOR_DB" "UPDATE tasks SET retries = retries + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = '$(sql_escape "$stuck_id")';" 2>/dev/null || true
+				log_info "  Phase 1c: $stuck_id → retrying (retry $((stuck_retries + 1))/$stuck_max_retries)"
+			else
+				# Max retries exhausted — mark as failed
+				cmd_transition "$stuck_id" "failed" --error "Auto-reaped: stuck in evaluating >10min, max retries exhausted (Phase 1c)" 2>>"$SUPERVISOR_LOG" || true
+				log_warn "  Phase 1c: $stuck_id → failed (max retries exhausted)"
+			fi
+
+			# Clean up PID file
+			cleanup_worker_processes "$stuck_id" 2>>"$SUPERVISOR_LOG" || true
+		done <<<"$stuck_evaluating"
+	fi
+
 	# Phase 2: Dispatch queued tasks up to concurrency limit
 
 	if [[ -n "$batch_id" ]]; then
@@ -552,6 +611,59 @@ cmd_pulse() {
 					log_warn "Dispatch failed for $tid (exit $dispatch_exit), trying next task"
 				fi
 			done <<<"$next_tasks"
+		fi
+	fi
+
+	# Phase 2b: Dispatch stall detection and auto-recovery
+	# If there are queued tasks but nothing was dispatched and nothing is running,
+	# the pipeline is stalled. Common causes:
+	#   - No active batch (auto-pickup creates batches, but may have failed)
+	#   - All tasks stuck in non-dispatchable states (evaluating, blocked)
+	#   - Provider unavailable for extended period
+	#   - Concurrency limit misconfigured to 0
+	if [[ "$dispatched_count" -eq 0 ]]; then
+		local queued_count running_count
+		queued_count=$(db "$SUPERVISOR_DB" "SELECT COUNT(*) FROM tasks WHERE status = 'queued';" 2>/dev/null || echo 0)
+		running_count=$(db "$SUPERVISOR_DB" "SELECT COUNT(*) FROM tasks WHERE status IN ('running', 'dispatched');" 2>/dev/null || echo 0)
+
+		if [[ "$queued_count" -gt 0 && "$running_count" -eq 0 ]]; then
+			log_warn "Phase 2b: Dispatch stall detected — $queued_count queued, 0 running, 0 dispatched this pulse"
+
+			# Diagnose: is there an active batch?
+			local active_batch_count
+			active_batch_count=$(db "$SUPERVISOR_DB" "
+				SELECT COUNT(*) FROM batches
+				WHERE status IN ('active', 'running');" 2>/dev/null || echo 0)
+
+			if [[ "$active_batch_count" -eq 0 ]]; then
+				log_warn "Phase 2b: No active batch found — queued tasks have no batch to dispatch from"
+				# Auto-recovery: trigger auto-pickup to create a batch
+				# This handles the case where tasks were added to the DB but no batch was created
+				local stall_repos
+				stall_repos=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks WHERE status = 'queued';" 2>/dev/null || echo "")
+				if [[ -n "$stall_repos" ]]; then
+					while IFS= read -r stall_repo; do
+						[[ -z "$stall_repo" ]] && continue
+						log_info "Phase 2b: Re-running auto-pickup for $stall_repo to create batch"
+						cmd_auto_pickup --repo "$stall_repo" 2>>"$SUPERVISOR_LOG" || true
+					done <<<"$stall_repos"
+				fi
+			else
+				# Batch exists but dispatch failed — log diagnostic info
+				local batch_info
+				batch_info=$(db -separator '|' "$SUPERVISOR_DB" "
+					SELECT id, concurrency, status FROM batches
+					WHERE status IN ('active', 'running')
+					LIMIT 1;" 2>/dev/null || echo "")
+				log_warn "Phase 2b: Active batch exists ($batch_info) but dispatch produced 0 — check concurrency limits and provider health"
+			fi
+
+			# Track stall count in state_log for the AI self-reflection to pick up
+			db "$SUPERVISOR_DB" "
+				INSERT INTO state_log (task_id, from_state, to_state, reason)
+				VALUES ('supervisor', 'dispatch', 'stalled',
+						'$(sql_escape "Dispatch stall: $queued_count queued, 0 running, 0 dispatched. Active batches: $active_batch_count")');
+			" 2>/dev/null || true
 		fi
 	fi
 
