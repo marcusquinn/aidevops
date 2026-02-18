@@ -1517,7 +1517,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
   - [ ] t1120.3 Add platform detection from git remote URL + multi-platform push/pull/close ~1h ref:GH#1678 [proposed:auto-dispatch model:sonnet]
   - [ ] t1120.4 Test with awardsapp repo (dual GitHub + Gitea sync) ~30m ref:GH#1679
 
-- [ ] t1121 Fix tea CLI TTY requirement in non-interactive mode #bugfix #git ~30m model:haiku ref:GH#1680 logged:2026-02-18 [proposed:auto-dispatch model:haiku]
+- [ ] t1121 Fix tea CLI TTY requirement in non-interactive mode #bugfix #git ~30m model:haiku ref:GH#1680 logged:2026-02-18 #auto-dispatch
   - `tea issues list` fails with `huh: could not open a new TTY: open /dev/tty: device not configured` when run from scripts/CI
   - gitea-cli-helper.sh uses tea CLI but it can't work in headless dispatch or GitHub Actions
   - Either: (1) report upstream to tea project, (2) add `--non-interactive` flag detection, or (3) migrate gitea-cli-helper.sh to use REST API directly (like the gitea-issue-sync.sh prototype does)
