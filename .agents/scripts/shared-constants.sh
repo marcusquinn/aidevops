@@ -142,9 +142,9 @@ readonly CI_BACKOFF_MAX=120      # Maximum wait between polls
 readonly CI_BACKOFF_MULTIPLIER=2 # Multiply wait by this each iteration
 
 # Service-specific timeouts (max time to wait before giving up)
-readonly CI_TIMEOUT_FAST=60      # 1 minute for fast checks
-readonly CI_TIMEOUT_MEDIUM=180   # 3 minutes for medium checks
-readonly CI_TIMEOUT_SLOW=600     # 10 minutes for slow checks (CodeRabbit)
+readonly CI_TIMEOUT_FAST=60    # 1 minute for fast checks
+readonly CI_TIMEOUT_MEDIUM=180 # 3 minutes for medium checks
+readonly CI_TIMEOUT_SLOW=600   # 10 minutes for slow checks (CodeRabbit)
 
 # =============================================================================
 # Color Constants (for consistent output formatting)
@@ -178,77 +178,89 @@ readonly NC="$COLOR_RESET"
 
 # Print error message with consistent formatting
 print_shared_error() {
-    local msg="$1"
-    echo -e "${COLOR_RED}[ERROR]${COLOR_RESET} $msg" >&2
-    return 0
+	local msg="$1"
+	echo -e "${COLOR_RED}[ERROR]${COLOR_RESET} $msg" >&2
+	return 0
 }
 
 # Print success message with consistent formatting
 print_shared_success() {
-    local msg="$1"
-    echo -e "${COLOR_GREEN}[SUCCESS]${COLOR_RESET} $msg"
-    return 0
+	local msg="$1"
+	echo -e "${COLOR_GREEN}[SUCCESS]${COLOR_RESET} $msg"
+	return 0
 }
 
 # Print warning message with consistent formatting
 print_shared_warning() {
-    local msg="$1"
-    echo -e "${COLOR_YELLOW}[WARNING]${COLOR_RESET} $msg"
-    return 0
+	local msg="$1"
+	echo -e "${COLOR_YELLOW}[WARNING]${COLOR_RESET} $msg"
+	return 0
 }
 
 # Print info message with consistent formatting
 print_shared_info() {
-    local msg="$1"
-    echo -e "${COLOR_BLUE}[INFO]${COLOR_RESET} $msg"
-    return 0
+	local msg="$1"
+	echo -e "${COLOR_BLUE}[INFO]${COLOR_RESET} $msg"
+	return 0
 }
 
 # Short aliases (used by most scripts - avoids needing inline redefinitions)
-print_error() { print_shared_error "$1"; return $?; }
-print_success() { print_shared_success "$1"; return $?; }
-print_warning() { print_shared_warning "$1"; return $?; }
-print_info() { print_shared_info "$1"; return $?; }
+print_error() {
+	print_shared_error "$1"
+	return $?
+}
+print_success() {
+	print_shared_success "$1"
+	return $?
+}
+print_warning() {
+	print_shared_warning "$1"
+	return $?
+}
+print_info() {
+	print_shared_info "$1"
+	return $?
+}
 
 # Validate required parameter
 validate_required_param() {
-    local param_name="$1"
-    local param_value="$2"
-    
-    if [[ -z "$param_value" ]]; then
-        print_shared_error "$param_name is required"
-        return 1
-    fi
-    return 0
+	local param_name="$1"
+	local param_value="$2"
+
+	if [[ -z "$param_value" ]]; then
+		print_shared_error "$param_name is required"
+		return 1
+	fi
+	return 0
 }
 
 # Check if file exists and is readable
 validate_file_exists() {
-    local file_path="$1"
-    local file_description="${2:-File}"
-    
-    if [[ ! -f "$file_path" ]]; then
-        print_shared_error "$file_description not found: $file_path"
-        return 1
-    fi
-    
-    if [[ ! -r "$file_path" ]]; then
-        print_shared_error "$file_description is not readable: $file_path"
-        return 1
-    fi
-    
-    return 0
+	local file_path="$1"
+	local file_description="${2:-File}"
+
+	if [[ ! -f "$file_path" ]]; then
+		print_shared_error "$file_description not found: $file_path"
+		return 1
+	fi
+
+	if [[ ! -r "$file_path" ]]; then
+		print_shared_error "$file_description is not readable: $file_path"
+		return 1
+	fi
+
+	return 0
 }
 
 # Check if command exists
 validate_command_exists() {
-    local command_name="$1"
-    
-    if ! command -v "$command_name" &> /dev/null; then
-        print_shared_error "Required command not found: $command_name"
-        return 1
-    fi
-    return 0
+	local command_name="$1"
+
+	if ! command -v "$command_name" &>/dev/null; then
+		print_shared_error "Required command not found: $command_name"
+		return 1
+	fi
+	return 0
 }
 
 # =============================================================================
@@ -259,29 +271,29 @@ validate_command_exists() {
 # =============================================================================
 
 sed_inplace() {
-    if [[ "$(uname)" == "Darwin" ]]; then
-        sed -i '' "$@"
-    else
-        sed -i "$@"
-    fi
-    return $?
+	if [[ "$(uname)" == "Darwin" ]]; then
+		sed -i '' "$@"
+	else
+		sed -i "$@"
+	fi
+	return $?
 }
 
 # Portable sed append-after-line (macOS vs GNU/Linux)
 # BSD sed 'a' requires a backslash-newline; GNU sed accepts inline text.
 # Usage: sed_append_after <line_number> <text_to_insert> <file>
 sed_append_after() {
-    local line_num="$1"
-    local text="$2"
-    local file="$3"
-    if [[ "$(uname)" == "Darwin" ]]; then
-        sed -i '' "${line_num} a\\
+	local line_num="$1"
+	local text="$2"
+	local file="$3"
+	if [[ "$(uname)" == "Darwin" ]]; then
+		sed -i '' "${line_num} a\\
 ${text}
 " "$file"
-    else
-        sed -i "${line_num}a\\${text}" "$file"
-    fi
-    return $?
+	else
+		sed -i "${line_num}a\\${text}" "$file"
+	fi
+	return $?
 }
 
 # =============================================================================
@@ -302,39 +314,39 @@ ${text}
 # Sets AIDEVOPS_LOG_FILE to ~/.aidevops/logs/<script-name>.log
 # Call once at script start after sourcing shared-constants.sh.
 init_log_file() {
-    local script_name
-    script_name="$(basename "${BASH_SOURCE[1]:-${0:-unknown}}" .sh)"
-    local log_dir="${HOME}/.aidevops/logs"
-    mkdir -p "$log_dir" 2>/dev/null || true
-    AIDEVOPS_LOG_FILE="${log_dir}/${script_name}.log"
-    export AIDEVOPS_LOG_FILE
-    return 0
+	local script_name
+	script_name="$(basename "${BASH_SOURCE[1]:-${0:-unknown}}" .sh)"
+	local log_dir="${HOME}/.aidevops/logs"
+	mkdir -p "$log_dir" 2>/dev/null || true
+	AIDEVOPS_LOG_FILE="${log_dir}/${script_name}.log"
+	export AIDEVOPS_LOG_FILE
+	return 0
 }
 
 # Run a command, redirecting stderr to the script's log file.
 # Preserves exit code. Falls back to /dev/null if no log file set.
 # Usage: log_stderr "db migration" sqlite3 "$db" "ALTER TABLE..."
 log_stderr() {
-    local context="$1"
-    shift
-    local log_target="${AIDEVOPS_LOG_FILE:-/dev/null}"
-    local timestamp
-    timestamp="$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "unknown")"
-    echo "[$timestamp] [$context] Running: $*" >> "$log_target" 2>/dev/null || true
-    "$@" 2>> "$log_target"
-    local rc=$?
-    if [[ $rc -ne 0 ]]; then
-        echo "[$timestamp] [$context] Exit code: $rc" >> "$log_target" 2>/dev/null || true
-    fi
-    return $rc
+	local context="$1"
+	shift
+	local log_target="${AIDEVOPS_LOG_FILE:-/dev/null}"
+	local timestamp
+	timestamp="$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "unknown")"
+	echo "[$timestamp] [$context] Running: $*" >>"$log_target" 2>/dev/null || true
+	"$@" 2>>"$log_target"
+	local rc=$?
+	if [[ $rc -ne 0 ]]; then
+		echo "[$timestamp] [$context] Exit code: $rc" >>"$log_target" 2>/dev/null || true
+	fi
+	return $rc
 }
 
 # Suppress stderr with documented intent. Use for commands where stderr
 # is expected noise (e.g., command -v, kill -0, pgrep, sysctl on wrong OS).
 # Usage: suppress_stderr command -v jq
 suppress_stderr() {
-    "$@" 2>/dev/null
-    return $?
+	"$@" 2>/dev/null
+	return $?
 }
 
 # =============================================================================
@@ -392,41 +404,41 @@ _CLEANUP_SAVE_STACK=""
 # Arguments:
 #   $1 - shell command to eval on cleanup (required)
 push_cleanup() {
-    local cmd="$1"
-    if [[ -n "$_CLEANUP_CMDS" ]]; then
-        _CLEANUP_CMDS="${_CLEANUP_CMDS}"$'\n'"${cmd}"
-    else
-        _CLEANUP_CMDS="${cmd}"
-    fi
-    return 0
+	local cmd="$1"
+	if [[ -n "$_CLEANUP_CMDS" ]]; then
+		_CLEANUP_CMDS="${_CLEANUP_CMDS}"$'\n'"${cmd}"
+	else
+		_CLEANUP_CMDS="${cmd}"
+	fi
+	return 0
 }
 
 # Run all cleanup commands for the current scope (reverse order),
 # then restore the parent scope's cleanup list.
 # This is the RETURN trap handler — do not call directly.
 _run_cleanups() {
-    if [[ -n "$_CLEANUP_CMDS" ]]; then
-        # Reverse the command list (LIFO) and execute each
-        local reversed
-        # tail -r is macOS, tac is GNU — try both
-        reversed=$(echo "$_CLEANUP_CMDS" | tail -r 2>/dev/null) \
-            || reversed=$(echo "$_CLEANUP_CMDS" | tac 2>/dev/null) \
-            || reversed="$_CLEANUP_CMDS"
-        local line
-        while IFS= read -r line; do
-            [[ -z "$line" ]] && continue
-            eval "$line" 2>/dev/null || true
-        done <<< "$reversed"
-    fi
-    # Restore parent scope (pop from save stack)
-    local sep=$'\x1F'
-    if [[ -n "$_CLEANUP_SAVE_STACK" ]]; then
-        _CLEANUP_CMDS="${_CLEANUP_SAVE_STACK%%"${sep}"*}"
-        _CLEANUP_SAVE_STACK="${_CLEANUP_SAVE_STACK#*"${sep}"}"
-    else
-        _CLEANUP_CMDS=""
-    fi
-    return 0
+	if [[ -n "$_CLEANUP_CMDS" ]]; then
+		# Reverse the command list (LIFO) and execute each
+		local reversed
+		# tail -r is macOS, tac is GNU — try both
+		reversed=$(echo "$_CLEANUP_CMDS" | tail -r 2>/dev/null) ||
+			reversed=$(echo "$_CLEANUP_CMDS" | tac 2>/dev/null) ||
+			reversed="$_CLEANUP_CMDS"
+		local line
+		while IFS= read -r line; do
+			[[ -z "$line" ]] && continue
+			eval "$line" 2>/dev/null || true
+		done <<<"$reversed"
+	fi
+	# Restore parent scope (pop from save stack)
+	local sep=$'\x1F'
+	if [[ -n "$_CLEANUP_SAVE_STACK" ]]; then
+		_CLEANUP_CMDS="${_CLEANUP_SAVE_STACK%%"${sep}"*}"
+		_CLEANUP_SAVE_STACK="${_CLEANUP_SAVE_STACK#*"${sep}"}"
+	else
+		_CLEANUP_CMDS=""
+	fi
+	return 0
 }
 
 # Save the current cleanup scope and start a fresh one.
@@ -434,10 +446,10 @@ _run_cleanups() {
 # `trap '_run_cleanups' RETURN`. This preserves the parent function's
 # cleanup list so nested calls don't interfere.
 _save_cleanup_scope() {
-    local sep=$'\x1F'
-    _CLEANUP_SAVE_STACK="${_CLEANUP_CMDS}${sep}${_CLEANUP_SAVE_STACK}"
-    _CLEANUP_CMDS=""
-    return 0
+	local sep=$'\x1F'
+	_CLEANUP_SAVE_STACK="${_CLEANUP_CMDS}${sep}${_CLEANUP_SAVE_STACK}"
+	_CLEANUP_CMDS=""
+	return 0
 }
 
 # =============================================================================
@@ -466,145 +478,145 @@ readonly TODO_STALE_LOCK_AGE=120
 # Portable atomic lock using mkdir (works on macOS + Linux).
 # mkdir is atomic on all POSIX systems -- only one process succeeds.
 _todo_acquire_lock() {
-    local log_target="${1:-/dev/null}"
-    local waited=0
+	local log_target="${1:-/dev/null}"
+	local waited=0
 
-    while [[ $waited -lt $TODO_LOCK_TIMEOUT ]]; do
-        if mkdir "$TODO_LOCK_PATH" 2>/dev/null; then
-            echo $$ > "$TODO_LOCK_PATH/pid"
-            return 0
-        fi
+	while [[ $waited -lt $TODO_LOCK_TIMEOUT ]]; do
+		if mkdir "$TODO_LOCK_PATH" 2>/dev/null; then
+			echo $$ >"$TODO_LOCK_PATH/pid"
+			return 0
+		fi
 
-        # Check for stale lock (owner process died)
-        if [[ -f "$TODO_LOCK_PATH/pid" ]]; then
-            local lock_pid
-            lock_pid=$(cat "$TODO_LOCK_PATH/pid" 2>/dev/null || echo "")
-            if [[ -n "$lock_pid" ]] && ! kill -0 "$lock_pid" 2>/dev/null; then
-                echo "[todo_lock] Removing stale lock (PID $lock_pid dead)" >> "$log_target"
-                rm -rf "$TODO_LOCK_PATH"
-                continue
-            fi
-        fi
+		# Check for stale lock (owner process died)
+		if [[ -f "$TODO_LOCK_PATH/pid" ]]; then
+			local lock_pid
+			lock_pid=$(cat "$TODO_LOCK_PATH/pid" 2>/dev/null || echo "")
+			if [[ -n "$lock_pid" ]] && ! kill -0 "$lock_pid" 2>/dev/null; then
+				echo "[todo_lock] Removing stale lock (PID $lock_pid dead)" >>"$log_target"
+				rm -rf "$TODO_LOCK_PATH"
+				continue
+			fi
+		fi
 
-        # Check lock age (safety net for orphaned locks)
-        if [[ -d "$TODO_LOCK_PATH" ]]; then
-            local lock_age
-            if [[ "$(uname)" == "Darwin" ]]; then
-                lock_age=$(( $(date +%s) - $(stat -f %m "$TODO_LOCK_PATH" 2>/dev/null || echo "0") ))
-            else
-                lock_age=$(( $(date +%s) - $(stat -c %Y "$TODO_LOCK_PATH" 2>/dev/null || echo "0") ))
-            fi
-            if [[ $lock_age -gt $TODO_STALE_LOCK_AGE ]]; then
-                echo "[todo_lock] Removing stale lock (age ${lock_age}s > ${TODO_STALE_LOCK_AGE}s)" >> "$log_target"
-                rm -rf "$TODO_LOCK_PATH"
-                continue
-            fi
-        fi
+		# Check lock age (safety net for orphaned locks)
+		if [[ -d "$TODO_LOCK_PATH" ]]; then
+			local lock_age
+			if [[ "$(uname)" == "Darwin" ]]; then
+				lock_age=$(($(date +%s) - $(stat -f %m "$TODO_LOCK_PATH" 2>/dev/null || echo "0")))
+			else
+				lock_age=$(($(date +%s) - $(stat -c %Y "$TODO_LOCK_PATH" 2>/dev/null || echo "0")))
+			fi
+			if [[ $lock_age -gt $TODO_STALE_LOCK_AGE ]]; then
+				echo "[todo_lock] Removing stale lock (age ${lock_age}s > ${TODO_STALE_LOCK_AGE}s)" >>"$log_target"
+				rm -rf "$TODO_LOCK_PATH"
+				continue
+			fi
+		fi
 
-        sleep 1
-        waited=$((waited + 1))
-    done
+		sleep 1
+		waited=$((waited + 1))
+	done
 
-    echo "[todo_lock] Failed to acquire lock after ${TODO_LOCK_TIMEOUT}s" >> "$log_target"
-    return 1
+	echo "[todo_lock] Failed to acquire lock after ${TODO_LOCK_TIMEOUT}s" >>"$log_target"
+	return 1
 }
 
 _todo_release_lock() {
-    rm -rf "$TODO_LOCK_PATH"
-    return 0
+	rm -rf "$TODO_LOCK_PATH"
+	return 0
 }
 
 todo_commit_push() {
-    local repo_path="$1"
-    local commit_msg="$2"
-    local files="${3:-TODO.md todo/}"
-    local log_target="${AIDEVOPS_LOG_FILE:-/dev/null}"
+	local repo_path="$1"
+	local commit_msg="$2"
+	local files="${3:-TODO.md todo/}"
+	local log_target="${AIDEVOPS_LOG_FILE:-/dev/null}"
 
-    mkdir -p "$TODO_LOCK_DIR" 2>/dev/null || true
+	mkdir -p "$TODO_LOCK_DIR" 2>/dev/null || true
 
-    if ! _todo_acquire_lock "$log_target"; then
-        return 1
-    fi
+	if ! _todo_acquire_lock "$log_target"; then
+		return 1
+	fi
 
-    # Ensure lock is released on exit (including signals)
-    trap '_todo_release_lock' EXIT
+	# Ensure lock is released on exit (including signals)
+	trap '_todo_release_lock' EXIT
 
-    local rc=0
-    _todo_commit_push_inner "$repo_path" "$commit_msg" "$files" "$log_target" || rc=$?
+	local rc=0
+	_todo_commit_push_inner "$repo_path" "$commit_msg" "$files" "$log_target" || rc=$?
 
-    _todo_release_lock
-    trap - EXIT
+	_todo_release_lock
+	trap - EXIT
 
-    return $rc
+	return $rc
 }
 
 _todo_commit_push_inner() {
-    local repo_path="$1"
-    local commit_msg="$2"
-    local files="$3"
-    local log_target="$4"
-    local attempt=0
+	local repo_path="$1"
+	local commit_msg="$2"
+	local files="$3"
+	local log_target="$4"
+	local attempt=0
 
-    while [[ $attempt -lt $TODO_MAX_RETRIES ]]; do
-        attempt=$((attempt + 1))
+	while [[ $attempt -lt $TODO_MAX_RETRIES ]]; do
+		attempt=$((attempt + 1))
 
-        # Pull latest before staging (rebase to keep linear history)
-        local current_branch
-        current_branch=$(git -C "$repo_path" branch --show-current 2>/dev/null || echo "main")
-        if git -C "$repo_path" remote get-url origin &>/dev/null; then
-            git -C "$repo_path" pull --rebase origin "$current_branch" 2>>"$log_target" || {
-                echo "[todo_commit_push] Pull --rebase failed (attempt $attempt/$TODO_MAX_RETRIES)" >> "$log_target"
-                # If rebase conflicts, abort and retry
-                git -C "$repo_path" rebase --abort 2>/dev/null || true
-                sleep 1
-                continue
-            }
-        fi
+		# Pull latest before staging (rebase to keep linear history)
+		local current_branch
+		current_branch=$(git -C "$repo_path" branch --show-current 2>/dev/null || echo "main")
+		if git -C "$repo_path" remote get-url origin &>/dev/null; then
+			git -C "$repo_path" pull --rebase origin "$current_branch" 2>>"$log_target" || {
+				echo "[todo_commit_push] Pull --rebase failed (attempt $attempt/$TODO_MAX_RETRIES)" >>"$log_target"
+				# If rebase conflicts, abort and retry
+				git -C "$repo_path" rebase --abort 2>/dev/null || true
+				sleep 1
+				continue
+			}
+		fi
 
-        # Stage planning files
-        local file
-        for file in $files; do
-            git -C "$repo_path" add "$file" 2>/dev/null || true
-        done
+		# Stage planning files
+		local file
+		for file in $files; do
+			git -C "$repo_path" add "$file" 2>/dev/null || true
+		done
 
-        # Check if anything was staged
-        if git -C "$repo_path" diff --cached --quiet 2>/dev/null; then
-            echo "[todo_commit_push] No changes staged" >> "$log_target"
-            return 0
-        fi
+		# Check if anything was staged
+		if git -C "$repo_path" diff --cached --quiet 2>/dev/null; then
+			echo "[todo_commit_push] No changes staged" >>"$log_target"
+			return 0
+		fi
 
-        # Commit
-        if ! git -C "$repo_path" commit -m "$commit_msg" --no-verify 2>>"$log_target"; then
-            echo "[todo_commit_push] Commit failed (attempt $attempt/$TODO_MAX_RETRIES)" >> "$log_target"
-            continue
-        fi
+		# Commit
+		if ! git -C "$repo_path" commit -m "$commit_msg" --no-verify 2>>"$log_target"; then
+			echo "[todo_commit_push] Commit failed (attempt $attempt/$TODO_MAX_RETRIES)" >>"$log_target"
+			continue
+		fi
 
-        # Push
-        if git -C "$repo_path" push origin "$current_branch" 2>>"$log_target"; then
-            echo "[todo_commit_push] Success on attempt $attempt" >> "$log_target"
-            return 0
-        fi
+		# Push
+		if git -C "$repo_path" push origin "$current_branch" 2>>"$log_target"; then
+			echo "[todo_commit_push] Success on attempt $attempt" >>"$log_target"
+			return 0
+		fi
 
-        echo "[todo_commit_push] Push failed (attempt $attempt/$TODO_MAX_RETRIES), retrying..." >> "$log_target"
+		echo "[todo_commit_push] Push failed (attempt $attempt/$TODO_MAX_RETRIES), retrying..." >>"$log_target"
 
-        # Push failed: pull --rebase to incorporate remote changes, then retry push
-        git -C "$repo_path" pull --rebase origin "$current_branch" 2>>"$log_target" || {
-            git -C "$repo_path" rebase --abort 2>/dev/null || true
-            sleep 1
-            continue
-        }
+		# Push failed: pull --rebase to incorporate remote changes, then retry push
+		git -C "$repo_path" pull --rebase origin "$current_branch" 2>>"$log_target" || {
+			git -C "$repo_path" rebase --abort 2>/dev/null || true
+			sleep 1
+			continue
+		}
 
-        # Retry push after rebase
-        if git -C "$repo_path" push origin "$current_branch" 2>>"$log_target"; then
-            echo "[todo_commit_push] Success after rebase on attempt $attempt" >> "$log_target"
-            return 0
-        fi
+		# Retry push after rebase
+		if git -C "$repo_path" push origin "$current_branch" 2>>"$log_target"; then
+			echo "[todo_commit_push] Success after rebase on attempt $attempt" >>"$log_target"
+			return 0
+		fi
 
-        sleep $((attempt))
-    done
+		sleep $((attempt))
+	done
 
-    echo "[todo_commit_push] Failed after $TODO_MAX_RETRIES attempts" >> "$log_target"
-    return 1
+	echo "[todo_commit_push] Failed after $TODO_MAX_RETRIES attempts" >>"$log_target"
+	return 1
 }
 
 # =============================================================================
@@ -620,14 +632,14 @@ WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/worktree-registry.db"
 
 # SQL-escape a value for SQLite (double single quotes)
 _wt_sql_escape() {
-    local val="$1"
-    echo "${val//\'/\'\'}"
+	local val="$1"
+	echo "${val//\'/\'\'}"
 }
 
 # Initialize the registry database
 _init_registry_db() {
-    mkdir -p "$WORKTREE_REGISTRY_DIR" 2>/dev/null || true
-    sqlite3 "$WORKTREE_REGISTRY_DB" "
+	mkdir -p "$WORKTREE_REGISTRY_DIR" 2>/dev/null || true
+	sqlite3 "$WORKTREE_REGISTRY_DB" "
         CREATE TABLE IF NOT EXISTS worktree_owners (
             worktree_path TEXT PRIMARY KEY,
             branch        TEXT,
@@ -638,7 +650,7 @@ _init_registry_db() {
             created_at    TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
         );
     " 2>/dev/null || true
-    return 0
+	return 0
 }
 
 # Register ownership of a worktree
@@ -647,23 +659,32 @@ _init_registry_db() {
 #   $2 - branch name (required)
 #   Flags: --task <id>, --batch <id>, --session <id>
 register_worktree() {
-    local wt_path="$1"
-    local branch="$2"
-    shift 2
+	local wt_path="$1"
+	local branch="$2"
+	shift 2
 
-    local task_id="" batch_id="" session_id=""
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --task) task_id="${2:-}"; shift 2 ;;
-            --batch) batch_id="${2:-}"; shift 2 ;;
-            --session) session_id="${2:-}"; shift 2 ;;
-            *) shift ;;
-        esac
-    done
+	local task_id="" batch_id="" session_id=""
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--task)
+			task_id="${2:-}"
+			shift 2
+			;;
+		--batch)
+			batch_id="${2:-}"
+			shift 2
+			;;
+		--session)
+			session_id="${2:-}"
+			shift 2
+			;;
+		*) shift ;;
+		esac
+	done
 
-    _init_registry_db
+	_init_registry_db
 
-    sqlite3 "$WORKTREE_REGISTRY_DB" "
+	sqlite3 "$WORKTREE_REGISTRY_DB" "
         INSERT OR REPLACE INTO worktree_owners
             (worktree_path, branch, owner_pid, owner_session, owner_batch, task_id)
         VALUES
@@ -674,22 +695,22 @@ register_worktree() {
              '$(_wt_sql_escape "$batch_id")',
              '$(_wt_sql_escape "$task_id")');
     " 2>/dev/null || true
-    return 0
+	return 0
 }
 
 # Unregister ownership of a worktree
 # Arguments:
 #   $1 - worktree path (required)
 unregister_worktree() {
-    local wt_path="$1"
+	local wt_path="$1"
 
-    [[ ! -f "$WORKTREE_REGISTRY_DB" ]] && return 0
+	[[ ! -f "$WORKTREE_REGISTRY_DB" ]] && return 0
 
-    sqlite3 "$WORKTREE_REGISTRY_DB" "
+	sqlite3 "$WORKTREE_REGISTRY_DB" "
         DELETE FROM worktree_owners
         WHERE worktree_path = '$(_wt_sql_escape "$wt_path")';
     " 2>/dev/null || true
-    return 0
+	return 0
 }
 
 # Check who owns a worktree
@@ -698,22 +719,22 @@ unregister_worktree() {
 # Output: owner info (pid|session|batch|task|created_at) or empty
 # Returns: 0 if owned, 1 if not owned
 check_worktree_owner() {
-    local wt_path="$1"
+	local wt_path="$1"
 
-    [[ ! -f "$WORKTREE_REGISTRY_DB" ]] && return 1
+	[[ ! -f "$WORKTREE_REGISTRY_DB" ]] && return 1
 
-    local owner_info
-    owner_info=$(sqlite3 -separator '|' "$WORKTREE_REGISTRY_DB" "
+	local owner_info
+	owner_info=$(sqlite3 -separator '|' "$WORKTREE_REGISTRY_DB" "
         SELECT owner_pid, owner_session, owner_batch, task_id, created_at
         FROM worktree_owners
         WHERE worktree_path = '$(_wt_sql_escape "$wt_path")';
     " 2>/dev/null || echo "")
 
-    if [[ -n "$owner_info" ]]; then
-        echo "$owner_info"
-        return 0
-    fi
-    return 1
+	if [[ -n "$owner_info" ]]; then
+		echo "$owner_info"
+		return 0
+	fi
+	return 1
 }
 
 # Check if a worktree is owned by a DIFFERENT process (still alive)
@@ -721,31 +742,31 @@ check_worktree_owner() {
 #   $1 - worktree path
 # Returns: 0 if owned by another live process, 1 if safe to remove
 is_worktree_owned_by_others() {
-    local wt_path="$1"
+	local wt_path="$1"
 
-    [[ ! -f "$WORKTREE_REGISTRY_DB" ]] && return 1
+	[[ ! -f "$WORKTREE_REGISTRY_DB" ]] && return 1
 
-    local owner_pid
-    owner_pid=$(sqlite3 "$WORKTREE_REGISTRY_DB" "
+	local owner_pid
+	owner_pid=$(sqlite3 "$WORKTREE_REGISTRY_DB" "
         SELECT owner_pid FROM worktree_owners
         WHERE worktree_path = '$(_wt_sql_escape "$wt_path")';
     " 2>/dev/null || echo "")
 
-    # No owner registered
-    [[ -z "$owner_pid" ]] && return 1
+	# No owner registered
+	[[ -z "$owner_pid" ]] && return 1
 
-    # We own it
-    [[ "$owner_pid" == "$$" ]] && return 1
+	# We own it
+	[[ "$owner_pid" == "$$" ]] && return 1
 
-    # Owner process is dead — stale entry, safe to remove
-    if ! kill -0 "$owner_pid" 2>/dev/null; then
-        # Clean up stale entry
-        unregister_worktree "$wt_path"
-        return 1
-    fi
+	# Owner process is dead — stale entry, safe to remove
+	if ! kill -0 "$owner_pid" 2>/dev/null; then
+		# Clean up stale entry
+		unregister_worktree "$wt_path"
+		return 1
+	fi
 
-    # Owner process is alive and it's not us — NOT safe to remove
-    return 0
+	# Owner process is alive and it's not us — NOT safe to remove
+	return 0
 }
 
 # Prune stale registry entries (dead PIDs, missing directories, corrupted paths)
@@ -754,65 +775,65 @@ is_worktree_owned_by_others() {
 #   - Paths with ANSI escape codes (corrupted entries)
 #   - Test artifacts in /tmp or /var/folders
 prune_worktree_registry() {
-    [[ ! -f "$WORKTREE_REGISTRY_DB" ]] && return 0
+	[[ ! -f "$WORKTREE_REGISTRY_DB" ]] && return 0
 
-    local pruned_count=0
-    
-    # First, delete entries with ANSI escape codes (corrupted entries)
-    # These often have newlines and break normal parsing
-    local ansi_count
-    ansi_count=$(sqlite3 "$WORKTREE_REGISTRY_DB" "
+	local pruned_count=0
+
+	# First, delete entries with ANSI escape codes (corrupted entries)
+	# These often have newlines and break normal parsing
+	local ansi_count
+	ansi_count=$(sqlite3 "$WORKTREE_REGISTRY_DB" "
         DELETE FROM worktree_owners 
         WHERE worktree_path LIKE '%'||char(27)||'%' 
            OR worktree_path LIKE '%[0;%'
            OR worktree_path LIKE '%[1m%';
         SELECT changes();
     " 2>/dev/null || echo "0")
-    pruned_count=$((pruned_count + ansi_count))
-    [[ -n "${VERBOSE:-}" && "$ansi_count" -gt 0 ]] && echo "  Pruned $ansi_count entries with ANSI escape codes"
-    
-    # Next, delete test artifacts in temp directories
-    local temp_count
-    temp_count=$(sqlite3 "$WORKTREE_REGISTRY_DB" "
+	pruned_count=$((pruned_count + ansi_count))
+	[[ -n "${VERBOSE:-}" && "$ansi_count" -gt 0 ]] && echo "  Pruned $ansi_count entries with ANSI escape codes"
+
+	# Next, delete test artifacts in temp directories
+	local temp_count
+	temp_count=$(sqlite3 "$WORKTREE_REGISTRY_DB" "
         DELETE FROM worktree_owners 
         WHERE worktree_path LIKE '/tmp/%' 
            OR worktree_path LIKE '/var/folders/%';
         SELECT changes();
     " 2>/dev/null || echo "0")
-    pruned_count=$((pruned_count + temp_count))
-    [[ -n "${VERBOSE:-}" && "$temp_count" -gt 0 ]] && echo "  Pruned $temp_count test artifacts in temp directories"
+	pruned_count=$((pruned_count + temp_count))
+	[[ -n "${VERBOSE:-}" && "$temp_count" -gt 0 ]] && echo "  Pruned $temp_count test artifacts in temp directories"
 
-    # Now process remaining entries for dead PIDs and missing directories
-    local entries
-    entries=$(sqlite3 -separator '|' "$WORKTREE_REGISTRY_DB" "
+	# Now process remaining entries for dead PIDs and missing directories
+	local entries
+	entries=$(sqlite3 -separator '|' "$WORKTREE_REGISTRY_DB" "
         SELECT worktree_path, owner_pid FROM worktree_owners;
     " 2>/dev/null || echo "")
 
-    if [[ -n "$entries" ]]; then
-        while IFS='|' read -r wt_path owner_pid; do
-            local should_prune=false
-            local prune_reason=""
+	if [[ -n "$entries" ]]; then
+		while IFS='|' read -r wt_path owner_pid; do
+			local should_prune=false
+			local prune_reason=""
 
-            # Directory no longer exists
-            if [[ ! -d "$wt_path" ]]; then
-                should_prune=true
-                prune_reason="directory missing"
-            # Owner process is dead (only prune if directory also missing)
-            elif [[ -n "$owner_pid" ]] && ! kill -0 "$owner_pid" 2>/dev/null && [[ ! -d "$wt_path" ]]; then
-                should_prune=true
-                prune_reason="dead PID and directory missing"
-            fi
+			# Directory no longer exists
+			if [[ ! -d "$wt_path" ]]; then
+				should_prune=true
+				prune_reason="directory missing"
+			# Owner process is dead (only prune if directory also missing)
+			elif [[ -n "$owner_pid" ]] && ! kill -0 "$owner_pid" 2>/dev/null && [[ ! -d "$wt_path" ]]; then
+				should_prune=true
+				prune_reason="dead PID and directory missing"
+			fi
 
-            if [[ "$should_prune" == "true" ]]; then
-                unregister_worktree "$wt_path"
-                ((pruned_count++))
-                [[ -n "${VERBOSE:-}" ]] && echo "  Pruned: $wt_path ($prune_reason)"
-            fi
-        done <<< "$entries"
-    fi
-    
-    [[ -n "${VERBOSE:-}" ]] && echo "Pruned $pruned_count entries total"
-    return 0
+			if [[ "$should_prune" == "true" ]]; then
+				unregister_worktree "$wt_path"
+				((pruned_count++))
+				[[ -n "${VERBOSE:-}" ]] && echo "  Pruned: $wt_path ($prune_reason)"
+			fi
+		done <<<"$entries"
+	fi
+
+	[[ -n "${VERBOSE:-}" ]] && echo "Pruned $pruned_count entries total"
+	return 0
 }
 
 # =============================================================================
@@ -843,39 +864,39 @@ SQLITE_BACKUP_RETAIN_COUNT="${SQLITE_BACKUP_RETAIN_COUNT:-5}"
 # Output: backup file path on stdout
 # Returns: 0 on success, 1 on failure
 backup_sqlite_db() {
-    local db_path="$1"
-    local reason="${2:-manual}"
+	local db_path="$1"
+	local reason="${2:-manual}"
 
-    if [[ ! -f "$db_path" ]]; then
-        echo "[backup] No database to backup at: $db_path" >&2
-        return 1
-    fi
+	if [[ ! -f "$db_path" ]]; then
+		echo "[backup] No database to backup at: $db_path" >&2
+		return 1
+	fi
 
-    local db_dir
-    db_dir="$(dirname "$db_path")"
-    local db_name
-    db_name="$(basename "$db_path" .db)"
-    local timestamp
-    timestamp=$(date -u +%Y%m%dT%H%M%SZ)
-    local backup_file="${db_dir}/${db_name}-backup-${timestamp}-${reason}.db"
+	local db_dir
+	db_dir="$(dirname "$db_path")"
+	local db_name
+	db_name="$(basename "$db_path" .db)"
+	local timestamp
+	timestamp=$(date -u +%Y%m%dT%H%M%SZ)
+	local backup_file="${db_dir}/${db_name}-backup-${timestamp}-${reason}.db"
 
-    # Use SQLite .backup for WAL-safe consistency
-    if sqlite3 "$db_path" ".backup '$backup_file'" 2>/dev/null; then
-        echo "$backup_file"
-        return 0
-    fi
+	# Use SQLite .backup for WAL-safe consistency
+	if sqlite3 "$db_path" ".backup '$backup_file'" 2>/dev/null; then
+		echo "$backup_file"
+		return 0
+	fi
 
-    # Fallback to file copy if .backup fails
-    if cp "$db_path" "$backup_file" 2>/dev/null; then
-        # Also copy WAL/SHM if present for consistency
-        [[ -f "${db_path}-wal" ]] && cp "${db_path}-wal" "${backup_file}-wal" 2>/dev/null || true
-        [[ -f "${db_path}-shm" ]] && cp "${db_path}-shm" "${backup_file}-shm" 2>/dev/null || true
-        echo "$backup_file"
-        return 0
-    fi
+	# Fallback to file copy if .backup fails
+	if cp "$db_path" "$backup_file" 2>/dev/null; then
+		# Also copy WAL/SHM if present for consistency
+		[[ -f "${db_path}-wal" ]] && cp "${db_path}-wal" "${backup_file}-wal" 2>/dev/null || true
+		[[ -f "${db_path}-shm" ]] && cp "${db_path}-shm" "${backup_file}-shm" 2>/dev/null || true
+		echo "$backup_file"
+		return 0
+	fi
 
-    echo "[backup] Failed to backup database: $db_path" >&2
-    return 1
+	echo "[backup] Failed to backup database: $db_path" >&2
+	return 1
 }
 
 # Verify a SQLite backup by comparing row counts for specified tables.
@@ -885,33 +906,33 @@ backup_sqlite_db() {
 #   $3 - space-separated list of table names to verify (required)
 # Returns: 0 if all row counts match, 1 if mismatch or error
 verify_sqlite_backup() {
-    local db_path="$1"
-    local backup_path="$2"
-    local tables="$3"
+	local db_path="$1"
+	local backup_path="$2"
+	local tables="$3"
 
-    if [[ ! -f "$db_path" || ! -f "$backup_path" ]]; then
-        echo "[backup] Cannot verify: missing database or backup file" >&2
-        return 1
-    fi
+	if [[ ! -f "$db_path" || ! -f "$backup_path" ]]; then
+		echo "[backup] Cannot verify: missing database or backup file" >&2
+		return 1
+	fi
 
-    local table
-    for table in $tables; do
-        local orig_count backup_count
-        orig_count=$(sqlite3 -cmd ".timeout 5000" "$db_path" "SELECT count(*) FROM $table;" 2>/dev/null || echo "-1")
-        backup_count=$(sqlite3 -cmd ".timeout 5000" "$backup_path" "SELECT count(*) FROM $table;" 2>/dev/null || echo "-1")
+	local table
+	for table in $tables; do
+		local orig_count backup_count
+		orig_count=$(sqlite3 -cmd ".timeout 5000" "$db_path" "SELECT count(*) FROM $table;" 2>/dev/null || echo "-1")
+		backup_count=$(sqlite3 -cmd ".timeout 5000" "$backup_path" "SELECT count(*) FROM $table;" 2>/dev/null || echo "-1")
 
-        if [[ "$orig_count" == "-1" || "$backup_count" == "-1" ]]; then
-            echo "[backup] Cannot read table '$table' from database or backup" >&2
-            return 1
-        fi
+		if [[ "$orig_count" == "-1" || "$backup_count" == "-1" ]]; then
+			echo "[backup] Cannot read table '$table' from database or backup" >&2
+			return 1
+		fi
 
-        if [[ "$orig_count" -lt "$backup_count" ]]; then
-            echo "[backup] Row count DECREASED for '$table': was $backup_count, now $orig_count" >&2
-            return 1
-        fi
-    done
+		if [[ "$orig_count" -lt "$backup_count" ]]; then
+			echo "[backup] Row count DECREASED for '$table': was $backup_count, now $orig_count" >&2
+			return 1
+		fi
+	done
 
-    return 0
+	return 0
 }
 
 # Verify a migration preserved row counts (compare current DB against backup).
@@ -923,38 +944,38 @@ verify_sqlite_backup() {
 #   $3 - space-separated list of table names to verify
 # Returns: 0 if row counts match or increased, 1 if any decreased
 verify_migration_rowcounts() {
-    local db_path="$1"
-    local backup_path="$2"
-    local tables="$3"
+	local db_path="$1"
+	local backup_path="$2"
+	local tables="$3"
 
-    if [[ ! -f "$db_path" || ! -f "$backup_path" ]]; then
-        echo "[backup] Cannot verify migration: missing database or backup file" >&2
-        return 1
-    fi
+	if [[ ! -f "$db_path" || ! -f "$backup_path" ]]; then
+		echo "[backup] Cannot verify migration: missing database or backup file" >&2
+		return 1
+	fi
 
-    local table
-    for table in $tables; do
-        local post_count pre_count
-        post_count=$(sqlite3 -cmd ".timeout 5000" "$db_path" "SELECT count(*) FROM $table;" 2>/dev/null || echo "-1")
-        pre_count=$(sqlite3 -cmd ".timeout 5000" "$backup_path" "SELECT count(*) FROM $table;" 2>/dev/null || echo "-1")
+	local table
+	for table in $tables; do
+		local post_count pre_count
+		post_count=$(sqlite3 -cmd ".timeout 5000" "$db_path" "SELECT count(*) FROM $table;" 2>/dev/null || echo "-1")
+		pre_count=$(sqlite3 -cmd ".timeout 5000" "$backup_path" "SELECT count(*) FROM $table;" 2>/dev/null || echo "-1")
 
-        if [[ "$post_count" == "-1" ]]; then
-            echo "[backup] MIGRATION FAILURE: Cannot read table '$table' after migration" >&2
-            return 1
-        fi
+		if [[ "$post_count" == "-1" ]]; then
+			echo "[backup] MIGRATION FAILURE: Cannot read table '$table' after migration" >&2
+			return 1
+		fi
 
-        if [[ "$pre_count" == "-1" ]]; then
-            # Backup table might not exist (new table added by migration)
-            continue
-        fi
+		if [[ "$pre_count" == "-1" ]]; then
+			# Backup table might not exist (new table added by migration)
+			continue
+		fi
 
-        if [[ "$post_count" -lt "$pre_count" ]]; then
-            echo "[backup] MIGRATION FAILURE: Row count DECREASED for '$table': was $pre_count, now $post_count" >&2
-            return 1
-        fi
-    done
+		if [[ "$post_count" -lt "$pre_count" ]]; then
+			echo "[backup] MIGRATION FAILURE: Row count DECREASED for '$table': was $pre_count, now $post_count" >&2
+			return 1
+		fi
+	done
 
-    return 0
+	return 0
 }
 
 # Restore a SQLite database from a backup file.
@@ -964,35 +985,35 @@ verify_migration_rowcounts() {
 #   $2 - backup file to restore from (required)
 # Returns: 0 on success, 1 on failure
 rollback_sqlite_db() {
-    local db_path="$1"
-    local backup_path="$2"
+	local db_path="$1"
+	local backup_path="$2"
 
-    if [[ ! -f "$backup_path" ]]; then
-        echo "[backup] Backup file not found: $backup_path" >&2
-        return 1
-    fi
+	if [[ ! -f "$backup_path" ]]; then
+		echo "[backup] Backup file not found: $backup_path" >&2
+		return 1
+	fi
 
-    # Verify backup is valid SQLite
-    if ! sqlite3 "$backup_path" "SELECT 1;" >/dev/null 2>&1; then
-        echo "[backup] Backup file is not a valid SQLite database: $backup_path" >&2
-        return 1
-    fi
+	# Verify backup is valid SQLite
+	if ! sqlite3 "$backup_path" "SELECT 1;" >/dev/null 2>&1; then
+		echo "[backup] Backup file is not a valid SQLite database: $backup_path" >&2
+		return 1
+	fi
 
-    # Safety: backup current state before overwriting (in case rollback itself is wrong)
-    if [[ -f "$db_path" ]]; then
-        backup_sqlite_db "$db_path" "pre-rollback" >/dev/null 2>&1 || true
-    fi
+	# Safety: backup current state before overwriting (in case rollback itself is wrong)
+	if [[ -f "$db_path" ]]; then
+		backup_sqlite_db "$db_path" "pre-rollback" >/dev/null 2>&1 || true
+	fi
 
-    cp "$backup_path" "$db_path"
-    [[ -f "${backup_path}-wal" ]] && cp "${backup_path}-wal" "${db_path}-wal" 2>/dev/null || true
-    [[ -f "${backup_path}-shm" ]] && cp "${backup_path}-shm" "${db_path}-shm" 2>/dev/null || true
+	cp "$backup_path" "$db_path"
+	[[ -f "${backup_path}-wal" ]] && cp "${backup_path}-wal" "${db_path}-wal" 2>/dev/null || true
+	[[ -f "${backup_path}-shm" ]] && cp "${backup_path}-shm" "${db_path}-shm" 2>/dev/null || true
 
-    # Remove stale WAL/SHM if backup didn't have them
-    [[ ! -f "${backup_path}-wal" && -f "${db_path}-wal" ]] && rm -f "${db_path}-wal" 2>/dev/null || true
-    [[ ! -f "${backup_path}-shm" && -f "${db_path}-shm" ]] && rm -f "${db_path}-shm" 2>/dev/null || true
+	# Remove stale WAL/SHM if backup didn't have them
+	[[ ! -f "${backup_path}-wal" && -f "${db_path}-wal" ]] && rm -f "${db_path}-wal" 2>/dev/null || true
+	[[ ! -f "${backup_path}-shm" && -f "${db_path}-shm" ]] && rm -f "${db_path}-shm" 2>/dev/null || true
 
-    echo "[backup] Database restored from: $backup_path" >&2
-    return 0
+	echo "[backup] Database restored from: $backup_path" >&2
+	return 0
 }
 
 # Clean up old backups, keeping the most recent N.
@@ -1001,30 +1022,30 @@ rollback_sqlite_db() {
 #   $2 - number of backups to keep (default: SQLITE_BACKUP_RETAIN_COUNT)
 # Returns: 0 always
 cleanup_sqlite_backups() {
-    local db_path="$1"
-    local keep_count="${2:-$SQLITE_BACKUP_RETAIN_COUNT}"
+	local db_path="$1"
+	local keep_count="${2:-$SQLITE_BACKUP_RETAIN_COUNT}"
 
-    local db_dir
-    db_dir="$(dirname "$db_path")"
-    local db_name
-    db_name="$(basename "$db_path" .db)"
-    local pattern="${db_dir}/${db_name}-backup-*.db"
+	local db_dir
+	db_dir="$(dirname "$db_path")"
+	local db_name
+	db_name="$(basename "$db_path" .db)"
+	local pattern="${db_dir}/${db_name}-backup-*.db"
 
-    # Count existing backups (glob in $pattern is intentional)
-    local backup_count
-    # shellcheck disable=SC2012,SC2086
-    backup_count=$(ls -1 $pattern 2>/dev/null | wc -l | tr -d ' ')
+	# Count existing backups (glob in $pattern is intentional)
+	local backup_count
+	# shellcheck disable=SC2012,SC2086
+	backup_count=$(ls -1 $pattern 2>/dev/null | wc -l | tr -d ' ')
 
-    if [[ "$backup_count" -gt "$keep_count" ]]; then
-        local to_remove
-        to_remove=$((backup_count - keep_count))
-        # shellcheck disable=SC2012,SC2086
-        ls -1t $pattern 2>/dev/null | tail -n "$to_remove" | while IFS= read -r old_backup; do
-            rm -f "$old_backup" "${old_backup}-wal" "${old_backup}-shm" 2>/dev/null || true
-        done
-    fi
+	if [[ "$backup_count" -gt "$keep_count" ]]; then
+		local to_remove
+		to_remove=$((backup_count - keep_count))
+		# shellcheck disable=SC2012,SC2086
+		ls -1t $pattern 2>/dev/null | tail -n "$to_remove" | while IFS= read -r old_backup; do
+			rm -f "$old_backup" "${old_backup}-wal" "${old_backup}-shm" 2>/dev/null || true
+		done
+	fi
 
-    return 0
+	return 0
 }
 
 # =============================================================================
@@ -1046,52 +1067,52 @@ cleanup_sqlite_backups() {
 # Returns the resolved model string on stdout.
 #######################################
 resolve_model_tier() {
-    local tier="${1:-coding}"
+	local tier="${1:-coding}"
 
-    # If already a full provider/model string (contains /), return as-is
-    if [[ "$tier" == *"/"* ]]; then
-        echo "$tier"
-        return 0
-    fi
+	# If already a full provider/model string (contains /), return as-is
+	if [[ "$tier" == *"/"* ]]; then
+		echo "$tier"
+		return 0
+	fi
 
-    # Try fallback-chain-helper.sh for availability-aware resolution
-    local chain_helper="${BASH_SOURCE[0]%/*}/fallback-chain-helper.sh"
-    if [[ -x "$chain_helper" ]]; then
-        local resolved
-        resolved=$("$chain_helper" resolve "$tier" --quiet 2>/dev/null) || true
-        if [[ -n "$resolved" ]]; then
-            echo "$resolved"
-            return 0
-        fi
-    fi
+	# Try fallback-chain-helper.sh for availability-aware resolution
+	local chain_helper="${BASH_SOURCE[0]%/*}/fallback-chain-helper.sh"
+	if [[ -x "$chain_helper" ]]; then
+		local resolved
+		resolved=$("$chain_helper" resolve "$tier" --quiet 2>/dev/null) || true
+		if [[ -n "$resolved" ]]; then
+			echo "$resolved"
+			return 0
+		fi
+	fi
 
-    # Static fallback: map tier names to concrete models
-    case "$tier" in
-        opus|coding)
-            echo "anthropic/claude-opus-4-6"
-            ;;
-        sonnet|eval)
-            echo "anthropic/claude-sonnet-4-20250514"
-            ;;
-        haiku|health)
-            echo "anthropic/claude-3-5-haiku-20241022"
-            ;;
-        flash)
-            echo "google/gemini-2.5-flash-preview-05-20"
-            ;;
-        pro)
-            echo "google/gemini-2.5-pro-preview-06-05"
-            ;;
-        grok)
-            echo "xai/grok-3"
-            ;;
-        *)
-            # Unknown tier — return as-is (may be a model name without provider)
-            echo "$tier"
-            ;;
-    esac
+	# Static fallback: map tier names to concrete models
+	case "$tier" in
+	opus | coding)
+		echo "anthropic/claude-opus-4-6"
+		;;
+	sonnet | eval)
+		echo "anthropic/claude-sonnet-4-6"
+		;;
+	haiku | health)
+		echo "anthropic/claude-3-5-haiku-20241022"
+		;;
+	flash)
+		echo "google/gemini-2.5-flash-preview-05-20"
+		;;
+	pro)
+		echo "google/gemini-2.5-pro-preview-06-05"
+		;;
+	grok)
+		echo "xai/grok-3"
+		;;
+	*)
+		# Unknown tier — return as-is (may be a model name without provider)
+		echo "$tier"
+		;;
+	esac
 
-    return 0
+	return 0
 }
 
 #######################################
@@ -1100,23 +1121,23 @@ resolve_model_tier() {
 # Checks: opencode, claude
 #######################################
 detect_ai_backends() {
-    local -a backends=()
+	local -a backends=()
 
-    if command -v opencode &>/dev/null; then
-        backends+=("opencode")
-    fi
+	if command -v opencode &>/dev/null; then
+		backends+=("opencode")
+	fi
 
-    if command -v claude &>/dev/null; then
-        backends+=("claude")
-    fi
+	if command -v claude &>/dev/null; then
+		backends+=("claude")
+	fi
 
-    if [[ ${#backends[@]} -eq 0 ]]; then
-        echo "none"
-        return 1
-    fi
+	if [[ ${#backends[@]} -eq 0 ]]; then
+		echo "none"
+		return 1
+	fi
 
-    printf '%s\n' "${backends[@]}"
-    return 0
+	printf '%s\n' "${backends[@]}"
+	return 0
 }
 
 # This ensures all constants are available when this file is sourced

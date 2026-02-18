@@ -74,7 +74,7 @@ Test suites are JSON files defining prompts and expected response patterns:
   "name": "build-agent-tests",
   "description": "Validates build-agent subagent knowledge",
   "agent": "Build+",
-  "model": "anthropic/claude-sonnet-4-20250514",
+  "model": "anthropic/claude-sonnet-4-6",
   "timeout": 120,
   "tests": [
     {
@@ -149,7 +149,7 @@ agent-test-helper.sh run-one "List your tools" --expect "bash"
 # With specific agent and model
 agent-test-helper.sh run-one "Explain git workflow" \
   --agent "Build+" \
-  --model "anthropic/claude-sonnet-4-20250514" \
+  --model "anthropic/claude-sonnet-4-6" \
   --timeout 60
 ```
 

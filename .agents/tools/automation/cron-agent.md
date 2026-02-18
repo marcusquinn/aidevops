@@ -183,7 +183,7 @@ Jobs are stored in `~/.config/aidevops/cron-jobs.json`:
       "workdir": "/Users/me/projects/example-site",
       "timeout": 300,
       "notify": "mail",
-      "model": "anthropic/claude-sonnet-4-20250514",
+      "model": "anthropic/claude-sonnet-4-6",
       "status": "active",
       "created": "2024-01-10T10:00:00Z",
       "lastRun": "2024-01-15T09:00:00Z",

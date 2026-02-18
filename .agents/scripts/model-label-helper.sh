@@ -56,7 +56,7 @@ ACTIONS:
     planned, researched, implemented, reviewed, verified, documented, failed, retried
 
 MODELS:
-    haiku, flash, sonnet, pro, opus (or concrete model names like claude-sonnet-4-5)
+    haiku, flash, sonnet, pro, opus (or concrete model names like claude-sonnet-4-6)
 
 EXAMPLES:
     # Add label when dispatching a task
@@ -92,7 +92,7 @@ EOF
 #######################################
 # Normalize model name to tier
 # Arguments:
-#   $1 - Model name (e.g., claude-sonnet-4-5, sonnet, gpt-4)
+#   $1 - Model name (e.g., claude-sonnet-4-6, sonnet, gpt-4)
 # Returns:
 #   Normalized tier name (haiku, flash, sonnet, pro, opus)
 #######################################

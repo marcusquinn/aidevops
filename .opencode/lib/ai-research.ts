@@ -43,7 +43,7 @@ const AGENTS_BASE = `${process.env.HOME || "~"}/.aidevops/agents`
 
 const MODEL_MAP: Record<string, string> = {
   haiku: "claude-3-haiku-20240307",
-  sonnet: "claude-sonnet-4-20250514",
+  sonnet: "claude-sonnet-4-6",
   opus: "claude-opus-4-20250514",
 }
 

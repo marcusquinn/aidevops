@@ -73,7 +73,7 @@ Simplest approach. Each invocation starts a fresh session (or resumes one).
 opencode run "Review src/auth.ts for security issues"
 
 # With specific model
-opencode run -m anthropic/claude-sonnet-4-20250514 "Generate unit tests for src/utils/"
+opencode run -m anthropic/claude-sonnet-4-6 "Generate unit tests for src/utils/"
 
 # With specific agent
 opencode run --agent plan "Analyze the database schema"
@@ -111,7 +111,7 @@ import { createOpencode, createOpencodeClient } from "@opencode-ai/sdk"
 // Start server + client together
 const { client, server } = await createOpencode({
   port: 4096,
-  config: { model: "anthropic/claude-sonnet-4-20250514" },
+  config: { model: "anthropic/claude-sonnet-4-6" },
 })
 
 // Or connect to existing server
@@ -136,7 +136,7 @@ SESSION_ID=$(curl -sf -X POST "$SERVER/session" \
 curl -sf -X POST "$SERVER/session/$SESSION_ID/message" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": {"providerID": "anthropic", "modelID": "claude-sonnet-4-20250514"},
+    "model": {"providerID": "anthropic", "modelID": "claude-sonnet-4-6"},
     "parts": [{"type": "text", "text": "Explain this codebase"}]
   }'
 
@@ -276,7 +276,7 @@ Runners are named, persistent agent instances with their own identity, instructi
 # Create a runner
 runner-helper.sh create code-reviewer \
   --description "Reviews code for security and quality" \
-  --model anthropic/claude-sonnet-4-20250514
+  --model anthropic/claude-sonnet-4-6
 
 # Run a task
 runner-helper.sh run code-reviewer "Review src/auth/ for vulnerabilities"
@@ -367,7 +367,7 @@ Place in `.opencode/agents/security-reviewer.md`:
 ---
 description: Security-focused code reviewer
 mode: subagent
-model: anthropic/claude-sonnet-4-20250514
+model: anthropic/claude-sonnet-4-6
 temperature: 0.1
 tools:
   write: false
@@ -395,7 +395,7 @@ In `opencode.json`:
     "security-reviewer": {
       "description": "Security-focused code reviewer",
       "mode": "subagent",
-      "model": "anthropic/claude-sonnet-4-20250514",
+      "model": "anthropic/claude-sonnet-4-6",
       "tools": { "write": false, "edit": false }
     }
   }
@@ -427,7 +427,7 @@ OpenCode supports any provider via `opencode auth login`. Runners inherit the co
 opencode auth login  # Interactive provider selection
 
 # Override model per dispatch
-opencode run -m openrouter/anthropic/claude-sonnet-4-20250514 "Task"
+opencode run -m openrouter/anthropic/claude-sonnet-4-6 "Task"
 opencode run -m groq/llama-4-scout-17b-16e-instruct "Quick task"
 ```
 

@@ -49,10 +49,10 @@ Add `fallback-chain:` to any model tier's YAML frontmatter for per-agent overrid
 
 ```yaml
 fallback-chain:
-  - anthropic/claude-sonnet-4-20250514
+  - anthropic/claude-sonnet-4-6
   - openai/gpt-4.1
   - google/gemini-2.5-pro
-  - openrouter/anthropic/claude-sonnet-4-20250514
+  - openrouter/anthropic/claude-sonnet-4-6
 ```
 
 Global defaults are configured in `configs/fallback-chain-config.json`. See `tools/ai-assistants/fallback-chains.md` for full documentation.

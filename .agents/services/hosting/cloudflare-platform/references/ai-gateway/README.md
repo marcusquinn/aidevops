@@ -60,7 +60,7 @@ const client = new OpenAI({
 
 // Switch providers by changing model format: {provider}/{model}
 const response = await client.chat.completions.create({
-  model: 'openai/gpt-4o-mini', // or 'anthropic/claude-sonnet-4-5'
+  model: 'openai/gpt-4o-mini', // or 'anthropic/claude-sonnet-4-6'
   messages: [{ role: 'user', content: 'Hello!' }]
 });
 ```
@@ -449,7 +449,7 @@ const response = await client.chat.completions.create({
 ```typescript
 // Dashboard: Create route with Percentage node
 // - 50% to gpt-4o-mini
-// - 50% to claude-sonnet-4-5
+// - 50% to claude-sonnet-4-6
 // Analyze logs to compare quality/cost/latency
 
 const response = await client.chat.completions.create({

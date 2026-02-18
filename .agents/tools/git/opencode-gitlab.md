@@ -189,7 +189,7 @@ Specify model in the opencode run command:
 
 ```yaml
 script:
-  - opencode run --model anthropic/claude-sonnet-4-20250514 "$AI_FLOW_INPUT"
+  - opencode run --model anthropic/claude-sonnet-4-6 "$AI_FLOW_INPUT"
 ```
 
 ### Self-Hosted GitLab

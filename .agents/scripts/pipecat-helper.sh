@@ -42,7 +42,7 @@ readonly CLIENT_PID_FILE="${HOME}/.aidevops/.agent-workspace/tmp/.pipecat-client
 readonly DEFAULT_SERVER_PORT=7860
 readonly DEFAULT_CLIENT_PORT=3000
 readonly DEFAULT_LLM_PROVIDER="anthropic"
-readonly DEFAULT_ANTHROPIC_MODEL="claude-sonnet-4-20250514"
+readonly DEFAULT_ANTHROPIC_MODEL="claude-sonnet-4-6"
 readonly DEFAULT_OPENAI_MODEL="gpt-4o"
 readonly DEFAULT_CARTESIA_VOICE_ID="71a7ad14-091c-4e8e-a314-022ece01c121"
 readonly DEFAULT_PYTHON="python3.12"
@@ -289,7 +289,7 @@ def get_llm_service(provider: str):
             sys.exit(1)
         return AnthropicLLMService(
             api_key=api_key,
-            model=os.getenv("PIPECAT_ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
+            model=os.getenv("PIPECAT_ANTHROPIC_MODEL", "claude-sonnet-4-6"),
         )
     elif provider == "openai":
         from pipecat.services.openai.llm import OpenAILLMService
@@ -593,7 +593,7 @@ cmd_setup() {
 # PIPECAT_LOCAL_LLM_MODEL=local-model
 
 # Optional: Override default models
-# PIPECAT_ANTHROPIC_MODEL=claude-sonnet-4-20250514
+# PIPECAT_ANTHROPIC_MODEL=claude-sonnet-4-6
 # PIPECAT_OPENAI_MODEL=gpt-4o
 ENVEOF
 		print_success "Environment template created: ${PIPECAT_DIR}/.env"
@@ -1188,7 +1188,7 @@ Environment Variables:
   OPENAI_API_KEY           OpenAI LLM key (for openai provider)
   PIPECAT_LOCAL_LLM_URL    Local LLM endpoint (default: http://127.0.0.1:1234/v1)
   PIPECAT_LOCAL_LLM_MODEL  Local LLM model name
-  PIPECAT_ANTHROPIC_MODEL  Override Anthropic model (default: claude-sonnet-4-20250514)
+  PIPECAT_ANTHROPIC_MODEL  Override Anthropic model (default: claude-sonnet-4-6)
   PIPECAT_OPENAI_MODEL     Override OpenAI model (default: gpt-4o)
 
 Directories:
