@@ -1396,3 +1396,12 @@
   check: file-exists .agents/scripts/supervisor/ai-reason.sh
   check: shellcheck tests/test-ai-actions.sh
   check: file-exists tests/test-ai-actions.sh
+
+- [ ] v166 t1199 Add worker hung timeout tuning based on task estimate #en... | PR #1826 | merged:2026-02-18
+  files: .agents/scripts/supervisor/_common.sh, .agents/scripts/supervisor/dispatch.sh, .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/supervisor/_common.sh
+  check: file-exists .agents/scripts/supervisor/_common.sh
+  check: shellcheck .agents/scripts/supervisor/dispatch.sh
+  check: file-exists .agents/scripts/supervisor/dispatch.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
