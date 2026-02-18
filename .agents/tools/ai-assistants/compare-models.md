@@ -21,9 +21,10 @@ model: sonnet
 
 - **Purpose**: Compare AI models by capability, pricing, context window, and task suitability
 - **Commands**: `/compare-models` (full, with web fetch), `/compare-models-free` (offline, embedded data)
-- **Helper**: `compare-models-helper.sh [list|compare|recommend|pricing|context|providers|capabilities|discover]`
+- **Helper**: `compare-models-helper.sh [list|compare|recommend|pricing|context|capabilities|patterns|providers|discover]`
 - **Discovery**: `compare-models-helper.sh discover [--probe] [--list-models] [--json]`
-- **Data sources**: Embedded reference data + optional live web fetch for latest pricing
+- **Pattern data**: `compare-models-helper.sh patterns [--task-type TYPE]` — live success rates from pattern tracker
+- **Data sources**: Embedded reference data + live pattern tracker data + optional web fetch for latest pricing
 
 <!-- AI-CONTEXT-END -->
 
@@ -116,13 +117,33 @@ Runner-up: {model} — {reason}
 Budget option: {model} — {reason}
 ```
 
-### Step 5: Provide Actionable Advice
+### Step 5: Include Pattern Data (t1098)
+
+The helper automatically includes live success rates from the pattern tracker when data exists.
+Pattern data appears in `list`, `compare`, `recommend`, `capabilities`, and the dedicated `patterns` command.
+
+```bash
+# Focused pattern data view
+~/.aidevops/agents/scripts/compare-models-helper.sh patterns
+
+# Filter by task type
+~/.aidevops/agents/scripts/compare-models-helper.sh patterns --task-type code-review
+```
+
+Example output alongside static specs:
+
+```text
+sonnet: $3.00/$15.00 per 1M tokens, 200K context — 85% (n=47) success
+```
+
+### Step 6: Provide Actionable Advice
 
 For each comparison, include:
 
 1. **Winner by category**: Best for cost, capability, context, speed
 2. **aidevops tier mapping**: How models map to haiku/flash/sonnet/pro/opus tiers
 3. **Trade-offs**: What you gain/lose with each choice
+4. **Pattern-backed insights**: Which tiers have proven track records for the task type
 
 ## Model Discovery
 
@@ -155,5 +176,6 @@ Use discovery output to filter `/compare-models` to only show models the user ca
 - `scripts/commands/score-responses.md` - `/score-responses` slash command handler
 - `tools/ai-assistants/response-scoring.md` - Evaluate actual model response quality
 - `tools/context/model-routing.md` - Cost-aware model routing within aidevops
+- `scripts/pattern-tracker-helper.sh` - Pattern tracker (data source for live success rates)
 - `tools/voice/voice-ai-models.md` - Voice-specific model comparison
 - `tools/voice/voice-models.md` - TTS/STT model catalog
