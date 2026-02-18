@@ -3,7 +3,7 @@
 # Part of t1012: live model leaderboard with success rates
 #
 # Usage:
-#   generate-models-md.sh [--output PATH] [--quiet]
+#   generate-models-md.sh [--output PATH] [--repo-path PATH] [--quiet]
 #   generate-models-md.sh help
 #
 # Data sources:
@@ -33,6 +33,7 @@ readonly FAILURE_TYPES="'FAILURE_PATTERN','FAILED_APPROACH','ERROR_FIX'"
 
 # Defaults
 OUTPUT_PATH=""
+REPO_PATH=""
 QUIET=0
 
 log_info() {
@@ -60,6 +61,25 @@ log_error() {
 #######################################
 find_repo_root() {
 	git rev-parse --show-toplevel 2>/dev/null || echo ""
+	return 0
+}
+
+#######################################
+# Build a SQL WHERE clause fragment for repo-path filtering
+# Uses the learnings.project_path column (FTS5 UNINDEXED)
+# Arguments: none (reads global REPO_PATH)
+# Outputs: SQL fragment to stdout (empty string if no filter)
+#######################################
+repo_path_filter() {
+	if [[ -z "$REPO_PATH" ]]; then
+		echo ""
+		return 0
+	fi
+	# Match exact path or any subdirectory/worktree of the repo
+	# project_path may contain worktree paths like /repo-feature-x/
+	local escaped_path
+	escaped_path=$(printf '%s' "$REPO_PATH" | sed "s/'/''/g")
+	echo "AND (project_path = '${escaped_path}' OR project_path LIKE '${escaped_path}/%' OR project_path LIKE '%/$(basename "$REPO_PATH")%')"
 	return 0
 }
 
@@ -193,10 +213,13 @@ generate_leaderboard() {
 		return 0
 	fi
 
+	local path_filter
+	path_filter=$(repo_path_filter)
+
 	local total
 	total=$(sqlite3 "$MEMORY_DB" "
         SELECT COUNT(*) FROM learnings
-        WHERE type IN ($PATTERN_TYPES);
+        WHERE type IN ($PATTERN_TYPES) $path_filter;
     " 2>/dev/null) || total=0
 
 	if [[ "$total" -eq 0 ]]; then
@@ -215,13 +238,15 @@ generate_leaderboard() {
 		successes=$(sqlite3 "$MEMORY_DB" "
             SELECT COUNT(*) FROM learnings
             WHERE type IN ($SUCCESS_TYPES)
-            AND (tags LIKE '%model:${tier}%' OR content LIKE '%[model:${tier}]%');
+            AND (tags LIKE '%model:${tier}%' OR content LIKE '%[model:${tier}]%')
+            $path_filter;
         " 2>/dev/null) || successes=0
 
 		failures=$(sqlite3 "$MEMORY_DB" "
             SELECT COUNT(*) FROM learnings
             WHERE type IN ($FAILURE_TYPES)
-            AND (tags LIKE '%model:${tier}%' OR content LIKE '%[model:${tier}]%');
+            AND (tags LIKE '%model:${tier}%' OR content LIKE '%[model:${tier}]%')
+            $path_filter;
         " 2>/dev/null) || failures=0
 
 		local tasks_total=$((successes + failures))
@@ -237,7 +262,8 @@ generate_leaderboard() {
 		last_used=$(sqlite3 "$MEMORY_DB" "
             SELECT SUBSTR(MAX(created_at), 1, 10) FROM learnings
             WHERE type IN ($PATTERN_TYPES)
-            AND (tags LIKE '%model:${tier}%' OR content LIKE '%[model:${tier}]%');
+            AND (tags LIKE '%model:${tier}%' OR content LIKE '%[model:${tier}]%')
+            $path_filter;
         " 2>/dev/null) || last_used="—"
 		[[ -z "$last_used" ]] && last_used="—"
 
@@ -257,10 +283,13 @@ generate_task_type_breakdown() {
 		return 0
 	fi
 
+	local path_filter
+	path_filter=$(repo_path_filter)
+
 	local total
 	total=$(sqlite3 "$MEMORY_DB" "
         SELECT COUNT(*) FROM learnings
-        WHERE type IN ($PATTERN_TYPES);
+        WHERE type IN ($PATTERN_TYPES) $path_filter;
     " 2>/dev/null) || total=0
 	[[ "$total" -eq 0 ]] && return 0
 
@@ -273,13 +302,15 @@ generate_task_type_breakdown() {
 		successes=$(sqlite3 "$MEMORY_DB" "
             SELECT COUNT(*) FROM learnings
             WHERE type IN ($SUCCESS_TYPES)
-            AND (tags LIKE '%${task_type}%' OR content LIKE '%[task:${task_type}]%');
+            AND (tags LIKE '%${task_type}%' OR content LIKE '%[task:${task_type}]%')
+            $path_filter;
         " 2>/dev/null) || successes=0
 
 		failures=$(sqlite3 "$MEMORY_DB" "
             SELECT COUNT(*) FROM learnings
             WHERE type IN ($FAILURE_TYPES)
-            AND (tags LIKE '%${task_type}%' OR content LIKE '%[task:${task_type}]%');
+            AND (tags LIKE '%${task_type}%' OR content LIKE '%[task:${task_type}]%')
+            $path_filter;
         " 2>/dev/null) || failures=0
 
 		local task_total=$((successes + failures))
@@ -404,10 +435,12 @@ generate_contest_results() {
 generate_stats_summary() {
 	local pattern_total=0
 	local scoring_total=0
+	local path_filter
+	path_filter=$(repo_path_filter)
 
 	if [[ -f "$MEMORY_DB" ]]; then
 		pattern_total=$(sqlite3 "$MEMORY_DB" "
-            SELECT COUNT(*) FROM learnings WHERE type IN ($PATTERN_TYPES);
+            SELECT COUNT(*) FROM learnings WHERE type IN ($PATTERN_TYPES) $path_filter;
         " 2>/dev/null) || pattern_total=0
 	fi
 
@@ -417,14 +450,19 @@ generate_stats_summary() {
 
 	echo "- **Pattern data points**: $pattern_total"
 	echo "- **Scored responses**: $scoring_total"
+	if [[ -n "$REPO_PATH" ]]; then
+		echo "- **Scope**: $(basename "$REPO_PATH") (repo-specific)"
+	else
+		echo "- **Scope**: Global (all repos)"
+	fi
 
 	if [[ -f "$MEMORY_DB" ]] && [[ "$pattern_total" -gt 0 ]]; then
 		local oldest newest
 		oldest=$(sqlite3 "$MEMORY_DB" "
-            SELECT SUBSTR(MIN(created_at), 1, 10) FROM learnings WHERE type IN ($PATTERN_TYPES);
+            SELECT SUBSTR(MIN(created_at), 1, 10) FROM learnings WHERE type IN ($PATTERN_TYPES) $path_filter;
         " 2>/dev/null) || oldest="—"
 		newest=$(sqlite3 "$MEMORY_DB" "
-            SELECT SUBSTR(MAX(created_at), 1, 10) FROM learnings WHERE type IN ($PATTERN_TYPES);
+            SELECT SUBSTR(MAX(created_at), 1, 10) FROM learnings WHERE type IN ($PATTERN_TYPES) $path_filter;
         " 2>/dev/null) || newest="—"
 		echo "- **Date range**: $oldest to $newest"
 	fi
@@ -444,7 +482,11 @@ generate_models_md() {
 	{
 		echo "# Model Leaderboard"
 		echo ""
-		echo "Live performance data from pattern-tracker and response-scoring databases."
+		if [[ -n "$REPO_PATH" ]]; then
+			echo "Per-repo performance data for **$(basename "$REPO_PATH")** from pattern-tracker and response-scoring databases."
+		else
+			echo "Live performance data from pattern-tracker and response-scoring databases."
+		fi
 		echo "Auto-generated by \`generate-models-md.sh\` — do not edit manually."
 		echo ""
 		echo "**Last updated**: $timestamp"
@@ -467,7 +509,7 @@ generate_models_md() {
 		generate_contest_results
 		echo "---"
 		echo ""
-		echo "*Generated by [aidevops](https://github.com/anomalyco/aidevops) t1012*"
+		echo "*Generated by [aidevops](https://github.com/anomalyco/aidevops) t1012, t1129*"
 	} >"$output"
 
 	return 0
@@ -480,12 +522,17 @@ cmd_help() {
 	echo "generate-models-md.sh - Generate MODELS.md leaderboard"
 	echo ""
 	echo "Usage:"
-	echo "  generate-models-md.sh [--output PATH] [--quiet]"
+	echo "  generate-models-md.sh [--output PATH] [--repo-path PATH] [--quiet]"
 	echo "  generate-models-md.sh help"
 	echo ""
 	echo "Options:"
-	echo "  --output PATH   Output file path (default: MODELS.md in repo root)"
-	echo "  --quiet         Suppress info messages"
+	echo "  --output PATH      Output file path (default: MODELS.md in repo root)"
+	echo "  --repo-path PATH   Filter pattern data to this repo path (per-repo tracking)"
+	echo "  --quiet            Suppress info messages"
+	echo ""
+	echo "When --repo-path is provided, pattern data is filtered to only include"
+	echo "learnings recorded against that project path, giving per-repo performance"
+	echo "insights. Without it, global stats across all repos are shown."
 	echo ""
 	echo "Data sources:"
 	echo "  Model registry:    $REGISTRY_DB"
@@ -503,6 +550,14 @@ while [[ $# -gt 0 ]]; do
 			exit 1
 		fi
 		OUTPUT_PATH="$2"
+		shift 2
+		;;
+	--repo-path)
+		if [[ $# -lt 2 ]]; then
+			log_error "--repo-path requires a value"
+			exit 1
+		fi
+		REPO_PATH="$2"
 		shift 2
 		;;
 	--quiet)
@@ -541,6 +596,9 @@ log_info "Generating MODELS.md from live data..."
 log_info "  Registry: $REGISTRY_DB"
 log_info "  Patterns: $MEMORY_DB"
 log_info "  Scoring:  $SCORING_DB"
+if [[ -n "$REPO_PATH" ]]; then
+	log_info "  Repo filter: $REPO_PATH"
+fi
 
 generate_models_md "$OUTPUT_PATH"
 

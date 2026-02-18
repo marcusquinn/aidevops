@@ -1247,6 +1247,19 @@ SOPSEOF
 		print_info "Collaborator pointer files already exist"
 	fi
 
+	# Generate MODELS.md (per-repo model performance leaderboard, t1129)
+	local generate_models_script="$AGENTS_DIR/scripts/generate-models-md.sh"
+	if [[ -x "$generate_models_script" ]] && command -v sqlite3 &>/dev/null; then
+		print_info "Generating MODELS.md (model performance leaderboard)..."
+		if "$generate_models_script" --output "$project_root/MODELS.md" --repo-path "$project_root" --quiet 2>/dev/null; then
+			print_success "Created MODELS.md (per-repo model leaderboard)"
+		else
+			print_warning "MODELS.md generation failed (will be populated as tasks run)"
+		fi
+	else
+		print_info "MODELS.md skipped (sqlite3 or generate script not available)"
+	fi
+
 	# Build features string for registration
 	local features_list=""
 	[[ "$enable_planning" == "true" ]] && features_list="${features_list}planning,"
@@ -1272,6 +1285,7 @@ SOPSEOF
 	[[ "$enable_database" == "true" ]] && echo "  ✓ Database (schemas/, migrations/, seeds/)"
 	[[ "$enable_beads" == "true" ]] && echo "  ✓ Beads (task graph visualization)"
 	[[ "$enable_sops" == "true" ]] && echo "  ✓ SOPS (encrypted config files with age backend)"
+	[[ -f "$project_root/MODELS.md" ]] && echo "  ✓ MODELS.md (per-repo model performance leaderboard)"
 	echo ""
 	echo "Next steps:"
 	if [[ "$enable_beads" == "true" ]]; then
