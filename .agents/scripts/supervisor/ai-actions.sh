@@ -19,7 +19,7 @@
 AI_ACTIONS_LOG_DIR="${AI_ACTIONS_LOG_DIR:-$HOME/.aidevops/logs/ai-supervisor}"
 
 # Valid action types — any action not in this list is rejected
-readonly AI_VALID_ACTION_TYPES="comment_on_issue create_task create_subtasks flag_for_review adjust_priority close_verified request_info create_improvement escalate_model"
+readonly AI_VALID_ACTION_TYPES="comment_on_issue create_task create_subtasks flag_for_review adjust_priority close_verified request_info create_improvement escalate_model propose_auto_dispatch"
 
 # Maximum actions per execution cycle (safety limit)
 AI_MAX_ACTIONS_PER_CYCLE="${AI_MAX_ACTIONS_PER_CYCLE:-10}"
@@ -71,7 +71,7 @@ _extract_action_target() {
 		parent_task_id=$(printf '%s' "$action" | jq -r '.parent_task_id // "unknown"')
 		echo "task:${parent_task_id}"
 		;;
-	adjust_priority | escalate_model)
+	adjust_priority | escalate_model | propose_auto_dispatch)
 		local task_id
 		task_id=$(printf '%s' "$action" | jq -r '.task_id // "unknown"')
 		echo "task:${task_id}"
@@ -775,6 +775,27 @@ validate_action_fields() {
 			return 0
 		fi
 		;;
+	propose_auto_dispatch)
+		local task_id recommended_model
+		task_id=$(printf '%s' "$action" | jq -r '.task_id // empty')
+		recommended_model=$(printf '%s' "$action" | jq -r '.recommended_model // empty')
+		if [[ -z "$task_id" ]]; then
+			echo "missing required field: task_id"
+			return 0
+		fi
+		if [[ -z "$recommended_model" ]]; then
+			echo "missing required field: recommended_model"
+			return 0
+		fi
+		# Validate model tier
+		case "$recommended_model" in
+		haiku | flash | sonnet | pro | opus) ;;
+		*)
+			echo "invalid recommended_model: $recommended_model (must be haiku|flash|sonnet|pro|opus)"
+			return 0
+			;;
+		esac
+		;;
 	*)
 		echo "unhandled action type: $action_type"
 		return 0
@@ -814,6 +835,7 @@ execute_single_action() {
 	request_info) _exec_request_info "$action" "$repo_slug" ;;
 	create_improvement) _exec_create_improvement "$action" "$repo_path" ;;
 	escalate_model) _exec_escalate_model "$action" "$repo_path" ;;
+	propose_auto_dispatch) _exec_propose_auto_dispatch "$action" "$repo_path" ;;
 	*)
 		echo '{"error":"unhandled_action_type"}'
 		return 1
@@ -1403,6 +1425,148 @@ _exec_escalate_model() {
 	fi
 
 	echo "{\"escalated\":true,\"task_id\":\"$task_id\",\"from_tier\":\"$from_tier\",\"to_tier\":\"$to_tier\"}"
+	return 0
+}
+
+#######################################
+# Action: propose_auto_dispatch (t1134)
+# Two-phase guard for auto-dispatch tagging:
+#   Phase 1 (proposal): Adds "[proposed:auto-dispatch model:X]" annotation
+#     to the task line in TODO.md. Does NOT add #auto-dispatch yet.
+#   Phase 2 (confirmation): On the NEXT pulse cycle, if the [proposed:...]
+#     annotation still exists (not removed by a human), converts it to
+#     the actual #auto-dispatch tag + model:X field.
+#
+# This ensures no task is auto-tagged without at least one pulse cycle
+# of visibility, giving humans a window to intervene.
+#######################################
+_exec_propose_auto_dispatch() {
+	local action="$1"
+	local repo_path="$2"
+
+	local task_id recommended_model reasoning
+	task_id=$(printf '%s' "$action" | jq -r '.task_id')
+	recommended_model=$(printf '%s' "$action" | jq -r '.recommended_model // "sonnet"')
+	reasoning=$(printf '%s' "$action" | jq -r '.reasoning // ""')
+
+	# Find the correct TODO.md — search all registered repos
+	local todo_file=""
+	local task_repo=""
+
+	# First check the provided repo
+	if [[ -f "$repo_path/TODO.md" ]] && grep -qE "^[[:space:]]*- \[ \] ${task_id}( |$)" "$repo_path/TODO.md" 2>/dev/null; then
+		todo_file="$repo_path/TODO.md"
+		task_repo="$repo_path"
+	fi
+
+	# If not found, search other registered repos
+	if [[ -z "$todo_file" && -f "$SUPERVISOR_DB" ]]; then
+		local search_repos
+		search_repos=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks WHERE repo IS NOT NULL AND repo != '';" 2>/dev/null || echo "")
+		if [[ -n "$search_repos" ]]; then
+			while IFS= read -r search_repo; do
+				[[ -z "$search_repo" || ! -f "$search_repo/TODO.md" ]] && continue
+				if grep -qE "^[[:space:]]*- \[ \] ${task_id}( |$)" "$search_repo/TODO.md" 2>/dev/null; then
+					todo_file="$search_repo/TODO.md"
+					task_repo="$search_repo"
+					break
+				fi
+			done <<<"$search_repos"
+		fi
+	fi
+
+	if [[ -z "$todo_file" ]]; then
+		echo "{\"error\":\"task_not_found\",\"task_id\":\"$task_id\"}"
+		return 1
+	fi
+
+	# Check if task already has #auto-dispatch
+	local task_line
+	task_line=$(grep -E "^[[:space:]]*- \[ \] ${task_id}( |$)" "$todo_file" | head -1)
+	if [[ -z "$task_line" ]]; then
+		echo "{\"error\":\"task_not_found_in_todo\",\"task_id\":\"$task_id\"}"
+		return 1
+	fi
+
+	if echo "$task_line" | grep -q '#auto-dispatch'; then
+		echo "{\"skipped\":true,\"task_id\":\"$task_id\",\"reason\":\"already_tagged\"}"
+		return 0
+	fi
+
+	# Check if task already has a [proposed:auto-dispatch] annotation
+	if echo "$task_line" | grep -q '\[proposed:auto-dispatch'; then
+		# Phase 2: Confirmation — the proposal survived one pulse cycle.
+		# Convert [proposed:auto-dispatch model:X] to actual #auto-dispatch + model:X
+		local proposed_model
+		proposed_model=$(echo "$task_line" | grep -oE '\[proposed:auto-dispatch model:([a-z]+)\]' | grep -oE 'model:[a-z]+' | sed 's/model://')
+		if [[ -z "$proposed_model" ]]; then
+			proposed_model="$recommended_model"
+		fi
+
+		# Remove the [proposed:...] annotation and add #auto-dispatch + model:
+		local new_line
+		new_line=$(echo "$task_line" | sed -E 's/ *\[proposed:auto-dispatch[^]]*\]//')
+
+		# Add #auto-dispatch if not present
+		if ! echo "$new_line" | grep -q '#auto-dispatch'; then
+			new_line="$new_line #auto-dispatch"
+		fi
+
+		# Add or update model: field
+		if echo "$new_line" | grep -qE 'model:[a-z]+'; then
+			new_line=$(echo "$new_line" | sed -E "s/model:[a-z]+/model:${proposed_model}/")
+		else
+			new_line="$new_line model:${proposed_model}"
+		fi
+
+		# Apply the change
+		local escaped_old
+		escaped_old=$(printf '%s\n' "$task_line" | sed 's/[[\.*^$()+?{|]/\\&/g')
+		sed -i.bak "s|${escaped_old}|${new_line}|" "$todo_file"
+		rm -f "${todo_file}.bak"
+
+		# Commit and push
+		if declare -f commit_and_push_todo &>/dev/null; then
+			commit_and_push_todo "$task_repo" "chore: AI supervisor confirmed auto-dispatch for $task_id (model:$proposed_model, t1134)" >>"$SUPERVISOR_LOG" 2>&1 || true
+		fi
+
+		# Log the confirmation event
+		if [[ -n "$SUPERVISOR_DB" && -f "$SUPERVISOR_DB" ]]; then
+			db "$SUPERVISOR_DB" "
+				INSERT INTO state_log (task_id, from_state, to_state, reason)
+				VALUES ('$(sql_escape "$task_id")', 'proposed', 'auto-dispatch',
+						'$(sql_escape "AI auto-dispatch confirmed: $reasoning")');
+			" 2>/dev/null || true
+		fi
+
+		echo "{\"confirmed\":true,\"task_id\":\"$task_id\",\"model\":\"$proposed_model\",\"phase\":\"confirmation\"}"
+		return 0
+	fi
+
+	# Phase 1: Proposal — add [proposed:auto-dispatch model:X] annotation
+	local annotation=" [proposed:auto-dispatch model:${recommended_model}]"
+	local new_line="${task_line}${annotation}"
+
+	local escaped_old
+	escaped_old=$(printf '%s\n' "$task_line" | sed 's/[[\.*^$()+?{|]/\\&/g')
+	sed -i.bak "s|${escaped_old}|${new_line}|" "$todo_file"
+	rm -f "${todo_file}.bak"
+
+	# Commit and push
+	if declare -f commit_and_push_todo &>/dev/null; then
+		commit_and_push_todo "$task_repo" "chore: AI supervisor proposed auto-dispatch for $task_id (model:$recommended_model, t1134)" >>"$SUPERVISOR_LOG" 2>&1 || true
+	fi
+
+	# Log the proposal event
+	if [[ -n "$SUPERVISOR_DB" && -f "$SUPERVISOR_DB" ]]; then
+		db "$SUPERVISOR_DB" "
+			INSERT INTO state_log (task_id, from_state, to_state, reason)
+			VALUES ('$(sql_escape "$task_id")', 'untagged', 'proposed',
+					'$(sql_escape "AI auto-dispatch proposed: model=$recommended_model, $reasoning")');
+		" 2>/dev/null || true
+	fi
+
+	echo "{\"proposed\":true,\"task_id\":\"$task_id\",\"recommended_model\":\"$recommended_model\",\"phase\":\"proposal\"}"
 	return 0
 }
 
