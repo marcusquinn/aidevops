@@ -1111,7 +1111,7 @@
   check: file-exists .agents/tools/ai-assistants/compare-models.md
   check: rg "compare-models" .agents/subagent-index.toon
 
-- [ ] v128 t1099 Wire response-scoring to write back to pattern tracker â€... | PR #1634 | merged:2026-02-18
+- [x] v128 t1099 Wire response-scoring to write back to pattern tracker â€... | PR #1634 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/commands/score-responses.md, .agents/scripts/response-scoring-helper.sh, .agents/tools/ai-assistants/response-scoring.md, tests/test-response-scoring.sh
   check: file-exists .agents/scripts/commands/score-responses.md
   check: shellcheck .agents/scripts/response-scoring-helper.sh
@@ -1121,7 +1121,7 @@
   check: file-exists tests/test-response-scoring.sh
   check: rg "response-scoring" .agents/subagent-index.toon
 
-- [ ] v129 t1100 Budget-aware model routing â€” two strategies based on bi... | PR #1636 | merged:2026-02-18
+- [x] v129 t1100 Budget-aware model routing â€” two strategies based on bi... | PR #1636 | merged:2026-02-18 verified:2026-02-18
   files: .agents/AGENTS.md, .agents/scripts/budget-tracker-helper.sh, .agents/scripts/supervisor/dispatch.sh, .agents/scripts/supervisor/evaluate.sh, .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/AGENTS.md
   check: shellcheck .agents/scripts/budget-tracker-helper.sh
@@ -1133,7 +1133,7 @@
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
 
-- [ ] v130 t1081.2 Add --non-interactive support to skill-update-helper.sh â... | PR #1630 | merged:2026-02-18
+- [x] v130 t1081.2 Add --non-interactive support to skill-update-helper.sh â... | PR #1630 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/skill-update-helper.sh
   check: shellcheck .agents/scripts/skill-update-helper.sh
   check: file-exists .agents/scripts/skill-update-helper.sh
@@ -1142,3 +1142,8 @@
   files: .agents/tools/build-agent/build-agent.md
   check: file-exists .agents/tools/build-agent/build-agent.md
   check: rg "build-agent" .agents/subagent-index.toon
+
+- [ ] v132 t1081.3 Update auto-update state file schema â€” add last_skill_c... | PR #1638 | merged:2026-02-18
+  files: .agents/scripts/auto-update-helper.sh
+  check: shellcheck .agents/scripts/auto-update-helper.sh
+  check: file-exists .agents/scripts/auto-update-helper.sh
