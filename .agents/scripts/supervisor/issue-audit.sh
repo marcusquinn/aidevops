@@ -28,6 +28,50 @@ AUDIT_BLOCKED_TASK_HOURS="${AUDIT_BLOCKED_TASK_HOURS:-48}"
 AUDIT_MAX_ISSUES="${AUDIT_MAX_ISSUES:-200}"
 
 #######################################
+# Check supervisor DB for a task's verified status and PR URL (t1158)
+# Auto-reaped tasks may have a PR URL in the DB even when evaluation was
+# interrupted. This prevents false-positive no_pr_linkage findings.
+#
+# Arguments:
+#   $1 - task_id (e.g., "t1141")
+# Outputs:
+#   PR URL on stdout if found and task is verified/complete, empty string otherwise
+# Returns:
+#   0 if PR found in supervisor DB, 1 otherwise
+#######################################
+check_supervisor_db_for_pr() {
+	local task_id="$1"
+
+	# Locate supervisor DB — use SUPERVISOR_DB if set, else default path
+	local sup_db="${SUPERVISOR_DB:-$HOME/.aidevops/.agent-workspace/supervisor/supervisor.db}"
+	if [[ ! -f "$sup_db" ]]; then
+		return 1
+	fi
+
+	if ! command -v sqlite3 &>/dev/null; then
+		return 1
+	fi
+
+	# Query for pr_url where task is in a terminal verified/complete state
+	# Also accept tasks whose error field shows auto-reap (they may still have a valid PR)
+	local pr_url=""
+	pr_url=$(sqlite3 "$sup_db" \
+		"SELECT pr_url FROM tasks
+		 WHERE id = '${task_id}'
+		   AND pr_url IS NOT NULL
+		   AND pr_url != ''
+		   AND pr_url != 'no_pr'
+		 LIMIT 1;" 2>/dev/null || echo "")
+
+	if [[ -n "$pr_url" ]]; then
+		printf '%s' "$pr_url"
+		return 0
+	fi
+
+	return 1
+}
+
+#######################################
 # Audit 1: Closed Issue Audit
 # Checks issues closed in the last N hours for:
 #   - Missing PR linkage (no closing PR referenced)
@@ -151,6 +195,20 @@ audit_closed_issues() {
 			fi
 		fi
 
+		# Check 4 (t1158): Supervisor DB fallback — auto-reaped tasks may have a
+		# valid pr_url in the DB even when GitHub cross-references are missing.
+		# This prevents false-positive no_pr_linkage for tasks that were stuck in
+		# 'evaluating' and reaped by Phase 1c, but had already created a PR.
+		local supervisor_pr_url=""
+		if [[ -n "$task_id" && -z "$merged_pr" && "$linked_pr_count" -eq 0 ]]; then
+			supervisor_pr_url=$(check_supervisor_db_for_pr "$task_id" 2>/dev/null || echo "")
+			if [[ -n "$supervisor_pr_url" ]]; then
+				# Extract PR number from URL for merged_pr field
+				merged_pr=$(printf '%s' "$supervisor_pr_url" | grep -oE '[0-9]+$' || echo "")
+				log_verbose "audit_closed_issues: $task_id — PR found in supervisor DB: $supervisor_pr_url (suppressing no_pr_linkage)"
+			fi
+		fi
+
 		# Generate findings based on checks
 		local severity="low"
 		local issues_found=()
@@ -187,6 +245,7 @@ audit_closed_issues() {
 				--arg state_reason "$state_reason" \
 				--argjson linked_pr_count "$linked_pr_count" \
 				--arg merged_pr "${merged_pr:-none}" \
+				--arg supervisor_pr_url "${supervisor_pr_url:-none}" \
 				--argjson has_evidence "$has_evidence" \
 				--argjson issues "$issues_json" \
 				'{
@@ -199,6 +258,7 @@ audit_closed_issues() {
 					state_reason: $state_reason,
 					linked_pr_count: $linked_pr_count,
 					merged_pr: $merged_pr,
+					supervisor_pr_url: $supervisor_pr_url,
 					has_evidence: $has_evidence,
 					issues: $issues,
 					suggested_action: (
