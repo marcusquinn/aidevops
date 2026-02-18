@@ -1168,9 +1168,16 @@
   check: shellcheck .agents/scripts/issue-sync-helper.sh
   check: file-exists .agents/scripts/issue-sync-helper.sh
 
-- [ ] v136 t1126 Fix adjust_priority action schema — add new_priority fi... | PR #1703 | merged:2026-02-18
+- [x] v136 t1126 Fix adjust_priority action schema — add new_priority fi... | PR #1703 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/supervisor/ai-reason.sh, tests/test-ai-actions.sh
   check: shellcheck .agents/scripts/supervisor/ai-reason.sh
   check: file-exists .agents/scripts/supervisor/ai-reason.sh
   check: shellcheck tests/test-ai-actions.sh
   check: file-exists tests/test-ai-actions.sh
+
+- [ ] v137 t1125 Fix jq JSON parsing errors in supervisor action executor ... | PR #1702 | merged:2026-02-18
+  files: .agents/scripts/supervisor/ai-actions.sh, .agents/scripts/supervisor/issue-audit.sh
+  check: shellcheck .agents/scripts/supervisor/ai-actions.sh
+  check: file-exists .agents/scripts/supervisor/ai-actions.sh
+  check: shellcheck .agents/scripts/supervisor/issue-audit.sh
+  check: file-exists .agents/scripts/supervisor/issue-audit.sh
