@@ -1312,9 +1312,16 @@
   check: shellcheck .agents/scripts/supervisor/ai-reason.sh
   check: file-exists .agents/scripts/supervisor/ai-reason.sh
 
-- [ ] v155 t1186 Investigate frequent sonnet→opus tier escalation in dis... | PR #1806 | merged:2026-02-18
+- [x] v155 t1186 Investigate frequent sonnet→opus tier escalation in dis... | PR #1806 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/supervisor/dispatch.sh, .agents/scripts/supervisor/self-heal.sh
   check: shellcheck .agents/scripts/supervisor/dispatch.sh
   check: file-exists .agents/scripts/supervisor/dispatch.sh
   check: shellcheck .agents/scripts/supervisor/self-heal.sh
   check: file-exists .agents/scripts/supervisor/self-heal.sh
+
+- [ ] v156 t1189 Fix AI actions pipeline empty-response handling to preven... | PR #1807 | merged:2026-02-18
+  files: .agents/scripts/supervisor/ai-actions.sh, tests/test-ai-supervisor-e2e.sh
+  check: shellcheck .agents/scripts/supervisor/ai-actions.sh
+  check: file-exists .agents/scripts/supervisor/ai-actions.sh
+  check: shellcheck tests/test-ai-supervisor-e2e.sh
+  check: file-exists tests/test-ai-supervisor-e2e.sh
