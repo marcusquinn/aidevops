@@ -335,6 +335,8 @@ Usage:
   supervisor-helper.sh dashboard [--batch id] [--interval N] Live TUI dashboard
   supervisor-helper.sh queue-health [--batch id]     Update pinned queue health issue (t1013)
   supervisor-helper.sh labels [--action X] [--model Y] [--json]  Query model usage labels (t1010)
+  supervisor-helper.sh ai-pipeline [full|dry-run]    Run AI reasoning + action pipeline manually
+  supervisor-helper.sh ai-status                     Show AI supervisor status and next-run countdown
   supervisor-helper.sh db [sql]                      Direct SQLite access
   supervisor-helper.sh help                          Show this help
 
@@ -451,6 +453,9 @@ Environment:
   SUPERVISOR_SELF_MEM_LIMIT   MB before supervisor respawns after batch (default: 8192)
   SUPERVISOR_SKILL_UPDATE_PR  Enable skill update PR pipeline in pulse (default: false)
   SUPERVISOR_SKILL_UPDATE_INTERVAL Seconds between skill update PR runs (default: 86400)
+  SUPERVISOR_AI_ENABLED       Enable AI supervisor reasoning in pulse (default: true)
+  SUPERVISOR_AI_INTERVAL      Pulses between AI reasoning runs (default: 15, ~30min)
+  AI_MAX_ACTIONS_PER_CYCLE    Max actions per AI reasoning cycle (default: 10)
   AIDEVOPS_SUPERVISOR_DIR     Override supervisor data directory
 
 Database: ~/.aidevops/.agent-workspace/supervisor/supervisor.db
@@ -735,19 +740,43 @@ main() {
 		;;
 	ai-status)
 		local last_run_ts
-		last_run_ts=$(db "$SUPERVISOR_DB" "SELECT MAX(timestamp) FROM state_log WHERE task_id = 'ai-supervisor' AND to_state = 'complete';" 2>/dev/null || echo "never")
+		last_run_ts=$(db "$SUPERVISOR_DB" "SELECT MAX(timestamp) FROM state_log WHERE task_id = 'ai-supervisor' AND to_state = 'complete';" 2>/dev/null || echo "")
 		local run_count
 		run_count=$(db "$SUPERVISOR_DB" "SELECT COUNT(*) FROM state_log WHERE task_id = 'ai-supervisor' AND to_state = 'complete';" 2>/dev/null || echo 0)
 		local action_count
 		action_count=$(db "$SUPERVISOR_DB" "SELECT COUNT(*) FROM state_log WHERE task_id = 'ai-supervisor' AND from_state = 'actions';" 2>/dev/null || echo 0)
+
+		# Read pulse counter and last-run timestamp from files
+		local ai_pulse_count_file="${SUPERVISOR_DIR}/ai-pulse-count"
+		local ai_last_run_file="${SUPERVISOR_DIR}/ai-supervisor-last-run"
+		local ai_log_file="${SUPERVISOR_DIR}/logs/ai-supervisor.log"
+		local ai_interval="${SUPERVISOR_AI_INTERVAL:-15}"
+
+		local ai_pulse_count=0
+		if [[ -f "$ai_pulse_count_file" ]]; then
+			ai_pulse_count=$(cat "$ai_pulse_count_file" 2>/dev/null || echo 0)
+		fi
+
+		local ai_last_run="never"
+		if [[ -f "$ai_last_run_file" ]]; then
+			ai_last_run=$(cat "$ai_last_run_file" 2>/dev/null || echo "never")
+		elif [[ -n "$last_run_ts" ]]; then
+			ai_last_run="$last_run_ts"
+		fi
+
+		local ai_pulses_remaining=$((ai_interval - ai_pulse_count))
+		local ai_minutes_remaining=$((ai_pulses_remaining * 2))
+
 		echo "AI Supervisor Status"
-		echo "  Last run: ${last_run_ts:-never}"
-		echo "  Total reasoning runs: $run_count"
-		echo "  Total action executions: $action_count"
-		echo "  Enabled: ${SUPERVISOR_AI_ENABLED:-true}"
-		echo "  Interval: ${SUPERVISOR_AI_INTERVAL:-15} pulses (~$((${SUPERVISOR_AI_INTERVAL:-15} * 2))min)"
+		echo "  Enabled:          ${SUPERVISOR_AI_ENABLED:-true}"
+		echo "  Interval:         ${ai_interval} pulses (~$((ai_interval * 2))min)"
+		echo "  Pulse counter:    ${ai_pulse_count}/${ai_interval} (${ai_pulses_remaining} pulses / ~${ai_minutes_remaining}min until next run)"
+		echo "  Last run:         ${ai_last_run}"
+		echo "  Total runs:       $run_count"
+		echo "  Total actions:    $action_count"
 		echo "  Max actions/cycle: ${AI_MAX_ACTIONS_PER_CYCLE:-10}"
-		echo "  Log dir: ${AI_REASON_LOG_DIR:-$HOME/.aidevops/logs/ai-supervisor}"
+		echo "  Log file:         ${ai_log_file}"
+		echo "  Reason log dir:   ${AI_REASON_LOG_DIR:-$HOME/.aidevops/logs/ai-supervisor}"
 		;;
 	help | --help | -h) show_usage ;;
 	*)
