@@ -832,7 +832,7 @@ update_todo_on_cancelled() {
 		sed_inplace "${next_line_num}s/$/${append_text}/" "$todo_file"
 	else
 		# Insert a new Notes line after the task
-		local notes_line="${indent}  - Notes: CANCELLED by supervisor: ${safe_reason}"
+		local notes_line="${indent}  - Notes: CANCELLED: ${safe_reason}"
 		sed_append_after "$line_num" "$notes_line" "$todo_file"
 	fi
 
@@ -950,15 +950,14 @@ cmd_update_todo() {
 		terror=$(db "$SUPERVISOR_DB" "SELECT error FROM tasks WHERE id = '$escaped_id';")
 		update_todo_on_blocked "$task_id" "${terror:-blocked by supervisor}"
 		;;
-	failed)
+	failed | cancelled)
 		local terror
 		terror=$(db "$SUPERVISOR_DB" "SELECT error FROM tasks WHERE id = '$escaped_id';")
-		update_todo_on_blocked "$task_id" "FAILED: ${terror:-unknown}"
-		;;
-	cancelled)
-		local terror
-		terror=$(db "$SUPERVISOR_DB" "SELECT error FROM tasks WHERE id = '$escaped_id';")
-		update_todo_on_cancelled "$task_id" "${terror:-cancelled by supervisor}"
+		if [[ "$tstatus" == "failed" ]]; then
+			update_todo_on_blocked "$task_id" "FAILED: ${terror:-unknown}"
+		else
+			update_todo_on_cancelled "$task_id" "${terror:-cancelled by supervisor}"
+		fi
 		;;
 	*)
 		log_warn "Task $task_id is in '$tstatus' state - TODO update only applies to complete/deployed/merged/blocked/failed/cancelled tasks"
