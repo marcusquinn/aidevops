@@ -909,12 +909,7 @@ cmd_pr_batch() {
 	local skill_current_commits=()
 	local skill_latest_commits=()
 
-	while IFS= read -r skill_json; do
-		local name upstream_url current_commit
-		name=$(echo "$skill_json" | jq -r '.name')
-		upstream_url=$(echo "$skill_json" | jq -r '.upstream_url')
-		current_commit=$(echo "$skill_json" | jq -r '.upstream_commit // empty')
-
+	while IFS=$'\t' read -r name upstream_url current_commit; do
 		# Filter to specific skill if requested
 		if [[ -n "$target_skill" && "$name" != "$target_skill" ]]; then
 			continue
@@ -962,7 +957,7 @@ cmd_pr_batch() {
 		skill_current_commits+=("$current_commit")
 		skill_latest_commits+=("$latest_commit")
 
-	done < <(jq -c '.skills[]' "$SKILL_SOURCES")
+	done < <(jq -r '.skills[] | [.name, .upstream_url, .upstream_commit // empty] | @tsv' "$SKILL_SOURCES")
 
 	local update_count="${#skills_to_update[@]}"
 
@@ -1098,14 +1093,14 @@ cmd_pr_batch() {
 
 	# Build commit message listing all updated skills
 	local commit_msg="chore: batch update ${#imported_skills[@]} skill(s) from upstream (t1082.3)"$'\n'$'\n'
+	local -A imported_skills_map
+	for imp in "${imported_skills[@]}"; do
+		imported_skills_map["$imp"]=1
+	done
 	for i in "${!skills_to_update[@]}"; do
 		local sname="${skills_to_update[$i]}"
 		# Only include successfully imported skills
-		local found=false
-		for imp in "${imported_skills[@]}"; do
-			[[ "$imp" == "$sname" ]] && found=true && break
-		done
-		if [[ "$found" == true ]]; then
+		if [[ -v imported_skills_map["$sname"] ]]; then
 			commit_msg+="- ${sname}: ${skill_current_commits[$i]:0:12} → ${skill_latest_commits[$i]:0:12}"$'\n'
 		fi
 	done
@@ -1142,11 +1137,8 @@ cmd_pr_batch() {
 	skill_table+="|-------|----------|--------|--------|"$'\n'
 	for i in "${!skills_to_update[@]}"; do
 		local sname="${skills_to_update[$i]}"
-		local found=false
-		for imp in "${imported_skills[@]}"; do
-			[[ "$imp" == "$sname" ]] && found=true && break
-		done
-		if [[ "$found" == true ]]; then
+		# Reuse the associative array built for the commit message lookup
+		if [[ -v imported_skills_map["$sname"] ]]; then
 			skill_table+="| \`${sname}\` | \`${skill_current_commits[$i]:0:12}\` | \`${skill_latest_commits[$i]:0:12}\` | ${skill_urls[$i]} |"$'\n'
 		fi
 	done

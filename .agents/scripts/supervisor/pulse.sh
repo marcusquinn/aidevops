@@ -1817,7 +1817,7 @@ RULES:
 		if [[ -f "$skill_update_stamp" ]]; then
 			skill_update_last=$(cat "$skill_update_stamp" 2>/dev/null || echo 0)
 		fi
-		local skill_update_elapsed=$((skill_update_now - skill_update_last))
+		local skill_update_elapsed=$((skill_update_now - ${skill_update_last:-0}))
 		if [[ "$skill_update_elapsed" -ge "$skill_update_interval" ]]; then
 			local skill_update_script="${SCRIPT_DIR}/skill-update-helper.sh"
 			if [[ -x "$skill_update_script" ]]; then
