@@ -801,8 +801,13 @@ cmd_push() {
 		log_verbose "Processing $task_id..."
 
 		# Check if issue already exists
+		# Use gh API list (not --search) to avoid GitHub search index lag.
+		# Search is eventually consistent and misses issues created seconds ago,
+		# causing duplicates when multiple pushes trigger the workflow rapidly.
+		# The API list with jq filter is immediately consistent.
 		local existing
-		existing=$(gh issue list --repo "$repo_slug" --search "in:title ${task_id}:" --json number --jq '.[0].number' 2>/dev/null || echo "")
+		existing=$(gh issue list --repo "$repo_slug" --state all --limit 50 \
+			--json number,title --jq "[.[] | select(.title | startswith(\"${task_id}:\"))][0].number" 2>/dev/null || echo "")
 		if [[ -n "$existing" && "$existing" != "null" ]]; then
 			log_verbose "$task_id already has issue #$existing"
 			# Add ref to TODO.md if missing
