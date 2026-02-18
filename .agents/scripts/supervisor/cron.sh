@@ -547,6 +547,28 @@ cmd_auto_pickup() {
 		done <<<"$parent_ids"
 	fi
 
+	# Strategy 5: Batch-cleanup for simple #chore tasks (t1146)
+	# Groups #chore tasks with ~<=15m estimates into a single dispatch.
+	# Reduces overhead: N*(worktree+PR+CI+merge) → 1*(worktree+PR+CI+merge).
+	# Only triggers when >=2 eligible tasks are found and no cleanup worker is running.
+	local batch_cleanup_helper="${SCRIPT_DIR}/../batch-cleanup-helper.sh"
+	if [[ -x "$batch_cleanup_helper" ]]; then
+		local chore_eligible
+		chore_eligible=$("$batch_cleanup_helper" scan --repo "$repo" 2>>"$SUPERVISOR_LOG" | grep -E '^t[0-9]' || true)
+		if [[ -n "$chore_eligible" ]]; then
+			local chore_count
+			chore_count=$(echo "$chore_eligible" | grep -c '^t' || true)
+			log_info "Strategy 5: found $chore_count #chore task(s) eligible for batch cleanup"
+			if [[ "$chore_count" -ge 2 ]]; then
+				log_info "  Triggering batch-cleanup dispatch for $chore_count tasks..."
+				"$batch_cleanup_helper" dispatch --repo "$repo" 2>>"$SUPERVISOR_LOG" ||
+					log_warn "  Batch-cleanup dispatch failed (non-fatal)"
+			else
+				log_info "  Only $chore_count task(s) — waiting for more to accumulate (min: 2)"
+			fi
+		fi
+	fi
+
 	if [[ "$picked_up" -eq 0 ]]; then
 		log_info "No new tasks to pick up"
 	else
