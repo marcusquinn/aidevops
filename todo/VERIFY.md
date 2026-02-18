@@ -1085,3 +1085,12 @@
   check: file-exists .agents/scripts/supervisor/pulse.sh
   check: shellcheck .agents/scripts/supervisor/routine-scheduler.sh
   check: file-exists .agents/scripts/supervisor/routine-scheduler.sh
+
+- [ ] v125 t1095 Extend pattern tracker schema — add columns: strategy (... | PR #1629 | merged:2026-02-18
+  files: .agents/scripts/memory/_common.sh, .agents/scripts/pattern-tracker-helper.sh, .agents/scripts/shared-constants.sh
+  check: shellcheck .agents/scripts/memory/_common.sh
+  check: file-exists .agents/scripts/memory/_common.sh
+  check: shellcheck .agents/scripts/pattern-tracker-helper.sh
+  check: file-exists .agents/scripts/pattern-tracker-helper.sh
+  check: shellcheck .agents/scripts/shared-constants.sh
+  check: file-exists .agents/scripts/shared-constants.sh
