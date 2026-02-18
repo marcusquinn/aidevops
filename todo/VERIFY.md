@@ -1103,3 +1103,10 @@
   check: file-exists .agents/scripts/supervisor/dispatch.sh
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
+
+- [ ] v127 t1098 Wire compare-models to read live pattern data — /compar... | PR #1637 | merged:2026-02-18
+  files: .agents/scripts/compare-models-helper.sh, .agents/tools/ai-assistants/compare-models.md
+  check: shellcheck .agents/scripts/compare-models-helper.sh
+  check: file-exists .agents/scripts/compare-models-helper.sh
+  check: file-exists .agents/tools/ai-assistants/compare-models.md
+  check: rg "compare-models" .agents/subagent-index.toon
