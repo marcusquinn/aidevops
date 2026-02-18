@@ -217,6 +217,27 @@ cmd_watch() {
 }
 
 #######################################
+# Check if a task is blocked by unresolved dependencies.
+# Returns 0 (should skip) if blocked, 1 (should not skip) otherwise.
+# Usage: _check_and_skip_if_blocked <line> <task_id> <todo_file>
+#######################################
+_check_and_skip_if_blocked() {
+	local line
+	line="$1"
+	local task_id
+	task_id="$2"
+	local todo_file
+	todo_file="$3"
+	local unresolved_blockers
+
+	if unresolved_blockers=$(is_task_blocked "$line" "$todo_file"); then
+		log_info "  $task_id: blocked by unresolved dependencies ($unresolved_blockers) — skipping"
+		return 0
+	fi
+	return 1
+}
+
+#######################################
 # Scan TODO.md for tasks tagged #auto-dispatch or in a
 # "Dispatch Queue" section. Auto-adds them to supervisor
 # if not already tracked, then queues them for dispatch.
@@ -276,9 +297,7 @@ cmd_auto_pickup() {
 			fi
 
 			# Skip tasks with unresolved blocked-by dependencies (t1085.4)
-			local unresolved_blockers
-			if unresolved_blockers=$(is_task_blocked "$line" "$todo_file"); then
-				log_info "  $task_id: blocked by unresolved dependencies ($unresolved_blockers) — skipping"
+			if _check_and_skip_if_blocked "$line" "$task_id" "$todo_file"; then
 				continue
 			fi
 
@@ -349,9 +368,7 @@ cmd_auto_pickup() {
 			fi
 
 			# Skip tasks with unresolved blocked-by dependencies (t1085.4)
-			local unresolved_blockers
-			if unresolved_blockers=$(is_task_blocked "$line" "$todo_file"); then
-				log_info "  $task_id: blocked by unresolved dependencies ($unresolved_blockers) — skipping"
+			if _check_and_skip_if_blocked "$line" "$task_id" "$todo_file"; then
 				continue
 			fi
 
@@ -488,9 +505,7 @@ cmd_auto_pickup() {
 				fi
 
 				# Skip tasks with unresolved blocked-by dependencies
-				local unresolved_blockers
-				if unresolved_blockers=$(is_task_blocked "$sub_line" "$todo_file"); then
-					log_info "  $sub_id: blocked by unresolved dependencies ($unresolved_blockers) — skipping"
+				if _check_and_skip_if_blocked "$sub_line" "$sub_id" "$todo_file"; then
 					continue
 				fi
 
