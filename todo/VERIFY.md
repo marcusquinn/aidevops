@@ -1268,3 +1268,13 @@
 - [ ] v149 t1181 Add action-target cooldown to supervisor reasoning to pre... | PR #1785 | merged:2026-02-18
   files: VERIFY.md
   check: file-exists VERIFY.md
+
+- [ ] v150 t1156 Add supervisor DB cross-reference to issue audit tool to ... | PR #1773 | merged:2026-02-18
+  files: .agents/scripts/supervisor/issue-audit.sh
+  check: shellcheck .agents/scripts/supervisor/issue-audit.sh
+  check: file-exists .agents/scripts/supervisor/issue-audit.sh
+
+- [ ] v150 t1178 Add completed-task filter to supervisor AI context builde... | PR #1779 | merged:2026-02-18
+  files: .agents/scripts/supervisor/ai-context.sh
+  check: shellcheck .agents/scripts/supervisor/ai-context.sh
+  check: file-exists .agents/scripts/supervisor/ai-context.sh
