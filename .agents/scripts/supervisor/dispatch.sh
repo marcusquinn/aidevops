@@ -554,6 +554,425 @@ get_next_tier() {
 }
 
 #######################################
+# Prompt-repeat retry strategy (t1097)
+#
+# Before escalating to a higher-tier model, retry the same task at the same
+# model tier with a reinforced/doubled prompt. Many failures are due to the
+# model not following instructions closely enough — a stronger prompt with
+# explicit emphasis on the failure reason often succeeds without the cost of
+# a higher-tier model.
+#
+# The strategy is:
+#   1. Check if prompt-repeat is enabled (SUPERVISOR_PROMPT_REPEAT_ENABLED)
+#   2. Check if this task has already had a prompt-repeat attempt
+#   3. Consult pattern tracker: does this task type benefit from prompt-repeat?
+#   4. If eligible, build a reinforced prompt and dispatch at same tier
+#
+# Pattern tracker integration: tasks tagged with SUCCESS_PATTERN where the
+# detail contains "prompt_repeat" indicate this strategy works for that type.
+# Tasks with FAILURE_PATTERN + "prompt_repeat" indicate it doesn't help.
+# With 3+ samples and >50% success rate, prompt-repeat is recommended.
+#######################################
+
+#######################################
+# Check if a task is eligible for prompt-repeat retry (t1097)
+#
+# Eligibility criteria:
+#   1. SUPERVISOR_PROMPT_REPEAT_ENABLED is true (default: true)
+#   2. Task has not already had a prompt-repeat attempt (DB flag)
+#   3. Failure reason is retryable (not auth, merge conflict, OOM, etc.)
+#   4. Pattern tracker data doesn't show prompt-repeat is ineffective
+#      for this task type (>3 samples with <25% success = skip)
+#
+# Args: $1 = task_id, $2 = failure_reason
+# Returns: 0 if eligible, 1 if not
+# Outputs: reason string on stdout (for logging)
+#######################################
+should_prompt_repeat() {
+	local task_id="$1"
+	local failure_reason="$2"
+
+	# 1. Global toggle
+	if [[ "${SUPERVISOR_PROMPT_REPEAT_ENABLED:-true}" != "true" ]]; then
+		echo "disabled"
+		return 1
+	fi
+
+	# 2. Skip non-retryable failures — prompt changes won't fix these
+	case "$failure_reason" in
+	auth_error | merge_conflict | out_of_memory | billing_credits_exhausted | \
+		backend_quota_error | backend_infrastructure_error | max_retries)
+		echo "non_retryable:$failure_reason"
+		return 1
+		;;
+	esac
+
+	ensure_db
+
+	local escaped_id
+	escaped_id=$(sql_escape "$task_id")
+
+	# 3. Check if prompt-repeat was already attempted for this task
+	local prompt_repeat_done
+	prompt_repeat_done=$(db "$SUPERVISOR_DB" "
+		SELECT COALESCE(prompt_repeat_done, 0)
+		FROM tasks WHERE id = '$escaped_id';
+	" 2>/dev/null || echo "0")
+
+	if [[ "$prompt_repeat_done" -ge 1 ]]; then
+		echo "already_attempted"
+		return 1
+	fi
+
+	# 4. Consult pattern tracker — check if prompt-repeat works for this task type
+	local pattern_helper="${SCRIPT_DIR}/pattern-tracker-helper.sh"
+	if [[ -x "$pattern_helper" ]]; then
+		# Query success/failure counts for prompt_repeat patterns
+		local pr_success pr_failure
+		pr_success=$("$pattern_helper" stats 2>/dev/null |
+			grep -c 'prompt_repeat.*SUCCESS\|SUCCESS.*prompt_repeat' 2>/dev/null || echo "0")
+		pr_failure=$("$pattern_helper" stats 2>/dev/null |
+			grep -c 'prompt_repeat.*FAILURE\|FAILURE.*prompt_repeat' 2>/dev/null || echo "0")
+
+		local pr_total=$((pr_success + pr_failure))
+
+		# If we have enough data and success rate is very low, skip
+		if [[ "$pr_total" -ge 3 ]]; then
+			local pr_rate=0
+			if [[ "$pr_total" -gt 0 ]]; then
+				pr_rate=$(((pr_success * 100) / pr_total))
+			fi
+			if [[ "$pr_rate" -lt 25 ]]; then
+				echo "pattern_data_negative:${pr_rate}pct_over_${pr_total}"
+				return 1
+			fi
+		fi
+	fi
+
+	echo "eligible"
+	return 0
+}
+
+#######################################
+# Mark a task as having had a prompt-repeat attempt (t1097)
+#
+# Sets the prompt_repeat_done flag in the DB so the task won't get
+# another prompt-repeat on subsequent retries (escalation takes over).
+#
+# Args: $1 = task_id
+#######################################
+mark_prompt_repeat_done() {
+	local task_id="$1"
+
+	ensure_db
+
+	local escaped_id
+	escaped_id=$(sql_escape "$task_id")
+
+	db "$SUPERVISOR_DB" "
+		UPDATE tasks SET prompt_repeat_done = 1
+		WHERE id = '$escaped_id';
+	" 2>/dev/null || true
+
+	return 0
+}
+
+#######################################
+# Build a reinforced prompt for prompt-repeat retry (t1097)
+#
+# Takes the original task description and failure reason, and constructs
+# a prompt that:
+#   1. Doubles down on the task requirements
+#   2. Explicitly states what went wrong in the previous attempt
+#   3. Adds emphasis on completion signals and PR creation
+#   4. Keeps the same model tier (no escalation)
+#
+# Args:
+#   $1 = task_id
+#   $2 = failure_reason (from evaluate_worker)
+#   $3 = task_description
+#   $4 = previous_error (from DB error field)
+#
+# Outputs: reinforced prompt string on stdout
+#######################################
+build_prompt_repeat_prompt() {
+	local task_id="$1"
+	local failure_reason="$2"
+	local task_desc="${3:-}"
+	local previous_error="${4:-}"
+
+	local prompt="/full-loop $task_id --headless"
+	if [[ -n "$task_desc" ]]; then
+		prompt="/full-loop $task_id --headless -- $task_desc"
+	fi
+
+	# Build failure-specific guidance
+	local failure_guidance=""
+	case "$failure_reason" in
+	clean_exit_no_signal)
+		failure_guidance="The previous worker completed without emitting FULL_LOOP_COMPLETE or creating a PR. You MUST:
+1. Complete ALL implementation steps
+2. Run ShellCheck on any .sh files before pushing
+3. Create a PR via 'gh pr create' with task ID in the title
+4. Emit FULL_LOOP_COMPLETE in your final output
+Do NOT exit without creating a PR. If you run low on context, commit and push what you have, then create a draft PR."
+		;;
+	trivial_output_*)
+		failure_guidance="The previous worker produced almost no output — it likely failed to engage with the task. Read the task description carefully, break it into subtasks with TodoWrite, and implement each one. Commit after each subtask."
+		;;
+	work_in_progress)
+		failure_guidance="The previous worker started but didn't finish. Check the existing branch for partial work, continue from where it left off, and ensure you create a PR when done."
+		;;
+	*)
+		failure_guidance="The previous attempt failed with: ${failure_reason}. Address this specific issue in your approach. Ensure you complete the full implementation and create a PR."
+		;;
+	esac
+
+	prompt="$prompt
+
+## PROMPT-REPEAT RETRY (t1097)
+This is a reinforced retry at the SAME model tier. The previous attempt failed.
+You have ONE chance to get this right before the system escalates to a more expensive model.
+
+### What went wrong previously
+Failure reason: ${failure_reason}
+${previous_error:+Previous error detail: ${previous_error}}
+
+### Critical requirements (REINFORCED)
+${failure_guidance}
+
+### Mandatory completion checklist
+- [ ] Read and understand the task fully before writing code
+- [ ] Break task into subtasks with TodoWrite
+- [ ] Implement each subtask, committing after each one
+- [ ] Run ShellCheck on .sh files before pushing
+- [ ] Push to remote and create PR with task ID in title
+- [ ] Emit FULL_LOOP_COMPLETE when done
+
+## MANDATORY Worker Restrictions (t173)
+- Do NOT edit, commit, or push TODO.md — the supervisor owns all TODO.md updates.
+- Do NOT edit todo/PLANS.md or todo/tasks/* — these are supervisor-managed.
+- Report status via exit code, log output, and PR creation only.
+- Put task notes in commit messages or PR body, never in TODO.md."
+
+	echo "$prompt"
+	return 0
+}
+
+#######################################
+# Execute a prompt-repeat retry for a task (t1097)
+#
+# Dispatches the task with a reinforced prompt at the same model tier.
+# This is called from the pulse cycle's retry handler, BEFORE model
+# escalation. If prompt-repeat succeeds, the task completes without
+# burning a more expensive model. If it fails, normal escalation proceeds.
+#
+# Args:
+#   $1 = task_id
+#
+# Returns: 0 if dispatch succeeded, 1 if failed
+# Side effects: marks prompt_repeat_done, creates new log file, dispatches worker
+#######################################
+do_prompt_repeat() {
+	local task_id="$1"
+
+	ensure_db
+
+	local escaped_id
+	escaped_id=$(sql_escape "$task_id")
+
+	# Get task details
+	local task_row
+	task_row=$(db -separator '|' "$SUPERVISOR_DB" "
+		SELECT repo, description, worktree, log_file, error, model, retries, max_retries
+		FROM tasks WHERE id = '$escaped_id';
+	")
+
+	if [[ -z "$task_row" ]]; then
+		log_error "do_prompt_repeat: task not found: $task_id"
+		return 1
+	fi
+
+	local trepo tdesc tworktree _tlog terror tmodel tretries tmax_retries
+	IFS='|' read -r trepo tdesc tworktree _tlog terror tmodel tretries tmax_retries <<<"$task_row"
+
+	# Mark prompt-repeat as attempted (prevents infinite loop)
+	mark_prompt_repeat_done "$task_id"
+
+	# Build reinforced prompt
+	local reinforced_prompt
+	reinforced_prompt=$(build_prompt_repeat_prompt "$task_id" "${terror:-unknown}" "$tdesc" "$terror")
+
+	# Resolve AI CLI
+	local ai_cli
+	ai_cli=$(resolve_ai_cli 2>/dev/null) || {
+		log_error "do_prompt_repeat: AI CLI not available"
+		return 1
+	}
+
+	# Pre-dispatch health check
+	local health_model health_exit=0
+	health_model=$(resolve_model "health" "$ai_cli")
+	check_model_health "$ai_cli" "$health_model" || health_exit=$?
+	if [[ "$health_exit" -ne 0 ]]; then
+		log_warn "do_prompt_repeat: provider unhealthy (exit $health_exit) — skipping prompt-repeat"
+		return 1
+	fi
+
+	# Determine working directory (reuse existing worktree)
+	local work_dir="$trepo"
+	if [[ -n "$tworktree" && -d "$tworktree" ]]; then
+		work_dir="$tworktree"
+	fi
+
+	# Set up log file
+	local log_dir="$SUPERVISOR_DIR/logs"
+	mkdir -p "$log_dir"
+	local new_log_file
+	new_log_file="$log_dir/${task_id}-prompt-repeat-$(date +%Y%m%d%H%M%S).log"
+
+	# Pre-create log file with metadata
+	{
+		echo "=== PROMPT-REPEAT METADATA (t1097) ==="
+		echo "task_id=$task_id"
+		echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+		echo "retry=$tretries/$tmax_retries"
+		echo "work_dir=$work_dir"
+		echo "previous_error=${terror:-none}"
+		echo "strategy=prompt_repeat_same_tier"
+		echo "model=$tmodel"
+		echo "=== END PROMPT-REPEAT METADATA ==="
+		echo ""
+	} >"$new_log_file" 2>/dev/null || true
+
+	# Transition to dispatched
+	cmd_transition "$task_id" "dispatched" --log-file "$new_log_file"
+
+	log_info "Prompt-repeat retry for $task_id (same model: $tmodel)"
+
+	# Build dispatch command — use same model, reinforced prompt
+	local -a cmd_parts=()
+	if [[ "$ai_cli" == "opencode" ]]; then
+		local session_title="${task_id}-prompt-repeat"
+		if [[ -n "$tdesc" ]]; then
+			local short_desc="${tdesc%% -- *}"
+			short_desc="${short_desc%% #*}"
+			short_desc="${short_desc%% ~*}"
+			if [[ ${#short_desc} -gt 30 ]]; then
+				short_desc="${short_desc:0:27}..."
+			fi
+			session_title="${task_id}-pr: ${short_desc}"
+		fi
+		cmd_parts=(opencode run --format json)
+		if [[ -n "$tmodel" ]]; then
+			cmd_parts+=(-m "$tmodel")
+		fi
+		cmd_parts+=(--title "$session_title" "$reinforced_prompt")
+	else
+		cmd_parts=(claude -p "$reinforced_prompt")
+		if [[ -n "$tmodel" ]]; then
+			local claude_model="${tmodel#*/}"
+			cmd_parts+=(--model "$claude_model")
+		fi
+		cmd_parts+=(--output-format json)
+	fi
+
+	# Ensure PID directory exists
+	mkdir -p "$SUPERVISOR_DIR/pids"
+
+	# Generate worker-specific MCP config (t221)
+	local worker_xdg_config=""
+	worker_xdg_config=$(generate_worker_mcp_config "$task_id" 2>/dev/null) || true
+
+	# Write dispatch script
+	local dispatch_script="${SUPERVISOR_DIR}/pids/${task_id}-prompt-repeat.sh"
+	{
+		echo '#!/usr/bin/env bash'
+		echo "echo 'WORKER_STARTED task_id=${task_id} strategy=prompt_repeat pid=\$\$ timestamp='\$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+		echo "cd '${work_dir}' || { echo 'WORKER_FAILED: cd to work_dir failed: ${work_dir}'; exit 1; }"
+		echo "export FULL_LOOP_HEADLESS=true"
+		if [[ -n "$worker_xdg_config" ]]; then
+			echo "export XDG_CONFIG_HOME='${worker_xdg_config}'"
+		fi
+		printf 'exec '
+		printf '%q ' "${cmd_parts[@]}"
+		printf '\n'
+	} >"$dispatch_script"
+	chmod +x "$dispatch_script"
+
+	# Wrapper script with cleanup handlers (t253)
+	local wrapper_script="${SUPERVISOR_DIR}/pids/${task_id}-prompt-repeat-wrapper.sh"
+	{
+		echo '#!/usr/bin/env bash'
+		echo '_kill_descendants_recursive() {'
+		echo '  local parent_pid="$1"'
+		echo '  local children'
+		echo '  children=$(pgrep -P "$parent_pid" 2>/dev/null || true)'
+		echo '  if [[ -n "$children" ]]; then'
+		echo '    for child in $children; do'
+		echo '      _kill_descendants_recursive "$child"'
+		echo '    done'
+		echo '  fi'
+		echo '  kill -TERM "$parent_pid" 2>/dev/null || true'
+		echo '}'
+		echo 'cleanup_children() {'
+		echo '  local wrapper_pid=$$'
+		echo '  local children'
+		echo '  children=$(pgrep -P "$wrapper_pid" 2>/dev/null || true)'
+		echo '  if [[ -n "$children" ]]; then'
+		echo '    for child in $children; do'
+		echo '      _kill_descendants_recursive "$child"'
+		echo '    done'
+		echo '    sleep 0.5'
+		echo '    for child in $children; do'
+		echo '      pkill -9 -P "$child" 2>/dev/null || true'
+		echo '      kill -9 "$child" 2>/dev/null || true'
+		echo '    done'
+		echo '  fi'
+		echo '}'
+		echo 'trap cleanup_children EXIT INT TERM'
+		echo ''
+		echo "'${dispatch_script}' >> '${new_log_file}' 2>&1"
+		echo "rc=\$?"
+		echo "echo \"EXIT:\${rc}\" >> '${new_log_file}'"
+		echo "if [ \$rc -ne 0 ]; then"
+		echo "  echo \"WORKER_DISPATCH_ERROR: prompt-repeat script exited with code \${rc}\" >> '${new_log_file}'"
+		echo "fi"
+	} >"$wrapper_script"
+	chmod +x "$wrapper_script"
+
+	# Dispatch
+	if command -v setsid &>/dev/null; then
+		nohup setsid bash "${wrapper_script}" &>/dev/null &
+	else
+		nohup bash "${wrapper_script}" &>/dev/null &
+	fi
+	local worker_pid=$!
+	disown "$worker_pid" 2>/dev/null || true
+
+	echo "$worker_pid" >"$SUPERVISOR_DIR/pids/${task_id}.pid"
+
+	# Transition to running
+	cmd_transition "$task_id" "running" --session "pid:$worker_pid"
+
+	log_success "Prompt-repeat dispatched for $task_id (PID: $worker_pid, same model: $tmodel)"
+
+	# Record pattern for tracking
+	local pattern_helper="${SCRIPT_DIR}/pattern-tracker-helper.sh"
+	if [[ -x "$pattern_helper" ]]; then
+		"$pattern_helper" record \
+			--type "WORKING_SOLUTION" \
+			--task "$task_id" \
+			--model "${tmodel:-unknown}" \
+			--detail "prompt_repeat_attempted for ${terror:-unknown}" \
+			2>/dev/null || true
+	fi
+
+	echo "$worker_pid"
+	return 0
+}
+
+#######################################
 # Check output quality of a completed worker (t132.6)
 # Heuristic quality checks on worker output to decide if escalation is needed.
 # Returns: "pass" if quality is acceptable, "fail:<reason>" if not.

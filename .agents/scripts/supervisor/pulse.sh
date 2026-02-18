@@ -271,6 +271,21 @@ cmd_pulse() {
 				send_task_notification "$tid" "complete" "$outcome_detail" 2>>"$SUPERVISOR_LOG" || true
 				# Store success pattern in memory (t128.6)
 				store_success_pattern "$tid" "$outcome_detail" "$tid_desc" 2>>"$SUPERVISOR_LOG" || true
+				# Track prompt-repeat outcome for pattern data (t1097)
+				local tid_pr_done
+				tid_pr_done=$(db "$SUPERVISOR_DB" "SELECT COALESCE(prompt_repeat_done, 0) FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "0")
+				if [[ "$tid_pr_done" -ge 1 ]]; then
+					local pr_pattern_helper="${SCRIPT_DIR}/pattern-tracker-helper.sh"
+					if [[ -x "$pr_pattern_helper" ]]; then
+						"$pr_pattern_helper" record \
+							--type "SUCCESS_PATTERN" \
+							--task "$tid" \
+							--model "${tid_model:-unknown}" \
+							--detail "prompt_repeat_success: task completed after reinforced prompt at same tier" \
+							2>/dev/null || true
+					fi
+					log_info "  $tid: prompt-repeat strategy succeeded (t1097)"
+				fi
 				# Add implemented:model label to GitHub issue (t1010)
 				add_model_label "$tid" "implemented" "$tid_model" "${tid_repo:-.}" 2>>"$SUPERVISOR_LOG" || true
 				# Self-heal: if this was a diagnostic task, re-queue the parent (t150)
@@ -287,10 +302,25 @@ cmd_pulse() {
 				cleanup_worker_processes "$tid"
 				# Store failure pattern in memory (t128.6)
 				store_failure_pattern "$tid" "retry" "$outcome_detail" "$tid_desc" 2>>"$SUPERVISOR_LOG" || true
+				# Track prompt-repeat failure for pattern data (t1097)
+				# If this task already had a prompt-repeat attempt and is failing again,
+				# record that prompt-repeat didn't help for this task type.
+				local tid_pr_done_retry
+				tid_pr_done_retry=$(db "$SUPERVISOR_DB" "SELECT COALESCE(prompt_repeat_done, 0) FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "0")
+				if [[ "$tid_pr_done_retry" -ge 1 ]]; then
+					local pr_pattern_helper_retry="${SCRIPT_DIR}/pattern-tracker-helper.sh"
+					if [[ -x "$pr_pattern_helper_retry" ]]; then
+						"$pr_pattern_helper_retry" record \
+							--type "FAILURE_PATTERN" \
+							--task "$tid" \
+							--model "${tid_model:-unknown}" \
+							--detail "prompt_repeat_failure: task failed again after reinforced prompt ($outcome_detail)" \
+							2>/dev/null || true
+					fi
+					log_info "  $tid: prompt-repeat strategy failed, will escalate model (t1097)"
+				fi
 				# Add retried:model label to GitHub issue (t1010)
 				add_model_label "$tid" "retried" "$tid_model" "${tid_repo:-.}" 2>>"$SUPERVISOR_LOG" || true
-				# Auto-escalate model on retry so re-prompt uses stronger model (t314 wiring)
-				escalate_model_on_failure "$tid" 2>>"$SUPERVISOR_LOG" || true
 				# Backend quota errors: defer re-prompt to next pulse (t095-diag-1).
 				# Quota resets take hours, not minutes. Immediate re-prompt wastes
 				# retry attempts. Leave in retrying state for deferred retry loop.
@@ -298,6 +328,26 @@ cmd_pulse() {
 					log_warn "  $tid: backend issue ($outcome_detail), deferring re-prompt to next pulse"
 					continue
 				fi
+				# Prompt-repeat retry strategy (t1097): before escalating to a more
+				# expensive model, try the same tier with a reinforced prompt. Many
+				# failures are due to insufficient prompt clarity, not model capability.
+				local prompt_repeat_eligible=""
+				prompt_repeat_eligible=$(should_prompt_repeat "$tid" "$outcome_detail" 2>/dev/null) || prompt_repeat_eligible=""
+				if [[ "$prompt_repeat_eligible" == "eligible" ]]; then
+					log_info "  $tid: attempting prompt-repeat retry at same tier (t1097)"
+					local pr_rc=0
+					do_prompt_repeat "$tid" 2>>"$SUPERVISOR_LOG" || pr_rc=$?
+					if [[ "$pr_rc" -eq 0 ]]; then
+						dispatched_count=$((dispatched_count + 1))
+						log_info "  $tid: prompt-repeat dispatched successfully"
+						continue
+					fi
+					log_warn "  $tid: prompt-repeat dispatch failed (rc=$pr_rc), falling through to model escalation"
+				else
+					log_info "  $tid: prompt-repeat not eligible ($prompt_repeat_eligible), proceeding to model escalation"
+				fi
+				# Auto-escalate model on retry so re-prompt uses stronger model (t314 wiring)
+				escalate_model_on_failure "$tid" 2>>"$SUPERVISOR_LOG" || true
 				# Re-prompt in existing worktree (continues context)
 				local reprompt_rc=0
 				cmd_reprompt "$tid" 2>>"$SUPERVISOR_LOG" || reprompt_rc=$?
