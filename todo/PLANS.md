@@ -21,6 +21,177 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-02-18] Supervisor Intelligence Upgrade
+
+**Status:** Planning
+**Estimate:** ~12h (ai:8h test:3h read:1h)
+**TODO:** t1085
+**Logged:** 2026-02-18
+
+**Problem:** The supervisor is a 2164-line mechanical bash pulse loop (Phases 0-12) that runs every 2 minutes via cron. It picks up tasks, dispatches workers, checks PRs, and reconciles state — but it has zero intelligence. Every decision is a hardcoded conditional. It cannot:
+
+- Look at open GitHub issues and figure out how to get them solved
+- Verify that recently closed issues/PRs have proper evidence
+- Ensure closed issues have linked PRs with real deliverables
+- Comment on issues to acknowledge, request information, or provide status
+- Reason about project priorities, blockers, or optimal dispatch order
+- Learn from patterns of failure or success across tasks
+
+The user's vision: transform the supervisor into an opus-tier AI engineering manager that runs 24/7 and maximises project outcomes through intelligent reasoning, not just mechanical state transitions.
+
+**Current architecture:**
+
+```text
+Cron (*/2) → supervisor-helper.sh pulse
+  → Phase 0:    Auto-pickup #auto-dispatch tasks from TODO.md
+  → Phase 0.5:  Task ID deduplication
+  → Phase 1:    Check running workers for completion
+  → Phase 1b:   Re-prompt stale retrying tasks
+  → Phase 2:    Dispatch queued tasks (mechanical: next in queue)
+  → Phase 2.5:  Contest mode check
+  → Phase 3:    Post-PR lifecycle (merge, deploy states)
+  → Phase 3b:   Post-merge verification
+  → Phase 3b2:  Reconcile stale blocked/verify_failed tasks
+  → Phase 3c:   Reconcile terminal DB states with GH issues
+  → Phase 3.5:  Auto-retry merge-conflict tasks
+  → Phase 3.6:  Escalate rebase-blocked PRs to opus worker
+  → Phase 4:    Worker health checks (dead, hung, orphaned)
+  → Phase 4b-e: DB orphans, stale diagnostics, stuck deploys, process sweep
+  → Phase 5:    Summary
+  → Phase 6:    Orphaned PR scanner
+  → Phase 7:    TODO.md reconciliation
+  → Phase 7b:   Bidirectional DB<->TODO.md reconciliation
+  → Phase 8:    Issue-sync reconciliation
+  → Phase 8b-c: Status label sweep, pinned health issues
+  → Phase 9:    Memory audit pulse
+  → Phase 10:   CodeRabbit daily pulse
+  → Phase 10b:  Auto-create TODO tasks from quality findings
+  → Phase 10c:  Audit regression detection
+  → Phase 11:   Memory monitoring + respawn
+  → Phase 12:   MODELS.md leaderboard regeneration
+```
+
+**AI integration points today:** Only `evaluate.sh` uses AI (to assess worker output quality). Dispatch is purely mechanical. No phase reasons about what to do next.
+
+**Target architecture:**
+
+```text
+Cron (*/2) → supervisor-helper.sh pulse
+  → Phases 0-12: (unchanged — mechanical state machine, fast, reliable)
+  → Phase 13: AI Supervisor Reasoning (NEW)
+      → Runs every N pulses (configurable, default: every 15th pulse = ~30min)
+      → Spawns an opus-tier AI session with full project context
+      → AI reviews: open issues, recent PRs, TODO.md, worker outcomes, patterns
+      → AI takes actions: comment on issues, create tasks, adjust priorities
+      → AI reports: reasoning log, decisions made, actions taken
+```
+
+**Design principles:**
+
+1. **Additive, not replacement** — the mechanical phases stay. They're fast, reliable, and handle 95% of operations. The AI phase adds reasoning on top.
+2. **Bounded cost** — opus sessions are expensive. Cap at 1 session per 30min, with token budget limits. Use sonnet for routine checks, opus only for complex reasoning.
+3. **Auditable** — every AI decision is logged with reasoning. The AI cannot silently change state.
+4. **Idempotent** — if the AI phase crashes or times out, the next pulse continues normally. No state corruption.
+5. **Progressive rollout** — start with read-only analysis (Phase 13a), then add write actions (Phase 13b) after validation.
+
+#### Phases
+
+**Phase 1: AI Supervisor Context Builder (t1085.1) ~2h**
+
+Create `supervisor/ai-context.sh` module that assembles a comprehensive project snapshot for the AI:
+
+- Open GitHub issues (title, labels, age, comments, linked PRs)
+- Recent PRs (last 48h: state, reviews, CI status, merge status)
+- TODO.md state (open tasks, blocked tasks, stale tasks)
+- Supervisor DB state (running workers, recent completions, failure patterns)
+- Recent memory entries (last 24h)
+- Pattern tracker data (success/failure rates by model tier)
+- Queue health metrics
+
+Output: a structured markdown document (< 50K tokens) that gives the AI full situational awareness.
+
+**Phase 2: AI Supervisor Reasoning Engine (t1085.2) ~3h**
+
+Create `supervisor/ai-reason.sh` module that:
+
+1. Builds context via Phase 1
+2. Spawns an AI session (opus tier) with a carefully crafted system prompt
+3. The AI reasons about 5 key questions:
+   - **Solvability**: Which open issues can be broken into dispatchable tasks?
+   - **Verification**: Have recently closed issues/PRs been properly verified?
+   - **Linkage**: Do all closed issues have linked PRs with real deliverables?
+   - **Communication**: Should any issues get a comment (acknowledgement, status, clarification request)?
+   - **Priority**: What should be worked on next and why?
+4. AI outputs a structured action plan (JSON)
+5. Module validates and executes approved actions
+
+**Phase 3: Action Executor (t1085.3) ~2h**
+
+Implement the action types the AI can request:
+
+- `comment_on_issue(issue_number, body)` — post a comment on a GitHub issue
+- `create_task(title, description, tags, estimate)` — add to TODO.md via claim-task-id.sh
+- `create_subtasks(parent_id, subtasks[])` — break down an issue into subtasks
+- `flag_for_review(issue_number, reason)` — add label + comment requesting human review
+- `adjust_priority(task_id, reason)` — reorder in TODO.md
+- `close_verified(issue_number, evidence)` — close with proof (only if PR merged + verified)
+- `request_info(issue_number, questions[])` — comment asking for clarification
+
+Each action is validated before execution (e.g., close_verified checks PR merge status).
+
+**Phase 4: Subtask Auto-Dispatch Enhancement (t1085.4) ~1h**
+
+Fix the current gap where subtasks of `#auto-dispatch` parents aren't independently dispatched:
+
+- Phase 0 auto-pickup: when a parent has `#auto-dispatch`, also consider its subtasks
+- Respect `blocked-by:` dependencies before dispatching subtasks
+- Propagate model tier from parent to subtasks if not specified
+- This immediately unblocks t1081.1-t1081.4 and t1082.1-t1082.4
+
+**Phase 5: Pulse Integration + Scheduling (t1085.5) ~1h**
+
+Wire Phase 13 into pulse.sh:
+
+- Add `SUPERVISOR_AI_INTERVAL` config (default: 15 pulses = ~30min)
+- Track last AI run timestamp in DB
+- Skip if within cooldown
+- Run after all mechanical phases complete
+- Log AI reasoning and actions to dedicated log file
+- Add `supervisor-helper.sh ai-status` command for monitoring
+
+**Phase 6: Issue Audit Capabilities (t1085.6) ~2h**
+
+Specific AI-driven audits that run as part of Phase 13:
+
+- **Closed issue audit**: For each issue closed in last 48h, verify: has linked PR, PR is merged, PR has substantive changes (not just TODO.md edits), task in TODO.md is marked complete with `pr:` evidence
+- **Stale issue detection**: Issues open > 7 days with no activity, no assignee, no linked task
+- **Orphan PR detection**: PRs with no linked issue or TODO task
+- **Blocked task analysis**: Tasks blocked > 48h — can the blocker be resolved? Should the task be redesigned?
+
+**Phase 7: Testing + Validation (t1085.7) ~1h**
+
+- Dry-run mode: `supervisor-helper.sh ai-pulse --dry-run` shows what AI would do without executing
+- Mock context for testing without live GitHub API calls
+- Token budget tracking and cost reporting
+- Integration test: run against current repo state, verify reasonable output
+
+#### Decision Log
+
+| Date | Decision | Rationale |
+|------|----------|-----------|
+| 2026-02-18 | Additive phase (13), not replacement of existing phases | Mechanical phases are fast and reliable. AI adds reasoning, doesn't replace plumbing. |
+| 2026-02-18 | Opus tier for reasoning, sonnet for routine checks | Complex reasoning (issue triage, priority assessment) needs opus. Simple checks (is PR merged?) don't. |
+| 2026-02-18 | 30-minute default interval | Balance between responsiveness and cost. 48 opus calls/day at ~$0.50 each = ~$24/day. Configurable. |
+| 2026-02-18 | Structured JSON action output, not free-form | Enables validation before execution. AI proposes, executor validates and acts. |
+| 2026-02-18 | Read-only first (Phase 13a), write actions later (Phase 13b) | Build trust in AI reasoning before letting it modify state. |
+| 2026-02-18 | Subtask dispatch fix (t1085.4) as part of this plan | Directly addresses the stalled t1081/t1082 subtasks and is a prerequisite for AI-created subtasks. |
+
+#### Surprises & Discoveries
+
+*(none yet)*
+
+---
+
 ### [2026-02-17] Daily Skill Auto-Update Pipeline
 
 **Status:** Planning
