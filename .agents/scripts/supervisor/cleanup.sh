@@ -505,8 +505,10 @@ cmd_cleanup() {
 					process_cleaned=$((process_cleaned + 1))
 				fi
 				;;
-			running | dispatched)
+			running | dispatched | evaluating)
 				# Active task - check if PID is actually dead (stale)
+				# t1145: 'evaluating' added here so stale PID files are cleaned up
+				# consistently; Phase 0.7 in pulse.sh handles the DB state transition.
 				if ! kill -0 "$pid" 2>/dev/null; then
 					if [[ "$dry_run" == "true" ]]; then
 						log_info "  [dry-run] Would remove stale PID for active task $task_id_from_pid"
