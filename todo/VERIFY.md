@@ -924,7 +924,12 @@
   check: shellcheck .agents/scripts/test-task-id-collision.sh
   check: file-exists .agents/scripts/test-task-id-collision.sh
 
-- [ ] v111 t1081 Daily skill auto-update pipeline — add daily skill fres... | PR #1591 | merged:2026-02-17
+- [x] v111 t1081 Daily skill auto-update pipeline — add daily skill fres... | PR #1591 | merged:2026-02-17 verified:2026-02-17
   files: .agents/scripts/auto-update-helper.sh
   check: shellcheck .agents/scripts/auto-update-helper.sh
   check: file-exists .agents/scripts/auto-update-helper.sh
+
+- [ ] v112 t1082 Maintainer skill-update PR pipeline — new skill-update-... | PR #1593 | merged:2026-02-18
+  files: .agents/scripts/skill-update-helper.sh
+  check: shellcheck .agents/scripts/skill-update-helper.sh
+  check: file-exists .agents/scripts/skill-update-helper.sh
