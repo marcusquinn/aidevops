@@ -2115,17 +2115,20 @@ RULES:
 		done
 	fi
 
-	# Phase 4b: DB orphans — tasks marked running/dispatched with no PID file
+	# Phase 4b: DB orphans — tasks marked running/dispatched/evaluating with no PID file
+	# t1208: Extended to include 'evaluating' state — Phase 0.7 covers stale-by-time
+	# but tasks can also become orphaned when the PID file is missing entirely
+	# (e.g., supervisor killed mid-dispatch before PID file was written).
 	local db_orphans
-	db_orphans=$(db "$SUPERVISOR_DB" "SELECT id FROM tasks WHERE status IN ('running', 'dispatched');" 2>/dev/null || echo "")
+	db_orphans=$(db "$SUPERVISOR_DB" "SELECT id, status FROM tasks WHERE status IN ('running', 'dispatched', 'evaluating');" 2>/dev/null || echo "")
 	if [[ -n "$db_orphans" ]]; then
-		while IFS= read -r orphan_id; do
+		while IFS='|' read -r orphan_id orphan_status; do
 			[[ -n "$orphan_id" ]] || continue
 			local orphan_pid_file="$SUPERVISOR_DIR/pids/${orphan_id}.pid"
 			if [[ ! -f "$orphan_pid_file" ]]; then
-				log_warn "  DB orphan: $orphan_id marked running but no PID file — evaluating"
+				log_warn "  DB orphan: $orphan_id marked $orphan_status but no PID file — evaluating (t1208)"
 				cmd_evaluate "$orphan_id" --no-ai 2>>"$SUPERVISOR_LOG" || {
-					cmd_transition "$orphan_id" "failed" --error "No worker process found (DB orphan)" 2>>"$SUPERVISOR_LOG" || true
+					cmd_transition "$orphan_id" "failed" --error "No worker process found (DB orphan, was $orphan_status)" 2>>"$SUPERVISOR_LOG" || true
 					failed_count=$((failed_count + 1))
 					# Auto-escalate model on failure so self-heal retry uses stronger model (t314 wiring)
 					escalate_model_on_failure "$orphan_id" 2>>"$SUPERVISOR_LOG" || true
@@ -2133,6 +2136,47 @@ RULES:
 				}
 			fi
 		done <<<"$db_orphans"
+	fi
+
+	# Phase 4b2: Stale pr_review recovery (t1208)
+	# Tasks in 'pr_review' are processed by Phase 3 (process_post_pr_lifecycle) each
+	# pulse. However, if cmd_pr_lifecycle fails repeatedly or the PR is in an
+	# unexpected state, the task can get stuck in pr_review indefinitely.
+	# After SUPERVISOR_PR_REVIEW_STALE_SECONDS (default 3600 = 1h), force a
+	# re-attempt via cmd_pr_lifecycle. If that also fails, log a warning so the
+	# operator can investigate — do NOT auto-fail pr_review tasks since the PR
+	# may be legitimately waiting for CI or human review.
+	local pr_review_stale_seconds="${SUPERVISOR_PR_REVIEW_STALE_SECONDS:-3600}"
+	local stale_pr_review
+	stale_pr_review=$(db -separator '|' "$SUPERVISOR_DB" "
+        SELECT id, pr_url, updated_at
+        FROM tasks
+        WHERE status = 'pr_review'
+        AND updated_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${pr_review_stale_seconds} seconds')
+        ORDER BY updated_at ASC;
+    " 2>/dev/null || echo "")
+
+	if [[ -n "$stale_pr_review" ]]; then
+		local pr_review_recovered=0
+		while IFS='|' read -r spr_id spr_pr_url spr_updated; do
+			[[ -n "$spr_id" ]] || continue
+			log_warn "  Stale pr_review: $spr_id (last updated: ${spr_updated:-unknown}, >${pr_review_stale_seconds}s) — re-attempting lifecycle (t1208)"
+			if cmd_pr_lifecycle "$spr_id" 2>>"$SUPERVISOR_LOG"; then
+				local spr_new_status
+				spr_new_status=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$spr_id")';" 2>/dev/null || echo "")
+				if [[ "$spr_new_status" != "pr_review" ]]; then
+					log_info "  Phase 4b2: $spr_id advanced from pr_review → $spr_new_status"
+					pr_review_recovered=$((pr_review_recovered + 1))
+				else
+					log_warn "  Phase 4b2: $spr_id still in pr_review after lifecycle attempt — may need manual review (PR: ${spr_pr_url:-none})"
+				fi
+			else
+				log_warn "  Phase 4b2: cmd_pr_lifecycle failed for stale $spr_id — will retry next pulse (PR: ${spr_pr_url:-none})"
+			fi
+		done <<<"$stale_pr_review"
+		if [[ "$pr_review_recovered" -gt 0 ]]; then
+			log_info "  Phase 4b2: $pr_review_recovered stale pr_review task(s) advanced"
+		fi
 	fi
 
 	# Phase 4c: Cancel stale diagnostic subtasks whose parent is already resolved
@@ -2226,6 +2270,43 @@ RULES:
 	log_info "  Post-PR:    $total_pr_review"
 	log_info "  Verifying:  $total_verifying"
 	log_info "  Total done: $total_complete / $total_tasks"
+
+	# t1208: State/worker count mismatch warning
+	# Detect when DB shows active states (running/evaluating/pr_review) but
+	# no live PID files exist — indicates stale state entries not yet cleaned up.
+	# This warning surfaces the inconsistency so operators can investigate.
+	local db_active_running db_active_evaluating db_active_pr_review
+	db_active_running=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('running', 'dispatched');" 2>/dev/null || echo "0")
+	db_active_evaluating=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status = 'evaluating';" 2>/dev/null || echo "0")
+	db_active_pr_review=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status = 'pr_review';" 2>/dev/null || echo "0")
+
+	# Count live PID files
+	local live_pid_count=0
+	if [[ -d "$SUPERVISOR_DIR/pids" ]]; then
+		for _pid_f in "$SUPERVISOR_DIR/pids"/*.pid; do
+			[[ -f "$_pid_f" ]] || continue
+			local _pid
+			_pid=$(cat "$_pid_f" 2>/dev/null || echo "")
+			if [[ -n "$_pid" ]] && kill -0 "$_pid" 2>/dev/null; then
+				live_pid_count=$((live_pid_count + 1))
+			fi
+		done
+	fi
+
+	# Warn when DB shows running/evaluating tasks but no live workers exist
+	local db_active_workers=$((db_active_running + db_active_evaluating))
+	if [[ "$db_active_workers" -gt 0 && "$live_pid_count" -eq 0 ]]; then
+		log_warn "  STATE MISMATCH: DB shows ${db_active_running} running + ${db_active_evaluating} evaluating but 0 live workers (t1208)"
+		log_warn "  Stale state recovery (Phase 0.7/0.8/4b) should clean these up next pulse"
+	elif [[ "$db_active_workers" -gt "$live_pid_count" ]]; then
+		log_warn "  STATE MISMATCH: DB shows $db_active_workers active tasks but only $live_pid_count live workers (t1208)"
+	fi
+
+	# Warn when pr_review count is unexpectedly high (>10 suggests stuck tasks)
+	local pr_review_warn_threshold="${SUPERVISOR_PR_REVIEW_WARN_THRESHOLD:-10}"
+	if [[ "$db_active_pr_review" -gt "$pr_review_warn_threshold" ]]; then
+		log_warn "  PR_REVIEW BACKLOG: $db_active_pr_review tasks in pr_review state (threshold: $pr_review_warn_threshold) — check for stuck tasks (t1208)"
+	fi
 
 	# Resource stats (t135.15.3)
 	if [[ -n "$sys_load_1m" ]]; then
