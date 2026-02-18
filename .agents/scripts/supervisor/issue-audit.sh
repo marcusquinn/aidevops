@@ -626,7 +626,6 @@ audit_blocked_tasks() {
 	local findings="[]"
 	local now_epoch=""
 	now_epoch=$(date +%s)
-	local threshold_seconds=$((hours * 3600))
 
 	# Find all open tasks with blocked-by: field
 	while IFS= read -r line; do
