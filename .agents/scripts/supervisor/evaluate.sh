@@ -682,18 +682,13 @@ classify_failure_mode() {
 
 	case "$detail" in
 	rate_limited | backend_quota_error | backend_infrastructure_error | \
-		retry:backend* | quota* | 429*)
-		echo "TRANSIENT"
-		;;
-	auth_error | unauthorized | forbidden | 401* | 403* | \
-		billing_credits_exhausted)
-		echo "RESOURCE"
-		;;
-	timeout | interrupted_sigint | killed_sigkill | terminated_sigterm | \
+		retry:backend* | quota* | 429* | \
+		timeout | interrupted_sigint | killed_sigkill | terminated_sigterm | \
 		work_in_progress)
 		echo "TRANSIENT"
 		;;
-	out_of_memory)
+	auth_error | unauthorized | forbidden | 401* | 403* | \
+		billing_credits_exhausted | out_of_memory)
 		echo "RESOURCE"
 		;;
 	merge_conflict | test_fail* | lint_* | build_* | \
@@ -743,12 +738,8 @@ rate_output_quality() {
 		echo "2"
 		;;
 	retry)
-		# work_in_progress = partial commits exist
-		if [[ "$outcome_detail" == "work_in_progress" ]]; then
-			echo "1"
-		else
-			echo "1"
-		fi
+		# All retries imply some form of progress or attempt
+		echo "1"
 		;;
 	blocked)
 		# auth/billing blocks = no output; merge conflict = partial
@@ -765,16 +756,8 @@ rate_output_quality() {
 		esac
 		;;
 	failed)
-		# worker_never_started / log missing = truly no output
-		case "$outcome_detail" in
-		worker_never_started* | log_file_missing* | log_file_empty | \
-			no_log_path_in_db* | max_retries)
-			echo "0"
-			;;
-		*)
-			echo "0"
-			;;
-		esac
+		# All failed outcomes are considered to have no usable output
+		echo "0"
 		;;
 	*)
 		echo "0"
@@ -833,12 +816,28 @@ record_evaluation_metadata() {
 		fi
 	fi
 
+	# Look up task type from DB tags if available, fallback to "unknown"
+	# TODO(t1096): extract real task type from TODO.md tags or DB metadata
+	local task_type="unknown"
+	if [[ -n "${SUPERVISOR_DB:-}" ]]; then
+		local task_desc
+		task_desc=$(db "$SUPERVISOR_DB" "SELECT description FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo "")
+		# Infer type from description keywords (best-effort)
+		case "$task_desc" in
+		*bugfix* | *fix* | *bug*) task_type="bugfix" ;;
+		*refactor*) task_type="refactor" ;;
+		*test*) task_type="testing" ;;
+		*doc*) task_type="docs" ;;
+		*) task_type="feature" ;;
+		esac
+	fi
+
 	# Build description
 	local description="Worker $task_id: ${outcome_type}:${outcome_detail} [fmode:${failure_mode}] [quality:${quality_score}]"
 
 	"$pattern_helper" record \
 		--outcome "$pt_outcome" \
-		--task-type "feature" \
+		--task-type "$task_type" \
 		--task-id "$task_id" \
 		--description "$description" \
 		--tags "supervisor,evaluate,${outcome_type},${extra_tags}${model_tier:+,model:${model_tier}}" \
@@ -1277,10 +1276,9 @@ evaluate_worker() {
 # Returns: complete:<detail>, retry:<reason>, blocked:<reason>
 #
 # Extended format (t1096): AI is asked to also classify failure mode and
-# rate output quality. The response is parsed for the extended fields and
-# stored as metadata. The returned verdict is the standard format (unchanged
-# for callers) — extended fields are captured as side-effects via
-# _AI_EVAL_FMODE and _AI_EVAL_QUALITY shell variables for the caller.
+# rate output quality. When extended fields are present, the stdout output
+# encodes them as type:detail:FMODE:mode:QUALITY:n so they survive subshell
+# capture. evaluate_worker_with_metadata() parses and strips these fields.
 #######################################
 evaluate_with_ai() {
 	local task_id="$1"
@@ -1352,7 +1350,7 @@ Respond with ONLY the verdict line, nothing else. Example: VERDICT:retry:rate_li
 	# Full format: VERDICT:type:detail:FMODE:mode:QUALITY:n
 	# Basic format: VERDICT:type:detail (legacy / fallback)
 	local verdict_line
-	verdict_line=$(echo "$ai_result" | grep -oE 'VERDICT:[a-z]+:[a-z_]+:FMODE:[A-Z]+:QUALITY:[012]' | head -1 || true)
+	verdict_line=$(echo "$ai_result" | grep -oE 'VERDICT:[a-z]+:[a-z0-9_-]+:FMODE:[A-Z]+:QUALITY:[012]' | head -1 || true)
 
 	if [[ -n "$verdict_line" ]]; then
 		# Parse extended format
@@ -1368,11 +1366,6 @@ Respond with ONLY the verdict line, nothing else. Example: VERDICT:retry:rate_li
 
 		log_info "AI eval for $task_id: $verdict [fmode:${ai_fmode}] [quality:${ai_quality}]"
 
-		# Export extended fields for record_evaluation_metadata() caller
-		# These are set as global-scope variables (prefixed to avoid collision)
-		_AI_EVAL_FMODE="$ai_fmode"
-		_AI_EVAL_QUALITY="$ai_quality"
-
 		# Store AI evaluation in state log for audit trail
 		db "$SUPERVISOR_DB" "
             INSERT INTO state_log (task_id, from_state, to_state, reason)
@@ -1380,21 +1373,20 @@ Respond with ONLY the verdict line, nothing else. Example: VERDICT:retry:rate_li
                     'AI eval verdict: $verdict fmode:${ai_fmode} quality:${ai_quality}');
         " 2>/dev/null || true
 
-		echo "$verdict"
+		# Encode AI-derived fields in stdout so they survive subshell capture.
+		# Format: type:detail:FMODE:mode:QUALITY:n
+		# evaluate_worker_with_metadata() parses and strips these before returning.
+		echo "${verdict}:FMODE:${ai_fmode}:QUALITY:${ai_quality}"
 		return 0
 	fi
 
 	# Fallback: try basic VERDICT format (AI didn't include extended fields)
 	local basic_verdict_line
-	basic_verdict_line=$(echo "$ai_result" | grep -oE 'VERDICT:[a-z]+:[a-z_]+' | head -1 || true)
+	basic_verdict_line=$(echo "$ai_result" | grep -oE 'VERDICT:[a-z]+:[a-z0-9_-]+' | head -1 || true)
 
 	if [[ -n "$basic_verdict_line" ]]; then
 		local verdict="${basic_verdict_line#VERDICT:}"
 		log_info "AI eval for $task_id: $verdict (basic format — no fmode/quality)"
-
-		# Clear extended fields (not provided by AI in this response)
-		_AI_EVAL_FMODE=""
-		_AI_EVAL_QUALITY=""
 
 		# Store AI evaluation in state log for audit trail
 		db "$SUPERVISOR_DB" "
@@ -1435,28 +1427,36 @@ evaluate_worker_with_metadata() {
 	local task_id="$1"
 	local skip_ai_eval="${2:-false}"
 
-	# Reset AI eval extended fields before calling evaluate_worker
-	_AI_EVAL_FMODE=""
-	_AI_EVAL_QUALITY=""
+	# Run core evaluation (captures stdout which may include AI-derived fields)
+	local raw_verdict
+	raw_verdict=$(evaluate_worker "$task_id" "$skip_ai_eval") || return 1
 
-	# Run core evaluation
-	local verdict
-	verdict=$(evaluate_worker "$task_id" "$skip_ai_eval") || return 1
+	# Parse AI-derived extended fields from stdout if present.
+	# Extended format: type:detail:FMODE:mode:QUALITY:n
+	# Basic format:    type:detail
+	local verdict ai_evaluated="false"
+	local failure_mode quality_score
+
+	if [[ "$raw_verdict" == *":FMODE:"*":QUALITY:"* ]]; then
+		# AI eval encoded extended fields in stdout — extract them
+		ai_evaluated="true"
+		# Strip :FMODE:...:QUALITY:... to get the original verdict
+		verdict="${raw_verdict%%:FMODE:*}"
+		# Extract failure mode (between :FMODE: and :QUALITY:)
+		local fmode_part="${raw_verdict#*:FMODE:}"
+		failure_mode="${fmode_part%%:QUALITY:*}"
+		# Extract quality (after last :QUALITY:)
+		quality_score="${fmode_part##*:QUALITY:}"
+	else
+		# No AI fields — use deterministic classification
+		verdict="$raw_verdict"
+	fi
 
 	# Parse verdict into type and detail
 	local outcome_type="${verdict%%:*}"
 	local outcome_detail="${verdict#*:}"
 
-	# Determine if AI eval was used (extended fields set by evaluate_with_ai)
-	local ai_evaluated="false"
-	local failure_mode quality_score
-
-	if [[ -n "$_AI_EVAL_FMODE" ]]; then
-		# AI provided failure mode classification
-		ai_evaluated="true"
-		failure_mode="$_AI_EVAL_FMODE"
-		quality_score="${_AI_EVAL_QUALITY:-$(rate_output_quality "$outcome_type" "$outcome_detail")}"
-	else
+	if [[ "$ai_evaluated" != "true" ]]; then
 		# Deterministic classification from outcome strings
 		if [[ "$outcome_type" == "complete" ]]; then
 			failure_mode="NONE"

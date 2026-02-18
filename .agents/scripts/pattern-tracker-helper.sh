@@ -1118,13 +1118,13 @@ RECORD OPTIONS:
     --task-id <id>                Task identifier (e.g., t102.3)
     --duration <seconds>          How long the task took
     --retries <count>             Number of retries before completion
-    --failure-mode <mode>         Failure category (t1096): TRANSIENT|RESOURCE|LOGIC|BLOCKED|AMBIGUOUS|NONE
-    --quality <score>             Output quality (t1096): 0=no_output 1=partial 2=complete
     --tags <tags>                 Additional comma-separated tags
     --strategy <type>             Dispatch strategy: normal, prompt-repeat, escalated (t1095)
     --quality <level>             CI quality: ci-pass-first-try, ci-pass-after-fix, needs-human (t1095)
+    --quality-score <n>           Output quality rating (t1096): 0=no_output 1=partial 2=complete
     --failure-mode <mode>         Failure classification: hallucination, context-miss,
-                                  incomplete, wrong-file, timeout (t1095)
+                                  incomplete, wrong-file, timeout (t1095) or
+                                  TRANSIENT, RESOURCE, LOGIC, BLOCKED, AMBIGUOUS, NONE (t1096)
     --tokens-in <count>           Input token count (t1095)
     --tokens-out <count>          Output token count (t1095)
 
