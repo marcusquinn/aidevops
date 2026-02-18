@@ -339,6 +339,106 @@ cmd_pulse() {
 		fi
 	fi
 
+	# Phase 0.8: Stale 'running' task recovery using started_at (t1193)
+	# Phase 0.7 uses updated_at which can be refreshed by other DB operations,
+	# causing it to miss tasks whose workers died long ago but whose updated_at
+	# was recently touched. This phase uses started_at (set once at dispatch,
+	# never refreshed) to catch running tasks that have exceeded a wall-clock
+	# timeout with no live worker process.
+	#
+	# Configurable via SUPERVISOR_RUNNING_STALE_SECONDS (default 3600 = 1h).
+	# Only targets 'running' status — dispatched/evaluating are covered by
+	# Phase 0.7 and Phase 1c respectively.
+	local running_stale_seconds="${SUPERVISOR_RUNNING_STALE_SECONDS:-3600}"
+	local stale_running_tasks
+	stale_running_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
+		SELECT id, started_at, pr_url FROM tasks
+		WHERE status = 'running'
+		AND started_at IS NOT NULL
+		AND started_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${running_stale_seconds} seconds')
+		ORDER BY started_at ASC;
+	" 2>/dev/null || echo "")
+
+	if [[ -n "$stale_running_tasks" ]]; then
+		local sr_recovered=0
+		local sr_skipped=0
+
+		while IFS='|' read -r sr_id sr_started sr_pr_url; do
+			[[ -z "$sr_id" ]] && continue
+
+			# Check if a live worker process exists for this task
+			local sr_pid_file="$SUPERVISOR_DIR/pids/${sr_id}.pid"
+			local sr_has_live_worker=false
+
+			if [[ -f "$sr_pid_file" ]]; then
+				local sr_pid
+				sr_pid=$(cat "$sr_pid_file" 2>/dev/null || echo "")
+				if [[ -n "$sr_pid" ]] && kill -0 "$sr_pid" 2>/dev/null; then
+					sr_has_live_worker=true
+				fi
+			fi
+
+			if [[ "$sr_has_live_worker" == "true" ]]; then
+				# Worker is alive and legitimately long-running — skip
+				sr_skipped=$((sr_skipped + 1))
+				continue
+			fi
+
+			# No live worker — orphaned running task. Transition to failed.
+			log_warn "  Phase 0.8: Orphaned running task $sr_id (started: $sr_started, no live worker after ${running_stale_seconds}s)"
+
+			# Clean up stale PID file if present
+			if [[ -f "$sr_pid_file" ]]; then
+				rm -f "$sr_pid_file" 2>/dev/null || true
+			fi
+
+			# If task has a PR, route to pr_review — work may be done
+			if [[ -n "$sr_pr_url" ]]; then
+				log_info "  Phase 0.8: $sr_id → pr_review (has PR, worker died after running)"
+				cmd_transition "$sr_id" "pr_review" --pr-url "$sr_pr_url" \
+					--error "Stale running recovery (Phase 0.8/t1193): worker died after ${running_stale_seconds}s, PR exists" \
+					2>>"$SUPERVISOR_LOG" || true
+				db "$SUPERVISOR_DB" "
+					INSERT INTO state_log (task_id, from_state, to_state, reason)
+					VALUES ('$(sql_escape "$sr_id")', 'running', 'pr_review',
+						'Phase 0.8 stale_running_no_process (t1193): started_at=${sr_started}, no live worker after ${running_stale_seconds}s, PR exists');
+				" 2>/dev/null || true
+			else
+				# No PR — mark failed with stale_running_no_process reason
+				cmd_transition "$sr_id" "failed" \
+					--error "stale_running_no_process: worker terminated without recording exit after ${running_stale_seconds}s (Phase 0.8/t1193)" \
+					2>>"$SUPERVISOR_LOG" || true
+				db "$SUPERVISOR_DB" "
+					INSERT INTO state_log (task_id, from_state, to_state, reason)
+					VALUES ('$(sql_escape "$sr_id")', 'running', 'failed',
+						'Phase 0.8 stale_running_no_process (t1193): started_at=${sr_started}, no live worker after ${running_stale_seconds}s');
+				" 2>/dev/null || true
+				# Clean up worker process tree (zombie children)
+				cleanup_worker_processes "$sr_id" 2>>"$SUPERVISOR_LOG" || true
+				# Attempt self-heal for retry eligibility
+				attempt_self_heal "$sr_id" "failed" \
+					"stale_running_no_process: worker terminated without recording exit" \
+					"${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
+			fi
+
+			sr_recovered=$((sr_recovered + 1))
+		done <<<"$stale_running_tasks"
+
+		if [[ "$sr_recovered" -gt 0 ]]; then
+			log_success "  Phase 0.8: Recovered $sr_recovered stale running task(s) ($sr_skipped still alive)"
+			# Record pattern for observability and model routing
+			local pattern_helper="${SCRIPT_DIR}/pattern-tracker-helper.sh"
+			if [[ -x "$pattern_helper" ]]; then
+				"$pattern_helper" record \
+					--type "SELF_HEAL_PATTERN" \
+					--task "supervisor" \
+					--model "n/a" \
+					--detail "Phase 0.8 stale_running_no_process recovery: $sr_recovered tasks recovered (timeout=${running_stale_seconds}s)" \
+					2>/dev/null || true
+			fi
+		fi
+	fi
+
 	# Phase 1: Check running workers for completion
 	# Also check 'evaluating' tasks - AI eval may have timed out, leaving them stuck
 	local running_tasks
