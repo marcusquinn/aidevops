@@ -1305,9 +1305,16 @@
   check: shellcheck .agents/scripts/supervisor/ai-reason.sh
   check: file-exists .agents/scripts/supervisor/ai-reason.sh
 
-- [ ] v154 t1187 Harden AI actions pipeline against empty/malformed model ... | PR #1805 | merged:2026-02-18
+- [x] v154 t1187 Harden AI actions pipeline against empty/malformed model ... | PR #1805 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/supervisor/ai-actions.sh, .agents/scripts/supervisor/ai-reason.sh
   check: shellcheck .agents/scripts/supervisor/ai-actions.sh
   check: file-exists .agents/scripts/supervisor/ai-actions.sh
   check: shellcheck .agents/scripts/supervisor/ai-reason.sh
   check: file-exists .agents/scripts/supervisor/ai-reason.sh
+
+- [ ] v155 t1186 Investigate frequent sonnet→opus tier escalation in dis... | PR #1806 | merged:2026-02-18
+  files: .agents/scripts/supervisor/dispatch.sh, .agents/scripts/supervisor/self-heal.sh
+  check: shellcheck .agents/scripts/supervisor/dispatch.sh
+  check: file-exists .agents/scripts/supervisor/dispatch.sh
+  check: shellcheck .agents/scripts/supervisor/self-heal.sh
+  check: file-exists .agents/scripts/supervisor/self-heal.sh
