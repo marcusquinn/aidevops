@@ -581,6 +581,18 @@ CONTEST_SQL
 		log_success "Added prompt_repeat_done column to tasks (t1097)"
 	fi
 
+	# Migrate: add requested_tier and actual_tier columns to tasks (t1117)
+	# requested_tier: tier from TODO.md model: tag (e.g., "sonnet")
+	# actual_tier: tier after all resolution steps (escalation, budget, pattern-tracker)
+	local has_requested_tier
+	has_requested_tier=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('tasks') WHERE name='requested_tier';" 2>/dev/null || echo "0")
+	if [[ "$has_requested_tier" -eq 0 ]]; then
+		log_info "Migrating tasks table: adding requested_tier and actual_tier columns (t1117)..."
+		db "$SUPERVISOR_DB" "ALTER TABLE tasks ADD COLUMN requested_tier TEXT;" 2>/dev/null || true
+		db "$SUPERVISOR_DB" "ALTER TABLE tasks ADD COLUMN actual_tier TEXT;" 2>/dev/null || true
+		log_success "Added requested_tier and actual_tier columns to tasks (t1117)"
+	fi
+
 	# Ensure WAL mode for existing databases created before t135.3
 	local current_mode
 	current_mode=$(db "$SUPERVISOR_DB" "PRAGMA journal_mode;" 2>/dev/null || echo "")
@@ -624,6 +636,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     escalation_depth INTEGER NOT NULL DEFAULT 0,
     max_escalation  INTEGER NOT NULL DEFAULT 2,
     prompt_repeat_done INTEGER NOT NULL DEFAULT 0,
+    requested_tier  TEXT,
+    actual_tier     TEXT,
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
     started_at      TEXT,
     completed_at    TEXT,
