@@ -929,7 +929,84 @@
   check: shellcheck .agents/scripts/auto-update-helper.sh
   check: file-exists .agents/scripts/auto-update-helper.sh
 
-- [ ] v112 t1082 Maintainer skill-update PR pipeline — new skill-update-... | PR #1593 | merged:2026-02-18
+- [x] v112 t1082 Maintainer skill-update PR pipeline — new skill-update-... | PR #1593 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/skill-update-helper.sh
   check: shellcheck .agents/scripts/skill-update-helper.sh
   check: file-exists .agents/scripts/skill-update-helper.sh
+
+- [ ] v113 t1083 Update model references for Claude Sonnet 4.6 — Anthrop... | PR #1594 | merged:2026-02-18
+  files: .agents/configs/fallback-chain-config.json.txt, .agents/scripts/agent-test-helper.sh, .agents/scripts/contest-helper.sh, .agents/scripts/cron-dispatch.sh, .agents/scripts/cron-helper.sh, .agents/scripts/document-extraction-helper.sh, .agents/scripts/fallback-chain-helper.sh, .agents/scripts/generate-opencode-agents.sh, .agents/scripts/model-availability-helper.sh, .agents/scripts/model-label-helper.sh, .agents/scripts/model-registry-helper.sh, .agents/scripts/objective-runner-helper.sh, .agents/scripts/opencode-github-setup-helper.sh, .agents/scripts/pipecat-helper.sh, .agents/scripts/runner-helper.sh, .agents/scripts/shared-constants.sh, .agents/scripts/supervisor/dispatch.sh, .agents/services/hosting/cloudflare-platform/references/ai-gateway/README.md, .agents/subagent-index.toon, .agents/tools/ai-assistants/fallback-chains.md, .agents/tools/ai-assistants/headless-dispatch.md, .agents/tools/ai-assistants/models/README.md, .agents/tools/ai-assistants/models/opus.md, .agents/tools/ai-assistants/models/pro.md, .agents/tools/ai-assistants/models/sonnet.md, .agents/tools/ai-assistants/opencode-server.md, .agents/tools/automation/cron-agent.md, .agents/tools/build-agent/agent-testing.md, .agents/tools/content/summarize.md, .agents/tools/context/model-routing.md, .agents/tools/git/opencode-github.md, .agents/tools/git/opencode-gitlab.md, .agents/tools/opencode/opencode-anthropic-auth.md, .agents/tools/opencode/opencode.md, .agents/tools/vision/image-understanding.md, .agents/tools/voice/pipecat-opencode.md, .opencode/lib/ai-research.ts, configs/mcp-templates/opencode-github-workflow.yml, tests/test-batch-quality-hardening.sh
+  check: file-exists .agents/configs/fallback-chain-config.json.txt
+  check: shellcheck .agents/scripts/agent-test-helper.sh
+  check: file-exists .agents/scripts/agent-test-helper.sh
+  check: shellcheck .agents/scripts/contest-helper.sh
+  check: file-exists .agents/scripts/contest-helper.sh
+  check: shellcheck .agents/scripts/cron-dispatch.sh
+  check: file-exists .agents/scripts/cron-dispatch.sh
+  check: shellcheck .agents/scripts/cron-helper.sh
+  check: file-exists .agents/scripts/cron-helper.sh
+  check: shellcheck .agents/scripts/document-extraction-helper.sh
+  check: file-exists .agents/scripts/document-extraction-helper.sh
+  check: shellcheck .agents/scripts/fallback-chain-helper.sh
+  check: file-exists .agents/scripts/fallback-chain-helper.sh
+  check: shellcheck .agents/scripts/generate-opencode-agents.sh
+  check: file-exists .agents/scripts/generate-opencode-agents.sh
+  check: shellcheck .agents/scripts/model-availability-helper.sh
+  check: file-exists .agents/scripts/model-availability-helper.sh
+  check: shellcheck .agents/scripts/model-label-helper.sh
+  check: file-exists .agents/scripts/model-label-helper.sh
+  check: shellcheck .agents/scripts/model-registry-helper.sh
+  check: file-exists .agents/scripts/model-registry-helper.sh
+  check: shellcheck .agents/scripts/objective-runner-helper.sh
+  check: file-exists .agents/scripts/objective-runner-helper.sh
+  check: shellcheck .agents/scripts/opencode-github-setup-helper.sh
+  check: file-exists .agents/scripts/opencode-github-setup-helper.sh
+  check: shellcheck .agents/scripts/pipecat-helper.sh
+  check: file-exists .agents/scripts/pipecat-helper.sh
+  check: shellcheck .agents/scripts/runner-helper.sh
+  check: file-exists .agents/scripts/runner-helper.sh
+  check: shellcheck .agents/scripts/shared-constants.sh
+  check: file-exists .agents/scripts/shared-constants.sh
+  check: shellcheck .agents/scripts/supervisor/dispatch.sh
+  check: file-exists .agents/scripts/supervisor/dispatch.sh
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/ai-gateway/README.md
+  check: file-exists .agents/subagent-index.toon
+  check: file-exists .agents/tools/ai-assistants/fallback-chains.md
+  check: file-exists .agents/tools/ai-assistants/headless-dispatch.md
+  check: file-exists .agents/tools/ai-assistants/models/README.md
+  check: file-exists .agents/tools/ai-assistants/models/opus.md
+  check: file-exists .agents/tools/ai-assistants/models/pro.md
+  check: file-exists .agents/tools/ai-assistants/models/sonnet.md
+  check: file-exists .agents/tools/ai-assistants/opencode-server.md
+  check: file-exists .agents/tools/automation/cron-agent.md
+  check: file-exists .agents/tools/build-agent/agent-testing.md
+  check: file-exists .agents/tools/content/summarize.md
+  check: file-exists .agents/tools/context/model-routing.md
+  check: file-exists .agents/tools/git/opencode-github.md
+  check: file-exists .agents/tools/git/opencode-gitlab.md
+  check: file-exists .agents/tools/opencode/opencode-anthropic-auth.md
+  check: file-exists .agents/tools/opencode/opencode.md
+  check: file-exists .agents/tools/vision/image-understanding.md
+  check: file-exists .agents/tools/voice/pipecat-opencode.md
+  check: file-exists .opencode/lib/ai-research.ts
+  check: file-exists configs/mcp-templates/opencode-github-workflow.yml
+  check: shellcheck tests/test-batch-quality-hardening.sh
+  check: file-exists tests/test-batch-quality-hardening.sh
+  check: rg "README" .agents/subagent-index.toon
+  check: rg "fallback-chains" .agents/subagent-index.toon
+  check: rg "headless-dispatch" .agents/subagent-index.toon
+  check: rg "README" .agents/subagent-index.toon
+  check: rg "opus" .agents/subagent-index.toon
+  check: rg "pro" .agents/subagent-index.toon
+  check: rg "sonnet" .agents/subagent-index.toon
+  check: rg "opencode-server" .agents/subagent-index.toon
+  check: rg "cron-agent" .agents/subagent-index.toon
+  check: rg "agent-testing" .agents/subagent-index.toon
+  check: rg "summarize" .agents/subagent-index.toon
+  check: rg "model-routing" .agents/subagent-index.toon
+  check: rg "opencode-github" .agents/subagent-index.toon
+  check: rg "opencode-gitlab" .agents/subagent-index.toon
+  check: rg "opencode-anthropic-auth" .agents/subagent-index.toon
+  check: rg "opencode" .agents/subagent-index.toon
+  check: rg "image-understanding" .agents/subagent-index.toon
+  check: rg "pipecat-opencode" .agents/subagent-index.toon
