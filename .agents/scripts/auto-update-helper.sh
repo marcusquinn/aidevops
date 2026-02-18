@@ -169,7 +169,8 @@ get_remote_version() {
 #######################################
 is_update_running() {
 	# Check for running setup.sh processes (not our own)
-	if pgrep -f "setup\.sh" >/dev/null 2>&1; then
+	# Use full path to avoid matching unrelated projects' setup.sh scripts
+	if pgrep -f "${INSTALL_DIR}/setup\.sh" >/dev/null 2>&1; then
 		return 0
 	fi
 	# Check for running aidevops update
@@ -237,6 +238,11 @@ check_skill_freshness() {
 	fi
 
 	local freshness_hours="${AIDEVOPS_SKILL_FRESHNESS_HOURS:-$DEFAULT_SKILL_FRESHNESS_HOURS}"
+	# Validate freshness_hours is a positive integer (non-numeric crashes under set -e)
+	if ! [[ "$freshness_hours" =~ ^[0-9]+$ ]] || [[ "$freshness_hours" -eq 0 ]]; then
+		log_warn "AIDEVOPS_SKILL_FRESHNESS_HOURS='${freshness_hours}' is not a positive integer — using default (${DEFAULT_SKILL_FRESHNESS_HOURS}h)"
+		freshness_hours="$DEFAULT_SKILL_FRESHNESS_HOURS"
+	fi
 	local freshness_seconds=$((freshness_hours * 3600))
 
 	# Read last skill check timestamp from state file
@@ -618,7 +624,7 @@ HOW IT WORKS:
     5. Skips if another update is already in progress
     6. Runs daily skill freshness check (24h gate):
        a. Reads last_skill_check from state file
-       b. If >24h since last check, calls skill-update-helper.sh --auto-update --quiet
+       b. If >24h since last check, calls skill-update-helper.sh check --auto-update --quiet
        c. Updates last_skill_check timestamp in state file
        d. Runs on every cmd_check invocation (gate prevents excessive network calls)
 
