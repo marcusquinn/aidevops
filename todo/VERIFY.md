@@ -1559,12 +1559,12 @@
   check: shellcheck .agents/scripts/localdev-helper.sh
   check: file-exists .agents/scripts/localdev-helper.sh
 
-- [ ] v185 t1235 Fix issue-sync-helper.sh `cmd_push()` cross-repo vulnerab... | PR #1913 | merged:2026-02-19
+- [x] v185 t1235 Fix issue-sync-helper.sh `cmd_push()` cross-repo vulnerab... | PR #1913 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/issue-sync-helper.sh
   check: shellcheck .agents/scripts/issue-sync-helper.sh
   check: file-exists .agents/scripts/issue-sync-helper.sh
 
-- [ ] v186 t004.1 Design multi-org data isolation schema and tenant context... | PR #1914 | merged:2026-02-19
+- [x] v186 t004.1 Design multi-org data isolation schema and tenant context... | PR #1914 | merged:2026-02-19 verified:2026-02-19
   files: .agents/AGENTS.md, .agents/scripts/multi-org-helper.sh, .agents/services/database/multi-org-isolation.md, .agents/services/database/schemas/multi-org.ts, .agents/services/database/schemas/rls-policies.sql, .agents/services/database/schemas/tenant-context.ts, .agents/subagent-index.toon, configs/multi-org-config.json.txt
   check: file-exists .agents/AGENTS.md
   check: shellcheck .agents/scripts/multi-org-helper.sh
@@ -1577,7 +1577,12 @@
   check: file-exists configs/multi-org-config.json.txt
   check: rg "multi-org-isolation" .agents/subagent-index.toon
 
-- [ ] v187 t1236 Investigate stale 'running' state for 2 workers with no d... | PR #1918 | merged:2026-02-19
+- [x] v187 t1236 Investigate stale 'running' state for 2 workers with no d... | PR #1918 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/supervisor/ai-context.sh
   check: shellcheck .agents/scripts/supervisor/ai-context.sh
   check: file-exists .agents/scripts/supervisor/ai-context.sh
+
+- [ ] v188 t1224.3 Implement `localdev branch` — subdomain routing for wor... | PR #1916 | merged:2026-02-19
+  files: .agents/scripts/localdev-helper.sh
+  check: shellcheck .agents/scripts/localdev-helper.sh
+  check: file-exists .agents/scripts/localdev-helper.sh
