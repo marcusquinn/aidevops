@@ -422,6 +422,30 @@ cmd_stale_gc_report() {
 		echo ""
 	fi
 
+	# t1252: Eval duration analysis — how long AI evaluation actually takes
+	# Only shown when eval_duration_secs data is available (requires t1252 migration)
+	local has_eval_duration_data
+	has_eval_duration_data=$(db "$SUPERVISOR_DB" "
+		SELECT count(*) FROM tasks
+		WHERE eval_duration_secs IS NOT NULL
+		AND updated_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days');
+	" 2>/dev/null || echo "0")
+	if [[ "$has_eval_duration_data" -gt 0 ]]; then
+		echo "--- Eval Duration Analysis (t1252: AI evaluation step timing) ---"
+		db -column -header "$SUPERVISOR_DB" "
+			SELECT
+				count(*) AS Evals,
+				printf('%.1f', avg(eval_duration_secs)) AS 'Avg Duration (s)',
+				max(eval_duration_secs) AS 'Max Duration (s)',
+				min(eval_duration_secs) AS 'Min Duration (s)',
+				sum(CASE WHEN eval_duration_secs >= 60 THEN 1 ELSE 0 END) AS 'Watchdog Threshold Exceeded'
+			FROM tasks
+			WHERE eval_duration_secs IS NOT NULL
+			AND updated_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days');
+		" 2>/dev/null || echo "(no data)"
+		echo ""
+	fi
+
 	# Daily trend
 	echo "--- Daily Trend ---"
 	db -column -header "$SUPERVISOR_DB" "

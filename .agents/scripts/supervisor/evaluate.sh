@@ -864,11 +864,18 @@ record_evaluation_metadata() {
 		tier_delta_tag=",tier_delta:${requested_tier}->${actual_tier}"
 	fi
 
+	# t1252: Look up eval_duration_secs from DB for inclusion in pattern record
+	local eval_duration_secs=""
+	if [[ -n "${SUPERVISOR_DB:-}" ]]; then
+		eval_duration_secs=$(db "$SUPERVISOR_DB" "SELECT eval_duration_secs FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo "")
+	fi
+
 	# Build description
 	local description="Worker $task_id: ${outcome_type}:${outcome_detail} [fmode:${failure_mode}] [quality:${quality_score}]"
 	[[ -n "$requested_tier" ]] && description="${description} [req:${requested_tier}]"
 	[[ -n "$actual_tier" ]] && description="${description} [act:${actual_tier}]"
 	[[ -n "$tokens_in" || -n "$tokens_out" ]] && description="${description} [tokens:${tokens_in:-0}+${tokens_out:-0}]"
+	[[ -n "$eval_duration_secs" ]] && description="${description} [eval:${eval_duration_secs}s]"
 
 	# Build record args — add tier and token counts when available (t1114, t1117)
 	local record_args=(
@@ -876,7 +883,7 @@ record_evaluation_metadata() {
 		--task-type "$task_type"
 		--task-id "$task_id"
 		--description "$description"
-		--tags "supervisor,evaluate,${outcome_type},${extra_tags}${model_tier:+,model:${model_tier}}${requested_tier:+,requested_tier:${requested_tier}}${actual_tier:+,actual_tier:${actual_tier}}${tier_delta_tag}"
+		--tags "supervisor,evaluate,${outcome_type},${extra_tags}${model_tier:+,model:${model_tier}}${requested_tier:+,requested_tier:${requested_tier}}${actual_tier:+,actual_tier:${actual_tier}}${tier_delta_tag}${eval_duration_secs:+,eval_duration:${eval_duration_secs}s}"
 	)
 	[[ -n "$model_tier" ]] && record_args+=(--model "$model_tier")
 	[[ -n "$tokens_in" ]] && record_args+=(--tokens-in "$tokens_in")
@@ -1424,14 +1431,40 @@ Respond with ONLY the verdict line, nothing else. Example: VERDICT:retry:rate_li
 	local eval_model
 	eval_model=$(resolve_model "eval" "$ai_cli")
 
+	# t1252: Record eval start timestamp for duration tracking.
+	local eval_start_epoch
+	eval_start_epoch=$(date +%s 2>/dev/null || echo 0)
+
 	# t1251: Log evaluation start so _diagnose_stale_root_cause can detect
 	# "eval in progress" vs "eval died" — reduces false stale-evaluating recoveries.
-	log_info "evaluate_with_ai: starting AI eval for $task_id (timeout=${eval_timeout}s, model=$eval_model)"
+	log_info "evaluate_with_ai: starting AI eval for $task_id (timeout=${eval_timeout}s, model=$eval_model, started=$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo 'unknown'))"
 
 	# t1251: Heartbeat — touch updated_at so Phase 0.7's grace period doesn't
 	# fire while evaluation is actively running. Without this, a 60s+ eval that
 	# started just before the grace window expires triggers unnecessary recovery.
 	db "$SUPERVISOR_DB" "UPDATE tasks SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || true
+
+	# t1252: Watchdog timer — detect evaluation hangs within 60s instead of
+	# waiting for the full stale timeout (120s grace + eval_timeout).
+	# The watchdog fires a warning log at 60s so trends are visible in logs
+	# before the timeout kills the eval at eval_timeout seconds.
+	# Uses a background subshell that self-terminates when the eval completes.
+	local watchdog_pid=""
+	local watchdog_sentinel
+	watchdog_sentinel=$(mktemp 2>/dev/null || echo "")
+	if [[ -n "$watchdog_sentinel" ]]; then
+		(
+			local watchdog_delay="${SUPERVISOR_EVAL_WATCHDOG:-60}"
+			sleep "$watchdog_delay"
+			# Only fire if sentinel still exists (eval still running)
+			if [[ -f "$watchdog_sentinel" ]]; then
+				log_warn "evaluate_with_ai: WATCHDOG — AI eval for $task_id has been running for ${watchdog_delay}s (timeout=${eval_timeout}s) — possible hang detected"
+				# Emit watchdog metric to supervisor log for trend analysis
+				log_info "EVAL_WATCHDOG_FIRED task=$task_id elapsed=${watchdog_delay}s timeout=${eval_timeout}s model=$eval_model"
+			fi
+		) &
+		watchdog_pid=$!
+	fi
 
 	if [[ "$ai_cli" == "opencode" ]]; then
 		ai_result=$(timeout "$eval_timeout" opencode run \
@@ -1446,6 +1479,28 @@ Respond with ONLY the verdict line, nothing else. Example: VERDICT:retry:rate_li
 			-p "$eval_prompt" \
 			--model "$claude_model" \
 			--output-format text 2>/dev/null || echo "")
+	fi
+
+	# t1252: Cancel watchdog — eval completed (or timed out), no longer needed.
+	# Remove sentinel first so watchdog subshell won't fire if it wakes up late.
+	if [[ -n "$watchdog_sentinel" ]]; then
+		rm -f "$watchdog_sentinel" 2>/dev/null || true
+	fi
+	if [[ -n "$watchdog_pid" ]]; then
+		kill "$watchdog_pid" 2>/dev/null || true
+		wait "$watchdog_pid" 2>/dev/null || true
+	fi
+
+	# t1252: Calculate and record eval duration.
+	local eval_end_epoch eval_duration_secs=""
+	eval_end_epoch=$(date +%s 2>/dev/null || echo 0)
+	if [[ "$eval_start_epoch" -gt 0 && "$eval_end_epoch" -gt 0 ]]; then
+		eval_duration_secs=$((eval_end_epoch - eval_start_epoch))
+		log_info "evaluate_with_ai: AI eval for $task_id completed in ${eval_duration_secs}s"
+		# Persist duration to DB for trend analysis (t1252)
+		db "$SUPERVISOR_DB" "UPDATE tasks SET eval_duration_secs = ${eval_duration_secs} WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || true
+		# Emit structured metric line for log-based trend analysis
+		log_info "EVAL_DURATION task=$task_id duration_secs=${eval_duration_secs} timeout=${eval_timeout}s model=$eval_model"
 	fi
 
 	# Parse extended VERDICT line (t1096): try full format first, fall back to basic
@@ -1466,13 +1521,13 @@ Respond with ONLY the verdict line, nothing else. Example: VERDICT:retry:rate_li
 		# Extract quality (after :QUALITY:)
 		local ai_quality="${fmode_part##*:QUALITY:}"
 
-		log_info "AI eval for $task_id: $verdict [fmode:${ai_fmode}] [quality:${ai_quality}]"
+		log_info "AI eval for $task_id: $verdict [fmode:${ai_fmode}] [quality:${ai_quality}]${eval_duration_secs:+ [duration:${eval_duration_secs}s]}"
 
 		# Store AI evaluation in state log for audit trail
 		db "$SUPERVISOR_DB" "
             INSERT INTO state_log (task_id, from_state, to_state, reason)
             VALUES ('$(sql_escape "$task_id")', 'evaluating', 'evaluating',
-                    'AI eval verdict: $verdict fmode:${ai_fmode} quality:${ai_quality}');
+                    'AI eval verdict: $verdict fmode:${ai_fmode} quality:${ai_quality}${eval_duration_secs:+ duration:${eval_duration_secs}s}');
         " 2>/dev/null || true
 
 		# Encode AI-derived fields in stdout so they survive subshell capture.
@@ -1488,13 +1543,13 @@ Respond with ONLY the verdict line, nothing else. Example: VERDICT:retry:rate_li
 
 	if [[ -n "$basic_verdict_line" ]]; then
 		local verdict="${basic_verdict_line#VERDICT:}"
-		log_info "AI eval for $task_id: $verdict (basic format — no fmode/quality)"
+		log_info "AI eval for $task_id: $verdict (basic format — no fmode/quality)${eval_duration_secs:+ [duration:${eval_duration_secs}s]}"
 
 		# Store AI evaluation in state log for audit trail
 		db "$SUPERVISOR_DB" "
             INSERT INTO state_log (task_id, from_state, to_state, reason)
             VALUES ('$(sql_escape "$task_id")', 'evaluating', 'evaluating',
-                    'AI eval verdict: $verdict');
+                    'AI eval verdict: $verdict${eval_duration_secs:+ duration:${eval_duration_secs}s}');
         " 2>/dev/null || true
 
 		echo "$verdict"
@@ -1502,7 +1557,7 @@ Respond with ONLY the verdict line, nothing else. Example: VERDICT:retry:rate_li
 	fi
 
 	# AI didn't return a parseable verdict
-	log_warn "AI eval for $task_id returned unparseable result"
+	log_warn "AI eval for $task_id returned unparseable result${eval_duration_secs:+ (after ${eval_duration_secs}s)}"
 	return 1
 }
 
