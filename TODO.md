@@ -1748,5 +1748,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 <<<<<<< Updated upstream
 - [ ] t1244 Fix duplicate t1241 entries in TODO.md #bugfix #auto-dispatch #self-improvement ~15m model:sonnet category:data-integrity — TODO.md contains two identical t1241 entries ('Add minimum estimate threshold bypass for trivial bugfixes in auto-dispatch eligibility'). This is a task ID collision or copy-paste error. Deduplicate by removing the duplicate entry. Also investigate whether claim-task-id.sh CAS loop failed to prevent this, or if it was a manual edit. ref:GH#1932 assignee:marcusquinn
 =======
-- [ ] t1244 Fix duplicate t1241 entries in TODO.md #bugfix #auto-dispatch #self-improvement ~15m model:sonnet category:data-integrity — TODO.md contains two identical t1241 entries ('Add minimum estimate threshold bypass for trivial bugfixes in auto-dispatch eligibility'). This is a task ID collision or copy-paste error. Deduplicate by removing the duplicate entry. Also investigate whether claim-task-id.sh CAS loop failed to prevent this, or if it was a manual edit. assignee:marcusquinn started:2026-02-19T06:11:26Z
 >>>>>>> Stashed changes
