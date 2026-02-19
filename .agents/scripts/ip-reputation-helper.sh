@@ -11,15 +11,16 @@
 #   ip-reputation-helper.sh providers
 #   ip-reputation-helper.sh cache-stats
 #   ip-reputation-helper.sh cache-clear [--provider <p>] [--ip <ip>]
+#   ip-reputation-helper.sh rate-limit-status
 #   ip-reputation-helper.sh help
 #
 # Options:
 #   --provider <p>    Use only specified provider
 #   --timeout <s>     Per-provider timeout in seconds (default: 15)
-#   --format <fmt>    Output format: table (default), json, markdown
+#   --format <fmt>    Output format: table (default), json, markdown, compact
 #   --parallel        Run providers in parallel (default)
 #   --sequential      Run providers sequentially
-#   --no-color        Disable color output
+#   --no-color        Disable color output (also respects NO_COLOR env)
 #   --no-cache        Bypass cache for this query
 #   --rate-limit <n>  Requests per second per provider in batch mode (default: 2)
 #   --dnsbl-overlap   Cross-reference results with email-health-check-helper.sh DNSBL
@@ -81,7 +82,7 @@ set -euo pipefail
 # Constants
 # =============================================================================
 
-readonly VERSION="2.0.0"
+readonly VERSION="2.1.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly SCRIPT_DIR
 readonly PROVIDERS_DIR="${SCRIPT_DIR}/providers"
@@ -95,6 +96,10 @@ source "${SCRIPT_DIR}/shared-constants.sh" 2>/dev/null || true
 # All available providers (order matters for display)
 # greynoise has a free community API (no key required) but also supports keyed full API
 readonly ALL_PROVIDERS="spamhaus proxycheck stopforumspam blocklistde greynoise abuseipdb virustotal ipqualityscore scamalytics shodan iphub"
+
+# Global color toggle (set by --no-color flag or NO_COLOR env before any output)
+# shellcheck disable=SC2034
+IP_REP_NO_COLOR="${NO_COLOR:-false}"
 
 # =============================================================================
 # SQLite Cache
@@ -116,7 +121,7 @@ provider_cache_ttl() {
 	return 0
 }
 
-# Initialise SQLite cache database
+# Initialise SQLite cache database (includes rate_limits table for 429 tracking)
 cache_init() {
 	if ! command -v sqlite3 &>/dev/null; then
 		return 0
@@ -132,7 +137,43 @@ CREATE TABLE IF NOT EXISTS ip_cache (
     PRIMARY KEY (ip, provider)
 );
 CREATE INDEX IF NOT EXISTS idx_ip_cache_expiry ON ip_cache (cached_at, ttl);
+CREATE TABLE IF NOT EXISTS rate_limits (
+    provider    TEXT PRIMARY KEY,
+    hit_at      INTEGER NOT NULL,
+    retry_after INTEGER NOT NULL DEFAULT 60,
+    hit_count   INTEGER NOT NULL DEFAULT 1
+);
 SQL
+	# Auto-prune expired entries (runs at most once per hour via timestamp check)
+	cache_auto_prune
+	return 0
+}
+
+# Auto-prune expired cache entries (gated to once per hour)
+cache_auto_prune() {
+	if ! command -v sqlite3 &>/dev/null; then
+		return 0
+	fi
+	[[ -f "$IP_REP_CACHE_DB" ]] || return 0
+	local prune_marker="${IP_REP_CACHE_DIR}/.last_prune"
+	local now
+	now=$(date +%s)
+	if [[ -f "$prune_marker" ]]; then
+		local last_prune
+		last_prune=$(cat "$prune_marker" 2>/dev/null || echo "0")
+		local elapsed=$((now - last_prune))
+		if [[ "$elapsed" -lt 3600 ]]; then
+			return 0
+		fi
+	fi
+	local pruned
+	pruned=$(sqlite3 "$IP_REP_CACHE_DB" \
+		"DELETE FROM ip_cache WHERE (cached_at + ttl) <= ${now}; SELECT changes();" \
+		2>/dev/null || echo "0")
+	printf '%s' "$now" >"$prune_marker"
+	if [[ "$pruned" -gt 0 ]]; then
+		log_info "Auto-pruned ${pruned} expired cache entries"
+	fi
 	return 0
 }
 
@@ -192,6 +233,112 @@ cache_put() {
 	return 0
 }
 
+# =============================================================================
+# Rate Limit Tracking
+# =============================================================================
+
+# Record a rate limit hit (HTTP 429) for a provider
+rate_limit_record() {
+	local provider="$1"
+	local retry_after="${2:-60}"
+	if ! command -v sqlite3 &>/dev/null; then
+		return 0
+	fi
+	if ! sanitize_provider "$provider"; then
+		return 0
+	fi
+	local now
+	now=$(date +%s)
+	sqlite3 "$IP_REP_CACHE_DB" \
+		"INSERT INTO rate_limits (provider, hit_at, retry_after, hit_count)
+		 VALUES ('${provider}', ${now}, ${retry_after}, 1)
+		 ON CONFLICT(provider) DO UPDATE SET
+		   hit_at = ${now},
+		   retry_after = ${retry_after},
+		   hit_count = hit_count + 1;" \
+		2>/dev/null || true
+	return 0
+}
+
+# Check if a provider is currently rate-limited; returns 0 if OK, 1 if limited
+rate_limit_check() {
+	local provider="$1"
+	if ! command -v sqlite3 &>/dev/null; then
+		return 0
+	fi
+	if ! sanitize_provider "$provider"; then
+		return 0
+	fi
+	local now
+	now=$(date +%s)
+	local remaining
+	remaining=$(sqlite3 "$IP_REP_CACHE_DB" \
+		"SELECT (hit_at + retry_after) - ${now} FROM rate_limits
+		 WHERE provider='${provider}' AND (hit_at + retry_after) > ${now}
+		 LIMIT 1;" \
+		2>/dev/null || true)
+	if [[ -n "$remaining" && "$remaining" -gt 0 ]]; then
+		log_warn "Provider '${provider}' rate-limited for ${remaining}s more"
+		return 1
+	fi
+	return 0
+}
+
+# Show rate limit status for all providers
+cmd_rate_limit_status() {
+	if ! command -v sqlite3 &>/dev/null; then
+		log_warn "sqlite3 not available — rate limit tracking disabled"
+		return 0
+	fi
+	if [[ ! -f "$IP_REP_CACHE_DB" ]]; then
+		log_info "No rate limit data (no queries run yet)"
+		return 0
+	fi
+	local now
+	now=$(date +%s)
+	echo ""
+	echo -e "$(c_bold)$(c_cyan)=== Rate Limit Status ===$(c_nc)"
+	echo ""
+	printf "  %-18s %-12s %-14s %-10s %s\n" "Provider" "Status" "Retry After" "Hits" "Last Hit"
+	printf "  %-18s %-12s %-14s %-10s %s\n" "--------" "------" "-----------" "----" "--------"
+
+	local has_data=false
+	local provider
+	for provider in $ALL_PROVIDERS; do
+		local row
+		row=$(sqlite3 "$IP_REP_CACHE_DB" \
+			"SELECT hit_at, retry_after, hit_count FROM rate_limits
+			 WHERE provider='${provider}' LIMIT 1;" \
+			2>/dev/null || true)
+		[[ -z "$row" ]] && continue
+		has_data=true
+		local hit_at retry_after hit_count
+		IFS='|' read -r hit_at retry_after hit_count <<<"$row"
+		local expires=$((hit_at + retry_after))
+		local status status_color
+		if [[ "$expires" -gt "$now" ]]; then
+			local remaining=$((expires - now))
+			status="LIMITED (${remaining}s)"
+			status_color=$(c_red)
+		else
+			status="OK"
+			status_color=$(c_green)
+		fi
+		local last_hit_fmt
+		last_hit_fmt=$(date -r "$hit_at" +"%Y-%m-%d %H:%M" 2>/dev/null || date -d "@${hit_at}" +"%Y-%m-%d %H:%M" 2>/dev/null || echo "unknown")
+		local display_name
+		display_name=$(provider_display_name "$provider")
+		printf "  %-18s " "$display_name"
+		echo -e "${status_color}${status}$(c_nc)  ${retry_after}s           ${hit_count}         ${last_hit_fmt}"
+	done
+
+	if [[ "$has_data" == "false" ]]; then
+		echo "  No rate limit events recorded."
+	fi
+	echo ""
+	return 0
+}
+
 # Show cache statistics
 cmd_cache_stats() {
 	if ! command -v sqlite3 &>/dev/null; then
@@ -205,7 +352,7 @@ cmd_cache_stats() {
 	local now
 	now=$(date +%s)
 	echo ""
-	echo -e "${BOLD}${CYAN}=== IP Reputation Cache Statistics ===${NC}"
+	echo -e "$(c_bold)$(c_cyan)=== IP Reputation Cache Statistics ===$(c_nc)"
 	echo -e "Database: ${IP_REP_CACHE_DB}"
 	echo ""
 	sqlite3 "$IP_REP_CACHE_DB" <<SQL 2>/dev/null || true
@@ -313,29 +460,46 @@ readonly IP_REP_DEFAULT_FORMAT="${IP_REP_FORMAT:-table}"
 # =============================================================================
 
 # BOLD is not in shared-constants.sh — define it here
-readonly BOLD='\033[1m'
+# shellcheck disable=SC2034
+BOLD='\033[1m'
+
+# Color accessor functions — return empty strings when --no-color is active.
+# This avoids reassigning readonly variables from shared-constants.sh.
+c_red() { [[ "$IP_REP_NO_COLOR" == "true" ]] && echo "" || echo "$RED"; }
+c_green() { [[ "$IP_REP_NO_COLOR" == "true" ]] && echo "" || echo "$GREEN"; }
+c_yellow() { [[ "$IP_REP_NO_COLOR" == "true" ]] && echo "" || echo "$YELLOW"; }
+c_cyan() { [[ "$IP_REP_NO_COLOR" == "true" ]] && echo "" || echo "$CYAN"; }
+c_nc() { [[ "$IP_REP_NO_COLOR" == "true" ]] && echo "" || echo "$NC"; }
+c_bold() { [[ "$IP_REP_NO_COLOR" == "true" ]] && echo "" || echo "$BOLD"; }
+
+# Disable colors when --no-color is active or NO_COLOR env is set
+# Called after argument parsing sets IP_REP_NO_COLOR
+disable_colors() {
+	IP_REP_NO_COLOR="true"
+	return 0
+}
 
 # =============================================================================
 # Logging
 # =============================================================================
 
 log_info() {
-	echo -e "${CYAN}[INFO]${NC} $*" >&2
+	echo -e "$(c_cyan)[INFO]$(c_nc) $*" >&2
 	return 0
 }
 
 log_warn() {
-	echo -e "${YELLOW}[WARN]${NC} $*" >&2
+	echo -e "$(c_yellow)[WARN]$(c_nc) $*" >&2
 	return 0
 }
 
 log_error() {
-	echo -e "${RED}[ERROR]${NC} $*" >&2
+	echo -e "$(c_red)[ERROR]$(c_nc) $*" >&2
 	return 0
 }
 
 log_success() {
-	echo -e "${GREEN}[OK]${NC} $*" >&2
+	echo -e "$(c_green)[OK]$(c_nc) $*" >&2
 	return 0
 }
 
@@ -416,7 +580,8 @@ get_available_providers() {
 # =============================================================================
 
 # Run a single provider and write JSON result to stdout
-# Checks SQLite cache first; falls back to live query on miss/expiry
+# Checks rate limits and SQLite cache first; falls back to live query on miss/expiry
+# Detects HTTP 429 (rate_limited error) and retries with exponential backoff
 run_provider() {
 	local provider="$1"
 	local ip="$2"
@@ -435,6 +600,15 @@ run_provider() {
 		return 0
 	fi
 
+	# Check if provider is currently rate-limited
+	if ! rate_limit_check "$provider" 2>/dev/null; then
+		jq -n \
+			--arg provider "$provider" \
+			--arg ip "$ip" \
+			'{provider: $provider, ip: $ip, error: "rate_limited", is_listed: false, score: 0, risk_level: "unknown"}'
+		return 0
+	fi
+
 	# Check cache first (skip if --no-cache or provider errored last time)
 	if [[ "$use_cache" == "true" ]]; then
 		local cached
@@ -446,43 +620,68 @@ run_provider() {
 		fi
 	fi
 
-	local result
-	local run_cmd=("$script_path" check "$ip")
-	if [[ -n "$TIMEOUT_CMD" ]]; then
-		run_cmd=("$TIMEOUT_CMD" "$timeout_secs" "${run_cmd[@]}")
-	fi
+	# Retry loop with exponential backoff for rate limit (429) responses
+	local max_retries=2
+	local attempt=0
+	local backoff=2
 
-	if result=$("${run_cmd[@]}" 2>/dev/null); then
-		if echo "$result" | jq empty 2>/dev/null; then
-			# Only cache successful (non-error) results
-			local has_error
-			has_error=$(echo "$result" | jq -r '.error // empty')
-			if [[ -z "$has_error" && "$use_cache" == "true" ]]; then
-				local ttl
-				ttl=$(provider_cache_ttl "$provider")
-				cache_put "$ip" "$provider" "$result" "$ttl"
+	while [[ "$attempt" -le "$max_retries" ]]; do
+		local result
+		local run_cmd=("$script_path" check "$ip")
+		if [[ -n "$TIMEOUT_CMD" ]]; then
+			run_cmd=("$TIMEOUT_CMD" "$timeout_secs" "${run_cmd[@]}")
+		fi
+
+		if result=$("${run_cmd[@]}" 2>/dev/null); then
+			if echo "$result" | jq empty 2>/dev/null; then
+				# Check for rate_limited error from provider script
+				local error_type
+				error_type=$(echo "$result" | jq -r '.error // empty')
+				if [[ "$error_type" == "rate_limited" || "$error_type" == *"429"* || "$error_type" == *"rate limit"* ]]; then
+					local retry_after
+					retry_after=$(echo "$result" | jq -r '.retry_after // 60')
+					rate_limit_record "$provider" "$retry_after"
+					if [[ "$attempt" -lt "$max_retries" ]]; then
+						attempt=$((attempt + 1))
+						log_warn "Provider '${provider}' returned 429 — retry ${attempt}/${max_retries} in ${backoff}s"
+						sleep "$backoff" 2>/dev/null || true
+						backoff=$((backoff * 2))
+						continue
+					fi
+					echo "$result"
+					return 0
+				fi
+
+				# Only cache successful (non-error) results
+				if [[ -z "$error_type" && "$use_cache" == "true" ]]; then
+					local ttl
+					ttl=$(provider_cache_ttl "$provider")
+					cache_put "$ip" "$provider" "$result" "$ttl"
+				fi
+				echo "$result"
+			else
+				jq -n \
+					--arg provider "$provider" \
+					--arg ip "$ip" \
+					'{provider: $provider, ip: $ip, error: "invalid_json_response", is_listed: false, score: 0, risk_level: "unknown"}'
 			fi
-			echo "$result"
+			return 0
 		else
+			local exit_code=$?
+			local err_msg
+			if [[ $exit_code -eq 124 ]]; then
+				err_msg="timeout after ${timeout_secs}s"
+			else
+				err_msg="provider failed (exit ${exit_code})"
+			fi
 			jq -n \
 				--arg provider "$provider" \
 				--arg ip "$ip" \
-				'{provider: $provider, ip: $ip, error: "invalid_json_response", is_listed: false, score: 0, risk_level: "unknown"}'
+				--arg error "$err_msg" \
+				'{provider: $provider, ip: $ip, error: $error, is_listed: false, score: 0, risk_level: "unknown"}'
+			return 0
 		fi
-	else
-		local exit_code=$?
-		local err_msg
-		if [[ $exit_code -eq 124 ]]; then
-			err_msg="timeout after ${timeout_secs}s"
-		else
-			err_msg="provider failed (exit ${exit_code})"
-		fi
-		jq -n \
-			--arg provider "$provider" \
-			--arg ip "$ip" \
-			--arg error "$err_msg" \
-			'{provider: $provider, ip: $ip, error: $error, is_listed: false, score: 0, risk_level: "unknown"}'
-	fi
+	done
 	return 0
 }
 
@@ -505,6 +704,8 @@ merge_results() {
 	local is_proxy=false
 	local is_vpn=false
 	local errors=0
+	local cache_hits=0
+	local cache_misses=0
 	local file
 
 	for file in "${result_files[@]}"; do
@@ -525,6 +726,15 @@ merge_results() {
 		fi
 
 		provider_count=$((provider_count + 1))
+
+		# Track cache hit/miss
+		local was_cached
+		was_cached=$(echo "$content" | jq -r '.cached // false')
+		if [[ "$was_cached" == "true" ]]; then
+			cache_hits=$((cache_hits + 1))
+		else
+			cache_misses=$((cache_misses + 1))
+		fi
 
 		local score is_listed
 		score=$(echo "$content" | jq -r '.score // 0')
@@ -600,6 +810,8 @@ merge_results() {
 		--argjson is_tor "$is_tor" \
 		--argjson is_proxy "$is_proxy" \
 		--argjson is_vpn "$is_vpn" \
+		--argjson cache_hits "$cache_hits" \
+		--argjson cache_misses "$cache_misses" \
 		--argjson providers "$provider_results" \
 		--arg scan_time "$scan_time" \
 		'{
@@ -615,7 +827,9 @@ merge_results() {
                 listed_by: $listed_count,
                 is_tor: $is_tor,
                 is_proxy: $is_proxy,
-                is_vpn: $is_vpn
+                is_vpn: $is_vpn,
+                cache_hits: $cache_hits,
+                cache_misses: $cache_misses
             },
             providers: $providers
         }'
@@ -626,16 +840,16 @@ merge_results() {
 # Output Formatting
 # =============================================================================
 
-# Risk level color
+# Risk level color (respects --no-color)
 risk_color() {
 	local level="$1"
 	case "$level" in
-	critical) echo "$RED" ;;
-	high) echo "$RED" ;;
-	medium) echo "$YELLOW" ;;
-	low) echo "$YELLOW" ;;
-	clean) echo "$GREEN" ;;
-	*) echo "$NC" ;;
+	critical) c_red ;;
+	high) c_red ;;
+	medium) c_yellow ;;
+	low) c_yellow ;;
+	clean) c_green ;;
+	*) c_nc ;;
 	esac
 	return 0
 }
@@ -671,11 +885,11 @@ format_table() {
 	symbol=$(risk_symbol "$risk_level")
 
 	echo ""
-	echo -e "${BOLD}${CYAN}=== IP Reputation Report ===${NC}"
-	echo -e "IP:          ${BOLD}${ip}${NC}"
+	echo -e "$(c_bold)$(c_cyan)=== IP Reputation Report ===$(c_nc)"
+	echo -e "IP:          $(c_bold)${ip}$(c_nc)"
 	echo -e "Scanned:     ${scan_time}"
-	echo -e "Risk Level:  ${color}${BOLD}${symbol}${NC} (score: ${unified_score}/100)"
-	echo -e "Verdict:     ${color}${recommendation}${NC}"
+	echo -e "Risk Level:  ${color}$(c_bold)${symbol}$(c_nc) (score: ${unified_score}/100)"
+	echo -e "Verdict:     ${color}${recommendation}$(c_nc)"
 	echo ""
 
 	# Summary flags
@@ -687,30 +901,39 @@ format_table() {
 	providers_queried=$(echo "$json" | jq -r '.summary.providers_queried')
 	providers_responded=$(echo "$json" | jq -r '.summary.providers_responded')
 
-	echo -e "${BOLD}Summary:${NC}"
+	local cache_hits cache_misses
+	cache_hits=$(echo "$json" | jq -r '.summary.cache_hits // 0')
+	cache_misses=$(echo "$json" | jq -r '.summary.cache_misses // 0')
+
+	echo -e "$(c_bold)Summary:$(c_nc)"
 	echo -e "  Providers:  ${providers_responded}/${providers_queried} responded"
 	echo -e "  Listed by:  ${listed_by} provider(s)"
+	if [[ "$cache_hits" -gt 0 || "$cache_misses" -gt 0 ]]; then
+		echo -e "  Cache:      ${cache_hits} hit(s), ${cache_misses} miss(es)"
+	fi
 	local tor_flag proxy_flag vpn_flag
-	tor_flag=$([[ "$is_tor" == "true" ]] && echo "${RED}YES${NC}" || echo "${GREEN}NO${NC}")
-	proxy_flag=$([[ "$is_proxy" == "true" ]] && echo "${RED}YES${NC}" || echo "${GREEN}NO${NC}")
-	vpn_flag=$([[ "$is_vpn" == "true" ]] && echo "${YELLOW}YES${NC}" || echo "${GREEN}NO${NC}")
+	tor_flag=$([[ "$is_tor" == "true" ]] && echo "$(c_red)YES$(c_nc)" || echo "$(c_green)NO$(c_nc)")
+	proxy_flag=$([[ "$is_proxy" == "true" ]] && echo "$(c_red)YES$(c_nc)" || echo "$(c_green)NO$(c_nc)")
+	vpn_flag=$([[ "$is_vpn" == "true" ]] && echo "$(c_yellow)YES$(c_nc)" || echo "$(c_green)NO$(c_nc)")
 	echo -e "  Tor:        $(echo -e "$tor_flag")"
 	echo -e "  Proxy:      $(echo -e "$proxy_flag")"
 	echo -e "  VPN:        $(echo -e "$vpn_flag")"
 	echo ""
 
 	# Per-provider results
-	echo -e "${BOLD}Provider Results:${NC}"
-	printf "  %-18s %-10s %-8s %s\n" "Provider" "Risk" "Score" "Details"
-	printf "  %-18s %-10s %-8s %s\n" "--------" "----" "-----" "-------"
+	echo -e "$(c_bold)Provider Results:$(c_nc)"
+	printf "  %-18s %-10s %-8s %-8s %s\n" "Provider" "Risk" "Score" "Source" "Details"
+	printf "  %-18s %-10s %-8s %-8s %s\n" "--------" "----" "-----" "------" "-------"
 
-	echo "$json" | jq -r '.providers[] | [.provider, (.risk_level // "error"), (.score // 0 | tostring), (.error // (.is_listed | if . then "listed" else "clean" end))] | @tsv' 2>/dev/null |
-		while IFS=$'\t' read -r prov risk score detail; do
+	local _nc
+	_nc=$(c_nc)
+	echo "$json" | jq -r '.providers[] | [.provider, (.risk_level // "error"), (.score // 0 | tostring), (if .cached then "cached" else "live" end), (.error // (.is_listed | if . then "listed" else "clean" end))] | @tsv' 2>/dev/null |
+		while IFS=$'\t' read -r prov risk score source detail; do
 			local prov_color
 			prov_color=$(risk_color "$risk")
 			local display_name
 			display_name=$(provider_display_name "$prov")
-			printf "  %-18s ${prov_color}%-10s${NC} %-8s %s\n" "$display_name" "$risk" "$score" "$detail"
+			printf "  %-18s ${prov_color}%-10s${_nc} %-8s %-8s %s\n" "$display_name" "$risk" "$score" "$source" "$detail"
 		done
 
 	echo ""
@@ -736,6 +959,10 @@ format_markdown() {
 	is_proxy=$(echo "$json" | jq -r '.summary.is_proxy')
 	is_vpn=$(echo "$json" | jq -r '.summary.is_vpn')
 
+	local cache_hits cache_misses
+	cache_hits=$(echo "$json" | jq -r '.summary.cache_hits // 0')
+	cache_misses=$(echo "$json" | jq -r '.summary.cache_misses // 0')
+
 	# Uppercase risk level (portable — no bash 4 ^^ operator)
 	local risk_upper
 	risk_upper=$(echo "$risk_level" | tr '[:lower:]' '[:upper:]')
@@ -754,21 +981,52 @@ format_markdown() {
 | Providers queried | ${providers_queried} |
 | Providers responded | ${providers_responded} |
 | Listed by | ${listed_by} provider(s) |
+| Cache hits | ${cache_hits} |
+| Cache misses | ${cache_misses} |
 | Tor exit node | ${is_tor} |
 | Proxy detected | ${is_proxy} |
 | VPN detected | ${is_vpn} |
 
 ## Provider Results
 
-| Provider | Risk Level | Score | Listed | Details |
-|----------|-----------|-------|--------|---------|
+| Provider | Risk Level | Score | Source | Listed | Details |
+|----------|-----------|-------|--------|--------|---------|
 EOF
 
-	echo "$json" | jq -r '.providers[] | "| \(.provider) | \(.risk_level // "error") | \(.score // 0) | \(.is_listed // false) | \(.error // "ok") |"' 2>/dev/null
+	echo "$json" | jq -r '.providers[] | "| \(.provider) | \(.risk_level // "error") | \(.score // 0) | \(if .cached then "cached" else "live" end) | \(.is_listed // false) | \(.error // "ok") |"' 2>/dev/null
 
 	echo ""
 	echo "---"
 	echo "*Generated by ip-reputation-helper.sh v${VERSION}*"
+	return 0
+}
+
+# Format results as compact one-line summary (for scripting/batch)
+format_compact() {
+	local json="$1"
+
+	local ip risk_level unified_score listed_by is_tor is_proxy is_vpn
+	ip=$(echo "$json" | jq -r '.ip')
+	risk_level=$(echo "$json" | jq -r '.risk_level')
+	unified_score=$(echo "$json" | jq -r '.unified_score')
+	listed_by=$(echo "$json" | jq -r '.summary.listed_by')
+	is_tor=$(echo "$json" | jq -r '.summary.is_tor')
+	is_proxy=$(echo "$json" | jq -r '.summary.is_proxy')
+	is_vpn=$(echo "$json" | jq -r '.summary.is_vpn')
+
+	local risk_upper
+	risk_upper=$(echo "$risk_level" | tr '[:lower:]' '[:upper:]')
+
+	local color
+	color=$(risk_color "$risk_level")
+
+	local flags=""
+	[[ "$is_tor" == "true" ]] && flags="${flags}Tor "
+	[[ "$is_proxy" == "true" ]] && flags="${flags}Proxy "
+	[[ "$is_vpn" == "true" ]] && flags="${flags}VPN "
+	[[ -z "$flags" ]] && flags="none"
+
+	echo -e "${ip}  ${color}${risk_upper}$(c_nc) (${unified_score}/100)  listed:${listed_by}  flags:${flags}"
 	return 0
 }
 
@@ -780,6 +1038,7 @@ output_results() {
 	case "$format" in
 	json) echo "$json" ;;
 	markdown) format_markdown "$json" ;;
+	compact) format_compact "$json" ;;
 	table | *) format_table "$json" ;;
 	esac
 	return 0
@@ -830,6 +1089,8 @@ cmd_check() {
 			shift
 			;;
 		--no-color)
+			IP_REP_NO_COLOR="true"
+			disable_colors
 			shift
 			;;
 		# Batch-mode passthrough flags (ignored in single-check context)
@@ -1002,6 +1263,11 @@ cmd_batch() {
 			use_cache="false"
 			shift
 			;;
+		--no-color)
+			IP_REP_NO_COLOR="true"
+			disable_colors
+			shift
+			;;
 		--rate-limit)
 			rate_limit="$2"
 			shift 2
@@ -1122,23 +1388,25 @@ cmd_batch() {
 
 	# Batch summary
 	echo ""
-	echo -e "${BOLD}${CYAN}=== Batch Results ===${NC}"
+	echo -e "$(c_bold)$(c_cyan)=== Batch Results ===$(c_nc)"
 	echo -e "File:     ${file}"
 	echo -e "Total:    ${processed} IPs processed"
-	echo -e "Clean:    ${GREEN}${clean}${NC}"
-	echo -e "Flagged:  ${RED}${flagged}${NC}"
+	echo -e "Clean:    $(c_green)${clean}$(c_nc)"
+	echo -e "Flagged:  $(c_red)${flagged}$(c_nc)"
 	[[ "$dnsbl_overlap" == "true" ]] && echo -e "DNSBL:    overlap check enabled"
 	echo ""
 
 	# Show flagged IPs
 	if [[ "$flagged" -gt 0 ]]; then
-		echo -e "${BOLD}Flagged IPs:${NC}"
+		echo -e "$(c_bold)Flagged IPs:$(c_nc)"
+		local _nc_batch
+		_nc_batch=$(c_nc)
 		echo "$batch_results" | jq -r '.[] | select(.risk_level != "clean") | "\(.ip)\t\(.risk_level)\t\(.unified_score)\t\(.recommendation)"' 2>/dev/null |
 			while IFS=$'\t' read -r batch_ip risk score rec; do
 				local color risk_upper
 				color=$(risk_color "$risk")
 				risk_upper=$(echo "$risk" | tr '[:lower:]' '[:upper:]')
-				echo -e "  ${batch_ip}  ${color}${risk_upper}${NC} (${score})  ${rec}"
+				echo -e "  ${batch_ip}  ${color}${risk_upper}${_nc_batch} (${score})  ${rec}"
 			done
 		echo ""
 	fi
@@ -1208,7 +1476,7 @@ cmd_report() {
 # List all providers and their status
 cmd_providers() {
 	echo ""
-	echo -e "${BOLD}${CYAN}=== IP Reputation Providers ===${NC}"
+	echo -e "$(c_bold)$(c_cyan)=== IP Reputation Providers ===$(c_nc)"
 	echo ""
 	printf "  %-18s %-20s %-10s %-12s %s\n" "Provider" "Display Name" "Status" "Key Req." "Free Tier"
 	printf "  %-18s %-20s %-10s %-12s %s\n" "--------" "------------" "------" "--------" "---------"
@@ -1228,9 +1496,9 @@ cmd_providers() {
 			info=$("$script_path" info 2>/dev/null || echo '{}')
 			key_req=$(echo "$info" | jq -r '.requires_key // false | if . then "yes" else "no" end')
 			free_tier=$(echo "$info" | jq -r '.free_tier // "unknown"')
-			status="${GREEN}available${NC}"
+			status="$(c_green)available$(c_nc)"
 		else
-			status="${RED}missing${NC}"
+			status="$(c_red)missing$(c_nc)"
 			key_req="-"
 			free_tier="-"
 		fi
@@ -1262,18 +1530,20 @@ Arguments:
 Options:
   --provider, -p <p>    Use only specified provider (default: all available)
   --timeout, -t <s>     Per-provider timeout in seconds (default: ${IP_REP_DEFAULT_TIMEOUT})
-  --format, -f <fmt>    Output format: table (default), json, markdown
+  --format, -f <fmt>    Output format: table (default), json, markdown, compact
   --parallel            Run providers in parallel (default)
   --sequential          Run providers sequentially
   --no-cache            Bypass cache for this query
-  --no-color            Disable color output
+  --no-color            Disable color output (also respects NO_COLOR env)
 
 Examples:
   $(basename "$0") check 1.2.3.4
   $(basename "$0") check 1.2.3.4 -f json
   $(basename "$0") check 1.2.3.4 --format markdown
+  $(basename "$0") check 1.2.3.4 --format compact
   $(basename "$0") check 1.2.3.4 --provider abuseipdb
   $(basename "$0") check 1.2.3.4 --no-cache
+  $(basename "$0") check 1.2.3.4 --no-color
   $(basename "$0") check 1.2.3.4 --sequential --timeout 30
 EOF
 	return 0
@@ -1362,22 +1632,23 @@ print_usage() {
 Usage: $(basename "$0") <command> [options]
 
 Commands:
-  check <ip>        Check reputation of a single IP address
-  batch <file>      Check multiple IPs from file (one per line)
-  report <ip>       Generate detailed markdown report for an IP
-  providers         List available providers and their status
-  cache-stats       Show SQLite cache statistics
-  cache-clear       Clear cache entries (--provider, --ip filters)
-  help              Show this help message
+  check <ip>          Check reputation of a single IP address
+  batch <file>        Check multiple IPs from file (one per line)
+  report <ip>         Generate detailed markdown report for an IP
+  providers           List available providers and their status
+  cache-stats         Show SQLite cache statistics
+  cache-clear         Clear cache entries (--provider, --ip filters)
+  rate-limit-status   Show per-provider rate limit status and history
+  help                Show this help message
 
 Options:
   --provider <p>    Use only specified provider
   --timeout <s>     Per-provider timeout in seconds (default: ${IP_REP_DEFAULT_TIMEOUT})
-  --format <fmt>    Output format: table (default), json, markdown
+  --format <fmt>    Output format: table (default), json, markdown, compact
   --parallel        Run providers in parallel (default)
   --sequential      Run providers sequentially
   --no-cache        Bypass cache for this query
-  --no-color        Disable color output
+  --no-color        Disable color output (also respects NO_COLOR env)
   --rate-limit <n>  Requests/second per provider in batch mode (default: 2)
   --dnsbl-overlap   Cross-reference with DNSBL in batch mode
 
@@ -1414,8 +1685,10 @@ Environment:
 Examples:
   $(basename "$0") check 1.2.3.4
   $(basename "$0") check 1.2.3.4 --format json
+  $(basename "$0") check 1.2.3.4 --format compact
   $(basename "$0") check 1.2.3.4 --provider spamhaus
   $(basename "$0") check 1.2.3.4 --no-cache
+  $(basename "$0") check 1.2.3.4 --no-color
   $(basename "$0") batch ips.txt
   $(basename "$0") batch ips.txt --rate-limit 1 --dnsbl-overlap
   $(basename "$0") batch ips.txt --format json
@@ -1424,6 +1697,7 @@ Examples:
   $(basename "$0") cache-stats
   $(basename "$0") cache-clear --provider abuseipdb
   $(basename "$0") cache-clear --ip 1.2.3.4
+  $(basename "$0") rate-limit-status
 EOF
 	return 0
 }
@@ -1435,6 +1709,13 @@ EOF
 main() {
 	local command="${1:-help}"
 	shift || true
+
+	# Handle global --no-color before dispatch (for commands that don't parse it)
+	if [[ "${NO_COLOR:-}" == "true" || "${NO_COLOR:-}" == "1" ]]; then
+		# shellcheck disable=SC2034
+		IP_REP_NO_COLOR="true"
+		disable_colors
+	fi
 
 	case "$command" in
 	check)
@@ -1454,6 +1735,10 @@ main() {
 		;;
 	cache-clear | cache_clear)
 		cmd_cache_clear "$@"
+		;;
+	rate-limit-status | rate_limit_status)
+		cache_init
+		cmd_rate_limit_status
 		;;
 	help | --help | -h)
 		print_usage

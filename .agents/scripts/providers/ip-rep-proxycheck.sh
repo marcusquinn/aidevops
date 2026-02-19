@@ -95,14 +95,36 @@ cmd_check() {
 		url="${url}&key=${api_key}"
 	fi
 
-	local response
-	response=$(curl -sf \
+	local response http_code
+	local tmp_body
+	tmp_body=$(mktemp)
+	# shellcheck disable=SC2064
+	trap "rm -f '${tmp_body}'" RETURN
+	http_code=$(curl -s -o "$tmp_body" -w '%{http_code}' \
 		--max-time "$timeout" \
 		-H "Accept: application/json" \
 		"$url" 2>/dev/null) || {
+		rm -f "$tmp_body"
 		error_json "$ip" "curl request failed"
 		return 0
 	}
+	response=$(cat "$tmp_body")
+	rm -f "$tmp_body"
+
+	# Handle HTTP 429 rate limiting
+	if [[ "$http_code" == "429" ]]; then
+		jq -n \
+			--arg provider "$PROVIDER_NAME" \
+			--arg ip "$ip" \
+			'{provider: $provider, ip: $ip, error: "rate_limited", retry_after: 60, is_listed: false, score: 0, risk_level: "unknown"}'
+		return 0
+	fi
+
+	# Handle other HTTP errors
+	if [[ "$http_code" -ge 400 ]]; then
+		error_json "$ip" "HTTP ${http_code}"
+		return 0
+	fi
 
 	if ! echo "$response" | jq empty 2>/dev/null; then
 		error_json "$ip" "invalid JSON response"
@@ -115,6 +137,14 @@ cmd_check() {
 	if [[ "$status" == "error" ]]; then
 		local api_error
 		api_error=$(echo "$response" | jq -r '.message // "unknown error"')
+		# ProxyCheck returns "Denied" when rate limited without 429 header
+		if [[ "$api_error" == *"limit"* || "$api_error" == *"Denied"* ]]; then
+			jq -n \
+				--arg provider "$PROVIDER_NAME" \
+				--arg ip "$ip" \
+				'{provider: $provider, ip: $ip, error: "rate_limited", retry_after: 60, is_listed: false, score: 0, risk_level: "unknown"}'
+			return 0
+		fi
 		error_json "$ip" "$api_error"
 		return 0
 	fi

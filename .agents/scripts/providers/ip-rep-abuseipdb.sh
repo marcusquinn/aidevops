@@ -96,8 +96,12 @@ cmd_check() {
 		return 0
 	fi
 
-	local response
-	response=$(curl -sf \
+	local response http_code
+	local tmp_body
+	tmp_body=$(mktemp)
+	# shellcheck disable=SC2064
+	trap "rm -f '${tmp_body}'" RETURN
+	http_code=$(curl -s -o "$tmp_body" -w '%{http_code}' \
 		--max-time "$timeout" \
 		-H "Key: ${api_key}" \
 		-H "Accept: application/json" \
@@ -106,9 +110,32 @@ cmd_check() {
 		--data-urlencode "maxAgeInDays=90" \
 		--data-urlencode "verbose" \
 		"${API_BASE}/check" 2>/dev/null) || {
+		rm -f "$tmp_body"
 		error_json "$ip" "curl request failed"
 		return 0
 	}
+	response=$(cat "$tmp_body")
+	rm -f "$tmp_body"
+
+	# Handle HTTP 429 rate limiting
+	if [[ "$http_code" == "429" ]]; then
+		# AbuseIPDB returns retry-after info in the response body
+		local retry_after
+		retry_after=$(echo "$response" | jq -r '.errors[0].detail // empty' 2>/dev/null | grep -oE '[0-9]+' | head -1 || echo "60")
+		[[ -z "$retry_after" ]] && retry_after=60
+		jq -n \
+			--arg provider "$PROVIDER_NAME" \
+			--arg ip "$ip" \
+			--argjson retry_after "$retry_after" \
+			'{provider: $provider, ip: $ip, error: "rate_limited", retry_after: $retry_after, is_listed: false, score: 0, risk_level: "unknown"}'
+		return 0
+	fi
+
+	# Handle other HTTP errors
+	if [[ "$http_code" -ge 400 ]]; then
+		error_json "$ip" "HTTP ${http_code}"
+		return 0
+	fi
 
 	# Validate JSON
 	if ! echo "$response" | jq empty 2>/dev/null; then
@@ -120,6 +147,14 @@ cmd_check() {
 	local api_error
 	api_error=$(echo "$response" | jq -r '.errors[0].detail // empty' 2>/dev/null || true)
 	if [[ -n "$api_error" ]]; then
+		# Check if error message indicates rate limiting
+		if [[ "$api_error" == *"rate limit"* || "$api_error" == *"quota"* || "$api_error" == *"exceeded"* ]]; then
+			jq -n \
+				--arg provider "$PROVIDER_NAME" \
+				--arg ip "$ip" \
+				'{provider: $provider, ip: $ip, error: "rate_limited", retry_after: 60, is_listed: false, score: 0, risk_level: "unknown"}'
+			return 0
+		fi
 		error_json "$ip" "$api_error"
 		return 0
 	fi
