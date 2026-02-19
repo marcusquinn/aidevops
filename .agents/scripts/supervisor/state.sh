@@ -969,6 +969,7 @@ cmd_next() {
             WHERE bt.batch_id = '$escaped_batch'
             AND t.status = 'queued'
             AND t.retries < t.max_retries
+            AND (t.rate_limit_until IS NULL OR t.rate_limit_until <= strftime('%Y-%m-%dT%H:%M:%SZ','now'))
             ORDER BY t.retries ASC, bt.position
             LIMIT $((limit * 5));
         ")
@@ -978,6 +979,7 @@ cmd_next() {
             FROM tasks
             WHERE status = 'queued'
             AND retries < max_retries
+            AND (rate_limit_until IS NULL OR rate_limit_until <= strftime('%Y-%m-%dT%H:%M:%SZ','now'))
             ORDER BY retries ASC, created_at ASC
             LIMIT $((limit * 5));
         ")
