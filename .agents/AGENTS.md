@@ -389,6 +389,7 @@ Orchestration agents can create drafts in `draft/` for reusable parallel process
 | Cloud GPU | `tools/infrastructure/cloud-gpu.md` |
 | Containers | `tools/containers/orbstack.md` |
 | Networking | `services/networking/tailscale.md` |
+| Localhost | `services/hosting/local-hosting.md` (primary — localdev-helper.sh, dnsmasq, Traefik, mkcert, port registry), `services/hosting/localhost.md` (legacy reference) |
 | Personal AI | `tools/ai-assistants/openclaw.md` (deployment tiers, security, channels) |
 | Research | `tools/research/tech-stack-lookup.md`, `tech-stack-helper.sh`, `/tech-stack` (tech stack detection, reverse lookup) |
 | Model routing | `tools/context/model-routing.md`, `model-registry-helper.sh`, `fallback-chain-helper.sh`, `model-availability-helper.sh`, `budget-tracker-helper.sh` |
@@ -483,4 +484,4 @@ Proactively use a browser for: dev server verification, form testing, deployment
 
 ## Localhost Standards
 
-`.local` domains + SSL via Traefik + mkcert. See `services/hosting/localhost.md`.
+`.local` domains + SSL via Traefik + mkcert. See `services/hosting/local-hosting.md` (primary) or `services/hosting/localhost.md` (legacy).
