@@ -9,6 +9,8 @@
 #   ip-reputation-helper.sh batch <file> [options]
 #   ip-reputation-helper.sh report <ip> [options]
 #   ip-reputation-helper.sh providers
+#   ip-reputation-helper.sh cache-stats
+#   ip-reputation-helper.sh cache-clear [--provider <p>] [--ip <ip>]
 #   ip-reputation-helper.sh help
 #
 # Options:
@@ -18,31 +20,58 @@
 #   --parallel        Run providers in parallel (default)
 #   --sequential      Run providers sequentially
 #   --no-color        Disable color output
+#   --no-cache        Bypass cache for this query
+#   --rate-limit <n>  Requests per second per provider in batch mode (default: 2)
+#   --dnsbl-overlap   Cross-reference results with email-health-check-helper.sh DNSBL
 #
 # Providers (free/no-key):
 #   spamhaus      Spamhaus DNSBL (SBL/XBL/PBL via dig)
 #   proxycheck    ProxyCheck.io (proxy/VPN/Tor detection)
 #   stopforumspam StopForumSpam (forum spammer database)
 #   blocklistde   Blocklist.de (attack/botnet IPs)
+#   greynoise     GreyNoise Community API (internet noise scanner)
 #
 # Providers (free tier with API key):
-#   abuseipdb     AbuseIPDB (community abuse reports, 1000/day free)
+#   abuseipdb       AbuseIPDB (community abuse reports, 1000/day free)
+#   ipqualityscore  IPQualityScore (fraud/proxy/VPN detection, 5000/month free)
+#   scamalytics     Scamalytics (fraud scoring, 5000/month free)
+#   shodan          Shodan (open ports, vulns, tags — free key, limited credits)
+#   iphub           IP Hub (proxy/VPN/hosting detection, 1000/day free)
 #
 # Risk levels: clean → low → medium → high → critical
 #
 # Environment variables:
-#   ABUSEIPDB_API_KEY     AbuseIPDB API key (free at abuseipdb.com)
-#   PROXYCHECK_API_KEY    ProxyCheck.io API key (optional, increases limit)
-#   IP_REP_TIMEOUT        Default per-provider timeout (default: 15)
-#   IP_REP_FORMAT         Default output format (default: table)
+#   ABUSEIPDB_API_KEY         AbuseIPDB API key (free at abuseipdb.com)
+#   PROXYCHECK_API_KEY        ProxyCheck.io API key (optional, increases limit)
+#   IPQUALITYSCORE_API_KEY    IPQualityScore API key (free at ipqualityscore.com)
+#   SCAMALYTICS_API_KEY       Scamalytics API key (free at scamalytics.com)
+#   GREYNOISE_API_KEY         GreyNoise API key (optional, enables full API)
+#   SHODAN_API_KEY            Shodan API key (free at shodan.io, limited credits)
+#   IPHUB_API_KEY             IP Hub API key (free at iphub.info)
+#   IP_REP_TIMEOUT            Default per-provider timeout (default: 15)
+#   IP_REP_FORMAT             Default output format (default: table)
+#   IP_REP_CACHE_DIR          SQLite cache directory (default: ~/.cache/ip-reputation)
+#   IP_REP_CACHE_TTL          Default cache TTL in seconds (default: 86400 = 24h)
+#   IP_REP_RATE_LIMIT         Requests per second per provider in batch (default: 2)
+#
+# Cache TTL per provider (seconds):
+#   spamhaus/blocklistde/stopforumspam: 3600  (1h — DNSBL data changes frequently)
+#   proxycheck/iphub:                   21600 (6h)
+#   abuseipdb/ipqualityscore:           86400 (24h)
+#   scamalytics/greynoise:              86400 (24h)
+#   shodan:                             604800 (7d — scan data changes slowly)
 #
 # Examples:
 #   ip-reputation-helper.sh check 1.2.3.4
 #   ip-reputation-helper.sh check 1.2.3.4 --format json
 #   ip-reputation-helper.sh check 1.2.3.4 --provider spamhaus
+#   ip-reputation-helper.sh check 1.2.3.4 --no-cache
 #   ip-reputation-helper.sh batch ips.txt
+#   ip-reputation-helper.sh batch ips.txt --rate-limit 1 --dnsbl-overlap
 #   ip-reputation-helper.sh report 1.2.3.4
 #   ip-reputation-helper.sh providers
+#   ip-reputation-helper.sh cache-stats
+#   ip-reputation-helper.sh cache-clear --provider abuseipdb
 
 set -euo pipefail
 
@@ -50,7 +79,7 @@ set -euo pipefail
 # Constants
 # =============================================================================
 
-readonly VERSION="1.0.0"
+readonly VERSION="2.0.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly SCRIPT_DIR
 readonly PROVIDERS_DIR="${SCRIPT_DIR}/providers"
@@ -62,7 +91,203 @@ source "${SCRIPT_DIR}/shared-constants.sh" 2>/dev/null || true
 [[ -f "${HOME}/.config/aidevops/credentials.sh" ]] && source "${HOME}/.config/aidevops/credentials.sh"
 
 # All available providers (order matters for display)
-readonly ALL_PROVIDERS="spamhaus proxycheck stopforumspam blocklistde abuseipdb"
+# greynoise has a free community API (no key required) but also supports keyed full API
+readonly ALL_PROVIDERS="spamhaus proxycheck stopforumspam blocklistde greynoise abuseipdb ipqualityscore scamalytics shodan iphub"
+
+# =============================================================================
+# SQLite Cache
+# =============================================================================
+
+readonly IP_REP_CACHE_DIR="${IP_REP_CACHE_DIR:-${HOME}/.cache/ip-reputation}"
+readonly IP_REP_CACHE_DB="${IP_REP_CACHE_DIR}/cache.db"
+readonly IP_REP_DEFAULT_CACHE_TTL="${IP_REP_CACHE_TTL:-86400}"
+
+# Per-provider TTL overrides (seconds)
+provider_cache_ttl() {
+	local provider="$1"
+	case "$provider" in
+	spamhaus | blocklistde | stopforumspam) echo "3600" ;;
+	proxycheck | iphub) echo "21600" ;;
+	shodan) echo "604800" ;;
+	*) echo "$IP_REP_DEFAULT_CACHE_TTL" ;;
+	esac
+	return 0
+}
+
+# Initialise SQLite cache database
+cache_init() {
+	if ! command -v sqlite3 &>/dev/null; then
+		return 0
+	fi
+	mkdir -p "$IP_REP_CACHE_DIR"
+	sqlite3 "$IP_REP_CACHE_DB" <<'SQL' 2>/dev/null || true
+CREATE TABLE IF NOT EXISTS ip_cache (
+    ip       TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    result   TEXT NOT NULL,
+    cached_at INTEGER NOT NULL,
+    ttl      INTEGER NOT NULL,
+    PRIMARY KEY (ip, provider)
+);
+CREATE INDEX IF NOT EXISTS idx_ip_cache_expiry ON ip_cache (cached_at, ttl);
+SQL
+	return 0
+}
+
+# Sanitize a provider name: allow only alphanumeric, hyphen, underscore
+# Returns 0 if valid, 1 if invalid
+sanitize_provider() {
+	local provider="$1"
+	[[ "$provider" =~ ^[a-zA-Z0-9_-]+$ ]]
+	return $?
+}
+
+# Get cached result for ip+provider; returns empty string if miss/expired
+# ip is validated as IPv4 (digits/dots only) by callers; provider is validated
+# by sanitize_provider ([a-zA-Z0-9_-]+) — neither can contain SQL metacharacters.
+cache_get() {
+	local ip="$1"
+	local provider="$2"
+	if ! command -v sqlite3 &>/dev/null; then
+		echo ""
+		return 0
+	fi
+	if ! sanitize_provider "$provider"; then
+		echo ""
+		return 0
+	fi
+	local now
+	now=$(date +%s)
+	local result
+	result=$(sqlite3 "$IP_REP_CACHE_DB" \
+		"SELECT result FROM ip_cache WHERE ip='${ip}' AND provider='${provider}' AND (cached_at + ttl) > ${now} LIMIT 1;" \
+		2>/dev/null || true)
+	echo "$result"
+	return 0
+}
+
+# Store result in cache
+# ip and provider are validated before this call; result (JSON) has single quotes escaped.
+cache_put() {
+	local ip="$1"
+	local provider="$2"
+	local result="$3"
+	local ttl="$4"
+	if ! command -v sqlite3 &>/dev/null; then
+		return 0
+	fi
+	if ! sanitize_provider "$provider"; then
+		return 0
+	fi
+	local now
+	now=$(date +%s)
+	# Escape single quotes in result JSON by doubling them (SQL standard)
+	local escaped_result
+	escaped_result=$(printf '%s' "$result" | sed "s/'/''/g")
+	sqlite3 "$IP_REP_CACHE_DB" \
+		"INSERT OR REPLACE INTO ip_cache (ip, provider, result, cached_at, ttl) VALUES ('${ip}', '${provider}', '${escaped_result}', ${now}, ${ttl});" \
+		2>/dev/null || true
+	return 0
+}
+
+# Show cache statistics
+cmd_cache_stats() {
+	if ! command -v sqlite3 &>/dev/null; then
+		log_warn "sqlite3 not available — caching disabled"
+		return 0
+	fi
+	if [[ ! -f "$IP_REP_CACHE_DB" ]]; then
+		log_info "Cache database not yet initialised (no queries run yet)"
+		return 0
+	fi
+	local now
+	now=$(date +%s)
+	echo ""
+	echo -e "${BOLD}${CYAN}=== IP Reputation Cache Statistics ===${NC}"
+	echo -e "Database: ${IP_REP_CACHE_DB}"
+	echo ""
+	sqlite3 "$IP_REP_CACHE_DB" <<SQL 2>/dev/null || true
+.mode column
+.headers on
+SELECT
+    provider,
+    COUNT(*) AS total_entries,
+    SUM(CASE WHEN (cached_at + ttl) > ${now} THEN 1 ELSE 0 END) AS valid,
+    SUM(CASE WHEN (cached_at + ttl) <= ${now} THEN 1 ELSE 0 END) AS expired,
+    MIN(datetime(cached_at, 'unixepoch')) AS oldest,
+    MAX(datetime(cached_at, 'unixepoch')) AS newest
+FROM ip_cache
+GROUP BY provider
+ORDER BY provider;
+SQL
+	echo ""
+	return 0
+}
+
+# Clear cache entries
+cmd_cache_clear() {
+	local specific_provider=""
+	local specific_ip=""
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--provider | -p)
+			specific_provider="$2"
+			shift 2
+			;;
+		--ip)
+			specific_ip="$2"
+			shift 2
+			;;
+		*)
+			shift
+			;;
+		esac
+	done
+
+	if ! command -v sqlite3 &>/dev/null; then
+		log_warn "sqlite3 not available — caching disabled"
+		return 0
+	fi
+	if [[ ! -f "$IP_REP_CACHE_DB" ]]; then
+		log_info "Cache database not found — nothing to clear"
+		return 0
+	fi
+
+	# Validate inputs before use in SQL to prevent injection
+	if [[ -n "$specific_provider" ]] && ! sanitize_provider "$specific_provider"; then
+		log_error "Invalid provider name: ${specific_provider}"
+		return 1
+	fi
+	if [[ -n "$specific_ip" ]] && ! [[ "$specific_ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+		log_error "Invalid IP address: ${specific_ip}"
+		return 1
+	fi
+
+	local deleted
+	if [[ -n "$specific_provider" && -n "$specific_ip" ]]; then
+		deleted=$(sqlite3 "$IP_REP_CACHE_DB" \
+			"DELETE FROM ip_cache WHERE provider=? AND ip=?; SELECT changes();" \
+			"$specific_provider" "$specific_ip" \
+			2>/dev/null || echo "0")
+	elif [[ -n "$specific_provider" ]]; then
+		deleted=$(sqlite3 "$IP_REP_CACHE_DB" \
+			"DELETE FROM ip_cache WHERE provider=?; SELECT changes();" \
+			"$specific_provider" \
+			2>/dev/null || echo "0")
+	elif [[ -n "$specific_ip" ]]; then
+		deleted=$(sqlite3 "$IP_REP_CACHE_DB" \
+			"DELETE FROM ip_cache WHERE ip=?; SELECT changes();" \
+			"$specific_ip" \
+			2>/dev/null || echo "0")
+	else
+		deleted=$(sqlite3 "$IP_REP_CACHE_DB" \
+			"DELETE FROM ip_cache; SELECT changes();" \
+			2>/dev/null || echo "0")
+	fi
+	log_success "Cleared ${deleted} cache entries"
+	return 0
+}
 
 # Portable timeout command (macOS uses gtimeout from coreutils, Linux has timeout)
 TIMEOUT_CMD=""
@@ -121,6 +346,11 @@ provider_script() {
 	spamhaus) echo "ip-rep-spamhaus.sh" ;;
 	stopforumspam) echo "ip-rep-stopforumspam.sh" ;;
 	blocklistde) echo "ip-rep-blocklistde.sh" ;;
+	greynoise) echo "ip-rep-greynoise.sh" ;;
+	ipqualityscore) echo "ip-rep-ipqualityscore.sh" ;;
+	scamalytics) echo "ip-rep-scamalytics.sh" ;;
+	shodan) echo "ip-rep-shodan.sh" ;;
+	iphub) echo "ip-rep-iphub.sh" ;;
 	*) echo "" ;;
 	esac
 	return 0
@@ -135,6 +365,11 @@ provider_display_name() {
 	spamhaus) echo "Spamhaus DNSBL" ;;
 	stopforumspam) echo "StopForumSpam" ;;
 	blocklistde) echo "Blocklist.de" ;;
+	greynoise) echo "GreyNoise" ;;
+	ipqualityscore) echo "IPQualityScore" ;;
+	scamalytics) echo "Scamalytics" ;;
+	shodan) echo "Shodan" ;;
+	iphub) echo "IP Hub" ;;
 	*) echo "$provider" ;;
 	esac
 	return 0
@@ -173,10 +408,12 @@ get_available_providers() {
 # =============================================================================
 
 # Run a single provider and write JSON result to stdout
+# Checks SQLite cache first; falls back to live query on miss/expiry
 run_provider() {
 	local provider="$1"
 	local ip="$2"
 	local timeout_secs="$3"
+	local use_cache="${4:-true}"
 
 	local script
 	script=$(provider_script "$provider")
@@ -190,6 +427,17 @@ run_provider() {
 		return 0
 	fi
 
+	# Check cache first (skip if --no-cache or provider errored last time)
+	if [[ "$use_cache" == "true" ]]; then
+		local cached
+		cached=$(cache_get "$ip" "$provider")
+		if [[ -n "$cached" ]]; then
+			# Annotate cached result
+			echo "$cached" | jq '. + {cached: true}'
+			return 0
+		fi
+	fi
+
 	local result
 	local run_cmd=("$script_path" check "$ip")
 	if [[ -n "$TIMEOUT_CMD" ]]; then
@@ -198,6 +446,14 @@ run_provider() {
 
 	if result=$("${run_cmd[@]}" 2>/dev/null); then
 		if echo "$result" | jq empty 2>/dev/null; then
+			# Only cache successful (non-error) results
+			local has_error
+			has_error=$(echo "$result" | jq -r '.error // empty')
+			if [[ -z "$has_error" && "$use_cache" == "true" ]]; then
+				local ttl
+				ttl=$(provider_cache_ttl "$provider")
+				cache_put "$ip" "$provider" "$result" "$ttl"
+			fi
 			echo "$result"
 		else
 			jq -n \
@@ -532,6 +788,7 @@ cmd_check() {
 	local run_parallel=true
 	local timeout_secs="$IP_REP_DEFAULT_TIMEOUT"
 	local output_format="$IP_REP_DEFAULT_FORMAT"
+	local use_cache="true"
 
 	# Parse arguments
 	while [[ $# -gt 0 ]]; do
@@ -556,7 +813,16 @@ cmd_check() {
 			run_parallel=false
 			shift
 			;;
+		--no-cache)
+			use_cache="false"
+			shift
+			;;
 		--no-color)
+			shift
+			;;
+		# Batch-mode passthrough flags (ignored in single-check context)
+		--rate-limit | --dnsbl-overlap)
+			[[ "$1" == "--rate-limit" ]] && shift
 			shift
 			;;
 		-*)
@@ -585,6 +851,9 @@ cmd_check() {
 	fi
 
 	log_info "Checking IP reputation for: ${ip}"
+
+	# Initialise cache
+	cache_init
 
 	# Determine providers to use
 	local -a providers_to_run=()
@@ -622,7 +891,7 @@ cmd_check() {
 
 			(
 				local result
-				result=$(run_provider "$provider" "$ip" "$timeout_secs")
+				result=$(run_provider "$provider" "$ip" "$timeout_secs" "$use_cache")
 				echo "$result" >"$result_file"
 			) &
 			pids+=($!)
@@ -640,7 +909,7 @@ cmd_check() {
 			local result_file="${tmp_dir}/${provider}.json"
 			result_files+=("$result_file")
 			local result
-			result=$(run_provider "$provider" "$ip" "$timeout_secs")
+			result=$(run_provider "$provider" "$ip" "$timeout_secs" "$use_cache")
 			echo "$result" >"$result_file"
 		done
 	fi
@@ -656,12 +925,48 @@ cmd_check() {
 	return 0
 }
 
+# DNSBL overlap check — performs standalone DNS lookups against common blacklists.
+# Returns JSON array of blacklists the IP appears on.
+# Uses the same DNSBL zones as email-health-check-helper.sh for cross-tool consistency.
+dnsbl_overlap_check() {
+	local ip="$1"
+
+	if ! command -v dig &>/dev/null; then
+		echo "[]"
+		return 0
+	fi
+
+	# Reverse IP for DNSBL lookup
+	local reversed_ip
+	reversed_ip=$(echo "$ip" | awk -F. '{print $4"."$3"."$2"."$1}')
+
+	# Common DNSBL zones (same set used by email-health-check-helper.sh)
+	local blacklists="zen.spamhaus.org bl.spamcop.net b.barracudacentral.org"
+	local listed_on="[]"
+
+	local bl
+	for bl in $blacklists; do
+		local result
+		result=$(dig A "${reversed_ip}.${bl}" +short 2>/dev/null || true)
+		if [[ -n "$result" && "$result" != *"NXDOMAIN"* ]]; then
+			listed_on=$(echo "$listed_on" | jq --arg bl "$bl" '. + [$bl]')
+		fi
+	done
+
+	echo "$listed_on"
+	return 0
+}
+
 # Batch check IPs from a file (one IP per line)
+# Supports rate limiting across providers and optional DNSBL overlap
 cmd_batch() {
 	local file=""
 	local output_format="$IP_REP_DEFAULT_FORMAT"
 	local timeout_secs="$IP_REP_DEFAULT_TIMEOUT"
 	local specific_provider=""
+	local use_cache="true"
+	local rate_limit="${IP_REP_RATE_LIMIT:-2}"
+	local dnsbl_overlap=false
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -676,6 +981,18 @@ cmd_batch() {
 		--provider | -p)
 			specific_provider="$2"
 			shift 2
+			;;
+		--no-cache)
+			use_cache="false"
+			shift
+			;;
+		--rate-limit)
+			rate_limit="$2"
+			shift 2
+			;;
+		--dnsbl-overlap)
+			dnsbl_overlap=true
+			shift
 			;;
 		-*)
 			log_warn "Unknown option: $1"
@@ -701,6 +1018,9 @@ cmd_batch() {
 		return 1
 	fi
 
+	# Initialise cache
+	cache_init
+
 	local total=0
 	local processed=0
 	local clean=0
@@ -708,9 +1028,27 @@ cmd_batch() {
 
 	# Count IPs
 	total=$(grep -cE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$' "$file" || echo 0)
-	log_info "Processing ${total} IPs from ${file}"
+	log_info "Processing ${total} IPs from ${file} (rate limit: ${rate_limit} req/s per provider)"
 
 	local batch_results="[]"
+
+	# Validate rate_limit is a positive integer
+	if ! [[ "$rate_limit" =~ ^[0-9]+$ ]]; then
+		log_warn "Invalid --rate-limit value '${rate_limit}' — must be a positive integer; defaulting to 2"
+		rate_limit=2
+	fi
+
+	# Rate limiting: sleep a fixed interval between IPs
+	# rate_limit=2 means 2 IPs/second → sleep 0.5s between IPs
+	# Uses awk for portable float division (bash doesn't do floats)
+	local sleep_between
+	if [[ "$rate_limit" -gt 0 ]]; then
+		sleep_between=$(awk "BEGIN {printf \"%.3f\", 1/$rate_limit}")
+	else
+		sleep_between="0"
+	fi
+
+	local first_ip=true
 
 	while IFS= read -r line; do
 		# Skip empty lines and comments
@@ -722,17 +1060,36 @@ cmd_batch() {
 			continue
 		fi
 
+		# Rate limiting: sleep between IPs (skip before first IP)
+		if [[ "$sleep_between" != "0" && "$first_ip" == "false" ]]; then
+			sleep "$sleep_between" 2>/dev/null || true
+		fi
+		first_ip=false
+
 		processed=$((processed + 1))
 		log_info "[${processed}/${total}] Checking ${line}..."
 
 		local check_args=("$line" "--format" "json" "--timeout" "$timeout_secs")
 		[[ -n "$specific_provider" ]] && check_args+=("--provider" "$specific_provider")
+		[[ "$use_cache" == "false" ]] && check_args+=("--no-cache")
 
 		local result
 		result=$(cmd_check "${check_args[@]}" 2>/dev/null) || {
 			log_warn "Failed to check ${line}"
 			continue
 		}
+
+		# DNSBL overlap integration
+		if [[ "$dnsbl_overlap" == "true" ]]; then
+			local dnsbl_hits
+			dnsbl_hits=$(dnsbl_overlap_check "$line")
+			local dnsbl_count
+			dnsbl_count=$(echo "$dnsbl_hits" | jq 'length')
+			result=$(echo "$result" | jq \
+				--argjson dnsbl_hits "$dnsbl_hits" \
+				--argjson dnsbl_count "$dnsbl_count" \
+				'. + {dnsbl_overlap: {listed_on: $dnsbl_hits, count: $dnsbl_count}}')
+		fi
 
 		local risk_level
 		risk_level=$(echo "$result" | jq -r '.risk_level // "unknown"')
@@ -754,17 +1111,18 @@ cmd_batch() {
 	echo -e "Total:    ${processed} IPs processed"
 	echo -e "Clean:    ${GREEN}${clean}${NC}"
 	echo -e "Flagged:  ${RED}${flagged}${NC}"
+	[[ "$dnsbl_overlap" == "true" ]] && echo -e "DNSBL:    overlap check enabled"
 	echo ""
 
 	# Show flagged IPs
 	if [[ "$flagged" -gt 0 ]]; then
 		echo -e "${BOLD}Flagged IPs:${NC}"
 		echo "$batch_results" | jq -r '.[] | select(.risk_level != "clean") | "\(.ip)\t\(.risk_level)\t\(.unified_score)\t\(.recommendation)"' 2>/dev/null |
-			while IFS=$'\t' read -r ip risk score rec; do
+			while IFS=$'\t' read -r batch_ip risk score rec; do
 				local color risk_upper
 				color=$(risk_color "$risk")
 				risk_upper=$(echo "$risk" | tr '[:lower:]' '[:upper:]')
-				echo -e "  ${ip}  ${color}${risk_upper}${NC} (${score})  ${rec}"
+				echo -e "  ${batch_ip}  ${color}${risk_upper}${NC} (${score})  ${rec}"
 			done
 		echo ""
 	fi
@@ -881,6 +1239,8 @@ Commands:
   batch <file>      Check multiple IPs from file (one per line)
   report <ip>       Generate detailed markdown report for an IP
   providers         List available providers and their status
+  cache-stats       Show SQLite cache statistics
+  cache-clear       Clear cache entries (--provider, --ip filters)
   help              Show this help message
 
 Options:
@@ -889,29 +1249,52 @@ Options:
   --format <fmt>    Output format: table (default), json, markdown
   --parallel        Run providers in parallel (default)
   --sequential      Run providers sequentially
+  --no-cache        Bypass cache for this query
   --no-color        Disable color output
+  --rate-limit <n>  Requests/second per provider in batch mode (default: 2)
+  --dnsbl-overlap   Cross-reference with DNSBL in batch mode
 
-Providers:
-  spamhaus          Spamhaus DNSBL (no key required)
-  proxycheck        ProxyCheck.io (no key required, optional key for more)
-  stopforumspam     StopForumSpam (no key required)
-  blocklistde       Blocklist.de (no key required)
-  abuseipdb         AbuseIPDB (free API key required: abuseipdb.com)
+Providers (no key required):
+  spamhaus          Spamhaus DNSBL (SBL/XBL/PBL)
+  proxycheck        ProxyCheck.io (optional key for higher limits)
+  stopforumspam     StopForumSpam
+  blocklistde       Blocklist.de
+  greynoise         GreyNoise Community API (optional key for full API)
+
+Providers (free API key required):
+  abuseipdb         AbuseIPDB — 1000/day free (abuseipdb.com)
+  ipqualityscore    IPQualityScore — 5000/month free (ipqualityscore.com)
+  scamalytics       Scamalytics — 5000/month free (scamalytics.com)
+  shodan            Shodan — free key, limited credits (shodan.io)
+  iphub             IP Hub — 1000/day free (iphub.info)
 
 Environment:
-  ABUSEIPDB_API_KEY     AbuseIPDB API key
-  PROXYCHECK_API_KEY    ProxyCheck.io API key (optional)
-  IP_REP_TIMEOUT        Default timeout (default: 15)
-  IP_REP_FORMAT         Default format (default: table)
+  ABUSEIPDB_API_KEY         AbuseIPDB API key
+  PROXYCHECK_API_KEY        ProxyCheck.io API key (optional)
+  IPQUALITYSCORE_API_KEY    IPQualityScore API key
+  SCAMALYTICS_API_KEY       Scamalytics API key
+  GREYNOISE_API_KEY         GreyNoise API key (optional, enables full API)
+  SHODAN_API_KEY            Shodan API key
+  IPHUB_API_KEY             IP Hub API key
+  IP_REP_TIMEOUT            Default timeout (default: 15)
+  IP_REP_FORMAT             Default format (default: table)
+  IP_REP_CACHE_DIR          SQLite cache directory (default: ~/.cache/ip-reputation)
+  IP_REP_CACHE_TTL          Default cache TTL in seconds (default: 86400)
+  IP_REP_RATE_LIMIT         Batch rate limit req/s (default: 2)
 
 Examples:
   $(basename "$0") check 1.2.3.4
   $(basename "$0") check 1.2.3.4 --format json
   $(basename "$0") check 1.2.3.4 --provider spamhaus
+  $(basename "$0") check 1.2.3.4 --no-cache
   $(basename "$0") batch ips.txt
+  $(basename "$0") batch ips.txt --rate-limit 1 --dnsbl-overlap
   $(basename "$0") batch ips.txt --format json
   $(basename "$0") report 1.2.3.4
   $(basename "$0") providers
+  $(basename "$0") cache-stats
+  $(basename "$0") cache-clear --provider abuseipdb
+  $(basename "$0") cache-clear --ip 1.2.3.4
 EOF
 	return 0
 }
@@ -936,6 +1319,12 @@ main() {
 		;;
 	providers)
 		cmd_providers
+		;;
+	cache-stats | cache_stats)
+		cmd_cache_stats
+		;;
+	cache-clear | cache_clear)
+		cmd_cache_clear "$@"
 		;;
 	help | --help | -h)
 		print_usage

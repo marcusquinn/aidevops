@@ -110,6 +110,10 @@ cmd_check() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--timeout)
+			[[ $# -lt 2 ]] && {
+				echo "Error: --timeout requires a value" >&2
+				return 1
+			}
 			timeout="$2"
 			shift 2
 			;;
