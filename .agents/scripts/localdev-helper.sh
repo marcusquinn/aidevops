@@ -24,8 +24,8 @@ fi
 # Paths
 readonly LOCALDEV_DIR="$HOME/.local-dev-proxy"
 readonly CONFD_DIR="$LOCALDEV_DIR/conf.d"
-readonly PORTS_FILE="$LOCALDEV_DIR/ports.json"
-readonly CERTS_DIR="$HOME/.local-ssl-certs"
+export PORTS_FILE="$LOCALDEV_DIR/ports.json"
+export CERTS_DIR="$HOME/.local-ssl-certs"
 readonly TRAEFIK_STATIC="$LOCALDEV_DIR/traefik.yml"
 readonly DOCKER_COMPOSE="$LOCALDEV_DIR/docker-compose.yml"
 readonly BACKUP_DIR="$LOCALDEV_DIR/backup"
@@ -211,7 +211,8 @@ migrate_dynamic_yml() {
 	fi
 
 	# Backup original
-	local backup_name="dynamic.yml.backup.$(date +%Y%m%d-%H%M%S)"
+	local backup_name
+	backup_name="dynamic.yml.backup.$(date +%Y%m%d-%H%M%S)"
 	cp "$dynamic_yml" "$BACKUP_DIR/$backup_name"
 	print_info "Backed up dynamic.yml to $BACKUP_DIR/$backup_name"
 
@@ -279,7 +280,8 @@ update_traefik_static_config() {
 	fi
 
 	# Backup and rewrite
-	local backup_name="traefik.yml.backup.$(date +%Y%m%d-%H%M%S)"
+	local backup_name
+	backup_name="traefik.yml.backup.$(date +%Y%m%d-%H%M%S)"
 	cp "$TRAEFIK_STATIC" "$BACKUP_DIR/$backup_name"
 	print_info "Backed up traefik.yml to $BACKUP_DIR/$backup_name"
 
@@ -326,7 +328,8 @@ update_docker_compose() {
 	fi
 
 	# Backup and rewrite
-	local backup_name="docker-compose.yml.backup.$(date +%Y%m%d-%H%M%S)"
+	local backup_name
+	backup_name="docker-compose.yml.backup.$(date +%Y%m%d-%H%M%S)"
 	cp "$DOCKER_COMPOSE" "$BACKUP_DIR/$backup_name"
 	print_info "Backed up docker-compose.yml to $BACKUP_DIR/$backup_name"
 
