@@ -298,6 +298,13 @@ launchd_install_supervisor_pulse() {
 	# GH_TOKEN is resolved at runtime by the pulse script (not baked into plist)
 	local env_path="${PATH}"
 
+	# Create named symlink so macOS System Settings shows "aidevops-supervisor-pulse"
+	# instead of the raw script name (t1260)
+	local bin_dir="$HOME/.aidevops/bin"
+	mkdir -p "$bin_dir"
+	local display_link="$bin_dir/aidevops-supervisor-pulse"
+	ln -sf "$script_path" "$display_link"
+
 	# Check if already loaded
 	if _launchd_is_loaded "$label"; then
 		log_warn "LaunchAgent $label already loaded. Unload first to change settings."
@@ -305,9 +312,9 @@ launchd_install_supervisor_pulse() {
 		return 0
 	fi
 
-	# Generate and write plist (no GH_TOKEN — resolved at runtime)
+	# Generate and write plist using symlink for display name (no GH_TOKEN — resolved at runtime)
 	_generate_supervisor_pulse_plist \
-		"$script_path" \
+		"$display_link" \
 		"$interval_seconds" \
 		"$log_path" \
 		"$batch_arg" \
@@ -422,15 +429,22 @@ launchd_install_auto_update() {
 
 	local env_path="${PATH}"
 
+	# Create named symlink so macOS System Settings shows "aidevops-auto-update"
+	# instead of the raw script name (t1260)
+	local bin_dir="$HOME/.aidevops/bin"
+	mkdir -p "$bin_dir"
+	local display_link="$bin_dir/aidevops-auto-update"
+	ln -sf "$script_path" "$display_link"
+
 	# Check if already loaded
 	if _launchd_is_loaded "$label"; then
 		log_warn "LaunchAgent $label already loaded. Unload first to change settings."
 		return 0
 	fi
 
-	# Generate and write plist
+	# Generate and write plist using symlink for display name
 	_generate_auto_update_plist \
-		"$script_path" \
+		"$display_link" \
 		"$interval_seconds" \
 		"$log_path" \
 		"$env_path" >"$plist_path"
@@ -539,15 +553,22 @@ launchd_install_todo_watcher() {
 
 	local env_path="${PATH}"
 
+	# Create named symlink so macOS System Settings shows "aidevops-todo-watcher"
+	# instead of the raw script name (t1260)
+	local bin_dir="$HOME/.aidevops/bin"
+	mkdir -p "$bin_dir"
+	local display_link="$bin_dir/aidevops-todo-watcher"
+	ln -sf "$script_path" "$display_link"
+
 	# Check if already loaded
 	if _launchd_is_loaded "$label"; then
 		log_warn "LaunchAgent $label already loaded."
 		return 0
 	fi
 
-	# Generate and write plist
+	# Generate and write plist using symlink for display name
 	_generate_todo_watcher_plist \
-		"$script_path" \
+		"$display_link" \
 		"$todo_path" \
 		"$repo_path" \
 		"$log_path" \

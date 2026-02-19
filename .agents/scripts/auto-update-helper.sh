@@ -593,7 +593,15 @@ cmd_enable() {
 		fi
 
 		mkdir -p "$LAUNCHD_DIR"
-		_generate_auto_update_plist "$script_path" "$interval_seconds" "${PATH}" >"$LAUNCHD_PLIST"
+
+		# Create named symlink so macOS System Settings shows "aidevops-auto-update"
+		# instead of the raw script name (t1260)
+		local bin_dir="$HOME/.aidevops/bin"
+		mkdir -p "$bin_dir"
+		local display_link="$bin_dir/aidevops-auto-update"
+		ln -sf "$script_path" "$display_link"
+
+		_generate_auto_update_plist "$display_link" "$interval_seconds" "${PATH}" >"$LAUNCHD_PLIST"
 
 		if launchctl load -w "$LAUNCHD_PLIST" 2>/dev/null; then
 			update_state "enable" "$(get_local_version)" "enabled"
