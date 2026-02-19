@@ -1779,3 +1779,12 @@
   check: file-exists .agents/scripts/supervisor/ai-reason.sh
   check: shellcheck tests/test-ai-actions.sh
   check: file-exists tests/test-ai-actions.sh
+
+- [ ] v216 t1113 Add worker_never_started diagnostic and auto-retry with e... | PR #1980 | merged:2026-02-19
+  files: .agents/scripts/supervisor/dispatch.sh, .agents/scripts/supervisor/evaluate.sh, .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/supervisor/dispatch.sh
+  check: file-exists .agents/scripts/supervisor/dispatch.sh
+  check: shellcheck .agents/scripts/supervisor/evaluate.sh
+  check: file-exists .agents/scripts/supervisor/evaluate.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
