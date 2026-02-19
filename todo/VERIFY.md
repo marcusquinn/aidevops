@@ -1619,14 +1619,19 @@
   check: shellcheck .agents/scripts/supervisor/dispatch.sh
   check: file-exists .agents/scripts/supervisor/dispatch.sh
 
-- [ ] v192 t1224.4 Implement `localdev db` — shared Postgres management. `... | PR #1920 | merged:2026-02-19
+- [x] v192 t1224.4 Implement `localdev db` — shared Postgres management. `... | PR #1920 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/localdev-helper.sh
   check: shellcheck .agents/scripts/localdev-helper.sh
   check: file-exists .agents/scripts/localdev-helper.sh
 
-- [ ] v193 t1240 Investigate awardsapp t004/t005 subtask state after cross... | PR #1925 | merged:2026-02-19
+- [x] v193 t1240 Investigate awardsapp t004/t005 subtask state after cross... | PR #1925 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/supervisor/ai-actions.sh, .agents/scripts/supervisor/ai-context.sh
   check: shellcheck .agents/scripts/supervisor/ai-actions.sh
   check: file-exists .agents/scripts/supervisor/ai-actions.sh
+  check: shellcheck .agents/scripts/supervisor/ai-context.sh
+  check: file-exists .agents/scripts/supervisor/ai-context.sh
+
+- [ ] v194 t1241 Add minimum estimate threshold bypass for trivial bugfixe... | PR #1930 | merged:2026-02-19
+  files: .agents/scripts/supervisor/ai-context.sh
   check: shellcheck .agents/scripts/supervisor/ai-context.sh
   check: file-exists .agents/scripts/supervisor/ai-context.sh
