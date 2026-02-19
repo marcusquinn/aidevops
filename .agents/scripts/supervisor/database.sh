@@ -727,6 +727,17 @@ CONTEST_SQL
 		log_success "Added timing columns to stale_recovery_log (t1249)"
 	fi
 
+	# Migrate: add eval_duration_secs column to tasks if missing (t1252)
+	# Records how long the AI evaluation step took — enables trend analysis and
+	# early detection of evaluation hangs before the full stale timeout fires.
+	local has_eval_duration_secs
+	has_eval_duration_secs=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('tasks') WHERE name='eval_duration_secs';" 2>/dev/null || echo "0")
+	if [[ "$has_eval_duration_secs" -eq 0 ]]; then
+		log_info "Migrating tasks table: adding eval_duration_secs column (t1252)..."
+		db "$SUPERVISOR_DB" "ALTER TABLE tasks ADD COLUMN eval_duration_secs INTEGER DEFAULT NULL;" 2>/dev/null || true
+		log_success "Added eval_duration_secs column to tasks (t1252)"
+	fi
+
 	# Prune old action_dedup_log entries (keep last 7 days)
 	db "$SUPERVISOR_DB" "DELETE FROM action_dedup_log WHERE created_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-7 days');" 2>/dev/null || true
 
@@ -783,6 +794,9 @@ CREATE TABLE IF NOT EXISTS tasks (
     -- t1249: timestamp set when task transitions to 'evaluating' state
     -- enables measurement of lag between worker completion and evaluation start
     evaluating_started_at TEXT,
+    -- t1252: duration of the AI evaluation step in seconds
+    -- enables trend analysis and early detection of evaluation hangs
+    eval_duration_secs INTEGER DEFAULT NULL,
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
     started_at      TEXT,
     completed_at    TEXT,
