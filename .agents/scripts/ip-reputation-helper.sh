@@ -97,7 +97,8 @@ source "${SCRIPT_DIR}/shared-constants.sh" 2>/dev/null || true
 # greynoise has a free community API (no key required) but also supports keyed full API
 readonly ALL_PROVIDERS="spamhaus proxycheck stopforumspam blocklistde greynoise abuseipdb virustotal ipqualityscore scamalytics shodan iphub"
 
-# Global color toggle (set by --no-color flag before any output)
+# Global color toggle (set by --no-color flag or NO_COLOR env before any output)
+# shellcheck disable=SC2034
 IP_REP_NO_COLOR="${NO_COLOR:-false}"
 
 # =============================================================================
@@ -296,7 +297,7 @@ cmd_rate_limit_status() {
 	local now
 	now=$(date +%s)
 	echo ""
-	echo -e "${BOLD}${CYAN}=== Rate Limit Status ===${NC}"
+	echo -e "$(c_bold)$(c_cyan)=== Rate Limit Status ===$(c_nc)"
 	echo ""
 	printf "  %-18s %-12s %-14s %-10s %s\n" "Provider" "Status" "Retry After" "Hits" "Last Hit"
 	printf "  %-18s %-12s %-14s %-10s %s\n" "--------" "------" "-----------" "----" "--------"
@@ -318,17 +319,17 @@ cmd_rate_limit_status() {
 		if [[ "$expires" -gt "$now" ]]; then
 			local remaining=$((expires - now))
 			status="LIMITED (${remaining}s)"
-			status_color="$RED"
+			status_color=$(c_red)
 		else
 			status="OK"
-			status_color="$GREEN"
+			status_color=$(c_green)
 		fi
 		local last_hit_fmt
 		last_hit_fmt=$(date -r "$hit_at" +"%Y-%m-%d %H:%M" 2>/dev/null || date -d "@${hit_at}" +"%Y-%m-%d %H:%M" 2>/dev/null || echo "unknown")
 		local display_name
 		display_name=$(provider_display_name "$provider")
 		printf "  %-18s " "$display_name"
-		echo -e "${status_color}${status}${NC}  ${retry_after}s           ${hit_count}         ${last_hit_fmt}"
+		echo -e "${status_color}${status}$(c_nc)  ${retry_after}s           ${hit_count}         ${last_hit_fmt}"
 	done
 
 	if [[ "$has_data" == "false" ]]; then
@@ -351,7 +352,7 @@ cmd_cache_stats() {
 	local now
 	now=$(date +%s)
 	echo ""
-	echo -e "${BOLD}${CYAN}=== IP Reputation Cache Statistics ===${NC}"
+	echo -e "$(c_bold)$(c_cyan)=== IP Reputation Cache Statistics ===$(c_nc)"
 	echo -e "Database: ${IP_REP_CACHE_DB}"
 	echo ""
 	sqlite3 "$IP_REP_CACHE_DB" <<SQL 2>/dev/null || true
@@ -459,14 +460,22 @@ readonly IP_REP_DEFAULT_FORMAT="${IP_REP_FORMAT:-table}"
 # =============================================================================
 
 # BOLD is not in shared-constants.sh — define it here
+# shellcheck disable=SC2034
 BOLD='\033[1m'
-readonly BOLD
+
+# Color accessor functions — return empty strings when --no-color is active.
+# This avoids reassigning readonly variables from shared-constants.sh.
+c_red() { [[ "$IP_REP_NO_COLOR" == "true" ]] && echo "" || echo "$RED"; }
+c_green() { [[ "$IP_REP_NO_COLOR" == "true" ]] && echo "" || echo "$GREEN"; }
+c_yellow() { [[ "$IP_REP_NO_COLOR" == "true" ]] && echo "" || echo "$YELLOW"; }
+c_cyan() { [[ "$IP_REP_NO_COLOR" == "true" ]] && echo "" || echo "$CYAN"; }
+c_nc() { [[ "$IP_REP_NO_COLOR" == "true" ]] && echo "" || echo "$NC"; }
+c_bold() { [[ "$IP_REP_NO_COLOR" == "true" ]] && echo "" || echo "$BOLD"; }
 
 # Disable colors when --no-color is active or NO_COLOR env is set
 # Called after argument parsing sets IP_REP_NO_COLOR
 disable_colors() {
-	# shellcheck disable=SC2034
-	RED="" GREEN="" YELLOW="" CYAN="" NC="" BOLD=""
+	IP_REP_NO_COLOR="true"
 	return 0
 }
 
@@ -475,22 +484,22 @@ disable_colors() {
 # =============================================================================
 
 log_info() {
-	echo -e "${CYAN}[INFO]${NC} $*" >&2
+	echo -e "$(c_cyan)[INFO]$(c_nc) $*" >&2
 	return 0
 }
 
 log_warn() {
-	echo -e "${YELLOW}[WARN]${NC} $*" >&2
+	echo -e "$(c_yellow)[WARN]$(c_nc) $*" >&2
 	return 0
 }
 
 log_error() {
-	echo -e "${RED}[ERROR]${NC} $*" >&2
+	echo -e "$(c_red)[ERROR]$(c_nc) $*" >&2
 	return 0
 }
 
 log_success() {
-	echo -e "${GREEN}[OK]${NC} $*" >&2
+	echo -e "$(c_green)[OK]$(c_nc) $*" >&2
 	return 0
 }
 
@@ -831,16 +840,16 @@ merge_results() {
 # Output Formatting
 # =============================================================================
 
-# Risk level color
+# Risk level color (respects --no-color)
 risk_color() {
 	local level="$1"
 	case "$level" in
-	critical) echo "$RED" ;;
-	high) echo "$RED" ;;
-	medium) echo "$YELLOW" ;;
-	low) echo "$YELLOW" ;;
-	clean) echo "$GREEN" ;;
-	*) echo "$NC" ;;
+	critical) c_red ;;
+	high) c_red ;;
+	medium) c_yellow ;;
+	low) c_yellow ;;
+	clean) c_green ;;
+	*) c_nc ;;
 	esac
 	return 0
 }
@@ -876,11 +885,11 @@ format_table() {
 	symbol=$(risk_symbol "$risk_level")
 
 	echo ""
-	echo -e "${BOLD}${CYAN}=== IP Reputation Report ===${NC}"
-	echo -e "IP:          ${BOLD}${ip}${NC}"
+	echo -e "$(c_bold)$(c_cyan)=== IP Reputation Report ===$(c_nc)"
+	echo -e "IP:          $(c_bold)${ip}$(c_nc)"
 	echo -e "Scanned:     ${scan_time}"
-	echo -e "Risk Level:  ${color}${BOLD}${symbol}${NC} (score: ${unified_score}/100)"
-	echo -e "Verdict:     ${color}${recommendation}${NC}"
+	echo -e "Risk Level:  ${color}$(c_bold)${symbol}$(c_nc) (score: ${unified_score}/100)"
+	echo -e "Verdict:     ${color}${recommendation}$(c_nc)"
 	echo ""
 
 	# Summary flags
@@ -896,33 +905,35 @@ format_table() {
 	cache_hits=$(echo "$json" | jq -r '.summary.cache_hits // 0')
 	cache_misses=$(echo "$json" | jq -r '.summary.cache_misses // 0')
 
-	echo -e "${BOLD}Summary:${NC}"
+	echo -e "$(c_bold)Summary:$(c_nc)"
 	echo -e "  Providers:  ${providers_responded}/${providers_queried} responded"
 	echo -e "  Listed by:  ${listed_by} provider(s)"
 	if [[ "$cache_hits" -gt 0 || "$cache_misses" -gt 0 ]]; then
 		echo -e "  Cache:      ${cache_hits} hit(s), ${cache_misses} miss(es)"
 	fi
 	local tor_flag proxy_flag vpn_flag
-	tor_flag=$([[ "$is_tor" == "true" ]] && echo "${RED}YES${NC}" || echo "${GREEN}NO${NC}")
-	proxy_flag=$([[ "$is_proxy" == "true" ]] && echo "${RED}YES${NC}" || echo "${GREEN}NO${NC}")
-	vpn_flag=$([[ "$is_vpn" == "true" ]] && echo "${YELLOW}YES${NC}" || echo "${GREEN}NO${NC}")
+	tor_flag=$([[ "$is_tor" == "true" ]] && echo "$(c_red)YES$(c_nc)" || echo "$(c_green)NO$(c_nc)")
+	proxy_flag=$([[ "$is_proxy" == "true" ]] && echo "$(c_red)YES$(c_nc)" || echo "$(c_green)NO$(c_nc)")
+	vpn_flag=$([[ "$is_vpn" == "true" ]] && echo "$(c_yellow)YES$(c_nc)" || echo "$(c_green)NO$(c_nc)")
 	echo -e "  Tor:        $(echo -e "$tor_flag")"
 	echo -e "  Proxy:      $(echo -e "$proxy_flag")"
 	echo -e "  VPN:        $(echo -e "$vpn_flag")"
 	echo ""
 
 	# Per-provider results
-	echo -e "${BOLD}Provider Results:${NC}"
+	echo -e "$(c_bold)Provider Results:$(c_nc)"
 	printf "  %-18s %-10s %-8s %-8s %s\n" "Provider" "Risk" "Score" "Source" "Details"
 	printf "  %-18s %-10s %-8s %-8s %s\n" "--------" "----" "-----" "------" "-------"
 
+	local _nc
+	_nc=$(c_nc)
 	echo "$json" | jq -r '.providers[] | [.provider, (.risk_level // "error"), (.score // 0 | tostring), (if .cached then "cached" else "live" end), (.error // (.is_listed | if . then "listed" else "clean" end))] | @tsv' 2>/dev/null |
 		while IFS=$'\t' read -r prov risk score source detail; do
 			local prov_color
 			prov_color=$(risk_color "$risk")
 			local display_name
 			display_name=$(provider_display_name "$prov")
-			printf "  %-18s ${prov_color}%-10s${NC} %-8s %-8s %s\n" "$display_name" "$risk" "$score" "$source" "$detail"
+			printf "  %-18s ${prov_color}%-10s${_nc} %-8s %-8s %s\n" "$display_name" "$risk" "$score" "$source" "$detail"
 		done
 
 	echo ""
@@ -1015,7 +1026,7 @@ format_compact() {
 	[[ "$is_vpn" == "true" ]] && flags="${flags}VPN "
 	[[ -z "$flags" ]] && flags="none"
 
-	echo -e "${ip}  ${color}${risk_upper}${NC} (${unified_score}/100)  listed:${listed_by}  flags:${flags}"
+	echo -e "${ip}  ${color}${risk_upper}$(c_nc) (${unified_score}/100)  listed:${listed_by}  flags:${flags}"
 	return 0
 }
 
@@ -1377,23 +1388,25 @@ cmd_batch() {
 
 	# Batch summary
 	echo ""
-	echo -e "${BOLD}${CYAN}=== Batch Results ===${NC}"
+	echo -e "$(c_bold)$(c_cyan)=== Batch Results ===$(c_nc)"
 	echo -e "File:     ${file}"
 	echo -e "Total:    ${processed} IPs processed"
-	echo -e "Clean:    ${GREEN}${clean}${NC}"
-	echo -e "Flagged:  ${RED}${flagged}${NC}"
+	echo -e "Clean:    $(c_green)${clean}$(c_nc)"
+	echo -e "Flagged:  $(c_red)${flagged}$(c_nc)"
 	[[ "$dnsbl_overlap" == "true" ]] && echo -e "DNSBL:    overlap check enabled"
 	echo ""
 
 	# Show flagged IPs
 	if [[ "$flagged" -gt 0 ]]; then
-		echo -e "${BOLD}Flagged IPs:${NC}"
+		echo -e "$(c_bold)Flagged IPs:$(c_nc)"
+		local _nc_batch
+		_nc_batch=$(c_nc)
 		echo "$batch_results" | jq -r '.[] | select(.risk_level != "clean") | "\(.ip)\t\(.risk_level)\t\(.unified_score)\t\(.recommendation)"' 2>/dev/null |
 			while IFS=$'\t' read -r batch_ip risk score rec; do
 				local color risk_upper
 				color=$(risk_color "$risk")
 				risk_upper=$(echo "$risk" | tr '[:lower:]' '[:upper:]')
-				echo -e "  ${batch_ip}  ${color}${risk_upper}${NC} (${score})  ${rec}"
+				echo -e "  ${batch_ip}  ${color}${risk_upper}${_nc_batch} (${score})  ${rec}"
 			done
 		echo ""
 	fi
@@ -1463,7 +1476,7 @@ cmd_report() {
 # List all providers and their status
 cmd_providers() {
 	echo ""
-	echo -e "${BOLD}${CYAN}=== IP Reputation Providers ===${NC}"
+	echo -e "$(c_bold)$(c_cyan)=== IP Reputation Providers ===$(c_nc)"
 	echo ""
 	printf "  %-18s %-20s %-10s %-12s %s\n" "Provider" "Display Name" "Status" "Key Req." "Free Tier"
 	printf "  %-18s %-20s %-10s %-12s %s\n" "--------" "------------" "------" "--------" "---------"
@@ -1483,9 +1496,9 @@ cmd_providers() {
 			info=$("$script_path" info 2>/dev/null || echo '{}')
 			key_req=$(echo "$info" | jq -r '.requires_key // false | if . then "yes" else "no" end')
 			free_tier=$(echo "$info" | jq -r '.free_tier // "unknown"')
-			status="${GREEN}available${NC}"
+			status="$(c_green)available$(c_nc)"
 		else
-			status="${RED}missing${NC}"
+			status="$(c_red)missing$(c_nc)"
 			key_req="-"
 			free_tier="-"
 		fi
@@ -1699,6 +1712,7 @@ main() {
 
 	# Handle global --no-color before dispatch (for commands that don't parse it)
 	if [[ "${NO_COLOR:-}" == "true" || "${NO_COLOR:-}" == "1" ]]; then
+		# shellcheck disable=SC2034
 		IP_REP_NO_COLOR="true"
 		disable_colors
 	fi
