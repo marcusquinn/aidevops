@@ -591,6 +591,7 @@ Respond with ONLY a JSON array of actions. Each action is an object with:
 - Keep comments professional and concise.
 - If nothing needs attention, return an empty array: []
 - Maximum 10 actions per reasoning cycle to keep changes manageable.
+- **CRITICAL — DUPLICATE PREVENTION**: Before proposing `create_task` or `create_improvement`, scan the TODO tasks list in the context for ANY existing task (open OR recently completed) that addresses the same root cause, symptom, or investigation area. If such a task exists, DO NOT create a new one — instead, comment on the existing task's issue or adjust its priority. Creating duplicate investigation tasks wastes tokens and compute. A task completed yesterday about the same symptom means the fix is either deployed (wait and observe) or failed (reopen/escalate the existing task). Never create a new task when an existing one covers the same ground.
 - For model selection on new tasks: use the cheapest tier that can succeed. Check pattern data — if similar tasks have >75% success at sonnet, don't use opus. Default to sonnet unless the task requires complex reasoning or architecture decisions.
 - For escalate_model: only recommend when pattern data shows repeated failures at the current tier, or when the task description clearly requires capabilities beyond the current tier.
 - For create_improvement: focus on changes that reduce future token spend or manual intervention. Quantify the expected benefit when possible (e.g., "saves ~500 tokens/task" or "eliminates manual step that fails 30% of the time").
