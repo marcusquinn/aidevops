@@ -373,6 +373,66 @@ cmd_watch() {
 }
 
 #######################################
+# Check if a task has unresolved blocked-by dependencies (t1243).
+# Parses the blocked-by: field from a TODO.md task line and checks
+# whether each blocker is completed ([x]) or declined ([-]) in TODO.md.
+#
+# Returns 0 (blocked) if any dependency is unresolved, outputting
+# the unresolved blocker IDs to stdout. Returns 1 (not blocked)
+# if all dependencies are resolved or no blocked-by: field exists.
+#
+# Args:
+#   $1 - task line from TODO.md
+#   $2 - path to TODO.md file
+#
+# Stdout: comma-separated unresolved blocker IDs (only on return 0)
+# Returns: 0 = blocked, 1 = not blocked
+#######################################
+is_task_blocked() {
+	local task_line="$1"
+	local todo_file="$2"
+
+	# Extract blocked-by: field
+	local blocked_by
+	blocked_by=$(printf '%s' "$task_line" | grep -oE 'blocked-by:[^ ]+' | sed 's/blocked-by://' || true)
+
+	if [[ -z "$blocked_by" ]]; then
+		return 1 # No dependencies — not blocked
+	fi
+
+	# Check each dependency
+	local unresolved=""
+	local dep
+	IFS=',' read -ra deps <<<"$blocked_by"
+	for dep in "${deps[@]}"; do
+		dep="${dep// /}"
+		[[ -z "$dep" ]] && continue
+
+		# Check if dependency is completed ([x]) or declined ([-]) in TODO.md
+		if grep -qE "^[[:space:]]*- \[x\] ${dep}( |$)" "$todo_file" 2>/dev/null; then
+			continue # Resolved
+		fi
+		if grep -qE "^[[:space:]]*- \[-\] ${dep}( |$)" "$todo_file" 2>/dev/null; then
+			continue # Declined = resolved
+		fi
+
+		# Unresolved
+		if [[ -n "$unresolved" ]]; then
+			unresolved="${unresolved},${dep}"
+		else
+			unresolved="$dep"
+		fi
+	done
+
+	if [[ -n "$unresolved" ]]; then
+		echo "$unresolved"
+		return 0 # Blocked
+	fi
+
+	return 1 # All resolved — not blocked
+}
+
+#######################################
 # Check if a task is blocked by unresolved dependencies.
 # Returns 0 (should skip) if blocked, 1 (should not skip) otherwise.
 # Usage: _check_and_skip_if_blocked <line> <task_id> <todo_file>

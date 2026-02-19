@@ -914,6 +914,107 @@ update_todo_on_blocked() {
 }
 
 #######################################
+# t1243: Auto-unblock tasks whose blocked-by dependencies are all resolved.
+# Scans TODO.md for open tasks with blocked-by: fields, checks whether
+# all blockers are completed ([x]) or declined ([-]), and removes the
+# blocked-by: field from tasks that are fully unblocked.
+#
+# This enables the supervisor to automatically detect when blocking tasks
+# transition to verified/completed and make dependent tasks dispatchable
+# without manual intervention.
+#
+# Args:
+#   $1 - repo path
+#
+# Returns:
+#   0 on success (even if no tasks were unblocked)
+#   1 on failure (TODO.md not found)
+#######################################
+auto_unblock_resolved_tasks() {
+	local repo_path="$1"
+	local todo_file="$repo_path/TODO.md"
+
+	if [[ ! -f "$todo_file" ]]; then
+		log_verbose "auto_unblock_resolved_tasks: TODO.md not found at $todo_file"
+		return 1
+	fi
+
+	local unblocked_count=0
+	local unblocked_ids=""
+
+	# Find all open tasks with blocked-by: field
+	while IFS= read -r line; do
+		local task_id=""
+		task_id=$(printf '%s' "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
+		[[ -z "$task_id" ]] && continue
+
+		# Extract blocked-by dependencies
+		local blocked_by=""
+		blocked_by=$(printf '%s' "$line" | grep -oE 'blocked-by:[^ ]+' | head -1 | sed 's/blocked-by://' || echo "")
+		[[ -z "$blocked_by" ]] && continue
+
+		# Check each blocker
+		local all_resolved=true
+		local _saved_ifs="$IFS"
+		IFS=','
+		for blocker_id in $blocked_by; do
+			[[ -z "$blocker_id" ]] && continue
+
+			# Check if blocker is completed ([x]) or declined ([-])
+			if grep -qE "^[[:space:]]*- \[x\] ${blocker_id}( |$)" "$todo_file" 2>/dev/null; then
+				continue # Resolved
+			fi
+			if grep -qE "^[[:space:]]*- \[-\] ${blocker_id}( |$)" "$todo_file" 2>/dev/null; then
+				continue # Declined = resolved
+			fi
+
+			# Check if blocker doesn't exist in TODO.md at all (orphaned reference)
+			if ! grep -qE "^[[:space:]]*- \[.\] ${blocker_id}( |$)" "$todo_file" 2>/dev/null; then
+				continue # Non-existent blocker = resolved
+			fi
+
+			# Blocker is still open — task remains blocked
+			all_resolved=false
+			break
+		done
+		IFS="$_saved_ifs"
+
+		if [[ "$all_resolved" == "true" ]]; then
+			# Remove blocked-by: field from the task line
+			# Find the line number first, then do a targeted replacement
+			local line_num
+			line_num=$(grep -nE "^[[:space:]]*- \[ \] ${task_id}( |$)" "$todo_file" | head -1 | cut -d: -f1 || echo "")
+			if [[ -n "$line_num" ]]; then
+				# Remove ' blocked-by:<value>' from the specific line
+				# Escape dots in task IDs for sed regex (e.g., t1224.3 → t1224\.3)
+				local escaped_blocked_by
+				escaped_blocked_by=$(printf '%s' "$blocked_by" | sed 's/\./\\./g')
+				sed_inplace "${line_num}s/ blocked-by:${escaped_blocked_by}//" "$todo_file"
+				# Clean up any trailing whitespace left behind
+				sed_inplace "${line_num}s/[[:space:]]*$//" "$todo_file"
+			fi
+
+			unblocked_count=$((unblocked_count + 1))
+			if [[ -n "$unblocked_ids" ]]; then
+				unblocked_ids="${unblocked_ids}, ${task_id}"
+			else
+				unblocked_ids="$task_id"
+			fi
+			log_info "  auto-unblock: $task_id — all blockers resolved (was: blocked-by:$blocked_by)"
+		fi
+	done < <(grep -E '^\s*- \[ \] t[0-9]+.*blocked-by:' "$todo_file" || true)
+
+	if [[ "$unblocked_count" -gt 0 ]]; then
+		log_success "auto_unblock_resolved_tasks: unblocked $unblocked_count task(s): $unblocked_ids"
+		commit_and_push_todo "$repo_path" "chore: auto-unblock $unblocked_count task(s) with resolved blockers (t1243): $unblocked_ids"
+	else
+		log_verbose "auto_unblock_resolved_tasks: no tasks to unblock"
+	fi
+
+	return 0
+}
+
+#######################################
 # Command: update-todo - manually trigger TODO.md update for a task
 #######################################
 cmd_update_todo() {
