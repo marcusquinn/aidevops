@@ -1243,26 +1243,60 @@ _exec_create_subtasks() {
 	local repo_path="$2"
 
 	local parent_task_id
-	parent_task_id=$(printf '%s' "$action" | jq -r '.parent_task_id')
+	parent_task_id=$(printf '%s' "$action" | jq -r '.parent_task_id // empty')
+
+	# Input validation: parent_task_id is required
+	if [[ -z "$parent_task_id" || "$parent_task_id" == "null" ]]; then
+		log_warn "create_subtasks: missing required field parent_task_id"
+		echo '{"error":"missing_parent_task_id","detail":"parent_task_id is required and must be a non-empty string"}'
+		return 1
+	fi
+
+	# Input validation: subtasks array is required and non-empty
+	local subtask_count
+	subtask_count=$(printf '%s' "$action" | jq '.subtasks | length' 2>/dev/null || echo 0)
+	if [[ "$subtask_count" -eq 0 ]]; then
+		log_warn "create_subtasks: subtasks array is missing or empty for parent $parent_task_id"
+		echo "{\"error\":\"missing_subtasks\",\"parent_task_id\":\"$parent_task_id\",\"detail\":\"subtasks must be a non-empty array\"}"
+		return 1
+	fi
 
 	local todo_file="$repo_path/TODO.md"
+
+	# Cross-repo support: if parent task not in primary repo, look up its repo from DB
+	if [[ ! -f "$todo_file" ]] || ! grep -q "^\s*- \[.\] $parent_task_id " "$todo_file" 2>/dev/null; then
+		local alt_repo_path=""
+		if [[ -n "${SUPERVISOR_DB:-}" && -f "${SUPERVISOR_DB:-}" ]]; then
+			alt_repo_path=$(db "$SUPERVISOR_DB" "
+				SELECT repo FROM tasks WHERE id = '$(sql_escape "$parent_task_id")' AND repo IS NOT NULL AND repo != '' LIMIT 1;
+			" 2>/dev/null || echo "")
+		fi
+		if [[ -n "$alt_repo_path" && -f "$alt_repo_path/TODO.md" ]]; then
+			log_info "create_subtasks: parent $parent_task_id not in primary repo — using repo: $alt_repo_path"
+			repo_path="$alt_repo_path"
+			todo_file="$repo_path/TODO.md"
+		fi
+	fi
+
 	if [[ ! -f "$todo_file" ]]; then
-		echo '{"error":"todo_file_not_found"}'
+		log_warn "create_subtasks: TODO.md not found at $todo_file (parent: $parent_task_id)"
+		echo "{\"error\":\"todo_file_not_found\",\"parent_task_id\":\"$parent_task_id\",\"repo_path\":\"$repo_path\"}"
 		return 1
 	fi
 
 	# Verify parent task exists in TODO.md
 	if ! grep -q "^\s*- \[.\] $parent_task_id " "$todo_file" 2>/dev/null; then
-		echo "{\"error\":\"parent_task_not_found\",\"parent_task_id\":\"$parent_task_id\"}"
+		log_warn "create_subtasks: parent task $parent_task_id not found in $todo_file"
+		echo "{\"error\":\"parent_task_not_found\",\"parent_task_id\":\"$parent_task_id\",\"todo_file\":\"$todo_file\"}"
 		return 1
 	fi
 
 	# Count existing subtasks to determine next index
+	# Note: grep -c returns exit code 1 when count is 0 — use || true to avoid set -e
+	# triggering, then default to 0 if result is empty.
 	local existing_subtask_count
-	existing_subtask_count=$(grep -c "^\s*- \[.\] ${parent_task_id}\." "$todo_file" 2>/dev/null || echo 0)
-
-	local subtask_count
-	subtask_count=$(printf '%s' "$action" | jq '.subtasks | length')
+	existing_subtask_count=$(grep -c "^\s*- \[.\] ${parent_task_id}\." "$todo_file" 2>/dev/null) || existing_subtask_count=0
+	existing_subtask_count="${existing_subtask_count:-0}"
 
 	local created_ids=""
 	local next_index=$((existing_subtask_count + 1))
@@ -1272,7 +1306,8 @@ _exec_create_subtasks() {
 	parent_line_num=$(grep -n "^\s*- \[.\] $parent_task_id " "$todo_file" | head -1 | cut -d: -f1)
 
 	if [[ -z "$parent_line_num" ]]; then
-		echo "{\"error\":\"parent_task_line_not_found\"}"
+		log_warn "create_subtasks: could not find line number for parent $parent_task_id in $todo_file"
+		echo "{\"error\":\"parent_task_line_not_found\",\"parent_task_id\":\"$parent_task_id\",\"todo_file\":\"$todo_file\"}"
 		return 1
 	fi
 
@@ -1357,7 +1392,10 @@ _exec_create_subtasks() {
 
 	# Post-execution verification: confirm subtasks are visible in TODO.md (t1214)
 	local verified_count
-	verified_count=$(grep -c "^[[:space:]]*- \[.\] ${parent_task_id}\." "$todo_file" 2>/dev/null || echo 0)
+	# Note: grep -c returns exit code 1 when count is 0 — use || true to avoid set -e
+	# triggering, then default to 0 if result is empty.
+	verified_count=$(grep -c "^[[:space:]]*- \[.\] ${parent_task_id}\." "$todo_file" 2>/dev/null) || verified_count=0
+	verified_count="${verified_count:-0}"
 	if [[ "$verified_count" -lt "$subtask_count" ]]; then
 		echo "{\"created\":true,\"parent_task_id\":\"$parent_task_id\",\"subtask_ids\":\"$created_ids\",\"count\":$subtask_count,\"verified_count\":$verified_count,\"warning\":\"subtask_count_mismatch\"}"
 		return 0

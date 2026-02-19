@@ -1472,6 +1472,214 @@ else
 	fail "pipeline: valid empty-actions '[]' response handling broken (t1204)"
 fi
 
+# ─── Test 23: create_subtasks executor — grep -c bug fix (t1221) ────
+echo "Test 23: create_subtasks executor — grep -c with no matches does not crash"
+
+_test_create_subtasks_grep_c_bug() {
+	(
+		BLUE='' GREEN='' YELLOW='' RED='' NC=''
+		SUPERVISOR_DB="/tmp/test-subtasks-$$.db"
+		SUPERVISOR_LOG="/dev/null"
+		SCRIPT_DIR="$REPO_DIR/.agents/scripts"
+		REPO_PATH="$REPO_DIR"
+		AI_ACTIONS_LOG_DIR="/tmp/test-ai-actions-logs-$$"
+		mkdir -p "$AI_ACTIONS_LOG_DIR"
+		db() { sqlite3 -cmd ".timeout 5000" "$@" 2>/dev/null || true; }
+		log_info() { :; }
+		log_success() { :; }
+		log_warn() { :; }
+		log_error() { :; }
+		log_verbose() { :; }
+		sql_escape() { printf '%s' "$1" | sed "s/'/''/g"; }
+		detect_repo_slug() { echo "test/repo"; }
+		commit_and_push_todo() { :; }
+		find_task_issue_number() { echo ""; }
+		build_ai_context() { echo "# test"; }
+		run_ai_reasoning() { echo '[]'; }
+
+		source "$ACTIONS_SCRIPT"
+
+		local failures=0
+
+		# Create a temp directory with a TODO.md containing a parent task but NO existing subtasks.
+		# This is the exact scenario that triggered the grep -c bug:
+		# grep -c returns exit 1 (no matches) + outputs "0", then || echo 0
+		# appends another "0", producing "0\n0" which breaks arithmetic.
+		local tmp_dir
+		tmp_dir=$(mktemp -d)
+		printf '# Test TODO\n\n- [ ] t999 Parent task with no subtasks ~4h\n- [ ] t998 Another task\n' >"$tmp_dir/TODO.md"
+
+		local action
+		action='{"type":"create_subtasks","parent_task_id":"t999","subtasks":[{"title":"Sub 1","tags":["#auto-dispatch"],"estimate":"~1h","model":"sonnet"},{"title":"Sub 2","tags":["#auto-dispatch"],"estimate":"~2h","model":"sonnet"}],"reasoning":"test"}'
+
+		local result rc
+		result=$(_exec_create_subtasks "$action" "$tmp_dir" 2>/dev/null)
+		rc=$?
+
+		# Should succeed (rc=0) and return JSON with created:true
+		if [[ $rc -ne 0 ]]; then
+			echo "FAIL: create_subtasks should succeed with rc=0, got rc=$rc (result: $result)"
+			failures=$((failures + 1))
+		fi
+
+		local created
+		created=$(printf '%s' "$result" | jq -r '.created // "MISSING"' 2>/dev/null || echo "PARSE_ERROR")
+		if [[ "$created" != "true" ]]; then
+			echo "FAIL: create_subtasks should return created:true, got: $result"
+			failures=$((failures + 1))
+		fi
+
+		# Verify subtasks were actually written to the temp TODO.md
+		if ! grep -q "t999.1" "$tmp_dir/TODO.md" 2>/dev/null; then
+			echo "FAIL: subtask t999.1 not found in TODO.md after create_subtasks"
+			failures=$((failures + 1))
+		fi
+		if ! grep -q "t999.2" "$tmp_dir/TODO.md" 2>/dev/null; then
+			echo "FAIL: subtask t999.2 not found in TODO.md after create_subtasks"
+			failures=$((failures + 1))
+		fi
+
+		rm -rf "$tmp_dir" "/tmp/test-ai-actions-logs-$$" "/tmp/test-$$.db" 2>/dev/null || true
+		exit "$failures"
+	)
+}
+
+if _test_create_subtasks_grep_c_bug 2>/dev/null; then
+	pass "create_subtasks: grep -c with no existing subtasks does not crash (t1221)"
+else
+	fail "create_subtasks: grep -c bug still present (t1221)"
+fi
+
+# ─── Test 24: create_subtasks executor — missing parent_task_id (t1221) ─
+echo "Test 24: create_subtasks executor — missing parent_task_id returns clear error"
+
+_test_create_subtasks_missing_parent() {
+	(
+		BLUE='' GREEN='' YELLOW='' RED='' NC=''
+		SUPERVISOR_DB="/tmp/test-subtasks-missing-$$.db"
+		SUPERVISOR_LOG="/dev/null"
+		SCRIPT_DIR="$REPO_DIR/.agents/scripts"
+		REPO_PATH="$REPO_DIR"
+		AI_ACTIONS_LOG_DIR="/tmp/test-ai-actions-logs-$$"
+		mkdir -p "$AI_ACTIONS_LOG_DIR"
+		db() { sqlite3 -cmd ".timeout 5000" "$@" 2>/dev/null || true; }
+		log_info() { :; }
+		log_success() { :; }
+		log_warn() { :; }
+		log_error() { :; }
+		log_verbose() { :; }
+		sql_escape() { printf '%s' "$1" | sed "s/'/''/g"; }
+		detect_repo_slug() { echo "test/repo"; }
+		commit_and_push_todo() { :; }
+		find_task_issue_number() { echo ""; }
+		build_ai_context() { echo "# test"; }
+		run_ai_reasoning() { echo '[]'; }
+
+		source "$ACTIONS_SCRIPT"
+
+		local failures=0
+
+		# Missing parent_task_id — should return clear error, not crash
+		local action
+		action='{"type":"create_subtasks","subtasks":[{"title":"Sub 1","estimate":"~1h","model":"sonnet"}],"reasoning":"test"}'
+
+		local result rc
+		result=$(_exec_create_subtasks "$action" "$REPO_DIR" 2>/dev/null)
+		rc=$?
+
+		if [[ $rc -eq 0 ]]; then
+			echo "FAIL: missing parent_task_id should return rc=1, got rc=0"
+			failures=$((failures + 1))
+		fi
+
+		local error_field
+		error_field=$(printf '%s' "$result" | jq -r '.error // "MISSING"' 2>/dev/null || echo "PARSE_ERROR")
+		if [[ "$error_field" != "missing_parent_task_id" ]]; then
+			echo "FAIL: missing parent_task_id should return error=missing_parent_task_id, got: $result"
+			failures=$((failures + 1))
+		fi
+
+		rm -rf "/tmp/test-ai-actions-logs-$$" "/tmp/test-subtasks-missing-$$.db" 2>/dev/null || true
+		exit "$failures"
+	)
+}
+
+if _test_create_subtasks_missing_parent 2>/dev/null; then
+	pass "create_subtasks: missing parent_task_id returns clear error (t1221)"
+else
+	fail "create_subtasks: missing parent_task_id error handling broken (t1221)"
+fi
+
+# ─── Test 25: create_subtasks executor — parent not in primary repo (t1221) ─
+echo "Test 25: create_subtasks executor — parent task not in primary repo returns clear error"
+
+_test_create_subtasks_cross_repo() {
+	(
+		BLUE='' GREEN='' YELLOW='' RED='' NC=''
+		SUPERVISOR_DB="/tmp/test-subtasks-cross-$$.db"
+		SUPERVISOR_LOG="/dev/null"
+		SCRIPT_DIR="$REPO_DIR/.agents/scripts"
+		REPO_PATH="$REPO_DIR"
+		AI_ACTIONS_LOG_DIR="/tmp/test-ai-actions-logs-$$"
+		mkdir -p "$AI_ACTIONS_LOG_DIR"
+		db() { sqlite3 -cmd ".timeout 5000" "$@" 2>/dev/null || true; }
+		log_info() { :; }
+		log_success() { :; }
+		log_warn() { :; }
+		log_error() { :; }
+		log_verbose() { :; }
+		sql_escape() { printf '%s' "$1" | sed "s/'/''/g"; }
+		detect_repo_slug() { echo "test/repo"; }
+		commit_and_push_todo() { :; }
+		find_task_issue_number() { echo ""; }
+		build_ai_context() { echo "# test"; }
+		run_ai_reasoning() { echo '[]'; }
+
+		source "$ACTIONS_SCRIPT"
+
+		local failures=0
+
+		# Task t99998 does not exist in the aidevops repo TODO.md
+		# (simulates a cross-repo task like awardsapp t003) — should return
+		# parent_task_not_found with clear diagnostics, not crash silently
+		local action
+		action='{"type":"create_subtasks","parent_task_id":"t99998","subtasks":[{"title":"Sub 1","estimate":"~1h","model":"sonnet"}],"reasoning":"test"}'
+
+		local result rc
+		result=$(_exec_create_subtasks "$action" "$REPO_DIR" 2>/dev/null)
+		rc=$?
+
+		if [[ $rc -eq 0 ]]; then
+			echo "FAIL: cross-repo task should return rc=1 (not found in primary repo), got rc=0"
+			failures=$((failures + 1))
+		fi
+
+		local error_field
+		error_field=$(printf '%s' "$result" | jq -r '.error // "MISSING"' 2>/dev/null || echo "PARSE_ERROR")
+		if [[ "$error_field" != "parent_task_not_found" ]]; then
+			echo "FAIL: cross-repo task should return error=parent_task_not_found, got: $result"
+			failures=$((failures + 1))
+		fi
+
+		# Verify the error includes the parent_task_id for diagnostics
+		local returned_id
+		returned_id=$(printf '%s' "$result" | jq -r '.parent_task_id // "MISSING"' 2>/dev/null || echo "PARSE_ERROR")
+		if [[ "$returned_id" != "t99998" ]]; then
+			echo "FAIL: error should include parent_task_id=t99998, got: $returned_id"
+			failures=$((failures + 1))
+		fi
+
+		rm -rf "/tmp/test-ai-actions-logs-$$" "/tmp/test-subtasks-cross-$$.db" 2>/dev/null || true
+		exit "$failures"
+	)
+}
+
+if _test_create_subtasks_cross_repo 2>/dev/null; then
+	pass "create_subtasks: cross-repo task returns clear parent_task_not_found error (t1221)"
+else
+	fail "create_subtasks: cross-repo task error handling broken (t1221)"
+fi
+
 # ─── Summary ────────────────────────────────────────────────────────
 echo ""
 echo "=== Results: $PASS/$TOTAL passed, $FAIL failed ==="
