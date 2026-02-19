@@ -722,7 +722,7 @@ cmd_pulse() {
 		fi
 	fi
 
-	# Phase 0.7: Stale-state detection (t1132, enhanced t1202)
+	# Phase 0.7: Stale-state detection (t1132, enhanced t1202, t1250)
 	# Detect tasks in active states (running/dispatched/evaluating) that have no
 	# live worker process. This catches stale state from previous crashes, stuck
 	# evaluations, or supervisor restarts where PID files were cleaned up but DB
@@ -736,19 +736,67 @@ cmd_pulse() {
 	# certainly has a dead evaluation process.
 	#   - SUPERVISOR_EVALUATING_GRACE_SECONDS (default 120 = 2 min)
 	#   - SUPERVISOR_STALE_GRACE_SECONDS (default 600 = 10 min) for running/dispatched
+	#   - SUPERVISOR_FAST_PATH_EVALUATING_GRACE_SECONDS (default 10s) for evaluating+PR
+	#   - SUPERVISOR_DEAD_PID_GRACE_SECONDS (default 60s) for running with dead PID
+	#
+	# Fast-path recovery (t1250): Two additional zero-grace queries eliminate the
+	# most common stale-evaluating patterns without waiting for grace periods:
+	#   1. evaluating + pr_url already persisted → immediate pr_review (no grace)
+	#      Root cause: pulse killed after t1245 early-persist but before cmd_transition.
+	#      The PR URL in the DB proves evaluate_worker() completed its critical work.
+	#   2. running/dispatched + dead PID file → shorter grace (60s vs 600s)
+	#      Root cause: worker died and PID file confirms it. No need to wait 10min.
 	local stale_grace_seconds="${SUPERVISOR_STALE_GRACE_SECONDS:-600}"
 	local evaluating_grace_seconds="${SUPERVISOR_EVALUATING_GRACE_SECONDS:-120}"
+	local dead_pid_grace_seconds="${SUPERVISOR_DEAD_PID_GRACE_SECONDS:-60}"
 
-	# Query evaluating tasks with shorter grace period
+	# Fast-path 1 (t1250): evaluating tasks with pr_url already persisted — recover
+	# with a minimal 10s grace (vs 120s standard). The PR URL proves evaluate_worker()
+	# ran far enough to find the PR (t1245 early-persist checkpoint). Only the final
+	# cmd_transition call was lost. A 10s grace avoids racing with the current pulse's
+	# own evaluation (Phase 1 transitions to evaluating, then immediately calls
+	# evaluate_worker — we don't want to recover a task that's actively evaluating).
+	local fast_path_evaluating_grace="${SUPERVISOR_FAST_PATH_EVALUATING_GRACE_SECONDS:-10}"
+	local fast_path_evaluating_tasks
+	fast_path_evaluating_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
+		SELECT id, status, updated_at FROM tasks
+		WHERE status = 'evaluating'
+		AND pr_url IS NOT NULL
+		AND pr_url != ''
+		AND pr_url != 'no_pr'
+		AND pr_url != 'task_only'
+		AND pr_url != 'task_obsolete'
+		AND updated_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${fast_path_evaluating_grace} seconds')
+		ORDER BY updated_at ASC;
+	" 2>/dev/null || echo "")
+
+	# Query evaluating tasks without PR URL — use standard grace period
 	local stale_evaluating_tasks
 	stale_evaluating_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
 		SELECT id, status, updated_at FROM tasks
 		WHERE status = 'evaluating'
+		AND (pr_url IS NULL OR pr_url = '' OR pr_url = 'no_pr' OR pr_url = 'task_only' OR pr_url = 'task_obsolete')
 		AND updated_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${evaluating_grace_seconds} seconds')
 		ORDER BY updated_at ASC;
 	" 2>/dev/null || echo "")
 
-	# Query running/dispatched tasks with standard grace period
+	# Fast-path 2 (t1250): running/dispatched tasks with shorter grace period.
+	# When a worker dies (rate-limited, OOM, SIGKILL), the PID file exists but the
+	# process is gone. The current 600s grace was designed for tasks where we're
+	# unsure if the worker started. For tasks with a confirmed dead PID, we can
+	# use a shorter grace (60s) to recover faster.
+	# Note: The PID check happens in the processing loop below — this query fetches
+	# candidates; the loop skips any with live PIDs.
+	local stale_running_fast_tasks
+	stale_running_fast_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
+		SELECT id, status, updated_at FROM tasks
+		WHERE status IN ('running', 'dispatched')
+		AND updated_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${dead_pid_grace_seconds} seconds')
+		AND updated_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${stale_grace_seconds} seconds')
+		ORDER BY updated_at ASC;
+	" 2>/dev/null || echo "")
+
+	# Query running/dispatched tasks with standard grace period (no PID file or very old)
 	local stale_other_tasks
 	stale_other_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
 		SELECT id, status, updated_at FROM tasks
@@ -757,15 +805,15 @@ cmd_pulse() {
 		ORDER BY updated_at ASC;
 	" 2>/dev/null || echo "")
 
-	# Combine results for unified processing
+	# Combine results: fast-path first (shorter grace), then standard grace queries
 	local stale_active_tasks=""
-	if [[ -n "$stale_evaluating_tasks" && -n "$stale_other_tasks" ]]; then
-		stale_active_tasks="${stale_evaluating_tasks}
-${stale_other_tasks}"
-	elif [[ -n "$stale_evaluating_tasks" ]]; then
-		stale_active_tasks="$stale_evaluating_tasks"
-	elif [[ -n "$stale_other_tasks" ]]; then
-		stale_active_tasks="$stale_other_tasks"
+	local _parts=()
+	[[ -n "$fast_path_evaluating_tasks" ]] && _parts+=("$fast_path_evaluating_tasks")
+	[[ -n "$stale_evaluating_tasks" ]] && _parts+=("$stale_evaluating_tasks")
+	[[ -n "$stale_running_fast_tasks" ]] && _parts+=("$stale_running_fast_tasks")
+	[[ -n "$stale_other_tasks" ]] && _parts+=("$stale_other_tasks")
+	if [[ "${#_parts[@]}" -gt 0 ]]; then
+		stale_active_tasks=$(printf '%s\n' "${_parts[@]}")
 	fi
 
 	if [[ -n "$stale_active_tasks" ]]; then
@@ -793,7 +841,7 @@ ${stale_other_tasks}"
 				continue
 			fi
 
-			# Calculate how long the task has been stale
+			# Calculate how long the task has been stale (needed for fast-path guard below)
 			local stale_secs=0
 			if [[ -n "$stale_updated" ]]; then
 				local updated_epoch
@@ -802,6 +850,17 @@ ${stale_other_tasks}"
 				now_epoch=$(date "+%s")
 				if [[ "$updated_epoch" -gt 0 ]]; then
 					stale_secs=$((now_epoch - updated_epoch))
+				fi
+			fi
+
+			# Fast-path 2 guard (t1250): for running/dispatched tasks in the short-grace
+			# window (60-600s), only recover if a PID file exists with a dead PID.
+			# Without a PID file, we can't confirm the worker is gone — it may still be
+			# starting up. These tasks will be caught by the standard 600s grace query.
+			if [[ "$stale_status" == "running" || "$stale_status" == "dispatched" ]]; then
+				if [[ "$stale_secs" -lt "$stale_grace_seconds" && ! -f "$stale_pid_file" ]]; then
+					stale_skipped=$((stale_skipped + 1))
+					continue
 				fi
 			fi
 
@@ -814,41 +873,46 @@ ${stale_other_tasks}"
 			local diag_eval_started_at="${_DIAG_EVAL_STARTED_AT:-}"
 			local diag_eval_lag_secs="${_DIAG_EVAL_LAG_SECS:-NULL}"
 
-			# No live worker — this is stale state. Transition based on retry eligibility.
-			local effective_grace="$stale_grace_seconds"
-			[[ "$stale_status" == "evaluating" ]] && effective_grace="$evaluating_grace_seconds"
-			# t1249: Include eval lag in log message when available for stale-evaluating tasks
-			local eval_lag_info=""
-			if [[ "$stale_status" == "evaluating" && "$diag_eval_lag_secs" != "NULL" ]]; then
-				eval_lag_info=", eval_lag: ${diag_eval_lag_secs}s"
-			fi
-			log_warn "  Phase 0.7: Stale $stale_status task $stale_id (updated: $stale_updated, ${stale_secs}s stale, grace: ${effective_grace}s, cause: $root_cause${eval_lag_info})"
-
 			local stale_retries stale_max_retries stale_pr_url
 			stale_retries=$(db "$SUPERVISOR_DB" "SELECT retries FROM tasks WHERE id = '$(sql_escape "$stale_id")';" 2>/dev/null || echo "0")
 			stale_max_retries=$(db "$SUPERVISOR_DB" "SELECT max_retries FROM tasks WHERE id = '$(sql_escape "$stale_id")';" 2>/dev/null || echo "3")
 			stale_pr_url=$(db "$SUPERVISOR_DB" "SELECT pr_url FROM tasks WHERE id = '$(sql_escape "$stale_id")';" 2>/dev/null || echo "")
+
+			local had_pr_flag=0
+			[[ -n "$stale_pr_url" && "$stale_pr_url" != "no_pr" && "$stale_pr_url" != "task_only" ]] && had_pr_flag=1
+
+			# No live worker — this is stale state. Transition based on retry eligibility.
+			# Effective grace: fast-path (evaluating+PR) < evaluating < running/dispatched
+			local effective_grace="$stale_grace_seconds"
+			if [[ "$stale_status" == "evaluating" ]]; then
+				if [[ "$had_pr_flag" -eq 1 ]]; then
+					effective_grace="$fast_path_evaluating_grace"
+				else
+					effective_grace="$evaluating_grace_seconds"
+				fi
+			fi
+			log_warn "  Phase 0.7: Stale $stale_status task $stale_id (updated: $stale_updated, ${stale_secs}s stale, grace: ${effective_grace}s, cause: $root_cause)"
 
 			# Clean up any stale PID file
 			if [[ -f "$stale_pid_file" ]]; then
 				rm -f "$stale_pid_file" 2>/dev/null || true
 			fi
 
-			local had_pr_flag=0
-			[[ -n "$stale_pr_url" && "$stale_pr_url" != "no_pr" && "$stale_pr_url" != "task_only" ]] && had_pr_flag=1
 			local recovery_to_state=""
 
-			# t1145: If the stale task is in 'evaluating' and already has a PR, route to
-			# pr_review instead of re-queuing — the work is done, only evaluation died.
+			# t1145/t1250: If the stale task is in 'evaluating' and already has a PR, route
+			# to pr_review instead of re-queuing — the work is done, only evaluation died.
+			# Fast-path tasks (with PR URL) arrive here with a 10s grace instead of 120s,
+			# reducing the median recovery latency from ~120s to ~10s for this common case.
 			if [[ "$stale_status" == "evaluating" && "$had_pr_flag" -eq 1 ]]; then
 				recovery_to_state="pr_review"
 				log_info "  Phase 0.7: $stale_id → pr_review (has PR, evaluation process died)"
-				cmd_transition "$stale_id" "pr_review" --pr-url "$stale_pr_url" --error "Stale evaluating recovery (Phase 0.7/t1145): evaluation process died, PR exists (cause: $root_cause)" 2>>"$SUPERVISOR_LOG" || true
+				cmd_transition "$stale_id" "pr_review" --pr-url "$stale_pr_url" --error "Stale evaluating recovery (Phase 0.7/t1145/t1250): evaluation process died, PR exists (cause: $root_cause)" 2>>"$SUPERVISOR_LOG" || true
 				db "$SUPERVISOR_DB" "
 					INSERT INTO state_log (task_id, from_state, to_state, reason)
 					VALUES ('$(sql_escape "$stale_id")', '$(sql_escape "$stale_status")',
 						'pr_review',
-						'Phase 0.7 stale-state recovery (t1145/t1202): evaluating with dead worker but PR exists — routed to pr_review (cause: $(sql_escape "$root_cause"))');
+						'Phase 0.7 stale-state recovery (t1145/t1202/t1250): evaluating with dead worker but PR exists — routed to pr_review (cause: $(sql_escape "$root_cause"))');
 				" 2>/dev/null || true
 			elif [[ "$stale_retries" -lt "$stale_max_retries" ]]; then
 				# Retries remaining — re-queue for dispatch
@@ -878,8 +942,12 @@ ${stale_other_tasks}"
 			fi
 
 			# Record metrics to stale_recovery_log (t1202, t1249)
+			# Use phase "0.7fp" for fast-path recoveries (t1250) to distinguish
+			# them from standard grace-period recoveries in observability reports.
+			local _record_phase="0.7"
+			[[ "$stale_status" == "evaluating" && "$had_pr_flag" -eq 1 && "$stale_secs" -lt "$evaluating_grace_seconds" ]] && _record_phase="0.7fp"
 			_record_stale_recovery \
-				--task "$stale_id" --phase "0.7" \
+				--task "$stale_id" --phase "$_record_phase" \
 				--from "$stale_status" --to "$recovery_to_state" \
 				--stale-secs "$stale_secs" --root-cause "$root_cause" \
 				--had-pr "$had_pr_flag" --retries "$stale_retries" \
@@ -903,7 +971,7 @@ ${stale_other_tasks}"
 					--type "SELF_HEAL_PATTERN" \
 					--task "supervisor" \
 					--model "n/a" \
-					--detail "Phase 0.7 stale-state recovery (t1202): $stale_recovered tasks recovered (eval_grace=${evaluating_grace_seconds}s, other_grace=${stale_grace_seconds}s)" \
+					--detail "Phase 0.7 stale-state recovery (t1202/t1250): $stale_recovered tasks recovered (fp_eval_grace=${fast_path_evaluating_grace}s, eval_grace=${evaluating_grace_seconds}s, dead_pid_grace=${dead_pid_grace_seconds}s, other_grace=${stale_grace_seconds}s)" \
 					2>/dev/null || true
 			fi
 		fi
