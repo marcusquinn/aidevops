@@ -42,6 +42,12 @@ FORCE_CLOSE="${FORCE_CLOSE:-false}"
 REPO_SLUG=""
 PLATFORM="" # github, gitea, gitlab — auto-detected if empty
 
+# Supervisor DB path — used for cross-repo task ownership checks (t1235).
+# The supervisor stores each task's repo path in tasks.repo.
+# When issue-sync runs from one repo but TODO.md contains tasks from other
+# repos (cross-repo DB), we must skip tasks that belong to other repos.
+SUPERVISOR_DB="${SUPERVISOR_DB:-${HOME}/.aidevops/.agent-workspace/supervisor/supervisor.db}"
+
 # =============================================================================
 # Utility Functions
 # =============================================================================
@@ -50,6 +56,35 @@ log_verbose() {
 	if [[ "$VERBOSE" == "true" ]]; then
 		print_info "$1"
 	fi
+	return 0
+}
+
+# Derive the repo slug for a task from the supervisor DB (t1235).
+# Returns the slug (owner/repo) on stdout, or empty string if:
+#   - SUPERVISOR_DB is not set / does not exist
+#   - The task has no DB record
+#   - The DB repo path cannot be resolved to a git remote
+# Arguments:
+#   $1 - task_id (e.g. t1235)
+# Returns: 0 always (caller decides how to handle empty result)
+_get_task_repo_slug_from_db() {
+	local task_id="$1"
+	if [[ -z "${SUPERVISOR_DB:-}" || ! -f "${SUPERVISOR_DB:-}" ]]; then
+		return 0
+	fi
+	local db_repo_path
+	db_repo_path=$(sqlite3 -cmd ".timeout 5000" "$SUPERVISOR_DB" \
+		"SELECT repo FROM tasks WHERE id = '$(printf '%s' "$task_id" | sed "s/'/''/g")' AND repo IS NOT NULL AND repo != '' LIMIT 1;" \
+		2>/dev/null || echo "")
+	if [[ -z "$db_repo_path" ]]; then
+		return 0
+	fi
+	local canonical_path
+	canonical_path=$(realpath "$db_repo_path" 2>/dev/null || echo "")
+	if [[ -z "$canonical_path" ]]; then
+		return 0
+	fi
+	detect_repo_slug "$canonical_path" 2>/dev/null || true
 	return 0
 }
 
@@ -1587,13 +1622,15 @@ cmd_push() {
 	for task_id in "${tasks[@]}"; do
 		log_verbose "Processing $task_id..."
 
-		# Cross-repo guard (t1235): if the supervisor DB knows this task belongs
-		# to a different repo, skip it. Prevents creating issues in the wrong repo
-		# when TODO.md contains cross-repo tasks (same class of bug as t1234).
+		# Cross-repo guard (t1235): verify this task belongs to the current repo.
+		# The supervisor DB is authoritative for task-to-repo mapping. When the
+		# supervisor calls cmd_push from the aidevops repo but TODO.md contains
+		# tasks from other repos (cross-repo DB), we must skip those tasks —
+		# their own repo's issue-sync run will handle them.
 		local task_repo_slug=""
 		task_repo_slug=$(_lookup_task_repo_slug "$task_id")
 		if [[ -n "$task_repo_slug" && "$task_repo_slug" != "$repo_slug" ]]; then
-			log_verbose "$task_id belongs to $task_repo_slug, not $repo_slug — skipping"
+			log_verbose "$task_id belongs to $task_repo_slug (not $repo_slug) — skipping cross-repo task"
 			skipped=$((skipped + 1))
 			continue
 		fi
