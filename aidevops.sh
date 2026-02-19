@@ -2637,6 +2637,7 @@ cmd_help() {
 	echo "  auto-update <cmd>  Manage automatic update polling (enable/disable/status)"
 	echo "  update-tools       Check for outdated tools (--update to auto-update)"
 	echo "  repos [cmd]        Manage registered projects (list/add/remove/clean)"
+	echo "  ip-check <cmd>     IP reputation checks (check/batch/report/providers)"
 	echo "  secret <cmd>       Manage secrets (set/list/run/init/import/status)"
 	echo "  detect             Find and register aidevops projects"
 	echo "  uninstall          Remove aidevops from your system"
@@ -2656,6 +2657,13 @@ cmd_help() {
 	echo "  aidevops update-tools        # Check for outdated tools"
 	echo "  aidevops update-tools -u     # Update all outdated tools"
 	echo "  aidevops uninstall           # Remove aidevops"
+	echo ""
+	echo "IP Reputation:"
+	echo "  aidevops ip-check check <ip> # Check IP reputation across providers"
+	echo "  aidevops ip-check batch <f>  # Batch check IPs from file"
+	echo "  aidevops ip-check report <ip># Generate markdown report"
+	echo "  aidevops ip-check providers  # List available providers"
+	echo "  aidevops ip-check cache-stats# Show cache statistics"
 	echo ""
 	echo "Secrets:"
 	echo "  aidevops secret set NAME     # Store a secret (hidden input)"
@@ -2787,6 +2795,19 @@ main() {
 		;;
 	detect | scan)
 		cmd_detect
+		;;
+	ip-check | ip_check)
+		shift
+		local ip_rep_helper="$AGENTS_DIR/scripts/ip-reputation-helper.sh"
+		if [[ ! -f "$ip_rep_helper" ]]; then
+			ip_rep_helper="$INSTALL_DIR/.agents/scripts/ip-reputation-helper.sh"
+		fi
+		if [[ -f "$ip_rep_helper" ]]; then
+			bash "$ip_rep_helper" "$@"
+		else
+			print_error "ip-reputation-helper.sh not found. Run: aidevops update"
+			exit 1
+		fi
 		;;
 	secret | secrets)
 		shift
