@@ -1006,7 +1006,7 @@ auto_unblock_resolved_tasks() {
 
 	if [[ "$unblocked_count" -gt 0 ]]; then
 		log_success "auto_unblock_resolved_tasks: unblocked $unblocked_count task(s): $unblocked_ids"
-		commit_and_push_todo "$repo_path" "chore: auto-unblock $unblocked_count task(s) with resolved blockers (t1243): $unblocked_ids"
+		commit_and_push_todo "$repo_path" "chore: auto-unblock $unblocked_count task(s) with resolved blockers: $unblocked_ids"
 	else
 		log_verbose "auto_unblock_resolved_tasks: no tasks to unblock"
 	fi
