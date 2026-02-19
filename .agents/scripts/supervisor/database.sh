@@ -156,6 +156,13 @@ CREATE TABLE IF NOT EXISTS stale_recovery_log (
     retries_at_recovery INTEGER NOT NULL DEFAULT 0,
     max_retries     INTEGER NOT NULL DEFAULT 3,
     batch_id        TEXT DEFAULT '',
+    -- t1249: timing columns for stale-evaluating root cause analysis
+    -- worker_completed_at: when the worker process finished (completed_at from tasks)
+    -- eval_started_at: when evaluation began (evaluating_started_at from tasks)
+    -- eval_lag_seconds: gap between worker completion and evaluation start (NULL if unknown)
+    worker_completed_at TEXT DEFAULT '',
+    eval_started_at TEXT DEFAULT '',
+    eval_lag_seconds INTEGER DEFAULT NULL,
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_stale_recovery_task ON stale_recovery_log(task_id);
@@ -694,6 +701,32 @@ CONTEST_SQL
 		log_success "Added state_hash column to action_dedup_log (t1179)"
 	fi
 
+	# Migrate: add evaluating_started_at column to tasks if missing (t1249)
+	# Records when a task transitions to 'evaluating' state, enabling measurement
+	# of the lag between worker completion and evaluation start — key for diagnosing
+	# why tasks get stuck in 'evaluating' (race conditions, timeouts, etc.).
+	local has_evaluating_started_at
+	has_evaluating_started_at=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('tasks') WHERE name='evaluating_started_at';" 2>/dev/null || echo "0")
+	if [[ "$has_evaluating_started_at" -eq 0 ]]; then
+		log_info "Migrating tasks table: adding evaluating_started_at column (t1249)..."
+		db "$SUPERVISOR_DB" "ALTER TABLE tasks ADD COLUMN evaluating_started_at TEXT;" 2>/dev/null || true
+		log_success "Added evaluating_started_at column to tasks (t1249)"
+	fi
+
+	# Migrate: add timing columns to stale_recovery_log if missing (t1249)
+	# worker_completed_at, eval_started_at, eval_lag_seconds enable root-cause analysis
+	# of stale-evaluating patterns by measuring the gap between worker completion and
+	# evaluation start.
+	local has_eval_lag_seconds
+	has_eval_lag_seconds=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('stale_recovery_log') WHERE name='eval_lag_seconds';" 2>/dev/null || echo "0")
+	if [[ "$has_eval_lag_seconds" -eq 0 ]]; then
+		log_info "Migrating stale_recovery_log: adding timing columns (t1249)..."
+		db "$SUPERVISOR_DB" "ALTER TABLE stale_recovery_log ADD COLUMN worker_completed_at TEXT DEFAULT '';" 2>/dev/null || true
+		db "$SUPERVISOR_DB" "ALTER TABLE stale_recovery_log ADD COLUMN eval_started_at TEXT DEFAULT '';" 2>/dev/null || true
+		db "$SUPERVISOR_DB" "ALTER TABLE stale_recovery_log ADD COLUMN eval_lag_seconds INTEGER DEFAULT NULL;" 2>/dev/null || true
+		log_success "Added timing columns to stale_recovery_log (t1249)"
+	fi
+
 	# Prune old action_dedup_log entries (keep last 7 days)
 	db "$SUPERVISOR_DB" "DELETE FROM action_dedup_log WHERE created_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-7 days');" 2>/dev/null || true
 
@@ -747,6 +780,9 @@ CREATE TABLE IF NOT EXISTS tasks (
     actual_tier     TEXT,
     last_failure_at TEXT,
     consecutive_failure_count INTEGER NOT NULL DEFAULT 0,
+    -- t1249: timestamp set when task transitions to 'evaluating' state
+    -- enables measurement of lag between worker completion and evaluation start
+    evaluating_started_at TEXT,
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
     started_at      TEXT,
     completed_at    TEXT,

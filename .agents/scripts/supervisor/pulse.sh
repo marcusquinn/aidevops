@@ -4,23 +4,40 @@
 # Functions for the main pulse loop and post-PR lifecycle processing
 
 #######################################
-# Record a stale state recovery event to stale_recovery_log (t1202)
+# Convert an ISO 8601 timestamp to a Unix epoch integer (t1249)
+# Tries BSD date (-j -f), then GNU date (-d), falls back to 0.
+# Args: $1 = ISO 8601 timestamp (e.g. "2026-02-19T08:00:00Z")
+# Returns: epoch integer via stdout
+#######################################
+_iso_to_epoch() {
+	local iso_ts="$1"
+	date -j -f "%Y-%m-%dT%H:%M:%SZ" "$iso_ts" "+%s" 2>/dev/null ||
+		date -d "$iso_ts" "+%s" 2>/dev/null ||
+		echo "0"
+}
+
+#######################################
+# Record a stale state recovery event to stale_recovery_log (t1202, t1249)
 # Provides per-event metrics for observability and root-cause analysis.
 # Args:
-#   --task <id>           Task ID
-#   --phase <phase>       Which phase detected it (0.7, 0.8, 1c)
-#   --from <state>        Original stale state
-#   --to <state>          State transitioned to
-#   --stale-secs <N>      How long the task was stale
-#   --root-cause <text>   Why the task got stuck (optional)
-#   --had-pr <0|1>        Whether task had a PR (optional, default 0)
-#   --retries <N>         Retry count at recovery time (optional, default 0)
-#   --max-retries <N>     Max retries configured (optional, default 3)
-#   --batch <id>          Batch ID (optional)
+#   --task <id>                Task ID
+#   --phase <phase>            Which phase detected it (0.7, 0.8, 1c)
+#   --from <state>             Original stale state
+#   --to <state>               State transitioned to
+#   --stale-secs <N>           How long the task was stale
+#   --root-cause <text>        Why the task got stuck (optional)
+#   --had-pr <0|1>             Whether task had a PR (optional, default 0)
+#   --retries <N>              Retry count at recovery time (optional, default 0)
+#   --max-retries <N>          Max retries configured (optional, default 3)
+#   --batch <id>               Batch ID (optional)
+#   --worker-completed-at <ts> When the worker process finished (optional, t1249)
+#   --eval-started-at <ts>     When evaluation began (optional, t1249)
+#   --eval-lag-secs <N>        Gap between worker completion and eval start (optional, t1249)
 #######################################
 _record_stale_recovery() {
 	local task_id="" phase="" from_state="" to_state="" stale_secs=0
 	local root_cause="" had_pr=0 retries=0 max_retries=3 batch_id=""
+	local worker_completed_at="" eval_started_at="" eval_lag_secs="NULL"
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -64,6 +81,18 @@ _record_stale_recovery() {
 			batch_id="$2"
 			shift 2
 			;;
+		--worker-completed-at)
+			worker_completed_at="$2"
+			shift 2
+			;;
+		--eval-started-at)
+			eval_started_at="$2"
+			shift 2
+			;;
+		--eval-lag-secs)
+			eval_lag_secs="$2"
+			shift 2
+			;;
 		*) shift ;;
 		esac
 	done
@@ -73,27 +102,37 @@ _record_stale_recovery() {
 	db "$SUPERVISOR_DB" "
 		INSERT INTO stale_recovery_log
 			(task_id, phase, from_state, to_state, stale_seconds, root_cause,
-			 had_pr, had_live_worker, retries_at_recovery, max_retries, batch_id)
+			 had_pr, had_live_worker, retries_at_recovery, max_retries, batch_id,
+			 worker_completed_at, eval_started_at, eval_lag_seconds)
 		VALUES (
 			'$(sql_escape "$task_id")', '$(sql_escape "$phase")',
 			'$(sql_escape "$from_state")', '$(sql_escape "$to_state")',
 			$stale_secs, '$(sql_escape "$root_cause")',
 			$had_pr, 0, $retries, $max_retries,
-			'$(sql_escape "$batch_id")');" 2>/dev/null || true
+			'$(sql_escape "$batch_id")',
+			'$(sql_escape "$worker_completed_at")', '$(sql_escape "$eval_started_at")',
+			$eval_lag_secs);" 2>/dev/null || true
 }
 
 #######################################
-# Diagnose root cause of a stale evaluating/running task (t1202)
-# Checks log files, PID state, and evaluate step artifacts to determine
-# why the task got stuck.
+# Diagnose root cause of a stale evaluating/running task (t1202, t1249)
+# Checks log files, PID state, evaluate step artifacts, and timing data to
+# determine why the task got stuck.
 # Args: $1 = task_id, $2 = stale_status
 # Returns: root cause string via stdout
+# Side-effect: sets global _DIAG_WORKER_COMPLETED_AT, _DIAG_EVAL_STARTED_AT,
+#              _DIAG_EVAL_LAG_SECS for the caller to capture timing data (t1249)
 #######################################
 _diagnose_stale_root_cause() {
 	local task_id="$1"
 	local stale_status="$2"
 	local escaped_id
 	escaped_id=$(sql_escape "$task_id")
+
+	# t1249: Reset timing globals — caller reads these after the call
+	_DIAG_WORKER_COMPLETED_AT=""
+	_DIAG_EVAL_STARTED_AT=""
+	_DIAG_EVAL_LAG_SECS="NULL"
 
 	local log_file
 	log_file=$(db "$SUPERVISOR_DB" "SELECT log_file FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
@@ -114,6 +153,39 @@ _diagnose_stale_root_cause() {
 
 	# Check 3: For evaluating tasks, check if evaluation was attempted
 	if [[ "$stale_status" == "evaluating" ]]; then
+		# t1249: Capture timing data — how long between worker completion and eval start?
+		local db_completed_at db_eval_started_at
+		db_completed_at=$(db "$SUPERVISOR_DB" "SELECT completed_at FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+		db_eval_started_at=$(db "$SUPERVISOR_DB" "SELECT evaluating_started_at FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+		_DIAG_WORKER_COMPLETED_AT="$db_completed_at"
+		_DIAG_EVAL_STARTED_AT="$db_eval_started_at"
+
+		# Calculate eval lag if both timestamps are available
+		if [[ -n "$db_completed_at" && -n "$db_eval_started_at" ]]; then
+			local completed_epoch eval_epoch
+			completed_epoch=$(_iso_to_epoch "$db_completed_at")
+			eval_epoch=$(_iso_to_epoch "$db_eval_started_at")
+			if [[ "$completed_epoch" -gt 0 && "$eval_epoch" -gt 0 ]]; then
+				local lag=$((eval_epoch - completed_epoch))
+				# Negative lag means evaluating_started_at was set before completed_at
+				# (race condition: pulse transitioned to evaluating before worker set completed_at)
+				_DIAG_EVAL_LAG_SECS="$lag"
+				if [[ "$lag" -lt 0 ]]; then
+					echo "eval_race_condition_negative_lag"
+					return 0
+				fi
+				# Large positive lag (>30s) suggests the pulse was delayed picking up the worker
+				if [[ "$lag" -gt 30 ]]; then
+					echo "eval_delayed_pickup_lag_${lag}s"
+					return 0
+				fi
+			fi
+		elif [[ -z "$db_eval_started_at" && -n "$db_completed_at" ]]; then
+			# Worker completed but evaluating_started_at was never set — transition to
+			# evaluating happened before t1249 migration, or the transition was bypassed
+			_DIAG_EVAL_LAG_SECS="NULL"
+		fi
+
 		# Check if the evaluate step left any error indicators in the log
 		if grep -q 'WORKER_FAILED\|DISPATCH_ERROR\|command not found' "$log_file" 2>/dev/null; then
 			echo "worker_failed_before_eval"
@@ -217,7 +289,10 @@ cmd_stale_gc_report() {
 				count(*) as event_count,
 				avg(stale_seconds) as avg_stale_secs,
 				max(stale_seconds) as max_stale_secs,
-				sum(had_pr) as with_pr_count
+				sum(had_pr) as with_pr_count,
+				avg(eval_lag_seconds) as avg_eval_lag_secs,
+				max(eval_lag_seconds) as max_eval_lag_secs,
+				count(eval_lag_seconds) as eval_lag_sample_count
 			FROM stale_recovery_log
 			WHERE created_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days')
 			GROUP BY phase, from_state, to_state, root_cause
@@ -298,6 +373,32 @@ cmd_stale_gc_report() {
 		LIMIT 10;
 	" 2>/dev/null || echo "(none)"
 	echo ""
+
+	# t1249: Eval lag analysis — time between worker completion and evaluation start
+	# Only shown when timing data is available (requires t1249 migration)
+	local has_eval_lag_data
+	has_eval_lag_data=$(db "$SUPERVISOR_DB" "
+		SELECT count(*) FROM stale_recovery_log
+		WHERE eval_lag_seconds IS NOT NULL
+		AND created_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days');
+	" 2>/dev/null || echo "0")
+	if [[ "$has_eval_lag_data" -gt 0 ]]; then
+		echo "--- Eval Lag Analysis (t1249: worker completion → eval start) ---"
+		db -column -header "$SUPERVISOR_DB" "
+			SELECT
+				root_cause AS 'Root Cause',
+				count(*) AS Events,
+				printf('%.1f', avg(eval_lag_seconds)) AS 'Avg Lag (s)',
+				max(eval_lag_seconds) AS 'Max Lag (s)',
+				min(eval_lag_seconds) AS 'Min Lag (s)'
+			FROM stale_recovery_log
+			WHERE eval_lag_seconds IS NOT NULL
+			AND created_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days')
+			GROUP BY root_cause
+			ORDER BY Events DESC;
+		" 2>/dev/null || echo "(no data)"
+		echo ""
+	fi
 
 	# Daily trend
 	echo "--- Daily Trend ---"
@@ -704,14 +805,24 @@ ${stale_other_tasks}"
 				fi
 			fi
 
-			# Diagnose root cause (t1202)
+			# Diagnose root cause (t1202, t1249)
+			# _diagnose_stale_root_cause sets _DIAG_WORKER_COMPLETED_AT, _DIAG_EVAL_STARTED_AT,
+			# _DIAG_EVAL_LAG_SECS as side-effects for timing instrumentation (t1249)
 			local root_cause
 			root_cause=$(_diagnose_stale_root_cause "$stale_id" "$stale_status")
+			local diag_worker_completed_at="${_DIAG_WORKER_COMPLETED_AT:-}"
+			local diag_eval_started_at="${_DIAG_EVAL_STARTED_AT:-}"
+			local diag_eval_lag_secs="${_DIAG_EVAL_LAG_SECS:-NULL}"
 
 			# No live worker — this is stale state. Transition based on retry eligibility.
 			local effective_grace="$stale_grace_seconds"
 			[[ "$stale_status" == "evaluating" ]] && effective_grace="$evaluating_grace_seconds"
-			log_warn "  Phase 0.7: Stale $stale_status task $stale_id (updated: $stale_updated, ${stale_secs}s stale, grace: ${effective_grace}s, cause: $root_cause)"
+			# t1249: Include eval lag in log message when available for stale-evaluating tasks
+			local eval_lag_info=""
+			if [[ "$stale_status" == "evaluating" && "$diag_eval_lag_secs" != "NULL" ]]; then
+				eval_lag_info=", eval_lag: ${diag_eval_lag_secs}s"
+			fi
+			log_warn "  Phase 0.7: Stale $stale_status task $stale_id (updated: $stale_updated, ${stale_secs}s stale, grace: ${effective_grace}s, cause: $root_cause${eval_lag_info})"
 
 			local stale_retries stale_max_retries stale_pr_url
 			stale_retries=$(db "$SUPERVISOR_DB" "SELECT retries FROM tasks WHERE id = '$(sql_escape "$stale_id")';" 2>/dev/null || echo "0")
@@ -766,13 +877,16 @@ ${stale_other_tasks}"
 				" 2>/dev/null || true
 			fi
 
-			# Record metrics to stale_recovery_log (t1202)
+			# Record metrics to stale_recovery_log (t1202, t1249)
 			_record_stale_recovery \
 				--task "$stale_id" --phase "0.7" \
 				--from "$stale_status" --to "$recovery_to_state" \
 				--stale-secs "$stale_secs" --root-cause "$root_cause" \
 				--had-pr "$had_pr_flag" --retries "$stale_retries" \
-				--max-retries "$stale_max_retries" --batch "${batch_id:-}"
+				--max-retries "$stale_max_retries" --batch "${batch_id:-}" \
+				--worker-completed-at "$diag_worker_completed_at" \
+				--eval-started-at "$diag_eval_started_at" \
+				--eval-lag-secs "$diag_eval_lag_secs"
 
 			# Clean up worker process tree (in case of zombie children)
 			cleanup_worker_processes "$stale_id" 2>>"$SUPERVISOR_LOG" || true
@@ -1335,9 +1449,13 @@ ${stale_other_tasks}"
 				continue
 			fi
 
-			# Diagnose root cause (t1202)
+			# Diagnose root cause (t1202, t1249)
+			# _diagnose_stale_root_cause sets _DIAG_* timing globals (t1249)
 			local stuck_root_cause
 			stuck_root_cause=$(_diagnose_stale_root_cause "$stuck_id" "evaluating")
+			local stuck_worker_completed_at="${_DIAG_WORKER_COMPLETED_AT:-}"
+			local stuck_eval_started_at="${_DIAG_EVAL_STARTED_AT:-}"
+			local stuck_eval_lag_secs="${_DIAG_EVAL_LAG_SECS:-NULL}"
 
 			# Calculate stale duration
 			local stuck_stale_secs=0
@@ -1351,7 +1469,12 @@ ${stale_other_tasks}"
 				fi
 			fi
 
-			log_warn "  Phase 1c: $stuck_id stuck in evaluating since $stuck_updated (${stuck_stale_secs}s, worker dead, cause: $stuck_root_cause)"
+			# t1249: Include eval lag in log message when available
+			local stuck_eval_lag_info=""
+			if [[ "$stuck_eval_lag_secs" != "NULL" ]]; then
+				stuck_eval_lag_info=", eval_lag: ${stuck_eval_lag_secs}s"
+			fi
+			log_warn "  Phase 1c: $stuck_id stuck in evaluating since $stuck_updated (${stuck_stale_secs}s, worker dead, cause: $stuck_root_cause${stuck_eval_lag_info})"
 
 			# t1183 Bug 1: Check if task already has a PR before retrying.
 			# If a PR exists, the worker succeeded but evaluation was lost —
@@ -1388,7 +1511,7 @@ ${stale_other_tasks}"
 				fi
 			fi
 
-			# Record metrics to stale_recovery_log (t1202)
+			# Record metrics to stale_recovery_log (t1202, t1249)
 			local stuck_retries_val
 			stuck_retries_val=$(db "$SUPERVISOR_DB" "SELECT retries FROM tasks WHERE id = '$(sql_escape "$stuck_id")';" 2>/dev/null || echo 0)
 			local stuck_max_val
@@ -1398,7 +1521,10 @@ ${stale_other_tasks}"
 				--from "evaluating" --to "$stuck_to_state" \
 				--stale-secs "$stuck_stale_secs" --root-cause "$stuck_root_cause" \
 				--had-pr "$stuck_had_pr" --retries "$stuck_retries_val" \
-				--max-retries "$stuck_max_val" --batch "${batch_id:-}"
+				--max-retries "$stuck_max_val" --batch "${batch_id:-}" \
+				--worker-completed-at "$stuck_worker_completed_at" \
+				--eval-started-at "$stuck_eval_started_at" \
+				--eval-lag-secs "$stuck_eval_lag_secs"
 
 			# Clean up PID file
 			cleanup_worker_processes "$stuck_id" 2>>"$SUPERVISOR_LOG" || true
