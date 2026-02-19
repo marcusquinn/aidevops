@@ -1743,3 +1743,10 @@
   files: .agents/scripts/supervisor/state.sh
   check: shellcheck .agents/scripts/supervisor/state.sh
   check: file-exists .agents/scripts/supervisor/state.sh
+
+- [ ] v211 t1254 Add stale-evaluating root cause fix based on t1251 invest... | PR #1958 | merged:2026-02-19
+  files: .agents/scripts/supervisor/evaluate.sh, .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/supervisor/evaluate.sh
+  check: file-exists .agents/scripts/supervisor/evaluate.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
