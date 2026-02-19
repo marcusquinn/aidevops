@@ -282,6 +282,8 @@ cleanup_worker_processes() {
 	fi
 
 	rm -f "$pid_file"
+	# t1222: Clean up hang warning marker to prevent stale markers from killing re-dispatched workers
+	rm -f "$SUPERVISOR_DIR/pids/${task_id}.hang-warned" 2>/dev/null || true
 
 	if [[ "$killed" -gt 0 ]]; then
 		log_info "Cleaned up worker process for $task_id (PID: $pid)"

@@ -2025,6 +2025,8 @@ RULES:
 			if ! kill -0 "$health_pid" 2>/dev/null; then
 				# Dead worker: PID no longer exists
 				rm -f "$pid_file"
+				# t1222: Clean up hang warning marker for dead workers
+				rm -f "$SUPERVISOR_DIR/pids/${health_task}.hang-warned"
 				if [[ "$health_status" == "running" || "$health_status" == "dispatched" ]]; then
 					log_warn "  Dead worker for $health_task (PID $health_pid gone, was $health_status) — evaluating"
 					cmd_evaluate "$health_task" --no-ai 2>>"$SUPERVISOR_LOG" || {
@@ -2063,6 +2065,9 @@ RULES:
 
 					# Check 2: Hung state (no log output for timeout period)
 					# t1199: Use per-task hung timeout based on ~estimate (2x estimate, 4h cap, 30m default)
+					# t1222: Two-phase hang detection — graceful SIGTERM at 50% timeout, hard SIGKILL at 100%.
+					#   Saves ~15 minutes per hung worker by terminating early and retrying immediately
+					#   instead of waiting the full timeout. The wrapper's EXIT trap handles child cleanup.
 					if [[ "$should_kill" == "false" ]]; then
 						local log_file
 						log_file=$(db "$SUPERVISOR_DB" "SELECT log_file FROM tasks WHERE id = '$(sql_escape "$health_task")';" 2>/dev/null || echo "")
@@ -2076,9 +2081,48 @@ RULES:
 							# Compute per-task hung timeout from ~estimate field (t1199)
 							local task_hung_timeout
 							task_hung_timeout=$(get_task_hung_timeout "$health_task" 2>/dev/null || echo "$worker_timeout_seconds")
+
+							# t1222: Two-phase hang detection (disable with SUPERVISOR_HANG_GRACEFUL=false)
+							local hang_graceful="${SUPERVISOR_HANG_GRACEFUL:-true}"
+							local hang_warn_threshold=$((task_hung_timeout / 2))
+							local hang_warn_marker="$SUPERVISOR_DIR/pids/${health_task}.hang-warned"
+
 							if [[ "$log_age_seconds" -gt "$task_hung_timeout" ]]; then
+								# Phase 2 (or single-phase if graceful disabled): Full timeout exceeded — hard kill
 								should_kill=true
 								kill_reason="Worker hung (no output for ${log_age_seconds}s, timeout ${task_hung_timeout}s)"
+								rm -f "$hang_warn_marker"
+							elif [[ "$hang_graceful" == "true" && "$log_age_seconds" -gt "$hang_warn_threshold" ]]; then
+								# Phase 1: 50% timeout exceeded — attempt graceful termination
+								if [[ ! -f "$hang_warn_marker" ]]; then
+									# First detection at 50%: send SIGTERM for graceful shutdown
+									log_warn "  t1222: Worker $health_task possibly hung (no output for ${log_age_seconds}s, 50% of ${task_hung_timeout}s timeout)"
+									log_warn "  t1222: Sending SIGTERM for graceful shutdown (PID $health_pid)"
+									echo "$now_epoch" >"$hang_warn_marker" 2>/dev/null || true
+									# SIGTERM triggers the wrapper's cleanup_children trap
+									kill -TERM "$health_pid" 2>/dev/null || true
+								else
+									# Already warned — check if SIGTERM worked (grace period: 2 pulse cycles ~4min)
+									local warn_epoch=0
+									warn_epoch=$(cat "$hang_warn_marker" 2>/dev/null || echo "0")
+									warn_epoch="${warn_epoch:-0}"
+									local grace_elapsed=$((now_epoch - warn_epoch))
+									# Grace period: min(240s, max(120s, 25% of hung timeout))
+									# At 2-min cron this spans 1-2 cycles; at 5-min cron the hard kill fires on the next cycle
+									local grace_period=$((task_hung_timeout / 4))
+									if [[ "$grace_period" -gt 240 ]]; then
+										grace_period=240
+									fi
+									if [[ "$grace_period" -lt 120 ]]; then
+										grace_period=120
+									fi
+									if [[ "$grace_elapsed" -gt "$grace_period" ]]; then
+										# Grace period expired, worker didn't terminate — escalate to hard kill
+										should_kill=true
+										kill_reason="Worker hung (graceful SIGTERM failed after ${grace_elapsed}s grace, no output for ${log_age_seconds}s)"
+										rm -f "$hang_warn_marker"
+									fi
+								fi
 							fi
 						fi
 					fi
@@ -2094,6 +2138,8 @@ RULES:
 							kill -9 "$health_pid" 2>/dev/null || true
 						fi
 						rm -f "$pid_file"
+						# t1222: Clean up hang warning marker on kill
+						rm -f "$SUPERVISOR_DIR/pids/${health_task}.hang-warned"
 
 						# t1074: Auto-retry timed-out workers up to max_retries before marking failed.
 						# Check if the task has a PR already (worker may have created one before timeout).
