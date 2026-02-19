@@ -1693,7 +1693,7 @@
   check: shellcheck tests/test-supervisor-state-machine.sh
   check: file-exists tests/test-supervisor-state-machine.sh
 
-- [ ] v204 t1249 Add stale-evaluating root cause analysis to pulse cycle #... | PR #1949 | merged:2026-02-19
+- [x] v204 t1249 Add stale-evaluating root cause analysis to pulse cycle #... | PR #1949 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/supervisor/database.sh, .agents/scripts/supervisor/pulse.sh, .agents/scripts/supervisor/state.sh
   check: shellcheck .agents/scripts/supervisor/database.sh
   check: file-exists .agents/scripts/supervisor/database.sh
@@ -1701,3 +1701,8 @@
   check: file-exists .agents/scripts/supervisor/pulse.sh
   check: shellcheck .agents/scripts/supervisor/state.sh
   check: file-exists .agents/scripts/supervisor/state.sh
+
+- [ ] v205 t1250 Reduce stale-evaluating recovery frequency by improving w... | PR #1950 | merged:2026-02-19
+  files: .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
