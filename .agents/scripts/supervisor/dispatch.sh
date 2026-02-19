@@ -2196,8 +2196,8 @@ cmd_dispatch() {
 	local dispatch_todo_file="${trepo:-.}/TODO.md"
 	if [[ -n "$trepo" && -f "$dispatch_todo_file" ]]; then
 		local task_in_registered_repo
-		task_in_registered_repo=$(grep -cE "^[[:space:]]*- \[.\] $task_id( |$)" "$dispatch_todo_file" 2>/dev/null || echo 0)
-		if [[ "$task_in_registered_repo" -eq 0 ]]; then
+		task_in_registered_repo=$(grep -cE "^[[:space:]]*- \[.\] $task_id( |$)" "$dispatch_todo_file" 2>/dev/null | head -1 || echo 0)
+		if [[ "${task_in_registered_repo:-0}" -eq 0 ]]; then
 			log_error "Cross-repo misregistration detected at dispatch: $task_id not found in $(basename "$trepo") TODO.md ($dispatch_todo_file) — cancelling to prevent wrong-repo worker spawn (t1239)"
 			db "$SUPERVISOR_DB" "UPDATE tasks SET status='cancelled', error='Cross-repo misregistration: task not found in registered repo TODO.md (t1239)' WHERE id='$(sql_escape "$task_id")';"
 			return 1
