@@ -1481,3 +1481,13 @@
   check: file-exists .agents/scripts/providers/ip-rep-spamhaus.sh
   check: shellcheck .agents/scripts/providers/ip-rep-stopforumspam.sh
   check: file-exists .agents/scripts/providers/ip-rep-stopforumspam.sh
+
+- [ ] v175 t1219 Use launchd LaunchAgents on macOS instead of cron — pla... | PR #1864 | merged:2026-02-19
+  files: .agents/AGENTS.md, .agents/scripts/auto-update-helper.sh, .agents/scripts/supervisor/cron.sh, .agents/scripts/supervisor/launchd.sh
+  check: file-exists .agents/AGENTS.md
+  check: shellcheck .agents/scripts/auto-update-helper.sh
+  check: file-exists .agents/scripts/auto-update-helper.sh
+  check: shellcheck .agents/scripts/supervisor/cron.sh
+  check: file-exists .agents/scripts/supervisor/cron.sh
+  check: shellcheck .agents/scripts/supervisor/launchd.sh
+  check: file-exists .agents/scripts/supervisor/launchd.sh
