@@ -1676,3 +1676,8 @@
   files: .agents/services/hosting/local-hosting.md
   check: file-exists .agents/services/hosting/local-hosting.md
   check: rg "local-hosting" .agents/subagent-index.toon
+
+- [ ] v202 t1122 Fix issue-sync-helper.sh IFS unbound variable error in cm... | PR #1941 | merged:2026-02-19
+  files: .agents/scripts/issue-sync-helper.sh
+  check: shellcheck .agents/scripts/issue-sync-helper.sh
+  check: file-exists .agents/scripts/issue-sync-helper.sh
