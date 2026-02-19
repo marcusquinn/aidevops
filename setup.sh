@@ -519,9 +519,21 @@ main() {
 	print_success "🎉 Setup complete!"
 
 	# Enable auto-update if not already enabled
+	# Check both launchd (macOS) and cron (Linux) for existing installation
 	local auto_update_script="$HOME/.aidevops/agents/scripts/auto-update-helper.sh"
 	if [[ -x "$auto_update_script" ]] && [[ "${AIDEVOPS_AUTO_UPDATE:-true}" != "false" ]]; then
-		if ! crontab -l 2>/dev/null | grep -q "aidevops-auto-update"; then
+		local _auto_update_installed=false
+		if launchctl list 2>/dev/null | grep -qF "com.aidevops.auto-update"; then
+			_auto_update_installed=true
+		elif crontab -l 2>/dev/null | grep -q "aidevops-auto-update"; then
+			if [[ "$(uname -s)" == "Darwin" ]]; then
+				# macOS: cron entry exists but no launchd plist — migrate silently
+				bash "$auto_update_script" enable >/dev/null 2>&1 || true
+				print_info "Auto-update migrated from cron to launchd"
+			fi
+			_auto_update_installed=true
+		fi
+		if [[ "$_auto_update_installed" == "false" ]]; then
 			if [[ "$NON_INTERACTIVE" == "true" ]]; then
 				# Non-interactive: enable silently
 				bash "$auto_update_script" enable >/dev/null 2>&1 || true
@@ -536,6 +548,40 @@ main() {
 					bash "$auto_update_script" enable
 				else
 					print_info "Skipped. Enable later: aidevops auto-update enable"
+				fi
+			fi
+		fi
+	fi
+
+	# Enable supervisor pulse scheduler if not already installed
+	# This is REQUIRED for autonomous task orchestration (dispatch, evaluation, cleanup)
+	local supervisor_script="$HOME/.aidevops/agents/scripts/supervisor-helper.sh"
+	if [[ -x "$supervisor_script" ]]; then
+		local _pulse_installed=false
+		if launchctl list 2>/dev/null | grep -qF "com.aidevops.supervisor-pulse"; then
+			_pulse_installed=true
+		elif crontab -l 2>/dev/null | grep -q "aidevops-supervisor-pulse"; then
+			if [[ "$(uname -s)" == "Darwin" ]]; then
+				# macOS: cron entry exists but no launchd plist — migrate silently
+				bash "$supervisor_script" cron install >/dev/null 2>&1 || true
+				print_info "Supervisor pulse migrated from cron to launchd"
+			fi
+			_pulse_installed=true
+		fi
+		if [[ "$_pulse_installed" == "false" ]]; then
+			if [[ "$NON_INTERACTIVE" == "true" ]]; then
+				bash "$supervisor_script" cron install >/dev/null 2>&1 || true
+				print_info "Supervisor pulse enabled (every 2 min). Disable: supervisor-helper.sh cron uninstall"
+			else
+				echo ""
+				echo "The supervisor pulse runs every 2 minutes to dispatch tasks, evaluate"
+				echo "worker results, merge PRs, and clean up. Required for autonomous operation."
+				echo ""
+				read -r -p "Enable supervisor pulse? [Y/n]: " enable_pulse
+				if [[ "$enable_pulse" =~ ^[Yy]?$ || -z "$enable_pulse" ]]; then
+					bash "$supervisor_script" cron install
+				else
+					print_info "Skipped. Enable later: supervisor-helper.sh cron install"
 				fi
 			fi
 		fi
