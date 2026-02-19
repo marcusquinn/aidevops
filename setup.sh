@@ -527,14 +527,20 @@ main() {
 			_auto_update_installed=true
 		elif launchctl list 2>/dev/null | grep -qF "com.aidevops.auto-update"; then
 			# Old label — re-running enable will migrate to new label
-			bash "$auto_update_script" enable >/dev/null 2>&1 || true
-			print_info "Auto-update LaunchAgent migrated to new label"
+			if bash "$auto_update_script" enable >/dev/null 2>&1; then
+				print_info "Auto-update LaunchAgent migrated to new label"
+			else
+				print_warning "Auto-update label migration failed. Run: aidevops auto-update enable"
+			fi
 			_auto_update_installed=true
-		elif crontab -l 2>/dev/null | grep -q "aidevops-auto-update"; then
+		elif crontab -l 2>/dev/null | grep -qF "aidevops-auto-update"; then
 			if [[ "$(uname -s)" == "Darwin" ]]; then
-				# macOS: cron entry exists but no launchd plist — migrate silently
-				bash "$auto_update_script" enable >/dev/null 2>&1 || true
-				print_info "Auto-update migrated from cron to launchd"
+				# macOS: cron entry exists but no launchd plist — migrate
+				if bash "$auto_update_script" enable >/dev/null 2>&1; then
+					print_info "Auto-update migrated from cron to launchd"
+				else
+					print_warning "Auto-update cron→launchd migration failed. Run: aidevops auto-update enable"
+				fi
 			fi
 			_auto_update_installed=true
 		fi
@@ -561,20 +567,26 @@ main() {
 	# Enable supervisor pulse scheduler if not already installed
 	# This is REQUIRED for autonomous task orchestration (dispatch, evaluation, cleanup)
 	local supervisor_script="$HOME/.aidevops/agents/scripts/supervisor-helper.sh"
-	if [[ -x "$supervisor_script" ]]; then
+	if [[ -x "$supervisor_script" ]] && [[ "${AIDEVOPS_SUPERVISOR_PULSE:-true}" != "false" ]]; then
 		local _pulse_installed=false
 		if launchctl list 2>/dev/null | grep -qF "com.aidevops.aidevops-supervisor-pulse"; then
 			_pulse_installed=true
 		elif launchctl list 2>/dev/null | grep -qF "com.aidevops.supervisor-pulse"; then
 			# Old label — re-running install will migrate to new label
-			bash "$supervisor_script" cron install >/dev/null 2>&1 || true
-			print_info "Supervisor pulse LaunchAgent migrated to new label"
+			if bash "$supervisor_script" cron install >/dev/null 2>&1; then
+				print_info "Supervisor pulse LaunchAgent migrated to new label"
+			else
+				print_warning "Supervisor pulse label migration failed. Run: supervisor-helper.sh cron install"
+			fi
 			_pulse_installed=true
-		elif crontab -l 2>/dev/null | grep -q "aidevops-supervisor-pulse"; then
+		elif crontab -l 2>/dev/null | grep -qF "aidevops-supervisor-pulse"; then
 			if [[ "$(uname -s)" == "Darwin" ]]; then
-				# macOS: cron entry exists but no launchd plist — migrate silently
-				bash "$supervisor_script" cron install >/dev/null 2>&1 || true
-				print_info "Supervisor pulse migrated from cron to launchd"
+				# macOS: cron entry exists but no launchd plist — migrate
+				if bash "$supervisor_script" cron install >/dev/null 2>&1; then
+					print_info "Supervisor pulse migrated from cron to launchd"
+				else
+					print_warning "Supervisor pulse cron→launchd migration failed. Run: supervisor-helper.sh cron install"
+				fi
 			fi
 			_pulse_installed=true
 		fi
