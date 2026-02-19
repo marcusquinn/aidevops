@@ -1283,30 +1283,33 @@ _exec_create_subtasks() {
 
 	local todo_file="$repo_path/TODO.md"
 
-	# Cross-repo support: if parent task not in primary repo, look up its repo from DB
-	if [[ ! -f "$todo_file" ]] || ! grep -q "^\s*- \[.\] $parent_task_id " "$todo_file" 2>/dev/null; then
-		local alt_repo_path=""
-		if [[ -n "${SUPERVISOR_DB:-}" && -f "${SUPERVISOR_DB:-}" ]]; then
-			alt_repo_path=$(db "$SUPERVISOR_DB" "
-				SELECT repo FROM tasks WHERE id = '$(sql_escape "$parent_task_id")' AND repo IS NOT NULL AND repo != '' LIMIT 1;
-			" 2>/dev/null || echo "")
-		fi
-		if [[ -n "$alt_repo_path" && -f "$alt_repo_path/TODO.md" ]]; then
-			# Canonicalise before trusting — reject traversal segments or stale/corrupt paths
-			local canonical_alt
-			canonical_alt=$(realpath "$alt_repo_path" 2>/dev/null || echo "")
-			if [[ -z "$canonical_alt" ]]; then
-				log_warn "create_subtasks: could not resolve alt repo path for $parent_task_id — skipping"
-				alt_repo_path=""
-			else
-				alt_repo_path="$canonical_alt"
+	# Cross-repo support (t1234): check supervisor DB FIRST for the task's repo.
+	# This prevents task ID collisions across repos — if both repos have t003,
+	# the DB knows which repo the AI reasoner was targeting. Only fall back to
+	# the primary repo if the DB has no record for this task.
+	local db_repo_path=""
+	if [[ -n "${SUPERVISOR_DB:-}" && -f "${SUPERVISOR_DB:-}" ]]; then
+		db_repo_path=$(db "$SUPERVISOR_DB" "
+			SELECT repo FROM tasks WHERE id = '$(sql_escape "$parent_task_id")' AND repo IS NOT NULL AND repo != '' LIMIT 1;
+		" 2>/dev/null || echo "")
+	fi
+	if [[ -n "$db_repo_path" && -f "$db_repo_path/TODO.md" ]]; then
+		# Canonicalise before trusting — reject traversal segments or stale/corrupt paths
+		local canonical_db
+		canonical_db=$(realpath "$db_repo_path" 2>/dev/null || echo "")
+		if [[ -n "$canonical_db" && -f "$canonical_db/TODO.md" ]]; then
+			# DB says this task belongs to a specific repo — use it
+			if [[ "$canonical_db" != "$(realpath "$repo_path" 2>/dev/null)" ]]; then
+				log_info "create_subtasks: DB says $parent_task_id belongs to $canonical_db (not primary repo $repo_path)"
 			fi
-		fi
-		if [[ -n "$alt_repo_path" && -f "$alt_repo_path/TODO.md" ]]; then
-			log_info "create_subtasks: parent $parent_task_id not in primary repo — using repo: $alt_repo_path"
-			repo_path="$alt_repo_path"
+			repo_path="$canonical_db"
 			todo_file="$repo_path/TODO.md"
 		fi
+	fi
+
+	# Fallback: if DB had no record, check if parent exists in primary repo
+	if [[ ! -f "$todo_file" ]] || ! grep -q "^\s*- \[.\] $parent_task_id " "$todo_file" 2>/dev/null; then
+		log_warn "create_subtasks: parent $parent_task_id not found in $todo_file"
 	fi
 
 	if [[ ! -f "$todo_file" ]]; then
