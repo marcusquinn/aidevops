@@ -906,6 +906,12 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [ ] t004.4 Implement AI context isolation per organisation #feature #auto-dispatch ~4h model:sonnet
   - [ ] t004.5 Integration tests for multi-org data boundaries and AI isolation #testing #auto-dispatch ~3h model:sonnet
 - [x] t005 Implement multi-tenant credential storage #security ~1.5d (ai:8h test:4h read:2h) logged:2025-12-20 completed:2026-01-24 pr:#227
+  - [ ] t005.1 Design AI chat sidebar component architecture and state management approach #feature #auto-dispatch ~3h model:opus
+  - [ ] t005.2 Implement collapsible sidebar panel with IDE-style resize and toggle #feature #auto-dispatch ~4h model:sonnet
+  - [ ] t005.3 Build chat message UI with streaming response display and markdown rendering #feature #auto-dispatch ~4h model:sonnet
+  - [ ] t005.4 Implement AI backend integration — context injection, conversation history, API routing #feature #auto-dispatch ~4h model:sonnet
+  - [ ] t005.5 Add conversation persistence, search, and multi-thread management #feature #auto-dispatch ~4h model:sonnet
+  - [ ] t005.6 Responsive layout integration and accessibility for chat sidebar #feature #auto-dispatch ~3h model:sonnet
 - [x] t070 Backlink & Expired Domain Checker subagent #seo #domains ~15m (ai:10m test:3m read:2m) logged:2026-01-24 completed:2026-02-07 verified:2026-02-07
   - Notes: seo/backlink-checker.md created (106 lines). Covers Ahrefs/DataForSEO backlink APIs, WHOIS expired domain detection, reclamation workflow, and integration with existing SEO subagents.
 - [x] t071 Voice AI models for speech generation and transcription #tools #voice #ai ~30m (ai:20m test:5m read:5m) ref:GH#502 logged:2026-01-24 related:t027 completed:2026-02-08 verified:2026-02-08 PR #613 merged pr:#613
