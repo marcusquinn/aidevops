@@ -394,6 +394,47 @@ _check_and_skip_if_blocked() {
 }
 
 #######################################
+# t1239: Cross-repo misregistration guard for auto-pickup.
+# Returns 0 (skip) if the task_id is already registered in the DB
+# under a DIFFERENT repo path than the one being scanned.
+# This prevents subtasks or tasks from private repos from being
+# picked up as if they belong to the current repo.
+#
+# Args:
+#   $1 - task_id (e.g. t004.1)
+#   $2 - current repo path being scanned
+#
+# Returns:
+#   0 - task is misregistered (caller should skip)
+#   1 - task is safe to register in this repo
+#######################################
+_is_cross_repo_misregistration() {
+	local task_id="$1"
+	local current_repo="$2"
+
+	# Check if this task_id is already registered in the DB under a different repo
+	local db_repo
+	db_repo=$(db "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$(sql_escape "$task_id")' LIMIT 1;" 2>/dev/null || echo "")
+
+	if [[ -z "$db_repo" ]]; then
+		# Not in DB yet — no misregistration possible at this stage
+		return 1
+	fi
+
+	# Canonicalize paths for comparison
+	local canonical_current canonical_db
+	canonical_current=$(realpath "$current_repo" 2>/dev/null || echo "$current_repo")
+	canonical_db=$(realpath "$db_repo" 2>/dev/null || echo "$db_repo")
+
+	if [[ "$canonical_current" != "$canonical_db" ]]; then
+		log_warn "  $task_id: cross-repo misregistration detected — already registered to $(basename "$canonical_db") but found in $(basename "$canonical_current") TODO.md — skipping (t1239)"
+		return 0
+	fi
+
+	return 1
+}
+
+#######################################
 # Scan TODO.md for tasks tagged #auto-dispatch or in a
 # "Dispatch Queue" section. Auto-adds them to supervisor
 # if not already tracked, then queues them for dispatch.
@@ -468,6 +509,11 @@ cmd_auto_pickup() {
 				continue
 			fi
 
+			# t1239: Cross-repo misregistration guard — skip if task is registered to a different repo
+			if _is_cross_repo_misregistration "$task_id" "$repo"; then
+				continue
+			fi
+
 			# Pre-pickup check: skip tasks with merged PRs (t224).
 			# cmd_add also checks, but checking here provides better logging.
 			if check_task_already_done "$task_id" "$repo"; then
@@ -538,6 +584,11 @@ cmd_auto_pickup() {
 				continue
 			fi
 
+			# t1239: Cross-repo misregistration guard — skip if task is registered to a different repo
+			if _is_cross_repo_misregistration "$task_id" "$repo"; then
+				continue
+			fi
+
 			# Pre-pickup check: skip tasks with merged PRs (t224).
 			if check_task_already_done "$task_id" "$repo"; then
 				log_info "  $task_id: already completed (merged PR) — skipping auto-pickup"
@@ -582,6 +633,11 @@ cmd_auto_pickup() {
 					continue
 				fi
 				log_info "  $task_id: already tracked (status: $existing)"
+				continue
+			fi
+
+			# t1239: Cross-repo misregistration guard — skip if task is registered to a different repo
+			if _is_cross_repo_misregistration "$task_id" "$repo"; then
 				continue
 			fi
 
@@ -673,6 +729,11 @@ cmd_auto_pickup() {
 						continue
 					fi
 					log_info "  $sub_id: already tracked (status: $existing)"
+					continue
+				fi
+
+				# t1239: Cross-repo misregistration guard — skip if subtask is registered to a different repo
+				if _is_cross_repo_misregistration "$sub_id" "$repo"; then
 					continue
 				fi
 

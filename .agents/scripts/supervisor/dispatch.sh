@@ -2188,6 +2188,22 @@ cmd_dispatch() {
 		return 1
 	fi
 
+	# t1239: Pre-dispatch cross-repo validation.
+	# Verify the task's registered repo actually contains this task in its TODO.md.
+	# This is the last line of defence against cross-repo misregistration — if a task
+	# from a private repo (e.g., awardsapp) was registered under the wrong repo path
+	# (e.g., aidevops), the worker would run in the wrong codebase. Cancel instead.
+	local dispatch_todo_file="${trepo:-.}/TODO.md"
+	if [[ -n "$trepo" && -f "$dispatch_todo_file" ]]; then
+		local task_in_registered_repo
+		task_in_registered_repo=$(grep -cE "^[[:space:]]*- \[.\] $task_id( |$)" "$dispatch_todo_file" 2>/dev/null || echo 0)
+		if [[ "$task_in_registered_repo" -eq 0 ]]; then
+			log_error "Cross-repo misregistration detected at dispatch: $task_id not found in $(basename "$trepo") TODO.md ($dispatch_todo_file) — cancelling to prevent wrong-repo worker spawn (t1239)"
+			db "$SUPERVISOR_DB" "UPDATE tasks SET status='cancelled', error='Cross-repo misregistration: task not found in registered repo TODO.md (t1239)' WHERE id='$(sql_escape "$task_id")';"
+			return 1
+		fi
+	fi
+
 	# Pre-dispatch verification: check if task was already completed in a prior batch.
 	# Searches git history for commits referencing this task ID. If a merged PR commit
 	# exists, the task is already done — cancel it instead of wasting an Opus session.
