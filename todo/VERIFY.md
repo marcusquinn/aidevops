@@ -1517,3 +1517,8 @@
   check: file-exists .agents/scripts/providers/ip-rep-virustotal.sh
   check: file-exists .agents/tools/security/ip-reputation.md
   check: rg "ip-reputation" .agents/subagent-index.toon
+
+- [ ] v179 t1223 Add input validation guard for AI reasoner non-array outp... | PR #1872 | merged:2026-02-19
+  files: .agents/scripts/supervisor/ai-actions.sh
+  check: shellcheck .agents/scripts/supervisor/ai-actions.sh
+  check: file-exists .agents/scripts/supervisor/ai-actions.sh
