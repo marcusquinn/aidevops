@@ -397,14 +397,9 @@ build_todo_context() {
 	local db_completed_ids=""
 	db_completed_ids=$(_get_db_completed_task_ids)
 
-	# Build a fast lookup: associative array of completed task IDs
-	declare -A _db_done_ids
-	if [[ -n "$db_completed_ids" ]]; then
-		while IFS= read -r tid; do
-			tid="${tid// /}"
-			[[ -n "$tid" ]] && _db_done_ids["$tid"]=1
-		done <<<"$db_completed_ids"
-	fi
+	# Build a fast lookup: newline-separated string of completed task IDs
+	# (bash 3.2-compatible alternative to declare -A associative arrays)
+	local _db_done_ids="$db_completed_ids"
 
 	# Count open vs completed tasks (top-level only)
 	local open_count completed_count
@@ -427,7 +422,7 @@ build_todo_context() {
 			local task_id desc
 			task_id=$(echo "$line" | grep -oE 't[0-9]+' | head -1)
 			# Skip tasks already verified/cancelled/complete in supervisor DB (t1178)
-			if [[ -n "$task_id" && -n "${_db_done_ids[$task_id]+x}" ]]; then
+			if [[ -n "$task_id" ]] && echo "$_db_done_ids" | grep -qxF "$task_id"; then
 				filtered_count=$((filtered_count + 1))
 				continue
 			fi
@@ -459,7 +454,7 @@ build_todo_context() {
 			local task_id blocker
 			task_id=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1)
 			# Skip DB-verified tasks from blocked list too (t1178)
-			if [[ -n "$task_id" && -n "${_db_done_ids[$task_id]+x}" ]]; then
+			if [[ -n "$task_id" ]] && echo "$_db_done_ids" | grep -qxF "$task_id"; then
 				continue
 			fi
 			blocker=$(echo "$line" | grep -oE 'blocked-by:[^ ]+' | head -1)
@@ -480,7 +475,7 @@ build_todo_context() {
 			local task_id
 			task_id=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1)
 			# Exclude DB-verified tasks from dispatchable list (t1178)
-			if [[ -n "$task_id" && -n "${_db_done_ids[$task_id]+x}" ]]; then
+			if [[ -n "$task_id" ]] && echo "$_db_done_ids" | grep -qxF "$task_id"; then
 				continue
 			fi
 			output+="- $task_id\n"
@@ -536,13 +531,8 @@ build_autodispatch_eligibility_context() {
 	# Fetch DB-verified/cancelled task IDs for filtering
 	local db_completed_ids=""
 	db_completed_ids=$(_get_db_completed_task_ids)
-	declare -A _elig_done_ids
-	if [[ -n "$db_completed_ids" ]]; then
-		while IFS= read -r tid; do
-			tid="${tid// /}"
-			[[ -n "$tid" ]] && _elig_done_ids["$tid"]=1
-		done <<<"$db_completed_ids"
-	fi
+	# bash 3.2-compatible lookup: newline-separated string (no declare -A needed)
+	local _elig_done_ids="$db_completed_ids"
 
 	local total_candidates=0
 
@@ -567,7 +557,7 @@ build_autodispatch_eligibility_context() {
 			[[ -z "$task_id" ]] && continue
 
 			# Skip DB-verified tasks
-			if [[ -n "${_elig_done_ids[$task_id]+x}" ]]; then
+			if echo "$_elig_done_ids" | grep -qxF "$task_id"; then
 				continue
 			fi
 
