@@ -1655,9 +1655,14 @@
   check: shellcheck .agents/scripts/supervisor/todo-sync.sh
   check: file-exists .agents/scripts/supervisor/todo-sync.sh
 
-- [ ] v198 t1245 Investigate stale evaluating recovery pattern — root ca... | PR #1940 | merged:2026-02-19
+- [x] v198 t1245 Investigate stale evaluating recovery pattern — root ca... | PR #1940 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/supervisor/evaluate.sh, .agents/scripts/supervisor/pulse.sh
   check: shellcheck .agents/scripts/supervisor/evaluate.sh
   check: file-exists .agents/scripts/supervisor/evaluate.sh
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
+
+- [ ] v199 t1224.6 Create local-hosting agent (`.agents/services/hosting/loc... | PR #1939 | merged:2026-02-19
+  files: .agents/services/hosting/local-hosting.md
+  check: file-exists .agents/services/hosting/local-hosting.md
+  check: rg "local-hosting" .agents/subagent-index.toon
