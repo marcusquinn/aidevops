@@ -901,7 +901,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t008.3 Quality hooks (pre-commit) ~3h #auto-dispatch blocked-by:t008.1 ref:GH#1096 assignee:marcusquinn completed:2026-02-11 pr:#1150
   - [x] t008.4 oh-my-opencode compatibility ~2h #auto-dispatch blocked-by:t008.1,t008.2,t008.3 ref:GH#1097 assignee:marcusquinn completed:2026-02-11 pr:#1157
 - [x] t004 Add Ahrefs MCP server integration #seo ~4h (ai:2h test:1h read:1h) logged:2025-12-20 completed:2026-01-25 verified:2026-01-25
-  - [ ] t004.1 Design multi-org data isolation schema and tenant context model #feature #auto-dispatch ~3h model:opus ref:GH#1897
+  - [ ] t004.1 Design multi-org data isolation schema and tenant context model #feature #auto-dispatch ~3h model:opus ref:GH#1897 assignee:marcusquinn started:2026-02-19T04:09:26Z
   - [ ] t004.2 Implement tenant-scoped database queries and middleware #feature #auto-dispatch ~4h model:sonnet ref:GH#1898
   - [ ] t004.3 Add org-switching UI and session context management #feature #auto-dispatch ~4h model:sonnet ref:GH#1899
   - [ ] t004.4 Implement AI context isolation per organisation #feature #auto-dispatch ~4h model:sonnet ref:GH#1900
