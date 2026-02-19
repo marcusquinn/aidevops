@@ -195,10 +195,11 @@ _diagnose_stale_root_cause() {
 		# t1251/t1254: Check if evaluation is actively in progress via heartbeat.
 		# evaluate_with_ai() updates updated_at at the start of each AI eval call
 		# and every 20s via a periodic background heartbeat (t1254).
-		# heartbeat_window = eval_timeout * 2 + 60: covers slow models that exceed
-		# eval_timeout (e.g., 90s timeout but model responds at 150s), plus 60s
-		# buffer for teardown. The periodic heartbeat keeps updated_at fresh, so
-		# this window only needs to cover the 20s heartbeat interval + teardown.
+		# heartbeat_window = eval_timeout * 2 + 60: defense-in-depth in case the
+		# heartbeat process itself fails or is delayed. Under normal operation the
+		# periodic heartbeat keeps updated_at fresh and a much smaller window would
+		# suffice, but this wider window ensures Phase 0.7 does not fire if the
+		# heartbeat subshell is unexpectedly killed or stalled.
 		local eval_timeout_cfg="${SUPERVISOR_EVAL_TIMEOUT:-90}"
 		local heartbeat_window=$((eval_timeout_cfg * 2 + 60))
 		local db_updated_at

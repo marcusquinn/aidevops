@@ -1463,7 +1463,7 @@ Respond with ONLY the verdict line, nothing else. Example: VERDICT:retry:rate_li
 			done
 		) &
 		_hb_pid=$!
-		push_cleanup "rm -f '${_hb_sentinel}' 2>/dev/null || true; kill '${_hb_pid}' 2>/dev/null; wait '${_hb_pid}' 2>/dev/null || true"
+		push_cleanup "rm -f '${_hb_sentinel}' 2>/dev/null || true; kill '${_hb_pid}' 2>/dev/null || true; wait '${_hb_pid}' 2>/dev/null || true"
 	fi
 
 	# t1252: Watchdog timer — detect evaluation hangs within 60s instead of
@@ -1513,10 +1513,10 @@ Respond with ONLY the verdict line, nothing else. Example: VERDICT:retry:rate_li
 
 	# t1254: Stop periodic heartbeat — eval completed (or timed out).
 	# Remove sentinel first so the heartbeat loop exits cleanly on its next iteration.
-	if [[ -n "$_hb_sentinel" ]]; then
-		rm -f "$_hb_sentinel" 2>/dev/null || true
-	fi
+	# _hb_pid is only set when _hb_sentinel was successfully created, so checking
+	# _hb_pid alone is sufficient to guard all heartbeat cleanup operations.
 	if [[ -n "$_hb_pid" ]]; then
+		rm -f "$_hb_sentinel" 2>/dev/null || true
 		kill "$_hb_pid" 2>/dev/null || true
 		wait "$_hb_pid" 2>/dev/null || true
 	fi
