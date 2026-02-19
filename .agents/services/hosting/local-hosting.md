@@ -498,6 +498,80 @@ PORT=3100 bun run dev
 Bun.serve({ port: 3100 })
 ```
 
+### Turbostarter / Turborepo Monorepo
+
+Turbostarter (and similar Turborepo-based monorepos) have specific quirks discovered during the awardsapp migration:
+
+**1. Port hardcoded in `apps/web/package.json`** (not via `PORT` env var):
+
+```json
+"scripts": {
+  "dev": "next dev --port 3100"
+}
+```
+
+When registering with localdev, use the same port that's hardcoded in the web app's `package.json`. If you need to change the port, update both the localdev registry and the `package.json` script.
+
+**2. `allowedDevOrigins` required in `next.config.ts`** (Next.js 15+):
+
+Next.js 15 blocks cross-origin requests by default. Add your `.local` domain to `allowedDevOrigins`:
+
+```typescript
+const config: NextConfig = {
+  allowedDevOrigins: [
+    "myapp.local",
+    "myapp.local:3000",
+    "localhost:3000",
+  ],
+  // ...
+};
+```
+
+Without this, browser requests from `https://myapp.local` will be blocked with a CORS error.
+
+**3. `with-env` script loads `.env.local` from monorepo root**:
+
+Turbostarter uses `dotenv -c --` (aliased as `with-env`) to inject environment variables:
+
+```bash
+# Root package.json
+"dev": "pnpm with-env turbo dev"
+"dev:web": "pnpm with-env pnpm --filter web dev"
+```
+
+Place your `URL` and `DATABASE_URL` in the root `.env.local`:
+
+```bash
+URL="https://myapp.local"
+NEXT_PUBLIC_URL="https://myapp.local"
+DATABASE_URL="postgresql://user:pass@localhost:5432/mydb"
+```
+
+**4. Postgres: project-specific container vs shared `local-postgres`**:
+
+Turbostarter projects typically include their own `docker-compose.yml` with a Postgres container. If port 5432 is already allocated by the project's container, `localdev db start` will fail with "port already allocated". This is expected — use the project's own Postgres container and skip `localdev db start`.
+
+```bash
+# Start project services (includes Postgres)
+pnpm services:start  # or: docker compose up -d
+
+# Verify connectivity
+docker exec <project>-db-1 psql -U <user> -d <db> -c '\dt'
+```
+
+**5. Start command for development**:
+
+```bash
+# From monorepo root — starts all apps via Turborepo
+pnpm dev
+
+# Or just the web app
+pnpm dev:web
+
+# Or directly in apps/web/
+cd apps/web && pnpm dev
+```
+
 ### Docker Compose Projects
 
 For projects using Docker Compose, expose the app port and let Traefik route to it:
