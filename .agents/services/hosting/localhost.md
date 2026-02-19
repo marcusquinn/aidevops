@@ -1,5 +1,5 @@
 ---
-description: Localhost development environment setup
+description: Localhost development environment setup (legacy — see local-hosting.md)
 mode: subagent
 tools:
   read: true
@@ -10,6 +10,10 @@ tools:
   grep: true
   webfetch: false
 ---
+
+> **Legacy reference**: This file documents the original `localhost-helper.sh` approach.
+> For new projects, use [`local-hosting.md`](local-hosting.md) which covers the current
+> `localdev-helper.sh` system (dnsmasq + Traefik v3.3 + mkcert + port registry).
 
 # Localhost Development Environment Guide
 
