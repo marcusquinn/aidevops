@@ -1657,6 +1657,32 @@ run_ai_actions_pipeline() {
 		plan_len=$(printf '%s' "$action_plan" | wc -c | tr -d ' ')
 		plan_head=$(printf '%s' "$action_plan" | head -c 200 | tr '\n' ' ')
 		log_warn "AI Actions Pipeline: expected array, got ${plan_type:-<empty>} (len=${plan_len} head='${plan_head}') — treating as empty plan"
+		# Write a diagnostic actions log so the failure is visible in the actions log
+		# directory (not just the supervisor log). This makes it easier to correlate
+		# parse failures with specific pulse cycles (t1211).
+		mkdir -p "$AI_ACTIONS_LOG_DIR"
+		local diag_timestamp diag_log
+		diag_timestamp=$(date -u '+%Y%m%d-%H%M%S')
+		diag_log="$AI_ACTIONS_LOG_DIR/actions-${diag_timestamp}-parse-failure.md"
+		{
+			echo "# AI Supervisor Action Execution Log — Parse Failure"
+			echo ""
+			echo "Timestamp: $diag_timestamp"
+			echo "Status: PARSE_FAILURE — expected array, got ${plan_type:-<empty>}"
+			echo "Response length: ${plan_len} bytes"
+			echo ""
+			echo "## Raw Response (first 500 bytes)"
+			echo ""
+			echo '```'
+			printf '%s' "$action_plan" | head -c 500
+			echo ""
+			echo '```'
+			echo ""
+			echo "## Result"
+			echo ""
+			echo "Treated as empty action plan (rc=0). No actions executed."
+		} >"$diag_log" 2>/dev/null || true
+		log_info "AI Actions Pipeline: parse failure logged to $diag_log"
 		# Return rc=0 with empty action set — a non-array response is not actionable
 		# but should not cascade into a pipeline error (t1187)
 		echo '{"executed":0,"failed":0,"skipped":0,"actions":[]}'
