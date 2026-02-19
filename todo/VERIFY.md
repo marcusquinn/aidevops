@@ -1666,3 +1666,8 @@
   files: .agents/services/hosting/local-hosting.md
   check: file-exists .agents/services/hosting/local-hosting.md
   check: rg "local-hosting" .agents/subagent-index.toon
+
+- [ ] v200 t1246 Auto-unblock tasks when blockers are verified — verify ... | PR #1938 | merged:2026-02-19
+  files: .agents/scripts/supervisor/todo-sync.sh
+  check: shellcheck .agents/scripts/supervisor/todo-sync.sh
+  check: file-exists .agents/scripts/supervisor/todo-sync.sh
