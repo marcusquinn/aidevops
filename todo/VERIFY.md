@@ -1576,3 +1576,8 @@
   check: file-exists .agents/subagent-index.toon
   check: file-exists configs/multi-org-config.json.txt
   check: rg "multi-org-isolation" .agents/subagent-index.toon
+
+- [ ] v187 t1236 Investigate stale 'running' state for 2 workers with no d... | PR #1918 | merged:2026-02-19
+  files: .agents/scripts/supervisor/ai-context.sh
+  check: shellcheck .agents/scripts/supervisor/ai-context.sh
+  check: file-exists .agents/scripts/supervisor/ai-context.sh
