@@ -1563,3 +1563,16 @@
   files: .agents/scripts/issue-sync-helper.sh
   check: shellcheck .agents/scripts/issue-sync-helper.sh
   check: file-exists .agents/scripts/issue-sync-helper.sh
+
+- [ ] v186 t004.1 Design multi-org data isolation schema and tenant context... | PR #1914 | merged:2026-02-19
+  files: .agents/AGENTS.md, .agents/scripts/multi-org-helper.sh, .agents/services/database/multi-org-isolation.md, .agents/services/database/schemas/multi-org.ts, .agents/services/database/schemas/rls-policies.sql, .agents/services/database/schemas/tenant-context.ts, .agents/subagent-index.toon, configs/multi-org-config.json.txt
+  check: file-exists .agents/AGENTS.md
+  check: shellcheck .agents/scripts/multi-org-helper.sh
+  check: file-exists .agents/scripts/multi-org-helper.sh
+  check: file-exists .agents/services/database/multi-org-isolation.md
+  check: file-exists .agents/services/database/schemas/multi-org.ts
+  check: file-exists .agents/services/database/schemas/rls-policies.sql
+  check: file-exists .agents/services/database/schemas/tenant-context.ts
+  check: file-exists .agents/subagent-index.toon
+  check: file-exists configs/multi-org-config.json.txt
+  check: rg "multi-org-isolation" .agents/subagent-index.toon
