@@ -1616,24 +1616,54 @@ cmd_pulse() {
 				attempt_self_heal "$tid" "blocked" "$outcome_detail" "${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
 				;;
 			failed)
-				log_error "  $tid: FAILED ($outcome_detail)"
-				# Proof-log: failed decision (t218)
-				write_proof_log --task "$tid" --event "failed" --stage "evaluate" \
-					--decision "failed:$outcome_detail" \
-					--maker "pulse:phase1" 2>/dev/null || true
-				cmd_transition "$tid" "failed" --error "$outcome_detail" 2>>"$SUPERVISOR_LOG" || true
-				failed_count=$((failed_count + 1))
-				# Clean up worker process tree and PID file (t128.7)
-				cleanup_worker_processes "$tid"
-				# Auto-update TODO.md and send notification (t128.4)
-				update_todo_on_blocked "$tid" "FAILED: $outcome_detail" 2>>"$SUPERVISOR_LOG" || true
-				send_task_notification "$tid" "failed" "$outcome_detail" 2>>"$SUPERVISOR_LOG" || true
-				# Store failure pattern in memory (t128.6)
-				store_failure_pattern "$tid" "failed" "$outcome_detail" "$tid_desc" 2>>"$SUPERVISOR_LOG" || true
-				# Add failed:model label to GitHub issue (t1010)
-				add_model_label "$tid" "failed" "$tid_model" "${tid_repo:-.}" 2>>"$SUPERVISOR_LOG" || true
-				# Self-heal: attempt diagnostic subtask (t150)
-				attempt_self_heal "$tid" "failed" "$outcome_detail" "${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
+				# t1113: Classify failure mode to distinguish environment issues from
+				# task/code problems. Environment failures (worker_never_started,
+				# log_file_missing, etc.) are re-queued without burning retry count
+				# since the task itself isn't at fault.
+				local failed_fmode=""
+				failed_fmode=$(classify_failure_mode "$outcome_detail" 2>/dev/null) || failed_fmode="AMBIGUOUS"
+
+				if [[ "$failed_fmode" == "ENVIRONMENT" ]]; then
+					# t1113: Environment failure — re-queue without incrementing retry count.
+					# The CLI/environment was broken, not the task. Burning retries here
+					# would exhaust max_retries on infrastructure issues, permanently
+					# failing tasks that would succeed once the environment is fixed.
+					log_warn "  $tid: ENVIRONMENT failure ($outcome_detail) — re-queuing without retry increment (t1113)"
+					write_proof_log --task "$tid" --event "environment_failure" --stage "evaluate" \
+						--decision "requeue:$outcome_detail" \
+						--evidence "failure_mode=ENVIRONMENT,retry_preserved=true" \
+						--maker "pulse:phase1:t1113" 2>/dev/null || true
+					# Clean up worker process tree and PID file
+					cleanup_worker_processes "$tid"
+					# Transition back to queued (preserves current retry count)
+					cmd_transition "$tid" "queued" --error "environment:$outcome_detail" 2>>"$SUPERVISOR_LOG" || true
+					# Store pattern for diagnostics but don't mark as task failure
+					store_failure_pattern "$tid" "environment" "$outcome_detail" "$tid_desc" 2>>"$SUPERVISOR_LOG" || true
+					# Invalidate CLI health cache so next pulse re-checks
+					local cli_cache_dir="${SUPERVISOR_DIR}/health"
+					rm -f "$cli_cache_dir"/cli-* 2>/dev/null || true
+					_PULSE_CLI_VERIFIED=""
+					log_info "  $tid: CLI health cache invalidated — next dispatch will re-verify"
+				else
+					log_error "  $tid: FAILED ($outcome_detail)"
+					# Proof-log: failed decision (t218)
+					write_proof_log --task "$tid" --event "failed" --stage "evaluate" \
+						--decision "failed:$outcome_detail" \
+						--maker "pulse:phase1" 2>/dev/null || true
+					cmd_transition "$tid" "failed" --error "$outcome_detail" 2>>"$SUPERVISOR_LOG" || true
+					failed_count=$((failed_count + 1))
+					# Clean up worker process tree and PID file (t128.7)
+					cleanup_worker_processes "$tid"
+					# Auto-update TODO.md and send notification (t128.4)
+					update_todo_on_blocked "$tid" "FAILED: $outcome_detail" 2>>"$SUPERVISOR_LOG" || true
+					send_task_notification "$tid" "failed" "$outcome_detail" 2>>"$SUPERVISOR_LOG" || true
+					# Store failure pattern in memory (t128.6)
+					store_failure_pattern "$tid" "failed" "$outcome_detail" "$tid_desc" 2>>"$SUPERVISOR_LOG" || true
+					# Add failed:model label to GitHub issue (t1010)
+					add_model_label "$tid" "failed" "$tid_model" "${tid_repo:-.}" 2>>"$SUPERVISOR_LOG" || true
+					# Self-heal: attempt diagnostic subtask (t150)
+					attempt_self_heal "$tid" "failed" "$outcome_detail" "${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
+				fi
 				;;
 			esac
 		done <<<"$running_tasks"
