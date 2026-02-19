@@ -1631,7 +1631,12 @@
   check: shellcheck .agents/scripts/supervisor/ai-context.sh
   check: file-exists .agents/scripts/supervisor/ai-context.sh
 
-- [ ] v194 t1241 Add minimum estimate threshold bypass for trivial bugfixe... | PR #1930 | merged:2026-02-19
+- [x] v194 t1241 Add minimum estimate threshold bypass for trivial bugfixe... | PR #1930 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/supervisor/ai-context.sh
   check: shellcheck .agents/scripts/supervisor/ai-context.sh
   check: file-exists .agents/scripts/supervisor/ai-context.sh
+
+- [ ] v195 t1242 Verify create_subtasks executor fix from t1238 is working... | PR #1929 | merged:2026-02-19
+  files: tests/test-ai-actions.sh
+  check: shellcheck tests/test-ai-actions.sh
+  check: file-exists tests/test-ai-actions.sh
