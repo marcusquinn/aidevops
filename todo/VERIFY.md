@@ -1509,7 +1509,7 @@
   check: shellcheck tests/test-ai-actions.sh
   check: file-exists tests/test-ai-actions.sh
 
-- [ ] v178 t1200.4 Core IP reputation lookup module using AbuseIPDB and Viru... | PR #1871 | merged:2026-02-19
+- [x] v178 t1200.4 Core IP reputation lookup module using AbuseIPDB and Viru... | PR #1871 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/ip-reputation-helper.sh, .agents/scripts/providers/ip-rep-virustotal.sh, .agents/tools/security/ip-reputation.md
   check: shellcheck .agents/scripts/ip-reputation-helper.sh
   check: file-exists .agents/scripts/ip-reputation-helper.sh
@@ -1518,7 +1518,16 @@
   check: file-exists .agents/tools/security/ip-reputation.md
   check: rg "ip-reputation" .agents/subagent-index.toon
 
-- [ ] v179 t1223 Add input validation guard for AI reasoner non-array outp... | PR #1872 | merged:2026-02-19
+- [x] v179 t1223 Add input validation guard for AI reasoner non-array outp... | PR #1872 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/supervisor/ai-actions.sh
   check: shellcheck .agents/scripts/supervisor/ai-actions.sh
   check: file-exists .agents/scripts/supervisor/ai-actions.sh
+
+- [ ] v180 t1222 Add worker hang detection with graceful termination befor... | PR #1869 | merged:2026-02-19
+  files: .agents/scripts/supervisor-helper.sh, .agents/scripts/supervisor/cleanup.sh, .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/supervisor-helper.sh
+  check: file-exists .agents/scripts/supervisor-helper.sh
+  check: shellcheck .agents/scripts/supervisor/cleanup.sh
+  check: file-exists .agents/scripts/supervisor/cleanup.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
