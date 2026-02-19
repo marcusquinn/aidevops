@@ -1348,7 +1348,8 @@ map_tags_to_labels() {
 	fi
 
 	local labels=""
-	local tag _saved_ifs="$IFS"
+	local tag
+	local _saved_ifs="$IFS"
 	IFS=','
 	for tag in $tags; do
 		tag="${tag#\#}"  # Remove # prefix if present
@@ -1383,7 +1384,8 @@ ensure_labels_exist() {
 
 	[[ -z "$labels" || -z "$repo_slug" ]] && return 0
 
-	local label _saved_ifs="$IFS"
+	local label
+	local _saved_ifs="$IFS"
 	IFS=','
 	for label in $labels; do
 		[[ -z "$label" ]] && continue
