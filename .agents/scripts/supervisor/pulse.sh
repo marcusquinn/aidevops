@@ -4,6 +4,19 @@
 # Functions for the main pulse loop and post-PR lifecycle processing
 
 #######################################
+# Convert an ISO 8601 timestamp to a Unix epoch integer (t1249)
+# Tries BSD date (-j -f), then GNU date (-d), falls back to 0.
+# Args: $1 = ISO 8601 timestamp (e.g. "2026-02-19T08:00:00Z")
+# Returns: epoch integer via stdout
+#######################################
+_iso_to_epoch() {
+	local iso_ts="$1"
+	date -j -f "%Y-%m-%dT%H:%M:%SZ" "$iso_ts" "+%s" 2>/dev/null ||
+		date -d "$iso_ts" "+%s" 2>/dev/null ||
+		echo "0"
+}
+
+#######################################
 # Record a stale state recovery event to stale_recovery_log (t1202, t1249)
 # Provides per-event metrics for observability and root-cause analysis.
 # Args:
@@ -150,10 +163,8 @@ _diagnose_stale_root_cause() {
 		# Calculate eval lag if both timestamps are available
 		if [[ -n "$db_completed_at" && -n "$db_eval_started_at" ]]; then
 			local completed_epoch eval_epoch
-			completed_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$db_completed_at" "+%s" 2>/dev/null ||
-				date -d "$db_completed_at" "+%s" 2>/dev/null || echo "0")
-			eval_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$db_eval_started_at" "+%s" 2>/dev/null ||
-				date -d "$db_eval_started_at" "+%s" 2>/dev/null || echo "0")
+			completed_epoch=$(_iso_to_epoch "$db_completed_at")
+			eval_epoch=$(_iso_to_epoch "$db_eval_started_at")
 			if [[ "$completed_epoch" -gt 0 && "$eval_epoch" -gt 0 ]]; then
 				local lag=$((eval_epoch - completed_epoch))
 				# Negative lag means evaluating_started_at was set before completed_at
