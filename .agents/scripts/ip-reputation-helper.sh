@@ -231,6 +231,10 @@ cmd_cache_clear() {
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
+		--help | -h)
+			print_usage_cache_clear
+			return 0
+			;;
 		--provider | -p)
 			specific_provider="$2"
 			shift 2
@@ -793,6 +797,10 @@ cmd_check() {
 	# Parse arguments
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
+		--help | -h)
+			print_usage_check
+			return 0
+			;;
 		--provider | -p)
 			specific_provider="$2"
 			shift 2
@@ -970,6 +978,10 @@ cmd_batch() {
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
+		--help | -h)
+			print_usage_batch
+			return 0
+			;;
 		--format | -f)
 			output_format="$2"
 			shift 2
@@ -1148,6 +1160,10 @@ cmd_report() {
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
+		--help | -h)
+			print_usage_report
+			return 0
+			;;
 		--timeout | -t)
 			timeout_secs="$2"
 			shift 2
@@ -1223,6 +1239,113 @@ cmd_providers() {
 	echo -e "Provider scripts location: ${PROVIDERS_DIR}/"
 	echo -e "Each provider implements: check <ip> [--api-key <key>] [--timeout <s>]"
 	echo ""
+	return 0
+}
+
+# =============================================================================
+# Per-Subcommand Help
+# =============================================================================
+
+print_usage_check() {
+	cat <<EOF
+Usage: $(basename "$0") check <ip> [options]
+
+Check the reputation of a single IP address across multiple providers.
+
+Arguments:
+  <ip>              IPv4 address to check (required)
+
+Options:
+  --provider, -p <p>    Use only specified provider (default: all available)
+  --timeout, -t <s>     Per-provider timeout in seconds (default: ${IP_REP_DEFAULT_TIMEOUT})
+  --format, -f <fmt>    Output format: table (default), json, markdown
+  --parallel            Run providers in parallel (default)
+  --sequential          Run providers sequentially
+  --no-cache            Bypass cache for this query
+  --no-color            Disable color output
+
+Examples:
+  $(basename "$0") check 1.2.3.4
+  $(basename "$0") check 1.2.3.4 -f json
+  $(basename "$0") check 1.2.3.4 --format markdown
+  $(basename "$0") check 1.2.3.4 --provider abuseipdb
+  $(basename "$0") check 1.2.3.4 --no-cache
+  $(basename "$0") check 1.2.3.4 --sequential --timeout 30
+EOF
+	return 0
+}
+
+print_usage_batch() {
+	cat <<EOF
+Usage: $(basename "$0") batch <file> [options]
+
+Check multiple IP addresses from a file (one IP per line).
+Lines starting with # and blank lines are skipped.
+
+Arguments:
+  <file>            Path to file containing IPs (required)
+
+Options:
+  --provider, -p <p>    Use only specified provider (default: all available)
+  --timeout, -t <s>     Per-provider timeout in seconds (default: ${IP_REP_DEFAULT_TIMEOUT})
+  --format, -f <fmt>    Output format: table (default), json
+  --no-cache            Bypass cache for this query
+  --rate-limit <n>      Requests per second per provider (default: 2)
+  --dnsbl-overlap       Cross-reference results with email DNSBL zones
+
+Examples:
+  $(basename "$0") batch ips.txt
+  $(basename "$0") batch ips.txt --rate-limit 1
+  $(basename "$0") batch ips.txt --dnsbl-overlap
+  $(basename "$0") batch ips.txt -f json
+  $(basename "$0") batch ips.txt --provider spamhaus --rate-limit 5
+EOF
+	return 0
+}
+
+print_usage_report() {
+	cat <<EOF
+Usage: $(basename "$0") report <ip> [options]
+
+Generate a detailed markdown report for an IP address.
+Queries all available providers and outputs a formatted markdown document
+suitable for documentation, audit trails, or sharing.
+
+Arguments:
+  <ip>              IPv4 address to report on (required)
+
+Options:
+  --provider, -p <p>    Use only specified provider (default: all available)
+  --timeout, -t <s>     Per-provider timeout in seconds (default: ${IP_REP_DEFAULT_TIMEOUT})
+
+Examples:
+  $(basename "$0") report 1.2.3.4
+  $(basename "$0") report 1.2.3.4 > report.md
+  $(basename "$0") report 1.2.3.4 --provider abuseipdb
+  $(basename "$0") report 1.2.3.4 --timeout 30
+
+Note: Equivalent to: $(basename "$0") check 1.2.3.4 --format markdown
+EOF
+	return 0
+}
+
+print_usage_cache_clear() {
+	cat <<EOF
+Usage: $(basename "$0") cache-clear [options]
+
+Clear cached IP reputation results from the SQLite cache.
+Without filters, clears all cached entries.
+
+Options:
+  --provider, -p <p>    Clear cache only for specified provider
+  --ip <ip>             Clear cache only for specified IP address
+
+Examples:
+  $(basename "$0") cache-clear
+  $(basename "$0") cache-clear --provider abuseipdb
+  $(basename "$0") cache-clear --ip 1.2.3.4
+  $(basename "$0") cache-clear --provider spamhaus --ip 1.2.3.4
+EOF
 	return 0
 }
 
