@@ -587,8 +587,23 @@ build_autodispatch_eligibility_context() {
 						status="has-subtasks"
 						reason="parent task (${has_subtasks} subtasks exist) — dispatch subtasks instead"
 					else
-						status="needs-subtasking"
-						reason="estimate ${est_raw} exceeds ~4h — use create_subtasks to break down"
+						# Guard: only flag needs-subtasking if the task is registered in the
+						# supervisor DB. If not registered, create_subtasks will always fail
+						# (executor refuses to guess the repo). Mark as not-in-db instead to
+						# prevent the AI from generating actions that will always fail (t1238).
+						local db_registered=""
+						if [[ -n "${SUPERVISOR_DB:-}" && -f "${SUPERVISOR_DB:-}" ]]; then
+							db_registered=$(db "$SUPERVISOR_DB" "
+								SELECT id FROM tasks WHERE id = '$(sql_escape "$task_id")' AND repo IS NOT NULL AND repo != '' LIMIT 1;
+							" 2>/dev/null || echo "")
+						fi
+						if [[ -z "$db_registered" && -n "${SUPERVISOR_DB:-}" && -f "${SUPERVISOR_DB:-}" ]]; then
+							status="not-in-db"
+							reason="task not registered in supervisor DB — cannot create subtasks safely (cross-repo collision risk)"
+						else
+							status="needs-subtasking"
+							reason="estimate ${est_raw} exceeds ~4h — use create_subtasks to break down"
+						fi
 					fi
 				fi
 			fi
