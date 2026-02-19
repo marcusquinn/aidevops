@@ -40,7 +40,7 @@ readonly STATE_FILE="$HOME/.aidevops/cache/auto-update-state.json"
 readonly CRON_MARKER="# aidevops-auto-update"
 readonly DEFAULT_INTERVAL=10
 readonly DEFAULT_SKILL_FRESHNESS_HOURS=24
-readonly LAUNCHD_LABEL="com.aidevops.auto-update"
+readonly LAUNCHD_LABEL="com.aidevops.aidevops-auto-update"
 readonly LAUNCHD_DIR="$HOME/Library/LaunchAgents"
 readonly LAUNCHD_PLIST="${LAUNCHD_DIR}/${LAUNCHD_LABEL}.plist"
 
@@ -573,6 +573,15 @@ cmd_enable() {
 	if [[ "$backend" == "launchd" ]]; then
 		local interval_seconds=$((interval * 60))
 
+		# Migrate from old label if present (t1260)
+		local old_label="com.aidevops.auto-update"
+		local old_plist="${LAUNCHD_DIR}/${old_label}.plist"
+		if launchctl list 2>/dev/null | grep -qF "$old_label"; then
+			launchctl unload -w "$old_plist" 2>/dev/null || true
+			log_info "Unloaded old LaunchAgent: $old_label"
+		fi
+		rm -f "$old_plist"
+
 		# Auto-migrate existing cron entry if present
 		_migrate_cron_to_launchd "$script_path" "$interval_seconds"
 
@@ -861,7 +870,7 @@ ENVIRONMENT:
     AIDEVOPS_SKILL_FRESHNESS_HOURS=24    Hours between skill checks (default: 24)
 
 SCHEDULER BACKENDS:
-    macOS:  launchd LaunchAgent (~/Library/LaunchAgents/com.aidevops.auto-update.plist)
+    macOS:  launchd LaunchAgent (~/Library/LaunchAgents/com.aidevops.aidevops-auto-update.plist)
             - Native macOS scheduler, survives reboots without cron
             - Auto-migrates existing cron entries on first 'enable'
     Linux:  cron (crontab entry with # aidevops-auto-update marker)

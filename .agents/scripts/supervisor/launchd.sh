@@ -5,9 +5,12 @@
 # Called by cron.sh when running on macOS.
 #
 # Three LaunchAgent plists managed:
-#   com.aidevops.supervisor-pulse   - StartInterval:120 (every 2 min)
-#   com.aidevops.auto-update        - StartInterval:600 (every 10 min)
-#   com.aidevops.todo-watcher       - WatchPaths (replaces fswatch)
+#   com.aidevops.aidevops-supervisor-pulse   - StartInterval:120 (every 2 min)
+#   com.aidevops.aidevops-auto-update        - StartInterval:600 (every 10 min)
+#   com.aidevops.aidevops-todo-watcher       - WatchPaths (replaces fswatch)
+#
+# Labels are prefixed with "aidevops-" so they appear grouped in
+# macOS System Settings > Login Items & Extensions.
 #
 # Migration: auto-migrates existing cron entries to launchd on macOS.
 
@@ -35,7 +38,7 @@ _launchd_dir() {
 #######################################
 # Plist path for a given label
 # Arguments:
-#   $1 - label (e.g., com.aidevops.supervisor-pulse)
+#   $1 - label (e.g., com.aidevops.aidevops-supervisor-pulse)
 #######################################
 _plist_path() {
 	local label="$1"
@@ -86,7 +89,7 @@ _launchd_unload() {
 #   $3 - log_path
 #   $4 - batch_arg (optional, e.g., "--batch my-batch")
 #   $5 - env_path (PATH value for launchd environment)
-#   $6 - gh_token (optional GH_TOKEN value)
+#   $6 - gh_token (deprecated — token now resolved at runtime by pulse.sh)
 #######################################
 _generate_supervisor_pulse_plist() {
 	local script_path="$1"
@@ -96,7 +99,7 @@ _generate_supervisor_pulse_plist() {
 	local env_path="${5:-/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin}"
 	local gh_token="${6:-}"
 
-	local label="com.aidevops.supervisor-pulse"
+	local label="com.aidevops.aidevops-supervisor-pulse"
 
 	# Build ProgramArguments array
 	local prog_args
@@ -167,7 +170,7 @@ _generate_auto_update_plist() {
 	local log_path="$3"
 	local env_path="${4:-/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin}"
 
-	local label="com.aidevops.auto-update"
+	local label="com.aidevops.aidevops-auto-update"
 
 	cat <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -220,7 +223,7 @@ _generate_todo_watcher_plist() {
 	local log_path="$4"
 	local env_path="${5:-/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin}"
 
-	local label="com.aidevops.todo-watcher"
+	local label="com.aidevops.aidevops-todo-watcher"
 
 	cat <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -273,7 +276,7 @@ launchd_install_supervisor_pulse() {
 	local log_path="$3"
 	local batch_arg="${4:-}"
 
-	local label="com.aidevops.supervisor-pulse"
+	local label="com.aidevops.aidevops-supervisor-pulse"
 	local plist_path
 	plist_path="$(_plist_path "$label")"
 	local launchd_dir
@@ -281,12 +284,19 @@ launchd_install_supervisor_pulse() {
 
 	mkdir -p "$launchd_dir"
 
-	# Detect PATH and GH_TOKEN for launchd environment
-	local env_path="${PATH}"
-	local gh_token=""
-	if command -v gh &>/dev/null; then
-		gh_token=$(gh auth token 2>/dev/null || true)
+	# Migrate from old label if present (t1260)
+	local old_label="com.aidevops.supervisor-pulse"
+	local old_plist
+	old_plist="$(_plist_path "$old_label")"
+	if _launchd_is_loaded "$old_label"; then
+		_launchd_unload "$old_plist" || true
+		log_info "Unloaded old LaunchAgent: $old_label"
 	fi
+	rm -f "$old_plist"
+
+	# Detect PATH for launchd environment
+	# GH_TOKEN is resolved at runtime by the pulse script (not baked into plist)
+	local env_path="${PATH}"
 
 	# Check if already loaded
 	if _launchd_is_loaded "$label"; then
@@ -295,14 +305,14 @@ launchd_install_supervisor_pulse() {
 		return 0
 	fi
 
-	# Generate and write plist
+	# Generate and write plist (no GH_TOKEN — resolved at runtime)
 	_generate_supervisor_pulse_plist \
 		"$script_path" \
 		"$interval_seconds" \
 		"$log_path" \
 		"$batch_arg" \
 		"$env_path" \
-		"$gh_token" >"$plist_path"
+		"" >"$plist_path"
 
 	# Load into launchd
 	if _launchd_load "$plist_path"; then
@@ -321,7 +331,7 @@ launchd_install_supervisor_pulse() {
 # Uninstall supervisor-pulse LaunchAgent on macOS
 #######################################
 launchd_uninstall_supervisor_pulse() {
-	local label="com.aidevops.supervisor-pulse"
+	local label="com.aidevops.aidevops-supervisor-pulse"
 	local plist_path
 	plist_path="$(_plist_path "$label")"
 
@@ -343,7 +353,7 @@ launchd_uninstall_supervisor_pulse() {
 # Show status of supervisor-pulse LaunchAgent
 #######################################
 launchd_status_supervisor_pulse() {
-	local label="com.aidevops.supervisor-pulse"
+	local label="com.aidevops.aidevops-supervisor-pulse"
 	local plist_path
 	plist_path="$(_plist_path "$label")"
 
@@ -392,13 +402,23 @@ launchd_install_auto_update() {
 	local interval_seconds="${2:-600}"
 	local log_path="$3"
 
-	local label="com.aidevops.auto-update"
+	local label="com.aidevops.aidevops-auto-update"
 	local plist_path
 	plist_path="$(_plist_path "$label")"
 	local launchd_dir
 	launchd_dir="$(_launchd_dir)"
 
 	mkdir -p "$launchd_dir"
+
+	# Migrate from old label if present (t1260)
+	local old_label="com.aidevops.auto-update"
+	local old_plist
+	old_plist="$(_plist_path "$old_label")"
+	if _launchd_is_loaded "$old_label"; then
+		_launchd_unload "$old_plist" || true
+		log_info "Unloaded old LaunchAgent: $old_label"
+	fi
+	rm -f "$old_plist"
 
 	local env_path="${PATH}"
 
@@ -432,7 +452,7 @@ launchd_install_auto_update() {
 # Uninstall auto-update LaunchAgent on macOS
 #######################################
 launchd_uninstall_auto_update() {
-	local label="com.aidevops.auto-update"
+	local label="com.aidevops.aidevops-auto-update"
 	local plist_path
 	plist_path="$(_plist_path "$label")"
 
@@ -454,7 +474,7 @@ launchd_uninstall_auto_update() {
 # Show status of auto-update LaunchAgent
 #######################################
 launchd_status_auto_update() {
-	local label="com.aidevops.auto-update"
+	local label="com.aidevops.aidevops-auto-update"
 	local plist_path
 	plist_path="$(_plist_path "$label")"
 
@@ -499,13 +519,23 @@ launchd_install_todo_watcher() {
 	local repo_path="$3"
 	local log_path="$4"
 
-	local label="com.aidevops.todo-watcher"
+	local label="com.aidevops.aidevops-todo-watcher"
 	local plist_path
 	plist_path="$(_plist_path "$label")"
 	local launchd_dir
 	launchd_dir="$(_launchd_dir)"
 
 	mkdir -p "$launchd_dir"
+
+	# Migrate from old label if present (t1260)
+	local old_label="com.aidevops.todo-watcher"
+	local old_plist
+	old_plist="$(_plist_path "$old_label")"
+	if _launchd_is_loaded "$old_label"; then
+		_launchd_unload "$old_plist" || true
+		log_info "Unloaded old LaunchAgent: $old_label"
+	fi
+	rm -f "$old_plist"
 
 	local env_path="${PATH}"
 
@@ -540,7 +570,7 @@ launchd_install_todo_watcher() {
 # Uninstall todo-watcher LaunchAgent on macOS
 #######################################
 launchd_uninstall_todo_watcher() {
-	local label="com.aidevops.todo-watcher"
+	local label="com.aidevops.aidevops-todo-watcher"
 	local plist_path
 	plist_path="$(_plist_path "$label")"
 

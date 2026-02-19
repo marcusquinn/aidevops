@@ -627,6 +627,24 @@ cmd_pulse() {
 
 	ensure_db
 
+	# Resolve GH_TOKEN at runtime if not already set (t1260)
+	# Previously baked into the launchd plist as plaintext — now resolved
+	# from gh CLI keychain, gopass, or credential-helper at each pulse.
+	if [[ -z "${GH_TOKEN:-}" ]]; then
+		local _resolved_token=""
+		# Try gh CLI (reads from macOS Keychain when user is logged in)
+		if command -v gh &>/dev/null; then
+			_resolved_token=$(gh auth token 2>/dev/null || true)
+		fi
+		# Fallback: gopass encrypted store
+		if [[ -z "$_resolved_token" ]] && command -v gopass &>/dev/null; then
+			_resolved_token=$(gopass show -o "aidevops/GH_TOKEN" 2>/dev/null || true)
+		fi
+		if [[ -n "$_resolved_token" ]]; then
+			export GH_TOKEN="$_resolved_token"
+		fi
+	fi
+
 	# Acquire pulse dispatch lock to prevent concurrent pulses from
 	# independently dispatching workers and exceeding concurrency limits (t159)
 	if ! acquire_pulse_lock; then

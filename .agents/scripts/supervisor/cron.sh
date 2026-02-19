@@ -4,7 +4,7 @@
 # Platform-aware: uses launchd on macOS, cron on Linux.
 # Same CLI interface (cron install/uninstall/status) regardless of backend.
 #
-# On macOS: generates ~/Library/LaunchAgents/com.aidevops.supervisor-pulse.plist
+# On macOS: generates ~/Library/LaunchAgents/com.aidevops.aidevops-supervisor-pulse.plist
 # On Linux: installs a crontab entry (unchanged behaviour)
 
 # Source launchd helpers (macOS backend)
@@ -103,7 +103,7 @@ _cmd_cron_launchd() {
 			"$batch_arg"
 
 		# Install (migrate handles the case where cron existed; install handles fresh)
-		if ! _launchd_is_loaded "com.aidevops.supervisor-pulse"; then
+		if ! _launchd_is_loaded "com.aidevops.aidevops-supervisor-pulse"; then
 			launchd_install_supervisor_pulse \
 				"$script_path" \
 				"$interval_seconds" \
@@ -167,19 +167,13 @@ _cmd_cron_linux() {
 	# Detect current PATH for cron environment (t1006)
 	local user_path="${PATH}"
 
-	# Detect GH_TOKEN from gh CLI if available (t1006)
-	local gh_token=""
-	if command -v gh &>/dev/null; then
-		gh_token=$(gh auth token 2>/dev/null || true)
-	fi
+	# GH_TOKEN is resolved at runtime by pulse.sh (t1260)
+	# Previously baked into crontab/plist as plaintext — no longer needed here
 
 	# Build cron command with environment variables
 	local env_vars=""
 	if [[ -n "$user_path" ]]; then
 		env_vars="PATH=${user_path}"
-	fi
-	if [[ -n "$gh_token" ]]; then
-		env_vars="${env_vars:+${env_vars} }GH_TOKEN=${gh_token}"
 	fi
 
 	local cron_cmd="*/${interval} * * * * ${env_vars:+${env_vars} }${script_path} pulse ${batch_arg} >> ${log_path} 2>&1 ${cron_marker}"
