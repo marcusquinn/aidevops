@@ -844,11 +844,22 @@ build_health_context() {
 		  AND updated_at > datetime('now', '-7 days');
 	" 2>/dev/null || echo 0)
 
-	# Tasks failed in last 7 days
+	# Tasks failed in last 7 days (t1248: exclude cancelled — cancelled tasks are
+	# administrative cleanup, not worker failures; including them inflates the failure
+	# rate and causes false alarms. Cancelled tasks have their own metric row.)
 	local failed_7d
 	failed_7d=$(db "$SUPERVISOR_DB" "
 		SELECT COUNT(*) FROM tasks
-		WHERE status IN ('failed', 'cancelled')
+		WHERE status = 'failed'
+		  AND updated_at > datetime('now', '-7 days');
+	" 2>/dev/null || echo 0)
+
+	# Tasks cancelled in last 7 days (separate from failures — cancellations are
+	# intentional administrative actions: orphaned tasks, superseded work, cleanup)
+	local cancelled_7d
+	cancelled_7d=$(db "$SUPERVISOR_DB" "
+		SELECT COUNT(*) FROM tasks
+		WHERE status = 'cancelled'
 		  AND updated_at > datetime('now', '-7 days');
 	" 2>/dev/null || echo 0)
 
@@ -874,6 +885,7 @@ build_health_context() {
 		  AND updated_at > datetime('now', '-7 days');
 	" 2>/dev/null || echo "0")
 
+	# Success rate excludes cancelled tasks (t1248: cancelled != failed)
 	local total_7d=$((completed_7d + failed_7d))
 	local success_rate="N/A"
 	if [[ "$total_7d" -gt 0 ]]; then
@@ -884,6 +896,7 @@ build_health_context() {
 	output+="| Metric | Value |\n|--------|-------|\n"
 	output+="| Completed (7d) | $completed_7d |\n"
 	output+="| Failed (7d) | $failed_7d |\n"
+	output+="| Cancelled (7d) | $cancelled_7d |\n"
 	output+="| Success rate (7d) | $success_rate |\n"
 	output+="| Currently queued | $queued_count |\n"
 	output+="| Currently blocked | $blocked_count |\n"
