@@ -1405,6 +1405,25 @@ ${stale_other_tasks}"
 		done <<<"$stuck_evaluating"
 	fi
 
+	# Phase 1d: Post-completion auto-unblock pass (t1247)
+	# Phase 0.5d runs BEFORE Phase 1, so tasks completed in this pulse (marked [x]
+	# by update_todo_on_complete in Phase 1) are missed by the earlier unblock pass.
+	# This second pass runs immediately after Phase 1 so any newly-completed blockers
+	# unblock their downstream tasks in the same pulse — no extra 2-minute wait.
+	# The DB-fallback in auto_unblock_resolved_tasks (also t1247) handles the case
+	# where update_todo_on_complete failed but the DB status is already terminal.
+	if [[ -n "$all_repos" ]]; then
+		while IFS= read -r repo_path; do
+			if [[ -f "$repo_path/TODO.md" ]]; then
+				auto_unblock_resolved_tasks "$repo_path" 2>>"$SUPERVISOR_LOG" || true
+			fi
+		done <<<"$all_repos"
+	else
+		if [[ -f "$(pwd)/TODO.md" ]]; then
+			auto_unblock_resolved_tasks "$(pwd)" 2>>"$SUPERVISOR_LOG" || true
+		fi
+	fi
+
 	# Phase 2: Dispatch queued tasks up to concurrency limit
 
 	if [[ -n "$batch_id" ]]; then

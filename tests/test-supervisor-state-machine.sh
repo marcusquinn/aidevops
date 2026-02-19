@@ -1810,6 +1810,94 @@ else
 fi
 
 # ============================================================
+# SECTION: Auto-unblock resolved tasks (t1247)
+# Tests the auto_unblock_resolved_tasks function and its DB fallback.
+# ============================================================
+section "Auto-unblock resolved tasks (t1247)"
+
+# Setup: create a temp repo with a TODO.md for unblock tests
+UNBLOCK_REPO=$(mktemp -d)
+trap 'rm -rf "$TEST_DIR" "$UNBLOCK_REPO"' EXIT
+git -C "$UNBLOCK_REPO" init -q
+git -C "$UNBLOCK_REPO" config user.email "test@test.com"
+git -C "$UNBLOCK_REPO" config user.name "Test"
+
+# Test 1: Blocker marked [x] in TODO.md — downstream task should be unblocked
+cat >"$UNBLOCK_REPO/TODO.md" <<'EOF'
+- [x] t9001 Blocker task (completed)
+- [ ] t9002 Downstream task blocked-by:t9001
+EOF
+git -C "$UNBLOCK_REPO" add TODO.md && git -C "$UNBLOCK_REPO" commit -q -m "init"
+sup auto-unblock --repo "$UNBLOCK_REPO" 2>/dev/null || true
+if grep -qE '^\s*- \[ \] t9002 ' "$UNBLOCK_REPO/TODO.md" &&
+	! grep -qE 'blocked-by:t9001' "$UNBLOCK_REPO/TODO.md"; then
+	pass "t1247: blocker [x] in TODO.md unblocks downstream task"
+else
+	fail "t1247: blocker [x] in TODO.md did not unblock downstream task" \
+		"$(grep 't9002' "$UNBLOCK_REPO/TODO.md")"
+fi
+
+# Test 2: Blocker still [ ] in TODO.md but 'deployed' in DB — should unblock via DB fallback
+cat >"$UNBLOCK_REPO/TODO.md" <<'EOF'
+- [ ] t9003 Blocker task (deployed in DB but TODO.md not yet updated)
+- [ ] t9004 Downstream task blocked-by:t9003
+EOF
+git -C "$UNBLOCK_REPO" add TODO.md && git -C "$UNBLOCK_REPO" commit -q -m "reset for test 2"
+# Add t9003 to DB and transition to deployed
+sup add t9003 --repo "$UNBLOCK_REPO" --description "Blocker deployed in DB" >/dev/null 2>&1 || true
+sup transition t9003 dispatched >/dev/null 2>&1 || true
+sup transition t9003 running >/dev/null 2>&1 || true
+sup transition t9003 evaluating >/dev/null 2>&1 || true
+sup transition t9003 complete --pr-url "https://github.com/test/repo/pull/999" >/dev/null 2>&1 || true
+sup transition t9003 pr_review >/dev/null 2>&1 || true
+sup transition t9003 merging >/dev/null 2>&1 || true
+sup transition t9003 merged >/dev/null 2>&1 || true
+sup transition t9003 deploying >/dev/null 2>&1 || true
+sup transition t9003 deployed >/dev/null 2>&1 || true
+t9003_db_status=$(get_status t9003)
+if [[ "$t9003_db_status" == "deployed" ]]; then
+	sup auto-unblock --repo "$UNBLOCK_REPO" 2>/dev/null || true
+	if grep -qE '^\s*- \[ \] t9004 ' "$UNBLOCK_REPO/TODO.md" &&
+		! grep -qE 'blocked-by:t9003' "$UNBLOCK_REPO/TODO.md"; then
+		pass "t1247: blocker 'deployed' in DB unblocks downstream task (DB fallback)"
+	else
+		fail "t1247: DB fallback did not unblock downstream task when blocker is deployed" \
+			"$(grep 't9004' "$UNBLOCK_REPO/TODO.md")"
+	fi
+else
+	skip "t1247: DB fallback test skipped (t9003 not in deployed state: $t9003_db_status)"
+fi
+
+# Test 3: Blocker still [ ] in TODO.md and 'queued' in DB — should NOT unblock
+cat >"$UNBLOCK_REPO/TODO.md" <<'EOF'
+- [ ] t9005 Blocker task (still queued)
+- [ ] t9006 Downstream task blocked-by:t9005
+EOF
+git -C "$UNBLOCK_REPO" add TODO.md && git -C "$UNBLOCK_REPO" commit -q -m "reset for test 3"
+sup add t9005 --repo "$UNBLOCK_REPO" --description "Blocker still queued" >/dev/null 2>&1 || true
+sup auto-unblock --repo "$UNBLOCK_REPO" 2>/dev/null || true
+if grep -qE 'blocked-by:t9005' "$UNBLOCK_REPO/TODO.md"; then
+	pass "t1247: queued blocker does NOT unblock downstream task"
+else
+	fail "t1247: queued blocker incorrectly unblocked downstream task" \
+		"$(grep 't9006' "$UNBLOCK_REPO/TODO.md")"
+fi
+
+# Test 4: Blocker not in TODO.md at all (orphaned reference) — should unblock
+cat >"$UNBLOCK_REPO/TODO.md" <<'EOF'
+- [ ] t9007 Downstream task blocked-by:t9999
+EOF
+git -C "$UNBLOCK_REPO" add TODO.md && git -C "$UNBLOCK_REPO" commit -q -m "reset for test 4"
+sup auto-unblock --repo "$UNBLOCK_REPO" 2>/dev/null || true
+if grep -qE '^\s*- \[ \] t9007 ' "$UNBLOCK_REPO/TODO.md" &&
+	! grep -qE 'blocked-by:t9999' "$UNBLOCK_REPO/TODO.md"; then
+	pass "t1247: orphaned blocker reference (not in TODO.md) unblocks downstream task"
+else
+	fail "t1247: orphaned blocker reference did not unblock downstream task" \
+		"$(grep 't9007' "$UNBLOCK_REPO/TODO.md")"
+fi
+
+# ============================================================
 # SUMMARY
 # ============================================================
 echo ""
