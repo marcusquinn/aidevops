@@ -250,11 +250,12 @@ _is_duplicate_action() {
 	escaped_type=$(sql_escape "$action_type")
 	escaped_target=$(sql_escape "$target")
 
-	# Get the N most recent distinct cycle IDs
+	# Get the N most recent distinct cycle IDs (include both 'executed' and 'failed'
+	# statuses — failed actions should also suppress retries within the window (t1238))
 	local recent_cycles
 	recent_cycles=$(db "$SUPERVISOR_DB" "
 		SELECT DISTINCT cycle_id FROM action_dedup_log
-		WHERE status = 'executed'
+		WHERE status IN ('executed', 'failed')
 		ORDER BY created_at DESC
 		LIMIT $AI_ACTION_DEDUP_WINDOW;
 	" 2>>"${SUPERVISOR_LOG:-/dev/null}" || echo "")
@@ -281,13 +282,32 @@ _is_duplicate_action() {
 		SELECT COUNT(*) FROM action_dedup_log
 		WHERE action_type = '$escaped_type'
 		  AND target = '$escaped_target'
-		  AND status = 'executed'
+		  AND status IN ('executed', 'failed')
 		  AND cycle_id IN ($in_clause);
 	" 2>>"${SUPERVISOR_LOG:-/dev/null}" || echo "0")
 
 	if [[ "$match_count" -eq 0 ]]; then
-		# No prior execution found — not a duplicate
+		# No prior execution or failure found — not a duplicate
 		return 1
+	fi
+
+	# Check if the most recent entry is a 'failed' status — if so, always suppress
+	# regardless of state changes. Failed actions (e.g., task_not_in_db) indicate a
+	# structural issue that won't resolve on retry within the same window (t1238).
+	local last_status
+	last_status=$(db "$SUPERVISOR_DB" "
+		SELECT status FROM action_dedup_log
+		WHERE action_type = '$escaped_type'
+		  AND target = '$escaped_target'
+		  AND status IN ('executed', 'failed')
+		  AND cycle_id IN ($in_clause)
+		ORDER BY created_at DESC
+		LIMIT 1;
+	" 2>>"${SUPERVISOR_LOG:-/dev/null}" || echo "")
+
+	if [[ "$last_status" == "failed" ]]; then
+		log_info "AI Actions: dedup: $action_type on $target — last attempt failed (structural error), suppressing retry within window"
+		return 0
 	fi
 
 	# Basic dedup says this is a duplicate. Now check cycle-aware state (t1179).
@@ -852,6 +872,10 @@ execute_action_plan() {
 				--arg type "$action_type" \
 				--arg error "$exec_result" \
 				'. + [{"index": $idx, "type": $type, "status": "failed", "error": $error}]')
+			# Record failed actions in the dedup log so the dedup system suppresses
+			# retries within the window. Without this, structural failures (e.g.,
+			# task_not_in_db) are retried every time the dedup window expires (t1238).
+			_record_action_dedup "$cycle_id" "$action_type" "$dedup_target" "failed" "$state_hash"
 		fi
 
 		{
