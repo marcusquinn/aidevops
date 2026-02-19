@@ -1426,6 +1426,11 @@ t165,Provider-agnostic task claiming via TODO.md,marcusquinn,orchestration archi
 - [x] t001 Add TODO.md and planning workflow #workflow ~2h actual:1.5h ref:GH#1112 logged:2025-12-18 completed:2025-12-20 verified:2026-02-11
 - [x] t002 Add shadcn/ui MCP support #tools ~1h actual:45m logged:2025-12-18 completed:2025-12-18 verified:2025-12-18
 - [x] t003 Add oh-my-opencode integration #tools ~30m actual:25m logged:2025-12-18 completed:2025-12-18 verified:2025-12-18
+  - [ ] t003.1 Audit all dashboard pages for responsive breakpoint issues and document findings #auto-dispatch ~2h model:sonnet
+  - [ ] t003.2 Fix responsive layout for primary dashboard views (home, overview, stats) #auto-dispatch ~3h model:sonnet
+  - [ ] t003.3 Fix responsive layout for form-heavy pages (settings, profile, submissions) #auto-dispatch ~3h model:sonnet
+  - [ ] t003.4 Fix responsive layout for data table pages (lists, reports, admin grids) #auto-dispatch ~3h model:sonnet
+  - [ ] t003.5 Cross-browser and device testing for all responsive fixes #auto-dispatch ~1h model:sonnet
 - [x] t011 Demote wordpress.md from main agent to subagent #architecture ~1h actual:45m logged:2025-12-21 started:2025-12-22T04:10Z completed:2025-12-22 verified:2025-12-22
 - [x] t022 Move wordpress from root to tools/wordpress #refactor ~30m actual:25m logged:2025-12-22 started:2025-12-22T05:15Z completed:2025-12-22 verified:2025-12-22
 - [x] t019 Beads Integration for aidevops #plan #beads ~2d actual:1.5d logged:2025-12-21 started:2025-12-21T16:00Z completed:2025-12-22 verified:2025-12-22
