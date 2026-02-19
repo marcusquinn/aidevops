@@ -1544,7 +1544,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
   - gitea-cli-helper.sh uses tea CLI but it can't work in headless dispatch or GitHub Actions
   - Either: (1) report upstream to tea project, (2) add `--non-interactive` flag detection, or (3) migrate gitea-cli-helper.sh to use REST API directly (like the gitea-issue-sync.sh prototype does)
 
-- [ ] t1122 Fix issue-sync-helper.sh IFS unbound variable error in cmd_enrich #bugfix #git #sync ~15m model:haiku ref:GH#1681 logged:2026-02-18 [proposed:auto-dispatch model:haiku]
+- [ ] t1122 Fix issue-sync-helper.sh IFS unbound variable error in cmd_enrich #bugfix #git #sync ~15m model:haiku ref:GH#1681 logged:2026-02-18 #auto-dispatch
   - Running `issue-sync-helper.sh enrich` (without specific task) fails at line 528 with `IFS: unbound variable`
   - Likely a `set -u` issue where IFS is used before being set in a read loop
   - Quick fix: add `local IFS` or use `IFS='' read` pattern
