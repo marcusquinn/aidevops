@@ -1609,3 +1609,12 @@
   check: file-exists .agents/scripts/supervisor/ai-actions.sh
   check: shellcheck .agents/scripts/supervisor/ai-context.sh
   check: file-exists .agents/scripts/supervisor/ai-context.sh
+
+- [ ] v191 t1239 Add cross-repo task registration validation to prevent mi... | PR #1926 | merged:2026-02-19
+  files: .agents/scripts/supervisor/batch.sh, .agents/scripts/supervisor/cron.sh, .agents/scripts/supervisor/dispatch.sh
+  check: shellcheck .agents/scripts/supervisor/batch.sh
+  check: file-exists .agents/scripts/supervisor/batch.sh
+  check: shellcheck .agents/scripts/supervisor/cron.sh
+  check: file-exists .agents/scripts/supervisor/cron.sh
+  check: shellcheck .agents/scripts/supervisor/dispatch.sh
+  check: file-exists .agents/scripts/supervisor/dispatch.sh
