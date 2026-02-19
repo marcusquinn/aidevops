@@ -26,7 +26,21 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+# Resolve symlinks to find real script location (t1262)
+# When invoked via symlink (e.g. ~/.aidevops/bin/aidevops-auto-update),
+# BASH_SOURCE[0] is the symlink path. We must resolve it to find sibling scripts.
+_resolve_script_path() {
+	local src="${BASH_SOURCE[0]}"
+	while [[ -L "$src" ]]; do
+		local dir
+		dir="$(cd "$(dirname "$src")" && pwd)" || return 1
+		src="$(readlink "$src")"
+		[[ "$src" != /* ]] && src="$dir/$src"
+	done
+	cd "$(dirname "$src")" && pwd
+}
+SCRIPT_DIR="$(_resolve_script_path)" || exit
+unset -f _resolve_script_path
 source "${SCRIPT_DIR}/shared-constants.sh"
 
 init_log_file
