@@ -186,13 +186,11 @@ _diagnose_stale_root_cause() {
 			_DIAG_EVAL_LAG_SECS="NULL"
 		fi
 
-		# Check if the evaluate step left any error indicators in the log
-		if grep -q 'WORKER_FAILED\|DISPATCH_ERROR\|command not found' "$log_file" 2>/dev/null; then
-			echo "worker_failed_before_eval"
-			return 0
-		fi
-
 		# t1251/t1254: Check if evaluation is actively in progress via heartbeat.
+		# MUST run BEFORE log content checks — if eval is actively running, we must
+		# skip regardless of what error strings appear in the log (t1258 fix: the
+		# previous ordering caused worker_failed_before_eval to fire on tasks that
+		# were actively evaluating, bypassing this heartbeat guard entirely).
 		# evaluate_with_ai() updates updated_at at the start of each AI eval call
 		# and every 20s via a periodic background heartbeat (t1254).
 		# heartbeat_window = eval_timeout * 2 + 60: defense-in-depth in case the
@@ -217,9 +215,14 @@ _diagnose_stale_root_cause() {
 			fi
 		fi
 
-		# Check if there's an AI eval timeout indicator in the supervisor log
-		if grep -q 'evaluate_with_ai\|AI evaluation' "$log_file" 2>/dev/null; then
-			echo "ai_eval_timeout"
+		# Check if the evaluate step left any error indicators in the log.
+		# t1258: Only check the last 20 lines to avoid false positives from
+		# REPROMPT METADATA headers that embed previous failure content (e.g.,
+		# a retry log that includes WORKER_FAILED from the prior attempt).
+		# Full-log grep caused worker_failed_before_eval false positives on
+		# tasks that were actively evaluating their second or third attempt.
+		if tail -20 "$log_file" 2>/dev/null | grep -q 'WORKER_FAILED\|DISPATCH_ERROR\|command not found'; then
+			echo "worker_failed_before_eval"
 			return 0
 		fi
 
@@ -242,6 +245,16 @@ _diagnose_stale_root_cause() {
 		if [[ -f "$eval_checkpoint_file" ]]; then
 			echo "pulse_killed_mid_eval"
 			return 0
+		fi
+
+		# t1258: Check supervisor log for AI eval activity — the worker log never
+		# contains evaluate_with_ai (it's a supervisor function). The previous check
+		# searched the wrong file and never matched, masking ai_eval_timeout cases.
+		if [[ -n "${SUPERVISOR_LOG:-}" && -f "$SUPERVISOR_LOG" ]]; then
+			if tail -100 "$SUPERVISOR_LOG" 2>/dev/null | grep -q "evaluate_with_ai.*${task_id}\|AI eval.*${task_id}"; then
+				echo "ai_eval_timeout"
+				return 0
+			fi
 		fi
 
 		# Check if the pulse was killed mid-evaluation (no completion marker)
@@ -997,19 +1010,22 @@ cmd_pulse() {
 
 			local recovery_to_state=""
 
-			# t1145/t1250: If the stale task is in 'evaluating' and already has a PR, route
-			# to pr_review instead of re-queuing — the work is done, only evaluation died.
-			# Fast-path tasks (with PR URL) arrive here with a 10s grace instead of 120s,
-			# reducing the median recovery latency from ~120s to ~10s for this common case.
-			if [[ "$stale_status" == "evaluating" && "$had_pr_flag" -eq 1 ]]; then
+			# t1145/t1250/t1258: If the stale task has a PR, route to pr_review instead of
+			# re-queuing — the work is done, only evaluation (or the worker) died.
+			# Applies to both 'evaluating' and 'running' states with a PR URL.
+			# Fast-path evaluating tasks (with PR URL) arrive here with a 10s grace instead
+			# of 120s, reducing the median recovery latency from ~120s to ~10s.
+			# Running tasks with a PR (e.g., worker_oom_killed after creating PR) previously
+			# went to queued unnecessarily — they should go directly to pr_review (t1258).
+			if [[ "$had_pr_flag" -eq 1 ]]; then
 				recovery_to_state="pr_review"
-				log_info "  Phase 0.7: $stale_id → pr_review (has PR, evaluation process died)"
-				cmd_transition "$stale_id" "pr_review" --pr-url "$stale_pr_url" --error "Stale evaluating recovery (Phase 0.7/t1145/t1250): evaluation process died, PR exists (cause: $root_cause)" 2>>"$SUPERVISOR_LOG" || true
+				log_info "  Phase 0.7: $stale_id → pr_review (has PR, $stale_status process died, cause: $root_cause)"
+				cmd_transition "$stale_id" "pr_review" --pr-url "$stale_pr_url" --error "Stale $stale_status recovery (Phase 0.7/t1145/t1250/t1258): process died, PR exists (cause: $root_cause)" 2>>"$SUPERVISOR_LOG" || true
 				db "$SUPERVISOR_DB" "
 					INSERT INTO state_log (task_id, from_state, to_state, reason)
 					VALUES ('$(sql_escape "$stale_id")', '$(sql_escape "$stale_status")',
 						'pr_review',
-						'Phase 0.7 stale-state recovery (t1145/t1202/t1250): evaluating with dead worker but PR exists — routed to pr_review (cause: $(sql_escape "$root_cause"))');
+						'Phase 0.7 stale-state recovery (t1145/t1202/t1250/t1258): $stale_status with dead worker but PR exists — routed to pr_review (cause: $(sql_escape "$root_cause"))');
 				" 2>/dev/null || true
 			elif [[ "$stale_retries" -lt "$stale_max_retries" ]]; then
 				# Retries remaining — re-queue for dispatch
