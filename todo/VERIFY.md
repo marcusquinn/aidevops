@@ -1755,7 +1755,7 @@
   files: VERIFY.md
   check: file-exists VERIFY.md
 
-- [ ] v213 t1256 Add stale-evaluating root cause analysis to pulse Phase 0... | PR #1963 | merged:2026-02-19
+- [x] v213 t1256 Add stale-evaluating root cause analysis to pulse Phase 0... | PR #1963 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/supervisor/database.sh, .agents/scripts/supervisor/evaluate.sh, .agents/scripts/supervisor/pulse.sh, .agents/scripts/supervisor/state.sh
   check: shellcheck .agents/scripts/supervisor/database.sh
   check: file-exists .agents/scripts/supervisor/database.sh
