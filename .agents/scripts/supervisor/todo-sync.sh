@@ -1671,9 +1671,20 @@ cmd_reconcile_queue_dispatchability() {
 		todo_line=$(grep -E "^[[:space:]]*- \[ \] ${tid}( |$)" "$task_todo" 2>/dev/null | head -1 || true)
 
 		if [[ -z "$todo_line" ]]; then
-			# Task not found in TODO.md at all — orphan, handled by Phase 7b Gap 3
-			log_verbose "Phase 0.6: $tid not found in TODO.md — skipping (Phase 7b handles orphans)"
-			skipped_count=$((skipped_count + 1))
+			# t1261: Task queued in DB but not found in TODO.md at all — orphan.
+			# This happens when _exec_create_task appends to TODO.md but
+			# commit_and_push_todo fails (merge conflict), and the auto-pickup
+			# phase adds the task to the DB from the local (uncommitted) copy.
+			# The next git pull removes the local-only line, leaving a DB-only
+			# task that can never be dispatched (dispatch requires TODO.md claim).
+			# Cancel these orphans to prevent permanent dispatch stall.
+			if [[ "$dry_run" == "true" ]]; then
+				log_warn "[dry-run] Phase 0.6: $tid queued in DB but not in TODO.md — would cancel (orphaned, t1261)"
+			else
+				log_warn "Phase 0.6: $tid queued in DB but not in TODO.md — cancelling orphan (t1261)"
+				db "$SUPERVISOR_DB" "UPDATE tasks SET status='cancelled', error='Orphaned: queued in DB but not found in TODO.md (t1261)' WHERE id='$(sql_escape "$tid")' AND status='queued';" 2>/dev/null || true
+				phantom_count=$((phantom_count + 1))
+			fi
 			continue
 		fi
 

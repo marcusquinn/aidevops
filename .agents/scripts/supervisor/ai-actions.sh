@@ -1324,8 +1324,26 @@ _exec_create_task() {
 	printf '\n%s\n' "$task_line" >>"$todo_file"
 
 	# Commit and push (redirect stdout to log — git operations leak noise)
+	# t1261: Verify commit succeeded — if it fails (merge conflict, etc.), the task
+	# line exists only in the local working copy and will be lost on next git pull.
+	# This caused orphaned DB tasks that could never be dispatched.
+	local commit_ok=false
 	if declare -f commit_and_push_todo &>/dev/null; then
-		commit_and_push_todo "$repo_path" "chore: AI supervisor created task $task_id" >>"$SUPERVISOR_LOG" 2>&1 || true
+		if commit_and_push_todo "$repo_path" "chore: AI supervisor created improvement task $task_id" >>"$SUPERVISOR_LOG" 2>&1; then
+			commit_ok=true
+		else
+			log_warn "AI Actions: commit_and_push_todo failed for $task_id — reverting TODO.md append (t1261)"
+			# Revert the append: remove the task line we just added
+			local escaped_task_id
+			escaped_task_id=$(printf '%s' "$task_id" | sed 's/[.[\*^$()+?{|\\]/\\&/g')
+			sed -i '' "/^- \[ \] ${escaped_task_id} /d" "$todo_file" 2>/dev/null || true
+		fi
+	fi
+
+	if [[ "$commit_ok" != "true" ]]; then
+		jq -n --arg task_id "$task_id" --arg error "commit_failed" \
+			'{"created": false, "task_id": $task_id, "error": $error}'
+		return 1
 	fi
 
 	jq -n --arg task_id "$task_id" --arg title "$title" \
