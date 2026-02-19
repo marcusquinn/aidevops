@@ -1783,14 +1783,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 =======
 >>>>>>> Stashed changes
 
-<<<<<<< Updated upstream
 - [ ] t1257 Add sequential dependency enforcement for t1120 subtask chain #bugfix #auto-dispatch #self-improvement ~15m model:haiku category:process — t1120.1, t1120.2, and t1120.4 are all eligible for auto-dispatch but have an implicit sequential dependency (extract functions → add adapter → test). Without explicit blocked-by fields, they could be dispatched simultaneously and t1120.2/t1120.4 would fail because t1120.1 hasn't landed yet. Add blocked-by:t1120.1 to t1120.2 and blocked-by:t1120.2 to t1120.4 in TODO.md to prevent wasted dispatch cycles. ref:GH#1964
-=======
-
 - [x] t1258 Investigate high volume of stale evaluating recovery events #bugfix #auto-dispatch #self-improvement ~2h model:sonnet category:reliability — 15 of 15 recently completed tasks in the last 24h show 'Stale evaluating recovery (Phase 0.7)' notes. This suggests tasks are routinely getting stuck in 'evaluating' state and requiring Phase 0.7 recovery rather than completing normally. Root cause investigation needed: is the evaluation step timing out? Is there a race condition between worker completion and evaluation? The recovery mechanism works but shouldn't be the primary completion path. Check supervisor-helper.sh evaluate flow, worker sentinel timing, and whether evaluation is blocking on external calls (GitHub API rate limits, PR merge checks). assignee:marcusquinn started:2026-02-19T13:35:18Z ref:GH#1965 pr:#1966 completed:2026-02-19
->>>>>>> Stashed changes
-
-<<<<<<< Updated upstream
 - [x] t1259 Investigate and mitigate stale evaluating recovery pattern across all recent completions #bugfix #auto-dispatch #self-improvement ~2h model:sonnet category:reliability — All 15 recently completed tasks in the last 24h show 'Stale evaluating recovery (Phase 0.7)' in their notes. While tasks are completing successfully, this indicates workers are consistently entering a stale state that requires recovery intervention. Root cause analysis needed: are workers failing to report completion, is the evaluation phase timing out, or is there a race condition in the pulse cycle? Fixing this would reduce unnecessary recovery cycles and improve dispatch latency. ref:GH#1967 assignee:marcusquinn pr:#1968 completed:2026-02-19
-=======
->>>>>>> Stashed changes
+- [ ] t1262 Fix symlink SCRIPT_DIR resolution for launchd agents #bugfix ~30m model:sonnet category:reliability — supervisor-helper.sh and auto-update-helper.sh use BASH_SOURCE[0] to determine SCRIPT_DIR, but when invoked via symlinks in ~/.aidevops/bin/ (created by t1260 launchd setup), BASH_SOURCE resolves to the symlink path not the target. This causes shared-constants.sh sourcing to fail, breaking both launchd agents (exit code 1). Fix: resolve symlinks before dirname. ref:GH#1976 started:2026-02-19T22:00:00Z
