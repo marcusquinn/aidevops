@@ -1,5 +1,48 @@
 # Verification Log
 
+## t1255 Verification — Cross-Repo Dispatch Investigation (Duplicate of t1253)
+
+### Status: DUPLICATE — closed, covered by t1253 / PR #1959
+
+t1255 requested investigation of 15 awardsapp subtasks not being dispatched, with 3
+verification points: (1) supervisor pulse scans all registered repos, (2) awardsapp tasks
+have correct repo path in supervisor DB, (3) cross-repo concurrency fairness (t1188.2) is
+functioning.
+
+All 3 points were fully investigated and resolved by t1253 (merged PR #1959,
+2026-02-19T11:11:21Z).
+
+### Root Cause (from t1253)
+
+`cmd_next` in `state.sh:1004-1017` filtered subtasks whose earlier siblings were "still
+active" using `status NOT IN ('verified','cancelled','deployed','complete')`. This omitted
+`failed` and `blocked` — both terminal states for sibling ordering purposes:
+
+- `t007.1` was `failed` (3/3 retries exhausted), blocking t007.2-t007.8
+- `t004.2` and `t005.1` were `blocked`, preventing t004.3-t004.5 and t005.2-t005.6
+
+**Fix**: Added `'failed'` and `'blocked'` to the `NOT IN` terminal states list in the
+sibling ordering SQL query (consistent with `todo-sync.sh:1443` which already included both).
+
+### t1255 Verification Points — All Confirmed by t1253
+
+| Verification Point | Finding |
+|---|---|
+| Supervisor pulse scans all registered repos | TRUE — pulse scans all repos; issue was upstream in sibling filter |
+| awardsapp tasks have correct repo path in supervisor DB | TRUE — all 15 subtasks were in `batch-20260218143815-69271` |
+| Cross-repo concurrency fairness (t1188.2) functioning | TRUE — fairness logic in `cmd_next` is correct; sibling filter eliminated all awardsapp candidates before fairness ran |
+
+### Other Hypotheses Ruled Out
+
+1. awardsapp tasks not in supervisor batch — FALSE
+2. Cross-repo fairness not routing to awardsapp — FALSE
+3. Parent task `@marcus` assignee blocking subtask dispatch — FALSE (`cmd_auto_pickup` checks subtask's own line, not parent's)
+4. Subtasks lack `#auto-dispatch` tags — FALSE (all subtasks had `#auto-dispatch` and were `queued` in supervisor DB)
+
+Closes #1960
+
+---
+
 ## t1181 Verification — Action-Target Cooldown (Superseded by t1179)
 
 ### Status: COMPLETE (superseded)
