@@ -192,13 +192,16 @@ _diagnose_stale_root_cause() {
 			return 0
 		fi
 
-		# t1251: Check if evaluation is actively in progress via heartbeat.
-		# evaluate_with_ai() updates updated_at at the start of each AI eval call.
-		# If updated_at is very recent (< eval_timeout + 30s buffer), the eval is
-		# likely still running — not stuck. Return a distinct cause so callers can
-		# skip recovery for actively-evaluating tasks.
+		# t1251/t1254: Check if evaluation is actively in progress via heartbeat.
+		# evaluate_with_ai() updates updated_at at the start of each AI eval call
+		# and every 20s via a periodic background heartbeat (t1254).
+		# heartbeat_window = eval_timeout * 2 + 60: defense-in-depth in case the
+		# heartbeat process itself fails or is delayed. Under normal operation the
+		# periodic heartbeat keeps updated_at fresh and a much smaller window would
+		# suffice, but this wider window ensures Phase 0.7 does not fire if the
+		# heartbeat subshell is unexpectedly killed or stalled.
 		local eval_timeout_cfg="${SUPERVISOR_EVAL_TIMEOUT:-90}"
-		local heartbeat_window=$((eval_timeout_cfg + 30))
+		local heartbeat_window=$((eval_timeout_cfg * 2 + 60))
 		local db_updated_at
 		db_updated_at=$(db "$SUPERVISOR_DB" "SELECT updated_at FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
 		if [[ -n "$db_updated_at" ]]; then

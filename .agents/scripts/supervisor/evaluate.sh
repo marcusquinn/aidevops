@@ -1439,10 +1439,32 @@ Respond with ONLY the verdict line, nothing else. Example: VERDICT:retry:rate_li
 	# "eval in progress" vs "eval died" — reduces false stale-evaluating recoveries.
 	log_info "evaluate_with_ai: starting AI eval for $task_id (timeout=${eval_timeout}s, model=$eval_model, started=$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo 'unknown'))"
 
-	# t1251: Heartbeat — touch updated_at so Phase 0.7's grace period doesn't
-	# fire while evaluation is actively running. Without this, a 60s+ eval that
-	# started just before the grace window expires triggers unnecessary recovery.
+	# t1251: Initial heartbeat — touch updated_at so Phase 0.7's grace period
+	# doesn't fire while evaluation is actively running.
 	db "$SUPERVISOR_DB" "UPDATE tasks SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || true
+
+	# t1254: Periodic heartbeat — refresh updated_at every 20s during the AI call.
+	# The one-shot heartbeat from t1251 only covers eval_timeout+30s (120s window).
+	# If the AI eval takes >120s (slow model, large log), Phase 0.7 triggers false
+	# recovery even though eval is actively running. A periodic heartbeat keeps
+	# updated_at fresh for the full duration of the eval, regardless of how long
+	# it takes. The loop self-terminates when the sentinel file is removed.
+	local _hb_sentinel
+	_hb_sentinel=$(mktemp 2>/dev/null || echo "")
+	local _hb_pid=""
+	if [[ -n "$_hb_sentinel" ]]; then
+		local _hb_task_id="$task_id"
+		local _hb_db="$SUPERVISOR_DB"
+		(
+			while [[ -f "$_hb_sentinel" ]]; do
+				sleep 20
+				[[ -f "$_hb_sentinel" ]] || break
+				db "$_hb_db" "UPDATE tasks SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = '$(sql_escape "$_hb_task_id")';" 2>/dev/null || true
+			done
+		) &
+		_hb_pid=$!
+		push_cleanup "rm -f '${_hb_sentinel}' 2>/dev/null || true; kill '${_hb_pid}' 2>/dev/null || true; wait '${_hb_pid}' 2>/dev/null || true"
+	fi
 
 	# t1252: Watchdog timer — detect evaluation hangs within 60s instead of
 	# waiting for the full stale timeout (120s grace + eval_timeout).
@@ -1488,6 +1510,21 @@ Respond with ONLY the verdict line, nothing else. Example: VERDICT:retry:rate_li
 			--model "$claude_model" \
 			--output-format text 2>/dev/null || echo "")
 	fi
+
+	# t1254: Stop periodic heartbeat — eval completed (or timed out).
+	# Remove sentinel first so the heartbeat loop exits cleanly on its next iteration.
+	# _hb_pid is only set when _hb_sentinel was successfully created, so checking
+	# _hb_pid alone is sufficient to guard all heartbeat cleanup operations.
+	if [[ -n "$_hb_pid" ]]; then
+		rm -f "$_hb_sentinel" 2>/dev/null || true
+		kill "$_hb_pid" 2>/dev/null || true
+		wait "$_hb_pid" 2>/dev/null || true
+	fi
+
+	# t1254: Final heartbeat touch — extend the Phase 0.7 grace window through
+	# post-eval teardown. Without this, if watchdog fires at eval_timeout and
+	# teardown takes >30s, Phase 0.7 could recover the task mid-teardown.
+	db "$SUPERVISOR_DB" "UPDATE tasks SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || true
 
 	# t1252: Cancel watchdog — eval completed (or timed out), no longer needed.
 	# Remove sentinel first so watchdog subshell won't fire if it wakes up late.
