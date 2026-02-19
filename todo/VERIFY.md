@@ -1437,7 +1437,7 @@
   check: shellcheck .agents/scripts/supervisor/ai-context.sh
   check: file-exists .agents/scripts/supervisor/ai-context.sh
 
-- [ ] v172 t1200.1 Core orchestrator + free-tier providers — create `ip-re... | PR #1856 | merged:2026-02-19
+- [x] v172 t1200.1 Core orchestrator + free-tier providers — create `ip-re... | PR #1856 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/ip-reputation-helper.sh, .agents/scripts/providers/ip-rep-abuseipdb.sh, .agents/scripts/providers/ip-rep-blocklistde.sh, .agents/scripts/providers/ip-rep-proxycheck.sh, .agents/scripts/providers/ip-rep-spamhaus.sh, .agents/scripts/providers/ip-rep-stopforumspam.sh
   check: shellcheck .agents/scripts/ip-reputation-helper.sh
   check: file-exists .agents/scripts/ip-reputation-helper.sh
@@ -1451,3 +1451,8 @@
   check: file-exists .agents/scripts/providers/ip-rep-spamhaus.sh
   check: shellcheck .agents/scripts/providers/ip-rep-stopforumspam.sh
   check: file-exists .agents/scripts/providers/ip-rep-stopforumspam.sh
+
+- [ ] v173 t1217 Add create_subtasks post-execution verification to confir... | PR #1858 | merged:2026-02-19
+  files: .agents/scripts/supervisor/ai-actions.sh
+  check: shellcheck .agents/scripts/supervisor/ai-actions.sh
+  check: file-exists .agents/scripts/supervisor/ai-actions.sh
