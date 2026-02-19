@@ -274,22 +274,24 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       background: #0d1117; color: #c9d1d9; padding: 20px;
     }
-    h1 { margin-bottom: 20px; color: #58a6ff; }
+    h1 { margin-bottom: 20px; color: #58a6ff; font-size: clamp(1.25rem, 4vw, 1.75rem); }
     .auth-bar {
       background: #161b22; border: 1px solid #30363d; border-radius: 8px;
       padding: 12px 16px; margin-bottom: 16px; display: flex; align-items: center; gap: 12px;
+      flex-wrap: wrap;
     }
     .auth-bar input {
-      flex: 1; padding: 8px 12px; border-radius: 6px; border: 1px solid #30363d;
+      flex: 1 1 200px; min-width: 0; padding: 8px 12px; border-radius: 6px; border: 1px solid #30363d;
       background: #0d1117; color: #c9d1d9; font-size: 14px;
     }
     .auth-bar button {
       padding: 8px 16px; border-radius: 6px; border: none;
       background: #238636; color: #fff; cursor: pointer; font-size: 14px;
+      white-space: nowrap;
     }
-    .auth-status { font-size: 12px; color: #8b949e; }
+    .auth-status { font-size: 12px; color: #8b949e; flex-basis: 100%; }
     .auth-status.authenticated { color: #3fb950; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 16px; }
     .card {
       background: #161b22; border: 1px solid #30363d; border-radius: 8px;
       padding: 16px; transition: border-color 0.2s;
@@ -299,17 +301,19 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     .card-title { font-size: 18px; font-weight: 600; }
     .status { 
       padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: 500;
+      white-space: nowrap;
     }
     .status.running { background: #238636; color: #fff; }
     .status.stopped { background: #6e7681; color: #fff; }
     .status.error { background: #da3633; color: #fff; }
     .status.unknown { background: #6e7681; color: #fff; }
     .card-body { font-size: 14px; color: #8b949e; }
-    .card-body code { background: #0d1117; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
-    .actions { margin-top: 12px; display: flex; gap: 8px; }
+    .card-body code { background: #0d1117; padding: 2px 6px; border-radius: 4px; font-size: 12px; word-break: break-all; }
+    .actions { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
     button {
-      padding: 6px 12px; border-radius: 6px; border: 1px solid #30363d;
-      background: #21262d; color: #c9d1d9; cursor: pointer; font-size: 12px;
+      padding: 8px 16px; border-radius: 6px; border: 1px solid #30363d;
+      background: #21262d; color: #c9d1d9; cursor: pointer; font-size: 14px;
+      min-height: 44px; min-width: 44px;
     }
     button:hover { background: #30363d; }
     button.primary { background: #238636; border-color: #238636; }
@@ -320,6 +324,26 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     .refresh { margin-bottom: 16px; }
     .last-update { font-size: 12px; color: #6e7681; margin-top: 20px; }
     .error-msg { color: #f85149; font-size: 12px; margin-top: 8px; }
+
+    /* Responsive breakpoints */
+    @media (max-width: 768px) {
+      body { padding: 12px; }
+      h1 { font-size: 1.25rem; }
+      .auth-bar { padding: 10px 12px; gap: 8px; }
+      .auth-bar input { flex-basis: 100%; }
+      .card { padding: 12px; }
+      .card-title { font-size: 16px; }
+      .card-body code { font-size: 11px; }
+    }
+    @media (max-width: 480px) {
+      body { padding: 8px; }
+      .auth-bar { flex-direction: column; align-items: stretch; }
+      .auth-bar button { width: 100%; text-align: center; }
+      .auth-status { text-align: center; }
+      .actions { flex-direction: column; }
+      .actions button { width: 100%; text-align: center; }
+      .grid { gap: 12px; }
+    }
   </style>
 </head>
 <body>
