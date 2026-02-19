@@ -1,0 +1,56 @@
+{
+  "_comment": "Multi-org isolation configuration template. Copy to multi-org-config.json and customise.",
+  "isolation": {
+    "strategy": "row_level",
+    "rls_enabled": true,
+    "rls_forced": true,
+    "db_role": "app_user"
+  },
+  "context_resolution": {
+    "order": [
+      "header",
+      "session",
+      "url",
+      "project_config",
+      "user_default",
+      "single_org"
+    ],
+    "header_name": "X-Org-Id",
+    "url_pattern": "/org/:slug",
+    "project_config_file": ".aidevops-tenant"
+  },
+  "defaults": {
+    "plan": "free",
+    "role": "member",
+    "session_timeout_minutes": 480
+  },
+  "plans": {
+    "free": {
+      "max_members": 5,
+      "max_ai_sessions_per_day": 50,
+      "max_credentials": 20,
+      "allowed_model_tiers": ["haiku", "sonnet"],
+      "memory_retention_days": 30
+    },
+    "pro": {
+      "max_members": 50,
+      "max_ai_sessions_per_day": 500,
+      "max_credentials": 200,
+      "allowed_model_tiers": ["haiku", "sonnet", "opus"],
+      "memory_retention_days": 365
+    },
+    "enterprise": {
+      "max_members": -1,
+      "max_ai_sessions_per_day": -1,
+      "max_credentials": -1,
+      "allowed_model_tiers": ["haiku", "sonnet", "opus"],
+      "memory_retention_days": -1
+    }
+  },
+  "audit": {
+    "enabled": true,
+    "log_reads": false,
+    "log_writes": true,
+    "retention_days": 90
+  }
+}
