@@ -666,11 +666,15 @@ link_pr_to_task() {
 # five broad categories for pattern tracking and model routing decisions.
 #
 # Categories:
-#   TRANSIENT - recoverable with retry (rate limits, timeouts, backend blips)
-#   RESOURCE  - infrastructure/environment issue (auth, OOM, disk)
-#   LOGIC     - task/code problem (merge conflict, test failure, build error)
-#   BLOCKED   - external dependency (human needed, upstream, missing context)
-#   AMBIGUOUS - unclear cause (clean exit, max retries, unknown)
+#   TRANSIENT   - recoverable with retry (rate limits, timeouts, backend blips)
+#   RESOURCE    - infrastructure/environment issue (auth, OOM, disk)
+#   ENVIRONMENT - dispatch infrastructure failure (t1113: CLI missing, worker never
+#                 started, log file missing). These are NOT task/code problems —
+#                 retrying won't help until the environment is fixed. The pulse
+#                 handles these by deferring re-queue without burning retry count.
+#   LOGIC       - task/code problem (merge conflict, test failure, build error)
+#   BLOCKED     - external dependency (human needed, upstream, missing context)
+#   AMBIGUOUS   - unclear cause (clean exit, max retries, unknown)
 #
 # $1: outcome_detail (e.g., "rate_limited", "auth_error", "merge_conflict")
 #
@@ -691,9 +695,15 @@ classify_failure_mode() {
 		billing_credits_exhausted | out_of_memory)
 		echo "RESOURCE"
 		;;
-	merge_conflict | test_fail* | lint_* | build_* | \
-		worker_never_started* | log_file_missing* | log_file_empty | \
+	worker_never_started* | log_file_missing* | log_file_empty | \
 		no_log_path_in_db* | dispatch_script_not_executable)
+		# t1113: Reclassified from LOGIC to ENVIRONMENT. These failures indicate
+		# the dispatch infrastructure (CLI binary, worktree, permissions) is broken,
+		# not the task itself. Retrying the task won't help — the environment must
+		# be fixed first. The pulse defers these without burning retry count.
+		echo "ENVIRONMENT"
+		;;
+	merge_conflict | test_fail* | lint_* | build_*)
 		echo "LOGIC"
 		;;
 	blocked:* | waiting* | upstream* | missing_context* | \
