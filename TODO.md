@@ -1779,7 +1779,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 >>>>>>> Stashed changes
 
 <<<<<<< Updated upstream
-- [ ] t1256 Add stale-evaluating root cause analysis to pulse Phase 0.7 #bugfix #auto-dispatch #self-improvement ~2h model:sonnet category:automation — 14 of 15 recently completed tasks required 'Stale evaluating recovery (Phase 0.7)' intervention. While the self-healing works, the high frequency suggests a systemic issue — tasks are routinely getting stuck in evaluating state rather than transitioning cleanly. Root cause analysis should determine why tasks stall in evaluating (possible causes: evaluator timeout, race condition in status transition, slow PR merge detection) and fix the upstream issue rather than relying on recovery. This would reduce retry overhead and improve average task completion time. ref:GH#1962 assignee:marcusquinn
+- [x] t1256 Add stale-evaluating root cause analysis to pulse Phase 0.7 #bugfix #auto-dispatch #self-improvement ~2h model:sonnet category:automation — 14 of 15 recently completed tasks required 'Stale evaluating recovery (Phase 0.7)' intervention. While the self-healing works, the high frequency suggests a systemic issue — tasks are routinely getting stuck in evaluating state rather than transitioning cleanly. Root cause analysis should determine why tasks stall in evaluating (possible causes: evaluator timeout, race condition in status transition, slow PR merge detection) and fix the upstream issue rather than relying on recovery. This would reduce retry overhead and improve average task completion time. ref:GH#1962 assignee:marcusquinn pr:#1963 completed:2026-02-19
 =======
 >>>>>>> Stashed changes
 
