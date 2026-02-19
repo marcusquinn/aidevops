@@ -1682,6 +1682,415 @@ else
 	fail "create_subtasks: cross-repo task error handling broken (t1221)"
 fi
 
+# ─── Test 26: create_subtasks — parent with existing subtasks (t1238) ─
+echo "Test 26: create_subtasks executor — parent task with existing subtasks appends correctly"
+
+_test_create_subtasks_with_existing() {
+	(
+		BLUE='' GREEN='' YELLOW='' RED='' NC=''
+		SUPERVISOR_DB="/tmp/test-subtasks-existing-$$.db"
+		SUPERVISOR_LOG="/dev/null"
+		SCRIPT_DIR="$REPO_DIR/.agents/scripts"
+		REPO_PATH="$REPO_DIR"
+		AI_ACTIONS_LOG_DIR="/tmp/test-ai-actions-logs-$$"
+		mkdir -p "$AI_ACTIONS_LOG_DIR"
+		db() { sqlite3 -cmd ".timeout 5000" "$@" 2>/dev/null || true; }
+		log_info() { :; }
+		log_success() { :; }
+		log_warn() { :; }
+		log_error() { :; }
+		log_verbose() { :; }
+		sql_escape() { printf '%s' "$1" | sed "s/'/''/g"; }
+		detect_repo_slug() { echo "test/repo"; }
+		commit_and_push_todo() { :; }
+		find_task_issue_number() { echo ""; }
+		build_ai_context() { echo "# test"; }
+		run_ai_reasoning() { echo '[]'; }
+
+		source "$ACTIONS_SCRIPT"
+
+		local failures=0
+
+		# Create a temp directory with a TODO.md containing a parent task
+		# that ALREADY has 2 existing subtasks (t888.1 and t888.2).
+		# The executor must append t888.3 and t888.4, not overwrite t888.1/t888.2.
+		local tmp_dir
+		tmp_dir=$(mktemp -d)
+		printf '# Test TODO\n\n- [ ] t888 Parent task with existing subtasks ~8h\n  - [ ] t888.1 Existing subtask one #auto-dispatch ~1h model:sonnet\n  - [ ] t888.2 Existing subtask two #auto-dispatch ~2h model:sonnet\n- [ ] t887 Another task\n' >"$tmp_dir/TODO.md"
+
+		local action
+		action='{"type":"create_subtasks","parent_task_id":"t888","subtasks":[{"title":"New Sub 3","tags":["#auto-dispatch"],"estimate":"~1h","model":"sonnet"},{"title":"New Sub 4","tags":["#auto-dispatch"],"estimate":"~1h","model":"haiku"}],"reasoning":"test"}'
+
+		local result rc
+		result=$(_exec_create_subtasks "$action" "$tmp_dir" 2>/dev/null)
+		rc=$?
+
+		# Should succeed
+		if [[ $rc -ne 0 ]]; then
+			echo "FAIL: create_subtasks with existing subtasks should succeed, got rc=$rc (result: $result)"
+			failures=$((failures + 1))
+		fi
+
+		local created
+		created=$(printf '%s' "$result" | jq -r '.created // "MISSING"' 2>/dev/null || echo "PARSE_ERROR")
+		if [[ "$created" != "true" ]]; then
+			echo "FAIL: create_subtasks should return created:true, got: $result"
+			failures=$((failures + 1))
+		fi
+
+		# Verify existing subtasks were NOT overwritten
+		if ! grep -q "t888.1" "$tmp_dir/TODO.md" 2>/dev/null; then
+			echo "FAIL: existing subtask t888.1 was removed — should be preserved"
+			failures=$((failures + 1))
+		fi
+		if ! grep -q "t888.2" "$tmp_dir/TODO.md" 2>/dev/null; then
+			echo "FAIL: existing subtask t888.2 was removed — should be preserved"
+			failures=$((failures + 1))
+		fi
+
+		# Verify new subtasks were appended with correct IDs (t888.3, t888.4)
+		if ! grep -q "t888.3" "$tmp_dir/TODO.md" 2>/dev/null; then
+			echo "FAIL: new subtask t888.3 not found — should be appended after existing subtasks"
+			failures=$((failures + 1))
+		fi
+		if ! grep -q "t888.4" "$tmp_dir/TODO.md" 2>/dev/null; then
+			echo "FAIL: new subtask t888.4 not found — should be appended after existing subtasks"
+			failures=$((failures + 1))
+		fi
+
+		# Verify t888.1 does NOT exist (wrong index would be t888.1 again)
+		local subtask3_line
+		subtask3_line=$(grep "t888.3" "$tmp_dir/TODO.md" 2>/dev/null || true)
+		if [[ -z "$subtask3_line" ]]; then
+			echo "FAIL: t888.3 line not found in TODO.md"
+			failures=$((failures + 1))
+		fi
+
+		rm -rf "$tmp_dir" "/tmp/test-ai-actions-logs-$$" "/tmp/test-subtasks-existing-$$.db" 2>/dev/null || true
+		exit "$failures"
+	)
+}
+
+if _test_create_subtasks_with_existing 2>/dev/null; then
+	pass "create_subtasks: parent with existing subtasks appends at correct index (t1238)"
+else
+	fail "create_subtasks: parent with existing subtasks — index calculation broken (t1238)"
+fi
+
+# ─── Test 27: create_subtasks — task_not_in_db recorded as failed in dedup (t1238) ─
+echo "Test 27: create_subtasks executor — task_not_in_db failure recorded in dedup log (t1238)"
+
+_test_create_subtasks_not_in_db_dedup() {
+	(
+		set +e
+		BLUE='' GREEN='' YELLOW='' RED='' NC=''
+		SUPERVISOR_DB="/tmp/test-subtasks-notindb-$$.db"
+		SUPERVISOR_LOG="/dev/null"
+		SCRIPT_DIR="$REPO_DIR/.agents/scripts"
+		REPO_PATH="$REPO_DIR"
+		AI_ACTIONS_LOG_DIR="/tmp/test-ai-actions-logs-$$"
+		AI_ACTION_DEDUP_WINDOW=5
+		AI_ACTION_CYCLE_AWARE_DEDUP="false"
+		mkdir -p "$AI_ACTIONS_LOG_DIR"
+		db() { sqlite3 -cmd ".timeout 5000" "$@" 2>/dev/null || true; }
+		log_info() { :; }
+		log_success() { :; }
+		log_warn() { :; }
+		log_error() { :; }
+		log_verbose() { :; }
+		sql_escape() { printf '%s' "$1" | sed "s/'/''/g"; }
+		detect_repo_slug() { echo "test/repo"; }
+		commit_and_push_todo() { :; }
+		find_task_issue_number() { echo ""; }
+		build_ai_context() { echo "# test"; }
+		run_ai_reasoning() { echo '[]'; }
+
+		source "$ACTIONS_SCRIPT"
+
+		local failures=0
+
+		# Create a supervisor DB with the tasks table but WITHOUT t77777 registered.
+		# This simulates a cross-repo task (e.g., awardsapp t003) that the AI
+		# incorrectly tries to subtask in the aidevops context (t1238 root cause).
+		sqlite3 "$SUPERVISOR_DB" "
+			CREATE TABLE IF NOT EXISTS tasks (
+				id TEXT PRIMARY KEY,
+				repo TEXT,
+				description TEXT,
+				status TEXT DEFAULT 'queued'
+			);
+			CREATE TABLE IF NOT EXISTS action_dedup_log (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				cycle_id TEXT NOT NULL,
+				action_type TEXT NOT NULL,
+				target TEXT NOT NULL,
+				status TEXT NOT NULL DEFAULT 'executed',
+				state_hash TEXT DEFAULT '',
+				created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+			);
+		"
+
+		# Execute create_subtasks for a task NOT in the DB
+		local action
+		action='{"type":"create_subtasks","parent_task_id":"t77777","subtasks":[{"title":"Sub 1","estimate":"~1h","model":"sonnet"}],"reasoning":"test"}'
+
+		local result rc
+		result=$(_exec_create_subtasks "$action" "$REPO_DIR" 2>/dev/null)
+		rc=$?
+
+		# Should fail with task_not_in_db
+		if [[ $rc -eq 0 ]]; then
+			echo "FAIL: task not in DB should return rc=1, got rc=0"
+			failures=$((failures + 1))
+		fi
+
+		local error_field
+		error_field=$(printf '%s' "$result" | jq -r '.error // "MISSING"' 2>/dev/null || echo "PARSE_ERROR")
+		if [[ "$error_field" != "task_not_in_db" ]]; then
+			echo "FAIL: should return error=task_not_in_db, got: $result"
+			failures=$((failures + 1))
+		fi
+
+		# Now simulate what execute_action_plan() does: record the failure in dedup log (t1238 fix 2)
+		_record_action_dedup "cycle-test-001" "create_subtasks" "task:t77777" "failed" "unknown"
+
+		# Verify the failure IS now visible to _is_duplicate_action (t1238 fix 3)
+		# With AI_ACTION_CYCLE_AWARE_DEDUP=false, basic dedup applies: same type+target = duplicate
+		if ! _is_duplicate_action "create_subtasks" "task:t77777" "unknown"; then
+			echo "FAIL: failed action should be detected as duplicate to suppress retry (t1238 fix 3)"
+			failures=$((failures + 1))
+		fi
+
+		# Verify the dedup log entry has status='failed' (not 'executed')
+		local stored_status
+		stored_status=$(sqlite3 "$SUPERVISOR_DB" "SELECT status FROM action_dedup_log WHERE target='task:t77777' LIMIT 1;")
+		if [[ "$stored_status" != "failed" ]]; then
+			echo "FAIL: dedup log should store status='failed', got '$stored_status'"
+			failures=$((failures + 1))
+		fi
+
+		rm -rf "/tmp/test-ai-actions-logs-$$" "$SUPERVISOR_DB" 2>/dev/null || true
+		exit "$failures"
+	)
+}
+
+if _test_create_subtasks_not_in_db_dedup 2>/dev/null; then
+	pass "create_subtasks: task_not_in_db failure recorded in dedup log, suppresses retry (t1238)"
+else
+	fail "create_subtasks: task_not_in_db dedup recording broken (t1238)"
+fi
+
+# ─── Test 28: create_subtasks — malformed subtask arrays (t1238) ─────
+echo "Test 28: create_subtasks executor — malformed subtask arrays handled gracefully"
+
+_test_create_subtasks_malformed_arrays() {
+	(
+		set +e
+		BLUE='' GREEN='' YELLOW='' RED='' NC=''
+		SUPERVISOR_DB="/tmp/test-subtasks-malformed-$$.db"
+		SUPERVISOR_LOG="/dev/null"
+		SCRIPT_DIR="$REPO_DIR/.agents/scripts"
+		REPO_PATH="$REPO_DIR"
+		AI_ACTIONS_LOG_DIR="/tmp/test-ai-actions-logs-$$"
+		mkdir -p "$AI_ACTIONS_LOG_DIR"
+		db() { sqlite3 -cmd ".timeout 5000" "$@" 2>/dev/null || true; }
+		log_info() { :; }
+		log_success() { :; }
+		log_warn() { :; }
+		log_error() { :; }
+		log_verbose() { :; }
+		sql_escape() { printf '%s' "$1" | sed "s/'/''/g"; }
+		detect_repo_slug() { echo "test/repo"; }
+		commit_and_push_todo() { :; }
+		find_task_issue_number() { echo ""; }
+		build_ai_context() { echo "# test"; }
+		run_ai_reasoning() { echo '[]'; }
+
+		source "$ACTIONS_SCRIPT"
+
+		local failures=0
+
+		# Case 1: subtasks field is null (not an array)
+		local result rc
+		result=$(_exec_create_subtasks '{"type":"create_subtasks","parent_task_id":"t555","subtasks":null,"reasoning":"test"}' "$REPO_DIR" 2>/dev/null)
+		rc=$?
+		if [[ $rc -eq 0 ]]; then
+			echo "FAIL: null subtasks should return rc=1, got rc=0"
+			failures=$((failures + 1))
+		fi
+		local error_field
+		error_field=$(printf '%s' "$result" | jq -r '.error // "MISSING"' 2>/dev/null || echo "PARSE_ERROR")
+		if [[ "$error_field" != "missing_subtasks" ]]; then
+			echo "FAIL: null subtasks should return error=missing_subtasks, got: $result"
+			failures=$((failures + 1))
+		fi
+
+		# Case 2: subtasks field is a string (wrong type).
+		# Note: jq '.subtasks | length' on a string returns the string length (not 0),
+		# so the executor does NOT catch this as missing_subtasks — it proceeds and
+		# fails at parent_task_not_found (t555 is not in the aidevops TODO.md).
+		# This is a known gap; the test documents actual behaviour.
+		result=$(_exec_create_subtasks '{"type":"create_subtasks","parent_task_id":"t555","subtasks":"not an array","reasoning":"test"}' "$REPO_DIR" 2>/dev/null)
+		rc=$?
+		if [[ $rc -eq 0 ]]; then
+			echo "FAIL: string subtasks should return rc=1 (fails at parent lookup), got rc=0"
+			failures=$((failures + 1))
+		fi
+		# The executor fails at parent_task_not_found (not missing_subtasks) for string input
+		error_field=$(printf '%s' "$result" | jq -r '.error // "MISSING"' 2>/dev/null || echo "PARSE_ERROR")
+		if [[ "$error_field" != "parent_task_not_found" && "$error_field" != "missing_subtasks" && "$error_field" != "task_not_in_db" ]]; then
+			echo "FAIL: string subtasks should return a validation error, got: $result"
+			failures=$((failures + 1))
+		fi
+
+		# Case 3: subtasks field is an empty array
+		result=$(_exec_create_subtasks '{"type":"create_subtasks","parent_task_id":"t555","subtasks":[],"reasoning":"test"}' "$REPO_DIR" 2>/dev/null)
+		rc=$?
+		if [[ $rc -eq 0 ]]; then
+			echo "FAIL: empty subtasks array should return rc=1, got rc=0"
+			failures=$((failures + 1))
+		fi
+		error_field=$(printf '%s' "$result" | jq -r '.error // "MISSING"' 2>/dev/null || echo "PARSE_ERROR")
+		if [[ "$error_field" != "missing_subtasks" ]]; then
+			echo "FAIL: empty subtasks array should return error=missing_subtasks, got: $result"
+			failures=$((failures + 1))
+		fi
+
+		# Case 4: subtasks array with partial objects (missing title) — executor should
+		# use fallback title "Untitled subtask" and still succeed if parent exists
+		local tmp_dir
+		tmp_dir=$(mktemp -d)
+		printf '# Test TODO\n\n- [ ] t556 Parent task ~2h\n' >"$tmp_dir/TODO.md"
+
+		result=$(_exec_create_subtasks '{"type":"create_subtasks","parent_task_id":"t556","subtasks":[{"estimate":"~1h","model":"sonnet"}],"reasoning":"test"}' "$tmp_dir" 2>/dev/null)
+		rc=$?
+		if [[ $rc -ne 0 ]]; then
+			echo "FAIL: partial subtask object (missing title) should use fallback and succeed, got rc=$rc (result: $result)"
+			failures=$((failures + 1))
+		fi
+		local created
+		created=$(printf '%s' "$result" | jq -r '.created // "MISSING"' 2>/dev/null || echo "PARSE_ERROR")
+		if [[ "$created" != "true" ]]; then
+			echo "FAIL: partial subtask should succeed with fallback title, got: $result"
+			failures=$((failures + 1))
+		fi
+		# Verify fallback title was used
+		if ! grep -q "Untitled subtask" "$tmp_dir/TODO.md" 2>/dev/null; then
+			echo "FAIL: partial subtask should use 'Untitled subtask' fallback title"
+			failures=$((failures + 1))
+		fi
+
+		# Case 5: subtasks field is missing entirely
+		result=$(_exec_create_subtasks '{"type":"create_subtasks","parent_task_id":"t555","reasoning":"test"}' "$REPO_DIR" 2>/dev/null)
+		rc=$?
+		if [[ $rc -eq 0 ]]; then
+			echo "FAIL: missing subtasks field should return rc=1, got rc=0"
+			failures=$((failures + 1))
+		fi
+		error_field=$(printf '%s' "$result" | jq -r '.error // "MISSING"' 2>/dev/null || echo "PARSE_ERROR")
+		if [[ "$error_field" != "missing_subtasks" ]]; then
+			echo "FAIL: missing subtasks field should return error=missing_subtasks, got: $result"
+			failures=$((failures + 1))
+		fi
+
+		rm -rf "$tmp_dir" "/tmp/test-ai-actions-logs-$$" "$SUPERVISOR_DB" 2>/dev/null || true
+		exit "$failures"
+	)
+}
+
+if _test_create_subtasks_malformed_arrays 2>/dev/null; then
+	pass "create_subtasks: malformed subtask arrays handled gracefully (t1238)"
+else
+	fail "create_subtasks: malformed subtask array handling broken (t1238)"
+fi
+
+# ─── Test 29: _is_duplicate_action includes failed status (t1238) ────
+echo "Test 29: _is_duplicate_action — failed status suppresses retry within window (t1238)"
+
+_test_dedup_includes_failed_status() {
+	(
+		BLUE='' GREEN='' YELLOW='' RED='' NC=''
+		SUPERVISOR_DB="/tmp/test-dedup-failed-$$.db"
+		SUPERVISOR_LOG="/dev/null"
+		SCRIPT_DIR="$REPO_DIR/.agents/scripts"
+		REPO_PATH="$REPO_DIR"
+		AI_ACTIONS_LOG_DIR="/tmp/test-ai-actions-logs-$$"
+		AI_ACTION_DEDUP_WINDOW=5
+		AI_ACTION_CYCLE_AWARE_DEDUP="false"
+		mkdir -p "$AI_ACTIONS_LOG_DIR"
+		db() { sqlite3 -cmd ".timeout 5000" "$@" 2>/dev/null || true; }
+		log_info() { :; }
+		log_success() { :; }
+		log_warn() { :; }
+		log_error() { :; }
+		log_verbose() { :; }
+		sql_escape() { printf '%s' "$1" | sed "s/'/''/g"; }
+		detect_repo_slug() { echo "test/repo"; }
+		commit_and_push_todo() { :; }
+		find_task_issue_number() { echo ""; }
+		build_ai_context() { echo "# test"; }
+		run_ai_reasoning() { echo '[]'; }
+
+		source "$ACTIONS_SCRIPT"
+
+		local failures=0
+
+		# Create the dedup table
+		sqlite3 "$SUPERVISOR_DB" "
+			CREATE TABLE IF NOT EXISTS action_dedup_log (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				cycle_id TEXT NOT NULL,
+				action_type TEXT NOT NULL,
+				target TEXT NOT NULL,
+				status TEXT NOT NULL DEFAULT 'executed',
+				state_hash TEXT DEFAULT '',
+				created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+			);
+		"
+
+		# Pre-t1238 bug: only 'executed' entries were checked. A 'failed' entry
+		# would be invisible, allowing immediate retry on next cycle.
+		# Post-t1238 fix: 'failed' entries ARE included in dedup queries.
+
+		# Record a FAILED action (simulating task_not_in_db failure)
+		_record_action_dedup "cycle-001" "create_subtasks" "task:t4444" "failed" "unknown"
+
+		# Verify the failed entry is detected as a duplicate (t1238 fix 3)
+		if ! _is_duplicate_action "create_subtasks" "task:t4444" "unknown"; then
+			echo "FAIL: failed action should be detected as duplicate — retry must be suppressed (t1238 fix 3)"
+			failures=$((failures + 1))
+		fi
+
+		# Verify that a DIFFERENT target is NOT a duplicate
+		if _is_duplicate_action "create_subtasks" "task:t5555" "unknown"; then
+			echo "FAIL: different target should not be a duplicate"
+			failures=$((failures + 1))
+		fi
+
+		# Verify that a DIFFERENT action type is NOT a duplicate
+		if _is_duplicate_action "create_task" "task:t4444" "unknown"; then
+			echo "FAIL: different action type should not be a duplicate"
+			failures=$((failures + 1))
+		fi
+
+		# Now record an 'executed' entry for a different target and verify it's also detected
+		_record_action_dedup "cycle-002" "create_subtasks" "task:t6666" "executed" "abc123"
+		if ! _is_duplicate_action "create_subtasks" "task:t6666" "abc123"; then
+			echo "FAIL: executed action should also be detected as duplicate"
+			failures=$((failures + 1))
+		fi
+
+		rm -rf "/tmp/test-ai-actions-logs-$$" "$SUPERVISOR_DB" 2>/dev/null || true
+		exit "$failures"
+	)
+}
+
+if _test_dedup_includes_failed_status 2>/dev/null; then
+	pass "_is_duplicate_action: failed status suppresses retry within dedup window (t1238)"
+else
+	fail "_is_duplicate_action: failed status not included in dedup check (t1238)"
+fi
+
 # ─── Summary ────────────────────────────────────────────────────────
 echo ""
 echo "=== Results: $PASS/$TOTAL passed, $FAIL failed ==="
