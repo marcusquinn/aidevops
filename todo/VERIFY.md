@@ -1425,7 +1425,14 @@
   check: shellcheck .agents/scripts/supervisor/ai-reason.sh
   check: file-exists .agents/scripts/supervisor/ai-reason.sh
 
-- [ ] v170 t1211 Add empty/malformed response fallback to AI actions pipel... | PR #1843 | merged:2026-02-19
+- [x] v170 t1211 Add empty/malformed response fallback to AI actions pipel... | PR #1843 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/supervisor/ai-actions.sh
   check: shellcheck .agents/scripts/supervisor/ai-actions.sh
   check: file-exists .agents/scripts/supervisor/ai-actions.sh
+
+- [ ] v171 t1214 Add t1200 subtask visibility check — subtasks created b... | PR #1850 | merged:2026-02-19
+  files: .agents/scripts/supervisor/ai-actions.sh, .agents/scripts/supervisor/ai-context.sh
+  check: shellcheck .agents/scripts/supervisor/ai-actions.sh
+  check: file-exists .agents/scripts/supervisor/ai-actions.sh
+  check: shellcheck .agents/scripts/supervisor/ai-context.sh
+  check: file-exists .agents/scripts/supervisor/ai-context.sh
