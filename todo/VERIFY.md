@@ -1645,3 +1645,12 @@
   files: .agents/scripts/localdev-helper.sh
   check: shellcheck .agents/scripts/localdev-helper.sh
   check: file-exists .agents/scripts/localdev-helper.sh
+
+- [ ] v197 t1243 Add auto-unblock detection for tasks whose blockers are r... | PR #1935 | merged:2026-02-19
+  files: .agents/scripts/supervisor/cron.sh, .agents/scripts/supervisor/pulse.sh, .agents/scripts/supervisor/todo-sync.sh
+  check: shellcheck .agents/scripts/supervisor/cron.sh
+  check: file-exists .agents/scripts/supervisor/cron.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/supervisor/todo-sync.sh
+  check: file-exists .agents/scripts/supervisor/todo-sync.sh
