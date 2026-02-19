@@ -968,6 +968,25 @@ auto_unblock_resolved_tasks() {
 				continue # Declined = resolved
 			fi
 
+			# t1247: DB fallback — blocker may be deployed/verified in DB but TODO.md
+			# not yet updated (update_todo_on_complete runs AFTER Phase 0.5d in the same
+			# pulse, or may have failed due to deliverable verification / subtask guard).
+			# Treat deployed/verified/complete/merged DB status as resolved so downstream
+			# tasks are unblocked atomically without waiting for the next pulse.
+			if [[ -n "${SUPERVISOR_DB:-}" && -f "${SUPERVISOR_DB}" ]]; then
+				local blocker_db_status=""
+				blocker_db_status=$(db "$SUPERVISOR_DB" \
+					"SELECT status FROM tasks WHERE id = '$(sql_escape "$blocker_id")' LIMIT 1;" \
+					2>/dev/null || echo "")
+				if [[ "$blocker_db_status" == "complete" ||
+					"$blocker_db_status" == "deployed" ||
+					"$blocker_db_status" == "verified" ||
+					"$blocker_db_status" == "merged" ]]; then
+					log_verbose "  auto-unblock: blocker $blocker_id is '$blocker_db_status' in DB (TODO.md not yet updated) — treating as resolved"
+					continue # Resolved in DB
+				fi
+			fi
+
 			# Check if blocker doesn't exist in TODO.md at all (orphaned reference)
 			if ! grep -qE "^[[:space:]]*- \[.\] ${blocker_id}( |$)" "$todo_file" 2>/dev/null; then
 				continue # Non-existent blocker = resolved

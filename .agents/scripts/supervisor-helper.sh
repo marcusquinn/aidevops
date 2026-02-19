@@ -713,6 +713,22 @@ main() {
 	reconcile-queue) cmd_reconcile_queue_dispatchability "$@" ;;
 	notify) cmd_notify "$@" ;;
 	auto-pickup) cmd_auto_pickup "$@" ;;
+	auto-unblock)
+		# t1247: Manually trigger auto-unblock for a repo
+		# Usage: supervisor-helper.sh auto-unblock [--repo <path>]
+		local _au_repo="${REPO_PATH:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+		while [[ $# -gt 0 ]]; do
+			case "$1" in
+			--repo)
+				_au_repo="$2"
+				shift 2
+				;;
+			*) shift ;;
+			esac
+		done
+		ensure_db
+		auto_unblock_resolved_tasks "$_au_repo"
+		;;
 	batch-cleanup)
 		local _bc_helper="${SCRIPT_DIR}/batch-cleanup-helper.sh"
 		if [[ ! -x "$_bc_helper" ]]; then
