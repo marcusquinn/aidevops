@@ -1603,14 +1603,14 @@
   check: file-exists .opencode/ui/chat-sidebar/types.ts
   check: rg "ai-chat-sidebar" .agents/subagent-index.toon
 
-- [ ] v190 t1238 Fix create_subtasks executor to handle edge cases causing... | PR #1924 | merged:2026-02-19
+- [x] v190 t1238 Fix create_subtasks executor to handle edge cases causing... | PR #1924 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/supervisor/ai-actions.sh, .agents/scripts/supervisor/ai-context.sh
   check: shellcheck .agents/scripts/supervisor/ai-actions.sh
   check: file-exists .agents/scripts/supervisor/ai-actions.sh
   check: shellcheck .agents/scripts/supervisor/ai-context.sh
   check: file-exists .agents/scripts/supervisor/ai-context.sh
 
-- [ ] v191 t1239 Add cross-repo task registration validation to prevent mi... | PR #1926 | merged:2026-02-19
+- [x] v191 t1239 Add cross-repo task registration validation to prevent mi... | PR #1926 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/supervisor/batch.sh, .agents/scripts/supervisor/cron.sh, .agents/scripts/supervisor/dispatch.sh
   check: shellcheck .agents/scripts/supervisor/batch.sh
   check: file-exists .agents/scripts/supervisor/batch.sh
@@ -1618,3 +1618,8 @@
   check: file-exists .agents/scripts/supervisor/cron.sh
   check: shellcheck .agents/scripts/supervisor/dispatch.sh
   check: file-exists .agents/scripts/supervisor/dispatch.sh
+
+- [ ] v192 t1224.4 Implement `localdev db` — shared Postgres management. `... | PR #1920 | merged:2026-02-19
+  files: .agents/scripts/localdev-helper.sh
+  check: shellcheck .agents/scripts/localdev-helper.sh
+  check: file-exists .agents/scripts/localdev-helper.sh
