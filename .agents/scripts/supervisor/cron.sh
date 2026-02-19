@@ -540,9 +540,10 @@ cmd_auto_pickup() {
 				continue
 			fi
 
-			# Skip tasks with assignee: or started: fields (t1062)
-			# These indicate someone is already working on the task
-			if echo "$line" | grep -qE '(assignee:|started:)'; then
+			# Skip tasks with assignee: or started: metadata fields (t1062, t1263)
+			# Match actual metadata fields, not description text containing these words.
+			# assignee: must be followed by a username (word chars), started: by ISO timestamp.
+			if echo "$line" | grep -qE '(assignee:[a-zA-Z0-9_-]+|started:[0-9]{4}-[0-9]{2}-[0-9]{2}T)'; then
 				log_info "  $task_id: already claimed or in progress — skipping auto-pickup"
 				continue
 			fi
@@ -556,7 +557,7 @@ cmd_auto_pickup() {
 			local existing
 			existing=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || true)
 			if [[ -n "$existing" ]]; then
-				if [[ "$existing" == "complete" || "$existing" == "cancelled" ]]; then
+				if [[ "$existing" == "complete" || "$existing" == "cancelled" || "$existing" == "verified" ]]; then
 					continue
 				fi
 				log_info "  $task_id: already tracked (status: $existing)"
@@ -616,9 +617,10 @@ cmd_auto_pickup() {
 				continue
 			fi
 
-			# Skip tasks with assignee: or started: fields (t1062)
-			# These indicate someone is already working on the task
-			if echo "$line" | grep -qE '(assignee:|started:)'; then
+			# Skip tasks with assignee: or started: metadata fields (t1062, t1263)
+			# Match actual metadata fields, not description text containing these words.
+			# assignee: must be followed by a username (word chars), started: by ISO timestamp.
+			if echo "$line" | grep -qE '(assignee:[a-zA-Z0-9_-]+|started:[0-9]{4}-[0-9]{2}-[0-9]{2}T)'; then
 				log_info "  $task_id: already claimed or in progress — skipping auto-pickup"
 				continue
 			fi
@@ -631,7 +633,7 @@ cmd_auto_pickup() {
 			local existing
 			existing=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || true)
 			if [[ -n "$existing" ]]; then
-				if [[ "$existing" == "complete" || "$existing" == "cancelled" ]]; then
+				if [[ "$existing" == "complete" || "$existing" == "cancelled" || "$existing" == "verified" ]]; then
 					continue
 				fi
 				log_info "  $task_id: already tracked (status: $existing)"
@@ -764,8 +766,8 @@ cmd_auto_pickup() {
 					continue
 				fi
 
-				# Skip tasks with assignee: or started: fields
-				if echo "$sub_line" | grep -qE '(assignee:|started:)'; then
+				# Skip tasks with assignee: or started: metadata fields (t1263)
+				if echo "$sub_line" | grep -qE '(assignee:[a-zA-Z0-9_-]+|started:[0-9]{4}-[0-9]{2}-[0-9]{2}T)'; then
 					log_info "  $sub_id: already claimed or in progress — skipping subtask pickup"
 					continue
 				fi
