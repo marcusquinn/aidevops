@@ -1523,7 +1523,7 @@
   check: shellcheck .agents/scripts/supervisor/ai-actions.sh
   check: file-exists .agents/scripts/supervisor/ai-actions.sh
 
-- [ ] v180 t1222 Add worker hang detection with graceful termination befor... | PR #1869 | merged:2026-02-19
+- [x] v180 t1222 Add worker hang detection with graceful termination befor... | PR #1869 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/supervisor-helper.sh, .agents/scripts/supervisor/cleanup.sh, .agents/scripts/supervisor/pulse.sh
   check: shellcheck .agents/scripts/supervisor-helper.sh
   check: file-exists .agents/scripts/supervisor-helper.sh
@@ -1531,3 +1531,9 @@
   check: file-exists .agents/scripts/supervisor/cleanup.sh
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
+
+- [ ] v181 t1200.5 CLI interface and agent framework integration for IP repu... | PR #1883 | merged:2026-02-19
+  files: .agents/AGENTS.md, aidevops.sh
+  check: file-exists .agents/AGENTS.md
+  check: shellcheck aidevops.sh
+  check: file-exists aidevops.sh
