@@ -1452,7 +1452,32 @@
   check: shellcheck .agents/scripts/providers/ip-rep-stopforumspam.sh
   check: file-exists .agents/scripts/providers/ip-rep-stopforumspam.sh
 
-- [ ] v173 t1217 Add create_subtasks post-execution verification to confir... | PR #1858 | merged:2026-02-19
+- [x] v173 t1217 Add create_subtasks post-execution verification to confir... | PR #1858 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/supervisor/ai-actions.sh
   check: shellcheck .agents/scripts/supervisor/ai-actions.sh
   check: file-exists .agents/scripts/supervisor/ai-actions.sh
+
+- [ ] v174 t1200.2 Keyed providers + SQLite cache + batch mode — implement... | PR #1860 | merged:2026-02-19
+  files: .agents/scripts/ip-reputation-helper.sh, .agents/scripts/providers/ip-rep-abuseipdb.sh, .agents/scripts/providers/ip-rep-blocklistde.sh, .agents/scripts/providers/ip-rep-greynoise.sh, .agents/scripts/providers/ip-rep-iphub.sh, .agents/scripts/providers/ip-rep-ipqualityscore.sh, .agents/scripts/providers/ip-rep-proxycheck.sh, .agents/scripts/providers/ip-rep-scamalytics.sh, .agents/scripts/providers/ip-rep-shodan.sh, .agents/scripts/providers/ip-rep-spamhaus.sh, .agents/scripts/providers/ip-rep-stopforumspam.sh
+  check: shellcheck .agents/scripts/ip-reputation-helper.sh
+  check: file-exists .agents/scripts/ip-reputation-helper.sh
+  check: shellcheck .agents/scripts/providers/ip-rep-abuseipdb.sh
+  check: file-exists .agents/scripts/providers/ip-rep-abuseipdb.sh
+  check: shellcheck .agents/scripts/providers/ip-rep-blocklistde.sh
+  check: file-exists .agents/scripts/providers/ip-rep-blocklistde.sh
+  check: shellcheck .agents/scripts/providers/ip-rep-greynoise.sh
+  check: file-exists .agents/scripts/providers/ip-rep-greynoise.sh
+  check: shellcheck .agents/scripts/providers/ip-rep-iphub.sh
+  check: file-exists .agents/scripts/providers/ip-rep-iphub.sh
+  check: shellcheck .agents/scripts/providers/ip-rep-ipqualityscore.sh
+  check: file-exists .agents/scripts/providers/ip-rep-ipqualityscore.sh
+  check: shellcheck .agents/scripts/providers/ip-rep-proxycheck.sh
+  check: file-exists .agents/scripts/providers/ip-rep-proxycheck.sh
+  check: shellcheck .agents/scripts/providers/ip-rep-scamalytics.sh
+  check: file-exists .agents/scripts/providers/ip-rep-scamalytics.sh
+  check: shellcheck .agents/scripts/providers/ip-rep-shodan.sh
+  check: file-exists .agents/scripts/providers/ip-rep-shodan.sh
+  check: shellcheck .agents/scripts/providers/ip-rep-spamhaus.sh
+  check: file-exists .agents/scripts/providers/ip-rep-spamhaus.sh
+  check: shellcheck .agents/scripts/providers/ip-rep-stopforumspam.sh
+  check: file-exists .agents/scripts/providers/ip-rep-stopforumspam.sh
