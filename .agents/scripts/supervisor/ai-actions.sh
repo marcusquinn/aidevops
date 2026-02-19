@@ -1281,11 +1281,15 @@ _exec_create_subtasks() {
 		return 1
 	fi
 
-	# Resolve the task's repo from the supervisor DB (t1234).
+	# Resolve the task's repo from the supervisor DB (t1234, t1237).
 	# Tasks are always repo-specific — never guess by falling back to the
 	# primary repo, because task IDs can collide across repos (e.g., both
 	# aidevops and awardsapp have t003 for different things). Writing to
 	# the wrong repo is a privacy breach if repo visibility differs.
+	#
+	# If the parent task is NOT in the DB, refuse to proceed — the AI reasoner
+	# may be hallucinating subtasks for a task from another repo that happens
+	# to share the same ID in the current repo's TODO.md.
 	local db_repo_path=""
 	if [[ -n "${SUPERVISOR_DB:-}" && -f "${SUPERVISOR_DB:-}" ]]; then
 		db_repo_path=$(db "$SUPERVISOR_DB" "
@@ -1303,9 +1307,26 @@ _exec_create_subtasks() {
 				'{"error":"db_repo_path_invalid","parent_task_id":$parent,"repo_path":$repo}'
 			return 1
 		fi
+	elif [[ -n "${SUPERVISOR_DB:-}" && -f "${SUPERVISOR_DB:-}" ]]; then
+		# DB exists but has no record for this task — refuse to guess (t1237).
+		# The task may belong to another repo with a colliding ID.
+		log_warn "create_subtasks: $parent_task_id not found in supervisor DB — cannot determine repo, refusing to guess"
+		jq -n --arg parent "$parent_task_id" \
+			'{"error":"task_not_in_db","parent_task_id":$parent,"detail":"Task not registered in supervisor DB. Cannot determine correct repo — refusing to create subtasks to prevent cross-repo writes."}'
+		return 1
 	fi
 
 	local todo_file="$repo_path/TODO.md"
+
+	# Guard: refuse to create subtasks for completed parent tasks (t1237).
+	# The auto-subtasking eligibility check should skip [x] tasks, but if
+	# the AI reasoner requests it anyway, block it here as a safety net.
+	if grep -qE "^\s*- \[x\] $parent_task_id " "$todo_file" 2>/dev/null; then
+		log_warn "create_subtasks: parent task $parent_task_id is already completed in $todo_file"
+		jq -n --arg parent "$parent_task_id" --arg todo "$todo_file" \
+			'{"error":"parent_task_completed","parent_task_id":$parent,"todo_file":$todo,"detail":"Cannot create subtasks for a completed task."}'
+		return 1
+	fi
 
 	if [[ ! -f "$todo_file" ]]; then
 		log_warn "create_subtasks: TODO.md not found at $todo_file (parent: $parent_task_id)"
