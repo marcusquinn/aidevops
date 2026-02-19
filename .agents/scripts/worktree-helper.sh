@@ -39,6 +39,95 @@ readonly BOLD='\033[1m'
 #   register_worktree, unregister_worktree, check_worktree_owner,
 #   is_worktree_owned_by_others, prune_worktree_registry
 
+# =============================================================================
+# Localdev Integration (t1224.8)
+# =============================================================================
+# When a worktree is created for a localdev-registered project, auto-create
+# a branch subdomain route (e.g., feature-xyz.myapp.local) and output the URL.
+# When a worktree is removed, auto-clean the corresponding branch route.
+
+readonly LOCALDEV_PORTS_FILE="$HOME/.local-dev-proxy/ports.json"
+readonly LOCALDEV_HELPER="${SCRIPT_DIR}/localdev-helper.sh"
+
+# Detect if the current repo is registered as a localdev project.
+# Matches repo directory name against registered app names in ports.json.
+# Outputs the app name if found, empty string otherwise.
+detect_localdev_project() {
+	local repo_root="${1:-}"
+	[[ -z "$repo_root" ]] && repo_root="$(get_repo_root)"
+	[[ -z "$repo_root" ]] && return 1
+
+	# ports.json must exist
+	[[ ! -f "$LOCALDEV_PORTS_FILE" ]] && return 1
+
+	# localdev-helper.sh must exist
+	[[ ! -x "$LOCALDEV_HELPER" ]] && return 1
+
+	local repo_name
+	repo_name="$(basename "$repo_root")"
+
+	# Strip worktree suffix to get the base repo name
+	# Worktree paths: ~/Git/{repo}-{branch-slug} → extract {repo}
+	# Main repo paths: ~/Git/{repo} → use as-is
+	local base_name="$repo_name"
+	# If this is a worktree (has .git file, not directory), find the main repo name
+	if [[ -f "$repo_root/.git" ]]; then
+		local main_worktree
+		main_worktree="$(git -C "$repo_root" worktree list --porcelain | head -1 | cut -d' ' -f2-)"
+		if [[ -n "$main_worktree" ]]; then
+			base_name="$(basename "$main_worktree")"
+		fi
+	fi
+
+	# Check if this repo name is registered in ports.json
+	if command -v jq >/dev/null 2>&1; then
+		local match
+		match="$(jq -r --arg n "$base_name" '.apps[$n] // empty | .domain // empty' "$LOCALDEV_PORTS_FILE" 2>/dev/null)"
+		if [[ -n "$match" ]]; then
+			echo "$base_name"
+			return 0
+		fi
+	else
+		# Fallback: grep-based check
+		if grep -qF "\"$base_name\"" "$LOCALDEV_PORTS_FILE" 2>/dev/null; then
+			echo "$base_name"
+			return 0
+		fi
+	fi
+
+	return 1
+}
+
+# Auto-create localdev branch route after worktree creation.
+# Called from cmd_add after successful worktree creation.
+localdev_auto_branch() {
+	local branch="$1"
+	local project
+	project="$(detect_localdev_project)" || return 0
+
+	echo ""
+	echo -e "${BLUE}Localdev integration: creating branch route for $project...${NC}"
+	if "$LOCALDEV_HELPER" branch "$project" "$branch" 2>&1; then
+		return 0
+	else
+		echo -e "${YELLOW}Localdev branch route creation failed (non-fatal)${NC}"
+		return 0
+	fi
+}
+
+# Auto-remove localdev branch route when worktree is removed.
+# Called from cmd_remove after successful worktree removal.
+localdev_auto_branch_rm() {
+	local branch="$1"
+	local project
+	project="$(detect_localdev_project)" || return 0
+
+	echo ""
+	echo -e "${BLUE}Localdev integration: removing branch route for $project/$branch...${NC}"
+	"$LOCALDEV_HELPER" branch rm "$project" "$branch" 2>&1 || true
+	return 0
+}
+
 # Get repo info
 get_repo_root() {
 	git rev-parse --show-toplevel 2>/dev/null || echo ""
@@ -357,6 +446,9 @@ cmd_add() {
 	echo "  cursor $path      # Cursor"
 	echo "  opencode $path    # OpenCode"
 
+	# Localdev integration (t1224.8): auto-create branch subdomain route
+	localdev_auto_branch "$branch"
+
 	return 0
 }
 
@@ -500,6 +592,10 @@ cmd_remove() {
 	rm -f "$path_to_remove/.agents/.DS_Store" 2>/dev/null || true
 	rmdir "$path_to_remove/.agent" 2>/dev/null || true # Only removes if empty
 
+	# Capture branch name before removal for localdev cleanup (t1224.8)
+	local removed_branch=""
+	removed_branch="$(git -C "$path_to_remove" branch --show-current 2>/dev/null || echo "")"
+
 	echo -e "${BLUE}Removing worktree: $path_to_remove${NC}"
 	git worktree remove "$path_to_remove"
 
@@ -507,6 +603,12 @@ cmd_remove() {
 	unregister_worktree "$path_to_remove"
 
 	echo -e "${GREEN}Worktree removed successfully${NC}"
+
+	# Localdev integration (t1224.8): auto-remove branch subdomain route
+	if [[ -n "$removed_branch" ]]; then
+		localdev_auto_branch_rm "$removed_branch"
+	fi
+
 	return 0
 }
 
@@ -702,6 +804,8 @@ cmd_clean() {
 						else
 							# Unregister ownership (t189)
 							unregister_worktree "$worktree_path"
+							# Localdev integration (t1224.8): auto-remove branch route
+							localdev_auto_branch_rm "$worktree_branch"
 							# Also delete the local branch
 							git branch -D "$worktree_branch" 2>/dev/null || true
 						fi
@@ -872,6 +976,14 @@ STALE REMOTE DETECTION (t1060)
   Headless mode (no tty):
     - Merged stale: auto-deletes the remote ref and continues
     - Unmerged stale: warns but proceeds without deleting
+
+LOCALDEV INTEGRATION (t1224.8)
+  For projects registered with 'localdev add', worktree creation auto-runs
+  'localdev branch <project> <branch>' to create a subdomain route
+  (e.g., feature-auth.myapp.local). Worktree removal auto-cleans the route.
+  
+  Detection: matches repo name against ~/.local-dev-proxy/ports.json
+  Requires: localdev-helper.sh in the same scripts directory
 
 NOTES
   - All worktrees share the same .git database (commits, stashes, refs)

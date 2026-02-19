@@ -269,6 +269,19 @@ The `pre-edit-check.sh` script works in any worktree:
 # Works correctly whether in main or linked worktree
 ```
 
+### Localdev Integration (t1224.8)
+
+For projects registered with `localdev add`, worktree creation automatically sets up branch-specific subdomain routing:
+
+```bash
+worktree-helper.sh add feature/auth
+# Creates: ~/Git/myrepo-feature-auth/
+# Also runs: localdev branch myapp feature/auth
+# Output: https://feature-auth.myapp.local (auto-assigned port)
+```
+
+Worktree removal (`remove`, `clean`) auto-cleans the corresponding branch route. Detection works by matching the repo name against `~/.local-dev-proxy/ports.json`.
+
 ### Session Naming
 
 When using OpenCode with worktrees, session names auto-sync:
