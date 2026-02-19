@@ -639,15 +639,34 @@ execute_action_plan() {
 	timestamp=$(date -u '+%Y%m%d-%H%M%S')
 	local action_log="$AI_ACTIONS_LOG_DIR/actions-${timestamp}.md"
 
-	# Validate input is a JSON array
-	local action_count
-	action_count=$(printf '%s' "$action_plan" | jq 'length' 2>/dev/null || echo -1)
-
-	if [[ "$action_count" -eq -1 ]]; then
-		log_error "AI Actions: invalid JSON input"
+	# Validate input is a JSON array (t1223)
+	# Step 1: Check it's valid JSON at all
+	local input_type
+	input_type=$(printf '%s' "$action_plan" | jq 'type' 2>/dev/null || echo "")
+	if [[ -z "$input_type" ]]; then
+		# jq failed — not valid JSON
+		local raw_len raw_head
+		raw_len=$(printf '%s' "$action_plan" | wc -c | tr -d ' ')
+		raw_head=$(printf '%s' "$action_plan" | head -c 200 | tr '\n' ' ')
+		log_error "AI Actions: invalid JSON input (len=${raw_len} head='${raw_head}')"
 		echo '{"error":"invalid_json","executed":0,"failed":0}'
 		return 1
 	fi
+
+	# Step 2: Verify it's specifically an array — jq 'length' on a string/object
+	# returns a non-negative number and bypasses the -1 guard, causing downstream
+	# failures when the loop tries jq ".[$i]" on a non-array value (t1223)
+	if [[ "$input_type" != '"array"' ]]; then
+		local raw_len raw_head
+		raw_len=$(printf '%s' "$action_plan" | wc -c | tr -d ' ')
+		raw_head=$(printf '%s' "$action_plan" | head -c 200 | tr '\n' ' ')
+		log_warn "AI Actions: expected array, got ${input_type} (len=${raw_len} head='${raw_head}') — returning gracefully"
+		echo '{"error":"non_array_input","executed":0,"failed":0,"skipped":0,"actions":[]}'
+		return 0
+	fi
+
+	local action_count
+	action_count=$(printf '%s' "$action_plan" | jq 'length' 2>/dev/null || echo 0)
 
 	if [[ "$action_count" -eq 0 ]]; then
 		log_info "AI Actions: empty action plan — nothing to execute"
