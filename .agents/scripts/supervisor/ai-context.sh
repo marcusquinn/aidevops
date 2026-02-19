@@ -515,6 +515,7 @@ build_autodispatch_eligibility_context() {
 
 	output+="### Eligibility Criteria\n\n"
 	output+="- **Eligible**: Clear spec, bounded scope (~30m-~4h), no unresolved blockers, no assignee\n"
+	output+="- **Trivial bugfix exception** (t1241): #bugfix + model:haiku + specific file/function target → eligible down to ~10m (93% success rate)\n"
 	output+="- **Needs subtasking**: Estimate >~4h with no existing subtasks — use \`create_subtasks\` to break down before dispatch\n"
 	output+="- **Ineligible**: Vague description, has assignee, has unresolved blocked-by, or has a blocker status\n"
 	output+="- **Blocker statuses** (human action required): account-needed, hosting-needed, login-needed, api-key-needed, clarification-needed, resources-needed, payment-needed, approval-needed, decision-needed, design-needed, content-needed, dns-needed, domain-needed, testing-needed\n\n"
@@ -1196,6 +1197,7 @@ build_self_reflection_context() {
 #   2. No blocked-by with unresolved dependencies
 #   3. No assignee already set
 #   4. Estimated effort within worker capability (~30m to ~4h)
+#      Exception (t1241): #bugfix + model:haiku + specific target → ~10m minimum
 #   5. Task type matches patterns with >70% autonomous success rate
 #
 # Arguments:
@@ -1365,6 +1367,8 @@ build_auto_dispatch_eligibility_context() {
 			fi
 
 			# Check 3: Estimate within worker capability (~30m to ~4h)
+			# Exception (t1241): trivial bugfix bypass — #bugfix + model:haiku + specific
+			# file/function target in description → eligible down to ~10m (93% success rate)
 			if [[ "$eligible" == "yes" && -n "$estimate" ]]; then
 				local est_minutes=0
 				if [[ "$estimate" =~ ~([0-9]+)h ]]; then
@@ -1374,8 +1378,22 @@ build_auto_dispatch_eligibility_context() {
 				fi
 				if [[ "$est_minutes" -gt 0 ]]; then
 					if [[ "$est_minutes" -lt 30 ]]; then
-						eligible="no"
-						reason="estimate too small (<30m)"
+						# Trivial bugfix bypass (t1241): allow ~10m+ if task meets all three criteria:
+						# 1. Has #bugfix tag, 2. Has model:haiku, 3. Description contains a specific
+						# file or function target (contains extension, function call, or path reference)
+						local is_trivial_bugfix="no"
+						if [[ "$est_minutes" -ge 10 ]] &&
+							echo "$task_line" | grep -qE '#bugfix' &&
+							echo "$task_line" | grep -qE 'model:haiku' &&
+							echo "$desc" | grep -qE '(\.[a-z]{1,5}|[a-zA-Z_]+\(\)|\.sh|\.py|\.ts|\.js|in [a-zA-Z_/.-]+)'; then
+							is_trivial_bugfix="yes"
+						fi
+						if [[ "$is_trivial_bugfix" == "yes" ]]; then
+							reason="trivial bugfix bypass (t1241): #bugfix+haiku+specific target"
+						else
+							eligible="no"
+							reason="estimate too small (<30m)"
+						fi
 					elif [[ "$est_minutes" -gt 240 ]]; then
 						# Check if subtasks already exist for this task (t1214)
 						local has_subtasks_count
