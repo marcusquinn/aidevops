@@ -1417,9 +1417,21 @@ Analyze the log and determine the outcome. Look for:
 Respond with ONLY the verdict line, nothing else. Example: VERDICT:retry:rate_limited:FMODE:TRANSIENT:QUALITY:1"
 
 	local ai_result=""
-	local eval_timeout=60
+	# t1251: Make eval timeout configurable — hardcoded 60s was too short under load,
+	# causing silent timeouts that left tasks stuck in 'evaluating' state.
+	# Default 90s gives more headroom; set SUPERVISOR_EVAL_TIMEOUT to override.
+	local eval_timeout="${SUPERVISOR_EVAL_TIMEOUT:-90}"
 	local eval_model
 	eval_model=$(resolve_model "eval" "$ai_cli")
+
+	# t1251: Log evaluation start so _diagnose_stale_root_cause can detect
+	# "eval in progress" vs "eval died" — reduces false stale-evaluating recoveries.
+	log_info "evaluate_with_ai: starting AI eval for $task_id (timeout=${eval_timeout}s, model=$eval_model)"
+
+	# t1251: Heartbeat — touch updated_at so Phase 0.7's grace period doesn't
+	# fire while evaluation is actively running. Without this, a 60s+ eval that
+	# started just before the grace window expires triggers unnecessary recovery.
+	db "$SUPERVISOR_DB" "UPDATE tasks SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || true
 
 	if [[ "$ai_cli" == "opencode" ]]; then
 		ai_result=$(timeout "$eval_timeout" opencode run \
