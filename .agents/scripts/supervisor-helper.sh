@@ -356,6 +356,7 @@ Usage:
   supervisor-helper.sh dashboard [--batch id] [--interval N] Live TUI dashboard
   supervisor-helper.sh queue-health [--batch id]     Update pinned queue health issue (t1013)
   supervisor-helper.sh stale-gc-report [--days N] [--json]  Stale state GC metrics report (t1202)
+  supervisor-helper.sh stale-claims [--repo path]          Detect and recover stale TODO.md claims (t1263)
   supervisor-helper.sh labels [--action X] [--model Y] [--json]  Query model usage labels (t1010)
   supervisor-helper.sh ai-pipeline [full|dry-run]    Run AI reasoning + action pipeline manually
   supervisor-helper.sh ai-status                     Show AI supervisor status and next-run countdown
@@ -757,6 +758,22 @@ main() {
 	dashboard) cmd_dashboard "$@" ;;
 	queue-health) cmd_queue_health "$@" ;;
 	stale-gc-report) cmd_stale_gc_report "$@" ;;
+	stale-claims)
+		# t1263: Manually trigger stale-claim recovery for a repo
+		# Usage: supervisor-helper.sh stale-claims [--repo <path>]
+		local _sc_repo="${REPO_PATH:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+		while [[ $# -gt 0 ]]; do
+			case "$1" in
+			--repo)
+				_sc_repo="$2"
+				shift 2
+				;;
+			*) shift ;;
+			esac
+		done
+		ensure_db
+		recover_stale_claims "$_sc_repo"
+		;;
 	recall) cmd_recall "$@" ;;
 	release) cmd_release "$@" ;;
 	retrospective) cmd_retrospective "$@" ;;
