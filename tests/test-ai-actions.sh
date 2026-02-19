@@ -2091,6 +2091,176 @@ else
 	fail "_is_duplicate_action: failed status not included in dedup check (t1238)"
 fi
 
+# ─── Test 30: Keyword pre-filter — action verbs not stripped (t1218) ──
+echo "Test 30: Keyword pre-filter — action verbs kept as signal words"
+
+_test_keyword_prefilter_stop_words() {
+	(
+		BLUE='' GREEN='' YELLOW='' RED='' NC=''
+		SUPERVISOR_DB="/tmp/test-prefilter-$$.db"
+		SUPERVISOR_LOG="/dev/null"
+		SCRIPT_DIR="$REPO_DIR/.agents/scripts"
+		REPO_PATH="$REPO_DIR"
+		AI_ACTIONS_LOG_DIR="/tmp/test-ai-actions-logs-$$"
+		AI_SEMANTIC_DEDUP_MIN_MATCHES=2
+		db() { sqlite3 -cmd ".timeout 5000" "$@" 2>/dev/null || true; }
+		log_info() { :; }
+		log_success() { :; }
+		log_warn() { :; }
+		log_error() { :; }
+		log_verbose() { :; }
+		sql_escape() { printf '%s' "$1" | sed "s/'/''/g"; }
+		detect_repo_slug() { echo "test/repo"; }
+		commit_and_push_todo() { :; }
+		find_task_issue_number() { echo ""; }
+		build_ai_context() { echo "# test"; }
+		run_ai_reasoning() { echo '[]'; }
+
+		source "$ACTIONS_SCRIPT"
+
+		local failures=0
+
+		# Create a temp TODO.md with tasks that share action verbs
+		local tmp_dir
+		tmp_dir=$(mktemp -d)
+		cat >"$tmp_dir/TODO.md" <<'TODOEOF'
+# Test TODO
+
+- [ ] t100 Investigate stale evaluating recovery pattern ~2h
+- [ ] t101 Fix dispatch timeout handling ~1h
+- [x] t102 Investigate stale evaluating frequency reduction ~2h completed:2026-02-19
+TODOEOF
+
+		# Test 1: "Investigate stale evaluating" should match t100 (open)
+		# because "investigate" is no longer a stop word
+		local candidates
+		candidates=$(_keyword_prefilter_open_tasks "Investigate stale evaluating recovery events" "$tmp_dir/TODO.md") || true
+		if [[ -z "$candidates" ]]; then
+			echo "FAIL: 'Investigate stale evaluating recovery events' should find candidates (action verbs not stripped)"
+			failures=$((failures + 1))
+		else
+			# Should find t100 as a candidate
+			if ! printf '%s' "$candidates" | grep -q "t100"; then
+				echo "FAIL: t100 should be a candidate for 'Investigate stale evaluating recovery events'"
+				failures=$((failures + 1))
+			fi
+		fi
+
+		# Test 2: "Fix dispatch timeout" should match t101
+		candidates=$(_keyword_prefilter_open_tasks "Fix dispatch timeout errors" "$tmp_dir/TODO.md") || true
+		if [[ -z "$candidates" ]]; then
+			echo "FAIL: 'Fix dispatch timeout errors' should find t101 as candidate"
+			failures=$((failures + 1))
+		fi
+
+		# Test 3: "Add logging to deploy" should NOT match any (different topic)
+		candidates=$(_keyword_prefilter_open_tasks "Add logging to deploy pipeline" "$tmp_dir/TODO.md") || true
+		if [[ -n "$candidates" ]]; then
+			echo "FAIL: 'Add logging to deploy pipeline' should NOT match any existing task"
+			failures=$((failures + 1))
+		fi
+
+		# Test 4: Recently completed tasks should also be found
+		# t102 is [x] with completed:2026-02-19 — should appear as candidate
+		# We need to test _check_similar_open_task which includes completed tasks
+		# But _keyword_prefilter_open_tasks only scans open tasks by design
+		# The completed task scanning is in _check_similar_open_task via the
+		# recently-completed scan added in this fix
+
+		rm -rf "$tmp_dir" "/tmp/test-ai-actions-logs-$$" "$SUPERVISOR_DB" 2>/dev/null || true
+		exit "$failures"
+	)
+}
+
+if _test_keyword_prefilter_stop_words 2>/dev/null; then
+	pass "keyword pre-filter: action verbs kept as signal words, correct matching (t1218)"
+else
+	fail "keyword pre-filter: action verb handling broken (t1218)"
+fi
+
+# ─── Test 31: _check_similar_open_task — recently completed tasks (t1218) ──
+echo "Test 31: Semantic dedup — recently completed tasks block new creation"
+
+_test_dedup_recently_completed() {
+	(
+		BLUE='' GREEN='' YELLOW='' RED='' NC=''
+		SUPERVISOR_DB="/tmp/test-dedup-completed-$$.db"
+		SUPERVISOR_LOG="/dev/null"
+		SCRIPT_DIR="$REPO_DIR/.agents/scripts"
+		REPO_PATH="$REPO_DIR"
+		AI_ACTIONS_LOG_DIR="/tmp/test-ai-actions-logs-$$"
+		AI_SEMANTIC_DEDUP_MIN_MATCHES=2
+		AI_SEMANTIC_DEDUP_USE_AI="false"
+		db() { sqlite3 -cmd ".timeout 5000" "$@" 2>/dev/null || true; }
+		log_info() { :; }
+		log_success() { :; }
+		log_warn() { :; }
+		log_error() { :; }
+		log_verbose() { :; }
+		sql_escape() { printf '%s' "$1" | sed "s/'/''/g"; }
+		detect_repo_slug() { echo "test/repo"; }
+		commit_and_push_todo() { :; }
+		find_task_issue_number() { echo ""; }
+		build_ai_context() { echo "# test"; }
+		run_ai_reasoning() { echo '[]'; }
+
+		source "$ACTIONS_SCRIPT"
+
+		local failures=0
+		local today
+		today=$(date -u '+%Y-%m-%d')
+
+		# Create a temp TODO.md where the only matching task is COMPLETED today
+		local tmp_dir
+		tmp_dir=$(mktemp -d)
+		cat >"$tmp_dir/TODO.md" <<TODOEOF
+# Test TODO
+
+- [ ] t200 Unrelated task about deployment ~1h
+- [x] t201 Investigate stale evaluating recovery pattern ~2h completed:${today}
+TODOEOF
+
+		# With AI disabled, keyword-only fallback requires 3+ matches.
+		# "Investigate stale evaluating recovery" vs t201 should match on:
+		# investigate, stale, evaluating, recovery, pattern = 5 keywords
+		local similar_id
+		if similar_id=$(_check_similar_open_task "Investigate stale evaluating recovery frequency" "$tmp_dir/TODO.md"); then
+			# Should find t201 (recently completed)
+			if [[ "$similar_id" == "t201" ]]; then
+				: # correct
+			else
+				echo "FAIL: should find t201 as similar, got: $similar_id"
+				failures=$((failures + 1))
+			fi
+		else
+			echo "FAIL: recently completed task t201 should be detected as similar"
+			failures=$((failures + 1))
+		fi
+
+		# Old completed task (not today/yesterday) should NOT be found
+		cat >"$tmp_dir/TODO.md" <<'TODOEOF'
+# Test TODO
+
+- [ ] t200 Unrelated task about deployment ~1h
+- [x] t201 Investigate stale evaluating recovery pattern ~2h completed:2026-01-01
+TODOEOF
+
+		if _check_similar_open_task "Investigate stale evaluating recovery frequency" "$tmp_dir/TODO.md" >/dev/null 2>&1; then
+			echo "FAIL: old completed task (2026-01-01) should NOT be detected as similar"
+			failures=$((failures + 1))
+		fi
+
+		rm -rf "$tmp_dir" "/tmp/test-ai-actions-logs-$$" "$SUPERVISOR_DB" 2>/dev/null || true
+		exit "$failures"
+	)
+}
+
+if _test_dedup_recently_completed 2>/dev/null; then
+	pass "semantic dedup: recently completed tasks block duplicate creation (t1218)"
+else
+	fail "semantic dedup: recently completed task detection broken (t1218)"
+fi
+
 # ─── Summary ────────────────────────────────────────────────────────
 echo ""
 echo "=== Results: $PASS/$TOTAL passed, $FAIL failed ==="

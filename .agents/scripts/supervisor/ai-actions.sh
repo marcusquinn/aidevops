@@ -409,7 +409,10 @@ _keyword_prefilter_open_tasks() {
 		return 1
 	fi
 
-	local stop_words=" a an the and or but in on to for of is it by at from with as be do has have had this that are was were will can may should would could into not no add fix investigate implement create update check "
+	# Stop words: only true grammatical stop words. Action verbs like "investigate",
+	# "fix", "add" are intentionally KEPT because they carry semantic signal for
+	# dedup — "Investigate X" and "Investigate Y" share a pattern that matters.
+	local stop_words=" a an the and or but in on to for of is it by at from with as be do has have had this that are was were will can may should would could into not no "
 
 	local keywords=""
 	local keyword_count=0
@@ -429,34 +432,64 @@ _keyword_prefilter_open_tasks() {
 	fi
 
 	# Collect candidates: task_id|match_count|title_excerpt
+	# Scan BOTH open tasks AND recently completed tasks (last 24h).
+	# Recently completed tasks matter because the same symptom shouldn't
+	# trigger a new investigation if one was just completed — the fix
+	# either worked (wait and observe) or didn't (the existing task
+	# should be reopened, not duplicated).
 	local candidates=""
 	local task_line
 
-	while IFS= read -r task_line; do
-		[[ -z "$task_line" ]] && continue
+	# Helper: score a task line against keywords
+	_score_task_line() {
+		local _task_line="$1"
+		[[ -z "$_task_line" ]] && return
 
-		local existing_id
-		existing_id=$(printf '%s' "$task_line" | grep -oE 't[0-9]+(\.[0-9]+)?' | head -1)
-		[[ -z "$existing_id" ]] && continue
+		local _existing_id
+		_existing_id=$(printf '%s' "$_task_line" | grep -oE 't[0-9]+(\.[0-9]+)?' | head -1)
+		[[ -z "$_existing_id" ]] && return
 
-		local lower_line
-		lower_line=$(printf '%s' "$task_line" | tr '[:upper:]' '[:lower:]')
+		local _lower_line
+		_lower_line=$(printf '%s' "$_task_line" | tr '[:upper:]' '[:lower:]')
 
-		local match_count=0
-		local kw
-		for kw in $keywords; do
-			if [[ "$lower_line" == *"$kw"* ]]; then
-				match_count=$((match_count + 1))
+		local _match_count=0
+		local _kw
+		for _kw in $keywords; do
+			if [[ "$_lower_line" == *"$_kw"* ]]; then
+				_match_count=$((_match_count + 1))
 			fi
 		done
 
-		if [[ $match_count -ge $min_matches ]]; then
-			# Extract a readable title excerpt (first 120 chars after the task ID)
-			local excerpt
-			excerpt=$(printf '%s' "$task_line" | sed -E 's/^[[:space:]]*- \[.\] t[0-9]+(\.[0-9]+)? //' | head -c 120)
-			candidates="${candidates}${existing_id}|${match_count}|${excerpt}\n"
+		if [[ $_match_count -ge $min_matches ]]; then
+			local _excerpt
+			_excerpt=$(printf '%s' "$_task_line" | sed -E 's/^[[:space:]]*- \[.\] t[0-9]+(\.[0-9]+)? //' | head -c 120)
+			candidates="${candidates}${_existing_id}|${_match_count}|${_excerpt}\n"
 		fi
+	}
+
+	# Scan open tasks
+	while IFS= read -r task_line; do
+		_score_task_line "$task_line"
 	done < <(grep -E '^\s*- \[ \] t[0-9]' "$todo_file" 2>/dev/null)
+
+	# Scan recently completed tasks (completed: field within last 24h)
+	# These are [x] tasks with a completed: timestamp from today or yesterday
+	local today yesterday
+	today=$(date -u '+%Y-%m-%d')
+	yesterday=$(date -u -v-1d '+%Y-%m-%d' 2>/dev/null || date -u -d 'yesterday' '+%Y-%m-%d' 2>/dev/null || echo "")
+	if [[ -n "$today" ]]; then
+		while IFS= read -r task_line; do
+			# Only include if completed: timestamp is recent (today or yesterday)
+			local completed_date
+			completed_date=$(printf '%s' "$task_line" | grep -oE 'completed:[0-9]{4}-[0-9]{2}-[0-9]{2}' | head -1 | sed 's/completed://')
+			if [[ "$completed_date" == "$today" || "$completed_date" == "$yesterday" ]]; then
+				_score_task_line "$task_line"
+			fi
+		done < <(grep -E '^\s*- \[x\] t[0-9]' "$todo_file" 2>/dev/null)
+	fi
+
+	# Clean up helper function
+	unset -f _score_task_line
 
 	if [[ -z "$candidates" ]]; then
 		return 1
@@ -517,17 +550,30 @@ _ai_semantic_dedup_check() {
 	}
 
 	local prompt
-	prompt="You are a task deduplication checker. Determine if a proposed new task is a semantic duplicate of any existing task.
+	prompt="You are a strict task deduplication checker. Your job is to PREVENT duplicate tasks from being created. When in doubt, mark as duplicate.
 
 PROPOSED NEW TASK:
 \"${proposed_title}\"
 
-EXISTING OPEN TASKS:
+EXISTING TASKS (open or recently completed):
 $(printf '%b' "$candidate_list")
 
-A task is a DUPLICATE if it describes essentially the same work, investigation, or fix — even if the wording differs. For example:
-- \"Investigate X failures\" and \"Add diagnostics for X failures\" are duplicates (same root problem)
-- \"Fix timeout in dispatch\" and \"Add logging to dispatch\" are NOT duplicates (different work)
+A task is a DUPLICATE if ANY of these apply:
+1. It describes the same work, investigation, or fix — even with different wording
+2. It targets the same ROOT CAUSE or SYMPTOM as an existing task
+3. It is a follow-up investigation for something an existing task already covers
+4. It adds instrumentation/diagnostics for the same issue an existing task investigates
+5. It proposes a different approach to the same problem (the existing task should be updated instead)
+
+Examples of DUPLICATES (same root cause):
+- \"Investigate X failures\" and \"Add diagnostics for X failures\" → DUPLICATE
+- \"Investigate stale evaluating recovery\" and \"Reduce stale evaluating frequency\" → DUPLICATE
+- \"Fix root cause of X\" and \"Investigate why X keeps happening\" → DUPLICATE
+- \"Add instrumentation for X\" and \"Investigate X pattern\" → DUPLICATE
+
+Examples of NOT duplicates (genuinely different work):
+- \"Fix timeout in dispatch\" and \"Add logging to deploy\" → NOT duplicate (different systems)
+- \"Investigate auth failures\" and \"Investigate dispatch stalls\" → NOT duplicate (different symptoms)
 
 Respond with ONLY a JSON object, no markdown fencing, no explanation:
 - If duplicate: {\"duplicate\": true, \"existing_task\": \"tXXXX\", \"confidence\": \"high|medium\"}
@@ -609,6 +655,11 @@ _check_similar_open_task() {
 	local candidates
 	candidates=$(_keyword_prefilter_open_tasks "$title" "$todo_file") || return 1
 
+	# Check the best keyword match score for safety-net logic below
+	local best_id best_count
+	best_id=$(printf '%s' "$candidates" | head -1 | cut -d'|' -f1)
+	best_count=$(printf '%s' "$candidates" | head -1 | cut -d'|' -f2)
+
 	# Step 2: AI semantic check (if enabled and CLI available)
 	if [[ "${AI_SEMANTIC_DEDUP_USE_AI:-true}" == "true" ]]; then
 		local ai_result
@@ -616,17 +667,22 @@ _check_similar_open_task() {
 			printf '%s' "$ai_result"
 			return 0
 		fi
-		# AI said not a duplicate or was unavailable — trust the AI over keywords
+		# AI said not a duplicate or was unavailable.
+		# Safety net: if keyword overlap is very high (4+ matches), treat as
+		# duplicate anyway. The AI can be wrong, but 4+ shared distinctive
+		# keywords is strong evidence of the same topic. This prevents the
+		# "9 tasks about stale evaluating" scenario where the AI kept saying
+		# "not duplicate" despite obvious overlap.
+		if [[ -n "$best_id" && "$best_count" -ge 4 ]]; then
+			log_info "AI Actions: semantic dedup safety net: AI said not duplicate but $best_id has $best_count keyword matches — treating as duplicate"
+			printf '%s' "$best_id"
+			return 0
+		fi
 		log_info "AI Actions: semantic dedup: AI did not confirm duplicate, allowing task creation"
 		return 1
 	fi
 
-	# Fallback: keyword-only mode (AI disabled) — require higher threshold
-	local best_id best_count
-	best_id=$(printf '%s' "$candidates" | head -1 | cut -d'|' -f1)
-	best_count=$(printf '%s' "$candidates" | head -1 | cut -d'|' -f2)
-
-	# Without AI confirmation, require 3+ keyword matches (stricter)
+	# Fallback: keyword-only mode (AI disabled) — require 3+ keyword matches
 	if [[ -n "$best_id" && "$best_count" -ge 3 ]]; then
 		log_info "AI Actions: semantic dedup (keyword-only fallback): $best_id matches with $best_count keywords"
 		printf '%s' "$best_id"
