@@ -1430,9 +1430,24 @@
   check: shellcheck .agents/scripts/supervisor/ai-actions.sh
   check: file-exists .agents/scripts/supervisor/ai-actions.sh
 
-- [ ] v171 t1214 Add t1200 subtask visibility check — subtasks created b... | PR #1850 | merged:2026-02-19
+- [x] v171 t1214 Add t1200 subtask visibility check — subtasks created b... | PR #1850 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/supervisor/ai-actions.sh, .agents/scripts/supervisor/ai-context.sh
   check: shellcheck .agents/scripts/supervisor/ai-actions.sh
   check: file-exists .agents/scripts/supervisor/ai-actions.sh
   check: shellcheck .agents/scripts/supervisor/ai-context.sh
   check: file-exists .agents/scripts/supervisor/ai-context.sh
+
+- [ ] v172 t1200.1 Core orchestrator + free-tier providers — create `ip-re... | PR #1856 | merged:2026-02-19
+  files: .agents/scripts/ip-reputation-helper.sh, .agents/scripts/providers/ip-rep-abuseipdb.sh, .agents/scripts/providers/ip-rep-blocklistde.sh, .agents/scripts/providers/ip-rep-proxycheck.sh, .agents/scripts/providers/ip-rep-spamhaus.sh, .agents/scripts/providers/ip-rep-stopforumspam.sh
+  check: shellcheck .agents/scripts/ip-reputation-helper.sh
+  check: file-exists .agents/scripts/ip-reputation-helper.sh
+  check: shellcheck .agents/scripts/providers/ip-rep-abuseipdb.sh
+  check: file-exists .agents/scripts/providers/ip-rep-abuseipdb.sh
+  check: shellcheck .agents/scripts/providers/ip-rep-blocklistde.sh
+  check: file-exists .agents/scripts/providers/ip-rep-blocklistde.sh
+  check: shellcheck .agents/scripts/providers/ip-rep-proxycheck.sh
+  check: file-exists .agents/scripts/providers/ip-rep-proxycheck.sh
+  check: shellcheck .agents/scripts/providers/ip-rep-spamhaus.sh
+  check: file-exists .agents/scripts/providers/ip-rep-spamhaus.sh
+  check: shellcheck .agents/scripts/providers/ip-rep-stopforumspam.sh
+  check: file-exists .agents/scripts/providers/ip-rep-stopforumspam.sh
