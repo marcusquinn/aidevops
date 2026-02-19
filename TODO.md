@@ -907,7 +907,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [ ] t004.4 Implement AI context isolation per organisation #feature #auto-dispatch ~4h model:sonnet ref:GH#1900
   - [ ] t004.5 Integration tests for multi-org data boundaries and AI isolation #testing #auto-dispatch ~3h model:sonnet ref:GH#1901
 - [x] t005 Implement multi-tenant credential storage #security ~1.5d (ai:8h test:4h read:2h) logged:2025-12-20 completed:2026-01-24 pr:#227
-  - [ ] t005.1 Design AI chat sidebar component architecture and state management approach #feature #auto-dispatch ~3h model:opus ref:GH#1902
+  - [ ] t005.1 Design AI chat sidebar component architecture and state management approach #feature #auto-dispatch ~3h model:opus ref:GH#1902 assignee:marcusquinn started:2026-02-19T04:10:03Z
   - [ ] t005.2 Implement collapsible sidebar panel with IDE-style resize and toggle #feature #auto-dispatch ~4h model:sonnet ref:GH#1903
   - [ ] t005.3 Build chat message UI with streaming response display and markdown rendering #feature #auto-dispatch ~4h model:sonnet ref:GH#1904
   - [ ] t005.4 Implement AI backend integration — context injection, conversation history, API routing #feature #auto-dispatch ~4h model:sonnet ref:GH#1905
