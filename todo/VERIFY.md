@@ -1771,7 +1771,7 @@
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
 
-- [ ] v215 t1218 Add semantic dedup to AI task creation to prevent duplica... | PR #1969 | merged:2026-02-19
+- [x] v215 t1218 Add semantic dedup to AI task creation to prevent duplica... | PR #1969 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/supervisor/ai-actions.sh, .agents/scripts/supervisor/ai-reason.sh, tests/test-ai-actions.sh
   check: shellcheck .agents/scripts/supervisor/ai-actions.sh
   check: file-exists .agents/scripts/supervisor/ai-actions.sh
