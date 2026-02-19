@@ -1502,9 +1502,18 @@
   check: file-exists .agents/tools/security/ip-reputation.md
   check: rg "ip-reputation" .agents/subagent-index.toon
 
-- [ ] v177 t1221 Fix create_subtasks executor — 10 consecutive failures ... | PR #1866 | merged:2026-02-19
+- [x] v177 t1221 Fix create_subtasks executor — 10 consecutive failures ... | PR #1866 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/supervisor/ai-actions.sh, tests/test-ai-actions.sh
   check: shellcheck .agents/scripts/supervisor/ai-actions.sh
   check: file-exists .agents/scripts/supervisor/ai-actions.sh
   check: shellcheck tests/test-ai-actions.sh
   check: file-exists tests/test-ai-actions.sh
+
+- [ ] v178 t1200.4 Core IP reputation lookup module using AbuseIPDB and Viru... | PR #1871 | merged:2026-02-19
+  files: .agents/scripts/ip-reputation-helper.sh, .agents/scripts/providers/ip-rep-virustotal.sh, .agents/tools/security/ip-reputation.md
+  check: shellcheck .agents/scripts/ip-reputation-helper.sh
+  check: file-exists .agents/scripts/ip-reputation-helper.sh
+  check: shellcheck .agents/scripts/providers/ip-rep-virustotal.sh
+  check: file-exists .agents/scripts/providers/ip-rep-virustotal.sh
+  check: file-exists .agents/tools/security/ip-reputation.md
+  check: rg "ip-reputation" .agents/subagent-index.toon
