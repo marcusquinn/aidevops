@@ -1504,6 +1504,109 @@ reset_failure_dedup_state() {
 }
 
 #######################################
+# Pre-dispatch CLI health check (t1113)
+#
+# Verifies the AI CLI binary exists, is executable, and can produce output
+# before spawning a worker. This prevents wasting retries on environment
+# issues where the CLI was invoked but never produced output (the
+# "worker_never_started:no_sentinel" failure pattern).
+#
+# Strategy:
+#   1. Check binary exists in PATH (command -v)
+#   2. Run a lightweight version/help check to verify it can execute
+#   3. Cache result for the pulse duration (pulse-level flag)
+#
+# $1: ai_cli - the CLI binary name (e.g., "opencode", "claude")
+#
+# Exit codes:
+#   0 = CLI healthy, proceed with dispatch
+#   1 = CLI not found or not executable
+#
+# Outputs: diagnostic message on failure (for dispatch log)
+#######################################
+check_cli_health() {
+	local ai_cli="$1"
+
+	# Pulse-level fast path: if CLI was already verified in this pulse, skip
+	if [[ -n "${_PULSE_CLI_VERIFIED:-}" ]]; then
+		log_verbose "CLI health: pulse-verified OK (skipping check)"
+		return 0
+	fi
+
+	# File-based cache: avoid re-checking within 5 minutes
+	local cache_dir="$SUPERVISOR_DIR/health"
+	mkdir -p "$cache_dir"
+	local cli_cache_file="$cache_dir/cli-${ai_cli}"
+	if [[ -f "$cli_cache_file" ]]; then
+		local cached_at
+		cached_at=$(cat "$cli_cache_file" 2>/dev/null || echo "0")
+		local now
+		now=$(date +%s)
+		local age=$((now - cached_at))
+		if [[ "$age" -lt 300 ]]; then
+			log_verbose "CLI health: cached OK ($age seconds ago)"
+			_PULSE_CLI_VERIFIED="true"
+			return 0
+		fi
+	fi
+
+	# Check 1: binary exists in PATH
+	if ! command -v "$ai_cli" &>/dev/null; then
+		log_error "CLI health check FAILED: '$ai_cli' not found in PATH"
+		log_error "PATH=$PATH"
+		echo "cli_not_found:${ai_cli}"
+		return 1
+	fi
+
+	# Check 2: binary is executable and can produce version output
+	local version_output=""
+	local version_exit=1
+
+	# Use timeout to prevent hanging on broken installations
+	local timeout_cmd=""
+	if command -v gtimeout &>/dev/null; then
+		timeout_cmd="gtimeout"
+	elif command -v timeout &>/dev/null; then
+		timeout_cmd="timeout"
+	fi
+
+	if [[ "$ai_cli" == "opencode" ]]; then
+		if [[ -n "$timeout_cmd" ]]; then
+			version_output=$("$timeout_cmd" 10 "$ai_cli" version 2>&1) || version_exit=$?
+		else
+			version_output=$("$ai_cli" version 2>&1) || version_exit=$?
+		fi
+	else
+		# claude CLI
+		if [[ -n "$timeout_cmd" ]]; then
+			version_output=$("$timeout_cmd" 10 "$ai_cli" --version 2>&1) || version_exit=$?
+		else
+			version_output=$("$ai_cli" --version 2>&1) || version_exit=$?
+		fi
+	fi
+
+	# If version command succeeded (exit 0) or produced output, CLI is working
+	if [[ "$version_exit" -eq 0 ]] || [[ -n "$version_output" && "$version_exit" -ne 124 && "$version_exit" -ne 137 ]]; then
+		# Cache the healthy result
+		date +%s >"$cli_cache_file" 2>/dev/null || true
+		_PULSE_CLI_VERIFIED="true"
+		log_info "CLI health: OK ($ai_cli: ${version_output:0:80})"
+		return 0
+	fi
+
+	# Version check failed
+	if [[ "$version_exit" -eq 124 || "$version_exit" -eq 137 ]]; then
+		log_error "CLI health check FAILED: '$ai_cli' timed out (10s)"
+		echo "cli_timeout:${ai_cli}"
+	else
+		log_error "CLI health check FAILED: '$ai_cli' exited with code $version_exit"
+		log_error "Output: ${version_output:0:200}"
+		echo "cli_error:${ai_cli}:exit_${version_exit}"
+	fi
+	return 1
+}
+
+#######################################
 # Pre-dispatch model health check (t132.3, t233)
 # Two-tier probe strategy:
 #   1. Fast path: model-availability-helper.sh (direct HTTP, ~1-2s, cached)
@@ -2354,6 +2457,20 @@ cmd_dispatch() {
 	local ai_cli
 	ai_cli=$(resolve_ai_cli) || return 1
 
+	# Pre-dispatch CLI health check (t1113): verify the AI CLI binary exists and
+	# can execute before creating worktrees and spawning workers. This prevents
+	# the "worker_never_started:no_sentinel" failure pattern where the CLI is
+	# invoked but never produces output due to environment issues (missing binary,
+	# broken installation, PATH misconfiguration). Deferring here avoids burning
+	# retries on environment problems that won't resolve between retry attempts.
+	local cli_health_exit=0 cli_health_detail=""
+	cli_health_detail=$(check_cli_health "$ai_cli") || cli_health_exit=$?
+	if [[ "$cli_health_exit" -ne 0 ]]; then
+		log_error "CLI health check failed for $task_id ($ai_cli): $cli_health_detail — deferring dispatch"
+		log_error "Fix: ensure '$ai_cli' is installed and in PATH, then retry"
+		return 3 # Defer to next pulse (same as provider unavailable)
+	fi
+
 	# Pre-dispatch model availability check (t233 — replaces simple health check)
 	# Calls model-availability-helper.sh check before spawning workers.
 	# Distinct exit codes prevent wasted dispatch attempts:
@@ -2450,6 +2567,7 @@ cmd_dispatch() {
 		echo "dispatch_type=${verify_mode:+verify}"
 		echo "verify_reason=${verify_reason:-}"
 		echo "hung_timeout_seconds=${dispatch_hung_timeout}"
+		echo "cli_health=ok"
 		echo "=== END DISPATCH METADATA ==="
 		echo ""
 	} >"$log_file" 2>/dev/null || true
