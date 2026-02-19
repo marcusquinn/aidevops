@@ -1554,7 +1554,12 @@
   check: file-exists .agents/tools/security/ip-reputation.md
   check: rg "ip-reputation" .agents/subagent-index.toon
 
-- [ ] v184 t1224.2 Implement `localdev add/rm` — port registry (`~/.local-... | PR #1908 | merged:2026-02-19
+- [x] v184 t1224.2 Implement `localdev add/rm` — port registry (`~/.local-... | PR #1908 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/localdev-helper.sh
   check: shellcheck .agents/scripts/localdev-helper.sh
   check: file-exists .agents/scripts/localdev-helper.sh
+
+- [ ] v185 t1235 Fix issue-sync-helper.sh `cmd_push()` cross-repo vulnerab... | PR #1913 | merged:2026-02-19
+  files: .agents/scripts/issue-sync-helper.sh
+  check: shellcheck .agents/scripts/issue-sync-helper.sh
+  check: file-exists .agents/scripts/issue-sync-helper.sh
