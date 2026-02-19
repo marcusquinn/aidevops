@@ -128,6 +128,12 @@ recover_stale_claims() {
 	local skipped_young=0
 	local recovered_ids=""
 
+	# Pre-compute identity variants for ownership checks (loop-invariant)
+	local local_user
+	local_user=$(whoami 2>/dev/null || echo "")
+	local gh_user="${_CACHED_GH_USERNAME:-}"
+	local identity_user="${identity%%@*}"
+
 	# Find all open tasks with assignee: or started: fields
 	while IFS= read -r line; do
 		[[ -z "$line" ]] && continue
@@ -143,9 +149,11 @@ recover_stale_claims() {
 
 		# Extract started timestamp
 		local started_ts=""
-		started_ts=$(printf '%s' "$line" | grep -oE 'started:[0-9T:Z-]+' | head -1 | sed 's/started://' || echo "")
+		started_ts=$(printf '%s' "$line" | grep -oE 'started:[0-9T:Z-]+' | tail -1 | sed 's/started://' || echo "")
 
 		# Safety check: only unclaim tasks assigned to the local user (t1017)
+		# Tasks with started: but no assignee: are treated as external — we cannot
+		# verify ownership without the assignee field, so skipping is the safe default.
 		if [[ -n "$assignee" ]]; then
 			local is_local_user=false
 
@@ -156,11 +164,6 @@ recover_stale_claims() {
 
 			# Fuzzy match: username portion (before @)
 			if [[ "$is_local_user" == "false" ]]; then
-				local local_user
-				local_user=$(whoami 2>/dev/null || echo "")
-				local gh_user="${_CACHED_GH_USERNAME:-}"
-				local identity_user="${identity%%@*}"
-
 				if [[ "$assignee" == "$local_user" ]] ||
 					[[ -n "$gh_user" && "$assignee" == "$gh_user" ]] ||
 					[[ "$assignee" == "$identity_user" ]] ||
@@ -174,6 +177,12 @@ recover_stale_claims() {
 				log_verbose "  Phase 0.5e: $task_id skipped — assignee:$assignee is not local user ($identity)"
 				continue
 			fi
+		else
+			# No assignee: field — cannot verify ownership; skip to protect external contributors
+			# (Normal claim flow always writes both assignee: and started: together)
+			skipped_external=$((skipped_external + 1))
+			log_verbose "  Phase 0.5e: $task_id skipped — started: without assignee: (ownership unverifiable)"
+			continue
 		fi
 
 		# Check 1: Is the task actively tracked in the supervisor DB?
@@ -207,14 +216,19 @@ recover_stale_claims() {
 				date -d "$started_ts" "+%s" 2>/dev/null ||
 				echo "0")
 
-			if [[ "$started_epoch" -gt 0 ]]; then
-				local claim_age=$((now_epoch - started_epoch))
-				if [[ "$claim_age" -lt "$stale_threshold" ]]; then
-					skipped_young=$((skipped_young + 1))
-					local remaining=$(((stale_threshold - claim_age) / 3600))
-					log_verbose "  Phase 0.5e: $task_id skipped — claim age ${claim_age}s < threshold ${stale_threshold}s (~${remaining}h remaining)"
-					continue
-				fi
+			if [[ "$started_epoch" -eq 0 ]]; then
+				# Parse failure — unknown age; skip conservatively rather than treating as stale
+				log_warn "  Phase 0.5e: $task_id skipped — could not parse started: timestamp '${started_ts}'"
+				skipped_young=$((skipped_young + 1))
+				continue
+			fi
+
+			local claim_age=$((now_epoch - started_epoch))
+			if [[ "$claim_age" -lt "$stale_threshold" ]]; then
+				skipped_young=$((skipped_young + 1))
+				local remaining=$(((stale_threshold - claim_age) / 3600))
+				log_verbose "  Phase 0.5e: $task_id skipped — claim age ${claim_age}s < threshold ${stale_threshold}s (~${remaining}h remaining)"
+				continue
 			fi
 		else
 			# No started: timestamp — use a heuristic: if assignee: exists but no

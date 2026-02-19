@@ -761,7 +761,8 @@ main() {
 	stale-claims)
 		# t1263: Manually trigger stale-claim recovery for a repo
 		# Usage: supervisor-helper.sh stale-claims [--repo <path>]
-		local _sc_repo="${REPO_PATH:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+		local _sc_repo
+		_sc_repo="${REPO_PATH:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 		while [[ $# -gt 0 ]]; do
 			case "$1" in
 			--repo)
