@@ -18,6 +18,12 @@
 # Action execution log directory (shares with ai-reason)
 AI_ACTIONS_LOG_DIR="${AI_ACTIONS_LOG_DIR:-$HOME/.aidevops/logs/ai-supervisor}"
 
+# Semantic dedup: minimum keyword matches to consider tasks similar (t1218)
+# A new task title is compared against open tasks by extracting distinctive
+# keywords (3+ chars, excluding stop words) and counting overlap.
+# If overlap >= this threshold, the task is considered a duplicate.
+AI_SEMANTIC_DEDUP_MIN_MATCHES="${AI_SEMANTIC_DEDUP_MIN_MATCHES:-3}"
+
 # Valid action types — any action not in this list is rejected
 readonly AI_VALID_ACTION_TYPES="comment_on_issue create_task create_subtasks flag_for_review adjust_priority close_verified request_info create_improvement escalate_model propose_auto_dispatch"
 
@@ -347,6 +353,105 @@ _record_action_dedup() {
 	}
 
 	return 0
+}
+
+#######################################
+# Check if a similar open task already exists in TODO.md (t1218)
+#
+# Extracts distinctive keywords from the proposed title, then searches
+# all open tasks (- [ ]) for keyword overlap. This catches duplicates
+# where the AI generates slightly different titles for the same issue
+# (e.g., "Investigate worker_never_started..." vs "Add diagnostics for
+# worker_never_started...").
+#
+# Arguments:
+#   $1 - proposed task title
+#   $2 - path to TODO.md
+# Outputs:
+#   If similar task found: "tXXXX" (the existing task ID)
+#   If no similar task: "" (empty string)
+# Returns:
+#   0 if similar task found (should skip creation)
+#   1 if no similar task (safe to create)
+#######################################
+_check_similar_open_task() {
+	local title="$1"
+	local todo_file="$2"
+	local min_matches="${AI_SEMANTIC_DEDUP_MIN_MATCHES:-3}"
+
+	if [[ ! -f "$todo_file" ]]; then
+		return 1
+	fi
+
+	# Stop words to exclude from keyword matching (common words that don't
+	# carry semantic meaning for task dedup)
+	local stop_words=" a an the and or but in on to for of is it by at from with as be do has have had this that are was were will can may should would could into not no "
+
+	# Extract distinctive keywords from the proposed title:
+	# - Lowercase
+	# - Split on non-alphanumeric (spaces, punctuation, underscores)
+	# - Keep words >= 3 chars
+	# - Exclude stop words
+	local keywords=""
+	local keyword_count=0
+	local word
+	while IFS= read -r word; do
+		[[ -z "$word" ]] && continue
+		# Skip short words
+		[[ ${#word} -lt 3 ]] && continue
+		# Skip stop words
+		if [[ "$stop_words" == *" $word "* ]]; then
+			continue
+		fi
+		keywords="${keywords} ${word}"
+		keyword_count=$((keyword_count + 1))
+	done < <(printf '%s' "$title" | tr '[:upper:]' '[:lower:]' | tr -cs '[:alnum:]' '\n')
+
+	# Need at least min_matches keywords to do a meaningful comparison
+	if [[ $keyword_count -lt $min_matches ]]; then
+		return 1
+	fi
+
+	# Search open tasks in TODO.md for keyword overlap
+	local best_match_id=""
+	local best_match_count=0
+	local task_line
+
+	while IFS= read -r task_line; do
+		[[ -z "$task_line" ]] && continue
+
+		# Extract the task ID (tNNNN or tNNNN.N)
+		local existing_id
+		existing_id=$(printf '%s' "$task_line" | grep -oE 't[0-9]+(\.[0-9]+)?' | head -1)
+		[[ -z "$existing_id" ]] && continue
+
+		# Lowercase the task line for comparison
+		local lower_line
+		lower_line=$(printf '%s' "$task_line" | tr '[:upper:]' '[:lower:]')
+
+		# Count how many of our keywords appear in this task line
+		local match_count=0
+		local kw
+		for kw in $keywords; do
+			if [[ "$lower_line" == *"$kw"* ]]; then
+				match_count=$((match_count + 1))
+			fi
+		done
+
+		# Track the best match
+		if [[ $match_count -ge $min_matches && $match_count -gt $best_match_count ]]; then
+			best_match_count=$match_count
+			best_match_id="$existing_id"
+		fi
+	done < <(grep -E '^\s*- \[ \] t[0-9]' "$todo_file" 2>/dev/null)
+
+	if [[ -n "$best_match_id" ]]; then
+		log_info "AI Actions: semantic dedup (t1218): proposed title matches existing $best_match_id ($best_match_count/$keyword_count keywords)"
+		printf '%s' "$best_match_id"
+		return 0
+	fi
+
+	return 1
 }
 
 #######################################
@@ -918,6 +1023,15 @@ _exec_create_task() {
 		return 1
 	fi
 
+	# Semantic dedup: check if a similar open task already exists (t1218)
+	local similar_task_id
+	if similar_task_id=$(_check_similar_open_task "$title" "$todo_file"); then
+		log_info "AI Actions: create_task skipped — similar open task $similar_task_id exists (t1218)"
+		jq -n --arg existing "$similar_task_id" --arg title "$title" \
+			'{"skipped": true, "reason": "similar_task_exists", "existing_task": $existing, "proposed_title": $title}'
+		return 0
+	fi
+
 	# Allocate task ID via claim-task-id.sh
 	local claim_script="${SCRIPT_DIR}/claim-task-id.sh"
 	local task_id=""
@@ -1350,6 +1464,15 @@ _exec_create_improvement() {
 	if [[ ! -f "$todo_file" ]]; then
 		echo '{"error":"todo_file_not_found"}'
 		return 1
+	fi
+
+	# Semantic dedup: check if a similar open task already exists (t1218)
+	local similar_task_id
+	if similar_task_id=$(_check_similar_open_task "$title" "$todo_file"); then
+		log_info "AI Actions: create_improvement skipped — similar open task $similar_task_id exists (t1218)"
+		jq -n --arg existing "$similar_task_id" --arg title "$title" --arg category "$category" \
+			'{"skipped": true, "reason": "similar_task_exists", "existing_task": $existing, "proposed_title": $title, "category": $category}'
+		return 0
 	fi
 
 	# Allocate task ID via claim-task-id.sh
