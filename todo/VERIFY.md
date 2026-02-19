@@ -1543,7 +1543,7 @@
   check: shellcheck .agents/scripts/localdev-helper.sh
   check: file-exists .agents/scripts/localdev-helper.sh
 
-- [ ] v183 t1200.6 Output formatting, caching layer, and rate limit handling... | PR #1911 | merged:2026-02-19
+- [x] v183 t1200.6 Output formatting, caching layer, and rate limit handling... | PR #1911 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/ip-reputation-helper.sh, .agents/scripts/providers/ip-rep-abuseipdb.sh, .agents/scripts/providers/ip-rep-proxycheck.sh, .agents/tools/security/ip-reputation.md
   check: shellcheck .agents/scripts/ip-reputation-helper.sh
   check: file-exists .agents/scripts/ip-reputation-helper.sh
@@ -1553,3 +1553,8 @@
   check: file-exists .agents/scripts/providers/ip-rep-proxycheck.sh
   check: file-exists .agents/tools/security/ip-reputation.md
   check: rg "ip-reputation" .agents/subagent-index.toon
+
+- [ ] v184 t1224.2 Implement `localdev add/rm` — port registry (`~/.local-... | PR #1908 | merged:2026-02-19
+  files: .agents/scripts/localdev-helper.sh
+  check: shellcheck .agents/scripts/localdev-helper.sh
+  check: file-exists .agents/scripts/localdev-helper.sh
