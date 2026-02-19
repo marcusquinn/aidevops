@@ -1791,6 +1791,6 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 >>>>>>> Stashed changes
 
 <<<<<<< Updated upstream
-- [ ] t1259 Investigate and mitigate stale evaluating recovery pattern across all recent completions #bugfix #auto-dispatch #self-improvement ~2h model:sonnet category:reliability — All 15 recently completed tasks in the last 24h show 'Stale evaluating recovery (Phase 0.7)' in their notes. While tasks are completing successfully, this indicates workers are consistently entering a stale state that requires recovery intervention. Root cause analysis needed: are workers failing to report completion, is the evaluation phase timing out, or is there a race condition in the pulse cycle? Fixing this would reduce unnecessary recovery cycles and improve dispatch latency. ref:GH#1967
+- [ ] t1259 Investigate and mitigate stale evaluating recovery pattern across all recent completions #bugfix #auto-dispatch #self-improvement ~2h model:sonnet category:reliability — All 15 recently completed tasks in the last 24h show 'Stale evaluating recovery (Phase 0.7)' in their notes. While tasks are completing successfully, this indicates workers are consistently entering a stale state that requires recovery intervention. Root cause analysis needed: are workers failing to report completion, is the evaluation phase timing out, or is there a race condition in the pulse cycle? Fixing this would reduce unnecessary recovery cycles and improve dispatch latency. ref:GH#1967 assignee:marcusquinn
 =======
 >>>>>>> Stashed changes
