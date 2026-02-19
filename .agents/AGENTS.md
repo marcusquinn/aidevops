@@ -384,7 +384,7 @@ Orchestration agents can create drafts in `draft/` for reusable parallel process
 | Voice | `tools/voice/speech-to-speech.md`, `voice-helper.sh talk` (voice bridge) |
 | Email testing | `services/email/email-testing.md` (overview), `services/email/email-design-test.md`, `services/email/email-delivery-test.md`, `email-test-suite-helper.sh` |
 | Encryption | `tools/credentials/encryption-stack.md` (decision tree), `tools/credentials/sops.md`, `tools/credentials/gocryptfs.md`, `tools/credentials/gopass.md` |
-| Security | `tools/security/tirith.md` (terminal guard), `tools/security/shannon.md` (pentesting), `tools/security/ip-reputation.md` (IP reputation), `/ip-check <ip>` |
+| Security | `tools/security/tirith.md` (terminal guard), `tools/security/shannon.md` (pentesting), `tools/security/ip-reputation.md` (IP reputation), `tools/security/cdn-origin-ip.md` (CDN origin leak), `/ip-check <ip>`, `aidevops ip-check` |
 | Cloud GPU | `tools/infrastructure/cloud-gpu.md` |
 | Containers | `tools/containers/orbstack.md` |
 | Networking | `services/networking/tailscale.md` |
