@@ -40,6 +40,9 @@ readonly STATE_FILE="$HOME/.aidevops/cache/auto-update-state.json"
 readonly CRON_MARKER="# aidevops-auto-update"
 readonly DEFAULT_INTERVAL=10
 readonly DEFAULT_SKILL_FRESHNESS_HOURS=24
+readonly LAUNCHD_LABEL="com.aidevops.auto-update"
+readonly LAUNCHD_DIR="$HOME/Library/LaunchAgents"
+readonly LAUNCHD_PLIST="${LAUNCHD_DIR}/${LAUNCHD_LABEL}.plist"
 
 #######################################
 # Logging
@@ -71,6 +74,117 @@ log_error() {
 #######################################
 ensure_dirs() {
 	mkdir -p "$LOCK_DIR" "$HOME/.aidevops/logs" "$HOME/.aidevops/cache" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Detect scheduler backend for current platform
+# Returns: "launchd" on macOS, "cron" on Linux/other
+#######################################
+_get_scheduler_backend() {
+	if [[ "$(uname)" == "Darwin" ]]; then
+		echo "launchd"
+	else
+		echo "cron"
+	fi
+	return 0
+}
+
+#######################################
+# Check if the auto-update LaunchAgent is loaded
+# Returns: 0 if loaded, 1 if not
+#######################################
+_launchd_is_loaded() {
+	launchctl list 2>/dev/null | grep -qF "$LAUNCHD_LABEL"
+	return $?
+}
+
+#######################################
+# Generate auto-update LaunchAgent plist content
+# Arguments:
+#   $1 - script_path
+#   $2 - interval_seconds
+#   $3 - env_path
+#######################################
+_generate_auto_update_plist() {
+	local script_path="$1"
+	local interval_seconds="$2"
+	local env_path="$3"
+
+	cat <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>${LAUNCHD_LABEL}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>${script_path}</string>
+		<string>check</string>
+	</array>
+	<key>StartInterval</key>
+	<integer>${interval_seconds}</integer>
+	<key>StandardOutPath</key>
+	<string>${LOG_FILE}</string>
+	<key>StandardErrorPath</key>
+	<string>${LOG_FILE}</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>${env_path}</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>KeepAlive</key>
+	<false/>
+</dict>
+</plist>
+EOF
+	return 0
+}
+
+#######################################
+# Migrate existing cron entry to launchd (macOS only)
+# Called automatically when cmd_enable runs on macOS
+# Arguments:
+#   $1 - script_path
+#   $2 - interval_seconds
+#######################################
+_migrate_cron_to_launchd() {
+	local script_path="$1"
+	local interval_seconds="$2"
+
+	# Check if cron entry exists
+	if ! crontab -l 2>/dev/null | grep -qF "$CRON_MARKER"; then
+		return 0
+	fi
+
+	log_info "Migrating auto-update from cron to launchd..."
+
+	# Generate and write plist
+	mkdir -p "$LAUNCHD_DIR"
+	_generate_auto_update_plist "$script_path" "$interval_seconds" "${PATH}" >"$LAUNCHD_PLIST"
+
+	# Load into launchd
+	if launchctl load -w "$LAUNCHD_PLIST" 2>/dev/null; then
+		log_info "LaunchAgent loaded: $LAUNCHD_LABEL"
+	else
+		log_error "Failed to load LaunchAgent during migration"
+		return 1
+	fi
+
+	# Remove old cron entry
+	local temp_cron
+	temp_cron=$(mktemp)
+	if crontab -l 2>/dev/null | grep -vF "$CRON_MARKER" >"$temp_cron"; then
+		crontab "$temp_cron"
+	else
+		crontab -r 2>/dev/null || true
+	fi
+	rm -f "$temp_cron"
+
+	log_info "Migration complete: auto-update now managed by launchd"
 	return 0
 }
 
@@ -433,7 +547,9 @@ cmd_check() {
 }
 
 #######################################
-# Enable auto-update cron job
+# Enable auto-update scheduler (platform-aware)
+# On macOS: installs LaunchAgent plist
+# On Linux: installs crontab entry
 #######################################
 cmd_enable() {
 	ensure_dirs
@@ -451,6 +567,45 @@ cmd_enable() {
 		fi
 	fi
 
+	local backend
+	backend="$(_get_scheduler_backend)"
+
+	if [[ "$backend" == "launchd" ]]; then
+		local interval_seconds=$((interval * 60))
+
+		# Auto-migrate existing cron entry if present
+		_migrate_cron_to_launchd "$script_path" "$interval_seconds"
+
+		# Install if not already loaded
+		if _launchd_is_loaded; then
+			print_info "Auto-update LaunchAgent already loaded ($LAUNCHD_LABEL)"
+			update_state "enable" "$(get_local_version)" "enabled"
+			return 0
+		fi
+
+		mkdir -p "$LAUNCHD_DIR"
+		_generate_auto_update_plist "$script_path" "$interval_seconds" "${PATH}" >"$LAUNCHD_PLIST"
+
+		if launchctl load -w "$LAUNCHD_PLIST" 2>/dev/null; then
+			update_state "enable" "$(get_local_version)" "enabled"
+			print_success "Auto-update enabled (every ${interval} minutes)"
+			echo ""
+			echo "  Scheduler: launchd (macOS LaunchAgent)"
+			echo "  Label:     $LAUNCHD_LABEL"
+			echo "  Plist:     $LAUNCHD_PLIST"
+			echo "  Script:    $script_path"
+			echo "  Logs:      $LOG_FILE"
+			echo ""
+			echo "  Disable with: aidevops auto-update disable"
+			echo "  Check now:    aidevops auto-update check"
+		else
+			print_error "Failed to load LaunchAgent: $LAUNCHD_LABEL"
+			return 1
+		fi
+		return 0
+	fi
+
+	# Linux: cron backend
 	# Build cron expression
 	local cron_expr="*/${interval} * * * *"
 	local cron_line="$cron_expr $script_path check >> $LOG_FILE 2>&1 $CRON_MARKER"
@@ -484,9 +639,48 @@ cmd_enable() {
 }
 
 #######################################
-# Disable auto-update cron job
+# Disable auto-update scheduler (platform-aware)
+# On macOS: unloads and removes LaunchAgent plist
+# On Linux: removes crontab entry
 #######################################
 cmd_disable() {
+	local backend
+	backend="$(_get_scheduler_backend)"
+
+	if [[ "$backend" == "launchd" ]]; then
+		local had_entry=false
+
+		if _launchd_is_loaded; then
+			had_entry=true
+			launchctl unload -w "$LAUNCHD_PLIST" 2>/dev/null || true
+		fi
+
+		if [[ -f "$LAUNCHD_PLIST" ]]; then
+			had_entry=true
+			rm -f "$LAUNCHD_PLIST"
+		fi
+
+		# Also remove any lingering cron entry (migration cleanup)
+		if crontab -l 2>/dev/null | grep -qF "$CRON_MARKER"; then
+			local temp_cron
+			temp_cron=$(mktemp)
+			crontab -l 2>/dev/null | grep -vF "$CRON_MARKER" >"$temp_cron" || true
+			crontab "$temp_cron"
+			rm -f "$temp_cron"
+			had_entry=true
+		fi
+
+		update_state "disable" "$(get_local_version)" "disabled"
+
+		if [[ "$had_entry" == "true" ]]; then
+			print_success "Auto-update disabled"
+		else
+			print_info "Auto-update was not enabled"
+		fi
+		return 0
+	fi
+
+	# Linux: cron backend
 	local temp_cron
 	temp_cron=$(mktemp)
 	trap 'rm -f "${temp_cron:-}"' RETURN
@@ -511,7 +705,7 @@ cmd_disable() {
 }
 
 #######################################
-# Show status
+# Show status (platform-aware)
 #######################################
 cmd_status() {
 	ensure_dirs
@@ -519,19 +713,57 @@ cmd_status() {
 	local current
 	current=$(get_local_version)
 
+	local backend
+	backend="$(_get_scheduler_backend)"
+
 	echo ""
 	echo -e "${BOLD:-}Auto-Update Status${NC}"
 	echo "-------------------"
 	echo ""
 
-	# Check if cron job is installed
-	if crontab -l 2>/dev/null | grep -q "$CRON_MARKER"; then
-		local cron_entry
-		cron_entry=$(crontab -l 2>/dev/null | grep "$CRON_MARKER")
-		echo -e "  Cron job:  ${GREEN}enabled${NC}"
-		echo "  Schedule:  $(echo "$cron_entry" | awk '{print $1, $2, $3, $4, $5}')"
+	if [[ "$backend" == "launchd" ]]; then
+		# macOS: show LaunchAgent status
+		if _launchd_is_loaded; then
+			local launchctl_info
+			launchctl_info=$(launchctl list 2>/dev/null | grep -F "$LAUNCHD_LABEL" || true)
+			local pid exit_code interval
+			pid=$(echo "$launchctl_info" | awk '{print $1}')
+			exit_code=$(echo "$launchctl_info" | awk '{print $2}')
+			echo -e "  Scheduler: launchd (macOS LaunchAgent)"
+			echo -e "  Status:    ${GREEN}loaded${NC}"
+			echo "  Label:     $LAUNCHD_LABEL"
+			echo "  PID:       ${pid:--}"
+			echo "  Last exit: ${exit_code:--}"
+			if [[ -f "$LAUNCHD_PLIST" ]]; then
+				interval=$(grep -A1 'StartInterval' "$LAUNCHD_PLIST" 2>/dev/null | grep integer | grep -oE '[0-9]+' || true)
+				if [[ -n "$interval" ]]; then
+					echo "  Interval:  every ${interval}s"
+				fi
+				echo "  Plist:     $LAUNCHD_PLIST"
+			fi
+		else
+			echo -e "  Scheduler: launchd (macOS LaunchAgent)"
+			echo -e "  Status:    ${YELLOW}not loaded${NC}"
+			if [[ -f "$LAUNCHD_PLIST" ]]; then
+				echo "  Plist:     $LAUNCHD_PLIST (exists but not loaded)"
+			fi
+		fi
+		# Also check for any lingering cron entry
+		if crontab -l 2>/dev/null | grep -q "$CRON_MARKER"; then
+			echo -e "  ${YELLOW}Note: legacy cron entry found — run 'aidevops auto-update disable && enable' to migrate${NC}"
+		fi
 	else
-		echo -e "  Cron job:  ${YELLOW}disabled${NC}"
+		# Linux: show cron status
+		if crontab -l 2>/dev/null | grep -q "$CRON_MARKER"; then
+			local cron_entry
+			cron_entry=$(crontab -l 2>/dev/null | grep "$CRON_MARKER")
+			echo -e "  Scheduler: cron"
+			echo -e "  Status:    ${GREEN}enabled${NC}"
+			echo "  Schedule:  $(echo "$cron_entry" | awk '{print $1, $2, $3, $4, $5}')"
+		else
+			echo -e "  Scheduler: cron"
+			echo -e "  Status:    ${YELLOW}disabled${NC}"
+		fi
 	fi
 
 	echo "  Version:   v$current"
@@ -559,7 +791,7 @@ cmd_status() {
 	# Check env var overrides
 	if [[ "${AIDEVOPS_AUTO_UPDATE:-}" == "false" ]]; then
 		echo ""
-		echo -e "  ${YELLOW}Note: AIDEVOPS_AUTO_UPDATE=false is set (overrides cron)${NC}"
+		echo -e "  ${YELLOW}Note: AIDEVOPS_AUTO_UPDATE=false is set (overrides scheduler)${NC}"
 	fi
 	if [[ "${AIDEVOPS_SKILL_AUTO_UPDATE:-}" == "false" ]]; then
 		echo ""
@@ -614,8 +846,8 @@ USAGE:
     aidevops auto-update <command> [options]
 
 COMMANDS:
-    enable              Install cron job (checks every 10 min)
-    disable             Remove cron job
+    enable              Install scheduler (launchd on macOS, cron on Linux)
+    disable             Remove scheduler
     status              Show current auto-update state
     check               One-shot: check for updates and install if available
     logs [--tail N]     View update logs (default: last 50 lines)
@@ -623,13 +855,19 @@ COMMANDS:
     help                Show this help
 
 ENVIRONMENT:
-    AIDEVOPS_AUTO_UPDATE=false           Disable auto-update (overrides cron)
+    AIDEVOPS_AUTO_UPDATE=false           Disable auto-update (overrides scheduler)
     AIDEVOPS_UPDATE_INTERVAL=10          Minutes between checks (default: 10)
     AIDEVOPS_SKILL_AUTO_UPDATE=false     Disable daily skill freshness check
     AIDEVOPS_SKILL_FRESHNESS_HOURS=24    Hours between skill checks (default: 24)
 
+SCHEDULER BACKENDS:
+    macOS:  launchd LaunchAgent (~/Library/LaunchAgents/com.aidevops.auto-update.plist)
+            - Native macOS scheduler, survives reboots without cron
+            - Auto-migrates existing cron entries on first 'enable'
+    Linux:  cron (crontab entry with # aidevops-auto-update marker)
+
 HOW IT WORKS:
-    1. Cron runs 'auto-update-helper.sh check' every 10 minutes
+    1. Scheduler runs 'auto-update-helper.sh check' every 10 minutes
     2. Checks GitHub API for latest version (no CDN cache)
     3. If newer version found:
        a. Acquires lock (prevents concurrent updates)

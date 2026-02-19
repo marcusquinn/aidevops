@@ -1,12 +1,25 @@
 #!/usr/bin/env bash
-# cron.sh - Cron scheduling and auto-pickup functions
+# cron.sh - Scheduler abstraction for pulse management and auto-pickup
 #
-# Functions for cron pulse management, TODO.md watching,
-# and automatic task pickup
+# Platform-aware: uses launchd on macOS, cron on Linux.
+# Same CLI interface (cron install/uninstall/status) regardless of backend.
+#
+# On macOS: generates ~/Library/LaunchAgents/com.aidevops.supervisor-pulse.plist
+# On Linux: installs a crontab entry (unchanged behaviour)
+
+# Source launchd helpers (macOS backend)
+# shellcheck source=launchd.sh
+_CRON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${_CRON_DIR}/launchd.sh" ]]; then
+	# shellcheck disable=SC1091
+	source "${_CRON_DIR}/launchd.sh"
+fi
 
 #######################################
-# Manage cron-based pulse scheduling
-# Installs/uninstalls a crontab entry that runs pulse every N minutes
+# Manage pulse scheduling (platform-aware)
+# On macOS: installs/uninstalls LaunchAgent plist
+# On Linux: installs/uninstalls crontab entry
+# Same CLI: cron [install|uninstall|status] [--interval N] [--batch id]
 #######################################
 cmd_cron() {
 	local action="${1:-status}"
@@ -41,7 +54,114 @@ cmd_cron() {
 	done
 
 	local script_path
-	script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/supervisor-helper.sh"
+	script_path="${_CRON_DIR}/supervisor-helper.sh"
+	local cron_log="${SUPERVISOR_DIR}/cron.log"
+
+	# Ensure supervisor dir exists for log file
+	mkdir -p "$SUPERVISOR_DIR"
+
+	# Platform dispatch: launchd on macOS, cron on Linux
+	local backend
+	backend="$(_get_scheduler_backend 2>/dev/null || echo "cron")"
+
+	if [[ "$backend" == "launchd" ]]; then
+		_cmd_cron_launchd "$action" "$script_path" "$interval" "$batch_arg" "$cron_log"
+		return $?
+	fi
+
+	# Linux: cron backend (unchanged)
+	_cmd_cron_linux "$action" "$script_path" "$interval" "$batch_arg" "$cron_log"
+	return $?
+}
+
+#######################################
+# macOS launchd backend for cmd_cron
+# Arguments:
+#   $1 - action (install|uninstall|status)
+#   $2 - script_path
+#   $3 - interval (minutes)
+#   $4 - batch_arg
+#   $5 - log_path
+#######################################
+_cmd_cron_launchd() {
+	local action="$1"
+	local script_path="$2"
+	local interval="$3"
+	local batch_arg="$4"
+	local log_path="$5"
+
+	local interval_seconds=$((interval * 60))
+
+	case "$action" in
+	install)
+		# Auto-migrate existing cron entry if present
+		launchd_migrate_from_cron \
+			"supervisor-pulse" \
+			"$script_path" \
+			"$log_path" \
+			"$interval_seconds" \
+			"$batch_arg"
+
+		# Install (migrate handles the case where cron existed; install handles fresh)
+		if ! _launchd_is_loaded "com.aidevops.supervisor-pulse"; then
+			launchd_install_supervisor_pulse \
+				"$script_path" \
+				"$interval_seconds" \
+				"$log_path" \
+				"$batch_arg"
+		fi
+
+		if [[ -n "$batch_arg" ]]; then
+			log_info "Batch filter: $batch_arg"
+		fi
+		return 0
+		;;
+
+	uninstall)
+		launchd_uninstall_supervisor_pulse
+		return 0
+		;;
+
+	status)
+		launchd_status_supervisor_pulse
+
+		# Show log tail if it exists
+		if [[ -f "$log_path" ]]; then
+			local log_size
+			log_size=$(wc -c <"$log_path" | tr -d ' ')
+			echo "  Log:      $log_path ($log_size bytes)"
+			echo ""
+			echo "  Last 5 log lines:"
+			tail -5 "$log_path" 2>/dev/null | while IFS= read -r line; do
+				echo "    $line"
+			done
+		fi
+		return 0
+		;;
+
+	*)
+		log_error "Usage: supervisor-helper.sh cron [install|uninstall|status] [--interval N] [--batch id]"
+		return 1
+		;;
+	esac
+}
+
+#######################################
+# Linux cron backend for cmd_cron
+# Arguments:
+#   $1 - action (install|uninstall|status)
+#   $2 - script_path
+#   $3 - interval (minutes)
+#   $4 - batch_arg
+#   $5 - log_path
+#######################################
+_cmd_cron_linux() {
+	local action="$1"
+	local script_path="$2"
+	local interval="$3"
+	local batch_arg="$4"
+	local log_path="$5"
+
 	local cron_marker="# aidevops-supervisor-pulse"
 
 	# Detect current PATH for cron environment (t1006)
@@ -62,17 +182,14 @@ cmd_cron() {
 		env_vars="${env_vars:+${env_vars} }GH_TOKEN=${gh_token}"
 	fi
 
-	local cron_cmd="*/${interval} * * * * ${env_vars:+${env_vars} }${script_path} pulse ${batch_arg} >> ${SUPERVISOR_DIR}/cron.log 2>&1 ${cron_marker}"
+	local cron_cmd="*/${interval} * * * * ${env_vars:+${env_vars} }${script_path} pulse ${batch_arg} >> ${log_path} 2>&1 ${cron_marker}"
 
 	case "$action" in
 	install)
-		# Ensure supervisor dir exists for log file
-		mkdir -p "$SUPERVISOR_DIR"
-
 		# Check if already installed
 		if crontab -l 2>/dev/null | grep -qF "$cron_marker"; then
 			log_warn "Supervisor cron already installed. Use 'cron uninstall' first to change settings."
-			cmd_cron status
+			_cmd_cron_linux status "$script_path" "$interval" "$batch_arg" "$log_path"
 			return 0
 		fi
 
@@ -91,7 +208,7 @@ cmd_cron() {
 		rm -f "$temp_cron"
 
 		log_success "Installed supervisor cron (every ${interval} minutes)"
-		log_info "Log: ${SUPERVISOR_DIR}/cron.log"
+		log_info "Log: ${log_path}"
 		if [[ -n "$batch_arg" ]]; then
 			log_info "Batch filter: $batch_arg"
 		fi
@@ -134,14 +251,13 @@ cmd_cron() {
 		fi
 
 		# Show cron log tail if it exists
-		local cron_log="${SUPERVISOR_DIR}/cron.log"
-		if [[ -f "$cron_log" ]]; then
+		if [[ -f "$log_path" ]]; then
 			local log_size
-			log_size=$(wc -c <"$cron_log" | tr -d ' ')
-			echo "  Log:      $cron_log ($log_size bytes)"
+			log_size=$(wc -c <"$log_path" | tr -d ' ')
+			echo "  Log:      $log_path ($log_size bytes)"
 			echo ""
 			echo "  Last 5 log lines:"
-			tail -5 "$cron_log" 2>/dev/null | while IFS= read -r line; do
+			tail -5 "$log_path" 2>/dev/null | while IFS= read -r line; do
 				echo "    $line"
 			done
 		fi
@@ -157,12 +273,14 @@ cmd_cron() {
 }
 
 #######################################
-# Watch TODO.md for changes using fswatch
+# Watch TODO.md for changes (platform-aware)
+# On macOS: installs a WatchPaths LaunchAgent (no fswatch dependency)
+# On Linux: uses fswatch (existing behaviour)
 # Triggers auto-pickup + pulse on file modification
-# Alternative to cron for real-time responsiveness
 #######################################
 cmd_watch() {
 	local repo=""
+	local uninstall=false
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -173,6 +291,10 @@ cmd_watch() {
 			}
 			repo="$2"
 			shift 2
+			;;
+		--uninstall)
+			uninstall=true
+			shift
 			;;
 		*)
 			log_error "Unknown option: $1"
@@ -186,6 +308,43 @@ cmd_watch() {
 	fi
 
 	local todo_file="$repo/TODO.md"
+	local script_path="${_CRON_DIR}/supervisor-helper.sh"
+	local watch_log="${SUPERVISOR_DIR}/watch.log"
+
+	# Platform dispatch
+	local backend
+	backend="$(_get_scheduler_backend 2>/dev/null || echo "cron")"
+
+	if [[ "$backend" == "launchd" ]]; then
+		# macOS: use WatchPaths LaunchAgent (no fswatch required)
+		if [[ "$uninstall" == "true" ]]; then
+			launchd_uninstall_todo_watcher
+			return $?
+		fi
+
+		if [[ ! -f "$todo_file" ]]; then
+			log_error "TODO.md not found at $todo_file"
+			return 1
+		fi
+
+		mkdir -p "$SUPERVISOR_DIR"
+		launchd_install_todo_watcher \
+			"$script_path" \
+			"$todo_file" \
+			"$repo" \
+			"$watch_log"
+		log_info "TODO.md watcher installed via launchd WatchPaths"
+		log_info "Triggers: auto-pickup --repo $repo on every TODO.md change"
+		log_info "Uninstall: supervisor-helper.sh watch --uninstall"
+		return $?
+	fi
+
+	# Linux: fswatch backend (unchanged)
+	if [[ "$uninstall" == "true" ]]; then
+		log_info "On Linux, 'watch' runs in the foreground. Use Ctrl+C to stop."
+		return 0
+	fi
+
 	if [[ ! -f "$todo_file" ]]; then
 		log_error "TODO.md not found at $todo_file"
 		return 1
@@ -197,9 +356,6 @@ cmd_watch() {
 		log_info "Alternative: use 'supervisor-helper.sh cron install' for cron-based scheduling"
 		return 1
 	fi
-
-	local script_path
-	script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/supervisor-helper.sh"
 
 	log_info "Watching $todo_file for changes..."
 	log_info "Press Ctrl+C to stop"
