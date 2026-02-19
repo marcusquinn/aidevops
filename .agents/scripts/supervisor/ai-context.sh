@@ -1372,8 +1372,16 @@ build_auto_dispatch_eligibility_context() {
 						eligible="no"
 						reason="estimate too small (<30m)"
 					elif [[ "$est_minutes" -gt 240 ]]; then
-						eligible="no"
-						reason="estimate too large (>4h)"
+						# Check if subtasks already exist for this task (t1214)
+						local has_subtasks_count
+						has_subtasks_count=$(grep -c "^[[:space:]]*- \[.\] ${tid}\." "$scan_todo" 2>/dev/null || echo 0)
+						if [[ "$has_subtasks_count" -gt 0 ]]; then
+							eligible="no"
+							reason="has-subtasks: ${has_subtasks_count} subtask(s) exist — dispatch subtasks instead"
+						else
+							eligible="no"
+							reason="estimate too large (>4h) — use create_subtasks to break down"
+						fi
 					fi
 				fi
 			fi

@@ -1060,7 +1060,15 @@ _exec_create_subtasks() {
 	# Remove trailing comma from created_ids
 	created_ids="${created_ids%,}"
 
-	echo "{\"created\":true,\"parent_task_id\":\"$parent_task_id\",\"subtask_ids\":\"$created_ids\",\"count\":$subtask_count}"
+	# Post-execution verification: confirm subtasks are visible in TODO.md (t1214)
+	local verified_count
+	verified_count=$(grep -c "^[[:space:]]*- \[.\] ${parent_task_id}\." "$todo_file" 2>/dev/null || echo 0)
+	if [[ "$verified_count" -lt "$subtask_count" ]]; then
+		echo "{\"created\":true,\"parent_task_id\":\"$parent_task_id\",\"subtask_ids\":\"$created_ids\",\"count\":$subtask_count,\"verified_count\":$verified_count,\"warning\":\"subtask_count_mismatch\"}"
+		return 0
+	fi
+
+	echo "{\"created\":true,\"parent_task_id\":\"$parent_task_id\",\"subtask_ids\":\"$created_ids\",\"count\":$subtask_count,\"verified_count\":$verified_count}"
 	return 0
 }
 
