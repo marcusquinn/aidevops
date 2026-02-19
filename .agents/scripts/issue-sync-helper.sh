@@ -92,6 +92,40 @@ detect_repo_slug() {
 	return 0
 }
 
+# Resolve a task's repo slug from the supervisor DB (t1235).
+# When the supervisor manages tasks across multiple repos, each task has a
+# repo path stored in the DB. This function looks up that path and derives
+# the repo slug from its git remote — ensuring issues are created in the
+# correct repo, not the CWD repo.
+# Returns: repo slug on stdout, or empty string if DB unavailable/task not found.
+# $1: task_id
+_lookup_task_repo_slug() {
+	local task_id="$1"
+	local supervisor_db="${SUPERVISOR_DB:-$HOME/.aidevops/.agent-workspace/supervisor/supervisor.db}"
+
+	if [[ ! -f "$supervisor_db" ]]; then
+		return 0
+	fi
+
+	# Look up the task's repo path from the supervisor DB
+	local db_repo_path=""
+	db_repo_path=$(sqlite3 "$supervisor_db" \
+		"SELECT repo FROM tasks WHERE id = '$(printf '%s' "$task_id" | sed "s/'/''/g")' AND repo IS NOT NULL AND repo != '' LIMIT 1;" \
+		2>/dev/null || echo "")
+
+	if [[ -z "$db_repo_path" ]]; then
+		return 0
+	fi
+
+	# Resolve to canonical path and derive slug from its git remote
+	local canonical_path=""
+	canonical_path=$(realpath "$db_repo_path" 2>/dev/null || echo "")
+	if [[ -n "$canonical_path" && (-d "$canonical_path/.git" || -f "$canonical_path/.git") ]]; then
+		detect_repo_slug "$canonical_path" 2>/dev/null || echo ""
+	fi
+	return 0
+}
+
 # =============================================================================
 # Platform Detection (t1120.3)
 # =============================================================================
@@ -1553,6 +1587,17 @@ cmd_push() {
 	for task_id in "${tasks[@]}"; do
 		log_verbose "Processing $task_id..."
 
+		# Cross-repo guard (t1235): if the supervisor DB knows this task belongs
+		# to a different repo, skip it. Prevents creating issues in the wrong repo
+		# when TODO.md contains cross-repo tasks (same class of bug as t1234).
+		local task_repo_slug=""
+		task_repo_slug=$(_lookup_task_repo_slug "$task_id")
+		if [[ -n "$task_repo_slug" && "$task_repo_slug" != "$repo_slug" ]]; then
+			log_verbose "$task_id belongs to $task_repo_slug, not $repo_slug — skipping"
+			skipped=$((skipped + 1))
+			continue
+		fi
+
 		# Check if issue already exists (platform-agnostic title search)
 		local existing
 		existing=$(platform_find_issue_by_title "$repo_slug" "${task_id}:" "all" 50)
@@ -1688,6 +1733,14 @@ cmd_enrich() {
 
 	local enriched=0
 	for task_id in "${tasks[@]}"; do
+		# Cross-repo guard (t1235)
+		local task_repo_slug=""
+		task_repo_slug=$(_lookup_task_repo_slug "$task_id")
+		if [[ -n "$task_repo_slug" && "$task_repo_slug" != "$repo_slug" ]]; then
+			log_verbose "$task_id belongs to $task_repo_slug, not $repo_slug — skipping enrich"
+			continue
+		fi
+
 		# Find the issue number (match both top-level and indented subtasks)
 		local task_line
 		task_line=$(grep -E "^\s*- \[.\] ${task_id} " "$todo_file" | head -1 || echo "")
@@ -2168,6 +2221,14 @@ cmd_close() {
 		task_id=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
 		[[ -z "$task_id" ]] && continue
 
+		# Cross-repo guard (t1235)
+		local task_repo_slug=""
+		task_repo_slug=$(_lookup_task_repo_slug "$task_id")
+		if [[ -n "$task_repo_slug" && "$task_repo_slug" != "$repo_slug" ]]; then
+			log_verbose "$task_id belongs to $task_repo_slug, not $repo_slug — skipping close"
+			continue
+		fi
+
 		# Lookup task_id in the open issues list (grep for exact match at line start)
 		local mapped_line
 		mapped_line=$(echo "$open_issue_lines" | grep -E "^${task_id}\|" | head -1 || echo "")
@@ -2291,6 +2352,14 @@ _close_single_task() {
 	local task_id="$1"
 	local todo_file="$2"
 	local repo_slug="$3"
+
+	# Cross-repo guard (t1235)
+	local task_repo_slug=""
+	task_repo_slug=$(_lookup_task_repo_slug "$task_id")
+	if [[ -n "$task_repo_slug" && "$task_repo_slug" != "$repo_slug" ]]; then
+		print_warning "$task_id belongs to $task_repo_slug, not $repo_slug — skipping close"
+		return 0
+	fi
 
 	local task_line
 	task_line=$(grep -E "^\s*- \[.\] ${task_id} " "$todo_file" | head -1 || echo "")
@@ -2476,6 +2545,14 @@ cmd_reconcile() {
 		gh_ref=$(echo "$line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
 
 		if [[ -z "$tid" || -z "$gh_ref" ]]; then
+			continue
+		fi
+
+		# Cross-repo guard (t1235)
+		local task_repo_slug=""
+		task_repo_slug=$(_lookup_task_repo_slug "$tid")
+		if [[ -n "$task_repo_slug" && "$task_repo_slug" != "$repo_slug" ]]; then
+			log_verbose "$tid belongs to $task_repo_slug, not $repo_slug — skipping reconcile"
 			continue
 		fi
 
