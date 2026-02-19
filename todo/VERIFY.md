@@ -1739,7 +1739,7 @@
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
 
-- [ ] v210 t1253 Investigate awardsapp dispatch stall — 15 subtasks disp... | PR #1959 | merged:2026-02-19
+- [x] v210 t1253 Investigate awardsapp dispatch stall — 15 subtasks disp... | PR #1959 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/supervisor/state.sh
   check: shellcheck .agents/scripts/supervisor/state.sh
   check: file-exists .agents/scripts/supervisor/state.sh
