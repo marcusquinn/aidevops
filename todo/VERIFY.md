@@ -1765,3 +1765,8 @@
   check: file-exists .agents/scripts/supervisor/pulse.sh
   check: shellcheck .agents/scripts/supervisor/state.sh
   check: file-exists .agents/scripts/supervisor/state.sh
+
+- [ ] v214 t1258 Investigate high volume of stale evaluating recovery even... | PR #1966 | merged:2026-02-19
+  files: .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
