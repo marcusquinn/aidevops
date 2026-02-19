@@ -1532,13 +1532,24 @@
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
 
-- [ ] v181 t1200.5 CLI interface and agent framework integration for IP repu... | PR #1883 | merged:2026-02-19
+- [x] v181 t1200.5 CLI interface and agent framework integration for IP repu... | PR #1883 | merged:2026-02-19 verified:2026-02-19
   files: .agents/AGENTS.md, aidevops.sh
   check: file-exists .agents/AGENTS.md
   check: shellcheck aidevops.sh
   check: file-exists aidevops.sh
 
-- [ ] v182 t1224.1 Create `localdev` shell script with `init` command — co... | PR #1884 | merged:2026-02-19
+- [x] v182 t1224.1 Create `localdev` shell script with `init` command — co... | PR #1884 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/localdev-helper.sh
   check: shellcheck .agents/scripts/localdev-helper.sh
   check: file-exists .agents/scripts/localdev-helper.sh
+
+- [ ] v183 t1200.6 Output formatting, caching layer, and rate limit handling... | PR #1911 | merged:2026-02-19
+  files: .agents/scripts/ip-reputation-helper.sh, .agents/scripts/providers/ip-rep-abuseipdb.sh, .agents/scripts/providers/ip-rep-proxycheck.sh, .agents/tools/security/ip-reputation.md
+  check: shellcheck .agents/scripts/ip-reputation-helper.sh
+  check: file-exists .agents/scripts/ip-reputation-helper.sh
+  check: shellcheck .agents/scripts/providers/ip-rep-abuseipdb.sh
+  check: file-exists .agents/scripts/providers/ip-rep-abuseipdb.sh
+  check: shellcheck .agents/scripts/providers/ip-rep-proxycheck.sh
+  check: file-exists .agents/scripts/providers/ip-rep-proxycheck.sh
+  check: file-exists .agents/tools/security/ip-reputation.md
+  check: rg "ip-reputation" .agents/subagent-index.toon
