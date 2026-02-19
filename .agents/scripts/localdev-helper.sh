@@ -30,6 +30,9 @@ readonly TRAEFIK_STATIC="$LOCALDEV_DIR/traefik.yml"
 readonly DOCKER_COMPOSE="$LOCALDEV_DIR/docker-compose.yml"
 readonly BACKUP_DIR="$LOCALDEV_DIR/backup"
 
+# LocalWP sites.json path (macOS standard location)
+LOCALWP_SITES_JSON="${LOCALWP_SITES_JSON:-$HOME/Library/Application Support/Local/sites.json}"
+
 # Detect Homebrew prefix (Apple Silicon vs Intel)
 detect_brew_prefix() {
 	if [[ -d "/opt/homebrew" ]]; then
@@ -1382,13 +1385,128 @@ cmd_rm() {
 }
 
 # =============================================================================
-# List Command
+# Dashboard Helpers — cert status, process health, LocalWP sites.json
+# =============================================================================
+
+# Check if cert files exist for a domain and return status string
+# Returns: "ok" (both files exist), "missing" (neither), "partial" (one missing)
+check_cert_status() {
+	local name="$1"
+	local domain="${name}.local"
+	local cert_file="$CERTS_DIR/${domain}+1.pem"
+	local key_file="$CERTS_DIR/${domain}+1-key.pem"
+
+	if [[ -f "$cert_file" ]] && [[ -f "$key_file" ]]; then
+		echo "ok"
+	elif [[ -f "$cert_file" ]] || [[ -f "$key_file" ]]; then
+		echo "partial"
+	else
+		echo "missing"
+	fi
+	return 0
+}
+
+# Check if something is listening on a given port
+# Returns: "up" (listening), "down" (nothing listening)
+check_port_health() {
+	local port="$1"
+	if lsof -i ":$port" -sTCP:LISTEN >/dev/null 2>&1; then
+		echo "up"
+	else
+		echo "down"
+	fi
+	return 0
+}
+
+# Get the process name listening on a port (empty if nothing)
+get_port_process() {
+	local port="$1"
+	lsof -i ":$port" -sTCP:LISTEN -t 2>/dev/null | head -1 | xargs -I{} ps -p {} -o comm= 2>/dev/null | head -1
+	return 0
+}
+
+# Read LocalWP sites from sites.json (richer data than /etc/hosts grep)
+# Outputs JSON array: [{name, domain, path, http_port, status}]
+read_localwp_sites() {
+	local sites_json="$LOCALWP_SITES_JSON"
+
+	if [[ ! -f "$sites_json" ]]; then
+		echo "[]"
+		return 0
+	fi
+
+	if command -v jq >/dev/null 2>&1; then
+		jq '[to_entries[] | .value | {
+			name: .name,
+			domain: .domain,
+			path: .path,
+			http_port: ((.services.nginx.ports.HTTP // .services.apache.ports.HTTP // [null])[0]),
+			php_version: (.services.php.version // "unknown"),
+			mysql_version: (.services.mysql.version // "unknown")
+		}]' "$sites_json" 2>/dev/null || echo "[]"
+	else
+		python3 - "$sites_json" <<'PYEOF'
+import sys, json
+try:
+    with open(sys.argv[1]) as f:
+        data = json.load(f)
+    sites = []
+    for key, site in data.items():
+        services = site.get('services', {})
+        nginx = services.get('nginx', {}).get('ports', {}).get('HTTP', [None])
+        apache = services.get('apache', {}).get('ports', {}).get('HTTP', [None])
+        http_port = nginx[0] if nginx[0] else (apache[0] if apache[0] else None)
+        sites.append({
+            'name': site.get('name', ''),
+            'domain': site.get('domain', ''),
+            'path': site.get('path', ''),
+            'http_port': http_port,
+            'php_version': services.get('php', {}).get('version', 'unknown'),
+            'mysql_version': services.get('mysql', {}).get('version', 'unknown'),
+        })
+    print(json.dumps(sites))
+except Exception:
+    print('[]')
+PYEOF
+	fi
+	return 0
+}
+
+# Format a status indicator for terminal output
+format_status() {
+	local status="$1"
+	case "$status" in
+	ok | up)
+		echo "[OK]"
+		;;
+	down)
+		echo "[--]"
+		;;
+	missing)
+		echo "[!!]"
+		;;
+	partial)
+		echo "[!?]"
+		;;
+	*)
+		echo "[??]"
+		;;
+	esac
+	return 0
+}
+
+# =============================================================================
+# List Command — Unified dashboard
 # =============================================================================
 
 cmd_list() {
 	ensure_ports_file
 
-	print_info "Registered localdev apps:"
+	echo "=== Local Development Dashboard ==="
+	echo ""
+
+	# --- localdev-managed projects ---
+	echo "--- localdev projects ---"
 	echo ""
 
 	if command -v jq >/dev/null 2>&1; then
@@ -1396,35 +1514,169 @@ cmd_list() {
 		count="$(jq '.apps | length' "$PORTS_FILE")"
 		if [[ "$count" -eq 0 ]]; then
 			print_info "  No apps registered. Use: localdev-helper.sh add <name>"
-			return 0
+		else
+			# Header
+			printf "  %-20s %-28s %-6s %-6s %-6s %s\n" "NAME" "URL" "PORT" "CERT" "PROC" "PROCESS"
+			printf "  %-20s %-28s %-6s %-6s %-6s %s\n" "----" "---" "----" "----" "----" "-------"
+
+			# Iterate apps
+			local apps_json
+			apps_json="$(jq -r '.apps | to_entries[] | "\(.key)\t\(.value.port)\t\(.value.domain)"' "$PORTS_FILE")"
+			while IFS=$'\t' read -r app_name app_port app_domain; do
+				[[ -z "$app_name" ]] && continue
+				local cert_st health_st proc_name
+				cert_st="$(check_cert_status "$app_name")"
+				health_st="$(check_port_health "$app_port")"
+				proc_name="$(get_port_process "$app_port")"
+				printf "  %-20s %-28s %-6s %-6s %-6s %s\n" \
+					"$app_name" "https://${app_domain}" "$app_port" \
+					"$(format_status "$cert_st")" "$(format_status "$health_st")" \
+					"${proc_name:--}"
+
+				# Show branches for this app
+				local branches_json
+				branches_json="$(jq -r --arg a "$app_name" \
+					'.apps[$a].branches // {} | to_entries[] | "\(.key)\t\(.value.port)\t\(.value.subdomain)"' \
+					"$PORTS_FILE" 2>/dev/null)"
+				if [[ -n "$branches_json" ]]; then
+					while IFS=$'\t' read -r br_name br_port br_subdomain; do
+						[[ -z "$br_name" ]] && continue
+						local br_health br_proc
+						br_health="$(check_port_health "$br_port")"
+						br_proc="$(get_port_process "$br_port")"
+						printf "  %-20s %-28s %-6s %-6s %-6s %s\n" \
+							"  > $br_name" "https://${br_subdomain}" "$br_port" \
+							"    " "$(format_status "$br_health")" \
+							"${br_proc:--}"
+					done <<<"$branches_json"
+				fi
+			done <<<"$apps_json"
 		fi
-		jq -r '.apps | to_entries[] | "  \(.key)\t\(.value.domain)\tport:\(.value.port)\tadded:\(.value.added)"' "$PORTS_FILE"
-		# Show branches inline
-		jq -r '.apps | to_entries[] | select(.value.branches // {} | length > 0) | .key as $app | .value.branches | to_entries[] | "    ↳ \(.key)\t\(.value.subdomain)\tport:\(.value.port)"' "$PORTS_FILE" 2>/dev/null || true
 	else
-		python3 - "$PORTS_FILE" <<'PYEOF'
-import sys, json
-with open(sys.argv[1]) as f:
+		python3 - "$PORTS_FILE" "$CERTS_DIR" <<'PYEOF'
+import sys, json, subprocess, os
+
+ports_file, certs_dir = sys.argv[1], sys.argv[2]
+with open(ports_file) as f:
     data = json.load(f)
+
 apps = data.get('apps', {})
 if not apps:
     print("  No apps registered.")
 else:
+    print(f"  {'NAME':<20} {'URL':<28} {'PORT':<6} {'CERT':<6} {'PROC':<6} {'PROCESS'}")
+    print(f"  {'----':<20} {'---':<28} {'----':<6} {'----':<6} {'----':<6} {'-------'}")
     for name, info in apps.items():
-        print(f"  {name}\t{info['domain']}\tport:{info['port']}\tadded:{info['added']}")
+        domain = info.get('domain', f'{name}.local')
+        port = info.get('port', '?')
+        cert = os.path.join(certs_dir, f'{domain}+1.pem')
+        key = os.path.join(certs_dir, f'{domain}+1-key.pem')
+        cert_ok = os.path.isfile(cert) and os.path.isfile(key)
+        try:
+            r = subprocess.run(['lsof', '-i', f':{port}', '-sTCP:LISTEN', '-t'],
+                               capture_output=True, text=True, timeout=2)
+            proc_up = r.returncode == 0
+            pid = r.stdout.strip().split('\n')[0] if proc_up else ''
+            proc_name = subprocess.run(['ps', '-p', pid, '-o', 'comm='],
+                                       capture_output=True, text=True, timeout=2).stdout.strip() if pid else '-'
+        except Exception:
+            proc_up = False
+            proc_name = '-'
+        print(f"  {name:<20} https://{domain:<24} {port:<6} {'[OK]' if cert_ok else '[!!]':<6} {'[OK]' if proc_up else '[--]':<6} {proc_name}")
         for bname, binfo in info.get('branches', {}).items():
-            print(f"    > {bname}\t{binfo['subdomain']}\tport:{binfo['port']}")
+            bp = binfo.get('port', '?')
+            try:
+                r2 = subprocess.run(['lsof', '-i', f':{bp}', '-sTCP:LISTEN', '-t'],
+                                    capture_output=True, text=True, timeout=2)
+                bp_up = r2.returncode == 0
+            except Exception:
+                bp_up = False
+            print(f"    > {bname:<16} https://{binfo.get('subdomain','?'):<24} {bp:<6} {'    ':<6} {'[OK]' if bp_up else '[--]':<6}")
 PYEOF
 	fi
 
+	# --- LocalWP sites ---
 	echo ""
-	# Also show LocalWP sites for context
+	echo "--- LocalWP sites (read-only) ---"
+	echo ""
+
+	local localwp_data
+	localwp_data="$(read_localwp_sites)"
 	local localwp_count
-	localwp_count="$(grep -c '#Local Site' /etc/hosts 2>/dev/null || echo "0")"
-	if [[ "$localwp_count" -gt 0 ]]; then
-		print_info "LocalWP sites (managed separately via /etc/hosts):"
-		grep '#Local Site' /etc/hosts 2>/dev/null | awk '{print "  " $2}' | sort -u
+	if command -v jq >/dev/null 2>&1; then
+		localwp_count="$(echo "$localwp_data" | jq 'length')"
+	else
+		localwp_count="$(echo "$localwp_data" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))")"
 	fi
+
+	if [[ "$localwp_count" -eq 0 ]] || [[ "$localwp_count" == "0" ]]; then
+		print_info "  No LocalWP sites found"
+		if [[ ! -f "$LOCALWP_SITES_JSON" ]]; then
+			print_info "  (sites.json not found at: $LOCALWP_SITES_JSON)"
+		fi
+	else
+		printf "  %-20s %-28s %-6s %-6s %-10s %s\n" "NAME" "DOMAIN" "PORT" "PROC" "PHP" "MYSQL"
+		printf "  %-20s %-28s %-6s %-6s %-10s %s\n" "----" "------" "----" "----" "---" "-----"
+
+		if command -v jq >/dev/null 2>&1; then
+			echo "$localwp_data" | jq -r '.[] | "\(.name)\t\(.domain)\t\(.http_port // "-")\t\(.php_version)\t\(.mysql_version)"' |
+				while IFS=$'\t' read -r lwp_name lwp_domain lwp_port lwp_php lwp_mysql; do
+					[[ -z "$lwp_name" ]] && continue
+					local lwp_health
+					if [[ "$lwp_port" != "-" ]] && [[ "$lwp_port" != "null" ]] && [[ -n "$lwp_port" ]]; then
+						lwp_health="$(check_port_health "$lwp_port")"
+					else
+						lwp_health="down"
+						lwp_port="-"
+					fi
+					printf "  %-20s %-28s %-6s %-6s %-10s %s\n" \
+						"$lwp_name" "$lwp_domain" "$lwp_port" \
+						"$(format_status "$lwp_health")" "$lwp_php" "$lwp_mysql"
+				done
+		else
+			python3 -c "
+import sys, json, subprocess
+data = json.loads(sys.argv[1])
+for site in data:
+    name = site.get('name', '?')
+    domain = site.get('domain', '?')
+    port = site.get('http_port')
+    php = site.get('php_version', '?')
+    mysql = site.get('mysql_version', '?')
+    port_str = str(port) if port else '-'
+    proc_up = False
+    if port:
+        try:
+            r = subprocess.run(['lsof', '-i', f':{port}', '-sTCP:LISTEN', '-t'],
+                               capture_output=True, text=True, timeout=2)
+            proc_up = r.returncode == 0
+        except Exception:
+            pass
+    status = '[OK]' if proc_up else '[--]'
+    print(f'  {name:<20} {domain:<28} {port_str:<6} {status:<6} {php:<10} {mysql}')
+" "$localwp_data"
+		fi
+	fi
+
+	# --- Shared Postgres ---
+	echo ""
+	echo "--- Shared Postgres ---"
+	echo ""
+	if pg_container_running; then
+		local db_count
+		db_count="$(docker exec "$LOCALDEV_PG_CONTAINER" psql -U "$LOCALDEV_PG_USER" -tAc \
+			"SELECT count(*) FROM pg_database WHERE datistemplate = false AND datname != 'postgres'" 2>/dev/null | tr -d ' ')"
+		printf "  %-20s %-28s %-6s %-6s\n" "$LOCALDEV_PG_CONTAINER" "localhost:$LOCALDEV_PG_PORT" "$LOCALDEV_PG_PORT" "[OK]"
+		print_info "  Databases: ${db_count:-0}"
+	elif pg_container_exists; then
+		printf "  %-20s %-28s %-6s %-6s\n" "$LOCALDEV_PG_CONTAINER" "localhost:$LOCALDEV_PG_PORT" "$LOCALDEV_PG_PORT" "[--]"
+		print_info "  Container exists but stopped"
+	else
+		print_info "  Not configured (run: localdev db start)"
+	fi
+
+	echo ""
+	echo "Legend: [OK]=healthy [--]=down [!!]=missing [!?]=partial"
 	return 0
 }
 
@@ -1433,7 +1685,7 @@ PYEOF
 # =============================================================================
 
 cmd_status() {
-	print_info "localdev status"
+	print_info "localdev status — infrastructure health"
 	echo ""
 
 	# dnsmasq
@@ -1445,6 +1697,12 @@ cmd_status() {
 			print_success "dnsmasq: .local wildcard configured"
 		else
 			print_warning "dnsmasq: .local wildcard NOT configured (run: localdev init)"
+		fi
+		# Check if dnsmasq process is running
+		if pgrep -x dnsmasq >/dev/null 2>&1; then
+			print_success "dnsmasq process: running"
+		else
+			print_warning "dnsmasq process: not running"
 		fi
 	else
 		print_warning "dnsmasq: config not found"
@@ -1477,20 +1735,103 @@ cmd_status() {
 
 	if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^local-traefik$'; then
 		print_success "Traefik container: running"
+		# Show Traefik dashboard URL
+		print_info "  Dashboard: http://localhost:8080"
 	else
 		print_warning "Traefik container: not running"
 	fi
 
+	# Certificates
+	echo ""
+	echo "--- Certificates ---"
+	if [[ -d "$CERTS_DIR" ]]; then
+		local cert_count
+		cert_count="$(find "$CERTS_DIR" -name '*.pem' -not -name '*-key.pem' 2>/dev/null | wc -l | tr -d ' ')"
+		print_info "Cert directory: $CERTS_DIR ($cert_count cert(s))"
+
+		# Check each registered app's cert status
+		ensure_ports_file
+		if command -v jq >/dev/null 2>&1; then
+			local app_names
+			app_names="$(jq -r '.apps | keys[]' "$PORTS_FILE" 2>/dev/null)"
+			if [[ -n "$app_names" ]]; then
+				while IFS= read -r app_name; do
+					[[ -z "$app_name" ]] && continue
+					local cert_st
+					cert_st="$(check_cert_status "$app_name")"
+					case "$cert_st" in
+					ok)
+						print_success "  ${app_name}.local: cert + key present"
+						;;
+					partial)
+						print_warning "  ${app_name}.local: cert or key missing (incomplete)"
+						;;
+					missing)
+						print_warning "  ${app_name}.local: no cert files found"
+						;;
+					esac
+				done <<<"$app_names"
+			fi
+		fi
+	else
+		print_warning "Cert directory not found: $CERTS_DIR"
+	fi
+
+	# Port health
+	echo ""
+	echo "--- Port health ---"
+	ensure_ports_file
+	if command -v jq >/dev/null 2>&1; then
+		local apps_ports
+		apps_ports="$(jq -r '.apps | to_entries[] | "\(.key)\t\(.value.port)"' "$PORTS_FILE" 2>/dev/null)"
+		if [[ -n "$apps_ports" ]]; then
+			while IFS=$'\t' read -r app_name app_port; do
+				[[ -z "$app_name" ]] && continue
+				local health proc_name
+				health="$(check_port_health "$app_port")"
+				proc_name="$(get_port_process "$app_port")"
+				if [[ "$health" == "up" ]]; then
+					print_success "  $app_name (port $app_port): listening (${proc_name:-unknown})"
+				else
+					print_info "  $app_name (port $app_port): not listening"
+				fi
+			done <<<"$apps_ports"
+		else
+			print_info "  No apps registered"
+		fi
+	fi
+
 	# LocalWP coexistence
 	echo ""
-	echo "--- LocalWP coexistence ---"
-	local localwp_count
-	localwp_count="$(grep -c '#Local Site' /etc/hosts 2>/dev/null || echo "0")"
-	if [[ "$localwp_count" -gt 0 ]]; then
-		print_info "LocalWP entries in /etc/hosts: $localwp_count"
-		grep '#Local Site' /etc/hosts 2>/dev/null | awk '{print "  " $2}' | sort -u
+	echo "--- LocalWP ---"
+	if [[ -f "$LOCALWP_SITES_JSON" ]]; then
+		local lwp_count
+		if command -v jq >/dev/null 2>&1; then
+			lwp_count="$(jq 'length' "$LOCALWP_SITES_JSON" 2>/dev/null || echo "0")"
+		else
+			lwp_count="$(python3 -c "import json; print(len(json.load(open('$LOCALWP_SITES_JSON'))))" 2>/dev/null || echo "0")"
+		fi
+		print_info "LocalWP sites.json: $lwp_count site(s)"
+		print_info "  Path: $LOCALWP_SITES_JSON"
 	else
-		print_info "No LocalWP entries in /etc/hosts"
+		print_info "LocalWP sites.json not found"
+	fi
+
+	local hosts_count
+	hosts_count="$(grep -c '#Local Site' /etc/hosts 2>/dev/null || echo "0")"
+	if [[ "$hosts_count" -gt 0 ]]; then
+		print_info "LocalWP /etc/hosts entries: $hosts_count"
+	fi
+
+	# Shared Postgres
+	echo ""
+	echo "--- Shared Postgres ---"
+	if pg_container_running; then
+		print_success "$LOCALDEV_PG_CONTAINER: running (port $LOCALDEV_PG_PORT)"
+	elif pg_container_exists; then
+		print_warning "$LOCALDEV_PG_CONTAINER: stopped"
+	else
+		print_info "$LOCALDEV_PG_CONTAINER: not created"
 	fi
 
 	return 0
@@ -1944,8 +2285,8 @@ cmd_help() {
 	echo "  branch rm <app> <branch>      Remove branch route"
 	echo "  branch list [app]             List branch routes"
 	echo "  db <command>       Shared Postgres management (start, create, list, drop, url)"
-	echo "  list               List registered apps, branches, and LocalWP sites"
-	echo "  status             Show current configuration status"
+	echo "  list               Dashboard: all projects, URLs, certs, health, LocalWP"
+	echo "  status             Infrastructure health: dnsmasq, Traefik, certs, ports"
 	echo "  help               Show this help message"
 	echo ""
 	echo "Add performs:"
