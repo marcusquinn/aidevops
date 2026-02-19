@@ -1449,10 +1449,16 @@ Respond with ONLY the verdict line, nothing else. Example: VERDICT:retry:rate_li
 	# The watchdog fires a warning log at 60s so trends are visible in logs
 	# before the timeout kills the eval at eval_timeout seconds.
 	# Uses a background subshell that self-terminates when the eval completes.
+	# Cleanup scope ensures sentinel file and watchdog process are released on
+	# any exit path (normal return, early return, or unexpected signal).
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
 	local watchdog_pid=""
 	local watchdog_sentinel
 	watchdog_sentinel=$(mktemp 2>/dev/null || echo "")
 	if [[ -n "$watchdog_sentinel" ]]; then
+		# Push sentinel removal first (LIFO: runs last, after process kill)
+		push_cleanup "rm -f '${watchdog_sentinel}' 2>/dev/null || true"
 		(
 			local watchdog_delay="${SUPERVISOR_EVAL_WATCHDOG:-60}"
 			sleep "$watchdog_delay"
@@ -1464,6 +1470,8 @@ Respond with ONLY the verdict line, nothing else. Example: VERDICT:retry:rate_li
 			fi
 		) &
 		watchdog_pid=$!
+		# Push process cleanup second (LIFO: runs first, before sentinel removal)
+		push_cleanup "kill '${watchdog_pid}' 2>/dev/null; wait '${watchdog_pid}' 2>/dev/null || true"
 	fi
 
 	if [[ "$ai_cli" == "opencode" ]]; then
