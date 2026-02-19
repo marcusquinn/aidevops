@@ -1723,9 +1723,18 @@
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
 
-- [ ] v208 t1224.9 Update localhost.md and subagent-index.toon — reflect n... | PR #1953 | merged:2026-02-19
+- [x] v208 t1224.9 Update localhost.md and subagent-index.toon — reflect n... | PR #1953 | merged:2026-02-19 verified:2026-02-19
   files: .agents/AGENTS.md, .agents/services/hosting/localhost.md, .agents/subagent-index.toon
   check: file-exists .agents/AGENTS.md
   check: file-exists .agents/services/hosting/localhost.md
   check: file-exists .agents/subagent-index.toon
   check: rg "localhost" .agents/subagent-index.toon
+
+- [ ] v209 t1252 Investigate and reduce stale-evaluating recovery frequenc... | PR #1955 | merged:2026-02-19
+  files: .agents/scripts/supervisor/database.sh, .agents/scripts/supervisor/evaluate.sh, .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/supervisor/database.sh
+  check: file-exists .agents/scripts/supervisor/database.sh
+  check: shellcheck .agents/scripts/supervisor/evaluate.sh
+  check: file-exists .agents/scripts/supervisor/evaluate.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
