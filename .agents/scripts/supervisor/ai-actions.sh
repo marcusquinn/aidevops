@@ -1166,6 +1166,25 @@ _exec_create_subtasks() {
 	} >"$temp_file"
 	mv "$temp_file" "$todo_file"
 
+	# Post-write verification: confirm each subtask ID was actually persisted (t1217)
+	local missing_ids=""
+	local verify_index=$((existing_subtask_count + 1))
+	local k
+	for ((k = 0; k < subtask_count; k++)); do
+		local expected_id="${parent_task_id}.${verify_index}"
+		if ! grep -q "^\s*- \[.\] ${expected_id} " "$todo_file" 2>/dev/null; then
+			missing_ids="${missing_ids}${expected_id},"
+		fi
+		verify_index=$((verify_index + 1))
+	done
+
+	if [[ -n "$missing_ids" ]]; then
+		missing_ids="${missing_ids%,}"
+		log_warn "create_subtasks: post-write verification FAILED — subtask IDs not found in TODO.md: $missing_ids (parent: $parent_task_id)"
+		echo "{\"created\":false,\"error\":\"subtasks_not_persisted\",\"parent_task_id\":\"$parent_task_id\",\"missing_ids\":\"$missing_ids\"}"
+		return 1
+	fi
+
 	# Commit and push (redirect stdout to log — git operations leak noise)
 	if declare -f commit_and_push_todo &>/dev/null; then
 		commit_and_push_todo "$repo_path" "chore: AI supervisor created subtasks for $parent_task_id" >>"$SUPERVISOR_LOG" 2>&1 || true
