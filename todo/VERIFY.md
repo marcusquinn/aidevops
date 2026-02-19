@@ -1411,7 +1411,7 @@
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
 
-- [ ] v168 t1206 Add dispatch deduplication guard for repeated task failur... | PR #1835 | merged:2026-02-18
+- [x] v168 t1206 Add dispatch deduplication guard for repeated task failur... | PR #1835 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/supervisor/database.sh, .agents/scripts/supervisor/dispatch.sh, .agents/scripts/supervisor/pulse.sh
   check: shellcheck .agents/scripts/supervisor/database.sh
   check: file-exists .agents/scripts/supervisor/database.sh
@@ -1419,3 +1419,8 @@
   check: file-exists .agents/scripts/supervisor/dispatch.sh
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
+
+- [ ] v169 t1210 Add create_subtasks parent_task_id validation to AI reaso... | PR #1839 | merged:2026-02-19
+  files: .agents/scripts/supervisor/ai-reason.sh
+  check: shellcheck .agents/scripts/supervisor/ai-reason.sh
+  check: file-exists .agents/scripts/supervisor/ai-reason.sh
