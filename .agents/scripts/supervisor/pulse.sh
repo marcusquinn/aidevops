@@ -521,6 +521,15 @@ cmd_stale_gc_report() {
 }
 
 #######################################
+# Refresh updated_at for a task to extend Phase 0.7 heartbeat window (t1259)
+# Args: $1 = task_id
+#######################################
+_update_task_heartbeat() {
+	local task_id="$1"
+	db "$SUPERVISOR_DB" "UPDATE tasks SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || true
+}
+
+#######################################
 # Check if a task has had a prompt-repeat attempt (t1097)
 # Args: $1 = task_id
 # Returns: 0 if attempted, 1 if not
@@ -1336,7 +1345,7 @@ cmd_pulse() {
 			# timestamp. If the pulse is killed between evaluate_worker() returning
 			# and cmd_transition("complete"), the task stays in evaluating with a
 			# stale updated_at and Phase 0.7 fires after 240s.
-			db "$SUPERVISOR_DB" "UPDATE tasks SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || true
+			_update_task_heartbeat "$tid"
 
 			local outcome
 			local eval_maker="evaluate_worker"
@@ -1359,7 +1368,7 @@ cmd_pulse() {
 			# cmd_transition("complete") leaves the task in evaluating with a stale
 			# updated_at, causing Phase 0.7 to fire after 240s.
 			if [[ "$outcome_type" == "complete" ]]; then
-				db "$SUPERVISOR_DB" "UPDATE tasks SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || true
+				_update_task_heartbeat "$tid"
 			fi
 
 			# Proof-log: record evaluation outcome (t218)
