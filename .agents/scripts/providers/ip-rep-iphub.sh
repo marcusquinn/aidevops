@@ -10,7 +10,7 @@
 #   score         int     0-100 (derived from block value)
 #   risk_level    string  clean/low/medium/high/critical
 #   is_listed     bool    true if block=1 (recommended to block)
-#   is_proxy      bool    true if block >= 1
+#   is_proxy      bool    true if block=1 (non-residential/hosting; block=2 is caution only)
 #   block         int     0=residential, 1=non-residential/hosting, 2=non-residential+residential
 #   country       string  ISO country code
 #   asn           int     ASN number
@@ -80,10 +80,18 @@ cmd_check() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--api-key)
+			[[ $# -lt 2 ]] && {
+				echo "Error: --api-key requires a value" >&2
+				return 1
+			}
 			api_key="$2"
 			shift 2
 			;;
 		--timeout)
+			[[ $# -lt 2 ]] && {
+				echo "Error: --timeout requires a value" >&2
+				return 1
+			}
 			timeout="$2"
 			shift 2
 			;;

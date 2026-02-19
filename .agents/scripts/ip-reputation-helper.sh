@@ -134,11 +134,25 @@ SQL
 	return 0
 }
 
+# Sanitize a provider name: allow only alphanumeric, hyphen, underscore
+# Returns 0 if valid, 1 if invalid
+sanitize_provider() {
+	local provider="$1"
+	[[ "$provider" =~ ^[a-zA-Z0-9_-]+$ ]]
+	return $?
+}
+
 # Get cached result for ip+provider; returns empty string if miss/expired
+# ip is validated as IPv4 (digits/dots only) by callers; provider is validated
+# by sanitize_provider ([a-zA-Z0-9_-]+) — neither can contain SQL metacharacters.
 cache_get() {
 	local ip="$1"
 	local provider="$2"
 	if ! command -v sqlite3 &>/dev/null; then
+		echo ""
+		return 0
+	fi
+	if ! sanitize_provider "$provider"; then
 		echo ""
 		return 0
 	fi
@@ -153,6 +167,7 @@ cache_get() {
 }
 
 # Store result in cache
+# ip and provider are validated before this call; result (JSON) has single quotes escaped.
 cache_put() {
 	local ip="$1"
 	local provider="$2"
@@ -161,11 +176,14 @@ cache_put() {
 	if ! command -v sqlite3 &>/dev/null; then
 		return 0
 	fi
+	if ! sanitize_provider "$provider"; then
+		return 0
+	fi
 	local now
 	now=$(date +%s)
-	# Escape single quotes in result JSON
+	# Escape single quotes in result JSON by doubling them (SQL standard)
 	local escaped_result
-	escaped_result="${result//\'/\'\'}"
+	escaped_result=$(printf '%s' "$result" | sed "s/'/''/g")
 	sqlite3 "$IP_REP_CACHE_DB" \
 		"INSERT OR REPLACE INTO ip_cache (ip, provider, result, cached_at, ttl) VALUES ('${ip}', '${provider}', '${escaped_result}', ${now}, ${ttl});" \
 		2>/dev/null || true
@@ -236,14 +254,37 @@ cmd_cache_clear() {
 		return 0
 	fi
 
-	local where_clause="1=1"
-	[[ -n "$specific_provider" ]] && where_clause="${where_clause} AND provider='${specific_provider}'"
-	[[ -n "$specific_ip" ]] && where_clause="${where_clause} AND ip='${specific_ip}'"
+	# Validate inputs before use in SQL to prevent injection
+	if [[ -n "$specific_provider" ]] && ! sanitize_provider "$specific_provider"; then
+		log_error "Invalid provider name: ${specific_provider}"
+		return 1
+	fi
+	if [[ -n "$specific_ip" ]] && ! [[ "$specific_ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+		log_error "Invalid IP address: ${specific_ip}"
+		return 1
+	fi
 
 	local deleted
-	deleted=$(sqlite3 "$IP_REP_CACHE_DB" \
-		"DELETE FROM ip_cache WHERE ${where_clause}; SELECT changes();" \
-		2>/dev/null || echo "0")
+	if [[ -n "$specific_provider" && -n "$specific_ip" ]]; then
+		deleted=$(sqlite3 "$IP_REP_CACHE_DB" \
+			"DELETE FROM ip_cache WHERE provider=? AND ip=?; SELECT changes();" \
+			"$specific_provider" "$specific_ip" \
+			2>/dev/null || echo "0")
+	elif [[ -n "$specific_provider" ]]; then
+		deleted=$(sqlite3 "$IP_REP_CACHE_DB" \
+			"DELETE FROM ip_cache WHERE provider=?; SELECT changes();" \
+			"$specific_provider" \
+			2>/dev/null || echo "0")
+	elif [[ -n "$specific_ip" ]]; then
+		deleted=$(sqlite3 "$IP_REP_CACHE_DB" \
+			"DELETE FROM ip_cache WHERE ip=?; SELECT changes();" \
+			"$specific_ip" \
+			2>/dev/null || echo "0")
+	else
+		deleted=$(sqlite3 "$IP_REP_CACHE_DB" \
+			"DELETE FROM ip_cache; SELECT changes();" \
+			2>/dev/null || echo "0")
+	fi
 	log_success "Cleared ${deleted} cache entries"
 	return 0
 }
@@ -884,13 +925,13 @@ cmd_check() {
 	return 0
 }
 
-# DNSBL overlap check via email-health-check-helper.sh
-# Returns JSON array of blacklists the IP appears on
+# DNSBL overlap check — performs standalone DNS lookups against common blacklists.
+# Returns JSON array of blacklists the IP appears on.
+# Uses the same DNSBL zones as email-health-check-helper.sh for cross-tool consistency.
 dnsbl_overlap_check() {
 	local ip="$1"
 
-	local email_helper="${SCRIPT_DIR}/email-health-check-helper.sh"
-	if [[ ! -x "$email_helper" ]]; then
+	if ! command -v dig &>/dev/null; then
 		echo "[]"
 		return 0
 	fi
@@ -899,7 +940,7 @@ dnsbl_overlap_check() {
 	local reversed_ip
 	reversed_ip=$(echo "$ip" | awk -F. '{print $4"."$3"."$2"."$1}')
 
-	# Common DNSBL zones (matches email-health-check-helper.sh blacklists)
+	# Common DNSBL zones (same set used by email-health-check-helper.sh)
 	local blacklists="zen.spamhaus.org bl.spamcop.net b.barracudacentral.org"
 	local listed_on="[]"
 
@@ -990,6 +1031,12 @@ cmd_batch() {
 	log_info "Processing ${total} IPs from ${file} (rate limit: ${rate_limit} req/s per provider)"
 
 	local batch_results="[]"
+
+	# Validate rate_limit is a positive integer
+	if ! [[ "$rate_limit" =~ ^[0-9]+$ ]]; then
+		log_warn "Invalid --rate-limit value '${rate_limit}' — must be a positive integer; defaulting to 2"
+		rate_limit=2
+	fi
 
 	# Rate limiting: sleep a fixed interval between IPs
 	# rate_limit=2 means 2 IPs/second → sleep 0.5s between IPs

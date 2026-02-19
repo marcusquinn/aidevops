@@ -88,10 +88,18 @@ cmd_check() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--api-key)
+			[[ $# -lt 2 ]] && {
+				echo "Error: --api-key requires a value" >&2
+				return 1
+			}
 			api_key="$2"
 			shift 2
 			;;
 		--timeout)
+			[[ $# -lt 2 ]] && {
+				echo "Error: --timeout requires a value" >&2
+				return 1
+			}
 			timeout="$2"
 			shift 2
 			;;
