@@ -572,6 +572,24 @@ cmd_pulse() {
 		log_verbose "Phase 0.5c: No cancelled tasks in DB"
 	fi
 
+	# Phase 0.5d: Auto-unblock tasks with resolved blockers (t1243)
+	# Scans TODO.md for open tasks with blocked-by: fields and checks whether
+	# all blocking tasks are completed ([x]) or declined ([-]). If all blockers
+	# are resolved, removes the blocked-by: field so the task becomes dispatchable.
+	# Runs every pulse before Phase 0.6/Phase 2 so newly unblocked tasks are
+	# immediately eligible for dispatch without manual intervention.
+	if [[ -n "$all_repos" ]]; then
+		while IFS= read -r repo_path; do
+			if [[ -f "$repo_path/TODO.md" ]]; then
+				auto_unblock_resolved_tasks "$repo_path" 2>>"$SUPERVISOR_LOG" || true
+			fi
+		done <<<"$all_repos"
+	else
+		if [[ -f "$(pwd)/TODO.md" ]]; then
+			auto_unblock_resolved_tasks "$(pwd)" 2>>"$SUPERVISOR_LOG" || true
+		fi
+	fi
+
 	# Phase 0.6: Queue-dispatchability reconciliation (t1180)
 	# Syncs DB queue state with TODO.md reality to eliminate phantom queue entries.
 	# Runs every pulse (not gated on idle) because phantom entries can appear
