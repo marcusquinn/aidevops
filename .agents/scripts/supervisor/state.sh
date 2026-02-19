@@ -173,6 +173,13 @@ cmd_transition() {
 		update_parts+=("started_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')")
 	fi
 
+	# t1249: Set evaluating_started_at when entering evaluating state
+	# This timestamp enables root-cause analysis of stale-evaluating patterns by
+	# measuring the lag between worker completion (completed_at) and evaluation start.
+	if [[ "$new_state" == "evaluating" ]]; then
+		update_parts+=("evaluating_started_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')")
+	fi
+
 	# Set completed_at on terminal states
 	if [[ "$new_state" == "complete" || "$new_state" == "deployed" || "$new_state" == "verified" || "$new_state" == "failed" || "$new_state" == "cancelled" ]]; then
 		update_parts+=("completed_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')")
