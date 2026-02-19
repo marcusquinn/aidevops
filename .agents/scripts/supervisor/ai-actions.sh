@@ -1257,7 +1257,8 @@ _exec_create_subtasks() {
 	subtask_count=$(printf '%s' "$action" | jq '.subtasks | length' 2>/dev/null || echo 0)
 	if [[ "$subtask_count" -eq 0 ]]; then
 		log_warn "create_subtasks: subtasks array is missing or empty for parent $parent_task_id"
-		echo "{\"error\":\"missing_subtasks\",\"parent_task_id\":\"$parent_task_id\",\"detail\":\"subtasks must be a non-empty array\"}"
+		jq -n --arg parent "$parent_task_id" \
+			'{"error":"missing_subtasks","parent_task_id":$parent,"detail":"subtasks must be a non-empty array"}'
 		return 1
 	fi
 
@@ -1272,6 +1273,17 @@ _exec_create_subtasks() {
 			" 2>/dev/null || echo "")
 		fi
 		if [[ -n "$alt_repo_path" && -f "$alt_repo_path/TODO.md" ]]; then
+			# Canonicalise before trusting — reject traversal segments or stale/corrupt paths
+			local canonical_alt
+			canonical_alt=$(realpath "$alt_repo_path" 2>/dev/null || echo "")
+			if [[ -z "$canonical_alt" ]]; then
+				log_warn "create_subtasks: could not resolve alt repo path for $parent_task_id — skipping"
+				alt_repo_path=""
+			else
+				alt_repo_path="$canonical_alt"
+			fi
+		fi
+		if [[ -n "$alt_repo_path" && -f "$alt_repo_path/TODO.md" ]]; then
 			log_info "create_subtasks: parent $parent_task_id not in primary repo — using repo: $alt_repo_path"
 			repo_path="$alt_repo_path"
 			todo_file="$repo_path/TODO.md"
@@ -1280,20 +1292,22 @@ _exec_create_subtasks() {
 
 	if [[ ! -f "$todo_file" ]]; then
 		log_warn "create_subtasks: TODO.md not found at $todo_file (parent: $parent_task_id)"
-		echo "{\"error\":\"todo_file_not_found\",\"parent_task_id\":\"$parent_task_id\",\"repo_path\":\"$repo_path\"}"
+		jq -n --arg parent "$parent_task_id" --arg repo "$repo_path" \
+			'{"error":"todo_file_not_found","parent_task_id":$parent,"repo_path":$repo}'
 		return 1
 	fi
 
 	# Verify parent task exists in TODO.md
 	if ! grep -q "^\s*- \[.\] $parent_task_id " "$todo_file" 2>/dev/null; then
 		log_warn "create_subtasks: parent task $parent_task_id not found in $todo_file"
-		echo "{\"error\":\"parent_task_not_found\",\"parent_task_id\":\"$parent_task_id\",\"todo_file\":\"$todo_file\"}"
+		jq -n --arg parent "$parent_task_id" --arg todo "$todo_file" \
+			'{"error":"parent_task_not_found","parent_task_id":$parent,"todo_file":$todo}'
 		return 1
 	fi
 
 	# Count existing subtasks to determine next index
-	# Note: grep -c returns exit code 1 when count is 0 — use || true to avoid set -e
-	# triggering, then default to 0 if result is empty.
+	# Note: grep -c exits 1 when count is 0. Placing the fallback assignment outside $()
+	# makes this an || list — an excepted context for set -e — so no set -e abort occurs.
 	local existing_subtask_count
 	existing_subtask_count=$(grep -c "^\s*- \[.\] ${parent_task_id}\." "$todo_file" 2>/dev/null) || existing_subtask_count=0
 	existing_subtask_count="${existing_subtask_count:-0}"
@@ -1307,7 +1321,8 @@ _exec_create_subtasks() {
 
 	if [[ -z "$parent_line_num" ]]; then
 		log_warn "create_subtasks: could not find line number for parent $parent_task_id in $todo_file"
-		echo "{\"error\":\"parent_task_line_not_found\",\"parent_task_id\":\"$parent_task_id\",\"todo_file\":\"$todo_file\"}"
+		jq -n --arg parent "$parent_task_id" --arg todo "$todo_file" \
+			'{"error":"parent_task_line_not_found","parent_task_id":$parent,"todo_file":$todo}'
 		return 1
 	fi
 
@@ -1378,7 +1393,8 @@ _exec_create_subtasks() {
 	if [[ -n "$missing_ids" ]]; then
 		missing_ids="${missing_ids%,}"
 		log_warn "create_subtasks: post-write verification FAILED — subtask IDs not found in TODO.md: $missing_ids (parent: $parent_task_id)"
-		echo "{\"created\":false,\"error\":\"subtasks_not_persisted\",\"parent_task_id\":\"$parent_task_id\",\"missing_ids\":\"$missing_ids\"}"
+		jq -n --arg parent "$parent_task_id" --arg missing "$missing_ids" \
+			'{"created":false,"error":"subtasks_not_persisted","parent_task_id":$parent,"missing_ids":$missing}'
 		return 1
 	fi
 
@@ -1392,16 +1408,20 @@ _exec_create_subtasks() {
 
 	# Post-execution verification: confirm subtasks are visible in TODO.md (t1214)
 	local verified_count
-	# Note: grep -c returns exit code 1 when count is 0 — use || true to avoid set -e
-	# triggering, then default to 0 if result is empty.
+	# Note: grep -c exits 1 when count is 0. Placing the fallback assignment outside $()
+	# makes this an || list — an excepted context for set -e — so no set -e abort occurs.
 	verified_count=$(grep -c "^[[:space:]]*- \[.\] ${parent_task_id}\." "$todo_file" 2>/dev/null) || verified_count=0
 	verified_count="${verified_count:-0}"
 	if [[ "$verified_count" -lt "$subtask_count" ]]; then
-		echo "{\"created\":true,\"parent_task_id\":\"$parent_task_id\",\"subtask_ids\":\"$created_ids\",\"count\":$subtask_count,\"verified_count\":$verified_count,\"warning\":\"subtask_count_mismatch\"}"
+		jq -n --arg parent "$parent_task_id" --arg ids "$created_ids" \
+			--argjson count "$subtask_count" --argjson verified "$verified_count" \
+			'{"created":true,"parent_task_id":$parent,"subtask_ids":$ids,"count":$count,"verified_count":$verified,"warning":"subtask_count_mismatch"}'
 		return 0
 	fi
 
-	echo "{\"created\":true,\"parent_task_id\":\"$parent_task_id\",\"subtask_ids\":\"$created_ids\",\"count\":$subtask_count,\"verified_count\":$verified_count}"
+	jq -n --arg parent "$parent_task_id" --arg ids "$created_ids" \
+		--argjson count "$subtask_count" --argjson verified "$verified_count" \
+		'{"created":true,"parent_task_id":$parent,"subtask_ids":$ids,"count":$count,"verified_count":$verified}'
 	return 0
 }
 

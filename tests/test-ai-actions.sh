@@ -1539,7 +1539,7 @@ _test_create_subtasks_grep_c_bug() {
 			failures=$((failures + 1))
 		fi
 
-		rm -rf "$tmp_dir" "/tmp/test-ai-actions-logs-$$" "/tmp/test-$$.db" 2>/dev/null || true
+		rm -rf "$tmp_dir" "/tmp/test-ai-actions-logs-$$" "/tmp/test-subtasks-$$.db" 2>/dev/null || true
 		exit "$failures"
 	)
 }
@@ -1555,6 +1555,7 @@ echo "Test 24: create_subtasks executor — missing parent_task_id returns clear
 
 _test_create_subtasks_missing_parent() {
 	(
+		set +e
 		BLUE='' GREEN='' YELLOW='' RED='' NC=''
 		SUPERVISOR_DB="/tmp/test-subtasks-missing-$$.db"
 		SUPERVISOR_LOG="/dev/null"
@@ -1615,6 +1616,7 @@ echo "Test 25: create_subtasks executor — parent task not in primary repo retu
 
 _test_create_subtasks_cross_repo() {
 	(
+		set +e
 		BLUE='' GREEN='' YELLOW='' RED='' NC=''
 		SUPERVISOR_DB="/tmp/test-subtasks-cross-$$.db"
 		SUPERVISOR_LOG="/dev/null"
