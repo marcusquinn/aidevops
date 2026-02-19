@@ -2699,27 +2699,10 @@ cmd_dispatch() {
 		log_info "Opening Tabby tab for $task_id..."
 		printf '\e]1337;NewTab=%s\a' "'${wrapper_script}'" 2>/dev/null || true
 		# Also start background process as fallback (Tabby may not support OSC 1337)
-		# t253: Use setsid if available (Linux) for process group isolation
-		# Use nohup + disown to survive parent (cron) exit
-		# t1190: Redirect wrapper stderr to log file (not /dev/null) so wrapper startup
-		# errors (e.g., bash not found, permission denied) are captured for diagnosis.
-		if command -v setsid &>/dev/null; then
-			nohup setsid bash "${wrapper_script}" >>"${log_file}" 2>&1 &
-		else
-			nohup bash "${wrapper_script}" >>"${log_file}" 2>&1 &
-		fi
+		_launch_wrapper_script "${wrapper_script}" "${log_file}"
 	else
 		# Headless: background process
-		# t253: Use setsid if available (Linux) for process group isolation
-		# Use nohup + disown to survive parent (cron) exit — without this,
-		# workers die after ~2 minutes when the cron pulse script exits
-		# t1190: Redirect wrapper stderr to log file (not /dev/null) so wrapper startup
-		# errors (e.g., bash not found, permission denied) are captured for diagnosis.
-		if command -v setsid &>/dev/null; then
-			nohup setsid bash "${wrapper_script}" >>"${log_file}" 2>&1 &
-		else
-			nohup bash "${wrapper_script}" >>"${log_file}" 2>&1 &
-		fi
+		_launch_wrapper_script "${wrapper_script}" "${log_file}"
 	fi
 
 	local worker_pid=$!
@@ -2736,6 +2719,24 @@ cmd_dispatch() {
 
 	log_success "Dispatched $task_id (PID: $worker_pid)"
 	echo "$worker_pid"
+	return 0
+}
+
+#######################################
+# Launch a wrapper script in the background, surviving parent (cron) exit.
+# t253: Uses setsid if available (Linux) for process group isolation.
+# t1190: Redirects wrapper stderr to log file for startup error diagnosis.
+# Args: wrapper_script log_file
+#######################################
+_launch_wrapper_script() {
+	local wrapper_script="$1"
+	local log_file="$2"
+
+	if command -v setsid &>/dev/null; then
+		nohup setsid bash "${wrapper_script}" >>"${log_file}" 2>&1 &
+	else
+		nohup bash "${wrapper_script}" >>"${log_file}" 2>&1 &
+	fi
 	return 0
 }
 

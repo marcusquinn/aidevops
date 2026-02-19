@@ -290,11 +290,11 @@ cleanup_worker_processes() {
 	local script
 	for script in "$SUPERVISOR_DIR/pids/${task_id}"-dispatch-*.sh \
 		"$SUPERVISOR_DIR/pids/${task_id}"-wrapper-*.sh \
-		"$SUPERVISOR_DIR/pids/${task_id}"-reprompt-[0-9]*.sh \
+		"$SUPERVISOR_DIR/pids/${task_id}"-reprompt-*.sh \
 		"$SUPERVISOR_DIR/pids/${task_id}"-reprompt-wrapper-*.sh \
-		"$SUPERVISOR_DIR/pids/${task_id}"-prompt-repeat-[0-9]*.sh \
+		"$SUPERVISOR_DIR/pids/${task_id}"-prompt-repeat-*.sh \
 		"$SUPERVISOR_DIR/pids/${task_id}"-prompt-repeat-wrapper-*.sh; do
-		[[ -f "$script" ]] && rm -f "$script" 2>/dev/null || true
+		[[ -f "$script" ]] && rm -f "$script" || true
 	done
 
 	if [[ "$killed" -gt 0 ]]; then
