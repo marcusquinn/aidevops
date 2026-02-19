@@ -1716,9 +1716,16 @@
   check: rg "worktrunk" .agents/subagent-index.toon
   check: rg "worktree" .agents/subagent-index.toon
 
-- [ ] v207 t1251 Investigate frequent stale-evaluating recovery pattern in... | PR #1952 | merged:2026-02-19
+- [x] v207 t1251 Investigate frequent stale-evaluating recovery pattern in... | PR #1952 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/supervisor/evaluate.sh, .agents/scripts/supervisor/pulse.sh
   check: shellcheck .agents/scripts/supervisor/evaluate.sh
   check: file-exists .agents/scripts/supervisor/evaluate.sh
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
+
+- [ ] v208 t1224.9 Update localhost.md and subagent-index.toon — reflect n... | PR #1953 | merged:2026-02-19
+  files: .agents/AGENTS.md, .agents/services/hosting/localhost.md, .agents/subagent-index.toon
+  check: file-exists .agents/AGENTS.md
+  check: file-exists .agents/services/hosting/localhost.md
+  check: file-exists .agents/subagent-index.toon
+  check: rg "localhost" .agents/subagent-index.toon
