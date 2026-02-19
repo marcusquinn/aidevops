@@ -1730,7 +1730,7 @@
   check: file-exists .agents/subagent-index.toon
   check: rg "localhost" .agents/subagent-index.toon
 
-- [ ] v209 t1252 Investigate and reduce stale-evaluating recovery frequenc... | PR #1955 | merged:2026-02-19
+- [x] v209 t1252 Investigate and reduce stale-evaluating recovery frequenc... | PR #1955 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/supervisor/database.sh, .agents/scripts/supervisor/evaluate.sh, .agents/scripts/supervisor/pulse.sh
   check: shellcheck .agents/scripts/supervisor/database.sh
   check: file-exists .agents/scripts/supervisor/database.sh
@@ -1738,3 +1738,8 @@
   check: file-exists .agents/scripts/supervisor/evaluate.sh
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
+
+- [ ] v210 t1253 Investigate awardsapp dispatch stall — 15 subtasks disp... | PR #1959 | merged:2026-02-19
+  files: .agents/scripts/supervisor/state.sh
+  check: shellcheck .agents/scripts/supervisor/state.sh
+  check: file-exists .agents/scripts/supervisor/state.sh
