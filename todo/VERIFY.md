@@ -1682,7 +1682,7 @@
   check: shellcheck .agents/scripts/issue-sync-helper.sh
   check: file-exists .agents/scripts/issue-sync-helper.sh
 
-- [ ] v203 t1247 Auto-unblock tasks when blocker transitions to deployed/v... | PR #1945 | merged:2026-02-19
+- [!] v203 t1247 Auto-unblock tasks when blocker transitions to deployed/v... | PR #1945 | merged:2026-02-19 failed:2026-02-19 reason:shellcheck: tests/test-supervisor-state-machine.sh has violations
   files: .agents/scripts/supervisor-helper.sh, .agents/scripts/supervisor/pulse.sh, .agents/scripts/supervisor/todo-sync.sh, tests/test-supervisor-state-machine.sh
   check: shellcheck .agents/scripts/supervisor-helper.sh
   check: file-exists .agents/scripts/supervisor-helper.sh
@@ -1692,3 +1692,12 @@
   check: file-exists .agents/scripts/supervisor/todo-sync.sh
   check: shellcheck tests/test-supervisor-state-machine.sh
   check: file-exists tests/test-supervisor-state-machine.sh
+
+- [ ] v204 t1249 Add stale-evaluating root cause analysis to pulse cycle #... | PR #1949 | merged:2026-02-19
+  files: .agents/scripts/supervisor/database.sh, .agents/scripts/supervisor/pulse.sh, .agents/scripts/supervisor/state.sh
+  check: shellcheck .agents/scripts/supervisor/database.sh
+  check: file-exists .agents/scripts/supervisor/database.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/supervisor/state.sh
+  check: file-exists .agents/scripts/supervisor/state.sh
