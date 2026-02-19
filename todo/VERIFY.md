@@ -1586,3 +1586,19 @@
   files: .agents/scripts/localdev-helper.sh
   check: shellcheck .agents/scripts/localdev-helper.sh
   check: file-exists .agents/scripts/localdev-helper.sh
+
+- [ ] v189 t005.1 Design AI chat sidebar component architecture and state m... | PR #1917 | merged:2026-02-19
+  files: .agents/tools/ui/ai-chat-sidebar.md, .opencode/ui/chat-sidebar/constants.ts, .opencode/ui/chat-sidebar/context/chat-context.tsx, .opencode/ui/chat-sidebar/context/settings-context.tsx, .opencode/ui/chat-sidebar/context/sidebar-context.tsx, .opencode/ui/chat-sidebar/hooks/use-chat.ts, .opencode/ui/chat-sidebar/hooks/use-resize.ts, .opencode/ui/chat-sidebar/hooks/use-streaming.ts, .opencode/ui/chat-sidebar/index.tsx, .opencode/ui/chat-sidebar/lib/api-client.ts, .opencode/ui/chat-sidebar/lib/storage.ts, .opencode/ui/chat-sidebar/types.ts
+  check: file-exists .agents/tools/ui/ai-chat-sidebar.md
+  check: file-exists .opencode/ui/chat-sidebar/constants.ts
+  check: file-exists .opencode/ui/chat-sidebar/context/chat-context.tsx
+  check: file-exists .opencode/ui/chat-sidebar/context/settings-context.tsx
+  check: file-exists .opencode/ui/chat-sidebar/context/sidebar-context.tsx
+  check: file-exists .opencode/ui/chat-sidebar/hooks/use-chat.ts
+  check: file-exists .opencode/ui/chat-sidebar/hooks/use-resize.ts
+  check: file-exists .opencode/ui/chat-sidebar/hooks/use-streaming.ts
+  check: file-exists .opencode/ui/chat-sidebar/index.tsx
+  check: file-exists .opencode/ui/chat-sidebar/lib/api-client.ts
+  check: file-exists .opencode/ui/chat-sidebar/lib/storage.ts
+  check: file-exists .opencode/ui/chat-sidebar/types.ts
+  check: rg "ai-chat-sidebar" .agents/subagent-index.toon
