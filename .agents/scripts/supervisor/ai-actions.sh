@@ -18,11 +18,20 @@
 # Action execution log directory (shares with ai-reason)
 AI_ACTIONS_LOG_DIR="${AI_ACTIONS_LOG_DIR:-$HOME/.aidevops/logs/ai-supervisor}"
 
-# Semantic dedup: minimum keyword matches to consider tasks similar (t1218)
-# A new task title is compared against open tasks by extracting distinctive
-# keywords (3+ chars, excluding stop words) and counting overlap.
-# If overlap >= this threshold, the task is considered a duplicate.
-AI_SEMANTIC_DEDUP_MIN_MATCHES="${AI_SEMANTIC_DEDUP_MIN_MATCHES:-3}"
+# Semantic dedup: minimum keyword matches for pre-filter candidates (t1218, t1220)
+# The keyword pre-filter extracts distinctive words from the proposed title and
+# counts overlap with existing open tasks. Tasks with >= this many matching
+# keywords become candidates for the AI semantic check.
+# Set to 2 (lower than before) since the AI makes the final call.
+AI_SEMANTIC_DEDUP_MIN_MATCHES="${AI_SEMANTIC_DEDUP_MIN_MATCHES:-2}"
+
+# AI semantic dedup: use sonnet to verify duplicates (t1220)
+# When true, keyword pre-filter candidates are verified by a sonnet API call
+# that understands semantic similarity. When false, falls back to keyword-only.
+AI_SEMANTIC_DEDUP_USE_AI="${AI_SEMANTIC_DEDUP_USE_AI:-true}"
+
+# AI semantic dedup timeout in seconds
+AI_SEMANTIC_DEDUP_TIMEOUT="${AI_SEMANTIC_DEDUP_TIMEOUT:-30}"
 
 # Valid action types — any action not in this list is rejected
 readonly AI_VALID_ACTION_TYPES="comment_on_issue create_task create_subtasks flag_for_review adjust_priority close_verified request_info create_improvement escalate_model propose_auto_dispatch"
@@ -356,13 +365,207 @@ _record_action_dedup() {
 }
 
 #######################################
-# Check if a similar open task already exists in TODO.md (t1218)
+# Keyword pre-filter: find candidate duplicate tasks (t1218, t1220)
 #
-# Extracts distinctive keywords from the proposed title, then searches
-# all open tasks (- [ ]) for keyword overlap. This catches duplicates
-# where the AI generates slightly different titles for the same issue
-# (e.g., "Investigate worker_never_started..." vs "Add diagnostics for
-# worker_never_started...").
+# Fast keyword overlap scan — extracts distinctive words from the proposed
+# title and counts how many appear in each open task. Returns up to 5
+# candidates with the highest overlap for the AI to evaluate.
+#
+# Arguments:
+#   $1 - proposed task title
+#   $2 - path to TODO.md
+# Outputs:
+#   Newline-separated list of "task_id|title_excerpt" for candidates
+#   Empty if no candidates found
+# Returns:
+#   0 if candidates found, 1 if none
+#######################################
+_keyword_prefilter_open_tasks() {
+	local title="$1"
+	local todo_file="$2"
+	local min_matches="${AI_SEMANTIC_DEDUP_MIN_MATCHES:-2}"
+
+	if [[ ! -f "$todo_file" ]]; then
+		return 1
+	fi
+
+	local stop_words=" a an the and or but in on to for of is it by at from with as be do has have had this that are was were will can may should would could into not no add fix investigate implement create update check "
+
+	local keywords=""
+	local keyword_count=0
+	local word
+	while IFS= read -r word; do
+		[[ -z "$word" ]] && continue
+		[[ ${#word} -lt 3 ]] && continue
+		if [[ "$stop_words" == *" $word "* ]]; then
+			continue
+		fi
+		keywords="${keywords} ${word}"
+		keyword_count=$((keyword_count + 1))
+	done < <(printf '%s' "$title" | tr '[:upper:]' '[:lower:]' | tr -cs '[:alnum:]' '\n')
+
+	if [[ $keyword_count -lt $min_matches ]]; then
+		return 1
+	fi
+
+	# Collect candidates: task_id|match_count|title_excerpt
+	local candidates=""
+	local task_line
+
+	while IFS= read -r task_line; do
+		[[ -z "$task_line" ]] && continue
+
+		local existing_id
+		existing_id=$(printf '%s' "$task_line" | grep -oE 't[0-9]+(\.[0-9]+)?' | head -1)
+		[[ -z "$existing_id" ]] && continue
+
+		local lower_line
+		lower_line=$(printf '%s' "$task_line" | tr '[:upper:]' '[:lower:]')
+
+		local match_count=0
+		local kw
+		for kw in $keywords; do
+			if [[ "$lower_line" == *"$kw"* ]]; then
+				match_count=$((match_count + 1))
+			fi
+		done
+
+		if [[ $match_count -ge $min_matches ]]; then
+			# Extract a readable title excerpt (first 120 chars after the task ID)
+			local excerpt
+			excerpt=$(printf '%s' "$task_line" | sed -E 's/^[[:space:]]*- \[.\] t[0-9]+(\.[0-9]+)? //' | head -c 120)
+			candidates="${candidates}${existing_id}|${match_count}|${excerpt}\n"
+		fi
+	done < <(grep -E '^\s*- \[ \] t[0-9]' "$todo_file" 2>/dev/null)
+
+	if [[ -z "$candidates" ]]; then
+		return 1
+	fi
+
+	# Sort by match count descending, take top 5
+	printf '%b' "$candidates" | sort -t'|' -k2 -rn | head -5
+	return 0
+}
+
+#######################################
+# AI semantic dedup: ask sonnet if a proposed task duplicates an existing one (t1220)
+#
+# Sends a focused prompt to sonnet with the proposed title and candidate
+# existing tasks. The AI determines whether the proposed task is semantically
+# a duplicate — understanding that different phrasing can describe the same
+# work (e.g., "Investigate X failures" vs "Add diagnostics for X failures").
+#
+# Arguments:
+#   $1 - proposed task title
+#   $2 - candidate list (newline-separated "task_id|match_count|excerpt")
+# Outputs:
+#   If duplicate: the existing task ID (e.g., "t1190")
+#   If not duplicate: empty string
+# Returns:
+#   0 if duplicate confirmed, 1 if not duplicate or AI unavailable
+#######################################
+_ai_semantic_dedup_check() {
+	local proposed_title="$1"
+	local candidates="$2"
+
+	# Build the candidate list for the prompt
+	local candidate_list=""
+	local line
+	while IFS= read -r line; do
+		[[ -z "$line" ]] && continue
+		local cid cexcerpt
+		cid=$(printf '%s' "$line" | cut -d'|' -f1)
+		cexcerpt=$(printf '%s' "$line" | cut -d'|' -f3-)
+		candidate_list="${candidate_list}- ${cid}: ${cexcerpt}\n"
+	done <<<"$candidates"
+
+	if [[ -z "$candidate_list" ]]; then
+		return 1
+	fi
+
+	# Resolve AI CLI and sonnet model
+	local ai_cli
+	ai_cli=$(resolve_ai_cli 2>/dev/null) || {
+		log_warn "AI Actions: semantic dedup AI check skipped — no AI CLI available"
+		return 1
+	}
+
+	local ai_model
+	ai_model=$(resolve_model "sonnet" "$ai_cli" 2>/dev/null) || {
+		log_warn "AI Actions: semantic dedup AI check skipped — sonnet model unavailable"
+		return 1
+	}
+
+	local prompt
+	prompt="You are a task deduplication checker. Determine if a proposed new task is a semantic duplicate of any existing task.
+
+PROPOSED NEW TASK:
+\"${proposed_title}\"
+
+EXISTING OPEN TASKS:
+$(printf '%b' "$candidate_list")
+
+A task is a DUPLICATE if it describes essentially the same work, investigation, or fix — even if the wording differs. For example:
+- \"Investigate X failures\" and \"Add diagnostics for X failures\" are duplicates (same root problem)
+- \"Fix timeout in dispatch\" and \"Add logging to dispatch\" are NOT duplicates (different work)
+
+Respond with ONLY a JSON object, no markdown fencing, no explanation:
+- If duplicate: {\"duplicate\": true, \"existing_task\": \"tXXXX\", \"confidence\": \"high|medium\"}
+- If not duplicate: {\"duplicate\": false}"
+
+	local ai_timeout="${AI_SEMANTIC_DEDUP_TIMEOUT:-30}"
+	local ai_result=""
+
+	if [[ "$ai_cli" == "opencode" ]]; then
+		ai_result=$(portable_timeout "$ai_timeout" opencode run \
+			-m "$ai_model" \
+			--format default \
+			--title "dedup-check-$$" \
+			"$prompt" 2>/dev/null || echo "")
+		# Strip ANSI escape codes
+		ai_result=$(printf '%s' "$ai_result" | sed 's/\x1b\[[0-9;]*[mGKHF]//g; s/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b\]//g; s/\x07//g')
+	else
+		local claude_model="${ai_model#*/}"
+		ai_result=$(portable_timeout "$ai_timeout" claude \
+			-p "$prompt" \
+			--model "$claude_model" \
+			--output-format text 2>/dev/null || echo "")
+	fi
+
+	# Parse the response — extract JSON from potentially noisy output
+	local json_block=""
+	json_block=$(printf '%s' "$ai_result" | grep -oE '\{[^}]+\}' | head -1)
+
+	if [[ -z "$json_block" ]]; then
+		log_warn "AI Actions: semantic dedup AI check — could not parse response, falling back to keyword-only"
+		return 1
+	fi
+
+	local is_duplicate existing_task confidence
+	is_duplicate=$(printf '%s' "$json_block" | jq -r '.duplicate // false' 2>/dev/null || echo "false")
+	existing_task=$(printf '%s' "$json_block" | jq -r '.existing_task // ""' 2>/dev/null || echo "")
+	confidence=$(printf '%s' "$json_block" | jq -r '.confidence // "unknown"' 2>/dev/null || echo "unknown")
+
+	if [[ "$is_duplicate" == "true" && -n "$existing_task" ]]; then
+		log_info "AI Actions: semantic dedup (t1220): sonnet confirmed duplicate of $existing_task (confidence: $confidence)"
+		printf '%s' "$existing_task"
+		return 0
+	fi
+
+	log_info "AI Actions: semantic dedup (t1220): sonnet says NOT a duplicate"
+	return 1
+}
+
+#######################################
+# Check if a similar open task already exists in TODO.md (t1218, t1220)
+#
+# Two-layer dedup:
+#   1. Fast keyword pre-filter scans open tasks for word overlap (free, instant)
+#   2. If candidates found and AI dedup enabled, asks sonnet to confirm
+#      semantic similarity (accurate, ~$0.002 per check)
+#
+# If AI is unavailable or disabled, falls back to keyword-only with a
+# higher threshold (3+ matches required without AI confirmation).
 #
 # Arguments:
 #   $1 - proposed task title
@@ -377,77 +580,36 @@ _record_action_dedup() {
 _check_similar_open_task() {
 	local title="$1"
 	local todo_file="$2"
-	local min_matches="${AI_SEMANTIC_DEDUP_MIN_MATCHES:-3}"
 
 	if [[ ! -f "$todo_file" ]]; then
 		return 1
 	fi
 
-	# Stop words to exclude from keyword matching (common words that don't
-	# carry semantic meaning for task dedup)
-	local stop_words=" a an the and or but in on to for of is it by at from with as be do has have had this that are was were will can may should would could into not no "
+	# Step 1: Fast keyword pre-filter
+	local candidates
+	candidates=$(_keyword_prefilter_open_tasks "$title" "$todo_file") || return 1
 
-	# Extract distinctive keywords from the proposed title:
-	# - Lowercase
-	# - Split on non-alphanumeric (spaces, punctuation, underscores)
-	# - Keep words >= 3 chars
-	# - Exclude stop words
-	local keywords=""
-	local keyword_count=0
-	local word
-	while IFS= read -r word; do
-		[[ -z "$word" ]] && continue
-		# Skip short words
-		[[ ${#word} -lt 3 ]] && continue
-		# Skip stop words
-		if [[ "$stop_words" == *" $word "* ]]; then
-			continue
+	# Step 2: AI semantic check (if enabled and CLI available)
+	if [[ "${AI_SEMANTIC_DEDUP_USE_AI:-true}" == "true" ]]; then
+		local ai_result
+		if ai_result=$(_ai_semantic_dedup_check "$title" "$candidates"); then
+			printf '%s' "$ai_result"
+			return 0
 		fi
-		keywords="${keywords} ${word}"
-		keyword_count=$((keyword_count + 1))
-	done < <(printf '%s' "$title" | tr '[:upper:]' '[:lower:]' | tr -cs '[:alnum:]' '\n')
-
-	# Need at least min_matches keywords to do a meaningful comparison
-	if [[ $keyword_count -lt $min_matches ]]; then
+		# AI said not a duplicate or was unavailable — trust the AI over keywords
+		log_info "AI Actions: semantic dedup: AI did not confirm duplicate, allowing task creation"
 		return 1
 	fi
 
-	# Search open tasks in TODO.md for keyword overlap
-	local best_match_id=""
-	local best_match_count=0
-	local task_line
+	# Fallback: keyword-only mode (AI disabled) — require higher threshold
+	local best_id best_count
+	best_id=$(printf '%s' "$candidates" | head -1 | cut -d'|' -f1)
+	best_count=$(printf '%s' "$candidates" | head -1 | cut -d'|' -f2)
 
-	while IFS= read -r task_line; do
-		[[ -z "$task_line" ]] && continue
-
-		# Extract the task ID (tNNNN or tNNNN.N)
-		local existing_id
-		existing_id=$(printf '%s' "$task_line" | grep -oE 't[0-9]+(\.[0-9]+)?' | head -1)
-		[[ -z "$existing_id" ]] && continue
-
-		# Lowercase the task line for comparison
-		local lower_line
-		lower_line=$(printf '%s' "$task_line" | tr '[:upper:]' '[:lower:]')
-
-		# Count how many of our keywords appear in this task line
-		local match_count=0
-		local kw
-		for kw in $keywords; do
-			if [[ "$lower_line" == *"$kw"* ]]; then
-				match_count=$((match_count + 1))
-			fi
-		done
-
-		# Track the best match
-		if [[ $match_count -ge $min_matches && $match_count -gt $best_match_count ]]; then
-			best_match_count=$match_count
-			best_match_id="$existing_id"
-		fi
-	done < <(grep -E '^\s*- \[ \] t[0-9]' "$todo_file" 2>/dev/null)
-
-	if [[ -n "$best_match_id" ]]; then
-		log_info "AI Actions: semantic dedup (t1218): proposed title matches existing $best_match_id ($best_match_count/$keyword_count keywords)"
-		printf '%s' "$best_match_id"
+	# Without AI confirmation, require 3+ keyword matches (stricter)
+	if [[ -n "$best_id" && "$best_count" -ge 3 ]]; then
+		log_info "AI Actions: semantic dedup (keyword-only fallback): $best_id matches with $best_count keywords"
+		printf '%s' "$best_id"
 		return 0
 	fi
 
