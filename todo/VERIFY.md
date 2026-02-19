@@ -1788,3 +1788,8 @@
   check: file-exists .agents/scripts/supervisor/evaluate.sh
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
+
+- [ ] v217 t1248 Investigate 7-day success rate drop from 94% overall to 8... | PR #1983 | merged:2026-02-19
+  files: .agents/scripts/supervisor/ai-context.sh
+  check: shellcheck .agents/scripts/supervisor/ai-context.sh
+  check: file-exists .agents/scripts/supervisor/ai-context.sh
