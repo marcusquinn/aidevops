@@ -54,7 +54,7 @@ tools/data-extraction/,Data extraction - scraping business data,outscraper
 tools/deployment/,Deployment automation - self-hosted PaaS and orchestration,coolify|coolify-cli|vercel|cloudron-app-packaging|uncloud
 tools/git/,Git operations - GitHub/GitLab/Gitea CLIs and diff tools,github-cli|gitlab-cli|gitea-cli|github-actions|worktrunk|lumen|jujutsu|conflict-resolution
 tools/credentials/,Secret management - API keys vaults and encryption stack,api-key-setup|api-key-management|vaultwarden|gopass|psst|multi-tenant|list-keys|sops|gocryptfs|encryption-stack
-tools/security/,Security tools - terminal guards privacy filtering and scanning,tirith|shannon|cdn-origin-ip|privacy-filter
+tools/security/,Security tools - terminal guards privacy filtering IP reputation and scanning,tirith|shannon|cdn-origin-ip|privacy-filter|ip-reputation
 tools/task-management/,Task tracking - dependency graphs,beads
 tools/terminal/,Terminal integration - tab titles,terminal-title
 tools/automation/,Automation - cron scheduling objective runner and macOS AppleScript/JXA,cron-agent|objective-runner|mac|macos-automator
@@ -119,6 +119,7 @@ quality-sweep-helper.sh,Unified quality debt sweep (SonarCloud Codacy CodeFactor
 finding-to-task-helper.sh,Convert quality findings into grouped TODO tasks with auto-dispatch
 secretlint-helper.sh,Secret detection
 security-helper.sh,Security analysis (OSV Ferret history full-scan)
+ip-reputation-helper.sh,IP reputation checker - multi-provider risk scoring for VPS/server/proxy IPs (check batch report providers cache-stats cache-clear)
 beads-sync-helper.sh,Sync TODO.md/PLANS.md with Beads graph
 todo-ready.sh,Show tasks with no open blockers
 ralph-loop-helper.sh,Iterative AI development loops
