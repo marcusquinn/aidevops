@@ -1420,7 +1420,12 @@
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
 
-- [ ] v169 t1210 Add create_subtasks parent_task_id validation to AI reaso... | PR #1839 | merged:2026-02-19
+- [x] v169 t1210 Add create_subtasks parent_task_id validation to AI reaso... | PR #1839 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/supervisor/ai-reason.sh
   check: shellcheck .agents/scripts/supervisor/ai-reason.sh
   check: file-exists .agents/scripts/supervisor/ai-reason.sh
+
+- [ ] v170 t1211 Add empty/malformed response fallback to AI actions pipel... | PR #1843 | merged:2026-02-19
+  files: .agents/scripts/supervisor/ai-actions.sh
+  check: shellcheck .agents/scripts/supervisor/ai-actions.sh
+  check: file-exists .agents/scripts/supervisor/ai-actions.sh
