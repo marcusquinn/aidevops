@@ -1281,36 +1281,31 @@ _exec_create_subtasks() {
 		return 1
 	fi
 
-	local todo_file="$repo_path/TODO.md"
-
-	# Cross-repo support (t1234): check supervisor DB FIRST for the task's repo.
-	# This prevents task ID collisions across repos — if both repos have t003,
-	# the DB knows which repo the AI reasoner was targeting. Only fall back to
-	# the primary repo if the DB has no record for this task.
+	# Resolve the task's repo from the supervisor DB (t1234).
+	# Tasks are always repo-specific — never guess by falling back to the
+	# primary repo, because task IDs can collide across repos (e.g., both
+	# aidevops and awardsapp have t003 for different things). Writing to
+	# the wrong repo is a privacy breach if repo visibility differs.
 	local db_repo_path=""
 	if [[ -n "${SUPERVISOR_DB:-}" && -f "${SUPERVISOR_DB:-}" ]]; then
 		db_repo_path=$(db "$SUPERVISOR_DB" "
 			SELECT repo FROM tasks WHERE id = '$(sql_escape "$parent_task_id")' AND repo IS NOT NULL AND repo != '' LIMIT 1;
 		" 2>/dev/null || echo "")
 	fi
-	if [[ -n "$db_repo_path" && -f "$db_repo_path/TODO.md" ]]; then
-		# Canonicalise before trusting — reject traversal segments or stale/corrupt paths
+	if [[ -n "$db_repo_path" ]]; then
 		local canonical_db
 		canonical_db=$(realpath "$db_repo_path" 2>/dev/null || echo "")
 		if [[ -n "$canonical_db" && -f "$canonical_db/TODO.md" ]]; then
-			# DB says this task belongs to a specific repo — use it
-			if [[ "$canonical_db" != "$(realpath "$repo_path" 2>/dev/null)" ]]; then
-				log_info "create_subtasks: DB says $parent_task_id belongs to $canonical_db (not primary repo $repo_path)"
-			fi
 			repo_path="$canonical_db"
-			todo_file="$repo_path/TODO.md"
+		else
+			log_warn "create_subtasks: DB repo path for $parent_task_id is stale or missing TODO.md: $db_repo_path"
+			jq -n --arg parent "$parent_task_id" --arg repo "$db_repo_path" \
+				'{"error":"db_repo_path_invalid","parent_task_id":$parent,"repo_path":$repo}'
+			return 1
 		fi
 	fi
 
-	# Fallback: if DB had no record, check if parent exists in primary repo
-	if [[ ! -f "$todo_file" ]] || ! grep -q "^\s*- \[.\] $parent_task_id " "$todo_file" 2>/dev/null; then
-		log_warn "create_subtasks: parent $parent_task_id not found in $todo_file"
-	fi
+	local todo_file="$repo_path/TODO.md"
 
 	if [[ ! -f "$todo_file" ]]; then
 		log_warn "create_subtasks: TODO.md not found at $todo_file (parent: $parent_task_id)"
