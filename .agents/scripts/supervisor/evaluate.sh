@@ -52,6 +52,13 @@ extract_log_metadata() {
 		echo "worker_started=false"
 	fi
 
+	# Wrapper startup sentinel (t1190): distinguishes wrapper-never-ran from dispatch-exec-failed
+	if grep -q 'WRAPPER_STARTED' "$log_file" 2>/dev/null; then
+		echo "wrapper_started=true"
+	else
+		echo "wrapper_started=false"
+	fi
+
 	# Dispatch error sentinel (t183)
 	if grep -q 'WORKER_DISPATCH_ERROR\|WORKER_FAILED' "$log_file" 2>/dev/null; then
 		local dispatch_error
@@ -1014,13 +1021,22 @@ evaluate_worker() {
 	fi
 
 	# Check if worker never started (only dispatch metadata, no WORKER_STARTED sentinel)
+	# t1190: Distinguish between wrapper-never-ran vs dispatch-script-failed:
+	#   - no WRAPPER_STARTED: wrapper process never ran (nohup spawn failed, OS killed it)
+	#   - WRAPPER_STARTED but no WORKER_STARTED: wrapper ran but dispatch script failed
+	#     (exec failure, bad shebang, permission error, dispatch script overwritten)
 	if [[ "$log_size" -lt 500 ]] && ! grep -q 'WORKER_STARTED' "$tlog" 2>/dev/null; then
 		# Log has metadata but worker never started — extract any error from log
 		local startup_error=""
 		startup_error=$(grep -i 'WORKER_FAILED\|WORKER_DISPATCH_ERROR\|command not found\|No such file\|Permission denied' "$tlog" 2>/dev/null | head -1 | head -c 200 || echo "")
 		if [[ -n "$startup_error" ]]; then
 			echo "failed:worker_never_started:$(echo "$startup_error" | tr ' ' '_' | tr -cd '[:alnum:]_:-')"
+		elif grep -q 'WRAPPER_STARTED' "$tlog" 2>/dev/null; then
+			# t1190: Wrapper ran but dispatch script failed to produce WORKER_STARTED.
+			# This means the dispatch script exec failed (e.g., CLI not found, bad args).
+			echo "failed:worker_never_started:dispatch_exec_failed"
 		else
+			# t1190: Neither wrapper nor worker started — nohup spawn likely failed.
 			echo "failed:worker_never_started:no_sentinel"
 		fi
 		return 0

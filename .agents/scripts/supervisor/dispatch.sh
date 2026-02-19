@@ -1049,7 +1049,10 @@ do_prompt_repeat() {
 	worker_xdg_config=$(generate_worker_mcp_config "$task_id" 2>/dev/null) || true
 
 	# Write dispatch script
-	local dispatch_script="${SUPERVISOR_DIR}/pids/${task_id}-prompt-repeat.sh"
+	# t1190: Use timestamped filename to prevent overwrite race condition.
+	local pr_dispatch_ts
+	pr_dispatch_ts=$(date +%Y%m%d%H%M%S)
+	local dispatch_script="${SUPERVISOR_DIR}/pids/${task_id}-prompt-repeat-${pr_dispatch_ts}.sh"
 	{
 		echo '#!/usr/bin/env bash'
 		echo "echo 'WORKER_STARTED task_id=${task_id} strategy=prompt_repeat pid=\$\$ timestamp='\$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -1065,9 +1068,12 @@ do_prompt_repeat() {
 	chmod +x "$dispatch_script"
 
 	# Wrapper script with cleanup handlers (t253)
-	local wrapper_script="${SUPERVISOR_DIR}/pids/${task_id}-prompt-repeat-wrapper.sh"
+	# t1190: Use timestamped filename to prevent overwrite race condition.
+	local wrapper_script="${SUPERVISOR_DIR}/pids/${task_id}-prompt-repeat-wrapper-${pr_dispatch_ts}.sh"
 	{
 		echo '#!/usr/bin/env bash'
+		# t1190: Wrapper-level sentinel written before running dispatch script.
+		echo "echo 'WRAPPER_STARTED task_id=${task_id} strategy=prompt_repeat wrapper_pid=\$\$ dispatch_script=${dispatch_script} timestamp='\$(date -u +%Y-%m-%dT%H:%M:%SZ) >> '${new_log_file}' 2>/dev/null || true"
 		echo '_kill_descendants_recursive() {'
 		echo '  local parent_pid="$1"'
 		echo '  local children'
@@ -1118,10 +1124,11 @@ do_prompt_repeat() {
 	chmod +x "$wrapper_script"
 
 	# Dispatch
+	# t1190: Redirect wrapper stderr to log file (not /dev/null) for diagnosis.
 	if command -v setsid &>/dev/null; then
-		nohup setsid bash "${wrapper_script}" &>/dev/null &
+		nohup setsid bash "${wrapper_script}" >>"${new_log_file}" 2>&1 &
 	else
-		nohup bash "${wrapper_script}" &>/dev/null &
+		nohup bash "${wrapper_script}" >>"${new_log_file}" 2>&1 &
 	fi
 	local worker_pid=$!
 	disown "$worker_pid" 2>/dev/null || true
@@ -2588,7 +2595,15 @@ cmd_dispatch() {
 
 	# Write dispatch script to a temp file to avoid bash -c quoting issues
 	# with multi-line prompts (newlines in printf '%q' break bash -c strings)
-	local dispatch_script="${SUPERVISOR_DIR}/pids/${task_id}-dispatch.sh"
+	# t1190: Use timestamped filenames to prevent overwrite race condition when
+	# multiple dispatches run for the same task within a short window. Previously,
+	# a second dispatch would overwrite the dispatch/wrapper scripts before the
+	# first wrapper process had a chance to read them, causing the first wrapper
+	# to execute the second dispatch's script (which writes to a different log file),
+	# leaving the first log file with only the metadata header (no WORKER_STARTED).
+	local dispatch_ts
+	dispatch_ts=$(date +%Y%m%d%H%M%S)
+	local dispatch_script="${SUPERVISOR_DIR}/pids/${task_id}-dispatch-${dispatch_ts}.sh"
 	{
 		echo '#!/usr/bin/env bash'
 		echo "# Startup sentinel (t183): if this line appears in the log, the script started"
@@ -2611,9 +2626,15 @@ cmd_dispatch() {
 	# errors when the dispatch script failed to start (e.g., opencode not found).
 	# Now errors are appended to the log file for diagnosis.
 	# t253: Add cleanup handlers to prevent orphaned children when wrapper exits
-	local wrapper_script="${SUPERVISOR_DIR}/pids/${task_id}-wrapper.sh"
+	# t1190: Use timestamped filename (matches dispatch_ts) to prevent overwrite race.
+	local wrapper_script="${SUPERVISOR_DIR}/pids/${task_id}-wrapper-${dispatch_ts}.sh"
 	{
 		echo '#!/usr/bin/env bash'
+		# t1190: Wrapper-level sentinel — written before running the dispatch script.
+		# If WRAPPER_STARTED appears in the log but WORKER_STARTED does not, the
+		# wrapper ran but the dispatch script failed to start (exec failure, bad shebang,
+		# permission error). This distinguishes "wrapper never ran" from "dispatch failed".
+		echo "echo 'WRAPPER_STARTED task_id=${task_id} wrapper_pid=\$\$ dispatch_script=${dispatch_script} timestamp='\$(date -u +%Y-%m-%dT%H:%M:%SZ) >> '${log_file}' 2>/dev/null || true"
 		echo '# t253: Recursive cleanup to kill all descendant processes'
 		echo '_kill_descendants_recursive() {'
 		echo '  local parent_pid="$1"'
@@ -2680,20 +2701,24 @@ cmd_dispatch() {
 		# Also start background process as fallback (Tabby may not support OSC 1337)
 		# t253: Use setsid if available (Linux) for process group isolation
 		# Use nohup + disown to survive parent (cron) exit
+		# t1190: Redirect wrapper stderr to log file (not /dev/null) so wrapper startup
+		# errors (e.g., bash not found, permission denied) are captured for diagnosis.
 		if command -v setsid &>/dev/null; then
-			nohup setsid bash "${wrapper_script}" &>/dev/null &
+			nohup setsid bash "${wrapper_script}" >>"${log_file}" 2>&1 &
 		else
-			nohup bash "${wrapper_script}" &>/dev/null &
+			nohup bash "${wrapper_script}" >>"${log_file}" 2>&1 &
 		fi
 	else
 		# Headless: background process
 		# t253: Use setsid if available (Linux) for process group isolation
 		# Use nohup + disown to survive parent (cron) exit — without this,
 		# workers die after ~2 minutes when the cron pulse script exits
+		# t1190: Redirect wrapper stderr to log file (not /dev/null) so wrapper startup
+		# errors (e.g., bash not found, permission denied) are captured for diagnosis.
 		if command -v setsid &>/dev/null; then
-			nohup setsid bash "${wrapper_script}" &>/dev/null &
+			nohup setsid bash "${wrapper_script}" >>"${log_file}" 2>&1 &
 		else
-			nohup bash "${wrapper_script}" &>/dev/null &
+			nohup bash "${wrapper_script}" >>"${log_file}" 2>&1 &
 		fi
 	fi
 
@@ -3054,7 +3079,10 @@ Task description: ${tdesc:-$task_id}"
 	worker_xdg_config=$(generate_worker_mcp_config "$task_id" 2>/dev/null) || true
 
 	# Write dispatch script with startup sentinel (t183)
-	local dispatch_script="${SUPERVISOR_DIR}/pids/${task_id}-reprompt.sh"
+	# t1190: Use timestamped filename to prevent overwrite race condition.
+	local reprompt_dispatch_ts
+	reprompt_dispatch_ts=$(date +%Y%m%d%H%M%S)
+	local dispatch_script="${SUPERVISOR_DIR}/pids/${task_id}-reprompt-${reprompt_dispatch_ts}.sh"
 	{
 		echo '#!/usr/bin/env bash'
 		echo "echo 'WORKER_STARTED task_id=${task_id} retry=${tretries} pid=\$\$ timestamp='\$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -3071,9 +3099,12 @@ Task description: ${tdesc:-$task_id}"
 
 	# Wrapper script (t183): captures dispatch errors in log file
 	# t253: Add cleanup handlers to prevent orphaned children when wrapper exits
-	local wrapper_script="${SUPERVISOR_DIR}/pids/${task_id}-reprompt-wrapper.sh"
+	# t1190: Use timestamped filename to prevent overwrite race condition.
+	local wrapper_script="${SUPERVISOR_DIR}/pids/${task_id}-reprompt-wrapper-${reprompt_dispatch_ts}.sh"
 	{
 		echo '#!/usr/bin/env bash'
+		# t1190: Wrapper-level sentinel written before running dispatch script.
+		echo "echo 'WRAPPER_STARTED task_id=${task_id} retry=${tretries} wrapper_pid=\$\$ dispatch_script=${dispatch_script} timestamp='\$(date -u +%Y-%m-%dT%H:%M:%SZ) >> '${new_log_file}' 2>/dev/null || true"
 		echo '# t253: Recursive cleanup to kill all descendant processes'
 		echo '_kill_descendants_recursive() {'
 		echo '  local parent_pid="$1"'
@@ -3118,10 +3149,11 @@ Task description: ${tdesc:-$task_id}"
 
 	# t253: Use setsid if available (Linux) for process group isolation
 	# Use nohup + disown to survive parent (cron) exit
+	# t1190: Redirect wrapper stderr to log file (not /dev/null) for diagnosis.
 	if command -v setsid &>/dev/null; then
-		nohup setsid bash "${wrapper_script}" &>/dev/null &
+		nohup setsid bash "${wrapper_script}" >>"${new_log_file}" 2>&1 &
 	else
-		nohup bash "${wrapper_script}" &>/dev/null &
+		nohup bash "${wrapper_script}" >>"${new_log_file}" 2>&1 &
 	fi
 	local worker_pid=$!
 	disown "$worker_pid" 2>/dev/null || true
