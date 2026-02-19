@@ -832,6 +832,25 @@ cmd_pulse() {
 		fi
 	fi
 
+	# Phase 0.5e: Stale-claim auto-recovery (t1263)
+	# When interactive sessions claim tasks (assignee: + started:) but die or
+	# move on without completing them, the tasks become permanently stuck:
+	# auto-pickup skips them because they have assignee/started fields, but no
+	# worker is running. This phase detects stale claims (>24h, no active worker
+	# or worktree) and strips assignee:/started: so auto-pickup can re-dispatch.
+	# Respects t1017 assignee ownership: only unclaims tasks assigned to local user.
+	if [[ -n "$all_repos" ]]; then
+		while IFS= read -r repo_path; do
+			if [[ -f "$repo_path/TODO.md" ]]; then
+				recover_stale_claims "$repo_path" 2>>"$SUPERVISOR_LOG" || true
+			fi
+		done <<<"$all_repos"
+	else
+		if [[ -f "$(pwd)/TODO.md" ]]; then
+			recover_stale_claims "$(pwd)" 2>>"$SUPERVISOR_LOG" || true
+		fi
+	fi
+
 	# Phase 0.6: Queue-dispatchability reconciliation (t1180)
 	# Syncs DB queue state with TODO.md reality to eliminate phantom queue entries.
 	# Runs every pulse (not gated on idle) because phantom entries can appear
