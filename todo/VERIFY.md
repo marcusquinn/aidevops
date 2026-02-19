@@ -1457,7 +1457,7 @@
   check: shellcheck .agents/scripts/supervisor/ai-actions.sh
   check: file-exists .agents/scripts/supervisor/ai-actions.sh
 
-- [ ] v174 t1200.2 Keyed providers + SQLite cache + batch mode — implement... | PR #1860 | merged:2026-02-19
+- [x] v174 t1200.2 Keyed providers + SQLite cache + batch mode — implement... | PR #1860 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/ip-reputation-helper.sh, .agents/scripts/providers/ip-rep-abuseipdb.sh, .agents/scripts/providers/ip-rep-blocklistde.sh, .agents/scripts/providers/ip-rep-greynoise.sh, .agents/scripts/providers/ip-rep-iphub.sh, .agents/scripts/providers/ip-rep-ipqualityscore.sh, .agents/scripts/providers/ip-rep-proxycheck.sh, .agents/scripts/providers/ip-rep-scamalytics.sh, .agents/scripts/providers/ip-rep-shodan.sh, .agents/scripts/providers/ip-rep-spamhaus.sh, .agents/scripts/providers/ip-rep-stopforumspam.sh
   check: shellcheck .agents/scripts/ip-reputation-helper.sh
   check: file-exists .agents/scripts/ip-reputation-helper.sh
@@ -1482,7 +1482,7 @@
   check: shellcheck .agents/scripts/providers/ip-rep-stopforumspam.sh
   check: file-exists .agents/scripts/providers/ip-rep-stopforumspam.sh
 
-- [ ] v175 t1219 Use launchd LaunchAgents on macOS instead of cron — pla... | PR #1864 | merged:2026-02-19
+- [x] v175 t1219 Use launchd LaunchAgents on macOS instead of cron — pla... | PR #1864 | merged:2026-02-19 verified:2026-02-19
   files: .agents/AGENTS.md, .agents/scripts/auto-update-helper.sh, .agents/scripts/supervisor/cron.sh, .agents/scripts/supervisor/launchd.sh
   check: file-exists .agents/AGENTS.md
   check: shellcheck .agents/scripts/auto-update-helper.sh
@@ -1491,3 +1491,13 @@
   check: file-exists .agents/scripts/supervisor/cron.sh
   check: shellcheck .agents/scripts/supervisor/launchd.sh
   check: file-exists .agents/scripts/supervisor/launchd.sh
+
+- [ ] v176 t1200.3 Agent doc + slash command + index updates + output format... | PR #1867 | merged:2026-02-19
+  files: .agents/AGENTS.md, .agents/scripts/commands/ip-check.md, .agents/scripts/ip-reputation-helper.sh, .agents/subagent-index.toon, .agents/tools/security/ip-reputation.md
+  check: file-exists .agents/AGENTS.md
+  check: file-exists .agents/scripts/commands/ip-check.md
+  check: shellcheck .agents/scripts/ip-reputation-helper.sh
+  check: file-exists .agents/scripts/ip-reputation-helper.sh
+  check: file-exists .agents/subagent-index.toon
+  check: file-exists .agents/tools/security/ip-reputation.md
+  check: rg "ip-reputation" .agents/subagent-index.toon
