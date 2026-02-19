@@ -299,10 +299,12 @@ supervisor-helper.sh claim t001     # Adds assignee: to TODO.md, optional GH syn
 supervisor-helper.sh unclaim t001   # Releases claim (removes assignee:)
 # Claiming is automatic during dispatch. Manual claim/unclaim for coordination.
 
-# Install cron pulse (REQUIRED for autonomous operation)
+# Install pulse scheduler (REQUIRED for autonomous operation)
+# macOS: installs ~/Library/LaunchAgents/com.aidevops.supervisor-pulse.plist
+# Linux: installs crontab entry
 supervisor-helper.sh cron install
 
-# Manual pulse (cron does this automatically every 2 minutes)
+# Manual pulse (scheduler does this automatically every 2 minutes)
 supervisor-helper.sh pulse --batch <batch-id>
 
 # Monitor
@@ -314,7 +316,7 @@ supervisor-helper.sh status <batch-id>
 
 **Assignee ownership** (t1017): NEVER remove or change `assignee:` on a task without explicit user confirmation. The assignee may be a contributor on another host whose work you cannot see. `unclaim` requires `--force` to release a task claimed by someone else. The full-loop claims the task automatically before starting work — if the task is already claimed by another, the loop stops.
 
-**Cron pulse is mandatory** for autonomous operation. Without it, the supervisor is passive and requires manual `pulse` calls. The pulse cycle: check workers -> evaluate outcomes -> dispatch next -> cleanup.
+**Pulse scheduler is mandatory** for autonomous operation. Without it, the supervisor is passive and requires manual `pulse` calls. The pulse cycle: check workers -> evaluate outcomes -> dispatch next -> cleanup. On macOS, `cron install` uses launchd (no cron dependency); on Linux, it uses crontab.
 
 **Session memory monitoring + respawn** (t264, t264.1): Long-running OpenCode/Bun sessions accumulate WebKit malloc dirty pages that are never returned to the OS (25GB+ observed). Phase 11 of the pulse cycle checks the parent session's `phys_footprint` when a batch wave completes (no running/queued tasks). If memory exceeds `SUPERVISOR_SELF_MEM_LIMIT` (default: 8192MB), it saves a checkpoint, logs the respawn event to `~/.aidevops/logs/respawn-history.log`, and exits cleanly for the next cron pulse to start fresh. Use `supervisor-helper.sh mem-check` to inspect memory and `supervisor-helper.sh respawn-history` to review respawn patterns.
 
@@ -414,7 +416,9 @@ Automatic polling for new releases. Checks GitHub every 10 minutes and runs `aid
 
 **Disable**: `aidevops auto-update disable`
 
-**Env override**: `AIDEVOPS_AUTO_UPDATE=false` disables even if cron is installed.
+**Scheduler**: macOS uses launchd (`~/Library/LaunchAgents/com.aidevops.auto-update.plist`); Linux uses cron. Auto-migrates existing cron entries on macOS when `enable` is run.
+
+**Env override**: `AIDEVOPS_AUTO_UPDATE=false` disables even if scheduler is installed.
 
 **Logs**: `~/.aidevops/logs/auto-update.log`
 
