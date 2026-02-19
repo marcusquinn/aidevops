@@ -467,7 +467,7 @@ Environment:
   SUPERVISOR_TIMEOUT_BUGFIX   Hang timeout for #bugfix/#fix tasks (default: 3600 — 1h)
   SUPERVISOR_TIMEOUT_DOCS     Hang timeout for #docs tasks (default: 1800 — 30m)
   SUPERVISOR_HEARTBEAT_INTERVAL Seconds between worker heartbeat writes to log (default: 300 — 5m)
-  SUPERVISOR_HANG_GRACEFUL    Enable two-phase hang detection: SIGTERM at 50%% timeout, SIGKILL at 100%% (default: true, t1222)
+  SUPERVISOR_HANG_GRACEFUL    Enable two-phase hang detection: SIGTERM at 50% timeout, SIGKILL at 100% (default: true, t1222)
   SUPERVISOR_SELF_MEM_LIMIT   MB before supervisor respawns after batch (default: 8192)
   SUPERVISOR_SKILL_UPDATE_PR  Enable skill update PR pipeline in pulse (default: false)
   SUPERVISOR_SKILL_UPDATE_INTERVAL Seconds between skill update PR runs (default: 86400)

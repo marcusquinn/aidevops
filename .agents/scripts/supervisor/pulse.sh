@@ -2098,15 +2098,17 @@ RULES:
 									# First detection at 50%: send SIGTERM for graceful shutdown
 									log_warn "  t1222: Worker $health_task possibly hung (no output for ${log_age_seconds}s, 50% of ${task_hung_timeout}s timeout)"
 									log_warn "  t1222: Sending SIGTERM for graceful shutdown (PID $health_pid)"
-									echo "$now_epoch" >"$hang_warn_marker"
+									echo "$now_epoch" >"$hang_warn_marker" 2>/dev/null || true
 									# SIGTERM triggers the wrapper's cleanup_children trap
 									kill -TERM "$health_pid" 2>/dev/null || true
 								else
 									# Already warned — check if SIGTERM worked (grace period: 2 pulse cycles ~4min)
-									local warn_epoch
+									local warn_epoch=0
 									warn_epoch=$(cat "$hang_warn_marker" 2>/dev/null || echo "0")
+									warn_epoch="${warn_epoch:-0}"
 									local grace_elapsed=$((now_epoch - warn_epoch))
-									# Grace period: min(240s, 25% of hung timeout) — enough for 2 pulse cycles
+									# Grace period: min(240s, max(120s, 25% of hung timeout))
+									# At 2-min cron this spans 1-2 cycles; at 5-min cron the hard kill fires on the next cycle
 									local grace_period=$((task_hung_timeout / 4))
 									if [[ "$grace_period" -gt 240 ]]; then
 										grace_period=240
