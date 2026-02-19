@@ -1492,7 +1492,7 @@
   check: shellcheck .agents/scripts/supervisor/launchd.sh
   check: file-exists .agents/scripts/supervisor/launchd.sh
 
-- [ ] v176 t1200.3 Agent doc + slash command + index updates + output format... | PR #1867 | merged:2026-02-19
+- [x] v176 t1200.3 Agent doc + slash command + index updates + output format... | PR #1867 | merged:2026-02-19 verified:2026-02-19
   files: .agents/AGENTS.md, .agents/scripts/commands/ip-check.md, .agents/scripts/ip-reputation-helper.sh, .agents/subagent-index.toon, .agents/tools/security/ip-reputation.md
   check: file-exists .agents/AGENTS.md
   check: file-exists .agents/scripts/commands/ip-check.md
@@ -1501,3 +1501,10 @@
   check: file-exists .agents/subagent-index.toon
   check: file-exists .agents/tools/security/ip-reputation.md
   check: rg "ip-reputation" .agents/subagent-index.toon
+
+- [ ] v177 t1221 Fix create_subtasks executor — 10 consecutive failures ... | PR #1866 | merged:2026-02-19
+  files: .agents/scripts/supervisor/ai-actions.sh, tests/test-ai-actions.sh
+  check: shellcheck .agents/scripts/supervisor/ai-actions.sh
+  check: file-exists .agents/scripts/supervisor/ai-actions.sh
+  check: shellcheck tests/test-ai-actions.sh
+  check: file-exists tests/test-ai-actions.sh
