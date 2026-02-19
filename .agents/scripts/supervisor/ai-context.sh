@@ -596,7 +596,7 @@ build_autodispatch_eligibility_context() {
 			local short_desc="${line:0:100}"
 			[[ ${#line} -gt 100 ]] && short_desc+="..."
 
-			output+="- **$task_id** [$status${reason:+: $reason}]: $short_desc\n"
+			output+="- **$task_id** [repo:$repo_name] [$status${reason:+: $reason}]: $short_desc\n"
 			total_candidates=$((total_candidates + 1))
 		done <<<"$candidates"
 
