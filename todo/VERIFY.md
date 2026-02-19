@@ -1537,3 +1537,8 @@
   check: file-exists .agents/AGENTS.md
   check: shellcheck aidevops.sh
   check: file-exists aidevops.sh
+
+- [ ] v182 t1224.1 Create `localdev` shell script with `init` command — co... | PR #1884 | merged:2026-02-19
+  files: .agents/scripts/localdev-helper.sh
+  check: shellcheck .agents/scripts/localdev-helper.sh
+  check: file-exists .agents/scripts/localdev-helper.sh
