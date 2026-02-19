@@ -222,7 +222,9 @@ This works with both `worktree-helper.sh` and Worktrunk's `post-create` hook:
 #!/bin/bash
 branch="$(git branch --show-current)"
 project="$(basename "$(git worktree list --porcelain | head -1 | cut -d' ' -f2-)")"
-~/.aidevops/agents/scripts/localdev-helper.sh branch "$project" "$branch" 2>/dev/null || true
+# Adjust LOCALDEV_HELPER if aidevops is installed to a custom path
+LOCALDEV_HELPER="${AIDEVOPS_HOME:-$HOME/.aidevops}/agents/scripts/localdev-helper.sh"
+"$LOCALDEV_HELPER" branch "$project" "$branch" 2>/dev/null || true
 ```
 
 ### Session Naming

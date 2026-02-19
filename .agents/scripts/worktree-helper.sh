@@ -89,7 +89,7 @@ detect_localdev_project() {
 		fi
 	else
 		# Fallback: grep-based check
-		if grep -q "\"$base_name\"" "$LOCALDEV_PORTS_FILE" 2>/dev/null; then
+		if grep -qF "\"$base_name\"" "$LOCALDEV_PORTS_FILE" 2>/dev/null; then
 			echo "$base_name"
 			return 0
 		fi
@@ -121,16 +121,6 @@ localdev_auto_branch_rm() {
 	local branch="$1"
 	local project
 	project="$(detect_localdev_project)" || return 0
-
-	# Check if this branch is actually registered before attempting removal
-	if [[ -f "$LOCALDEV_PORTS_FILE" ]] && command -v jq >/dev/null 2>&1; then
-		local sanitised
-		sanitised="$(echo "$branch" | tr '[:upper:]' '[:lower:]' | sed 's|/|-|g; s|[^a-z0-9-]||g; s|--*|-|g; s|^-||; s|-$||')"
-		local registered
-		registered="$(jq -r --arg a "$project" --arg b "$sanitised" \
-			'.apps[$a].branches[$b] // empty' "$LOCALDEV_PORTS_FILE" 2>/dev/null)"
-		[[ -z "$registered" ]] && return 0
-	fi
 
 	echo ""
 	echo -e "${BLUE}Localdev integration: removing branch route for $project/$branch...${NC}"
