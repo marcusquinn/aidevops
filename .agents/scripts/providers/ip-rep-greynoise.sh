@@ -101,25 +101,30 @@ cmd_check() {
 		esac
 	done
 
-	local api_url headers=()
+	local api_url
+	local response
 	if [[ -n "$api_key" ]]; then
 		api_url="${API_BASE_FULL}/${ip}"
-		headers=("-H" "key: ${api_key}")
+		response=$(curl -sf \
+			--max-time "$timeout" \
+			-H "Accept: application/json" \
+			-H "key: ${api_key}" \
+			"$api_url" \
+			2>/dev/null) || {
+			error_json "$ip" "curl request failed"
+			return 0
+		}
 	else
 		api_url="${API_BASE_COMMUNITY}/${ip}"
-		headers=()
+		response=$(curl -sf \
+			--max-time "$timeout" \
+			-H "Accept: application/json" \
+			"$api_url" \
+			2>/dev/null) || {
+			error_json "$ip" "curl request failed"
+			return 0
+		}
 	fi
-
-	local response
-	response=$(curl -sf \
-		--max-time "$timeout" \
-		-H "Accept: application/json" \
-		"${headers[@]}" \
-		"$api_url" \
-		2>/dev/null) || {
-		error_json "$ip" "curl request failed"
-		return 0
-	}
 
 	if ! echo "$response" | jq empty 2>/dev/null; then
 		error_json "$ip" "invalid JSON response"

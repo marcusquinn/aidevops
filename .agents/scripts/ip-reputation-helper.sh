@@ -991,18 +991,17 @@ cmd_batch() {
 
 	local batch_results="[]"
 
-	# Rate limiting: track last request time per provider
-	# We use a simple inter-IP sleep based on rate_limit
+	# Rate limiting: sleep a fixed interval between IPs
 	# rate_limit=2 means 2 IPs/second → sleep 0.5s between IPs
+	# Uses awk for portable float division (bash doesn't do floats)
 	local sleep_between
 	if [[ "$rate_limit" -gt 0 ]]; then
-		# Use awk for float division (bash doesn't do floats)
 		sleep_between=$(awk "BEGIN {printf \"%.3f\", 1/$rate_limit}")
 	else
 		sleep_between="0"
 	fi
 
-	local last_check_time=0
+	local first_ip=true
 
 	while IFS= read -r line; do
 		# Skip empty lines and comments
@@ -1014,21 +1013,11 @@ cmd_batch() {
 			continue
 		fi
 
-		# Rate limiting: enforce minimum interval between requests
-		if [[ "$sleep_between" != "0" ]]; then
-			local now_ms
-			now_ms=$(date +%s%3N 2>/dev/null || date +%s)
-			local elapsed_ms=$((now_ms - last_check_time))
-			local sleep_ms
-			sleep_ms=$(awk "BEGIN {printf \"%d\", $sleep_between * 1000}")
-			if [[ "$elapsed_ms" -lt "$sleep_ms" && "$last_check_time" -gt 0 ]]; then
-				local wait_ms=$((sleep_ms - elapsed_ms))
-				local wait_s
-				wait_s=$(awk "BEGIN {printf \"%.3f\", $wait_ms/1000}")
-				sleep "$wait_s" 2>/dev/null || true
-			fi
-			last_check_time=$(date +%s%3N 2>/dev/null || date +%s)
+		# Rate limiting: sleep between IPs (skip before first IP)
+		if [[ "$sleep_between" != "0" && "$first_ip" == "false" ]]; then
+			sleep "$sleep_between" 2>/dev/null || true
 		fi
+		first_ip=false
 
 		processed=$((processed + 1))
 		log_info "[${processed}/${total}] Checking ${line}..."
