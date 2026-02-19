@@ -1751,6 +1751,17 @@
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
 
-- [ ] v212 t1255 Investigate awardsapp cross-repo dispatch — 15 tasks di... | PR #1961 | merged:2026-02-19
+- [x] v212 t1255 Investigate awardsapp cross-repo dispatch — 15 tasks di... | PR #1961 | merged:2026-02-19 verified:2026-02-19
   files: VERIFY.md
   check: file-exists VERIFY.md
+
+- [ ] v213 t1256 Add stale-evaluating root cause analysis to pulse Phase 0... | PR #1963 | merged:2026-02-19
+  files: .agents/scripts/supervisor/database.sh, .agents/scripts/supervisor/evaluate.sh, .agents/scripts/supervisor/pulse.sh, .agents/scripts/supervisor/state.sh
+  check: shellcheck .agents/scripts/supervisor/database.sh
+  check: file-exists .agents/scripts/supervisor/database.sh
+  check: shellcheck .agents/scripts/supervisor/evaluate.sh
+  check: file-exists .agents/scripts/supervisor/evaluate.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/supervisor/state.sh
+  check: file-exists .agents/scripts/supervisor/state.sh
