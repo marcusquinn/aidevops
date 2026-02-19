@@ -20,7 +20,7 @@ tools:
 - **Purpose**: Vet VPS/server/proxy IPs before purchase or deployment — check if they are burned (blacklisted, flagged)
 - **Helper**: `ip-reputation-helper.sh`
 - **Slash command**: `/ip-check <ip>`
-- **Providers**: 10 providers (5 free/no-key, 5 free-tier with API key)
+- **Providers**: 11 providers (5 free/no-key, 6 free-tier with API key)
 - **Output formats**: `table` (default), `json`, `markdown`
 - **Cache**: SQLite, per-provider TTL (1h–7d)
 
@@ -107,6 +107,7 @@ ip-reputation-helper.sh cache-clear --help
 | Provider | What it checks | Free Limit | Cache TTL |
 |----------|---------------|------------|-----------|
 | `abuseipdb` | Community abuse reports | 1,000/day | 24h |
+| `virustotal` | 70+ AV engine IP analysis | 500/day | 24h |
 | `ipqualityscore` | Fraud/proxy/VPN detection | 5,000/month | 24h |
 | `scamalytics` | Fraud scoring | 5,000/month | 24h |
 | `shodan` | Open ports, vulns, tags | Free key, limited credits | 7d |
@@ -205,6 +206,7 @@ Store keys via `aidevops secret set NAME` (never paste in conversation):
 
 ```bash
 aidevops secret set ABUSEIPDB_API_KEY
+aidevops secret set VIRUSTOTAL_API_KEY
 aidevops secret set IPQUALITYSCORE_API_KEY
 aidevops secret set SCAMALYTICS_API_KEY
 aidevops secret set SHODAN_API_KEY

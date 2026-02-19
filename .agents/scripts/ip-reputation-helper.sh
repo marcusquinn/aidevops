@@ -33,6 +33,7 @@
 #
 # Providers (free tier with API key):
 #   abuseipdb       AbuseIPDB (community abuse reports, 1000/day free)
+#   virustotal      VirusTotal (70+ AV engines, 500/day free)
 #   ipqualityscore  IPQualityScore (fraud/proxy/VPN detection, 5000/month free)
 #   scamalytics     Scamalytics (fraud scoring, 5000/month free)
 #   shodan          Shodan (open ports, vulns, tags — free key, limited credits)
@@ -42,6 +43,7 @@
 #
 # Environment variables:
 #   ABUSEIPDB_API_KEY         AbuseIPDB API key (free at abuseipdb.com)
+#   VIRUSTOTAL_API_KEY        VirusTotal API key (free at virustotal.com)
 #   PROXYCHECK_API_KEY        ProxyCheck.io API key (optional, increases limit)
 #   IPQUALITYSCORE_API_KEY    IPQualityScore API key (free at ipqualityscore.com)
 #   SCAMALYTICS_API_KEY       Scamalytics API key (free at scamalytics.com)
@@ -57,7 +59,7 @@
 # Cache TTL per provider (seconds):
 #   spamhaus/blocklistde/stopforumspam: 3600  (1h — DNSBL data changes frequently)
 #   proxycheck/iphub:                   21600 (6h)
-#   abuseipdb/ipqualityscore:           86400 (24h)
+#   abuseipdb/ipqualityscore/virustotal: 86400 (24h)
 #   scamalytics/greynoise:              86400 (24h)
 #   shodan:                             604800 (7d — scan data changes slowly)
 #
@@ -92,7 +94,7 @@ source "${SCRIPT_DIR}/shared-constants.sh" 2>/dev/null || true
 
 # All available providers (order matters for display)
 # greynoise has a free community API (no key required) but also supports keyed full API
-readonly ALL_PROVIDERS="spamhaus proxycheck stopforumspam blocklistde greynoise abuseipdb ipqualityscore scamalytics shodan iphub"
+readonly ALL_PROVIDERS="spamhaus proxycheck stopforumspam blocklistde greynoise abuseipdb virustotal ipqualityscore scamalytics shodan iphub"
 
 # =============================================================================
 # SQLite Cache
@@ -346,6 +348,7 @@ provider_script() {
 	local provider="$1"
 	case "$provider" in
 	abuseipdb) echo "ip-rep-abuseipdb.sh" ;;
+	virustotal) echo "ip-rep-virustotal.sh" ;;
 	proxycheck) echo "ip-rep-proxycheck.sh" ;;
 	spamhaus) echo "ip-rep-spamhaus.sh" ;;
 	stopforumspam) echo "ip-rep-stopforumspam.sh" ;;
@@ -365,6 +368,7 @@ provider_display_name() {
 	local provider="$1"
 	case "$provider" in
 	abuseipdb) echo "AbuseIPDB" ;;
+	virustotal) echo "VirusTotal" ;;
 	proxycheck) echo "ProxyCheck.io" ;;
 	spamhaus) echo "Spamhaus DNSBL" ;;
 	stopforumspam) echo "StopForumSpam" ;;
@@ -1386,6 +1390,7 @@ Providers (no key required):
 
 Providers (free API key required):
   abuseipdb         AbuseIPDB — 1000/day free (abuseipdb.com)
+  virustotal        VirusTotal — 500/day free (virustotal.com)
   ipqualityscore    IPQualityScore — 5000/month free (ipqualityscore.com)
   scamalytics       Scamalytics — 5000/month free (scamalytics.com)
   shodan            Shodan — free key, limited credits (shodan.io)
@@ -1393,6 +1398,7 @@ Providers (free API key required):
 
 Environment:
   ABUSEIPDB_API_KEY         AbuseIPDB API key
+  VIRUSTOTAL_API_KEY        VirusTotal API key
   PROXYCHECK_API_KEY        ProxyCheck.io API key (optional)
   IPQUALITYSCORE_API_KEY    IPQualityScore API key
   SCAMALYTICS_API_KEY       Scamalytics API key
