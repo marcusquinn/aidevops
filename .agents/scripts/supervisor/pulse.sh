@@ -126,6 +126,16 @@ _diagnose_stale_root_cause() {
 			return 0
 		fi
 
+		# t1245: Check if PR URL was already persisted (early-persist checkpoint hit)
+		# This means evaluate_worker() ran far enough to discover the PR but the pulse
+		# was killed before cmd_transition("complete") — a clean recovery case.
+		local db_pr_url
+		db_pr_url=$(db "$SUPERVISOR_DB" "SELECT pr_url FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+		if [[ -n "$db_pr_url" && "$db_pr_url" != "no_pr" && "$db_pr_url" != "task_only" ]]; then
+			echo "pulse_killed_after_pr_persist"
+			return 0
+		fi
+
 		# Check if the pulse was killed mid-evaluation (no completion marker)
 		echo "eval_process_died"
 		return 0

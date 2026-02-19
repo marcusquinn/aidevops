@@ -1078,6 +1078,21 @@ evaluate_worker() {
 		meta_pr_url=$(discover_pr_by_branch "$task_id" "$repo_slug_detect" "$task_branch") || meta_pr_url=""
 	fi
 
+	# t1245: Persist PR URL to DB immediately after discovery — crash-safe checkpoint.
+	# If the pulse is killed mid-evaluation (eval_process_died root cause), Phase 0.7
+	# can find the PR URL in the DB and route to pr_review instead of re-queuing.
+	# Without this, the PR URL only reaches the DB when cmd_transition("complete") is
+	# called — after evaluate_worker() returns — leaving a window where a pulse kill
+	# strands the task in evaluating with no pr_url, causing unnecessary re-queuing.
+	if [[ -n "$meta_pr_url" && "$meta_pr_url" != "no_pr" && "$meta_pr_url" != "task_only" ]]; then
+		local current_db_pr_url
+		current_db_pr_url=$(db "$SUPERVISOR_DB" "SELECT pr_url FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+		if [[ "$current_db_pr_url" != "$meta_pr_url" ]]; then
+			db "$SUPERVISOR_DB" "UPDATE tasks SET pr_url = '$(sql_escape "$meta_pr_url")' WHERE id = '$escaped_id';" 2>/dev/null || true
+			log_verbose "evaluate_worker: persisted PR URL for $task_id early (crash-safe checkpoint, t1245)"
+		fi
+	fi
+
 	local meta_rate_limit_count meta_auth_error_count meta_conflict_count
 	local meta_timeout_count meta_oom_count meta_backend_error_count
 	meta_rate_limit_count=$(_meta_get "rate_limit_count" "0")
