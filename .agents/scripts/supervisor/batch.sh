@@ -3,7 +3,6 @@
 #
 # Functions for adding tasks and creating batches
 
-
 #######################################
 # Add a task to the supervisor
 #######################################
@@ -128,6 +127,37 @@ cmd_add() {
 	if [[ -n "$existing" ]]; then
 		log_warn "Task $task_id already exists (status: $existing)"
 		return 1
+	fi
+
+	# t1239: Cross-repo misregistration guard.
+	# Verify the task_id actually exists in the target repo's TODO.md before registering.
+	# Task IDs are repo-scoped — the same ID (e.g., t004) can exist in multiple repos
+	# for completely different tasks. Registering a task to the wrong repo causes workers
+	# to run in the wrong codebase, wasting compute and potentially leaking private data.
+	if [[ -f "$todo_file" ]]; then
+		local task_in_target_repo
+		task_in_target_repo=$(grep -cE "^[[:space:]]*- \[.\] $task_id( |$)" "$todo_file" 2>/dev/null || echo 0)
+		if [[ "$task_in_target_repo" -eq 0 ]]; then
+			# Task not found in target repo — check if it belongs to another registered repo
+			local other_repos
+			other_repos=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks WHERE repo IS NOT NULL AND repo != '' AND repo != '$(sql_escape "$repo")';" 2>/dev/null || echo "")
+			local found_in_other_repo=""
+			if [[ -n "$other_repos" ]]; then
+				while IFS= read -r other_repo; do
+					[[ -z "$other_repo" || ! -f "$other_repo/TODO.md" ]] && continue
+					if grep -qE "^[[:space:]]*- \[.\] $task_id( |$)" "$other_repo/TODO.md" 2>/dev/null; then
+						found_in_other_repo="$other_repo"
+						break
+					fi
+				done <<<"$other_repos"
+			fi
+			if [[ -n "$found_in_other_repo" ]]; then
+				log_error "Cross-repo misregistration prevented: $task_id belongs to $(basename "$found_in_other_repo") ($(basename "$repo") TODO.md does not contain $task_id). Use --repo '$found_in_other_repo' instead."
+				return 1
+			else
+				log_warn "Task $task_id not found in $todo_file — task may not exist in this repo. Proceeding with caution."
+			fi
+		fi
 	fi
 
 	# Pre-add check: prevent re-queuing tasks that already have a merged PR (t224).
