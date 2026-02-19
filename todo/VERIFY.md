@@ -1641,12 +1641,12 @@
   check: shellcheck tests/test-ai-actions.sh
   check: file-exists tests/test-ai-actions.sh
 
-- [ ] v196 t1224.5 Implement `localdev list/status` — dashboard showing al... | PR #1934 | merged:2026-02-19
+- [x] v196 t1224.5 Implement `localdev list/status` — dashboard showing al... | PR #1934 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/localdev-helper.sh
   check: shellcheck .agents/scripts/localdev-helper.sh
   check: file-exists .agents/scripts/localdev-helper.sh
 
-- [ ] v197 t1243 Add auto-unblock detection for tasks whose blockers are r... | PR #1935 | merged:2026-02-19
+- [x] v197 t1243 Add auto-unblock detection for tasks whose blockers are r... | PR #1935 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/supervisor/cron.sh, .agents/scripts/supervisor/pulse.sh, .agents/scripts/supervisor/todo-sync.sh
   check: shellcheck .agents/scripts/supervisor/cron.sh
   check: file-exists .agents/scripts/supervisor/cron.sh
@@ -1654,3 +1654,10 @@
   check: file-exists .agents/scripts/supervisor/pulse.sh
   check: shellcheck .agents/scripts/supervisor/todo-sync.sh
   check: file-exists .agents/scripts/supervisor/todo-sync.sh
+
+- [ ] v198 t1245 Investigate stale evaluating recovery pattern — root ca... | PR #1940 | merged:2026-02-19
+  files: .agents/scripts/supervisor/evaluate.sh, .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/supervisor/evaluate.sh
+  check: file-exists .agents/scripts/supervisor/evaluate.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
