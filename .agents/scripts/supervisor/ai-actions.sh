@@ -1332,12 +1332,50 @@ _exec_create_subtasks() {
 			return 1
 		fi
 	elif [[ -n "${SUPERVISOR_DB:-}" && -f "${SUPERVISOR_DB:-}" ]]; then
-		# DB exists but has no record for this task — refuse to guess (t1237).
-		# The task may belong to another repo with a colliding ID.
-		log_warn "create_subtasks: $parent_task_id not found in supervisor DB — cannot determine repo, refusing to guess"
-		jq -n --arg parent "$parent_task_id" \
-			'{"error":"task_not_in_db","parent_task_id":$parent,"detail":"Task not registered in supervisor DB. Cannot determine correct repo — refusing to create subtasks to prevent cross-repo writes."}'
-		return 1
+		# DB exists but has no record for this task — search all registered repos
+		# for the task in their TODO.md files (t1240). This handles parent tasks
+		# that appear in the eligibility assessment but were never dispatched
+		# (and thus never registered in the DB). If found in exactly one repo,
+		# use that repo. If found in multiple repos (ID collision), refuse to guess.
+		local found_repos=""
+		local all_registered_repos
+		all_registered_repos=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks WHERE repo IS NOT NULL AND repo != '';" 2>/dev/null || echo "")
+		while IFS= read -r candidate_repo; do
+			[[ -z "$candidate_repo" || ! -f "$candidate_repo/TODO.md" ]] && continue
+			if grep -qE "^\s*- \[.\] $parent_task_id " "$candidate_repo/TODO.md" 2>/dev/null; then
+				found_repos="${found_repos}${candidate_repo}"$'\n'
+			fi
+		done <<<"$all_registered_repos"
+		found_repos="${found_repos%$'\n'}"
+
+		local found_count
+		found_count=$(printf '%s' "$found_repos" | grep -c . 2>/dev/null || echo 0)
+
+		if [[ "$found_count" -eq 1 ]]; then
+			local canonical_found
+			canonical_found=$(realpath "$found_repos" 2>/dev/null || echo "")
+			if [[ -n "$canonical_found" && -f "$canonical_found/TODO.md" ]]; then
+				log_warn "create_subtasks: $parent_task_id not in DB but found in TODO.md at $canonical_found — using that repo (t1240)"
+				repo_path="$canonical_found"
+			else
+				log_warn "create_subtasks: $parent_task_id found in TODO.md at $found_repos but path is invalid"
+				jq -n --arg parent "$parent_task_id" --arg repo "$found_repos" \
+					'{"error":"todo_repo_path_invalid","parent_task_id":$parent,"repo_path":$repo}'
+				return 1
+			fi
+		elif [[ "$found_count" -gt 1 ]]; then
+			# Task ID exists in multiple repos — cannot safely determine which one (t1237).
+			log_warn "create_subtasks: $parent_task_id found in $found_count repos — ambiguous, refusing to guess"
+			jq -n --arg parent "$parent_task_id" --arg repos "$found_repos" \
+				'{"error":"task_id_ambiguous","parent_task_id":$parent,"found_in_repos":$repos,"detail":"Task ID exists in multiple repos. Cannot determine correct repo — refusing to create subtasks."}'
+			return 1
+		else
+			# Not found anywhere — the AI reasoner may be hallucinating (t1237).
+			log_warn "create_subtasks: $parent_task_id not found in supervisor DB or any registered repo TODO.md — refusing to guess"
+			jq -n --arg parent "$parent_task_id" \
+				'{"error":"task_not_found","parent_task_id":$parent,"detail":"Task not in supervisor DB or any registered repo TODO.md. Cannot determine correct repo — refusing to create subtasks."}'
+			return 1
+		fi
 	fi
 
 	local todo_file="$repo_path/TODO.md"
