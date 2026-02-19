@@ -186,13 +186,19 @@ _diagnose_stale_root_cause() {
 			_DIAG_EVAL_LAG_SECS="NULL"
 		fi
 
-		# t1251/t1254: Check if evaluation is actively in progress via heartbeat.
+		# t1251/t1254/t1259: Check if evaluation is actively in progress via heartbeat.
 		# MUST run BEFORE log content checks — if eval is actively running, we must
 		# skip regardless of what error strings appear in the log (t1258 fix: the
 		# previous ordering caused worker_failed_before_eval to fire on tasks that
 		# were actively evaluating, bypassing this heartbeat guard entirely).
 		# evaluate_with_ai() updates updated_at at the start of each AI eval call
 		# and every 20s via a periodic background heartbeat (t1254).
+		# t1259: Phase 1 also writes a pre-evaluation heartbeat immediately before
+		# calling evaluate_worker(), ensuring updated_at is fresh even for fast-path
+		# completions where evaluate_with_ai() is never called (tasks with
+		# FULL_LOOP_COMPLETE signal or PR URL + clean exit). Without this, the
+		# heartbeat window was anchored to cmd_transition("evaluating"), not the
+		# actual start of evaluation.
 		# heartbeat_window = eval_timeout * 2 + 60: defense-in-depth in case the
 		# heartbeat process itself fails or is delayed. Under normal operation the
 		# periodic heartbeat keeps updated_at fresh and a much smaller window would
@@ -512,6 +518,15 @@ cmd_stale_gc_report() {
 	" 2>/dev/null || echo "(no data)"
 
 	return 0
+}
+
+#######################################
+# Refresh updated_at for a task to extend Phase 0.7 heartbeat window (t1259)
+# Args: $1 = task_id
+#######################################
+_update_task_heartbeat() {
+	local task_id="$1"
+	db "$SUPERVISOR_DB" "UPDATE tasks SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || true
 }
 
 #######################################
@@ -852,7 +867,7 @@ cmd_pulse() {
 	# certainly has a dead evaluation process.
 	#   - SUPERVISOR_EVALUATING_GRACE_SECONDS (default 120 = 2 min)
 	#   - SUPERVISOR_STALE_GRACE_SECONDS (default 600 = 10 min) for running/dispatched
-	#   - SUPERVISOR_FAST_PATH_EVALUATING_GRACE_SECONDS (default 10s) for evaluating+PR
+	#   - SUPERVISOR_FAST_PATH_EVALUATING_GRACE_SECONDS (default 30s) for evaluating+PR (t1259: was 10s)
 	#   - SUPERVISOR_DEAD_PID_GRACE_SECONDS (default 60s) for running with dead PID
 	#   - SUPERVISOR_RATE_LIMIT_COOLDOWN_SECONDS (default 300 = 5 min) for rate-limited tasks (t1256)
 	#
@@ -868,12 +883,19 @@ cmd_pulse() {
 	local dead_pid_grace_seconds="${SUPERVISOR_DEAD_PID_GRACE_SECONDS:-60}"
 
 	# Fast-path 1 (t1250): evaluating tasks with pr_url already persisted — recover
-	# with a minimal 10s grace (vs 120s standard). The PR URL proves evaluate_worker()
+	# with a minimal grace (vs 120s standard). The PR URL proves evaluate_worker()
 	# ran far enough to find the PR (t1245 early-persist checkpoint). Only the final
-	# cmd_transition call was lost. A 10s grace avoids racing with the current pulse's
-	# own evaluation (Phase 1 transitions to evaluating, then immediately calls
-	# evaluate_worker — we don't want to recover a task that's actively evaluating).
-	local fast_path_evaluating_grace="${SUPERVISOR_FAST_PATH_EVALUATING_GRACE_SECONDS:-10}"
+	# cmd_transition call was lost. A grace period avoids racing with the current
+	# pulse's own evaluation (Phase 1 transitions to evaluating, then immediately
+	# calls evaluate_worker — we don't want to recover a task that's actively
+	# evaluating). t1259: Increased default from 10s to 30s — evaluate_worker()
+	# can take 10-30s for PR discovery via GitHub API. A 10s grace caused false
+	# recoveries when the task was actively being evaluated but updated_at was
+	# 10-30s old (set by cmd_transition("evaluating"), not yet refreshed by the
+	# t1259 pre-evaluation heartbeat). The heartbeat check in
+	# _diagnose_stale_root_cause() provides the real protection (240s window);
+	# this grace period is just a first-pass filter to avoid unnecessary work.
+	local fast_path_evaluating_grace="${SUPERVISOR_FAST_PATH_EVALUATING_GRACE_SECONDS:-30}"
 	local fast_path_evaluating_tasks
 	fast_path_evaluating_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
 		SELECT id, status, updated_at FROM tasks
@@ -1031,8 +1053,8 @@ cmd_pulse() {
 			# t1145/t1250/t1258: If the stale task has a PR, route to pr_review instead of
 			# re-queuing — the work is done, only evaluation (or the worker) died.
 			# Applies to both 'evaluating' and 'running' states with a PR URL.
-			# Fast-path evaluating tasks (with PR URL) arrive here with a 10s grace instead
-			# of 120s, reducing the median recovery latency from ~120s to ~10s.
+			# Fast-path evaluating tasks (with PR URL) arrive here with a 30s grace instead
+			# of 120s, reducing the median recovery latency from ~120s to ~30s (t1259: was 10s).
 			# Running tasks with a PR (e.g., worker_oom_killed after creating PR) previously
 			# went to queued unnecessarily — they should go directly to pr_review (t1258).
 			if [[ "$had_pr_flag" -eq 1 ]]; then
@@ -1332,6 +1354,17 @@ cmd_pulse() {
 				log_info "  $tid: PR already in DB ($tid_existing_pr) — skipping AI eval (t1251 fast-path)"
 			fi
 
+			# t1259: Pre-evaluation heartbeat — refresh updated_at immediately before
+			# calling evaluate_worker(). This ensures Phase 0.7's heartbeat check
+			# (240s window) is anchored to the start of evaluation, not the earlier
+			# cmd_transition("evaluating") call. Without this, fast-path completions
+			# (tasks where evaluate_worker() returns complete: without calling
+			# evaluate_with_ai()) have no heartbeat protection beyond the transition
+			# timestamp. If the pulse is killed between evaluate_worker() returning
+			# and cmd_transition("complete"), the task stays in evaluating with a
+			# stale updated_at and Phase 0.7 fires after 240s.
+			_update_task_heartbeat "$tid"
+
 			local outcome
 			local eval_maker="evaluate_worker"
 			# t1096: use evaluate_worker_with_metadata() to capture richer metadata
@@ -1345,6 +1378,16 @@ cmd_pulse() {
 			fi
 			local outcome_type="${outcome%%:*}"
 			local outcome_detail="${outcome#*:}"
+
+			# t1259: Post-evaluation heartbeat — refresh updated_at immediately after
+			# evaluate_worker() returns complete:*. This extends the Phase 0.7 grace
+			# window through the quality gate check and cmd_transition("complete") call.
+			# Without this, a pulse kill between evaluate_worker() returning and
+			# cmd_transition("complete") leaves the task in evaluating with a stale
+			# updated_at, causing Phase 0.7 to fire after 240s.
+			if [[ "$outcome_type" == "complete" ]]; then
+				_update_task_heartbeat "$tid"
+			fi
 
 			# Proof-log: record evaluation outcome (t218)
 			local _eval_duration
