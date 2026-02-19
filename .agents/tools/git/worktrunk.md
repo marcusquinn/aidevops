@@ -205,6 +205,26 @@ The `pre-edit-check.sh` script works with both tools:
 - Suggests worktree creation
 - In loop mode, auto-creates worktree
 
+### Localdev Integration (t1224.8)
+
+When creating a worktree for a project registered with `localdev add`, `worktree-helper.sh` automatically:
+
+1. Detects the project name from the repo path
+2. Runs `localdev branch <project> <branch>` to create a subdomain route
+3. Outputs the branch-specific URL (e.g., `https://feature-xyz.myapp.local`)
+
+When removing a worktree, the corresponding branch route is auto-cleaned.
+
+This works with both `worktree-helper.sh` and Worktrunk's `post-create` hook:
+
+```bash
+# .worktrunk/hooks/post-create — add to your project repo
+#!/bin/bash
+branch="$(git branch --show-current)"
+project="$(basename "$(git worktree list --porcelain | head -1 | cut -d' ' -f2-)")"
+~/.aidevops/agents/scripts/localdev-helper.sh branch "$project" "$branch" 2>/dev/null || true
+```
+
 ### Session Naming
 
 After creating a worktree, sync the session name:
