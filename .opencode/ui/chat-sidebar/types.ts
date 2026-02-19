@@ -251,7 +251,7 @@ export interface UseResizeReturn {
   isDragging: boolean
   /** Props to spread on the resize handle element */
   handleProps: {
-    onPointerDown: (e: React.PointerEvent) => void
-    style: React.CSSProperties
+    onPointerDown: (e: PointerEvent) => void
+    style: Record<string, string>
   }
 }
