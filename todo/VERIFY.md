@@ -1702,7 +1702,16 @@
   check: shellcheck .agents/scripts/supervisor/state.sh
   check: file-exists .agents/scripts/supervisor/state.sh
 
-- [ ] v205 t1250 Reduce stale-evaluating recovery frequency by improving w... | PR #1950 | merged:2026-02-19
+- [x] v205 t1250 Reduce stale-evaluating recovery frequency by improving w... | PR #1950 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/supervisor/pulse.sh
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
+
+- [ ] v206 t1224.8 Integrate localdev with aidevops worktree workflow — wh... | PR #1948 | merged:2026-02-19
+  files: .agents/scripts/worktree-helper.sh, .agents/tools/git/worktrunk.md, .agents/workflows/worktree.md
+  check: shellcheck .agents/scripts/worktree-helper.sh
+  check: file-exists .agents/scripts/worktree-helper.sh
+  check: file-exists .agents/tools/git/worktrunk.md
+  check: file-exists .agents/workflows/worktree.md
+  check: rg "worktrunk" .agents/subagent-index.toon
+  check: rg "worktree" .agents/subagent-index.toon
