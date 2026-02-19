@@ -466,7 +466,7 @@ You can propose these action types:
 
 1. **comment_on_issue** — Post a comment on a GitHub issue (acknowledge, provide status, request clarification)
 2. **create_task** — Add a new task to TODO.md (with title, description, tags, estimate, model tier)
-3. **create_subtasks** — Break down an existing task into subtasks
+3. **create_subtasks** — Break down an existing task into subtasks. Required fields: `parent_task_id` (string: the task ID to break down, e.g. `"t1234"`), `subtasks` (array of objects, each with `title`, `tags`, `estimate`, `model`), `reasoning` (string).
 4. **flag_for_review** — Flag an issue for human review with a reason
 5. **adjust_priority** — Suggest reordering tasks with reasoning. Required fields: `task_id` (string), `new_priority` (string: must be exactly `"high"`, `"medium"`, or `"low"`), `reasoning` (string)
 6. **close_verified** — Close an issue that has been verified complete (only if PR merged + evidence exists)
@@ -510,6 +510,25 @@ Respond with ONLY a JSON array of actions. Each action is an object with:
     "estimate": "~1h",
     "model": "sonnet",
     "reasoning": "Why this task is needed"
+  },
+  {
+    "type": "create_subtasks",
+    "parent_task_id": "t1234",
+    "subtasks": [
+      {
+        "title": "Research and design approach",
+        "tags": ["#auto-dispatch"],
+        "estimate": "~1h",
+        "model": "sonnet"
+      },
+      {
+        "title": "Implement the feature",
+        "tags": ["#auto-dispatch"],
+        "estimate": "~2h",
+        "model": "sonnet"
+      }
+    ],
+    "reasoning": "Task estimate exceeds 4h and has no existing subtasks — breaking into dispatchable units"
   },
   {
     "type": "create_improvement",
@@ -577,6 +596,7 @@ Respond with ONLY a JSON array of actions. Each action is an object with:
 - For create_improvement: focus on changes that reduce future token spend or manual intervention. Quantify the expected benefit when possible (e.g., "saves ~500 tokens/task" or "eliminates manual step that fails 30% of the time").
 - Self-improvement tasks should be tagged with `#self-improvement` and `#auto-dispatch` so they flow through the normal pipeline.
 - For adjust_priority: `new_priority` is REQUIRED and must be exactly one of `"high"`, `"medium"`, or `"low"`. Actions missing this field will be skipped by the executor.
+- For create_subtasks: `parent_task_id` is REQUIRED (the task ID string, e.g. `"t1234"`). `subtasks` is REQUIRED and must be a non-empty array. Actions missing either field will be skipped by the executor.
 - For propose_auto_dispatch: only propose for tasks listed as "eligible" in the Auto-Dispatch Eligibility Assessment section. The executor uses a two-phase guard: first pulse adds `[proposed:auto-dispatch]` annotation, second pulse (confirmation) applies the actual `#auto-dispatch` tag. This prevents accidental tagging. Required fields: `task_id` (string), `recommended_model` (string: haiku|sonnet|opus), `reasoning` (string).
 
 Respond with ONLY the JSON array. No markdown fencing, no explanation outside the JSON.
