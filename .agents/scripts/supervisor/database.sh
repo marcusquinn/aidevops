@@ -738,6 +738,19 @@ CONTEST_SQL
 		log_success "Added eval_duration_secs column to tasks (t1252)"
 	fi
 
+	# Migrate: add rate_limit_until column to tasks if missing (t1256)
+	# When Phase 0.7 recovers a worker_rate_limited task, this timestamp is set
+	# to now + cooldown (default 5 min). cmd_next() skips tasks where
+	# rate_limit_until > now, preventing immediate re-dispatch into the same
+	# rate limit. Addresses the #1 stale-evaluating root cause (29% of events).
+	local has_rate_limit_until
+	has_rate_limit_until=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('tasks') WHERE name='rate_limit_until';" 2>/dev/null || echo "0")
+	if [[ "$has_rate_limit_until" -eq 0 ]]; then
+		log_info "Migrating tasks table: adding rate_limit_until column (t1256)..."
+		db "$SUPERVISOR_DB" "ALTER TABLE tasks ADD COLUMN rate_limit_until TEXT DEFAULT NULL;" 2>/dev/null || true
+		log_success "Added rate_limit_until column to tasks (t1256)"
+	fi
+
 	# Prune old action_dedup_log entries (keep last 7 days)
 	db "$SUPERVISOR_DB" "DELETE FROM action_dedup_log WHERE created_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-7 days');" 2>/dev/null || true
 
@@ -797,6 +810,10 @@ CREATE TABLE IF NOT EXISTS tasks (
     -- t1252: duration of the AI evaluation step in seconds
     -- enables trend analysis and early detection of evaluation hangs
     eval_duration_secs INTEGER DEFAULT NULL,
+    -- t1256: rate limit cooldown — Phase 0.7 sets this when recovering a
+    -- worker_rate_limited task. cmd_next() skips tasks until this timestamp
+    -- passes, preventing immediate re-dispatch into the same rate limit.
+    rate_limit_until TEXT DEFAULT NULL,
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
     started_at      TEXT,
     completed_at    TEXT,

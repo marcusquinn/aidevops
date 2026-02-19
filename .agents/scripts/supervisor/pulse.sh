@@ -233,6 +233,17 @@ _diagnose_stale_root_cause() {
 			return 0
 		fi
 
+		# t1256: Check for eval checkpoint file — written by evaluate_with_ai() at
+		# eval start and removed on completion. If it exists, the pulse was killed
+		# mid-evaluation (SIGTERM, cron restart, system shutdown). This is a more
+		# precise diagnosis than the generic "eval_process_died" fallback.
+		local eval_checkpoint_dir="${SUPERVISOR_DIR}/eval-checkpoints"
+		local eval_checkpoint_file="${eval_checkpoint_dir}/${task_id}.eval"
+		if [[ -f "$eval_checkpoint_file" ]]; then
+			echo "pulse_killed_mid_eval"
+			return 0
+		fi
+
 		# Check if the pulse was killed mid-evaluation (no completion marker)
 		echo "eval_process_died"
 		return 0
@@ -445,6 +456,31 @@ cmd_stale_gc_report() {
 			FROM tasks
 			WHERE eval_duration_secs IS NOT NULL
 			AND updated_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days');
+		" 2>/dev/null || echo "(no data)"
+		echo ""
+	fi
+
+	# t1256: Rate limit cooldown status — tasks currently deferred due to rate limiting
+	local rate_limited_count
+	rate_limited_count=$(db "$SUPERVISOR_DB" "
+		SELECT count(*) FROM tasks
+		WHERE status = 'queued'
+		AND rate_limit_until IS NOT NULL
+		AND rate_limit_until > strftime('%Y-%m-%dT%H:%M:%SZ','now');
+	" 2>/dev/null || echo "0")
+	if [[ "$rate_limited_count" -gt 0 ]]; then
+		echo "--- Rate Limit Cooldown (t1256) ---"
+		echo "Tasks currently deferred (rate_limit_until > now): $rate_limited_count"
+		db -column -header "$SUPERVISOR_DB" "
+			SELECT
+				id AS Task,
+				rate_limit_until AS 'Retry After',
+				retries AS Retries
+			FROM tasks
+			WHERE status = 'queued'
+			AND rate_limit_until IS NOT NULL
+			AND rate_limit_until > strftime('%Y-%m-%dT%H:%M:%SZ','now')
+			ORDER BY rate_limit_until ASC;
 		" 2>/dev/null || echo "(no data)"
 		echo ""
 	fi
@@ -787,6 +823,7 @@ cmd_pulse() {
 	#   - SUPERVISOR_STALE_GRACE_SECONDS (default 600 = 10 min) for running/dispatched
 	#   - SUPERVISOR_FAST_PATH_EVALUATING_GRACE_SECONDS (default 10s) for evaluating+PR
 	#   - SUPERVISOR_DEAD_PID_GRACE_SECONDS (default 60s) for running with dead PID
+	#   - SUPERVISOR_RATE_LIMIT_COOLDOWN_SECONDS (default 300 = 5 min) for rate-limited tasks (t1256)
 	#
 	# Fast-path recovery (t1250): Two additional zero-grace queries eliminate the
 	# most common stale-evaluating patterns without waiting for grace periods:
@@ -980,6 +1017,15 @@ cmd_pulse() {
 				local new_retries=$((stale_retries + 1))
 				log_info "  Phase 0.7: $stale_id → queued (retry $new_retries/$stale_max_retries, was $stale_status, cause: $root_cause)"
 				db "$SUPERVISOR_DB" "UPDATE tasks SET retries = $new_retries WHERE id = '$(sql_escape "$stale_id")';" 2>/dev/null || true
+				# t1256: Rate limit cooldown — when the root cause is worker_rate_limited,
+				# set rate_limit_until to prevent immediate re-dispatch into the same limit.
+				# Default cooldown: 5 minutes (SUPERVISOR_RATE_LIMIT_COOLDOWN_SECONDS).
+				# This addresses the #1 stale-evaluating root cause (29% of events).
+				if [[ "$root_cause" == "worker_rate_limited" ]]; then
+					local rate_limit_cooldown="${SUPERVISOR_RATE_LIMIT_COOLDOWN_SECONDS:-300}"
+					db "$SUPERVISOR_DB" "UPDATE tasks SET rate_limit_until = strftime('%Y-%m-%dT%H:%M:%SZ','now','+${rate_limit_cooldown} seconds') WHERE id = '$(sql_escape "$stale_id")';" 2>/dev/null || true
+					log_info "  Phase 0.7: $stale_id rate_limit_until set (+${rate_limit_cooldown}s cooldown, t1256)"
+				fi
 				cmd_transition "$stale_id" "queued" --error "Stale state recovery (Phase 0.7/t1132): was $stale_status with no live worker for >${effective_grace}s (cause: $root_cause)" 2>>"$SUPERVISOR_LOG" || true
 				db "$SUPERVISOR_DB" "
 					INSERT INTO state_log (task_id, from_state, to_state, reason)
@@ -1018,6 +1064,15 @@ cmd_pulse() {
 
 			# Clean up worker process tree (in case of zombie children)
 			cleanup_worker_processes "$stale_id" 2>>"$SUPERVISOR_LOG" || true
+
+			# t1256: Clean up eval checkpoint file if it exists — the task has been
+			# recovered, so the checkpoint is no longer needed. Prevents accumulation
+			# of stale checkpoint files from pulse_killed_mid_eval recoveries.
+			local stale_eval_checkpoint="${SUPERVISOR_DIR}/eval-checkpoints/${stale_id}.eval"
+			if [[ -f "$stale_eval_checkpoint" ]]; then
+				rm -f "$stale_eval_checkpoint" 2>/dev/null || true
+				log_verbose "  Phase 0.7: removed eval checkpoint for $stale_id"
+			fi
 
 			stale_recovered=$((stale_recovered + 1))
 		done <<<"$stale_active_tasks"

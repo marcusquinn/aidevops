@@ -1439,6 +1439,18 @@ Respond with ONLY the verdict line, nothing else. Example: VERDICT:retry:rate_li
 	# "eval in progress" vs "eval died" — reduces false stale-evaluating recoveries.
 	log_info "evaluate_with_ai: starting AI eval for $task_id (timeout=${eval_timeout}s, model=$eval_model, started=$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo 'unknown'))"
 
+	# t1256: Write eval checkpoint file — persists across pulse restarts.
+	# If the pulse is killed mid-eval (SIGTERM, cron restart, system shutdown),
+	# the checkpoint file survives. _diagnose_stale_root_cause() reads it to
+	# distinguish "pulse_killed_mid_eval" from "eval_process_died" (unknown cause).
+	# The checkpoint is removed when evaluate_with_ai() returns (success or timeout).
+	local _eval_checkpoint_dir="${SUPERVISOR_DIR}/eval-checkpoints"
+	local _eval_checkpoint_file=""
+	mkdir -p "$_eval_checkpoint_dir" 2>/dev/null || true
+	_eval_checkpoint_file="${_eval_checkpoint_dir}/${task_id}.eval"
+	printf '%s\n%s\n' "$$" "$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo 'unknown')" >"$_eval_checkpoint_file" 2>/dev/null || _eval_checkpoint_file=""
+	push_cleanup "rm -f '${_eval_checkpoint_file}' 2>/dev/null || true"
+
 	# t1251: Initial heartbeat — touch updated_at so Phase 0.7's grace period
 	# doesn't fire while evaluation is actively running.
 	db "$SUPERVISOR_DB" "UPDATE tasks SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || true
