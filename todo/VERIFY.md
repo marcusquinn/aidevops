@@ -1662,12 +1662,17 @@
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
 
-- [ ] v199 t1224.6 Create local-hosting agent (`.agents/services/hosting/loc... | PR #1939 | merged:2026-02-19
+- [!] v199 t1224.6 Create local-hosting agent (`.agents/services/hosting/loc... | PR #1939 | merged:2026-02-19 failed:2026-02-19 reason:rg: "local-hosting" not found in .agents/subagent-index.toon
   files: .agents/services/hosting/local-hosting.md
   check: file-exists .agents/services/hosting/local-hosting.md
   check: rg "local-hosting" .agents/subagent-index.toon
 
-- [ ] v200 t1246 Auto-unblock tasks when blockers are verified — verify ... | PR #1938 | merged:2026-02-19
+- [x] v200 t1246 Auto-unblock tasks when blockers are verified — verify ... | PR #1938 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/supervisor/todo-sync.sh
   check: shellcheck .agents/scripts/supervisor/todo-sync.sh
   check: file-exists .agents/scripts/supervisor/todo-sync.sh
+
+- [ ] v201 t1224.7 Migrate awardsapp to new localdev setup — validate end-... | PR #1943 | merged:2026-02-19
+  files: .agents/services/hosting/local-hosting.md
+  check: file-exists .agents/services/hosting/local-hosting.md
+  check: rg "local-hosting" .agents/subagent-index.toon
