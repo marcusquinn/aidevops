@@ -1705,6 +1705,12 @@ cmd_db_url() {
 		return 1
 	fi
 
+	# Validate name (mirrors cmd_db_create)
+	if ! echo "$dbname" | grep -qE '^[a-zA-Z][a-zA-Z0-9_-]*$'; then
+		print_error "Invalid database name '$dbname': must start with a letter, then letters/numbers/hyphens/underscores"
+		return 1
+	fi
+
 	# Convert hyphens to underscores
 	local pg_dbname
 	pg_dbname="$(echo "$dbname" | tr '-' '_')"
@@ -1740,20 +1746,18 @@ cmd_db_list() {
 	echo ""
 
 	# List user databases (exclude template and postgres system dbs)
-	docker exec "$LOCALDEV_PG_CONTAINER" psql -U "$LOCALDEV_PG_USER" -tAc \
-		"SELECT datname FROM pg_database WHERE datistemplate = false AND datname != 'postgres' ORDER BY datname" 2>/dev/null | while IFS= read -r db; do
-		[[ -z "$db" ]] && continue
-		echo "  $db"
-		echo "    $(cmd_db_url_string "$db")"
-	done
+	local db_list
+	db_list="$(docker exec "$LOCALDEV_PG_CONTAINER" psql -U "$LOCALDEV_PG_USER" -tAc \
+		"SELECT datname FROM pg_database WHERE datistemplate = false AND datname != 'postgres' ORDER BY datname" 2>/dev/null)"
 
-	# Check if any user databases exist
-	local count
-	count="$(docker exec "$LOCALDEV_PG_CONTAINER" psql -U "$LOCALDEV_PG_USER" -tAc \
-		"SELECT count(*) FROM pg_database WHERE datistemplate = false AND datname != 'postgres'" 2>/dev/null | tr -d ' ')"
-
-	if [[ "${count:-0}" -eq 0 ]]; then
+	if [[ -z "$db_list" ]]; then
 		print_info "  No user databases. Create one: localdev-helper.sh db create <name>"
+	else
+		while IFS= read -r db; do
+			[[ -z "$db" ]] && continue
+			echo "  $db"
+			echo "    $(cmd_db_url_string "$db")"
+		done <<<"$db_list"
 	fi
 
 	echo ""
@@ -1769,6 +1773,12 @@ cmd_db_drop() {
 
 	if [[ -z "$dbname" ]]; then
 		print_error "Usage: localdev-helper.sh db drop <dbname> [--force]"
+		return 1
+	fi
+
+	# Validate name (mirrors cmd_db_create)
+	if ! echo "$dbname" | grep -qE '^[a-zA-Z][a-zA-Z0-9_-]*$'; then
+		print_error "Invalid database name '$dbname': must start with a letter, then letters/numbers/hyphens/underscores"
 		return 1
 	fi
 
@@ -1803,7 +1813,7 @@ cmd_db_drop() {
 	docker exec "$LOCALDEV_PG_CONTAINER" psql -U "$LOCALDEV_PG_USER" -c \
 		"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$pg_dbname' AND pid <> pg_backend_pid()" >/dev/null 2>&1 || true
 
-	docker exec "$LOCALDEV_PG_CONTAINER" dropdb -U "$LOCALDEV_PG_USER" "$pg_dbname" 2>/dev/null || {
+	docker exec "$LOCALDEV_PG_CONTAINER" dropdb -U "$LOCALDEV_PG_USER" "$pg_dbname" || {
 		print_error "Failed to drop database '$pg_dbname'"
 		return 1
 	}
@@ -1888,7 +1898,7 @@ cmd_db_help() {
 	echo "  start              Ensure shared local-postgres container is running"
 	echo "  stop               Stop the shared Postgres container"
 	echo "  create <dbname>    Create a database (e.g., myapp, myapp-feature-xyz)"
-	echo "  drop <dbname> [-f] Drop a database (requires --force)"
+	echo "  drop <dbname> [--force|-f]  Drop a database (requires confirmation flag)"
 	echo "  list               List all user databases with connection strings"
 	echo "  url <dbname>       Output connection string for a database"
 	echo "  status             Show container and database status"
