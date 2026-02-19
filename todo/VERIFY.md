@@ -1707,7 +1707,7 @@
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
 
-- [ ] v206 t1224.8 Integrate localdev with aidevops worktree workflow — wh... | PR #1948 | merged:2026-02-19
+- [!] v206 t1224.8 Integrate localdev with aidevops worktree workflow — wh... | PR #1948 | merged:2026-02-19 failed:2026-02-19 reason:rg: "worktree" not found in .agents/subagent-index.toon
   files: .agents/scripts/worktree-helper.sh, .agents/tools/git/worktrunk.md, .agents/workflows/worktree.md
   check: shellcheck .agents/scripts/worktree-helper.sh
   check: file-exists .agents/scripts/worktree-helper.sh
@@ -1715,3 +1715,10 @@
   check: file-exists .agents/workflows/worktree.md
   check: rg "worktrunk" .agents/subagent-index.toon
   check: rg "worktree" .agents/subagent-index.toon
+
+- [ ] v207 t1251 Investigate frequent stale-evaluating recovery pattern in... | PR #1952 | merged:2026-02-19
+  files: .agents/scripts/supervisor/evaluate.sh, .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/supervisor/evaluate.sh
+  check: file-exists .agents/scripts/supervisor/evaluate.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
