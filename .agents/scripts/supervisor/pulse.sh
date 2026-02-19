@@ -192,7 +192,29 @@ _diagnose_stale_root_cause() {
 			return 0
 		fi
 
-		# Check if there's an AI eval timeout indicator
+		# t1251: Check if evaluation is actively in progress via heartbeat.
+		# evaluate_with_ai() updates updated_at at the start of each AI eval call.
+		# If updated_at is very recent (< eval_timeout + 30s buffer), the eval is
+		# likely still running — not stuck. Return a distinct cause so callers can
+		# skip recovery for actively-evaluating tasks.
+		local eval_timeout_cfg="${SUPERVISOR_EVAL_TIMEOUT:-90}"
+		local heartbeat_window=$((eval_timeout_cfg + 30))
+		local db_updated_at
+		db_updated_at=$(db "$SUPERVISOR_DB" "SELECT updated_at FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+		if [[ -n "$db_updated_at" ]]; then
+			local updated_epoch now_epoch secs_since_update
+			updated_epoch=$(_iso_to_epoch "$db_updated_at")
+			now_epoch=$(date +%s 2>/dev/null || echo 0)
+			if [[ "$updated_epoch" -gt 0 && "$now_epoch" -gt 0 ]]; then
+				secs_since_update=$((now_epoch - updated_epoch))
+				if [[ "$secs_since_update" -lt "$heartbeat_window" ]]; then
+					echo "eval_in_progress_heartbeat_${secs_since_update}s"
+					return 0
+				fi
+			fi
+		fi
+
+		# Check if there's an AI eval timeout indicator in the supervisor log
 		if grep -q 'evaluate_with_ai\|AI evaluation' "$log_file" 2>/dev/null; then
 			echo "ai_eval_timeout"
 			return 0
@@ -881,6 +903,17 @@ cmd_pulse() {
 			local had_pr_flag=0
 			[[ -n "$stale_pr_url" && "$stale_pr_url" != "no_pr" && "$stale_pr_url" != "task_only" ]] && had_pr_flag=1
 
+			# t1251: Skip recovery if evaluation is actively in progress (heartbeat check).
+			# evaluate_with_ai() updates updated_at at the start of each AI eval call.
+			# If the root cause is eval_in_progress_heartbeat_*, the task is not stuck —
+			# it's actively evaluating. Recovering it would interrupt a live eval and
+			# cause unnecessary re-queuing (the primary driver of the 73% stale rate).
+			if [[ "$root_cause" == eval_in_progress_heartbeat_* ]]; then
+				log_info "  Phase 0.7: $stale_id skipped — AI eval actively in progress ($root_cause)"
+				stale_skipped=$((stale_skipped + 1))
+				continue
+			fi
+
 			# No live worker — this is stale state. Transition based on retry eligibility.
 			# Effective grace: fast-path (evaluating+PR) < evaluating < running/dispatched
 			local effective_grace="$stale_grace_seconds"
@@ -1165,10 +1198,22 @@ cmd_pulse() {
 			tid_model=$(db "$SUPERVISOR_DB" "SELECT model FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "")
 			tid_repo=$(db "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "")
 
-			# Skip AI eval for stuck tasks (it already timed out once)
+			# t1251: Fast-path evaluation for tasks with PR already in DB (t1245 early-persist).
+			# If the PR URL is already persisted, evaluate_worker() will find it immediately
+			# via the heuristic tiers and return complete: without needing AI eval.
+			# Skip AI eval proactively to avoid the 60-90s AI eval window that causes
+			# tasks to appear stuck in 'evaluating' and trigger Phase 0.7 recovery.
+			local tid_existing_pr
+			tid_existing_pr=$(db "$SUPERVISOR_DB" "SELECT pr_url FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "")
 			local skip_ai="false"
 			if [[ "$current_task_state" == "evaluating" ]]; then
+				# Already stuck in evaluating — skip AI (it already timed out once)
 				skip_ai="true"
+			elif [[ -n "$tid_existing_pr" && "$tid_existing_pr" != "no_pr" && "$tid_existing_pr" != "task_only" && "$tid_existing_pr" != "task_obsolete" ]]; then
+				# PR already in DB from t1245 early-persist — heuristic tiers will find it,
+				# no need for AI eval. Skipping saves 60-90s and prevents stale-evaluating.
+				skip_ai="true"
+				log_info "  $tid: PR already in DB ($tid_existing_pr) — skipping AI eval (t1251 fast-path)"
 			fi
 
 			local outcome
@@ -1524,6 +1569,15 @@ cmd_pulse() {
 			local stuck_worker_completed_at="${_DIAG_WORKER_COMPLETED_AT:-}"
 			local stuck_eval_started_at="${_DIAG_EVAL_STARTED_AT:-}"
 			local stuck_eval_lag_secs="${_DIAG_EVAL_LAG_SECS:-NULL}"
+
+			# t1251: Skip recovery if evaluation is actively in progress (heartbeat check).
+			# The heartbeat in evaluate_with_ai() updates updated_at at eval start.
+			# Phase 1c's grace query uses updated_at, so a heartbeat-refreshed task
+			# won't appear here — but check anyway as a safety net.
+			if [[ "$stuck_root_cause" == eval_in_progress_heartbeat_* ]]; then
+				log_info "  Phase 1c: $stuck_id skipped — AI eval actively in progress ($stuck_root_cause)"
+				continue
+			fi
 
 			# Calculate stale duration
 			local stuck_stale_secs=0
