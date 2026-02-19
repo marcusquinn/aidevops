@@ -1001,14 +1001,18 @@ cmd_next() {
 			local parent_id="${cid%.*}"
 			local suffix="${cid##*.}"
 
-			# Check if any earlier sibling (same parent, lower suffix) is non-terminal
+			# Check if any earlier sibling (same parent, lower suffix) is non-terminal.
+			# t1253: 'failed' (max retries exhausted) and 'blocked' (waiting on deps,
+			# not in-flight) are treated as terminal for sibling ordering purposes.
+			# A failed or blocked earlier sibling should not indefinitely prevent
+			# later siblings from being dispatched.
 			local earlier_active
 			earlier_active=$(db "$SUPERVISOR_DB" "
 				SELECT count(*) FROM tasks
 				WHERE id LIKE '$(sql_escape "$parent_id").%'
 				  AND id != '$(sql_escape "$cid")'
 				  AND CAST(REPLACE(id, '$(sql_escape "$parent_id").', '') AS INTEGER) < $suffix
-				  AND status NOT IN ('verified','cancelled','deployed','complete');
+				  AND status NOT IN ('verified','cancelled','deployed','complete','failed','blocked');
 			" 2>/dev/null || echo "0")
 
 			if [[ "$earlier_active" -gt 0 ]]; then
