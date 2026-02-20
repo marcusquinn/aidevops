@@ -1366,15 +1366,23 @@ cmd_pulse() {
 				# rolling back to 'running' is the safest option (worker is dead, but
 				# 'running' lets Phase 1 re-evaluate on next pulse without grace delay).
 				_phase1_pre_eval_state="running"
+				# t1269: Mark this task as actively being evaluated BEFORE any state
+				# transition, so the SIGTERM cleanup handler always knows which task
+				# to roll back. The SQL guard (AND status = 'evaluating') makes a
+				# premature rollback a no-op if the transition hasn't committed yet.
+				_phase1_evaluating_tid="$tid"
 			else
 				log_info "  $tid: worker finished, evaluating..."
 				# t1269: Record pre-eval state before transitioning
 				_phase1_pre_eval_state="$current_task_state"
+				# t1269: Mark this task as actively being evaluated BEFORE the
+				# transition to close the SIGTERM race window. If SIGTERM arrives
+				# after this but before cmd_transition, the cleanup handler's SQL
+				# guard (AND status = 'evaluating') makes the rollback a no-op.
+				_phase1_evaluating_tid="$tid"
 				# Transition to evaluating
 				cmd_transition "$tid" "evaluating" 2>>"$SUPERVISOR_LOG" || true
 			fi
-			# t1269: Mark this task as actively being evaluated
-			_phase1_evaluating_tid="$tid"
 
 			# Get task description for memory context (t128.6)
 			local tid_desc
