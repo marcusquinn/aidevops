@@ -1208,9 +1208,11 @@ auto_unblock_resolved_tasks() {
 					2>/dev/null || echo "")
 				if [[ "$blocker_failed_status" == "failed" ]]; then
 					local blocker_retries_left blocker_max_retries_left
-					blocker_retries_left=$(db "$SUPERVISOR_DB" "SELECT COALESCE(retries, 0) FROM tasks WHERE id = '$(sql_escape "$blocker_id")';" 2>/dev/null || echo "0")
-					blocker_max_retries_left=$(db "$SUPERVISOR_DB" "SELECT COALESCE(max_retries, 3) FROM tasks WHERE id = '$(sql_escape "$blocker_id")';" 2>/dev/null || echo "0")
-					# Guard against empty strings from race conditions
+					blocker_retries_left=$(db "$SUPERVISOR_DB" "SELECT COALESCE(retries, 0) FROM tasks WHERE id = '$(sql_escape "$blocker_id")';" 2>/dev/null || echo "")
+					blocker_max_retries_left=$(db "$SUPERVISOR_DB" "SELECT COALESCE(max_retries, 3) FROM tasks WHERE id = '$(sql_escape "$blocker_id")';" 2>/dev/null || echo "")
+					# Guard against empty strings from race conditions or db failure
+					# Default max_retries to 3 (not 0) so db failure doesn't falsely
+					# trigger "retries exhausted" and prematurely unblock dependents
 					blocker_retries_left="${blocker_retries_left:-0}"
 					blocker_max_retries_left="${blocker_max_retries_left:-3}"
 					if [[ "$blocker_retries_left" -ge "$blocker_max_retries_left" ]]; then

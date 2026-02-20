@@ -131,9 +131,13 @@ _check_db_failed_with_claims() {
 	while IFS='|' read -r task_id db_status db_error db_retries db_max_retries; do
 		[[ -z "$task_id" ]] && continue
 
+		# Escape dots in task IDs (e.g., t215.3) for grep ERE patterns
+		local escaped_task_id
+		escaped_task_id=$(printf '%s' "$task_id" | sed 's/\./\\./g')
+
 		# Check if this task is open in TODO.md with a claim
 		local todo_line
-		todo_line=$(grep -E "^[[:space:]]*- \[ \] ${task_id}( |$)" "$todo_file" 2>/dev/null || echo "")
+		todo_line=$(grep -E "^[[:space:]]*- \[ \] ${escaped_task_id}( |$)" "$todo_file" 2>/dev/null || echo "")
 		[[ -z "$todo_line" ]] && continue
 
 		# Check for assignee: or started: fields
@@ -201,10 +205,15 @@ _check_failed_blocker_chains() {
 		blocked_by=$(printf '%s' "$line" | grep -oE 'blocked-by:[^ ]+' | head -1 | sed 's/blocked-by://' || echo "")
 		[[ -z "$blocked_by" ]] && continue
 
+		# Escape dots in task ID for grep ERE patterns (e.g., t215.3 → t215\.3)
+		local escaped_task_id
+		escaped_task_id=$(printf '%s' "$task_id" | sed 's/\./\\./g')
+
 		# Check each blocker against the DB
-		local _saved_ifs="$IFS"
-		IFS=','
-		for blocker_id in $blocked_by; do
+		# Use read-based splitting instead of IFS mutation to avoid corrupting
+		# global IFS if an early exit occurs under set -euo pipefail
+		local blocker_id
+		while IFS= read -r blocker_id; do
 			[[ -z "$blocker_id" ]] && continue
 
 			# Is this blocker failed in the DB?
@@ -237,7 +246,7 @@ _check_failed_blocker_chains() {
 
 					# Remove this specific blocker from the blocked-by field
 					local line_num
-					line_num=$(grep -nE "^[[:space:]]*- \[ \] ${task_id}( |$)" "$todo_file" | head -1 | cut -d: -f1 || echo "")
+					line_num=$(grep -nE "^[[:space:]]*- \[ \] ${escaped_task_id}( |$)" "$todo_file" | head -1 | cut -d: -f1 || echo "")
 					if [[ -n "$line_num" ]]; then
 						if [[ "$blocked_by" == "$blocker_id" ]]; then
 							# Only blocker — remove the whole field
@@ -263,8 +272,7 @@ _check_failed_blocker_chains() {
 					fi
 				fi
 			fi
-		done
-		IFS="$_saved_ifs"
+		done < <(tr ',' '\n' <<<"$blocked_by")
 	done <<<"$blocked_tasks"
 
 	if [[ "$fixed" -gt 0 ]]; then
@@ -327,6 +335,10 @@ _check_missing_auto_dispatch() {
 			task_id=$(printf '%s' "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
 			[[ -z "$task_id" ]] && continue
 
+			# Escape dots in task ID for grep ERE patterns
+			local escaped_task_id
+			escaped_task_id=$(printf '%s' "$task_id" | sed 's/\./\\./g')
+
 			# Skip if already tracked in DB (may have been manually dispatched)
 			local existing
 			existing=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo "")
@@ -336,20 +348,20 @@ _check_missing_auto_dispatch() {
 
 			# Auto-tag: add #auto-dispatch to the task line
 			local line_num
-			line_num=$(grep -nE "^[[:space:]]*- \[ \] ${task_id}( |$)" "$todo_file" | head -1 | cut -d: -f1 || echo "")
+			line_num=$(grep -nE "^[[:space:]]*- \[ \] ${escaped_task_id}( |$)" "$todo_file" | head -1 | cut -d: -f1 || echo "")
 			if [[ -n "$line_num" ]]; then
 				# Insert #auto-dispatch before the first — or at end of tags
 				# Find where to insert: after the last #tag before any —
 				sed_inplace "${line_num}s/\(#[a-zA-Z][a-zA-Z0-9_-]*\)\([[:space:]]\)/\1 #auto-dispatch\2/" "$todo_file"
 
 				# Verify it was added (sed may not have matched if tag format differs)
-				if grep -q "^[[:space:]]*- \[ \] ${task_id}.*#auto-dispatch" "$todo_file"; then
+				if grep -q "^[[:space:]]*- \[ \] ${escaped_task_id}.*#auto-dispatch" "$todo_file"; then
 					log_success "  Sanity check 3: $task_id — auto-tagged #auto-dispatch (has model:, estimate, no blockers)"
 					fixed=$((fixed + 1))
 				else
 					# Fallback: append before the description separator
 					sed_inplace "${line_num}s/ — / #auto-dispatch — /" "$todo_file"
-					if grep -q "^[[:space:]]*- \[ \] ${task_id}.*#auto-dispatch" "$todo_file"; then
+					if grep -q "^[[:space:]]*- \[ \] ${escaped_task_id}.*#auto-dispatch" "$todo_file"; then
 						log_success "  Sanity check 3: $task_id — auto-tagged #auto-dispatch (fallback insertion)"
 						fixed=$((fixed + 1))
 					else
@@ -392,8 +404,12 @@ _check_db_orphans() {
 	while IFS='|' read -r task_id db_status; do
 		[[ -z "$task_id" ]] && continue
 
+		# Escape dots in task ID for grep ERE patterns
+		local escaped_task_id
+		escaped_task_id=$(printf '%s' "$task_id" | sed 's/\./\\./g')
+
 		# Check if task exists in TODO.md (any state)
-		if ! grep -qE "^[[:space:]]*- \[.\] ${task_id}( |$)" "$todo_file" 2>/dev/null; then
+		if ! grep -qE "^[[:space:]]*- \[.\] ${escaped_task_id}( |$)" "$todo_file" 2>/dev/null; then
 			log_warn "  Sanity check 4: $task_id is '$db_status' in DB but missing from TODO.md — cancelling"
 			cmd_transition "$task_id" "cancelled" --error "Sanity check: DB orphan with no TODO.md entry" >>"${SUPERVISOR_LOG:-/dev/null}" 2>&1 || true
 			fixed=$((fixed + 1))
