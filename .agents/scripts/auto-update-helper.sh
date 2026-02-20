@@ -109,7 +109,11 @@ _get_scheduler_backend() {
 # Returns: 0 if loaded, 1 if not
 #######################################
 _launchd_is_loaded() {
-	launchctl list 2>/dev/null | grep -qF "$LAUNCHD_LABEL"
+	# Use a variable to avoid SIGPIPE (141) when grep -q exits early
+	# under set -o pipefail (t1265)
+	local output
+	output=$(launchctl list 2>/dev/null) || true
+	echo "$output" | grep -qF "$LAUNCHD_LABEL"
 	return $?
 }
 

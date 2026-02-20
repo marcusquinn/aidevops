@@ -54,7 +54,11 @@ _plist_path() {
 #######################################
 _launchd_is_loaded() {
 	local label="$1"
-	launchctl list 2>/dev/null | grep -qF "$label"
+	# Use a variable to avoid SIGPIPE (141) when grep -q exits early
+	# under set -o pipefail (t1265)
+	local output
+	output=$(launchctl list 2>/dev/null) || true
+	echo "$output" | grep -qF "$label"
 	return $?
 }
 
