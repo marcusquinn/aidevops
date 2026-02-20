@@ -1802,3 +1802,13 @@
   check: file-exists .agents/scripts/supervisor/dispatch.sh
   check: shellcheck .agents/scripts/supervisor/evaluate.sh
   check: file-exists .agents/scripts/supervisor/evaluate.sh
+
+- [ ] v219 t1263 Add stale-claim auto-recovery to supervisor pulse #enhanc... | PR #1982 | merged:2026-02-20
+  files: .agents/AGENTS.md, .agents/scripts/supervisor-helper.sh, .agents/scripts/supervisor/pulse.sh, .agents/scripts/supervisor/todo-sync.sh
+  check: file-exists .agents/AGENTS.md
+  check: shellcheck .agents/scripts/supervisor-helper.sh
+  check: file-exists .agents/scripts/supervisor-helper.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/supervisor/todo-sync.sh
+  check: file-exists .agents/scripts/supervisor/todo-sync.sh
