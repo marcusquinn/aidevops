@@ -1845,7 +1845,7 @@
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
 
-- [ ] v225 t1271 Mobile app dev and browser extension dev agents — compr... | PR #2011 | merged:2026-02-20
+- [!] v225 t1271 Mobile app dev and browser extension dev agents — compr... | PR #2011 | merged:2026-02-20 failed:2026-02-20 reason:rg: "revenuecat" not found in .agents/subagent-index.toon; rg: "stripe" not found in .agents/subagent-index.toon; rg: "superwall" not found in .agents/subagent-index.toon; rg: "design-inspiration" 
   files: .agents/AGENTS.md, .agents/browser-extension-dev.md, .agents/browser-extension-dev/development.md, .agents/browser-extension-dev/publishing.md, .agents/browser-extension-dev/testing.md, .agents/mobile-app-dev.md, .agents/mobile-app-dev/analytics.md, .agents/mobile-app-dev/assets.md, .agents/mobile-app-dev/backend.md, .agents/mobile-app-dev/expo.md, .agents/mobile-app-dev/monetisation.md, .agents/mobile-app-dev/notifications.md, .agents/mobile-app-dev/onboarding.md, .agents/mobile-app-dev/planning.md, .agents/mobile-app-dev/publishing.md, .agents/mobile-app-dev/swift.md, .agents/mobile-app-dev/testing.md, .agents/mobile-app-dev/ui-design.md, .agents/services/payments/revenuecat.md, .agents/services/payments/stripe.md, .agents/services/payments/superwall.md, .agents/tools/design/design-inspiration.md, .agents/tools/ui/react-email.md, .agents/tools/ui/wxt.md
   check: file-exists .agents/AGENTS.md
   check: file-exists .agents/browser-extension-dev.md
