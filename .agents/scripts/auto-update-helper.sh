@@ -540,7 +540,7 @@ check_openclaw_freshness() {
 	# Check if user has a channel preference in openclaw config
 	local openclaw_channel=""
 	openclaw_channel=$(openclaw update status 2>/dev/null | grep "Channel" | sed 's/[^a-zA-Z]*Channel[^a-zA-Z]*//' | awk '{print $1}' || true)
-	if [[ -n "$openclaw_channel" && "$openclaw_channel" != "stable" ]]; then
+	if [[ "$openclaw_channel" =~ ^(beta|dev)$ ]]; then
 		update_cmd=(openclaw update --channel "$openclaw_channel" --yes --no-restart)
 	fi
 
