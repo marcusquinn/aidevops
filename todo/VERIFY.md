@@ -1885,7 +1885,7 @@
   check: file-exists .agents/subagent-index.toon
   check: rg "localhost" .agents/subagent-index.toon
 
-- [ ] v227 t1094 Unified model performance scoring — extend pattern trac... | PR #2018 | merged:2026-02-20
+- [x] v227 t1094 Unified model performance scoring — extend pattern trac... | PR #2018 | merged:2026-02-20 verified:2026-02-20
   files: .agents/scripts/agent-test-helper.sh, .agents/scripts/compare-models-helper.sh, .agents/scripts/pattern-tracker-helper.sh, .agents/scripts/response-scoring-helper.sh, tests/test-pattern-scoring.sh
   check: shellcheck .agents/scripts/agent-test-helper.sh
   check: file-exists .agents/scripts/agent-test-helper.sh
@@ -1897,3 +1897,8 @@
   check: file-exists .agents/scripts/response-scoring-helper.sh
   check: shellcheck tests/test-pattern-scoring.sh
   check: file-exists tests/test-pattern-scoring.sh
+
+- [ ] v228 t1264.3 Integrate into aidevops CLI and setup.sh — add `repo-sy... | PR #2016 | merged:2026-02-20
+  files: .agents/scripts/onboarding-helper.sh
+  check: shellcheck .agents/scripts/onboarding-helper.sh
+  check: file-exists .agents/scripts/onboarding-helper.sh
