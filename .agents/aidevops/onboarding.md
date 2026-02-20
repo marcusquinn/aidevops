@@ -1082,6 +1082,38 @@ If you're not sure what to build, tell me:
 
 I'll suggest a small project tailored to your needs that we can build together in the playground.
 
+## Repo Sync Configuration
+
+During onboarding, ask the user about their git parent directories for daily repo sync:
+
+```text
+Repo sync keeps your local git repos up to date by running git pull --ff-only
+daily on repos that are clean and on their default branch.
+
+Where do you keep your git repos? (default: ~/Git)
+Enter one or more directories separated by commas, or press Enter for default:
+```
+
+If the user provides directories, configure them:
+
+```bash
+# Update repos.json with git_parent_dirs
+jq --argjson dirs '["~/Git", "~/Projects"]' \
+  '. + {git_parent_dirs: $dirs}' \
+  ~/.config/aidevops/repos.json > /tmp/repos.json && \
+  mv /tmp/repos.json ~/.config/aidevops/repos.json
+
+# Enable the daily scheduler
+aidevops repo-sync enable
+```
+
+If the user skips, note they can configure later:
+
+```bash
+aidevops repo-sync config   # Show configuration instructions
+aidevops repo-sync enable   # Enable after configuring
+```
+
 ## Next Steps After Setup
 
 Once services are configured:

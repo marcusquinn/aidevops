@@ -2635,6 +2635,7 @@ cmd_help() {
 	echo "  update             Update aidevops to the latest version (alias: upgrade)"
 	echo "  upgrade            Alias for update"
 	echo "  auto-update <cmd>  Manage automatic update polling (enable/disable/status)"
+	echo "  repo-sync <cmd>    Daily git pull for repos in parent dirs (enable/disable/status)"
 	echo "  update-tools       Check for outdated tools (--update to auto-update)"
 	echo "  repos [cmd]        Manage registered projects (list/add/remove/clean)"
 	echo "  ip-check <cmd>     IP reputation checks (check/batch/report/providers)"
@@ -2678,6 +2679,14 @@ cmd_help() {
 	echo "  aidevops auto-update disable # Stop auto-updating"
 	echo "  aidevops auto-update status  # Show auto-update state"
 	echo "  aidevops auto-update check   # One-shot check and update now"
+	echo ""
+	echo "Repo Sync:"
+	echo "  aidevops repo-sync enable    # Enable daily git pull for repos"
+	echo "  aidevops repo-sync disable   # Disable daily sync"
+	echo "  aidevops repo-sync status    # Show sync state and last results"
+	echo "  aidevops repo-sync check     # One-shot sync all repos now"
+	echo "  aidevops repo-sync config    # Show/edit configuration"
+	echo "  aidevops repo-sync logs      # View sync logs"
 	echo ""
 	echo "Plugins:"
 	echo "  aidevops plugin add <url>    # Install a plugin from git repo"
@@ -2770,6 +2779,19 @@ main() {
 			bash "$auto_update_helper" "$@"
 		else
 			print_error "auto-update-helper.sh not found. Run: aidevops update"
+			exit 1
+		fi
+		;;
+	repo-sync | reposync)
+		shift
+		local repo_sync_helper="$AGENTS_DIR/scripts/repo-sync-helper.sh"
+		if [[ ! -f "$repo_sync_helper" ]]; then
+			repo_sync_helper="$INSTALL_DIR/.agents/scripts/repo-sync-helper.sh"
+		fi
+		if [[ -f "$repo_sync_helper" ]]; then
+			bash "$repo_sync_helper" "$@"
+		else
+			print_error "repo-sync-helper.sh not found. Run: aidevops update"
 			exit 1
 		fi
 		;;
