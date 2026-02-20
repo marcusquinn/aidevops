@@ -1942,3 +1942,10 @@
   check: file-exists .agents/scripts/issue-sync-helper.sh
   check: shellcheck .agents/scripts/issue-sync-lib.sh
   check: file-exists .agents/scripts/issue-sync-lib.sh
+
+- [ ] v236 t1277 Fix setup.sh unbound variable extra_args[@] during Bun in... | PR #2027 | merged:2026-02-20
+  files: .agents/scripts/setup/_common.sh, setup.sh
+  check: shellcheck .agents/scripts/setup/_common.sh
+  check: file-exists .agents/scripts/setup/_common.sh
+  check: shellcheck setup.sh
+  check: file-exists setup.sh
