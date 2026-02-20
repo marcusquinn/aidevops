@@ -1927,6 +1927,11 @@
   check: shellcheck .agents/scripts/issue-sync-helper.sh
   check: file-exists .agents/scripts/issue-sync-helper.sh
 
-- [ ] v233 t1264.4 Update AGENTS.md documentation — add repo-sync to Auto-... | PR #2023 | merged:2026-02-20
+- [x] v233 t1264.4 Update AGENTS.md documentation — add repo-sync to Auto-... | PR #2023 | merged:2026-02-20 verified:2026-02-20
   files: .agents/AGENTS.md
   check: file-exists .agents/AGENTS.md
+
+- [ ] v234 t1279 Fix wp-helper.sh run_wp_command() CONFIG_FILE not propaga... | PR #2028 | merged:2026-02-20
+  files: .agents/scripts/wp-helper.sh
+  check: shellcheck .agents/scripts/wp-helper.sh
+  check: file-exists .agents/scripts/wp-helper.sh
