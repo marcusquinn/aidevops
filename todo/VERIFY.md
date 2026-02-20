@@ -1935,3 +1935,10 @@
   files: .agents/scripts/wp-helper.sh
   check: shellcheck .agents/scripts/wp-helper.sh
   check: file-exists .agents/scripts/wp-helper.sh
+
+- [ ] v235 t1120.1 Extract platform-agnostic functions from issue-sync-helpe... | PR #2029 | merged:2026-02-20
+  files: .agents/scripts/issue-sync-helper.sh, .agents/scripts/issue-sync-lib.sh
+  check: shellcheck .agents/scripts/issue-sync-helper.sh
+  check: file-exists .agents/scripts/issue-sync-helper.sh
+  check: shellcheck .agents/scripts/issue-sync-lib.sh
+  check: file-exists .agents/scripts/issue-sync-lib.sh
