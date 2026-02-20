@@ -77,7 +77,17 @@ check_file() {
 init_repos_file() {
 	if [[ ! -f "$REPOS_FILE" ]]; then
 		mkdir -p "$CONFIG_DIR"
-		echo '{"initialized_repos": []}' >"$REPOS_FILE"
+		echo '{"initialized_repos": [], "git_parent_dirs": ["~/Git"]}' >"$REPOS_FILE"
+	elif command -v jq &>/dev/null; then
+		# Migrate: add git_parent_dirs if missing from existing repos.json
+		if ! jq -e '.git_parent_dirs' "$REPOS_FILE" &>/dev/null; then
+			local temp_file="${REPOS_FILE}.tmp"
+			if jq '. + {"git_parent_dirs": ["~/Git"]}' "$REPOS_FILE" >"$temp_file"; then
+				mv "$temp_file" "$REPOS_FILE"
+			else
+				rm -f "$temp_file"
+			fi
+		fi
 	fi
 	return 0
 }
@@ -2635,7 +2645,7 @@ cmd_help() {
 	echo "  update             Update aidevops to the latest version (alias: upgrade)"
 	echo "  upgrade            Alias for update"
 	echo "  auto-update <cmd>  Manage automatic update polling (enable/disable/status)"
-	echo "  repo-sync <cmd>    Daily git pull for repos in parent dirs (enable/disable/status)"
+	echo "  repo-sync <cmd>    Daily git pull for repos in parent dirs (enable/disable/status/dirs)"
 	echo "  update-tools       Check for outdated tools (--update to auto-update)"
 	echo "  repos [cmd]        Manage registered projects (list/add/remove/clean)"
 	echo "  ip-check <cmd>     IP reputation checks (check/batch/report/providers)"
@@ -2685,6 +2695,9 @@ cmd_help() {
 	echo "  aidevops repo-sync disable   # Disable daily sync"
 	echo "  aidevops repo-sync status    # Show sync state and last results"
 	echo "  aidevops repo-sync check     # One-shot sync all repos now"
+	echo "  aidevops repo-sync dirs list # List configured parent directories"
+	echo "  aidevops repo-sync dirs add  # Add a parent directory"
+	echo "  aidevops repo-sync dirs rm   # Remove a parent directory"
 	echo "  aidevops repo-sync config    # Show/edit configuration"
 	echo "  aidevops repo-sync logs      # View sync logs"
 	echo ""
