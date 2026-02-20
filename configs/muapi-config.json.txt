@@ -1,0 +1,21 @@
+{
+  "accounts": {
+    "personal": {
+      "api_key": "YOUR_MUAPI_API_KEY_HERE",
+      "base_url": "https://api.muapi.ai/api/v1",
+      "agents_base_url": "https://api.muapi.ai/agents",
+      "description": "Personal MuAPI account"
+    }
+  },
+  "default_settings": {
+    "poll_interval": 2,
+    "timeout": 300,
+    "default_resolution": "480p",
+    "default_quality": "medium",
+    "default_aspect_ratio": "16:9",
+    "default_duration": 5,
+    "flux_default_size": "1024*1024",
+    "flux_default_steps": 28,
+    "flux_default_guidance": 3.5
+  }
+}
