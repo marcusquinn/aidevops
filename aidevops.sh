@@ -77,7 +77,17 @@ check_file() {
 init_repos_file() {
 	if [[ ! -f "$REPOS_FILE" ]]; then
 		mkdir -p "$CONFIG_DIR"
-		echo '{"initialized_repos": []}' >"$REPOS_FILE"
+		echo '{"initialized_repos": [], "git_parent_dirs": ["~/Git"]}' >"$REPOS_FILE"
+	elif command -v jq &>/dev/null; then
+		# Migrate: add git_parent_dirs if missing from existing repos.json
+		if ! jq -e '.git_parent_dirs' "$REPOS_FILE" &>/dev/null; then
+			local temp_file="${REPOS_FILE}.tmp"
+			if jq '. + {"git_parent_dirs": ["~/Git"]}' "$REPOS_FILE" >"$temp_file" 2>/dev/null; then
+				mv "$temp_file" "$REPOS_FILE"
+			else
+				rm -f "$temp_file"
+			fi
+		fi
 	fi
 	return 0
 }
