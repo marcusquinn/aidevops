@@ -182,12 +182,17 @@ The AI will iterate on the task until outputting:
 
 **Completion criteria (ALL must be satisfied before emitting TASK_COMPLETE):**
 
-1. All requirements implemented
+1. All requirements implemented — list each as [DONE], if any are [TODO] keep working
 2. Tests passing (if applicable)
-3. Code quality acceptable
-4. **README gate passed** (see below)
-5. Conventional commits used (for auto-changelog)
-6. **Headless rules observed** (see below)
+3. Code quality acceptable (lint, shellcheck, type-check)
+4. **Generalization check** — solution works for varying inputs, not just current state
+5. **README gate passed** (see below)
+6. Conventional commits used (for auto-changelog)
+7. **Headless rules observed** (see below)
+
+**Replanning rule**: If your approach isn't working after a reasonable attempt, step back
+and try a fundamentally different strategy before giving up. A fresh approach often
+succeeds where incremental fixes to a broken one fail.
 
 **Headless dispatch rules (MANDATORY for supervisor-dispatched workers - t158/t174):**
 
