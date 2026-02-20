@@ -103,11 +103,11 @@ verified_install() {
 	chmod +x "$tmp_script"
 
 	# Execute from file
+	# Build cmd array once; prepend sudo conditionally to avoid duplicating the safe expansion
 	# Use ${extra_args[@]+"${extra_args[@]}"} for safe expansion under set -u when array is empty
-	local cmd=("$shell" "$tmp_script" ${extra_args[@]+"${extra_args[@]}"})
-	if [[ "$use_sudo" == "true" ]]; then
-		cmd=(sudo "$shell" "$tmp_script" ${extra_args[@]+"${extra_args[@]}"})
-	fi
+	local cmd=()
+	[[ "$use_sudo" == "true" ]] && cmd+=(sudo)
+	cmd+=("$shell" "$tmp_script" ${extra_args[@]+"${extra_args[@]}"})
 
 	if "${cmd[@]}"; then
 		print_success "$description installed"

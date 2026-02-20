@@ -23,7 +23,9 @@ CLEAN_MODE=false
 INTERACTIVE_MODE=false
 NON_INTERACTIVE="${AIDEVOPS_NON_INTERACTIVE:-false}"
 UPDATE_TOOLS_MODE=false
+# shellcheck disable=SC2034  # Used by sourced modules (setup-modules/core.sh, agent-deploy.sh)
 REPO_URL="https://github.com/marcusquinn/aidevops.git"
+# shellcheck disable=SC2034  # Used by sourced modules (setup-modules/core.sh, agent-deploy.sh)
 INSTALL_DIR="$HOME/Git/aidevops"
 
 # Source modular setup functions (t316.2)
@@ -31,27 +33,27 @@ INSTALL_DIR="$HOME/Git/aidevops"
 # (not during bootstrap from curl, which re-execs after cloning)
 SETUP_MODULES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.agents/scripts/setup" 2>/dev/null && pwd)"
 if [[ -d "$SETUP_MODULES_DIR" ]]; then
-	# shellcheck source=.agents/scripts/setup/_common.sh
+	# shellcheck disable=SC1091  # Dynamic path via $SETUP_MODULES_DIR; files exist at runtime
 	source "$SETUP_MODULES_DIR/_common.sh"
-	# shellcheck source=.agents/scripts/setup/_backup.sh
+	# shellcheck disable=SC1091
 	source "$SETUP_MODULES_DIR/_backup.sh"
-	# shellcheck source=.agents/scripts/setup/_validation.sh
+	# shellcheck disable=SC1091
 	source "$SETUP_MODULES_DIR/_validation.sh"
-	# shellcheck source=.agents/scripts/setup/_migration.sh
+	# shellcheck disable=SC1091
 	source "$SETUP_MODULES_DIR/_migration.sh"
-	# shellcheck source=.agents/scripts/setup/_shell.sh
+	# shellcheck disable=SC1091
 	source "$SETUP_MODULES_DIR/_shell.sh"
-	# shellcheck source=.agents/scripts/setup/_installation.sh
+	# shellcheck disable=SC1091
 	source "$SETUP_MODULES_DIR/_installation.sh"
-	# shellcheck source=.agents/scripts/setup/_deployment.sh
+	# shellcheck disable=SC1091
 	source "$SETUP_MODULES_DIR/_deployment.sh"
-	# shellcheck source=.agents/scripts/setup/_opencode.sh
+	# shellcheck disable=SC1091
 	source "$SETUP_MODULES_DIR/_opencode.sh"
-	# shellcheck source=.agents/scripts/setup/_tools.sh
+	# shellcheck disable=SC1091
 	source "$SETUP_MODULES_DIR/_tools.sh"
-	# shellcheck source=.agents/scripts/setup/_services.sh
+	# shellcheck disable=SC1091
 	source "$SETUP_MODULES_DIR/_services.sh"
-	# shellcheck source=.agents/scripts/setup/_bootstrap.sh
+	# shellcheck disable=SC1091
 	source "$SETUP_MODULES_DIR/_bootstrap.sh"
 fi
 
@@ -157,11 +159,11 @@ verified_install() {
 	chmod +x "$tmp_script"
 
 	# Execute from file
+	# Build cmd array once; prepend sudo conditionally to avoid duplicating the safe expansion
 	# Use ${extra_args[@]+"${extra_args[@]}"} for safe expansion under set -u when array is empty
-	local cmd=("$shell" "$tmp_script" ${extra_args[@]+"${extra_args[@]}"})
-	if [[ "$use_sudo" == "true" ]]; then
-		cmd=(sudo "$shell" "$tmp_script" ${extra_args[@]+"${extra_args[@]}"})
-	fi
+	local cmd=()
+	[[ "$use_sudo" == "true" ]] && cmd+=(sudo)
+	cmd+=("$shell" "$tmp_script" ${extra_args[@]+"${extra_args[@]}"})
 
 	if "${cmd[@]}"; then
 		print_success "$description installed"
@@ -340,21 +342,21 @@ validate_namespace() {
 }
 
 # Source modularized setup functions
-# shellcheck source=setup-modules/core.sh
+# shellcheck disable=SC1091  # Dynamic path via BASH_SOURCE; files exist at runtime
 source "$(dirname "${BASH_SOURCE[0]}")/setup-modules/core.sh"
-# shellcheck source=setup-modules/migrations.sh
+# shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/setup-modules/migrations.sh"
-# shellcheck source=setup-modules/shell-env.sh
+# shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/setup-modules/shell-env.sh"
-# shellcheck source=setup-modules/tool-install.sh
+# shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/setup-modules/tool-install.sh"
-# shellcheck source=setup-modules/mcp-setup.sh
+# shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/setup-modules/mcp-setup.sh"
-# shellcheck source=setup-modules/agent-deploy.sh
+# shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/setup-modules/agent-deploy.sh"
-# shellcheck source=setup-modules/config.sh
+# shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/setup-modules/config.sh"
-# shellcheck source=setup-modules/plugins.sh
+# shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/setup-modules/plugins.sh"
 
 parse_args() {
