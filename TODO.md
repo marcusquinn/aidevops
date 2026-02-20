@@ -1378,7 +1378,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 ## In Progress
 
-- [ ] t1266 Add openclaw auto-update to daily housekeeping in auto-update-helper.sh — openclaw has no built-in auto-update; add a 24h-gated `check_openclaw_freshness()` function (same pattern as skill freshness) that runs `openclaw update --channel beta --yes --no-restart` daily. Opt-out via `AIDEVOPS_OPENCLAW_AUTO_UPDATE=false`. #feature #auto-update ~30m model:sonnet ref:GH#1994 assignee:marcusquinn started:2026-02-20
+- [x] t1266 Add openclaw auto-update to daily housekeeping in auto-update-helper.sh — openclaw has no built-in auto-update; add a 24h-gated `check_openclaw_freshness()` function (same pattern as skill freshness) that runs `openclaw update --channel beta --yes --no-restart` daily. Opt-out via `AIDEVOPS_OPENCLAW_AUTO_UPDATE=false`. #feature #auto-update ~30m model:sonnet ref:GH#1994 assignee:marcusquinn started:2026-02-20 pr:#1995 completed:2026-02-20
 
 - [x] t1056 Fix: stop re-adding Intel brew shellenv to rc files on Apple Silicon — check_requirements() unconditionally re-adds Intel brew shellenv to all rc files on every update, breaking ARM brew on dual-brew Apple Silicon Macs. Skip Intel brew rc writes when ARM brew exists; skip all brew rc writes in non-interactive mode. #bugfix #setup ~30m ref:GH#1463 started:2026-02-16 pr:#1512 completed:2026-02-16
 
