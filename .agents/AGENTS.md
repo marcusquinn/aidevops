@@ -375,7 +375,9 @@ Orchestration agents can create drafts in `draft/` for reusable parallel process
 | Git/PRs | `workflows/git-workflow.md`, `tools/git/github-cli.md`, `tools/git/conflict-resolution.md`, `tools/git/lumen.md` |
 | Releases | `workflows/release.md`, `workflows/version-bump.md` |
 | Browser | `tools/browser/browser-automation.md` (decision tree, then tool-specific subagent) |
-| Mobile/E2E | `tools/mobile/agent-device.md`, `tools/mobile/xcodebuild-mcp.md`, `tools/mobile/axe-cli.md`, `tools/mobile/maestro.md`, `tools/mobile/ios-simulator-mcp.md`, `tools/mobile/minisim.md` |
+| Mobile app dev | `mobile-app-dev.md` (orchestrator), `mobile-app-dev/planning.md`, `mobile-app-dev/expo.md`, `mobile-app-dev/swift.md`, `mobile-app-dev/ui-design.md`, `mobile-app-dev/testing.md`, `mobile-app-dev/publishing.md`, `mobile-app-dev/monetisation.md`, `mobile-app-dev/onboarding.md`, `mobile-app-dev/analytics.md`, `mobile-app-dev/backend.md`, `mobile-app-dev/notifications.md`, `mobile-app-dev/assets.md` |
+| Mobile tools | `tools/mobile/agent-device.md`, `tools/mobile/xcodebuild-mcp.md`, `tools/mobile/axe-cli.md`, `tools/mobile/maestro.md`, `tools/mobile/ios-simulator-mcp.md`, `tools/mobile/minisim.md` |
+| Browser extensions | `browser-extension-dev.md` (orchestrator), `browser-extension-dev/development.md`, `browser-extension-dev/testing.md`, `browser-extension-dev/publishing.md`, `tools/browser/chrome-webstore-release.md` |
 | WordPress | `tools/wordpress/wp-dev.md`, `tools/wordpress/mainwp.md` |
 | SEO | `seo/dataforseo.md`, `seo/google-search-console.md` |
 | Content | `content.md` (orchestrator), `content/research.md`, `content/story.md`, `content/production/`, `content/distribution/`, `content/optimization.md` |
