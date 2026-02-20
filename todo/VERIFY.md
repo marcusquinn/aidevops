@@ -1950,7 +1950,17 @@
   check: shellcheck setup.sh
   check: file-exists setup.sh
 
-- [ ] v237 t1120.2 Add Gitea API adapter functions (create/close/edit/list/s... | PR #2031 | merged:2026-02-20
+- [x] v237 t1120.2 Add Gitea API adapter functions (create/close/edit/list/s... | PR #2031 | merged:2026-02-20 verified:2026-02-20
   files: .agents/scripts/issue-sync-helper.sh
   check: shellcheck .agents/scripts/issue-sync-helper.sh
   check: file-exists .agents/scripts/issue-sync-helper.sh
+
+- [ ] v238 t1278 Feature: Interactive Skill Discovery & Management CLI (ai... | PR #2030 | merged:2026-02-20
+  files: .agents/AGENTS.md, .agents/scripts/commands/skills.md, .agents/scripts/skills-helper.sh, .agents/subagent-index.toon, aidevops.sh
+  check: file-exists .agents/AGENTS.md
+  check: file-exists .agents/scripts/commands/skills.md
+  check: shellcheck .agents/scripts/skills-helper.sh
+  check: file-exists .agents/scripts/skills-helper.sh
+  check: file-exists .agents/subagent-index.toon
+  check: shellcheck aidevops.sh
+  check: file-exists aidevops.sh
