@@ -652,6 +652,549 @@ cmd_agent_skills() {
 	return 0
 }
 
+# --- Specialized Apps ---
+
+# Generic specialized app submission (shared logic)
+submit_specialized() {
+	local endpoint="$1"
+	local image_url="$2"
+	shift 2
+	local extra_payload="${1:-{}}"
+	local poll_interval="${2:-${DEFAULT_POLL_INTERVAL}}"
+	local timeout="${3:-${DEFAULT_TIMEOUT}}"
+	local output_file="${4:-}"
+	local webhook="${5:-}"
+
+	if [[ -z "${image_url}" ]]; then
+		print_error "Image URL is required (--image)"
+		return 1
+	fi
+
+	local payload
+	payload=$(echo "${extra_payload}" | jq --arg url "${image_url}" '. + {image_url: $url}')
+
+	submit_and_poll "${endpoint}" "${payload}" "${poll_interval}" "${timeout}" "${output_file}" "${webhook}"
+}
+
+# Face swap (image or video)
+cmd_face_swap() {
+	local image_url=""
+	local face_url=""
+	local mode="image"
+	local poll_interval="${DEFAULT_POLL_INTERVAL}"
+	local timeout="${DEFAULT_TIMEOUT}"
+	local output_file=""
+	local webhook=""
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--image)
+			image_url="$2"
+			shift 2
+			;;
+		--face)
+			face_url="$2"
+			shift 2
+			;;
+		--video)
+			image_url="$2"
+			mode="video"
+			shift 2
+			;;
+		--mode)
+			mode="$2"
+			shift 2
+			;;
+		--poll)
+			poll_interval="$2"
+			shift 2
+			;;
+		--timeout)
+			timeout="$2"
+			shift 2
+			;;
+		--output | -o)
+			output_file="$2"
+			shift 2
+			;;
+		--webhook)
+			webhook="$2"
+			shift 2
+			;;
+		--*)
+			print_error "Unknown option: $1"
+			return 1
+			;;
+		*)
+			print_error "Unexpected argument: $1"
+			return 1
+			;;
+		esac
+	done
+
+	if [[ -z "${image_url}" ]]; then
+		print_error "Source URL is required (--image or --video)"
+		print_info "Usage: muapi-helper.sh face-swap --image URL --face URL [--mode image|video]"
+		return 1
+	fi
+
+	if [[ -z "${face_url}" ]]; then
+		print_error "Face reference URL is required (--face)"
+		return 1
+	fi
+
+	local endpoint
+	case "${mode}" in
+	image) endpoint="ai-image-face-swap" ;;
+	video) endpoint="ai-video-face-swap" ;;
+	*)
+		print_error "Unknown mode: ${mode} (use image or video)"
+		return 1
+		;;
+	esac
+
+	local extra
+	extra=$(jq -n --arg face "${face_url}" '{face_image: $face}')
+
+	submit_specialized "${endpoint}" "${image_url}" "${extra}" "${poll_interval}" "${timeout}" "${output_file}" "${webhook}"
+}
+
+# Image upscaling
+cmd_upscale() {
+	local image_url=""
+	local poll_interval="${DEFAULT_POLL_INTERVAL}"
+	local timeout="${DEFAULT_TIMEOUT}"
+	local output_file=""
+	local webhook=""
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--image)
+			image_url="$2"
+			shift 2
+			;;
+		--poll)
+			poll_interval="$2"
+			shift 2
+			;;
+		--timeout)
+			timeout="$2"
+			shift 2
+			;;
+		--output | -o)
+			output_file="$2"
+			shift 2
+			;;
+		--webhook)
+			webhook="$2"
+			shift 2
+			;;
+		--*)
+			print_error "Unknown option: $1"
+			return 1
+			;;
+		*)
+			print_error "Unexpected argument: $1"
+			return 1
+			;;
+		esac
+	done
+
+	submit_specialized "ai-image-upscale" "${image_url}" "{}" "${poll_interval}" "${timeout}" "${output_file}" "${webhook}"
+}
+
+# Background removal
+cmd_bg_remove() {
+	local image_url=""
+	local poll_interval="${DEFAULT_POLL_INTERVAL}"
+	local timeout="${DEFAULT_TIMEOUT}"
+	local output_file=""
+	local webhook=""
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--image)
+			image_url="$2"
+			shift 2
+			;;
+		--poll)
+			poll_interval="$2"
+			shift 2
+			;;
+		--timeout)
+			timeout="$2"
+			shift 2
+			;;
+		--output | -o)
+			output_file="$2"
+			shift 2
+			;;
+		--webhook)
+			webhook="$2"
+			shift 2
+			;;
+		--*)
+			print_error "Unknown option: $1"
+			return 1
+			;;
+		*)
+			print_error "Unexpected argument: $1"
+			return 1
+			;;
+		esac
+	done
+
+	submit_specialized "ai-background-remover" "${image_url}" "{}" "${poll_interval}" "${timeout}" "${output_file}" "${webhook}"
+}
+
+# Dress change
+cmd_dress_change() {
+	local image_url=""
+	local prompt=""
+	local poll_interval="${DEFAULT_POLL_INTERVAL}"
+	local timeout="${DEFAULT_TIMEOUT}"
+	local output_file=""
+	local webhook=""
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--image)
+			image_url="$2"
+			shift 2
+			;;
+		--poll)
+			poll_interval="$2"
+			shift 2
+			;;
+		--timeout)
+			timeout="$2"
+			shift 2
+			;;
+		--output | -o)
+			output_file="$2"
+			shift 2
+			;;
+		--webhook)
+			webhook="$2"
+			shift 2
+			;;
+		--*)
+			print_error "Unknown option: $1"
+			return 1
+			;;
+		*)
+			if [[ -z "${prompt}" ]]; then prompt="$1"; else
+				print_error "Unexpected argument: $1"
+				return 1
+			fi
+			shift
+			;;
+		esac
+	done
+
+	local extra
+	if [[ -n "${prompt}" ]]; then
+		extra=$(jq -n --arg p "${prompt}" '{prompt: $p}')
+	else
+		extra="{}"
+	fi
+
+	submit_specialized "ai-dress-change" "${image_url}" "${extra}" "${poll_interval}" "${timeout}" "${output_file}" "${webhook}"
+}
+
+# Stylization (Ghibli/Anime)
+cmd_stylize() {
+	local image_url=""
+	local style="ghibli"
+	local poll_interval="${DEFAULT_POLL_INTERVAL}"
+	local timeout="${DEFAULT_TIMEOUT}"
+	local output_file=""
+	local webhook=""
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--image)
+			image_url="$2"
+			shift 2
+			;;
+		--style)
+			style="$2"
+			shift 2
+			;;
+		--poll)
+			poll_interval="$2"
+			shift 2
+			;;
+		--timeout)
+			timeout="$2"
+			shift 2
+			;;
+		--output | -o)
+			output_file="$2"
+			shift 2
+			;;
+		--webhook)
+			webhook="$2"
+			shift 2
+			;;
+		--*)
+			print_error "Unknown option: $1"
+			return 1
+			;;
+		*)
+			print_error "Unexpected argument: $1"
+			return 1
+			;;
+		esac
+	done
+
+	local endpoint
+	case "${style}" in
+	ghibli) endpoint="ai-ghibli-style" ;;
+	anime) endpoint="ai-anime-generator" ;;
+	*)
+		print_error "Unknown style: ${style} (use ghibli or anime)"
+		return 1
+		;;
+	esac
+
+	submit_specialized "${endpoint}" "${image_url}" "{}" "${poll_interval}" "${timeout}" "${output_file}" "${webhook}"
+}
+
+# Product shot
+cmd_product_shot() {
+	local image_url=""
+	local prompt=""
+	local poll_interval="${DEFAULT_POLL_INTERVAL}"
+	local timeout="${DEFAULT_TIMEOUT}"
+	local output_file=""
+	local webhook=""
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--image)
+			image_url="$2"
+			shift 2
+			;;
+		--poll)
+			poll_interval="$2"
+			shift 2
+			;;
+		--timeout)
+			timeout="$2"
+			shift 2
+			;;
+		--output | -o)
+			output_file="$2"
+			shift 2
+			;;
+		--webhook)
+			webhook="$2"
+			shift 2
+			;;
+		--*)
+			print_error "Unknown option: $1"
+			return 1
+			;;
+		*)
+			if [[ -z "${prompt}" ]]; then prompt="$1"; else
+				print_error "Unexpected argument: $1"
+				return 1
+			fi
+			shift
+			;;
+		esac
+	done
+
+	local extra
+	if [[ -n "${prompt}" ]]; then
+		extra=$(jq -n --arg p "${prompt}" '{prompt: $p}')
+	else
+		extra="{}"
+	fi
+
+	submit_specialized "ai-product-shot" "${image_url}" "${extra}" "${poll_interval}" "${timeout}" "${output_file}" "${webhook}"
+}
+
+# Object eraser
+cmd_object_erase() {
+	local image_url=""
+	local mask_url=""
+	local poll_interval="${DEFAULT_POLL_INTERVAL}"
+	local timeout="${DEFAULT_TIMEOUT}"
+	local output_file=""
+	local webhook=""
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--image)
+			image_url="$2"
+			shift 2
+			;;
+		--mask)
+			mask_url="$2"
+			shift 2
+			;;
+		--poll)
+			poll_interval="$2"
+			shift 2
+			;;
+		--timeout)
+			timeout="$2"
+			shift 2
+			;;
+		--output | -o)
+			output_file="$2"
+			shift 2
+			;;
+		--webhook)
+			webhook="$2"
+			shift 2
+			;;
+		--*)
+			print_error "Unknown option: $1"
+			return 1
+			;;
+		*)
+			print_error "Unexpected argument: $1"
+			return 1
+			;;
+		esac
+	done
+
+	local extra
+	if [[ -n "${mask_url}" ]]; then
+		extra=$(jq -n --arg m "${mask_url}" '{mask_url: $m}')
+	else
+		extra="{}"
+	fi
+
+	submit_specialized "ai-object-eraser" "${image_url}" "${extra}" "${poll_interval}" "${timeout}" "${output_file}" "${webhook}"
+}
+
+# Image extension (outpainting)
+cmd_image_extend() {
+	local image_url=""
+	local prompt=""
+	local poll_interval="${DEFAULT_POLL_INTERVAL}"
+	local timeout="${DEFAULT_TIMEOUT}"
+	local output_file=""
+	local webhook=""
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--image)
+			image_url="$2"
+			shift 2
+			;;
+		--poll)
+			poll_interval="$2"
+			shift 2
+			;;
+		--timeout)
+			timeout="$2"
+			shift 2
+			;;
+		--output | -o)
+			output_file="$2"
+			shift 2
+			;;
+		--webhook)
+			webhook="$2"
+			shift 2
+			;;
+		--*)
+			print_error "Unknown option: $1"
+			return 1
+			;;
+		*)
+			if [[ -z "${prompt}" ]]; then prompt="$1"; else
+				print_error "Unexpected argument: $1"
+				return 1
+			fi
+			shift
+			;;
+		esac
+	done
+
+	local extra
+	if [[ -n "${prompt}" ]]; then
+		extra=$(jq -n --arg p "${prompt}" '{prompt: $p}')
+	else
+		extra="{}"
+	fi
+
+	submit_specialized "ai-image-extension" "${image_url}" "${extra}" "${poll_interval}" "${timeout}" "${output_file}" "${webhook}"
+}
+
+# Skin enhancer
+cmd_skin_enhance() {
+	local image_url=""
+	local poll_interval="${DEFAULT_POLL_INTERVAL}"
+	local timeout="${DEFAULT_TIMEOUT}"
+	local output_file=""
+	local webhook=""
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--image)
+			image_url="$2"
+			shift 2
+			;;
+		--poll)
+			poll_interval="$2"
+			shift 2
+			;;
+		--timeout)
+			timeout="$2"
+			shift 2
+			;;
+		--output | -o)
+			output_file="$2"
+			shift 2
+			;;
+		--webhook)
+			webhook="$2"
+			shift 2
+			;;
+		--*)
+			print_error "Unknown option: $1"
+			return 1
+			;;
+		*)
+			print_error "Unexpected argument: $1"
+			return 1
+			;;
+		esac
+	done
+
+	submit_specialized "ai-skin-enhancer" "${image_url}" "{}" "${poll_interval}" "${timeout}" "${output_file}" "${webhook}"
+}
+
+# --- Credits & Usage ---
+
+# Check credit balance
+cmd_balance() {
+	load_api_key || return 1
+
+	local response
+	response=$(api_request GET "${MUAPI_BASE}/payments/credits")
+
+	echo "${response}" | jq . 2>/dev/null || echo "${response}"
+	return 0
+}
+
+# Check usage history
+cmd_usage() {
+	load_api_key || return 1
+
+	local response
+	response=$(api_request GET "${MUAPI_BASE}/payments/usage")
+
+	echo "${response}" | jq . 2>/dev/null || echo "${response}"
+	return 0
+}
+
 # Check task status
 cmd_status() {
 	local request_id="${1:-}"
@@ -685,6 +1228,17 @@ Commands:
   motion <prompt>         Apply motion controls to an image
   music <prompt>          Generate music with Suno
   lipsync                 Lip-sync video with audio
+  face-swap               Swap faces in images or videos
+  upscale                 Upscale image resolution
+  bg-remove               Remove image background
+  dress-change [prompt]   Change outfit on a subject
+  stylize                 Apply Ghibli or anime style
+  product-shot [prompt]   Generate product photography background
+  object-erase            Remove objects with inpainting
+  image-extend [prompt]   Outpaint beyond image borders
+  skin-enhance            Professional skin retouching
+  balance                 Check credit balance
+  usage                   Check usage history
   agent-create <prompt>   Create an AI agent from a goal
   agent-chat <id> <msg>   Chat with an agent
   agent-list              List your agents
@@ -726,6 +1280,20 @@ Lipsync Options:
   --audio <url>           Audio URL (required)
   --model <name>          Model: sync-lipsync, latentsync, creatify, veed (default: sync-lipsync)
 
+Face Swap Options:
+  --image <url>           Source image URL (required for image mode)
+  --video <url>           Source video URL (sets mode to video)
+  --face <url>            Face reference image URL (required)
+  --mode <image|video>    Swap mode (default: image)
+
+Stylize Options:
+  --image <url>           Source image URL (required)
+  --style <name>          Style: ghibli, anime (default: ghibli)
+
+Object Erase Options:
+  --image <url>           Source image URL (required)
+  --mask <url>            Mask image URL (white=erase area)
+
 Examples:
   # Generate an image
   muapi-helper.sh flux "A cyberpunk city at night" --size 1024*1024
@@ -744,6 +1312,24 @@ Examples:
 
   # Lip-sync
   muapi-helper.sh lipsync --video https://example.com/video.mp4 --audio https://example.com/audio.mp3
+
+  # Face swap
+  muapi-helper.sh face-swap --image https://example.com/photo.jpg --face https://example.com/face.jpg
+
+  # Upscale image
+  muapi-helper.sh upscale --image https://example.com/lowres.jpg
+
+  # Remove background
+  muapi-helper.sh bg-remove --image https://example.com/product.jpg
+
+  # Ghibli stylization
+  muapi-helper.sh stylize --image https://example.com/photo.jpg --style ghibli
+
+  # Product photography
+  muapi-helper.sh product-shot --image https://example.com/product.jpg "white studio"
+
+  # Check credit balance
+  muapi-helper.sh balance
 
   # Create an agent
   muapi-helper.sh agent-create "I want an agent that creates minimalist brand assets"
@@ -772,6 +1358,17 @@ main() {
 	motion) cmd_effects "$@" ;;
 	music) cmd_music "$@" ;;
 	lipsync) cmd_lipsync "$@" ;;
+	face-swap) cmd_face_swap "$@" ;;
+	upscale) cmd_upscale "$@" ;;
+	bg-remove) cmd_bg_remove "$@" ;;
+	dress-change) cmd_dress_change "$@" ;;
+	stylize) cmd_stylize "$@" ;;
+	product-shot) cmd_product_shot "$@" ;;
+	object-erase) cmd_object_erase "$@" ;;
+	image-extend) cmd_image_extend "$@" ;;
+	skin-enhance) cmd_skin_enhance "$@" ;;
+	balance) cmd_balance "$@" ;;
+	usage) cmd_usage "$@" ;;
 	agent-create) cmd_agent_create "$@" ;;
 	agent-chat) cmd_agent_chat "$@" ;;
 	agent-list) cmd_agent_list "$@" ;;
