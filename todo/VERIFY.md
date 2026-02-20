@@ -1828,7 +1828,7 @@
   check: shellcheck .agents/scripts/auto-update-helper.sh
   check: file-exists .agents/scripts/auto-update-helper.sh
 
-- [ ] v222 t1264.1 Add `git_parent_dirs` config to repos.json — extend `in... | PR #1997 | merged:2026-02-20
+- [x] v222 t1264.1 Add `git_parent_dirs` config to repos.json — extend `in... | PR #1997 | merged:2026-02-20 verified:2026-02-20
   files: .agents/scripts/repo-sync-helper.sh, aidevops.sh
   check: shellcheck .agents/scripts/repo-sync-helper.sh
   check: file-exists .agents/scripts/repo-sync-helper.sh
