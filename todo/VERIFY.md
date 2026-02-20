@@ -1926,3 +1926,7 @@
   files: .agents/scripts/issue-sync-helper.sh
   check: shellcheck .agents/scripts/issue-sync-helper.sh
   check: file-exists .agents/scripts/issue-sync-helper.sh
+
+- [ ] v233 t1264.4 Update AGENTS.md documentation — add repo-sync to Auto-... | PR #2023 | merged:2026-02-20
+  files: .agents/AGENTS.md
+  check: file-exists .agents/AGENTS.md
