@@ -1548,7 +1548,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
   - [x] t1120.1 Extract platform-agnostic functions from issue-sync-helper.sh (parse, compose, ref management) ~1h ref:GH#1676 assignee:marcusquinn started:2026-02-20T19:52:54Z pr:#2029 completed:2026-02-20
   - [x] t1120.2 Add Gitea API adapter functions (create/close/edit/list/search/labels) ~1h ref:GH#1677 assignee:marcusquinn started:2026-02-20T21:24:40Z pr:#2031 completed:2026-02-20
   - [x] t1120.3 Add platform detection from git remote URL + multi-platform push/pull/close ~1h ref:GH#1678 #auto-dispatch model:sonnet assignee:marcusquinn started:2026-02-18T22:07:40Z pr:#1815 completed:2026-02-18
-  - [ ] t1120.4 Test with dual-hosted repo (GitHub + Gitea sync) ~30m ref:GH#1679
+  - [ ] t1120.4 Test with dual-hosted repo (GitHub + Gitea sync) ~30m ref:GH#1679 assignee:marcusquinn started:2026-02-20T22:21:08Z
 
 - [x] t1121 Fix tea CLI TTY requirement in non-interactive mode #bugfix #git ~30m model:haiku ref:GH#1680 assignee:marcusquinn started:2026-02-18T22:08:17Z logged:2026-02-18 #auto-dispatch pr:#1814 completed:2026-02-18
   - `tea issues list` fails with `huh: could not open a new TTY: open /dev/tty: device not configured` when run from scripts/CI
