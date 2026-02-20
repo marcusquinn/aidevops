@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Mobile app dev agent suite — 1 orchestrator + 11 subagents covering full lifecycle: planning, Expo, Swift, UI design, testing, publishing, monetisation, onboarding, analytics, backend, notifications, assets (t1271)
+- Browser extension dev agent suite — 1 orchestrator + 3 subagents for WXT/Plasmo development, testing, and multi-store publishing (t1271)
+- Payment agents — RevenueCat (mobile subscriptions), Stripe (web/extension payments), Superwall (paywall A/B testing) (t1271)
+- UI framework agents — WXT (browser extension framework), React Email (email templates) (t1271)
+- Design inspiration agent — 75+ curated UI/UX resources across mobile, web, game, email, and design systems (t1271)
+- Game UI Database category in design inspiration (69K+ game interface screenshots)
+- MuAPI missing endpoints — specialized apps, storyboarding, payments (t1272)
+- Auto-detect plan refs from PLANS.md in compose_issue_body (t1268)
+
 ## [2.118.0] - 2026-02-20
 
 ### Added
