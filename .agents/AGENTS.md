@@ -445,6 +445,46 @@ Automatic polling for new releases. Checks GitHub every 10 minutes and runs `aid
 
 **Repo version wins on update**: When `aidevops update` runs, shared agents in `~/.aidevops/agents/` are overwritten by the repo version. Only `custom/` and `draft/` directories are preserved. Imported skills stored outside these directories will be overwritten. To keep a skill across updates, either re-import it after each update or move it to `custom/`.
 
+## Repo Sync
+
+Automatic daily `git pull` for all git repos in configured parent directories. Keeps local clones up to date without manual intervention. Safe by design: only fast-forward pulls on clean, default-branch checkouts.
+
+**CLI**: `aidevops repo-sync [enable|disable|status|check|dirs|config|logs]`
+
+**Enable**: `aidevops repo-sync enable` (also offered during `/onboarding`)
+
+**Disable**: `aidevops repo-sync disable`
+
+**One-shot sync**: `aidevops repo-sync check` (runs immediately, no scheduler needed)
+
+**Scheduler**: macOS uses launchd (`~/Library/LaunchAgents/com.aidevops.aidevops-repo-sync.plist`); Linux uses cron (daily at 3am).
+
+**Env overrides**:
+
+- `AIDEVOPS_REPO_SYNC=false` — disable even if scheduler is installed
+- `AIDEVOPS_REPO_SYNC_INTERVAL=1440` — minutes between syncs (default: 1440 = daily)
+
+**Configuration** (`~/.config/aidevops/repos.json`):
+
+```json
+{"git_parent_dirs": ["~/Git", "~/Projects"]}
+```
+
+Default: `~/Git`. Manage with:
+
+```bash
+aidevops repo-sync dirs list           # Show configured directories
+aidevops repo-sync dirs add ~/Projects # Add a parent directory
+aidevops repo-sync dirs remove ~/Old   # Remove a parent directory
+aidevops repo-sync config              # Show current config
+```
+
+**Safety**: Only runs `git pull --ff-only`. Skips repos with dirty working trees, repos not on their default branch, repos with no remote, and git worktrees (only main checkouts are synced).
+
+**Logs**: `~/.aidevops/logs/repo-sync.log` — view with `aidevops repo-sync logs [--tail N]` or `aidevops repo-sync logs --follow`.
+
+**Status**: `aidevops repo-sync status` — shows scheduler state, configured directories, and last sync results (pulled/skipped/failed counts).
+
 ## Bot Reviewer Feedback
 
 AI code review bots (Gemini, CodeRabbit, Copilot) can provide incorrect suggestions. **Never blindly implement bot feedback.** Verify factual claims (versions, paths, APIs) against runtime/docs/project conventions before acting. Dismiss incorrect suggestions with evidence; address valid ones.
