@@ -1921,3 +1921,8 @@
 - [ ] v231 t1274 Resolve t1200 merge conflict and retry dispatch #bugfix #... | PR #2020 | merged:2026-02-20
   files: VERIFY.md
   check: file-exists VERIFY.md
+
+- [ ] v232 t1120 Add platform abstraction to issue-sync-helper.sh — Gite... | PR #2017 | merged:2026-02-20
+  files: .agents/scripts/issue-sync-helper.sh
+  check: shellcheck .agents/scripts/issue-sync-helper.sh
+  check: file-exists .agents/scripts/issue-sync-helper.sh
