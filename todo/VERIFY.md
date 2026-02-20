@@ -1780,7 +1780,7 @@
   check: shellcheck tests/test-ai-actions.sh
   check: file-exists tests/test-ai-actions.sh
 
-- [ ] v216 t1113 Add worker_never_started diagnostic and auto-retry with e... | PR #1980 | merged:2026-02-19
+- [x] v216 t1113 Add worker_never_started diagnostic and auto-retry with e... | PR #1980 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/supervisor/dispatch.sh, .agents/scripts/supervisor/evaluate.sh, .agents/scripts/supervisor/pulse.sh
   check: shellcheck .agents/scripts/supervisor/dispatch.sh
   check: file-exists .agents/scripts/supervisor/dispatch.sh
@@ -1789,7 +1789,16 @@
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
 
-- [ ] v217 t1248 Investigate 7-day success rate drop from 94% overall to 8... | PR #1983 | merged:2026-02-19
+- [x] v217 t1248 Investigate 7-day success rate drop from 94% overall to 8... | PR #1983 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/supervisor/ai-context.sh
   check: shellcheck .agents/scripts/supervisor/ai-context.sh
   check: file-exists .agents/scripts/supervisor/ai-context.sh
+
+- [ ] v218 t1190 Investigate and fix worker_never_started:no_sentinel disp... | PR #1981 | merged:2026-02-20
+  files: .agents/scripts/supervisor/cleanup.sh, .agents/scripts/supervisor/dispatch.sh, .agents/scripts/supervisor/evaluate.sh
+  check: shellcheck .agents/scripts/supervisor/cleanup.sh
+  check: file-exists .agents/scripts/supervisor/cleanup.sh
+  check: shellcheck .agents/scripts/supervisor/dispatch.sh
+  check: file-exists .agents/scripts/supervisor/dispatch.sh
+  check: shellcheck .agents/scripts/supervisor/evaluate.sh
+  check: file-exists .agents/scripts/supervisor/evaluate.sh
