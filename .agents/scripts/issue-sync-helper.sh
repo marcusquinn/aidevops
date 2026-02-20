@@ -1236,6 +1236,124 @@ extract_plan_discoveries() {
 	return 0
 }
 
+# Find a plan section in PLANS.md by matching task ID in **TODO:** or **Task:** fields
+# Supports subtask walk-up: t004.2 → t004
+# Returns: "plan_id\n<plan_section_text>" or empty string if not found
+# Args: $1=task_id, $2=project_root
+find_plan_by_task_id() {
+	local task_id="$1"
+	local project_root="$2"
+
+	local plans_file="$project_root/todo/PLANS.md"
+	if [[ ! -f "$plans_file" ]]; then
+		return 0
+	fi
+
+	# Resolve lookup IDs: try exact task_id first, then walk up to parent for subtasks
+	local lookup_ids=("$task_id")
+	if [[ "$task_id" == *"."* ]]; then
+		local parent_id="${task_id%%.*}"
+		lookup_ids+=("$parent_id")
+	fi
+
+	for lookup_id in "${lookup_ids[@]}"; do
+		# Search for **TODO:** or **Task:** field containing this task ID
+		# Match: **TODO:** t004, t007  OR  **Task:** t004
+		# The task ID must appear as a whole word (not as prefix of another ID)
+		local match_line match_line_num
+		match_line=$(grep -n "^\*\*\(TODO\|Task\):\*\*.*\b${lookup_id}\b" "$plans_file" | head -1 || true)
+		if [[ -z "$match_line" ]]; then
+			continue
+		fi
+		match_line_num="${match_line%%:*}"
+
+		# Walk backwards from match_line_num to find the enclosing ### heading
+		local heading_line
+		heading_line=$(awk -v target="$match_line_num" '
+			NR <= target && /^### / { last_heading = NR; last_text = $0 }
+			NR == target { print last_heading ":" last_text; exit }
+		' "$plans_file")
+
+		if [[ -z "$heading_line" ]]; then
+			continue
+		fi
+
+		local heading_num heading_raw
+		heading_num="${heading_line%%:*}"
+		heading_raw="${heading_line#*:}"
+
+		# Extract plan ID from TOON block between heading and next ### heading
+		local plan_id=""
+		plan_id=$(awk -v start="$heading_num" '
+			NR < start { next }
+			NR > start && /^### / { exit }
+			/^<!--TOON:plan\{/ {
+				# Extract first field (plan ID) from TOON data line
+				getline data_line
+				if (match(data_line, /^p[0-9]+,/)) {
+					id = substr(data_line, RSTART, RLENGTH - 1)
+					print id
+					exit
+				}
+			}
+		' "$plans_file" || true)
+
+		# Generate anchor from heading text for extract_plan_section
+		local anchor
+		anchor=$(echo "$heading_raw" | sed 's/^### //' | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9 -]//g' | sed 's/ /-/g')
+
+		local plan_section
+		plan_section=$(extract_plan_section "todo/PLANS.md#${anchor}" "$project_root")
+
+		if [[ -n "$plan_section" ]]; then
+			# Return plan_id on first line, then section content
+			echo "${plan_id}"
+			echo "$plan_section"
+			return 0
+		fi
+	done
+
+	return 0
+}
+
+# Extract additional plan subsections not covered by the 4 standard extractors
+# Returns non-empty content for: Context, Research, Architecture, Tool Matrix, Linkage, etc.
+# Args: $1=plan_section
+extract_plan_extra_sections() {
+	local plan_section="$1"
+
+	# Headings to include (beyond Purpose/Progress/Decision Log/Surprises)
+	local extra_headings=(
+		"Context"
+		"Context from Discussion"
+		"Context from Review"
+		"Research"
+		"Architecture"
+		"Tool Matrix"
+		"Linkage"
+		"Proposed Structure"
+		"Design"
+		"Implementation"
+		"Phases"
+		"Risks"
+		"Open Questions"
+		"Related Tasks"
+		"Dependencies"
+	)
+
+	local result=""
+	for heading in "${extra_headings[@]}"; do
+		local content
+		content=$(_extract_plan_subsection "$plan_section" "$heading" 0 "true")
+		if [[ -n "$content" ]]; then
+			result="${result}"$'\n\n'"**${heading}**"$'\n\n'"${content}"
+		fi
+	done
+
+	echo "$result"
+	return 0
+}
+
 # =============================================================================
 # PRD/Task File Lookup
 # =============================================================================
@@ -1441,6 +1559,28 @@ compose_issue_body() {
 	blocks=$(echo "$parsed" | grep '^blocks=' | cut -d= -f2-)
 	verified=$(echo "$parsed" | grep '^verified=' | cut -d= -f2-)
 
+	# Resolve plan context early so plan ID can appear in metadata header
+	# Supports: explicit → [todo/PLANS.md#anchor] link OR auto-detect via **TODO:**/**Task:** field
+	local plan_section="" detected_plan_id=""
+	if [[ -n "$plan_link" ]]; then
+		plan_section=$(extract_plan_section "$plan_link" "$project_root")
+		# Also extract plan ID from TOON block for explicit links
+		if [[ -n "$plan_section" ]]; then
+			detected_plan_id=$(echo "$plan_section" | awk '
+				/^<!--TOON:plan\{/ { getline data; if (match(data, /^p[0-9]+,/)) { print substr(data, RSTART, RLENGTH-1); exit } }
+			' || true)
+		fi
+	else
+		# Auto-detect: scan PLANS.md for **TODO:** or **Task:** containing this task ID
+		# Also handles subtasks by walking up to parent (t004.2 → t004)
+		local auto_detected
+		auto_detected=$(find_plan_by_task_id "$task_id" "$project_root")
+		if [[ -n "$auto_detected" ]]; then
+			detected_plan_id=$(echo "$auto_detected" | head -1)
+			plan_section=$(echo "$auto_detected" | tail -n +2)
+		fi
+	fi
+
 	# Start building the body
 	local body=""
 
@@ -1454,6 +1594,10 @@ compose_issue_body() {
 	fi
 	if [[ -n "$actual" ]]; then
 		body="$body | **Actual:** \`$actual\`"
+	fi
+	# Include plan ID in metadata header when auto-detected (no explicit link)
+	if [[ -n "$detected_plan_id" ]]; then
+		body="$body | **Plan:** \`$detected_plan_id\`"
 	fi
 
 	# Second metadata line: dates and assignment
@@ -1518,38 +1662,41 @@ compose_issue_body() {
 		body="$body"$'\n\n'"## Notes"$'\n\n'"$notes"
 	fi
 
-	# Plan context (if linked)
-	if [[ -n "$plan_link" ]]; then
-		local plan_section
-		plan_section=$(extract_plan_section "$plan_link" "$project_root")
-		if [[ -n "$plan_section" ]]; then
-			# Purpose
-			local purpose
-			purpose=$(extract_plan_purpose "$plan_section")
-			if [[ -n "$purpose" ]]; then
-				body="$body"$'\n\n'"## Plan: Purpose"$'\n\n'"$purpose"
-			fi
+	# Plan context (plan_section resolved above before metadata header)
+	if [[ -n "$plan_section" ]]; then
+		# Purpose (always shown inline)
+		local purpose
+		purpose=$(extract_plan_purpose "$plan_section")
+		if [[ -n "$purpose" ]]; then
+			body="$body"$'\n\n'"## Plan: Purpose"$'\n\n'"$purpose"
+		fi
 
-			# Progress
-			local progress
-			progress=$(extract_plan_progress "$plan_section")
-			if [[ -n "$progress" ]]; then
-				body="$body"$'\n\n'"<details><summary>Plan: Progress</summary>"$'\n\n'"$progress"$'\n\n'"</details>"
-			fi
+		# Extra sections: Context, Research, Architecture, Tool Matrix, etc. (collapsed)
+		local extra_sections
+		extra_sections=$(extract_plan_extra_sections "$plan_section")
+		if [[ -n "$extra_sections" ]]; then
+			body="$body"$'\n\n'"<details><summary>Plan: Context &amp; Architecture</summary>"$'\n'"$extra_sections"$'\n\n'"</details>"
+		fi
 
-			# Decisions
-			local decisions
-			decisions=$(extract_plan_decisions "$plan_section")
-			if [[ -n "$decisions" ]]; then
-				body="$body"$'\n\n'"<details><summary>Plan: Decision Log</summary>"$'\n\n'"$decisions"$'\n\n'"</details>"
-			fi
+		# Progress (collapsed)
+		local progress
+		progress=$(extract_plan_progress "$plan_section")
+		if [[ -n "$progress" ]]; then
+			body="$body"$'\n\n'"<details><summary>Plan: Progress</summary>"$'\n\n'"$progress"$'\n\n'"</details>"
+		fi
 
-			# Discoveries
-			local discoveries
-			discoveries=$(extract_plan_discoveries "$plan_section")
-			if [[ -n "$discoveries" ]]; then
-				body="$body"$'\n\n'"<details><summary>Plan: Discoveries</summary>"$'\n\n'"$discoveries"$'\n\n'"</details>"
-			fi
+		# Decisions (collapsed)
+		local decisions
+		decisions=$(extract_plan_decisions "$plan_section")
+		if [[ -n "$decisions" ]]; then
+			body="$body"$'\n\n'"<details><summary>Plan: Decision Log</summary>"$'\n\n'"$decisions"$'\n\n'"</details>"
+		fi
+
+		# Discoveries (collapsed)
+		local discoveries
+		discoveries=$(extract_plan_discoveries "$plan_section")
+		if [[ -n "$discoveries" ]]; then
+			body="$body"$'\n\n'"<details><summary>Plan: Discoveries</summary>"$'\n\n'"$discoveries"$'\n\n'"</details>"
 		fi
 	fi
 
