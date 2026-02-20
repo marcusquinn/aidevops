@@ -1938,6 +1938,49 @@ cmd_pulse() {
 		fi
 	fi
 
+	# Phase 0.9: Sanity check — question assumptions when queue appears empty
+	# Runs after all recovery phases (0.5–0.8, 1–1d) and before dispatch (Phase 2).
+	# When the queue has zero dispatchable tasks but open tasks exist in TODO.md,
+	# cross-references DB state, TODO.md state, and system state to find
+	# contradictions that cause silent stalls. Fixes: stale claims on DB-failed
+	# tasks, failed blocker cascades, missing #auto-dispatch tags, DB orphans.
+	local queued_before_sanity
+	queued_before_sanity=$(db "$SUPERVISOR_DB" "SELECT COUNT(*) FROM tasks WHERE status = 'queued';" 2>/dev/null || echo 0)
+	if [[ "$queued_before_sanity" -eq 0 ]]; then
+		# No queued tasks — check if there are open tasks in TODO.md that should be
+		if [[ -n "$all_repos" ]]; then
+			while IFS= read -r repo_path; do
+				if [[ -f "$repo_path/TODO.md" ]]; then
+					local open_count
+					open_count=$(grep -cE '^\s*- \[ \] t[0-9]+' "$repo_path/TODO.md" 2>/dev/null || echo 0)
+					if [[ "$open_count" -gt 0 ]]; then
+						local sanity_fixed
+						sanity_fixed=$(run_sanity_check "$repo_path" 2>>"$SUPERVISOR_LOG")
+						if [[ "${sanity_fixed:-0}" -gt 0 ]]; then
+							log_info "Phase 0.9: Sanity check fixed $sanity_fixed issue(s) in $repo_path — re-running auto-pickup"
+							cmd_auto_pickup --repo "$repo_path" 2>>"$SUPERVISOR_LOG" || true
+						fi
+					fi
+				fi
+			done <<<"$all_repos"
+		else
+			local cwd_todo
+			cwd_todo="$(pwd)/TODO.md"
+			if [[ -f "$cwd_todo" ]]; then
+				local open_count
+				open_count=$(grep -cE '^\s*- \[ \] t[0-9]+' "$cwd_todo" 2>/dev/null || echo 0)
+				if [[ "$open_count" -gt 0 ]]; then
+					local sanity_fixed
+					sanity_fixed=$(run_sanity_check "$(pwd)" 2>>"$SUPERVISOR_LOG")
+					if [[ "${sanity_fixed:-0}" -gt 0 ]]; then
+						log_info "Phase 0.9: Sanity check fixed $sanity_fixed issue(s) — re-running auto-pickup"
+						cmd_auto_pickup --repo "$(pwd)" 2>>"$SUPERVISOR_LOG" || true
+					fi
+				fi
+			fi
+		fi
+	fi
+
 	# Phase 2: Dispatch queued tasks up to concurrency limit
 
 	if [[ -n "$batch_id" ]]; then

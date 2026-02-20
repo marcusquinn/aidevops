@@ -1199,6 +1199,24 @@ auto_unblock_resolved_tasks() {
 				fi
 			fi
 
+			# Check if blocker is permanently failed in DB (retries exhausted)
+			# A failed blocker will never complete — don't let it block dependents forever
+			if [[ -n "${SUPERVISOR_DB:-}" && -f "${SUPERVISOR_DB}" ]]; then
+				local blocker_failed_status=""
+				blocker_failed_status=$(db "$SUPERVISOR_DB" \
+					"SELECT status FROM tasks WHERE id = '$(sql_escape "$blocker_id")' AND status = 'failed' LIMIT 1;" \
+					2>/dev/null || echo "")
+				if [[ "$blocker_failed_status" == "failed" ]]; then
+					local blocker_retries_left blocker_max_retries_left
+					blocker_retries_left=$(db "$SUPERVISOR_DB" "SELECT retries FROM tasks WHERE id = '$(sql_escape "$blocker_id")';" 2>/dev/null || echo "0")
+					blocker_max_retries_left=$(db "$SUPERVISOR_DB" "SELECT max_retries FROM tasks WHERE id = '$(sql_escape "$blocker_id")';" 2>/dev/null || echo "0")
+					if [[ "$blocker_retries_left" -ge "$blocker_max_retries_left" ]]; then
+						log_verbose "  auto-unblock: blocker $blocker_id is permanently failed in DB ($blocker_retries_left/$blocker_max_retries_left retries) — treating as resolved"
+						continue # Permanently failed = treat as resolved
+					fi
+				fi
+			fi
+
 			# Check if blocker doesn't exist in TODO.md at all (orphaned reference)
 			if ! grep -qE "^[[:space:]]*- \[.\] ${blocker_id}( |$)" "$todo_file" 2>/dev/null; then
 				continue # Non-existent blocker = resolved
