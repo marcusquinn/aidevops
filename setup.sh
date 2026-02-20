@@ -609,6 +609,35 @@ main() {
 		fi
 	fi
 
+	# Enable repo-sync scheduler if not already installed
+	# Keeps local git repos up to date with daily ff-only pulls
+	local repo_sync_script="$HOME/.aidevops/agents/scripts/repo-sync-helper.sh"
+	if [[ -x "$repo_sync_script" ]] && [[ "${AIDEVOPS_REPO_SYNC:-}" != "false" ]]; then
+		local _repo_sync_installed=false
+		if launchctl list 2>/dev/null | grep -qF "com.aidevops.aidevops-repo-sync"; then
+			_repo_sync_installed=true
+		elif crontab -l 2>/dev/null | grep -qF "aidevops-repo-sync"; then
+			_repo_sync_installed=true
+		fi
+		if [[ "$_repo_sync_installed" == "false" ]]; then
+			if [[ "$NON_INTERACTIVE" == "true" ]]; then
+				bash "$repo_sync_script" enable >/dev/null 2>&1 || true
+				print_info "Repo sync enabled (daily). Disable: aidevops repo-sync disable"
+			else
+				echo ""
+				echo "Repo sync keeps your local git repos up to date by running"
+				echo "git pull --ff-only daily on clean repos on their default branch."
+				echo ""
+				read -r -p "Enable daily repo sync? [Y/n]: " enable_repo_sync
+				if [[ "$enable_repo_sync" =~ ^[Yy]?$ || -z "$enable_repo_sync" ]]; then
+					bash "$repo_sync_script" enable
+				else
+					print_info "Skipped. Enable later: aidevops repo-sync enable"
+				fi
+			fi
+		fi
+	fi
+
 	echo ""
 	echo "CLI Command:"
 	echo "  aidevops init         - Initialize aidevops in a project"
