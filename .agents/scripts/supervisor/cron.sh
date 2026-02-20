@@ -743,10 +743,12 @@ cmd_auto_pickup() {
 	# from parent when the subtask has no explicit model: field.
 	# This unblocks subtask trees like t1081.1-t1081.4 and t1082.1-t1082.4.
 
-	# Step 1: Collect parent task IDs that have #auto-dispatch
+	# Step 1: Collect OPEN parent task IDs that have #auto-dispatch (t1276)
+	# Only open parents ([ ]) — completed parents' subtasks are irrelevant.
+	# Previous head -50 limit caused parents beyond the 50th to be silently skipped.
 	local parent_ids
-	parent_ids=$(grep -E '^[[:space:]]*- \[[ xX-]\] (t[0-9]+) .*#auto-dispatch' "$todo_file" 2>/dev/null |
-		grep -oE 't[0-9]+' | head -50 | sort -u || true)
+	parent_ids=$(grep -E '^[[:space:]]*- \[ \] (t[0-9]+) .*#auto-dispatch' "$todo_file" 2>/dev/null |
+		grep -oE 't[0-9]+' | sort -u || true)
 
 	if [[ -n "$parent_ids" ]]; then
 		while IFS= read -r parent_id; do
