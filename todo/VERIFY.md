@@ -1965,7 +1965,7 @@
   check: shellcheck aidevops.sh
   check: file-exists aidevops.sh
 
-- [ ] v239 t1280 Extend skills discovery with external skills.sh registry ... | PR #2035 | merged:2026-02-20
+- [x] v239 t1280 Extend skills discovery with external skills.sh registry ... | PR #2035 | merged:2026-02-20 verified:2026-02-20
   files: .agents/AGENTS.md, .agents/scripts/commands/skills.md, .agents/scripts/skills-helper.sh, aidevops.sh
   check: file-exists .agents/AGENTS.md
   check: file-exists .agents/scripts/commands/skills.md
@@ -1973,3 +1973,8 @@
   check: file-exists .agents/scripts/skills-helper.sh
   check: shellcheck aidevops.sh
   check: file-exists aidevops.sh
+
+- [ ] v240 t1120.4 Test with dual-hosted repo (GitHub + Gitea sync) ~30m ref... | PR #2033 | merged:2026-02-20
+  files: .agents/scripts/test-dual-hosted-sync.sh
+  check: shellcheck .agents/scripts/test-dual-hosted-sync.sh
+  check: file-exists .agents/scripts/test-dual-hosted-sync.sh
