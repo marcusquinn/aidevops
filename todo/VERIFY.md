@@ -1878,9 +1878,22 @@
   check: rg "react-email" .agents/subagent-index.toon
   check: rg "wxt" .agents/subagent-index.toon
 
-- [ ] v226 t1224 Local development environment (localdev) — unified `.lo... | PR #1953 | merged:2026-02-20
+- [x] v226 t1224 Local development environment (localdev) — unified `.lo... | PR #1953 | merged:2026-02-20 verified:2026-02-20
   files: .agents/AGENTS.md, .agents/services/hosting/localhost.md, .agents/subagent-index.toon
   check: file-exists .agents/AGENTS.md
   check: file-exists .agents/services/hosting/localhost.md
   check: file-exists .agents/subagent-index.toon
   check: rg "localhost" .agents/subagent-index.toon
+
+- [ ] v227 t1094 Unified model performance scoring — extend pattern trac... | PR #2018 | merged:2026-02-20
+  files: .agents/scripts/agent-test-helper.sh, .agents/scripts/compare-models-helper.sh, .agents/scripts/pattern-tracker-helper.sh, .agents/scripts/response-scoring-helper.sh, tests/test-pattern-scoring.sh
+  check: shellcheck .agents/scripts/agent-test-helper.sh
+  check: file-exists .agents/scripts/agent-test-helper.sh
+  check: shellcheck .agents/scripts/compare-models-helper.sh
+  check: file-exists .agents/scripts/compare-models-helper.sh
+  check: shellcheck .agents/scripts/pattern-tracker-helper.sh
+  check: file-exists .agents/scripts/pattern-tracker-helper.sh
+  check: shellcheck .agents/scripts/response-scoring-helper.sh
+  check: file-exists .agents/scripts/response-scoring-helper.sh
+  check: shellcheck tests/test-pattern-scoring.sh
+  check: file-exists tests/test-pattern-scoring.sh
