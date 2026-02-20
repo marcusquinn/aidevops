@@ -1382,7 +1382,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [ ] t1271 Mobile app dev and browser extension dev agents — comprehensive agent suite for building, testing, and publishing mobile apps (Expo + Swift) and browser extensions (Chromium + Firefox). Covers full lifecycle: idea validation, planning, UI/UX design, development, testing (simulator/emulator/device), app store compliance, publishing, monetisation (RevenueCat, ads, freemium), analytics, notifications, and self-improvement. Inspired by Rork and VibeCode capabilities but with open-source aidevops approach. Includes shared subagents for common needs (onboarding, UI design, app store compliance, analytics). #feature #agents #mobile #browser-extension ~12h (ai:10h test:2h) model:opus ref:GH#2004 assignee:marcusquinn started:2026-02-20
 <<<<<<< Updated upstream
   - [ ] t1271.1 Main mobile-app-dev agent and subagent folder structure ~3h ref:GH#2005
-  - [ ] t1271.2 Main browser-extension-dev agent and subagent folder structure ~2h ref:GH#2006
+  - [ ] t1271.2 Main browser-extension-dev agent and subagent folder structure ~2h ref:GH#2006 [proposed:auto-dispatch model:sonnet]
   - [ ] t1271.3 Shared subagents (revenuecat, onboarding, ui-design, app-store-compliance, analytics, notifications) ~3h ref:GH#2007
   - [ ] t1271.4 Integration with existing mobile tools (agent-device, xcodebuild-mcp, maestro, ios-simulator-mcp, playwright-emulation) ~2h ref:GH#2008
   - [ ] t1271.5 README and AGENTS.md updates, quality checks ~2h ref:GH#2009
