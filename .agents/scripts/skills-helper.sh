@@ -40,22 +40,22 @@ SKILL_SOURCES="${AGENTS_DIR}/configs/skill-sources.json"
 # =============================================================================
 
 log_info() {
-	echo -e "${BLUE}[skills]${NC} $1"
+	echo -e "${BLUE}[skills]${NC} $1" >&2
 	return 0
 }
 
 log_success() {
-	echo -e "${GREEN}[OK]${NC} $1"
+	echo -e "${GREEN}[OK]${NC} $1" >&2
 	return 0
 }
 
 log_warning() {
-	echo -e "${YELLOW}[WARN]${NC} $1"
+	echo -e "${YELLOW}[WARN]${NC} $1" >&2
 	return 0
 }
 
 log_error() {
-	echo -e "${RED}[ERROR]${NC} $1"
+	echo -e "${RED}[ERROR]${NC} $1" >&2
 	return 0
 }
 
@@ -156,7 +156,7 @@ extract_title() {
 		return 0
 	fi
 
-	grep -m1 "^# " "$file" 2>/dev/null | sed 's/^# //' || echo ""
+	grep -m1 "^# " "$file" | sed 's/^# //' || true
 	return 0
 }
 
@@ -209,7 +209,7 @@ cmd_search() {
 
 		# Skip non-skill files
 		case "$rel_path" in
-		scripts/* | templates/* | memory/* | configs/* | custom/* | draft/* | AGENTS.md | VERSION)
+		scripts/* | templates/* | memory/* | configs/* | custom/* | draft/* | AGENTS.md | VERSION | subagent-index.toon)
 			continue
 			;;
 		esac
@@ -243,7 +243,7 @@ cmd_search() {
 			fi
 
 			if [[ "$json_output" == true ]]; then
-				results+=("{\"name\":\"$filename\",\"category\":\"$category\",\"description\":\"$(echo "$desc" | sed 's/"/\\"/g')\",\"imported\":$is_imported,\"path\":\"$rel_path\"}")
+				results+=("{\"name\":\"$filename\",\"category\":\"$category\",\"description\":\"${desc//\"/\\\"}\",\"imported\":$is_imported,\"path\":\"$rel_path\"}")
 			else
 				local type_label="native"
 				if [[ "$is_imported" == "true" ]]; then
@@ -255,13 +255,13 @@ cmd_search() {
 				fi
 			fi
 		fi
-	done < <(find "$AGENTS_DIR" -name "*.md" -type f 2>/dev/null | sort)
+	done < <(find "$AGENTS_DIR" -name "*.md" -type f | sort)
 
 	if [[ "$json_output" == true ]]; then
 		local results_json
-		results_json=$(printf '%s,' "${results[@]}" 2>/dev/null || echo "")
+		results_json=$(printf '%s,' "${results[@]}" || true)
 		results_json="${results_json%,}"
-		echo "{\"query\":\"$(echo "$query" | sed 's/"/\\"/g')\",\"count\":$found,\"results\":[$results_json]}"
+		echo "{\"query\":\"${query//\"/\\\"}\",\"count\":$found,\"results\":[$results_json]}"
 	else
 		echo ""
 		if [[ $found -eq 0 ]]; then
@@ -311,7 +311,7 @@ cmd_browse() {
 			if [[ -n "$top_cat" && "$top_cat" != "root" ]]; then
 				echo "$top_cat" >>"$cat_counts_file"
 			fi
-		done < <(find "$AGENTS_DIR" -name "*.md" -type f 2>/dev/null)
+		done < <(find "$AGENTS_DIR" -name "*.md" -type f)
 
 		# Sort, count, and display
 		if [[ -s "$cat_counts_file" ]]; then
@@ -332,7 +332,8 @@ cmd_browse() {
 	# Browse specific category
 	echo ""
 	echo -e "${BOLD}Skills in: $category${NC}"
-	echo "$(printf '=%.0s' $(seq 1 $((${#category} + 12))))"
+	printf '=%.0s' $(seq 1 $((${#category} + 12)))
+	echo
 	echo ""
 
 	local found=0
@@ -367,7 +368,7 @@ cmd_browse() {
 			fi
 			((found++)) || true
 		fi
-	done < <(find "$AGENTS_DIR" -name "*.md" -type f 2>/dev/null | sort)
+	done < <(find "$AGENTS_DIR" -name "*.md" -type f | sort)
 
 	echo ""
 	if [[ $found -eq 0 ]]; then
@@ -414,7 +415,7 @@ cmd_describe() {
 		elif [[ "$filename" == *"$name"* ]]; then
 			candidates+=("$md_file")
 		fi
-	done < <(find "$AGENTS_DIR" -name "*.md" -type f 2>/dev/null | sort)
+	done < <(find "$AGENTS_DIR" -name "*.md" -type f | sort)
 
 	# Use first candidate if no exact match
 	if [[ -z "$skill_file" && ${#candidates[@]} -gt 0 ]]; then
@@ -442,7 +443,8 @@ cmd_describe() {
 
 	echo ""
 	echo -e "${BOLD}${title:-$filename}${NC}"
-	echo "$(printf '=%.0s' $(seq 1 ${#filename}))"
+	printf '=%.0s' $(seq 1 ${#filename})
+	echo
 	echo ""
 
 	if [[ -n "$desc" ]]; then
@@ -464,12 +466,12 @@ cmd_describe() {
 		if [[ -f "$SKILL_SOURCES" ]] && command -v jq &>/dev/null; then
 			local base_name="${filename%-skill}"
 			local upstream
-			upstream=$(jq -r --arg n "$base_name" '.skills[] | select(.name == $n) | .upstream_url // empty' "$SKILL_SOURCES" 2>/dev/null || echo "")
+			upstream=$(jq -r --arg n "$base_name" '.skills[] | select(.name == $n) | .upstream_url // empty' "$SKILL_SOURCES" || true)
 			if [[ -n "$upstream" ]]; then
 				echo -e "  ${CYAN}Upstream:${NC}    $upstream"
 			fi
 			local imported_at
-			imported_at=$(jq -r --arg n "$base_name" '.skills[] | select(.name == $n) | .imported_at // empty' "$SKILL_SOURCES" 2>/dev/null || echo "")
+			imported_at=$(jq -r --arg n "$base_name" '.skills[] | select(.name == $n) | .imported_at // empty' "$SKILL_SOURCES" || true)
 			if [[ -n "$imported_at" ]]; then
 				echo -e "  ${CYAN}Imported:${NC}    $imported_at"
 			fi
@@ -482,7 +484,7 @@ cmd_describe() {
 	local companion_dir="${skill_file%.md}"
 	if [[ -d "$companion_dir" ]]; then
 		local sub_count
-		sub_count=$(find "$companion_dir" -maxdepth 1 -name "*.md" -type f 2>/dev/null | wc -l | tr -d ' ')
+		sub_count=$(find "$companion_dir" -maxdepth 1 -name "*.md" -type f | wc -l | tr -d ' ')
 		if [[ "$sub_count" -gt 0 ]]; then
 			echo ""
 			echo -e "  ${CYAN}Subagents ($sub_count):${NC}"
@@ -496,7 +498,7 @@ cmd_describe() {
 				else
 					echo "    - $sub_name"
 				fi
-			done < <(find "$companion_dir" -maxdepth 1 -name "*.md" -type f 2>/dev/null | sort)
+			done < <(find "$companion_dir" -maxdepth 1 -name "*.md" -type f | sort)
 		fi
 	fi
 
@@ -544,7 +546,7 @@ cmd_info() {
 			skill_file="$md_file"
 			break
 		fi
-	done < <(find "$AGENTS_DIR" -name "*.md" -type f 2>/dev/null | sort)
+	done < <(find "$AGENTS_DIR" -name "*.md" -type f | sort)
 
 	if [[ -z "$skill_file" || ! -f "$skill_file" ]]; then
 		log_error "Skill not found: $name"
@@ -574,15 +576,14 @@ cmd_info() {
 		is_imported="true"
 		if [[ -f "$SKILL_SOURCES" ]] && command -v jq &>/dev/null; then
 			local base_name="${filename%-skill}"
-			upstream_url=$(jq -r --arg n "$base_name" '.skills[] | select(.name == $n) | .upstream_url // empty' "$SKILL_SOURCES" 2>/dev/null || echo "")
-			imported_at=$(jq -r --arg n "$base_name" '.skills[] | select(.name == $n) | .imported_at // empty' "$SKILL_SOURCES" 2>/dev/null || echo "")
-			format_detected=$(jq -r --arg n "$base_name" '.skills[] | select(.name == $n) | .format_detected // empty' "$SKILL_SOURCES" 2>/dev/null || echo "")
+			upstream_url=$(jq -r --arg n "$base_name" '.skills[] | select(.name == $n) | .upstream_url // empty' "$SKILL_SOURCES" || true)
+			imported_at=$(jq -r --arg n "$base_name" '.skills[] | select(.name == $n) | .imported_at // empty' "$SKILL_SOURCES" || true)
+			format_detected=$(jq -r --arg n "$base_name" '.skills[] | select(.name == $n) | .format_detected // empty' "$SKILL_SOURCES" || true)
 		fi
 	fi
 
 	if [[ "$json_output" == true ]]; then
-		local json_desc
-		json_desc=$(echo "$desc" | sed 's/"/\\"/g')
+		local json_desc="${desc//\"/\\\"}"
 		echo "{"
 		echo "  \"name\": \"$filename\","
 		echo "  \"category\": \"$category\","
@@ -644,7 +645,8 @@ cmd_list() {
 
 	if [[ "$json_output" != true ]]; then
 		echo -e "${BOLD}${header}${NC}"
-		echo "$(printf '=%.0s' $(seq 1 ${#header}))"
+		printf '=%.0s' $(seq 1 ${#header})
+		echo
 		echo ""
 	fi
 
@@ -682,7 +684,7 @@ cmd_list() {
 		desc=$(extract_description "$md_file")
 
 		if [[ "$json_output" == true ]]; then
-			results+=("{\"name\":\"$filename\",\"category\":\"$category\",\"description\":\"$(echo "$desc" | sed 's/"/\\"/g')\",\"imported\":$is_imported}")
+			results+=("{\"name\":\"$filename\",\"category\":\"$category\",\"description\":\"${desc//\"/\\\"}\",\"imported\":$is_imported}")
 		else
 			local type_label="native"
 			if [[ "$is_imported" == "true" ]]; then
@@ -691,11 +693,11 @@ cmd_list() {
 			printf "  %-35s %-25s %s\n" "$filename" "[$category]" "($type_label)"
 		fi
 		((count++)) || true
-	done < <(find "$AGENTS_DIR" -name "*.md" -type f 2>/dev/null | sort)
+	done < <(find "$AGENTS_DIR" -name "*.md" -type f | sort)
 
 	if [[ "$json_output" == true ]]; then
 		local results_json
-		results_json=$(printf '%s,' "${results[@]}" 2>/dev/null || echo "")
+		results_json=$(printf '%s,' "${results[@]}" || true)
 		results_json="${results_json%,}"
 		echo "{\"filter\":\"$filter\",\"count\":$count,\"skills\":[$results_json]}"
 	else
@@ -711,6 +713,9 @@ cmd_categories() {
 
 	local cat_counts_file
 	cat_counts_file=$(mktemp)
+	# Intentional: expand now to capture temp path
+	# shellcheck disable=SC2064
+	trap "rm -f '$cat_counts_file'" RETURN
 
 	while IFS= read -r md_file; do
 		local rel_path="${md_file#"$AGENTS_DIR/"}"
@@ -727,7 +732,7 @@ cmd_categories() {
 		if [[ -n "$cat" ]]; then
 			echo "$cat" >>"$cat_counts_file"
 		fi
-	done < <(find "$AGENTS_DIR" -name "*.md" -type f 2>/dev/null)
+	done < <(find "$AGENTS_DIR" -name "*.md" -type f)
 
 	if [[ "$json_output" == true ]]; then
 		local entries=()
@@ -737,7 +742,7 @@ cmd_categories() {
 			done < <(sort "$cat_counts_file" | uniq -c | sort -rn | awk '{print $1, $2}')
 		fi
 		local entries_json
-		entries_json=$(printf '%s,' "${entries[@]}" 2>/dev/null || echo "")
+		entries_json=$(printf '%s,' "${entries[@]}" || true)
 		entries_json="${entries_json%,}"
 		echo "{\"categories\":[$entries_json]}"
 	else
@@ -902,7 +907,7 @@ receipt=tools/accounts"
 				((found_in_cat++)) || true
 				((total_found++)) || true
 			fi
-		done < <(find "$AGENTS_DIR" -name "*.md" -type f 2>/dev/null | sort)
+		done < <(find "$AGENTS_DIR" -name "*.md" -type f | sort)
 
 		if [[ $found_in_cat -eq 0 ]]; then
 			echo "    (no skills in this category)"

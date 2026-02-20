@@ -93,7 +93,7 @@ feature-development,workflows/feature-development.md,Feature development workflo
 conversation-starter,workflows/conversation-starter.md,Session greeting and auto-recall
 -->
 
-<!--TOON:scripts[82]{name,purpose}:
+<!--TOON:scripts[92]{name,purpose}:
 accessibility-helper.sh,Accessibility and contrast testing (WCAG compliance WAVE API for websites and emails)
 accessibility-audit-helper.sh,Accessibility audit CLI wrapping axe-core WAVE API WebAIM contrast and Lighthouse a11y
 auto-update-helper.sh,Automatic update polling daemon (enable disable status check logs)
