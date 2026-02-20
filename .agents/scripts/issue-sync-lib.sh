@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2155
 # =============================================================================
 # aidevops Issue Sync Library — Platform-Agnostic Functions (t1120.1)
 # =============================================================================
@@ -19,9 +18,21 @@
 #
 # Part of aidevops framework: https://aidevops.sh
 
+# Apply strict mode only when executed directly (not when sourced — would affect caller)
+[[ "${BASH_SOURCE[0]}" == "${0}" ]] && set -euo pipefail
+
 # Include guard
 [[ -n "${_ISSUE_SYNC_LIB_LOADED:-}" ]] && return 0
 _ISSUE_SYNC_LIB_LOADED=1
+
+# Source shared-constants.sh to make the library self-contained.
+# Resolves SCRIPT_DIR from BASH_SOURCE so it works when sourced from any location.
+if [[ -z "${SCRIPT_DIR:-}" ]]; then
+	SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
+# shellcheck source=shared-constants.sh
+# shellcheck disable=SC1091  # path resolved at runtime; file exists in deployed environment
+source "${SCRIPT_DIR}/shared-constants.sh"
 
 # =============================================================================
 # Parse — TODO.md Utilities
@@ -93,35 +104,35 @@ parse_task_line() {
 
 	# Extract logged date
 	local logged
-	logged=$(echo "$line" | grep -oE 'logged:[0-9-]+' | sed 's/logged://' || echo "")
+	logged=$(echo "$line" | sed -nE 's/.*logged:([0-9-]+).*/\1/p' || echo "")
 
 	# Extract assignee
 	local assignee
-	assignee=$(echo "$line" | grep -oE 'assignee:[A-Za-z0-9._@-]+' | head -1 | sed 's/assignee://' || echo "")
+	assignee=$(echo "$line" | sed -nE 's/.*assignee:([A-Za-z0-9._@-]+).*/\1/p' | head -1 || echo "")
 
 	# Extract started timestamp
 	local started
-	started=$(echo "$line" | grep -oE 'started:[0-9T:Z-]+' | head -1 | sed 's/started://' || echo "")
+	started=$(echo "$line" | sed -nE 's/.*started:([0-9T:Z-]+).*/\1/p' | head -1 || echo "")
 
 	# Extract completed date
 	local completed
-	completed=$(echo "$line" | grep -oE 'completed:[0-9-]+' | head -1 | sed 's/completed://' || echo "")
+	completed=$(echo "$line" | sed -nE 's/.*completed:([0-9-]+).*/\1/p' | head -1 || echo "")
 
 	# Extract actual time
 	local actual
-	actual=$(echo "$line" | grep -oE 'actual:[0-9.]+[hmd]' | head -1 | sed 's/actual://' || echo "")
+	actual=$(echo "$line" | sed -nE 's/.*actual:([0-9.]+[hmd]).*/\1/p' | head -1 || echo "")
 
 	# Extract blocked-by dependencies
 	local blocked_by
-	blocked_by=$(echo "$line" | grep -oE 'blocked-by:[A-Za-z0-9.,]+' | head -1 | sed 's/blocked-by://' || echo "")
+	blocked_by=$(echo "$line" | sed -nE 's/.*blocked-by:([A-Za-z0-9.,]+).*/\1/p' | head -1 || echo "")
 
 	# Extract blocks (downstream dependencies)
 	local blocks
-	blocks=$(echo "$line" | grep -oE 'blocks:[A-Za-z0-9.,]+' | head -1 | sed 's/blocks://' || echo "")
+	blocks=$(echo "$line" | sed -nE 's/.*blocks:([A-Za-z0-9.,]+).*/\1/p' | head -1 || echo "")
 
 	# Extract verified date
 	local verified
-	verified=$(echo "$line" | grep -oE 'verified:[0-9-]+' | head -1 | sed 's/verified://' || echo "")
+	verified=$(echo "$line" | sed -nE 's/.*verified:([0-9-]+).*/\1/p' | head -1 || echo "")
 
 	echo "task_id=$task_id"
 	echo "status=$status"
@@ -159,17 +170,17 @@ extract_task_block() {
 		if [[ "$in_block" == "false" ]] && echo "$line" | grep -qE "^\s*- \[.\] ${task_id} "; then
 			in_block=true
 			block="$line"
-			# Calculate indent level
-			task_indent=$(echo "$line" | sed -E 's/[^ ].*//' | wc -c)
-			task_indent=$((task_indent - 1))
+			# Calculate indent level using pure bash (avoids subshells in loop)
+			local prefix="${line%%[! ]*}"
+			task_indent=${#prefix}
 			continue
 		fi
 
 		if [[ "$in_block" == "true" ]]; then
 			# Check if we've hit the next task at same or lower indent
 			local current_indent
-			current_indent=$(echo "$line" | sed -E 's/[^ ].*//' | wc -c)
-			current_indent=$((current_indent - 1))
+			local cur_prefix="${line%%[! ]*}"
+			current_indent=${#cur_prefix}
 
 			# Empty lines within block end the block
 			if [[ -z "${line// /}" ]]; then
@@ -532,7 +543,7 @@ find_related_files() {
 	# 2. Search for files referencing this task ID in todo/tasks/
 	if [[ -d "$tasks_dir" ]]; then
 		local grep_files
-		grep_files=$(grep -rl "$task_id" "$tasks_dir" 2>/dev/null || true)
+		grep_files=$(grep -rl "$task_id" "$tasks_dir" || true)
 		if [[ -n "$grep_files" ]]; then
 			all_files="${all_files:+$all_files"$'\n'"}$grep_files"
 		fi
@@ -681,22 +692,26 @@ compose_issue_body() {
 	local parsed
 	parsed=$(parse_task_line "$first_line")
 
-	# Extract fields from parsed output
-	local description tags estimate plan_link status logged
-	local assignee started completed actual blocked_by blocks verified
-	description=$(echo "$parsed" | grep '^description=' | cut -d= -f2-)
-	tags=$(echo "$parsed" | grep '^tags=' | cut -d= -f2-)
-	estimate=$(echo "$parsed" | grep '^estimate=' | cut -d= -f2-)
-	plan_link=$(echo "$parsed" | grep '^plan_link=' | cut -d= -f2-)
-	status=$(echo "$parsed" | grep '^status=' | cut -d= -f2-)
-	logged=$(echo "$parsed" | grep '^logged=' | cut -d= -f2-)
-	assignee=$(echo "$parsed" | grep '^assignee=' | cut -d= -f2-)
-	started=$(echo "$parsed" | grep '^started=' | cut -d= -f2-)
-	completed=$(echo "$parsed" | grep '^completed=' | cut -d= -f2-)
-	actual=$(echo "$parsed" | grep '^actual=' | cut -d= -f2-)
-	blocked_by=$(echo "$parsed" | grep '^blocked_by=' | cut -d= -f2-)
-	blocks=$(echo "$parsed" | grep '^blocks=' | cut -d= -f2-)
-	verified=$(echo "$parsed" | grep '^verified=' | cut -d= -f2-)
+	# Extract fields from parsed output using a single pass (avoids repeated grep|cut subshells)
+	local description="" tags="" estimate="" plan_link="" status="" logged=""
+	local assignee="" started="" completed="" actual="" blocked_by="" blocks="" verified=""
+	while IFS='=' read -r key value; do
+		case "$key" in
+		description) description="$value" ;;
+		tags) tags="$value" ;;
+		estimate) estimate="$value" ;;
+		plan_link) plan_link="$value" ;;
+		status) status="$value" ;;
+		logged) logged="$value" ;;
+		assignee) assignee="$value" ;;
+		started) started="$value" ;;
+		completed) completed="$value" ;;
+		actual) actual="$value" ;;
+		blocked_by) blocked_by="$value" ;;
+		blocks) blocks="$value" ;;
+		verified) verified="$value" ;;
+		esac
+	done <<<"$parsed"
 
 	# Resolve plan context early so plan ID can appear in metadata header.
 	# Supports: explicit → [todo/PLANS.md#anchor] link OR auto-detect via **TODO:**/**Task:** field.
@@ -762,6 +777,7 @@ compose_issue_body() {
 	# Tags
 	if [[ -n "$tags" ]]; then
 		local formatted_tags
+		# shellcheck disable=SC2016  # & in sed replacement is sed syntax, not a bash expression
 		formatted_tags=$(echo "$tags" | sed 's/,/ /g' | sed 's/#//g' | sed 's/[^ ]*/`&`/g')
 		body="$body"$'\n'"**Tags:** $formatted_tags"
 	fi
@@ -902,18 +918,18 @@ add_gh_ref_to_todo() {
 	local todo_file="$3"
 
 	# Check if ref already exists (match both top-level and indented subtasks)
-	if grep -qE "^\s*- \[.\] ${task_id} .*ref:GH#${issue_number}" "$todo_file" 2>/dev/null; then
+	if grep -qE "^\s*- \[.\] ${task_id} .*ref:GH#${issue_number}" "$todo_file"; then
 		return 0
 	fi
 
 	# Check if any GH ref exists (might be different number)
-	if grep -qE "^\s*- \[.\] ${task_id} .*ref:GH#" "$todo_file" 2>/dev/null; then
+	if grep -qE "^\s*- \[.\] ${task_id} .*ref:GH#" "$todo_file"; then
 		log_verbose "$task_id already has a GH ref, skipping"
 		return 0
 	fi
 
 	# Add ref before logged: or at end of line (handle indented subtasks)
-	if grep -qE "^\s*- \[.\] ${task_id} .*logged:" "$todo_file" 2>/dev/null; then
+	if grep -qE "^\s*- \[.\] ${task_id} .*logged:" "$todo_file"; then
 		sed_inplace -E "s/^([[:space:]]*- \[.\] ${task_id} .*)( logged:)/\1 ref:GH#${issue_number}\2/" "$todo_file"
 	else
 		# Append at end of line
@@ -937,20 +953,20 @@ add_pr_ref_to_todo() {
 	local todo_file="$3"
 
 	# Check if pr: ref already exists for this PR number
-	if grep -qE "^\s*- \[.\] ${task_id} .*pr:#${pr_number}" "$todo_file" 2>/dev/null; then
+	if grep -qE "^\s*- \[.\] ${task_id} .*pr:#${pr_number}" "$todo_file"; then
 		return 0
 	fi
 
 	# Check if any pr: ref already exists (don't duplicate)
-	if grep -qE "^\s*- \[.\] ${task_id} .*pr:#" "$todo_file" 2>/dev/null; then
+	if grep -qE "^\s*- \[.\] ${task_id} .*pr:#" "$todo_file"; then
 		log_verbose "$task_id already has a pr: ref, skipping"
 		return 0
 	fi
 
 	# Add pr:#NNN before logged: or completed: or at end of line
-	if grep -qE "^\s*- \[.\] ${task_id} .* logged:" "$todo_file" 2>/dev/null; then
+	if grep -qE "^\s*- \[.\] ${task_id} .* logged:" "$todo_file"; then
 		sed_inplace -E "s/^([[:space:]]*- \[.\] ${task_id} .*)( logged:)/\1 pr:#${pr_number}\2/" "$todo_file"
-	elif grep -qE "^\s*- \[.\] ${task_id} .* completed:" "$todo_file" 2>/dev/null; then
+	elif grep -qE "^\s*- \[.\] ${task_id} .* completed:" "$todo_file"; then
 		sed_inplace -E "s/^([[:space:]]*- \[.\] ${task_id} .*)( completed:)/\1 pr:#${pr_number}\2/" "$todo_file"
 	else
 		# Append at end of line
