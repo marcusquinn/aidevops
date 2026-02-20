@@ -1378,6 +1378,13 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 ## In Progress
 
+- [ ] t1271 Mobile app dev and browser extension dev agents — comprehensive agent suite for building, testing, and publishing mobile apps (Expo + Swift) and browser extensions (Chromium + Firefox). Covers full lifecycle: idea validation, planning, UI/UX design, development, testing (simulator/emulator/device), app store compliance, publishing, monetisation (RevenueCat, ads, freemium), analytics, notifications, and self-improvement. Inspired by Rork and VibeCode capabilities but with open-source aidevops approach. Includes shared subagents for common needs (onboarding, UI design, app store compliance, analytics). #feature #agents #mobile #browser-extension ~12h (ai:10h test:2h) model:opus ref:GH#2004 assignee:marcusquinn started:2026-02-20
+  - [ ] t1271.1 Main mobile-app-dev agent and subagent folder structure ~3h
+  - [ ] t1271.2 Main browser-extension-dev agent and subagent folder structure ~2h
+  - [ ] t1271.3 Shared subagents (revenuecat, onboarding, ui-design, app-store-compliance, analytics, notifications) ~3h
+  - [ ] t1271.4 Integration with existing mobile tools (agent-device, xcodebuild-mcp, maestro, ios-simulator-mcp, playwright-emulation) ~2h
+  - [ ] t1271.5 README and AGENTS.md updates, quality checks ~2h
+
 - [x] t1266 Add openclaw auto-update to daily housekeeping in auto-update-helper.sh — openclaw has no built-in auto-update; add a 24h-gated `check_openclaw_freshness()` function (same pattern as skill freshness) that runs `openclaw update --channel beta --yes --no-restart` daily. Opt-out via `AIDEVOPS_OPENCLAW_AUTO_UPDATE=false`. #feature #auto-update ~30m model:sonnet ref:GH#1994 assignee:marcusquinn started:2026-02-20 pr:#1995 completed:2026-02-20
 
 - [x] t1056 Fix: stop re-adding Intel brew shellenv to rc files on Apple Silicon — check_requirements() unconditionally re-adds Intel brew shellenv to all rc files on every update, breaking ARM brew on dual-brew Apple Silicon Macs. Skip Intel brew rc writes when ARM brew exists; skip all brew rc writes in non-interactive mode. #bugfix #setup ~30m ref:GH#1463 started:2026-02-16 pr:#1512 completed:2026-02-16
