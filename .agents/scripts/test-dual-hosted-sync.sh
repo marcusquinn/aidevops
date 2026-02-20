@@ -99,9 +99,9 @@ assert_exit_code() {
 setup_mock_repo() {
 	local repo_dir="$1" remote_url="$2"
 	mkdir -p "$repo_dir"
-	git -C "$repo_dir" init -q 2>/dev/null
-	git -C "$repo_dir" remote add origin "$remote_url" 2>/dev/null ||
-		git -C "$repo_dir" remote set-url origin "$remote_url" 2>/dev/null
+	git -C "$repo_dir" init -q
+	git -C "$repo_dir" remote add origin "$remote_url" ||
+		git -C "$repo_dir" remote set-url origin "$remote_url"
 	return 0
 }
 
@@ -114,7 +114,7 @@ setup_mock_repo "$TEST_DIR/ssh-gitea-repo" "git@gitea.example.com:testowner/test
 setup_mock_repo "$TEST_DIR/ssh-gitlab-repo" "git@gitlab.com:testowner/testrepo.git"
 setup_mock_repo "$TEST_DIR/unknown-repo" "https://unknown.example.com/testowner/testrepo.git"
 setup_mock_repo "$TEST_DIR/no-remote-repo" "https://github.com/testowner/testrepo.git"
-git -C "$TEST_DIR/no-remote-repo" remote remove origin 2>/dev/null || true
+git -C "$TEST_DIR/no-remote-repo" remote remove origin || true
 
 # Create TODO.md for ref management tests
 mkdir -p "$TEST_DIR/todo-repo"
@@ -157,7 +157,7 @@ SUPERVISOR_DB=""
 
 # Source the helper — this defines detect_platform, init_platform, etc.
 # We'll override detect_platform for tests that need it.
-source "${SCRIPT_DIR}/issue-sync-helper.sh" 2>/dev/null || {
+source "${SCRIPT_DIR}/issue-sync-helper.sh" || {
 	# If sourcing fails (e.g., main() runs), extract just the functions we need
 	log "${YELLOW}WARN${NC}: Could not source issue-sync-helper.sh directly, testing lib only"
 }
@@ -788,7 +788,7 @@ test_gitea_list_state_all() {
 	# We can't call the real API, but we can verify the state_param logic
 	# by checking the function exists and has the right structure
 	TOTAL=$((TOTAL + 1))
-	if declare -f gitea_list_issues >/dev/null 2>&1; then
+	if declare -f gitea_list_issues >/dev/null; then
 		PASS=$((PASS + 1))
 		log "${GREEN}PASS${NC}: gitea_list_issues: function exists"
 	else
@@ -813,7 +813,7 @@ test_dispatch_functions_exist() {
 	)
 	for func in "${funcs[@]}"; do
 		TOTAL=$((TOTAL + 1))
-		if declare -f "$func" >/dev/null 2>&1; then
+		if declare -f "$func" >/dev/null; then
 			PASS=$((PASS + 1))
 			log "${GREEN}PASS${NC}: dispatch: $func exists"
 		else
@@ -831,7 +831,7 @@ test_adapter_functions_exist() {
 		for op in "${ops[@]}"; do
 			local func="${plat}_${op}"
 			TOTAL=$((TOTAL + 1))
-			if declare -f "$func" >/dev/null 2>&1; then
+			if declare -f "$func" >/dev/null; then
 				PASS=$((PASS + 1))
 				verbose "adapter: $func exists"
 			else
