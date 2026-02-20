@@ -157,9 +157,10 @@ verified_install() {
 	chmod +x "$tmp_script"
 
 	# Execute from file
-	local cmd=("$shell" "$tmp_script" "${extra_args[@]}")
+	# Use ${extra_args[@]+"${extra_args[@]}"} for safe expansion under set -u when array is empty
+	local cmd=("$shell" "$tmp_script" ${extra_args[@]+"${extra_args[@]}"})
 	if [[ "$use_sudo" == "true" ]]; then
-		cmd=(sudo "$shell" "$tmp_script" "${extra_args[@]}")
+		cmd=(sudo "$shell" "$tmp_script" ${extra_args[@]+"${extra_args[@]}"})
 	fi
 
 	if "${cmd[@]}"; then
