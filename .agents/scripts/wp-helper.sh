@@ -99,7 +99,7 @@ resolve_server_ref() {
 	server_def=$(jq -r --arg ref "$server_ref" '.servers[$ref] // empty' "$CONFIG_FILE" 2>/dev/null)
 
 	if [[ -z "$server_def" ]]; then
-		print_warning "server_ref '$server_ref' not found in servers section — using site config as-is"
+		print_warning "server_ref '$server_ref' not found in servers section — using site config as-is" >&2
 		echo "$site_config"
 		return 0
 	fi
@@ -349,6 +349,8 @@ run_wp_command() {
 		print_error "$ERROR_COMMAND_REQUIRED"
 		exit 1
 	fi
+
+	load_config
 
 	local site_config
 	site_config=$(get_site_config "$site_key")
