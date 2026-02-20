@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Fix auto-pickup Strategy 4 `head -50` limit that silently skipped subtask inheritance for parents beyond the 50th (t1276, #2026)
+
+### Changed
+
+- Enhance runners-check to report subtask-aware queue depth: total open, dispatchable, blocked, claimed (t1276, #2026)
+- Add TODO entries for 3 orphan user-reported GitHub issues: GH#1791, GH#1975, GH#1991 (t1276)
+
 ## [2.119.2] - 2026-02-20
 
 ### Added
