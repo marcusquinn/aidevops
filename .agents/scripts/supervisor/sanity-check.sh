@@ -236,20 +236,22 @@ _check_failed_blocker_chains() {
 					local line_num
 					line_num=$(grep -nE "^[[:space:]]*- \[ \] ${task_id}( |$)" "$todo_file" | head -1 | cut -d: -f1 || echo "")
 					if [[ -n "$line_num" ]]; then
-						# If this is the only blocker, remove the whole field
 						if [[ "$blocked_by" == "$blocker_id" ]]; then
+							# Only blocker — remove the whole field
 							local escaped_blocker
 							escaped_blocker=$(printf '%s' "$blocker_id" | sed 's/\./\\./g')
 							sed_inplace "${line_num}s/ blocked-by:${escaped_blocker}//" "$todo_file"
 						else
-							# Multiple blockers — remove just this one
-							local escaped_blocker
-							escaped_blocker=$(printf '%s' "$blocker_id" | sed 's/\./\\./g')
-							# Remove blocker_id from comma-separated list
-							sed_inplace "${line_num}s/blocked-by:\([^ ]*\)${escaped_blocker},\?/blocked-by:\1/" "$todo_file"
-							# Clean up trailing/leading commas
-							sed_inplace "${line_num}s/blocked-by:,/blocked-by:/" "$todo_file"
-							sed_inplace "${line_num}s/,\( \)/\1/" "$todo_file"
+							# Multiple blockers — rebuild the list without this one
+							local new_blockers
+							new_blockers=$(printf '%s' ",$blocked_by," | sed "s/,${blocker_id},/,/" | sed 's/^,//;s/,$//')
+							local escaped_blocked_by
+							escaped_blocked_by=$(printf '%s' "$blocked_by" | sed 's/\./\\./g')
+							if [[ -n "$new_blockers" ]]; then
+								sed_inplace "${line_num}s/blocked-by:${escaped_blocked_by}/blocked-by:${new_blockers}/" "$todo_file"
+							else
+								sed_inplace "${line_num}s/ blocked-by:${escaped_blocked_by}//" "$todo_file"
+							fi
 						fi
 						sed_inplace "${line_num}s/[[:space:]]*$//" "$todo_file"
 						fixed=$((fixed + 1))
