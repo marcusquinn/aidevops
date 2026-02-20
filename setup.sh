@@ -60,6 +60,15 @@ print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
+# Check if a launchd agent is loaded (SIGPIPE-safe for pipefail, t1265)
+_launchd_has_agent() {
+	local label="$1"
+	local output
+	output=$(launchctl list 2>/dev/null) || true
+	echo "$output" | grep -qF "$label"
+	return $?
+}
+
 # Spinner for long-running operations
 # Usage: run_with_spinner "Installing package..." command arg1 arg2
 run_with_spinner() {
@@ -523,9 +532,9 @@ main() {
 	local auto_update_script="$HOME/.aidevops/agents/scripts/auto-update-helper.sh"
 	if [[ -x "$auto_update_script" ]] && [[ "${AIDEVOPS_AUTO_UPDATE:-true}" != "false" ]]; then
 		local _auto_update_installed=false
-		if launchctl list 2>/dev/null | grep -qF "com.aidevops.aidevops-auto-update"; then
+		if _launchd_has_agent "com.aidevops.aidevops-auto-update"; then
 			_auto_update_installed=true
-		elif launchctl list 2>/dev/null | grep -qF "com.aidevops.auto-update"; then
+		elif _launchd_has_agent "com.aidevops.auto-update"; then
 			# Old label — re-running enable will migrate to new label
 			if bash "$auto_update_script" enable >/dev/null 2>&1; then
 				print_info "Auto-update LaunchAgent migrated to new label"
@@ -569,9 +578,9 @@ main() {
 	local supervisor_script="$HOME/.aidevops/agents/scripts/supervisor-helper.sh"
 	if [[ -x "$supervisor_script" ]] && [[ "${AIDEVOPS_SUPERVISOR_PULSE:-true}" != "false" ]]; then
 		local _pulse_installed=false
-		if launchctl list 2>/dev/null | grep -qF "com.aidevops.aidevops-supervisor-pulse"; then
+		if _launchd_has_agent "com.aidevops.aidevops-supervisor-pulse"; then
 			_pulse_installed=true
-		elif launchctl list 2>/dev/null | grep -qF "com.aidevops.supervisor-pulse"; then
+		elif _launchd_has_agent "com.aidevops.supervisor-pulse"; then
 			# Old label — re-running install will migrate to new label
 			if bash "$supervisor_script" cron install >/dev/null 2>&1; then
 				print_info "Supervisor pulse LaunchAgent migrated to new label"
@@ -614,7 +623,7 @@ main() {
 	local repo_sync_script="$HOME/.aidevops/agents/scripts/repo-sync-helper.sh"
 	if [[ -x "$repo_sync_script" ]] && [[ "${AIDEVOPS_REPO_SYNC:-}" != "false" ]]; then
 		local _repo_sync_installed=false
-		if launchctl list 2>/dev/null | grep -qF "com.aidevops.aidevops-repo-sync"; then
+		if _launchd_has_agent "com.aidevops.aidevops-repo-sync"; then
 			_repo_sync_installed=true
 		elif crontab -l 2>/dev/null | grep -qF "aidevops-repo-sync"; then
 			_repo_sync_installed=true
