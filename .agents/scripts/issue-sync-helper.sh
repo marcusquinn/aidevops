@@ -434,12 +434,11 @@ github_find_merged_pr_by_task() {
 	local repo_slug="$1" task_id="$2"
 	local pr_json
 	pr_json=$(gh pr list --repo "$repo_slug" --state merged \
-		--search "$task_id in:title" --limit 1 --json number,url 2>/dev/null || echo "[]")
-	local pr_number pr_url
-	pr_number=$(echo "$pr_json" | jq -r '.[0].number // empty' 2>/dev/null || echo "")
-	pr_url=$(echo "$pr_json" | jq -r '.[0].url // empty' 2>/dev/null || echo "")
-	if [[ -n "$pr_number" && "$pr_number" != "null" ]]; then
-		echo "${pr_number}|${pr_url}"
+		--search "$task_id in:title" --limit 1 --json number,url || echo "[]")
+	local pr_data
+	pr_data=$(echo "$pr_json" | jq -r '.[0] | select(. != null) | "\(.number)|\(.url)"' || echo "")
+	if [[ -n "$pr_data" ]]; then
+		echo "$pr_data"
 	fi
 	return 0
 }
@@ -641,19 +640,34 @@ gitea_find_issue_by_title() {
 
 # Find a merged PR by task ID in title (Gitea REST API v1)
 # Returns "number|url" on stdout, empty if not found.
+# Paginates through closed PRs until a match is found or results are exhausted.
 gitea_find_merged_pr_by_task() {
 	local repo_slug="$1" task_id="$2"
 	local owner="${repo_slug%%/*}"
 	local repo="${repo_slug#*/}"
+	local page=1
+	local limit=50
 	# Gitea: list closed PRs (merged PRs have state=closed and merged=true)
-	local response
-	response=$(gitea_api "GET" "repos/${owner}/${repo}/pulls?state=closed&limit=50&type=pulls")
-	local pr_number pr_url
-	pr_number=$(echo "$response" | jq -r "[.[] | select(.title | startswith(\"${task_id}:\")) | select(.merged == true)][0].number // empty" 2>/dev/null || echo "")
-	if [[ -n "$pr_number" && "$pr_number" != "null" ]]; then
-		pr_url="${_PLATFORM_BASE_URL}/${repo_slug}/pulls/${pr_number}"
-		echo "${pr_number}|${pr_url}"
-	fi
+	# Note: /pulls endpoint does not support type=pulls (that param is for /issues)
+	while true; do
+		local response
+		response=$(gitea_api "GET" "repos/${owner}/${repo}/pulls?state=closed&limit=${limit}&page=${page}")
+		# Stop if response is empty array
+		local count
+		count=$(echo "$response" | jq 'length' || echo "0")
+		if [[ "$count" -eq 0 ]]; then
+			break
+		fi
+		local pr_data
+		pr_data=$(echo "$response" | jq -r --arg tid "${task_id}:" \
+			'.[] | select(.title | startswith($tid)) | select(.merged == true) | "\(.number)|\(.html_url)"' |
+			head -n 1 || echo "")
+		if [[ -n "$pr_data" ]]; then
+			echo "$pr_data"
+			return 0
+		fi
+		page=$((page + 1))
+	done
 	return 0
 }
 
@@ -817,14 +831,15 @@ gitlab_find_merged_pr_by_task() {
 	local project_path
 	project_path=$(_gitlab_project_path "$repo_slug")
 	local encoded_task
-	encoded_task=$(printf '%s' "$task_id" | jq -sRr @uri)
+	encoded_task=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.stdin.read().strip()))' <<<"$task_id")
 	local response
 	response=$(gitlab_api "GET" "projects/${project_path}/merge_requests?state=merged&search=${encoded_task}&per_page=10")
-	local mr_iid mr_url
-	mr_iid=$(echo "$response" | jq -r "[.[] | select(.title | startswith(\"${task_id}:\"))][0].iid // empty" 2>/dev/null || echo "")
-	if [[ -n "$mr_iid" && "$mr_iid" != "null" ]]; then
-		mr_url="${_PLATFORM_BASE_URL}/${repo_slug}/-/merge_requests/${mr_iid}"
-		echo "${mr_iid}|${mr_url}"
+	local mr_data
+	mr_data=$(echo "$response" | jq -r --arg tid "${task_id}:" \
+		'.[] | select(.title | startswith($tid)) | "\(.iid)|\(.web_url)"' |
+		head -n 1 || echo "")
+	if [[ -n "$mr_data" ]]; then
+		echo "$mr_data"
 	fi
 	return 0
 }
@@ -2342,7 +2357,7 @@ task_has_completion_evidence() {
 	# Check 3: Search platform for a merged PR/MR with this task ID in the title
 	if [[ -n "$repo_slug" && -n "${_DETECTED_PLATFORM:-}" ]]; then
 		local merged_pr_info
-		merged_pr_info=$(platform_find_merged_pr_by_task "$repo_slug" "$task_id" 2>/dev/null || echo "")
+		merged_pr_info=$(platform_find_merged_pr_by_task "$repo_slug" "$task_id" || echo "")
 		if [[ -n "$merged_pr_info" ]]; then
 			return 0
 		fi
@@ -2364,9 +2379,17 @@ _build_pr_url() {
 		echo "https://github.com/${repo_slug}/pull/${pr_number}"
 		;;
 	gitea)
+		if [[ -z "$base" ]]; then
+			print_error "_build_pr_url: _PLATFORM_BASE_URL is empty for gitea; was init_platform called?"
+			return 1
+		fi
 		echo "${base}/${repo_slug}/pulls/${pr_number}"
 		;;
 	gitlab)
+		if [[ -z "$base" ]]; then
+			print_error "_build_pr_url: _PLATFORM_BASE_URL is empty for gitlab; was init_platform called?"
+			return 1
+		fi
 		echo "${base}/${repo_slug}/-/merge_requests/${pr_number}"
 		;;
 	*)
@@ -2404,7 +2427,7 @@ find_closing_pr() {
 	# Check 3: Search platform for a merged PR/MR with this task ID in the title
 	if [[ -n "$repo_slug" && -n "${_DETECTED_PLATFORM:-}" ]]; then
 		local pr_info
-		pr_info=$(platform_find_merged_pr_by_task "$repo_slug" "$task_id" 2>/dev/null || echo "")
+		pr_info=$(platform_find_merged_pr_by_task "$repo_slug" "$task_id" || echo "")
 		if [[ -n "$pr_info" ]]; then
 			echo "$pr_info"
 			return 0
@@ -2414,7 +2437,7 @@ find_closing_pr() {
 		local parent_id
 		parent_id=$(echo "$task_id" | grep -oE '^t[0-9]+' || echo "")
 		if [[ -n "$parent_id" && "$parent_id" != "$task_id" ]]; then
-			pr_info=$(platform_find_merged_pr_by_task "$repo_slug" "$parent_id" 2>/dev/null || echo "")
+			pr_info=$(platform_find_merged_pr_by_task "$repo_slug" "$parent_id" || echo "")
 			if [[ -n "$pr_info" ]]; then
 				echo "$pr_info"
 				return 0
