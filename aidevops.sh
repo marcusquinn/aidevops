@@ -2626,6 +2626,80 @@ cmd_plugin() {
 	return 0
 }
 
+# Skills discovery command - search, browse, describe installed skills
+cmd_skills() {
+	local action="${1:-help}"
+	shift || true
+
+	local skills_helper="$AGENTS_DIR/scripts/skills-helper.sh"
+
+	if [[ ! -f "$skills_helper" ]]; then
+		print_error "skills-helper.sh not found"
+		print_info "Run 'aidevops update' to get the latest scripts"
+		return 1
+	fi
+
+	case "$action" in
+	search | s | find | f)
+		bash "$skills_helper" search "$@"
+		;;
+	browse | b)
+		bash "$skills_helper" browse "$@"
+		;;
+	describe | desc | d | show)
+		bash "$skills_helper" describe "$@"
+		;;
+	info | i | meta)
+		bash "$skills_helper" info "$@"
+		;;
+	list | ls | l)
+		bash "$skills_helper" list "$@"
+		;;
+	categories | cats | cat)
+		bash "$skills_helper" categories "$@"
+		;;
+	recommend | rec | suggest)
+		bash "$skills_helper" recommend "$@"
+		;;
+	help | --help | -h)
+		print_header "Skill Discovery & Exploration"
+		echo ""
+		echo "Discover, explore, and get recommendations for installed skills."
+		echo "For importing/managing skills, use: aidevops skill <cmd>"
+		echo ""
+		echo "Usage: aidevops skills <command> [options]"
+		echo ""
+		echo "Commands:"
+		echo "  search <query>     Search skills by keyword"
+		echo "  browse [category]  Browse skills by category"
+		echo "  describe <name>    Show detailed skill description"
+		echo "  info <name>        Show skill metadata (path, source, model tier)"
+		echo "  list [filter]      List skills (--imported, --native, --all)"
+		echo "  categories         List all categories with skill counts"
+		echo "  recommend <task>   Suggest skills for a task description"
+		echo ""
+		echo "Options:"
+		echo "  --json             Output in JSON format (for scripting)"
+		echo ""
+		echo "Examples:"
+		echo "  aidevops skills search \"browser automation\""
+		echo "  aidevops skills browse tools"
+		echo "  aidevops skills browse tools/browser"
+		echo "  aidevops skills describe playwright"
+		echo "  aidevops skills info seo-audit-skill"
+		echo "  aidevops skills list --imported"
+		echo "  aidevops skills categories"
+		echo "  aidevops skills recommend \"deploy a Next.js app\""
+		echo ""
+		echo "See also: aidevops skill help  (import/manage skills)"
+		;;
+	*)
+		# Treat unknown action as a search query
+		bash "$skills_helper" search "$action $*"
+		;;
+	esac
+}
+
 # Help command
 cmd_help() {
 	local version
@@ -2640,6 +2714,7 @@ cmd_help() {
 	echo "  upgrade-planning   Upgrade TODO.md/PLANS.md to latest templates"
 	echo "  features           List available features for init"
 	echo "  skill <cmd>        Manage agent skills (add/list/check/update/remove)"
+	echo "  skills <cmd>       Discover skills (search/browse/describe/recommend)"
 	echo "  plugin <cmd>       Manage plugins (add/list/update/enable/disable/remove)"
 	echo "  status             Check installation status of all components"
 	echo "  update             Update aidevops to the latest version (alias: upgrade)"
@@ -2707,12 +2782,19 @@ cmd_help() {
 	echo "  aidevops plugin update       # Update all plugins"
 	echo "  aidevops plugin remove <n>   # Remove a plugin"
 	echo ""
-	echo "Skills:"
+	echo "Skill Management:"
 	echo "  aidevops skill add <source>  # Import a skill from GitHub"
 	echo "  aidevops skill list          # List imported skills"
 	echo "  aidevops skill check         # Check for upstream updates"
 	echo "  aidevops skill update [name] # Update skills to latest"
 	echo "  aidevops skill remove <name> # Remove an imported skill"
+	echo ""
+	echo "Skill Discovery:"
+	echo "  aidevops skills search <q>   # Search skills by keyword"
+	echo "  aidevops skills browse       # Browse skills by category"
+	echo "  aidevops skills describe <n> # Show skill description"
+	echo "  aidevops skills recommend <t># Suggest skills for a task"
+	echo "  aidevops skills categories   # List all categories"
 	echo ""
 	echo "Installation:"
 	echo "  npm install -g aidevops && aidevops update      # via npm (recommended)"
@@ -2820,9 +2902,13 @@ main() {
 		shift
 		cmd_repos "$@"
 		;;
-	skill | skills)
+	skill)
 		shift
 		cmd_skill "$@"
+		;;
+	skills)
+		shift
+		cmd_skills "$@"
 		;;
 	plugin | plugins)
 		shift
