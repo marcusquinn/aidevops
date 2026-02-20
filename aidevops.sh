@@ -2661,6 +2661,12 @@ cmd_skills() {
 	recommend | rec | suggest)
 		bash "$skills_helper" recommend "$@"
 		;;
+	install | add)
+		bash "$skills_helper" install "$@"
+		;;
+	registry | online)
+		bash "$skills_helper" registry "$@"
+		;;
 	help | --help | -h)
 		print_header "Skill Discovery & Exploration"
 		echo ""
@@ -2670,19 +2676,23 @@ cmd_skills() {
 		echo "Usage: aidevops skills <command> [options]"
 		echo ""
 		echo "Commands:"
-		echo "  search <query>     Search skills by keyword"
-		echo "  browse [category]  Browse skills by category"
-		echo "  describe <name>    Show detailed skill description"
-		echo "  info <name>        Show skill metadata (path, source, model tier)"
-		echo "  list [filter]      List skills (--imported, --native, --all)"
-		echo "  categories         List all categories with skill counts"
-		echo "  recommend <task>   Suggest skills for a task description"
+		echo "  search <query>          Search installed skills by keyword"
+		echo "  search --registry <q>   Search the public skills.sh registry (online)"
+		echo "  browse [category]       Browse skills by category"
+		echo "  describe <name>         Show detailed skill description"
+		echo "  info <name>             Show skill metadata (path, source, model tier)"
+		echo "  list [filter]           List skills (--imported, --native, --all)"
+		echo "  categories              List all categories with skill counts"
+		echo "  recommend <task>        Suggest skills for a task description"
+		echo "  install <owner/repo@s>  Install a skill from the public registry"
 		echo ""
 		echo "Options:"
-		echo "  --json             Output in JSON format (for scripting)"
+		echo "  --json                  Output in JSON format (for scripting)"
+		echo "  --registry, --online    Search the public skills.sh registry"
 		echo ""
 		echo "Examples:"
 		echo "  aidevops skills search \"browser automation\""
+		echo "  aidevops skills search --registry \"seo\""
 		echo "  aidevops skills browse tools"
 		echo "  aidevops skills browse tools/browser"
 		echo "  aidevops skills describe playwright"
@@ -2690,6 +2700,7 @@ cmd_skills() {
 		echo "  aidevops skills list --imported"
 		echo "  aidevops skills categories"
 		echo "  aidevops skills recommend \"deploy a Next.js app\""
+		echo "  aidevops skills install vercel-labs/agent-browser@agent-browser"
 		echo ""
 		echo "See also: aidevops skill help  (import/manage skills)"
 		;;
