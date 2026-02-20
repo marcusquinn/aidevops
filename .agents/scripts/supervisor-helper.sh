@@ -232,6 +232,7 @@ source "${SUPERVISOR_MODULE_DIR}/ai-reason.sh"
 source "${SUPERVISOR_MODULE_DIR}/ai-actions.sh"
 source "${SUPERVISOR_MODULE_DIR}/issue-audit.sh"
 source "${SUPERVISOR_MODULE_DIR}/routine-scheduler.sh"
+source "${SUPERVISOR_MODULE_DIR}/sanity-check.sh"
 
 # Valid states for the state machine
 # shellcheck disable=SC2034 # Used by supervisor/state.sh
