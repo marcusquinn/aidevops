@@ -1813,7 +1813,7 @@
   check: shellcheck .agents/scripts/supervisor/todo-sync.sh
   check: file-exists .agents/scripts/supervisor/todo-sync.sh
 
-- [ ] v220 t1264 Daily repo sync: auto-pull latest for git repos in config... | PR #1989 | merged:2026-02-20
+- [!] v220 t1264 Daily repo sync: auto-pull latest for git repos in config... | PR #1989 | merged:2026-02-20 failed:2026-02-20 reason:shellcheck: setup.sh has violations
   files: .agents/aidevops/onboarding.md, .agents/scripts/repo-sync-helper.sh, aidevops.sh, setup.sh
   check: file-exists .agents/aidevops/onboarding.md
   check: shellcheck .agents/scripts/repo-sync-helper.sh
@@ -1822,3 +1822,8 @@
   check: file-exists aidevops.sh
   check: shellcheck setup.sh
   check: file-exists setup.sh
+
+- [ ] v221 t1266 Add openclaw auto-update to daily housekeeping in auto-up... | PR #1995 | merged:2026-02-20
+  files: .agents/scripts/auto-update-helper.sh
+  check: shellcheck .agents/scripts/auto-update-helper.sh
+  check: file-exists .agents/scripts/auto-update-helper.sh
