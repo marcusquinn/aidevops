@@ -84,6 +84,14 @@ All development work MUST follow this lifecycle:
 Never skip testing. Never declare work "done" without verification. The full-loop
 means: plan -> implement -> test -> verify -> deliver.
 
+**Completion self-check (before declaring any task done):**
+
+1. List every requirement from the task — mark each DONE or TODO
+2. If any are TODO, you are not done — keep working
+3. Run available verification (tests, lint, build, type-check)
+4. Confirm outputs match expected format and behaviour
+5. Only then declare complete or offer to commit/PR
+
 ## Contributing
 
 See `.agents/aidevops/` for framework development guidance:

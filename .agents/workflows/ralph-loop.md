@@ -301,6 +301,25 @@ Always use `--max-iterations` as a safety net:
 #  - Suggest alternative approaches"
 ```
 
+### 6. Replanning (don't patch a broken approach)
+
+If you've spent 3+ iterations on the same sub-problem without progress, STOP patching and replan from scratch. Read the task description fresh, examine what you've built so far, and consider a fundamentally different approach. The loop gives you fresh context each iteration — use it.
+
+**Signs you need to replan:**
+
+- Same error recurring across iterations despite fixes
+- Incremental patches making the code more complex without solving the root issue
+- Tests still failing after 3+ attempts at the same approach
+
+**How to replan:**
+
+1. Acknowledge the current approach isn't working
+2. List what you've learned about the problem from failed attempts
+3. Identify at least one fundamentally different strategy
+4. Start the new approach cleanly — don't build on the broken foundation
+
+A fresh strategy beats incremental fixes to a broken approach. Sunk cost is not a reason to continue.
+
 ## When to Use Ralph
 
 **Good for:**

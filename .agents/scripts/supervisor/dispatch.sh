@@ -2075,7 +2075,39 @@ Before writing any code, verify your assumptions:
 **7. Minimise token waste**
 - Don't read entire large files — use line ranges from search results
 - Don't output verbose explanations in commit messages — be concise
-- Don't retry failed approaches more than once — exit with BLOCKED instead"
+- If an approach fails, try ONE fundamentally different strategy before exiting BLOCKED
+
+**8. Replan when stuck, don't patch**
+If your first approach isn't working, step back and consider a fundamentally different
+strategy instead of incrementally patching the broken approach. A fresh approach often
+succeeds where incremental fixes fail. Only exit with BLOCKED after trying at least one
+alternative strategy.
+
+## Completion Self-Check (MANDATORY before FULL_LOOP_COMPLETE)
+
+Before emitting FULL_LOOP_COMPLETE or marking task complete, you MUST:
+
+1. **Requirements checklist**: List every requirement from the task description as a
+   numbered checklist. Mark each [DONE] or [TODO]. If ANY are [TODO], do NOT mark
+   complete — keep working.
+
+2. **Verification run**: Execute available verification:
+   - Run tests if the project has them
+   - Run shellcheck on any .sh files you modified
+   - Run lint/typecheck if configured
+   - Confirm output files exist and have expected content
+
+3. **Generalization check**: Would your solution still work if input values, file
+   contents, or dimensions changed? If you hardcoded something that should be
+   parameterized, fix it before completing.
+
+4. **Minimal state changes**: Only create or modify files explicitly required by the
+   task. Do not leave behind extra files, modified configs, or side effects that were
+   not requested.
+
+FULL_LOOP_COMPLETE is IRREVERSIBLE and FINAL. You have unlimited iterations but only
+one submission. Extra verification costs nothing; a wrong completion wastes an entire
+retry cycle."
 
 	if [[ -n "$memory_context" ]]; then
 		prompt="$prompt
