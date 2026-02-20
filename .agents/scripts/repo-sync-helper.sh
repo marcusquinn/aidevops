@@ -740,6 +740,131 @@ cmd_status() {
 }
 
 #######################################
+# Manage git_parent_dirs in repos.json
+# Subcommands: add <path>, remove <path>, list
+#######################################
+cmd_dirs() {
+	local subcmd="${1:-list}"
+	shift || true
+
+	if ! command -v jq &>/dev/null; then
+		print_error "jq is required for dirs management. Install: brew install jq"
+		return 1
+	fi
+
+	# Ensure config file exists with git_parent_dirs
+	if [[ ! -f "$CONFIG_FILE" ]]; then
+		mkdir -p "$(dirname "$CONFIG_FILE")"
+		echo '{"initialized_repos": [], "git_parent_dirs": ["~/Git"]}' >"$CONFIG_FILE"
+	elif ! jq -e '.git_parent_dirs' "$CONFIG_FILE" &>/dev/null; then
+		local temp_file="${CONFIG_FILE}.tmp"
+		if jq '. + {"git_parent_dirs": ["~/Git"]}' "$CONFIG_FILE" >"$temp_file" 2>/dev/null; then
+			mv "$temp_file" "$CONFIG_FILE"
+		else
+			rm -f "$temp_file"
+			print_error "Failed to initialize git_parent_dirs in config"
+			return 1
+		fi
+	fi
+
+	case "$subcmd" in
+	list)
+		local dirs
+		dirs=$(jq -r '.git_parent_dirs[]? // empty' "$CONFIG_FILE" 2>/dev/null || true)
+		if [[ -z "$dirs" ]]; then
+			echo "No parent directories configured."
+			echo "Add one with: aidevops repo-sync dirs add ~/Git"
+		else
+			echo "Configured git parent directories:"
+			while IFS= read -r dir; do
+				local expanded="${dir/#\~/$HOME}"
+				if [[ -d "$expanded" ]]; then
+					echo "  $dir"
+				else
+					echo "  $dir  (not found)"
+				fi
+			done <<<"$dirs"
+		fi
+		;;
+	add)
+		local new_dir="${1:-}"
+		if [[ -z "$new_dir" ]]; then
+			print_error "Usage: aidevops repo-sync dirs add <path>"
+			return 1
+		fi
+
+		# Normalize: collapse to ~ prefix if under HOME
+		local expanded="${new_dir/#\~/$HOME}"
+		if [[ "$expanded" == "$HOME"/* ]]; then
+			new_dir="~${expanded#"$HOME"}"
+		else
+			new_dir="$expanded"
+		fi
+
+		# Check if already present
+		if jq -e --arg d "$new_dir" '.git_parent_dirs | index($d)' "$CONFIG_FILE" &>/dev/null; then
+			print_warning "Already configured: $new_dir"
+			return 0
+		fi
+
+		# Validate directory exists
+		local check_path="${new_dir/#\~/$HOME}"
+		if [[ ! -d "$check_path" ]]; then
+			print_warning "Directory does not exist: $check_path"
+			echo "Adding anyway — create it before next sync."
+		fi
+
+		local temp_file="${CONFIG_FILE}.tmp"
+		if jq --arg d "$new_dir" '.git_parent_dirs += [$d]' "$CONFIG_FILE" >"$temp_file" 2>/dev/null; then
+			mv "$temp_file" "$CONFIG_FILE"
+			print_success "Added: $new_dir"
+		else
+			rm -f "$temp_file"
+			print_error "Failed to add directory"
+			return 1
+		fi
+		;;
+	remove | rm)
+		local rm_dir="${1:-}"
+		if [[ -z "$rm_dir" ]]; then
+			print_error "Usage: aidevops repo-sync dirs remove <path>"
+			return 1
+		fi
+
+		# Normalize the same way as add
+		local expanded="${rm_dir/#\~/$HOME}"
+		if [[ "$expanded" == "$HOME"/* ]]; then
+			rm_dir="~${expanded#"$HOME"}"
+		else
+			rm_dir="$expanded"
+		fi
+
+		# Check if present
+		if ! jq -e --arg d "$rm_dir" '.git_parent_dirs | index($d)' "$CONFIG_FILE" &>/dev/null; then
+			print_warning "Not configured: $rm_dir"
+			return 0
+		fi
+
+		local temp_file="${CONFIG_FILE}.tmp"
+		if jq --arg d "$rm_dir" '.git_parent_dirs |= map(select(. != $d))' "$CONFIG_FILE" >"$temp_file" 2>/dev/null; then
+			mv "$temp_file" "$CONFIG_FILE"
+			print_success "Removed: $rm_dir"
+		else
+			rm -f "$temp_file"
+			print_error "Failed to remove directory"
+			return 1
+		fi
+		;;
+	*)
+		print_error "Unknown dirs subcommand: $subcmd"
+		echo "Usage: aidevops repo-sync dirs [add|remove|list]"
+		return 1
+		;;
+	esac
+	return 0
+}
+
+#######################################
 # Show or edit configuration
 #######################################
 cmd_config() {
@@ -766,12 +891,10 @@ cmd_config() {
 	fi
 
 	echo ""
-	echo "To configure parent directories, add to $CONFIG_FILE:"
-	echo ""
-	echo '  {"git_parent_dirs": ["~/Git", "~/Projects"]}'
-	echo ""
-	echo "Or use jq to update:"
-	echo "  jq '.git_parent_dirs = [\"~/Git\", \"~/Projects\"]' $CONFIG_FILE > /tmp/repos.json && mv /tmp/repos.json $CONFIG_FILE"
+	echo "Manage parent directories:"
+	echo "  aidevops repo-sync dirs list          # Show configured directories"
+	echo "  aidevops repo-sync dirs add ~/Projects  # Add a directory"
+	echo "  aidevops repo-sync dirs remove ~/Old    # Remove a directory"
 	echo ""
 	return 0
 }
@@ -824,6 +947,10 @@ COMMANDS:
     disable             Remove scheduler
     status              Show current state and last sync results
     check               One-shot: sync all configured repos now
+    dirs [subcmd]       Manage git parent directories:
+        list            Show configured directories (default)
+        add <path>      Add a parent directory
+        remove <path>   Remove a parent directory
     config              Show configuration and how to edit it
     logs [--tail N]     View sync logs (default: last 50 lines)
     logs --follow       Follow log output in real-time
@@ -834,7 +961,8 @@ ENVIRONMENT:
     AIDEVOPS_REPO_SYNC_INTERVAL=1440     Minutes between syncs (default: 1440 = daily)
 
 CONFIGURATION:
-    Add "git_parent_dirs" array to ~/.config/aidevops/repos.json:
+    Manage with: aidevops repo-sync dirs [add|remove|list]
+    Or manually add "git_parent_dirs" array to ~/.config/aidevops/repos.json:
       {"git_parent_dirs": ["~/Git", "~/Projects"]}
     Default: ~/Git
 
@@ -881,6 +1009,7 @@ main() {
 	disable) cmd_disable "$@" ;;
 	status) cmd_status "$@" ;;
 	check) cmd_check "$@" ;;
+	dirs) cmd_dirs "$@" ;;
 	config) cmd_config "$@" ;;
 	logs) cmd_logs "$@" ;;
 	help | --help | -h) cmd_help ;;
