@@ -1,5 +1,39 @@
 # Verification Log
 
+## t1274 Verification — Resolve t1200 Merge Conflict
+
+### Status: RESOLVED — No conflict exists; t1200 deliverables fully merged
+
+**Investigation findings:**
+
+t1200 (IP reputation check agent) was broken into 6 subtasks, all of which merged successfully:
+
+| Subtask | PR | Status |
+|---------|-----|--------|
+| t1200.1 Core orchestrator + free-tier providers | #1856 | MERGED |
+| t1200.2 Keyed providers + SQLite cache + batch mode | #1860 | MERGED |
+| t1200.3 Agent doc + slash command + index updates | #1867 | MERGED |
+| t1200.4 Core IP reputation lookup module | #1871 | MERGED |
+| t1200.5 CLI interface and agent framework integration | #1883 | MERGED |
+| t1200.6 Output formatting, caching layer, rate limit handling | #1911 | MERGED |
+
+**Deliverables verified on main:**
+- `.agents/scripts/ip-reputation-helper.sh` — present
+- `.agents/tools/security/ip-reputation.md` — present
+
+**Root cause of t1274 dispatch:** The supervisor recorded `blocked:merge_conflict` for the
+parent t1200 task. This was a false alarm — the parent branch (`feature/t1200`) had no
+divergent commits (it was at the same SHA as `origin/main`). All feature work was
+implemented via subtask branches. The parent t1200 task simply needs to be marked `[x]`
+complete by the supervisor since all subtasks have `pr:` proof-log entries.
+
+**Action taken:** No code changes needed. This PR serves as the proof-log entry for t1274.
+The supervisor should mark t1200 complete based on all subtasks being `[x]` with merged PRs.
+
+## Proof-Log
+
+t1274 verified:2026-02-20
+
 ## t1255 Verification — Cross-Repo Dispatch Investigation (Duplicate of t1253)
 
 ### Status: DUPLICATE — closed, covered by t1253 / PR #1959
