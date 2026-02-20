@@ -428,6 +428,21 @@ github_find_issue_by_title() {
 	return 0
 }
 
+# Find a merged PR by task ID in title (GitHub-specific, uses gh CLI)
+# Returns "number|url" on stdout, empty if not found.
+github_find_merged_pr_by_task() {
+	local repo_slug="$1" task_id="$2"
+	local pr_json
+	pr_json=$(gh pr list --repo "$repo_slug" --state merged \
+		--search "$task_id in:title" --limit 1 --json number,url || echo "[]")
+	local pr_data
+	pr_data=$(echo "$pr_json" | jq -r '.[0] | select(. != null) | "\(.number)|\(.url)"' || echo "")
+	if [[ -n "$pr_data" ]]; then
+		echo "$pr_data"
+	fi
+	return 0
+}
+
 # --- Gitea Adapter (uses curl + REST API v1) ---
 
 gitea_api() {
@@ -623,6 +638,39 @@ gitea_find_issue_by_title() {
 	return 0
 }
 
+# Find a merged PR by task ID in title (Gitea REST API v1)
+# Returns "number|url" on stdout, empty if not found.
+# Paginates through closed PRs until a match is found or results are exhausted.
+gitea_find_merged_pr_by_task() {
+	local repo_slug="$1" task_id="$2"
+	local owner="${repo_slug%%/*}"
+	local repo="${repo_slug#*/}"
+	local page=1
+	local limit=50
+	# Gitea: list closed PRs (merged PRs have state=closed and merged=true)
+	# Note: /pulls endpoint does not support type=pulls (that param is for /issues)
+	while true; do
+		local response
+		response=$(gitea_api "GET" "repos/${owner}/${repo}/pulls?state=closed&limit=${limit}&page=${page}")
+		# Stop if response is empty array
+		local count
+		count=$(echo "$response" | jq 'length' || echo "0")
+		if [[ "$count" -eq 0 ]]; then
+			break
+		fi
+		local pr_data
+		pr_data=$(echo "$response" | jq -r --arg tid "${task_id}:" \
+			'.[] | select(.title | startswith($tid)) | select(.merged == true) | "\(.number)|\(.html_url)"' |
+			head -n 1 || echo "")
+		if [[ -n "$pr_data" ]]; then
+			echo "$pr_data"
+			return 0
+		fi
+		page=$((page + 1))
+	done
+	return 0
+}
+
 # --- GitLab Adapter (uses curl + REST API v4) ---
 
 gitlab_api() {
@@ -776,6 +824,26 @@ gitlab_find_issue_by_title() {
 	return 0
 }
 
+# Find a merged MR by task ID in title (GitLab REST API v4)
+# Returns "number|url" on stdout, empty if not found.
+gitlab_find_merged_pr_by_task() {
+	local repo_slug="$1" task_id="$2"
+	local project_path
+	project_path=$(_gitlab_project_path "$repo_slug")
+	local encoded_task
+	encoded_task=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.stdin.read().strip()))' <<<"$task_id")
+	local response
+	response=$(gitlab_api "GET" "projects/${project_path}/merge_requests?state=merged&search=${encoded_task}&per_page=10")
+	local mr_data
+	mr_data=$(echo "$response" | jq -r --arg tid "${task_id}:" \
+		'.[] | select(.title | startswith($tid)) | "\(.iid)|\(.web_url)"' |
+		head -n 1 || echo "")
+	if [[ -n "$mr_data" ]]; then
+		echo "$mr_data"
+	fi
+	return 0
+}
+
 # =============================================================================
 # Platform Dispatch Layer (t1120.3)
 # =============================================================================
@@ -900,6 +968,20 @@ platform_find_issue_by_title() {
 	*)
 		print_error "Unsupported platform: $_DETECTED_PLATFORM"
 		return 1
+		;;
+	esac
+}
+
+# Find a merged PR/MR by task ID in title (platform-agnostic).
+# Returns "number|url" on stdout, empty if not found.
+# $1: repo_slug  $2: task_id
+platform_find_merged_pr_by_task() {
+	case "$_DETECTED_PLATFORM" in
+	github) github_find_merged_pr_by_task "$@" ;;
+	gitea) gitea_find_merged_pr_by_task "$@" ;;
+	gitlab) gitlab_find_merged_pr_by_task "$@" ;;
+	*)
+		return 0
 		;;
 	esac
 }
@@ -1939,7 +2021,7 @@ cmd_enrich() {
 		fi
 
 		if [[ -z "$issue_number" || "$issue_number" == "null" ]]; then
-			print_warning "$task_id: no matching issue found on $_DETECTED_PLATFORM"
+			print_warning "$task_id: no matching issue found on $_DETECTED_PLATFORM (skipping enrich)"
 			continue
 		fi
 
@@ -2007,7 +2089,7 @@ cmd_pull() {
 	init_platform "$project_root"
 	verify_platform_auth "$_DETECTED_PLATFORM" || return 1
 
-	print_info "Pulling issue refs from $repo_slug ($_DETECTED_PLATFORM) to TODO.md..."
+	print_info "Pulling issue refs from $_DETECTED_PLATFORM ($repo_slug) to TODO.md..."
 
 	# Get all open issues with t-number prefixes (include assignees for assignee: sync)
 	local issues_json
@@ -2036,8 +2118,8 @@ cmd_pull() {
 
 		# Check if task exists in TODO.md (any checkbox state, any indent level)
 		if ! grep -qE "^\s*- \[.\] ${task_id} " "$todo_file" 2>/dev/null; then
-			# Orphan: GH issue exists but no TODO.md entry
-			print_warning "ORPHAN: GH#$issue_number ($task_id: $issue_title) — no TODO.md entry"
+			# Orphan: platform issue exists but no TODO.md entry
+			print_warning "ORPHAN: #$issue_number ($task_id: $issue_title) — no TODO.md entry"
 			orphan_open=$((orphan_open + 1))
 			orphan_open_list="${orphan_open_list:+$orphan_open_list, }#$issue_number ($task_id)"
 			continue
@@ -2076,7 +2158,7 @@ cmd_pull() {
 		fi
 
 		if ! grep -qE "^\s*- \[.\] ${task_id} " "$todo_file" 2>/dev/null; then
-			log_verbose "ORPHAN (closed): GH#$issue_number ($task_id) — no TODO.md entry"
+			log_verbose "ORPHAN (closed): #$issue_number ($task_id) — no TODO.md entry"
 			orphan_closed=$((orphan_closed + 1))
 			continue
 		fi
@@ -2092,7 +2174,7 @@ cmd_pull() {
 		synced=$((synced + 1))
 	done < <(echo "$closed_json" | jq -c '.[]' 2>/dev/null || true)
 
-	# Sync GitHub Issue assignees → TODO.md assignee: field (t165 bi-directional sync)
+	# Sync platform issue assignees → TODO.md assignee: field (t165 bi-directional sync)
 	local assignee_synced=0
 	while IFS= read -r issue_line; do
 		local issue_number
@@ -2126,7 +2208,7 @@ cmd_pull() {
 
 		# No assignee in TODO.md but issue has assignee — sync it
 		if [[ "$DRY_RUN" == "true" ]]; then
-			print_info "[DRY-RUN] Would add assignee:$assignee_login to $task_id (from GH#$issue_number)"
+			print_info "[DRY-RUN] Would add assignee:$assignee_login to $task_id (from $_DETECTED_PLATFORM #$issue_number)"
 			assignee_synced=$((assignee_synced + 1))
 			continue
 		fi
@@ -2144,7 +2226,7 @@ cmd_pull() {
 				new_line="${current_line} assignee:${assignee_login}"
 			fi
 			sed_inplace "${line_num}s|.*|${new_line}|" "$todo_file"
-			log_verbose "Synced assignee:$assignee_login to $task_id (from GH#$issue_number)"
+			log_verbose "Synced assignee:$assignee_login to $task_id (from $_DETECTED_PLATFORM #$issue_number)"
 			assignee_synced=$((assignee_synced + 1))
 		fi
 	done < <(echo "$issues_json" | jq -c '.[]' 2>/dev/null || true)
@@ -2160,10 +2242,10 @@ cmd_pull() {
 
 	if [[ $orphan_open -gt 0 ]]; then
 		print_warning "$orphan_open open issue(s) have no TODO.md entry: $orphan_open_list"
-		print_info "Add tasks to TODO.md or close orphan issues on GitHub"
+		print_info "Add tasks to TODO.md or close orphan issues on $_DETECTED_PLATFORM"
 	fi
 	if [[ $synced -eq 0 && $assignee_synced -eq 0 && $orphan_open -eq 0 ]]; then
-		print_success "TODO.md refs are up to date with GitHub"
+		print_success "TODO.md refs are up to date with $_DETECTED_PLATFORM"
 	fi
 
 	return 0
@@ -2251,7 +2333,7 @@ add_pr_ref_to_todo() {
 
 # Verify a completed task has evidence of real work (merged PR or verified: field)
 # Returns 0 if verified, 1 if not
-# shellcheck disable=SC2155
+# Requires _DETECTED_PLATFORM and _PLATFORM_BASE_URL to be set (call init_platform first).
 task_has_completion_evidence() {
 	local task_line="$1"
 	local task_id="$2"
@@ -2268,16 +2350,15 @@ task_has_completion_evidence() {
 	fi
 
 	# Check 2b: Has a merged PR reference in the task line (e.g., "PR #NNN merged" in Notes)
-	# Look for the task and its Notes lines
 	if echo "$task_line" | grep -qiE 'PR #[0-9]+ merged|PR.*merged'; then
 		return 0
 	fi
 
-	# Check 3: Search for a merged PR with this task ID in the title
-	if command -v gh &>/dev/null && [[ -n "$repo_slug" ]]; then
-		local merged_pr
-		merged_pr=$(gh pr list --repo "$repo_slug" --state merged --search "$task_id in:title" --limit 1 --json number --jq '.[0].number' 2>/dev/null || echo "")
-		if [[ -n "$merged_pr" ]]; then
+	# Check 3: Search platform for a merged PR/MR with this task ID in the title
+	if [[ -n "$repo_slug" && -n "${_DETECTED_PLATFORM:-}" ]]; then
+		local merged_pr_info
+		merged_pr_info=$(platform_find_merged_pr_by_task "$repo_slug" "$task_id" || echo "")
+		if [[ -n "$merged_pr_info" ]]; then
 			return 0
 		fi
 	fi
@@ -2285,10 +2366,43 @@ task_has_completion_evidence() {
 	return 1
 }
 
+# Build a PR/MR URL for a given number using the detected platform base URL.
+# Falls back to github.com format when base URL is unavailable.
+# $1: repo_slug  $2: pr_number
+_build_pr_url() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local base="${_PLATFORM_BASE_URL:-}"
+
+	case "${_DETECTED_PLATFORM:-github}" in
+	github)
+		echo "https://github.com/${repo_slug}/pull/${pr_number}"
+		;;
+	gitea)
+		if [[ -z "$base" ]]; then
+			print_error "_build_pr_url: _PLATFORM_BASE_URL is empty for gitea; was init_platform called?"
+			return 1
+		fi
+		echo "${base}/${repo_slug}/pulls/${pr_number}"
+		;;
+	gitlab)
+		if [[ -z "$base" ]]; then
+			print_error "_build_pr_url: _PLATFORM_BASE_URL is empty for gitlab; was init_platform called?"
+			return 1
+		fi
+		echo "${base}/${repo_slug}/-/merge_requests/${pr_number}"
+		;;
+	*)
+		echo "https://github.com/${repo_slug}/pull/${pr_number}"
+		;;
+	esac
+	return 0
+}
+
 # Find the closing/merged PR for a completed task (t220)
 # Outputs "number|url" on stdout if found, empty string if not.
-# Searches: task line notes, then GitHub merged PRs by title.
-# Used by cmd_close() to include an auditable PR reference when closing issues.
+# Searches: task line notes, then platform merged PRs/MRs by title.
+# Requires _DETECTED_PLATFORM and _PLATFORM_BASE_URL to be set (call init_platform first).
 find_closing_pr() {
 	local task_line="$1"
 	local task_id="$2"
@@ -2298,7 +2412,7 @@ find_closing_pr() {
 	local todo_pr
 	todo_pr=$(echo "$task_line" | grep -oE 'pr:#[0-9]+' | head -1 | grep -oE '[0-9]+' || echo "")
 	if [[ -n "$todo_pr" ]]; then
-		echo "${todo_pr}|https://github.com/${repo_slug}/pull/${todo_pr}"
+		echo "${todo_pr}|$(_build_pr_url "$repo_slug" "$todo_pr")"
 		return 0
 	fi
 
@@ -2306,20 +2420,16 @@ find_closing_pr() {
 	local inline_pr
 	inline_pr=$(echo "$task_line" | grep -oiE 'PR #[0-9]+' | head -1 | grep -oE '[0-9]+' || echo "")
 	if [[ -n "$inline_pr" ]]; then
-		echo "${inline_pr}|https://github.com/${repo_slug}/pull/${inline_pr}"
+		echo "${inline_pr}|$(_build_pr_url "$repo_slug" "$inline_pr")"
 		return 0
 	fi
 
-	# Check 3: Search GitHub for a merged PR with this task ID in the title
-	if command -v gh &>/dev/null && [[ -n "$repo_slug" ]]; then
-		local pr_json
-		pr_json=$(gh pr list --repo "$repo_slug" --state merged --search "$task_id in:title" --limit 1 --json number,url 2>/dev/null || echo "[]")
-		local pr_number
-		pr_number=$(echo "$pr_json" | jq -r '.[0].number // empty' 2>/dev/null || echo "")
-		local pr_url
-		pr_url=$(echo "$pr_json" | jq -r '.[0].url // empty' 2>/dev/null || echo "")
-		if [[ -n "$pr_number" && "$pr_number" != "null" ]]; then
-			echo "${pr_number}|${pr_url}"
+	# Check 3: Search platform for a merged PR/MR with this task ID in the title
+	if [[ -n "$repo_slug" && -n "${_DETECTED_PLATFORM:-}" ]]; then
+		local pr_info
+		pr_info=$(platform_find_merged_pr_by_task "$repo_slug" "$task_id" || echo "")
+		if [[ -n "$pr_info" ]]; then
+			echo "$pr_info"
 			return 0
 		fi
 
@@ -2327,11 +2437,9 @@ find_closing_pr() {
 		local parent_id
 		parent_id=$(echo "$task_id" | grep -oE '^t[0-9]+' || echo "")
 		if [[ -n "$parent_id" && "$parent_id" != "$task_id" ]]; then
-			pr_json=$(gh pr list --repo "$repo_slug" --state merged --search "$parent_id in:title" --limit 1 --json number,url 2>/dev/null || echo "[]")
-			pr_number=$(echo "$pr_json" | jq -r '.[0].number // empty' 2>/dev/null || echo "")
-			pr_url=$(echo "$pr_json" | jq -r '.[0].url // empty' 2>/dev/null || echo "")
-			if [[ -n "$pr_number" && "$pr_number" != "null" ]]; then
-				echo "${pr_number}|${pr_url}"
+			pr_info=$(platform_find_merged_pr_by_task "$repo_slug" "$parent_id" || echo "")
+			if [[ -n "$pr_info" ]]; then
+				echo "$pr_info"
 				return 0
 			fi
 		fi
@@ -2557,7 +2665,7 @@ _close_single_task() {
 		log_verbose "$task_id: no ref:GH# in TODO.md, searching $_DETECTED_PLATFORM by title..."
 		issue_number=$(platform_find_issue_by_title "$repo_slug" "${task_id}:" "open" 50)
 		if [[ -n "$issue_number" && "$issue_number" != "null" ]]; then
-			log_verbose "$task_id: found open issue #$issue_number by title search"
+			log_verbose "$task_id: found open issue #$issue_number by title search on $_DETECTED_PLATFORM"
 			if [[ "$DRY_RUN" != "true" ]]; then
 				add_gh_ref_to_todo "$task_id" "$issue_number" "$todo_file"
 			fi
@@ -2691,13 +2799,13 @@ cmd_status() {
 	echo ""
 
 	if [[ $without_ref -gt 0 ]]; then
-		print_warning "$without_ref open tasks have no GitHub issue. Run: issue-sync-helper.sh push"
+		print_warning "$without_ref open tasks have no $_DETECTED_PLATFORM issue. Run: issue-sync-helper.sh push"
 	fi
 	if [[ $completed_with_open_issues -gt 0 ]]; then
-		print_warning "$completed_with_open_issues completed tasks have open GitHub issues. Run: issue-sync-helper.sh close"
+		print_warning "$completed_with_open_issues completed tasks have open $_DETECTED_PLATFORM issues. Run: issue-sync-helper.sh close"
 	fi
 	if [[ $without_ref -eq 0 && $completed_with_open_issues -eq 0 ]]; then
-		print_success "TODO.md and GitHub issues are in sync"
+		print_success "TODO.md and $_DETECTED_PLATFORM issues are in sync"
 	fi
 
 	return 0
@@ -2769,7 +2877,7 @@ cmd_reconcile() {
 			fi
 			ref_fixed=$((ref_fixed + 1))
 		elif [[ -z "$correct_number" || "$correct_number" == "null" ]]; then
-			print_warning "$tid: no matching issue found on $_DETECTED_PLATFORM (ref:GH#$gh_ref is stale)"
+			print_warning "$tid: no matching issue found on $_DETECTED_PLATFORM (ref:GH#$gh_ref may be stale)"
 		fi
 	done < <(strip_code_fences <"$todo_file" | grep -E '^\s*- \[.\] t[0-9]+.*ref:GH#[0-9]+' || true)
 
@@ -2797,7 +2905,7 @@ cmd_reconcile() {
 
 		# Check if task exists at all in TODO.md (any indent level)
 		if ! grep -qE "^\s*- \[.\] ${issue_tid} " "$todo_file" 2>/dev/null; then
-			log_verbose "ORPHAN: GH#$issue_number ($issue_tid) has no matching TODO.md entry"
+			log_verbose "ORPHAN: #$issue_number ($issue_tid) has no matching TODO.md entry"
 			orphan_issues=$((orphan_issues + 1))
 		fi
 	done < <(echo "$open_issues_json" | jq -c '.[]' 2>/dev/null || true)
