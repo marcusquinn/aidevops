@@ -1902,3 +1902,14 @@
   files: .agents/scripts/onboarding-helper.sh
   check: shellcheck .agents/scripts/onboarding-helper.sh
   check: file-exists .agents/scripts/onboarding-helper.sh
+
+- [ ] v229 t1275 KIRA-informed completion discipline: universal behavioura... | PR #2022 | merged:2026-02-20
+  files: .agents/AGENTS.md, .agents/prompts/build.txt, .agents/scripts/commands/full-loop.md, .agents/scripts/supervisor/dispatch.sh, .agents/workflows/ralph-loop.md, AGENTS.md
+  check: file-exists .agents/AGENTS.md
+  check: file-exists .agents/prompts/build.txt
+  check: file-exists .agents/scripts/commands/full-loop.md
+  check: shellcheck .agents/scripts/supervisor/dispatch.sh
+  check: file-exists .agents/scripts/supervisor/dispatch.sh
+  check: file-exists .agents/workflows/ralph-loop.md
+  check: file-exists AGENTS.md
+  check: rg "ralph-loop" .agents/subagent-index.toon
