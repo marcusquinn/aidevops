@@ -1839,3 +1839,8 @@
   files: .agents/scripts/issue-sync-helper.sh
   check: shellcheck .agents/scripts/issue-sync-helper.sh
   check: file-exists .agents/scripts/issue-sync-helper.sh
+
+- [ ] v224 t1269 Fix stuck evaluating tasks: crash-resilient evaluation wi... | PR #2002 | merged:2026-02-20
+  files: .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
