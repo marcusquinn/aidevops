@@ -208,4 +208,7 @@ See `services/accessibility/accessibility-audit.md` for comprehensive auditing.
 - `mobile-app-dev/assets.md` - Asset generation and management
 - `tools/vision/overview.md` - Image generation tools
 - `tools/browser/remotion-best-practices-skill.md` - Animated previews
+- `tools/ui/tailwind-css.md` - Tailwind CSS (web and NativeWind for React Native)
+- `tools/ui/shadcn.md` - shadcn/ui component library
+- `tools/ui/i18next.md` - Internationalisation
 - `services/accessibility/accessibility-audit.md` - Accessibility auditing

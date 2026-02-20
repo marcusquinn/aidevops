@@ -211,6 +211,9 @@ Use RevenueCat Experiments or Superwall to test:
 
 ## Related
 
+- `services/payments/revenuecat.md` - Dedicated RevenueCat agent (setup, SDK, entitlements)
+- `services/payments/superwall.md` - Advanced paywall A/B testing
+- `services/payments/stripe.md` - Stripe payments (web apps, extensions)
 - `mobile-app-dev/publishing.md` - Store submission with payments
 - `mobile-app-dev/onboarding.md` - Paywall placement in onboarding
 - `mobile-app-dev/analytics.md` - Revenue analytics and optimisation

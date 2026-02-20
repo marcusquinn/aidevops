@@ -248,3 +248,8 @@ After building, use the aidevops mobile testing stack:
 - `mobile-app-dev/testing.md` - Full testing guide
 - `mobile-app-dev/publishing.md` - Store submission
 - `tools/mobile/` - Mobile testing tools
+- `tools/api/better-auth.md` - Authentication (has `@better-auth/expo` package)
+- `tools/ui/tailwind-css.md` - Tailwind CSS (via NativeWind for React Native)
+- `tools/api/hono.md` - API framework for backend
+- `tools/api/drizzle.md` - Database ORM for backend
+- `services/payments/revenuecat.md` - In-app subscription management

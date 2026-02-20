@@ -136,6 +136,10 @@ Options:
 
 ## Related
 
+- `tools/api/hono.md` - Hono API framework (recommended for custom APIs)
+- `tools/api/drizzle.md` - Drizzle ORM for type-safe database queries
+- `tools/api/better-auth.md` - Better Auth (supports Expo via `@better-auth/expo`)
+- `services/database/postgres-drizzle-skill.md` - Postgres + Drizzle deep reference
+- `services/database/multi-org-isolation.md` - Multi-tenant patterns
 - `tools/deployment/coolify.md` - Self-hosted deployment
 - `mobile-app-dev/notifications.md` - Push notification setup
-- `services/database/multi-org-isolation.md` - Multi-tenant patterns

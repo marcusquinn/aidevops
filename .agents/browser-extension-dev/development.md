@@ -232,4 +232,11 @@ document.body.appendChild(host);
 - `browser-extension-dev/testing.md` - Testing extensions
 - `browser-extension-dev/publishing.md` - Store submission
 - `tools/browser/chrome-webstore-release.md` - Chrome Web Store automation
+- `tools/ui/wxt.md` - Dedicated WXT framework agent
+- `tools/ui/tailwind-css.md` - Tailwind CSS styling
+- `tools/ui/shadcn.md` - shadcn/ui components (for extension UIs)
+- `tools/ui/react-email.md` - React Email (for transactional emails)
+- `tools/api/hono.md` - Hono API framework (for extension backends)
+- `tools/api/better-auth.md` - Authentication
+- `services/payments/stripe.md` - Stripe payments (for premium extensions)
 - `mobile-app-dev/ui-design.md` - Design standards (shared)
