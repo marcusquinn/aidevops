@@ -648,6 +648,49 @@ cmd_run() {
 
 	log_info "Results saved: $result_file"
 
+	# Sync test results to unified pattern tracker backbone (t1094)
+	# Records agent test outcomes as build-agent patterns for model routing.
+	local pt_helper="${SCRIPT_DIR}/pattern-tracker-helper.sh"
+	if [[ -x "$pt_helper" ]]; then
+		local pt_outcome="success"
+		[[ "$failed" -gt 0 ]] && pt_outcome="failure"
+
+		# Derive model tier from suite model string
+		local model_tier=""
+		case "${suite_model:-}" in
+		*haiku*) model_tier="haiku" ;;
+		*sonnet*) model_tier="sonnet" ;;
+		*opus*) model_tier="opus" ;;
+		*flash*) model_tier="flash" ;;
+		*pro*) model_tier="pro" ;;
+		esac
+
+		local pt_quality=""
+		if [[ "$failed" -eq 0 ]]; then
+			pt_quality="ci-pass-first-try"
+		elif [[ "$passed" -gt 0 ]]; then
+			pt_quality="ci-pass-after-fix"
+		else
+			pt_quality="needs-human"
+		fi
+
+		local pt_desc="Agent test suite '${suite_name}': ${passed} passed, ${failed} failed"
+		[[ -n "$suite_agent" ]] && pt_desc="${pt_desc} (agent: ${suite_agent})"
+
+		local pt_args=(
+			--outcome "$pt_outcome"
+			--task-type "testing"
+			--description "$pt_desc"
+			--quality "$pt_quality"
+			--duration "$total_duration"
+			--tags "agent-test,suite:${suite_name}"
+			--source "build-agent"
+		)
+		[[ -n "$model_tier" ]] && pt_args+=(--model "$model_tier")
+
+		"$pt_helper" score "${pt_args[@]}" >/dev/null 2>&1 || true
+	fi
+
 	if [[ $failed -gt 0 ]]; then
 		return 1
 	fi
