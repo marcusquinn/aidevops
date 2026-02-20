@@ -1917,3 +1917,7 @@
 - [ ] v230 t1200 IP reputation check agent — vet VPS/server/proxy IPs be... | PR #2020 | merged:2026-02-20
   files: VERIFY.md
   check: file-exists VERIFY.md
+
+- [ ] v231 t1274 Resolve t1200 merge conflict and retry dispatch #bugfix #... | PR #2020 | merged:2026-02-20
+  files: VERIFY.md
+  check: file-exists VERIFY.md
