@@ -1936,16 +1936,21 @@
   check: shellcheck .agents/scripts/wp-helper.sh
   check: file-exists .agents/scripts/wp-helper.sh
 
-- [ ] v235 t1120.1 Extract platform-agnostic functions from issue-sync-helpe... | PR #2029 | merged:2026-02-20
+- [x] v235 t1120.1 Extract platform-agnostic functions from issue-sync-helpe... | PR #2029 | merged:2026-02-20 verified:2026-02-20
   files: .agents/scripts/issue-sync-helper.sh, .agents/scripts/issue-sync-lib.sh
   check: shellcheck .agents/scripts/issue-sync-helper.sh
   check: file-exists .agents/scripts/issue-sync-helper.sh
   check: shellcheck .agents/scripts/issue-sync-lib.sh
   check: file-exists .agents/scripts/issue-sync-lib.sh
 
-- [ ] v236 t1277 Fix setup.sh unbound variable extra_args[@] during Bun in... | PR #2027 | merged:2026-02-20
+- [x] v236 t1277 Fix setup.sh unbound variable extra_args[@] during Bun in... | PR #2027 | merged:2026-02-20 verified:2026-02-20
   files: .agents/scripts/setup/_common.sh, setup.sh
   check: shellcheck .agents/scripts/setup/_common.sh
   check: file-exists .agents/scripts/setup/_common.sh
   check: shellcheck setup.sh
   check: file-exists setup.sh
+
+- [ ] v237 t1120.2 Add Gitea API adapter functions (create/close/edit/list/s... | PR #2031 | merged:2026-02-20
+  files: .agents/scripts/issue-sync-helper.sh
+  check: shellcheck .agents/scripts/issue-sync-helper.sh
+  check: file-exists .agents/scripts/issue-sync-helper.sh
