@@ -1931,7 +1931,7 @@
   files: .agents/AGENTS.md
   check: file-exists .agents/AGENTS.md
 
-- [ ] v234 t1279 Fix wp-helper.sh run_wp_command() CONFIG_FILE not propaga... | PR #2028 | merged:2026-02-20
+- [x] v234 t1279 Fix wp-helper.sh run_wp_command() CONFIG_FILE not propaga... | PR #2028 | merged:2026-02-20 verified:2026-02-20
   files: .agents/scripts/wp-helper.sh
   check: shellcheck .agents/scripts/wp-helper.sh
   check: file-exists .agents/scripts/wp-helper.sh

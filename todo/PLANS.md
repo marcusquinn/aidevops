@@ -255,7 +255,7 @@ Scale beyond a single subscription's rate limits by running Claude Code CLI inst
 
 ### [2026-02-18] Supervisor Intelligence Upgrade
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~12h (ai:8h test:3h read:1h)
 **TODO:** t1085
 **Logged:** 2026-02-18
@@ -469,7 +469,7 @@ Specific AI-driven audits that run as part of Phase 13:
 
 ### [2026-02-17] Daily Skill Auto-Update Pipeline
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~7h (ai:5h test:2h)
 **TODO:** t1081, t1082
 **Logged:** 2026-02-17
@@ -513,7 +513,7 @@ Two-layer approach:
 
 ### [2026-02-14] Automated Matrix+Cloudron Setup
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~4h (ai:3h test:1h)
 **TODO:** t1056
 **Logged:** 2026-02-14
@@ -644,7 +644,7 @@ auto-setup <cloudron-server> [--runners "code-reviewer,seo-analyst,ops-monitor"]
 
 ### [2026-02-14] PageIndex-Ready Markdown Normalisation
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~3h (ai:2h test:1h)
 **TODO:** t1046
 **Logged:** 2026-02-14
@@ -746,7 +746,7 @@ Output: normalised markdown + optional .pageindex.json
 
 ### [2026-02-13] Continual Improvement Audit Loop
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~6h (ai:4h test:2h)
 **TODO:** t1032
 
@@ -929,7 +929,7 @@ CREATE TABLE audit_snapshots (
 
 ### [2026-02-12] Automated Git Stash Audit and Cleanup
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~45m (ai:30m test:15m)
 **TODO:** t1005
 
@@ -995,7 +995,7 @@ stash-audit-helper.sh clean --dry-run # Show what would be dropped
 
 ### [2026-02-12] Modularise Oversized Shell Scripts
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~8h (ai:6h test:2h)
 **TODO:** t311
 
@@ -1087,7 +1087,7 @@ scripts/
 
 ### [2026-02-10] Email Testing Suite
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~2h (ai:1.5h test:25m read:5m)
 **TODO:** t214
 
@@ -1209,7 +1209,7 @@ Add comprehensive email testing capabilities to aidevops, covering both visual r
 
 ### [2026-02-10] Accessibility & Contrast Testing
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~2.5h (ai:2h test:25m read:5m)
 **TODO:** t215
 
@@ -1357,7 +1357,7 @@ Large text = >= 18pt (24px) or >= 14pt (18.66px) bold.
 
 ### [2026-02-09] Content Creation Agent Architecture
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~8h (ai:5h test:2h read:1h)
 
 <!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
@@ -1592,7 +1592,7 @@ m120,p025,Phase 7: Test + enrich existing 46 issues,15m,,2026-02-08T00:00Z,,pend
 
 ### [2026-02-07] Plugin System for Private Extension Repos
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~1d (ai:6h test:3h read:3h)
 
 <!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
@@ -1752,7 +1752,7 @@ m113,p024,Phase 5: Scaffold aidevops-pro and aidevops-anon repos,2h,,2026-02-07T
 
 ### [2026-02-07] Codebase Quality Hardening
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~3d (ai:1.5d test:1d read:0.5d)
 
 <!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
@@ -1860,7 +1860,7 @@ Address findings from Claude Opus 4.6 full codebase review. Harden shell script 
 
 ### [2026-02-06] Cross-Provider Model Routing with Fallbacks
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~1.5d (ai:8h test:4h read:2h)
 
 <!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
@@ -1991,7 +1991,7 @@ s016,p022,Duplicate TOON milestone IDs m095-097 between p019 and p021,Both plans
 
 ### [2026-02-06] gopass Integration & Credentials Rename
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~2d (ai:1d test:4h read:4h)
 
 <!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
@@ -2073,7 +2073,7 @@ d031,p021,Build thin shell wrapper not fork psst,AI-native gap is ~50 lines of s
 
 ### [2026-02-03] Install Script Integrity Hardening
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~4h (ai:2h test:1h read:1h)
 
 <!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
@@ -2122,7 +2122,7 @@ m087,p016,Phase 4: Update docs/tests and verify behavior,30m,,2026-02-03T00:00Z,
 
 ### [2026-02-06] Autonomous Supervisor Loop
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~8h (ai:5h test:2h read:1h)
 
 <!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
@@ -2233,7 +2233,7 @@ m090,p017,Phase 3: Add reset/clear UI flow and verify behavior,45m,5m,2026-02-03
 
 ### [2025-12-21] aidevops-opencode Plugin
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~2d (ai:1d test:0.5d read:0.5d)
 **Architecture:** [.agents/build-mcp/aidevops-plugin.md](../.agents/build-mcp/aidevops-plugin.md)
 
@@ -2810,7 +2810,7 @@ d010,p007,Split agents between content/ and seo/ folders,Writing/editing belongs
 
 ### [2025-12-21] Enhance Plan+ and Build+ with OpenCode's Latest Features
 
-**Status:** Planning
+**Status:** Superseded (Plan+ merged into Build+; OpenCode dropped in favour of Claude Code)
 **Estimate:** ~3h (ai:1.5h test:1h read:30m)
 
 <!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
@@ -3080,7 +3080,7 @@ p020,SEO Tool Subagents Sprint,planning,0,3,,seo|tools|subagents|sprint,1.5d,1d,
 
 ### [2026-02-05] MCP Auto-Installation in setup.sh
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~4h (ai:2h test:1h read:1h)
 
 <!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
@@ -3160,7 +3160,7 @@ d027,p018,Auth-required MCPs installed but disabled,Reduces friction; enable aft
 
 ### [2025-01-11] Agent Design Pattern Improvements
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~1d (ai:6h test:4h read:2h)
 **Source:** [Lance Martin's "Effective Agent Design" (Jan 2025)](https://x.com/RLanceMartin/status/2009683038272401719)
 
@@ -3244,7 +3244,7 @@ d018,p010,Prioritize automatic session reflection,Highest impact for continual l
 
 ### [2026-01-21] /add-skill System for External Skill Import
 
-**Status:** Planning (Research Complete)
+**Status:** Completed
 **Estimate:** ~2d (ai:1d test:0.5d read:0.5d)
 **Branch:** `feature/add-skill-command` (worktree at `~/Git/aidevops.feature-add-skill-command/`)
 
@@ -3387,7 +3387,7 @@ d025,p012,Merge conflicts require human decision,Preserves existing knowledge,20
 
 ### [2026-01-11] Memory Auto-Capture
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~1d (ai:6h test:4h read:2h)
 **PRD:** [todo/tasks/prd-memory-auto-capture.md](tasks/prd-memory-auto-capture.md)
 **Source:** [claude-mem](https://github.com/thedotmack/claude-mem) - inspiration for auto-capture patterns
@@ -3484,7 +3484,7 @@ d021,p011,Implement ourselves rather than depend on claude-mem,claude-mem is Cla
 
 ### [2026-01-23] Multi-Agent Orchestration & Token Efficiency
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~5d (ai:3d test:1d read:1d)
 **Source:** [steveyegge/gastown](https://github.com/steveyegge/gastown) (inspiration, not wholesale adoption)
 
@@ -3772,7 +3772,7 @@ This reuses all infrastructure from phases 1-8 and adds only an ingestion pipeli
 
 ### [2026-01-25] Document Extraction Subagent & Workflow
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~3h (ai:1h test:2h)
 **PRD:** [todo/tasks/prd-document-extraction.md](tasks/prd-document-extraction.md)
 **Source:** [On-Premise Document Intelligence Stack](https://pub.towardsai.net/building-an-on-premise-document-intelligence-stack-with-docling-ollama-phi-4-extractthinker-6ab60b495751)
@@ -4144,7 +4144,7 @@ d038,p015,Use all-MiniLM-L6-v2 via ONNX for embeddings,Small fast no Python requ
 
 ### [2026-02-03] Parallel Agents & Headless Dispatch
 
-**Status:** In Progress (Phase 4/5)
+**Status:** Completed
 **Estimate:** ~3d (ai:1.5d test:1d read:0.5d)
 **Source:** [alexfazio's X post on droids](https://gist.github.com/alexfazio/dcf2f253d346d8ed2702935b57184582)
 
@@ -4315,7 +4315,7 @@ d042,p016,Document model providers generically,Models evolve quickly keep option
 
 ### [2026-02-04] Self-Improving Agent System
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~2d (ai:1d test:0.5d read:0.5d)
 **Source:** Discussion on parallel agents, OpenCode server, and community contributions
 
@@ -4513,7 +4513,7 @@ d046,p017,Worktree isolation for all changes,Easy rollback and doesn't affect ma
 
 ### [2026-02-05] SEO Tool Subagents Sprint
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~1.5d (ai:1d test:4h read:2h)
 
 <!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
@@ -4609,7 +4609,7 @@ d052,p020,t088 Sitebulb scope changed to manual workflow,No public API or CLI ex
 
 ### [2026-02-05] Voice Integration Pipeline
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~3d (ai:1.5d test:1d read:0.5d)
 
 <!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
