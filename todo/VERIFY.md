@@ -1898,12 +1898,12 @@
   check: shellcheck tests/test-pattern-scoring.sh
   check: file-exists tests/test-pattern-scoring.sh
 
-- [ ] v228 t1264.3 Integrate into aidevops CLI and setup.sh — add `repo-sy... | PR #2016 | merged:2026-02-20
+- [x] v228 t1264.3 Integrate into aidevops CLI and setup.sh — add `repo-sy... | PR #2016 | merged:2026-02-20 verified:2026-02-20
   files: .agents/scripts/onboarding-helper.sh
   check: shellcheck .agents/scripts/onboarding-helper.sh
   check: file-exists .agents/scripts/onboarding-helper.sh
 
-- [ ] v229 t1275 KIRA-informed completion discipline: universal behavioura... | PR #2022 | merged:2026-02-20
+- [x] v229 t1275 KIRA-informed completion discipline: universal behavioura... | PR #2022 | merged:2026-02-20 verified:2026-02-20
   files: .agents/AGENTS.md, .agents/prompts/build.txt, .agents/scripts/commands/full-loop.md, .agents/scripts/supervisor/dispatch.sh, .agents/workflows/ralph-loop.md, AGENTS.md
   check: file-exists .agents/AGENTS.md
   check: file-exists .agents/prompts/build.txt
@@ -1913,3 +1913,7 @@
   check: file-exists .agents/workflows/ralph-loop.md
   check: file-exists AGENTS.md
   check: rg "ralph-loop" .agents/subagent-index.toon
+
+- [ ] v230 t1200 IP reputation check agent — vet VPS/server/proxy IPs be... | PR #2020 | merged:2026-02-20
+  files: VERIFY.md
+  check: file-exists VERIFY.md
