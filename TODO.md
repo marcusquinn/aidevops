@@ -1546,7 +1546,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
   - Tested working prototype in a managed project repo: gitea-issue-sync.sh (separate script, ~600 lines)
   - Key findings from testing: (1) `set -euo pipefail` + grep in pipelines needs `{ grep ... || true; }` guard, (2) macOS sed `\s` doesn't work — use `[[:space:]]`, (3) dots in task IDs (t007.1) need escaping in sed patterns, (4) Gitea label API returns IDs not names (need ID array in create payload)
   - [x] t1120.1 Extract platform-agnostic functions from issue-sync-helper.sh (parse, compose, ref management) ~1h ref:GH#1676 assignee:marcusquinn started:2026-02-20T19:52:54Z pr:#2029 completed:2026-02-20
-  - [ ] t1120.2 Add Gitea API adapter functions (create/close/edit/list/search/labels) ~1h ref:GH#1677 assignee:marcusquinn started:2026-02-20T21:24:40Z
+  - [x] t1120.2 Add Gitea API adapter functions (create/close/edit/list/search/labels) ~1h ref:GH#1677 assignee:marcusquinn started:2026-02-20T21:24:40Z pr:#2031 completed:2026-02-20
   - [x] t1120.3 Add platform detection from git remote URL + multi-platform push/pull/close ~1h ref:GH#1678 #auto-dispatch model:sonnet assignee:marcusquinn started:2026-02-18T22:07:40Z pr:#1815 completed:2026-02-18
   - [ ] t1120.4 Test with dual-hosted repo (GitHub + Gitea sync) ~30m ref:GH#1679
 
