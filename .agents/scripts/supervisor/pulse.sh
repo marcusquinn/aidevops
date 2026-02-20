@@ -1314,7 +1314,29 @@ cmd_pulse() {
 	local failed_count=0
 	local dispatched_count=0
 
+	# t1269: Track which task is currently being evaluated so we can roll back
+	# on pulse death (SIGTERM/SIGINT). Without this, a killed pulse leaves the
+	# task stranded in 'evaluating' until Phase 0.7 detects it (120-600s).
+	# With this trap, the task is rolled back to its pre-evaluation state
+	# immediately, so the next pulse can re-evaluate it without delay.
+	local _phase1_evaluating_tid=""
+	local _phase1_pre_eval_state=""
+	# shellcheck disable=SC2329  # invoked indirectly via trap
+	_phase1_cleanup_on_signal() {
+		if [[ -n "$_phase1_evaluating_tid" && -n "$_phase1_pre_eval_state" ]]; then
+			log_warn "  Phase 1 (t1269): pulse killed during evaluation of $_phase1_evaluating_tid — rolling back to $_phase1_pre_eval_state"
+			db "$SUPERVISOR_DB" "UPDATE tasks SET status = '$(sql_escape "$_phase1_pre_eval_state")', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), error = 'pulse_killed_mid_eval_rollback_t1269' WHERE id = '$(sql_escape "$_phase1_evaluating_tid")' AND status = 'evaluating';" 2>/dev/null || true
+			_phase1_evaluating_tid=""
+			_phase1_pre_eval_state=""
+		fi
+	}
+
 	if [[ -n "$running_tasks" ]]; then
+		# Install signal trap for crash-resilient evaluation (t1269).
+		# Chain with existing EXIT trap (release_pulse_lock) by saving and restoring.
+		# shellcheck disable=SC2064  # intentional: expand SUPERVISOR_DIR at definition time
+		trap "_phase1_cleanup_on_signal; release_pulse_lock; rm -f '${SUPERVISOR_DIR}/MODELS.md.tmp' 2>/dev/null || true" TERM INT
+
 		while IFS='|' read -r tid _; do
 			# Check if worker process is still alive
 			local pid_file="$SUPERVISOR_DIR/pids/${tid}.pid"
@@ -1340,11 +1362,19 @@ cmd_pulse() {
 
 			if [[ "$current_task_state" == "evaluating" ]]; then
 				log_info "  $tid: stuck in evaluating (AI eval likely timed out), re-evaluating without AI..."
+				# t1269: Record pre-eval state for rollback — already evaluating, so
+				# rolling back to 'running' is the safest option (worker is dead, but
+				# 'running' lets Phase 1 re-evaluate on next pulse without grace delay).
+				_phase1_pre_eval_state="running"
 			else
 				log_info "  $tid: worker finished, evaluating..."
+				# t1269: Record pre-eval state before transitioning
+				_phase1_pre_eval_state="$current_task_state"
 				# Transition to evaluating
 				cmd_transition "$tid" "evaluating" 2>>"$SUPERVISOR_LOG" || true
 			fi
+			# t1269: Mark this task as actively being evaluated
+			_phase1_evaluating_tid="$tid"
 
 			# Get task description for memory context (t128.6)
 			local tid_desc
@@ -1437,6 +1467,8 @@ cmd_pulse() {
 					cleanup_worker_processes "$tid"
 					# Success pattern already stored by scan_orphaned_pr_for_task
 					handle_diagnostic_completion "$tid" 2>>"$SUPERVISOR_LOG" || true
+					_phase1_evaluating_tid="" # t1269: clear before continue
+					_phase1_pre_eval_state=""
 					continue
 				fi
 			fi
@@ -1463,6 +1495,8 @@ cmd_pulse() {
 					# Add escalated:model label (original model that failed quality gate) (t1010)
 					add_model_label "$tid" "escalated" "$tid_model" "${tid_repo:-.}" 2>>"$SUPERVISOR_LOG" || true
 					send_task_notification "$tid" "escalated" "Re-queued with $escalated_model" 2>>"$SUPERVISOR_LOG" || true
+					_phase1_evaluating_tid="" # t1269: clear before continue
+					_phase1_pre_eval_state=""
 					continue
 				fi
 
@@ -1549,6 +1583,8 @@ cmd_pulse() {
 				# retry attempts. Leave in retrying state for deferred retry loop.
 				if [[ "$outcome_detail" == "backend_quota_error" || "$outcome_detail" == "backend_infrastructure_error" ]]; then
 					log_warn "  $tid: backend issue ($outcome_detail), deferring re-prompt to next pulse"
+					_phase1_evaluating_tid="" # t1269: clear before continue
+					_phase1_pre_eval_state=""
 					continue
 				fi
 				# Prompt-repeat retry strategy (t1097): before escalating to a more
@@ -1563,6 +1599,8 @@ cmd_pulse() {
 					if [[ "$pr_rc" -eq 0 ]]; then
 						dispatched_count=$((dispatched_count + 1))
 						log_info "  $tid: prompt-repeat dispatched successfully"
+						_phase1_evaluating_tid="" # t1269: clear before continue
+						_phase1_pre_eval_state=""
 						continue
 					fi
 					log_warn "  $tid: prompt-repeat dispatch failed (rc=$pr_rc), falling through to model escalation"
@@ -1685,7 +1723,19 @@ cmd_pulse() {
 				fi
 				;;
 			esac
+
+			# t1269: Clear evaluation tracking — task has been fully processed.
+			# If the pulse is killed after this point, the task is already in its
+			# final state (complete/retrying/blocked/failed/queued) and doesn't
+			# need rollback.
+			_phase1_evaluating_tid=""
+			_phase1_pre_eval_state=""
 		done <<<"$running_tasks"
+
+		# t1269: Restore original signal trap after evaluation loop completes.
+		# The EXIT trap (release_pulse_lock) is still active from the outer scope.
+		# shellcheck disable=SC2064  # intentional: expand SUPERVISOR_DIR at definition time
+		trap "release_pulse_lock; rm -f '${SUPERVISOR_DIR}/MODELS.md.tmp' 2>/dev/null || true" TERM INT
 	fi
 
 	# Phase 1b: Re-prompt stale retrying tasks (t153-pre-diag-1)
