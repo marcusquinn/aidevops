@@ -1387,11 +1387,6 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
   - [ ] t1271.4 Integration with existing mobile tools (agent-device, xcodebuild-mcp, maestro, ios-simulator-mcp, playwright-emulation) ~2h ref:GH#2008
   - [ ] t1271.5 README and AGENTS.md updates, quality checks ~2h ref:GH#2009 [proposed:auto-dispatch model:sonnet]
 =======
-  - [ ] t1271.1 Main mobile-app-dev agent and subagent folder structure ~3h [proposed:auto-dispatch model:opus]
-  - [ ] t1271.2 Main browser-extension-dev agent and subagent folder structure ~2h
-  - [ ] t1271.3 Shared subagents (revenuecat, onboarding, ui-design, app-store-compliance, analytics, notifications) ~3h
-  - [ ] t1271.4 Integration with existing mobile tools (agent-device, xcodebuild-mcp, maestro, ios-simulator-mcp, playwright-emulation) ~2h
-  - [ ] t1271.5 README and AGENTS.md updates, quality checks ~2h
 >>>>>>> Stashed changes
 
 - [x] t1266 Add openclaw auto-update to daily housekeeping in auto-update-helper.sh — openclaw has no built-in auto-update; add a 24h-gated `check_openclaw_freshness()` function (same pattern as skill freshness) that runs `openclaw update --channel beta --yes --no-restart` daily. Opt-out via `AIDEVOPS_OPENCLAW_AUTO_UPDATE=false`. #feature #auto-update ~30m model:sonnet ref:GH#1994 assignee:marcusquinn started:2026-02-20 pr:#1995 completed:2026-02-20
