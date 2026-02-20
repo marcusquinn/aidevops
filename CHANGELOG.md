@@ -7,19 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+## [2.119.1] - 2026-02-20
 
-- Supervisor Phase 0.9 sanity-check for self-healing queue stalls (t1273) (#2015)
-  - Cross-references DB state, TODO.md state, and system state to find contradictions
-  - Strips stale claims on DB-failed tasks immediately (don't wait 24h)
-  - Unblocks tasks whose blockers permanently failed (retries exhausted)
-  - Auto-tags dispatchable tasks missing #auto-dispatch
-  - Cancels DB orphans with no TODO.md entry
-  - Logs structured stall breakdown when nothing is fixable
+### Changed
 
-### Fixed
-
-- Phase 0.5d now treats permanently failed blockers as resolved, preventing infinite dependency chain stalls (t1273)
+- Documentation: add changelog entries for v2.120.0 (t1273)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
 
 ## [2.119.0] - 2026-02-20
 
