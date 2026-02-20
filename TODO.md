@@ -1385,7 +1385,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
   - [ ] t1271.2 Main browser-extension-dev agent and subagent folder structure ~2h ref:GH#2006 [proposed:auto-dispatch model:sonnet]
   - [ ] t1271.3 Shared subagents (revenuecat, onboarding, ui-design, app-store-compliance, analytics, notifications) ~3h ref:GH#2007
   - [ ] t1271.4 Integration with existing mobile tools (agent-device, xcodebuild-mcp, maestro, ios-simulator-mcp, playwright-emulation) ~2h ref:GH#2008
-  - [ ] t1271.5 README and AGENTS.md updates, quality checks ~2h ref:GH#2009
+  - [ ] t1271.5 README and AGENTS.md updates, quality checks ~2h ref:GH#2009 [proposed:auto-dispatch model:sonnet]
 =======
   - [ ] t1271.1 Main mobile-app-dev agent and subagent folder structure ~3h [proposed:auto-dispatch model:opus]
   - [ ] t1271.2 Main browser-extension-dev agent and subagent folder structure ~2h
