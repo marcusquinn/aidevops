@@ -425,20 +425,77 @@ github_find_merged_pr_by_task() {
 }
 
 # --- Gitea Adapter (uses curl + REST API v1) ---
+# t1120.2: Hardened adapter with HTTP error checking, label ID caching,
+# pagination for search, and proper state normalization.
 
+# Low-level Gitea API caller with HTTP status code checking.
+# Outputs response body on stdout. Returns non-zero on HTTP errors (4xx/5xx).
+# Arguments:
+#   $1 - HTTP method (GET, POST, PATCH, DELETE, PUT)
+#   $2 - API endpoint (relative to /api/v1/)
+#   $3 - JSON request body (optional)
 gitea_api() {
 	local method="$1" endpoint="$2" data="${3:-}"
 	local base_url="$_PLATFORM_BASE_URL"
 	local token
 	token=$(get_platform_token "gitea")
-	local -a curl_args=("-s" "--max-time" "30" "-H" "Authorization: token ${token}" "-H" "Content-Type: application/json")
+	local -a curl_args=("-s" "--max-time" "30" "-w" "\n%{http_code}" "-H" "Authorization: token ${token}" "-H" "Content-Type: application/json")
 	if [[ "$method" != "GET" ]]; then
 		curl_args+=("-X" "$method")
 	fi
 	if [[ -n "$data" ]]; then
 		curl_args+=("-d" "$data")
 	fi
-	curl "${curl_args[@]}" "${base_url}/api/v1/${endpoint}"
+	local raw_output
+	raw_output=$(curl "${curl_args[@]}" "${base_url}/api/v1/${endpoint}")
+	# Split response body from HTTP status code (last line)
+	local http_code
+	http_code=$(echo "$raw_output" | tail -n 1)
+	local response_body
+	response_body=$(echo "$raw_output" | sed '$d')
+	# Check for HTTP errors
+	case "$http_code" in
+	2[0-9][0-9])
+		# 2xx success — output the body
+		echo "$response_body"
+		return 0
+		;;
+	*)
+		# Non-2xx — log and return error
+		log_verbose "gitea_api: HTTP $http_code on $method /api/v1/$endpoint"
+		echo "$response_body"
+		return 1
+		;;
+	esac
+}
+
+# Resolve comma-separated label names to Gitea label IDs in a single API call.
+# Fetches the repo's label list once and matches all names against it.
+# Outputs comma-separated label IDs on stdout (e.g. "1,5,12"), empty if none found.
+# Arguments:
+#   $1 - owner
+#   $2 - repo
+#   $3 - labels (comma-separated names)
+_gitea_resolve_label_ids() {
+	local owner="$1" repo="$2" labels="$3"
+	[[ -z "$labels" ]] && return 0
+	# Fetch all repo labels in one API call
+	local all_labels
+	all_labels=$(gitea_api "GET" "repos/${owner}/${repo}/labels" 2>/dev/null || echo "[]")
+	# Resolve each name to its ID using jq
+	local label_ids=""
+	local _saved_ifs="$IFS"
+	IFS=','
+	for lbl in $labels; do
+		[[ -z "$lbl" ]] && continue
+		local label_id
+		label_id=$(echo "$all_labels" | jq -r --arg name "$lbl" '.[] | select(.name == $name) | .id' 2>/dev/null || echo "")
+		if [[ -n "$label_id" ]]; then
+			label_ids="${label_ids:+${label_ids},}${label_id}"
+		fi
+	done
+	IFS="$_saved_ifs"
+	echo "$label_ids"
 	return 0
 }
 
@@ -448,21 +505,11 @@ gitea_create_issue() {
 	local owner="${repo_slug%%/*}"
 	local repo="${repo_slug#*/}"
 
-	# Resolve label names to IDs (Gitea requires label IDs)
+	# Resolve label names to IDs in a single API call (Gitea requires label IDs)
 	local label_ids_json="[]"
 	if [[ -n "$labels" ]]; then
-		local label_ids=""
-		local IFS=','
-		for lbl in $labels; do
-			[[ -z "$lbl" ]] && continue
-			# Search for label by name
-			local label_id
-			label_id=$(gitea_api "GET" "repos/${owner}/${repo}/labels" | jq -r ".[] | select(.name == \"${lbl}\") | .id" 2>/dev/null || echo "")
-			if [[ -n "$label_id" ]]; then
-				label_ids="${label_ids:+${label_ids},}${label_id}"
-			fi
-		done
-		unset IFS
+		local label_ids
+		label_ids=$(_gitea_resolve_label_ids "$owner" "$repo" "$labels")
 		if [[ -n "$label_ids" ]]; then
 			label_ids_json="[${label_ids}]"
 		fi
@@ -520,13 +567,26 @@ gitea_edit_issue() {
 	return $?
 }
 
+# List issues with normalized JSON output.
+# Handles Gitea's state parameter: "open", "closed", or "all".
+# Note: Gitea API does not support state=all directly — we omit the state
+# parameter to get all issues (Gitea defaults to returning all states when
+# the state parameter is absent).
+# Arguments:
+#   $1 - repo_slug (owner/repo)
+#   $2 - state (open|closed|all)
+#   $3 - limit (max results)
 gitea_list_issues() {
 	local repo_slug="$1" state="$2" limit="$3"
 	local owner="${repo_slug%%/*}"
 	local repo="${repo_slug#*/}"
-	# Gitea uses "open"/"closed" for state
+	# Build query params — omit state for "all" (Gitea returns all states by default)
+	local state_param=""
+	if [[ "$state" != "all" ]]; then
+		state_param="&state=${state}"
+	fi
 	local response
-	response=$(gitea_api "GET" "repos/${owner}/${repo}/issues?state=${state}&limit=${limit}&type=issues")
+	response=$(gitea_api "GET" "repos/${owner}/${repo}/issues?limit=${limit}&type=issues${state_param}")
 	# Normalize to same JSON shape as GitHub: [{number, title, assignees: [{login}], state}]
 	echo "$response" | jq '[.[] | {number: .number, title: .title, state: .state, assignees: [.assignees[]? | {login: .login}]}]' 2>/dev/null || echo "[]"
 	return 0
@@ -536,18 +596,9 @@ gitea_add_labels() {
 	local repo_slug="$1" issue_number="$2" labels="$3"
 	local owner="${repo_slug%%/*}"
 	local repo="${repo_slug#*/}"
-	# Resolve label names to IDs
-	local label_ids=""
-	local IFS=','
-	for lbl in $labels; do
-		[[ -z "$lbl" ]] && continue
-		local label_id
-		label_id=$(gitea_api "GET" "repos/${owner}/${repo}/labels" | jq -r ".[] | select(.name == \"${lbl}\") | .id" 2>/dev/null || echo "")
-		if [[ -n "$label_id" ]]; then
-			label_ids="${label_ids:+${label_ids},}${label_id}"
-		fi
-	done
-	unset IFS
+	# Resolve all label names to IDs in a single API call
+	local label_ids
+	label_ids=$(_gitea_resolve_label_ids "$owner" "$repo" "$labels")
 	if [[ -n "$label_ids" ]]; then
 		gitea_api "POST" "repos/${owner}/${repo}/issues/${issue_number}/labels" "{\"labels\":[${label_ids}]}" >/dev/null
 	fi
@@ -558,16 +609,20 @@ gitea_remove_labels() {
 	local repo_slug="$1" issue_number="$2" labels="$3"
 	local owner="${repo_slug%%/*}"
 	local repo="${repo_slug#*/}"
-	local IFS=','
+	# Fetch all labels once, then delete each matching ID
+	local all_labels
+	all_labels=$(gitea_api "GET" "repos/${owner}/${repo}/labels" 2>/dev/null || echo "[]")
+	local _saved_ifs="$IFS"
+	IFS=','
 	for lbl in $labels; do
 		[[ -z "$lbl" ]] && continue
 		local label_id
-		label_id=$(gitea_api "GET" "repos/${owner}/${repo}/labels" | jq -r ".[] | select(.name == \"${lbl}\") | .id" 2>/dev/null || echo "")
+		label_id=$(echo "$all_labels" | jq -r --arg name "$lbl" '.[] | select(.name == $name) | .id' 2>/dev/null || echo "")
 		if [[ -n "$label_id" ]]; then
 			gitea_api "DELETE" "repos/${owner}/${repo}/issues/${issue_number}/labels/${label_id}" >/dev/null 2>/dev/null || true
 		fi
 	done
-	unset IFS
+	IFS="$_saved_ifs"
 	return 0
 }
 
@@ -575,20 +630,19 @@ gitea_create_label() {
 	local repo_slug="$1" label_name="$2" color="$3" description="$4"
 	local owner="${repo_slug%%/*}"
 	local repo="${repo_slug#*/}"
-	# Check if label exists
+	# Fetch all labels once to check existence
+	local all_labels
+	all_labels=$(gitea_api "GET" "repos/${owner}/${repo}/labels" 2>/dev/null || echo "[]")
 	local existing
-	existing=$(gitea_api "GET" "repos/${owner}/${repo}/labels" | jq -r ".[] | select(.name == \"${label_name}\") | .id" 2>/dev/null || echo "")
+	existing=$(echo "$all_labels" | jq -r --arg name "$label_name" '.[] | select(.name == $name) | .id' 2>/dev/null || echo "")
+	local payload
+	payload=$(jq -n --arg name "$label_name" --arg color "#${color}" --arg desc "$description" \
+		'{name: $name, color: $color, description: $desc}')
 	if [[ -n "$existing" ]]; then
 		# Update existing label
-		local payload
-		payload=$(jq -n --arg name "$label_name" --arg color "#${color}" --arg desc "$description" \
-			'{name: $name, color: $color, description: $desc}')
 		gitea_api "PATCH" "repos/${owner}/${repo}/labels/${existing}" "$payload" >/dev/null
 	else
 		# Create new label
-		local payload
-		payload=$(jq -n --arg name "$label_name" --arg color "#${color}" --arg desc "$description" \
-			'{name: $name, color: $color, description: $desc}')
 		gitea_api "POST" "repos/${owner}/${repo}/labels" "$payload" >/dev/null
 	fi
 	return 0
@@ -604,18 +658,72 @@ gitea_view_issue() {
 	return 0
 }
 
+# Search for an issue by title prefix with pagination support.
+# Gitea lacks a dedicated search-by-title API, so we list issues and filter
+# client-side. Paginates through results to avoid missing matches beyond
+# the first page.
+# Arguments:
+#   $1 - repo_slug (owner/repo)
+#   $2 - title_prefix (e.g. "t1120:")
+#   $3 - state (open|closed|all, default: all)
+#   $4 - limit per page (default: 50)
+# Returns: issue number on stdout, empty if not found.
 gitea_find_issue_by_title() {
 	local repo_slug="$1" title_prefix="$2" state="${3:-all}" limit="${4:-50}"
 	local owner="${repo_slug%%/*}"
 	local repo="${repo_slug#*/}"
-	# Gitea doesn't have a search-by-title API; list and filter client-side
 	local state_param=""
 	if [[ "$state" != "all" ]]; then
 		state_param="&state=${state}"
 	fi
+	local page=1
+	while true; do
+		local response
+		response=$(gitea_api "GET" "repos/${owner}/${repo}/issues?limit=${limit}&type=issues&page=${page}${state_param}")
+		local count
+		count=$(echo "$response" | jq 'length' 2>/dev/null || echo "0")
+		if [[ "$count" -eq 0 ]]; then
+			break
+		fi
+		local match
+		match=$(echo "$response" | jq -r --arg prefix "$title_prefix" \
+			'[.[] | select(.title | startswith($prefix))][0].number // empty' 2>/dev/null || echo "")
+		if [[ -n "$match" ]]; then
+			echo "$match"
+			return 0
+		fi
+		# Stop if we got fewer results than the limit (last page)
+		if [[ "$count" -lt "$limit" ]]; then
+			break
+		fi
+		page=$((page + 1))
+	done
+	echo ""
+	return 0
+}
+
+# Search issues by query string using Gitea's search endpoint.
+# Uses GET /repos/{owner}/{repo}/issues?q={query} for server-side filtering.
+# Returns normalized JSON array on stdout (same shape as gitea_list_issues).
+# Arguments:
+#   $1 - repo_slug (owner/repo)
+#   $2 - query string
+#   $3 - state (open|closed|all, default: open)
+#   $4 - limit (default: 50)
+gitea_search_issues() {
+	local repo_slug="$1" query="$2" state="${3:-open}" limit="${4:-50}"
+	local owner="${repo_slug%%/*}"
+	local repo="${repo_slug#*/}"
+	local state_param=""
+	if [[ "$state" != "all" ]]; then
+		state_param="&state=${state}"
+	fi
+	# URL-encode the query for safe inclusion in the URL
+	local encoded_query
+	encoded_query=$(printf '%s' "$query" | jq -sRr @uri)
 	local response
-	response=$(gitea_api "GET" "repos/${owner}/${repo}/issues?limit=${limit}&type=issues${state_param}")
-	echo "$response" | jq -r "[.[] | select(.title | startswith(\"${title_prefix}\"))][0].number // empty" 2>/dev/null || echo ""
+	response=$(gitea_api "GET" "repos/${owner}/${repo}/issues?q=${encoded_query}&limit=${limit}&type=issues${state_param}")
+	echo "$response" | jq '[.[] | {number: .number, title: .title, state: .state, assignees: [.assignees[]? | {login: .login}]}]' 2>/dev/null || echo "[]"
 	return 0
 }
 
@@ -635,7 +743,7 @@ gitea_find_merged_pr_by_task() {
 		response=$(gitea_api "GET" "repos/${owner}/${repo}/pulls?state=closed&limit=${limit}&page=${page}")
 		# Stop if response is empty array
 		local count
-		count=$(echo "$response" | jq 'length' || echo "0")
+		count=$(echo "$response" | jq 'length' 2>/dev/null || echo "0")
 		if [[ "$count" -eq 0 ]]; then
 			break
 		fi
@@ -646,6 +754,10 @@ gitea_find_merged_pr_by_task() {
 		if [[ -n "$pr_data" ]]; then
 			echo "$pr_data"
 			return 0
+		fi
+		# Stop if we got fewer results than the limit (last page)
+		if [[ "$count" -lt "$limit" ]]; then
+			break
 		fi
 		page=$((page + 1))
 	done
