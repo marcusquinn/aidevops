@@ -1877,3 +1877,10 @@
   check: rg "design-inspiration" .agents/subagent-index.toon
   check: rg "react-email" .agents/subagent-index.toon
   check: rg "wxt" .agents/subagent-index.toon
+
+- [ ] v226 t1224 Local development environment (localdev) — unified `.lo... | PR #1953 | merged:2026-02-20
+  files: .agents/AGENTS.md, .agents/services/hosting/localhost.md, .agents/subagent-index.toon
+  check: file-exists .agents/AGENTS.md
+  check: file-exists .agents/services/hosting/localhost.md
+  check: file-exists .agents/subagent-index.toon
+  check: rg "localhost" .agents/subagent-index.toon
