@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.118.0] - 2026-02-20
+
+### Added
+
+- add t1269 — fix stuck evaluating tasks with crash-resilient evaluation
+- add 'get' command to secret-helper.sh for programmatic secret retrieval (#1990)
+- add daily repo sync via repo-sync-helper.sh (t1264) (#1989)
+
+### Changed
+
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+
+### Fixed
+
+- resolve SIGPIPE in _launchd_is_loaded under pipefail (t1265)
+- skip LaunchAgent plist rewrite when content unchanged (t1265)
+- supervisor auto-pickup skips tasks with assignee:/started: fields (t1062) (#1519)
+- exclude cancelled tasks from 7-day success rate metric (t1248) (#1983)
+
 ## [2.117.0] - 2026-02-19
 
 ### Added
