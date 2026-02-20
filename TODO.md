@@ -1537,7 +1537,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [-] t1119 Add dispatch stall auto-detection to supervisor pulse cycle #enhancement #auto-dispatch #self-improvement ~3h model:sonnet category:automation — The current state shows 7 queued tasks and 0 running workers with no automatic recovery. The supervisor pulse should detect when queued > 0 and running == 0 for more than 2 consecutive pulse cycles (4+ minutes) and trigger diagnostic actions: (1) check if dispatch.sh is functional, (2) verify Claude CLI is available, (3) check for stuck evaluating tasks blocking slots, (4) log the stall event, (5) attempt a single dispatch as a probe. This would have caught the current stall automatically instead of requiring t1115 to be manually created. ref:GH#1672 cancelled:2026-02-18 cancel-reason:superseded-by-feature/supervisor-self-heal
 
-- [ ] t1120 Add platform abstraction to issue-sync-helper.sh — Gitea and GitLab support #feature #auto-dispatch #git #sync ~4h (ai:2h test:1h read:1h) model:sonnet ref:GH#1673 logged:2026-02-18
+- [ ] t1120 Add platform abstraction to issue-sync-helper.sh — Gitea and GitLab support #feature #auto-dispatch #git #sync ~4h (ai:2h test:1h read:1h) model:sonnet ref:GH#1673 assignee:marcusquinn started:2026-02-20T17:49:37Z logged:2026-02-18
   - issue-sync-helper.sh currently hardcodes `gh` CLI for all operations (create, close, edit, list, search, labels)
   - Need platform dispatch layer: detect forge from git remote URL, route to gh/gitea-api/glab
   - Gitea: use REST API directly (tea CLI has TTY issues in non-interactive mode — `open /dev/tty: device not configured`)
