@@ -1840,7 +1840,40 @@
   check: shellcheck .agents/scripts/issue-sync-helper.sh
   check: file-exists .agents/scripts/issue-sync-helper.sh
 
-- [ ] v224 t1269 Fix stuck evaluating tasks: crash-resilient evaluation wi... | PR #2002 | merged:2026-02-20
+- [x] v224 t1269 Fix stuck evaluating tasks: crash-resilient evaluation wi... | PR #2002 | merged:2026-02-20 verified:2026-02-20
   files: .agents/scripts/supervisor/pulse.sh
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
+
+- [ ] v225 t1271 Mobile app dev and browser extension dev agents — compr... | PR #2011 | merged:2026-02-20
+  files: .agents/AGENTS.md, .agents/browser-extension-dev.md, .agents/browser-extension-dev/development.md, .agents/browser-extension-dev/publishing.md, .agents/browser-extension-dev/testing.md, .agents/mobile-app-dev.md, .agents/mobile-app-dev/analytics.md, .agents/mobile-app-dev/assets.md, .agents/mobile-app-dev/backend.md, .agents/mobile-app-dev/expo.md, .agents/mobile-app-dev/monetisation.md, .agents/mobile-app-dev/notifications.md, .agents/mobile-app-dev/onboarding.md, .agents/mobile-app-dev/planning.md, .agents/mobile-app-dev/publishing.md, .agents/mobile-app-dev/swift.md, .agents/mobile-app-dev/testing.md, .agents/mobile-app-dev/ui-design.md, .agents/services/payments/revenuecat.md, .agents/services/payments/stripe.md, .agents/services/payments/superwall.md, .agents/tools/design/design-inspiration.md, .agents/tools/ui/react-email.md, .agents/tools/ui/wxt.md
+  check: file-exists .agents/AGENTS.md
+  check: file-exists .agents/browser-extension-dev.md
+  check: file-exists .agents/browser-extension-dev/development.md
+  check: file-exists .agents/browser-extension-dev/publishing.md
+  check: file-exists .agents/browser-extension-dev/testing.md
+  check: file-exists .agents/mobile-app-dev.md
+  check: file-exists .agents/mobile-app-dev/analytics.md
+  check: file-exists .agents/mobile-app-dev/assets.md
+  check: file-exists .agents/mobile-app-dev/backend.md
+  check: file-exists .agents/mobile-app-dev/expo.md
+  check: file-exists .agents/mobile-app-dev/monetisation.md
+  check: file-exists .agents/mobile-app-dev/notifications.md
+  check: file-exists .agents/mobile-app-dev/onboarding.md
+  check: file-exists .agents/mobile-app-dev/planning.md
+  check: file-exists .agents/mobile-app-dev/publishing.md
+  check: file-exists .agents/mobile-app-dev/swift.md
+  check: file-exists .agents/mobile-app-dev/testing.md
+  check: file-exists .agents/mobile-app-dev/ui-design.md
+  check: file-exists .agents/services/payments/revenuecat.md
+  check: file-exists .agents/services/payments/stripe.md
+  check: file-exists .agents/services/payments/superwall.md
+  check: file-exists .agents/tools/design/design-inspiration.md
+  check: file-exists .agents/tools/ui/react-email.md
+  check: file-exists .agents/tools/ui/wxt.md
+  check: rg "revenuecat" .agents/subagent-index.toon
+  check: rg "stripe" .agents/subagent-index.toon
+  check: rg "superwall" .agents/subagent-index.toon
+  check: rg "design-inspiration" .agents/subagent-index.toon
+  check: rg "react-email" .agents/subagent-index.toon
+  check: rg "wxt" .agents/subagent-index.toon
