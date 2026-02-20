@@ -28,9 +28,11 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 
 set -euo pipefail
 
+# Bold not in shared-constants.sh — define locally
+BOLD='\033[1m'
+
 # Configuration
 AGENTS_DIR="${AIDEVOPS_AGENTS_DIR:-$HOME/.aidevops/agents}"
-SUBAGENT_INDEX="${AGENTS_DIR}/subagent-index.toon"
 SKILL_SOURCES="${AGENTS_DIR}/configs/skill-sources.json"
 
 # =============================================================================
@@ -287,7 +289,11 @@ cmd_browse() {
 		echo "================"
 		echo ""
 
-		local -A cat_counts
+		local cat_counts_file
+		cat_counts_file=$(mktemp)
+		# Intentional: expand now to capture temp path
+		# shellcheck disable=SC2064
+		trap "rm -f '$cat_counts_file'" RETURN
 		while IFS= read -r md_file; do
 			local rel_path="${md_file#"$AGENTS_DIR/"}"
 
@@ -303,15 +309,17 @@ cmd_browse() {
 			# Get top-level category
 			local top_cat="${cat%%/*}"
 			if [[ -n "$top_cat" && "$top_cat" != "root" ]]; then
-				cat_counts["$top_cat"]=$((${cat_counts["$top_cat"]:-0} + 1))
+				echo "$top_cat" >>"$cat_counts_file"
 			fi
 		done < <(find "$AGENTS_DIR" -name "*.md" -type f 2>/dev/null)
 
-		# Sort and display
-		local cat_name
-		for cat_name in $(echo "${!cat_counts[@]}" | tr ' ' '\n' | sort); do
-			printf "  %-25s %s skill(s)\n" "$cat_name" "${cat_counts[$cat_name]}"
-		done
+		# Sort, count, and display
+		if [[ -s "$cat_counts_file" ]]; then
+			sort "$cat_counts_file" | uniq -c | sort -rn | while read -r count cat_name; do
+				printf "  %-25s %s skill(s)\n" "$cat_name" "$count"
+			done
+		fi
+		rm -f "$cat_counts_file"
 
 		echo ""
 		echo "Usage: skills-helper.sh browse <category>"
@@ -701,7 +709,8 @@ cmd_list() {
 cmd_categories() {
 	local json_output="${1:-false}"
 
-	local -A cat_counts
+	local cat_counts_file
+	cat_counts_file=$(mktemp)
 
 	while IFS= read -r md_file; do
 		local rel_path="${md_file#"$AGENTS_DIR/"}"
@@ -716,16 +725,17 @@ cmd_categories() {
 		local cat
 		cat=$(path_to_category "$rel_path")
 		if [[ -n "$cat" ]]; then
-			cat_counts["$cat"]=$((${cat_counts["$cat"]:-0} + 1))
+			echo "$cat" >>"$cat_counts_file"
 		fi
 	done < <(find "$AGENTS_DIR" -name "*.md" -type f 2>/dev/null)
 
 	if [[ "$json_output" == true ]]; then
 		local entries=()
-		local cat_name
-		for cat_name in $(echo "${!cat_counts[@]}" | tr ' ' '\n' | sort); do
-			entries+=("{\"category\":\"$cat_name\",\"count\":${cat_counts[$cat_name]}}")
-		done
+		if [[ -s "$cat_counts_file" ]]; then
+			while read -r count cat_name; do
+				entries+=("{\"category\":\"$cat_name\",\"count\":$count}")
+			done < <(sort "$cat_counts_file" | uniq -c | sort -rn | awk '{print $1, $2}')
+		fi
 		local entries_json
 		entries_json=$(printf '%s,' "${entries[@]}" 2>/dev/null || echo "")
 		entries_json="${entries_json%,}"
@@ -738,20 +748,23 @@ cmd_categories() {
 		printf "  %-40s %s\n" "CATEGORY" "COUNT"
 		printf "  %-40s %s\n" "--------" "-----"
 
-		local cat_name
-		for cat_name in $(echo "${!cat_counts[@]}" | tr ' ' '\n' | sort); do
-			printf "  %-40s %s\n" "$cat_name" "${cat_counts[$cat_name]}"
-		done
+		if [[ -s "$cat_counts_file" ]]; then
+			sort "$cat_counts_file" | uniq -c | sort -rn | while read -r count cat_name; do
+				printf "  %-40s %s\n" "$cat_name" "$count"
+			done
+		fi
 
 		echo ""
 		local total=0
-		local c
-		for c in "${cat_counts[@]}"; do
-			total=$((total + c))
-		done
-		log_info "Total: $total skill(s) in ${#cat_counts[@]} categories"
+		local num_cats=0
+		if [[ -s "$cat_counts_file" ]]; then
+			total=$(wc -l <"$cat_counts_file" | tr -d ' ')
+			num_cats=$(sort "$cat_counts_file" | uniq | wc -l | tr -d ' ')
+		fi
+		log_info "Total: $total skill(s) in $num_cats categories"
 	fi
 
+	rm -f "$cat_counts_file"
 	return 0
 }
 
@@ -776,63 +789,65 @@ cmd_recommend() {
 	task_lower=$(echo "$task_desc" | tr '[:upper:]' '[:lower:]')
 
 	# Define keyword-to-category mappings for common tasks
-	local -A keyword_map
-	keyword_map["browser"]="tools/browser"
-	keyword_map["scrape"]="tools/browser"
-	keyword_map["crawl"]="tools/browser"
-	keyword_map["playwright"]="tools/browser"
-	keyword_map["seo"]="seo"
-	keyword_map["search engine"]="seo"
-	keyword_map["keyword"]="seo"
-	keyword_map["ranking"]="seo"
-	keyword_map["deploy"]="tools/deployment"
-	keyword_map["vercel"]="tools/deployment"
-	keyword_map["coolify"]="tools/deployment"
-	keyword_map["docker"]="tools/containers"
-	keyword_map["container"]="tools/containers"
-	keyword_map["wordpress"]="tools/wordpress"
-	keyword_map["wp"]="tools/wordpress"
-	keyword_map["git"]="tools/git"
-	keyword_map["github"]="tools/git"
-	keyword_map["pr"]="tools/git"
-	keyword_map["pull request"]="tools/git"
-	keyword_map["email"]="services/email"
-	keyword_map["video"]="tools/video"
-	keyword_map["image"]="tools/vision"
-	keyword_map["pdf"]="tools/pdf"
-	keyword_map["database"]="services/database"
-	keyword_map["postgres"]="services/database"
-	keyword_map["security"]="tools/security"
-	keyword_map["secret"]="tools/credentials"
-	keyword_map["api key"]="tools/credentials"
-	keyword_map["voice"]="tools/voice"
-	keyword_map["speech"]="tools/voice"
-	keyword_map["mobile"]="tools/mobile"
-	keyword_map["ios"]="tools/mobile"
-	keyword_map["accessibility"]="tools/accessibility"
-	keyword_map["wcag"]="tools/accessibility"
-	keyword_map["content"]="content"
-	keyword_map["blog"]="content"
-	keyword_map["article"]="content"
-	keyword_map["youtube"]="content"
-	keyword_map["code review"]="tools/code-review"
-	keyword_map["lint"]="tools/code-review"
-	keyword_map["quality"]="tools/code-review"
-	keyword_map["hosting"]="services/hosting"
-	keyword_map["cloudflare"]="services/hosting"
-	keyword_map["dns"]="services/hosting"
-	keyword_map["monitor"]="services/monitoring"
-	keyword_map["sentry"]="services/monitoring"
-	keyword_map["document"]="tools/document"
-	keyword_map["extract"]="tools/document"
-	keyword_map["ocr"]="tools/ocr"
-	keyword_map["receipt"]="tools/accounts"
+	# Format: "keyword=category" (one per line, simple string matching)
+	local keyword_map
+	keyword_map="browser=tools/browser
+scrape=tools/browser
+crawl=tools/browser
+playwright=tools/browser
+seo=seo
+search engine=seo
+keyword=seo
+ranking=seo
+deploy=tools/deployment
+vercel=tools/deployment
+coolify=tools/deployment
+docker=tools/containers
+container=tools/containers
+wordpress=tools/wordpress
+wp=tools/wordpress
+git=tools/git
+github=tools/git
+pr=tools/git
+pull request=tools/git
+email=services/email
+video=tools/video
+image=tools/vision
+pdf=tools/pdf
+database=services/database
+postgres=services/database
+security=tools/security
+secret=tools/credentials
+api key=tools/credentials
+voice=tools/voice
+speech=tools/voice
+mobile=tools/mobile
+ios=tools/mobile
+accessibility=tools/accessibility
+wcag=tools/accessibility
+content=content
+blog=content
+article=content
+youtube=content
+code review=tools/code-review
+lint=tools/code-review
+quality=tools/code-review
+hosting=services/hosting
+cloudflare=services/hosting
+dns=services/hosting
+monitor=services/monitoring
+sentry=services/monitoring
+document=tools/document
+extract=tools/document
+ocr=tools/ocr
+receipt=tools/accounts"
 
 	local matched_categories=()
-	local keyword
-	for keyword in "${!keyword_map[@]}"; do
-		if [[ "$task_lower" == *"$keyword"* ]]; then
-			local cat="${keyword_map[$keyword]}"
+	local line
+	while IFS= read -r line; do
+		local kw="${line%%=*}"
+		local cat="${line#*=}"
+		if [[ "$task_lower" == *"$kw"* ]]; then
 			# Avoid duplicates
 			local already=false
 			local existing
@@ -846,7 +861,7 @@ cmd_recommend() {
 				matched_categories+=("$cat")
 			fi
 		fi
-	done
+	done <<<"$keyword_map"
 
 	if [[ ${#matched_categories[@]} -eq 0 ]]; then
 		# Fallback: do a general search with the task words

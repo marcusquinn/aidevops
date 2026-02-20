@@ -417,13 +417,14 @@ Orchestration agents can create drafts in `draft/` for reusable parallel process
 | Orchestration | `supervisor-helper.sh` (batch dispatch, cron pulse, self-healing), `/runners-check` (quick queue status) |
 | MCP dev | `tools/build-mcp/build-mcp.md` |
 | Agent design | `tools/build-agent/build-agent.md` |
+| Skills | `scripts/commands/skills.md`, `skills-helper.sh` (search, browse, describe, recommend), `/skills` |
 | Framework | `aidevops/architecture.md` |
 
 <!-- AI-CONTEXT-END -->
 
 ## Getting Started
 
-**CLI**: `aidevops [init|update|auto-update|status|repos|skill|detect|features|uninstall]`. See `/onboarding` for setup wizard.
+**CLI**: `aidevops [init|update|auto-update|status|repos|skill|skills|detect|features|uninstall]`. See `/onboarding` for setup wizard.
 
 ## Auto-Update
 
@@ -501,11 +502,15 @@ Development → @code-standards → /code-simplifier → /linters-local → /pr 
 
 Import community skills: `aidevops skill add <source>` (→ `*-skill.md` suffix)
 
+**Discover skills**: `aidevops skills` or `/skills` in chat. Search, browse by category, get detailed descriptions, and get task-based recommendations.
+
+**Commands**: `aidevops skills search <query>`, `aidevops skills browse <category>`, `aidevops skills describe <name>`, `aidevops skills categories`, `aidevops skills recommend "<task>"`, `aidevops skills list [--imported]`
+
 **Cross-tool**: Claude marketplace plugin, Agent Skills (SKILL.md), Claude Code agents, manual AGENTS.md reference.
 
 **Skill persistence**: Imported skills are stored in `~/.aidevops/agents/` and tracked in `configs/skill-sources.json`. The daily auto-update skill refresh (see Auto-Update above) keeps them current from upstream. Note: `aidevops update` overwrites shared agent files — only `custom/` and `draft/` survive. Re-import skills after an update, or place them in `custom/` for persistence.
 
-**Full docs**: `scripts/commands/add-skill.md`
+**Full docs**: `scripts/commands/add-skill.md`, `scripts/commands/skills.md`
 
 ## Security
 
