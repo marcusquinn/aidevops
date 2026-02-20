@@ -123,6 +123,8 @@ Use `/save-todo` after planning. Auto-detects complexity:
 
 **Working on #auto-dispatch tasks interactively** (t1062): When you start working on a task tagged with `#auto-dispatch`, immediately add `assignee:` to the TODO entry before pushing. This prevents the supervisor from racing and dispatching a worker for the same task. The supervisor's auto-pickup skips tasks with `assignee:` or `started:` fields.
 
+**Stale-claim auto-recovery** (t1263): When interactive sessions claim tasks (assignee: + started:) but die or move on without completing them, the tasks become permanently stuck. Phase 0.5e of the pulse cycle detects stale claims: tasks with assignee:/started: that have (1) no active worker in the supervisor DB, (2) no active worktree, and (3) claim age >24h. It auto-unclaims by stripping assignee: and started: fields so auto-pickup can re-dispatch. Respects t1017 assignee ownership: only unclaims tasks assigned to the local user. Configure threshold: `SUPERVISOR_STALE_CLAIM_SECONDS` (default: 86400 = 24h). Manual check: `supervisor-helper.sh stale-claims [--repo path]`.
+
 **Task completion rules** (CRITICAL - prevents false completion cascade):
 - NEVER mark a task `[x]` unless a merged PR exists with real deliverables for that task
 - Use `task-complete-helper.sh <task-id> --pr <number>` or `task-complete-helper.sh <task-id> --verified` to mark tasks complete in interactive sessions

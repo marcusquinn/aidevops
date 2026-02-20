@@ -65,6 +65,218 @@ commit_and_push_todo() {
 }
 
 #######################################
+# Phase 0.5e: Stale-claim auto-recovery (t1263)
+#
+# When interactive sessions claim tasks (assignee: + started:) but die or
+# move on without completing them, the tasks become permanently stuck:
+# auto-pickup skips them because they have assignee/started fields, but no
+# worker is running. This function detects and recovers those stale claims.
+#
+# Detection criteria (ALL must be true):
+#   1. Task is open ([ ]) in TODO.md with assignee: and/or started: fields
+#   2. Task is NOT in the supervisor DB as running/dispatched/evaluating
+#      (i.e., no active worker process is tracked for it)
+#   3. No active git worktree exists for the task
+#   4. Claim age exceeds threshold (default: 24h)
+#
+# Safety (t1017 assignee ownership rule):
+#   - Only unclaims tasks where assignee matches the local user identity
+#   - External contributors' claims are NEVER touched
+#
+# Args:
+#   $1 - repo path containing TODO.md
+#
+# Returns:
+#   0 on success (including no stale claims found)
+#   1 on failure (TODO.md not found)
+#######################################
+recover_stale_claims() {
+	local repo_path="$1"
+	local todo_file="$repo_path/TODO.md"
+
+	if [[ ! -f "$todo_file" ]]; then
+		log_verbose "recover_stale_claims: TODO.md not found at $todo_file"
+		return 1
+	fi
+
+	# Configurable stale threshold in seconds (default: 24 hours)
+	local stale_threshold="${SUPERVISOR_STALE_CLAIM_SECONDS:-86400}"
+
+	local identity
+	identity=$(get_aidevops_identity)
+
+	local now_epoch
+	now_epoch=$(date +%s 2>/dev/null || echo "0")
+
+	# Get list of active worktrees for cross-referencing
+	local active_worktrees=""
+	active_worktrees=$(git -C "$repo_path" worktree list --porcelain 2>/dev/null | grep '^worktree ' | sed 's/^worktree //' || true)
+
+	# Get list of tasks currently in active states in the supervisor DB
+	local active_db_tasks=""
+	if [[ -n "${SUPERVISOR_DB:-}" && -f "${SUPERVISOR_DB}" ]]; then
+		active_db_tasks=$(db "$SUPERVISOR_DB" "
+			SELECT id FROM tasks
+			WHERE status IN ('running', 'dispatched', 'evaluating', 'queued', 'pr_review', 'review_triage', 'merging')
+			ORDER BY id;
+		" 2>/dev/null || true)
+	fi
+
+	local recovered_count=0
+	local skipped_external=0
+	local skipped_active=0
+	local skipped_young=0
+	local recovered_ids=""
+
+	# Pre-compute identity variants for ownership checks (loop-invariant)
+	local local_user
+	local_user=$(whoami 2>/dev/null || echo "")
+	local gh_user="${_CACHED_GH_USERNAME:-}"
+	local identity_user="${identity%%@*}"
+
+	# Find all open tasks with assignee: or started: fields
+	while IFS= read -r line; do
+		[[ -z "$line" ]] && continue
+
+		# Extract task ID
+		local task_id=""
+		task_id=$(printf '%s' "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
+		[[ -z "$task_id" ]] && continue
+
+		# Extract assignee value
+		local assignee=""
+		assignee=$(printf '%s' "$line" | grep -oE 'assignee:[A-Za-z0-9._@-]+' | tail -1 | sed 's/assignee://' || echo "")
+
+		# Extract started timestamp
+		local started_ts=""
+		started_ts=$(printf '%s' "$line" | grep -oE 'started:[0-9T:Z-]+' | tail -1 | sed 's/started://' || echo "")
+
+		# Safety check: only unclaim tasks assigned to the local user (t1017)
+		# Tasks with started: but no assignee: are treated as external — we cannot
+		# verify ownership without the assignee field, so skipping is the safe default.
+		if [[ -n "$assignee" ]]; then
+			local is_local_user=false
+
+			# Check exact match
+			if [[ "$assignee" == "$identity" ]]; then
+				is_local_user=true
+			fi
+
+			# Fuzzy match: username portion (before @)
+			if [[ "$is_local_user" == "false" ]]; then
+				if [[ "$assignee" == "$local_user" ]] ||
+					[[ -n "$gh_user" && "$assignee" == "$gh_user" ]] ||
+					[[ "$assignee" == "$identity_user" ]] ||
+					[[ "${assignee%%@*}" == "$identity_user" ]]; then
+					is_local_user=true
+				fi
+			fi
+
+			if [[ "$is_local_user" == "false" ]]; then
+				skipped_external=$((skipped_external + 1))
+				log_verbose "  Phase 0.5e: $task_id skipped — assignee:$assignee is not local user ($identity)"
+				continue
+			fi
+		else
+			# No assignee: field — cannot verify ownership; skip to protect external contributors
+			# (Normal claim flow always writes both assignee: and started: together)
+			skipped_external=$((skipped_external + 1))
+			log_verbose "  Phase 0.5e: $task_id skipped — started: without assignee: (ownership unverifiable)"
+			continue
+		fi
+
+		# Check 1: Is the task actively tracked in the supervisor DB?
+		if [[ -n "$active_db_tasks" ]]; then
+			if echo "$active_db_tasks" | grep -qE "^${task_id}$"; then
+				skipped_active=$((skipped_active + 1))
+				log_verbose "  Phase 0.5e: $task_id skipped — active in supervisor DB"
+				continue
+			fi
+		fi
+
+		# Check 2: Is there an active worktree for this task?
+		local has_worktree=false
+		if [[ -n "$active_worktrees" ]]; then
+			# Match worktree paths containing the task ID (e.g., repo.feature-t1263)
+			if echo "$active_worktrees" | grep -qE "[-./]${task_id}([^0-9.]|$)"; then
+				has_worktree=true
+			fi
+		fi
+
+		if [[ "$has_worktree" == "true" ]]; then
+			skipped_active=$((skipped_active + 1))
+			log_verbose "  Phase 0.5e: $task_id skipped — active worktree exists"
+			continue
+		fi
+
+		# Check 3: Is the claim old enough? (>threshold seconds)
+		if [[ -n "$started_ts" ]]; then
+			local started_epoch=0
+			started_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$started_ts" "+%s" 2>/dev/null ||
+				date -d "$started_ts" "+%s" 2>/dev/null ||
+				echo "0")
+
+			if [[ "$started_epoch" -eq 0 ]]; then
+				# Parse failure — unknown age; skip conservatively rather than treating as stale
+				log_warn "  Phase 0.5e: $task_id skipped — could not parse started: timestamp '${started_ts}'"
+				skipped_young=$((skipped_young + 1))
+				continue
+			fi
+
+			local claim_age=$((now_epoch - started_epoch))
+			if [[ "$claim_age" -lt "$stale_threshold" ]]; then
+				skipped_young=$((skipped_young + 1))
+				local remaining=$(((stale_threshold - claim_age) / 3600))
+				log_verbose "  Phase 0.5e: $task_id skipped — claim age ${claim_age}s < threshold ${stale_threshold}s (~${remaining}h remaining)"
+				continue
+			fi
+		else
+			# No started: timestamp — use a heuristic: if assignee: exists but no
+			# started:, the claim is malformed. Still check age via git blame if
+			# possible, but default to treating it as stale (it's already orphaned
+			# from the normal claim flow which always sets both fields).
+			log_verbose "  Phase 0.5e: $task_id has assignee: but no started: — treating as stale (malformed claim)"
+		fi
+
+		# All checks passed — this is a stale claim. Unclaim it.
+		log_warn "  Phase 0.5e: Stale claim detected — $task_id (assignee:${assignee:-unknown}, started:${started_ts:-unknown})"
+
+		# Use cmd_unclaim with --force to strip assignee: and started: fields
+		if cmd_unclaim "$task_id" "$repo_path" --force 2>>"${SUPERVISOR_LOG:-/dev/null}"; then
+			recovered_count=$((recovered_count + 1))
+			if [[ -n "$recovered_ids" ]]; then
+				recovered_ids="${recovered_ids}, ${task_id}"
+			else
+				recovered_ids="$task_id"
+			fi
+			log_success "  Phase 0.5e: Recovered $task_id — assignee: and started: stripped, task is now dispatchable"
+		else
+			log_warn "  Phase 0.5e: Failed to unclaim $task_id"
+		fi
+	done < <(grep -E '^\s*- \[ \] t[0-9]+.*(assignee:|started:)' "$todo_file" || true)
+
+	# Summary
+	if [[ "$recovered_count" -gt 0 ]]; then
+		log_success "Phase 0.5e: Recovered $recovered_count stale claim(s): $recovered_ids (skipped: $skipped_external external, $skipped_active active, $skipped_young young)"
+
+		# Record pattern for observability
+		local pattern_helper="${SCRIPT_DIR:-}/pattern-tracker-helper.sh"
+		if [[ -x "$pattern_helper" ]]; then
+			"$pattern_helper" record \
+				--type "SELF_HEAL_PATTERN" \
+				--task "supervisor" \
+				--model "n/a" \
+				--detail "Phase 0.5e stale-claim recovery (t1263): $recovered_count claims recovered ($recovered_ids), threshold=${stale_threshold}s" \
+				2>/dev/null || true
+		fi
+	else
+		log_verbose "Phase 0.5e: No stale claims detected (skipped: $skipped_external external, $skipped_active active, $skipped_young young)"
+	fi
+
+	return 0
+}
+
+#######################################
 # Commit and push todo/VERIFY.md with pull-rebase retry (t1053)
 # Handles concurrent push conflicts from parallel workers
 # Args: $1=repo_path $2=commit_message $3=max_retries (default 3)
