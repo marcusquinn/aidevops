@@ -8,6 +8,9 @@
 # --auto-update --quiet to pull upstream changes for all imported skills.
 # The 24h gate ensures skills stay fresh without excessive network calls.
 #
+# Also runs a daily OpenClaw update check (if openclaw CLI is installed).
+# Uses the same 24h gate pattern. Respects the user's configured channel.
+#
 # Usage:
 #   auto-update-helper.sh enable           Install cron job (every 10 min)
 #   auto-update-helper.sh disable          Remove cron job
@@ -21,6 +24,8 @@
 #   AIDEVOPS_UPDATE_INTERVAL=10           Minutes between checks (default: 10)
 #   AIDEVOPS_SKILL_AUTO_UPDATE=false      Disable daily skill freshness check
 #   AIDEVOPS_SKILL_FRESHNESS_HOURS=24     Hours between skill checks (default: 24)
+#   AIDEVOPS_OPENCLAW_AUTO_UPDATE=false   Disable daily OpenClaw update check
+#   AIDEVOPS_OPENCLAW_FRESHNESS_HOURS=24  Hours between OpenClaw checks (default: 24)
 #
 # Logs: ~/.aidevops/logs/auto-update.log
 
@@ -54,6 +59,7 @@ readonly STATE_FILE="$HOME/.aidevops/cache/auto-update-state.json"
 readonly CRON_MARKER="# aidevops-auto-update"
 readonly DEFAULT_INTERVAL=10
 readonly DEFAULT_SKILL_FRESHNESS_HOURS=24
+readonly DEFAULT_OPENCLAW_FRESHNESS_HOURS=24
 readonly LAUNCHD_LABEL="com.aidevops.aidevops-auto-update"
 readonly LAUNCHD_DIR="$HOME/Library/LaunchAgents"
 readonly LAUNCHD_PLIST="${LAUNCHD_DIR}/${LAUNCHD_LABEL}.plist"
@@ -473,6 +479,111 @@ update_skill_check_timestamp() {
 }
 
 #######################################
+# Check openclaw freshness and auto-update if stale (24h gate)
+# Called from cmd_check after skill freshness check.
+# Respects AIDEVOPS_OPENCLAW_AUTO_UPDATE=false to opt out.
+# Only runs if openclaw CLI is installed.
+#######################################
+check_openclaw_freshness() {
+	# Opt-out via env var
+	if [[ "${AIDEVOPS_OPENCLAW_AUTO_UPDATE:-}" == "false" ]]; then
+		log_info "OpenClaw auto-update disabled via AIDEVOPS_OPENCLAW_AUTO_UPDATE=false"
+		return 0
+	fi
+
+	# Skip if openclaw is not installed
+	if ! command -v openclaw &>/dev/null; then
+		return 0
+	fi
+
+	local freshness_hours="${AIDEVOPS_OPENCLAW_FRESHNESS_HOURS:-$DEFAULT_OPENCLAW_FRESHNESS_HOURS}"
+	if ! [[ "$freshness_hours" =~ ^[0-9]+$ ]] || [[ "$freshness_hours" -eq 0 ]]; then
+		log_warn "AIDEVOPS_OPENCLAW_FRESHNESS_HOURS='${freshness_hours}' is not a positive integer — using default (${DEFAULT_OPENCLAW_FRESHNESS_HOURS}h)"
+		freshness_hours="$DEFAULT_OPENCLAW_FRESHNESS_HOURS"
+	fi
+	local freshness_seconds=$((freshness_hours * 3600))
+
+	# Read last openclaw check timestamp from state file
+	local last_openclaw_check=""
+	if [[ -f "$STATE_FILE" ]] && command -v jq &>/dev/null; then
+		last_openclaw_check=$(jq -r '.last_openclaw_check // empty' "$STATE_FILE" 2>/dev/null || true)
+	fi
+
+	# Determine if check is needed
+	local needs_check=true
+	if [[ -n "$last_openclaw_check" ]]; then
+		local last_epoch now_epoch elapsed
+		if [[ "$(uname)" == "Darwin" ]]; then
+			last_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_openclaw_check" "+%s" 2>/dev/null || echo "0")
+		else
+			last_epoch=$(date -d "$last_openclaw_check" "+%s" 2>/dev/null || echo "0")
+		fi
+		now_epoch=$(date +%s)
+		elapsed=$((now_epoch - last_epoch))
+
+		if [[ $elapsed -lt $freshness_seconds ]]; then
+			log_info "OpenClaw checked ${elapsed}s ago (gate: ${freshness_seconds}s) — skipping"
+			needs_check=false
+		fi
+	fi
+
+	if [[ "$needs_check" != "true" ]]; then
+		return 0
+	fi
+
+	log_info "Running daily OpenClaw update check..."
+	local before_version after_version
+	before_version=$(openclaw --version 2>/dev/null | head -1 || echo "unknown")
+
+	# Determine update channel from openclaw config (default: current channel)
+	local -a update_cmd=(openclaw update --yes --no-restart)
+	# Check if user has a channel preference in openclaw config
+	local openclaw_channel=""
+	openclaw_channel=$(openclaw update status 2>/dev/null | grep "Channel" | sed 's/[^a-zA-Z]*Channel[^a-zA-Z]*//' | awk '{print $1}' || true)
+	if [[ -n "$openclaw_channel" && "$openclaw_channel" != "stable" ]]; then
+		update_cmd=(openclaw update --channel "$openclaw_channel" --yes --no-restart)
+	fi
+
+	if "${update_cmd[@]}" >>"$LOG_FILE" 2>&1; then
+		after_version=$(openclaw --version 2>/dev/null | head -1 || echo "unknown")
+		if [[ "$before_version" != "$after_version" ]]; then
+			log_info "OpenClaw updated: $before_version -> $after_version"
+		else
+			log_info "OpenClaw already up to date ($before_version)"
+		fi
+	else
+		log_warn "OpenClaw update failed (exit code: $?)"
+	fi
+
+	update_openclaw_check_timestamp
+	return 0
+}
+
+#######################################
+# Record last_openclaw_check timestamp in state file
+#######################################
+update_openclaw_check_timestamp() {
+	local timestamp
+	timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+	if command -v jq &>/dev/null; then
+		local tmp_state
+		tmp_state=$(mktemp)
+		trap 'rm -f "${tmp_state:-}"' RETURN
+
+		if [[ -f "$STATE_FILE" ]]; then
+			jq --arg ts "$timestamp" \
+				'. + {last_openclaw_check: $ts}' \
+				"$STATE_FILE" >"$tmp_state" 2>/dev/null && mv "$tmp_state" "$STATE_FILE"
+		else
+			jq -n --arg ts "$timestamp" \
+				'{last_openclaw_check: $ts}' >"$STATE_FILE"
+		fi
+	fi
+	return 0
+}
+
+#######################################
 # One-shot check and update
 # This is what the cron job calls
 #######################################
@@ -508,6 +619,7 @@ cmd_check() {
 		log_warn "Could not determine versions (local=$current, remote=$remote)"
 		update_state "check" "$current" "version_unknown"
 		check_skill_freshness
+		check_openclaw_freshness
 		return 0
 	fi
 
@@ -515,6 +627,7 @@ cmd_check() {
 		log_info "Already up to date (v$current)"
 		update_state "check" "$current" "up_to_date"
 		check_skill_freshness
+		check_openclaw_freshness
 		return 0
 	fi
 
@@ -527,6 +640,7 @@ cmd_check() {
 		log_error "Install directory is not a git repo: $INSTALL_DIR"
 		update_state "update" "$remote" "no_git_repo"
 		check_skill_freshness
+		check_openclaw_freshness
 		return 1
 	fi
 
@@ -535,6 +649,7 @@ cmd_check() {
 		log_error "git fetch failed"
 		update_state "update" "$remote" "fetch_failed"
 		check_skill_freshness
+		check_openclaw_freshness
 		return 1
 	fi
 
@@ -542,6 +657,7 @@ cmd_check() {
 		log_error "git pull --ff-only failed (local changes?)"
 		update_state "update" "$remote" "pull_failed"
 		check_skill_freshness
+		check_openclaw_freshness
 		return 1
 	fi
 
@@ -556,11 +672,15 @@ cmd_check() {
 		log_error "setup.sh failed (exit code: $?)"
 		update_state "update" "$remote" "setup_failed"
 		check_skill_freshness
+		check_openclaw_freshness
 		return 1
 	fi
 
 	# Run daily skill freshness check (24h gate)
 	check_skill_freshness
+
+	# Run daily OpenClaw update check (24h gate)
+	check_openclaw_freshness
 
 	return 0
 }
@@ -834,6 +954,15 @@ cmd_status() {
 		fi
 		echo "  Last skill check:   $last_skill_check"
 		echo "  Skill updates:      $skill_updates applied (lifetime)"
+
+		local last_openclaw_check
+		last_openclaw_check=$(jq -r '.last_openclaw_check // "never"' "$STATE_FILE" 2>/dev/null)
+		echo "  Last OpenClaw check: $last_openclaw_check"
+		if command -v openclaw &>/dev/null; then
+			local openclaw_ver
+			openclaw_ver=$(openclaw --version 2>/dev/null | head -1 || echo "unknown")
+			echo "  OpenClaw version:   $openclaw_ver"
+		fi
 	fi
 
 	# Check env var overrides
@@ -844,6 +973,10 @@ cmd_status() {
 	if [[ "${AIDEVOPS_SKILL_AUTO_UPDATE:-}" == "false" ]]; then
 		echo ""
 		echo -e "  ${YELLOW}Note: AIDEVOPS_SKILL_AUTO_UPDATE=false is set (skill freshness disabled)${NC}"
+	fi
+	if [[ "${AIDEVOPS_OPENCLAW_AUTO_UPDATE:-}" == "false" ]]; then
+		echo ""
+		echo -e "  ${YELLOW}Note: AIDEVOPS_OPENCLAW_AUTO_UPDATE=false is set (OpenClaw auto-update disabled)${NC}"
 	fi
 
 	echo ""
@@ -907,6 +1040,8 @@ ENVIRONMENT:
     AIDEVOPS_UPDATE_INTERVAL=10          Minutes between checks (default: 10)
     AIDEVOPS_SKILL_AUTO_UPDATE=false     Disable daily skill freshness check
     AIDEVOPS_SKILL_FRESHNESS_HOURS=24    Hours between skill checks (default: 24)
+    AIDEVOPS_OPENCLAW_AUTO_UPDATE=false  Disable daily OpenClaw update check
+    AIDEVOPS_OPENCLAW_FRESHNESS_HOURS=24 Hours between OpenClaw checks (default: 24)
 
 SCHEDULER BACKENDS:
     macOS:  launchd LaunchAgent (~/Library/LaunchAgents/com.aidevops.aidevops-auto-update.plist)
@@ -928,11 +1063,17 @@ HOW IT WORKS:
        b. If >24h since last check, calls skill-update-helper.sh check --auto-update --quiet
        c. Updates last_skill_check timestamp in state file
        d. Runs on every cmd_check invocation (gate prevents excessive network calls)
+    7. Runs daily OpenClaw update check (24h gate, if openclaw CLI is installed):
+       a. Reads last_openclaw_check from state file
+       b. If >24h since last check, runs openclaw update --yes --no-restart
+       c. Respects user's configured channel (beta/dev/stable)
+       d. Opt-out: AIDEVOPS_OPENCLAW_AUTO_UPDATE=false
 
 RATE LIMITS:
     GitHub API: 60 requests/hour (unauthenticated)
     10-min interval = 6 requests/hour (well within limits)
     Skill check: once per 24h per user (configurable via AIDEVOPS_SKILL_FRESHNESS_HOURS)
+    OpenClaw check: once per 24h per user (configurable via AIDEVOPS_OPENCLAW_FRESHNESS_HOURS)
 
 LOGS:
     ~/.aidevops/logs/auto-update.log
