@@ -43,6 +43,7 @@
 - `tools/mobile/ios-simulator-mcp.md` - iOS simulator interaction
 - `tools/mobile/minisim.md` - Simulator launcher
 - `tools/browser/playwright-emulation.md` - Mobile web preview
+- `tools/design/design-inspiration.md` - 60+ UI/UX design inspiration resources
 - `tools/browser/remotion-best-practices-skill.md` - Animated previews and App Store videos
 - `tools/vision/overview.md` - Image generation for app assets
 - `tools/deployment/coolify.md` - Self-hosted backend deployment

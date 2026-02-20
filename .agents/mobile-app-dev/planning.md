@@ -106,19 +106,15 @@ After planning, produce a specification covering:
 
 ## Design Research
 
-Before development, gather visual inspiration:
+Before development, gather visual inspiration. See `tools/design/design-inspiration.md` for the full catalogue of 60+ resources.
 
-| Resource | URL | Best For |
-|----------|-----|----------|
-| **Mobbin** | https://mobbin.com/ | Real-world UI patterns, flows, screenshots from top apps |
-| **Pinterest** | https://pinterest.com/ | Mood boards, colour palettes, design components |
-| **Dribbble** | https://dribbble.com/ | Visual concepts, icon styles, animation ideas |
-| **Apple HIG** | https://developer.apple.com/design/ | iOS design standards |
-| **Material Design** | https://m3.material.io/ | Android design standards |
+**Quick workflow**:
 
-**Mobbin workflow**: Search for your app category. Study onboarding flows, navigation patterns, paywall designs, and empty states from top-rated apps. Capture screenshots for reference.
-
-**Pinterest workflow**: Search combinations like "minimal iOS app UI", "dark onboarding flow", "mobile paywall design", "habit tracker UI aesthetic". Select 4-5 design components you like (onboarding screens, typography, colours, progress bars, card layouts).
+1. **Search Mobbin** (https://mobbin.com) for your app category — study onboarding flows, navigation patterns, paywall designs, and empty states from top-rated apps
+2. **Browse Screenlane** (https://screenlane.com) for free mobile UI screenshots by component type
+3. **Search Pinterest** for mood boards: "minimal iOS app UI", "dark onboarding flow", "mobile paywall design"
+4. **Select 4-5 design components** you like (onboarding screens, typography, colours, progress bars, card layouts)
+5. **Capture screenshots** using browser tools for reference during development
 
 ## App Store Research Techniques
 

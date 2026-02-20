@@ -141,25 +141,20 @@ Use vision AI tools for icon generation:
 
 ## Design Inspiration Resources
 
+See `tools/design/design-inspiration.md` for the full catalogue of 60+ design inspiration resources.
+
+**Quick picks for mobile app design**:
+
 | Resource | URL | Best For |
 |----------|-----|----------|
-| **Mobbin** | https://mobbin.com/ | Real-world mobile UI patterns, flows, and screenshots from top apps |
-| **Dribbble** | https://dribbble.com/ | Visual design concepts, colour palettes, icon styles |
-| **Pinterest** | https://pinterest.com/ | Mood boards, onboarding flows, paywall designs |
-| **Apple HIG** | https://developer.apple.com/design/ | iOS design standards and patterns |
-| **Material Design** | https://m3.material.io/ | Android design standards and components |
-| **Refactoring UI** | https://www.refactoringui.com/ | Practical design tips for developers |
+| **Mobbin** | https://mobbin.com | Real-world mobile UI patterns, flows, and screenshots |
+| **Screenlane** | https://screenlane.com | Mobile UI screenshots by component type (free) |
+| **Page Flows** | https://pageflows.com | Recorded user flows with annotations |
+| **PaywallPro** | https://paywallpro.app | 46,000+ iOS paywall screenshots |
+| **Apple HIG** | https://developer.apple.com/design/ | iOS design standards |
+| **Material Design** | https://m3.material.io/ | Android design standards |
 
-**Mobbin workflow**: Search Mobbin for your app category (e.g., "habit tracker", "finance", "fitness"). Study:
-
-- Onboarding flows of top-rated apps
-- Navigation patterns (tab bar placement, gesture navigation)
-- Paywall designs that convert
-- Settings and profile screen layouts
-- Empty states and error handling
-- Dark mode implementations
-
-Use browser tools to capture screenshots from Mobbin for reference during development.
+**Research workflow**: Search Mobbin/Screenlane for your app category. Study onboarding flows, navigation patterns, paywall designs, empty states, and dark mode implementations from top-rated apps. Use browser tools to capture screenshots for reference.
 
 ### Illustration Style
 

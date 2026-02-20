@@ -82,6 +82,7 @@ npx expo install react-native-purchases
 
 ```typescript
 // Expo / React Native
+import { Platform } from 'react-native';
 import Purchases from 'react-native-purchases';
 
 Purchases.configure({
