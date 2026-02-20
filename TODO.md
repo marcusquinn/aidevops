@@ -1378,6 +1378,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 ## In Progress
 
+- [ ] t1266 Add openclaw auto-update to daily housekeeping in auto-update-helper.sh — openclaw has no built-in auto-update; add a 24h-gated `check_openclaw_freshness()` function (same pattern as skill freshness) that runs `openclaw update --channel beta --yes --no-restart` daily. Opt-out via `AIDEVOPS_OPENCLAW_AUTO_UPDATE=false`. #feature #auto-update ~30m model:sonnet ref:GH#1994 assignee:marcusquinn started:2026-02-20
+
 - [x] t1056 Fix: stop re-adding Intel brew shellenv to rc files on Apple Silicon — check_requirements() unconditionally re-adds Intel brew shellenv to all rc files on every update, breaking ARM brew on dual-brew Apple Silicon Macs. Skip Intel brew rc writes when ARM brew exists; skip all brew rc writes in non-interactive mode. #bugfix #setup ~30m ref:GH#1463 started:2026-02-16 pr:#1512 completed:2026-02-16
 
 - [x] t1047 Fix task ID race condition: replace TODO.md scanning with atomic .task-counter file and CAS push loop — current claim-task-id.sh has TOCTOU race where parallel sessions all read same TODO.md, compute same t(N+1), creating duplicate IDs (t1032 duplicated 10x, t132 8x, etc). New approach: single counter file on origin, fetch→read→increment→commit→push with retry on conflict. Batch allocation support for audit/sweep callers. #bugfix #orchestration #auto-dispatch ~2h (ai:1.5h test:30m) ref:GH#1440 started:2026-02-14 assignee:marcusquinn started:2026-02-14T01:07:59Z pr:#1458 completed:2026-02-14
