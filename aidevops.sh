@@ -82,7 +82,7 @@ init_repos_file() {
 		# Migrate: add git_parent_dirs if missing from existing repos.json
 		if ! jq -e '.git_parent_dirs' "$REPOS_FILE" &>/dev/null; then
 			local temp_file="${REPOS_FILE}.tmp"
-			if jq '. + {"git_parent_dirs": ["~/Git"]}' "$REPOS_FILE" >"$temp_file" 2>/dev/null; then
+			if jq '. + {"git_parent_dirs": ["~/Git"]}' "$REPOS_FILE" >"$temp_file"; then
 				mv "$temp_file" "$REPOS_FILE"
 			else
 				rm -f "$temp_file"

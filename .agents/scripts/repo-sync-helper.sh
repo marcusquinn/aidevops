@@ -222,7 +222,7 @@ release_lock() {
 get_parent_dirs() {
 	if [[ -f "$CONFIG_FILE" ]] && command -v jq &>/dev/null; then
 		local dirs
-		dirs=$(jq -r '.git_parent_dirs[]? // empty' "$CONFIG_FILE" 2>/dev/null || true)
+		dirs=$(jq -r '.git_parent_dirs[]? // empty' "$CONFIG_FILE" || true)
 		if [[ -n "$dirs" ]]; then
 			echo "$dirs"
 			return 0
@@ -758,11 +758,11 @@ cmd_dirs() {
 		echo '{"initialized_repos": [], "git_parent_dirs": ["~/Git"]}' >"$CONFIG_FILE"
 	elif ! jq -e '.git_parent_dirs' "$CONFIG_FILE" &>/dev/null; then
 		local temp_file="${CONFIG_FILE}.tmp"
-		if jq '. + {"git_parent_dirs": ["~/Git"]}' "$CONFIG_FILE" >"$temp_file" 2>/dev/null; then
+		if jq '. + {"git_parent_dirs": ["~/Git"]}' "$CONFIG_FILE" >"$temp_file"; then
 			mv "$temp_file" "$CONFIG_FILE"
 		else
 			rm -f "$temp_file"
-			print_error "Failed to initialize git_parent_dirs in config"
+			print_error "Failed to initialize git_parent_dirs in config. Please check $CONFIG_FILE"
 			return 1
 		fi
 	fi
@@ -770,7 +770,7 @@ cmd_dirs() {
 	case "$subcmd" in
 	list)
 		local dirs
-		dirs=$(jq -r '.git_parent_dirs[]? // empty' "$CONFIG_FILE" 2>/dev/null || true)
+		dirs=$(jq -r '.git_parent_dirs[]? // empty' "$CONFIG_FILE" || true)
 		if [[ -z "$dirs" ]]; then
 			echo "No parent directories configured."
 			echo "Add one with: aidevops repo-sync dirs add ~/Git"
@@ -815,7 +815,7 @@ cmd_dirs() {
 		fi
 
 		local temp_file="${CONFIG_FILE}.tmp"
-		if jq --arg d "$new_dir" '.git_parent_dirs += [$d]' "$CONFIG_FILE" >"$temp_file" 2>/dev/null; then
+		if jq --arg d "$new_dir" '.git_parent_dirs += [$d]' "$CONFIG_FILE" >"$temp_file"; then
 			mv "$temp_file" "$CONFIG_FILE"
 			print_success "Added: $new_dir"
 		else
@@ -845,8 +845,16 @@ cmd_dirs() {
 			return 0
 		fi
 
+		# Confirm destructive operation
+		local _confirm=""
+		read -r -p "Remove '$rm_dir' from git_parent_dirs? [y/N] " _confirm
+		if [[ ! "$_confirm" =~ ^[Yy]$ ]]; then
+			print_info "Cancelled"
+			return 0
+		fi
+
 		local temp_file="${CONFIG_FILE}.tmp"
-		if jq --arg d "$rm_dir" '.git_parent_dirs |= map(select(. != $d))' "$CONFIG_FILE" >"$temp_file" 2>/dev/null; then
+		if jq --arg d "$rm_dir" '.git_parent_dirs |= map(select(. != $d))' "$CONFIG_FILE" >"$temp_file"; then
 			mv "$temp_file" "$CONFIG_FILE"
 			print_success "Removed: $rm_dir"
 		else
@@ -857,7 +865,7 @@ cmd_dirs() {
 		;;
 	*)
 		print_error "Unknown dirs subcommand: $subcmd"
-		echo "Usage: aidevops repo-sync dirs [add|remove|list]"
+		echo "Usage: aidevops repo-sync dirs [list|add|remove|rm]"
 		return 1
 		;;
 	esac
@@ -877,7 +885,7 @@ cmd_config() {
 
 	if [[ -f "$CONFIG_FILE" ]] && command -v jq &>/dev/null; then
 		local dirs
-		dirs=$(jq -r '.git_parent_dirs[]? // empty' "$CONFIG_FILE" 2>/dev/null || true)
+		dirs=$(jq -r '.git_parent_dirs[]? // empty' "$CONFIG_FILE" || true)
 		if [[ -n "$dirs" ]]; then
 			echo "Configured parent directories:"
 			while IFS= read -r dir; do
