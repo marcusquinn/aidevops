@@ -68,21 +68,29 @@ USAGE:
 
 COMMANDS:
     search <query>          Search installed skills by keyword
+    search --registry <q>   Search the public skills.sh registry (online)
     browse [category]       Browse skills by category (interactive)
     describe <name>         Show detailed description of a skill/subagent
     info <name>             Show metadata (path, source, model tier, format)
     list [filter]           List skills (--imported, --native, --all)
     categories              List all skill categories with counts
     recommend <task>        Suggest relevant skills for a task description
+    install <owner/repo@s>  Install a skill from the public registry
     help                    Show this help message
 
 OPTIONS:
     --json                  Output in JSON format (for scripting)
     --quiet                 Suppress decorative output
+    --registry              Search the public skills.sh registry (with search)
+    --online                Alias for --registry
 
 EXAMPLES:
     # Find skills related to browser automation
     skills-helper.sh search "browser automation"
+
+    # Search the public skills.sh registry
+    skills-helper.sh search --registry "browser automation"
+    skills-helper.sh search --online "seo"
 
     # Browse all tools
     skills-helper.sh browse tools
@@ -101,6 +109,9 @@ EXAMPLES:
 
     # List all categories
     skills-helper.sh categories
+
+    # Install a skill from the public registry
+    skills-helper.sh install vercel-labs/agent-browser@agent-browser
 EOF
 	return 0
 }
@@ -182,14 +193,105 @@ path_to_category() {
 # Commands
 # =============================================================================
 
+cmd_search_registry() {
+	local query="$1"
+
+	if [[ -z "$query" ]]; then
+		log_error "Search query required"
+		echo "Usage: skills-helper.sh search --registry <query>"
+		return 1
+	fi
+
+	if ! command -v npx &>/dev/null; then
+		log_error "npx not found — install Node.js to use registry search"
+		return 1
+	fi
+
+	log_info "Searching skills.sh registry for '$query'..."
+	echo ""
+
+	local raw_output
+	# Strip ANSI escape codes for parsing, but capture raw for display
+	raw_output=$(npx --yes skills find "$query" 2>/dev/null || true)
+
+	if [[ -z "$raw_output" ]]; then
+		log_warning "No results from skills.sh registry for '$query'"
+		echo ""
+		echo "Browse the registry at: https://skills.sh/"
+		return 0
+	fi
+
+	# Display the raw output (already formatted by skills CLI)
+	echo "$raw_output"
+	echo ""
+
+	# Parse and show install hint
+	local pkg_count
+	pkg_count=$(echo "$raw_output" | grep -cE '@[a-zA-Z0-9_-]+[[:space:]]' || true)
+	if [[ "$pkg_count" -gt 0 ]]; then
+		echo -e "  ${CYAN}Tip:${NC} Install with: skills-helper.sh install <owner/repo@skill>"
+		echo -e "       Or:         aidevops skills install <owner/repo@skill>"
+	fi
+
+	return 0
+}
+
+cmd_install() {
+	local pkg="$1"
+
+	if [[ -z "$pkg" ]]; then
+		log_error "Package required"
+		echo "Usage: skills-helper.sh install <owner/repo@skill>"
+		echo "Example: skills-helper.sh install vercel-labs/agent-browser@agent-browser"
+		return 1
+	fi
+
+	if ! command -v npx &>/dev/null; then
+		log_error "npx not found — install Node.js to use registry install"
+		return 1
+	fi
+
+	log_info "Installing '$pkg' from skills.sh registry..."
+	echo ""
+
+	npx --yes skills add "$pkg" -g -y
+	local exit_code=$?
+
+	if [[ $exit_code -eq 0 ]]; then
+		log_success "Installed '$pkg'"
+		echo ""
+		echo -e "  ${CYAN}Tip:${NC} Run 'aidevops update' to deploy to ~/.aidevops/agents/"
+	else
+		log_error "Install failed for '$pkg'"
+		echo ""
+		echo "Search for available skills: skills-helper.sh search --registry \"<query>\""
+	fi
+
+	return $exit_code
+}
+
 cmd_search() {
 	local query="$1"
 	local json_output="${2:-false}"
+	local registry_search="${3:-false}"
+
+	# Handle --registry / --online flag embedded in query
+	if [[ "$query" == "--registry" || "$query" == "--online" ]]; then
+		log_error "Query required after --registry/--online flag"
+		echo "Usage: skills-helper.sh search --registry <query>"
+		return 1
+	fi
 
 	if [[ -z "$query" ]]; then
 		log_error "Search query required"
 		echo "Usage: skills-helper.sh search <query>"
 		return 1
+	fi
+
+	# If registry search requested, delegate directly
+	if [[ "$registry_search" == "true" ]]; then
+		cmd_search_registry "$query"
+		return $?
 	fi
 
 	# Convert query to lowercase for case-insensitive matching
@@ -265,11 +367,17 @@ cmd_search() {
 	else
 		echo ""
 		if [[ $found -eq 0 ]]; then
-			log_warning "No skills found matching '$query'"
+			log_warning "No local skills found matching '$query'"
 			echo ""
 			echo "Try:"
-			echo "  skills-helper.sh browse          # Browse all categories"
-			echo "  skills-helper.sh categories       # List categories"
+			echo "  skills-helper.sh browse                    # Browse all categories"
+			echo "  skills-helper.sh categories                # List categories"
+			echo "  skills-helper.sh search --registry '$query'  # Search public registry"
+			echo ""
+			if command -v npx &>/dev/null; then
+				echo -e "  ${CYAN}Search the public skills.sh registry?${NC}"
+				echo "  Run: skills-helper.sh search --registry \"$query\""
+			fi
 		else
 			log_info "Found $found skill(s) matching '$query'"
 		fi
@@ -930,6 +1038,7 @@ main() {
 	shift || true
 
 	local json_output=false
+	local registry_search=false
 
 	# Extract global options
 	local args=()
@@ -944,6 +1053,10 @@ main() {
 		--quiet | -q)
 			shift
 			;;
+		--registry | --online)
+			registry_search=true
+			shift
+			;;
 		*)
 			args+=("$arg")
 			shift
@@ -953,7 +1066,7 @@ main() {
 
 	case "$command" in
 	search | s | find | f)
-		cmd_search "${args[*]:-}" "$json_output"
+		cmd_search "${args[*]:-}" "$json_output" "$registry_search"
 		;;
 	browse | b)
 		cmd_browse "${args[0]:-}" "$json_output"
@@ -972,6 +1085,12 @@ main() {
 		;;
 	recommend | rec | suggest)
 		cmd_recommend "${args[*]:-}"
+		;;
+	install | add)
+		cmd_install "${args[0]:-}"
+		;;
+	registry | online)
+		cmd_search_registry "${args[*]:-}"
 		;;
 	help | --help | -h)
 		show_help

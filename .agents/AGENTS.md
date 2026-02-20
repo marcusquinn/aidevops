@@ -506,6 +506,16 @@ Import community skills: `aidevops skill add <source>` (→ `*-skill.md` suffix)
 
 **Commands**: `aidevops skills search <query>`, `aidevops skills browse <category>`, `aidevops skills describe <name>`, `aidevops skills categories`, `aidevops skills recommend "<task>"`, `aidevops skills list [--imported]`
 
+**Online registry search**: Search the public [skills.sh](https://skills.sh/) registry for community skills:
+
+```bash
+aidevops skills search --registry "browser automation"
+aidevops skills search --online "seo"
+aidevops skills install vercel-labs/agent-browser@agent-browser
+```
+
+When local search returns no results, the `/skills` command suggests searching the public registry automatically.
+
 **Cross-tool**: Claude marketplace plugin, Agent Skills (SKILL.md), Claude Code agents, manual AGENTS.md reference.
 
 **Skill persistence**: Imported skills are stored in `~/.aidevops/agents/` and tracked in `configs/skill-sources.json`. The daily auto-update skill refresh (see Auto-Update above) keeps them current from upstream. Note: `aidevops update` overwrites shared agent files — only `custom/` and `draft/` survive. Re-import skills after an update, or place them in `custom/` for persistence.
