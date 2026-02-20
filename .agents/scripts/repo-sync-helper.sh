@@ -517,11 +517,6 @@ cmd_enable() {
 	if [[ "$backend" == "launchd" ]]; then
 		local interval_seconds=$((interval * 60))
 
-		if _launchd_is_loaded; then
-			print_info "Repo sync LaunchAgent already loaded ($LAUNCHD_LABEL)"
-			return 0
-		fi
-
 		mkdir -p "$LAUNCHD_DIR"
 
 		# Create named symlink so macOS System Settings shows "aidevops-repo-sync"
@@ -530,7 +525,23 @@ cmd_enable() {
 		local display_link="$bin_dir/aidevops-repo-sync"
 		ln -sf "$script_path" "$display_link"
 
-		_generate_plist "$display_link" "$interval_seconds" "${PATH}" >"$LAUNCHD_PLIST"
+		# Generate plist content and compare to existing (t1265)
+		local new_content
+		new_content=$(_generate_plist "$display_link" "$interval_seconds" "${PATH}")
+
+		# Skip if already loaded with identical config (avoids macOS notification)
+		if _launchd_is_loaded && [[ -f "$LAUNCHD_PLIST" ]]; then
+			local existing_content
+			existing_content=$(cat "$LAUNCHD_PLIST" 2>/dev/null) || existing_content=""
+			if [[ "$existing_content" == "$new_content" ]]; then
+				print_info "Repo sync LaunchAgent already installed with identical config ($LAUNCHD_LABEL)"
+				return 0
+			fi
+			print_info "Repo sync LaunchAgent already loaded ($LAUNCHD_LABEL)"
+			return 0
+		fi
+
+		echo "$new_content" >"$LAUNCHD_PLIST"
 
 		if launchctl load -w "$LAUNCHD_PLIST" 2>/dev/null; then
 			print_success "Repo sync enabled (every ${interval} minutes)"

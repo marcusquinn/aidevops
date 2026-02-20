@@ -174,18 +174,23 @@ _migrate_cron_to_launchd() {
 		return 0
 	fi
 
-	log_info "Migrating auto-update from cron to launchd..."
-
-	# Generate and write plist
-	mkdir -p "$LAUNCHD_DIR"
-	_generate_auto_update_plist "$script_path" "$interval_seconds" "${PATH}" >"$LAUNCHD_PLIST"
-
-	# Load into launchd
-	if launchctl load -w "$LAUNCHD_PLIST" 2>/dev/null; then
-		log_info "LaunchAgent loaded: $LAUNCHD_LABEL"
+	# Skip migration if launchd agent already loaded (t1265)
+	if _launchd_is_loaded; then
+		log_info "LaunchAgent already loaded — removing stale cron entry only"
 	else
-		log_error "Failed to load LaunchAgent during migration"
-		return 1
+		log_info "Migrating auto-update from cron to launchd..."
+
+		# Generate and write plist
+		mkdir -p "$LAUNCHD_DIR"
+		_generate_auto_update_plist "$script_path" "$interval_seconds" "${PATH}" >"$LAUNCHD_PLIST"
+
+		# Load into launchd
+		if launchctl load -w "$LAUNCHD_PLIST" 2>/dev/null; then
+			log_info "LaunchAgent loaded: $LAUNCHD_LABEL"
+		else
+			log_error "Failed to load LaunchAgent during migration"
+			return 1
+		fi
 	fi
 
 	# Remove old cron entry
@@ -599,13 +604,6 @@ cmd_enable() {
 		# Auto-migrate existing cron entry if present
 		_migrate_cron_to_launchd "$script_path" "$interval_seconds"
 
-		# Install if not already loaded
-		if _launchd_is_loaded; then
-			print_info "Auto-update LaunchAgent already loaded ($LAUNCHD_LABEL)"
-			update_state "enable" "$(get_local_version)" "enabled"
-			return 0
-		fi
-
 		mkdir -p "$LAUNCHD_DIR"
 
 		# Create named symlink so macOS System Settings shows "aidevops-auto-update"
@@ -615,7 +613,26 @@ cmd_enable() {
 		local display_link="$bin_dir/aidevops-auto-update"
 		ln -sf "$script_path" "$display_link"
 
-		_generate_auto_update_plist "$display_link" "$interval_seconds" "${PATH}" >"$LAUNCHD_PLIST"
+		# Generate plist content and compare to existing (t1265)
+		local new_content
+		new_content=$(_generate_auto_update_plist "$display_link" "$interval_seconds" "${PATH}")
+
+		# Skip if already loaded with identical config (avoids macOS notification)
+		if _launchd_is_loaded && [[ -f "$LAUNCHD_PLIST" ]]; then
+			local existing_content
+			existing_content=$(cat "$LAUNCHD_PLIST" 2>/dev/null) || existing_content=""
+			if [[ "$existing_content" == "$new_content" ]]; then
+				print_info "Auto-update LaunchAgent already installed with identical config ($LAUNCHD_LABEL)"
+				update_state "enable" "$(get_local_version)" "enabled"
+				return 0
+			fi
+			# Loaded but config differs — don't overwrite while running
+			print_info "Auto-update LaunchAgent already loaded ($LAUNCHD_LABEL)"
+			update_state "enable" "$(get_local_version)" "enabled"
+			return 0
+		fi
+
+		echo "$new_content" >"$LAUNCHD_PLIST"
 
 		if launchctl load -w "$LAUNCHD_PLIST" 2>/dev/null; then
 			update_state "enable" "$(get_local_version)" "enabled"

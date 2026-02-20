@@ -59,6 +59,32 @@ _launchd_is_loaded() {
 }
 
 #######################################
+# Check if generated plist content matches existing file on disk
+# Used to avoid unnecessary plist rewrites that trigger macOS
+# "Background Items" notifications (t1265)
+# Arguments:
+#   $1 - plist_path (existing file)
+#   $2 - new_content (generated plist content)
+# Returns: 0 if content matches (skip write), 1 if different (needs write)
+#######################################
+_plist_unchanged() {
+	local plist_path="$1"
+	local new_content="$2"
+
+	if [[ ! -f "$plist_path" ]]; then
+		return 1
+	fi
+
+	local existing_content
+	existing_content=$(cat "$plist_path" 2>/dev/null) || return 1
+
+	if [[ "$existing_content" == "$new_content" ]]; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
 # Load a plist into launchd
 # Arguments:
 #   $1 - plist path
@@ -305,23 +331,32 @@ launchd_install_supervisor_pulse() {
 	local display_link="$bin_dir/aidevops-supervisor-pulse"
 	ln -sf "$script_path" "$display_link"
 
-	# Check if already loaded
+	# Generate plist content
+	local new_content
+	new_content=$(_generate_supervisor_pulse_plist \
+		"$display_link" \
+		"$interval_seconds" \
+		"$log_path" \
+		"$batch_arg" \
+		"$env_path" \
+		"")
+
+	# Skip if already loaded with identical config (t1265 — avoids macOS notification)
+	if _launchd_is_loaded "$label" && _plist_unchanged "$plist_path" "$new_content"; then
+		log_info "LaunchAgent $label already installed with identical config — skipping"
+		return 0
+	fi
+
+	# Check if loaded but config changed
 	if _launchd_is_loaded "$label"; then
 		log_warn "LaunchAgent $label already loaded. Unload first to change settings."
 		launchd_status_supervisor_pulse
 		return 0
 	fi
 
-	# Generate and write plist using symlink for display name (no GH_TOKEN — resolved at runtime)
-	_generate_supervisor_pulse_plist \
-		"$display_link" \
-		"$interval_seconds" \
-		"$log_path" \
-		"$batch_arg" \
-		"$env_path" \
-		"" >"$plist_path"
+	# Write plist and load into launchd
+	echo "$new_content" >"$plist_path"
 
-	# Load into launchd
 	if _launchd_load "$plist_path"; then
 		log_success "Installed LaunchAgent: $label (every ${interval_seconds}s)"
 		log_info "Plist: $plist_path"
@@ -436,20 +471,29 @@ launchd_install_auto_update() {
 	local display_link="$bin_dir/aidevops-auto-update"
 	ln -sf "$script_path" "$display_link"
 
-	# Check if already loaded
+	# Generate plist content
+	local new_content
+	new_content=$(_generate_auto_update_plist \
+		"$display_link" \
+		"$interval_seconds" \
+		"$log_path" \
+		"$env_path")
+
+	# Skip if already loaded with identical config (t1265 — avoids macOS notification)
+	if _launchd_is_loaded "$label" && _plist_unchanged "$plist_path" "$new_content"; then
+		log_info "LaunchAgent $label already installed with identical config — skipping"
+		return 0
+	fi
+
+	# Check if loaded but config changed
 	if _launchd_is_loaded "$label"; then
 		log_warn "LaunchAgent $label already loaded. Unload first to change settings."
 		return 0
 	fi
 
-	# Generate and write plist using symlink for display name
-	_generate_auto_update_plist \
-		"$display_link" \
-		"$interval_seconds" \
-		"$log_path" \
-		"$env_path" >"$plist_path"
+	# Write plist and load into launchd
+	echo "$new_content" >"$plist_path"
 
-	# Load into launchd
 	if _launchd_load "$plist_path"; then
 		log_success "Installed LaunchAgent: $label (every ${interval_seconds}s)"
 		log_info "Plist: $plist_path"
@@ -560,21 +604,30 @@ launchd_install_todo_watcher() {
 	local display_link="$bin_dir/aidevops-todo-watcher"
 	ln -sf "$script_path" "$display_link"
 
-	# Check if already loaded
+	# Generate plist content
+	local new_content
+	new_content=$(_generate_todo_watcher_plist \
+		"$display_link" \
+		"$todo_path" \
+		"$repo_path" \
+		"$log_path" \
+		"$env_path")
+
+	# Skip if already loaded with identical config (t1265 — avoids macOS notification)
+	if _launchd_is_loaded "$label" && _plist_unchanged "$plist_path" "$new_content"; then
+		log_info "LaunchAgent $label already installed with identical config — skipping"
+		return 0
+	fi
+
+	# Check if loaded but config changed
 	if _launchd_is_loaded "$label"; then
 		log_warn "LaunchAgent $label already loaded."
 		return 0
 	fi
 
-	# Generate and write plist using symlink for display name
-	_generate_todo_watcher_plist \
-		"$display_link" \
-		"$todo_path" \
-		"$repo_path" \
-		"$log_path" \
-		"$env_path" >"$plist_path"
+	# Write plist and load into launchd
+	echo "$new_content" >"$plist_path"
 
-	# Load into launchd
 	if _launchd_load "$plist_path"; then
 		log_success "Installed LaunchAgent: $label (WatchPaths: $todo_path)"
 		log_info "Plist: $plist_path"
