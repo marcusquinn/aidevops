@@ -1835,7 +1835,7 @@
   check: shellcheck aidevops.sh
   check: file-exists aidevops.sh
 
-- [ ] v223 t1268 issue-sync: auto-detect plan references from PLANS.md `Ta... | PR #2000 | merged:2026-02-20
+- [x] v223 t1268 issue-sync: auto-detect plan references from PLANS.md `Ta... | PR #2000 | merged:2026-02-20 verified:2026-02-20
   files: .agents/scripts/issue-sync-helper.sh
   check: shellcheck .agents/scripts/issue-sync-helper.sh
   check: file-exists .agents/scripts/issue-sync-helper.sh
