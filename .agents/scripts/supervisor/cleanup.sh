@@ -284,6 +284,18 @@ cleanup_worker_processes() {
 	rm -f "$pid_file"
 	# t1222: Clean up hang warning marker to prevent stale markers from killing re-dispatched workers
 	rm -f "$SUPERVISOR_DIR/pids/${task_id}.hang-warned" 2>/dev/null || true
+	# t1190: Clean up timestamped dispatch/wrapper scripts for this task.
+	# These are created with timestamps (e.g., t001-dispatch-20260213142302.sh) to
+	# prevent overwrite race conditions. Remove them when the task is cleaned up.
+	local script
+	for script in "$SUPERVISOR_DIR/pids/${task_id}"-dispatch-*.sh \
+		"$SUPERVISOR_DIR/pids/${task_id}"-wrapper-*.sh \
+		"$SUPERVISOR_DIR/pids/${task_id}"-reprompt-*.sh \
+		"$SUPERVISOR_DIR/pids/${task_id}"-reprompt-wrapper-*.sh \
+		"$SUPERVISOR_DIR/pids/${task_id}"-prompt-repeat-*.sh \
+		"$SUPERVISOR_DIR/pids/${task_id}"-prompt-repeat-wrapper-*.sh; do
+		[[ -f "$script" ]] && rm -f "$script" || true
+	done
 
 	if [[ "$killed" -gt 0 ]]; then
 		log_info "Cleaned up worker process for $task_id (PID: $pid)"
