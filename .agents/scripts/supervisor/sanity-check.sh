@@ -118,7 +118,7 @@ _check_db_failed_with_claims() {
 	# Get all failed/blocked tasks from DB for this repo
 	local failed_tasks
 	failed_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
-		SELECT id, status, error, retries, max_retries FROM tasks
+		SELECT id, status, error, COALESCE(retries, 0), COALESCE(max_retries, 3) FROM tasks
 		WHERE status IN ('failed', 'blocked')
 		AND repo = '$(sql_escape "$repo_path")';
 	" 2>/dev/null || echo "")
@@ -158,15 +158,15 @@ _check_db_failed_with_claims() {
 		log_warn "    Error: ${db_error:0:100}"
 		log_warn "    Action: stripping stale claim (DB state is authoritative)"
 
-		# Strip the claim
-		if cmd_unclaim "$task_id" "$repo_path" --force 2>>"${SUPERVISOR_LOG:-/dev/null}"; then
+		# Strip the claim (redirect stdout to log to prevent leakage into $() capture)
+		if cmd_unclaim "$task_id" "$repo_path" --force >>"${SUPERVISOR_LOG:-/dev/null}" 2>&1; then
 			fixed=$((fixed + 1))
 			log_success "  Sanity check 1: $task_id — claim stripped, task now assessable"
 
 			# If retries aren't exhausted, reset to queued for re-dispatch
-			if [[ "$db_retries" -lt "$db_max_retries" ]]; then
+			if [[ "${db_retries:-0}" -lt "${db_max_retries:-3}" ]]; then
 				log_info "  Sanity check 1: $task_id — retries available ($db_retries/$db_max_retries), resetting to queued"
-				cmd_reset "$task_id" 2>>"${SUPERVISOR_LOG:-/dev/null}" || true
+				cmd_reset "$task_id" >>"${SUPERVISOR_LOG:-/dev/null}" 2>&1 || true
 			fi
 		fi
 	done <<<"$failed_tasks"
@@ -218,13 +218,16 @@ _check_failed_blocker_chains() {
 			if [[ "$blocker_status" == "failed" ]]; then
 				# Check if the failed blocker has retries available
 				local blocker_retries blocker_max
-				blocker_retries=$(db "$SUPERVISOR_DB" "SELECT retries FROM tasks WHERE id = '$(sql_escape "$blocker_id")';" 2>/dev/null || echo "3")
-				blocker_max=$(db "$SUPERVISOR_DB" "SELECT max_retries FROM tasks WHERE id = '$(sql_escape "$blocker_id")';" 2>/dev/null || echo "3")
+				blocker_retries=$(db "$SUPERVISOR_DB" "SELECT COALESCE(retries, 0) FROM tasks WHERE id = '$(sql_escape "$blocker_id")';" 2>/dev/null || echo "0")
+				blocker_max=$(db "$SUPERVISOR_DB" "SELECT COALESCE(max_retries, 3) FROM tasks WHERE id = '$(sql_escape "$blocker_id")';" 2>/dev/null || echo "3")
+				# Guard against empty strings from race conditions (task removed between queries)
+				blocker_retries="${blocker_retries:-0}"
+				blocker_max="${blocker_max:-3}"
 
 				if [[ "$blocker_retries" -lt "$blocker_max" ]]; then
-					# Reset the failed blocker for retry
+					# Reset the failed blocker for retry (redirect stdout to log)
 					log_warn "  Sanity check 2: $blocker_id failed but has retries ($blocker_retries/$blocker_max) — resetting for retry (blocks $task_id)"
-					cmd_reset "$blocker_id" 2>>"${SUPERVISOR_LOG:-/dev/null}" || true
+					cmd_reset "$blocker_id" >>"${SUPERVISOR_LOG:-/dev/null}" 2>&1 || true
 					fixed=$((fixed + 1))
 				else
 					# Blocker is permanently failed — remove the blocked-by so the
@@ -243,8 +246,10 @@ _check_failed_blocker_chains() {
 							sed_inplace "${line_num}s/ blocked-by:${escaped_blocker}//" "$todo_file"
 						else
 							# Multiple blockers — rebuild the list without this one
+							local escaped_blocker_id
+							escaped_blocker_id=$(printf '%s' "$blocker_id" | sed 's/\./\\./g')
 							local new_blockers
-							new_blockers=$(printf '%s' ",$blocked_by," | sed "s/,${blocker_id},/,/" | sed 's/^,//;s/,$//')
+							new_blockers=$(printf '%s' ",$blocked_by," | sed "s/,${escaped_blocker_id},/,/" | sed 's/^,//;s/,$//')
 							local escaped_blocked_by
 							escaped_blocked_by=$(printf '%s' "$blocked_by" | sed 's/\./\\./g')
 							if [[ -n "$new_blockers" ]]; then
@@ -263,7 +268,7 @@ _check_failed_blocker_chains() {
 	done <<<"$blocked_tasks"
 
 	if [[ "$fixed" -gt 0 ]]; then
-		commit_and_push_todo "$repo_path" "chore: sanity check — unblock tasks with failed/retryable blockers" || true
+		commit_and_push_todo "$repo_path" "chore: sanity check — unblock tasks with failed/retryable blockers" >>"${SUPERVISOR_LOG:-/dev/null}" 2>&1 || true
 	fi
 
 	echo "$fixed"
@@ -355,7 +360,7 @@ _check_missing_auto_dispatch() {
 		done <<<"$candidates"
 
 		if [[ "$fixed" -gt 0 ]]; then
-			commit_and_push_todo "$repo_path" "chore: sanity check — auto-tag $fixed task(s) as #auto-dispatch" || true
+			commit_and_push_todo "$repo_path" "chore: sanity check — auto-tag $fixed task(s) as #auto-dispatch" >>"${SUPERVISOR_LOG:-/dev/null}" 2>&1 || true
 		fi
 	fi
 
@@ -390,7 +395,7 @@ _check_db_orphans() {
 		# Check if task exists in TODO.md (any state)
 		if ! grep -qE "^[[:space:]]*- \[.\] ${task_id}( |$)" "$todo_file" 2>/dev/null; then
 			log_warn "  Sanity check 4: $task_id is '$db_status' in DB but missing from TODO.md — cancelling"
-			cmd_transition "$task_id" "cancelled" --error "Sanity check: DB orphan with no TODO.md entry" 2>>"${SUPERVISOR_LOG:-/dev/null}" || true
+			cmd_transition "$task_id" "cancelled" --error "Sanity check: DB orphan with no TODO.md entry" >>"${SUPERVISOR_LOG:-/dev/null}" 2>&1 || true
 			fixed=$((fixed + 1))
 		fi
 	done <<<"$orphans"

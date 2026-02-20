@@ -1972,7 +1972,7 @@ cmd_pulse() {
 	local queued_before_sanity
 	queued_before_sanity=$(db "$SUPERVISOR_DB" "SELECT COUNT(*) FROM tasks WHERE status = 'queued';" 2>/dev/null || echo 0)
 	if [[ "$queued_before_sanity" -eq 0 ]]; then
-		# No queued tasks — check if there are open tasks in TODO.md that should be
+		# No queued tasks — check if there are open tasks in TODO.md that should be dispatchable
 		if [[ -n "$all_repos" ]]; then
 			while IFS= read -r repo_path; do
 				_run_sanity_check_for_repo "$repo_path"
