@@ -387,11 +387,16 @@ _sync_score_to_patterns() {
 		return 0
 	fi
 
-	# Get response metadata
+	# Get response metadata including per-criterion scores and token usage (t1094)
 	local result
 	result=$(sqlite3 -separator '|' "$SCORING_DB" "
         SELECT r.model_id, p.category, p.difficulty,
-               ${WEIGHTED_AVG_SQL} as weighted_avg
+               ${WEIGHTED_AVG_SQL} as weighted_avg,
+               r.token_count, r.cost_estimate,
+               (SELECT score FROM scores s WHERE s.response_id = r.response_id AND s.criterion = 'correctness' LIMIT 1) as corr,
+               (SELECT score FROM scores s WHERE s.response_id = r.response_id AND s.criterion = 'completeness' LIMIT 1) as comp,
+               (SELECT score FROM scores s WHERE s.response_id = r.response_id AND s.criterion = 'code_quality' LIMIT 1) as cq,
+               (SELECT score FROM scores s WHERE s.response_id = r.response_id AND s.criterion = 'clarity' LIMIT 1) as clar
         FROM responses r
         JOIN prompts p ON r.prompt_id = p.prompt_id
         WHERE r.response_id = ${response_id};
@@ -401,34 +406,38 @@ _sync_score_to_patterns() {
 		return 0
 	fi
 
-	local model_id category difficulty weighted_avg
-	IFS='|' read -r model_id category difficulty weighted_avg <<<"$result"
+	local model_id category difficulty weighted_avg token_count _cost_estimate
+	local score_corr score_comp score_cq score_clar
+	IFS='|' read -r model_id category difficulty weighted_avg token_count _cost_estimate \
+		score_corr score_comp score_cq score_clar <<<"$result"
 
 	# Skip if no scores recorded yet (weighted_avg = 0)
 	if [[ "$weighted_avg" == "0" || "$weighted_avg" == "0.0" ]]; then
 		return 0
 	fi
 
-	# Determine outcome: >= 3.5 weighted avg = success, < 3.5 = failure
-	local outcome="success"
-	local avg_int
-	avg_int=$(awk "BEGIN{printf \"%d\", $weighted_avg * 100}")
-	if [[ "$avg_int" -lt "$SUCCESS_THRESHOLD_SCORE_X100" ]]; then
-		outcome="failure"
-	fi
-
 	# Map full model name to tier for pattern tracker
 	local model_tier
 	model_tier=$(_model_to_tier "$model_id")
 
-	# Record pattern (fire-and-forget, don't fail the scoring operation)
-	"$PATTERN_TRACKER" record \
-		--outcome "$outcome" \
-		--task-type "$category" \
-		--model "$model_tier" \
-		--description "Response scoring: ${model_id} scored ${weighted_avg}/5.0 on ${difficulty} ${category} task" \
-		--tags "response-scoring,scored-avg:${weighted_avg}" \
-		>/dev/null 2>&1 || true
+	# Use the unified score command (t1094) for richer metadata capture
+	local score_args=(
+		--model "$model_tier"
+		--task-type "$category"
+		--weighted-avg "$weighted_avg"
+		--source "response-scoring"
+		--description "Response scoring: ${model_id} scored ${weighted_avg}/5.0 on ${difficulty} ${category} task"
+	)
+	[[ -n "$score_corr" && "$score_corr" != "0" ]] && score_args+=(--correctness "$score_corr")
+	[[ -n "$score_comp" && "$score_comp" != "0" ]] && score_args+=(--completeness "$score_comp")
+	[[ -n "$score_cq" && "$score_cq" != "0" ]] && score_args+=(--code-quality "$score_cq")
+	[[ -n "$score_clar" && "$score_clar" != "0" ]] && score_args+=(--clarity "$score_clar")
+	if [[ -n "$token_count" ]] && [[ "$token_count" =~ ^[0-9]+$ ]] && [[ "$token_count" -gt 0 ]]; then
+		score_args+=(--tokens-out "$token_count")
+	fi
+
+	# Record via unified score command (fire-and-forget)
+	"$PATTERN_TRACKER" score "${score_args[@]}" >/dev/null 2>&1 || true
 
 	return 0
 }
@@ -463,15 +472,31 @@ _sync_comparison_to_patterns() {
 	category=$(sqlite3 "$SCORING_DB" \
 		"SELECT category FROM prompts WHERE prompt_id = ${prompt_id};") || return 0
 
-	local model_tier
-	model_tier=$(_model_to_tier "$winner_model")
+	local winner_tier
+	winner_tier=$(_model_to_tier "$winner_model")
 
-	"$PATTERN_TRACKER" record \
-		--outcome "success" \
+	# Get loser models for this prompt (all non-winner responses) (t1094)
+	local loser_args=()
+	while IFS='|' read -r loser_model_id _loser_avg; do
+		local loser_tier
+		loser_tier=$(_model_to_tier "$loser_model_id")
+		loser_args+=(--loser "$loser_tier")
+	done < <(sqlite3 -separator '|' "$SCORING_DB" "
+		SELECT r.model_id, ${WEIGHTED_AVG_SQL} as wavg
+		FROM responses r
+		WHERE r.prompt_id = ${prompt_id}
+		AND r.model_id != '$(echo "$winner_model" | sed "s/'/''/g")'
+		ORDER BY wavg DESC;
+	" 2>/dev/null || true)
+
+	# Use the unified ab-compare command (t1094)
+	"$PATTERN_TRACKER" ab-compare \
+		--winner "$winner_tier" \
+		"${loser_args[@]}" \
 		--task-type "${category:-general}" \
-		--model "$model_tier" \
-		--description "Comparison winner: ${winner_model} (${winner_avg}/5.0) beat ${compared_count} models on ${category:-general} task" \
-		--tags "response-scoring,comparison-winner,models-compared:${compared_count}" \
+		--winner-score "$winner_avg" \
+		--models-compared "$compared_count" \
+		--source "response-scoring" \
 		>/dev/null 2>&1 || true
 
 	return 0

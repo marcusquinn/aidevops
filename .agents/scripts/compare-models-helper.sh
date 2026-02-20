@@ -1596,6 +1596,65 @@ cmd_score() {
 	fi
 	echo ""
 
+	# Sync to unified pattern tracker backbone (t1094)
+	# Scores are 1-10 here; normalize to 1-5 for pattern tracker compatibility.
+	local pt_helper="${SCRIPT_DIR}/pattern-tracker-helper.sh"
+	if [[ -x "$pt_helper" ]]; then
+		local winner_tier=""
+		local loser_args=()
+		local winner_overall=0
+
+		for entry in "${model_entries[@]}"; do
+			IFS='|' read -r m_id m_cor m_com m_qua m_cla m_adh m_ove m_lat m_tok _ _ _ <<<"$entry"
+			local m_tier
+			m_tier=$(model_id_to_tier "$m_id")
+			[[ -z "$m_tier" ]] && m_tier="$m_id"
+
+			# Normalize 1-10 scores to 1-5 (halve, round)
+			local norm_cor norm_com norm_qua norm_cla norm_tok_arg=()
+			norm_cor=$(awk "BEGIN{v=int($m_cor/2+0.5); if(v<1)v=1; if(v>5)v=5; print v}")
+			norm_com=$(awk "BEGIN{v=int($m_com/2+0.5); if(v<1)v=1; if(v>5)v=5; print v}")
+			norm_qua=$(awk "BEGIN{v=int($m_qua/2+0.5); if(v<1)v=1; if(v>5)v=5; print v}")
+			norm_cla=$(awk "BEGIN{v=int($m_cla/2+0.5); if(v<1)v=1; if(v>5)v=5; print v}")
+			if [[ "$m_tok" =~ ^[0-9]+$ ]] && [[ "$m_tok" -gt 0 ]]; then
+				norm_tok_arg=(--tokens-out "$m_tok")
+			fi
+
+			"$pt_helper" score \
+				--model "$m_tier" \
+				--task-type "$task_type" \
+				--correctness "$norm_cor" \
+				--completeness "$norm_com" \
+				--code-quality "$norm_qua" \
+				--clarity "$norm_cla" \
+				"${norm_tok_arg[@]}" \
+				--source "compare-models" \
+				>/dev/null 2>&1 || true
+
+			# Track winner for ab-compare
+			if [[ -n "$winner" && "$m_id" == "$winner" ]]; then
+				winner_tier="$m_tier"
+				winner_overall="$m_ove"
+			elif [[ -n "$winner" && "$m_id" != "$winner" ]]; then
+				loser_args+=(--loser "$m_tier")
+			fi
+		done
+
+		# Record A/B comparison if a winner was declared
+		if [[ -n "$winner_tier" && "${#loser_args[@]}" -gt 0 ]]; then
+			local winner_avg_norm
+			winner_avg_norm=$(awk "BEGIN{printf \"%.1f\", $winner_overall / 2}")
+			"$pt_helper" ab-compare \
+				--winner "$winner_tier" \
+				"${loser_args[@]}" \
+				--task-type "$task_type" \
+				--winner-score "$winner_avg_norm" \
+				--models-compared "${#model_entries[@]}" \
+				--source "compare-models" \
+				>/dev/null 2>&1 || true
+		fi
+	fi
+
 	return 0
 }
 

@@ -1589,6 +1589,347 @@ ENDJSON
 }
 
 #######################################
+# Unified scoring backbone: record structured quality scores for a model response
+# Acts as the shared entry point for compare-models, response-scoring, build-agent,
+# evaluate.sh, and dispatch.sh to record A/B comparison data (t1094).
+#
+# Options:
+#   --model <tier>          Model tier (haiku|flash|sonnet|pro|opus)
+#   --task-type <type>      Task category
+#   --task-id <id>          Task identifier
+#   --correctness <1-5>     Factual accuracy score
+#   --completeness <1-5>    Coverage score
+#   --code-quality <1-5>    Code quality score
+#   --clarity <1-5>         Clarity/readability score
+#   --weighted-avg <float>  Pre-computed weighted average (overrides per-criterion)
+#   --outcome <success|failure>  Explicit outcome (auto-derived from avg if omitted)
+#   --strategy <type>       Prompt strategy: normal|prompt-repeat|escalated
+#   --quality <level>       CI quality: ci-pass-first-try|ci-pass-after-fix|needs-human
+#   --failure-mode <mode>   Failure classification
+#   --tokens-in <n>         Input token count
+#   --tokens-out <n>        Output token count
+#   --description <text>    Free-text description (auto-generated if omitted)
+#   --tags <tags>           Additional comma-separated tags
+#   --source <name>         Source tool (response-scoring|compare-models|build-agent|evaluate|dispatch)
+#######################################
+cmd_score() {
+	local model="" task_type="" task_id="" description="" tags="" source=""
+	local correctness="" completeness="" code_quality="" clarity="" weighted_avg=""
+	local outcome="" strategy="" quality="" failure_mode=""
+	local tokens_in="" tokens_out=""
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--model)
+			model="$2"
+			shift 2
+			;;
+		--task-type)
+			task_type="$2"
+			shift 2
+			;;
+		--task-id)
+			task_id="$2"
+			shift 2
+			;;
+		--correctness)
+			correctness="$2"
+			shift 2
+			;;
+		--completeness)
+			completeness="$2"
+			shift 2
+			;;
+		--code-quality)
+			code_quality="$2"
+			shift 2
+			;;
+		--clarity)
+			clarity="$2"
+			shift 2
+			;;
+		--weighted-avg)
+			weighted_avg="$2"
+			shift 2
+			;;
+		--outcome)
+			outcome="$2"
+			shift 2
+			;;
+		--strategy)
+			strategy="$2"
+			shift 2
+			;;
+		--quality)
+			quality="$2"
+			shift 2
+			;;
+		--failure-mode)
+			failure_mode="$2"
+			shift 2
+			;;
+		--tokens-in)
+			tokens_in="$2"
+			shift 2
+			;;
+		--tokens-out)
+			tokens_out="$2"
+			shift 2
+			;;
+		--description | --desc)
+			description="$2"
+			shift 2
+			;;
+		--tags)
+			tags="$2"
+			shift 2
+			;;
+		--source)
+			source="$2"
+			shift 2
+			;;
+		*) shift ;;
+		esac
+	done
+
+	# Validate per-criterion scores if provided
+	local score_val
+	for score_val in "$correctness" "$completeness" "$code_quality" "$clarity"; do
+		if [[ -n "$score_val" ]] && ! [[ "$score_val" =~ ^[1-5]$ ]]; then
+			log_error "Scores must be integers 1-5, got: $score_val"
+			return 1
+		fi
+	done
+
+	# Compute weighted average from per-criterion scores if not provided
+	if [[ -z "$weighted_avg" ]]; then
+		local has_scores=false
+		local wsum=0 wdenom=0
+		if [[ -n "$correctness" ]]; then
+			wsum=$(awk "BEGIN{printf \"%.4f\", $wsum + ($correctness * 0.30)}")
+			wdenom=$(awk "BEGIN{printf \"%.4f\", $wdenom + 0.30}")
+			has_scores=true
+		fi
+		if [[ -n "$completeness" ]]; then
+			wsum=$(awk "BEGIN{printf \"%.4f\", $wsum + ($completeness * 0.25)}")
+			wdenom=$(awk "BEGIN{printf \"%.4f\", $wdenom + 0.25}")
+			has_scores=true
+		fi
+		if [[ -n "$code_quality" ]]; then
+			wsum=$(awk "BEGIN{printf \"%.4f\", $wsum + ($code_quality * 0.25)}")
+			wdenom=$(awk "BEGIN{printf \"%.4f\", $wdenom + 0.25}")
+			has_scores=true
+		fi
+		if [[ -n "$clarity" ]]; then
+			wsum=$(awk "BEGIN{printf \"%.4f\", $wsum + ($clarity * 0.20)}")
+			wdenom=$(awk "BEGIN{printf \"%.4f\", $wdenom + 0.20}")
+			has_scores=true
+		fi
+		if [[ "$has_scores" == true ]] && awk "BEGIN{exit !($wdenom > 0)}" 2>/dev/null; then
+			weighted_avg=$(awk "BEGIN{printf \"%.2f\", $wsum / $wdenom}")
+		fi
+	fi
+
+	# Validate weighted_avg if provided or computed
+	if [[ -n "$weighted_avg" ]] && ! echo "$weighted_avg" | grep -qE '^[0-9]+(\.[0-9]+)?$'; then
+		log_error "weighted-avg must be a non-negative number"
+		return 1
+	fi
+
+	# Derive outcome from weighted average if not explicitly set
+	if [[ -z "$outcome" && -n "$weighted_avg" ]]; then
+		local avg_int
+		avg_int=$(awk "BEGIN{printf \"%d\", $weighted_avg * 100}")
+		if [[ "$avg_int" -ge 350 ]]; then
+			outcome="success"
+		else
+			outcome="failure"
+		fi
+	fi
+
+	# Default outcome to success if still unset
+	outcome="${outcome:-success}"
+
+	# Build description if not provided
+	if [[ -z "$description" ]]; then
+		local desc_parts=""
+		[[ -n "$source" ]] && desc_parts="${source}: "
+		[[ -n "$model" ]] && desc_parts="${desc_parts}${model}"
+		[[ -n "$weighted_avg" ]] && desc_parts="${desc_parts} scored ${weighted_avg}/5.0"
+		[[ -n "$task_type" ]] && desc_parts="${desc_parts} on ${task_type}"
+		[[ -n "$task_id" ]] && desc_parts="${desc_parts} (${task_id})"
+		description="${desc_parts:-Unified score record}"
+	fi
+
+	# Build extra tags for scoring metadata
+	local score_tags="unified-score"
+	[[ -n "$source" ]] && score_tags="${score_tags},source:${source}"
+	[[ -n "$weighted_avg" ]] && score_tags="${score_tags},scored-avg:${weighted_avg}"
+	[[ -n "$correctness" ]] && score_tags="${score_tags},score-correctness:${correctness}"
+	[[ -n "$completeness" ]] && score_tags="${score_tags},score-completeness:${completeness}"
+	[[ -n "$code_quality" ]] && score_tags="${score_tags},score-code-quality:${code_quality}"
+	[[ -n "$clarity" ]] && score_tags="${score_tags},score-clarity:${clarity}"
+	[[ -n "$tags" ]] && score_tags="${score_tags},${tags}"
+
+	# Delegate to cmd_record with all structured metadata
+	local record_args=(
+		--outcome "$outcome"
+		--description "$description"
+		--tags "$score_tags"
+	)
+	[[ -n "$model" ]] && record_args+=(--model "$model")
+	[[ -n "$task_type" ]] && record_args+=(--task-type "$task_type")
+	[[ -n "$task_id" ]] && record_args+=(--task-id "$task_id")
+	[[ -n "$strategy" ]] && record_args+=(--strategy "$strategy")
+	[[ -n "$quality" ]] && record_args+=(--quality "$quality")
+	[[ -n "$failure_mode" ]] && record_args+=(--failure-mode "$failure_mode")
+	[[ -n "$tokens_in" ]] && record_args+=(--tokens-in "$tokens_in")
+	[[ -n "$tokens_out" ]] && record_args+=(--tokens-out "$tokens_out")
+
+	cmd_record "${record_args[@]}"
+	return 0
+}
+
+#######################################
+# A/B comparison: record head-to-head model comparison results (t1094)
+# Enables data-driven model selection by tracking which model wins comparisons.
+#
+# Options:
+#   --winner <tier>         Winning model tier
+#   --loser <tier>          Losing model tier (can repeat for multi-model)
+#   --task-type <type>      Task category
+#   --task-id <id>          Task identifier
+#   --winner-score <float>  Winner's weighted average score
+#   --loser-score <float>   Loser's weighted average score (optional)
+#   --margin <float>        Score margin (winner - loser)
+#   --models-compared <n>   Total number of models compared
+#   --description <text>    Free-text description
+#   --tags <tags>           Additional comma-separated tags
+#   --source <name>         Source tool
+#######################################
+cmd_ab_compare() {
+	local winner="" task_type="" task_id="" description="" tags="" source=""
+	local winner_score="" loser_score="" margin="" models_compared=""
+	local losers=()
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--winner)
+			winner="$2"
+			shift 2
+			;;
+		--loser)
+			losers+=("$2")
+			shift 2
+			;;
+		--task-type)
+			task_type="$2"
+			shift 2
+			;;
+		--task-id)
+			task_id="$2"
+			shift 2
+			;;
+		--winner-score)
+			winner_score="$2"
+			shift 2
+			;;
+		--loser-score)
+			loser_score="$2"
+			shift 2
+			;;
+		--margin)
+			margin="$2"
+			shift 2
+			;;
+		--models-compared)
+			models_compared="$2"
+			shift 2
+			;;
+		--description | --desc)
+			description="$2"
+			shift 2
+			;;
+		--tags)
+			tags="$2"
+			shift 2
+			;;
+		--source)
+			source="$2"
+			shift 2
+			;;
+		*) shift ;;
+		esac
+	done
+
+	if [[ -z "$winner" ]]; then
+		log_error "Winner model required: --winner <tier>"
+		return 1
+	fi
+
+	# Build description if not provided
+	if [[ -z "$description" ]]; then
+		local loser_str=""
+		if [[ "${#losers[@]}" -gt 0 ]]; then
+			loser_str=" beat ${losers[*]}"
+		fi
+		description="A/B comparison: ${winner}${loser_str}"
+		[[ -n "$winner_score" ]] && description="${description} (${winner_score}/5.0)"
+		[[ -n "$task_type" ]] && description="${description} on ${task_type}"
+		[[ -n "$task_id" ]] && description="${description} (${task_id})"
+	fi
+
+	# Build tags
+	local ab_tags="ab-comparison,comparison-winner"
+	[[ -n "$source" ]] && ab_tags="${ab_tags},source:${source}"
+	[[ -n "$winner_score" ]] && ab_tags="${ab_tags},winner-score:${winner_score}"
+	[[ -n "$loser_score" ]] && ab_tags="${ab_tags},loser-score:${loser_score}"
+	[[ -n "$margin" ]] && ab_tags="${ab_tags},margin:${margin}"
+	[[ -n "$models_compared" ]] && ab_tags="${ab_tags},models-compared:${models_compared}"
+	for loser in "${losers[@]}"; do
+		ab_tags="${ab_tags},loser:${loser}"
+	done
+	[[ -n "$tags" ]] && ab_tags="${ab_tags},${tags}"
+
+	# Record winner as success
+	local winner_args=(
+		--outcome "success"
+		--description "$description"
+		--model "$winner"
+		--tags "$ab_tags"
+	)
+	[[ -n "$task_type" ]] && winner_args+=(--task-type "$task_type")
+	[[ -n "$task_id" ]] && winner_args+=(--task-id "$task_id")
+
+	cmd_record "${winner_args[@]}"
+
+	# Record each loser as failure (for accurate success rate tracking)
+	for loser in "${losers[@]}"; do
+		local loser_desc="A/B comparison: ${loser} lost to ${winner}"
+		[[ -n "$task_type" ]] && loser_desc="${loser_desc} on ${task_type}"
+		local loser_tags="ab-comparison,comparison-loser,winner:${winner}"
+		[[ -n "$source" ]] && loser_tags="${loser_tags},source:${source}"
+		[[ -n "$loser_score" ]] && loser_tags="${loser_tags},loser-score:${loser_score}"
+		[[ -n "$models_compared" ]] && loser_tags="${loser_tags},models-compared:${models_compared}"
+		[[ -n "$tags" ]] && loser_tags="${loser_tags},${tags}"
+
+		local loser_args=(
+			--outcome "failure"
+			--description "$loser_desc"
+			--model "$loser"
+			--tags "$loser_tags"
+		)
+		[[ -n "$task_type" ]] && loser_args+=(--task-type "$task_type")
+		[[ -n "$task_id" ]] && loser_args+=(--task-id "$task_id")
+
+		cmd_record "${loser_args[@]}"
+	done
+
+	log_success "Recorded A/B comparison: ${winner} wins"
+	return 0
+}
+
+#######################################
 # Show help
 #######################################
 cmd_help() {
@@ -1600,6 +1941,8 @@ USAGE:
 
 COMMANDS:
     record      Record a success or failure pattern
+    score       Record structured quality scores (unified backbone for all tools) (t1094)
+    ab-compare  Record A/B head-to-head model comparison results (t1094)
     analyze     Analyze patterns by task type or model
     suggest     Get suggestions based on past patterns for a task
     recommend   Recommend model tier based on historical success rates
@@ -1630,6 +1973,38 @@ RECORD OPTIONS:
     --tokens-out <count>          Output token count (t1095)
     --estimated-cost <usd>        Explicit cost in USD (t1114; auto-calculated from tokens+model if omitted)
 
+SCORE OPTIONS (t1094 — unified backbone):
+    --model <tier>                Model tier (haiku|flash|sonnet|pro|opus)
+    --task-type <type>            Task category
+    --task-id <id>                Task identifier
+    --correctness <1-5>           Factual accuracy score
+    --completeness <1-5>          Coverage score
+    --code-quality <1-5>          Code quality score
+    --clarity <1-5>               Clarity/readability score
+    --weighted-avg <float>        Pre-computed weighted average (overrides per-criterion)
+    --outcome <success|failure>   Explicit outcome (auto-derived from avg if omitted)
+    --strategy <type>             Prompt strategy: normal|prompt-repeat|escalated
+    --quality <level>             CI quality: ci-pass-first-try|ci-pass-after-fix|needs-human
+    --failure-mode <mode>         Failure classification
+    --tokens-in <n>               Input token count
+    --tokens-out <n>              Output token count
+    --description <text>          Free-text description (auto-generated if omitted)
+    --tags <tags>                 Additional comma-separated tags
+    --source <name>               Source tool (response-scoring|compare-models|build-agent|evaluate|dispatch)
+
+AB-COMPARE OPTIONS (t1094 — A/B comparison data):
+    --winner <tier>               Winning model tier (required)
+    --loser <tier>                Losing model tier (repeatable for multi-model)
+    --task-type <type>            Task category
+    --task-id <id>                Task identifier
+    --winner-score <float>        Winner's weighted average score
+    --loser-score <float>         Loser's weighted average score
+    --margin <float>              Score margin (winner - loser)
+    --models-compared <n>         Total number of models compared
+    --description <text>          Free-text description
+    --tags <tags>                 Additional comma-separated tags
+    --source <name>               Source tool
+
 ANALYZE OPTIONS:
     --task-type <type>            Filter by task type
     --model <tier>                Filter by model tier
@@ -1655,6 +2030,20 @@ VALID TASK TYPES:
     security, architecture, planning, research, content, seo
 
 EXAMPLES:
+    # Unified score: record structured quality scores (t1094)
+    pattern-tracker-helper.sh score \
+        --model sonnet --task-type code-review --task-id t102.3 \
+        --correctness 5 --completeness 4 --code-quality 5 --clarity 4 \
+        --strategy normal --quality ci-pass-first-try \
+        --tokens-in 12000 --tokens-out 5000 \
+        --source response-scoring
+
+    # A/B comparison: record which model won (t1094)
+    pattern-tracker-helper.sh ab-compare \
+        --winner sonnet --loser haiku --loser opus \
+        --task-type code-review --winner-score 4.5 --loser-score 3.2 \
+        --models-compared 3 --source compare-models
+
     # Record a success with full metadata
     pattern-tracker-helper.sh record --outcome success \
         --task-type code-review --model sonnet --task-id t102.3 \
@@ -1725,6 +2114,8 @@ main() {
 
 	case "$command" in
 	record) cmd_record "$@" ;;
+	score) cmd_score "$@" ;;
+	ab-compare) cmd_ab_compare "$@" ;;
 	analyze) cmd_analyze "$@" ;;
 	suggest) cmd_suggest "$@" ;;
 	recommend) cmd_recommend "$@" ;;
