@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- KIRA-informed completion discipline across all autonomy levels (t1275, #2022)
+- Completion self-check protocol in AGENTS.md and developer guide
+- Replanning guidance in ralph-loop.md and full-loop.md
+- Unified model performance scoring backbone (t1094, #2018)
+- Repo-sync parent dirs onboarding question (t1264.3, #2016)
+
+### Fixed
+
+- Document t1200 merge conflict resolution (t1274, #2020)
+
 ## [2.119.1] - 2026-02-20
 
 ### Changed
