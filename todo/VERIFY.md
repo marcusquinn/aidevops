@@ -1794,7 +1794,7 @@
   check: shellcheck .agents/scripts/supervisor/ai-context.sh
   check: file-exists .agents/scripts/supervisor/ai-context.sh
 
-- [ ] v218 t1190 Investigate and fix worker_never_started:no_sentinel disp... | PR #1981 | merged:2026-02-20
+- [x] v218 t1190 Investigate and fix worker_never_started:no_sentinel disp... | PR #1981 | merged:2026-02-20 verified:2026-02-20
   files: .agents/scripts/supervisor/cleanup.sh, .agents/scripts/supervisor/dispatch.sh, .agents/scripts/supervisor/evaluate.sh
   check: shellcheck .agents/scripts/supervisor/cleanup.sh
   check: file-exists .agents/scripts/supervisor/cleanup.sh
@@ -1803,7 +1803,7 @@
   check: shellcheck .agents/scripts/supervisor/evaluate.sh
   check: file-exists .agents/scripts/supervisor/evaluate.sh
 
-- [ ] v219 t1263 Add stale-claim auto-recovery to supervisor pulse #enhanc... | PR #1982 | merged:2026-02-20
+- [x] v219 t1263 Add stale-claim auto-recovery to supervisor pulse #enhanc... | PR #1982 | merged:2026-02-20 verified:2026-02-20
   files: .agents/AGENTS.md, .agents/scripts/supervisor-helper.sh, .agents/scripts/supervisor/pulse.sh, .agents/scripts/supervisor/todo-sync.sh
   check: file-exists .agents/AGENTS.md
   check: shellcheck .agents/scripts/supervisor-helper.sh
@@ -1812,3 +1812,13 @@
   check: file-exists .agents/scripts/supervisor/pulse.sh
   check: shellcheck .agents/scripts/supervisor/todo-sync.sh
   check: file-exists .agents/scripts/supervisor/todo-sync.sh
+
+- [ ] v220 t1264 Daily repo sync: auto-pull latest for git repos in config... | PR #1989 | merged:2026-02-20
+  files: .agents/aidevops/onboarding.md, .agents/scripts/repo-sync-helper.sh, aidevops.sh, setup.sh
+  check: file-exists .agents/aidevops/onboarding.md
+  check: shellcheck .agents/scripts/repo-sync-helper.sh
+  check: file-exists .agents/scripts/repo-sync-helper.sh
+  check: shellcheck aidevops.sh
+  check: file-exists aidevops.sh
+  check: shellcheck setup.sh
+  check: file-exists setup.sh
