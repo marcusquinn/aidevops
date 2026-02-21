@@ -1,11 +1,28 @@
 ---
-description: "Comprehensive Cloudflare platform skill covering Workers, Pages, storage (KV, D1, R2), AI (Workers AI, Vectorize, Agents SDK), networking (Tunnel, Spectrum), security (WAF, DDoS), and infrastructure-as-code (Terraform, Pulumi). Use for any Cloudflare development task."
+description: "Cloudflare platform development guidance — patterns, gotchas, decision trees, SDK usage for Workers, Pages, KV, D1, R2, AI, Durable Objects, and 60+ products. Use when building or developing ON the Cloudflare platform. For managing/configuring CF resources via API, use the Cloudflare Code Mode MCP (cloudflare-mcp.md)."
 mode: subagent
 imported_from: external
 ---
-# cloudflare
+# cloudflare-platform
 
 # Cloudflare Platform Skill
+
+**Role**: Development guidance for building on the Cloudflare platform — patterns, gotchas, decision trees, SDK usage, and API references. This skill is for **developers writing code that runs on Cloudflare** (Workers, Pages, D1, R2, KV, Durable Objects, AI, etc.).
+
+> **Not for API operations**: To manage, configure, or update Cloudflare resources (DNS records, zone settings, deployments) use the Cloudflare Code Mode MCP — see `tools/api/cloudflare-mcp.md`.
+
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Role**: Development guidance — patterns, gotchas, SDK usage, decision trees
+- **Scope**: Building code that runs ON Cloudflare (Workers, Pages, D1, R2, KV, DO, AI, etc.)
+- **Not for**: Managing/configuring CF resources → use `tools/api/cloudflare-mcp.md` (Code Mode MCP)
+- **Entry point**: Use decision trees below to find the right product, then load `./references/<product>/README.md`
+- **Reference format**: Multi-file (`api.md`, `configuration.md`, `patterns.md`, `gotchas.md`) or single-file
+- **60+ products** indexed below with direct entry-point paths
+
+<!-- AI-CONTEXT-END -->
 
 Consolidated skill for building on the Cloudflare platform. Use decision trees below to find the right product, then load detailed references.
 
