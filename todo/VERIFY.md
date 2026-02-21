@@ -2000,7 +2000,7 @@
   check: file-exists .agents/reference/services.md
   check: file-exists .agents/reference/session.md
 
-- [ ] v244 t1265 Fix LaunchAgent plist rewrite triggering repeat macOS Bac... | PR #1996 | merged:2026-02-21
+- [x] v244 t1265 Fix LaunchAgent plist rewrite triggering repeat macOS Bac... | PR #1996 | merged:2026-02-21 verified:2026-02-21
   files: .agents/scripts/auto-update-helper.sh, .agents/scripts/repo-sync-helper.sh, .agents/scripts/supervisor/launchd.sh, setup.sh
   check: shellcheck .agents/scripts/auto-update-helper.sh
   check: file-exists .agents/scripts/auto-update-helper.sh
@@ -2010,3 +2010,7 @@
   check: file-exists .agents/scripts/supervisor/launchd.sh
   check: shellcheck setup.sh
   check: file-exists setup.sh
+
+- [ ] v245 t1267 Retry t005.1 — AI chat sidebar foundation after stale-s... | PR #2049 | merged:2026-02-21
+  files: .agents/subagent-index.toon
+  check: file-exists .agents/subagent-index.toon
