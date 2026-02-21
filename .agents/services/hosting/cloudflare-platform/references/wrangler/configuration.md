@@ -1,9 +1,13 @@
 # wrangler Configuration
 
-> **Superseded by Cloudflare Code Mode MCP**
+> **Local CLI tool — configuration is file-based, not a REST API surface**
 >
-> Configuration API endpoints for wrangler are now accessible via the Cloudflare Code Mode MCP server,
-> which covers the full Cloudflare API (2,500+ endpoints) in ~1,000 tokens.
+> Wrangler configuration (`wrangler.toml` / `wrangler.jsonc`) is a local file that drives
+> CLI-based development and deployment. There are no Wrangler configuration REST endpoints
+> to discover or call via the Cloudflare Code Mode MCP.
 >
-> Use `tools/mcp/cloudflare-code-mode.md` — call `search()` to discover endpoints,
-> then `execute()` to call them.
+> For `wrangler.toml` / `wrangler.jsonc` configuration reference see:
+> https://developers.cloudflare.com/workers/wrangler/configuration/
+>
+> To manage live Cloudflare resources (deploy Workers, configure bindings, etc.) use the
+> Cloudflare Code Mode MCP — see `.agents/tools/mcp/cloudflare-code-mode.md`.

@@ -1,9 +1,12 @@
 # wrangler API
 
-> **Superseded by Cloudflare Code Mode MCP**
+> **Local CLI tool — no Cloudflare management API endpoints**
 >
-> Management API endpoints for wrangler are now accessible via the Cloudflare Code Mode MCP server,
-> which covers the full Cloudflare API (2,500+ endpoints) in ~1,000 tokens.
+> Wrangler is a CLI for developing and deploying Cloudflare Workers. It does not expose
+> Cloudflare platform management API endpoints directly; it wraps them internally.
 >
-> Use `tools/mcp/cloudflare-code-mode.md` — call `search()` to discover endpoints,
-> then `execute()` to call them.
+> For Wrangler CLI commands and programmatic usage see:
+> https://developers.cloudflare.com/workers/wrangler/commands/
+>
+> To call Cloudflare management API endpoints directly (deploy, configure, manage resources),
+> use the Cloudflare Code Mode MCP — see `.agents/tools/mcp/cloudflare-code-mode.md`.

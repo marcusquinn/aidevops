@@ -17,11 +17,11 @@ tools:
 
 | Intent | Resource |
 |--------|----------|
-| **Manage/configure/update** Cloudflare resources (DNS, WAF, DDoS, R2, Workers, zones, rules, etc.) | `tools/mcp/cloudflare-code-mode.md` — Code Mode MCP (2,500+ endpoints, live OpenAPI) |
+| **Manage/configure/update** Cloudflare resources (DNS, WAF, DDoS, R2, Workers, zones, rules, etc.) | `.agents/tools/mcp/cloudflare-code-mode.md` — Code Mode MCP (2,500+ endpoints, live OpenAPI) |
 | **Build/develop** on the Cloudflare platform (Workers, Pages, D1, KV, Durable Objects, AI, etc.) | `cloudflare-platform.md` — patterns, gotchas, decision trees, SDK usage |
 | **Auth/token setup** for API access | This file (below) |
 
-> **Operations** (DNS records, WAF rules, zone settings, R2 buckets, Worker deployments): use Code Mode MCP via `tools/mcp/cloudflare-code-mode.md`.
+> **Operations** (DNS records, WAF rules, zone settings, R2 buckets, Worker deployments): use Code Mode MCP via `.agents/tools/mcp/cloudflare-code-mode.md`.
 >
 > **Development** (building Workers, integrating D1, using KV bindings, AI gateway patterns): use `cloudflare-platform.md`.
 
@@ -38,7 +38,7 @@ tools:
 - **API test**: `curl -X GET "https://api.cloudflare.com/client/v4/zones" -H "Authorization: Bearer TOKEN"`
 - **Security**: IP filtering, expiration dates, minimal permissions
 - **Rotation**: Every 6-12 months or after team changes
-- **Code Mode MCP**: `tools/mcp/cloudflare-code-mode.md` (operations via 2,500+ endpoints)
+- **Code Mode MCP**: `.agents/tools/mcp/cloudflare-code-mode.md` (operations via 2,500+ endpoints)
 
 <!-- AI-CONTEXT-END -->
 
