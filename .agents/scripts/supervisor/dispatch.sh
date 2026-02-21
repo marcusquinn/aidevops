@@ -174,7 +174,7 @@ resolve_ai_cli() {
 	fi
 	# Fallback: claude CLI without OAuth preference
 	if command -v claude &>/dev/null; then
-		log_warning "Using claude CLI fallback (no opencode). Install opencode: npm i -g opencode"
+		log_warn "Using deprecated claude CLI fallback. Install opencode: npm i -g opencode"
 		echo "claude"
 		return 0
 	fi
