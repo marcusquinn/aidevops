@@ -20,21 +20,7 @@ mode: subagent
 
 ## MANDATORY: Pre-Edit Git Check
 
-> **Skip if you don't have Edit/Write/Bash tools**.
-
-**CRITICAL**: Before creating, editing, or writing ANY file, run:
-
-```bash
-~/.aidevops/agents/scripts/pre-edit-check.sh
-```
-
-Exit 0 = proceed. Exit 1 = STOP (on main). Exit 2 = create worktree. Exit 3 = warn user.
-
-**Loop mode**: `pre-edit-check.sh --loop-mode --task "description"`
-
-**Full details**: Read `workflows/pre-edit.md` for interactive prompts, worktree creation, and edge cases.
-
-**Self-verification**: Your FIRST step before any Edit/Write MUST be to run this script. If you are about to edit a file and have not yet run pre-edit-check.sh in this session, STOP and run it now. No exceptions — including TODO.md and planning files (the script handles exception logic, not you).
+Pre-edit check rules: see `prompts/build.txt`. Full details: `workflows/pre-edit.md`. Additional restrictions below:
 
 **Subagent write restrictions**: Subagents invoked via the Task tool cannot run `pre-edit-check.sh` (many lack `bash: true`). When on `main`/`master`, subagents with `write: true` may ONLY write to: `README.md`, `TODO.md`, `todo/PLANS.md`, `todo/tasks/*`. All other writes must be returned as proposed edits for the calling agent to apply in a worktree.
 
@@ -58,28 +44,13 @@ All development work MUST follow this lifecycle:
 
 Never skip testing. Never declare work "done" without verification. The full-loop means: plan -> implement -> test -> verify -> deliver.
 
-**Completion self-check (before declaring any task done):**
-
-1. List every requirement from the task — mark each DONE or TODO
-2. If any are TODO, you are not done — keep working
-3. Run available verification (tests, lint, build, type-check)
-4. Confirm outputs match expected format and behaviour
-5. Only then declare complete or offer to commit/PR
-
-This applies to all autonomy levels: interactive sessions, loop agents, and headless workers. The structured checklist prevents false completion — models are poor at self-evaluating their own output without an explicit protocol.
+Completion self-check: see `prompts/build.txt` "Completion and quality discipline".
 
 ---
 
 ## MANDATORY: File Discovery
 
-> **NEVER use `mcp_glob` when Bash is available.**
-
-| Use Case | Command |
-|----------|---------|
-| Git-tracked files | `git ls-files '<pattern>'` |
-| Untracked/system files | `fd -e <ext>` or `fd -g '<pattern>'` |
-| Content + file list | `rg --files -g '<pattern>'` |
-| **Bash unavailable only** | `mcp_glob` tool (last resort) |
+File discovery rules: see `prompts/build.txt`.
 
 ---
 
@@ -99,17 +70,7 @@ Full PTY access: run any CLI (`vim`, `psql`, `ssh`, `htop`, dev servers, `openco
 - **Secrets**: `aidevops secret` (gopass encrypted) or `~/.config/aidevops/credentials.sh` (plaintext fallback)
 - **Subagent Index**: `subagent-index.toon` (agents, subagents, workflows, scripts)
 
-**Critical Rules**:
-- Git check before edits (see above)
-- File discovery via Bash (see above)
-- **ALWAYS Read before Edit/Write** - Edit and Write tools FAIL if the file hasn't been Read in this conversation. Read the file first, then edit. No exceptions.
-- Re-read files immediately before editing (stale reads cause errors)
-- Context budget: Never >100K tokens per operation
-- NEVER create files in `~/` root - use `~/.aidevops/.agent-workspace/work/[project]/`
-- NEVER expose credentials in output/logs
-- Confirm destructive operations before execution
-
-**Quality**: SonarCloud A-grade, ShellCheck zero violations, `local var="$1"` pattern, explicit returns, blank lines around code blocks (MD031).
+**Critical Rules**: See `prompts/build.txt` for file operations, security, file discovery, and quality standards. Additional AGENTS.md-specific rule: blank lines around code blocks (MD031).
 
 ## Planning & Tasks
 
@@ -354,7 +315,7 @@ When context is compacted (long sessions, autonomous loops), operational state i
 
 **When to checkpoint**: After each task completion, before large operations, after PR creation/merge.
 
-**Compaction survival rule**: When summarizing this conversation for compaction, ALWAYS preserve: current task IDs and states, active batch ID, worktree path, open PR numbers, and the next 3 action items. This operational state is more important than conversation history details.
+**Compaction survival rule**: See `prompts/build.txt` "Context Compaction Survival".
 
 **Full docs**: `workflows/session-manager.md` "Compaction Resilience" section
 
@@ -488,7 +449,7 @@ aidevops repo-sync config              # Show current config
 
 ## Bot Reviewer Feedback
 
-AI code review bots (Gemini, CodeRabbit, Copilot) can provide incorrect suggestions. **Never blindly implement bot feedback.** Verify factual claims (versions, paths, APIs) against runtime/docs/project conventions before acting. Dismiss incorrect suggestions with evidence; address valid ones.
+AI suggestion verification: see `prompts/build.txt`. Dismiss incorrect suggestions with evidence; address valid ones.
 
 ## Quality Workflow
 
@@ -524,29 +485,19 @@ When local search returns no results, the `/skills` command suggests searching t
 
 ## Security
 
-- **Encrypted secrets** (recommended): `aidevops secret` (gopass backend, GPG-encrypted)
-- **Plaintext fallback**: `~/.config/aidevops/credentials.sh` (600 permissions)
-- Config templates: `configs/*.json.txt` (committed), working: `configs/*.json` (gitignored)
-- Confirm destructive operations before execution
+Security rules: see `prompts/build.txt`. Additional details:
 
-**Secret handling rule**: When a user needs to store a secret, ALWAYS instruct them to run `aidevops secret set NAME` at their terminal. NEVER accept secret values in conversation context. NEVER run `gopass show`, `cat credentials.sh`, or any command that prints secret values.
+- Config templates: `configs/*.json.txt` (committed), working: `configs/*.json` (gitignored)
 
 **Full docs**: `tools/credentials/gopass.md`, `tools/credentials/api-key-setup.md`
 
 ## Working Directories
 
-```text
-~/.aidevops/
-├── agents/                    # Deployed agent files
-│   ├── custom/                # User's private agents (survives updates)
-│   ├── draft/                 # Experimental/R&D agents (survives updates)
-│   └── ...                    # Shared agents (deployed from repo)
-└── .agent-workspace/
-    ├── work/[project]/        # Persistent project files
-    ├── tmp/session-*/         # Temporary session files
-    ├── mail/                  # Inter-agent mailbox (SQLite: mailbox.db)
-    └── memory/                # Cross-session patterns (SQLite FTS5)
-```
+Working directory tree: see `prompts/build.txt`. Agent file locations:
+
+- `~/.aidevops/agents/custom/` — User's permanent private agents (survives updates)
+- `~/.aidevops/agents/draft/` — R&D, experimental agents (survives updates)
+- `~/.aidevops/agents/` — Shared agents (deployed from repo, overwritten on update)
 
 ## Browser Automation
 

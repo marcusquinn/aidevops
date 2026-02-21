@@ -100,7 +100,7 @@ keep changes minimal and focused.
 
 **Execution Mode** (implementation):
 
-1. Run pre-edit check: `~/.aidevops/agents/scripts/pre-edit-check.sh`
+1. Pre-edit check: run `pre-edit-check.sh` before any edit (see `prompts/build.txt`)
 2. Follow the Build Workflow below
 3. Iterate until complete
 
@@ -312,7 +312,7 @@ Document your synthesized recommendation including:
 
 Once planning is complete and user confirms:
 
-1. Run pre-edit check: `~/.aidevops/agents/scripts/pre-edit-check.sh`
+1. Pre-edit check: run `pre-edit-check.sh` before any edit (see `prompts/build.txt`)
 2. Switch to execution mode and implement the plan
 3. Follow the Build Workflow above
 
