@@ -2026,7 +2026,7 @@
   files: VERIFY.md
   check: file-exists VERIFY.md
 
-- [ ] v248 t1160.1 Create build_cli_cmd() abstraction in supervisor/dispatch... | PR #2053 | merged:2026-02-21
+- [x] v248 t1160.1 Create build_cli_cmd() abstraction in supervisor/dispatch... | PR #2053 | merged:2026-02-21 verified:2026-02-21
   files: .agents/scripts/supervisor/dispatch.sh
   check: shellcheck .agents/scripts/supervisor/dispatch.sh
   check: file-exists .agents/scripts/supervisor/dispatch.sh

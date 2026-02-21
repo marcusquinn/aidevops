@@ -21,6 +21,320 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-02-21] Cloudflare Code Mode MCP Integration
+
+**Status:** Planning
+**Estimate:** ~4h (ai:3h test:1h)
+**TODO:** t1289, t1290, t1291, t1292, t1293
+**Logged:** 2026-02-21
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p027,Cloudflare Code Mode MCP Integration,planning,0,4,,feature|mcp|cloudflare|agent,4h,3h,1h,0m,2026-02-21T00:00Z,
+-->
+
+#### Purpose
+
+Cloudflare released a Code Mode MCP server (`mcp.cloudflare.com/mcp`) that provides full API coverage (2,500+ endpoints) via just 2 tools (`search()` + `execute()`) in ~1,000 tokens. Our current Cloudflare integration uses a static imported skill (`dmmulroy/cloudflare-skill`) with 310 files / 773KB of reference docs that drift from the live API and cost thousands of tokens per product loaded.
+
+Code Mode is strictly better for **operations** (DNS, WAF, DDoS, R2, Workers management) — more accurate, more efficient, more secure, zero maintenance. The imported skill remains better for **development guidance** (patterns, gotchas, decision trees, SDK usage). This plan integrates Code Mode for operations and trims the static docs it supersedes.
+
+#### Context
+
+**Current state:**
+
+```text
+cloudflare.md (254 lines)
+  - Manual API token setup, curl/bash scripts for DNS ops
+  - No MCP integration
+
+cloudflare-platform.md (241 lines)
+  - Decision trees for 59 products
+  - Points to cloudflare-platform/references/
+
+cloudflare-platform/references/ (310 files, 773KB)
+  - Per-product: README.md, api.md, configuration.md, patterns.md, gotchas.md
+  - 96 files (api.md + configuration.md) = 250KB of API reference
+  - Static snapshots from dmmulroy/cloudflare-skill, can drift from live API
+  - Imported via skill-sources.json, daily auto-update via t1081
+```
+
+**Target state:**
+
+```text
+cloudflare.md
+  - Intent-based routing: operations -> Code Mode MCP, development -> skill docs
+  - API token setup retained for CI/CD (non-OAuth use cases)
+
+cloudflare-platform.md
+  - Clarified role: development patterns & architecture guidance (not API reference)
+  - Reference file structure table updated (no more api.md/configuration.md)
+
+cloudflare-platform/references/ (~214 files, ~523KB)
+  - 96 api.md + configuration.md files REMOVED (superseded by Code Mode)
+  - README.md, patterns.md, gotchas.md RETAINED (development guidance)
+
+tools/api/cloudflare-mcp.md (NEW)
+  - Subagent doc for Code Mode MCP usage
+  - search() patterns, execute() patterns, auth setup, security model
+
+MCP config:
+  cloudflare-api: { url: "https://mcp.cloudflare.com/mcp" }
+```
+
+**Key metrics:**
+
+| Metric | Before | After | Improvement |
+|--------|--------|-------|-------------|
+| API reference tokens per product | ~2,000-5,000 | ~1,000 (fixed) | 60-80% reduction |
+| API coverage | 59 products (static) | 2,500+ endpoints (live) | 42x more endpoints |
+| Reference file count | 310 | ~214 | 31% fewer files |
+| Reference disk size | 773KB | ~523KB | 32% smaller |
+| Maintenance burden | Daily skill sync | Zero (Cloudflare-maintained) | Eliminated for API ops |
+| API accuracy | Snapshot (can drift) | Live OpenAPI spec | Always current |
+
+#### Execution Phases
+
+**Phase 1: MCP server config + subagent doc (t1290, ~1h)**
+
+- Add `cloudflare-api` entry to `mcp-integrations.md` under new "API Management" section
+- Create `configs/mcp-templates/cloudflare-api.json` with Claude Code config snippet
+- Create `tools/api/cloudflare-mcp.md` subagent doc covering:
+  - `search()` usage patterns (filter by product, path, tags; inspect schemas)
+  - `execute()` usage patterns (single calls, chained operations, pagination)
+  - Auth: OAuth 2.1 flow (interactive) vs API token (CI/CD)
+  - Security model: sandboxed V8 isolate, no filesystem, no env var leakage
+  - When to use Code Mode vs skill docs (routing guidance)
+- Update `subagent-index.toon` with new entry
+- Verification: MCP config is valid JSON, subagent doc loads correctly
+
+**Phase 2: Update routing and role clarification (t1291, ~30m, blocked-by t1290)**
+
+- Update `cloudflare.md` Quick Reference to include Code Mode MCP
+- Add intent-based routing section: operations -> MCP, development -> skill docs
+- Update `cloudflare-platform.md` description and header to clarify "development patterns & architecture guidance"
+- Update reference file structure table (remove api.md/configuration.md rows)
+- Verification: both files have consistent cross-references
+
+**Phase 3: Trim superseded reference docs (t1292, ~1.5h, blocked-by t1291)**
+
+- Remove 48 `api.md` files from `cloudflare-platform/references/*/`
+- Remove 48 `configuration.md` files from `cloudflare-platform/references/*/`
+- Verify no broken cross-references in remaining README.md/patterns.md/gotchas.md files
+- Update `skill-sources.json` notes field to reflect trimmed state
+- Verification: `find references/ -name 'api.md' -o -name 'configuration.md'` returns 0 results
+
+**Phase 4: End-to-end testing (t1293, ~1h, blocked-by t1292)**
+
+- Connect to Code Mode MCP server via OAuth
+- Test `search()`: discover DNS endpoints, WAF endpoints, R2 endpoints
+- Test `execute()`: list zones, query DNS records, inspect WAF rules
+- Test routing: verify operations question triggers MCP, development question triggers skill docs
+- Test fallback: verify API token auth works for CI/CD (non-OAuth)
+- Verification: all 5 test scenarios pass
+
+#### Decision Log
+
+| Date | Decision | Rationale |
+|------|----------|-----------|
+| 2026-02-21 | Add Code Mode MCP alongside existing skill (not replace) | They solve different problems: Code Mode for operations (live API), skill for development guidance (patterns, gotchas, SDK usage). Together they cover the full spectrum at lower total context cost. |
+| 2026-02-21 | Remove api.md + configuration.md but keep README/patterns/gotchas | api.md and configuration.md contain API endpoint details and wrangler.toml config that Code Mode's live OpenAPI spec supersedes. README (overview/decision support), patterns (best practices), and gotchas (pitfalls) contain development wisdom that no API spec provides. |
+| 2026-02-21 | OAuth 2.1 as primary auth, API token as CI/CD fallback | OAuth provides scoped per-session permissions (more secure). API tokens needed for headless/CI environments where OAuth flow isn't possible. |
+| 2026-02-21 | Subtasks chained sequentially (blocked-by) | Each phase builds on the previous. Config must exist before routing can reference it. Routing must be updated before docs are trimmed. Testing validates the complete stack. |
+
+#### Risks
+
+| Risk | Likelihood | Impact | Mitigation |
+|------|-----------|--------|------------|
+| Code Mode MCP server downtime | Low | Medium | API token fallback in cloudflare.md; skill docs still available for manual reference |
+| OAuth flow not supported in headless dispatch | Medium | Low | API token auth documented as CI/CD alternative; workers use token-based auth |
+| Removing api.md/configuration.md breaks skill auto-update | Low | Low | Update skill-sources.json notes; daily auto-update (t1081) will re-import from upstream but our trimmed state is intentional |
+| Code Mode search() returns too many results for complex queries | Low | Low | Subagent doc includes query refinement patterns (filter by path, tags, method) |
+
+#### Relationship to Other Tasks
+
+- **t1288** (OpenAPI MCP Server / openapisearch.com): General-purpose OpenAPI discovery for any API. t1289 is Cloudflare-specific with authenticated execution. Complementary, no dependency.
+- **t1294** (MCPorter): MCP toolkit for discovery/testing. Could be used to test the Cloudflare Code Mode MCP during Phase 4. No hard dependency.
+
+---
+
+### [2026-02-21] OpenAPI Search MCP Integration
+
+**Status:** Planning
+**Estimate:** ~2h (ai:1.5h test:30m)
+**TODO:** t1288, t1288.1, t1288.2, t1288.3, t1288.4, t1288.5, t1288.6
+**Logged:** 2026-02-21
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p026,OpenAPI Search MCP Integration,planning,0,6,,feature|mcp|agent|context,2h,1.5h,30m,0m,2026-02-21T00:00Z,
+-->
+
+#### Purpose
+
+[janwilmake/openapi-mcp-server](https://github.com/janwilmake/openapi-mcp-server) (875 stars, MIT, TypeScript) is a hosted MCP that lets LLMs search and explore 2500+ OpenAPI specifications through [openapisearch.com](https://openapisearch.com/). It uses a 3-step process:
+
+1. **Search** — find the right API identifier from the directory
+2. **Overview** — get a simple-language summary of the API's capabilities
+3. **Detail** — drill into specific endpoints with request/response schemas in plain language
+
+This is valuable when agents need to discover or understand third-party APIs without manually reading raw OpenAPI specs. Use cases:
+
+- Agent needs to integrate with an unfamiliar API — search, understand, and generate code
+- Exploring what APIs exist for a given domain (payments, email, CRM, etc.)
+- Getting endpoint details (auth, params, response shape) without leaving the conversation
+
+**Key advantage**: Remote MCP at `https://openapi-mcp.openapisearch.com/mcp` — zero install, no API key, no local dependencies. Runs on Cloudflare Workers. Self-hosting via `wrangler dev` available as fallback.
+
+#### Integration Decision
+
+**Use as remote MCP** (not CLI agent). Rationale:
+
+- Zero dependencies — no npm install, no local server, no API key
+- Already a production Cloudflare Worker with public MCP endpoint
+- Follows the same remote-MCP pattern we'd use for any hosted service
+- Self-hosting adds complexity with no clear benefit (the data is public anyway)
+
+**Subagent pattern**: Disabled globally, enabled on-demand per `add-new-mcp-to-aidevops.md` checklist. Same pattern as FluentCRM, Unstract, iOS Simulator MCPs.
+
+**Agent enablement**:
+
+| Agent | Enabled | Rationale |
+|-------|---------|-----------|
+| Build+ | Yes | Primary development agent — API integration is core workflow |
+| AI-DevOps | Yes | Infrastructure and integration work |
+| Research | Yes | API discovery and evaluation |
+| Others | No | Not relevant to their domains |
+
+#### Execution Phases
+
+**Phase 1: Subagent documentation (t1288.1, ~30m)**
+- Create `.agents/tools/context/openapi-search.md` following context7.md pattern
+- Frontmatter: `openapi-search_*: true` in tools section
+- AI-CONTEXT-START block with: purpose, MCP URL, tool names, common API IDs
+- Tool descriptions: `searchAPIs`, `getAPIOverview`, `getOperationDetails`
+- Usage examples and verification prompt
+- All AI assistant configurations (remote URL — same for all)
+
+**Phase 2: Config templates (t1288.2, ~20m, blocked-by Phase 1)**
+- Create `configs/openapi-search-config.json.txt` — comprehensive template
+- Create `configs/mcp-templates/openapi-search.json` — per-assistant snippets
+- Remote URL config only — no env vars, no API keys, no local binary
+
+**Phase 3: OpenCode agent generation (t1288.3, ~15m, blocked-by Phase 2)**
+- Add `openapi-search` MCP to `generate-opencode-agents.sh`
+- Global config: `"enabled": false`
+- Enable `openapi-search_*: true` for Build+, AI-DevOps, Research agents
+
+**Phase 4: CLI config function (t1288.4, ~15m, blocked-by Phase 2)**
+- Add `configure_openapi_search_mcp()` to `ai-cli-config.sh`
+- Configure for all detected AI assistants
+- No prerequisites check needed (remote URL)
+
+**Phase 5: Index and docs updates (t1288.5, ~15m, blocked-by Phase 1)**
+- Add to `mcp-integrations.md` under Development Tools / Context section
+- Register in `subagent-index.toon`
+- Update AGENTS.md domain index if needed
+
+**Phase 6: Verification (t1288.6, ~15m, blocked-by Phases 3-5)**
+- Run `generate-opencode-agents.sh`, verify MCP in config
+- Test verification prompt: "Search for the Stripe API and show me the create payment intent endpoint"
+- Run `linters-local.sh` and markdownlint
+- Verify subagent loads correctly via agent invocation
+
+#### Decision Log
+
+- d001: Remote MCP over self-hosted — zero deps, public data, production Cloudflare Worker. Self-host only if latency or availability becomes an issue. 2026-02-21
+- d002: Place at `tools/context/openapi-search.md` — this is a context/discovery tool (finding and understanding APIs), same category as context7, augment-context-engine, osgrep. 2026-02-21
+- d003: Enable for Build+, AI-DevOps, Research only — API discovery is a development/research task. Domain agents (SEO, WordPress, etc.) can invoke via subagent reference if needed. 2026-02-21
+
+#### Risks
+
+- **Remote service availability**: Hosted on Cloudflare Workers — generally reliable, but no SLA. Mitigation: self-hosting via `wrangler dev` documented as fallback.
+- **API coverage gaps**: Directory may not have every API. Mitigation: document how to contribute specs to openapisearch.com, and note that agents can fall back to reading raw specs.
+- **MCP protocol changes**: The server uses standard MCP over HTTP. Mitigation: pin to known-working URL, document version.
+
+### [2026-02-21] MCPorter MCP Toolkit Agent
+
+**Status:** Planning
+**Estimate:** ~4h (ai:3h test:1h)
+**TODO:** t1294, t1294.1, t1294.2, t1294.3, t1294.4, t1294.5
+**Logged:** 2026-02-21
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p025,MCPorter MCP Toolkit Agent,planning,0,5,,feature|mcp|agent,4h,3h,1h,0m,2026-02-21T00:00Z,
+-->
+
+#### Purpose
+
+[steipete/mcporter](https://github.com/steipete/mcporter) (2K stars, MIT, v0.7.3) is a TypeScript runtime, CLI, and code-generation toolkit for MCP. It auto-discovers MCP servers from all major AI editors (Cursor, Claude, Codex, Windsurf, VS Code), calls tools from CLI or TypeScript, generates standalone CLIs from MCP servers, and emits typed TypeScript clients.
+
+Adding MCPorter as an aidevops agent provides:
+
+1. **Unified MCP CLI** — replaces ad-hoc `npx` calls with a single tool for discovery, calling, and testing
+2. **Cross-editor discovery** — `mcporter list` shows all MCPs from all editors in one view
+3. **Automation** — TypeScript API (`callOnce()`, `createRuntime()`) for composing MCP calls in scripts/agents
+4. **CLI generation** — `mcporter generate-cli` turns any MCP server into a standalone CLI
+5. **Typed clients** — `mcporter emit-ts` generates `.d.ts` interfaces for MCP servers
+6. **Testing** — quick CLI-based MCP validation without restarting editors
+
+MCPorter complements (does not replace) existing infrastructure:
+- `mcp-index-helper.sh` — token-aware on-demand loading (MCPorter doesn't solve token cost)
+- `setup-mcp-integrations.sh` — initial setup automation (MCPorter is for runtime use)
+- `validate-mcp-integrations.sh` — validation (MCPorter's `list` can augment this)
+
+#### Key Capabilities to Document
+
+| Capability | Command | aidevops Use Case |
+|---|---|---|
+| Discovery | `mcporter list` | See all MCPs across all editors |
+| Tool calling | `mcporter call server.tool args` | Test MCP tools from CLI |
+| CLI generation | `mcporter generate-cli` | Create standalone CLIs from MCPs |
+| Typed clients | `mcporter emit-ts` | TypeScript wrappers for MCP servers |
+| OAuth auth | `mcporter auth <server>` | Handle OAuth for hosted MCPs |
+| Daemon | `mcporter daemon start/stop/status` | Keep stateful servers warm |
+| Ad-hoc | `mcporter list --http-url <url>` | Test MCPs without config changes |
+| Config mgmt | `mcporter config list/add/remove` | Manage MCP configs |
+
+#### Execution Phases
+
+**Phase 1: Subagent documentation (t1294.1, ~1.5h)**
+- Create `.agents/tools/mcp-toolkit/mcporter.md` following `add-new-mcp-to-aidevops.md` template
+- Include AI-CONTEXT-START block with quick reference, install, key commands
+- Document all major capabilities with examples
+- Cover per-assistant configuration (Claude Code, Cursor, OpenCode, etc.)
+- Include verification prompt and troubleshooting
+
+**Phase 2: Config templates (t1294.2, ~30m, blocked-by Phase 1)**
+- Create `configs/mcp-templates/mcporter.json` with per-assistant snippets
+- Not an MCP server itself — it's a CLI tool, so config is about making it available
+- Document `config/mcporter.json` for projects that want MCPorter's own config
+
+**Phase 3: Integration updates (t1294.3, ~30m, blocked-by Phase 1)**
+- Update `mcp-integrations.md` — add MCPorter under Development Tools
+- Update `mcp-discovery.md` — reference MCPorter as alternative discovery method
+- Cross-reference with existing MCP infrastructure
+
+**Phase 4: Index registration (t1294.4, ~15m, blocked-by Phase 3)**
+- Add to `subagent-index.toon`
+- Update AGENTS.md domain index (Agent/MCP dev row)
+
+**Phase 5: Verification (t1294.5, ~30m, blocked-by Phase 4)**
+- Test `npx mcporter list` discovers existing MCPs
+- Test `mcporter call context7.resolve-library-id libraryName=react`
+- Verify subagent doc loads correctly via agent invocation
+- Run linters (`linters-local.sh`, markdownlint)
+
+#### Decision Log
+
+- d001: Place at `tools/mcp-toolkit/mcporter.md` (new category) rather than `tools/context/` — MCPorter is a toolkit for MCP management, not a context/search tool. New category allows future MCP toolkit additions. 2026-02-21
+- d002: MCPorter is NOT an MCP server itself — it's a CLI/library that calls MCP servers. Config templates document how to use it alongside existing MCPs, not how to register it as an MCP. 2026-02-21
+- d003: Enable for Build+ and AI-DevOps agents only — MCP toolkit operations are developer/infrastructure tasks, not domain-specific. Other agents can invoke via subagent reference. 2026-02-21
+
+#### Risks
+
+- **Pre-1.0 API instability**: v0.7.3 means breaking changes possible. Mitigation: document version pinning, link to changelog.
+- **Node/pnpm dependency**: aidevops prefers Bun. Mitigation: MCPorter has Bun support (`dist-bun/`), document both options.
+- **Overlap with existing tools**: Could confuse users about when to use MCPorter vs existing scripts. Mitigation: clear "when to use what" section in subagent doc.
+
 ### [2026-02-21] Context Optimisation: Slim Always-Loaded Harness
 
 **Status:** Planning
