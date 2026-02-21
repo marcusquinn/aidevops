@@ -2345,9 +2345,14 @@
   check: shellcheck .agents/scripts/generate-opencode-agents.sh
   check: file-exists .agents/scripts/generate-opencode-agents.sh
 
-- [ ] v269 t1160.7 Integration test: full dispatch cycle with SUPERVISOR_CLI... | PR #2096 | merged:2026-02-21
+- [x] v269 t1160.7 Integration test: full dispatch cycle with SUPERVISOR_CLI... | PR #2096 | merged:2026-02-21 verified:2026-02-21
   files: .agents/scripts/supervisor/evaluate.sh, tests/test-dispatch-claude-cli.sh
   check: shellcheck .agents/scripts/supervisor/evaluate.sh
   check: file-exists .agents/scripts/supervisor/evaluate.sh
   check: shellcheck tests/test-dispatch-claude-cli.sh
   check: file-exists tests/test-dispatch-claude-cli.sh
+
+- [ ] v270 t1288.4 Update `ai-cli-config.sh` — add `configure_openapi_sear... | PR #2095 | merged:2026-02-21
+  files: .agents/scripts/ai-cli-config.sh
+  check: shellcheck .agents/scripts/ai-cli-config.sh
+  check: file-exists .agents/scripts/ai-cli-config.sh
