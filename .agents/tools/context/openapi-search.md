@@ -2,6 +2,9 @@
 description: OpenAPI Search MCP — search and explore any OpenAPI spec via 3-step process
 mode: subagent
 tools:
+  openapi-search_searchAPIs: true
+  openapi-search_getAPIOverview: true
+  openapi-search_getOperationDetails: true
   read: true
   write: false
   edit: false
@@ -24,18 +27,15 @@ mcp:
 - **Purpose**: Search and explore OpenAPI specifications for any API — lets LLMs understand any API's structure and endpoints
 - **Install**: Zero install — remote Cloudflare Worker at `https://openapi-mcp.openapisearch.com/mcp`
 - **Auth**: None required
+- **Backend**: `https://search.apis.guru/v1` (overridable via `OPENAPI_SEARCH_URL` env var)
 - **MCP Tools**:
-  - `getApiOverview` — Get a summary of any API's endpoints (step 1)
-  - `getApiOperation` — Get details about a specific endpoint (step 2)
+  - `searchAPIs` — Semantic search for APIs relevant to a use case (step 0)
+  - `getAPIOverview` — Get a summary of any API's endpoints (step 1)
+  - `getOperationDetails` — Get details about a specific endpoint (step 2)
 - **Docs**: <https://github.com/janwilmake/openapi-mcp-server>
 - **Directory**: <https://openapisearch.com/search>
-- **Stars**: 875 (MIT license)
 
-**3-Step Process**:
-
-1. Find the API identifier from <https://openapisearch.com/search> or use a raw OpenAPI URL
-2. Call `getApiOverview(id)` to get a summary of all endpoints
-3. Call `getApiOperation(id, operationIdOrRoute)` to drill into a specific endpoint
+**Intended workflow**: `searchAPIs` -> `getAPIOverview` -> `getOperationDetails`
 
 **OpenCode Config**:
 
@@ -56,7 +56,7 @@ Use the openapi-search MCP to get an overview of the Stripe API, then show me th
 **Enabled for Agents**: `@openapi-search` subagent only (lazy-loaded — zero install overhead)
 
 **Usage Strategy**: Use when you need to understand an unfamiliar API before writing integration code.
-The 3-step process (find → overview → endpoint detail) keeps context usage minimal.
+The 3-step process (search → overview → endpoint detail) keeps context usage minimal.
 
 <!-- AI-CONTEXT-END -->
 
@@ -67,9 +67,9 @@ OpenAPI documents into context. It uses a 3-step process:
 
 | Step | Tool | Purpose |
 |------|------|---------|
-| 1 | Browse <https://openapisearch.com/search> | Find the API identifier |
-| 2 | `getApiOverview(id)` | Get a plain-language summary of all endpoints |
-| 3 | `getApiOperation(id, operationId)` | Get full details for a specific endpoint |
+| 0 | `searchAPIs(query)` | Find APIs relevant to a use case via semantic search |
+| 1 | `getAPIOverview(apiId)` | Get a plain-language summary of all endpoints |
+| 2 | `getOperationDetails(apiId, operationId)` | Get full details for a specific endpoint |
 
 The server converts OpenAPI specs (including Swagger 2.x) to simple language, making
 even the largest APIs navigable without overwhelming context.
@@ -130,6 +130,32 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
     "openapi-search": {
       "type": "http",
       "url": "https://openapi-mcp.openapisearch.com/mcp"
+    }
+  }
+}
+```
+
+### With npx (alternative)
+
+```json
+{
+  "mcpServers": {
+    "openapi-search": {
+      "command": "npx",
+      "args": ["-y", "@openapi-search/mcp-server"]
+    }
+  }
+}
+```
+
+### With Bun (faster startup)
+
+```json
+{
+  "mcpServers": {
+    "openapi-search": {
+      "command": "bunx",
+      "args": ["--bun", "-y", "@openapi-search/mcp-server"]
     }
   }
 }
@@ -231,73 +257,108 @@ Add to global MCP config:
 }
 ```
 
-## MCP Tools Reference
+## Tool Reference
 
-### `getApiOverview`
+### `searchAPIs`
 
-Get a plain-language overview of all endpoints in an API.
-
-**Parameters**:
+Search for APIs relevant to a specific use case using semantic search. Returns matching APIs with descriptions and identifiers.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `id` | string | Yes | API identifier from openapisearch.com, or a URL to a raw OpenAPI file |
+| `query` | string | yes | What you want to do with an API (e.g. "send email notifications", "process payments") |
+| `limit` | number | no | Max results to return (default: 5, max: 20) |
 
-**Example**:
+**Returns**: List of matching APIs with `apiId`, name, description, and relevance score.
 
-```text
-getApiOverview({ id: "stripe" })
-getApiOverview({ id: "https://raw.githubusercontent.com/example/api/main/openapi.yaml" })
-```
+### `getAPIOverview`
 
-**Returns**: Plain-language list of all endpoints with operation IDs, HTTP methods, paths, and summaries.
-
-### `getApiOperation`
-
-Get detailed information about a specific API endpoint.
-
-**Parameters**:
+Get an overview of a specific API including its available endpoints and capabilities. Use after `searchAPIs` to explore a specific API.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `id` | string | Yes | Same API identifier as used in `getApiOverview` |
-| `operationIdOrRoute` | string | Yes | Operation ID (e.g., `createPaymentIntent`) or route path (e.g., `/v1/payment_intents`) |
+| `apiId` | string | yes | API identifier from `searchAPIs` results, or a URL to a raw OpenAPI file |
 
-**Example**:
+**Returns**: API summary with endpoint list, base URL, authentication info, and capability overview.
 
-```text
-getApiOperation({ id: "stripe", operationIdOrRoute: "createPaymentIntent" })
-getApiOperation({ id: "github", operationIdOrRoute: "/repos/{owner}/{repo}/issues" })
-```
+### `getOperationDetails`
 
-**Returns**: Full YAML spec for the endpoint including parameters, request body schema, and response schemas.
+Get detailed information about a specific API operation including parameters, request body schema, and response schema.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `apiId` | string | yes | API identifier |
+| `operationId` | string | yes | Operation identifier from `getAPIOverview` results (e.g. `"POST /mail/send"`) |
+
+**Returns**: Full operation details including path/query parameters, request body schema, response schemas, and authentication requirements.
 
 ## Usage Examples
 
-### Explore a Known API
+### Discovering APIs for a Use Case
 
 ```text
-1. getApiOverview({ id: "stripe" })
-   → Lists all Stripe endpoints with operation IDs
+# Find APIs for sending emails
+searchAPIs(query: "send email notifications", limit: 5)
 
-2. getApiOperation({ id: "stripe", operationIdOrRoute: "createPaymentIntent" })
-   → Full spec for POST /v1/payment_intents
+# Find APIs for payment processing
+searchAPIs(query: "process credit card payments", limit: 5)
+
+# Find APIs for weather data
+searchAPIs(query: "get weather forecast by location", limit: 3)
 ```
 
-### Explore an API by URL
+### Exploring an API
 
 ```text
-1. getApiOverview({ id: "https://petstore3.swagger.io/api/v3/openapi.json" })
-   → Lists all Petstore endpoints
+# Get overview of SendGrid API (apiId from searchAPIs results)
+getAPIOverview(apiId: "sendgrid-v3")
 
-2. getApiOperation({ id: "https://petstore3.swagger.io/api/v3/openapi.json", operationIdOrRoute: "addPet" })
-   → Full spec for POST /pet
+# Get overview of Stripe API
+getAPIOverview(apiId: "stripe.com")
+
+# Get overview via raw OpenAPI URL
+getAPIOverview(apiId: "https://petstore3.swagger.io/api/v3/openapi.json")
 ```
 
-### Find Available APIs
+### Getting Operation Details
 
-Browse the directory at <https://openapisearch.com/search> to find API identifiers.
-Common identifiers include: `stripe`, `github`, `openai`, `twilio`, `sendgrid`, `shopify`.
+```text
+# Get details for sending mail via SendGrid
+getOperationDetails(apiId: "sendgrid-v3", operationId: "POST /mail/send")
+
+# Get details for creating a Stripe payment intent
+getOperationDetails(apiId: "stripe.com", operationId: "POST /v1/payment_intents")
+```
+
+### Full Discovery Workflow
+
+```text
+# 1. Search for relevant APIs
+searchAPIs(query: "convert currency exchange rates")
+# Returns: [{ apiId: "exchangerate-api", ... }, { apiId: "fixer.io", ... }]
+
+# 2. Explore the best match
+getAPIOverview(apiId: "exchangerate-api")
+# Returns: endpoints list, base URL, auth info
+
+# 3. Get details for the specific operation you need
+getOperationDetails(apiId: "exchangerate-api", operationId: "GET /latest/{base}")
+# Returns: parameters, response schema, example responses
+```
+
+## When to Use OpenAPI Search
+
+**Use it when**:
+
+- You need to find an API for a specific task and don't know which service to use
+- You want to explore an API's endpoints before writing integration code
+- You need request/response schemas for code generation
+- You're comparing multiple APIs for the same use case
+
+**Don't use it when**:
+
+- You already know the exact API and have its documentation (use Context7 or direct docs)
+- You need to test live API calls (this is read-only search over specs)
+- You need internal/private API documentation (this indexes public OpenAPI specs)
 
 ## Agent Enablement
 
@@ -311,6 +372,12 @@ Common identifiers include: `stripe`, `github`, `openai`, `twilio`, `sendgrid`, 
 **Rationale**: OpenAPI exploration is a focused, on-demand task. Lazy-loading keeps
 session startup fast and avoids unnecessary context overhead for sessions that don't
 need API exploration.
+
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OPENAPI_SEARCH_URL` | `https://search.apis.guru/v1` | Override the backend API URL |
 
 ## Verification
 
