@@ -2389,7 +2389,18 @@
   check: shellcheck tests/test-smoke-help.sh
   check: file-exists tests/test-smoke-help.sh
 
-- [ ] v274 t1161.3 Enhance ~/.claude/settings.json with tool permissions #au... | PR #2101 | merged:2026-02-21
+- [x] v274 t1161.3 Enhance ~/.claude/settings.json with tool permissions #au... | PR #2101 | merged:2026-02-21 verified:2026-02-21
   files: .agents/scripts/generate-claude-agents.sh
   check: shellcheck .agents/scripts/generate-claude-agents.sh
   check: file-exists .agents/scripts/generate-claude-agents.sh
+
+- [ ] v275 t1163 OAuth-aware dispatch routing #auto-dispatch — detect OA... | PR #2104 | merged:2026-02-21
+  files: .agents/scripts/budget-tracker-helper.sh, .agents/scripts/supervisor/dispatch.sh, .agents/tools/ai-assistants/headless-dispatch.md, tests/test-dispatch-claude-cli.sh
+  check: shellcheck .agents/scripts/budget-tracker-helper.sh
+  check: file-exists .agents/scripts/budget-tracker-helper.sh
+  check: shellcheck .agents/scripts/supervisor/dispatch.sh
+  check: file-exists .agents/scripts/supervisor/dispatch.sh
+  check: file-exists .agents/tools/ai-assistants/headless-dispatch.md
+  check: shellcheck tests/test-dispatch-claude-cli.sh
+  check: file-exists tests/test-dispatch-claude-cli.sh
+  check: rg "headless-dispatch" .agents/subagent-index.toon
