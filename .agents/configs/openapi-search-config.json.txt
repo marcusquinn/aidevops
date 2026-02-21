@@ -1,0 +1,95 @@
+{
+  "_comment": "OpenAPI Search MCP Configuration — remote Cloudflare Worker, zero install",
+  "_docs": "See .agents/tools/context/openapi-search.md for full documentation",
+  "_source": "https://github.com/janwilmake/openapi-mcp-server",
+  "_directory": "https://openapisearch.com/search",
+
+  "opencode": {
+    "_comment": "Add to ~/.config/opencode/opencode.json under 'mcp' key",
+    "openapi-search": {
+      "type": "remote",
+      "url": "https://openapi-mcp.openapisearch.com/mcp",
+      "enabled": false
+    }
+  },
+
+  "claude_code": {
+    "_comment": "Run: claude mcp add --scope user openapi-search --transport http https://openapi-mcp.openapisearch.com/mcp",
+    "_or_edit": "~/.claude/settings.json",
+    "mcpServers": {
+      "openapi-search": {
+        "type": "http",
+        "url": "https://openapi-mcp.openapisearch.com/mcp"
+      }
+    }
+  },
+
+  "claude_desktop": {
+    "_comment": "Edit ~/Library/Application Support/Claude/claude_desktop_config.json",
+    "mcpServers": {
+      "openapi-search": {
+        "type": "http",
+        "url": "https://openapi-mcp.openapisearch.com/mcp"
+      }
+    }
+  },
+
+  "cursor": {
+    "_comment": "Edit ~/.cursor/mcp.json",
+    "mcpServers": {
+      "openapi-search": {
+        "url": "https://openapi-mcp.openapisearch.com/mcp"
+      }
+    }
+  },
+
+  "windsurf": {
+    "_comment": "Edit ~/.codeium/windsurf/mcp_config.json",
+    "mcpServers": {
+      "openapi-search": {
+        "serverUrl": "https://openapi-mcp.openapisearch.com/mcp"
+      }
+    }
+  },
+
+  "gemini_cli": {
+    "_comment": "Edit ~/.gemini/settings.json",
+    "mcpServers": {
+      "openapi-search": {
+        "url": "https://openapi-mcp.openapisearch.com/mcp"
+      }
+    }
+  },
+
+  "continue_dev": {
+    "_comment": "Edit ~/.continue/config.json — add to mcpServers array",
+    "mcpServers": [
+      {
+        "name": "openapi-search",
+        "transport": {
+          "type": "streamable-http",
+          "url": "https://openapi-mcp.openapisearch.com/mcp"
+        }
+      }
+    ]
+  },
+
+  "vscode_copilot": {
+    "_comment": "Add to .vscode/mcp.json in your project",
+    "servers": {
+      "openapi-search": {
+        "type": "http",
+        "url": "https://openapi-mcp.openapisearch.com/mcp"
+      }
+    }
+  },
+
+  "kilo_code_kiro": {
+    "_comment": "Add to global MCP config",
+    "mcpServers": {
+      "openapi-search": {
+        "url": "https://openapi-mcp.openapisearch.com/mcp"
+      }
+    }
+  }
+}

@@ -93,6 +93,7 @@ Read subagents on-demand. Full index: `subagent-index.toon`.
 | Security/Encryption | `tools/security/tirith.md`, `tools/credentials/encryption-stack.md` |
 | Infrastructure | `tools/infrastructure/cloud-gpu.md`, `tools/containers/orbstack.md`, `services/hosting/local-hosting.md` |
 | Accessibility | `services/accessibility/accessibility-audit.md` |
+| OpenAPI exploration | `tools/context/openapi-search.md` |
 | Model routing | `tools/context/model-routing.md`, `reference/orchestration.md` |
 | Orchestration | `reference/orchestration.md`, `tools/ai-assistants/headless-dispatch.md` |
 | Agent/MCP dev | `tools/build-agent/build-agent.md`, `tools/build-mcp/build-mcp.md` |
