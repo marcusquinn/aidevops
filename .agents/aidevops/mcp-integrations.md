@@ -43,6 +43,7 @@ tools:
 - LocalWP MCP: WordPress database access
 - Cloudflare Code Mode MCP: Workers, D1, KV, R2, Pages, AI Gateway via OAuth
 - MCPorter: Discover, call, compose, and generate CLIs/typed clients for MCP servers
+- OpenAPI Search MCP: Search and explore any OpenAPI spec — zero install, remote Cloudflare Worker
 
 **Config Location**: `configs/mcp-templates/`
 <!-- AI-CONTEXT-END -->
@@ -73,6 +74,7 @@ This document provides comprehensive setup and usage instructions for advanced M
 - **Next.js DevTools MCP**: Next.js development and debugging assistance
 - **Cloudflare Code Mode MCP**: Deploy Workers, query D1, manage KV/R2/Pages, AI Gateway — OAuth-authenticated remote server
 - **MCPorter**: TypeScript runtime, CLI, and code-generation toolkit — discover, call, compose, and generate CLIs/typed clients for any MCP server
+- **OpenAPI Search MCP**: Search and explore any OpenAPI specification — semantic search across 3000+ public APIs, zero install, no auth required
 
 ### **📄 Document Processing**
 
@@ -160,6 +162,50 @@ brew tap steipete/tap && brew install steipete/tap/mcporter
 **Auto-imports**: Merges configs from Claude Code, Claude Desktop, Cursor, Codex, Windsurf, OpenCode, VS Code automatically.
 
 See `tools/mcp-toolkit/mcporter.md` for full documentation.
+
+### **OpenAPI Search MCP**
+
+No installation required — this is a remote Cloudflare Worker with no authentication needed.
+
+```bash
+# Claude Code (recommended)
+claude mcp add --scope user openapi-search --transport http https://openapi-mcp.openapisearch.com/mcp
+```
+
+**For OpenCode** (`~/.config/opencode/opencode.json`):
+
+```json
+{
+  "mcp": {
+    "openapi-search": {
+      "type": "remote",
+      "url": "https://openapi-mcp.openapisearch.com/mcp",
+      "enabled": false
+    }
+  }
+}
+```
+
+**For Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "openapi-search": {
+      "type": "http",
+      "url": "https://openapi-mcp.openapisearch.com/mcp"
+    }
+  }
+}
+```
+
+**Available Tools**: `searchAPIs` (semantic search across 3000+ public APIs), `getAPIOverview` (endpoint summary), `getOperationDetails` (full request/response schema).
+
+**Workflow**: `searchAPIs` → `getAPIOverview` → `getOperationDetails` — keeps context usage minimal by loading only what you need.
+
+**Per-Agent Enablement**: The `tools/context/openapi-search.md` subagent has `openapi-search_*: true` in its tools section. Disabled globally, enabled on-demand for API exploration tasks.
+
+See `tools/context/openapi-search.md` for full documentation.
 
 ### **Cloudflare Code Mode MCP**
 
