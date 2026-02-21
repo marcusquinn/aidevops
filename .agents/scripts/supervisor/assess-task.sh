@@ -122,7 +122,7 @@ gather_task_evidence() {
 		pr_repo=$(echo "$pr_to_check" | grep -oE 'github\.com/[^/]+/[^/]+' | sed 's|github.com/||' || echo "")
 		pr_number=$(echo "$pr_to_check" | grep -oE '/pull/[0-9]+' | sed 's|/pull/||' || echo "")
 		if [[ -n "$pr_repo" && -n "$pr_number" ]]; then
-			gh_pr_state=$(gh pr view "$pr_number" --repo "$pr_repo" --json state --jq '.state' 2>/dev/null || echo "UNKNOWN")
+			gh_pr_state=$(gh pr view "$pr_number" --repo "$pr_repo" --json state --jq '.state' </dev/null 2>/dev/null || echo "UNKNOWN")
 			if [[ "$gh_pr_state" == "MERGED" ]]; then
 				gh_pr_merged="true"
 			else
@@ -137,7 +137,7 @@ gather_task_evidence() {
 		repo_slug=$(detect_repo_slug "$db_repo" 2>/dev/null || echo "")
 		if [[ -n "$repo_slug" ]]; then
 			local branch_pr
-			branch_pr=$(gh pr list --repo "$repo_slug" --head "$db_branch" --json url,state --jq '.[0] | "\(.url)|\(.state)"' 2>/dev/null || echo "")
+			branch_pr=$(gh pr list --repo "$repo_slug" --head "$db_branch" --json url,state --jq '.[0] | "\(.url)|\(.state)"' </dev/null 2>/dev/null || echo "")
 			if [[ -n "$branch_pr" ]]; then
 				gh_pr_url="${branch_pr%%|*}"
 				gh_pr_state="${branch_pr##*|}"
@@ -263,7 +263,7 @@ PROMPT
 			-m "$ai_model" \
 			--format default \
 			--title "assess-${task_id}" \
-			"$prompt" 2>/dev/null || echo "")
+			"$prompt" </dev/null 2>/dev/null || echo "")
 		# Strip ANSI codes
 		ai_result=$(printf '%s' "$ai_result" | sed 's/\x1b\[[0-9;]*[mGKHF]//g; s/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b\]//g; s/\x07//g')
 	else
@@ -271,7 +271,7 @@ PROMPT
 		ai_result=$(portable_timeout "$ai_timeout" claude \
 			-p "$prompt" \
 			--model "$claude_model" \
-			--output-format text 2>/dev/null || echo "")
+			--output-format text </dev/null 2>/dev/null || echo "")
 	fi
 
 	# Parse the verdict from AI response — find the first line matching our format
@@ -314,12 +314,13 @@ assess_task_with_metadata() {
 		quality_score="0"
 	fi
 
-	# Record to pattern tracker
+	# Record to pattern tracker (stdout must be suppressed — we're inside
+	# a command substitution and only our echo "$verdict" should reach stdout)
 	if command -v record_evaluation_metadata &>/dev/null; then
 		record_evaluation_metadata \
 			"$task_id" "$outcome_type" "$outcome_detail" \
 			"$failure_mode" "$quality_score" "true" \
-			2>/dev/null || true
+			>/dev/null 2>/dev/null || true
 	fi
 
 	log_info "assess_task_with_metadata: $task_id → $verdict [fmode:${failure_mode}] [quality:${quality_score}] [ai:true]"

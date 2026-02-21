@@ -1189,6 +1189,10 @@ cmd_pulse() {
 	local _phase1_evaluating_tid=""
 	local _phase1_pre_eval_state=""
 
+	local _phase1_task_count
+	_phase1_task_count=$(echo "$running_tasks" | grep -c . 2>/dev/null || echo 0)
+	log_info "Phase 1: found $_phase1_task_count running/dispatched/evaluating task(s)"
+
 	if [[ -n "$running_tasks" ]]; then
 		# No intermediate evaluating state — if pulse is killed mid-evaluation,
 		# the task stays in running/dispatched and the next pulse re-evaluates it.
@@ -1227,6 +1231,9 @@ cmd_pulse() {
 			log_info "  $tid: worker finished, evaluating..."
 			_phase1_pre_eval_state="$current_task_state"
 			_phase1_evaluating_tid="$tid"
+			# Temporarily disable errexit for evaluation — a single task failure
+			# must not abort evaluation of remaining tasks
+			set +e
 
 			# Get task description for memory context (t128.6)
 			local tid_desc
@@ -1574,10 +1581,12 @@ cmd_pulse() {
 			# If the pulse is killed after this point, the task is already in its
 			# final state (complete/retrying/blocked/failed/queued) and doesn't
 			# need rollback.
+			set -e # Re-enable errexit after task processing
 			_phase1_evaluating_tid=""
 			_phase1_pre_eval_state=""
 		done <<<"$running_tasks"
 
+		set -e # Ensure errexit is restored after loop
 		# t1269: Restore original signal trap after evaluation loop completes.
 		# The EXIT trap (release_pulse_lock) is still active from the outer scope.
 		# shellcheck disable=SC2064  # intentional: expand SUPERVISOR_DIR at definition time
