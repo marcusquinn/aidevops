@@ -2066,3 +2066,10 @@
   files: .agents/tools/mcp-toolkit/mcporter.md
   check: file-exists .agents/tools/mcp-toolkit/mcporter.md
   check: rg "mcporter" .agents/subagent-index.toon
+
+- [ ] v254 t1160.3 Add Claude CLI branching to runner-helper.sh #auto-dispat... | PR #2082 | merged:2026-02-21
+  files: .agents/scripts/objective-runner-helper.sh, .agents/scripts/runner-helper.sh
+  check: shellcheck .agents/scripts/objective-runner-helper.sh
+  check: file-exists .agents/scripts/objective-runner-helper.sh
+  check: shellcheck .agents/scripts/runner-helper.sh
+  check: file-exists .agents/scripts/runner-helper.sh
