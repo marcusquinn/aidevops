@@ -553,6 +553,14 @@ cmd_auto_pickup() {
 				continue
 			fi
 
+			# Skip tasks with -needed blocker tags (t1287) — human action required
+			if echo "$line" | grep -qE '(account|hosting|login|api-key|clarification|resources|payment|approval|decision|design|content|dns|domain|testing)-needed'; then
+				local blocker_tag
+				blocker_tag=$(echo "$line" | grep -oE '(account|hosting|login|api-key|clarification|resources|payment|approval|decision|design|content|dns|domain|testing)-needed' | head -1)
+				log_info "  $task_id: blocked by $blocker_tag (human action required) — skipping auto-pickup"
+				continue
+			fi
+
 			# Check if already in supervisor
 			local existing
 			existing=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || true)
@@ -635,6 +643,14 @@ cmd_auto_pickup() {
 
 			# Skip tasks with unresolved blocked-by dependencies (t1085.4)
 			if _check_and_skip_if_blocked "$line" "$task_id" "$todo_file"; then
+				continue
+			fi
+
+			# Skip tasks with -needed blocker tags (t1287) — human action required
+			if echo "$line" | grep -qE '(account|hosting|login|api-key|clarification|resources|payment|approval|decision|design|content|dns|domain|testing)-needed'; then
+				local blocker_tag
+				blocker_tag=$(echo "$line" | grep -oE '(account|hosting|login|api-key|clarification|resources|payment|approval|decision|design|content|dns|domain|testing)-needed' | head -1)
+				log_info "  $task_id: blocked by $blocker_tag (human action required) — skipping auto-pickup"
 				continue
 			fi
 
