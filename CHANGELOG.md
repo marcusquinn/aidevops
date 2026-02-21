@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.121.0] - 2026-02-21
+
+### Changed
+
+- Refactor: eliminate evaluating state race condition in supervisor pulse (#2056)
+- Refactor: add build_cli_cmd() abstraction to replace duplicated CLI branches (t1160.1) (#2053)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+
+### Fixed
+
+- add ai-chat-sidebar to subagent-index.toon (t1267) (#2049)
+- wire -needed blocker tags into cron auto-pickup and add park_task AI action (t1287) (#2052)
+
 ## [2.120.0] - 2026-02-21
 
 ### Added
