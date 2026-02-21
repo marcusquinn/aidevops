@@ -549,9 +549,9 @@ find_related_files() {
 		fi
 	fi
 
-	# Deduplicate
+	# Deduplicate and exclude brief files (handled separately by compose_issue_body)
 	if [[ -n "$all_files" ]]; then
-		echo "$all_files" | sort -u
+		echo "$all_files" | sort -u | grep -v -- '-brief\.md$'
 	fi
 	return 0
 }
@@ -870,6 +870,28 @@ compose_issue_body() {
 				fi
 			fi
 		done <<<"$related_files"
+	fi
+
+	# Task brief file (todo/tasks/{task_id}-brief.md)
+	local brief_file="$project_root/todo/tasks/${task_id}-brief.md"
+	if [[ -f "$brief_file" ]]; then
+		local brief_content
+		# Strip YAML frontmatter (--- ... ---) if present
+		brief_content=$(awk '
+			BEGIN { in_front=0; front_done=0 }
+			/^---$/ && !front_done { in_front=!in_front; if(!in_front) front_done=1; next }
+			!in_front { print }
+		' "$brief_file")
+		if [[ -n "$brief_content" && ${#brief_content} -gt 10 ]]; then
+			body="$body"$'\n\n'"## Task Brief"$'\n\n'"$brief_content"
+		fi
+	fi
+
+	# Extract HTML comments (e.g., REBASE notes) from the task line
+	local html_comments
+	html_comments=$(echo "$first_line" | grep -oE '<!--[^>]+-->' | sed 's/<!--//;s/-->//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+	if [[ -n "$html_comments" ]]; then
+		body="$body"$'\n\n'"## Implementation Notes"$'\n\n'"$html_comments"
 	fi
 
 	# Footer
