@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# generate-brief.sh — Generate a task brief from OpenCode session history
+# task-brief-helper.sh — Generate a task brief from OpenCode session history
 #
-# Usage: generate-brief.sh <task_id> [project_root]
+# Usage: task-brief-helper.sh <task_id> [project_root]
+#        task-brief-helper.sh --all [project_root]
 #
 # Traces a task back to its source session in OpenCode's DB,
 # extracts the conversation context, and generates a brief file.
@@ -17,16 +18,36 @@ readonly SUPERVISOR_DB="${HOME}/.aidevops/.agent-workspace/supervisor/supervisor
 
 # --- Helpers ---
 
-log_info() { echo "[INFO] $*" >&2; }
-log_warn() { echo "[WARN] $*" >&2; }
-log_error() { echo "[ERROR] $*" >&2; }
+log_info() {
+	echo "[INFO] $*" >&2
+	return 0
+}
+log_warn() {
+	echo "[WARN] $*" >&2
+	return 0
+}
+log_error() {
+	echo "[ERROR] $*" >&2
+	return 0
+}
 
 usage() {
 	echo "Usage: $0 <task_id> [project_root]"
+	echo "       $0 --all [project_root]"
 	echo ""
 	echo "Generates a task brief from OpenCode session history."
 	echo "Output: {project_root}/todo/tasks/{task_id}-brief.md"
 	exit 1
+}
+
+# Validate task_id format to prevent injection
+validate_task_id() {
+	local task_id="$1"
+	if [[ ! "$task_id" =~ ^t[0-9]+(\.[0-9]+)*$ ]]; then
+		log_error "Invalid task ID format: $task_id (expected tNNN or tNNN.N)"
+		return 1
+	fi
+	return 0
 }
 
 # --- Step 1: Find creation commit ---
@@ -37,21 +58,23 @@ find_creation_commit() {
 
 	# Find the first commit that introduced this task ID in TODO.md
 	local commit
-	commit=$(git -C "$project_root" log --all --format="%H" -S "- [ ] ${task_id} " -- TODO.md 2>/dev/null | tail -1)
+	commit=$(git -C "$project_root" log --all --format="%H" -S "- [ ] ${task_id} " -- TODO.md 2>&1 | grep -E '^[0-9a-f]{40}$' | tail -1) || true
 
 	if [[ -z "$commit" ]]; then
 		# Try without the checkbox
-		commit=$(git -C "$project_root" log --all --format="%H" -S "${task_id}" -- TODO.md 2>/dev/null | tail -1)
+		commit=$(git -C "$project_root" log --all --format="%H" -S "${task_id}" -- TODO.md 2>&1 | grep -E '^[0-9a-f]{40}$' | tail -1) || true
 	fi
 
 	echo "$commit"
+	return 0
 }
 
 get_commit_info() {
 	local commit="$1"
 	local project_root="$2"
 
-	git -C "$project_root" log -1 --format="COMMIT_DATE=%ai%nCOMMIT_AUTHOR=%an%nCOMMIT_MSG=%s%nCOMMIT_EPOCH=%ct" "$commit" 2>/dev/null
+	git -C "$project_root" log -1 --format="COMMIT_DATE=%ai%nCOMMIT_AUTHOR=%an%nCOMMIT_MSG=%s%nCOMMIT_EPOCH=%ct" "$commit" 2>&1 || true
+	return 0
 }
 
 # --- Step 2: Find OpenCode session ---
@@ -63,9 +86,20 @@ find_opencode_project_id() {
 		return 1
 	fi
 
-	sqlite3 "$OPENCODE_DB" "
-		SELECT id FROM project WHERE worktree = '$project_root'
-	" 2>/dev/null | head -1
+	# Use env var to pass project_root safely — parameterized query prevents injection
+	BRIEF_OPENCODE_DB="$OPENCODE_DB" BRIEF_PROJECT_ROOT="$project_root" python3 -c "
+import sqlite3, os
+db = sqlite3.connect(os.environ['BRIEF_OPENCODE_DB'])
+db.execute('PRAGMA journal_mode=WAL')
+db.execute('PRAGMA busy_timeout=5000')
+cursor = db.cursor()
+cursor.execute('SELECT id FROM project WHERE worktree = ?', (os.environ['BRIEF_PROJECT_ROOT'],))
+row = cursor.fetchone()
+if row:
+    print(row[0])
+db.close()
+" 2>&1 | head -1
+	return 0
 }
 
 find_session_by_timestamp() {
@@ -77,19 +111,32 @@ find_session_by_timestamp() {
 		return 1
 	fi
 
-	# Find session that was active at this timestamp
-	# (created before, updated after or within 1 hour)
-	sqlite3 "$OPENCODE_DB" "
-		SELECT s.id, s.title, s.parent_id,
-		       datetime(s.time_created/1000, 'unixepoch') as created,
-		       datetime(s.time_updated/1000, 'unixepoch') as updated
-		FROM session s
-		WHERE s.project_id = '$project_id'
-		AND s.time_created <= $epoch_ms
-		AND s.time_updated >= ($epoch_ms - 3600000)
-		ORDER BY s.time_updated DESC
-		LIMIT 1
-	" 2>/dev/null
+	# Use env vars to pass parameters safely — parameterized query prevents injection
+	BRIEF_OPENCODE_DB="$OPENCODE_DB" BRIEF_PROJECT_ID="$project_id" BRIEF_EPOCH_MS="$epoch_ms" python3 -c "
+import sqlite3, os
+db = sqlite3.connect(os.environ['BRIEF_OPENCODE_DB'])
+db.execute('PRAGMA journal_mode=WAL')
+db.execute('PRAGMA busy_timeout=5000')
+cursor = db.cursor()
+project_id = os.environ['BRIEF_PROJECT_ID']
+epoch_ms = int(os.environ['BRIEF_EPOCH_MS'])
+cursor.execute('''
+    SELECT s.id, s.title, s.parent_id,
+           datetime(s.time_created/1000, 'unixepoch') as created,
+           datetime(s.time_updated/1000, 'unixepoch') as updated
+    FROM session s
+    WHERE s.project_id = ?
+    AND s.time_created <= ?
+    AND s.time_updated >= (? - 3600000)
+    ORDER BY s.time_updated DESC
+    LIMIT 1
+''', (project_id, epoch_ms, epoch_ms))
+row = cursor.fetchone()
+if row:
+    print('|'.join(str(x) if x else '' for x in row))
+db.close()
+" 2>&1 | head -1
+	return 0
 }
 
 find_parent_session() {
@@ -99,17 +146,23 @@ find_parent_session() {
 		return 1
 	fi
 
-	local parent_id
-	parent_id=$(sqlite3 "$OPENCODE_DB" "
-		SELECT parent_id FROM session WHERE id = '$session_id'
-	" 2>/dev/null)
-
-	if [[ -n "$parent_id" ]]; then
-		sqlite3 "$OPENCODE_DB" "
-			SELECT id, title, datetime(time_created/1000, 'unixepoch')
-			FROM session WHERE id = '$parent_id'
-		" 2>/dev/null
-	fi
+	BRIEF_OPENCODE_DB="$OPENCODE_DB" BRIEF_SESSION_ID="$session_id" python3 -c "
+import sqlite3, os
+db = sqlite3.connect(os.environ['BRIEF_OPENCODE_DB'])
+db.execute('PRAGMA journal_mode=WAL')
+db.execute('PRAGMA busy_timeout=5000')
+cursor = db.cursor()
+session_id = os.environ['BRIEF_SESSION_ID']
+cursor.execute('SELECT parent_id FROM session WHERE id = ?', (session_id,))
+row = cursor.fetchone()
+if row and row[0]:
+    cursor.execute(\"SELECT id, title, datetime(time_created/1000, 'unixepoch') FROM session WHERE id = ?\", (row[0],))
+    parent = cursor.fetchone()
+    if parent:
+        print('|'.join(str(x) if x else '' for x in parent))
+db.close()
+" 2>&1 | head -1
+	return 0
 }
 
 # --- Step 3: Extract conversation context ---
@@ -122,24 +175,28 @@ extract_session_context() {
 		return 1
 	fi
 
-	# Find user messages that mention this task or were around the creation time
-	# Extract summary titles and diff content
-	python3 -c "
-import sqlite3, json, sys, re
+	# Pass all parameters via environment variables to prevent injection
+	BRIEF_SESSION_ID="$session_id" BRIEF_TASK_ID="$task_id" BRIEF_OPENCODE_DB="$OPENCODE_DB" python3 -c "
+import sqlite3, json, sys, re, os
 
-db = sqlite3.connect('$OPENCODE_DB')
+db_path = os.environ['BRIEF_OPENCODE_DB']
+session_id = os.environ['BRIEF_SESSION_ID']
+task_id = os.environ['BRIEF_TASK_ID']
+
+db = sqlite3.connect(db_path)
+db.execute('PRAGMA journal_mode=WAL')
+db.execute('PRAGMA busy_timeout=5000')
 cursor = db.cursor()
 
-# Get all user messages from this session
+# Get all user messages from this session — parameterized query
 cursor.execute('''
     SELECT m.data, m.time_created
     FROM message m
     WHERE m.session_id = ?
     AND json_extract(m.data, '\$.role') = 'user'
     ORDER BY m.time_created
-''', ('$session_id',))
+''', (session_id,))
 
-task_id = '$task_id'
 context_parts = []
 
 for row in cursor.fetchall():
@@ -209,7 +266,8 @@ if context_parts:
     print('\n'.join(context_parts))
 else:
     print('NO_CONTEXT_FOUND')
-" 2>/dev/null
+" 2>&1 | grep -v '^Traceback\|^  File\|^    \|^[A-Z][a-z]*Error:' || echo "NO_CONTEXT_FOUND"
+	return 0
 }
 
 # --- Step 4: Check supervisor DB ---
@@ -221,13 +279,22 @@ find_supervisor_context() {
 		return 0
 	fi
 
-	# Exact match on task ID only — LIKE is too loose and matches unrelated tasks
-	sqlite3 "$SUPERVISOR_DB" "
-		SELECT id, description, session_id, created_at, completed_at
-		FROM tasks
-		WHERE id = '$task_id'
-		LIMIT 1
-	" 2>/dev/null
+	# Exact match on task ID only — parameterized query prevents injection
+	BRIEF_TASK_ID="$task_id" BRIEF_SUPERVISOR_DB="$SUPERVISOR_DB" python3 -c "
+import sqlite3, os
+db_path = os.environ['BRIEF_SUPERVISOR_DB']
+task_id = os.environ['BRIEF_TASK_ID']
+db = sqlite3.connect(db_path)
+db.execute('PRAGMA journal_mode=WAL')
+db.execute('PRAGMA busy_timeout=5000')
+cursor = db.cursor()
+cursor.execute('SELECT id, description, session_id, created_at, completed_at FROM tasks WHERE id = ? LIMIT 1', (task_id,))
+row = cursor.fetchone()
+if row:
+    print('|'.join(str(x) if x is not None else '' for x in row))
+db.close()
+" 2>&1 | head -1
+	return 0
 }
 
 # --- Step 5: Generate brief ---
@@ -236,6 +303,8 @@ generate_brief() {
 	local task_id="$1"
 	local project_root="$2"
 	local output_file="$project_root/todo/tasks/${task_id}-brief.md"
+
+	validate_task_id "$task_id" || return 1
 
 	mkdir -p "$project_root/todo/tasks"
 
@@ -247,8 +316,11 @@ generate_brief() {
 		return 1
 	fi
 
-	# Get commit info
-	local commit_date="" commit_author="" commit_msg="" commit_epoch=""
+	# Get commit info — separate declaration from assignment per style guide
+	local commit_date=""
+	local commit_author=""
+	local commit_msg=""
+	local commit_epoch=""
 	while IFS='=' read -r key value; do
 		case "$key" in
 		COMMIT_DATE) commit_date="$value" ;;
@@ -261,13 +333,15 @@ generate_brief() {
 	log_info "$task_id: commit $commit ($commit_date) by $commit_author"
 
 	# Find OpenCode session
-	local session_id="" session_title="" parent_session=""
+	local session_id=""
+	local session_title=""
+	local parent_session=""
 	local project_id
-	project_id=$(find_opencode_project_id "$project_root")
+	project_id=$(find_opencode_project_id "$project_root") || true
 
 	if [[ -n "$project_id" && -n "$commit_epoch" ]]; then
 		local session_info
-		session_info=$(find_session_by_timestamp "$project_id" "$commit_epoch")
+		session_info=$(find_session_by_timestamp "$project_id" "$commit_epoch") || true
 		if [[ -n "$session_info" ]]; then
 			session_id=$(echo "$session_info" | cut -d'|' -f1)
 			session_title=$(echo "$session_info" | cut -d'|' -f2)
@@ -275,7 +349,7 @@ generate_brief() {
 			parent_id=$(echo "$session_info" | cut -d'|' -f3)
 
 			if [[ -n "$parent_id" ]]; then
-				parent_session=$(find_parent_session "$session_id")
+				parent_session=$(find_parent_session "$session_id") || true
 			fi
 
 			log_info "$task_id: session $session_id '$session_title'"
@@ -289,32 +363,33 @@ generate_brief() {
 	# If this was a subagent commit session, search the parent
 	if [[ "$session_title" == *"subagent"* && -n "$parent_session" ]]; then
 		search_session=$(echo "$parent_session" | cut -d'|' -f1)
-		local parent_title
-		parent_title=$(echo "$parent_session" | cut -d'|' -f2)
-		log_info "$task_id: searching parent session '$parent_title'"
+		local p_title
+		p_title=$(echo "$parent_session" | cut -d'|' -f2)
+		log_info "$task_id: searching parent session '$p_title'"
 	fi
 
 	if [[ -n "$search_session" ]]; then
-		context=$(extract_session_context "$search_session" "$task_id")
+		context=$(extract_session_context "$search_session" "$task_id") || true
 	fi
 
 	# Check supervisor DB
 	local supervisor_info=""
-	supervisor_info=$(find_supervisor_context "$task_id")
+	supervisor_info=$(find_supervisor_context "$task_id") || true
 
 	# Extract task description from TODO.md
 	local task_line=""
-	task_line=$(grep -E "^\s*- \[.\] ${task_id} " "$project_root/TODO.md" 2>/dev/null | head -1)
+	task_line=$(grep -E "^\s*- \[.\] ${task_id} " "$project_root/TODO.md" 2>&1 | head -1) || true
 	local task_title=""
-	task_title=$(echo "$task_line" | sed -E 's/^.*\] t[0-9]+(\.[0-9]+)* //' | sed -E 's/ #.*//' | sed -E 's/ ~.*//')
+	task_title=$(echo "$task_line" | sed -E 's/^.*\] t[0-9]+(\.[0-9]+)* //' | sed -E 's/ #.*//' | sed -E 's/ ~//')
 
 	# Extract task block (subtasks/notes) from TODO.md
 	# Captures the task line and all lines more indented than it
 	local task_block=""
-	task_block=$(python3 -c "
-import re, sys
-task_id = '$task_id'
-lines = open('$project_root/TODO.md').readlines()
+	task_block=$(BRIEF_TASK_ID="$task_id" BRIEF_TODO_FILE="$project_root/TODO.md" python3 -c "
+import re, os
+task_id = os.environ['BRIEF_TASK_ID']
+todo_file = os.environ['BRIEF_TODO_FILE']
+lines = open(todo_file).readlines()
 capturing = False
 task_indent = -1
 block = []
@@ -344,7 +419,7 @@ for i, line in enumerate(lines):
         else:
             break
 print('\n'.join(block))
-" 2>/dev/null)
+" 2>&1) || true
 
 	# Extract REBASE comment
 	local rebase_note=""
@@ -354,10 +429,11 @@ print('\n'.join(block))
 	local session_origin="unknown"
 	if [[ -n "$session_id" ]]; then
 		if [[ -n "$parent_session" ]]; then
-			local parent_id parent_title
-			parent_id=$(echo "$parent_session" | cut -d'|' -f1)
-			parent_title=$(echo "$parent_session" | cut -d'|' -f2)
-			session_origin="opencode:${parent_id} '${parent_title}' (committed via subagent ${session_id})"
+			local p_id
+			local p_title
+			p_id=$(echo "$parent_session" | cut -d'|' -f1)
+			p_title=$(echo "$parent_session" | cut -d'|' -f2)
+			session_origin="opencode:${p_id} '${p_title}' (committed via subagent ${session_id})"
 		else
 			session_origin="opencode:${session_id} '${session_title}'"
 		fi
@@ -465,7 +541,8 @@ BRIEF
 
 main() {
 	local task_id="${1:-}"
-	local project_root="${2:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+	local project_root
+	project_root="${2:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 
 	if [[ -z "$task_id" ]]; then
 		usage
@@ -484,8 +561,11 @@ main() {
 		done < <(grep -E '^\s*- \[ \] t[0-9]' "$project_root/TODO.md")
 		log_info "Generated $count briefs"
 	else
+		validate_task_id "$task_id" || exit 1
 		generate_brief "$task_id" "$project_root"
 	fi
+
+	return 0
 }
 
 main "$@"
