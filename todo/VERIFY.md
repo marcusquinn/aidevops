@@ -2366,7 +2366,7 @@
   check: shellcheck setup.sh
   check: file-exists setup.sh
 
-- [ ] v272 t1161.2 Automate MCP registration via claude mcp add-json #auto-d... | PR #2100 | merged:2026-02-21
+- [x] v272 t1161.2 Automate MCP registration via claude mcp add-json #auto-d... | PR #2100 | merged:2026-02-21 verified:2026-02-21
   files: .agents/scripts/mcp-register-claude.sh, configs/mcp-templates/chrome-devtools.json, configs/mcp-templates/crawl4ai-mcp-config.json, configs/mcp-templates/grep-vercel.json, configs/mcp-templates/nextjs-devtools.json, configs/mcp-templates/peekaboo.json, configs/mcp-templates/playwright.json, configs/mcp-templates/shadcn.json, configs/mcp-templates/stagehand.json
   check: shellcheck .agents/scripts/mcp-register-claude.sh
   check: file-exists .agents/scripts/mcp-register-claude.sh
@@ -2378,3 +2378,13 @@
   check: file-exists configs/mcp-templates/playwright.json
   check: file-exists configs/mcp-templates/shadcn.json
   check: file-exists configs/mcp-templates/stagehand.json
+
+- [ ] v273 t1161.1 Create generate-claude-commands.sh #auto-dispatch — gen... | PR #2098 | merged:2026-02-21
+  files: .agents/scripts/generate-claude-commands.sh, README.md, setup-modules/config.sh, tests/test-smoke-help.sh
+  check: shellcheck .agents/scripts/generate-claude-commands.sh
+  check: file-exists .agents/scripts/generate-claude-commands.sh
+  check: file-exists README.md
+  check: shellcheck setup-modules/config.sh
+  check: file-exists setup-modules/config.sh
+  check: shellcheck tests/test-smoke-help.sh
+  check: file-exists tests/test-smoke-help.sh
