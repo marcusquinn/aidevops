@@ -101,6 +101,15 @@ build_ai_context() {
 		context+="$(build_auto_dispatch_eligibility_context "$repo_path")\n\n"
 	fi
 
+	# Section 12: Recently Fixed Systemic Issues (t1284)
+	# Shows improvement/bugfix tasks completed in the last 30 days so the AI
+	# reasoner doesn't re-create investigation tasks for already-fixed problems.
+	# The create_improvement dedup only checks 24h; this section provides broader
+	# awareness of recent fixes to prevent stale-data false positives.
+	if [[ "$scope" == "full" ]]; then
+		context+="$(build_recent_fixes_context "$repo_path")\n\n"
+	fi
+
 	printf '%b' "$context"
 	return 0
 }
@@ -1471,6 +1480,85 @@ build_auto_dispatch_eligibility_context() {
 	output+="\n**Summary**: $eligible_count eligible, $ineligible_count ineligible, $already_tagged already tagged\n"
 	output+="\nFor eligible tasks, use \`propose_auto_dispatch\` action with the task_id and recommended model.\n"
 	output+="The executor adds a \`[proposed]\` prefix that requires one pulse cycle confirmation before actual tagging.\n"
+
+	printf '%b' "$output"
+	return 0
+}
+
+#######################################
+# Section 12: Recently Fixed Systemic Issues (t1284)
+# Shows improvement/bugfix tasks completed in the last 30 days so the AI
+# reasoner doesn't re-create investigation tasks for already-fixed problems.
+# The create_improvement dedup only checks 24h; this section provides broader
+# awareness of recent fixes to prevent stale-data false positives.
+#
+# Arguments:
+#   $1 - repo path
+# Outputs:
+#   Markdown section to stdout
+#######################################
+build_recent_fixes_context() {
+	local repo_path="${1:-$REPO_PATH}"
+	local dedup_days="${AI_IMPROVEMENT_DEDUP_DAYS:-30}"
+	local output="## Recently Fixed Systemic Issues (last ${dedup_days}d)\n\n"
+	output+="**IMPORTANT**: Do NOT create \`create_improvement\` tasks for problems listed here — they were already fixed.\n"
+	output+="If the same symptom recurs, check whether the fix was effective before proposing new work.\n\n"
+
+	local todo_file="${repo_path}/TODO.md"
+	if [[ ! -f "$todo_file" ]]; then
+		output+="*TODO.md not found*\n"
+		printf '%b' "$output"
+		return 0
+	fi
+
+	# Compute cutoff date (30 days ago)
+	local cutoff_date
+	cutoff_date=$(date -u -v-"${dedup_days}d" '+%Y-%m-%d' 2>/dev/null || date -u -d "${dedup_days} days ago" '+%Y-%m-%d' 2>/dev/null || echo "")
+
+	if [[ -z "$cutoff_date" ]]; then
+		output+="*Could not compute cutoff date*\n"
+		printf '%b' "$output"
+		return 0
+	fi
+
+	# Scan completed tasks with #bugfix, #self-improvement, or improvement-related keywords
+	local found_fixes=""
+	local fix_count=0
+	while IFS= read -r task_line; do
+		# Only include if completed: timestamp is within the dedup window
+		local completed_date
+		completed_date=$(printf '%s' "$task_line" | grep -oE 'completed:[0-9]{4}-[0-9]{2}-[0-9]{2}' | head -1 | sed 's/completed://')
+		if [[ -z "$completed_date" || ! "$completed_date" > "$cutoff_date" ]]; then
+			continue
+		fi
+
+		# Only include bugfix, self-improvement, or automation tasks
+		local lower_line
+		lower_line=$(printf '%s' "$task_line" | tr '[:upper:]' '[:lower:]')
+		if ! printf '%s' "$lower_line" | grep -qE '#bugfix|#self-improvement|#automation|fix|investigate|hang|timeout|worker|supervisor|dispatch'; then
+			continue
+		fi
+
+		local task_id
+		task_id=$(printf '%s' "$task_line" | grep -oE 't[0-9]+(\.[0-9]+)?' | head -1)
+		[[ -z "$task_id" ]] && continue
+
+		local pr_ref
+		pr_ref=$(printf '%s' "$task_line" | grep -oE 'pr:#[0-9]+' | head -1 || echo "")
+
+		local excerpt
+		excerpt=$(printf '%s' "$task_line" | sed -E 's/^[[:space:]]*- \[x\] t[0-9]+(\.[0-9]+)? //' | head -c 120)
+
+		found_fixes+="- **$task_id** (completed: $completed_date${pr_ref:+, $pr_ref}): $excerpt\n"
+		fix_count=$((fix_count + 1))
+	done < <(grep -E '^\s*- \[x\] t[0-9]' "$todo_file" 2>/dev/null)
+
+	if [[ "$fix_count" -eq 0 ]]; then
+		output+="No systemic fixes found in the last ${dedup_days} days.\n"
+	else
+		output+="$fix_count fix(es) merged in the last ${dedup_days} days:\n\n"
+		output+="$(printf '%b' "$found_fixes")"
+	fi
 
 	printf '%b' "$output"
 	return 0
