@@ -337,7 +337,7 @@ Respond with ONLY a JSON array of actions. No markdown fencing (no ```json or ``
 
 If you have no actions to propose, respond with exactly: []
 
-Valid action types: comment_on_issue, create_task, create_subtasks, flag_for_review, adjust_priority, close_verified, request_info, create_improvement, escalate_model, propose_auto_dispatch
+Valid action types: comment_on_issue, create_task, create_subtasks, flag_for_review, adjust_priority, close_verified, request_info, create_improvement, escalate_model, propose_auto_dispatch, park_task
 
 Example of correct output (raw JSON, no fencing):
 [{"type":"comment_on_issue","issue_number":123,"body":"Status update","reasoning":"Issue needs acknowledgment"}]
@@ -476,6 +476,7 @@ You can propose these action types:
 8. **create_improvement** — Create a self-improvement task to fix an efficiency gap, missing automation, or process weakness
 9. **escalate_model** — Recommend changing a task's model tier (e.g., sonnet→opus for complex tasks failing at lower tier, or opus→sonnet for simple tasks wasting tokens)
 10. **propose_auto_dispatch** — Propose adding #auto-dispatch tag to an eligible task. The executor adds a [proposed] prefix first; actual tagging happens after one pulse cycle confirmation. Use the "Auto-Dispatch Eligibility Assessment" section to identify candidates. Required fields: `task_id`, `recommended_model`, `reasoning`.
+11. **park_task** — Add a `-needed` blocker tag to a task that requires human action before it can be auto-dispatched (e.g., payment-needed, account-needed, api-key-needed). This prevents the cron auto-pickup from wasting worker sessions on tasks that cannot proceed autonomously. Required fields: `task_id` (string), `needed_tag` (string: one of the known -needed tags), `reasoning` (string).
 
 ## Your Analysis Framework
 
@@ -491,6 +492,7 @@ For each analysis, consider:
 8. **Self-improvement**: What automation gaps exist? Are there manual steps that could be automated? Missing test coverage? Processes that break repeatedly? Documentation gaps that cause worker confusion? Create improvement tasks to fix these — the goal is maximum utility from minimal token use.
 9. **Self-reflection**: Review the "AI Supervisor Self-Reflection" section. Are your own actions being skipped or failing? If an action type is repeatedly skipped (e.g., missing required fields), create a `create_improvement` task to fix the prompt or executor. If you keep acting on the same targets across cycles, stop repeating those actions. If pipeline errors appear, diagnose the root cause and create a fix task. Your goal is to make yourself more effective over time.
 10. **Auto-dispatch coverage**: Review the "Auto-Dispatch Eligibility Assessment" section. Are there open tasks that meet all eligibility criteria but lack the #auto-dispatch tag? Propose tagging them via `propose_auto_dispatch`. Only propose for tasks marked "eligible" in the assessment. Never propose for tasks with assignees, unresolved blockers, vague descriptions, or estimates outside the ~30m-~4h range.
+11. **Human-action blockers**: Scan open tasks for descriptions that indicate they cannot proceed without human action — e.g., tasks requiring payment, account creation, credential setup, design decisions, DNS changes, or external approvals. If such a task has `#auto-dispatch` or is in a Dispatch Queue section but clearly cannot run autonomously, propose `park_task` with the appropriate `-needed` tag. Known tags: `payment-needed`, `account-needed`, `hosting-needed`, `login-needed`, `api-key-needed`, `clarification-needed`, `resources-needed`, `approval-needed`, `decision-needed`, `design-needed`, `content-needed`, `dns-needed`, `domain-needed`, `testing-needed`. Only park tasks where the blocker is clear from the task description — do not park tasks speculatively.
 
 ## Output Format
 
@@ -568,6 +570,12 @@ Respond with ONLY a JSON array of actions. Each action is an object with:
     "reasoning": "Task has clear spec, bounded scope (~2h), no blockers, and pattern data shows 85% success rate for similar feature tasks at sonnet tier"
   },
   {
+    "type": "park_task",
+    "task_id": "t1234",
+    "needed_tag": "payment-needed",
+    "reasoning": "Task description requires purchasing a paid API subscription before implementation can proceed — cannot run autonomously"
+  },
+  {
     "type": "flag_for_review",
     "issue_number": 456,
     "reason": "Why human review is needed",
@@ -601,6 +609,8 @@ Respond with ONLY a JSON array of actions. Each action is an object with:
 - For adjust_priority: `new_priority` is REQUIRED and must be exactly one of `"high"`, `"medium"`, or `"low"`. Actions missing this field will be skipped by the executor.
 - For create_subtasks: `parent_task_id` is REQUIRED (the task ID string, e.g. `"t1234"`). `subtasks` is REQUIRED and must be a non-empty array. Actions missing either field will be skipped by the executor.
 - For propose_auto_dispatch: only propose for tasks listed as "eligible" in the Auto-Dispatch Eligibility Assessment section. The executor uses a two-phase guard: first pulse adds `[proposed:auto-dispatch]` annotation, second pulse (confirmation) applies the actual `#auto-dispatch` tag. This prevents accidental tagging. Required fields: `task_id` (string), `recommended_model` (string: haiku|sonnet|opus), `reasoning` (string).
+- For park_task: only use when the task description clearly indicates a human-action blocker (payment, account setup, credentials, design decision, DNS, etc.). Do not park tasks speculatively. The `needed_tag` must be one of: `account-needed`, `hosting-needed`, `login-needed`, `api-key-needed`, `clarification-needed`, `resources-needed`, `payment-needed`, `approval-needed`, `decision-needed`, `design-needed`, `content-needed`, `dns-needed`, `domain-needed`, `testing-needed`. Required fields: `task_id` (string), `needed_tag` (string), `reasoning` (string).
+- For the simplified retry prompt: valid action types include `park_task` in addition to the types listed there.
 
 Respond with ONLY the JSON array. No markdown fencing, no explanation outside the JSON.
 SYSTEM_PROMPT

@@ -41,7 +41,7 @@ AI_SEMANTIC_DEDUP_TIMEOUT="${AI_SEMANTIC_DEDUP_TIMEOUT:-30}"
 AI_IMPROVEMENT_DEDUP_DAYS="${AI_IMPROVEMENT_DEDUP_DAYS:-30}"
 
 # Valid action types — any action not in this list is rejected
-readonly AI_VALID_ACTION_TYPES="comment_on_issue create_task create_subtasks flag_for_review adjust_priority close_verified request_info create_improvement escalate_model propose_auto_dispatch"
+readonly AI_VALID_ACTION_TYPES="comment_on_issue create_task create_subtasks flag_for_review adjust_priority close_verified request_info create_improvement escalate_model propose_auto_dispatch park_task"
 
 # Maximum actions per execution cycle (safety limit)
 AI_MAX_ACTIONS_PER_CYCLE="${AI_MAX_ACTIONS_PER_CYCLE:-10}"
@@ -93,7 +93,7 @@ _extract_action_target() {
 		parent_task_id=$(printf '%s' "$action" | jq -r '.parent_task_id // "unknown"')
 		echo "task:${parent_task_id}"
 		;;
-	adjust_priority | escalate_model | propose_auto_dispatch)
+	adjust_priority | escalate_model | propose_auto_dispatch | park_task)
 		local task_id
 		task_id=$(printf '%s' "$action" | jq -r '.task_id // "unknown"')
 		echo "task:${task_id}"
@@ -1214,6 +1214,30 @@ validate_action_fields() {
 			;;
 		esac
 		;;
+	park_task)
+		local task_id needed_tag
+		task_id=$(printf '%s' "$action" | jq -r '.task_id // empty')
+		needed_tag=$(printf '%s' "$action" | jq -r '.needed_tag // empty')
+		if [[ -z "$task_id" ]]; then
+			echo "missing required field: task_id"
+			return 0
+		fi
+		if [[ -z "$needed_tag" ]]; then
+			echo "missing required field: needed_tag"
+			return 0
+		fi
+		# Validate needed_tag is a known -needed blocker tag
+		case "$needed_tag" in
+		account-needed | hosting-needed | login-needed | api-key-needed | \
+			clarification-needed | resources-needed | payment-needed | \
+			approval-needed | decision-needed | design-needed | content-needed | \
+			dns-needed | domain-needed | testing-needed) ;;
+		*)
+			echo "invalid needed_tag: $needed_tag (must be a known -needed blocker tag)"
+			return 0
+			;;
+		esac
+		;;
 	*)
 		echo "unhandled action type: $action_type"
 		return 0
@@ -1254,6 +1278,7 @@ execute_single_action() {
 	create_improvement) _exec_create_improvement "$action" "$repo_path" ;;
 	escalate_model) _exec_escalate_model "$action" "$repo_path" ;;
 	propose_auto_dispatch) _exec_propose_auto_dispatch "$action" "$repo_path" ;;
+	park_task) _exec_park_task "$action" "$repo_path" ;;
 	*)
 		echo '{"error":"unhandled_action_type"}'
 		return 1
@@ -2163,6 +2188,90 @@ _exec_propose_auto_dispatch() {
 	fi
 
 	echo "{\"proposed\":true,\"task_id\":\"$task_id\",\"recommended_model\":\"$recommended_model\",\"phase\":\"proposal\"}"
+	return 0
+}
+
+#######################################
+# Action: park_task (t1287)
+# Adds a -needed blocker tag to a task to signal it requires human action
+# before it can be auto-dispatched. Prevents the cron auto-pickup from
+# wasting worker sessions on tasks that need payment, credentials, etc.
+# Required fields: task_id, needed_tag, reasoning
+#######################################
+_exec_park_task() {
+	local action="$1"
+	local repo_path="$2"
+
+	local task_id needed_tag reasoning
+	task_id=$(printf '%s' "$action" | jq -r '.task_id')
+	needed_tag=$(printf '%s' "$action" | jq -r '.needed_tag')
+	reasoning=$(printf '%s' "$action" | jq -r '.reasoning // ""')
+
+	# Find the correct TODO.md — search provided repo first, then registered repos
+	local todo_file=""
+	local task_repo=""
+
+	if [[ -f "$repo_path/TODO.md" ]] && grep -qE "^[[:space:]]*- \[ \] ${task_id}( |$)" "$repo_path/TODO.md" 2>/dev/null; then
+		todo_file="$repo_path/TODO.md"
+		task_repo="$repo_path"
+	fi
+
+	if [[ -z "$todo_file" && -f "$SUPERVISOR_DB" ]]; then
+		local search_repos
+		search_repos=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks WHERE repo IS NOT NULL AND repo != '';" 2>/dev/null || echo "")
+		if [[ -n "$search_repos" ]]; then
+			while IFS= read -r search_repo; do
+				[[ -z "$search_repo" || ! -f "$search_repo/TODO.md" ]] && continue
+				if grep -qE "^[[:space:]]*- \[ \] ${task_id}( |$)" "$search_repo/TODO.md" 2>/dev/null; then
+					todo_file="$search_repo/TODO.md"
+					task_repo="$search_repo"
+					break
+				fi
+			done <<<"$search_repos"
+		fi
+	fi
+
+	if [[ -z "$todo_file" ]]; then
+		echo "{\"error\":\"task_not_found\",\"task_id\":\"$task_id\"}"
+		return 1
+	fi
+
+	local task_line
+	task_line=$(grep -E "^[[:space:]]*- \[ \] ${task_id}( |$)" "$todo_file" | head -1)
+	if [[ -z "$task_line" ]]; then
+		echo "{\"error\":\"task_not_found_in_todo\",\"task_id\":\"$task_id\"}"
+		return 1
+	fi
+
+	# Skip if already has this blocker tag
+	if echo "$task_line" | grep -q "#${needed_tag}"; then
+		echo "{\"skipped\":true,\"task_id\":\"$task_id\",\"reason\":\"already_tagged\",\"tag\":\"#${needed_tag}\"}"
+		return 0
+	fi
+
+	# Append the -needed tag to the task line
+	local new_line="${task_line} #${needed_tag}"
+
+	local escaped_old
+	escaped_old=$(printf '%s\n' "$task_line" | sed 's/[[\.*^$()+?{|]/\\&/g')
+	sed -i.bak "s|${escaped_old}|${new_line}|" "$todo_file"
+	rm -f "${todo_file}.bak"
+
+	# Commit and push
+	if declare -f commit_and_push_todo &>/dev/null; then
+		commit_and_push_todo "$task_repo" "chore: AI supervisor parked $task_id with #${needed_tag} (t1287)" >>"$SUPERVISOR_LOG" 2>&1 || true
+	fi
+
+	# Log the park event in supervisor DB
+	if [[ -n "$SUPERVISOR_DB" && -f "$SUPERVISOR_DB" ]]; then
+		db "$SUPERVISOR_DB" "
+			INSERT INTO state_log (task_id, from_state, to_state, reason)
+			VALUES ('$(sql_escape "$task_id")', 'queued', 'parked',
+					'$(sql_escape "AI parked with #${needed_tag}: $reasoning")');
+		" 2>/dev/null || true
+	fi
+
+	echo "{\"parked\":true,\"task_id\":\"$task_id\",\"tag\":\"#${needed_tag}\"}"
 	return 0
 }
 
