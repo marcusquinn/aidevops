@@ -1948,11 +1948,20 @@ cmd_pulse() {
 		adopt_untracked_prs 2>>"$SUPERVISOR_LOG" || true
 	fi
 
-	# Phase 3: Post-PR lifecycle (t128.8)
-	# Process tasks that workers completed (PR created) but still need merge/deploy
-	# t265: Redirect stderr to log and capture errors before || true suppresses them
-	if ! process_post_pr_lifecycle "${batch_id:-}" 2>>"$SUPERVISOR_LOG"; then
-		log_error "Phase 3 (process_post_pr_lifecycle) failed — see $SUPERVISOR_LOG for details"
+	# Phase 3: AI-driven task lifecycle
+	# Intelligence-first: gathers real-world state for each active task, decides
+	# the next action (merge, update branch, rebase, deploy, wait, escalate),
+	# executes it, and updates TODO status: tags for user visibility.
+	# Replaces hardcoded bash heuristics with AI decision-making.
+	# Falls back to process_post_pr_lifecycle if AI lifecycle is disabled.
+	if [[ "${SUPERVISOR_AI_LIFECYCLE:-true}" == "true" ]]; then
+		if ! process_ai_lifecycle "${batch_id:-}" 2>>"$SUPERVISOR_LOG"; then
+			log_error "Phase 3 (process_ai_lifecycle) failed — see $SUPERVISOR_LOG for details"
+		fi
+	else
+		if ! process_post_pr_lifecycle "${batch_id:-}" 2>>"$SUPERVISOR_LOG"; then
+			log_error "Phase 3 (process_post_pr_lifecycle) failed — see $SUPERVISOR_LOG for details"
+		fi
 	fi
 
 	# Phase 3b: Post-merge verification (t180.4)
@@ -2223,99 +2232,104 @@ cmd_pulse() {
 		date +%s >"$reconcile_cooldown_file" 2>/dev/null || true
 	fi
 
-	# Phase 3.5: Auto-retry blocked merge-conflict tasks (t1029)
-	# When a task is blocked with "Merge conflict — auto-rebase failed", periodically
-	# re-attempt the rebase after main advances. Other PRs merging often resolve conflicts.
-	local max_retry_cycles=3
-	local blocked_tasks
-	blocked_tasks=$(db "$SUPERVISOR_DB" "SELECT id, repo, error, rebase_attempts, last_main_sha FROM tasks WHERE status = 'blocked' AND error LIKE '%Merge conflict%auto-rebase failed%';" 2>/dev/null || echo "")
+	# Phase 3.5 and 3.6: Legacy rebase retry and escalation
+	# Skipped when AI lifecycle is active — process_ai_lifecycle handles blocked
+	# tasks directly by gathering state and deciding the next action.
+	if [[ "${SUPERVISOR_AI_LIFECYCLE:-true}" != "true" ]]; then
 
-	if [[ -n "$blocked_tasks" ]]; then
-		while IFS='|' read -r blocked_id blocked_repo _ blocked_rebase_attempts blocked_last_main_sha; do
-			[[ -z "$blocked_id" ]] && continue
+		# Phase 3.5: Auto-retry blocked merge-conflict tasks (t1029)
+		# When a task is blocked with "Merge conflict — auto-rebase failed", periodically
+		# re-attempt the rebase after main advances. Other PRs merging often resolve conflicts.
+		local max_retry_cycles=3
+		local blocked_tasks
+		blocked_tasks=$(db "$SUPERVISOR_DB" "SELECT id, repo, error, rebase_attempts, last_main_sha FROM tasks WHERE status = 'blocked' AND error LIKE '%Merge conflict%auto-rebase failed%';" 2>/dev/null || echo "")
 
-			# Cap at max_retry_cycles total retry cycles to prevent infinite loops
-			if [[ "${blocked_rebase_attempts:-0}" -ge "$max_retry_cycles" ]]; then
-				log_info "  Skipping $blocked_id — max retry cycles ($max_retry_cycles) reached"
-				continue
-			fi
+		if [[ -n "$blocked_tasks" ]]; then
+			while IFS='|' read -r blocked_id blocked_repo _ blocked_rebase_attempts blocked_last_main_sha; do
+				[[ -z "$blocked_id" ]] && continue
 
-			# Get current main SHA
-			local current_main_sha
-			current_main_sha=$(git -C "$blocked_repo" rev-parse origin/main 2>/dev/null || echo "")
-			if [[ -z "$current_main_sha" ]]; then
-				log_warn "  Failed to get origin/main SHA for $blocked_id in $blocked_repo"
-				continue
-			fi
+				# Cap at max_retry_cycles total retry cycles to prevent infinite loops
+				if [[ "${blocked_rebase_attempts:-0}" -ge "$max_retry_cycles" ]]; then
+					log_info "  Skipping $blocked_id — max retry cycles ($max_retry_cycles) reached"
+					continue
+				fi
 
-			# Check if main has advanced since last attempt
-			if [[ -n "$blocked_last_main_sha" && "$current_main_sha" == "$blocked_last_main_sha" ]]; then
-				# Main hasn't advanced — skip retry
-				continue
-			fi
+				# Get current main SHA
+				local current_main_sha
+				current_main_sha=$(git -C "$blocked_repo" rev-parse origin/main 2>/dev/null || echo "")
+				if [[ -z "$current_main_sha" ]]; then
+					log_warn "  Failed to get origin/main SHA for $blocked_id in $blocked_repo"
+					continue
+				fi
 
-			# Main has advanced (or this is first retry) — reset counter and retry
-			log_info "  Main advanced for $blocked_id — retrying rebase (attempt $((blocked_rebase_attempts + 1))/$max_retry_cycles)"
+				# Check if main has advanced since last attempt
+				if [[ -n "$blocked_last_main_sha" && "$current_main_sha" == "$blocked_last_main_sha" ]]; then
+					# Main hasn't advanced — skip retry
+					continue
+				fi
 
-			# Update last_main_sha before attempting rebase
-			local escaped_blocked_id
-			escaped_blocked_id=$(sql_escape "$blocked_id")
-			db "$SUPERVISOR_DB" "UPDATE tasks SET last_main_sha = '$current_main_sha' WHERE id = '$escaped_blocked_id';" 2>/dev/null || true
+				# Main has advanced (or this is first retry) — reset counter and retry
+				log_info "  Main advanced for $blocked_id — retrying rebase (attempt $((blocked_rebase_attempts + 1))/$max_retry_cycles)"
 
-			# Attempt rebase
-			if rebase_sibling_pr "$blocked_id" 2>>"$SUPERVISOR_LOG"; then
-				log_success "  Auto-rebase retry succeeded for $blocked_id — transitioning to pr_review"
-				# Increment rebase_attempts counter
-				db "$SUPERVISOR_DB" "UPDATE tasks SET rebase_attempts = $((blocked_rebase_attempts + 1)) WHERE id = '$escaped_blocked_id';" 2>/dev/null || true
-				# Transition back to pr_review so CI can run
-				cmd_transition "$blocked_id" "pr_review" --error "" 2>>"$SUPERVISOR_LOG" || true
-			else
-				# Rebase still failed — increment counter and stay blocked
-				log_warn "  Auto-rebase retry failed for $blocked_id — staying blocked"
-				db "$SUPERVISOR_DB" "UPDATE tasks SET rebase_attempts = $((blocked_rebase_attempts + 1)) WHERE id = '$escaped_blocked_id';" 2>/dev/null || true
-			fi
-		done <<<"$blocked_tasks"
-	fi
+				# Update last_main_sha before attempting rebase
+				local escaped_blocked_id
+				escaped_blocked_id=$(sql_escape "$blocked_id")
+				db "$SUPERVISOR_DB" "UPDATE tasks SET last_main_sha = '$current_main_sha' WHERE id = '$escaped_blocked_id';" 2>/dev/null || true
 
-	# Phase 3.6: Escalate rebase-blocked PRs to opus worker (t1050)
-	# When auto-rebase fails max_retry_cycles times, dispatch an opus worker to
-	# manually rebase, resolve conflicts, and merge the PR. Only ONE escalation
-	# runs at a time (sequential) so each subsequent rebase has a clean base.
-	local escalation_lock="${SUPERVISOR_DIR}/rebase-escalation.lock"
-	local escalation_cooldown=300 # 5 minutes between escalations
+				# Attempt rebase
+				if rebase_sibling_pr "$blocked_id" 2>>"$SUPERVISOR_LOG"; then
+					log_success "  Auto-rebase retry succeeded for $blocked_id — transitioning to pr_review"
+					# Increment rebase_attempts counter
+					db "$SUPERVISOR_DB" "UPDATE tasks SET rebase_attempts = $((blocked_rebase_attempts + 1)) WHERE id = '$escaped_blocked_id';" 2>/dev/null || true
+					# Transition back to pr_review so CI can run
+					cmd_transition "$blocked_id" "pr_review" --error "" 2>>"$SUPERVISOR_LOG" || true
+				else
+					# Rebase still failed — increment counter and stay blocked
+					log_warn "  Auto-rebase retry failed for $blocked_id — staying blocked"
+					db "$SUPERVISOR_DB" "UPDATE tasks SET rebase_attempts = $((blocked_rebase_attempts + 1)) WHERE id = '$escaped_blocked_id';" 2>/dev/null || true
+				fi
+			done <<<"$blocked_tasks"
+		fi
 
-	# Check if an escalation is already running or recently completed
-	local should_escalate=true
-	if [[ -f "$escalation_lock" ]]; then
-		local lock_pid lock_age
-		lock_pid=$(head -1 "$escalation_lock" 2>/dev/null || echo "")
-		lock_age=$(($(date +%s) - $(stat -c %Y "$escalation_lock" 2>/dev/null || stat -f %m "$escalation_lock" 2>/dev/null || echo "0")))
-		# Check if the lock holder is still alive
-		if [[ -n "$lock_pid" ]] && kill -0 "$lock_pid" 2>/dev/null; then
-			# Lock holder alive — respect cooldown
-			if [[ "$lock_age" -lt "$escalation_cooldown" ]]; then
+		# Phase 3.6: Escalate rebase-blocked PRs to opus worker (t1050)
+		# When auto-rebase fails max_retry_cycles times, dispatch an opus worker to
+		# manually rebase, resolve conflicts, and merge the PR. Only ONE escalation
+		# runs at a time (sequential) so each subsequent rebase has a clean base.
+		local escalation_lock="${SUPERVISOR_DIR}/rebase-escalation.lock"
+		local escalation_cooldown=300 # 5 minutes between escalations
+
+		# Check if an escalation is already running or recently completed
+		local should_escalate=true
+		if [[ -f "$escalation_lock" ]]; then
+			local lock_pid lock_age
+			lock_pid=$(head -1 "$escalation_lock" 2>/dev/null || echo "")
+			lock_age=$(($(date +%s) - $(stat -c %Y "$escalation_lock" 2>/dev/null || stat -f %m "$escalation_lock" 2>/dev/null || echo "0")))
+			# Check if the lock holder is still alive
+			if [[ -n "$lock_pid" ]] && kill -0 "$lock_pid" 2>/dev/null; then
+				# Lock holder alive — respect cooldown
+				if [[ "$lock_age" -lt "$escalation_cooldown" ]]; then
+					should_escalate=false
+					log_verbose "  Phase 3.6: escalation in progress (PID $lock_pid, ${lock_age}s/${escalation_cooldown}s)"
+				else
+					# Running too long — stale, remove
+					log_warn "  Phase 3.6: escalation lock stale (PID $lock_pid alive but ${lock_age}s old), removing"
+					rm -f "$escalation_lock" 2>/dev/null || true
+				fi
+			elif [[ "$lock_age" -lt "$escalation_cooldown" ]]; then
+				# Lock holder dead but within cooldown — likely just finished
 				should_escalate=false
-				log_verbose "  Phase 3.6: escalation in progress (PID $lock_pid, ${lock_age}s/${escalation_cooldown}s)"
+				log_verbose "  Phase 3.6: escalation cooldown (${lock_age}s/${escalation_cooldown}s)"
 			else
-				# Running too long — stale, remove
-				log_warn "  Phase 3.6: escalation lock stale (PID $lock_pid alive but ${lock_age}s old), removing"
+				# Lock holder dead and past cooldown — stale lock from crashed pulse
+				log_info "  Phase 3.6: removing stale escalation lock (PID $lock_pid dead, ${lock_age}s old)"
 				rm -f "$escalation_lock" 2>/dev/null || true
 			fi
-		elif [[ "$lock_age" -lt "$escalation_cooldown" ]]; then
-			# Lock holder dead but within cooldown — likely just finished
-			should_escalate=false
-			log_verbose "  Phase 3.6: escalation cooldown (${lock_age}s/${escalation_cooldown}s)"
-		else
-			# Lock holder dead and past cooldown — stale lock from crashed pulse
-			log_info "  Phase 3.6: removing stale escalation lock (PID $lock_pid dead, ${lock_age}s old)"
-			rm -f "$escalation_lock" 2>/dev/null || true
 		fi
-	fi
 
-	if [[ "$should_escalate" == "true" ]]; then
-		# Find ONE task that has exhausted auto-rebase retries
-		local escalation_candidate
-		escalation_candidate=$(db "$SUPERVISOR_DB" "
+		if [[ "$should_escalate" == "true" ]]; then
+			# Find ONE task that has exhausted auto-rebase retries
+			local escalation_candidate
+			escalation_candidate=$(db "$SUPERVISOR_DB" "
 			SELECT t.id, t.repo, t.pr_url, t.branch, t.rebase_attempts
 			FROM tasks t
 			WHERE t.status = 'blocked'
@@ -2326,29 +2340,29 @@ cmd_pulse() {
 			LIMIT 1;
 		" 2>/dev/null || echo "")
 
-		if [[ -n "$escalation_candidate" ]]; then
-			local esc_id esc_repo esc_pr esc_branch esc_attempts
-			IFS='|' read -r esc_id esc_repo esc_pr esc_branch esc_attempts <<<"$escalation_candidate"
+			if [[ -n "$escalation_candidate" ]]; then
+				local esc_id esc_repo esc_pr esc_branch esc_attempts
+				IFS='|' read -r esc_id esc_repo esc_pr esc_branch esc_attempts <<<"$escalation_candidate"
 
-			if [[ -n "$esc_id" ]]; then
-				log_info "  Phase 3.6: escalating $esc_id to opus worker (rebase_attempts=$esc_attempts, pr=$esc_pr)"
+				if [[ -n "$esc_id" ]]; then
+					log_info "  Phase 3.6: escalating $esc_id to opus worker (rebase_attempts=$esc_attempts, pr=$esc_pr)"
 
-				# Resolve AI CLI
-				local esc_ai_cli
-				esc_ai_cli=$(resolve_ai_cli 2>/dev/null || echo "")
-				if [[ -z "$esc_ai_cli" ]]; then
-					log_warn "  Phase 3.6: no AI CLI available for escalation"
-				else
-					# Find the worktree path
-					local esc_worktree=""
-					local esc_wt_row
-					esc_wt_row=$(db "$SUPERVISOR_DB" "SELECT worktree FROM tasks WHERE id = '$(sql_escape "$esc_id")';" 2>/dev/null || echo "")
-					if [[ -n "$esc_wt_row" && -d "$esc_wt_row" ]]; then
-						esc_worktree="$esc_wt_row"
-					fi
+					# Resolve AI CLI
+					local esc_ai_cli
+					esc_ai_cli=$(resolve_ai_cli 2>/dev/null || echo "")
+					if [[ -z "$esc_ai_cli" ]]; then
+						log_warn "  Phase 3.6: no AI CLI available for escalation"
+					else
+						# Find the worktree path
+						local esc_worktree=""
+						local esc_wt_row
+						esc_wt_row=$(db "$SUPERVISOR_DB" "SELECT worktree FROM tasks WHERE id = '$(sql_escape "$esc_id")';" 2>/dev/null || echo "")
+						if [[ -n "$esc_wt_row" && -d "$esc_wt_row" ]]; then
+							esc_worktree="$esc_wt_row"
+						fi
 
-					# Build the escalation prompt
-					local esc_prompt="You are resolving a merge conflict that automated tools could not handle.
+						# Build the escalation prompt
+						local esc_prompt="You are resolving a merge conflict that automated tools could not handle.
 
 TASK: $esc_id
 BRANCH: $esc_branch
@@ -2381,49 +2395,51 @@ RULES:
 - If a file has been deleted on main but modified on the branch, keep the branch version
 - Do NOT create new commits beyond what the rebase produces"
 
-					# Resolve model — use opus for complex conflict resolution
-					local esc_model
-					esc_model=$(resolve_model "opus" "$esc_ai_cli" 2>/dev/null || echo "")
+						# Resolve model — use opus for complex conflict resolution
+						local esc_model
+						esc_model=$(resolve_model "opus" "$esc_ai_cli" 2>/dev/null || echo "")
 
-					# Dispatch the worker
-					local esc_log_dir="${SUPERVISOR_DIR}/logs"
-					mkdir -p "$esc_log_dir" 2>/dev/null || true
-					local esc_log_file
-					esc_log_file="${esc_log_dir}/escalation-${esc_id}-$(date +%Y%m%d-%H%M%S).log"
+						# Dispatch the worker
+						local esc_log_dir="${SUPERVISOR_DIR}/logs"
+						mkdir -p "$esc_log_dir" 2>/dev/null || true
+						local esc_log_file
+						esc_log_file="${esc_log_dir}/escalation-${esc_id}-$(date +%Y%m%d-%H%M%S).log"
 
-					local esc_workdir="${esc_worktree:-$esc_repo}"
-					if [[ "$esc_ai_cli" == "opencode" ]]; then
-						(cd "$esc_workdir" && $esc_ai_cli run \
-							${esc_model:+--model "$esc_model"} \
-							--format json \
-							--title "escalation-rebase-${esc_id}" \
-							"$esc_prompt" \
-							>"$esc_log_file" 2>&1) &
-						local esc_pid=$!
-					else
-						(cd "$esc_workdir" && $esc_ai_cli -p "$esc_prompt" \
-							${esc_model:+--model "$esc_model"} \
-							>"$esc_log_file" 2>&1) &
-						local esc_pid=$!
-					fi
+						local esc_workdir="${esc_worktree:-$esc_repo}"
+						if [[ "$esc_ai_cli" == "opencode" ]]; then
+							(cd "$esc_workdir" && $esc_ai_cli run \
+								${esc_model:+--model "$esc_model"} \
+								--format json \
+								--title "escalation-rebase-${esc_id}" \
+								"$esc_prompt" \
+								>"$esc_log_file" 2>&1) &
+							local esc_pid=$!
+						else
+							(cd "$esc_workdir" && $esc_ai_cli -p "$esc_prompt" \
+								${esc_model:+--model "$esc_model"} \
+								>"$esc_log_file" 2>&1) &
+							local esc_pid=$!
+						fi
 
-					# Record the escalation in the DB
-					db "$SUPERVISOR_DB" "UPDATE tasks SET
+						# Record the escalation in the DB
+						db "$SUPERVISOR_DB" "UPDATE tasks SET
 						status = 'running',
 						error = 'Escalation: opus rebase worker (PID $esc_pid)',
 						worker_pid = $esc_pid,
 						updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
 					WHERE id = '$(sql_escape "$esc_id")';" 2>/dev/null || true
 
-					# Create lock file AFTER successful dispatch (stores worker PID for stale detection)
-					echo "$esc_pid" >"$escalation_lock" 2>/dev/null || true
+						# Create lock file AFTER successful dispatch (stores worker PID for stale detection)
+						echo "$esc_pid" >"$escalation_lock" 2>/dev/null || true
 
-					log_success "  Phase 3.6: dispatched opus worker PID $esc_pid for $esc_id"
-					send_task_notification "$esc_id" "escalated" "Opus rebase worker dispatched (PID $esc_pid)" 2>>"$SUPERVISOR_LOG" || true
+						log_success "  Phase 3.6: dispatched opus worker PID $esc_pid for $esc_id"
+						send_task_notification "$esc_id" "escalated" "Opus rebase worker dispatched (PID $esc_pid)" 2>>"$SUPERVISOR_LOG" || true
+					fi
 				fi
 			fi
 		fi
-	fi
+
+	fi # End of Phase 3.5/3.6 legacy guard (SUPERVISOR_AI_LIFECYCLE != true)
 
 	# t1052: Flush deferred batch completions after all lifecycle phases.
 	# Runs retrospective, session review, distillation, and auto-release

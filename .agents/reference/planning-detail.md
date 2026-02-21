@@ -23,6 +23,47 @@ Add `#auto-dispatch` to tasks that can run autonomously (clear spec, bounded sco
 
 **Interactive claim guard** (t1062): When working interactively on a task tagged `#auto-dispatch`, immediately add `assignee:` or `started:` in the TODO entry before pushing — the supervisor skips tasks with these fields to prevent race conditions.
 
+## Lifecycle Status Tags
+
+The supervisor updates a `status:` tag on each task's TODO.md line at every decision point. This gives users real-time visibility into what the supervisor is doing with each task. Tags are updated by the AI lifecycle engine (`ai-lifecycle.sh`) and batch-committed once per pulse.
+
+**Lifecycle states** (progressive — task moves through these):
+
+| Tag | Meaning |
+|-----|---------|
+| `status:dispatched` | Worker session launched |
+| `status:running` | Worker actively coding |
+| `status:evaluating` | Checking worker output |
+| `status:pr-open` | PR created, awaiting CI |
+| `status:ci-running` | CI checks in progress |
+| `status:ci-passed` | CI green, ready to merge |
+| `status:merging` | Merge in progress |
+| `status:merged` | PR merged to main |
+| `status:deploying` | Running deploy/setup |
+| `status:deployed` | Live on main, awaiting verification |
+| `status:verified` | Post-merge verification passed |
+
+**Action states** (transient — what the supervisor is doing right now):
+
+| Tag | Meaning |
+|-----|---------|
+| `status:updating-branch` | Updating PR branch via GitHub API |
+| `status:rebasing` | Git rebase onto main |
+| `status:resolving-conflicts` | AI resolving merge conflicts |
+| `status:reviewing-threads` | Triaging PR review comments |
+
+**Problem states** (visible to user — needs attention or patience):
+
+| Tag | Meaning |
+|-----|---------|
+| `status:behind-main` | PR needs update, supervisor will handle |
+| `status:has-conflicts` | Merge conflicts, AI attempting resolution |
+| `status:ci-failed` | CI checks failed, investigating |
+| `status:changes-requested` | Human reviewer requested changes |
+| `status:blocked:<reason>` | Cannot proceed, reason given |
+
+The AI lifecycle engine (`SUPERVISOR_AI_LIFECYCLE=true`, default) replaces hardcoded bash heuristics with intelligence-first decision making. For each active task, it gathers real-world state (DB, GitHub PR, CI, git), decides the next action, executes it, and updates the status tag. Set `SUPERVISOR_AI_LIFECYCLE=false` to fall back to the legacy `cmd_pr_lifecycle` bash heuristics.
+
 ## Blocker Statuses
 
 Add these tags to tasks that need human action before they can proceed. The supervisor's eligibility assessment detects them and skips dispatch: `account-needed`, `hosting-needed`, `login-needed`, `api-key-needed`, `clarification-needed`, `resources-needed`, `payment-needed`, `approval-needed`, `decision-needed`, `design-needed`, `content-needed`, `dns-needed`, `domain-needed`, `testing-needed`.
