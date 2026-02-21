@@ -10,6 +10,9 @@
 #   --description "Details"    Task description (optional)
 #   --labels "label1,label2"   Comma-separated labels (optional)
 #   --count N                  Allocate N consecutive IDs (default: 1)
+#                              Creates one GitHub/GitLab issue per ID using
+#                              the same --title. Output includes ref_tNNN=GH#NNN
+#                              for each created issue.
 #   --offline                  Force offline mode (skip remote push)
 #   --no-issue                 Skip GitHub/GitLab issue creation
 #   --dry-run                  Show what would be allocated without changes
@@ -27,7 +30,7 @@
 #   4. Write 1048+count to .task-counter
 #   5. git commit .task-counter && git push origin HEAD:main
 #   6. If push fails (conflict) → retry from step 1 (max 10 attempts)
-#   7. On success, create GitHub/GitLab issue (optional, non-blocking)
+#   7. On success, create GitHub/GitLab issue per ID (optional, non-blocking)
 #
 # The .task-counter file is the single source of truth for the next
 # available task ID. It contains one integer. Every allocation atomically
@@ -541,31 +544,45 @@ main() {
 		fi
 	fi
 
-	# --- Create issue AFTER ID is secured (optional, non-blocking) ---
+	# --- Create issues AFTER IDs are secured (optional, non-blocking) ---
+	# For batch allocations (--count N), create one issue per allocated ID.
 
-	local issue_num=""
 	local ref_prefix=""
+	local last_id=$((first_id + ALLOC_COUNT - 1))
+	# Associative-style parallel arrays: issue_nums[0..N-1] for each allocated ID
+	local -a issue_nums=()
+	local has_any_issue=false
 
 	if [[ "$NO_ISSUE" == "false" ]] && [[ "$is_offline" == "false" ]] && [[ "$platform" != "unknown" ]]; then
 		if check_cli "$platform"; then
-			local issue_title="t${first_id}: ${TASK_TITLE}"
-
 			case "$platform" in
-			github)
-				ref_prefix="GH"
-				issue_num=$(create_github_issue "$issue_title" "$TASK_DESCRIPTION" "$TASK_LABELS" "$REPO_PATH") || true
-				;;
-			gitlab)
-				ref_prefix="GL"
-				issue_num=$(create_gitlab_issue "$issue_title" "$TASK_DESCRIPTION" "$TASK_LABELS" "$REPO_PATH") || true
-				;;
+			github) ref_prefix="GH" ;;
+			gitlab) ref_prefix="GL" ;;
 			esac
 
-			if [[ -n "$issue_num" ]]; then
-				log_success "Created issue: ${ref_prefix}#${issue_num}"
-			else
-				log_warn "Issue creation failed (non-fatal — ID t${first_id} is secured)"
-			fi
+			local i
+			for ((i = first_id; i <= last_id; i++)); do
+				local issue_title="t${i}: ${TASK_TITLE}"
+				local issue_num=""
+
+				case "$platform" in
+				github)
+					issue_num=$(create_github_issue "$issue_title" "$TASK_DESCRIPTION" "$TASK_LABELS" "$REPO_PATH") || true
+					;;
+				gitlab)
+					issue_num=$(create_gitlab_issue "$issue_title" "$TASK_DESCRIPTION" "$TASK_LABELS" "$REPO_PATH") || true
+					;;
+				esac
+
+				if [[ -n "$issue_num" ]]; then
+					log_success "Created issue: ${ref_prefix}#${issue_num}"
+					issue_nums+=("$issue_num")
+					has_any_issue=true
+				else
+					log_warn "Issue creation failed for t${i} (non-fatal — ID is secured)"
+					issue_nums+=("")
+				fi
+			done
 		else
 			log_warn "CLI for $platform not found — skipping issue creation"
 		fi
@@ -576,19 +593,28 @@ main() {
 	if [[ "$ALLOC_COUNT" -eq 1 ]]; then
 		echo "task_id=t${first_id}"
 	else
-		# Batch mode: output all claimed IDs
-		local last_id=$((first_id + ALLOC_COUNT - 1))
 		echo "task_id=t${first_id}"
 		echo "task_id_last=t${last_id}"
 		echo "task_count=${ALLOC_COUNT}"
 	fi
 
-	if [[ -n "$issue_num" ]]; then
-		echo "ref=${ref_prefix}#${issue_num}"
+	if [[ "$has_any_issue" == "true" ]]; then
+		# Output ref for first issue (primary — backwards compatible)
+		echo "ref=${ref_prefix}#${issue_nums[0]}"
 		local remote_url
 		remote_url=$(cd "$REPO_PATH" && git remote get-url origin 2>/dev/null | sed 's/\.git$//' || echo "")
-		if [[ -n "$remote_url" ]]; then
-			echo "issue_url=${remote_url}/issues/${issue_num}"
+		if [[ -n "$remote_url" ]] && [[ -n "${issue_nums[0]}" ]]; then
+			echo "issue_url=${remote_url}/issues/${issue_nums[0]}"
+		fi
+		# Output refs for all issues in batch (new — for callers that parse all output)
+		if [[ "$ALLOC_COUNT" -gt 1 ]]; then
+			local j
+			for ((j = 0; j < ALLOC_COUNT; j++)); do
+				local tid=$((first_id + j))
+				if [[ -n "${issue_nums[$j]}" ]]; then
+					echo "ref_t${tid}=${ref_prefix}#${issue_nums[$j]}"
+				fi
+			done
 		fi
 	elif [[ "$is_offline" == "true" ]]; then
 		echo "ref=offline"
