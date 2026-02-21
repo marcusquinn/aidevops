@@ -39,6 +39,7 @@ pass() {
 	PASS_COUNT=$((PASS_COUNT + 1))
 	TOTAL_COUNT=$((TOTAL_COUNT + 1))
 	printf "  \033[0;32mPASS\033[0m %s\n" "$1"
+	return 0
 }
 
 fail() {
@@ -48,17 +49,20 @@ fail() {
 	if [[ -n "${2:-}" ]]; then
 		printf "       %s\n" "$2"
 	fi
+	return 0
 }
 
 skip() {
 	SKIP_COUNT=$((SKIP_COUNT + 1))
 	TOTAL_COUNT=$((TOTAL_COUNT + 1))
 	printf "  \033[0;33mSKIP\033[0m %s\n" "$1"
+	return 0
 }
 
 section() {
 	echo ""
 	printf "\033[1m=== %s ===\033[0m\n" "$1"
+	return 0
 }
 
 # --- Isolated Test Environment ---
@@ -126,6 +130,7 @@ trap cleanup EXIT
 # Helper: run supervisor command with isolated DB
 sup() {
 	bash "$SUPERVISOR_SCRIPT" "$@" 2>&1
+	return $?
 }
 
 # Helper: query the test DB directly
@@ -145,9 +150,12 @@ get_field() {
 
 # Helper: create a mock worker log file
 create_log() {
-	local task_id="$1"
-	local content="$2"
-	local log_file="$TEST_DIR/supervisor/logs/${task_id}.log"
+	local task_id
+	task_id="$1"
+	local content
+	content="$2"
+	local log_file
+	log_file="$TEST_DIR/supervisor/logs/${task_id}.log"
 	mkdir -p "$TEST_DIR/supervisor/logs"
 	echo "$content" >"$log_file"
 	# Update the task's log_file in DB
@@ -161,11 +169,11 @@ create_log() {
 section "Test Environment Setup"
 
 # Initialize a real git repo with a commit on main
-git init "$TEST_REPO" &>/dev/null
-git -C "$TEST_REPO" checkout -b main &>/dev/null 2>&1 || true
+git init -q "$TEST_REPO"
+git -C "$TEST_REPO" checkout -q -b main 2>&1 || true
 echo "# Test Repo" >"$TEST_REPO/README.md"
-git -C "$TEST_REPO" add README.md &>/dev/null
-git -C "$TEST_REPO" commit -m "initial commit" &>/dev/null
+git -C "$TEST_REPO" add README.md
+git -C "$TEST_REPO" commit -q -m "initial commit"
 
 # Initialize supervisor DB
 sup init >/dev/null
@@ -201,7 +209,7 @@ cli_result=$(bash -c "
     source '$SUPERVISOR_DIR_MODULE/_common.sh'
     source '$SUPERVISOR_DIR_MODULE/dispatch.sh'
     resolve_ai_cli
-" 2>/dev/null)
+")
 
 if [[ "$cli_result" == "claude" ]]; then
 	pass "resolve_ai_cli returns 'claude' when SUPERVISOR_CLI=claude"
@@ -268,7 +276,7 @@ run_cmd=$(bash -c "
     build_cli_cmd --cli claude --action run --output array \
         --model 'anthropic/claude-sonnet-4-6' \
         --prompt 'Test prompt here'
-" 2>/dev/null)
+")
 
 if echo "$run_cmd" | grep -q "^claude"; then
 	pass "build_cli_cmd run: starts with 'claude'"
@@ -304,7 +312,7 @@ version_cmd=$(bash -c "
     source '$SUPERVISOR_DIR_MODULE/_common.sh'
     source '$SUPERVISOR_DIR_MODULE/dispatch.sh'
     build_cli_cmd --cli claude --action version --output array
-" 2>/dev/null)
+")
 
 if [[ "$version_cmd" == *"claude"*"--version"* ]]; then
 	pass "build_cli_cmd version: produces 'claude --version'"
@@ -322,7 +330,7 @@ probe_cmd=$(bash -c "
     source '$SUPERVISOR_DIR_MODULE/dispatch.sh'
     build_cli_cmd --cli claude --action probe --output array \
         --model 'anthropic/claude-sonnet-4-6'
-" 2>/dev/null)
+")
 
 if echo "$probe_cmd" | grep -q "output-format.*text\|text.*output-format"; then
 	pass "build_cli_cmd probe: uses --output-format text (not json)"
@@ -350,7 +358,7 @@ wt_spawn=$(bash -c "
     set -- init
     source '$SUPERVISOR_SCRIPT' >/dev/null
     create_task_worktree 'claude-spawn-t1' '$TEST_REPO'
-" 2>/dev/null)
+")
 
 if [[ -d "$wt_spawn" ]]; then
 	pass "Worktree created for claude dispatch test"
@@ -444,7 +452,7 @@ meta_output=$(bash -c "
     source '$SUPERVISOR_DIR_MODULE/_common.sh'
     source '$SUPERVISOR_DIR_MODULE/evaluate.sh'
     extract_log_metadata '$TEST_DIR/supervisor/logs/claude-cap-t1.log'
-" 2>/dev/null)
+")
 
 if echo "$meta_output" | grep -q "worker_started=true"; then
 	pass "Claude output: WORKER_STARTED sentinel detected"
@@ -608,7 +616,7 @@ wt_full=$(bash -c "
     set -- init
     source '$SUPERVISOR_SCRIPT' >/dev/null
     create_task_worktree 'claude-full-t1' '$TEST_REPO'
-" 2>/dev/null)
+")
 
 # Simulate dispatch pipeline transitions
 sup transition claude-full-t1 dispatched \
@@ -640,8 +648,8 @@ fi
 
 # Simulate worker creating a commit in the worktree
 echo "feature code from claude worker" >"$wt_full/feature.txt"
-git -C "$wt_full" add feature.txt &>/dev/null
-git -C "$wt_full" commit -m "feat: add feature code (claude-full-t1)" &>/dev/null
+git -C "$wt_full" add feature.txt
+git -C "$wt_full" commit -q -m "feat: add feature code (claude-full-t1)"
 
 # Create a successful worker log (claude JSON format)
 create_log "claude-full-t1" 'WRAPPER_STARTED task_id=claude-full-t1 wrapper_pid=9001 timestamp=2026-02-21T10:00:00Z
@@ -788,7 +796,7 @@ wt_merge=$(bash -c "
     set -- init
     source '$SUPERVISOR_SCRIPT' >/dev/null
     create_task_worktree 'claude-merge-t1' '$TEST_REPO'
-" 2>/dev/null)
+")
 
 sup transition claude-merge-t1 dispatched \
 	--worktree "$wt_merge" \
@@ -859,7 +867,7 @@ wt_retry=$(bash -c "
     set -- init
     source '$SUPERVISOR_SCRIPT' >/dev/null
     create_task_worktree 'claude-retry-t1' '$TEST_REPO'
-" 2>/dev/null)
+")
 
 sup transition claude-retry-t1 dispatched --worktree "$wt_retry" --branch "feature/claude-retry-t1" >/dev/null
 sup transition claude-retry-t1 running >/dev/null
@@ -894,7 +902,7 @@ wt_retry2=$(bash -c "
     set -- init
     source '$SUPERVISOR_SCRIPT' >/dev/null
     create_task_worktree 'claude-retry-t1' '$TEST_REPO' 'true'
-" 2>/dev/null)
+")
 
 if [[ -d "$wt_retry2" ]]; then
 	pass "Retry cycle: force-fresh worktree created"
@@ -906,8 +914,8 @@ fi
 sup transition claude-retry-t1 running >/dev/null
 
 echo "retry feature" >"$wt_retry2/retry-feature.txt"
-git -C "$wt_retry2" add retry-feature.txt &>/dev/null
-git -C "$wt_retry2" commit -m "feat: retry success (claude-retry-t1)" &>/dev/null
+git -C "$wt_retry2" add retry-feature.txt
+git -C "$wt_retry2" commit -q -m "feat: retry success (claude-retry-t1)"
 
 create_log "claude-retry-t1" 'WRAPPER_STARTED task_id=claude-retry-t1 wrapper_pid=10003 timestamp=2026-02-21T10:05:00Z
 WORKER_STARTED task_id=claude-retry-t1 pid=10004 timestamp=2026-02-21T10:05:01Z
