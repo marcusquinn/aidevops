@@ -1837,7 +1837,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
-- [ ] t1300 Investigate t1165.1 repeated permission_denied_write_operations failures #bugfix #auto-dispatch #self-improvement ~1h model:sonnet category:reliability — Task t1165.1 has failed 3+ times with failure mode 'permission_denied_write_operations' at opus tier. Recent memories show this pattern at 10:45, 11:03, and 11:21 today. Root cause needs investigation — likely a filesystem permission issue in the worktree or container environment. Check: (1) worktree directory permissions, (2) whether the task requires writing to protected paths, (3) if this is a sandbox restriction. Fix the environment or task spec so workers can succeed. ref:GH#2106 assignee:marcusquinn
+- [ ] t1300 Investigate t1165.1 repeated permission_denied_write_operations failures #bugfix #auto-dispatch #self-improvement ~1h model:opus category:reliability — Task t1165.1 has failed 3+ times with failure mode 'permission_denied_write_operations' at opus tier. Recent memories show this pattern at 10:45, 11:03, and 11:21 today. Root cause needs investigation — likely a filesystem permission issue in the worktree or container environment. Check: (1) worktree directory permissions, (2) whether the task requires writing to protected paths, (3) if this is a sandbox restriction. Fix the environment or task spec so workers can succeed. ref:GH#2106 assignee:marcusquinn
 =======
 >>>>>>> Stashed changes
 =======
