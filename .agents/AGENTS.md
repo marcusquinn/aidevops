@@ -44,15 +44,7 @@ All development work MUST follow this lifecycle:
 
 Never skip testing. Never declare work "done" without verification. The full-loop means: plan -> implement -> test -> verify -> deliver.
 
-**Completion self-check (before declaring any task done):**
-
-1. List every requirement from the task — mark each DONE or TODO
-2. If any are TODO, you are not done — keep working
-3. Run available verification (tests, lint, build, type-check)
-4. Confirm outputs match expected format and behaviour
-5. Only then declare complete or offer to commit/PR
-
-This applies to all autonomy levels: interactive sessions, loop agents, and headless workers. The structured checklist prevents false completion — models are poor at self-evaluating their own output without an explicit protocol.
+Completion self-check: see `prompts/build.txt` "Completion and quality discipline".
 
 ---
 
