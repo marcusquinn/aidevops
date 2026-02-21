@@ -137,7 +137,7 @@
     "_description": "MCPorter CLI usage (not MCP server mode — run these directly in terminal)",
     "discover": "npx mcporter list",
     "discover_single": "npx mcporter list context7 --schema",
-    "call_tool": "npx mcporter call context7.resolve-library-id libraryName=react",
+    "call_tool": "npx mcporter call context7.resolve-library-id query='React docs' libraryName=react",
     "call_shorthand": "npx mcporter context7.resolve-library-id libraryName=react",
     "generate_cli": "npx mcporter generate-cli --command https://mcp.context7.com/mcp --compile",
     "emit_types": "npx mcporter emit-ts linear --out types/linear-tools.d.ts",

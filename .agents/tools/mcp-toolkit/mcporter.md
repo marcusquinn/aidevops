@@ -73,7 +73,7 @@ Run any mcporter command without installing:
 
 ```bash
 npx mcporter list
-npx mcporter call context7.resolve-library-id libraryName=react
+npx mcporter call context7.resolve-library-id query="React docs" libraryName=react
 ```
 
 ### Project dependency
@@ -476,5 +476,5 @@ MCPORTER_LIST_TIMEOUT=120000 mcporter list <server>
 Use Context7 MCP for current mcporter documentation:
 
 ```bash
-mcporter call context7.resolve-library-id libraryName=mcporter
+mcporter call context7.resolve-library-id query="mcporter MCP toolkit" libraryName=mcporter
 ```
