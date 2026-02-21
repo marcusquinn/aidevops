@@ -2356,3 +2356,12 @@
   files: .agents/scripts/ai-cli-config.sh
   check: shellcheck .agents/scripts/ai-cli-config.sh
   check: file-exists .agents/scripts/ai-cli-config.sh
+
+- [ ] v271 t1161 Claude Code config parity in setup.sh #auto-dispatch — ... | PR #2099 | merged:2026-02-21
+  files: .agents/scripts/generate-claude-agents.sh, setup-modules/config.sh, setup.sh
+  check: shellcheck .agents/scripts/generate-claude-agents.sh
+  check: file-exists .agents/scripts/generate-claude-agents.sh
+  check: shellcheck setup-modules/config.sh
+  check: file-exists setup-modules/config.sh
+  check: shellcheck setup.sh
+  check: file-exists setup.sh
