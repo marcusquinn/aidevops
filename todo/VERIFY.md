@@ -2306,3 +2306,9 @@
   files: .agents/scripts/email-signature-parser-helper.sh
   check: shellcheck .agents/scripts/email-signature-parser-helper.sh
   check: file-exists .agents/scripts/email-signature-parser-helper.sh
+
+- [ ] v262 t1294.4 Update `subagent-index.toon` and AGENTS.md domain index â... | PR #2087 | merged:2026-02-21
+  files: .agents/AGENTS.md, .agents/subagent-index.toon, AGENTS.md
+  check: file-exists .agents/AGENTS.md
+  check: file-exists .agents/subagent-index.toon
+  check: file-exists AGENTS.md
