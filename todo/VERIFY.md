@@ -2302,13 +2302,18 @@
   check: rg "api" .agents/subagent-index.toon
   check: rg "configuration" .agents/subagent-index.toon
 
-- [ ] v261 t1160.5 Fix email-signature-parser-helper.sh to use resolve_ai_cl... | PR #2088 | merged:2026-02-21
+- [x] v261 t1160.5 Fix email-signature-parser-helper.sh to use resolve_ai_cl... | PR #2088 | merged:2026-02-21 verified:2026-02-21
   files: .agents/scripts/email-signature-parser-helper.sh
   check: shellcheck .agents/scripts/email-signature-parser-helper.sh
   check: file-exists .agents/scripts/email-signature-parser-helper.sh
 
-- [ ] v262 t1294.4 Update `subagent-index.toon` and AGENTS.md domain index â... | PR #2087 | merged:2026-02-21
+- [x] v262 t1294.4 Update `subagent-index.toon` and AGENTS.md domain index â... | PR #2087 | merged:2026-02-21 verified:2026-02-21
   files: .agents/AGENTS.md, .agents/subagent-index.toon, AGENTS.md
   check: file-exists .agents/AGENTS.md
   check: file-exists .agents/subagent-index.toon
   check: file-exists AGENTS.md
+
+- [ ] v263 t1160.6 Add claude to orphan process detection in pulse.sh Phase ... | PR #2089 | merged:2026-02-21
+  files: .agents/scripts/supervisor/pulse.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
