@@ -892,6 +892,13 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 	# Stub resolve_ai_cli and resolve_model if not available
 	if ! declare -f resolve_ai_cli &>/dev/null; then
 		resolve_ai_cli() {
+			if [[ -n "${SUPERVISOR_CLI:-}" ]]; then
+				if command -v "$SUPERVISOR_CLI" &>/dev/null; then
+					echo "$SUPERVISOR_CLI"
+					return 0
+				fi
+				return 1
+			fi
 			if command -v opencode &>/dev/null; then
 				echo "opencode"
 			elif command -v claude &>/dev/null; then

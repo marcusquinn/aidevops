@@ -32,6 +32,15 @@ detect_dispatch_mode() {
 # claude CLI fallback is DEPRECATED and will be removed in a future release.
 #######################################
 resolve_ai_cli() {
+	# Allow env var override for explicit CLI preference
+	if [[ -n "${SUPERVISOR_CLI:-}" ]]; then
+		if command -v "$SUPERVISOR_CLI" &>/dev/null; then
+			echo "$SUPERVISOR_CLI"
+			return 0
+		fi
+		log_error "SUPERVISOR_CLI='$SUPERVISOR_CLI' not found in PATH"
+		return 1
+	fi
 	# opencode is the primary and only supported CLI
 	if command -v opencode &>/dev/null; then
 		echo "opencode"
