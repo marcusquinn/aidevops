@@ -10,12 +10,11 @@ tools:
   glob: true
   grep: true
 subagents:
+  - company-runners
   - accounts
   - sales
   - marketing
   - legal
-  - general
-  - explore
 ---
 
 # Business - Company Orchestration Agent
@@ -127,8 +126,8 @@ coordinator-helper.sh dispatch \
 
 # Group related tasks into a convoy
 coordinator-helper.sh convoy \
-  --name "monthly-close" \
-  --tasks "reconcile-bank,review-expenses,generate-report"
+  --name "example-convoy" \
+  --tasks "task-a,task-b,task-c"
 ```
 
 ## Example Runner Configurations

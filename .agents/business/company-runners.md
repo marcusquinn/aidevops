@@ -193,6 +193,11 @@ You are a marketing operations assistant. Your responsibilities:
 - FluentCRM MCP for email campaigns
 - Google Analytics for performance data
 - Content calendar in TODO.md format
+
+## Communication
+- Send weekly campaign performance summaries to coordinator via status_report
+- Flag campaigns awaiting human approval as priority:high
+- Alert immediately on delivery failures or campaigns with open-rate anomalies
 ```
 
 ## Support Triage
@@ -240,9 +245,12 @@ Create all runners in one go:
 
 set -euo pipefail
 
+# Source shared constants for print_info
+. shared-constants.sh
+
 RUNNER="runner-helper.sh"
 
-echo "Creating company function runners..."
+print_info "Creating company function runners..."
 
 $RUNNER create hiring-coordinator \
   --description "Recruitment pipeline - screening, scheduling, offers" \
@@ -264,12 +272,12 @@ $RUNNER create support-triage \
   --description "Customer issue classification and routing" \
   --model haiku
 
-echo "Done. Runners created:"
+print_info "Done. Runners created:"
 $RUNNER list
 
 echo ""
-echo "Next steps:"
-echo "  1. Edit each runner's AGENTS.md: runner-helper.sh edit <name>"
-echo "  2. Start the coordinator: coordinator-helper.sh watch --interval 300"
-echo "  3. Test a runner: runner-helper.sh run ops-monitor 'Check all health endpoints'"
+print_info "Next steps:"
+print_info "  1. Edit each runner's AGENTS.md: runner-helper.sh edit <name>"
+print_info "  2. Start the coordinator: coordinator-helper.sh watch --interval 300"
+print_info "  3. Test a runner: runner-helper.sh run ops-monitor 'Check all health endpoints'"
 ```
