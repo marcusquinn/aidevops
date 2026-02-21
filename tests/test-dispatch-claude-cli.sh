@@ -26,6 +26,7 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPTS_DIR="$REPO_DIR/.agents/scripts"
 SUPERVISOR_SCRIPT="$SCRIPTS_DIR/supervisor-helper.sh"
 SUPERVISOR_DIR_MODULE="$SCRIPTS_DIR/supervisor"
+SHARED_CONSTANTS="$SCRIPTS_DIR/shared-constants.sh"
 VERBOSE="${1:-}"
 
 # --- Test Framework ---
@@ -188,13 +189,17 @@ fi
 # ============================================================
 section "CLI Resolution (SUPERVISOR_CLI=claude)"
 
-# Test: resolve_ai_cli with SUPERVISOR_CLI=claude and mock claude in PATH
+# Source individual modules for unit-level tests (avoids running main init)
+# resolve_ai_cli lives in dispatch.sh, which needs _common.sh for log_* functions
 cli_result=$(bash -c "
     export AIDEVOPS_SUPERVISOR_DIR='$TEST_DIR/supervisor'
     export SUPERVISOR_CLI=claude
-    export PATH='$MOCK_BIN:$PATH'
-    set -- init
-    source '$SUPERVISOR_SCRIPT' >/dev/null
+    export PATH='$MOCK_BIN:\$PATH'
+    BLUE='' GREEN='' YELLOW='' RED='' NC=''
+    SUPERVISOR_LOG='/dev/null'
+    source '$SHARED_CONSTANTS'
+    source '$SUPERVISOR_DIR_MODULE/_common.sh'
+    source '$SUPERVISOR_DIR_MODULE/dispatch.sh'
     resolve_ai_cli
 " 2>/dev/null)
 
@@ -205,37 +210,44 @@ else
 fi
 
 # Test: resolve_ai_cli rejects invalid SUPERVISOR_CLI values
-invalid_result=$(bash -c "
+# Note: _common.sh sets -e, so we must catch the failure explicitly
+invalid_rc=0
+bash -c "
     export AIDEVOPS_SUPERVISOR_DIR='$TEST_DIR/supervisor'
     export SUPERVISOR_CLI=invalid_cli
-    export PATH='$MOCK_BIN:$PATH'
-    set -- init
-    source '$SUPERVISOR_SCRIPT' >/dev/null
-    resolve_ai_cli 2>/dev/null
-    echo \"exit:\$?\"
-" 2>&1 | tail -1)
+    export PATH='$MOCK_BIN:\$PATH'
+    BLUE='' GREEN='' YELLOW='' RED='' NC=''
+    SUPERVISOR_LOG='/dev/null'
+    source '$SHARED_CONSTANTS'
+    source '$SUPERVISOR_DIR_MODULE/_common.sh'
+    source '$SUPERVISOR_DIR_MODULE/dispatch.sh'
+    resolve_ai_cli
+" &>/dev/null || invalid_rc=$?
 
-if [[ "$invalid_result" == "exit:1" ]]; then
-	pass "resolve_ai_cli rejects invalid SUPERVISOR_CLI value"
+if [[ "$invalid_rc" -ne 0 ]]; then
+	pass "resolve_ai_cli rejects invalid SUPERVISOR_CLI value (exit $invalid_rc)"
 else
-	fail "resolve_ai_cli should reject 'invalid_cli'" "Got: $invalid_result"
+	fail "resolve_ai_cli should reject 'invalid_cli' (exit 0)"
 fi
 
 # Test: resolve_ai_cli fails when SUPERVISOR_CLI=claude but claude not in PATH
-missing_result=$(bash -c "
+missing_rc=0
+bash -c "
     export AIDEVOPS_SUPERVISOR_DIR='$TEST_DIR/supervisor'
     export SUPERVISOR_CLI=claude
     export PATH='/nonexistent'
-    set -- init
-    source '$SUPERVISOR_SCRIPT' >/dev/null
-    resolve_ai_cli 2>/dev/null
-    echo \"exit:\$?\"
-" 2>&1 | tail -1)
+    BLUE='' GREEN='' YELLOW='' RED='' NC=''
+    SUPERVISOR_LOG='/dev/null'
+    source '$SHARED_CONSTANTS'
+    source '$SUPERVISOR_DIR_MODULE/_common.sh'
+    source '$SUPERVISOR_DIR_MODULE/dispatch.sh'
+    resolve_ai_cli
+" &>/dev/null || missing_rc=$?
 
-if [[ "$missing_result" == "exit:1" ]]; then
-	pass "resolve_ai_cli fails when claude not in PATH"
+if [[ "$missing_rc" -ne 0 ]]; then
+	pass "resolve_ai_cli fails when claude not in PATH (exit $missing_rc)"
 else
-	fail "resolve_ai_cli should fail when claude not in PATH" "Got: $missing_result"
+	fail "resolve_ai_cli should fail when claude not in PATH (exit 0)"
 fi
 
 # ============================================================
@@ -249,6 +261,7 @@ run_cmd=$(bash -c "
     export PATH='$MOCK_BIN:$PATH'
     BLUE='' GREEN='' YELLOW='' RED='' NC=''
     SUPERVISOR_LOG='/dev/null'
+    source '$SHARED_CONSTANTS'
     source '$SUPERVISOR_DIR_MODULE/_common.sh'
     source '$SUPERVISOR_DIR_MODULE/dispatch.sh'
     # Use array output mode for readable verification
@@ -287,6 +300,7 @@ version_cmd=$(bash -c "
     export AIDEVOPS_SUPERVISOR_DIR='$TEST_DIR/supervisor'
     BLUE='' GREEN='' YELLOW='' RED='' NC=''
     SUPERVISOR_LOG='/dev/null'
+    source '$SHARED_CONSTANTS'
     source '$SUPERVISOR_DIR_MODULE/_common.sh'
     source '$SUPERVISOR_DIR_MODULE/dispatch.sh'
     build_cli_cmd --cli claude --action version --output array
@@ -303,6 +317,7 @@ probe_cmd=$(bash -c "
     export AIDEVOPS_SUPERVISOR_DIR='$TEST_DIR/supervisor'
     BLUE='' GREEN='' YELLOW='' RED='' NC=''
     SUPERVISOR_LOG='/dev/null'
+    source '$SHARED_CONSTANTS'
     source '$SUPERVISOR_DIR_MODULE/_common.sh'
     source '$SUPERVISOR_DIR_MODULE/dispatch.sh'
     build_cli_cmd --cli claude --action probe --output array \
@@ -350,6 +365,7 @@ dispatch_output=$(bash -c "
     export PATH='$MOCK_BIN:$PATH'
     BLUE='' GREEN='' YELLOW='' RED='' NC=''
     SUPERVISOR_LOG='/dev/null'
+    source '$SHARED_CONSTANTS'
     source '$SUPERVISOR_DIR_MODULE/_common.sh'
     source '$SUPERVISOR_DIR_MODULE/dispatch.sh'
     build_dispatch_cmd 'claude-spawn-t1' '$wt_spawn' '/tmp/test.log' 'claude' '' 'anthropic/claude-sonnet-4-6' 'Test dispatch'
@@ -424,6 +440,7 @@ meta_output=$(bash -c "
     BLUE='' GREEN='' YELLOW='' RED='' NC=''
     SUPERVISOR_LOG='/dev/null'
     SUPERVISOR_DB='$TEST_DIR/supervisor/supervisor.db'
+    source '$SHARED_CONSTANTS'
     source '$SUPERVISOR_DIR_MODULE/_common.sh'
     source '$SUPERVISOR_DIR_MODULE/evaluate.sh'
     extract_log_metadata '$TEST_DIR/supervisor/logs/claude-cap-t1.log'
@@ -698,6 +715,7 @@ if [[ -d "$wt_full" ]]; then
         SUPERVISOR_LOG='/dev/null'
         SUPERVISOR_DIR='$TEST_DIR/supervisor'
         SUPERVISOR_DB='$TEST_DIR/supervisor/supervisor.db'
+        source '$SHARED_CONSTANTS'
         source '$SUPERVISOR_DIR_MODULE/_common.sh'
         source '$SUPERVISOR_DIR_MODULE/cleanup.sh'
         # Stub ownership functions (not relevant for this test)
@@ -732,6 +750,7 @@ bash -c "
     BLUE='' GREEN='' YELLOW='' RED='' NC=''
     SUPERVISOR_LOG='/dev/null'
     SUPERVISOR_DIR='$TEST_DIR/supervisor'
+    source '$SHARED_CONSTANTS'
     source '$SUPERVISOR_DIR_MODULE/_common.sh'
     source '$SUPERVISOR_DIR_MODULE/cleanup.sh'
     cleanup_worker_processes 'claude-proc-t1'
@@ -792,7 +811,9 @@ bash -c "
     SUPERVISOR_LOG='/dev/null'
     SUPERVISOR_DIR='$TEST_DIR/supervisor'
     SUPERVISOR_DB='$TEST_DIR/supervisor/supervisor.db'
+    source '$SHARED_CONSTANTS'
     source '$SUPERVISOR_DIR_MODULE/_common.sh'
+    source '$SUPERVISOR_DIR_MODULE/database.sh'
     source '$SUPERVISOR_DIR_MODULE/cleanup.sh'
     # Stub ownership functions
     is_worktree_owned_by_others() { return 1; }
@@ -992,9 +1013,8 @@ sup transition claude-cleanup-t1 complete >/dev/null
 # Mark as failed to test terminal-state detection
 test_db "UPDATE tasks SET status = 'failed' WHERE id = 'claude-cleanup-t1';" 2>/dev/null
 
-cleanup_output=$(sup cleanup --dry-run 2>&1)
 # The cleanup command should run without error (even if no worktrees to clean)
-if [[ $? -eq 0 ]]; then
+if cleanup_output=$(sup cleanup --dry-run 2>&1); then
 	pass "cmd_cleanup --dry-run runs without error"
 else
 	fail "cmd_cleanup --dry-run failed" "$cleanup_output"
@@ -1011,6 +1031,7 @@ health_result=$(bash -c "
     BLUE='' GREEN='' YELLOW='' RED='' NC=''
     SUPERVISOR_LOG='/dev/null'
     SUPERVISOR_DIR='$TEST_DIR/supervisor'
+    source '$SHARED_CONSTANTS'
     source '$SUPERVISOR_DIR_MODULE/_common.sh'
     source '$SUPERVISOR_DIR_MODULE/dispatch.sh'
     # Clear any cached health state
