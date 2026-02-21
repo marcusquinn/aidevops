@@ -256,7 +256,7 @@ Need IaC?
 |---------|------------|
 | Pulumi | `./references/pulumi/README.md` |
 | Terraform | `./references/terraform/README.md` |
-| API | `./references/api/README.md` |
+| API (Code Mode MCP) | `.agents/tools/mcp/cloudflare-code-mode.md` |
 
 ### Other Services
 
