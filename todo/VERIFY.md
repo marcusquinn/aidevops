@@ -2061,3 +2061,8 @@
   check: file-exists .agents/subagent-index.toon
   check: file-exists .agents/tools/context/openapi-search.md
   check: rg "openapi-search" .agents/subagent-index.toon
+
+- [ ] v253 t1294 Add MCPorter agent for MCP toolkit — steipete/mcporter ... | PR #2075 | merged:2026-02-21
+  files: .agents/tools/mcp-toolkit/mcporter.md
+  check: file-exists .agents/tools/mcp-toolkit/mcporter.md
+  check: rg "mcporter" .agents/subagent-index.toon
