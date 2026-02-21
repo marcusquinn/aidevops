@@ -527,6 +527,9 @@ cmd_auto_pickup() {
 
 	local picked_up=0
 
+	# Blocker tags that indicate human action is needed — matches sanity-check.sh (t1287)
+	local blocker_pattern='account-needed|hosting-needed|login-needed|api-key-needed|clarification-needed|resources-needed|payment-needed|approval-needed|decision-needed|design-needed|content-needed|dns-needed|domain-needed|testing-needed'
+
 	# Strategy 1: Find tasks tagged #auto-dispatch
 	# Matches: - [ ] tXXX description #auto-dispatch ...
 	local tagged_tasks
@@ -545,6 +548,12 @@ cmd_auto_pickup() {
 			# assignee: must be followed by a username (word chars), started: by ISO timestamp.
 			if echo "$line" | grep -qE '(assignee:[a-zA-Z0-9_-]+|started:[0-9]{4}-[0-9]{2}-[0-9]{2}T)'; then
 				log_info "  $task_id: already claimed or in progress — skipping auto-pickup"
+				continue
+			fi
+
+			# Skip tasks with -needed blocker tags (t1287): human action required
+			if echo "$line" | grep -qE "$blocker_pattern"; then
+				log_info "  $task_id: has -needed blocker tag — skipping auto-pickup (needs human action)"
 				continue
 			fi
 
@@ -630,6 +639,12 @@ cmd_auto_pickup() {
 			# assignee: must be followed by a username (word chars), started: by ISO timestamp.
 			if echo "$line" | grep -qE '(assignee:[a-zA-Z0-9_-]+|started:[0-9]{4}-[0-9]{2}-[0-9]{2}T)'; then
 				log_info "  $task_id: already claimed or in progress — skipping auto-pickup"
+				continue
+			fi
+
+			# Skip tasks with -needed blocker tags (t1287): human action required
+			if echo "$line" | grep -qE "$blocker_pattern"; then
+				log_info "  $task_id: has -needed blocker tag — skipping auto-pickup (needs human action)"
 				continue
 			fi
 
@@ -785,6 +800,12 @@ cmd_auto_pickup() {
 				# Skip tasks with assignee: or started: metadata fields (t1263)
 				if echo "$sub_line" | grep -qE '(assignee:[a-zA-Z0-9_-]+|started:[0-9]{4}-[0-9]{2}-[0-9]{2}T)'; then
 					log_info "  $sub_id: already claimed or in progress — skipping subtask pickup"
+					continue
+				fi
+
+				# Skip tasks with -needed blocker tags (t1287): human action required
+				if echo "$sub_line" | grep -qE "$blocker_pattern"; then
+					log_info "  $sub_id: has -needed blocker tag — skipping subtask pickup (needs human action)"
 					continue
 				fi
 
