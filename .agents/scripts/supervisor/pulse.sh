@@ -1257,10 +1257,13 @@ cmd_pulse() {
 
 			local outcome
 			local eval_maker="evaluate_worker"
-			# t1096: use evaluate_worker_with_metadata() to capture richer metadata
-			# (failure mode, output quality) and record to pattern tracker.
-			# Falls back to evaluate_worker() if the wrapper is unavailable.
-			if command -v evaluate_worker_with_metadata &>/dev/null; then
+			# Prefer assess_task (AI-powered, reads real sources of truth)
+			# over evaluate_worker (1900-line deterministic heuristic tree).
+			# Falls back to evaluate_worker_with_metadata, then evaluate_worker.
+			if command -v assess_task_with_metadata &>/dev/null; then
+				outcome=$(assess_task_with_metadata "$tid")
+				eval_maker="assess_task"
+			elif command -v evaluate_worker_with_metadata &>/dev/null; then
 				outcome=$(evaluate_worker_with_metadata "$tid" "$skip_ai")
 				eval_maker="evaluate_worker_with_metadata"
 			else
@@ -1310,6 +1313,13 @@ cmd_pulse() {
 			fi
 
 			case "$outcome_type" in
+			alive)
+				# assess_task safety net: worker is still running despite PID check above
+				log_info "  $tid: still running (confirmed by assess_task)"
+				_phase1_evaluating_tid=""
+				_phase1_pre_eval_state=""
+				continue
+				;;
 			complete)
 				# Quality gate check before accepting completion (t132.6)
 				local gate_result
