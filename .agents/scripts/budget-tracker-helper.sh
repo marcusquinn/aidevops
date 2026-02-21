@@ -281,6 +281,10 @@ get_billing_type() {
 		# OpenCode uses OAuth with periodic allowances (Max plan)
 		echo "$BILLING_SUBSCRIPTION"
 		;;
+	claude-oauth)
+		# Claude CLI with OAuth (Max/Pro subscription) — zero marginal cost (t1163)
+		echo "$BILLING_SUBSCRIPTION"
+		;;
 	*)
 		echo "$BILLING_TOKEN"
 		;;

@@ -1029,7 +1029,214 @@ else
 fi
 
 # ============================================================
-# SECTION 10: check_cli_health with Mock Claude
+# SECTION 10: OAuth-Aware Dispatch Routing (t1163)
+# ============================================================
+section "OAuth-Aware Dispatch Routing (t1163)"
+
+# Helper: run a function in an isolated subshell with mock environment
+# Uses a script file to avoid complex quoting issues
+_run_oauth_test() {
+	local test_script="$TEST_DIR/oauth-test-$$.sh"
+	cat >"$test_script"
+	chmod +x "$test_script"
+	bash "$test_script" 2>/dev/null
+	local rc=$?
+	rm -f "$test_script"
+	return $rc
+}
+
+# Test: detect_claude_oauth returns "oauth" when ~/.claude/settings.json exists
+oauth_result=$(
+	_run_oauth_test <<OAUTH_TEST
+#!/usr/bin/env bash
+set -euo pipefail
+export AIDEVOPS_SUPERVISOR_DIR='$TEST_DIR/supervisor'
+export PATH='$MOCK_BIN':/usr/bin:/bin
+BLUE='' GREEN='' YELLOW='' RED='' NC=''
+SUPERVISOR_LOG='/dev/null'
+SUPERVISOR_DIR='$TEST_DIR/supervisor'
+source '$SHARED_CONSTANTS'
+source '$SUPERVISOR_DIR_MODULE/_common.sh'
+source '$SUPERVISOR_DIR_MODULE/dispatch.sh'
+mock_claude_dir=\$(mktemp -d)
+export HOME=\$mock_claude_dir
+mkdir -p "\$mock_claude_dir/.claude"
+echo '{"hasCompletedOnboarding":true}' > "\$mock_claude_dir/.claude/settings.json"
+rm -f '$TEST_DIR/supervisor/health/claude-oauth' 2>/dev/null
+detect_claude_oauth
+rm -rf "\$mock_claude_dir"
+OAUTH_TEST
+)
+
+if [[ "$oauth_result" == "oauth" ]]; then
+	pass "detect_claude_oauth: returns 'oauth' when settings.json exists"
+else
+	fail "detect_claude_oauth: should return 'oauth'" "Got: '$oauth_result'"
+fi
+
+# Test: detect_claude_oauth returns empty when no ~/.claude directory
+no_oauth_rc=0
+no_oauth_result=$(
+	_run_oauth_test <<OAUTH_TEST2
+#!/usr/bin/env bash
+set -uo pipefail
+export AIDEVOPS_SUPERVISOR_DIR='$TEST_DIR/supervisor'
+export PATH='$MOCK_BIN':/usr/bin:/bin
+BLUE='' GREEN='' YELLOW='' RED='' NC=''
+SUPERVISOR_LOG='/dev/null'
+SUPERVISOR_DIR='$TEST_DIR/supervisor'
+source '$SHARED_CONSTANTS'
+source '$SUPERVISOR_DIR_MODULE/_common.sh'
+source '$SUPERVISOR_DIR_MODULE/dispatch.sh'
+mock_home=\$(mktemp -d)
+export HOME=\$mock_home
+rm -f '$TEST_DIR/supervisor/health/claude-oauth' 2>/dev/null
+detect_claude_oauth || true
+rm -rf "\$mock_home"
+OAUTH_TEST2
+) || no_oauth_rc=$?
+
+if [[ -z "$no_oauth_result" ]]; then
+	pass "detect_claude_oauth: returns empty when no .claude directory"
+else
+	fail "detect_claude_oauth: should return empty" "Got: '$no_oauth_result'"
+fi
+
+# Test: resolve_ai_cli prefers claude for Anthropic models when OAuth available
+oauth_cli_result=$(
+	_run_oauth_test <<OAUTH_TEST3
+#!/usr/bin/env bash
+set -euo pipefail
+export AIDEVOPS_SUPERVISOR_DIR='$TEST_DIR/supervisor'
+export PATH='$MOCK_BIN':/usr/bin:/bin
+export SUPERVISOR_PREFER_OAUTH=true
+unset SUPERVISOR_CLI 2>/dev/null || true
+BLUE='' GREEN='' YELLOW='' RED='' NC=''
+SUPERVISOR_LOG='/dev/null'
+SUPERVISOR_DIR='$TEST_DIR/supervisor'
+source '$SHARED_CONSTANTS'
+source '$SUPERVISOR_DIR_MODULE/_common.sh'
+source '$SUPERVISOR_DIR_MODULE/dispatch.sh'
+mock_claude_dir=\$(mktemp -d)
+export HOME=\$mock_claude_dir
+mkdir -p "\$mock_claude_dir/.claude"
+echo '{"hasCompletedOnboarding":true}' > "\$mock_claude_dir/.claude/settings.json"
+rm -f '$TEST_DIR/supervisor/health/claude-oauth' 2>/dev/null
+resolve_ai_cli 'anthropic/claude-opus-4-6'
+rm -rf "\$mock_claude_dir"
+OAUTH_TEST3
+)
+
+if [[ "$oauth_cli_result" == "claude" ]]; then
+	pass "resolve_ai_cli: prefers claude for Anthropic model when OAuth available"
+else
+	fail "resolve_ai_cli: should prefer claude for Anthropic model" "Got: '$oauth_cli_result'"
+fi
+
+# Create mock opencode binary for non-Anthropic tests
+cat >"$MOCK_BIN/opencode" <<'MOCK_OPENCODE'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "version" ]]; then
+    echo "opencode 0.1.0 (mock)"
+    exit 0
+fi
+echo "opencode mock"
+exit 0
+MOCK_OPENCODE
+chmod +x "$MOCK_BIN/opencode"
+
+# Test: resolve_ai_cli uses opencode for non-Anthropic models even with OAuth
+non_anthropic_cli=$(
+	_run_oauth_test <<OAUTH_TEST4
+#!/usr/bin/env bash
+set -euo pipefail
+export AIDEVOPS_SUPERVISOR_DIR='$TEST_DIR/supervisor'
+export PATH='$MOCK_BIN':/usr/bin:/bin
+export SUPERVISOR_PREFER_OAUTH=true
+unset SUPERVISOR_CLI 2>/dev/null || true
+BLUE='' GREEN='' YELLOW='' RED='' NC=''
+SUPERVISOR_LOG='/dev/null'
+SUPERVISOR_DIR='$TEST_DIR/supervisor'
+source '$SHARED_CONSTANTS'
+source '$SUPERVISOR_DIR_MODULE/_common.sh'
+source '$SUPERVISOR_DIR_MODULE/dispatch.sh'
+mock_claude_dir=\$(mktemp -d)
+export HOME=\$mock_claude_dir
+mkdir -p "\$mock_claude_dir/.claude"
+echo '{"hasCompletedOnboarding":true}' > "\$mock_claude_dir/.claude/settings.json"
+rm -f '$TEST_DIR/supervisor/health/claude-oauth' 2>/dev/null
+resolve_ai_cli 'google/gemini-2.5-pro'
+rm -rf "\$mock_claude_dir"
+OAUTH_TEST4
+)
+
+if [[ "$non_anthropic_cli" == "opencode" ]]; then
+	pass "resolve_ai_cli: uses opencode for non-Anthropic model (google/gemini)"
+else
+	fail "resolve_ai_cli: should use opencode for non-Anthropic model" "Got: '$non_anthropic_cli'"
+fi
+
+# Test: resolve_ai_cli uses opencode when SUPERVISOR_PREFER_OAUTH=false
+no_prefer_cli=$(
+	_run_oauth_test <<OAUTH_TEST5
+#!/usr/bin/env bash
+set -euo pipefail
+export AIDEVOPS_SUPERVISOR_DIR='$TEST_DIR/supervisor'
+export PATH='$MOCK_BIN':/usr/bin:/bin
+export SUPERVISOR_PREFER_OAUTH=false
+unset SUPERVISOR_CLI 2>/dev/null || true
+BLUE='' GREEN='' YELLOW='' RED='' NC=''
+SUPERVISOR_LOG='/dev/null'
+SUPERVISOR_DIR='$TEST_DIR/supervisor'
+source '$SHARED_CONSTANTS'
+source '$SUPERVISOR_DIR_MODULE/_common.sh'
+source '$SUPERVISOR_DIR_MODULE/dispatch.sh'
+mock_claude_dir=\$(mktemp -d)
+export HOME=\$mock_claude_dir
+mkdir -p "\$mock_claude_dir/.claude"
+echo '{"hasCompletedOnboarding":true}' > "\$mock_claude_dir/.claude/settings.json"
+rm -f '$TEST_DIR/supervisor/health/claude-oauth' 2>/dev/null
+resolve_ai_cli 'anthropic/claude-opus-4-6'
+rm -rf "\$mock_claude_dir"
+OAUTH_TEST5
+)
+
+if [[ "$no_prefer_cli" == "opencode" ]]; then
+	pass "resolve_ai_cli: uses opencode when SUPERVISOR_PREFER_OAUTH=false"
+else
+	fail "resolve_ai_cli: should use opencode when OAuth preference disabled" "Got: '$no_prefer_cli'"
+fi
+
+# Test: SUPERVISOR_CLI override takes precedence over OAuth routing
+override_cli=$(
+	_run_oauth_test <<OAUTH_TEST6
+#!/usr/bin/env bash
+set -euo pipefail
+export AIDEVOPS_SUPERVISOR_DIR='$TEST_DIR/supervisor'
+export PATH='$MOCK_BIN':/usr/bin:/bin
+export SUPERVISOR_CLI=opencode
+export SUPERVISOR_PREFER_OAUTH=true
+BLUE='' GREEN='' YELLOW='' RED='' NC=''
+SUPERVISOR_LOG='/dev/null'
+SUPERVISOR_DIR='$TEST_DIR/supervisor'
+source '$SHARED_CONSTANTS'
+source '$SUPERVISOR_DIR_MODULE/_common.sh'
+source '$SUPERVISOR_DIR_MODULE/dispatch.sh'
+resolve_ai_cli 'anthropic/claude-opus-4-6'
+OAUTH_TEST6
+)
+
+if [[ "$override_cli" == "opencode" ]]; then
+	pass "resolve_ai_cli: SUPERVISOR_CLI override takes precedence over OAuth"
+else
+	fail "resolve_ai_cli: SUPERVISOR_CLI should override OAuth routing" "Got: '$override_cli'"
+fi
+
+# Remove mock opencode (keep claude mock for remaining tests)
+rm -f "$MOCK_BIN/opencode"
+
+# ============================================================
+# SECTION 11: check_cli_health with Mock Claude
 # ============================================================
 section "CLI Health Check (mock claude)"
 
