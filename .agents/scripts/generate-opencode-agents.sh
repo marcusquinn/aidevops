@@ -127,6 +127,7 @@ SKIP_PRIMARY_AGENTS = {"plan-plus.md", "aidevops.md"}
 #   - gh_grep_*: ~600 tokens - replaced by @github-search subagent (uses rg/bash)
 #   - google-analytics-mcp_*: ~800 tokens - enable via @google-analytics subagent
 #   - context7_*: ~800 tokens - enable via @context7 subagent (library docs lookup)
+#   - openapi-search_*: ~500 tokens - enabled for Build+, AI-DevOps, Research only
 #
 # osgrep_* remains enabled as the primary semantic search tool (local, no auth).
 # Use @augment-context-engine subagent when osgrep returns insufficient results.
@@ -138,9 +139,11 @@ AGENT_TOOLS = {
         # Semantic search: osgrep primary, @augment-context-engine fallback
         # Library docs: use @context7 subagent when needed
         # GitHub search: use @github-search subagent (rg/bash, no MCP needed)
+        # OpenAPI search: enabled for API exploration (remote, zero install)
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
         "webfetch": True, "task": True, "todoread": True, "todowrite": True,
-        "osgrep_*": True
+        "osgrep_*": True,
+        "openapi-search_*": True
     },
     "Onboarding": {
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
@@ -172,7 +175,8 @@ AGENT_TOOLS = {
     },
     "Research": {
         "read": True, "webfetch": True, "bash": True,
-        "osgrep_*": True
+        "osgrep_*": True,
+        "openapi-search_*": True
     },
 }
 
@@ -185,6 +189,7 @@ AGENT_TOOLS = {
 # - google-analytics-mcp_*: ~800 tokens - @google-analytics subagent
 # - context7_*: ~800 tokens - @context7 subagent
 # - claude-code-mcp_*: use @claude-code subagent
+# - openapi-search_*: ~500 tokens - enabled for Build+, AI-DevOps, Research only
 #
 # osgrep_* remains enabled as primary semantic search (local, fast, no auth)
 DEFAULT_TOOLS = {
@@ -745,6 +750,9 @@ generate_subagent_stub() {
 	# serper - REMOVED: Uses curl subagent now, no MCP tools
 	openapi-search)
 		extra_tools=$'  openapi-search_*: true\n  webfetch: true'
+		;;
+	aidevops)
+		extra_tools=$'  openapi-search_*: true'
 		;;
 	playwriter)
 		extra_tools=$'  playwriter_*: true'
