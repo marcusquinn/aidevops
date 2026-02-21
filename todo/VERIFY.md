@@ -2042,3 +2042,11 @@
   files: .agents/tools/mcp-toolkit/mcporter.md
   check: file-exists .agents/tools/mcp-toolkit/mcporter.md
   check: rg "mcporter" .agents/subagent-index.toon
+
+- [ ] v251 t1290 Add Cloudflare Code Mode MCP server config and subagent d... | PR #2077 | merged:2026-02-21
+  files: .agents/aidevops/mcp-integrations.md, .agents/subagent-index.toon, .agents/tools/api/cloudflare-mcp.md, configs/mcp-servers-config.json.txt
+  check: file-exists .agents/aidevops/mcp-integrations.md
+  check: file-exists .agents/subagent-index.toon
+  check: file-exists .agents/tools/api/cloudflare-mcp.md
+  check: file-exists configs/mcp-servers-config.json.txt
+  check: rg "cloudflare-mcp" .agents/subagent-index.toon
