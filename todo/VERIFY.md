@@ -2329,13 +2329,18 @@
   check: shellcheck tests/test-cloudflare-mcp-e2e.sh
   check: file-exists tests/test-cloudflare-mcp-e2e.sh
 
-- [ ] v266 t1288.5 Update `mcp-integrations.md` and `subagent-index.toon` â€... | PR #2092 | merged:2026-02-21
+- [x] v266 t1288.5 Update `mcp-integrations.md` and `subagent-index.toon` â€... | PR #2092 | merged:2026-02-21 verified:2026-02-21
   files: .agents/aidevops/mcp-integrations.md, .agents/subagent-index.toon
   check: file-exists .agents/aidevops/mcp-integrations.md
   check: file-exists .agents/subagent-index.toon
 
-- [ ] v267 t1294.5 Verification â€” test `npx mcporter list` discovers exist... | PR #2093 | merged:2026-02-21
+- [x] v267 t1294.5 Verification â€” test `npx mcporter list` discovers exist... | PR #2093 | merged:2026-02-21 verified:2026-02-21
   files: .agents/tools/mcp-toolkit/mcporter.md, configs/mcp-templates/mcporter.json
   check: file-exists .agents/tools/mcp-toolkit/mcporter.md
   check: file-exists configs/mcp-templates/mcporter.json
   check: rg "mcporter" .agents/subagent-index.toon
+
+- [ ] v268 t1288.3 Update `generate-opencode-agents.sh` â€” add `openapi-sea... | PR #2094 | merged:2026-02-21
+  files: .agents/scripts/generate-opencode-agents.sh
+  check: shellcheck .agents/scripts/generate-opencode-agents.sh
+  check: file-exists .agents/scripts/generate-opencode-agents.sh
