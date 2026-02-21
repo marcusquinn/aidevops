@@ -2050,3 +2050,14 @@
   check: file-exists .agents/tools/api/cloudflare-mcp.md
   check: file-exists configs/mcp-servers-config.json.txt
   check: rg "cloudflare-mcp" .agents/subagent-index.toon
+
+- [ ] v252 t1288 Add OpenAPI Search MCP integration — janwilmake/openapi... | PR #2078 | merged:2026-02-21
+  files: .agents/AGENTS.md, .agents/configs/mcp-templates/openapi-search.json, .agents/configs/openapi-search-config.json.txt, .agents/scripts/generate-opencode-agents.sh, .agents/subagent-index.toon, .agents/tools/context/openapi-search.md
+  check: file-exists .agents/AGENTS.md
+  check: file-exists .agents/configs/mcp-templates/openapi-search.json
+  check: file-exists .agents/configs/openapi-search-config.json.txt
+  check: shellcheck .agents/scripts/generate-opencode-agents.sh
+  check: file-exists .agents/scripts/generate-opencode-agents.sh
+  check: file-exists .agents/subagent-index.toon
+  check: file-exists .agents/tools/context/openapi-search.md
+  check: rg "openapi-search" .agents/subagent-index.toon
