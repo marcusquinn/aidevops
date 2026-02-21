@@ -4,60 +4,18 @@
 
 ## Quick Reference
 
-- **Purpose**: Contributing to aidevops framework development
 - **User Guide**: `.agents/AGENTS.md` (deployed to `~/.aidevops/agents/`)
-- **Repo**: `~/Git/aidevops/`
+- **Commands**: `./setup.sh` (deploy) | `.agents/scripts/linters-local.sh` (quality) | `version-manager.sh release [major|minor|patch]`
+- **Config**: `~/.config/opencode/opencode.json`, `~/.claude/settings.json`
+- **Quality**: `prompts/build.txt`
 
-**AI Tool Config Paths**:
-- Primary: `~/.config/opencode/opencode.json`, `~/.config/opencode/agent/`
-- Companion CLI: `~/.claude/`, `~/.claude/settings.json`
+**File Structure**: `TODO.md` (tasks), `todo/` (plans, PRDs), `.agents/` (agents, tools, services, workflows, scripts).
 
-**Development Commands**:
-
-```bash
-# Deploy agents locally
-./setup.sh
-
-# Quality check
-.agents/scripts/linters-local.sh
-
-# Release
-.agents/scripts/version-manager.sh release [major|minor|patch]
-```text
-
-**Quality Standards**: See `prompts/build.txt`.
-
-**File Structure**:
-
-```text
-/
-├── TODO.md                # Quick tasks, backlog (root level)
-├── todo/
-│   ├── PLANS.md           # Complex execution plans
-│   └── tasks/             # PRD and task files
-│       ├── prd-*.md       # Product requirement documents
-│       └── tasks-*.md     # Implementation task lists
-└── .agents/
-    ├── AGENTS.md          # User guide (distributed)
-    ├── {domain}.md        # Main agents (aidevops, wordpress, seo, etc.)
-    ├── {domain}/          # Subagents for each domain
-    ├── tools/             # Cross-domain utilities
-    ├── services/          # External integrations  
-    ├── workflows/         # Process guides (incl. plans.md, plans-quick.md)
-    ├── templates/         # PRD and task templates
-    └── scripts/           # Helper scripts
-```
-
-**Before extending aidevops**: Read `.agents/aidevops/architecture.md` for:
-- Agent design patterns (progressive disclosure, context offloading, Ralph loop)
-- Extension guide (adding services, tools, documentation standards)
-- Framework conventions (naming, code standards, security requirements)
+**Before extending**: Read `.agents/aidevops/architecture.md` (design patterns, conventions, extension guide).
 
 <!-- AI-CONTEXT-END -->
 
 ## Two AGENTS.md Files
-
-This repository has two AGENTS.md files with different purposes:
 
 | File | Purpose | Audience |
 |------|---------|----------|
@@ -66,9 +24,9 @@ This repository has two AGENTS.md files with different purposes:
 
 The `.agents/AGENTS.md` is copied to `~/.aidevops/agents/AGENTS.md` by `setup.sh`.
 
-## Development Lifecycle (MANDATORY)
+## Development Lifecycle
 
-See `.agents/AGENTS.md` "MANDATORY: Development Lifecycle" for the full lifecycle.
+See `.agents/AGENTS.md` "Development Lifecycle" for the full lifecycle.
 Completion self-check: see `prompts/build.txt` "Completion and quality discipline".
 
 ## Contributing
@@ -113,7 +71,7 @@ find .agents/scripts/ -name "*.sh" -exec shellcheck {} \;
 
 ## Self-Assessment Protocol
 
-When developing agents, apply self-assessment from `tools/build-agent/build-agent.md`:
+From `tools/build-agent/build-agent.md`:
 
 - **Triggers**: Observable failure, user correction, contradiction, staleness
 - **Process**: Complete task, cite evidence, check duplicates, propose fix
