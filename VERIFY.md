@@ -160,3 +160,38 @@ No additional integration work needed. The subtasks collectively deliver:
 ## Proof-Log
 
 t1081 verified:2026-02-18 pr:#1591,#1630,#1638,#1639
+
+## t1276 Verification — Subtask-aware queue analysis and orphan issue intake
+
+### Status: COMPLETE — All deliverables merged in PR #2026
+
+**Root Cause (Strategy 4 head -50 bug):**
+
+`cmd_auto_pickup()` Strategy 4 collected parent IDs with `head -50 | sort -u`. With 242 `#auto-dispatch` parents in TODO.md (mostly completed), open parents with subtasks (t1120, t1264) were beyond position 50 and never processed. Their subtasks (t1120.1, t1120.2, t1120.4, t1264.2) were invisible to the dispatcher despite the parent having `#auto-dispatch`.
+
+**Deliverables:**
+
+| Deliverable | File | PR | Status |
+|-------------|------|----|--------|
+| Fix Strategy 4 head -50 limit | `.agents/scripts/supervisor/cron.sh` | #2026 | MERGED |
+| Subtask-aware runners-check queue depth | `.agents/scripts/commands/runners-check.md` | #2026 | MERGED |
+| 3 orphan issue TODO entries (t1277-t1279) | `TODO.md` | #2026 | MERGED |
+| 3 stale GH issues closed (GH#1970, #1973, #2014) | `TODO.md` (pr: refs added) | #2026 | MERGED |
+
+**Fix verification:**
+
+- `cron.sh` Strategy 4 now uses `grep -oE 't[0-9]+' | sort -u` with no `head` limit
+- Comment at line 764 documents the previous bug and fix
+- `runners-check.md` reports: total open (parents + subtasks), dispatchable (tagged + inherited), blocked, claimed
+
+**Stale GH issues closed:**
+
+| Issue | Task | State |
+|-------|------|-------|
+| GH#1970 | t1260: Fix setup.sh launchd schedulers | CLOSED |
+| GH#1973 | t1261: Fix dispatch stall | CLOSED |
+| GH#2014 | t1273: Supervisor sanity-check | CLOSED |
+
+## Proof-Log
+
+t1276 verified:2026-02-21 pr:#2026
