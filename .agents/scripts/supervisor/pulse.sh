@@ -963,38 +963,13 @@ cmd_pulse() {
 		ORDER BY updated_at ASC;
 	" 2>/dev/null || echo "")
 
-	# Fast-path 2 (t1250): running/dispatched tasks with shorter grace period.
-	# When a worker dies (rate-limited, OOM, SIGKILL), the PID file exists but the
-	# process is gone. The current 600s grace was designed for tasks where we're
-	# unsure if the worker started. For tasks with a confirmed dead PID, we can
-	# use a shorter grace (60s) to recover faster.
-	# Note: The PID check happens in the processing loop below — this query fetches
-	# candidates; the loop skips any with live PIDs.
-	local stale_running_fast_tasks
-	stale_running_fast_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
-		SELECT id, status, updated_at FROM tasks
-		WHERE status IN ('running', 'dispatched')
-		AND updated_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${dead_pid_grace_seconds} seconds')
-		AND updated_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${stale_grace_seconds} seconds')
-		ORDER BY updated_at ASC;
-	" 2>/dev/null || echo "")
-
-	# Query running/dispatched tasks with standard grace period (no PID file or very old)
-	local stale_other_tasks
-	stale_other_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
-		SELECT id, status, updated_at FROM tasks
-		WHERE status IN ('running', 'dispatched')
-		AND updated_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${stale_grace_seconds} seconds')
-		ORDER BY updated_at ASC;
-	" 2>/dev/null || echo "")
-
-	# Combine results: fast-path first (shorter grace), then standard grace queries
+	# Phase 0.7 no longer handles running/dispatched tasks — Phase 1 evaluates
+	# those directly without an intermediate evaluating state. Phase 0.7 only
+	# cleans up legacy evaluating tasks (from prior pulse versions or crashes).
 	local stale_active_tasks=""
 	local _parts=()
 	[[ -n "$fast_path_evaluating_tasks" ]] && _parts+=("$fast_path_evaluating_tasks")
 	[[ -n "$stale_evaluating_tasks" ]] && _parts+=("$stale_evaluating_tasks")
-	[[ -n "$stale_running_fast_tasks" ]] && _parts+=("$stale_running_fast_tasks")
-	[[ -n "$stale_other_tasks" ]] && _parts+=("$stale_other_tasks")
 	if [[ "${#_parts[@]}" -gt 0 ]]; then
 		stale_active_tasks=$(printf '%s\n' "${_parts[@]}")
 	fi
@@ -1192,139 +1167,10 @@ cmd_pulse() {
 		fi
 	fi
 
-	# Phase 0.8: Stale 'running' task recovery using started_at (t1193)
-	# Phase 0.7 uses updated_at which can be refreshed by other DB operations,
-	# causing it to miss tasks whose workers died long ago but whose updated_at
-	# was recently touched. This phase uses started_at (set once at dispatch,
-	# never refreshed) to catch running tasks that have exceeded a wall-clock
-	# timeout with no live worker process.
-	#
-	# Configurable via SUPERVISOR_RUNNING_STALE_SECONDS (default 3600 = 1h).
-	# Only targets 'running' status — dispatched/evaluating are covered by
-	# Phase 0.7 and Phase 1c respectively.
-	local running_stale_seconds="${SUPERVISOR_RUNNING_STALE_SECONDS:-3600}"
-	local stale_running_tasks
-	stale_running_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
-		SELECT id, started_at, pr_url FROM tasks
-		WHERE status = 'running'
-		AND started_at IS NOT NULL
-		AND started_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${running_stale_seconds} seconds')
-		ORDER BY started_at ASC;
-	" 2>/dev/null || echo "")
-
-	if [[ -n "$stale_running_tasks" ]]; then
-		local sr_recovered=0
-		local sr_skipped=0
-
-		while IFS='|' read -r sr_id sr_started sr_pr_url; do
-			[[ -z "$sr_id" ]] && continue
-
-			# Check if a live worker process exists for this task
-			local sr_pid_file="$SUPERVISOR_DIR/pids/${sr_id}.pid"
-			local sr_has_live_worker=false
-
-			if [[ -f "$sr_pid_file" ]]; then
-				local sr_pid
-				sr_pid=$(cat "$sr_pid_file" 2>/dev/null || echo "")
-				if [[ -n "$sr_pid" ]] && kill -0 "$sr_pid" 2>/dev/null; then
-					sr_has_live_worker=true
-				fi
-			fi
-
-			if [[ "$sr_has_live_worker" == "true" ]]; then
-				# Worker is alive and legitimately long-running — skip
-				sr_skipped=$((sr_skipped + 1))
-				continue
-			fi
-
-			# No live worker — orphaned running task.
-			# Diagnose root cause (t1202)
-			local sr_root_cause
-			sr_root_cause=$(_diagnose_stale_root_cause "$sr_id" "running")
-
-			# Calculate stale duration from started_at
-			local sr_stale_secs=0
-			if [[ -n "$sr_started" ]]; then
-				local sr_started_epoch
-				sr_started_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$sr_started" "+%s" 2>/dev/null || date -d "$sr_started" "+%s" 2>/dev/null || echo "0")
-				local sr_now_epoch
-				sr_now_epoch=$(date "+%s")
-				if [[ "$sr_started_epoch" -gt 0 ]]; then
-					sr_stale_secs=$((sr_now_epoch - sr_started_epoch))
-				fi
-			fi
-
-			log_warn "  Phase 0.8: Orphaned running task $sr_id (started: $sr_started, ${sr_stale_secs}s stale, cause: $sr_root_cause)"
-
-			# Clean up stale PID file if present
-			if [[ -f "$sr_pid_file" ]]; then
-				rm -f "$sr_pid_file" 2>/dev/null || true
-			fi
-
-			local sr_had_pr=0
-			local sr_to_state=""
-			[[ -n "$sr_pr_url" && "$sr_pr_url" != "no_pr" && "$sr_pr_url" != "task_only" ]] && sr_had_pr=1
-
-			# If task has a PR, route to pr_review — work may be done
-			if [[ "$sr_had_pr" -eq 1 ]]; then
-				sr_to_state="pr_review"
-				log_info "  Phase 0.8: $sr_id → pr_review (has PR, worker died after running, cause: $sr_root_cause)"
-				cmd_transition "$sr_id" "pr_review" --pr-url "$sr_pr_url" \
-					--error "Stale running recovery (Phase 0.8/t1193): worker died after ${running_stale_seconds}s, PR exists (cause: $sr_root_cause)" \
-					2>>"$SUPERVISOR_LOG" || true
-				db "$SUPERVISOR_DB" "
-					INSERT INTO state_log (task_id, from_state, to_state, reason)
-					VALUES ('$(sql_escape "$sr_id")', 'running', 'pr_review',
-						'Phase 0.8 stale_running_no_process (t1193/t1202): started_at=${sr_started}, no live worker after ${running_stale_seconds}s, PR exists (cause: $(sql_escape "$sr_root_cause"))');
-				" 2>/dev/null || true
-			else
-				# No PR — mark failed with stale_running_no_process reason
-				sr_to_state="failed"
-				cmd_transition "$sr_id" "failed" \
-					--error "stale_running_no_process: worker terminated without recording exit after ${running_stale_seconds}s (Phase 0.8/t1193, cause: $sr_root_cause)" \
-					2>>"$SUPERVISOR_LOG" || true
-				db "$SUPERVISOR_DB" "
-					INSERT INTO state_log (task_id, from_state, to_state, reason)
-					VALUES ('$(sql_escape "$sr_id")', 'running', 'failed',
-						'Phase 0.8 stale_running_no_process (t1193/t1202): started_at=${sr_started}, no live worker after ${running_stale_seconds}s (cause: $(sql_escape "$sr_root_cause"))');
-				" 2>/dev/null || true
-				# Clean up worker process tree (zombie children)
-				cleanup_worker_processes "$sr_id" 2>>"$SUPERVISOR_LOG" || true
-				# Attempt self-heal for retry eligibility
-				attempt_self_heal "$sr_id" "failed" \
-					"stale_running_no_process: worker terminated without recording exit (cause: $sr_root_cause)" \
-					"${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
-			fi
-
-			# Record metrics to stale_recovery_log (t1202)
-			local sr_retries
-			sr_retries=$(db "$SUPERVISOR_DB" "SELECT retries FROM tasks WHERE id = '$(sql_escape "$sr_id")';" 2>/dev/null || echo "0")
-			local sr_max_retries
-			sr_max_retries=$(db "$SUPERVISOR_DB" "SELECT max_retries FROM tasks WHERE id = '$(sql_escape "$sr_id")';" 2>/dev/null || echo "3")
-			_record_stale_recovery \
-				--task "$sr_id" --phase "0.8" \
-				--from "running" --to "$sr_to_state" \
-				--stale-secs "$sr_stale_secs" --root-cause "$sr_root_cause" \
-				--had-pr "$sr_had_pr" --retries "$sr_retries" \
-				--max-retries "$sr_max_retries" --batch "${batch_id:-}"
-
-			sr_recovered=$((sr_recovered + 1))
-		done <<<"$stale_running_tasks"
-
-		if [[ "$sr_recovered" -gt 0 ]]; then
-			log_success "  Phase 0.8: Recovered $sr_recovered stale running task(s) ($sr_skipped still alive)"
-			# Record pattern for observability and model routing
-			local pattern_helper="${SCRIPT_DIR}/pattern-tracker-helper.sh"
-			if [[ -x "$pattern_helper" ]]; then
-				"$pattern_helper" record \
-					--type "SELF_HEAL_PATTERN" \
-					--task "supervisor" \
-					--model "n/a" \
-					--detail "Phase 0.8 stale_running_no_process recovery: $sr_recovered tasks recovered (timeout=${running_stale_seconds}s)" \
-					2>/dev/null || true
-			fi
-		fi
-	fi
+	# Phase 0.8: REMOVED — running/dispatched tasks are now evaluated directly
+	# by Phase 1 without an intermediate evaluating state. Phase 1 re-reads
+	# current DB state before acting, preventing the race condition where
+	# Phase 0.7/0.8 and Phase 1 both tried to transition the same task.
 
 	# Phase 1: Check running workers for completion
 	# Also check 'evaluating' tasks - AI eval may have timed out, leaving them stuck
@@ -1339,28 +1185,15 @@ cmd_pulse() {
 	local failed_count=0
 	local dispatched_count=0
 
-	# t1269: Track which task is currently being evaluated so we can roll back
-	# on pulse death (SIGTERM/SIGINT). Without this, a killed pulse leaves the
-	# task stranded in 'evaluating' until Phase 0.7 detects it (120-600s).
-	# With this trap, the task is rolled back to its pre-evaluation state
-	# immediately, so the next pulse can re-evaluate it without delay.
+	# Track which task is being evaluated (for logging on pulse kill)
 	local _phase1_evaluating_tid=""
 	local _phase1_pre_eval_state=""
-	# shellcheck disable=SC2329  # invoked indirectly via trap
-	_phase1_cleanup_on_signal() {
-		if [[ -n "$_phase1_evaluating_tid" && -n "$_phase1_pre_eval_state" ]]; then
-			log_warn "  Phase 1 (t1269): pulse killed during evaluation of $_phase1_evaluating_tid — rolling back to $_phase1_pre_eval_state"
-			db "$SUPERVISOR_DB" "UPDATE tasks SET status = '$(sql_escape "$_phase1_pre_eval_state")', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), error = 'pulse_killed_mid_eval_rollback_t1269' WHERE id = '$(sql_escape "$_phase1_evaluating_tid")' AND status = 'evaluating';" 2>/dev/null || true
-			_phase1_evaluating_tid=""
-			_phase1_pre_eval_state=""
-		fi
-	}
 
 	if [[ -n "$running_tasks" ]]; then
-		# Install signal trap for crash-resilient evaluation (t1269).
-		# Chain with existing EXIT trap (release_pulse_lock) by saving and restoring.
+		# No intermediate evaluating state — if pulse is killed mid-evaluation,
+		# the task stays in running/dispatched and the next pulse re-evaluates it.
 		# shellcheck disable=SC2064  # intentional: expand SUPERVISOR_DIR at definition time
-		trap "_phase1_cleanup_on_signal; release_pulse_lock; rm -f '${SUPERVISOR_DIR}/MODELS.md.tmp' 2>/dev/null || true" TERM INT
+		trap "release_pulse_lock; rm -f '${SUPERVISOR_DIR}/MODELS.md.tmp' 2>/dev/null || true" TERM INT
 
 		while IFS='|' read -r tid _; do
 			# Check if worker process is still alive
@@ -1380,34 +1213,20 @@ cmd_pulse() {
 				continue
 			fi
 
-			# Worker is done - evaluate outcome
-			# Check current state to handle already-evaluating tasks (AI eval timeout)
+			# Worker is done - evaluate outcome directly (no intermediate evaluating state)
+			# Re-read current state fresh from DB to avoid race conditions with Phase 0.7
 			local current_task_state
 			current_task_state=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "")
 
-			if [[ "$current_task_state" == "evaluating" ]]; then
-				log_info "  $tid: stuck in evaluating (AI eval likely timed out), re-evaluating without AI..."
-				# t1269: Record pre-eval state for rollback — already evaluating, so
-				# rolling back to 'running' is the safest option (worker is dead, but
-				# 'running' lets Phase 1 re-evaluate on next pulse without grace delay).
-				_phase1_pre_eval_state="running"
-				# t1269: Mark this task as actively being evaluated BEFORE any state
-				# transition, so the SIGTERM cleanup handler always knows which task
-				# to roll back. The SQL guard (AND status = 'evaluating') makes a
-				# premature rollback a no-op if the transition hasn't committed yet.
-				_phase1_evaluating_tid="$tid"
-			else
-				log_info "  $tid: worker finished, evaluating..."
-				# t1269: Record pre-eval state before transitioning
-				_phase1_pre_eval_state="$current_task_state"
-				# t1269: Mark this task as actively being evaluated BEFORE the
-				# transition to close the SIGTERM race window. If SIGTERM arrives
-				# after this but before cmd_transition, the cleanup handler's SQL
-				# guard (AND status = 'evaluating') makes the rollback a no-op.
-				_phase1_evaluating_tid="$tid"
-				# Transition to evaluating
-				cmd_transition "$tid" "evaluating" 2>>"$SUPERVISOR_LOG" || true
+			# Skip if another phase already moved this task to a post-running state
+			if [[ "$current_task_state" != "running" && "$current_task_state" != "dispatched" && "$current_task_state" != "evaluating" ]]; then
+				log_info "  $tid: skipping — already transitioned to $current_task_state by another phase"
+				continue
 			fi
+
+			log_info "  $tid: worker finished, evaluating..."
+			_phase1_pre_eval_state="$current_task_state"
+			_phase1_evaluating_tid="$tid"
 
 			# Get task description for memory context (t128.6)
 			local tid_desc
@@ -1426,25 +1245,14 @@ cmd_pulse() {
 			local tid_existing_pr
 			tid_existing_pr=$(db "$SUPERVISOR_DB" "SELECT pr_url FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "")
 			local skip_ai="false"
-			if [[ "$current_task_state" == "evaluating" ]]; then
-				# Already stuck in evaluating — skip AI (it already timed out once)
-				skip_ai="true"
-			elif [[ -n "$tid_existing_pr" && "$tid_existing_pr" != "no_pr" && "$tid_existing_pr" != "task_only" && "$tid_existing_pr" != "task_obsolete" ]]; then
+			if [[ -n "$tid_existing_pr" && "$tid_existing_pr" != "no_pr" && "$tid_existing_pr" != "task_only" && "$tid_existing_pr" != "task_obsolete" ]]; then
 				# PR already in DB from t1245 early-persist — heuristic tiers will find it,
 				# no need for AI eval. Skipping saves 60-90s and prevents stale-evaluating.
 				skip_ai="true"
 				log_info "  $tid: PR already in DB ($tid_existing_pr) — skipping AI eval (t1251 fast-path)"
 			fi
 
-			# t1259: Pre-evaluation heartbeat — refresh updated_at immediately before
-			# calling evaluate_worker(). This ensures Phase 0.7's heartbeat check
-			# (240s window) is anchored to the start of evaluation, not the earlier
-			# cmd_transition("evaluating") call. Without this, fast-path completions
-			# (tasks where evaluate_worker() returns complete: without calling
-			# evaluate_with_ai()) have no heartbeat protection beyond the transition
-			# timestamp. If the pulse is killed between evaluate_worker() returning
-			# and cmd_transition("complete"), the task stays in evaluating with a
-			# stale updated_at and Phase 0.7 fires after 240s.
+			# Heartbeat: refresh updated_at before evaluation
 			_update_task_heartbeat "$tid"
 
 			local outcome
@@ -1461,12 +1269,7 @@ cmd_pulse() {
 			local outcome_type="${outcome%%:*}"
 			local outcome_detail="${outcome#*:}"
 
-			# t1259: Post-evaluation heartbeat — refresh updated_at immediately after
-			# evaluate_worker() returns complete:*. This extends the Phase 0.7 grace
-			# window through the quality gate check and cmd_transition("complete") call.
-			# Without this, a pulse kill between evaluate_worker() returning and
-			# cmd_transition("complete") leaves the task in evaluating with a stale
-			# updated_at, causing Phase 0.7 to fire after 240s.
+			# Post-evaluation heartbeat
 			if [[ "$outcome_type" == "complete" ]]; then
 				_update_task_heartbeat "$tid"
 			fi
