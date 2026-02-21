@@ -21,6 +21,125 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-02-21] Context Optimisation: Slim Always-Loaded Harness
+
+**Status:** Planning
+**Estimate:** ~9h (ai:7h test:1.5h read:30m)
+**TODO:** t1281, t1282, t1283
+**Logged:** 2026-02-21
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p024,Context Optimisation: Slim Always-Loaded Harness,planning,0,3,,refactor|context|token-efficiency|progressive-disclosure,9h,7h,1.5h,30m,2026-02-21T00:00Z,
+-->
+
+#### Purpose
+
+The always-loaded context chain (build.txt + AGENTS.md files + build-plus.md) consumes ~18,300 tokens before the first user message. Combined with Claude Code's own system prompt (~8-10K), sessions start at ~28K tokens just to say "hi". Analysis shows ~70% of .agents/AGENTS.md content is procedural detail only relevant in specific scenarios, and ~1,500 tokens are duplicated across files.
+
+This plan reduces the always-loaded footprint by ~49% (18,300 → ~9,300 tokens) through three sequential passes: deduplication, tiering, and language tightening. All knowledge is preserved — detail moves to on-demand reference files, not deleted.
+
+#### Principles (MUST be followed by all passes)
+
+1. **Nothing deleted** — knowledge was earned through real failures and discoveries. Every rule exists for a reason. Content moves to on-demand files, never to /dev/null.
+2. **Progressive disclosure** — load the minimum needed to route correctly, then pull detail when the session encounters that domain. The subagent-index.toon is the detailed index; AGENTS.md needs only enough to route.
+3. **Deterministic workflows, intelligent exceptions** — the harness should be crisp and procedural. Intelligence is for scenarios that fall outside pre-determined instructions, not for re-deriving the instructions themselves.
+4. **Agent awareness without agent loading** — sessions must know what capabilities exist (the index) without loading the full instructions of every capability. A 1-line pointer per domain is sufficient for routing.
+5. **Smaller models benefit most** — concise, directive language reduces confusion from unnecessary optionality. Write for the least capable model that might read the file.
+6. **Inheritance chain is sacred** — build.txt → repo AGENTS.md → .agents/AGENTS.md → agent.md. Each file inherits everything above it. Dedup means keeping content at the highest (earliest-loaded) appropriate level.
+
+#### Architecture: File Roles After Optimisation
+
+```
+ALWAYS LOADED (every session):
+  build.txt (~2,800 tokens)
+    - Universal behavioural rules (mission, tone, critical thinking)
+    - Completion discipline (KIRA)
+    - Tool usage, file discovery, code search
+    - Security rules
+    - Git workflow essentials (pre-edit check)
+    - Quality standards
+    - Working directories
+    - Context compaction survival
+    - Model reinforcements
+
+  repo AGENTS.md (~1,000 tokens)
+    - Contributing guide for aidevops framework development
+    - Pointer to .agents/AGENTS.md for operational rules
+
+  .agents/AGENTS.md (~3,000 tokens)
+    - Identity & mission (3 lines)
+    - Mandatory rules (pointers to build.txt + unique additions)
+    - Planning & tasks (core format, task ID, auto-dispatch basics)
+    - Git workflow (branch types, PR format, worktree basics)
+    - Compressed domain index (1 line per domain)
+    - Capabilities index (1 line per capability)
+    - Security pointer + unique content
+
+  build-plus.md (~2,500 tokens)
+    - Intent detection (deliberation vs execution)
+    - Build workflow (aidevops-specific steps only)
+    - Domain expertise check (full — high value)
+    - Planning file access & auto-commit
+    - Quality gates & git safety pointers
+
+ON-DEMAND (loaded when session touches the domain):
+  reference/planning-detail.md (~1,700 tokens)
+    - Auto-dispatch, blocker statuses, auto-subtasking
+    - Stale-claim recovery, task completion rules
+    - Atomic counter, interactive claim guard
+
+  reference/orchestration.md (~1,500 tokens)
+    - Supervisor CLI, pulse scheduler
+    - Model routing detail, budget-aware routing
+    - Pattern tracking, session memory monitoring
+
+  reference/services.md (~1,200 tokens)
+    - Memory system, inter-agent mailbox
+    - MCP discovery, skills system
+    - Auto-update, repo-sync
+
+  reference/session.md (~500 tokens)
+    - Session completion, context compaction
+    - Browser automation, localhost standards
+    - Bot reviewer feedback
+```
+
+#### Execution Phases
+
+**Phase 1: Deduplicate (t1281, ~3h)**
+- Establish build.txt as single source of truth for universal rules
+- Remove duplicated content from downstream files, replace with pointers
+- Preserve any unique content that exists only in downstream files
+- Target: ~1,500 token reduction
+- Verification: `wc -c` each file, trace inheritance chain
+
+**Phase 2: Tier AGENTS.md (t1282, ~4h, blocked-by t1281)**
+- Split .agents/AGENTS.md into slim core + 4 reference files
+- Compress progressive disclosure table to 1-line-per-domain format
+- Create reference/planning-detail.md, orchestration.md, services.md, session.md
+- Target: ~6,000 token reduction from always-loaded
+- Verification: every original section heading traceable to exactly one file
+
+**Phase 3: Tighten language (t1283, ~2h, blocked-by t1282)**
+- Compress explanatory paragraphs to directive statements
+- Move "why" explanations to comments or reference files
+- Trim generic coding advice from build-plus.md (models know how to code)
+- Target: ~1,500 token reduction
+- Verification: sonnet-tier model can follow every rule unambiguously
+
+#### Decision Log
+
+- d001: DSPy evaluated and rejected — solves structured pipeline optimisation (input→output with training data), not behavioural instruction compression for interactive agents. Would increase tokens via few-shot examples. 2026-02-21
+- d002: Chose 3-pass sequential approach over single rewrite — each pass is independently verifiable and reversible. If pass 1 causes issues, passes 2-3 can be deferred. 2026-02-21
+- d003: reference/ directory chosen over splitting into multiple AGENTS-*.md files — cleaner separation, avoids Claude Code auto-loading multiple AGENTS.md files from the same directory. 2026-02-21
+- d004: Opus tier required for all three passes — the model must understand the full context of why each rule exists to safely reorganise without losing intent. Sonnet might optimise too literally, removing content that appears redundant but serves a distinct purpose in its specific loading context. 2026-02-21
+
+#### Risks
+
+- **Over-trimming**: A model focused on token reduction may remove content that appears redundant but serves a purpose in a specific context (e.g., the same rule repeated in build.txt and AGENTS.md may seem redundant, but AGENTS.md is the only file loaded by some tools). Mitigation: opus tier, explicit "nothing deleted" constraint, verification step traces inheritance chain.
+- **Reference files not discovered**: If the slim AGENTS.md pointers are too terse, sessions may not know when to load reference files. Mitigation: each pointer includes a trigger condition ("when working on planning tasks, read reference/planning-detail.md").
+- **Worker regression**: Headless workers load the same AGENTS.md chain. If the slim version loses critical worker-specific rules (e.g., "Workers must NEVER edit TODO.md"), workers may misbehave. Mitigation: worker-specific rules stay in the always-loaded core, not in reference files.
+
 ### [2026-02-18] Dual-CLI Architecture: OpenCode Primary + Claude Code Fallback
 
 **Status:** Planning
