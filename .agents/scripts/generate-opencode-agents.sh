@@ -495,6 +495,7 @@ LAZY_MCPS = {'claude-code-mcp', 'outscraper', 'dataforseo', 'shadcn', 'macos-aut
              'google-analytics-mcp', 'MCP_DOCKER', 'ahrefs',
              'playwriter', 'augment-context-engine', 'context7',
              'sentry', 'socket', 'ios-simulator',
+             'openapi-search',
              # Oh-My-OpenCode MCPs - disable globally, use @github-search/@context7 subagents
              'grep_app', 'websearch', 'gh_grep'}
 # Note: gh_grep removed from aidevops but may exist from old configs or OmO
@@ -659,6 +660,22 @@ if platform.system() == 'Darwin':
         config['tools']['ios-simulator_*'] = False
         print("  Set ios-simulator_* disabled globally")
 
+# OpenAPI Search MCP - remote Cloudflare Worker, zero install (subagent only)
+# Docs: https://github.com/janwilmake/openapi-mcp-server
+# Directory: https://openapisearch.com/search
+# Note: enabled state is set by MCP loading policy above
+if 'openapi-search' not in config['mcp']:
+    config['mcp']['openapi-search'] = {
+        "type": "remote",
+        "url": "https://openapi-mcp.openapisearch.com/mcp",
+        "enabled": False
+    }
+    print("  Added openapi-search MCP (lazy load - @openapi-search subagent only)")
+
+if 'openapi-search_*' not in config['tools']:
+    config['tools']['openapi-search_*'] = False
+    print("  Set openapi-search_* disabled globally")
+
 # Disable Oh-My-OpenCode MCP tools globally
 # OmO installs: grep_app (GitHub search), context7 (docs), websearch (Exa)
 # MCPs are disabled via LAZY_MCPS above, but we also need to disable tools
@@ -726,6 +743,9 @@ generate_subagent_stub() {
 		extra_tools=$'  claude-code-mcp_*: true'
 		;;
 	# serper - REMOVED: Uses curl subagent now, no MCP tools
+	openapi-search)
+		extra_tools=$'  openapi-search_*: true\n  webfetch: true'
+		;;
 	playwriter)
 		extra_tools=$'  playwriter_*: true'
 		;;
