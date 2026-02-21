@@ -2037,3 +2037,8 @@
   check: file-exists .agents/business.md
   check: file-exists .agents/business/company-runners.md
   check: file-exists .agents/subagent-index.toon
+
+- [ ] v250 t1294.1 Create `.agents/tools/mcp-toolkit/mcporter.md` subagent d... | PR #2075 | merged:2026-02-21
+  files: .agents/tools/mcp-toolkit/mcporter.md
+  check: file-exists .agents/tools/mcp-toolkit/mcporter.md
+  check: rg "mcporter" .agents/subagent-index.toon
