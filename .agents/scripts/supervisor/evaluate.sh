@@ -1206,7 +1206,7 @@ evaluate_worker() {
 		# OpenCode Zen proxy returns CreditsError when credits exhausted;
 		# this is a billing issue, not a transient backend error.
 		if [[ "$meta_backend_error_count" -gt 0 && "$meta_content_lines" -lt 10 ]]; then
-			if grep -qi 'CreditsError\|Insufficient balance' "$log_file" 2>/dev/null; then
+			if grep -qi 'CreditsError\|Insufficient balance' "$tlog"; then
 				echo "blocked:billing_credits_exhausted"
 				return 0
 			fi
