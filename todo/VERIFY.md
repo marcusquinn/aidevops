@@ -2091,3 +2091,9 @@
   check: file-exists .agents/scripts/supervisor/ai-reason.sh
   check: shellcheck .agents/scripts/supervisor/dispatch.sh
   check: file-exists .agents/scripts/supervisor/dispatch.sh
+
+- [ ] v258 t1294.3 Update `mcp-integrations.md` and `mcp-discovery.md` — a... | PR #2084 | merged:2026-02-21
+  files: .agents/aidevops/mcp-integrations.md, .agents/tools/context/mcp-discovery.md
+  check: file-exists .agents/aidevops/mcp-integrations.md
+  check: file-exists .agents/tools/context/mcp-discovery.md
+  check: rg "mcp-discovery" .agents/subagent-index.toon
