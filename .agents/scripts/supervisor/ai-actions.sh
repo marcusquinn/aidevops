@@ -41,7 +41,7 @@ AI_SEMANTIC_DEDUP_TIMEOUT="${AI_SEMANTIC_DEDUP_TIMEOUT:-30}"
 AI_IMPROVEMENT_DEDUP_DAYS="${AI_IMPROVEMENT_DEDUP_DAYS:-30}"
 
 # Valid action types — any action not in this list is rejected
-readonly AI_VALID_ACTION_TYPES="comment_on_issue create_task create_subtasks flag_for_review adjust_priority close_verified request_info create_improvement escalate_model propose_auto_dispatch"
+readonly AI_VALID_ACTION_TYPES="comment_on_issue create_task create_subtasks flag_for_review adjust_priority close_verified request_info create_improvement escalate_model propose_auto_dispatch park_task"
 
 # Maximum actions per execution cycle (safety limit)
 AI_MAX_ACTIONS_PER_CYCLE="${AI_MAX_ACTIONS_PER_CYCLE:-10}"
@@ -1214,6 +1214,27 @@ validate_action_fields() {
 			;;
 		esac
 		;;
+	park_task)
+		local task_id blocker_tag
+		task_id=$(printf '%s' "$action" | jq -r '.task_id // empty')
+		blocker_tag=$(printf '%s' "$action" | jq -r '.blocker_tag // empty')
+		if [[ -z "$task_id" ]]; then
+			echo "missing required field: task_id"
+			return 0
+		fi
+		if [[ -z "$blocker_tag" ]]; then
+			echo "missing required field: blocker_tag"
+			return 0
+		fi
+		# Validate blocker_tag is one of the known -needed tags
+		case "$blocker_tag" in
+		account-needed | hosting-needed | login-needed | api-key-needed | clarification-needed | resources-needed | payment-needed | approval-needed | decision-needed | design-needed | content-needed | dns-needed | domain-needed | testing-needed) ;;
+		*)
+			echo "invalid blocker_tag: $blocker_tag (must be one of: account-needed, hosting-needed, login-needed, api-key-needed, clarification-needed, resources-needed, payment-needed, approval-needed, decision-needed, design-needed, content-needed, dns-needed, domain-needed, testing-needed)"
+			return 0
+			;;
+		esac
+		;;
 	*)
 		echo "unhandled action type: $action_type"
 		return 0
@@ -1254,6 +1275,7 @@ execute_single_action() {
 	create_improvement) _exec_create_improvement "$action" "$repo_path" ;;
 	escalate_model) _exec_escalate_model "$action" "$repo_path" ;;
 	propose_auto_dispatch) _exec_propose_auto_dispatch "$action" "$repo_path" ;;
+	park_task) _exec_park_task "$action" "$repo_path" ;;
 	*)
 		echo '{"error":"unhandled_action_type"}'
 		return 1
@@ -2164,6 +2186,69 @@ _exec_propose_auto_dispatch() {
 
 	echo "{\"proposed\":true,\"task_id\":\"$task_id\",\"recommended_model\":\"$recommended_model\",\"phase\":\"proposal\"}"
 	return 0
+}
+
+#######################################
+# Execute park_task action — add a -needed blocker tag to a task in TODO.md (t1287)
+# This prevents the supervisor from dispatching tasks that require human action.
+# Arguments:
+#   $1 - JSON action object with task_id, blocker_tag, reasoning
+#   $2 - repo path
+# Returns:
+#   0 on success, 1 on failure
+#######################################
+_exec_park_task() {
+	local action="$1"
+	local repo_path="$2"
+	local todo_file="$repo_path/TODO.md"
+
+	local task_id blocker_tag reasoning
+	task_id=$(printf '%s' "$action" | jq -r '.task_id // empty')
+	blocker_tag=$(printf '%s' "$action" | jq -r '.blocker_tag // empty')
+	reasoning=$(printf '%s' "$action" | jq -r '.reasoning // empty')
+
+	if [[ ! -f "$todo_file" ]]; then
+		log_error "park_task: TODO.md not found at $todo_file"
+		echo '{"error":"todo_not_found"}'
+		return 1
+	fi
+
+	# Find the task line
+	local task_line
+	task_line=$(grep -n "^\- \[ \] ${task_id} " "$todo_file" 2>/dev/null | head -1)
+	if [[ -z "$task_line" ]]; then
+		log_warn "park_task: $task_id not found as open task in TODO.md"
+		echo "{\"error\":\"task_not_found\",\"task_id\":\"$task_id\"}"
+		return 1
+	fi
+
+	# Check if already tagged with this blocker
+	if echo "$task_line" | grep -q "$blocker_tag"; then
+		log_info "park_task: $task_id already has $blocker_tag tag — skipping"
+		echo "{\"skipped\":true,\"task_id\":\"$task_id\",\"reason\":\"already_tagged\"}"
+		return 0
+	fi
+
+	# Append the blocker tag to the task line
+	local line_num
+	line_num=$(echo "$task_line" | cut -d: -f1)
+
+	# Use sed to append the blocker tag at the end of the line
+	if sed -i'' -e "${line_num}s/$/ ${blocker_tag}/" "$todo_file" 2>/dev/null; then
+		log_success "park_task: added $blocker_tag to $task_id"
+
+		# Commit and push the change
+		if type commit_and_push_todo &>/dev/null; then
+			commit_and_push_todo "$repo_path" "chore: park $task_id with $blocker_tag (AI supervisor)" 2>>"$SUPERVISOR_LOG" || true
+		fi
+
+		echo "{\"parked\":true,\"task_id\":\"$task_id\",\"blocker_tag\":\"$blocker_tag\"}"
+		return 0
+	else
+		log_error "park_task: failed to update TODO.md for $task_id"
+		echo "{\"error\":\"sed_failed\",\"task_id\":\"$task_id\"}"
+		return 1
+	fi
 }
 
 #######################################

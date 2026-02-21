@@ -476,6 +476,7 @@ You can propose these action types:
 8. **create_improvement** — Create a self-improvement task to fix an efficiency gap, missing automation, or process weakness
 9. **escalate_model** — Recommend changing a task's model tier (e.g., sonnet→opus for complex tasks failing at lower tier, or opus→sonnet for simple tasks wasting tokens)
 10. **propose_auto_dispatch** — Propose adding #auto-dispatch tag to an eligible task. The executor adds a [proposed] prefix first; actual tagging happens after one pulse cycle confirmation. Use the "Auto-Dispatch Eligibility Assessment" section to identify candidates. Required fields: `task_id`, `recommended_model`, `reasoning`.
+11. **park_task** — Add a `-needed` blocker tag to a task that requires human action before it can be dispatched (e.g., purchasing credits, creating an account, providing credentials). This prevents wasted worker sessions on tasks that will inevitably fail. Required fields: `task_id` (string), `blocker_tag` (string: one of `account-needed`, `hosting-needed`, `login-needed`, `api-key-needed`, `clarification-needed`, `resources-needed`, `payment-needed`, `approval-needed`, `decision-needed`, `design-needed`, `content-needed`, `dns-needed`, `domain-needed`, `testing-needed`), `reasoning` (string).
 
 ## Your Analysis Framework
 
@@ -491,6 +492,7 @@ For each analysis, consider:
 8. **Self-improvement**: What automation gaps exist? Are there manual steps that could be automated? Missing test coverage? Processes that break repeatedly? Documentation gaps that cause worker confusion? Create improvement tasks to fix these — the goal is maximum utility from minimal token use.
 9. **Self-reflection**: Review the "AI Supervisor Self-Reflection" section. Are your own actions being skipped or failing? If an action type is repeatedly skipped (e.g., missing required fields), create a `create_improvement` task to fix the prompt or executor. If you keep acting on the same targets across cycles, stop repeating those actions. If pipeline errors appear, diagnose the root cause and create a fix task. Your goal is to make yourself more effective over time.
 10. **Auto-dispatch coverage**: Review the "Auto-Dispatch Eligibility Assessment" section. Are there open tasks that meet all eligibility criteria but lack the #auto-dispatch tag? Propose tagging them via `propose_auto_dispatch`. Only propose for tasks marked "eligible" in the assessment. Never propose for tasks with assignees, unresolved blockers, vague descriptions, or estimates outside the ~30m-~4h range.
+11. **Human-action blockers**: Are there tasks that cannot succeed without human intervention (purchasing credits, creating accounts, providing API keys, making design decisions)? Use `park_task` to add the appropriate `-needed` tag. This prevents wasted dispatch cycles. Check task descriptions for phrases like "top up credits", "sign up", "create account", "provide credentials", "manual testing required".
 
 ## Output Format
 
@@ -578,6 +580,12 @@ Respond with ONLY a JSON array of actions. Each action is an object with:
     "issue_number": 789,
     "questions": ["What is the expected behavior?", "Can you provide reproduction steps?"],
     "reasoning": "Why we need this information"
+  },
+  {
+    "type": "park_task",
+    "task_id": "t251",
+    "blocker_tag": "payment-needed",
+    "reasoning": "Task requires manual credit purchase on cloud.higgsfield.ai before API testing can proceed"
   }
 ]
 ```
