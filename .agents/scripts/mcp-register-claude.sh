@@ -126,7 +126,7 @@ check_claude_cli() {
 get_registered_servers() {
 	local servers
 	# claude mcp list outputs lines like: "name: command - status"
-	servers=$(claude mcp list 2>/dev/null | grep -oE '^\S+:' | sed 's/:$//' || true)
+	servers=$(claude mcp list | grep -oE '^\S+:' | sed 's/:$//' || true)
 	echo "$servers"
 	return 0
 }
@@ -135,7 +135,7 @@ get_registered_servers() {
 is_registered() {
 	local name="$1"
 	local registered_list="$2"
-	echo "$registered_list" | grep -qx "$name" 2>/dev/null
+	echo "$registered_list" | grep -qx "$name"
 	return $?
 }
 
@@ -193,7 +193,7 @@ with open('$template_file') as f:
 val = data.get('$key', None)
 if isinstance(val, str) and val.startswith('claude mcp'):
     print(val)
-" 2>/dev/null || true)
+" || true)
 		if [[ -n "$value" ]]; then
 			echo "$value"
 			return 0
@@ -236,15 +236,15 @@ for name, config in servers.items():
     if url:
         # HTTP/SSE server
         entry = {'type': 'http', 'url': url}
-        print(f'claude mcp add-json {name} --scope $SCOPE ' + \"'\" + json.dumps(entry, separators=(',', ':')) + \"'\")
+        print(f'claude mcp add-json {name} ' + \"'\" + json.dumps(entry, separators=(',', ':')) + \"'\")
     elif cmd:
         entry = {'type': 'stdio', 'command': cmd, 'args': args}
         if env:
             entry['env'] = env
-        print(f'claude mcp add-json {name} --scope $SCOPE ' + \"'\" + json.dumps(entry, separators=(',', ':')) + \"'\")
+        print(f'claude mcp add-json {name} ' + \"'\" + json.dumps(entry, separators=(',', ':')) + \"'\")
     # Only generate for the first server entry
     break
-" 2>/dev/null || true
+" || true
 	return 0
 }
 
@@ -261,24 +261,45 @@ extract_server_name() {
 	local -a words
 	read -ra words <<<"$stripped"
 
+	# Known claude mcp flags that take a value argument
+	local -a flags_with_value=("--scope" "--transport")
+
 	local found_subcmd=false
+	local skip_next=false
 	local i=0
 	while [[ $i -lt ${#words[@]} ]]; do
 		local word="${words[$i]}"
-		if [[ "$found_subcmd" == true ]]; then
-			if [[ "$word" == --* ]]; then
-				# Skip flag and its value
-				i=$((i + 2))
-				continue
-			fi
-			# This is the server name
-			echo "$word"
-			return 0
-		fi
-		if [[ "$word" == "add-json" ]] || [[ "$word" == "add" ]]; then
-			found_subcmd=true
-		fi
 		i=$((i + 1))
+		if [[ "$found_subcmd" != true ]]; then
+			if [[ "$word" == "add-json" ]] || [[ "$word" == "add" ]]; then
+				found_subcmd=true
+			fi
+			continue
+		fi
+		# Skip value of a flag we consumed on the previous iteration
+		if [[ "$skip_next" == true ]]; then
+			skip_next=false
+			continue
+		fi
+		# Handle --flag=value (skip entirely)
+		if [[ "$word" == --*=* ]]; then
+			continue
+		fi
+		# Handle --flag value (known flags with a value)
+		if [[ "$word" == --* ]]; then
+			local flag
+			for flag in "${flags_with_value[@]}"; do
+				if [[ "$word" == "$flag" ]]; then
+					skip_next=true
+					break
+				fi
+			done
+			# Unknown flags (e.g. --force) are skipped without consuming next word
+			continue
+		fi
+		# First non-flag word is the server name
+		echo "$word"
+		return 0
 	done
 
 	return 1
@@ -326,7 +347,15 @@ run_command() {
 		return 0
 	fi
 
-	if eval "$cmd" 2>/dev/null; then
+	# Split command into prefix args and JSON payload (avoiding eval for security)
+	local prefix="${cmd%%\'*}"
+	local json_payload="${cmd#*\'}"
+	json_payload="${json_payload%\'*}" # Strip trailing quote
+
+	local -a cmd_parts
+	read -ra cmd_parts <<<"$prefix"
+
+	if "${cmd_parts[@]}" "$json_payload"; then
 		print_success "${template_name}: registered"
 		((registered++))
 	else
