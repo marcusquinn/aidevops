@@ -2011,6 +2011,13 @@
   check: shellcheck setup.sh
   check: file-exists setup.sh
 
-- [ ] v245 t1267 Retry t005.1 — AI chat sidebar foundation after stale-s... | PR #2049 | merged:2026-02-21
+- [x] v245 t1267 Retry t005.1 — AI chat sidebar foundation after stale-s... | PR #2049 | merged:2026-02-21 verified:2026-02-21
   files: .agents/subagent-index.toon
   check: file-exists .agents/subagent-index.toon
+
+- [ ] v246 t1283 Context optimisation pass 3: tighten language across buil... | PR #2048 | merged:2026-02-21
+  files: .agents/AGENTS.md, .agents/build-plus.md, .agents/prompts/build.txt, AGENTS.md
+  check: file-exists .agents/AGENTS.md
+  check: file-exists .agents/build-plus.md
+  check: file-exists .agents/prompts/build.txt
+  check: file-exists AGENTS.md
