@@ -1,0 +1,183 @@
+{
+  "provider": "openapi-search",
+  "description": "OpenAPI Search MCP — search and explore 2500+ OpenAPI specs via remote Cloudflare Worker",
+  "documentation": "https://github.com/janwilmake/openapi-mcp-server",
+  "directory": "https://openapisearch.com/search",
+  "license": "MIT",
+  "prerequisites": {
+    "install": "None — remote MCP, zero install",
+    "auth": "None — no API key required",
+    "url": "https://openapi-mcp.openapisearch.com/mcp",
+    "self_host": "git clone https://github.com/janwilmake/openapi-mcp-server && wrangler dev"
+  },
+  "mcp_tools": ["searchApis", "getApiOverview", "getApiEndpointDetails"],
+  "verification_prompt": "Search for payment processing APIs and show me what Stripe endpoints are available.",
+  "configurations": {
+    "opencode": {
+      "config_location": "~/.config/opencode/opencode.json",
+      "mcp_config": {
+        "openapi-search": {
+          "type": "remote",
+          "url": "https://openapi-mcp.openapisearch.com/mcp",
+          "enabled": true
+        }
+      }
+    },
+    "claude_code": {
+      "method": "cli",
+      "user_scope": "claude mcp add --scope user openapi-search --transport http https://openapi-mcp.openapisearch.com/mcp",
+      "project_scope": "claude mcp add --scope project openapi-search --transport http https://openapi-mcp.openapisearch.com/mcp",
+      "manual_config": {
+        "_file": "~/.claude/settings.json",
+        "mcpServers": {
+          "openapi-search": {
+            "type": "http",
+            "url": "https://openapi-mcp.openapisearch.com/mcp"
+          }
+        }
+      }
+    },
+    "claude_desktop": {
+      "config_location": "~/Library/Application Support/Claude/claude_desktop_config.json",
+      "config": {
+        "mcpServers": {
+          "openapi-search": {
+            "type": "http",
+            "url": "https://openapi-mcp.openapisearch.com/mcp"
+          }
+        }
+      }
+    },
+    "cursor": {
+      "config_location": "~/.cursor/mcp.json",
+      "config": {
+        "mcpServers": {
+          "openapi-search": {
+            "url": "https://openapi-mcp.openapisearch.com/mcp"
+          }
+        }
+      }
+    },
+    "windsurf": {
+      "config_location": "~/.codeium/windsurf/mcp_config.json",
+      "config": {
+        "mcpServers": {
+          "openapi-search": {
+            "serverUrl": "https://openapi-mcp.openapisearch.com/mcp"
+          }
+        }
+      }
+    },
+    "github_copilot": {
+      "config_location": ".vscode/mcp.json",
+      "scope": "project",
+      "config": {
+        "servers": {
+          "openapi-search": {
+            "type": "http",
+            "url": "https://openapi-mcp.openapisearch.com/mcp"
+          }
+        }
+      }
+    },
+    "kilo_code": {
+      "method": "global_mcp_config",
+      "config": {
+        "mcpServers": {
+          "openapi-search": {
+            "url": "https://openapi-mcp.openapisearch.com/mcp",
+            "disabled": false,
+            "alwaysAllow": ["searchApis", "getApiOverview", "getApiEndpointDetails"]
+          }
+        }
+      }
+    },
+    "kiro": {
+      "method": "command_palette",
+      "commands": [
+        "Kiro: Open workspace MCP config (JSON)",
+        "Kiro: Open user MCP config (JSON)"
+      ],
+      "config": {
+        "mcpServers": {
+          "openapi-search": {
+            "url": "https://openapi-mcp.openapisearch.com/mcp",
+            "disabled": false,
+            "autoApprove": ["searchApis", "getApiOverview", "getApiEndpointDetails"]
+          }
+        }
+      }
+    },
+    "gemini_cli": {
+      "config_locations": {
+        "user": "~/.gemini/settings.json",
+        "project": ".gemini/settings.json"
+      },
+      "config": {
+        "mcpServers": {
+          "openapi-search": {
+            "url": "https://openapi-mcp.openapisearch.com/mcp"
+          }
+        }
+      }
+    },
+    "continue_dev": {
+      "config_location": "~/.continue/config.json",
+      "config": {
+        "mcpServers": [
+          {
+            "name": "openapi-search",
+            "transport": {
+              "type": "streamable-http",
+              "url": "https://openapi-mcp.openapisearch.com/mcp"
+            }
+          }
+        ]
+      }
+    },
+    "zed": {
+      "method": "settings_ui",
+      "config": {
+        "openapi-search": {
+          "url": "https://openapi-mcp.openapisearch.com/mcp"
+        }
+      }
+    },
+    "droid": {
+      "method": "cli",
+      "command": "droid mcp add openapi-search --url https://openapi-mcp.openapisearch.com/mcp"
+    }
+  },
+  "workflow": {
+    "step_1": "Search — find the right API identifier from the 2500+ API directory",
+    "step_2": "Overview — get a plain-language summary of the API's capabilities",
+    "step_3": "Detail — drill into specific endpoints with request/response schemas"
+  },
+  "use_cases": [
+    "Discover APIs for a given domain (payments, email, CRM, etc.)",
+    "Understand unfamiliar API endpoints without reading raw OpenAPI specs",
+    "Generate integration code from endpoint details",
+    "Compare APIs across providers for the same domain"
+  ],
+  "troubleshooting": {
+    "connection_failed": {
+      "issue": "Cannot connect to remote MCP server",
+      "solution": "Verify network connectivity; the server runs on Cloudflare Workers at https://openapi-mcp.openapisearch.com/mcp"
+    },
+    "api_not_found": {
+      "issue": "API not found in directory",
+      "solution": "Try different search terms; browse https://openapisearch.com/search to verify availability"
+    },
+    "self_host_fallback": {
+      "issue": "Remote server unavailable or too slow",
+      "solution": "Clone https://github.com/janwilmake/openapi-mcp-server and run 'wrangler dev' locally"
+    }
+  },
+  "notes": {
+    "privacy": "Remote service — queries are sent to Cloudflare Workers (public API data only)",
+    "auth": "No API key or authentication required",
+    "coverage": "2500+ OpenAPI specifications indexed",
+    "transport": "HTTP-based MCP (streamable-http) — no local process needed",
+    "source": "https://github.com/janwilmake/openapi-mcp-server (875+ stars, MIT)"
+  }
+}

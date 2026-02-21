@@ -1,0 +1,108 @@
+{
+  "_comment": "OpenAPI Search MCP — remote Cloudflare Worker, zero install, no API key",
+  "_documentation": "https://github.com/janwilmake/openapi-mcp-server",
+  "_directory": "https://openapisearch.com/search",
+
+  "opencode": {
+    "_file": "~/.config/opencode/opencode.json",
+    "_section": "mcp",
+    "openapi-search": {
+      "type": "remote",
+      "url": "https://openapi-mcp.openapisearch.com/mcp",
+      "enabled": true
+    }
+  },
+
+  "claude_code": "claude mcp add --scope user openapi-search --transport http https://openapi-mcp.openapisearch.com/mcp",
+
+  "claude_desktop": {
+    "_file": "~/Library/Application Support/Claude/claude_desktop_config.json",
+    "mcpServers": {
+      "openapi-search": {
+        "type": "http",
+        "url": "https://openapi-mcp.openapisearch.com/mcp"
+      }
+    }
+  },
+
+  "cursor": {
+    "_file": "~/.cursor/mcp.json",
+    "mcpServers": {
+      "openapi-search": {
+        "url": "https://openapi-mcp.openapisearch.com/mcp"
+      }
+    }
+  },
+
+  "windsurf": {
+    "_file": "~/.codeium/windsurf/mcp_config.json",
+    "mcpServers": {
+      "openapi-search": {
+        "serverUrl": "https://openapi-mcp.openapisearch.com/mcp"
+      }
+    }
+  },
+
+  "github_copilot": {
+    "_file": ".vscode/mcp.json (project root)",
+    "servers": {
+      "openapi-search": {
+        "type": "http",
+        "url": "https://openapi-mcp.openapisearch.com/mcp"
+      }
+    }
+  },
+
+  "kilo_code": {
+    "_method": "Global MCP Config",
+    "mcpServers": {
+      "openapi-search": {
+        "url": "https://openapi-mcp.openapisearch.com/mcp",
+        "disabled": false,
+        "alwaysAllow": ["searchApis", "getApiOverview", "getApiEndpointDetails"]
+      }
+    }
+  },
+
+  "kiro": {
+    "_method": "Command Palette: Kiro: Open user MCP config (JSON)",
+    "mcpServers": {
+      "openapi-search": {
+        "url": "https://openapi-mcp.openapisearch.com/mcp",
+        "disabled": false,
+        "autoApprove": ["searchApis", "getApiOverview", "getApiEndpointDetails"]
+      }
+    }
+  },
+
+  "gemini_cli": {
+    "_file": "~/.gemini/settings.json",
+    "mcpServers": {
+      "openapi-search": {
+        "url": "https://openapi-mcp.openapisearch.com/mcp"
+      }
+    }
+  },
+
+  "continue_dev": {
+    "_file": "~/.continue/config.json",
+    "mcpServers": [
+      {
+        "name": "openapi-search",
+        "transport": {
+          "type": "streamable-http",
+          "url": "https://openapi-mcp.openapisearch.com/mcp"
+        }
+      }
+    ]
+  },
+
+  "zed": {
+    "_method": "Settings UI",
+    "openapi-search": {
+      "url": "https://openapi-mcp.openapisearch.com/mcp"
+    }
+  },
+
+  "droid_command": "droid mcp add openapi-search --url https://openapi-mcp.openapisearch.com/mcp"
+}
