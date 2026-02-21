@@ -2317,3 +2317,8 @@
   files: .agents/scripts/supervisor/pulse.sh
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
+
+- [ ] v264 t1288.2 Create config templates `configs/openapi-search-config.js... | PR #2090 | merged:2026-02-21
+  files: configs/mcp-templates/openapi-search.json, configs/openapi-search-config.json.txt
+  check: file-exists configs/mcp-templates/openapi-search.json
+  check: file-exists configs/openapi-search-config.json.txt
