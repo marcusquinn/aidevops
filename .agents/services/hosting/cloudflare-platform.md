@@ -1,5 +1,5 @@
 ---
-description: "Cloudflare platform development guidance — patterns, gotchas, decision trees, SDK usage for Workers, Pages, KV, D1, R2, AI, Durable Objects, and 60+ products. Use when building or developing ON the Cloudflare platform. For managing/configuring CF resources via API, use the Cloudflare Code Mode MCP (cloudflare-mcp.md)."
+description: "Cloudflare platform development guidance — patterns, gotchas, decision trees, SDK usage for Workers, Pages, KV, D1, R2, AI, Durable Objects, and 60+ products. Use when building or developing ON the Cloudflare platform. For managing Cloudflare resources (DNS, WAF, DDoS, R2 buckets, Workers deployments), use the Cloudflare Code Mode MCP server instead."
 mode: subagent
 imported_from: external
 ---
@@ -24,6 +24,19 @@ imported_from: external
 
 <!-- AI-CONTEXT-END -->
 
+## Routing: Operations vs Development
+
+| Task | Tool |
+|------|------|
+| Manage DNS records, zones | Code Mode MCP |
+| Configure WAF, DDoS, firewall rules | Code Mode MCP |
+| Manage R2 buckets, Workers deployments | Code Mode MCP |
+| Zero Trust, Access, Tunnel management | Code Mode MCP |
+| Build a Worker (SDK, bindings, types) | This skill |
+| Configure wrangler.toml, local dev | This skill |
+| Debug Workers runtime issues | This skill |
+| Understand product architecture, patterns | This skill |
+
 Consolidated skill for building on the Cloudflare platform. Use decision trees below to find the right product, then load detailed references.
 
 ## How to Use This Skill
@@ -37,8 +50,8 @@ Each product in `./references/<product>/` contains a `README.md` as the entry po
 | File | Purpose | When to Read |
 |------|---------|--------------|
 | `README.md` | Overview, when to use, getting started | **Always read first** |
-| `api.md` | Runtime API, types, method signatures | Writing code |
-| `configuration.md` | wrangler.toml, bindings, setup | Configuring a project |
+| `api.md` | Workers runtime SDK, types, method signatures (not management API — use Code Mode MCP for that) | Writing code |
+| `configuration.md` | wrangler.toml, bindings, local dev setup | Configuring a project |
 | `patterns.md` | Common patterns, best practices | Implementation guidance |
 | `gotchas.md` | Pitfalls, limitations, edge cases | Debugging, avoiding mistakes |
 
@@ -141,7 +154,7 @@ Need media?
 Need IaC?
 ├─ Pulumi → pulumi/
 ├─ Terraform → terraform/
-└─ Direct API → api/
+└─ Direct API → use Code Mode MCP (tools/mcp/cloudflare-code-mode.md)
 ```
 
 ## Product Index
