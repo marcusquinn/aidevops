@@ -2030,3 +2030,10 @@
   files: .agents/scripts/supervisor/dispatch.sh
   check: shellcheck .agents/scripts/supervisor/dispatch.sh
   check: file-exists .agents/scripts/supervisor/dispatch.sh
+
+- [ ] v249 t031 Company orchestration agent/workflow inspired by @Daniell... | PR #2054 | merged:2026-02-21
+  files: .agents/AGENTS.md, .agents/business.md, .agents/business/company-runners.md, .agents/subagent-index.toon
+  check: file-exists .agents/AGENTS.md
+  check: file-exists .agents/business.md
+  check: file-exists .agents/business/company-runners.md
+  check: file-exists .agents/subagent-index.toon
