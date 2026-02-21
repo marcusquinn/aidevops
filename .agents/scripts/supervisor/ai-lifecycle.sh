@@ -912,6 +912,10 @@ process_ai_lifecycle() {
 	local merged_parents=""
 	local repos_with_changes=""
 
+	local total_eligible=0
+	total_eligible=$(printf '%s\n' "$eligible_tasks" | grep -c '.' || echo "0")
+	log_info "ai-lifecycle: $total_eligible eligible tasks"
+
 	while IFS='|' read -r tid tstatus tpr trepo; do
 		[[ -z "$tid" ]] && continue
 
@@ -944,6 +948,7 @@ process_ai_lifecycle() {
 			# Check if a merge happened
 			local new_status
 			new_status=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "")
+			log_info "ai-lifecycle: $tid → $new_status"
 			case "$new_status" in
 			merged | deploying | deployed)
 				merged_count=$((merged_count + 1))
@@ -956,6 +961,8 @@ process_ai_lifecycle() {
 				fi
 				;;
 			esac
+		else
+			log_warn "ai-lifecycle: $tid failed (process_task_lifecycle returned non-zero)"
 		fi
 
 		# Track repos that had status tag changes
