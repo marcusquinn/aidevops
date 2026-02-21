@@ -1038,21 +1038,29 @@ do_prompt_repeat() {
 		fi
 		session_title="${task_id}-pr: ${short_desc}"
 	fi
-	local -a cmd_parts=()
-	eval "cmd_parts=($(build_cli_cmd \
-		--cli "$ai_cli" \
-		--action run \
-		--output array \
-		--model "$tmodel" \
-		--title "$session_title" \
-		--prompt "$reinforced_prompt"))"
-
 	# Ensure PID directory exists
 	mkdir -p "$SUPERVISOR_DIR/pids"
 
-	# Generate worker-specific MCP config (t221)
-	local worker_xdg_config=""
-	worker_xdg_config=$(generate_worker_mcp_config "$task_id" 2>/dev/null) || true
+	# Generate worker-specific MCP config (t221, t1162)
+	# Must be generated BEFORE build_cli_cmd so Claude CLI gets --mcp-config flag
+	local worker_mcp_config=""
+	worker_mcp_config=$(generate_worker_mcp_config "$task_id" "$ai_cli" 2>/dev/null) || true
+
+	# Build CLI command with MCP config for Claude (t1162)
+	local -a build_cmd_args=(
+		--cli "$ai_cli"
+		--action run
+		--output array
+		--model "$tmodel"
+		--title "$session_title"
+		--prompt "$reinforced_prompt"
+	)
+	# For Claude CLI, pass MCP config as CLI flag; for OpenCode, it's an env var
+	if [[ "$ai_cli" == "claude" && -n "$worker_mcp_config" ]]; then
+		build_cmd_args+=(--mcp-config "$worker_mcp_config")
+	fi
+	local -a cmd_parts=()
+	eval "cmd_parts=($(build_cli_cmd "${build_cmd_args[@]}"))"
 
 	# Write dispatch script
 	# t1190: Use timestamped filename to prevent overwrite race condition.
@@ -1064,8 +1072,9 @@ do_prompt_repeat() {
 		echo "echo 'WORKER_STARTED task_id=${task_id} strategy=prompt_repeat pid=\$\$ timestamp='\$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 		echo "cd '${work_dir}' || { echo 'WORKER_FAILED: cd to work_dir failed: ${work_dir}'; exit 1; }"
 		echo "export FULL_LOOP_HEADLESS=true"
-		if [[ -n "$worker_xdg_config" ]]; then
-			echo "export XDG_CONFIG_HOME='${worker_xdg_config}'"
+		# t1162: For OpenCode, set XDG_CONFIG_HOME; for Claude, MCP config is in CLI flags
+		if [[ "$ai_cli" != "claude" && -n "$worker_mcp_config" ]]; then
+			echo "export XDG_CONFIG_HOME='${worker_mcp_config}'"
 		fi
 		printf 'exec '
 		printf '%q ' "${cmd_parts[@]}"
@@ -1777,23 +1786,54 @@ check_model_health() {
 }
 
 #######################################
-# Generate a worker-specific MCP config with heavy indexers disabled (t221)
+# Generate a worker-specific MCP config with heavy indexers disabled (t221, t1162)
 #
-# Workers inherit the global ~/.config/opencode/opencode.json which may have
-# osgrep enabled. osgrep indexes the entire codebase on startup, consuming
-# ~4 CPU cores per worker. With 3-4 concurrent workers, that's 12-16 cores
-# wasted on indexing that workers don't need (they have rg/grep/read tools).
+# Workers inherit the global MCP config which may have osgrep enabled.
+# osgrep indexes the entire codebase on startup, consuming ~4 CPU cores
+# per worker. With 3-4 concurrent workers, that's 12-16 cores wasted on
+# indexing that workers don't need (they have rg/grep/read tools).
 #
-# This function copies the user's config to a per-worker temp directory and
-# disables osgrep (and augment-context-engine, another heavy indexer).
-# The caller sets XDG_CONFIG_HOME to redirect OpenCode to this config.
+# CLI-aware behavior (t1162):
+#   opencode: Copies ~/.config/opencode/opencode.json to a per-worker temp
+#             directory with heavy indexers disabled. Returns XDG_CONFIG_HOME
+#             path. Caller sets XDG_CONFIG_HOME env var.
+#   claude:   Generates a standalone mcpServers JSON file for --mcp-config
+#             --strict-mcp-config flags. Sources MCP servers from the user's
+#             Claude settings (~/.claude/settings.json) and project .mcp.json,
+#             filtering out heavy indexers. Returns the JSON file path.
 #
-# Args: $1 = task_id (used for directory naming)
-# Outputs: XDG_CONFIG_HOME path on stdout
+# Args:
+#   $1 = task_id (used for directory naming)
+#   $2 = ai_cli (optional, default: "opencode") — "opencode" or "claude"
+# Outputs: config path on stdout (XDG_CONFIG_HOME for opencode, JSON file for claude)
 # Returns: 0 on success, 1 on failure (caller should proceed without override)
 #######################################
 generate_worker_mcp_config() {
 	local task_id="$1"
+	local ai_cli="${2:-opencode}"
+
+	if ! command -v jq &>/dev/null; then
+		log_warn "jq not available — cannot generate worker MCP config"
+		return 1
+	fi
+
+	local worker_config_dir="${SUPERVISOR_DIR}/pids/${task_id}-config"
+	mkdir -p "$worker_config_dir"
+
+	if [[ "$ai_cli" == "claude" ]]; then
+		_generate_worker_mcp_config_claude "$task_id" "$worker_config_dir"
+	else
+		_generate_worker_mcp_config_opencode "$task_id" "$worker_config_dir"
+	fi
+}
+
+#######################################
+# Generate worker MCP config for OpenCode CLI (t221)
+# Internal helper — called by generate_worker_mcp_config()
+#######################################
+_generate_worker_mcp_config_opencode() {
+	local task_id="$1"
+	local worker_config_dir="$2"
 
 	local user_config="$HOME/.config/opencode/opencode.json"
 	if [[ ! -f "$user_config" ]]; then
@@ -1801,39 +1841,120 @@ generate_worker_mcp_config() {
 		return 1
 	fi
 
-	# Create per-worker config directory under supervisor's pids dir
-	local worker_config_dir="${SUPERVISOR_DIR}/pids/${task_id}-config/opencode"
-	mkdir -p "$worker_config_dir"
+	local opencode_dir="${worker_config_dir}/opencode"
+	mkdir -p "$opencode_dir"
 
 	# Copy and modify: disable heavy indexing MCPs
 	# osgrep: local semantic search, spawns indexer (~4 CPU cores)
 	# augment-context-engine: another semantic indexer
-	if command -v jq &>/dev/null; then
-		jq '
-            # Disable heavy indexing MCP servers for workers
-            .mcp["osgrep"].enabled = false |
-            .mcp["augment-context-engine"].enabled = false |
-            # Also disable their tools to avoid tool-not-found errors
-            .tools["osgrep_*"] = false |
-            .tools["augment-context-engine_*"] = false
-        ' "$user_config" >"$worker_config_dir/opencode.json" 2>/dev/null
-	else
-		# Fallback: copy as-is if jq unavailable (workers still get osgrep but
-		# this is a best-effort optimisation, not a hard requirement)
-		log_warn "jq not available — cannot generate worker MCP config"
-		return 1
-	fi
+	jq '
+		# Disable heavy indexing MCP servers for workers
+		.mcp["osgrep"].enabled = false |
+		.mcp["augment-context-engine"].enabled = false |
+		# Also disable their tools to avoid tool-not-found errors
+		.tools["osgrep_*"] = false |
+		.tools["augment-context-engine_*"] = false
+	' "$user_config" >"$opencode_dir/opencode.json" 2>/dev/null
 
 	# Validate the generated config is valid JSON
-	if ! jq empty "$worker_config_dir/opencode.json" 2>/dev/null; then
-		log_warn "Generated worker config is invalid JSON — removing"
-		rm -f "$worker_config_dir/opencode.json"
+	if ! jq empty "$opencode_dir/opencode.json" 2>/dev/null; then
+		log_warn "Generated worker OpenCode config is invalid JSON — removing"
+		rm -f "$opencode_dir/opencode.json"
 		return 1
 	fi
 
 	# Return the parent of the opencode/ dir (XDG_CONFIG_HOME points to the
 	# directory that *contains* the opencode/ subdirectory)
-	echo "${SUPERVISOR_DIR}/pids/${task_id}-config"
+	echo "$worker_config_dir"
+	return 0
+}
+
+#######################################
+# Generate worker MCP config for Claude CLI (t1162)
+# Internal helper — called by generate_worker_mcp_config()
+#
+# Builds a standalone JSON file with mcpServers for --mcp-config flag.
+# Used with --strict-mcp-config to ensure workers ONLY get the specified
+# MCP servers, not the user's full global set.
+#
+# MCP server sources (merged, deduplicated):
+#   1. User's Claude settings: ~/.claude/settings.json (mcpServers key)
+#   2. Project-level .mcp.json (if present in the repo)
+#   3. Deployed MCP templates: ~/.aidevops/agents/configs/mcp-templates/
+#      (only servers with claude_code_command entries)
+#
+# Heavy indexers are filtered out:
+#   - osgrep (spawns indexer, ~4 CPU cores)
+#   - augment-context-engine (another semantic indexer)
+#
+# Output format matches Claude CLI --mcp-config expectation:
+#   { "mcpServers": { "name": { "command": "...", "args": [...], "env": {...} } } }
+#######################################
+_generate_worker_mcp_config_claude() {
+	local task_id="$1"
+	local worker_config_dir="$2"
+
+	local config_file="${worker_config_dir}/claude-mcp-config.json"
+
+	# Heavy indexer server names to exclude
+	local -a excluded_servers=("osgrep" "augment-context-engine")
+
+	# Start with empty mcpServers object
+	local merged_config='{"mcpServers":{}}'
+
+	# Source 1: User's Claude settings (~/.claude/settings.json)
+	local claude_settings="$HOME/.claude/settings.json"
+	if [[ -f "$claude_settings" ]]; then
+		local user_servers
+		user_servers=$(jq -r '.mcpServers // empty' "$claude_settings" 2>/dev/null) || true
+		if [[ -n "$user_servers" && "$user_servers" != "null" ]]; then
+			merged_config=$(echo "$merged_config" | jq --argjson servers "$user_servers" '
+				.mcpServers = (.mcpServers + $servers)
+			' 2>/dev/null) || true
+		fi
+	fi
+
+	# Source 2: Project-level .mcp.json (check common locations)
+	# Workers run in worktrees, so check the repo root for .mcp.json
+	local -a mcp_json_paths=(
+		"$HOME/Git/aidevops/.mcp.json"
+		"./.mcp.json"
+	)
+	for mcp_json in "${mcp_json_paths[@]}"; do
+		if [[ -f "$mcp_json" ]]; then
+			local project_servers
+			project_servers=$(jq -r '.mcpServers // empty' "$mcp_json" 2>/dev/null) || true
+			if [[ -n "$project_servers" && "$project_servers" != "null" ]]; then
+				merged_config=$(echo "$merged_config" | jq --argjson servers "$project_servers" '
+					.mcpServers = (.mcpServers + $servers)
+				' 2>/dev/null) || true
+			fi
+			break # Use first found
+		fi
+	done
+
+	# Filter out heavy indexers
+	for excluded in "${excluded_servers[@]}"; do
+		merged_config=$(echo "$merged_config" | jq --arg name "$excluded" '
+			.mcpServers |= del(.[$name])
+		' 2>/dev/null) || true
+	done
+
+	# Write the config file
+	echo "$merged_config" | jq '.' >"$config_file" 2>/dev/null
+
+	# Validate the generated config is valid JSON with mcpServers key
+	if ! jq -e '.mcpServers' "$config_file" &>/dev/null; then
+		log_warn "Generated worker Claude MCP config is invalid — removing"
+		rm -f "$config_file"
+		return 1
+	fi
+
+	local server_count
+	server_count=$(jq '.mcpServers | length' "$config_file" 2>/dev/null || echo "0")
+	log_verbose "Generated Claude worker MCP config: $config_file ($server_count servers, excluded: ${excluded_servers[*]})"
+
+	echo "$config_file"
 	return 0
 }
 
@@ -1860,11 +1981,13 @@ generate_worker_mcp_config() {
 #   --model <provider/model>  (optional, for run/probe)
 #   --title <session-title>   (optional, for run — opencode only)
 #   --prompt <text>           (required for run, ignored for version)
+#   --mcp-config <path>       (optional, for run — claude only, t1162)
+#                              Path to MCP config JSON for --mcp-config --strict-mcp-config
 #
 # Returns: 0 on success, 1 on invalid args
 #######################################
 build_cli_cmd() {
-	local cli="" action="" output_mode="nul" model="" title="" prompt=""
+	local cli="" action="" output_mode="nul" model="" title="" prompt="" mcp_config=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -1890,6 +2013,10 @@ build_cli_cmd() {
 			;;
 		--prompt)
 			prompt="$2"
+			shift 2
+			;;
+		--mcp-config)
+			mcp_config="$2"
 			shift 2
 			;;
 		*)
@@ -1942,6 +2069,13 @@ build_cli_cmd() {
 			fi
 			_emit_token "--output-format"
 			_emit_token "json"
+			# t1162: Worker MCP isolation — pass --mcp-config and --strict-mcp-config
+			# to ensure workers only get specified MCP servers, not the user's full set
+			if [[ -n "$mcp_config" ]]; then
+				_emit_token "--mcp-config"
+				_emit_token "$mcp_config"
+				_emit_token "--strict-mcp-config"
+			fi
 		fi
 		;;
 	version)
@@ -2009,6 +2143,7 @@ build_cli_cmd() {
 # Build the dispatch command for a task
 # Outputs the command array elements, one per line
 # $5 (optional): memory context to inject into the prompt
+# $8 (optional): MCP config path for Claude CLI --mcp-config (t1162)
 #######################################
 build_dispatch_cmd() {
 	local task_id="$1"
@@ -2018,6 +2153,7 @@ build_dispatch_cmd() {
 	local memory_context="${5:-}"
 	local model="${6:-}"
 	local description="${7:-}"
+	local mcp_config="${8:-}"
 
 	# Include task description in the prompt so the worker knows what to do
 	# even if TODO.md doesn't have an entry for this task (t158)
@@ -2262,13 +2398,19 @@ $memory_context"
 	fi
 
 	# t1160.1: Delegate CLI-specific command building to build_cli_cmd()
-	build_cli_cmd \
-		--cli "$ai_cli" \
-		--action run \
-		--output nul \
-		--model "$model" \
-		--title "$session_title" \
+	local -a _build_args=(
+		--cli "$ai_cli"
+		--action run
+		--output nul
+		--model "$model"
+		--title "$session_title"
 		--prompt "$prompt"
+	)
+	# t1162: Pass MCP config for Claude CLI worker isolation
+	if [[ -n "$mcp_config" ]]; then
+		_build_args+=(--mcp-config "$mcp_config")
+	fi
+	build_cli_cmd "${_build_args[@]}"
 
 	return 0
 }
@@ -2288,6 +2430,7 @@ $memory_context"
 #   $6 = model (resolved model string — overridden to sonnet tier)
 #   $7 = description
 #   $8 = verify_reason (from was_previously_worked)
+#   $9 = mcp_config (optional, path to MCP config JSON for Claude CLI, t1162)
 #
 # Output: NUL-delimited command array (same format as build_dispatch_cmd)
 #######################################
@@ -2300,6 +2443,7 @@ build_verify_dispatch_cmd() {
 	local model="${6:-}"
 	local description="${7:-}"
 	local verify_reason="${8:-}"
+	local mcp_config="${9:-}"
 
 	local prompt="/full-loop $task_id --headless --verify"
 	if [[ -n "$description" ]]; then
@@ -2361,13 +2505,19 @@ $memory_context"
 	fi
 
 	# t1160.1: Delegate CLI-specific command building to build_cli_cmd()
-	build_cli_cmd \
-		--cli "$ai_cli" \
-		--action run \
-		--output nul \
-		--model "$model" \
-		--title "$session_title" \
+	local -a _build_args=(
+		--cli "$ai_cli"
+		--action run
+		--output nul
+		--model "$model"
+		--title "$session_title"
 		--prompt "$prompt"
+	)
+	# t1162: Pass MCP config for Claude CLI worker isolation
+	if [[ -n "$mcp_config" ]]; then
+		_build_args+=(--mcp-config "$mcp_config")
+	fi
+	build_cli_cmd "${_build_args[@]}"
 
 	return 0
 }
@@ -2819,31 +2969,38 @@ cmd_dispatch() {
 	log_info "Model: $resolved_model"
 	log_info "Log: $log_file"
 
+	# Ensure PID directory exists before dispatch
+	mkdir -p "$SUPERVISOR_DIR/pids"
+
+	# Generate worker-specific MCP config with heavy indexers disabled (t221, t1162)
+	# Must be generated BEFORE build_*_dispatch_cmd so Claude CLI gets --mcp-config flag
+	# Saves ~4 CPU cores per worker by preventing osgrep from indexing
+	local worker_mcp_config=""
+	worker_mcp_config=$(generate_worker_mcp_config "$task_id" "$ai_cli" 2>/dev/null) || true
+
 	# Build and execute dispatch command
 	# t1008: Use verify dispatch for previously-worked tasks (cheaper, focused)
 	# Use NUL-delimited read to preserve multi-line prompts as single arguments
+	# t1162: For Claude CLI, pass MCP config path to build_*_dispatch_cmd
+	local claude_mcp_config=""
+	if [[ "$ai_cli" == "claude" && -n "$worker_mcp_config" ]]; then
+		claude_mcp_config="$worker_mcp_config"
+	fi
+
 	local -a cmd_parts=()
 	if [[ "$verify_mode" == "true" ]]; then
 		while IFS= read -r -d '' part; do
 			cmd_parts+=("$part")
-		done < <(build_verify_dispatch_cmd "$task_id" "$worktree_path" "$log_file" "$ai_cli" "$memory_context" "$resolved_model" "$tdesc" "$verify_reason")
+		done < <(build_verify_dispatch_cmd "$task_id" "$worktree_path" "$log_file" "$ai_cli" "$memory_context" "$resolved_model" "$tdesc" "$verify_reason" "$claude_mcp_config")
 	else
 		while IFS= read -r -d '' part; do
 			cmd_parts+=("$part")
-		done < <(build_dispatch_cmd "$task_id" "$worktree_path" "$log_file" "$ai_cli" "$memory_context" "$resolved_model" "$tdesc")
+		done < <(build_dispatch_cmd "$task_id" "$worktree_path" "$log_file" "$ai_cli" "$memory_context" "$resolved_model" "$tdesc" "$claude_mcp_config")
 	fi
-
-	# Ensure PID directory exists before dispatch
-	mkdir -p "$SUPERVISOR_DIR/pids"
 
 	# Set FULL_LOOP_HEADLESS for all supervisor-dispatched workers (t174)
 	# This ensures headless mode even if the AI doesn't parse --headless from the prompt
 	local headless_env="FULL_LOOP_HEADLESS=true"
-
-	# Generate worker-specific MCP config with heavy indexers disabled (t221)
-	# Saves ~4 CPU cores per worker by preventing osgrep from indexing
-	local worker_xdg_config=""
-	worker_xdg_config=$(generate_worker_mcp_config "$task_id" 2>/dev/null) || true
 
 	# Write dispatch script to a temp file to avoid bash -c quoting issues
 	# with multi-line prompts (newlines in printf '%q' break bash -c strings)
@@ -2862,9 +3019,9 @@ cmd_dispatch() {
 		echo "echo 'WORKER_STARTED task_id=${task_id} pid=\$\$ timestamp='\$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 		echo "cd '${worktree_path}' || { echo 'WORKER_FAILED: cd to worktree failed: ${worktree_path}'; exit 1; }"
 		echo "export ${headless_env}"
-		# Redirect worker to use MCP config with heavy indexers disabled (t221)
-		if [[ -n "$worker_xdg_config" ]]; then
-			echo "export XDG_CONFIG_HOME='${worker_xdg_config}'"
+		# t1162: For OpenCode, set XDG_CONFIG_HOME; for Claude, MCP config is in CLI flags
+		if [[ "$ai_cli" != "claude" && -n "$worker_mcp_config" ]]; then
+			echo "export XDG_CONFIG_HOME='${worker_mcp_config}'"
 		fi
 		# Write each cmd_part as a properly quoted array element
 		printf 'exec '
@@ -3305,24 +3462,31 @@ Task description: ${tdesc:-$task_id}"
 		fi
 		retry_title="${task_id}-r${tretries}: ${short_desc}"
 	fi
-	# t1186: Pass task model to opencode — without this, retries default to
-	# opencode's configured model (opus), wasting budget on tasks that only
-	# need sonnet. This was the root cause of the sonnet→opus tier escalation.
-	local -a cmd_parts=()
-	eval "cmd_parts=($(build_cli_cmd \
-		--cli "$ai_cli" \
-		--action run \
-		--output array \
-		--model "$resolved_model" \
-		--title "$retry_title" \
-		--prompt "$reprompt_msg"))"
-
 	# Ensure PID directory exists
 	mkdir -p "$SUPERVISOR_DIR/pids"
 
-	# Generate worker-specific MCP config with heavy indexers disabled (t221)
-	local worker_xdg_config=""
-	worker_xdg_config=$(generate_worker_mcp_config "$task_id" 2>/dev/null) || true
+	# Generate worker-specific MCP config (t221, t1162)
+	# Must be generated BEFORE build_cli_cmd so Claude CLI gets --mcp-config flag
+	local worker_mcp_config=""
+	worker_mcp_config=$(generate_worker_mcp_config "$task_id" "$ai_cli" 2>/dev/null) || true
+
+	# t1186: Pass task model to opencode — without this, retries default to
+	# opencode's configured model (opus), wasting budget on tasks that only
+	# need sonnet. This was the root cause of the sonnet→opus tier escalation.
+	# t1162: Build CLI command with MCP config for Claude worker isolation
+	local -a build_cmd_args=(
+		--cli "$ai_cli"
+		--action run
+		--output array
+		--model "$resolved_model"
+		--title "$retry_title"
+		--prompt "$reprompt_msg"
+	)
+	if [[ "$ai_cli" == "claude" && -n "$worker_mcp_config" ]]; then
+		build_cmd_args+=(--mcp-config "$worker_mcp_config")
+	fi
+	local -a cmd_parts=()
+	eval "cmd_parts=($(build_cli_cmd "${build_cmd_args[@]}"))"
 
 	# Write dispatch script with startup sentinel (t183)
 	# t1190: Use timestamped filename to prevent overwrite race condition.
@@ -3333,9 +3497,9 @@ Task description: ${tdesc:-$task_id}"
 		echo '#!/usr/bin/env bash'
 		echo "echo 'WORKER_STARTED task_id=${task_id} retry=${tretries} pid=\$\$ timestamp='\$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 		echo "cd '${work_dir}' || { echo 'WORKER_FAILED: cd to work_dir failed: ${work_dir}'; exit 1; }"
-		# Redirect worker to use MCP config with heavy indexers disabled (t221)
-		if [[ -n "$worker_xdg_config" ]]; then
-			echo "export XDG_CONFIG_HOME='${worker_xdg_config}'"
+		# t1162: For OpenCode, set XDG_CONFIG_HOME; for Claude, MCP config is in CLI flags
+		if [[ "$ai_cli" != "claude" && -n "$worker_mcp_config" ]]; then
+			echo "export XDG_CONFIG_HOME='${worker_mcp_config}'"
 		fi
 		printf 'exec '
 		printf '%q ' "${cmd_parts[@]}"
