@@ -1992,10 +1992,21 @@
   check: shellcheck .agents/scripts/supervisor/ai-context.sh
   check: file-exists .agents/scripts/supervisor/ai-context.sh
 
-- [ ] v243 t1282 Context optimisation pass 2: tier .agents/AGENTS.md into ... | PR #2046 | merged:2026-02-21
+- [x] v243 t1282 Context optimisation pass 2: tier .agents/AGENTS.md into ... | PR #2046 | merged:2026-02-21 verified:2026-02-21
   files: .agents/AGENTS.md, .agents/reference/orchestration.md, .agents/reference/planning-detail.md, .agents/reference/services.md, .agents/reference/session.md
   check: file-exists .agents/AGENTS.md
   check: file-exists .agents/reference/orchestration.md
   check: file-exists .agents/reference/planning-detail.md
   check: file-exists .agents/reference/services.md
   check: file-exists .agents/reference/session.md
+
+- [ ] v244 t1265 Fix LaunchAgent plist rewrite triggering repeat macOS Bac... | PR #1996 | merged:2026-02-21
+  files: .agents/scripts/auto-update-helper.sh, .agents/scripts/repo-sync-helper.sh, .agents/scripts/supervisor/launchd.sh, setup.sh
+  check: shellcheck .agents/scripts/auto-update-helper.sh
+  check: file-exists .agents/scripts/auto-update-helper.sh
+  check: shellcheck .agents/scripts/repo-sync-helper.sh
+  check: file-exists .agents/scripts/repo-sync-helper.sh
+  check: shellcheck .agents/scripts/supervisor/launchd.sh
+  check: file-exists .agents/scripts/supervisor/launchd.sh
+  check: shellcheck setup.sh
+  check: file-exists setup.sh
