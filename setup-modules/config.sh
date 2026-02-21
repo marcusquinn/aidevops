@@ -145,5 +145,29 @@ update_claude_config() {
 		print_warning "Claude Code command generator not found at $commands_script"
 	fi
 
+	# Generate Claude Code agent configuration (MCPs, settings.json, slash commands)
+	# Mirrors update_opencode_config() calling generate-opencode-agents.sh (t1161.4)
+	local generator_script=".agents/scripts/generate-claude-agents.sh"
+	if [[ -f "$generator_script" ]]; then
+		print_info "Generating Claude Code agent configuration..."
+		if bash "$generator_script"; then
+			print_success "Claude Code agents configured (MCPs, settings, commands)"
+		else
+			print_warning "Claude Code agent generation encountered issues"
+		fi
+	else
+		print_warning "Claude Code agent generator not found at $generator_script"
+	fi
+
+	# Regenerate subagent index (shared between OpenCode and Claude Code)
+	local index_script=".agents/scripts/subagent-index-helper.sh"
+	if [[ -f "$index_script" ]]; then
+		if bash "$index_script" generate; then
+			print_success "Subagent index regenerated"
+		else
+			print_warning "Subagent index generation encountered issues"
+		fi
+	fi
+
 	return 0
 }
