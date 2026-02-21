@@ -561,11 +561,48 @@ add_email_cross_reference() {
 }
 
 # =============================================================================
+# AI CLI Resolution
+# =============================================================================
+
+# Resolve the available AI CLI tool (opencode preferred, claude fallback).
+# Mirrors resolve_ai_cli() from supervisor/dispatch.sh but uses print_* logging
+# to avoid requiring the full supervisor stack.
+# shellcheck disable=SC2120
+resolve_ai_cli() {
+	# Allow env var override for explicit CLI preference
+	if [[ -n "${SUPERVISOR_CLI:-}" ]]; then
+		if [[ "$SUPERVISOR_CLI" != "opencode" && "$SUPERVISOR_CLI" != "claude" ]]; then
+			print_error "SUPERVISOR_CLI='$SUPERVISOR_CLI' is not a supported CLI (opencode|claude)"
+			return 1
+		fi
+		if command -v "$SUPERVISOR_CLI" &>/dev/null; then
+			echo "$SUPERVISOR_CLI"
+			return 0
+		fi
+		print_error "SUPERVISOR_CLI='$SUPERVISOR_CLI' not found in PATH"
+		return 1
+	fi
+	# opencode is the primary and only supported CLI
+	if command -v opencode &>/dev/null; then
+		echo "opencode"
+		return 0
+	fi
+	# DEPRECATED: claude CLI fallback - will be removed
+	if command -v claude &>/dev/null; then
+		print_warning "Using deprecated claude CLI fallback. Install opencode: npm i -g opencode"
+		echo "claude"
+		return 0
+	fi
+	print_error "opencode CLI not found. Install it: npm i -g opencode"
+	return 1
+}
+
+# =============================================================================
 # LLM Fallback Extraction
 # =============================================================================
 
 # Use LLM to extract contact fields from a messy signature block.
-# Requires: Anthropic API key or Claude CLI available.
+# Requires: AI CLI (opencode/claude) or Anthropic API key.
 # Returns extracted fields as key=value pairs on stdout.
 llm_extract_signature() {
 	local sig_block="$1"
@@ -577,8 +614,7 @@ llm_extract_signature() {
 		return 1
 	fi
 
-	# Check for Claude CLI (headless subagent)
-	# Use gtimeout (coreutils) or timeout if available, otherwise skip CLI fallback
+	# Resolve timeout command
 	local timeout_cmd=""
 	if command -v gtimeout &>/dev/null; then
 		timeout_cmd="gtimeout 30"
@@ -586,11 +622,29 @@ llm_extract_signature() {
 		timeout_cmd="timeout 30"
 	fi
 
-	if command -v claude &>/dev/null && [[ -n "$timeout_cmd" ]]; then
-		result=$($timeout_cmd claude -p "Extract contact information from this email signature. Return ONLY key=value pairs, one per line, for these fields: name, title, company, phone, email, website, address. If a field is not found, omit it. No explanations, no markdown.
+	# Try AI CLI (opencode preferred, claude fallback)
+	local ai_cli=""
+	ai_cli=$(resolve_ai_cli 2>/dev/null) || true
+
+	local prompt="Extract contact information from this email signature. Return ONLY key=value pairs, one per line, for these fields: name, title, company, phone, email, website, address. If a field is not found, omit it. No explanations, no markdown.
 
 Signature:
-${sig_block}" 2>/dev/null) || true
+${sig_block}"
+
+	if [[ -n "$ai_cli" && -n "$timeout_cmd" ]]; then
+		if [[ "$ai_cli" == "opencode" ]]; then
+			result=$($timeout_cmd opencode run \
+				--format default \
+				--title "email-sig-parse-$$" \
+				"$prompt" 2>/dev/null) || true
+			# Strip ANSI escape codes from opencode output
+			if [[ -n "$result" ]]; then
+				result=$(printf '%s' "$result" | sed 's/\x1b\[[0-9;]*[mGKHF]//g; s/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b\]//g; s/\x07//g')
+			fi
+		else
+			result=$($timeout_cmd claude -p "$prompt" \
+				--output-format text 2>/dev/null) || true
+		fi
 	fi
 
 	# Fallback: check for Anthropic API via curl
