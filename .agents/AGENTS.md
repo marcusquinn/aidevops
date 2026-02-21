@@ -50,14 +50,7 @@ Completion self-check: see `prompts/build.txt` "Completion and quality disciplin
 
 ## MANDATORY: File Discovery
 
-> **NEVER use `mcp_glob` when Bash is available.**
-
-| Use Case | Command |
-|----------|---------|
-| Git-tracked files | `git ls-files '<pattern>'` |
-| Untracked/system files | `fd -e <ext>` or `fd -g '<pattern>'` |
-| Content + file list | `rg --files -g '<pattern>'` |
-| **Bash unavailable only** | `mcp_glob` tool (last resort) |
+File discovery rules: see `prompts/build.txt`.
 
 ---
 
@@ -77,17 +70,7 @@ Full PTY access: run any CLI (`vim`, `psql`, `ssh`, `htop`, dev servers, `openco
 - **Secrets**: `aidevops secret` (gopass encrypted) or `~/.config/aidevops/credentials.sh` (plaintext fallback)
 - **Subagent Index**: `subagent-index.toon` (agents, subagents, workflows, scripts)
 
-**Critical Rules**:
-- Git check before edits (see above)
-- File discovery via Bash (see above)
-- **ALWAYS Read before Edit/Write** - Edit and Write tools FAIL if the file hasn't been Read in this conversation. Read the file first, then edit. No exceptions.
-- Re-read files immediately before editing (stale reads cause errors)
-- Context budget: Never >100K tokens per operation
-- NEVER create files in `~/` root - use `~/.aidevops/.agent-workspace/work/[project]/`
-- NEVER expose credentials in output/logs
-- Confirm destructive operations before execution
-
-**Quality**: SonarCloud A-grade, ShellCheck zero violations, `local var="$1"` pattern, explicit returns, blank lines around code blocks (MD031).
+**Critical Rules**: See `prompts/build.txt` for file operations, security, file discovery, and quality standards. Additional AGENTS.md-specific rule: blank lines around code blocks (MD031).
 
 ## Planning & Tasks
 
@@ -502,29 +485,19 @@ When local search returns no results, the `/skills` command suggests searching t
 
 ## Security
 
-- **Encrypted secrets** (recommended): `aidevops secret` (gopass backend, GPG-encrypted)
-- **Plaintext fallback**: `~/.config/aidevops/credentials.sh` (600 permissions)
-- Config templates: `configs/*.json.txt` (committed), working: `configs/*.json` (gitignored)
-- Confirm destructive operations before execution
+Security rules: see `prompts/build.txt`. Additional details:
 
-**Secret handling rule**: When a user needs to store a secret, ALWAYS instruct them to run `aidevops secret set NAME` at their terminal. NEVER accept secret values in conversation context. NEVER run `gopass show`, `cat credentials.sh`, or any command that prints secret values.
+- Config templates: `configs/*.json.txt` (committed), working: `configs/*.json` (gitignored)
 
 **Full docs**: `tools/credentials/gopass.md`, `tools/credentials/api-key-setup.md`
 
 ## Working Directories
 
-```text
-~/.aidevops/
-├── agents/                    # Deployed agent files
-│   ├── custom/                # User's private agents (survives updates)
-│   ├── draft/                 # Experimental/R&D agents (survives updates)
-│   └── ...                    # Shared agents (deployed from repo)
-└── .agent-workspace/
-    ├── work/[project]/        # Persistent project files
-    ├── tmp/session-*/         # Temporary session files
-    ├── mail/                  # Inter-agent mailbox (SQLite: mailbox.db)
-    └── memory/                # Cross-session patterns (SQLite FTS5)
-```
+Working directory tree: see `prompts/build.txt`. Agent file locations:
+
+- `~/.aidevops/agents/custom/` — User's permanent private agents (survives updates)
+- `~/.aidevops/agents/draft/` — R&D, experimental agents (survives updates)
+- `~/.aidevops/agents/` — Shared agents (deployed from repo, overwritten on update)
 
 ## Browser Automation
 
