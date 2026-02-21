@@ -44,6 +44,63 @@ WEIGHT_CODE_QUALITY=25
 WEIGHT_CLARITY=20
 
 #######################################
+# Resolve AI CLI for contest scoring (t1160.4)
+# Matches pattern from supervisor/dispatch.sh resolve_ai_cli()
+# Prefers opencode; falls back to claude CLI
+#######################################
+resolve_ai_cli() {
+	if command -v opencode &>/dev/null; then
+		echo "opencode"
+		return 0
+	fi
+	if command -v claude &>/dev/null; then
+		echo "claude"
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# Run an AI scoring prompt via the resolved CLI (t1160.4)
+# Usage: run_ai_scoring <model> <prompt> <output_file>
+# Writes raw output to output_file; returns 0 on success
+#######################################
+run_ai_scoring() {
+	local model="$1"
+	local prompt="$2"
+	local output_file="$3"
+
+	local ai_cli
+	ai_cli=$(resolve_ai_cli) || {
+		log_error "No AI CLI available (install opencode or claude)"
+		return 1
+	}
+
+	case "$ai_cli" in
+	opencode)
+		timeout 120 opencode run --format json \
+			--model "$model" \
+			--prompt "$prompt" \
+			>"$output_file" 2>/dev/null || true
+		;;
+	claude)
+		# claude CLI uses bare model name (strip provider/ prefix)
+		local claude_model="${model#*/}"
+		timeout 120 claude -p "$prompt" \
+			--model "$claude_model" \
+			--output-format json \
+			>"$output_file" 2>/dev/null || true
+		;;
+	*)
+		log_error "Unknown AI CLI: $ai_cli"
+		return 1
+		;;
+	esac
+
+	return 0
+}
+
+#######################################
 # Logging
 #######################################
 log_info() { echo -e "${BLUE}[INFO]${NC} $*" >&2; }
@@ -716,17 +773,12 @@ Now score each implementation. Output ONLY the JSON lines, nothing else."
 		judge_count=$((judge_count + 1))
 		log_info "Judge $judge_count/${#judges[@]}: $judge_model scoring all entries..."
 
-		# Dispatch scoring via AI CLI
+		# Dispatch scoring via resolved AI CLI (t1160.4)
 		local score_output=""
 		local score_tmpfile
 		score_tmpfile=$(mktemp "${TMPDIR:-/tmp}/contest-score-XXXXXX")
 
-		# Use opencode for scoring if available, otherwise fall back to direct API
-		if command -v opencode &>/dev/null; then
-			timeout 120 opencode run --format json \
-				--model "$judge_model" \
-				--prompt "$ranking_prompt" \
-				>"$score_tmpfile" 2>/dev/null || true
+		if run_ai_scoring "$judge_model" "$ranking_prompt" "$score_tmpfile"; then
 			score_output=$(cat "$score_tmpfile" 2>/dev/null || echo "")
 		fi
 
@@ -1320,4 +1372,7 @@ main() {
 	esac
 }
 
-main "$@"
+# Allow sourcing without executing main (for testing)
+if [[ "${1:-}" != "--source-only" ]]; then
+	main "$@"
+fi
