@@ -9,7 +9,7 @@
 #
 # Output: todo/tasks/{task_id}-brief.md
 #
-# Dependencies: sqlite3, git, python3 (for JSON parsing)
+# Dependencies: git, python3 (DB access via sqlite3 module, JSON parsing, task block extraction)
 
 set -euo pipefail
 
@@ -58,11 +58,11 @@ find_creation_commit() {
 
 	# Find the first commit that introduced this task ID in TODO.md
 	local commit
-	commit=$(git -C "$project_root" log --all --format="%H" -S "- [ ] ${task_id} " -- TODO.md 2>&1 | grep -E '^[0-9a-f]{40}$' | tail -1) || true
+	commit=$(git -C "$project_root" log --all --format="%H" -S "- [ ] ${task_id} " -- TODO.md 2>/dev/null | grep -E '^[0-9a-f]{40}$' | tail -1) || true
 
 	if [[ -z "$commit" ]]; then
 		# Try without the checkbox
-		commit=$(git -C "$project_root" log --all --format="%H" -S "${task_id}" -- TODO.md 2>&1 | grep -E '^[0-9a-f]{40}$' | tail -1) || true
+		commit=$(git -C "$project_root" log --all --format="%H" -S "${task_id}" -- TODO.md 2>/dev/null | grep -E '^[0-9a-f]{40}$' | tail -1) || true
 	fi
 
 	echo "$commit"
@@ -73,7 +73,7 @@ get_commit_info() {
 	local commit="$1"
 	local project_root="$2"
 
-	git -C "$project_root" log -1 --format="COMMIT_DATE=%ai%nCOMMIT_AUTHOR=%an%nCOMMIT_MSG=%s%nCOMMIT_EPOCH=%ct" "$commit" 2>&1 || true
+	git -C "$project_root" log -1 --format="COMMIT_DATE=%ai%nCOMMIT_AUTHOR=%an%nCOMMIT_MSG=%s%nCOMMIT_EPOCH=%ct" "$commit" 2>/dev/null || true
 	return 0
 }
 
@@ -98,7 +98,7 @@ row = cursor.fetchone()
 if row:
     print(row[0])
 db.close()
-" 2>&1 | head -1
+" 2>/dev/null | head -1
 	return 0
 }
 
@@ -135,7 +135,7 @@ row = cursor.fetchone()
 if row:
     print('|'.join(str(x) if x else '' for x in row))
 db.close()
-" 2>&1 | head -1
+" 2>/dev/null | head -1
 	return 0
 }
 
@@ -161,7 +161,7 @@ if row and row[0]:
     if parent:
         print('|'.join(str(x) if x else '' for x in parent))
 db.close()
-" 2>&1 | head -1
+" 2>/dev/null | head -1
 	return 0
 }
 
@@ -266,7 +266,7 @@ if context_parts:
     print('\n'.join(context_parts))
 else:
     print('NO_CONTEXT_FOUND')
-" 2>&1 | grep -v '^Traceback\|^  File\|^    \|^[A-Z][a-z]*Error:' || echo "NO_CONTEXT_FOUND"
+" 2>/dev/null || echo "NO_CONTEXT_FOUND"
 	return 0
 }
 
@@ -293,7 +293,7 @@ row = cursor.fetchone()
 if row:
     print('|'.join(str(x) if x is not None else '' for x in row))
 db.close()
-" 2>&1 | head -1
+" 2>/dev/null | head -1
 	return 0
 }
 
@@ -378,7 +378,7 @@ generate_brief() {
 
 	# Extract task description from TODO.md
 	local task_line=""
-	task_line=$(grep -E "^\s*- \[.\] ${task_id} " "$project_root/TODO.md" 2>&1 | head -1) || true
+	task_line=$(grep -E "^\s*- \[.\] ${task_id} " "$project_root/TODO.md" 2>/dev/null | head -1) || true
 	local task_title=""
 	task_title=$(echo "$task_line" | sed -E 's/^.*\] t[0-9]+(\.[0-9]+)* //' | sed -E 's/ #.*//' | sed -E 's/ ~//')
 
@@ -419,7 +419,7 @@ for i, line in enumerate(lines):
         else:
             break
 print('\n'.join(block))
-" 2>&1) || true
+" 2>/dev/null) || true
 
 	# Extract REBASE comment
 	local rebase_note=""

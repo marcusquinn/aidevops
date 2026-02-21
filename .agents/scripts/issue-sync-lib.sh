@@ -889,7 +889,9 @@ compose_issue_body() {
 
 	# Extract HTML comments (e.g., REBASE notes) from the task line
 	local html_comments
-	html_comments=$(echo "$first_line" | grep -oE '<!--[^>]+-->' | sed 's/<!--//;s/-->//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+	# Match HTML comments — use sed to extract content between <!-- and -->
+	# Handles comments containing > characters (e.g., "use a -> b pattern")
+	html_comments=$(echo "$first_line" | sed -n 's/.*\(<!--.*-->\).*/\1/p' | sed 's/<!--//;s/-->//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 	if [[ -n "$html_comments" ]]; then
 		body="$body"$'\n\n'"## Implementation Notes"$'\n\n'"$html_comments"
 	fi
