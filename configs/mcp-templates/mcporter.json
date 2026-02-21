@@ -1,0 +1,158 @@
+{
+  "_comment": "MCPorter MCP configuration snippets for various AI tools",
+  "_documentation": "https://github.com/steipete/mcporter",
+  "_npm": "https://www.npmjs.com/package/mcporter",
+  "_install": "npx mcporter list (zero-install) | pnpm add mcporter | brew install steipete/tap/mcporter",
+  "_note": "MCPorter can run as an MCP server (proxying other MCPs) or as a CLI tool for discovery, calling, and code generation",
+
+  "_usage_modes": {
+    "mcp_server": "Use 'mcporter serve' to expose all configured MCP servers through a single MCP server entry — reduces config sprawl",
+    "cli_tool": "Use 'mcporter list|call|generate-cli|emit-ts' directly from terminal for discovery, ad-hoc calls, and CLI generation"
+  },
+
+  "_config_locations": [
+    "--config <path> or MCPORTER_CONFIG env var",
+    "<project>/config/mcporter.json",
+    "~/.mcporter/mcporter.json[c]"
+  ],
+
+  "opencode": {
+    "_file": "~/.config/opencode/opencode.json",
+    "_section": "mcp",
+    "mcporter": {
+      "type": "local",
+      "command": ["npx", "-y", "mcporter", "serve"],
+      "enabled": true
+    }
+  },
+
+  "claude_code_command": "claude mcp add-json mcporter --scope user '{\"type\":\"stdio\",\"command\":\"npx\",\"args\":[\"-y\",\"mcporter\",\"serve\"]}'",
+
+  "cursor": {
+    "_file": "~/.cursor/mcp.json",
+    "mcpServers": {
+      "mcporter": {
+        "command": "npx",
+        "args": ["-y", "mcporter", "serve"]
+      }
+    }
+  },
+
+  "windsurf": {
+    "_file": "~/.codeium/windsurf/mcp_config.json",
+    "mcpServers": {
+      "mcporter": {
+        "command": "npx",
+        "args": ["-y", "mcporter", "serve"]
+      }
+    }
+  },
+
+  "gemini_cli": {
+    "_file": "~/.gemini/settings.json",
+    "mcpServers": {
+      "mcporter": {
+        "command": "npx",
+        "args": ["-y", "mcporter", "serve"]
+      }
+    }
+  },
+
+  "github_copilot": {
+    "_file": ".vscode/mcp.json (project root)",
+    "servers": {
+      "mcporter": {
+        "type": "stdio",
+        "command": "npx",
+        "args": ["-y", "mcporter", "serve"]
+      }
+    }
+  },
+
+  "kilo_code": {
+    "_method": "Global MCP Config",
+    "mcpServers": {
+      "mcporter": {
+        "command": "npx",
+        "type": "stdio",
+        "args": ["-y", "mcporter", "serve"],
+        "disabled": false,
+        "alwaysAllow": []
+      }
+    }
+  },
+
+  "kiro": {
+    "_method": "Command Palette: Kiro: Open user MCP config (JSON)",
+    "mcpServers": {
+      "mcporter": {
+        "command": "npx",
+        "args": ["-y", "mcporter", "serve"],
+        "disabled": false,
+        "autoApprove": []
+      }
+    }
+  },
+
+  "zed": {
+    "_method": "Custom Server UI",
+    "mcporter": {
+      "command": "npx",
+      "args": ["-y", "mcporter", "serve"],
+      "env": {}
+    }
+  },
+
+  "droid_command": "droid mcp add mcporter \"npx\" -y mcporter serve",
+
+  "with_custom_config": {
+    "_description": "Point MCPorter at a specific config file (any assistant — add --config flag to args)",
+    "command": "npx",
+    "args": ["-y", "mcporter", "serve", "--config", "~/.mcporter/mcporter.json"]
+  },
+
+  "with_verbose_logging": {
+    "_description": "Enable verbose logging for debugging (any assistant — add --verbose flag to args)",
+    "command": "npx",
+    "args": ["-y", "mcporter", "serve", "--verbose"]
+  },
+
+  "mcporter_config_example": {
+    "_description": "Example ~/.mcporter/mcporter.json — defines which MCP servers MCPorter proxies",
+    "_file": "~/.mcporter/mcporter.json",
+    "mcpServers": {
+      "context7": {
+        "description": "Context7 library documentation",
+        "baseUrl": "https://mcp.context7.com/mcp"
+      },
+      "filesystem": {
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/user/docs"]
+      }
+    },
+    "imports": ["cursor", "claude-code", "claude-desktop", "codex", "windsurf", "opencode", "vscode"]
+  },
+
+  "cli_examples": {
+    "_description": "MCPorter CLI usage (not MCP server mode — run these directly in terminal)",
+    "discover": "npx mcporter list",
+    "discover_single": "npx mcporter list context7 --schema",
+    "call_tool": "npx mcporter call context7.resolve-library-id libraryName=react",
+    "call_shorthand": "npx mcporter context7.resolve-library-id libraryName=react",
+    "generate_cli": "npx mcporter generate-cli --command https://mcp.context7.com/mcp --compile",
+    "emit_types": "npx mcporter emit-ts linear --out types/linear-tools.d.ts",
+    "oauth_login": "npx mcporter auth vercel",
+    "config_add": "npx mcporter config add my-server https://example.com/mcp",
+    "install_server": "npx mcporter install @modelcontextprotocol/server-filesystem --name filesystem"
+  },
+
+  "notes": [
+    "MCPorter auto-imports configs from Cursor, Claude Code, Claude Desktop, Codex, Windsurf, OpenCode, VS Code",
+    "In MCP server mode ('serve'), MCPorter exposes all configured MCP server tools through a single entry point",
+    "Supports both stdio and HTTP MCP transports",
+    "Variable interpolation: ${VAR}, ${VAR:-fallback}, $env:VAR in headers and env",
+    "OAuth token caching is automatic under ~/.mcporter/<server>/",
+    "Daemon mode ('mcporter daemon start') keeps stateful servers warm between calls",
+    "Bun preferred runtime (auto-detected), Node.js fallback"
+  ]
+}
