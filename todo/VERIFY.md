@@ -1974,7 +1974,13 @@
   check: shellcheck aidevops.sh
   check: file-exists aidevops.sh
 
-- [ ] v240 t1120.4 Test with dual-hosted repo (GitHub + Gitea sync) ~30m ref... | PR #2033 | merged:2026-02-20
+- [x] v240 t1120.4 Test with dual-hosted repo (GitHub + Gitea sync) ~30m ref... | PR #2033 | merged:2026-02-20 verified:2026-02-20
   files: .agents/scripts/test-dual-hosted-sync.sh
   check: shellcheck .agents/scripts/test-dual-hosted-sync.sh
   check: file-exists .agents/scripts/test-dual-hosted-sync.sh
+
+- [ ] v241 t1281 Context optimisation pass 1: deduplicate shared rules acr... | PR #2039 | merged:2026-02-21
+  files: .agents/AGENTS.md, .agents/build-plus.md, AGENTS.md
+  check: file-exists .agents/AGENTS.md
+  check: file-exists .agents/build-plus.md
+  check: file-exists AGENTS.md
