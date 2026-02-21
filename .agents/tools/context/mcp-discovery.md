@@ -21,8 +21,9 @@ tools:
 - **Purpose**: Discover MCP tools without loading all definitions upfront
 - **Pattern**: Search → Find MCP → Enable → Use
 - **Script**: `~/.aidevops/agents/scripts/mcp-index-helper.sh`
+- **Alternative**: MCPorter (`npx mcporter list`) — ad-hoc discovery across all configured MCP clients
 
-**Commands**:
+**Commands (mcp-index-helper.sh)**:
 
 ```bash
 # Search for tools by capability
@@ -38,6 +39,19 @@ mcp-index-helper.sh get-mcp "query-docs"
 
 # Show index status
 mcp-index-helper.sh status
+```
+
+**Commands (MCPorter — alternative)**:
+
+```bash
+# Discover all configured MCP servers and their tools
+npx mcporter list
+
+# List tools for a specific server
+npx mcporter list context7
+
+# Find and call a tool directly
+npx mcporter call context7.resolve-library-id libraryName=react
 ```
 
 **Why this matters**:
@@ -133,6 +147,40 @@ mcp-index-helper.sh list dataforseo
 # dataforseo_keywords     Keyword research and metrics
 # dataforseo_backlinks    Backlink analysis
 ```
+
+## MCPorter: Alternative Discovery Method
+
+[MCPorter](https://mcporter.dev) (`steipete/mcporter`, MIT) is a TypeScript runtime, CLI, and code-generation toolkit that provides an alternative approach to MCP discovery. Unlike `mcp-index-helper.sh` (which queries a local SQLite index built from your `opencode.json`), MCPorter reads directly from all configured MCP clients (Claude Code, Claude Desktop, Cursor, Codex, Windsurf, OpenCode, VS Code) and queries live servers.
+
+### When to use MCPorter vs mcp-index-helper.sh
+
+| Scenario | Use |
+|----------|-----|
+| Searching the local index for a capability | `mcp-index-helper.sh search "capability"` |
+| Discovering tools across all MCP clients | `npx mcporter list` |
+| Calling a tool ad-hoc without config changes | `npx mcporter call server.tool arg=value` |
+| Generating a typed CLI or TypeScript client | `npx mcporter generate-cli` / `mcporter emit-ts` |
+| Keeping stateful servers warm between calls | `mcporter daemon start` |
+
+### Quick start
+
+```bash
+# Zero-install: list all configured MCP servers
+npx mcporter list
+
+# Inspect a specific server's tools
+npx mcporter list context7 --schema
+
+# Call a tool directly
+npx mcporter call context7.resolve-library-id libraryName=react
+
+# Generate a standalone CLI from any MCP server
+npx mcporter generate-cli --command https://mcp.context7.com/mcp --compile
+```
+
+MCPorter auto-merges configs from all supported AI assistants, so `mcporter list` shows the union of all your configured servers without any additional setup.
+
+See `tools/mcp-toolkit/mcporter.md` for full documentation and `aidevops/mcp-integrations.md` for setup instructions.
 
 ## Integration with Agents
 
