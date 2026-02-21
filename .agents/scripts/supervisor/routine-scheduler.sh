@@ -167,7 +167,7 @@ routine_refresh_signals() {
 	if command -v gh &>/dev/null; then
 		local gh_repo=""
 		gh_repo=$(git -C "${REPO_PATH:-$(pwd)}" remote get-url origin 2>/dev/null |
-			sed -E 's#.*[:/]([^/]+/[^/]+?)(\.git)?$#\1#' || echo "")
+			sed -E 's#.*[:/]([^/]+/[^/]+)$#\1#' | sed 's/\.git$//' || echo "")
 		if [[ -n "$gh_repo" ]]; then
 			critical_count=$(gh issue list --repo "$gh_repo" --state open \
 				--search 'label:bug,critical,P0,P1,"severity:critical","severity:high"' \

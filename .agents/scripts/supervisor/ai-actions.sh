@@ -166,7 +166,11 @@ _compute_target_state_hash() {
 				blocked=$(printf '%s' "$task_line" | grep -oE 'blocked-by:[^ ]+' || echo "")
 				local pr_field
 				pr_field=$(printf '%s' "$task_line" | grep -oE 'pr:#[0-9]+' || echo "")
-				state_data="${checkbox}|${assignee}|${started}|${blocked}|${pr_field}"
+				# t1285: Include [proposed:...] annotations in state hash so
+				# cycle-aware dedup detects two-phase flow state changes
+				local proposed
+				proposed=$(printf '%s' "$task_line" | grep -oE '\[proposed:[^]]*\]' || echo "")
+				state_data="${checkbox}|${assignee}|${started}|${blocked}|${pr_field}|${proposed}"
 			fi
 		fi
 		# Also check DB state
@@ -246,6 +250,34 @@ _is_duplicate_action() {
 	# Dedup disabled
 	if [[ "${AI_ACTION_DEDUP_WINDOW:-0}" -eq 0 ]]; then
 		return 1
+	fi
+
+	# t1285: Exempt propose_auto_dispatch confirmation phase from dedup.
+	# The two-phase flow uses the same action type for both phases:
+	#   Phase 1: propose_auto_dispatch adds [proposed:auto-dispatch] annotation
+	#   Phase 2: propose_auto_dispatch converts annotation to #auto-dispatch tag
+	# The state hash doesn't capture [proposed:...] annotations, so the dedup
+	# window suppresses Phase 2 for ~2.5 hours (5 cycles). Fix: when the target
+	# task already has [proposed:auto-dispatch], bypass dedup to allow confirmation.
+	if [[ "$action_type" == "propose_auto_dispatch" ]]; then
+		local target_task_id="${target#task:}"
+		local _pad_todo_file=""
+		# Search for the task in TODO.md files across registered repos
+		for _pad_search_dir in "${REPO_PATH:-}" $(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks WHERE repo IS NOT NULL AND repo != '';" 2>/dev/null || echo ""); do
+			[[ -z "$_pad_search_dir" || ! -f "$_pad_search_dir/TODO.md" ]] && continue
+			if grep -qE "^[[:space:]]*- \[ \] ${target_task_id}( |$)" "$_pad_search_dir/TODO.md" 2>/dev/null; then
+				_pad_todo_file="$_pad_search_dir/TODO.md"
+				break
+			fi
+		done
+		if [[ -n "$_pad_todo_file" ]]; then
+			local _pad_task_line
+			_pad_task_line=$(grep -E "^[[:space:]]*- \[ \] ${target_task_id}( |$)" "$_pad_todo_file" 2>/dev/null | head -1 || echo "")
+			if echo "$_pad_task_line" | grep -q '\[proposed:auto-dispatch'; then
+				log_verbose "AI Actions: dedup bypass for propose_auto_dispatch on $target (Phase 2 confirmation)"
+				return 1
+			fi
+		fi
 	fi
 
 	# Check if DB and table exist
@@ -2296,7 +2328,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 		detect_repo_slug() {
 			local repo_path="${1:-.}"
 			git -C "$repo_path" remote get-url origin 2>/dev/null |
-				sed -E 's#.*[:/]([^/]+/[^/]+?)(\.git)?$#\1#' || echo ""
+				sed -E 's#.*[:/]([^/]+/[^/]+)$#\1#' | sed 's/\.git$//' || echo ""
 			return 0
 		}
 	fi

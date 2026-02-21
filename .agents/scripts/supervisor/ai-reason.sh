@@ -61,7 +61,7 @@ has_actionable_work() {
 	local gh_repo=""
 	if command -v gh &>/dev/null; then
 		gh_repo=$(git -C "$repo_path" remote get-url origin 2>/dev/null |
-			sed -E 's#.*[:/]([^/]+/[^/]+?)(\.git)?$#\1#' || echo "")
+			sed -E 's#.*[:/]([^/]+/[^/]+)$#\1#' | sed 's/\.git$//' || echo "")
 	fi
 
 	# 1. Open GitHub issues (excluding supervisor/logging noise)
@@ -89,7 +89,9 @@ has_actionable_work() {
 	# 3. Open tasks that are blocked (might be unblockable)
 	local blocked_tasks=0
 	if [[ -f "$repo_path/TODO.md" ]]; then
-		blocked_tasks=$(grep -c '^\- \[ \].*blocked-by:' "$repo_path/TODO.md" 2>/dev/null || echo 0)
+		blocked_tasks=$(grep -c '^\- \[ \].*blocked-by:' "$repo_path/TODO.md" 2>/dev/null | tail -1 || echo 0)
+		blocked_tasks="${blocked_tasks//[^0-9]/}"
+		blocked_tasks="${blocked_tasks:-0}"
 	fi
 	if [[ "$blocked_tasks" -gt 0 ]]; then
 		actionable=$((actionable + blocked_tasks))
@@ -810,8 +812,21 @@ should_run_ai_reasoning() {
 		return 1
 	fi
 
-	# Time-based cooldown (default: 300 seconds = 5 minutes)
+	# Adaptive cooldown: shorter when dispatchable tasks exist, longer when idle.
+	# Default base: 300s. With queued tasks: 60s. Idle: 600s.
 	local cooldown="${SUPERVISOR_AI_COOLDOWN:-300}"
+	if [[ -f "${SUPERVISOR_DB:-}" ]]; then
+		local queued_count
+		queued_count=$(db "$SUPERVISOR_DB" "SELECT COUNT(*) FROM tasks WHERE status = 'queued';" 2>/dev/null || echo "0")
+		queued_count="${queued_count//[^0-9]/}"
+		queued_count="${queued_count:-0}"
+		if [[ "$queued_count" -gt 0 ]]; then
+			cooldown="${SUPERVISOR_AI_COOLDOWN_ACTIVE:-60}"
+			log_verbose "AI Reasoning: adaptive cooldown ${cooldown}s (${queued_count} queued tasks)"
+		else
+			cooldown="${SUPERVISOR_AI_COOLDOWN_IDLE:-600}"
+		fi
+	fi
 
 	# Get last AI run timestamp
 	local last_run
