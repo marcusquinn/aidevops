@@ -2352,12 +2352,12 @@
   check: shellcheck tests/test-dispatch-claude-cli.sh
   check: file-exists tests/test-dispatch-claude-cli.sh
 
-- [ ] v270 t1288.4 Update `ai-cli-config.sh` — add `configure_openapi_sear... | PR #2095 | merged:2026-02-21
+- [x] v270 t1288.4 Update `ai-cli-config.sh` — add `configure_openapi_sear... | PR #2095 | merged:2026-02-21 verified:2026-02-21
   files: .agents/scripts/ai-cli-config.sh
   check: shellcheck .agents/scripts/ai-cli-config.sh
   check: file-exists .agents/scripts/ai-cli-config.sh
 
-- [ ] v271 t1161 Claude Code config parity in setup.sh #auto-dispatch — ... | PR #2099 | merged:2026-02-21
+- [x] v271 t1161 Claude Code config parity in setup.sh #auto-dispatch — ... | PR #2099 | merged:2026-02-21 verified:2026-02-21
   files: .agents/scripts/generate-claude-agents.sh, setup-modules/config.sh, setup.sh
   check: shellcheck .agents/scripts/generate-claude-agents.sh
   check: file-exists .agents/scripts/generate-claude-agents.sh
@@ -2365,3 +2365,16 @@
   check: file-exists setup-modules/config.sh
   check: shellcheck setup.sh
   check: file-exists setup.sh
+
+- [ ] v272 t1161.2 Automate MCP registration via claude mcp add-json #auto-d... | PR #2100 | merged:2026-02-21
+  files: .agents/scripts/mcp-register-claude.sh, configs/mcp-templates/chrome-devtools.json, configs/mcp-templates/crawl4ai-mcp-config.json, configs/mcp-templates/grep-vercel.json, configs/mcp-templates/nextjs-devtools.json, configs/mcp-templates/peekaboo.json, configs/mcp-templates/playwright.json, configs/mcp-templates/shadcn.json, configs/mcp-templates/stagehand.json
+  check: shellcheck .agents/scripts/mcp-register-claude.sh
+  check: file-exists .agents/scripts/mcp-register-claude.sh
+  check: file-exists configs/mcp-templates/chrome-devtools.json
+  check: file-exists configs/mcp-templates/crawl4ai-mcp-config.json
+  check: file-exists configs/mcp-templates/grep-vercel.json
+  check: file-exists configs/mcp-templates/nextjs-devtools.json
+  check: file-exists configs/mcp-templates/peekaboo.json
+  check: file-exists configs/mcp-templates/playwright.json
+  check: file-exists configs/mcp-templates/shadcn.json
+  check: file-exists configs/mcp-templates/stagehand.json
