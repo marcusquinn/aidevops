@@ -15,7 +15,12 @@
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
-source "${SCRIPT_DIR}/shared-constants.sh"
+if [[ -f "${SCRIPT_DIR}/shared-constants.sh" ]]; then
+	source "${SCRIPT_DIR}/shared-constants.sh"
+else
+	echo "Error: shared-constants.sh not found at ${SCRIPT_DIR}/shared-constants.sh" >&2
+	exit 1
+fi
 
 set -euo pipefail
 
