@@ -13,6 +13,18 @@ tools:
 
 # Cloudflare API Setup for AI-Assisted Development
 
+## Intent-Based Routing
+
+| Intent | Resource |
+|--------|----------|
+| **Manage/configure/update** Cloudflare resources (DNS, WAF, DDoS, R2, Workers, zones, rules, etc.) | `tools/mcp/cloudflare-code-mode.md` — Code Mode MCP (2,500+ endpoints, live OpenAPI) |
+| **Build/develop** on the Cloudflare platform (Workers, Pages, D1, KV, Durable Objects, AI, etc.) | `cloudflare-platform.md` — patterns, gotchas, decision trees, SDK usage |
+| **Auth/token setup** for API access | This file (below) |
+
+> **Operations** (DNS records, WAF rules, zone settings, R2 buckets, Worker deployments): use Code Mode MCP via `tools/mcp/cloudflare-code-mode.md`.
+>
+> **Development** (building Workers, integrating D1, using KV bindings, AI gateway patterns): use `cloudflare-platform.md`.
+
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
@@ -26,14 +38,7 @@ tools:
 - **API test**: `curl -X GET "https://api.cloudflare.com/client/v4/zones" -H "Authorization: Bearer TOKEN"`
 - **Security**: IP filtering, expiration dates, minimal permissions
 - **Rotation**: Every 6-12 months or after team changes
-
-## Intent-Based Routing
-
-| Intent | Tool |
-|--------|------|
-| Manage, configure, or update CF resources (DNS, zones, deployments, KV data, D1 queries) | Cloudflare Code Mode MCP → `tools/api/cloudflare-mcp.md` |
-| Build or develop on the CF platform (Workers, Pages, D1 schema, R2, AI, Durable Objects) | Platform skill docs → `services/hosting/cloudflare-platform.md` |
-| Set up API token auth for DNS/CDN management | This file (`cloudflare.md`) |
+- **Code Mode MCP**: `tools/mcp/cloudflare-code-mode.md` (operations via 2,500+ endpoints)
 
 <!-- AI-CONTEXT-END -->
 

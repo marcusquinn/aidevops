@@ -1,53 +1,9 @@
-## Configuration Management
+# argo-smart-routing Configuration
 
-### Infrastructure as Code (Terraform)
-
-```hcl
-# terraform/argo.tf
-# Note: Use Cloudflare Terraform provider
-
-resource "cloudflare_argo" "example" {
-  zone_id        = var.zone_id
-  smart_routing  = "on"
-  tiered_caching = "on"
-}
-
-variable "zone_id" {
-  description = "Cloudflare Zone ID"
-  type        = string
-}
-
-output "argo_enabled" {
-  value       = cloudflare_argo.example.smart_routing
-  description = "Argo Smart Routing status"
-}
-```
-
-### Environment-Based Configuration
-
-```typescript
-// config/argo.ts
-interface ArgoEnvironmentConfig {
-  enabled: boolean;
-  tieredCache: boolean;
-  monitoring: {
-    usageAlerts: boolean;
-    threshold: number;
-  };
-}
-
-const configs: Record<string, ArgoEnvironmentConfig> = {
-  production: {
-    enabled: true,
-    tieredCache: true,
-    monitoring: {
-      usageAlerts: true,
-      threshold: 1000, // GB
-    },
-  },
-  staging: {
-    enabled: true,
-    tieredCache: false,
-    monitoring: {
-      usageAlerts: false,
-      th
+> **Superseded by Cloudflare Code Mode MCP**
+>
+> Configuration API endpoints for argo-smart-routing are now accessible via the Cloudflare Code Mode MCP server,
+> which covers the full Cloudflare API (2,500+ endpoints) in ~1,000 tokens.
+>
+> Use `tools/mcp/cloudflare-code-mode.md` — call `search()` to discover endpoints,
+> then `execute()` to call them.
