@@ -1667,7 +1667,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
   - [ ] t1165 Containerized Claude Code CLI instances for multi-subscription scaling #auto-dispatch — OrbStack/Docker containers each with own OAuth token (CLAUDE_CODE_OAUTH_TOKEN via claude setup-token), supervisor dispatches to container pool, per-container rate limit tracking, health checks, auto-scaling. ~6h model:opus ref:GH#1762 assignee:marcusquinn started:2026-02-21T11:06:24Z
     - Notes: BLOCKED by supervisor: FAILED: ai_assessment_unparseable
     - [ ] t1165.1 Design container image and OAuth token provisioning #auto-dispatch — Dockerfile with claude CLI + git + aidevops agents, token injection via env var, volume mounts for repo access. ~2h model:opus ref:GH#1763 assignee:marcusquinn started:2026-02-21T10:29:46Z
-    - [ ] t1165.2 Container pool manager in supervisor — spawn/destroy containers, health checks, round-robin dispatch across pool, per-container rate limit tracking. ~2h model:opus blocked-by:t1165.1 ref:GH#1764
+    - [ ] t1165.2 Container pool manager in supervisor — spawn/destroy containers, health checks, round-robin dispatch across pool, per-container rate limit tracking. ~2h model:opus ref:GH#1764
     - [ ] t1165.3 Remote container support — dispatch to containers on remote hosts via SSH/Tailscale, credential forwarding, log collection. ~1h model:opus blocked-by:t1165.2 ref:GH#1765
     - [ ] t1165.4 Integration test: multi-container batch dispatch — verify parallel workers across containers, correct OAuth routing, container lifecycle, log aggregation. ~1h model:opus blocked-by:t1165.2,t1165.3 ref:GH#1766
 
