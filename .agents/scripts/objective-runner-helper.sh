@@ -33,6 +33,10 @@
 #   ├── audit.log           # Full audit trail of all actions
 #   └── runs/               # Per-step output logs
 #
+# Backend detection (t1160.3):
+#   - Prefers opencode if available, falls back to Claude CLI
+#   - Override: AIDEVOPS_DISPATCH_BACKEND=claude|opencode
+#
 # Integration:
 #   - Runner: runner-helper.sh (optional identity)
 #   - Memory: memory-helper.sh (audit log persistence)
@@ -104,12 +108,37 @@ check_jq() {
 }
 
 #######################################
-# Check if opencode is available
+# Detect available AI CLI backend (t1160.3)
+# Sets AIDEVOPS_DISPATCH_BACKEND to "opencode" or "claude"
+# Returns 1 if no backend is available
 #######################################
-check_opencode() {
-	if ! command -v opencode &>/dev/null; then
-		log_error "opencode is required but not installed. Install from: https://opencode.ai"
+detect_dispatch_backend() {
+	if [[ -n "${AIDEVOPS_DISPATCH_BACKEND:-}" ]]; then
+		return 0
+	fi
+
+	if command -v opencode &>/dev/null; then
+		AIDEVOPS_DISPATCH_BACKEND="opencode"
+	elif command -v claude &>/dev/null; then
+		AIDEVOPS_DISPATCH_BACKEND="claude"
+	else
+		log_error "No AI CLI backend available. Install opencode (https://opencode.ai) or Claude CLI (https://docs.anthropic.com/en/docs/claude-cli)"
 		return 1
+	fi
+
+	log_info "Using dispatch backend: $AIDEVOPS_DISPATCH_BACKEND"
+	return 0
+}
+
+#######################################
+# Extract Claude-compatible model name from provider/model string (t1160.3)
+#######################################
+model_for_claude_cli() {
+	local model="$1"
+	if [[ "$model" == *"/"* ]]; then
+		echo "${model#*/}"
+	else
+		echo "$model"
 	fi
 	return 0
 }
@@ -636,7 +665,7 @@ run_loop() {
 	local dir
 	dir=$(obj_dir "$obj_id")
 
-	check_opencode || return 1
+	detect_dispatch_backend || return 1
 
 	local objective
 	objective=$(obj_config "$obj_id" "objective")
@@ -751,11 +780,19 @@ Work toward the objective above. After each meaningful unit of work:
 Focus on making measurable progress. Be efficient with tokens."
 		fi
 
-		# Dispatch to opencode
+		# Dispatch to AI backend (t1160.3)
 		local log_file="$dir/runs/step-${next_step}.log"
-		local -a cmd_args=("opencode" "run" "-m" "$model" "--title" "objective/$obj_id/step-$next_step")
+		local -a cmd_args=()
 
-		log_info "Step $next_step: dispatching to $model"
+		if [[ "$AIDEVOPS_DISPATCH_BACKEND" == "opencode" ]]; then
+			cmd_args=("opencode" "run" "-m" "$model" "--title" "objective/$obj_id/step-$next_step")
+		elif [[ "$AIDEVOPS_DISPATCH_BACKEND" == "claude" ]]; then
+			local claude_model
+			claude_model=$(model_for_claude_cli "$model")
+			cmd_args=("claude" "--print" "--model" "$claude_model")
+		fi
+
+		log_info "Step $next_step: dispatching to $model via $AIDEVOPS_DISPATCH_BACKEND"
 
 		local exit_code=0
 		local start_time
@@ -946,7 +983,7 @@ cmd_pause() {
 #######################################
 cmd_resume() {
 	check_jq || return 1
-	check_opencode || return 1
+	detect_dispatch_backend || return 1
 
 	local obj_id="${1:-}"
 	if [[ -z "$obj_id" ]]; then
@@ -1261,6 +1298,11 @@ INTEGRATION:
     Memory:     memory-helper.sh (audit persistence, cross-session recall)
     Supervisor: supervisor-helper.sh (batch coordination)
     Git:        Worktree isolation for safe rollback
+
+BACKEND DETECTION:
+    Prefers opencode if available, falls back to Claude CLI.
+    Override with: AIDEVOPS_DISPATCH_BACKEND=claude objective-runner-helper.sh start ...
+    Note: Claude CLI does not support --title (session naming).
 
 EOF
 }

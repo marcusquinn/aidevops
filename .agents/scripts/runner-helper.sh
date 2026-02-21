@@ -27,6 +27,11 @@
 #   - Mailbox: mail-helper.sh --to <runner-name>
 #   - Cron: cron-helper.sh --task "runner-helper.sh run <name> 'prompt'"
 #
+# Backend detection (t1160.3):
+#   - Prefers opencode if available, falls back to Claude CLI
+#   - Override: AIDEVOPS_DISPATCH_BACKEND=claude|opencode
+#   - Claude CLI uses --print for headless mode, strips provider/ prefix from model
+#
 # Security:
 #   - Uses HTTPS by default for remote OpenCode servers
 #   - Supports basic auth via OPENCODE_SERVER_PASSWORD
@@ -127,12 +132,40 @@ check_jq() {
 }
 
 #######################################
-# Check if opencode is available
+# Detect available AI CLI backend (t1160.3)
+# Sets AIDEVOPS_DISPATCH_BACKEND to "opencode" or "claude"
+# Returns 1 if no backend is available
 #######################################
-check_opencode() {
-	if ! command -v opencode &>/dev/null; then
-		log_error "opencode is required but not installed. Install from: https://opencode.ai"
+detect_dispatch_backend() {
+	if [[ -n "${AIDEVOPS_DISPATCH_BACKEND:-}" ]]; then
+		# Already detected or explicitly set
+		return 0
+	fi
+
+	if command -v opencode &>/dev/null; then
+		AIDEVOPS_DISPATCH_BACKEND="opencode"
+	elif command -v claude &>/dev/null; then
+		AIDEVOPS_DISPATCH_BACKEND="claude"
+	else
+		log_error "No AI CLI backend available. Install opencode (https://opencode.ai) or Claude CLI (https://docs.anthropic.com/en/docs/claude-cli)"
 		return 1
+	fi
+
+	log_info "Using dispatch backend: $AIDEVOPS_DISPATCH_BACKEND"
+	return 0
+}
+
+#######################################
+# Extract Claude-compatible model name from provider/model string (t1160.3)
+# opencode uses "anthropic/claude-sonnet-4-6", Claude CLI uses "claude-sonnet-4-6"
+#######################################
+model_for_claude_cli() {
+	local model="$1"
+	# Strip provider prefix if present (e.g., "anthropic/claude-sonnet-4-6" -> "claude-sonnet-4-6")
+	if [[ "$model" == *"/"* ]]; then
+		echo "${model#*/}"
+	else
+		echo "$model"
 	fi
 	return 0
 }
@@ -354,7 +387,7 @@ EOF
 #######################################
 cmd_run() {
 	check_jq || return 1
-	check_opencode || return 1
+	detect_dispatch_backend || return 1
 
 	local name="${1:-}"
 	shift || true
@@ -461,36 +494,69 @@ cmd_run() {
 		workdir="$(pwd)"
 	fi
 
-	# Build opencode run command
-	local -a cmd_args=("opencode" "run")
+	# Build dispatch command based on available backend (t1160.3)
+	local -a cmd_args=()
 
-	# Attach to server if specified
-	if [[ -n "$attach" ]]; then
-		cmd_args+=("--attach" "$attach")
-	fi
+	if [[ "$AIDEVOPS_DISPATCH_BACKEND" == "opencode" ]]; then
+		cmd_args=("opencode" "run")
 
-	# Model
-	cmd_args+=("-m" "$model")
-
-	# Session title
-	cmd_args+=("--title" "runner/$name")
-
-	# Continue previous session if requested
-	if [[ "$continue_session" == "true" ]]; then
-		local session_id=""
-		if [[ -f "$dir/session.id" ]]; then
-			session_id=$(cat "$dir/session.id")
+		# Attach to server if specified
+		if [[ -n "$attach" ]]; then
+			cmd_args+=("--attach" "$attach")
 		fi
-		if [[ -n "$session_id" ]]; then
-			cmd_args+=("-s" "$session_id")
-		else
-			log_warn "No previous session found for $name, starting fresh"
-		fi
-	fi
 
-	# Output format
-	if [[ -n "$format" ]]; then
-		cmd_args+=("--format" "$format")
+		# Model
+		cmd_args+=("-m" "$model")
+
+		# Session title
+		cmd_args+=("--title" "runner/$name")
+
+		# Continue previous session if requested
+		if [[ "$continue_session" == "true" ]]; then
+			local session_id=""
+			if [[ -f "$dir/session.id" ]]; then
+				session_id=$(cat "$dir/session.id")
+			fi
+			if [[ -n "$session_id" ]]; then
+				cmd_args+=("-s" "$session_id")
+			else
+				log_warn "No previous session found for $name, starting fresh"
+			fi
+		fi
+
+		# Output format
+		if [[ -n "$format" ]]; then
+			cmd_args+=("--format" "$format")
+		fi
+
+	elif [[ "$AIDEVOPS_DISPATCH_BACKEND" == "claude" ]]; then
+		cmd_args=("claude" "--print")
+
+		# Model (strip provider prefix for Claude CLI)
+		local claude_model
+		claude_model=$(model_for_claude_cli "$model")
+		cmd_args+=("--model" "$claude_model")
+
+		# Continue previous session if requested
+		if [[ "$continue_session" == "true" ]]; then
+			local session_id=""
+			if [[ -f "$dir/session.id" ]]; then
+				session_id=$(cat "$dir/session.id")
+			fi
+			if [[ -n "$session_id" ]]; then
+				cmd_args+=("--continue" "$session_id")
+			else
+				log_warn "No previous session found for $name, starting fresh"
+			fi
+		fi
+
+		# Note: Claude CLI does not support --attach, --title, or --format
+		if [[ -n "$attach" ]]; then
+			log_warn "Claude CLI does not support --attach (server mode). Ignoring."
+		fi
+		if [[ -n "$format" ]]; then
+			log_warn "Claude CLI does not support --format. Ignoring."
+		fi
 	fi
 
 	# Mailbox bookend: check inbox before work
@@ -1091,8 +1157,13 @@ INTEGRATION:
     Cron:    cron-helper.sh add --task "runner-helper.sh run <name> 'prompt'"
 
 REQUIREMENTS:
-    - opencode (https://opencode.ai)
+    - opencode (https://opencode.ai) OR Claude CLI (https://docs.anthropic.com/en/docs/claude-cli)
     - jq (brew install jq)
+
+BACKEND DETECTION:
+    Prefers opencode if available, falls back to Claude CLI.
+    Override with: AIDEVOPS_DISPATCH_BACKEND=claude runner-helper.sh run ...
+    Note: Claude CLI does not support --attach (server mode), --title, or --format.
 
 EOF
 }
