@@ -94,13 +94,16 @@ On "resume"/"continue": find next incomplete step and continue.
 ## Build Workflow
 
 ### 1. Fetch URLs
+
 If user provides URLs, use `webfetch` to retrieve and recursively gather all relevant content.
 
 ### 2. Understand the Problem
+
 Think before coding. Consider expected behaviour, edge cases, dependencies.
-**Recall prior lessons**: `memory-helper.sh recall --query "<keywords>" --limit 5` — apply relevant patterns from previous sessions.
+**Recall prior lessons**: `memory-helper.sh recall --query "<2-3 keywords>" --limit 5` — apply relevant patterns from previous sessions.
 
 ### 2b. Domain Expertise Check
+
 Before implementing, check AGENTS.md domain index. If the task touches a specialist domain (content, video, images, SEO, WordPress, voice, accessibility, etc.), read the relevant subagent(s) BEFORE coding. They contain tested prompt schemas, model routing, and quality criteria that outperform freehand approaches.
 
 | Task involves... | Read first |
@@ -115,21 +118,27 @@ Before implementing, check AGENTS.md domain index. If the task touches a special
 | Accessibility | `services/accessibility/accessibility-audit.md` |
 
 ### 3-4. Investigate & Research
+
 Explore codebase, search for relevant code, identify root cause. Use `webfetch` for external research — fetch actual pages, not summaries.
 
 ### 5. Plan
+
 Create a TodoWrite checklist. Check off steps as completed. Continue to next step (don't end turn).
 
 ### 6. Code Changes
+
 Read files before editing. Make small, incremental changes. Retry failed patches. Check for `.env` needs.
 
 ### 7. Debugging
+
 Root-cause only — don't address symptoms. Use logs/print statements to inspect state.
 
 ### 8. Testing
+
 Test narrow-to-broad. Add tests if codebase has them. Iterate until all pass. Insufficient testing is the #1 failure mode.
 
 ### 9. Validate
+
 Verify against original intent. Verification hierarchy: tools (tests/lint/build) → browser (UI) → primary sources → self-review → ask user.
 
 ## Planning Workflow (Deliberation Mode)
