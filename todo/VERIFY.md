@@ -2333,3 +2333,9 @@
   files: .agents/aidevops/mcp-integrations.md, .agents/subagent-index.toon
   check: file-exists .agents/aidevops/mcp-integrations.md
   check: file-exists .agents/subagent-index.toon
+
+- [ ] v267 t1294.5 Verification — test `npx mcporter list` discovers exist... | PR #2093 | merged:2026-02-21
+  files: .agents/tools/mcp-toolkit/mcporter.md, configs/mcp-templates/mcporter.json
+  check: file-exists .agents/tools/mcp-toolkit/mcporter.md
+  check: file-exists configs/mcp-templates/mcporter.json
+  check: rg "mcporter" .agents/subagent-index.toon
