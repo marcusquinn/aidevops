@@ -1979,8 +1979,15 @@
   check: shellcheck .agents/scripts/test-dual-hosted-sync.sh
   check: file-exists .agents/scripts/test-dual-hosted-sync.sh
 
-- [ ] v241 t1281 Context optimisation pass 1: deduplicate shared rules acr... | PR #2039 | merged:2026-02-21
+- [x] v241 t1281 Context optimisation pass 1: deduplicate shared rules acr... | PR #2039 | merged:2026-02-21 verified:2026-02-21
   files: .agents/AGENTS.md, .agents/build-plus.md, AGENTS.md
   check: file-exists .agents/AGENTS.md
   check: file-exists .agents/build-plus.md
   check: file-exists AGENTS.md
+
+- [ ] v242 t1284 Investigate and fix recurring worker hang timeouts (1800s... | PR #2040 | merged:2026-02-21
+  files: .agents/scripts/supervisor/ai-actions.sh, .agents/scripts/supervisor/ai-context.sh
+  check: shellcheck .agents/scripts/supervisor/ai-actions.sh
+  check: file-exists .agents/scripts/supervisor/ai-actions.sh
+  check: shellcheck .agents/scripts/supervisor/ai-context.sh
+  check: file-exists .agents/scripts/supervisor/ai-context.sh
