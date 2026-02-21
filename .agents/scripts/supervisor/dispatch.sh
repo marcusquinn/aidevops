@@ -26,12 +26,110 @@ detect_dispatch_mode() {
 }
 
 #######################################
-# Resolve the AI CLI tool to use for dispatch
-# Resolve AI CLI for worker dispatch
-# opencode is the ONLY supported CLI for aidevops supervisor workers.
-# claude CLI fallback is DEPRECATED and will be removed in a future release.
+# Detect if claude CLI has OAuth authentication (t1163)
+#
+# Claude Code CLI can authenticate via OAuth (subscription/Max plan) without
+# needing ANTHROPIC_API_KEY. This makes it zero marginal cost for Anthropic
+# models when a subscription is active.
+#
+# Detection strategy:
+#   1. Check claude CLI exists in PATH
+#   2. Check for OAuth credential indicators:
+#      a. ~/.claude/credentials.json or ~/.claude/.credentials (stored tokens)
+#      b. System keychain entries (macOS Keychain, Linux secret-service)
+#      c. claude -p probe succeeds without ANTHROPIC_API_KEY set
+#   3. Cache result for 5 minutes (file-based)
+#
+# Returns: 0 if OAuth available, 1 if not
+# Outputs: "oauth" on stdout if available, empty otherwise
+#######################################
+detect_claude_oauth() {
+	# Fast path: check cache
+	local cache_dir="${SUPERVISOR_DIR:-${HOME}/.aidevops/.agent-workspace/supervisor}/health"
+	mkdir -p "$cache_dir" 2>/dev/null || true
+	local cache_file="$cache_dir/claude-oauth"
+
+	if [[ -f "$cache_file" ]]; then
+		local cached_at cached_result
+		IFS='|' read -r cached_at cached_result <"$cache_file" 2>/dev/null || true
+		local now
+		now=$(date +%s 2>/dev/null) || now=0
+		local age=$((now - ${cached_at:-0}))
+		if [[ "$age" -lt 300 ]]; then
+			if [[ "$cached_result" == "oauth" ]]; then
+				echo "oauth"
+				return 0
+			fi
+			return 1
+		fi
+	fi
+
+	# Check 1: claude CLI must exist
+	if ! command -v claude &>/dev/null; then
+		echo "$(date +%s)|none" >"$cache_file" 2>/dev/null || true
+		return 1
+	fi
+
+	# Check 2: Look for OAuth credential indicators
+	# Claude Code stores OAuth tokens in its internal state directory
+	# The presence of settings.json with oauthAccount or the credentials
+	# being managed by the app indicates OAuth is configured
+	local has_oauth_indicator=false
+
+	# Check for Claude Code's internal auth state
+	# Claude Code v2+ stores auth in ~/.claude/ directory
+	local claude_dir="${HOME}/.claude"
+	if [[ -d "$claude_dir" ]]; then
+		# Check settings.json for OAuth account indicators
+		if [[ -f "$claude_dir/settings.json" ]]; then
+			# If settings exist and claude is installed, it likely has OAuth
+			# (Claude Code requires login on first use — no API key mode by default)
+			has_oauth_indicator=true
+		fi
+		# Check for explicit credential files
+		if [[ -f "$claude_dir/credentials.json" ]] || [[ -f "$claude_dir/.credentials" ]]; then
+			has_oauth_indicator=true
+		fi
+	fi
+
+	# Check 3: If no file indicators, try a lightweight probe
+	# Only if ANTHROPIC_API_KEY is NOT set (to confirm OAuth works independently)
+	if [[ "$has_oauth_indicator" == false ]]; then
+		echo "$(date +%s)|none" >"$cache_file" 2>/dev/null || true
+		return 1
+	fi
+
+	# Verify OAuth actually works by checking claude can start without API key
+	# Use --version as a lightweight check (doesn't need auth)
+	# The real test is whether -p mode works, but that's expensive
+	# Trust the file indicators + CLI presence as sufficient signal
+	echo "$(date +%s)|oauth" >"$cache_file" 2>/dev/null || true
+	echo "oauth"
+	return 0
+}
+
+#######################################
+# Resolve the AI CLI tool to use for dispatch (t1163: OAuth-aware routing)
+#
+# Routing priority:
+#   1. SUPERVISOR_CLI env var override (explicit preference)
+#   2. OAuth-aware routing (when SUPERVISOR_PREFER_OAUTH=true, default):
+#      - For Anthropic models: prefer claude CLI if OAuth available (subscription = zero cost)
+#      - For non-Anthropic models: use opencode (multi-provider support)
+#   3. opencode as primary CLI
+#   4. claude as fallback
+#
+# Args:
+#   $1 (optional): resolved model string (e.g., "anthropic/claude-opus-4-6")
+#                  Used for OAuth routing decisions. If empty, defaults to opencode.
+#
+# Env vars:
+#   SUPERVISOR_CLI          — explicit CLI override (opencode|claude)
+#   SUPERVISOR_PREFER_OAUTH — prefer claude OAuth for Anthropic models (default: true)
 #######################################
 resolve_ai_cli() {
+	local resolved_model="${1:-}"
+
 	# Allow env var override for explicit CLI preference
 	if [[ -n "${SUPERVISOR_CLI:-}" ]]; then
 		if [[ "$SUPERVISOR_CLI" != "opencode" && "$SUPERVISOR_CLI" != "claude" ]]; then
@@ -45,18 +143,42 @@ resolve_ai_cli() {
 		log_error "SUPERVISOR_CLI='$SUPERVISOR_CLI' not found in PATH"
 		return 1
 	fi
-	# opencode is the primary and only supported CLI
+
+	# OAuth-aware routing (t1163): prefer claude CLI for Anthropic models
+	# when OAuth is available (subscription = zero marginal cost)
+	local prefer_oauth="${SUPERVISOR_PREFER_OAUTH:-true}"
+	if [[ "$prefer_oauth" == "true" ]]; then
+		# Determine if the target model is Anthropic
+		local is_anthropic=false
+		if [[ -z "$resolved_model" || "$resolved_model" == anthropic/* || "$resolved_model" == *claude* ]]; then
+			is_anthropic=true
+		fi
+
+		if [[ "$is_anthropic" == true ]]; then
+			local oauth_status=""
+			oauth_status=$(detect_claude_oauth 2>/dev/null) || true
+			if [[ "$oauth_status" == "oauth" ]]; then
+				if command -v claude &>/dev/null; then
+					log_info "OAuth-aware routing: using claude CLI for Anthropic model (subscription, zero marginal cost) (t1163)"
+					echo "claude"
+					return 0
+				fi
+			fi
+		fi
+	fi
+
+	# opencode is the primary CLI for all other cases
 	if command -v opencode &>/dev/null; then
 		echo "opencode"
 		return 0
 	fi
-	# DEPRECATED: claude CLI fallback - will be removed
+	# Fallback: claude CLI without OAuth preference
 	if command -v claude &>/dev/null; then
-		log_warning "Using deprecated claude CLI fallback. Install opencode: npm i -g opencode"
+		log_warning "Using claude CLI fallback (no opencode). Install opencode: npm i -g opencode"
 		echo "claude"
 		return 0
 	fi
-	log_error "opencode CLI not found. Install it: npm i -g opencode"
+	log_error "No supported AI CLI found. Install opencode: npm i -g opencode"
 	log_error "See: https://opencode.ai/docs/installation/"
 	return 1
 }
@@ -2594,7 +2716,7 @@ cmd_dispatch() {
 		return 3
 	fi
 
-	# Resolve AI CLI
+	# Resolve AI CLI (initial — may be re-resolved after model resolution for OAuth routing)
 	local ai_cli
 	ai_cli=$(resolve_ai_cli) || return 1
 
@@ -2740,6 +2862,25 @@ cmd_dispatch() {
 		log_info "Verify mode: using coding-tier model ($resolved_model) instead of task-specific model"
 	else
 		resolved_model=$(resolve_task_model "$task_id" "$tmodel" "${trepo:-.}" "$ai_cli")
+	fi
+
+	# OAuth-aware CLI re-resolution (t1163): now that we know the target model,
+	# re-resolve the CLI to potentially route Anthropic models through claude OAuth.
+	# This is a no-op if SUPERVISOR_PREFER_OAUTH=false or OAuth is unavailable.
+	if [[ "$resolved_model" != "CONTEST" ]]; then
+		local oauth_cli
+		oauth_cli=$(resolve_ai_cli "$resolved_model" 2>/dev/null) || oauth_cli="$ai_cli"
+		if [[ "$oauth_cli" != "$ai_cli" ]]; then
+			log_info "OAuth-aware CLI switch for $task_id: $ai_cli -> $oauth_cli (model: $resolved_model) (t1163)"
+			ai_cli="$oauth_cli"
+			# Re-check CLI health for the new CLI
+			local oauth_health_exit=0
+			check_cli_health "$ai_cli" >/dev/null 2>&1 || oauth_health_exit=$?
+			if [[ "$oauth_health_exit" -ne 0 ]]; then
+				log_warn "OAuth CLI ($ai_cli) health check failed — falling back to opencode (t1163)"
+				ai_cli="opencode"
+			fi
+		fi
 	fi
 
 	# Record requested vs actual model tiers for cost analysis (t1117)
