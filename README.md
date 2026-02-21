@@ -1958,19 +1958,25 @@ See `.agents/memory/README.md` for complete documentation.
 
 ### **Installation**
 
-Slash commands are automatically installed by `setup.sh`:
+Slash commands are automatically installed by `setup.sh` for both OpenCode and Claude Code:
 
 ```bash
-# Commands are deployed to:
-~/.config/opencode/commands/
+# OpenCode commands deployed to:
+~/.config/opencode/command/
+
+# Claude Code commands deployed to:
+~/.claude/commands/
 
 # Regenerate commands manually:
 .agents/scripts/generate-opencode-commands.sh
+.agents/scripts/generate-claude-commands.sh
 ```
+
+Both generators read from the same source (`.agents/scripts/commands/*.md`), ensuring command parity across tools.
 
 ### **Usage**
 
-In OpenCode, type the command at the prompt:
+In OpenCode or Claude Code, type the command at the prompt:
 
 ```text
 /preflight
