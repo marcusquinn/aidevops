@@ -197,7 +197,7 @@ gather_task_state() {
 			if [[ -n "$pr_number" && -n "$pr_repo_slug" ]] && command -v gh &>/dev/null; then
 				local pr_json
 				pr_json=$(gh pr view "$pr_number" --repo "$pr_repo_slug" \
-					--json state,isDraft,reviewDecision,mergeable,mergeStateStatus,statusCheckRollup \
+					--json state,isDraft,reviewDecision,mergeable,mergeStateStatus,statusCheckRollup,baseRefName \
 					2>/dev/null || echo "")
 
 				if [[ -n "$pr_json" ]]; then
@@ -230,11 +230,12 @@ gather_task_state() {
 						pr_ci_status="no-checks"
 					fi
 
-					local is_draft
+					local is_draft pr_base_ref
 					is_draft=$(printf '%s' "$pr_json" | jq -r '.isDraft // false' 2>/dev/null || echo "false")
 					if [[ "$is_draft" == "true" ]]; then
 						pr_state="DRAFT"
 					fi
+					pr_base_ref=$(printf '%s' "$pr_json" | jq -r '.baseRefName // "main"' 2>/dev/null || echo "main")
 				fi
 			fi
 		fi
@@ -263,6 +264,7 @@ PR_URL: ${tpr:-none}
 PR_NUMBER: ${pr_number:-none}
 PR_REPO: ${pr_repo_slug:-none}
 PR_STATE: ${pr_state:-none}
+PR_BASE_BRANCH: ${pr_base_ref:-main}
 PR_MERGE_STATE: ${pr_merge_state:-none}
 PR_CI: ${pr_ci_status:-unknown}
 PR_REVIEW: ${pr_review_decision:-none}
@@ -407,12 +409,20 @@ execute_lifecycle_action() {
 	tbranch=$(db "$SUPERVISOR_DB" "SELECT branch FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
 	tworktree=$(db "$SUPERVISOR_DB" "SELECT worktree FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
 
-	local parsed_pr pr_number pr_repo_slug
+	local parsed_pr pr_number pr_repo_slug pr_base_branch
+	pr_base_branch="main" # default fallback
 	if [[ -n "$tpr" && "$tpr" != "no_pr" ]]; then
 		parsed_pr=$(parse_pr_url "$tpr" 2>/dev/null) || parsed_pr=""
 		if [[ -n "$parsed_pr" ]]; then
 			pr_repo_slug="${parsed_pr%%|*}"
 			pr_number="${parsed_pr##*|}"
+			# Look up the PR's actual base branch (e.g. develop, main)
+			local base_ref
+			base_ref=$(gh pr view "$pr_number" --repo "$pr_repo_slug" \
+				--json baseRefName --jq '.baseRefName' 2>/dev/null) || base_ref=""
+			if [[ -n "$base_ref" ]]; then
+				pr_base_branch="$base_ref"
+			fi
 		fi
 	fi
 
@@ -645,9 +655,9 @@ Error: $esc_error
 
 Steps:
 1. cd to $esc_workdir
-2. git fetch origin main
+2. git fetch origin $pr_base_branch
 3. Abort any stale rebase: git rebase --abort (ignore errors)
-4. git rebase origin/main
+4. git rebase origin/$pr_base_branch
 5. If conflicts: resolve them intelligently, git add, git rebase --continue
 6. git push --force-with-lease origin $tbranch
 7. Verify: gh pr view $tpr --json mergeStateStatus

@@ -2232,16 +2232,34 @@ rebase_sibling_pr() {
 		use_worktree=true
 	fi
 
-	log_info "rebase_sibling_pr: rebasing $task_id ($tbranch) onto main..."
+	# Determine the rebase target branch from the PR's base ref (e.g. develop, main).
+	# Repos like awardsapp use 'develop' as default branch — hardcoding 'main' causes
+	# rebases onto the wrong branch, leaving PRs permanently DIRTY.
+	local rebase_target="main"
+	if [[ -n "$tpr" && "$tpr" != "no_pr" && "$tpr" != "task_only" && "$tpr" != "verified_complete" ]]; then
+		local parsed_pr_info pr_repo_slug_local pr_number_local pr_base_ref
+		parsed_pr_info=$(parse_pr_url "$tpr" 2>/dev/null) || parsed_pr_info=""
+		if [[ -n "$parsed_pr_info" ]]; then
+			pr_repo_slug_local="${parsed_pr_info%%|*}"
+			pr_number_local="${parsed_pr_info##*|}"
+			pr_base_ref=$(gh pr view "$pr_number_local" --repo "$pr_repo_slug_local" \
+				--json baseRefName --jq '.baseRefName' 2>/dev/null) || pr_base_ref=""
+			if [[ -n "$pr_base_ref" ]]; then
+				rebase_target="$pr_base_ref"
+			fi
+		fi
+	fi
+
+	log_info "rebase_sibling_pr: rebasing $task_id ($tbranch) onto $rebase_target..."
 
 	# Prevent git rebase --continue from opening an editor (nano/vim) for
 	# commit messages — in cron/headless environments TERM is unset, causing
 	# "error: there was a problem with the editor 'nano'" and aborting the rebase.
 	export GIT_EDITOR=true
 
-	# Fetch latest main
-	if ! git -C "$trepo" fetch origin main 2>>"$SUPERVISOR_LOG"; then
-		log_warn "rebase_sibling_pr: failed to fetch origin main for $task_id"
+	# Fetch latest base branch
+	if ! git -C "$trepo" fetch origin "$rebase_target" 2>>"$SUPERVISOR_LOG"; then
+		log_warn "rebase_sibling_pr: failed to fetch origin $rebase_target for $task_id"
 		return 1
 	fi
 
@@ -2265,7 +2283,7 @@ rebase_sibling_pr() {
 
 	if [[ "$use_worktree" == "true" ]]; then
 		# Worktree is already on the branch — rebase in place
-		if ! git -C "$git_dir" rebase origin/main 2>>"$SUPERVISOR_LOG"; then
+		if ! git -C "$git_dir" rebase "origin/$rebase_target" 2>>"$SUPERVISOR_LOG"; then
 			if ! _resolve_rebase_loop "$git_dir" "$task_id"; then
 				return 1
 			fi
@@ -2281,15 +2299,15 @@ rebase_sibling_pr() {
 			return 1
 		fi
 
-		if ! git -C "$git_dir" rebase origin/main 2>>"$SUPERVISOR_LOG"; then
+		if ! git -C "$git_dir" rebase "origin/$rebase_target" 2>>"$SUPERVISOR_LOG"; then
 			if ! _resolve_rebase_loop "$git_dir" "$task_id"; then
-				git -C "$git_dir" checkout "${current_branch:-main}" 2>>"$SUPERVISOR_LOG" || true
+				git -C "$git_dir" checkout "${current_branch:-$rebase_target}" 2>>"$SUPERVISOR_LOG" || true
 				return 1
 			fi
 		fi
 
 		# Return to original branch
-		git -C "$git_dir" checkout "${current_branch:-main}" 2>>"$SUPERVISOR_LOG" || true
+		git -C "$git_dir" checkout "${current_branch:-$rebase_target}" 2>>"$SUPERVISOR_LOG" || true
 	fi
 
 	# Force-push the rebased branch (required after rebase)
@@ -2298,7 +2316,7 @@ rebase_sibling_pr() {
 		return 2
 	fi
 
-	log_success "rebase_sibling_pr: $task_id ($tbranch) rebased onto main and pushed"
+	log_success "rebase_sibling_pr: $task_id ($tbranch) rebased onto $rebase_target and pushed"
 	return 0
 }
 
