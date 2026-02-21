@@ -1312,7 +1312,7 @@ Instructions:
 	# Generate worker-specific MCP config (t221, t1162)
 	# Must be generated BEFORE building CLI command for Claude --mcp-config flag
 	local worker_mcp_config=""
-	worker_mcp_config=$(generate_worker_mcp_config "$task_id" "$ai_cli" 2>/dev/null) || true
+	worker_mcp_config=$(generate_worker_mcp_config "$task_id" "$ai_cli" "$work_dir") || true
 
 	local -a cmd_parts=()
 	if [[ "$ai_cli" == "opencode" ]]; then

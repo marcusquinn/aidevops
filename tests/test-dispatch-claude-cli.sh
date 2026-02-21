@@ -1068,10 +1068,16 @@ fi
 # ============================================================
 section "Worker MCP Config Generation (t1162)"
 
-# Create a mock Claude settings file with mcpServers
-MOCK_CLAUDE_DIR="$TEST_DIR/mock-claude-home/.claude"
-mkdir -p "$MOCK_CLAUDE_DIR"
-cat >"$MOCK_CLAUDE_DIR/settings.json" <<'MOCK_SETTINGS'
+# jq is required for MCP config generation tests
+if ! command -v jq >/dev/null 2>&1; then
+	skip "Worker MCP Config Generation: jq required but not installed"
+	# Skip to summary — remaining tests in this section all need jq
+else
+
+	# Create a mock Claude settings file with mcpServers
+	MOCK_CLAUDE_DIR="$TEST_DIR/mock-claude-home/.claude"
+	mkdir -p "$MOCK_CLAUDE_DIR"
+	cat >"$MOCK_CLAUDE_DIR/settings.json" <<'MOCK_SETTINGS'
 {
   "model": "claude-opus-4-5-20251101",
   "mcpServers": {
@@ -1095,8 +1101,8 @@ cat >"$MOCK_CLAUDE_DIR/settings.json" <<'MOCK_SETTINGS'
 }
 MOCK_SETTINGS
 
-# Test: generate_worker_mcp_config for Claude CLI produces valid JSON
-claude_mcp_result=$(bash -c "
+	# Test: generate_worker_mcp_config for Claude CLI produces valid JSON
+	claude_mcp_result=$(bash -c "
     export AIDEVOPS_SUPERVISOR_DIR='$TEST_DIR/supervisor'
     export HOME='$TEST_DIR/mock-claude-home'
     BLUE='' GREEN='' YELLOW='' RED='' NC=''
@@ -1108,49 +1114,49 @@ claude_mcp_result=$(bash -c "
     generate_worker_mcp_config 'mcp-test-t1' 'claude'
 " 2>/dev/null)
 
-if [[ -n "$claude_mcp_result" && -f "$claude_mcp_result" ]]; then
-	pass "generate_worker_mcp_config claude: returns valid file path"
-else
-	fail "generate_worker_mcp_config claude: should return a file path" "Got: '$claude_mcp_result'"
-fi
-
-# Test: Generated config is valid JSON with mcpServers key
-if [[ -f "$claude_mcp_result" ]] && jq -e '.mcpServers' "$claude_mcp_result" &>/dev/null; then
-	pass "generate_worker_mcp_config claude: output has mcpServers key"
-else
-	fail "generate_worker_mcp_config claude: output should have mcpServers key"
-fi
-
-# Test: Heavy indexers are excluded from generated config
-if [[ -f "$claude_mcp_result" ]]; then
-	has_osgrep=$(jq -r '.mcpServers | has("osgrep")' "$claude_mcp_result" 2>/dev/null)
-	has_augment=$(jq -r '.mcpServers | has("augment-context-engine")' "$claude_mcp_result" 2>/dev/null)
-	if [[ "$has_osgrep" == "false" && "$has_augment" == "false" ]]; then
-		pass "generate_worker_mcp_config claude: heavy indexers excluded"
+	if [[ -n "$claude_mcp_result" && -f "$claude_mcp_result" ]]; then
+		pass "generate_worker_mcp_config claude: returns valid file path"
 	else
-		fail "generate_worker_mcp_config claude: should exclude osgrep and augment-context-engine" \
-			"osgrep=$has_osgrep augment=$has_augment"
+		fail "generate_worker_mcp_config claude: should return a file path" "Got: '$claude_mcp_result'"
 	fi
-else
-	fail "generate_worker_mcp_config claude: config file not found for indexer check"
-fi
 
-# Test: Non-heavy MCP servers are preserved
-if [[ -f "$claude_mcp_result" ]]; then
-	has_context7=$(jq -r '.mcpServers | has("context7")' "$claude_mcp_result" 2>/dev/null)
-	has_sentry=$(jq -r '.mcpServers | has("sentry")' "$claude_mcp_result" 2>/dev/null)
-	if [[ "$has_context7" == "true" && "$has_sentry" == "true" ]]; then
-		pass "generate_worker_mcp_config claude: non-heavy servers preserved (context7, sentry)"
+	# Test: Generated config is valid JSON with mcpServers key
+	if [[ -f "$claude_mcp_result" ]] && jq -e '.mcpServers' "$claude_mcp_result" &>/dev/null; then
+		pass "generate_worker_mcp_config claude: output has mcpServers key"
 	else
-		fail "generate_worker_mcp_config claude: should preserve context7 and sentry" \
-			"context7=$has_context7 sentry=$has_sentry"
+		fail "generate_worker_mcp_config claude: output should have mcpServers key"
 	fi
-else
-	fail "generate_worker_mcp_config claude: config file not found for server check"
-fi
 
-# Test: build_cli_cmd includes --mcp-config and --strict-mcp-config for Claude
-mcp_cmd=$(bash -c "
+	# Test: Heavy indexers are excluded from generated config
+	if [[ -f "$claude_mcp_result" ]]; then
+		has_osgrep=$(jq -r '.mcpServers | has("osgrep")' "$claude_mcp_result" 2>/dev/null)
+		has_augment=$(jq -r '.mcpServers | has("augment-context-engine")' "$claude_mcp_result" 2>/dev/null)
+		if [[ "$has_osgrep" == "false" && "$has_augment" == "false" ]]; then
+			pass "generate_worker_mcp_config claude: heavy indexers excluded"
+		else
+			fail "generate_worker_mcp_config claude: should exclude osgrep and augment-context-engine" \
+				"osgrep=$has_osgrep augment=$has_augment"
+		fi
+	else
+		fail "generate_worker_mcp_config claude: config file not found for indexer check"
+	fi
+
+	# Test: Non-heavy MCP servers are preserved
+	if [[ -f "$claude_mcp_result" ]]; then
+		has_context7=$(jq -r '.mcpServers | has("context7")' "$claude_mcp_result" 2>/dev/null)
+		has_sentry=$(jq -r '.mcpServers | has("sentry")' "$claude_mcp_result" 2>/dev/null)
+		if [[ "$has_context7" == "true" && "$has_sentry" == "true" ]]; then
+			pass "generate_worker_mcp_config claude: non-heavy servers preserved (context7, sentry)"
+		else
+			fail "generate_worker_mcp_config claude: should preserve context7 and sentry" \
+				"context7=$has_context7 sentry=$has_sentry"
+		fi
+	else
+		fail "generate_worker_mcp_config claude: config file not found for server check"
+	fi
+
+	# Test: build_cli_cmd includes --mcp-config and --strict-mcp-config for Claude
+	mcp_cmd=$(bash -c "
     export AIDEVOPS_SUPERVISOR_DIR='$TEST_DIR/supervisor'
     export PATH='$MOCK_BIN:$PATH'
     BLUE='' GREEN='' YELLOW='' RED='' NC=''
@@ -1160,30 +1166,30 @@ mcp_cmd=$(bash -c "
     source '$SUPERVISOR_DIR_MODULE/dispatch.sh'
     build_cli_cmd --cli claude --action run --output array \
         --model 'anthropic/claude-sonnet-4-6' \
-        --mcp-config '/tmp/test-mcp-config.json' \
+        --mcp-config '$TEST_DIR/test-mcp-config.json' \
         --prompt 'Test prompt'
 ")
 
-if echo "$mcp_cmd" | grep -q "\-\-mcp-config"; then
-	pass "build_cli_cmd claude: includes --mcp-config flag"
-else
-	fail "build_cli_cmd claude: should include --mcp-config" "Got: $mcp_cmd"
-fi
+	if echo "$mcp_cmd" | grep -q "\-\-mcp-config"; then
+		pass "build_cli_cmd claude: includes --mcp-config flag"
+	else
+		fail "build_cli_cmd claude: should include --mcp-config" "Got: $mcp_cmd"
+	fi
 
-if echo "$mcp_cmd" | grep -q "\-\-strict-mcp-config"; then
-	pass "build_cli_cmd claude: includes --strict-mcp-config flag"
-else
-	fail "build_cli_cmd claude: should include --strict-mcp-config" "Got: $mcp_cmd"
-fi
+	if echo "$mcp_cmd" | grep -q "\-\-strict-mcp-config"; then
+		pass "build_cli_cmd claude: includes --strict-mcp-config flag"
+	else
+		fail "build_cli_cmd claude: should include --strict-mcp-config" "Got: $mcp_cmd"
+	fi
 
-if echo "$mcp_cmd" | grep -q "/tmp/test-mcp-config.json"; then
-	pass "build_cli_cmd claude: includes config file path"
-else
-	fail "build_cli_cmd claude: should include config file path" "Got: $mcp_cmd"
-fi
+	if echo "$mcp_cmd" | grep -q "$TEST_DIR/test-mcp-config.json"; then
+		pass "build_cli_cmd claude: includes config file path"
+	else
+		fail "build_cli_cmd claude: should include config file path" "Got: $mcp_cmd"
+	fi
 
-# Test: build_cli_cmd does NOT include --mcp-config when not provided
-no_mcp_cmd=$(bash -c "
+	# Test: build_cli_cmd does NOT include --mcp-config when not provided
+	no_mcp_cmd=$(bash -c "
     export AIDEVOPS_SUPERVISOR_DIR='$TEST_DIR/supervisor'
     export PATH='$MOCK_BIN:$PATH'
     BLUE='' GREEN='' YELLOW='' RED='' NC=''
@@ -1196,14 +1202,14 @@ no_mcp_cmd=$(bash -c "
         --prompt 'Test prompt without MCP'
 ")
 
-if ! echo "$no_mcp_cmd" | grep -q "\-\-mcp-config"; then
-	pass "build_cli_cmd claude: no --mcp-config when not provided"
-else
-	fail "build_cli_cmd claude: should not include --mcp-config when not provided" "Got: $no_mcp_cmd"
-fi
+	if ! echo "$no_mcp_cmd" | grep -q "\-\-mcp-config"; then
+		pass "build_cli_cmd claude: no --mcp-config when not provided"
+	else
+		fail "build_cli_cmd claude: should not include --mcp-config when not provided" "Got: $no_mcp_cmd"
+	fi
 
-# Test: build_cli_cmd for OpenCode does NOT include --mcp-config (even if passed)
-oc_mcp_cmd=$(bash -c "
+	# Test: build_cli_cmd for OpenCode does NOT include --mcp-config (even if passed)
+	oc_mcp_cmd=$(bash -c "
     export AIDEVOPS_SUPERVISOR_DIR='$TEST_DIR/supervisor'
     BLUE='' GREEN='' YELLOW='' RED='' NC=''
     SUPERVISOR_LOG='/dev/null'
@@ -1212,21 +1218,21 @@ oc_mcp_cmd=$(bash -c "
     source '$SUPERVISOR_DIR_MODULE/dispatch.sh'
     build_cli_cmd --cli opencode --action run --output array \
         --model 'anthropic/claude-sonnet-4-6' \
-        --mcp-config '/tmp/test-mcp-config.json' \
+        --mcp-config '$TEST_DIR/test-mcp-config.json' \
         --prompt 'Test prompt'
 ")
 
-if ! echo "$oc_mcp_cmd" | grep -q "\-\-mcp-config"; then
-	pass "build_cli_cmd opencode: does not include --mcp-config (OpenCode uses XDG_CONFIG_HOME)"
-else
-	fail "build_cli_cmd opencode: should not include --mcp-config" "Got: $oc_mcp_cmd"
-fi
+	if ! echo "$oc_mcp_cmd" | grep -q "\-\-mcp-config"; then
+		pass "build_cli_cmd opencode: does not include --mcp-config (OpenCode uses XDG_CONFIG_HOME)"
+	else
+		fail "build_cli_cmd opencode: should not include --mcp-config" "Got: $oc_mcp_cmd"
+	fi
 
-# Test: generate_worker_mcp_config for OpenCode still works (backward compat)
-# Create a mock opencode config
-MOCK_OC_DIR="$TEST_DIR/mock-claude-home/.config/opencode"
-mkdir -p "$MOCK_OC_DIR"
-cat >"$MOCK_OC_DIR/opencode.json" <<'MOCK_OC'
+	# Test: generate_worker_mcp_config for OpenCode still works (backward compat)
+	# Create a mock opencode config
+	MOCK_OC_DIR="$TEST_DIR/mock-claude-home/.config/opencode"
+	mkdir -p "$MOCK_OC_DIR"
+	cat >"$MOCK_OC_DIR/opencode.json" <<'MOCK_OC'
 {
   "mcp": {
     "osgrep": {"enabled": true, "command": "osgrep", "args": ["mcp"]},
@@ -1236,7 +1242,7 @@ cat >"$MOCK_OC_DIR/opencode.json" <<'MOCK_OC'
 }
 MOCK_OC
 
-oc_config_result=$(bash -c "
+	oc_config_result=$(bash -c "
     export AIDEVOPS_SUPERVISOR_DIR='$TEST_DIR/supervisor'
     export HOME='$TEST_DIR/mock-claude-home'
     BLUE='' GREEN='' YELLOW='' RED='' NC=''
@@ -1248,31 +1254,31 @@ oc_config_result=$(bash -c "
     generate_worker_mcp_config 'mcp-oc-t1' 'opencode'
 " 2>/dev/null)
 
-if [[ -n "$oc_config_result" && -d "$oc_config_result" ]]; then
-	pass "generate_worker_mcp_config opencode: returns directory path (XDG_CONFIG_HOME)"
-else
-	fail "generate_worker_mcp_config opencode: should return directory path" "Got: '$oc_config_result'"
-fi
-
-# Verify the OpenCode config has osgrep disabled
-if [[ -f "$oc_config_result/opencode/opencode.json" ]]; then
-	oc_osgrep=$(jq -r '.mcp.osgrep.enabled' "$oc_config_result/opencode/opencode.json" 2>/dev/null)
-	if [[ "$oc_osgrep" == "false" ]]; then
-		pass "generate_worker_mcp_config opencode: osgrep disabled in worker config"
+	if [[ -n "$oc_config_result" && -d "$oc_config_result" ]]; then
+		pass "generate_worker_mcp_config opencode: returns directory path (XDG_CONFIG_HOME)"
 	else
-		fail "generate_worker_mcp_config opencode: osgrep should be disabled" "Got: $oc_osgrep"
+		fail "generate_worker_mcp_config opencode: should return directory path" "Got: '$oc_config_result'"
 	fi
-else
-	fail "generate_worker_mcp_config opencode: config file not found at expected path"
-fi
 
-# Test: Cleanup removes per-worker config directory
-mkdir -p "$TEST_DIR/supervisor/pids/cleanup-mcp-t1-config/opencode"
-echo '{}' >"$TEST_DIR/supervisor/pids/cleanup-mcp-t1-config/opencode/opencode.json"
-echo '{}' >"$TEST_DIR/supervisor/pids/cleanup-mcp-t1-config/claude-mcp-config.json"
-echo "99998" >"$TEST_DIR/supervisor/pids/cleanup-mcp-t1.pid"
+	# Verify the OpenCode config has osgrep disabled
+	if [[ -f "$oc_config_result/opencode/opencode.json" ]]; then
+		oc_osgrep=$(jq -r '.mcp.osgrep.enabled' "$oc_config_result/opencode/opencode.json" 2>/dev/null)
+		if [[ "$oc_osgrep" == "false" ]]; then
+			pass "generate_worker_mcp_config opencode: osgrep disabled in worker config"
+		else
+			fail "generate_worker_mcp_config opencode: osgrep should be disabled" "Got: $oc_osgrep"
+		fi
+	else
+		fail "generate_worker_mcp_config opencode: config file not found at expected path"
+	fi
 
-bash -c "
+	# Test: Cleanup removes per-worker config directory
+	mkdir -p "$TEST_DIR/supervisor/pids/cleanup-mcp-t1-config/opencode"
+	echo '{}' >"$TEST_DIR/supervisor/pids/cleanup-mcp-t1-config/opencode/opencode.json"
+	echo '{}' >"$TEST_DIR/supervisor/pids/cleanup-mcp-t1-config/claude-mcp-config.json"
+	echo "99998" >"$TEST_DIR/supervisor/pids/cleanup-mcp-t1.pid"
+
+	bash -c "
     export AIDEVOPS_SUPERVISOR_DIR='$TEST_DIR/supervisor'
     BLUE='' GREEN='' YELLOW='' RED='' NC=''
     SUPERVISOR_LOG='/dev/null'
@@ -1283,11 +1289,13 @@ bash -c "
     cleanup_worker_processes 'cleanup-mcp-t1'
 " 2>/dev/null
 
-if [[ ! -d "$TEST_DIR/supervisor/pids/cleanup-mcp-t1-config" ]]; then
-	pass "Cleanup: per-worker MCP config directory removed"
-else
-	fail "Cleanup: per-worker MCP config directory should be removed"
-fi
+	if [[ ! -d "$TEST_DIR/supervisor/pids/cleanup-mcp-t1-config" ]]; then
+		pass "Cleanup: per-worker MCP config directory removed"
+	else
+		fail "Cleanup: per-worker MCP config directory should be removed"
+	fi
+
+fi # end jq prerequisite check
 
 # ============================================================
 # SUMMARY

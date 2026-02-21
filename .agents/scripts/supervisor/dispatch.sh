@@ -1044,13 +1044,13 @@ do_prompt_repeat() {
 	# Generate worker-specific MCP config (t221, t1162)
 	# Must be generated BEFORE build_cli_cmd so Claude CLI gets --mcp-config flag
 	local worker_mcp_config=""
-	worker_mcp_config=$(generate_worker_mcp_config "$task_id" "$ai_cli" 2>/dev/null) || true
+	worker_mcp_config=$(generate_worker_mcp_config "$task_id" "$ai_cli" "$work_dir") || true
 
 	# Build CLI command with MCP config for Claude (t1162)
 	local -a build_cmd_args=(
 		--cli "$ai_cli"
 		--action run
-		--output array
+		--output nul
 		--model "$tmodel"
 		--title "$session_title"
 		--prompt "$reinforced_prompt"
@@ -1060,7 +1060,9 @@ do_prompt_repeat() {
 		build_cmd_args+=(--mcp-config "$worker_mcp_config")
 	fi
 	local -a cmd_parts=()
-	eval "cmd_parts=($(build_cli_cmd "${build_cmd_args[@]}"))"
+	while IFS= read -r -d '' part; do
+		cmd_parts+=("$part")
+	done < <(build_cli_cmd "${build_cmd_args[@]}")
 
 	# Write dispatch script
 	# t1190: Use timestamped filename to prevent overwrite race condition.
@@ -1811,6 +1813,7 @@ check_model_health() {
 generate_worker_mcp_config() {
 	local task_id="$1"
 	local ai_cli="${2:-opencode}"
+	local repo_root="${3:-}"
 
 	if ! command -v jq &>/dev/null; then
 		log_warn "jq not available — cannot generate worker MCP config"
@@ -1821,10 +1824,11 @@ generate_worker_mcp_config() {
 	mkdir -p "$worker_config_dir"
 
 	if [[ "$ai_cli" == "claude" ]]; then
-		_generate_worker_mcp_config_claude "$task_id" "$worker_config_dir"
+		_generate_worker_mcp_config_claude "$task_id" "$worker_config_dir" "$repo_root"
 	else
 		_generate_worker_mcp_config_opencode "$task_id" "$worker_config_dir"
 	fi
+	return $?
 }
 
 #######################################
@@ -1854,7 +1858,7 @@ _generate_worker_mcp_config_opencode() {
 		# Also disable their tools to avoid tool-not-found errors
 		.tools["osgrep_*"] = false |
 		.tools["augment-context-engine_*"] = false
-	' "$user_config" >"$opencode_dir/opencode.json" 2>/dev/null
+	' "$user_config" >"$opencode_dir/opencode.json"
 
 	# Validate the generated config is valid JSON
 	if ! jq empty "$opencode_dir/opencode.json" 2>/dev/null; then
@@ -1893,6 +1897,7 @@ _generate_worker_mcp_config_opencode() {
 _generate_worker_mcp_config_claude() {
 	local task_id="$1"
 	local worker_config_dir="$2"
+	local repo_root="${3:-}"
 
 	local config_file="${worker_config_dir}/claude-mcp-config.json"
 
@@ -1906,42 +1911,39 @@ _generate_worker_mcp_config_claude() {
 	local claude_settings="$HOME/.claude/settings.json"
 	if [[ -f "$claude_settings" ]]; then
 		local user_servers
-		user_servers=$(jq -r '.mcpServers // empty' "$claude_settings" 2>/dev/null) || true
+		user_servers=$(jq -r '.mcpServers // empty' "$claude_settings") || true
 		if [[ -n "$user_servers" && "$user_servers" != "null" ]]; then
 			merged_config=$(echo "$merged_config" | jq --argjson servers "$user_servers" '
 				.mcpServers = (.mcpServers + $servers)
-			' 2>/dev/null) || true
+			') || true
 		fi
 	fi
 
-	# Source 2: Project-level .mcp.json (check common locations)
-	# Workers run in worktrees, so check the repo root for .mcp.json
-	local -a mcp_json_paths=(
-		"$HOME/Git/aidevops/.mcp.json"
-		"./.mcp.json"
-	)
+	# Source 2: Project-level .mcp.json (check repo root, then cwd)
+	# Workers run in worktrees, so use the passed repo_root for .mcp.json resolution
+	local -a mcp_json_paths=()
+	if [[ -n "$repo_root" ]]; then
+		mcp_json_paths+=("$repo_root/.mcp.json")
+	fi
+	mcp_json_paths+=("./.mcp.json")
 	for mcp_json in "${mcp_json_paths[@]}"; do
 		if [[ -f "$mcp_json" ]]; then
 			local project_servers
-			project_servers=$(jq -r '.mcpServers // empty' "$mcp_json" 2>/dev/null) || true
+			project_servers=$(jq -r '.mcpServers // empty' "$mcp_json") || true
 			if [[ -n "$project_servers" && "$project_servers" != "null" ]]; then
 				merged_config=$(echo "$merged_config" | jq --argjson servers "$project_servers" '
 					.mcpServers = (.mcpServers + $servers)
-				' 2>/dev/null) || true
+				') || true
 			fi
 			break # Use first found
 		fi
 	done
 
-	# Filter out heavy indexers
-	for excluded in "${excluded_servers[@]}"; do
-		merged_config=$(echo "$merged_config" | jq --arg name "$excluded" '
-			.mcpServers |= del(.[$name])
-		' 2>/dev/null) || true
-	done
+	# Filter out heavy indexers in a single pass
+	merged_config=$(echo "$merged_config" | jq 'del(.mcpServers[$ARGS.positional[]])' --args "${excluded_servers[@]}") || true
 
 	# Write the config file
-	echo "$merged_config" | jq '.' >"$config_file" 2>/dev/null
+	echo "$merged_config" | jq '.' >"$config_file"
 
 	# Validate the generated config is valid JSON with mcpServers key
 	if ! jq -e '.mcpServers' "$config_file" &>/dev/null; then
@@ -2976,7 +2978,7 @@ cmd_dispatch() {
 	# Must be generated BEFORE build_*_dispatch_cmd so Claude CLI gets --mcp-config flag
 	# Saves ~4 CPU cores per worker by preventing osgrep from indexing
 	local worker_mcp_config=""
-	worker_mcp_config=$(generate_worker_mcp_config "$task_id" "$ai_cli" 2>/dev/null) || true
+	worker_mcp_config=$(generate_worker_mcp_config "$task_id" "$ai_cli" "$worktree_path") || true
 
 	# Build and execute dispatch command
 	# t1008: Use verify dispatch for previously-worked tasks (cheaper, focused)
@@ -3468,7 +3470,7 @@ Task description: ${tdesc:-$task_id}"
 	# Generate worker-specific MCP config (t221, t1162)
 	# Must be generated BEFORE build_cli_cmd so Claude CLI gets --mcp-config flag
 	local worker_mcp_config=""
-	worker_mcp_config=$(generate_worker_mcp_config "$task_id" "$ai_cli" 2>/dev/null) || true
+	worker_mcp_config=$(generate_worker_mcp_config "$task_id" "$ai_cli" "$work_dir") || true
 
 	# t1186: Pass task model to opencode — without this, retries default to
 	# opencode's configured model (opus), wasting budget on tasks that only
@@ -3477,7 +3479,7 @@ Task description: ${tdesc:-$task_id}"
 	local -a build_cmd_args=(
 		--cli "$ai_cli"
 		--action run
-		--output array
+		--output nul
 		--model "$resolved_model"
 		--title "$retry_title"
 		--prompt "$reprompt_msg"
@@ -3486,7 +3488,9 @@ Task description: ${tdesc:-$task_id}"
 		build_cmd_args+=(--mcp-config "$worker_mcp_config")
 	fi
 	local -a cmd_parts=()
-	eval "cmd_parts=($(build_cli_cmd "${build_cmd_args[@]}"))"
+	while IFS= read -r -d '' part; do
+		cmd_parts+=("$part")
+	done < <(build_cli_cmd "${build_cmd_args[@]}")
 
 	# Write dispatch script with startup sentinel (t183)
 	# t1190: Use timestamped filename to prevent overwrite race condition.
