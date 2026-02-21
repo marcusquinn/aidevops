@@ -80,6 +80,7 @@ Read subagents on-demand. Full index: `subagent-index.toon`.
 
 | Domain | Entry point |
 |--------|-------------|
+| Business | `business.md`, `business/company-runners.md` |
 | Planning | `workflows/plans.md`, `tools/task-management/beads.md` |
 | Code quality | `tools/code-review/code-standards.md` |
 | Git/PRs/Releases | `workflows/git-workflow.md`, `tools/git/github-cli.md`, `workflows/release.md` |
