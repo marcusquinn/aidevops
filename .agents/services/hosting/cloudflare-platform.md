@@ -19,7 +19,7 @@ imported_from: external
 - **Scope**: Building code that runs ON Cloudflare (Workers, Pages, D1, R2, KV, DO, AI, etc.)
 - **Not for**: Managing/configuring CF resources → use `tools/api/cloudflare-mcp.md` (Code Mode MCP)
 - **Entry point**: Use decision trees below to find the right product, then load `./references/<product>/README.md`
-- **Reference format**: Multi-file (`api.md`, `configuration.md`, `patterns.md`, `gotchas.md`) or single-file
+- **Reference format**: Multi-file (`patterns.md`, `gotchas.md`) or single-file; `api.md`/`configuration.md` superseded by Code Mode live OpenAPI queries
 - **60+ products** indexed below with direct entry-point paths
 
 <!-- AI-CONTEXT-END -->
@@ -32,15 +32,15 @@ Consolidated skill for building on the Cloudflare platform. Use decision trees b
 
 Each product in `./references/<product>/` contains a `README.md` as the entry point, which may be structured in one of two ways:
 
-**Multi-file format (5 files):**
+**Multi-file format (3 files):**
 
 | File | Purpose | When to Read |
 |------|---------|--------------|
 | `README.md` | Overview, when to use, getting started | **Always read first** |
-| `api.md` | Runtime API, types, method signatures | Writing code |
-| `configuration.md` | wrangler.toml, bindings, setup | Configuring a project |
 | `patterns.md` | Common patterns, best practices | Implementation guidance |
 | `gotchas.md` | Pitfalls, limitations, edge cases | Debugging, avoiding mistakes |
+
+> **API & configuration details**: Use the Cloudflare Code Mode MCP (`tools/api/cloudflare-mcp.md`) for live OpenAPI spec queries — `api.md` and `configuration.md` files have been removed as they are superseded by Code Mode's real-time spec access.
 
 **Single-file format:** All information consolidated in `README.md`.
 
@@ -48,15 +48,14 @@ Each product in `./references/<product>/` contains a `README.md` as the entry po
 
 1. Start with `README.md`
 2. Then read additional files relevant to your task (if multi-file format):
-   - Building feature → `api.md` + `patterns.md`
-   - Setting up project → `configuration.md`
+   - Implementation guidance → `patterns.md`
    - Troubleshooting → `gotchas.md`
+   - API/configuration details → use Cloudflare Code Mode MCP (live OpenAPI)
 
 ### Example Paths
 
 ```
 ./references/workflows/README.md         # Start here for Workflows
-./references/workflows/api.md            # Workflow class, step methods
 ./references/durable-objects/gotchas.md  # DO limitations
 ./references/workers-ai/README.md        # Single-file - all Workers AI docs
 ```
