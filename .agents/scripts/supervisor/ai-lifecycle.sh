@@ -466,16 +466,15 @@ execute_lifecycle_action() {
 			return 1
 		fi
 
-		# Use GitHub API to update the branch (no local git needed)
-		if gh api "repos/${pr_repo_slug}/pulls/${pr_number}/update-branch" \
-			-X PUT -f expected_head_sha="" 2>>"$SUPERVISOR_LOG"; then
+		# Use gh CLI to update the branch (handles sha automatically)
+		if gh pr update-branch "$pr_number" --repo "$pr_repo_slug" 2>>"$SUPERVISOR_LOG"; then
 			log_success "ai-lifecycle: branch updated for $task_id — CI will re-run"
 			update_task_status_tag "$task_id" "ci-running" "$repo_path"
 			# Reset rebase counter since we used a different strategy
 			db "$SUPERVISOR_DB" "UPDATE tasks SET rebase_attempts = 0 WHERE id = '$escaped_id';" 2>/dev/null || true
 			return 0
 		else
-			log_warn "ai-lifecycle: GitHub API update-branch failed for $task_id — will try rebase next cycle"
+			log_warn "ai-lifecycle: update-branch failed for $task_id — will try rebase next cycle"
 			update_task_status_tag "$task_id" "behind-main" "$repo_path"
 			return 1
 		fi
