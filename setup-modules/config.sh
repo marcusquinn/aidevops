@@ -132,16 +132,17 @@ update_claude_config() {
 
 	print_info "Updating Claude Code configuration..."
 
-	local generator_script=".agents/scripts/generate-claude-agents.sh"
-	if [[ -f "$generator_script" ]]; then
-		print_info "Generating Claude Code slash commands, MCP servers, and settings..."
-		if bash "$generator_script"; then
-			print_success "Claude Code configured (slash commands, MCP servers, settings.json)"
+	# Generate Claude Code commands (writes to ~/.claude/commands/)
+	local commands_script=".agents/scripts/generate-claude-commands.sh"
+	if [[ -f "$commands_script" ]]; then
+		print_info "Generating Claude Code commands..."
+		if bash "$commands_script"; then
+			print_success "Claude Code commands configured"
 		else
-			print_warning "Claude Code configuration encountered issues"
+			print_warning "Claude Code command generation encountered issues"
 		fi
 	else
-		print_warning "Claude Code config generator not found at $generator_script"
+		print_warning "Claude Code command generator not found at $commands_script"
 	fi
 
 	return 0

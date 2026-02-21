@@ -94,6 +94,7 @@ SKIP_HELP=(
 	"validate-version-consistency.sh"
 	"extract-opencode-prompts.sh"
 	"generate-opencode-commands.sh"
+	"generate-claude-commands.sh"
 	"generate-skills.sh"
 	"opencode-prompt-drift-check.sh"
 	"quality-fix.sh"
