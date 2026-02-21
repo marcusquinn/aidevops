@@ -9,6 +9,8 @@
   ],
   "_install": "brew install steipete/tap/peekaboo",
 
+  "claude_code_command": "claude mcp add-json peekaboo --scope user '{\"type\":\"stdio\",\"command\":\"npx\",\"args\":[\"-y\",\"@steipete/peekaboo\"],\"env\":{\"PEEKABOO_AI_PROVIDERS\":\"openai/gpt-4o,anthropic/claude-sonnet-4\"}}'",
+
   "claude_desktop": {
     "_comment": "Add to Claude Desktop config (Developer > Edit Config)",
     "mcpServers": {

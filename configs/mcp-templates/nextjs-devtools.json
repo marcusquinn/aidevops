@@ -1,4 +1,6 @@
 {
+  "claude_code_command": "claude mcp add-json nextjs-devtools --scope user '{\"type\":\"stdio\",\"command\":\"npx\",\"args\":[\"next-devtools-mcp@latest\",\"--dev-mode=true\",\"--hot-reload=true\"]}'",
+
   "mcpServers": {
     "nextjs-devtools": {
       "command": "npx",

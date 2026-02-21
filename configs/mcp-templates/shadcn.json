@@ -1,4 +1,6 @@
 {
+  "claude_code_command": "claude mcp add-json shadcn --scope user '{\"type\":\"stdio\",\"command\":\"npx\",\"args\":[\"shadcn@latest\",\"mcp\"]}'",
+
   "mcpServers": {
     "shadcn": {
       "command": "npx",

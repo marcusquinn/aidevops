@@ -1,4 +1,6 @@
 {
+  "claude_code_command": "claude mcp add-json gh_grep --scope user '{\"type\":\"http\",\"url\":\"https://mcp.grep.app\"}'",
+
   "mcpServers": {
     "gh_grep": {
       "type": "remote",
