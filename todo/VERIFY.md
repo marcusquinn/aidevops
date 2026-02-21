@@ -2104,3 +2104,200 @@
   check: file-exists .agents/scripts/contest-helper.sh
   check: shellcheck tests/test-contest-helper.sh
   check: file-exists tests/test-contest-helper.sh
+
+- [ ] v260 t1292 Audit and trim api.md + configuration.md files superseded... | PR #2085 | merged:2026-02-21
+  files: .agents/services/hosting/cloudflare-platform.md, .agents/services/hosting/cloudflare-platform/references/agents-sdk/api.md, .agents/services/hosting/cloudflare-platform/references/agents-sdk/configuration.md, .agents/services/hosting/cloudflare-platform/references/ai-search/api.md, .agents/services/hosting/cloudflare-platform/references/ai-search/configuration.md, .agents/services/hosting/cloudflare-platform/references/analytics-engine/api.md, .agents/services/hosting/cloudflare-platform/references/analytics-engine/configuration.md, .agents/services/hosting/cloudflare-platform/references/api-shield/api.md, .agents/services/hosting/cloudflare-platform/references/api-shield/configuration.md, .agents/services/hosting/cloudflare-platform/references/api/api.md, .agents/services/hosting/cloudflare-platform/references/api/configuration.md, .agents/services/hosting/cloudflare-platform/references/argo-smart-routing/api.md, .agents/services/hosting/cloudflare-platform/references/argo-smart-routing/configuration.md, .agents/services/hosting/cloudflare-platform/references/bindings/api.md, .agents/services/hosting/cloudflare-platform/references/bindings/configuration.md, .agents/services/hosting/cloudflare-platform/references/bot-management/api.md, .agents/services/hosting/cloudflare-platform/references/bot-management/configuration.md, .agents/services/hosting/cloudflare-platform/references/browser-rendering/api.md, .agents/services/hosting/cloudflare-platform/references/browser-rendering/configuration.md, .agents/services/hosting/cloudflare-platform/references/cache-reserve/api.md, .agents/services/hosting/cloudflare-platform/references/cache-reserve/configuration.md, .agents/services/hosting/cloudflare-platform/references/containers/api.md, .agents/services/hosting/cloudflare-platform/references/containers/configuration.md, .agents/services/hosting/cloudflare-platform/references/cron-triggers/api.md, .agents/services/hosting/cloudflare-platform/references/cron-triggers/configuration.md, .agents/services/hosting/cloudflare-platform/references/d1/api.md, .agents/services/hosting/cloudflare-platform/references/d1/configuration.md, .agents/services/hosting/cloudflare-platform/references/ddos/api.md, .agents/services/hosting/cloudflare-platform/references/ddos/configuration.md, .agents/services/hosting/cloudflare-platform/references/do-storage/api.md, .agents/services/hosting/cloudflare-platform/references/do-storage/configuration.md, .agents/services/hosting/cloudflare-platform/references/durable-objects/api.md, .agents/services/hosting/cloudflare-platform/references/durable-objects/configuration.md, .agents/services/hosting/cloudflare-platform/references/email-routing/api.md, .agents/services/hosting/cloudflare-platform/references/email-routing/configuration.md, .agents/services/hosting/cloudflare-platform/references/hyperdrive/api.md, .agents/services/hosting/cloudflare-platform/references/hyperdrive/configuration.md, .agents/services/hosting/cloudflare-platform/references/images/api.md, .agents/services/hosting/cloudflare-platform/references/images/configuration.md, .agents/services/hosting/cloudflare-platform/references/kv/api.md, .agents/services/hosting/cloudflare-platform/references/kv/configuration.md, .agents/services/hosting/cloudflare-platform/references/miniflare/api.md, .agents/services/hosting/cloudflare-platform/references/miniflare/configuration.md, .agents/services/hosting/cloudflare-platform/references/network-interconnect/api.md, .agents/services/hosting/cloudflare-platform/references/network-interconnect/configuration.md, .agents/services/hosting/cloudflare-platform/references/observability/api.md, .agents/services/hosting/cloudflare-platform/references/observability/configuration.md, .agents/services/hosting/cloudflare-platform/references/pages-functions/api.md, .agents/services/hosting/cloudflare-platform/references/pages-functions/configuration.md, .agents/services/hosting/cloudflare-platform/references/pages/api.md, .agents/services/hosting/cloudflare-platform/references/pages/configuration.md, .agents/services/hosting/cloudflare-platform/references/pulumi/api.md, .agents/services/hosting/cloudflare-platform/references/pulumi/configuration.md, .agents/services/hosting/cloudflare-platform/references/queues/api.md, .agents/services/hosting/cloudflare-platform/references/queues/configuration.md, .agents/services/hosting/cloudflare-platform/references/r2-data-catalog/api.md, .agents/services/hosting/cloudflare-platform/references/r2-data-catalog/configuration.md, .agents/services/hosting/cloudflare-platform/references/r2/api.md, .agents/services/hosting/cloudflare-platform/references/r2/configuration.md, .agents/services/hosting/cloudflare-platform/references/realtime-sfu/api.md, .agents/services/hosting/cloudflare-platform/references/realtime-sfu/configuration.md, .agents/services/hosting/cloudflare-platform/references/realtimekit/api.md, .agents/services/hosting/cloudflare-platform/references/realtimekit/configuration.md, .agents/services/hosting/cloudflare-platform/references/sandbox/api.md, .agents/services/hosting/cloudflare-platform/references/sandbox/configuration.md, .agents/services/hosting/cloudflare-platform/references/smart-placement/api.md, .agents/services/hosting/cloudflare-platform/references/smart-placement/configuration.md, .agents/services/hosting/cloudflare-platform/references/snippets/api.md, .agents/services/hosting/cloudflare-platform/references/snippets/configuration.md, .agents/services/hosting/cloudflare-platform/references/spectrum/api.md, .agents/services/hosting/cloudflare-platform/references/spectrum/configuration.md, .agents/services/hosting/cloudflare-platform/references/static-assets/api.md, .agents/services/hosting/cloudflare-platform/references/static-assets/configuration.md, .agents/services/hosting/cloudflare-platform/references/stream/api.md, .agents/services/hosting/cloudflare-platform/references/stream/configuration.md, .agents/services/hosting/cloudflare-platform/references/terraform/api.md, .agents/services/hosting/cloudflare-platform/references/terraform/configuration.md, .agents/services/hosting/cloudflare-platform/references/tunnel/api.md, .agents/services/hosting/cloudflare-platform/references/tunnel/configuration.md, .agents/services/hosting/cloudflare-platform/references/turnstile/api.md, .agents/services/hosting/cloudflare-platform/references/turnstile/configuration.md, .agents/services/hosting/cloudflare-platform/references/waf/api.md, .agents/services/hosting/cloudflare-platform/references/waf/configuration.md, .agents/services/hosting/cloudflare-platform/references/web-analytics/api.md, .agents/services/hosting/cloudflare-platform/references/web-analytics/configuration.md, .agents/services/hosting/cloudflare-platform/references/workerd/api.md, .agents/services/hosting/cloudflare-platform/references/workerd/configuration.md, .agents/services/hosting/cloudflare-platform/references/workers-for-platforms/api.md, .agents/services/hosting/cloudflare-platform/references/workers-for-platforms/configuration.md, .agents/services/hosting/cloudflare-platform/references/workers-playground/api.md, .agents/services/hosting/cloudflare-platform/references/workers-playground/configuration.md, .agents/services/hosting/cloudflare-platform/references/workers/api.md, .agents/services/hosting/cloudflare-platform/references/workers/configuration.md, .agents/services/hosting/cloudflare-platform/references/workflows/api.md, .agents/services/hosting/cloudflare-platform/references/workflows/configuration.md, .agents/services/hosting/cloudflare-platform/references/wrangler/api.md, .agents/services/hosting/cloudflare-platform/references/wrangler/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/agents-sdk/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/agents-sdk/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/ai-search/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/ai-search/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/analytics-engine/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/analytics-engine/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/api-shield/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/api-shield/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/api/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/api/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/argo-smart-routing/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/argo-smart-routing/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/bindings/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/bindings/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/bot-management/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/bot-management/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/browser-rendering/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/browser-rendering/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/cache-reserve/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/cache-reserve/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/containers/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/containers/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/cron-triggers/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/cron-triggers/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/d1/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/d1/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/ddos/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/ddos/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/do-storage/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/do-storage/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/durable-objects/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/durable-objects/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/email-routing/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/email-routing/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/hyperdrive/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/hyperdrive/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/images/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/images/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/kv/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/kv/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/miniflare/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/miniflare/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/network-interconnect/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/network-interconnect/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/observability/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/observability/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/pages-functions/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/pages-functions/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/pages/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/pages/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/pulumi/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/pulumi/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/queues/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/queues/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/r2-data-catalog/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/r2-data-catalog/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/r2/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/r2/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/realtime-sfu/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/realtime-sfu/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/realtimekit/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/realtimekit/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/sandbox/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/sandbox/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/smart-placement/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/smart-placement/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/snippets/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/snippets/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/spectrum/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/spectrum/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/static-assets/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/static-assets/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/stream/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/stream/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/terraform/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/terraform/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/tunnel/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/tunnel/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/turnstile/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/turnstile/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/waf/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/waf/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/web-analytics/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/web-analytics/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/workerd/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/workerd/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/workers-for-platforms/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/workers-for-platforms/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/workers-playground/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/workers-playground/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/workers/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/workers/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/workflows/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/workflows/configuration.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/wrangler/api.md
+  check: file-exists .agents/services/hosting/cloudflare-platform/references/wrangler/configuration.md
+  check: rg "cloudflare-platform" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
+  check: rg "api" .agents/subagent-index.toon
+  check: rg "configuration" .agents/subagent-index.toon
