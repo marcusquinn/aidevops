@@ -2077,3 +2077,10 @@
 - [ ] v255 t1294.2 Create `configs/mcp-templates/mcporter.json` config snipp... | PR #2083 | merged:2026-02-21
   files: configs/mcp-templates/mcporter.json
   check: file-exists configs/mcp-templates/mcporter.json
+
+- [ ] v256 t1291 Update cloudflare-platform.md role and cloudflare.md rout... | PR #2081 | merged:2026-02-21
+  files: .agents/services/hosting/cloudflare-platform.md, .agents/services/hosting/cloudflare.md
+  check: file-exists .agents/services/hosting/cloudflare-platform.md
+  check: file-exists .agents/services/hosting/cloudflare.md
+  check: rg "cloudflare-platform" .agents/subagent-index.toon
+  check: rg "cloudflare" .agents/subagent-index.toon
