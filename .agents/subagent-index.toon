@@ -81,6 +81,21 @@ tools/research/,Tech stack research - open-source technology explorer provider,p
 tools/research/,Tech stack research - Wappalyzer OSS technology detection provider,providers/wappalyzer
 -->
 
+<!--TOON:mcp_servers[12]{name,url,auth,subagent,purpose}:
+chrome-devtools,npx chrome-devtools-mcp@latest,none,tools/browser/chrome-devtools.md,Browser automation debugging and performance analysis
+playwright,npx playwright-mcp@latest,none,tools/browser/playwright.md,Cross-browser testing and automation
+cloudflare-api,https://mcp.cloudflare.com/mcp,oauth,tools/api/cloudflare-mcp.md,Workers D1 KV R2 Pages AI Gateway via OAuth
+openapi-search,https://openapi-mcp.openapisearch.com/mcp,none,tools/context/openapi-search.md,Search and explore any OpenAPI spec — semantic search across 3000+ public APIs
+context7,npx @upstash/context7-mcp@latest,none,tools/context/context7.md,Real-time library documentation for development
+ios-simulator,npx ios-simulator-mcp,none,tools/mobile/ios-simulator-mcp.md,AI-driven iOS simulator interaction
+fluentcrm,local-build,api-key,services/crm/fluentcrm.md,WordPress CRM contacts campaigns automations email marketing
+unstract,docker unstract/mcp-server,api-key,services/document-processing/unstract.md,LLM-powered structured data extraction from unstructured documents
+ahrefs,npx @ahrefs/mcp@latest,api-key,seo/dataforseo.md,SEO analysis backlink research keyword data
+perplexity,npx perplexity-mcp@latest,api-key,tools/context/model-routing.md,AI-powered web search and research
+google-search-console,npx mcp-server-gsc@latest,service-account,seo/google-search-console.md,Search performance data and insights
+mcporter,npx mcporter,none,tools/mcp-toolkit/mcporter.md,Discover call compose and generate CLIs for any MCP server
+-->
+
 <!--TOON:workflows[13]{name,file,purpose}:
 git-workflow,workflows/git-workflow.md,Branch naming and commit conventions
 plans,workflows/plans.md,Complex execution plans
