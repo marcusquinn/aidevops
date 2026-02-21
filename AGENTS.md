@@ -38,6 +38,7 @@ See `.agents/aidevops/` for framework development guidance:
 | `tools/build-agent/build-agent.md` | Composing efficient agents |
 | `tools/build-agent/agent-review.md` | Reviewing and improving agents |
 | `tools/build-mcp/build-mcp.md` | MCP server development |
+| `tools/mcp-toolkit/mcporter.md` | MCP runtime toolkit (discover, call, generate CLIs) |
 | `architecture.md` | Framework structure |
 | `setup.md` | AI guide to setup.sh |
 
