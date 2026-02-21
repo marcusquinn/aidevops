@@ -1,47 +1,9 @@
-## Configuration
+# analytics-engine Configuration
 
-### Wrangler Setup
-
-**wrangler.toml:**
-
-```toml
-[[analytics_engine_datasets]]
-binding = "WEATHER"
-dataset = "weather_data"
-```
-
-**wrangler.jsonc:**
-
-```jsonc
-{
-  "$schema": "./node_modules/wrangler/config-schema.json",
-  "analytics_engine_datasets": [
-    {
-      "binding": "WEATHER",
-      "dataset": "weather_data"
-    }
-  ]
-}
-```
-
-**Key Points:**
-- Datasets are created automatically on first write - no manual dashboard setup needed
-- `binding` = variable name accessible in Worker env
-- `dataset` = logical table name (like SQL table - rows/columns should have consistent meaning)
-- Multiple datasets can be defined per Worker
-
-### TypeScript Types
-
-```typescript
-interface Env {
-  WEATHER: AnalyticsEngineDataset;
-}
-
-// The binding exposes this interface
-interface AnalyticsEngineDataset {
-  writeDataPoint(data: AnalyticsEngineDataPoint): void;
-}
-
-interface AnalyticsEngineDataPoint {
-  blobs?: string[];      // Up to 20 strings (dimensions for grouping/filtering)
-  doubles?
+> **Superseded by Cloudflare Code Mode MCP**
+>
+> Configuration API endpoints for analytics-engine are now accessible via the Cloudflare Code Mode MCP server,
+> which covers the full Cloudflare API (2,500+ endpoints) in ~1,000 tokens.
+>
+> Use `tools/mcp/cloudflare-code-mode.md` — call `search()` to discover endpoints,
+> then `execute()` to call them.

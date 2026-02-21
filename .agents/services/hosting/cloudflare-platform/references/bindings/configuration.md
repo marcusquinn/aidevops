@@ -1,60 +1,9 @@
-## Wrangler Configuration Patterns
+# bindings Configuration
 
-### JSON vs TOML
-
-**JSON (Recommended for new projects):**
-
-```jsonc
-// wrangler.jsonc
-{
-  "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "my-worker",
-  "main": "src/index.ts",
-  "compatibility_date": "2024-01-01",
-  "vars": {
-    "API_URL": "https://api.example.com"
-  }
-}
-```
-
-**TOML (Legacy):**
-
-```toml
-# wrangler.toml
-name = "my-worker"
-main = "src/index.ts"
-compatibility_date = "2024-01-01"
-
-[vars]
-API_URL = "https://api.example.com"
-```
-
-### Environment-Specific Configuration
-
-```jsonc
-{
-  "name": "my-worker",
-  "main": "src/index.ts",
-  "compatibility_date": "2024-01-01",
-  
-  // Production bindings
-  "vars": {
-    "ENV": "production"
-  },
-  "kv_namespaces": [
-    {
-      "binding": "CACHE",
-      "id": "prod-kv-id"
-    }
-  ],
-  
-  // Environment overrides
-  "env": {
-    "staging": {
-      "vars": {
-        "ENV": "staging"
-      },
-      "kv_namespaces": [
-        {
-          "binding": "CACHE",
-          "id": "staging-kv-id
+> **Superseded by Cloudflare Code Mode MCP**
+>
+> Configuration API endpoints for bindings are now accessible via the Cloudflare Code Mode MCP server,
+> which covers the full Cloudflare API (2,500+ endpoints) in ~1,000 tokens.
+>
+> Use `tools/mcp/cloudflare-code-mode.md` — call `search()` to discover endpoints,
+> then `execute()` to call them.
