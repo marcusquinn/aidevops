@@ -1991,3 +1991,11 @@
   check: file-exists .agents/scripts/supervisor/ai-actions.sh
   check: shellcheck .agents/scripts/supervisor/ai-context.sh
   check: file-exists .agents/scripts/supervisor/ai-context.sh
+
+- [ ] v243 t1282 Context optimisation pass 2: tier .agents/AGENTS.md into ... | PR #2046 | merged:2026-02-21
+  files: .agents/AGENTS.md, .agents/reference/orchestration.md, .agents/reference/planning-detail.md, .agents/reference/services.md, .agents/reference/session.md
+  check: file-exists .agents/AGENTS.md
+  check: file-exists .agents/reference/orchestration.md
+  check: file-exists .agents/reference/planning-detail.md
+  check: file-exists .agents/reference/services.md
+  check: file-exists .agents/reference/session.md
