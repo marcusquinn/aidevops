@@ -11,41 +11,15 @@
 
 set -euo pipefail
 
-# Colors for output
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly BLUE='\033[0;34m'
-readonly NC='\033[0m' # No Color
+source "$(dirname "${BASH_SOURCE[0]}")/shared-constants.sh"
 
-log_info() {
-	local msg="$1"
-	echo -e "${BLUE}[INFO]${NC} $msg"
-	return 0
-}
-
-log_success() {
-	local msg="$1"
-	echo -e "${GREEN}[SUCCESS]${NC} $msg"
-	return 0
-}
-
-log_warning() {
-	local msg="$1"
-	echo -e "${YELLOW}[WARNING]${NC} $msg"
-	return 0
-}
-
-log_error() {
-	local msg="$1"
-	echo -e "${RED}[ERROR]${NC} $msg"
-	return 0
-}
-
-# Safely merge a key/value into a JSON file using python3.
-# Usage: json_merge_key <file> <key_path_expr> <value_json>
-# key_path_expr is a dot-separated path, e.g. "mcp.openapi-search"
-# value_json is a valid JSON string, e.g. '{"type":"http","url":"https://..."}'
+# Safely set a nested key/value into a JSON file using python3.
+# Usage: json_set_nested <file> <outer_key> <inner_key> <value_json>
+# Example: json_set_nested config.json mcp openapi-search '{"type":"http","url":"..."}'
+#   file       - path to the JSON file (created if missing)
+#   outer_key  - top-level key whose value is an object (e.g. "mcp", "mcpServers")
+#   inner_key  - key within outer_key to set (e.g. "openapi-search")
+#   value_json - valid JSON string to assign (e.g. '{"type":"http","url":"https://..."}')
 json_set_nested() {
 	local file="$1"
 	local outer_key="$2"
@@ -53,7 +27,7 @@ json_set_nested() {
 	local value_json="$4"
 
 	if ! command -v python3 >/dev/null 2>&1; then
-		log_warning "python3 not found - cannot update $file"
+		print_warning "python3 not found - cannot update $file"
 		return 0
 	fi
 
@@ -87,7 +61,13 @@ PYEOF
 }
 
 # Safely append an object to a JSON array in a file using python3.
-# Usage: json_append_to_array <file> <array_key> <value_json>
+# Usage: json_append_to_array <file> <array_key> <value_json> <match_key> <match_val>
+# Example: json_append_to_array config.json mcpServers '{"name":"foo"}' name foo
+#   file       - path to the JSON file (created if missing)
+#   array_key  - top-level key whose value is an array (e.g. "mcpServers")
+#   value_json - valid JSON object string to append
+#   match_key  - key within each array item used to detect duplicates (e.g. "name")
+#   match_val  - value of match_key that identifies an existing entry (e.g. "openapi-search")
 json_append_to_array() {
 	local file="$1"
 	local array_key="$2"
@@ -96,7 +76,7 @@ json_append_to_array() {
 	local match_val="$5"
 
 	if ! command -v python3 >/dev/null 2>&1; then
-		log_warning "python3 not found - cannot update $file"
+		print_warning "python3 not found - cannot update $file"
 		return 0
 	fi
 
@@ -145,38 +125,39 @@ configure_openapi_search_mcp() {
 	local mcp_name="openapi-search"
 	local mcp_url="https://openapi-mcp.openapisearch.com/mcp"
 
-	log_info "Configuring OpenAPI Search MCP for AI assistants..."
-	log_info "Remote URL: $mcp_url (no prerequisites required)"
+	print_info "Configuring OpenAPI Search MCP for AI assistants..."
+	print_info "Remote URL: $mcp_url (no prerequisites required)"
 
 	# -------------------------------------------------------------------------
 	# OpenCode — ~/.config/opencode/opencode.json
 	# -------------------------------------------------------------------------
 	local opencode_config="$HOME/.config/opencode/opencode.json"
-	if [[ -f "$opencode_config" ]]; then
-		log_info "Configuring OpenAPI Search for OpenCode..."
+	if [[ -d "$HOME/.config/opencode" ]] || command -v opencode >/dev/null 2>&1; then
+		mkdir -p "$HOME/.config/opencode"
+		print_info "Configuring OpenAPI Search for OpenCode..."
 		json_set_nested "$opencode_config" "mcp" "$mcp_name" \
 			"{\"type\":\"remote\",\"url\":\"$mcp_url\",\"enabled\":false}"
-		log_success "OpenCode configured (disabled by default — enable per-agent via tools: openapi-search_*: true)"
+		print_success "OpenCode configured (disabled by default — enable per-agent via tools: openapi-search_*: true)"
 	else
-		log_warning "OpenCode config not found at $opencode_config - skipping"
-		log_info "Run setup.sh to create OpenCode config, then re-run this script"
+		print_warning "OpenCode not detected - skipping"
+		print_info "Run setup.sh to create OpenCode config, then re-run this script"
 	fi
 
 	# -------------------------------------------------------------------------
 	# Claude Code CLI — claude mcp add --transport http
 	# -------------------------------------------------------------------------
 	if command -v claude >/dev/null 2>&1; then
-		log_info "Configuring OpenAPI Search for Claude Code..."
-		if claude mcp add --scope user "$mcp_name" --transport http "$mcp_url" 2>/dev/null; then
-			log_success "Claude Code configured for OpenAPI Search"
+		print_info "Configuring OpenAPI Search for Claude Code..."
+		if claude mcp add --scope user "$mcp_name" --transport http "$mcp_url"; then
+			print_success "Claude Code configured for OpenAPI Search"
 		else
 			# May already be configured — try add-json as fallback
 			claude mcp add-json "$mcp_name" --scope user \
-				"{\"type\":\"http\",\"url\":\"$mcp_url\"}" 2>/dev/null || true
-			log_success "Claude Code configured for OpenAPI Search (via add-json)"
+				"{\"type\":\"http\",\"url\":\"$mcp_url\"}" || true
+			print_success "Claude Code configured for OpenAPI Search (via add-json)"
 		fi
 	else
-		log_info "Claude Code CLI not found - skipping (install: https://claude.ai/download)"
+		print_info "Claude Code CLI not found - skipping (install: https://claude.ai/download)"
 	fi
 
 	# -------------------------------------------------------------------------
@@ -184,13 +165,13 @@ configure_openapi_search_mcp() {
 	# -------------------------------------------------------------------------
 	local cursor_config="$HOME/.cursor/mcp.json"
 	if [[ -d "$HOME/.cursor" ]] || command -v cursor >/dev/null 2>&1; then
-		log_info "Configuring OpenAPI Search for Cursor..."
+		print_info "Configuring OpenAPI Search for Cursor..."
 		mkdir -p "$HOME/.cursor"
 		json_set_nested "$cursor_config" "mcpServers" "$mcp_name" \
 			"{\"url\":\"$mcp_url\"}"
-		log_success "Cursor configured for OpenAPI Search"
+		print_success "Cursor configured for OpenAPI Search"
 	else
-		log_info "Cursor not detected - skipping"
+		print_info "Cursor not detected - skipping"
 	fi
 
 	# -------------------------------------------------------------------------
@@ -198,13 +179,13 @@ configure_openapi_search_mcp() {
 	# -------------------------------------------------------------------------
 	local windsurf_config="$HOME/.codeium/windsurf/mcp_config.json"
 	if [[ -d "$HOME/.codeium/windsurf" ]] || command -v windsurf >/dev/null 2>&1; then
-		log_info "Configuring OpenAPI Search for Windsurf..."
+		print_info "Configuring OpenAPI Search for Windsurf..."
 		mkdir -p "$HOME/.codeium/windsurf"
 		json_set_nested "$windsurf_config" "mcpServers" "$mcp_name" \
 			"{\"serverUrl\":\"$mcp_url\"}"
-		log_success "Windsurf configured for OpenAPI Search"
+		print_success "Windsurf configured for OpenAPI Search"
 	else
-		log_info "Windsurf not detected - skipping"
+		print_info "Windsurf not detected - skipping"
 	fi
 
 	# -------------------------------------------------------------------------
@@ -212,13 +193,13 @@ configure_openapi_search_mcp() {
 	# -------------------------------------------------------------------------
 	local gemini_config="$HOME/.gemini/settings.json"
 	if [[ -d "$HOME/.gemini" ]] || command -v gemini >/dev/null 2>&1; then
-		log_info "Configuring OpenAPI Search for Gemini CLI..."
+		print_info "Configuring OpenAPI Search for Gemini CLI..."
 		mkdir -p "$HOME/.gemini"
 		json_set_nested "$gemini_config" "mcpServers" "$mcp_name" \
 			"{\"url\":\"$mcp_url\"}"
-		log_success "Gemini CLI configured for OpenAPI Search"
+		print_success "Gemini CLI configured for OpenAPI Search"
 	else
-		log_info "Gemini CLI not detected - skipping"
+		print_info "Gemini CLI not detected - skipping"
 	fi
 
 	# -------------------------------------------------------------------------
@@ -226,14 +207,14 @@ configure_openapi_search_mcp() {
 	# -------------------------------------------------------------------------
 	local continue_config="$HOME/.continue/config.json"
 	if [[ -d "$HOME/.continue" ]] || command -v continue >/dev/null 2>&1; then
-		log_info "Configuring OpenAPI Search for Continue.dev..."
+		print_info "Configuring OpenAPI Search for Continue.dev..."
 		mkdir -p "$HOME/.continue"
 		local continue_entry
 		continue_entry="{\"name\":\"$mcp_name\",\"transport\":{\"type\":\"streamable-http\",\"url\":\"$mcp_url\"}}"
 		json_append_to_array "$continue_config" "mcpServers" "$continue_entry" "name" "$mcp_name"
-		log_success "Continue.dev configured for OpenAPI Search"
+		print_success "Continue.dev configured for OpenAPI Search"
 	else
-		log_info "Continue.dev not detected - skipping"
+		print_info "Continue.dev not detected - skipping"
 	fi
 
 	# -------------------------------------------------------------------------
@@ -244,10 +225,10 @@ configure_openapi_search_mcp() {
 			local kilo_config="$kilo_dir/mcp.json"
 			local kilo_name
 			kilo_name="$(basename "$kilo_dir")"
-			log_info "Configuring OpenAPI Search for ${kilo_name}..."
+			print_info "Configuring OpenAPI Search for ${kilo_name}..."
 			json_set_nested "$kilo_config" "mcpServers" "$mcp_name" \
 				"{\"url\":\"$mcp_url\"}"
-			log_success "${kilo_name} configured for OpenAPI Search"
+			print_success "${kilo_name} configured for OpenAPI Search"
 		fi
 	done
 
@@ -255,17 +236,17 @@ configure_openapi_search_mcp() {
 	# Droid (Factory.AI) — droid mcp add CLI
 	# -------------------------------------------------------------------------
 	if command -v droid >/dev/null 2>&1; then
-		log_info "Configuring OpenAPI Search for Droid (Factory.AI)..."
-		droid mcp add "$mcp_name" --url "$mcp_url" 2>/dev/null || true
-		log_success "Droid configured for OpenAPI Search"
+		print_info "Configuring OpenAPI Search for Droid (Factory.AI)..."
+		droid mcp add "$mcp_name" --url "$mcp_url" || true
+		print_success "Droid configured for OpenAPI Search"
 	else
-		log_info "Droid (Factory.AI) not detected - skipping"
+		print_info "Droid (Factory.AI) not detected - skipping"
 	fi
 
-	log_success "OpenAPI Search MCP configured for all detected AI assistants"
-	log_info "Docs: https://github.com/janwilmake/openapi-mcp-server"
-	log_info "Directory: https://openapisearch.com/search"
-	log_info "Verification: Ask your AI assistant to 'list tools from openapi-search'"
+	print_success "OpenAPI Search MCP configured for all detected AI assistants"
+	print_info "Docs: https://github.com/janwilmake/openapi-mcp-server"
+	print_info "Directory: https://openapisearch.com/search"
+	print_info "Verification: Ask your AI assistant to 'list tools from openapi-search'"
 	return 0
 }
 
@@ -289,7 +270,7 @@ main() {
 		echo "Run without arguments to see this help."
 		;;
 	*)
-		log_error "Unknown command: $cmd"
+		print_error "Unknown command: $cmd"
 		echo "Run '$0 help' for usage."
 		return 1
 		;;
