@@ -1014,32 +1014,25 @@ do_prompt_repeat() {
 
 	log_info "Prompt-repeat retry for $task_id (same model: $tmodel)"
 
-	# Build dispatch command — use same model, reinforced prompt
-	local -a cmd_parts=()
-	if [[ "$ai_cli" == "opencode" ]]; then
-		local session_title="${task_id}-prompt-repeat"
-		if [[ -n "$tdesc" ]]; then
-			local short_desc="${tdesc%% -- *}"
-			short_desc="${short_desc%% #*}"
-			short_desc="${short_desc%% ~*}"
-			if [[ ${#short_desc} -gt 30 ]]; then
-				short_desc="${short_desc:0:27}..."
-			fi
-			session_title="${task_id}-pr: ${short_desc}"
+	# Build dispatch command — use same model, reinforced prompt (t1160.1)
+	local session_title="${task_id}-prompt-repeat"
+	if [[ -n "$tdesc" ]]; then
+		local short_desc="${tdesc%% -- *}"
+		short_desc="${short_desc%% #*}"
+		short_desc="${short_desc%% ~*}"
+		if [[ ${#short_desc} -gt 30 ]]; then
+			short_desc="${short_desc:0:27}..."
 		fi
-		cmd_parts=(opencode run --format json)
-		if [[ -n "$tmodel" ]]; then
-			cmd_parts+=(-m "$tmodel")
-		fi
-		cmd_parts+=(--title "$session_title" "$reinforced_prompt")
-	else
-		cmd_parts=(claude -p "$reinforced_prompt")
-		if [[ -n "$tmodel" ]]; then
-			local claude_model="${tmodel#*/}"
-			cmd_parts+=(--model "$claude_model")
-		fi
-		cmd_parts+=(--output-format json)
+		session_title="${task_id}-pr: ${short_desc}"
 	fi
+	local -a cmd_parts=()
+	eval "cmd_parts=($(build_cli_cmd \
+		--cli "$ai_cli" \
+		--action run \
+		--output array \
+		--model "$tmodel" \
+		--title "$session_title" \
+		--prompt "$reinforced_prompt"))"
 
 	# Ensure PID directory exists
 	mkdir -p "$SUPERVISOR_DIR/pids"
@@ -1577,19 +1570,13 @@ check_cli_health() {
 		timeout_cmd="timeout"
 	fi
 
-	if [[ "$ai_cli" == "opencode" ]]; then
-		if [[ -n "$timeout_cmd" ]]; then
-			version_output=$("$timeout_cmd" 10 "$ai_cli" version 2>&1) || version_exit=$?
-		else
-			version_output=$("$ai_cli" version 2>&1) || version_exit=$?
-		fi
+	# t1160.1: Build version command via build_cli_cmd abstraction
+	local -a version_cmd=()
+	eval "version_cmd=($(build_cli_cmd --cli "$ai_cli" --action version --output array))"
+	if [[ -n "$timeout_cmd" ]]; then
+		version_output=$("$timeout_cmd" 10 "${version_cmd[@]}" 2>&1) || version_exit=$?
 	else
-		# claude CLI
-		if [[ -n "$timeout_cmd" ]]; then
-			version_output=$("$timeout_cmd" 10 "$ai_cli" --version 2>&1) || version_exit=$?
-		else
-			version_output=$("$ai_cli" --version 2>&1) || version_exit=$?
-		fi
+		version_output=$("${version_cmd[@]}" 2>&1) || version_exit=$?
 	fi
 
 	# If version command succeeded (exit 0) or produced output, CLI is working
@@ -1716,67 +1703,33 @@ check_model_health() {
 	local probe_result=""
 	local probe_exit=1
 
-	if [[ "$ai_cli" == "opencode" ]]; then
-		local -a probe_cmd=(opencode run --format json)
-		if [[ -n "$model" ]]; then
-			probe_cmd+=(-m "$model")
-		fi
-		probe_cmd+=(--title "health-check" "Reply with exactly: OK")
-		if [[ -n "$timeout_cmd" ]]; then
-			probe_result=$("$timeout_cmd" 15 "${probe_cmd[@]}" 2>&1)
-			probe_exit=$?
-		else
-			local probe_pid probe_tmpfile
-			probe_tmpfile=$(mktemp)
-			push_cleanup "rm -f '${probe_tmpfile}'"
-			("${probe_cmd[@]}" >"$probe_tmpfile" 2>&1) &
-			probe_pid=$!
-			local waited=0
-			while kill -0 "$probe_pid" 2>/dev/null && [[ "$waited" -lt 15 ]]; do
-				sleep 1
-				waited=$((waited + 1))
-			done
-			if kill -0 "$probe_pid" 2>/dev/null; then
-				kill "$probe_pid" 2>/dev/null || true
-				wait "$probe_pid" 2>/dev/null || true
-				probe_exit=124
-			else
-				wait "$probe_pid" 2>/dev/null || true
-				probe_exit=$?
-			fi
-			probe_result=$(cat "$probe_tmpfile" 2>/dev/null || true)
-			rm -f "$probe_tmpfile"
-		fi
+	# t1160.1: Build probe command via build_cli_cmd abstraction
+	local -a probe_cmd=()
+	eval "probe_cmd=($(build_cli_cmd --cli "$ai_cli" --action probe --output array --model "$model"))"
+	if [[ -n "$timeout_cmd" ]]; then
+		probe_result=$("$timeout_cmd" 15 "${probe_cmd[@]}" 2>&1)
+		probe_exit=$?
 	else
-		local -a probe_cmd=(claude -p "Reply with exactly: OK" --output-format text)
-		if [[ -n "$model" ]]; then
-			probe_cmd+=(--model "$model")
-		fi
-		if [[ -n "$timeout_cmd" ]]; then
-			probe_result=$("$timeout_cmd" 15 "${probe_cmd[@]}" 2>&1)
-			probe_exit=$?
+		local probe_pid probe_tmpfile
+		probe_tmpfile=$(mktemp)
+		push_cleanup "rm -f '${probe_tmpfile}'"
+		("${probe_cmd[@]}" >"$probe_tmpfile" 2>&1) &
+		probe_pid=$!
+		local waited=0
+		while kill -0 "$probe_pid" 2>/dev/null && [[ "$waited" -lt 15 ]]; do
+			sleep 1
+			waited=$((waited + 1))
+		done
+		if kill -0 "$probe_pid" 2>/dev/null; then
+			kill "$probe_pid" 2>/dev/null || true
+			wait "$probe_pid" 2>/dev/null || true
+			probe_exit=124
 		else
-			local probe_pid probe_tmpfile
-			probe_tmpfile=$(mktemp)
-			push_cleanup "rm -f '${probe_tmpfile}'"
-			("${probe_cmd[@]}" >"$probe_tmpfile" 2>&1) &
-			probe_pid=$!
-			local waited=0
-			while kill -0 "$probe_pid" 2>/dev/null && [[ "$waited" -lt 15 ]]; do
-				sleep 1
-				waited=$((waited + 1))
-			done
-			if kill -0 "$probe_pid" 2>/dev/null; then
-				kill "$probe_pid" 2>/dev/null || true
-				wait "$probe_pid" 2>/dev/null || true
-				probe_exit=124
-			else
-				wait "$probe_pid" 2>/dev/null || true
-				probe_exit=$?
-			fi
-			probe_result=$(cat "$probe_tmpfile" 2>/dev/null || true)
-			rm -f "$probe_tmpfile"
+			wait "$probe_pid" 2>/dev/null || true
+			probe_exit=$?
 		fi
+		probe_result=$(cat "$probe_tmpfile" 2>/dev/null || true)
+		rm -f "$probe_tmpfile"
 	fi
 
 	# Check for known failure patterns (t233: distinguish quota/rate-limit from generic failures)
@@ -1868,6 +1821,174 @@ generate_worker_mcp_config() {
 	# Return the parent of the opencode/ dir (XDG_CONFIG_HOME points to the
 	# directory that *contains* the opencode/ subdirectory)
 	echo "${SUPERVISOR_DIR}/pids/${task_id}-config"
+	return 0
+}
+
+#######################################
+# Build a CLI-specific command from semantic parameters (t1160.1)
+#
+# Centralises the opencode-vs-claude if/else branching that was previously
+# duplicated across build_dispatch_cmd, build_verify_dispatch_cmd,
+# do_prompt_repeat, cmd_reprompt, check_cli_health, and check_model_health.
+#
+# Output modes:
+#   "nul"   — NUL-delimited (\0) tokens on stdout (for process-substitution reads)
+#   "array" — space-separated %q-quoted tokens on stdout (for eval into arrays)
+#
+# Supported actions:
+#   "run"     — dispatch a worker with a prompt
+#   "version" — CLI version/health check
+#   "probe"   — lightweight health probe ("Reply with exactly: OK")
+#
+# Args (passed as named flags for clarity):
+#   --cli <opencode|claude>   (required)
+#   --action <run|version|probe>  (required)
+#   --output <nul|array>      (default: nul)
+#   --model <provider/model>  (optional, for run/probe)
+#   --title <session-title>   (optional, for run — opencode only)
+#   --prompt <text>           (required for run, ignored for version)
+#
+# Returns: 0 on success, 1 on invalid args
+#######################################
+build_cli_cmd() {
+	local cli="" action="" output_mode="nul" model="" title="" prompt=""
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--cli)
+			cli="$2"
+			shift 2
+			;;
+		--action)
+			action="$2"
+			shift 2
+			;;
+		--output)
+			output_mode="$2"
+			shift 2
+			;;
+		--model)
+			model="$2"
+			shift 2
+			;;
+		--title)
+			title="$2"
+			shift 2
+			;;
+		--prompt)
+			prompt="$2"
+			shift 2
+			;;
+		*)
+			log_error "build_cli_cmd: unknown flag: $1"
+			return 1
+			;;
+		esac
+	done
+
+	if [[ -z "$cli" || -z "$action" ]]; then
+		log_error "build_cli_cmd: --cli and --action are required"
+		return 1
+	fi
+
+	# --- Emit helper: handles nul vs array output modes ---
+	local -a _tokens=()
+	_emit_token() { _tokens+=("$1"); }
+
+	# --- Build tokens based on action + CLI ---
+	case "$action" in
+	run)
+		if [[ -z "$prompt" ]]; then
+			log_error "build_cli_cmd: --prompt required for action=run"
+			return 1
+		fi
+		if [[ "$cli" == "opencode" ]]; then
+			_emit_token "opencode"
+			_emit_token "run"
+			_emit_token "--format"
+			_emit_token "json"
+			if [[ -n "$model" ]]; then
+				_emit_token "-m"
+				_emit_token "$model"
+			fi
+			if [[ -n "$title" ]]; then
+				_emit_token "--title"
+				_emit_token "$title"
+			fi
+			_emit_token "$prompt"
+		else
+			# claude CLI
+			_emit_token "claude"
+			_emit_token "-p"
+			_emit_token "$prompt"
+			if [[ -n "$model" ]]; then
+				# claude CLI uses bare model name (strip provider/ prefix)
+				local claude_model="${model#*/}"
+				_emit_token "--model"
+				_emit_token "$claude_model"
+			fi
+			_emit_token "--output-format"
+			_emit_token "json"
+		fi
+		;;
+	version)
+		if [[ "$cli" == "opencode" ]]; then
+			_emit_token "opencode"
+			_emit_token "version"
+		else
+			_emit_token "claude"
+			_emit_token "--version"
+		fi
+		;;
+	probe)
+		if [[ "$cli" == "opencode" ]]; then
+			_emit_token "opencode"
+			_emit_token "run"
+			_emit_token "--format"
+			_emit_token "json"
+			if [[ -n "$model" ]]; then
+				_emit_token "-m"
+				_emit_token "$model"
+			fi
+			_emit_token "--title"
+			_emit_token "health-check"
+			_emit_token "Reply with exactly: OK"
+		else
+			_emit_token "claude"
+			_emit_token "-p"
+			_emit_token "Reply with exactly: OK"
+			_emit_token "--output-format"
+			_emit_token "text"
+			if [[ -n "$model" ]]; then
+				local claude_model="${model#*/}"
+				_emit_token "--model"
+				_emit_token "$claude_model"
+			fi
+		fi
+		;;
+	*)
+		log_error "build_cli_cmd: unknown action: $action"
+		return 1
+		;;
+	esac
+
+	# --- Output tokens in requested format ---
+	case "$output_mode" in
+	nul)
+		local t
+		for t in "${_tokens[@]}"; do
+			printf '%s\0' "$t"
+		done
+		;;
+	array)
+		printf '%q ' "${_tokens[@]}"
+		;;
+	*)
+		log_error "build_cli_cmd: unknown output mode: $output_mode"
+		return 1
+		;;
+	esac
+
 	return 0
 }
 
@@ -2115,42 +2236,26 @@ retry cycle."
 $memory_context"
 	fi
 
-	# Use NUL-delimited output so multi-line prompts stay as single arguments
-	if [[ "$ai_cli" == "opencode" ]]; then
-		printf '%s\0' "opencode"
-		printf '%s\0' "run"
-		printf '%s\0' "--format"
-		printf '%s\0' "json"
-		if [[ -n "$model" ]]; then
-			printf '%s\0' "-m"
-			printf '%s\0' "$model"
+	# t262: Include truncated description in session title for readability
+	local session_title="$task_id"
+	if [[ -n "$description" ]]; then
+		local short_desc="${description%% -- *}" # strip notes after --
+		short_desc="${short_desc%% #*}"          # strip tags
+		short_desc="${short_desc%% ~*}"          # strip estimates
+		if [[ ${#short_desc} -gt 40 ]]; then
+			short_desc="${short_desc:0:37}..."
 		fi
-		printf '%s\0' "--title"
-		# t262: Include truncated description in session title for readability
-		local session_title="$task_id"
-		if [[ -n "$description" ]]; then
-			local short_desc="${description%% -- *}" # strip notes after --
-			short_desc="${short_desc%% #*}"          # strip tags
-			short_desc="${short_desc%% ~*}"          # strip estimates
-			if [[ ${#short_desc} -gt 40 ]]; then
-				short_desc="${short_desc:0:37}..."
-			fi
-			session_title="${task_id}: ${short_desc}"
-		fi
-		printf '%s\0' "$session_title"
-		printf '%s\0' "$prompt"
-	else
-		# claude CLI
-		printf '%s\0' "claude"
-		printf '%s\0' "-p"
-		printf '%s\0' "$prompt"
-		if [[ -n "$model" ]]; then
-			printf '%s\0' "--model"
-			printf '%s\0' "$model"
-		fi
-		printf '%s\0' "--output-format"
-		printf '%s\0' "json"
+		session_title="${task_id}: ${short_desc}"
 	fi
+
+	# t1160.1: Delegate CLI-specific command building to build_cli_cmd()
+	build_cli_cmd \
+		--cli "$ai_cli" \
+		--action run \
+		--output nul \
+		--model "$model" \
+		--title "$session_title" \
+		--prompt "$prompt"
 
 	return 0
 }
@@ -2231,41 +2336,25 @@ and functional, NOT to reimplement from scratch.
 $memory_context"
 	fi
 
-	# Use NUL-delimited output so multi-line prompts stay as single arguments
-	if [[ "$ai_cli" == "opencode" ]]; then
-		printf '%s\0' "opencode"
-		printf '%s\0' "run"
-		printf '%s\0' "--format"
-		printf '%s\0' "json"
-		if [[ -n "$model" ]]; then
-			printf '%s\0' "-m"
-			printf '%s\0' "$model"
+	local session_title="${task_id}-verify"
+	if [[ -n "$description" ]]; then
+		local short_desc="${description%% -- *}"
+		short_desc="${short_desc%% #*}"
+		short_desc="${short_desc%% ~*}"
+		if [[ ${#short_desc} -gt 30 ]]; then
+			short_desc="${short_desc:0:27}..."
 		fi
-		printf '%s\0' "--title"
-		local session_title="${task_id}-verify"
-		if [[ -n "$description" ]]; then
-			local short_desc="${description%% -- *}"
-			short_desc="${short_desc%% #*}"
-			short_desc="${short_desc%% ~*}"
-			if [[ ${#short_desc} -gt 30 ]]; then
-				short_desc="${short_desc:0:27}..."
-			fi
-			session_title="${task_id}-verify: ${short_desc}"
-		fi
-		printf '%s\0' "$session_title"
-		printf '%s\0' "$prompt"
-	else
-		# claude CLI
-		printf '%s\0' "claude"
-		printf '%s\0' "-p"
-		printf '%s\0' "$prompt"
-		if [[ -n "$model" ]]; then
-			printf '%s\0' "--model"
-			printf '%s\0' "$model"
-		fi
-		printf '%s\0' "--output-format"
-		printf '%s\0' "json"
+		session_title="${task_id}-verify: ${short_desc}"
 	fi
+
+	# t1160.1: Delegate CLI-specific command building to build_cli_cmd()
+	build_cli_cmd \
+		--cli "$ai_cli" \
+		--action run \
+		--output nul \
+		--model "$model" \
+		--title "$session_title" \
+		--prompt "$prompt"
 
 	return 0
 }
@@ -3191,36 +3280,29 @@ Task description: ${tdesc:-$task_id}"
 		record_dispatch_model_tiers "$task_id" "$tmodel" "$resolved_model"
 	fi
 
-	# Dispatch the re-prompt
-	local -a cmd_parts=()
-	if [[ "$ai_cli" == "opencode" ]]; then
-		# t262: Include truncated description in retry session title
-		local retry_title="${task_id}-retry${tretries}"
-		if [[ -n "$tdesc" ]]; then
-			local short_desc="${tdesc%% -- *}"
-			short_desc="${short_desc%% #*}"
-			short_desc="${short_desc%% ~*}"
-			if [[ ${#short_desc} -gt 30 ]]; then
-				short_desc="${short_desc:0:27}..."
-			fi
-			retry_title="${task_id}-r${tretries}: ${short_desc}"
+	# Dispatch the re-prompt (t1160.1: uses build_cli_cmd abstraction)
+	# t262: Include truncated description in retry session title
+	local retry_title="${task_id}-retry${tretries}"
+	if [[ -n "$tdesc" ]]; then
+		local short_desc="${tdesc%% -- *}"
+		short_desc="${short_desc%% #*}"
+		short_desc="${short_desc%% ~*}"
+		if [[ ${#short_desc} -gt 30 ]]; then
+			short_desc="${short_desc:0:27}..."
 		fi
-		cmd_parts=(opencode run --format json)
-		# t1186: Pass task model to opencode — without this, retries default to
-		# opencode's configured model (opus), wasting budget on tasks that only
-		# need sonnet. This was the root cause of the sonnet→opus tier escalation.
-		if [[ -n "$resolved_model" ]]; then
-			cmd_parts+=(-m "$resolved_model")
-		fi
-		cmd_parts+=(--title "$retry_title" "$reprompt_msg")
-	else
-		cmd_parts=(claude -p "$reprompt_msg")
-		if [[ -n "$resolved_model" ]]; then
-			local claude_model="${resolved_model#*/}"
-			cmd_parts+=(--model "$claude_model")
-		fi
-		cmd_parts+=(--output-format json)
+		retry_title="${task_id}-r${tretries}: ${short_desc}"
 	fi
+	# t1186: Pass task model to opencode — without this, retries default to
+	# opencode's configured model (opus), wasting budget on tasks that only
+	# need sonnet. This was the root cause of the sonnet→opus tier escalation.
+	local -a cmd_parts=()
+	eval "cmd_parts=($(build_cli_cmd \
+		--cli "$ai_cli" \
+		--action run \
+		--output array \
+		--model "$resolved_model" \
+		--title "$retry_title" \
+		--prompt "$reprompt_msg"))"
 
 	# Ensure PID directory exists
 	mkdir -p "$SUPERVISOR_DIR/pids"
