@@ -751,6 +751,19 @@ CONTEST_SQL
 		log_success "Added rate_limit_until column to tasks (t1256)"
 	fi
 
+	# Migrate: add dispatch_target column to tasks if missing (t1165.3)
+	# Stores the remote host name for tasks dispatched to remote containers.
+	# NULL = local dispatch (default). Non-null = remote host name from
+	# remote-hosts.json config. Used by dispatch.sh to route to
+	# remote-dispatch-helper.sh instead of local nohup/setsid.
+	local has_dispatch_target
+	has_dispatch_target=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('tasks') WHERE name='dispatch_target';" 2>/dev/null || echo "0")
+	if [[ "$has_dispatch_target" -eq 0 ]]; then
+		log_info "Migrating tasks table: adding dispatch_target column (t1165.3)..."
+		db "$SUPERVISOR_DB" "ALTER TABLE tasks ADD COLUMN dispatch_target TEXT DEFAULT NULL;" 2>/dev/null || true
+		log_success "Added dispatch_target column to tasks (t1165.3)"
+	fi
+
 	# Prune old action_dedup_log entries (keep last 7 days)
 	db "$SUPERVISOR_DB" "DELETE FROM action_dedup_log WHERE created_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-7 days');" 2>/dev/null || true
 
@@ -814,6 +827,9 @@ CREATE TABLE IF NOT EXISTS tasks (
     -- worker_rate_limited task. cmd_next() skips tasks until this timestamp
     -- passes, preventing immediate re-dispatch into the same rate limit.
     rate_limit_until TEXT DEFAULT NULL,
+    -- t1165.3: remote dispatch target — NULL for local dispatch, host name
+    -- from remote-hosts.json for remote container dispatch via SSH/Tailscale
+    dispatch_target TEXT DEFAULT NULL,
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
     started_at      TEXT,
     completed_at    TEXT,

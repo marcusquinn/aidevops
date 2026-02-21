@@ -787,7 +787,8 @@ cmd_logs() {
 		"${ssh_cmd[@]}" "tail -f '${remote_log_file}'" 2>/dev/null
 	else
 		# Collect logs to local file
-		local local_log_file="${REMOTE_LOG_DIR}/${task_id}-$(date +%Y%m%d%H%M%S).log"
+		local local_log_file
+		local_log_file="${REMOTE_LOG_DIR}/${task_id}-$(date +%Y%m%d%H%M%S).log"
 		mkdir -p "$REMOTE_LOG_DIR" 2>/dev/null || true
 
 		_log_info "Collecting logs from $host for $task_id..."
