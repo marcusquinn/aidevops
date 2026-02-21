@@ -1,0 +1,34 @@
+{
+  "_comment": "Cloudflare Code Mode MCP — remote server, OAuth-authenticated (no API tokens needed)",
+  "_source": "https://developers.cloudflare.com/agents/guides/remote-mcp-server/",
+  "_remote_url": "https://mcp.cloudflare.com/mcp",
+
+  "opencode": {
+    "type": "remote",
+    "url": "https://mcp.cloudflare.com/mcp",
+    "enabled": true
+  },
+
+  "claude_code_cli": "claude mcp add cloudflare-api --transport http https://mcp.cloudflare.com/mcp",
+
+  "claude_code_json": {
+    "type": "http",
+    "url": "https://mcp.cloudflare.com/mcp"
+  },
+
+  "claude_desktop": {
+    "mcpServers": {
+      "cloudflare-api": {
+        "url": "https://mcp.cloudflare.com/mcp"
+      }
+    }
+  },
+
+  "cursor": {
+    "url": "https://mcp.cloudflare.com/mcp"
+  },
+
+  "windsurf": {
+    "serverUrl": "https://mcp.cloudflare.com/mcp"
+  }
+}
