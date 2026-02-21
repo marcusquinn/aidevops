@@ -97,7 +97,7 @@ Read subagents on-demand. Full index: `subagent-index.toon`.
 | OpenAPI exploration | `tools/context/openapi-search.md` |
 | Model routing | `tools/context/model-routing.md`, `reference/orchestration.md` |
 | Orchestration | `reference/orchestration.md`, `tools/ai-assistants/headless-dispatch.md` |
-| Agent/MCP dev | `tools/build-agent/build-agent.md`, `tools/build-mcp/build-mcp.md` |
+| Agent/MCP dev | `tools/build-agent/build-agent.md`, `tools/build-mcp/build-mcp.md`, `tools/mcp-toolkit/mcporter.md` |
 | Framework | `aidevops/architecture.md`, `scripts/commands/skills.md` |
 
 ## Capabilities
