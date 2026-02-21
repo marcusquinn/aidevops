@@ -2340,7 +2340,14 @@
   check: file-exists configs/mcp-templates/mcporter.json
   check: rg "mcporter" .agents/subagent-index.toon
 
-- [ ] v268 t1288.3 Update `generate-opencode-agents.sh` — add `openapi-sea... | PR #2094 | merged:2026-02-21
+- [x] v268 t1288.3 Update `generate-opencode-agents.sh` — add `openapi-sea... | PR #2094 | merged:2026-02-21 verified:2026-02-21
   files: .agents/scripts/generate-opencode-agents.sh
   check: shellcheck .agents/scripts/generate-opencode-agents.sh
   check: file-exists .agents/scripts/generate-opencode-agents.sh
+
+- [ ] v269 t1160.7 Integration test: full dispatch cycle with SUPERVISOR_CLI... | PR #2096 | merged:2026-02-21
+  files: .agents/scripts/supervisor/evaluate.sh, tests/test-dispatch-claude-cli.sh
+  check: shellcheck .agents/scripts/supervisor/evaluate.sh
+  check: file-exists .agents/scripts/supervisor/evaluate.sh
+  check: shellcheck tests/test-dispatch-claude-cli.sh
+  check: file-exists tests/test-dispatch-claude-cli.sh
