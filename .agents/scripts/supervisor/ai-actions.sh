@@ -33,6 +33,13 @@ AI_SEMANTIC_DEDUP_USE_AI="${AI_SEMANTIC_DEDUP_USE_AI:-true}"
 # AI semantic dedup timeout in seconds
 AI_SEMANTIC_DEDUP_TIMEOUT="${AI_SEMANTIC_DEDUP_TIMEOUT:-30}"
 
+# create_improvement dedup: how many days back to scan completed tasks (t1284)
+# The default 24h window misses fixes completed more than a day ago, causing the
+# supervisor to re-create improvement tasks for already-fixed issues (e.g., t1284
+# was created 9 days after t314 fixed the same worker hang problem).
+# 30 days covers the typical fix→observe→re-trigger cycle for systemic issues.
+AI_IMPROVEMENT_DEDUP_DAYS="${AI_IMPROVEMENT_DEDUP_DAYS:-30}"
+
 # Valid action types — any action not in this list is rejected
 readonly AI_VALID_ACTION_TYPES="comment_on_issue create_task create_subtasks flag_for_review adjust_priority close_verified request_info create_improvement escalate_model propose_auto_dispatch"
 
@@ -432,10 +439,10 @@ _keyword_prefilter_open_tasks() {
 	fi
 
 	# Collect candidates: task_id|match_count|title_excerpt
-	# Scan BOTH open tasks AND recently completed tasks (last 24h).
-	# Recently completed tasks matter because the same symptom shouldn't
-	# trigger a new investigation if one was just completed — the fix
-	# either worked (wait and observe) or didn't (the existing task
+	# Scan BOTH open tasks AND recently completed tasks (within AI_IMPROVEMENT_DEDUP_DAYS).
+	# t1284: Extended from 24h to 30 days — recently completed tasks matter because
+	# the same symptom shouldn't trigger a new investigation if a fix was already
+	# merged. The fix either worked (wait and observe) or didn't (the existing task
 	# should be reopened, not duplicated).
 	local candidates=""
 	local task_line
@@ -472,17 +479,20 @@ _keyword_prefilter_open_tasks() {
 		_score_task_line "$task_line"
 	done < <(grep -E '^\s*- \[ \] t[0-9]' "$todo_file" 2>/dev/null)
 
-	# Scan recently completed tasks (completed: field within last 24h)
-	# These are [x] tasks with a completed: timestamp from today or yesterday
-	local today yesterday
-	today=$(date -u '+%Y-%m-%d')
-	yesterday=$(date -u -v-1d '+%Y-%m-%d' 2>/dev/null || date -u -d 'yesterday' '+%Y-%m-%d' 2>/dev/null || echo "")
-	if [[ -n "$today" ]]; then
+	# Scan recently completed tasks (completed: field within AI_IMPROVEMENT_DEDUP_DAYS)
+	# t1284: Extended from 24h to 30 days (configurable via AI_IMPROVEMENT_DEDUP_DAYS).
+	# The 24h window missed fixes completed more than a day ago, causing the supervisor
+	# to re-create improvement tasks for already-fixed issues (e.g., t1284 was created
+	# 9 days after t314 fixed the same worker hang problem).
+	local dedup_days="${AI_IMPROVEMENT_DEDUP_DAYS:-30}"
+	local cutoff_date
+	cutoff_date=$(date -u -v-"${dedup_days}d" '+%Y-%m-%d' 2>/dev/null || date -u -d "${dedup_days} days ago" '+%Y-%m-%d' 2>/dev/null || echo "")
+	if [[ -n "$cutoff_date" ]]; then
 		while IFS= read -r task_line; do
-			# Only include if completed: timestamp is recent (today or yesterday)
+			# Only include if completed: timestamp is within the dedup window
 			local completed_date
 			completed_date=$(printf '%s' "$task_line" | grep -oE 'completed:[0-9]{4}-[0-9]{2}-[0-9]{2}' | head -1 | sed 's/completed://')
-			if [[ "$completed_date" == "$today" || "$completed_date" == "$yesterday" ]]; then
+			if [[ -n "$completed_date" && "$completed_date" > "$cutoff_date" ]]; then
 				_score_task_line "$task_line"
 			fi
 		done < <(grep -E '^\s*- \[x\] t[0-9]' "$todo_file" 2>/dev/null)
