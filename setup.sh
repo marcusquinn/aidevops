@@ -455,6 +455,7 @@ main() {
 		scan_imported_skills
 		inject_agents_reference
 		update_opencode_config
+		update_claude_config
 		disable_ondemand_mcps
 	else
 		# Required steps (always run)
@@ -523,6 +524,8 @@ main() {
 		confirm_step "Setup OpenCode plugins" && setup_opencode_plugins
 		# Run AFTER OpenCode CLI install so opencode.json may exist for agent config
 		confirm_step "Update OpenCode configuration" && update_opencode_config
+		# Run AFTER OpenCode config so Claude Code gets equivalent setup
+		confirm_step "Update Claude Code configuration (slash commands, MCPs, settings)" && update_claude_config
 		# Run AFTER all MCP setup functions to ensure disabled state persists
 		confirm_step "Disable on-demand MCPs globally" && disable_ondemand_mcps
 	fi

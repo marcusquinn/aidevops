@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Configuration functions: setup_configs, set_permissions, ssh, aidevops-cli, opencode-config, validate, extract-prompts, drift-check
+# Configuration functions: setup_configs, set_permissions, ssh, aidevops-cli, opencode-config, claude-config, validate, extract-prompts, drift-check
 # Part of aidevops setup.sh modularization (t316.3)
 
 setup_configs() {
@@ -118,6 +118,30 @@ update_opencode_config() {
 		else
 			print_warning "Subagent index generation encountered issues"
 		fi
+	fi
+
+	return 0
+}
+
+update_claude_config() {
+	# Guard: only run if claude binary exists (t1161)
+	if ! command -v claude &>/dev/null; then
+		print_info "Claude Code not found — skipping Claude config (install: https://claude.ai/download)"
+		return 0
+	fi
+
+	print_info "Updating Claude Code configuration..."
+
+	local generator_script=".agents/scripts/generate-claude-agents.sh"
+	if [[ -f "$generator_script" ]]; then
+		print_info "Generating Claude Code slash commands, MCP servers, and settings..."
+		if bash "$generator_script"; then
+			print_success "Claude Code configured (slash commands, MCP servers, settings.json)"
+		else
+			print_warning "Claude Code configuration encountered issues"
+		fi
+	else
+		print_warning "Claude Code config generator not found at $generator_script"
 	fi
 
 	return 0
