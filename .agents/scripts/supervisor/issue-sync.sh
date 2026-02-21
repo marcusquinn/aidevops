@@ -26,7 +26,7 @@ ensure_status_labels() {
 	gh label create "status:verify-failed" --repo "$repo_slug" --color "E4E669" --description "Task verification failed" --force 2>/dev/null || true
 	gh label create "status:needs-testing" --repo "$repo_slug" --color "FBCA04" --description "Code merged, needs manual or integration testing" --force 2>/dev/null || true
 	gh label create "status:done" --repo "$repo_slug" --color "6F42C1" --description "Task is complete" --force 2>/dev/null || true
-	gh label create "needs-review" --repo "$repo_slug" --color "D93F0B" --description "Flagged for human review by AI supervisor" --force 2>/dev/null || true
+	gh label create "needs-review" --repo "$repo_slug" --color "E99695" --description "Flagged for human review by AI supervisor" --force 2>/dev/null || true
 	return 0
 }
 
@@ -343,7 +343,7 @@ state_to_status_label() {
 # Used to remove stale labels before applying the new one.
 # Restored from pre-modularisation supervisor-helper.sh (t1035).
 #######################################
-ALL_STATUS_LABELS="status:available,status:queued,status:claimed,status:in-review,status:blocked,status:verify-failed,status:needs-testing,status:done,needs-review"
+ALL_STATUS_LABELS="status:available,status:queued,status:claimed,status:in-review,status:blocked,status:verify-failed,status:needs-testing,status:done"
 
 #######################################
 # Sync GitHub issue status label on state transition (t1009)
@@ -418,9 +418,9 @@ sync_issue_status_label() {
 			pr_number=$(echo "$pr_url" | grep -oE '[0-9]+$' || echo "")
 			if [[ -n "$pr_number" ]]; then
 				local pr_state="" pr_state_raw=""
-				pr_state_raw=$(gh pr view "$pr_number" --repo "$repo_slug" --json state --jq '.state' || echo "")
 				pr_state=$(gh pr view "$pr_number" --repo "$repo_slug" --json state,mergedAt,changedFiles \
 					--jq '"state:\(.state) merged:\(.mergedAt // "n/a") files:\(.changedFiles)"' || echo "")
+				pr_state_raw=$(echo "$pr_state" | sed -n 's/^state:\([A-Z]*\).*/\1/p')
 				close_comment="Verified: PR #$pr_number ($pr_state). Task $task_id: $old_state -> $new_state"
 				# Only count as merged if PR state field is exactly MERGED
 				if [[ "$pr_state_raw" == "MERGED" ]]; then
