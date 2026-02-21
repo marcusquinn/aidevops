@@ -315,7 +315,7 @@ When context is compacted (long sessions, autonomous loops), operational state i
 
 **When to checkpoint**: After each task completion, before large operations, after PR creation/merge.
 
-**Compaction survival rule**: When summarizing this conversation for compaction, ALWAYS preserve: current task IDs and states, active batch ID, worktree path, open PR numbers, and the next 3 action items. This operational state is more important than conversation history details.
+**Compaction survival rule**: See `prompts/build.txt` "Context Compaction Survival".
 
 **Full docs**: `workflows/session-manager.md` "Compaction Resilience" section
 
@@ -449,7 +449,7 @@ aidevops repo-sync config              # Show current config
 
 ## Bot Reviewer Feedback
 
-AI code review bots (Gemini, CodeRabbit, Copilot) can provide incorrect suggestions. **Never blindly implement bot feedback.** Verify factual claims (versions, paths, APIs) against runtime/docs/project conventions before acting. Dismiss incorrect suggestions with evidence; address valid ones.
+AI suggestion verification: see `prompts/build.txt`. Dismiss incorrect suggestions with evidence; address valid ones.
 
 ## Quality Workflow
 
