@@ -431,6 +431,33 @@ opencode run -m openrouter/anthropic/claude-sonnet-4-6 "Task"
 opencode run -m groq/llama-4-scout-17b-16e-instruct "Quick task"
 ```
 
+### OAuth-Aware Dispatch Routing (t1163)
+
+When `SUPERVISOR_PREFER_OAUTH=true` (default), the supervisor automatically detects if the Claude CLI has OAuth authentication (subscription/Max plan) and routes Anthropic model requests through it. This is zero marginal cost for Anthropic models.
+
+**Routing logic:**
+
+- Anthropic models + Claude OAuth available → `claude` CLI (subscription billing)
+- Anthropic models + no OAuth → `opencode` CLI (token billing)
+- Non-Anthropic models → `opencode` CLI (multi-provider support)
+
+**Configuration:**
+
+```bash
+# Enable/disable OAuth preference (default: true)
+export SUPERVISOR_PREFER_OAUTH=true
+
+# Force a specific CLI (overrides OAuth routing)
+export SUPERVISOR_CLI=opencode
+
+# Configure claude-oauth as subscription provider in budget tracker
+budget-tracker-helper.sh configure claude-oauth --billing-type subscription
+budget-tracker-helper.sh configure-period claude-oauth \
+  --start 2026-02-01 --end 2026-03-01 --allowance 500 --unit usd
+```
+
+**Detection:** The supervisor checks for OAuth by looking for Claude CLI credentials in `~/.claude/`. Results are cached for 5 minutes.
+
 Environment variables for non-interactive setup:
 
 ```bash
