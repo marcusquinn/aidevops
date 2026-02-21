@@ -418,9 +418,9 @@ sync_issue_status_label() {
 			pr_number=$(echo "$pr_url" | grep -oE '[0-9]+$' || echo "")
 			if [[ -n "$pr_number" ]]; then
 				local pr_state="" pr_state_raw=""
-				pr_state_raw=$(gh pr view "$pr_number" --repo "$repo_slug" --json state --jq '.state' 2>/dev/null || echo "")
+				pr_state_raw=$(gh pr view "$pr_number" --repo "$repo_slug" --json state --jq '.state' || echo "")
 				pr_state=$(gh pr view "$pr_number" --repo "$repo_slug" --json state,mergedAt,changedFiles \
-					--jq '"state:\(.state) merged:\(.mergedAt // "n/a") files:\(.changedFiles)"' 2>/dev/null || echo "")
+					--jq '"state:\(.state) merged:\(.mergedAt // "n/a") files:\(.changedFiles)"' || echo "")
 				close_comment="Verified: PR #$pr_number ($pr_state). Task $task_id: $old_state -> $new_state"
 				# Only count as merged if PR state field is exactly MERGED
 				if [[ "$pr_state_raw" == "MERGED" ]]; then
