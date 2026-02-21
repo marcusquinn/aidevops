@@ -2405,7 +2405,7 @@
   check: file-exists tests/test-dispatch-claude-cli.sh
   check: rg "headless-dispatch" .agents/subagent-index.toon
 
-- [ ] v276 t1162 Worker MCP isolation for Claude CLI dispatch #auto-dispat... | PR #2102 | merged:2026-02-21
+- [x] v276 t1162 Worker MCP isolation for Claude CLI dispatch #auto-dispat... | PR #2102 | merged:2026-02-21 verified:2026-02-21
   files: .agents/scripts/supervisor/cleanup.sh, .agents/scripts/supervisor/deploy.sh, .agents/scripts/supervisor/dispatch.sh, tests/test-dispatch-claude-cli.sh
   check: shellcheck .agents/scripts/supervisor/cleanup.sh
   check: file-exists .agents/scripts/supervisor/cleanup.sh
