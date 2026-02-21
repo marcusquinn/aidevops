@@ -2316,6 +2316,17 @@ rebase_sibling_pr() {
 		return 2
 	fi
 
+	# If a separate 'github' remote exists (e.g. Gitea-primary repos with GitHub
+	# mirror), push there too so GitHub PRs see the updated branch immediately
+	# instead of waiting for mirror sync.
+	if git -C "$trepo" remote get-url github &>/dev/null; then
+		if ! git -C "$git_dir" push --force-with-lease github "$tbranch" 2>>"$SUPERVISOR_LOG"; then
+			# Non-fatal — GitHub push may fail due to OAuth scope limitations
+			# (e.g. workflow file restrictions). The mirror will eventually sync.
+			log_warn "rebase_sibling_pr: github remote push failed for $task_id ($tbranch) — mirror will sync"
+		fi
+	fi
+
 	log_success "rebase_sibling_pr: $task_id ($tbranch) rebased onto $rebase_target and pushed"
 	return 0
 }
