@@ -2322,3 +2322,9 @@
   files: configs/mcp-templates/openapi-search.json, configs/openapi-search-config.json.txt
   check: file-exists configs/mcp-templates/openapi-search.json
   check: file-exists configs/openapi-search-config.json.txt
+
+- [ ] v265 t1293 Test Cloudflare Code Mode MCP end-to-end — verify: (1) ... | PR #2091 | merged:2026-02-21
+  files: configs/mcp-templates/cloudflare-api.json, tests/test-cloudflare-mcp-e2e.sh
+  check: file-exists configs/mcp-templates/cloudflare-api.json
+  check: shellcheck tests/test-cloudflare-mcp-e2e.sh
+  check: file-exists tests/test-cloudflare-mcp-e2e.sh
