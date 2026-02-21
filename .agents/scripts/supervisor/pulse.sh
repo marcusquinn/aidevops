@@ -2902,10 +2902,10 @@ RULES:
 		[[ -z "$self_pid" ]] && break
 	done
 
-	# Find orphaned opencode/shellcheck/bash-language-server processes with PPID=1
+	# Find orphaned claude/opencode/shellcheck/bash-language-server processes with PPID=1
 	# PPID=1 means the parent died and the process was reparented to init/launchd
 	local orphan_candidates
-	orphan_candidates=$(pgrep -f 'opencode|shellcheck|bash-language-server' 2>/dev/null || true)
+	orphan_candidates=$(pgrep -f 'claude|opencode|shellcheck|bash-language-server' 2>/dev/null || true)
 	if [[ -n "$orphan_candidates" ]]; then
 		while read -r opid; do
 			[[ -z "$opid" ]] && continue
@@ -2937,7 +2937,7 @@ RULES:
 	if [[ "${sys_memory:-}" == "high" ]]; then
 		log_error "  CRITICAL: Memory pressure HIGH — emergency worker cleanup"
 		local emergency_candidates
-		emergency_candidates=$(pgrep -f 'opencode|shellcheck|bash-language-server' 2>/dev/null || true)
+		emergency_candidates=$(pgrep -f 'claude|opencode|shellcheck|bash-language-server' 2>/dev/null || true)
 		if [[ -n "$emergency_candidates" ]]; then
 			while read -r epid; do
 				[[ -z "$epid" ]] && continue
