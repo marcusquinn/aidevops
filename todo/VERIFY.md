@@ -2423,7 +2423,7 @@
   check: shellcheck tests/test-dual-cli-e2e.sh
   check: file-exists tests/test-dual-cli-e2e.sh
 
-- [ ] v278 t1165.3 Remote container support — dispatch to containers on re... | PR #2109 | merged:2026-02-21
+- [x] v278 t1165.3 Remote container support — dispatch to containers on re... | PR #2109 | merged:2026-02-21 verified:2026-02-21
   files: .agents/AGENTS.md, .agents/scripts/remote-dispatch-helper.sh, .agents/scripts/supervisor/database.sh, .agents/scripts/supervisor/dispatch.sh, .agents/scripts/supervisor/pulse.sh, .agents/subagent-index.toon, .agents/tools/ai-assistants/headless-dispatch.md, .agents/tools/containers/remote-dispatch.md
   check: file-exists .agents/AGENTS.md
   check: shellcheck .agents/scripts/remote-dispatch-helper.sh
@@ -2439,3 +2439,8 @@
   check: file-exists .agents/tools/containers/remote-dispatch.md
   check: rg "headless-dispatch" .agents/subagent-index.toon
   check: rg "remote-dispatch" .agents/subagent-index.toon
+
+- [ ] v279 t1165.4 Integration test: multi-container batch dispatch — veri... | PR #2111 | merged:2026-02-21
+  files: tests/test-multi-container-batch-dispatch.sh
+  check: shellcheck tests/test-multi-container-batch-dispatch.sh
+  check: file-exists tests/test-multi-container-batch-dispatch.sh
