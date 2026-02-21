@@ -1,4 +1,6 @@
 {
+  "claude_code_command": "claude mcp add-json crawl4ai --scope user '{\"type\":\"stdio\",\"command\":\"npx\",\"args\":[\"crawl4ai-mcp-server@latest\"],\"env\":{\"CRAWL4AI_API_URL\":\"http://localhost:11235\",\"CRAWL4AI_TIMEOUT\":\"60\",\"CRAWL4AI_MAX_PAGES\":\"50\",\"CRAWL4AI_DEFAULT_FORMAT\":\"markdown\"}}'",
+
   "mcpServers": {
     "crawl4ai": {
       "command": "npx",

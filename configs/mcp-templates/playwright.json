@@ -1,4 +1,6 @@
 {
+  "claude_code_command": "claude mcp add-json playwright --scope user '{\"type\":\"stdio\",\"command\":\"npx\",\"args\":[\"playwright-mcp@latest\"]}'",
+
   "mcpServers": {
     "playwright": {
       "command": "npx",

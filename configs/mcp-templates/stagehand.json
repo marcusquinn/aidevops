@@ -1,4 +1,6 @@
 {
+  "claude_code_command": "claude mcp add-json stagehand --scope user '{\"type\":\"stdio\",\"command\":\"node\",\"args\":[\"-e\",\"const { Stagehand } = require(\\u0027@browserbasehq/stagehand\\u0027); console.log(\\u0027Stagehand JavaScript AI Browser Automation Ready\\u0027);\"],\"env\":{\"STAGEHAND_ENV\":\"LOCAL\",\"STAGEHAND_VERBOSE\":\"1\",\"STAGEHAND_HEADLESS\":\"false\"}}'",
+
   "mcpServers": {
     "stagehand": {
       "command": "node",

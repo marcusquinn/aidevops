@@ -1,4 +1,6 @@
 {
+  "claude_code_command": "claude mcp add-json chrome-devtools --scope user '{\"type\":\"stdio\",\"command\":\"npx\",\"args\":[\"chrome-devtools-mcp@latest\",\"--channel=canary\",\"--headless=true\",\"--isolated=true\",\"--viewport=1920x1080\",\"--logFile=/tmp/chrome-mcp.log\"]}'",
+
   "mcpServers": {
     "chrome-devtools": {
       "command": "npx",
