@@ -2416,9 +2416,26 @@
   check: shellcheck tests/test-dispatch-claude-cli.sh
   check: file-exists tests/test-dispatch-claude-cli.sh
 
-- [ ] v277 t1164 End-to-end verification of dual-CLI architecture #auto-di... | PR #2105 | merged:2026-02-21
+- [x] v277 t1164 End-to-end verification of dual-CLI architecture #auto-di... | PR #2105 | merged:2026-02-21 verified:2026-02-21
   files: .agents/scripts/supervisor/dispatch.sh, tests/test-dual-cli-e2e.sh
   check: shellcheck .agents/scripts/supervisor/dispatch.sh
   check: file-exists .agents/scripts/supervisor/dispatch.sh
   check: shellcheck tests/test-dual-cli-e2e.sh
   check: file-exists tests/test-dual-cli-e2e.sh
+
+- [ ] v278 t1165.3 Remote container support — dispatch to containers on re... | PR #2109 | merged:2026-02-21
+  files: .agents/AGENTS.md, .agents/scripts/remote-dispatch-helper.sh, .agents/scripts/supervisor/database.sh, .agents/scripts/supervisor/dispatch.sh, .agents/scripts/supervisor/pulse.sh, .agents/subagent-index.toon, .agents/tools/ai-assistants/headless-dispatch.md, .agents/tools/containers/remote-dispatch.md
+  check: file-exists .agents/AGENTS.md
+  check: shellcheck .agents/scripts/remote-dispatch-helper.sh
+  check: file-exists .agents/scripts/remote-dispatch-helper.sh
+  check: shellcheck .agents/scripts/supervisor/database.sh
+  check: file-exists .agents/scripts/supervisor/database.sh
+  check: shellcheck .agents/scripts/supervisor/dispatch.sh
+  check: file-exists .agents/scripts/supervisor/dispatch.sh
+  check: shellcheck .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/scripts/supervisor/pulse.sh
+  check: file-exists .agents/subagent-index.toon
+  check: file-exists .agents/tools/ai-assistants/headless-dispatch.md
+  check: file-exists .agents/tools/containers/remote-dispatch.md
+  check: rg "headless-dispatch" .agents/subagent-index.toon
+  check: rg "remote-dispatch" .agents/subagent-index.toon
