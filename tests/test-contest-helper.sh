@@ -292,6 +292,56 @@ else
 fi
 
 # ============================================================
+section "11. CLI Branching Functions (t1160.4)"
+# ============================================================
+
+# Source the helper to test internal functions
+# shellcheck source=../.agents/scripts/contest-helper.sh
+source "$HELPER" --source-only 2>/dev/null || true
+
+# Test resolve_ai_cli function exists and works
+if declare -f resolve_ai_cli &>/dev/null; then
+	pass "resolve_ai_cli function is defined"
+else
+	fail "resolve_ai_cli function not found"
+fi
+
+# Test run_ai_scoring function exists
+if declare -f run_ai_scoring &>/dev/null; then
+	pass "run_ai_scoring function is defined"
+else
+	fail "run_ai_scoring function not found"
+fi
+
+# Verify resolve_ai_cli returns a known CLI name
+if declare -f resolve_ai_cli &>/dev/null; then
+	cli_result=$(resolve_ai_cli 2>/dev/null || echo "none")
+	if [[ "$cli_result" == "opencode" || "$cli_result" == "claude" ]]; then
+		pass "resolve_ai_cli returns valid CLI: $cli_result"
+	elif [[ "$cli_result" == "none" ]]; then
+		skip "resolve_ai_cli: no AI CLI installed (opencode or claude)"
+	else
+		fail "resolve_ai_cli returned unexpected value: $cli_result"
+	fi
+fi
+
+# Verify the script no longer has hardcoded opencode-only dispatch in scoring
+# The old pattern was: 'command -v opencode' immediately followed by 'opencode run'
+# for scoring. Now it should use run_ai_scoring instead.
+if grep -q 'Use opencode for scoring if available' "$HELPER" 2>/dev/null; then
+	fail "Found old hardcoded opencode-only scoring comment"
+else
+	pass "No hardcoded opencode-only dispatch in scoring path"
+fi
+
+# Verify run_ai_scoring is called in cmd_evaluate
+if grep -q 'run_ai_scoring' "$HELPER"; then
+	pass "cmd_evaluate uses run_ai_scoring abstraction"
+else
+	fail "cmd_evaluate does not use run_ai_scoring"
+fi
+
+# ============================================================
 section "Summary"
 # ============================================================
 
