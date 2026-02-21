@@ -42,6 +42,7 @@ tools:
 - Context7 MCP: Real-time library docs
 - LocalWP MCP: WordPress database access
 - Cloudflare Code Mode MCP: Workers, D1, KV, R2, Pages, AI Gateway via OAuth
+- MCPorter: Discover, call, compose, and generate CLIs/typed clients for MCP servers
 
 **Config Location**: `configs/mcp-templates/`
 <!-- AI-CONTEXT-END -->
@@ -71,6 +72,7 @@ This document provides comprehensive setup and usage instructions for advanced M
 - **Claude Code MCP**: Run Claude Code as an MCP server for automation
 - **Next.js DevTools MCP**: Next.js development and debugging assistance
 - **Cloudflare Code Mode MCP**: Deploy Workers, query D1, manage KV/R2/Pages, AI Gateway — OAuth-authenticated remote server
+- **MCPorter**: TypeScript runtime, CLI, and code-generation toolkit — discover, call, compose, and generate CLIs/typed clients for any MCP server
 
 ### **📄 Document Processing**
 
@@ -139,6 +141,25 @@ claude mcp add claude-code-mcp "npx -y github:marcusquinn/claude-code-mcp"
 **One-time setup**: run `claude --dangerously-skip-permissions` and accept prompts.
 **Upstream**: https://github.com/steipete/claude-code-mcp (revert if merged).
 **Local dev (optional)**: clone the fork and swap the command to `./start.sh` for instant iteration.
+
+### **MCPorter**
+
+```bash
+# Zero-install (npx)
+npx mcporter list
+
+# Project dependency
+pnpm add mcporter
+
+# Homebrew
+brew tap steipete/tap && brew install steipete/tap/mcporter
+```
+
+**Core commands**: `mcporter list` (discover servers/tools), `mcporter call` (invoke tools), `mcporter generate-cli` (mint standalone CLIs), `mcporter emit-ts` (typed client wrappers), `mcporter auth` (OAuth login), `mcporter daemon` (keep stateful servers warm).
+
+**Auto-imports**: Merges configs from Claude Code, Claude Desktop, Cursor, Codex, Windsurf, OpenCode, VS Code automatically.
+
+See `tools/mcp-toolkit/mcporter.md` for full documentation.
 
 ### **Cloudflare Code Mode MCP**
 
