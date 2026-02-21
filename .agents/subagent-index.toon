@@ -38,7 +38,7 @@ tools/pdf/,PDF processing - form filling and digital signatures,overview|libpdf
 tools/accessibility/,Accessibility and contrast testing - WCAG compliance for websites and emails,accessibility
 tools/performance/,Web performance - Core Web Vitals and network analysis,performance|webpagetest
 tools/research/,Technology research - tech stack detection and reverse lookup,tech-stack-lookup
-tools/ui/,UI components - design systems and debugging,shadcn|ui-skills|frontend-debugging
+tools/ui/,UI components - design systems and debugging,shadcn|ui-skills|frontend-debugging|ai-chat-sidebar
 tools/code-review/,Code quality - linting and security scanning,code-standards|code-simplifier|codacy|coderabbit|qlty|snyk|secretlint|security-analysis
 tools/context/,Context optimization - semantic search and indexing,osgrep|augment-context-engine|context-builder|context7|toon|mcp-discovery|github-search|model-routing
 tools/conversion/,Format conversion - document transformation,pandoc
