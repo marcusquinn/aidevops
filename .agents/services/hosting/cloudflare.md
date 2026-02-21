@@ -1,5 +1,5 @@
 ---
-description: Cloudflare DNS and CDN API integration
+description: Cloudflare DNS, CDN, and API token setup for managing/configuring Cloudflare resources. For building on the Cloudflare platform (Workers, Pages, D1, R2, KV, AI, etc.), see cloudflare-platform.md.
 mode: subagent
 tools:
   read: true
@@ -12,8 +12,6 @@ tools:
 ---
 
 # Cloudflare API Setup for AI-Assisted Development
-
-> **For Cloudflare development** (Workers, Pages, D1, R2, KV, Durable Objects, AI, etc.), see `cloudflare-platform.md` which covers 60 products with detailed API references, patterns, and gotchas.
 
 <!-- AI-CONTEXT-START -->
 
@@ -28,7 +26,20 @@ tools:
 - **API test**: `curl -X GET "https://api.cloudflare.com/client/v4/zones" -H "Authorization: Bearer TOKEN"`
 - **Security**: IP filtering, expiration dates, minimal permissions
 - **Rotation**: Every 6-12 months or after team changes
+
+## Intent-Based Routing
+
+| Intent | Tool |
+|--------|------|
+| Manage, configure, or update CF resources (DNS, zones, deployments, KV data, D1 queries) | Cloudflare Code Mode MCP → `tools/api/cloudflare-mcp.md` |
+| Build or develop on the CF platform (Workers, Pages, D1 schema, R2, AI, Durable Objects) | Platform skill docs → `services/hosting/cloudflare-platform.md` |
+| Set up API token auth for DNS/CDN management | This file (`cloudflare.md`) |
+
 <!-- AI-CONTEXT-END -->
+
+> **Building on Cloudflare?** (Workers, Pages, D1, R2, KV, Durable Objects, AI, etc.) → see `cloudflare-platform.md` which covers 60+ products with patterns, gotchas, decision trees, and SDK references.
+>
+> **Managing CF resources via MCP?** (deploy Workers, run D1 SQL, manage KV, trigger Pages builds) → see `tools/api/cloudflare-mcp.md` for the Code Mode MCP (no token setup needed — uses OAuth).
 
 This guide shows you how to securely set up Cloudflare API access for local AI-assisted development, DevOps, and system administration.
 
