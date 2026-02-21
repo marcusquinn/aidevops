@@ -2415,3 +2415,10 @@
   check: file-exists .agents/scripts/supervisor/dispatch.sh
   check: shellcheck tests/test-dispatch-claude-cli.sh
   check: file-exists tests/test-dispatch-claude-cli.sh
+
+- [ ] v277 t1164 End-to-end verification of dual-CLI architecture #auto-di... | PR #2105 | merged:2026-02-21
+  files: .agents/scripts/supervisor/dispatch.sh, tests/test-dual-cli-e2e.sh
+  check: shellcheck .agents/scripts/supervisor/dispatch.sh
+  check: file-exists .agents/scripts/supervisor/dispatch.sh
+  check: shellcheck tests/test-dual-cli-e2e.sh
+  check: file-exists tests/test-dual-cli-e2e.sh
