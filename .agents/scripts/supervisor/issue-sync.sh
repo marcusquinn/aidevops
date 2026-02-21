@@ -417,12 +417,13 @@ sync_issue_status_label() {
 			local pr_number=""
 			pr_number=$(echo "$pr_url" | grep -oE '[0-9]+$' || echo "")
 			if [[ -n "$pr_number" ]]; then
-				local pr_state=""
+				local pr_state="" pr_state_raw=""
+				pr_state_raw=$(gh pr view "$pr_number" --repo "$repo_slug" --json state --jq '.state' 2>/dev/null || echo "")
 				pr_state=$(gh pr view "$pr_number" --repo "$repo_slug" --json state,mergedAt,changedFiles \
 					--jq '"state:\(.state) merged:\(.mergedAt // "n/a") files:\(.changedFiles)"' 2>/dev/null || echo "")
 				close_comment="Verified: PR #$pr_number ($pr_state). Task $task_id: $old_state -> $new_state"
-				# Only count as merged if PR state confirms it
-				if echo "$pr_state" | grep -qi 'MERGED'; then
+				# Only count as merged if PR state field is exactly MERGED
+				if [[ "$pr_state_raw" == "MERGED" ]]; then
 					has_merged_pr="true"
 				fi
 			fi
@@ -478,7 +479,15 @@ sync_issue_status_label() {
 		gh issue edit "$issue_number" --repo "$repo_slug" \
 			--add-label "needs-review" "${remove_args[@]}" 2>/dev/null || true
 		log_verbose "sync_issue_status_label: flagged #$issue_number for review ($task_id failed)"
-		# Fall through to non-terminal state logic for label handling
+		# Reopen if the issue was previously closed (e.g. verified -> failed retry)
+		local fail_issue_state
+		fail_issue_state=$(gh issue view "$issue_number" --repo "$repo_slug" --json state --jq '.state' 2>/dev/null || echo "")
+		if [[ "$fail_issue_state" == "CLOSED" ]]; then
+			gh issue reopen "$issue_number" --repo "$repo_slug" \
+				--comment "Reopening: task $task_id failed and needs human review." 2>/dev/null || true
+			log_verbose "sync_issue_status_label: reopened #$issue_number ($task_id failed, was closed)"
+		fi
+		return 0
 		;;
 	blocked)
 		# Read the error/blocked reason from DB
