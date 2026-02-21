@@ -25,8 +25,7 @@
 .agents/scripts/version-manager.sh release [major|minor|patch]
 ```text
 
-**Quality Standards**: SonarCloud A-grade, ShellCheck zero violations,
-`local var="$1"` pattern, explicit returns
+**Quality Standards**: See `prompts/build.txt`.
 
 **File Structure**:
 
@@ -69,21 +68,7 @@ The `.agents/AGENTS.md` is copied to `~/.aidevops/agents/AGENTS.md` by `setup.sh
 
 ## Development Lifecycle (MANDATORY)
 
-All development work MUST follow this lifecycle:
-
-1. **Create a TODO entry** in `TODO.md` before starting any work
-2. **Ask the user**: implement now (full-loop) or queue for runner orchestration?
-3. **If implementing now**, follow the full-loop development lifecycle:
-   - Create branch/worktree
-   - Implement changes
-   - Run tests (syntax, shellcheck, Docker tests, integration tests as applicable)
-   - Verify the changes work end-to-end
-   - Only then offer to commit/PR
-4. **If queuing**, add the task to `TODO.md` with appropriate metadata (`~estimate`, `#tags`, dependencies) so the supervisor can dispatch it to a runner when orchestration next runs
-
-Never skip testing. Never declare work "done" without verification. The full-loop
-means: plan -> implement -> test -> verify -> deliver.
-
+See `.agents/AGENTS.md` "MANDATORY: Development Lifecycle" for the full lifecycle.
 Completion self-check: see `prompts/build.txt` "Completion and quality discipline".
 
 ## Contributing
@@ -110,10 +95,7 @@ From `tools/build-agent/build-agent.md`:
 
 ## Security
 
-- Never commit credentials
-- Store secrets via `aidevops secret set NAME` (gopass encrypted) or `~/.config/aidevops/credentials.sh` (plaintext fallback, 600 permissions)
-- NEVER accept secret values in AI conversation context
-- Confirm destructive operations before execution
+Security rules: see `prompts/build.txt`. Additional contributor rule:
 - Use placeholders in examples, note secure storage location
 
 ## Quality Workflow
