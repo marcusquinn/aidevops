@@ -893,10 +893,15 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 	if ! declare -f resolve_ai_cli &>/dev/null; then
 		resolve_ai_cli() {
 			if [[ -n "${SUPERVISOR_CLI:-}" ]]; then
+				if [[ "$SUPERVISOR_CLI" != "opencode" && "$SUPERVISOR_CLI" != "claude" ]]; then
+					log_error "SUPERVISOR_CLI='$SUPERVISOR_CLI' is not a supported CLI (opencode|claude)"
+					return 1
+				fi
 				if command -v "$SUPERVISOR_CLI" &>/dev/null; then
 					echo "$SUPERVISOR_CLI"
 					return 0
 				fi
+				log_error "SUPERVISOR_CLI='$SUPERVISOR_CLI' not found in PATH"
 				return 1
 			fi
 			if command -v opencode &>/dev/null; then
