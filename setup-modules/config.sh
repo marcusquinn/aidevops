@@ -67,22 +67,37 @@ install_aidevops_cli() {
 	return 0
 }
 
+# Helper: check for a generator script, run it, report result consistently
+_run_generator() {
+	local script_path="$1"
+	local info_msg="$2"
+	local success_msg="$3"
+	local failure_msg="$4"
+	shift 4
+	local script_args=("$@")
+
+	if [[ ! -f "$script_path" ]]; then
+		print_warning "Generator script not found: $script_path"
+		return 0
+	fi
+
+	print_info "$info_msg"
+	if bash "$script_path" "${script_args[@]}"; then
+		print_success "$success_msg"
+	else
+		print_warning "$failure_msg"
+	fi
+}
+
 update_opencode_config() {
 	print_info "Updating OpenCode configuration..."
 
 	# Generate OpenCode commands (independent of opencode.json — writes to ~/.config/opencode/command/)
 	# Run this first so /onboarding and other commands exist even if opencode.json hasn't been created yet
-	local commands_script=".agents/scripts/generate-opencode-commands.sh"
-	if [[ -f "$commands_script" ]]; then
-		print_info "Generating OpenCode commands..."
-		if bash "$commands_script"; then
-			print_success "OpenCode commands configured"
-		else
-			print_warning "OpenCode command generation encountered issues"
-		fi
-	else
-		print_warning "OpenCode command generator not found at $commands_script"
-	fi
+	_run_generator ".agents/scripts/generate-opencode-commands.sh" \
+		"Generating OpenCode commands..." \
+		"OpenCode commands configured" \
+		"OpenCode command generation encountered issues"
 
 	# Generate OpenCode agent configuration (requires opencode.json)
 	# - Primary agents: Added to opencode.json (for Tab order & MCP control)
@@ -98,27 +113,17 @@ update_opencode_config() {
 	# Create backup (with rotation)
 	create_backup_with_rotation "$opencode_config" "opencode"
 
-	local generator_script=".agents/scripts/generate-opencode-agents.sh"
-	if [[ -f "$generator_script" ]]; then
-		print_info "Generating OpenCode agent configuration..."
-		if bash "$generator_script"; then
-			print_success "OpenCode agents configured (11 primary in JSON, subagents as markdown)"
-		else
-			print_warning "OpenCode agent generation encountered issues"
-		fi
-	else
-		print_warning "OpenCode agent generator not found at $generator_script"
-	fi
+	_run_generator ".agents/scripts/generate-opencode-agents.sh" \
+		"Generating OpenCode agent configuration..." \
+		"OpenCode agents configured (11 primary in JSON, subagents as markdown)" \
+		"OpenCode agent generation encountered issues"
 
 	# Regenerate subagent index for plugin startup (t1040)
-	local index_script=".agents/scripts/subagent-index-helper.sh"
-	if [[ -f "$index_script" ]]; then
-		if bash "$index_script" generate; then
-			print_success "Subagent index regenerated"
-		else
-			print_warning "Subagent index generation encountered issues"
-		fi
-	fi
+	_run_generator ".agents/scripts/subagent-index-helper.sh" \
+		"Regenerating subagent index..." \
+		"Subagent index regenerated" \
+		"Subagent index generation encountered issues" \
+		generate
 
 	return 0
 }
@@ -133,41 +138,24 @@ update_claude_config() {
 	print_info "Updating Claude Code configuration..."
 
 	# Generate Claude Code commands (writes to ~/.claude/commands/)
-	local commands_script=".agents/scripts/generate-claude-commands.sh"
-	if [[ -f "$commands_script" ]]; then
-		print_info "Generating Claude Code commands..."
-		if bash "$commands_script"; then
-			print_success "Claude Code commands configured"
-		else
-			print_warning "Claude Code command generation encountered issues"
-		fi
-	else
-		print_warning "Claude Code command generator not found at $commands_script"
-	fi
+	_run_generator ".agents/scripts/generate-claude-commands.sh" \
+		"Generating Claude Code commands..." \
+		"Claude Code commands configured" \
+		"Claude Code command generation encountered issues"
 
 	# Generate Claude Code agent configuration (MCPs, settings.json, slash commands)
 	# Mirrors update_opencode_config() calling generate-opencode-agents.sh (t1161.4)
-	local generator_script=".agents/scripts/generate-claude-agents.sh"
-	if [[ -f "$generator_script" ]]; then
-		print_info "Generating Claude Code agent configuration..."
-		if bash "$generator_script"; then
-			print_success "Claude Code agents configured (MCPs, settings, commands)"
-		else
-			print_warning "Claude Code agent generation encountered issues"
-		fi
-	else
-		print_warning "Claude Code agent generator not found at $generator_script"
-	fi
+	_run_generator ".agents/scripts/generate-claude-agents.sh" \
+		"Generating Claude Code agent configuration..." \
+		"Claude Code agents configured (MCPs, settings, commands)" \
+		"Claude Code agent generation encountered issues"
 
 	# Regenerate subagent index (shared between OpenCode and Claude Code)
-	local index_script=".agents/scripts/subagent-index-helper.sh"
-	if [[ -f "$index_script" ]]; then
-		if bash "$index_script" generate; then
-			print_success "Subagent index regenerated"
-		else
-			print_warning "Subagent index generation encountered issues"
-		fi
-	fi
+	_run_generator ".agents/scripts/subagent-index-helper.sh" \
+		"Regenerating subagent index..." \
+		"Subagent index regenerated" \
+		"Subagent index generation encountered issues" \
+		generate
 
 	return 0
 }
