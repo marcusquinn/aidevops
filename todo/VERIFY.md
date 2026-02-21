@@ -2097,3 +2097,10 @@
   check: file-exists .agents/aidevops/mcp-integrations.md
   check: file-exists .agents/tools/context/mcp-discovery.md
   check: rg "mcp-discovery" .agents/subagent-index.toon
+
+- [ ] v259 t1160.4 Add Claude CLI branching to contest-helper.sh #auto-dispa... | PR #2086 | merged:2026-02-21
+  files: .agents/scripts/contest-helper.sh, tests/test-contest-helper.sh
+  check: shellcheck .agents/scripts/contest-helper.sh
+  check: file-exists .agents/scripts/contest-helper.sh
+  check: shellcheck tests/test-contest-helper.sh
+  check: file-exists tests/test-contest-helper.sh
