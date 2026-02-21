@@ -1307,6 +1307,13 @@ Instructions:
 		resolved_model=$(resolve_model "$tmodel" "$ai_cli")
 	fi
 
+	mkdir -p "$SUPERVISOR_DIR/pids"
+
+	# Generate worker-specific MCP config (t221, t1162)
+	# Must be generated BEFORE building CLI command for Claude --mcp-config flag
+	local worker_mcp_config=""
+	worker_mcp_config=$(generate_worker_mcp_config "$task_id" "$ai_cli" "$work_dir") || true
+
 	local -a cmd_parts=()
 	if [[ "$ai_cli" == "opencode" ]]; then
 		cmd_parts=(opencode run --format json)
@@ -1327,13 +1334,11 @@ Instructions:
 		cmd_parts+=(--title "$fix_title" "$fix_prompt")
 	else
 		cmd_parts=(claude -p "$fix_prompt" --output-format json)
+		# t1162: Worker MCP isolation for Claude CLI
+		if [[ -n "$worker_mcp_config" ]]; then
+			cmd_parts+=(--mcp-config "$worker_mcp_config" --strict-mcp-config)
+		fi
 	fi
-
-	mkdir -p "$SUPERVISOR_DIR/pids"
-
-	# Generate worker-specific MCP config with heavy indexers disabled (t221)
-	local worker_xdg_config=""
-	worker_xdg_config=$(generate_worker_mcp_config "$task_id" 2>/dev/null) || true
 
 	# Write dispatch script with startup sentinel (t183)
 	local dispatch_script="${SUPERVISOR_DIR}/pids/${task_id}-review-fix.sh"
@@ -1341,9 +1346,9 @@ Instructions:
 		echo '#!/usr/bin/env bash'
 		echo "echo 'WORKER_STARTED task_id=${task_id} type=review-fix pid=\$\$ timestamp='\$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 		echo "cd '${work_dir}' || { echo 'WORKER_FAILED: cd to work_dir failed: ${work_dir}'; exit 1; }"
-		# Redirect worker to use MCP config with heavy indexers disabled (t221)
-		if [[ -n "$worker_xdg_config" ]]; then
-			echo "export XDG_CONFIG_HOME='${worker_xdg_config}'"
+		# t1162: For OpenCode, set XDG_CONFIG_HOME; for Claude, MCP config is in CLI flags
+		if [[ "$ai_cli" != "claude" && -n "$worker_mcp_config" ]]; then
+			echo "export XDG_CONFIG_HOME='${worker_mcp_config}'"
 		fi
 		printf 'exec '
 		printf '%q ' "${cmd_parts[@]}"

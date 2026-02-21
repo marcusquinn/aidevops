@@ -296,6 +296,10 @@ cleanup_worker_processes() {
 		"$SUPERVISOR_DIR/pids/${task_id}"-prompt-repeat-wrapper-*.sh; do
 		[[ -f "$script" ]] && rm -f "$script" || true
 	done
+	# t1162: Clean up per-worker MCP config directory (OpenCode XDG override + Claude JSON)
+	if [[ -d "$SUPERVISOR_DIR/pids/${task_id}-config" ]]; then
+		rm -rf "$SUPERVISOR_DIR/pids/${task_id}-config"
+	fi
 
 	if [[ "$killed" -gt 0 ]]; then
 		log_info "Cleaned up worker process for $task_id (PID: $pid)"
