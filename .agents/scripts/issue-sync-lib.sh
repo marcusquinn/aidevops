@@ -80,10 +80,23 @@ parse_task_line() {
 	local task_id
 	task_id=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
 
-	# Extract description (between task ID and first metadata field)
+	# Extract FULL description (everything after task ID, including em-dash content)
+	# We'll clean out metadata fields separately, but preserve the full text
+	local full_text
+	full_text=$(echo "$line" | sed -E 's/^[[:space:]]*- \[.\] t[0-9]+(\.[0-9]+)* //' || echo "")
+
+	# Extract description by removing all metadata fields but keeping em-dash content
+	# Strategy: remove tags, estimate, and key:value pairs, but preserve text after em dash
 	local description
-	description=$(echo "$line" | sed -E 's/^[[:space:]]*- \[.\] t[0-9]+(\.[0-9]+)* //' |
-		sed -E 's/ (#[a-z]|~[0-9]|→ |logged:|started:|completed:|ref:|actual:|blocked-by:|blocks:|assignee:|verified:).*//' ||
+	description=$(echo "$full_text" |
+		sed -E 's/ #[a-z][a-z0-9-]*//g' |                                  # Remove tags
+		sed -E 's/ ~[0-9]+[hmd]( \(ai:[^)]+\))?//g' |                      # Remove estimate
+		sed -E 's/ (logged|started|completed|actual|verified):[^ ]+//g' |  # Remove date fields
+		sed -E 's/ (assignee|blocked-by|blocks|model|category):[^ ]+//g' | # Remove other metadata
+		sed -E 's/ ref:GH#[0-9]+//g' |                                     # Remove GH ref
+		sed -E 's/ pr:#[0-9]+//g' |                                        # Remove PR ref
+		sed -E 's/ → \[todo\/PLANS\.md#[^]]+\]//g' |                       # Remove plan link
+		sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' ||                   # Trim whitespace
 		echo "")
 
 	# Extract tags

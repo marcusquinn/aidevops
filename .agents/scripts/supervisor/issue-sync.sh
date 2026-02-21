@@ -457,13 +457,14 @@ sync_issue_status_label() {
 		if [[ -n "$fail_error" && "$fail_error" != "null" ]]; then
 			fail_comment="Task $task_id failed (was: $old_state). Error: $fail_error"
 		fi
-		# Close with failure comment but don't add status:done
-		gh issue close "$issue_number" --repo "$repo_slug" \
-			--comment "$fail_comment" 2>/dev/null || true
+		# DO NOT auto-close failed tasks - they need human review
+		# Add needs-review label and post failure comment, but keep issue OPEN
+		gh issue comment "$issue_number" --repo "$repo_slug" \
+			--body "$fail_comment" 2>/dev/null || true
 		gh issue edit "$issue_number" --repo "$repo_slug" \
-			"${remove_args[@]}" 2>/dev/null || true
-		log_verbose "sync_issue_status_label: closed #$issue_number as failed ($task_id)"
-		return 0
+			--add-label "needs-review" "${remove_args[@]}" 2>/dev/null || true
+		log_verbose "sync_issue_status_label: flagged #$issue_number for review ($task_id failed)"
+		# Don't return here - let the non-terminal state logic handle label updates
 		;;
 	blocked)
 		# Read the error/blocked reason from DB
