@@ -36,7 +36,9 @@ supervisor-helper.sh status <batch-id>
 
 (t165): TODO.md `assignee:` field is the authoritative claim source. Works offline, with any git host. GitHub Issue sync is optional best-effort (requires `gh` CLI + `ref:GH#` in TODO.md). GH Issue creation is opt-in: use `--with-issue` flag or `SUPERVISOR_AUTO_ISSUE=true`.
 
-**Assignee ownership** (t1017): NEVER remove or change `assignee:` on a task without explicit user confirmation. The assignee may be a contributor on another host whose work you cannot see. `unclaim` requires `--force` to release a task claimed by someone else. The full-loop claims the task automatically before starting work — if the task is already claimed by another, the loop stops.
+**Assignee ownership** (t1017): NEVER remove or change `assignee:` on a task without explicit user confirmation. The assignee may be a contributor on another host whose work you cannot see.
+- `unclaim` requires `--force` to release a task claimed by someone else
+- The full-loop claims the task automatically before starting work — if already claimed by another, the loop stops
 
 ## Pulse Scheduler
 

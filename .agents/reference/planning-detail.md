@@ -21,9 +21,7 @@ Dependencies: `blocked-by:t001`, `blocks:t002`, `t001.1` (subtask).
 
 Add `#auto-dispatch` to tasks that can run autonomously (clear spec, bounded scope, no user input needed). Default to including it — only omit when a specific exclusion applies. See `workflows/plans.md` "Auto-Dispatch Tagging" for full criteria. The supervisor's Phase 0 picks these up automatically every 2 minutes and auto-creates batches (`auto-YYYYMMDD-HHMMSS`, concurrency = cores/2, min 2) when no active batch exists.
 
-**Interactive claim guard** (t1062): When working interactively on a task tagged `#auto-dispatch`, always include `assignee:` or `started:` in the TODO entry before pushing — the supervisor skips tasks with these fields to prevent race conditions.
-
-**Working on #auto-dispatch tasks interactively** (t1062): When you start working on a task tagged with `#auto-dispatch`, immediately add `assignee:` to the TODO entry before pushing. This prevents the supervisor from racing and dispatching a worker for the same task. The supervisor's auto-pickup skips tasks with `assignee:` or `started:` fields.
+**Interactive claim guard** (t1062): When working interactively on a task tagged `#auto-dispatch`, immediately add `assignee:` or `started:` in the TODO entry before pushing — the supervisor skips tasks with these fields to prevent race conditions.
 
 ## Blocker Statuses
 
