@@ -282,7 +282,7 @@ Get an overview of a specific API including its available endpoints and capabili
 
 ### `getOperationDetails`
 
-Get detailed information about a specific API operation including parameters, request body schema, and response schema.
+Get detailed information about a specific API operation including parameters, request body schema, and response schema. Use after `getAPIOverview` to get specifics about an endpoint.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
