@@ -26,6 +26,7 @@ ensure_status_labels() {
 	gh label create "status:verify-failed" --repo "$repo_slug" --color "E4E669" --description "Task verification failed" --force 2>/dev/null || true
 	gh label create "status:needs-testing" --repo "$repo_slug" --color "FBCA04" --description "Code merged, needs manual or integration testing" --force 2>/dev/null || true
 	gh label create "status:done" --repo "$repo_slug" --color "6F42C1" --description "Task is complete" --force 2>/dev/null || true
+	gh label create "needs-review" --repo "$repo_slug" --color "D93F0B" --description "Flagged for human review by AI supervisor" --force 2>/dev/null || true
 	return 0
 }
 
@@ -328,8 +329,9 @@ state_to_status_label() {
 	merged | deploying) echo "status:in-review" ;;
 	blocked) echo "status:blocked" ;;
 	verify_failed) echo "status:verify-failed" ;;
-	# Terminal states: verified/deployed close the issue, cancelled closes as not-planned
-	# These return empty — the caller handles close logic separately
+	# Terminal states: verified/deployed close the issue (only with merged PR evidence),
+	# cancelled closes as not-planned, failed flags for human review (never auto-closes).
+	# These return empty — the caller handles close/flag logic separately.
 	verified | deployed | cancelled | failed) echo "" ;;
 	*) echo "" ;;
 	esac
@@ -341,7 +343,7 @@ state_to_status_label() {
 # Used to remove stale labels before applying the new one.
 # Restored from pre-modularisation supervisor-helper.sh (t1035).
 #######################################
-ALL_STATUS_LABELS="status:available,status:queued,status:claimed,status:in-review,status:blocked,status:verify-failed,status:needs-testing,status:done"
+ALL_STATUS_LABELS="status:available,status:queued,status:claimed,status:in-review,status:blocked,status:verify-failed,status:needs-testing,status:done,needs-review"
 
 #######################################
 # Sync GitHub issue status label on state transition (t1009)
@@ -410,7 +412,8 @@ sync_issue_status_label() {
 		close_comment="Task $task_id reached state: $new_state (from $old_state)"
 		local pr_url=""
 		pr_url=$(db "$SUPERVISOR_DB" "SELECT pr_url FROM tasks WHERE id='$(sql_escape "$task_id")';" 2>/dev/null || echo "")
-		if [[ -n "$pr_url" && "$pr_url" != "null" ]]; then
+		local has_merged_pr="false"
+		if [[ -n "$pr_url" && "$pr_url" != "null" && "$pr_url" != "no_pr" && "$pr_url" != "task_only" && "$pr_url" != "task_obsolete" ]]; then
 			local pr_number=""
 			pr_number=$(echo "$pr_url" | grep -oE '[0-9]+$' || echo "")
 			if [[ -n "$pr_number" ]]; then
@@ -418,18 +421,29 @@ sync_issue_status_label() {
 				pr_state=$(gh pr view "$pr_number" --repo "$repo_slug" --json state,mergedAt,changedFiles \
 					--jq '"state:\(.state) merged:\(.mergedAt // "n/a") files:\(.changedFiles)"' 2>/dev/null || echo "")
 				close_comment="Verified: PR #$pr_number ($pr_state). Task $task_id: $old_state -> $new_state"
+				# Only count as merged if PR state confirms it
+				if echo "$pr_state" | grep -qi 'MERGED'; then
+					has_merged_pr="true"
+				fi
 			fi
 		fi
-		if [[ -z "$pr_url" || "$pr_url" == "null" ]]; then
-			close_comment="Task $task_id reached state: $new_state (from $old_state). No PR on record — verify deliverables manually."
+		if [[ "$has_merged_pr" == "true" ]]; then
+			# Close the issue with proof-log comment — PR evidence confirmed
+			gh issue close "$issue_number" --repo "$repo_slug" \
+				--comment "$close_comment" 2>/dev/null || true
+			# Add status:done and remove all other status labels
+			gh issue edit "$issue_number" --repo "$repo_slug" \
+				--add-label "status:done" "${remove_args[@]}" 2>/dev/null || true
+			log_verbose "sync_issue_status_label: closed #$issue_number ($task_id -> $new_state) proof: ${pr_url:-none}"
+		else
+			# No merged PR evidence — do NOT auto-close. Flag for human review.
+			local review_comment="Task $task_id reached state: $new_state (from $old_state). No merged PR on record — flagged for human review instead of auto-closing."
+			gh issue comment "$issue_number" --repo "$repo_slug" \
+				--body "$review_comment" 2>/dev/null || true
+			gh issue edit "$issue_number" --repo "$repo_slug" \
+				--add-label "needs-review" "${remove_args[@]}" 2>/dev/null || true
+			log_verbose "sync_issue_status_label: flagged #$issue_number for review ($task_id -> $new_state, no merged PR)"
 		fi
-		# Close the issue with proof-log comment
-		gh issue close "$issue_number" --repo "$repo_slug" \
-			--comment "$close_comment" 2>/dev/null || true
-		# Add status:done and remove all other status labels
-		gh issue edit "$issue_number" --repo "$repo_slug" \
-			--add-label "status:done" "${remove_args[@]}" 2>/dev/null || true
-		log_verbose "sync_issue_status_label: closed #$issue_number ($task_id -> $new_state) proof: ${pr_url:-none}"
 		return 0
 		;;
 	cancelled)
@@ -457,13 +471,14 @@ sync_issue_status_label() {
 		if [[ -n "$fail_error" && "$fail_error" != "null" ]]; then
 			fail_comment="Task $task_id failed (was: $old_state). Error: $fail_error"
 		fi
-		# Close with failure comment but don't add status:done
-		gh issue close "$issue_number" --repo "$repo_slug" \
-			--comment "$fail_comment" 2>/dev/null || true
+		# DO NOT auto-close failed tasks — they need human review.
+		# Post failure comment and add needs-review label, keep issue OPEN.
+		gh issue comment "$issue_number" --repo "$repo_slug" \
+			--body "$fail_comment" 2>/dev/null || true
 		gh issue edit "$issue_number" --repo "$repo_slug" \
-			"${remove_args[@]}" 2>/dev/null || true
-		log_verbose "sync_issue_status_label: closed #$issue_number as failed ($task_id)"
-		return 0
+			--add-label "needs-review" "${remove_args[@]}" 2>/dev/null || true
+		log_verbose "sync_issue_status_label: flagged #$issue_number for review ($task_id failed)"
+		# Fall through to non-terminal state logic for label handling
 		;;
 	blocked)
 		# Read the error/blocked reason from DB
