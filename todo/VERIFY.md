@@ -2084,3 +2084,10 @@
   check: file-exists .agents/services/hosting/cloudflare.md
   check: rg "cloudflare-platform" .agents/subagent-index.toon
   check: rg "cloudflare" .agents/subagent-index.toon
+
+- [ ] v257 t1160.2 Add SUPERVISOR_CLI env var to resolve_ai_cli() #auto-disp... | PR #2080 | merged:2026-02-21
+  files: .agents/scripts/supervisor/ai-reason.sh, .agents/scripts/supervisor/dispatch.sh
+  check: shellcheck .agents/scripts/supervisor/ai-reason.sh
+  check: file-exists .agents/scripts/supervisor/ai-reason.sh
+  check: shellcheck .agents/scripts/supervisor/dispatch.sh
+  check: file-exists .agents/scripts/supervisor/dispatch.sh
