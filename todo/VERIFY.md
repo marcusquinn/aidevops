@@ -2313,18 +2313,23 @@
   check: file-exists .agents/subagent-index.toon
   check: file-exists AGENTS.md
 
-- [ ] v263 t1160.6 Add claude to orphan process detection in pulse.sh Phase ... | PR #2089 | merged:2026-02-21
+- [x] v263 t1160.6 Add claude to orphan process detection in pulse.sh Phase ... | PR #2089 | merged:2026-02-21 verified:2026-02-21
   files: .agents/scripts/supervisor/pulse.sh
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
 
-- [ ] v264 t1288.2 Create config templates `configs/openapi-search-config.js... | PR #2090 | merged:2026-02-21
+- [x] v264 t1288.2 Create config templates `configs/openapi-search-config.js... | PR #2090 | merged:2026-02-21 verified:2026-02-21
   files: configs/mcp-templates/openapi-search.json, configs/openapi-search-config.json.txt
   check: file-exists configs/mcp-templates/openapi-search.json
   check: file-exists configs/openapi-search-config.json.txt
 
-- [ ] v265 t1293 Test Cloudflare Code Mode MCP end-to-end — verify: (1) ... | PR #2091 | merged:2026-02-21
+- [x] v265 t1293 Test Cloudflare Code Mode MCP end-to-end — verify: (1) ... | PR #2091 | merged:2026-02-21 verified:2026-02-21
   files: configs/mcp-templates/cloudflare-api.json, tests/test-cloudflare-mcp-e2e.sh
   check: file-exists configs/mcp-templates/cloudflare-api.json
   check: shellcheck tests/test-cloudflare-mcp-e2e.sh
   check: file-exists tests/test-cloudflare-mcp-e2e.sh
+
+- [ ] v266 t1288.5 Update `mcp-integrations.md` and `subagent-index.toon` �... | PR #2092 | merged:2026-02-21
+  files: .agents/aidevops/mcp-integrations.md, .agents/subagent-index.toon
+  check: file-exists .agents/aidevops/mcp-integrations.md
+  check: file-exists .agents/subagent-index.toon
