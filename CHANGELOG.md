@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.120.0] - 2026-02-21
+
+### Added
+
+- extend skills discovery with skills.sh registry search (t1280) (#2035)
+- harden Gitea API adapter with error checking, label caching, pagination, and search (t1120.2) (#2031)
+
+### Changed
+
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: add Repo Sync section to AGENTS.md (t1264.4) (#2023)
+
+### Fixed
+
+- resolve BSD sed regex, dedup suppression, and add adaptive AI pulsing (t1285) (#2043)
+- create one GitHub issue per ID in claim-task-id.sh --count N batch allocation (#2045)
+- extend create_improvement dedup window + add recent fixes context (t1284) (#2040)
+- wp-helper.sh run_wp_command() CONFIG_FILE not propagated from get_site_config subshell (t1279) (#2028)
+
 ## [2.119.3] - 2026-02-20
 
 ### Changed
