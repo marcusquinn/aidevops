@@ -546,11 +546,13 @@ echo -e "  ${GREEN}Done${NC} — $mcp_count new MCP servers registered"
 # PHASE 3: SETTINGS.JSON
 # =============================================================================
 # Manages ~/.claude/settings.json:
-#   - Safety hooks (PreToolUse for Bash)
+#   - Safety hooks (PreToolUse for Bash — git safety guard)
 #   - Plugin enablement (osgrep)
+#   - Tool permissions (allow/deny/ask rules per Claude Code syntax)
 #   - Preserves user customizations (model, etc.)
 #
-# Uses jq for safe JSON manipulation. Falls back to Python if jq unavailable.
+# Merge strategy: read existing, deep-merge new entries, never remove
+# user-added rules. Uses Python for JSON manipulation (always available).
 # =============================================================================
 
 echo -e "${BLUE}Updating Claude Code settings...${NC}"
@@ -622,17 +624,241 @@ if shutil.which("osgrep"):
         settings.setdefault("enabledPlugins", {})["osgrep@osgrep"] = True
         changed = True
 
-# --- Permissions: allow common tool directories ---
-# Claude Code's settings.json supports allowedTools for tool permissions
-# We ensure the aidevops scripts directory is trusted
-permissions = settings.get("permissions", {})
-allow_dirs = permissions.get("allow", [])
+# --- Tool permissions (allow / deny / ask) ---
+# Claude Code permission rule syntax: Tool or Tool(specifier)
+# Rules evaluated: deny first, then ask, then allow. First match wins.
+# Merge strategy: add our rules if not already present, never remove user rules.
+#
+# Design rationale:
+#   allow  — safe read-only commands, aidevops scripts, common dev tools
+#   deny   — secrets, credentials, destructive ops (defense-in-depth with hooks)
+#   ask    — powerful but legitimate operations that benefit from confirmation
+#
+# Reference: https://docs.anthropic.com/en/docs/claude-code/settings
 
-aidevops_pattern = os.path.expanduser("~/.aidevops/**")
-if aidevops_pattern not in allow_dirs:
-    allow_dirs.append(aidevops_pattern)
-    permissions["allow"] = allow_dirs
-    settings["permissions"] = permissions
+permissions = settings.setdefault("permissions", {})
+
+# ---- ALLOW rules ----
+# Safe operations that should never prompt the user
+allow_rules = [
+    # --- aidevops framework access ---
+    "Read(~/.aidevops/**)",
+    "Bash(~/.aidevops/agents/scripts/*)",
+
+    # --- Read-only git commands ---
+    "Bash(git status)",
+    "Bash(git status *)",
+    "Bash(git log *)",
+    "Bash(git diff *)",
+    "Bash(git diff)",
+    "Bash(git branch *)",
+    "Bash(git branch)",
+    "Bash(git show *)",
+    "Bash(git rev-parse *)",
+    "Bash(git ls-files *)",
+    "Bash(git ls-files)",
+    "Bash(git remote -v)",
+    "Bash(git stash list)",
+    "Bash(git tag *)",
+    "Bash(git tag)",
+
+    # --- Safe git write operations ---
+    "Bash(git add *)",
+    "Bash(git add .)",
+    "Bash(git commit *)",
+    "Bash(git checkout -b *)",
+    "Bash(git switch -c *)",
+    "Bash(git switch *)",
+    "Bash(git push *)",
+    "Bash(git push)",
+    "Bash(git pull *)",
+    "Bash(git pull)",
+    "Bash(git fetch *)",
+    "Bash(git fetch)",
+    "Bash(git merge *)",
+    "Bash(git rebase *)",
+    "Bash(git stash *)",
+    "Bash(git worktree *)",
+    "Bash(git branch -d *)",
+    "Bash(git push --force-with-lease *)",
+    "Bash(git push --force-if-includes *)",
+
+    # --- GitHub CLI (read + PR operations) ---
+    "Bash(gh pr *)",
+    "Bash(gh issue *)",
+    "Bash(gh run *)",
+    "Bash(gh api *)",
+    "Bash(gh repo *)",
+    "Bash(gh auth status *)",
+    "Bash(gh auth status)",
+
+    # --- Common dev tools ---
+    "Bash(npm run *)",
+    "Bash(npm test *)",
+    "Bash(npm test)",
+    "Bash(npm install *)",
+    "Bash(npm install)",
+    "Bash(npm ci)",
+    "Bash(npx *)",
+    "Bash(bun *)",
+    "Bash(pnpm *)",
+    "Bash(yarn *)",
+    "Bash(node *)",
+    "Bash(python3 *)",
+    "Bash(python *)",
+    "Bash(pip *)",
+
+    # --- File discovery and search ---
+    "Bash(fd *)",
+    "Bash(rg *)",
+    "Bash(find *)",
+    "Bash(grep *)",
+    "Bash(wc *)",
+    "Bash(ls *)",
+    "Bash(ls)",
+    "Bash(tree *)",
+
+    # --- Quality tools ---
+    "Bash(shellcheck *)",
+    "Bash(eslint *)",
+    "Bash(prettier *)",
+    "Bash(tsc *)",
+
+    # --- System info (read-only) ---
+    "Bash(which *)",
+    "Bash(command -v *)",
+    "Bash(uname *)",
+    "Bash(date *)",
+    "Bash(pwd)",
+    "Bash(whoami)",
+    "Bash(cat *)",
+    "Bash(head *)",
+    "Bash(tail *)",
+    "Bash(sort *)",
+    "Bash(uniq *)",
+    "Bash(cut *)",
+    "Bash(awk *)",
+    "Bash(sed *)",
+    "Bash(jq *)",
+    "Bash(basename *)",
+    "Bash(dirname *)",
+    "Bash(realpath *)",
+    "Bash(readlink *)",
+    "Bash(stat *)",
+    "Bash(file *)",
+    "Bash(diff *)",
+    "Bash(mkdir *)",
+    "Bash(touch *)",
+    "Bash(cp *)",
+    "Bash(mv *)",
+    "Bash(chmod *)",
+    "Bash(echo *)",
+    "Bash(printf *)",
+    "Bash(test *)",
+    "Bash([ *)",
+
+    # --- Claude CLI (for sub-agent dispatch) ---
+    "Bash(claude *)",
+]
+
+# ---- DENY rules ----
+# Block access to secrets and destructive operations (defense-in-depth)
+deny_rules = [
+    # --- Secrets and credentials ---
+    "Read(./.env)",
+    "Read(./.env.*)",
+    "Read(./secrets/**)",
+    "Read(./**/credentials.json)",
+    "Read(./**/.env)",
+    "Read(./**/.env.*)",
+    "Read(~/.config/aidevops/credentials.sh)",
+
+    # --- Destructive git (also blocked by PreToolUse hook) ---
+    "Bash(git push --force *)",
+    "Bash(git push -f *)",
+    "Bash(git reset --hard *)",
+    "Bash(git reset --hard)",
+    "Bash(git clean -f *)",
+    "Bash(git clean -f)",
+    "Bash(git checkout -- *)",
+    "Bash(git branch -D *)",
+
+    # --- Dangerous system commands ---
+    "Bash(rm -rf /)",
+    "Bash(rm -rf /*)",
+    "Bash(rm -rf ~)",
+    "Bash(rm -rf ~/*)",
+    "Bash(sudo *)",
+    "Bash(chmod 777 *)",
+
+    # --- Secret exposure prevention ---
+    "Bash(gopass show *)",
+    "Bash(cat ~/.config/aidevops/credentials.sh)",
+]
+
+# ---- ASK rules ----
+# Powerful operations that benefit from user confirmation
+ask_rules = [
+    # --- Potentially destructive file operations ---
+    "Bash(rm -rf *)",
+    "Bash(rm -r *)",
+
+    # --- Network operations ---
+    "Bash(curl *)",
+    "Bash(wget *)",
+
+    # --- Docker/container operations ---
+    "Bash(docker *)",
+    "Bash(docker-compose *)",
+    "Bash(orbctl *)",
+]
+
+# Merge function: add rules not already present, preserve user additions
+def merge_rules(existing, new_rules):
+    """Add new_rules to existing list if not already present. Returns True if changed."""
+    added = False
+    for rule in new_rules:
+        if rule not in existing:
+            existing.append(rule)
+            added = True
+    return added
+
+# Also clean up any expanded-path rules from prior versions
+# (e.g., /Users/foo/.aidevops/** should become ~/.aidevops/**)
+home = os.path.expanduser("~")
+existing_allow = permissions.get("allow", [])
+cleaned_allow = []
+for rule in existing_allow:
+    if rule.startswith(home + "/"):
+        # Convert expanded path to portable form
+        portable = "Read(~" + rule[len(home):] + ")"
+        # Only convert bare path patterns (not already Tool(specifier) format)
+        if "(" not in rule:
+            # This was a bare path from the old format — skip it,
+            # the new rules below use proper Tool(specifier) syntax
+            continue
+    cleaned_allow.append(rule)
+
+if len(cleaned_allow) != len(existing_allow):
+    permissions["allow"] = cleaned_allow
+    changed = True
+
+allow_list = permissions.setdefault("allow", [])
+deny_list = permissions.setdefault("deny", [])
+ask_list = permissions.setdefault("ask", [])
+
+if merge_rules(allow_list, allow_rules):
+    changed = True
+if merge_rules(deny_list, deny_rules):
+    changed = True
+if merge_rules(ask_list, ask_rules):
+    changed = True
+
+settings["permissions"] = permissions
+
+# --- JSON Schema reference for editor autocomplete ---
+if "$schema" not in settings:
+    settings["$schema"] = "https://json.schemastore.org/claude-code-settings.json"
     changed = True
 
 # Write back if changed
@@ -656,7 +882,7 @@ echo ""
 echo -e "${GREEN}Claude Code configuration complete!${NC}"
 echo "  Slash commands: $command_count in $CLAUDE_COMMANDS_DIR"
 echo "  MCP servers: $mcp_count newly registered (user scope)"
-echo "  Settings: $CLAUDE_SETTINGS (hooks, plugins, permissions)"
+echo "  Settings: $CLAUDE_SETTINGS (hooks, plugins, tool permissions)"
 echo ""
 echo "Available slash commands (subset):"
 echo "  /onboarding       - Interactive setup wizard"
