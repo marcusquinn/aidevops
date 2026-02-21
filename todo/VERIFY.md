@@ -2394,7 +2394,7 @@
   check: shellcheck .agents/scripts/generate-claude-agents.sh
   check: file-exists .agents/scripts/generate-claude-agents.sh
 
-- [ ] v275 t1163 OAuth-aware dispatch routing #auto-dispatch — detect OA... | PR #2104 | merged:2026-02-21
+- [x] v275 t1163 OAuth-aware dispatch routing #auto-dispatch — detect OA... | PR #2104 | merged:2026-02-21 verified:2026-02-21
   files: .agents/scripts/budget-tracker-helper.sh, .agents/scripts/supervisor/dispatch.sh, .agents/tools/ai-assistants/headless-dispatch.md, tests/test-dispatch-claude-cli.sh
   check: shellcheck .agents/scripts/budget-tracker-helper.sh
   check: file-exists .agents/scripts/budget-tracker-helper.sh
@@ -2404,3 +2404,14 @@
   check: shellcheck tests/test-dispatch-claude-cli.sh
   check: file-exists tests/test-dispatch-claude-cli.sh
   check: rg "headless-dispatch" .agents/subagent-index.toon
+
+- [ ] v276 t1162 Worker MCP isolation for Claude CLI dispatch #auto-dispat... | PR #2102 | merged:2026-02-21
+  files: .agents/scripts/supervisor/cleanup.sh, .agents/scripts/supervisor/deploy.sh, .agents/scripts/supervisor/dispatch.sh, tests/test-dispatch-claude-cli.sh
+  check: shellcheck .agents/scripts/supervisor/cleanup.sh
+  check: file-exists .agents/scripts/supervisor/cleanup.sh
+  check: shellcheck .agents/scripts/supervisor/deploy.sh
+  check: file-exists .agents/scripts/supervisor/deploy.sh
+  check: shellcheck .agents/scripts/supervisor/dispatch.sh
+  check: file-exists .agents/scripts/supervisor/dispatch.sh
+  check: shellcheck tests/test-dispatch-claude-cli.sh
+  check: file-exists tests/test-dispatch-claude-cli.sh
