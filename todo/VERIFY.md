@@ -2379,7 +2379,7 @@
   check: file-exists configs/mcp-templates/shadcn.json
   check: file-exists configs/mcp-templates/stagehand.json
 
-- [ ] v273 t1161.1 Create generate-claude-commands.sh #auto-dispatch — gen... | PR #2098 | merged:2026-02-21
+- [x] v273 t1161.1 Create generate-claude-commands.sh #auto-dispatch — gen... | PR #2098 | merged:2026-02-21 verified:2026-02-21
   files: .agents/scripts/generate-claude-commands.sh, README.md, setup-modules/config.sh, tests/test-smoke-help.sh
   check: shellcheck .agents/scripts/generate-claude-commands.sh
   check: file-exists .agents/scripts/generate-claude-commands.sh
@@ -2388,3 +2388,8 @@
   check: file-exists setup-modules/config.sh
   check: shellcheck tests/test-smoke-help.sh
   check: file-exists tests/test-smoke-help.sh
+
+- [ ] v274 t1161.3 Enhance ~/.claude/settings.json with tool permissions #au... | PR #2101 | merged:2026-02-21
+  files: .agents/scripts/generate-claude-agents.sh
+  check: shellcheck .agents/scripts/generate-claude-agents.sh
+  check: file-exists .agents/scripts/generate-claude-agents.sh
