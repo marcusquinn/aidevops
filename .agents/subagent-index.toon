@@ -63,7 +63,7 @@ tools/task-management/,Task tracking - dependency graphs,beads
 tools/terminal/,Terminal integration - tab titles,terminal-title
 tools/automation/,Automation - cron scheduling objective runner and macOS AppleScript/JXA,cron-agent|objective-runner|mac|macos-automator
 tools/wordpress/,WordPress ecosystem - local dev and fleet,wp-dev|wp-admin|localwp|mainwp|wp-preferred|scf
-tools/containers/,Container runtimes - Docker and Linux VMs on macOS,orbstack
+tools/containers/,Container runtimes - Docker and Linux VMs on macOS and remote dispatch via SSH/Tailscale,orbstack|remote-dispatch
 tools/infrastructure/,Infrastructure - cloud GPU deployment and compute,cloud-gpu
 services/accessibility/,Unified web and email accessibility auditing - WCAG compliance remediation and monitoring,accessibility-audit
 services/hosting/,Hosting providers - DNS and cloud servers and local dev,local-hosting|localhost|hostinger|hetzner|cloudflare|cloudflare-platform|cloudron|closte

@@ -1207,7 +1207,30 @@ cmd_pulse() {
 			if [[ -f "$pid_file" ]]; then
 				local pid
 				pid=$(cat "$pid_file")
-				if kill -0 "$pid" 2>/dev/null; then
+				# t1165.3: Handle remote dispatch PID format "remote:host:pid"
+				if [[ "$pid" == remote:* ]]; then
+					local _remote_host _remote_pid
+					_remote_host=$(echo "$pid" | cut -d: -f2)
+					_remote_pid=$(echo "$pid" | cut -d: -f3)
+					local remote_helper="${SCRIPT_DIR}/../remote-dispatch-helper.sh"
+					if [[ -x "$remote_helper" ]]; then
+						if "$remote_helper" status "$tid" "$_remote_host" >/dev/null 2>&1; then
+							is_alive=true
+						else
+							# Remote worker finished — collect logs before evaluation
+							log_info "  $tid: remote worker finished on $_remote_host, collecting logs..."
+							local collected_log
+							collected_log=$("$remote_helper" logs "$tid" "$_remote_host" 2>/dev/null) || collected_log=""
+							if [[ -n "$collected_log" && -f "$collected_log" ]]; then
+								# Update the task's log_file to point to the collected local copy
+								db "$SUPERVISOR_DB" "UPDATE tasks SET log_file = '$(sql_escape "$collected_log")' WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || true
+								log_info "  $tid: remote logs collected to $collected_log"
+							fi
+						fi
+					else
+						log_warn "  $tid: remote-dispatch-helper.sh not found, cannot check remote worker"
+					fi
+				elif kill -0 "$pid" 2>/dev/null; then
 					is_alive=true
 				fi
 			fi

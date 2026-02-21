@@ -41,6 +41,8 @@ tools:
 
 **Draft agents for reusable context**: When parallel workers share domain-specific instructions, create a draft agent in `~/.aidevops/agents/draft/` instead of duplicating prompts. Subsequent dispatches can reference the draft. See `tools/build-agent/build-agent.md` "Agent Lifecycle Tiers" for details.
 
+**Remote dispatch**: For dispatching to containers on remote hosts via SSH/Tailscale, see `tools/containers/remote-dispatch.md`. Set `dispatch_target` on a task to route it to a remote host with credential forwarding and log collection.
+
 <!-- AI-CONTEXT-END -->
 
 ## Architecture

@@ -3246,6 +3246,52 @@ cmd_dispatch() {
 	} >"$wrapper_script"
 	chmod +x "$wrapper_script"
 
+	# t1165.3: Remote dispatch — check if task has a dispatch_target set.
+	# If so, route to remote-dispatch-helper.sh instead of local process.
+	local dispatch_target=""
+	dispatch_target=$(db "$SUPERVISOR_DB" "SELECT COALESCE(dispatch_target, '') FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null) || dispatch_target=""
+
+	if [[ -n "$dispatch_target" ]]; then
+		# Remote dispatch via SSH/Tailscale
+		log_info "Remote dispatch target detected for $task_id: $dispatch_target (t1165.3)"
+		local remote_helper="${SCRIPT_DIR}/../remote-dispatch-helper.sh"
+		if [[ ! -x "$remote_helper" ]]; then
+			log_error "remote-dispatch-helper.sh not found or not executable: $remote_helper"
+			cmd_transition "$task_id" "failed" --error "Remote dispatch helper not found (t1165.3)"
+			return 1
+		fi
+
+		# Verify remote host connectivity before dispatch
+		local remote_check_rc=0
+		"$remote_helper" check "$dispatch_target" >/dev/null 2>&1 || remote_check_rc=$?
+		if [[ "$remote_check_rc" -ne 0 ]]; then
+			log_error "Remote host $dispatch_target is unreachable — deferring dispatch (t1165.3)"
+			return 3
+		fi
+
+		# Dispatch to remote host
+		local remote_pid=""
+		remote_pid=$("$remote_helper" dispatch "$task_id" "$dispatch_target" \
+			--model "$resolved_model" \
+			--description "$tdesc" 2>>"$SUPERVISOR_LOG") || {
+			log_error "Remote dispatch failed for $task_id to $dispatch_target"
+			cmd_transition "$task_id" "failed" --error "Remote dispatch failed to $dispatch_target (t1165.3)"
+			return 1
+		}
+
+		# Store remote PID and transition to running
+		echo "remote:${dispatch_target}:${remote_pid}" >"$SUPERVISOR_DIR/pids/${task_id}.pid"
+		cmd_transition "$task_id" "running" --session "remote:${dispatch_target}:pid:${remote_pid}"
+
+		# Add dispatched:model label to GitHub issue (t1010)
+		add_model_label "$task_id" "dispatched" "$resolved_model" "${trepo:-.}" 2>>"$SUPERVISOR_LOG" || true
+
+		log_success "Remote-dispatched $task_id to $dispatch_target (remote PID: $remote_pid)"
+		echo "$remote_pid"
+		return 0
+	fi
+
+	# Local dispatch (default path)
 	if [[ "$dispatch_mode" == "tabby" ]]; then
 		# Tabby: attempt to open in a new tab via OSC 1337 escape sequence
 		log_info "Opening Tabby tab for $task_id..."
@@ -3334,7 +3380,24 @@ cmd_worker_status() {
 		if [[ -f "$pid_file" ]]; then
 			local pid
 			pid=$(cat "$pid_file")
-			if kill -0 "$pid" 2>/dev/null; then
+			# t1165.3: Detect remote dispatch (PID file contains "remote:host:pid")
+			if [[ "$pid" == remote:* ]]; then
+				local remote_host remote_pid
+				remote_host=$(echo "$pid" | cut -d: -f2)
+				remote_pid=$(echo "$pid" | cut -d: -f3)
+				echo -e "  Dispatch:   ${YELLOW}remote${NC} (host: $remote_host, PID: $remote_pid)"
+				# Check remote status via helper
+				local remote_helper="${SCRIPT_DIR}/../remote-dispatch-helper.sh"
+				if [[ -x "$remote_helper" ]]; then
+					if "$remote_helper" status "$task_id" "$remote_host" >/dev/null 2>&1; then
+						echo -e "  Process:    ${GREEN}alive (remote)${NC}"
+					else
+						echo -e "  Process:    ${RED}dead (remote)${NC}"
+					fi
+				else
+					echo "  Process:    unknown (remote helper not found)"
+				fi
+			elif kill -0 "$pid" 2>/dev/null; then
 				echo -e "  Process:    ${GREEN}alive${NC} (PID: $pid)"
 			else
 				echo -e "  Process:    ${RED}dead${NC} (PID: $pid was)"
