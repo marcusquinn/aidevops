@@ -2015,9 +2015,13 @@
   files: .agents/subagent-index.toon
   check: file-exists .agents/subagent-index.toon
 
-- [ ] v246 t1283 Context optimisation pass 3: tighten language across buil... | PR #2048 | merged:2026-02-21
+- [x] v246 t1283 Context optimisation pass 3: tighten language across buil... | PR #2048 | merged:2026-02-21 verified:2026-02-21
   files: .agents/AGENTS.md, .agents/build-plus.md, .agents/prompts/build.txt, AGENTS.md
   check: file-exists .agents/AGENTS.md
   check: file-exists .agents/build-plus.md
   check: file-exists .agents/prompts/build.txt
   check: file-exists AGENTS.md
+
+- [ ] v247 t1276 Subtask-aware queue analysis and orphan issue intake #bug... | PR #2055 | merged:2026-02-21
+  files: VERIFY.md
+  check: file-exists VERIFY.md
