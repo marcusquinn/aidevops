@@ -41,6 +41,7 @@ tools:
 - Next.js DevTools MCP
 - Context7 MCP: Real-time library docs
 - LocalWP MCP: WordPress database access
+- Cloudflare Code Mode MCP: Workers, D1, KV, R2, Pages, AI Gateway via OAuth
 
 **Config Location**: `configs/mcp-templates/`
 <!-- AI-CONTEXT-END -->
@@ -69,6 +70,7 @@ This document provides comprehensive setup and usage instructions for advanced M
 
 - **Claude Code MCP**: Run Claude Code as an MCP server for automation
 - **Next.js DevTools MCP**: Next.js development and debugging assistance
+- **Cloudflare Code Mode MCP**: Deploy Workers, query D1, manage KV/R2/Pages, AI Gateway — OAuth-authenticated remote server
 
 ### **📄 Document Processing**
 
@@ -137,6 +139,51 @@ claude mcp add claude-code-mcp "npx -y github:marcusquinn/claude-code-mcp"
 **One-time setup**: run `claude --dangerously-skip-permissions` and accept prompts.
 **Upstream**: https://github.com/steipete/claude-code-mcp (revert if merged).
 **Local dev (optional)**: clone the fork and swap the command to `./start.sh` for instant iteration.
+
+### **Cloudflare Code Mode MCP**
+
+No installation required — this is a remote MCP server authenticated via OAuth.
+
+```json
+{
+  "cloudflare-api": {
+    "url": "https://mcp.cloudflare.com/mcp"
+  }
+}
+```
+
+On first connection, your MCP client opens a browser OAuth flow to `dash.cloudflare.com`. After authorizing, the token is stored automatically — no manual API key setup needed.
+
+**For Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "cloudflare-api": {
+      "url": "https://mcp.cloudflare.com/mcp"
+    }
+  }
+}
+```
+
+**For OpenCode** (`~/.config/opencode/config.json`):
+
+```json
+{
+  "mcp": {
+    "cloudflare-api": {
+      "type": "remote",
+      "url": "https://mcp.cloudflare.com/mcp"
+    }
+  }
+}
+```
+
+**Available Tools**: Workers (deploy/update/tail), D1 (SQL queries/schema), KV (get/put/delete/list), R2 (objects/buckets), Pages (projects/deployments), AI Gateway (logs/analytics), DNS records, zone analytics.
+
+**Per-Agent Enablement**: The `tools/api/cloudflare-mcp.md` subagent has `cloudflare-api_*: true` in its tools section. Disabled globally, enabled on-demand for Cloudflare platform work.
+
+See `tools/api/cloudflare-mcp.md` for detailed documentation.
 
 ### **Ahrefs MCP**
 

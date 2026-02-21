@@ -28,6 +28,7 @@ seo/,Search optimization - keywords and rankings and UX/CRO,dataforseo|serper|se
 content/,Multi-media multi-channel content production - research to distribution,research|story|production/writing|production/image|production/video|production/audio|production/characters|distribution/youtube|distribution/short-form|distribution/social|distribution/blog|distribution/email|distribution/podcast|optimization|guidelines|platform-personas|humanise|seo-writer|meta-creator|editor|internal-linker|context-templates
 tools/content/,Content tools - calendar planning summarization and extraction,content-calendar|summarize
 tools/social-media/,Social media tools - X/Twitter LinkedIn and Reddit,bird|linkedin|reddit
+tools/api/,API integrations - authentication ORM framework and Cloudflare MCP,better-auth|cloudflare-mcp|drizzle|hono|vercel-ai-sdk
 tools/build-agent/,Agent design - composing efficient agents,build-agent|agent-review|agent-testing
 tools/build-mcp/,MCP development - creating MCP servers and plugins,build-mcp|server-patterns|api-wrapper|transports|deployment|aidevops-plugin
 tools/ai-assistants/,AI tool integration - OpenCode headless dispatch model comparison and response scoring,agno|capsolver|claude-code|compare-models|response-scoring|overview|openclaw|opencode-server|headless-dispatch

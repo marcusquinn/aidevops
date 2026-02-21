@@ -57,6 +57,11 @@
         "GOOGLE_PROJECT_ID": "YOUR_GCP_PROJECT_ID_HERE"
       },
       "description": "Google Analytics MCP server for GA4 reporting (requires pipx and Google Cloud ADC)"
+    },
+    "cloudflare-api": {
+      "type": "remote",
+      "url": "https://mcp.cloudflare.com/mcp",
+      "description": "Cloudflare Code Mode MCP — Workers, D1, KV, R2, Pages, AI Gateway (OAuth on first connect)"
     }
   }
 }
