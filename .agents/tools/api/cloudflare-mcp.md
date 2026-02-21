@@ -95,7 +95,7 @@ Use these patterns when asking the AI to interact with Cloudflare resources:
 
 ### Workers
 
-```
+```text
 List all Workers in my account
 Show the code for Worker named "api-gateway"
 Deploy the Worker script at ./src/worker.ts to "my-worker"
@@ -104,7 +104,7 @@ Tail logs for Worker "my-worker"
 
 ### D1 (SQLite)
 
-```
+```text
 List all D1 databases
 Run SQL: SELECT * FROM users LIMIT 10 on database "prod-db"
 Show the schema for D1 database "prod-db"
@@ -113,7 +113,7 @@ Create a table in D1: CREATE TABLE events (id INTEGER PRIMARY KEY, name TEXT)
 
 ### KV (Key-Value)
 
-```
+```text
 List all KV namespaces
 Get the value of key "config:feature-flags" from namespace "APP_CONFIG"
 Put key "session:abc123" with value "..." in namespace "SESSIONS"
@@ -123,7 +123,7 @@ Delete key "cache:stale" from namespace "CACHE"
 
 ### R2 (Object Storage)
 
-```
+```text
 List all R2 buckets
 List objects in bucket "assets" with prefix "images/"
 Get object "images/logo.png" from bucket "assets"
@@ -133,7 +133,7 @@ Delete object "tmp/old-file.txt" from bucket "assets"
 
 ### Pages
 
-```
+```text
 List all Pages projects
 Show deployments for Pages project "my-site"
 Trigger a new deployment for Pages project "my-site"
@@ -141,7 +141,7 @@ Trigger a new deployment for Pages project "my-site"
 
 ### AI Gateway
 
-```
+```text
 List all AI Gateways
 Show recent logs for AI Gateway "production"
 Get analytics for AI Gateway "production" for the last 24 hours
@@ -149,7 +149,7 @@ Get analytics for AI Gateway "production" for the last 24 hours
 
 ### DNS
 
-```
+```text
 List DNS records for zone "example.com"
 Add A record: api.example.com → 1.2.3.4 with TTL 300
 Delete CNAME record "www" from zone "example.com"
@@ -161,14 +161,14 @@ Common end-to-end workflows:
 
 ### Deploy a Worker
 
-```
+```text
 Read ./src/worker.ts and deploy it as a Cloudflare Worker named "my-api".
 Bind it to the KV namespace "APP_DATA" and D1 database "prod-db".
 ```
 
 ### Query D1 and return results
 
-```
+```text
 On D1 database "analytics", run:
 SELECT date, count(*) as visits FROM page_views
 WHERE date >= date('now', '-7 days')
@@ -177,14 +177,14 @@ GROUP BY date ORDER BY date DESC
 
 ### Sync local files to R2
 
-```
+```text
 Upload all files in ./dist/ to R2 bucket "static-assets" under prefix "v2.1.0/".
 List the uploaded objects to confirm.
 ```
 
 ### Inspect KV namespace
 
-```
+```text
 List all keys in KV namespace "FEATURE_FLAGS".
 For each key, get its value and show me the full config.
 ```
