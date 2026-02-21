@@ -26,11 +26,15 @@ Subagent write restrictions: on `main`/`master`, subagents may ONLY write to `RE
 
 ## Development Lifecycle
 
-1. Create TODO entry before starting work
-2. Ask user: implement now or queue for runner?
-3. Full-loop: branch/worktree → implement → test → verify → commit/PR
-4. Queue: add to TODO.md for supervisor dispatch
-5. Never skip testing. Never declare "done" without verification.
+1. Create TODO entry **with brief** before starting work
+2. Brief file at `todo/tasks/{task_id}-brief.md` is MANDATORY (see `templates/brief-template.md`)
+3. Brief must include: session origin, what, why, how, acceptance criteria, context
+4. Ask user: implement now or queue for runner?
+5. Full-loop: branch/worktree → implement → test → verify → commit/PR
+6. Queue: add to TODO.md for supervisor dispatch
+7. Never skip testing. Never declare "done" without verification.
+
+**Task brief rule**: A task without a brief is undevelopable. The brief captures conversation context that would otherwise be lost between sessions. See `workflows/plans.md` and `scripts/commands/new-task.md`.
 
 ---
 
@@ -56,7 +60,9 @@ Format: `- [ ] t001 Description @owner #tag ~4h started:ISO blocked-by:t002`
 
 Task IDs: `/new-task` or `claim-task-id.sh`. NEVER grep TODO.md for next ID.
 
-Auto-dispatch: `#auto-dispatch` tag. Add `assignee:` before pushing if working interactively.
+**Task briefs are MANDATORY.** Every task must have `todo/tasks/{task_id}-brief.md` capturing: session origin, what, why, how, acceptance criteria, and conversation context. Use `templates/brief-template.md`. A task without a brief loses the knowledge that created it.
+
+Auto-dispatch: `#auto-dispatch` tag — only if brief has 2+ acceptance criteria, file references in How section, and clear deliverable in What section. Add `assignee:` before pushing if working interactively.
 
 Completion: NEVER mark `[x]` without merged PR (`pr:#NNN`) or `verified:YYYY-MM-DD`. Use `task-complete-helper.sh`.
 

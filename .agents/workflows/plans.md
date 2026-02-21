@@ -208,6 +208,20 @@ These use `quality-loop-helper.sh` which applies Ralph patterns to quality workf
 
 ## Saving Work
 
+### MANDATORY: Task Brief Requirement
+
+**Every task MUST have a brief file** at `todo/tasks/{task_id}-brief.md`. A task without a brief is undevelopable — it loses the conversation context that informed it.
+
+Use `templates/brief-template.md`. The brief captures:
+- **Origin**: session ID, date, author, conversation context
+- **What**: clear deliverable (not "implement X" but what it produces)
+- **Why**: problem, user need, business value
+- **How**: technical approach, file references, patterns
+- **Acceptance criteria**: specific, testable conditions
+- **Context & decisions**: from the conversation that created the task
+
+**Session provenance is mandatory.** Every brief must link back to the session that created it. Detect runtime: `$OPENCODE_SESSION_ID`, `$CLAUDE_SESSION_ID`, or `{app}:unknown-{date}`.
+
 ### Step 1: Extract from Conversation
 
 - **Title**: Concise task/plan name
@@ -215,6 +229,7 @@ These use `quality-loop-helper.sh` which applies Ralph patterns to quality workf
 - **Estimate**: Time estimate with breakdown `~Xh (ai:Xh test:Xh read:Xm)`
 - **Tags**: Relevant categories (#seo, #security, #feature, etc.)
 - **Context**: Key decisions, research findings, constraints discussed
+- **Session**: Current session ID for audit trail
 
 ### Step 2: Present with Auto-Detection
 
@@ -223,8 +238,13 @@ These use `quality-loop-helper.sh` which applies Ralph patterns to quality workf
 ```text
 Saving to TODO.md: "{title}" ~{estimate}
 
-1. Confirm
-2. Add more details first
+Creating brief: todo/tasks/{task_id}-brief.md
+- What: {deliverable summary}
+- Why: {problem/need}
+- Acceptance: {key criteria}
+
+1. Confirm (creates brief + TODO entry)
+2. Add more details to brief first
 3. Create full plan instead (PLANS.md)
 ```
 
@@ -237,16 +257,20 @@ Title: {title}
 Estimate: ~{estimate}
 Phases: {count} identified
 
-1. Confirm and create plan
-2. Simplify to TODO.md only
+Creating brief: todo/tasks/{task_id}-brief.md
+(Full context from this conversation will be captured)
+
+1. Confirm and create plan + brief
+2. Simplify to TODO.md + brief only
 3. Add more context first
 ```
 
 ### Step 3: Save Appropriately
 
-#### Simple Save (TODO.md only)
+#### Simple Save (TODO.md + brief)
 
-Add to TODO.md Backlog:
+1. **Create brief** at `todo/tasks/{task_id}-brief.md` from conversation context
+2. **Add to TODO.md** Backlog:
 
 ```markdown
 ## Backlog
@@ -263,10 +287,13 @@ Add to TODO.md Backlog:
 - `blocked-by:t001,t002` - Dependencies (cannot start until these done)
 - `blocks:t003` - What this unblocks when complete
 
+**Auto-dispatch gate**: Only add `#auto-dispatch` if the brief has at least 2 specific acceptance criteria, a non-empty How section with file references, and a clear What section. Thin briefs = no auto-dispatch.
+
 Respond:
 
 ```text
 Saved: "{title}" to TODO.md (~{estimate})
+Brief: todo/tasks/{task_id}-brief.md
 Start anytime with: "Let's work on {title}"
 ```
 
