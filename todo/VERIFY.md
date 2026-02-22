@@ -2478,7 +2478,7 @@
   files: .agents/plugins/opencode-aidevops/index.mjs
   check: file-exists .agents/plugins/opencode-aidevops/index.mjs
 
-- [ ] v284 t1308 LLM observability: data collection from OpenCode plugin â... | PR #2138 | merged:2026-02-22
+- [x] v284 t1308 LLM observability: data collection from OpenCode plugin â... | PR #2138 | merged:2026-02-22 verified:2026-02-22
   files: .agents/plugins/opencode-aidevops/index.mjs, .agents/plugins/opencode-aidevops/observability.mjs
   check: file-exists .agents/plugins/opencode-aidevops/index.mjs
   check: file-exists .agents/plugins/opencode-aidevops/observability.mjs
