@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.123.1] - 2026-02-22
 
+### Changed
+
+- Documentation: add changelog entries for v2.123.0 and v2.123.1
+
+### Fixed
+
+- use npm for tool updates and capture positional params as locals (#2158)
+
+## [2.123.1] - 2026-02-22
+
 ### Fixed
 
 - Use npm (not bun) for all tool update commands in tool-version-check.sh — bun not guaranteed installed (#2158)
