@@ -508,18 +508,43 @@ services:
       start_period: 30s
 ```
 
+### Dokploy (Alternative to Coolify)
+
+[Dokploy](https://dokploy.com) is another open-source, Traefik-based PaaS with Docker Compose support. The same deployment approach used for Coolify works for Dokploy with minor differences:
+
+- **Traefik labels**: Same syntax -- Dokploy uses Traefik natively
+- **Docker Compose**: Supported as a first-class build pack
+- **Port mapping**: `ports` directive works the same way for UDP 3478
+- **Environment variables**: Set via UI or `.env` file (use `env_file` in compose)
+- **Persistent storage**: Named volumes or bind mounts via `../files/` directory
+- **Wildcard certs**: Supported via Traefik DNS challenge
+
+Key differences from Coolify:
+
+| Aspect | Coolify | Dokploy |
+|--------|---------|---------|
+| Volume backups | Yes | Yes (named volumes only) |
+| Bind mount persistence | Standard Docker | Use `../files/` prefix (cleaned on deploy otherwise) |
+| Git integrations | GitHub, GitLab, Bitbucket | GitHub, GitLab, Bitbucket, Gitea |
+| Swarm mode | No | Yes (Docker Stack) |
+| License | Apache-2.0 | Apache-2.0 |
+
+To deploy on Dokploy: follow the same Steps 1-4 as Coolify above, substituting "Coolify dashboard" with "Dokploy dashboard". The Docker Compose file and Traefik labels are identical.
+
+See: https://dokploy.com/docs/core/docker-compose
+
 ### Feature comparison across deployment options
 
-| Feature | Cloudron | Standalone VPS | Coolify |
-|---------|----------|---------------|---------|
+| Feature | Cloudron | Standalone VPS | Coolify / Dokploy |
+|---------|----------|---------------|-------------------|
 | Mesh VPN (P2P tunnels) | Yes | Yes | Yes |
 | NAT traversal (STUN/TURN) | Yes | Yes | Yes |
 | Dashboard + API | Yes | Yes | Yes |
 | SSO (OIDC) | Yes (Cloudron SSO) | Yes (any IdP) | Yes (any IdP) |
-| PostgreSQL | Yes (addon) | Yes (manual) | Yes (Coolify DB) |
+| PostgreSQL | Yes (addon) | Yes (manual) | Yes (PaaS DB) |
 | Reverse proxy feature | **No** | Yes | **Yes** |
-| Management UI for infra | Cloudron | None (SSH) | Coolify |
-| Auto-TLS | Cloudron | Traefik | Coolify/Traefik |
+| Management UI for infra | Cloudron | None (SSH) | PaaS dashboard |
+| Auto-TLS | Cloudron | Traefik | PaaS/Traefik |
 | Wildcard certs | Limited | Yes | Yes |
 | Cost overhead | Cloudron license | None | None (open source) |
 
@@ -575,7 +600,7 @@ curl -fsSL https://pkgs.netbird.io/install.sh | sh
 sudo netbird up --setup-key <SETUP_KEY>
 ```
 
-### Proxmox Host
+### Proxmox Host (direct install)
 
 ```bash
 # Install on the Proxmox host itself (not in a VM)
@@ -585,6 +610,121 @@ sudo netbird up --setup-key <SETUP_KEY>
 # Optionally advertise the Proxmox subnet as a network route
 # (allows mesh peers to reach VMs on the Proxmox bridge)
 ```
+
+### Proxmox LXC Container
+
+Running NetBird in an unprivileged LXC requires `/dev/tun` passthrough. On the Proxmox host shell:
+
+```bash
+# Edit the LXC config (replace 100 with your CT ID)
+nano /etc/pve/lxc/100.conf
+
+# Add these lines at the bottom:
+lxc.cgroup2.devices.allow: c 10:200 rwm
+lxc.mount.entry: /dev/net dev/net none bind,create=dir
+lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file
+```
+
+Then restart the container and install normally:
+
+```bash
+# Inside the LXC
+curl -fsSL https://pkgs.netbird.io/install.sh | sh
+sudo netbird up --setup-key <SETUP_KEY>
+```
+
+Recommended LXC specs for NetBird client only: 1 core, 1 GB RAM, 8 GB disk. Enable start-on-boot in LXC options.
+
+See: https://docs.netbird.io/get-started/install/proxmox-ve
+
+### Synology NAS
+
+Requires SSH access and admin privileges. The TUN device may not persist across reboots.
+
+```bash
+# SSH into Synology
+ssh user@synology-ip
+
+# Install
+curl -fsSL https://pkgs.netbird.io/install.sh | sudo sh
+
+# Connect
+sudo netbird up --setup-key <SETUP_KEY>
+```
+
+**Reboot script** (required on some Synology models): Create a triggered task in DSM (Control Panel > Task Scheduler > Triggered Task > Boot-up) running as root:
+
+```bash
+#!/bin/sh
+if [ ! -c /dev/net/tun ]; then
+  [ ! -d /dev/net ] && mkdir -m 755 /dev/net
+  mknod /dev/net/tun c 10 200
+  chmod 0755 /dev/net/tun
+fi
+if ! lsmod | grep -q "^tun\s"; then
+  insmod /lib/modules/tun.ko
+fi
+```
+
+See: https://docs.netbird.io/get-started/install/synology
+
+### pfSense
+
+NetBird has an official pfSense package (under review for the package manager). Key gotcha: pfSense's automatic outbound NAT randomizes source ports, which breaks NAT traversal. You must configure a Static Port mapping rule.
+
+```bash
+# SSH into pfSense, then download and install
+fetch https://github.com/netbirdio/pfsense-netbird/releases/download/v0.1.2/netbird-0.55.1.pkg
+fetch https://github.com/netbirdio/pfsense-netbird/releases/download/v0.1.2/pfSense-pkg-NetBird-0.1.0.pkg
+pkg add -f netbird-0.55.1.pkg
+pkg add -f pfSense-pkg-NetBird-0.1.0.pkg
+```
+
+After install: configure via VPN > NetBird in the pfSense UI. Assign the `wt0` interface and create a "pass all" firewall rule on it (NetBird ACLs handle access control).
+
+For direct connections (not relayed): Firewall > NAT > Outbound > Hybrid mode, add a Static Port rule for the NetBird host's UDP traffic on WAN.
+
+See: https://docs.netbird.io/get-started/install/pfsense
+
+### OPNSense
+
+```bash
+# SSH into OPNSense
+curl -fsSL https://pkgs.netbird.io/install.sh | sh
+netbird up --setup-key <SETUP_KEY>
+```
+
+See: https://docs.netbird.io/get-started/install/opnsense
+
+### TrueNAS
+
+```bash
+# Via SSH or TrueNAS shell
+curl -fsSL https://pkgs.netbird.io/install.sh | sh
+netbird up --setup-key <SETUP_KEY>
+```
+
+See: https://docs.netbird.io/get-started/install/truenas
+
+### All Supported Client Platforms
+
+| Platform | Install Method | Gotchas |
+|----------|---------------|---------|
+| macOS | Homebrew | None |
+| Linux (any) | Install script | None |
+| Windows | MSI installer | Run as admin |
+| Docker | Container | `NET_ADMIN` + `SYS_ADMIN` caps required |
+| Raspberry Pi / ARM | Install script (auto-detects arch) | None |
+| Proxmox host | Install script | None |
+| Proxmox LXC | Install script | Needs `/dev/tun` passthrough in LXC config |
+| Synology | Install script via SSH | May need reboot script for TUN device |
+| pfSense | Official `.pkg` package | Static Port NAT rule needed for direct connections |
+| OPNSense | Install script | None |
+| TrueNAS | Install script | None |
+| iOS / Android | App Store / Play Store | Mobile only, no setup key support |
+| tvOS / Android TV | App Store / Play Store | Limited to TV interface |
+
+Full install docs: https://docs.netbird.io/get-started/install
 
 ### Verify Connection
 
