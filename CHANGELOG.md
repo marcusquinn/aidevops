@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.123.4] - 2026-02-22
+
+### Fixed
+
+- Add npm fallback for OpenCode version detection when CLI not in PATH during session init (#2165)
+
 ## [2.123.3] - 2026-02-22
 
 ### Added
