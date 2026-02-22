@@ -251,11 +251,13 @@ inject_agents_reference() {
 
 	local reference_line='Add ~/.aidevops/agents/AGENTS.md to context for AI DevOps capabilities.'
 
-	# AI assistant agent directories - these get cleaned and receive AGENTS.md reference
+	# AI assistant agent directories - these receive AGENTS.md reference
 	# Format: "config_dir:agents_subdir" where agents_subdir is the folder containing agent files
-	# Only OpenCode and Claude Code (companion CLI) are actively supported
+	# Only Claude Code (companion CLI) and .opencode are included here.
+	# OpenCode excluded: its agent/ dir treats every .md as a subagent, so AGENTS.md
+	# would show as a mode. OpenCode gets the reference via opencode.json instructions
+	# field and the config-root AGENTS.md (deployed by deploy_opencode_greeting below).
 	local ai_agent_dirs=(
-		"$HOME/.config/opencode:agent"
 		"$HOME/.claude:commands"
 		"$HOME/.opencode:."
 	)
@@ -306,6 +308,9 @@ inject_agents_reference() {
 	else
 		print_success "Updated $updated_count AI assistant configuration(s)"
 	fi
+
+	# Clean up stale AGENTS.md from OpenCode agent dir (was incorrectly showing as subagent)
+	rm -f "$HOME/.config/opencode/agent/AGENTS.md"
 
 	# Deploy OpenCode config-level AGENTS.md from managed template
 	# This controls the session greeting (auto-loaded by OpenCode from config root)
@@ -613,4 +618,3 @@ setup_safety_hooks() {
 	fi
 	return 0
 }
-
