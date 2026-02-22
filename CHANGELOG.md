@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.123.1] - 2026-02-22
+
+### Fixed
+
+- Use npm (not bun) for all tool update commands in tool-version-check.sh — bun not guaranteed installed (#2158)
+- Fix OpenCode package name from `opencode` to `opencode-ai` in tool registry (#2158)
+- Capture positional params as locals in run_with_spinner after shift (#2158)
+
+## [2.123.0] - 2026-02-22
+
+### Added
+
+- NetBird self-hosted mesh VPN agent with multi-platform support
+
 ## [2.122.5] - 2026-02-22
 
 ### Added
