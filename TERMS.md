@@ -81,4 +81,4 @@ If any provision of these terms is found unenforceable, the remaining provisions
 
 ## Contact
 
-For questions about these terms, open an issue at [github.com/anomalyco/aidevops/issues](https://github.com/anomalyco/aidevops/issues).
+For questions about these terms, open an issue at [github.com/marcusquinn/aidevops/issues](https://github.com/marcusquinn/aidevops/issues).
