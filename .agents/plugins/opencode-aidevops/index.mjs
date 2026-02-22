@@ -1391,7 +1391,7 @@ const BUILTIN_TTSR_RULES = [
   {
     id: "no-credentials-in-output",
     description: "Never expose credentials, API keys, or secrets in output",
-    pattern: "(?:api[_-]?key|secret|password|token)\\s*[:=]\\s*['\"][A-Za-z0-9+/=]{16,}['\"]",
+    pattern: "(?:api[_-]?key|secret|password|token)\\s*[:=]\\s*['\"][A-Za-z0-9+/=_-]{16,}['\"]",
     correction: "SECURITY: Never expose credentials in output. Use `aidevops secret set NAME` for secure storage.",
     severity: "error",
     systemPrompt: "NEVER expose credentials, API keys, or secrets in output or logs.",
