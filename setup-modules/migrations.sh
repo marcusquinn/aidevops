@@ -76,6 +76,19 @@ cleanup_deprecated_paths() {
 cleanup_osgrep() {
 	local cleaned=false
 
+	# 0. Kill running osgrep processes first (MCP servers, indexers)
+	# These are Node.js processes already loaded in memory — removing the
+	# binary and data won't stop them, and they may try to rebuild indexes.
+	if pgrep -f 'osgrep' >/dev/null 2>&1; then
+		print_info "Killing running osgrep processes..."
+		pkill -f 'osgrep' 2>/dev/null || true
+		# Give processes a moment to exit gracefully
+		sleep 1
+		# Force-kill any stragglers
+		pkill -9 -f 'osgrep' 2>/dev/null || true
+		cleaned=true
+	fi
+
 	# 1. Uninstall npm package (global)
 	if command -v osgrep &>/dev/null; then
 		print_info "Removing osgrep npm package..."
