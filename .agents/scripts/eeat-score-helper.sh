@@ -48,104 +48,104 @@ WEIGHT_WRITING=0.10
 
 # Print functions
 print_header() {
-    local message="$1"
-    echo -e "${PURPLE}=== $message ===${NC}"
-    return 0
+	local message="$1"
+	echo -e "${PURPLE}=== $message ===${NC}"
+	return 0
 }
 
 # Load configuration
 load_config() {
-    if [[ -f "$CONFIG_FILE" ]] && command -v jq &> /dev/null; then
-        LLM_PROVIDER=$(jq -r '.llm_provider // "openai"' "$CONFIG_FILE")
-        LLM_MODEL=$(jq -r '.llm_model // "gpt-4o"' "$CONFIG_FILE")
-        TEMPERATURE=$(jq -r '.temperature // 0.3' "$CONFIG_FILE")
-        MAX_TOKENS=$(jq -r '.max_tokens // 500' "$CONFIG_FILE")
-        CONCURRENT_REQUESTS=$(jq -r '.concurrent_requests // 3' "$CONFIG_FILE")
-        OUTPUT_FORMAT=$(jq -r '.output_format // "xlsx"' "$CONFIG_FILE")
-        INCLUDE_REASONING=$(jq -r '.include_reasoning // true' "$CONFIG_FILE")
-        
-        # Load weights
-        WEIGHT_AUTHORSHIP=$(jq -r '.weights.authorship // 0.15' "$CONFIG_FILE")
-        WEIGHT_CITATION=$(jq -r '.weights.citation // 0.15' "$CONFIG_FILE")
-        WEIGHT_EFFORT=$(jq -r '.weights.effort // 0.15' "$CONFIG_FILE")
-        WEIGHT_ORIGINALITY=$(jq -r '.weights.originality // 0.15' "$CONFIG_FILE")
-        WEIGHT_INTENT=$(jq -r '.weights.intent // 0.15' "$CONFIG_FILE")
-        WEIGHT_SUBJECTIVE=$(jq -r '.weights.subjective // 0.15' "$CONFIG_FILE")
-        WEIGHT_WRITING=$(jq -r '.weights.writing // 0.10' "$CONFIG_FILE")
-    fi
-    return 0
+	if [[ -f "$CONFIG_FILE" ]] && command -v jq &>/dev/null; then
+		LLM_PROVIDER=$(jq -r '.llm_provider // "openai"' "$CONFIG_FILE")
+		LLM_MODEL=$(jq -r '.llm_model // "gpt-4o"' "$CONFIG_FILE")
+		TEMPERATURE=$(jq -r '.temperature // 0.3' "$CONFIG_FILE")
+		MAX_TOKENS=$(jq -r '.max_tokens // 500' "$CONFIG_FILE")
+		CONCURRENT_REQUESTS=$(jq -r '.concurrent_requests // 3' "$CONFIG_FILE")
+		OUTPUT_FORMAT=$(jq -r '.output_format // "xlsx"' "$CONFIG_FILE")
+		INCLUDE_REASONING=$(jq -r '.include_reasoning // true' "$CONFIG_FILE")
+
+		# Load weights
+		WEIGHT_AUTHORSHIP=$(jq -r '.weights.authorship // 0.15' "$CONFIG_FILE")
+		WEIGHT_CITATION=$(jq -r '.weights.citation // 0.15' "$CONFIG_FILE")
+		WEIGHT_EFFORT=$(jq -r '.weights.effort // 0.15' "$CONFIG_FILE")
+		WEIGHT_ORIGINALITY=$(jq -r '.weights.originality // 0.15' "$CONFIG_FILE")
+		WEIGHT_INTENT=$(jq -r '.weights.intent // 0.15' "$CONFIG_FILE")
+		WEIGHT_SUBJECTIVE=$(jq -r '.weights.subjective // 0.15' "$CONFIG_FILE")
+		WEIGHT_WRITING=$(jq -r '.weights.writing // 0.10' "$CONFIG_FILE")
+	fi
+	return 0
 }
 
 # Check dependencies
 check_dependencies() {
-    local missing=()
-    
-    if ! command -v curl &> /dev/null; then
-        missing+=("curl")
-    fi
-    
-    if ! command -v jq &> /dev/null; then
-        missing+=("jq")
-    fi
-    
-    if ! command -v python3 &> /dev/null; then
-        missing+=("python3")
-    fi
-    
-    if [[ ${#missing[@]} -gt 0 ]]; then
-        print_error "Missing dependencies: ${missing[*]}"
-        print_info "Install with: brew install ${missing[*]}"
-        return 1
-    fi
-    
-    return 0
+	local missing=()
+
+	if ! command -v curl &>/dev/null; then
+		missing+=("curl")
+	fi
+
+	if ! command -v jq &>/dev/null; then
+		missing+=("jq")
+	fi
+
+	if ! command -v python3 &>/dev/null; then
+		missing+=("python3")
+	fi
+
+	if [[ ${#missing[@]} -gt 0 ]]; then
+		print_error "Missing dependencies: ${missing[*]}"
+		print_info "Install with: brew install ${missing[*]}"
+		return 1
+	fi
+
+	return 0
 }
 
 # Check API key
 check_api_key() {
-    if [[ "$LLM_PROVIDER" == "openai" ]]; then
-        if [[ -z "${OPENAI_API_KEY:-}" ]]; then
-            print_error "OPENAI_API_KEY environment variable not set"
-            print_info "Set with: export OPENAI_API_KEY='sk-...'"
-            return 1
-        fi
-    elif [[ "$LLM_PROVIDER" == "anthropic" ]]; then
-        if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
-            print_error "ANTHROPIC_API_KEY environment variable not set"
-            return 1
-        fi
-    fi
-    return 0
+	if [[ "$LLM_PROVIDER" == "openai" ]]; then
+		if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+			print_error "OPENAI_API_KEY environment variable not set"
+			print_info "Set with: export OPENAI_API_KEY='sk-...'"
+			return 1
+		fi
+	elif [[ "$LLM_PROVIDER" == "anthropic" ]]; then
+		if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+			print_error "ANTHROPIC_API_KEY environment variable not set"
+			return 1
+		fi
+	fi
+	return 0
 }
 
 # Extract domain from URL
 get_domain() {
-    local url="$1"
-    echo "$url" | sed -E 's|^https?://||' | sed -E 's|/.*||' | sed -E 's|:.*||'
+	local url="$1"
+	echo "$url" | sed -E 's|^https?://||' | sed -E 's|/.*||' | sed -E 's|:.*||'
 }
 
 # Create output directory structure
 create_output_dir() {
-    local domain="$1"
-    local output_base="${2:-$DEFAULT_OUTPUT_DIR}"
-    local timestamp
-    timestamp=$(date +%Y-%m-%d_%H%M%S)
-    
-    local output_dir="${output_base}/${domain}/${timestamp}"
-    mkdir -p "$output_dir"
-    
-    # Update _latest symlink
-    local latest_link="${output_base}/${domain}/_latest"
-    rm -f "$latest_link"
-    ln -sf "$timestamp" "$latest_link"
-    
-    echo "$output_dir"
-    return 0
+	local domain="$1"
+	local output_base="${2:-$DEFAULT_OUTPUT_DIR}"
+	local timestamp
+	timestamp=$(date +%Y-%m-%d_%H%M%S)
+
+	local output_dir="${output_base}/${domain}/${timestamp}"
+	mkdir -p "$output_dir"
+
+	# Update _latest symlink
+	local latest_link="${output_base}/${domain}/_latest"
+	rm -f "$latest_link"
+	ln -sf "$timestamp" "$latest_link"
+
+	echo "$output_dir"
+	return 0
 }
 
 # Generate Python E-E-A-T analyzer script
 generate_analyzer_script() {
-    cat << 'PYTHON_SCRIPT'
+	cat <<'PYTHON_SCRIPT'
 #!/usr/bin/env python3
 """
 E-E-A-T Score Analyzer
@@ -428,7 +428,7 @@ class EEATAnalyzer:
         }
         
         payload = {
-            "model": self.model if "claude" in self.model else "claude-3-sonnet-20240229",
+            "model": self.model if "claude" in self.model else "claude-sonnet-4-6",
             "max_tokens": 500,
             "messages": [
                 {"role": "user", "content": f"{prompt}\n\nAnalyze this content:\n\n{content}"}
@@ -768,336 +768,336 @@ PYTHON_SCRIPT
 
 # Analyze crawled pages
 do_analyze() {
-    local input_file="$1"
-    shift
-    
-    if [[ ! -f "$input_file" ]]; then
-        print_error "Input file not found: $input_file"
-        return 1
-    fi
-    
-    # Parse options
-    local output_base="$DEFAULT_OUTPUT_DIR"
-    local format="$OUTPUT_FORMAT"
-    local provider="$LLM_PROVIDER"
-    local model="$LLM_MODEL"
-    
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --output)
-                output_base="$2"
-                shift 2
-                ;;
-            --format)
-                format="$2"
-                shift 2
-                ;;
-            --provider)
-                provider="$2"
-                shift 2
-                ;;
-            --model)
-                model="$2"
-                shift 2
-                ;;
-            *)
-                shift
-                ;;
-        esac
-    done
-    
-    # Extract URLs from crawl data
-    local urls=()
-    if [[ "$input_file" == *.json ]]; then
-        # JSON format - extract URLs with status 200
-        mapfile -t urls < <(jq -r '.[] | select(.status_code == 200) | .url' "$input_file" 2>/dev/null || echo "")
-    elif [[ "$input_file" == *.csv ]]; then
-        # CSV format - extract URLs from first column where status is 200
-        mapfile -t urls < <(tail -n +2 "$input_file" | awk -F',' '$2 == "200" || $2 == 200 {gsub(/"/, "", $1); print $1}')
-    fi
-    
-    if [[ ${#urls[@]} -eq 0 ]]; then
-        print_error "No valid URLs found in input file"
-        return 1
-    fi
-    
-    print_header "E-E-A-T Score Analysis"
-    print_info "Input: $input_file"
-    print_info "URLs to analyze: ${#urls[@]}"
-    
-    # Determine domain from first URL
-    local domain
-    domain=$(get_domain "${urls[0]}")
-    
-    # Get output directory (use same as crawl data if in domain folder)
-    local input_dir
-    input_dir=$(dirname "$input_file")
-    local output_dir
-    
-    if [[ "$input_dir" == *"$domain"* ]]; then
-        output_dir="$input_dir"
-    else
-        output_dir=$(create_output_dir "$domain" "$output_base")
-    fi
-    
-    print_info "Output: $output_dir"
-    
-    # Check Python dependencies
-    if ! python3 -c "import aiohttp, bs4" 2>/dev/null; then
-        print_warning "Installing Python dependencies..."
-        pip3 install aiohttp beautifulsoup4 openpyxl --quiet
-    fi
-    
-    # Generate and run analyzer
-    local analyzer_script="/tmp/eeat_analyzer_$$.py"
-    generate_analyzer_script > "$analyzer_script"
-    
-    # Limit to reasonable number for API costs
-    local max_urls=50
-    if [[ ${#urls[@]} -gt $max_urls ]]; then
-        print_warning "Limiting analysis to first $max_urls URLs (of ${#urls[@]})"
-        urls=("${urls[@]:0:$max_urls}")
-    fi
-    
-    python3 "$analyzer_script" "${urls[@]}" \
-        --output "$output_dir" \
-        --provider "$provider" \
-        --model "$model" \
-        --format "$format" \
-        --domain "$domain"
-    
-    rm -f "$analyzer_script"
-    
-    print_success "E-E-A-T analysis complete!"
-    print_info "Results: $output_dir"
-    
-    return 0
+	local input_file="$1"
+	shift
+
+	if [[ ! -f "$input_file" ]]; then
+		print_error "Input file not found: $input_file"
+		return 1
+	fi
+
+	# Parse options
+	local output_base="$DEFAULT_OUTPUT_DIR"
+	local format="$OUTPUT_FORMAT"
+	local provider="$LLM_PROVIDER"
+	local model="$LLM_MODEL"
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--output)
+			output_base="$2"
+			shift 2
+			;;
+		--format)
+			format="$2"
+			shift 2
+			;;
+		--provider)
+			provider="$2"
+			shift 2
+			;;
+		--model)
+			model="$2"
+			shift 2
+			;;
+		*)
+			shift
+			;;
+		esac
+	done
+
+	# Extract URLs from crawl data
+	local urls=()
+	if [[ "$input_file" == *.json ]]; then
+		# JSON format - extract URLs with status 200
+		mapfile -t urls < <(jq -r '.[] | select(.status_code == 200) | .url' "$input_file" 2>/dev/null || echo "")
+	elif [[ "$input_file" == *.csv ]]; then
+		# CSV format - extract URLs from first column where status is 200
+		mapfile -t urls < <(tail -n +2 "$input_file" | awk -F',' '$2 == "200" || $2 == 200 {gsub(/"/, "", $1); print $1}')
+	fi
+
+	if [[ ${#urls[@]} -eq 0 ]]; then
+		print_error "No valid URLs found in input file"
+		return 1
+	fi
+
+	print_header "E-E-A-T Score Analysis"
+	print_info "Input: $input_file"
+	print_info "URLs to analyze: ${#urls[@]}"
+
+	# Determine domain from first URL
+	local domain
+	domain=$(get_domain "${urls[0]}")
+
+	# Get output directory (use same as crawl data if in domain folder)
+	local input_dir
+	input_dir=$(dirname "$input_file")
+	local output_dir
+
+	if [[ "$input_dir" == *"$domain"* ]]; then
+		output_dir="$input_dir"
+	else
+		output_dir=$(create_output_dir "$domain" "$output_base")
+	fi
+
+	print_info "Output: $output_dir"
+
+	# Check Python dependencies
+	if ! python3 -c "import aiohttp, bs4" 2>/dev/null; then
+		print_warning "Installing Python dependencies..."
+		pip3 install aiohttp beautifulsoup4 openpyxl --quiet
+	fi
+
+	# Generate and run analyzer
+	local analyzer_script="/tmp/eeat_analyzer_$$.py"
+	generate_analyzer_script >"$analyzer_script"
+
+	# Limit to reasonable number for API costs
+	local max_urls=50
+	if [[ ${#urls[@]} -gt $max_urls ]]; then
+		print_warning "Limiting analysis to first $max_urls URLs (of ${#urls[@]})"
+		urls=("${urls[@]:0:$max_urls}")
+	fi
+
+	python3 "$analyzer_script" "${urls[@]}" \
+		--output "$output_dir" \
+		--provider "$provider" \
+		--model "$model" \
+		--format "$format" \
+		--domain "$domain"
+
+	rm -f "$analyzer_script"
+
+	print_success "E-E-A-T analysis complete!"
+	print_info "Results: $output_dir"
+
+	return 0
 }
 
 # Score single URL
 do_score() {
-    local url="$1"
-    shift
-    
-    local verbose=false
-    local output_base="$DEFAULT_OUTPUT_DIR"
-    
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --verbose|-v)
-                verbose=true
-                shift
-                ;;
-            --output)
-                output_base="$2"
-                shift 2
-                ;;
-            *)
-                shift
-                ;;
-        esac
-    done
-    
-    local domain
-    domain=$(get_domain "$url")
-    local output_dir
-    output_dir=$(create_output_dir "$domain" "$output_base")
-    
-    print_header "E-E-A-T Score Analysis"
-    print_info "URL: $url"
-    
-    # Check Python dependencies
-    if ! python3 -c "import aiohttp, bs4" 2>/dev/null; then
-        print_warning "Installing Python dependencies..."
-        pip3 install aiohttp beautifulsoup4 openpyxl --quiet
-    fi
-    
-    local analyzer_script="/tmp/eeat_analyzer_$$.py"
-    generate_analyzer_script > "$analyzer_script"
-    
-    python3 "$analyzer_script" "$url" \
-        --output "$output_dir" \
-        --provider "$LLM_PROVIDER" \
-        --model "$LLM_MODEL" \
-        --format "all" \
-        --domain "$domain"
-    
-    rm -f "$analyzer_script"
-    
-    print_success "Analysis complete!"
-    print_info "Results: $output_dir"
-    
-    return 0
+	local url="$1"
+	shift
+
+	local verbose=false
+	local output_base="$DEFAULT_OUTPUT_DIR"
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--verbose | -v)
+			verbose=true
+			shift
+			;;
+		--output)
+			output_base="$2"
+			shift 2
+			;;
+		*)
+			shift
+			;;
+		esac
+	done
+
+	local domain
+	domain=$(get_domain "$url")
+	local output_dir
+	output_dir=$(create_output_dir "$domain" "$output_base")
+
+	print_header "E-E-A-T Score Analysis"
+	print_info "URL: $url"
+
+	# Check Python dependencies
+	if ! python3 -c "import aiohttp, bs4" 2>/dev/null; then
+		print_warning "Installing Python dependencies..."
+		pip3 install aiohttp beautifulsoup4 openpyxl --quiet
+	fi
+
+	local analyzer_script="/tmp/eeat_analyzer_$$.py"
+	generate_analyzer_script >"$analyzer_script"
+
+	python3 "$analyzer_script" "$url" \
+		--output "$output_dir" \
+		--provider "$LLM_PROVIDER" \
+		--model "$LLM_MODEL" \
+		--format "all" \
+		--domain "$domain"
+
+	rm -f "$analyzer_script"
+
+	print_success "Analysis complete!"
+	print_info "Results: $output_dir"
+
+	return 0
 }
 
 # Batch analyze URLs from file
 do_batch() {
-    local urls_file="$1"
-    shift
-    
-    if [[ ! -f "$urls_file" ]]; then
-        print_error "URLs file not found: $urls_file"
-        return 1
-    fi
-    
-    local urls=()
-    while IFS= read -r url; do
-        [[ -n "$url" && ! "$url" =~ ^# ]] && urls+=("$url")
-    done < "$urls_file"
-    
-    if [[ ${#urls[@]} -eq 0 ]]; then
-        print_error "No URLs found in file"
-        return 1
-    fi
-    
-    local output_base="$DEFAULT_OUTPUT_DIR"
-    local format="$OUTPUT_FORMAT"
-    
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --output)
-                output_base="$2"
-                shift 2
-                ;;
-            --format)
-                format="$2"
-                shift 2
-                ;;
-            *)
-                shift
-                ;;
-        esac
-    done
-    
-    local domain
-    domain=$(get_domain "${urls[0]}")
-    local output_dir
-    output_dir=$(create_output_dir "$domain" "$output_base")
-    
-    print_header "E-E-A-T Batch Analysis"
-    print_info "URLs: ${#urls[@]}"
-    print_info "Output: $output_dir"
-    
-    # Check Python dependencies
-    if ! python3 -c "import aiohttp, bs4" 2>/dev/null; then
-        print_warning "Installing Python dependencies..."
-        pip3 install aiohttp beautifulsoup4 openpyxl --quiet
-    fi
-    
-    local analyzer_script="/tmp/eeat_analyzer_$$.py"
-    generate_analyzer_script > "$analyzer_script"
-    
-    python3 "$analyzer_script" "${urls[@]}" \
-        --output "$output_dir" \
-        --provider "$LLM_PROVIDER" \
-        --model "$LLM_MODEL" \
-        --format "$format" \
-        --domain "$domain"
-    
-    rm -f "$analyzer_script"
-    
-    print_success "Batch analysis complete!"
-    print_info "Results: $output_dir"
-    
-    return 0
+	local urls_file="$1"
+	shift
+
+	if [[ ! -f "$urls_file" ]]; then
+		print_error "URLs file not found: $urls_file"
+		return 1
+	fi
+
+	local urls=()
+	while IFS= read -r url; do
+		[[ -n "$url" && ! "$url" =~ ^# ]] && urls+=("$url")
+	done <"$urls_file"
+
+	if [[ ${#urls[@]} -eq 0 ]]; then
+		print_error "No URLs found in file"
+		return 1
+	fi
+
+	local output_base="$DEFAULT_OUTPUT_DIR"
+	local format="$OUTPUT_FORMAT"
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--output)
+			output_base="$2"
+			shift 2
+			;;
+		--format)
+			format="$2"
+			shift 2
+			;;
+		*)
+			shift
+			;;
+		esac
+	done
+
+	local domain
+	domain=$(get_domain "${urls[0]}")
+	local output_dir
+	output_dir=$(create_output_dir "$domain" "$output_base")
+
+	print_header "E-E-A-T Batch Analysis"
+	print_info "URLs: ${#urls[@]}"
+	print_info "Output: $output_dir"
+
+	# Check Python dependencies
+	if ! python3 -c "import aiohttp, bs4" 2>/dev/null; then
+		print_warning "Installing Python dependencies..."
+		pip3 install aiohttp beautifulsoup4 openpyxl --quiet
+	fi
+
+	local analyzer_script="/tmp/eeat_analyzer_$$.py"
+	generate_analyzer_script >"$analyzer_script"
+
+	python3 "$analyzer_script" "${urls[@]}" \
+		--output "$output_dir" \
+		--provider "$LLM_PROVIDER" \
+		--model "$LLM_MODEL" \
+		--format "$format" \
+		--domain "$domain"
+
+	rm -f "$analyzer_script"
+
+	print_success "Batch analysis complete!"
+	print_info "Results: $output_dir"
+
+	return 0
 }
 
 # Generate report from existing scores
 do_report() {
-    local scores_file="$1"
-    shift
-    
-    if [[ ! -f "$scores_file" ]]; then
-        print_error "Scores file not found: $scores_file"
-        return 1
-    fi
-    
-    print_header "Generating E-E-A-T Report"
-    print_info "Input: $scores_file"
-    
-    # For now, just display summary from JSON
-    if [[ "$scores_file" == *.json ]]; then
-        if command -v jq &> /dev/null; then
-            jq '.' "$scores_file"
-        else
-            cat "$scores_file"
-        fi
-    fi
-    
-    return 0
+	local scores_file="$1"
+	shift
+
+	if [[ ! -f "$scores_file" ]]; then
+		print_error "Scores file not found: $scores_file"
+		return 1
+	fi
+
+	print_header "Generating E-E-A-T Report"
+	print_info "Input: $scores_file"
+
+	# For now, just display summary from JSON
+	if [[ "$scores_file" == *.json ]]; then
+		if command -v jq &>/dev/null; then
+			jq '.' "$scores_file"
+		else
+			cat "$scores_file"
+		fi
+	fi
+
+	return 0
 }
 
 # Check status
 check_status() {
-    print_header "E-E-A-T Score Helper Status"
-    
-    # Check dependencies
-    print_info "Checking dependencies..."
-    
-    if command -v curl &> /dev/null; then
-        print_success "curl: installed"
-    else
-        print_error "curl: not installed"
-    fi
-    
-    if command -v jq &> /dev/null; then
-        print_success "jq: installed"
-    else
-        print_error "jq: not installed"
-    fi
-    
-    if command -v python3 &> /dev/null; then
-        print_success "python3: installed"
-        
-        if python3 -c "import aiohttp" 2>/dev/null; then
-            print_success "  aiohttp: installed"
-        else
-            print_warning "  aiohttp: not installed (pip3 install aiohttp)"
-        fi
-        
-        if python3 -c "import bs4" 2>/dev/null; then
-            print_success "  beautifulsoup4: installed"
-        else
-            print_warning "  beautifulsoup4: not installed"
-        fi
-        
-        if python3 -c "import openpyxl" 2>/dev/null; then
-            print_success "  openpyxl: installed"
-        else
-            print_warning "  openpyxl: not installed"
-        fi
-    else
-        print_error "python3: not installed"
-    fi
-    
-    # Check API keys
-    print_info "Checking API keys..."
-    
-    if [[ -n "${OPENAI_API_KEY:-}" ]]; then
-        print_success "OPENAI_API_KEY: set"
-    else
-        print_warning "OPENAI_API_KEY: not set"
-    fi
-    
-    if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
-        print_success "ANTHROPIC_API_KEY: set"
-    else
-        print_info "ANTHROPIC_API_KEY: not set (optional)"
-    fi
-    
-    # Check config
-    if [[ -f "$CONFIG_FILE" ]]; then
-        print_success "Config: $CONFIG_FILE"
-    else
-        print_info "Config: using defaults"
-    fi
-    
-    return 0
+	print_header "E-E-A-T Score Helper Status"
+
+	# Check dependencies
+	print_info "Checking dependencies..."
+
+	if command -v curl &>/dev/null; then
+		print_success "curl: installed"
+	else
+		print_error "curl: not installed"
+	fi
+
+	if command -v jq &>/dev/null; then
+		print_success "jq: installed"
+	else
+		print_error "jq: not installed"
+	fi
+
+	if command -v python3 &>/dev/null; then
+		print_success "python3: installed"
+
+		if python3 -c "import aiohttp" 2>/dev/null; then
+			print_success "  aiohttp: installed"
+		else
+			print_warning "  aiohttp: not installed (pip3 install aiohttp)"
+		fi
+
+		if python3 -c "import bs4" 2>/dev/null; then
+			print_success "  beautifulsoup4: installed"
+		else
+			print_warning "  beautifulsoup4: not installed"
+		fi
+
+		if python3 -c "import openpyxl" 2>/dev/null; then
+			print_success "  openpyxl: installed"
+		else
+			print_warning "  openpyxl: not installed"
+		fi
+	else
+		print_error "python3: not installed"
+	fi
+
+	# Check API keys
+	print_info "Checking API keys..."
+
+	if [[ -n "${OPENAI_API_KEY:-}" ]]; then
+		print_success "OPENAI_API_KEY: set"
+	else
+		print_warning "OPENAI_API_KEY: not set"
+	fi
+
+	if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+		print_success "ANTHROPIC_API_KEY: set"
+	else
+		print_info "ANTHROPIC_API_KEY: not set (optional)"
+	fi
+
+	# Check config
+	if [[ -f "$CONFIG_FILE" ]]; then
+		print_success "Config: $CONFIG_FILE"
+	else
+		print_info "Config: using defaults"
+	fi
+
+	return 0
 }
 
 # Show help
 show_help() {
-    cat << 'EOF'
+	cat <<'EOF'
 E-E-A-T Score Helper - Content Quality Analysis
 
 Usage: eeat-score-helper.sh [command] [input] [options]
@@ -1162,49 +1162,49 @@ Related:
   - Site crawler: site-crawler-helper.sh
   - Crawl4AI: crawl4ai-helper.sh
 EOF
-    return 0
+	return 0
 }
 
 # Main function
 main() {
-    load_config
-    
-    local command="${1:-help}"
-    shift || true
-    
-    case "$command" in
-        analyze)
-            check_dependencies || exit 1
-            check_api_key || exit 1
-            do_analyze "$@"
-            ;;
-        score)
-            check_dependencies || exit 1
-            check_api_key || exit 1
-            do_score "$@"
-            ;;
-        batch)
-            check_dependencies || exit 1
-            check_api_key || exit 1
-            do_batch "$@"
-            ;;
-        report)
-            do_report "$@"
-            ;;
-        status)
-            check_status
-            ;;
-        help|-h|--help|"")
-            show_help
-            ;;
-        *)
-            print_error "Unknown command: $command"
-            show_help
-            exit 1
-            ;;
-    esac
-    
-    return 0
+	load_config
+
+	local command="${1:-help}"
+	shift || true
+
+	case "$command" in
+	analyze)
+		check_dependencies || exit 1
+		check_api_key || exit 1
+		do_analyze "$@"
+		;;
+	score)
+		check_dependencies || exit 1
+		check_api_key || exit 1
+		do_score "$@"
+		;;
+	batch)
+		check_dependencies || exit 1
+		check_api_key || exit 1
+		do_batch "$@"
+		;;
+	report)
+		do_report "$@"
+		;;
+	status)
+		check_status
+		;;
+	help | -h | --help | "")
+		show_help
+		;;
+	*)
+		print_error "Unknown command: $command"
+		show_help
+		exit 1
+		;;
+	esac
+
+	return 0
 }
 
 main "$@"
