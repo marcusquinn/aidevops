@@ -2466,3 +2466,10 @@
   check: file-exists .agents/rules/no-todo-edit-by-worker.md
   check: shellcheck .agents/scripts/ttsr-rule-loader.sh
   check: file-exists .agents/scripts/ttsr-rule-loader.sh
+
+- [ ] v282 t1307 LLM observability: SQLite-based request tracking — crea... | PR #2137 | merged:2026-02-22
+  files: .agents/scripts/observability-helper.sh, aidevops.sh
+  check: shellcheck .agents/scripts/observability-helper.sh
+  check: file-exists .agents/scripts/observability-helper.sh
+  check: shellcheck aidevops.sh
+  check: file-exists aidevops.sh
