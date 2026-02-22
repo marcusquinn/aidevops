@@ -2455,3 +2455,14 @@
   check: file-exists .agents/scripts/supervisor/pulse.sh
   check: shellcheck .agents/scripts/supervisor/utility.sh
   check: file-exists .agents/scripts/supervisor/utility.sh
+
+- [ ] v281 t1303 Soft TTSR rule engine — define rules in `.agents/rules/... | PR #2136 | merged:2026-02-22
+  files: .agents/rules/README.md, .agents/rules/no-cat-for-reading.md, .agents/rules/no-edit-on-main.md, .agents/rules/no-glob-for-discovery.md, .agents/rules/no-hardcoded-secrets.md, .agents/rules/no-todo-edit-by-worker.md, .agents/scripts/ttsr-rule-loader.sh
+  check: file-exists .agents/rules/README.md
+  check: file-exists .agents/rules/no-cat-for-reading.md
+  check: file-exists .agents/rules/no-edit-on-main.md
+  check: file-exists .agents/rules/no-glob-for-discovery.md
+  check: file-exists .agents/rules/no-hardcoded-secrets.md
+  check: file-exists .agents/rules/no-todo-edit-by-worker.md
+  check: shellcheck .agents/scripts/ttsr-rule-loader.sh
+  check: file-exists .agents/scripts/ttsr-rule-loader.sh
