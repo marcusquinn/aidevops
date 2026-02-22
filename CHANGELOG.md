@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- add spinner to brew/apt/dnf/yum/pacman/apk installs during setup (#2154)
+
+### Changed
+
+- Documentation: add changelog entry for v2.122.3
+
+## [2.122.3] - 2026-02-22
+
+### Added
+
 - Spinner feedback for package manager installs during setup (brew, apt, dnf, yum, pacman, apk) (#2154)
 
 ## [2.122.2] - 2026-02-22
