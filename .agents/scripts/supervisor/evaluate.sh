@@ -5,6 +5,25 @@
 # and AI-assisted evaluation
 
 #######################################
+# Map a tier name to a numeric rank for comparison (t4107)
+# Used to detect tier downgrades: actual_tier < requested_tier
+# Ordering: haiku(1) < flash(2) < sonnet(3) < pro(4) < opus(5)
+# Returns 0 for unknown tiers (comparison will be skipped)
+#######################################
+_tier_rank() {
+	local tier="$1"
+	case "$tier" in
+	haiku) echo "1" ;;
+	flash) echo "2" ;;
+	sonnet) echo "3" ;;
+	pro) echo "4" ;;
+	opus) echo "5" ;;
+	*) echo "0" ;;
+	esac
+	return 0
+}
+
+#######################################
 # Extract the last N lines from a log file (for AI eval context)
 # Avoids sending entire multi-MB logs to the evaluator
 #######################################
@@ -939,6 +958,40 @@ record_evaluation_metadata() {
 			[[ -n "$actual_tier" ]] && budget_args+=(--actual-tier "$actual_tier")
 
 			"$budget_helper" record "${budget_args[@]}" 2>/dev/null || true
+		fi
+	fi
+
+	# t4107: Tier downgrade detection — record TIER_DOWNGRADE_OK pattern when a task
+	# succeeds at a lower tier than requested. This enables the dispatch phase to
+	# automatically recommend the lower tier for similar future tasks, reducing
+	# token cost by ~40-60% per downgraded task.
+	#
+	# Conditions: actual_tier < requested_tier AND quality >= 2 (complete)
+	# The tier ordering is: haiku(1) < flash(2) < sonnet(3) < pro(4) < opus(5)
+	if [[ -n "$requested_tier" && -n "$actual_tier" && "$requested_tier" != "$actual_tier" && "$quality_score" -ge 2 ]]; then
+		local requested_rank actual_rank
+		requested_rank=$(_tier_rank "$requested_tier")
+		actual_rank=$(_tier_rank "$actual_tier")
+
+		if [[ "$actual_rank" -lt "$requested_rank" && "$actual_rank" -gt 0 && "$requested_rank" -gt 0 ]]; then
+			log_info "t4107: Tier downgrade success detected for $task_id: requested=$requested_tier actual=$actual_tier quality=$quality_score — recording TIER_DOWNGRADE_OK"
+
+			local downgrade_desc="TIER_DOWNGRADE_OK: $task_id succeeded at $actual_tier (requested $requested_tier) quality=$quality_score type=$task_type"
+			local downgrade_tags="supervisor,tier_downgrade_ok,requested_tier:${requested_tier},actual_tier:${actual_tier},quality:${quality_score}"
+			[[ -n "$task_type" ]] && downgrade_tags="${downgrade_tags},task_type:${task_type}"
+			[[ -n "$model_tier" ]] && downgrade_tags="${downgrade_tags},model:${model_tier}"
+
+			"$pattern_helper" record \
+				--outcome "success" \
+				--task-type "${task_type:-feature}" \
+				--task-id "$task_id" \
+				--description "$downgrade_desc" \
+				--tags "$downgrade_tags" \
+				--strategy "tier_downgrade" \
+				${model_tier:+--model "$model_tier"} \
+				${tokens_in:+--tokens-in "$tokens_in"} \
+				${tokens_out:+--tokens-out "$tokens_out"} \
+				2>/dev/null || true
 		fi
 	fi
 
