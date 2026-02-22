@@ -142,6 +142,49 @@ cleanup_osgrep() {
 	return 0
 }
 
+# Remove stale bun-installed opencode if npm version exists (v2.123.5)
+# Prior to v2.123.1, tool-version-check.sh used `bun install -g opencode-ai`.
+# This left a binary at ~/.bun/bin/opencode that shadows the npm install
+# if ~/.bun/bin is earlier in PATH than the npm bin directory.
+cleanup_stale_bun_opencode() {
+	local bun_opencode="$HOME/.bun/bin/opencode"
+	local bun_modules="$HOME/.bun/install/global/node_modules/opencode-ai"
+
+	# Only clean up if the stale bun binary exists
+	if [[ ! -f "$bun_opencode" ]] && [[ ! -d "$bun_modules" ]]; then
+		return 0
+	fi
+
+	# Only clean up if npm version is installed (don't leave user without opencode)
+	local npm_opencode
+	npm_opencode=$(npm list -g opencode-ai --json 2>/dev/null | grep -c '"opencode-ai"' || true)
+	if [[ "$npm_opencode" -eq 0 ]]; then
+		# npm version not installed — install it first, then clean up bun
+		if command -v npm >/dev/null 2>&1; then
+			print_info "Installing opencode via npm (replacing bun install)..."
+			npm_global_install "opencode-ai" >/dev/null 2>&1 || true
+		else
+			# Can't install npm version — leave bun version in place
+			return 0
+		fi
+	fi
+
+	# Remove stale bun binary and modules
+	if [[ -f "$bun_opencode" ]]; then
+		rm -f "$bun_opencode"
+		print_info "Removed stale bun opencode binary: $bun_opencode"
+	fi
+
+	if [[ -d "$bun_modules" ]]; then
+		rm -rf "$bun_modules"
+		print_info "Removed stale bun opencode modules: $bun_modules"
+	fi
+
+	print_success "Cleaned up stale bun opencode install (npm version is canonical)"
+
+	return 0
+}
+
 # Migrate .agent -> .agents in user projects and local config
 # v2.104.0: Industry converging on .agents/ folder convention (aligning with AGENTS.md)
 # This migrates:
