@@ -7,9 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.122.2] - 2026-02-22
+
+### Changed
+
+- Documentation: add changelog entry for SETUP_MODULES_DIR hotfix
+
 ### Fixed
 
-- Curl install still dies silently on fresh machines — SETUP_MODULES_DIR subshell exits non-zero under set -e (#2149)
+- curl install dies at SETUP_MODULES_DIR under set -e on fresh machines (#2149)
 
 ## [2.122.1] - 2026-02-22
 
