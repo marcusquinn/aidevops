@@ -2440,7 +2440,7 @@
   check: rg "headless-dispatch" .agents/subagent-index.toon
   check: rg "remote-dispatch" .agents/subagent-index.toon
 
-- [ ] v279 t1165.4 Integration test: multi-container batch dispatch — veri... | PR #2111 | merged:2026-02-21
+- [x] v279 t1165.4 Integration test: multi-container batch dispatch — veri... | PR #2111 | merged:2026-02-21 verified:2026-02-21
   files: tests/test-multi-container-batch-dispatch.sh
   check: shellcheck tests/test-multi-container-batch-dispatch.sh
   check: file-exists tests/test-multi-container-batch-dispatch.sh
