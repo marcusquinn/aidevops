@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.124.2] - 2026-02-22
+
+### Changed
+
+- Documentation: update model files from aidevops (t1133)
+
+### Fixed
+
+- kill running osgrep processes before cleanup to prevent index rebuilds (#2170)
+
 ## [2.123.5] - 2026-02-22
 
 ### Added
