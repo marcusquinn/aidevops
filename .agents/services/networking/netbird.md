@@ -354,6 +354,175 @@ curl -sf "https://netbird.example.com/api/peers" \
   }'
 ```
 
+## Coolify Deployment (Recommended)
+
+Coolify uses **Traefik natively** as its reverse proxy, which means it supports the full NetBird feature set -- including the reverse proxy feature that requires TLS passthrough. Combined with Coolify's management UI, Docker Compose build pack, persistent storage, and environment variable management, this is the **best deployment option** for aidevops users who already run Coolify.
+
+### Why Coolify over standalone VPS
+
+| Aspect | Standalone VPS | Coolify |
+|--------|---------------|---------|
+| Reverse proxy | Full (Traefik) | Full (Traefik, native) |
+| Management UI | SSH + CLI only | Coolify dashboard |
+| TLS certificates | Traefik Let's Encrypt | Coolify-managed Let's Encrypt |
+| Updates | Manual or cron script | Coolify redeploy |
+| Monitoring | Custom scripts | Coolify built-in + custom |
+| Backups | Manual | Coolify volume backups |
+| Multi-service | Docker Compose only | Full PaaS with other apps |
+
+### Prerequisites
+
+- A Coolify instance (v4.x) with a connected server
+- A public domain pointing to the Coolify server (e.g., `netbird.example.com`)
+- (Optional) Wildcard DNS for the proxy feature (e.g., `*.proxy.netbird.example.com`)
+- UDP port 3478 open on the server firewall (STUN -- cannot be proxied)
+
+### DNS Records
+
+| Type | Name | Content | Notes |
+|------|------|---------|-------|
+| A | `netbird` | `COOLIFY.SERVER.IP` | Management server |
+| CNAME | `proxy` | `netbird.example.com` | Reverse proxy (optional) |
+| CNAME | `*.proxy` | `netbird.example.com` | Wildcard for proxy services (optional) |
+
+### Step 1: Generate NetBird config on a temporary machine
+
+NetBird's `getting-started.sh` script generates the Docker Compose and config files. Run it once on any machine to generate the files, then deploy them via Coolify.
+
+```bash
+# On any Linux machine with Docker (can be temporary)
+export NETBIRD_DOMAIN=netbird.example.com
+curl -fsSL https://github.com/netbirdio/netbird/releases/latest/download/getting-started.sh | bash
+```
+
+When prompted:
+1. **Reverse proxy**: Select `[1] Existing Traefik` (Coolify already provides Traefik)
+2. **Proxy service**: Answer `y` if you want the reverse proxy feature
+3. **Proxy domain**: Enter your proxy domain (e.g., `proxy.netbird.example.com`)
+
+This generates:
+- `docker-compose.yml` -- all NetBird services (without Traefik, since Coolify provides it)
+- `config.yaml` -- combined server config
+- `dashboard.env` -- dashboard environment variables
+- `proxy.env` -- proxy environment variables (if enabled)
+
+### Step 2: Adapt the Docker Compose for Coolify
+
+The generated `docker-compose.yml` needs minor adjustments for Coolify:
+
+1. **Remove the Traefik service** (if present) -- Coolify provides its own Traefik
+2. **Add Traefik labels** to the dashboard service for domain routing
+3. **Expose UDP 3478** via port mapping for STUN
+4. **Use bind mounts** for persistent config
+
+Example adapted compose (adjust based on your generated file):
+
+```yaml
+services:
+  netbird-server:
+    image: netbirdio/netbird:latest
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: ./config.yaml
+        target: /etc/netbird/config.yaml
+        content: |
+          # Paste your generated config.yaml content here
+          # Coolify will create this file automatically
+      - netbird-data:/var/lib/netbird
+    ports:
+      # STUN -- must be exposed directly, cannot be proxied
+      - "3478:3478/udp"
+
+  dashboard:
+    image: netbirdio/dashboard:latest
+    restart: unless-stopped
+    env_file:
+      - dashboard.env
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.netbird-dashboard.rule=Host(`netbird.example.com`)"
+      - "traefik.http.routers.netbird-dashboard.tls=true"
+      - "traefik.http.routers.netbird-dashboard.tls.certresolver=letsencrypt"
+      - "traefik.http.services.netbird-dashboard.loadbalancer.server.port=80"
+
+  # Only if proxy feature is enabled
+  netbird-proxy:
+    image: netbirdio/netbird-proxy:latest
+    restart: unless-stopped
+    env_file:
+      - proxy.env
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.netbird-proxy.rule=HostRegexp(`{subdomain:.+}.proxy.netbird.example.com`)"
+      - "traefik.http.routers.netbird-proxy.tls=true"
+      - "traefik.http.routers.netbird-proxy.tls.certresolver=letsencrypt"
+      - "traefik.http.services.netbird-proxy.loadbalancer.server.port=443"
+      - "traefik.tcp.routers.netbird-proxy-tls.rule=HostSNI(`*.proxy.netbird.example.com`)"
+      - "traefik.tcp.routers.netbird-proxy-tls.tls.passthrough=true"
+
+volumes:
+  netbird-data:
+```
+
+### Step 3: Deploy via Coolify
+
+1. In Coolify dashboard, create a new **Application** (not Service)
+2. Select **Docker Compose** as the build pack
+3. Choose deployment method:
+   - **Git repository**: Push the adapted compose + config files to a repo, connect it
+   - **Raw Docker Compose**: Paste the compose content directly in the Coolify UI
+4. Set the domain for the dashboard service to `netbird.example.com`
+5. Configure environment variables in Coolify's UI (from `dashboard.env` and `proxy.env`)
+6. Deploy
+
+### Step 4: Post-deployment
+
+1. Open `https://netbird.example.com` and create your admin account on the `/setup` page
+2. Create a Personal Access Token (Settings > Personal Access Tokens)
+3. Store the PAT securely: `aidevops secret set NETBIRD_PAT`
+4. Create setup keys for device provisioning
+
+### Coolify-specific considerations
+
+**UDP port 3478**: Coolify's Docker Compose build pack supports port mapping via the `ports` directive. The STUN port is mapped directly to the host, bypassing Traefik (UDP cannot be proxied through HTTP reverse proxies).
+
+**Persistent storage**: Use Coolify's volume management or bind mounts. The `netbird-data` volume holds the database (SQLite) and encryption keys. For production, consider adding a PostgreSQL database via Coolify's database feature and updating `config.yaml` accordingly.
+
+**Updates**: Redeploy from Coolify's dashboard to pull latest images. Coolify can be configured for auto-deploy on image tag changes.
+
+**TLS passthrough for reverse proxy**: Coolify's Traefik supports TCP routers with TLS passthrough via labels. This is what enables the NetBird reverse proxy feature -- the key capability that Cloudron cannot provide.
+
+**Wildcard certificates**: If using the proxy feature, configure Coolify's Traefik for wildcard certificates via DNS challenge. See Coolify docs: Knowledge Base > Proxy > Traefik > Wildcard SSL Certificates.
+
+**Health checks**: Add a health check to the netbird-server service:
+
+```yaml
+services:
+  netbird-server:
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:80/api/accounts"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+```
+
+### Feature comparison across deployment options
+
+| Feature | Cloudron | Standalone VPS | Coolify |
+|---------|----------|---------------|---------|
+| Mesh VPN (P2P tunnels) | Yes | Yes | Yes |
+| NAT traversal (STUN/TURN) | Yes | Yes | Yes |
+| Dashboard + API | Yes | Yes | Yes |
+| SSO (OIDC) | Yes (Cloudron SSO) | Yes (any IdP) | Yes (any IdP) |
+| PostgreSQL | Yes (addon) | Yes (manual) | Yes (Coolify DB) |
+| Reverse proxy feature | **No** | Yes | **Yes** |
+| Management UI for infra | Cloudron | None (SSH) | Coolify |
+| Auto-TLS | Cloudron | Traefik | Coolify/Traefik |
+| Wildcard certs | Limited | Yes | Yes |
+| Cost overhead | Cloudron license | None | None (open source) |
+
 ## Client Installation
 
 ### macOS
