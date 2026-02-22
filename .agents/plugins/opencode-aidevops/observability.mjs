@@ -14,7 +14,7 @@
  * @module observability
  */
 
-import { existsSync, mkdirSync } from "fs";
+import { mkdirSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import { execSync } from "child_process";
