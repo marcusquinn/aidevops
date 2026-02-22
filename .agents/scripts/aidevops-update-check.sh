@@ -69,7 +69,7 @@ detect_app() {
 		case "$parent" in
 		*opencode*)
 			app_name="OpenCode"
-			app_version=$(jq -r '.version // empty' ~/.bun/install/global/node_modules/opencode-ai/package.json 2>/dev/null || echo "")
+			app_version=$(opencode --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
 			;;
 		*claude*)
 			app_name="Claude Code"
