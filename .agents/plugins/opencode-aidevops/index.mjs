@@ -1329,6 +1329,350 @@ async function compactingHook(_input, output, directory) {
 // Tool definitions extracted to tools.mjs — imported at top of file
 
 // ---------------------------------------------------------------------------
+// Phase 5: Soft TTSR — Rule Enforcement via Plugin Hooks (t1304)
+// ---------------------------------------------------------------------------
+// "Soft TTSR" (Text-to-Speech Rules) provides preventative enforcement of
+// coding standards without stream-level interception (which OpenCode doesn't
+// expose). Three hooks work together:
+//
+//   1. system.transform  — inject active rules into system prompt (preventative)
+//   2. messages.transform — scan prior assistant outputs for violations, inject
+//                           correction context into message history (corrective)
+//   3. text.complete      — detect violations post-hoc and flag them (observational)
+//
+// Rules are data-driven: each rule is an object with id, description, a regex
+// pattern to detect violations, and a correction message. Rules can be loaded
+// from a config file or use the built-in defaults.
+
+/**
+ * Path to optional user-defined TTSR rules file.
+ * JSON array of rule objects: { id, description, pattern, correction, severity }
+ * @type {string}
+ */
+const TTSR_RULES_PATH = join(AGENTS_DIR, "configs", "ttsr-rules.json");
+
+/**
+ * Built-in TTSR rules — enforced by default.
+ * Each rule has:
+ *   - id: unique identifier
+ *   - description: human-readable explanation
+ *   - pattern: regex string to detect violations in assistant output
+ *   - correction: message injected when violation is detected
+ *   - severity: "error" | "warn" | "info"
+ *   - systemPrompt: instruction injected into system prompt (preventative)
+ *
+ * @type {Array<{id: string, description: string, pattern: string, correction: string, severity: string, systemPrompt: string}>}
+ */
+const BUILTIN_TTSR_RULES = [
+  {
+    id: "no-glob-for-discovery",
+    description: "Use git ls-files or fd instead of Glob/find for file discovery",
+    pattern: "(?:mcp_glob|Glob tool|use.*\\bGlob\\b.*to find|I'll use Glob)",
+    correction: "Use `git ls-files` or `fd` for file discovery, not Glob. Glob is a last resort when Bash is unavailable.",
+    severity: "warn",
+    systemPrompt: "File discovery: use `git ls-files '<pattern>'` for git-tracked files, `fd` for untracked. NEVER use Glob/find as primary discovery.",
+  },
+  {
+    id: "no-cat-for-reading",
+    description: "Use Read tool instead of cat/head/tail for file reading",
+    pattern: "(?:^|\\s)cat\\s+['\"]?[/~\\w]|\\bhead\\s+-n|\\btail\\s+-n",
+    correction: "Use the Read tool for file reading, not cat/head/tail. These are Bash commands that waste context.",
+    severity: "info",
+    systemPrompt: "Use the Read tool for file reading. Avoid cat/head/tail in Bash — they waste context tokens.",
+  },
+  {
+    id: "read-before-edit",
+    description: "Always Read a file before Edit or Write operations",
+    pattern: "(?:I'll edit|Let me edit|I'll write to|Let me write)(?:(?!I'll read|let me read|I've read|already read).){0,200}$",
+    correction: "ALWAYS Read a file before Edit/Write. These tools fail without a prior Read in this conversation.",
+    severity: "error",
+    systemPrompt: "ALWAYS Read a file before Edit or Write. These tools FAIL without a prior Read in this conversation.",
+  },
+  {
+    id: "no-credentials-in-output",
+    description: "Never expose credentials, API keys, or secrets in output",
+    pattern: "(?:api[_-]?key|secret|password|token)\\s*[:=]\\s*['\"][A-Za-z0-9+/=]{16,}['\"]",
+    correction: "SECURITY: Never expose credentials in output. Use `aidevops secret set NAME` for secure storage.",
+    severity: "error",
+    systemPrompt: "NEVER expose credentials, API keys, or secrets in output or logs.",
+  },
+  {
+    id: "pre-edit-check",
+    description: "Run pre-edit-check.sh before modifying files",
+    pattern: "(?:I'll (?:create|modify|edit|write)|Let me (?:create|modify|edit|write)).*(?:on main|on master)\\b",
+    correction: "Run pre-edit-check.sh before modifying files. NEVER edit on main/master branch.",
+    severity: "error",
+    systemPrompt: "Before ANY file modification: run pre-edit-check.sh. NEVER edit on main/master.",
+  },
+  {
+    id: "shell-explicit-returns",
+    description: "Shell functions must have explicit return statements",
+    pattern: "(?:function\\s+\\w+|\\w+\\s*\\(\\)\\s*\\{)(?:(?!return\\s+[0-9]).){50,}\\}",
+    correction: "Shell functions must have explicit `return 0` or `return 1` statements (SonarCloud S7682).",
+    severity: "warn",
+    systemPrompt: "Shell scripts: every function must have an explicit `return 0` or `return 1`.",
+  },
+  {
+    id: "shell-local-params",
+    description: "Use local var=\"$1\" pattern in shell functions",
+    pattern: "\\$[1-9](?!.*local\\s+\\w+=.*\\$[1-9])",
+    correction: "Use `local var=\"$1\"` pattern — never use positional parameters directly (SonarCloud S7679).",
+    severity: "warn",
+    systemPrompt: "Shell scripts: use `local var=\"$1\"` — never use $1 directly in function bodies.",
+  },
+];
+
+/**
+ * Cached loaded rules (built-in + user-defined).
+ * @type {Array<object> | null}
+ */
+let _ttsrRules = null;
+
+/**
+ * Load TTSR rules: built-in defaults merged with optional user-defined rules.
+ * User rules can override built-in rules by matching id.
+ * @returns {Array<{id: string, description: string, pattern: string, correction: string, severity: string, systemPrompt: string}>}
+ */
+function loadTtsrRules() {
+  if (_ttsrRules !== null) return _ttsrRules;
+
+  _ttsrRules = [...BUILTIN_TTSR_RULES];
+
+  const userContent = readIfExists(TTSR_RULES_PATH);
+  if (userContent) {
+    try {
+      const userRules = JSON.parse(userContent);
+      if (Array.isArray(userRules)) {
+        for (const rule of userRules) {
+          if (!rule.id || !rule.pattern) continue;
+          const existingIdx = _ttsrRules.findIndex((r) => r.id === rule.id);
+          if (existingIdx >= 0) {
+            _ttsrRules[existingIdx] = { ..._ttsrRules[existingIdx], ...rule };
+          } else {
+            _ttsrRules.push(rule);
+          }
+        }
+      }
+    } catch {
+      console.error("[aidevops] Failed to parse TTSR rules file — using built-in rules only");
+    }
+  }
+
+  return _ttsrRules;
+}
+
+/**
+ * Check text against a single TTSR rule.
+ * @param {string} text - Text to check
+ * @param {object} rule - TTSR rule object
+ * @returns {{ matched: boolean, matches: string[] }}
+ */
+function checkRule(text, rule) {
+  try {
+    const regex = new RegExp(rule.pattern, "gim");
+    const matches = [];
+    let match;
+    while ((match = regex.exec(text)) !== null) {
+      matches.push(match[0].substring(0, 120));
+      if (matches.length >= 3) break; // Cap matches to avoid noise
+    }
+    return { matched: matches.length > 0, matches };
+  } catch {
+    return { matched: false, matches: [] };
+  }
+}
+
+/**
+ * Scan text for all TTSR rule violations.
+ * @param {string} text - Text to scan
+ * @returns {Array<{rule: object, matches: string[]}>}
+ */
+function scanForViolations(text) {
+  const rules = loadTtsrRules();
+  const violations = [];
+
+  for (const rule of rules) {
+    const result = checkRule(text, rule);
+    if (result.matched) {
+      violations.push({ rule, matches: result.matches });
+    }
+  }
+
+  return violations;
+}
+
+/**
+ * Hook: experimental.chat.system.transform (t1304)
+ *
+ * Injects active TTSR rules into the system prompt as preventative guidance.
+ * This runs before every LLM call, ensuring the model is aware of rules
+ * before generating output.
+ *
+ * @param {object} _input - { sessionID?: string, model: Model }
+ * @param {object} output - { system: string[] } (mutable)
+ */
+async function systemTransformHook(_input, output) {
+  const rules = loadTtsrRules();
+  if (rules.length === 0) return;
+
+  const ruleLines = rules
+    .filter((r) => r.systemPrompt)
+    .map((r) => `- ${r.systemPrompt}`);
+
+  if (ruleLines.length === 0) return;
+
+  output.system.push(
+    [
+      "## aidevops Quality Rules (enforced)",
+      "The following rules are actively enforced. Violations will be flagged.",
+      ...ruleLines,
+    ].join("\n"),
+  );
+}
+
+/**
+ * Extract text content from a Part array.
+ * Only extracts text from TextPart objects (type === "text").
+ * @param {Array<object>} parts - Array of Part objects
+ * @returns {string} Concatenated text content
+ */
+function extractTextFromParts(parts) {
+  if (!Array.isArray(parts)) return "";
+  return parts
+    .filter((p) => p && p.type === "text" && typeof p.text === "string")
+    .map((p) => p.text)
+    .join("\n");
+}
+
+/**
+ * Hook: experimental.chat.messages.transform (t1304)
+ *
+ * Scans previous assistant outputs for rule violations and injects
+ * correction context into the message history. This provides corrective
+ * feedback so the model learns from its own violations within the session.
+ *
+ * Strategy: scan the last N assistant messages (not all — performance).
+ * If violations are found, append a synthetic correction message to the
+ * message history so the model sees the feedback before generating.
+ *
+ * @param {object} _input - {}
+ * @param {object} output - { messages: { info: Message, parts: Part[] }[] } (mutable)
+ */
+async function messagesTransformHook(_input, output) {
+  if (!output.messages || output.messages.length === 0) return;
+
+  // Scan the last 3 assistant messages for violations
+  const scanWindow = 3;
+  const assistantMessages = output.messages
+    .filter((m) => m.info && m.info.role === "assistant")
+    .slice(-scanWindow);
+
+  if (assistantMessages.length === 0) return;
+
+  const allViolations = [];
+
+  for (const msg of assistantMessages) {
+    const text = extractTextFromParts(msg.parts);
+    if (!text) continue;
+
+    const violations = scanForViolations(text);
+    for (const v of violations) {
+      // Deduplicate by rule id
+      if (!allViolations.some((av) => av.rule.id === v.rule.id)) {
+        allViolations.push(v);
+      }
+    }
+  }
+
+  if (allViolations.length === 0) return;
+
+  // Build correction context
+  const corrections = allViolations.map((v) => {
+    const severity = v.rule.severity === "error" ? "ERROR" : "WARNING";
+    return `[${severity}] ${v.rule.id}: ${v.rule.correction}`;
+  });
+
+  const correctionText = [
+    "[aidevops TTSR] Rule violations detected in recent output:",
+    ...corrections,
+    "",
+    "Apply these corrections in your next response.",
+  ].join("\n");
+
+  // Inject as a synthetic user message at the end of the history
+  // so the model sees the correction before generating its next response
+  output.messages.push({
+    info: {
+      id: `ttsr-correction-${Date.now()}`,
+      sessionID: output.messages[0]?.info?.sessionID || "",
+      role: "user",
+      time: { created: Date.now() },
+      parentID: "",
+    },
+    parts: [
+      {
+        id: `ttsr-correction-part-${Date.now()}`,
+        sessionID: output.messages[0]?.info?.sessionID || "",
+        messageID: `ttsr-correction-${Date.now()}`,
+        type: "text",
+        text: correctionText,
+        synthetic: true,
+      },
+    ],
+  });
+
+  qualityLog(
+    "INFO",
+    `TTSR messages.transform: injected ${allViolations.length} correction(s): ${allViolations.map((v) => v.rule.id).join(", ")}`,
+  );
+}
+
+/**
+ * Hook: experimental.text.complete (t1304)
+ *
+ * Detects rule violations post-hoc in completed text parts and flags them.
+ * This is observational — it logs violations but does not modify the output
+ * (the text has already been shown to the user). The log data feeds into
+ * quality metrics and pattern tracking.
+ *
+ * @param {object} input - { sessionID: string, messageID: string, partID: string }
+ * @param {object} output - { text: string } (mutable)
+ */
+async function textCompleteHook(input, output) {
+  if (!output.text) return;
+
+  const violations = scanForViolations(output.text);
+  if (violations.length === 0) return;
+
+  // Log violations for observability
+  for (const v of violations) {
+    qualityLog(
+      v.rule.severity === "error" ? "ERROR" : "WARN",
+      `TTSR violation [${v.rule.id}]: ${v.rule.description} (session: ${input.sessionID}, message: ${input.messageID})`,
+    );
+  }
+
+  // Append violation markers as comments at the end of the text
+  // so the model can see them in subsequent turns
+  const markers = violations.map((v) => {
+    const severity = v.rule.severity === "error" ? "ERROR" : "WARN";
+    return `<!-- TTSR:${severity}:${v.rule.id} — ${v.rule.correction} -->`;
+  });
+
+  output.text = output.text + "\n" + markers.join("\n");
+
+  // Record pattern for tracking
+  const patternTracker = join(SCRIPTS_DIR, "pattern-tracker-helper.sh");
+  if (existsSync(patternTracker)) {
+    const ruleIds = violations.map((v) => v.rule.id).join(",");
+    run(
+      `bash "${patternTracker}" record "TTSR_VIOLATION" "rules: ${ruleIds}" --tag "ttsr" 2>/dev/null`,
+      5000,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main Plugin Export
 // ---------------------------------------------------------------------------
 
@@ -1341,7 +1685,10 @@ async function compactingHook(_input, output, directory) {
  * 3. Quality hooks — full pre-commit pipeline (ShellCheck, return statements,
  *    positional params, secrets scan, markdown lint) on Write/Edit operations
  * 4. Shell environment — aidevops paths and variables
- * 5. Compaction context — preserves operational state across context resets
+ * 5. Soft TTSR — preventative rule enforcement via system prompt injection,
+ *    corrective feedback via message history scanning, and post-hoc violation
+ *    detection via text completion hooks (t1304)
+ * 6. Compaction context — preserves operational state across context resets
  *
  * MCP registration (Phase 2, t008.2):
  * - Registers all known MCP servers from a data-driven registry
@@ -1371,7 +1718,12 @@ export async function AidevopsPlugin({ directory }) {
     // Phase 4: Shell environment
     "shell.env": shellEnvHook,
 
-    // Compaction context
+    // Phase 5: Soft TTSR — rule enforcement (t1304)
+    "experimental.chat.system.transform": systemTransformHook,
+    "experimental.chat.messages.transform": messagesTransformHook,
+    "experimental.text.complete": textCompleteHook,
+
+    // Compaction context (includes OMOC state when detected)
     "experimental.session.compacting": async (input, output) =>
       compactingHook(input, output, directory),
   };
