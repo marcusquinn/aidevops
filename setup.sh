@@ -341,6 +341,77 @@ validate_namespace() {
 	return 0
 }
 
+# =============================================================================
+# Bootstrap guard: detect curl/process-substitution execution
+# When running via `bash <(curl ...)`, BASH_SOURCE[0] is /dev/fd/NN and the
+# setup-modules/ directory doesn't exist at that path. We must clone the repo
+# first, then re-exec the local copy. This MUST run before any source lines.
+# =============================================================================
+_setup_script_dir="$(dirname "${BASH_SOURCE[0]}")"
+if [[ ! -d "$_setup_script_dir/setup-modules" ]]; then
+	# Running from curl pipe or process substitution — bootstrap the repo
+	print_info "Remote install detected — bootstrapping repository..."
+
+	# Auto-install git if missing
+	if ! command -v git >/dev/null 2>&1; then
+		if [[ "$(uname)" == "Darwin" ]]; then
+			print_info "Installing Xcode Command Line Tools (includes git)..."
+			xcode-select --install 2>/dev/null || true
+			xcode_wait=0
+			while ! command -v git >/dev/null 2>&1 && [[ $xcode_wait -lt 300 ]]; do
+				sleep 5
+				xcode_wait=$((xcode_wait + 5))
+			done
+			if ! command -v git >/dev/null 2>&1; then
+				print_error "git not available after Xcode CLT install. Re-run after installation completes."
+				exit 1
+			fi
+		elif command -v apt-get >/dev/null 2>&1; then
+			sudo apt-get update -qq && sudo apt-get install -y -qq git
+		elif command -v dnf >/dev/null 2>&1; then
+			sudo dnf install -y git
+		elif command -v yum >/dev/null 2>&1; then
+			sudo yum install -y git
+		elif command -v pacman >/dev/null 2>&1; then
+			sudo pacman -S --noconfirm git
+		elif command -v apk >/dev/null 2>&1; then
+			sudo apk add git
+		else
+			print_error "git is required but not installed and no supported package manager found"
+			exit 1
+		fi
+	fi
+
+	# Clone or update the repo
+	mkdir -p "$(dirname "$INSTALL_DIR")"
+	if [[ -d "$INSTALL_DIR/.git" ]]; then
+		print_info "Existing installation found — updating..."
+		cd "$INSTALL_DIR" || exit 1
+		git pull --ff-only 2>/dev/null || {
+			print_warning "Git pull failed — resetting to origin/main"
+			git fetch origin
+			git reset --hard origin/main
+		}
+	else
+		if [[ -d "$INSTALL_DIR" ]]; then
+			print_warning "Directory exists but is not a git repo — backing up"
+			mv "$INSTALL_DIR" "$INSTALL_DIR.backup.$(date +%Y%m%d_%H%M%S)"
+		fi
+		print_info "Cloning aidevops to $INSTALL_DIR..."
+		git clone "$REPO_URL" "$INSTALL_DIR" || {
+			print_error "Failed to clone repository"
+			exit 1
+		}
+	fi
+
+	print_success "Repository ready at $INSTALL_DIR"
+
+	# Re-execute the local copy (which has setup-modules/ available)
+	cd "$INSTALL_DIR" || exit 1
+	exec bash "./setup.sh" "$@"
+fi
+unset _setup_script_dir
+
 # Source modularized setup functions
 # shellcheck disable=SC1091  # Dynamic path via BASH_SOURCE; files exist at runtime
 source "$(dirname "${BASH_SOURCE[0]}")/setup-modules/core.sh"
