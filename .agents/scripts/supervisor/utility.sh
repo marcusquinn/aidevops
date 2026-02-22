@@ -801,37 +801,50 @@ calculate_adaptive_concurrency() {
 	local load_output
 	load_output=$(check_system_load "$max_load_factor")
 
-	local cpu_cores load_ratio memory_pressure overloaded
+	local cpu_cores memory_pressure supervisor_process_count
 	cpu_cores=$(echo "$load_output" | grep '^cpu_cores=' | cut -d= -f2)
-	load_ratio=$(echo "$load_output" | grep '^load_ratio=' | cut -d= -f2)
 	memory_pressure=$(echo "$load_output" | grep '^memory_pressure=' | cut -d= -f2)
-	overloaded=$(echo "$load_output" | grep '^overloaded=' | cut -d= -f2)
+	supervisor_process_count=$(echo "$load_output" | grep '^supervisor_process_count=' | cut -d= -f2)
 
-	# Default max cap to cpu_cores if not specified
+	# Workers are API-bound (waiting for LLM responses), not CPU-bound.
+	# A typical worker uses ~20% of one core; the rest is I/O wait.
+	# Background processes (Backblaze, Spotlight, osgrep indexing) inflate
+	# CPU load averages but don't compete with workers for the actual
+	# bottleneck: API rate limits and network latency.
+	#
+	# Concurrency model: use base_concurrency directly, constrained only by:
+	#   1. Memory pressure (hard constraint — OOM kills everything)
+	#   2. max_concurrency_cap (user-configured ceiling)
+	#   3. min_concurrency floor (always allow at least 1)
+	#
+	# CPU load is logged for observability but no longer throttles dispatch.
+
+	# Default max cap: generous — 2x cores for API-bound workloads
 	if [[ "$max_concurrency_cap" -le 0 ]]; then
-		max_concurrency_cap="$cpu_cores"
+		max_concurrency_cap=$((cpu_cores * 2))
 	fi
 
 	local effective_concurrency="$base_concurrency"
 
-	# High memory pressure: drop to minimum floor
+	# Hard constraint: memory pressure
+	# High = system is swapping, OOM risk — drop to minimum
+	# Medium = getting tight — use base (don't scale up)
 	if [[ "$memory_pressure" == "high" ]]; then
 		effective_concurrency="$min_concurrency"
 		echo "$effective_concurrency"
 		return 0
 	fi
 
-	if [[ "$overloaded" == "true" ]]; then
-		# Severely overloaded (CPU > 85%): minimum floor
-		effective_concurrency="$min_concurrency"
-	elif [[ "$load_ratio" -gt 70 ]]; then
-		# Heavy load (CPU 70-85%): halve concurrency
-		effective_concurrency=$(((base_concurrency + 1) / 2))
-	elif [[ "$load_ratio" -lt 40 ]]; then
-		# Light load (CPU < 40%): scale up to double base
-		effective_concurrency=$((base_concurrency * 2))
+	# Scale up when there's headroom: if current workers < base, allow base.
+	# If workers are well below cap and memory is fine, allow up to 2x base.
+	if [[ "$memory_pressure" != "medium" ]]; then
+		# Low memory pressure: allow scaling up to 2x base
+		local scaled=$((base_concurrency * 2))
+		if [[ "$scaled" -gt "$effective_concurrency" ]]; then
+			effective_concurrency="$scaled"
+		fi
 	fi
-	# else: CPU 40-70% — use base_concurrency as-is
+	# Medium memory pressure: stay at base_concurrency (no scaling)
 
 	# Enforce minimum floor
 	if [[ "$effective_concurrency" -lt "$min_concurrency" ]]; then

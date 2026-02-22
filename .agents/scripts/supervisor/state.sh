@@ -988,37 +988,36 @@ cmd_next() {
 	[[ -z "$candidates" ]] && return 0
 
 	# t1073: Filter out subtasks whose earlier siblings are still in-flight.
-	# Subtasks (IDs like t1063.2) should run sequentially — dispatching them
-	# in parallel causes merge conflicts because they modify the same files.
-	# Skip a subtask if any sibling with a lower suffix is not yet terminal.
+	# Subtask parallel dispatch: siblings run on separate worktrees/branches,
+	# so they CAN run in parallel. We allow up to MAX_PARALLEL_SIBLINGS
+	# siblings to be active simultaneously (default: 3). This replaces the
+	# old strict sequential ordering which blocked the entire queue when
+	# one sibling was running. Merge conflicts are handled by the AI
+	# lifecycle engine (rebase/fix_ci) after PRs are created.
 	# Also builds per-repo candidate lists for fair dispatch (t1188.2).
 	#
 	# We collect eligible candidates into a flat list first, then apply
 	# repo-fair interleaving below.
+	local max_parallel_siblings="${SUPERVISOR_MAX_PARALLEL_SIBLINGS:-3}"
 	local eligible_candidates=""
 	local eligible_count=0
 	while IFS=$'\t' read -r cid crepo cdesc cmodel; do
 		# Check if this is a subtask (contains a dot)
 		if [[ "$cid" == *.* ]]; then
 			local parent_id="${cid%.*}"
-			local suffix="${cid##*.}"
 
-			# Check if any earlier sibling (same parent, lower suffix) is non-terminal.
-			# t1253: 'failed' (max retries exhausted) and 'blocked' (waiting on deps,
-			# not in-flight) are treated as terminal for sibling ordering purposes.
-			# A failed or blocked earlier sibling should not indefinitely prevent
-			# later siblings from being dispatched.
-			local earlier_active
-			earlier_active=$(db "$SUPERVISOR_DB" "
+			# Count how many siblings are currently in-flight (running/dispatched/evaluating)
+			# t1253: 'failed' and 'blocked' are terminal — don't count them.
+			local siblings_active
+			siblings_active=$(db "$SUPERVISOR_DB" "
 				SELECT count(*) FROM tasks
 				WHERE id LIKE '$(sql_escape "$parent_id").%'
 				  AND id != '$(sql_escape "$cid")'
-				  AND CAST(REPLACE(id, '$(sql_escape "$parent_id").', '') AS INTEGER) < $suffix
-				  AND status NOT IN ('verified','cancelled','deployed','complete','failed','blocked');
+				  AND status NOT IN ('verified','cancelled','deployed','complete','failed','blocked','queued');
 			" 2>/dev/null || echo "0")
 
-			if [[ "$earlier_active" -gt 0 ]]; then
-				log_info "  cmd_next: deferring $cid — earlier sibling(s) of $parent_id still active"
+			if [[ "$siblings_active" -ge "$max_parallel_siblings" ]]; then
+				log_info "  cmd_next: deferring $cid — $siblings_active siblings of $parent_id already active (max: $max_parallel_siblings)"
 				continue
 			fi
 		fi
