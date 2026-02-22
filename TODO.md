@@ -1842,3 +1842,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 >>>>>>> Stashed changes
 =======
 >>>>>>> Stashed changes
+
+- [ ] t1301 Investigate rc=143 supervisor pipeline kills during AI reasoning phase #bugfix #auto-dispatch #self-improvement ~2h model:sonnet category:reliability — Two consecutive supervisor runs terminated with rc=143 (SIGTERM) at 01:10 and 01:17 on 2026-02-22. This matches the SIGTERM pattern seen in worker outcomes (t004.21, t1165.2, t1300). Root cause candidates: (1) OOM killer targeting the supervisor process during opus AI reasoning (high memory), (2) launchd timeout killing the supervisor plist job, (3) system resource pressure from concurrent workers. Investigate: check system logs (log show --predicate), launchd timeout config, memory pressure during AI reasoning phase. If OOM, consider adding memory guard or splitting context snapshot to reduce opus prompt size.
