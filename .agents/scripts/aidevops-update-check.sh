@@ -69,7 +69,11 @@ detect_app() {
 		case "$parent" in
 		*opencode*)
 			app_name="OpenCode"
+			# Try CLI first, then npm global package.json, then parent binary path
 			app_version=$(opencode --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
+			if [[ -z "$app_version" ]]; then
+				app_version=$(npm list -g opencode-ai --json 2>/dev/null | jq -r '.dependencies["opencode-ai"].version // empty' 2>/dev/null || echo "")
+			fi
 			;;
 		*claude*)
 			app_name="Claude Code"
