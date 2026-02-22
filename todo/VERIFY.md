@@ -2456,7 +2456,7 @@
   check: shellcheck .agents/scripts/supervisor/utility.sh
   check: file-exists .agents/scripts/supervisor/utility.sh
 
-- [ ] v281 t1303 Soft TTSR rule engine — define rules in `.agents/rules/... | PR #2136 | merged:2026-02-22
+- [x] v281 t1303 Soft TTSR rule engine — define rules in `.agents/rules/... | PR #2136 | merged:2026-02-22 verified:2026-02-22
   files: .agents/rules/README.md, .agents/rules/no-cat-for-reading.md, .agents/rules/no-edit-on-main.md, .agents/rules/no-glob-for-discovery.md, .agents/rules/no-hardcoded-secrets.md, .agents/rules/no-todo-edit-by-worker.md, .agents/scripts/ttsr-rule-loader.sh
   check: file-exists .agents/rules/README.md
   check: file-exists .agents/rules/no-cat-for-reading.md
@@ -2467,9 +2467,13 @@
   check: shellcheck .agents/scripts/ttsr-rule-loader.sh
   check: file-exists .agents/scripts/ttsr-rule-loader.sh
 
-- [ ] v282 t1307 LLM observability: SQLite-based request tracking — crea... | PR #2137 | merged:2026-02-22
+- [x] v282 t1307 LLM observability: SQLite-based request tracking — crea... | PR #2137 | merged:2026-02-22 verified:2026-02-22
   files: .agents/scripts/observability-helper.sh, aidevops.sh
   check: shellcheck .agents/scripts/observability-helper.sh
   check: file-exists .agents/scripts/observability-helper.sh
   check: shellcheck aidevops.sh
   check: file-exists aidevops.sh
+
+- [ ] v283 t1304 Soft TTSR: wire rules into OpenCode plugin hooks — use ... | PR #2139 | merged:2026-02-22
+  files: .agents/plugins/opencode-aidevops/index.mjs
+  check: file-exists .agents/plugins/opencode-aidevops/index.mjs
