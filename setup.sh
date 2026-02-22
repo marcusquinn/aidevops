@@ -31,7 +31,7 @@ INSTALL_DIR="$HOME/Git/aidevops"
 # Source modular setup functions (t316.2)
 # These modules are sourced only when setup.sh is run from the repo directory
 # (not during bootstrap from curl, which re-execs after cloning)
-SETUP_MODULES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.agents/scripts/setup" 2>/dev/null && pwd)"
+SETUP_MODULES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.agents/scripts/setup" 2>/dev/null && pwd)" || true
 if [[ -d "$SETUP_MODULES_DIR" ]]; then
 	# shellcheck disable=SC1091  # Dynamic path via $SETUP_MODULES_DIR; files exist at runtime
 	source "$SETUP_MODULES_DIR/_common.sh"
