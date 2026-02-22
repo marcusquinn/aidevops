@@ -722,6 +722,65 @@ cmd_update() {
 			print_info "Run 'aidevops upgrade-planning' in each project to upgrade manually"
 		fi
 	fi
+
+	# Quick tool staleness check (key tools only, <5s)
+	echo ""
+	print_header "Checking Key Tools"
+
+	local tool_check_script="$AGENTS_DIR/scripts/tool-version-check.sh"
+	if [[ -f "$tool_check_script" ]]; then
+		local stale_count=0
+		local stale_tools=""
+
+		# Check a few key tools quickly via npm view (parallel, ~2-3s total)
+		local -A key_tools=(
+			["opencode"]="opencode-ai"
+			["gh"]="brew:gh"
+		)
+
+		for cmd_name in "${!key_tools[@]}"; do
+			local pkg_ref="${key_tools[$cmd_name]}"
+			local installed=""
+			local latest=""
+
+			# Get installed version
+			if command -v "$cmd_name" &>/dev/null; then
+				installed=$("$cmd_name" --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+			else
+				continue
+			fi
+			[[ -z "$installed" ]] && continue
+
+			# Get latest version (npm or brew)
+			if [[ "$pkg_ref" == brew:* ]]; then
+				local brew_pkg="${pkg_ref#brew:}"
+				latest=$(brew info --json=v2 "$brew_pkg" 2>/dev/null | jq -r '.formulae[0].versions.stable // empty' 2>/dev/null || true)
+			else
+				latest=$(npm view "$pkg_ref" version 2>/dev/null || true)
+			fi
+			[[ -z "$latest" ]] && continue
+
+			if [[ "$installed" != "$latest" ]]; then
+				stale_tools="${stale_tools:+$stale_tools, }$cmd_name ($installed -> $latest)"
+				((stale_count++)) || true
+			fi
+		done
+
+		if [[ "$stale_count" -eq 0 ]]; then
+			print_success "Key tools are up to date"
+		else
+			print_warning "$stale_count tool(s) have updates: $stale_tools"
+			echo ""
+			read -r -p "Run full tool update check? [y/N] " response
+			if [[ "$response" =~ ^[Yy]$ ]]; then
+				bash "$tool_check_script" --update
+			else
+				print_info "Run 'aidevops update-tools --update' to update later"
+			fi
+		fi
+	else
+		print_info "Tool version check not available (run setup first)"
+	fi
 }
 
 # Uninstall command
