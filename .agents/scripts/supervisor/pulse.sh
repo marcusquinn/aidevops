@@ -2927,8 +2927,23 @@ RULES:
 			local sweep_pid
 			sweep_pid=$(cat "$pid_file" 2>/dev/null || echo "")
 			[[ -z "$sweep_pid" ]] && continue
+			local sweep_basename
+			sweep_basename=$(basename "$pid_file" .pid)
+			# Protect AI supervisor session (t1301): ai-supervisor.pid is written by
+			# Phase 14 while the AI pipeline is running. Protect the pulse process and
+			# all its descendants so concurrent pulses do not kill opencode/claude
+			# processes spawned during reasoning or action execution.
+			if [[ "$sweep_basename" == "ai-supervisor" ]] && kill -0 "$sweep_pid" 2>/dev/null; then
+				protected_pids="${protected_pids} ${sweep_pid}"
+				local ai_sweep_descendants
+				ai_sweep_descendants=$(_list_descendants "$sweep_pid" 2>/dev/null || true)
+				if [[ -n "$ai_sweep_descendants" ]]; then
+					protected_pids="${protected_pids} ${ai_sweep_descendants}"
+				fi
+				continue
+			fi
 			local sweep_task_status
-			sweep_task_status=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$(basename "$pid_file" .pid)")';" 2>/dev/null || echo "")
+			sweep_task_status=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$sweep_basename")';" 2>/dev/null || echo "")
 			if [[ "$sweep_task_status" == "running" || "$sweep_task_status" == "dispatched" ]] && kill -0 "$sweep_pid" 2>/dev/null; then
 				protected_pids="${protected_pids} ${sweep_pid}"
 				local sweep_descendants
@@ -3656,6 +3671,12 @@ RULES:
 			# Ensure log directory exists
 			mkdir -p "$ai_log_dir" 2>/dev/null || true
 
+			# Write a PID file for the AI session so Phase 4e does not kill
+			# opencode/claude processes spawned during reasoning or action execution
+			# (t1301: concurrent pulses can trigger Phase 4e while AI is running).
+			local ai_pid_file="${SUPERVISOR_DIR}/pids/ai-supervisor.pid"
+			echo "$$" >"$ai_pid_file" 2>/dev/null || true
+
 			# Record start timestamp
 			local ai_start_ts
 			ai_start_ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
@@ -3668,6 +3689,9 @@ RULES:
 			local ai_result=""
 			local ai_rc=0
 			ai_result=$(run_ai_actions_pipeline "$ai_repo_path" "full" 2>>"$ai_log_file") || ai_rc=$?
+
+			# Remove AI session PID file now that the pipeline has completed
+			rm -f "$ai_pid_file" 2>/dev/null || true
 
 			# Record completion timestamp
 			local ai_end_ts
@@ -3683,6 +3707,17 @@ RULES:
 				log_success "  Phase 14: AI pipeline complete (executed=$ai_executed failed=$ai_failed skipped=$ai_skipped)"
 				{
 					echo "Result: executed=$ai_executed failed=$ai_failed skipped=$ai_skipped"
+					echo "=== End: $ai_end_ts ==="
+				} >>"$ai_log_file" 2>/dev/null || true
+			elif [[ $ai_rc -eq 143 ]]; then
+				# rc=143 = SIGTERM received during AI pipeline execution.
+				# Root causes (t1301): concurrent pulse breaking stale lock and running
+				# Phase 4e which kills orphaned opencode/claude processes; or the pulse
+				# process itself receiving SIGTERM. The AI session PID file above should
+				# prevent Phase 4e from killing AI-spawned processes in future pulses.
+				log_warn "  Phase 14: AI pipeline killed by SIGTERM (rc=143) — likely concurrent pulse interference (t1301)"
+				{
+					echo "Result: rc=143 (SIGTERM — concurrent pulse or external kill)"
 					echo "=== End: $ai_end_ts ==="
 				} >>"$ai_log_file" 2>/dev/null || true
 			else
