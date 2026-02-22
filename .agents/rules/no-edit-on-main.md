@@ -1,6 +1,6 @@
 ---
 id: no-edit-on-main
-ttsr_trigger: "git (commit|add|push).*main|on branch (main|master)"
+ttsr_trigger: git (commit|add|push).*main|on branch (main|master)
 severity: error
 repeat_policy: always
 tags: [git, safety]

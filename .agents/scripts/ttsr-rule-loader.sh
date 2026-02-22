@@ -431,15 +431,22 @@ cmd_check() {
 					else
 						corrections="${corrections},"
 					fi
-					# Escape body for JSON (basic: newlines and quotes)
+					# Escape body for JSON (backslashes, quotes, newlines)
 					local escaped_body
-					escaped_body="$(printf '%s' "$rule_body" | sed 's/\\/\\\\/g; s/"/\\"/g; s/$/\\n/' | tr -d '\n')"
-					escaped_body="${escaped_body%\\n}"
+					escaped_body="$(printf '%s' "$rule_body" | awk '
+					BEGIN { ORS="" }
+					{
+						gsub(/\\/, "\\\\")
+						gsub(/"/, "\\\"")
+						if (NR > 1) printf "\\n"
+						printf "%s", $0
+					}
+				')"
 					corrections="${corrections}{\"id\":\"${rule_id}\",\"severity\":\"${rule_severity}\",\"body\":\"${escaped_body}\"}"
 				else
-					corrections="${corrections}--- [${rule_severity^^}] Rule: ${rule_id} ---
-${rule_body}
-"
+					local severity_upper
+					severity_upper="$(printf '%s' "$rule_severity" | tr '[:lower:]' '[:upper:]')"
+					corrections="${corrections}--- [${severity_upper}] Rule: ${rule_id} ---"$'\n'"${rule_body}"$'\n'
 				fi
 
 				log_info "Rule matched: $rule_id (severity: $rule_severity)"
@@ -555,6 +562,11 @@ main() {
 		--help | -h)
 			usage || true
 			return 0
+			;;
+		-)
+			# Stdin marker — treat as positional arg
+			positional_args+=("$1")
+			shift
 			;;
 		-*)
 			log_error "Unknown option: $1"

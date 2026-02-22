@@ -1,6 +1,6 @@
 ---
 id: no-cat-for-reading
-ttsr_trigger: "\\bcat\\b.*\\.(md|sh|txt|json|yaml|yml|ts|js|py)|head -[0-9]|tail -[0-9]"
+ttsr_trigger: \bcat\b.*\.(md|sh|txt|json|yaml|yml|ts|js|py)|head -[0-9]|tail -[0-9]
 severity: info
 repeat_policy: once
 tags: [efficiency, tools]

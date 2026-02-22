@@ -12,8 +12,8 @@ Each `.md` file in this directory (except this README) is a rule. Rules use YAML
 
 ```yaml
 ---
-id: unique-rule-id           # Required. Dedup key for state tracking
-ttsr_trigger: "regex pattern" # Required. ERE regex matched against AI output
+id: unique-rule-id            # Required. Dedup key for state tracking
+ttsr_trigger: regex pattern   # Required. ERE regex matched against AI output
 severity: warn                # Optional. info | warn | error (default: warn)
 repeat_policy: once           # Optional. once | after-gap | always (default: once)
 gap_turns: 3                  # Optional. Cooldown turns for after-gap policy (default: 3)
@@ -21,6 +21,10 @@ tags: [git, safety]           # Optional. Categorization tags
 enabled: true                 # Optional. Set false to disable without deleting
 ---
 ```
+
+**Important**: Write `ttsr_trigger` values as raw ERE regex — do NOT quote or double-escape.
+The parser reads values literally, so `\b` means word boundary, not `\\b`.
+Do not wrap values in quotes unless the value itself contains a colon followed by a space.
 
 ## Rule Body
 

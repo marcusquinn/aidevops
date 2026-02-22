@@ -1,6 +1,6 @@
 ---
 id: no-todo-edit-by-worker
-ttsr_trigger: "(Edit|Write).*TODO\\.md|todo/PLANS\\.md|todo/tasks/"
+ttsr_trigger: (Edit|Write).*TODO\.md|todo/PLANS\.md|todo/tasks/
 severity: error
 repeat_policy: always
 tags: [workflow, planning]

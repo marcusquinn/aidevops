@@ -1,6 +1,6 @@
 ---
 id: no-glob-for-discovery
-ttsr_trigger: "mcp_glob|Glob tool|glob pattern"
+ttsr_trigger: mcp_glob|Glob tool|glob pattern
 severity: warn
 repeat_policy: after-gap
 gap_turns: 5
