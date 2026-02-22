@@ -635,10 +635,11 @@ get_user_idle_seconds() {
 
 	# Linux: try dbus-send to GNOME/KDE screensaver (Wayland-compatible)
 	if command -v dbus-send &>/dev/null && [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
-		# GNOME ScreenSaver GetActiveTime returns seconds since screensaver activated
+		# GetSessionIdleTime returns seconds since last user input (keyboard/mouse)
+		# (GetActiveTime only measures screensaver runtime, which is 0 when not active)
 		idle_secs=$(dbus-send --session --dest=org.gnome.ScreenSaver \
 			--type=method_call --print-reply /org/gnome/ScreenSaver \
-			org.gnome.ScreenSaver.GetActiveTime 2>/dev/null |
+			org.gnome.ScreenSaver.GetSessionIdleTime 2>/dev/null |
 			awk '/uint32/ {print $2}')
 		if [[ -n "$idle_secs" && "$idle_secs" =~ ^[0-9]+$ && "$idle_secs" -gt 0 ]]; then
 			echo "$idle_secs"
@@ -801,10 +802,12 @@ check_tool_freshness() {
 	fi
 
 	# Count updates from output (best-effort: count lines with "Updated" or arrow)
+	# Use a subshell to avoid pipefail issues: grep -c exits 1 on no match,
+	# which under set -o pipefail would trigger || echo "0" and produce "0\n0"
 	local tool_updates
 	tool_updates=0
 	if [[ -n "$update_output" ]]; then
-		tool_updates=$(echo "$update_output" | grep -cE '(Updated|→|->)' 2>/dev/null || echo "0")
+		tool_updates=$(echo "$update_output" | { grep -cE '(Updated|→|->)' || true; })
 	fi
 
 	if [[ $tool_updates -gt 0 ]]; then
@@ -1248,7 +1251,12 @@ cmd_status() {
 		idle_secs=$(get_user_idle_seconds)
 		idle_h=$((idle_secs / 3600))
 		idle_m=$(((idle_secs % 3600) / 60))
-		local idle_threshold="${AIDEVOPS_TOOL_IDLE_HOURS:-$DEFAULT_TOOL_IDLE_HOURS}"
+		local idle_threshold
+		idle_threshold="${AIDEVOPS_TOOL_IDLE_HOURS:-$DEFAULT_TOOL_IDLE_HOURS}"
+		# Validate idle_threshold is a positive integer (mirrors check_tool_freshness)
+		if ! [[ "$idle_threshold" =~ ^[0-9]+$ ]] || [[ "$idle_threshold" -eq 0 ]]; then
+			idle_threshold="$DEFAULT_TOOL_IDLE_HOURS"
+		fi
 		if [[ $idle_secs -ge $((idle_threshold * 3600)) ]]; then
 			echo -e "  User idle:          ${idle_h}h${idle_m}m (${GREEN}>=${idle_threshold}h — tool updates eligible${NC})"
 		else
