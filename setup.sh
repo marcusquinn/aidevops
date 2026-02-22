@@ -227,18 +227,14 @@ find_python3() {
 	return 1
 }
 
-# Install a package globally via npm or bun, with sudo when needed on Linux.
+# Install a package globally via npm, with sudo when needed on Linux.
 # Usage: npm_global_install "package-name" OR npm_global_install "package@version"
-# Uses bun if available (no sudo needed), falls back to npm.
 # On Linux with apt-installed npm, automatically prepends sudo.
 # Returns: 0 on success, 1 on failure
 npm_global_install() {
 	local pkg="$1"
 
-	if command -v bun >/dev/null 2>&1; then
-		bun install -g "$pkg"
-		return $?
-	elif command -v npm >/dev/null 2>&1; then
+	if command -v npm >/dev/null 2>&1; then
 		# npm global installs need sudo on Linux when prefix dir isn't writable
 		if [[ "$(uname)" != "Darwin" ]] && [[ ! -w "$(npm config get prefix 2>/dev/null)/lib" ]]; then
 			sudo npm install -g "$pkg"
@@ -533,6 +529,7 @@ main() {
 		migrate_mcp_env_to_credentials
 		cleanup_deprecated_paths
 		cleanup_deprecated_mcps
+		cleanup_stale_bun_opencode
 		validate_opencode_config
 		deploy_aidevops_agents
 		setup_safety_hooks
@@ -583,6 +580,7 @@ main() {
 		confirm_step "Migrate mcp-env.sh -> credentials.sh" && migrate_mcp_env_to_credentials
 		confirm_step "Cleanup deprecated agent paths" && cleanup_deprecated_paths
 		confirm_step "Cleanup deprecated MCP entries (hetzner, serper, etc.)" && cleanup_deprecated_mcps
+		confirm_step "Cleanup stale bun opencode install" && cleanup_stale_bun_opencode
 		confirm_step "Validate and repair OpenCode config schema" && validate_opencode_config
 		confirm_step "Extract OpenCode prompts" && extract_opencode_prompts
 		confirm_step "Check OpenCode prompt drift" && check_opencode_prompt_drift
