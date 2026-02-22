@@ -154,6 +154,206 @@ Multiple IdPs can coexist (e.g., Cloudron SSO + Google + Keycloak). Local email/
 7. **Oracle Cloud blocks UDP 3478** by default in both Security Rules and iptables
 8. **Reverse proxy requires Traefik** -- NetBird's reverse proxy feature (exposing internal services publicly) requires Traefik with TLS passthrough. This is incompatible with Cloudron's nginx (see Cloudron section below). Does not affect core mesh VPN functionality.
 
+## Standalone VPS Deployment (Full Features)
+
+For full NetBird functionality including the reverse proxy feature, deploy on a dedicated VPS with Traefik. This is the recommended production deployment for aidevops.
+
+### Recommended VPS Specs
+
+| Peers | CPU | RAM | Disk | Monthly Cost (approx) |
+|-------|-----|-----|------|-----------------------|
+| 1-25 | 1 vCPU | 2 GB | 20 GB SSD | ~$4-6 (Hetzner CX22, Hostinger KVM1) |
+| 25-100 | 2 vCPU | 4 GB | 40 GB SSD | ~$6-10 |
+| 100-500 | 4 vCPU | 8 GB | 80 GB SSD | ~$15-20 |
+
+A 1 vCPU / 2 GB VPS is sufficient for most self-hosted deployments. NetBird's management server is lightweight -- the main resource consumers are the database and concurrent gRPC connections.
+
+### Prerequisites
+
+- A VPS with Ubuntu 22.04+ (or any Linux with Docker)
+- A public domain pointing to the VPS IP (e.g., `netbird.example.com`)
+- (Optional) A proxy domain with wildcard DNS (e.g., `*.proxy.netbird.example.com`)
+- Docker + docker-compose plugin installed
+- Ports open: TCP 80, 443 + UDP 3478
+
+### DNS Records
+
+| Type | Name | Content | Notes |
+|------|------|---------|-------|
+| A | `netbird` | `YOUR.SERVER.IP` | Management server |
+| CNAME | `proxy` | `netbird.example.com` | Reverse proxy (optional) |
+| CNAME | `*.proxy` | `netbird.example.com` | Wildcard for proxy services (optional) |
+
+### Installation
+
+```bash
+# SSH into your VPS
+ssh root@your-vps-ip
+
+# Install Docker if not present
+curl -fsSL https://get.docker.com | sh
+
+# Install jq
+apt install -y jq
+
+# Run the NetBird installer
+export NETBIRD_DOMAIN=netbird.example.com
+curl -fsSL https://github.com/netbirdio/netbird/releases/latest/download/getting-started.sh | bash
+```
+
+The installer prompts for:
+1. **Reverse proxy**: Select `[0] Traefik` (default) for full functionality
+2. **Proxy service**: Answer `y` to enable the reverse proxy feature
+3. **Proxy domain**: Enter your proxy domain (e.g., `proxy.netbird.example.com`)
+
+Generated files:
+
+| File | Purpose |
+|------|---------|
+| `docker-compose.yml` | All services (netbird-server, dashboard, traefik, proxy) |
+| `config.yaml` | Combined server config (management, signal, relay, STUN) |
+| `dashboard.env` | Dashboard environment |
+| `proxy.env` | Proxy environment (if enabled) |
+
+### Post-Install
+
+1. Open `https://netbird.example.com` and create your admin account on the `/setup` page
+2. Create a Personal Access Token (Settings > Personal Access Tokens) -- save it securely
+3. Create setup keys for device provisioning
+
+### Health Check
+
+```bash
+# Check version and update availability via API
+curl -s "https://netbird.example.com/api/instance/version" \
+  -H "Authorization: Bearer <PAT>" | jq .
+
+# Response includes:
+# management_current_version, management_available_version, management_update_available
+```
+
+### Manual Upgrade
+
+```bash
+# 1. Backup first
+docker compose exec netbird-server cat /var/lib/netbird/store.db > backup-$(date +%F).db 2>/dev/null || true
+docker compose exec netbird-server pg_dump ... > backup-$(date +%F).sql 2>/dev/null || true
+
+# 2. Pull latest images
+docker compose pull netbird-server dashboard
+
+# 3. Recreate containers
+docker compose up -d --force-recreate netbird-server dashboard
+
+# 4. Verify
+docker compose ps
+curl -s "https://netbird.example.com/api/instance/version" \
+  -H "Authorization: Bearer <PAT>" | jq .management_current_version
+```
+
+### Automated Updates via aidevops
+
+Create a cron job or aidevops scheduler task to check for updates and apply them automatically:
+
+```bash
+#!/bin/bash
+# netbird-auto-update.sh -- run via cron or aidevops scheduler
+# Place on the NetBird VPS at /opt/netbird/auto-update.sh
+set -eu
+
+NETBIRD_DIR="/opt/netbird"
+NETBIRD_URL="https://netbird.example.com"
+PAT_FILE="/opt/netbird/.pat"
+LOG_FILE="/var/log/netbird-update.log"
+
+log() { echo "$(date -Iseconds) $1" >> "$LOG_FILE"; }
+
+# Check if PAT file exists
+if [[ ! -f "$PAT_FILE" ]]; then
+    log "ERROR: PAT file not found at $PAT_FILE"
+    exit 1
+fi
+PAT=$(cat "$PAT_FILE")
+
+# Check for updates via API
+RESPONSE=$(curl -sf "${NETBIRD_URL}/api/instance/version" \
+    -H "Authorization: Bearer ${PAT}" \
+    -H "Accept: application/json" 2>/dev/null || echo '{}')
+
+UPDATE_AVAILABLE=$(echo "$RESPONSE" | jq -r '.management_update_available // false')
+CURRENT=$(echo "$RESPONSE" | jq -r '.management_current_version // "unknown"')
+AVAILABLE=$(echo "$RESPONSE" | jq -r '.management_available_version // "unknown"')
+
+if [[ "$UPDATE_AVAILABLE" != "true" ]]; then
+    log "OK: NetBird ${CURRENT} is up to date"
+    exit 0
+fi
+
+log "UPDATE: ${CURRENT} -> ${AVAILABLE}"
+
+# Pull and recreate
+cd "$NETBIRD_DIR"
+docker compose pull netbird-server dashboard >> "$LOG_FILE" 2>&1
+docker compose up -d --force-recreate netbird-server dashboard >> "$LOG_FILE" 2>&1
+
+# Verify
+sleep 10
+NEW_VERSION=$(curl -sf "${NETBIRD_URL}/api/instance/version" \
+    -H "Authorization: Bearer ${PAT}" | jq -r '.management_current_version // "unknown"')
+
+if [[ "$NEW_VERSION" == "$AVAILABLE" ]]; then
+    log "SUCCESS: Updated to ${NEW_VERSION}"
+else
+    log "WARNING: Expected ${AVAILABLE} but got ${NEW_VERSION}"
+fi
+```
+
+Install the cron job:
+
+```bash
+# Save PAT securely
+echo "YOUR_PAT_HERE" > /opt/netbird/.pat
+chmod 600 /opt/netbird/.pat
+
+# Make script executable
+chmod +x /opt/netbird/auto-update.sh
+
+# Run daily at 3am
+echo "0 3 * * * root /opt/netbird/auto-update.sh" > /etc/cron.d/netbird-update
+```
+
+Or via aidevops remote dispatch (if the VPS is on the mesh):
+
+```bash
+# From any mesh peer with aidevops
+ssh netbird-vps.netbird.cloud "/opt/netbird/auto-update.sh"
+```
+
+### Monitoring via aidevops
+
+Add a health check to the aidevops scheduler:
+
+```bash
+# Check NetBird health from any mesh peer
+curl -sf "https://netbird.example.com/api/instance/version" \
+  -H "Authorization: Bearer <PAT>" | jq '{
+    version: .management_current_version,
+    update_available: .management_update_available,
+    latest: .management_available_version
+  }'
+
+# Check peer count
+curl -sf "https://netbird.example.com/api/peers" \
+  -H "Authorization: Token <PAT>" | jq 'length'
+
+# Check connected vs total peers
+curl -sf "https://netbird.example.com/api/peers" \
+  -H "Authorization: Token <PAT>" | jq '{
+    total: length,
+    connected: [.[] | select(.connected == true)] | length
+  }'
+```
+
 ## Client Installation
 
 ### macOS
