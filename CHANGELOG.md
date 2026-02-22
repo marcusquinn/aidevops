@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.123.5] - 2026-02-22
+
+### Added
+
+- add intent tracing to OpenCode plugin tool call logging (t1309) (#2153)
+
+### Changed
+
+- Documentation: add hashline edit format reference (t1310) (#2151)
+
+### Fixed
+
+- safe empty array expansion in _run_generator under set -u
+
 ## [2.123.4] - 2026-02-22
 
 ### Changed
