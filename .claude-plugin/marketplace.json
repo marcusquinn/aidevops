@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "AI DevOps Framework - comprehensive DevOps automation with 25+ service integrations",
-    "version": "2.123.5"
+    "version": "2.124.0"
   },
   "plugins": [
     {
