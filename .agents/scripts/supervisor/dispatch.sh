@@ -109,23 +109,24 @@ detect_claude_oauth() {
 }
 
 #######################################
-# Resolve the AI CLI tool to use for dispatch (t1163: OAuth-aware routing)
+# Resolve the AI CLI tool to use for dispatch
+#
+# OpenCode is the sole worker CLI. It already supports Anthropic OAuth
+# (subscription billing) so there is no cost benefit to routing through
+# the claude CLI, and the claude CLI sandbox blocks write operations
+# which causes worker failures (see t1165 family, t1300).
 #
 # Routing priority:
-#   1. SUPERVISOR_CLI env var override (explicit preference)
-#   2. OAuth-aware routing (when SUPERVISOR_PREFER_OAUTH=true, default):
-#      - For Anthropic models: prefer claude CLI if OAuth available (subscription = zero cost)
-#      - For non-Anthropic models: use opencode (multi-provider support)
-#   3. opencode as primary CLI
-#   4. claude as fallback
+#   1. SUPERVISOR_CLI env var override (opencode|claude — use only when
+#      explicitly requested by the user)
+#   2. opencode (primary — handles all providers including Anthropic OAuth)
+#   3. claude as last-resort fallback if opencode is not installed
 #
 # Args:
-#   $1 (optional): resolved model string (e.g., "anthropic/claude-opus-4-6")
-#                  Used for OAuth routing decisions. If empty, defaults to opencode.
+#   $1 (optional): resolved model string (unused, kept for API compat)
 #
 # Env vars:
-#   SUPERVISOR_CLI          — explicit CLI override (opencode|claude)
-#   SUPERVISOR_PREFER_OAUTH — prefer claude OAuth for Anthropic models (default: true)
+#   SUPERVISOR_CLI — explicit CLI override (opencode|claude)
 #######################################
 resolve_ai_cli() {
 	local resolved_model="${1:-}"
@@ -144,37 +145,14 @@ resolve_ai_cli() {
 		return 1
 	fi
 
-	# OAuth-aware routing (t1163): prefer claude CLI for Anthropic models
-	# when OAuth is available (subscription = zero marginal cost)
-	local prefer_oauth="${SUPERVISOR_PREFER_OAUTH:-true}"
-	if [[ "$prefer_oauth" == "true" ]]; then
-		# Determine if the target model is Anthropic
-		local is_anthropic=false
-		if [[ -z "$resolved_model" || "$resolved_model" == anthropic/* || "$resolved_model" == *claude* ]]; then
-			is_anthropic=true
-		fi
-
-		if [[ "$is_anthropic" == true ]]; then
-			local oauth_status=""
-			oauth_status=$(detect_claude_oauth 2>/dev/null) || true
-			if [[ "$oauth_status" == "oauth" ]]; then
-				if command -v claude &>/dev/null; then
-					log_info "OAuth-aware routing: using claude CLI for Anthropic model (subscription, zero marginal cost) (t1163)"
-					echo "claude"
-					return 0
-				fi
-			fi
-		fi
-	fi
-
-	# opencode is the primary CLI for all other cases
+	# opencode is the primary and preferred CLI for all workers
 	if command -v opencode &>/dev/null; then
 		echo "opencode"
 		return 0
 	fi
-	# Fallback: claude CLI without OAuth preference
+	# Last-resort fallback only if opencode is not installed
 	if command -v claude &>/dev/null; then
-		log_warn "Using deprecated claude CLI fallback. Install opencode: npm i -g opencode"
+		log_warn "opencode not found, falling back to claude CLI. Install opencode: npm i -g opencode"
 		echo "claude"
 		return 0
 	fi
