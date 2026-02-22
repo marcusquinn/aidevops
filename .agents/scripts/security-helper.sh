@@ -15,26 +15,25 @@ readonly OUTPUT_DIR=".security-analysis"
 readonly VERSION="1.0.0"
 readonly SCAN_RESULTS_FILE=".agents/SKILL-SCAN-RESULTS.md"
 
-# Colors
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly BLUE='\033[0;34m'
-readonly CYAN='\033[0;36m'
-readonly NC='\033[0m'
-
+# Colors (fallback if shared-constants.sh not loaded)
+[[ -z "${RED+x}" ]] && RED='\033[0;31m'
+[[ -z "${GREEN+x}" ]] && GREEN='\033[0;32m'
+[[ -z "${YELLOW+x}" ]] && YELLOW='\033[1;33m'
+[[ -z "${BLUE+x}" ]] && BLUE='\033[0;34m'
+[[ -z "${CYAN+x}" ]] && CYAN='\033[0;36m'
+[[ -z "${NC+x}" ]] && NC='\033[0m'
 
 print_header() {
-    echo -e "${CYAN}"
-    echo "╔═══════════════════════════════════════════════════════════╗"
-    echo "║           Security Analysis Helper v${VERSION}               ║"
-    echo "║   AI-powered vulnerability detection for code & configs   ║"
-    echo "╚═══════════════════════════════════════════════════════════╝"
-    echo -e "${NC}"
+	echo -e "${CYAN}"
+	echo "╔═══════════════════════════════════════════════════════════╗"
+	echo "║           Security Analysis Helper v${VERSION}               ║"
+	echo "║   AI-powered vulnerability detection for code & configs   ║"
+	echo "╚═══════════════════════════════════════════════════════════╝"
+	echo -e "${NC}"
 }
 
 print_usage() {
-    cat << EOF
+	cat <<EOF
 Usage: $(basename "$0") <command> [options]
 
 Commands:
@@ -65,908 +64,908 @@ EOF
 }
 
 check_command() {
-    local cmd="$1"
-    command -v "$cmd" &>/dev/null
+	local cmd="$1"
+	command -v "$cmd" &>/dev/null
 }
 
 print_status() {
-    local name="$1"
-    local installed="$2"
-    local version="${3:-}"
-    
-    if [[ "$installed" == "true" ]]; then
-        echo -e "  ${GREEN}✓${NC} ${name} ${version:+($version)}"
-    else
-        echo -e "  ${RED}✗${NC} ${name} (not installed)"
-    fi
+	local name="$1"
+	local installed="$2"
+	local version="${3:-}"
+
+	if [[ "$installed" == "true" ]]; then
+		echo -e "  ${GREEN}✓${NC} ${name} ${version:+($version)}"
+	else
+		echo -e "  ${RED}✗${NC} ${name} (not installed)"
+	fi
 }
 
 cmd_status() {
-    print_header
-    echo -e "${BLUE}Security Tools Status:${NC}"
-    echo ""
-    
-    # OSV-Scanner
-    if check_command osv-scanner; then
-        local osv_version
-        osv_version=$(osv-scanner --version 2>/dev/null | head -1 || echo "unknown")
-        print_status "OSV-Scanner" "true" "$osv_version"
-    else
-        print_status "OSV-Scanner" "false"
-    fi
-    
-    # Ferret
-    if check_command ferret; then
-        local ferret_version
-        ferret_version=$(ferret --version 2>/dev/null | head -1 || echo "unknown")
-        print_status "Ferret" "true" "$ferret_version"
-    elif check_command npx && npx ferret-scan --version &>/dev/null 2>&1; then
-        print_status "Ferret (via npx)" "true"
-    else
-        print_status "Ferret" "false"
-    fi
-    
-    # Cisco Skill Scanner
-    if check_command skill-scanner; then
-        local skillscanner_version
-        skillscanner_version=$(skill-scanner --version 2>/dev/null | head -1 || echo "unknown")
-        print_status "Skill Scanner" "true" "$skillscanner_version"
-    elif check_command uvx; then
-        print_status "Skill Scanner (via uvx)" "true"
-    else
-        print_status "Skill Scanner" "false"
-    fi
-    
-    # Secretlint
-    if check_command secretlint; then
-        local secretlint_version
-        secretlint_version=$(secretlint --version 2>/dev/null || echo "unknown")
-        print_status "Secretlint" "true" "$secretlint_version"
-    elif check_command npx && npx secretlint --version &>/dev/null 2>&1; then
-        print_status "Secretlint (via npx)" "true"
-    else
-        print_status "Secretlint" "false"
-    fi
-    
-    # VirusTotal
-    local vt_helper="${SCRIPT_DIR}/virustotal-helper.sh"
-    if [[ -x "$vt_helper" ]]; then
-        local vt_output=""
-        vt_output=$("$vt_helper" status 2>/dev/null || true)
-        if echo "$vt_output" | grep -q "API key configured"; then
-            print_status "VirusTotal" "true" "API key configured"
-        else
-            print_status "VirusTotal" "false" "(helper installed, API key missing)"
-        fi
-    else
-        print_status "VirusTotal" "false"
-    fi
-    
-    # Snyk (optional)
-    if check_command snyk; then
-        local snyk_version
-        snyk_version=$(snyk --version 2>/dev/null || echo "unknown")
-        print_status "Snyk (optional)" "true" "$snyk_version"
-    else
-        print_status "Snyk (optional)" "false"
-    fi
-    
-    # Git
-    if check_command git; then
-        local git_version
-        git_version=$(git --version 2>/dev/null | awk '{print $3}')
-        print_status "Git" "true" "$git_version"
-    else
-        print_status "Git" "false"
-    fi
-    
-    echo ""
-    echo -e "${BLUE}Output Directory:${NC} ${OUTPUT_DIR}"
-    
-    if [[ -d "$OUTPUT_DIR" ]]; then
-        echo -e "  ${GREEN}✓${NC} Directory exists"
-        local report_count
-        report_count=$(find "$OUTPUT_DIR" -name "*.md" -o -name "*.json" -o -name "*.sarif" 2>/dev/null | wc -l | tr -d ' ')
-        echo -e "  Reports: ${report_count}"
-    else
-        echo -e "  ${YELLOW}○${NC} Directory will be created on first scan"
-    fi
-    
-    return 0
+	print_header
+	echo -e "${BLUE}Security Tools Status:${NC}"
+	echo ""
+
+	# OSV-Scanner
+	if check_command osv-scanner; then
+		local osv_version
+		osv_version=$(osv-scanner --version 2>/dev/null | head -1 || echo "unknown")
+		print_status "OSV-Scanner" "true" "$osv_version"
+	else
+		print_status "OSV-Scanner" "false"
+	fi
+
+	# Ferret
+	if check_command ferret; then
+		local ferret_version
+		ferret_version=$(ferret --version 2>/dev/null | head -1 || echo "unknown")
+		print_status "Ferret" "true" "$ferret_version"
+	elif check_command npx && npx ferret-scan --version &>/dev/null 2>&1; then
+		print_status "Ferret (via npx)" "true"
+	else
+		print_status "Ferret" "false"
+	fi
+
+	# Cisco Skill Scanner
+	if check_command skill-scanner; then
+		local skillscanner_version
+		skillscanner_version=$(skill-scanner --version 2>/dev/null | head -1 || echo "unknown")
+		print_status "Skill Scanner" "true" "$skillscanner_version"
+	elif check_command uvx; then
+		print_status "Skill Scanner (via uvx)" "true"
+	else
+		print_status "Skill Scanner" "false"
+	fi
+
+	# Secretlint
+	if check_command secretlint; then
+		local secretlint_version
+		secretlint_version=$(secretlint --version 2>/dev/null || echo "unknown")
+		print_status "Secretlint" "true" "$secretlint_version"
+	elif check_command npx && npx secretlint --version &>/dev/null 2>&1; then
+		print_status "Secretlint (via npx)" "true"
+	else
+		print_status "Secretlint" "false"
+	fi
+
+	# VirusTotal
+	local vt_helper="${SCRIPT_DIR}/virustotal-helper.sh"
+	if [[ -x "$vt_helper" ]]; then
+		local vt_output=""
+		vt_output=$("$vt_helper" status 2>/dev/null || true)
+		if echo "$vt_output" | grep -q "API key configured"; then
+			print_status "VirusTotal" "true" "API key configured"
+		else
+			print_status "VirusTotal" "false" "(helper installed, API key missing)"
+		fi
+	else
+		print_status "VirusTotal" "false"
+	fi
+
+	# Snyk (optional)
+	if check_command snyk; then
+		local snyk_version
+		snyk_version=$(snyk --version 2>/dev/null || echo "unknown")
+		print_status "Snyk (optional)" "true" "$snyk_version"
+	else
+		print_status "Snyk (optional)" "false"
+	fi
+
+	# Git
+	if check_command git; then
+		local git_version
+		git_version=$(git --version 2>/dev/null | awk '{print $3}')
+		print_status "Git" "true" "$git_version"
+	else
+		print_status "Git" "false"
+	fi
+
+	echo ""
+	echo -e "${BLUE}Output Directory:${NC} ${OUTPUT_DIR}"
+
+	if [[ -d "$OUTPUT_DIR" ]]; then
+		echo -e "  ${GREEN}✓${NC} Directory exists"
+		local report_count
+		report_count=$(find "$OUTPUT_DIR" -name "*.md" -o -name "*.json" -o -name "*.sarif" 2>/dev/null | wc -l | tr -d ' ')
+		echo -e "  Reports: ${report_count}"
+	else
+		echo -e "  ${YELLOW}○${NC} Directory will be created on first scan"
+	fi
+
+	return 0
 }
 
 ensure_output_dir() {
-    if [[ ! -d "$OUTPUT_DIR" ]]; then
-        mkdir -p "$OUTPUT_DIR"
-        echo -e "${GREEN}Created output directory: ${OUTPUT_DIR}${NC}"
-    fi
+	if [[ ! -d "$OUTPUT_DIR" ]]; then
+		mkdir -p "$OUTPUT_DIR"
+		echo -e "${GREEN}Created output directory: ${OUTPUT_DIR}${NC}"
+	fi
 }
 
 cmd_analyze() {
-    local scope="${1:-diff}"
-    shift || true
-    
-    print_header
-    ensure_output_dir
-    
-    # Guard: ensure we're in a git repository
-    if ! git rev-parse --is-inside-work-tree &>/dev/null; then
-        echo -e "${RED}Not inside a git repository.${NC}"
-        echo "Run this command from within a git repository."
-        return 1
-    fi
-    
-    echo -e "${BLUE}Security Analysis - Scope: ${scope}${NC}"
-    echo ""
-    
-    local files_to_scan=""
-    local scan_description=""
-    
-    case "$scope" in
-        diff)
-            scan_description="Uncommitted changes (git diff)"
-            if git rev-parse --verify origin/HEAD &>/dev/null; then
-                files_to_scan=$(git diff --merge-base origin/HEAD --name-only 2>/dev/null || git diff --name-only)
-            else
-                files_to_scan=$(git diff --name-only)
-            fi
-            ;;
-        staged)
-            scan_description="Staged changes"
-            files_to_scan=$(git diff --cached --name-only)
-            ;;
-        branch)
-            scan_description="All changes on current branch"
-            local base_branch
-            base_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo "main")
-            files_to_scan=$(git diff --name-only "${base_branch}"...HEAD 2>/dev/null || git diff --name-only main...HEAD 2>/dev/null || git diff --name-only)
-            ;;
-        full)
-            scan_description="Full codebase"
-            files_to_scan=$(git ls-files 2>/dev/null || find . -type f -not -path '*/\.*' -not -path '*/node_modules/*')
-            ;;
-        *)
-            echo -e "${RED}Unknown scope: ${scope}${NC}"
-            echo "Valid scopes: diff, staged, branch, full"
-            return 1
-            ;;
-    esac
-    
-    local file_count
-    file_count=$(echo "$files_to_scan" | grep -c . || echo "0")
-    
-    echo -e "Scan: ${scan_description}"
-    echo -e "Files: ${file_count}"
-    echo ""
-    
-    if [[ "$file_count" -eq 0 ]]; then
-        echo -e "${YELLOW}No files to scan.${NC}"
-        return 0
-    fi
-    
-    # Run secretlint if available
-    echo -e "${CYAN}Running secret detection...${NC}"
-    if check_command secretlint || (check_command npx && npx secretlint --version &>/dev/null 2>&1); then
-        local secretlint_cmd="secretlint"
-        if ! check_command secretlint; then
-            secretlint_cmd="npx secretlint"
-        fi
-        
-        # Use xargs -I {} to handle filenames with spaces correctly
-        # shellcheck disable=SC2086
-        echo "$files_to_scan" | grep . | xargs -I {} $secretlint_cmd "{}" 2>/dev/null || true
-    else
-        echo -e "${YELLOW}Secretlint not available. Install with: npm install -g secretlint${NC}"
-    fi
-    
-    echo ""
-    echo -e "${GREEN}Analysis complete.${NC}"
-    echo -e "For AI-powered deep analysis, use the security-analysis subagent."
-    
-    return 0
+	local scope="${1:-diff}"
+	shift || true
+
+	print_header
+	ensure_output_dir
+
+	# Guard: ensure we're in a git repository
+	if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+		echo -e "${RED}Not inside a git repository.${NC}"
+		echo "Run this command from within a git repository."
+		return 1
+	fi
+
+	echo -e "${BLUE}Security Analysis - Scope: ${scope}${NC}"
+	echo ""
+
+	local files_to_scan=""
+	local scan_description=""
+
+	case "$scope" in
+	diff)
+		scan_description="Uncommitted changes (git diff)"
+		if git rev-parse --verify origin/HEAD &>/dev/null; then
+			files_to_scan=$(git diff --merge-base origin/HEAD --name-only 2>/dev/null || git diff --name-only)
+		else
+			files_to_scan=$(git diff --name-only)
+		fi
+		;;
+	staged)
+		scan_description="Staged changes"
+		files_to_scan=$(git diff --cached --name-only)
+		;;
+	branch)
+		scan_description="All changes on current branch"
+		local base_branch
+		base_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo "main")
+		files_to_scan=$(git diff --name-only "${base_branch}"...HEAD 2>/dev/null || git diff --name-only main...HEAD 2>/dev/null || git diff --name-only)
+		;;
+	full)
+		scan_description="Full codebase"
+		files_to_scan=$(git ls-files 2>/dev/null || find . -type f -not -path '*/\.*' -not -path '*/node_modules/*')
+		;;
+	*)
+		echo -e "${RED}Unknown scope: ${scope}${NC}"
+		echo "Valid scopes: diff, staged, branch, full"
+		return 1
+		;;
+	esac
+
+	local file_count
+	file_count=$(echo "$files_to_scan" | grep -c . || echo "0")
+
+	echo -e "Scan: ${scan_description}"
+	echo -e "Files: ${file_count}"
+	echo ""
+
+	if [[ "$file_count" -eq 0 ]]; then
+		echo -e "${YELLOW}No files to scan.${NC}"
+		return 0
+	fi
+
+	# Run secretlint if available
+	echo -e "${CYAN}Running secret detection...${NC}"
+	if check_command secretlint || (check_command npx && npx secretlint --version &>/dev/null 2>&1); then
+		local secretlint_cmd="secretlint"
+		if ! check_command secretlint; then
+			secretlint_cmd="npx secretlint"
+		fi
+
+		# Use xargs -I {} to handle filenames with spaces correctly
+		# shellcheck disable=SC2086
+		echo "$files_to_scan" | grep . | xargs -I {} $secretlint_cmd "{}" 2>/dev/null || true
+	else
+		echo -e "${YELLOW}Secretlint not available. Install with: npm install -g secretlint${NC}"
+	fi
+
+	echo ""
+	echo -e "${GREEN}Analysis complete.${NC}"
+	echo -e "For AI-powered deep analysis, use the security-analysis subagent."
+
+	return 0
 }
 
 cmd_history() {
-    local commits="${1:-50}"
-    shift || true
-    
-    print_header
-    ensure_output_dir
-    
-    echo -e "${BLUE}Git History Security Scan${NC}"
-    echo ""
-    
-    # Parse commits argument
-    local git_log_args=""
-    if [[ "$commits" =~ ^[0-9]+$ ]]; then
-        git_log_args="-n $commits"
-        echo -e "Scanning last ${commits} commits..."
-    elif [[ "$commits" =~ \.\. ]]; then
-        git_log_args="$commits"
-        echo -e "Scanning commit range: ${commits}..."
-    elif [[ "$commits" == --* ]]; then
-        git_log_args="$commits $*"
-        echo -e "Scanning with options: ${git_log_args}..."
-    else
-        git_log_args="-n 50"
-        echo -e "Scanning last 50 commits (default)..."
-    fi
-    
-    echo ""
-    
-    # Get commits
-    local commit_list
-    # shellcheck disable=SC2086
-    commit_list=$(git log $git_log_args --format="%H" 2>/dev/null || echo "")
-    
-    if [[ -z "$commit_list" ]]; then
-        echo -e "${YELLOW}No commits found.${NC}"
-        return 0
-    fi
-    
-    local commit_count
-    commit_count=$(echo "$commit_list" | wc -l | tr -d ' ')
-    echo -e "Found ${commit_count} commits to analyze."
-    echo ""
-    
-    # Analyze each commit for potential security issues
-    local issues_found=0
-    local current=0
-    
-    while IFS= read -r commit; do
-        current=$((current + 1))
-        local short_hash="${commit:0:8}"
-        local commit_msg
-        commit_msg=$(git log -1 --format="%s" "$commit" 2>/dev/null | head -c 50)
-        
-        printf "\r[%d/%d] Analyzing %s..." "$current" "$commit_count" "$short_hash"
-        
-        # Get diff for this commit
-        local diff_content
-        diff_content=$(git show "$commit" --format="" 2>/dev/null || echo "")
-        
-        # Quick pattern matching for common security issues (word boundaries to reduce false positives)
-        if echo "$diff_content" | grep -qiE '\b(password|secret|api[_-]?key|token|credential)s?\b' 2>/dev/null; then
-            issues_found=$((issues_found + 1))
-            echo ""
-            echo -e "${YELLOW}[POTENTIAL] ${short_hash}: ${commit_msg}${NC}"
-            echo -e "  May contain sensitive data patterns"
-        fi
-        
-    done <<< "$commit_list"
-    
-    echo ""
-    echo ""
-    echo -e "${GREEN}History scan complete.${NC}"
-    echo -e "Commits analyzed: ${commit_count}"
-    echo -e "Potential issues: ${issues_found}"
-    echo ""
-    echo -e "For deep analysis of specific commits, use:"
-    echo -e "  security-helper.sh history <commit>^..<commit>"
-    
-    return 0
+	local commits="${1:-50}"
+	shift || true
+
+	print_header
+	ensure_output_dir
+
+	echo -e "${BLUE}Git History Security Scan${NC}"
+	echo ""
+
+	# Parse commits argument
+	local git_log_args=""
+	if [[ "$commits" =~ ^[0-9]+$ ]]; then
+		git_log_args="-n $commits"
+		echo -e "Scanning last ${commits} commits..."
+	elif [[ "$commits" =~ \.\. ]]; then
+		git_log_args="$commits"
+		echo -e "Scanning commit range: ${commits}..."
+	elif [[ "$commits" == --* ]]; then
+		git_log_args="$commits $*"
+		echo -e "Scanning with options: ${git_log_args}..."
+	else
+		git_log_args="-n 50"
+		echo -e "Scanning last 50 commits (default)..."
+	fi
+
+	echo ""
+
+	# Get commits
+	local commit_list
+	# shellcheck disable=SC2086
+	commit_list=$(git log $git_log_args --format="%H" 2>/dev/null || echo "")
+
+	if [[ -z "$commit_list" ]]; then
+		echo -e "${YELLOW}No commits found.${NC}"
+		return 0
+	fi
+
+	local commit_count
+	commit_count=$(echo "$commit_list" | wc -l | tr -d ' ')
+	echo -e "Found ${commit_count} commits to analyze."
+	echo ""
+
+	# Analyze each commit for potential security issues
+	local issues_found=0
+	local current=0
+
+	while IFS= read -r commit; do
+		current=$((current + 1))
+		local short_hash="${commit:0:8}"
+		local commit_msg
+		commit_msg=$(git log -1 --format="%s" "$commit" 2>/dev/null | head -c 50)
+
+		printf "\r[%d/%d] Analyzing %s..." "$current" "$commit_count" "$short_hash"
+
+		# Get diff for this commit
+		local diff_content
+		diff_content=$(git show "$commit" --format="" 2>/dev/null || echo "")
+
+		# Quick pattern matching for common security issues (word boundaries to reduce false positives)
+		if echo "$diff_content" | grep -qiE '\b(password|secret|api[_-]?key|token|credential)s?\b' 2>/dev/null; then
+			issues_found=$((issues_found + 1))
+			echo ""
+			echo -e "${YELLOW}[POTENTIAL] ${short_hash}: ${commit_msg}${NC}"
+			echo -e "  May contain sensitive data patterns"
+		fi
+
+	done <<<"$commit_list"
+
+	echo ""
+	echo ""
+	echo -e "${GREEN}History scan complete.${NC}"
+	echo -e "Commits analyzed: ${commit_count}"
+	echo -e "Potential issues: ${issues_found}"
+	echo ""
+	echo -e "For deep analysis of specific commits, use:"
+	echo -e "  security-helper.sh history <commit>^..<commit>"
+
+	return 0
 }
 
 cmd_scan_deps() {
-    local path="${1:-.}"
-    shift || true
-    
-    print_header
-    ensure_output_dir
-    
-    echo -e "${BLUE}Dependency Vulnerability Scan${NC}"
-    echo -e "Path: ${path}"
-    echo ""
-    
-    if ! check_command osv-scanner; then
-        echo -e "${YELLOW}OSV-Scanner not installed.${NC}"
-        echo ""
-        echo "Install with:"
-        echo "  go install github.com/google/osv-scanner/cmd/osv-scanner@latest"
-        echo "  # or"
-        echo "  brew install osv-scanner"
-        echo ""
-        return 1
-    fi
-    
-    echo -e "${CYAN}Running OSV-Scanner...${NC}"
-    echo ""
-    
-    # Run OSV-Scanner
-    # Exit codes: 0=clean, 1=vulnerabilities found, 127=general error, 128=no packages, 129+=other errors
-    osv-scanner --recursive "$path" "$@" || {
-        local exit_code=$?
-        if [[ $exit_code -eq 1 ]]; then
-            echo ""
-            echo -e "${RED}Vulnerabilities found!${NC}"
-            return 1
-        fi
-        # Propagate actual errors (not just vulnerability findings)
-        echo ""
-        echo -e "${RED}OSV-Scanner failed with exit code ${exit_code}.${NC}"
-        return "$exit_code"
-    }
-    
-    echo ""
-    echo -e "${GREEN}No vulnerabilities found.${NC}"
-    return 0
+	local path="${1:-.}"
+	shift || true
+
+	print_header
+	ensure_output_dir
+
+	echo -e "${BLUE}Dependency Vulnerability Scan${NC}"
+	echo -e "Path: ${path}"
+	echo ""
+
+	if ! check_command osv-scanner; then
+		echo -e "${YELLOW}OSV-Scanner not installed.${NC}"
+		echo ""
+		echo "Install with:"
+		echo "  go install github.com/google/osv-scanner/cmd/osv-scanner@latest"
+		echo "  # or"
+		echo "  brew install osv-scanner"
+		echo ""
+		return 1
+	fi
+
+	echo -e "${CYAN}Running OSV-Scanner...${NC}"
+	echo ""
+
+	# Run OSV-Scanner
+	# Exit codes: 0=clean, 1=vulnerabilities found, 127=general error, 128=no packages, 129+=other errors
+	osv-scanner --recursive "$path" "$@" || {
+		local exit_code=$?
+		if [[ $exit_code -eq 1 ]]; then
+			echo ""
+			echo -e "${RED}Vulnerabilities found!${NC}"
+			return 1
+		fi
+		# Propagate actual errors (not just vulnerability findings)
+		echo ""
+		echo -e "${RED}OSV-Scanner failed with exit code ${exit_code}.${NC}"
+		return "$exit_code"
+	}
+
+	echo ""
+	echo -e "${GREEN}No vulnerabilities found.${NC}"
+	return 0
 }
 
 update_scan_results_log() {
-    local skills_scanned="$1"
-    local safe_count="$2"
-    local critical_count="$3"
-    local high_count="$4"
-    local medium_count="$5"
-    local notes="$6"
-    
-    # Find the repo root containing .agents/SKILL-SCAN-RESULTS.md
-    local repo_root=""
-    repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
-    
-    if [[ -z "$repo_root" ]]; then
-        return 0
-    fi
-    
-    local results_file="${repo_root}/${SCAN_RESULTS_FILE}"
-    
-    if [[ ! -f "$results_file" ]]; then
-        return 0
-    fi
-    
-    local scan_date
-    scan_date=$(date -u +"%Y-%m-%d")
-    local scan_timestamp
-    scan_timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    
-    # Update the "Latest Full Scan" date
-    sed_inplace "s/^\*\*Date\*\*: .*/**Date**: ${scan_timestamp}/" "$results_file" 2>/dev/null || true
-    sed_inplace "s/^\*\*Skills scanned\*\*: .*/**Skills scanned**: ${skills_scanned}/" "$results_file" 2>/dev/null || true
-    sed_inplace "s/^\*\*Safe\*\*: .*/**Safe**: ${safe_count}/" "$results_file" 2>/dev/null || true
-    
-    # Append to scan history table
-    local history_row="| ${scan_date} | ${skills_scanned} | ${safe_count} | ${critical_count} | ${high_count} | ${medium_count} | ${notes} |"
-    echo "$history_row" >> "$results_file"
-    
-    echo -e "${GREEN}Scan results logged to ${SCAN_RESULTS_FILE}${NC}"
-    return 0
+	local skills_scanned="$1"
+	local safe_count="$2"
+	local critical_count="$3"
+	local high_count="$4"
+	local medium_count="$5"
+	local notes="$6"
+
+	# Find the repo root containing .agents/SKILL-SCAN-RESULTS.md
+	local repo_root=""
+	repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+
+	if [[ -z "$repo_root" ]]; then
+		return 0
+	fi
+
+	local results_file="${repo_root}/${SCAN_RESULTS_FILE}"
+
+	if [[ ! -f "$results_file" ]]; then
+		return 0
+	fi
+
+	local scan_date
+	scan_date=$(date -u +"%Y-%m-%d")
+	local scan_timestamp
+	scan_timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+	# Update the "Latest Full Scan" date
+	sed_inplace "s/^\*\*Date\*\*: .*/**Date**: ${scan_timestamp}/" "$results_file" 2>/dev/null || true
+	sed_inplace "s/^\*\*Skills scanned\*\*: .*/**Skills scanned**: ${skills_scanned}/" "$results_file" 2>/dev/null || true
+	sed_inplace "s/^\*\*Safe\*\*: .*/**Safe**: ${safe_count}/" "$results_file" 2>/dev/null || true
+
+	# Append to scan history table
+	local history_row="| ${scan_date} | ${skills_scanned} | ${safe_count} | ${critical_count} | ${high_count} | ${medium_count} | ${notes} |"
+	echo "$history_row" >>"$results_file"
+
+	echo -e "${GREEN}Scan results logged to ${SCAN_RESULTS_FILE}${NC}"
+	return 0
 }
 
 cmd_skill_scan() {
-    local target="${1:-all}"
-    shift || true
-    
-    print_header
-    ensure_output_dir
-    
-    echo -e "${BLUE}Agent Skill Security Scan (Cisco Skill Scanner)${NC}"
-    echo ""
-    
-    # Determine scanner command
-    local scanner_cmd=""
-    
-    if check_command skill-scanner; then
-        scanner_cmd="skill-scanner"
-    elif check_command uvx; then
-        scanner_cmd="uvx cisco-ai-skill-scanner"
-    elif check_command pipx; then
-        scanner_cmd="pipx run cisco-ai-skill-scanner"
-    else
-        echo -e "${YELLOW}Cisco Skill Scanner not installed.${NC}"
-        echo ""
-        echo "Install with:"
-        echo "  uv tool install cisco-ai-skill-scanner"
-        echo "  # or via pip"
-        echo "  pip3 install --user cisco-ai-skill-scanner"
-        echo "  # or run setup.sh to auto-install"
-        echo "  aidevops update"
-        echo ""
-        return 1
-    fi
-    
-    local agents_dir="${AIDEVOPS_AGENTS_DIR:-$HOME/.aidevops/agents}"
-    local skill_sources="${agents_dir}/configs/skill-sources.json"
-    
-    if [[ "$target" == "all" ]]; then
-        # Scan all imported skills
-        if [[ ! -f "$skill_sources" ]] || ! check_command jq; then
-            echo -e "${YELLOW}No skill-sources.json found or jq not available.${NC}"
-            return 1
-        fi
-        
-        local skill_count
-        skill_count=$(jq '.skills | length' "$skill_sources" 2>/dev/null || echo "0")
-        
-        if [[ "$skill_count" -eq 0 ]]; then
-            echo -e "${GREEN}No imported skills to scan.${NC}"
-            return 0
-        fi
-        
-        echo -e "Scanning ${skill_count} imported skills..."
-        echo ""
-        
-        local total_findings=0
-        local skills_with_issues=0
-        local skills_scanned=0
-        local total_critical=0
-        local total_high=0
-        local total_medium=0
-        
-        while IFS= read -r skill_json; do
-            local name local_path
-            name=$(echo "$skill_json" | jq -r '.name')
-            local_path=$(echo "$skill_json" | jq -r '.local_path')
-            
-            local full_path="${agents_dir}/${local_path#.agents/}"
-            
-            if [[ ! -f "$full_path" ]]; then
-                echo -e "${YELLOW}SKIP${NC}: $name (file not found: $local_path)"
-                continue
-            fi
-            
-            # Skill scanner expects a directory with SKILL.md, so scan the parent dir
-            # or the file directly if it's a standalone markdown
-            local scan_target
-            local skill_dir="${full_path%.md}"
-            if [[ -d "$skill_dir" ]]; then
-                scan_target="$skill_dir"
-            else
-                scan_target="$(dirname "$full_path")"
-            fi
-            
-            echo -e "${CYAN}Scanning${NC}: $name ($local_path)"
-            
-            local scan_output
-            scan_output=$($scanner_cmd scan "$scan_target" --format json 2>/dev/null) || true
-            
-            if [[ -n "$scan_output" ]]; then
-                local findings
-                findings=$(echo "$scan_output" | jq -r '.total_findings // 0' 2>/dev/null || echo "0")
-                local max_severity
-                max_severity=$(echo "$scan_output" | jq -r '.max_severity // "SAFE"' 2>/dev/null || echo "SAFE")
-                
-                if [[ "$findings" -gt 0 ]]; then
-                    total_findings=$((total_findings + findings))
-                    skills_with_issues=$((skills_with_issues + 1))
-                    echo -e "  ${RED}ISSUES${NC}: $findings findings (max severity: $max_severity)"
-                    
-                    # Track severity counts
-                    local skill_critical skill_high skill_medium
-                    skill_critical=$(echo "$scan_output" | jq '[.findings[]? | select(.severity == "CRITICAL")] | length' 2>/dev/null || echo "0")
-                    skill_high=$(echo "$scan_output" | jq '[.findings[]? | select(.severity == "HIGH")] | length' 2>/dev/null || echo "0")
-                    skill_medium=$(echo "$scan_output" | jq '[.findings[]? | select(.severity == "MEDIUM")] | length' 2>/dev/null || echo "0")
-                    total_critical=$((total_critical + skill_critical))
-                    total_high=$((total_high + skill_high))
-                    total_medium=$((total_medium + skill_medium))
-                    
-                    # Show critical/high findings inline
-                    echo "$scan_output" | jq -r '.findings[]? | select(.severity == "CRITICAL" or .severity == "HIGH") | "  [\(.severity)] \(.rule_id): \(.description)"' 2>/dev/null || true
-                else
-                    echo -e "  ${GREEN}SAFE${NC}"
-                fi
-            else
-                echo -e "  ${GREEN}SAFE${NC} (no output from scanner)"
-            fi
-            
-            skills_scanned=$((skills_scanned + 1))
-        done < <(jq -c '.skills[]' "$skill_sources" 2>/dev/null)
-        
-        local safe_count=$((skills_scanned - skills_with_issues))
-        
-        echo ""
-        echo "═══════════════════════════════════════"
-        echo -e "Skills scanned: ${skills_scanned}"
-        echo -e "Skills with issues: ${skills_with_issues}"
-        echo -e "Total findings: ${total_findings}"
-        echo "═══════════════════════════════════════"
-        
-        # Log results to SKILL-SCAN-RESULTS.md
-        local notes="Routine scan"
-        if [[ "$skills_with_issues" -gt 0 ]]; then
-            notes="${skills_with_issues} skill(s) with findings"
-        fi
-        update_scan_results_log "$skills_scanned" "$safe_count" "$total_critical" "$total_high" "$total_medium" "$notes"
-        
-        if [[ "$skills_with_issues" -gt 0 ]]; then
-            echo ""
-            echo -e "${YELLOW}Review skills with findings and consider removing unsafe ones:${NC}"
-            echo "  aidevops skill remove <name>"
-            return 1
-        fi
-        
-        # Advisory: Run VirusTotal scan if available
-        local vt_helper="${SCRIPT_DIR}/virustotal-helper.sh"
-        if [[ -x "$vt_helper" ]] && "$vt_helper" status 2>/dev/null | grep -q "API key configured"; then
-            echo ""
-            echo -e "${CYAN}Running advisory VirusTotal scan...${NC}"
-            echo -e "${YELLOW}(VT scans are advisory only - Cisco scanner is the security gate)${NC}"
-            echo ""
+	local target="${1:-all}"
+	shift || true
 
-            local vt_issues=0
-            while IFS= read -r skill_json; do
-                local name local_path
-                name=$(echo "$skill_json" | jq -r '.name')
-                local_path=$(echo "$skill_json" | jq -r '.local_path')
-                local full_path="${agents_dir}/${local_path#.agents/}"
+	print_header
+	ensure_output_dir
 
-                if [[ ! -f "$full_path" ]]; then
-                    continue
-                fi
+	echo -e "${BLUE}Agent Skill Security Scan (Cisco Skill Scanner)${NC}"
+	echo ""
 
-                echo -e "${CYAN}VT Scanning${NC}: $name"
-                local scan_target="$full_path"
-                if [[ -d "${full_path%.*}" ]]; then
-                    scan_target="${full_path%.*}"
-                fi
-                "$vt_helper" scan-skill "$scan_target" --quiet 2>/dev/null || {
-                    vt_issues=$((vt_issues + 1))
-                    echo -e "  ${YELLOW}VT flagged issues${NC} for $name"
-                }
-            done < <(jq -c '.skills[]' "$skill_sources" 2>/dev/null)
+	# Determine scanner command
+	local scanner_cmd=""
 
-            if [[ $vt_issues -gt 0 ]]; then
-                echo ""
-                echo -e "${YELLOW}VirusTotal flagged ${vt_issues} skill(s) - review recommended${NC}"
-            else
-                echo ""
-                echo -e "${GREEN}VirusTotal: No threats detected${NC}"
-            fi
-        fi
+	if check_command skill-scanner; then
+		scanner_cmd="skill-scanner"
+	elif check_command uvx; then
+		scanner_cmd="uvx cisco-ai-skill-scanner"
+	elif check_command pipx; then
+		scanner_cmd="pipx run cisco-ai-skill-scanner"
+	else
+		echo -e "${YELLOW}Cisco Skill Scanner not installed.${NC}"
+		echo ""
+		echo "Install with:"
+		echo "  uv tool install cisco-ai-skill-scanner"
+		echo "  # or via pip"
+		echo "  pip3 install --user cisco-ai-skill-scanner"
+		echo "  # or run setup.sh to auto-install"
+		echo "  aidevops update"
+		echo ""
+		return 1
+	fi
 
-        echo ""
-        echo -e "${GREEN}All imported skills passed security scan.${NC}"
-        return 0
-    else
-        # Scan a specific skill by name or path
-        local scan_path="$target"
-        
-        # If target looks like a skill name (no slashes), resolve from registry
-        if [[ "$target" != */* && -f "$skill_sources" ]] && check_command jq; then
-            local resolved_path
-            resolved_path=$(jq -r --arg name "$target" '.skills[] | select(.name == $name) | .local_path' "$skill_sources" 2>/dev/null || echo "")
-            if [[ -n "$resolved_path" ]]; then
-                scan_path="${agents_dir}/${resolved_path#.agents/}"
-                scan_path="$(dirname "$scan_path")"
-                echo -e "Resolved skill '$target' to: $scan_path"
-            fi
-        fi
-        
-        echo -e "Scanning: ${scan_path}"
-        echo ""
-        
-        $scanner_cmd scan "$scan_path" --use-behavioral "$@"
-        return $?
-    fi
+	local agents_dir="${AIDEVOPS_AGENTS_DIR:-$HOME/.aidevops/agents}"
+	local skill_sources="${agents_dir}/configs/skill-sources.json"
+
+	if [[ "$target" == "all" ]]; then
+		# Scan all imported skills
+		if [[ ! -f "$skill_sources" ]] || ! check_command jq; then
+			echo -e "${YELLOW}No skill-sources.json found or jq not available.${NC}"
+			return 1
+		fi
+
+		local skill_count
+		skill_count=$(jq '.skills | length' "$skill_sources" 2>/dev/null || echo "0")
+
+		if [[ "$skill_count" -eq 0 ]]; then
+			echo -e "${GREEN}No imported skills to scan.${NC}"
+			return 0
+		fi
+
+		echo -e "Scanning ${skill_count} imported skills..."
+		echo ""
+
+		local total_findings=0
+		local skills_with_issues=0
+		local skills_scanned=0
+		local total_critical=0
+		local total_high=0
+		local total_medium=0
+
+		while IFS= read -r skill_json; do
+			local name local_path
+			name=$(echo "$skill_json" | jq -r '.name')
+			local_path=$(echo "$skill_json" | jq -r '.local_path')
+
+			local full_path="${agents_dir}/${local_path#.agents/}"
+
+			if [[ ! -f "$full_path" ]]; then
+				echo -e "${YELLOW}SKIP${NC}: $name (file not found: $local_path)"
+				continue
+			fi
+
+			# Skill scanner expects a directory with SKILL.md, so scan the parent dir
+			# or the file directly if it's a standalone markdown
+			local scan_target
+			local skill_dir="${full_path%.md}"
+			if [[ -d "$skill_dir" ]]; then
+				scan_target="$skill_dir"
+			else
+				scan_target="$(dirname "$full_path")"
+			fi
+
+			echo -e "${CYAN}Scanning${NC}: $name ($local_path)"
+
+			local scan_output
+			scan_output=$($scanner_cmd scan "$scan_target" --format json 2>/dev/null) || true
+
+			if [[ -n "$scan_output" ]]; then
+				local findings
+				findings=$(echo "$scan_output" | jq -r '.total_findings // 0' 2>/dev/null || echo "0")
+				local max_severity
+				max_severity=$(echo "$scan_output" | jq -r '.max_severity // "SAFE"' 2>/dev/null || echo "SAFE")
+
+				if [[ "$findings" -gt 0 ]]; then
+					total_findings=$((total_findings + findings))
+					skills_with_issues=$((skills_with_issues + 1))
+					echo -e "  ${RED}ISSUES${NC}: $findings findings (max severity: $max_severity)"
+
+					# Track severity counts
+					local skill_critical skill_high skill_medium
+					skill_critical=$(echo "$scan_output" | jq '[.findings[]? | select(.severity == "CRITICAL")] | length' 2>/dev/null || echo "0")
+					skill_high=$(echo "$scan_output" | jq '[.findings[]? | select(.severity == "HIGH")] | length' 2>/dev/null || echo "0")
+					skill_medium=$(echo "$scan_output" | jq '[.findings[]? | select(.severity == "MEDIUM")] | length' 2>/dev/null || echo "0")
+					total_critical=$((total_critical + skill_critical))
+					total_high=$((total_high + skill_high))
+					total_medium=$((total_medium + skill_medium))
+
+					# Show critical/high findings inline
+					echo "$scan_output" | jq -r '.findings[]? | select(.severity == "CRITICAL" or .severity == "HIGH") | "  [\(.severity)] \(.rule_id): \(.description)"' 2>/dev/null || true
+				else
+					echo -e "  ${GREEN}SAFE${NC}"
+				fi
+			else
+				echo -e "  ${GREEN}SAFE${NC} (no output from scanner)"
+			fi
+
+			skills_scanned=$((skills_scanned + 1))
+		done < <(jq -c '.skills[]' "$skill_sources" 2>/dev/null)
+
+		local safe_count=$((skills_scanned - skills_with_issues))
+
+		echo ""
+		echo "═══════════════════════════════════════"
+		echo -e "Skills scanned: ${skills_scanned}"
+		echo -e "Skills with issues: ${skills_with_issues}"
+		echo -e "Total findings: ${total_findings}"
+		echo "═══════════════════════════════════════"
+
+		# Log results to SKILL-SCAN-RESULTS.md
+		local notes="Routine scan"
+		if [[ "$skills_with_issues" -gt 0 ]]; then
+			notes="${skills_with_issues} skill(s) with findings"
+		fi
+		update_scan_results_log "$skills_scanned" "$safe_count" "$total_critical" "$total_high" "$total_medium" "$notes"
+
+		if [[ "$skills_with_issues" -gt 0 ]]; then
+			echo ""
+			echo -e "${YELLOW}Review skills with findings and consider removing unsafe ones:${NC}"
+			echo "  aidevops skill remove <name>"
+			return 1
+		fi
+
+		# Advisory: Run VirusTotal scan if available
+		local vt_helper="${SCRIPT_DIR}/virustotal-helper.sh"
+		if [[ -x "$vt_helper" ]] && "$vt_helper" status 2>/dev/null | grep -q "API key configured"; then
+			echo ""
+			echo -e "${CYAN}Running advisory VirusTotal scan...${NC}"
+			echo -e "${YELLOW}(VT scans are advisory only - Cisco scanner is the security gate)${NC}"
+			echo ""
+
+			local vt_issues=0
+			while IFS= read -r skill_json; do
+				local name local_path
+				name=$(echo "$skill_json" | jq -r '.name')
+				local_path=$(echo "$skill_json" | jq -r '.local_path')
+				local full_path="${agents_dir}/${local_path#.agents/}"
+
+				if [[ ! -f "$full_path" ]]; then
+					continue
+				fi
+
+				echo -e "${CYAN}VT Scanning${NC}: $name"
+				local scan_target="$full_path"
+				if [[ -d "${full_path%.*}" ]]; then
+					scan_target="${full_path%.*}"
+				fi
+				"$vt_helper" scan-skill "$scan_target" --quiet 2>/dev/null || {
+					vt_issues=$((vt_issues + 1))
+					echo -e "  ${YELLOW}VT flagged issues${NC} for $name"
+				}
+			done < <(jq -c '.skills[]' "$skill_sources" 2>/dev/null)
+
+			if [[ $vt_issues -gt 0 ]]; then
+				echo ""
+				echo -e "${YELLOW}VirusTotal flagged ${vt_issues} skill(s) - review recommended${NC}"
+			else
+				echo ""
+				echo -e "${GREEN}VirusTotal: No threats detected${NC}"
+			fi
+		fi
+
+		echo ""
+		echo -e "${GREEN}All imported skills passed security scan.${NC}"
+		return 0
+	else
+		# Scan a specific skill by name or path
+		local scan_path="$target"
+
+		# If target looks like a skill name (no slashes), resolve from registry
+		if [[ "$target" != */* && -f "$skill_sources" ]] && check_command jq; then
+			local resolved_path
+			resolved_path=$(jq -r --arg name "$target" '.skills[] | select(.name == $name) | .local_path' "$skill_sources" 2>/dev/null || echo "")
+			if [[ -n "$resolved_path" ]]; then
+				scan_path="${agents_dir}/${resolved_path#.agents/}"
+				scan_path="$(dirname "$scan_path")"
+				echo -e "Resolved skill '$target' to: $scan_path"
+			fi
+		fi
+
+		echo -e "Scanning: ${scan_path}"
+		echo ""
+
+		$scanner_cmd scan "$scan_path" --use-behavioral "$@"
+		return $?
+	fi
 }
 
 cmd_vt_scan() {
-    local target="${1:-}"
-    shift || true
+	local target="${1:-}"
+	shift || true
 
-    print_header
+	print_header
 
-    local vt_helper="${SCRIPT_DIR}/virustotal-helper.sh"
-    if [[ ! -x "$vt_helper" ]]; then
-        echo -e "${RED}VirusTotal helper not found: ${vt_helper}${NC}"
-        echo "Expected at: .agents/scripts/virustotal-helper.sh"
-        return 1
-    fi
+	local vt_helper="${SCRIPT_DIR}/virustotal-helper.sh"
+	if [[ ! -x "$vt_helper" ]]; then
+		echo -e "${RED}VirusTotal helper not found: ${vt_helper}${NC}"
+		echo "Expected at: .agents/scripts/virustotal-helper.sh"
+		return 1
+	fi
 
-    if [[ -z "$target" ]]; then
-        echo -e "${RED}Target required.${NC}"
-        echo ""
-        echo "Usage: $(basename "$0") vt-scan <type> [target]"
-        echo ""
-        echo "Types:"
-        echo "  file <path>       Scan a file by SHA256 hash lookup"
-        echo "  url <url>         Scan a URL for threats"
-        echo "  domain <domain>   Check domain reputation"
-        echo "  skill <path>      Scan all files in a skill directory"
-        echo "  status            Check VT API key and quota"
-        return 1
-    fi
+	if [[ -z "$target" ]]; then
+		echo -e "${RED}Target required.${NC}"
+		echo ""
+		echo "Usage: $(basename "$0") vt-scan <type> [target]"
+		echo ""
+		echo "Types:"
+		echo "  file <path>       Scan a file by SHA256 hash lookup"
+		echo "  url <url>         Scan a URL for threats"
+		echo "  domain <domain>   Check domain reputation"
+		echo "  skill <path>      Scan all files in a skill directory"
+		echo "  status            Check VT API key and quota"
+		return 1
+	fi
 
-    # Delegate to virustotal-helper.sh
-    case "$target" in
-        file|scan-file)
-            "$vt_helper" scan-file "$@"
-            ;;
-        url|scan-url)
-            "$vt_helper" scan-url "$@"
-            ;;
-        domain|scan-domain)
-            "$vt_helper" scan-domain "$@"
-            ;;
-        skill|scan-skill)
-            "$vt_helper" scan-skill "$@"
-            ;;
-        status)
-            "$vt_helper" status
-            ;;
-        *)
-            # Treat as a path -- auto-detect file vs directory
-            if [[ -d "$target" ]]; then
-                "$vt_helper" scan-skill "$target" "$@"
-            elif [[ -f "$target" ]]; then
-                "$vt_helper" scan-file "$target" "$@"
-            elif [[ "$target" =~ ^https?:// ]]; then
-                "$vt_helper" scan-url "$target" "$@"
-            else
-                # Assume domain
-                "$vt_helper" scan-domain "$target" "$@"
-            fi
-            ;;
-    esac
+	# Delegate to virustotal-helper.sh
+	case "$target" in
+	file | scan-file)
+		"$vt_helper" scan-file "$@"
+		;;
+	url | scan-url)
+		"$vt_helper" scan-url "$@"
+		;;
+	domain | scan-domain)
+		"$vt_helper" scan-domain "$@"
+		;;
+	skill | scan-skill)
+		"$vt_helper" scan-skill "$@"
+		;;
+	status)
+		"$vt_helper" status
+		;;
+	*)
+		# Treat as a path -- auto-detect file vs directory
+		if [[ -d "$target" ]]; then
+			"$vt_helper" scan-skill "$target" "$@"
+		elif [[ -f "$target" ]]; then
+			"$vt_helper" scan-file "$target" "$@"
+		elif [[ "$target" =~ ^https?:// ]]; then
+			"$vt_helper" scan-url "$target" "$@"
+		else
+			# Assume domain
+			"$vt_helper" scan-domain "$target" "$@"
+		fi
+		;;
+	esac
 
-    return $?
+	return $?
 }
 
 cmd_ferret() {
-    local path="${1:-.}"
-    shift || true
-    
-    print_header
-    ensure_output_dir
-    
-    echo -e "${BLUE}AI CLI Configuration Security Scan (Ferret)${NC}"
-    echo -e "Path: ${path}"
-    echo ""
-    
-    local ferret_cmd=""
-    
-    if check_command ferret; then
-        ferret_cmd="ferret"
-    elif check_command npx; then
-        ferret_cmd="npx ferret-scan"
-    else
-        echo -e "${YELLOW}Ferret not installed.${NC}"
-        echo ""
-        echo "Install with:"
-        echo "  npm install -g ferret-scan"
-        echo "  # or run directly"
-        echo "  npx ferret-scan scan ."
-        echo ""
-        return 1
-    fi
-    
-    echo -e "${CYAN}Running Ferret security scan...${NC}"
-    echo ""
-    
-    # Run Ferret
-    $ferret_cmd scan "$path" "$@" || {
-        local exit_code=$?
-        if [[ $exit_code -ne 0 ]]; then
-            echo ""
-            echo -e "${RED}Security issues found in AI CLI configurations!${NC}"
-            return 1
-        fi
-    }
-    
-    return 0
+	local path="${1:-.}"
+	shift || true
+
+	print_header
+	ensure_output_dir
+
+	echo -e "${BLUE}AI CLI Configuration Security Scan (Ferret)${NC}"
+	echo -e "Path: ${path}"
+	echo ""
+
+	local ferret_cmd=""
+
+	if check_command ferret; then
+		ferret_cmd="ferret"
+	elif check_command npx; then
+		ferret_cmd="npx ferret-scan"
+	else
+		echo -e "${YELLOW}Ferret not installed.${NC}"
+		echo ""
+		echo "Install with:"
+		echo "  npm install -g ferret-scan"
+		echo "  # or run directly"
+		echo "  npx ferret-scan scan ."
+		echo ""
+		return 1
+	fi
+
+	echo -e "${CYAN}Running Ferret security scan...${NC}"
+	echo ""
+
+	# Run Ferret
+	$ferret_cmd scan "$path" "$@" || {
+		local exit_code=$?
+		if [[ $exit_code -ne 0 ]]; then
+			echo ""
+			echo -e "${RED}Security issues found in AI CLI configurations!${NC}"
+			return 1
+		fi
+	}
+
+	return 0
 }
 
 cmd_report() {
-    local format="text"
-    
-    # Parse --format flag or positional argument
-    if [[ "${1:-}" == --format=* ]]; then
-        format="${1#--format=}"
-        shift || true
-    elif [[ "${1:-}" == "--format" ]]; then
-        format="${2:-text}"
-        shift 2 || true
-    elif [[ -n "${1:-}" && "${1:-}" != -* ]]; then
-        format="$1"
-        shift || true
-    fi
-    
-    print_header
-    ensure_output_dir
-    
-    echo -e "${BLUE}Generating Security Report${NC}"
-    echo -e "Format: ${format}"
-    echo ""
-    
-    local timestamp
-    timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    local report_file="${OUTPUT_DIR}/SECURITY_REPORT"
-    
-    case "$format" in
-        text|md|markdown)
-            report_file="${report_file}.md"
-            {
-                echo "# Security Analysis Report"
-                echo ""
-                echo "**Generated**: ${timestamp}"
-                echo "**Directory**: $(pwd)"
-                echo ""
-                echo "## Summary"
-                echo ""
-                echo "Run individual scans to populate this report:"
-                echo ""
-                echo "- \`security-helper.sh analyze\` - Code analysis"
-                echo "- \`security-helper.sh scan-deps\` - Dependency scan"
-                echo "- \`security-helper.sh ferret\` - AI CLI config scan"
-                echo "- \`security-helper.sh history\` - Git history scan"
-                echo ""
-            } > "$report_file"
-            ;;
-        json)
-            report_file="${report_file}.json"
-            {
-                echo "{"
-                echo "  \"generated\": \"${timestamp}\","
-                echo "  \"directory\": \"$(pwd)\","
-                echo "  \"findings\": [],"
-                echo "  \"summary\": {"
-                echo "    \"critical\": 0,"
-                echo "    \"high\": 0,"
-                echo "    \"medium\": 0,"
-                echo "    \"low\": 0"
-                echo "  }"
-                echo "}"
-            } > "$report_file"
-            ;;
-        sarif)
-            report_file="${report_file}.sarif"
-            {
-                echo "{"
-                echo "  \"\$schema\": \"https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json\","
-                echo "  \"version\": \"2.1.0\","
-                echo "  \"runs\": [{"
-                echo "    \"tool\": {"
-                echo "      \"driver\": {"
-                echo "        \"name\": \"security-helper\","
-                echo "        \"version\": \"${VERSION}\""
-                echo "      }"
-                echo "    },"
-                echo "    \"results\": []"
-                echo "  }]"
-                echo "}"
-            } > "$report_file"
-            ;;
-        *)
-            echo -e "${RED}Unknown format: ${format}${NC}"
-            echo "Valid formats: text, json, sarif"
-            return 1
-            ;;
-    esac
-    
-    echo -e "${GREEN}Report generated: ${report_file}${NC}"
-    return 0
+	local format="text"
+
+	# Parse --format flag or positional argument
+	if [[ "${1:-}" == --format=* ]]; then
+		format="${1#--format=}"
+		shift || true
+	elif [[ "${1:-}" == "--format" ]]; then
+		format="${2:-text}"
+		shift 2 || true
+	elif [[ -n "${1:-}" && "${1:-}" != -* ]]; then
+		format="$1"
+		shift || true
+	fi
+
+	print_header
+	ensure_output_dir
+
+	echo -e "${BLUE}Generating Security Report${NC}"
+	echo -e "Format: ${format}"
+	echo ""
+
+	local timestamp
+	timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+	local report_file="${OUTPUT_DIR}/SECURITY_REPORT"
+
+	case "$format" in
+	text | md | markdown)
+		report_file="${report_file}.md"
+		{
+			echo "# Security Analysis Report"
+			echo ""
+			echo "**Generated**: ${timestamp}"
+			echo "**Directory**: $(pwd)"
+			echo ""
+			echo "## Summary"
+			echo ""
+			echo "Run individual scans to populate this report:"
+			echo ""
+			echo "- \`security-helper.sh analyze\` - Code analysis"
+			echo "- \`security-helper.sh scan-deps\` - Dependency scan"
+			echo "- \`security-helper.sh ferret\` - AI CLI config scan"
+			echo "- \`security-helper.sh history\` - Git history scan"
+			echo ""
+		} >"$report_file"
+		;;
+	json)
+		report_file="${report_file}.json"
+		{
+			echo "{"
+			echo "  \"generated\": \"${timestamp}\","
+			echo "  \"directory\": \"$(pwd)\","
+			echo "  \"findings\": [],"
+			echo "  \"summary\": {"
+			echo "    \"critical\": 0,"
+			echo "    \"high\": 0,"
+			echo "    \"medium\": 0,"
+			echo "    \"low\": 0"
+			echo "  }"
+			echo "}"
+		} >"$report_file"
+		;;
+	sarif)
+		report_file="${report_file}.sarif"
+		{
+			echo "{"
+			echo "  \"\$schema\": \"https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json\","
+			echo "  \"version\": \"2.1.0\","
+			echo "  \"runs\": [{"
+			echo "    \"tool\": {"
+			echo "      \"driver\": {"
+			echo "        \"name\": \"security-helper\","
+			echo "        \"version\": \"${VERSION}\""
+			echo "      }"
+			echo "    },"
+			echo "    \"results\": []"
+			echo "  }]"
+			echo "}"
+		} >"$report_file"
+		;;
+	*)
+		echo -e "${RED}Unknown format: ${format}${NC}"
+		echo "Valid formats: text, json, sarif"
+		return 1
+		;;
+	esac
+
+	echo -e "${GREEN}Report generated: ${report_file}${NC}"
+	return 0
 }
 
 cmd_install() {
-    local tool="${1:-all}"
-    
-    print_header
-    echo -e "${BLUE}Installing Security Tools${NC}"
-    echo ""
-    
-    case "$tool" in
-        osv|osv-scanner)
-            echo "Installing OSV-Scanner..."
-            if check_command brew; then
-                brew install osv-scanner
-            elif check_command go; then
-                go install github.com/google/osv-scanner/cmd/osv-scanner@latest
-            else
-                echo -e "${RED}Please install via Homebrew or Go${NC}"
-                return 1
-            fi
-            ;;
-        skill-scanner|cisco-ai-skill-scanner)
-            echo "Installing Cisco Skill Scanner..."
-            if check_command uv; then
-                uv tool install cisco-ai-skill-scanner
-            elif check_command pip3; then
-                pip3 install --user cisco-ai-skill-scanner
-            else
-                echo -e "${RED}Please install uv or pip3 first${NC}"
-                return 1
-            fi
-            ;;
-        ferret|ferret-scan)
-            echo "Installing Ferret..."
-            npm install -g ferret-scan
-            ;;
-        secretlint)
-            echo "Installing Secretlint..."
-            npm install -g secretlint @secretlint/secretlint-rule-preset-recommend
-            ;;
-        all)
-            echo "Installing all security tools..."
-            echo ""
-            
-            # OSV-Scanner
-            if ! check_command osv-scanner; then
-                echo -e "${CYAN}Installing OSV-Scanner...${NC}"
-                if check_command brew; then
-                    brew install osv-scanner || true
-                elif check_command go; then
-                    go install github.com/google/osv-scanner/cmd/osv-scanner@latest || true
-                fi
-            fi
-            
-            # Cisco Skill Scanner
-            if ! check_command skill-scanner; then
-                echo -e "${CYAN}Installing Cisco Skill Scanner...${NC}"
-                if check_command uv; then
-                    uv tool install cisco-ai-skill-scanner || true
-                elif check_command pip3; then
-                    pip3 install --user cisco-ai-skill-scanner || true
-                fi
-            fi
-            
-            # Ferret
-            if ! check_command ferret; then
-                echo -e "${CYAN}Installing Ferret...${NC}"
-                npm install -g ferret-scan || true
-            fi
-            
-            # Secretlint
-            if ! check_command secretlint; then
-                echo -e "${CYAN}Installing Secretlint...${NC}"
-                npm install -g secretlint @secretlint/secretlint-rule-preset-recommend || true
-            fi
-            
-            echo ""
-            echo -e "${GREEN}Installation complete.${NC}"
-            cmd_status
-            ;;
-        *)
-            echo -e "${RED}Unknown tool: ${tool}${NC}"
-            echo "Valid tools: osv-scanner, skill-scanner, ferret, secretlint, all"
-            return 1
-            ;;
-    esac
-    
-    return 0
+	local tool="${1:-all}"
+
+	print_header
+	echo -e "${BLUE}Installing Security Tools${NC}"
+	echo ""
+
+	case "$tool" in
+	osv | osv-scanner)
+		echo "Installing OSV-Scanner..."
+		if check_command brew; then
+			brew install osv-scanner
+		elif check_command go; then
+			go install github.com/google/osv-scanner/cmd/osv-scanner@latest
+		else
+			echo -e "${RED}Please install via Homebrew or Go${NC}"
+			return 1
+		fi
+		;;
+	skill-scanner | cisco-ai-skill-scanner)
+		echo "Installing Cisco Skill Scanner..."
+		if check_command uv; then
+			uv tool install cisco-ai-skill-scanner
+		elif check_command pip3; then
+			pip3 install --user cisco-ai-skill-scanner
+		else
+			echo -e "${RED}Please install uv or pip3 first${NC}"
+			return 1
+		fi
+		;;
+	ferret | ferret-scan)
+		echo "Installing Ferret..."
+		npm install -g ferret-scan
+		;;
+	secretlint)
+		echo "Installing Secretlint..."
+		npm install -g secretlint @secretlint/secretlint-rule-preset-recommend
+		;;
+	all)
+		echo "Installing all security tools..."
+		echo ""
+
+		# OSV-Scanner
+		if ! check_command osv-scanner; then
+			echo -e "${CYAN}Installing OSV-Scanner...${NC}"
+			if check_command brew; then
+				brew install osv-scanner || true
+			elif check_command go; then
+				go install github.com/google/osv-scanner/cmd/osv-scanner@latest || true
+			fi
+		fi
+
+		# Cisco Skill Scanner
+		if ! check_command skill-scanner; then
+			echo -e "${CYAN}Installing Cisco Skill Scanner...${NC}"
+			if check_command uv; then
+				uv tool install cisco-ai-skill-scanner || true
+			elif check_command pip3; then
+				pip3 install --user cisco-ai-skill-scanner || true
+			fi
+		fi
+
+		# Ferret
+		if ! check_command ferret; then
+			echo -e "${CYAN}Installing Ferret...${NC}"
+			npm install -g ferret-scan || true
+		fi
+
+		# Secretlint
+		if ! check_command secretlint; then
+			echo -e "${CYAN}Installing Secretlint...${NC}"
+			npm install -g secretlint @secretlint/secretlint-rule-preset-recommend || true
+		fi
+
+		echo ""
+		echo -e "${GREEN}Installation complete.${NC}"
+		cmd_status
+		;;
+	*)
+		echo -e "${RED}Unknown tool: ${tool}${NC}"
+		echo "Valid tools: osv-scanner, skill-scanner, ferret, secretlint, all"
+		return 1
+		;;
+	esac
+
+	return 0
 }
 
 # Main entry point
 main() {
-    local command="${1:-help}"
-    shift || true
-    
-    case "$command" in
-        status)
-            cmd_status "$@"
-            ;;
-        analyze)
-            cmd_analyze "$@"
-            ;;
-        history)
-            cmd_history "$@"
-            ;;
-        scan-deps|deps)
-            cmd_scan_deps "$@"
-            ;;
-        skill-scan|skills)
-            cmd_skill_scan "$@"
-            ;;
-        vt-scan|virustotal)
-            cmd_vt_scan "$@"
-            ;;
-        ferret|ai-config)
-            cmd_ferret "$@"
-            ;;
-        report)
-            cmd_report "$@"
-            ;;
-        install)
-            cmd_install "$@"
-            ;;
-        help|--help|-h)
-            print_usage
-            ;;
-        *)
-            echo -e "${RED}Unknown command: ${command}${NC}"
-            echo ""
-            print_usage
-            return 1
-            ;;
-    esac
+	local command="${1:-help}"
+	shift || true
+
+	case "$command" in
+	status)
+		cmd_status "$@"
+		;;
+	analyze)
+		cmd_analyze "$@"
+		;;
+	history)
+		cmd_history "$@"
+		;;
+	scan-deps | deps)
+		cmd_scan_deps "$@"
+		;;
+	skill-scan | skills)
+		cmd_skill_scan "$@"
+		;;
+	vt-scan | virustotal)
+		cmd_vt_scan "$@"
+		;;
+	ferret | ai-config)
+		cmd_ferret "$@"
+		;;
+	report)
+		cmd_report "$@"
+		;;
+	install)
+		cmd_install "$@"
+		;;
+	help | --help | -h)
+		print_usage
+		;;
+	*)
+		echo -e "${RED}Unknown command: ${command}${NC}"
+		echo ""
+		print_usage
+		return 1
+		;;
+	esac
 }
 
 main "$@"

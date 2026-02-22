@@ -1149,14 +1149,16 @@ cmd_pr_batch() {
 
 	# Build commit message listing all updated skills
 	local commit_msg="chore: batch update ${#imported_skills[@]} skill(s) from upstream (t1082.3)"$'\n'$'\n'
-	local -A imported_skills_map
+	# bash 3.2-compatible: newline-separated string instead of associative array
+	local imported_skills_list=""
 	for imp in "${imported_skills[@]}"; do
-		imported_skills_map["$imp"]=1
+		imported_skills_list="${imported_skills_list:+$imported_skills_list
+}$imp"
 	done
 	for i in "${!skills_to_update[@]}"; do
 		local sname="${skills_to_update[$i]}"
 		# Only include successfully imported skills
-		if [[ -v imported_skills_map["$sname"] ]]; then
+		if echo "$imported_skills_list" | grep -qxF "$sname"; then
 			commit_msg+="- ${sname}: ${skill_current_commits[$i]:0:12} → ${skill_latest_commits[$i]:0:12}"$'\n'
 		fi
 	done
@@ -1193,8 +1195,8 @@ cmd_pr_batch() {
 	skill_table+="|-------|----------|--------|--------|"$'\n'
 	for i in "${!skills_to_update[@]}"; do
 		local sname="${skills_to_update[$i]}"
-		# Reuse the associative array built for the commit message lookup
-		if [[ -v imported_skills_map["$sname"] ]]; then
+		# Reuse the imported_skills_list built for the commit message lookup
+		if echo "$imported_skills_list" | grep -qxF "$sname"; then
 			skill_table+="| \`${sname}\` | \`${skill_current_commits[$i]:0:12}\` | \`${skill_latest_commits[$i]:0:12}\` | ${skill_urls[$i]} |"$'\n'
 		fi
 	done
