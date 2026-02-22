@@ -56,7 +56,7 @@ echo -e "  ${GREEN}✓${NC} Updated AGENTS.md with version check"
 # This cleans up any legacy files from before auto-discovery
 # Also removes demoted agents that are now subagents
 # Plan+ and AI-DevOps consolidated into Build+ as of v2.50.0
-for f in Accounts.md Accounting.md accounting.md AI-DevOps.md Build+.md Content.md Health.md Legal.md Marketing.md Research.md Sales.md SEO.md WordPress.md Plan+.md Build-Agent.md Build-MCP.md build-agent.md build-mcp.md plan-plus.md aidevops.md; do
+for f in Accounts.md Accounting.md accounting.md AI-DevOps.md Build+.md Content.md Health.md Legal.md Marketing.md Research.md Sales.md SEO.md WordPress.md Plan+.md Build-Agent.md Build-MCP.md build-agent.md build-mcp.md plan-plus.md aidevops.md Browser-Extension-Dev.md Mobile-App-Dev.md AGENTS.md; do
 	rm -f "$OPENCODE_AGENT_DIR/$f"
 done
 
@@ -115,7 +115,8 @@ AGENT_ORDER = ["Build+"]
 
 # Files to skip (not primary agents - includes demoted agents)
 # plan-plus.md and aidevops.md are now subagents, not primary agents
-SKIP_PRIMARY_AGENTS = {"plan-plus.md", "aidevops.md"}
+# browser-extension-dev.md and mobile-app-dev.md are specialist subagents under Build+
+SKIP_PRIMARY_AGENTS = {"plan-plus.md", "aidevops.md", "browser-extension-dev.md", "mobile-app-dev.md"}
 
 # Special tool configurations per agent (by display name)
 # These are MCP tools that specific agents need access to
@@ -393,11 +394,13 @@ sorted_agents = dict(sorted(primary_agents.items(), key=lambda x: sort_key(x[0])
 
 sorted_agents["build"] = {"disable": True}
 sorted_agents["plan"] = {"disable": True}
-# Disable Plan+ and AI-DevOps as primary agents (now subagents)
+# Disable demoted agents (now subagents accessible via @mention)
 sorted_agents["Plan+"] = {"disable": True}
 sorted_agents["AI-DevOps"] = {"disable": True}
+sorted_agents["Browser-Extension-Dev"] = {"disable": True}
+sorted_agents["Mobile-App-Dev"] = {"disable": True}
 print("  Disabled default 'build' and 'plan' agents")
-print("  Disabled 'Plan+' and 'AI-DevOps' (consolidated into Build+, available as @subagents)")
+print("  Disabled 'Plan+', 'AI-DevOps', 'Browser-Extension-Dev', 'Mobile-App-Dev' (available as @subagents)")
 
 config['agent'] = sorted_agents
 
