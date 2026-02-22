@@ -950,7 +950,16 @@ update_queue_health_issue() {
 			# Extract short description — strip metadata tags but preserve natural #refs
 			local f_desc_short
 			f_desc_short=$(echo "$f_desc" | sed 's/ #[a-z][a-z_-]*//g; s/ ~[0-9][0-9hm]*//g; s/ ref:[^ ]*//g; s/ model:[^ ]*//g; s/ —.*//' | head -c 80)
-			local f_entry="  - \`${f_id}\` — ${f_desc_short:-unknown task}"
+			# Link task ID to its GitHub issue if ref:GH#NNNN exists in description
+			local f_issue_num
+			f_issue_num=$(echo "$f_desc" | sed -n 's/.*ref:GH#\([0-9]*\).*/\1/p' | head -1)
+			local f_id_display
+			if [[ -n "$f_issue_num" ]]; then
+				f_id_display="[${f_id}](https://github.com/${repo_slug}/issues/${f_issue_num})"
+			else
+				f_id_display="\`${f_id}\`"
+			fi
+			local f_entry="  - ${f_id_display} — ${f_desc_short:-unknown task}"
 
 			if [[ "$f_err" == *"superseded"* ]]; then
 				cat_superseded="${cat_superseded}${f_entry}
