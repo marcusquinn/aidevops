@@ -21,6 +21,81 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-02-22] Harness Engineering: oh-my-pi Learnings
+
+**Status:** Planning
+**Estimate:** ~20h (ai:14h test:4h research:2h)
+**TODO:** t1302, t1303, t1304, t1305, t1306, t1307, t1308, t1309, t1310
+**Logged:** 2026-02-22
+**Reference:** https://blog.can.ac/2026/02/12/the-harness-problem/ | https://github.com/can1357/oh-my-pi (cloned to ~/Git/oh-my-pi)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p030,Harness Engineering: oh-my-pi Learnings,planning,0,5,,feature|harness|edit-tool|observability|orchestration|opencode,20h,14h,4h,2h,2026-02-22T00:00Z,
+-->
+
+#### Purpose
+
+Can Boluk's "The Harness Problem" blog post and oh-my-pi codebase (1,300+ commits, fork of Pi) demonstrate that the harness -- the tool layer between model output and workspace changes -- is the highest-leverage place to innovate. His benchmark showed a single edit tool change (hashline) improved 15 models, with Grok Code Fast 1 going from 6.7% to 68.3% success rate. Zero training compute.
+
+Deep analysis of oh-my-pi revealed 10+ patterns applicable to aidevops, ranging from edit tool improvements to real-time streaming policy enforcement (TTSR), observability, and multi-agent orchestration. This plan captures all actionable learnings as concrete implementation tasks.
+
+#### Context
+
+**Key findings from oh-my-pi analysis:**
+
+| Pattern | Impact | Feasibility |
+|---------|--------|-------------|
+| TTSR (real-time stream rules) | High -- policy enforcement during generation | Blocked in OpenCode (no stream hooks); needs upstream PR |
+| Soft TTSR (system prompt + message transform) | Medium -- preventative enforcement | Available now via unused OpenCode plugin hooks |
+| Hashline edit format | High -- 5-14% success improvement, 20-61% token reduction | Custom tooling only (can't replace Claude Code's str_replace) |
+| Intent tracing | Medium -- tool-level chain-of-thought for observability | Implementable in OpenCode plugin |
+| SQLite observability | High -- cost/performance tracking, budget enforcement | No equivalent exists in aidevops |
+| Steering messages | Medium -- user interruption mid-execution | OpenCode architecture question |
+| Swarm DAG execution | Medium -- dependency-resolved multi-agent orchestration | Enhances existing supervisor dispatch |
+| Blob/artifact storage | Low-medium -- session compactness | Platform-dependent |
+
+**OpenCode plugin hooks we're NOT using yet:**
+
+- `experimental.chat.system.transform` -- transform system prompt before LLM call
+- `experimental.chat.messages.transform` -- transform message history before LLM call
+- `experimental.text.complete` -- modify completed text parts after generation
+- `chat.message` -- intercept new user messages
+- `chat.params` -- modify LLM parameters
+- `event` -- receive bus events
+
+**OpenCode plugin hooks that DON'T exist (needed for full TTSR):**
+
+- `stream.delta` -- observe individual streaming tokens
+- `stream.aborted` -- handle abort with retry/inject capability
+
+#### Execution Phases
+
+**Phase 1: Soft TTSR + Rule Engine (t1302, t1303)** ~4h
+
+Implement preventative rule enforcement using existing OpenCode plugin hooks. Define rules in `.agents/rules/` with regex triggers. Inject rules into system prompt via `experimental.chat.system.transform`. Scan previous outputs for violations via `experimental.chat.messages.transform` and inject corrections. Post-hoc detection via `experimental.text.complete`.
+
+**Phase 2: OpenCode Upstream -- Stream Hooks (t1304, t1305)** ~6h
+
+Open issue on opencode-ai/opencode proposing `stream.delta` and `stream.aborted` plugin hooks. Reference oh-my-pi benchmark data as evidence. Create proof-of-concept PR demonstrating the implementation in OpenCode's `processor.ts`.
+
+**Phase 3: Observability (t1306, t1307)** ~4h
+
+Implement SQLite-based LLM request tracking: model, provider, tokens, costs, duration, TTFT, stop reason. Incremental session parsing. CLI dashboard (`aidevops stats`). Wire into budget enforcement (t1100).
+
+**Phase 4: Intent Tracing + Edit Tool Research (t1308, t1309)** ~4h
+
+Add intent field to tool call logging in OpenCode plugin. Document hashline autocorrect heuristics as reference for future custom edit tooling. Benchmark str_replace failure rates in our actual workloads.
+
+**Phase 5: Swarm DAG Patterns (t1310)** ~2h
+
+Evaluate oh-my-pi's YAML-defined swarm orchestration with `reports_to`/`waits_for` dependency resolution. Compare with our TODO.md `blocked-by:` system. Propose enhancements to supervisor dispatch.
+
+#### Decision Log
+
+- 2026-02-22: Full TTSR blocked by OpenCode plugin API -- no `stream.delta` hook exists. Pursuing soft TTSR (preventative) + upstream contribution for real TTSR.
+- 2026-02-22: Hashline edit format is valuable but only applicable where we own the full tool chain (headless dispatch, objective runner). Can't replace Claude Code's str_replace.
+- 2026-02-22: oh-my-pi cloned to ~/Git/oh-my-pi for ongoing reference. Track upstream changes.
+
 ### [2026-02-21] Cloudflare Code Mode MCP Integration
 
 **Status:** Planning
