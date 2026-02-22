@@ -147,7 +147,17 @@ _generate_supervisor_pulse_plist() {
 	# Build EnvironmentVariables dict
 	local env_dict
 	env_dict="<key>PATH</key>
-		<string>${env_path}</string>"
+		<string>${env_path}</string>
+		<key>SUPERVISOR_PULSE_LOCK_TIMEOUT</key>
+		<string>1800</string>
+		<key>SUPERVISOR_AI_TIMEOUT</key>
+		<string>600</string>"
+	# SUPERVISOR_PULSE_LOCK_TIMEOUT=1800s (30 min): prevents concurrent pulses when
+	# Phase 14 AI reasoning runs long (108KB+ context can take 6+ min). The default
+	# 600s was shorter than the total pulse duration, causing concurrent pulses that
+	# interfered with each other via Phase 4e orphan killing (t1301).
+	# SUPERVISOR_AI_TIMEOUT=600s (10 min): gives the AI CLI more time to respond to
+	# large context prompts before portable_timeout fires (t1301).
 	if [[ -n "$gh_token" ]]; then
 		env_dict="${env_dict}
 		<key>GH_TOKEN</key>

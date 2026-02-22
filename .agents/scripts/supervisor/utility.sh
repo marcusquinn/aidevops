@@ -259,6 +259,10 @@ acquire_pulse_lock() {
 	now_epoch=$(date +%s)
 	lock_age=$((now_epoch - lock_mtime))
 
+	# PULSE_LOCK_TIMEOUT default: 1800s (30 min) via SUPERVISOR_PULSE_LOCK_TIMEOUT env var
+	# set in the launchd plist. This must exceed the maximum pulse duration including
+	# Phase 14 AI reasoning (108KB+ context can take 6+ min) to prevent concurrent
+	# pulses that interfere via Phase 4e orphan killing (t1301).
 	if [[ "$lock_age" -gt "$PULSE_LOCK_TIMEOUT" ]]; then
 		should_break=true
 		break_reason="stale (age: ${lock_age}s > timeout: ${PULSE_LOCK_TIMEOUT}s)"
