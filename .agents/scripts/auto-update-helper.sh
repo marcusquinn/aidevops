@@ -650,34 +650,34 @@ get_user_idle_seconds() {
 	# w output format: USER TTY FROM LOGIN@ IDLE JCPU PCPU WHAT
 	# IDLE can be: "3:42" (min:sec), "2days", "23:15m", "0.50s", etc.
 	if command -v w &>/dev/null; then
-		local min_idle=999999
-		local found_user=false
+		local min_idle
+		min_idle=999999
+		local found_user
+		found_user=false
 		local idle_field
-		while IFS= read -r line; do
+		# Parse w(1) output: extract idle field (5th column) using read builtin
+		local _user _tty _from _login _jcpu _pcpu _what
+		while read -r _user _tty _from _login idle_field _jcpu _pcpu _what; do
 			# Skip header lines
-			[[ "$line" =~ ^USER ]] && continue
-			[[ "$line" =~ ^[[:space:]]*$ ]] && continue
-			# Extract idle field (5th column)
-			idle_field=$(echo "$line" | awk '{print $5}')
+			[[ "$_user" == "USER" ]] && continue
 			[[ -z "$idle_field" ]] && continue
 			found_user=true
 
-			local parsed=0
+			local parsed
+			parsed=0
 			if [[ "$idle_field" =~ ^([0-9]+)days$ ]]; then
-				local d="${BASH_REMATCH[1]}"
-				parsed=$((d * 86400))
+				# Use 10# prefix to force base-10 (avoids octal interpretation of "08", "09")
+				parsed=$((10#${BASH_REMATCH[1]} * 86400))
 			elif [[ "$idle_field" =~ ^([0-9]+):([0-9]+)m$ ]]; then
 				# hours:minutes format (e.g. "23:15m")
-				local hh="${BASH_REMATCH[1]}" mm="${BASH_REMATCH[2]}"
-				parsed=$((hh * 3600 + mm * 60))
+				parsed=$((10#${BASH_REMATCH[1]} * 3600 + 10#${BASH_REMATCH[2]} * 60))
 			elif [[ "$idle_field" =~ ^([0-9]+):([0-9]+)$ ]]; then
-				# minutes:seconds format (e.g. "3:42")
-				local mm="${BASH_REMATCH[1]}" ss="${BASH_REMATCH[2]}"
-				parsed=$((mm * 60 + ss))
+				# minutes:seconds format (e.g. "3:42", "08:09")
+				parsed=$((10#${BASH_REMATCH[1]} * 60 + 10#${BASH_REMATCH[2]}))
 			elif [[ "$idle_field" =~ ^([0-9]+)\.([0-9]+)s$ ]]; then
-				parsed="${BASH_REMATCH[1]}"
+				parsed="$((10#${BASH_REMATCH[1]}))"
 			elif [[ "$idle_field" =~ ^([0-9]+)s$ ]]; then
-				parsed="${BASH_REMATCH[1]}"
+				parsed="$((10#${BASH_REMATCH[1]}))"
 			fi
 
 			if [[ $parsed -lt $min_idle ]]; then
@@ -717,15 +717,18 @@ check_tool_freshness() {
 		return 0
 	fi
 
-	local freshness_hours="${AIDEVOPS_TOOL_FRESHNESS_HOURS:-$DEFAULT_TOOL_FRESHNESS_HOURS}"
+	local freshness_hours
+	freshness_hours="${AIDEVOPS_TOOL_FRESHNESS_HOURS:-$DEFAULT_TOOL_FRESHNESS_HOURS}"
 	if ! [[ "$freshness_hours" =~ ^[0-9]+$ ]] || [[ "$freshness_hours" -eq 0 ]]; then
 		log_warn "AIDEVOPS_TOOL_FRESHNESS_HOURS='${freshness_hours}' is not a positive integer — using default (${DEFAULT_TOOL_FRESHNESS_HOURS}h)"
 		freshness_hours="$DEFAULT_TOOL_FRESHNESS_HOURS"
 	fi
-	local freshness_seconds=$((freshness_hours * 3600))
+	local freshness_seconds
+	freshness_seconds=$((freshness_hours * 3600))
 
 	# Read last tool check timestamp from state file
-	local last_tool_check=""
+	local last_tool_check
+	last_tool_check=""
 	if [[ -f "$STATE_FILE" ]] && command -v jq &>/dev/null; then
 		last_tool_check=$(jq -r '.last_tool_check // empty' "$STATE_FILE" 2>/dev/null || true)
 	fi
@@ -753,18 +756,22 @@ check_tool_freshness() {
 	fi
 
 	# Check user idle time — only update when user is away
-	local idle_hours="${AIDEVOPS_TOOL_IDLE_HOURS:-$DEFAULT_TOOL_IDLE_HOURS}"
+	local idle_hours
+	idle_hours="${AIDEVOPS_TOOL_IDLE_HOURS:-$DEFAULT_TOOL_IDLE_HOURS}"
 	if ! [[ "$idle_hours" =~ ^[0-9]+$ ]] || [[ "$idle_hours" -eq 0 ]]; then
 		log_warn "AIDEVOPS_TOOL_IDLE_HOURS='${idle_hours}' is not a positive integer — using default (${DEFAULT_TOOL_IDLE_HOURS}h)"
 		idle_hours="$DEFAULT_TOOL_IDLE_HOURS"
 	fi
-	local idle_threshold_seconds=$((idle_hours * 3600))
+	local idle_threshold_seconds
+	idle_threshold_seconds=$((idle_hours * 3600))
 
 	local user_idle_seconds
 	user_idle_seconds=$(get_user_idle_seconds)
 	if [[ $user_idle_seconds -lt $idle_threshold_seconds ]]; then
-		local idle_h=$((user_idle_seconds / 3600))
-		local idle_m=$(((user_idle_seconds % 3600) / 60))
+		local idle_h
+		idle_h=$((user_idle_seconds / 3600))
+		local idle_m
+		idle_m=$(((user_idle_seconds % 3600) / 60))
 		log_info "User idle ${idle_h}h${idle_m}m (need ${idle_hours}h) — deferring tool updates"
 		return 0
 	fi
@@ -794,7 +801,8 @@ check_tool_freshness() {
 	fi
 
 	# Count updates from output (best-effort: count lines with "Updated" or arrow)
-	local tool_updates=0
+	local tool_updates
+	tool_updates=0
 	if [[ -n "$update_output" ]]; then
 		tool_updates=$(echo "$update_output" | grep -cE '(Updated|→|->)' 2>/dev/null || echo "0")
 	fi
@@ -814,7 +822,8 @@ check_tool_freshness() {
 # Args: $1 = number of tool updates applied (default: 0)
 #######################################
 update_tool_check_timestamp() {
-	local updates_count="${1:-0}"
+	local updates_count
+	updates_count="${1:-0}"
 	local timestamp
 	timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
