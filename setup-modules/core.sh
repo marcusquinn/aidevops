@@ -217,11 +217,8 @@ install_packages() {
 		# Run brew update with spinner (Homebrew auto-update is slow and silent)
 		run_with_spinner "Updating Homebrew" brew update
 		# Install with auto-update disabled (we just ran it)
-		# Must export — run_with_spinner backgrounds the command, so env var
-		# prefix syntax (VAR=x cmd) doesn't propagate to the child process.
-		export HOMEBREW_NO_AUTO_UPDATE=1
+		# Note: run_with_spinner auto-exports HOMEBREW_NO_AUTO_UPDATE for brew commands
 		run_with_spinner "Installing ${packages[*]}" brew install "${packages[@]}"
-		unset HOMEBREW_NO_AUTO_UPDATE
 		;;
 	apt)
 		run_with_spinner "Updating package lists" sudo apt-get update -qq

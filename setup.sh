@@ -80,6 +80,14 @@ run_with_spinner() {
 	local spin_chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
 	local i=0
 
+	# Suppress Homebrew's slow auto-update for all backgrounded brew commands.
+	# run_with_spinner backgrounds via "$@" &, so env var prefix syntax
+	# (VAR=x cmd) doesn't propagate. Export globally for the child process.
+	local _brew_was_set="${HOMEBREW_NO_AUTO_UPDATE:-}"
+	if [[ "$1" == "brew" && "$2" != "update" ]]; then
+		export HOMEBREW_NO_AUTO_UPDATE=1
+	fi
+
 	# Start command in background
 	"$@" &>/dev/null &
 	pid=$!
@@ -94,6 +102,11 @@ run_with_spinner() {
 	# Check exit status
 	wait "$pid"
 	local exit_code=$?
+
+	# Restore HOMEBREW_NO_AUTO_UPDATE to previous state
+	if [[ -z "$_brew_was_set" ]]; then
+		unset HOMEBREW_NO_AUTO_UPDATE
+	fi
 
 	# Clear spinner and show result
 	printf "\r"
