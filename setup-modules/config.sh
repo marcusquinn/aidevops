@@ -82,11 +82,14 @@ _run_generator() {
 	fi
 
 	print_info "$info_msg"
-	if bash "$script_path" "${script_args[@]}"; then
+	# Use ${arr[@]+"${arr[@]}"} pattern for safe expansion under set -u when array may be empty
+	if bash "$script_path" ${script_args[@]+"${script_args[@]}"}; then
 		print_success "$success_msg"
 	else
 		print_warning "$failure_msg"
 	fi
+
+	return 0
 }
 
 update_opencode_config() {
