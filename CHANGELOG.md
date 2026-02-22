@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- add quick tool staleness check to aidevops update (#2161)
+
+### Changed
+
+- Documentation: add changelog entry for v2.123.2
+
+## [2.123.2] - 2026-02-22
+
+### Added
+
 - Quick tool staleness check in `aidevops update` — checks key tools (opencode, gh) and offers to run full update (#2161)
 
 ## [2.123.1] - 2026-02-22
