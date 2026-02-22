@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Idle-gated tool auto-update: keeps all installed tools (npm, brew, pip) fresh via 6-hourly checks when user is idle 6+ hours (#2145)
+- Cross-platform idle detection: macOS IOKit, Linux xprintidle/dbus/w(1), headless servers
+- Worker-count concurrency model and parallel sibling dispatch (#2146)
+- fix_ci action for supervisor AI lifecycle automatic CI repair (#2144)
+
+### Fixed
+
+- Disable Phase 4e PPID=1 orphan kill sweep in pulse.sh (#2143)
+
 ## [2.121.0] - 2026-02-21
 
 ### Changed
