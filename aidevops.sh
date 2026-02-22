@@ -727,13 +727,15 @@ cmd_update() {
 		local stale_tools=""
 
 		# Check a few key tools quickly via npm view (parallel, ~2-3s total)
-		local -A key_tools=(
-			["opencode"]="opencode-ai"
-			["gh"]="brew:gh"
-		)
+		# bash 3.2-compatible: parallel arrays instead of associative array
+		local key_tool_cmds="opencode gh"
+		local key_tool_pkgs="opencode-ai brew:gh"
 
-		for cmd_name in "${!key_tools[@]}"; do
-			local pkg_ref="${key_tools[$cmd_name]}"
+		local idx=0
+		for cmd_name in $key_tool_cmds; do
+			local pkg_ref
+			pkg_ref=$(echo "$key_tool_pkgs" | cut -d' ' -f$((idx + 1)))
+			idx=$((idx + 1))
 			local installed=""
 			local latest=""
 
@@ -775,6 +777,8 @@ cmd_update() {
 	else
 		print_info "Tool version check not available (run setup first)"
 	fi
+
+	return 0
 }
 
 # Uninstall command
@@ -1365,6 +1369,8 @@ SOPSEOF
 		echo "  2. Use /create-prd for complex features"
 		echo "  3. Use /feature to start development"
 	fi
+
+	return 0
 }
 
 # Upgrade planning command - upgrade TODO.md and PLANS.md to latest templates
@@ -1703,6 +1709,8 @@ cmd_upgrade_planning() {
 		[[ "$todo_needs_upgrade" == "true" ]] && echo "  mv TODO.md.bak TODO.md"
 		[[ "$plans_needs_upgrade" == "true" ]] && echo "  mv todo/PLANS.md.bak todo/PLANS.md"
 	fi
+
+	return 0
 }
 
 # Features command - list available features

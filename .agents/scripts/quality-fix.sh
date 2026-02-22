@@ -9,12 +9,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
 
-# Color codes for output
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly BLUE='\033[0;34m'
-readonly NC='\033[0m' # No Color
+# Color codes for output (fallback if shared-constants.sh not loaded)
+[[ -z "${RED+x}" ]] && RED='\033[0;31m'
+[[ -z "${GREEN+x}" ]] && GREEN='\033[0;32m'
+[[ -z "${YELLOW+x}" ]] && YELLOW='\033[1;33m'
+[[ -z "${BLUE+x}" ]] && BLUE='\033[0;34m'
+[[ -z "${NC+x}" ]] && NC='\033[0m'
 
 print_header() {
 	echo -e "${BLUE}🔧 AI DevOps Framework - Universal Quality Fix${NC}"
