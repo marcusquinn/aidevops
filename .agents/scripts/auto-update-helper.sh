@@ -1377,7 +1377,7 @@ HOW IT WORKS:
     8. Runs 6-hourly tool freshness check (idle-gated):
        a. Reads last_tool_check from state file
        b. If >6h since last check AND user idle >6h, runs tool-version-check.sh --update --quiet
-       c. Covers all installed tools: npm (OpenCode, osgrep, MCP servers, etc.),
+       c. Covers all installed tools: npm (OpenCode, MCP servers, etc.),
           brew (gh, glab, shellcheck, jq, etc.), pip (DSPy, crawl4ai, etc.)
        d. Idle detection: macOS IOKit HIDIdleTime, Linux xprintidle/dbus/w(1),
           headless servers treated as always idle

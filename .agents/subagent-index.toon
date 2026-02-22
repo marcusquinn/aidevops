@@ -44,7 +44,7 @@ tools/performance/,Web performance - Core Web Vitals and network analysis,perfor
 tools/research/,Technology research - tech stack detection and reverse lookup,tech-stack-lookup
 tools/ui/,UI components - design systems and debugging,shadcn|ui-skills|frontend-debugging|ai-chat-sidebar
 tools/code-review/,Code quality - linting and security scanning,code-standards|code-simplifier|codacy|coderabbit|qlty|snyk|secretlint|security-analysis
-tools/context/,Context optimization - semantic search and indexing,osgrep|augment-context-engine|context-builder|context7|toon|mcp-discovery|github-search|model-routing|openapi-search
+tools/context/,Context optimization - semantic search and indexing,augment-context-engine|context-builder|context7|toon|mcp-discovery|github-search|model-routing|openapi-search
 tools/conversion/,Format conversion - document transformation,pandoc
 tools/document/,Document extraction - conversion structured data extraction schemas and workflow orchestration,document-extraction|extraction-schemas|extraction-workflow|docstrange
 tools/ocr/,OCR and text extraction - local document processing via Ollama,glm-ocr

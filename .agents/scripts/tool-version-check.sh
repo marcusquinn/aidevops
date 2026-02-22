@@ -67,7 +67,6 @@ done
 # Format: category|display_name|cli_command|version_flag|package_name|update_command
 
 NPM_TOOLS=(
-	"npm|osgrep|osgrep|--version|osgrep|npm update -g osgrep"
 	"npm|Augment CLI|auggie|--version|@augmentcode/auggie@prerelease|npm update -g @augmentcode/auggie@prerelease"
 	"npm|Repomix|repomix|--version|repomix|npm install -g repomix@latest"
 	"npm|DSPyGround|dspyground|--version|dspyground|npm update -g dspyground"

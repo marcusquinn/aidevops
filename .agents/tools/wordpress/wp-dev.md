@@ -459,11 +459,8 @@ All plugin and theme development/analysis happens in `~/Git/wordpress/`:
 2. **Analyze the code**:
 
    ```bash
-   # Use osgrep for semantic search
-   osgrep "where does this plugin handle user authentication"
-   
-   # Or traditional grep
-   grep -r "add_action\|add_filter" --include="*.php" .
+   # Search for authentication handling
+   rg "add_action|add_filter" --type php .
    ```
 
 3. **Test in LocalWP**:

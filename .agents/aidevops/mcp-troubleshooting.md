@@ -61,20 +61,6 @@ opencode mcp list
 
 ## Version-Specific Issues
 
-### osgrep
-
-| Version | MCP Command | Notes |
-|---------|-------------|-------|
-| v0.4.x | `osgrep serve` | HTTP server, NOT MCP-compatible |
-| v0.5.x | `osgrep mcp` | Native MCP support |
-
-**Fix**: Update to v0.5+ and run `osgrep install-opencode`
-
-```bash
-npm update -g osgrep
-osgrep install-opencode
-```
-
 ### augment-context-engine
 
 | Issue | Solution |
@@ -143,9 +129,6 @@ Context7 is a remote MCP - no local installation needed.
 Test MCP command directly (should output JSON-RPC):
 
 ```bash
-# osgrep
-osgrep mcp
-
 # augment
 auggie --mcp
 

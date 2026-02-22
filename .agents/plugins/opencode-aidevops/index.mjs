@@ -260,7 +260,7 @@ function getPkgRunner() {
  *   - url: URL for remote MCPs (mutually exclusive with command)
  *   - type: "local" (default) or "remote"
  *   - eager: true = start at launch, false = lazy-load on demand
- *   - toolPattern: glob pattern for tool permissions (e.g. "osgrep_*")
+ *   - toolPattern: glob pattern for tool permissions (e.g. "playwriter_*")
  *   - globallyEnabled: whether tools are enabled globally (true) or per-agent (false)
  *   - requiresBinary: optional binary name that must exist for local MCPs
  *   - macOnly: optional flag for macOS-only MCPs
@@ -277,18 +277,6 @@ function getMcpRegistry() {
   const pkgRunnerParts = pkgRunner.split(" ");
 
   return [
-    // --- Eager-loaded MCPs (start at launch) ---
-    {
-      name: "osgrep",
-      type: "local",
-      command: ["osgrep", "mcp"],
-      eager: true,
-      toolPattern: "osgrep_*",
-      globallyEnabled: true,
-      requiresBinary: "osgrep",
-      description: "Semantic code search (local, no auth)",
-    },
-
     // --- Lazy-loaded MCPs (start on demand) ---
     {
       name: "playwriter",
@@ -1821,7 +1809,7 @@ async function textCompleteHook(input, output) {
  *
  * MCP registration (Phase 2, t008.2):
  * - Registers all known MCP servers from a data-driven registry
- * - Enforces eager/lazy loading policy (only osgrep starts at launch)
+ * - Enforces eager/lazy loading policy (all MCPs lazy-load on demand)
  * - Sets global tool permissions and per-agent MCP tool enablement
  * - Skips MCPs whose required binaries aren't installed
  * - Complements generate-opencode-agents.sh (shell script takes precedence)

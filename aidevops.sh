@@ -471,12 +471,6 @@ cmd_status() {
 		print_warning "Augment Context Engine - not installed"
 	fi
 
-	if check_cmd osgrep; then
-		print_success "osgrep (local semantic search)"
-	else
-		print_warning "osgrep - not installed"
-	fi
-
 	if check_cmd bd; then
 		print_success "Beads CLI (task graph)"
 	else

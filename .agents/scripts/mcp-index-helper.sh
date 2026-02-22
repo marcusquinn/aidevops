@@ -40,12 +40,12 @@ log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 # Initialize SQLite database with FTS5
 #######################################
 init_db() {
-    mkdir -p "$INDEX_DIR"
-    
-    if [[ ! -f "$INDEX_DB" ]]; then
-        log_info "Creating MCP tool index at $INDEX_DB"
-        
-        sqlite3 "$INDEX_DB" <<'EOF'
+	mkdir -p "$INDEX_DIR"
+
+	if [[ ! -f "$INDEX_DB" ]]; then
+		log_info "Creating MCP tool index at $INDEX_DB"
+
+		sqlite3 "$INDEX_DB" <<'EOF'
 -- Main tools table
 CREATE TABLE IF NOT EXISTS mcp_tools (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -98,38 +98,38 @@ CREATE TABLE IF NOT EXISTS sync_metadata (
 CREATE INDEX IF NOT EXISTS idx_mcp_tools_mcp ON mcp_tools(mcp_name);
 CREATE INDEX IF NOT EXISTS idx_mcp_tools_enabled ON mcp_tools(enabled_globally);
 EOF
-        log_success "Database initialized"
-    fi
+		log_success "Database initialized"
+	fi
 }
 
 #######################################
 # Check if index needs refresh
 #######################################
 needs_refresh() {
-    if [[ ! -f "$INDEX_DB" ]]; then
-        return 0
-    fi
-    
-    local last_sync
-    last_sync=$(sqlite3 "$INDEX_DB" "SELECT value FROM sync_metadata WHERE key='last_sync'" 2>/dev/null || echo "")
-    
-    if [[ -z "$last_sync" ]]; then
-        return 0
-    fi
-    
-    # Check if opencode.json is newer than last sync
-    if [[ -f "$OPENCODE_CONFIG" ]]; then
-        local config_mtime
-        config_mtime=$(stat -c %Y "$OPENCODE_CONFIG" 2>/dev/null || stat -f %m "$OPENCODE_CONFIG" 2>/dev/null || echo "0")
-        local sync_epoch
-        sync_epoch=$(date -j -f "%Y-%m-%d %H:%M:%S" "$last_sync" +%s 2>/dev/null || date -d "$last_sync" +%s 2>/dev/null || echo "0")
-        
-        if [[ "$config_mtime" -gt "$sync_epoch" ]]; then
-            return 0
-        fi
-    fi
-    
-    return 1
+	if [[ ! -f "$INDEX_DB" ]]; then
+		return 0
+	fi
+
+	local last_sync
+	last_sync=$(sqlite3 "$INDEX_DB" "SELECT value FROM sync_metadata WHERE key='last_sync'" 2>/dev/null || echo "")
+
+	if [[ -z "$last_sync" ]]; then
+		return 0
+	fi
+
+	# Check if opencode.json is newer than last sync
+	if [[ -f "$OPENCODE_CONFIG" ]]; then
+		local config_mtime
+		config_mtime=$(stat -c %Y "$OPENCODE_CONFIG" 2>/dev/null || stat -f %m "$OPENCODE_CONFIG" 2>/dev/null || echo "0")
+		local sync_epoch
+		sync_epoch=$(date -j -f "%Y-%m-%d %H:%M:%S" "$last_sync" +%s 2>/dev/null || date -d "$last_sync" +%s 2>/dev/null || echo "0")
+
+		if [[ "$config_mtime" -gt "$sync_epoch" ]]; then
+			return 0
+		fi
+	fi
+
+	return 1
 }
 
 #######################################
@@ -137,17 +137,17 @@ needs_refresh() {
 # Uses Python for reliable JSON parsing
 #######################################
 sync_from_config() {
-    init_db
-    
-    if [[ ! -f "$OPENCODE_CONFIG" ]]; then
-        log_error "OpenCode config not found: $OPENCODE_CONFIG"
-        return 1
-    fi
-    
-    log_info "Syncing MCP tool descriptions from opencode.json..."
-    
-    # Use Python to extract MCP info and tool global states
-    python3 << 'PYEOF'
+	init_db
+
+	if [[ ! -f "$OPENCODE_CONFIG" ]]; then
+		log_error "OpenCode config not found: $OPENCODE_CONFIG"
+		return 1
+	fi
+
+	log_info "Syncing MCP tool descriptions from opencode.json..."
+
+	# Use Python to extract MCP info and tool global states
+	python3 <<'PYEOF'
 import json
 import sqlite3
 import os
@@ -194,7 +194,6 @@ for mcp_name, mcp_config in mcp_servers.items():
     # Common tool patterns based on MCP naming conventions
     tool_categories = {
         'context7': ['query-docs', 'resolve-library-id'],
-        'osgrep': ['search', 'trace', 'skeleton'],
         'augment-context-engine': ['codebase-retrieval'],
         'dataforseo': ['serp', 'keywords', 'backlinks', 'domain-analytics'],
         # serper - REMOVED: Uses curl subagent (.agents/seo/serper.md)
@@ -218,7 +217,7 @@ for mcp_name, mcp_config in mcp_servers.items():
             # Derive category from MCP name
             if 'seo' in mcp_name.lower() or pattern in ['dataforseo', 'gsc']:
                 category = 'seo'
-            elif pattern in ['context7', 'osgrep', 'augment-context-engine']:
+            elif pattern in ['context7', 'augment-context-engine']:
                 category = 'context'
             elif pattern in ['shadcn', 'playwriter']:
                 category = 'browser'
@@ -284,39 +283,39 @@ conn.close()
 
 print(f"Synced {tool_count} tools from {mcp_count} MCP servers")
 PYEOF
-    
-    log_success "Sync complete"
-    return 0
+
+	log_success "Sync complete"
+	return 0
 }
 
 #######################################
 # Search for tools matching a query
 #######################################
 search_tools() {
-    local query="$1"
-    local limit="${2:-10}"
-    
-    init_db
-    
-    # Auto-sync if needed
-    if needs_refresh; then
-        sync_from_config
-    fi
-    
-    echo -e "${CYAN}Searching for tools matching: ${NC}$query"
-    echo ""
-    
-    # Escape single quotes for SQL injection prevention
-    local query_esc="${query//\'/\'\'}"
-    
-    # Validate limit is a positive integer
-    if ! [[ "$limit" =~ ^[0-9]+$ ]]; then
-        log_error "Limit must be a positive integer"
-        return 1
-    fi
-    
-    # FTS5 search with ranking
-    sqlite3 -header -column "$INDEX_DB" <<EOF
+	local query="$1"
+	local limit="${2:-10}"
+
+	init_db
+
+	# Auto-sync if needed
+	if needs_refresh; then
+		sync_from_config
+	fi
+
+	echo -e "${CYAN}Searching for tools matching: ${NC}$query"
+	echo ""
+
+	# Escape single quotes for SQL injection prevention
+	local query_esc="${query//\'/\'\'}"
+
+	# Validate limit is a positive integer
+	if ! [[ "$limit" =~ ^[0-9]+$ ]]; then
+		log_error "Limit must be a positive integer"
+		return 1
+	fi
+
+	# FTS5 search with ranking
+	sqlite3 -header -column "$INDEX_DB" <<EOF
 SELECT 
     mcp_name as MCP,
     tool_name as Tool,
@@ -328,22 +327,22 @@ WHERE mcp_tools_fts MATCH '$query_esc'
 ORDER BY rank
 LIMIT $limit;
 EOF
-    return 0
+	return 0
 }
 
 #######################################
 # List tools for a specific MCP
 #######################################
 list_tools() {
-    local mcp_name="${1:-}"
-    
-    init_db
-    
-    if [[ -z "$mcp_name" ]]; then
-        # List all MCPs with tool counts
-        echo -e "${CYAN}MCP Servers with indexed tools:${NC}"
-        echo ""
-        sqlite3 -header -column "$INDEX_DB" <<'EOF'
+	local mcp_name="${1:-}"
+
+	init_db
+
+	if [[ -z "$mcp_name" ]]; then
+		# List all MCPs with tool counts
+		echo -e "${CYAN}MCP Servers with indexed tools:${NC}"
+		echo ""
+		sqlite3 -header -column "$INDEX_DB" <<'EOF'
 SELECT 
     mcp_name as MCP,
     COUNT(*) as Tools,
@@ -353,13 +352,13 @@ FROM mcp_tools
 GROUP BY mcp_name
 ORDER BY mcp_name;
 EOF
-    else
-        # List tools for specific MCP
-        echo -e "${CYAN}Tools for MCP: ${NC}$mcp_name"
-        echo ""
-        # Escape single quotes for SQL injection prevention
-        local mcp_name_esc="${mcp_name//\'/\'\'}"
-        sqlite3 -header -column "$INDEX_DB" <<EOF
+	else
+		# List tools for specific MCP
+		echo -e "${CYAN}Tools for MCP: ${NC}$mcp_name"
+		echo ""
+		# Escape single quotes for SQL injection prevention
+		local mcp_name_esc="${mcp_name//\'/\'\'}"
+		sqlite3 -header -column "$INDEX_DB" <<EOF
 SELECT 
     tool_name as Tool,
     description as Description,
@@ -368,43 +367,43 @@ FROM mcp_tools
 WHERE mcp_name = '$mcp_name_esc'
 ORDER BY tool_name;
 EOF
-    fi
-    return 0
+	fi
+	return 0
 }
 
 #######################################
 # Show index status
 #######################################
 show_status() {
-    init_db
-    
-    echo -e "${CYAN}MCP Tool Index Status${NC}"
-    echo "====================="
-    echo ""
-    
-    local last_sync mcp_count tool_count
-    last_sync=$(sqlite3 "$INDEX_DB" "SELECT value FROM sync_metadata WHERE key='last_sync'" 2>/dev/null || echo "Never")
-    mcp_count=$(sqlite3 "$INDEX_DB" "SELECT value FROM sync_metadata WHERE key='mcp_count'" 2>/dev/null || echo "0")
-    tool_count=$(sqlite3 "$INDEX_DB" "SELECT value FROM sync_metadata WHERE key='tool_count'" 2>/dev/null || echo "0")
-    
-    echo "Database: $INDEX_DB"
-    echo "Last sync: $last_sync"
-    echo "MCP servers: $mcp_count"
-    echo "Tools indexed: $tool_count"
-    echo ""
-    
-    # Show globally enabled vs disabled
-    local enabled disabled
-    enabled=$(sqlite3 "$INDEX_DB" "SELECT COUNT(*) FROM mcp_tools WHERE enabled_globally = 1" 2>/dev/null || echo "0")
-    disabled=$(sqlite3 "$INDEX_DB" "SELECT COUNT(*) FROM mcp_tools WHERE enabled_globally = 0" 2>/dev/null || echo "0")
-    
-    echo "Globally enabled tools: $enabled"
-    echo "Disabled (on-demand): $disabled"
-    echo ""
-    
-    # Show by category
-    echo -e "${CYAN}Tools by category:${NC}"
-    sqlite3 -header -column "$INDEX_DB" <<'EOF'
+	init_db
+
+	echo -e "${CYAN}MCP Tool Index Status${NC}"
+	echo "====================="
+	echo ""
+
+	local last_sync mcp_count tool_count
+	last_sync=$(sqlite3 "$INDEX_DB" "SELECT value FROM sync_metadata WHERE key='last_sync'" 2>/dev/null || echo "Never")
+	mcp_count=$(sqlite3 "$INDEX_DB" "SELECT value FROM sync_metadata WHERE key='mcp_count'" 2>/dev/null || echo "0")
+	tool_count=$(sqlite3 "$INDEX_DB" "SELECT value FROM sync_metadata WHERE key='tool_count'" 2>/dev/null || echo "0")
+
+	echo "Database: $INDEX_DB"
+	echo "Last sync: $last_sync"
+	echo "MCP servers: $mcp_count"
+	echo "Tools indexed: $tool_count"
+	echo ""
+
+	# Show globally enabled vs disabled
+	local enabled disabled
+	enabled=$(sqlite3 "$INDEX_DB" "SELECT COUNT(*) FROM mcp_tools WHERE enabled_globally = 1" 2>/dev/null || echo "0")
+	disabled=$(sqlite3 "$INDEX_DB" "SELECT COUNT(*) FROM mcp_tools WHERE enabled_globally = 0" 2>/dev/null || echo "0")
+
+	echo "Globally enabled tools: $enabled"
+	echo "Disabled (on-demand): $disabled"
+	echo ""
+
+	# Show by category
+	echo -e "${CYAN}Tools by category:${NC}"
+	sqlite3 -header -column "$INDEX_DB" <<'EOF'
 SELECT 
     category as Category,
     COUNT(*) as Tools,
@@ -414,52 +413,52 @@ FROM mcp_tools
 GROUP BY category
 ORDER BY Tools DESC;
 EOF
-    return 0
+	return 0
 }
 
 #######################################
 # Rebuild index from scratch
 #######################################
 rebuild_index() {
-    log_info "Rebuilding MCP tool index..."
-    
-    if [[ -f "$INDEX_DB" ]]; then
-        rm -f "$INDEX_DB"
-        log_info "Removed old index"
-    fi
-    
-    sync_from_config
-    log_success "Index rebuilt"
-    return 0
+	log_info "Rebuilding MCP tool index..."
+
+	if [[ -f "$INDEX_DB" ]]; then
+		rm -f "$INDEX_DB"
+		log_info "Removed old index"
+	fi
+
+	sync_from_config
+	log_success "Index rebuilt"
+	return 0
 }
 
 #######################################
 # Get MCP for a tool (for lazy-loading)
 #######################################
 get_mcp_for_tool() {
-    local tool_query="$1"
-    
-    init_db
-    
-    # Escape single quotes and percent signs for SQL injection prevention
-    local tool_query_esc="${tool_query//\'/\'\'}"
-    tool_query_esc="${tool_query_esc//%/%%}"
-    
-    # Find which MCP provides this tool
-    sqlite3 "$INDEX_DB" <<EOF
+	local tool_query="$1"
+
+	init_db
+
+	# Escape single quotes and percent signs for SQL injection prevention
+	local tool_query_esc="${tool_query//\'/\'\'}"
+	tool_query_esc="${tool_query_esc//%/%%}"
+
+	# Find which MCP provides this tool
+	sqlite3 "$INDEX_DB" <<EOF
 SELECT DISTINCT mcp_name
 FROM mcp_tools
 WHERE tool_name LIKE '%$tool_query_esc%'
 LIMIT 1;
 EOF
-    return 0
+	return 0
 }
 
 #######################################
 # Show help
 #######################################
 show_help() {
-    cat << 'EOF'
+	cat <<'EOF'
 MCP Index Helper - Tool description indexing for on-demand MCP discovery
 
 Usage:
@@ -491,45 +490,45 @@ EOF
 # Main
 #######################################
 main() {
-    local command="${1:-help}"
-    shift || true
-    
-    case "$command" in
-        sync)
-            sync_from_config
-            ;;
-        search)
-            if [[ -z "${1:-}" ]]; then
-                log_error "Usage: mcp-index-helper.sh search \"query\""
-                return 1
-            fi
-            search_tools "$1" "${2:-10}"
-            ;;
-        list)
-            list_tools "${1:-}"
-            ;;
-        status)
-            show_status
-            ;;
-        rebuild)
-            rebuild_index
-            ;;
-        get-mcp)
-            if [[ -z "${1:-}" ]]; then
-                log_error "Usage: mcp-index-helper.sh get-mcp \"tool-name\""
-                return 1
-            fi
-            get_mcp_for_tool "$1"
-            ;;
-        help|--help|-h)
-            show_help
-            ;;
-        *)
-            log_error "Unknown command: $command"
-            show_help
-            return 1
-            ;;
-    esac
+	local command="${1:-help}"
+	shift || true
+
+	case "$command" in
+	sync)
+		sync_from_config
+		;;
+	search)
+		if [[ -z "${1:-}" ]]; then
+			log_error "Usage: mcp-index-helper.sh search \"query\""
+			return 1
+		fi
+		search_tools "$1" "${2:-10}"
+		;;
+	list)
+		list_tools "${1:-}"
+		;;
+	status)
+		show_status
+		;;
+	rebuild)
+		rebuild_index
+		;;
+	get-mcp)
+		if [[ -z "${1:-}" ]]; then
+			log_error "Usage: mcp-index-helper.sh get-mcp \"tool-name\""
+			return 1
+		fi
+		get_mcp_for_tool "$1"
+		;;
+	help | --help | -h)
+		show_help
+		;;
+	*)
+		log_error "Unknown command: $command"
+		show_help
+		return 1
+		;;
+	esac
 }
 
 main "$@"

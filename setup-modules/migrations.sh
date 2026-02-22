@@ -28,6 +28,8 @@ cleanup_deprecated_paths() {
 		# t199.8: youtube moved from root to content/distribution/youtube/
 		"$agents_dir/youtube.md"
 		"$agents_dir/youtube"
+		# osgrep removed — disproportionate CPU/disk cost vs rg + LLM comprehension
+		"$agents_dir/tools/context/osgrep.md"
 	)
 
 	for path in "${deprecated_paths[@]}"; do
@@ -48,6 +50,10 @@ cleanup_deprecated_paths() {
 		print_info "Removed oh-my-opencode config"
 	fi
 
+	# Remove osgrep — disproportionate CPU/disk cost (74GB indexes, 4 CPU cores on startup)
+	# rg + fd + LLM comprehension covers the same ground at zero resource cost
+	cleanup_osgrep
+
 	# Remove oh-my-opencode from plugin array if present
 	local opencode_config
 	opencode_config=$(find_opencode_config 2>/dev/null) || true
@@ -59,6 +65,78 @@ cleanup_deprecated_paths() {
 			jq '.plugin = [.plugin[] | select(. != "oh-my-opencode")]' "$opencode_config" >"$tmp_file" && mv "$tmp_file" "$opencode_config"
 			print_info "Removed oh-my-opencode from OpenCode plugin list"
 		fi
+	fi
+
+	return 0
+}
+
+# Remove osgrep completely — one-time cleanup for all aidevops users
+# osgrep consumed 74GB disk (lancedb indexes) and 4 CPU cores on startup.
+# rg + fd + LLM comprehension covers the same ground at zero resource cost.
+cleanup_osgrep() {
+	local cleaned=false
+
+	# 1. Uninstall npm package (global)
+	if command -v osgrep &>/dev/null; then
+		print_info "Removing osgrep npm package..."
+		npm uninstall -g osgrep >/dev/null 2>&1 || true
+		cleaned=true
+	fi
+
+	# 2. Remove indexes, models, and config (~74GB)
+	if [[ -d "$HOME/.osgrep" ]]; then
+		print_info "Removing osgrep data directory (~74GB indexes)..."
+		rm -rf "$HOME/.osgrep"
+		cleaned=true
+	fi
+
+	# 3. Remove osgrep from OpenCode MCP config
+	local opencode_config
+	opencode_config=$(find_opencode_config 2>/dev/null) || true
+	if [[ -n "$opencode_config" ]] && [[ -f "$opencode_config" ]] && command -v jq &>/dev/null; then
+		if jq -e '.mcp["osgrep"]' "$opencode_config" >/dev/null 2>&1; then
+			local tmp_file
+			tmp_file=$(mktemp)
+			if jq 'del(.mcp["osgrep"]) | del(.tools["osgrep_*"])' "$opencode_config" >"$tmp_file" 2>/dev/null; then
+				mv "$tmp_file" "$opencode_config"
+				print_info "Removed osgrep from OpenCode MCP config"
+			else
+				rm -f "$tmp_file"
+			fi
+			cleaned=true
+		fi
+	fi
+
+	# 4. Remove osgrep from Claude Code settings
+	local claude_settings="$HOME/.claude/settings.json"
+	if [[ -f "$claude_settings" ]] && command -v jq &>/dev/null; then
+		if jq -e '.mcpServers["osgrep"] // .enabledPlugins["osgrep@osgrep"]' "$claude_settings" >/dev/null 2>&1; then
+			local tmp_file
+			tmp_file=$(mktemp)
+			if jq 'del(.mcpServers["osgrep"]) | del(.enabledPlugins["osgrep@osgrep"])' "$claude_settings" >"$tmp_file" 2>/dev/null; then
+				mv "$tmp_file" "$claude_settings"
+				print_info "Removed osgrep from Claude Code settings"
+			else
+				rm -f "$tmp_file"
+			fi
+			cleaned=true
+		fi
+	fi
+
+	# 5. Remove per-repo .osgrep directories in registered repos
+	local repos_file="$HOME/.config/aidevops/repos.json"
+	if [[ -f "$repos_file" ]] && command -v jq &>/dev/null; then
+		while IFS= read -r repo_path; do
+			[[ -z "$repo_path" ]] && continue
+			[[ ! -d "$repo_path" ]] && continue
+			if [[ -d "$repo_path/.osgrep" ]]; then
+				rm -rf "$repo_path/.osgrep"
+			fi
+		done < <(jq -r '.[]' "$repos_file" 2>/dev/null)
+	fi
+
+	if [[ "$cleaned" == "true" ]]; then
+		print_success "osgrep removed (freed CPU cores and disk space)"
 	fi
 
 	return 0
@@ -354,7 +432,7 @@ disable_ondemand_mcps() {
 		"google-analytics-mcp"
 		"grep_app"
 		"websearch"
-		# KEEP ENABLED: osgrep (semantic code search), context7 (library docs)
+		# KEEP ENABLED: context7 (library docs)
 	)
 
 	local disabled=0
@@ -391,7 +469,7 @@ disable_ondemand_mcps() {
 	done
 
 	# Re-enable MCPs that were accidentally disabled (v2.100.16-17 bug)
-	local -a keep_enabled=("osgrep" "context7")
+	local -a keep_enabled=("context7")
 	for mcp in "${keep_enabled[@]}"; do
 		if jq -e ".mcp[\"$mcp\"].enabled == false" "$tmp_config" >/dev/null 2>&1; then
 			jq ".mcp[\"$mcp\"].enabled = true" "$tmp_config" >"${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"

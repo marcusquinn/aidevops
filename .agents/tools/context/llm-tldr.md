@@ -179,11 +179,10 @@ tldr dfg src/payment/processor.py process_payment
 | Tool | Purpose | Token Efficiency |
 |------|---------|------------------|
 | llm-tldr | Semantic extraction | 95% savings |
-| osgrep | Semantic search | Good for finding |
 | Augment | Codebase retrieval | Good for context |
 | repomix | Full packing | No savings |
 
-**Recommendation**: Use llm-tldr for understanding code structure, osgrep/Augment for finding code, repomix for full context when needed.
+**Recommendation**: Use llm-tldr for understanding code structure, rg/Augment for finding code, repomix for full context when needed.
 
 ## Integration with Memory System
 

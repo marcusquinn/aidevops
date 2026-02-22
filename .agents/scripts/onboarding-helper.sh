@@ -298,12 +298,6 @@ check_context_tools() {
 		print_service "Augment Context Engine" "needs-setup" "auggie not installed"
 	fi
 
-	if is_installed "osgrep"; then
-		print_service "osgrep" "ready" "installed (local)"
-	else
-		print_service "osgrep" "optional" "not installed"
-	fi
-
 	# Context7 is MCP-only, no auth needed
 	print_service "Context7" "ready" "MCP (no auth needed)"
 
@@ -922,8 +916,6 @@ output_json() {
 	is_installed "auggie" && json+='true' || json+='false'
 	json+=',"authenticated":'
 	is_cli_authenticated "auggie" && json+='true' || json+='false'
-	json+='},"osgrep":{"installed":'
-	is_installed "osgrep" && json+='true' || json+='false'
 	json+='},"sqlite3":{"installed":'
 	is_installed "sqlite3" && json+='true' || json+='false'
 	json+='}},'

@@ -6,7 +6,6 @@ subagents:
   # Context/docs
   - context7
   - augment-context-engine
-  - osgrep
   # Web research
   - crawl4ai
   - serper

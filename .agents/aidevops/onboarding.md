@@ -72,7 +72,7 @@ aidevops gives your AI assistant superpowers for DevOps and infrastructure manag
 - **WordPress**: LocalWP development, MainWP fleet management
 - **SEO**: Keyword research, SERP analysis, Google Search Console
 - **Browser Automation**: Playwright, Stagehand, Chrome DevTools
-- **Context Tools**: Augment, osgrep, Context7, Repomix for AI context
+- **Context Tools**: Augment, Context7, Repomix for AI context
 
 All through natural conversation - just tell me what you need!
 ```
@@ -386,7 +386,6 @@ Tab → SEO
 | Service | Auth Method | Setup Command | Purpose |
 |---------|-------------|---------------|---------|
 | Augment Context Engine | `auggie login` | Opens browser OAuth | Semantic codebase search |
-| osgrep | None (local) | `npm i -g osgrep && osgrep setup` | Local semantic search |
 | Context7 | None | MCP config only | Library documentation |
 
 **Augment setup**:
@@ -886,7 +885,7 @@ Subagents provide specialized knowledge without switching your main agent. Use `
 | Git | `@github-cli`, `@gitlab-cli`, `@gitea-cli` |
 | Quality | `@code-standards`, `@codacy`, `@coderabbit`, `@snyk` |
 | SEO | `@dataforseo`, `@serper`, `@keyword-research` |
-| Context | `@augment-context-engine`, `@osgrep`, `@context7` |
+| Context | `@augment-context-engine`, `@context7` |
 | WordPress | `@wp-dev`, `@wp-admin`, `@localwp`, `@mainwp` |
 
 ### Commands (/slash)

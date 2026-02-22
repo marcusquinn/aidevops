@@ -599,7 +599,6 @@ main() {
 		confirm_step "Install MCP packages globally (fast startup)" && install_mcp_packages
 		confirm_step "Setup LocalWP MCP server" && setup_localwp_mcp
 		confirm_step "Setup Augment Context Engine MCP" && setup_augment_context_engine
-		confirm_step "Setup osgrep (local semantic search)" && setup_osgrep
 		confirm_step "Setup Beads task management" && setup_beads
 		confirm_step "Setup SEO integrations (curl subagents)" && setup_seo_mcps
 		confirm_step "Setup Google Analytics MCP" && setup_google_analytics_mcp
@@ -775,7 +774,6 @@ main() {
 	echo "MCP Integrations (OpenCode):"
 	echo "• Augment Context Engine - Cloud semantic codebase retrieval"
 	echo "• Context7               - Real-time library documentation"
-	echo "• osgrep                 - Local semantic search (100% private)"
 	echo "• GSC                    - Google Search Console (MCP + OAuth2)"
 	echo "• Google Analytics       - Analytics data (shared GSC credentials)"
 	echo ""

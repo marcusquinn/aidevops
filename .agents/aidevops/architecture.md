@@ -81,7 +81,7 @@ aidevops implements proven agent design patterns identified by Lance Martin (Lan
 
 ```python
 # Tools disabled globally, enabled per-agent
-GLOBAL_TOOLS = {"gsc_*": False, "outscraper_*": False, "osgrep_*": True, ...}
+GLOBAL_TOOLS = {"gsc_*": False, "outscraper_*": False, ...}
 AGENT_TOOLS = {
     "Build+": {"write": True, "context7_*": True, "bash": True, "playwriter_*": True, ...},
     "SEO": {"gsc_*": True, "google-analytics-mcp_*": True, ...},
@@ -131,7 +131,7 @@ Decision framework for when to use an MCP server vs a curl-based subagent:
 
 **Three-tier MCP strategy**:
 
-1. **Globally enabled** (always loaded, ~2K tokens each): osgrep, augment-context-engine
+1. **Globally enabled** (always loaded, ~2K tokens each): augment-context-engine
 2. **Enabled, tools disabled** (zero context until agent invokes): claude-code-mcp, gsc, outscraper, google-analytics-mcp, quickfile, amazon-order-history, context7, repomix, playwriter, chrome-devtools, etc.
 3. **Replaced by curl subagent** (removed entirely): hetzner, serper, dataforseo, ahrefs, hostinger
 

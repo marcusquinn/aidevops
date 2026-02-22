@@ -51,10 +51,9 @@ Use TodoWrite frequently to track tasks and show progress. Break complex tasks i
 - Only use mcp_glob as last resort when Bash is unavailable
 
 # Code Search Priority
-1. Augment Context Engine (semantic search) - PRIMARY for code understanding
-2. grep/rg - for exact string matching
-3. osgrep - for concept-based search
-4. Glob - LAST RESORT only
+1. grep/rg - for exact string matching (fast, zero overhead)
+2. Augment Context Engine (semantic search) - for code understanding
+3. Glob - LAST RESORT only
 
 # Code References
 When referencing specific functions or code include the pattern `file_path:line_number` to allow the user to easily navigate to the source code location.
