@@ -86,6 +86,8 @@ export NETBIRD_DOMAIN=netbird.example.com
 curl -fsSL https://github.com/netbirdio/netbird/releases/latest/download/getting-started.sh | bash
 ```
 
+**Production note**: For automated pipelines, pin to a specific release tag instead of `latest` and verify the script checksum before executing. See the [releases page](https://github.com/netbirdio/netbird/releases) for versioned URLs.
+
 This deploys:
 - `netbird-server` (combined management + signal + relay + STUN)
 - `dashboard` (web UI with embedded nginx)
@@ -107,7 +109,7 @@ This deploys:
 | PostgreSQL | Production | Concurrent access, HA-capable |
 | MySQL/MariaDB | Production alternative | Same benefits as PostgreSQL |
 
-For Cloudron deployments, use the PostgreSQL addon.
+For Cloudron deployments, use the PostgreSQL add-on.
 
 ### Identity Provider (IdP)
 
@@ -150,7 +152,7 @@ Multiple IdPs can coexist (e.g., Cloudron SSO + Google + Keycloak). Local email/
 3. **Encryption key is critical** -- `server.store.encryptionKey` encrypts tokens at rest; losing it means regenerating all keys
 4. **Single account mode is default** -- all users join one network; disable with `--disable-single-account-mode` for multi-tenant
 5. **The `/setup` page disappears** after first user creation -- save your admin credentials
-6. **Hetzner firewalls are stateless** -- may need to open ephemeral UDP port range for STUN
+6. **Hetzner Dedicated (Robot) firewall is stateless** -- may need to open ephemeral UDP port range for STUN; Hetzner Cloud firewalls are stateful and do not have this limitation
 7. **Oracle Cloud blocks UDP 3478** by default in both Security Rules and iptables
 8. **Reverse proxy requires Traefik** -- NetBird's reverse proxy feature (exposing internal services publicly) requires Traefik with TLS passthrough. This is incompatible with Cloudron's nginx (see Cloudron section below). Does not affect core mesh VPN functionality.
 
@@ -226,7 +228,7 @@ Generated files:
 ```bash
 # Check version and update availability via API
 curl -s "https://netbird.example.com/api/instance/version" \
-  -H "Authorization: Bearer <PAT>" | jq .
+  -H "Authorization: Token <PAT>" | jq .
 
 # Response includes:
 # management_current_version, management_available_version, management_update_available
@@ -248,7 +250,7 @@ docker compose up -d --force-recreate netbird-server dashboard
 # 4. Verify
 docker compose ps
 curl -s "https://netbird.example.com/api/instance/version" \
-  -H "Authorization: Bearer <PAT>" | jq .management_current_version
+  -H "Authorization: Token <PAT>" | jq .management_current_version
 ```
 
 ### Automated Updates via aidevops
@@ -277,7 +279,7 @@ PAT=$(cat "$PAT_FILE")
 
 # Check for updates via API
 RESPONSE=$(curl -sf "${NETBIRD_URL}/api/instance/version" \
-    -H "Authorization: Bearer ${PAT}" \
+    -H "Authorization: Token ${PAT}" \
     -H "Accept: application/json" 2>/dev/null || echo '{}')
 
 UPDATE_AVAILABLE=$(echo "$RESPONSE" | jq -r '.management_update_available // false')
@@ -299,7 +301,7 @@ docker compose up -d --force-recreate netbird-server dashboard >> "$LOG_FILE" 2>
 # Verify
 sleep 10
 NEW_VERSION=$(curl -sf "${NETBIRD_URL}/api/instance/version" \
-    -H "Authorization: Bearer ${PAT}" | jq -r '.management_current_version // "unknown"')
+    -H "Authorization: Token ${PAT}" | jq -r '.management_current_version // "unknown"')
 
 if [[ "$NEW_VERSION" == "$AVAILABLE" ]]; then
     log "SUCCESS: Updated to ${NEW_VERSION}"
@@ -336,7 +338,7 @@ Add a health check to the aidevops scheduler:
 ```bash
 # Check NetBird health from any mesh peer
 curl -sf "https://netbird.example.com/api/instance/version" \
-  -H "Authorization: Bearer <PAT>" | jq '{
+  -H "Authorization: Token <PAT>" | jq '{
     version: .management_current_version,
     update_available: .management_update_available,
     latest: .management_available_version
@@ -541,7 +543,7 @@ See: https://dokploy.com/docs/core/docker-compose
 | NAT traversal (STUN/TURN) | Yes | Yes | Yes |
 | Dashboard + API | Yes | Yes | Yes |
 | SSO (OIDC) | Yes (Cloudron SSO) | Yes (any IdP) | Yes (any IdP) |
-| PostgreSQL | Yes (addon) | Yes (manual) | Yes (PaaS DB) |
+| PostgreSQL | Yes (add-on) | Yes (manual) | Yes (PaaS DB) |
 | Reverse proxy feature | **No** | Yes | **Yes** |
 | Management UI for infra | Cloudron | None (SSH) | PaaS dashboard |
 | Auto-TLS | Cloudron | Traefik | PaaS/Traefik |
@@ -753,7 +755,7 @@ curl -s -X POST "https://netbird.example.com/api/setup-keys" \
   -d '{
     "name": "aidevops-workers",
     "type": "reusable",
-    "expires_in": 86400,
+    "expires_in": 604800,
     "auto_groups": ["ai-workers"],
     "usage_limit": 50
   }'
@@ -867,14 +869,14 @@ provider "netbird" {
   token      = var.netbird_api_token
 }
 
+resource "netbird_group" "ai_workers" {
+  name = "ai-workers"
+}
+
 resource "netbird_setup_key" "workers" {
   name        = "aidevops-workers"
   type        = "reusable"
   auto_groups = [netbird_group.ai_workers.id]
-}
-
-resource "netbird_group" "ai_workers" {
-  name = "ai-workers"
 }
 ```
 
@@ -890,15 +892,15 @@ A Cloudron app package exists at https://github.com/marcusquinn/cloudron-netbird
 | Dashboard | Works | Static files served via nginx |
 | Signal server (gRPC) | Works | nginx `grpc_pass` routing |
 | Relay (WebSocket) | Works | nginx proxy with upgrade headers |
-| STUN (UDP 3478) | Works | Exposed via `tcpPorts` manifest option |
-| PostgreSQL | Works | Cloudron addon, auto-configured |
+| STUN (UDP 3478) | Works | Exposed via `udpPorts` manifest option |
+| PostgreSQL | Works | Cloudron add-on, auto-configured |
 | Cloudron SSO (OIDC) | Works | Cloudron's built-in OIDC provider, no Keycloak needed |
-| Cloudron TURN relay | Works | Cloudron addon, auto-configured for NAT traversal |
+| Cloudron TURN relay | Works | Cloudron add-on, auto-configured for NAT traversal |
 | **Reverse proxy** | **Not supported** | Requires Traefik with TLS passthrough; Cloudron uses nginx |
 
-### Cloudron addons used
+### Cloudron add-ons used
 
-| Addon | Purpose |
+| Add-on | Purpose |
 |-------|---------|
 | `postgresql` | Database (replaces default SQLite) |
 | `localstorage` | Persistent data at `/app/data/` |
@@ -907,7 +909,7 @@ A Cloudron app package exists at https://github.com/marcusquinn/cloudron-netbird
 
 ### OIDC integration
 
-Cloudron's OIDC addon provides credentials that are registered as a "Generic OIDC" identity provider in NetBird via the REST API on startup. This requires a Personal Access Token (PAT) stored at `/app/data/config/.admin_pat`. Without it, manual setup instructions are printed to the app logs.
+Cloudron's OIDC add-on provides credentials that are registered as a "Generic OIDC" identity provider in NetBird via the REST API on startup. This requires a Personal Access Token (PAT) stored at `/app/data/config/.admin_pat`. Without it, manual setup instructions are printed to the app logs.
 
 The OIDC registration is stored in PostgreSQL (not config files), so it persists across restarts. The startup script checks for existing registration to avoid duplicates.
 
@@ -974,7 +976,7 @@ NetBird v0.65+ includes a reverse proxy feature (beta, self-hosted only) that ex
 
 ### Limitations
 
-- **Requires Traefik** -- not compatible with nginx-based reverse proxies (including Cloudron)
+- **Requires Traefik** -- incompatible with nginx-based reverse proxies (including Cloudron)
 - **No pre-shared keys or Rosenpass** -- incompatible with the reverse proxy feature
 - **Beta** -- cloud support coming soon, currently self-hosted only
 - **Not a replacement for Cloudflare Tunnel** -- designed for exposing services within the mesh, not as a general-purpose tunnel
@@ -1003,7 +1005,7 @@ docker compose logs -f netbird-server
 # Re-authenticate
 netbird down && netbird up
 
-# Force relay (debug connectivity)
+# Prevent auto-connect on daemon start (useful during debugging)
 netbird up --disable-auto-connect
 
 # Check NAT traversal
