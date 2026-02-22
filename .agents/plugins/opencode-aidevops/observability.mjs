@@ -124,6 +124,7 @@ CREATE TABLE IF NOT EXISTS tool_calls (
   message_id TEXT,
   call_id TEXT,
   tool_name TEXT NOT NULL,
+  intent TEXT,
   success INTEGER DEFAULT 1,
   duration_ms INTEGER,
   metadata TEXT
@@ -158,6 +159,18 @@ CREATE INDEX IF NOT EXISTS idx_session_summaries_session
     console.error("[aidevops] Observability: schema creation failed");
     return false;
   }
+
+  // Migration: add intent column to tool_calls if it doesn't exist (t1309).
+  // Check first to avoid noisy "duplicate column" errors in logs.
+  // Fresh DBs already have the column from the CREATE TABLE above.
+  const hasIntentCol = sqliteExec(
+    "SELECT COUNT(*) FROM pragma_table_info('tool_calls') WHERE name='intent';",
+    5000,
+  );
+  if (hasIntentCol === "0") {
+    sqliteExec("ALTER TABLE tool_calls ADD COLUMN intent TEXT;", 5000);
+  }
+
   return true;
 }
 
@@ -350,8 +363,9 @@ ON CONFLICT(session_id) DO UPDATE SET
  *
  * @param {object} input - { tool, sessionID, callID, args }
  * @param {object} output - { title, output, metadata }
+ * @param {string | undefined} intent - LLM-provided intent string (from agent__intent field)
  */
-export function recordToolCall(input, output) {
+export function recordToolCall(input, output, intent) {
   if (!dbReady) return;
 
   const toolName = input.tool || "";
@@ -383,11 +397,12 @@ export function recordToolCall(input, output) {
     !outputText.includes("Error:") ? 1 : 0;
 
   const sql = `INSERT INTO tool_calls (
-    session_id, call_id, tool_name, success, metadata
+    session_id, call_id, tool_name, intent, success, metadata
   ) VALUES (
     ${sqlEscape(sessionID)},
     ${sqlEscape(callID)},
     ${sqlEscape(toolName)},
+    ${sqlEscape(intent || null)},
     ${isSuccess},
     NULL
   );`;

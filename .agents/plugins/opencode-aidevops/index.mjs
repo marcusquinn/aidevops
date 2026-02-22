@@ -1021,15 +1021,32 @@ function logQualityGateResult(label, filePath, totalViolations, report, errorLev
 }
 
 /**
- * Pre-tool-use hook: Comprehensive quality gate for Write/Edit operations.
- * Runs the full quality pipeline matching pre-commit-hook.sh checks:
- * - Shell scripts (.sh): ShellCheck, return statements, positional params, secrets
- * - Markdown (.md): MD031 (blank lines around code blocks), trailing whitespace
- * - All files: secrets scanning
+ * Pre-tool-use hook: Intent extraction + quality gate for Write/Edit operations.
+ *
+ * Intent tracing (t1309):
+ *   Extracts the `agent__intent` field from tool args (injected by the LLM
+ *   per system prompt instruction) and stores it keyed by callID for
+ *   retrieval in toolExecuteAfter when the call is recorded to the DB.
+ *
+ * Quality gate:
+ *   Runs the full quality pipeline matching pre-commit-hook.sh checks:
+ *   - Shell scripts (.sh): ShellCheck, return statements, positional params, secrets
+ *   - Markdown (.md): MD031 (blank lines around code blocks), trailing whitespace
+ *   - All files: secrets scanning
+ *
  * @param {object} input - { tool, sessionID, callID }
  * @param {object} output - { args } (mutable)
  */
 async function toolExecuteBefore(input, output) {
+  // Intent tracing (t1309): extract agent__intent from args before execution
+  const callID = input.callID || "";
+  if (callID && output.args) {
+    const intent = extractAndStoreIntent(callID, output.args);
+    if (intent) {
+      qualityLog("INFO", `Intent [${input.tool}] callID=${callID}: ${intent}`);
+    }
+  }
+
   if (!isWriteOrEditTool(input.tool)) return;
 
   const filePath = output.args?.filePath || output.args?.file_path || "";
@@ -1100,8 +1117,9 @@ function trackBashOperation(title, outputText) {
 }
 
 /**
- * Post-tool-use hook: Quality metrics tracking and pattern recording.
+ * Post-tool-use hook: Quality metrics tracking, pattern recording, and intent logging.
  * Logs tool execution for debugging and feeds data to pattern-tracker-helper.sh.
+ * Retrieves the intent captured in toolExecuteBefore and records it to the DB.
  * @param {object} input - { tool, sessionID, callID }
  * @param {object} output - { title, output, metadata } (mutable)
  */
@@ -1119,8 +1137,11 @@ async function toolExecuteAfter(input, output) {
     }
   }
 
-  // Phase 5: LLM observability — record tool calls (t1308)
-  recordToolCall(input, output);
+  // Intent tracing (t1309): retrieve intent stored by toolExecuteBefore
+  const intent = consumeIntent(input.callID || "");
+
+  // Phase 5: LLM observability — record tool calls with intent (t1308, t1309)
+  recordToolCall(input, output, intent);
 }
 
 // ---------------------------------------------------------------------------
@@ -1333,6 +1354,80 @@ async function compactingHook(_input, output, directory) {
 // Tool definitions extracted to tools.mjs — imported at top of file
 
 // ---------------------------------------------------------------------------
+// Phase 4.5: Intent Tracing (t1309)
+// ---------------------------------------------------------------------------
+// Inspired by oh-my-pi's agent__intent pattern. The LLM is instructed via
+// system prompt to include an `agent__intent` field in every tool call,
+// describing its intent in present participle form. The field is extracted
+// from tool args in the `tool.execute.before` hook and stored in the
+// observability DB alongside the tool call record.
+//
+// Why system prompt injection instead of JSON Schema injection:
+//   OpenCode's plugin API does not expose a hook to modify tool schemas
+//   before they are sent to the LLM. The `experimental.chat.system.transform`
+//   hook is the closest equivalent — it injects the requirement as a rule
+//   the LLM must follow, achieving the same chain-of-thought effect.
+
+/**
+ * Field name for intent tracing — matches oh-my-pi convention.
+ * @type {string}
+ */
+const INTENT_FIELD = "agent__intent";
+
+/**
+ * Per-callID intent store. Bridges tool.execute.before → tool.execute.after.
+ * Maps callID → intent string.
+ * @type {Map<string, string>}
+ */
+const intentByCallId = new Map();
+
+/**
+ * Extract and store the intent field from tool call args.
+ * Called from toolExecuteBefore — stores intent keyed by callID for
+ * retrieval in toolExecuteAfter when the tool call is recorded to the DB.
+ *
+ * @param {string} callID - Unique tool call identifier
+ * @param {object} args - Tool call arguments (may contain agent__intent)
+ * @returns {string | undefined} Extracted intent string, or undefined
+ */
+function extractAndStoreIntent(callID, args) {
+  if (!args || typeof args !== "object") return undefined;
+
+  const raw = args[INTENT_FIELD];
+  if (typeof raw !== "string") return undefined;
+
+  const intent = raw.trim();
+  if (!intent) return undefined;
+
+  intentByCallId.set(callID, intent);
+
+  // Prune old entries to prevent unbounded memory growth
+  if (intentByCallId.size > 5000) {
+    const keys = Array.from(intentByCallId.keys());
+    for (const k of keys.slice(0, 2500)) {
+      intentByCallId.delete(k);
+    }
+  }
+
+  return intent;
+}
+
+/**
+ * Retrieve and remove the stored intent for a callID.
+ * Called from toolExecuteAfter — consumes the intent stored by extractAndStoreIntent.
+ *
+ * @param {string} callID
+ * @returns {string | undefined}
+ */
+function consumeIntent(callID) {
+  const intent = intentByCallId.get(callID);
+  if (intent !== undefined) {
+    intentByCallId.delete(callID);
+  }
+  return intent;
+}
+
+// ---------------------------------------------------------------------------
 // Phase 5: Soft TTSR — Rule Enforcement via Plugin Hooks (t1304)
 // ---------------------------------------------------------------------------
 // "Soft TTSR" (Text-to-Speech Rules) provides preventative enforcement of
@@ -1506,22 +1601,40 @@ function scanForViolations(text) {
 }
 
 /**
- * Hook: experimental.chat.system.transform (t1304)
+ * Hook: experimental.chat.system.transform (t1304, t1309)
  *
- * Injects active TTSR rules into the system prompt as preventative guidance.
- * This runs before every LLM call, ensuring the model is aware of rules
- * before generating output.
+ * Injects active TTSR rules and intent tracing instruction into the system prompt.
+ *
+ * Intent tracing (t1309):
+ *   Instructs the LLM to include an `agent__intent` field in every tool call,
+ *   describing its intent in present participle form. This is the system-prompt
+ *   equivalent of oh-my-pi's JSON Schema injection — OpenCode's plugin API does
+ *   not expose tool schema modification, so we achieve the same effect via the
+ *   system prompt. The field is extracted in tool.execute.before and logged to
+ *   the observability DB for debugging and audit trails.
+ *
+ * TTSR rules (t1304):
+ *   Injects active rules as preventative guidance before every LLM call.
  *
  * @param {object} _input - { sessionID?: string, model: Model }
  * @param {object} output - { system: string[] } (mutable)
  */
 async function systemTransformHook(_input, output) {
   const rules = loadTtsrRules();
-  if (rules.length === 0) return;
 
   const ruleLines = rules
     .filter((r) => r.systemPrompt)
     .map((r) => `- ${r.systemPrompt}`);
+
+  // Intent tracing instruction (t1309) — always injected regardless of TTSR rules
+  const intentInstruction = [
+    "## Intent Tracing (observability)",
+    `When calling any tool, include a field named \`${INTENT_FIELD}\` in the tool arguments.`,
+    "Value: one sentence in present participle form describing your intent (e.g., \"Reading the file to understand the existing schema\").",
+    "No trailing period. This field is used for debugging and audit trails — it is stripped before tool execution.",
+  ].join("\n");
+
+  output.system.push(intentInstruction);
 
   if (ruleLines.length === 0) return;
 
@@ -1699,7 +1812,12 @@ async function textCompleteHook(input, output) {
  *    Captures assistant message metadata (model, tokens, cost, duration, errors)
  *    via the `event` hook, and tool call counts via `tool.execute.after`.
  *    Writes incrementally to ~/.aidevops/.agent-workspace/observability/llm-requests.db
- * 7. Compaction context — preserves operational state across context resets
+ * 7. Intent tracing — logs LLM-provided intent alongside tool calls (t1309)
+ *    Inspired by oh-my-pi's agent__intent pattern. The LLM is instructed via
+ *    system prompt to include an `agent__intent` field in every tool call,
+ *    describing its intent in present participle form. Extracted in
+ *    `tool.execute.before`, stored in the `tool_calls` table `intent` column.
+ * 8. Compaction context — preserves operational state across context resets
  *
  * MCP registration (Phase 2, t008.2):
  * - Registers all known MCP servers from a data-driven registry
