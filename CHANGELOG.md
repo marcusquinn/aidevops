@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.122.5] - 2026-02-22
 
+### Added
+
+- expand supervisor health issue with per-task detail and typed attention breakdown (#2156)
+
+### Changed
+
+- Documentation: add changelog entry for v2.122.5
+
+### Fixed
+
+- suppress Homebrew auto-update globally in run_with_spinner for all brew commands (#2157)
+
+## [2.122.5] - 2026-02-22
+
 ### Fixed
 
 - Suppress Homebrew auto-update globally in run_with_spinner for all 10 brew install call sites (#2157)
