@@ -2445,7 +2445,7 @@
   check: shellcheck tests/test-multi-container-batch-dispatch.sh
   check: file-exists tests/test-multi-container-batch-dispatch.sh
 
-- [ ] v280 t1301 Investigate rc=143 supervisor pipeline kills during AI re... | PR #2120 | merged:2026-02-22
+- [x] v280 t1301 Investigate rc=143 supervisor pipeline kills during AI re... | PR #2120 | merged:2026-02-22 verified:2026-02-22
   files: .agents/scripts/supervisor-helper.sh, .agents/scripts/supervisor/launchd.sh, .agents/scripts/supervisor/pulse.sh, .agents/scripts/supervisor/utility.sh
   check: shellcheck .agents/scripts/supervisor-helper.sh
   check: file-exists .agents/scripts/supervisor-helper.sh
