@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.123.3] - 2026-02-22
+
+### Fixed
+
+- Detect OpenCode version via CLI instead of hardcoded bun package.json path (#2164)
+
 ## [2.123.2] - 2026-02-22
 
 ### Added
