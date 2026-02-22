@@ -936,20 +936,91 @@ update_queue_health_issue() {
 	local alerts_md=""
 	local alert_count=0
 
-	# Alert: failed tasks
+	# Alert: failed tasks — categorized with descriptions and remediation
 	if [[ "${cnt_failed:-0}" -gt 0 ]]; then
 		local failed_list
-		failed_list=$(db -separator '|' "$SUPERVISOR_DB" "SELECT id, error FROM tasks WHERE ${repo_filter} AND status = 'failed' LIMIT 5;" 2>/dev/null || echo "")
-		alerts_md="${alerts_md}- **${cnt_failed} failed task(s)**:"
-		while IFS='|' read -r f_id f_err; do
+		failed_list=$(db -separator '|' "$SUPERVISOR_DB" "SELECT id, description, error FROM tasks WHERE ${repo_filter} AND status = 'failed' ORDER BY id;" 2>/dev/null || echo "")
+
+		# Categorize failures by error pattern
+		local cat_stale="" cat_deploy="" cat_permission="" cat_retries="" cat_verify="" cat_superseded="" cat_other=""
+		local cnt_stale=0 cnt_deploy=0 cnt_permission=0 cnt_retries=0 cnt_verify=0 cnt_superseded=0 cnt_other=0
+
+		while IFS='|' read -r f_id f_desc f_err; do
 			[[ -z "$f_id" ]] && continue
-			local f_err_short="${f_err:0:80}"
-			[[ ${#f_err} -gt 80 ]] && f_err_short="${f_err_short}..."
-			alerts_md="${alerts_md}
-  - \`${f_id}\`: ${f_err_short:-unknown error}"
-		done <<<"$failed_list"
-		alerts_md="${alerts_md}
+			# Extract short description (first phrase before #tag or ~time)
+			local f_desc_short
+			f_desc_short=$(echo "$f_desc" | sed 's/ [#~].*//; s/ ref:.*//; s/ model:.*//; s/ —.*//' | head -c 80)
+			local f_entry="  - \`${f_id}\` — ${f_desc_short:-unknown task}"
+
+			if [[ "$f_err" == *"superseded"* ]]; then
+				cat_superseded="${cat_superseded}${f_entry}
 "
+				cnt_superseded=$((cnt_superseded + 1))
+			elif [[ "$f_err" == *"Stale state recovery"* || "$f_err" == *"no live worker"* ]]; then
+				cat_stale="${cat_stale}${f_entry}
+"
+				cnt_stale=$((cnt_stale + 1))
+			elif [[ "$f_err" == *"Deploy"* && "$f_err" == *"setup.sh"* ]]; then
+				cat_deploy="${cat_deploy}${f_entry}
+"
+				cnt_deploy=$((cnt_deploy + 1))
+			elif [[ "$f_err" == *"permission_denied"* ]]; then
+				cat_permission="${cat_permission}${f_entry}
+"
+				cnt_permission=$((cnt_permission + 1))
+			elif [[ "$f_err" == *"Verification failed"* || "$f_err" == *"verify"* ]]; then
+				cat_verify="${cat_verify}${f_entry}
+"
+				cnt_verify=$((cnt_verify + 1))
+			elif [[ "$f_err" == *"Max retries"* ]]; then
+				cat_retries="${cat_retries}${f_entry}
+"
+				cnt_retries=$((cnt_retries + 1))
+			else
+				local f_err_short="${f_err:0:80}"
+				[[ ${#f_err} -gt 80 ]] && f_err_short="${f_err_short}..."
+				cat_other="${cat_other}${f_entry}: ${f_err_short:-unknown error}
+"
+				cnt_other=$((cnt_other + 1))
+			fi
+		done <<<"$failed_list"
+
+		alerts_md="${alerts_md}- **${cnt_failed} failed task(s)** by category:
+"
+		if [[ "$cnt_stale" -gt 0 ]]; then
+			alerts_md="${alerts_md}  **Stale workers** (${cnt_stale}) — worker died mid-execution, retries exhausted
+${cat_stale}  _Action: \`supervisor-helper.sh reset <id>\` to re-queue, or cancel if superseded_
+"
+		fi
+		if [[ "$cnt_superseded" -gt 0 ]]; then
+			alerts_md="${alerts_md}  **Superseded** (${cnt_superseded}) — replaced by newer tasks
+${cat_superseded}  _Action: cancel these — \`supervisor-helper.sh cancel <id>\`_
+"
+		fi
+		if [[ "$cnt_deploy" -gt 0 ]]; then
+			alerts_md="${alerts_md}  **Deploy failures** (${cnt_deploy}) — setup.sh failed during post-merge deploy
+${cat_deploy}  _Action: check deploy.log and re-run \`aidevops update\`_
+"
+		fi
+		if [[ "$cnt_permission" -gt 0 ]]; then
+			alerts_md="${alerts_md}  **Permission denied** (${cnt_permission}) — worker couldn't write to worktree
+${cat_permission}  _Action: check directory permissions and sandbox restrictions_
+"
+		fi
+		if [[ "$cnt_verify" -gt 0 ]]; then
+			alerts_md="${alerts_md}  **Verification failed** (${cnt_verify}) — post-merge checks failed
+${cat_verify}  _Action: review the PR and verify manually_
+"
+		fi
+		if [[ "$cnt_retries" -gt 0 ]]; then
+			alerts_md="${alerts_md}  **Max retries exhausted** (${cnt_retries}) — failed without clear root cause
+${cat_retries}  _Action: run \`supervisor-helper.sh triage\` or investigate logs_
+"
+		fi
+		if [[ "$cnt_other" -gt 0 ]]; then
+			alerts_md="${alerts_md}  **Other** (${cnt_other}):
+${cat_other}"
+		fi
 		alert_count=$((alert_count + 1))
 	fi
 
