@@ -12,6 +12,7 @@ import {
 import { join } from "path";
 import { homedir, platform } from "os";
 import { createTools } from "./tools.mjs";
+import { initObservability, handleEvent, recordToolCall } from "./observability.mjs";
 
 const HOME = homedir();
 const AGENTS_DIR = join(HOME, ".aidevops", "agents");
@@ -1117,6 +1118,9 @@ async function toolExecuteAfter(input, output) {
       qualityLog("INFO", `File modified: ${filePath} via ${toolName}`);
     }
   }
+
+  // Phase 5: LLM observability — record tool calls (t1308)
+  recordToolCall(input, output);
 }
 
 // ---------------------------------------------------------------------------
@@ -1691,7 +1695,11 @@ async function textCompleteHook(input, output) {
  * 5. Soft TTSR — preventative rule enforcement via system prompt injection,
  *    corrective feedback via message history scanning, and post-hoc violation
  *    detection via text completion hooks (t1304)
- * 6. Compaction context — preserves operational state across context resets
+ * 6. LLM observability — event-driven data collection to SQLite (t1308)
+ *    Captures assistant message metadata (model, tokens, cost, duration, errors)
+ *    via the `event` hook, and tool call counts via `tool.execute.after`.
+ *    Writes incrementally to ~/.aidevops/.agent-workspace/observability/llm-requests.db
+ * 7. Compaction context — preserves operational state across context resets
  *
  * MCP registration (Phase 2, t008.2):
  * - Registers all known MCP servers from a data-driven registry
@@ -1703,6 +1711,8 @@ async function textCompleteHook(input, output) {
  * @type {import('@opencode-ai/plugin').Plugin}
  */
 export async function AidevopsPlugin({ directory }) {
+  // Phase 6: Initialise LLM observability (t1308)
+  initObservability();
   return {
     // Phase 1+2: Lightweight agent index + MCP registration
     config: async (config) => configHook(config),
@@ -1725,6 +1735,9 @@ export async function AidevopsPlugin({ directory }) {
     "experimental.chat.system.transform": systemTransformHook,
     "experimental.chat.messages.transform": messagesTransformHook,
     "experimental.text.complete": textCompleteHook,
+
+    // Phase 6: LLM observability — capture assistant message metadata (t1308)
+    event: async (input) => handleEvent(input),
 
     // Compaction context (includes OMOC state when detected)
     "experimental.session.compacting": async (input, output) =>
