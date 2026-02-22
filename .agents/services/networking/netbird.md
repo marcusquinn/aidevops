@@ -122,7 +122,26 @@ For Cloudron deployments, use the PostgreSQL addon.
 | Authentik | Okta |
 | PocketID | Auth0 |
 
-For Cloudron users: Keycloak is available as a Cloudron app and integrates directly.
+For Cloudron users: Cloudron's built-in OIDC provider works directly -- no Keycloak needed. The Cloudron app package registers Cloudron as a "Generic OIDC" identity provider automatically.
+
+OIDC providers can be added via the dashboard (Settings > Identity Providers) or via API:
+
+```bash
+curl -X POST "https://netbird.example.com/api/identity-providers" \
+  -H "Authorization: Bearer ${TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "oidc",
+    "name": "My SSO Provider",
+    "client_id": "your-client-id",
+    "client_secret": "your-client-secret",
+    "issuer": "https://sso.example.com"
+  }'
+```
+
+Multiple IdPs can coexist (e.g., Cloudron SSO + Google + Keycloak). Local email/password auth is always available alongside external providers.
+
+**JWT Group Sync**: NetBird can sync groups from your IdP via JWT claims. Enable in Settings > Groups > JWT group sync. Set the claim name (usually `groups`) and optionally restrict access to specific groups.
 
 ### Critical Gotchas
 
@@ -133,6 +152,7 @@ For Cloudron users: Keycloak is available as a Cloudron app and integrates direc
 5. **The `/setup` page disappears** after first user creation -- save your admin credentials
 6. **Hetzner firewalls are stateless** -- may need to open ephemeral UDP port range for STUN
 7. **Oracle Cloud blocks UDP 3478** by default in both Security Rules and iptables
+8. **Reverse proxy requires Traefik** -- NetBird's reverse proxy feature (exposing internal services publicly) requires Traefik with TLS passthrough. This is incompatible with Cloudron's nginx (see Cloudron section below). Does not affect core mesh VPN functionality.
 
 ## Client Installation
 
@@ -349,15 +369,50 @@ resource "netbird_group" "ai_workers" {
 }
 ```
 
-## Cloudron Packaging
+## Cloudron Deployment
 
-NetBird management server is a candidate for Cloudron packaging. See the Cloudron packaging assessment below.
+A Cloudron app package exists at https://github.com/marcusquinn/cloudron-netbird-app.
 
-**Feasibility**: Medium complexity. The main challenge is UDP 3478 (STUN) which cannot go through Cloudron's nginx reverse proxy.
+### What works on Cloudron
 
-**Approach**: Package the dashboard + management API behind Cloudron's HTTP proxy, expose UDP 3478 via `tcpPorts` manifest option (which despite the name, supports UDP).
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Management server | Works | Combined `netbird-server` binary |
+| Dashboard | Works | Static files served via nginx |
+| Signal server (gRPC) | Works | nginx `grpc_pass` routing |
+| Relay (WebSocket) | Works | nginx proxy with upgrade headers |
+| STUN (UDP 3478) | Works | Exposed via `tcpPorts` manifest option |
+| PostgreSQL | Works | Cloudron addon, auto-configured |
+| Cloudron SSO (OIDC) | Works | Cloudron's built-in OIDC provider, no Keycloak needed |
+| Cloudron TURN relay | Works | Cloudron addon, auto-configured for NAT traversal |
+| **Reverse proxy** | **Not supported** | Requires Traefik with TLS passthrough; Cloudron uses nginx |
 
-See `tools/deployment/cloudron-app-packaging.md` for the full packaging guide.
+### Cloudron addons used
+
+| Addon | Purpose |
+|-------|---------|
+| `postgresql` | Database (replaces default SQLite) |
+| `localstorage` | Persistent data at `/app/data/` |
+| `oidc` | Cloudron SSO -- provides `CLOUDRON_OIDC_ISSUER`, `CLIENT_ID`, `CLIENT_SECRET` |
+| `turn` | NAT traversal relay -- provides `CLOUDRON_TURN_SERVER`, `TURN_PORT`, `TURN_SECRET` |
+
+### OIDC integration
+
+Cloudron's OIDC addon provides credentials that are registered as a "Generic OIDC" identity provider in NetBird via the REST API on startup. This requires a Personal Access Token (PAT) stored at `/app/data/config/.admin_pat`. Without it, manual setup instructions are printed to the app logs.
+
+The OIDC registration is stored in PostgreSQL (not config files), so it persists across restarts. The startup script checks for existing registration to avoid duplicates.
+
+### Reverse proxy limitation
+
+NetBird's reverse proxy feature (exposing internal services to the public internet with automatic TLS) requires Traefik with TLS passthrough. Cloudron's nginx terminates TLS before traffic reaches the app container, making TLS passthrough impossible. This is a fundamental architectural constraint of Cloudron, not a packaging issue.
+
+A feature request for TLS passthrough support has been submitted to the Cloudron forum. If added, it would unblock the reverse proxy feature.
+
+**This does not affect core mesh VPN functionality.** All P2P tunnels, NAT traversal, access control, DNS, network routes, and the management dashboard work normally.
+
+### Packaging reference
+
+See `tools/deployment/cloudron-app-packaging.md` for the general Cloudron packaging guide.
 
 ## Comparison with Tailscale
 
@@ -367,18 +422,59 @@ See `tools/deployment/cloudron-app-packaging.md` for the full packaging guide.
 | Client license | BSD-3 | BSD-3 |
 | REST API | Full, self-hosted | Full, cloud-hosted |
 | Terraform | Official provider | Official provider |
-| SSO/MFA | Any OIDC provider | Google/Microsoft/GitHub |
+| SSO/MFA | Any OIDC provider (multiple simultaneous) | Google/Microsoft/GitHub |
 | ACLs | Group-based, dashboard UI | JSON policy file |
 | DNS | Built-in private DNS | MagicDNS |
 | NAT traversal | ICE + TURN relay | DERP relay |
+| Reverse proxy | Yes (beta, self-hosted only, requires Traefik) | Tailscale Funnel |
 | Quantum resistance | Rosenpass | Not available |
 | Setup keys | Yes (bulk provisioning) | Auth keys |
 | Multi-user | Yes, with IdP | Yes, with identity provider |
+| JWT group sync | Yes (any OIDC claim) | Limited |
 | Vendor lock-in | None | High (proprietary control plane) |
 
 **When to use Tailscale instead**: If you want zero setup effort and don't mind vendor dependency. Tailscale's free tier (100 devices, 3 users) is generous for personal use.
 
 **When to use NetBird**: When you need full control, self-hosting, API automation, team scaling, or can't accept proprietary control plane dependency.
+
+## Reverse Proxy (Exposing Internal Services)
+
+NetBird v0.65+ includes a reverse proxy feature (beta, self-hosted only) that exposes internal services on mesh peers to the public internet with automatic TLS and optional SSO/password/PIN authentication.
+
+### How it works
+
+1. Create a "service" in the dashboard mapping a public domain to an internal peer + port
+2. NetBird provisions a TLS certificate and creates a WireGuard tunnel to the target peer
+3. Incoming HTTPS requests are terminated at the NetBird proxy, then forwarded through the mesh
+4. Optional authentication: SSO (via configured IdP), password, or PIN
+
+### Requirements
+
+- A separate `netbirdio/netbird-proxy` container connected to the management server
+- **Traefik** as the reverse proxy (required for TLS passthrough -- nginx is not supported)
+- DNS: A record for the NetBird host + CNAME records for `proxy` and `*.proxy`
+- The `getting-started.sh` installer (v0.65+) includes the proxy container when Traefik is selected
+
+### Key features
+
+- **Path-based routing**: Multiple targets per service (e.g., `/api` -> backend, `/` -> frontend)
+- **Custom domains**: CNAME to your proxy cluster address
+- **High availability**: Multiple proxy instances with the same `NB_PROXY_DOMAIN` form a cluster
+- **TLS modes**: ACME (Let's Encrypt, automatic) or static certificates (wildcard/corporate CA)
+- **Hot reload**: Static certificates are watched for changes, no restart needed
+
+### Limitations
+
+- **Requires Traefik** -- not compatible with nginx-based reverse proxies (including Cloudron)
+- **No pre-shared keys or Rosenpass** -- incompatible with the reverse proxy feature
+- **Beta** -- cloud support coming soon, currently self-hosted only
+- **Not a replacement for Cloudflare Tunnel** -- designed for exposing services within the mesh, not as a general-purpose tunnel
+
+### When to use it
+
+Use the reverse proxy when you want to expose an internal service (e.g., a dashboard on a Proxmox VM) to the internet without opening ports or configuring firewalls on the target machine. The service only needs to be reachable within the NetBird mesh.
+
+For Cloudron users: deploy NetBird standalone (outside Cloudron) with Traefik if you need this feature.
 
 ## Troubleshooting
 
@@ -430,8 +526,12 @@ netbird up --setup-key <KEY>
 
 - **Docs**: https://docs.netbird.io
 - **Self-Hosting Guide**: https://docs.netbird.io/selfhosted/selfhosted-quickstart
+- **Identity Providers**: https://docs.netbird.io/selfhosted/identity-providers
+- **Generic OIDC Setup**: https://docs.netbird.io/selfhosted/identity-providers/generic-oidc
+- **Reverse Proxy**: https://docs.netbird.io/manage/reverse-proxy
 - **API Reference**: https://docs.netbird.io/api
 - **Terraform Provider**: https://registry.terraform.io/providers/netbirdio/netbird/latest
 - **GitHub**: https://github.com/netbirdio/netbird
+- **Cloudron Package**: https://github.com/marcusquinn/cloudron-netbird-app
 - **Slack**: https://docs.netbird.io/slack-url
 - **Forum**: https://forum.netbird.io
