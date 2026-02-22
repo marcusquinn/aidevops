@@ -939,7 +939,7 @@ update_queue_health_issue() {
 	# Alert: failed tasks — categorized with descriptions and remediation
 	if [[ "${cnt_failed:-0}" -gt 0 ]]; then
 		local failed_list
-		failed_list=$(db -separator '|' "$SUPERVISOR_DB" "SELECT id, description, error FROM tasks WHERE ${repo_filter} AND status = 'failed' ORDER BY id;" 2>/dev/null || echo "")
+		failed_list=$(db -separator '|' "$SUPERVISOR_DB" "SELECT id, description, error FROM tasks WHERE ${repo_filter} AND status = 'failed' ORDER BY id;" || echo "")
 
 		# Categorize failures by error pattern
 		local cat_stale="" cat_deploy="" cat_permission="" cat_retries="" cat_verify="" cat_superseded="" cat_other=""
@@ -947,9 +947,9 @@ update_queue_health_issue() {
 
 		while IFS='|' read -r f_id f_desc f_err; do
 			[[ -z "$f_id" ]] && continue
-			# Extract short description (first phrase before #tag or ~time)
+			# Extract short description — strip metadata tags but preserve natural #refs
 			local f_desc_short
-			f_desc_short=$(echo "$f_desc" | sed 's/ [#~].*//; s/ ref:.*//; s/ model:.*//; s/ —.*//' | head -c 80)
+			f_desc_short=$(echo "$f_desc" | sed 's/ #[a-z][a-z_-]*//g; s/ ~[0-9][0-9hm]*//g; s/ ref:[^ ]*//g; s/ model:[^ ]*//g; s/ —.*//' | head -c 80)
 			local f_entry="  - \`${f_id}\` — ${f_desc_short:-unknown task}"
 
 			if [[ "$f_err" == *"superseded"* ]]; then
