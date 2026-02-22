@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.122.4] - 2026-02-22
 
+### Changed
+
+- Documentation: add changelog entry for v2.122.4
+- Documentation: update model files from aidevops (t1133)
+
+### Fixed
+
+- export HOMEBREW_NO_AUTO_UPDATE so it propagates to backgrounded brew install (#2155)
+
+## [2.122.4] - 2026-02-22
+
 ### Fixed
 
 - HOMEBREW_NO_AUTO_UPDATE not propagating to backgrounded brew install, causing duplicate 50MB index download (#2155)
