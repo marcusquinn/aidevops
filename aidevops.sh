@@ -2736,6 +2736,7 @@ cmd_help() {
 	echo "  repos [cmd]        Manage registered projects (list/add/remove/clean)"
 	echo "  ip-check <cmd>     IP reputation checks (check/batch/report/providers)"
 	echo "  secret <cmd>       Manage secrets (set/list/run/init/import/status)"
+	echo "  stats <cmd>        LLM usage analytics (summary/models/projects/costs/trend)"
 	echo "  detect             Find and register aidevops projects"
 	echo "  uninstall          Remove aidevops from your system"
 	echo "  version            Show version information"
@@ -2769,6 +2770,16 @@ cmd_help() {
 	echo "  aidevops secret init         # Initialize gopass encrypted store"
 	echo "  aidevops secret import       # Import from credentials.sh to gopass"
 	echo "  aidevops secret status       # Show backend status"
+	echo ""
+	echo "LLM Stats:"
+	echo "  aidevops stats               # Show usage summary (last 30 days)"
+	echo "  aidevops stats summary       # Overall usage summary"
+	echo "  aidevops stats models        # Per-model breakdown"
+	echo "  aidevops stats projects      # Per-project breakdown"
+	echo "  aidevops stats costs         # Cost analysis with category breakdown"
+	echo "  aidevops stats trend         # Usage trends over time"
+	echo "  aidevops stats ingest        # Parse new Claude JSONL log entries"
+	echo "  aidevops stats sync-budget   # Sync to budget tracker (t1100)"
 	echo ""
 	echo "Auto-Update:"
 	echo "  aidevops auto-update enable  # Poll for updates every 10 min"
@@ -2951,6 +2962,19 @@ main() {
 			bash "$secret_helper" "$@"
 		else
 			print_error "secret-helper.sh not found. Run: aidevops update"
+			exit 1
+		fi
+		;;
+	stats | observability)
+		shift
+		local obs_helper="$AGENTS_DIR/scripts/observability-helper.sh"
+		if [[ ! -f "$obs_helper" ]]; then
+			obs_helper="$INSTALL_DIR/.agents/scripts/observability-helper.sh"
+		fi
+		if [[ -f "$obs_helper" ]]; then
+			bash "$obs_helper" "$@"
+		else
+			print_error "observability-helper.sh not found. Run: aidevops update"
 			exit 1
 		fi
 		;;
