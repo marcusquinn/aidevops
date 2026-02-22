@@ -28,10 +28,11 @@ const DB_PATH = join(OBS_DIR, "llm-requests.db");
 // ---------------------------------------------------------------------------
 
 /**
- * Run a sqlite3 command. Returns stdout or empty string on failure.
+ * Run a sqlite3 command. Returns stdout on success, null on failure.
+ * Logs errors to stderr for debugging (never silently swallows).
  * @param {string} sql - SQL statement(s) to execute
  * @param {number} [timeout=5000]
- * @returns {string}
+ * @returns {string | null} stdout on success, null on failure
  */
 function sqliteExec(sql, timeout = 5000) {
   try {
@@ -41,8 +42,9 @@ function sqliteExec(sql, timeout = 5000) {
       timeout,
       stdio: ["pipe", "pipe", "pipe"],
     }).trim();
-  } catch {
-    return "";
+  } catch (e) {
+    console.error(`[aidevops] SQLite execution failed: ${e.stderr || e.message}`);
+    return null;
   }
 }
 
@@ -152,10 +154,10 @@ CREATE INDEX IF NOT EXISTS idx_session_summaries_session
 `;
 
   const result = sqliteExec(schema, 10000);
-  if (result === "" || result.includes("wal")) {
-    return true;
+  if (result === null) {
+    console.error("[aidevops] Observability: schema creation failed");
+    return false;
   }
-  // Schema creation returns empty on success for CREATE TABLE IF NOT EXISTS
   return true;
 }
 
@@ -333,7 +335,7 @@ ON CONFLICT(session_id) DO UPDATE SET
   total_tool_calls = ${toolCallCount},
   total_errors = total_errors + ${hasError},
   models_used = CASE
-    WHEN models_used NOT LIKE '%' || ${sqlEscape(msg.modelID || "")} || '%'
+    WHEN instr(',' || models_used || ',', ',' || ${sqlEscape(msg.modelID || "")} || ',') = 0
     THEN models_used || ',' || ${sqlEscape(msg.modelID || "")}
     ELSE models_used
   END;
@@ -365,6 +367,14 @@ export function recordToolCall(input, output) {
   const state = sessionToolCounts.get(sessionID);
   state.total++;
   state.byTool.set(toolName, (state.byTool.get(toolName) || 0) + 1);
+
+  // Prune old sessions to prevent unbounded memory growth
+  if (sessionToolCounts.size > 1000) {
+    const keys = Array.from(sessionToolCounts.keys());
+    for (const k of keys.slice(0, 500)) {
+      sessionToolCounts.delete(k);
+    }
+  }
 
   // Determine success from output (heuristic: no error indicators)
   const outputText = output.output || "";
