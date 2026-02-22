@@ -205,6 +205,8 @@ detect_package_manager() {
 }
 
 # Install packages using detected package manager
+# For Homebrew: runs 'brew update' with a spinner first (can take 30s+),
+# then installs packages with HOMEBREW_NO_AUTO_UPDATE to avoid a second update.
 install_packages() {
 	local pkg_manager="$1"
 	shift
@@ -212,22 +214,26 @@ install_packages() {
 
 	case "$pkg_manager" in
 	brew)
-		brew install "${packages[@]}"
+		# Run brew update with spinner (Homebrew auto-update is slow and silent)
+		run_with_spinner "Updating Homebrew" brew update
+		# Install with auto-update disabled (we just ran it)
+		HOMEBREW_NO_AUTO_UPDATE=1 run_with_spinner "Installing ${packages[*]}" brew install "${packages[@]}"
 		;;
 	apt)
-		sudo apt-get update && sudo apt-get install -y "${packages[@]}"
+		run_with_spinner "Updating package lists" sudo apt-get update -qq
+		run_with_spinner "Installing ${packages[*]}" sudo apt-get install -y -qq "${packages[@]}"
 		;;
 	dnf)
-		sudo dnf install -y "${packages[@]}"
+		run_with_spinner "Installing ${packages[*]}" sudo dnf install -y "${packages[@]}"
 		;;
 	yum)
-		sudo yum install -y "${packages[@]}"
+		run_with_spinner "Installing ${packages[*]}" sudo yum install -y "${packages[@]}"
 		;;
 	pacman)
-		sudo pacman -S --noconfirm "${packages[@]}"
+		run_with_spinner "Installing ${packages[*]}" sudo pacman -S --noconfirm "${packages[@]}"
 		;;
 	apk)
-		sudo apk add "${packages[@]}"
+		run_with_spinner "Installing ${packages[*]}" sudo apk add "${packages[@]}"
 		;;
 	*)
 		return 1
