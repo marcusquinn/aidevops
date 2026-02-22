@@ -2474,6 +2474,11 @@
   check: shellcheck aidevops.sh
   check: file-exists aidevops.sh
 
-- [ ] v283 t1304 Soft TTSR: wire rules into OpenCode plugin hooks — use ... | PR #2139 | merged:2026-02-22
+- [x] v283 t1304 Soft TTSR: wire rules into OpenCode plugin hooks — use ... | PR #2139 | merged:2026-02-22 verified:2026-02-22
   files: .agents/plugins/opencode-aidevops/index.mjs
   check: file-exists .agents/plugins/opencode-aidevops/index.mjs
+
+- [ ] v284 t1308 LLM observability: data collection from OpenCode plugin �... | PR #2138 | merged:2026-02-22
+  files: .agents/plugins/opencode-aidevops/index.mjs, .agents/plugins/opencode-aidevops/observability.mjs
+  check: file-exists .agents/plugins/opencode-aidevops/index.mjs
+  check: file-exists .agents/plugins/opencode-aidevops/observability.mjs
