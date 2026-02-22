@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.123.4] - 2026-02-22
 
+### Changed
+
+- Documentation: add changelog entry for v2.123.4
+- Documentation: update model files from aidevops (t1133)
+
+### Fixed
+
+- add npm fallback for OpenCode version detection (#2165)
+
+## [2.123.4] - 2026-02-22
+
 ### Fixed
 
 - Add npm fallback for OpenCode version detection when CLI not in PATH during session init (#2165)
