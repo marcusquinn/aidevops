@@ -1601,19 +1601,22 @@ async function messagesTransformHook(_input, output) {
 
   // Inject as a synthetic user message at the end of the history
   // so the model sees the correction before generating its next response
+  const correctionId = `ttsr-correction-${Date.now()}`;
+  const sessionID = output.messages[0]?.info?.sessionID || "";
+
   output.messages.push({
     info: {
-      id: `ttsr-correction-${Date.now()}`,
-      sessionID: output.messages[0]?.info?.sessionID || "",
+      id: correctionId,
+      sessionID,
       role: "user",
       time: { created: Date.now() },
       parentID: "",
     },
     parts: [
       {
-        id: `ttsr-correction-part-${Date.now()}`,
-        sessionID: output.messages[0]?.info?.sessionID || "",
-        messageID: `ttsr-correction-${Date.now()}`,
+        id: `${correctionId}-part`,
+        sessionID,
+        messageID: correctionId,
         type: "text",
         text: correctionText,
         synthetic: true,
