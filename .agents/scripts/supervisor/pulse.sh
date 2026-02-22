@@ -2913,89 +2913,40 @@ RULES:
 		log_info "  Cleaned:    $orphan_killed stale worker processes"
 	fi
 
-	# Phase 4e: System-wide orphan process sweep + memory pressure emergency kill
-	# Catches processes that escaped PID-file tracking (e.g., PID file deleted,
-	# never written, or child processes like shellcheck/node that outlived their parent).
-	# Also triggers emergency cleanup when memory pressure is critical.
+	# Phase 4e: DISABLED — PPID=1 orphan kill sweep removed.
+	# The blunt PPID=1 heuristic was killing legitimate escalation workers,
+	# AI supervisor reasoning sessions, and language servers. Phase 4b (DB orphan
+	# detection) already handles stale tasks intelligently by checking DB state.
+	# Retained: memory pressure emergency kill as last-resort safety valve.
 	local sweep_killed=0
 
-	# Build a set of PIDs we should NOT kill (active tracked workers + this process chain)
-	local protected_pids=""
-	if [[ -d "$SUPERVISOR_DIR/pids" ]]; then
-		for pid_file in "$SUPERVISOR_DIR/pids"/*.pid; do
-			[[ -f "$pid_file" ]] || continue
-			local sweep_pid
-			sweep_pid=$(cat "$pid_file" 2>/dev/null || echo "")
-			[[ -z "$sweep_pid" ]] && continue
-			local sweep_basename
-			sweep_basename=$(basename "$pid_file" .pid)
-			# Protect AI supervisor session (t1301): ai-supervisor.pid is written by
-			# Phase 14 while the AI pipeline is running. Protect the pulse process and
-			# all its descendants so concurrent pulses do not kill opencode/claude
-			# processes spawned during reasoning or action execution.
-			if [[ "$sweep_basename" == "ai-supervisor" ]] && kill -0 "$sweep_pid" 2>/dev/null; then
-				protected_pids="${protected_pids} ${sweep_pid}"
-				local ai_sweep_descendants
-				ai_sweep_descendants=$(_list_descendants "$sweep_pid" 2>/dev/null || true)
-				if [[ -n "$ai_sweep_descendants" ]]; then
-					protected_pids="${protected_pids} ${ai_sweep_descendants}"
-				fi
-				continue
-			fi
-			local sweep_task_status
-			sweep_task_status=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$sweep_basename")';" 2>/dev/null || echo "")
-			if [[ "$sweep_task_status" == "running" || "$sweep_task_status" == "dispatched" ]] && kill -0 "$sweep_pid" 2>/dev/null; then
-				protected_pids="${protected_pids} ${sweep_pid}"
-				local sweep_descendants
-				sweep_descendants=$(_list_descendants "$sweep_pid" 2>/dev/null || true)
-				if [[ -n "$sweep_descendants" ]]; then
-					protected_pids="${protected_pids} ${sweep_descendants}"
-				fi
-			fi
-		done
-	fi
-	# Protect this process chain
-	local self_pid=$$
-	while [[ "$self_pid" -gt 1 ]] 2>/dev/null; do
-		protected_pids="${protected_pids} ${self_pid}"
-		self_pid=$(ps -o ppid= -p "$self_pid" 2>/dev/null | tr -d ' ')
-		[[ -z "$self_pid" ]] && break
-	done
-
-	# Find orphaned claude/opencode/shellcheck/bash-language-server processes with PPID=1
-	# PPID=1 means the parent died and the process was reparented to init/launchd
-	local orphan_candidates
-	orphan_candidates=$(pgrep -f 'claude|opencode|shellcheck|bash-language-server' 2>/dev/null || true)
-	if [[ -n "$orphan_candidates" ]]; then
-		while read -r opid; do
-			[[ -z "$opid" ]] && continue
-			# Skip protected PIDs
-			if echo " ${protected_pids} " | grep -q " ${opid} "; then
-				continue
-			fi
-			# Only kill orphans (PPID=1) — processes whose parent has died
-			local oppid
-			oppid=$(ps -o ppid= -p "$opid" 2>/dev/null | tr -d ' ')
-			[[ "$oppid" != "1" ]] && continue
-
-			local ocmd
-			ocmd=$(ps -o args= -p "$opid" 2>/dev/null | head -c 100)
-			log_warn "  Killing orphaned process PID $opid (PPID=1): $ocmd"
-			_kill_descendants "$opid"
-			kill "$opid" 2>/dev/null || true
-			sleep 0.5
-			if kill -0 "$opid" 2>/dev/null; then
-				kill -9 "$opid" 2>/dev/null || true
-			fi
-			sweep_killed=$((sweep_killed + 1))
-		done <<<"$orphan_candidates"
-	fi
-
-	# Memory pressure emergency kill: if memory is critical, kill ALL non-protected
-	# worker processes regardless of PPID. This is the last line of defence against
-	# the system running out of RAM and becoming unresponsive.
 	if [[ "${sys_memory:-}" == "high" ]]; then
 		log_error "  CRITICAL: Memory pressure HIGH — emergency worker cleanup"
+		# Build protected PID set for emergency kill only
+		local protected_pids=""
+		if [[ -d "$SUPERVISOR_DIR/pids" ]]; then
+			for pid_file in "$SUPERVISOR_DIR/pids"/*.pid; do
+				[[ -f "$pid_file" ]] || continue
+				local sweep_pid
+				sweep_pid=$(cat "$pid_file" 2>/dev/null || echo "")
+				[[ -z "$sweep_pid" ]] && continue
+				if kill -0 "$sweep_pid" 2>/dev/null; then
+					protected_pids="${protected_pids} ${sweep_pid}"
+					local sweep_descendants
+					sweep_descendants=$(_list_descendants "$sweep_pid" 2>/dev/null || true)
+					if [[ -n "$sweep_descendants" ]]; then
+						protected_pids="${protected_pids} ${sweep_descendants}"
+					fi
+				fi
+			done
+		fi
+		local self_pid=$$
+		while [[ "$self_pid" -gt 1 ]] 2>/dev/null; do
+			protected_pids="${protected_pids} ${self_pid}"
+			self_pid=$(ps -o ppid= -p "$self_pid" 2>/dev/null | tr -d ' ')
+			[[ -z "$self_pid" ]] && break
+		done
+
 		local emergency_candidates
 		emergency_candidates=$(pgrep -f 'claude|opencode|shellcheck|bash-language-server' 2>/dev/null || true)
 		if [[ -n "$emergency_candidates" ]]; then
@@ -3015,7 +2966,7 @@ RULES:
 	fi
 
 	if [[ "$sweep_killed" -gt 0 ]]; then
-		log_warn "  Phase 4e: Killed $sweep_killed orphaned/emergency processes"
+		log_warn "  Phase 4e: Killed $sweep_killed emergency processes (memory pressure)"
 	fi
 
 	# Phase 6: Orphaned PR scanner — broad sweep (t210, t216)
