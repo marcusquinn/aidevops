@@ -84,7 +84,9 @@ run_with_spinner() {
 	# run_with_spinner backgrounds via "$@" &, so env var prefix syntax
 	# (VAR=x cmd) doesn't propagate. Export globally for the child process.
 	local _brew_was_set="${HOMEBREW_NO_AUTO_UPDATE:-}"
-	if [[ "$1" == "brew" && "$2" != "update" ]]; then
+	local _cmd="${1:-}"
+	local _subcmd="${2:-}"
+	if [[ "$_cmd" == "brew" && "$_subcmd" != "update" ]]; then
 		export HOMEBREW_NO_AUTO_UPDATE=1
 	fi
 
