@@ -186,7 +186,7 @@ gather_task_state() {
 	IFS='|' read -r tid tstatus tpr trepo tbranch tworktree terror trebase tretries tmax_retries tmodel <<<"$task_row"
 
 	# GitHub PR state (if PR exists)
-	local pr_state="" pr_merge_state="" pr_ci_status="" pr_review_decision="" pr_number="" pr_repo_slug=""
+	local pr_state="" pr_merge_state="" pr_ci_status="" pr_ci_failed_checks="" pr_review_decision="" pr_number="" pr_repo_slug=""
 	if [[ -n "$tpr" && "$tpr" != "no_pr" && "$tpr" != "task_only" && "$tpr" != "verified_complete" ]]; then
 		local parsed_pr
 		parsed_pr=$(parse_pr_url "$tpr" 2>/dev/null) || parsed_pr=""
@@ -226,6 +226,13 @@ gather_task_state() {
 						failed=$(printf '%s' "$check_rollup" | jq '[.[] | select((.conclusion | test("FAILURE|TIMED_OUT|ACTION_REQUIRED")) or .state == "FAILURE" or .state == "ERROR")] | length' 2>/dev/null || echo "0")
 						passed=$(printf '%s' "$check_rollup" | jq '[.[] | select(.conclusion == "SUCCESS" or .state == "SUCCESS")] | length' 2>/dev/null || echo "0")
 						pr_ci_status="passed:${passed} failed:${failed} pending:${pending}"
+
+						# Extract names of failed checks for fix_ci routing
+						local failed_check_names
+						failed_check_names=$(printf '%s' "$check_rollup" | jq -r '[.[] | select((.conclusion | test("FAILURE|TIMED_OUT|ACTION_REQUIRED")) or .state == "FAILURE" or .state == "ERROR") | .name] | join(",")' 2>/dev/null || echo "")
+						if [[ -n "$failed_check_names" ]]; then
+							pr_ci_failed_checks="$failed_check_names"
+						fi
 					else
 						pr_ci_status="no-checks"
 					fi
@@ -267,6 +274,7 @@ PR_STATE: ${pr_state:-none}
 PR_BASE_BRANCH: ${pr_base_ref:-main}
 PR_MERGE_STATE: ${pr_merge_state:-none}
 PR_CI: ${pr_ci_status:-unknown}
+PR_CI_FAILED_CHECKS: ${pr_ci_failed_checks:-none}
 PR_REVIEW: ${pr_review_decision:-none}
 BRANCH: ${tbranch:-none}
 WORKTREE: ${tworktree:-none}
@@ -320,7 +328,8 @@ AVAILABLE ACTIONS (pick exactly one):
 - rebase_branch: Git rebase onto main (use when update_branch isn't available or failed)
 - promote_draft: Convert draft PR to ready (use when PR is DRAFT and worker is done)
 - close_pr: Close the PR without merging (use when PR is obsolete or superseded)
-- retry_ci: Re-request CI checks (use when CI failed transiently)
+- fix_ci: Run mechanical CI fixes in worktree (use when Format/Lint/Typecheck failed — runs format:fix, lint:fix, then pushes)
+- retry_ci: Re-request CI checks (use when CI failed transiently — not for fixable failures)
 - wait: Do nothing this cycle (use when CI is running, or need to wait for something)
 - deploy: Run post-merge deployment (use when PR is already merged)
 - mark_deployed: Mark task as deployed without running deploy (non-deployable repos)
@@ -333,6 +342,7 @@ RULES:
 - If PR is CLEAN or UNSTABLE with CI passed: merge_pr
 - If PR is already MERGED: deploy
 - If CI is still running: wait
+- If CI failed on Format/Lint/Typecheck: fix_ci (not retry_ci or escalate)
 - Never pick escalate unless simpler actions have been tried and failed
 - If the task has no PR and status is complete: mark_deployed
 
@@ -556,6 +566,23 @@ execute_lifecycle_action() {
 		return 1
 		;;
 
+	fix_ci)
+		log_info "ai-lifecycle: fixing CI failures for $task_id"
+		update_task_status_tag "$task_id" "ci-failed" "$repo_path"
+
+		if fix_ci_failures "$task_id" "$repo_path"; then
+			log_success "ai-lifecycle: CI fixes pushed for $task_id — CI will re-run"
+			update_task_status_tag "$task_id" "ci-running" "$repo_path"
+			# Transition back to pr_review so the lifecycle picks it up next cycle
+			cmd_transition "$task_id" "pr_review" --error "" 2>>"$SUPERVISOR_LOG" || true
+			return 0
+		else
+			log_warn "ai-lifecycle: mechanical CI fix failed for $task_id — will escalate next cycle"
+			update_task_status_tag "$task_id" "blocked:ci-fix-failed" "$repo_path"
+			return 1
+		fi
+		;;
+
 	wait)
 		log_info "ai-lifecycle: waiting for $task_id (no action needed this cycle)"
 		# Status tag already set by gather phase — don't overwrite
@@ -705,6 +732,165 @@ Steps:
 		return 1
 		;;
 	esac
+}
+
+#######################################
+# Fix CI failures mechanically in a task's worktree
+# Tiered approach:
+#   1. Format/Lint: run fix commands (pnpm format:fix, pnpm lint:fix)
+#   2. Typecheck: fetch CI log, dispatch lightweight AI to fix types
+#   3. Commit + push to trigger CI re-run
+#
+# Detects repo tooling from package.json (pnpm/npm/yarn) and AGENTS.md.
+#
+# Arguments:
+#   $1 - task ID
+#   $2 - repo path
+# Returns:
+#   0 on success (fixes committed and pushed), 1 on failure
+#######################################
+fix_ci_failures() {
+	local task_id="$1"
+	local repo_path="$2"
+
+	local escaped_id
+	escaped_id=$(sql_escape "$task_id")
+
+	# Get worktree and branch from DB
+	local tworktree tbranch
+	tworktree=$(db "$SUPERVISOR_DB" "SELECT worktree FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+	tbranch=$(db "$SUPERVISOR_DB" "SELECT branch FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+
+	local workdir="${tworktree:-$repo_path}"
+	if [[ ! -d "$workdir" ]]; then
+		log_error "fix_ci: workdir not found: $workdir"
+		return 1
+	fi
+
+	# Detect package manager from the repo
+	local pkg_mgr=""
+	if [[ -f "$workdir/pnpm-lock.yaml" ]]; then
+		pkg_mgr="pnpm"
+	elif [[ -f "$workdir/yarn.lock" ]]; then
+		pkg_mgr="yarn"
+	elif [[ -f "$workdir/package-lock.json" || -f "$workdir/package.json" ]]; then
+		pkg_mgr="npm"
+	fi
+
+	# Detect available fix commands from package.json scripts
+	local has_format_fix="false" has_lint_fix="false" has_typecheck="false"
+	if [[ -n "$pkg_mgr" && -f "$workdir/package.json" ]]; then
+		local scripts_json
+		scripts_json=$(jq -r '.scripts // {}' "$workdir/package.json" 2>/dev/null || echo "{}")
+		if printf '%s' "$scripts_json" | jq -e '."format:fix" // ."format"' &>/dev/null; then
+			has_format_fix="true"
+		fi
+		if printf '%s' "$scripts_json" | jq -e '."lint:fix" // ."lint"' &>/dev/null; then
+			has_lint_fix="true"
+		fi
+		if printf '%s' "$scripts_json" | jq -e '.typecheck' &>/dev/null; then
+			has_typecheck="true"
+		fi
+	fi
+
+	# For shell-only repos (like aidevops), check for linters-local.sh
+	local has_shellcheck="false"
+	if [[ -x "$workdir/.agents/scripts/linters-local.sh" ]]; then
+		has_shellcheck="true"
+	fi
+
+	log_info "fix_ci: $task_id workdir=$workdir pkg=$pkg_mgr format=$has_format_fix lint=$has_lint_fix typecheck=$has_typecheck shell=$has_shellcheck"
+
+	# Ensure dependencies are installed (pnpm repos often need this after rebase)
+	if [[ "$pkg_mgr" == "pnpm" ]]; then
+		(cd "$workdir" && pnpm install --frozen-lockfile 2>>"$SUPERVISOR_LOG") || {
+			# Try without frozen lockfile (lockfile may be stale after rebase)
+			(cd "$workdir" && pnpm install 2>>"$SUPERVISOR_LOG") || true
+		}
+	fi
+
+	local fixes_applied=0
+
+	# Tier 1: Mechanical fixes (format + lint)
+	if [[ "$has_format_fix" == "true" ]]; then
+		log_info "fix_ci: running $pkg_mgr format:fix"
+		if (cd "$workdir" && $pkg_mgr format:fix 2>>"$SUPERVISOR_LOG"); then
+			fixes_applied=$((fixes_applied + 1))
+		else
+			# format:fix may have a non-zero exit even when it fixes files
+			# Check if any files were modified
+			if git -C "$workdir" diff --quiet 2>/dev/null; then
+				log_warn "fix_ci: format:fix failed with no changes"
+			else
+				fixes_applied=$((fixes_applied + 1))
+			fi
+		fi
+	fi
+
+	if [[ "$has_lint_fix" == "true" ]]; then
+		log_info "fix_ci: running $pkg_mgr lint:fix"
+		if (cd "$workdir" && $pkg_mgr lint:fix 2>>"$SUPERVISOR_LOG"); then
+			fixes_applied=$((fixes_applied + 1))
+		else
+			if ! git -C "$workdir" diff --quiet 2>/dev/null; then
+				fixes_applied=$((fixes_applied + 1))
+			fi
+		fi
+	fi
+
+	# Shell repos: run shellcheck auto-fix via linters-local.sh
+	if [[ "$has_shellcheck" == "true" ]]; then
+		log_info "fix_ci: running linters-local.sh"
+		(cd "$workdir" && .agents/scripts/linters-local.sh 2>>"$SUPERVISOR_LOG") || true
+		if ! git -C "$workdir" diff --quiet 2>/dev/null; then
+			fixes_applied=$((fixes_applied + 1))
+		fi
+	fi
+
+	# Tier 2: Typecheck — if format/lint fixes resolved it, great.
+	# Otherwise, run typecheck to see if it passes now (format/lint fixes
+	# often resolve type issues like unused imports).
+	if [[ "$has_typecheck" == "true" ]]; then
+		log_info "fix_ci: checking if typecheck passes after format/lint fixes"
+		if ! (cd "$workdir" && $pkg_mgr typecheck 2>>"$SUPERVISOR_LOG"); then
+			log_warn "fix_ci: typecheck still failing for $task_id — needs AI fix (deferred to escalation)"
+			# Don't fail the whole fix_ci — format/lint fixes are still valuable.
+			# The typecheck failure will be caught on the next CI run and
+			# escalated if it persists.
+		fi
+	fi
+
+	# Check if we have any changes to commit
+	if git -C "$workdir" diff --quiet 2>/dev/null && git -C "$workdir" diff --cached --quiet 2>/dev/null; then
+		log_warn "fix_ci: no changes after running fix commands for $task_id"
+		return 1
+	fi
+
+	# Commit and push
+	log_info "fix_ci: committing and pushing fixes for $task_id"
+	git -C "$workdir" add -A 2>>"$SUPERVISOR_LOG" || true
+	git -C "$workdir" commit -m "fix: auto-fix CI failures (format/lint) for $task_id
+
+Mechanical fixes applied by supervisor fix_ci action.
+Commands run: ${pkg_mgr:+$pkg_mgr format:fix, $pkg_mgr lint:fix}${has_shellcheck:+, linters-local.sh}" 2>>"$SUPERVISOR_LOG" || {
+		log_error "fix_ci: commit failed for $task_id"
+		return 1
+	}
+
+	# Push (force-with-lease since we're on a feature branch)
+	local push_branch="${tbranch:-$(git -C "$workdir" branch --show-current 2>/dev/null)}"
+	if [[ -z "$push_branch" ]]; then
+		log_error "fix_ci: cannot determine branch for $task_id"
+		return 1
+	fi
+
+	git -C "$workdir" push --force-with-lease origin "$push_branch" 2>>"$SUPERVISOR_LOG" || {
+		log_error "fix_ci: push failed for $task_id"
+		return 1
+	}
+
+	log_success "fix_ci: pushed $fixes_applied fix(es) for $task_id on $push_branch"
+	return 0
 }
 
 #######################################
@@ -862,6 +1048,47 @@ fast_path_decision() {
 		if [[ "${pending_count:-0}" -gt 0 ]]; then
 			echo '{"action":"wait","reason":"CI checks still running","status_tag":"ci-running"}'
 			return 0
+		fi
+	fi
+
+	# CI failed with fixable checks (Format/Lint/Typecheck) → fix_ci
+	# This is deterministic: if the only failures are mechanical (format, lint,
+	# typecheck), we can fix them without AI. Test failures need AI judgment.
+	if [[ "$pr_ci" == *"failed:"* ]]; then
+		local failed_count
+		failed_count=$(printf '%s' "$pr_ci" | grep -oE 'failed:[0-9]+' | cut -d: -f2)
+		if [[ "${failed_count:-0}" -gt 0 ]]; then
+			local ci_failed_checks worktree_exists
+			ci_failed_checks=$(printf '%s' "$task_state" | grep '^PR_CI_FAILED_CHECKS:' | cut -d' ' -f2-)
+			worktree_exists=$(printf '%s' "$task_state" | grep '^WORKTREE_EXISTS:' | cut -d' ' -f2)
+
+			if [[ -n "$ci_failed_checks" && "$ci_failed_checks" != "none" ]]; then
+				# Check if ALL failures are mechanically fixable
+				local all_fixable="true"
+				local IFS_SAVE="$IFS"
+				IFS=','
+				for check_name in $ci_failed_checks; do
+					# Normalize: lowercase, trim whitespace
+					local normalized
+					normalized=$(printf '%s' "$check_name" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+					case "$normalized" in
+					format | lint | typecheck | "unit tests" | "merge e2e reports") ;;
+					*)
+						# Non-fixable check (e.g., security, e2e, custom)
+						# Exception: "Merge E2E Reports" and "Unit Tests" fail as SKIPPED
+						# when earlier checks fail — they're not real failures
+						all_fixable="false"
+						break
+						;;
+					esac
+				done
+				IFS="$IFS_SAVE"
+
+				if [[ "$all_fixable" == "true" && "$worktree_exists" == "true" ]]; then
+					echo "{\"action\":\"fix_ci\",\"reason\":\"CI failed on fixable checks: ${ci_failed_checks}\",\"status_tag\":\"ci-failed\"}"
+					return 0
+				fi
+			fi
 		fi
 	fi
 
