@@ -387,7 +387,7 @@ if [[ ! -d "$_setup_script_dir/setup-modules" ]]; then
 	if [[ -d "$INSTALL_DIR/.git" ]]; then
 		print_info "Existing installation found — updating..."
 		cd "$INSTALL_DIR" || exit 1
-		git pull --ff-only 2>/dev/null || {
+		git pull --ff-only || {
 			print_warning "Git pull failed — resetting to origin/main"
 			git fetch origin
 			git reset --hard origin/main
