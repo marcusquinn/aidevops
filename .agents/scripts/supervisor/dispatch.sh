@@ -5,6 +5,81 @@
 # quality gates, and building dispatch commands
 
 #######################################
+# Check for TIER_DOWNGRADE_OK patterns in the memory DB (t4107)
+#
+# Queries the pattern-tracker memory DB for tier_downgrade_ok tagged patterns
+# matching the given task type. Returns the recommended lower tier if
+# sufficient evidence exists (≥2 samples, since each is a confirmed success).
+#
+# This enables automatic cost reduction: when tasks of type X have been
+# observed succeeding at sonnet when opus was requested, future type-X
+# tasks are dispatched at sonnet directly, saving ~40-60% token cost.
+#
+# $1: task_type (e.g., "feature", "bugfix", "refactor")
+# $2: pattern_helper path (pattern-tracker-helper.sh)
+#
+# Outputs: recommended tier name on stdout (e.g., "sonnet"), or empty if
+#          insufficient evidence
+# Returns: 0 if recommendation found, 1 if not
+#######################################
+_check_tier_downgrade_patterns() {
+	local task_type="${1:-}"
+	local pattern_helper="$2"
+
+	# Memory DB location (same as pattern-tracker-helper.sh)
+	local memory_db="${AIDEVOPS_MEMORY_DIR:-$HOME/.aidevops/.agent-workspace/memory}/memory.db"
+	if [[ ! -f "$memory_db" ]]; then
+		return 1
+	fi
+
+	# Build task type filter for SQL query
+	local type_filter=""
+	if [[ -n "$task_type" ]]; then
+		local escaped_type
+		escaped_type=$(sql_escape "$task_type")
+		type_filter="AND tags LIKE '%task_type:${escaped_type}%'"
+	fi
+
+	# Query for tier_downgrade_ok patterns, grouped by actual_tier
+	# Returns: actual_tier|count — sorted by count descending
+	local downgrade_results
+	downgrade_results=$(sqlite3 "$memory_db" "
+		SELECT
+			CASE
+				WHEN tags LIKE '%actual_tier:haiku%' THEN 'haiku'
+				WHEN tags LIKE '%actual_tier:flash%' THEN 'flash'
+				WHEN tags LIKE '%actual_tier:sonnet%' THEN 'sonnet'
+				WHEN tags LIKE '%actual_tier:pro%' THEN 'pro'
+				ELSE 'unknown'
+			END AS downgrade_tier,
+			COUNT(*) AS cnt
+		FROM learnings
+		WHERE tags LIKE '%tier_downgrade_ok%'
+		${type_filter}
+		GROUP BY downgrade_tier
+		HAVING cnt >= 2
+		ORDER BY cnt DESC
+		LIMIT 1;
+	" 2>/dev/null || echo "")
+
+	if [[ -z "$downgrade_results" ]]; then
+		return 1
+	fi
+
+	# Parse result: "tier|count"
+	local best_tier best_count
+	IFS='|' read -r best_tier best_count <<<"$downgrade_results"
+
+	if [[ -z "$best_tier" || "$best_tier" == "unknown" || "$best_count" -lt 2 ]]; then
+		return 1
+	fi
+
+	log_verbose "t4107: Found $best_count tier_downgrade_ok patterns for ${task_type:-all} tasks at $best_tier tier"
+	echo "$best_tier"
+	return 0
+}
+
+#######################################
 # Detect terminal environment for dispatch mode
 # Returns: "tabby", "headless", or "interactive"
 #######################################
@@ -631,6 +706,24 @@ resolve_task_model() {
 					return 0
 				fi
 			fi
+		fi
+	fi
+
+	# 3.5) Tier downgrade detection (t4107): check for TIER_DOWNGRADE_OK patterns
+	#    When previous tasks of the same type succeeded at a lower tier than
+	#    requested, recommend the lower tier. This is more specific than step 3's
+	#    general recommendation — it uses explicit evidence of successful downgrades.
+	#    Threshold: ≥2 samples (lower than step 3's ≥3 because these are high-signal
+	#    events — each one is a confirmed success at a lower tier).
+	if [[ -n "$task_desc" && -x "$pattern_helper" ]]; then
+		local downgrade_tier
+		downgrade_tier=$(_check_tier_downgrade_patterns "$inferred_task_type" "$pattern_helper")
+		if [[ -n "$downgrade_tier" ]]; then
+			local resolved
+			resolved=$(resolve_model "$downgrade_tier" "$ai_cli")
+			log_info "Model for $task_id: $resolved (t4107: tier downgrade pattern — ${inferred_task_type:-unknown} tasks succeed at $downgrade_tier)"
+			echo "$resolved"
+			return 0
 		fi
 	fi
 
