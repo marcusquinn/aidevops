@@ -277,10 +277,16 @@ export function createTools(scriptsDir, run, pipelines) {
       action: "store",
       description:
         'Store a new memory in the aidevops cross-session memory. Args: content (string), confidence (string: low/medium/high, default "medium")',
-      buildArgs: (args, helper) => ({
-        cmd: `bash "${helper}" store "${args.content}" --confidence ${args.confidence || "medium"} 2>/dev/null`,
-        timeout: 10000,
-      }),
+      buildArgs: (args, helper) => {
+        const content = typeof args.content === "string" ? args.content.trim() : "";
+        if (!content) {
+          return { cmd: `echo "Error: content is required to store a memory" >&2; exit 1`, timeout: 1000 };
+        }
+        return {
+          cmd: `bash "${helper}" store "${content}" --confidence ${args.confidence || "medium"} 2>/dev/null`,
+          timeout: 10000,
+        };
+      },
     }),
 
     aidevops_pre_edit_check: createPreEditCheckTool(scriptsDir),

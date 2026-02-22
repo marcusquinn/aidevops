@@ -87,6 +87,13 @@ cmd_store() {
 		return 1
 	fi
 
+	# Guard against literal "undefined" or "null" strings passed by JS callers
+	# when args.content is undefined in a template literal (produces "undefined").
+	if [[ "$content" == "undefined" || "$content" == "null" ]]; then
+		log_error "Content is 'undefined' or 'null' — refusing to store. Pass a real value."
+		return 1
+	fi
+
 	# Privacy filter: strip <private>...</private> blocks
 	content=$(echo "$content" | sed 's/<private>[^<]*<\/private>//g' | sed 's/  */ /g' | sed 's/^ *//;s/ *$//')
 
