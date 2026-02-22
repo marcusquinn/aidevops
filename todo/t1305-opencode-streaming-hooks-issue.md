@@ -1,5 +1,7 @@
 # t1305: OpenCode Upstream Issue Draft
 
+**Upstream issue created:** https://github.com/anomalyco/opencode/issues/14691
+
 ## Target Repository
 
 `anomalyco/opencode` (108k+ stars)
