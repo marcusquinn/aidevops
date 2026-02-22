@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.122.5] - 2026-02-22
+
+### Fixed
+
+- Suppress Homebrew auto-update globally in run_with_spinner for all 10 brew install call sites (#2157)
+
 ## [2.122.4] - 2026-02-22
 
 ### Changed
