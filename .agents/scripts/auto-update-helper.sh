@@ -11,6 +11,12 @@
 # Also runs a daily OpenClaw update check (if openclaw CLI is installed).
 # Uses the same 24h gate pattern. Respects the user's configured channel.
 #
+# Also runs a 6-hourly tool freshness check: calls tool-version-check.sh
+# --update --quiet to upgrade all installed tools (npm, brew, pip).
+# Only runs when the user has been idle for 6+ hours (sleeping/away).
+# macOS: uses IOKit HIDIdleTime. Linux: xprintidle, or /proc session idle,
+# or assumes idle on headless servers (no display).
+#
 # Usage:
 #   auto-update-helper.sh enable           Install cron job (every 10 min)
 #   auto-update-helper.sh disable          Remove cron job
@@ -26,6 +32,9 @@
 #   AIDEVOPS_SKILL_FRESHNESS_HOURS=24     Hours between skill checks (default: 24)
 #   AIDEVOPS_OPENCLAW_AUTO_UPDATE=false   Disable daily OpenClaw update check
 #   AIDEVOPS_OPENCLAW_FRESHNESS_HOURS=24  Hours between OpenClaw checks (default: 24)
+#   AIDEVOPS_TOOL_AUTO_UPDATE=false       Disable 6-hourly tool freshness check
+#   AIDEVOPS_TOOL_FRESHNESS_HOURS=6       Hours between tool checks (default: 6)
+#   AIDEVOPS_TOOL_IDLE_HOURS=6            Required user idle hours before tool updates (default: 6)
 #
 # Logs: ~/.aidevops/logs/auto-update.log
 
@@ -60,6 +69,8 @@ readonly CRON_MARKER="# aidevops-auto-update"
 readonly DEFAULT_INTERVAL=10
 readonly DEFAULT_SKILL_FRESHNESS_HOURS=24
 readonly DEFAULT_OPENCLAW_FRESHNESS_HOURS=24
+readonly DEFAULT_TOOL_FRESHNESS_HOURS=6
+readonly DEFAULT_TOOL_IDLE_HOURS=6
 readonly LAUNCHD_LABEL="com.aidevops.aidevops-auto-update"
 readonly LAUNCHD_DIR="$HOME/Library/LaunchAgents"
 readonly LAUNCHD_PLIST="${LAUNCHD_DIR}/${LAUNCHD_LABEL}.plist"
@@ -588,6 +599,258 @@ update_openclaw_check_timestamp() {
 }
 
 #######################################
+# Get user idle time in seconds (cross-platform)
+# macOS: IOKit HIDIdleTime (nanoseconds, works even without a GUI session)
+# Linux with X11: xprintidle (milliseconds) — requires X display
+# Linux with libinput: parse /sys/class/input/*/device/events (best-effort)
+# Linux TTY/headless: use shortest session idle from /proc (w command)
+# Headless server (no display, no TTY users): returns 999999 (always idle)
+# Returns: idle seconds on stdout, 0 on error (safe default = "user active")
+#######################################
+get_user_idle_seconds() {
+	local idle_ns idle_ms idle_secs
+
+	# macOS: IOKit HIDIdleTime (always available, even over SSH)
+	if [[ "$(uname)" == "Darwin" ]]; then
+		idle_ns=$(ioreg -c IOHIDSystem 2>/dev/null | awk '/HIDIdleTime/ {gsub(/[^0-9]/, "", $NF); print $NF; exit}')
+		if [[ -n "$idle_ns" && "$idle_ns" =~ ^[0-9]+$ ]]; then
+			# HIDIdleTime is in nanoseconds
+			idle_secs=$((idle_ns / 1000000000))
+			echo "$idle_secs"
+			return 0
+		fi
+		echo "0"
+		return 0
+	fi
+
+	# Linux: try xprintidle first (X11, most accurate for desktop)
+	if command -v xprintidle &>/dev/null && [[ -n "${DISPLAY:-}" ]]; then
+		idle_ms=$(xprintidle 2>/dev/null || echo "")
+		if [[ -n "$idle_ms" && "$idle_ms" =~ ^[0-9]+$ ]]; then
+			idle_secs=$((idle_ms / 1000))
+			echo "$idle_secs"
+			return 0
+		fi
+	fi
+
+	# Linux: try dbus-send to GNOME/KDE screensaver (Wayland-compatible)
+	if command -v dbus-send &>/dev/null && [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
+		# GetSessionIdleTime returns seconds since last user input (keyboard/mouse)
+		# (GetActiveTime only measures screensaver runtime, which is 0 when not active)
+		idle_secs=$(dbus-send --session --dest=org.gnome.ScreenSaver \
+			--type=method_call --print-reply /org/gnome/ScreenSaver \
+			org.gnome.ScreenSaver.GetSessionIdleTime 2>/dev/null |
+			awk '/uint32/ {print $2}')
+		if [[ -n "$idle_secs" && "$idle_secs" =~ ^[0-9]+$ && "$idle_secs" -gt 0 ]]; then
+			echo "$idle_secs"
+			return 0
+		fi
+	fi
+
+	# Linux: parse w(1) for shortest session idle (works on TTY and SSH)
+	# w output format: USER TTY FROM LOGIN@ IDLE JCPU PCPU WHAT
+	# IDLE can be: "3:42" (min:sec), "2days", "23:15m", "0.50s", etc.
+	if command -v w &>/dev/null; then
+		local min_idle
+		min_idle=999999
+		local found_user
+		found_user=false
+		local idle_field
+		# Parse w(1) output: extract idle field (5th column) using read builtin
+		local _user _tty _from _login _jcpu _pcpu _what
+		while read -r _user _tty _from _login idle_field _jcpu _pcpu _what; do
+			# Skip header lines
+			[[ "$_user" == "USER" ]] && continue
+			[[ -z "$idle_field" ]] && continue
+			found_user=true
+
+			local parsed
+			parsed=0
+			if [[ "$idle_field" =~ ^([0-9]+)days$ ]]; then
+				# Use 10# prefix to force base-10 (avoids octal interpretation of "08", "09")
+				parsed=$((10#${BASH_REMATCH[1]} * 86400))
+			elif [[ "$idle_field" =~ ^([0-9]+):([0-9]+)m$ ]]; then
+				# hours:minutes format (e.g. "23:15m")
+				parsed=$((10#${BASH_REMATCH[1]} * 3600 + 10#${BASH_REMATCH[2]} * 60))
+			elif [[ "$idle_field" =~ ^([0-9]+):([0-9]+)$ ]]; then
+				# minutes:seconds format (e.g. "3:42", "08:09")
+				parsed=$((10#${BASH_REMATCH[1]} * 60 + 10#${BASH_REMATCH[2]}))
+			elif [[ "$idle_field" =~ ^([0-9]+)\.([0-9]+)s$ ]]; then
+				parsed="$((10#${BASH_REMATCH[1]}))"
+			elif [[ "$idle_field" =~ ^([0-9]+)s$ ]]; then
+				parsed="$((10#${BASH_REMATCH[1]}))"
+			fi
+
+			if [[ $parsed -lt $min_idle ]]; then
+				min_idle=$parsed
+			fi
+		done < <(w -h 2>/dev/null || w 2>/dev/null)
+
+		if [[ "$found_user" == "true" ]]; then
+			echo "$min_idle"
+			return 0
+		fi
+	fi
+
+	# Headless server: no display, no logged-in users — treat as idle
+	# (background server with no human at keyboard)
+	if [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
+		echo "999999"
+		return 0
+	fi
+
+	# Fallback: cannot determine — assume active (safe default)
+	echo "0"
+	return 0
+}
+
+#######################################
+# Check tool freshness and auto-update if stale (6h gate)
+# Only runs when user has been idle for AIDEVOPS_TOOL_IDLE_HOURS.
+# Delegates to tool-version-check.sh --update --quiet.
+# Called from cmd_check after other freshness checks.
+# Respects AIDEVOPS_TOOL_AUTO_UPDATE=false to opt out.
+#######################################
+check_tool_freshness() {
+	# Opt-out via env var
+	if [[ "${AIDEVOPS_TOOL_AUTO_UPDATE:-}" == "false" ]]; then
+		log_info "Tool auto-update disabled via AIDEVOPS_TOOL_AUTO_UPDATE=false"
+		return 0
+	fi
+
+	local freshness_hours
+	freshness_hours="${AIDEVOPS_TOOL_FRESHNESS_HOURS:-$DEFAULT_TOOL_FRESHNESS_HOURS}"
+	if ! [[ "$freshness_hours" =~ ^[0-9]+$ ]] || [[ "$freshness_hours" -eq 0 ]]; then
+		log_warn "AIDEVOPS_TOOL_FRESHNESS_HOURS='${freshness_hours}' is not a positive integer — using default (${DEFAULT_TOOL_FRESHNESS_HOURS}h)"
+		freshness_hours="$DEFAULT_TOOL_FRESHNESS_HOURS"
+	fi
+	local freshness_seconds
+	freshness_seconds=$((freshness_hours * 3600))
+
+	# Read last tool check timestamp from state file
+	local last_tool_check
+	last_tool_check=""
+	if [[ -f "$STATE_FILE" ]] && command -v jq &>/dev/null; then
+		last_tool_check=$(jq -r '.last_tool_check // empty' "$STATE_FILE" 2>/dev/null || true)
+	fi
+
+	# Determine if check is needed (time gate)
+	local needs_check=true
+	if [[ -n "$last_tool_check" ]]; then
+		local last_epoch now_epoch elapsed
+		if [[ "$(uname)" == "Darwin" ]]; then
+			last_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_tool_check" "+%s" 2>/dev/null || echo "0")
+		else
+			last_epoch=$(date -d "$last_tool_check" "+%s" 2>/dev/null || echo "0")
+		fi
+		now_epoch=$(date +%s)
+		elapsed=$((now_epoch - last_epoch))
+
+		if [[ $elapsed -lt $freshness_seconds ]]; then
+			log_info "Tools checked ${elapsed}s ago (gate: ${freshness_seconds}s) — skipping"
+			needs_check=false
+		fi
+	fi
+
+	if [[ "$needs_check" != "true" ]]; then
+		return 0
+	fi
+
+	# Check user idle time — only update when user is away
+	local idle_hours
+	idle_hours="${AIDEVOPS_TOOL_IDLE_HOURS:-$DEFAULT_TOOL_IDLE_HOURS}"
+	if ! [[ "$idle_hours" =~ ^[0-9]+$ ]] || [[ "$idle_hours" -eq 0 ]]; then
+		log_warn "AIDEVOPS_TOOL_IDLE_HOURS='${idle_hours}' is not a positive integer — using default (${DEFAULT_TOOL_IDLE_HOURS}h)"
+		idle_hours="$DEFAULT_TOOL_IDLE_HOURS"
+	fi
+	local idle_threshold_seconds
+	idle_threshold_seconds=$((idle_hours * 3600))
+
+	local user_idle_seconds
+	user_idle_seconds=$(get_user_idle_seconds)
+	if [[ $user_idle_seconds -lt $idle_threshold_seconds ]]; then
+		local idle_h
+		idle_h=$((user_idle_seconds / 3600))
+		local idle_m
+		idle_m=$(((user_idle_seconds % 3600) / 60))
+		log_info "User idle ${idle_h}h${idle_m}m (need ${idle_hours}h) — deferring tool updates"
+		return 0
+	fi
+
+	# Locate tool-version-check.sh
+	local tool_check_script="$HOME/.aidevops/agents/scripts/tool-version-check.sh"
+	if [[ ! -x "$tool_check_script" ]]; then
+		tool_check_script="${SCRIPT_DIR}/tool-version-check.sh"
+	fi
+	if [[ ! -x "$tool_check_script" ]]; then
+		tool_check_script="$INSTALL_DIR/.agents/scripts/tool-version-check.sh"
+	fi
+
+	if [[ ! -x "$tool_check_script" ]]; then
+		log_warn "tool-version-check.sh not found — skipping tool freshness check"
+		return 0
+	fi
+
+	log_info "Running tool freshness check (user idle ${user_idle_seconds}s)..."
+
+	local update_output
+	update_output=$("$tool_check_script" --update --quiet 2>&1) || true
+
+	# Log output
+	if [[ -n "$update_output" ]]; then
+		echo "$update_output" >>"$LOG_FILE"
+	fi
+
+	# Count updates from output (best-effort: count lines with "Updated" or arrow)
+	# Use a subshell to avoid pipefail issues: grep -c exits 1 on no match,
+	# which under set -o pipefail would trigger || echo "0" and produce "0\n0"
+	local tool_updates
+	tool_updates=0
+	if [[ -n "$update_output" ]]; then
+		tool_updates=$(echo "$update_output" | { grep -cE '(Updated|→|->)' || true; })
+	fi
+
+	if [[ $tool_updates -gt 0 ]]; then
+		log_info "Tool freshness check complete ($tool_updates tools updated)"
+	else
+		log_info "Tool freshness check complete (all up to date)"
+	fi
+
+	update_tool_check_timestamp "$tool_updates"
+	return 0
+}
+
+#######################################
+# Record last_tool_check timestamp and updates count in state file
+# Args: $1 = number of tool updates applied (default: 0)
+#######################################
+update_tool_check_timestamp() {
+	local updates_count
+	updates_count="${1:-0}"
+	local timestamp
+	timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+	if command -v jq &>/dev/null; then
+		local tmp_state
+		tmp_state=$(mktemp)
+		trap 'rm -f "${tmp_state:-}"' RETURN
+
+		if [[ -f "$STATE_FILE" ]]; then
+			jq --arg ts "$timestamp" \
+				--argjson count "$updates_count" \
+				'. + {last_tool_check: $ts} |
+				.tool_updates_applied = ((.tool_updates_applied // 0) + $count)' \
+				"$STATE_FILE" >"$tmp_state" 2>/dev/null && mv "$tmp_state" "$STATE_FILE"
+		else
+			jq -n --arg ts "$timestamp" \
+				--argjson count "$updates_count" \
+				'{last_tool_check: $ts, tool_updates_applied: $count}' >"$STATE_FILE"
+		fi
+	fi
+	return 0
+}
+
+#######################################
 # One-shot check and update
 # This is what the cron job calls
 #######################################
@@ -624,6 +887,7 @@ cmd_check() {
 		update_state "check" "$current" "version_unknown"
 		check_skill_freshness
 		check_openclaw_freshness
+		check_tool_freshness
 		return 0
 	fi
 
@@ -632,6 +896,7 @@ cmd_check() {
 		update_state "check" "$current" "up_to_date"
 		check_skill_freshness
 		check_openclaw_freshness
+		check_tool_freshness
 		return 0
 	fi
 
@@ -645,6 +910,7 @@ cmd_check() {
 		update_state "update" "$remote" "no_git_repo"
 		check_skill_freshness
 		check_openclaw_freshness
+		check_tool_freshness
 		return 1
 	fi
 
@@ -654,6 +920,7 @@ cmd_check() {
 		update_state "update" "$remote" "fetch_failed"
 		check_skill_freshness
 		check_openclaw_freshness
+		check_tool_freshness
 		return 1
 	fi
 
@@ -662,6 +929,7 @@ cmd_check() {
 		update_state "update" "$remote" "pull_failed"
 		check_skill_freshness
 		check_openclaw_freshness
+		check_tool_freshness
 		return 1
 	fi
 
@@ -677,6 +945,7 @@ cmd_check() {
 		update_state "update" "$remote" "setup_failed"
 		check_skill_freshness
 		check_openclaw_freshness
+		check_tool_freshness
 		return 1
 	fi
 
@@ -685,6 +954,9 @@ cmd_check() {
 
 	# Run daily OpenClaw update check (24h gate)
 	check_openclaw_freshness
+
+	# Run 6-hourly tool freshness check (idle-gated)
+	check_tool_freshness
 
 	return 0
 }
@@ -967,6 +1239,29 @@ cmd_status() {
 			openclaw_ver=$(openclaw --version 2>/dev/null | head -1 || echo "unknown")
 			echo "  OpenClaw version:   $openclaw_ver"
 		fi
+
+		local last_tool_check tool_updates_applied
+		last_tool_check=$(jq -r '.last_tool_check // "never"' "$STATE_FILE" 2>/dev/null)
+		tool_updates_applied=$(jq -r '.tool_updates_applied // 0' "$STATE_FILE" 2>/dev/null)
+		echo "  Last tool check:    $last_tool_check"
+		echo "  Tool updates:       $tool_updates_applied applied (lifetime)"
+
+		# Show current user idle time
+		local idle_secs idle_h idle_m
+		idle_secs=$(get_user_idle_seconds)
+		idle_h=$((idle_secs / 3600))
+		idle_m=$(((idle_secs % 3600) / 60))
+		local idle_threshold
+		idle_threshold="${AIDEVOPS_TOOL_IDLE_HOURS:-$DEFAULT_TOOL_IDLE_HOURS}"
+		# Validate idle_threshold is a positive integer (mirrors check_tool_freshness)
+		if ! [[ "$idle_threshold" =~ ^[0-9]+$ ]] || [[ "$idle_threshold" -eq 0 ]]; then
+			idle_threshold="$DEFAULT_TOOL_IDLE_HOURS"
+		fi
+		if [[ $idle_secs -ge $((idle_threshold * 3600)) ]]; then
+			echo -e "  User idle:          ${idle_h}h${idle_m}m (${GREEN}>=${idle_threshold}h — tool updates eligible${NC})"
+		else
+			echo -e "  User idle:          ${idle_h}h${idle_m}m (${YELLOW}<${idle_threshold}h — tool updates deferred${NC})"
+		fi
 	fi
 
 	# Check env var overrides
@@ -981,6 +1276,10 @@ cmd_status() {
 	if [[ "${AIDEVOPS_OPENCLAW_AUTO_UPDATE:-}" == "false" ]]; then
 		echo ""
 		echo -e "  ${YELLOW}Note: AIDEVOPS_OPENCLAW_AUTO_UPDATE=false is set (OpenClaw auto-update disabled)${NC}"
+	fi
+	if [[ "${AIDEVOPS_TOOL_AUTO_UPDATE:-}" == "false" ]]; then
+		echo ""
+		echo -e "  ${YELLOW}Note: AIDEVOPS_TOOL_AUTO_UPDATE=false is set (tool auto-update disabled)${NC}"
 	fi
 
 	echo ""
@@ -1046,6 +1345,9 @@ ENVIRONMENT:
     AIDEVOPS_SKILL_FRESHNESS_HOURS=24    Hours between skill checks (default: 24)
     AIDEVOPS_OPENCLAW_AUTO_UPDATE=false  Disable daily OpenClaw update check
     AIDEVOPS_OPENCLAW_FRESHNESS_HOURS=24 Hours between OpenClaw checks (default: 24)
+    AIDEVOPS_TOOL_AUTO_UPDATE=false      Disable 6-hourly tool freshness check
+    AIDEVOPS_TOOL_FRESHNESS_HOURS=6      Hours between tool checks (default: 6)
+    AIDEVOPS_TOOL_IDLE_HOURS=6           Required user idle hours before tool updates (default: 6)
 
 SCHEDULER BACKENDS:
     macOS:  launchd LaunchAgent (~/Library/LaunchAgents/com.aidevops.aidevops-auto-update.plist)
@@ -1072,12 +1374,21 @@ HOW IT WORKS:
        b. If >24h since last check, runs openclaw update --yes --no-restart
        c. Respects user's configured channel (beta/dev/stable)
        d. Opt-out: AIDEVOPS_OPENCLAW_AUTO_UPDATE=false
+    8. Runs 6-hourly tool freshness check (idle-gated):
+       a. Reads last_tool_check from state file
+       b. If >6h since last check AND user idle >6h, runs tool-version-check.sh --update --quiet
+       c. Covers all installed tools: npm (OpenCode, osgrep, MCP servers, etc.),
+          brew (gh, glab, shellcheck, jq, etc.), pip (DSPy, crawl4ai, etc.)
+       d. Idle detection: macOS IOKit HIDIdleTime, Linux xprintidle/dbus/w(1),
+          headless servers treated as always idle
+       e. Opt-out: AIDEVOPS_TOOL_AUTO_UPDATE=false
 
 RATE LIMITS:
     GitHub API: 60 requests/hour (unauthenticated)
     10-min interval = 6 requests/hour (well within limits)
     Skill check: once per 24h per user (configurable via AIDEVOPS_SKILL_FRESHNESS_HOURS)
     OpenClaw check: once per 24h per user (configurable via AIDEVOPS_OPENCLAW_FRESHNESS_HOURS)
+    Tool check: once per 6h per user, only when idle (configurable via AIDEVOPS_TOOL_FRESHNESS_HOURS)
 
 LOGS:
     ~/.aidevops/logs/auto-update.log
