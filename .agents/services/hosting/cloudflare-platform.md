@@ -1,5 +1,5 @@
 ---
-description: "Cloudflare platform development guidance — patterns, gotchas, decision trees, SDK usage for Workers, Pages, KV, D1, R2, AI, Durable Objects, and 60+ products. Use when building or developing ON the Cloudflare platform. For managing/configuring CF resources via API, use the Cloudflare Code Mode MCP (cloudflare-mcp.md)."
+description: "Cloudflare platform development guidance — patterns, gotchas, decision trees, SDK usage for Workers, Pages, KV, D1, R2, AI, Durable Objects, and 60+ products. Use when building or developing ON the Cloudflare platform. For managing Cloudflare resources (DNS, WAF, DDoS, R2 buckets, Workers deployments), use the Cloudflare Code Mode MCP server instead."
 mode: subagent
 imported_from: external
 ---
@@ -23,6 +23,19 @@ imported_from: external
 - **60+ products** indexed below with direct entry-point paths
 
 <!-- AI-CONTEXT-END -->
+
+## Routing: Operations vs Development
+
+| Task | Tool |
+|------|------|
+| Manage DNS records, zones | Code Mode MCP |
+| Configure WAF, DDoS, firewall rules | Code Mode MCP |
+| Manage R2 buckets, Workers deployments | Code Mode MCP |
+| Zero Trust, Access, Tunnel management | Code Mode MCP |
+| Build a Worker (SDK, bindings, types) | This skill |
+| Configure wrangler.toml, local dev | This skill |
+| Debug Workers runtime issues | This skill |
+| Understand product architecture, patterns | This skill |
 
 Consolidated skill for building on the Cloudflare platform. Use decision trees below to find the right product, then load detailed references.
 
@@ -140,7 +153,7 @@ Need media?
 Need IaC?
 ├─ Pulumi → pulumi/
 ├─ Terraform → terraform/
-└─ Direct API → api/
+└─ Direct API → use Code Mode MCP (tools/mcp/cloudflare-code-mode.md)
 ```
 
 ## Product Index
@@ -243,7 +256,7 @@ Need IaC?
 |---------|------------|
 | Pulumi | `./references/pulumi/README.md` |
 | Terraform | `./references/terraform/README.md` |
-| API | `./references/api/README.md` |
+| API (Code Mode MCP) | `.agents/tools/mcp/cloudflare-code-mode.md` |
 
 ### Other Services
 
