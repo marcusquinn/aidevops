@@ -368,7 +368,7 @@ AI Gateway works with 15+ providers via unified API or provider-specific endpoin
 | Provider | Unified API | Provider Endpoint | Notes |
 |----------|-------------|-------------------|-------|
 | OpenAI | ✅ `openai/gpt-4o` | `/openai/*` | Full support |
-| Anthropic | ✅ `anthropic/claude-3-5-sonnet` | `/anthropic/*` | Full support |
+| Anthropic | ✅ `anthropic/claude-sonnet-4-6` | `/anthropic/*` | Full support |
 | Google AI Studio | ✅ `google-ai-studio/gemini-2.0-flash` | `/google-ai-studio/*` | Full support |
 | Workers AI | ✅ `workersai/@cf/meta/llama-3` | `/workers-ai/*` | Native integration |
 | Azure OpenAI | ✅ `azure-openai/*` | `/azure-openai/*` | Deployment names |

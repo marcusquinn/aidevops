@@ -116,7 +116,7 @@ init_db() {
 # Model Name Normalization
 # =============================================================================
 # Normalizes model names for fuzzy matching across different naming conventions.
-# e.g., "claude-3-5-haiku" and "claude-haiku-3.5" both normalize to "claude-haiku"
+# e.g., "claude-haiku-4-5" and "claude-3-5-haiku" both normalize to "claude-haiku"
 
 normalize_model_name() {
 	local name="$1"
@@ -1245,7 +1245,7 @@ cmd_route() {
 	# Defaults if registry is empty
 	case "$tier" in
 	haiku)
-		primary_model="${primary_model:-claude-3-5-haiku}"
+		primary_model="${primary_model:-claude-haiku-4-5}"
 		fallback_model="${fallback_model:-gemini-2.5-flash}"
 		;;
 	flash)

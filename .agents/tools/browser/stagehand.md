@@ -250,7 +250,7 @@ const stagehand = new Stagehand({
             "--disable-features=VizDisplayCompositor"
         ]
     },
-    modelName: "gpt-4o", // or "claude-3-5-sonnet-20241022"
+    modelName: "gpt-4o", // or "claude-sonnet-4-6"
     modelClientOptions: {
         apiKey: process.env.OPENAI_API_KEY
     }

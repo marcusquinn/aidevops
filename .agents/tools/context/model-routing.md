@@ -27,7 +27,7 @@ model: haiku
 
 | Tier | Model | Cost | Best For |
 |------|-------|------|----------|
-| `haiku` | claude-3-5-haiku | Lowest | Triage, classification, simple transforms, formatting |
+| `haiku` | claude-haiku-4-5 | Lowest | Triage, classification, simple transforms, formatting |
 | `flash` | gemini-2.5-flash | Low | Large context reads, summarization, bulk processing |
 | `sonnet` | claude-sonnet-4 | Medium | Code implementation, review, most development tasks |
 | `pro` | gemini-2.5-pro | Medium-High | Large codebase analysis, complex reasoning with big context |
@@ -108,7 +108,7 @@ Concrete model subagents are defined in `tools/ai-assistants/models/`:
 
 | Tier | Subagent | Primary Model | Fallback |
 |------|----------|---------------|----------|
-| `haiku` | `models/haiku.md` | claude-3-5-haiku | gemini-2.5-flash |
+| `haiku` | `models/haiku.md` | claude-haiku-4-5 | gemini-2.5-flash |
 | `flash` | `models/flash.md` | gemini-2.5-flash | gpt-4.1-mini |
 | `sonnet` | `models/sonnet.md` | claude-sonnet-4 | gpt-4.1 |
 | `pro` | `models/pro.md` | gemini-2.5-pro | claude-sonnet-4 |
@@ -148,7 +148,7 @@ Each tier defines a primary model and a fallback from a different provider. When
 
 | Tier | Primary | Fallback | When to Fallback |
 |------|---------|----------|------------------|
-| `haiku` | claude-3-5-haiku | gemini-2.5-flash | No Anthropic key |
+| `haiku` | claude-haiku-4-5 | gemini-2.5-flash | No Anthropic key |
 | `flash` | gemini-2.5-flash | gpt-4.1-mini | No Google key |
 | `sonnet` | claude-sonnet-4 | gpt-4.1 | No Anthropic key |
 | `pro` | gemini-2.5-pro | claude-sonnet-4 | No Google key |

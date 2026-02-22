@@ -173,7 +173,7 @@ result = compiled_qa(question="Explain neural networks")
       "anthropic": {
         "api_key": "YOUR_ANTHROPIC_API_KEY",
         "models": {
-          "claude-3-sonnet": "claude-3-sonnet-20240229"
+          "claude-sonnet": "claude-sonnet-4-6"
         }
       }
     }

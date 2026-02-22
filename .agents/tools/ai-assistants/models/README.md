@@ -6,7 +6,7 @@ Model-specific subagents enable cross-provider model routing. Instead of passing
 
 | Tier | Subagent | Primary Model | Fallback |
 |------|----------|---------------|----------|
-| `haiku` | `models/haiku.md` | claude-3-5-haiku | gemini-2.5-flash |
+| `haiku` | `models/haiku.md` | claude-haiku-4-5 | gemini-2.5-flash |
 | `flash` | `models/flash.md` | gemini-2.5-flash | gpt-4.1-mini |
 | `sonnet` | `models/sonnet.md` | claude-sonnet-4 | gpt-4.1 |
 | `pro` | `models/pro.md` | gemini-2.5-pro | claude-sonnet-4 |

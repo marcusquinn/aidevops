@@ -172,7 +172,7 @@ echo 'export VIRUSTOTAL_API_KEY="your_key"' >> ~/.config/aidevops/credentials.sh
 ```bash
 # LLM analyzer (optional)
 export SKILL_SCANNER_LLM_API_KEY="your_api_key"
-export SKILL_SCANNER_LLM_MODEL="claude-3-5-sonnet-20241022"
+export SKILL_SCANNER_LLM_MODEL="claude-sonnet-4-6"
 
 # VirusTotal (optional - prefer gopass: aidevops secret set VIRUSTOTAL_MARCUSQUINN)
 export VIRUSTOTAL_API_KEY="your_key"

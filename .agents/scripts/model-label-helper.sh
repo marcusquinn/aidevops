@@ -108,19 +108,19 @@ normalize_model() {
 	# Normalize concrete model names to tiers
 	# Specific patterns first, then wildcards
 	case "$model" in
-	claude-3-haiku* | claude-3-5-haiku*)
+	claude-haiku-4* | claude-3-haiku* | claude-3-5-haiku*)
 		echo "haiku"
 		;;
 	gemini-*-flash*)
 		echo "flash"
 		;;
-	claude-3-sonnet* | claude-3-5-sonnet* | claude-sonnet-4*)
+	claude-sonnet-4* | claude-3-sonnet* | claude-3-5-sonnet*)
 		echo "sonnet"
 		;;
 	gemini-*-pro*)
 		echo "pro"
 		;;
-	claude-3-opus* | claude-opus-4* | o3 | o1*)
+	claude-opus-4* | claude-3-opus* | o3 | o1*)
 		echo "opus"
 		;;
 	*haiku*)
