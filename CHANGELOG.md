@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.123.3] - 2026-02-22
+
+### Added
+
+- mandatory task briefs with session provenance and conversation context (#2116)
+
+### Changed
+
+- Documentation: add changelog entry for v2.123.3
+- Documentation: update TODOs t1305, t1306, t1309 with OpenCode v1.2.x release notes
+
+### Fixed
+
+- detect OpenCode version via CLI instead of hardcoded bun package.json path (#2164)
+
+## [2.123.3] - 2026-02-22
+
+### Fixed
+
+- Detect OpenCode version via CLI instead of hardcoded bun package.json path (#2164)
+
 ## [2.123.2] - 2026-02-22
 
 ### Added
