@@ -120,13 +120,6 @@ setup_augment_context_engine() {
 	return 0
 }
 
-# Setup osgrep (semantic code search)
-setup_osgrep() {
-	# TODO: Extract from setup.sh lines 4194-4263
-	:
-	return 0
-}
-
 # Setup Beads (task management)
 setup_beads() {
 	# TODO: Extract from setup.sh lines 4364-4419

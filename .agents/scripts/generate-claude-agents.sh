@@ -508,12 +508,6 @@ register_mcp() {
 	return 0
 }
 
-# --- osgrep (local semantic search) ---
-if command -v osgrep &>/dev/null; then
-	local_osgrep=$(command -v osgrep)
-	register_mcp "osgrep" "{\"type\":\"stdio\",\"command\":\"$local_osgrep\",\"args\":[\"mcp\"]}"
-fi
-
 # --- Augment Context Engine ---
 if command -v auggie &>/dev/null; then
 	local_auggie=$(command -v auggie)
@@ -547,7 +541,6 @@ echo -e "  ${GREEN}Done${NC} — $mcp_count new MCP servers registered"
 # =============================================================================
 # Manages ~/.claude/settings.json:
 #   - Safety hooks (PreToolUse for Bash — git safety guard)
-#   - Plugin enablement (osgrep)
 #   - Tool permissions (allow/deny/ask rules per Claude Code syntax)
 #   - Preserves user customizations (model, etc.)
 #
@@ -616,13 +609,6 @@ for rule in settings["hooks"]["PreToolUse"]:
 if not has_bash_hook:
     settings["hooks"]["PreToolUse"].append(bash_matcher)
     changed = True
-
-# --- Plugin enablement ---
-# Enable osgrep plugin if osgrep is installed
-if shutil.which("osgrep"):
-    if settings.get("enabledPlugins", {}).get("osgrep@osgrep") is not True:
-        settings.setdefault("enabledPlugins", {})["osgrep@osgrep"] = True
-        changed = True
 
 # --- Tool permissions (allow / deny / ask) ---
 # Claude Code permission rule syntax: Tool or Tool(specifier)

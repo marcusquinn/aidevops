@@ -65,7 +65,7 @@ npx mcporter call context7.resolve-library-id libraryName=react
 | MCP | Tokens | Subagent | When to enable |
 |-----|--------|----------|----------------|
 | `playwriter` | ~3K | `@playwriter` | Browser automation needed |
-| `augment-context-engine` | ~1K | `@augment-context-engine` | osgrep insufficient |
+| `augment-context-engine` | ~1K | `@augment-context-engine` | Semantic search needed |
 | `google-analytics-mcp` | ~800 | `@google-analytics` | Analytics reporting |
 | `context7` | ~800 | `@context7` | Library docs lookup |
 
@@ -75,7 +75,7 @@ npx mcporter call context7.resolve-library-id libraryName=react
 |-----|----------|-------|
 | `grep_app` / `gh_grep` | `@github-search` | CLI-based, zero tokens |
 
-**Always enabled**: `osgrep` (primary semantic search, local, no auth)
+**Primary search**: `rg`/`fd` (local, instant). Use `@augment-context-engine` for semantic search.
 
 <!-- AI-CONTEXT-END -->
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# MCP setup functions: install_mcp_packages, resolve_mcp_binary, localwp, augment, osgrep, seo, analytics, quickfile, browser-tools, opencode-plugins
+# MCP setup functions: install_mcp_packages, resolve_mcp_binary, localwp, augment, seo, analytics, quickfile, browser-tools, opencode-plugins
 # Part of aidevops setup.sh modularization (t316.3)
 
 install_mcp_packages() {
@@ -276,75 +276,6 @@ setup_augment_context_engine() {
 	print_info "Augment Context Engine available as MCP in OpenCode"
 	print_info "Verification: 'What is this project? Please use codebase retrieval tool.'"
 
-	return 0
-}
-
-setup_osgrep() {
-	print_info "Setting up osgrep (local semantic search)..."
-
-	# Check Node.js version (requires 18+)
-	if ! command -v node &>/dev/null; then
-		print_warning "Node.js not found - osgrep setup skipped"
-		print_info "Install Node.js 18+ to enable osgrep"
-		return 0
-	fi
-
-	local node_version
-	node_version=$(node --version | cut -d'v' -f2 | cut -d'.' -f1)
-	if [[ $node_version -lt 18 ]]; then
-		print_warning "Node.js 18+ required for osgrep, found v$node_version"
-		print_info "Install: brew install node@18 (macOS) or nvm install 18"
-		return 0
-	fi
-
-	# Check if osgrep is installed
-	if ! command -v osgrep &>/dev/null; then
-		echo ""
-		print_info "osgrep provides 100% local semantic search (no cloud, no auth)"
-		echo "  • Search code by meaning, not just keywords"
-		echo "  • Works offline with ~150MB local embedding models"
-		echo "  • Configured as MCP in OpenCode"
-		echo ""
-
-		read -r -p "Install osgrep CLI? [Y/n]: " install_osgrep
-		if [[ "$install_osgrep" =~ ^[Yy]?$ ]]; then
-			if run_with_spinner "Installing osgrep CLI" npm_global_install osgrep; then
-				print_info "Now downloading embedding models (~150MB)..."
-				# osgrep setup is interactive, don't use spinner
-				if osgrep setup; then
-					print_success "osgrep installed and configured"
-				else
-					print_warning "Model download failed - run manually: osgrep setup"
-				fi
-			else
-				print_warning "Installation failed - try manually: sudo npm install -g osgrep"
-				return 0
-			fi
-		else
-			print_info "Skipped osgrep installation"
-			print_info "Install later: npm install -g osgrep && osgrep setup"
-			return 0
-		fi
-	fi
-
-	# Check if models are downloaded
-	if [[ ! -d "$HOME/.osgrep" ]]; then
-		print_warning "osgrep models not yet downloaded"
-		read -r -p "Download embedding models now (~150MB)? [Y/n]: " download_models
-		if [[ "$download_models" =~ ^[Yy]?$ ]]; then
-			if osgrep setup; then
-				print_success "osgrep models downloaded"
-			else
-				print_warning "Model download failed - run manually: osgrep setup"
-			fi
-		else
-			print_info "Download later: osgrep setup"
-		fi
-	else
-		print_success "osgrep CLI installed and configured"
-	fi
-
-	print_info "Verification: 'Search for authentication handling in this codebase'"
 	return 0
 }
 
@@ -791,4 +722,3 @@ setup_quickfile_mcp() {
 	print_info "Documentation: ~/.aidevops/agents/services/accounting/quickfile.md"
 	return 0
 }
-

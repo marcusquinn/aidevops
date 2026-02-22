@@ -130,53 +130,45 @@ SKIP_PRIMARY_AGENTS = {"plan-plus.md", "aidevops.md", "browser-extension-dev.md"
 #   - context7_*: ~800 tokens - enable via @context7 subagent (library docs lookup)
 #   - openapi-search_*: ~500 tokens - enabled for Build+, AI-DevOps, Research only
 #
-# osgrep_* remains enabled as the primary semantic search tool (local, no auth).
-# Use @augment-context-engine subagent when osgrep returns insufficient results.
+# Use @augment-context-engine subagent for semantic codebase search.
 # Use @context7 subagent when you need up-to-date library documentation.
 AGENT_TOOLS = {
     "Build+": {
         # Unified coding agent - planning, implementation, and DevOps
         # Browser automation: use @playwriter subagent (enables playwriter MCP on-demand)
-        # Semantic search: osgrep primary, @augment-context-engine fallback
+        # Semantic search: use @augment-context-engine subagent
         # Library docs: use @context7 subagent when needed
         # GitHub search: use @github-search subagent (rg/bash, no MCP needed)
         # OpenAPI search: enabled for API exploration (remote, zero install)
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
         "webfetch": True, "task": True, "todoread": True, "todowrite": True,
-        "osgrep_*": True,
         "openapi-search_*": True
     },
     "Onboarding": {
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
-        "webfetch": True, "task": True,
-        "osgrep_*": True
+        "webfetch": True, "task": True
     },
     "Accounts": {
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
-        "webfetch": True, "task": True, "quickfile_*": True,
-        "osgrep_*": True
+        "webfetch": True, "task": True, "quickfile_*": True
     },
     "Social-Media": {
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
-        "webfetch": True, "task": True,
-        "osgrep_*": True
+        "webfetch": True, "task": True
     },
     "SEO": {
         "write": True, "read": True, "bash": True, "webfetch": True,
-        "gsc_*": True, "ahrefs_*": True, "dataforseo_*": True,
-        "osgrep_*": True
+        "gsc_*": True, "ahrefs_*": True, "dataforseo_*": True
     },
     "WordPress": {
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
-        "localwp_*": True, "osgrep_*": True
+        "localwp_*": True
     },
     "Content": {
-        "write": True, "edit": True, "read": True, "webfetch": True,
-        "osgrep_*": True
+        "write": True, "edit": True, "read": True, "webfetch": True
     },
     "Research": {
         "read": True, "webfetch": True, "bash": True,
-        "osgrep_*": True,
         "openapi-search_*": True
     },
 }
@@ -192,11 +184,9 @@ AGENT_TOOLS = {
 # - claude-code-mcp_*: use @claude-code subagent
 # - openapi-search_*: ~500 tokens - enabled for Build+, AI-DevOps, Research only
 #
-# osgrep_* remains enabled as primary semantic search (local, fast, no auth)
 DEFAULT_TOOLS = {
     "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
-    "webfetch": True, "task": True,
-    "osgrep_*": True
+    "webfetch": True, "task": True
 }
 
 # Temperature settings (by display name, default 0.2)
@@ -467,7 +457,7 @@ print("  Enabled prompt caching for Anthropic (setCacheKey: true)")
 #   - enabled: False = Server starts on-demand when subagent invokes it (lazy loading)
 #
 # MCPs enabled at startup (used by main agents):
-#   - osgrep, augment-context-engine, context7, playwriter, gh_grep
+#   - augment-context-engine, context7, playwriter, gh_grep
 #
 # MCPs lazy-loaded (subagent-only):
 #   - claude-code-mcp, outscraper, dataforseo, shadcn, macos-automator, gsc, localwp, etc.
@@ -492,8 +482,8 @@ pkg_runner = f"{bun_path} x" if bun_path else (npx_path or "npx")
 # MCP LOADING POLICY - Enforce enabled states for all MCPs
 # -----------------------------------------------------------------------------
 # Eager-loaded (enabled: True): Used by all main agents, start at launch
-# Only osgrep remains eager - it's local, fast, no auth required
-EAGER_MCPS = {'osgrep'}
+# No eager MCPs — all lazy-load on demand to save context tokens
+EAGER_MCPS = set()
 
 # Lazy-loaded (enabled: False): Subagent-only, start on-demand
 # sentry/socket: Remote MCPs requiring auth, disable until configured
@@ -527,26 +517,12 @@ print(f"  Applied MCP loading policy: {len(EAGER_MCPS)} eager, {len(LAZY_MCPS)} 
 # EAGER-LOADED MCPs (enabled: True) - Used by all main agents
 # -----------------------------------------------------------------------------
 
-# osgrep MCP - local semantic search (primary, try first)
-# Install: npm install -g osgrep && osgrep setup
-# Only enable if osgrep CLI is installed (avoids "Executable not found" errors)
-osgrep_installed = shutil.which('osgrep') is not None
-if osgrep_installed:
-    if 'osgrep' not in config['mcp']:
-        config['mcp']['osgrep'] = {
-            "type": "local",
-            "command": ["osgrep", "mcp"],
-            "enabled": True
-        }
-        print("  Added osgrep MCP (eager load - used by all agents)")
-    # osgrep_* enabled globally (used by all main agents)
-    config['tools']['osgrep_*'] = True
-else:
-    # Disable osgrep if not installed to avoid MCP errors
-    if 'osgrep' in config['mcp']:
-        config['mcp']['osgrep']['enabled'] = False
-    config['tools']['osgrep_*'] = False
-    print("  osgrep not installed - MCP disabled (install: npm install -g osgrep && osgrep setup)")
+# Remove osgrep if present (deprecated — disproportionate CPU/disk cost)
+if 'osgrep' in config.get('mcp', {}):
+    del config['mcp']['osgrep']
+    print("  Removed deprecated osgrep MCP")
+if 'osgrep_*' in config.get('tools', {}):
+    del config['tools']['osgrep_*']
 
 # Playwriter MCP - browser automation via Chrome extension (used by all main agents)
 # Requires: Chrome extension from https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe

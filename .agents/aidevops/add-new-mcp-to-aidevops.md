@@ -131,10 +131,6 @@ npm update -g {package}
 ```
 
 **Why this matters**: MCP integration methods change between versions.
-For example:
-- osgrep v0.4.x used `osgrep serve` (HTTP server)
-- osgrep v0.5.x uses `osgrep mcp` (native MCP) + `osgrep install-opencode`
-
 Using outdated commands will result in "Connection closed" errors.
 
 ## Step 2: Determine Agent Enablement

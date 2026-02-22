@@ -26,7 +26,7 @@ tools:
 
 **When NOT to use**:
 - Simple file edits (use native Edit tool)
-- Quick searches (use grep/osgrep)
+- Quick searches (use grep/rg)
 - Single-file changes (overhead not worth it)
 
 <!-- AI-CONTEXT-END -->

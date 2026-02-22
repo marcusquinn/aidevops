@@ -44,13 +44,12 @@ What is this project? Please use codebase retrieval tool to get the answer.
 
 **Configured for**: OpenCode (as MCP). Works with any tool that supports MCP.
 
-**Enabled for Agents**: All 14 primary agents (as fallback to osgrep)
+**Enabled for Agents**: All 14 primary agents (on-demand via subagent)
 
-**Usage Strategy**: Augment Context Engine is the **fallback** semantic search
-tool. Try osgrep first (local, no auth). Use Augment when:
-- osgrep returns insufficient results
+**Usage Strategy**: Augment Context Engine provides **semantic codebase search**.
+Use rg/fd for exact matches first. Use Augment when:
+- You need semantic understanding beyond keyword matching
 - You need cloud sync or team features
-- osgrep is unavailable or failing
 
 <!-- AI-CONTEXT-END -->
 

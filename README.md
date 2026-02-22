@@ -898,7 +898,6 @@ MCP packages are installed globally via `bun install -g` for instant startup (no
 |-----|---------|------|------------------|
 | [Augment Context Engine](https://docs.augmentcode.com/context-services/mcp/overview) | Semantic codebase retrieval | Global | Yes (Augment account) |
 | [Claude Code MCP](https://github.com/steipete/claude-code-mcp) | Claude as sub-agent | Global | No |
-| [osgrep](https://github.com/Ryandonofrio3/osgrep) | Local semantic search | Global | No |
 | [Amazon Order History](https://github.com/marcusquinn/amazon-order-history-csv-download-mcp) | Order data extraction | Per-agent | No |
 | [Chrome DevTools](https://chromedevtools.github.io/devtools-protocol/) | Browser debugging & automation | Per-agent | No |
 | [Context7](https://context7.com/) | Library documentation lookup | Per-agent | No |
@@ -944,7 +943,6 @@ These use direct API calls via curl, avoiding MCP server startup entirely:
 
 - [Augment Context Engine](https://docs.augmentcode.com/context-services/mcp/overview) - Semantic codebase retrieval with deep code understanding
 - [llm-tldr](https://github.com/parcadei/llm-tldr) - Semantic code analysis with 95% token savings (tree, structure, CFG, DFG, impact analysis)
-- [osgrep](https://github.com/Ryandonofrio3/osgrep) - Local semantic search (100% private, no cloud)
 - [Context7](https://context7.com/) - Real-time documentation access for thousands of libraries
 - [Repomix](https://github.com/yamadashy/repomix) - Pack codebases into AI-friendly context
 
@@ -1337,23 +1335,6 @@ The AI should provide a semantic understanding of your project architecture.
 | **CI/CD integration** | Repomix GitHub Action | Automated context in releases |
 
 See `.agents/tools/context/augment-context-engine.md` for complete documentation.
-
-### osgrep - Local Alternative (Experimental)
-
-[osgrep](https://github.com/Ryandonofrio3/osgrep) provides 100% local semantic search with no cloud dependency:
-
-```bash
-npm install -g osgrep && osgrep setup
-osgrep "where is authentication handled?"
-```
-
-| Feature | osgrep | Augment |
-|---------|--------|---------|
-| Privacy | 100% local | Cloud-based |
-| Auth | None required | Account + login |
-| Node.js | 18+ | 22+ |
-
-See `.agents/tools/context/osgrep.md` for complete documentation and AI tool configurations.
 
 ### llm-tldr - Semantic Code Analysis
 

@@ -140,7 +140,7 @@ async function configHook(config) {
 | `type` | `"local"` or `"remote"` |
 | `command` / `url` | Server launch command or remote URL |
 | `eager` | `true` = start at launch, `false` = lazy-load |
-| `toolPattern` | Glob pattern for tool permissions (e.g. `"osgrep_*"`) |
+| `toolPattern` | Glob pattern for tool permissions (e.g. `"playwriter_*"`) |
 | `globallyEnabled` | Whether tools are enabled for all agents |
 | `requiresBinary` | Binary that must exist (skips if missing) |
 | `macOnly` | Platform restriction flag |
@@ -149,7 +149,6 @@ async function configHook(config) {
 
 | MCP | Type | Loading | Tools Global |
 |-----|------|---------|-------------|
-| osgrep | local | eager | yes |
 | playwriter | local | lazy | yes |
 | context7 | remote | lazy | no |
 | augment-context-engine | local | lazy | no |
@@ -223,7 +222,7 @@ Preserves operational state across context resets:
 | Complement shell script, don't replace | `generate-opencode-agents.sh` handles primary agent config with full control; plugin adds runtime features |
 | Subagents only in config hook | Primary agents need explicit config (model, temperature, tools); auto-registration would override intentional settings |
 | Data-driven MCP registry over config file | Plugin needs runtime binary detection and platform-specific logic that a static JSON config cannot express |
-| Only osgrep eager-loaded | All other MCPs lazy-load on demand to save ~7K+ tokens on session startup |
+| All MCPs lazy-loaded | MCPs lazy-load on demand to save ~7K+ tokens on session startup |
 | Shell script takes precedence for MCPs | Plugin only registers MCPs not already configured; `generate-opencode-agents.sh` definitions win |
 
 ## Future Enhancements

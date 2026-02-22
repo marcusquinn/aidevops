@@ -808,7 +808,7 @@ calculate_adaptive_concurrency() {
 
 	# Workers are API-bound (waiting for LLM responses), not CPU-bound.
 	# A typical worker uses ~20% of one core; the rest is I/O wait.
-	# Background processes (Backblaze, Spotlight, osgrep indexing) inflate
+	# Background processes (Backblaze, Spotlight, etc.) inflate
 	# CPU load averages but don't compete with workers for the actual
 	# bottleneck: API rate limits and network latency.
 	#

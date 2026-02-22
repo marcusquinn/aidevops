@@ -1912,10 +1912,9 @@ check_model_health() {
 #######################################
 # Generate a worker-specific MCP config with heavy indexers disabled (t221, t1162)
 #
-# Workers inherit the global MCP config which may have osgrep enabled.
-# osgrep indexes the entire codebase on startup, consuming ~4 CPU cores
-# per worker. With 3-4 concurrent workers, that's 12-16 cores wasted on
-# indexing that workers don't need (they have rg/grep/read tools).
+# Workers inherit the global MCP config which may have heavy indexers enabled.
+# These index the entire codebase on startup, consuming significant CPU.
+# Workers don't need semantic search (they have rg/grep/read tools).
 #
 # CLI-aware behavior (t1162):
 #   opencode: Copies ~/.config/opencode/opencode.json to a per-worker temp
@@ -1971,14 +1970,11 @@ _generate_worker_mcp_config_opencode() {
 	mkdir -p "$opencode_dir"
 
 	# Copy and modify: disable heavy indexing MCPs
-	# osgrep: local semantic search, spawns indexer (~4 CPU cores)
-	# augment-context-engine: another semantic indexer
+	# augment-context-engine: semantic indexer, unnecessary for workers
 	jq '
 		# Disable heavy indexing MCP servers for workers
-		.mcp["osgrep"].enabled = false |
 		.mcp["augment-context-engine"].enabled = false |
 		# Also disable their tools to avoid tool-not-found errors
-		.tools["osgrep_*"] = false |
 		.tools["augment-context-engine_*"] = false
 	' "$user_config" >"$opencode_dir/opencode.json"
 
@@ -2010,8 +2006,7 @@ _generate_worker_mcp_config_opencode() {
 #      (only servers with claude_code_command entries)
 #
 # Heavy indexers are filtered out:
-#   - osgrep (spawns indexer, ~4 CPU cores)
-#   - augment-context-engine (another semantic indexer)
+#   - augment-context-engine (semantic indexer)
 #
 # Output format matches Claude CLI --mcp-config expectation:
 #   { "mcpServers": { "name": { "command": "...", "args": [...], "env": {...} } } }
@@ -2024,7 +2019,7 @@ _generate_worker_mcp_config_claude() {
 	local config_file="${worker_config_dir}/claude-mcp-config.json"
 
 	# Heavy indexer server names to exclude
-	local -a excluded_servers=("osgrep" "augment-context-engine")
+	local -a excluded_servers=("augment-context-engine")
 
 	# Start with empty mcpServers object
 	local merged_config='{"mcpServers":{}}'
@@ -3117,7 +3112,7 @@ cmd_dispatch() {
 
 	# Generate worker-specific MCP config with heavy indexers disabled (t221, t1162)
 	# Must be generated BEFORE build_*_dispatch_cmd so Claude CLI gets --mcp-config flag
-	# Saves ~4 CPU cores per worker by preventing osgrep from indexing
+	# Saves CPU by preventing heavy indexers from running in workers
 	local worker_mcp_config=""
 	worker_mcp_config=$(generate_worker_mcp_config "$task_id" "$ai_cli" "$worktree_path") || true
 

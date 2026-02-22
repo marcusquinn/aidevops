@@ -26,7 +26,6 @@ subagents:
   - secretlint
   - qlty
   # Context tools
-  - osgrep
   - augment-context-engine
   - context-builder
   - context7
@@ -84,7 +83,7 @@ On "resume"/"continue": find next incomplete step and continue.
 
 - Conversation starters: `workflows/conversation-starter.md`. Implementation: `workflows/branch.md`.
 - Git safety: stash before destructive ops. NEVER auto-commit (only when user requests).
-- Context: osgrep (primary, local) → Augment (fallback, cloud) → Context7 (library docs). TOON for data serialization.
+- Context: rg/fd (primary, local) → Augment (semantic, cloud) → Context7 (library docs). TOON for data serialization.
 - Quality: `linters-local.sh` pre-commit. Patterns: `tools/code-review/best-practices.md`.
 - Test config: `opencode run "query" --agent Build+`. See `tools/opencode/opencode.md`.
 - Draft agents: reusable patterns → `~/.aidevops/agents/draft/` with `status: draft`. See `tools/build-agent/build-agent.md`.
@@ -144,7 +143,7 @@ Verify against original intent. Verification hierarchy: tools (tests/lint/build)
 ## Planning Workflow (Deliberation Mode)
 
 1. **Understand**: Launch up to 3 Explore agents in parallel (usually 1 suffices). Clarify ambiguities upfront.
-2. **Investigate**: osgrep first → Augment fallback → context-builder for packing → Context7 for library docs.
+2. **Investigate**: rg/fd first → Augment for semantic search → context-builder for packing → Context7 for library docs.
 3. **Synthesise**: Collect findings, note critical files, ask user about tradeoffs.
 4. **Plan**: Document recommendation with rationale, files to modify, testing steps.
 5. **Execute**: Run `pre-edit-check.sh`, then follow Build Workflow above.

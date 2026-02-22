@@ -24,11 +24,6 @@
       "args": ["--mcp"],
       "description": "Augment Context Engine for semantic codebase search"
     },
-    "osgrep": {
-      "command": "osgrep",
-      "args": ["mcp"],
-      "description": "Semantic code search MCP (concept-based, not string-based)"
-    },
     "claude-code-mcp": {
       "command": "npx",
       "args": ["-y", "@steipete/claude-code-mcp@latest"],
