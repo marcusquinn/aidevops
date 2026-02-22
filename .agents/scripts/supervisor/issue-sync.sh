@@ -953,16 +953,65 @@ update_queue_health_issue() {
 		alert_count=$((alert_count + 1))
 	fi
 
-	# Alert: blocked tasks
+	# Alert: blocked tasks (with per-task detail)
 	if [[ "${cnt_blocked:-0}" -gt 0 ]]; then
-		alerts_md="${alerts_md}- **${cnt_blocked} blocked task(s)**
+		local blocked_list
+		blocked_list=$(db -separator '|' "$SUPERVISOR_DB" "SELECT id, error, pr_url FROM tasks WHERE ${repo_filter} AND status = 'blocked' LIMIT 10;" 2>/dev/null || echo "")
+		alerts_md="${alerts_md}- **${cnt_blocked} blocked task(s)**:"
+		while IFS='|' read -r b_id b_err b_pr; do
+			[[ -z "$b_id" ]] && continue
+			local b_err_short="${b_err:0:80}"
+			[[ ${#b_err} -gt 80 ]] && b_err_short="${b_err_short}..."
+			local b_pr_display=""
+			if [[ -n "$b_pr" ]]; then
+				local b_pr_num
+				b_pr_num=$(echo "$b_pr" | grep -oE '[0-9]+$' || echo "")
+				[[ -n "$b_pr_num" ]] && b_pr_display=" (PR #${b_pr_num})"
+			fi
+			alerts_md="${alerts_md}
+  - \`${b_id}\`${b_pr_display}: ${b_err_short:-reason unknown}"
+		done <<<"$blocked_list"
+		alerts_md="${alerts_md}
 "
 		alert_count=$((alert_count + 1))
 	fi
 
-	# Alert: retrying tasks
+	# Alert: retrying tasks (with per-task detail)
 	if [[ "${cnt_retrying:-0}" -gt 0 ]]; then
-		alerts_md="${alerts_md}- **${cnt_retrying} task(s) retrying**
+		local retrying_list
+		retrying_list=$(db -separator '|' "$SUPERVISOR_DB" "SELECT id, error, retries, max_retries FROM tasks WHERE ${repo_filter} AND status = 'retrying' LIMIT 10;" 2>/dev/null || echo "")
+		alerts_md="${alerts_md}- **${cnt_retrying} task(s) retrying**:"
+		while IFS='|' read -r r_id r_err r_retries r_max; do
+			[[ -z "$r_id" ]] && continue
+			local r_err_short="${r_err:0:60}"
+			[[ ${#r_err} -gt 60 ]] && r_err_short="${r_err_short}..."
+			alerts_md="${alerts_md}
+  - \`${r_id}\` (${r_retries:-0}/${r_max:-3}): ${r_err_short:-retrying}"
+		done <<<"$retrying_list"
+		alerts_md="${alerts_md}
+"
+		alert_count=$((alert_count + 1))
+	fi
+
+	# Alert: verify_failed tasks (with per-task detail)
+	if [[ "${cnt_verify_failed:-0}" -gt 0 ]]; then
+		local vf_list
+		vf_list=$(db -separator '|' "$SUPERVISOR_DB" "SELECT id, error, pr_url FROM tasks WHERE ${repo_filter} AND status = 'verify_failed' LIMIT 10;" 2>/dev/null || echo "")
+		alerts_md="${alerts_md}- **${cnt_verify_failed} verify-failed task(s)**:"
+		while IFS='|' read -r v_id v_err v_pr; do
+			[[ -z "$v_id" ]] && continue
+			local v_err_short="${v_err:0:80}"
+			[[ ${#v_err} -gt 80 ]] && v_err_short="${v_err_short}..."
+			local v_pr_display=""
+			if [[ -n "$v_pr" ]]; then
+				local v_pr_num
+				v_pr_num=$(echo "$v_pr" | grep -oE '[0-9]+$' || echo "")
+				[[ -n "$v_pr_num" ]] && v_pr_display=" (PR #${v_pr_num})"
+			fi
+			alerts_md="${alerts_md}
+  - \`${v_id}\`${v_pr_display}: ${v_err_short:-verification failed}"
+		done <<<"$vf_list"
+		alerts_md="${alerts_md}
 "
 		alert_count=$((alert_count + 1))
 	fi
@@ -1109,14 +1158,24 @@ _Auto-updated by supervisor pulse (t1013). Do not edit manually._"
 	cnt_working=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE ${repo_filter} AND status IN ('running','dispatched','evaluating');" 2>/dev/null || echo "0")
 	local cnt_in_review
 	cnt_in_review=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE ${repo_filter} AND status IN ('pr_review','review_triage','merging','merged','deploying','retrying');" 2>/dev/null || echo "0")
-	local cnt_failed_total=$((${cnt_blocked:-0} + ${cnt_verify_failed:-0} + ${cnt_failed:-0}))
 
 	local title_parts="${cnt_queued:-0} queued, ${cnt_working} working"
 	if [[ "${cnt_in_review}" -gt 0 ]]; then
 		title_parts="${title_parts}, ${cnt_in_review} in review"
 	fi
-	if [[ "${cnt_failed_total}" -gt 0 ]]; then
-		title_parts="${title_parts}, ${cnt_failed_total} need attention"
+	# Break down attention items by type instead of lumping into one count
+	local attention_parts=""
+	if [[ "${cnt_blocked:-0}" -gt 0 ]]; then
+		attention_parts="${attention_parts}${attention_parts:+, }${cnt_blocked} blocked"
+	fi
+	if [[ "${cnt_failed:-0}" -gt 0 ]]; then
+		attention_parts="${attention_parts}${attention_parts:+, }${cnt_failed} failed"
+	fi
+	if [[ "${cnt_verify_failed:-0}" -gt 0 ]]; then
+		attention_parts="${attention_parts}${attention_parts:+, }${cnt_verify_failed} verify-failed"
+	fi
+	if [[ -n "$attention_parts" ]]; then
+		title_parts="${title_parts}, ${attention_parts}"
 	fi
 
 	local title_time
