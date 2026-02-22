@@ -7,9 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.122.1] - 2026-02-22
+
+### Changed
+
+- Documentation: add changelog entry for curl install fix
+
 ### Fixed
 
-- `bash <(curl -fsSL https://aidevops.sh/install)` silently exits on fresh machines — bootstrap guard now runs before source lines (#2148)
+- curl install silently exits — bootstrap guard before source lines (#2148)
 
 ## [2.122.0] - 2026-02-22
 
