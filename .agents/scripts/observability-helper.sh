@@ -258,8 +258,9 @@ get_provider_from_model() {
 	return 0
 }
 
-# Parse a single JSONL log file from a given byte offset
-# Outputs SQL INSERT statements to stdout
+# Parse a single JSONL log file from a given byte offset.
+# Uses a single jq invocation for the entire file (fast), then batch-inserts
+# into SQLite via a single transaction (avoids per-line jq + per-row INSERT).
 parse_jsonl_file() {
 	local file_path="$1"
 	local start_offset="${2:-0}"
@@ -272,43 +273,23 @@ parse_jsonl_file() {
 	file_size=$(wc -c <"$file_path" | tr -d ' ')
 
 	if [[ "$start_offset" -ge "$file_size" ]]; then
-		# No new data
 		echo "$start_offset"
 		return 0
 	fi
 
 	local project
 	project=$(get_project_from_path "$file_path")
+	local escaped_project
+	escaped_project=$(sql_escape "$project")
+	local escaped_file_path
+	escaped_file_path=$(sql_escape "$file_path")
 
-	local insert_count=0
-	local prev_user_ts=""
-
-	# Read from offset using tail -c (portable)
-	local bytes_to_read=$((file_size - start_offset))
-
-	# Use dd for precise byte-offset reading
-	local content
-	content=$(dd if="$file_path" bs=1 skip="$start_offset" count="$bytes_to_read" 2>/dev/null) || {
-		echo "$start_offset"
-		return 0
-	}
-
-	# Process line by line, extracting assistant messages with usage data
-	while IFS= read -r line; do
-		[[ -z "$line" ]] && continue
-
-		# Quick filter: only process lines with "usage" and "assistant"
-		if [[ "$line" != *'"usage"'* ]] || [[ "$line" != *'"assistant"'* ]]; then
-			# Track user message timestamps for TTFT calculation
-			if [[ "$line" == *'"type":"user"'* ]] && [[ "$line" == *'"timestamp"'* ]]; then
-				prev_user_ts=$(echo "$line" | jq -r '.timestamp // empty' 2>/dev/null) || true
-			fi
-			continue
-		fi
-
-		# Parse the assistant message with jq
-		local parsed
-		parsed=$(echo "$line" | jq -r '
+	# Single jq invocation: extract all assistant messages with usage data.
+	# Outputs pipe-delimited rows for efficient bash processing.
+	# dd reads from byte offset; jq processes entire stream at once.
+	local parsed_rows
+	parsed_rows=$(dd if="$file_path" bs=1 skip="$start_offset" count=$((file_size - start_offset)) 2>/dev/null |
+		jq -r '
 			select(.type == "assistant" and .message.usage != null) |
 			[
 				(.message.model // "unknown"),
@@ -324,18 +305,31 @@ parse_jsonl_file() {
 				(.timestamp // ""),
 				(.message.usage.service_tier // ""),
 				(.gitBranch // "")
-			] | @tsv
-		' 2>/dev/null) || continue
+			] | join("|")
+		' 2>/dev/null) || parsed_rows=""
 
-		[[ -z "$parsed" ]] && continue
+	if [[ -z "$parsed_rows" ]]; then
+		# No assistant messages found — still update offset
+		db_query "
+			INSERT INTO parse_offsets (file_path, byte_offset, last_parsed)
+			VALUES ('$escaped_file_path', $file_size, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+			ON CONFLICT(file_path) DO UPDATE SET
+				byte_offset = $file_size,
+				last_parsed = strftime('%Y-%m-%dT%H:%M:%SZ', 'now');
+		" || true
+		echo "$file_size"
+		return 0
+	fi
 
-		local model session_id request_id input_tokens output_tokens
-		local cache_read_tokens cache_write_tokens stop_reason timestamp
-		local service_tier git_branch
+	# Build a single SQL transaction with all INSERTs for this file
+	local sql_batch="BEGIN TRANSACTION;"
+	local insert_count=0
 
-		IFS=$'\t' read -r model session_id request_id input_tokens output_tokens \
-			cache_read_tokens cache_write_tokens stop_reason timestamp \
-			service_tier git_branch <<<"$parsed"
+	while IFS='|' read -r model session_id request_id input_tokens output_tokens \
+		cache_read_tokens cache_write_tokens stop_reason timestamp \
+		service_tier git_branch; do
+
+		[[ -z "$model" ]] && continue
 
 		# Skip entries with no meaningful token usage
 		local total_tokens=$((input_tokens + output_tokens + cache_read_tokens + cache_write_tokens))
@@ -346,67 +340,48 @@ parse_jsonl_file() {
 		local provider
 		provider=$(get_provider_from_model "$model")
 
-		# Calculate costs
-		local costs
-		costs=$(calculate_costs "$input_tokens" "$output_tokens" "$cache_read_tokens" "$cache_write_tokens" "$model")
+		# Calculate costs inline (avoid subshell per row)
+		local pricing
+		pricing=$(get_model_pricing "$model")
+		local input_price output_price cache_read_price cache_write_price
+		IFS='|' read -r input_price output_price cache_read_price cache_write_price <<<"$pricing"
+
 		local cost_input cost_output cost_cache_read cost_cache_write cost_total
-		IFS='|' read -r cost_input cost_output cost_cache_read cost_cache_write cost_total <<<"$costs"
+		cost_input=$(awk "BEGIN { printf \"%.8f\", $input_tokens / 1000000.0 * $input_price }")
+		cost_output=$(awk "BEGIN { printf \"%.8f\", $output_tokens / 1000000.0 * $output_price }")
+		cost_cache_read=$(awk "BEGIN { printf \"%.8f\", $cache_read_tokens / 1000000.0 * $cache_read_price }")
+		cost_cache_write=$(awk "BEGIN { printf \"%.8f\", $cache_write_tokens / 1000000.0 * $cache_write_price }")
+		cost_total=$(awk "BEGIN { printf \"%.8f\", $cost_input + $cost_output + $cost_cache_read + $cost_cache_write }")
 
-		# Calculate TTFT (time from user message to first assistant response)
-		local ttft_ms=0
-		if [[ -n "$prev_user_ts" && -n "$timestamp" ]]; then
-			# Parse ISO timestamps to epoch seconds (portable)
-			local user_epoch assistant_epoch
-			user_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%S" "${prev_user_ts%%.*}" "+%s" 2>/dev/null) ||
-				user_epoch=$(date -d "${prev_user_ts}" "+%s" 2>/dev/null) || user_epoch=0
-			assistant_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%S" "${timestamp%%.*}" "+%s" 2>/dev/null) ||
-				assistant_epoch=$(date -d "${timestamp}" "+%s" 2>/dev/null) || assistant_epoch=0
-
-			if [[ "$user_epoch" -gt 0 && "$assistant_epoch" -gt 0 ]]; then
-				ttft_ms=$(((assistant_epoch - user_epoch) * 1000))
-				# Cap at reasonable values (negative or >5min = invalid)
-				if [[ "$ttft_ms" -lt 0 || "$ttft_ms" -gt 300000 ]]; then
-					ttft_ms=0
-				fi
-			fi
-		fi
-
-		# Insert into database
-		db_query "
-			INSERT INTO llm_requests (
-				provider, model, session_id, request_id, project,
-				input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
-				cost_input, cost_output, cost_cache_read, cost_cache_write, cost_total,
-				ttft_ms, stop_reason, service_tier, git_branch, log_source, recorded_at
-			) VALUES (
-				'$(sql_escape "$provider")',
-				'$(sql_escape "$model")',
-				'$(sql_escape "$session_id")',
-				'$(sql_escape "$request_id")',
-				'$(sql_escape "$project")',
-				$input_tokens, $output_tokens, $cache_read_tokens, $cache_write_tokens,
-				$cost_input, $cost_output, $cost_cache_read, $cost_cache_write, $cost_total,
-				$ttft_ms,
-				'$(sql_escape "$stop_reason")',
-				'$(sql_escape "$service_tier")',
-				'$(sql_escape "$git_branch")',
-				'$(sql_escape "$file_path")',
-				'$(sql_escape "$timestamp")'
-			);
-		" || true
-
+		sql_batch="${sql_batch}
+INSERT INTO llm_requests (
+	provider, model, session_id, request_id, project,
+	input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+	cost_input, cost_output, cost_cache_read, cost_cache_write, cost_total,
+	stop_reason, service_tier, git_branch, log_source, recorded_at
+) VALUES (
+	'$(sql_escape "$provider")', '$(sql_escape "$model")',
+	'$(sql_escape "$session_id")', '$(sql_escape "$request_id")', '$escaped_project',
+	$input_tokens, $output_tokens, $cache_read_tokens, $cache_write_tokens,
+	$cost_input, $cost_output, $cost_cache_read, $cost_cache_write, $cost_total,
+	'$(sql_escape "$stop_reason")', '$(sql_escape "$service_tier")',
+	'$(sql_escape "$git_branch")', '$escaped_file_path',
+	'$(sql_escape "$timestamp")'
+);"
 		insert_count=$((insert_count + 1))
-		prev_user_ts=""
-	done <<<"$content"
+	done <<<"$parsed_rows"
 
-	# Update parse offset
-	db_query "
-		INSERT INTO parse_offsets (file_path, byte_offset, last_parsed)
-		VALUES ('$(sql_escape "$file_path")', $file_size, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-		ON CONFLICT(file_path) DO UPDATE SET
-			byte_offset = $file_size,
-			last_parsed = strftime('%Y-%m-%dT%H:%M:%SZ', 'now');
-	" || true
+	# Update parse offset in same transaction
+	sql_batch="${sql_batch}
+INSERT INTO parse_offsets (file_path, byte_offset, last_parsed)
+VALUES ('$escaped_file_path', $file_size, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+ON CONFLICT(file_path) DO UPDATE SET
+	byte_offset = $file_size,
+	last_parsed = strftime('%Y-%m-%dT%H:%M:%SZ', 'now');
+COMMIT;"
+
+	# Execute entire batch in one sqlite3 call
+	db_query "$sql_batch" || true
 
 	if [[ "$insert_count" -gt 0 ]]; then
 		print_info "Parsed $insert_count requests from $(basename "$file_path")"
@@ -444,7 +419,6 @@ cmd_ingest() {
 		return 1
 	fi
 
-	local total_new=0
 	local files_processed=0
 
 	# Find all JSONL files recursively
@@ -466,14 +440,11 @@ cmd_ingest() {
 			continue
 		fi
 
-		# Parse new entries
-		local new_offset
-		new_offset=$(parse_jsonl_file "$jsonl_file" "$current_offset")
+		# Parse new entries (offset returned but tracked in DB)
+		parse_jsonl_file "$jsonl_file" "$current_offset" >/dev/null
 		files_processed=$((files_processed + 1))
 
 	done < <(find "$CLAUDE_LOG_DIR" -name "*.jsonl" -type f 2>/dev/null)
-
-	total_new=$(db_query "SELECT changes();" 2>/dev/null) || total_new=0
 
 	if [[ "$quiet" != "true" ]]; then
 		print_success "Ingestion complete: processed $files_processed files"
@@ -896,8 +867,8 @@ cmd_costs() {
 		$where_clause;
 	") || cache_stats="0|0|0|0"
 
-	local cr_tokens total_input_tokens cr_cost total_input_cost
-	IFS='|' read -r cr_tokens total_input_tokens cr_cost total_input_cost <<<"$cache_stats"
+	local cr_tokens total_input_tokens cr_cost _total_input_cost
+	IFS='|' read -r cr_tokens total_input_tokens cr_cost _total_input_cost <<<"$cache_stats"
 
 	if [[ "$total_input_tokens" -gt 0 ]]; then
 		local cache_hit_pct
@@ -1171,7 +1142,7 @@ cmd_sync_budget() {
 		FROM llm_requests
 		WHERE recorded_at >= datetime('now', '-${days} days')
 		GROUP BY provider, model, date(recorded_at);
-	" | while IFS='|' read -r prov mdl day inp outp cost; do
+	" | while IFS='|' read -r prov mdl _day inp outp cost; do
 		[[ -z "$prov" ]] && continue
 		bash "$budget_helper" record \
 			--provider "$prov" \
