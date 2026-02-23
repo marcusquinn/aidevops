@@ -57,7 +57,8 @@ localdev-helper.sh add myapp
 Browser request: https://myapp.local
         |
         v
-  /etc/resolver/local → dnsmasq (127.0.0.1)
+  /etc/hosts (127.0.0.1 myapp.local)
+    ← REQUIRED for .local in browsers (mDNS intercepts /etc/resolver)
         |
         v
   Traefik (Docker, ports 80/443/8080)
@@ -73,22 +74,35 @@ Browser request: https://myapp.local
 
 | Component | Role | Config location |
 |-----------|------|-----------------|
-| **dnsmasq** | Resolves `*.local` → `127.0.0.1` | `$(brew --prefix)/etc/dnsmasq.conf` |
-| **macOS resolver** | Routes `.local` DNS queries to dnsmasq | `/etc/resolver/local` |
+| **/etc/hosts** | **Primary**: maps `.local` domains to `127.0.0.1` for browsers | `/etc/hosts` |
+| **dnsmasq** | Wildcard `*.local` → `127.0.0.1` (CLI tools only) | `$(brew --prefix)/etc/dnsmasq.conf` |
+| **macOS resolver** | Routes `.local` to dnsmasq for CLI tools | `/etc/resolver/local` |
 | **Traefik v3.3** | Reverse proxy, TLS termination, routing | `~/.local-dev-proxy/traefik.yml` |
 | **mkcert** | Generates browser-trusted wildcard certs | `~/.local-ssl-certs/` |
 | **Port registry** | Tracks app→port→domain mappings | `~/.local-dev-proxy/ports.json` |
 | **conf.d/** | Per-app Traefik route files (hot-reloaded) | `~/.local-dev-proxy/conf.d/` |
 
-### DNS Resolution Order (macOS)
+### DNS Resolution and the .local mDNS Problem
+
+macOS reserves `.local` for mDNS (Bonjour/multicast DNS). This creates a resolution conflict:
 
 ```text
-1. /etc/hosts          ← LocalWP entries (#Local Site) win here
-2. /etc/resolver/local ← dnsmasq wildcard for .local
-3. Upstream DNS        ← External domains
+Browsers (Chrome, Safari, Firefox):
+  1. /etc/hosts          ← WORKS — only reliable method for .local
+  2. mDNS multicast      ← INTERCEPTS .local before resolver files
+  3. /etc/resolver/local  ← NEVER REACHED for .local in browsers
+
+CLI tools (dig, curl, etc.):
+  1. /etc/hosts           ← Checked first
+  2. /etc/resolver/local  ← Works — routes to dnsmasq
+  3. Upstream DNS         ← External domains
 ```
 
-This order is critical for LocalWP coexistence: domains in `/etc/hosts` always take precedence over dnsmasq.
+**Why `localdev add` always writes `/etc/hosts`**: The `/etc/resolver/local` → dnsmasq path only works for CLI tools (`dig`, `curl`). Browsers use the system resolver which sends `.local` queries to mDNS before consulting resolver files. Only `/etc/hosts` entries reliably override mDNS for `.local` domains in browsers.
+
+**dnsmasq is still useful** for wildcard subdomain resolution in CLI tools (e.g., `dig feature-login.myapp.local @127.0.0.1`), but it cannot serve as the primary DNS mechanism for browser access.
+
+> **Future consideration**: `.test` (RFC 6761) and `.localhost` (resolves to `127.0.0.1` natively) avoid the mDNS conflict entirely. Switching TLD would be a breaking change for existing projects but would eliminate the `/etc/hosts` requirement. See [RFC 6761](https://www.rfc-editor.org/rfc/rfc6761) and [RFC 6762 Section 3](https://www.rfc-editor.org/rfc/rfc6762#section-3).
 
 ### Port Registry Format
 
@@ -126,15 +140,17 @@ localdev-helper.sh init
 Performs:
 
 1. Check prerequisites (docker, mkcert, dnsmasq)
-2. Add `address=/.local/127.0.0.1` to dnsmasq.conf
-3. Create `/etc/resolver/local` with `nameserver 127.0.0.1`
+2. Add `address=/.local/127.0.0.1` to dnsmasq.conf (for CLI wildcard resolution)
+3. Create `/etc/resolver/local` with `nameserver 127.0.0.1` (for CLI tools)
 4. Migrate Traefik from single `dynamic.yml` to `conf.d/` directory provider
 5. Preserve existing routes (backs up to `~/.local-dev-proxy/backup/`)
 6. Restart Traefik if running
 
+Note: `init` sets up dnsmasq for CLI tool resolution (`dig`, `curl`). Browser resolution requires per-app `/etc/hosts` entries, which `add` handles automatically.
+
 ### add
 
-Register a new app with cert, Traefik route, and port assignment.
+Register a new app with cert, Traefik route, `/etc/hosts` entry, and port assignment.
 
 ```bash
 localdev-helper.sh add <name> [port]
@@ -149,7 +165,7 @@ Performs:
 2. Auto-assign port from 3100-3999 (or validate specified port)
 3. Generate mkcert wildcard cert (`*.name.local` + `name.local`)
 4. Create Traefik route: `conf.d/{name}.yml`
-5. Add `/etc/hosts` fallback if dnsmasq not configured
+5. Add `/etc/hosts` entry (required for browser resolution of `.local` domains)
 6. Register in `ports.json`
 
 Result: `https://{name}.local` routes to `http://localhost:{port}`
@@ -596,33 +612,33 @@ networks:
 
 ### DNS Resolution
 
-**Symptom**: `https://myapp.local` doesn't resolve.
+**Symptom**: `https://myapp.local` doesn't resolve in browser (but `dig myapp.local @127.0.0.1` works).
+
+**Most likely cause**: Missing `/etc/hosts` entry. macOS sends `.local` queries to mDNS before consulting `/etc/resolver/local`, so dnsmasq alone is insufficient for browsers.
 
 ```bash
-# Check dnsmasq is running
-pgrep -x dnsmasq
+# Step 1: Check /etc/hosts entry exists (REQUIRED for browsers)
+grep 'myapp.local' /etc/hosts
+# Should show: 127.0.0.1 myapp.local *.myapp.local # localdev: myapp
 
-# Test DNS resolution
-dig myapp.local @127.0.0.1
+# Step 2: If missing, add it
+localdev-helper.sh add myapp  # Re-running add is safe (idempotent)
 
-# Verify resolver file
-cat /etc/resolver/local
-# Should contain: nameserver 127.0.0.1
-
-# Check dnsmasq config
-grep 'address=/.local/' "$(brew --prefix)/etc/dnsmasq.conf"
-# Should contain: address=/.local/127.0.0.1
-
-# Restart dnsmasq
-sudo brew services restart dnsmasq
-
-# Flush macOS DNS cache
+# Step 3: Flush macOS DNS cache
 sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder
+
+# Step 4: Verify resolution via system resolver
+dscacheutil -q host -a name myapp.local
+# Should show: ip_address: 127.0.0.1
+
+# Optional: verify dnsmasq works for CLI tools
+dig myapp.local @127.0.0.1
+# Should return: 127.0.0.1
 ```
 
-**Common cause**: macOS mDNSResponder sometimes caches stale results. Flushing the cache usually resolves it.
+**Why `dig myapp.local` works but browser doesn't**: `dig` without `@127.0.0.1` uses the system resolver which may hit mDNS for `.local`. `dig @127.0.0.1` queries dnsmasq directly. Browsers use the system resolver, not dnsmasq directly.
 
-**LocalWP conflict**: If a domain resolves to a LocalWP IP instead of 127.0.0.1, check `/etc/hosts` for a conflicting entry.
+**LocalWP conflict**: If a domain resolves to a LocalWP IP instead of 127.0.0.1, check `/etc/hosts` for a conflicting `#Local Site` entry.
 
 ### Certificate Issues
 

@@ -6,9 +6,11 @@ set -euo pipefail
 # Manages dnsmasq, Traefik conf.d, mkcert certs, and port registry
 # for production-like .local domains with HTTPS on port 443.
 #
-# Coexists with LocalWP: dnsmasq wildcard DNS only resolves domains
-# NOT already in /etc/hosts (LocalWP entries take precedence via
-# macOS resolver order: /etc/hosts -> /etc/resolver/local -> upstream).
+# DNS: /etc/hosts entries are the PRIMARY mechanism for .local domains in
+# browsers (macOS mDNS intercepts .local before /etc/resolver/local).
+# dnsmasq provides wildcard resolution for CLI tools only.
+# Coexists with LocalWP: LocalWP entries (#Local Site) in /etc/hosts
+# take precedence; localdev entries use a different marker (# localdev:).
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
@@ -73,8 +75,8 @@ cmd_init() {
 
 	echo ""
 	print_success "localdev init complete"
-	print_info "Verify DNS: dig awardsapp.local @127.0.0.1"
-	print_info "Verify Traefik: curl -sk https://awardsapp.local"
+	print_info "Next: localdev-helper.sh add <appname> (registers app + /etc/hosts entry)"
+	print_info "Verify dnsmasq (CLI only): dig testdomain.local @127.0.0.1"
 	return 0
 }
 
@@ -172,9 +174,10 @@ configure_resolver() {
 	echo "nameserver 127.0.0.1" | sudo tee "$resolver_file" >/dev/null
 	print_success "Created /etc/resolver/local (nameserver 127.0.0.1)"
 
-	# Note about coexistence with /etc/hosts
-	print_info "DNS resolution order: /etc/hosts → /etc/resolver/local → upstream"
-	print_info "LocalWP entries in /etc/hosts take precedence over dnsmasq"
+	# Note about .local mDNS limitation
+	print_info "Note: /etc/resolver/local enables dnsmasq for CLI tools (dig, curl)"
+	print_info "Browsers require /etc/hosts entries for .local (mDNS intercepts resolver files)"
+	print_info "The 'add' command handles /etc/hosts entries automatically"
 	return 0
 }
 
@@ -723,10 +726,12 @@ remove_traefik_route() {
 }
 
 # =============================================================================
-# /etc/hosts Fallback
+# /etc/hosts Entry (Primary DNS for Browsers)
 # =============================================================================
 
-# Add /etc/hosts entry for a domain (fallback when dnsmasq not configured)
+# Add /etc/hosts entry for a domain (REQUIRED for .local in browsers)
+# macOS reserves .local for mDNS (Bonjour), which intercepts resolution before
+# /etc/resolver/local. Only /etc/hosts reliably overrides mDNS for browsers.
 add_hosts_entry() {
 	local domain="$1"
 	local marker="# localdev: $domain"
@@ -737,7 +742,7 @@ add_hosts_entry() {
 		return 0
 	fi
 
-	print_info "Adding /etc/hosts fallback entry for $domain..."
+	print_info "Adding /etc/hosts entry for $domain (required for browser resolution)..."
 	printf '\n127.0.0.1 %s %s # localdev: %s\n' "$domain" "*.$domain" "$domain" | sudo tee -a /etc/hosts >/dev/null
 	print_success "Added /etc/hosts entry: 127.0.0.1 $domain *.$domain"
 	return 0
@@ -831,13 +836,10 @@ cmd_add() {
 	# Step 4: Create Traefik conf.d route file
 	create_traefik_route "$name" "$port" || exit 1
 
-	# Step 5: Add /etc/hosts fallback if dnsmasq not configured
-	if ! is_dnsmasq_configured; then
-		print_info "dnsmasq not configured — adding /etc/hosts fallback entry"
-		add_hosts_entry "$domain" || true
-	else
-		print_info "dnsmasq configured — skipping /etc/hosts fallback"
-	fi
+	# Step 5: Add /etc/hosts entry (required for browser resolution of .local)
+	# macOS mDNS intercepts .local before /etc/resolver/local, so dnsmasq alone
+	# is insufficient for browsers. /etc/hosts is the only reliable mechanism.
+	add_hosts_entry "$domain" || true
 
 	# Step 6: Register in port registry
 	register_app "$name" "$port" "$domain" || exit 1
@@ -2294,17 +2296,19 @@ cmd_help() {
 	echo "  2. Auto-assign port from 3100-3999 (or use specified port)"
 	echo "  3. Generate mkcert wildcard cert (*.name.local + name.local)"
 	echo "  4. Create Traefik conf.d/{name}.yml route file"
-	echo "  5. Add /etc/hosts fallback entry (if dnsmasq not configured)"
+	echo "  5. Add /etc/hosts entry (required for browser resolution of .local)"
 	echo "  6. Register in ~/.local-dev-proxy/ports.json"
 	echo ""
 	echo "Remove reverses all add operations."
 	echo ""
 	echo "Init performs:"
-	echo "  1. Configure dnsmasq with address=/.local/127.0.0.1"
-	echo "  2. Create /etc/resolver/local (macOS)"
+	echo "  1. Configure dnsmasq with address=/.local/127.0.0.1 (CLI wildcard resolution)"
+	echo "  2. Create /etc/resolver/local (routes .local to dnsmasq for CLI tools)"
 	echo "  3. Migrate Traefik from single dynamic.yml to conf.d/ directory"
 	echo "  4. Preserve existing routes (e.g., awardsapp)"
 	echo "  5. Restart Traefik if running"
+	echo "  Note: dnsmasq resolves .local for CLI tools only. Browsers need /etc/hosts"
+	echo "  entries (added automatically by 'add' command) due to macOS mDNS."
 	echo ""
 	echo "Requires: docker, mkcert, dnsmasq (brew install dnsmasq)"
 	echo "Requires: sudo (for /etc/hosts and dnsmasq restart)"
