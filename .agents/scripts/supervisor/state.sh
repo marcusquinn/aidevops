@@ -638,6 +638,8 @@ cmd_reset() {
             pr_url = NULL,
             started_at = NULL,
             completed_at = NULL,
+            last_failure_at = NULL,
+            consecutive_failure_count = 0,
             updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
         WHERE id = '$escaped_id';
     "
