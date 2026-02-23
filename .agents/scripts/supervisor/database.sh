@@ -764,6 +764,17 @@ CONTEST_SQL
 		log_success "Added dispatch_target column to tasks (t1165.3)"
 	fi
 
+	# Migrate: create container_pool tables if missing (t1165.2)
+	# Container pool manager — spawn/destroy containers, health checks,
+	# round-robin dispatch, per-container rate limit tracking.
+	local has_container_pool
+	has_container_pool=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='container_pool';" 2>/dev/null || echo "0")
+	if [[ "$has_container_pool" -eq 0 ]]; then
+		log_info "Creating container_pool tables (t1165.2)..."
+		_create_container_pool_schema
+		log_success "Created container_pool and container_dispatch_log tables (t1165.2)"
+	fi
+
 	# Prune old action_dedup_log entries (keep last 7 days)
 	db "$SUPERVISOR_DB" "DELETE FROM action_dedup_log WHERE created_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-7 days');" 2>/dev/null || true
 
@@ -915,6 +926,9 @@ SQL
 
 	# Action dedup log — schema defined in _create_action_dedup_log_schema() (t1138)
 	_create_action_dedup_log_schema
+
+	# Container pool — schema defined in _create_container_pool_schema() (t1165.2)
+	_create_container_pool_schema
 
 	log_success "Initialized supervisor database: $SUPERVISOR_DB"
 	return 0

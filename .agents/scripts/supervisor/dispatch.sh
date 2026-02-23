@@ -3221,6 +3221,20 @@ cmd_dispatch() {
 	} >"$wrapper_script"
 	chmod +x "$wrapper_script"
 
+	# t1165.2: Container pool dispatch — if pool has healthy containers,
+	# select one via round-robin and record the dispatch. The container ID
+	# is stored in dispatch_target as "pool:<container_id>" for tracking.
+	# Pool dispatch is opt-in: only used when SUPERVISOR_USE_CONTAINER_POOL=true
+	# or when the task has dispatch_target=pool.
+	local pool_container_id=""
+	if [[ "${SUPERVISOR_USE_CONTAINER_POOL:-false}" == "true" ]]; then
+		pool_container_id=$(pool_select_container 2>/dev/null) || pool_container_id=""
+		if [[ -n "$pool_container_id" ]]; then
+			log_info "Container pool: selected $pool_container_id for $task_id (t1165.2)"
+			pool_record_dispatch "$pool_container_id" "$task_id" 2>/dev/null || true
+		fi
+	fi
+
 	# t1165.3: Remote dispatch — check if task has a dispatch_target set.
 	# If so, route to remote-dispatch-helper.sh instead of local process.
 	local dispatch_target=""
