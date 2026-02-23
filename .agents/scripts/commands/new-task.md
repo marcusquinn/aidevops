@@ -6,6 +6,8 @@ mode: subagent
 
 Allocate a new task ID using `claim-task-id.sh` (distributed lock via GitHub/GitLab issue creation) and add it to TODO.md.
 
+For complex tasks where requirements are unclear, use `/define` first — it runs an interactive interview to surface latent criteria before creating the brief.
+
 Topic/context: $ARGUMENTS
 
 ## Workflow
