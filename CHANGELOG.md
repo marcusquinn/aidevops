@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.125.0] - 2026-02-23
+
+### Added
+
+- add executable verify blocks for task briefs (t1313) (#2187)
+- add container pool manager for supervisor (t1165.2) (#2184)
+- link task IDs to GitHub issues in health dashboard alerts (#2171)
+
+### Changed
+
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+
+### Fixed
+
+- clear dedup guard state on task reset to prevent false cancellations (#2189)
+- ensure task briefs are copied into worktrees at dispatch time (#2188)
+- guard MEMORY_DB with default empty to prevent unbound variable crash (#2186)
+- resolve three supervisor pulse-blocking bugs (#2185)
+- align OAuth routing tests with PR #2173 (opencode is sole worker CLI) (#2180)
+- correct repo slug anomalyco/aidevops to marcusquinn/aidevops (#2181)
+- force opencode as sole worker CLI, remove OAuth routing to claude CLI (#2173)
+- bash 3.2 compatibility and readonly variable conflicts (#2172)
+
 ## [2.124.2] - 2026-02-22
 
 ### Changed
