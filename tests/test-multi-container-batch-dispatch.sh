@@ -304,7 +304,7 @@ fi
 # ============================================================
 section "OAuth Routing Across Containers"
 
-# Test: Anthropic model (opus) routes to claude CLI when OAuth available
+# Test: Anthropic model (opus) routes to opencode CLI (PR #2173 removed OAuth routing)
 oauth_opus_cli=$(
 	_run_isolated_test <<OAUTH_TEST
 #!/usr/bin/env bash
@@ -329,13 +329,13 @@ rm -rf "\$mock_home"
 OAUTH_TEST
 )
 
-if [[ "$oauth_opus_cli" == "claude" ]]; then
-	pass "OAuth routing: anthropic/claude-opus-4-6 -> claude CLI"
+if [[ "$oauth_opus_cli" == "opencode" ]]; then
+	pass "CLI routing: anthropic/claude-opus-4-6 -> opencode (PR #2173: opencode is sole worker CLI)"
 else
-	fail "OAuth routing: opus should route to claude" "Got: '$oauth_opus_cli'"
+	fail "CLI routing: opus should route to opencode" "Got: '$oauth_opus_cli'"
 fi
 
-# Test: Anthropic sonnet model also routes to claude CLI
+# Test: Anthropic sonnet model also routes to opencode CLI (PR #2173)
 oauth_sonnet_cli=$(
 	_run_isolated_test <<OAUTH_TEST2
 #!/usr/bin/env bash
@@ -360,10 +360,10 @@ rm -rf "\$mock_home"
 OAUTH_TEST2
 )
 
-if [[ "$oauth_sonnet_cli" == "claude" ]]; then
-	pass "OAuth routing: anthropic/claude-sonnet-4-6 -> claude CLI"
+if [[ "$oauth_sonnet_cli" == "opencode" ]]; then
+	pass "CLI routing: anthropic/claude-sonnet-4-6 -> opencode (PR #2173: opencode is sole worker CLI)"
 else
-	fail "OAuth routing: sonnet should route to claude" "Got: '$oauth_sonnet_cli'"
+	fail "CLI routing: sonnet should route to opencode" "Got: '$oauth_sonnet_cli'"
 fi
 
 # Test: Non-Anthropic model routes to opencode CLI even with OAuth
@@ -462,7 +462,7 @@ else
 	fail "OAuth routing: bare tier should route to opencode" "Got: '$oauth_bare_tier_cli'"
 fi
 
-# Test: Fully-qualified Anthropic haiku routes to claude
+# Test: Fully-qualified Anthropic haiku routes to opencode (PR #2173)
 oauth_fq_haiku_cli=$(
 	_run_isolated_test <<OAUTH_TEST6
 #!/usr/bin/env bash
@@ -487,10 +487,10 @@ rm -rf "\$mock_home"
 OAUTH_TEST6
 )
 
-if [[ "$oauth_fq_haiku_cli" == "claude" ]]; then
-	pass "OAuth routing: anthropic/claude-haiku-3 -> claude CLI"
+if [[ "$oauth_fq_haiku_cli" == "opencode" ]]; then
+	pass "CLI routing: anthropic/claude-haiku-3 -> opencode (PR #2173: opencode is sole worker CLI)"
 else
-	fail "OAuth routing: fully-qualified haiku should route to claude" "Got: '$oauth_fq_haiku_cli'"
+	fail "CLI routing: fully-qualified haiku should route to opencode" "Got: '$oauth_fq_haiku_cli'"
 fi
 
 # ============================================================
