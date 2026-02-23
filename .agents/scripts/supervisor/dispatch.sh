@@ -1528,14 +1528,16 @@ check_dispatch_dedup_guard() {
 	local cooldown_secs="${SUPERVISOR_FAILURE_COOLDOWN_SECS:-600}" # 10 minutes default
 	local max_consecutive="${SUPERVISOR_MAX_CONSECUTIVE_FAILURES:-2}"
 
-	# Rule 2: Block after max_consecutive identical failures
+	# Rule 2: Cancel after max_consecutive identical failures
+	# Note: queued->blocked is not a valid transition; use cancelled instead.
+	# The task can be manually re-queued after investigation.
 	if [[ "$consecutive_count" -ge "$max_consecutive" ]]; then
 		local block_reason="Dispatch dedup guard: $consecutive_count consecutive identical failures (error: ${last_error:-unknown}) — manual intervention required (t1206)"
-		log_warn "  $task_id: BLOCKED by dedup guard — $consecutive_count consecutive identical failures with error '${last_error:-unknown}'"
-		cmd_transition "$task_id" "blocked" --error "$block_reason" 2>/dev/null || true
+		log_warn "  $task_id: CANCELLED by dedup guard — $consecutive_count consecutive identical failures with error '${last_error:-unknown}'"
+		cmd_transition "$task_id" "cancelled" --error "$block_reason" 2>/dev/null || true
 		update_todo_on_blocked "$task_id" "$block_reason" 2>/dev/null || true
-		send_task_notification "$task_id" "blocked" "$block_reason" 2>/dev/null || true
-		store_failure_pattern "$task_id" "blocked" "$block_reason" "dispatch-dedup-guard" 2>/dev/null || true
+		send_task_notification "$task_id" "cancelled" "$block_reason" 2>/dev/null || true
+		store_failure_pattern "$task_id" "cancelled" "$block_reason" "dispatch-dedup-guard" 2>/dev/null || true
 		return 1
 	fi
 

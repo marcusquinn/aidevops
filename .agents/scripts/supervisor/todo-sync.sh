@@ -1693,7 +1693,7 @@ cmd_reconcile_db_todo() {
 				else
 					log_info "Phase 7b: Transitioning $tid from $tstatus to complete (TODO.md shows [x])"
 					cmd_transition "$tid" "complete" \
-						--reason "Reconciled: TODO.md marked [x] but DB was $tstatus (t1001)" \
+						--error "Reconciled: TODO.md marked [x] but DB was $tstatus (t1001)" \
 						2>>"${SUPERVISOR_LOG:-/dev/null}" || {
 						log_warn "Phase 7b: Failed to transition $tid to complete"
 						continue
@@ -1874,7 +1874,7 @@ cmd_reconcile_queue_dispatchability() {
 			else
 				log_info "Phase 0.6: $tid queued in DB but [x] in TODO.md — transitioning to complete"
 				cmd_transition "$tid" "complete" \
-					--reason "Reconciled: TODO.md marked [x] but DB was queued (t1180)" \
+					--error "Reconciled: TODO.md marked [x] but DB was queued (t1180)" \
 					2>>"${SUPERVISOR_LOG:-/dev/null}" || {
 					log_warn "Phase 0.6: Failed to transition $tid to complete"
 					continue
@@ -1891,7 +1891,7 @@ cmd_reconcile_queue_dispatchability() {
 			else
 				log_info "Phase 0.6: $tid queued in DB but [-] in TODO.md — cancelling"
 				cmd_transition "$tid" "cancelled" \
-					--reason "Reconciled: TODO.md marked [-] but DB was queued (t1180)" \
+					--error "Reconciled: TODO.md marked [-] but DB was queued (t1180)" \
 					2>>"${SUPERVISOR_LOG:-/dev/null}" || {
 					log_warn "Phase 0.6: Failed to cancel $tid"
 					continue
@@ -1950,7 +1950,7 @@ cmd_reconcile_queue_dispatchability() {
 			else
 				log_warn "Phase 0.6: $tid queued in DB but not dispatchable in TODO.md — cancelling phantom entry"
 				cmd_transition "$tid" "cancelled" \
-					--reason "Reconciled: queued in DB but TODO.md has no #auto-dispatch tag or Dispatch Queue entry (t1180)" \
+					--error "Reconciled: queued in DB but TODO.md has no #auto-dispatch tag or Dispatch Queue entry (t1180)" \
 					2>>"${SUPERVISOR_LOG:-/dev/null}" || {
 					log_warn "Phase 0.6: Failed to cancel phantom $tid"
 					continue

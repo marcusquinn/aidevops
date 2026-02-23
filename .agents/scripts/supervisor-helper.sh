@@ -245,6 +245,7 @@ readonly VALID_STATES="queued dispatched running evaluating retrying complete pr
 # shellcheck disable=SC2034 # Used by supervisor/state.sh
 readonly -a VALID_TRANSITIONS=(
 	"queued:dispatched"
+	"queued:blocked"
 	"queued:cancelled"
 	"dispatched:running"
 	"dispatched:failed"
