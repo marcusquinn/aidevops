@@ -2487,3 +2487,14 @@
   files: tests/test-multi-container-batch-dispatch.sh
   check: shellcheck tests/test-multi-container-batch-dispatch.sh
   check: file-exists tests/test-multi-container-batch-dispatch.sh
+
+- [ ] v286 t1312 Interactive brief generation with latent criteria probing... | PR #2183 | merged:2026-02-23
+  files: .agents/AGENTS.md, .agents/reference/define-probes/bugfix.md, .agents/reference/define-probes/docs.md, .agents/reference/define-probes/feature.md, .agents/reference/define-probes/refactor.md, .agents/reference/define-probes/research.md, .agents/scripts/commands/define.md, .agents/scripts/commands/new-task.md
+  check: file-exists .agents/AGENTS.md
+  check: file-exists .agents/reference/define-probes/bugfix.md
+  check: file-exists .agents/reference/define-probes/docs.md
+  check: file-exists .agents/reference/define-probes/feature.md
+  check: file-exists .agents/reference/define-probes/refactor.md
+  check: file-exists .agents/reference/define-probes/research.md
+  check: file-exists .agents/scripts/commands/define.md
+  check: file-exists .agents/scripts/commands/new-task.md
