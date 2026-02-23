@@ -8,6 +8,42 @@
 # Create a worktree for a task
 # Returns the worktree path on stdout
 #######################################
+#######################################
+# Ensure the task brief is present in the worktree.
+# Briefs live on the default branch (develop/main) and may not exist
+# in worktrees created from an older commit. This copies the brief
+# from the main repo into the worktree if missing.
+# Globals: None
+# Arguments:
+#   $1 - task_id
+#   $2 - repo (main repo path)
+#   $3 - worktree_path
+# Returns: 0 always (best-effort, non-fatal)
+#######################################
+ensure_brief_in_worktree() {
+	local task_id="$1"
+	local repo="$2"
+	local worktree_path="$3"
+
+	local brief_rel="todo/tasks/${task_id}-brief.md"
+	local src="${repo}/${brief_rel}"
+	local dst="${worktree_path}/${brief_rel}"
+
+	# Skip if brief already exists in worktree
+	if [[ -f "$dst" ]]; then
+		return 0
+	fi
+
+	# Copy from main repo if available
+	if [[ -f "$src" ]]; then
+		mkdir -p "$(dirname "$dst")" 2>/dev/null || true
+		cp "$src" "$dst" 2>/dev/null || true
+		log_info "Copied task brief ${brief_rel} into worktree" >&2
+	fi
+
+	return 0
+}
+
 create_task_worktree() {
 	local task_id="$1"
 	local repo="$2"
@@ -53,6 +89,7 @@ create_task_worktree() {
 						git -C "$worktree_path" push --force-with-lease origin "$branch_name" &>/dev/null ||
 							log_warn "Force-push after reset failed — worker may need --force on first push" >&2
 						log_info "Worktree $worktree_path reset to origin/main on branch $branch_name" >&2
+						ensure_brief_in_worktree "$task_id" "$repo" "$worktree_path"
 						echo "$worktree_path"
 						return 0
 					else
@@ -71,6 +108,7 @@ create_task_worktree() {
 								log_warn "Force-push after reset failed — worker may need --force on first push" >&2
 							register_worktree "$worktree_path" "$branch_name" --task "$task_id"
 							log_info "Created worktree on existing branch $branch_name, reset to origin/main" >&2
+							ensure_brief_in_worktree "$task_id" "$repo" "$worktree_path"
 							echo "$worktree_path"
 							return 0
 						else
@@ -99,6 +137,7 @@ create_task_worktree() {
 			open_pr_count=$(gh pr list --head "$branch_name" --state open --json number --jq 'length' 2>/dev/null || echo "0")
 			if [[ "$open_pr_count" -gt 0 ]]; then
 				log_warn "Branch $branch_name has 0 commits ahead but has an open PR — keeping" >&2
+				ensure_brief_in_worktree "$task_id" "$repo" "$worktree_path"
 				echo "$worktree_path"
 				return 0
 			fi
@@ -115,6 +154,7 @@ create_task_worktree() {
 				log_warn "Stale worktree for $task_id ($diff_files files diverged from main) — recreating" >&2
 			else
 				log_info "Worktree already exists with $ahead_count commit(s): $worktree_path" >&2
+				ensure_brief_in_worktree "$task_id" "$repo" "$worktree_path"
 				echo "$worktree_path"
 				return 0
 			fi
@@ -151,6 +191,7 @@ create_task_worktree() {
 			stale_owner_info=$(check_worktree_owner "$worktree_path" || echo "unknown")
 			log_warn "Cannot clean stale worktree $worktree_path — owned by another active session (owner: $stale_owner_info)" >&2
 			# Return existing path — let the caller decide
+			ensure_brief_in_worktree "$task_id" "$repo" "$worktree_path"
 			echo "$worktree_path"
 			return 0
 		fi
@@ -172,6 +213,7 @@ create_task_worktree() {
 	if command -v wt &>/dev/null && wt switch -c "$branch_name" -C "$repo" >&2 2>&1; then
 		# Register ownership (t189)
 		register_worktree "$worktree_path" "$branch_name" --task "$task_id"
+		ensure_brief_in_worktree "$task_id" "$repo" "$worktree_path"
 		echo "$worktree_path"
 		return 0
 	fi
@@ -180,6 +222,7 @@ create_task_worktree() {
 	if git -C "$repo" worktree add "$worktree_path" -b "$branch_name" >&2 2>&1; then
 		# Register ownership (t189)
 		register_worktree "$worktree_path" "$branch_name" --task "$task_id"
+		ensure_brief_in_worktree "$task_id" "$repo" "$worktree_path"
 		echo "$worktree_path"
 		return 0
 	fi
@@ -188,6 +231,7 @@ create_task_worktree() {
 	if git -C "$repo" worktree add "$worktree_path" "$branch_name" >&2 2>&1; then
 		# Register ownership (t189)
 		register_worktree "$worktree_path" "$branch_name" --task "$task_id"
+		ensure_brief_in_worktree "$task_id" "$repo" "$worktree_path"
 		echo "$worktree_path"
 		return 0
 	fi
