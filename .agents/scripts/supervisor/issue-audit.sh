@@ -254,10 +254,13 @@ audit_closed_issues() {
 		fi
 
 		# Check 3: Was there a merged PR for this task?
+		# t1158: Pass task_line (not empty string) so find_closing_pr can extract pr:#NNN
+		# from TODO.md. Previously passed "" which caused Check 1/2 in find_closing_pr
+		# to always fail, missing PR linkage for auto-reaped tasks not in supervisor DB.
 		local merged_pr=""
 		if [[ -n "$task_id" ]]; then
 			local pr_info=""
-			pr_info=$(find_closing_pr "" "$task_id" "$repo_slug" 2>/dev/null || echo "")
+			pr_info=$(find_closing_pr "${task_line:-}" "$task_id" "$repo_slug" 2>/dev/null || echo "")
 			if [[ -n "$pr_info" ]]; then
 				merged_pr="${pr_info%%|*}"
 			fi
@@ -274,6 +277,18 @@ audit_closed_issues() {
 				linked_pr_count=$((linked_pr_count + 1))
 			fi
 			has_evidence=true
+		fi
+
+		# t1158: Fallback — if TODO.md has completion evidence (pr:#NNN) but merged_pr
+		# is still empty (e.g., find_closing_pr failed, platform search unavailable),
+		# extract PR number directly from task_line as last resort.
+		if [[ "$has_evidence" == "true" && -z "$merged_pr" && -n "${task_line:-}" ]]; then
+			local fallback_pr=""
+			fallback_pr=$(printf '%s' "$task_line" | grep -oE 'pr:#[0-9]+' | head -1 | grep -oE '[0-9]+' || echo "")
+			if [[ -n "$fallback_pr" ]]; then
+				merged_pr="$fallback_pr"
+				log_verbose "audit_closed_issues: task $task_id — extracted PR #$fallback_pr from TODO.md as fallback"
+			fi
 		fi
 
 		# Generate findings based on checks
