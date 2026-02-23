@@ -21,6 +21,105 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-02-22] Manifest-Driven Brief Generation
+
+**Status:** Planning
+**Estimate:** ~8h (ai:6h test:2h)
+**TODO:** t1312, t1313
+**Logged:** 2026-02-22
+**Reference:** https://github.com/doodledood/manifest-dev (MIT, 40 stars)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p031,Manifest-Driven Brief Generation,planning,0,2,,feature|workflow|brief|quality,8h,6h,2h,0m,2026-02-22T00:00Z,
+-->
+
+#### Purpose
+
+Analysis of doodledood/manifest-dev revealed two high-value ideas worth adapting to aidevops:
+
+1. **Interactive brief generation** — a structured interview that surfaces "latent criteria" (requirements users don't know they have until probed) before creating a task brief
+2. **Executable verification blocks** — machine-runnable `verify:` blocks attached to each acceptance criterion, creating an automated completion gate
+
+Both address the same root problem: task briefs vary wildly in quality, and auto-dispatched workers have no human to catch gaps mid-implementation. Front-loading discovery (interview) and back-loading verification (executable checks) creates a tighter loop.
+
+#### Context
+
+**What manifest-dev does well (steal):**
+
+| Concept | Their Implementation | Our Adaptation |
+|---------|---------------------|----------------|
+| Structured interview | 30KB `/define` SKILL.md with domain grounding, pre-mortem, backcasting, outside view | Lighter `/define` slash command (~2KB) with probing angles per task type |
+| Concrete options | AskUserQuestion tool: 2-4 options, one recommended | Agent instruction: present numbered options with recommendation |
+| Per-criterion verification | YAML `verify:` blocks (bash, codebase, subagent, research, manual) | Same schema, minus `research` method (not needed for our domain) |
+| Task-type guidance | 8 task files (CODING.md, FEATURE.md, BUG.md, etc.) with quality gates, risks, scenarios | Compact probing angle files in `reference/define-probes/` |
+| Verify-fix loop | /do -> /verify -> fix -> /verify until all pass | verify-brief.sh as completion gate in task-complete-helper.sh |
+| Escalation protocol | /escalate with 3+ attempts required | Adapt as structured escalation guidance (not a separate command) |
+
+**What manifest-dev over-engineers (don't steal):**
+
+| Concept | Why Skip |
+|---------|----------|
+| Separate manifest file + discovery log | Our brief IS the output — no intermediate state needed |
+| manifest-verifier agent | Over-engineered for brief validation — the interview itself is the quality gate |
+| Global Invariants as separate concept | Our brief's AC section covers this |
+| Amendment protocol (INV-G1.1) | Too formal for our ephemeral briefs |
+| 10 specialized review agents | We have existing linters + code-standards.md + qlty |
+| Workflow enforcement hooks (Python) | We use pre-edit-check.sh + pre-commit hooks |
+
+**LLM first principles (from their LLM_CODING_CAPABILITIES.md, 20KB research doc):**
+
+Key findings that validate this approach:
+- LLMs achieve 92% on single-function tasks but drop to 23% on complex multi-file tasks
+- "Clear acceptance criteria play to their strength" (goal-oriented RL training)
+- Context drift in long sessions causes "context rot" — external state (the brief) compensates
+- LLMs can't express genuine uncertainty — verification catches what self-assessment misses
+- After ~5 self-debugging iterations, diminishing returns — verify-fix loop should cap retries
+- Effective context is 25-50% of claimed context window — keep briefs concise
+
+#### Execution Phases
+
+**Phase 1: Interactive Brief Generation (t1312) ~4h**
+
+- Create `.agents/scripts/commands/define.md` slash command
+- Create `.agents/reference/define-probes/` with task-type probing angles:
+  - `coding.md` — base probes for all code changes
+  - `feature.md` — feature-specific probes
+  - `bugfix.md` — bug-specific probes
+  - `refactor.md` — refactor-specific probes
+  - `shell.md` — shell script-specific probes
+- Interview workflow: classify -> domain ground -> probe -> pre-mortem -> generate brief
+- Each question: 2-4 concrete options, one recommended
+- Output: complete brief at `todo/tasks/{task_id}-brief.md`
+
+**Phase 2: Executable Verification Blocks (t1313) ~4h**
+
+- Extend `templates/brief-template.md` with `verify:` block syntax
+- Create `scripts/verify-brief.sh` — extracts and runs verification blocks
+- Four methods: bash (exit code), codebase (rg pattern), subagent (review prompt), manual (skip)
+- Integrate with `task-complete-helper.sh` as completion gate
+- Update at least one existing brief with verify blocks as example
+
+#### Decision Log
+
+| Date | Decision | Rationale |
+|------|----------|-----------|
+| 2026-02-22 | Adapt ideas, don't adopt the plugin | manifest-dev is a Claude Code plugin (Python hooks, Claude-specific skills). We're tool-agnostic. Extract the ideas, implement in our architecture. |
+| 2026-02-22 | Lighter interview than manifest-dev's 30KB prompt | Their `/define` is comprehensive but heavy (~30KB loaded per invocation). Our probing angles are compact reference files (~500 bytes each), loaded on-demand per task type. |
+| 2026-02-22 | Skip `research` verification method | manifest-dev includes web research verification for API compatibility checks. Our briefs are about code changes — bash + codebase + subagent covers our needs. |
+| 2026-02-22 | Verification blocks are optional | Existing briefs without `verify:` blocks still work. Gradual adoption — new briefs from `/define` include them, old briefs can be retrofitted. |
+| 2026-02-22 | Subagent verification uses task's model tier | manifest-dev defaults to opus for verification. We use the task's assigned model tier or default to sonnet (cost-aware). |
+
+#### Risks
+
+| Risk | Likelihood | Impact | Mitigation |
+|------|-----------|--------|------------|
+| Interview adds friction to quick tasks | Medium | Low | `/define` is optional — users can still create briefs manually for simple tasks |
+| Probing angles become stale | Low | Low | Angles are generic domain knowledge, not project-specific. Update when new failure patterns emerge. |
+| verify-brief.sh false positives | Medium | Medium | Each method has clear pass/fail semantics. Subagent method is the most subjective — use specific prompts, not vague "review this" |
+| Workers ignore verification failures | Low | High | Integration with task-complete-helper.sh makes it a hard gate, not advisory |
+
+---
+
 ### [2026-02-22] Harness Engineering: oh-my-pi Learnings
 
 **Status:** Planning
