@@ -2524,3 +2524,8 @@
 
 - [ ] v289 t1288.6 Test and verify — run `generate-opencode-agents.sh`, veri... | PR #2196 | merged:2026-02-23
   check: rg "t1288.6" TODO.md
+
+- [ ] v290 t1158 Fix audit script PR linkage detection for auto-reaped tas... | PR #2197 | merged:2026-02-23
+  files: .agents/scripts/supervisor/issue-audit.sh
+  check: shellcheck .agents/scripts/supervisor/issue-audit.sh
+  check: file-exists .agents/scripts/supervisor/issue-audit.sh
