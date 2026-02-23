@@ -104,7 +104,7 @@ store_failure_pattern() {
 	local recent_count=0
 	local escaped_detail
 	escaped_detail="$(sql_escape "$outcome_detail")"
-	if [[ -r "$MEMORY_DB" ]]; then
+	if [[ -n "${MEMORY_DB:-}" && -r "$MEMORY_DB" ]]; then
 		recent_count=$(sqlite3 "$MEMORY_DB" \
 			"SELECT COUNT(*) FROM learnings WHERE type = 'FAILURE_PATTERN' AND content LIKE '%${escaped_detail}%' AND created_at > datetime('now', '-1 day');" \
 			2>/dev/null || echo "0")
