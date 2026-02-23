@@ -27,11 +27,56 @@ mode: subagent
 
 ## Acceptance Criteria
 
+Each criterion may include an optional `verify:` block (YAML in a fenced code block)
+that defines how to machine-check the criterion. See `scripts/verify-brief.sh` for the runner.
+
 - [ ] {Specific, testable criterion — e.g., "User can toggle sidebar with Cmd+B"}
+  ```yaml
+  verify:
+    method: bash
+    run: "{shell command — pass if exit 0}"
+  ```
 - [ ] {Another criterion — e.g., "Conversation history persists across page reloads"}
+  ```yaml
+  verify:
+    method: codebase
+    pattern: "{regex pattern to search for}"
+    path: "{directory or file to search in}"
+  ```
 - [ ] {Negative criterion — e.g., "Org A's data never appears in Org B's context"}
+  ```yaml
+  verify:
+    method: codebase
+    pattern: "{pattern that must NOT match}"
+    path: "{search scope}"
+    expect: absent
+  ```
+- [ ] {Criterion requiring AI review}
+  ```yaml
+  verify:
+    method: subagent
+    prompt: "{review prompt for AI to evaluate}"
+    files: "{optional: files to include as context}"
+  ```
+- [ ] {Criterion requiring human review}
+  ```yaml
+  verify:
+    method: manual
+    prompt: "{what the human should check}"
+  ```
 - [ ] Tests pass (`npm test` / `bun test` / project-specific)
 - [ ] Lint clean (`eslint` / `shellcheck` / project-specific)
+
+<!-- Verify block reference:
+  Methods:
+    bash     — run shell command, pass if exit 0
+    codebase — rg pattern search, pass if match found (or absent with expect: absent)
+    subagent — spawn AI review prompt via ai-research
+    manual   — flag for human, always reports SKIP (never blocks automation)
+
+  Verify blocks are optional. Criteria without them are reported as UNVERIFIED.
+  Runner: .agents/scripts/verify-brief.sh <brief-file>
+-->
 
 ## Context & Decisions
 
