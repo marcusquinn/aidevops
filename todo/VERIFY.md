@@ -2511,3 +2511,13 @@
   check: file-exists .agents/scripts/supervisor/dispatch.sh
   check: shellcheck tests/test-container-pool.sh
   check: file-exists tests/test-container-pool.sh
+
+- [ ] v288 t1313 Executable verification blocks in task briefs — extend br... | PR #2187 | merged:2026-02-23
+  files: .agents/scripts/task-complete-helper.sh, .agents/scripts/verify-brief.sh, .agents/templates/brief-template.md, tests/test-verify-brief.sh
+  check: shellcheck .agents/scripts/task-complete-helper.sh
+  check: file-exists .agents/scripts/task-complete-helper.sh
+  check: shellcheck .agents/scripts/verify-brief.sh
+  check: file-exists .agents/scripts/verify-brief.sh
+  check: file-exists .agents/templates/brief-template.md
+  check: shellcheck tests/test-verify-brief.sh
+  check: file-exists tests/test-verify-brief.sh
