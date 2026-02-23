@@ -2482,3 +2482,8 @@
   files: .agents/plugins/opencode-aidevops/index.mjs, .agents/plugins/opencode-aidevops/observability.mjs
   check: file-exists .agents/plugins/opencode-aidevops/index.mjs
   check: file-exists .agents/plugins/opencode-aidevops/observability.mjs
+
+- [ ] v285 t1165 Containerized Claude Code CLI instances for multi-subscri... | PR #2180 | merged:2026-02-23
+  files: tests/test-multi-container-batch-dispatch.sh
+  check: shellcheck tests/test-multi-container-batch-dispatch.sh
+  check: file-exists tests/test-multi-container-batch-dispatch.sh
