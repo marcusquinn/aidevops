@@ -98,7 +98,8 @@ Read subagents on-demand. Full index: `subagent-index.toon`.
 | Email | `tools/ui/react-email.md`, `services/email/email-testing.md` |
 | Payments | `services/payments/revenuecat.md`, `services/payments/stripe.md` |
 | Security/Encryption | `tools/security/tirith.md`, `tools/credentials/encryption-stack.md` |
-| Infrastructure | `tools/infrastructure/cloud-gpu.md`, `tools/containers/orbstack.md`, `tools/containers/remote-dispatch.md`, `services/hosting/local-hosting.md` |
+| Local Development | `services/hosting/local-hosting.md` |
+| Infrastructure | `tools/infrastructure/cloud-gpu.md`, `tools/containers/orbstack.md`, `tools/containers/remote-dispatch.md` |
 | Accessibility | `services/accessibility/accessibility-audit.md` |
 | OpenAPI exploration | `tools/context/openapi-search.md` |
 | Model routing | `tools/context/model-routing.md`, `reference/orchestration.md` |

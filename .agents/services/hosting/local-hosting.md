@@ -259,9 +259,11 @@ localhost-helper.sh generate-cert <domain> # Generate mkcert cert
 # App management
 localhost-helper.sh create-app <name> <domain> <port> [ssl] [type]
 
-# LocalWP MCP
-localhost-helper.sh start-mcp             # Start LocalWP MCP server (port 8085)
+# LocalWP MCP (port 8085)
+localhost-helper.sh start-mcp             # Start LocalWP MCP server
 localhost-helper.sh stop-mcp              # Stop LocalWP MCP server
+localhost-helper.sh test-mcp              # Test MCP connection
+localhost-helper.sh mcp-query "<sql>"     # Query WordPress database via MCP
 ```
 
 ## LocalWP Coexistence
@@ -756,9 +758,9 @@ localdev-helper.sh init
 
 ## Legacy Context
 
-The `localhost.md` agent in this directory contains the original localhost development guide. It documents the older `localhost-helper.sh` approach with manual setup steps. For new projects, use `localdev-helper.sh` which automates the full workflow.
+The `localhost.md` file in this directory is a redirect stub pointing here. The legacy `localhost-helper.sh` commands are documented in the CLI Reference section above.
 
-Key differences:
+Key differences between legacy and current:
 
 | Aspect | localhost-helper.sh (legacy) | localdev-helper.sh (current) |
 |--------|------------------------------|------------------------------|
