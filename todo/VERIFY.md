@@ -2051,7 +2051,7 @@
   check: file-exists configs/mcp-servers-config.json.txt
   check: rg "cloudflare-mcp" .agents/subagent-index.toon
 
-- [ ] v252 t1288 Add OpenAPI Search MCP integration — janwilmake/openapi... | PR #2078 | merged:2026-02-21
+- [x] v252 t1288 Add OpenAPI Search MCP integration — janwilmake/openapi... | PR #2078 | merged:2026-02-21 verified:2026-02-23
   files: .agents/AGENTS.md, .agents/configs/mcp-templates/openapi-search.json, .agents/configs/openapi-search-config.json.txt, .agents/scripts/generate-opencode-agents.sh, .agents/subagent-index.toon, .agents/tools/context/openapi-search.md
   check: file-exists .agents/AGENTS.md
   check: file-exists .agents/configs/mcp-templates/openapi-search.json
@@ -2521,3 +2521,6 @@
   check: file-exists .agents/templates/brief-template.md
   check: shellcheck tests/test-verify-brief.sh
   check: file-exists tests/test-verify-brief.sh
+
+- [ ] v289 t1288.6 Test and verify — run `generate-opencode-agents.sh`, veri... | PR #2196 | merged:2026-02-23
+  check: rg "t1288.6" TODO.md
