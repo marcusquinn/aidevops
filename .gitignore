@@ -168,13 +168,9 @@ test-*.yaml
 *.sqlite3
 *.db
 
-#Ignore vscode AI rules
-.github/instructions/codacy.instructions.md
-
 # AI Tool Symlinks - Track these (they point to .agents and AGENTS.md)
 # Rules files - only actual files tracked, not symlinks
 !CLAUDE.md
-!GEMINI.md
 !AGENT.md
 
 # Rules symlinks removed - cause duplicate refs in OpenCode
@@ -184,8 +180,6 @@ test-*.yaml
 
 # Agent/skills folders - only .opencode tracked (has actual config)
 !.opencode/
-!.gemini/
-!.qoder/
 
 # AI tool directories removed - cause duplicate @ refs in OpenCode
 # These tools should use ~/.aidevops/agents/ (deployed location)
