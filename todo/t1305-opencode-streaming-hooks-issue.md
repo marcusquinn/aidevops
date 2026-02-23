@@ -1,14 +1,31 @@
 # t1305: OpenCode Upstream Issue Draft
 
-**Upstream issue created:** https://github.com/anomalyco/opencode/issues/14691
+## Status
+
+- **Original issue:** [#14691](https://github.com/anomalyco/opencode/issues/14691) -- CLOSED (superseded)
+- **Active issue:** [#14740](https://github.com/anomalyco/opencode/issues/14740) -- OPEN (cleaner description)
+- **Active PR:** [#14741](https://github.com/anomalyco/opencode/pull/14741) -- OPEN, MERGEABLE
+  - Branch: `feature/stream-hooks-v2`
+  - CI: 6/8 pass (2 failures are unrelated Windows Playwright flake)
+  - Includes unit tests
+  - Awaiting maintainer review/merge
+- **Internal PR:** [#2152](https://github.com/marcusquinn/aidevops/pull/2152) -- MERGED (issue draft)
+
+### Timeline
+
+1. Issue #14691 created (2026-02-22) with full research, benchmark data, code sketch
+2. PR #14727 submitted with initial implementation
+3. Issue #14740 created (2026-02-23) as cleaner re-submission
+4. PR #14741 submitted (2026-02-23) with unit tests, superseding #14727
+5. Issue #14691 closed to consolidate discussion at #14740
 
 ## Target Repository
 
-`anomalyco/opencode` (108k+ stars)
+`anomalyco/opencode` (109k+ stars, TypeScript, v1.2.10)
 
 ## Issue Title
 
-`[FEATURE]: Plugin hooks for streaming token observation (stream.delta) and abort handling (stream.aborted)`
+`[FEATURE]: Plugin hooks for real-time stream observation and abort control`
 
 ## Research Summary
 
@@ -217,3 +234,16 @@ if (abortReason) {
 4. **Complements #12472**: Claude Code's `PreToolUse`/`PostToolUse` map to `tool.execute.before/after`. These new hooks cover the streaming phase that Claude Code doesn't expose at all -- making OpenCode's plugin system strictly more capable.
 
 5. **Complements #13524**: The centralized hook dispatch from #13524 would naturally include these new hooks.
+
+## Architecture Verification (2026-02-23)
+
+Re-checked per task note about v1.2.7 Bun->Filesystem migration:
+
+- **`processor.ts` location**: Confirmed still in `packages/opencode/src/session/` (TypeScript codebase)
+- **Plugin system**: `packages/plugin/src/index.ts` -- `Plugin.trigger()` pattern unchanged
+- **Streaming loop**: `for await (const value of stream.fullStream)` switch statement in processor.ts
+- **v1.2.1 PartDelta SDK events**: `text-delta`, `reasoning-delta`, `tool-input-delta` events from AI SDK
+- **v1.2.7 migration**: Bun.file() -> Filesystem module (file I/O layer), does NOT affect streaming/plugin architecture
+- **Current version**: v1.2.10 (released 2026-02-20)
+
+**Note:** There is a separate Go project `opencode-ai/opencode` (11k stars) which is a different product entirely. The target for this task is `anomalyco/opencode` (109k stars, TypeScript).
