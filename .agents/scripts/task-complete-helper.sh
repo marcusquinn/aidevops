@@ -8,6 +8,7 @@
 # Options:
 #   --pr <number>              PR number (e.g., 123)
 #   --verified <date>          Verified date (YYYY-MM-DD, defaults to today)
+#   --verify                   Run verify-brief.sh on task brief before completing
 #   --repo-path <path>         Path to git repository (default: current directory)
 #   --no-push                  Mark complete but don't push (for testing)
 #   --help                     Show this help message
@@ -16,6 +17,7 @@
 #   task-complete-helper.sh t123 --pr 456
 #   task-complete-helper.sh t124 --verified 2026-02-12
 #   task-complete-helper.sh t125 --verified  # Uses today's date
+#   task-complete-helper.sh t126 --pr 789 --verify  # Verify brief before completing
 #
 # Exit codes:
 #   0 - Success (task marked complete, committed, and pushed)
@@ -41,6 +43,7 @@ PR_NUMBER=""
 VERIFIED_DATE=""
 REPO_PATH="$PWD"
 NO_PUSH=false
+VERIFY_BRIEF=false
 
 # Logging
 log_info() { echo -e "${BLUE}[INFO]${NC} $*" >&2; }
@@ -63,18 +66,24 @@ parse_args() {
 	fi
 
 	# First positional argument is task ID
-	TASK_ID="$1"
+	local first_arg="$1"
+	TASK_ID="$first_arg"
 	shift
 
+	local arg=""
+	local val=""
 	while [[ $# -gt 0 ]]; do
-		case "$1" in
+		arg="$1"
+		case "$arg" in
 		--pr)
-			PR_NUMBER="$2"
+			val="$2"
+			PR_NUMBER="$val"
 			shift 2
 			;;
 		--verified)
-			if [[ -n "${2:-}" && "$2" != --* ]]; then
-				VERIFIED_DATE="$2"
+			val="${2:-}"
+			if [[ -n "$val" && "$val" != --* ]]; then
+				VERIFIED_DATE="$val"
 				shift 2
 			else
 				VERIFIED_DATE=$(date +%Y-%m-%d)
@@ -82,11 +91,16 @@ parse_args() {
 			fi
 			;;
 		--repo-path)
-			REPO_PATH="$2"
+			val="$2"
+			REPO_PATH="$val"
 			shift 2
 			;;
 		--no-push)
 			NO_PUSH=true
+			shift
+			;;
+		--verify)
+			VERIFY_BRIEF=true
 			shift
 			;;
 		--help)
@@ -94,7 +108,7 @@ parse_args() {
 			exit 0
 			;;
 		*)
-			log_error "Unknown option: $1"
+			log_error "Unknown option: $arg"
 			return 1
 			;;
 		esac
@@ -278,6 +292,27 @@ main() {
 	fi
 
 	log_info "Completing task: $TASK_ID"
+
+	# Run brief verification if --verify flag is set
+	if [[ "$VERIFY_BRIEF" == "true" ]]; then
+		local brief_file="${REPO_PATH}/todo/tasks/${TASK_ID}-brief.md"
+		if [[ ! -f "$brief_file" ]]; then
+			log_warn "Brief file not found: $brief_file — skipping verification"
+		else
+			local verify_script="${SCRIPT_DIR}/verify-brief.sh"
+			if [[ ! -x "$verify_script" ]]; then
+				log_error "verify-brief.sh not found or not executable: $verify_script"
+				return 1
+			fi
+			log_info "Running brief verification: $brief_file"
+			if ! "$verify_script" "$brief_file" --repo-path "$REPO_PATH"; then
+				log_error "Brief verification failed — task cannot be marked complete"
+				log_info "Fix failing criteria or remove --verify flag to skip verification"
+				return 1
+			fi
+			log_success "Brief verification passed"
+		fi
+	fi
 
 	# Build proof-log string
 	local proof_log=""
