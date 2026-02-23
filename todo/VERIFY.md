@@ -2483,12 +2483,12 @@
   check: file-exists .agents/plugins/opencode-aidevops/index.mjs
   check: file-exists .agents/plugins/opencode-aidevops/observability.mjs
 
-- [ ] v285 t1165 Containerized Claude Code CLI instances for multi-subscri... | PR #2180 | merged:2026-02-23
+- [x] v285 t1165 Containerized Claude Code CLI instances for multi-subscri... | PR #2180 | merged:2026-02-23 verified:2026-02-23
   files: tests/test-multi-container-batch-dispatch.sh
   check: shellcheck tests/test-multi-container-batch-dispatch.sh
   check: file-exists tests/test-multi-container-batch-dispatch.sh
 
-- [ ] v286 t1312 Interactive brief generation with latent criteria probing... | PR #2183 | merged:2026-02-23
+- [x] v286 t1312 Interactive brief generation with latent criteria probing... | PR #2183 | merged:2026-02-23 verified:2026-02-23
   files: .agents/AGENTS.md, .agents/reference/define-probes/bugfix.md, .agents/reference/define-probes/docs.md, .agents/reference/define-probes/feature.md, .agents/reference/define-probes/refactor.md, .agents/reference/define-probes/research.md, .agents/scripts/commands/define.md, .agents/scripts/commands/new-task.md
   check: file-exists .agents/AGENTS.md
   check: file-exists .agents/reference/define-probes/bugfix.md
@@ -2498,3 +2498,16 @@
   check: file-exists .agents/reference/define-probes/research.md
   check: file-exists .agents/scripts/commands/define.md
   check: file-exists .agents/scripts/commands/new-task.md
+
+- [ ] v287 t1165.2 Container pool manager in supervisor — spawn/destroy cont... | PR #2184 | merged:2026-02-23
+  files: .agents/scripts/supervisor-helper.sh, .agents/scripts/supervisor/container-pool.sh, .agents/scripts/supervisor/database.sh, .agents/scripts/supervisor/dispatch.sh, tests/test-container-pool.sh
+  check: shellcheck .agents/scripts/supervisor-helper.sh
+  check: file-exists .agents/scripts/supervisor-helper.sh
+  check: shellcheck .agents/scripts/supervisor/container-pool.sh
+  check: file-exists .agents/scripts/supervisor/container-pool.sh
+  check: shellcheck .agents/scripts/supervisor/database.sh
+  check: file-exists .agents/scripts/supervisor/database.sh
+  check: shellcheck .agents/scripts/supervisor/dispatch.sh
+  check: file-exists .agents/scripts/supervisor/dispatch.sh
+  check: shellcheck tests/test-container-pool.sh
+  check: file-exists tests/test-container-pool.sh
