@@ -26,7 +26,7 @@ Subagent write restrictions: on `main`/`master`, subagents may ONLY write to `RE
 
 ## Development Lifecycle
 
-1. Create TODO entry **with brief** before starting work
+1. Define the task: `/define` (interactive interview) or `/new-task` (quick creation)
 2. Brief file at `todo/tasks/{task_id}-brief.md` is MANDATORY (see `templates/brief-template.md`)
 3. Brief must include: session origin, what, why, how, acceptance criteria, context
 4. Ask user: implement now or queue for runner?
@@ -60,7 +60,7 @@ Format: `- [ ] t001 Description @owner #tag ~4h started:ISO blocked-by:t002`
 
 Task IDs: `/new-task` or `claim-task-id.sh`. NEVER grep TODO.md for next ID.
 
-**Task briefs are MANDATORY.** Every task must have `todo/tasks/{task_id}-brief.md` capturing: session origin, what, why, how, acceptance criteria, and conversation context. Use `templates/brief-template.md`. A task without a brief loses the knowledge that created it.
+**Task briefs are MANDATORY.** Every task must have `todo/tasks/{task_id}-brief.md` capturing: session origin, what, why, how, acceptance criteria, and conversation context. Use `/define` for interactive brief generation with latent criteria probing, or `/new-task` for quick creation from `templates/brief-template.md`. A task without a brief loses the knowledge that created it.
 
 Auto-dispatch: `#auto-dispatch` tag — only if brief has 2+ acceptance criteria, file references in How section, and clear deliverable in What section. Add `assignee:` before pushing if working interactively.
 
@@ -87,7 +87,7 @@ Read subagents on-demand. Full index: `subagent-index.toon`.
 | Domain | Entry point |
 |--------|-------------|
 | Business | `business.md`, `business/company-runners.md` |
-| Planning | `workflows/plans.md`, `tools/task-management/beads.md` |
+| Planning | `workflows/plans.md`, `scripts/commands/define.md`, `tools/task-management/beads.md` |
 | Code quality | `tools/code-review/code-standards.md` |
 | Git/PRs/Releases | `workflows/git-workflow.md`, `tools/git/github-cli.md`, `workflows/release.md` |
 | Documents/PDF | `tools/document/document-creation.md`, `tools/pdf/overview.md`, `tools/conversion/pandoc.md` |
