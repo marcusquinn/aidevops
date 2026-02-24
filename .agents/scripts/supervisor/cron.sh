@@ -54,7 +54,7 @@ cmd_cron() {
 	done
 
 	local script_path
-	script_path="${_CRON_DIR}/supervisor-helper.sh"
+	script_path="${SCRIPT_DIR}/supervisor-helper.sh"
 	local cron_log="${SUPERVISOR_DIR}/cron.log"
 
 	# Ensure supervisor dir exists for log file
@@ -302,7 +302,7 @@ cmd_watch() {
 	fi
 
 	local todo_file="$repo/TODO.md"
-	local script_path="${_CRON_DIR}/supervisor-helper.sh"
+	local script_path="${SCRIPT_DIR}/supervisor-helper.sh"
 	local watch_log="${SUPERVISOR_DIR}/watch.log"
 
 	# Platform dispatch
