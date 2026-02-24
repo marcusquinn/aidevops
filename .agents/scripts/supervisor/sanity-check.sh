@@ -491,6 +491,8 @@ _execute_sanity_action() {
 		return 1
 	fi
 
+	log_verbose "  Sanity AI action: $action_type on $task_id — $reasoning"
+
 	case "$action_type" in
 	unclaim)
 		# Strip assignee:/started: from the task in TODO.md
