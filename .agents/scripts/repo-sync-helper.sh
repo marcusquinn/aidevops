@@ -55,6 +55,7 @@ readonly DEFAULT_INTERVAL=1440
 readonly LAUNCHD_LABEL="com.aidevops.aidevops-repo-sync"
 readonly LAUNCHD_DIR="$HOME/Library/LaunchAgents"
 readonly LAUNCHD_PLIST="${LAUNCHD_DIR}/${LAUNCHD_LABEL}.plist"
+readonly INSTALL_DIR="$HOME/Git/aidevops"
 readonly DEFAULT_PARENT_DIRS=("$HOME/Git")
 
 #######################################
@@ -360,6 +361,50 @@ sync_repo() {
 }
 
 #######################################
+# Update state file with an action (enable/disable)
+# Arguments:
+#   $1 - action (enable/disable)
+#   $2 - status string
+#######################################
+update_state_action() {
+	local action="$1"
+	local status="$2"
+	local timestamp
+	timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+	if ! command -v jq &>/dev/null; then
+		return 0
+	fi
+
+	ensure_dirs
+
+	local tmp_state
+	tmp_state=$(mktemp)
+	trap 'rm -f "${tmp_state:-}"' RETURN
+
+	if [[ -f "$STATE_FILE" ]]; then
+		jq --arg ts "$timestamp" \
+			--arg action "$action" \
+			--arg status "$status" \
+			'. + {
+				last_action: $action,
+				last_action_time: $ts,
+				status: $status
+			}' "$STATE_FILE" >"$tmp_state" 2>/dev/null && mv "$tmp_state" "$STATE_FILE"
+	else
+		jq -n --arg ts "$timestamp" \
+			--arg action "$action" \
+			--arg status "$status" \
+			'{
+				last_action: $action,
+				last_action_time: $ts,
+				status: $status
+			}' >"$STATE_FILE"
+	fi
+	return 0
+}
+
+#######################################
 # Update state file after a sync run
 # Arguments:
 #   $1 - synced count
@@ -507,8 +552,7 @@ cmd_enable() {
 	# Verify the script exists at the deployed location
 	if [[ ! -x "$script_path" ]]; then
 		# Fall back to repo location
-		local install_dir="$HOME/Git/aidevops"
-		script_path="$install_dir/.agents/scripts/repo-sync-helper.sh"
+		script_path="$INSTALL_DIR/.agents/scripts/repo-sync-helper.sh"
 		if [[ ! -x "$script_path" ]]; then
 			print_error "repo-sync-helper.sh not found"
 			return 1
@@ -539,15 +583,18 @@ cmd_enable() {
 			existing_content=$(cat "$LAUNCHD_PLIST" 2>/dev/null) || existing_content=""
 			if [[ "$existing_content" == "$new_content" ]]; then
 				print_info "Repo sync LaunchAgent already installed with identical config ($LAUNCHD_LABEL)"
+				update_state_action "enable" "enabled"
 				return 0
 			fi
 			print_info "Repo sync LaunchAgent already loaded ($LAUNCHD_LABEL)"
+			update_state_action "enable" "enabled"
 			return 0
 		fi
 
 		echo "$new_content" >"$LAUNCHD_PLIST"
 
 		if launchctl load -w "$LAUNCHD_PLIST" 2>/dev/null; then
+			update_state_action "enable" "enabled"
 			print_success "Repo sync enabled (every ${interval} minutes)"
 			echo ""
 			echo "  Scheduler: launchd (macOS LaunchAgent)"
@@ -565,8 +612,23 @@ cmd_enable() {
 		return 0
 	fi
 
-	# Linux: cron backend (daily at 3am)
-	local cron_expr="0 3 * * *"
+	# Linux: cron backend
+	# Build cron expression from interval (minutes)
+	local cron_expr cron_desc
+	if [[ "$interval" -ge 1440 ]]; then
+		# Daily or longer — run at 3am
+		cron_expr="0 3 * * *"
+		cron_desc="daily at 3am"
+	elif [[ "$interval" -ge 60 ]]; then
+		# Hourly intervals
+		local hours=$((interval / 60))
+		cron_expr="0 */${hours} * * *"
+		cron_desc="every ${hours} hours"
+	else
+		# Sub-hourly intervals
+		cron_expr="*/${interval} * * * *"
+		cron_desc="every ${interval} minutes"
+	fi
 	local cron_line="$cron_expr $script_path check >> $LOG_FILE 2>&1 $CRON_MARKER"
 
 	local temp_cron
@@ -578,7 +640,9 @@ cmd_enable() {
 	crontab "$temp_cron"
 	rm -f "$temp_cron"
 
-	print_success "Repo sync enabled (daily at 3am)"
+	update_state_action "enable" "enabled"
+
+	print_success "Repo sync enabled ($cron_desc)"
 	echo ""
 	echo "  Schedule: $cron_expr"
 	echo "  Script:   $script_path"
@@ -620,6 +684,7 @@ cmd_disable() {
 		fi
 
 		if [[ "$had_entry" == "true" ]]; then
+			update_state_action "disable" "disabled"
 			print_success "Repo sync disabled"
 		else
 			print_info "Repo sync was not enabled"
@@ -642,6 +707,7 @@ cmd_disable() {
 	rm -f "$temp_cron"
 
 	if [[ "$had_entry" == "true" ]]; then
+		update_state_action "disable" "disabled"
 		print_success "Repo sync disabled"
 	else
 		print_info "Repo sync was not enabled"
