@@ -2,6 +2,14 @@
 # state.sh - State machine and task/batch status functions
 #
 # Functions for state transitions, status queries, and task lifecycle
+#
+# t1320: Reviewed for AI migration — all functions in this module are mechanical:
+# - validate_transition(): state machine lookup (array scan)
+# - cmd_transition(): DB update with validation
+# - cmd_status/cmd_list(): DB queries + formatting
+# - check_batch_completion(): count incomplete tasks (SQL aggregate)
+# - cmd_next(): task selection with sibling limits + round-robin (SQL + arithmetic)
+# No judgment calls — entire module stays as shell plumbing.
 
 #######################################
 # Validate a state transition
