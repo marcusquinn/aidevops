@@ -2547,3 +2547,8 @@
   check: file-exists .agents/scripts/supervisor/sanity-check.sh
   check: shellcheck .agents/scripts/supervisor/self-heal.sh
   check: file-exists .agents/scripts/supervisor/self-heal.sh
+
+- [ ] v293 t1317 Migrate routine-scheduler.sh to AI — replace `should_ru... | PR #2220 | merged:2026-02-24
+  files: .agents/scripts/supervisor/routine-scheduler.sh
+  check: shellcheck .agents/scripts/supervisor/routine-scheduler.sh
+  check: file-exists .agents/scripts/supervisor/routine-scheduler.sh
