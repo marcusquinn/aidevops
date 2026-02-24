@@ -452,6 +452,52 @@ _check_and_skip_if_blocked() {
 }
 
 #######################################
+# Register a task as blocked in the supervisor DB.
+# Creates the task via cmd_add if not already tracked, then
+# sets status='blocked' with the blocker reason in the error field.
+#
+# This ensures blocked tasks are visible to the supervisor and
+# will be dispatched immediately when auto_unblock_resolved_tasks
+# transitions them to 'queued'.
+#
+# Args:
+#   $1 - task_id (e.g. t003.2)
+#   $2 - repo path
+#   $3 - blocker reason (e.g. "t003.1" or "hosting-needed")
+#
+# Returns: 0 on success, 1 on failure
+#######################################
+_register_blocked_task() {
+	local task_id="$1"
+	local repo="$2"
+	local blocker_reason="$3"
+
+	# Check if already in supervisor DB
+	local existing
+	existing=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || true)
+
+	if [[ -n "$existing" ]]; then
+		# Already tracked — update to blocked if not in a terminal state
+		if [[ "$existing" == "complete" || "$existing" == "cancelled" || "$existing" == "verified" ]]; then
+			return 0
+		fi
+		if [[ "$existing" != "blocked" ]]; then
+			db "$SUPERVISOR_DB" "UPDATE tasks SET status='blocked', error='Blocked by: ${blocker_reason}', updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id='$(sql_escape "$task_id")';" 2>/dev/null || true
+			log_info "  $task_id: updated to blocked (was: $existing, blocked by: $blocker_reason)"
+		fi
+		return 0
+	fi
+
+	# Not in DB — add it first, then mark blocked
+	if cmd_add "$task_id" --repo "$repo"; then
+		db "$SUPERVISOR_DB" "UPDATE tasks SET status='blocked', error='Blocked by: ${blocker_reason}', updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id='$(sql_escape "$task_id")';" 2>/dev/null || true
+		log_info "  $task_id: registered as blocked (blocked by: $blocker_reason)"
+	fi
+
+	return 0
+}
+
+#######################################
 # t1239: Cross-repo misregistration guard for auto-pickup.
 # Returns 0 (skip) if the task_id is already registered in the DB
 # under a DIFFERENT repo path than the one being scanned.
@@ -560,8 +606,15 @@ cmd_auto_pickup() {
 				continue
 			fi
 
+			# Register blocked tasks in DB instead of skipping entirely.
+			# This makes blocked tasks visible to the supervisor so they
+			# can be dispatched immediately when blockers resolve.
+
 			# Skip tasks with unresolved blocked-by dependencies (t1085.4)
 			if _check_and_skip_if_blocked "$line" "$task_id" "$todo_file"; then
+				local unresolved
+				unresolved=$(is_task_blocked "$line" "$todo_file" || true)
+				_register_blocked_task "$task_id" "$repo" "$unresolved"
 				continue
 			fi
 
@@ -570,6 +623,7 @@ cmd_auto_pickup() {
 				local blocker_tag
 				blocker_tag=$(echo "$line" | grep -oE '(account|hosting|login|api-key|clarification|resources|payment|approval|decision|design|content|dns|domain|testing)-needed' | head -1)
 				log_info "  $task_id: blocked by $blocker_tag (human action required) — skipping auto-pickup"
+				_register_blocked_task "$task_id" "$repo" "$blocker_tag"
 				continue
 			fi
 
@@ -653,8 +707,12 @@ cmd_auto_pickup() {
 				continue
 			fi
 
+			# Register blocked tasks in DB instead of skipping entirely.
 			# Skip tasks with unresolved blocked-by dependencies (t1085.4)
 			if _check_and_skip_if_blocked "$line" "$task_id" "$todo_file"; then
+				local unresolved
+				unresolved=$(is_task_blocked "$line" "$todo_file" || true)
+				_register_blocked_task "$task_id" "$repo" "$unresolved"
 				continue
 			fi
 
@@ -663,6 +721,7 @@ cmd_auto_pickup() {
 				local blocker_tag
 				blocker_tag=$(echo "$line" | grep -oE '(account|hosting|login|api-key|clarification|resources|payment|approval|decision|design|content|dns|domain|testing)-needed' | head -1)
 				log_info "  $task_id: blocked by $blocker_tag (human action required) — skipping auto-pickup"
+				_register_blocked_task "$task_id" "$repo" "$blocker_tag"
 				continue
 			fi
 
@@ -816,8 +875,11 @@ cmd_auto_pickup() {
 					continue
 				fi
 
-				# Skip tasks with unresolved blocked-by dependencies
+				# Register blocked subtasks in DB instead of skipping entirely
 				if _check_and_skip_if_blocked "$sub_line" "$sub_id" "$todo_file"; then
+					local unresolved
+					unresolved=$(is_task_blocked "$sub_line" "$todo_file" || true)
+					_register_blocked_task "$sub_id" "$repo" "$unresolved"
 					continue
 				fi
 
