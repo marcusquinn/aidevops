@@ -58,7 +58,7 @@ readonly ROUTINE_AI_AUTH_FILE="${HOME}/.local/share/opencode/auth.json"
 
 # Session-scoped AI decision cache (populated by _ai_schedule_all_routines)
 # Format: associative array routine_name -> "run"|"skip"|"defer"
-declare -gA _AI_SCHEDULE_CACHE=()
+declare -A _AI_SCHEDULE_CACHE=()
 _AI_SCHEDULE_CACHE_VALID=false
 
 #######################################
