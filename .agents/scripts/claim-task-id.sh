@@ -412,6 +412,9 @@ allocate_offline() {
 }
 
 # Create GitHub issue (post-allocation, non-blocking)
+# t1324: Delegates to issue-sync-helper.sh push when available for rich
+# issue bodies, proper labels (including auto-dispatch), and duplicate
+# detection. Falls back to bare gh issue create if helper not found.
 create_github_issue() {
 	local title="$1"
 	local description="$2"
@@ -420,6 +423,34 @@ create_github_issue() {
 
 	cd "$repo_path" || return 1
 
+	# Extract task ID from title (format: "tNNN: description")
+	local task_id
+	task_id=$(printf '%s' "$title" | grep -oE '^t[0-9]+' || echo "")
+
+	# t1324: Delegate to issue-sync-helper.sh for rich issue creation
+	# This ensures proper labels, body composition, and duplicate detection
+	local issue_sync_helper="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/issue-sync-helper.sh"
+	if [[ -n "$task_id" && -x "$issue_sync_helper" && -f "$repo_path/TODO.md" ]]; then
+		local push_output
+		push_output=$("$issue_sync_helper" push "$task_id" 2>/dev/null || echo "")
+
+		local issue_num
+		issue_num=$(printf '%s' "$push_output" | grep -oE 'Created #[0-9]+' | grep -oE '[0-9]+' | head -1 || echo "")
+
+		# Also check if it found an existing issue (already has ref)
+		if [[ -z "$issue_num" ]]; then
+			issue_num=$(printf '%s' "$push_output" | grep -oE 'already has issue #[0-9]+' | grep -oE '[0-9]+' | head -1 || echo "")
+		fi
+
+		if [[ -n "$issue_num" ]]; then
+			log_info "Issue created via issue-sync-helper.sh: #$issue_num"
+			echo "$issue_num"
+			return 0
+		fi
+		log_warn "issue-sync-helper.sh push returned no issue number, falling back to bare creation"
+	fi
+
+	# Fallback: bare issue creation (no labels, minimal body)
 	local gh_args=(issue create --title "$title")
 
 	if [[ -n "$description" ]]; then

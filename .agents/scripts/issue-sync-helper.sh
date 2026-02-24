@@ -60,6 +60,103 @@ log_verbose() {
 	return 0
 }
 
+#######################################
+# t1324: AI-based semantic duplicate detection (standalone)
+#
+# Checks if a new issue title semantically duplicates any existing open issue.
+# Self-contained — does not depend on supervisor modules.
+#
+# Args:
+#   $1 - new issue title
+#   $2 - repo_slug
+#
+# Stdout: existing issue number if duplicate found
+# Returns: 0 if duplicate found, 1 if not
+#######################################
+_ai_check_duplicate() {
+	local new_title="$1"
+	local repo_slug="$2"
+
+	# Resolve AI CLI (claude preferred, opencode fallback)
+	local ai_cli=""
+	if command -v claude &>/dev/null; then
+		ai_cli="claude"
+	elif command -v opencode &>/dev/null; then
+		ai_cli="opencode"
+	else
+		return 1 # No AI available
+	fi
+
+	# Fetch recent open issues
+	local existing_issues
+	existing_issues=$(gh issue list --repo "$repo_slug" --state open --limit 50 \
+		--json number,title,labels \
+		--jq '.[] | "#\(.number): \(.title) [\(.labels | map(.name) | join(","))]"' \
+		2>/dev/null || echo "")
+
+	if [[ -z "$existing_issues" ]]; then
+		return 1
+	fi
+
+	local prompt
+	prompt="You are a duplicate issue detector. Determine if a new issue is a semantic duplicate of any existing open issue.
+
+NEW ISSUE TITLE: ${new_title}
+
+EXISTING OPEN ISSUES:
+${existing_issues}
+
+RULES:
+- A duplicate means the same work described differently (different task IDs, rephrased titles).
+- Different task IDs (e.g., t10 vs t023) for the same work ARE duplicates.
+- Related but different-scope issues are NOT duplicates.
+- Auto-generated dashboard/status issues are never duplicates of task issues.
+- When uncertain, prefer false (not duplicate).
+
+Respond with ONLY a JSON object:
+{\"duplicate\": true|false, \"duplicate_of\": \"#NNN or empty\", \"reason\": \"one sentence\"}"
+
+	local ai_result=""
+	if [[ "$ai_cli" == "opencode" ]]; then
+		ai_result=$(timeout 15 opencode run \
+			-m "anthropic/claude-sonnet-4-20250514" \
+			--format default \
+			--title "dedup-$$" \
+			"$prompt" 2>/dev/null || echo "")
+		ai_result=$(printf '%s' "$ai_result" | sed 's/\x1b\[[0-9;]*[mGKHF]//g; s/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b\]//g; s/\x07//g')
+	else
+		ai_result=$(timeout 15 claude \
+			-p "$prompt" \
+			--model "claude-sonnet-4-20250514" \
+			--output-format text 2>/dev/null || echo "")
+	fi
+
+	if [[ -z "$ai_result" ]]; then
+		return 1
+	fi
+
+	local json_block
+	json_block=$(printf '%s' "$ai_result" | grep -oE '\{[^}]+\}' | head -1)
+	if [[ -z "$json_block" ]]; then
+		return 1
+	fi
+
+	local is_duplicate
+	is_duplicate=$(printf '%s' "$json_block" | jq -r '.duplicate // false' 2>/dev/null || echo "false")
+	local duplicate_of
+	duplicate_of=$(printf '%s' "$json_block" | jq -r '.duplicate_of // ""' 2>/dev/null | tr -d '#')
+
+	if [[ "$is_duplicate" == "true" && -n "$duplicate_of" && "$duplicate_of" =~ ^[0-9]+$ ]]; then
+		local reason
+		reason=$(printf '%s' "$json_block" | jq -r '.reason // ""' 2>/dev/null || echo "")
+		print_warning "Semantic duplicate: $new_title duplicates #${duplicate_of} — $reason"
+		echo "$duplicate_of"
+		return 0
+	fi
+
+	return 1
+}
+
 # Derive the repo slug for a task from the supervisor DB (t1235).
 # Returns the slug (owner/repo) on stdout, or empty string if:
 #   - SUPERVISOR_DB is not set / does not exist
@@ -1215,6 +1312,7 @@ cmd_push() {
 		fi
 
 		# Parse task for title and labels (match both top-level and indented subtasks)
+		# (parse early so we can use description for duplicate check)
 		local task_line
 		task_line=$(grep -E "^\s*- \[.\] ${task_id} " "$todo_file" | head -1 || echo "")
 		if [[ -z "$task_line" ]]; then
@@ -1242,6 +1340,20 @@ cmd_push() {
 		fi
 		local labels
 		labels=$(map_tags_to_labels "$tags")
+
+		# t1324: AI-based semantic duplicate detection before creating
+		# Only runs on GitHub (gh CLI required for issue listing)
+		if [[ "$_DETECTED_PLATFORM" == "github" ]]; then
+			local dup_issue_num
+			if dup_issue_num=$(_ai_check_duplicate "$title" "$repo_slug" 2>/dev/null); then
+				if [[ -n "$dup_issue_num" ]]; then
+					print_info "$task_id: semantic duplicate of #$dup_issue_num — linking instead of creating"
+					add_gh_ref_to_todo "$task_id" "$dup_issue_num" "$todo_file"
+					skipped=$((skipped + 1))
+					continue
+				fi
+			fi
+		fi
 
 		# Compose rich body
 		local body
