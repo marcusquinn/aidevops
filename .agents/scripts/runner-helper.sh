@@ -27,10 +27,11 @@
 #   - Mailbox: mail-helper.sh --to <runner-name>
 #   - Cron: cron-helper.sh --task "runner-helper.sh run <name> 'prompt'"
 #
-# Backend detection (t1160.3):
-#   - Prefers opencode if available, falls back to Claude CLI
+# Backend detection (t1160.3, t1160):
+#   - Prefers opencode if available, claude CLI as first-class fallback
 #   - Override: AIDEVOPS_DISPATCH_BACKEND=claude|opencode
-#   - Claude CLI uses --print for headless mode, strips provider/ prefix from model
+#   - Claude CLI uses -p for headless mode, strips provider/ prefix from model
+#   - Claude CLI supports --max-budget-usd, --fallback-model, --mcp-config
 #
 # Security:
 #   - Uses HTTPS by default for remote OpenCode servers
@@ -132,8 +133,15 @@ check_jq() {
 }
 
 #######################################
-# Detect available AI CLI backend (t1160.3)
+# Detect available AI CLI backend (t1160.3, t1160)
 # Sets AIDEVOPS_DISPATCH_BACKEND to "opencode" or "claude"
+#
+# Priority (aligned with supervisor/dispatch.sh resolve_ai_cli):
+#   1. AIDEVOPS_DISPATCH_BACKEND env var (explicit override)
+#   2. SUPERVISOR_CLI env var (supervisor-level override)
+#   3. opencode (primary — handles all providers including Anthropic OAuth)
+#   4. claude (first-class fallback — Anthropic-only, OAuth subscription billing)
+#
 # Returns 1 if no backend is available
 #######################################
 detect_dispatch_backend() {
@@ -142,12 +150,27 @@ detect_dispatch_backend() {
 		return 0
 	fi
 
+	# Honour SUPERVISOR_CLI if set (supervisor-level override)
+	if [[ -n "${SUPERVISOR_CLI:-}" ]]; then
+		if [[ "$SUPERVISOR_CLI" != "opencode" && "$SUPERVISOR_CLI" != "claude" ]]; then
+			log_error "SUPERVISOR_CLI='$SUPERVISOR_CLI' is not a supported CLI (opencode|claude)"
+			return 1
+		fi
+		if command -v "$SUPERVISOR_CLI" &>/dev/null; then
+			AIDEVOPS_DISPATCH_BACKEND="$SUPERVISOR_CLI"
+			log_info "Using dispatch backend: $AIDEVOPS_DISPATCH_BACKEND (from SUPERVISOR_CLI)"
+			return 0
+		fi
+		log_error "SUPERVISOR_CLI='$SUPERVISOR_CLI' not found in PATH"
+		return 1
+	fi
+
 	if command -v opencode &>/dev/null; then
 		AIDEVOPS_DISPATCH_BACKEND="opencode"
 	elif command -v claude &>/dev/null; then
 		AIDEVOPS_DISPATCH_BACKEND="claude"
 	else
-		log_error "No AI CLI backend available. Install opencode (https://opencode.ai) or Claude CLI (https://docs.anthropic.com/en/docs/claude-cli)"
+		log_error "No AI CLI backend available. Install opencode (https://opencode.ai) or Claude Code CLI (https://docs.anthropic.com/en/docs/claude-cli)"
 		return 1
 	fi
 
@@ -494,7 +517,8 @@ cmd_run() {
 		workdir="$(pwd)"
 	fi
 
-	# Build dispatch command based on available backend (t1160.3)
+	# Build dispatch command based on available backend (t1160.3, t1160)
+	# Centralised CLI command building — eliminates duplicated if/else branches
 	local -a cmd_args=()
 
 	if [[ "$AIDEVOPS_DISPATCH_BACKEND" == "opencode" ]]; then
@@ -530,12 +554,19 @@ cmd_run() {
 		fi
 
 	elif [[ "$AIDEVOPS_DISPATCH_BACKEND" == "claude" ]]; then
-		cmd_args=("claude" "--print")
+		cmd_args=("claude" "-p")
 
 		# Model (strip provider prefix for Claude CLI)
 		local claude_model
 		claude_model=$(model_for_claude_cli "$model")
 		cmd_args+=("--model" "$claude_model")
+
+		# Output format (Claude CLI supports --output-format)
+		if [[ -n "$format" ]]; then
+			cmd_args+=("--output-format" "$format")
+		else
+			cmd_args+=("--output-format" "text")
+		fi
 
 		# Continue previous session if requested
 		if [[ "$continue_session" == "true" ]]; then
@@ -544,18 +575,15 @@ cmd_run() {
 				session_id=$(cat "$dir/session.id")
 			fi
 			if [[ -n "$session_id" ]]; then
-				cmd_args+=("--continue" "$session_id")
+				cmd_args+=("--resume" "$session_id")
 			else
 				log_warn "No previous session found for $name, starting fresh"
 			fi
 		fi
 
-		# Note: Claude CLI does not support --attach, --title, or --format
+		# Claude CLI does not support --attach (server mode)
 		if [[ -n "$attach" ]]; then
 			log_warn "Claude CLI does not support --attach (server mode). Ignoring."
-		fi
-		if [[ -n "$format" ]]; then
-			log_warn "Claude CLI does not support --format. Ignoring."
 		fi
 	fi
 
