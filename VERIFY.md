@@ -38,8 +38,8 @@ t1274 verified:2026-02-20
 
 ### Status: DUPLICATE — closed, covered by t1253 / PR #1959
 
-t1255 requested investigation of 15 awardsapp subtasks not being dispatched, with 3
-verification points: (1) supervisor pulse scans all registered repos, (2) awardsapp tasks
+t1255 requested investigation of 15 webapp subtasks not being dispatched, with 3
+verification points: (1) supervisor pulse scans all registered repos, (2) webapp tasks
 have correct repo path in supervisor DB, (3) cross-repo concurrency fairness (t1188.2) is
 functioning.
 
@@ -63,13 +63,13 @@ sibling ordering SQL query (consistent with `todo-sync.sh:1443` which already in
 | Verification Point | Finding |
 |---|---|
 | Supervisor pulse scans all registered repos | TRUE — pulse scans all repos; issue was upstream in sibling filter |
-| awardsapp tasks have correct repo path in supervisor DB | TRUE — all 15 subtasks were in `batch-20260218143815-69271` |
-| Cross-repo concurrency fairness (t1188.2) functioning | TRUE — fairness logic in `cmd_next` is correct; sibling filter eliminated all awardsapp candidates before fairness ran |
+| webapp tasks have correct repo path in supervisor DB | TRUE — all 15 subtasks were in `batch-20260218143815-69271` |
+| Cross-repo concurrency fairness (t1188.2) functioning | TRUE — fairness logic in `cmd_next` is correct; sibling filter eliminated all webapp candidates before fairness ran |
 
 ### Other Hypotheses Ruled Out
 
-1. awardsapp tasks not in supervisor batch — FALSE
-2. Cross-repo fairness not routing to awardsapp — FALSE
+1. webapp tasks not in supervisor batch — FALSE
+2. Cross-repo fairness not routing to webapp — FALSE
 3. Parent task `@marcus` assignee blocking subtask dispatch — FALSE (`cmd_auto_pickup` checks subtask's own line, not parent's)
 4. Subtasks lack `#auto-dispatch` tags — FALSE (all subtasks had `#auto-dispatch` and were `queued` in supervisor DB)
 

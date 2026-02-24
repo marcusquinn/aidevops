@@ -344,7 +344,7 @@ cleanup_deprecated_mcps() {
 
 	# MCPs replaced by curl subagents in v2.79.0
 	local deprecated_mcps=(
-		"hetzner-awardsapp"
+		"hetzner-webapp"
 		"hetzner-brandlight"
 		"hetzner-marcusquinn"
 		"hetzner-storagebox"
