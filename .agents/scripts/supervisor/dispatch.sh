@@ -2599,6 +2599,24 @@ cmd_dispatch() {
 		fi
 	fi
 
+	# t1314: Enforce blocked-by dependencies at dispatch time.
+	# is_task_blocked() was only called during auto-pickup (cron.sh), not here.
+	# A task could become blocked between pickup and dispatch (e.g., a dependency
+	# was re-queued or failed). Re-check now to avoid wasting an Opus session.
+	if declare -f is_task_blocked &>/dev/null && [[ -f "$dispatch_todo_file" ]]; then
+		local todo_line
+		todo_line=$(grep -E "^[[:space:]]*- \[.\] $task_id( |$)" "$dispatch_todo_file" 2>/dev/null | head -1 || true)
+		if [[ -n "$todo_line" ]]; then
+			local dispatch_blockers
+			if dispatch_blockers=$(is_task_blocked "$todo_line" "$dispatch_todo_file"); then
+				log_warn "Task $task_id blocked by unresolved dependencies ($dispatch_blockers) at dispatch — returning to queued (t1314)"
+				cmd_unclaim "$task_id" "${trepo:-.}" --force 2>/dev/null || true
+				db "$SUPERVISOR_DB" "UPDATE tasks SET status='queued', error='Blocked by: $dispatch_blockers (t1314)' WHERE id='$(sql_escape "$task_id")';"
+				return 0
+			fi
+		fi
+	fi
+
 	# Pre-dispatch verification: check if task was already completed in a prior batch.
 	# Searches git history for commits referencing this task ID. If a merged PR commit
 	# exists, the task is already done — cancel it instead of wasting an Opus session.

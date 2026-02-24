@@ -890,60 +890,79 @@ cmd_auto_pickup() {
 	else
 		log_success "Picked up $picked_up new tasks"
 
-		# Auto-batch: assign picked-up tasks to a batch (t296)
+		# Auto-batch: assign picked-up tasks to a batch (t296, t1314)
 		# Find unbatched queued tasks (just added by auto-pickup)
 		local unbatched_queued
-		unbatched_queued=$(db "$SUPERVISOR_DB" "
-            SELECT t.id FROM tasks t
+		unbatched_queued=$(db -separator '|' "$SUPERVISOR_DB" "
+            SELECT t.id, t.repo FROM tasks t
             WHERE t.status = 'queued'
               AND t.id NOT IN (SELECT task_id FROM batch_tasks)
             ORDER BY t.created_at;
         " 2>/dev/null || true)
 
 		if [[ -n "$unbatched_queued" ]]; then
-			# Check for an active batch (has non-terminal tasks)
-			local active_batch_id
-			active_batch_id=$(db "$SUPERVISOR_DB" "
-                SELECT b.id FROM batches b
-                WHERE EXISTS (
-                    SELECT 1 FROM batch_tasks bt
-                    JOIN tasks t ON bt.task_id = t.id
-                    WHERE bt.batch_id = b.id
-                      AND t.status NOT IN ('complete','deployed','verified','verify_failed','merged','cancelled','failed','blocked')
-                )
-                ORDER BY b.created_at DESC
-                LIMIT 1;
-            " 2>/dev/null || true)
+			# t1314: Batch affinity check — only absorb tasks into a batch if
+			# the batch contains tasks from the same repo. Without this, tasks
+			# from different repos get absorbed into a batch with concurrency=1,
+			# causing cross-repo serialization that was never intended.
+			# Group unbatched tasks by repo for affinity matching.
+			local added_to_existing=0
 
-			if [[ -n "$active_batch_id" ]]; then
-				# Add to existing active batch
-				local added_count=0
-				local max_pos
-				max_pos=$(db "$SUPERVISOR_DB" "
-                    SELECT COALESCE(MAX(position), -1) FROM batch_tasks
-                    WHERE batch_id = '$(sql_escape "$active_batch_id")';
-                " 2>/dev/null || echo "-1")
-				local pos=$((max_pos + 1))
+			while IFS='|' read -r tid trepo_path; do
+				[[ -z "$tid" ]] && continue
 
-				while IFS= read -r tid; do
-					[[ -z "$tid" ]] && continue
+				# Find an active batch with repo affinity (same repo)
+				local affinity_batch_id
+				affinity_batch_id=$(db "$SUPERVISOR_DB" "
+					SELECT b.id FROM batches b
+					WHERE b.status IN ('active', 'running')
+					AND EXISTS (
+						SELECT 1 FROM batch_tasks bt
+						JOIN tasks t ON bt.task_id = t.id
+						WHERE bt.batch_id = b.id
+						AND t.repo = '$(sql_escape "${trepo_path:-}")'
+						AND t.status NOT IN ('complete','deployed','verified','verify_failed','merged','cancelled','failed','blocked')
+					)
+					ORDER BY b.created_at DESC
+					LIMIT 1;
+				" 2>/dev/null || true)
+
+				if [[ -n "$affinity_batch_id" ]]; then
+					# Add to existing batch with repo affinity
+					local max_pos
+					max_pos=$(db "$SUPERVISOR_DB" "
+						SELECT COALESCE(MAX(position), -1) FROM batch_tasks
+						WHERE batch_id = '$(sql_escape "$affinity_batch_id")';
+					" 2>/dev/null || echo "-1")
+					local pos=$((max_pos + 1))
 					db "$SUPERVISOR_DB" "
-                        INSERT OR IGNORE INTO batch_tasks (batch_id, task_id, position)
-                        VALUES ('$(sql_escape "$active_batch_id")', '$(sql_escape "$tid")', $pos);
-                    "
-					pos=$((pos + 1))
-					added_count=$((added_count + 1))
-				done <<<"$unbatched_queued"
-
-				if [[ "$added_count" -gt 0 ]]; then
-					log_success "Auto-batch: added $added_count tasks to active batch $active_batch_id"
+						INSERT OR IGNORE INTO batch_tasks (batch_id, task_id, position)
+						VALUES ('$(sql_escape "$affinity_batch_id")', '$(sql_escape "$tid")', $pos);
+					"
+					added_to_existing=$((added_to_existing + 1))
+					log_verbose "  Auto-batch: $tid → batch $affinity_batch_id (repo affinity: $(basename "${trepo_path:-.}")) (t1314)"
 				fi
-			else
-				# Create a new auto-batch with resource-aware concurrency
+			done <<<"$unbatched_queued"
+
+			if [[ "$added_to_existing" -gt 0 ]]; then
+				log_success "Auto-batch: added $added_to_existing tasks to existing batches (repo affinity, t1314)"
+			fi
+
+			# Re-check for remaining unbatched tasks (those without a matching batch)
+			local still_unbatched
+			still_unbatched=$(db "$SUPERVISOR_DB" "
+				SELECT t.id FROM tasks t
+				WHERE t.status = 'queued'
+				AND t.id NOT IN (SELECT task_id FROM batch_tasks)
+				ORDER BY t.created_at;
+			" 2>/dev/null || true)
+
+			if [[ -n "$still_unbatched" ]]; then
+				# Create a new auto-batch for remaining unbatched tasks (t1314)
 				local auto_batch_name
 				auto_batch_name="auto-$(date +%Y%m%d-%H%M%S)"
 				local task_csv
-				task_csv=$(echo "$unbatched_queued" | tr '\n' ',' | sed 's/,$//')
+				task_csv=$(echo "$still_unbatched" | tr '\n' ',' | sed 's/,$//')
 				# Derive base concurrency from CPU cores (cores / 2, min 2)
 				# A 10-core Mac gets 5, a 32-core server gets 16, etc.
 				# The adaptive scaling in calculate_adaptive_concurrency() then
@@ -954,10 +973,12 @@ cmd_auto_pickup() {
 				if [[ "$auto_base_concurrency" -lt 2 ]]; then
 					auto_base_concurrency=2
 				fi
+				local still_unbatched_count
+				still_unbatched_count=$(echo "$still_unbatched" | wc -l | tr -d ' ')
 				local auto_batch_id
 				auto_batch_id=$(cmd_batch "$auto_batch_name" --concurrency "$auto_base_concurrency" --tasks "$task_csv" 2>/dev/null)
 				if [[ -n "$auto_batch_id" ]]; then
-					log_success "Auto-batch: created '$auto_batch_name' ($auto_batch_id) with $picked_up tasks"
+					log_success "Auto-batch: created '$auto_batch_name' ($auto_batch_id) with $still_unbatched_count tasks (t1314)"
 				fi
 			fi
 		fi
