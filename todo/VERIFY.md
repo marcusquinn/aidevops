@@ -822,7 +822,7 @@
   check: shellcheck .agents/scripts/worktree-helper.sh
   check: file-exists .agents/scripts/worktree-helper.sh
 
-- [!] v108 t1080 Delete archived scripts in `.agents/scripts/_archive/` â€... | PR #1574 | merged:2026-02-17 failed:2026-02-17 reason:file-exists: .agents/scripts/_archive/README.md not found; shellcheck: .agents/scripts/_archive/add-missing-returns.sh has violations; file-exists: .agents/scripts/_archive/add-missing-return
+- [!] v108 t1080 Delete archived scripts in `.agents/scripts/_archive/` ï¿½... | PR #1574 | merged:2026-02-17 failed:2026-02-17 reason:file-exists: .agents/scripts/_archive/README.md not found; shellcheck: .agents/scripts/_archive/add-missing-returns.sh has violations; file-exists: .agents/scripts/_archive/add-missing-return
   files: .agents/scripts/_archive/README.md, .agents/scripts/_archive/add-missing-returns.sh, .agents/scripts/_archive/comprehensive-quality-fix.sh, .agents/scripts/_archive/efficient-return-fix.sh, .agents/scripts/_archive/find-missing-returns.sh, .agents/scripts/_archive/fix-auth-headers.sh, .agents/scripts/_archive/fix-common-strings.sh, .agents/scripts/_archive/fix-content-type.sh, .agents/scripts/_archive/fix-error-messages.sh, .agents/scripts/_archive/fix-misplaced-returns.sh, .agents/scripts/_archive/fix-remaining-literals.sh, .agents/scripts/_archive/fix-return-statements.sh, .agents/scripts/_archive/fix-s131-default-cases.sh, .agents/scripts/_archive/fix-sc2155-simple.sh, .agents/scripts/_archive/fix-shellcheck-critical.sh, .agents/scripts/_archive/fix-string-literals.sh, .agents/scripts/_archive/mass-fix-returns.sh
   check: file-exists .agents/scripts/_archive/README.md
   check: shellcheck .agents/scripts/_archive/add-missing-returns.sh
@@ -1111,7 +1111,7 @@
   check: file-exists .agents/tools/ai-assistants/compare-models.md
   check: rg "compare-models" .agents/subagent-index.toon
 
-- [x] v128 t1099 Wire response-scoring to write back to pattern tracker â€... | PR #1634 | merged:2026-02-18 verified:2026-02-18
+- [x] v128 t1099 Wire response-scoring to write back to pattern tracker ï¿½... | PR #1634 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/commands/score-responses.md, .agents/scripts/response-scoring-helper.sh, .agents/tools/ai-assistants/response-scoring.md, tests/test-response-scoring.sh
   check: file-exists .agents/scripts/commands/score-responses.md
   check: shellcheck .agents/scripts/response-scoring-helper.sh
@@ -1133,7 +1133,7 @@
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
 
-- [x] v130 t1081.2 Add --non-interactive support to skill-update-helper.sh â... | PR #1630 | merged:2026-02-18 verified:2026-02-18
+- [x] v130 t1081.2 Add --non-interactive support to skill-update-helper.sh ï¿½... | PR #1630 | merged:2026-02-18 verified:2026-02-18
   files: .agents/scripts/skill-update-helper.sh
   check: shellcheck .agents/scripts/skill-update-helper.sh
   check: file-exists .agents/scripts/skill-update-helper.sh
@@ -1624,7 +1624,7 @@
   check: shellcheck .agents/scripts/localdev-helper.sh
   check: file-exists .agents/scripts/localdev-helper.sh
 
-- [x] v193 t1240 Investigate awardsapp t004/t005 subtask state after cross... | PR #1925 | merged:2026-02-19 verified:2026-02-19
+- [x] v193 t1240 Investigate webapp t004/t005 subtask state after cross... | PR #1925 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/supervisor/ai-actions.sh, .agents/scripts/supervisor/ai-context.sh
   check: shellcheck .agents/scripts/supervisor/ai-actions.sh
   check: file-exists .agents/scripts/supervisor/ai-actions.sh
@@ -1672,7 +1672,7 @@
   check: shellcheck .agents/scripts/supervisor/todo-sync.sh
   check: file-exists .agents/scripts/supervisor/todo-sync.sh
 
-- [!] v201 t1224.7 Migrate awardsapp to new localdev setup â€” validate end-... | PR #1943 | merged:2026-02-19 failed:2026-02-19 reason:rg: "local-hosting" not found in .agents/subagent-index.toon
+- [!] v201 t1224.7 Migrate webapp to new localdev setup â€” validate end-... | PR #1943 | merged:2026-02-19 failed:2026-02-19 reason:rg: "local-hosting" not found in .agents/subagent-index.toon
   files: .agents/services/hosting/local-hosting.md
   check: file-exists .agents/services/hosting/local-hosting.md
   check: rg "local-hosting" .agents/subagent-index.toon
@@ -1739,7 +1739,7 @@
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
 
-- [x] v210 t1253 Investigate awardsapp dispatch stall â€” 15 subtasks disp... | PR #1959 | merged:2026-02-19 verified:2026-02-19
+- [x] v210 t1253 Investigate webapp dispatch stall â€” 15 subtasks disp... | PR #1959 | merged:2026-02-19 verified:2026-02-19
   files: .agents/scripts/supervisor/state.sh
   check: shellcheck .agents/scripts/supervisor/state.sh
   check: file-exists .agents/scripts/supervisor/state.sh
@@ -1751,7 +1751,7 @@
   check: shellcheck .agents/scripts/supervisor/pulse.sh
   check: file-exists .agents/scripts/supervisor/pulse.sh
 
-- [x] v212 t1255 Investigate awardsapp cross-repo dispatch â€” 15 tasks di... | PR #1961 | merged:2026-02-19 verified:2026-02-19
+- [x] v212 t1255 Investigate webapp cross-repo dispatch â€” 15 tasks di... | PR #1961 | merged:2026-02-19 verified:2026-02-19
   files: VERIFY.md
   check: file-exists VERIFY.md
 
@@ -2307,7 +2307,7 @@
   check: shellcheck .agents/scripts/email-signature-parser-helper.sh
   check: file-exists .agents/scripts/email-signature-parser-helper.sh
 
-- [x] v262 t1294.4 Update `subagent-index.toon` and AGENTS.md domain index â... | PR #2087 | merged:2026-02-21 verified:2026-02-21
+- [x] v262 t1294.4 Update `subagent-index.toon` and AGENTS.md domain index ï¿½... | PR #2087 | merged:2026-02-21 verified:2026-02-21
   files: .agents/AGENTS.md, .agents/subagent-index.toon, AGENTS.md
   check: file-exists .agents/AGENTS.md
   check: file-exists .agents/subagent-index.toon
@@ -2329,7 +2329,7 @@
   check: shellcheck tests/test-cloudflare-mcp-e2e.sh
   check: file-exists tests/test-cloudflare-mcp-e2e.sh
 
-- [x] v266 t1288.5 Update `mcp-integrations.md` and `subagent-index.toon` â€... | PR #2092 | merged:2026-02-21 verified:2026-02-21
+- [x] v266 t1288.5 Update `mcp-integrations.md` and `subagent-index.toon` ï¿½... | PR #2092 | merged:2026-02-21 verified:2026-02-21
   files: .agents/aidevops/mcp-integrations.md, .agents/subagent-index.toon
   check: file-exists .agents/aidevops/mcp-integrations.md
   check: file-exists .agents/subagent-index.toon
@@ -2478,7 +2478,7 @@
   files: .agents/plugins/opencode-aidevops/index.mjs
   check: file-exists .agents/plugins/opencode-aidevops/index.mjs
 
-- [x] v284 t1308 LLM observability: data collection from OpenCode plugin â... | PR #2138 | merged:2026-02-22 verified:2026-02-22
+- [x] v284 t1308 LLM observability: data collection from OpenCode plugin ï¿½... | PR #2138 | merged:2026-02-22 verified:2026-02-22
   files: .agents/plugins/opencode-aidevops/index.mjs, .agents/plugins/opencode-aidevops/observability.mjs
   check: file-exists .agents/plugins/opencode-aidevops/index.mjs
   check: file-exists .agents/plugins/opencode-aidevops/observability.mjs

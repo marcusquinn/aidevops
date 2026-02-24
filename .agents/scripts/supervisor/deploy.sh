@@ -2233,7 +2233,7 @@ rebase_sibling_pr() {
 	fi
 
 	# Determine the rebase target branch from the PR's base ref (e.g. develop, main).
-	# Repos like awardsapp use 'develop' as default branch — hardcoding 'main' causes
+	# Repos like webapp use 'develop' as default branch — hardcoding 'main' causes
 	# rebases onto the wrong branch, leaving PRs permanently DIRTY.
 	local rebase_target="main"
 	if [[ -n "$tpr" && "$tpr" != "no_pr" && "$tpr" != "task_only" && "$tpr" != "verified_complete" ]]; then

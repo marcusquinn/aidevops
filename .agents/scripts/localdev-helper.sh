@@ -185,7 +185,7 @@ configure_resolver() {
 # Traefik conf.d Migration
 # =============================================================================
 # Migrates from single dynamic.yml to conf.d/ directory provider.
-# Preserves existing routes (e.g., awardsapp) by splitting into per-app files.
+# Preserves existing routes (e.g., webapp) by splitting into per-app files.
 
 migrate_traefik_to_confd() {
 	print_info "Migrating Traefik to conf.d/ directory provider..."
@@ -222,34 +222,34 @@ migrate_dynamic_yml() {
 	cp "$dynamic_yml" "$BACKUP_DIR/$backup_name"
 	print_info "Backed up dynamic.yml to $BACKUP_DIR/$backup_name"
 
-	# Check if awardsapp route exists in dynamic.yml
-	if grep -q 'awardsapp' "$dynamic_yml" 2>/dev/null; then
-		# Extract and create awardsapp conf.d file
-		if [[ ! -f "$CONFD_DIR/awardsapp.yml" ]]; then
-			create_awardsapp_confd
-			print_success "Migrated awardsapp route to conf.d/awardsapp.yml"
+	# Check if webapp route exists in dynamic.yml
+	if grep -q 'webapp' "$dynamic_yml" 2>/dev/null; then
+		# Extract and create webapp conf.d file
+		if [[ ! -f "$CONFD_DIR/webapp.yml" ]]; then
+			create_webapp_confd
+			print_success "Migrated webapp route to conf.d/webapp.yml"
 		else
-			print_info "conf.d/awardsapp.yml already exists — skipping migration"
+			print_info "conf.d/webapp.yml already exists — skipping migration"
 		fi
 	fi
 
 	return 0
 }
 
-# Create the awardsapp conf.d file from the known existing config
-create_awardsapp_confd() {
-	cat >"$CONFD_DIR/awardsapp.yml" <<'YAML'
+# Create the webapp conf.d file from the known existing config
+create_webapp_confd() {
+	cat >"$CONFD_DIR/webapp.yml" <<'YAML'
 http:
   routers:
-    awardsapp:
-      rule: "Host(`awardsapp.local`)"
+    webapp:
+      rule: "Host(`webapp.local`)"
       entryPoints:
         - websecure
-      service: awardsapp
+      service: webapp
       tls: {}
 
   services:
-    awardsapp:
+    webapp:
       loadBalancer:
         servers:
           - url: "http://host.docker.internal:3100"
@@ -265,8 +265,8 @@ http:
 
 tls:
   certificates:
-    - certFile: /certs/awardsapp.local+1.pem
-      keyFile: /certs/awardsapp.local+1-key.pem
+    - certFile: /certs/webapp.local+1.pem
+      keyFile: /certs/webapp.local+1-key.pem
 YAML
 	return 0
 }
@@ -2305,7 +2305,7 @@ cmd_help() {
 	echo "  1. Configure dnsmasq with address=/.local/127.0.0.1 (CLI wildcard resolution)"
 	echo "  2. Create /etc/resolver/local (routes .local to dnsmasq for CLI tools)"
 	echo "  3. Migrate Traefik from single dynamic.yml to conf.d/ directory"
-	echo "  4. Preserve existing routes (e.g., awardsapp)"
+	echo "  4. Preserve existing routes (e.g., webapp)"
 	echo "  5. Restart Traefik if running"
 	echo "  Note: dnsmasq resolves .local for CLI tools only. Browsers need /etc/hosts"
 	echo "  entries (added automatically by 'add' command) due to macOS mDNS."

@@ -1446,7 +1446,7 @@ _exec_create_subtasks() {
 	# Resolve the task's repo from the supervisor DB (t1234, t1237).
 	# Tasks are always repo-specific — never guess by falling back to the
 	# primary repo, because task IDs can collide across repos (e.g., both
-	# aidevops and awardsapp have t003 for different things). Writing to
+	# aidevops and webapp have t003 for different things). Writing to
 	# the wrong repo is a privacy breach if repo visibility differs.
 	#
 	# If the parent task is NOT in the DB, refuse to proceed — the AI reasoner

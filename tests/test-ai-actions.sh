@@ -1642,7 +1642,7 @@ _test_create_subtasks_cross_repo() {
 		local failures=0
 
 		# Task t99998 does not exist in the aidevops repo TODO.md
-		# (simulates a cross-repo task like awardsapp t003) — should return
+		# (simulates a cross-repo task like webapp t003) — should return
 		# parent_task_not_found with clear diagnostics, not crash silently
 		local action
 		action='{"type":"create_subtasks","parent_task_id":"t99998","subtasks":[{"title":"Sub 1","estimate":"~1h","model":"sonnet"}],"reasoning":"test"}'
@@ -1810,7 +1810,7 @@ _test_create_subtasks_not_in_db_dedup() {
 		local failures=0
 
 		# Create a supervisor DB with the tasks table but WITHOUT t77777 registered.
-		# This simulates a cross-repo task (e.g., awardsapp t003) that the AI
+		# This simulates a cross-repo task (e.g., webapp t003) that the AI
 		# incorrectly tries to subtask in the aidevops context (t1238 root cause).
 		sqlite3 "$SUPERVISOR_DB" "
 			CREATE TABLE IF NOT EXISTS tasks (

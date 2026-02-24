@@ -518,7 +518,7 @@ Bun.serve({ port: 3100 })
 
 ### Turbostarter / Turborepo Monorepo
 
-Turbostarter (and similar Turborepo-based monorepos) have specific quirks discovered during the awardsapp migration:
+Turbostarter (and similar Turborepo-based monorepos) have specific quirks discovered during the webapp migration:
 
 **1. Port hardcoded in `apps/web/package.json`** (not via `PORT` env var):
 

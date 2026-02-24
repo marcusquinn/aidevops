@@ -469,7 +469,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - replace declare -A with bash 3.2-compatible grep lookup in ai-context.sh (t1236) (#1918)
 - guard cmd_push() against cross-repo issue creation (t1235) (#1913)
 - add cross-repo guard to issue-sync-helper.sh (t1235) (#1912)
-- remove misplaced awardsapp subtasks from aidevops TODO.md (privacy breach)
+- remove misplaced private repo subtasks from aidevops TODO.md (privacy breach)
 - strengthen execute_action_plan array validation guard (t1223) (#1872)
 - add post-write verification to create_subtasks executor (t1217) (#1858)
 - add semantic dedup to AI task creation to prevent duplicate tasks (t1218) (#1859)

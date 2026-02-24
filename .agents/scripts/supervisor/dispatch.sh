@@ -2684,7 +2684,7 @@ cmd_dispatch() {
 	# t1239: Pre-dispatch cross-repo validation.
 	# Verify the task's registered repo actually contains this task in its TODO.md.
 	# This is the last line of defence against cross-repo misregistration — if a task
-	# from a private repo (e.g., awardsapp) was registered under the wrong repo path
+	# from a private repo (e.g., webapp) was registered under the wrong repo path
 	# (e.g., aidevops), the worker would run in the wrong codebase. Cancel instead.
 	local dispatch_todo_file="${trepo:-.}/TODO.md"
 	if [[ -n "$trepo" && -f "$dispatch_todo_file" ]]; then
