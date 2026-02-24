@@ -466,7 +466,7 @@ build_todo_context() {
 			if [[ -n "$task_id" ]] && echo "$_db_done_ids" | grep -qxF "$task_id"; then
 				continue
 			fi
-			blocker=$(echo "$line" | grep -oE 'blocked-by:[^ ]+' | head -1)
+			blocker=$(echo "$line" | grep -oE 'blocked-by:t[0-9][^ ]*' | head -1)
 			output+="- $task_id ($blocker)\n"
 		done <<<"$blocked_tasks"
 	fi

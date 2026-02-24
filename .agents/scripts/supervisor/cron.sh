@@ -389,9 +389,10 @@ is_task_blocked() {
 	local task_line="$1"
 	local todo_file="$2"
 
-	# Extract blocked-by: field
+	# Extract blocked-by: field — require value to start with a task ID (tNNN)
+	# to avoid matching backtick-quoted mentions like `blocked-by:` in descriptions
 	local blocked_by
-	blocked_by=$(printf '%s' "$task_line" | grep -oE 'blocked-by:[^ ]+' | sed 's/blocked-by://' || true)
+	blocked_by=$(printf '%s' "$task_line" | grep -oE 'blocked-by:t[0-9][^ ]*' | sed 's/blocked-by://' || true)
 
 	if [[ -z "$blocked_by" ]]; then
 		return 1 # No dependencies — not blocked
