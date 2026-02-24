@@ -966,7 +966,7 @@ mark_prompt_repeat_done() {
 #
 # Args:
 #   $1 = task_id
-#   $2 = failure_reason (from evaluate_worker)
+#   $2 = failure_reason (from assess_task)
 #   $3 = task_description
 #   $4 = previous_error (from DB error field)
 #
@@ -1385,7 +1385,7 @@ check_output_quality() {
 
 #######################################
 # Run quality gate and escalate if needed (t132.6)
-# Called after evaluate_worker() returns "complete".
+# Called after assess_task() returns "complete".
 # Returns: "pass" if quality OK or escalation not possible,
 #          "escalate:<new_model>" if re-dispatch needed.
 #######################################

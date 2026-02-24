@@ -1713,7 +1713,7 @@ check_pr_status() {
 # Scenarios this catches:
 #   - Worker created PR but exited without FULL_LOOP_COMPLETE signal
 #   - Worker used a non-standard branch name not in the DB branch column
-#   - evaluate_worker() fallback PR detection failed (API timeout, etc.)
+#   - assess_task() fallback PR detection failed (API timeout, etc.)
 #   - Task stuck in failed/blocked/retrying with a valid PR on GitHub
 #   - Tasks evaluated by Phase 4b DB orphan detection (no eager scan)
 #
@@ -1871,7 +1871,7 @@ scan_orphaned_prs() {
 # single-task lookup — one repo, one API call — with no throttle.
 #
 # This catches the common case where a worker created a PR but exited
-# without the FULL_LOOP_COMPLETE signal, and evaluate_worker()'s
+# without the FULL_LOOP_COMPLETE signal, and assess_task()'s
 # fallback PR detection missed it (API timeout, non-standard branch, etc.).
 #
 # $1: task_id
