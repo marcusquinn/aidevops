@@ -1502,7 +1502,10 @@ const BUILTIN_TTSR_RULES = [
   {
     id: "shell-local-params",
     description: "Use local var=\"$1\" pattern in shell functions",
-    pattern: "\\$[1-9](?!.*local\\s+\\w+=.*\\$[1-9])",
+    // Only match bare $N at the start of a line or after whitespace in what looks
+    // like a shell assignment/command context — avoids matching $1 inside prose,
+    // documentation, quoted examples, or tool output from file reads.
+    pattern: "^\\s+(?:echo|printf|return|if|\\[\\[).*\\$[1-9](?!.*local\\s+\\w+=)",
     correction: "Use `local var=\"$1\"` pattern — never use positional parameters directly (SonarCloud S7679).",
     severity: "warn",
     systemPrompt: "Shell scripts: use `local var=\"$1\"` — never use $1 directly in function bodies.",
@@ -1639,15 +1642,38 @@ async function systemTransformHook(_input, output) {
  * Extract text content from a Part array.
  * Only extracts text from TextPart objects (type === "text").
  * @param {Array<object>} parts - Array of Part objects
+ * @param {object} [options] - Extraction options
+ * @param {boolean} [options.excludeToolOutput=false] - Skip tool-result/tool-invocation parts
  * @returns {string} Concatenated text content
  */
-function extractTextFromParts(parts) {
+function extractTextFromParts(parts, options = {}) {
   if (!Array.isArray(parts)) return "";
   return parts
-    .filter((p) => p && p.type === "text" && typeof p.text === "string")
+    .filter((p) => {
+      if (!p || typeof p.text !== "string") return false;
+      if (p.type !== "text") return false;
+      // When excludeToolOutput is set, skip parts that contain tool output.
+      // Tool results are embedded in assistant messages as text parts whose
+      // content is the serialized tool response. We detect these by checking
+      // for the tool-invocation/tool-result type or by the presence of
+      // toolCallId/toolInvocationId fields that OpenCode attaches.
+      if (options.excludeToolOutput) {
+        if (p.toolCallId || p.toolInvocationId) return false;
+      }
+      return true;
+    })
     .map((p) => p.text)
     .join("\n");
 }
+
+/**
+ * Cross-turn TTSR dedup state.
+ * Tracks which rules have already fired and on which message IDs,
+ * preventing the same rule from firing repeatedly on the same content
+ * across multiple LLM turns (which caused an infinite correction loop).
+ * @type {Map<string, Set<string>>} ruleId -> Set of messageIDs already corrected
+ */
+const _ttsrFiredState = new Map();
 
 /**
  * Hook: experimental.chat.messages.transform (t1304)
@@ -1660,6 +1686,13 @@ function extractTextFromParts(parts) {
  * If violations are found, append a synthetic correction message to the
  * message history so the model sees the feedback before generating.
  *
+ * Bug fix: Three changes to prevent infinite correction loops:
+ * 1. Only scan assistant-authored text, excluding tool output (Read/Bash
+ *    results contain code the assistant *read*, not code it *wrote*).
+ * 2. Cross-turn dedup — track which rules fired on which messages to
+ *    prevent the same rule re-firing on the same content every turn.
+ * 3. Skip messages that are themselves synthetic TTSR corrections.
+ *
  * @param {object} _input - {}
  * @param {object} output - { messages: { info: Message, parts: Part[] }[] } (mutable)
  */
@@ -1669,7 +1702,12 @@ async function messagesTransformHook(_input, output) {
   // Scan the last 3 assistant messages for violations
   const scanWindow = 3;
   const assistantMessages = output.messages
-    .filter((m) => m.info && m.info.role === "assistant")
+    .filter((m) => {
+      if (!m.info || m.info.role !== "assistant") return false;
+      // Skip synthetic TTSR correction messages that were injected previously
+      if (m.info.id && m.info.id.startsWith("ttsr-correction-")) return false;
+      return true;
+    })
     .slice(-scanWindow);
 
   if (assistantMessages.length === 0) return;
@@ -1677,19 +1715,38 @@ async function messagesTransformHook(_input, output) {
   const allViolations = [];
 
   for (const msg of assistantMessages) {
-    const text = extractTextFromParts(msg.parts);
+    const msgId = msg.info?.id || "";
+
+    // Extract only assistant-authored text, excluding tool output.
+    // Tool results (Read, Bash, etc.) contain code the assistant *read*,
+    // not code it *wrote* — scanning those causes false positives.
+    const text = extractTextFromParts(msg.parts, { excludeToolOutput: true });
     if (!text) continue;
 
     const violations = scanForViolations(text);
     for (const v of violations) {
-      // Deduplicate by rule id
-      if (!allViolations.some((av) => av.rule.id === v.rule.id)) {
-        allViolations.push(v);
+      const ruleId = v.rule.id;
+
+      // Cross-turn dedup: skip if this rule already fired on this message
+      const firedOn = _ttsrFiredState.get(ruleId);
+      if (firedOn && firedOn.has(msgId)) continue;
+
+      // Deduplicate by rule id within this scan
+      if (!allViolations.some((av) => av.rule.id === ruleId)) {
+        allViolations.push({ ...v, msgId });
       }
     }
   }
 
   if (allViolations.length === 0) return;
+
+  // Record that these rules fired on these messages (cross-turn dedup)
+  for (const v of allViolations) {
+    if (!_ttsrFiredState.has(v.rule.id)) {
+      _ttsrFiredState.set(v.rule.id, new Set());
+    }
+    _ttsrFiredState.get(v.rule.id).add(v.msgId);
+  }
 
   // Build correction context
   const corrections = allViolations.map((v) => {
