@@ -194,7 +194,7 @@ _diagnose_stale_root_cause() {
 		# evaluate_with_ai() updates updated_at at the start of each AI eval call
 		# and every 20s via a periodic background heartbeat (t1254).
 		# t1259: Phase 1 also writes a pre-evaluation heartbeat immediately before
-		# calling evaluate_worker(), ensuring updated_at is fresh even for fast-path
+		# calling assess_task(), ensuring updated_at is fresh even for fast-path
 		# completions where evaluate_with_ai() is never called (tasks with
 		# FULL_LOOP_COMPLETE signal or PR URL + clean exit). Without this, the
 		# heartbeat window was anchored to cmd_transition("evaluating"), not the
@@ -233,7 +233,7 @@ _diagnose_stale_root_cause() {
 		fi
 
 		# t1245: Check if PR URL was already persisted (early-persist checkpoint hit)
-		# This means evaluate_worker() ran far enough to discover the PR but the pulse
+		# This means assess_task() ran far enough to discover the PR but the pulse
 		# was killed before cmd_transition("complete") — a clean recovery case.
 		local db_pr_url
 		db_pr_url=$(db "$SUPERVISOR_DB" "SELECT pr_url FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
@@ -919,7 +919,7 @@ cmd_pulse() {
 	# most common stale-evaluating patterns without waiting for grace periods:
 	#   1. evaluating + pr_url already persisted → immediate pr_review (no grace)
 	#      Root cause: pulse killed after t1245 early-persist but before cmd_transition.
-	#      The PR URL in the DB proves evaluate_worker() completed its critical work.
+	#      The PR URL in the DB proves assess_task() completed its critical work.
 	#   2. running/dispatched + dead PID file → shorter grace (60s vs 600s)
 	#      Root cause: worker died and PID file confirms it. No need to wait 10min.
 	local stale_grace_seconds="${SUPERVISOR_STALE_GRACE_SECONDS:-600}"
@@ -927,12 +927,12 @@ cmd_pulse() {
 	local dead_pid_grace_seconds="${SUPERVISOR_DEAD_PID_GRACE_SECONDS:-60}"
 
 	# Fast-path 1 (t1250): evaluating tasks with pr_url already persisted — recover
-	# with a minimal grace (vs 120s standard). The PR URL proves evaluate_worker()
+	# with a minimal grace (vs 120s standard). The PR URL proves assess_task()
 	# ran far enough to find the PR (t1245 early-persist checkpoint). Only the final
 	# cmd_transition call was lost. A grace period avoids racing with the current
 	# pulse's own evaluation (Phase 1 transitions to evaluating, then immediately
-	# calls evaluate_worker — we don't want to recover a task that's actively
-	# evaluating). t1259: Increased default from 10s to 30s — evaluate_worker()
+	# calls assess_task — we don't want to recover a task that's actively
+	# evaluating). t1259: Increased default from 10s to 30s — assess_task()
 	# can take 10-30s for PR discovery via GitHub API. A 10s grace caused false
 	# recoveries when the task was actively being evaluated but updated_at was
 	# 10-30s old (set by cmd_transition("evaluating"), not yet refreshed by the
@@ -1268,7 +1268,7 @@ cmd_pulse() {
 			tid_repo=$(db "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "")
 
 			# t1251: Fast-path evaluation for tasks with PR already in DB (t1245 early-persist).
-			# If the PR URL is already persisted, evaluate_worker() will find it immediately
+			# If the PR URL is already persisted, assess_task() will find it immediately
 			# via the heuristic tiers and return complete: without needing AI eval.
 			# Skip AI eval proactively to avoid the 60-90s AI eval window that causes
 			# tasks to appear stuck in 'evaluating' and trigger Phase 0.7 recovery.
@@ -1286,19 +1286,9 @@ cmd_pulse() {
 			_update_task_heartbeat "$tid"
 
 			local outcome
-			local eval_maker="evaluate_worker"
-			# Prefer assess_task (AI-powered, reads real sources of truth)
-			# over evaluate_worker (1900-line deterministic heuristic tree).
-			# Falls back to evaluate_worker_with_metadata, then evaluate_worker.
-			if command -v assess_task_with_metadata &>/dev/null; then
-				outcome=$(assess_task_with_metadata "$tid")
-				eval_maker="assess_task"
-			elif command -v evaluate_worker_with_metadata &>/dev/null; then
-				outcome=$(evaluate_worker_with_metadata "$tid" "$skip_ai")
-				eval_maker="evaluate_worker_with_metadata"
-			else
-				outcome=$(evaluate_worker "$tid" "$skip_ai")
-			fi
+			local eval_maker="assess_task"
+			# t1312: Use AI-powered assessment directly (no fallback to removed heuristic tree)
+			outcome=$(assess_task_with_metadata "$tid")
 			local outcome_type="${outcome%%:*}"
 			local outcome_detail="${outcome#*:}"
 
@@ -1320,7 +1310,7 @@ cmd_pulse() {
 
 			# Eager orphaned PR scan (t216): if evaluation didn't find a PR,
 			# immediately check GitHub before retrying/failing. This catches
-			# PRs that evaluate_worker() missed (API timeout, non-standard
+			# PRs that assess_task() missed (API timeout, non-standard
 			# branch, etc.) without waiting for the Phase 6 throttled sweep.
 			if [[ "$outcome_type" != "complete" ]]; then
 				scan_orphaned_pr_for_task "$tid" 2>>"$SUPERVISOR_LOG" || true

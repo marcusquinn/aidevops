@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # assess-task.sh - AI-powered task assessment
 #
-# Replaces the 1900-line deterministic evaluate_worker() heuristic tree with
+# Primary task evaluation engine (t1312: evaluate_worker removed from evaluate.sh).
+# Replaces the former 687-line deterministic evaluate_worker() heuristic tree with
 # a single AI call that reads the actual sources of truth:
 #   1. Worker log (last 100 lines)
 #   2. TODO.md (task line)
