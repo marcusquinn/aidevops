@@ -2232,13 +2232,31 @@ create_github_issue() {
 		return 0
 	fi
 
-	# Check if an issue with this task ID prefix already exists
+	# Check if an issue with this task ID prefix already exists (fast deterministic check)
 	local existing_issue
 	existing_issue=$(gh issue list --repo "$repo_slug" --search "in:title ${task_id}:" --json number --jq '.[0].number' 2>>"$SUPERVISOR_LOG" || echo "")
 	if [[ -n "$existing_issue" && "$existing_issue" != "null" ]]; then
 		log_info "GitHub issue #${existing_issue} already exists for $task_id"
 		echo "$existing_issue"
 		return 0
+	fi
+
+	# t1324: AI-based semantic duplicate detection
+	# Catches duplicates that deterministic title-prefix matching misses
+	# (e.g., different task IDs for the same work, rephrased descriptions)
+	local new_title="${task_id}: ${_description}"
+	local dedup_result
+	if dedup_result=$(ai_detect_duplicate_issue "$new_title" "" "$repo_slug" 2>/dev/null); then
+		local dup_number
+		dup_number=$(printf '%s' "$dedup_result" | jq -r '.duplicate_of // ""' 2>/dev/null | tr -d '#')
+		if [[ -n "$dup_number" && "$dup_number" =~ ^[0-9]+$ ]]; then
+			local dup_reason
+			dup_reason=$(printf '%s' "$dedup_result" | jq -r '.reason // ""' 2>/dev/null)
+			log_warn "Semantic duplicate detected: $task_id duplicates #${dup_number} — $dup_reason"
+			log_info "Linking $task_id to existing issue #${dup_number} instead of creating new"
+			echo "$dup_number"
+			return 0
+		fi
 	fi
 
 	# Delegate to issue-sync-helper.sh push tNNN (t020.6: single source of truth)
@@ -2278,6 +2296,278 @@ create_github_issue() {
 
 	echo "$issue_number"
 	return 0
+}
+
+#######################################
+# AI-based duplicate issue detection (t1324)
+#
+# Given a new issue title/description and a list of existing open issues,
+# uses AI to determine if any existing issue is a semantic duplicate.
+# Catches cases that deterministic title-prefix matching misses (e.g.,
+# different task IDs for the same work, rephrased descriptions).
+#
+# Args:
+#   $1 - new issue title (e.g. "t1323: Fix TTSR false-positives")
+#   $2 - new issue description/body (can be empty)
+#   $3 - repo_slug (e.g. "marcusquinn/aidevops")
+#
+# Stdout: JSON {duplicate: true/false, duplicate_of: "#NNN", reason: "..."}
+# Returns: 0 if duplicate found, 1 if no duplicate, 2 on AI error
+#######################################
+ai_detect_duplicate_issue() {
+	local new_title="$1"
+	local new_body="${2:-}"
+	local repo_slug="$3"
+
+	# Fetch recent open issues for comparison
+	local existing_issues
+	existing_issues=$(gh issue list --repo "$repo_slug" --state open --limit 50 \
+		--json number,title,labels \
+		--jq '.[] | "#\(.number): \(.title) [\(.labels | map(.name) | join(","))]"' \
+		2>/dev/null || echo "")
+
+	if [[ -z "$existing_issues" ]]; then
+		log_verbose "ai_detect_duplicate_issue: no open issues to compare against"
+		return 1
+	fi
+
+	local ai_cli
+	ai_cli=$(resolve_ai_cli 2>/dev/null) || {
+		log_verbose "ai_detect_duplicate_issue: AI unavailable, skipping duplicate check"
+		return 1
+	}
+
+	local ai_model
+	ai_model=$(resolve_model "sonnet" "$ai_cli" 2>/dev/null) || {
+		log_verbose "ai_detect_duplicate_issue: model resolution failed, skipping"
+		return 1
+	}
+
+	local body_context=""
+	if [[ -n "$new_body" ]]; then
+		# Truncate body to avoid token overflow
+		body_context="
+
+BODY (first 500 chars):
+$(printf '%s' "$new_body" | head -c 500)"
+	fi
+
+	local prompt
+	prompt="You are a duplicate issue detector for a DevOps task management system. Determine if a new issue is a semantic duplicate of any existing open issue.
+
+NEW ISSUE:
+Title: ${new_title}${body_context}
+
+EXISTING OPEN ISSUES:
+${existing_issues}
+
+RULES:
+- A duplicate means the same work described differently (different task IDs, rephrased titles, same underlying fix/feature).
+- Different task IDs (e.g., t10 vs t023) for the same work ARE duplicates.
+- Issues that are related but address different aspects are NOT duplicates.
+- Auto-generated dashboard/status issues (e.g., [Supervisor:*]) are never duplicates of task issues.
+- If the new issue title starts with a task ID (tNNN:) and an existing issue has a DIFFERENT task ID but describes the SAME work, that is a duplicate.
+- When uncertain, prefer false (not duplicate) — closing a non-duplicate is worse than having a duplicate.
+
+Respond with ONLY a JSON object:
+{\"duplicate\": true|false, \"duplicate_of\": \"#NNN or empty\", \"reason\": \"one sentence\"}"
+
+	local ai_result=""
+	if [[ "$ai_cli" == "opencode" ]]; then
+		ai_result=$(portable_timeout 15 opencode run \
+			-m "$ai_model" \
+			--format default \
+			--title "dedup-issue-$$" \
+			"$prompt" 2>/dev/null || echo "")
+		ai_result=$(printf '%s' "$ai_result" | sed 's/\x1b\[[0-9;]*[mGKHF]//g; s/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b\]//g; s/\x07//g')
+	else
+		local claude_model="${ai_model#*/}"
+		ai_result=$(portable_timeout 15 claude \
+			-p "$prompt" \
+			--model "$claude_model" \
+			--output-format text 2>/dev/null || echo "")
+	fi
+
+	if [[ -z "$ai_result" ]]; then
+		log_verbose "ai_detect_duplicate_issue: empty AI response"
+		return 2
+	fi
+
+	local json_block
+	json_block=$(printf '%s' "$ai_result" | grep -oE '\{[^}]+\}' | head -1)
+	if [[ -z "$json_block" ]]; then
+		log_verbose "ai_detect_duplicate_issue: no JSON in response"
+		return 2
+	fi
+
+	local is_duplicate
+	is_duplicate=$(printf '%s' "$json_block" | jq -r '.duplicate // false' 2>/dev/null || echo "false")
+	local duplicate_of
+	duplicate_of=$(printf '%s' "$json_block" | jq -r '.duplicate_of // ""' 2>/dev/null || echo "")
+	local reason
+	reason=$(printf '%s' "$json_block" | jq -r '.reason // ""' 2>/dev/null || echo "")
+
+	# Log for audit trail
+	mkdir -p "${AI_LIFECYCLE_LOG_DIR:-/tmp}" 2>/dev/null || true
+	local timestamp
+	timestamp=$(date -u '+%Y%m%d-%H%M%S')
+	{
+		echo "# Duplicate Check @ $timestamp"
+		echo "New: $new_title"
+		echo "Duplicate: $is_duplicate"
+		echo "Of: $duplicate_of"
+		echo "Reason: $reason"
+	} >"${AI_LIFECYCLE_LOG_DIR:-/tmp}/dedup-issue-${timestamp}.md" 2>/dev/null || true
+
+	if [[ "$is_duplicate" == "true" && -n "$duplicate_of" ]]; then
+		log_info "ai_detect_duplicate_issue: DUPLICATE of $duplicate_of — $reason"
+		printf '%s' "$json_block"
+		return 0
+	fi
+
+	log_verbose "ai_detect_duplicate_issue: not a duplicate — $reason"
+	return 1
+}
+
+#######################################
+# AI-based auto-dispatch eligibility assessment (t1324)
+#
+# Given a task's description, tags, and brief content, uses AI to assess
+# whether the task is ready for autonomous dispatch. Replaces the
+# deterministic #auto-dispatch tag requirement with intelligent assessment.
+#
+# Args:
+#   $1 - task_id (e.g. "t1322")
+#   $2 - task line from TODO.md
+#   $3 - project root path
+#
+# Stdout: JSON {dispatchable: true/false, labels: [...], reason: "..."}
+# Returns: 0 if dispatchable, 1 if not, 2 on AI error
+#######################################
+ai_assess_auto_dispatch() {
+	local task_id="$1"
+	local task_line="$2"
+	local project_root="$3"
+
+	# Gather context: task description, tags, brief if available
+	local description
+	description=$(printf '%s' "$task_line" | sed -E 's/^[[:space:]]*- \[.\] [^ ]+ //' || echo "")
+
+	local tags
+	tags=$(printf '%s' "$task_line" | grep -oE '#[a-zA-Z0-9_-]+' | tr '\n' ' ' || echo "")
+
+	local estimate
+	estimate=$(printf '%s' "$task_line" | grep -oE '~[0-9]+[hm]' | head -1 || echo "")
+
+	local brief_content=""
+	local brief_file="$project_root/todo/tasks/${task_id}-brief.md"
+	if [[ -f "$brief_file" ]]; then
+		# Read first 1000 chars of brief
+		brief_content=$(head -c 1000 "$brief_file" 2>/dev/null || echo "")
+	fi
+
+	local ai_cli
+	ai_cli=$(resolve_ai_cli 2>/dev/null) || {
+		log_verbose "ai_assess_auto_dispatch: AI unavailable, skipping assessment"
+		return 2
+	}
+
+	local ai_model
+	ai_model=$(resolve_model "sonnet" "$ai_cli" 2>/dev/null) || {
+		log_verbose "ai_assess_auto_dispatch: model resolution failed, skipping"
+		return 2
+	}
+
+	local brief_section=""
+	if [[ -n "$brief_content" ]]; then
+		brief_section="
+
+TASK BRIEF (first 1000 chars):
+${brief_content}"
+	else
+		brief_section="
+
+TASK BRIEF: Not found (no brief file at todo/tasks/${task_id}-brief.md)"
+	fi
+
+	local prompt
+	prompt="You are a task dispatch eligibility assessor for a DevOps automation system. Determine whether a task is ready for autonomous AI dispatch (no human supervision).
+
+TASK: ${task_id}
+DESCRIPTION: ${description}
+TAGS: ${tags}
+ESTIMATE: ${estimate}${brief_section}
+
+ASSESSMENT CRITERIA:
+1. CLEAR DELIVERABLE: Is the task's output well-defined? (e.g., 'fix X in file Y' vs 'investigate something')
+2. ACCEPTANCE CRITERIA: Does the brief have testable acceptance criteria? (2+ criteria = strong signal)
+3. SCOPE: Is the task bounded enough for a single AI worker session? (>4h estimate = risky)
+4. ACTIONABILITY: Are there enough specifics (file paths, function names, error messages) for an AI to act on?
+5. DEPENDENCIES: Are all prerequisites met? (no unresolved blocked-by, no -needed tags)
+6. TYPE: Investigation, research, and design tasks are NOT auto-dispatchable (need human judgment).
+
+LABEL ASSESSMENT:
+Also determine which GitHub labels should be applied based on the task content:
+- Map #tags to labels (e.g., #bugfix -> fix, #feature -> enhancement, #docs -> documentation)
+- Add 'auto-dispatch' label ONLY if the task is dispatchable
+- Add appropriate status label (status:available if no assignee, status:claimed if assignee present)
+
+Respond with ONLY a JSON object:
+{\"dispatchable\": true|false, \"labels\": [\"label1\", \"label2\"], \"reason\": \"one sentence\"}"
+
+	local ai_result=""
+	if [[ "$ai_cli" == "opencode" ]]; then
+		ai_result=$(portable_timeout 15 opencode run \
+			-m "$ai_model" \
+			--format default \
+			--title "dispatch-assess-$$" \
+			"$prompt" 2>/dev/null || echo "")
+		ai_result=$(printf '%s' "$ai_result" | sed 's/\x1b\[[0-9;]*[mGKHF]//g; s/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b\]//g; s/\x07//g')
+	else
+		local claude_model="${ai_model#*/}"
+		ai_result=$(portable_timeout 15 claude \
+			-p "$prompt" \
+			--model "$claude_model" \
+			--output-format text 2>/dev/null || echo "")
+	fi
+
+	if [[ -z "$ai_result" ]]; then
+		log_verbose "ai_assess_auto_dispatch: empty AI response"
+		return 2
+	fi
+
+	local json_block
+	json_block=$(printf '%s' "$ai_result" | grep -oE '\{[^}]*\}' | head -1)
+	if [[ -z "$json_block" ]]; then
+		log_verbose "ai_assess_auto_dispatch: no JSON in response"
+		return 2
+	fi
+
+	local is_dispatchable
+	is_dispatchable=$(printf '%s' "$json_block" | jq -r '.dispatchable // false' 2>/dev/null || echo "false")
+	local reason
+	reason=$(printf '%s' "$json_block" | jq -r '.reason // ""' 2>/dev/null || echo "")
+
+	# Log for audit trail
+	mkdir -p "${AI_LIFECYCLE_LOG_DIR:-/tmp}" 2>/dev/null || true
+	local timestamp
+	timestamp=$(date -u '+%Y%m%d-%H%M%S')
+	{
+		echo "# Dispatch Assessment: $task_id @ $timestamp"
+		echo "Dispatchable: $is_dispatchable"
+		echo "Reason: $reason"
+		echo "Response: $json_block"
+	} >"${AI_LIFECYCLE_LOG_DIR:-/tmp}/dispatch-assess-${task_id}-${timestamp}.md" 2>/dev/null || true
+
+	if [[ "$is_dispatchable" == "true" ]]; then
+		log_info "ai_assess_auto_dispatch: $task_id IS dispatchable — $reason"
+		printf '%s' "$json_block"
+		return 0
+	fi
+
+	log_info "ai_assess_auto_dispatch: $task_id NOT dispatchable — $reason"
+	printf '%s' "$json_block"
+	return 1
 }
 
 #######################################
