@@ -1,159 +1,40 @@
 #!/usr/bin/env bash
-# ai-lifecycle.sh - AI-driven task lifecycle engine
+# ai-lifecycle.sh - AI-first task lifecycle engine
 #
-# Replaces hardcoded bash heuristics with intelligence-first decision making.
-# For each active task: gathers real-world state, asks AI "what's the next
-# action?", executes it, and updates TODO tags so users always know what's
-# happening.
+# Architecture: GATHER → DECIDE → EXECUTE
 #
-# Design principle: AI decides, bash executes. No case statements for
-# lifecycle decisions. The AI sees the same state a human would and picks
-# the obvious next step.
+# 1. gather_task_state()  — collects facts from DB, GitHub, git. Pure data.
+# 2. ai_decide()          — sends state to opus model, gets JSON action back.
+# 3. execute_action()     — runs what the AI decided. Complex work dispatches
+#                           an interactive AI worker with full tool access.
 #
-# Used by: pulse.sh Phase 3 (replaces process_post_pr_lifecycle)
+# Design principle: Shell gathers data and executes commands. AI makes every
+# decision. No case statements, no fast-paths, no deterministic decision gates.
+# The AI sees the same state a human would and picks the next step.
+#
+# Sourced by: supervisor-helper.sh
 # Depends on: dispatch.sh (resolve_ai_cli, resolve_model)
-#             todo-sync.sh (commit_and_push_todo)
-#             deploy.sh (merge_task_pr, rebase_sibling_pr, check_pr_status,
-#                        run_postflight_for_task, run_deploy_for_task,
-#                        cleanup_after_merge, rebase_sibling_prs_after_merge)
-# Sourced by: supervisor-helper.sh (set -euo pipefail inherited)
+#             deploy.sh (merge_task_pr, cleanup_after_merge, etc.)
+#             state.sh (cmd_transition)
 
 # Globals expected from supervisor-helper.sh:
 #   SUPERVISOR_DB, SUPERVISOR_LOG, SUPERVISOR_DIR, SCRIPT_DIR, REPO_PATH
 #   db(), log_info(), log_warn(), log_error(), log_success(), sql_escape()
 #   cmd_transition(), parse_pr_url()
 
-# ── Status Tag Vocabulary ──────────────────────────────────────────────
-#
-# These tags appear on TODO.md task lines as status:<value> so users can
-# see at a glance what the supervisor is doing with each task.
-#
-# Lifecycle states:
-#   status:dispatched       — Worker session launched
-#   status:running          — Worker actively coding
-#   status:evaluating       — Checking worker output
-#   status:pr-open          — PR created, awaiting CI
-#   status:ci-running       — CI checks in progress
-#   status:ci-passed        — CI green, ready to merge
-#   status:merging          — Merge in progress
-#   status:merged           — PR merged to main
-#   status:deploying        — Running deploy/setup
-#   status:deployed         — Live on main, awaiting verification
-#   status:verified         — Post-merge verification passed
-#
-# Action states (transient — what the supervisor is doing right now):
-#   status:updating-branch  — Running gh pr update-branch (GitHub API)
-#   status:rebasing         — Running git rebase onto main
-#   status:resolving-conflicts — AI resolving merge conflicts
-#   status:reviewing-threads — Triaging PR review comments
-#
-# Problem states (visible to user — needs attention or patience):
-#   status:behind-main      — PR needs update, supervisor will handle
-#   status:has-conflicts    — Merge conflicts, AI attempting resolution
-#   status:ci-failed        — CI checks failed, investigating
-#   status:changes-requested — Human reviewer requested changes
-#   status:blocked:<reason> — Cannot proceed, reason given
-#
-# ── End Vocabulary ─────────────────────────────────────────────────────
+# AI model for ALL lifecycle decisions — opus for full intelligence
+AI_LIFECYCLE_MODEL="${AI_LIFECYCLE_MODEL:-opus}"
 
-# Log directory for AI lifecycle decisions
+# Timeout for AI decision calls (seconds)
+AI_LIFECYCLE_TIMEOUT="${AI_LIFECYCLE_TIMEOUT:-90}"
+
+# Log directory for decision audit trail
 AI_LIFECYCLE_LOG_DIR="${AI_LIFECYCLE_LOG_DIR:-$HOME/.aidevops/logs/ai-lifecycle}"
 
-# Timeout for AI decision calls (seconds). These are fast, focused calls.
-AI_LIFECYCLE_DECISION_TIMEOUT="${AI_LIFECYCLE_DECISION_TIMEOUT:-60}"
-
-# Model tier for lifecycle decisions. Sonnet is sufficient — these are
-# bounded, factual decisions, not creative reasoning.
-AI_LIFECYCLE_MODEL_TIER="${AI_LIFECYCLE_MODEL_TIER:-sonnet}"
-
 #######################################
-# Update the status: tag on a task's TODO.md line
-# This is the primary communication channel to users.
-#
-# Arguments:
-#   $1 - task ID
-#   $2 - new status value (e.g., "ci-running", "merging", "behind-main")
-#   $3 - (optional) repo path override
-# Returns:
-#   0 on success, 1 on failure (non-fatal — status tags are best-effort)
-#######################################
-update_task_status_tag() {
-	local task_id="$1"
-	local new_status="$2"
-	local repo_override="${3:-}"
-
-	local trepo="$repo_override"
-	if [[ -z "$trepo" ]]; then
-		local escaped_id
-		escaped_id=$(sql_escape "$task_id")
-		trepo=$(db "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
-	fi
-
-	if [[ -z "$trepo" ]]; then
-		log_warn "update_task_status_tag: no repo for $task_id"
-		return 1
-	fi
-
-	local todo_file="$trepo/TODO.md"
-	if [[ ! -f "$todo_file" ]]; then
-		return 1
-	fi
-
-	# Find the task line (open checkbox only — completed tasks don't get status updates)
-	local line_num
-	line_num=$(grep -nE "^[[:space:]]*- \[ \] ${task_id}( |$)" "$todo_file" | head -1 | cut -d: -f1)
-	if [[ -z "$line_num" ]]; then
-		return 0 # Task not found as open — may already be completed
-	fi
-
-	local task_line
-	task_line=$(sed -n "${line_num}p" "$todo_file")
-
-	# Remove existing status: tag if present
-	local updated_line
-	updated_line=$(printf '%s' "$task_line" | sed -E 's/ status:[^ ]*//')
-
-	# Append new status tag
-	updated_line="${updated_line} status:${new_status}"
-
-	# Replace the line in-place
-	sed_inplace "${line_num}s|.*|${updated_line}|" "$todo_file"
-
-	return 0
-}
-
-#######################################
-# Batch-commit all status tag updates for a repo
-# Called once per pulse after all tasks are processed, not per-task.
-#
-# Arguments:
-#   $1 - repo path
-# Returns:
-#   0 on success
-#######################################
-commit_status_tag_updates() {
-	local repo_path="$1"
-
-	if [[ ! -f "$repo_path/TODO.md" ]]; then
-		return 0
-	fi
-
-	# Check if TODO.md has uncommitted changes
-	if ! git -C "$repo_path" diff --quiet -- TODO.md 2>/dev/null; then
-		if declare -f commit_and_push_todo &>/dev/null; then
-			commit_and_push_todo "$repo_path" "chore: update task status tags" >>"${SUPERVISOR_LOG:-/dev/null}" 2>&1 || {
-				log_warn "commit_status_tag_updates: commit failed for $repo_path (non-fatal)"
-				return 1
-			}
-		fi
-	fi
-
-	return 0
-}
-
-#######################################
-# Gather the real-world state for a task
-# Returns a structured text snapshot that the AI can reason about.
+# Gather the real-world state for a task.
+# Returns structured text that the AI can reason about.
+# PURE DATA — no decisions, no filtering, no skipping.
 #
 # Arguments:
 #   $1 - task ID
@@ -174,7 +55,7 @@ gather_task_state() {
 	local task_row
 	task_row=$(db -separator '|' "$SUPERVISOR_DB" "
 		SELECT id, status, pr_url, repo, branch, worktree, error,
-		       rebase_attempts, retries, max_retries, model
+		       rebase_attempts, retries, max_retries, model, worker_pid
 		FROM tasks WHERE id = '$escaped_id';
 	" 2>/dev/null || echo "")
 
@@ -182,11 +63,14 @@ gather_task_state() {
 		return 1
 	fi
 
-	local tid tstatus tpr trepo tbranch tworktree terror trebase tretries tmax_retries tmodel
-	IFS='|' read -r tid tstatus tpr trepo tbranch tworktree terror trebase tretries tmax_retries tmodel <<<"$task_row"
+	local tid tstatus tpr trepo tbranch tworktree terror trebase tretries tmax_retries tmodel tpid
+	IFS='|' read -r tid tstatus tpr trepo tbranch tworktree terror trebase tretries tmax_retries tmodel tpid <<<"$task_row"
 
 	# GitHub PR state (if PR exists)
-	local pr_state="" pr_merge_state="" pr_ci_status="" pr_ci_failed_checks="" pr_review_decision="" pr_number="" pr_repo_slug=""
+	local pr_state="none" pr_merge_state="none" pr_ci_summary="none"
+	local pr_ci_failed_names="none" pr_review_decision="none"
+	local pr_number="" pr_repo_slug="" pr_base_ref="main"
+
 	if [[ -n "$tpr" && "$tpr" != "no_pr" && "$tpr" != "task_only" && "$tpr" != "verified_complete" ]]; then
 		local parsed_pr
 		parsed_pr=$(parse_pr_url "$tpr" 2>/dev/null) || parsed_pr=""
@@ -203,49 +87,48 @@ gather_task_state() {
 				if [[ -n "$pr_json" ]]; then
 					pr_state=$(printf '%s' "$pr_json" | jq -r '.state // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
 					pr_merge_state=$(printf '%s' "$pr_json" | jq -r '.mergeStateStatus // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
-
-					# Retry once if UNKNOWN (GitHub lazy-loads mergeStateStatus)
-					if [[ "$pr_merge_state" == "UNKNOWN" ]]; then
-						sleep 2
-						local retry_json
-						retry_json=$(gh pr view "$pr_number" --repo "$pr_repo_slug" \
-							--json mergeable,mergeStateStatus 2>/dev/null || echo "")
-						if [[ -n "$retry_json" ]]; then
-							pr_merge_state=$(printf '%s' "$retry_json" | jq -r '.mergeStateStatus // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
-						fi
-					fi
-
 					pr_review_decision=$(printf '%s' "$pr_json" | jq -r '.reviewDecision // "NONE"' 2>/dev/null || echo "NONE")
+					pr_base_ref=$(printf '%s' "$pr_json" | jq -r '.baseRefName // "main"' 2>/dev/null || echo "main")
 
-					# Summarize CI status
-					local check_rollup
-					check_rollup=$(printf '%s' "$pr_json" | jq -r '.statusCheckRollup // []' 2>/dev/null || echo "[]")
-					if [[ "$check_rollup" != "[]" && "$check_rollup" != "null" ]]; then
-						local pending failed passed
-						pending=$(printf '%s' "$check_rollup" | jq '[.[] | select(.status == "IN_PROGRESS" or .status == "QUEUED" or .status == "PENDING")] | length' 2>/dev/null || echo "0")
-						failed=$(printf '%s' "$check_rollup" | jq '[.[] | select((.conclusion | test("FAILURE|TIMED_OUT|ACTION_REQUIRED")) or .state == "FAILURE" or .state == "ERROR")] | length' 2>/dev/null || echo "0")
-						passed=$(printf '%s' "$check_rollup" | jq '[.[] | select(.conclusion == "SUCCESS" or .state == "SUCCESS")] | length' 2>/dev/null || echo "0")
-						pr_ci_status="passed:${passed} failed:${failed} pending:${pending}"
-
-						# Extract names of failed checks for fix_ci routing
-						local failed_check_names
-						failed_check_names=$(printf '%s' "$check_rollup" | jq -r '[.[] | select((.conclusion | test("FAILURE|TIMED_OUT|ACTION_REQUIRED")) or .state == "FAILURE" or .state == "ERROR") | .name] | join(",")' 2>/dev/null || echo "")
-						if [[ -n "$failed_check_names" ]]; then
-							pr_ci_failed_checks="$failed_check_names"
-						fi
-					else
-						pr_ci_status="no-checks"
-					fi
-
-					local is_draft pr_base_ref
+					local is_draft
 					is_draft=$(printf '%s' "$pr_json" | jq -r '.isDraft // false' 2>/dev/null || echo "false")
 					if [[ "$is_draft" == "true" ]]; then
 						pr_state="DRAFT"
 					fi
-					pr_base_ref=$(printf '%s' "$pr_json" | jq -r '.baseRefName // "main"' 2>/dev/null || echo "main")
+
+					# CI summary
+					local check_rollup
+					check_rollup=$(printf '%s' "$pr_json" | jq -r '.statusCheckRollup // []' 2>/dev/null || echo "[]")
+					if [[ "$check_rollup" != "[]" && "$check_rollup" != "null" ]]; then
+						local pending failed passed total
+						pending=$(printf '%s' "$check_rollup" | jq '[.[] | select(.status == "IN_PROGRESS" or .status == "QUEUED" or .status == "PENDING")] | length' 2>/dev/null || echo "0")
+						failed=$(printf '%s' "$check_rollup" | jq '[.[] | select((.conclusion | test("FAILURE|TIMED_OUT|ACTION_REQUIRED")) or .state == "FAILURE" or .state == "ERROR")] | length' 2>/dev/null || echo "0")
+						passed=$(printf '%s' "$check_rollup" | jq '[.[] | select(.conclusion == "SUCCESS" or .state == "SUCCESS")] | length' 2>/dev/null || echo "0")
+						total=$(printf '%s' "$check_rollup" | jq 'length' 2>/dev/null || echo "0")
+						pr_ci_summary="total:${total} passed:${passed} failed:${failed} pending:${pending}"
+
+						# Names of failed checks
+						local failed_names
+						failed_names=$(printf '%s' "$check_rollup" | jq -r '[.[] | select((.conclusion | test("FAILURE|TIMED_OUT|ACTION_REQUIRED")) or .state == "FAILURE" or .state == "ERROR") | .name] | join(", ")' 2>/dev/null || echo "")
+						if [[ -n "$failed_names" ]]; then
+							pr_ci_failed_names="$failed_names"
+						fi
+					fi
 				fi
 			fi
 		fi
+	fi
+
+	# Worker process state
+	local worker_alive="unknown"
+	if [[ -n "$tpid" && "$tpid" != "0" ]]; then
+		if kill -0 "$tpid" 2>/dev/null; then
+			worker_alive="yes"
+		else
+			worker_alive="no (PID $tpid dead)"
+		fi
+	else
+		worker_alive="no worker"
 	fi
 
 	# Worktree state
@@ -262,49 +145,52 @@ gather_task_state() {
 		ORDER BY timestamp DESC LIMIT 5;
 	" 2>/dev/null || echo "none")
 
-	# Output structured state
-	cat <<STATE
-TASK: $tid
-DB_STATUS: $tstatus
-ERROR: ${terror:-none}
-PR_URL: ${tpr:-none}
-PR_NUMBER: ${pr_number:-none}
-PR_REPO: ${pr_repo_slug:-none}
-PR_STATE: ${pr_state:-none}
-PR_BASE_BRANCH: ${pr_base_ref:-main}
-PR_MERGE_STATE: ${pr_merge_state:-none}
-PR_CI: ${pr_ci_status:-unknown}
-PR_CI_FAILED_CHECKS: ${pr_ci_failed_checks:-none}
-PR_REVIEW: ${pr_review_decision:-none}
-BRANCH: ${tbranch:-none}
-WORKTREE: ${tworktree:-none}
-WORKTREE_EXISTS: $worktree_exists
-REPO: ${trepo:-none}
-REBASE_ATTEMPTS: ${trebase:-0}
-RETRIES: ${tretries:-0}/${tmax_retries:-3}
-MODEL: ${tmodel:-unknown}
-RECENT_TRANSITIONS:
-$recent_transitions
-STATE
+	# Output structured state — every field the AI needs to make a decision
+	cat <<-STATE
+		TASK: $tid
+		DB_STATUS: $tstatus
+		ERROR: ${terror:-none}
+		WORKER_ALIVE: $worker_alive
+		PR_URL: ${tpr:-none}
+		PR_NUMBER: ${pr_number:-none}
+		PR_REPO: ${pr_repo_slug:-none}
+		PR_STATE: $pr_state
+		PR_BASE_BRANCH: $pr_base_ref
+		PR_MERGE_STATE: $pr_merge_state
+		PR_CI: $pr_ci_summary
+		PR_CI_FAILED_CHECKS: $pr_ci_failed_names
+		PR_REVIEW: $pr_review_decision
+		BRANCH: ${tbranch:-none}
+		WORKTREE: ${tworktree:-none}
+		WORKTREE_EXISTS: $worktree_exists
+		REPO: ${trepo:-none}
+		REBASE_ATTEMPTS: ${trebase:-0}
+		RETRIES: ${tretries:-0}/${tmax_retries:-3}
+		MODEL: ${tmodel:-unknown}
+		RECENT_TRANSITIONS:
+		$recent_transitions
+	STATE
 
 	return 0
 }
 
 #######################################
-# Ask AI for the next action on a task
-# This is a focused, bounded call — not open-ended reasoning.
+# Ask AI for the next action on a task.
+# The AI gets full state and decides what to do.
+# NO fast-paths, NO deterministic shortcuts.
 #
 # Arguments:
 #   $1 - task state snapshot (from gather_task_state)
+#   $2 - task ID (for logging)
 # Outputs:
 #   JSON object with action and reasoning on stdout
 # Returns:
 #   0 on success, 1 on failure
 #######################################
-decide_next_action() {
+ai_decide() {
 	local task_state="$1"
+	local task_id="$2"
 
-	# Resolve AI CLI and model
 	local ai_cli
 	ai_cli=$(resolve_ai_cli 2>/dev/null) || {
 		log_error "ai-lifecycle: no AI CLI available"
@@ -312,121 +198,149 @@ decide_next_action() {
 	}
 
 	local ai_model
-	ai_model=$(resolve_model "$AI_LIFECYCLE_MODEL_TIER" "$ai_cli" 2>/dev/null) || {
-		log_error "ai-lifecycle: no model available"
+	ai_model=$(resolve_model "$AI_LIFECYCLE_MODEL" "$ai_cli" 2>/dev/null) || {
+		log_error "ai-lifecycle: no model available for tier $AI_LIFECYCLE_MODEL"
 		return 1
 	}
 
 	local prompt
-	prompt="You are a DevOps engineer looking at a task's current state. Decide the single next action to move it forward.
+	prompt="You are the AI supervisor for a DevOps pipeline. You see a task's current state and must decide the single next action to move it toward completion.
 
+CURRENT STATE:
 $task_state
 
-AVAILABLE ACTIONS (pick exactly one):
-- merge_pr: Squash-merge the PR (use when CI passed, no conflicts, reviews OK)
-- update_branch: Update PR branch via GitHub API (use when PR is BEHIND main, no conflicts)
-- rebase_branch: Git rebase onto main (use when update_branch isn't available or failed)
-- promote_draft: Convert draft PR to ready (use when PR is DRAFT and worker is done)
-- close_pr: Close the PR without merging (use when PR is obsolete or superseded)
-- fix_ci: Run mechanical CI fixes in worktree (use when Format/Lint/Typecheck failed — runs format:fix, lint:fix, then pushes)
-- retry_ci: Re-request CI checks (use when CI failed transiently — not for fixable failures)
-- wait: Do nothing this cycle (use when CI is running, or need to wait for something)
-- deploy: Run post-merge deployment (use when PR is already merged)
-- mark_deployed: Mark task as deployed without running deploy (non-deployable repos)
+YOUR GOAL: Make progress. Every cycle should move the task closer to merged+deployed. If something is broken, fix it. If something is blocked, unblock it. Never just wait unless work is genuinely in progress.
+
+AVAILABLE ACTIONS:
+- merge_pr: Squash-merge the PR (CI passed, mergeable)
+- update_branch: Update PR branch via GitHub API (PR behind base, no conflicts)
+- rebase_branch: Git rebase onto base branch (when update_branch failed or unavailable)
+- fix_ci: Dispatch AI worker to fix CI failures in the worktree (format, lint, typecheck, tests)
+- resolve_conflicts: Dispatch AI worker to resolve merge conflicts intelligently (reads both sides, understands code, merges correctly)
+- fix_and_push: Dispatch AI worker to diagnose and fix any issue blocking the PR (general-purpose problem solver)
+- promote_draft: Convert draft PR to ready for review
+- close_pr: Close PR without merging (obsolete or superseded)
+- deploy: Run post-merge deployment (PR already merged)
+- mark_complete: Mark task as deployed without deploy step (no PR, or non-deployable repo)
 - dismiss_reviews: Dismiss bot reviews blocking merge
-- escalate: Dispatch an AI worker to fix the issue (use as last resort for complex conflicts)
+- retry_ci: Re-trigger CI checks (only for transient/infra failures, not code failures)
+- wait: Do nothing this cycle (ONLY when a worker is actively running or CI is actively in progress)
+- cancel: Cancel the task entirely (unrecoverable)
 
-RULES:
-- Pick the SIMPLEST action that makes progress
-- If PR is BEHIND with no conflicts: update_branch (not rebase)
-- If PR is CLEAN or UNSTABLE with CI passed: merge_pr
-- If PR is already MERGED: deploy
-- If CI is still running: wait
-- If CI failed on Format/Lint/Typecheck: fix_ci (not retry_ci or escalate)
-- Never pick escalate unless simpler actions have been tried and failed
-- If the task has no PR and status is complete: mark_deployed
+DECISION RULES:
+- PR MERGED on GitHub → deploy (always)
+- PR CLEAN or UNSTABLE → merge_pr (always — UNSTABLE means non-required checks failed)
+- PR BEHIND base → update_branch
+- PR DIRTY/CONFLICTING → resolve_conflicts (dispatch AI worker to fix)
+- PR BLOCKED with CI failures → fix_ci (dispatch AI worker to fix)
+- CI has pending checks AND no failures → wait
+- Worker is alive → wait
+- Task complete with no PR → mark_complete
+- Task blocked with error → fix_and_push (dispatch AI worker to diagnose and fix)
+- PR is DRAFT → promote_draft
+- NEVER wait when there is a fixable problem. Fix it.
+- NEVER wait more than 2 cycles for the same issue. Escalate to fix_and_push.
+- If rebase_attempts > 3 → resolve_conflicts (not another rebase)
 
-Respond with ONLY a JSON object, no markdown fencing:
-{\"action\": \"<action_name>\", \"reason\": \"<one line explanation>\", \"status_tag\": \"<status tag for TODO.md>\"}"
+Respond with ONLY a JSON object (no markdown, no explanation outside the JSON):
+{\"action\": \"<action_name>\", \"reason\": \"<one sentence>\", \"status_tag\": \"<status tag for TODO.md>\"}"
 
 	local ai_result=""
-	local ai_timeout="$AI_LIFECYCLE_DECISION_TIMEOUT"
 
 	if [[ "$ai_cli" == "opencode" ]]; then
-		ai_result=$(portable_timeout "$ai_timeout" opencode run \
+		ai_result=$(portable_timeout "$AI_LIFECYCLE_TIMEOUT" opencode run \
 			-m "$ai_model" \
 			--format default \
-			--title "lifecycle-decision-$$" \
+			--title "lifecycle-${task_id}-$$" \
 			"$prompt" 2>/dev/null || echo "")
 		# Strip ANSI codes
 		ai_result=$(printf '%s' "$ai_result" | sed 's/\x1b\[[0-9;]*[mGKHF]//g; s/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b\]//g; s/\x07//g')
 	else
 		local claude_model="${ai_model#*/}"
-		ai_result=$(portable_timeout "$ai_timeout" claude \
+		ai_result=$(portable_timeout "$AI_LIFECYCLE_TIMEOUT" claude \
 			-p "$prompt" \
 			--model "$claude_model" \
 			--output-format text 2>/dev/null || echo "")
 	fi
 
 	if [[ -z "$ai_result" ]]; then
-		log_warn "ai-lifecycle: empty response from AI"
+		log_warn "ai-lifecycle: empty response from AI for $task_id"
 		return 1
 	fi
 
-	# Extract JSON from response (may have preamble/postamble)
+	# Extract JSON from response
 	local json_block
 	json_block=$(printf '%s' "$ai_result" | grep -oE '\{[^}]+\}' | head -1)
 
 	if [[ -z "$json_block" ]]; then
-		log_warn "ai-lifecycle: could not parse JSON from response"
-		log_warn "ai-lifecycle: raw response: $(printf '%s' "$ai_result" | head -c 200)"
+		log_warn "ai-lifecycle: no JSON in response for $task_id"
+		log_warn "ai-lifecycle: raw: $(printf '%s' "$ai_result" | head -c 300)"
 		return 1
 	fi
 
-	# Validate required fields
 	local action
 	action=$(printf '%s' "$json_block" | jq -r '.action // ""' 2>/dev/null || echo "")
 	if [[ -z "$action" ]]; then
-		log_warn "ai-lifecycle: no action field in response"
+		log_warn "ai-lifecycle: no action field in response for $task_id"
 		return 1
 	fi
+
+	# Log the decision for audit trail
+	mkdir -p "$AI_LIFECYCLE_LOG_DIR" 2>/dev/null || true
+	local timestamp
+	timestamp=$(date -u '+%Y%m%d-%H%M%S')
+	{
+		echo "# Decision: $task_id @ $timestamp"
+		echo "Action: $action"
+		echo "Reason: $(printf '%s' "$json_block" | jq -r '.reason // ""' 2>/dev/null)"
+		echo ""
+		echo "## State"
+		echo "$task_state"
+	} >"$AI_LIFECYCLE_LOG_DIR/decision-${task_id}-${timestamp}.md" 2>/dev/null || true
 
 	printf '%s' "$json_block"
 	return 0
 }
 
 #######################################
-# Execute a lifecycle action decided by the AI
+# Execute a lifecycle action.
+# Simple actions run inline. Complex actions (resolve_conflicts, fix_ci,
+# fix_and_push) dispatch an interactive AI worker with full tool access.
 #
 # Arguments:
 #   $1 - task ID
-#   $2 - action name (from decide_next_action)
-#   $3 - task repo path
+#   $2 - action name
+#   $3 - reason (for logging)
+#   $4 - status_tag (for TODO.md)
 # Returns:
 #   0 on success, 1 on failure
 #######################################
-execute_lifecycle_action() {
+execute_action() {
 	local task_id="$1"
 	local action="$2"
-	local repo_path="$3"
+	local reason="${3:-}"
+	local status_tag="${4:-}"
 
 	local escaped_id
 	escaped_id=$(sql_escape "$task_id")
 
-	# Get PR details from DB
-	local tpr tbranch tworktree
-	tpr=$(db "$SUPERVISOR_DB" "SELECT pr_url FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
-	tbranch=$(db "$SUPERVISOR_DB" "SELECT branch FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
-	tworktree=$(db "$SUPERVISOR_DB" "SELECT worktree FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+	# Get task details from DB
+	local task_row
+	task_row=$(db -separator '|' "$SUPERVISOR_DB" "
+		SELECT pr_url, repo, branch, worktree FROM tasks WHERE id = '$escaped_id';
+	" 2>/dev/null || echo "")
 
-	local parsed_pr pr_number pr_repo_slug pr_base_branch
-	pr_base_branch="main" # default fallback
-	if [[ -n "$tpr" && "$tpr" != "no_pr" ]]; then
+	local tpr trepo tbranch tworktree
+	IFS='|' read -r tpr trepo tbranch tworktree <<<"$task_row"
+
+	# Parse PR details
+	local pr_number="" pr_repo_slug="" pr_base_branch="main"
+	if [[ -n "$tpr" && "$tpr" != "no_pr" && "$tpr" != "task_only" && "$tpr" != "verified_complete" ]]; then
+		local parsed_pr
 		parsed_pr=$(parse_pr_url "$tpr" 2>/dev/null) || parsed_pr=""
 		if [[ -n "$parsed_pr" ]]; then
 			pr_repo_slug="${parsed_pr%%|*}"
 			pr_number="${parsed_pr##*|}"
-			# Look up the PR's actual base branch (e.g. develop, main)
 			local base_ref
 			base_ref=$(gh pr view "$pr_number" --repo "$pr_repo_slug" \
 				--json baseRefName --jq '.baseRefName' 2>/dev/null) || base_ref=""
@@ -436,127 +350,133 @@ execute_lifecycle_action() {
 		fi
 	fi
 
+	# Update status tag on TODO.md
+	if [[ -n "$status_tag" ]] && declare -f update_task_status_tag &>/dev/null; then
+		update_task_status_tag "$task_id" "$status_tag" "$trepo" 2>/dev/null || true
+	fi
+
+	log_info "ai-lifecycle: $task_id → $action ($reason)"
+
 	case "$action" in
+
 	merge_pr)
-		log_info "ai-lifecycle: merging PR for $task_id"
-		update_task_status_tag "$task_id" "merging" "$repo_path"
-
-		# Transition through the state machine
 		cmd_transition "$task_id" "merging" 2>>"$SUPERVISOR_LOG" || true
-
 		if merge_task_pr "$task_id" 2>>"$SUPERVISOR_LOG"; then
 			cmd_transition "$task_id" "merged" 2>>"$SUPERVISOR_LOG" || true
-			update_task_status_tag "$task_id" "merged" "$repo_path"
-
-			# Post-merge: pull main, rebase siblings, deploy
-			git -C "$repo_path" pull --rebase origin main 2>>"$SUPERVISOR_LOG" || true
+			# Post-merge: pull base, rebase siblings, deploy, cleanup
+			if [[ -n "$trepo" && -d "$trepo" ]]; then
+				git -C "$trepo" pull --rebase origin "$pr_base_branch" 2>>"$SUPERVISOR_LOG" || true
+			fi
 			rebase_sibling_prs_after_merge "$task_id" 2>>"$SUPERVISOR_LOG" || true
-
-			# Run postflight + deploy
-			run_postflight_for_task "$task_id" "$repo_path" 2>>"$SUPERVISOR_LOG" || true
-			update_task_status_tag "$task_id" "deploying" "$repo_path"
+			run_postflight_for_task "$task_id" "$trepo" 2>>"$SUPERVISOR_LOG" || true
 			cmd_transition "$task_id" "deploying" 2>>"$SUPERVISOR_LOG" || true
-
-			run_deploy_for_task "$task_id" "$repo_path" 2>>"$SUPERVISOR_LOG" || true
+			run_deploy_for_task "$task_id" "$trepo" 2>>"$SUPERVISOR_LOG" || true
 			cmd_transition "$task_id" "deployed" 2>>"$SUPERVISOR_LOG" || true
-			update_task_status_tag "$task_id" "deployed" "$repo_path"
-
-			# Clean up worktree
 			cleanup_after_merge "$task_id" 2>>"$SUPERVISOR_LOG" || true
-
-			# Update TODO.md completion
 			update_todo_on_complete "$task_id" 2>>"$SUPERVISOR_LOG" || true
-
 			log_success "ai-lifecycle: $task_id merged and deployed"
 			return 0
 		else
 			log_warn "ai-lifecycle: merge failed for $task_id"
-			update_task_status_tag "$task_id" "blocked:merge-failed" "$repo_path"
 			cmd_transition "$task_id" "blocked" --error "Merge failed" 2>>"$SUPERVISOR_LOG" || true
 			return 1
 		fi
 		;;
 
 	update_branch)
-		log_info "ai-lifecycle: updating PR branch for $task_id via GitHub API"
-		update_task_status_tag "$task_id" "updating-branch" "$repo_path"
-
-		if [[ -z "$pr_number" || -z "$pr_repo_slug" ]]; then
-			log_warn "ai-lifecycle: no PR number/repo for update_branch on $task_id"
-			return 1
+		if [[ -n "$pr_number" && -n "$pr_repo_slug" ]]; then
+			if gh pr update-branch "$pr_number" --repo "$pr_repo_slug" 2>>"$SUPERVISOR_LOG"; then
+				log_success "ai-lifecycle: branch updated for $task_id"
+				return 0
+			fi
 		fi
-
-		# Use gh CLI to update the branch (handles sha automatically)
-		if gh pr update-branch "$pr_number" --repo "$pr_repo_slug" 2>>"$SUPERVISOR_LOG"; then
-			log_success "ai-lifecycle: branch updated for $task_id — CI will re-run"
-			update_task_status_tag "$task_id" "ci-running" "$repo_path"
-			# Reset rebase counter since we used a different strategy
-			db "$SUPERVISOR_DB" "UPDATE tasks SET rebase_attempts = 0 WHERE id = '$escaped_id';" 2>/dev/null || true
-			return 0
-		else
-			log_warn "ai-lifecycle: update-branch failed for $task_id — will try rebase next cycle"
-			update_task_status_tag "$task_id" "behind-main" "$repo_path"
-			return 1
-		fi
+		log_warn "ai-lifecycle: update_branch failed for $task_id"
+		return 1
 		;;
 
 	rebase_branch)
-		log_info "ai-lifecycle: rebasing branch for $task_id"
-		update_task_status_tag "$task_id" "rebasing" "$repo_path"
-
 		if rebase_sibling_pr "$task_id" 2>>"$SUPERVISOR_LOG"; then
 			log_success "ai-lifecycle: rebase succeeded for $task_id"
-			update_task_status_tag "$task_id" "ci-running" "$repo_path"
-			# Increment rebase counter
 			local current_attempts
 			current_attempts=$(db "$SUPERVISOR_DB" "SELECT rebase_attempts FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "0")
 			db "$SUPERVISOR_DB" "UPDATE tasks SET rebase_attempts = $((current_attempts + 1)) WHERE id = '$escaped_id';" 2>/dev/null || true
 			return 0
-		else
-			log_warn "ai-lifecycle: rebase failed for $task_id"
-			update_task_status_tag "$task_id" "has-conflicts" "$repo_path"
-			return 1
 		fi
+		log_warn "ai-lifecycle: rebase failed for $task_id"
+		return 1
+		;;
+
+	resolve_conflicts | fix_ci | fix_and_push)
+		# These all dispatch an interactive AI worker with full tool access.
+		# The worker gets the problem description and solves it autonomously.
+		_dispatch_ai_worker "$task_id" "$action" "$trepo" "$tworktree" "$tbranch" "$tpr" "$pr_base_branch"
+		return $?
 		;;
 
 	promote_draft)
-		log_info "ai-lifecycle: promoting draft PR for $task_id"
-		update_task_status_tag "$task_id" "pr-open" "$repo_path"
-
 		if [[ -n "$pr_number" && -n "$pr_repo_slug" ]]; then
 			if gh pr ready "$pr_number" --repo "$pr_repo_slug" 2>>"$SUPERVISOR_LOG"; then
 				log_success "ai-lifecycle: draft promoted for $task_id"
-				update_task_status_tag "$task_id" "ci-running" "$repo_path"
 				return 0
 			fi
 		fi
-		log_warn "ai-lifecycle: draft promotion failed for $task_id"
 		return 1
 		;;
 
 	close_pr)
-		log_info "ai-lifecycle: closing PR for $task_id (obsolete/superseded)"
 		if [[ -n "$pr_number" && -n "$pr_repo_slug" ]]; then
 			gh pr close "$pr_number" --repo "$pr_repo_slug" \
-				--comment "Closed by AI supervisor: PR obsolete or superseded" \
-				2>>"$SUPERVISOR_LOG" || true
+				--comment "Closed by AI supervisor: $reason" 2>>"$SUPERVISOR_LOG" || true
 		fi
-		cmd_transition "$task_id" "cancelled" --error "PR closed (obsolete)" 2>>"$SUPERVISOR_LOG" || true
-		update_task_status_tag "$task_id" "cancelled" "$repo_path"
+		cmd_transition "$task_id" "cancelled" --error "PR closed: $reason" 2>>"$SUPERVISOR_LOG" || true
 		cleanup_after_merge "$task_id" 2>>"$SUPERVISOR_LOG" || true
 		return 0
 		;;
 
+	deploy)
+		if [[ -n "$trepo" && -d "$trepo" ]]; then
+			git -C "$trepo" pull --rebase origin "$pr_base_branch" 2>>"$SUPERVISOR_LOG" || true
+		fi
+		# Fast-track through merge states if needed
+		local current_status
+		current_status=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+		if [[ "$current_status" != "merged" && "$current_status" != "deploying" && "$current_status" != "deployed" ]]; then
+			cmd_transition "$task_id" "merging" 2>>"$SUPERVISOR_LOG" || true
+			cmd_transition "$task_id" "merged" 2>>"$SUPERVISOR_LOG" || true
+		fi
+		cmd_transition "$task_id" "deploying" 2>>"$SUPERVISOR_LOG" || true
+		run_deploy_for_task "$task_id" "$trepo" 2>>"$SUPERVISOR_LOG" || true
+		cmd_transition "$task_id" "deployed" 2>>"$SUPERVISOR_LOG" || true
+		cleanup_after_merge "$task_id" 2>>"$SUPERVISOR_LOG" || true
+		update_todo_on_complete "$task_id" 2>>"$SUPERVISOR_LOG" || true
+		log_success "ai-lifecycle: $task_id deployed"
+		return 0
+		;;
+
+	mark_complete)
+		local current_status
+		current_status=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+		if [[ "$current_status" == "complete" || "$current_status" == "blocked" ]]; then
+			cmd_transition "$task_id" "deployed" 2>>"$SUPERVISOR_LOG" || true
+		fi
+		cleanup_after_merge "$task_id" 2>>"$SUPERVISOR_LOG" || true
+		update_todo_on_complete "$task_id" 2>>"$SUPERVISOR_LOG" || true
+		log_success "ai-lifecycle: $task_id marked complete"
+		return 0
+		;;
+
+	dismiss_reviews)
+		if [[ -n "$pr_number" && -n "$pr_repo_slug" ]] && declare -f dismiss_bot_reviews &>/dev/null; then
+			dismiss_bot_reviews "$pr_number" "$pr_repo_slug" 2>>"$SUPERVISOR_LOG" || true
+		fi
+		return 0
+		;;
+
 	retry_ci)
-		log_info "ai-lifecycle: retrying CI for $task_id"
-		update_task_status_tag "$task_id" "ci-running" "$repo_path"
-		# Push an empty commit to re-trigger CI, or use gh api
-		if [[ -n "$pr_repo_slug" && -n "$tbranch" ]]; then
-			# Get the latest commit SHA on the PR branch
+		if [[ -n "$pr_repo_slug" && -n "$pr_number" ]]; then
 			local head_sha
 			head_sha=$(gh api "repos/${pr_repo_slug}/pulls/${pr_number}" --jq '.head.sha' 2>/dev/null || echo "")
 			if [[ -n "$head_sha" ]]; then
-				# Re-request check suites
 				gh api "repos/${pr_repo_slug}/check-suites" \
 					-X POST -f head_sha="$head_sha" 2>>"$SUPERVISOR_LOG" || true
 				log_info "ai-lifecycle: CI re-requested for $task_id"
@@ -566,164 +486,14 @@ execute_lifecycle_action() {
 		return 1
 		;;
 
-	fix_ci)
-		log_info "ai-lifecycle: fixing CI failures for $task_id"
-		update_task_status_tag "$task_id" "ci-failed" "$repo_path"
-
-		if fix_ci_failures "$task_id" "$repo_path"; then
-			log_success "ai-lifecycle: CI fixes pushed for $task_id — CI will re-run"
-			update_task_status_tag "$task_id" "ci-running" "$repo_path"
-			# Transition back to pr_review so the lifecycle picks it up next cycle
-			cmd_transition "$task_id" "pr_review" --error "" 2>>"$SUPERVISOR_LOG" || true
-			return 0
-		else
-			log_warn "ai-lifecycle: mechanical CI fix failed for $task_id — will escalate next cycle"
-			update_task_status_tag "$task_id" "blocked:ci-fix-failed" "$repo_path"
-			return 1
-		fi
-		;;
-
 	wait)
-		log_info "ai-lifecycle: waiting for $task_id (no action needed this cycle)"
-		# Status tag already set by gather phase — don't overwrite
+		log_info "ai-lifecycle: waiting for $task_id ($reason)"
 		return 0
 		;;
 
-	deploy)
-		log_info "ai-lifecycle: deploying $task_id (PR already merged)"
-		update_task_status_tag "$task_id" "deploying" "$repo_path"
-
-		# Ensure we're on latest main
-		git -C "$repo_path" pull --rebase origin main 2>>"$SUPERVISOR_LOG" || true
-
-		# Transition through merge states if not already there
-		local current_status
-		current_status=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
-		case "$current_status" in
-		complete | pr_review)
-			cmd_transition "$task_id" "merging" 2>>"$SUPERVISOR_LOG" || true
-			cmd_transition "$task_id" "merged" 2>>"$SUPERVISOR_LOG" || true
-			cmd_transition "$task_id" "deploying" 2>>"$SUPERVISOR_LOG" || true
-			;;
-		merged)
-			cmd_transition "$task_id" "deploying" 2>>"$SUPERVISOR_LOG" || true
-			;;
-		blocked)
-			# Blocked but PR is merged — advance through states
-			db "$SUPERVISOR_DB" "UPDATE tasks SET status = 'deploying', error = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = '$escaped_id';" 2>/dev/null || true
-			;;
-		esac
-
-		run_deploy_for_task "$task_id" "$repo_path" 2>>"$SUPERVISOR_LOG" || true
-		cmd_transition "$task_id" "deployed" 2>>"$SUPERVISOR_LOG" || true
-		update_task_status_tag "$task_id" "deployed" "$repo_path"
+	cancel)
+		cmd_transition "$task_id" "cancelled" --error "$reason" 2>>"$SUPERVISOR_LOG" || true
 		cleanup_after_merge "$task_id" 2>>"$SUPERVISOR_LOG" || true
-		update_todo_on_complete "$task_id" 2>>"$SUPERVISOR_LOG" || true
-
-		log_success "ai-lifecycle: $task_id deployed"
-		return 0
-		;;
-
-	mark_deployed)
-		log_info "ai-lifecycle: marking $task_id deployed (no deploy needed)"
-		update_task_status_tag "$task_id" "deployed" "$repo_path"
-
-		local current_status
-		current_status=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
-		if [[ "$current_status" == "complete" ]]; then
-			cmd_transition "$task_id" "deployed" 2>>"$SUPERVISOR_LOG" || true
-		elif [[ "$current_status" == "blocked" ]]; then
-			db "$SUPERVISOR_DB" "UPDATE tasks SET status = 'deployed', error = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = '$escaped_id';" 2>/dev/null || true
-		fi
-
-		cleanup_after_merge "$task_id" 2>>"$SUPERVISOR_LOG" || true
-		update_todo_on_complete "$task_id" 2>>"$SUPERVISOR_LOG" || true
-
-		log_success "ai-lifecycle: $task_id marked deployed"
-		return 0
-		;;
-
-	dismiss_reviews)
-		log_info "ai-lifecycle: dismissing bot reviews for $task_id"
-		update_task_status_tag "$task_id" "reviewing-threads" "$repo_path"
-
-		if [[ -n "$pr_number" && -n "$pr_repo_slug" ]] && declare -f dismiss_bot_reviews &>/dev/null; then
-			dismiss_bot_reviews "$pr_number" "$pr_repo_slug" 2>>"$SUPERVISOR_LOG" || true
-			log_info "ai-lifecycle: bot reviews dismissed for $task_id"
-			return 0
-		fi
-		return 1
-		;;
-
-	escalate)
-		log_info "ai-lifecycle: escalating $task_id to opus worker"
-		update_task_status_tag "$task_id" "resolving-conflicts" "$repo_path"
-
-		# Dispatch an opus worker to fix the issue
-		local esc_ai_cli
-		esc_ai_cli=$(resolve_ai_cli 2>/dev/null || echo "")
-		if [[ -z "$esc_ai_cli" ]]; then
-			log_warn "ai-lifecycle: no AI CLI for escalation"
-			return 1
-		fi
-
-		local esc_model
-		esc_model=$(resolve_model "opus" "$esc_ai_cli" 2>/dev/null || echo "")
-
-		local esc_workdir="${tworktree:-$repo_path}"
-		local esc_error
-		esc_error=$(db "$SUPERVISOR_DB" "SELECT error FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "unknown")
-		local esc_prompt
-		esc_prompt="You are fixing a stuck PR for task $task_id.
-
-PR: ${tpr:-none}
-Branch: ${tbranch:-none}
-Error: $esc_error
-
-Steps:
-1. cd to $esc_workdir
-2. git fetch origin $pr_base_branch
-3. Abort any stale rebase: git rebase --abort (ignore errors)
-4. git rebase origin/$pr_base_branch
-5. If conflicts: resolve them intelligently, git add, git rebase --continue
-6. git push --force-with-lease origin $tbranch
-7. Verify: gh pr view $tpr --json mergeStateStatus
-8. If clean: gh pr merge $tpr --squash
-9. Output ONLY: RESOLVED_MERGED if merged, RESOLVED_REBASED if rebased, RESOLVED_FAILED:<reason> if failed"
-
-		local esc_log
-		esc_log="${SUPERVISOR_DIR}/logs/escalation-${task_id}-$(date +%Y%m%d-%H%M%S).log"
-		mkdir -p "$SUPERVISOR_DIR/logs" 2>/dev/null || true
-
-		if [[ "$esc_ai_cli" == "opencode" ]]; then
-			(cd "$esc_workdir" && opencode run \
-				${esc_model:+-m "$esc_model"} \
-				--format json \
-				--title "escalation-${task_id}" \
-				"$esc_prompt" \
-				>"$esc_log" 2>&1) &
-		else
-			local claude_model="${esc_model#*/}"
-			(cd "$esc_workdir" && claude \
-				-p "$esc_prompt" \
-				${claude_model:+--model "$claude_model"} \
-				>"$esc_log" 2>&1) &
-		fi
-		local esc_pid=$!
-
-		# Record in DB
-		db "$SUPERVISOR_DB" "UPDATE tasks SET
-			status = 'running',
-			error = 'Escalation: AI worker resolving conflicts (PID $esc_pid)',
-			worker_pid = $esc_pid,
-			updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-		WHERE id = '$escaped_id';" 2>/dev/null || true
-
-		# Create PID file for health monitoring
-		mkdir -p "$SUPERVISOR_DIR/pids" 2>/dev/null || true
-		echo "$esc_pid" >"$SUPERVISOR_DIR/pids/${task_id}.pid"
-
-		log_success "ai-lifecycle: escalation worker dispatched for $task_id (PID $esc_pid)"
 		return 0
 		;;
 
@@ -735,374 +505,180 @@ Steps:
 }
 
 #######################################
-# Fix CI failures mechanically in a task's worktree
-# Tiered approach:
-#   1. Format/Lint: run fix commands (pnpm format:fix, pnpm lint:fix)
-#   2. Typecheck: fetch CI log, dispatch lightweight AI to fix types
-#   3. Commit + push to trigger CI re-run
-#
-# Detects repo tooling from package.json (pnpm/npm/yarn) and AGENTS.md.
+# Dispatch an interactive AI worker to solve a complex problem.
+# The worker gets full context and tool access — it can read files,
+# edit code, run commands, resolve conflicts, fix tests, etc.
 #
 # Arguments:
 #   $1 - task ID
-#   $2 - repo path
+#   $2 - action type (resolve_conflicts, fix_ci, fix_and_push)
+#   $3 - repo path
+#   $4 - worktree path
+#   $5 - branch name
+#   $6 - PR URL
+#   $7 - base branch
 # Returns:
-#   0 on success (fixes committed and pushed), 1 on failure
+#   0 on dispatch success, 1 on failure
 #######################################
-fix_ci_failures() {
+_dispatch_ai_worker() {
 	local task_id="$1"
-	local repo_path="$2"
+	local action_type="$2"
+	local repo_path="$3"
+	local worktree="${4:-}"
+	local branch="${5:-}"
+	local pr_url="${6:-}"
+	local base_branch="${7:-main}"
 
 	local escaped_id
 	escaped_id=$(sql_escape "$task_id")
 
-	# Get worktree and branch from DB
-	local tworktree tbranch
-	tworktree=$(db "$SUPERVISOR_DB" "SELECT worktree FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
-	tbranch=$(db "$SUPERVISOR_DB" "SELECT branch FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+	local ai_cli
+	ai_cli=$(resolve_ai_cli 2>/dev/null) || {
+		log_error "ai-lifecycle: no AI CLI for worker dispatch"
+		return 1
+	}
 
-	local workdir="${tworktree:-$repo_path}"
+	local ai_model
+	ai_model=$(resolve_model "opus" "$ai_cli" 2>/dev/null) || ai_model=""
+
+	local workdir="${worktree:-$repo_path}"
 	if [[ ! -d "$workdir" ]]; then
-		log_error "fix_ci: workdir not found: $workdir"
-		return 1
-	fi
-
-	# Detect package manager from the repo
-	local pkg_mgr=""
-	if [[ -f "$workdir/pnpm-lock.yaml" ]]; then
-		pkg_mgr="pnpm"
-	elif [[ -f "$workdir/yarn.lock" ]]; then
-		pkg_mgr="yarn"
-	elif [[ -f "$workdir/package-lock.json" || -f "$workdir/package.json" ]]; then
-		pkg_mgr="npm"
-	fi
-
-	# Detect available fix commands from package.json scripts
-	local has_format_fix="false" has_lint_fix="false" has_typecheck="false"
-	if [[ -n "$pkg_mgr" && -f "$workdir/package.json" ]]; then
-		local scripts_json
-		scripts_json=$(jq -r '.scripts // {}' "$workdir/package.json" 2>/dev/null || echo "{}")
-		if printf '%s' "$scripts_json" | jq -e '."format:fix" // ."format"' &>/dev/null; then
-			has_format_fix="true"
-		fi
-		if printf '%s' "$scripts_json" | jq -e '."lint:fix" // ."lint"' &>/dev/null; then
-			has_lint_fix="true"
-		fi
-		if printf '%s' "$scripts_json" | jq -e '.typecheck' &>/dev/null; then
-			has_typecheck="true"
-		fi
-	fi
-
-	# For shell-only repos (like aidevops), check for linters-local.sh
-	local has_shellcheck="false"
-	if [[ -x "$workdir/.agents/scripts/linters-local.sh" ]]; then
-		has_shellcheck="true"
-	fi
-
-	log_info "fix_ci: $task_id workdir=$workdir pkg=$pkg_mgr format=$has_format_fix lint=$has_lint_fix typecheck=$has_typecheck shell=$has_shellcheck"
-
-	# Ensure dependencies are installed (pnpm repos often need this after rebase)
-	if [[ "$pkg_mgr" == "pnpm" ]]; then
-		(cd "$workdir" && pnpm install --frozen-lockfile 2>>"$SUPERVISOR_LOG") || {
-			# Try without frozen lockfile (lockfile may be stale after rebase)
-			(cd "$workdir" && pnpm install 2>>"$SUPERVISOR_LOG") || true
-		}
-	fi
-
-	local fixes_applied=0
-
-	# Tier 1: Mechanical fixes (format + lint)
-	if [[ "$has_format_fix" == "true" ]]; then
-		log_info "fix_ci: running $pkg_mgr format:fix"
-		if (cd "$workdir" && $pkg_mgr format:fix 2>>"$SUPERVISOR_LOG"); then
-			fixes_applied=$((fixes_applied + 1))
+		# Try to recreate worktree if it's gone
+		if [[ -n "$branch" && -n "$repo_path" ]]; then
+			log_info "ai-lifecycle: recreating worktree for $task_id"
+			local wt_path
+			wt_path="${HOME}/Git/$(basename "$repo_path")-fix-${task_id}"
+			git -C "$repo_path" worktree add "$wt_path" "origin/$branch" 2>>"$SUPERVISOR_LOG" || {
+				log_error "ai-lifecycle: cannot create worktree for $task_id"
+				return 1
+			}
+			workdir="$wt_path"
+			db "$SUPERVISOR_DB" "UPDATE tasks SET worktree = '$wt_path' WHERE id = '$escaped_id';" 2>/dev/null || true
 		else
-			# format:fix may have a non-zero exit even when it fixes files
-			# Check if any files were modified
-			if git -C "$workdir" diff --quiet 2>/dev/null; then
-				log_warn "fix_ci: format:fix failed with no changes"
-			else
-				fixes_applied=$((fixes_applied + 1))
-			fi
+			log_error "ai-lifecycle: no workdir available for $task_id"
+			return 1
 		fi
 	fi
 
-	if [[ "$has_lint_fix" == "true" ]]; then
-		log_info "fix_ci: running $pkg_mgr lint:fix"
-		if (cd "$workdir" && $pkg_mgr lint:fix 2>>"$SUPERVISOR_LOG"); then
-			fixes_applied=$((fixes_applied + 1))
-		else
-			if ! git -C "$workdir" diff --quiet 2>/dev/null; then
-				fixes_applied=$((fixes_applied + 1))
-			fi
-		fi
+	# Get error context from DB
+	local task_error
+	task_error=$(db "$SUPERVISOR_DB" "SELECT error FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "unknown")
+
+	# Build the worker prompt based on action type
+	local worker_prompt=""
+	case "$action_type" in
+	resolve_conflicts)
+		worker_prompt="You are fixing merge conflicts for task $task_id.
+
+PR: ${pr_url:-none}
+Branch: ${branch:-none}
+Base branch: $base_branch
+Working directory: $workdir
+
+Steps:
+1. git fetch origin $base_branch
+2. git rebase --abort (ignore errors if no rebase in progress)
+3. git rebase origin/$base_branch
+4. For each conflict: read BOTH versions, understand the intent of each change, produce a correct merge that preserves both features
+5. git add the resolved files, git rebase --continue
+6. Repeat until rebase is complete
+7. git push --force-with-lease origin $branch
+8. Verify: gh pr view $pr_url --json mergeStateStatus
+
+IMPORTANT: Do NOT just pick one side. Read the code, understand what each side is doing, and merge them correctly. If one side adds a feature and the other refactors, keep both the feature and the refactoring.
+
+Output ONLY one of: RESOLVED or FAILED:<reason>"
+		;;
+
+	fix_ci)
+		worker_prompt="You are fixing CI failures for task $task_id.
+
+PR: ${pr_url:-none}
+Branch: ${branch:-none}
+Working directory: $workdir
+Error: ${task_error:-unknown}
+
+Steps:
+1. Check which CI checks failed: gh pr checks ${pr_url:-}
+2. For format/lint failures: run the project's format and lint fix commands
+3. For typecheck failures: read the error output, fix the type errors in the source code
+4. For test failures: read the test output, fix the failing tests or the code they test
+5. git add -A && git commit -m 'fix: resolve CI failures for $task_id'
+6. git push --force-with-lease origin $branch
+7. Verify the push succeeded
+
+IMPORTANT: Actually fix the root cause. Don't just suppress errors or skip tests. Read the error messages and fix the code.
+
+Output ONLY one of: FIXED or FAILED:<reason>"
+		;;
+
+	fix_and_push)
+		worker_prompt="You are a senior engineer diagnosing and fixing a blocked task.
+
+Task: $task_id
+PR: ${pr_url:-none}
+Branch: ${branch:-none}
+Working directory: $workdir
+Current error: ${task_error:-unknown}
+
+Your job: Figure out what's wrong and fix it. This task is stuck and needs your intelligence to unblock it.
+
+Steps:
+1. Understand the current state: git status, gh pr view, check CI, check for conflicts
+2. Diagnose the root cause of the blockage
+3. Fix it — whether that's resolving conflicts, fixing code, updating dependencies, or anything else
+4. Commit and push your fix
+5. Verify the PR is in a better state than before
+
+Output ONLY one of: FIXED:<what you did> or FAILED:<why you couldn't fix it>"
+		;;
+	esac
+
+	# Dispatch the worker
+	local worker_log
+	worker_log="${SUPERVISOR_DIR}/logs/worker-${task_id}-$(date +%Y%m%d-%H%M%S).log"
+	mkdir -p "$SUPERVISOR_DIR/logs" 2>/dev/null || true
+
+	log_info "ai-lifecycle: dispatching $action_type worker for $task_id in $workdir"
+
+	if [[ "$ai_cli" == "opencode" ]]; then
+		(cd "$workdir" && opencode run \
+			${ai_model:+-m "$ai_model"} \
+			--format json \
+			--title "${action_type}-${task_id}" \
+			"$worker_prompt" \
+			>"$worker_log" 2>&1) &
+	else
+		local claude_model="${ai_model#*/}"
+		(cd "$workdir" && claude \
+			-p "$worker_prompt" \
+			${claude_model:+--model "$claude_model"} \
+			>"$worker_log" 2>&1) &
 	fi
+	local worker_pid=$!
 
-	# Shell repos: run shellcheck auto-fix via linters-local.sh
-	if [[ "$has_shellcheck" == "true" ]]; then
-		log_info "fix_ci: running linters-local.sh"
-		(cd "$workdir" && .agents/scripts/linters-local.sh 2>>"$SUPERVISOR_LOG") || true
-		if ! git -C "$workdir" diff --quiet 2>/dev/null; then
-			fixes_applied=$((fixes_applied + 1))
-		fi
-	fi
+	# Record in DB
+	db "$SUPERVISOR_DB" "UPDATE tasks SET
+		status = 'running',
+		error = '${action_type}: AI worker solving (PID $worker_pid)',
+		worker_pid = $worker_pid,
+		log_file = '$(sql_escape "$worker_log")',
+		updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+	WHERE id = '$escaped_id';" 2>/dev/null || true
 
-	# Tier 2: Typecheck — if format/lint fixes resolved it, great.
-	# Otherwise, run typecheck to see if it passes now (format/lint fixes
-	# often resolve type issues like unused imports).
-	if [[ "$has_typecheck" == "true" ]]; then
-		log_info "fix_ci: checking if typecheck passes after format/lint fixes"
-		if ! (cd "$workdir" && $pkg_mgr typecheck 2>>"$SUPERVISOR_LOG"); then
-			log_warn "fix_ci: typecheck still failing for $task_id — needs AI fix (deferred to escalation)"
-			# Don't fail the whole fix_ci — format/lint fixes are still valuable.
-			# The typecheck failure will be caught on the next CI run and
-			# escalated if it persists.
-		fi
-	fi
+	# PID file for health monitoring
+	mkdir -p "$SUPERVISOR_DIR/pids" 2>/dev/null || true
+	echo "$worker_pid" >"$SUPERVISOR_DIR/pids/${task_id}.pid"
 
-	# Check if we have any changes to commit
-	if git -C "$workdir" diff --quiet 2>/dev/null && git -C "$workdir" diff --cached --quiet 2>/dev/null; then
-		log_warn "fix_ci: no changes after running fix commands for $task_id"
-		return 1
-	fi
-
-	# Commit and push
-	log_info "fix_ci: committing and pushing fixes for $task_id"
-	git -C "$workdir" add -A 2>>"$SUPERVISOR_LOG" || true
-	git -C "$workdir" commit -m "fix: auto-fix CI failures (format/lint) for $task_id
-
-Mechanical fixes applied by supervisor fix_ci action.
-Commands run: ${pkg_mgr:+$pkg_mgr format:fix, $pkg_mgr lint:fix}${has_shellcheck:+, linters-local.sh}" 2>>"$SUPERVISOR_LOG" || {
-		log_error "fix_ci: commit failed for $task_id"
-		return 1
-	}
-
-	# Push (force-with-lease since we're on a feature branch)
-	local push_branch="${tbranch:-$(git -C "$workdir" branch --show-current 2>/dev/null)}"
-	if [[ -z "$push_branch" ]]; then
-		log_error "fix_ci: cannot determine branch for $task_id"
-		return 1
-	fi
-
-	git -C "$workdir" push --force-with-lease origin "$push_branch" 2>>"$SUPERVISOR_LOG" || {
-		log_error "fix_ci: push failed for $task_id"
-		return 1
-	}
-
-	log_success "fix_ci: pushed $fixes_applied fix(es) for $task_id on $push_branch"
+	log_success "ai-lifecycle: $action_type worker dispatched for $task_id (PID $worker_pid)"
 	return 0
 }
 
 #######################################
-# Process a single task through the AI lifecycle engine
-# This is the main entry point — replaces cmd_pr_lifecycle for a single task.
+# Process all active tasks through the AI lifecycle engine.
+# This is the main entry point called from pulse.sh Phase 3.
 #
-# Arguments:
-#   $1 - task ID
-# Returns:
-#   0 on success (action taken or wait), 1 on failure
-#######################################
-process_task_lifecycle() {
-	local task_id="$1"
-
-	mkdir -p "$AI_LIFECYCLE_LOG_DIR" 2>/dev/null || true
-
-	# Step 1: Gather real-world state
-	local task_state
-	task_state=$(gather_task_state "$task_id") || {
-		log_warn "ai-lifecycle: could not gather state for $task_id"
-		return 1
-	}
-
-	# Step 2: Fast-path deterministic decisions (no AI needed)
-	# These are unambiguous — no judgment required.
-	local fast_action=""
-	fast_action=$(fast_path_decision "$task_state" "$task_id")
-
-	if [[ -n "$fast_action" ]]; then
-		local fp_action fp_reason fp_status_tag
-		fp_action=$(printf '%s' "$fast_action" | jq -r '.action' 2>/dev/null || echo "")
-		fp_reason=$(printf '%s' "$fast_action" | jq -r '.reason' 2>/dev/null || echo "")
-		fp_status_tag=$(printf '%s' "$fast_action" | jq -r '.status_tag' 2>/dev/null || echo "")
-
-		log_info "ai-lifecycle: $task_id — fast-path: $fp_action ($fp_reason)"
-
-		if [[ -n "$fp_status_tag" ]]; then
-			local trepo
-			trepo=$(db "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo "")
-			update_task_status_tag "$task_id" "$fp_status_tag" "$trepo"
-		fi
-
-		local trepo
-		trepo=$(db "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo "")
-		execute_lifecycle_action "$task_id" "$fp_action" "$trepo"
-		return $?
-	fi
-
-	# Step 3: Ask AI for the decision
-	local decision
-	decision=$(decide_next_action "$task_state") || {
-		log_warn "ai-lifecycle: AI decision failed for $task_id — defaulting to wait"
-		return 0
-	}
-
-	local action reason status_tag
-	action=$(printf '%s' "$decision" | jq -r '.action' 2>/dev/null || echo "wait")
-	reason=$(printf '%s' "$decision" | jq -r '.reason' 2>/dev/null || echo "")
-	status_tag=$(printf '%s' "$decision" | jq -r '.status_tag' 2>/dev/null || echo "")
-
-	# Log the decision
-	local timestamp
-	timestamp=$(date -u '+%Y%m%d-%H%M%S')
-	{
-		echo "# Lifecycle Decision: $task_id"
-		echo "Timestamp: $timestamp"
-		echo "Action: $action"
-		echo "Reason: $reason"
-		echo "Status tag: $status_tag"
-		echo ""
-		echo "## Task State"
-		echo "$task_state"
-	} >"$AI_LIFECYCLE_LOG_DIR/decision-${task_id}-${timestamp}.md" 2>/dev/null || true
-
-	log_info "ai-lifecycle: $task_id — AI decided: $action ($reason)"
-
-	# Step 4: Update status tag
-	if [[ -n "$status_tag" ]]; then
-		local trepo
-		trepo=$(db "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo "")
-		update_task_status_tag "$task_id" "$status_tag" "$trepo"
-	fi
-
-	# Step 5: Execute the action
-	local trepo
-	trepo=$(db "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo "")
-	execute_lifecycle_action "$task_id" "$action" "$trepo"
-	return $?
-}
-
-#######################################
-# Fast-path deterministic decisions
-# These don't need AI — the answer is unambiguous from the state.
-#
-# Arguments:
-#   $1 - task state snapshot
-#   $2 - task ID
-# Outputs:
-#   JSON action object if fast-path applies, empty string otherwise
-# Returns:
-#   0 if fast-path found, 1 if AI needed
-#######################################
-fast_path_decision() {
-	local task_state="$1"
-	local task_id="$2"
-
-	# Extract key fields from state snapshot
-	local db_status pr_state pr_merge_state pr_ci pr_url
-	db_status=$(printf '%s' "$task_state" | grep '^DB_STATUS:' | cut -d' ' -f2)
-	pr_state=$(printf '%s' "$task_state" | grep '^PR_STATE:' | cut -d' ' -f2)
-	pr_merge_state=$(printf '%s' "$task_state" | grep '^PR_MERGE_STATE:' | cut -d' ' -f2)
-	pr_ci=$(printf '%s' "$task_state" | grep '^PR_CI:' | cut -d' ' -f2-)
-	pr_url=$(printf '%s' "$task_state" | grep '^PR_URL:' | cut -d' ' -f2)
-
-	# PR already merged → deploy
-	if [[ "$pr_state" == "MERGED" ]]; then
-		echo '{"action":"deploy","reason":"PR already merged","status_tag":"deploying"}'
-		return 0
-	fi
-
-	# No PR and task is complete → mark deployed
-	if [[ "$db_status" == "complete" && ("$pr_url" == "none" || "$pr_url" == "no_pr" || "$pr_url" == "task_only" || "$pr_url" == "verified_complete") ]]; then
-		echo '{"action":"mark_deployed","reason":"No PR, task complete","status_tag":"deployed"}'
-		return 0
-	fi
-
-	# PR is CLEAN (all checks passed, no conflicts) → merge
-	if [[ "$pr_merge_state" == "CLEAN" ]]; then
-		echo '{"action":"merge_pr","reason":"CI passed, PR clean","status_tag":"merging"}'
-		return 0
-	fi
-
-	# PR is UNSTABLE (non-required checks failed) → merge (safe)
-	if [[ "$pr_merge_state" == "UNSTABLE" ]]; then
-		echo '{"action":"merge_pr","reason":"Required checks passed (non-required failed)","status_tag":"merging"}'
-		return 0
-	fi
-
-	# PR is BEHIND (just needs branch update, no conflicts) → update branch
-	if [[ "$pr_merge_state" == "BEHIND" ]]; then
-		echo '{"action":"update_branch","reason":"PR behind main, no conflicts","status_tag":"updating-branch"}'
-		return 0
-	fi
-
-	# PR is DRAFT → promote
-	if [[ "$pr_state" == "DRAFT" ]]; then
-		echo '{"action":"promote_draft","reason":"Draft PR ready for review","status_tag":"pr-open"}'
-		return 0
-	fi
-
-	# CI still running → wait
-	if [[ "$pr_ci" == *"pending:"* ]]; then
-		local pending_count
-		pending_count=$(printf '%s' "$pr_ci" | grep -oE 'pending:[0-9]+' | cut -d: -f2)
-		if [[ "${pending_count:-0}" -gt 0 ]]; then
-			echo '{"action":"wait","reason":"CI checks still running","status_tag":"ci-running"}'
-			return 0
-		fi
-	fi
-
-	# CI failed with fixable checks (Format/Lint/Typecheck) → fix_ci
-	# This is deterministic: if the only failures are mechanical (format, lint,
-	# typecheck), we can fix them without AI. Test failures need AI judgment.
-	if [[ "$pr_ci" == *"failed:"* ]]; then
-		local failed_count
-		failed_count=$(printf '%s' "$pr_ci" | grep -oE 'failed:[0-9]+' | cut -d: -f2)
-		if [[ "${failed_count:-0}" -gt 0 ]]; then
-			local ci_failed_checks worktree_exists
-			ci_failed_checks=$(printf '%s' "$task_state" | grep '^PR_CI_FAILED_CHECKS:' | cut -d' ' -f2-)
-			worktree_exists=$(printf '%s' "$task_state" | grep '^WORKTREE_EXISTS:' | cut -d' ' -f2)
-
-			if [[ -n "$ci_failed_checks" && "$ci_failed_checks" != "none" ]]; then
-				# Check if ALL failures are mechanically fixable
-				local all_fixable="true"
-				local IFS_SAVE="$IFS"
-				IFS=','
-				for check_name in $ci_failed_checks; do
-					# Normalize: lowercase, trim whitespace
-					local normalized
-					normalized=$(printf '%s' "$check_name" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-					case "$normalized" in
-					format | lint | typecheck | "unit tests" | "merge e2e reports") ;;
-					*)
-						# Non-fixable check (e.g., security, e2e, custom)
-						# Exception: "Merge E2E Reports" and "Unit Tests" fail as SKIPPED
-						# when earlier checks fail — they're not real failures
-						all_fixable="false"
-						break
-						;;
-					esac
-				done
-				IFS="$IFS_SAVE"
-
-				if [[ "$all_fixable" == "true" && "$worktree_exists" == "true" ]]; then
-					echo "{\"action\":\"fix_ci\",\"reason\":\"CI failed on fixable checks: ${ci_failed_checks}\",\"status_tag\":\"ci-failed\"}"
-					return 0
-				fi
-			fi
-		fi
-	fi
-
-	# PR closed without merge → task needs re-evaluation (let AI decide)
-	# DIRTY (conflicts) → let AI decide (rebase vs escalate)
-	# BLOCKED with CI failures → let AI decide
-	# Everything else → AI decides
-
-	return 1
-}
-
-#######################################
-# Process all active tasks through the AI lifecycle engine
-# This replaces process_post_pr_lifecycle in pulse.sh Phase 3.
+# For each eligible task: gather state → AI decides → execute action.
 #
 # Arguments:
 #   $1 - (optional) batch ID filter
@@ -1114,109 +690,198 @@ process_ai_lifecycle() {
 
 	ensure_db
 
-	# Find tasks eligible for lifecycle processing
-	local where_clause="t.status IN ('complete', 'pr_review', 'review_triage', 'merging', 'merged', 'deploying', 'blocked')"
+	# Find ALL tasks that need attention — not just specific states.
+	# The AI decides what to do with each one, including whether to wait.
+	local where_clause="t.status IN ('complete', 'pr_review', 'review_triage', 'merging', 'merged', 'deploying', 'blocked', 'running', 'evaluating', 'dispatched', 'verified', 'deployed')"
 	if [[ -n "$batch_id" ]]; then
 		where_clause="$where_clause AND EXISTS (SELECT 1 FROM batch_tasks bt WHERE bt.task_id = t.id AND bt.batch_id = '$(sql_escape "$batch_id")')"
 	fi
 
-	# Include blocked tasks — the AI can decide how to unblock them
+	# Exclude terminal states that genuinely need no action
+	# verified/deployed WITH merged PRs are truly done
+	# cancelled tasks are done
 	local eligible_tasks
 	eligible_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
 		SELECT t.id, t.status, t.pr_url, t.repo FROM tasks t
 		WHERE $where_clause
+		AND t.status != 'cancelled'
+		AND NOT (t.status IN ('verified', 'deployed') AND (t.pr_url IS NULL OR t.pr_url = '' OR t.pr_url = 'no_pr' OR t.pr_url = 'task_only' OR t.pr_url = 'verified_complete'))
 		ORDER BY
 			CASE t.status
 				WHEN 'merging' THEN 1
 				WHEN 'merged' THEN 2
 				WHEN 'deploying' THEN 3
-				WHEN 'review_triage' THEN 4
-				WHEN 'pr_review' THEN 5
-				WHEN 'complete' THEN 6
-				WHEN 'blocked' THEN 7
+				WHEN 'blocked' THEN 4
+				WHEN 'review_triage' THEN 5
+				WHEN 'pr_review' THEN 6
+				WHEN 'complete' THEN 7
+				WHEN 'running' THEN 8
+				WHEN 'evaluating' THEN 9
+				WHEN 'dispatched' THEN 10
+				WHEN 'verified' THEN 11
+				WHEN 'deployed' THEN 12
 			END,
-			t.updated_at ASC;
+			t.updated_at ASC
+		LIMIT 20;
 	")
 
 	if [[ -z "$eligible_tasks" ]]; then
+		log_info "ai-lifecycle: no tasks need attention"
 		return 0
 	fi
 
 	local processed=0
-	local merged_count=0
-	local max_merges_per_pulse="${SUPERVISOR_MAX_MERGES_PER_PULSE:-5}"
-	local merged_parents=""
-	local repos_with_changes=""
+	local actioned=0
+	local max_actions_per_pulse="${SUPERVISOR_MAX_ACTIONS_PER_PULSE:-10}"
 
-	local total_eligible=0
+	# Track merged parent IDs to serialize sibling merges
+	local merged_parents=""
+
+	local total_eligible
 	total_eligible=$(printf '%s\n' "$eligible_tasks" | grep -c '.' || echo "0")
-	log_info "ai-lifecycle: $total_eligible eligible tasks"
+	log_info "ai-lifecycle: $total_eligible tasks to evaluate"
 
 	while IFS='|' read -r tid tstatus tpr trepo; do
 		[[ -z "$tid" ]] && continue
 
-		# Cap merges per pulse
-		if [[ "$merged_count" -ge "$max_merges_per_pulse" ]]; then
-			log_info "ai-lifecycle: reached max merges per pulse ($max_merges_per_pulse)"
+		# Cap actions per pulse to prevent runaway
+		if [[ "$actioned" -ge "$max_actions_per_pulse" ]]; then
+			log_info "ai-lifecycle: reached max actions ($max_actions_per_pulse), rest deferred"
 			break
 		fi
 
-		# Serial merge guard for sibling subtasks
+		# Serial merge guard for siblings
 		local parent_id
 		parent_id=$(extract_parent_id "$tid" 2>/dev/null || echo "")
 		if [[ -n "$parent_id" ]] && [[ "$merged_parents" == *"|${parent_id}|"* ]]; then
-			log_info "ai-lifecycle: $tid deferred (sibling under $parent_id already merged this pulse)"
+			log_info "ai-lifecycle: $tid deferred (sibling merge this pulse)"
 			continue
 		fi
 
-		# Ensure task is in pr_review state for lifecycle processing
-		# (complete tasks need to transition first)
-		if [[ "$tstatus" == "complete" ]]; then
-			# Check if PR exists before transitioning
-			if [[ -n "$tpr" && "$tpr" != "no_pr" && "$tpr" != "task_only" && "$tpr" != "verified_complete" ]]; then
-				cmd_transition "$tid" "pr_review" 2>>"$SUPERVISOR_LOG" || true
-			fi
+		# Transition complete tasks with PRs to pr_review
+		if [[ "$tstatus" == "complete" && -n "$tpr" && "$tpr" != "no_pr" && "$tpr" != "task_only" && "$tpr" != "verified_complete" ]]; then
+			cmd_transition "$tid" "pr_review" 2>>"$SUPERVISOR_LOG" || true
 		fi
 
-		log_info "ai-lifecycle: processing $tid ($tstatus)"
+		# GATHER
+		local task_state
+		task_state=$(gather_task_state "$tid") || {
+			log_warn "ai-lifecycle: could not gather state for $tid"
+			continue
+		}
 
-		if process_task_lifecycle "$tid"; then
-			# Check if a merge happened
+		# DECIDE
+		local decision
+		decision=$(ai_decide "$task_state" "$tid") || {
+			log_warn "ai-lifecycle: AI decision failed for $tid — skipping"
+			continue
+		}
+
+		local action reason status_tag
+		action=$(printf '%s' "$decision" | jq -r '.action // "wait"' 2>/dev/null || echo "wait")
+		reason=$(printf '%s' "$decision" | jq -r '.reason // ""' 2>/dev/null || echo "")
+		status_tag=$(printf '%s' "$decision" | jq -r '.status_tag // ""' 2>/dev/null || echo "")
+
+		log_info "ai-lifecycle: $tid ($tstatus) → $action: $reason"
+
+		# EXECUTE
+		if [[ "$action" != "wait" ]]; then
+			execute_action "$tid" "$action" "$reason" "$status_tag"
+			actioned=$((actioned + 1))
+
+			# Track merges for sibling serialization
 			local new_status
 			new_status=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "")
-			log_info "ai-lifecycle: $tid → $new_status"
 			case "$new_status" in
 			merged | deploying | deployed)
-				merged_count=$((merged_count + 1))
 				if [[ -n "$parent_id" ]]; then
 					merged_parents="${merged_parents}|${parent_id}|"
 				fi
-				# Pull main so subsequent PRs can merge cleanly
+				# Pull base so subsequent PRs can merge cleanly
 				if [[ -n "$trepo" && -d "$trepo" ]]; then
-					git -C "$trepo" pull --rebase origin main 2>>"$SUPERVISOR_LOG" || true
+					local base_ref
+					base_ref=$(gh pr view "$tpr" --repo "$(detect_repo_slug "$trepo" 2>/dev/null || echo "")" \
+						--json baseRefName --jq '.baseRefName' 2>/dev/null) || base_ref="main"
+					git -C "$trepo" pull --rebase origin "$base_ref" 2>>"$SUPERVISOR_LOG" || true
 				fi
 				;;
 			esac
-		else
-			log_warn "ai-lifecycle: $tid failed (process_task_lifecycle returned non-zero)"
-		fi
-
-		# Track repos that had status tag changes
-		if [[ -n "$trepo" && "$repos_with_changes" != *"$trepo"* ]]; then
-			repos_with_changes="${repos_with_changes} ${trepo}"
 		fi
 
 		processed=$((processed + 1))
 	done <<<"$eligible_tasks"
 
-	# Batch-commit all status tag updates
-	for repo in $repos_with_changes; do
-		[[ -z "$repo" ]] && continue
-		commit_status_tag_updates "$repo" 2>>"$SUPERVISOR_LOG" || true
-	done
+	# Batch-commit status tag updates
+	if [[ -n "$eligible_tasks" ]]; then
+		local repos_seen=""
+		while IFS='|' read -r _ _ _ trepo; do
+			if [[ -n "$trepo" && "$repos_seen" != *"$trepo"* ]]; then
+				repos_seen="${repos_seen} ${trepo}"
+				if declare -f commit_status_tag_updates &>/dev/null; then
+					commit_status_tag_updates "$trepo" 2>>"$SUPERVISOR_LOG" || true
+				fi
+			fi
+		done <<<"$eligible_tasks"
+	fi
 
-	if [[ "$processed" -gt 0 ]]; then
-		log_info "ai-lifecycle: processed $processed tasks, merged $merged_count"
+	log_info "ai-lifecycle: evaluated $processed tasks, actioned $actioned"
+	return 0
+}
+
+# Keep update_task_status_tag for backward compatibility with other modules
+update_task_status_tag() {
+	local task_id="$1"
+	local new_status="$2"
+	local repo_override="${3:-}"
+
+	local trepo="$repo_override"
+	if [[ -z "$trepo" ]]; then
+		local escaped_id
+		escaped_id=$(sql_escape "$task_id")
+		trepo=$(db "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+	fi
+
+	if [[ -z "$trepo" ]]; then
+		return 1
+	fi
+
+	local todo_file="$trepo/TODO.md"
+	if [[ ! -f "$todo_file" ]]; then
+		return 1
+	fi
+
+	local line_num
+	line_num=$(grep -nE "^[[:space:]]*- \[ \] ${task_id}( |$)" "$todo_file" | head -1 | cut -d: -f1)
+	if [[ -z "$line_num" ]]; then
+		return 0
+	fi
+
+	local task_line
+	task_line=$(sed -n "${line_num}p" "$todo_file")
+
+	local updated_line
+	updated_line=$(printf '%s' "$task_line" | sed -E 's/ status:[^ ]*//')
+	updated_line="${updated_line} status:${new_status}"
+
+	sed_inplace "${line_num}s|.*|${updated_line}|" "$todo_file"
+	return 0
+}
+
+# Keep commit_status_tag_updates for backward compatibility
+commit_status_tag_updates() {
+	local repo_path="$1"
+
+	if [[ ! -f "$repo_path/TODO.md" ]]; then
+		return 0
+	fi
+
+	if ! git -C "$repo_path" diff --quiet -- TODO.md 2>/dev/null; then
+		if declare -f commit_and_push_todo &>/dev/null; then
+			commit_and_push_todo "$repo_path" "chore: update task status tags" >>"${SUPERVISOR_LOG:-/dev/null}" 2>&1 || {
+				log_warn "commit_status_tag_updates: commit failed for $repo_path (non-fatal)"
+				return 1
+			}
+		fi
 	fi
 
 	return 0
