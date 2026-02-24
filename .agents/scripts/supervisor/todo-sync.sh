@@ -1260,6 +1260,16 @@ auto_unblock_resolved_tasks() {
 				sed_inplace "${line_num}s/[[:space:]]*$//" "$todo_file"
 			fi
 
+			# Transition DB status from blocked to queued so dispatch picks it up
+			if [[ -n "${SUPERVISOR_DB:-}" && -f "${SUPERVISOR_DB}" ]]; then
+				local db_status
+				db_status=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$task_id")' LIMIT 1;" 2>/dev/null || echo "")
+				if [[ "$db_status" == "blocked" ]]; then
+					db "$SUPERVISOR_DB" "UPDATE tasks SET status='queued', error=NULL, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id='$(sql_escape "$task_id")';" 2>/dev/null || true
+					log_info "  auto-unblock: $task_id — DB status transitioned from blocked to queued"
+				fi
+			fi
+
 			unblocked_count=$((unblocked_count + 1))
 			if [[ -n "$unblocked_ids" ]]; then
 				unblocked_ids="${unblocked_ids}, ${task_id}"
