@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.125.1] - 2026-02-24
+
+### Changed
+
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+
+### Fixed
+
+- prevent TTSR messagesTransformHook infinite correction loop (#2203)
+- cron.sh script_path resolves to wrong directory (GH#2160), unblock t1311, add t1314 for batch concurrency fix (GH#2163) (#2193)
+- prevent undefined content in memory store (t1302) (#2125)
+- pass task_line to find_closing_pr in audit — fixes false no_pr_linkage for auto-reaped tasks (t1158) (#2197)
+- add sequential dependency enforcement for t1120 subtask chain (t1257) (#2195)
+
 ## [2.125.0] - 2026-02-23
 
 ### Added
