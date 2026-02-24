@@ -2529,3 +2529,14 @@
   files: .agents/scripts/supervisor/issue-audit.sh
   check: shellcheck .agents/scripts/supervisor/issue-audit.sh
   check: file-exists .agents/scripts/supervisor/issue-audit.sh
+
+- [ ] v291 t1314.1 Migrate deploy.sh decision logic to AI — replace `check... | PR #2219 | merged:2026-02-24
+  files: .agents/scripts/supervisor-helper.sh, .agents/scripts/supervisor/ai-deploy-decisions.sh, .agents/scripts/supervisor/deploy.sh, .agents/scripts/supervisor/todo-sync.sh
+  check: shellcheck .agents/scripts/supervisor-helper.sh
+  check: file-exists .agents/scripts/supervisor-helper.sh
+  check: shellcheck .agents/scripts/supervisor/ai-deploy-decisions.sh
+  check: file-exists .agents/scripts/supervisor/ai-deploy-decisions.sh
+  check: shellcheck .agents/scripts/supervisor/deploy.sh
+  check: file-exists .agents/scripts/supervisor/deploy.sh
+  check: shellcheck .agents/scripts/supervisor/todo-sync.sh
+  check: file-exists .agents/scripts/supervisor/todo-sync.sh
