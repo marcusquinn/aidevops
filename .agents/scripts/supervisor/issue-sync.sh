@@ -1800,17 +1800,15 @@ check_task_staleness() {
 		return 1 # Can't check without description — assume current
 	fi
 
-	local staleness_signals=0
-	local staleness_reasons=""
+	# --- Gather signals (facts only, no scoring) ---
+	local signals=""
 
 	# --- Signal 1: Extract feature/tool names and check for removal commits ---
-	# Pattern: hyphenated names with 2+ segments (widget-helper, oh-my-opencode, etc.)
 	local feature_names=""
 	feature_names=$(printf '%s' "$task_description" |
 		grep -oE '[a-zA-Z][a-zA-Z0-9]*-[a-zA-Z][a-zA-Z0-9]+(-[a-zA-Z][a-zA-Z0-9]+)*' |
 		sort -u) || true
 
-	# Also extract quoted terms
 	local quoted_terms=""
 	quoted_terms=$(printf '%s' "$task_description" |
 		grep -oE '"[^"]{3,}"' | tr -d '"' | sort -u) || true
@@ -1858,19 +1856,7 @@ check_task_staleness() {
 				local first_removal=""
 				first_removal=$(printf '%s' "$removal_commits" | head -1)
 
-				if [[ "$newest_commit_is_removal" == "true" && "$active_refs" -eq 0 ]]; then
-					staleness_signals=$((staleness_signals + 3))
-					staleness_reasons="${staleness_reasons}REMOVED: '$term' — most recent commit is a removal (${first_removal}), 0 active refs. "
-				elif [[ "$active_refs" -eq 0 ]]; then
-					staleness_signals=$((staleness_signals + 3))
-					staleness_reasons="${staleness_reasons}REMOVED: '$term' was removed (${first_removal}) with 0 active codebase references. "
-				elif [[ "$newest_commit_is_removal" == "true" ]]; then
-					staleness_signals=$((staleness_signals + 2))
-					staleness_reasons="${staleness_reasons}LIKELY_REMOVED: '$term' — most recent commit is removal (${first_removal}) but $active_refs active refs remain. "
-				elif [[ "$active_refs" -le 2 ]]; then
-					staleness_signals=$((staleness_signals + 1))
-					staleness_reasons="${staleness_reasons}MINIMAL: '$term' has removal commits and only $active_refs active references. "
-				fi
+				signals="${signals}TERM '${term}': removal_commits=[${first_removal}], newest_is_removal=${newest_commit_is_removal}, active_refs=${active_refs}. "
 			fi
 		done <<<"$all_terms"
 	fi
@@ -1885,6 +1871,7 @@ check_task_staleness() {
 	if [[ -n "$file_refs" ]]; then
 		local missing_files=0
 		local total_files=0
+		local missing_list=""
 		while IFS= read -r file_ref; do
 			[[ -z "$file_ref" ]] && continue
 			total_files=$((total_files + 1))
@@ -1901,16 +1888,13 @@ check_task_staleness() {
 				done
 				if [[ "$found" == "false" ]]; then
 					missing_files=$((missing_files + 1))
+					missing_list="${missing_list}${file_ref}, "
 				fi
 			fi
 		done <<<"$file_refs"
 
 		if [[ "$total_files" -gt 0 && "$missing_files" -gt 0 ]]; then
-			local missing_pct=$((missing_files * 100 / total_files))
-			if [[ "$missing_pct" -ge 50 ]]; then
-				staleness_signals=$((staleness_signals + 2))
-				staleness_reasons="${staleness_reasons}MISSING_FILES: $missing_files/$total_files referenced files not found. "
-			fi
+			signals="${signals}FILES: ${missing_files}/${total_files} referenced files missing (${missing_list%%, }). "
 		fi
 	fi
 
@@ -1925,8 +1909,7 @@ check_task_staleness() {
 			head -1) || true
 
 		if [[ -n "$parent_removal" ]]; then
-			staleness_signals=$((staleness_signals + 1))
-			staleness_reasons="${staleness_reasons}PARENT_REMOVED: Parent $parent_id has removal commits: $parent_removal. "
+			signals="${signals}PARENT: Parent task $parent_id has removal commit: ${parent_removal}. "
 		fi
 	fi
 
@@ -1949,21 +1932,98 @@ check_task_staleness() {
 				grep -icE "add|creat|implement|built|integrat" 2>/dev/null) || true
 
 			if [[ "$existing_refs" -ge 2 ]]; then
-				staleness_signals=$((staleness_signals + 1))
-				staleness_reasons="${staleness_reasons}POSSIBLY_DONE: '$subject' has $existing_refs existing implementation commits. "
+				signals="${signals}ALREADY_DONE: '${subject}' has ${existing_refs} existing implementation commits. "
 			fi
 		fi
 	fi
 
-	# --- Decision: three-tier threshold ---
-	if [[ "$staleness_signals" -ge 3 ]]; then
-		printf '%s' "$staleness_reasons"
-		return 0 # STALE
-	elif [[ "$staleness_signals" -eq 2 ]]; then
-		printf '%s' "$staleness_reasons"
-		return 2 # UNCERTAIN
+	# --- No signals gathered — task is current ---
+	if [[ -z "$signals" ]]; then
+		return 1 # CURRENT
 	fi
 
+	# --- AI decision: send gathered signals for judgment (t1318) ---
+	local ai_cli
+	ai_cli=$(resolve_ai_cli 2>/dev/null) || {
+		# AI unavailable — fall back to conservative "current"
+		log_verbose "check_task_staleness: AI unavailable, assuming current"
+		return 1
+	}
+
+	local ai_model
+	ai_model=$(resolve_model "sonnet" "$ai_cli" 2>/dev/null) || {
+		log_verbose "check_task_staleness: model resolution failed, assuming current"
+		return 1
+	}
+
+	local prompt
+	prompt="You are a task staleness detector for a DevOps automation system. Given a task and evidence signals gathered from the codebase, determine whether the task is still relevant or has become stale.
+
+TASK: ${task_id} — ${task_description}
+
+EVIDENCE SIGNALS:
+${signals}
+
+VERDICTS (respond with exactly one):
+- stale: The task's premise is clearly invalid — the feature was removed, files deleted, or work already completed. The task should be cancelled.
+- uncertain: There are concerning signals but the evidence is inconclusive. The task should be paused for human review.
+- current: The signals are weak or explainable — the task is still relevant and should proceed.
+
+GUIDELINES:
+- A term with removal commits AND 0 active references is strong evidence of staleness.
+- A term with removal commits but active references still exist is weaker — the removal may be partial.
+- Missing files alone are weak (files may have been renamed or the task is about creating them).
+- Parent task removal is a moderate signal — subtasks may still be independently valid.
+- 'Already done' signals are weak — similar commits may address different aspects.
+- When uncertain, prefer 'current' over 'stale' — false positives waste more time than false negatives.
+
+Respond with ONLY a JSON object: {\"verdict\": \"stale|uncertain|current\", \"reason\": \"one sentence explanation\"}"
+
+	local ai_result=""
+	if [[ "$ai_cli" == "opencode" ]]; then
+		ai_result=$(portable_timeout 15 opencode run \
+			-m "$ai_model" \
+			--format default \
+			--title "staleness-$$" \
+			"$prompt" 2>/dev/null || echo "")
+		ai_result=$(printf '%s' "$ai_result" | sed 's/\x1b\[[0-9;]*[mGKHF]//g; s/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b\]//g; s/\x07//g')
+	else
+		local claude_model="${ai_model#*/}"
+		ai_result=$(portable_timeout 15 claude \
+			-p "$prompt" \
+			--model "$claude_model" \
+			--output-format text 2>/dev/null || echo "")
+	fi
+
+	if [[ -n "$ai_result" ]]; then
+		local json_block
+		json_block=$(printf '%s' "$ai_result" | grep -oE '\{[^}]+\}' | head -1)
+		if [[ -n "$json_block" ]]; then
+			local verdict
+			verdict=$(printf '%s' "$json_block" | jq -r '.verdict // ""' 2>/dev/null || echo "")
+			local reason
+			reason=$(printf '%s' "$json_block" | jq -r '.reason // ""' 2>/dev/null || echo "")
+			case "$verdict" in
+			stale)
+				log_verbose "check_task_staleness: AI verdict=stale — $reason"
+				printf '%s' "${reason:-${signals}}"
+				return 0 # STALE
+				;;
+			uncertain)
+				log_verbose "check_task_staleness: AI verdict=uncertain — $reason"
+				printf '%s' "${reason:-${signals}}"
+				return 2 # UNCERTAIN
+				;;
+			current)
+				log_verbose "check_task_staleness: AI verdict=current — $reason"
+				return 1 # CURRENT
+				;;
+			esac
+		fi
+	fi
+
+	# AI returned invalid response — fall back to conservative "current"
+	log_verbose "check_task_staleness: AI response unparseable, assuming current"
 	return 1 # CURRENT
 }
 

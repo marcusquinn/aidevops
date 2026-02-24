@@ -375,6 +375,9 @@ cmd_watch() {
 # the unresolved blocker IDs to stdout. Returns 1 (not blocked)
 # if all dependencies are resolved or no blocked-by: field exists.
 #
+# t1319: Reviewed for AI migration — mechanical (parse field, check checkboxes).
+# No judgment calls — stays as shell plumbing.
+#
 # Args:
 #   $1 - task line from TODO.md
 #   $2 - path to TODO.md file
@@ -454,6 +457,9 @@ _check_and_skip_if_blocked() {
 # This prevents subtasks or tasks from private repos from being
 # picked up as if they belong to the current repo.
 #
+# t1319: Reviewed for AI migration — mechanical (DB lookup, string compare).
+# No judgment calls — stays as shell plumbing.
+#
 # Args:
 #   $1 - task_id (e.g. t004.1)
 #   $2 - current repo path being scanned
@@ -492,6 +498,11 @@ _is_cross_repo_misregistration() {
 # Scan TODO.md for tasks tagged #auto-dispatch or in a
 # "Dispatch Queue" section. Auto-adds them to supervisor
 # if not already tracked, then queues them for dispatch.
+#
+# t1319: Reviewed for AI migration — this function is mechanical filtering
+# (skip claimed, skip blocked, skip already tracked, skip cross-repo).
+# All guards are deterministic checks against DB/TODO.md state.
+# No judgment calls — stays as shell plumbing.
 #######################################
 cmd_auto_pickup() {
 	local repo=""

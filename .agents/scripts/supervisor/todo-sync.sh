@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 # todo-sync.sh - Supervisor TODO.md synchronization functions
 # Part of the AI DevOps Framework supervisor module
+#
+# t1318: Reviewed for AI migration — all functions in this module are mechanical:
+# - commit_and_push_todo(): git commit/push with retry (plumbing)
+# - recover_stale_claims(): timestamp/threshold checks, ownership verification
+# - auto_unblock_resolved_tasks(): check TODO.md/DB for completed blockers
+# - update_todo_on_complete/cancelled/blocked(): text manipulation (sed/grep)
+# - cmd_reconcile_todo/db_todo(): DB↔TODO.md consistency checks
+# No judgment calls — entire module stays as shell plumbing.
 
 #######################################
 # Commit and push TODO.md with pull-rebase retry
