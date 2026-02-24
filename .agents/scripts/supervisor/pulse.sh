@@ -877,40 +877,51 @@ cmd_pulse() {
 		log_verbose "Phase 0.5c: No cancelled tasks in DB"
 	fi
 
-	# Phase 0.5d: Auto-unblock tasks with resolved blockers (t1243)
+	# Phase 0.5d: Auto-unblock tasks with resolved blockers (t1243, t1318)
 	# Scans TODO.md for open tasks with blocked-by: fields and checks whether
 	# all blocking tasks are completed ([x]) or declined ([-]). If all blockers
 	# are resolved, removes the blocked-by: field so the task becomes dispatchable.
 	# Runs every pulse before Phase 0.6/Phase 2 so newly unblocked tasks are
 	# immediately eligible for dispatch without manual intervention.
+	# t1318: Prefers AI judgment (ai_auto_unblock_resolved_tasks) when available,
+	# falls back to deterministic auto_unblock_resolved_tasks.
+	local _unblock_func="auto_unblock_resolved_tasks"
+	if declare -f ai_auto_unblock_resolved_tasks &>/dev/null; then
+		_unblock_func="ai_auto_unblock_resolved_tasks"
+	fi
 	if [[ -n "$all_repos" ]]; then
 		while IFS= read -r repo_path; do
 			if [[ -f "$repo_path/TODO.md" ]]; then
-				auto_unblock_resolved_tasks "$repo_path" 2>>"$SUPERVISOR_LOG" || true
+				"$_unblock_func" "$repo_path" 2>>"$SUPERVISOR_LOG" || true
 			fi
 		done <<<"$all_repos"
 	else
 		if [[ -f "$(pwd)/TODO.md" ]]; then
-			auto_unblock_resolved_tasks "$(pwd)" 2>>"$SUPERVISOR_LOG" || true
+			"$_unblock_func" "$(pwd)" 2>>"$SUPERVISOR_LOG" || true
 		fi
 	fi
 
-	# Phase 0.5e: Stale-claim auto-recovery (t1263)
+	# Phase 0.5e: Stale-claim auto-recovery (t1263, t1318)
 	# When interactive sessions claim tasks (assignee: + started:) but die or
 	# move on without completing them, the tasks become permanently stuck:
 	# auto-pickup skips them because they have assignee/started fields, but no
 	# worker is running. This phase detects stale claims (>24h, no active worker
 	# or worktree) and strips assignee:/started: so auto-pickup can re-dispatch.
 	# Respects t1017 assignee ownership: only unclaims tasks assigned to local user.
+	# t1318: Prefers AI judgment (ai_recover_stale_claims) when available.
+	local _recover_func="recover_stale_claims"
+	if declare -f ai_recover_stale_claims &>/dev/null; then
+		_recover_func="ai_recover_stale_claims"
+	fi
 	if [[ -n "$all_repos" ]]; then
 		while IFS= read -r repo_path; do
 			if [[ -f "$repo_path/TODO.md" ]]; then
-				recover_stale_claims "$repo_path" 2>>"$SUPERVISOR_LOG" || true
+				"$_recover_func" "$repo_path" 2>>"$SUPERVISOR_LOG" || true
 			fi
 		done <<<"$all_repos"
 	else
 		if [[ -f "$(pwd)/TODO.md" ]]; then
-			recover_stale_claims "$(pwd)" 2>>"$SUPERVISOR_LOG" || true
+			"$_recover_func" "$(pwd)" 2>>"$SUPERVISOR_LOG" || true
 		fi
 	fi
 
@@ -1817,22 +1828,27 @@ cmd_pulse() {
 		done <<<"$stuck_evaluating"
 	fi
 
-	# Phase 1d: Post-completion auto-unblock pass (t1247)
+	# Phase 1d: Post-completion auto-unblock pass (t1247, t1318)
 	# Phase 0.5d runs BEFORE Phase 1, so tasks completed in this pulse (marked [x]
 	# by update_todo_on_complete in Phase 1) are missed by the earlier unblock pass.
 	# This second pass runs immediately after Phase 1 so any newly-completed blockers
 	# unblock their downstream tasks in the same pulse — no extra 2-minute wait.
 	# The DB-fallback in auto_unblock_resolved_tasks (also t1247) handles the case
 	# where update_todo_on_complete failed but the DB status is already terminal.
+	# t1318: Reuses _unblock_func resolved in Phase 0.5d (AI or deterministic).
+	local _unblock_func_1d="auto_unblock_resolved_tasks"
+	if declare -f ai_auto_unblock_resolved_tasks &>/dev/null; then
+		_unblock_func_1d="ai_auto_unblock_resolved_tasks"
+	fi
 	if [[ -n "$all_repos" ]]; then
 		while IFS= read -r repo_path; do
 			if [[ -f "$repo_path/TODO.md" ]]; then
-				auto_unblock_resolved_tasks "$repo_path" 2>>"$SUPERVISOR_LOG" || true
+				"$_unblock_func_1d" "$repo_path" 2>>"$SUPERVISOR_LOG" || true
 			fi
 		done <<<"$all_repos"
 	else
 		if [[ -f "$(pwd)/TODO.md" ]]; then
-			auto_unblock_resolved_tasks "$(pwd)" 2>>"$SUPERVISOR_LOG" || true
+			"$_unblock_func_1d" "$(pwd)" 2>>"$SUPERVISOR_LOG" || true
 		fi
 	fi
 

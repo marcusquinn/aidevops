@@ -234,6 +234,7 @@ source "${SUPERVISOR_MODULE_DIR}/ai-reason.sh"
 source "${SUPERVISOR_MODULE_DIR}/ai-actions.sh"
 source "${SUPERVISOR_MODULE_DIR}/ai-lifecycle.sh"
 source "${SUPERVISOR_MODULE_DIR}/ai-deploy-decisions.sh"
+source "${SUPERVISOR_MODULE_DIR}/ai-sync-decisions.sh"
 source "${SUPERVISOR_MODULE_DIR}/issue-audit.sh"
 source "${SUPERVISOR_MODULE_DIR}/routine-scheduler.sh"
 source "${SUPERVISOR_MODULE_DIR}/sanity-check.sh"
@@ -742,7 +743,8 @@ main() {
 	notify) cmd_notify "$@" ;;
 	auto-pickup) cmd_auto_pickup "$@" ;;
 	auto-unblock)
-		# t1247: Manually trigger auto-unblock for a repo
+		# t1247, t1318: Manually trigger auto-unblock for a repo
+		# Prefers AI judgment when ai_auto_unblock_resolved_tasks is available.
 		# Usage: supervisor-helper.sh auto-unblock [--repo <path>]
 		local _au_repo="${REPO_PATH:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 		while [[ $# -gt 0 ]]; do
@@ -755,7 +757,11 @@ main() {
 			esac
 		done
 		ensure_db
-		auto_unblock_resolved_tasks "$_au_repo"
+		if declare -f ai_auto_unblock_resolved_tasks &>/dev/null; then
+			ai_auto_unblock_resolved_tasks "$_au_repo"
+		else
+			auto_unblock_resolved_tasks "$_au_repo"
+		fi
 		;;
 	batch-cleanup)
 		local _bc_helper="${SCRIPT_DIR}/batch-cleanup-helper.sh"
@@ -772,7 +778,8 @@ main() {
 	queue-health) cmd_queue_health "$@" ;;
 	stale-gc-report) cmd_stale_gc_report "$@" ;;
 	stale-claims)
-		# t1263: Manually trigger stale-claim recovery for a repo
+		# t1263, t1318: Manually trigger stale-claim recovery for a repo
+		# Prefers AI judgment when ai_recover_stale_claims is available.
 		# Usage: supervisor-helper.sh stale-claims [--repo <path>]
 		local _sc_repo
 		_sc_repo="${REPO_PATH:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
@@ -786,7 +793,11 @@ main() {
 			esac
 		done
 		ensure_db
-		recover_stale_claims "$_sc_repo"
+		if declare -f ai_recover_stale_claims &>/dev/null; then
+			ai_recover_stale_claims "$_sc_repo"
+		else
+			recover_stale_claims "$_sc_repo"
+		fi
 		;;
 	recall) cmd_recall "$@" ;;
 	release) cmd_release "$@" ;;
