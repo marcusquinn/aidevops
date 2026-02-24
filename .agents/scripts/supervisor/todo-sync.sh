@@ -676,8 +676,12 @@ update_todo_on_complete() {
 	local trepo tdesc tpr_url
 	IFS='|' read -r trepo tdesc tpr_url <<<"$task_row"
 
-	# Verify deliverables before marking complete (t163.4)
-	if ! verify_task_deliverables "$task_id" "$tpr_url" "$trepo"; then
+	# Verify deliverables before marking complete (t163.4, t1314.1: AI judgment)
+	local _verify_func="verify_task_deliverables"
+	if declare -f ai_verify_task_deliverables &>/dev/null; then
+		_verify_func="ai_verify_task_deliverables"
+	fi
+	if ! "$_verify_func" "$task_id" "$tpr_url" "$trepo"; then
 		log_warn "Task $task_id failed deliverable verification - NOT marking [x] in TODO.md"
 		log_warn "  To manually verify: add 'verified:$(date +%Y-%m-%d)' to the task line"
 		return 1
