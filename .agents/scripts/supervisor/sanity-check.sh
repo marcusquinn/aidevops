@@ -1,25 +1,18 @@
 #!/usr/bin/env bash
-# sanity-check.sh - Adversarial state verification for the supervisor
+# sanity-check.sh - AI-powered adversarial state verification for the supervisor
 #
-# The deterministic phases of the pulse cycle make assumptions:
-#   - "has assignee: → someone is working on it"
-#   - "has blocked-by: → must wait"
-#   - "no #auto-dispatch → not dispatchable"
-#   - "DB says failed → nothing more to do"
+# Replaces the previous deterministic sanity checks (t1316) with AI reasoning.
+# Instead of 4 hardcoded contradiction checks, the AI analyzes the full state
+# snapshot (TODO.md, DB, system) and decides what's stuck and how to fix it.
 #
-# These assumptions cause the queue to stall silently when reality diverges
-# from the state model. This module questions those assumptions by cross-
-# referencing TODO.md state, DB state, and actual system state (worktrees,
-# PIDs, git history) to find contradictions.
-#
-# Design principle: Don't assume, verify. If a human looking at the queue
-# for 30 seconds would say "this is obviously stuck", the sanity check
-# should catch it and fix it.
+# The AI can detect novel stall patterns that hardcoded checks would miss,
+# and can reason about ambiguous cases (e.g., "is this task really stuck or
+# just slow?") instead of applying rigid time thresholds.
 #
 # Invoked by: pulse.sh Phase 0.9 (after all deterministic phases, before dispatch)
 # Frequency: every pulse when zero tasks are dispatchable
-# Cost: deterministic checks are free; AI reasoning is gated behind
-#        SUPERVISOR_SANITY_AI=true and rate-limited to 1/hour
+# Cost: AI reasoning gated behind SUPERVISOR_SANITY_AI (default: true)
+#        Rate-limited via cooldown (SUPERVISOR_SANITY_AI_COOLDOWN, default 300s)
 #
 # Sourced by: supervisor-helper.sh (set -euo pipefail inherited)
 
@@ -27,13 +20,27 @@
 #   SUPERVISOR_DB, SUPERVISOR_LOG, SCRIPT_DIR, REPO_PATH
 #   db(), log_info(), log_warn(), log_error(), log_success(), sql_escape()
 #   cmd_unclaim(), cmd_transition(), cmd_reset()
+#   resolve_ai_cli(), resolve_model() (from dispatch.sh)
+#   portable_timeout() (from _common.sh)
+#   commit_and_push_todo() (from todo-sync.sh)
+
+# Sanity check AI toggle (default: enabled)
+SUPERVISOR_SANITY_AI="${SUPERVISOR_SANITY_AI:-true}"
+
+# Cooldown between AI sanity checks (seconds, default 5 min)
+SUPERVISOR_SANITY_AI_COOLDOWN="${SUPERVISOR_SANITY_AI_COOLDOWN:-300}"
+
+# AI timeout for sanity check reasoning (seconds)
+SUPERVISOR_SANITY_AI_TIMEOUT="${SUPERVISOR_SANITY_AI_TIMEOUT:-120}"
+
+# Log directory for sanity check AI reasoning
+SANITY_AI_LOG_DIR="${SANITY_AI_LOG_DIR:-$HOME/.aidevops/logs/ai-supervisor}"
 
 #######################################
-# Phase 0.9: Sanity check — question every assumption when the queue is empty
+# Phase 0.9: Sanity check — AI-powered stall diagnosis
 #
 # Called when the pulse finds zero dispatchable tasks but open tasks exist.
-# Runs deterministic contradiction checks first (free), then optionally
-# invokes AI reasoning for ambiguous cases.
+# Gathers state data and asks the AI to identify contradictions and fixes.
 #
 # Args:
 #   $1 - repo path
@@ -47,39 +54,153 @@ run_sanity_check() {
 	local fixed=0
 
 	if [[ ! -f "$todo_file" ]]; then
+		echo "$fixed"
 		return 0
 	fi
 
 	ensure_db
 
-	log_info "Phase 0.9: Sanity check — questioning assumptions on stalled queue"
+	log_info "Phase 0.9: Sanity check — AI-powered stall diagnosis"
 
-	# Check 1: DB-failed tasks with TODO.md claims (the double-lock)
-	# If the DB knows a task failed, the TODO.md claim is stale by definition.
-	# Don't wait 24h — the DB is authoritative evidence.
-	local db_failed_check
-	db_failed_check=$(_check_db_failed_with_claims "$repo_path")
-	fixed=$((fixed + db_failed_check))
+	# Gate: check if AI sanity is enabled and cooldown has elapsed
+	if [[ "$SUPERVISOR_SANITY_AI" != "true" ]]; then
+		log_info "Phase 0.9: AI sanity check disabled (SUPERVISOR_SANITY_AI=false)"
+		_log_queue_stall_reasons "$repo_path"
+		echo "$fixed"
+		return 0
+	fi
 
-	# Check 2: Failed blockers holding up dependency chains
-	# If a blocker failed permanently (retries exhausted), dependents will
-	# never be unblocked. Either reset the blocker or mark the chain stuck.
-	local failed_blocker_check
-	failed_blocker_check=$(_check_failed_blocker_chains "$repo_path")
-	fixed=$((fixed + failed_blocker_check))
+	if ! _sanity_ai_cooldown_elapsed; then
+		log_info "Phase 0.9: AI sanity check cooldown not elapsed, skipping"
+		_log_queue_stall_reasons "$repo_path"
+		echo "$fixed"
+		return 0
+	fi
 
-	# Check 3: Tasks eligible for dispatch but missing #auto-dispatch
-	# If a task has a clear spec, model assignment, estimate, and no blocker
-	# tags, it's probably dispatchable. Flag it.
-	local missing_tag_check
-	missing_tag_check=$(_check_missing_auto_dispatch "$repo_path")
-	fixed=$((fixed + missing_tag_check))
+	# Gather state snapshot for AI reasoning
+	local state_snapshot
+	state_snapshot=$(_build_sanity_state_snapshot "$repo_path")
 
-	# Check 4: DB orphans — tasks in DB that don't exist in TODO.md
-	# These consume batch slots and confuse the state machine.
-	local orphan_check
-	orphan_check=$(_check_db_orphans "$repo_path")
-	fixed=$((fixed + orphan_check))
+	# Resolve AI CLI
+	local ai_cli
+	ai_cli=$(resolve_ai_cli 2>/dev/null) || {
+		log_warn "Phase 0.9: No AI CLI available, falling back to stall logging"
+		_log_queue_stall_reasons "$repo_path"
+		echo "$fixed"
+		return 0
+	}
+
+	local ai_model
+	ai_model=$(resolve_model "sonnet" "$ai_cli" 2>/dev/null) || {
+		log_warn "Phase 0.9: No model available, falling back to stall logging"
+		_log_queue_stall_reasons "$repo_path"
+		echo "$fixed"
+		return 0
+	}
+
+	# Build the reasoning prompt
+	local prompt
+	prompt=$(_build_sanity_prompt "$state_snapshot")
+
+	# Log the prompt for auditability
+	mkdir -p "$SANITY_AI_LOG_DIR"
+	local timestamp
+	timestamp=$(date -u '+%Y%m%d-%H%M%S')
+	local reason_log="$SANITY_AI_LOG_DIR/sanity-${timestamp}.md"
+	{
+		echo "# Sanity Check AI Reasoning Log"
+		echo ""
+		echo "Timestamp: $timestamp"
+		echo "Repo: $repo_path"
+		echo "Model: $ai_model"
+		echo ""
+		echo "## State Snapshot"
+		echo ""
+		echo "$state_snapshot"
+		echo ""
+		echo "## Prompt"
+		echo ""
+		echo "$prompt"
+		echo ""
+	} >"$reason_log"
+
+	# Spawn AI reasoning
+	log_info "Phase 0.9: Spawning AI reasoning ($ai_model)"
+	local ai_result=""
+	local ai_timeout="${SUPERVISOR_SANITY_AI_TIMEOUT:-120}"
+
+	if [[ "$ai_cli" == "opencode" ]]; then
+		ai_result=$(portable_timeout "$ai_timeout" opencode run \
+			-m "$ai_model" \
+			--format default \
+			--title "sanity-check-${timestamp}" \
+			"$prompt" 2>/dev/null || echo "")
+		# Strip ANSI escape codes
+		ai_result=$(printf '%s' "$ai_result" | sed 's/\x1b\[[0-9;]*[mGKHF]//g; s/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b\]//g; s/\x07//g')
+	else
+		local claude_model="${ai_model#*/}"
+		ai_result=$(portable_timeout "$ai_timeout" claude \
+			-p "$prompt" \
+			--model "$claude_model" \
+			--output-format text 2>/dev/null || echo "")
+	fi
+
+	# Log the AI response
+	{
+		echo "## AI Response"
+		echo ""
+		echo "Response length: $(printf '%s' "$ai_result" | wc -c | tr -d ' ') bytes"
+		echo ""
+		echo '```'
+		echo "$ai_result"
+		echo '```'
+		echo ""
+	} >>"$reason_log"
+
+	# Parse the JSON action plan
+	local action_plan
+	action_plan=$(_extract_sanity_actions "$ai_result")
+
+	if [[ -z "$action_plan" || "$action_plan" == "null" || "$action_plan" == "[]" ]]; then
+		log_info "Phase 0.9: AI found no fixable issues"
+		_log_queue_stall_reasons "$repo_path"
+		_record_sanity_ai_run
+		echo "$fixed"
+		return 0
+	fi
+
+	# Execute the actions
+	local action_count
+	action_count=$(printf '%s' "$action_plan" | jq 'length' 2>/dev/null || echo 0)
+	log_info "Phase 0.9: AI proposed $action_count fix(es)"
+
+	local i
+	for ((i = 0; i < action_count; i++)); do
+		local action
+		action=$(printf '%s' "$action_plan" | jq ".[$i]")
+		local action_type
+		action_type=$(printf '%s' "$action" | jq -r '.action // "unknown"')
+
+		local exec_result
+		exec_result=$(_execute_sanity_action "$action" "$action_type" "$repo_path")
+		local exec_rc=$?
+
+		if [[ $exec_rc -eq 0 ]]; then
+			fixed=$((fixed + 1))
+			log_success "  Phase 0.9: executed $action_type — $exec_result"
+		else
+			log_warn "  Phase 0.9: $action_type failed — $exec_result"
+		fi
+
+		{
+			echo "## Action $((i + 1)): $action_type — $([ $exec_rc -eq 0 ] && echo "SUCCESS" || echo "FAILED")"
+			echo "Result: $exec_result"
+			echo ""
+		} >>"$reason_log"
+	done
+
+	# Record the run for cooldown tracking
+	_record_sanity_ai_run
 
 	# Summary
 	if [[ "$fixed" -gt 0 ]]; then
@@ -91,13 +212,12 @@ run_sanity_check() {
 			"$pattern_helper" record \
 				--type "SELF_HEAL_PATTERN" \
 				--task "supervisor" \
-				--model "n/a" \
-				--detail "Phase 0.9 sanity check: fixed $fixed issue(s) on stalled queue" \
+				--model "$ai_model" \
+				--detail "Phase 0.9 AI sanity check: fixed $fixed issue(s) on stalled queue" \
 				2>/dev/null || true
 		fi
 	else
 		log_info "Phase 0.9: Sanity check found no fixable issues"
-		# Log the structured skip-reason summary so the stall is visible
 		_log_queue_stall_reasons "$repo_path"
 	fi
 
@@ -106,291 +226,91 @@ run_sanity_check() {
 }
 
 #######################################
-# Check 1: Tasks failed in DB but still claimed in TODO.md
-# The DB is authoritative — if it says failed, the claim is dead.
-# Strip assignee:/started: immediately so the task can be re-assessed.
+# Build a state snapshot for the AI to reason about
+# Gathers: TODO.md open tasks, DB state, system state (worktrees, PIDs)
+# Args:
+#   $1 - repo path
+# Returns:
+#   Structured text on stdout
 #######################################
-_check_db_failed_with_claims() {
+_build_sanity_state_snapshot() {
 	local repo_path="$1"
 	local todo_file="$repo_path/TODO.md"
-	local fixed=0
+	local snapshot=""
 
-	# Get all failed/blocked tasks from DB for this repo
+	# 1. Open tasks from TODO.md with metadata
+	snapshot+="### Open Tasks (TODO.md)\n"
+	local open_tasks
+	open_tasks=$(grep -E '^\s*- \[ \] t[0-9]+' "$todo_file" 2>/dev/null || echo "")
+	if [[ -n "$open_tasks" ]]; then
+		snapshot+="$open_tasks\n"
+	else
+		snapshot+="(none)\n"
+	fi
+	snapshot+="\n"
+
+	# 2. DB task states (non-terminal)
+	snapshot+="### Active DB Tasks\n"
+	local db_tasks
+	db_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
+		SELECT id, status, COALESCE(error,''), COALESCE(retries,0), COALESCE(max_retries,3),
+		       COALESCE(model,''), COALESCE(pr_url,''),
+		       CAST((julianday('now') - julianday(COALESCE(updated_at, created_at))) * 24 * 60 AS INTEGER) as mins_stale
+		FROM tasks
+		WHERE repo = '$(sql_escape "$repo_path")'
+		AND status NOT IN ('complete', 'verified', 'deployed', 'cancelled')
+		ORDER BY status, id;
+	" 2>/dev/null || echo "")
+	if [[ -n "$db_tasks" ]]; then
+		snapshot+="id|status|error|retries|max_retries|model|pr_url|mins_stale\n"
+		snapshot+="$db_tasks\n"
+	else
+		snapshot+="(none)\n"
+	fi
+	snapshot+="\n"
+
+	# 3. Failed/blocked tasks in DB (potential stall causes)
+	snapshot+="### Failed/Blocked DB Tasks\n"
 	local failed_tasks
 	failed_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
-		SELECT id, status, error, COALESCE(retries, 0), COALESCE(max_retries, 3) FROM tasks
-		WHERE status IN ('failed', 'blocked')
-		AND repo = '$(sql_escape "$repo_path")';
+		SELECT id, status, COALESCE(error,''), COALESCE(retries,0), COALESCE(max_retries,3)
+		FROM tasks
+		WHERE repo = '$(sql_escape "$repo_path")'
+		AND status IN ('failed', 'blocked')
+		ORDER BY updated_at DESC
+		LIMIT 20;
 	" 2>/dev/null || echo "")
-
-	[[ -z "$failed_tasks" ]] && echo "$fixed" && return 0
-
-	local identity
-	identity=$(get_aidevops_identity 2>/dev/null || whoami)
-
-	while IFS='|' read -r task_id db_status db_error db_retries db_max_retries; do
-		[[ -z "$task_id" ]] && continue
-
-		# Escape dots in task IDs (e.g., t215.3) for grep ERE patterns
-		local escaped_task_id
-		escaped_task_id=$(printf '%s' "$task_id" | sed 's/\./\\./g')
-
-		# Check if this task is open in TODO.md with a claim
-		local todo_line
-		todo_line=$(grep -E "^[[:space:]]*- \[ \] ${escaped_task_id}( |$)" "$todo_file" 2>/dev/null || echo "")
-		[[ -z "$todo_line" ]] && continue
-
-		# Check for assignee: or started: fields
-		if ! echo "$todo_line" | grep -qE '(assignee:|started:)'; then
-			continue
-		fi
-
-		# Verify the assignee is local (respect t1017 ownership)
-		local assignee=""
-		assignee=$(printf '%s' "$todo_line" | grep -oE 'assignee:[A-Za-z0-9._@-]+' | tail -1 | sed 's/assignee://' || echo "")
-		if [[ -n "$assignee" ]]; then
-			local local_user
-			local_user=$(whoami 2>/dev/null || echo "")
-			if [[ "$assignee" != "$local_user" && "$assignee" != "$identity" && "${assignee%%@*}" != "${identity%%@*}" ]]; then
-				log_verbose "  Sanity check 1: $task_id — DB says $db_status but assignee:$assignee is external, skipping"
-				continue
-			fi
-		fi
-
-		# The DB knows this task failed/blocked. The claim is stale by definition.
-		log_warn "  Sanity check 1: $task_id — DB says '$db_status' but TODO.md has active claim"
-		log_warn "    Error: ${db_error:0:100}"
-		log_warn "    Action: stripping stale claim (DB state is authoritative)"
-
-		# Strip the claim (redirect stdout to log to prevent leakage into $() capture)
-		if cmd_unclaim "$task_id" "$repo_path" --force >>"${SUPERVISOR_LOG:-/dev/null}" 2>&1; then
-			fixed=$((fixed + 1))
-			log_success "  Sanity check 1: $task_id — claim stripped, task now assessable"
-
-			# If retries aren't exhausted, reset to queued for re-dispatch
-			if [[ "${db_retries:-0}" -lt "${db_max_retries:-3}" ]]; then
-				log_info "  Sanity check 1: $task_id — retries available ($db_retries/$db_max_retries), resetting to queued"
-				cmd_reset "$task_id" >>"${SUPERVISOR_LOG:-/dev/null}" 2>&1 || true
-			fi
-		fi
-	done <<<"$failed_tasks"
-
-	echo "$fixed"
-	return 0
-}
-
-#######################################
-# Check 2: Failed blockers holding up dependency chains
-# When a root task fails permanently, its dependents wait forever.
-# Options: reset the failed root for retry, or surface the chain as stuck.
-#######################################
-_check_failed_blocker_chains() {
-	local repo_path="$1"
-	local todo_file="$repo_path/TODO.md"
-	local fixed=0
-
-	# Find open tasks with blocked-by: fields
-	local blocked_tasks
-	blocked_tasks=$(grep -E '^\s*- \[ \] t[0-9]+.*blocked-by:' "$todo_file" 2>/dev/null || echo "")
-	[[ -z "$blocked_tasks" ]] && echo "$fixed" && return 0
-
-	while IFS= read -r line; do
-		[[ -z "$line" ]] && continue
-
-		local task_id=""
-		task_id=$(printf '%s' "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
-		[[ -z "$task_id" ]] && continue
-
-		local blocked_by=""
-		blocked_by=$(printf '%s' "$line" | grep -oE 'blocked-by:[^ ]+' | head -1 | sed 's/blocked-by://' || echo "")
-		[[ -z "$blocked_by" ]] && continue
-
-		# Escape dots in task ID for grep ERE patterns (e.g., t215.3 → t215\.3)
-		local escaped_task_id
-		escaped_task_id=$(printf '%s' "$task_id" | sed 's/\./\\./g')
-
-		# Check each blocker against the DB
-		# Use read-based splitting instead of IFS mutation to avoid corrupting
-		# global IFS if an early exit occurs under set -euo pipefail
-		local blocker_id
-		while IFS= read -r blocker_id; do
-			[[ -z "$blocker_id" ]] && continue
-
-			# Is this blocker failed in the DB?
-			local blocker_status
-			blocker_status=$(db "$SUPERVISOR_DB" "
-				SELECT status FROM tasks
-				WHERE id = '$(sql_escape "$blocker_id")'
-				AND status = 'failed';
-			" 2>/dev/null || echo "")
-
-			if [[ "$blocker_status" == "failed" ]]; then
-				# Check if the failed blocker has retries available
-				local blocker_retries blocker_max
-				blocker_retries=$(db "$SUPERVISOR_DB" "SELECT COALESCE(retries, 0) FROM tasks WHERE id = '$(sql_escape "$blocker_id")';" 2>/dev/null || echo "0")
-				blocker_max=$(db "$SUPERVISOR_DB" "SELECT COALESCE(max_retries, 3) FROM tasks WHERE id = '$(sql_escape "$blocker_id")';" 2>/dev/null || echo "3")
-				# Guard against empty strings from race conditions (task removed between queries)
-				blocker_retries="${blocker_retries:-0}"
-				blocker_max="${blocker_max:-3}"
-
-				if [[ "$blocker_retries" -lt "$blocker_max" ]]; then
-					# Reset the failed blocker for retry (redirect stdout to log)
-					log_warn "  Sanity check 2: $blocker_id failed but has retries ($blocker_retries/$blocker_max) — resetting for retry (blocks $task_id)"
-					cmd_reset "$blocker_id" >>"${SUPERVISOR_LOG:-/dev/null}" 2>&1 || true
-					fixed=$((fixed + 1))
-				else
-					# Blocker is permanently failed — remove the blocked-by so the
-					# dependent can be assessed on its own merits (it may still work
-					# without the blocker, or the AI reasoner can decide)
-					log_warn "  Sanity check 2: $blocker_id permanently failed ($blocker_retries/$blocker_max) — unblocking $task_id (blocker is dead)"
-
-					# Remove this specific blocker from the blocked-by field
-					local line_num
-					line_num=$(grep -nE "^[[:space:]]*- \[ \] ${escaped_task_id}( |$)" "$todo_file" | head -1 | cut -d: -f1 || echo "")
-					if [[ -n "$line_num" ]]; then
-						if [[ "$blocked_by" == "$blocker_id" ]]; then
-							# Only blocker — remove the whole field
-							local escaped_blocker
-							escaped_blocker=$(printf '%s' "$blocker_id" | sed 's/\./\\./g')
-							sed_inplace "${line_num}s/ blocked-by:${escaped_blocker}//" "$todo_file"
-						else
-							# Multiple blockers — rebuild the list without this one
-							local escaped_blocker_id
-							escaped_blocker_id=$(printf '%s' "$blocker_id" | sed 's/\./\\./g')
-							local new_blockers
-							new_blockers=$(printf '%s' ",$blocked_by," | sed "s/,${escaped_blocker_id},/,/" | sed 's/^,//;s/,$//')
-							local escaped_blocked_by
-							escaped_blocked_by=$(printf '%s' "$blocked_by" | sed 's/\./\\./g')
-							if [[ -n "$new_blockers" ]]; then
-								sed_inplace "${line_num}s/blocked-by:${escaped_blocked_by}/blocked-by:${new_blockers}/" "$todo_file"
-							else
-								sed_inplace "${line_num}s/ blocked-by:${escaped_blocked_by}//" "$todo_file"
-							fi
-						fi
-						sed_inplace "${line_num}s/[[:space:]]*$//" "$todo_file"
-						fixed=$((fixed + 1))
-					fi
-				fi
-			fi
-		done < <(tr ',' '\n' <<<"$blocked_by")
-	done <<<"$blocked_tasks"
-
-	if [[ "$fixed" -gt 0 ]]; then
-		commit_and_push_todo "$repo_path" "chore: sanity check — unblock tasks with failed/retryable blockers" >>"${SUPERVISOR_LOG:-/dev/null}" 2>&1 || true
+	if [[ -n "$failed_tasks" ]]; then
+		snapshot+="id|status|error|retries|max_retries\n"
+		snapshot+="$failed_tasks\n"
+	else
+		snapshot+="(none)\n"
 	fi
+	snapshot+="\n"
 
-	echo "$fixed"
-	return 0
-}
-
-#######################################
-# Check 3: Tasks that look dispatchable but lack #auto-dispatch
-# Instead of silently ignoring them, flag them for the AI reasoner
-# or auto-tag if they clearly meet the criteria.
-#
-# Auto-tag criteria (all must be true):
-#   - Has model: assignment
-#   - Has time estimate (~Xh)
-#   - Has no blocker tags (account-needed, etc.)
-#   - Has no blocked-by: field
-#   - Has no assignee: or started: field
-#   - Is not a #plan task (plans need decomposition, not dispatch)
-#   - Is not an #investigation task (needs human judgment)
-#######################################
-_check_missing_auto_dispatch() {
-	local repo_path="$1"
-	local todo_file="$repo_path/TODO.md"
-	local fixed=0
-
-	# Blocker tags that indicate human action needed
-	local blocker_pattern='account-needed|hosting-needed|login-needed|api-key-needed|clarification-needed|resources-needed|payment-needed|approval-needed|decision-needed|design-needed|content-needed|dns-needed|domain-needed|testing-needed'
-
-	# Find open tasks WITHOUT #auto-dispatch
-	local candidates
-	candidates=$(grep -E '^\s*- \[ \] t[0-9]+' "$todo_file" 2>/dev/null |
-		grep -v '#auto-dispatch' |
-		grep -v 'assignee:' |
-		grep -v 'started:' |
-		grep -v 'blocked-by:' |
-		grep -vE "#(plan|investigation)" |
-		grep -vE "$blocker_pattern" |
-		grep -E 'model:' |
-		grep -E '~[0-9]+[hm]' || echo "")
-
-	[[ -z "$candidates" ]] && echo "$fixed" && return 0
-
-	# Also exclude the template line (tXXX)
-	candidates=$(echo "$candidates" | grep -v 'tXXX' || echo "")
-	[[ -z "$candidates" ]] && echo "$fixed" && return 0
-
-	local candidate_count
-	candidate_count=$(echo "$candidates" | wc -l | tr -d ' ')
-
-	if [[ "$candidate_count" -gt 0 ]]; then
-		log_warn "  Sanity check 3: $candidate_count task(s) look dispatchable but lack #auto-dispatch tag"
-
-		while IFS= read -r line; do
-			[[ -z "$line" ]] && continue
-			local task_id
-			task_id=$(printf '%s' "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
-			[[ -z "$task_id" ]] && continue
-
-			# Escape dots in task ID for grep ERE patterns
-			local escaped_task_id
-			escaped_task_id=$(printf '%s' "$task_id" | sed 's/\./\\./g')
-
-			# Skip if already tracked in DB (may have been manually dispatched)
-			local existing
-			existing=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo "")
-			if [[ -n "$existing" ]]; then
-				continue
+	# 4. Active PID files (running workers)
+	snapshot+="### Active Worker PIDs\n"
+	local supervisor_dir
+	supervisor_dir=$(dirname "$SUPERVISOR_DB")
+	if [[ -d "$supervisor_dir/pids" ]]; then
+		local pid_file
+		for pid_file in "$supervisor_dir/pids"/*.pid; do
+			[[ -f "$pid_file" ]] || continue
+			local pid_task
+			pid_task=$(basename "$pid_file" .pid)
+			local pid_val
+			pid_val=$(cat "$pid_file" 2>/dev/null || echo "")
+			local pid_alive="dead"
+			if [[ -n "$pid_val" ]] && kill -0 "$pid_val" 2>/dev/null; then
+				pid_alive="alive"
 			fi
-
-			# Auto-tag: add #auto-dispatch to the task line
-			local line_num
-			line_num=$(grep -nE "^[[:space:]]*- \[ \] ${escaped_task_id}( |$)" "$todo_file" | head -1 | cut -d: -f1 || echo "")
-			if [[ -n "$line_num" ]]; then
-				# Insert #auto-dispatch before the first — or at end of tags
-				# Find where to insert: after the last #tag before any —
-				sed_inplace "${line_num}s/\(#[a-zA-Z][a-zA-Z0-9_-]*\)\([[:space:]]\)/\1 #auto-dispatch\2/" "$todo_file"
-
-				# Verify it was added (sed may not have matched if tag format differs)
-				if grep -q "^[[:space:]]*- \[ \] ${escaped_task_id}.*#auto-dispatch" "$todo_file"; then
-					log_success "  Sanity check 3: $task_id — auto-tagged #auto-dispatch (has model:, estimate, no blockers)"
-					fixed=$((fixed + 1))
-				else
-					# Fallback: append before the description separator
-					sed_inplace "${line_num}s/ — / #auto-dispatch — /" "$todo_file"
-					if grep -q "^[[:space:]]*- \[ \] ${escaped_task_id}.*#auto-dispatch" "$todo_file"; then
-						log_success "  Sanity check 3: $task_id — auto-tagged #auto-dispatch (fallback insertion)"
-						fixed=$((fixed + 1))
-					else
-						log_warn "  Sanity check 3: $task_id — could not auto-tag, needs manual review"
-					fi
-				fi
-			fi
-		done <<<"$candidates"
-
-		if [[ "$fixed" -gt 0 ]]; then
-			commit_and_push_todo "$repo_path" "chore: sanity check — auto-tag $fixed task(s) as #auto-dispatch" >>"${SUPERVISOR_LOG:-/dev/null}" 2>&1 || true
-		fi
+			snapshot+="$pid_task: PID=$pid_val ($pid_alive)\n"
+		done
 	fi
+	snapshot+="\n"
 
-	echo "$fixed"
-	return 0
-}
-
-#######################################
-# Check 4: DB orphans with non-terminal status
-# Tasks in the DB that have no corresponding TODO.md entry and are
-# not in a terminal state (verified/cancelled/failed) consume batch
-# slots and confuse dispatch.
-#######################################
-_check_db_orphans() {
-	local repo_path="$1"
-	local todo_file="$repo_path/TODO.md"
-	local fixed=0
-
+	# 5. DB orphans (tasks in DB not in TODO.md)
+	snapshot+="### Potential DB Orphans\n"
 	local orphans
 	orphans=$(db -separator '|' "$SUPERVISOR_DB" "
 		SELECT id, status FROM tasks
@@ -398,25 +318,373 @@ _check_db_orphans() {
 		AND status IN ('queued', 'dispatched', 'running')
 		ORDER BY id;
 	" 2>/dev/null || echo "")
+	if [[ -n "$orphans" ]]; then
+		while IFS='|' read -r oid ostatus; do
+			[[ -z "$oid" ]] && continue
+			local escaped_oid
+			escaped_oid=$(printf '%s' "$oid" | sed 's/\./\\./g')
+			if ! grep -qE "^[[:space:]]*- \[.\] ${escaped_oid}( |$)" "$todo_file" 2>/dev/null; then
+				snapshot+="$oid ($ostatus): IN DB but NOT in TODO.md\n"
+			fi
+		done <<<"$orphans"
+	fi
+	snapshot+="\n"
 
-	[[ -z "$orphans" ]] && echo "$fixed" && return 0
+	# 6. Identity context
+	local identity
+	identity=$(get_aidevops_identity 2>/dev/null || whoami)
+	snapshot+="### Context\n"
+	snapshot+="Local identity: $identity\n"
+	snapshot+="Repo: $repo_path\n"
 
-	while IFS='|' read -r task_id db_status; do
-		[[ -z "$task_id" ]] && continue
+	printf '%b' "$snapshot"
+	return 0
+}
 
-		# Escape dots in task ID for grep ERE patterns
+#######################################
+# Build the AI prompt for sanity check reasoning
+# Args:
+#   $1 - state snapshot text
+# Returns:
+#   Full prompt on stdout
+#######################################
+_build_sanity_prompt() {
+	local state_snapshot="$1"
+
+	cat <<PROMPT
+You are a supervisor sanity checker for an automated task dispatch system. The queue is stalled — there are open tasks but none are dispatchable. Your job is to find contradictions between the TODO.md state, the database state, and the system state, then propose specific fixes.
+
+## State Snapshot
+
+$state_snapshot
+
+## What to Look For
+
+1. **DB-failed tasks with TODO.md claims**: If the DB says a task failed/blocked but TODO.md still has assignee:/started: fields, the claim is stale. Strip it so the task can be re-assessed.
+
+2. **Failed blockers holding up chains**: If a task's blocked-by: dependency has permanently failed (retries exhausted), the dependent will wait forever. Either reset the blocker for retry or remove the blocked-by field.
+
+3. **Tasks eligible for dispatch but missing #auto-dispatch**: If a task has model:, an estimate (~Xh), no blockers, no assignee, and no blocked-by, it's probably dispatchable. Recommend adding #auto-dispatch.
+
+4. **DB orphans**: Tasks in the DB with non-terminal status (queued/dispatched/running) that don't exist in TODO.md. These consume batch slots. Cancel them.
+
+5. **Stale claims**: Tasks with assignee:/started: but no corresponding running worker in the DB or PID files. The claim may be from a dead session.
+
+6. **Any other contradiction** you can identify between the three state sources.
+
+## Output Format
+
+Respond with ONLY a JSON array of fix actions. No markdown fencing, no explanation.
+
+Each action object must have:
+- "action": one of "unclaim", "reset", "cancel_orphan", "remove_blocker", "add_auto_dispatch", "log_only"
+- "task_id": the task ID to act on
+- "reasoning": why this fix is needed (one sentence)
+- For "remove_blocker": include "blocker_id" (the failed blocker to remove)
+- For "log_only": include "message" (what to log for human review)
+
+Example:
+[
+  {"action": "unclaim", "task_id": "t123", "reasoning": "DB says failed but TODO.md has active claim"},
+  {"action": "cancel_orphan", "task_id": "t456", "reasoning": "In DB as queued but missing from TODO.md"},
+  {"action": "remove_blocker", "task_id": "t789", "blocker_id": "t456", "reasoning": "Blocker t456 permanently failed (3/3 retries)"},
+  {"action": "add_auto_dispatch", "task_id": "t101", "reasoning": "Has model:sonnet, ~2h estimate, no blockers — eligible for dispatch"}
+]
+
+If nothing needs fixing, return: []
+
+Respond with ONLY the JSON array.
+PROMPT
+	return 0
+}
+
+#######################################
+# Extract JSON action plan from AI response
+# Reuses the same extraction logic as ai-reason.sh
+# Args:
+#   $1 - raw AI response
+# Returns:
+#   JSON array on stdout, or empty string
+#######################################
+_extract_sanity_actions() {
+	local response="$1"
+
+	if [[ -z "$response" ]]; then
+		echo ""
+		return 0
+	fi
+
+	# Try direct JSON parse
+	local parsed
+	parsed=$(printf '%s' "$response" | jq '.' 2>/dev/null)
+	if [[ $? -eq 0 && -n "$parsed" ]]; then
+		local is_array
+		is_array=$(printf '%s' "$parsed" | jq 'type' 2>/dev/null || echo "")
+		if [[ "$is_array" == '"array"' ]]; then
+			printf '%s' "$parsed"
+			return 0
+		fi
+	fi
+
+	# Try extracting from ```json block
+	local json_block
+	json_block=$(printf '%s' "$response" | awk '
+		/^```json/ { capture=1; block=""; next }
+		/^```$/ && capture { capture=0; last_block=block; next }
+		capture { block = block (block ? "\n" : "") $0 }
+		END { if (capture && block) print block; else if (last_block) print last_block }
+	')
+	if [[ -n "$json_block" ]]; then
+		parsed=$(printf '%s' "$json_block" | jq '.' 2>/dev/null)
+		if [[ $? -eq 0 && -n "$parsed" ]]; then
+			printf '%s' "$parsed"
+			return 0
+		fi
+	fi
+
+	# Try finding a JSON array in the response
+	local bracket_json
+	bracket_json=$(printf '%s' "$response" | awk '
+		/^[[:space:]]*\[/ { capture=1; block="" }
+		capture { block = block (block ? "\n" : "") $0 }
+		/^[[:space:]]*\]/ && capture { capture=0; last_block=block }
+		END { if (last_block) print last_block }
+	')
+	if [[ -n "$bracket_json" ]]; then
+		parsed=$(printf '%s' "$bracket_json" | jq '.' 2>/dev/null)
+		if [[ $? -eq 0 && -n "$parsed" ]]; then
+			local arr_type
+			arr_type=$(printf '%s' "$parsed" | jq 'type' 2>/dev/null || echo "")
+			if [[ "$arr_type" == '"array"' ]]; then
+				printf '%s' "$parsed"
+				return 0
+			fi
+		fi
+	fi
+
+	echo ""
+	return 0
+}
+
+#######################################
+# Execute a single sanity check action
+# Args:
+#   $1 - JSON action object
+#   $2 - action type
+#   $3 - repo path
+# Returns:
+#   Result description on stdout, 0 on success, 1 on failure
+#######################################
+_execute_sanity_action() {
+	local action="$1"
+	local action_type="$2"
+	local repo_path="$3"
+	local todo_file="$repo_path/TODO.md"
+
+	local task_id
+	task_id=$(printf '%s' "$action" | jq -r '.task_id // ""')
+	local reasoning
+	reasoning=$(printf '%s' "$action" | jq -r '.reasoning // ""')
+
+	if [[ -z "$task_id" ]]; then
+		echo "missing task_id"
+		return 1
+	fi
+
+	case "$action_type" in
+	unclaim)
+		# Strip assignee:/started: from the task in TODO.md
+		if cmd_unclaim "$task_id" "$repo_path" --force >>"${SUPERVISOR_LOG:-/dev/null}" 2>&1; then
+			# If task has retries available, reset to queued
+			local retries max_retries
+			retries=$(db "$SUPERVISOR_DB" "SELECT COALESCE(retries, 0) FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo "0")
+			max_retries=$(db "$SUPERVISOR_DB" "SELECT COALESCE(max_retries, 3) FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo "3")
+			retries="${retries:-0}"
+			max_retries="${max_retries:-3}"
+			if [[ "$retries" -lt "$max_retries" ]]; then
+				cmd_reset "$task_id" >>"${SUPERVISOR_LOG:-/dev/null}" 2>&1 || true
+				echo "claim stripped, reset to queued ($retries/$max_retries retries)"
+			else
+				echo "claim stripped (retries exhausted $retries/$max_retries)"
+			fi
+			return 0
+		fi
+		echo "unclaim failed"
+		return 1
+		;;
+
+	reset)
+		# Reset a failed/blocked task to queued for retry
+		if cmd_reset "$task_id" >>"${SUPERVISOR_LOG:-/dev/null}" 2>&1; then
+			echo "reset to queued"
+			return 0
+		fi
+		echo "reset failed"
+		return 1
+		;;
+
+	cancel_orphan)
+		# Cancel a DB orphan that has no TODO.md entry
+		if cmd_transition "$task_id" "cancelled" --error "Sanity check AI: DB orphan with no TODO.md entry" >>"${SUPERVISOR_LOG:-/dev/null}" 2>&1; then
+			echo "cancelled (DB orphan)"
+			return 0
+		fi
+		echo "cancel failed"
+		return 1
+		;;
+
+	remove_blocker)
+		# Remove a specific blocker from a task's blocked-by field
+		local blocker_id
+		blocker_id=$(printf '%s' "$action" | jq -r '.blocker_id // ""')
+		if [[ -z "$blocker_id" ]]; then
+			echo "missing blocker_id"
+			return 1
+		fi
+
 		local escaped_task_id
 		escaped_task_id=$(printf '%s' "$task_id" | sed 's/\./\\./g')
 
-		# Check if task exists in TODO.md (any state)
-		if ! grep -qE "^[[:space:]]*- \[.\] ${escaped_task_id}( |$)" "$todo_file" 2>/dev/null; then
-			log_warn "  Sanity check 4: $task_id is '$db_status' in DB but missing from TODO.md — cancelling"
-			cmd_transition "$task_id" "cancelled" --error "Sanity check: DB orphan with no TODO.md entry" >>"${SUPERVISOR_LOG:-/dev/null}" 2>&1 || true
-			fixed=$((fixed + 1))
+		local line_num
+		line_num=$(grep -nE "^[[:space:]]*- \[ \] ${escaped_task_id}( |$)" "$todo_file" | head -1 | cut -d: -f1 || echo "")
+		if [[ -z "$line_num" ]]; then
+			echo "task not found in TODO.md"
+			return 1
 		fi
-	done <<<"$orphans"
 
-	echo "$fixed"
+		# Get current blocked-by value
+		local current_line
+		current_line=$(sed -n "${line_num}p" "$todo_file")
+		local blocked_by
+		blocked_by=$(printf '%s' "$current_line" | grep -oE 'blocked-by:[^ ]+' | head -1 | sed 's/blocked-by://' || echo "")
+
+		if [[ -z "$blocked_by" ]]; then
+			echo "no blocked-by field found"
+			return 1
+		fi
+
+		local escaped_blocker
+		escaped_blocker=$(printf '%s' "$blocker_id" | sed 's/\./\\./g')
+
+		if [[ "$blocked_by" == "$blocker_id" ]]; then
+			# Only blocker — remove the whole field
+			sed_inplace "${line_num}s/ blocked-by:${escaped_blocker}//" "$todo_file"
+		else
+			# Multiple blockers — rebuild without this one
+			local new_blockers
+			new_blockers=$(printf '%s' ",$blocked_by," | sed "s/,${escaped_blocker},/,/" | sed 's/^,//;s/,$//')
+			local escaped_blocked_by
+			escaped_blocked_by=$(printf '%s' "$blocked_by" | sed 's/\./\\./g')
+			if [[ -n "$new_blockers" ]]; then
+				sed_inplace "${line_num}s/blocked-by:${escaped_blocked_by}/blocked-by:${new_blockers}/" "$todo_file"
+			else
+				sed_inplace "${line_num}s/ blocked-by:${escaped_blocked_by}//" "$todo_file"
+			fi
+		fi
+		sed_inplace "${line_num}s/[[:space:]]*$//" "$todo_file"
+
+		commit_and_push_todo "$repo_path" "chore: sanity check AI — unblock $task_id (removed failed blocker $blocker_id)" >>"${SUPERVISOR_LOG:-/dev/null}" 2>&1 || true
+		echo "removed blocker $blocker_id"
+		return 0
+		;;
+
+	add_auto_dispatch)
+		# Add #auto-dispatch tag to an eligible task
+		local escaped_task_id
+		escaped_task_id=$(printf '%s' "$task_id" | sed 's/\./\\./g')
+
+		local line_num
+		line_num=$(grep -nE "^[[:space:]]*- \[ \] ${escaped_task_id}( |$)" "$todo_file" | head -1 | cut -d: -f1 || echo "")
+		if [[ -z "$line_num" ]]; then
+			echo "task not found in TODO.md"
+			return 1
+		fi
+
+		# Check if already tagged
+		if grep -q "^[[:space:]]*- \[ \] ${escaped_task_id}.*#auto-dispatch" "$todo_file"; then
+			echo "already has #auto-dispatch"
+			return 0
+		fi
+
+		# Insert #auto-dispatch after the last #tag before any —
+		sed_inplace "${line_num}s/\(#[a-zA-Z][a-zA-Z0-9_-]*\)\([[:space:]]\)/\1 #auto-dispatch\2/" "$todo_file"
+
+		# Verify it was added
+		if grep -q "^[[:space:]]*- \[ \] ${escaped_task_id}.*#auto-dispatch" "$todo_file"; then
+			commit_and_push_todo "$repo_path" "chore: sanity check AI — auto-tag $task_id as #auto-dispatch" >>"${SUPERVISOR_LOG:-/dev/null}" 2>&1 || true
+			echo "tagged #auto-dispatch"
+			return 0
+		fi
+
+		# Fallback: append before the description separator
+		sed_inplace "${line_num}s/ — / #auto-dispatch — /" "$todo_file"
+		if grep -q "^[[:space:]]*- \[ \] ${escaped_task_id}.*#auto-dispatch" "$todo_file"; then
+			commit_and_push_todo "$repo_path" "chore: sanity check AI — auto-tag $task_id as #auto-dispatch" >>"${SUPERVISOR_LOG:-/dev/null}" 2>&1 || true
+			echo "tagged #auto-dispatch (fallback)"
+			return 0
+		fi
+
+		echo "could not insert #auto-dispatch tag"
+		return 1
+		;;
+
+	log_only)
+		# Just log a message for human review
+		local message
+		message=$(printf '%s' "$action" | jq -r '.message // "no message"')
+		log_warn "  Phase 0.9 AI: $task_id — $message"
+		echo "logged: $message"
+		return 0
+		;;
+
+	*)
+		echo "unknown action type: $action_type"
+		return 1
+		;;
+	esac
+}
+
+#######################################
+# Check if the AI sanity check cooldown has elapsed
+# Returns:
+#   0 if cooldown elapsed (should run), 1 if still cooling down
+#######################################
+_sanity_ai_cooldown_elapsed() {
+	local cooldown="${SUPERVISOR_SANITY_AI_COOLDOWN:-300}"
+
+	local last_run
+	last_run=$(db "$SUPERVISOR_DB" "
+		SELECT MAX(timestamp) FROM state_log
+		WHERE task_id = 'sanity-check-ai'
+		  AND to_state = 'complete';
+	" 2>/dev/null || echo "")
+
+	if [[ -z "$last_run" || "$last_run" == "null" ]]; then
+		return 0
+	fi
+
+	local last_epoch now_epoch
+	last_epoch=$(date -j -f "%Y-%m-%d %H:%M:%S" "$last_run" "+%s" 2>/dev/null || date -d "$last_run" "+%s" 2>/dev/null || echo 0)
+	now_epoch=$(date "+%s")
+	local elapsed=$((now_epoch - last_epoch))
+
+	if [[ "$elapsed" -lt "$cooldown" ]]; then
+		log_verbose "Phase 0.9: AI cooldown (${elapsed}s / ${cooldown}s)"
+		return 1
+	fi
+
+	return 0
+}
+
+#######################################
+# Record that an AI sanity check ran (for cooldown tracking)
+#######################################
+_record_sanity_ai_run() {
+	db "$SUPERVISOR_DB" "
+		INSERT INTO state_log (task_id, from_state, to_state, reason)
+		VALUES ('sanity-check-ai', 'reasoning', 'complete',
+				'AI sanity check completed');
+	" 2>/dev/null || true
 	return 0
 }
 
