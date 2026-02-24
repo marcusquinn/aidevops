@@ -302,8 +302,13 @@ cmd_pr_lifecycle() {
 		stage_start=$(date +%s)
 
 		# t298: Parse status|mergeStateStatus format
+		# t1314.1: Use AI judgment for PR status classification (falls back to deterministic)
 		local pr_status_full pr_status merge_state_status
-		pr_status_full=$(check_pr_status "$task_id")
+		if declare -f ai_check_pr_status &>/dev/null; then
+			pr_status_full=$(ai_check_pr_status "$task_id")
+		else
+			pr_status_full=$(check_pr_status "$task_id")
+		fi
 		pr_status="${pr_status_full%%|*}"
 		merge_state_status="${pr_status_full##*|}"
 		log_info "PR status: $pr_status (merge state: $merge_state_status)"
@@ -577,8 +582,13 @@ cmd_pr_lifecycle() {
 			else
 				log_info "Found $thread_count unresolved review thread(s) for $task_id - triaging..."
 
+				# t1314.1: Use AI judgment for review triage (falls back to deterministic)
 				local triage_result
-				triage_result=$(triage_review_feedback "$threads_json")
+				if declare -f ai_triage_review_feedback &>/dev/null; then
+					triage_result=$(ai_triage_review_feedback "$threads_json")
+				else
+					triage_result=$(triage_review_feedback "$threads_json")
+				fi
 
 				local triage_action
 				triage_action=$(echo "$triage_result" | jq -r '.action' 2>/dev/null || echo "merge")
