@@ -57,8 +57,8 @@ readonly ROUTINE_AI_TIMEOUT=10 # seconds — fail fast, fall back to heuristic
 readonly ROUTINE_AI_AUTH_FILE="${HOME}/.local/share/opencode/auth.json"
 
 # Session-scoped AI decision cache (populated by _ai_schedule_all_routines)
-# Format: associative array routine_name -> "run"|"skip"|"defer"
-declare -A _AI_SCHEDULE_CACHE=()
+# Format: newline-delimited "key=value" string (bash 3.2 compatible, no associative arrays)
+_AI_SCHEDULE_CACHE=""
 _AI_SCHEDULE_CACHE_VALID=false
 
 #######################################
@@ -259,7 +259,7 @@ Respond with ONLY a JSON object: {"decisions":{"routine_name":"run|skip|defer",.
 		# Validate decision value
 		case "$decision" in
 		run | skip | defer)
-			_AI_SCHEDULE_CACHE["$rname"]="$decision"
+			_AI_SCHEDULE_CACHE="${_AI_SCHEDULE_CACHE}${rname}=${decision}"$'\n'
 			;;
 		*)
 			log_verbose "  Phase 14: AI returned invalid decision for ${rname}: '${decision}'"
@@ -270,7 +270,7 @@ Respond with ONLY a JSON object: {"decisions":{"routine_name":"run|skip|defer",.
 
 	if [[ "$parse_ok" == "false" ]]; then
 		# Partial parse — clear cache, fall back entirely to heuristic
-		_AI_SCHEDULE_CACHE=()
+		_AI_SCHEDULE_CACHE=""
 		_AI_SCHEDULE_CACHE_VALID=false
 		log_verbose "  Phase 14: AI response partially invalid, falling back to heuristic"
 		return 1
@@ -488,8 +488,10 @@ should_run_routine() {
 	fi
 
 	# Check AI decision cache (populated by _ai_schedule_all_routines)
-	if [[ "$_AI_SCHEDULE_CACHE_VALID" == "true" && -n "${_AI_SCHEDULE_CACHE[$routine_name]+x}" ]]; then
-		local ai_decision="${_AI_SCHEDULE_CACHE[$routine_name]}"
+	local _cached_line
+	_cached_line=$(echo "$_AI_SCHEDULE_CACHE" | grep "^${routine_name}=" 2>/dev/null)
+	if [[ "$_AI_SCHEDULE_CACHE_VALID" == "true" && -n "$_cached_line" ]]; then
+		local ai_decision="${_cached_line#*=}"
 		log_verbose "  Phase 14: ${routine_name} — AI decision: ${ai_decision}"
 		echo "$ai_decision"
 		if [[ "$ai_decision" == "run" ]]; then
