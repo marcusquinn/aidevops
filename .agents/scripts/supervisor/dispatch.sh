@@ -303,187 +303,89 @@ resolve_model_from_frontmatter() {
 #   opus   — complex: architecture, novel features, multi-file refactors,
 #            security audits, system design, anything requiring deep reasoning
 #
+# AI-first (t1313): sends task description + tags to AI for classification.
+# Falls back to "opus" if AI is unavailable.
+#
 # Accepts optional $2 for TODO.md tags (e.g., "#docs #optimization") to
 # provide additional routing hints when description alone is ambiguous.
 #######################################
 classify_task_complexity() {
 	local description="$1"
 	local tags="${2:-}"
-	local desc_lower
-	desc_lower=$(echo "$description" | tr '[:upper:]' '[:lower:]')
-	local tags_lower
-	tags_lower=$(echo "$tags" | tr '[:upper:]' '[:lower:]')
 
-	# --- Tag-based hints (highest priority when present) ---
-	# Tags are explicit human intent — trust them over keyword matching
-	if [[ "$tags_lower" == *"#trivial"* ]]; then
-		echo "haiku"
-		return 0
+	# Gather facts for AI
+	local facts=""
+	facts="Task description: ${description}"
+	if [[ -n "$tags" ]]; then
+		facts="${facts}
+Tags: ${tags}"
 	fi
-	if [[ "$tags_lower" == *"#simple"* || "$tags_lower" == *"#docs"* ]]; then
-		echo "sonnet"
-		return 0
-	fi
-	if [[ "$tags_lower" == *"#complex"* || "$tags_lower" == *"#architecture"* ]]; then
+
+	# Ask AI to classify
+	local ai_cli
+	ai_cli=$(resolve_ai_cli 2>/dev/null) || {
 		echo "opus"
 		return 0
-	fi
+	}
 
-	# --- Pre-check: disambiguate patterns that match both sonnet and opus ---
-	# "extract modules" matches sonnet "extract.*function" when description also
-	# mentions functions. Check for module-level operations first (opus-tier).
-	if [[ "$desc_lower" =~ module && ("$desc_lower" =~ extract || "$desc_lower" =~ move.*into) ]]; then
+	local ai_model
+	ai_model=$(resolve_model "sonnet" "$ai_cli" 2>/dev/null) || {
 		echo "opus"
 		return 0
+	}
+
+	local prompt
+	prompt="You are a task complexity classifier for a DevOps automation system. Given a task description and optional tags, classify the task into one of three model tiers.
+
+TIERS:
+- haiku: Trivial mechanical tasks needing no reasoning (rename, reformat, sort, fix whitespace, remove unused imports, update copyright)
+- sonnet: Simple-to-moderate dev tasks (docs updates, config changes, bug fixes, writing tests, adding helpers, updating scripts, markdown changes, dependency updates)
+- opus: Complex tasks requiring deep reasoning (architecture, system design, security audits, major refactors, migrations, novel implementations, multi-file changes, state machines, concurrency, CI/CD workflows)
+
+TASK:
+${facts}
+
+RULES:
+- If tags explicitly indicate complexity (#trivial → haiku, #simple/#docs → sonnet, #complex/#architecture → opus), respect them.
+- When uncertain, prefer opus (complex tasks fail on weaker models; simple tasks succeed on stronger ones).
+- Respond with ONLY a JSON object: {\"tier\": \"haiku|sonnet|opus\", \"reason\": \"one sentence\"}"
+
+	local ai_result=""
+	if [[ "$ai_cli" == "opencode" ]]; then
+		ai_result=$(portable_timeout 15 opencode run \
+			-m "$ai_model" \
+			--format default \
+			--title "classify-$$" \
+			"$prompt" 2>/dev/null || echo "")
+		ai_result=$(printf '%s' "$ai_result" | sed 's/\x1b\[[0-9;]*[mGKHF]//g; s/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b\]//g; s/\x07//g')
+	else
+		local claude_model="${ai_model#*/}"
+		ai_result=$(portable_timeout 15 claude \
+			-p "$prompt" \
+			--model "$claude_model" \
+			--output-format text 2>/dev/null || echo "")
 	fi
 
-	# --- Haiku tier: trivial mechanical tasks (no reasoning needed) ---
-	# Aligned with model-registry-helper.sh route patterns
-	local haiku_patterns=(
-		"^rename "
-		"rename.*variable"
-		"rename.*function"
-		"rename.*file"
-		"reformat"
-		"re-format"
-		"classify"
-		"triage"
-		"commit.message"
-		"simple.*(text|transform)"
-		"extract.field"
-		"sort.*list"
-		"prioriti[sz]e"
-		"tag.*label"
-		"label.*tag"
-		"fix.*whitespace"
-		"fix.*indent"
-		"remove.*unused.*import"
-		"update.*copyright"
-	)
-
-	for pattern in "${haiku_patterns[@]}"; do
-		if [[ "$desc_lower" =~ $pattern ]]; then
-			echo "haiku"
-			return 0
+	if [[ -n "$ai_result" ]]; then
+		local json_block
+		json_block=$(printf '%s' "$ai_result" | grep -oE '\{[^}]+\}' | head -1)
+		if [[ -n "$json_block" ]]; then
+			local tier
+			tier=$(printf '%s' "$json_block" | jq -r '.tier // ""' 2>/dev/null || echo "")
+			case "$tier" in
+			haiku | sonnet | opus)
+				local reason
+				reason=$(printf '%s' "$json_block" | jq -r '.reason // ""' 2>/dev/null || echo "")
+				log_verbose "classify_task_complexity: AI classified as $tier — $reason"
+				echo "$tier"
+				return 0
+				;;
+			esac
 		fi
-	done
+	fi
 
-	# --- Sonnet tier: simple-to-moderate dev tasks ---
-	# Standard work that doesn't require deep architectural reasoning
-	local sonnet_patterns=(
-		"update.*readme"
-		"update.*docs"
-		"update.*documentation"
-		"add.*comment"
-		"add.*reference"
-		"update.*reference"
-		"fix.*typo"
-		"update.*version"
-		"bump.*version"
-		"update.*changelog"
-		"add.*to.*index"
-		"update.*index"
-		"wire.*up.*command"
-		"add.*slash.*command"
-		"update.*agents\.md"
-		"progressive.*disclosure"
-		"cross-reference"
-		"add.*test"
-		"write.*test"
-		"unit.*test"
-		"fix.*bug"
-		"fix.*error"
-		"fix.*issue"
-		"bugfix"
-		"hotfix"
-		"update.*config"
-		"update.*setting"
-		"add.*flag"
-		"add.*option"
-		"add.*parameter"
-		"update.*script"
-		"add.*helper"
-		"add.*logging"
-		"add.*validation"
-		"improve.*error.*message"
-		"update.*template"
-		"markdown.*change"
-		"update.*markdown"
-		"add.*entry"
-		"add.*section"
-		"move.*file"
-		"move.*function"
-		"extract.*function"
-		"inline.*function"
-		"add.*env.*var"
-		"update.*env"
-		"clean.*up"
-		"remove.*deprecated"
-		"update.*dependency"
-		"upgrade.*dependency"
-	)
-
-	for pattern in "${sonnet_patterns[@]}"; do
-		if [[ "$desc_lower" =~ $pattern ]]; then
-			echo "sonnet"
-			return 0
-		fi
-	done
-
-	# --- Opus tier: complex tasks requiring deep reasoning ---
-	local opus_patterns=(
-		"architect"
-		"design.*system"
-		"system.*design"
-		"security.*audit"
-		"refactor.*major"
-		"major.*refactor"
-		"migration"
-		"novel"
-		"from.*scratch"
-		"implement.*new.*system"
-		"multi.*provider"
-		"cross.*model"
-		"quality.*gate"
-		"fallback.*chain"
-		"trade.?off"
-		"evaluat.*option"
-		"evaluat.*approach"
-		"complex.*(plan|design|decision)"
-		"implement.*new.*(framework|engine|pipeline|protocol)"
-		"redesign"
-		"state.*machine"
-		"concurren"
-		"parallel.*processing"
-		"distributed"
-		"consensus"
-		"orchestrat"
-		"pre.commit.*hook"
-		"ci.*check"
-		"ci.*workflow"
-		"github.*action"
-		"edge.*case"
-		"enforce"
-		"guard"
-		"wire.*into"
-		"end.to.end"
-		"multi.file"
-		"modular"
-		"extract.*module"
-		"supervisor"
-		"parse.*diff"
-		"parse.*staged"
-	)
-
-	for pattern in "${opus_patterns[@]}"; do
-		if [[ "$desc_lower" =~ $pattern ]]; then
-			echo "opus"
-			return 0
-		fi
-	done
-
-	# Default: opus for safety (complex tasks fail on weaker models,
-	# but the quality gate can escalate haiku/sonnet tasks if needed)
+	# AI unavailable or invalid response — default to opus for safety
+	log_verbose "classify_task_complexity: AI unavailable, defaulting to opus"
 	echo "opus"
 	return 0
 }
@@ -551,177 +453,51 @@ resolve_task_model() {
 		fi
 	fi
 
-	# Fetch task description for classification (used by steps 3 and 4)
+	# 3) AI-first model selection (t1313)
+	# Gather all available signals and let AI decide the optimal tier.
+	# This replaces the previous 5-step heuristic chain (pattern-tracker,
+	# keyword classification, cost-efficiency check, contest detection, budget).
 	local task_desc
 	task_desc=$(db "$SUPERVISOR_DB" "SELECT description FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo "")
 
-	# Derive task type from tags/description — used by steps 3 and 4.5 (t1149)
-	local pattern_helper="${SCRIPT_DIR}/pattern-tracker-helper.sh"
-	local inferred_task_type=""
 	if [[ -n "$task_desc" ]]; then
-		local task_tags_for_type
-		task_tags_for_type=$(echo "$task_desc" | grep -oE '#[a-zA-Z][a-zA-Z0-9_-]*' | tr '[:upper:]' '[:lower:]' | tr '\n' ' ' || echo "")
-		local desc_lower_for_type
-		desc_lower_for_type=$(echo "$task_desc" | tr '[:upper:]' '[:lower:]')
-		# Map tags/keywords to VALID_TASK_TYPES
-		if [[ "$task_tags_for_type" == *"#feature"* || "$desc_lower_for_type" =~ add.*feature|implement.*feature|new.*feature ]]; then
-			inferred_task_type="feature"
-		elif [[ "$task_tags_for_type" == *"#bugfix"* || "$task_tags_for_type" == *"#fix"* || "$desc_lower_for_type" =~ fix.*bug|bugfix|hotfix ]]; then
-			inferred_task_type="bugfix"
-		elif [[ "$task_tags_for_type" == *"#refactor"* || "$desc_lower_for_type" =~ refactor ]]; then
-			inferred_task_type="refactor"
-		elif [[ "$task_tags_for_type" == *"#docs"* || "$desc_lower_for_type" =~ update.*doc|add.*doc ]]; then
-			inferred_task_type="docs"
-		elif [[ "$task_tags_for_type" == *"#test"* || "$desc_lower_for_type" =~ add.*test|write.*test ]]; then
-			inferred_task_type="testing"
-		elif [[ "$task_tags_for_type" == *"#architecture"* || "$desc_lower_for_type" =~ architect ]]; then
-			inferred_task_type="architecture"
-		elif [[ "$task_tags_for_type" == *"#security"* || "$desc_lower_for_type" =~ security ]]; then
-			inferred_task_type="security"
-		elif [[ "$task_tags_for_type" == *"#enhancement"* || "$task_tags_for_type" == *"#self-improvement"* ]]; then
-			inferred_task_type="feature"
-		fi
-	fi
-
-	# 3) Pattern-tracker recommendation (t246, t1149: data-driven routing)
-	#    If we have 3+ samples for a task type with ≥75% success rate on a
-	#    cheaper tier, use that tier. This learns from actual dispatch outcomes.
-	if [[ -n "$task_desc" && -x "$pattern_helper" ]]; then
-		local pattern_args=("recommend" "--json")
-		[[ -n "$inferred_task_type" ]] && pattern_args+=("--task-type" "$inferred_task_type")
-
-		local pattern_json
-		pattern_json=$("$pattern_helper" "${pattern_args[@]}" 2>/dev/null || echo "")
-		if [[ -n "$pattern_json" && "$pattern_json" != "{}" ]]; then
-			local recommended_tier
-			recommended_tier=$(echo "$pattern_json" | sed -n 's/.*"recommended_tier"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' 2>/dev/null || echo "")
-			local sample_count
-			sample_count=$(echo "$pattern_json" | sed -n 's/.*"total_samples"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p' 2>/dev/null || echo "0")
-			local success_rate
-			success_rate=$(echo "$pattern_json" | sed -n 's/.*"success_rate"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p' 2>/dev/null || echo "0")
-
-			if [[ -n "$recommended_tier" && "$sample_count" -ge 3 && "$success_rate" -ge 75 ]]; then
-				if [[ "$recommended_tier" != "opus" ]]; then
-					local resolved
-					resolved=$(resolve_model "$recommended_tier" "$ai_cli")
-					log_info "Model for $task_id: $resolved (pattern-tracker: ${recommended_tier}, ${success_rate}% success over ${sample_count} samples${inferred_task_type:+, type: $inferred_task_type})"
-					echo "$resolved"
-					return 0
-				fi
-			fi
-		fi
-	fi
-
-	# 4) Auto-classify task complexity from description + tags (t246)
-	#    Route trivial tasks to haiku, simple tasks to sonnet (~5x cheaper)
-	#    Keep complex tasks (architecture, novel features) on opus
-	if [[ -n "$task_desc" ]]; then
-		# Extract tags from description (e.g., "#docs #optimization")
 		local task_tags
 		task_tags=$(echo "$task_desc" | grep -oE '#[a-zA-Z][a-zA-Z0-9_-]*' | tr '\n' ' ' || echo "")
 
+		# AI classification — description + tags are sufficient for tier selection
 		local suggested_tier
 		suggested_tier=$(classify_task_complexity "$task_desc" "$task_tags")
-		if [[ "$suggested_tier" != "opus" ]]; then
-			local resolved
-			resolved=$(resolve_model "$suggested_tier" "$ai_cli")
-			log_info "Model for $task_id: $resolved (auto-classified as $suggested_tier)"
-			echo "$resolved"
-			return 0
-		fi
 
-		# 4.5) Cost-efficiency check (t1149): classify_task_complexity returned opus,
-		#      but check if pattern data shows sonnet achieves ≥80% success for this
-		#      task type. If so, downgrade to sonnet (~5x cheaper) unless the task
-		#      contains hard architecture/novel-problem indicators that require opus.
-		#      Threshold: 80% (higher than step 3's 75% — we're overriding opus here).
-		local desc_lower_ce
-		desc_lower_ce=$(echo "$task_desc" | tr '[:upper:]' '[:lower:]')
-		local hard_opus_indicators=false
-		# Hard indicators: tasks that genuinely need opus reasoning depth
-		if [[ "$desc_lower_ce" =~ architect.*system|design.*new.*system|security.*audit|from.*scratch|novel.*algorithm|consensus.*protocol|distributed.*system ]]; then
-			hard_opus_indicators=true
-		fi
-
-		if [[ "$hard_opus_indicators" == false && -x "$pattern_helper" ]]; then
-			# Query sonnet-specific success rate for this task type
-			local sonnet_args=("recommend" "--json")
-			[[ -n "$inferred_task_type" ]] && sonnet_args+=("--task-type" "$inferred_task_type")
-
-			local ce_pattern_json
-			ce_pattern_json=$("$pattern_helper" "${sonnet_args[@]}" 2>/dev/null || echo "")
-			if [[ -n "$ce_pattern_json" && "$ce_pattern_json" != "{}" ]]; then
-				local ce_recommended_tier
-				ce_recommended_tier=$(echo "$ce_pattern_json" | sed -n 's/.*"recommended_tier"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' 2>/dev/null || echo "")
-				local ce_sample_count
-				ce_sample_count=$(echo "$ce_pattern_json" | sed -n 's/.*"total_samples"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p' 2>/dev/null || echo "0")
-				local ce_success_rate
-				ce_success_rate=$(echo "$ce_pattern_json" | sed -n 's/.*"success_rate"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p' 2>/dev/null || echo "0")
-
-				# Downgrade opus→sonnet when: ≥3 samples, ≥80% success, recommended tier is sonnet or cheaper
-				if [[ -n "$ce_recommended_tier" && "$ce_sample_count" -ge 3 && "$ce_success_rate" -ge 80 ]]; then
-					if [[ "$ce_recommended_tier" == "sonnet" || "$ce_recommended_tier" == "haiku" || "$ce_recommended_tier" == "flash" ]]; then
-						local resolved
-						resolved=$(resolve_model "$ce_recommended_tier" "$ai_cli")
-						log_info "Model for $task_id: $resolved (cost-efficiency: pattern data shows ${ce_success_rate}% success at ${ce_recommended_tier} over ${ce_sample_count} samples — downgraded from opus)"
-						echo "$resolved"
-						return 0
+		# Budget-aware cap: if budget tracker says degrade, respect it
+		local budget_helper="${SCRIPT_DIR}/../budget-tracker-helper.sh"
+		if [[ -x "$budget_helper" ]]; then
+			local adjusted_tier
+			adjusted_tier=$("$budget_helper" budget-check-tier "anthropic" "coding" 2>/dev/null) || adjusted_tier=""
+			if [[ -n "$adjusted_tier" && "$adjusted_tier" != "coding" ]]; then
+				# Budget says degrade — only apply if it's cheaper than AI suggestion
+				case "$adjusted_tier" in
+				haiku)
+					suggested_tier="haiku"
+					log_info "Model for $task_id: budget cap applied (degraded to haiku)"
+					;;
+				sonnet)
+					if [[ "$suggested_tier" == "opus" ]]; then
+						suggested_tier="sonnet"
+						log_info "Model for $task_id: budget cap applied (degraded opus to sonnet)"
 					fi
-				fi
+					;;
+				esac
 			fi
 		fi
+
+		local resolved
+		resolved=$(resolve_model "$suggested_tier" "$ai_cli")
+		log_info "Model for $task_id: $resolved (AI-classified as $suggested_tier)"
+		echo "$resolved"
+		return 0
 	fi
 
-	# 4.6) Auto-contest detection (t1011): if we reached here (no strong signal),
-	# check if contest mode should be triggered. Only for genuinely uncertain cases
-	# where pattern data is insufficient or inconclusive.
-	# Env var SUPERVISOR_CONTEST_AUTO=true enables this (default: false to avoid 3x cost)
-	if [[ "${SUPERVISOR_CONTEST_AUTO:-false}" == "true" ]]; then
-		local contest_helper="${SCRIPT_DIR}/contest-helper.sh"
-		if [[ -x "$contest_helper" ]]; then
-			local contest_reason
-			contest_reason=$("$contest_helper" should-contest "$task_id" 2>/dev/null) || true
-			if [[ -n "$contest_reason" && "$contest_reason" != "strong_signal" ]]; then
-				log_info "Model for $task_id: CONTEST mode (auto-detected: $contest_reason)"
-				echo "CONTEST"
-				return 0
-			fi
-		fi
-	fi
-
-	# 4.7) Budget-aware tier adjustment (t1100)
-	# Check budget state and potentially degrade the tier to stay within budget.
-	# Token-billed: degrade opus->sonnet when approaching daily cap.
-	# Subscription: prefer subscription providers when allowance is available.
-	local budget_helper="${SCRIPT_DIR}/../budget-tracker-helper.sh"
-	if [[ -x "$budget_helper" ]]; then
-		# Determine the tier we're about to use (default: coding/opus)
-		local pre_budget_tier="coding"
-
-		# Check if a subscription provider has allowance (zero marginal cost)
-		local preferred_provider
-		preferred_provider=$("$budget_helper" budget-preferred-provider "$pre_budget_tier" 2>/dev/null) || preferred_provider=""
-		if [[ -n "$preferred_provider" ]]; then
-			local resolved
-			resolved=$(resolve_model "$pre_budget_tier" "$ai_cli")
-			log_info "Model for $task_id: $resolved (budget: preferred provider $preferred_provider has allowance)"
-			echo "$resolved"
-			return 0
-		fi
-
-		# Check if the default provider's budget requires tier degradation
-		local adjusted_tier
-		adjusted_tier=$("$budget_helper" budget-check-tier "anthropic" "$pre_budget_tier" 2>/dev/null) || adjusted_tier="$pre_budget_tier"
-		if [[ "$adjusted_tier" != "$pre_budget_tier" ]]; then
-			local resolved
-			resolved=$(resolve_model "$adjusted_tier" "$ai_cli")
-			log_info "Model for $task_id: $resolved (budget: degraded from $pre_budget_tier to $adjusted_tier)"
-			echo "$resolved"
-			return 0
-		fi
-	fi
-
-	# 5) Fall back to resolve_model with default tier
+	# 4) Fall back to resolve_model with default tier
 	local resolved
 	resolved=$(resolve_model "coding" "$ai_cli")
 	log_info "Model for $task_id: $resolved (default coding tier)"
@@ -851,14 +627,11 @@ get_next_tier() {
 #######################################
 
 #######################################
-# Check if a task is eligible for prompt-repeat retry (t1097)
+# Check if a task is eligible for prompt-repeat retry (t1097, t1313)
 #
-# Eligibility criteria:
-#   1. SUPERVISOR_PROMPT_REPEAT_ENABLED is true (default: true)
-#   2. Task has not already had a prompt-repeat attempt (DB flag)
-#   3. Failure reason is retryable (not auth, merge conflict, OOM, etc.)
-#   4. Pattern tracker data doesn't show prompt-repeat is ineffective
-#      for this task type (>3 samples with <25% success = skip)
+# AI-first: gathers retry state (failure reason, attempt history, pattern data)
+# and asks AI whether retrying with a reinforced prompt is worthwhile.
+# Mechanical guards (global toggle, non-retryable errors) remain as shell.
 #
 # Args: $1 = task_id, $2 = failure_reason
 # Returns: 0 if eligible, 1 if not
@@ -868,13 +641,13 @@ should_prompt_repeat() {
 	local task_id="$1"
 	local failure_reason="$2"
 
-	# 1. Global toggle
+	# Mechanical guard: global toggle
 	if [[ "${SUPERVISOR_PROMPT_REPEAT_ENABLED:-true}" != "true" ]]; then
 		echo "disabled"
 		return 1
 	fi
 
-	# 2. Skip non-retryable failures — prompt changes won't fix these
+	# Mechanical guard: non-retryable failures (infrastructure, not judgment)
 	case "$failure_reason" in
 	auth_error | merge_conflict | out_of_memory | billing_credits_exhausted | \
 		backend_quota_error | backend_infrastructure_error | max_retries)
@@ -888,44 +661,113 @@ should_prompt_repeat() {
 	local escaped_id
 	escaped_id=$(sql_escape "$task_id")
 
-	# 3. Check if prompt-repeat was already attempted for this task
+	# Gather facts for AI decision
 	local prompt_repeat_done
 	prompt_repeat_done=$(db "$SUPERVISOR_DB" "
 		SELECT COALESCE(prompt_repeat_done, 0)
 		FROM tasks WHERE id = '$escaped_id';
 	" 2>/dev/null || echo "0")
 
-	if [[ "$prompt_repeat_done" -ge 1 ]]; then
-		echo "already_attempted"
-		return 1
-	fi
+	local task_desc
+	task_desc=$(db "$SUPERVISOR_DB" "SELECT description FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
 
-	# 4. Consult pattern tracker — check if prompt-repeat works for this task type
+	local pattern_stats=""
 	local pattern_helper="${SCRIPT_DIR}/pattern-tracker-helper.sh"
 	if [[ -x "$pattern_helper" ]]; then
-		# Query success/failure counts for prompt_repeat patterns
-		local stats_output pr_success pr_failure
-		stats_output=$("$pattern_helper" stats 2>/dev/null)
+		local stats_output
+		stats_output=$("$pattern_helper" stats 2>/dev/null || echo "")
+		local pr_success pr_failure
 		pr_success=$(echo "$stats_output" |
 			grep -c 'prompt_repeat.*SUCCESS\|SUCCESS.*prompt_repeat' 2>/dev/null || echo "0")
 		pr_failure=$(echo "$stats_output" |
 			grep -c 'prompt_repeat.*FAILURE\|FAILURE.*prompt_repeat' 2>/dev/null || echo "0")
+		pattern_stats="prompt_repeat success: ${pr_success}, failure: ${pr_failure}"
+	fi
 
-		local pr_total=$((pr_success + pr_failure))
+	# Ask AI
+	local ai_cli
+	ai_cli=$(resolve_ai_cli 2>/dev/null) || {
+		# AI unavailable — use simple heuristic: eligible if not already attempted
+		if [[ "$prompt_repeat_done" -ge 1 ]]; then
+			echo "already_attempted"
+			return 1
+		fi
+		echo "eligible"
+		return 0
+	}
 
-		# If we have enough data and success rate is very low, skip
-		if [[ "$pr_total" -ge 3 ]]; then
-			local pr_rate=0
-			if [[ "$pr_total" -gt 0 ]]; then
-				pr_rate=$(((pr_success * 100) / pr_total))
-			fi
-			if [[ "$pr_rate" -lt 25 ]]; then
-				echo "pattern_data_negative:${pr_rate}pct_over_${pr_total}"
+	local ai_model
+	ai_model=$(resolve_model "sonnet" "$ai_cli" 2>/dev/null) || {
+		if [[ "$prompt_repeat_done" -ge 1 ]]; then
+			echo "already_attempted"
+			return 1
+		fi
+		echo "eligible"
+		return 0
+	}
+
+	local prompt
+	prompt="You are a retry strategy advisor for a DevOps task dispatch system. Decide whether a failed task should be retried with a reinforced prompt at the same model tier, or whether it should be escalated to a higher-tier model.
+
+TASK STATE:
+- Task ID: ${task_id}
+- Description: ${task_desc}
+- Failure reason: ${failure_reason}
+- Previous prompt-repeat attempts: ${prompt_repeat_done}
+${pattern_stats:+- Pattern tracker data: ${pattern_stats}}
+
+RULES:
+- If already attempted once, do NOT retry (escalation is better)
+- If failure reason suggests the task is fundamentally too hard for this tier, do NOT retry
+- If pattern data shows prompt-repeat has very low success (<25%), do NOT retry
+- If the failure is about not following instructions (clean_exit_no_signal, trivial_output), retry IS worthwhile
+
+Respond with ONLY a JSON object: {\"decision\": \"eligible|skip\", \"reason\": \"one sentence\"}"
+
+	local ai_result=""
+	if [[ "$ai_cli" == "opencode" ]]; then
+		ai_result=$(portable_timeout 15 opencode run \
+			-m "$ai_model" \
+			--format default \
+			--title "retry-${task_id}-$$" \
+			"$prompt" 2>/dev/null || echo "")
+		ai_result=$(printf '%s' "$ai_result" | sed 's/\x1b\[[0-9;]*[mGKHF]//g; s/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b\]//g; s/\x07//g')
+	else
+		local claude_model="${ai_model#*/}"
+		ai_result=$(portable_timeout 15 claude \
+			-p "$prompt" \
+			--model "$claude_model" \
+			--output-format text 2>/dev/null || echo "")
+	fi
+
+	if [[ -n "$ai_result" ]]; then
+		local json_block
+		json_block=$(printf '%s' "$ai_result" | grep -oE '\{[^}]+\}' | head -1)
+		if [[ -n "$json_block" ]]; then
+			local decision
+			decision=$(printf '%s' "$json_block" | jq -r '.decision // ""' 2>/dev/null || echo "")
+			local reason
+			reason=$(printf '%s' "$json_block" | jq -r '.reason // ""' 2>/dev/null || echo "")
+			case "$decision" in
+			eligible)
+				log_verbose "should_prompt_repeat: AI says eligible — $reason"
+				echo "eligible"
+				return 0
+				;;
+			skip)
+				log_verbose "should_prompt_repeat: AI says skip — $reason"
+				echo "ai_skip:${reason}"
 				return 1
-			fi
+				;;
+			esac
 		fi
 	fi
 
+	# AI unavailable — fall back to simple check
+	if [[ "$prompt_repeat_done" -ge 1 ]]; then
+		echo "already_attempted"
+		return 1
+	fi
 	echo "eligible"
 	return 0
 }
@@ -1273,16 +1115,13 @@ do_prompt_repeat() {
 }
 
 #######################################
-# Check output quality of a completed worker (t132.6)
-# Heuristic quality checks on worker output to decide if escalation is needed.
-# Returns: "pass" if quality is acceptable, "fail:<reason>" if not.
+# Check output quality of a completed worker (t132.6, t1313)
 #
-# Checks performed:
-#   1. Empty/trivial output (log too small)
-#   2. Error patterns in log (panics, crashes, unhandled exceptions)
-#   3. No substantive file changes (git diff empty)
-#   4. ShellCheck violations for .sh files (if applicable)
-#   5. Very low token-to-substance ratio
+# AI-first: gathers worker output signals (log size, error patterns, diff stats,
+# PR status) and asks AI to assess quality. The AI sees the full picture and
+# decides pass/fail with a reason, replacing 6 separate heuristic checks.
+#
+# Returns: "pass" if quality is acceptable, "fail:<reason>" if not.
 #######################################
 check_output_quality() {
 	local task_id="$1"
@@ -1293,7 +1132,7 @@ check_output_quality() {
 	escaped_id=$(sql_escape "$task_id")
 	local task_row
 	task_row=$(db -separator '|' "$SUPERVISOR_DB" "
-        SELECT log_file, worktree, branch, repo, pr_url
+        SELECT log_file, worktree, branch, repo, pr_url, description
         FROM tasks WHERE id = '$escaped_id';
     ")
 
@@ -1302,83 +1141,146 @@ check_output_quality() {
 		return 0
 	fi
 
-	local tlog tworktree _tbranch trepo tpr_url
-	IFS='|' read -r tlog tworktree _tbranch trepo tpr_url <<<"$task_row"
+	local tlog tworktree _tbranch trepo tpr_url tdesc
+	IFS='|' read -r tlog tworktree _tbranch trepo tpr_url tdesc <<<"$task_row"
 
-	# Check 1: Log file size — very small logs suggest trivial/empty output
+	# Gather facts for AI
+	local facts="Task: ${task_id}
+Description: ${tdesc}
+PR URL: ${tpr_url:-none}"
+
+	# Log file signals
 	if [[ -n "$tlog" && -f "$tlog" ]]; then
 		local log_size
 		log_size=$(wc -c <"$tlog" 2>/dev/null | tr -d ' ')
-		# Less than 2KB of log output is suspicious for a coding task
-		if [[ "$log_size" -lt 2048 ]]; then
-			# But check if it's a legitimate small task (e.g., docs-only)
-			local has_pr_signal
-			has_pr_signal=$(grep -c 'WORKER_PR_CREATED\|WORKER_COMPLETE\|PR_URL' "$tlog" 2>/dev/null || echo "0")
-			if [[ "$has_pr_signal" -eq 0 ]]; then
-				echo "fail:trivial_output_${log_size}b"
-				return 0
-			fi
-		fi
-
-		# Check 2: Error patterns in log
+		local pr_signals
+		pr_signals=$(grep -c 'WORKER_PR_CREATED\|WORKER_COMPLETE\|PR_URL' "$tlog" 2>/dev/null || echo "0")
 		local error_count
 		error_count=$(grep -ciE 'panic|fatal|unhandled.*exception|segfault|SIGKILL|out of memory|OOM' "$tlog" 2>/dev/null || echo "0")
-		if [[ "$error_count" -gt 2 ]]; then
-			echo "fail:error_patterns_${error_count}"
-			return 0
-		fi
+		local substance_markers
+		substance_markers=$(grep -ciE 'WORKER_COMPLETE|WORKER_PR_CREATED|PR_URL|commit|merged|created file|wrote file' "$tlog" 2>/dev/null || echo "0")
+		# Last 20 lines of log for context
+		local log_tail
+		log_tail=$(tail -20 "$tlog" 2>/dev/null || echo "(unreadable)")
 
-		# Check 3: Token-to-substance ratio
-		# If the log is very large (>500KB) but has no PR or meaningful output markers,
-		# the worker may have been spinning without producing results
-		if [[ "$log_size" -gt 512000 ]]; then
-			local substance_markers
-			substance_markers=$(grep -ciE 'WORKER_COMPLETE|WORKER_PR_CREATED|PR_URL|commit|merged|created file|wrote file' "$tlog" 2>/dev/null || echo "0")
-			if [[ "$substance_markers" -lt 3 ]]; then
-				echo "fail:low_substance_ratio_${log_size}b_${substance_markers}markers"
-				return 0
-			fi
-		fi
+		facts="${facts}
+Log file size: ${log_size} bytes
+PR/completion signals in log: ${pr_signals}
+Error patterns (panic/fatal/OOM): ${error_count}
+Substance markers (commit/merge/file writes): ${substance_markers}
+Last 20 lines of log:
+${log_tail}"
+	else
+		facts="${facts}
+Log file: not found"
 	fi
 
-	# Check 4: If we have a worktree/branch, check for substantive changes
+	# Git diff signals
 	if [[ -n "$tworktree" && -d "$tworktree" ]]; then
 		local diff_stat
-		diff_stat=$(git -C "$tworktree" diff --stat "main..HEAD" 2>/dev/null || echo "")
-		if [[ -z "$diff_stat" ]]; then
-			# No changes at all on the branch
-			echo "fail:no_file_changes"
-			return 0
-		fi
-
-		# Check 5: ShellCheck for .sh files (quick heuristic)
+		diff_stat=$(git -C "$tworktree" diff --stat "main..HEAD" 2>/dev/null || echo "(no changes)")
+		local changed_files_count
+		changed_files_count=$(git -C "$tworktree" diff --name-only "main..HEAD" 2>/dev/null | wc -l | tr -d ' ')
+		local syntax_errors=0
 		local changed_sh_files
 		changed_sh_files=$(git -C "$tworktree" diff --name-only "main..HEAD" 2>/dev/null | grep '\.sh$' || true)
 		if [[ -n "$changed_sh_files" ]]; then
-			local shellcheck_errors=0
 			while IFS= read -r sh_file; do
 				[[ -z "$sh_file" ]] && continue
 				local full_path="${tworktree}/${sh_file}"
 				[[ -f "$full_path" ]] || continue
 				local sc_count
 				sc_count=$(bash -n "$full_path" 2>&1 | wc -l | tr -d ' ')
-				shellcheck_errors=$((shellcheck_errors + sc_count))
+				syntax_errors=$((syntax_errors + sc_count))
 			done <<<"$changed_sh_files"
-			if [[ "$shellcheck_errors" -gt 5 ]]; then
-				echo "fail:syntax_errors_${shellcheck_errors}"
+		fi
+
+		facts="${facts}
+Files changed: ${changed_files_count}
+Bash syntax errors in .sh files: ${syntax_errors}
+Diff stat: ${diff_stat}"
+	else
+		facts="${facts}
+Worktree: not found"
+	fi
+
+	# Ask AI to assess quality
+	local ai_cli
+	ai_cli=$(resolve_ai_cli 2>/dev/null) || {
+		# AI unavailable — pass if PR exists, fail if no changes
+		if [[ -n "$tpr_url" && "$tpr_url" != "no_pr" && "$tpr_url" != "task_only" ]]; then
+			echo "pass"
+		else
+			echo "pass"
+		fi
+		return 0
+	}
+
+	local ai_model
+	ai_model=$(resolve_model "sonnet" "$ai_cli" 2>/dev/null) || {
+		echo "pass"
+		return 0
+	}
+
+	local prompt
+	prompt="You are a quality gate for a DevOps task dispatch system. Assess whether a completed worker produced acceptable output.
+
+WORKER OUTPUT:
+${facts}
+
+QUALITY CRITERIA:
+- Log too small (<2KB) with no PR signals → fail (trivial_output)
+- Multiple fatal errors (panic/OOM/segfault) → fail (error_patterns)
+- Very large log (>500KB) with few substance markers → fail (low_substance_ratio)
+- No file changes at all → fail (no_file_changes)
+- Many bash syntax errors (>5) → fail (syntax_errors)
+- PR exists → strong positive signal
+- Reasonable log size with completion signals → pass
+
+Respond with ONLY a JSON object: {\"result\": \"pass|fail\", \"reason\": \"one sentence\", \"fail_code\": \"code if fail, empty if pass\"}"
+
+	local ai_result=""
+	if [[ "$ai_cli" == "opencode" ]]; then
+		ai_result=$(portable_timeout 15 opencode run \
+			-m "$ai_model" \
+			--format default \
+			--title "quality-${task_id}-$$" \
+			"$prompt" 2>/dev/null || echo "")
+		ai_result=$(printf '%s' "$ai_result" | sed 's/\x1b\[[0-9;]*[mGKHF]//g; s/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b\]//g; s/\x07//g')
+	else
+		local claude_model="${ai_model#*/}"
+		ai_result=$(portable_timeout 15 claude \
+			-p "$prompt" \
+			--model "$claude_model" \
+			--output-format text 2>/dev/null || echo "")
+	fi
+
+	if [[ -n "$ai_result" ]]; then
+		local json_block
+		json_block=$(printf '%s' "$ai_result" | grep -oE '\{[^}]+\}' | head -1)
+		if [[ -n "$json_block" ]]; then
+			local result
+			result=$(printf '%s' "$json_block" | jq -r '.result // ""' 2>/dev/null || echo "")
+			local reason
+			reason=$(printf '%s' "$json_block" | jq -r '.reason // ""' 2>/dev/null || echo "")
+			local fail_code
+			fail_code=$(printf '%s' "$json_block" | jq -r '.fail_code // ""' 2>/dev/null || echo "")
+			case "$result" in
+			pass)
+				log_verbose "check_output_quality: AI says pass — $reason"
+				echo "pass"
 				return 0
-			fi
+				;;
+			fail)
+				log_verbose "check_output_quality: AI says fail — $reason"
+				echo "fail:${fail_code:-ai_quality_fail}"
+				return 0
+				;;
+			esac
 		fi
 	fi
 
-	# Check 6: If PR was created, verify it has substantive content
-	if [[ -n "$tpr_url" && "$tpr_url" != "no_pr" && "$tpr_url" != "task_only" ]]; then
-		# PR exists — that's a strong positive signal
-		echo "pass"
-		return 0
-	fi
-
-	# All checks passed
+	# AI unavailable — default to pass (don't block on AI failure)
 	echo "pass"
 	return 0
 }
