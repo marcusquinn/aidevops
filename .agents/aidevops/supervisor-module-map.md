@@ -176,7 +176,7 @@ The central autonomous loop that drives all other domains.
 | 3 | `check_system_load` | 587 | Check CPU/memory/load pressure |
 | 4 | `calculate_adaptive_concurrency` | 1037 | Dynamic worker count from load |
 | 5 | `cmd_pulse` | 9390 | CLI: `pulse` — the main orchestration loop |
-| 6 | `cmd_auto_pickup` | 13100 | CLI: `auto-pickup` — scan TODO.md for tasks |
+| 6 | `cmd_auto_pickup` | 13100 | CLI: `auto-pickup` — delegates to ai_auto_pickup (t1319) |
 | 7 | `cmd_cron` | 13356 | CLI: `cron` — manage cron scheduling |
 | 8 | `cmd_watch` | 13473 | CLI: `watch` — fswatch TODO.md |
 
