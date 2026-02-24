@@ -1971,20 +1971,12 @@ cmd_pulse() {
 		adopt_untracked_prs 2>>"$SUPERVISOR_LOG" || true
 	fi
 
-	# Phase 3: AI-driven task lifecycle
-	# Intelligence-first: gathers real-world state for each active task, decides
-	# the next action (merge, update branch, rebase, deploy, wait, escalate),
-	# executes it, and updates TODO status: tags for user visibility.
-	# Replaces hardcoded bash heuristics with AI decision-making.
-	# Falls back to process_post_pr_lifecycle if AI lifecycle is disabled.
-	if [[ "${SUPERVISOR_AI_LIFECYCLE:-true}" == "true" ]]; then
-		if ! process_ai_lifecycle "${batch_id:-}" 2>>"$SUPERVISOR_LOG"; then
-			log_error "Phase 3 (process_ai_lifecycle) failed — see $SUPERVISOR_LOG for details"
-		fi
-	else
-		if ! process_post_pr_lifecycle "${batch_id:-}" 2>>"$SUPERVISOR_LOG"; then
-			log_error "Phase 3 (process_post_pr_lifecycle) failed — see $SUPERVISOR_LOG for details"
-		fi
+	# Phase 3: AI-first task lifecycle
+	# For every active task: gather real-world state → AI decides next action → execute.
+	# The AI model (opus) makes ALL decisions. No deterministic shortcuts.
+	# Handles: merging, conflicts, CI failures, blocked tasks, stale PRs — everything.
+	if ! process_ai_lifecycle "${batch_id:-}" 2>>"$SUPERVISOR_LOG"; then
+		log_error "Phase 3 (process_ai_lifecycle) failed — see $SUPERVISOR_LOG for details"
 	fi
 
 	# Phase 3b: Post-merge verification (t180.4)
@@ -1994,14 +1986,9 @@ cmd_pulse() {
 		log_error "Phase 3b (process_verify_queue) failed — see $SUPERVISOR_LOG for details"
 	fi
 
-	# Phase 3b2: Reconcile stale blocked/verify_failed tasks against GitHub PR state
-	# Tasks can get stuck in 'blocked' or 'verify_failed' when the supervisor
-	# encounters an error (merge conflict, rebase failure, verify check failure)
-	# but the PR is subsequently merged by a later pulse or manual action.
-	# This phase queries GitHub for the actual PR state and advances tasks
-	# whose PRs have already been merged. Also handles PRs closed without merge
-	# (cancels the task) and tasks with obsolete/unreachable PR URLs.
-	# First: cancel tasks with obsolete/sentinel PR URLs
+	# Phase 3b2: Cancel tasks with obsolete PR markers (minimal data cleanup)
+	# This is pure data hygiene — not a decision. Tasks with 'task_obsolete'
+	# sentinel are definitively dead. Everything else is handled by Phase 3 AI.
 	local obsolete_tasks
 	obsolete_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
 		SELECT id, status, pr_url FROM tasks
@@ -2013,547 +2000,17 @@ cmd_pulse() {
 	if [[ -n "$obsolete_tasks" ]]; then
 		while IFS='|' read -r obs_id obs_status obs_pr; do
 			[[ -z "$obs_id" ]] && continue
-			log_warn "  Phase 3b2: $obs_id ($obs_status) has obsolete PR marker '$obs_pr' — cancelling"
+			log_warn "  Phase 3b2: $obs_id ($obs_status) has obsolete PR marker — cancelling"
 			cmd_transition "$obs_id" "cancelled" --error "Task obsolete (PR marker: $obs_pr)" 2>>"$SUPERVISOR_LOG" || true
 			cleanup_after_merge "$obs_id" 2>>"$SUPERVISOR_LOG" || true
 		done <<<"$obsolete_tasks"
 	fi
 
-	# Then: reconcile tasks with real PR URLs against GitHub
-	if command -v gh &>/dev/null; then
-		local stale_tasks
-		stale_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
-			SELECT id, status, pr_url, repo FROM tasks
-			WHERE status IN ('blocked', 'verify_failed')
-			  AND pr_url IS NOT NULL
-			  AND pr_url != ''
-			  AND pr_url != 'no_pr'
-			  AND pr_url != 'task_only'
-			  AND pr_url != 'task_obsolete'
-			  AND pr_url != 'verified_complete'
-			ORDER BY id;
-		" 2>/dev/null || echo "")
-
-		if [[ -n "$stale_tasks" ]]; then
-			local reconciled_merged=0
-			local reconciled_closed=0
-			local reconciled_obsolete=0
-
-			while IFS='|' read -r stale_id stale_status stale_pr _stale_repo; do
-				[[ -z "$stale_id" ]] && continue
-
-				# Extract PR number and repo slug from URL
-				local pr_number="" pr_repo_slug=""
-				if [[ "$stale_pr" =~ github\.com/([^/]+/[^/]+)/pull/([0-9]+)$ ]]; then
-					pr_repo_slug="${BASH_REMATCH[1]}"
-					pr_number="${BASH_REMATCH[2]}"
-				fi
-				if [[ -z "$pr_number" ]]; then
-					# Non-standard PR URL or obsolete marker — mark as cancelled
-					log_warn "  Phase 3b2: $stale_id has non-parseable PR URL '$stale_pr' — cancelling"
-					cmd_transition "$stale_id" "cancelled" --error "PR URL not parseable: $stale_pr" 2>>"$SUPERVISOR_LOG" || true
-					reconciled_obsolete=$((reconciled_obsolete + 1))
-					continue
-				fi
-
-				# Query GitHub for actual PR state (use --repo for cron compatibility)
-				local pr_json
-				pr_json=$(gh pr view "$pr_number" --repo "$pr_repo_slug" --json state,mergedAt 2>/dev/null || echo "")
-				if [[ -z "$pr_json" ]]; then
-					log_warn "  Phase 3b2: $stale_id PR #$pr_number unreachable — skipping"
-					continue
-				fi
-
-				local pr_state pr_merged_at
-				pr_state=$(echo "$pr_json" | grep -o '"state":"[^"]*"' | cut -d'"' -f4 || echo "")
-				pr_merged_at=$(echo "$pr_json" | grep -o '"mergedAt":"[^"]*"' | cut -d'"' -f4 || echo "")
-
-				if [[ "$pr_state" == "MERGED" ]]; then
-					local escaped_stale_id
-					escaped_stale_id=$(sql_escape "$stale_id")
-
-					if [[ "$stale_status" == "verify_failed" ]]; then
-						# verify_failed: PR was already merged and deployed, but
-						# post-merge verification failed. Put back to 'deployed'
-						# so Phase 3b (verify queue) can re-run verification.
-						# Cap retries to prevent infinite deployed→verify_failed loop (t1075).
-						local verify_reset_count
-						verify_reset_count=$(db "$SUPERVISOR_DB" "
-							SELECT COUNT(*) FROM state_log
-							WHERE task_id = '$escaped_stale_id'
-							  AND from_state = 'verify_failed'
-							  AND to_state = 'deployed';" 2>/dev/null || echo "0")
-						local max_verify_retries=3
-
-						if [[ "$verify_reset_count" -ge "$max_verify_retries" ]]; then
-							# Exhausted verification retries — mark permanently failed
-							log_error "  Phase 3b2: $stale_id exhausted $max_verify_retries verification retries — marking failed"
-							db "$SUPERVISOR_DB" "UPDATE tasks SET
-								status = 'failed',
-								error = 'Verification failed after $max_verify_retries retries — manual fix needed',
-								updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-							WHERE id = '$escaped_stale_id';" 2>/dev/null || true
-							db "$SUPERVISOR_DB" "INSERT INTO state_log (task_id, from_state, to_state, timestamp, reason)
-							VALUES ('$escaped_stale_id', 'verify_failed', 'failed',
-								strftime('%Y-%m-%dT%H:%M:%SZ','now'),
-								'Phase 3b2: verification exhausted ($verify_reset_count/$max_verify_retries retries)');" 2>/dev/null || true
-							sync_issue_status_label "$stale_id" "failed" "phase_3b2" 2>>"$SUPERVISOR_LOG" || true
-						else
-							log_info "  Phase 3b2: $stale_id (verify_failed) — PR #$pr_number merged, resetting to deployed for re-verification (attempt $((verify_reset_count + 1))/$max_verify_retries)"
-							db "$SUPERVISOR_DB" "UPDATE tasks SET
-								status = 'deployed',
-								error = NULL,
-								updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-							WHERE id = '$escaped_stale_id';" 2>/dev/null || true
-							db "$SUPERVISOR_DB" "INSERT INTO state_log (task_id, from_state, to_state, timestamp, reason)
-							VALUES ('$escaped_stale_id', 'verify_failed', 'deployed',
-								strftime('%Y-%m-%dT%H:%M:%SZ','now'),
-								'Phase 3b2: reset for re-verification attempt $((verify_reset_count + 1))/$max_verify_retries (PR #$pr_number merged)');" 2>/dev/null || true
-							sync_issue_status_label "$stale_id" "deployed" "phase_3b2" 2>>"$SUPERVISOR_LOG" || true
-						fi
-					else
-						# blocked: PR merged but task stuck in blocked state.
-						# Advance to deployed and mark complete.
-						log_success "  Phase 3b2: $stale_id ($stale_status) — PR #$pr_number already MERGED ($pr_merged_at), advancing to deployed"
-						db "$SUPERVISOR_DB" "UPDATE tasks SET
-							status = 'deployed',
-							error = NULL,
-							completed_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
-							updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-						WHERE id = '$escaped_stale_id';" 2>/dev/null || true
-						db "$SUPERVISOR_DB" "INSERT INTO state_log (task_id, from_state, to_state, timestamp, reason)
-						VALUES ('$escaped_stale_id', '$stale_status', 'deployed',
-							strftime('%Y-%m-%dT%H:%M:%SZ','now'),
-							'Phase 3b2 reconciliation: PR #$pr_number merged at $pr_merged_at');" 2>/dev/null || true
-						# Clean up worktree if it exists
-						cleanup_after_merge "$stale_id" 2>>"$SUPERVISOR_LOG" || log_warn "  Worktree cleanup issue for $stale_id (non-blocking)"
-						# Update TODO.md
-						update_todo_on_complete "$stale_id" 2>>"$SUPERVISOR_LOG" || true
-						# Sync GitHub issue status
-						sync_issue_status_label "$stale_id" "deployed" "phase_3b2" 2>>"$SUPERVISOR_LOG" || true
-					fi
-					# Proof-log for both paths
-					write_proof_log --task "$stale_id" --event "reconcile_merged" --stage "phase_3b2" \
-						--decision "$stale_status->deployed (PR already merged)" \
-						--evidence "pr=#$pr_number merged_at=$pr_merged_at prev_status=$stale_status" \
-						--maker "pulse:phase_3b2" 2>/dev/null || true
-					reconciled_merged=$((reconciled_merged + 1))
-
-				elif [[ "$pr_state" == "CLOSED" ]]; then
-					# PR was closed without merge — the work was abandoned or superseded
-					log_warn "  Phase 3b2: $stale_id ($stale_status) — PR #$pr_number CLOSED without merge, resetting to queued for re-dispatch"
-					# Reset to queued so it can be re-dispatched with a fresh worktree
-					local escaped_stale_id
-					escaped_stale_id=$(sql_escape "$stale_id")
-					db "$SUPERVISOR_DB" "UPDATE tasks SET
-						status = 'queued',
-						error = NULL,
-						pr_url = NULL,
-						worktree = NULL,
-						branch = NULL,
-						retries = 0,
-						rebase_attempts = 0,
-						updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-					WHERE id = '$escaped_stale_id';" 2>/dev/null || true
-					# Log the state transition
-					db "$SUPERVISOR_DB" "INSERT INTO state_log (task_id, from_state, to_state, timestamp, reason)
-					VALUES ('$escaped_stale_id', '$stale_status', 'queued',
-						strftime('%Y-%m-%dT%H:%M:%SZ','now'),
-						'Phase 3b2 reconciliation: PR #$pr_number closed without merge');" 2>/dev/null || true
-					# Clean up old worktree if it exists
-					cleanup_after_merge "$stale_id" 2>>"$SUPERVISOR_LOG" || true
-					write_proof_log --task "$stale_id" --event "reconcile_closed" --stage "phase_3b2" \
-						--decision "blocked->queued (PR closed without merge)" \
-						--evidence "pr=#$pr_number prev_status=$stale_status" \
-						--maker "pulse:phase_3b2" 2>/dev/null || true
-					reconciled_closed=$((reconciled_closed + 1))
-
-				else
-					# PR is still OPEN — leave the task in its current state
-					# Phase 3.5 (rebase retry) or Phase 3.6 (escalation) will handle it
-					:
-				fi
-			done <<<"$stale_tasks"
-
-			if [[ $((reconciled_merged + reconciled_closed + reconciled_obsolete)) -gt 0 ]]; then
-				log_success "  Phase 3b2: Reconciled $reconciled_merged merged, $reconciled_closed closed, $reconciled_obsolete obsolete"
-			fi
-		fi
-	fi
-
-	# Phase 3c: Reconcile terminal DB states with GitHub issues (t1038)
-	# Tasks can reach terminal states (cancelled, failed, verified) via direct DB
-	# updates or manual intervention, bypassing cmd_transition and its issue sync.
-	# This sweep finds tasks in terminal states whose GitHub issues are still open
-	# and syncs them. Runs at most once per 10 minutes to avoid API rate limits.
-	local reconcile_cooldown_file="${SUPERVISOR_DIR}/reconcile-issues-last-run"
-	local reconcile_cooldown=600 # 10 minutes
-	local should_reconcile=true
-	if [[ -f "$reconcile_cooldown_file" ]]; then
-		local last_reconcile
-		last_reconcile=$(cat "$reconcile_cooldown_file" 2>/dev/null || echo "0")
-		local now_epoch
-		now_epoch=$(date +%s)
-		if [[ $((now_epoch - last_reconcile)) -lt "$reconcile_cooldown" ]]; then
-			should_reconcile=false
-		fi
-	fi
-
-	if [[ "$should_reconcile" == "true" ]] && command -v gh &>/dev/null; then
-		# Two queries: (1) cancelled/failed are always safe to close,
-		# (2) deployed/verified only if they have a real PR (not no_pr/task_only/empty).
-		# This prevents closing issues for false completions from the no_pr cascade.
-		local terminal_tasks
-		terminal_tasks=$(db "$SUPERVISOR_DB" "
-			SELECT id, status, repo FROM tasks
-			WHERE (
-				status IN ('cancelled', 'failed')
-				OR (
-					status IN ('verified', 'deployed')
-					AND pr_url IS NOT NULL
-					AND pr_url != ''
-					AND pr_url != 'no_pr'
-					AND pr_url != 'task_only'
-					AND pr_url != 'verified_complete'
-				)
-			)
-			AND id IN (
-				SELECT DISTINCT task_id FROM state_log
-				WHERE timestamp > datetime('now', '-7 days')
-			)
-		;" 2>/dev/null || echo "")
-
-		if [[ -n "$terminal_tasks" ]]; then
-			local reconciled=0
-			while IFS='|' read -r rec_id rec_status rec_repo; do
-				[[ -z "$rec_id" ]] && continue
-
-				# Find the GitHub issue number
-				local rec_issue
-				rec_issue=$(find_task_issue_number "$rec_id" "$rec_repo" 2>/dev/null || echo "")
-				[[ -z "$rec_issue" ]] && continue
-
-				local rec_slug
-				rec_slug=$(detect_repo_slug "$rec_repo" 2>/dev/null || echo "")
-				[[ -z "$rec_slug" ]] && continue
-
-				# Check if the issue is still open
-				local issue_state
-				issue_state=$(gh issue view "$rec_issue" --repo "$rec_slug" --json state -q .state 2>/dev/null || echo "")
-				if [[ "$issue_state" == "OPEN" ]]; then
-					log_info "  Phase 3c: Reconciling $rec_id ($rec_status) — issue #$rec_issue still open"
-					sync_issue_status_label "$rec_id" "$rec_status" "reconcile" 2>>"$SUPERVISOR_LOG" || true
-					reconciled=$((reconciled + 1))
-				fi
-			done <<<"$terminal_tasks"
-
-			if [[ "$reconciled" -gt 0 ]]; then
-				log_success "  Phase 3c: Reconciled $reconciled issue(s)"
-			fi
-		fi
-
-		date +%s >"$reconcile_cooldown_file" 2>/dev/null || true
-	fi
-
-	# Phase 3d: Close/merge open PRs for verified/deployed tasks
-	# When a task reaches verified/deployed but its PR is still open on GitHub,
-	# the PR lingers indefinitely because process_ai_lifecycle only processes
-	# tasks in active states (complete, pr_review, merging, etc.), not terminal
-	# states. This phase finds verified/deployed tasks with real PR URLs and
-	# checks if the PR is still open — if so, squash-merges it (if CI green)
-	# or closes it (if already merged via another path).
-	# Also handles the case where a task has a DIFFERENT open PR than the one
-	# tracked in the DB (e.g., interactive session created a new PR after the
-	# original was merged).
-	# Runs on the same cooldown as Phase 3c to avoid API rate limits.
-	if [[ "$should_reconcile" == "true" ]] && command -v gh &>/dev/null; then
-		local verified_with_prs
-		verified_with_prs=$(db -separator '|' "$SUPERVISOR_DB" "
-			SELECT id, status, pr_url, repo FROM tasks
-			WHERE status IN ('verified', 'deployed')
-			AND pr_url IS NOT NULL
-			AND pr_url != ''
-			AND pr_url != 'no_pr'
-			AND pr_url != 'task_only'
-			AND pr_url != 'verified_complete'
-			AND pr_url != 'task_obsolete'
-			ORDER BY updated_at DESC
-			LIMIT 50;
-		" 2>/dev/null || echo "")
-
-		if [[ -n "$verified_with_prs" ]]; then
-			local phase3d_merged=0
-			local phase3d_closed=0
-
-			while IFS='|' read -r vt_id vt_status vt_pr vt_repo; do
-				[[ -z "$vt_id" ]] && continue
-
-				local vt_pr_number="" vt_repo_slug=""
-				if [[ "$vt_pr" =~ github\.com/([^/]+/[^/]+)/pull/([0-9]+)$ ]]; then
-					vt_repo_slug="${BASH_REMATCH[1]}"
-					vt_pr_number="${BASH_REMATCH[2]}"
-				fi
-				[[ -z "$vt_pr_number" ]] && continue
-
-				# Check PR state on GitHub
-				local vt_pr_json
-				vt_pr_json=$(gh pr view "$vt_pr_number" --repo "$vt_repo_slug" \
-					--json state,mergeStateStatus,mergeable 2>/dev/null || echo "")
-				[[ -z "$vt_pr_json" ]] && continue
-
-				local vt_pr_state
-				vt_pr_state=$(printf '%s' "$vt_pr_json" | jq -r '.state // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
-
-				if [[ "$vt_pr_state" == "OPEN" ]]; then
-					local vt_merge_state
-					vt_merge_state=$(printf '%s' "$vt_pr_json" | jq -r '.mergeStateStatus // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
-
-					if [[ "$vt_merge_state" == "CLEAN" || "$vt_merge_state" == "UNSTABLE" ]]; then
-						# CI passed — squash merge the PR
-						log_info "  Phase 3d: $vt_id ($vt_status) — PR #$vt_pr_number still open with CI green, merging"
-						if gh pr merge "$vt_pr_number" --repo "$vt_repo_slug" --squash --delete-branch 2>>"$SUPERVISOR_LOG"; then
-							log_success "  Phase 3d: Merged PR #$vt_pr_number for $vt_id"
-							phase3d_merged=$((phase3d_merged + 1))
-							# Pull main so subsequent operations have the latest
-							if [[ -n "$vt_repo" && -d "$vt_repo" ]]; then
-								git -C "$vt_repo" pull --rebase origin main 2>>"$SUPERVISOR_LOG" || true
-							fi
-							# Clean up worktree if it exists
-							cleanup_after_merge "$vt_id" 2>>"$SUPERVISOR_LOG" || true
-							# Proof-log
-							write_proof_log --task "$vt_id" --event "phase3d_merge" --stage "phase_3d" \
-								--decision "merged open PR for verified task" \
-								--evidence "pr=#$vt_pr_number merge_state=$vt_merge_state task_status=$vt_status" \
-								--maker "pulse:phase_3d" 2>/dev/null || true
-						else
-							log_warn "  Phase 3d: Failed to merge PR #$vt_pr_number for $vt_id"
-						fi
-					elif [[ "$vt_merge_state" == "BEHIND" ]]; then
-						# PR is behind main — update branch so CI re-runs, merge next pulse
-						log_info "  Phase 3d: $vt_id — PR #$vt_pr_number behind main, updating branch"
-						gh pr update-branch "$vt_pr_number" --repo "$vt_repo_slug" 2>>"$SUPERVISOR_LOG" || true
-					else
-						# BLOCKED/DIRTY/UNKNOWN — log but don't act (may need manual intervention)
-						log_verbose "  Phase 3d: $vt_id — PR #$vt_pr_number open but $vt_merge_state, skipping"
-					fi
-				fi
-				# MERGED or CLOSED — nothing to do, PR is already handled
-			done <<<"$verified_with_prs"
-
-			if [[ $((phase3d_merged + phase3d_closed)) -gt 0 ]]; then
-				log_success "  Phase 3d: Merged $phase3d_merged, closed $phase3d_closed open PR(s) for verified/deployed tasks"
-			fi
-		fi
-	fi
-
-	# Phase 3.5 and 3.6: Legacy rebase retry and escalation
-	# Skipped when AI lifecycle is active — process_ai_lifecycle handles blocked
-	# tasks directly by gathering state and deciding the next action.
-	if [[ "${SUPERVISOR_AI_LIFECYCLE:-true}" != "true" ]]; then
-
-		# Phase 3.5: Auto-retry blocked merge-conflict tasks (t1029)
-		# When a task is blocked with "Merge conflict — auto-rebase failed", periodically
-		# re-attempt the rebase after main advances. Other PRs merging often resolve conflicts.
-		local max_retry_cycles=3
-		local blocked_tasks
-		blocked_tasks=$(db "$SUPERVISOR_DB" "SELECT id, repo, error, rebase_attempts, last_main_sha FROM tasks WHERE status = 'blocked' AND error LIKE '%Merge conflict%auto-rebase failed%';" 2>/dev/null || echo "")
-
-		if [[ -n "$blocked_tasks" ]]; then
-			while IFS='|' read -r blocked_id blocked_repo _ blocked_rebase_attempts blocked_last_main_sha; do
-				[[ -z "$blocked_id" ]] && continue
-
-				# Cap at max_retry_cycles total retry cycles to prevent infinite loops
-				if [[ "${blocked_rebase_attempts:-0}" -ge "$max_retry_cycles" ]]; then
-					log_info "  Skipping $blocked_id — max retry cycles ($max_retry_cycles) reached"
-					continue
-				fi
-
-				# Get current main SHA
-				local current_main_sha
-				current_main_sha=$(git -C "$blocked_repo" rev-parse origin/main 2>/dev/null || echo "")
-				if [[ -z "$current_main_sha" ]]; then
-					log_warn "  Failed to get origin/main SHA for $blocked_id in $blocked_repo"
-					continue
-				fi
-
-				# Check if main has advanced since last attempt
-				if [[ -n "$blocked_last_main_sha" && "$current_main_sha" == "$blocked_last_main_sha" ]]; then
-					# Main hasn't advanced — skip retry
-					continue
-				fi
-
-				# Main has advanced (or this is first retry) — reset counter and retry
-				log_info "  Main advanced for $blocked_id — retrying rebase (attempt $((blocked_rebase_attempts + 1))/$max_retry_cycles)"
-
-				# Update last_main_sha before attempting rebase
-				local escaped_blocked_id
-				escaped_blocked_id=$(sql_escape "$blocked_id")
-				db "$SUPERVISOR_DB" "UPDATE tasks SET last_main_sha = '$current_main_sha' WHERE id = '$escaped_blocked_id';" 2>/dev/null || true
-
-				# Attempt rebase
-				if rebase_sibling_pr "$blocked_id" 2>>"$SUPERVISOR_LOG"; then
-					log_success "  Auto-rebase retry succeeded for $blocked_id — transitioning to pr_review"
-					# Increment rebase_attempts counter
-					db "$SUPERVISOR_DB" "UPDATE tasks SET rebase_attempts = $((blocked_rebase_attempts + 1)) WHERE id = '$escaped_blocked_id';" 2>/dev/null || true
-					# Transition back to pr_review so CI can run
-					cmd_transition "$blocked_id" "pr_review" --error "" 2>>"$SUPERVISOR_LOG" || true
-				else
-					# Rebase still failed — increment counter and stay blocked
-					log_warn "  Auto-rebase retry failed for $blocked_id — staying blocked"
-					db "$SUPERVISOR_DB" "UPDATE tasks SET rebase_attempts = $((blocked_rebase_attempts + 1)) WHERE id = '$escaped_blocked_id';" 2>/dev/null || true
-				fi
-			done <<<"$blocked_tasks"
-		fi
-
-		# Phase 3.6: Escalate rebase-blocked PRs to opus worker (t1050)
-		# When auto-rebase fails max_retry_cycles times, dispatch an opus worker to
-		# manually rebase, resolve conflicts, and merge the PR. Only ONE escalation
-		# runs at a time (sequential) so each subsequent rebase has a clean base.
-		local escalation_lock="${SUPERVISOR_DIR}/rebase-escalation.lock"
-		local escalation_cooldown=300 # 5 minutes between escalations
-
-		# Check if an escalation is already running or recently completed
-		local should_escalate=true
-		if [[ -f "$escalation_lock" ]]; then
-			local lock_pid lock_age
-			lock_pid=$(head -1 "$escalation_lock" 2>/dev/null || echo "")
-			lock_age=$(($(date +%s) - $(stat -c %Y "$escalation_lock" 2>/dev/null || stat -f %m "$escalation_lock" 2>/dev/null || echo "0")))
-			# Check if the lock holder is still alive
-			if [[ -n "$lock_pid" ]] && kill -0 "$lock_pid" 2>/dev/null; then
-				# Lock holder alive — respect cooldown
-				if [[ "$lock_age" -lt "$escalation_cooldown" ]]; then
-					should_escalate=false
-					log_verbose "  Phase 3.6: escalation in progress (PID $lock_pid, ${lock_age}s/${escalation_cooldown}s)"
-				else
-					# Running too long — stale, remove
-					log_warn "  Phase 3.6: escalation lock stale (PID $lock_pid alive but ${lock_age}s old), removing"
-					rm -f "$escalation_lock" 2>/dev/null || true
-				fi
-			elif [[ "$lock_age" -lt "$escalation_cooldown" ]]; then
-				# Lock holder dead but within cooldown — likely just finished
-				should_escalate=false
-				log_verbose "  Phase 3.6: escalation cooldown (${lock_age}s/${escalation_cooldown}s)"
-			else
-				# Lock holder dead and past cooldown — stale lock from crashed pulse
-				log_info "  Phase 3.6: removing stale escalation lock (PID $lock_pid dead, ${lock_age}s old)"
-				rm -f "$escalation_lock" 2>/dev/null || true
-			fi
-		fi
-
-		if [[ "$should_escalate" == "true" ]]; then
-			# Find ONE task that has exhausted auto-rebase retries
-			local escalation_candidate
-			escalation_candidate=$(db "$SUPERVISOR_DB" "
-			SELECT t.id, t.repo, t.pr_url, t.branch, t.rebase_attempts
-			FROM tasks t
-			WHERE t.status = 'blocked'
-			  AND t.error LIKE '%Merge conflict%auto-rebase failed%'
-			  AND t.rebase_attempts >= $max_retry_cycles
-			  AND t.pr_url IS NOT NULL AND t.pr_url != '' AND t.pr_url != 'no_pr'
-			ORDER BY t.rebase_attempts ASC, t.id ASC
-			LIMIT 1;
-		" 2>/dev/null || echo "")
-
-			if [[ -n "$escalation_candidate" ]]; then
-				local esc_id esc_repo esc_pr esc_branch esc_attempts
-				IFS='|' read -r esc_id esc_repo esc_pr esc_branch esc_attempts <<<"$escalation_candidate"
-
-				if [[ -n "$esc_id" ]]; then
-					log_info "  Phase 3.6: escalating $esc_id to opus worker (rebase_attempts=$esc_attempts, pr=$esc_pr)"
-
-					# Resolve AI CLI
-					local esc_ai_cli
-					esc_ai_cli=$(resolve_ai_cli 2>/dev/null || echo "")
-					if [[ -z "$esc_ai_cli" ]]; then
-						log_warn "  Phase 3.6: no AI CLI available for escalation"
-					else
-						# Find the worktree path
-						local esc_worktree=""
-						local esc_wt_row
-						esc_wt_row=$(db "$SUPERVISOR_DB" "SELECT worktree FROM tasks WHERE id = '$(sql_escape "$esc_id")';" 2>/dev/null || echo "")
-						if [[ -n "$esc_wt_row" && -d "$esc_wt_row" ]]; then
-							esc_worktree="$esc_wt_row"
-						fi
-
-						# Build the escalation prompt
-						local esc_prompt="You are resolving a merge conflict that automated tools could not handle.
-
-TASK: $esc_id
-BRANCH: $esc_branch
-PR: $esc_pr
-REPO: $esc_repo
-WORKTREE: ${esc_worktree:-$esc_repo}
-
-STEPS:
-1. cd to the worktree (or repo if no worktree)
-2. Run: git fetch origin main
-3. Abort any in-progress rebase: git rebase --abort (ignore errors)
-4. Clean any dirty state: git stash push -m 'pre-escalation' (ignore errors)
-5. Run: git rebase origin/main
-6. If conflicts occur, resolve ALL of them:
-   - Read each conflicting file
-   - Understand both sides' intent
-   - Merge intelligently (keep both sides' changes where possible)
-   - Remove ALL conflict markers
-   - git add each resolved file
-   - git rebase --continue
-   - Repeat for each commit in the rebase
-7. After rebase completes: git push --force-with-lease origin $esc_branch
-8. Verify the PR is no longer in conflict: gh pr view $esc_pr --json mergeStateStatus
-9. If CI passes, merge: gh pr merge $esc_pr --squash
-10. Output ONLY: 'ESCALATION_MERGED: $esc_id' if merged, 'ESCALATION_REBASED: $esc_id' if rebased but not merged, or 'ESCALATION_FAILED: reason' if failed
-
-RULES:
-- Do NOT modify the intent of any code — only resolve conflicts
-- Prefer the feature branch for new functionality, main for structural changes
-- If a file has been deleted on main but modified on the branch, keep the branch version
-- Do NOT create new commits beyond what the rebase produces"
-
-						# Resolve model — use opus for complex conflict resolution
-						local esc_model
-						esc_model=$(resolve_model "opus" "$esc_ai_cli" 2>/dev/null || echo "")
-
-						# Dispatch the worker
-						local esc_log_dir="${SUPERVISOR_DIR}/logs"
-						mkdir -p "$esc_log_dir" 2>/dev/null || true
-						local esc_log_file
-						esc_log_file="${esc_log_dir}/escalation-${esc_id}-$(date +%Y%m%d-%H%M%S).log"
-
-						local esc_workdir="${esc_worktree:-$esc_repo}"
-						if [[ "$esc_ai_cli" == "opencode" ]]; then
-							(cd "$esc_workdir" && $esc_ai_cli run \
-								${esc_model:+--model "$esc_model"} \
-								--format json \
-								--title "escalation-rebase-${esc_id}" \
-								"$esc_prompt" \
-								>"$esc_log_file" 2>&1) &
-							local esc_pid=$!
-						else
-							(cd "$esc_workdir" && $esc_ai_cli -p "$esc_prompt" \
-								${esc_model:+--model "$esc_model"} \
-								>"$esc_log_file" 2>&1) &
-							local esc_pid=$!
-						fi
-
-						# Record the escalation in the DB
-						db "$SUPERVISOR_DB" "UPDATE tasks SET
-						status = 'running',
-						error = 'Escalation: opus rebase worker (PID $esc_pid)',
-						worker_pid = $esc_pid,
-						updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-					WHERE id = '$(sql_escape "$esc_id")';" 2>/dev/null || true
-
-						# Create lock file AFTER successful dispatch (stores worker PID for stale detection)
-						echo "$esc_pid" >"$escalation_lock" 2>/dev/null || true
-
-						log_success "  Phase 3.6: dispatched opus worker PID $esc_pid for $esc_id"
-						send_task_notification "$esc_id" "escalated" "Opus rebase worker dispatched (PID $esc_pid)" 2>>"$SUPERVISOR_LOG" || true
-					fi
-				fi
-			fi
-		fi
-
-	fi # End of Phase 3.5/3.6 legacy guard (SUPERVISOR_AI_LIFECYCLE != true)
+	# NOTE: Phase 3b2 reconciliation, Phase 3c issue sync, Phase 3d verified PR cleanup,
+	# Phase 3.5 rebase retry, and Phase 3.6 escalation have been REMOVED.
+	# All of these are now handled by process_ai_lifecycle() in Phase 3, which
+	# queries ALL task states (including blocked, verified, deployed) and the AI
+	# decides what to do with each one. No deterministic decision gates.
 
 	# t1052: Flush deferred batch completions after all lifecycle phases.
 	# Runs retrospective, session review, distillation, and auto-release
@@ -2754,52 +2211,9 @@ RULES:
 		done <<<"$db_orphans"
 	fi
 
-	# Phase 4b2: Stale pr_review recovery (t1208)
-	# When AI lifecycle is active, Phase 3 handles all pr_review tasks via
-	# process_ai_lifecycle — skip legacy cmd_pr_lifecycle to avoid clobbering
-	# AI decisions (e.g., marking tasks as "Merge failed" when the AI already
-	# decided to escalate or wait).
-	if [[ "${SUPERVISOR_AI_LIFECYCLE:-true}" != "true" ]]; then
-		# Tasks in 'pr_review' are processed by Phase 3 (process_post_pr_lifecycle) each
-		# pulse. However, if cmd_pr_lifecycle fails repeatedly or the PR is in an
-		# unexpected state, the task can get stuck in pr_review indefinitely.
-		# After SUPERVISOR_PR_REVIEW_STALE_SECONDS (default 3600 = 1h), force a
-		# re-attempt via cmd_pr_lifecycle. If that also fails, log a warning so the
-		# operator can investigate — do NOT auto-fail pr_review tasks since the PR
-		# may be legitimately waiting for CI or human review.
-		local pr_review_stale_seconds="${SUPERVISOR_PR_REVIEW_STALE_SECONDS:-3600}"
-		local stale_pr_review
-		stale_pr_review=$(db -separator '|' "$SUPERVISOR_DB" "
-        SELECT id, pr_url, updated_at
-        FROM tasks
-        WHERE status = 'pr_review'
-        AND updated_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${pr_review_stale_seconds} seconds')
-        ORDER BY updated_at ASC;
-    " 2>/dev/null || echo "")
-
-		if [[ -n "$stale_pr_review" ]]; then
-			local pr_review_recovered=0
-			while IFS='|' read -r spr_id spr_pr_url spr_updated; do
-				[[ -n "$spr_id" ]] || continue
-				log_warn "  Stale pr_review: $spr_id (last updated: ${spr_updated:-unknown}, >${pr_review_stale_seconds}s) — re-attempting lifecycle (t1208)"
-				if cmd_pr_lifecycle "$spr_id" 2>>"$SUPERVISOR_LOG"; then
-					local spr_new_status
-					spr_new_status=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$spr_id")';" 2>/dev/null || echo "")
-					if [[ "$spr_new_status" != "pr_review" ]]; then
-						log_info "  Phase 4b2: $spr_id advanced from pr_review → $spr_new_status"
-						pr_review_recovered=$((pr_review_recovered + 1))
-					else
-						log_warn "  Phase 4b2: $spr_id still in pr_review after lifecycle attempt — may need manual review (PR: ${spr_pr_url:-none})"
-					fi
-				else
-					log_warn "  Phase 4b2: cmd_pr_lifecycle failed for stale $spr_id — will retry next pulse (PR: ${spr_pr_url:-none})"
-				fi
-			done <<<"$stale_pr_review"
-			if [[ "$pr_review_recovered" -gt 0 ]]; then
-				log_info "  Phase 4b2: $pr_review_recovered stale pr_review task(s) advanced"
-			fi
-		fi
-	fi # End of Phase 4b2 legacy guard (SUPERVISOR_AI_LIFECYCLE != true)
+	# Phase 4b2: Stale pr_review recovery — REMOVED
+	# Now handled by Phase 3 (process_ai_lifecycle) which processes all task
+	# states including pr_review. The AI decides what to do with stale tasks.
 
 	# Phase 4c: Cancel stale diagnostic subtasks whose parent is already resolved
 	# Diagnostic tasks (diagnostic_of != NULL) become stale when the parent task
@@ -2823,14 +2237,10 @@ RULES:
 		done <<<"$stale_diags"
 	fi
 
-	# Phase 4d: Auto-recover stuck deploying tasks (t222, t248)
-	# Tasks can get stuck in 'deploying' if the deploy succeeds but the
-	# transition to 'deployed' fails (e.g., DB write error, process killed
-	# mid-transition). Detect tasks in 'deploying' state for longer than
-	# the deploy timeout and auto-recover them via process_post_pr_lifecycle
-	# (which now handles the deploying state in Step 4b of cmd_pr_lifecycle).
-	# t248: Reduced from 600s (10min) to 120s (2min) for faster recovery
-	local deploying_timeout_seconds="${SUPERVISOR_DEPLOY_TIMEOUT:-120}" # 2 min default
+	# Phase 4d: Stuck deploying recovery — SIMPLIFIED
+	# Tasks stuck in 'deploying' for >2min are force-advanced to 'deployed'.
+	# Phase 3 AI lifecycle handles all other recovery scenarios.
+	local deploying_timeout_seconds="${SUPERVISOR_DEPLOY_TIMEOUT:-120}"
 	local stuck_deploying
 	stuck_deploying=$(db "$SUPERVISOR_DB" "
         SELECT id, updated_at FROM tasks
@@ -2841,13 +2251,8 @@ RULES:
 	if [[ -n "$stuck_deploying" ]]; then
 		while IFS='|' read -r stuck_id stuck_updated; do
 			[[ -n "$stuck_id" ]] || continue
-			log_warn "  Stuck deploying: $stuck_id (last updated: ${stuck_updated:-unknown}, timeout: ${deploying_timeout_seconds}s) — triggering recovery (t222)"
-			# process_post_pr_lifecycle will pick this up and run cmd_pr_lifecycle
-			# which now handles the deploying state in Step 4b
-			cmd_pr_lifecycle "$stuck_id" 2>>"$SUPERVISOR_LOG" || {
-				log_error "  Recovery failed for stuck deploying task $stuck_id — forcing to deployed"
-				cmd_transition "$stuck_id" "deployed" --error "Force-recovered from stuck deploying (t222)" 2>>"$SUPERVISOR_LOG" || true
-			}
+			log_warn "  Stuck deploying: $stuck_id (>${deploying_timeout_seconds}s) — forcing to deployed"
+			cmd_transition "$stuck_id" "deployed" --error "Force-recovered from stuck deploying" 2>>"$SUPERVISOR_LOG" || true
 		done <<<"$stuck_deploying"
 	fi
 
@@ -4029,114 +3434,13 @@ adopt_untracked_prs() {
 # the remaining siblings' branches onto the updated main. This prevents
 # cascading merge conflicts that occur when parallel PRs all target main.
 #######################################
+# DEPRECATED: process_post_pr_lifecycle is replaced by process_ai_lifecycle.
+# Kept as a thin redirect for backward compatibility with any callers.
 process_post_pr_lifecycle() {
 	local batch_id="${1:-}"
-
-	ensure_db
-
-	# Find tasks eligible for post-PR processing
-	local where_clause="t.status IN ('complete', 'pr_review', 'review_triage', 'merging', 'merged', 'deploying')"
-	if [[ -n "$batch_id" ]]; then
-		where_clause="$where_clause AND EXISTS (SELECT 1 FROM batch_tasks bt WHERE bt.task_id = t.id AND bt.batch_id = '$(sql_escape "$batch_id")')"
-	fi
-
-	local eligible_tasks
-	eligible_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
-        SELECT t.id, t.status, t.pr_url FROM tasks t
-        WHERE $where_clause
-        ORDER BY t.updated_at ASC;
-    ")
-
-	if [[ -z "$eligible_tasks" ]]; then
-		return 0
-	fi
-
-	local processed=0
-	local merged_count=0
-	local deployed_count=0
-	local deferred_count=0
-
-	# t1183 Bug 3: Cap merges per pulse to prevent runaway merge loops.
-	# Each merge dirties remaining PRs (main moves forward), so unlimited
-	# merges can cause cascading rebase failures. Default: 5 per pulse.
-	local max_merges_per_pulse="${SUPERVISOR_MAX_MERGES_PER_PULSE:-5}"
-
-	# t225: Track which parent IDs have already had a sibling merge in this pulse.
-	# Only one sibling per parent group is allowed to merge per cycle.
-	# Use a simple string list (bash 3.2 compatible — no associative arrays).
-	local merged_parents=""
-
-	while IFS='|' read -r tid tstatus tpr; do
-		# t1183 Bug 3: Stop processing if we've hit the merge cap.
-		# Remaining tasks will be picked up in the next pulse cycle.
-		if [[ "$merged_count" -ge "$max_merges_per_pulse" ]]; then
-			log_info "  Phase 3: reached max merges per pulse ($max_merges_per_pulse), deferring rest to next cycle"
-			break
-		fi
-
-		# Skip tasks without PRs that are already complete
-		# t1030: Defense-in-depth — cmd_transition() also guards complete->deployed
-		# when a real PR URL exists, but this fast path should only fire for genuinely
-		# PR-less tasks. The "|| $tpr == verified_complete" case is a verify-mode
-		# worker that confirmed prior work without creating a new PR.
-		if [[ "$tstatus" == "complete" && (-z "$tpr" || "$tpr" == "no_pr" || "$tpr" == "task_only" || "$tpr" == "verified_complete") ]]; then
-			# t240: Clean up worktree even for no-PR tasks before marking deployed
-			cleanup_after_merge "$tid" 2>>"$SUPERVISOR_LOG" || log_warn "Worktree cleanup issue for $tid (no-PR batch path, non-blocking)"
-			# No PR - transition directly to deployed
-			cmd_transition "$tid" "deployed" 2>>"$SUPERVISOR_LOG" || true
-			deployed_count=$((deployed_count + 1))
-			log_info "  $tid: no PR, marked deployed (worktree cleaned)"
-			continue
-		fi
-
-		# t225: Serial merge guard for sibling subtasks
-		# If this task is a subtask and a sibling has already merged in this
-		# pulse, defer it to the next cycle (after rebase completes).
-		local parent_id
-		parent_id=$(extract_parent_id "$tid")
-		if [[ -n "$parent_id" ]] && [[ "$merged_parents" == *"|${parent_id}|"* ]]; then
-			# A sibling already merged — defer this task to next pulse
-			# so the rebase can land first and CI can re-run
-			log_info "  $tid: deferred (sibling under $parent_id already merged this pulse — serial merge strategy)"
-			deferred_count=$((deferred_count + 1))
-			continue
-		fi
-
-		log_info "  $tid: processing post-PR lifecycle (status: $tstatus)"
-		if cmd_pr_lifecycle "$tid" >>"$SUPERVISOR_DIR/post-pr.log" 2>&1; then
-			local new_status
-			new_status=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "")
-			case "$new_status" in
-			merged | deploying | deployed)
-				merged_count=$((merged_count + 1))
-				# t225: Record that this parent group had a merge
-				if [[ -n "$parent_id" ]]; then
-					merged_parents="${merged_parents}|${parent_id}|"
-				fi
-				# t1183 Bug 3: After a successful merge, pull main in the task's
-				# repo so subsequent PRs in this pulse can rebase cleanly against
-				# the updated main. Without this, each merge dirties remaining PRs
-				# and they fail rebase until the next pulse.
-				local merge_repo
-				merge_repo=$(db "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "")
-				if [[ -n "$merge_repo" && -d "$merge_repo" ]]; then
-					git -C "$merge_repo" pull --rebase origin main 2>>"$SUPERVISOR_LOG" ||
-						log_warn "  $tid: failed to pull main in $merge_repo after merge (non-blocking)"
-				fi
-				;;
-			esac
-			if [[ "$new_status" == "deployed" ]]; then
-				deployed_count=$((deployed_count + 1))
-			fi
-		fi
-		processed=$((processed + 1))
-	done <<<"$eligible_tasks"
-
-	if [[ "$processed" -gt 0 || "$deferred_count" -gt 0 ]]; then
-		log_info "Post-PR lifecycle: processed=$processed merged=$merged_count deployed=$deployed_count deferred=$deferred_count"
-	fi
-
-	return 0
+	log_info "process_post_pr_lifecycle: redirecting to process_ai_lifecycle"
+	process_ai_lifecycle "$batch_id"
+	return $?
 }
 
 #######################################
