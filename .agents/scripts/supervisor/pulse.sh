@@ -2255,6 +2255,97 @@ cmd_pulse() {
 		date +%s >"$reconcile_cooldown_file" 2>/dev/null || true
 	fi
 
+	# Phase 3d: Close/merge open PRs for verified/deployed tasks
+	# When a task reaches verified/deployed but its PR is still open on GitHub,
+	# the PR lingers indefinitely because process_ai_lifecycle only processes
+	# tasks in active states (complete, pr_review, merging, etc.), not terminal
+	# states. This phase finds verified/deployed tasks with real PR URLs and
+	# checks if the PR is still open — if so, squash-merges it (if CI green)
+	# or closes it (if already merged via another path).
+	# Also handles the case where a task has a DIFFERENT open PR than the one
+	# tracked in the DB (e.g., interactive session created a new PR after the
+	# original was merged).
+	# Runs on the same cooldown as Phase 3c to avoid API rate limits.
+	if [[ "$should_reconcile" == "true" ]] && command -v gh &>/dev/null; then
+		local verified_with_prs
+		verified_with_prs=$(db -separator '|' "$SUPERVISOR_DB" "
+			SELECT id, status, pr_url, repo FROM tasks
+			WHERE status IN ('verified', 'deployed')
+			AND pr_url IS NOT NULL
+			AND pr_url != ''
+			AND pr_url != 'no_pr'
+			AND pr_url != 'task_only'
+			AND pr_url != 'verified_complete'
+			AND pr_url != 'task_obsolete'
+			ORDER BY updated_at DESC
+			LIMIT 50;
+		" 2>/dev/null || echo "")
+
+		if [[ -n "$verified_with_prs" ]]; then
+			local phase3d_merged=0
+			local phase3d_closed=0
+
+			while IFS='|' read -r vt_id vt_status vt_pr vt_repo; do
+				[[ -z "$vt_id" ]] && continue
+
+				local vt_pr_number="" vt_repo_slug=""
+				if [[ "$vt_pr" =~ github\.com/([^/]+/[^/]+)/pull/([0-9]+)$ ]]; then
+					vt_repo_slug="${BASH_REMATCH[1]}"
+					vt_pr_number="${BASH_REMATCH[2]}"
+				fi
+				[[ -z "$vt_pr_number" ]] && continue
+
+				# Check PR state on GitHub
+				local vt_pr_json
+				vt_pr_json=$(gh pr view "$vt_pr_number" --repo "$vt_repo_slug" \
+					--json state,mergeStateStatus,mergeable 2>/dev/null || echo "")
+				[[ -z "$vt_pr_json" ]] && continue
+
+				local vt_pr_state
+				vt_pr_state=$(printf '%s' "$vt_pr_json" | jq -r '.state // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
+
+				if [[ "$vt_pr_state" == "OPEN" ]]; then
+					local vt_merge_state
+					vt_merge_state=$(printf '%s' "$vt_pr_json" | jq -r '.mergeStateStatus // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
+
+					if [[ "$vt_merge_state" == "CLEAN" || "$vt_merge_state" == "UNSTABLE" ]]; then
+						# CI passed — squash merge the PR
+						log_info "  Phase 3d: $vt_id ($vt_status) — PR #$vt_pr_number still open with CI green, merging"
+						if gh pr merge "$vt_pr_number" --repo "$vt_repo_slug" --squash --delete-branch 2>>"$SUPERVISOR_LOG"; then
+							log_success "  Phase 3d: Merged PR #$vt_pr_number for $vt_id"
+							phase3d_merged=$((phase3d_merged + 1))
+							# Pull main so subsequent operations have the latest
+							if [[ -n "$vt_repo" && -d "$vt_repo" ]]; then
+								git -C "$vt_repo" pull --rebase origin main 2>>"$SUPERVISOR_LOG" || true
+							fi
+							# Clean up worktree if it exists
+							cleanup_after_merge "$vt_id" 2>>"$SUPERVISOR_LOG" || true
+							# Proof-log
+							write_proof_log --task "$vt_id" --event "phase3d_merge" --stage "phase_3d" \
+								--decision "merged open PR for verified task" \
+								--evidence "pr=#$vt_pr_number merge_state=$vt_merge_state task_status=$vt_status" \
+								--maker "pulse:phase_3d" 2>/dev/null || true
+						else
+							log_warn "  Phase 3d: Failed to merge PR #$vt_pr_number for $vt_id"
+						fi
+					elif [[ "$vt_merge_state" == "BEHIND" ]]; then
+						# PR is behind main — update branch so CI re-runs, merge next pulse
+						log_info "  Phase 3d: $vt_id — PR #$vt_pr_number behind main, updating branch"
+						gh pr update-branch "$vt_pr_number" --repo "$vt_repo_slug" 2>>"$SUPERVISOR_LOG" || true
+					else
+						# BLOCKED/DIRTY/UNKNOWN — log but don't act (may need manual intervention)
+						log_verbose "  Phase 3d: $vt_id — PR #$vt_pr_number open but $vt_merge_state, skipping"
+					fi
+				fi
+				# MERGED or CLOSED — nothing to do, PR is already handled
+			done <<<"$verified_with_prs"
+
+			if [[ $((phase3d_merged + phase3d_closed)) -gt 0 ]]; then
+				log_success "  Phase 3d: Merged $phase3d_merged, closed $phase3d_closed open PR(s) for verified/deployed tasks"
+			fi
+		fi
+	fi
+
 	# Phase 3.5 and 3.6: Legacy rebase retry and escalation
 	# Skipped when AI lifecycle is active — process_ai_lifecycle handles blocked
 	# tasks directly by gathering state and deciding the next action.
@@ -3740,17 +3831,18 @@ adopt_untracked_prs() {
 		# List open PRs (limit to 20 to avoid API rate limits)
 		local open_prs
 		open_prs=$(gh pr list --repo "$repo_slug" --state open --limit 20 \
-			--json number,title,url 2>/dev/null || echo "[]")
+			--json number,title,url,headRefName 2>/dev/null || echo "[]")
 
 		local pr_count
 		pr_count=$(printf '%s' "$open_prs" | jq 'length' 2>/dev/null || echo 0)
 
 		local i=0
 		while [[ "$i" -lt "$pr_count" ]]; do
-			local pr_number pr_title pr_url
+			local pr_number pr_title pr_url pr_branch
 			pr_number=$(printf '%s' "$open_prs" | jq -r ".[$i].number" 2>/dev/null || echo "")
 			pr_title=$(printf '%s' "$open_prs" | jq -r ".[$i].title" 2>/dev/null || echo "")
 			pr_url=$(printf '%s' "$open_prs" | jq -r ".[$i].url" 2>/dev/null || echo "")
+			pr_branch=$(printf '%s' "$open_prs" | jq -r ".[$i].headRefName" 2>/dev/null || echo "")
 			i=$((i + 1))
 
 			# Extract task ID from PR title (pattern: tNNN: or tNNN.N:)
@@ -3759,7 +3851,58 @@ adopt_untracked_prs() {
 				task_id="${BASH_REMATCH[1]}"
 			fi
 
+			# Fallback: try to extract task ID from branch name (e.g., feature/t1264.2)
+			if [[ -z "$task_id" && -n "$pr_branch" ]]; then
+				if [[ "$pr_branch" =~ (t[0-9]+(\.[0-9]+)?)$ ]] || [[ "$pr_branch" =~ /(t[0-9]+(\.[0-9]+)?) ]]; then
+					task_id="${BASH_REMATCH[1]}"
+				fi
+			fi
+
 			if [[ -z "$task_id" ]]; then
+				# No task ID in title or branch — check if PR is already tracked
+				local orphan_existing
+				orphan_existing=$(db "$SUPERVISOR_DB" "
+					SELECT id FROM tasks WHERE pr_url = '$(sql_escape "$pr_url")' LIMIT 1;
+				" 2>/dev/null || echo "")
+				if [[ -n "$orphan_existing" ]]; then
+					continue
+				fi
+
+				# Adopt as an orphan PR: create a synthetic task entry using
+				# the PR number as a unique identifier. This allows Phase 3d
+				# to find and merge it when CI is green.
+				local orphan_id="pr${pr_number}"
+				local orphan_desc="[adopted] $pr_title"
+
+				# Check if we already adopted this PR in a previous cycle
+				local already_adopted
+				already_adopted=$(db "$SUPERVISOR_DB" "
+					SELECT id FROM tasks WHERE id = '$(sql_escape "$orphan_id")' LIMIT 1;
+				" 2>/dev/null || echo "")
+				if [[ -n "$already_adopted" ]]; then
+					continue
+				fi
+
+				db "$SUPERVISOR_DB" "
+					INSERT INTO tasks (id, status, description, repo, pr_url, model, max_retries, created_at, updated_at)
+					VALUES (
+						'$(sql_escape "$orphan_id")',
+						'complete',
+						'$(sql_escape "$orphan_desc")',
+						'$(sql_escape "$repo_path")',
+						'$(sql_escape "$pr_url")',
+						'interactive',
+						0,
+						strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+						strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+					);
+				" 2>/dev/null || {
+					log_warn "Phase 3a: Failed to adopt orphan PR #$pr_number"
+					continue
+				}
+
+				log_success "Phase 3a: Adopted orphan PR #$pr_number ($pr_title) as $orphan_id — no task ID found"
+				adopted_count=$((adopted_count + 1))
 				continue
 			fi
 
@@ -3790,14 +3933,20 @@ adopt_untracked_prs() {
 				# Only link if the task is in a state where a PR makes sense
 				if [[ "$existing_status" =~ ^(queued|running|evaluating|retrying|complete)$ ]]; then
 					db "$SUPERVISOR_DB" "
-						UPDATE tasks
-						SET pr_url = '$(sql_escape "$pr_url")',
-						    status = 'complete',
-						    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-						WHERE id = '$(sql_escape "$task_id")';
-					" 2>/dev/null || true
+					UPDATE tasks
+					SET pr_url = '$(sql_escape "$pr_url")',
+					    status = 'complete',
+					    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+					WHERE id = '$(sql_escape "$task_id")';
+				" 2>/dev/null || true
 					log_info "Phase 3a: Linked PR #$pr_number to existing task $task_id (was: $existing_status)"
 					adopted_count=$((adopted_count + 1))
+				fi
+				# For verified/deployed tasks: the PR is a new/different one for
+				# an already-completed task. Phase 3d will handle merging/closing
+				# open PRs for verified tasks, so just log and skip here.
+				if [[ "$existing_status" =~ ^(verified|deployed|merged)$ ]]; then
+					log_verbose "Phase 3a: PR #$pr_number for $task_id (status: $existing_status) — Phase 3d will handle"
 				fi
 				continue
 			fi
