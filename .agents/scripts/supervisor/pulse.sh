@@ -560,54 +560,92 @@ _was_prompt_repeat_attempted() {
 #######################################
 get_task_timeout() {
 	local task_desc="${1:-}"
-	local desc_lower
-	desc_lower=$(echo "$task_desc" | tr '[:upper:]' '[:lower:]')
-	local tags
-	tags=$(echo "$task_desc" | grep -oE '#[a-zA-Z][a-zA-Z0-9_-]*' | tr '[:upper:]' '[:lower:]' | tr '\n' ' ' || echo "")
 
-	# Testing tasks: integration tests, unit tests, e2e — can be legitimately slow
-	if [[ "$tags" == *"#test"* || "$desc_lower" =~ add.*test|write.*test|run.*test|integration.*test|e2e ]]; then
-		echo "${SUPERVISOR_TIMEOUT_TESTING:-7200}"
+	# AI-first timeout classification (t1315): sends task description to AI
+	# to determine appropriate timeout. Falls back to default on AI failure.
+	# Timeout tiers: docs (1800s) < bugfix (3600s) < feature/security (5400s) < test/arch/refactor (7200s)
+	local ai_cli
+	ai_cli=$(resolve_ai_cli 2>/dev/null) || {
+		echo "${SUPERVISOR_WORKER_TIMEOUT:-3600}"
 		return 0
+	}
+
+	local ai_model
+	ai_model=$(resolve_model "haiku" "$ai_cli" 2>/dev/null) || {
+		echo "${SUPERVISOR_WORKER_TIMEOUT:-3600}"
+		return 0
+	}
+
+	local prompt
+	prompt="Classify this task into a timeout category. Task: ${task_desc}
+
+Categories (respond with ONLY the category name):
+- docs: documentation updates (30 min)
+- bugfix: bug fixes (60 min)
+- feature: new features, enhancements (90 min)
+- security: security audits (90 min)
+- testing: tests, e2e, integration (120 min)
+- architecture: system design, large refactors (120 min)
+- default: anything else (60 min)
+
+Respond with ONLY a JSON object: {\"category\": \"<name>\"}"
+
+	local ai_result=""
+	if [[ "$ai_cli" == "opencode" ]]; then
+		ai_result=$(portable_timeout 10 opencode run \
+			-m "$ai_model" \
+			--format default \
+			--title "timeout-$$" \
+			"$prompt" 2>/dev/null || echo "")
+		ai_result=$(printf '%s' "$ai_result" | sed 's/\x1b\[[0-9;]*[mGKHF]//g; s/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b\]//g; s/\x07//g')
+	else
+		local claude_model="${ai_model#*/}"
+		ai_result=$(portable_timeout 10 claude \
+			-p "$prompt" \
+			--model "$claude_model" \
+			--output-format text 2>/dev/null || echo "")
 	fi
 
-	# Architecture tasks: large-scale design work
-	if [[ "$tags" == *"#architecture"* || "$desc_lower" =~ architect ]]; then
-		echo "${SUPERVISOR_TIMEOUT_ARCHITECTURE:-7200}"
-		return 0
+	if [[ -n "$ai_result" ]]; then
+		local json_block
+		json_block=$(printf '%s' "$ai_result" | grep -oE '\{[^}]+\}' | head -1)
+		if [[ -n "$json_block" ]]; then
+			local category
+			category=$(printf '%s' "$json_block" | jq -r '.category // ""' 2>/dev/null || echo "")
+			case "$category" in
+			docs)
+				echo "${SUPERVISOR_TIMEOUT_DOCS:-1800}"
+				return 0
+				;;
+			bugfix)
+				echo "${SUPERVISOR_TIMEOUT_BUGFIX:-3600}"
+				return 0
+				;;
+			feature)
+				echo "${SUPERVISOR_TIMEOUT_FEATURE:-5400}"
+				return 0
+				;;
+			security)
+				echo "${SUPERVISOR_TIMEOUT_SECURITY:-5400}"
+				return 0
+				;;
+			testing)
+				echo "${SUPERVISOR_TIMEOUT_TESTING:-7200}"
+				return 0
+				;;
+			architecture)
+				echo "${SUPERVISOR_TIMEOUT_ARCHITECTURE:-7200}"
+				return 0
+				;;
+			default)
+				echo "${SUPERVISOR_WORKER_TIMEOUT:-3600}"
+				return 0
+				;;
+			esac
+		fi
 	fi
 
-	# Refactor tasks: large code changes
-	if [[ "$tags" == *"#refactor"* || "$desc_lower" =~ refactor ]]; then
-		echo "${SUPERVISOR_TIMEOUT_REFACTOR:-7200}"
-		return 0
-	fi
-
-	# Security tasks: audits, pentesting
-	if [[ "$tags" == *"#security"* || "$desc_lower" =~ security ]]; then
-		echo "${SUPERVISOR_TIMEOUT_SECURITY:-5400}"
-		return 0
-	fi
-
-	# Feature/enhancement tasks: typical implementation work
-	if [[ "$tags" == *"#feature"* || "$tags" == *"#enhancement"* || "$tags" == *"#self-improvement"* || "$desc_lower" =~ implement|add.*feature|new.*feature ]]; then
-		echo "${SUPERVISOR_TIMEOUT_FEATURE:-5400}"
-		return 0
-	fi
-
-	# Bugfix tasks: focused, should be faster
-	if [[ "$tags" == *"#bugfix"* || "$tags" == *"#fix"* || "$desc_lower" =~ fix.*bug|bugfix|hotfix ]]; then
-		echo "${SUPERVISOR_TIMEOUT_BUGFIX:-3600}"
-		return 0
-	fi
-
-	# Docs tasks: documentation updates — fastest
-	if [[ "$tags" == *"#docs"* || "$desc_lower" =~ update.*doc|add.*doc|documentation ]]; then
-		echo "${SUPERVISOR_TIMEOUT_DOCS:-1800}"
-		return 0
-	fi
-
-	# Default: use global SUPERVISOR_WORKER_TIMEOUT
+	# AI unavailable — default timeout
 	echo "${SUPERVISOR_WORKER_TIMEOUT:-3600}"
 	return 0
 }
