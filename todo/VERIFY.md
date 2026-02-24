@@ -2540,3 +2540,10 @@
   check: file-exists .agents/scripts/supervisor/deploy.sh
   check: shellcheck .agents/scripts/supervisor/todo-sync.sh
   check: file-exists .agents/scripts/supervisor/todo-sync.sh
+
+- [ ] v292 t1316 Migrate sanity-check.sh + self-heal.sh to AI — replace ... | PR #2218 | merged:2026-02-24
+  files: .agents/scripts/supervisor/sanity-check.sh, .agents/scripts/supervisor/self-heal.sh
+  check: shellcheck .agents/scripts/supervisor/sanity-check.sh
+  check: file-exists .agents/scripts/supervisor/sanity-check.sh
+  check: shellcheck .agents/scripts/supervisor/self-heal.sh
+  check: file-exists .agents/scripts/supervisor/self-heal.sh
