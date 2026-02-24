@@ -558,7 +558,7 @@ _execute_sanity_action() {
 		local current_line
 		current_line=$(sed -n "${line_num}p" "$todo_file")
 		local blocked_by
-		blocked_by=$(printf '%s' "$current_line" | grep -oE 'blocked-by:[^ ]+' | head -1 | sed 's/blocked-by://' || echo "")
+		blocked_by=$(printf '%s' "$current_line" | grep -oE 'blocked-by:t[0-9][^ ]*' | head -1 | sed 's/blocked-by://' || echo "")
 
 		if [[ -z "$blocked_by" ]]; then
 			echo "no blocked-by field found"

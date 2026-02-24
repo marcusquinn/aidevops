@@ -1174,7 +1174,7 @@ auto_unblock_resolved_tasks() {
 
 		# Extract blocked-by dependencies
 		local blocked_by=""
-		blocked_by=$(printf '%s' "$line" | grep -oE 'blocked-by:[^ ]+' | head -1 | sed 's/blocked-by://' || echo "")
+		blocked_by=$(printf '%s' "$line" | grep -oE 'blocked-by:t[0-9][^ ]*' | head -1 | sed 's/blocked-by://' || echo "")
 		[[ -z "$blocked_by" ]] && continue
 
 		# Check each blocker

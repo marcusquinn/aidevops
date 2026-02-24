@@ -163,7 +163,7 @@ _compute_target_state_hash() {
 				local started
 				started=$(printf '%s' "$task_line" | grep -oE 'started:[^ ]+' || echo "")
 				local blocked
-				blocked=$(printf '%s' "$task_line" | grep -oE 'blocked-by:[^ ]+' || echo "")
+				blocked=$(printf '%s' "$task_line" | grep -oE 'blocked-by:t[0-9][^ ]*' || echo "")
 				local pr_field
 				pr_field=$(printf '%s' "$task_line" | grep -oE 'pr:#[0-9]+' || echo "")
 				# t1285: Include [proposed:...] annotations in state hash so
