@@ -5472,6 +5472,249 @@ Harden the Higgsfield Playwright automator from "works in testing" to "reliable 
 
 ---
 
+### [2026-02-25] SimpleX Chat Agent and Command Integration
+
+**Status:** Planning
+**Estimate:** ~29h (ai:21h test:5h read:3h)
+**TODO:** t1327
+**Logged:** 2026-02-25
+**Reference:** https://simplex.chat/ | https://github.com/simplex-chat/simplex-chat | [Bot API](https://github.com/simplex-chat/simplex-chat/tree/stable/bots) | [TypeScript SDK](https://github.com/simplex-chat/simplex-chat/tree/stable/packages/simplex-chat-client/typescript) | [Whitepaper](https://github.com/simplex-chat/simplexmq/blob/stable/protocol/overview-tjr.md) | [mail-helper.sh](scripts/mail-helper.sh) | [IronClaw](https://github.com/nearai/ironclaw) | [OpenClaw](https://github.com/openclaw/openclaw)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p032,SimpleX Chat Agent and Command Integration,planning,0,8,,feature|communications|security|bots|opsec|mailbox|chat-security,29h,21h,5h,3h,2026-02-25T00:00Z,
+-->
+
+#### Purpose
+
+SimpleX Chat is the most privacy-respecting messaging platform available — no user identifiers (not even random ones), no phone numbers, no central metadata storage. This integration brings secure, zero-knowledge communications to aidevops for:
+
+1. **Secure remote AI agent control** — initiate sessions on remote devices running aidevops without exposing management interfaces to the public internet
+2. **Private device-to-device agent communication** — extend existing `mail-helper.sh` mailbox system with SimpleX/Matrix transport so agents on different machines coordinate over encrypted channels with zero metadata leakage
+3. **AI-powered bots** for direct and group channels — customer support, information retrieval, service automation, moderation
+4. **Business bot deployment** — per-customer support chats with agent escalation (SimpleX business addresses)
+5. **Opsec-first communications** — for users who need secure channels without trusting a central provider
+6. **Voice/file/attachment exchange** between users and AI agents
+7. **Future: real-time voice/video calls** between users and AI agents (when aidevops gains those capabilities)
+
+No existing aidevops integration covers secure messaging at this level. Matrix (existing agent) is federated but has user identifiers and server-side metadata. SimpleX fills the zero-knowledge gap.
+
+#### Context
+
+**SimpleX Protocol Key Properties:**
+
+| Property | Detail |
+|----------|--------|
+| Identity | No user identifiers — connections are pairs of uni-directional queues |
+| Encryption | Double ratchet (X3DH, Curve448) + AES-GCM + per-queue NaCl layer |
+| Routing | 2-hop onion routing — sender IP hidden from recipient's server |
+| Servers | Stateless — messages in memory only, deleted after delivery |
+| Files | XFTP — separate protocol, files split across multiple servers |
+| Calls | WebRTC with E2E encryption, ICE via chat protocol |
+| Platforms | iOS, Android, Desktop (Mac/Win/Linux), Terminal CLI |
+
+**Bot API Architecture:**
+
+```
+User (SimpleX mobile/desktop/CLI)
+    |
+    | SimpleX Protocol (E2E encrypted, no user IDs)
+    |
+SimpleX CLI (WebSocket server, port 5225)
+    |
+    | WebSocket JSON API (corrId request/response)
+    |
+aidevops SimpleX Bot (TypeScript/Bun)
+    |--- aidevops CLI commands (/run, /status, /deploy)
+    |--- AI model queries (/ask, /analyze)
+    |--- File/voice handling (/voice, /file)
+    |--- Group management (/invite, /role, /broadcast)
+    |--- Task management (/task, /tasks)
+```
+
+**Slash Command Design (no conflicts):**
+
+SimpleX bot commands use `/` in SimpleX chat context. aidevops commands use `/` in terminal context. Separate environments, no collision. Bot command menu configured via `/set bot commands` with hierarchical structure (similar to Telegram inline keyboards).
+
+Starter commands: `/help`, `/status`, `/ask <q>`, `/run <cmd>`, `/task <desc>`, `/tasks`, `/deploy <project>`, `/logs <service>`, `/voice`, `/file`, `/broadcast <msg>`, `/invite @user`, `/role @user <role>`.
+
+**Known Limitations:**
+
+1. **Cross-device sync**: Cannot access same profile from multiple devices simultaneously. Workaround: CLI in cloud + Remote Control Protocol from desktop.
+2. **Owner role recovery**: Lost device = lost group ownership. Mitigation: owner profiles on multiple devices.
+3. **Group stability**: Decentralized groups can have delayed delivery, member list desync at scale.
+4. **Bot WebSocket API unauthenticated**: Must run localhost or behind TLS proxy with basic auth.
+5. **No server-side search**: E2E encryption means local search only.
+
+**Opsec Agent Scope (existing aidevops tools + confirmed additions):**
+
+| Category | Tools / Existing Agents |
+|----------|-------------------------|
+| Messaging | SimpleX (this task), Matrix (`matrix-bot.md`) |
+| Mesh VPN | NetBird (`services/networking/netbird.md`) |
+| VPN | Mullvad, IVPN (confirmed for use) |
+| Secrets | gopass, Bitwarden/Vaultwarden, Enpass, SOPS, multi-tenant |
+| Encryption | gocryptfs, encryption-stack, SOPS |
+| Browsers | Brave (recommended), CamoFox/anti-detect, fingerprint-profiles, stealth-patches |
+| Network | proxy-integration, IP reputation, CDN origin IP |
+| Security | privacy-filter, Shannon entropy, Tirith |
+| Threat modeling | STRIDE, attack trees, risk matrices (guidance, not tooling) |
+
+Note: Additional tools (Tor, YubiKey, Whonix, Tails, etc.) assessed and added as needs arise.
+
+#### Execution Phases
+
+**Phase 1: Research & Foundation** (~2h)
+- [ ] Deep-read SimpleX bot API types reference (COMMANDS.md, EVENTS.md, TYPES.md)
+- [ ] Review TypeScript SDK source (`simplex-chat` npm package)
+- [ ] Test SimpleX CLI installation and basic operations
+- [ ] Review existing `matrix-bot.md`, `ip-reputation-helper.sh`, and `mail-helper.sh` patterns
+
+**Phase 2: Subagent Documentation** (~4h)
+- [ ] Create `.agents/services/communications/simplex.md` — comprehensive knowledge base
+  - Installation (CLI, desktop, mobile)
+  - Bot API reference (WebSocket protocol, commands, events)
+  - Business addresses and multi-agent support
+  - Protocol overview (SMP, XFTP, WebRTC)
+  - Voice notes, file attachments, media handling
+  - Multi-platform usage (desktop, mobile, CLI)
+  - Cross-device workarounds (Remote Control Protocol)
+  - Self-hosted SMP/XFTP server setup
+  - Upstream contribution guidance (AGPL, issue templates, PR workflow)
+  - Limitations and mitigations
+  - Integration with other aidevops capabilities
+
+**Phase 3: Helper Script** (~3h)
+- [ ] Create `simplex-helper.sh` with subcommands:
+  - `install` — download and install SimpleX CLI
+  - `init` — guided setup wizard (create profile, configure servers, create address)
+  - `bot-start` / `bot-stop` — manage bot process
+  - `send <contact> <message>` — send message
+  - `connect <address>` — connect to contact/group
+  - `group <create|list|invite>` — group management
+  - `status` — show connection status, active chats, bot health
+  - `server <setup|status>` — self-hosted SMP server management
+
+**Phase 4: Bot Framework** (~4h)
+- [ ] Create TypeScript/Bun bot scaffold as **channel-agnostic gateway** (inspired by OpenClaw/IronClaw gateway pattern):
+  - Channel abstraction layer — SimpleX as first adapter, Matrix/others plug in later
+  - WebSocket connection to SimpleX CLI (first channel adapter)
+  - Session-per-sender/group isolation (each contact/group gets own state)
+  - Command router with `/` prefix handling
+  - Event handler for NewChatItems, contact requests, file transfers
+  - Starter commands: `/help`, `/status`, `/ask`, `/run`, `/task`, `/tasks`
+  - Command menu configuration (hierarchical, Telegram-style)
+  - DM pairing flow — unknown contacts get pairing code, admin approves via `aidevops simplex pairing approve`
+  - Mention-based activation in groups (respond to `/` commands and @mentions only)
+  - Typing indicators while AI processes
+  - Voice note handling (receive -> transcribe -> respond)
+  - File attachment handling (receive -> analyze/store -> respond)
+  - Business address support (per-customer group chats)
+  - Error handling and reconnection logic
+  - Reference: OpenClaw gateway pattern (225K stars), IronClaw WASM channels
+
+**Phase 4b: Mailbox Transport Adapter** (~3h)
+- [ ] Extend `mail-helper.sh` with SimpleX transport:
+  - New subcommand: `mail-helper.sh transport <simplex|matrix|local>` to configure transport
+  - `local` (default): existing SQLite-only, same-machine mailbox
+  - `simplex`: send/receive mailbox messages over SimpleX (E2E encrypted, cross-machine)
+  - `matrix`: send/receive mailbox messages over Matrix (cross-machine, existing rooms)
+  - Preserve existing message types: task_dispatch, status_report, discovery, request, broadcast
+  - Serialize mailbox messages as JSON over SimpleX/Matrix text messages
+  - Agent registration includes transport preference and remote address
+  - Convoy tracking works across transports (local convoy ID maps to remote message thread)
+  - Fallback: if remote transport unavailable, queue locally and retry
+- [ ] Design: SimpleX transport uses `simplex-helper.sh send` under the hood
+- [ ] Design: Matrix transport uses existing matrix-bot.md capabilities
+- [ ] Test: agent on machine A sends task_dispatch via SimpleX to agent on machine B
+
+**Phase 5: Opsec Agent** (~3h)
+- [ ] Create `.agents/tools/security/opsec.md`:
+  - Threat modeling frameworks (STRIDE, attack trees, risk matrices)
+  - Secure communications (SimpleX vs Matrix — comparison, when to use which)
+  - Platform trust matrix: E2E encryption status, metadata collection, data training policies, phone number requirements — recommend secure apps (SimpleX, Matrix), caution others (Telegram, WhatsApp), warn about unencrypted (Discord, Slack, IRC)
+  - Chat-connected AI security model (inspired by IronClaw/OpenClaw):
+    - DM pairing by default — unknown senders must be approved
+    - Prompt injection defense — chat messages are untrusted input
+    - Tool sandboxing — commands from chat run in restricted environment
+    - Credential isolation — secrets never exposed to chat context
+    - Leak detection — scan outbound messages for credential patterns
+    - Per-group tool policies — different groups get different permissions
+    - Exec approvals — dangerous commands require explicit approval
+  - Network privacy (NetBird mesh VPN, existing proxy-integration, IP reputation, CDN origin IP agents)
+  - VPN guidance (Mullvad, IVPN — when and how to use)
+  - Browser privacy (Brave recommended, CamoFox/anti-detect, fingerprint-profiles, stealth-patches)
+  - Secret management (existing gopass, Bitwarden/Vaultwarden, SOPS, gocryptfs, encryption-stack agents)
+  - Operational security practices (compartmentalization, metadata hygiene, credential rotation)
+  - aidevops-specific opsec (multi-tenant credentials, privacy-filter, audit trails)
+  - Cross-references to all existing security/credentials/browser agents
+  - Reference: IronClaw security model, OpenClaw security defaults
+  - Note: additional tools (Tor, YubiKey, Whonix, Tails) assessed as needs arise
+
+**Phase 6: Chat Security** (~6h, inspired by IronClaw/OpenClaw)
+- [ ] Prompt injection defense for chat inputs (t1327.8):
+  - Pattern detection: role-play attacks, instruction override, delimiter injection, encoding tricks
+  - Content sanitization before passing to AI model
+  - Severity-based policy: block (reject message), warn (process but flag), sanitize (strip dangerous patterns)
+  - Log flagged attempts for audit
+  - Reference: IronClaw's multi-layer prompt injection defense
+- [ ] Outbound leak detection (t1327.9):
+  - Scan AI responses before sending to chat for: API keys, credentials, file paths, internal IPs, DB connection strings
+  - Extend existing Shannon entropy detection pattern (`tools/security/shannon.md`)
+  - Gate at bot's send boundary — if leak detected, redact and warn operator
+  - Reference: IronClaw's host-boundary leak scanning
+- [ ] Exec approval flow for remote chat commands (t1327.10):
+  - When user sends `/run <command>` via chat, classify command risk level
+  - Safe commands (e.g., `/status`, `/tasks`, `/help`) — execute immediately
+  - Approval-required commands (e.g., `/run`, `/deploy`) — send approval request back to chat, wait for confirmation (configurable timeout, default reject)
+  - Blocked commands (configurable) — reject with explanation
+  - Approval can come from same user (if owner) or designated approver contact
+  - Reference: IronClaw TUI approval overlay, OpenClaw `/approve` flow
+
+**Phase 7: Matterbridge Integration** — split to t1328
+
+**Phase 8: Integration & Testing** (~4h)
+- [ ] Update `subagent-index.toon` with simplex and opsec entries
+- [ ] Update both `AGENTS.md` files (domain index)
+- [ ] End-to-end test: install CLI, create bot, send/receive messages
+- [ ] Test voice note and file attachment handling
+- [ ] Test business address flow
+- [ ] ShellCheck all scripts, markdown lint all docs
+- [ ] Document in simplex.md: how to contribute upstream (issue templates, PR workflow, feedback logging via `gh issue create`)
+
+#### Decision Log
+
+| Date | Decision | Rationale |
+|------|----------|-----------|
+| 2026-02-25 | SimpleX over Signal/Telegram | Only platform with zero user identifiers — true anonymity |
+| 2026-02-25 | Bot via WebSocket API, not direct SMP | Officially supported, avoids reimplementing complex protocol |
+| 2026-02-25 | TypeScript/Bun for bot, not Haskell | Aligns with aidevops ecosystem, TypeScript SDK available |
+| 2026-02-25 | No MCP server — CLI agents sufficient | MCP adds context bloat with no capability the bot + helper script don't provide |
+| 2026-02-25 | Extend existing mailbox, not new protocol | mail-helper.sh already has message types, agent registration, convoy tracking — add SimpleX/Matrix as transport adapters |
+| 2026-02-25 | Opsec scoped to existing aidevops tools + confirmed | NetBird, Mullvad, IVPN, Brave, CamoFox + existing agents. Others assessed as needs arise |
+| 2026-02-25 | Slash commands coexist without conflict | Separate contexts (SimpleX chat vs terminal) — document clearly |
+| 2026-02-25 | Business address for multi-agent support | Per-customer group chats ideal for support bots with escalation |
+| 2026-02-25 | Voice/video calls as future phase | Depends on aidevops gaining real-time audio/video processing |
+| 2026-02-25 | Self-hosted SMP server guidance included | Maximum privacy requires own infrastructure — document setup |
+| 2026-02-25 | Matterbridge for SimpleX-Matrix bridging | Existing adapter (matterbridge-simplex) bridges SimpleX to 40+ platforms via Matterbridge — unifies with existing Matrix integration |
+| 2026-02-25 | Privacy gradient via bridging | Users choose SimpleX (max privacy) or Matrix/Telegram (convenience) — same conversation, different privacy levels |
+| 2026-02-25 | Bot as channel-agnostic gateway | Inspired by OpenClaw (225K stars) gateway pattern — SimpleX as first adapter, Matrix/others plug in later without rewriting core |
+| 2026-02-25 | Chat security as dedicated phase | IronClaw/OpenClaw both treat inbound DMs as untrusted — prompt injection defense, leak detection, exec approvals are real gaps in aidevops |
+| 2026-02-25 | Matterbridge split to t1328 | Separate agent — Matterbridge is a general-purpose bridge tool, not SimpleX-specific |
+
+#### Surprises & Discoveries
+
+- SimpleX bot command menus support nested hierarchical structure — more capable than expected, similar to Telegram inline keyboards
+- Business addresses create per-customer GROUP chats (not direct chats) — enables multi-agent support scenarios
+- Remote Control Protocol (XRCP) allows controlling CLI from desktop app via SSH tunnel — solves cross-device limitation for bot management
+- SimpleX has a TypeScript types package (`@simplex-chat/types`) auto-generated from the bot API — reduces manual type definitions
+- 2-hop onion routing is built into the protocol — sender IP protection without requiring Tor
+- AGPL license means any bot framework we build and distribute must be open source — aligns with aidevops's open approach
+- matterbridge-simplex already exists (MIT, 52 commits, Docker-compose ready) — no need to build a custom SimpleX-Matrix bridge from scratch
+- Matterbridge supports 40+ platforms — one bridge config gives us SimpleX + Matrix + Telegram + Discord + Slack + IRC simultaneously
+- `/hide` prefix in SimpleX messages prevents bridging — useful for private comms that should stay on SimpleX only
+
+---
+
 ## Completed Plans
 
 ### [2025-12-21] Beads Integration for aidevops Tasks & Plans ✓
