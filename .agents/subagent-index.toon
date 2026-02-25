@@ -13,7 +13,8 @@ Social-Media,social-media.md,Social media management,opus
 Video,video.md,AI video generation and prompt engineering,opus
 -->
 
-<!--TOON:model_tiers[6]{tier,model_id,use_case}:
+<!--TOON:model_tiers[7]{tier,model_id,use_case}:
+local,llama.cpp (user GGUF),Free private offline inference
 haiku,claude-haiku-4-5,Triage routing and simple tasks
 sonnet,claude-sonnet-4-6,Code review and implementation
 opus,claude-opus-4-6,Architecture and complex reasoning
@@ -22,7 +23,7 @@ pro,gemini-2.5-pro,Capable large context
 grok,grok-3,Research and real-time web knowledge
 -->
 
-<!--TOON:subagents[56]{folder,purpose,key_files}:
+<!--TOON:subagents[57]{folder,purpose,key_files}:
 aidevops/,Framework internals - extending aidevops and architecture and plugins,setup|architecture|troubleshooting|self-improving-agents|claude-flow-comparison|plugins
 business/,Company orchestration - runner configs for company functions,company-runners
 memory/,Cross-session memory - SQLite FTS5 storage,README
@@ -65,6 +66,7 @@ tools/automation/,Automation - cron scheduling objective runner and macOS AppleS
 tools/wordpress/,WordPress ecosystem - local dev and fleet,wp-dev|wp-admin|localwp|mainwp|wp-preferred|scf
 tools/containers/,Container runtimes - Docker and Linux VMs on macOS and remote dispatch via SSH/Tailscale,orbstack|remote-dispatch
 tools/infrastructure/,Infrastructure - cloud GPU deployment and compute,cloud-gpu
+tools/local-models/,Local AI model inference - llama.cpp setup GGUF models usage tracking disk cleanup,local-models
 services/accessibility/,Unified web and email accessibility auditing - WCAG compliance remediation and monitoring,accessibility-audit
 services/hosting/,Hosting providers - DNS and cloud servers and local dev,local-hosting|localhost|hostinger|hetzner|cloudflare|cloudflare-platform|cloudron|closte
 services/networking/,Networking - mesh VPN and secure device connectivity,tailscale|netbird
@@ -113,7 +115,7 @@ feature-development,workflows/feature-development.md,Feature development workflo
 conversation-starter,workflows/conversation-starter.md,Session greeting and auto-recall
 -->
 
-<!--TOON:scripts[93]{name,purpose}:
+<!--TOON:scripts[94]{name,purpose}:
 accessibility-helper.sh,Accessibility and contrast testing (WCAG compliance WAVE API for websites and emails)
 accessibility-audit-helper.sh,Accessibility audit CLI wrapping axe-core WAVE API WebAIM contrast and Lighthouse a11y
 auto-update-helper.sh,Automatic update polling daemon (enable disable status check logs)
@@ -126,6 +128,7 @@ code-audit-helper.sh,Run remote auditing (CodeRabbit Codacy SonarCloud)
 chrome-webstore-helper.sh,Chrome Web Store release automation (setup publish status upload-secrets)
 version-manager.sh,Version bumps and releases
 linter-manager.sh,Install and manage linters
+local-model-helper.sh,Local AI model management via llama.cpp (setup start stop status models download search recommend cleanup usage benchmark) [planned]
 github-cli-helper.sh,GitHub operations
 coolify-helper.sh,Coolify deployment management
 uncloud-helper.sh,Uncloud multi-machine container orchestration
