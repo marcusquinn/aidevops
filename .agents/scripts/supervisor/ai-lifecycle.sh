@@ -734,10 +734,10 @@ process_ai_lifecycle() {
 				WHEN 'merging' THEN 1
 				WHEN 'merged' THEN 2
 				WHEN 'deploying' THEN 3
-				WHEN 'blocked' THEN 4
-				WHEN 'review_triage' THEN 5
-				WHEN 'pr_review' THEN 6
-				WHEN 'complete' THEN 7
+				WHEN 'review_triage' THEN 4
+				WHEN 'pr_review' THEN 5
+				WHEN 'complete' THEN 6
+				WHEN 'blocked' THEN 7
 				WHEN 'running' THEN 8
 				WHEN 'evaluating' THEN 9
 				WHEN 'dispatched' THEN 10
