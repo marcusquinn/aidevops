@@ -60,7 +60,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly SCRIPT_DIR
 
 # shellcheck source=/dev/null
-source "${SCRIPT_DIR}/shared-constants.sh" 2>/dev/null || {
+source "${SCRIPT_DIR}/shared-constants.sh" || {
 	# shared-constants.sh is optional — defaults are defined below
 	[[ "${SIMPLEX_DEBUG:-}" == "true" ]] && printf '[DEBUG] shared-constants.sh not found or failed to source\n' >&2
 	true
