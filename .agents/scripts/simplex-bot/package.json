@@ -1,0 +1,22 @@
+{
+  "name": "@aidevops/simplex-bot",
+  "version": "1.0.0",
+  "description": "SimpleX Chat bot framework for aidevops — channel-agnostic gateway with WebSocket API",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "dev": "bun --watch run src/index.ts",
+    "typecheck": "bun x tsc --noEmit",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.9",
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "license": "MIT",
+  "private": true
+}
