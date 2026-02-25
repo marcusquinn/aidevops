@@ -542,13 +542,14 @@ _unpin_health_issue() {
 	issue_node_id=$(gh issue view "$issue_number" --repo "$repo_slug" --json id --jq '.id' 2>/dev/null || echo "")
 	[[ -z "$issue_node_id" ]] && return 0
 
-	gh api graphql -f query="
+	if gh api graphql -f query="
 		mutation {
 			unpinIssue(input: {issueId: \"${issue_node_id}\"}) {
 				issue { number }
 			}
-		}" >/dev/null 2>&1 || true
-	log_verbose "  Unpinned health issue #$issue_number"
+		}" >/dev/null 2>&1; then
+		log_verbose "  Unpinned health issue #$issue_number"
+	fi
 
 	return 0
 }
