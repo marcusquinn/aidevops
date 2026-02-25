@@ -188,8 +188,12 @@ check_positional_parameters() {
             /print.*\$[1-9]/ { next }
             /Usage:/ { next }
             # Skip currency/pricing patterns: $[1-9] followed by digit, decimal, comma,
-            # or slash (e.g. $28/mo, $1.99, $1,000) — false-positives in markdown tables.
+            # slash (e.g. $28/mo, $1.99, $1,000), pipe (markdown table), or common
+            # currency/pricing unit words (per, mo, month, flat, etc.).
             /\$[1-9][0-9.,\/]/ { next }
+            /\$[1-9][[:space:]]*\|/ { next }
+            /\$[1-9][[:space:]]+(per|mo(nth)?|year|yr|day|week|hr|hour|flat|each|off|fee|plan|tier|user|seat|unit|addon|setup|trial|credit|annual|quarterly|monthly)[[:space:][:punct:]]/ { next }
+            /\$[1-9][[:space:]]+(per|mo(nth)?|year|yr|day|week|hr|hour|flat|each|off|fee|plan|tier|user|seat|unit|addon|setup|trial|credit|annual|quarterly|monthly)$/ { next }
             in_func && /\$[1-9]/ && !/local.*=.*\$[1-9]/ {
                 print FILENAME ":" NR ": " $0
             }

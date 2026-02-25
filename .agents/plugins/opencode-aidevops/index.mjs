@@ -1510,9 +1510,11 @@ const BUILTIN_TTSR_RULES = [
     // Only match bare $N at the start of a line or after whitespace in what looks
     // like a shell assignment/command context — avoids matching $1 inside prose,
     // documentation, quoted examples, or tool output from file reads.
-    // Excludes currency/pricing patterns: $[1-9] followed by digits, decimal, comma,
-    // or slash (e.g. $28/mo, $1.99, $1,000) to prevent false-positives in markdown tables.
-    pattern: "^\\s+(?:echo|printf|return|if|\\[\\[).*\\$[1-9](?![0-9.,/])(?!.*local\\s+\\w+=)",
+    // Excludes currency/pricing patterns:
+    //   - $[1-9] followed by digits, decimal, comma, or slash (e.g. $28/mo, $1.99, $1,000)
+    //   - $[1-9] followed by pipe (markdown table cell boundary)
+    //   - $[1-9] followed by common currency/pricing unit words (per, mo, month, flat, etc.)
+    pattern: "^\\s+(?:echo|printf|return|if|\\[\\[).*\\$[1-9](?![0-9.,/])(?!\\s*[|])(?!\\s+(?:per|mo(?:nth)?|year|yr|day|week|hr|hour|flat|each|off|fee|plan|tier|user|seat|unit|addon|setup|trial|credit|annual|quarterly|monthly)\\b)(?!.*local\\s+\\w+=)",
     correction: "Use `local var=\"$1\"` pattern — never use positional parameters directly (SonarCloud S7679).",
     severity: "warn",
     systemPrompt: "Shell scripts: use `local var=\"$1\"` — never use $1 directly in function bodies.",

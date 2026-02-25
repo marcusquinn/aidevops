@@ -78,10 +78,11 @@ validate_positional_parameters() {
 
 	for file in "$@"; do
 		# Exclude currency/pricing patterns: $[1-9] followed by digit, decimal, comma,
-		# or slash (e.g. $28/mo, $1.99, $1,000) — false-positives in markdown tables.
-		if [[ -f "$file" ]] && grep -n '\$[1-9]' "$file" | grep -v 'local.*=.*\$[1-9]' | grep -vE '\$[1-9][0-9.,/]' >/dev/null; then
+		# slash (e.g. $28/mo, $1.99, $1,000), pipe (markdown table cell), or common
+		# currency/pricing unit words (per, mo, month, flat, etc.).
+		if [[ -f "$file" ]] && grep -n '\$[1-9]' "$file" | grep -v 'local.*=.*\$[1-9]' | grep -vE '\$[1-9][0-9.,/]' | grep -vE '\$[1-9]\s*\|' | grep -vE '\$[1-9]\s+(per|mo(nth)?|year|yr|day|week|hr|hour|flat|each|off|fee|plan|tier|user|seat|unit|addon|setup|trial|credit|annual|quarterly|monthly)\b' >/dev/null; then
 			print_error "Direct positional parameter usage in $file"
-			grep -n '\$[1-9]' "$file" | grep -v 'local.*=.*\$[1-9]' | grep -vE '\$[1-9][0-9.,/]' | head -3
+			grep -n '\$[1-9]' "$file" | grep -v 'local.*=.*\$[1-9]' | grep -vE '\$[1-9][0-9.,/]' | grep -vE '\$[1-9]\s*\|' | grep -vE '\$[1-9]\s+(per|mo(nth)?|year|yr|day|week|hr|hour|flat|each|off|fee|plan|tier|user|seat|unit|addon|setup|trial|credit|annual|quarterly|monthly)\b' | head -3
 			((violations++))
 		fi
 	done
