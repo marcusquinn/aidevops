@@ -1981,7 +1981,7 @@ Respond with ONLY a JSON object: {\"verdict\": \"stale|uncertain|current\", \"re
 
 	local ai_result=""
 	if [[ "$ai_cli" == "opencode" ]]; then
-		ai_result=$(portable_timeout 15 opencode run \
+		ai_result=$(portable_timeout 30 opencode run \
 			-m "$ai_model" \
 			--format default \
 			--title "staleness-$$" \
@@ -1989,7 +1989,7 @@ Respond with ONLY a JSON object: {\"verdict\": \"stale|uncertain|current\", \"re
 		ai_result=$(printf '%s' "$ai_result" | sed 's/\x1b\[[0-9;]*[mGKHF]//g; s/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b\]//g; s/\x07//g')
 	else
 		local claude_model="${ai_model#*/}"
-		ai_result=$(portable_timeout 15 claude \
+		ai_result=$(portable_timeout 30 claude \
 			-p "$prompt" \
 			--model "$claude_model" \
 			--output-format text 2>/dev/null || echo "")
@@ -2246,6 +2246,7 @@ create_github_issue() {
 	# (e.g., different task IDs for the same work, rephrased descriptions)
 	local new_title="${task_id}: ${_description}"
 	local dedup_result
+	local _dedup_exit=0
 	if dedup_result=$(ai_detect_duplicate_issue "$new_title" "" "$repo_slug" 2>/dev/null); then
 		local dup_number
 		dup_number=$(printf '%s' "$dedup_result" | jq -r '.duplicate_of // ""' 2>/dev/null | tr -d '#')
@@ -2257,6 +2258,8 @@ create_github_issue() {
 			echo "$dup_number"
 			return 0
 		fi
+	else
+		_dedup_exit=$?
 	fi
 
 	# Delegate to issue-sync-helper.sh push tNNN (t020.6: single source of truth)
@@ -2284,6 +2287,15 @@ create_github_issue() {
 
 	log_success "Created GitHub issue #${issue_number} for $task_id via issue-sync-helper.sh"
 
+	# t1325: If AI dedup was unavailable, queue deferred re-evaluation
+	# so the duplicate check runs again on next pulse (prevents permanent false negatives)
+	if [[ "${_dedup_exit:-0}" -eq 2 ]]; then
+		queue_deferred_assessment "dedup_issue" \
+			"$(printf '{"title":"%s","repo_slug":"%s","issue_number":"%s"}' \
+				"$(printf '%s' "$new_title" | sed 's/"/\\"/g')" \
+				"$repo_slug" "$issue_number")"
+	fi
+
 	# Update supervisor DB with issue URL
 	local escaped_id
 	escaped_id=$(sql_escape "$task_id")
@@ -2294,7 +2306,210 @@ create_github_issue() {
 	# issue-sync-helper.sh already added ref:GH#N to TODO.md — commit and push it
 	commit_and_push_todo "$repo_path" "chore: add GH#${issue_number} ref to $task_id in TODO.md"
 
+	# t1325: AI auto-dispatch assessment for newly created issues
+	# Determines if the task should get #auto-dispatch tag for supervisor pickup
+	local task_line
+	task_line=$(grep -E "^\s*- \[.\] ${task_id} " "$repo_path/TODO.md" 2>/dev/null | head -1 || echo "")
+	if [[ -n "$task_line" ]] && ! printf '%s' "$task_line" | grep -q '#auto-dispatch'; then
+		local _dispatch_exit=0
+		if ai_assess_auto_dispatch "$task_id" "$task_line" "$repo_path" 2>/dev/null; then
+			# Dispatchable — add #auto-dispatch to TODO.md
+			local line_num
+			line_num=$(grep -n "^\s*- \[.\] ${task_id} " "$repo_path/TODO.md" | head -1 | cut -d: -f1 || echo "")
+			if [[ -n "$line_num" ]]; then
+				sed_inplace "${line_num}s/$/ #auto-dispatch/" "$repo_path/TODO.md"
+				log_info "AI assessed $task_id as auto-dispatchable"
+				commit_and_push_todo "$repo_path" "chore: AI assessed $task_id as auto-dispatchable" 2>/dev/null || true
+			fi
+		else
+			_dispatch_exit=$?
+			if [[ "$_dispatch_exit" -eq 2 ]]; then
+				queue_deferred_assessment "auto_dispatch" \
+					"$(printf '{"task_id":"%s","repo_path":"%s"}' \
+						"$task_id" "$repo_path")"
+			fi
+		fi
+	fi
+
 	echo "$issue_number"
+	return 0
+}
+
+#######################################
+# Queue a deferred AI assessment for retry on next pulse (t1325)
+#
+# When an AI assessment fails (timeout, unavailable, unparseable), the
+# decision falls back to a conservative default. This function queues
+# the assessment for retry so the AI gets another chance to evaluate it.
+# Without this, fallback decisions become permanent (e.g., a duplicate
+# issue is never detected, a task never gets auto-dispatch label).
+#
+# Args:
+#   $1 - assessment type (dedup_issue|auto_dispatch|staleness)
+#   $2 - context JSON (type-specific data needed to retry)
+#
+# Returns: 0 always (best-effort, never blocks caller)
+#######################################
+queue_deferred_assessment() {
+	local assess_type="$1"
+	local context_json="$2"
+
+	local pending_file="${SUPERVISOR_DIR:-$HOME/.aidevops/.agent-workspace/supervisor}/pending-assessments.jsonl"
+	mkdir -p "$(dirname "$pending_file")" 2>/dev/null || true
+
+	local timestamp
+	timestamp=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+	# Append as JSONL (one JSON object per line)
+	printf '{"type":"%s","queued_at":"%s","context":%s}\n' \
+		"$assess_type" "$timestamp" "$context_json" \
+		>>"$pending_file" 2>/dev/null || true
+
+	log_info "Queued deferred $assess_type assessment for retry"
+	return 0
+}
+
+#######################################
+# Process deferred AI assessments queued by queue_deferred_assessment (t1325)
+#
+# Called by pulse Phase 8 (or similar idle phase). Reads pending-assessments.jsonl,
+# retries each assessment, and removes successful ones. Failed retries stay
+# in the queue for the next pulse. Entries older than 24h are expired.
+#
+# Returns: 0 always
+#######################################
+process_deferred_assessments() {
+	local pending_file="${SUPERVISOR_DIR:-$HOME/.aidevops/.agent-workspace/supervisor}/pending-assessments.jsonl"
+
+	if [[ ! -f "$pending_file" ]]; then
+		return 0
+	fi
+
+	local line_count
+	line_count=$(wc -l <"$pending_file" 2>/dev/null | tr -d ' ')
+	if [[ "$line_count" -eq 0 ]]; then
+		return 0
+	fi
+
+	log_info "Processing $line_count deferred AI assessment(s)"
+
+	local remaining_file="${pending_file}.tmp"
+	: >"$remaining_file"
+
+	local processed=0
+	local expired=0
+	local retried=0
+	local now_epoch
+	now_epoch=$(date +%s)
+	local max_age=86400 # 24h expiry
+
+	while IFS= read -r line; do
+		[[ -z "$line" ]] && continue
+
+		local assess_type
+		assess_type=$(printf '%s' "$line" | jq -r '.type // ""' 2>/dev/null || echo "")
+		local queued_at
+		queued_at=$(printf '%s' "$line" | jq -r '.queued_at // ""' 2>/dev/null || echo "")
+
+		# Expire old entries
+		if [[ -n "$queued_at" ]]; then
+			local queued_epoch
+			queued_epoch=$(date -j -f '%Y-%m-%dT%H:%M:%SZ' "$queued_at" '+%s' 2>/dev/null || echo "0")
+			if [[ $((now_epoch - queued_epoch)) -gt $max_age ]]; then
+				expired=$((expired + 1))
+				continue
+			fi
+		fi
+
+		case "$assess_type" in
+		dedup_issue)
+			local title repo_slug issue_number
+			title=$(printf '%s' "$line" | jq -r '.context.title // ""' 2>/dev/null || echo "")
+			repo_slug=$(printf '%s' "$line" | jq -r '.context.repo_slug // ""' 2>/dev/null || echo "")
+			issue_number=$(printf '%s' "$line" | jq -r '.context.issue_number // ""' 2>/dev/null || echo "")
+
+			if [[ -z "$title" || -z "$repo_slug" ]]; then
+				continue # Malformed, drop it
+			fi
+
+			local dedup_result
+			if dedup_result=$(ai_detect_duplicate_issue "$title" "" "$repo_slug" 2>/dev/null); then
+				local dup_number
+				dup_number=$(printf '%s' "$dedup_result" | jq -r '.duplicate_of // ""' 2>/dev/null | tr -d '#')
+				if [[ -n "$dup_number" && "$dup_number" =~ ^[0-9]+$ && -n "$issue_number" ]]; then
+					local dup_reason
+					dup_reason=$(printf '%s' "$dedup_result" | jq -r '.reason // ""' 2>/dev/null)
+					log_info "Deferred dedup: #$issue_number duplicates #$dup_number — $dup_reason"
+					# Close the duplicate with a comment
+					gh issue close "$issue_number" --repo "$repo_slug" \
+						--comment "Closing as duplicate of #${dup_number} (detected by deferred AI assessment: $dup_reason)" \
+						2>/dev/null || true
+				fi
+				retried=$((retried + 1))
+			else
+				local exit_code=$?
+				if [[ $exit_code -eq 2 ]]; then
+					# AI still unavailable — keep in queue
+					printf '%s\n' "$line" >>"$remaining_file"
+				else
+					# AI said not a duplicate — assessment complete, drop from queue
+					retried=$((retried + 1))
+				fi
+			fi
+			;;
+		auto_dispatch)
+			local task_id repo_path
+			task_id=$(printf '%s' "$line" | jq -r '.context.task_id // ""' 2>/dev/null || echo "")
+			repo_path=$(printf '%s' "$line" | jq -r '.context.repo_path // ""' 2>/dev/null || echo "")
+
+			if [[ -z "$task_id" || -z "$repo_path" || ! -f "$repo_path/TODO.md" ]]; then
+				continue # Malformed or repo gone, drop it
+			fi
+
+			local task_line
+			task_line=$(grep -E "^\s*- \[.\] ${task_id} " "$repo_path/TODO.md" 2>/dev/null | head -1 || echo "")
+			if [[ -z "$task_line" ]]; then
+				continue # Task no longer in TODO.md
+			fi
+
+			if ai_assess_auto_dispatch "$task_id" "$task_line" "$repo_path" >/dev/null 2>&1; then
+				# Dispatchable — add #auto-dispatch to TODO.md if not already present
+				if ! printf '%s' "$task_line" | grep -q '#auto-dispatch'; then
+					local line_num
+					line_num=$(grep -n "^\s*- \[.\] ${task_id} " "$repo_path/TODO.md" | head -1 | cut -d: -f1 || echo "")
+					if [[ -n "$line_num" ]]; then
+						sed_inplace "${line_num}s/$/ #auto-dispatch/" "$repo_path/TODO.md"
+						log_info "Deferred dispatch assessment: added #auto-dispatch to $task_id"
+						commit_and_push_todo "$repo_path" "chore: AI assessed $task_id as auto-dispatchable (deferred)" 2>/dev/null || true
+					fi
+				fi
+				retried=$((retried + 1))
+			else
+				local exit_code=$?
+				if [[ $exit_code -eq 2 ]]; then
+					# AI still unavailable — keep in queue
+					printf '%s\n' "$line" >>"$remaining_file"
+				else
+					# AI said not dispatchable — assessment complete, drop from queue
+					retried=$((retried + 1))
+				fi
+			fi
+			;;
+		*)
+			# Unknown type — drop it
+			;;
+		esac
+
+		processed=$((processed + 1))
+	done <"$pending_file"
+
+	# Replace pending file with remaining entries
+	mv "$remaining_file" "$pending_file" 2>/dev/null || true
+
+	if [[ $retried -gt 0 || $expired -gt 0 ]]; then
+		log_info "Deferred assessments: $retried completed, $expired expired, $(wc -l <"$pending_file" 2>/dev/null | tr -d ' ') remaining"
+	fi
+
 	return 0
 }
 
@@ -2374,7 +2589,7 @@ Respond with ONLY a JSON object:
 
 	local ai_result=""
 	if [[ "$ai_cli" == "opencode" ]]; then
-		ai_result=$(portable_timeout 15 opencode run \
+		ai_result=$(portable_timeout 30 opencode run \
 			-m "$ai_model" \
 			--format default \
 			--title "dedup-issue-$$" \
@@ -2382,7 +2597,7 @@ Respond with ONLY a JSON object:
 		ai_result=$(printf '%s' "$ai_result" | sed 's/\x1b\[[0-9;]*[mGKHF]//g; s/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b\]//g; s/\x07//g')
 	else
 		local claude_model="${ai_model#*/}"
-		ai_result=$(portable_timeout 15 claude \
+		ai_result=$(portable_timeout 30 claude \
 			-p "$prompt" \
 			--model "$claude_model" \
 			--output-format text 2>/dev/null || echo "")
@@ -2517,7 +2732,7 @@ Respond with ONLY a JSON object:
 
 	local ai_result=""
 	if [[ "$ai_cli" == "opencode" ]]; then
-		ai_result=$(portable_timeout 15 opencode run \
+		ai_result=$(portable_timeout 30 opencode run \
 			-m "$ai_model" \
 			--format default \
 			--title "dispatch-assess-$$" \
@@ -2525,7 +2740,7 @@ Respond with ONLY a JSON object:
 		ai_result=$(printf '%s' "$ai_result" | sed 's/\x1b\[[0-9;]*[mGKHF]//g; s/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b\]//g; s/\x07//g')
 	else
 		local claude_model="${ai_model#*/}"
-		ai_result=$(portable_timeout 15 claude \
+		ai_result=$(portable_timeout 30 claude \
 			-p "$prompt" \
 			--model "$claude_model" \
 			--output-format text 2>/dev/null || echo "")

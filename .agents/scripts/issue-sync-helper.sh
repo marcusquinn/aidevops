@@ -118,14 +118,14 @@ Respond with ONLY a JSON object:
 
 	local ai_result=""
 	if [[ "$ai_cli" == "opencode" ]]; then
-		ai_result=$(timeout 15 opencode run \
+		ai_result=$(timeout 30 opencode run \
 			-m "anthropic/claude-sonnet-4-20250514" \
 			--format default \
 			--title "dedup-$$" \
 			"$prompt" 2>/dev/null || echo "")
 		ai_result=$(printf '%s' "$ai_result" | sed 's/\x1b\[[0-9;]*[mGKHF]//g; s/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b\]//g; s/\x07//g')
 	else
-		ai_result=$(timeout 15 claude \
+		ai_result=$(timeout 30 claude \
 			-p "$prompt" \
 			--model "claude-sonnet-4-20250514" \
 			--output-format text 2>/dev/null || echo "")
@@ -1343,6 +1343,7 @@ cmd_push() {
 
 		# t1324: AI-based semantic duplicate detection before creating
 		# Only runs on GitHub (gh CLI required for issue listing)
+		local _dedup_failed=0
 		if [[ "$_DETECTED_PLATFORM" == "github" ]]; then
 			local dup_issue_num
 			if dup_issue_num=$(_ai_check_duplicate "$title" "$repo_slug" 2>/dev/null); then
@@ -1352,6 +1353,10 @@ cmd_push() {
 					skipped=$((skipped + 1))
 					continue
 				fi
+			else
+				# t1325: Track if AI was unavailable (empty result = timeout/error)
+				# so we can queue deferred re-evaluation after issue creation
+				_dedup_failed=1
 			fi
 		fi
 
@@ -1408,6 +1413,21 @@ cmd_push() {
 			print_success "Created #$issue_number: $title"
 			add_gh_ref_to_todo "$task_id" "$issue_number" "$todo_file"
 			created=$((created + 1))
+
+			# t1325: Queue deferred dedup assessment if AI was unavailable
+			# Writes directly to supervisor's pending-assessments.jsonl
+			if [[ "$_dedup_failed" -eq 1 ]]; then
+				local pending_file="${SUPERVISOR_DIR:-$HOME/.aidevops/.agent-workspace/supervisor}/pending-assessments.jsonl"
+				mkdir -p "$(dirname "$pending_file")" 2>/dev/null || true
+				local ts
+				ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+				local escaped_title
+				escaped_title=$(printf '%s' "$title" | sed 's/"/\\"/g')
+				printf '{"type":"dedup_issue","queued_at":"%s","context":{"title":"%s","repo_slug":"%s","issue_number":"%s"}}\n' \
+					"$ts" "$escaped_title" "$repo_slug" "$issue_number" \
+					>>"$pending_file" 2>/dev/null || true
+				log_verbose "Queued deferred dedup assessment for #$issue_number"
+			fi
 		fi
 	done
 
