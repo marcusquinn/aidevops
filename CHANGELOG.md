@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.127.1] - 2026-02-25
+
+### Fixed
+
+- gather_task_state query references non-existent worker_pid column — Phase 3 completely broken (#2275)
+
 ## [2.127.0] - 2026-02-25
 
 ### Added
