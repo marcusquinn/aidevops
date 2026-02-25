@@ -42,6 +42,38 @@ launchctl unload ~/Library/LaunchAgents/com.aidevops.aidevops-supervisor-pulse.p
 launchctl list | grep aidevops-supervisor-pulse
 ```
 
+## Pre-check: Repo Config
+
+Before dispatching, verify the pulse repo config exists:
+
+```bash
+cat ~/.config/aidevops/pulse-repos.json
+```
+
+If the file is **missing or empty**, STOP and tell the user:
+
+> Runners needs to know which repos to work on. Create `~/.config/aidevops/pulse-repos.json`:
+>
+> ```json
+> {
+>   "repos": [
+>     {
+>       "slug": "owner/repo",
+>       "path": "~/Git/repo",
+>       "priority": "product"
+>     }
+>   ]
+> }
+> ```
+>
+> - `slug`: GitHub owner/repo (used for `gh` commands)
+> - `path`: local checkout path (used for `--dir` in worker dispatch)
+> - `priority`: `"product"` or `"tooling"` (product repos get priority in tie-breaking)
+
+Then exit. Do not proceed without this config.
+
+Use the `path` values from this config when dispatching workers with `--dir`.
+
 ## Interactive Mode: `/runners`
 
 For manual dispatch of specific work items.
