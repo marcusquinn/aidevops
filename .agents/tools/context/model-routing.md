@@ -46,7 +46,12 @@ model: haiku
 - Simple tasks where network latency exceeds local inference time
 - The task fits within the local model's capability (typically <32K context, simpler reasoning)
 
-**Limitations**: Local models are smaller and less capable than cloud models. Do not route complex reasoning, large-context analysis, or architecture decisions to local. If a local model is not running or not installed, skip to `haiku`.
+**Limitations**: Local models are smaller and less capable than cloud models. Do not route complex reasoning, large-context analysis, or architecture decisions to local.
+
+**Fallback behaviour**: If a local model is not running or not installed, the routing depends on why `local` was selected:
+
+- **Privacy/on-device requirement**: FAIL — do not route to cloud. Return an error instructing the user to start the local server or pass `--allow-cloud` to explicitly override.
+- **Cost optimisation or experimentation**: Fall back to `haiku` (cheapest cloud tier).
 
 ### Use `haiku` when:
 
@@ -118,11 +123,11 @@ Approximate relative costs (sonnet = 1x baseline):
 
 ## Model-Specific Subagents
 
-Concrete model subagents are defined in `tools/ai-assistants/models/`:
+Concrete model subagents are defined across these paths (`tools/ai-assistants/models/` for cloud tiers, `tools/local-models/` for the local tier):
 
 | Tier | Subagent | Primary Model | Fallback |
 |------|----------|---------------|----------|
-| `local` | `tools/local-models/local-models.md` | llama.cpp (user GGUF) | haiku |
+| `local` | `tools/local-models/local-models.md` | llama.cpp (user GGUF) | FAIL (privacy) or haiku (cost) |
 | `haiku` | `models/haiku.md` | claude-haiku-4-5 | gemini-2.5-flash |
 | `flash` | `models/flash.md` | gemini-2.5-flash | gpt-4.1-mini |
 | `sonnet` | `models/sonnet.md` | claude-sonnet-4 | gpt-4.1 |
@@ -173,7 +178,7 @@ Each tier defines a primary model and a fallback from a different provider. When
 
 | Tier | Primary | Fallback | When to Fallback |
 |------|---------|----------|------------------|
-| `local` | llama.cpp (localhost) | haiku | Server not running, no model installed |
+| `local` | llama.cpp (localhost) | haiku (cost-only) or FAIL (privacy) | Server not running, no model installed. Fails closed for privacy/on-device tasks; falls back to haiku only for cost-optimisation use cases. |
 | `haiku` | claude-haiku-4-5 | gemini-2.5-flash | No Anthropic key |
 | `flash` | gemini-2.5-flash | gpt-4.1-mini | No Google key |
 | `sonnet` | claude-sonnet-4 | gpt-4.1 | No Anthropic key |
@@ -237,19 +242,23 @@ Exit codes: 0=available, 1=unavailable, 2=rate-limited, 3=API-key-invalid.
 ## Decision Flowchart
 
 ```text
-Must data stay on-device, or is the task offline/bulk?
+Is the task privacy/on-device constrained?
   → YES: Is a local model running and capable enough?
     → YES: local
-    → NO: haiku (fallback to cloud)
-  → NO: Is the task simple classification/formatting?
-    → YES: haiku
-    → NO: Does it need >50K tokens of context?
-      → YES: Is deep reasoning also needed?
-        → YES: pro
-        → NO: flash
-      → NO: Is it a novel architecture/design problem?
-        → YES: opus
-        → NO: sonnet
+    → NO: FAIL (require --allow-cloud to override)
+  → NO: Is the task bulk/offline where local saves cost?
+    → YES: Is a local model running and capable enough?
+      → YES: local
+      → NO: haiku (cheapest cloud fallback)
+    → NO: Is the task simple classification/formatting?
+      → YES: haiku
+      → NO: Does it need >50K tokens of context?
+        → YES: Is deep reasoning also needed?
+          → YES: pro
+          → NO: flash
+        → NO: Is it a novel architecture/design problem?
+          → YES: opus
+          → NO: sonnet
 ```
 
 ## Examples
