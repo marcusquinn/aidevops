@@ -1371,7 +1371,8 @@ cmd_rate_limits() {
 
 	# Auto-ingest before showing stats.
 	# Keep stdout clean so --json remains machine-parseable.
-	cmd_ingest --quiet >/dev/null || true
+	# Redirect both stdout and stderr to prevent any output contamination.
+	cmd_ingest --quiet >/dev/null 2>&1 || true
 
 	local config_file
 	config_file=$(_get_rate_limits_config) || config_file=""
