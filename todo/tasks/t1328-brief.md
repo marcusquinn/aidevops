@@ -17,7 +17,7 @@ A Matterbridge subagent and helper script for aidevops:
 
 1. **Subagent doc** (`.agents/services/communications/matterbridge.md`) — setup, configuration, platform-specific gateway configs, Docker deployment, security guidance, and cross-reference to opsec agent for platform trust assessment
 2. **Helper script** (`matterbridge-helper.sh`) — CLI wrapper for install, configure, start/stop, status, add/remove gateways, test bridges
-3. **Security cross-reference** — the agent itself documents setup; platform security/privacy assessments live in the opsec agent (`tools/security/opsec.md`, t1327.6) which covers: which platforms are E2E encrypted, which gather metadata, which may train on chat content, and recommends secure apps we already support (SimpleX, Matrix)
+3. **Security cross-reference** — the agent itself documents setup; platform security/privacy assessments live in the opsec agent (`.agents/tools/security/opsec.md`, t1327.6) which covers: which platforms are E2E encrypted, which gather metadata, which may train on chat content, and recommends secure apps we already support (SimpleX, Matrix)
 
 ## Why
 

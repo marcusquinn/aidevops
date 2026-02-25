@@ -16,7 +16,7 @@ A full SimpleX Chat integration for aidevops comprising:
 
 1. **Subagent doc** (`.agents/services/communications/simplex.md`) — comprehensive knowledge base for SimpleX Chat capabilities, bot API, CLI, protocol, setup, and opsec
 2. **Helper script** (`simplex-helper.sh`) — CLI wrapper for common SimpleX operations (install, configure, bot management, message sending, connection management)
-3. **Bot framework** — TypeScript/Node bot scaffold that connects to SimpleX CLI via WebSocket, handles aidevops slash commands, supports direct and group channels
+3. **Bot framework** — TypeScript/Bun bot scaffold that connects to SimpleX CLI via WebSocket, handles aidevops slash commands, supports direct and group channels
 4. **Mailbox transport adapter** — extend existing `mail-helper.sh` SQLite mailbox system to use SimpleX (and optionally Matrix) as a secure network transport for inter-agent communication across devices/machines
 5. **Opsec agent** (`.agents/tools/security/opsec.md`) — operational security guidance cross-referencing existing aidevops security tools, plus NetBird, Mullvad/IVPN, Brave, and threat modeling
 6. **Setup wizard** — guided `aidevops simplex init` flow for installing SimpleX CLI, creating bot profiles, configuring business addresses
@@ -257,12 +257,12 @@ Key decisions from the conversation:
 | Research/read | 2h | Protocol docs, bot API, TypeScript SDK, mail-helper.sh |
 | Subagent doc (simplex.md) | 4h | Comprehensive knowledge base |
 | Helper script (simplex-helper.sh) | 3h | CLI wrapper with subcommands |
-| Bot framework scaffold | 4h | TypeScript WebSocket bot with command routing |
+| Bot framework scaffold | 4h | TypeScript/Bun WebSocket bot with command routing |
 | Mailbox transport adapter | 3h | Extend mail-helper.sh with SimpleX/Matrix transports |
 | Opsec agent (opsec.md) | 3h | Security guidance cross-referencing existing agents |
-| Matterbridge integration | 4h | SimpleX-Matrix bridge setup and scripting |
+| Chat security (t1327.8-10) | 6h | Prompt injection, leak detection, exec approval |
 | Integration/testing | 4h | Index updates, end-to-end tests, linting |
-| **Total** | **~27h** | (ai:20h test:4h read:3h) |
+| **Total** | **~29h** | (ai:22h test:4h read:3h) |
 
 ## Research Notes
 

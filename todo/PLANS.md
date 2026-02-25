@@ -5478,7 +5478,7 @@ Harden the Higgsfield Playwright automator from "works in testing" to "reliable 
 **Estimate:** ~29h (ai:21h test:5h read:3h)
 **TODO:** t1327
 **Logged:** 2026-02-25
-**Reference:** https://simplex.chat/ | https://github.com/simplex-chat/simplex-chat | [Bot API](https://github.com/simplex-chat/simplex-chat/tree/stable/bots) | [TypeScript SDK](https://github.com/simplex-chat/simplex-chat/tree/stable/packages/simplex-chat-client/typescript) | [Whitepaper](https://github.com/simplex-chat/simplexmq/blob/stable/protocol/overview-tjr.md) | [mail-helper.sh](scripts/mail-helper.sh) | [IronClaw](https://github.com/nearai/ironclaw) | [OpenClaw](https://github.com/openclaw/openclaw)
+**Reference:** https://simplex.chat/ | https://github.com/simplex-chat/simplex-chat | [Bot API](https://github.com/simplex-chat/simplex-chat/tree/stable/bots) | [TypeScript SDK](https://github.com/simplex-chat/simplex-chat/tree/stable/packages/simplex-chat-client/typescript) | [Whitepaper](https://github.com/simplex-chat/simplexmq/blob/stable/protocol/overview-tjr.md) | [mail-helper.sh](.agents/scripts/mail-helper.sh) | [IronClaw](https://github.com/nearai/ironclaw) | [OpenClaw](https://github.com/openclaw/openclaw)
 
 <!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
 p032,SimpleX Chat Agent and Command Integration,planning,0,8,,feature|communications|security|bots|opsec|mailbox|chat-security,29h,21h,5h,3h,2026-02-25T00:00Z,
