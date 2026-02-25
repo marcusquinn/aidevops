@@ -526,6 +526,34 @@ sync_issue_status_label() {
 }
 
 #######################################
+# Unpin a GitHub issue (best-effort, never fails the caller)
+# Used when closing/replacing supervisor health issues to prevent
+# stale pinned issues from accumulating on the issues page.
+# Args: $1 = issue number, $2 = repo slug (owner/repo)
+# Returns: 0 always
+#######################################
+_unpin_health_issue() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	[[ -z "$issue_number" || -z "$repo_slug" ]] && return 0
+
+	local issue_node_id
+	issue_node_id=$(gh issue view "$issue_number" --repo "$repo_slug" --json id --jq '.id' 2>/dev/null || echo "")
+	[[ -z "$issue_node_id" ]] && return 0
+
+	gh api graphql -f query="
+		mutation {
+			unpinIssue(input: {issueId: \"${issue_node_id}\"}) {
+				issue { number }
+			}
+		}" >/dev/null 2>&1 || true
+	log_verbose "  Unpinned health issue #$issue_number"
+
+	return 0
+}
+
+#######################################
 # Update pinned queue health issue with live supervisor status (t1013)
 #
 # Creates or updates a single comment on a pinned GitHub issue with:
@@ -579,6 +607,8 @@ update_queue_health_issue() {
 		local issue_state
 		issue_state=$(gh issue view "$health_issue_number" --repo "$repo_slug" --json state --jq '.state' 2>/dev/null || echo "")
 		if [[ "$issue_state" != "OPEN" ]]; then
+			# Unpin the stale/closed issue before discarding it
+			_unpin_health_issue "$health_issue_number" "$repo_slug"
 			health_issue_number=""
 			rm -f "$health_issue_file" "$health_comment_file" 2>/dev/null || true
 		fi
@@ -608,6 +638,8 @@ update_queue_health_issue() {
 			dup_numbers=$(printf '%s' "$label_search_results" | jq -r '.[1:][].number' 2>/dev/null || echo "")
 			while IFS= read -r dup_num; do
 				[[ -z "$dup_num" ]] && continue
+				# Unpin before closing so stale issues don't remain pinned
+				_unpin_health_issue "$dup_num" "$repo_slug"
 				gh issue close "$dup_num" --repo "$repo_slug" \
 					--comment "Closing duplicate supervisor health issue — superseded by #${health_issue_number}." 2>/dev/null || true
 				log_info "  Phase 8c: Closed duplicate health issue #$dup_num (kept #$health_issue_number)"
@@ -678,6 +710,35 @@ update_queue_health_issue() {
 				}
 			}" >/dev/null 2>&1 || true
 		log_info "  Phase 8c: Created and pinned health issue #$health_issue_number for ${runner_user}"
+	fi
+
+	# Ensure the active issue is pinned (idempotent — covers cases where
+	# the issue was found via search but lost its pin, e.g., manual unpin)
+	local _active_node_id
+	_active_node_id=$(gh issue view "$health_issue_number" --repo "$repo_slug" --json id --jq '.id' 2>/dev/null || echo "")
+	if [[ -n "$_active_node_id" ]]; then
+		gh api graphql -f query="
+			mutation {
+				pinIssue(input: {issueId: \"${_active_node_id}\"}) {
+					issue { number }
+				}
+			}" >/dev/null 2>&1 || true
+	fi
+
+	# Unpin any closed supervisor issues for this runner that are still pinned.
+	# This catches stale pins from issues closed externally, cache loss, or
+	# prior versions that didn't unpin on close. Limited to 10 most recent
+	# to avoid excessive API calls on repos with long history.
+	local closed_supervisor_issues
+	closed_supervisor_issues=$(gh issue list --repo "$repo_slug" \
+		--label "supervisor" --label "$runner_user" \
+		--state closed --limit 10 --json number \
+		--jq '.[].number' 2>/dev/null || echo "")
+	if [[ -n "$closed_supervisor_issues" ]]; then
+		while IFS= read -r closed_num; do
+			[[ -z "$closed_num" ]] && continue
+			_unpin_health_issue "$closed_num" "$repo_slug"
+		done <<<"$closed_supervisor_issues"
 	fi
 
 	# Cache the issue number
