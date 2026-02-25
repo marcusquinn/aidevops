@@ -64,12 +64,14 @@ Key files:
 - [ ] `supervisor-helper.sh circuit-breaker reset` resumes dispatch
 - [ ] Counter resets to 0 on any successful task completion
 - [ ] Threshold is configurable via `SUPERVISOR_CIRCUIT_BREAKER_THRESHOLD`
+
   ```yaml
   verify:
     method: codebase
     pattern: "SUPERVISOR_CIRCUIT_BREAKER_THRESHOLD"
     path: ".agents/scripts/supervisor/"
   ```
+
 - [ ] ShellCheck clean on modified scripts
 
 ## Context & Decisions
