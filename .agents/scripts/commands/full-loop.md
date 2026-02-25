@@ -249,6 +249,15 @@ When running as a headless worker (dispatched by the supervisor via `opencode ru
    When proceeding, document the choice: `feat: add retry logic (chose exponential backoff — matches existing patterns)`
    When exiting, be specific: `BLOCKED: Task says 'update auth endpoint' but 3 exist (JWT, OAuth, API key). Need clarification.`
 
+8. **Cross-repo routing** — If you discover mid-task that the fix belongs in a different repo (e.g., working in awardsapp but the bug is in an aidevops framework script), do NOT create tasks or TODO entries in the current repo. Instead, file a GitHub issue in the correct repo:
+
+   ```bash
+   gh issue create --repo <owner/correct-repo> --title "<description>" \
+     --body "Discovered while working on <current-task> in <current-repo>. <details>"
+   ```
+
+   Then continue with your assigned task in the current repo. The pulse supervisor will pick up the cross-repo issue on its next cycle. This prevents framework-level work from being tracked in app repos and vice versa.
+
 **README gate (MANDATORY - do NOT skip):**
 
 Before emitting `TASK_COMPLETE`, answer this decision tree:
