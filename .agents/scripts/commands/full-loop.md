@@ -194,6 +194,25 @@ The AI will iterate on the task until outputting:
 and try a fundamentally different strategy before giving up. A fresh approach often
 succeeds where incremental fixes to a broken one fail.
 
+**CI failure debugging (t1334)**: When a task involves fixing CI failures or a PR has
+failing checks, ALWAYS read the CI logs first before attempting any code changes:
+
+```bash
+# 1. Identify the failing job
+gh pr checks <PR_NUMBER> --repo <owner/repo>
+
+# 2. Get the run ID and read failure logs
+gh run view <RUN_ID> --repo <owner/repo> --log | grep -iE 'FAIL|Error.*spec|expect.*received'
+
+# 3. Identify the EXACT test name, file, and line number from the error
+```
+
+This prevents context exhaustion from blind debugging. Workers that skip this step
+waste entire sessions guessing at root causes. Common pitfalls:
+- Testing the wrong DOM element (e.g., `<main>` vs its child `<div>`)
+- Assuming infrastructure issues (OOM, timeouts) when the test itself is wrong
+- Not checking if another PR (e.g., a CI investigation PR) already identified the fix
+
 **Headless dispatch rules (MANDATORY for supervisor-dispatched workers - t158/t174):**
 
 When running as a headless worker (dispatched by the supervisor via `opencode run` or `Claude -p`), the `--headless` flag is passed automatically. The full-loop-helper.sh script enforces these rules:
