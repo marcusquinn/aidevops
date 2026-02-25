@@ -7,6 +7,9 @@ on:
       - 'TODO.md'
       - 'todo/PLANS.md'
       - 'todo/tasks/**'
+  pull_request:
+    branches: [main]
+    types: [closed, opened, edited]
   issues:
     types: [opened]
   workflow_dispatch:
@@ -255,4 +258,197 @@ jobs:
               sleep $((i * 3))
             done
             exit 1
+          fi
+
+  # =========================================================================
+  # t1339: Sync issue hygiene on PR merge
+  # =========================================================================
+  # When a PR merges to main, this job:
+  #   1. Extracts task ID from PR title (tNNN: ... pattern)
+  #   2. Finds linked issues (from PR body Closes/Fixes/Resolves #NNN, or by task ID)
+  #   3. Posts a closing comment with PR link
+  #   4. Applies status:done label, removes stale status labels
+  #
+  # This ensures all closing paths (interactive, worker, pulse) get the same
+  # hygiene treatment — previously only the TODO.md push path ran issue-sync.
+  sync-on-pr-merge:
+    name: Sync Issue Hygiene on PR Merge
+    if: github.event_name == 'pull_request' && github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: issue-sync-pr-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+
+    steps:
+      - name: Extract task ID and collect linked issues
+        id: extract
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Extract task ID from PR title (e.g., "t1329: Cross-review judge pipeline")
+          TASK_ID=""
+          if echo "$PR_TITLE" | grep -qE '^t[0-9]+'; then
+            TASK_ID=$(echo "$PR_TITLE" | grep -oE '^t[0-9]+(\.[0-9]+)*')
+          fi
+          echo "task_id=$TASK_ID" >> "$GITHUB_OUTPUT"
+
+          # Collect linked issue numbers from PR body (Closes #NNN, Fixes #NNN, Resolves #NNN)
+          LINKED_ISSUES=""
+          if [[ -n "$PR_BODY" ]]; then
+            LINKED_ISSUES=$(echo "$PR_BODY" | grep -oiE '(closes?|fixes?|resolves?)\s*#[0-9]+' | grep -oE '[0-9]+' | sort -u | tr '\n' ' ' || true)
+          fi
+          echo "linked_issues=$LINKED_ISSUES" >> "$GITHUB_OUTPUT"
+
+          # Determine if we have anything to process
+          if [[ -n "$TASK_ID" || -n "$LINKED_ISSUES" ]]; then
+            echo "has_work=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_work=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "PR #$PR_NUMBER: task_id=$TASK_ID linked_issues=$LINKED_ISSUES"
+
+      - name: Find issue by task ID (fallback)
+        id: find-issue
+        if: steps.extract.outputs.has_work == 'true' && steps.extract.outputs.task_id != ''
+        env:
+          TASK_ID: ${{ steps.extract.outputs.task_id }}
+          LINKED_ISSUES: ${{ steps.extract.outputs.linked_issues }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # If no explicit Closes #NNN in PR body, search for the issue by task ID in title
+          if [[ -z "$LINKED_ISSUES" ]]; then
+            FOUND=$(gh issue list --state all --search "${TASK_ID}:" --json number,title --limit 5 \
+              | jq -r --arg tid "$TASK_ID" '[.[] | select(.title | test("^" + $tid + "[.:\\s]"))] | .[0].number // empty')
+            if [[ -n "$FOUND" && "$FOUND" != "null" ]]; then
+              echo "found_issues=$FOUND" >> "$GITHUB_OUTPUT"
+              echo "Found issue #$FOUND for task $TASK_ID"
+            else
+              echo "found_issues=" >> "$GITHUB_OUTPUT"
+              echo "No issue found for task $TASK_ID"
+            fi
+          else
+            echo "found_issues=" >> "$GITHUB_OUTPUT"
+            echo "Using linked issues from PR body: $LINKED_ISSUES"
+          fi
+
+      - name: Apply closing hygiene to linked issues
+        if: steps.extract.outputs.has_work == 'true'
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          LINKED_ISSUES: ${{ steps.extract.outputs.linked_issues }}
+          FOUND_ISSUES: ${{ steps.find-issue.outputs.found_issues }}
+          TASK_ID: ${{ steps.extract.outputs.task_id }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Merge all issue numbers (from PR body + fallback search)
+          ALL_ISSUES="$LINKED_ISSUES $FOUND_ISSUES"
+          ALL_ISSUES=$(echo "$ALL_ISSUES" | tr ' ' '\n' | sort -u | grep -v '^$' | tr '\n' ' ')
+
+          if [[ -z "$ALL_ISSUES" ]]; then
+            echo "No linked issues found — skipping closing hygiene"
+            exit 0
+          fi
+
+          echo "Processing issues: $ALL_ISSUES"
+
+          for ISSUE_NUM in $ALL_ISSUES; do
+            echo "--- Issue #$ISSUE_NUM ---"
+
+            # Post closing comment if none exists from this PR
+            EXISTING_COMMENT=$(gh api "repos/${{ github.repository }}/issues/${ISSUE_NUM}/comments" \
+              --jq "[.[] | select(.body | test(\"Completed via.*PR #${PR_NUMBER}\"))] | length" 2>/dev/null || echo "0")
+
+            if [[ "$EXISTING_COMMENT" == "0" ]]; then
+              TASK_REF=""
+              if [[ -n "$TASK_ID" ]]; then
+                TASK_REF=" Task $TASK_ID"
+              fi
+              gh issue comment "$ISSUE_NUM" --body "Completed via [PR #${PR_NUMBER}](${PR_URL}).${TASK_REF} merged to main."
+              echo "Posted closing comment on #$ISSUE_NUM"
+            else
+              echo "Closing comment already exists on #$ISSUE_NUM"
+            fi
+
+            # Apply status:done label (create if needed)
+            gh label create "status:done" --color "6F42C1" --description "Task is complete" --force 2>/dev/null || true
+            gh issue edit "$ISSUE_NUM" --add-label "status:done" 2>/dev/null || true
+
+            # Remove stale status labels
+            for STALE_LABEL in "status:available" "status:queued" "status:claimed" "status:in-review" "status:in-progress" "status:blocked" "status:verify-failed"; do
+              gh issue edit "$ISSUE_NUM" --remove-label "$STALE_LABEL" 2>/dev/null || true
+            done
+
+            echo "Updated labels on #$ISSUE_NUM (added status:done, removed stale)"
+          done
+
+  # =========================================================================
+  # t1339: Apply conventional-commit labels to PRs
+  # =========================================================================
+  # Parses the PR title prefix (feat:, fix:, docs:, etc.) and applies
+  # the corresponding GitHub label. Runs on PR open and title edit.
+  label-pr:
+    name: Label PR from Conventional Commit
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.merged != true &&
+      (github.event.action == 'opened' || github.event.action == 'edited')
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Apply label from PR title prefix
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Extract conventional commit prefix from PR title
+          # Supports: feat, fix, docs, refactor, chore, perf, test, ci, build, style
+          # Also supports task-prefixed titles: "t1234: feat: ..." or "t1234: Fix ..."
+          TITLE="$PR_TITLE"
+
+          # Strip task ID prefix if present (e.g., "t1234: " or "t1234.5: ")
+          TITLE=$(echo "$TITLE" | sed -E 's/^t[0-9]+(\.[0-9]+)*:\s*//')
+
+          # Extract the conventional commit type (case-insensitive)
+          # Matches "feat:", "fix:", "Fix ", "Add ", etc. — colon or space after prefix
+          PREFIX=$(echo "$TITLE" | grep -oiE '^(feat|fix|docs|refactor|chore|perf|test|ci|build|style|hotfix|bugfix|add|update|enhance)[:(! ]' | sed 's/[:(! ]$//' | tr '[:upper:]' '[:lower:]' || true)
+
+          if [[ -z "$PREFIX" ]]; then
+            echo "No conventional commit prefix found in: $PR_TITLE"
+            exit 0
+          fi
+
+          # Map prefix to GitHub label
+          case "$PREFIX" in
+            feat|add)          LABEL="enhancement" ;;
+            fix|bugfix|hotfix) LABEL="bug" ;;
+            docs)              LABEL="documentation" ;;
+            refactor)          LABEL="refactor" ;;
+            chore)             LABEL="chore" ;;
+            perf)              LABEL="performance" ;;
+            test)              LABEL="testing" ;;
+            ci|build)          LABEL="ci" ;;
+            style)             LABEL="style" ;;
+            update|enhance)    LABEL="enhancement" ;;
+            *)                 LABEL="" ;;
+          esac
+
+          if [[ -n "$LABEL" ]]; then
+            # Create label if it doesn't exist (idempotent)
+            gh label create "$LABEL" --force 2>/dev/null || true
+            gh pr edit "$PR_NUMBER" --add-label "$LABEL"
+            echo "Applied label '$LABEL' to PR #$PR_NUMBER (prefix: $PREFIX)"
           fi
