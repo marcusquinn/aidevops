@@ -775,11 +775,23 @@ CONTEST_SQL
 		log_success "Created container_pool and container_dispatch_log tables (t1165.2)"
 	fi
 
+	# Migrate: create stuck_detection_log table if missing (t1332)
+	local has_stuck_detection_log
+	has_stuck_detection_log=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='stuck_detection_log';" 2>/dev/null || echo "0")
+	if [[ "$has_stuck_detection_log" -eq 0 ]]; then
+		log_info "Creating stuck_detection_log table (t1332)..."
+		_create_stuck_detection_schema
+		log_success "Created stuck_detection_log table (t1332)"
+	fi
+
 	# Prune old action_dedup_log entries (keep last 7 days)
 	db "$SUPERVISOR_DB" "DELETE FROM action_dedup_log WHERE created_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-7 days');" 2>/dev/null || true
 
 	# Prune old stale_recovery_log entries (keep last 30 days for trend analysis, t1202)
 	db "$SUPERVISOR_DB" "DELETE FROM stale_recovery_log WHERE created_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-30 days');" 2>/dev/null || true
+
+	# Prune old stuck_detection_log entries (keep last 30 days for trend analysis, t1332)
+	db "$SUPERVISOR_DB" "DELETE FROM stuck_detection_log WHERE created_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-30 days');" 2>/dev/null || true
 
 	# Ensure WAL mode for existing databases created before t135.3
 	local current_mode
@@ -929,6 +941,9 @@ SQL
 
 	# Container pool — schema defined in _create_container_pool_schema() (t1165.2)
 	_create_container_pool_schema
+
+	# Stuck detection log — schema defined in _create_stuck_detection_schema() (t1332)
+	_create_stuck_detection_schema
 
 	log_success "Initialized supervisor database: $SUPERVISOR_DB"
 	return 0

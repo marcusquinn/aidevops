@@ -1205,6 +1205,17 @@ cmd_pulse() {
 		fi
 	fi
 
+	# Phase 0.75: Advisory stuck detection (t1332)
+	# At configurable milestones (default: 30/60/120 min), evaluate long-running
+	# tasks via haiku-tier AI reasoning. If stuck detected (confidence >0.7),
+	# tag GitHub issue with `stuck-detection` label and post explanatory comment.
+	# ADVISORY ONLY — never auto-cancels, auto-pivots, or modifies tasks.
+	local stuck_detected=0
+	stuck_detected=$(cmd_stuck_detection 2>>"$SUPERVISOR_LOG") || stuck_detected=0
+	if [[ "$stuck_detected" -gt 0 ]]; then
+		log_warn "Phase 0.75: $stuck_detected task(s) flagged as potentially stuck (advisory only, t1332)"
+	fi
+
 	# Phase 0.8: REMOVED — running/dispatched tasks are now evaluated directly
 	# by Phase 1 without an intermediate evaluating state. Phase 1 re-reads
 	# current DB state before acting, preventing the race condition where
@@ -1364,6 +1375,8 @@ cmd_pulse() {
 					cleanup_worker_processes "$tid"
 					# Success pattern already stored by scan_orphaned_pr_for_task
 					handle_diagnostic_completion "$tid" 2>>"$SUPERVISOR_LOG" || true
+					# Remove stuck-detection label if previously flagged (t1332)
+					remove_stuck_label_on_success "$tid" 2>>"$SUPERVISOR_LOG" || true
 					_phase1_evaluating_tid="" # t1269: clear before continue
 					_phase1_pre_eval_state=""
 					continue
@@ -1445,6 +1458,8 @@ cmd_pulse() {
 				fi
 				# Add implemented:model label to GitHub issue (t1010)
 				add_model_label "$tid" "implemented" "$tid_model" "${tid_repo:-.}" 2>>"$SUPERVISOR_LOG" || true
+				# Remove stuck-detection label if previously flagged (t1332)
+				remove_stuck_label_on_success "$tid" 2>>"$SUPERVISOR_LOG" || true
 				# Self-heal: if this was a diagnostic task, re-queue the parent (t150)
 				handle_diagnostic_completion "$tid" 2>>"$SUPERVISOR_LOG" || true
 				;;
