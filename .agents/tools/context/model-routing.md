@@ -245,11 +245,9 @@ tracker and budget tracker.
 **CLI**:
 
 ```bash
-# Pattern-based analysis (from memory/pattern data)
-pattern-tracker-helper.sh tier-drift              # Full report
-pattern-tracker-helper.sh tier-drift --days 7     # Last 7 days
-pattern-tracker-helper.sh tier-drift --json       # Machine-readable
-pattern-tracker-helper.sh tier-drift --summary    # One-line for automation
+# Pattern-based analysis via slash commands
+/patterns report                    # Full pattern report
+/patterns recommend "task type"     # Tier recommendation from pattern data
 
 # Cost-based analysis (from budget spend events)
 budget-tracker-helper.sh tier-drift               # Full cost report

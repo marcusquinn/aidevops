@@ -189,7 +189,7 @@ async function configHook(config) {
 **Post-tool hooks** (`tool.execute.after`):
 
 - Git operation detection and logging
-- Pattern tracker integration (`pattern-tracker-helper.sh`) for success/failure recording
+- Pattern tracking via cross-session memory for success/failure recording
 - ShellCheck/lint run tracking
 - File modification audit logging to `~/.aidevops/logs/quality-hooks.log`
 
@@ -233,7 +233,7 @@ Preserves operational state across context resets:
 - **`chat.params` hook**: Dynamic model routing based on task complexity
 - **`permission.ask` hook**: Auto-approve safe operations, deny dangerous ones
 - **Dynamic agent reloading**: Watch filesystem for agent changes and hot-reload
-- **Pattern tracking integration**: Feed tool execution data to `pattern-tracker-helper.sh`
+- **Pattern tracking integration**: Feed tool execution data to cross-session memory
 
 ### When to Expand
 

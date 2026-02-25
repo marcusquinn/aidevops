@@ -11,30 +11,27 @@ Arguments: $ARGUMENTS
 
 ## Instructions
 
-1. If arguments contain "report", show the comprehensive report:
+1. Query cross-session memory for pattern data:
 
 ```bash
-~/.aidevops/agents/scripts/pattern-tracker-helper.sh report
+# Get success patterns
+~/.aidevops/agents/scripts/memory-helper.sh recall --type SUCCESS_PATTERN --limit 20
+
+# Get failure patterns
+~/.aidevops/agents/scripts/memory-helper.sh recall --type FAILURE_PATTERN --limit 20
+
+# Get working solutions
+~/.aidevops/agents/scripts/memory-helper.sh recall --type WORKING_SOLUTION --limit 10
+
+# Get failed approaches
+~/.aidevops/agents/scripts/memory-helper.sh recall --type FAILED_APPROACH --limit 10
 ```
 
-2. If arguments contain "recommend", show model recommendation:
+2. If arguments are provided, filter results relevant to the task description.
 
-```bash
-~/.aidevops/agents/scripts/pattern-tracker-helper.sh recommend "$ARGUMENTS"
-```
+3. If arguments contain "recommend", focus on model tier recommendations based on success/failure rates per tier.
 
-3. If other arguments are provided, use them as a task description to find relevant patterns:
-
-```bash
-~/.aidevops/agents/scripts/pattern-tracker-helper.sh suggest "$ARGUMENTS"
-```
-
-4. If no arguments, show overall pattern statistics and recent patterns:
-
-```bash
-~/.aidevops/agents/scripts/pattern-tracker-helper.sh stats
-~/.aidevops/agents/scripts/pattern-tracker-helper.sh analyze --limit 5
-```
+4. If arguments contain "report", provide a comprehensive summary of all patterns.
 
 5. Present the results with actionable guidance:
    - Highlight what approaches have worked for similar tasks
@@ -45,11 +42,10 @@ Arguments: $ARGUMENTS
 
 ```text
 No patterns recorded yet. Patterns are recorded automatically by the
-supervisor after task completion, or manually with:
+pulse supervisor after observing outcomes, or manually with:
 
-  pattern-tracker-helper.sh record --outcome success \
-      --task-type bugfix --model sonnet \
-      --description "Structured debugging approach found root cause quickly"
+  /remember "SUCCESS: bugfix with sonnet — structured debugging found root cause quickly"
+  /remember "FAILURE: architecture with sonnet — needed opus for cross-service trade-offs"
 
-Available commands: suggest, recommend, analyze, stats, report, export
+Available commands: /patterns suggest, /patterns recommend, /patterns report
 ```

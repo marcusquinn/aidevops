@@ -176,6 +176,6 @@ Use discovery output to filter `/compare-models` to only show models the user ca
 - `scripts/commands/score-responses.md` - `/score-responses` slash command handler
 - `tools/ai-assistants/response-scoring.md` - Evaluate actual model response quality
 - `tools/context/model-routing.md` - Cost-aware model routing within aidevops
-- `scripts/pattern-tracker-helper.sh` - Pattern tracker (data source for live success rates)
+- Cross-session memory system - Pattern data source for live success rates (replaces archived `pattern-tracker-helper.sh`)
 - `tools/voice/voice-ai-models.md` - Voice-specific model comparison
 - `tools/voice/voice-models.md` - TTS/STT model catalog

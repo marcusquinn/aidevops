@@ -650,7 +650,7 @@ cmd_run() {
 
 	# Sync test results to unified pattern tracker backbone (t1094)
 	# Records agent test outcomes as build-agent patterns for model routing.
-	local pt_helper="${SCRIPT_DIR}/pattern-tracker-helper.sh"
+	local pt_helper="${SCRIPT_DIR}/archived/pattern-tracker-helper.sh"
 	if [[ -x "$pt_helper" ]]; then
 		local pt_outcome="success"
 		[[ "$failed" -gt 0 ]] && pt_outcome="failure"

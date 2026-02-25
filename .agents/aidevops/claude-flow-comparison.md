@@ -58,9 +58,9 @@ Selective feature adoption from [ruvnet/claude-flow](https://github.com/ruvnet/c
 
 **Claude-Flow**: SONA neural architecture tracks routing decisions and outcomes.
 
-**aidevops**: `pattern-tracker-helper.sh` records SUCCESS_PATTERN and FAILURE_PATTERN memories tagged with task type and model tier. `/patterns` command surfaces relevant patterns for new tasks.
+**aidevops**: The pulse supervisor observes outcomes from GitHub state and agents record patterns via cross-session memory (`/remember`, `/recall`). `/patterns` command surfaces relevant patterns for new tasks.
 
-**Why this approach**: Simple pattern storage in existing SQLite memory is sufficient. No need for neural architecture when the pattern corpus is small (hundreds, not millions).
+**Why this approach**: Simple pattern storage in existing SQLite memory is sufficient. No need for neural architecture when the pattern corpus is small (hundreds, not millions). The dedicated `pattern-tracker-helper.sh` was archived in favour of the universal memory system.
 
 ## What We Skipped
 

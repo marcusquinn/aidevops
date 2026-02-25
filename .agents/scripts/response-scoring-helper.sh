@@ -45,8 +45,8 @@ readonly SCORING_DIR="${HOME}/.aidevops/.agent-workspace"
 readonly SCORING_DB_DEFAULT="${SCORING_DIR}/response-scoring.db"
 SCORING_DB="${SCORING_DB_OVERRIDE:-$SCORING_DB_DEFAULT}"
 
-# Pattern tracker integration (t1099)
-readonly PATTERN_TRACKER="${SCRIPT_DIR}/pattern-tracker-helper.sh"
+# Pattern tracker integration (t1099) — archived, graceful fallback when missing
+readonly PATTERN_TRACKER="${SCRIPT_DIR}/archived/pattern-tracker-helper.sh"
 # Set SCORING_NO_PATTERN_SYNC=1 to disable automatic pattern sync
 SCORING_NO_PATTERN_SYNC="${SCORING_NO_PATTERN_SYNC:-0}"
 

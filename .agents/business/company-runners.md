@@ -278,6 +278,6 @@ $RUNNER list
 echo ""
 print_info "Next steps:"
 print_info "  1. Edit each runner's AGENTS.md: runner-helper.sh edit <name>"
-print_info "  2. Start the coordinator: coordinator-helper.sh watch --interval 300"
+print_info "  2. Dispatch is handled by the pulse supervisor (/pulse)"
 print_info "  3. Test a runner: runner-helper.sh run ops-monitor 'Check all health endpoints'"
 ```

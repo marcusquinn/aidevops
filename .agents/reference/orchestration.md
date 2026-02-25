@@ -88,11 +88,11 @@ budget-tracker-helper.sh configure-period opencode --start 2026-02-01 --end 2026
 
 Track success/failure patterns across task types, models, and approaches. Patterns feed into model routing recommendations for data-driven dispatch.
 
-**CLI**: `pattern-tracker-helper.sh [record|suggest|recommend|analyze|stats|report|export]`
+**How it works**: The pulse supervisor observes outcomes from GitHub state (Step 2a) and agents record patterns via cross-session memory (`/remember`, `/recall`). No separate CLI or database — GitHub issues/PRs and the memory system are the sources of truth.
 
 **Commands**: `/patterns <task>` (suggest approach), `/patterns report` (full report), `/patterns recommend <type>` (model recommendation)
 
-**Automatic capture**: The supervisor stores `SUCCESS_PATTERN` and `FAILURE_PATTERN` entries after each task evaluation, tagged with model tier, duration, and retry count.
+**Automatic capture**: The pulse supervisor observes success/failure patterns from GitHub PR state (merged vs closed-without-merge) and files improvement issues when patterns emerge.
 
 **Integration with model routing**: `/route <task>` combines routing rules with pattern history. If pattern data shows >75% success rate with 3+ samples for a tier, it is weighted heavily in the recommendation.
 

@@ -222,8 +222,8 @@ cmd_should_contest() {
 		fi
 	fi
 
-	# Check 2: Query pattern-tracker for this task type
-	local pattern_helper="${SCRIPT_DIR}/pattern-tracker-helper.sh"
+	# Check 2: Query pattern-tracker for this task type (archived — graceful fallback)
+	local pattern_helper="${SCRIPT_DIR}/archived/pattern-tracker-helper.sh"
 	if [[ ! -x "$pattern_helper" ]]; then
 		log_warn "Pattern tracker not available — defaulting to no contest"
 		echo "no_tracker"
@@ -909,7 +909,7 @@ Now score each implementation. Output ONLY the JSON lines, nothing else."
 #######################################
 _record_contest_patterns() {
 	local contest_id="$1"
-	local pattern_helper="${SCRIPT_DIR}/pattern-tracker-helper.sh"
+	local pattern_helper="${SCRIPT_DIR}/archived/pattern-tracker-helper.sh"
 
 	if [[ ! -x "$pattern_helper" ]]; then
 		log_warn "Pattern tracker not available — skipping pattern recording"

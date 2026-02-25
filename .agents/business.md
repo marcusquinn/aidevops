@@ -24,8 +24,8 @@ subagents:
 ## Quick Reference
 
 - **Purpose**: Orchestrate AI agents across company functions (HR, Finance, Operations, Marketing)
-- **Pattern**: Named runners per function, coordinated via `coordinator-helper.sh`
-- **Extends**: Parallel agents (t109), runner-helper.sh, coordinator-helper.sh
+- **Pattern**: Named runners per function, coordinated via pulse supervisor
+- **Extends**: Parallel agents (t109), runner-helper.sh, pulse supervisor
 
 **Related Agents**:
 
@@ -37,7 +37,7 @@ subagents:
 **Key Scripts**:
 
 - `scripts/runner-helper.sh` - Create and manage named agent instances
-- `scripts/coordinator-helper.sh` - Cross-function task dispatch
+- Pulse supervisor (`scripts/commands/pulse.md`) - Cross-function task dispatch
 - `scripts/objective-runner-helper.sh` - Long-running objectives with guardrails
 
 <!-- AI-CONTEXT-END -->
@@ -51,17 +51,17 @@ The pattern maps company departments to named runners that:
 
 1. Have persistent identity and memory (via `runner-helper.sh`)
 2. Communicate through the mailbox system (via `mail-helper.sh`)
-3. Are coordinated by a stateless pulse loop (via `coordinator-helper.sh`)
+3. Are coordinated by a stateless pulse loop (via pulse supervisor)
 4. Operate within safety guardrails (via `objective-runner-helper.sh`)
 
 ### Architecture
 
 ```text
-coordinator-helper.sh (pulse every 2-5 min)
-├── Reads agent status from SQLite
-├── Processes worker status reports
-├── Dispatches tasks to idle agents
-└── Exits (stateless)
+Pulse supervisor (every 2 min)
+├── Fetches GitHub state (issues, PRs)
+├── Observes outcomes (stale PRs, failures)
+├── Dispatches tasks to available worker slots
+└── Exits (stateless — GitHub is the state DB)
 
 Named Runners (persistent identity):
 ├── hiring-coordinator   — Recruitment pipeline
@@ -74,12 +74,12 @@ Named Runners (persistent identity):
 ### Communication Flow
 
 ```text
-1. Task arrives (TODO.md, mailbox message, or cron trigger)
-2. coordinator-helper.sh pulse picks it up
-3. Dispatches to appropriate runner via mail-helper.sh
-4. Runner executes with its AGENTS.md personality
-5. Runner sends status_report back to coordinator
-6. Coordinator archives report, dispatches next task
+1. Task arrives (GitHub issue, TODO.md, or mailbox message)
+2. Pulse supervisor picks it up (Step 3: priority ordering)
+3. Dispatches to appropriate runner/worker (Step 4)
+4. Worker executes with its AGENTS.md personality
+5. Pulse observes outcomes on next cycle (Step 2a)
+6. Files improvement issues if patterns emerge
 ```
 
 ## Setting Up Company Runners
@@ -107,27 +107,18 @@ runner-helper.sh list
 runner-helper.sh run hiring-coordinator "Review the 3 latest applications in the hiring pipeline and summarise each candidate's fit"
 ```
 
-### Coordinator Integration
+### Pulse Supervisor Integration
+
+The pulse supervisor (`/pulse`) runs every 2 minutes and coordinates all dispatch. Runners are dispatched as workers:
 
 ```bash
-# Start the coordinator pulse (runs every 5 minutes via cron)
-coordinator-helper.sh watch --interval 300
+# Dispatch is handled by the pulse supervisor automatically
+# To manually dispatch a runner task:
+opencode run --dir ~/Git/<repo> --agent Business --title "Task: Review Q1 expenses" \
+  "/full-loop Review Q1 expense reports for anomalies" &
 
-# Or install as a cron job
-cron-helper.sh add "company-coordinator" \
-  --schedule "*/5 * * * *" \
-  --command "coordinator-helper.sh pulse"
-
-# Manual dispatch to a specific runner
-coordinator-helper.sh dispatch \
-  --task "Review Q1 expense reports for anomalies" \
-  --to finance-reviewer \
-  --priority high
-
-# Group related tasks into a convoy
-coordinator-helper.sh convoy \
-  --name "example-convoy" \
-  --tasks "task-a,task-b,task-c"
+# The pulse supervisor handles priority ordering, slot management,
+# and outcome observation — no separate coordinator needed.
 ```
 
 ## Example Runner Configurations
@@ -146,17 +137,21 @@ Some tasks span multiple departments. Use convoys or chained dispatch:
 # 2. Dispatches to finance-reviewer for payroll setup
 # 3. Dispatches to ops-monitor for account provisioning
 
-coordinator-helper.sh convoy \
-  --name "onboard-new-hire" \
-  --tasks "confirm-offer,setup-payroll,provision-accounts"
+# Create GitHub issues for each step, linked to a parent issue
+gh issue create --repo <owner/repo> --title "Onboard: Confirm offer" --label "hiring"
+gh issue create --repo <owner/repo> --title "Onboard: Setup payroll" --label "finance"
+gh issue create --repo <owner/repo> --title "Onboard: Provision accounts" --label "ops"
+# Pulse supervisor picks up each issue and routes to the appropriate agent
 ```
 
 ### Example: Monthly Financial Close
 
 ```bash
-coordinator-helper.sh convoy \
-  --name "monthly-close" \
-  --tasks "reconcile-transactions,review-expenses,generate-pnl,send-summary"
+# Create GitHub issues for each step in the monthly close
+gh issue create --repo <owner/repo> --title "Monthly close: Reconcile transactions" --label "finance"
+gh issue create --repo <owner/repo> --title "Monthly close: Review expenses" --label "finance"
+gh issue create --repo <owner/repo> --title "Monthly close: Generate P&L" --label "finance"
+gh issue create --repo <owner/repo> --title "Monthly close: Send summary" --label "finance"
 ```
 
 ## Guardrails

@@ -256,4 +256,4 @@ Requires `opencode` CLI available in the CI environment with appropriate API cre
 - `agent-review.md` - Reviewing and improving agents
 - `tools/ai-assistants/headless-dispatch.md` - Headless AI dispatch patterns
 - `tools/ai-assistants/opencode-server.md` - OpenCode server API
-- `scripts/self-improve-helper.sh` - Self-improving agent system (uses similar session patterns)
+- AGENTS.md "Self-Improvement" section - Universal self-improvement principle (replaces archived `self-improve-helper.sh`)

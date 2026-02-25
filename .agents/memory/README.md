@@ -296,39 +296,23 @@ Track what works and what fails across task types, models, and approaches.
 Patterns are captured automatically by the supervisor after task completion,
 and can also be recorded manually.
 
+Pattern tracking is now handled by the cross-session memory system and the pulse supervisor's outcome observation (Step 2a). Use `/remember` and `/recall` for manual pattern recording, and slash commands for querying:
+
 ```bash
-# Record a pattern with full metadata
-pattern-tracker-helper.sh record --outcome success --task-type bugfix \
-    --model sonnet --task-id t102.3 --duration 120 \
-    --description "Structured debugging found root cause"
-
-# Get suggestions for a task (includes model routing hints)
-pattern-tracker-helper.sh suggest "refactor the auth middleware"
-
-# Get model recommendation based on historical success rates
-pattern-tracker-helper.sh recommend --task-type bugfix
-
-# View pattern statistics (includes supervisor-generated patterns)
-pattern-tracker-helper.sh stats
-
-# Generate a comprehensive report
-pattern-tracker-helper.sh report
-
-# Export patterns for analysis
-pattern-tracker-helper.sh export --format json > patterns.json
-
-# Or use slash commands
+# Use slash commands for pattern queries
 /patterns refactor          # Suggest patterns for a task
 /patterns report            # Full report
 /patterns recommend bugfix  # Model recommendation
-/route "fix auth bug"       # Model routing (now includes pattern data)
+/route "fix auth bug"       # Model routing (includes pattern data)
+
+# Manual pattern recording via memory
+/remember "Structured debugging found root cause for bugfix t102.3 (sonnet, 120s)"
+/recall "bugfix patterns"
 ```
 
-**Automatic capture**: The supervisor stores `SUCCESS_PATTERN` and `FAILURE_PATTERN`
-entries after each task evaluation, tagged with model tier, duration, and retry count.
-This data feeds into the `recommend` command for data-driven model routing.
+**Automatic capture**: The pulse supervisor observes success/failure patterns from GitHub PR state (merged vs closed-without-merge) and files improvement issues when patterns emerge. Agents also record patterns via `/remember` after task completion.
 
-See `scripts/pattern-tracker-helper.sh help` for full documentation.
+> **Note**: The `pattern-tracker-helper.sh` script has been archived. Pattern data in `memory.db` remains accessible via the memory system. See `scripts/archived/pattern-tracker-helper.sh` for the original implementation.
 
 ## Memory Graduation (Sharing Learnings)
 
