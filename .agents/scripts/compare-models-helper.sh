@@ -798,26 +798,22 @@ Score each model and declare a winner."
 		--arg user "$user_prompt" \
 		'{model: $model, max_tokens: 1024, system: $system, messages: [{role: "user", content: $user}]}')
 
-	# Determine if OAuth (needs beta header)
-	local header_name curl_extra_args=()
+	# Build curl config via process substitution to avoid exposing auth in ps
+	local header_name
 	header_name="${auth_header%%:*}"
+	local curl_config
+	curl_config="header = \"Content-Type: application/json\"
+header = \"anthropic-version: 2023-06-01\"
+header = \"${auth_header}\""
 	if [[ "$header_name" == "Authorization" ]]; then
-		curl_extra_args+=(-H "anthropic-beta: oauth-2025-04-20")
+		curl_config="${curl_config}
+header = \"anthropic-beta: oauth-2025-04-20\""
 	fi
 
-	# Pass auth header via curl config file to avoid exposing secrets in process list
-	local curl_config
-	curl_config=$(mktemp)
-	printf 'header = "%s"\n' "$auth_header" >"$curl_config"
-	trap 'rm -f "$curl_config"' RETURN
-
-	# Call judge model API
+	# Call judge model API (headers via --config to keep secrets out of process list)
 	local response
 	response=$(curl -s --max-time 120 \
-		-H "Content-Type: application/json" \
-		-H "anthropic-version: 2023-06-01" \
-		-K "$curl_config" \
-		"${curl_extra_args[@]}" \
+		--config <(printf '%s\n' "$curl_config") \
 		-d "$request_body" \
 		"https://api.anthropic.com/v1/messages") || {
 		print_error "Judge API call failed (curl error)"
@@ -1083,7 +1079,7 @@ cmd_cross_review() {
 		local file_b="${output_dir}/${model_names[1]}.txt"
 		if [[ -f "$file_a" && -f "$file_b" ]]; then
 			echo "Diff (${model_names[0]} vs ${model_names[1]}):"
-			diff --unified=3 "$file_a" "$file_b" 2>/dev/null | head -100 || echo "  (files are identical or diff unavailable)"
+			diff --unified=3 "$file_a" "$file_b" || echo "  (files are identical or diff unavailable)"
 			echo ""
 		fi
 	fi
