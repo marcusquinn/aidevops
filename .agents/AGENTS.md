@@ -58,6 +58,9 @@ Every agent session — interactive, worker, or supervisor — should improve th
 - Improving agent prompts when workers consistently misunderstand instructions
 - Identifying missing automation (e.g., a manual step that could be a `gh` command)
 - Flagging stale tasks that are blocked but not marked as such
+- Running the session miner pulse (`scripts/session-miner-pulse.sh`) to extract learning from past sessions
+
+**Autonomous operation:** When the user says "continue", "monitor", or "keep going" — enter autonomous mode: use sleep/wait loops, maintain a perpetual todo to survive compaction, only interrupt for blocking errors that require user input.
 
 ---
 
@@ -133,7 +136,7 @@ Task IDs: `/new-task` or `claim-task-id.sh`. NEVER grep TODO.md for next ID.
 
 Auto-dispatch: `#auto-dispatch` tag — only if brief has 2+ acceptance criteria, file references in How section, and clear deliverable in What section. Add `assignee:` before pushing if working interactively.
 
-Completion: NEVER mark `[x]` without merged PR (`pr:#NNN`) or `verified:YYYY-MM-DD`. Use `task-complete-helper.sh`.
+Completion: NEVER mark `[x]` without merged PR (`pr:#NNN`) or `verified:YYYY-MM-DD`. Use `task-complete-helper.sh`. Every completed task must link to its verification evidence — work without an audit trail is unverifiable and may be reverted.
 
 Planning files go direct to main. Code changes need worktree + PR. Workers NEVER edit TODO.md.
 
