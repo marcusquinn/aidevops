@@ -141,6 +141,7 @@ class SimplexAdapter {
   private corrIdCounter = 0;
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private suppressReconnect = false;
   private contactNames: Map<number, string> = new Map();
   private groupNames: Map<number, string> = new Map();
 
@@ -181,13 +182,17 @@ class SimplexAdapter {
         this.ws.onclose = () => {
           this.logger.warn("WebSocket connection closed");
           this.ws = null;
-          this.scheduleReconnect();
+          if (!this.suppressReconnect) {
+            this.scheduleReconnect();
+          }
+          this.suppressReconnect = false;
         };
 
         this.ws.onerror = (event: Event) => {
           this.logger.error("WebSocket error", event);
           if (this.reconnectAttempts === 0) {
-            // Clear any pending reconnect to avoid dangling timers
+            // Suppress the reconnect that onclose would otherwise trigger
+            this.suppressReconnect = true;
             this.disconnect();
             reject(new Error(`Failed to connect to ${url}`));
           }
@@ -361,6 +366,12 @@ class SimplexAdapter {
         args: parsed.args,
         rawText: text,
         chatItem: item,
+        contact: chatDir?.contactId !== undefined
+          ? { contactId: chatDir.contactId, localDisplayName: this.contactNames.get(chatDir.contactId) ?? "", profile: { displayName: this.contactNames.get(chatDir.contactId) ?? "" } }
+          : undefined,
+        group: chatDir?.groupId !== undefined
+          ? { groupId: chatDir.groupId, localDisplayName: this.groupNames.get(chatDir.groupId) ?? "", groupProfile: { displayName: this.groupNames.get(chatDir.groupId) ?? "" } }
+          : undefined,
         reply: async (replyText: string) => {
           await this.replyToItem(item, replyText);
         },

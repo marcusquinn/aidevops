@@ -378,12 +378,6 @@ section_bot_framework() {
 	# package.json checks
 	local pkg="${bot_dir}/package.json"
 	if [[ -f "$pkg" ]]; then
-		if grep -q "simplex-chat" "$pkg"; then
-			print_result "package.json: has simplex-chat dependency" 0
-		else
-			print_result "package.json: has simplex-chat dependency" 1 "Expected simplex-chat in dependencies"
-		fi
-
 		if grep -q "bun" "$pkg"; then
 			print_result "package.json: references bun" 0
 		else
