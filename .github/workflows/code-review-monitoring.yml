@@ -32,11 +32,6 @@ jobs:
         fetch-depth: 0
         token: ${{ secrets.GITHUB_TOKEN }}
     
-    - name: 🔧 Setup Bun
-      uses: oven-sh/setup-bun@v2
-      with:
-        bun-version: latest
-    
     - name: 🐍 Setup Python
       uses: actions/setup-python@v5
       with:
@@ -46,9 +41,6 @@ jobs:
       run: |
         # Install jq for JSON processing
         sudo apt-get update && sudo apt-get install -y jq curl
-        
-        # Install TOON CLI (Bun for faster install)
-        bun install -g @toon-format/cli
         
         # Install Python dependencies for quality tools
         pip install --upgrade pip pyyaml
@@ -269,6 +261,6 @@ jobs:
         echo "- ✅ SonarCloud Analysis" >> $GITHUB_STEP_SUMMARY
         echo "- ✅ Codacy Analysis with Auto-Fix" >> $GITHUB_STEP_SUMMARY
         echo "- ✅ Qlty Universal Linting" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ TOON Format Integration" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ TOON Format Validation" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "*Automated by AI DevOps Framework v1.5.0*" >> $GITHUB_STEP_SUMMARY

@@ -93,8 +93,7 @@ opencode run --dir ~/Git/<repo> --title "Issue #42: <title>" \
 ```
 
 **Dispatch rules:**
-- Use `--dir ~/Git/aidevops` for aidevops repo work
-- Use `--dir ~/Git/awardsapp` for awardsapp repo work
+- Use `--dir ~/Git/<repo-name>` matching the repo the task belongs to
 - Use `--agent <name>` to route to a specialist (SEO, Content, Marketing, etc.)
 - Omit `--agent` for code tasks — defaults to Build+
 - Do NOT add `--model` — let `/full-loop` use its default (opus)
@@ -143,7 +142,7 @@ not to do the work for it. Each failure that gets fixed makes the next run more 
 /runners #382 #383
 
 # Work on a GitHub issue
-/runners https://github.com/awardsapp/awardsapp/issues/42
+/runners https://github.com/user/repo/issues/42
 
 # Free-form task
 /runners "Add rate limiting to the API endpoints"

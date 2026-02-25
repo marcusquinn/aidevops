@@ -1338,6 +1338,10 @@ cmd_push() {
 		else
 			title="${task_id}: ${description}"
 		fi
+
+		# Sanitize title for public repos (strip private repo names)
+		title=$(_sanitize_for_public_repo "$title" "$repo_slug")
+
 		local labels
 		labels=$(map_tags_to_labels "$tags")
 
@@ -1360,9 +1364,9 @@ cmd_push() {
 			fi
 		fi
 
-		# Compose rich body
+		# Compose rich body (pass repo_slug for private repo name sanitization)
 		local body
-		body=$(compose_issue_body "$task_id" "$project_root")
+		body=$(compose_issue_body "$task_id" "$project_root" "$repo_slug")
 
 		if [[ "$DRY_RUN" == "true" ]]; then
 			print_info "[DRY-RUN] Would create: $title"
@@ -1514,9 +1518,12 @@ cmd_enrich() {
 			title="${task_id}: ${description}"
 		fi
 
-		# Compose rich body
+		# Sanitize title for public repos (strip private repo names)
+		title=$(_sanitize_for_public_repo "$title" "$repo_slug")
+
+		# Compose rich body (pass repo_slug for private repo name sanitization)
 		local body
-		body=$(compose_issue_body "$task_id" "$project_root")
+		body=$(compose_issue_body "$task_id" "$project_root" "$repo_slug")
 
 		if [[ "$DRY_RUN" == "true" ]]; then
 			print_info "[DRY-RUN] Would enrich #$issue_number ($task_id)"
