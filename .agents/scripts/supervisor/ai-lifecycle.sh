@@ -52,10 +52,13 @@ gather_task_state() {
 	escaped_id=$(sql_escape "$task_id")
 
 	# DB state
+	# Note: worker_pid column was removed in schema migration; use session_id instead.
+	# The query previously referenced worker_pid which caused silent SQLite errors,
+	# making gather_task_state return empty for ALL tasks and breaking Phase 3 entirely.
 	local task_row
 	task_row=$(db -separator '|' "$SUPERVISOR_DB" "
 		SELECT id, status, pr_url, repo, branch, worktree, error,
-		       rebase_attempts, retries, max_retries, model, worker_pid
+		       rebase_attempts, retries, max_retries, model, session_id
 		FROM tasks WHERE id = '$escaped_id';
 	" 2>/dev/null || echo "")
 
@@ -63,8 +66,8 @@ gather_task_state() {
 		return 1
 	fi
 
-	local tid tstatus tpr trepo tbranch tworktree terror trebase tretries tmax_retries tmodel tpid
-	IFS='|' read -r tid tstatus tpr trepo tbranch tworktree terror trebase tretries tmax_retries tmodel tpid <<<"$task_row"
+	local tid tstatus tpr trepo tbranch tworktree terror trebase tretries tmax_retries tmodel tsession
+	IFS='|' read -r tid tstatus tpr trepo tbranch tworktree terror trebase tretries tmax_retries tmodel tsession <<<"$task_row"
 
 	# GitHub PR state (if PR exists)
 	local pr_state="none" pr_merge_state="none" pr_ci_summary="none"
@@ -119,13 +122,16 @@ gather_task_state() {
 		fi
 	fi
 
-	# Worker process state
+	# Worker process state — session_id replaces worker_pid after schema migration.
+	# We can check if a worker session is active by looking for the session's
+	# log file or checking if the status implies an active worker.
 	local worker_alive="unknown"
-	if [[ -n "$tpid" && "$tpid" != "0" ]]; then
-		if kill -0 "$tpid" 2>/dev/null; then
-			worker_alive="yes"
+	if [[ -n "$tsession" && "$tsession" != "0" && "$tsession" != "" ]]; then
+		# Session exists — check if the task is in an active-worker state
+		if [[ "$tstatus" == "running" || "$tstatus" == "dispatched" ]]; then
+			worker_alive="yes (session: ${tsession:0:12}...)"
 		else
-			worker_alive="no (PID $tpid dead)"
+			worker_alive="no (session ended)"
 		fi
 	else
 		worker_alive="no worker"
