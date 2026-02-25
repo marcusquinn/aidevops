@@ -538,8 +538,27 @@ cmd_update() {
 	if check_dir "$INSTALL_DIR/.git"; then
 		cd "$INSTALL_DIR" || exit 1
 
-		# Fetch and check for updates
-		git fetch origin main --quiet
+		# Ensure we're on the main branch (detached HEAD or stale branch blocks pull)
+		local current_branch
+		current_branch=$(git branch --show-current 2>/dev/null || echo "")
+		if [[ "$current_branch" != "main" ]]; then
+			print_info "Switching to main branch..."
+			git checkout main --quiet 2>/dev/null || git checkout -b main origin/main --quiet 2>/dev/null || true
+		fi
+
+		# Clean up any working tree changes left by a previous update
+		# (e.g. chmod on tracked scripts, scan results written to repo)
+		# This ensures git pull --ff-only won't be blocked.
+		# Handles both staged and unstaged changes.
+		# See: https://github.com/marcusquinn/aidevops/issues/2286
+		if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
+			print_info "Cleaning up stale working tree changes..."
+			git reset HEAD -- . 2>/dev/null || true
+			git checkout -- . 2>/dev/null || true
+		fi
+
+		# Fetch latest from origin (include tags for version consistency)
+		git fetch origin main --tags --quiet
 
 		local local_hash
 		local_hash=$(git rev-parse HEAD)
@@ -559,21 +578,41 @@ cmd_update() {
 				print_info "Re-running setup to sync agents..."
 				bash "$INSTALL_DIR/setup.sh" --non-interactive
 			fi
+
+			# Safety net: discard any working tree changes setup.sh may have introduced
+			# (e.g. chmod on tracked scripts, scan results written to repo)
+			# See: https://github.com/marcusquinn/aidevops/issues/2286
+			git checkout -- . 2>/dev/null || true
 		else
 			print_info "Pulling latest changes..."
 			local old_hash
 			old_hash=$(git rev-parse HEAD)
 
 			if git pull --ff-only origin main --quiet; then
-				local new_version new_hash
-				new_version=$(get_version)
-				new_hash=$(git rev-parse HEAD)
-				print_success "Updated to version $new_version"
+				: # fast-forward succeeded
+			else
+				# Fast-forward failed (dirty tree, diverged history, or other issue).
+				# Since we just fetched origin/main, reset to it — the repo is managed
+				# by aidevops and should always track origin/main exactly.
+				# See: https://github.com/marcusquinn/aidevops/issues/2288
+				print_warning "Fast-forward pull failed — resetting to origin/main..."
+				git reset --hard origin/main --quiet 2>/dev/null || {
+					print_error "Failed to reset to origin/main"
+					print_info "Try: cd $INSTALL_DIR && git fetch origin && git reset --hard origin/main"
+					return 1
+				}
+			fi
 
-				# Print bounded summary of meaningful changes
-				if [[ "$old_hash" != "$new_hash" ]]; then
-					local total_commits
-					total_commits=$(git rev-list --count "$old_hash..$new_hash")
+			local new_version new_hash
+			new_version=$(get_version)
+			new_hash=$(git rev-parse HEAD)
+			print_success "Updated to version $new_version"
+
+			# Print bounded summary of meaningful changes
+			if [[ "$old_hash" != "$new_hash" ]]; then
+				local total_commits
+				total_commits=$(git rev-list --count "$old_hash..$new_hash" 2>/dev/null || echo "0")
+				if [[ "$total_commits" -gt 0 ]]; then
 					echo ""
 					print_info "Changes since $current_version ($total_commits commits):"
 					git log --oneline "$old_hash..$new_hash" |
@@ -583,15 +622,16 @@ cmd_update() {
 						echo "  ... and more (run 'git log --oneline' in $INSTALL_DIR for full list)"
 					fi
 				fi
-
-				echo ""
-				print_info "Running setup to apply changes..."
-				bash "$INSTALL_DIR/setup.sh" --non-interactive
-			else
-				print_error "Failed to pull updates"
-				print_info "Try: cd $INSTALL_DIR && git pull"
-				return 1
 			fi
+
+			echo ""
+			print_info "Running setup to apply changes..."
+			bash "$INSTALL_DIR/setup.sh" --non-interactive
+
+			# Safety net: discard any working tree changes setup.sh may have introduced
+			# (e.g. chmod on tracked scripts, scan results written to repo)
+			# See: https://github.com/marcusquinn/aidevops/issues/2286
+			git checkout -- . 2>/dev/null || true
 		fi
 	else
 		print_warning "Repository not found, performing fresh install..."

@@ -1,0 +1,81 @@
+# Matterbridge + SimpleX Bridge — Docker Compose
+# Bridges SimpleX Chat to Matrix/Telegram/Discord/40+ platforms via matterbridge-simplex
+#
+# Usage:
+#   1. Prepare SimpleX database in data/simplex/ (see matterbridge.md)
+#   2. Copy matterbridge-simplex.toml.example to matterbridge.toml and configure
+#   3. docker compose -f matterbridge-simplex-compose.yml up --build -d
+#
+# Or via helper script:
+#   matterbridge-helper.sh simplex-bridge up
+#
+# Ref: https://github.com/UnkwUsr/matterbridge-simplex
+# Ref: https://github.com/42wim/matterbridge
+
+version: "3"
+
+services:
+  # SimpleX CLI — runs as WebSocket server on port 5225
+  simplex:
+    image: simplexchat/simplex-chat:latest
+    # Alternative: build from Dockerfile if image unavailable
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile.simplex
+    restart: unless-stopped
+    volumes:
+      # SimpleX database — must be prepared before first run
+      # Run simplex-chat CLI locally first, then copy ~/.simplex/simplex_v1_* here
+      - ./data/simplex:/root/.simplex/
+    # Must be host mode — SimpleX WebSocket binds to 127.0.0.1 only
+    network_mode: host
+    healthcheck:
+      # SimpleX CLI doesn't have a health endpoint; check if process is running
+      test: ["CMD-SHELL", "pgrep -f simplex-chat || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    command: ["-p", "5225"]
+
+  # Matterbridge — multi-platform bridge with HTTP API
+  matterbridge:
+    image: 42wim/matterbridge:stable
+    # Alternative: use maintained fork for latest fixes
+    # image: ghcr.io/bibanon/matterbridge:latest
+    restart: unless-stopped
+    volumes:
+      - ./matterbridge.toml:/etc/matterbridge/matterbridge.toml:ro
+    network_mode: host
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:4242/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      simplex:
+        condition: service_started
+
+  # matterbridge-simplex — Node.js adapter connecting SimpleX to Matterbridge API
+  node-app:
+    build:
+      context: https://github.com/UnkwUsr/matterbridge-simplex.git
+      dockerfile: Dockerfile.node-app
+    restart: unless-stopped
+    network_mode: host
+    # Format: <MB_API_ADDR> <MB_GATEWAY> <SXC_WS_ADDR> <CHAT_ID> <CHAT_TYPE>
+    # CHAT_ID: get via simplex-chat -e '/i #group_name' or list command
+    # CHAT_TYPE: "contact" or "group"
+    command: >-
+      127.0.0.1:4242
+      gateway1
+      127.0.0.1:5225
+      ${SIMPLEX_CHAT_ID:-1}
+      ${SIMPLEX_CHAT_TYPE:-group}
+    environment:
+      - SIMPLEX_CHAT_ID=${SIMPLEX_CHAT_ID:-1}
+      - SIMPLEX_CHAT_TYPE=${SIMPLEX_CHAT_TYPE:-group}
+    depends_on:
+      simplex:
+        condition: service_started
+      matterbridge:
+        condition: service_started

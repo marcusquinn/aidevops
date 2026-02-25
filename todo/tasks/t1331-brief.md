@@ -49,7 +49,8 @@ Key files:
     method: codebase
     pattern: "circuit.breaker|consecutive_fail"
     path: ".agents/scripts/supervisor/"
-  ```
+   ```
+
 - [ ] A GitHub issue is created/updated with `circuit-breaker` label on trip
 
   ```yaml
@@ -57,17 +58,20 @@ Key files:
     method: codebase
     pattern: "circuit-breaker"
     path: ".agents/scripts/supervisor/"
-  ```
+   ```
+
 - [ ] `supervisor-helper.sh circuit-breaker status` shows current state
 - [ ] `supervisor-helper.sh circuit-breaker reset` resumes dispatch
 - [ ] Counter resets to 0 on any successful task completion
 - [ ] Threshold is configurable via `SUPERVISOR_CIRCUIT_BREAKER_THRESHOLD`
+
   ```yaml
   verify:
     method: codebase
     pattern: "SUPERVISOR_CIRCUIT_BREAKER_THRESHOLD"
     path: ".agents/scripts/supervisor/"
   ```
+
 - [ ] ShellCheck clean on modified scripts
 
 ## Context & Decisions

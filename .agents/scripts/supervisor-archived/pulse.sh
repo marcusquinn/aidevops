@@ -1373,6 +1373,8 @@ cmd_pulse() {
 					log_success "  $tid: COMPLETE via eager orphaned PR scan ($post_scan_pr)"
 					completed_count=$((completed_count + 1))
 					cleanup_worker_processes "$tid"
+					# t1331: Reset circuit breaker counter on early-success path
+					cb_record_success 2>>"$SUPERVISOR_LOG" || true
 					# Success pattern already stored by scan_orphaned_pr_for_task
 					handle_diagnostic_completion "$tid" 2>>"$SUPERVISOR_LOG" || true
 					# Remove stuck-detection label if previously flagged (t1332)
@@ -1628,6 +1630,8 @@ cmd_pulse() {
 					log_info "  $tid: CLI health cache invalidated — next dispatch will re-verify"
 				else
 					log_error "  $tid: FAILED ($outcome_detail)"
+					# t1331: Record failure for circuit breaker (consecutive failure tracking)
+					cb_record_failure "$tid" "$outcome_detail" 2>>"$SUPERVISOR_LOG" || true
 					# Proof-log: failed decision (t218)
 					write_proof_log --task "$tid" --event "failed" --stage "evaluate" \
 						--decision "failed:$outcome_detail" \
