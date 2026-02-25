@@ -849,8 +849,72 @@ _record_model_availability() {
 # Tier Resolution with Fallback
 # =============================================================================
 
+# =============================================================================
+# Rate Limit Awareness (t1330)
+# =============================================================================
+
+# Check if a provider is at throttle risk using observability data.
+# Delegates to observability-helper.sh check_rate_limit_risk() if available.
+# Returns: 0=ok, 1=throttle-risk (warn), 2=critical
+# Outputs: "ok", "warn", or "critical" on stdout
+_check_provider_rate_limit_risk() {
+	local provider="$1"
+	local obs_helper="${SCRIPT_DIR}/observability-helper.sh"
+
+	if [[ ! -x "$obs_helper" ]]; then
+		echo "ok"
+		return 0
+	fi
+
+	# Source the observability helper to access check_rate_limit_risk()
+	# We need to call it as a subprocess to avoid variable conflicts
+	local risk_status
+	risk_status=$(bash "$obs_helper" rate-limits --provider "$provider" --json 2>/dev/null |
+		jq -r '.[0].status // "ok"' 2>/dev/null) || risk_status="ok"
+	risk_status="${risk_status:-ok}"
+
+	case "$risk_status" in
+	critical)
+		echo "critical"
+		return 2
+		;;
+	warn)
+		echo "warn"
+		return 1
+		;;
+	*)
+		echo "ok"
+		return 0
+		;;
+	esac
+}
+
+# Extract provider from a model spec (provider/model or model)
+_extract_provider() {
+	local model_spec="$1"
+	if [[ "$model_spec" == *"/"* ]]; then
+		echo "${model_spec%%/*}"
+	else
+		case "$model_spec" in
+		claude*) echo "anthropic" ;;
+		gpt* | o3* | o4*) echo "openai" ;;
+		gemini*) echo "google" ;;
+		deepseek*) echo "deepseek" ;;
+		llama*) echo "groq" ;;
+		*) echo "" ;;
+		esac
+	fi
+	return 0
+}
+
+# =============================================================================
+# Tier Resolution with Fallback
+# =============================================================================
+
 # Resolve the best available model for a given tier.
 # Checks primary model first, falls back to secondary if primary is unavailable.
+# Rate limit awareness (t1330): if primary provider is at throttle risk (>=warn_pct),
+# prefer the fallback provider even if primary is technically available.
 # If both fail, delegates to fallback-chain-helper.sh for extended chain resolution
 # including gateway providers (OpenRouter, Cloudflare AI Gateway).
 # Output: provider/model_id on stdout
@@ -870,6 +934,26 @@ resolve_tier() {
 	local primary fallback
 	primary="${tier_spec%%|*}"
 	fallback="${tier_spec#*|}"
+
+	# Rate limit check (t1330): if primary provider is at throttle risk,
+	# try fallback first to avoid hitting rate limits
+	local primary_provider
+	primary_provider=$(_extract_provider "$primary")
+	if [[ -n "$primary_provider" ]]; then
+		local rl_risk
+		rl_risk=$(_check_provider_rate_limit_risk "$primary_provider" 2>/dev/null) || rl_risk="ok"
+		if [[ "$rl_risk" == "warn" || "$rl_risk" == "critical" ]]; then
+			[[ "$quiet" != "true" ]] && print_warning "$primary_provider: rate limit ${rl_risk} — preferring fallback for $tier"
+			# Try fallback first when primary is throttle-risk
+			if [[ -n "$fallback" && "$fallback" != "$primary" ]] && check_model_available "$fallback" "$force" "true"; then
+				echo "$fallback"
+				[[ "$quiet" != "true" ]] && print_success "Resolved $tier -> $fallback (rate-limit routing: $primary_provider at ${rl_risk})"
+				return 0
+			fi
+			# Fallback also unavailable — still try primary (better than nothing)
+			[[ "$quiet" != "true" ]] && print_warning "Fallback also unavailable, trying primary despite rate limit risk"
+		fi
+	fi
 
 	# Try primary
 	if check_model_available "$primary" "$force" "true"; then
@@ -1239,8 +1323,8 @@ cmd_rate_limits() {
 	fi
 
 	echo ""
-	echo "Rate Limit Status"
-	echo "================="
+	echo "Rate Limit Status (from API response headers)"
+	echo "============================================="
 	echo ""
 
 	local count
@@ -1248,21 +1332,30 @@ cmd_rate_limits() {
 
 	if [[ "$count" -eq 0 ]]; then
 		print_info "No rate limit data cached. Probe providers to collect rate limit headers."
-		return 0
+	else
+		printf "  %-12s %-12s %-12s %-20s %-12s %-12s %-20s %-20s\n" \
+			"Provider" "Req Limit" "Req Left" "Req Reset" "Tok Limit" "Tok Left" "Tok Reset" "Checked"
+		printf "  %-12s %-12s %-12s %-20s %-12s %-12s %-20s %-20s\n" \
+			"--------" "---------" "--------" "---------" "---------" "--------" "---------" "-------"
+
+		db_query "SELECT * FROM rate_limits ORDER BY provider;" |
+			while IFS='|' read -r prov rl rr rres tl tr tres checked _ttl; do
+				printf "  %-12s %-12s %-12s %-20s %-12s %-12s %-20s %-20s\n" \
+					"$prov" "$rl" "$rr" "${rres:-n/a}" "$tl" "$tr" "${tres:-n/a}" "$checked"
+			done
 	fi
 
-	printf "  %-12s %-12s %-12s %-20s %-12s %-12s %-20s %-20s\n" \
-		"Provider" "Req Limit" "Req Left" "Req Reset" "Tok Limit" "Tok Left" "Tok Reset" "Checked"
-	printf "  %-12s %-12s %-12s %-20s %-12s %-12s %-20s %-20s\n" \
-		"--------" "---------" "--------" "---------" "---------" "--------" "---------" "-------"
-
-	db_query "SELECT * FROM rate_limits ORDER BY provider;" |
-		while IFS='|' read -r prov rl rr rres tl tr tres checked _ttl; do
-			printf "  %-12s %-12s %-12s %-20s %-12s %-12s %-20s %-20s\n" \
-				"$prov" "$rl" "$rr" "${rres:-n/a}" "$tl" "$tr" "${tres:-n/a}" "$checked"
-		done
-
 	echo ""
+
+	# Also show observability-derived utilisation (t1330)
+	local obs_helper="${SCRIPT_DIR}/observability-helper.sh"
+	if [[ -x "$obs_helper" ]]; then
+		echo "Rate Limit Utilisation (from observability DB, t1330)"
+		echo "====================================================="
+		echo ""
+		bash "$obs_helper" rate-limits 2>/dev/null || true
+	fi
+
 	return 0
 }
 

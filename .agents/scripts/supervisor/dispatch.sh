@@ -203,6 +203,9 @@ resolve_model() {
 	fi
 
 	# Try model-availability-helper.sh for availability-aware resolution (t132.3)
+	# This now includes rate limit awareness (t1330): if the primary provider is
+	# at throttle risk (>=warn_pct of its rate limit), resolve_tier() will prefer
+	# the fallback provider automatically.
 	# IMPORTANT: When using OpenCode CLI with Anthropic OAuth, the availability
 	# helper sees anthropic as "no-key" (no standalone ANTHROPIC_API_KEY) and
 	# resolves to opencode/* models that route through OpenCode's Zen proxy.
@@ -217,6 +220,22 @@ resolve_model() {
 		fi
 		# Fallback: availability helper returned non-anthropic or empty, use static defaults
 		log_verbose "model-availability-helper.sh resolved '$resolved' (non-anthropic or empty), using static default"
+	fi
+
+	# Rate limit check (t1330): before returning static default, check if anthropic
+	# is at throttle risk. If so, log a warning — the static fallback still uses
+	# anthropic since it's the only configured provider in the static map.
+	local obs_helper="${SCRIPT_DIR}/../observability-helper.sh"
+	if [[ -x "$obs_helper" ]]; then
+		local rl_json
+		rl_json=$(bash "$obs_helper" rate-limits --provider anthropic --json 2>/dev/null) || rl_json=""
+		if [[ -n "$rl_json" ]]; then
+			local rl_status
+			rl_status=$(printf '%s' "$rl_json" | jq -r '.[0].status // "ok"' 2>/dev/null) || rl_status="ok"
+			if [[ "$rl_status" == "warn" || "$rl_status" == "critical" ]]; then
+				log_warn "resolve_model: anthropic rate limit ${rl_status} — consider configuring alternative providers in fallback-chain-config.json (t1330)"
+			fi
+		fi
 	fi
 
 	# Static fallback: map tier names to concrete models (t132.5)
