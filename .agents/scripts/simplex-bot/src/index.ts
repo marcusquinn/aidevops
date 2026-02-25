@@ -440,11 +440,13 @@ class SimplexAdapter {
     }
 
     if (this.config.autoAcceptContacts && this.config.welcomeMessage) {
-      this.sendMessage(`@${name}`, this.config.welcomeMessage);
+      this.sendMessage(`@${name}`, this.config.welcomeMessage).catch((err) => {
+        this.logger.error(`Failed to send welcome message to ${name}:`, err);
+      });
     }
   }
 
-  /** Schedule reconnection attempt with exponential backoff */
+  /** Schedule reconnection attempt with linear backoff (capped at 6x interval) */
   private scheduleReconnect(): void {
     if (
       this.config.maxReconnectAttempts > 0 &&

@@ -237,9 +237,9 @@ section_helper_script() {
 		print_result "status: shows binary status" 1 "Expected 'Binary:' in status output"
 	fi
 
-	# Count subcommands (should have at least 8)
+	# Count subcommand function definitions (should have at least 8)
 	local cmd_count
-	cmd_count="$(grep -c 'cmd_' "$HELPER" 2>/dev/null || echo 0)"
+	cmd_count="$(grep -cE '^cmd_[a-z_]+\(\)' "$HELPER" 2>/dev/null || echo 0)"
 	if [[ "$cmd_count" -ge 8 ]]; then
 		print_result "helper has >= 8 cmd_ functions (found: ${cmd_count})" 0
 	else
@@ -479,7 +479,7 @@ section_bot_framework() {
 	local commands_ts="${bot_dir}/src/commands.ts"
 	if [[ -f "$commands_ts" ]]; then
 		local cmd_count
-		cmd_count="$(grep -c "name:" "$commands_ts" 2>/dev/null || echo 0)"
+		cmd_count="$(grep -cE 'name:\s*"' "$commands_ts" 2>/dev/null || echo 0)"
 		if [[ "$cmd_count" -ge 5 ]]; then
 			print_result "commands.ts: has >= 5 starter commands (found: ${cmd_count})" 0
 		else
