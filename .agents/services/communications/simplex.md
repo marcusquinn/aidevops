@@ -330,7 +330,7 @@ The SDK provides a typed WebSocket client with sequential command queue and type
 
 ```typescript
 import {ChatClient} from "simplex-chat"
-import {ChatType} from "@simplex-chat/types"
+import {ChatType} from "simplex-chat/dist/command"
 
 // Connect to CLI WebSocket server
 const chat = await ChatClient.create("ws://localhost:5225")
@@ -343,7 +343,7 @@ const address = await chat.apiGetUserAddress(user.userId)
   || await chat.apiCreateUserAddress(user.userId)
 
 // Enable auto-accept for incoming contacts
-await chat.enableAddressAutoAccept(user.userId)
+await chat.enableAddressAutoAccept()
 
 // Send text message to contact or group (use ChatType enum)
 const contactId = 1  // obtained from contactConnected event
@@ -352,7 +352,7 @@ await chat.apiSendTextMessage(ChatType.Direct, contactId, "Hello!")
 await chat.apiSendTextMessage(ChatType.Group, groupId, "Hello group!")
 
 // Raw command (for commands not wrapped by SDK)
-const resp = await chat.sendChatCmd("/_show_address 1")
+const resp = await chat.sendChatCmd(`/_show_address ${user.userId}`)
 
 // Event loop — process incoming messages (runs indefinitely)
 for await (const event of chat.msgQ) {
@@ -375,6 +375,9 @@ See: [TypeScript SDK README](https://github.com/simplex-chat/simplex-chat/tree/s
 
 ```typescript
 // Subset of types from @simplex-chat/types — see upstream for full definitions.
+// Placeholders for types defined in @simplex-chat/types
+type LinkPreview = { uri: string; title: string; description: string; image: string }
+type CryptoFile = { filePath: string; cryptoArgs?: object }
 
 // MsgContent — discriminated union (common variants; upstream also has video, report, chat, unknown)
 type MsgContent =
