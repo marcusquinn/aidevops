@@ -842,6 +842,9 @@ cmd_server() {
 			return 1
 		fi
 
+		log_warn "This will download and execute a server installer script from:"
+		log_warn "  ${SERVER_INSTALL_URL}"
+		log_warn "Review the script at the URL above before proceeding."
 		log_info "Downloading SimpleX server installer..."
 		local installer
 		installer="$(mktemp /tmp/simplex-server-install-XXXXXX.sh)"
@@ -852,17 +855,20 @@ cmd_server() {
 			return 1
 		fi
 
-		log_info "Run the installer and choose option for ${server_type}-server:"
-		log_info "  bash ${installer}"
-		log_info ""
-		log_info "Then initialize:"
+		log_info "Running server installer (choose option for ${server_type}-server)..."
+		if ! bash "$installer"; then
+			log_error "Server installation failed"
+			rm -f "$installer"
+			return 1
+		fi
+		rm -f "$installer"
+
+		log_info "Initialize the server:"
 		if [[ "$server_type" == "smp" ]]; then
 			log_info "  su smp -c 'smp-server init --yes --store-log --control-port --fqdn=${fqdn}'"
 		else
 			log_info "  su xftp -c 'xftp-server init -l --fqdn=${fqdn} -q 100gb -p /srv/xftp/'"
 		fi
-
-		rm -f "$installer"
 		;;
 	start)
 		log_info "Starting ${service_name}..."
