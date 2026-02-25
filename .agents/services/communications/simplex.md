@@ -330,6 +330,7 @@ The SDK provides a typed WebSocket client with sequential command queue and type
 
 ```typescript
 import {ChatClient} from "simplex-chat"
+import {ChatType} from "@simplex-chat/types"
 
 // Connect to CLI WebSocket server
 const chat = await ChatClient.create("ws://localhost:5225")
@@ -337,18 +338,23 @@ const chat = await ChatClient.create("ws://localhost:5225")
 // Get active user
 const user = await chat.apiGetActiveUser()
 
-// Get or create address
-const address = await chat.apiGetUserAddress()
-  || await chat.apiCreateUserAddress()
+// Get or create address (userId required by SDK)
+const address = await chat.apiGetUserAddress(user.userId)
+  || await chat.apiCreateUserAddress(user.userId)
 
 // Enable auto-accept for incoming contacts
 await chat.enableAddressAutoAccept(user.userId)
 
-// Send text message to contact or group
-await chat.apiSendTextMessage("direct", contactId, "Hello!")
-await chat.apiSendTextMessage("group", groupId, "Hello group!")
+// Send text message to contact or group (use ChatType enum)
+const contactId = 1  // obtained from contactConnected event
+const groupId = 1    // obtained from joinedGroupMember event
+await chat.apiSendTextMessage(ChatType.Direct, contactId, "Hello!")
+await chat.apiSendTextMessage(ChatType.Group, groupId, "Hello group!")
 
-// Event loop — process incoming messages
+// Raw command (for commands not wrapped by SDK)
+const resp = await chat.sendChatCmd("/_show_address 1")
+
+// Event loop — process incoming messages (runs indefinitely)
 for await (const event of chat.msgQ) {
   switch (event.type) {
     case "contactConnected":
@@ -359,9 +365,6 @@ for await (const event of chat.msgQ) {
       break
   }
 }
-
-// Raw command (for commands not wrapped by SDK)
-const resp = await chat.sendChatCmd("/_show_address 1")
 ```
 
 **Bun compatibility**: Bun has native WebSocket — `isomorphic-ws` (SDK dependency) uses the native impl. Use `bun:sqlite` for session storage instead of `better-sqlite3` to avoid native module compilation.
@@ -371,34 +374,38 @@ See: [TypeScript SDK README](https://github.com/simplex-chat/simplex-chat/tree/s
 ### Key Types
 
 ```typescript
-// MsgContent — discriminated union for message types
-{ type: "text", text: string }
-{ type: "image", text: string, image: string }  // base64
-{ type: "file", text: string }
-{ type: "voice", text: string, duration: int }
-{ type: "link", text: string, preview: LinkPreview }
+// Subset of types from @simplex-chat/types — see upstream for full definitions.
+
+// MsgContent — discriminated union (common variants; upstream also has video, report, chat, unknown)
+type MsgContent =
+  | { type: "text"; text: string }
+  | { type: "image"; text: string; image: string }  // base64
+  | { type: "file"; text: string }
+  | { type: "voice"; text: string; duration: number }
+  | { type: "link"; text: string; preview: LinkPreview }
 
 // ComposedMessage — for APISendMessages
-{
-  fileSource?: CryptoFile,
-  quotedItemId?: int64,
-  msgContent: MsgContent,
-  mentions: { [displayName: string]: int64 }  // groupMemberId
+interface ComposedMessage {
+  fileSource?: CryptoFile
+  quotedItemId?: number   // int64
+  msgContent: MsgContent
+  mentions: { [displayName: string]: number }  // groupMemberId (int64)
 }
 
 // ChatBotCommand — for bot menus
-{ type: "command", keyword: string, label: string, params?: string }
-{ type: "menu", label: string, commands: ChatBotCommand[] }
+type ChatBotCommand =
+  | { type: "command"; keyword: string; label: string; params?: string }
+  | { type: "menu"; label: string; commands: ChatBotCommand[] }
 
 // AddressSettings
-{
-  businessAddress: bool,
-  autoAccept?: { acceptIncognito: bool },
+interface AddressSettings {
+  businessAddress: boolean
+  autoAccept?: { acceptIncognito: boolean }
   autoReply?: MsgContent
 }
 
 // GroupMemberRole
-// observer | author | member | moderator | admin | owner
+type GroupMemberRole = "observer" | "author" | "member" | "moderator" | "admin" | "owner"
 ```
 
 ### Bot Profile Configuration
