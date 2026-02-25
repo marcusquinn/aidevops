@@ -941,7 +941,7 @@ resolve_tier() {
 	primary_provider=$(_extract_provider "$primary")
 	if [[ -n "$primary_provider" ]]; then
 		local rl_risk
-		rl_risk=$(_check_provider_rate_limit_risk "$primary_provider" 2>/dev/null || true)
+		rl_risk=$(_check_provider_rate_limit_risk "$primary_provider" || true)
 		rl_risk="${rl_risk:-ok}"
 		if [[ "$rl_risk" == "warn" || "$rl_risk" == "critical" ]]; then
 			[[ "$quiet" != "true" ]] && print_warning "$primary_provider: rate limit ${rl_risk} — preferring fallback for $tier"
