@@ -187,6 +187,9 @@ check_positional_parameters() {
             /echo.*\$[1-9]/ { next }
             /print.*\$[1-9]/ { next }
             /Usage:/ { next }
+            # Skip currency/pricing patterns: $[1-9] followed by digit, decimal, comma,
+            # or slash (e.g. $28/mo, $1.99, $1,000) — false-positives in markdown tables.
+            /\$[1-9][0-9.,\/]/ { next }
             in_func && /\$[1-9]/ && !/local.*=.*\$[1-9]/ {
                 print FILENAME ":" NR ": " $0
             }

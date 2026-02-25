@@ -77,9 +77,11 @@ validate_positional_parameters() {
 	print_info "Validating positional parameters..."
 
 	for file in "$@"; do
-		if [[ -f "$file" ]] && grep -n '\$[1-9]' "$file" | grep -v 'local.*=.*\$[1-9]' >/dev/null; then
+		# Exclude currency/pricing patterns: $[1-9] followed by digit, decimal, comma,
+		# or slash (e.g. $28/mo, $1.99, $1,000) — false-positives in markdown tables.
+		if [[ -f "$file" ]] && grep -n '\$[1-9]' "$file" | grep -v 'local.*=.*\$[1-9]' | grep -vE '\$[1-9][0-9.,/]' >/dev/null; then
 			print_error "Direct positional parameter usage in $file"
-			grep -n '\$[1-9]' "$file" | grep -v 'local.*=.*\$[1-9]' | head -3
+			grep -n '\$[1-9]' "$file" | grep -v 'local.*=.*\$[1-9]' | grep -vE '\$[1-9][0-9.,/]' | head -3
 			((violations++))
 		fi
 	done
