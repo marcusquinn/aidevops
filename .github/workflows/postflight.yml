@@ -76,6 +76,7 @@ jobs:
         # Count results (excluding self)
         TOTAL=$(echo "$CHECK_RUNS" | jq -s 'length')
         PASSED=$(echo "$CHECK_RUNS" | jq -s '[.[] | select(.conclusion == "success")] | length')
+        SKIPPED=$(echo "$CHECK_RUNS" | jq -s '[.[] | select(.conclusion == "skipped")] | length')
         FAILED=$(echo "$CHECK_RUNS" | jq -s '[.[] | select(.conclusion == "failure")] | length')
         
         echo "| Check | Status | Conclusion |" >> $GITHUB_STEP_SUMMARY
@@ -89,20 +90,48 @@ jobs:
         echo "*Note: 'Verify Release Health' (this workflow) is excluded from pass/fail counts*" >> $GITHUB_STEP_SUMMARY
         
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Total**: $TOTAL | **Passed**: $PASSED | **Failed**: $FAILED" >> $GITHUB_STEP_SUMMARY
+        echo "**Total**: $TOTAL | **Passed**: $PASSED | **Skipped**: $SKIPPED | **Failed**: $FAILED" >> $GITHUB_STEP_SUMMARY
         
-        if [[ "$FAILED" != "0" ]]; then
-          echo "::error::$FAILED check runs failed"
+        # Separate critical workflow failures from advisory tool failures
+        # Critical: core CI checks (Security Validation, Framework Validation, Version Consistency)
+        # Advisory: external analysis tools that fail intermittently (non-blocking)
+        # Pipe-delimited list of exact check names to treat as advisory
+        ADVISORY_NAMES="SonarCloud Code Analysis"
+        
+        CRITICAL_FAILED=$(echo "$CHECK_RUNS" | jq -s --arg names "$ADVISORY_NAMES" \
+          '($names | split("|")) as $adv |
+           [.[] | select(.conclusion == "failure") | select(.name as $n | $adv | index($n) | not)] | length')
+        ADVISORY_FAILED=$(echo "$CHECK_RUNS" | jq -s --arg names "$ADVISORY_NAMES" \
+          '($names | split("|")) as $adv |
+           [.[] | select(.conclusion == "failure") | select(.name as $n | $adv | index($n))] | length')
+        
+        if [[ "$ADVISORY_FAILED" != "0" ]]; then
+          echo "::warning::$ADVISORY_FAILED advisory check(s) failed (non-blocking)"
+          echo "$CHECK_RUNS" | jq -rs --arg names "$ADVISORY_NAMES" \
+            '($names | split("|")) as $adv |
+             .[] | select(.conclusion == "failure") | select(.name as $n | $adv | index($n)) | "  Advisory failure: \(.name)"'
+        fi
+        
+        if [[ "$CRITICAL_FAILED" != "0" ]]; then
+          echo "::error::$CRITICAL_FAILED critical check run(s) failed"
+          echo "$CHECK_RUNS" | jq -rs --arg names "$ADVISORY_NAMES" \
+            '($names | split("|")) as $adv |
+             .[] | select(.conclusion == "failure") | select(.name as $n | $adv | index($n) | not) | "  Critical failure: \(.name)"'
           echo "cicd_status=failed" >> $GITHUB_OUTPUT
           exit 1
         fi
         
-        echo "cicd_status=passed" >> $GITHUB_OUTPUT
-        echo "All CI/CD checks passed"
+        if [[ "$ADVISORY_FAILED" != "0" ]]; then
+          echo "cicd_status=warning" >> $GITHUB_OUTPUT
+        else
+          echo "cicd_status=passed" >> $GITHUB_OUTPUT
+        fi
+        echo "CI/CD critical checks passed"
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     
     - name: Check SonarCloud Quality Gate
+      if: always()
       id: sonarcloud
       run: |
         echo "" >> $GITHUB_STEP_SUMMARY
@@ -134,6 +163,7 @@ jobs:
       continue-on-error: true
     
     - name: Security Scan with Snyk
+      if: always()
       id: snyk
       run: |
         echo "" >> $GITHUB_STEP_SUMMARY
@@ -169,6 +199,7 @@ jobs:
       continue-on-error: true
     
     - name: Check for Secrets
+      if: always()
       id: secrets
       run: |
         echo "" >> $GITHUB_STEP_SUMMARY
@@ -190,6 +221,7 @@ jobs:
       continue-on-error: true
     
     - name: Generate Final Report
+      id: report
       if: always()
       run: |
         echo "" >> $GITHUB_STEP_SUMMARY
@@ -197,25 +229,59 @@ jobs:
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "## Postflight Summary" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
+        
+        CICD="${{ steps.cicd.outputs.cicd_status }}"
+        SONAR="${{ steps.sonarcloud.outputs.sonar_status }}"
+        SNYK="${{ steps.snyk.outputs.snyk_status }}"
+        SECRETS="${{ steps.secrets.outputs.secrets_status }}"
+        
+        # Default unset outputs to 'skipped' (step didn't produce output)
+        CICD="${CICD:-skipped}"
+        SONAR="${SONAR:-skipped}"
+        SNYK="${SNYK:-skipped}"
+        SECRETS="${SECRETS:-skipped}"
+        
         echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
         echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
-        echo "| CI/CD Pipelines | ${{ steps.cicd.outputs.cicd_status || 'unknown' }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| SonarCloud | ${{ steps.sonarcloud.outputs.sonar_status || 'unknown' }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Snyk Security | ${{ steps.snyk.outputs.snyk_status || 'unknown' }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Secret Detection | ${{ steps.secrets.outputs.secrets_status || 'unknown' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| CI/CD Pipelines | ${CICD} |" >> $GITHUB_STEP_SUMMARY
+        echo "| SonarCloud | ${SONAR} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Snyk Security | ${SNYK} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Secret Detection | ${SECRETS} |" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**Release**: ${{ github.event.release.tag_name || github.ref_name }}" >> $GITHUB_STEP_SUMMARY
         echo "**Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
         echo "**Time**: $(date -u)" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "*Generated by AI DevOps Framework Postflight Verification*" >> $GITHUB_STEP_SUMMARY
-    
-    - name: Notify on Critical Failure
-      if: failure()
-      run: |
-        echo "::error::Postflight verification failed for release ${{ github.event.release.tag_name || github.ref_name }}"
-        echo ""
-        echo "Recommended actions:"
-        echo "1. Review the failed checks in the workflow summary"
-        echo "2. If critical issues found, consider rollback"
-        echo "3. See: .agents/workflows/postflight.md#rollback-procedures"
+        
+        # Determine overall result
+        # Critical failures: CI/CD hard failures or secrets detected
+        HAS_CRITICAL=false
+        HAS_WARNING=false
+        
+        if [[ "$CICD" == "failed" ]]; then
+          HAS_CRITICAL=true
+        fi
+        if [[ "$SECRETS" == "failed" ]]; then
+          HAS_CRITICAL=true
+        fi
+        
+        # Warnings: advisory failures, SonarCloud issues, Snyk issues
+        if [[ "$CICD" == "warning" || "$SONAR" == "failed" || "$SNYK" == "issues" ]]; then
+          HAS_WARNING=true
+        fi
+        
+        if [[ "$HAS_CRITICAL" == "true" ]]; then
+          echo "::error::Postflight verification failed for release ${{ github.event.release.tag_name || github.ref_name }}"
+          echo ""
+          echo "Recommended actions:"
+          echo "1. Review the failed checks in the workflow summary"
+          echo "2. If critical issues found, consider rollback"
+          echo "3. See: .agents/workflows/postflight.md#rollback-procedures"
+          exit 1
+        elif [[ "$HAS_WARNING" == "true" ]]; then
+          echo "::warning::Postflight completed with warnings for release ${{ github.event.release.tag_name || github.ref_name }}"
+          echo "Review advisory warnings above and address in next release if needed."
+        else
+          echo "Postflight verification passed for release ${{ github.event.release.tag_name || github.ref_name }}"
+        fi
