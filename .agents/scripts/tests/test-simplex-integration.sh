@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2034
 
 # =============================================================================
 # Integration Test Script for SimpleX Chat Components (t1327 series)
@@ -199,7 +198,7 @@ section_helper_script() {
 
 	# Count subcommand function definitions (should have at least 8)
 	local cmd_count
-	cmd_count="$(grep -cE '^cmd_[a-z_]+\(\)' "$HELPER" 2>/dev/null)" || cmd_count=0
+	cmd_count="$(grep -cE '^cmd_[a-z_]+\(\) \{' "$HELPER" 2>/dev/null)" || cmd_count=0
 	if [[ "$cmd_count" -ge 8 ]]; then
 		print_result "helper has >= 8 cmd_ functions (found: ${cmd_count})" 0
 	else

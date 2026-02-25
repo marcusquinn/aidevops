@@ -192,8 +192,9 @@ class SimplexAdapter {
 
         this.ws.onerror = (event: Event) => {
           this.logger.error("WebSocket error", event);
-          // Clean up the socket without triggering reconnect from onclose
-          if (this.ws) {
+          // Only suppress reconnect on initial connection failure;
+          // mid-session errors should allow onclose to trigger reconnect.
+          if (this.reconnectAttempts === 0 && this.ws) {
             this.intentionalDisconnect = true;
             this.ws.close();
             this.ws = null;

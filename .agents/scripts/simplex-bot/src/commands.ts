@@ -44,9 +44,11 @@ const statusCommand: CommandDefinition = {
         stderr: "pipe",
       });
       const output = await new Response(proc.stdout).text();
+      const stderrText = await new Response(proc.stderr).text();
       const exitCode = await proc.exited;
       if (exitCode !== 0) {
-        return "Failed to get aidevops status. Is aidevops installed?";
+        const detail = stderrText.trim();
+        return "Failed to get aidevops status." + (detail ? ` Error: ${detail}` : " Is aidevops installed?");
       }
       return output.trim() || "aidevops is running (no output)";
     } catch {
@@ -84,8 +86,8 @@ const tasksCommand: CommandDefinition = {
   handler: async (_ctx: CommandContext): Promise<string> => {
     try {
       const tasksFile =
-        process.env.SIMPLEX_TASKS_FILE ||
-        `${import.meta.dir}/../../../..` + "/TODO.md";
+        process.env.SIMPLEX_TASKS_FILE ??
+        `${import.meta.dir}/../../../../TODO.md`;
       const todoPath = resolve(tasksFile);
       const proc = Bun.spawn(
         ["grep", "-c", "\\- \\[ \\]", todoPath],
