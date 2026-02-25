@@ -52,6 +52,12 @@ gh pr list --repo marcusquinn/aidevops --state open --json number,title,reviewDe
 # aidevops issues
 gh issue list --repo marcusquinn/aidevops --state open --json number,title,labels,updatedAt --limit 20
 
+# aidevops-dashboard PRs (community companion project — fork at marcusquinn/aidevops-dashboard, issues on johnwaldo/aidevops-dashboard)
+gh pr list --repo johnwaldo/aidevops-dashboard --state open --json number,title,reviewDecision,statusCheckRollup,updatedAt,headRefName --limit 20
+
+# aidevops-dashboard issues
+gh issue list --repo johnwaldo/aidevops-dashboard --state open --json number,title,labels,updatedAt --limit 20
+
 # For each managed repo in the supervisor DB, fetch PRs and issues:
 # gh pr list --repo <owner/repo> --state open --json number,title,reviewDecision,statusCheckRollup,updatedAt,headRefName --limit 20
 # gh issue list --repo <owner/repo> --state open --json number,title,labels,updatedAt --limit 20
@@ -131,7 +137,7 @@ opencode run --dir ~/Git/<repo> [--agent <agent>] --title "Issue #<number>: <tit
 ```
 
 **Important dispatch rules:**
-- Use `--dir ~/Git/<repo-name>` matching the repo the task belongs to
+- Use `--dir ~/Git/<repo-name>` matching the repo the task belongs to (e.g., `~/Git/aidevops-dashboard` for dashboard issues)
 - The `/full-loop` command handles everything: branching, implementation, PR, CI, merge, deploy
 - Do NOT add `--model` — let `/full-loop` use its default (opus for implementation)
 - **Background each dispatch with `&`** so you can launch multiple workers in one pulse
