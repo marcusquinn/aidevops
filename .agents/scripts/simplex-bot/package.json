@@ -14,7 +14,7 @@
     "simplex-chat": "^0.3.0"
   },
   "devDependencies": {
-    "@types/bun": "^1.3.0",
+    "@types/bun": "~1.3.0",
     "typescript": "^5.0.0"
   },
   "engines": {

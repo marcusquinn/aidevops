@@ -440,9 +440,14 @@ class SimplexAdapter {
     }
 
     if (this.config.autoAcceptContacts && this.config.welcomeMessage) {
-      this.sendMessage(`@${name}`, this.config.welcomeMessage).catch((err) => {
-        this.logger.error(`Failed to send welcome message to ${name}:`, err);
-      });
+      void this.sendMessage(`@${name}`, this.config.welcomeMessage).catch(
+        (err) => {
+          this.logger.error(
+            `Failed to send welcome message to ${name}:`,
+            err,
+          );
+        },
+      );
     }
   }
 
