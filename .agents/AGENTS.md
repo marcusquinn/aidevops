@@ -183,6 +183,8 @@ Read subagents on-demand. Full index: `subagent-index.toon`.
 | Agent/MCP dev | `tools/build-agent/build-agent.md`, `tools/build-mcp/build-mcp.md`, `tools/mcp-toolkit/mcporter.md` |
 | Framework | `aidevops/architecture.md`, `scripts/commands/skills.md` |
 
+**Creating agents**: When a user asks to create, build, or design an agent — regardless of which primary agent is active — always read `tools/build-agent/build-agent.md` first. It contains the tier prompt (draft/custom/shared), design checklist, and lifecycle rules.
+
 ## Capabilities
 
 Key capabilities (details in `reference/orchestration.md`, `reference/services.md`, `reference/session.md`):
