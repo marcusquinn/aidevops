@@ -5,7 +5,7 @@ Updated on each `aidevops skill scan`, `aidevops update`, or skill import.
 
 ## Latest Full Scan
 
-**Date**: 2026-02-24T03:49:08Z
+**Date**: 2026-02-25T05:28:26Z
 **Scanner**: cisco-ai-skill-scanner 1.0.2
 **Analyzers**: static, behavioral (dataflow)
 **Skills scanned**: 8
@@ -65,3 +65,4 @@ Source of truth for audit trail. The "Latest Full Scan" header is updated automa
 | 2026-02-22 | 8 | 8 | 0 | 0 | 0 | Routine scan |
 | 2026-02-23 | 8 | 8 | 0 | 0 | 0 | Routine scan |
 | 2026-02-24 | 8 | 8 | 0 | 0 | 0 | Routine scan |
+| 2026-02-25 | 8 | 8 | 0 | 0 | 0 | Routine scan |

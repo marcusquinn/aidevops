@@ -2553,7 +2553,7 @@
   check: shellcheck .agents/scripts/supervisor/routine-scheduler.sh
   check: file-exists .agents/scripts/supervisor/routine-scheduler.sh
 
-- [ ] v294 pr2257 [adopted] chore: add PGlite local-first embedded Postgres... | PR #2257 | merged:2026-02-25
+- [x] v294 pr2257 [adopted] chore: add PGlite local-first embedded Postgres... | PR #2257 | merged:2026-02-25 verified:2026-02-25
   files: .agents/AGENTS.md, .agents/subagent-index.toon, .agents/tools/database/pglite-local-first.md
   check: file-exists .agents/AGENTS.md
   check: file-exists .agents/subagent-index.toon
