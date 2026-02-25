@@ -122,14 +122,18 @@ export async function createLocalDb(dataDir: string) {
 
 ### 2. Electron integration
 
-Run PGlite in the main process. Expose via IPC to renderer.
+Run PGlite in the main process. Expose typed operations via IPC to renderer.
+
+**Security note**: Never expose raw SQL execution over IPC. A compromised renderer (e.g. XSS) could escalate to full DB access. Instead, expose specific named operations.
 
 ```typescript
 // apps/desktop/src/main/database.ts
 import { createLocalDb } from "@workspace/db/local";
+import { eq } from "drizzle-orm";
 import { app, ipcMain } from "electron";
 import { migrate } from "drizzle-orm/pglite/migrator";
 import path from "path";
+import * as schema from "@workspace/db/schema";
 
 let db: Awaited<ReturnType<typeof createLocalDb>>;
 
@@ -137,14 +141,22 @@ export async function initDatabase() {
   const dataDir = path.join(app.getPath("userData"), "pgdata");
   db = await createLocalDb(dataDir);
 
-  // Run the SAME migrations as production
-  await migrate(db, {
-    migrationsFolder: path.join(__dirname, "../../packages/db/migrations"),
+  // Migrations path: use app.getAppPath() for packaged builds
+  // __dirname is unreliable in asar archives — bundle migrations
+  // as extraResources or resolve via app.getAppPath()
+  const migrationsPath = app.isPackaged
+    ? path.join(process.resourcesPath, "migrations")
+    : path.join(app.getAppPath(), "packages/db/migrations");
+
+  await migrate(db, { migrationsFolder: migrationsPath });
+
+  // Expose NAMED operations — never raw SQL over IPC
+  ipcMain.handle("db:items:list", async () => {
+    return db.select().from(schema.items);
   });
 
-  // Expose query interface to renderer
-  ipcMain.handle("db:query", async (_event, sql: string, params?: unknown[]) => {
-    return db.execute(sql, params);
+  ipcMain.handle("db:items:get", async (_event, id: string) => {
+    return db.select().from(schema.items).where(eq(schema.items.id, id));
   });
 
   return db;
@@ -155,9 +167,11 @@ export async function initDatabase() {
 // apps/desktop/src/renderer/db.ts
 import { ipcRenderer } from "electron";
 
-export async function query(sql: string, params?: unknown[]) {
-  return ipcRenderer.invoke("db:query", sql, params);
-}
+// Type-safe IPC wrappers — no raw SQL exposed to renderer
+export const items = {
+  list: () => ipcRenderer.invoke("db:items:list"),
+  get: (id: string) => ipcRenderer.invoke("db:items:get", id),
+};
 ```
 
 ### 3. Browser extension integration (WXT / Manifest V3)
