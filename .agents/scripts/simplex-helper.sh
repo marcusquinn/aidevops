@@ -6,7 +6,7 @@
 # Usage:
 #   simplex-helper.sh install [--verify]
 #   simplex-helper.sh init [--name <bot-name>] [--port <port>] [--allow-files]
-#   simplex-helper.sh bot-start [--port <port>] [--db <prefix>] [--background]
+#   simplex-helper.sh bot-start [--port <port>] [--db <prefix>] [--background|--bg]
 #   simplex-helper.sh bot-stop [--port <port>]
 #   simplex-helper.sh send <contact> <message>
 #   simplex-helper.sh send-group <group> <message>
@@ -22,7 +22,7 @@
 #   --db <prefix>       Database prefix (default: ~/.simplex/)
 #   --name <name>       Bot display name
 #   --allow-files       Allow file transfers for bot
-#   --background        Run bot in background (detached)
+#   --background, --bg  Run bot in background (detached)
 #   --verify            Verify installation after install
 #   --type <smp|xftp>   Server type for server subcommand
 #   --fqdn <domain>     Fully qualified domain name for server init
@@ -60,7 +60,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly SCRIPT_DIR
 
 # shellcheck source=/dev/null
-source "${SCRIPT_DIR}/shared-constants.sh" 2>/dev/null || true
+source "${SCRIPT_DIR}/shared-constants.sh" || true
 
 readonly SIMPLEX_DEFAULT_PORT="${SIMPLEX_PORT:-5225}"
 readonly SIMPLEX_DEFAULT_DB_PREFIX="${SIMPLEX_DB_PREFIX:-}"
@@ -226,6 +226,9 @@ cmd_install() {
 		return 0
 	fi
 
+	log_warn "This will download and execute an installer script from:"
+	log_warn "  ${INSTALL_URL}"
+	log_warn "Review the script at the URL above before proceeding."
 	log_info "Downloading SimpleX Chat installer..."
 	local installer
 	installer="$(mktemp /tmp/simplex-install-XXXXXX.sh)"
@@ -348,7 +351,7 @@ cmd_bot_start() {
 			db_prefix="$2"
 			shift 2
 			;;
-		--background)
+		--background | --bg)
 			background="true"
 			shift
 			;;
@@ -489,11 +492,11 @@ cmd_send() {
 		else
 			log_warn "websocat not installed. Install with: brew install websocat (or cargo install websocat)"
 			log_info "Falling back to CLI command..."
-			echo "${contact} ${message}" | "$SIMPLEX_BIN" -p "$port" 2>/dev/null || true
+			echo "${contact} ${message}" | "$SIMPLEX_BIN" -p "$port" || true
 		fi
 	else
 		log_warn "No bot running. Starting CLI to send message..."
-		echo "${contact} ${message}" | "$SIMPLEX_BIN" 2>/dev/null || true
+		echo "${contact} ${message}" | "$SIMPLEX_BIN" || true
 	fi
 
 	return 0
@@ -542,11 +545,11 @@ cmd_connect() {
 			log_success "Connection request sent via WebSocket API"
 		else
 			log_warn "websocat not installed. Using CLI..."
-			echo "/c ${link}" | "$SIMPLEX_BIN" 2>/dev/null || true
+			echo "/c ${link}" | "$SIMPLEX_BIN" || true
 		fi
 	else
 		log_info "Starting CLI to connect..."
-		echo "/c ${link}" | "$SIMPLEX_BIN" 2>/dev/null || true
+		echo "/c ${link}" | "$SIMPLEX_BIN" || true
 	fi
 
 	return 0
@@ -603,10 +606,10 @@ cmd_address() {
 			echo "$json_cmd" | websocat "ws://127.0.0.1:${port}" --one-message
 		else
 			log_warn "websocat not installed"
-			echo "$cli_cmd" | "$SIMPLEX_BIN" 2>/dev/null || true
+			echo "$cli_cmd" | "$SIMPLEX_BIN" || true
 		fi
 	else
-		echo "$cli_cmd" | "$SIMPLEX_BIN" 2>/dev/null || true
+		echo "$cli_cmd" | "$SIMPLEX_BIN" || true
 	fi
 
 	return 0
@@ -691,10 +694,10 @@ cmd_group() {
 		if command -v websocat &>/dev/null; then
 			echo "$json_cmd" | websocat "ws://127.0.0.1:${port}" --one-message
 		else
-			echo "$cli_cmd" | "$SIMPLEX_BIN" 2>/dev/null || true
+			echo "$cli_cmd" | "$SIMPLEX_BIN" || true
 		fi
 	else
-		echo "$cli_cmd" | "$SIMPLEX_BIN" 2>/dev/null || true
+		echo "$cli_cmd" | "$SIMPLEX_BIN" || true
 	fi
 
 	return 0
@@ -917,7 +920,7 @@ Options:
   --db <prefix>       Database prefix
   --name <name>       Bot display name (default: AIBot)
   --allow-files       Allow file transfers for bot
-  --background        Run bot in background
+  --background, --bg  Run bot in background
   --verify            Verify installation
   --type <smp|xftp>   Server type
   --fqdn <domain>     Domain for server init

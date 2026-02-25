@@ -10,8 +10,7 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "declaration": true,
-    "resolveJsonModule": true,
-    "types": ["bun-types"]
+    "resolveJsonModule": true
   },
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist"]

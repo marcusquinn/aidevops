@@ -14,27 +14,29 @@ import pkg from "../package.json";
 // Built-in Commands
 // =============================================================================
 
+/** Show available commands and usage instructions */
 const helpCommand: CommandDefinition = {
   name: "help",
   description: "Show available commands and usage",
   groupEnabled: true,
   dmEnabled: true,
-  handler: async (ctx: CommandContext): Promise<string> => {
+  handler: async (_ctx: CommandContext): Promise<string> => {
     return [
       "Available commands:",
       "",
       "/help — Show this help message",
       "/status — Show aidevops system status",
-      "/ask <question> — Ask AI a question",
+      "/ask [question] — Ask AI a question",
       "/tasks — List open tasks",
-      "/task <description> — Create a new task",
-      "/run <command> — Execute an aidevops CLI command",
+      "/task [description] — Create a new task",
+      "/run [command] — Execute an aidevops CLI command",
       "/ping — Check bot responsiveness",
       "/version — Show bot version",
     ].join("\n");
   },
 };
 
+/** Query aidevops CLI for system status */
 const statusCommand: CommandDefinition = {
   name: "status",
   description: "Show aidevops system status",
@@ -58,6 +60,7 @@ const statusCommand: CommandDefinition = {
   },
 };
 
+/** Route a question to the AI model routing system */
 const askCommand: CommandDefinition = {
   name: "ask",
   description: "Ask AI a question (routes to appropriate model tier)",
@@ -66,13 +69,18 @@ const askCommand: CommandDefinition = {
   handler: async (ctx: CommandContext): Promise<string> => {
     const question = ctx.args.join(" ");
     if (!question) {
-      return "Usage: /ask <question>\nExample: /ask What is the status of issue #42?";
+      return "Usage: /ask [question]\nExample: /ask What is the status of issue #42?";
     }
     // Placeholder — in production this routes to the model routing system
-    return `Question received: "${question}"\n\n(AI model routing not yet connected. This is a scaffold — connect to your preferred AI provider.)`;
+    return (
+      'Question received: "' +
+      question +
+      '"\n\n(AI model routing not yet connected. This is a scaffold.)'
+    );
   },
 };
 
+/** List open tasks from TODO.md using configurable path */
 const tasksCommand: CommandDefinition = {
   name: "tasks",
   description: "List open tasks from TODO.md",
@@ -86,21 +94,30 @@ const tasksCommand: CommandDefinition = {
       const { resolve } = await import("node:path");
       const todoPath = resolve(tasksFile);
       const proc = Bun.spawn(
-        [
-          "bash",
-          "-c",
-          `grep -c '\\- \\[ \\]' "${todoPath}" 2>/dev/null || echo 0`,
-        ],
+        ["grep", "-c", "\\- \\[ \\]", todoPath],
         { stdout: "pipe", stderr: "pipe" },
       );
-      const count = (await new Response(proc.stdout).text()).trim();
-      return `Open tasks: ${count}\n\nUse /task <description> to create a new task.`;
+      const exitCode = await proc.exited;
+
+      if (exitCode === 0) {
+        const count = (await new Response(proc.stdout).text()).trim();
+        return "Open tasks: " + count + "\n\nUse /task <description> to create a new task.";
+      } else if (exitCode === 1) {
+        // grep returns 1 when no lines match — not an error
+        return "Open tasks: 0\n\nUse /task <description> to create a new task.";
+      } else {
+        // grep returns >1 for actual errors (file not found, permission denied)
+        const stderr = await new Response(proc.stderr).text();
+        console.error("[tasksCommand] grep failed (exit " + exitCode + "): " + stderr);
+        return "Could not read TODO.md";
+      }
     } catch (err) {
-      return `Could not read TODO.md: ${String(err)}`;
+      return "Could not read TODO.md: " + String(err);
     }
   },
 };
 
+/** Create a new task entry in TODO.md (DM only) */
 const taskCommand: CommandDefinition = {
   name: "task",
   description: "Create a new task in TODO.md",
@@ -109,13 +126,18 @@ const taskCommand: CommandDefinition = {
   handler: async (ctx: CommandContext): Promise<string> => {
     const description = ctx.args.join(" ");
     if (!description) {
-      return "Usage: /task <description>\nExample: /task Fix authentication bug in login page";
+      return "Usage: /task [description]\nExample: /task Fix authentication bug in login page";
     }
     // Placeholder — in production this calls claim-task-id.sh and appends to TODO.md
-    return `Task noted: "${description}"\n\n(Task creation not yet connected to TODO.md pipeline. This is a scaffold.)`;
+    return (
+      'Task noted: "' +
+      description +
+      '"\n\n(Task creation not yet connected to TODO.md pipeline. This is a scaffold.)'
+    );
   },
 };
 
+/** Execute an aidevops CLI command remotely (DM only, requires approval) */
 const runCommand: CommandDefinition = {
   name: "run",
   description: "Execute an aidevops CLI command remotely",
@@ -124,11 +146,11 @@ const runCommand: CommandDefinition = {
   handler: async (ctx: CommandContext): Promise<string> => {
     const command = ctx.args.join(" ");
     if (!command) {
-      return "Usage: /run <command>\nExample: /run aidevops status";
+      return "Usage: /run [command]\nExample: /run aidevops status";
     }
     // Security: this should go through exec approval flow (t1327.10)
     return [
-      `Command: ${command}`,
+      "Command: " + command,
       "",
       "Remote command execution requires approval (t1327.10).",
       "Safe commands (/status, /tasks) can be allowlisted.",
@@ -137,6 +159,7 @@ const runCommand: CommandDefinition = {
   },
 };
 
+/** Simple liveness check — returns "pong" */
 const pingCommand: CommandDefinition = {
   name: "ping",
   description: "Check bot responsiveness",
@@ -147,13 +170,14 @@ const pingCommand: CommandDefinition = {
   },
 };
 
+/** Report bot version from package.json */
 const versionCommand: CommandDefinition = {
   name: "version",
   description: "Show bot version",
   groupEnabled: true,
   dmEnabled: true,
   handler: async (_ctx: CommandContext): Promise<string> => {
-    return `aidevops SimpleX Bot v${pkg.version}`;
+    return "aidevops SimpleX Bot v" + pkg.version;
   },
 };
 

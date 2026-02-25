@@ -39,6 +39,7 @@ import { BUILTIN_COMMANDS } from "./commands";
 
 type LogLevel = "debug" | "info" | "warn" | "error";
 
+/** Numeric priority for each log level */
 const LOG_LEVELS: Record<LogLevel, number> = {
   debug: 0,
   info: 1,
@@ -46,31 +47,37 @@ const LOG_LEVELS: Record<LogLevel, number> = {
   error: 3,
 };
 
+/** Level-filtered console logger for bot output */
 class Logger {
   private level: number;
 
+  /** Create a logger that filters messages below the given level */
   constructor(level: LogLevel) {
     this.level = LOG_LEVELS[level];
   }
 
+  /** Log a debug-level message */
   debug(msg: string, ...args: unknown[]): void {
     if (this.level <= LOG_LEVELS.debug) {
       console.log(`[DEBUG] ${msg}`, ...args);
     }
   }
 
+  /** Log an info-level message */
   info(msg: string, ...args: unknown[]): void {
     if (this.level <= LOG_LEVELS.info) {
       console.log(`[INFO] ${msg}`, ...args);
     }
   }
 
+  /** Log a warning-level message */
   warn(msg: string, ...args: unknown[]): void {
     if (this.level <= LOG_LEVELS.warn) {
       console.warn(`[WARN] ${msg}`, ...args);
     }
   }
 
+  /** Log an error-level message */
   error(msg: string, ...args: unknown[]): void {
     if (this.level <= LOG_LEVELS.error) {
       console.error(`[ERROR] ${msg}`, ...args);
@@ -82,23 +89,28 @@ class Logger {
 // Command Router
 // =============================================================================
 
+/** Routes incoming messages to registered command handlers */
 class CommandRouter {
   private commands: Map<string, CommandDefinition> = new Map();
 
+  /** Register a single command definition */
   register(cmd: CommandDefinition): void {
     this.commands.set(cmd.name.toLowerCase(), cmd);
   }
 
+  /** Register multiple command definitions at once */
   registerAll(cmds: CommandDefinition[]): void {
     for (const cmd of cmds) {
       this.register(cmd);
     }
   }
 
+  /** Look up a command by name (case-insensitive) */
   get(name: string): CommandDefinition | undefined {
     return this.commands.get(name.toLowerCase());
   }
 
+  /** Return all registered commands */
   list(): CommandDefinition[] {
     return Array.from(this.commands.values());
   }
@@ -120,6 +132,7 @@ class CommandRouter {
 // SimpleX Adapter
 // =============================================================================
 
+/** WebSocket adapter connecting to SimpleX CLI for message handling */
 class SimplexAdapter {
   private ws: WebSocket | null = null;
   private config: BotConfig;
@@ -131,6 +144,7 @@ class SimplexAdapter {
   private contactNames: Map<number, string> = new Map();
   private groupNames: Map<number, string> = new Map();
 
+  /** Initialize adapter with optional config overrides */
   constructor(config: Partial<BotConfig> = {}) {
     this.config = { ...DEFAULT_BOT_CONFIG, ...config };
     this.logger = new Logger(this.config.logLevel);
@@ -307,8 +321,19 @@ class SimplexAdapter {
       const cmdDef = this.router.get(parsed.command);
       if (!cmdDef) {
         this.logger.debug(`Unknown command: /${parsed.command}`);
-        // Optionally reply with help
         await this.replyToItem(item, `Unknown command: /${parsed.command}. Type /help for available commands.`);
+        continue;
+      }
+
+      // Check dmEnabled/groupEnabled before executing
+      const isGroup = chatDir?.groupId !== undefined;
+      const isDm = chatDir?.contactId !== undefined;
+      if (isGroup && !cmdDef.groupEnabled) {
+        await this.replyToItem(item, `/${cmdDef.name} is not available in group chats.`);
+        continue;
+      }
+      if (isDm && !cmdDef.dmEnabled) {
+        await this.replyToItem(item, `/${cmdDef.name} is not available in direct messages.`);
         continue;
       }
 
@@ -401,7 +426,7 @@ class SimplexAdapter {
     }
   }
 
-  /** Schedule reconnection attempt */
+  /** Schedule reconnection attempt with exponential backoff */
   private scheduleReconnect(): void {
     if (
       this.config.maxReconnectAttempts > 0 &&
@@ -442,6 +467,7 @@ function parseLogLevel(value: string | undefined): LogLevel {
   return DEFAULT_BOT_CONFIG.logLevel;
 }
 
+/** Entry point — configure and start the bot */
 async function main(): Promise<void> {
   const config: Partial<BotConfig> = {
     port: Number(process.env.SIMPLEX_PORT) || DEFAULT_BOT_CONFIG.port,
