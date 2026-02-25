@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.127.0] - 2026-02-25
+
+### Added
+
+- cross-repo issue/PR visibility in supervisor AI context + concurrency underutilisation alerting (#2272)
+
+### Changed
+
+- Documentation: update model files from aidevops (t1133)
+
+### Fixed
+
+- unpin stale supervisor health issues when closing or replacing them (#2270)
+
 ## [2.126.0] - 2026-02-25
 
 ### Added
