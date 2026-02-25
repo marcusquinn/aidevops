@@ -278,9 +278,58 @@ After task completion, the loop automatically:
 2. **PR Create**: Verifies `gh auth`, rebases onto `origin/main`, pushes branch, creates PR with proper title/body
 3. **PR Review**: Monitors CI checks and review status
 4. **Merge**: Squash merge (without `--delete-branch` when in worktree)
-5. **Worktree Cleanup**: Return to main repo, pull, clean merged worktrees
-6. **Postflight**: Verifies release health after merge
-7. **Deploy**: Runs `setup.sh --non-interactive` (aidevops repos only)
+5. **Issue Closing Comment**: Post a summary comment on linked issues (see below)
+6. **Worktree Cleanup**: Return to main repo, pull, clean merged worktrees
+7. **Postflight**: Verifies release health after merge
+8. **Deploy**: Runs `setup.sh --non-interactive` (aidevops repos only)
+
+**Issue closing comment (MANDATORY — do NOT skip):**
+
+After the PR merges, post a closing comment on every linked GitHub issue. This preserves the context that would otherwise die with the worker session. The comment is the permanent record of what was done.
+
+Find linked issues from the PR body (`Fixes #NNN`, `Closes #NNN`, `Resolves #NNN`):
+
+```bash
+# Get the PR body and extract linked issue numbers
+PR_BODY=$(gh pr view <PR_NUMBER> --repo <owner/repo> --json body -q .body)
+# Parse "Fixes #123", "Closes #456", "Resolves #789" patterns
+```
+
+For each linked issue, post a comment with this structure:
+
+```bash
+gh issue comment <ISSUE_NUMBER> --repo <owner/repo> --body "$(cat <<'COMMENT'
+## Completed via PR #<PR_NUMBER>
+
+**What was done:**
+- <bullet list of what was implemented/fixed>
+
+**How it was tested:**
+- <what tests were run, what was verified>
+
+**Key decisions:**
+- <any non-obvious choices made and why>
+
+**Files changed:**
+- `path/to/file.ext` — <what changed and why>
+
+**Blockers encountered:**
+- <any issues hit during implementation, and how they were resolved>
+- None (if clean)
+
+**Follow-up needs:**
+- <anything that should be done next but was out of scope>
+- None (if complete)
+COMMENT
+)"
+```
+
+**Rules:**
+- Every section must have at least one bullet (use "None" if nothing to report)
+- Be specific — "fixed the bug" is useless; "fixed race condition in worktree creation by adding `sleep 2` between dispatches" is useful
+- Include file paths with brief descriptions so future workers can find the changes
+- If the task was dispatched by the supervisor, include the original dispatch description for traceability
+- This is a gate: do NOT emit `FULL_LOOP_COMPLETE` until closing comments are posted
 
 **Worktree cleanup after merge:**
 
