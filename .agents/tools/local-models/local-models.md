@@ -1,7 +1,7 @@
 ---
 description: Local AI model inference via llama.cpp - hardware-aware setup, HuggingFace GGUF models, usage tracking, disk cleanup
 mode: subagent
-model-tier: local
+model: haiku
 tools:
   read: true
   write: false
@@ -24,7 +24,7 @@ tools:
 - **Models**: Any GGUF from HuggingFace (Qwen, Llama, DeepSeek, Mistral, Gemma, Phi)
 - **Binary**: Download-on-first-use via `local-model-helper.sh setup`
 - **API**: OpenAI-compatible at `http://localhost:8080/v1`
-- **Helper**: `local-model-helper.sh [setup|start|stop|status|models|download|search|recommend|cleanup|usage|benchmark]`
+- **Helper**: `local-model-helper.sh [setup|start|stop|status|models|download|search|recommend|cleanup|usage|benchmark]` (planned — not yet implemented; tracked in parent task t1338)
 
 **When to use local**: Privacy/compliance, offline work, bulk processing, experimentation, simple tasks where network latency exceeds local inference time. See `tools/context/model-routing.md` for routing rules.
 
@@ -38,8 +38,8 @@ tools:
 |-----------|-----------|--------|-----------|--------|
 | License | MIT | MIT | Closed frontend | AGPL |
 | Speed | Fastest (baseline) | 20-70% slower | Same engine | Same engine |
-| Security | No daemon, localhost only | 175k+ exposed instances (Jan 2026), multiple CVEs | Desktop-safe | Desktop-safe |
-| Binary size | 23-40 MB | ~200 MB | ~500 MB+ | ~300 MB+ |
+| Security | No daemon, localhost only | 175k+ exposed instances (Jan 2024), multiple CVEs | Desktop-safe | Desktop-safe |
+| Binary size | 23-130 MB (platform-dependent) | ~200 MB | ~500 MB+ | ~300 MB+ |
 | HuggingFace access | Direct GGUF download | Walled library | HF browser built-in | HF download |
 | Control | Full (quantization, context, sampling) | Abstracted | GUI-mediated | GUI-mediated |
 
@@ -55,7 +55,7 @@ local-model-helper.sh setup
 
 # What this does:
 # 1. Detects platform (macOS ARM/x64, Linux x64/Vulkan/ROCm)
-# 2. Downloads latest llama.cpp release binary (~23-40 MB)
+# 2. Downloads latest llama.cpp release binary (23-130 MB depending on platform)
 # 3. Installs huggingface-cli if not present (pip install huggingface_hub[cli])
 # 4. Creates ~/.aidevops/local-models/ directory structure
 ```
@@ -131,9 +131,9 @@ local-model-helper.sh models
 
 # Example output:
 # NAME                          SIZE     QUANT    DOWNLOADED
-# qwen3-8b-q4_k_m.gguf        4.9 GB   Q4_K_M   2026-02-25
-# llama-3.1-8b-q6_k.gguf      6.6 GB   Q6_K     2026-02-20
-# deepseek-r1-7b-q4_k_m.gguf  4.1 GB   Q4_K_M   2026-02-18
+# qwen3-8b-q4_k_m.gguf        4.9 GB   Q4_K_M   YYYY-MM-DD
+# llama-3.1-8b-q6_k.gguf      6.6 GB   Q6_K     YYYY-MM-DD
+# deepseek-r1-7b-q4_k_m.gguf  4.1 GB   Q4_K_M   YYYY-MM-DD
 ```
 
 ### Recommended Models by Use Case
@@ -234,7 +234,9 @@ curl http://localhost:8080/health
 
 ### Integration with aidevops
 
-When the local server is running, other framework components can use it:
+When the local server is running, other framework components can use it.
+
+> **Note**: These integrations require the helper scripts to be updated to recognize `local` as a tier. This is tracked in the parent task (t1338) and will be implemented in a follow-up PR.
 
 ```bash
 # Model routing resolves "local" tier to localhost
@@ -265,7 +267,7 @@ local-model-helper.sh usage
 # Estimated cloud cost saved: $0.82 (vs haiku), $3.29 (vs sonnet)
 
 # Usage for a specific period
-local-model-helper.sh usage --since 2026-02-01
+local-model-helper.sh usage --since YYYY-MM-01
 
 # Export as JSON for analysis
 local-model-helper.sh usage --json
@@ -325,7 +327,7 @@ local-model-helper.sh benchmark --model qwen3-8b-q4_k_m.gguf --model llama-3.1-8
 
 | Issue | Solution |
 |-------|----------|
-| `setup` fails on Linux | Install build dependencies: `apt install build-essential cmake` |
+| `setup` fails on Linux | Check glibc compatibility (`ldd --version`); for ROCm, ensure ROCm runtime is installed; try `local-model-helper.sh setup --update` |
 | Slow inference (no GPU) | Check `gpu_layers` is set; verify Metal/CUDA is detected: `local-model-helper.sh status` |
 | Model download interrupted | Re-run `download` — `huggingface-cli` resumes automatically |
 | Out of memory | Use a smaller quantization (Q4_K_M) or smaller model; check `local-model-helper.sh recommend` |
