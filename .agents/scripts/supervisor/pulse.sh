@@ -2041,6 +2041,55 @@ cmd_pulse() {
 				VALUES ('supervisor', 'dispatch', 'stalled',
 						'$(sql_escape "Dispatch stall: $queued_count queued, 0 running, 0 dispatched. Active batches: $active_batch_count")');
 			" 2>/dev/null || true
+
+		elif [[ "$queued_count" -gt 0 && "$running_count" -gt 0 ]]; then
+			# t1334: Concurrency underutilisation detection
+			# Tasks are queued and some are running, but we dispatched 0 this pulse.
+			# Check if we're below max concurrency — if so, capacity is being wasted.
+			local base_global_concurrency="${SUPERVISOR_MAX_CONCURRENCY:-4}"
+			local effective_max
+			effective_max=$(calculate_adaptive_concurrency "$base_global_concurrency")
+			if [[ "$running_count" -lt "$effective_max" ]]; then
+				local utilisation_pct=0
+				if [[ "$effective_max" -gt 0 ]]; then
+					utilisation_pct=$(((running_count * 100) / effective_max))
+				fi
+				log_warn "Phase 2b: Concurrency underutilised — $running_count/$effective_max slots used ($utilisation_pct%), $queued_count queued but 0 dispatched this pulse"
+
+				# Diagnose: check provider rate limit headroom from model-availability cache
+				# The rate_limits table is populated by model-availability-helper.sh during
+				# check_model_health() calls. If requests_remaining is low, that explains
+				# why dispatch deferred. (t1330 will add proactive throttling; for now, report.)
+				local rate_limit_info=""
+				local avail_db="${SCRIPT_DIR}/model-availability-helper.sh"
+				if [[ -x "$avail_db" ]]; then
+					rate_limit_info=$("$avail_db" rate-limits 2>/dev/null | head -5 || echo "")
+				fi
+				if [[ -n "$rate_limit_info" ]]; then
+					log_warn "Phase 2b: Provider rate limit status: $rate_limit_info"
+				fi
+
+				# Check if batch concurrency is the bottleneck
+				local batch_bottleneck=""
+				batch_bottleneck=$(db -separator '|' "$SUPERVISOR_DB" "
+					SELECT b.id, b.concurrency,
+						(SELECT COUNT(*) FROM batch_tasks bt JOIN tasks t ON bt.task_id = t.id
+						 WHERE bt.batch_id = b.id AND t.status IN ('running','dispatched')) as active
+					FROM batches b
+					WHERE b.status IN ('active', 'running')
+					AND b.concurrency <= 1
+					LIMIT 3;" 2>/dev/null || echo "")
+				if [[ -n "$batch_bottleneck" ]]; then
+					log_warn "Phase 2b: Batch concurrency bottleneck detected — batches with concurrency<=1: $batch_bottleneck"
+				fi
+
+				log_warn "Phase 2b: Possible causes: batch concurrency=1 limiting dispatch, blocked-by dependencies, provider rate limits, or dispatch dedup guard"
+				db "$SUPERVISOR_DB" "
+					INSERT INTO state_log (task_id, from_state, to_state, reason)
+					VALUES ('supervisor', 'dispatch', 'underutilised',
+							'$(sql_escape "Concurrency underutilised: $running_count/$effective_max slots ($utilisation_pct%), $queued_count queued, 0 dispatched")');
+				" 2>/dev/null || true
+			fi
 		fi
 	fi
 
