@@ -680,11 +680,11 @@ Output ONLY one of: FIXED:<what you did> or FAILED:<why you couldn't fix it>"
 	fi
 	local worker_pid=$!
 
-	# Record in DB
+	# Record in DB — use session_id (not worker_pid which was removed in schema migration)
 	db "$SUPERVISOR_DB" "UPDATE tasks SET
 		status = 'running',
 		error = '${action_type}: AI worker solving (PID $worker_pid)',
-		worker_pid = $worker_pid,
+		session_id = 'pid:$worker_pid',
 		log_file = '$(sql_escape "$worker_log")',
 		updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
 	WHERE id = '$escaped_id';" 2>/dev/null || true
