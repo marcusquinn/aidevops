@@ -213,4 +213,11 @@ Tree: `prompts/build.txt`. Agent tiers:
 
 Lifecycle: `tools/build-agent/build-agent.md`.
 
+## Scheduled Tasks (launchd/cron)
+
+When creating launchd plists or cron jobs, use the `aidevops` prefix so they're easy to find in System Settings > General > Login Items & Extensions:
+- **launchd label**: `sh.aidevops.<name>` (reverse domain, e.g., `sh.aidevops.session-miner-pulse`)
+- **plist filename**: `sh.aidevops.<name>.plist`
+- **cron comment**: `# aidevops: <description>`
+
 <!-- AI-CONTEXT-END -->
