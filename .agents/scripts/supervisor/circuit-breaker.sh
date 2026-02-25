@@ -278,7 +278,7 @@ cb_status() {
 	local state
 	state=$(cb_read_state)
 
-	local tripped count tripped_at last_failure last_reset cooldown_secs
+	local tripped count tripped_at last_failure last_reset
 	tripped=$(printf '%s' "$state" | jq -r '.tripped // false' 2>/dev/null || echo "false")
 	count=$(printf '%s' "$state" | jq -r '.consecutive_failures // 0' 2>/dev/null || echo "0")
 	tripped_at=$(printf '%s' "$state" | jq -r '.tripped_at // "never"' 2>/dev/null || echo "never")
@@ -337,8 +337,6 @@ _cb_create_or_update_issue() {
 		log_warn "circuit-breaker: gh CLI not found, skipping GitHub issue creation"
 		return 1
 	fi
-
-	local repo_path="${REPO_PATH:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 
 	# Check for existing open circuit-breaker issue
 	local existing_issue

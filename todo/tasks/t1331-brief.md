@@ -43,6 +43,7 @@ Key files:
 ## Acceptance Criteria
 
 - [ ] After 3 consecutive task failures, supervisor pauses dispatch
+
   ```yaml
   verify:
     method: codebase
@@ -50,6 +51,7 @@ Key files:
     path: ".agents/scripts/supervisor/"
   ```
 - [ ] A GitHub issue is created/updated with `circuit-breaker` label on trip
+
   ```yaml
   verify:
     method: codebase
