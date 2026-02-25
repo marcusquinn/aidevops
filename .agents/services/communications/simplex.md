@@ -286,13 +286,120 @@ CLI pushes events (no `corrId`):
 
 Full reference: [API Commands](https://github.com/simplex-chat/simplex-chat/blob/stable/bots/api/COMMANDS.md) | [API Events](https://github.com/simplex-chat/simplex-chat/blob/stable/bots/api/EVENTS.md) | [API Types](https://github.com/simplex-chat/simplex-chat/blob/stable/bots/api/TYPES.md)
 
+### Essential Bot Events
+
+| Event | Type Tag | When | Action |
+|-------|----------|------|--------|
+| Contact connected | `contactConnected` | User connects via address | Send welcome, store contactId |
+| Business request | `acceptingBusinessRequest` | User connects via business address | New business chat created |
+| New message | `newChatItems` | Message received | Parse and respond |
+| Contact request | `receivedContactRequest` | Auto-accept off | Call `/_accept <id>` |
+| File ready | `rcvFileDescrReady` | File incoming | Call `/freceive <fileId>` |
+| File complete | `rcvFileComplete` | File downloaded | Process file |
+| Group invitation | `receivedGroupInvitation` | Bot invited to group | Call `/_join #<groupId>` |
+| Member joined | `joinedGroupMember` | New group member | Optional: welcome |
+| Member removed | `deletedMemberUser` | Bot removed from group | Cleanup |
+
+**Error events** (`messageError`, `chatError`, `chatErrors`): Log but do not fail — these are common network/delivery errors, not bot failures.
+
+### ChatRef Syntax
+
+Commands use these prefixes to target chats:
+
+| Prefix | Target | Example |
+|--------|--------|---------|
+| `@<contactId>` | Direct chat | `/_send @42 json [...]` |
+| `#<groupId>` | Group chat | `/_send #7 json [...]` |
+| `*<noteFolderId>` | Local notes | `/_send *1 json [...]` |
+
+### Network Usage Classification
+
+| Classification | Behaviour | Examples |
+|----------------|-----------|----------|
+| `no` | Instant, no network | List contacts, get profile |
+| `interactive` | Waits for network before responding | Connect, create address |
+| `background` | Responds immediately, network async | Send message, delete chat |
+
 ### TypeScript SDK
 
 ```bash
 npm install simplex-chat @simplex-chat/types
 ```
 
-The SDK provides a typed WebSocket client with sequential command queue and typed event handling. See: [TypeScript SDK README](https://github.com/simplex-chat/simplex-chat/tree/stable/packages/simplex-chat-client/typescript)
+The SDK provides a typed WebSocket client with sequential command queue and typed event handling.
+
+```typescript
+import {ChatClient} from "simplex-chat"
+
+// Connect to CLI WebSocket server
+const chat = await ChatClient.create("ws://localhost:5225")
+
+// Get active user
+const user = await chat.apiGetActiveUser()
+
+// Get or create address
+const address = await chat.apiGetUserAddress()
+  || await chat.apiCreateUserAddress()
+
+// Enable auto-accept for incoming contacts
+await chat.enableAddressAutoAccept(user.userId)
+
+// Send text message to contact or group
+await chat.apiSendTextMessage("direct", contactId, "Hello!")
+await chat.apiSendTextMessage("group", groupId, "Hello group!")
+
+// Event loop — process incoming messages
+for await (const event of chat.msgQ) {
+  switch (event.type) {
+    case "contactConnected":
+      // New contact connected — send welcome
+      break
+    case "newChatItems":
+      // Message received — parse and respond
+      break
+  }
+}
+
+// Raw command (for commands not wrapped by SDK)
+const resp = await chat.sendChatCmd("/_show_address 1")
+```
+
+**Bun compatibility**: Bun has native WebSocket — `isomorphic-ws` (SDK dependency) uses the native impl. Use `bun:sqlite` for session storage instead of `better-sqlite3` to avoid native module compilation.
+
+See: [TypeScript SDK README](https://github.com/simplex-chat/simplex-chat/tree/stable/packages/simplex-chat-client/typescript)
+
+### Key Types
+
+```typescript
+// MsgContent — discriminated union for message types
+{ type: "text", text: string }
+{ type: "image", text: string, image: string }  // base64
+{ type: "file", text: string }
+{ type: "voice", text: string, duration: int }
+{ type: "link", text: string, preview: LinkPreview }
+
+// ComposedMessage — for APISendMessages
+{
+  fileSource?: CryptoFile,
+  quotedItemId?: int64,
+  msgContent: MsgContent,
+  mentions: { [displayName: string]: int64 }  // groupMemberId
+}
+
+// ChatBotCommand — for bot menus
+{ type: "command", keyword: string, label: string, params?: string }
+{ type: "menu", label: string, commands: ChatBotCommand[] }
+
+// AddressSettings
+{
+  businessAddress: bool,
+  autoAccept?: { acceptIncognito: bool },
+  autoReply?: MsgContent
+}
+
+// GroupMemberRole
+// observer | author | member | moderator | admin | owner
+```
 
 ### Bot Profile Configuration
 
