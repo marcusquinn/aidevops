@@ -169,10 +169,14 @@ class SimplexAdapter {
     this.logger.info(`Connecting to SimpleX CLI at ${url}...`);
 
     return new Promise((resolve, reject) => {
+      // Track whether this Promise has settled to prevent hanging on reconnect failures
+      let settled = false;
+
       try {
         this.ws = new WebSocket(url);
 
         this.ws.onopen = () => {
+          settled = true;
           this.logger.info("Connected to SimpleX CLI");
           this.reconnectAttempts = 0;
           this.hasConnected = true;
@@ -190,22 +194,29 @@ class SimplexAdapter {
             this.scheduleReconnect();
           }
           this.intentionalDisconnect = false;
+          // Reject if the Promise hasn't settled (connection failed before onopen)
+          if (!settled) {
+            settled = true;
+            reject(new Error(`Connection to ${url} closed before opening`));
+          }
         };
 
         this.ws.onerror = (event: Event) => {
           this.logger.error("WebSocket error", event);
-          // Only suppress reconnect on initial connection failure;
-          // mid-session errors should allow onclose to trigger reconnect.
+          // On initial connection failure, suppress reconnect so the caller
+          // can handle the error (e.g., process.exit in main).
+          // Mid-session errors let onclose handle reconnect naturally.
           if (!this.hasConnected && this.ws) {
             this.intentionalDisconnect = true;
             this.ws.close();
             this.ws = null;
-            reject(new Error(`Failed to connect to ${url}`));
           }
-          // Mid-session errors: let onclose handle reconnect naturally
         };
       } catch (err) {
-        reject(err);
+        if (!settled) {
+          settled = true;
+          reject(err);
+        }
       }
     });
   }
