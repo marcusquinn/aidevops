@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.131.0] - 2026-02-25
+
+### Added
+
+- add structural thinking, scientific reasoning, and reasoning responsibility to build.txt (#2315)
+- session miner — daily self-improvement pulse from session data (#2313)
+
+### Changed
+
+- Documentation: add launchd/cron naming convention to AGENTS.md (#2319)
+- Documentation: t1306 mark stream hooks upstream PR complete with brief (#2318)
+- Documentation: add build-agent routing instruction for all primary agents (#2314)
+- Documentation: t1311 post-migration review of swarm DAG research (#2306)
+
+### Fixed
+
+- t1327.2 address PR review feedback on SimpleX subagent docs (#2317)
+- add dispatch dedup helper with normalized title matching (#2310) (#2312)
+- distinguish advisory vs critical failures in postflight workflow (#2308)
+
 ## [2.130.0] - 2026-02-25
 
 ### Added
