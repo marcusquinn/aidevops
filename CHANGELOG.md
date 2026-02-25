@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.126.0] - 2026-02-25
+
+### Added
+
+- support .aidevops.json project config in claim-task-id.sh (t1322) (#2237)
+- increase AI timeouts to 30s and add deferred re-evaluation queue (t1325) (#2242)
+- AI-based issue duplicate detection and auto-dispatch assessment (t1324) (#2241)
+- align repo-sync-helper.sh with auto-update-helper.sh patterns (t1264.2) (#2200)
+
+### Changed
+
+- Documentation: add SimpleX (t1327) and Matterbridge (t1328) planning artifacts (#2255)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Refactor: t1160.3 — align runner-helper.sh CLI resolution with dual-CLI architecture (#2231)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: t1321 integration test results — final t1311 migration audit (#2229)
+- Refactor: t1318-t1320 migrate check_task_staleness() to AI, document mechanical modules (#2226)
+- Documentation: update model files from aidevops (t1133)
+- Refactor: t1315 migrate pulse.sh get_task_timeout() to AI classification (#2225)
+- Refactor: t1313 migrate dispatch.sh decision logic to AI (#2224)
+- Refactor: t1312 remove dead code stubs + retire evaluate_worker heuristic tree (#2221)
+- Refactor: migrate should_run_routine() from case-statement to AI scheduling (t1317) (#2220)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Refactor: replace deterministic supervisor lifecycle with AI-first decision engine (#2206)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update t1305 issue draft with current upstream status (t1305) (#2201)
+
+### Fixed
+
+- resolve bare tier names to full model strings before DB storage (#2256)
+- resolve merge conflict markers in TODO.md (t1305/t1306, t1107)
+- exclude currency patterns from shell-local-params rule (t1323) (#2238)
+- prevent duplicate supervisor health issues via label-based lookup and dedup guard (#2243)
+- register blocked tasks in DB during auto-pickup instead of skipping (#2239)
+- blocked-by parser matches backtick-quoted code in task descriptions (#2232)
+- bash 3.2 compatibility for routine-scheduler cache (#2222)
+- add Phase 3d to merge open PRs for verified tasks and adopt orphan PRs (#2205)
+
 ## [2.125.1] - 2026-02-24
 
 ### Changed
