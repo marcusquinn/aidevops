@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # matterbridge-helper.sh — Manage Matterbridge multi-platform chat bridge
-# Usage: matterbridge-helper.sh [setup|start|stop|status|logs|validate|update|simplex-bridge]
+# Usage: matterbridge-helper.sh [setup|start|stop|status|logs|validate|update]
 set -euo pipefail
 
 BINARY_PATH="/usr/local/bin/matterbridge"
@@ -9,9 +9,6 @@ DATA_DIR="$HOME/.aidevops/.agent-workspace/matterbridge"
 PID_FILE="$DATA_DIR/matterbridge.pid"
 LOG_FILE="$DATA_DIR/matterbridge.log"
 LATEST_RELEASE_URL="https://api.github.com/repos/42wim/matterbridge/releases/latest"
-SIMPLEX_BRIDGE_DIR="$DATA_DIR/simplex-bridge"
-SIMPLEX_COMPOSE_FILE="${SIMPLEX_COMPOSE_FILE:-}"
-AGENTS_DIR="${AGENTS_DIR:-$HOME/.aidevops/agents}"
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -308,247 +305,6 @@ cmd_update() {
 	return 0
 }
 
-# ── simplex bridge (Docker Compose) ──────────────────────────────────────────
-
-_find_compose_file() {
-	# Priority: env var > simplex-bridge dir > agents configs dir
-	if [ -n "$SIMPLEX_COMPOSE_FILE" ] && [ -f "$SIMPLEX_COMPOSE_FILE" ]; then
-		echo "$SIMPLEX_COMPOSE_FILE"
-		return 0
-	fi
-	if [ -f "$SIMPLEX_BRIDGE_DIR/docker-compose.yml" ]; then
-		echo "$SIMPLEX_BRIDGE_DIR/docker-compose.yml"
-		return 0
-	fi
-	if [ -f "$AGENTS_DIR/configs/matterbridge-simplex-compose.yml" ]; then
-		echo "$AGENTS_DIR/configs/matterbridge-simplex-compose.yml"
-		return 0
-	fi
-	# Check repo-local path (for development)
-	local script_dir
-	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-	local repo_compose="${script_dir}/../configs/matterbridge-simplex-compose.yml"
-	if [ -f "$repo_compose" ]; then
-		echo "$repo_compose"
-		return 0
-	fi
-	echo ""
-	return 1
-}
-
-_ensure_simplex_bridge_dir() {
-	mkdir -p "$SIMPLEX_BRIDGE_DIR"
-	mkdir -p "$SIMPLEX_BRIDGE_DIR/data/simplex"
-	return 0
-}
-
-cmd_simplex_bridge() {
-	local action="${1:-help}"
-	shift || true
-
-	case "$action" in
-	up | start)
-		_simplex_bridge_up "$@"
-		;;
-	down | stop)
-		_simplex_bridge_down "$@"
-		;;
-	status | ps)
-		_simplex_bridge_status
-		;;
-	logs)
-		_simplex_bridge_logs "$@"
-		;;
-	init | setup)
-		_simplex_bridge_init "$@"
-		;;
-	help | --help | -h)
-		_simplex_bridge_help
-		;;
-	*)
-		log "Unknown simplex-bridge action: $action"
-		_simplex_bridge_help
-		return 1
-		;;
-	esac
-
-	return 0
-}
-
-_simplex_bridge_up() {
-	local compose_file
-	compose_file="$(_find_compose_file)" || {
-		die "No compose file found. Run: matterbridge-helper.sh simplex-bridge init"
-		return 1
-	}
-
-	if ! command -v docker >/dev/null 2>&1; then
-		die "Docker not found. Install Docker or OrbStack first."
-		return 1
-	fi
-
-	# Check for matterbridge.toml in the compose file directory
-	local compose_dir
-	compose_dir="$(dirname "$compose_file")"
-	if [ ! -f "$compose_dir/matterbridge.toml" ] && [ ! -f "$SIMPLEX_BRIDGE_DIR/matterbridge.toml" ]; then
-		log "WARNING: No matterbridge.toml found. The bridge will not connect to any platforms."
-		log "Copy the template: cp configs/matterbridge-simplex.toml.example matterbridge.toml"
-	fi
-
-	# Check for SimpleX database
-	if [ ! -d "$SIMPLEX_BRIDGE_DIR/data/simplex" ] || [ -z "$(ls -A "$SIMPLEX_BRIDGE_DIR/data/simplex" 2>/dev/null)" ]; then
-		log "WARNING: No SimpleX database found in $SIMPLEX_BRIDGE_DIR/data/simplex/"
-		log "Run simplex-chat CLI first to create a profile, then copy database files."
-		log "See: matterbridge-helper.sh simplex-bridge init"
-	fi
-
-	log "Starting SimpleX bridge stack..."
-	docker compose -f "$compose_file" up --build -d "$@"
-	log "SimpleX bridge started. Check status: matterbridge-helper.sh simplex-bridge status"
-	return 0
-}
-
-_simplex_bridge_down() {
-	local compose_file
-	compose_file="$(_find_compose_file)" || {
-		die "No compose file found."
-		return 1
-	}
-
-	log "Stopping SimpleX bridge stack..."
-	docker compose -f "$compose_file" down "$@"
-	log "SimpleX bridge stopped."
-	return 0
-}
-
-_simplex_bridge_status() {
-	local compose_file
-	compose_file="$(_find_compose_file)" || {
-		log "No compose file found. SimpleX bridge not configured."
-		return 0
-	}
-
-	log "Compose file: $compose_file"
-	log "Data dir: $SIMPLEX_BRIDGE_DIR"
-
-	if command -v docker >/dev/null 2>&1; then
-		docker compose -f "$compose_file" ps 2>/dev/null || log "No containers running"
-	else
-		log "Docker not available"
-	fi
-
-	# Check for SimpleX database
-	if [ -d "$SIMPLEX_BRIDGE_DIR/data/simplex" ]; then
-		local db_count
-		db_count="$(find "$SIMPLEX_BRIDGE_DIR/data/simplex" -name 'simplex_v1_*' 2>/dev/null | wc -l | tr -d ' ')"
-		log "SimpleX database files: $db_count"
-	else
-		log "SimpleX database: not found"
-	fi
-
-	return 0
-}
-
-_simplex_bridge_logs() {
-	local compose_file
-	compose_file="$(_find_compose_file)" || {
-		die "No compose file found."
-		return 1
-	}
-
-	docker compose -f "$compose_file" logs "$@"
-	return 0
-}
-
-_simplex_bridge_init() {
-	_ensure_simplex_bridge_dir
-
-	# Copy compose file to working directory if not present
-	local compose_file
-	compose_file="$(_find_compose_file)" || true
-
-	if [ -z "$compose_file" ] || [ ! -f "$SIMPLEX_BRIDGE_DIR/docker-compose.yml" ]; then
-		local template=""
-		# Find template from agents dir or repo
-		if [ -f "$AGENTS_DIR/configs/matterbridge-simplex-compose.yml" ]; then
-			template="$AGENTS_DIR/configs/matterbridge-simplex-compose.yml"
-		else
-			local script_dir
-			script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-			local repo_template="${script_dir}/../configs/matterbridge-simplex-compose.yml"
-			if [ -f "$repo_template" ]; then
-				template="$repo_template"
-			fi
-		fi
-
-		if [ -n "$template" ]; then
-			cp "$template" "$SIMPLEX_BRIDGE_DIR/docker-compose.yml"
-			log "Copied compose template to $SIMPLEX_BRIDGE_DIR/docker-compose.yml"
-		else
-			die "No compose template found. Ensure aidevops is installed."
-			return 1
-		fi
-	else
-		log "Compose file already exists: $SIMPLEX_BRIDGE_DIR/docker-compose.yml"
-	fi
-
-	# Copy config template if not present
-	if [ ! -f "$SIMPLEX_BRIDGE_DIR/matterbridge.toml" ]; then
-		local config_template=""
-		if [ -f "$AGENTS_DIR/configs/matterbridge-simplex.toml.example" ]; then
-			config_template="$AGENTS_DIR/configs/matterbridge-simplex.toml.example"
-		else
-			local script_dir
-			script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-			local repo_config="${script_dir}/../configs/matterbridge-simplex.toml.example"
-			if [ -f "$repo_config" ]; then
-				config_template="$repo_config"
-			fi
-		fi
-
-		if [ -n "$config_template" ]; then
-			cp "$config_template" "$SIMPLEX_BRIDGE_DIR/matterbridge.toml"
-			chmod 600 "$SIMPLEX_BRIDGE_DIR/matterbridge.toml"
-			log "Copied config template to $SIMPLEX_BRIDGE_DIR/matterbridge.toml"
-		else
-			log "WARNING: No config template found. Create matterbridge.toml manually."
-		fi
-	else
-		log "Config already exists: $SIMPLEX_BRIDGE_DIR/matterbridge.toml"
-	fi
-
-	log ""
-	log "Next steps:"
-	log "  1. Run simplex-chat CLI to create a profile and join/create the chat to bridge"
-	log "  2. Copy database: cp ~/.simplex/simplex_v1_* $SIMPLEX_BRIDGE_DIR/data/simplex/"
-	log "  3. Set permissions: chmod -R 777 $SIMPLEX_BRIDGE_DIR/data/"
-	log "  4. Get chat ID: simplex-chat -e '/i #group_name'"
-	log "  5. Edit $SIMPLEX_BRIDGE_DIR/matterbridge.toml with platform credentials"
-	log "  6. Start: matterbridge-helper.sh simplex-bridge up"
-	return 0
-}
-
-_simplex_bridge_help() {
-	cat <<'HELP'
-matterbridge-helper.sh simplex-bridge — Manage SimpleX-Matterbridge Docker stack
-
-Actions:
-  init               Set up working directory with compose + config templates
-  up                 Start the 3-container stack (simplex, matterbridge, adapter)
-  down               Stop and remove containers
-  status             Show container status and database info
-  logs [--follow]    Show container logs (pass -f for follow)
-
-Environment:
-  SIMPLEX_COMPOSE_FILE   Override compose file path
-  SIMPLEX_CHAT_ID        SimpleX chat ID to bridge (default: 1)
-  SIMPLEX_CHAT_TYPE      Chat type: contact or group (default: group)
-
-Docs: .agents/services/communications/matterbridge.md
-HELP
-	return 0
-}
-
 cmd_help() {
 	cat <<'HELP'
 matterbridge-helper.sh — Manage Matterbridge multi-platform chat bridge
@@ -561,7 +317,6 @@ Commands:
   status             Show running status
   logs [--follow]    Show/follow log output
   update             Update to latest release
-  simplex-bridge     Manage SimpleX bridge Docker stack (init|up|down|status|logs)
 
 Config: ~/.config/aidevops/matterbridge.toml (override: MATTERBRIDGE_CONFIG)
 Docs:   .agents/services/communications/matterbridge.md
@@ -583,7 +338,6 @@ main() {
 	status) cmd_status "$@" ;;
 	logs) cmd_logs "$@" ;;
 	update) cmd_update "$@" ;;
-	simplex-bridge) cmd_simplex_bridge "$@" ;;
 	help | --help | -h) cmd_help ;;
 	*)
 		echo "Unknown command: $cmd" >&2
