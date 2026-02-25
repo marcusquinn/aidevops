@@ -660,6 +660,118 @@ map_tags_to_labels() {
 }
 
 # =============================================================================
+# Sanitization — Private Repo Name Scrubbing (security)
+# =============================================================================
+# When syncing tasks from a cross-repo TODO.md to a PUBLIC issue tracker,
+# private repo names must never appear in issue titles, bodies, or comments.
+# This prevents information leakage about private projects.
+
+# Cache for private repo names (populated once per run)
+_PRIVATE_REPO_NAMES_CACHE=""
+_PRIVATE_REPO_NAMES_LOADED=""
+
+# Build a list of private repo names from the supervisor DB.
+# Queries gh for each repo's visibility and caches the result.
+# Outputs newline-separated list of private repo short names (e.g., "myapp").
+_load_private_repo_names() {
+	if [[ -n "$_PRIVATE_REPO_NAMES_LOADED" ]]; then
+		echo "$_PRIVATE_REPO_NAMES_CACHE"
+		return 0
+	fi
+	_PRIVATE_REPO_NAMES_LOADED=1
+
+	local supervisor_db="${SUPERVISOR_DB:-$HOME/.aidevops/.agent-workspace/supervisor/supervisor.db}"
+	if [[ ! -f "$supervisor_db" ]]; then
+		return 0
+	fi
+
+	# Get all distinct repo paths from the DB
+	local repo_paths
+	repo_paths=$(sqlite3 "$supervisor_db" \
+		"SELECT DISTINCT repo FROM tasks WHERE repo IS NOT NULL AND repo != '';" \
+		2>/dev/null || echo "")
+
+	if [[ -z "$repo_paths" ]]; then
+		return 0
+	fi
+
+	local private_names=""
+	while IFS= read -r repo_path; do
+		[[ -z "$repo_path" ]] && continue
+		local canonical
+		canonical=$(realpath "$repo_path" 2>/dev/null || echo "")
+		[[ -z "$canonical" ]] && continue
+
+		# Derive slug from git remote
+		local remote_url
+		remote_url=$(git -C "$canonical" remote get-url origin 2>/dev/null || echo "")
+		[[ -z "$remote_url" ]] && continue
+		remote_url="${remote_url%.git}"
+		local slug
+		slug=$(echo "$remote_url" | sed -E 's|.*[:/]([^/]+/[^/]+)$|\1|' || echo "")
+		[[ -z "$slug" ]] && continue
+
+		# Check if repo is private (cache-friendly: gh caches auth)
+		local is_private
+		is_private=$(gh repo view "$slug" --json isPrivate --jq '.isPrivate' 2>/dev/null || echo "")
+		if [[ "$is_private" == "true" ]]; then
+			# Extract the short name (repo part of owner/repo)
+			local short_name="${slug#*/}"
+			private_names="${private_names:+${private_names}$'\n'}${short_name}"
+		fi
+	done <<<"$repo_paths"
+
+	_PRIVATE_REPO_NAMES_CACHE="$private_names"
+	echo "$private_names"
+	return 0
+}
+
+# Sanitize text by replacing private repo names with a generic placeholder.
+# Also strips cross-repo PR/issue references that could identify private repos
+# (e.g., "myapp#253" or "PR #253 in myapp").
+# Arguments:
+#   $1 - text to sanitize
+#   $2 - repo_slug of the TARGET issue tracker (sanitization only applies to public repos)
+# Returns: sanitized text on stdout
+_sanitize_for_public_repo() {
+	local text="$1"
+	local target_repo_slug="${2:-}"
+
+	# Only sanitize when target repo is public
+	if [[ -n "$target_repo_slug" ]]; then
+		local is_private
+		is_private=$(gh repo view "$target_repo_slug" --json isPrivate --jq '.isPrivate' 2>/dev/null || echo "")
+		if [[ "$is_private" == "true" ]]; then
+			# Target is private — no sanitization needed
+			echo "$text"
+			return 0
+		fi
+	fi
+
+	local private_names
+	private_names=$(_load_private_repo_names)
+
+	if [[ -z "$private_names" ]]; then
+		echo "$text"
+		return 0
+	fi
+
+	local result="$text"
+	while IFS= read -r name; do
+		[[ -z "$name" ]] && continue
+		# Replace patterns: "myapp", "myapp#NNN", "in myapp", "the myapp"
+		# Case-insensitive replacement using sed
+		result=$(printf '%s' "$result" | sed -E "s/${name}#[0-9]+/a private repo PR/gi")
+		result=$(printf '%s' "$result" | sed -E "s/(in|the|from|of|for) ${name}/\1 a managed private repo/gi")
+		result=$(printf '%s' "$result" | sed -E "s/${name} (CI|PR|pipeline|repo|project|branch|check)/private repo \1/gi")
+		result=$(printf '%s' "$result" | sed -E "s/${name}/a managed private repo/gi")
+	done <<<"$private_names"
+
+	echo "$result"
+	return 0
+}
+
+# =============================================================================
 # Compose — Issue Body
 # =============================================================================
 
@@ -668,9 +780,11 @@ map_tags_to_labels() {
 # Arguments:
 #   $1 - task_id
 #   $2 - project_root
+#   $3 - repo_slug (optional, for sanitization — if omitted, no sanitization)
 compose_issue_body() {
 	local task_id="$1"
 	local project_root="$2"
+	local repo_slug="${3:-}"
 
 	local todo_file="$project_root/TODO.md"
 	if [[ ! -f "$todo_file" ]]; then
@@ -898,6 +1012,11 @@ compose_issue_body() {
 
 	# Footer
 	body="$body"$'\n\n'"---"$'\n'"*Synced from TODO.md by issue-sync-helper.sh*"
+
+	# Sanitize private repo names before publishing to public issue trackers
+	if [[ -n "$repo_slug" ]]; then
+		body=$(_sanitize_for_public_repo "$body" "$repo_slug")
+	fi
 
 	echo "$body"
 	return 0

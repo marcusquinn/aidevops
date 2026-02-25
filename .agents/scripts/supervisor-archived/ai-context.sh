@@ -40,7 +40,7 @@ build_ai_context() {
 
 	# Section 1: Open GitHub Issues (multi-repo, t1333)
 	# Include issues from all registered repos, not just the primary one.
-	# Previously only queried the cwd repo, missing issues from awardsapp etc.
+	# Previously only queried the cwd repo, missing issues from other managed repos.
 	local all_issue_repos
 	all_issue_repos=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks WHERE repo IS NOT NULL AND repo != '';" 2>/dev/null || echo "")
 	if [[ -n "$all_issue_repos" ]]; then

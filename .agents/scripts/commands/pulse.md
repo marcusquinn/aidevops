@@ -52,11 +52,10 @@ gh pr list --repo marcusquinn/aidevops --state open --json number,title,reviewDe
 # aidevops issues
 gh issue list --repo marcusquinn/aidevops --state open --json number,title,labels,updatedAt --limit 20
 
-# awardsapp PRs
-gh pr list --repo awardsapp/awardsapp --state open --json number,title,reviewDecision,statusCheckRollup,updatedAt,headRefName --limit 20
-
-# awardsapp issues
-gh issue list --repo awardsapp/awardsapp --state open --json number,title,labels,updatedAt --limit 20
+# For each managed repo in the supervisor DB, fetch PRs and issues:
+# gh pr list --repo <owner/repo> --state open --json number,title,reviewDecision,statusCheckRollup,updatedAt,headRefName --limit 20
+# gh issue list --repo <owner/repo> --state open --json number,title,labels,updatedAt --limit 20
+# Discover managed repos dynamically from the supervisor DB or repos.json — do NOT hardcode private repo names.
 ```
 
 ## Step 2a: Observe Outcomes (Self-Improvement)
@@ -100,7 +99,7 @@ Look at everything you fetched and pick up to **AVAILABLE** items — the highes
 
 **Tie-breaking rules:**
 - Prefer PRs over issues (PRs are closer to done)
-- Prefer awardsapp over aidevops (product value > tooling)
+- Prefer product repos over tooling repos (product value > tooling)
 - Prefer smaller/simpler tasks (faster throughput)
 
 **Deduplication:** Before dispatching, check if a PR or issue already has a running worker. Use the worker process list from Step 1 to avoid dispatching duplicate work. If you can't tell, skip items that look like they might already be in progress (e.g., PRs with very recent pushes from a bot/worker branch).
@@ -132,8 +131,7 @@ opencode run --dir ~/Git/<repo> [--agent <agent>] --title "Issue #<number>: <tit
 ```
 
 **Important dispatch rules:**
-- Use `--dir ~/Git/aidevops` for aidevops repo work
-- Use `--dir ~/Git/awardsapp` for awardsapp repo work
+- Use `--dir ~/Git/<repo-name>` matching the repo the task belongs to
 - The `/full-loop` command handles everything: branching, implementation, PR, CI, merge, deploy
 - Do NOT add `--model` — let `/full-loop` use its default (opus for implementation)
 - **Background each dispatch with `&`** so you can launch multiple workers in one pulse
@@ -175,7 +173,7 @@ Output a summary of what you dispatched:
 ```text
 Pulse: 3 workers running, 3 slots available, dispatched 3 new workers:
   1. aidevops PR #2274: Supervisor stuck detection
-  2. awardsapp Issue #19: Fix responsive layout
+  2. myproject Issue #19: Fix responsive layout
   3. aidevops PR #2273: Rate limit tracker
 ```
 
@@ -190,3 +188,4 @@ Then exit. The next pulse in 2 minutes will check worker counts again.
 - Do NOT retry failed workers — the next pulse will pick up where things left off
 - Do NOT override the AI worker's decisions with deterministic gates
 - Do NOT create complex bash scripts or pipelines
+- Do NOT include private repo names in issue titles, bodies, or comments on public repos — use generic references like "a managed private repo"

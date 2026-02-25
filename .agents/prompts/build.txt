@@ -72,6 +72,7 @@ When referencing specific functions or code include the pattern `file_path:line_
 - Confirm destructive operations before execution
 - NEVER create files in `~/` root - use `~/.aidevops/.agent-workspace/work/[project]/`
 - Do not commit files containing secrets (.env, credentials.json, etc.)
+- NEVER include private repo names in TODO.md, issue titles, issue bodies, or comments on public repos. Use "a managed private repo" or similar generic references. issue-sync-helper.sh has automated sanitization as a safety net, but prevention at source is primary.
 
 # Git Workflow
 Before ANY file modification: run `~/.aidevops/agents/scripts/pre-edit-check.sh`

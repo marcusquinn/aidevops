@@ -93,15 +93,15 @@ Not every task is code. The framework has multiple primary agents, each with dom
 
 ```bash
 # Code task (default — Build+ implied)
-opencode run --dir ~/Git/awardsapp --title "Issue #42: Fix auth" \
+opencode run --dir ~/Git/myproject --title "Issue #42: Fix auth" \
   "/full-loop Implement issue #42 -- Fix authentication bug" &
 
 # SEO task
-opencode run --dir ~/Git/awardsapp --agent SEO --title "Issue #55: SEO audit" \
+opencode run --dir ~/Git/myproject --agent SEO --title "Issue #55: SEO audit" \
   "/full-loop Implement issue #55 -- Run SEO audit on landing pages" &
 
 # Content task
-opencode run --dir ~/Git/awardsapp --agent Content --title "Issue #60: Blog post" \
+opencode run --dir ~/Git/myproject --agent Content --title "Issue #60: Blog post" \
   "/full-loop Implement issue #60 -- Write launch announcement blog post" &
 ```
 
@@ -196,6 +196,8 @@ Key capabilities (details in `reference/orchestration.md`, `reference/services.m
 ## Security
 
 Rules: `prompts/build.txt`. Secrets: `gopass` preferred; `credentials.sh` plaintext fallback (600 perms). Config templates: `configs/*.json.txt` (committed), working: `configs/*.json` (gitignored). Full docs: `tools/credentials/gopass.md`.
+
+**Cross-repo privacy:** NEVER include private repo names in TODO.md task descriptions, issue titles, or comments on public repos. Use generic references like "a managed private repo" or "cross-repo project". The issue-sync-helper.sh has automated sanitization, but prevention at the source is the primary defense.
 
 ## Working Directories
 
