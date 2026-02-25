@@ -229,7 +229,8 @@ AVAILABLE ACTIONS:
 
 DECISION RULES:
 - PR MERGED on GitHub → deploy (always)
-- PR CLEAN or UNSTABLE → merge_pr (always — UNSTABLE means non-required checks failed)
+- PR CLEAN or UNSTABLE with PR_REVIEW APPROVED → merge_pr
+- PR CLEAN or UNSTABLE with PR_REVIEW not APPROVED → wait (human review required before merge)
 - PR BEHIND base → update_branch
 - PR DIRTY/CONFLICTING → resolve_conflicts (dispatch AI worker to fix)
 - PR BLOCKED with CI failures → fix_ci (dispatch AI worker to fix)
@@ -360,6 +361,22 @@ execute_action() {
 	case "$action" in
 
 	merge_pr)
+		# t1314: Human review gate — require APPROVED review unless auto-merge is explicitly enabled.
+		# Without this, the AI lifecycle merges PRs as soon as mergeState is CLEAN/UNSTABLE,
+		# bypassing human review entirely. Default: require human approval.
+		local auto_merge_enabled="${SUPERVISOR_AUTO_MERGE_ENABLED:-false}"
+		if [[ "$auto_merge_enabled" != "true" ]]; then
+			local current_review_decision="NONE"
+			if [[ -n "$pr_number" && -n "$pr_repo_slug" ]] && command -v gh &>/dev/null; then
+				current_review_decision=$(gh pr view "$pr_number" --repo "$pr_repo_slug" \
+					--json reviewDecision --jq '.reviewDecision // "NONE"' 2>/dev/null || echo "NONE")
+			fi
+			if [[ "$current_review_decision" != "APPROVED" ]]; then
+				log_info "ai-lifecycle: $task_id merge blocked — human review required (reviewDecision=$current_review_decision, set SUPERVISOR_AUTO_MERGE_ENABLED=true to bypass) (t1314)"
+				cmd_transition "$task_id" "review_waiting" 2>>"$SUPERVISOR_LOG" || true
+				return 0
+			fi
+		fi
 		cmd_transition "$task_id" "merging" 2>>"$SUPERVISOR_LOG" || true
 		if merge_task_pr "$task_id" 2>>"$SUPERVISOR_LOG"; then
 			cmd_transition "$task_id" "merged" 2>>"$SUPERVISOR_LOG" || true

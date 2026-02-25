@@ -1856,8 +1856,15 @@ cmd_pulse() {
 	fi
 
 	# Phase 2: Dispatch queued tasks up to concurrency limit
+	#
+	# t1314: Auto-detect active batches when --batch is not explicitly passed.
+	# Previously, calling cmd_pulse() without --batch fell through to global
+	# dispatch with SUPERVISOR_MAX_CONCURRENCY (default: 4), ignoring the
+	# batch's concurrency=1 setting. Now we detect active batches and dispatch
+	# through them, respecting their concurrency limits.
 
 	if [[ -n "$batch_id" ]]; then
+		# Explicit --batch flag: dispatch only within this batch
 		local next_tasks
 		next_tasks=$(cmd_next "$batch_id" 10)
 
@@ -1885,31 +1892,102 @@ cmd_pulse() {
 			done <<<"$next_tasks"
 		fi
 	else
-		# Global dispatch (no batch filter)
-		local next_tasks
-		next_tasks=$(cmd_next "" 10)
+		# t1314: No explicit --batch flag. Auto-detect active batches and dispatch
+		# through them to respect batch concurrency limits. Without this, all queued
+		# tasks are dispatched via global concurrency (SUPERVISOR_MAX_CONCURRENCY=4),
+		# bypassing batch concurrency=1 settings entirely.
+		local active_batches
+		active_batches=$(db -separator '|' "$SUPERVISOR_DB" "
+			SELECT b.id, b.concurrency FROM batches b
+			WHERE b.status IN ('active', 'running')
+			AND EXISTS (
+				SELECT 1 FROM batch_tasks bt
+				JOIN tasks t ON bt.task_id = t.id
+				WHERE bt.batch_id = b.id
+				AND t.status = 'queued'
+			)
+			ORDER BY b.created_at ASC;
+		" 2>/dev/null || echo "")
 
-		if [[ -n "$next_tasks" ]]; then
-			while IFS=$'\t' read -r tid _ _ _; do
-				# Guard: skip malformed task IDs (same as batch dispatch above)
-				if [[ -z "$tid" || "$tid" =~ [[:space:]:] || ! "$tid" =~ ^[a-zA-Z0-9._-]+$ ]]; then
-					log_warn "Skipping malformed task ID in cmd_next output: '${tid:0:40}'"
-					continue
+		if [[ -n "$active_batches" ]]; then
+			# Dispatch through each active batch, respecting its concurrency limit
+			while IFS='|' read -r auto_batch_id auto_batch_conc; do
+				[[ -z "$auto_batch_id" ]] && continue
+				log_info "Phase 2: auto-detected active batch $auto_batch_id (concurrency: $auto_batch_conc) (t1314)"
+
+				local next_tasks
+				next_tasks=$(cmd_next "$auto_batch_id" 10)
+
+				if [[ -n "$next_tasks" ]]; then
+					while IFS=$'\t' read -r tid _ _ _; do
+						if [[ -z "$tid" || "$tid" =~ [[:space:]:] || ! "$tid" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+							log_warn "Skipping malformed task ID in cmd_next output: '${tid:0:40}'"
+							continue
+						fi
+						local dispatch_exit=0
+						cmd_dispatch "$tid" --batch "$auto_batch_id" || dispatch_exit=$?
+						if [[ "$dispatch_exit" -eq 0 ]]; then
+							dispatched_count=$((dispatched_count + 1))
+						elif [[ "$dispatch_exit" -eq 2 ]]; then
+							log_info "Concurrency limit reached for batch $auto_batch_id, moving to next batch"
+							break
+						elif [[ "$dispatch_exit" -eq 3 ]]; then
+							log_warn "Provider unavailable for $tid, stopping dispatch until next pulse"
+							break 2 # Break out of both loops
+						else
+							log_warn "Dispatch failed for $tid (exit $dispatch_exit), trying next task"
+						fi
+					done <<<"$next_tasks"
 				fi
-				local dispatch_exit=0
-				cmd_dispatch "$tid" || dispatch_exit=$?
-				if [[ "$dispatch_exit" -eq 0 ]]; then
-					dispatched_count=$((dispatched_count + 1))
-				elif [[ "$dispatch_exit" -eq 2 ]]; then
-					log_info "Concurrency limit reached, stopping dispatch"
-					break
-				elif [[ "$dispatch_exit" -eq 3 ]]; then
-					log_warn "Provider unavailable for $tid, stopping dispatch until next pulse"
-					break
-				else
-					log_warn "Dispatch failed for $tid (exit $dispatch_exit), trying next task"
-				fi
-			done <<<"$next_tasks"
+			done <<<"$active_batches"
+		fi
+
+		# Also dispatch any unbatched queued tasks via global concurrency
+		# (tasks not in any batch still need to be dispatched)
+		local unbatched_queued
+		unbatched_queued=$(db "$SUPERVISOR_DB" "
+			SELECT COUNT(*) FROM tasks t
+			WHERE t.status = 'queued'
+			AND t.retries < t.max_retries
+			AND NOT EXISTS (SELECT 1 FROM batch_tasks bt WHERE bt.task_id = t.id);
+		" 2>/dev/null || echo "0")
+
+		if [[ "$unbatched_queued" -gt 0 ]]; then
+			log_info "Phase 2: $unbatched_queued unbatched queued task(s) — using global concurrency (t1314)"
+			local next_tasks
+			# Pass empty batch_id to get unbatched tasks only
+			next_tasks=$(db -separator $'\t' "$SUPERVISOR_DB" "
+				SELECT id, repo, description, model
+				FROM tasks
+				WHERE status = 'queued'
+				AND retries < max_retries
+				AND (rate_limit_until IS NULL OR rate_limit_until <= strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+				AND NOT EXISTS (SELECT 1 FROM batch_tasks bt WHERE bt.task_id = id)
+				ORDER BY retries ASC, created_at ASC
+				LIMIT 10;
+			" 2>/dev/null || echo "")
+
+			if [[ -n "$next_tasks" ]]; then
+				while IFS=$'\t' read -r tid _ _ _; do
+					if [[ -z "$tid" || "$tid" =~ [[:space:]:] || ! "$tid" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+						log_warn "Skipping malformed task ID in cmd_next output: '${tid:0:40}'"
+						continue
+					fi
+					local dispatch_exit=0
+					cmd_dispatch "$tid" || dispatch_exit=$?
+					if [[ "$dispatch_exit" -eq 0 ]]; then
+						dispatched_count=$((dispatched_count + 1))
+					elif [[ "$dispatch_exit" -eq 2 ]]; then
+						log_info "Global concurrency limit reached, stopping dispatch"
+						break
+					elif [[ "$dispatch_exit" -eq 3 ]]; then
+						log_warn "Provider unavailable for $tid, stopping dispatch until next pulse"
+						break
+					else
+						log_warn "Dispatch failed for $tid (exit $dispatch_exit), trying next task"
+					fi
+				done <<<"$next_tasks"
+			fi
 		fi
 	fi
 

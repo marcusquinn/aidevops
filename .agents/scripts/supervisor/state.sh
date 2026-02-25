@@ -1016,6 +1016,23 @@ cmd_next() {
 		if [[ "$cid" == *.* ]]; then
 			local parent_id="${cid%.*}"
 
+			# t1314: If this subtask belongs to a batch, cap sibling parallelism
+			# to the batch's concurrency setting. Without this, batch concurrency=1
+			# is bypassed because siblings use SUPERVISOR_MAX_PARALLEL_SIBLINGS (default: 3).
+			local effective_max_siblings="$max_parallel_siblings"
+			local subtask_batch_concurrency
+			subtask_batch_concurrency=$(db "$SUPERVISOR_DB" "
+				SELECT b.concurrency FROM batches b
+				JOIN batch_tasks bt ON bt.batch_id = b.id
+				WHERE bt.task_id = '$(sql_escape "$cid")'
+				  AND b.status IN ('active', 'running')
+				LIMIT 1;
+			" 2>/dev/null || echo "")
+			if [[ -n "$subtask_batch_concurrency" && "$subtask_batch_concurrency" -lt "$effective_max_siblings" ]]; then
+				effective_max_siblings="$subtask_batch_concurrency"
+				log_verbose "  cmd_next: $cid batch concurrency=$subtask_batch_concurrency caps sibling limit (was $max_parallel_siblings) (t1314)"
+			fi
+
 			# Count how many siblings are currently in-flight (running/dispatched/evaluating)
 			# t1253: 'failed' and 'blocked' are terminal — don't count them.
 			local siblings_active
@@ -1026,8 +1043,8 @@ cmd_next() {
 				  AND status NOT IN ('verified','cancelled','deployed','complete','failed','blocked','queued');
 			" 2>/dev/null || echo "0")
 
-			if [[ "$siblings_active" -ge "$max_parallel_siblings" ]]; then
-				log_info "  cmd_next: deferring $cid — $siblings_active siblings of $parent_id already active (max: $max_parallel_siblings)"
+			if [[ "$siblings_active" -ge "$effective_max_siblings" ]]; then
+				log_info "  cmd_next: deferring $cid — $siblings_active siblings of $parent_id already active (max: $effective_max_siblings)"
 				continue
 			fi
 		fi
