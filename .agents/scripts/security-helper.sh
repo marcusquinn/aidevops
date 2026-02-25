@@ -399,15 +399,15 @@ update_scan_results_log() {
 	local medium_count="$5"
 	local notes="$6"
 
-	# Find the repo root containing .agents/SKILL-SCAN-RESULTS.md
-	local repo_root=""
-	repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
-
-	if [[ -z "$repo_root" ]]; then
-		return 0
-	fi
-
-	local results_file="${repo_root}/${SCAN_RESULTS_FILE}"
+	# Write to the DEPLOYED copy, not the git repo working tree.
+	# Writing to the repo via git rev-parse --show-toplevel dirties the working tree
+	# and blocks subsequent `aidevops update` (git pull --ff-only refuses).
+	# See: https://github.com/marcusquinn/aidevops/issues/2286
+	local deployed_dir="$HOME/.aidevops/agents"
+	# SCAN_RESULTS_FILE is ".agents/SKILL-SCAN-RESULTS.md" (repo-relative);
+	# strip the ".agents/" prefix to get the deployed path
+	local results_filename="${SCAN_RESULTS_FILE#.agents/}"
+	local results_file="${deployed_dir}/${results_filename}"
 
 	if [[ ! -f "$results_file" ]]; then
 		return 0

@@ -539,14 +539,19 @@ verify_location() {
 set_permissions() {
 	print_info "Setting proper file permissions..."
 
-	# Make scripts executable (suppress errors for missing paths)
-	chmod +x ./*.sh 2>/dev/null || true
-	chmod +x .agents/scripts/*.sh 2>/dev/null || true
-	# Also handle modularised subdirectories (e.g. memory/, supervisor-modules/)
-	find .agents/scripts -mindepth 2 -name "*.sh" -exec chmod +x {} + 2>/dev/null || true
-	chmod +x ssh/*.sh 2>/dev/null || true
+	local deployed_dir="$HOME/.aidevops/agents"
 
-	# Secure configuration files
+	# Set permissions on DEPLOYED agents (not the git repo, to avoid dirtying the working tree)
+	# See: https://github.com/marcusquinn/aidevops/issues/2286
+	if [[ -d "$deployed_dir/scripts" ]]; then
+		chmod +x "$deployed_dir/scripts/"*.sh 2>/dev/null || true
+		# Also handle modularised subdirectories (e.g. memory/, supervisor-modules/)
+		find "$deployed_dir/scripts" -mindepth 2 -name "*.sh" -exec chmod +x {} + 2>/dev/null || true
+	fi
+
+	# Secure configuration files (these are in the user's config dir, not the repo)
+	chmod 600 "$HOME/.config/aidevops/"*.json 2>/dev/null || true
+	# Also secure repo-local configs if present (for interactive setup from repo root)
 	chmod 600 configs/*.json 2>/dev/null || true
 
 	print_success "File permissions set"

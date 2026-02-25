@@ -538,6 +538,15 @@ cmd_update() {
 	if check_dir "$INSTALL_DIR/.git"; then
 		cd "$INSTALL_DIR" || exit 1
 
+		# Clean up any working tree changes left by a previous update
+		# (e.g. chmod on tracked scripts, scan results written to repo)
+		# This ensures git pull --ff-only won't be blocked.
+		# See: https://github.com/marcusquinn/aidevops/issues/2286
+		if ! git diff --quiet 2>/dev/null; then
+			print_info "Cleaning up stale working tree changes..."
+			git checkout -- . 2>/dev/null || true
+		fi
+
 		# Fetch and check for updates
 		git fetch origin main --quiet
 
@@ -559,6 +568,11 @@ cmd_update() {
 				print_info "Re-running setup to sync agents..."
 				bash "$INSTALL_DIR/setup.sh" --non-interactive
 			fi
+
+			# Safety net: discard any working tree changes setup.sh may have introduced
+			# (e.g. chmod on tracked scripts, scan results written to repo)
+			# See: https://github.com/marcusquinn/aidevops/issues/2286
+			git checkout -- . 2>/dev/null || true
 		else
 			print_info "Pulling latest changes..."
 			local old_hash
@@ -587,6 +601,11 @@ cmd_update() {
 				echo ""
 				print_info "Running setup to apply changes..."
 				bash "$INSTALL_DIR/setup.sh" --non-interactive
+
+				# Safety net: discard any working tree changes setup.sh may have introduced
+				# (e.g. chmod on tracked scripts, scan results written to repo)
+				# See: https://github.com/marcusquinn/aidevops/issues/2286
+				git checkout -- . 2>/dev/null || true
 			else
 				print_error "Failed to pull updates"
 				print_info "Try: cd $INSTALL_DIR && git pull"
