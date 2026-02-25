@@ -349,7 +349,7 @@ _build_sanity_state_snapshot() {
 			if [[ "$eval_count" == "0" ]]; then
 				# Count how many consecutive 0-evaluated runs
 				local zero_streak
-				zero_streak=$(grep -c 'ai-lifecycle.*evaluated 0' "$log_file" 2>/dev/null || echo "0")
+				zero_streak=$(grep -c 'ai-lifecycle.*evaluated 0' "$log_file" 2>/dev/null | tr -d '[:space:]' || echo "0")
 				snapshot+="WARNING: Phase 3 evaluated 0 tasks ($zero_streak consecutive zero-runs in log)\n"
 			fi
 		else
@@ -358,15 +358,15 @@ _build_sanity_state_snapshot() {
 
 		# Check for repeated "could not gather state" errors
 		local gather_failures
-		gather_failures=$(grep -c 'could not gather state' "$log_file" 2>/dev/null || echo "0")
+		gather_failures=$(grep -c 'could not gather state' "$log_file" 2>/dev/null | tr -d '[:space:]' || echo "0")
 		if [[ "$gather_failures" -gt 10 ]]; then
 			snapshot+="WARNING: $gather_failures 'could not gather state' errors in log — possible schema drift or query bug\n"
 		fi
 
 		# Phase 2b: check for stall/underutilisation entries
 		local stall_count underutil_count
-		stall_count=$(grep -c 'Dispatch stall detected' "$log_file" 2>/dev/null || echo "0")
-		underutil_count=$(grep -c 'Concurrency underutilised' "$log_file" 2>/dev/null || echo "0")
+		stall_count=$(grep -c 'Dispatch stall detected' "$log_file" 2>/dev/null | tr -d '[:space:]' || echo "0")
+		underutil_count=$(grep -c 'Concurrency underutilised' "$log_file" 2>/dev/null | tr -d '[:space:]' || echo "0")
 		if [[ "$stall_count" -gt 5 ]]; then
 			snapshot+="WARNING: $stall_count dispatch stalls in log\n"
 		fi
