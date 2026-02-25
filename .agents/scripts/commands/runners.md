@@ -23,10 +23,11 @@ The `/full-loop` command is the worker. It already works. Runners just launches 
 
 For unattended operation, the `/pulse` command runs every 2 minutes via launchd. It:
 
-1. Checks if a worker is already running (if yes, skips)
+1. Counts running workers (max 6 concurrent)
 2. Fetches open issues and PRs from managed repos via `gh`
-3. Uses AI (sonnet) to pick the single highest-value thing to work on
-4. Dispatches one worker via `opencode run "/full-loop ..."`
+3. Observes outcomes — files improvement issues for stuck/failed work
+4. Uses AI (sonnet) to pick the highest-value items to fill available slots
+5. Dispatches workers via `opencode run "/full-loop ..."`, routing to the right agent
 
 See `pulse.md` for the full spec. Enable/disable with:
 
@@ -71,26 +72,33 @@ gh issue view 42 --repo user/repo --json number,title,url
 
 ### Step 2: Dispatch Workers
 
-For each resolved item, launch a worker:
+For each resolved item, launch a worker. Route to the appropriate agent based on the task domain (see `AGENTS.md` "Agent Routing"):
 
 ```bash
-# For tasks
+# For code tasks (Build+ is default — omit --agent)
 opencode run --dir ~/Git/<repo> --title "t083: <description>" \
-  "/full-loop t083 -- <description>"
+  "/full-loop t083 -- <description>" &
+
+# For domain-specific tasks (route to specialist agent)
+opencode run --dir ~/Git/<repo> --agent SEO --title "t084: <description>" \
+  "/full-loop t084 -- <description>" &
 
 # For PRs
 opencode run --dir ~/Git/<repo> --title "PR #382: <title>" \
-  "/full-loop Fix PR #382 (https://github.com/user/repo/pull/382) -- <what needs fixing>"
+  "/full-loop Fix PR #382 (https://github.com/user/repo/pull/382) -- <what needs fixing>" &
 
 # For issues
 opencode run --dir ~/Git/<repo> --title "Issue #42: <title>" \
-  "/full-loop Implement issue #42 (https://github.com/user/repo/issues/42) -- <description>"
+  "/full-loop Implement issue #42 (https://github.com/user/repo/issues/42) -- <description>" &
 ```
 
 **Dispatch rules:**
 - Use `--dir ~/Git/aidevops` for aidevops repo work
 - Use `--dir ~/Git/awardsapp` for awardsapp repo work
+- Use `--agent <name>` to route to a specialist (SEO, Content, Marketing, etc.)
+- Omit `--agent` for code tasks — defaults to Build+
 - Do NOT add `--model` — let `/full-loop` use its default (opus)
+- **Background each dispatch with `&`** so multiple workers launch concurrently
 - Workers handle everything: branching, implementation, PR, CI, merge, deploy
 
 ### Step 3: Monitor
@@ -118,9 +126,12 @@ The supervisor (whether `/pulse` or `/runners`) NEVER does task work itself:
 - **Never** runs tests or linters on behalf of workers
 - **Never** pushes branches or resolves merge conflicts for workers
 - **Always** dispatches workers via `opencode run "/full-loop ..."`
+- **Always** routes to the right agent — not every task is code
 
 If a worker fails, the fix is to improve the worker's instructions (`/full-loop`),
 not to do the work for it. Each failure that gets fixed makes the next run more reliable.
+
+**Self-improvement:** The supervisor observes outcomes from GitHub state (PRs, issues, timelines) and files improvement issues for systemic problems. See `AGENTS.md` "Self-Improvement" for the universal principle. The supervisor never maintains separate state — TODO.md, PLANS.md, and GitHub are the database.
 
 ## Examples
 
