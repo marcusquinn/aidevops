@@ -330,7 +330,150 @@ _build_sanity_state_snapshot() {
 	fi
 	snapshot+="\n"
 
-	# 6. Identity context
+	# 6. Pipeline phase health (t1336)
+	# Check if critical pipeline phases are actually working by examining
+	# recent log output. Phase 3 (ai-lifecycle) was silently broken for days
+	# because gather_task_state referenced a non-existent column — every task
+	# failed with "could not gather state" but nothing flagged it.
+	snapshot+="### Pipeline Phase Health\n"
+	local log_file="${SUPERVISOR_LOG:-$HOME/.aidevops/logs/supervisor.log}"
+	if [[ -f "$log_file" ]]; then
+		# Phase 3: check last ai-lifecycle summary line
+		local last_lifecycle
+		last_lifecycle=$(grep 'ai-lifecycle.*evaluated.*actioned' "$log_file" 2>/dev/null | tail -1 || echo "")
+		if [[ -n "$last_lifecycle" ]]; then
+			local eval_count action_count
+			eval_count=$(echo "$last_lifecycle" | grep -oE 'evaluated [0-9]+' | grep -oE '[0-9]+' || echo "0")
+			action_count=$(echo "$last_lifecycle" | grep -oE 'actioned [0-9]+' | grep -oE '[0-9]+' || echo "0")
+			snapshot+="Phase 3 (ai-lifecycle): last run evaluated=$eval_count actioned=$action_count\n"
+			if [[ "$eval_count" == "0" ]]; then
+				# Count how many consecutive 0-evaluated runs
+				local zero_streak
+				zero_streak=$(grep -c 'ai-lifecycle.*evaluated 0' "$log_file" 2>/dev/null || echo "0")
+				snapshot+="WARNING: Phase 3 evaluated 0 tasks ($zero_streak consecutive zero-runs in log)\n"
+			fi
+		else
+			snapshot+="Phase 3 (ai-lifecycle): no recent runs found in log\n"
+		fi
+
+		# Check for repeated "could not gather state" errors
+		local gather_failures
+		gather_failures=$(grep -c 'could not gather state' "$log_file" 2>/dev/null || echo "0")
+		if [[ "$gather_failures" -gt 10 ]]; then
+			snapshot+="WARNING: $gather_failures 'could not gather state' errors in log — possible schema drift or query bug\n"
+		fi
+
+		# Phase 2b: check for stall/underutilisation entries
+		local stall_count underutil_count
+		stall_count=$(grep -c 'Dispatch stall detected' "$log_file" 2>/dev/null || echo "0")
+		underutil_count=$(grep -c 'Concurrency underutilised' "$log_file" 2>/dev/null || echo "0")
+		if [[ "$stall_count" -gt 5 ]]; then
+			snapshot+="WARNING: $stall_count dispatch stalls in log\n"
+		fi
+		if [[ "$underutil_count" -gt 5 ]]; then
+			snapshot+="WARNING: $underutil_count concurrency underutilisation events in log\n"
+		fi
+	else
+		snapshot+="(log file not found)\n"
+	fi
+	snapshot+="\n"
+
+	# 7. Schema validation (t1336)
+	# Verify that key queries used by supervisor modules reference columns
+	# that actually exist in the tasks table. This catches the exact bug where
+	# gather_task_state referenced worker_pid after it was removed.
+	snapshot+="### Schema Validation\n"
+	local actual_columns
+	actual_columns=$(sqlite3 "$SUPERVISOR_DB" "PRAGMA table_info(tasks);" 2>/dev/null | cut -d'|' -f2 | tr '\n' ',' || echo "")
+	if [[ -n "$actual_columns" ]]; then
+		# Check for known query columns that must exist
+		local required_cols="id status pr_url repo branch worktree error rebase_attempts retries max_retries model session_id"
+		local missing_cols=""
+		for col in $required_cols; do
+			if ! echo ",$actual_columns" | grep -q ",$col,"; then
+				missing_cols="${missing_cols}${col} "
+			fi
+		done
+		if [[ -n "$missing_cols" ]]; then
+			snapshot+="CRITICAL: Missing columns in tasks table: $missing_cols\n"
+			snapshot+="Queries referencing these columns will silently fail!\n"
+		else
+			snapshot+="All required columns present in tasks table\n"
+		fi
+	else
+		snapshot+="Could not read tasks schema\n"
+	fi
+	snapshot+="\n"
+
+	# 8. Cross-repo issue tag truthfulness (t1336)
+	# Compare GitHub issue labels (status:*) against actual DB state.
+	# Catches drift where GH says "status:in-review" but DB says "queued".
+	snapshot+="### Cross-Repo Issue Tag Truthfulness\n"
+	local all_repos
+	all_repos=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks WHERE repo IS NOT NULL AND repo != '';" 2>/dev/null || echo "")
+	if [[ -n "$all_repos" ]]; then
+		while IFS= read -r check_repo; do
+			[[ -z "$check_repo" || ! -d "$check_repo" ]] && continue
+			local check_slug
+			check_slug=$(detect_repo_slug "$check_repo" 2>/dev/null || echo "")
+			[[ -z "$check_slug" ]] && continue
+			local repo_name
+			repo_name=$(basename "$check_repo")
+
+			# Get tasks with both DB status and GH issue
+			local db_tasks_with_issues
+			db_tasks_with_issues=$(db -separator '|' "$SUPERVISOR_DB" "
+				SELECT id, status, issue_url FROM tasks
+				WHERE repo = '$(sql_escape "$check_repo")'
+				AND issue_url IS NOT NULL AND issue_url != ''
+				AND status NOT IN ('cancelled')
+				ORDER BY id;
+			" 2>/dev/null || echo "")
+
+			if [[ -z "$db_tasks_with_issues" ]]; then
+				continue
+			fi
+
+			local drift_count=0
+			while IFS='|' read -r dtid dtstatus dtissue; do
+				[[ -z "$dtid" || -z "$dtissue" ]] && continue
+				# Extract issue number
+				local issue_num
+				issue_num=$(echo "$dtissue" | grep -oE '[0-9]+$' || echo "")
+				[[ -z "$issue_num" ]] && continue
+
+				# Get GH labels for this issue (cached per-pulse is fine)
+				local gh_labels
+				gh_labels=$(gh issue view "$issue_num" --repo "$check_slug" --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null || echo "")
+
+				# Map DB status to expected GH label
+				local expected_label=""
+				case "$dtstatus" in
+				queued) expected_label="status:queued" ;;
+				running | dispatched) expected_label="status:claimed" ;;
+				pr_review | review_triage) expected_label="status:in-review" ;;
+				blocked) expected_label="status:blocked" ;;
+				complete | verified | deployed) expected_label="status:in-review" ;; # PR submitted
+				esac
+
+				if [[ -n "$expected_label" ]] && ! echo "$gh_labels" | grep -q "$expected_label"; then
+					snapshot+="DRIFT ($repo_name): $dtid DB=$dtstatus but GH#$issue_num labels=[$gh_labels] (expected $expected_label)\n"
+					drift_count=$((drift_count + 1))
+				fi
+			done <<<"$db_tasks_with_issues"
+
+			if [[ "$drift_count" -eq 0 ]]; then
+				snapshot+="$repo_name: all issue tags match DB state\n"
+			else
+				snapshot+="$repo_name: $drift_count tag drift(s) found\n"
+			fi
+		done <<<"$all_repos"
+	else
+		snapshot+="(no repos in DB)\n"
+	fi
+	snapshot+="\n"
+
+	# 9. Identity context
 	local identity
 	identity=$(get_aidevops_identity 2>/dev/null || whoami)
 	snapshot+="### Context\n"
@@ -370,7 +513,13 @@ $state_snapshot
 
 5. **Stale claims**: Tasks with assignee:/started: but no corresponding running worker in the DB or PID files. The claim may be from a dead session.
 
-6. **Any other contradiction** you can identify between the three state sources.
+6. **Pipeline phase failures**: Check the "Pipeline Phase Health" section. If Phase 3 evaluated 0 tasks for multiple consecutive runs, or there are many "could not gather state" errors, the pipeline is broken — likely a schema drift or query bug. Recommend "log_only" with a clear diagnosis so a human can investigate.
+
+7. **Schema drift**: Check the "Schema Validation" section. If any required columns are missing, this is CRITICAL — queries referencing those columns silently return empty results. Recommend "log_only" with urgency.
+
+8. **Issue tag drift**: Check the "Cross-Repo Issue Tag Truthfulness" section. If GitHub issue labels don't match DB state, recommend "log_only" with the specific drifts so the label sync can be triggered.
+
+9. **Any other contradiction** you can identify between the state sources.
 
 ## Output Format
 
@@ -388,7 +537,8 @@ Example:
   {"action": "unclaim", "task_id": "t123", "reasoning": "DB says failed but TODO.md has active claim"},
   {"action": "cancel_orphan", "task_id": "t456", "reasoning": "In DB as queued but missing from TODO.md"},
   {"action": "remove_blocker", "task_id": "t789", "blocker_id": "t456", "reasoning": "Blocker t456 permanently failed (3/3 retries)"},
-  {"action": "add_auto_dispatch", "task_id": "t101", "reasoning": "Has model:sonnet, ~2h estimate, no blockers — eligible for dispatch"}
+  {"action": "add_auto_dispatch", "task_id": "t101", "reasoning": "Has model:sonnet, ~2h estimate, no blockers — eligible for dispatch"},
+  {"action": "log_only", "task_id": "pipeline", "message": "Phase 3 evaluated 0 tasks for 5 consecutive runs — possible schema drift in gather_task_state query"}
 ]
 
 If nothing needs fixing, return: []
