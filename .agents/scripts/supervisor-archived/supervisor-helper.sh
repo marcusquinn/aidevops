@@ -46,6 +46,7 @@
 #   supervisor-helper.sh self-heal <task_id>            Create diagnostic subtask for failed/blocked task
 #   supervisor-helper.sh pool <subcommand> [args]       Container pool manager (t1165.2)
 #   supervisor-helper.sh contest <subcommand> [args]    Model contest mode (t1011)
+#   supervisor-helper.sh circuit-breaker <status|reset|check|trip>  Circuit breaker (t1331)
 #   supervisor-helper.sh backup [reason]               Backup supervisor database (t162)
 #   supervisor-helper.sh restore [backup_file]         Restore from backup (lists if no file) (t162)
 #   supervisor-helper.sh db [sql]                      Direct SQLite access
@@ -236,6 +237,8 @@ source "${SUPERVISOR_MODULE_DIR}/issue-audit.sh"
 source "${SUPERVISOR_MODULE_DIR}/routine-scheduler.sh"
 source "${SUPERVISOR_MODULE_DIR}/sanity-check.sh"
 source "${SUPERVISOR_MODULE_DIR}/container-pool.sh"
+source "${SUPERVISOR_MODULE_DIR}/stuck-detection.sh"
+source "${SUPERVISOR_MODULE_DIR}/circuit-breaker.sh"
 
 # Valid states for the state machine
 # shellcheck disable=SC2034 # Used by supervisor/state.sh
@@ -366,6 +369,9 @@ Usage:
   supervisor-helper.sh dashboard [--batch id] [--interval N] Live TUI dashboard
   supervisor-helper.sh queue-health [--batch id]     Update pinned queue health issue (t1013)
   supervisor-helper.sh stale-gc-report [--days N] [--json]  Stale state GC metrics report (t1202)
+  supervisor-helper.sh stuck-detection                     Run stuck detection checks manually (t1332)
+  supervisor-helper.sh stuck-detection-report [--days N] [--json]  Stuck detection metrics report (t1332)
+  supervisor-helper.sh circuit-breaker <status|reset|check|trip>   Circuit breaker controls (t1331)
   supervisor-helper.sh stale-claims [--repo path]          Detect and recover stale TODO.md claims (t1263)
   supervisor-helper.sh labels [--action X] [--model Y] [--json]  Query model usage labels (t1010)
   supervisor-helper.sh pool <subcommand> [args]      Container pool manager (t1165.2)
@@ -769,6 +775,8 @@ main() {
 	dashboard) cmd_dashboard "$@" ;;
 	queue-health) cmd_queue_health "$@" ;;
 	stale-gc-report) cmd_stale_gc_report "$@" ;;
+	stuck-detection) cmd_stuck_detection "$@" ;;
+	stuck-detection-report) cmd_stuck_detection_report "$@" ;;
 	stale-claims)
 		# t1263: Manually trigger stale-claim recovery for a repo
 		# Usage: supervisor-helper.sh stale-claims [--repo <path>]
@@ -804,6 +812,7 @@ main() {
 	labels) cmd_labels "$@" ;;
 	contest) cmd_contest "$@" ;;
 	pool) cmd_pool "$@" ;;
+	circuit-breaker) cmd_circuit_breaker "$@" ;;
 	ai-context) build_ai_context "${REPO_PATH:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}" "${1:-full}" ;;
 	ai-reason) run_ai_reasoning "${REPO_PATH:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}" "${1:-full}" ;;
 	ai-actions)
