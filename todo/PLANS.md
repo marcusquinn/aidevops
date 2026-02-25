@@ -21,6 +21,97 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-02-25] Local AI Model Support
+
+**Status:** Planning
+**Estimate:** ~13.5h (ai:10h test:2h read:1.5h)
+**TODO:** t1338
+**Logged:** 2026-02-25
+**Brief:** [todo/tasks/t1338-brief.md](tasks/t1338-brief.md)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p032,Local AI Model Support,planning,0,4,,feature|local-models|infrastructure|model-routing,13.5h,10h,2h,1.5h,2026-02-25T00:00Z,
+-->
+
+#### Purpose
+
+Add local AI model inference to aidevops via llama.cpp + HuggingFace, completing the cost spectrum from free (local) through budget (haiku) to premium (opus). Users get guided hardware-aware setup, access to any HuggingFace GGUF model, usage tracking, and disk cleanup recommendations.
+
+#### Context
+
+**Why llama.cpp (not Ollama, LM Studio, or Jan.ai):**
+
+| Criterion | llama.cpp | Ollama | LM Studio | Jan.ai |
+|-----------|-----------|--------|-----------|--------|
+| License | MIT | MIT | Closed frontend | AGPL |
+| Speed | Fastest (baseline) | 20-70% slower | Same (uses llama.cpp) | Same (uses llama.cpp) |
+| Security | No daemon, localhost only | 175k+ exposed instances (Jan 2026), multiple CVEs | Desktop-safe | Desktop-safe |
+| Binary size | 23-40 MB | ~200 MB | ~500 MB+ | ~300 MB+ |
+| HuggingFace access | Direct GGUF download | Walled library | HF browser built-in | HF download |
+| Control | Full (quantization, context, sampling) | Abstracted | GUI-mediated | GUI-mediated |
+
+**Key decision: download-on-first-use, not bundled.** llama.cpp releases weekly (b8152 current, daily commits). Bundling means stale binaries. Platform-specific (macOS ARM 29 MB, Linux x64 23 MB, Linux Vulkan 40 MB). Optional feature — not every user wants local models.
+
+**Binary sizes by platform (b8152):**
+
+| Platform | Size |
+|----------|------|
+| macOS ARM64 | 29 MB |
+| macOS x64 | 82 MB |
+| Linux x64 (CPU) | 23 MB |
+| Linux Vulkan | 40 MB |
+| Linux ROCm | 130 MB |
+
+#### Execution Phases
+
+**Phase 1: Foundation (t1338.1, t1338.3) ~3h**
+
+- [ ] Extend `model-routing.md` with `local` tier — routing rules, cost table, decision flowchart, provider discovery
+- [ ] Create `huggingface.md` subagent — model discovery, GGUF format, quantization guide, hardware-tier recommendations
+
+These two are independent and can run in parallel. model-routing extension is the architectural anchor; HuggingFace guide is reference material needed by the helper script.
+
+**Phase 2: Documentation (t1338.2) ~2h**
+
+- [ ] Create `local-models.md` subagent — llama.cpp setup guide, platform matrix, server management, hardware detection
+
+Depends on Phase 1 (references model-routing integration points).
+
+**Phase 3: Implementation (t1338.4) ~6h**
+
+- [ ] Create `local-model-helper.sh` — 11 subcommands covering full lifecycle
+
+The main implementation. Depends on Phase 2 for design decisions. Largest single task — consider splitting into 2 PRs (install/serve/stop/status in first, search/pull/recommend/usage/cleanup/update in second).
+
+**Phase 4: Polish (t1338.5, t1338.6) ~2.5h**
+
+- [ ] Usage logging SQLite schema + disk management logic
+- [ ] Update AGENTS.md domain index + subagent-index.toon
+
+#### Decision Log
+
+| Date | Decision | Rationale |
+|------|----------|-----------|
+| 2026-02-25 | llama.cpp as primary runtime | MIT license, fastest, most secure, every other tool wraps it anyway |
+| 2026-02-25 | Download-on-first-use, not bundled | Weekly releases, platform-specific, optional feature |
+| 2026-02-25 | Single model-routing.md (extend, not new file) | Local is just another tier in the same routing decision |
+| 2026-02-25 | HuggingFace as model source (not Ollama library) | Largest open repo, no walled garden, GGUF is standard |
+| 2026-02-25 | SQLite for usage logging | Consistent with existing framework pattern |
+| 2026-02-25 | 30-day cleanup threshold | Models are 2-50+ GB; generous but prevents unbounded disk growth |
+| 2026-02-25 | No Ollama fallback in v1 | Users with Ollama can point at its API manually; add if demand exists |
+
+#### Risks
+
+| Risk | Mitigation |
+|------|------------|
+| llama.cpp binary API changes between releases | Pin to known-good release in helper script, test on update |
+| HuggingFace API rate limits for search | Cache search results, fallback to `huggingface-cli` |
+| Model recommendations become stale as new models release | Recommend by capability tier, not specific model names where possible |
+| Large model downloads fail mid-transfer | `huggingface-cli` handles resume; document manual resume |
+| GPU detection unreliable across platforms | Graceful fallback to CPU-only with clear messaging |
+
+---
+
 ### [2026-02-22] Manifest-Driven Brief Generation
 
 **Status:** Planning
