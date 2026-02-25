@@ -131,4 +131,4 @@ This agent improves based on:
 - Cross-browser compatibility issues discovered
 - Manifest V3 API changes and deprecations
 - New framework features (WXT, Plasmo updates)
-- Pattern tracking via `pattern-tracker-helper.sh`
+- Pattern tracking via cross-session memory (`/remember`, `/recall`)

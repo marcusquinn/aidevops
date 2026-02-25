@@ -164,6 +164,6 @@ This agent suite improves based on:
 - App Store review feedback (common rejections)
 - User testing results (UX issues discovered)
 - New tool capabilities (framework updates, new APIs)
-- Pattern tracking via `pattern-tracker-helper.sh`
+- Pattern tracking via cross-session memory (`/remember`, `/recall`)
 
 Use `/remember` to capture learnings across sessions.

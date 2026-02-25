@@ -30,7 +30,7 @@ set -euo pipefail
 # Pattern Tracker Integration (t1098)
 # =============================================================================
 # Reads live success/failure data from the pattern tracker memory DB.
-# Same DB as pattern-tracker-helper.sh — no duplication of storage.
+# Same DB as pattern-tracker-helper.sh (archived) — no duplication of storage.
 
 readonly PATTERN_DB="${AIDEVOPS_MEMORY_DIR:-$HOME/.aidevops/.agent-workspace/memory}/memory.db"
 readonly -a PATTERN_VALID_MODELS=(haiku flash sonnet pro opus)
@@ -502,7 +502,7 @@ cmd_recommend() {
 				printf "  %-10s %d%% success (n=%d)\n" "$ptier:" "$prate" "$psample"
 			done <<<"$pattern_lines"
 		else
-			echo "  (no model-tagged patterns — record with pattern-tracker-helper.sh)"
+			echo "  (no model-tagged patterns — record with /remember)"
 		fi
 	fi
 
@@ -1183,8 +1183,8 @@ cmd_cross_review() {
 			print_warning "cmd_score recording failed (scores still in $judge_file)"
 		fi
 
-		# Feed winner/loser data into pattern tracker
-		local pt_helper="${SCRIPT_DIR}/pattern-tracker-helper.sh"
+		# Feed winner/loser data into pattern tracker (archived — graceful fallback)
+		local pt_helper="${SCRIPT_DIR}/archived/pattern-tracker-helper.sh"
 		if [[ -x "$pt_helper" && -n "$winner" ]]; then
 			echo "Syncing results to pattern tracker..."
 			local winner_tier loser_args=() winner_overall_score=0
@@ -1277,8 +1277,7 @@ cmd_patterns() {
 		echo "No pattern data available."
 		echo ""
 		echo "Record patterns to populate this view:"
-		echo "  pattern-tracker-helper.sh record --outcome success --model sonnet --task-type code-review \\"
-		echo "    --description \"Completed code review successfully\""
+		echo "  /remember \"SUCCESS: code-review with sonnet — completed successfully\""
 		echo ""
 		echo "The supervisor also records patterns automatically after each task."
 		return 0
@@ -1342,8 +1341,8 @@ cmd_patterns() {
 	fi
 
 	echo ""
-	echo "Data source: pattern-tracker-helper.sh (memory.db)"
-	echo "Record more: pattern-tracker-helper.sh record --outcome success --model <tier> ..."
+	echo "Data source: cross-session memory (memory.db)"
+	echo "Record more: /remember \"SUCCESS: <task-type> with <tier> — <description>\""
 	echo ""
 	return 0
 }
@@ -1991,9 +1990,9 @@ cmd_score() {
 	fi
 	echo ""
 
-	# Sync to unified pattern tracker backbone (t1094)
+	# Sync to unified pattern tracker backbone (t1094) — archived, graceful fallback
 	# Scores are 1-10 here; normalize to 1-5 for pattern tracker compatibility.
-	local pt_helper="${SCRIPT_DIR}/pattern-tracker-helper.sh"
+	local pt_helper="${SCRIPT_DIR}/archived/pattern-tracker-helper.sh"
 	if [[ -x "$pt_helper" ]]; then
 		local winner_tier=""
 		local loser_args=()

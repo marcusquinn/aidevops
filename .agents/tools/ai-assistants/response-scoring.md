@@ -225,6 +225,6 @@ comparisons -- Comparison records with winner tracking
 
 - `tools/ai-assistants/compare-models.md` - Model spec comparison
 - `tools/context/model-routing.md` - Cost-aware model routing
-- `scripts/pattern-tracker-helper.sh` - Pattern tracking and model recommendations
+- Cross-session memory system - Pattern tracking and model recommendations (replaces archived `pattern-tracker-helper.sh`)
 - `scripts/model-availability-helper.sh` - Provider health checks
 - `scripts/model-registry-helper.sh` - Model version tracking

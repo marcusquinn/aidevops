@@ -93,7 +93,7 @@ readonly TEMP_PREFIX="tmp_"
 # Pattern Tracking Constants
 # =============================================================================
 # All pattern-related memory types (dedicated + supervisor-generated)
-# Used by pattern-tracker-helper.sh and memory/_common.sh migrate_db backfill
+# Used by memory/_common.sh migrate_db backfill (pattern-tracker-helper.sh archived)
 readonly PATTERN_TYPES_SQL="'SUCCESS_PATTERN','FAILURE_PATTERN','WORKING_SOLUTION','FAILED_APPROACH','ERROR_FIX'"
 
 # =============================================================================

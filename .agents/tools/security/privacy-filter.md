@@ -169,7 +169,7 @@ MY_PROJECT_[A-Z]+_KEY
 The privacy filter is mandatory in the PR phase (t116.4) of the self-improving agent system:
 
 ```bash
-# In self-improve-helper.sh pr command:
+# In self-improvement PR workflow (previously self-improve-helper.sh):
 
 # 1. Run privacy filter
 if ! privacy-filter-helper.sh scan "$worktree_path"; then

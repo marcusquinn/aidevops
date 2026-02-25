@@ -67,8 +67,8 @@ See `agent-testing.md` for the full testing framework.
 **Model tier in frontmatter**: Use evidence, not just rules. Before setting `model:`, check pattern data:
 
 ```bash
-pattern-tracker-helper.sh recommend "task type"  # data-driven tier recommendation
-/route "task description"                          # rules + pattern history combined
+/route "task description"    # rules + pattern history combined
+/patterns recommend "type"   # data-driven tier recommendation
 ```
 
 Static rules (`haiku` → formatting, `sonnet` → code, `opus` → architecture) are starting points. Pattern data overrides when >75% success rate with 3+ samples. See "Model Tier Selection: Evidence-Based Routing" section below.
@@ -402,11 +402,11 @@ opus  → architecture, novel problems
 
 ```bash
 # What has worked for this task type before?
-pattern-tracker-helper.sh suggest "shell script agent"
+/patterns suggest "shell script agent"
 # → "pattern data shows sonnet with prompt-repeat is optimal for shell-script agents (87% success, 14 samples)"
 
 # Get a data-driven tier recommendation
-pattern-tracker-helper.sh recommend "code review"
+/patterns recommend "code review"
 # → "sonnet: 85% success rate from 12 samples (vs opus: 60% from 5 samples)"
 
 # Or use the /route command (combines rules + pattern history)
@@ -425,15 +425,11 @@ pattern-tracker-helper.sh recommend "code review"
 **Recording outcomes** (the supervisor does this automatically; agents can also record manually):
 
 ```bash
-# After a successful task
-pattern-tracker-helper.sh record --outcome success \
-    --task-type "shell script agent" --model sonnet \
-    --description "Prompt-repeat pattern resolved ambiguous instructions"
+# After a successful task — record via memory
+/remember "SUCCESS: shell script agent with sonnet — prompt-repeat pattern resolved ambiguous instructions"
 
-# After a failure
-pattern-tracker-helper.sh record --outcome failure \
-    --task-type "architecture design" --model sonnet \
-    --description "Needed opus — sonnet missed cross-service dependency trade-offs"
+# After a failure — record via memory
+/remember "FAILURE: architecture design with sonnet — needed opus, missed cross-service dependency trade-offs"
 ```
 
 **In agent frontmatter**, document the evidence behind your `model:` choice:

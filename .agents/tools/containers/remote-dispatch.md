@@ -117,15 +117,9 @@ remote-dispatch-helper.sh dispatch t123 gpu-server \
 
 ### Supervisor Integration
 
-Tasks with a `dispatch_target` in the supervisor database are automatically routed to the remote host:
+The pulse supervisor dispatches workers to remote hosts via `remote-dispatch-helper.sh`. Use `target:hostname` tags in TODO.md or GitHub issue labels to route tasks to specific hosts.
 
-```bash
-# Set dispatch target on a task (via SQL or future CLI)
-sqlite3 ~/.aidevops/.agent-workspace/supervisor/supervisor.db \
-  "UPDATE tasks SET dispatch_target='gpu-server' WHERE id='t123';"
-```
-
-The supervisor's `cmd_dispatch()` detects the `dispatch_target` column and routes through `remote-dispatch-helper.sh` instead of local `nohup`/`setsid`.
+> **Note**: The previous SQLite-based `supervisor.db` dispatch_target mechanism has been deprecated. The pulse supervisor uses GitHub as the state DB.
 
 ### TODO.md Integration
 

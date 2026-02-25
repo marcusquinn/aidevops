@@ -6,7 +6,7 @@
 # t245: Parent task — unified quality debt pipeline
 # t245.1: SonarCloud API integration
 # t245.2: Codacy API integration
-# t245.3: Finding-to-task pipeline (finding-to-task-helper.sh)
+# t245.3: Finding-to-task pipeline (archived — AI reads quality output directly)
 # t245.4: Daily GitHub Action (quality-sweep.yml)
 #
 # Usage:

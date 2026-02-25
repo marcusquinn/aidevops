@@ -709,6 +709,6 @@ See [runners/README.md](runners/README.md) for how to create runners from templa
 - `scripts/cron-helper.sh` - Cron job management
 - `scripts/matrix-dispatch-helper.sh` - Matrix chat-triggered dispatch
 - `services/communications/matrix-bot.md` - Matrix bot setup and configuration
-- `scripts/coordinator-helper.sh` - Multi-agent coordination
+- Pulse supervisor (`scripts/commands/pulse.md`) - Multi-agent coordination (replaces archived `coordinator-helper.sh`)
 - `scripts/mail-helper.sh` - Inter-agent mailbox
 - `memory/README.md` - Memory system (supports namespaces)
