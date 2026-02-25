@@ -17,6 +17,22 @@
 #   --no-issue                 Skip GitHub/GitLab issue creation
 #   --dry-run                  Show what would be allocated without changes
 #   --repo-path PATH           Path to git repository (default: current directory)
+#   --remote NAME              Git remote name for counter branch (default: origin,
+#                              or value from .aidevops.json "remote" key)
+#   --counter-branch BRANCH    Branch holding .task-counter (default: main,
+#                              or value from .aidevops.json "counter_branch" key)
+#
+# Project-level config (.aidevops.json in repo root):
+#   {
+#     "remote": "upstream",
+#     "default_branch": "develop",
+#     "counter_branch": "develop"
+#   }
+#   Keys:
+#     remote          - git remote name (default: "origin")
+#     default_branch  - informational default branch name (not used by CAS)
+#     counter_branch  - branch that holds .task-counter (default: "main")
+#   CLI flags --remote and --counter-branch override .aidevops.json values.
 #
 # Exit codes:
 #   0 - Success (outputs: task_id=tNNN ref=GH#NNN or GL#NNN)
@@ -24,11 +40,11 @@
 #   2 - Offline fallback used (outputs: task_id=tNNN ref=offline)
 #
 # Algorithm (CAS loop — compare-and-swap via git push):
-#   1. git fetch origin main
-#   2. Read origin/main:.task-counter → current value (e.g. 1048)
+#   1. git fetch <remote> <counter_branch>
+#   2. Read <remote>/<counter_branch>:.task-counter → current value (e.g. 1048)
 #   3. Claim IDs: 1048 to 1048+count-1
 #   4. Write 1048+count to .task-counter
-#   5. git commit .task-counter && git push origin HEAD:main
+#   5. git commit .task-counter && git push <remote> HEAD:<counter_branch>
 #   6. If push fails (conflict) → retry from step 1 (max 10 attempts)
 #   7. On success, create GitHub/GitLab issue per ID (optional, non-blocking)
 #
@@ -43,7 +59,7 @@
 #
 # Migration from TODO.md scanning:
 #   - If .task-counter doesn't exist, initialize from TODO.md highest ID
-#   - First run creates .task-counter and commits to origin/main
+#   - First run creates .task-counter and commits to <remote>/<counter_branch>
 #
 # Platform detection:
 #   - Checks git remote URL for github.com, gitlab.com, gitea
@@ -67,12 +83,54 @@ ALLOC_COUNT=1
 OFFLINE_OFFSET=100
 CAS_MAX_RETRIES=10
 COUNTER_FILE=".task-counter"
+# Remote and branch — defaults; overridden by .aidevops.json and/or CLI flags
+REMOTE_NAME="origin"
+COUNTER_BRANCH="main"
+# Track whether CLI flags explicitly set these (CLI overrides config file)
+_REMOTE_NAME_SET=false
+_COUNTER_BRANCH_SET=false
 
 # Logging (all to stderr so stdout is machine-readable)
 log_info() { echo -e "${BLUE}[INFO]${NC} $*" >&2; }
 log_success() { echo -e "${GREEN}[OK]${NC} $*" >&2; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $*" >&2; }
 log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
+
+# Load project-level config from .aidevops.json in the repo root.
+# Populates REMOTE_NAME and COUNTER_BRANCH unless already set by CLI flags.
+# Requires: jq (optional — silently skipped if not installed).
+load_project_config() {
+	local repo_path="$1"
+	local config_file="${repo_path}/.aidevops.json"
+
+	if [[ ! -f "$config_file" ]]; then
+		return 0
+	fi
+
+	if ! command -v jq &>/dev/null; then
+		log_warn ".aidevops.json found but jq is not installed — project config ignored"
+		return 0
+	fi
+
+	log_info "Loading project config from .aidevops.json"
+
+	local remote_val counter_branch_val
+	remote_val=$(jq -r '.remote // empty' "$config_file" 2>/dev/null || true)
+	counter_branch_val=$(jq -r '.counter_branch // empty' "$config_file" 2>/dev/null || true)
+
+	# CLI flags take precedence over config file
+	if [[ -n "$remote_val" ]] && [[ "$_REMOTE_NAME_SET" == "false" ]]; then
+		REMOTE_NAME="$remote_val"
+		log_info "remote set from .aidevops.json: $REMOTE_NAME"
+	fi
+
+	if [[ -n "$counter_branch_val" ]] && [[ "$_COUNTER_BRANCH_SET" == "false" ]]; then
+		COUNTER_BRANCH="$counter_branch_val"
+		log_info "counter_branch set from .aidevops.json: $COUNTER_BRANCH"
+	fi
+
+	return 0
+}
 
 # Extract hashtags from text and convert to comma-separated labels
 extract_hashtags() {
@@ -132,6 +190,16 @@ parse_args() {
 			REPO_PATH="$2"
 			shift 2
 			;;
+		--remote)
+			REMOTE_NAME="$2"
+			_REMOTE_NAME_SET=true
+			shift 2
+			;;
+		--counter-branch)
+			COUNTER_BRANCH="$2"
+			_COUNTER_BRANCH_SET=true
+			shift 2
+			;;
 		--help)
 			grep '^#' "$0" | grep -v '#!/usr/bin/env' | sed 's/^# //' | sed 's/^#//'
 			exit 0
@@ -169,7 +237,7 @@ parse_args() {
 # Detect git platform from remote URL
 detect_platform() {
 	local remote_url
-	remote_url=$(cd "$REPO_PATH" && git remote get-url origin 2>/dev/null || echo "")
+	remote_url=$(cd "$REPO_PATH" && git remote get-url "$REMOTE_NAME" 2>/dev/null || echo "")
 
 	if [[ -z "$remote_url" ]]; then
 		echo "unknown"
@@ -221,22 +289,22 @@ get_highest_task_id() {
 	echo "$highest"
 }
 
-# Read .task-counter from origin/main (fetches first)
+# Read .task-counter from <remote>/<counter_branch> (fetches first)
 read_remote_counter() {
 	local repo_path="$1"
 
 	cd "$repo_path" || return 1
 
-	if ! git fetch origin main 2>/dev/null; then
-		log_warn "Failed to fetch origin/main"
+	if ! git fetch "$REMOTE_NAME" "$COUNTER_BRANCH" 2>/dev/null; then
+		log_warn "Failed to fetch ${REMOTE_NAME}/${COUNTER_BRANCH}"
 		return 1
 	fi
 
 	local counter_value
-	counter_value=$(git show "origin/main:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]')
+	counter_value=$(git show "${REMOTE_NAME}/${COUNTER_BRANCH}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]')
 
 	if [[ -z "$counter_value" ]] || ! [[ "$counter_value" =~ ^[0-9]+$ ]]; then
-		log_warn "Invalid or missing ${COUNTER_FILE} on origin/main"
+		log_warn "Invalid or missing ${COUNTER_FILE} on ${REMOTE_NAME}/${COUNTER_BRANCH}"
 		return 1
 	fi
 
@@ -274,7 +342,7 @@ allocate_counter_cas() {
 
 	cd "$repo_path" || return 1
 
-	# Step 1: Read current counter from origin/main
+	# Step 1: Read current counter from <remote>/<counter_branch>
 	local current_value
 	if ! current_value=$(read_remote_counter "$repo_path"); then
 		return 1
@@ -286,7 +354,7 @@ allocate_counter_cas() {
 
 	log_info "Counter at ${current_value}, claiming t${first_id}..t${last_id}, new counter: ${new_counter}"
 
-	# Step 2: Build a commit directly on origin/main using plumbing commands.
+	# Step 2: Build a commit directly on <remote>/<counter_branch> using plumbing commands.
 	# This is safe from any branch — we never touch HEAD or the working tree index.
 	cd "$repo_path" || return 1
 
@@ -304,17 +372,17 @@ allocate_counter_cas() {
 		return 1
 	}
 
-	# Read origin/main's tree, replace .task-counter with our new blob
+	# Read <remote>/<counter_branch>'s tree, replace .task-counter with our new blob
 	local tree_sha
-	tree_sha=$(git ls-tree origin/main | sed "s|[0-9a-f]\{40,64\}	${COUNTER_FILE}$|${blob_sha}	${COUNTER_FILE}|" | git mktree 2>/dev/null) || {
+	tree_sha=$(git ls-tree "${REMOTE_NAME}/${COUNTER_BRANCH}" | sed "s|[0-9a-f]\{40,64\}	${COUNTER_FILE}$|${blob_sha}	${COUNTER_FILE}|" | git mktree 2>/dev/null) || {
 		log_warn "Failed to create tree"
 		return 1
 	}
 
-	# Create a commit on top of origin/main
+	# Create a commit on top of <remote>/<counter_branch>
 	local parent_sha
-	parent_sha=$(git rev-parse origin/main 2>/dev/null) || {
-		log_warn "Failed to resolve origin/main"
+	parent_sha=$(git rev-parse "${REMOTE_NAME}/${COUNTER_BRANCH}" 2>/dev/null) || {
+		log_warn "Failed to resolve ${REMOTE_NAME}/${COUNTER_BRANCH}"
 		return 1
 	}
 
@@ -324,18 +392,18 @@ allocate_counter_cas() {
 		return 1
 	}
 
-	# Step 3: Push the exact commit to main — this is the atomic gate.
+	# Step 3: Push the exact commit to <counter_branch> — this is the atomic gate.
 	# If another session pushed between our fetch and now, this fails (non-fast-forward).
 	# Safe from any branch: we push a specific SHA, not HEAD.
-	if ! git push origin "${commit_sha}:refs/heads/main" 2>/dev/null; then
+	if ! git push "$REMOTE_NAME" "${commit_sha}:refs/heads/${COUNTER_BRANCH}" 2>/dev/null; then
 		log_warn "Push failed (conflict — another session claimed an ID)"
 		# Fetch latest for next retry attempt
-		git fetch origin main 2>/dev/null || true
+		git fetch "$REMOTE_NAME" "$COUNTER_BRANCH" 2>/dev/null || true
 		return 2
 	fi
 
 	# Update local ref so subsequent fetches see our commit
-	git fetch origin main 2>/dev/null || true
+	git fetch "$REMOTE_NAME" "$COUNTER_BRANCH" 2>/dev/null || true
 
 	# Success — output the claimed IDs
 	echo "$first_id"
@@ -524,9 +592,15 @@ create_gitlab_issue() {
 main() {
 	parse_args "$@"
 
+	# Load project config after parse_args so REPO_PATH is resolved,
+	# but before detect_platform so REMOTE_NAME is set correctly.
+	load_project_config "$REPO_PATH"
+
 	if [[ "$DRY_RUN" == "true" ]]; then
 		log_info "DRY RUN mode - no changes will be made"
 	fi
+
+	log_info "Using remote: ${REMOTE_NAME}, counter branch: ${COUNTER_BRANCH}"
 
 	local platform
 	platform=$(detect_platform)
@@ -633,7 +707,7 @@ main() {
 		# Output ref for first issue (primary — backwards compatible)
 		echo "ref=${ref_prefix}#${issue_nums[0]}"
 		local remote_url
-		remote_url=$(cd "$REPO_PATH" && git remote get-url origin 2>/dev/null | sed 's/\.git$//' || echo "")
+		remote_url=$(cd "$REPO_PATH" && git remote get-url "$REMOTE_NAME" 2>/dev/null | sed 's/\.git$//' || echo "")
 		if [[ -n "$remote_url" ]] && [[ -n "${issue_nums[0]}" ]]; then
 			echo "issue_url=${remote_url}/issues/${issue_nums[0]}"
 		fi
