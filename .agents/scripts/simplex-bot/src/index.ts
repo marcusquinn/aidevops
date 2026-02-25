@@ -265,7 +265,7 @@ class SimplexAdapter {
 
       const msgContent = content.msgContent;
       if (msgContent?.type !== "text" || !msgContent.text) {
-        // TODO: handle voice, file, image messages (t1327.4 future)
+        // Non-text messages (voice, file, image) deferred to t1327.4
         this.logger.debug(`Non-text message type: ${msgContent?.type}`);
         continue;
       }
