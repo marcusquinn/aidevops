@@ -10,6 +10,15 @@ Target: $ARGUMENTS
 
 ## Instructions
 
+Parse the arguments to extract:
+- `--prompt`: the review prompt (required)
+- `--models`: comma-separated model tiers (default: `sonnet,opus`)
+- `--score`: enable judge scoring pipeline (optional flag)
+- `--judge`: judge model tier (default: `opus`)
+- `--task-type`: scoring category — `code`, `review`, `analysis`, `text`, `general` (default: `general`)
+- `--timeout`: per-model timeout in seconds (default: 600)
+- `--output`: output directory (default: auto-generated tmp dir)
+
 1. Parse the user's arguments. Common forms:
 
    ```bash
@@ -68,13 +77,14 @@ Target: $ARGUMENTS
 
 ## Scoring Criteria (judge model, 1-10 scale)
 
-| Criterion | Description |
-|-----------|-------------|
-| correctness | Factual accuracy and technical correctness |
-| completeness | Coverage of all requirements and edge cases |
-| quality | Code quality, best practices, maintainability |
-| clarity | Clear explanation, good formatting, readability |
-| overall | Judge's holistic assessment |
+| Criterion | Scale | Description |
+|-----------|-------|-------------|
+| Correctness | 1-10 | Factual accuracy and technical correctness |
+| Completeness | 1-10 | Coverage of all requirements and edge cases |
+| Quality | 1-10 | Code quality / writing quality |
+| Clarity | 1-10 | Clear explanation, good formatting, readability |
+| Adherence | 1-10 | Following instructions precisely, staying on-task |
+| Overall | 1-10 | Judge's holistic assessment |
 
 ## Examples
 
