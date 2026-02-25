@@ -228,10 +228,10 @@ resolve_model() {
 	local obs_helper="${SCRIPT_DIR}/../observability-helper.sh"
 	if [[ -x "$obs_helper" ]]; then
 		local rl_json
-		rl_json=$(bash "$obs_helper" rate-limits --provider anthropic --json 2>/dev/null) || rl_json=""
+		rl_json=$(bash "$obs_helper" rate-limits --provider anthropic --json) || rl_json=""
 		if [[ -n "$rl_json" ]]; then
 			local rl_status
-			rl_status=$(printf '%s' "$rl_json" | jq -r '.[0].status // "ok"' 2>/dev/null) || rl_status="ok"
+			rl_status=$(printf '%s' "$rl_json" | jq -r '.[0].status // "ok"') || rl_status="ok"
 			if [[ "$rl_status" == "warn" || "$rl_status" == "critical" ]]; then
 				log_warn "resolve_model: anthropic rate limit ${rl_status} — consider configuring alternative providers in fallback-chain-config.json (t1330)"
 			fi

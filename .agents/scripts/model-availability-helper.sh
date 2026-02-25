@@ -869,8 +869,8 @@ _check_provider_rate_limit_risk() {
 	# Source the observability helper to access check_rate_limit_risk()
 	# We need to call it as a subprocess to avoid variable conflicts
 	local risk_status
-	risk_status=$(bash "$obs_helper" rate-limits --provider "$provider" --json 2>/dev/null |
-		jq -r '.[0].status // "ok"' 2>/dev/null) || risk_status="ok"
+	risk_status=$(bash "$obs_helper" rate-limits --provider "$provider" --json |
+		jq -r '.[0].status // "ok"' || true)
 	risk_status="${risk_status:-ok}"
 
 	case "$risk_status" in
@@ -941,7 +941,8 @@ resolve_tier() {
 	primary_provider=$(_extract_provider "$primary")
 	if [[ -n "$primary_provider" ]]; then
 		local rl_risk
-		rl_risk=$(_check_provider_rate_limit_risk "$primary_provider" 2>/dev/null) || rl_risk="ok"
+		rl_risk=$(_check_provider_rate_limit_risk "$primary_provider" 2>/dev/null || true)
+		rl_risk="${rl_risk:-ok}"
 		if [[ "$rl_risk" == "warn" || "$rl_risk" == "critical" ]]; then
 			[[ "$quiet" != "true" ]] && print_warning "$primary_provider: rate limit ${rl_risk} — preferring fallback for $tier"
 			# Try fallback first when primary is throttle-risk
@@ -1353,7 +1354,7 @@ cmd_rate_limits() {
 		echo "Rate Limit Utilisation (from observability DB, t1330)"
 		echo "====================================================="
 		echo ""
-		bash "$obs_helper" rate-limits 2>/dev/null || true
+		bash "$obs_helper" rate-limits || true
 	fi
 
 	return 0

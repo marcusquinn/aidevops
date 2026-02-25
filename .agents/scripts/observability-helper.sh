@@ -1192,7 +1192,7 @@ _get_rate_limit_value() {
 	local provider="$1"
 	local field="$2"
 	local config_file
-	config_file=$(_get_rate_limits_config 2>/dev/null) || {
+	config_file=$(_get_rate_limits_config) || {
 		echo "0"
 		return 0
 	}
@@ -1202,7 +1202,7 @@ _get_rate_limit_value() {
 	fi
 	local val
 	val=$(jq -r --arg p "$provider" --arg f "$field" \
-		'.providers[$p][$f] // 0' "$config_file" 2>/dev/null) || val="0"
+		'.providers[$p][$f] // 0' "$config_file") || val="0"
 	echo "${val:-0}"
 	return 0
 }
@@ -1210,7 +1210,7 @@ _get_rate_limit_value() {
 # Get the warn_pct threshold from config (default 80).
 _get_warn_pct() {
 	local config_file
-	config_file=$(_get_rate_limits_config 2>/dev/null) || {
+	config_file=$(_get_rate_limits_config) || {
 		echo "$DEFAULT_WARN_PCT"
 		return 0
 	}
@@ -1219,7 +1219,7 @@ _get_warn_pct() {
 		return 0
 	fi
 	local val
-	val=$(jq -r '.warn_pct // 80' "$config_file" 2>/dev/null) || val="$DEFAULT_WARN_PCT"
+	val=$(jq -r '.warn_pct // 80' "$config_file") || val="$DEFAULT_WARN_PCT"
 	echo "${val:-$DEFAULT_WARN_PCT}"
 	return 0
 }
@@ -1227,7 +1227,7 @@ _get_warn_pct() {
 # Get the rolling window in minutes from config (default 1).
 _get_window_minutes() {
 	local config_file
-	config_file=$(_get_rate_limits_config 2>/dev/null) || {
+	config_file=$(_get_rate_limits_config) || {
 		echo "$DEFAULT_WINDOW_MINUTES"
 		return 0
 	}
@@ -1236,7 +1236,7 @@ _get_window_minutes() {
 		return 0
 	fi
 	local val
-	val=$(jq -r '.window_minutes // 1' "$config_file" 2>/dev/null) || val="$DEFAULT_WINDOW_MINUTES"
+	val=$(jq -r '.window_minutes // 1' "$config_file") || val="$DEFAULT_WINDOW_MINUTES"
 	echo "${val:-$DEFAULT_WINDOW_MINUTES}"
 	return 0
 }
@@ -1244,7 +1244,7 @@ _get_window_minutes() {
 # Get list of configured providers from rate-limits config.
 _get_configured_providers() {
 	local config_file
-	config_file=$(_get_rate_limits_config 2>/dev/null) || {
+	config_file=$(_get_rate_limits_config) || {
 		echo ""
 		return 0
 	}
@@ -1252,7 +1252,7 @@ _get_configured_providers() {
 		echo ""
 		return 0
 	fi
-	jq -r '.providers | keys[]' "$config_file" 2>/dev/null || echo ""
+	jq -r '.providers | keys[]' "$config_file" || echo ""
 	return 0
 }
 
@@ -1265,8 +1265,16 @@ check_rate_limit_risk() {
 
 	local window_minutes
 	window_minutes=$(_get_window_minutes)
+	# Validate window_minutes is a positive integer to prevent SQL injection/malformed queries
+	if [[ ! "$window_minutes" =~ ^[0-9]+$ ]] || [[ "$window_minutes" -eq 0 ]]; then
+		window_minutes="$DEFAULT_WINDOW_MINUTES"
+	fi
 	local warn_pct
 	warn_pct=$(_get_warn_pct)
+	# Validate warn_pct is a positive integer
+	if [[ ! "$warn_pct" =~ ^[0-9]+$ ]]; then
+		warn_pct="$DEFAULT_WARN_PCT"
+	fi
 
 	local req_limit tok_limit
 	req_limit=$(_get_rate_limit_value "$provider" "requests_per_min")
@@ -1346,15 +1354,24 @@ cmd_rate_limits() {
 	done
 
 	# Auto-ingest before showing stats
-	cmd_ingest --quiet 2>/dev/null || true
+	cmd_ingest --quiet || true
 
 	local config_file
-	config_file=$(_get_rate_limits_config 2>/dev/null) || config_file=""
+	config_file=$(_get_rate_limits_config) || config_file=""
 
 	local effective_window
 	effective_window="${window_minutes:-$(_get_window_minutes)}"
+	# Validate effective_window is a positive integer to prevent SQL injection/malformed queries
+	if [[ ! "$effective_window" =~ ^[0-9]+$ ]] || [[ "$effective_window" -eq 0 ]]; then
+		print_error "--window must be a positive integer (minutes)"
+		return 1
+	fi
 	local warn_pct
 	warn_pct=$(_get_warn_pct)
+	# Validate warn_pct is a positive integer
+	if [[ ! "$warn_pct" =~ ^[0-9]+$ ]]; then
+		warn_pct="$DEFAULT_WARN_PCT"
+	fi
 
 	# Get providers to display: from config + any seen in DB
 	local -a providers=()
@@ -1363,7 +1380,7 @@ cmd_rate_limits() {
 	else
 		# Merge configured providers with providers seen in DB
 		local configured_providers db_providers
-		configured_providers=$(_get_configured_providers 2>/dev/null) || configured_providers=""
+		configured_providers=$(_get_configured_providers) || configured_providers=""
 		db_providers=$(db_query "
 			SELECT DISTINCT provider FROM llm_requests
 			WHERE recorded_at >= datetime('now', '-1 days')
@@ -1448,8 +1465,19 @@ cmd_rate_limits() {
 			IFS='|' read -r prov ar rl rp at tl tp st bt <<<"$row"
 			[[ "$first" == "true" ]] || echo ","
 			first=false
-			printf '  {"provider":"%s","requests_used":%s,"requests_limit":%s,"requests_pct":%s,"tokens_used":%s,"tokens_limit":%s,"tokens_pct":%s,"status":"%s","billing_type":"%s","window_minutes":%s,"warn_pct":%s}' \
-				"$prov" "$ar" "$rl" "$rp" "$at" "$tl" "$tp" "$st" "$bt" "$effective_window" "$warn_pct"
+			printf '  %s' "$(jq -c -n \
+				--arg prov "$prov" \
+				--argjson ar "${ar:-0}" \
+				--argjson rl "${rl:-0}" \
+				--argjson rp "${rp:-0}" \
+				--argjson at "${at:-0}" \
+				--argjson tl "${tl:-0}" \
+				--argjson tp "${tp:-0}" \
+				--arg st "$st" \
+				--arg bt "$bt" \
+				--argjson ew "${effective_window:-1}" \
+				--argjson wp "${warn_pct:-80}" \
+				'{provider: $prov, requests_used: $ar, requests_limit: $rl, requests_pct: $rp, tokens_used: $at, tokens_limit: $tl, tokens_pct: $tp, status: $st, billing_type: $bt, window_minutes: $ew, warn_pct: $wp}')"
 		done
 		echo ""
 		echo "]"
