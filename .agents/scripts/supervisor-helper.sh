@@ -371,6 +371,7 @@ Usage:
   supervisor-helper.sh stale-gc-report [--days N] [--json]  Stale state GC metrics report (t1202)
   supervisor-helper.sh stuck-detection                     Run stuck detection checks manually (t1332)
   supervisor-helper.sh stuck-detection-report [--days N] [--json]  Stuck detection metrics report (t1332)
+  supervisor-helper.sh circuit-breaker <status|reset|check|trip>   Circuit breaker controls (t1331)
   supervisor-helper.sh stale-claims [--repo path]          Detect and recover stale TODO.md claims (t1263)
   supervisor-helper.sh labels [--action X] [--model Y] [--json]  Query model usage labels (t1010)
   supervisor-helper.sh pool <subcommand> [args]      Container pool manager (t1165.2)
