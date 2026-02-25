@@ -28,7 +28,7 @@ CIRCUIT_BREAKER_COOLDOWN_SECS="${SUPERVISOR_CIRCUIT_BREAKER_COOLDOWN_SECS:-1800}
 
 _cb_state_file() {
 	local dir="${SUPERVISOR_DIR:-${HOME}/.aidevops/.agent-workspace/supervisor}"
-	mkdir -p "$dir" 2>/dev/null || true
+	mkdir -p "$dir" || true
 	echo "$dir/circuit-breaker.state"
 	return 0
 }
@@ -88,14 +88,14 @@ cb_record_failure() {
 	state=$(cb_read_state)
 
 	local current_count
-	current_count=$(printf '%s' "$state" | jq -r '.consecutive_failures // 0' 2>/dev/null || echo "0")
+	current_count=$(printf '%s' "$state" | jq -r '.consecutive_failures // 0' || echo "0")
 
 	local new_count=$((current_count + 1))
 	local now
 	now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 	local tripped
-	tripped=$(printf '%s' "$state" | jq -r '.tripped // false' 2>/dev/null || echo "false")
+	tripped=$(printf '%s' "$state" | jq -r '.tripped // false' || echo "false")
 
 	# Update state with new failure count
 	local new_state
@@ -104,8 +104,7 @@ cb_record_failure() {
 		--arg now "$now" \
 		--arg task "$task_id" \
 		--arg reason "$failure_reason" \
-		'.consecutive_failures = $count | .last_failure_at = $now | .last_failure_task = $task | .last_failure_reason = $reason' \
-		2>/dev/null)
+		'.consecutive_failures = $count | .last_failure_at = $now | .last_failure_task = $task | .last_failure_reason = $reason')
 
 	if [[ -z "$new_state" ]]; then
 		log_warn "circuit-breaker: failed to update state JSON"
@@ -116,8 +115,7 @@ cb_record_failure() {
 	if [[ "$tripped" != "true" && "$new_count" -ge "$CIRCUIT_BREAKER_THRESHOLD" ]]; then
 		new_state=$(printf '%s' "$new_state" | jq \
 			--arg now "$now" \
-			'.tripped = true | .tripped_at = $now' \
-			2>/dev/null)
+			'.tripped = true | .tripped_at = $now')
 		cb_write_state "$new_state"
 		log_error "circuit-breaker: TRIPPED after $new_count consecutive failures (threshold: $CIRCUIT_BREAKER_THRESHOLD)"
 		log_error "circuit-breaker: last failure: $task_id ($failure_reason)"
@@ -146,10 +144,10 @@ cb_record_success() {
 	state=$(cb_read_state)
 
 	local current_count
-	current_count=$(printf '%s' "$state" | jq -r '.consecutive_failures // 0' 2>/dev/null || echo "0")
+	current_count=$(printf '%s' "$state" | jq -r '.consecutive_failures // 0' || echo "0")
 
 	local was_tripped
-	was_tripped=$(printf '%s' "$state" | jq -r '.tripped // false' 2>/dev/null || echo "false")
+	was_tripped=$(printf '%s' "$state" | jq -r '.tripped // false' || echo "false")
 
 	# Only write if there's something to reset
 	if [[ "$current_count" -eq 0 && "$was_tripped" != "true" ]]; then
@@ -162,8 +160,7 @@ cb_record_success() {
 	local new_state
 	new_state=$(printf '%s' "$state" | jq \
 		--arg now "$now" \
-		'.consecutive_failures = 0 | .tripped = false | .last_reset_at = $now | .reset_reason = "task_success"' \
-		2>/dev/null)
+		'.consecutive_failures = 0 | .tripped = false | .last_reset_at = $now | .reset_reason = "task_success"')
 
 	if [[ -z "$new_state" ]]; then
 		return 0
@@ -192,7 +189,7 @@ cb_check() {
 	state=$(cb_read_state)
 
 	local tripped
-	tripped=$(printf '%s' "$state" | jq -r '.tripped // false' 2>/dev/null || echo "false")
+	tripped=$(printf '%s' "$state" | jq -r '.tripped // false' || echo "false")
 
 	if [[ "$tripped" != "true" ]]; then
 		return 0
@@ -200,13 +197,13 @@ cb_check() {
 
 	# Check auto-reset cooldown
 	local tripped_at
-	tripped_at=$(printf '%s' "$state" | jq -r '.tripped_at // ""' 2>/dev/null || echo "")
+	tripped_at=$(printf '%s' "$state" | jq -r '.tripped_at // ""' || echo "")
 
 	if [[ -n "$tripped_at" && "$CIRCUIT_BREAKER_COOLDOWN_SECS" -gt 0 ]]; then
 		local now_epoch tripped_epoch elapsed
-		now_epoch=$(date -u +%s 2>/dev/null) || now_epoch=0
-		tripped_epoch=$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$tripped_at" '+%s' 2>/dev/null ||
-			date -u -d "$tripped_at" '+%s' 2>/dev/null ||
+		now_epoch=$(date -u +%s) || now_epoch=0
+		tripped_epoch=$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$tripped_at" '+%s' ||
+			date -u -d "$tripped_at" '+%s' ||
 			echo 0)
 		elapsed=$((now_epoch - tripped_epoch))
 
@@ -237,10 +234,10 @@ cb_reset() {
 	state=$(cb_read_state)
 
 	local was_tripped
-	was_tripped=$(printf '%s' "$state" | jq -r '.tripped // false' 2>/dev/null || echo "false")
+	was_tripped=$(printf '%s' "$state" | jq -r '.tripped // false' || echo "false")
 
 	local prev_count
-	prev_count=$(printf '%s' "$state" | jq -r '.consecutive_failures // 0' 2>/dev/null || echo "0")
+	prev_count=$(printf '%s' "$state" | jq -r '.consecutive_failures // 0' || echo "0")
 
 	local now
 	now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -249,8 +246,7 @@ cb_reset() {
 	new_state=$(printf '%s' "$state" | jq \
 		--arg now "$now" \
 		--arg reason "$reason" \
-		'.consecutive_failures = 0 | .tripped = false | .last_reset_at = $now | .reset_reason = $reason' \
-		2>/dev/null)
+		'.consecutive_failures = 0 | .tripped = false | .last_reset_at = $now | .reset_reason = $reason')
 
 	if [[ -z "$new_state" ]]; then
 		log_error "circuit-breaker: failed to build reset state"
@@ -279,11 +275,11 @@ cb_status() {
 	state=$(cb_read_state)
 
 	local tripped count tripped_at last_failure last_reset
-	tripped=$(printf '%s' "$state" | jq -r '.tripped // false' 2>/dev/null || echo "false")
-	count=$(printf '%s' "$state" | jq -r '.consecutive_failures // 0' 2>/dev/null || echo "0")
-	tripped_at=$(printf '%s' "$state" | jq -r '.tripped_at // "never"' 2>/dev/null || echo "never")
-	last_failure=$(printf '%s' "$state" | jq -r '.last_failure_task // "none"' 2>/dev/null || echo "none")
-	last_reset=$(printf '%s' "$state" | jq -r '.last_reset_at // "never"' 2>/dev/null || echo "never")
+	tripped=$(printf '%s' "$state" | jq -r '.tripped // false' || echo "false")
+	count=$(printf '%s' "$state" | jq -r '.consecutive_failures // 0' || echo "0")
+	tripped_at=$(printf '%s' "$state" | jq -r '.tripped_at // "never"' || echo "never")
+	last_failure=$(printf '%s' "$state" | jq -r '.last_failure_task // "none"' || echo "none")
+	last_reset=$(printf '%s' "$state" | jq -r '.last_reset_at // "never"' || echo "never")
 
 	echo "Circuit Breaker Status"
 	echo "======================"
@@ -302,9 +298,9 @@ cb_status() {
 	# Show time until auto-reset if tripped
 	if [[ "$tripped" == "true" && "$tripped_at" != "never" && "$CIRCUIT_BREAKER_COOLDOWN_SECS" -gt 0 ]]; then
 		local now_epoch tripped_epoch elapsed remaining
-		now_epoch=$(date -u +%s 2>/dev/null) || now_epoch=0
-		tripped_epoch=$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$tripped_at" '+%s' 2>/dev/null ||
-			date -u -d "$tripped_at" '+%s' 2>/dev/null ||
+		now_epoch=$(date -u +%s) || now_epoch=0
+		tripped_epoch=$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$tripped_at" '+%s' ||
+			date -u -d "$tripped_at" '+%s' ||
 			echo 0)
 		elapsed=$((now_epoch - tripped_epoch))
 		remaining=$((CIRCUIT_BREAKER_COOLDOWN_SECS - elapsed))
@@ -341,12 +337,11 @@ _cb_create_or_update_issue() {
 	# Check for existing open circuit-breaker issue
 	local existing_issue
 	existing_issue=$(gh issue list \
-		--repo "$(gh repo view --json nameWithOwner -q '.nameWithOwner' 2>/dev/null || echo '')" \
+		--repo "$(gh repo view --json nameWithOwner -q '.nameWithOwner' || echo '')" \
 		--label "circuit-breaker" \
 		--state open \
 		--json number \
-		--jq '.[0].number // empty' \
-		2>/dev/null) || existing_issue=""
+		--jq '.[0].number // empty') || existing_issue=""
 
 	local now
 	now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -387,8 +382,7 @@ Supervisor dispatch is **paused**. No new tasks will be dispatched until the cir
 
 - Consecutive failures: ${failure_count}
 - Last failed task: \`${last_task_id}\`
-- Reason: \`${last_failure_reason}\`" \
-			2>/dev/null || {
+- Reason: \`${last_failure_reason}\`" || {
 			log_warn "circuit-breaker: failed to comment on issue #$existing_issue"
 			return 1
 		}
@@ -399,15 +393,13 @@ Supervisor dispatch is **paused**. No new tasks will be dispatched until the cir
 		gh label create "circuit-breaker" \
 			--description "Supervisor circuit breaker tripped — dispatch paused" \
 			--color "D93F0B" \
-			--force \
-			2>/dev/null || true
+			--force || true
 
 		local issue_url
 		issue_url=$(gh issue create \
 			--title "Supervisor circuit breaker tripped — ${failure_count} consecutive failures" \
 			--body "$body" \
-			--label "circuit-breaker" \
-			2>/dev/null) || {
+			--label "circuit-breaker") || {
 			log_warn "circuit-breaker: failed to create GitHub issue"
 			return 1
 		}
@@ -434,16 +426,14 @@ _cb_close_issue() {
 		--label "circuit-breaker" \
 		--state open \
 		--json number \
-		--jq '.[0].number // empty' \
-		2>/dev/null) || existing_issue=""
+		--jq '.[0].number // empty') || existing_issue=""
 
 	if [[ -z "$existing_issue" ]]; then
 		return 0
 	fi
 
 	gh issue close "$existing_issue" \
-		--comment "Circuit breaker reset: ${reason}" \
-		2>/dev/null || {
+		--comment "Circuit breaker reset: ${reason}" || {
 		log_warn "circuit-breaker: failed to close issue #$existing_issue"
 		return 1
 	}
@@ -493,7 +483,10 @@ cmd_circuit_breaker() {
 			--arg now "$now" \
 			--arg task "$task_id" \
 			--arg reason "$reason" \
-			'{consecutive_failures: $count, tripped: true, tripped_at: $now, last_failure_at: $now, last_failure_task: $task, last_failure_reason: $reason}')
+			'{consecutive_failures: $count, tripped: true, tripped_at: $now, last_failure_at: $now, last_failure_task: $task, last_failure_reason: $reason}') || {
+			log_error "circuit-breaker: failed to build trip state JSON"
+			return 1
+		}
 		cb_write_state "$state"
 		log_warn "circuit-breaker: manually tripped (task: $task_id, reason: $reason)"
 		_cb_create_or_update_issue "$CIRCUIT_BREAKER_THRESHOLD" "$task_id" "$reason" || true
