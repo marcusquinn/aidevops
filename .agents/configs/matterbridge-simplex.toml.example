@@ -1,0 +1,119 @@
+# Matterbridge config for SimpleX Chat bridge
+# Copy to matterbridge.toml and fill in credentials
+# Security: chmod 600 matterbridge.toml — contains platform credentials
+#
+# This config bridges SimpleX Chat (via matterbridge-simplex adapter) to
+# one or more platforms. The adapter connects to the [api] endpoint below.
+#
+# Ref: https://github.com/42wim/matterbridge/wiki
+# Ref: https://github.com/UnkwUsr/matterbridge-simplex
+
+# ── API endpoint for matterbridge-simplex adapter ────────────────────────────
+# The adapter connects here to send/receive messages from SimpleX
+[api]
+  [api.myapi]
+  BindAddress="127.0.0.1:4242"
+  Buffer=1000
+  # Optional: require token for API access
+  # Token="your-secret-api-token"
+
+# ── Matrix (self-hosted or public) ───────────────────────────────────────────
+# Uncomment to bridge SimpleX <-> Matrix
+# [matrix]
+#   [matrix.home]
+#   Server="https://matrix.example.com"
+#   Login="bridgebot"
+#   Password="YOUR_MATRIX_PASSWORD"
+#   # Or use access token (preferred — avoids storing password):
+#   # Token="syt_YOUR_ACCESS_TOKEN"
+#   RemoteNickFormat="[{PROTOCOL}] <{NICK}> "
+#   PreserveThreading=true
+
+# ── Telegram ─────────────────────────────────────────────────────────────────
+# Uncomment to bridge SimpleX <-> Telegram
+# [telegram]
+#   [telegram.main]
+#   Token="YOUR_TELEGRAM_BOT_TOKEN"
+#   RemoteNickFormat="{NICK}: "
+
+# ── Discord ──────────────────────────────────────────────────────────────────
+# Uncomment to bridge SimpleX <-> Discord
+# [discord]
+#   [discord.myserver]
+#   Token="Bot YOUR_DISCORD_BOT_TOKEN"
+#   Server="My Server Name"
+#   # Use webhooks for better username/avatar display:
+#   # WebhookURL="https://discord.com/api/webhooks/..."
+#   RemoteNickFormat="{NICK} [{PROTOCOL}]"
+
+# ── IRC ──────────────────────────────────────────────────────────────────────
+# Uncomment to bridge SimpleX <-> IRC
+# [irc]
+#   [irc.libera]
+#   Server="irc.libera.chat:6697"
+#   Nick="simplexbridge"
+#   UseTLS=true
+#   NickServPassword="your-nickserv-password"
+
+# ── Slack ────────────────────────────────────────────────────────────────────
+# Uncomment to bridge SimpleX <-> Slack
+# [slack]
+#   [slack.workspace]
+#   Token="xoxb-YOUR-BOT-TOKEN"
+#   PrefixMessagesWithNick=true
+
+# ── General settings ─────────────────────────────────────────────────────────
+[general]
+RemoteNickFormat="[{PROTOCOL}] <{NICK}> "
+
+# ── Gateway: SimpleX <-> Matrix ──────────────────────────────────────────────
+# This gateway connects the SimpleX adapter (via API) to Matrix
+# Uncomment and adjust channel names for your setup
+[[gateway]]
+name="gateway1"
+enable=true
+
+  # SimpleX side (via matterbridge-simplex adapter)
+  [[gateway.inout]]
+  account="api.myapi"
+  channel="api"
+
+  # Matrix side — uncomment and set your room
+  # [[gateway.inout]]
+  # account="matrix.home"
+  # channel="#bridged:example.com"
+
+  # Telegram side — uncomment and set your group ID
+  # [[gateway.inout]]
+  # account="telegram.main"
+  # channel="-1001234567890"
+
+  # Discord side — uncomment and set your channel
+  # [[gateway.inout]]
+  # account="discord.myserver"
+  # channel="general"
+
+  # IRC side — uncomment and set your channel
+  # [[gateway.inout]]
+  # account="irc.libera"
+  # channel="#myproject"
+
+# ── One-way bridge example (announcements) ───────────────────────────────────
+# Uncomment to create a one-way bridge from SimpleX to other platforms
+# [[gateway]]
+# name="announcements"
+# enable=true
+#
+#   # Source: SimpleX only
+#   [[gateway.in]]
+#   account="api.myapi"
+#   channel="api"
+#
+#   # Destinations
+#   [[gateway.out]]
+#   account="matrix.home"
+#   channel="#announcements:example.com"
+#
+#   [[gateway.out]]
+#   account="telegram.main"
+#   channel="-1001234567890"
