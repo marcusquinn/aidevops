@@ -1353,8 +1353,9 @@ cmd_rate_limits() {
 		esac
 	done
 
-	# Auto-ingest before showing stats
-	cmd_ingest --quiet || true
+	# Auto-ingest before showing stats.
+	# Keep stdout clean so --json remains machine-parseable.
+	cmd_ingest --quiet >/dev/null || true
 
 	local config_file
 	config_file=$(_get_rate_limits_config) || config_file=""
