@@ -2002,13 +2002,22 @@ _exec_escalate_model() {
 	to_tier=$(printf '%s' "$action" | jq -r '.to_tier')
 	reasoning=$(printf '%s' "$action" | jq -r '.reasoning // ""')
 
+	# Resolve bare tier name to full model string before DB update
+	local resolved_to_tier="$to_tier"
+	if [[ -n "$to_tier" && "$to_tier" != *"/"* ]]; then
+		resolved_to_tier=$(resolve_model "$to_tier" "opencode" 2>/dev/null) || resolved_to_tier="$to_tier"
+	fi
+
 	# Update model tier in supervisor DB if task exists there
+	# NOTE: tasks table PK is 'id', not 'task_id'
 	if [[ -n "$SUPERVISOR_DB" && -f "$SUPERVISOR_DB" ]]; then
+		local escaped_task_id
+		escaped_task_id=$(sql_escape "$task_id")
 		local db_task_exists
-		db_task_exists=$(db "$SUPERVISOR_DB" "SELECT COUNT(*) FROM tasks WHERE task_id = '$task_id';" 2>/dev/null || echo 0)
+		db_task_exists=$(db "$SUPERVISOR_DB" "SELECT COUNT(*) FROM tasks WHERE id = '$escaped_task_id';" 2>/dev/null || echo 0)
 		if [[ "$db_task_exists" -gt 0 ]]; then
-			db "$SUPERVISOR_DB" "UPDATE tasks SET model = '$to_tier' WHERE task_id = '$task_id';" 2>/dev/null || true
-			log_info "AI Actions: escalated $task_id model in DB: $from_tier -> $to_tier"
+			db "$SUPERVISOR_DB" "UPDATE tasks SET model = '$(sql_escape "$resolved_to_tier")' WHERE id = '$escaped_task_id';" 2>/dev/null || true
+			log_info "AI Actions: escalated $task_id model in DB: $from_tier -> $resolved_to_tier"
 		fi
 	fi
 

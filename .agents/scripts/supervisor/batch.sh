@@ -119,6 +119,18 @@ cmd_add() {
 		fi
 	fi
 
+	# Resolve bare tier names (e.g., "sonnet", "opus") to full model strings
+	# (e.g., "anthropic/claude-sonnet-4-6") before storing in DB. Bare tier names
+	# cause model_config_error when passed to the CLI at dispatch time.
+	if [[ -n "$model" && "$model" != *"/"* ]]; then
+		local resolved_model
+		resolved_model=$(resolve_model "$model" "opencode" 2>/dev/null) || resolved_model=""
+		if [[ -n "$resolved_model" ]]; then
+			log_info "Task $task_id: resolved tier '$model' to '$resolved_model' for DB storage"
+			model="$resolved_model"
+		fi
+	fi
+
 	ensure_db
 
 	# Check if task already exists

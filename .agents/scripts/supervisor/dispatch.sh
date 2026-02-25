@@ -2857,6 +2857,19 @@ cmd_dispatch() {
 	local log_file
 	log_file="$log_dir/${task_id}-$(date +%Y%m%d%H%M%S).log"
 
+	# Resolve model via frontmatter + fallback chain (t132.5)
+	# Moved before metadata write so dispatch log has the resolved model, not bare tier.
+	# t1008: For verify-mode dispatches, prefer sonnet tier (cheaper, sufficient for
+	# verification checks). The verify worker can escalate to full implementation if
+	# it discovers the work is incomplete, but starts cheap.
+	local resolved_model
+	if [[ "$verify_mode" == "true" ]]; then
+		resolved_model=$(resolve_model "coding" "$ai_cli" 2>/dev/null) || resolved_model=""
+		log_info "Verify mode: using coding-tier model ($resolved_model) instead of task-specific model"
+	else
+		resolved_model=$(resolve_task_model "$task_id" "$tmodel" "${trepo:-.}" "$ai_cli")
+	fi
+
 	# Pre-create log file with dispatch metadata (t183)
 	# If the worker fails to start (opencode not found, permission error, etc.),
 	# the log file still exists with context for diagnosis instead of no_log_file.
@@ -2897,18 +2910,6 @@ cmd_dispatch() {
 	memory_context=$(recall_task_memories "$task_id" "$tdesc" 2>/dev/null || echo "")
 	if [[ -n "$memory_context" ]]; then
 		log_info "Injecting ${#memory_context} bytes of memory context for $task_id"
-	fi
-
-	# Resolve model via frontmatter + fallback chain (t132.5)
-	# t1008: For verify-mode dispatches, prefer sonnet tier (cheaper, sufficient for
-	# verification checks). The verify worker can escalate to full implementation if
-	# it discovers the work is incomplete, but starts cheap.
-	local resolved_model
-	if [[ "$verify_mode" == "true" ]]; then
-		resolved_model=$(resolve_model "coding" "$ai_cli" 2>/dev/null) || resolved_model=""
-		log_info "Verify mode: using coding-tier model ($resolved_model) instead of task-specific model"
-	else
-		resolved_model=$(resolve_task_model "$task_id" "$tmodel" "${trepo:-.}" "$ai_cli")
 	fi
 
 	# OAuth-aware CLI re-resolution (t1163): now that we know the target model,
