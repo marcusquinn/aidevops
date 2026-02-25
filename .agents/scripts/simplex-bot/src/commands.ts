@@ -14,25 +14,19 @@ import pkg from "../package.json";
 // Built-in Commands
 // =============================================================================
 
-/** Show available commands and usage instructions */
+/** Show available commands and usage instructions (generated dynamically) */
 const helpCommand: CommandDefinition = {
   name: "help",
   description: "Show available commands and usage",
   groupEnabled: true,
   dmEnabled: true,
   handler: async (_ctx: CommandContext): Promise<string> => {
-    return [
-      "Available commands:",
-      "",
-      "/help — Show this help message",
-      "/status — Show aidevops system status",
-      "/ask [question] — Ask AI a question",
-      "/tasks — List open tasks",
-      "/task [description] — Create a new task",
-      "/run [command] — Execute an aidevops CLI command",
-      "/ping — Check bot responsiveness",
-      "/version — Show bot version",
-    ].join("\n");
+    // Build help text dynamically from BUILTIN_COMMANDS so it never drifts
+    const lines = ["Available commands:", ""];
+    for (const cmd of BUILTIN_COMMANDS) {
+      lines.push(`/${cmd.name} — ${cmd.description}`);
+    }
+    return lines.join("\n");
   },
 };
 

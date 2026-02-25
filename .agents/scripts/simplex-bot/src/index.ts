@@ -281,21 +281,11 @@ class SimplexAdapter {
 
   /** Cache contact and group display names from a chat item for reply routing */
   private cacheDisplayNames(chatDir: ChatItem["chatItem"]["chatDir"]): void {
-    if (chatDir?.contactId !== undefined) {
-      const contact = (chatDir as Record<string, unknown>).contact as
-        | { localDisplayName?: string }
-        | undefined;
-      if (contact?.localDisplayName) {
-        this.contactNames.set(chatDir.contactId, contact.localDisplayName);
-      }
+    if (chatDir?.contactId !== undefined && chatDir.contact?.localDisplayName) {
+      this.contactNames.set(chatDir.contactId, chatDir.contact.localDisplayName);
     }
-    if (chatDir?.groupId !== undefined) {
-      const groupInfo = (chatDir as Record<string, unknown>).groupInfo as
-        | { localDisplayName?: string }
-        | undefined;
-      if (groupInfo?.localDisplayName) {
-        this.groupNames.set(chatDir.groupId, groupInfo.localDisplayName);
-      }
+    if (chatDir?.groupId !== undefined && chatDir.groupInfo?.localDisplayName) {
+      this.groupNames.set(chatDir.groupId, chatDir.groupInfo.localDisplayName);
     }
   }
 

@@ -65,6 +65,10 @@ export interface ChatItem {
       type: string;
       contactId?: number;
       groupId?: number;
+      /** Contact info attached by SimpleX API (used for display name caching) */
+      contact?: { localDisplayName?: string };
+      /** Group info attached by SimpleX API (used for display name caching) */
+      groupInfo?: { localDisplayName?: string };
     };
     meta?: {
       itemId: number;
