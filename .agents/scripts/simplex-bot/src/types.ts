@@ -174,7 +174,7 @@ export interface BotConfig {
   reconnectInterval: number;
   /** Maximum reconnect attempts (default: 10, 0 = infinite) */
   maxReconnectAttempts: number;
-  /** Use wss:// instead of ws:// (default: false — local CLI uses plain WS) */
+  /** Enable TLS for WebSocket connection (default: false — local CLI uses plain WebSocket) */
   useTls: boolean;
 }
 
