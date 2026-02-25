@@ -128,6 +128,8 @@ class SimplexAdapter {
   private corrIdCounter = 0;
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private contactNames: Map<number, string> = new Map();
+  private groupNames: Map<number, string> = new Map();
 
   constructor(config: Partial<BotConfig> = {}) {
     this.config = { ...DEFAULT_BOT_CONFIG, ...config };
@@ -171,6 +173,8 @@ class SimplexAdapter {
         this.ws.onerror = (event: Event) => {
           this.logger.error("WebSocket error", event);
           if (this.reconnectAttempts === 0) {
+            // Clear any pending reconnect to avoid dangling timers
+            this.disconnect();
             reject(new Error(`Failed to connect to ${url}`));
           }
         };
@@ -257,8 +261,27 @@ class SimplexAdapter {
   }
 
   /** Handle new chat items (incoming messages) */
-  private handleNewChatItems(event: NewChatItemsEvent): void {
+  private async handleNewChatItems(event: NewChatItemsEvent): Promise<void> {
     for (const item of event.chatItems ?? []) {
+      // Cache display names from incoming messages for reply routing
+      const chatDir = item?.chatItem?.chatDir;
+      if (chatDir?.contactId !== undefined) {
+        const contact = (chatDir as Record<string, unknown>).contact as
+          | { localDisplayName?: string }
+          | undefined;
+        if (contact?.localDisplayName) {
+          this.contactNames.set(chatDir.contactId, contact.localDisplayName);
+        }
+      }
+      if (chatDir?.groupId !== undefined) {
+        const groupInfo = (chatDir as Record<string, unknown>).groupInfo as
+          | { localDisplayName?: string }
+          | undefined;
+        if (groupInfo?.localDisplayName) {
+          this.groupNames.set(chatDir.groupId, groupInfo.localDisplayName);
+        }
+      }
+
       const content = item?.chatItem?.content;
       if (content?.type !== "rcvMsgContent") {
         continue;
@@ -285,7 +308,7 @@ class SimplexAdapter {
       if (!cmdDef) {
         this.logger.debug(`Unknown command: /${parsed.command}`);
         // Optionally reply with help
-        this.replyToItem(item, `Unknown command: /${parsed.command}. Type /help for available commands.`);
+        await this.replyToItem(item, `Unknown command: /${parsed.command}. Type /help for available commands.`);
         continue;
       }
 
@@ -300,7 +323,11 @@ class SimplexAdapter {
         },
       };
 
-      this.executeCommand(cmdDef, ctx);
+      try {
+        await this.executeCommand(cmdDef, ctx);
+      } catch (err) {
+        this.logger.error(`Unhandled error in command /${parsed.command}:`, err);
+      }
     }
   }
 
@@ -321,7 +348,7 @@ class SimplexAdapter {
     }
   }
 
-  /** Reply to a chat item */
+  /** Reply to a chat item using cached display names */
   private async replyToItem(item: ChatItem, text: string): Promise<void> {
     const chatDir = item?.chatItem?.chatDir;
     if (!chatDir) {
@@ -331,11 +358,23 @@ class SimplexAdapter {
 
     let target: string;
     if (chatDir.contactId !== undefined) {
-      // DM — we need the contact name, but we only have the ID
-      // For now, use the API command format
-      target = `@${chatDir.contactId}`;
+      const displayName = this.contactNames.get(chatDir.contactId);
+      if (!displayName) {
+        this.logger.warn(
+          `Cannot reply: no cached display name for contactId ${chatDir.contactId}`,
+        );
+        return;
+      }
+      target = `@${displayName}`;
     } else if (chatDir.groupId !== undefined) {
-      target = `#${chatDir.groupId}`;
+      const displayName = this.groupNames.get(chatDir.groupId);
+      if (!displayName) {
+        this.logger.warn(
+          `Cannot reply: no cached display name for groupId ${chatDir.groupId}`,
+        );
+        return;
+      }
+      target = `#${displayName}`;
     } else {
       this.logger.warn("Cannot reply: unknown chat direction");
       return;
@@ -344,13 +383,18 @@ class SimplexAdapter {
     await this.sendMessage(target, text);
   }
 
-  /** Handle new contact connection */
+  /** Handle new contact connection — caches display name for reply routing */
   private handleContactConnected(event: SimplexEvent): void {
     const contact = (event as Record<string, unknown>).contact as
-      | { localDisplayName?: string }
+      | { localDisplayName?: string; contactId?: number }
       | undefined;
     const name = contact?.localDisplayName ?? "unknown";
     this.logger.info(`New contact connected: ${name}`);
+
+    // Cache display name for reply routing
+    if (contact?.contactId !== undefined && contact.localDisplayName) {
+      this.contactNames.set(contact.contactId, contact.localDisplayName);
+    }
 
     if (this.config.autoAcceptContacts && this.config.welcomeMessage) {
       this.sendMessage(`@${name}`, this.config.welcomeMessage);
@@ -389,13 +433,22 @@ class SimplexAdapter {
 // Main
 // =============================================================================
 
+/** Validate and parse log level from environment */
+function parseLogLevel(value: string | undefined): LogLevel {
+  const valid: LogLevel[] = ["debug", "info", "warn", "error"];
+  if (value && valid.includes(value as LogLevel)) {
+    return value as LogLevel;
+  }
+  return DEFAULT_BOT_CONFIG.logLevel;
+}
+
 async function main(): Promise<void> {
   const config: Partial<BotConfig> = {
     port: Number(process.env.SIMPLEX_PORT) || DEFAULT_BOT_CONFIG.port,
     host: process.env.SIMPLEX_HOST || DEFAULT_BOT_CONFIG.host,
     displayName: process.env.SIMPLEX_BOT_NAME || DEFAULT_BOT_CONFIG.displayName,
     autoAcceptContacts: process.env.SIMPLEX_AUTO_ACCEPT === "true",
-    logLevel: (process.env.SIMPLEX_LOG_LEVEL as BotConfig["logLevel"]) || "info",
+    logLevel: parseLogLevel(process.env.SIMPLEX_LOG_LEVEL),
   };
 
   const bot = new SimplexAdapter(config);

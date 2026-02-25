@@ -205,6 +205,6 @@ plugin-loader-helper.sh,Plugin agent loader - discover validate load unload agen
 claim-task-id.sh,Distributed task ID allocation with collision prevention (online GH/GL issue lock or offline +100 offset)
 planning-commit-helper.sh,Planning file auto-commit helper (next-id complete commit check status)
 multi-org-helper.sh,Multi-org management CLI (init create delete list switch use status info set-plan context)
-simplex-helper.sh,SimpleX Chat CLI helper (install init bot-start bot-stop send connect address group status server)
+simplex-helper.sh,SimpleX Chat CLI helper (install init bot-start bot-stop send send-group connect address group status server)
 skills-helper.sh,Skill discovery and exploration CLI (search browse describe info list categories recommend)
 -->

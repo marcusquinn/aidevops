@@ -146,8 +146,8 @@ section_helper_script() {
 		return 0
 	fi
 
-	# Executable check
-	if [[ -x "$HELPER" ]] || bash -n "$HELPER" 2>/dev/null; then
+	# Syntax check (always run bash -n regardless of executable bit)
+	if bash -n "$HELPER" 2>/dev/null; then
 		print_result "helper script is valid bash" 0
 	else
 		print_result "helper script is valid bash" 1 "Syntax error in simplex-helper.sh"
@@ -513,11 +513,10 @@ section_shellcheck() {
 	fi
 
 	if [[ -f "$HELPER" ]]; then
-		local sc_output
-		sc_output="$(shellcheck -S warning "$HELPER" 2>&1)" || true
-		local sc_exit=$?
+		local sc_output sc_exit
+		sc_output="$(shellcheck -S warning "$HELPER" 2>&1)" && sc_exit=0 || sc_exit=$?
 
-		if [[ -z "$sc_output" ]] || [[ "$sc_exit" -eq 0 ]]; then
+		if [[ "$sc_exit" -eq 0 ]]; then
 			print_result "simplex-helper.sh: shellcheck clean" 0
 		else
 			local issue_count
@@ -530,11 +529,10 @@ section_shellcheck() {
 	# Check this test script too
 	local this_script="${SCRIPT_DIR}/test-simplex-integration.sh"
 	if [[ -f "$this_script" ]]; then
-		local sc_output2
-		sc_output2="$(shellcheck -S warning "$this_script" 2>&1)" || true
-		local sc_exit2=$?
+		local sc_output2 sc_exit2
+		sc_output2="$(shellcheck -S warning "$this_script" 2>&1)" && sc_exit2=0 || sc_exit2=$?
 
-		if [[ -z "$sc_output2" ]] || [[ "$sc_exit2" -eq 0 ]]; then
+		if [[ "$sc_exit2" -eq 0 ]]; then
 			print_result "test-simplex-integration.sh: shellcheck clean" 0
 		else
 			local issue_count2

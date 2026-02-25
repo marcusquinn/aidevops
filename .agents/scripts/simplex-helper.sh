@@ -121,6 +121,33 @@ log_error() {
 # Utility Functions
 # =============================================================================
 
+# Build a JSON command safely using jq (prevents JSON injection)
+build_json_cmd() {
+	local corr_id="$1"
+	local cmd="$2"
+	if command -v jq &>/dev/null; then
+		jq -n --arg corrId "$corr_id" --arg cmd "$cmd" \
+			'{"corrId": $corrId, "cmd": $cmd}'
+	else
+		# Fallback: escape double quotes in values
+		local safe_corr_id="${corr_id//\"/\\\"}"
+		local safe_cmd="${cmd//\"/\\\"}"
+		printf '{"corrId":"%s","cmd":"%s"}' "$safe_corr_id" "$safe_cmd"
+	fi
+	return 0
+}
+
+# Require that a flag has a following argument
+require_arg() {
+	local flag="$1"
+	local remaining="$2"
+	if [[ "$remaining" -lt 2 ]]; then
+		log_error "${flag} requires a value"
+		return 1
+	fi
+	return 0
+}
+
 # Check if simplex-chat binary is available
 check_simplex_installed() {
 	if command -v "$SIMPLEX_BIN" &>/dev/null; then
@@ -252,10 +279,12 @@ cmd_init() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--name)
+			require_arg "--name" "$#" || return 1
 			name="$2"
 			shift 2
 			;;
 		--port)
+			require_arg "--port" "$#" || return 1
 			port="$2"
 			shift 2
 			;;
@@ -310,10 +339,12 @@ cmd_bot_start() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--port)
+			require_arg "--port" "$#" || return 1
 			port="$2"
 			shift 2
 			;;
 		--db)
+			require_arg "--db" "$#" || return 1
 			db_prefix="$2"
 			shift 2
 			;;
@@ -373,6 +404,7 @@ cmd_bot_stop() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--port)
+			require_arg "--port" "$#" || return 1
 			port="$2"
 			shift 2
 			;;
@@ -449,7 +481,7 @@ cmd_send() {
 		local corr_id
 		corr_id="$(date +%s%N)"
 		local json_msg
-		json_msg=$(printf '{"corrId":"%s","cmd":"%s %s"}' "$corr_id" "$contact" "$message")
+		json_msg=$(build_json_cmd "$corr_id" "${contact} ${message}")
 
 		if command -v websocat &>/dev/null; then
 			echo "$json_msg" | websocat "ws://127.0.0.1:${port}" --one-message
@@ -503,7 +535,7 @@ cmd_connect() {
 		local corr_id
 		corr_id="$(date +%s%N)"
 		local json_cmd
-		json_cmd=$(printf '{"corrId":"%s","cmd":"/c %s"}' "$corr_id" "$link")
+		json_cmd=$(build_json_cmd "$corr_id" "/c ${link}")
 
 		if command -v websocat &>/dev/null; then
 			echo "$json_cmd" | websocat "ws://127.0.0.1:${port}" --one-message
@@ -565,7 +597,7 @@ cmd_address() {
 		local corr_id
 		corr_id="$(date +%s%N)"
 		local json_cmd
-		json_cmd=$(printf '{"corrId":"%s","cmd":"%s"}' "$corr_id" "$cli_cmd")
+		json_cmd=$(build_json_cmd "$corr_id" "$cli_cmd")
 
 		if command -v websocat &>/dev/null; then
 			echo "$json_cmd" | websocat "ws://127.0.0.1:${port}" --one-message
@@ -603,11 +635,13 @@ cmd_group() {
 			shift
 			;;
 		--add)
+			require_arg "--add" "$#" || return 1
 			action="add"
 			contact="$2"
 			shift 2
 			;;
 		--remove)
+			require_arg "--remove" "$#" || return 1
 			action="remove"
 			contact="$2"
 			shift 2
@@ -652,7 +686,7 @@ cmd_group() {
 		local corr_id
 		corr_id="$(date +%s%N)"
 		local json_cmd
-		json_cmd=$(printf '{"corrId":"%s","cmd":"%s"}' "$corr_id" "$cli_cmd")
+		json_cmd=$(build_json_cmd "$corr_id" "$cli_cmd")
 
 		if command -v websocat &>/dev/null; then
 			echo "$json_cmd" | websocat "ws://127.0.0.1:${port}" --one-message
@@ -672,6 +706,7 @@ cmd_status() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--port)
+			require_arg "--port" "$#" || return 1
 			port="$2"
 			shift 2
 			;;
@@ -760,10 +795,12 @@ cmd_server() {
 			shift
 			;;
 		--type)
+			require_arg "--type" "$#" || return 1
 			server_type="$2"
 			shift 2
 			;;
 		--fqdn)
+			require_arg "--fqdn" "$#" || return 1
 			fqdn="$2"
 			shift 2
 			;;

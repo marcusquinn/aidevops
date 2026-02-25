@@ -8,6 +8,7 @@
  */
 
 import type { CommandContext, CommandDefinition } from "./types";
+import pkg from "../package.json";
 
 // =============================================================================
 // Built-in Commands
@@ -19,7 +20,6 @@ const helpCommand: CommandDefinition = {
   groupEnabled: true,
   dmEnabled: true,
   handler: async (ctx: CommandContext): Promise<string> => {
-    // This gets replaced at runtime with the full command list
     return [
       "Available commands:",
       "",
@@ -80,14 +80,23 @@ const tasksCommand: CommandDefinition = {
   dmEnabled: true,
   handler: async (_ctx: CommandContext): Promise<string> => {
     try {
+      const tasksFile =
+        process.env.SIMPLEX_TASKS_FILE ||
+        `${import.meta.dir}/../../../..` + "/TODO.md";
+      const { resolve } = await import("node:path");
+      const todoPath = resolve(tasksFile);
       const proc = Bun.spawn(
-        ["bash", "-c", "grep -c '\\- \\[ \\]' TODO.md 2>/dev/null || echo 0"],
+        [
+          "bash",
+          "-c",
+          `grep -c '\\- \\[ \\]' "${todoPath}" 2>/dev/null || echo 0`,
+        ],
         { stdout: "pipe", stderr: "pipe" },
       );
       const count = (await new Response(proc.stdout).text()).trim();
       return `Open tasks: ${count}\n\nUse /task <description> to create a new task.`;
-    } catch {
-      return "Could not read TODO.md";
+    } catch (err) {
+      return `Could not read TODO.md: ${String(err)}`;
     }
   },
 };
@@ -144,7 +153,7 @@ const versionCommand: CommandDefinition = {
   groupEnabled: true,
   dmEnabled: true,
   handler: async (_ctx: CommandContext): Promise<string> => {
-    return "aidevops SimpleX Bot v1.0.0";
+    return `aidevops SimpleX Bot v${pkg.version}`;
   },
 };
 
