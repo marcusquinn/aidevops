@@ -174,6 +174,8 @@ export interface BotConfig {
   reconnectInterval: number;
   /** Maximum reconnect attempts (default: 10, 0 = infinite) */
   maxReconnectAttempts: number;
+  /** Use wss:// instead of ws:// (default: false — local CLI uses plain WS) */
+  useTls: boolean;
 }
 
 /** Default bot configuration */
@@ -186,6 +188,7 @@ export const DEFAULT_BOT_CONFIG: BotConfig = {
   logLevel: "info",
   reconnectInterval: 5000,
   maxReconnectAttempts: 10,
+  useTls: false,
 };
 
 // =============================================================================

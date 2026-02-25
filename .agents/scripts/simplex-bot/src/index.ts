@@ -144,7 +144,8 @@ class SimplexAdapter {
 
   /** Connect to SimpleX CLI WebSocket */
   async connect(): Promise<void> {
-    const url = `ws://${this.config.host}:${this.config.port}`;
+    const protocol = this.config.useTls ? "wss" : "ws";
+    const url = `${protocol}://${this.config.host}:${this.config.port}`;
     this.logger.info(`Connecting to SimpleX CLI at ${url}...`);
 
     return new Promise((resolve, reject) => {
