@@ -69,7 +69,7 @@ services/accessibility/,Unified web and email accessibility auditing - WCAG comp
 services/hosting/,Hosting providers - DNS and cloud servers and local dev,local-hosting|localhost|hostinger|hetzner|cloudflare|cloudflare-platform|cloudron|closte
 services/networking/,Networking - mesh VPN and secure device connectivity,tailscale|netbird
 services/email/,Email services - transactional email deliverability and testing,ses|email-health-check|email-testing|email-delivery-test|email-design-test|email-delivery-testing|email-design-testing
-services/communications/,Communications - SMS voice and Matrix bot dispatch,twilio|telfon|matrix-bot
+services/communications/,Communications - SMS voice Matrix bot and multi-platform chat bridging,twilio|telfon|matrix-bot|matterbridge|simplex
 services/crm/,CRM integration - contact management,fluentcrm
 services/analytics/,Website analytics - GA4 reporting,google-analytics
 services/monitoring/,Error monitoring and debugging,sentry|socket

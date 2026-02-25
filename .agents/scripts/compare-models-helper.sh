@@ -648,13 +648,17 @@ cmd_providers() {
 # =============================================================================
 
 #######################################
-# Cross-model review: dispatch same prompt to multiple models (t132.8)
+# Cross-model review: dispatch same prompt to multiple models (t132.8, t1329)
 # Usage: compare-models-helper.sh cross-review --prompt "review this code" \
 #          --models "sonnet,opus,pro" [--workdir path] [--timeout N] [--output dir]
+#          [--score] [--judge <model>]
 # Dispatches via runner-helper.sh in parallel, collects outputs, produces summary.
+# With --score: feeds outputs to a judge model (default: opus) for structured scoring
+# and records results in the model-comparisons DB + pattern tracker.
 #######################################
 cmd_cross_review() {
 	local prompt="" models_str="" workdir="" review_timeout="600" output_dir=""
+	local score_flag=false judge_model="opus"
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -696,6 +700,18 @@ cmd_cross_review() {
 				return 1
 			}
 			output_dir="$2"
+			shift 2
+			;;
+		--score)
+			score_flag=true
+			shift
+			;;
+		--judge)
+			[[ $# -lt 2 ]] && {
+				print_error "--judge requires a value"
+				return 1
+			}
+			judge_model="$2"
 			shift 2
 			;;
 		*)
@@ -863,6 +879,184 @@ cmd_cross_review() {
 	echo "Full results saved to: $output_dir"
 	echo ""
 
+	# Judge scoring pipeline (t1329)
+	# When --score is set, dispatch all outputs to a judge model for structured scoring.
+	if [[ "$score_flag" == "true" ]]; then
+		_cross_review_judge_score \
+			"$prompt" "$models_str" "$output_dir" "$judge_model" "${model_names[@]}"
+	fi
+
+	return 0
+}
+
+# Judge scoring for cross-review (t1329)
+# Dispatches all model outputs to a judge model, parses structured JSON scores,
+# records results via cmd_score, and feeds into the pattern tracker.
+#
+# Args:
+#   $1 - original prompt
+#   $2 - models_str (comma-separated)
+#   $3 - output_dir
+#   $4 - judge_model tier
+#   $5+ - model_names array
+_cross_review_judge_score() {
+	local original_prompt="$1"
+	local models_str="$2"
+	local output_dir="$3"
+	local judge_model="$4"
+	shift 4
+	local -a model_names=("$@")
+
+	local runner_helper="${SCRIPT_DIR}/runner-helper.sh"
+	if [[ ! -x "$runner_helper" ]]; then
+		print_warning "runner-helper.sh not found — skipping judge scoring"
+		return 0
+	fi
+
+	echo "=== JUDGE SCORING (${judge_model}) ==="
+	echo ""
+
+	# Build judge prompt: include original prompt + all model responses
+	local judge_prompt
+	judge_prompt="You are a neutral judge evaluating AI model responses. Score each response on a 1-10 scale.
+
+ORIGINAL PROMPT:
+${original_prompt}
+
+MODEL RESPONSES:
+"
+	local models_with_output=()
+	for model_tier in "${model_names[@]}"; do
+		local result_file="${output_dir}/${model_tier}.txt"
+		if [[ -f "$result_file" && -s "$result_file" ]]; then
+			local response_text
+			response_text=$(cat "$result_file")
+			judge_prompt+="
+=== MODEL: ${model_tier} ===
+${response_text}
+"
+			models_with_output+=("$model_tier")
+		fi
+	done
+
+	if [[ ${#models_with_output[@]} -lt 2 ]]; then
+		print_warning "Not enough model outputs for judge scoring (need 2+)"
+		return 0
+	fi
+
+	judge_prompt+="
+SCORING INSTRUCTIONS:
+Score each model on these criteria (1-10 scale):
+- correctness: Factual accuracy and technical correctness
+- completeness: Coverage of all requirements and edge cases
+- quality: Code quality, best practices, maintainability
+- clarity: Clear explanation, good formatting, readability
+- adherence: Following the original prompt instructions precisely
+
+Respond with ONLY a valid JSON object in this exact format (no markdown, no explanation):
+{
+  \"task_type\": \"general\",
+  \"winner\": \"<model_tier_of_best_response>\",
+  \"reasoning\": \"<one sentence explaining the winner>\",
+  \"scores\": {
+    \"<model_tier>\": {
+      \"correctness\": <1-10>,
+      \"completeness\": <1-10>,
+      \"quality\": <1-10>,
+      \"clarity\": <1-10>,
+      \"adherence\": <1-10>
+    }
+  }
+}"
+
+	# Dispatch to judge model
+	local judge_runner="cross-review-judge-$$"
+	local judge_output_file="${output_dir}/judge-${judge_model}.json"
+
+	echo "  Dispatching to judge (${judge_model})..."
+
+	"$runner_helper" create "$judge_runner" \
+		--model "$judge_model" \
+		--description "Cross-review judge" \
+		--workdir "$(pwd)" 2>/dev/null || true
+
+	"$runner_helper" run "$judge_runner" "$judge_prompt" \
+		--model "$judge_model" \
+		--timeout "120" \
+		--format text 2>/dev/null >"$judge_output_file" || true
+
+	"$runner_helper" destroy "$judge_runner" --force 2>/dev/null || true
+
+	if [[ ! -f "$judge_output_file" || ! -s "$judge_output_file" ]]; then
+		print_warning "Judge model returned no output — skipping scoring"
+		return 0
+	fi
+
+	# Extract JSON from judge output (strip any surrounding text)
+	local judge_json
+	judge_json=$(grep -o '{.*}' "$judge_output_file" 2>/dev/null | head -1 || true)
+	if [[ -z "$judge_json" ]]; then
+		# Try multiline JSON extraction
+		judge_json=$(python3 -c "
+import sys, json, re
+text = open('${judge_output_file}').read()
+m = re.search(r'\{.*\}', text, re.DOTALL)
+if m:
+    try:
+        obj = json.loads(m.group())
+        print(json.dumps(obj))
+    except Exception:
+        pass
+" 2>/dev/null || true)
+	fi
+
+	if [[ -z "$judge_json" ]]; then
+		print_warning "Could not parse judge JSON output. Raw output saved to: $judge_output_file"
+		return 0
+	fi
+
+	# Parse winner and task_type
+	local winner task_type reasoning
+	winner=$(echo "$judge_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('winner',''))" 2>/dev/null || true)
+	task_type=$(echo "$judge_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('task_type','general'))" 2>/dev/null || echo "general")
+	reasoning=$(echo "$judge_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('reasoning',''))" 2>/dev/null || true)
+
+	echo "  Judge winner: ${winner:-unknown}"
+	[[ -n "$reasoning" ]] && echo "  Reasoning: ${reasoning}"
+	echo ""
+
+	# Build cmd_score arguments from judge JSON
+	local -a score_args=(
+		--task "$original_prompt"
+		--type "$task_type"
+		--evaluator "$judge_model"
+	)
+	[[ -n "$winner" ]] && score_args+=(--winner "$winner")
+
+	for model_tier in "${models_with_output[@]}"; do
+		local corr comp qual clar adhr
+		corr=$(echo "$judge_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('scores',{}).get('${model_tier}',{}).get('correctness',0))" 2>/dev/null || echo "0")
+		comp=$(echo "$judge_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('scores',{}).get('${model_tier}',{}).get('completeness',0))" 2>/dev/null || echo "0")
+		qual=$(echo "$judge_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('scores',{}).get('${model_tier}',{}).get('quality',0))" 2>/dev/null || echo "0")
+		clar=$(echo "$judge_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('scores',{}).get('${model_tier}',{}).get('clarity',0))" 2>/dev/null || echo "0")
+		adhr=$(echo "$judge_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('scores',{}).get('${model_tier}',{}).get('adherence',0))" 2>/dev/null || echo "0")
+
+		score_args+=(
+			--model "$model_tier"
+			--correctness "$corr"
+			--completeness "$comp"
+			--quality "$qual"
+			--clarity "$clar"
+			--adherence "$adhr"
+		)
+	done
+
+	# Record scores via cmd_score (also syncs to pattern tracker)
+	cmd_score "${score_args[@]}"
+
+	echo "Judge scores recorded. Judge output: $judge_output_file"
+	echo ""
+
 	return 0
 }
 
@@ -1021,6 +1215,12 @@ cmd_help() {
 	echo "  compare-models-helper.sh cross-review \\"
 	echo "    --prompt 'Audit the architecture of this project' \\"
 	echo "    --models 'opus,pro' --timeout 900"
+	echo "  compare-models-helper.sh cross-review \\"
+	echo "    --prompt 'Review this PR diff' --models 'sonnet,gemini-pro' \\"
+	echo "    --score                          # auto-score via judge model (default: opus)"
+	echo "  compare-models-helper.sh cross-review \\"
+	echo "    --prompt 'Review this PR diff' --models 'sonnet,gemini-pro' \\"
+	echo "    --score --judge sonnet            # use sonnet as judge instead"
 	echo ""
 	echo "Data is embedded in this script. Last updated: 2025-02-08."
 	echo "For live pricing, use /compare-models (with web fetch)."
