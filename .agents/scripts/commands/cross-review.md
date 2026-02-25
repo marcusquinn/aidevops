@@ -11,7 +11,7 @@ Target: $ARGUMENTS
 ## Instructions
 
 Parse the arguments to extract:
-- `--prompt` or positional: the review prompt (required)
+- `--prompt`: the review prompt (required)
 - `--models`: comma-separated model tiers (default: `sonnet,opus`)
 - `--score`: enable judge scoring pipeline (optional flag)
 - `--judge`: judge model tier (default: `opus`)
@@ -60,6 +60,7 @@ When `--score` is set, the pipeline:
 | Completeness | 1-10 | Coverage of all requirements and edge cases |
 | Quality | 1-10 | Code quality / writing quality |
 | Clarity | 1-10 | Clear explanation, good formatting, readability |
+| Adherence | 1-10 | Following instructions precisely, staying on-task |
 | Overall | 1-10 | Judge's holistic assessment |
 
 ## Examples

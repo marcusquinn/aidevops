@@ -741,13 +741,14 @@ ${response_text}"
 
 	# Build judge system prompt
 	local system_prompt
-	system_prompt='You are an expert AI model evaluator. You will be given a prompt and responses from multiple AI models. Score each model on four criteria (1-10 scale) and declare a winner.
+	system_prompt='You are an expert AI model evaluator. You will be given a prompt and responses from multiple AI models. Score each model on five criteria (1-10 scale) and declare a winner.
 
 Scoring criteria:
 - correctness (1-10): Factual accuracy and technical correctness
 - completeness (1-10): Coverage of all requirements and edge cases
 - quality (1-10): Code quality, best practices, structure (or writing quality for non-code)
 - clarity (1-10): Clear explanation, good formatting, readability
+- adherence (1-10): Following instructions precisely, staying on-task
 
 Respond with ONLY a valid JSON object in this exact format (no markdown, no explanation):
 {
@@ -757,6 +758,7 @@ Respond with ONLY a valid JSON object in this exact format (no markdown, no expl
       "completeness": <1-10>,
       "quality": <1-10>,
       "clarity": <1-10>,
+      "adherence": <1-10>,
       "overall": <1-10>,
       "strengths": "<brief strengths>",
       "weaknesses": "<brief weaknesses>"
@@ -779,6 +781,14 @@ Score each model and declare a winner."
 	# Resolve judge model to full model ID
 	local judge_model_id
 	judge_model_id=$(resolve_model_tier "$judge_model" 2>/dev/null || echo "$judge_model")
+
+	# Anthropic Messages API expects raw model IDs without provider prefix
+	if [[ "$judge_model_id" == anthropic/* ]]; then
+		judge_model_id="${judge_model_id#anthropic/}"
+	elif [[ "$judge_model_id" == */* ]]; then
+		print_error "--judge must resolve to an Anthropic model when using Anthropic judge API (got: $judge_model_id)"
+		return 1
+	fi
 
 	# Build API request body
 	local request_body
@@ -803,25 +813,25 @@ Score each model and declare a winner."
 		-H "${auth_header}" \
 		"${curl_extra_args[@]}" \
 		-d "$request_body" \
-		"https://api.anthropic.com/v1/messages" 2>/dev/null) || {
+		"https://api.anthropic.com/v1/messages") || {
 		print_error "Judge API call failed (curl error)"
 		return 1
 	}
 
 	# Extract text content from response
 	local ai_text
-	ai_text=$(echo "$response" | jq -r '.content[]? | select(.type == "text") | .text' 2>/dev/null)
+	ai_text=$(echo "$response" | jq -r '.content[]? | select(.type == "text") | .text')
 
 	if [[ -z "$ai_text" ]]; then
 		local api_error
-		api_error=$(echo "$response" | jq -r '.error.message // empty' 2>/dev/null)
+		api_error=$(echo "$response" | jq -r '.error.message // empty')
 		print_error "Judge API returned no content (error: ${api_error:-unknown})"
 		return 1
 	fi
 
 	# Strip markdown code fences if present
 	local clean_json
-	clean_json=$(echo "$ai_text" | sed -n '/^{/,/^}/p' | head -100)
+	clean_json=$(echo "$ai_text" | sed -n '/^{/,/^}/p')
 	if [[ -z "$clean_json" ]]; then
 		clean_json="$ai_text"
 	fi
@@ -1088,8 +1098,8 @@ cmd_cross_review() {
 
 		local judge_json
 		if ! judge_json=$(_judge_cross_review "$output_dir" "$models_str" "$prompt" "$judge_model" "$task_type"); then
-			print_warning "Judge scoring failed — raw outputs still saved to $output_dir"
-			return 0
+			print_error "Judge scoring failed — raw outputs still saved to $output_dir"
+			return 1
 		fi
 
 		# Save judge output
@@ -1104,11 +1114,11 @@ cmd_cross_review() {
 		printf "%-22s %6s %6s %6s %6s %7s\n" "-----" "----" "----" "----" "----" "-------"
 
 		local winner=""
-		winner=$(echo "$judge_json" | jq -r '.winner // empty' 2>/dev/null)
+		winner=$(echo "$judge_json" | jq -r '.winner // empty')
 		local winner_reasoning=""
-		winner_reasoning=$(echo "$judge_json" | jq -r '.winner_reasoning // empty' 2>/dev/null)
+		winner_reasoning=$(echo "$judge_json" | jq -r '.winner_reasoning // empty')
 		local judge_task_type=""
-		judge_task_type=$(echo "$judge_json" | jq -r '.task_type // empty' 2>/dev/null)
+		judge_task_type=$(echo "$judge_json" | jq -r '.task_type // empty')
 		[[ -n "$judge_task_type" ]] && task_type="$judge_task_type"
 
 		# Build cmd_score args from judge JSON
@@ -1117,17 +1127,24 @@ cmd_cross_review() {
 		local -a scored_models=()
 		while IFS= read -r model_name; do
 			scored_models+=("$model_name")
-		done < <(echo "$judge_json" | jq -r '.scores | keys[]' 2>/dev/null)
+		done < <(echo "$judge_json" | jq -r '.scores | keys[]')
 
 		for model_name in "${scored_models[@]}"; do
-			local m_corr m_comp m_qual m_clar m_overall m_str m_wea
-			m_corr=$(echo "$judge_json" | jq -r ".scores[\"${model_name}\"].correctness // 0" 2>/dev/null)
-			m_comp=$(echo "$judge_json" | jq -r ".scores[\"${model_name}\"].completeness // 0" 2>/dev/null)
-			m_qual=$(echo "$judge_json" | jq -r ".scores[\"${model_name}\"].quality // 0" 2>/dev/null)
-			m_clar=$(echo "$judge_json" | jq -r ".scores[\"${model_name}\"].clarity // 0" 2>/dev/null)
-			m_overall=$(echo "$judge_json" | jq -r ".scores[\"${model_name}\"].overall // 0" 2>/dev/null)
-			m_str=$(echo "$judge_json" | jq -r ".scores[\"${model_name}\"].strengths // \"\"" 2>/dev/null)
-			m_wea=$(echo "$judge_json" | jq -r ".scores[\"${model_name}\"].weaknesses // \"\"" 2>/dev/null)
+			# Consolidate jq calls into a single pass using --arg for safe variable passing
+			local m_corr m_comp m_qual m_clar m_adh m_overall m_str m_wea
+			read -r m_corr m_comp m_qual m_clar m_adh m_overall m_str m_wea <<<"$(echo "$judge_json" | jq -r --arg mn "$model_name" '
+				.scores[$mn] |
+				[
+					(.correctness // 0),
+					(.completeness // 0),
+					(.quality // 0),
+					(.clarity // 0),
+					(.adherence // 0),
+					(.overall // 0),
+					(.strengths // ""),
+					(.weaknesses // "")
+				] | @tsv
+			')"
 
 			local result_file="${output_dir}/${model_name}.txt"
 			printf "%-22s %6s %6s %6s %6s %7s\n" \
@@ -1140,7 +1157,7 @@ cmd_cross_review() {
 				--completeness "$m_comp"
 				--quality "$m_qual"
 				--clarity "$m_clar"
-				--adherence "$m_overall"
+				--adherence "$m_adh"
 				--strengths "$m_str"
 				--weaknesses "$m_wea"
 				--response "${result_file:-}"
@@ -1158,7 +1175,7 @@ cmd_cross_review() {
 
 		# Record scores in model-comparisons DB via cmd_score
 		echo "Recording scores in model-comparisons DB..."
-		if cmd_score "${score_args[@]}" 2>/dev/null; then
+		if cmd_score "${score_args[@]}"; then
 			print_success "Scores recorded in model-comparisons DB"
 		else
 			print_warning "cmd_score recording failed (scores still in $judge_file)"
@@ -1173,22 +1190,21 @@ cmd_cross_review() {
 			[[ -z "$winner_tier" ]] && winner_tier="$winner"
 
 			for model_name in "${scored_models[@]}"; do
-				local m_ove
-				m_ove=$(echo "$judge_json" | jq -r ".scores[\"${model_name}\"].overall // 0" 2>/dev/null)
+				# Extract scores in a single jq pass using --arg for safe variable passing
+				local m_ove raw_corr raw_comp raw_qual raw_clar
+				read -r m_ove raw_corr raw_comp raw_qual raw_clar <<<"$(echo "$judge_json" | jq -r --arg mn "$model_name" '
+					.scores[$mn] | [(.overall // 0), (.correctness // 0), (.completeness // 0), (.quality // 0), (.clarity // 0)] | @tsv
+				')"
 				local m_tier
 				m_tier=$(model_id_to_tier "$model_name")
 				[[ -z "$m_tier" ]] && m_tier="$model_name"
 
 				# Normalize 1-10 to 1-5 for pattern tracker
 				local norm_corr norm_comp norm_qual norm_clar
-				norm_corr=$(echo "$judge_json" | jq -r ".scores[\"${model_name}\"].correctness // 0" 2>/dev/null)
-				norm_comp=$(echo "$judge_json" | jq -r ".scores[\"${model_name}\"].completeness // 0" 2>/dev/null)
-				norm_qual=$(echo "$judge_json" | jq -r ".scores[\"${model_name}\"].quality // 0" 2>/dev/null)
-				norm_clar=$(echo "$judge_json" | jq -r ".scores[\"${model_name}\"].clarity // 0" 2>/dev/null)
-				norm_corr=$(awk "BEGIN{v=int($norm_corr/2+0.5); if(v<1)v=1; if(v>5)v=5; print v}")
-				norm_comp=$(awk "BEGIN{v=int($norm_comp/2+0.5); if(v<1)v=1; if(v>5)v=5; print v}")
-				norm_qual=$(awk "BEGIN{v=int($norm_qual/2+0.5); if(v<1)v=1; if(v>5)v=5; print v}")
-				norm_clar=$(awk "BEGIN{v=int($norm_clar/2+0.5); if(v<1)v=1; if(v>5)v=5; print v}")
+				norm_corr=$(awk "BEGIN{v=int($raw_corr/2+0.5); if(v<1)v=1; if(v>5)v=5; print v}")
+				norm_comp=$(awk "BEGIN{v=int($raw_comp/2+0.5); if(v<1)v=1; if(v>5)v=5; print v}")
+				norm_qual=$(awk "BEGIN{v=int($raw_qual/2+0.5); if(v<1)v=1; if(v>5)v=5; print v}")
+				norm_clar=$(awk "BEGIN{v=int($raw_clar/2+0.5); if(v<1)v=1; if(v>5)v=5; print v}")
 
 				"$pt_helper" score \
 					--model "$m_tier" \
