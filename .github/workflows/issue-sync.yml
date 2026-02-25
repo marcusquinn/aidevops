@@ -321,11 +321,12 @@ jobs:
         env:
           TASK_ID: ${{ steps.extract.outputs.task_id }}
           LINKED_ISSUES: ${{ steps.extract.outputs.linked_issues }}
+          REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # If no explicit Closes #NNN in PR body, search for the issue by task ID in title
           if [[ -z "$LINKED_ISSUES" ]]; then
-            FOUND=$(gh issue list --state all --search "${TASK_ID}:" --json number,title --limit 5 \
+            FOUND=$(gh issue list --repo "$REPO" --state all --search "${TASK_ID}:" --json number,title --limit 5 \
               | jq -r --arg tid "$TASK_ID" '[.[] | select(.title | test("^" + $tid + "[.:\\s]"))] | .[0].number // empty')
             if [[ -n "$FOUND" && "$FOUND" != "null" ]]; then
               echo "found_issues=$FOUND" >> "$GITHUB_OUTPUT"
@@ -348,6 +349,7 @@ jobs:
           LINKED_ISSUES: ${{ steps.extract.outputs.linked_issues }}
           FOUND_ISSUES: ${{ steps.find-issue.outputs.found_issues }}
           TASK_ID: ${{ steps.extract.outputs.task_id }}
+          REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Merge all issue numbers (from PR body + fallback search)
@@ -365,7 +367,7 @@ jobs:
             echo "--- Issue #$ISSUE_NUM ---"
 
             # Post closing comment if none exists from this PR
-            EXISTING_COMMENT=$(gh api "repos/${{ github.repository }}/issues/${ISSUE_NUM}/comments" \
+            EXISTING_COMMENT=$(gh api "repos/${REPO}/issues/${ISSUE_NUM}/comments" \
               --jq "[.[] | select(.body | test(\"Completed via.*PR #${PR_NUMBER}\"))] | length" 2>/dev/null || echo "0")
 
             if [[ "$EXISTING_COMMENT" == "0" ]]; then
@@ -373,19 +375,19 @@ jobs:
               if [[ -n "$TASK_ID" ]]; then
                 TASK_REF=" Task $TASK_ID"
               fi
-              gh issue comment "$ISSUE_NUM" --body "Completed via [PR #${PR_NUMBER}](${PR_URL}).${TASK_REF} merged to main."
+              gh issue comment "$ISSUE_NUM" --repo "$REPO" --body "Completed via [PR #${PR_NUMBER}](${PR_URL}).${TASK_REF} merged to main."
               echo "Posted closing comment on #$ISSUE_NUM"
             else
               echo "Closing comment already exists on #$ISSUE_NUM"
             fi
 
             # Apply status:done label (create if needed)
-            gh label create "status:done" --color "6F42C1" --description "Task is complete" --force 2>/dev/null || true
-            gh issue edit "$ISSUE_NUM" --add-label "status:done" 2>/dev/null || true
+            gh label create "status:done" --color "6F42C1" --description "Task is complete" --repo "$REPO" --force 2>/dev/null || true
+            gh issue edit "$ISSUE_NUM" --repo "$REPO" --add-label "status:done" 2>/dev/null || true
 
             # Remove stale status labels
             for STALE_LABEL in "status:available" "status:queued" "status:claimed" "status:in-review" "status:in-progress" "status:blocked" "status:verify-failed"; do
-              gh issue edit "$ISSUE_NUM" --remove-label "$STALE_LABEL" 2>/dev/null || true
+              gh issue edit "$ISSUE_NUM" --repo "$REPO" --remove-label "$STALE_LABEL" 2>/dev/null || true
             done
 
             echo "Updated labels on #$ISSUE_NUM (added status:done, removed stale)"
@@ -412,6 +414,7 @@ jobs:
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Extract conventional commit prefix from PR title
@@ -448,7 +451,7 @@ jobs:
 
           if [[ -n "$LABEL" ]]; then
             # Create label if it doesn't exist (idempotent)
-            gh label create "$LABEL" --force 2>/dev/null || true
-            gh pr edit "$PR_NUMBER" --add-label "$LABEL"
+            gh label create "$LABEL" --repo "$REPO" --force 2>/dev/null || true
+            gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "$LABEL"
             echo "Applied label '$LABEL' to PR #$PR_NUMBER (prefix: $PREFIX)"
           fi
