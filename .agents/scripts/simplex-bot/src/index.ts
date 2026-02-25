@@ -274,44 +274,69 @@ class SimplexAdapter {
     }
   }
 
+  /** Cache contact and group display names from a chat item for reply routing */
+  private cacheDisplayNames(chatDir: ChatItem["chatItem"]["chatDir"]): void {
+    if (chatDir?.contactId !== undefined) {
+      const contact = (chatDir as Record<string, unknown>).contact as
+        | { localDisplayName?: string }
+        | undefined;
+      if (contact?.localDisplayName) {
+        this.contactNames.set(chatDir.contactId, contact.localDisplayName);
+      }
+    }
+    if (chatDir?.groupId !== undefined) {
+      const groupInfo = (chatDir as Record<string, unknown>).groupInfo as
+        | { localDisplayName?: string }
+        | undefined;
+      if (groupInfo?.localDisplayName) {
+        this.groupNames.set(chatDir.groupId, groupInfo.localDisplayName);
+      }
+    }
+  }
+
+  /** Extract text content from a chat item, or null if not a text message */
+  private extractTextContent(item: ChatItem): string | null {
+    const content = item?.chatItem?.content;
+    if (content?.type !== "rcvMsgContent") {
+      return null;
+    }
+    const msgContent = content.msgContent;
+    if (msgContent?.type !== "text" || !msgContent.text) {
+      this.logger.debug(`Non-text message type: ${msgContent?.type}`);
+      return null;
+    }
+    return msgContent.text;
+  }
+
+  /** Check whether a command is allowed in the current chat context */
+  private isCommandAllowed(
+    cmdDef: CommandDefinition,
+    chatDir: ChatItem["chatItem"]["chatDir"],
+  ): { allowed: boolean; reason?: string } {
+    const isGroup = chatDir?.groupId !== undefined;
+    const isDm = chatDir?.contactId !== undefined;
+    if (isGroup && !cmdDef.groupEnabled) {
+      return { allowed: false, reason: `/${cmdDef.name} is not available in group chats.` };
+    }
+    if (isDm && !cmdDef.dmEnabled) {
+      return { allowed: false, reason: `/${cmdDef.name} is not available in direct messages.` };
+    }
+    return { allowed: true };
+  }
+
   /** Handle new chat items (incoming messages) */
   private async handleNewChatItems(event: NewChatItemsEvent): Promise<void> {
     for (const item of event.chatItems ?? []) {
-      // Cache display names from incoming messages for reply routing
       const chatDir = item?.chatItem?.chatDir;
-      if (chatDir?.contactId !== undefined) {
-        const contact = (chatDir as Record<string, unknown>).contact as
-          | { localDisplayName?: string }
-          | undefined;
-        if (contact?.localDisplayName) {
-          this.contactNames.set(chatDir.contactId, contact.localDisplayName);
-        }
-      }
-      if (chatDir?.groupId !== undefined) {
-        const groupInfo = (chatDir as Record<string, unknown>).groupInfo as
-          | { localDisplayName?: string }
-          | undefined;
-        if (groupInfo?.localDisplayName) {
-          this.groupNames.set(chatDir.groupId, groupInfo.localDisplayName);
-        }
-      }
+      this.cacheDisplayNames(chatDir);
 
-      const content = item?.chatItem?.content;
-      if (content?.type !== "rcvMsgContent") {
+      const text = this.extractTextContent(item);
+      if (!text) {
         continue;
       }
 
-      const msgContent = content.msgContent;
-      if (msgContent?.type !== "text" || !msgContent.text) {
-        // Non-text messages (voice, file, image) deferred to t1327.4
-        this.logger.debug(`Non-text message type: ${msgContent?.type}`);
-        continue;
-      }
-
-      const text = msgContent.text;
       this.logger.info(`Received message: ${text.substring(0, 100)}`);
 
-      // Try to parse as command
       const parsed = this.router.parse(text);
       if (!parsed) {
         this.logger.debug("Not a command, ignoring");
@@ -325,19 +350,12 @@ class SimplexAdapter {
         continue;
       }
 
-      // Check dmEnabled/groupEnabled before executing
-      const isGroup = chatDir?.groupId !== undefined;
-      const isDm = chatDir?.contactId !== undefined;
-      if (isGroup && !cmdDef.groupEnabled) {
-        await this.replyToItem(item, `/${cmdDef.name} is not available in group chats.`);
-        continue;
-      }
-      if (isDm && !cmdDef.dmEnabled) {
-        await this.replyToItem(item, `/${cmdDef.name} is not available in direct messages.`);
+      const permission = this.isCommandAllowed(cmdDef, chatDir);
+      if (!permission.allowed) {
+        await this.replyToItem(item, permission.reason ?? "Command not allowed.");
         continue;
       }
 
-      // Build context and execute
       const ctx: CommandContext = {
         command: parsed.command,
         args: parsed.args,
