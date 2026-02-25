@@ -133,11 +133,15 @@ build_json_cmd() {
 		jq -n --arg corrId "$corr_id" --arg cmd "$cmd" \
 			'{"corrId": $corrId, "cmd": $cmd}'
 	else
-		# Fallback: escape backslashes first, then double quotes (order matters)
+		# Fallback: escape backslashes first, then quotes, then control chars
 		local safe_corr_id="${corr_id//\\/\\\\}"
 		safe_corr_id="${safe_corr_id//\"/\\\"}"
 		local safe_cmd="${cmd//\\/\\\\}"
 		safe_cmd="${safe_cmd//\"/\\\"}"
+		# Escape common control characters that break JSON
+		safe_cmd="${safe_cmd//$'\n'/\\n}"
+		safe_cmd="${safe_cmd//$'\t'/\\t}"
+		safe_cmd="${safe_cmd//$'\r'/\\r}"
 		printf '{"corrId":"%s","cmd":"%s"}' "$safe_corr_id" "$safe_cmd"
 	fi
 	return 0

@@ -143,7 +143,7 @@ class SimplexAdapter {
   private corrIdCounter = 0;
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private suppressReconnect = false;
+  private intentionalDisconnect = false;
   private contactNames: Map<number, string> = new Map();
   private groupNames: Map<number, string> = new Map();
 
@@ -184,20 +184,21 @@ class SimplexAdapter {
         this.ws.onclose = () => {
           this.logger.warn("WebSocket connection closed");
           this.ws = null;
-          if (!this.suppressReconnect) {
+          if (!this.intentionalDisconnect) {
             this.scheduleReconnect();
           }
-          this.suppressReconnect = false;
+          this.intentionalDisconnect = false;
         };
 
         this.ws.onerror = (event: Event) => {
           this.logger.error("WebSocket error", event);
-          if (this.reconnectAttempts === 0) {
-            // Suppress the reconnect that onclose would otherwise trigger
-            this.suppressReconnect = true;
-            this.disconnect();
-            reject(new Error(`Failed to connect to ${url}`));
+          // Clean up the socket without triggering reconnect from onclose
+          if (this.ws) {
+            this.intentionalDisconnect = true;
+            this.ws.close();
+            this.ws = null;
           }
+          reject(new Error(`Failed to connect to ${url}`));
         };
       } catch (err) {
         reject(err);
@@ -205,8 +206,9 @@ class SimplexAdapter {
     });
   }
 
-  /** Disconnect from SimpleX CLI */
+  /** Disconnect from SimpleX CLI (suppresses reconnect scheduling) */
   disconnect(): void {
+    this.intentionalDisconnect = true;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;

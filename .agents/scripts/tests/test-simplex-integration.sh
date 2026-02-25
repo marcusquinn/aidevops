@@ -184,7 +184,7 @@ section_helper_script() {
 	local unknown_output
 	unknown_output="$(bash "$HELPER" nonexistent-command 2>&1)" || true
 
-	if echo "$unknown_output" | grep -qi "unknown\|error"; then
+	if echo "$unknown_output" | grep -qiE "unknown|error"; then
 		print_result "unknown command: returns error" 0
 	else
 		print_result "unknown command: returns error" 1 "Expected error for unknown command"
@@ -416,7 +416,7 @@ section_bot_framework() {
 			print_result "types.ts: defines NewChatItems event" 1 "Expected NewChatItems type"
 		fi
 
-		if grep -q "APISendMessages\|SimplexCommand" "$types_ts"; then
+		if grep -qE "APISendMessages|SimplexCommand" "$types_ts"; then
 			print_result "types.ts: defines API command types" 0
 		else
 			print_result "types.ts: defines API command types" 1 "Expected API command types"
@@ -433,7 +433,7 @@ section_bot_framework() {
 	local commands_ts="${bot_dir}/src/commands.ts"
 	if [[ -f "$commands_ts" ]]; then
 		local cmd_count
-		cmd_count="$(grep -cE 'name:\s*"' "$commands_ts" 2>/dev/null)" || cmd_count=0
+		cmd_count="$(grep -cE 'name:[[:space:]]*"' "$commands_ts" 2>/dev/null)" || cmd_count=0
 		if [[ "$cmd_count" -ge 5 ]]; then
 			print_result "commands.ts: has >= 5 starter commands (found: ${cmd_count})" 0
 		else
