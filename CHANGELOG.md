@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.129.0] - 2026-02-25
+
+### Added
+
+- add self-improvement principle and agent routing to pulse system (#2295)
+- t1331 — standalone circuit breaker for AI pulse supervisor (#2294)
+- t1327.6 Matterbridge integration for SimpleX-Matrix bridging
+- add SimpleX Chat bot API research report (t1327.1) (#2258)
+- t1328 matterbridge agent + t1329 cross-review judge pipeline (#2267)
+
+### Changed
+
+- Refactor: replace 37K-line bash supervisor with 123-line AI pulse system (#2291)
+- Documentation: rebase and consolidate SimpleX Chat subagent documentation (t1327.2) (#2266)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+
+### Fixed
+
+- make cmd_update() resilient to dirty tree, diverged history, and detached HEAD (#2289)
+- prevent aidevops update from dirtying git working tree (#2286) (#2287)
+- add CI failure debugging guidance to worker protocol (#2283)
+- sanity-check grep -c arithmetic errors from whitespace in output (#2280)
+
 ## [2.127.1] - 2026-02-25
 
 ### Fixed
