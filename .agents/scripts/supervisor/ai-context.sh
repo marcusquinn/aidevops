@@ -38,11 +38,36 @@ build_ai_context() {
 	# Placed first so the AI sees it before any issue/task lists.
 	context+="$(build_exclusion_context)\n\n"
 
-	# Section 1: Open GitHub Issues
-	context+="$(build_issues_context "$repo_path" "$scope")\n\n"
+	# Section 1: Open GitHub Issues (multi-repo, t1333)
+	# Include issues from all registered repos, not just the primary one.
+	# Previously only queried the cwd repo, missing issues from awardsapp etc.
+	local all_issue_repos
+	all_issue_repos=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks WHERE repo IS NOT NULL AND repo != '';" 2>/dev/null || echo "")
+	if [[ -n "$all_issue_repos" ]]; then
+		while IFS= read -r issue_repo; do
+			[[ -z "$issue_repo" || ! -d "$issue_repo" ]] && continue
+			context+="$(build_issues_context "$issue_repo" "$scope")\n\n"
+		done <<<"$all_issue_repos"
+		# If primary repo wasn't in the DB list, include it too
+		if ! echo "$all_issue_repos" | grep -qF "$repo_path"; then
+			context+="$(build_issues_context "$repo_path" "$scope")\n\n"
+		fi
+	else
+		context+="$(build_issues_context "$repo_path" "$scope")\n\n"
+	fi
 
-	# Section 2: Recent PRs
-	context+="$(build_prs_context "$repo_path" "$scope")\n\n"
+	# Section 2: Recent PRs (multi-repo, t1333)
+	if [[ -n "$all_issue_repos" ]]; then
+		while IFS= read -r pr_repo; do
+			[[ -z "$pr_repo" || ! -d "$pr_repo" ]] && continue
+			context+="$(build_prs_context "$pr_repo" "$scope")\n\n"
+		done <<<"$all_issue_repos"
+		if ! echo "$all_issue_repos" | grep -qF "$repo_path"; then
+			context+="$(build_prs_context "$repo_path" "$scope")\n\n"
+		fi
+	else
+		context+="$(build_prs_context "$repo_path" "$scope")\n\n"
+	fi
 
 	# Section 3: TODO.md State (multi-repo, t1188)
 	# Include TODO.md from all registered repos, not just the primary one.
@@ -221,7 +246,12 @@ build_issues_context() {
 	local limit=30
 	[[ "$scope" == "quick" ]] && limit=15
 
-	local output="## Open GitHub Issues\n\n"
+	# Resolve repo slug for --repo flag (t1333: cross-repo visibility)
+	local repo_slug repo_label
+	repo_slug=$(detect_repo_slug "$repo_path" 2>/dev/null || echo "")
+	repo_label=$(basename "$repo_path")
+
+	local output="## Open GitHub Issues — ${repo_label}\n\n"
 
 	if ! command -v gh &>/dev/null; then
 		output+="*gh CLI not available — skipping issue context*\n"
@@ -229,8 +259,15 @@ build_issues_context() {
 		return 0
 	fi
 
+	# Use --repo flag to query the correct repo regardless of cwd (t1333)
+	local repo_flag=""
+	if [[ -n "$repo_slug" ]]; then
+		repo_flag="--repo $repo_slug"
+	fi
+
 	local issues_json
-	issues_json=$(gh issue list --state open --limit "$limit" --json number,title,labels,createdAt,comments,assignees 2>/dev/null || echo "[]")
+	# shellcheck disable=SC2086
+	issues_json=$(gh issue list $repo_flag --state open --limit "$limit" --json number,title,labels,createdAt,comments,assignees 2>/dev/null || echo "[]")
 
 	local issue_count
 	issue_count=$(printf '%s' "$issues_json" | jq 'length' 2>/dev/null || echo 0)
@@ -293,7 +330,12 @@ build_prs_context() {
 	local limit=20
 	[[ "$scope" == "quick" ]] && limit=10
 
-	local output="## Recent Pull Requests (last 48h)\n\n"
+	# Resolve repo slug for --repo flag (t1333: cross-repo visibility)
+	local repo_slug repo_label
+	repo_slug=$(detect_repo_slug "$repo_path" 2>/dev/null || echo "")
+	repo_label=$(basename "$repo_path")
+
+	local output="## Recent Pull Requests (last 48h) — ${repo_label}\n\n"
 
 	if ! command -v gh &>/dev/null; then
 		output+="*gh CLI not available — skipping PR context*\n"
@@ -301,9 +343,16 @@ build_prs_context() {
 		return 0
 	fi
 
+	# Use --repo flag to query the correct repo regardless of cwd (t1333)
+	local repo_flag=""
+	if [[ -n "$repo_slug" ]]; then
+		repo_flag="--repo $repo_slug"
+	fi
+
 	# Get recent PRs (open + recently closed/merged)
 	local prs_json
-	prs_json=$(gh pr list --state all --limit "$limit" --json number,title,state,createdAt,mergedAt,closedAt,reviews,statusCheckRollup,headRefName,author 2>/dev/null || echo "[]")
+	# shellcheck disable=SC2086
+	prs_json=$(gh pr list $repo_flag --state all --limit "$limit" --json number,title,state,createdAt,mergedAt,closedAt,reviews,statusCheckRollup,headRefName,author 2>/dev/null || echo "[]")
 
 	local pr_count
 	pr_count=$(printf '%s' "$prs_json" | jq 'length' 2>/dev/null || echo 0)

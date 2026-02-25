@@ -68,6 +68,8 @@ Completion: NEVER mark `[x]` without merged PR (`pr:#NNN`) or `verified:YYYY-MM-
 
 Planning files go direct to main. Code changes need worktree + PR. Workers NEVER edit TODO.md.
 
+**Cross-repo awareness**: The supervisor manages tasks across all `repos.json` repos. When querying queue status, check the supervisor DB (`~/.aidevops/.agent-workspace/supervisor/supervisor.db`) for all active tasks across repos, not just the current repo's TODO.md. Use `gh issue list --repo <slug>` for each managed repo to get the full picture.
+
 Full rules: `reference/planning-detail.md`
 
 ## Git Workflow
@@ -114,7 +116,7 @@ Key capabilities (details in `reference/orchestration.md`, `reference/services.m
 
 - **Model routing**: haiku→flash→sonnet→pro→opus (cost-aware)
 - **Memory**: cross-session SQLite FTS5 (`/remember`, `/recall`)
-- **Orchestration**: supervisor dispatch, pulse scheduler, auto-pickup
+- **Orchestration**: supervisor dispatch, pulse scheduler, auto-pickup, cross-repo issue/PR/TODO visibility
 - **Skills**: `aidevops skills`, `/skills`
 - **Auto-update**: GitHub poll + daily skill/repo sync
 - **Browser**: Playwright, dev-browser (persistent login)
