@@ -108,7 +108,20 @@ Look at everything you fetched and pick up to **AVAILABLE** items — the highes
 - Prefer product repos over tooling repos (product value > tooling)
 - Prefer smaller/simpler tasks (faster throughput)
 
-**Deduplication:** Before dispatching, check if a PR or issue already has a running worker. Use the worker process list from Step 1 to avoid dispatching duplicate work. If you can't tell, skip items that look like they might already be in progress (e.g., PRs with very recent pushes from a bot/worker branch).
+**Deduplication (t2310):** Before dispatching each item, run the dedup helper to check if a worker is already running for the same issue, PR, or task. The helper normalizes titles by extracting canonical keys (issue-NNN, pr-NNN, task-tNNN) so that different title formats for the same work are correctly detected as duplicates.
+
+```bash
+# Check before dispatching — exit 0 means duplicate found, skip it
+if ~/.aidevops/agents/scripts/dispatch-dedup-helper.sh is-duplicate "Issue #<number>: <title>"; then
+  echo "Skipping: already has a running worker"
+else
+  # Safe to dispatch
+  opencode run --dir ~/Git/<repo> --title "Issue #<number>: <title>" \
+    "/full-loop Implement issue #<number> -- <description>" &
+fi
+```
+
+The helper extracts issue/PR/task numbers from any title format and checks both the process list and the supervisor DB. This prevents the same issue being dispatched multiple times with different title variations (e.g., "issue-2300-simplify-infra-scripts" vs "Issue #2300: t1337 Simplify Tier 3 infrastructure scripts").
 
 ## Step 4: Dispatch Workers
 
