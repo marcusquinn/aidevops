@@ -22,7 +22,7 @@ pro,gemini-2.5-pro,Capable large context
 grok,grok-3,Research and real-time web knowledge
 -->
 
-<!--TOON:subagents[55]{folder,purpose,key_files}:
+<!--TOON:subagents[56]{folder,purpose,key_files}:
 aidevops/,Framework internals - extending aidevops and architecture and plugins,setup|architecture|troubleshooting|self-improving-agents|claude-flow-comparison|plugins
 business/,Company orchestration - runner configs for company functions,company-runners
 memory/,Cross-session memory - SQLite FTS5 storage,README
@@ -75,6 +75,7 @@ services/analytics/,Website analytics - GA4 reporting,google-analytics
 services/monitoring/,Error monitoring and debugging,sentry|socket
 services/accounting/,Accounting integration - invoicing,quickfile
 services/database/,Database schemas - multi-org isolation Drizzle ORM and PostgreSQL RLS,multi-org-isolation|postgres-drizzle-skill
+tools/database/,Embedded database - PGlite local-first Postgres for desktop and extension apps,pglite-local-first
 services/document-processing/,Document processing - LLM-powered extraction,unstract
 tools/research/,Tech stack research - frontend technology detection providers,providers/unbuilt
 tools/research/,Tech stack research - open-source technology explorer provider,providers/openexplorer

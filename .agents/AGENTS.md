@@ -98,6 +98,7 @@ Read subagents on-demand. Full index: `subagent-index.toon`.
 | Email | `tools/ui/react-email.md`, `services/email/email-testing.md` |
 | Payments | `services/payments/revenuecat.md`, `services/payments/stripe.md` |
 | Security/Encryption | `tools/security/tirith.md`, `tools/credentials/encryption-stack.md` |
+| Database/Local-first | `tools/database/pglite-local-first.md`, `services/database/postgres-drizzle-skill.md` |
 | Local Development | `services/hosting/local-hosting.md` |
 | Infrastructure | `tools/infrastructure/cloud-gpu.md`, `tools/containers/orbstack.md`, `tools/containers/remote-dispatch.md` |
 | Accessibility | `services/accessibility/accessibility-audit.md` |
