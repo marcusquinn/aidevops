@@ -584,12 +584,51 @@ update_queue_health_issue() {
 		fi
 	fi
 
-	# Search for this runner's existing health issue
+	# Search for this runner's existing health issue using labels (more reliable
+	# than title search — GitHub search can miss titles with brackets). Labels
+	# "supervisor" + "$runner_user" are set on creation and survive title edits.
+	if [[ -z "$health_issue_number" ]]; then
+		local label_search_results
+		label_search_results=$(gh issue list --repo "$repo_slug" \
+			--label "supervisor" --label "$runner_user" \
+			--state open --json number,title \
+			--jq '[.[] | select(.title | startswith("[Supervisor:"))] | sort_by(.number) | reverse' 2>/dev/null || echo "[]")
+
+		# Extract the newest issue (highest number)
+		health_issue_number=$(printf '%s' "$label_search_results" | jq -r '.[0].number // empty' 2>/dev/null || echo "")
+
+		# Dedup guard: if multiple supervisor issues exist for this runner,
+		# close all but the newest one. This prevents accumulation from transient
+		# API failures that caused the search to miss the existing issue.
+		local dup_count
+		dup_count=$(printf '%s' "$label_search_results" | jq 'length' 2>/dev/null || echo "0")
+		if [[ "${dup_count:-0}" -gt 1 ]]; then
+			log_warn "  Phase 8c: Found $dup_count duplicate health issues for ${runner_user} — closing stale ones"
+			local dup_numbers
+			dup_numbers=$(printf '%s' "$label_search_results" | jq -r '.[1:][].number' 2>/dev/null || echo "")
+			while IFS= read -r dup_num; do
+				[[ -z "$dup_num" ]] && continue
+				gh issue close "$dup_num" --repo "$repo_slug" \
+					--comment "Closing duplicate supervisor health issue — superseded by #${health_issue_number}." 2>/dev/null || true
+				log_info "  Phase 8c: Closed duplicate health issue #$dup_num (kept #$health_issue_number)"
+			done <<<"$dup_numbers"
+		fi
+	fi
+
+	# Fallback: title-based search if label search found nothing
+	# (covers issues created before labels were added, or label mismatch)
 	if [[ -z "$health_issue_number" ]]; then
 		health_issue_number=$(gh issue list --repo "$repo_slug" \
 			--search "in:title ${runner_prefix}" \
 			--state open --json number,title \
 			--jq "[.[] | select(.title | startswith(\"${runner_prefix}\"))][0].number" 2>/dev/null || echo "")
+		# Backfill labels on issues found by title search so future lookups use labels
+		if [[ -n "$health_issue_number" ]]; then
+			gh label create "$runner_user" --repo "$repo_slug" --color "0E8A16" --description "Supervisor runner: ${runner_user}" --force 2>/dev/null || true
+			gh issue edit "$health_issue_number" --repo "$repo_slug" \
+				--add-label "supervisor" --add-label "$runner_user" 2>/dev/null || true
+			log_info "  Phase 8c: Backfilled labels on health issue #$health_issue_number"
+		fi
 	fi
 
 	# Migrate legacy [Supervisor] health issue to [Supervisor:username] format (t1036)
@@ -612,13 +651,17 @@ update_queue_health_issue() {
 				gh issue edit "$legacy_issue" --repo "$repo_slug" --title "$migrated_title" >/dev/null 2>&1 || true
 				log_info "  Phase 8c: Migrated legacy health issue #$legacy_issue to ${runner_prefix} format (t1036)"
 			fi
+			# Backfill labels on migrated issue
+			gh label create "$runner_user" --repo "$repo_slug" --color "0E8A16" --description "Supervisor runner: ${runner_user}" --force 2>/dev/null || true
+			gh issue edit "$health_issue_number" --repo "$repo_slug" \
+				--add-label "supervisor" --add-label "$runner_user" 2>/dev/null || true
 		fi
 	fi
 
 	# Create the issue if it doesn't exist
 	if [[ -z "$health_issue_number" ]]; then
 		# Ensure username label exists
-		gh label create "$runner_user" --repo "$repo_slug" --color "0E8A16" --description "Supervisor runner: ${runner_user}" 2>/dev/null || true
+		gh label create "$runner_user" --repo "$repo_slug" --color "0E8A16" --description "Supervisor runner: ${runner_user}" --force 2>/dev/null || true
 		health_issue_number=$(gh issue create --repo "$repo_slug" \
 			--title "${runner_prefix} starting..." \
 			--body "Live supervisor queue status for **${runner_user}**. Updated when stats change. Pin this issue for at-a-glance monitoring." \
