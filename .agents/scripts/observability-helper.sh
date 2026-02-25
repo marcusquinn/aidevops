@@ -491,7 +491,7 @@ cmd_summary() {
 	# Auto-ingest before showing stats
 	cmd_ingest --quiet 2>/dev/null || true
 
-	local where_clause="WHERE recorded_at >= datetime('now', '-${days} days')"
+	local where_clause="WHERE recorded_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days')"
 	[[ -n "$project_filter" ]] && where_clause="$where_clause AND project = '$(sql_escape "$project_filter")'"
 	[[ -n "$provider_filter" ]] && where_clause="$where_clause AND provider = '$(sql_escape "$provider_filter")'"
 
@@ -623,7 +623,7 @@ cmd_models() {
 
 	cmd_ingest --quiet 2>/dev/null || true
 
-	local where_clause="WHERE recorded_at >= datetime('now', '-${days} days')"
+	local where_clause="WHERE recorded_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days')"
 	[[ -n "$project_filter" ]] && where_clause="$where_clause AND project = '$(sql_escape "$project_filter")'"
 
 	if [[ "$json_flag" == "true" ]]; then
@@ -698,7 +698,7 @@ cmd_projects() {
 
 	cmd_ingest --quiet 2>/dev/null || true
 
-	local where_clause="WHERE recorded_at >= datetime('now', '-${days} days')"
+	local where_clause="WHERE recorded_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days')"
 
 	if [[ "$json_flag" == "true" ]]; then
 		db_query_json "
@@ -777,7 +777,7 @@ cmd_costs() {
 
 	cmd_ingest --quiet 2>/dev/null || true
 
-	local where_clause="WHERE recorded_at >= datetime('now', '-${days} days')"
+	local where_clause="WHERE recorded_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days')"
 	[[ -n "$project_filter" ]] && where_clause="$where_clause AND project = '$(sql_escape "$project_filter")'"
 	[[ -n "$provider_filter" ]] && where_clause="$where_clause AND provider = '$(sql_escape "$provider_filter")'"
 
@@ -925,7 +925,7 @@ cmd_trend() {
 
 	cmd_ingest --quiet 2>/dev/null || true
 
-	local where_clause="WHERE recorded_at >= datetime('now', '-${days} days')"
+	local where_clause="WHERE recorded_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days')"
 	[[ -n "$project_filter" ]] && where_clause="$where_clause AND project = '$(sql_escape "$project_filter")'"
 
 	local date_expr
@@ -1147,7 +1147,7 @@ cmd_sync_budget() {
 			SUM(output_tokens),
 			ROUND(SUM(cost_total), 6)
 		FROM llm_requests
-		WHERE recorded_at >= datetime('now', '-${days} days')
+		WHERE recorded_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days')
 		GROUP BY provider, model, date(recorded_at);
 	" | while IFS='|' read -r prov mdl _day inp outp cost; do
 		[[ -z "$prov" ]] && continue
@@ -1308,7 +1308,7 @@ check_rate_limit_risk() {
 		SELECT COALESCE(COUNT(*), 0)
 		FROM llm_requests
 		WHERE provider = '$(sql_escape "$provider")'
-		AND recorded_at >= datetime('now', '-${window_minutes} minutes');
+		AND recorded_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${window_minutes} minutes');
 	") || actual_reqs=0
 	actual_reqs="${actual_reqs:-0}"
 
@@ -1316,7 +1316,7 @@ check_rate_limit_risk() {
 		SELECT COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens), 0)
 		FROM llm_requests
 		WHERE provider = '$(sql_escape "$provider")'
-		AND recorded_at >= datetime('now', '-${window_minutes} minutes');
+		AND recorded_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${window_minutes} minutes');
 	") || actual_tokens=0
 	actual_tokens="${actual_tokens:-0}"
 
@@ -1401,7 +1401,7 @@ cmd_rate_limits() {
 		configured_providers=$(_get_configured_providers) || configured_providers=""
 		db_providers=$(db_query "
 			SELECT DISTINCT provider FROM llm_requests
-			WHERE recorded_at >= datetime('now', '-1 days')
+			WHERE recorded_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-1 days')
 			ORDER BY provider;
 		") || db_providers=""
 
@@ -1444,7 +1444,7 @@ cmd_rate_limits() {
 			SELECT COALESCE(COUNT(*), 0)
 			FROM llm_requests
 			WHERE provider = '$(sql_escape "$provider")'
-			AND recorded_at >= datetime('now', '-${effective_window} minutes');
+			AND recorded_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${effective_window} minutes');
 		") || actual_reqs=0
 		actual_reqs="${actual_reqs:-0}"
 
@@ -1452,7 +1452,7 @@ cmd_rate_limits() {
 			SELECT COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens), 0)
 			FROM llm_requests
 			WHERE provider = '$(sql_escape "$provider")'
-			AND recorded_at >= datetime('now', '-${effective_window} minutes');
+			AND recorded_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${effective_window} minutes');
 		") || actual_tokens=0
 		actual_tokens="${actual_tokens:-0}"
 
@@ -1587,8 +1587,8 @@ cmd_prune() {
 	before_count=$(db_query "SELECT COUNT(*) FROM llm_requests;") || before_count=0
 
 	db_query "
-		DELETE FROM llm_requests WHERE recorded_at < datetime('now', '-${days} days');
-		DELETE FROM parse_offsets WHERE last_parsed < datetime('now', '-${days} days');
+		DELETE FROM llm_requests WHERE recorded_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days');
+		DELETE FROM parse_offsets WHERE last_parsed < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days');
 	" || true
 
 	local after_count
