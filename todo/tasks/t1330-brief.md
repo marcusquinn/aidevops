@@ -40,23 +40,28 @@ Key files:
 ## Acceptance Criteria
 
 - [ ] Rate limit definitions exist per provider (requests/min, tokens/min)
+
   ```yaml
   verify:
     method: codebase
     pattern: "rate.limit|requests_per_min|tokens_per_min"
     path: ".agents/scripts/"
   ```
+
 - [ ] `aidevops stats rate-limits` (or equivalent) shows current utilisation per provider
 - [ ] When a provider exceeds 80% of its rate limit, model routing prefers alternatives
 - [ ] Rate limit data is derived from existing observability SQLite DB (no new data collection)
+
   ```yaml
   verify:
     method: codebase
     pattern: "observability.*db\\|llm_requests"
     path: ".agents/scripts/"
   ```
+
 - [ ] Works with both token-billed and subscription providers
 - [ ] ShellCheck clean
+
   ```yaml
   verify:
     method: bash

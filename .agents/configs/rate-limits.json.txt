@@ -1,0 +1,80 @@
+{
+  "_comment": "Rate limit configuration per provider (t1330). Copy to ~/.config/aidevops/rate-limits.json and adjust for your plan.",
+  "_note": "Values are per-minute limits. Set to 0 to disable tracking for that metric.",
+  "_threshold": "warn_pct controls when a provider is flagged as throttle-risk (default 80%).",
+  "warn_pct": 80,
+  "window_minutes": 1,
+  "providers": {
+    "anthropic": {
+      "_comment": "Anthropic Claude API - limits vary by plan tier. These are conservative defaults for Pro/Team plans.",
+      "_docs": "https://docs.anthropic.com/en/api/rate-limits",
+      "requests_per_min": 50,
+      "tokens_per_min": 40000,
+      "input_tokens_per_min": 0,
+      "output_tokens_per_min": 0,
+      "billing_type": "subscription"
+    },
+    "openai": {
+      "_comment": "OpenAI API - limits vary by usage tier. Tier 1 defaults shown.",
+      "_docs": "https://platform.openai.com/docs/guides/rate-limits",
+      "requests_per_min": 500,
+      "tokens_per_min": 200000,
+      "input_tokens_per_min": 0,
+      "output_tokens_per_min": 0,
+      "billing_type": "token"
+    },
+    "google": {
+      "_comment": "Google Gemini API - limits vary by model and plan.",
+      "_docs": "https://ai.google.dev/gemini-api/docs/rate-limits",
+      "requests_per_min": 60,
+      "tokens_per_min": 1000000,
+      "input_tokens_per_min": 0,
+      "output_tokens_per_min": 0,
+      "billing_type": "token"
+    },
+    "deepseek": {
+      "_comment": "DeepSeek API - limits vary by plan.",
+      "_docs": "https://platform.deepseek.com/docs",
+      "requests_per_min": 60,
+      "tokens_per_min": 100000,
+      "input_tokens_per_min": 0,
+      "output_tokens_per_min": 0,
+      "billing_type": "token"
+    },
+    "openrouter": {
+      "_comment": "OpenRouter - limits depend on credits and plan.",
+      "_docs": "https://openrouter.ai/docs/limits",
+      "requests_per_min": 200,
+      "tokens_per_min": 500000,
+      "input_tokens_per_min": 0,
+      "output_tokens_per_min": 0,
+      "billing_type": "token"
+    },
+    "groq": {
+      "_comment": "Groq API - free tier limits shown. Paid plans are higher.",
+      "_docs": "https://console.groq.com/docs/rate-limits",
+      "requests_per_min": 30,
+      "tokens_per_min": 6000,
+      "input_tokens_per_min": 0,
+      "output_tokens_per_min": 0,
+      "billing_type": "token"
+    },
+    "opencode": {
+      "_comment": "OpenCode Zen proxy - inherits limits from underlying provider.",
+      "requests_per_min": 50,
+      "tokens_per_min": 40000,
+      "input_tokens_per_min": 0,
+      "output_tokens_per_min": 0,
+      "billing_type": "subscription"
+    },
+    "xai": {
+      "_comment": "xAI Grok API - limits vary by plan.",
+      "_docs": "https://docs.x.ai/docs/rate-limits",
+      "requests_per_min": 60,
+      "tokens_per_min": 100000,
+      "input_tokens_per_min": 0,
+      "output_tokens_per_min": 0,
+      "billing_type": "token"
+    }
+  }
+}

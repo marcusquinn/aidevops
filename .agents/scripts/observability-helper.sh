@@ -22,6 +22,7 @@
 #   trend           Show usage trends over time
 #   record          Manually record an LLM request
 #   sync-budget     Sync parsed data to budget-tracker (t1100)
+#   rate-limits     Show rate limit utilisation per provider (t1330)
 #   prune           Remove old data (default: keep 90 days)
 #   help            Show this help
 #
@@ -35,7 +36,7 @@
 # Storage: ~/.aidevops/.agent-workspace/observability.db
 #
 # Author: AI DevOps Framework
-# Version: 1.0.0
+# Version: 1.1.0
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
@@ -53,6 +54,12 @@ readonly OBS_DB="${OBS_DIR}/observability.db"
 readonly CLAUDE_LOG_DIR="${HOME}/.claude/projects"
 readonly DEFAULT_LOOKBACK_DAYS=30
 readonly DEFAULT_PRUNE_DAYS=90
+
+# Rate limit config (t1330)
+readonly RATE_LIMITS_CONFIG_USER="${HOME}/.config/aidevops/rate-limits.json"
+readonly RATE_LIMITS_CONFIG_TEMPLATE="${SCRIPT_DIR}/../configs/rate-limits.json.txt"
+readonly DEFAULT_WARN_PCT=80
+readonly DEFAULT_WINDOW_MINUTES=1
 
 # =============================================================================
 # Database Setup
@@ -484,7 +491,7 @@ cmd_summary() {
 	# Auto-ingest before showing stats
 	cmd_ingest --quiet 2>/dev/null || true
 
-	local where_clause="WHERE recorded_at >= datetime('now', '-${days} days')"
+	local where_clause="WHERE recorded_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days')"
 	[[ -n "$project_filter" ]] && where_clause="$where_clause AND project = '$(sql_escape "$project_filter")'"
 	[[ -n "$provider_filter" ]] && where_clause="$where_clause AND provider = '$(sql_escape "$provider_filter")'"
 
@@ -616,7 +623,7 @@ cmd_models() {
 
 	cmd_ingest --quiet 2>/dev/null || true
 
-	local where_clause="WHERE recorded_at >= datetime('now', '-${days} days')"
+	local where_clause="WHERE recorded_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days')"
 	[[ -n "$project_filter" ]] && where_clause="$where_clause AND project = '$(sql_escape "$project_filter")'"
 
 	if [[ "$json_flag" == "true" ]]; then
@@ -691,7 +698,7 @@ cmd_projects() {
 
 	cmd_ingest --quiet 2>/dev/null || true
 
-	local where_clause="WHERE recorded_at >= datetime('now', '-${days} days')"
+	local where_clause="WHERE recorded_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days')"
 
 	if [[ "$json_flag" == "true" ]]; then
 		db_query_json "
@@ -770,7 +777,7 @@ cmd_costs() {
 
 	cmd_ingest --quiet 2>/dev/null || true
 
-	local where_clause="WHERE recorded_at >= datetime('now', '-${days} days')"
+	local where_clause="WHERE recorded_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days')"
 	[[ -n "$project_filter" ]] && where_clause="$where_clause AND project = '$(sql_escape "$project_filter")'"
 	[[ -n "$provider_filter" ]] && where_clause="$where_clause AND provider = '$(sql_escape "$provider_filter")'"
 
@@ -918,7 +925,7 @@ cmd_trend() {
 
 	cmd_ingest --quiet 2>/dev/null || true
 
-	local where_clause="WHERE recorded_at >= datetime('now', '-${days} days')"
+	local where_clause="WHERE recorded_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days')"
 	[[ -n "$project_filter" ]] && where_clause="$where_clause AND project = '$(sql_escape "$project_filter")'"
 
 	local date_expr
@@ -1140,7 +1147,7 @@ cmd_sync_budget() {
 			SUM(output_tokens),
 			ROUND(SUM(cost_total), 6)
 		FROM llm_requests
-		WHERE recorded_at >= datetime('now', '-${days} days')
+		WHERE recorded_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days')
 		GROUP BY provider, model, date(recorded_at);
 	" | while IFS='|' read -r prov mdl _day inp outp cost; do
 		[[ -z "$prov" ]] && continue
@@ -1156,6 +1163,408 @@ cmd_sync_budget() {
 	if [[ "$quiet" != "true" ]]; then
 		print_success "Synced observability data to budget tracker"
 	fi
+
+	return 0
+}
+
+# =============================================================================
+# Rate Limit Tracking (t1330)
+# =============================================================================
+
+# Load rate limit config from user config or template.
+# Returns the config file path, or empty string if neither exists.
+_get_rate_limits_config() {
+	if [[ -f "$RATE_LIMITS_CONFIG_USER" ]]; then
+		echo "$RATE_LIMITS_CONFIG_USER"
+		return 0
+	fi
+	if [[ -f "$RATE_LIMITS_CONFIG_TEMPLATE" ]]; then
+		echo "$RATE_LIMITS_CONFIG_TEMPLATE"
+		return 0
+	fi
+	return 1
+}
+
+# Sanitize a value to an unsigned integer, returning fallback if non-numeric.
+# Args: $1=value, $2=fallback (default 0)
+_sanitize_uint() {
+	local val="$1"
+	local fallback="${2:-0}"
+	if [[ "$val" =~ ^[0-9]+$ ]]; then
+		echo "$val"
+	else
+		echo "$fallback"
+	fi
+	return 0
+}
+
+# Get rate limit value for a provider field from config JSON.
+# Args: $1=provider, $2=field (requests_per_min|tokens_per_min|billing_type)
+# Returns the value or 0 if not configured.
+_get_rate_limit_value() {
+	local provider="$1"
+	local field="$2"
+	local config_file
+	config_file=$(_get_rate_limits_config) || {
+		echo "0"
+		return 0
+	}
+	if ! command -v jq &>/dev/null; then
+		echo "0"
+		return 0
+	fi
+	local val
+	val=$(jq -r --arg p "$provider" --arg f "$field" \
+		'.providers[$p][$f] // 0' "$config_file") || val="0"
+	echo "${val:-0}"
+	return 0
+}
+
+# Get the warn_pct threshold from config (default 80).
+_get_warn_pct() {
+	local config_file
+	config_file=$(_get_rate_limits_config) || {
+		echo "$DEFAULT_WARN_PCT"
+		return 0
+	}
+	if ! command -v jq &>/dev/null; then
+		echo "$DEFAULT_WARN_PCT"
+		return 0
+	fi
+	local val
+	val=$(jq -r '.warn_pct // 80' "$config_file") || val="$DEFAULT_WARN_PCT"
+	echo "${val:-$DEFAULT_WARN_PCT}"
+	return 0
+}
+
+# Get the rolling window in minutes from config (default 1).
+_get_window_minutes() {
+	local config_file
+	config_file=$(_get_rate_limits_config) || {
+		echo "$DEFAULT_WINDOW_MINUTES"
+		return 0
+	}
+	if ! command -v jq &>/dev/null; then
+		echo "$DEFAULT_WINDOW_MINUTES"
+		return 0
+	fi
+	local val
+	val=$(jq -r '.window_minutes // 1' "$config_file") || val="$DEFAULT_WINDOW_MINUTES"
+	echo "${val:-$DEFAULT_WINDOW_MINUTES}"
+	return 0
+}
+
+# Get list of configured providers from rate-limits config.
+_get_configured_providers() {
+	local config_file
+	config_file=$(_get_rate_limits_config) || {
+		echo ""
+		return 0
+	}
+	if ! command -v jq &>/dev/null; then
+		echo ""
+		return 0
+	fi
+	jq -r '.providers | keys[]' "$config_file" || echo ""
+	return 0
+}
+
+# Check if a provider is at throttle risk based on current utilisation.
+# Args: $1=provider
+# Returns: 0=ok, 1=throttle-risk (>=warn_pct), 2=critical (>=95%)
+# Outputs: status string on stdout: "ok", "warn", or "critical"
+check_rate_limit_risk() {
+	local provider="$1"
+
+	local window_minutes
+	window_minutes=$(_get_window_minutes)
+	# Validate window_minutes is a positive integer to prevent SQL injection/malformed queries
+	if [[ ! "$window_minutes" =~ ^[0-9]+$ ]] || [[ "$window_minutes" -eq 0 ]]; then
+		window_minutes="$DEFAULT_WINDOW_MINUTES"
+	fi
+	local warn_pct
+	warn_pct=$(_get_warn_pct)
+	# Validate warn_pct is a positive integer
+	if [[ ! "$warn_pct" =~ ^[0-9]+$ ]]; then
+		warn_pct="$DEFAULT_WARN_PCT"
+	fi
+
+	local req_limit tok_limit
+	req_limit=$(_get_rate_limit_value "$provider" "requests_per_min")
+	tok_limit=$(_get_rate_limit_value "$provider" "tokens_per_min")
+	# Sanitize to integers — config values may be non-numeric from malformed JSON
+	req_limit=$(_sanitize_uint "$req_limit" 0)
+	tok_limit=$(_sanitize_uint "$tok_limit" 0)
+
+	# If no limits configured for this provider, it's always ok
+	if [[ "$req_limit" == "0" && "$tok_limit" == "0" ]]; then
+		echo "ok"
+		return 0
+	fi
+
+	# Query actual usage in the rolling window from observability DB
+	local actual_reqs actual_tokens
+	actual_reqs=$(db_query "
+		SELECT COALESCE(COUNT(*), 0)
+		FROM llm_requests
+		WHERE provider = '$(sql_escape "$provider")'
+		AND recorded_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${window_minutes} minutes');
+	") || actual_reqs=0
+	actual_reqs="${actual_reqs:-0}"
+
+	actual_tokens=$(db_query "
+		SELECT COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens), 0)
+		FROM llm_requests
+		WHERE provider = '$(sql_escape "$provider")'
+		AND recorded_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${window_minutes} minutes');
+	") || actual_tokens=0
+	actual_tokens="${actual_tokens:-0}"
+
+	# Calculate utilisation percentages
+	local req_pct=0 tok_pct=0
+	if [[ "$req_limit" -gt 0 ]]; then
+		req_pct=$(awk "BEGIN { printf \"%d\", $actual_reqs * 100 / $req_limit }")
+	fi
+	if [[ "$tok_limit" -gt 0 ]]; then
+		tok_pct=$(awk "BEGIN { printf \"%d\", $actual_tokens * 100 / $tok_limit }")
+	fi
+
+	# Use the higher of the two utilisation percentages
+	local max_pct
+	max_pct=$(awk "BEGIN { print ($req_pct > $tok_pct) ? $req_pct : $tok_pct }")
+
+	if [[ "$max_pct" -ge 95 ]]; then
+		echo "critical"
+		return 2
+	elif [[ "$max_pct" -ge "$warn_pct" ]]; then
+		echo "warn"
+		return 1
+	fi
+
+	echo "ok"
+	return 0
+}
+
+# Show rate limit utilisation per provider (t1330)
+cmd_rate_limits() {
+	local json_flag=false
+	local provider_filter=""
+	local window_minutes=""
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--json)
+			json_flag=true
+			shift
+			;;
+		--provider)
+			provider_filter="${2:-}"
+			shift 2
+			;;
+		--window)
+			window_minutes="${2:-}"
+			shift 2
+			;;
+		*) shift ;;
+		esac
+	done
+
+	# Auto-ingest before showing stats.
+	# Keep stdout clean so --json remains machine-parseable.
+	# Redirect both stdout and stderr to prevent any output contamination.
+	cmd_ingest --quiet >/dev/null 2>&1 || true
+
+	local config_file
+	config_file=$(_get_rate_limits_config) || config_file=""
+
+	local effective_window
+	effective_window="${window_minutes:-$(_get_window_minutes)}"
+	# Validate effective_window is a positive integer to prevent SQL injection/malformed queries
+	if [[ ! "$effective_window" =~ ^[0-9]+$ ]] || [[ "$effective_window" -eq 0 ]]; then
+		print_error "--window must be a positive integer (minutes)"
+		return 1
+	fi
+	local warn_pct
+	warn_pct=$(_get_warn_pct)
+	# Validate warn_pct is a positive integer
+	if [[ ! "$warn_pct" =~ ^[0-9]+$ ]]; then
+		warn_pct="$DEFAULT_WARN_PCT"
+	fi
+
+	# Get providers to display: from config + any seen in DB
+	local -a providers=()
+	if [[ -n "$provider_filter" ]]; then
+		providers=("$provider_filter")
+	else
+		# Merge configured providers with providers seen in DB
+		local configured_providers db_providers
+		configured_providers=$(_get_configured_providers) || configured_providers=""
+		db_providers=$(db_query "
+			SELECT DISTINCT provider FROM llm_requests
+			WHERE recorded_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-1 days')
+			ORDER BY provider;
+		") || db_providers=""
+
+		local seen_providers=""
+		while IFS= read -r p; do
+			[[ -z "$p" ]] && continue
+			if [[ "$seen_providers" != *"|${p}|"* ]]; then
+				providers+=("$p")
+				seen_providers="${seen_providers}|${p}|"
+			fi
+		done < <(printf '%s\n%s\n' "$configured_providers" "$db_providers")
+	fi
+
+	if [[ ${#providers[@]} -eq 0 ]]; then
+		if [[ "$json_flag" == "true" ]]; then
+			echo "[]"
+		else
+			print_info "No provider data found. Run 'observability-helper.sh ingest' first."
+		fi
+		return 0
+	fi
+
+	# Build result rows
+	local -a result_rows=()
+	for provider in "${providers[@]}"; do
+		[[ -z "$provider" ]] && continue
+
+		local req_limit tok_limit billing_type
+		req_limit=$(_get_rate_limit_value "$provider" "requests_per_min")
+		tok_limit=$(_get_rate_limit_value "$provider" "tokens_per_min")
+		# Sanitize to integers — config values may be non-numeric from malformed JSON
+		req_limit=$(_sanitize_uint "$req_limit" 0)
+		tok_limit=$(_sanitize_uint "$tok_limit" 0)
+		billing_type=$(_get_rate_limit_value "$provider" "billing_type")
+		[[ "$billing_type" == "0" ]] && billing_type="unknown"
+
+		# Actual usage in rolling window
+		local actual_reqs actual_tokens
+		actual_reqs=$(db_query "
+			SELECT COALESCE(COUNT(*), 0)
+			FROM llm_requests
+			WHERE provider = '$(sql_escape "$provider")'
+			AND recorded_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${effective_window} minutes');
+		") || actual_reqs=0
+		actual_reqs="${actual_reqs:-0}"
+
+		actual_tokens=$(db_query "
+			SELECT COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens), 0)
+			FROM llm_requests
+			WHERE provider = '$(sql_escape "$provider")'
+			AND recorded_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${effective_window} minutes');
+		") || actual_tokens=0
+		actual_tokens="${actual_tokens:-0}"
+
+		# Calculate utilisation percentages
+		local req_pct=0 tok_pct=0
+		if [[ "$req_limit" != "0" && "$req_limit" -gt 0 ]]; then
+			req_pct=$(awk "BEGIN { printf \"%d\", $actual_reqs * 100 / $req_limit }")
+		fi
+		if [[ "$tok_limit" != "0" && "$tok_limit" -gt 0 ]]; then
+			tok_pct=$(awk "BEGIN { printf \"%d\", $actual_tokens * 100 / $tok_limit }")
+		fi
+
+		# Determine status
+		local max_pct
+		max_pct=$(awk "BEGIN { print ($req_pct > $tok_pct) ? $req_pct : $tok_pct }")
+		local status="ok"
+		if [[ "$max_pct" -ge 95 ]]; then
+			status="critical"
+		elif [[ "$max_pct" -ge "$warn_pct" ]]; then
+			status="warn"
+		fi
+
+		result_rows+=("${provider}|${actual_reqs}|${req_limit}|${req_pct}|${actual_tokens}|${tok_limit}|${tok_pct}|${status}|${billing_type}")
+	done
+
+	if [[ "$json_flag" == "true" ]]; then
+		echo "["
+		local first=true
+		for row in "${result_rows[@]}"; do
+			local prov ar rl rp at tl tp st bt
+			IFS='|' read -r prov ar rl rp at tl tp st bt <<<"$row"
+			[[ "$first" == "true" ]] || echo ","
+			first=false
+			printf '  %s' "$(jq -c -n \
+				--arg prov "$prov" \
+				--argjson ar "${ar:-0}" \
+				--argjson rl "${rl:-0}" \
+				--argjson rp "${rp:-0}" \
+				--argjson at "${at:-0}" \
+				--argjson tl "${tl:-0}" \
+				--argjson tp "${tp:-0}" \
+				--arg st "$st" \
+				--arg bt "$bt" \
+				--argjson ew "${effective_window:-1}" \
+				--argjson wp "${warn_pct:-80}" \
+				'{provider: $prov, requests_used: $ar, requests_limit: $rl, requests_pct: $rp, tokens_used: $at, tokens_limit: $tl, tokens_pct: $tp, status: $st, billing_type: $bt, window_minutes: $ew, warn_pct: $wp}')"
+		done
+		echo ""
+		echo "]"
+		return 0
+	fi
+
+	echo ""
+	echo "Rate Limit Utilisation (${effective_window}min rolling window, warn at ${warn_pct}%)"
+	echo "========================================================================"
+	echo ""
+
+	if [[ -z "$config_file" ]]; then
+		print_warning "No rate-limits.json config found. Copy .agents/configs/rate-limits.json.txt to ~/.config/aidevops/rate-limits.json and adjust for your plan."
+		echo ""
+	fi
+
+	printf "  %-12s %-8s %-12s %-8s %-12s %-12s %-8s %-10s\n" \
+		"Provider" "Reqs" "Req Limit" "Req%" "Tokens" "Tok Limit" "Tok%" "Status"
+	printf "  %-12s %-8s %-12s %-8s %-12s %-12s %-8s %-10s\n" \
+		"--------" "----" "---------" "----" "------" "---------" "----" "------"
+
+	local has_warnings=false
+	for row in "${result_rows[@]}"; do
+		local prov ar rl rp at tl tp st bt
+		IFS='|' read -r prov ar rl rp at tl tp st bt <<<"$row"
+
+		local req_display tok_display status_display
+		req_display="${ar}/${rl}"
+		[[ "$rl" == "0" ]] && req_display="${ar}/n/a"
+		tok_display="${at}/${tl}"
+		[[ "$tl" == "0" ]] && tok_display="${at}/n/a"
+
+		case "$st" in
+		critical)
+			status_display="${RED}CRITICAL${NC}"
+			has_warnings=true
+			;;
+		warn)
+			status_display="${YELLOW}WARN${NC}"
+			has_warnings=true
+			;;
+		*)
+			status_display="${GREEN}ok${NC}"
+			;;
+		esac
+
+		printf "  %-12s %-8s %-12s %-8s %-12s %-12s %-8s " \
+			"$prov" "$ar" "$req_display" "${rp}%" "$at" "$tok_display" "${tp}%"
+		printf "%-10b\n" "$status_display"
+	done
+
+	echo ""
+
+	if [[ "$has_warnings" == "true" ]]; then
+		echo "  Providers at or above ${warn_pct}% utilisation are flagged as throttle-risk."
+		echo "  Model routing will prefer alternative providers for these."
+		echo ""
+	fi
+
+	# Show config location hint
+	if [[ -n "$config_file" ]]; then
+		echo "  Config: $config_file"
+	else
+		echo "  Config: not found (using defaults — copy .agents/configs/rate-limits.json.txt to ~/.config/aidevops/rate-limits.json)"
+	fi
+	echo ""
 
 	return 0
 }
@@ -1178,8 +1587,8 @@ cmd_prune() {
 	before_count=$(db_query "SELECT COUNT(*) FROM llm_requests;") || before_count=0
 
 	db_query "
-		DELETE FROM llm_requests WHERE recorded_at < datetime('now', '-${days} days');
-		DELETE FROM parse_offsets WHERE last_parsed < datetime('now', '-${days} days');
+		DELETE FROM llm_requests WHERE recorded_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days');
+		DELETE FROM parse_offsets WHERE last_parsed < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days');
 	" || true
 
 	local after_count
@@ -1212,6 +1621,7 @@ cmd_help() {
 	echo "  trend               Show usage trends over time"
 	echo "  record              Manually record an LLM request"
 	echo "  sync-budget         Sync data to budget-tracker (t1100)"
+	echo "  rate-limits         Show rate limit utilisation per provider (t1330)"
 	echo "  prune               Remove old data (default: keep 90 days)"
 	echo "  help                Show this help"
 	echo ""
@@ -1223,6 +1633,11 @@ cmd_help() {
 	echo "  --provider X        Filter by provider"
 	echo "  --weekly            Use weekly granularity (trend command)"
 	echo "  --hourly            Use hourly granularity (trend command)"
+	echo ""
+	echo "Rate-limits options:"
+	echo "  --provider X        Filter by provider"
+	echo "  --window N          Rolling window in minutes (default: 1)"
+	echo "  --json              Output in JSON format"
 	echo ""
 	echo "Record options:"
 	echo "  --model X           Model name (required)"
@@ -1247,11 +1662,20 @@ cmd_help() {
 	echo "  # Show daily trend for a specific project"
 	echo "  aidevops stats trend --project aidevops --days 14"
 	echo ""
+	echo "  # Show rate limit utilisation across all providers"
+	echo "  aidevops stats rate-limits"
+	echo ""
+	echo "  # Show rate limits for a specific provider in JSON"
+	echo "  aidevops stats rate-limits --provider anthropic --json"
+	echo ""
 	echo "  # Manually record a request"
 	echo "  aidevops stats record --model claude-opus-4-6 --input-tokens 50000 --output-tokens 10000"
 	echo ""
 	echo "  # Sync to budget tracker"
 	echo "  aidevops stats sync-budget --days 7"
+	echo ""
+	echo "Rate limit config: ~/.config/aidevops/rate-limits.json"
+	echo "  (template: .agents/configs/rate-limits.json.txt)"
 	echo ""
 	echo "Storage: $OBS_DB"
 	echo ""
@@ -1295,6 +1719,9 @@ main() {
 		;;
 	sync-budget | sync_budget | budget)
 		cmd_sync_budget "$@"
+		;;
+	rate-limits | rate_limits | ratelimits | rl)
+		cmd_rate_limits "$@"
 		;;
 	prune | cleanup)
 		cmd_prune "$@"
