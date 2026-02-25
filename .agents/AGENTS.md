@@ -38,6 +38,75 @@ Subagent write restrictions: on `main`/`master`, subagents may ONLY write to `RE
 
 ---
 
+## Self-Improvement
+
+Every agent session — interactive, worker, or supervisor — should improve the system, not just complete its task. This is a universal principle, not specific to any one command.
+
+**Observe outcomes from existing state.** TODO.md, PLANS.md, and GitHub issues/PRs are the state database. Never duplicate this state into separate files, databases, or logs.
+
+**Signals that something needs fixing** (check via `gh` CLI, not custom state):
+- A PR has been open for 6+ hours with no progress
+- The same issue/PR appears in consecutive supervisor pulses with no state change
+- A PR was closed (not merged) — a worker failed
+- Multiple PRs fail CI with the same error pattern
+- A worker creates a PR that duplicates an existing one
+
+**Response: create a GitHub issue, not a workaround.** When you observe a systemic problem, file a GitHub issue describing the pattern, root cause hypothesis, and proposed fix. This enters the existing task queue and gets picked up by the next available worker. Never patch around a broken process — fix the process.
+
+**What counts as self-improvement:**
+- Filing issues for repeated failure patterns
+- Improving agent prompts when workers consistently misunderstand instructions
+- Identifying missing automation (e.g., a manual step that could be a `gh` command)
+- Flagging stale tasks that are blocked but not marked as such
+
+---
+
+## Agent Routing
+
+Not every task is code. The framework has multiple primary agents, each with domain expertise. When dispatching workers (via `/pulse`, `/runners`, or manual `opencode run`), route to the appropriate agent using `--agent <name>`.
+
+**Available primary agents** (full index in `subagent-index.toon`):
+
+| Agent | Use for |
+|-------|---------|
+| Build+ | Code: features, bug fixes, refactors, CI, PRs (default) |
+| SEO | SEO audits, keyword research, GSC, schema markup |
+| Content | Blog posts, video scripts, social media, newsletters |
+| Marketing | Email campaigns, FluentCRM, landing pages |
+| Business | Company operations, runner configs, strategy |
+| Accounts | Financial operations, invoicing, receipts |
+| Legal | Compliance, terms of service, privacy policy |
+| Research | Tech research, competitive analysis, market research |
+| Sales | CRM pipeline, proposals, outreach |
+| Social-Media | Social media management, scheduling |
+| Video | Video generation, editing, prompt engineering |
+| Health | Health and wellness content |
+
+**Routing rules:**
+- Read the task/issue description and match it to the domain above
+- If the task is clearly code (implement, fix, refactor, CI), use Build+ or omit `--agent`
+- If the task matches another domain, pass `--agent <name>` to `opencode run`
+- When uncertain, default to Build+ — it can read subagent docs on demand
+- The agent choice affects which system prompt and domain knowledge the worker loads
+
+**Dispatch example:**
+
+```bash
+# Code task (default — Build+ implied)
+opencode run --dir ~/Git/awardsapp --title "Issue #42: Fix auth" \
+  "/full-loop Implement issue #42 -- Fix authentication bug" &
+
+# SEO task
+opencode run --dir ~/Git/awardsapp --agent SEO --title "Issue #55: SEO audit" \
+  "/full-loop Implement issue #55 -- Run SEO audit on landing pages" &
+
+# Content task
+opencode run --dir ~/Git/awardsapp --agent Content --title "Issue #60: Blog post" \
+  "/full-loop Implement issue #60 -- Write launch announcement blog post" &
+```
+
+---
+
 ## File Discovery
 
 Rules: `prompts/build.txt`.
@@ -68,7 +137,7 @@ Completion: NEVER mark `[x]` without merged PR (`pr:#NNN`) or `verified:YYYY-MM-
 
 Planning files go direct to main. Code changes need worktree + PR. Workers NEVER edit TODO.md.
 
-**Cross-repo awareness**: The supervisor manages tasks across all `repos.json` repos. When querying queue status, check the supervisor DB (`~/.aidevops/.agent-workspace/supervisor/supervisor.db`) for all active tasks across repos, not just the current repo's TODO.md. Use `gh issue list --repo <slug>` for each managed repo to get the full picture.
+**Cross-repo awareness**: The supervisor manages tasks across all `repos.json` repos. When querying queue status, check GitHub for all active tasks across repos, not just the current repo's TODO.md. Use `gh issue list --repo <slug>` and `gh pr list --repo <slug>` for each managed repo to get the full picture.
 
 Full rules: `reference/planning-detail.md`
 

@@ -30,10 +30,10 @@ If the first argument is a task ID (e.g., `t061`):
        TASK_DESC=$(grep -E "^- \[( |x|-)\] $TASK_ID " TODO.md 2>/dev/null | head -1 | sed -E 's/^- \[( |x|-)\] [^ ]* //')
    fi
 
-   # Priority 3: Query supervisor DB (for dynamically-created tasks not yet in TODO.md)
+   # Priority 3: Query GitHub issues (for dynamically-created tasks not yet in TODO.md)
    if [[ -z "$TASK_DESC" ]]; then
-       TASK_DESC=$(~/.aidevops/agents/scripts/supervisor-helper.sh db \
-           "SELECT description FROM tasks WHERE id = '$TASK_ID';" 2>/dev/null || echo "")
+       TASK_DESC=$(gh issue list --repo "$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)" \
+           --search "$TASK_ID" --json title -q '.[0].title' 2>/dev/null || echo "")
    fi
    ```
 
