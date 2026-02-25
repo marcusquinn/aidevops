@@ -3209,6 +3209,13 @@ cmd_pulse() {
 		log_verbose "  Phase 14: AI pipeline disabled (SUPERVISOR_AI_ENABLED=false)"
 	fi
 
+	# Phase 15: Process deferred AI assessments (t1325)
+	# Retries AI assessments that failed due to timeout/unavailability in previous pulses.
+	# Runs late in the pulse cycle to avoid competing with active AI workloads.
+	if type process_deferred_assessments &>/dev/null; then
+		process_deferred_assessments 2>>"$SUPERVISOR_LOG" || true
+	fi
+
 	# t1052: Clear deferred batch completion flag to avoid leaking state
 	# if the supervisor process is reused for non-pulse commands
 	_PULSE_DEFER_BATCH_COMPLETION=""
