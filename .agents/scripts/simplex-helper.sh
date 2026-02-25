@@ -60,8 +60,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly SCRIPT_DIR
 
 # shellcheck source=/dev/null
-source "${SCRIPT_DIR}/shared-constants.sh" || {
+source "${SCRIPT_DIR}/shared-constants.sh" 2>/dev/null || {
 	# shared-constants.sh is optional — defaults are defined below
+	[[ "${SIMPLEX_DEBUG:-}" == "true" ]] && printf '[DEBUG] shared-constants.sh not found or failed to source\n' >&2
 	true
 }
 
@@ -489,7 +490,7 @@ cmd_send() {
 	if is_bot_running "$port"; then
 		# Send via WebSocket JSON API
 		local corr_id
-		corr_id="$(date +%s%N)"
+		corr_id="$(date +%s)-${RANDOM}-${BASHPID}"
 		local json_msg
 		json_msg=$(build_json_cmd "$corr_id" "${contact} ${message}")
 
@@ -543,7 +544,7 @@ cmd_connect() {
 	local port="$SIMPLEX_DEFAULT_PORT"
 	if is_bot_running "$port"; then
 		local corr_id
-		corr_id="$(date +%s%N)"
+		corr_id="$(date +%s)-${RANDOM}-${BASHPID}"
 		local json_cmd
 		json_cmd=$(build_json_cmd "$corr_id" "/c ${link}")
 
@@ -605,7 +606,7 @@ cmd_address() {
 
 	if is_bot_running "$port"; then
 		local corr_id
-		corr_id="$(date +%s%N)"
+		corr_id="$(date +%s)-${RANDOM}-${BASHPID}"
 		local json_cmd
 		json_cmd=$(build_json_cmd "$corr_id" "$cli_cmd")
 
@@ -694,7 +695,7 @@ cmd_group() {
 	local port="$SIMPLEX_DEFAULT_PORT"
 	if is_bot_running "$port"; then
 		local corr_id
-		corr_id="$(date +%s%N)"
+		corr_id="$(date +%s)-${RANDOM}-${BASHPID}"
 		local json_cmd
 		json_cmd=$(build_json_cmd "$corr_id" "$cli_cmd")
 

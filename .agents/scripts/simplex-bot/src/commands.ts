@@ -7,6 +7,7 @@
  * Reference: t1327.4 bot framework specification
  */
 
+import { resolve } from "node:path";
 import type { CommandContext, CommandDefinition } from "./types";
 import pkg from "../package.json";
 
@@ -85,7 +86,6 @@ const tasksCommand: CommandDefinition = {
       const tasksFile =
         process.env.SIMPLEX_TASKS_FILE ||
         `${import.meta.dir}/../../../..` + "/TODO.md";
-      const { resolve } = await import("node:path");
       const todoPath = resolve(tasksFile);
       const proc = Bun.spawn(
         ["grep", "-c", "\\- \\[ \\]", todoPath],

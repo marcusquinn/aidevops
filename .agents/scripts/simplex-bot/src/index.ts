@@ -25,6 +25,8 @@ import type {
   ChatItem,
   CommandContext,
   CommandDefinition,
+  ContactInfo,
+  GroupInfo,
   NewChatItemsEvent,
   SimplexCommand,
   SimplexEvent,
@@ -267,10 +269,14 @@ class SimplexAdapter {
 
     switch (event.type) {
       case "newChatItems":
-        this.handleNewChatItems(event as NewChatItemsEvent);
+        void this.handleNewChatItems(event as NewChatItemsEvent).catch((err) => {
+          this.logger.error("Error handling newChatItems:", err);
+        });
         break;
       case "contactConnected":
-        this.handleContactConnected(event);
+        void this.handleContactConnected(event).catch((err) => {
+          this.logger.error("Error handling contactConnected:", err);
+        });
         break;
       default:
         // Tolerate unknown events (per API spec)
@@ -319,6 +325,18 @@ class SimplexAdapter {
     return { allowed: true };
   }
 
+  /** Build a ContactInfo object from cached display names */
+  private buildContactInfo(contactId: number): ContactInfo {
+    const name = this.contactNames.get(contactId) ?? "";
+    return { contactId, localDisplayName: name, profile: { displayName: name } };
+  }
+
+  /** Build a GroupInfo object from cached display names */
+  private buildGroupInfo(groupId: number): GroupInfo {
+    const name = this.groupNames.get(groupId) ?? "";
+    return { groupId, localDisplayName: name, groupProfile: { displayName: name } };
+  }
+
   /** Handle new chat items (incoming messages) */
   private async handleNewChatItems(event: NewChatItemsEvent): Promise<void> {
     for (const item of event.chatItems ?? []) {
@@ -330,7 +348,7 @@ class SimplexAdapter {
         continue;
       }
 
-      this.logger.info(`Received message: ${text.substring(0, 100)}`);
+      this.logger.debug(`Received message: ${text.substring(0, 100)}`);
 
       const parsed = this.router.parse(text);
       if (!parsed) {
@@ -357,10 +375,10 @@ class SimplexAdapter {
         rawText: text,
         chatItem: item,
         contact: chatDir?.contactId !== undefined
-          ? { contactId: chatDir.contactId, localDisplayName: this.contactNames.get(chatDir.contactId) ?? "", profile: { displayName: this.contactNames.get(chatDir.contactId) ?? "" } }
+          ? this.buildContactInfo(chatDir.contactId)
           : undefined,
         group: chatDir?.groupId !== undefined
-          ? { groupId: chatDir.groupId, localDisplayName: this.groupNames.get(chatDir.groupId) ?? "", groupProfile: { displayName: this.groupNames.get(chatDir.groupId) ?? "" } }
+          ? this.buildGroupInfo(chatDir.groupId)
           : undefined,
         reply: async (replyText: string) => {
           await this.replyToItem(item, replyText);
@@ -428,7 +446,7 @@ class SimplexAdapter {
   }
 
   /** Handle new contact connection — caches display name for reply routing */
-  private handleContactConnected(event: SimplexEvent): void {
+  private async handleContactConnected(event: SimplexEvent): Promise<void> {
     const contact = (event as Record<string, unknown>).contact as
       | { localDisplayName?: string; contactId?: number }
       | undefined;
@@ -441,14 +459,14 @@ class SimplexAdapter {
     }
 
     if (this.config.autoAcceptContacts && this.config.welcomeMessage) {
-      void this.sendMessage(`@${name}`, this.config.welcomeMessage).catch(
-        (err) => {
-          this.logger.error(
-            `Failed to send welcome message to ${name}:`,
-            err,
-          );
-        },
-      );
+      try {
+        await this.sendMessage(`@${name}`, this.config.welcomeMessage);
+      } catch (err) {
+        this.logger.error(
+          `Failed to send welcome message to ${name}:`,
+          err,
+        );
+      }
     }
   }
 
