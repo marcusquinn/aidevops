@@ -866,11 +866,24 @@ _check_provider_rate_limit_risk() {
 		return 0
 	fi
 
-	# Source the observability helper to access check_rate_limit_risk()
-	# We need to call it as a subprocess to avoid variable conflicts
+	# Determine timeout command (gtimeout on macOS, timeout on Linux)
+	local timeout_cmd=""
+	if command -v gtimeout &>/dev/null; then
+		timeout_cmd="gtimeout 5"
+	elif command -v timeout &>/dev/null; then
+		timeout_cmd="timeout 5"
+	fi
+
+	# Query rate-limit status as a subprocess to avoid variable conflicts.
+	# Timeout prevents blocking dispatch if observability DB is slow.
 	local risk_status
-	risk_status=$(bash "$obs_helper" rate-limits --provider "$provider" --json |
-		jq -r '.[0].status // "ok"' || true)
+	if [[ -n "$timeout_cmd" ]]; then
+		risk_status=$($timeout_cmd bash "$obs_helper" rate-limits --provider "$provider" --json |
+			jq -r '.[0].status // "ok"' || true)
+	else
+		risk_status=$(bash "$obs_helper" rate-limits --provider "$provider" --json |
+			jq -r '.[0].status // "ok"' || true)
+	fi
 	risk_status="${risk_status:-ok}"
 
 	case "$risk_status" in

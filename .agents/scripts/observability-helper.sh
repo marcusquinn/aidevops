@@ -1185,6 +1185,19 @@ _get_rate_limits_config() {
 	return 1
 }
 
+# Sanitize a value to an unsigned integer, returning fallback if non-numeric.
+# Args: $1=value, $2=fallback (default 0)
+_sanitize_uint() {
+	local val="$1"
+	local fallback="${2:-0}"
+	if [[ "$val" =~ ^[0-9]+$ ]]; then
+		echo "$val"
+	else
+		echo "$fallback"
+	fi
+	return 0
+}
+
 # Get rate limit value for a provider field from config JSON.
 # Args: $1=provider, $2=field (requests_per_min|tokens_per_min|billing_type)
 # Returns the value or 0 if not configured.
@@ -1279,6 +1292,9 @@ check_rate_limit_risk() {
 	local req_limit tok_limit
 	req_limit=$(_get_rate_limit_value "$provider" "requests_per_min")
 	tok_limit=$(_get_rate_limit_value "$provider" "tokens_per_min")
+	# Sanitize to integers — config values may be non-numeric from malformed JSON
+	req_limit=$(_sanitize_uint "$req_limit" 0)
+	tok_limit=$(_sanitize_uint "$tok_limit" 0)
 
 	# If no limits configured for this provider, it's always ok
 	if [[ "$req_limit" == "0" && "$tok_limit" == "0" ]]; then
@@ -1415,6 +1431,9 @@ cmd_rate_limits() {
 		local req_limit tok_limit billing_type
 		req_limit=$(_get_rate_limit_value "$provider" "requests_per_min")
 		tok_limit=$(_get_rate_limit_value "$provider" "tokens_per_min")
+		# Sanitize to integers — config values may be non-numeric from malformed JSON
+		req_limit=$(_sanitize_uint "$req_limit" 0)
+		tok_limit=$(_sanitize_uint "$tok_limit" 0)
 		billing_type=$(_get_rate_limit_value "$provider" "billing_type")
 		[[ "$billing_type" == "0" ]] && billing_type="unknown"
 
