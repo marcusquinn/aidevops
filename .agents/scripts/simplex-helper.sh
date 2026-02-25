@@ -406,8 +406,11 @@ cmd_bot_start() {
 		local pid=$!
 		echo "$pid" >"$(pid_file "$port")"
 		log_success "Bot started (PID: ${pid}, port: ${port})"
-		wait "$pid" || true
+		if ! wait "$pid"; then
+			log_warn "Bot process (PID: ${pid}) exited with non-zero status on port ${port}"
+		fi
 		rm -f "$(pid_file "$port")"
+		log_info "Bot process finished (port: ${port})"
 	fi
 
 	return 0
