@@ -1431,6 +1431,8 @@ cmd_pulse() {
 				# and consecutive_failure_count so a re-queued task is not deferred by a
 				# stale cooldown from a pre-success failure.
 				reset_failure_dedup_state "$tid" 2>>"$SUPERVISOR_LOG" || true
+				# t1331: Reset circuit breaker counter on any task success
+				cb_record_success 2>>"$SUPERVISOR_LOG" || true
 				# --- Non-critical post-processing below (safe to lose on kill) ---
 				# Proof-log: task completion (t218)
 				write_proof_log --task "$tid" --event "complete" --stage "evaluate" \
@@ -1465,6 +1467,8 @@ cmd_pulse() {
 				;;
 			retry)
 				log_warn "  $tid: RETRY ($outcome_detail)"
+				# t1331: Record failure for circuit breaker (consecutive failure tracking)
+				cb_record_failure "$tid" "$outcome_detail" 2>>"$SUPERVISOR_LOG" || true
 				# Proof-log: retry decision (t218)
 				write_proof_log --task "$tid" --event "retry" --stage "evaluate" \
 					--decision "retry:$outcome_detail" \
@@ -1574,6 +1578,8 @@ cmd_pulse() {
 				;;
 			blocked)
 				log_warn "  $tid: BLOCKED ($outcome_detail)"
+				# t1331: Record failure for circuit breaker (consecutive failure tracking)
+				cb_record_failure "$tid" "$outcome_detail" 2>>"$SUPERVISOR_LOG" || true
 				# Proof-log: blocked decision (t218)
 				write_proof_log --task "$tid" --event "blocked" --stage "evaluate" \
 					--decision "blocked:$outcome_detail" \
@@ -1872,13 +1878,23 @@ cmd_pulse() {
 
 	# Phase 2: Dispatch queued tasks up to concurrency limit
 	#
+	# t1331: Circuit breaker check — skip dispatch if tripped (consecutive failures).
+	# Auto-resets after cooldown or on manual reset. Counter resets on any success.
+	local _cb_dispatch_allowed=true
+	if ! cb_check 2>>"$SUPERVISOR_LOG"; then
+		log_warn "Phase 2: SKIPPED — circuit breaker is open (dispatch paused)"
+		_cb_dispatch_allowed=false
+	fi
+
 	# t1314: Auto-detect active batches when --batch is not explicitly passed.
 	# Previously, calling cmd_pulse() without --batch fell through to global
 	# dispatch with SUPERVISOR_MAX_CONCURRENCY (default: 4), ignoring the
 	# batch's concurrency=1 setting. Now we detect active batches and dispatch
 	# through them, respecting their concurrency limits.
 
-	if [[ -n "$batch_id" ]]; then
+	if [[ "$_cb_dispatch_allowed" != "true" ]]; then
+		log_info "Phase 2: dispatch skipped due to circuit breaker"
+	elif [[ -n "$batch_id" ]]; then
 		# Explicit --batch flag: dispatch only within this batch
 		local next_tasks
 		next_tasks=$(cmd_next "$batch_id" 10)

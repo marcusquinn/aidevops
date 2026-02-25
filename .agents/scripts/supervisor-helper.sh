@@ -46,6 +46,7 @@
 #   supervisor-helper.sh self-heal <task_id>            Create diagnostic subtask for failed/blocked task
 #   supervisor-helper.sh pool <subcommand> [args]       Container pool manager (t1165.2)
 #   supervisor-helper.sh contest <subcommand> [args]    Model contest mode (t1011)
+#   supervisor-helper.sh circuit-breaker <status|reset|check|trip>  Circuit breaker (t1331)
 #   supervisor-helper.sh backup [reason]               Backup supervisor database (t162)
 #   supervisor-helper.sh restore [backup_file]         Restore from backup (lists if no file) (t162)
 #   supervisor-helper.sh db [sql]                      Direct SQLite access
@@ -237,6 +238,7 @@ source "${SUPERVISOR_MODULE_DIR}/routine-scheduler.sh"
 source "${SUPERVISOR_MODULE_DIR}/sanity-check.sh"
 source "${SUPERVISOR_MODULE_DIR}/container-pool.sh"
 source "${SUPERVISOR_MODULE_DIR}/stuck-detection.sh"
+source "${SUPERVISOR_MODULE_DIR}/circuit-breaker.sh"
 
 # Valid states for the state machine
 # shellcheck disable=SC2034 # Used by supervisor/state.sh
@@ -809,6 +811,7 @@ main() {
 	labels) cmd_labels "$@" ;;
 	contest) cmd_contest "$@" ;;
 	pool) cmd_pool "$@" ;;
+	circuit-breaker) cmd_circuit_breaker "$@" ;;
 	ai-context) build_ai_context "${REPO_PATH:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}" "${1:-full}" ;;
 	ai-reason) run_ai_reasoning "${REPO_PATH:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}" "${1:-full}" ;;
 	ai-actions)
