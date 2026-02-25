@@ -960,6 +960,33 @@ build_health_context() {
 	output+="| Currently blocked | $blocked_count |\n"
 	output+="| Avg retries (7d) | ${avg_retries:-0} |\n"
 
+	# Phase 3 throughput metrics (t1336: supervisor self-diagnosis)
+	# Shows whether the AI lifecycle phase is actually processing tasks.
+	# Phase 3 was silently broken for days — these metrics make that visible.
+	local log_file="${SUPERVISOR_LOG:-$HOME/.aidevops/logs/supervisor.log}"
+	if [[ -f "$log_file" ]]; then
+		local last_lifecycle
+		last_lifecycle=$(grep 'ai-lifecycle.*evaluated.*actioned' "$log_file" 2>/dev/null | tail -1 || echo "")
+		if [[ -n "$last_lifecycle" ]]; then
+			local p3_eval p3_action
+			p3_eval=$(echo "$last_lifecycle" | grep -oE 'evaluated [0-9]+' | grep -oE '[0-9]+' || echo "0")
+			p3_action=$(echo "$last_lifecycle" | grep -oE 'actioned [0-9]+' | grep -oE '[0-9]+' || echo "0")
+			output+="| Phase 3 last eval | $p3_eval |\n"
+			output+="| Phase 3 last actioned | $p3_action |\n"
+		else
+			output+="| Phase 3 last eval | no data |\n"
+			output+="| Phase 3 last actioned | no data |\n"
+		fi
+
+		# Count zero-eval streaks in recent log (last 50 lifecycle entries)
+		local recent_zeros total_recent
+		total_recent=$(grep 'ai-lifecycle.*evaluated' "$log_file" 2>/dev/null | tail -50 | wc -l | tr -d ' ')
+		recent_zeros=$(grep 'ai-lifecycle.*evaluated' "$log_file" 2>/dev/null | tail -50 | grep -c 'evaluated 0' || echo "0")
+		if [[ "$total_recent" -gt 0 ]]; then
+			output+="| Phase 3 zero-eval rate (last 50) | ${recent_zeros}/${total_recent} |\n"
+		fi
+	fi
+
 	printf '%b' "$output"
 	return 0
 }
