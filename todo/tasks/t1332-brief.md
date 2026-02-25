@@ -44,27 +44,33 @@ Key files:
 ## Acceptance Criteria
 
 - [ ] At configurable time milestones, supervisor evaluates task progress
+
   ```yaml
   verify:
     method: codebase
     pattern: "SUPERVISOR_STUCK_CHECK|stuck.detect|milestone"
     path: ".agents/scripts/supervisor/"
   ```
+
 - [ ] Stuck detection uses AI reasoning (haiku-tier) not heuristics
 - [ ] When stuck is detected, GitHub issue gets `stuck-detection` label and explanatory comment
+
   ```yaml
   verify:
     method: codebase
     pattern: "stuck-detection"
     path: ".agents/scripts/supervisor/"
   ```
+
 - [ ] Detection is advisory only — no auto-cancel, no auto-pivot, no task modification
+
   ```yaml
   verify:
     method: subagent
     prompt: "Review the stuck detection implementation in .agents/scripts/supervisor/. Verify it NEVER cancels, pauses, or modifies a task — only labels issues and posts comments. Flag any auto-acting behavior."
     files: ".agents/scripts/supervisor/pulse.sh"
   ```
+
 - [ ] Label is removed if task subsequently succeeds
 - [ ] Confidence threshold is configurable
 - [ ] ShellCheck clean on modified scripts
