@@ -137,8 +137,8 @@ run_extraction() {
 		return 1
 	fi
 
-	log_info "Running extraction from ${db_path}..."
-	python3 "${EXTRACTOR}" --db "${db_path}" --format chunks --output "${output_dir}" 2>&1
+	log_info "Running incremental extraction from ${db_path}..."
+	python3 "${EXTRACTOR}" --db "${db_path}" --format chunks --output "${output_dir}" --incremental 2>&1
 	return $?
 }
 

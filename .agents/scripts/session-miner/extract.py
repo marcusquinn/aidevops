@@ -25,6 +25,7 @@ import os
 import re
 import sqlite3
 import sys
+import time
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -35,6 +36,7 @@ from typing import Any
 
 DEFAULT_DB = Path.home() / ".local/share/opencode/opencode.db"
 OUTPUT_DIR = Path.home() / ".aidevops/.agent-workspace/work/session-miner"
+STATE_FILE = OUTPUT_DIR / ".last-extract-ts"
 
 # Steerage detection patterns — things users say when correcting/guiding
 STEERAGE_PATTERNS = {
@@ -141,7 +143,8 @@ def classify_error(error_text: str) -> str:
     return "other"
 
 
-def extract_steerage(conn: sqlite3.Connection, limit: int | None = None) -> list[dict]:
+def extract_steerage(conn: sqlite3.Connection, limit: int | None = None,
+                     since_ts: int | None = None) -> list[dict]:
     """Extract user steerage signals from sessions.
 
     Returns tool-agnostic records with:
@@ -164,10 +167,12 @@ def extract_steerage(conn: sqlite3.Connection, limit: int | None = None) -> list
     FROM message m
     JOIN session s ON m.session_id = s.id
     WHERE json_extract(m.data, '$.role') = 'user'
-    ORDER BY m.time_created ASC
     """
+    if since_ts is not None:
+        query += f"  AND m.time_created > {int(since_ts)}\n"
+    query += "    ORDER BY m.time_created ASC\n"
     if limit:
-        query += f" LIMIT {int(limit) * 10}"  # Oversample, filter later
+        query += f"    LIMIT {int(limit) * 10}"  # Oversample, filter later
 
     steerage_records = []
     seen_texts = set()
@@ -238,7 +243,8 @@ def extract_steerage(conn: sqlite3.Connection, limit: int | None = None) -> list
     return steerage_records
 
 
-def extract_errors(conn: sqlite3.Connection, limit: int | None = None) -> list[dict]:
+def extract_errors(conn: sqlite3.Connection, limit: int | None = None,
+                   since_ts: int | None = None) -> list[dict]:
     """Extract tool error sequences with surrounding context.
 
     For each error, captures:
@@ -264,10 +270,12 @@ def extract_errors(conn: sqlite3.Connection, limit: int | None = None) -> list[d
     JOIN session s ON p.session_id = s.id
     WHERE json_extract(p.data, '$.type') = 'tool'
       AND json_extract(p.data, '$.state.status') = 'error'
-    ORDER BY p.time_created DESC
     """
+    if since_ts is not None:
+        query += f"  AND p.time_created > {int(since_ts)}\n"
+    query += "    ORDER BY p.time_created DESC\n"
     if limit:
-        query += f" LIMIT {int(limit)}"
+        query += f"    LIMIT {int(limit)}"
 
     error_records = []
 
@@ -601,7 +609,20 @@ def main():
                         help="Limit records extracted per category")
     parser.add_argument("--output", type=Path, default=OUTPUT_DIR,
                         help=f"Output directory (default: {OUTPUT_DIR})")
+    parser.add_argument("--since", type=int, default=None,
+                        help="Only extract sessions created after this timestamp (ms since epoch)")
+    parser.add_argument("--incremental", action="store_true",
+                        help="Auto-detect --since from last extraction timestamp")
     args = parser.parse_args()
+
+    # Resolve --since: explicit > incremental > full
+    since_ts = args.since
+    if since_ts is None and args.incremental and STATE_FILE.exists():
+        try:
+            since_ts = int(STATE_FILE.read_text().strip())
+            print(f"  Incremental: sessions since {datetime.fromtimestamp(since_ts / 1000).isoformat()}", file=sys.stderr)
+        except (ValueError, OSError):
+            since_ts = None
 
     print(f"Session Miner — Extracting from {args.db}", file=sys.stderr)
     print(f"  DB size: {args.db.stat().st_size / 1024 / 1024:.1f} MB", file=sys.stderr)
@@ -610,10 +631,10 @@ def main():
 
     try:
         # Phase 1a: Extract steerage
-        steerage = extract_steerage(conn, limit=args.limit)
+        steerage = extract_steerage(conn, limit=args.limit, since_ts=since_ts)
 
         # Phase 1b: Extract errors
-        errors = extract_errors(conn, limit=args.limit)
+        errors = extract_errors(conn, limit=args.limit, since_ts=since_ts)
 
         # Phase 1c: Aggregate stats
         stats = extract_error_stats(conn)
@@ -632,6 +653,11 @@ def main():
             print(f"\nOutput: {out_path}", file=sys.stderr)
             print(f"  {len(steerage)} steerage + {len(errors)} errors", file=sys.stderr)
 
+        # Record extraction timestamp for incremental runs
+        now_ms = int(time.time() * 1000)
+        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        STATE_FILE.write_text(str(now_ms))
+
         # Print summary to stdout
         print(json.dumps({
             "steerage_count": len(steerage),
@@ -647,6 +673,9 @@ def main():
             ),
             "error_categories": stats.get("error_categories", {}),
             "output": str(out_path),
+            "incremental": since_ts is not None,
+            "since_ts": since_ts,
+            "extract_ts": now_ms,
         }, indent=2))
 
     finally:
