@@ -198,6 +198,16 @@ Pulse: 3 workers running, 3 slots available, dispatched 3 new workers:
 
 Then exit. The next pulse in 2 minutes will check worker counts again.
 
+## Step 7: Session Miner (Daily)
+
+Run the session miner pulse. It has its own 20-hour interval guard, so this is a no-op on most pulses:
+
+```bash
+~/.aidevops/agents/scripts/session-miner-pulse.sh 2>&1 || true
+```
+
+If it produces output (new suggestions), create a TODO entry or GitHub issue in the aidevops repo for the harness improvement. The session miner extracts user corrections and tool error patterns from past sessions and suggests harness rules that would prevent recurring issues.
+
 ## What You Must NOT Do
 
 - Do NOT maintain state files, databases, or logs (the circuit breaker helper manages its own state file — that's the only exception)

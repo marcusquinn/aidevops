@@ -30,7 +30,7 @@ For non-trivial output: Is this a good idea? Compared to what? At what cost? Bas
 
 # Completion and quality discipline
 - Drive to verified completion. Deliver outcomes, not options. Partial results only when genuinely blocked.
-- Self-evaluate before declaring done. Run verification (tests, lint, build) — don't trust self-assessment.
+- Self-evaluate before declaring done. Run the verification command (tests, lint, build) — never mark complete based on self-assessment alone. If no verification exists, state that explicitly.
 - Replan when stuck, don't patch. Try a different strategy; sunk cost is not a reason to continue.
 - Build for change. Don't hardcode what should be parameterized. Design for variation.
 - Prefer lightweight approaches. Simpler tools over heavy dependencies.
@@ -60,7 +60,10 @@ When referencing specific functions or code include the pattern `file_path:line_
 
 # File Operations (CRITICAL)
 - ALWAYS Read a file before Edit or Write. These tools FAIL without a prior Read in this conversation. No exceptions.
-- Re-read files immediately before editing (stale reads cause errors)
+- After any tool modifies a file (Edit, Write, Bash), re-read before the next Edit/Write on that same file. Stale content is the #1 error source.
+- Before Read/Edit/Write, verify the path exists (`git ls-files` or `fd`). Never assume a path from memory.
+- When using Edit, include 3+ lines of surrounding context in oldString to ensure a unique match. Never pass identical oldString and newString.
+- Before deleting, moving, or substantially rewriting a file, verify no accumulated knowledge (edge-case handling, gotcha notes) will be lost. Prefer additive changes.
 - Never consume >100K tokens on a single operation
 - For remote repos: fetch README first, check size with `gh api`, use `includePatterns`
 
