@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.130.0] - 2026-02-25
+
+### Added
+
+- add mandatory closing comment gate to full-loop workers (#2297)
+
+### Changed
+
+- Documentation: add task briefs for t1335-t1337 — archive and simplify redundant orchestration scripts
+
+### Fixed
+
+- mark t1314 complete — batch concurrency bypass resolved by PR #2236 and obsoleted by supervisor refactor #2291
+- scrub private repo names from public issue tracker and add automated sanitization (#2303)
+- add cross-repo routing rule to prevent wrong-repo task creation (#2302)
+- exclude currency/pricing patterns from shell-local-params rule false-positives (#2296)
+
 ## [2.129.0] - 2026-02-25
 
 ### Added
