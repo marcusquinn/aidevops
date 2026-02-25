@@ -113,7 +113,7 @@ feature-development,workflows/feature-development.md,Feature development workflo
 conversation-starter,workflows/conversation-starter.md,Session greeting and auto-recall
 -->
 
-<!--TOON:scripts[92]{name,purpose}:
+<!--TOON:scripts[93]{name,purpose}:
 accessibility-helper.sh,Accessibility and contrast testing (WCAG compliance WAVE API for websites and emails)
 accessibility-audit-helper.sh,Accessibility audit CLI wrapping axe-core WAVE API WebAIM contrast and Lighthouse a11y
 auto-update-helper.sh,Automatic update polling daemon (enable disable status check logs)
@@ -205,5 +205,6 @@ plugin-loader-helper.sh,Plugin agent loader - discover validate load unload agen
 claim-task-id.sh,Distributed task ID allocation with collision prevention (online GH/GL issue lock or offline +100 offset)
 planning-commit-helper.sh,Planning file auto-commit helper (next-id complete commit check status)
 multi-org-helper.sh,Multi-org management CLI (init create delete list switch use status info set-plan context)
+simplex-helper.sh,SimpleX Chat CLI helper (install init bot-start bot-stop send connect address group status server)
 skills-helper.sh,Skill discovery and exploration CLI (search browse describe info list categories recommend)
 -->
