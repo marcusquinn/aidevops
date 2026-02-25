@@ -60,7 +60,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly SCRIPT_DIR
 
 # shellcheck source=/dev/null
-source "${SCRIPT_DIR}/shared-constants.sh" || true
+source "${SCRIPT_DIR}/shared-constants.sh" || {
+	# shared-constants.sh is optional — defaults are defined below
+	true
+}
 
 readonly SIMPLEX_DEFAULT_PORT="${SIMPLEX_PORT:-5225}"
 readonly SIMPLEX_DEFAULT_DB_PREFIX="${SIMPLEX_DB_PREFIX:-}"
@@ -129,7 +132,7 @@ build_json_cmd() {
 		jq -n --arg corrId "$corr_id" --arg cmd "$cmd" \
 			'{"corrId": $corrId, "cmd": $cmd}'
 	else
-		# Fallback: escape backslashes first, then double quotes
+		# Fallback: escape backslashes first, then double quotes (order matters)
 		local safe_corr_id="${corr_id//\\/\\\\}"
 		safe_corr_id="${safe_corr_id//\"/\\\"}"
 		local safe_cmd="${cmd//\\/\\\\}"
@@ -386,11 +389,12 @@ cmd_bot_start() {
 	mkdir -p "$PID_DIR"
 
 	if [[ "$background" == "true" ]]; then
+		local log_file="${PID_DIR}/simplex-${port}.log"
 		log_info "Starting SimpleX CLI in background on port ${port}..."
-		nohup "$SIMPLEX_BIN" "${cmd_args[@]}" >/dev/null 2>&1 &
+		nohup "$SIMPLEX_BIN" "${cmd_args[@]}" >>"$log_file" 2>&1 &
 		local pid=$!
 		echo "$pid" >"$(pid_file "$port")"
-		log_success "Bot started in background (PID: ${pid}, port: ${port})"
+		log_success "Bot started in background (PID: ${pid}, port: ${port}, log: ${log_file})"
 	else
 		log_info "Starting SimpleX CLI on port ${port} (foreground)..."
 		"$SIMPLEX_BIN" "${cmd_args[@]}" &
@@ -398,6 +402,7 @@ cmd_bot_start() {
 		echo "$pid" >"$(pid_file "$port")"
 		log_success "Bot started (PID: ${pid}, port: ${port})"
 		wait "$pid" || true
+		rm -f "$(pid_file "$port")"
 	fi
 
 	return 0

@@ -97,18 +97,21 @@ const tasksCommand: CommandDefinition = {
         ["grep", "-c", "\\- \\[ \\]", todoPath],
         { stdout: "pipe", stderr: "pipe" },
       );
+      // Read stdout/stderr before awaiting exit (consistent with statusCommand,
+      // avoids pipe buffer deadlocks for verbose commands)
+      const output = await new Response(proc.stdout).text();
+      const stderrOutput = await new Response(proc.stderr).text();
       const exitCode = await proc.exited;
 
       if (exitCode === 0) {
-        const count = (await new Response(proc.stdout).text()).trim();
+        const count = output.trim();
         return "Open tasks: " + count + "\n\nUse /task <description> to create a new task.";
       } else if (exitCode === 1) {
         // grep returns 1 when no lines match — not an error
         return "Open tasks: 0\n\nUse /task <description> to create a new task.";
       } else {
         // grep returns >1 for actual errors (file not found, permission denied)
-        const stderr = await new Response(proc.stderr).text();
-        console.error("[tasksCommand] grep failed (exit " + exitCode + "): " + stderr);
+        console.error("[tasksCommand] grep failed (exit " + exitCode + "): " + stderrOutput);
         return "Could not read TODO.md";
       }
     } catch (err) {

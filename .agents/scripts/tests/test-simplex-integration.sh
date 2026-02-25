@@ -63,6 +63,19 @@ print_result() {
 	return 0
 }
 
+# Assert that text contains a pattern (reduces repetitive echo|grep blocks)
+assert_contains() {
+	local label="$1"
+	local text="$2"
+	local pattern="$3"
+	if echo "$text" | grep -q "$pattern"; then
+		print_result "$label" 0
+	else
+		print_result "$label" 1 "Expected '$pattern' in output"
+	fi
+	return 0
+}
+
 # =============================================================================
 # Section 1: File Existence Tests
 # =============================================================================
@@ -157,59 +170,15 @@ section_helper_script() {
 	local help_output
 	help_output="$(bash "$HELPER" help 2>&1)" || true
 
-	if echo "$help_output" | grep -q "simplex-helper.sh"; then
-		print_result "help: shows script name" 0
-	else
-		print_result "help: shows script name" 1 "Expected 'simplex-helper.sh' in help output"
-	fi
-
-	if echo "$help_output" | grep -q "install"; then
-		print_result "help: mentions install command" 0
-	else
-		print_result "help: mentions install command" 1 "Expected 'install' in help output"
-	fi
-
-	if echo "$help_output" | grep -q "bot-start"; then
-		print_result "help: mentions bot-start command" 0
-	else
-		print_result "help: mentions bot-start command" 1 "Expected 'bot-start' in help output"
-	fi
-
-	if echo "$help_output" | grep -q "bot-stop"; then
-		print_result "help: mentions bot-stop command" 0
-	else
-		print_result "help: mentions bot-stop command" 1 "Expected 'bot-stop' in help output"
-	fi
-
-	if echo "$help_output" | grep -q "send"; then
-		print_result "help: mentions send command" 0
-	else
-		print_result "help: mentions send command" 1 "Expected 'send' in help output"
-	fi
-
-	if echo "$help_output" | grep -q "connect"; then
-		print_result "help: mentions connect command" 0
-	else
-		print_result "help: mentions connect command" 1 "Expected 'connect' in help output"
-	fi
-
-	if echo "$help_output" | grep -q "group"; then
-		print_result "help: mentions group command" 0
-	else
-		print_result "help: mentions group command" 1 "Expected 'group' in help output"
-	fi
-
-	if echo "$help_output" | grep -q "status"; then
-		print_result "help: mentions status command" 0
-	else
-		print_result "help: mentions status command" 1 "Expected 'status' in help output"
-	fi
-
-	if echo "$help_output" | grep -q "server"; then
-		print_result "help: mentions server command" 0
-	else
-		print_result "help: mentions server command" 1 "Expected 'server' in help output"
-	fi
+	assert_contains "help: shows script name" "$help_output" "simplex-helper.sh"
+	assert_contains "help: mentions install command" "$help_output" "install"
+	assert_contains "help: mentions bot-start command" "$help_output" "bot-start"
+	assert_contains "help: mentions bot-stop command" "$help_output" "bot-stop"
+	assert_contains "help: mentions send command" "$help_output" "send"
+	assert_contains "help: mentions connect command" "$help_output" "connect"
+	assert_contains "help: mentions group command" "$help_output" "group"
+	assert_contains "help: mentions status command" "$help_output" "status"
+	assert_contains "help: mentions server command" "$help_output" "server"
 
 	# Unknown command handling
 	local unknown_output
@@ -225,17 +194,8 @@ section_helper_script() {
 	local status_output
 	status_output="$(bash "$HELPER" status --no-color 2>&1)" || true
 
-	if echo "$status_output" | grep -q "SimpleX Chat Status"; then
-		print_result "status: shows status header" 0
-	else
-		print_result "status: shows status header" 1 "Expected 'SimpleX Chat Status' in output"
-	fi
-
-	if echo "$status_output" | grep -q "Binary:"; then
-		print_result "status: shows binary status" 0
-	else
-		print_result "status: shows binary status" 1 "Expected 'Binary:' in status output"
-	fi
+	assert_contains "status: shows status header" "$status_output" "SimpleX Chat Status"
+	assert_contains "status: shows binary status" "$status_output" "Binary:"
 
 	# Count subcommand function definitions (should have at least 8)
 	local cmd_count
