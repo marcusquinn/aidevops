@@ -43,20 +43,19 @@ echo "Running workers: $WORKER_COUNT / 6"
 
 ## Step 2: Fetch GitHub State
 
-Run these commands to get the current state of all managed repos:
+Read the pulse repo list, then fetch PRs and issues for each:
 
 ```bash
-# aidevops PRs
-gh pr list --repo marcusquinn/aidevops --state open --json number,title,reviewDecision,statusCheckRollup,updatedAt,headRefName --limit 20
+# Read managed repos from config
+cat ~/.config/aidevops/pulse-repos.json
+# → Extract each .repos[].slug
 
-# aidevops issues
-gh issue list --repo marcusquinn/aidevops --state open --json number,title,labels,updatedAt --limit 20
-
-# For each managed repo in the supervisor DB, fetch PRs and issues:
-# gh pr list --repo <owner/repo> --state open --json number,title,reviewDecision,statusCheckRollup,updatedAt,headRefName --limit 20
-# gh issue list --repo <owner/repo> --state open --json number,title,labels,updatedAt --limit 20
-# Discover managed repos dynamically from the supervisor DB or repos.json — do NOT hardcode private repo names.
+# For EACH repo slug, fetch PRs and issues:
+gh pr list --repo <slug> --state open --json number,title,reviewDecision,statusCheckRollup,updatedAt,headRefName --limit 20
+gh issue list --repo <slug> --state open --json number,title,labels,updatedAt --limit 20
 ```
+
+**Important:** Do NOT hardcode repo slugs in this prompt. Always read from `~/.config/aidevops/pulse-repos.json`. Private repo names must never appear in issues or comments on public repos.
 
 ## Step 2a: Observe Outcomes (Self-Improvement)
 
