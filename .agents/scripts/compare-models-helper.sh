@@ -785,27 +785,28 @@ cmd_cross_review() {
 
 		echo "  Dispatching to ${model_tier} (${resolved_model})..."
 
-		# Create runner, dispatch, capture output
+		# Create runner, dispatch, capture output (errors logged per-model for debugging)
+		local model_err_log="${output_dir}/${model_tier}-errors.log"
 		(
 			"$runner_helper" create "$runner_name" \
 				--model "$model_tier" \
 				--description "Cross-review: $model_tier" \
-				--workdir "$workdir" 2>/dev/null || true
+				--workdir "$workdir" 2>>"$model_err_log" || true
 
 			local result_file="${output_dir}/${model_tier}.txt"
 			"$runner_helper" run "$runner_name" "$prompt" \
 				--model "$model_tier" \
 				--timeout "$review_timeout" \
-				--format json 2>/dev/null >"${output_dir}/${model_tier}.json" || true
+				--format json 2>>"$model_err_log" >"${output_dir}/${model_tier}.json" || true
 
 			# Extract text response from JSON
 			if [[ -f "${output_dir}/${model_tier}.json" ]]; then
 				jq -r '.parts[]? | select(.type == "text") | .text' \
-					"${output_dir}/${model_tier}.json" 2>/dev/null >"$result_file" || true
+					"${output_dir}/${model_tier}.json" 2>>"$model_err_log" >"$result_file" || true
 			fi
 
 			# Clean up runner
-			"$runner_helper" destroy "$runner_name" --force 2>/dev/null || true
+			"$runner_helper" destroy "$runner_name" --force 2>>"$model_err_log" || true
 		) &
 		pids+=($!)
 	done
@@ -816,7 +817,8 @@ cmd_cross_review() {
 	local failed=0
 	for i in "${!pids[@]}"; do
 		if ! wait "${pids[$i]}" 2>/dev/null; then
-			echo "  ${model_names[$i]}: failed"
+			local err_log="${output_dir}/${model_names[$i]}-errors.log"
+			echo "  ${model_names[$i]}: failed (see ${err_log})"
 			failed=$((failed + 1))
 		else
 			echo "  ${model_names[$i]}: done"
@@ -1033,11 +1035,29 @@ if m:
 		return 0
 	fi
 
-	# Parse winner and task_type
+	# Parse winner, task_type, and reasoning in a single Python call
+	local parsed_fields
+	parsed_fields=$(echo "$judge_json" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+# Truncate reasoning to 500 chars and strip control characters
+r = d.get('reasoning', '')[:500]
+r = ''.join(c for c in r if c.isprintable() or c in (' ', '\t'))
+print(d.get('winner', ''))
+print(d.get('task_type', 'general'))
+print(r)
+" 2>/dev/null || true)
+
 	local winner task_type reasoning
-	winner=$(echo "$judge_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('winner',''))" 2>/dev/null || true)
-	task_type=$(echo "$judge_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('task_type','general'))" 2>/dev/null || echo "general")
-	reasoning=$(echo "$judge_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('reasoning',''))" 2>/dev/null || true)
+	if [[ -n "$parsed_fields" ]]; then
+		winner=$(echo "$parsed_fields" | head -1)
+		task_type=$(echo "$parsed_fields" | sed -n '2p')
+		reasoning=$(echo "$parsed_fields" | sed -n '3p')
+	else
+		winner=""
+		task_type="general"
+		reasoning=""
+	fi
 
 	# Sanitize task_type: restrict to known allowlist
 	local -a valid_task_types=(general code review analysis debug refactor test docs security)
