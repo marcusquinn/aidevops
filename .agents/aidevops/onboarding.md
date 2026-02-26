@@ -1113,6 +1113,65 @@ aidevops repo-sync config   # Show configuration instructions
 aidevops repo-sync enable   # Enable after configuring
 ```
 
+## Autonomous Orchestration (Optional)
+
+aidevops can work autonomously — dispatching AI workers, merging PRs, evaluating results, and self-improving. This is opt-in because it uses your API keys.
+
+Ask the user:
+
+```text
+aidevops includes autonomous orchestration features that can work in the background:
+
+1. Supervisor pulse    - Dispatches AI workers every 2 min to implement tasks from TODO.md
+2. Strategic review    - Every 4h, an opus-tier review checks queue health, finds stuck
+                         chains, identifies root causes, and creates self-improvement tasks
+3. Session miner       - Daily extraction of learning signals from past sessions
+4. Circuit breaker     - Auto-pauses dispatch if workers fail consecutively
+
+These require API keys (Anthropic/OpenAI) and will make API calls on your behalf.
+
+Would you like to enable autonomous orchestration? (yes/no/explain more)
+```
+
+If **explain more**:
+
+```text
+Here's how it works:
+
+- You add tasks to TODO.md with #auto-dispatch tag
+- The supervisor pulse picks them up and launches AI workers
+- Workers create branches, implement changes, and open PRs
+- The pulse evaluates results, merges passing PRs, and cleans up
+- Every 4 hours, an opus-tier strategic review assesses the whole operation:
+  finds blocked chains, stale state, idle capacity, and systemic issues
+- It creates self-improvement tasks when it finds root causes in the framework
+
+Cost: the pulse uses sonnet-tier (~$0.50/day active). The strategic review uses
+opus (~$1-2/day). Workers use the model specified per task.
+
+You stay in control — the supervisor only dispatches tasks you've tagged.
+```
+
+If **yes**:
+
+```bash
+# Enable the supervisor pulse (every 2 min)
+~/.aidevops/agents/scripts/supervisor-helper.sh cron install
+
+# Verify it's running
+~/.aidevops/agents/scripts/supervisor-helper.sh cron status
+```
+
+If **no**:
+
+```text
+No problem. You can enable it anytime:
+  supervisor-helper.sh cron install
+
+The strategic review, session miner, and circuit breaker all run as steps
+within the pulse — enabling the pulse enables everything.
+```
+
 ## Next Steps After Setup
 
 Once services are configured:
@@ -1121,4 +1180,5 @@ Once services are configured:
 2. **Test a simple task**: "List my GitHub repos" or "Check my Hetzner servers"
 3. **Explore agents**: Type `@` to see available agents
 4. **Try a workflow**: `/create-prd` → `/generate-tasks` → `/feature` → build → `/release`
-5. **Read the docs**: `@aidevops` for framework guidance
+5. **Enable orchestration**: `supervisor-helper.sh cron install` for autonomous task dispatch
+6. **Read the docs**: `@aidevops` for framework guidance
