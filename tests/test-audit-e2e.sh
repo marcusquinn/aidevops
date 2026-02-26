@@ -147,7 +147,7 @@ INSERT INTO findings (source, external_key, file, line, severity, type, rule, me
 VALUES
     ('sonarcloud', 'sc-001', '.agents/scripts/code-audit-helper.sh', 42, 'high', 'BUG', 'bash:S5515', 'Unquoted variable in conditional', 'OPEN'),
     ('sonarcloud', 'sc-002', '.agents/scripts/supervisor-helper.sh', 100, 'medium', 'CODE_SMELL', 'bash:S2034', 'Unused variable: old_status', 'OPEN'),
-    ('sonarcloud', 'sc-003', '.agents/scripts/quality-sweep-helper.sh', 55, 'critical', 'VULNERABILITY', 'bash:S4507', 'SQL injection via unsanitized input', 'OPEN'),
+    ('sonarcloud', 'sc-003', '.agents/scripts/supervisor-helper.sh', 55, 'critical', 'VULNERABILITY', 'bash:S4507', 'SQL injection via unsanitized input', 'OPEN'),
     ('codacy', 'cd-001', '.agents/scripts/code-audit-helper.sh', 42, 'high', 'BUG', 'ShellCheck/SC2086', 'Double quote to prevent globbing', 'OPEN'),
     ('codacy', 'cd-002', '.agents/scripts/memory-helper.sh', 200, 'medium', 'CODE_SMELL', 'ShellCheck/SC2155', 'Declare and assign separately', 'OPEN'),
     ('codacy', 'cd-003', '.agents/scripts/finding-to-task-helper.sh', 80, 'low', 'CODE_SMELL', 'ShellCheck/SC2034', 'Variable appears unused', 'OPEN'),
@@ -677,14 +677,9 @@ test_checkpoint_8() {
 	local chain_ok=true
 
 	# Step 1: Collectors exist
-	local collectors=0
-	for script in coderabbit-collector-helper.sh; do
-		if [[ -f "$SCRIPTS_DIR/$script" ]]; then
-			collectors=$((collectors + 1))
-		fi
-	done
-	if [[ "$collectors" -ge 1 ]]; then
-		pass "At least $collectors collector script(s) available"
+	# Step 1: Collector exists (quality-sweep-helper.sh archived t1336)
+	if [[ -f "$SCRIPTS_DIR/coderabbit-collector-helper.sh" ]]; then
+		pass "coderabbit-collector-helper.sh available"
 	else
 		fail "No collector scripts found"
 		chain_ok=false
@@ -706,14 +701,8 @@ test_checkpoint_8() {
 		skip "finding-to-task-helper.sh DB connection not verified"
 	fi
 
-	# Step 4: Phase 10b calls task creator
-	local pulse_script="$SCRIPTS_DIR/supervisor/pulse.sh"
-	if grep -q 'task_creator_script\|coderabbit-task-creator' "$pulse_script"; then
-		pass "Phase 10b calls task creator script"
-	else
-		fail "Phase 10b does not call task creator"
-		chain_ok=false
-	fi
+	# Step 4: Phase 10b task creation (task creator scripts archived t1336 — AI handles this)
+	skip "Task creator scripts archived (t1336) — pulse uses AI judgment for task creation from findings"
 
 	# Step 5: Phase 0 picks up #auto-dispatch tasks
 	if grep -q 'auto.pickup\|auto_pickup' "$pulse_script"; then
