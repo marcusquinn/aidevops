@@ -2638,12 +2638,16 @@
   check: shellcheck .agents/scripts/stuck-detection-helper.sh
   check: file-exists .agents/scripts/stuck-detection-helper.sh
 
-- [ ] v307 t1327.3 Helper script #auto-dispatch — create `simplex-helper.sh`... | PR #unknown | merged:2026-02-26
+- [x] v307 t1327.3 Helper script #auto-dispatch — create `simplex-helper.sh`... | PR #unknown | merged:2026-02-26 verified:2026-02-26
 
-- [ ] v308 t1338.2 Create local-models.md subagent #auto-dispatch — new `.ag... | PR #2391 | merged:2026-02-26
+- [x] v308 t1338.2 Create local-models.md subagent #auto-dispatch — new `.ag... | PR #2391 | merged:2026-02-26 verified:2026-02-26
   files: .agents/scripts/aidevops-update-check.sh, .agents/subagent-index.toon, .agents/tools/local-models/local-models.md
   check: shellcheck .agents/scripts/aidevops-update-check.sh
   check: file-exists .agents/scripts/aidevops-update-check.sh
   check: file-exists .agents/subagent-index.toon
   check: file-exists .agents/tools/local-models/local-models.md
   check: rg "local-models" .agents/subagent-index.toon
+
+- [ ] v309 t1338.6 Update AGENTS.md domain index and subagent-index.toon #au... | PR #2394 | merged:2026-02-26
+  files: .agents/AGENTS.md
+  check: file-exists .agents/AGENTS.md
