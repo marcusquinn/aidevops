@@ -69,7 +69,11 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [ ] t1337.1 Audit Tier 3 scripts — map functions, identify dead code, and document consolidation targets #refactor #auto-dispatch ~2h model:sonnet assignee:alex-solovyev started:2026-02-26T19:55:29Z ref:GH#2352 status:deployed
 >>>>>>> Stashed changes
   - [x] t1337.2 Consolidate Tier 3 scripts — merge overlapping functions, remove dead code, reduce to ~2,000 lines #refactor #auto-dispatch ~4h model:opus assignee:alex-solovyev started:2026-02-26T19:55:34Z ref:GH#2353 pr:#2398 completed:2026-02-26
+<<<<<<< Updated upstream
   - [x] t1337.3 Verify Tier 3 simplification — ShellCheck clean, integration test, no regressions #testing #auto-dispatch ~1h model:sonnet assignee:alex-solovyev started:2026-02-26T19:55:39Z ref:GH#2354 pr:#2399 completed:2026-02-26
+=======
+  - [x] t1337.3 Verify Tier 3 simplification — ShellCheck clean, integration test, no regressions #testing #auto-dispatch ~1h model:sonnet assignee:alex-solovyev started:2026-02-26T19:55:39Z ref:GH#2354 status:deployed pr:#2399 completed:2026-02-26
+>>>>>>> Stashed changes
 
 - [ ] t1338 Local AI model support (llama.cpp + HuggingFace) — add local model inference to aidevops: extend model-routing.md with `local` tier ($0 cost), create subagent docs for llama.cpp setup and HuggingFace model discovery, create `local-model-helper.sh` CLI (install, serve, stop, status, models, search, pull, recommend, usage, cleanup, update), usage logging via SQLite, disk cleanup nudges for models unused 30+ days. Guided setup detects hardware (Apple Silicon/NVIDIA/AMD), recommends models that fit, downloads llama.cpp binary on first use (~29 MB macOS ARM, ~23 MB Linux x64). OpenAI-compatible API on localhost for seamless integration. #plan #feature #local-models #infrastructure ~13.5h (ai:10h test:2h read:1.5h) model:sonnet ref:GH#2307 logged:2026-02-25 -> [todo/PLANS.md#2026-02-25-local-ai-model-support]
   - [x] t1338.1 Extend model-routing.md with local tier #auto-dispatch — add `local` to Model Tiers table, Routing Rules, Cost Estimation ($0), Decision Flowchart, Examples, Provider Discovery, Fallback Routing (local has no fallback, skip to haiku) ~1h model:sonnet ref:GH#2320 assignee:alex-solovyev started:2026-02-26T18:19:15Z pr:#2385 completed:2026-02-26
