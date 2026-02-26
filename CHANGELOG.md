@@ -7,9 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.133.6] - 2026-02-26
+
+### Added
+
+- add prompt-guard-helper.sh for chat input injection defense (t1327.8) (#2374)
+- add outbound leak detection at bot send boundary (t1327.9) (#2373)
+
+### Changed
+
+- Documentation: changelog for pulse autonomy v2 fix
+
 ### Fixed
 
-- Pulse supervisor: stronger autonomous execution enforcement — prevents report-and-stop pattern (#2376)
+- stronger autonomous execution enforcement in pulse — prevent report-and-stop pattern (#2376)
 
 ## [2.133.5] - 2026-02-26
 
