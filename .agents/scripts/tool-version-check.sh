@@ -126,10 +126,13 @@ get_installed_version() {
 	return 0
 }
 
+# Timeout for external package manager queries (seconds)
+readonly PKG_QUERY_TIMEOUT=30
+
 # Get latest npm version
 get_npm_latest() {
 	local pkg="$1"
-	npm view "$pkg" version 2>/dev/null || echo "unknown"
+	timeout "$PKG_QUERY_TIMEOUT" npm view "$pkg" version 2>/dev/null || echo "unknown"
 	return 0
 }
 
@@ -137,7 +140,7 @@ get_npm_latest() {
 get_brew_latest() {
 	local pkg="$1"
 	if command -v brew &>/dev/null; then
-		brew info "$pkg" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown"
+		timeout "$PKG_QUERY_TIMEOUT" brew info "$pkg" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown"
 	else
 		echo "unknown"
 	fi
@@ -147,7 +150,7 @@ get_brew_latest() {
 # Get latest pip version
 get_pip_latest() {
 	local pkg="$1"
-	pip index versions "$pkg" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown"
+	timeout "$PKG_QUERY_TIMEOUT" pip index versions "$pkg" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown"
 	return 0
 }
 
@@ -344,7 +347,8 @@ main() {
 				echo "  Running: $update_cmd"
 				# Run update command directly (not via eval for security)
 				# Commands are hardcoded in tool definitions, not user input
-				if bash -c "$update_cmd" 2>&1 | tail -2; then
+				# Timeout prevents hangs on slow registries/network issues
+				if timeout 120 bash -c "$update_cmd" 2>&1 | tail -2; then
 					echo -e "  ${GREEN}✓ Updated${NC}"
 				else
 					echo -e "  ${RED}✗ Failed${NC}"
