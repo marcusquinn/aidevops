@@ -795,9 +795,26 @@ function validatePositionalParams(filePath) {
         ) {
           continue;
         }
-        // Skip currency/pricing patterns: $[1-9] followed by digits, decimal, comma,
-        // or slash (e.g. $28/mo, $1.99, $1,000) — false-positives in markdown tables.
-        if (/\$[1-9][0-9.,/]/.test(trimmed)) {
+        // Strip escaped dollar signs before further checks so that lines with
+        // mixed content (e.g. "\$5 fee $1") still detect unescaped positional params.
+        // This replaces the previous whole-line skip for escaped dollars.
+        const stripped = trimmed.replace(/\\\$[1-9]/g, "");
+        // Skip if no unescaped $N remains after stripping escaped ones
+        if (!/\$[1-9]/.test(stripped)) {
+          continue;
+        }
+        // Skip currency/pricing patterns (false-positives in markdown tables,
+        // heredocs, and echo strings):
+        //   - $N followed by digits, decimal, or comma (e.g. $28, $1.99, $1,000)
+        //   - $N/billing-unit (e.g. $5/mo, $9/year) — but NOT $1/config (path)
+        //   - $N followed by space + pricing/unit word (e.g. $5 flat, $3 fee, $9 per month)
+        //   - Markdown table rows (lines starting with |)
+        if (
+          /\$[1-9][0-9.,]/.test(stripped) ||
+          /\$[1-9]\/(?:mo(?:nth)?|yr|year|day|week|hr|hour)\b/.test(stripped) ||
+          /\$[1-9]\s+(?:per|mo(?:nth)?|year|yr|day|week|hr|hour|flat|each|off|fee|plan|tier|user|seat|unit|addon|setup|trial|credit|annual|quarterly|monthly)\b/.test(stripped) ||
+          /^\s*\|/.test(line)
+        ) {
           continue;
         }
         details.push(`  Line ${i + 1}: direct positional parameter: ${trimmed.substring(0, 80)}`);
@@ -1511,10 +1528,11 @@ const BUILTIN_TTSR_RULES = [
     // like a shell assignment/command context — avoids matching $1 inside prose,
     // documentation, quoted examples, or tool output from file reads.
     // Excludes currency/pricing patterns:
-    //   - $[1-9] followed by digits, decimal, comma, or slash (e.g. $28/mo, $1.99, $1,000)
-    //   - $[1-9] followed by pipe (markdown table cell boundary)
+    //   - $[1-9] followed by digits, decimal, or comma (e.g. $28, $1.99, $1,000)
+    //   - $[1-9]/billing-unit (e.g. $5/mo, $9/year) — but NOT $1/config (path)
     //   - $[1-9] followed by common currency/pricing unit words (per, mo, month, flat, etc.)
-    pattern: "^\\s+(?:echo|printf|return|if|\\[\\[).*\\$[1-9](?![0-9.,/])(?!\\s*[|])(?!\\s+(?:per|mo(?:nth)?|year|yr|day|week|hr|hour|flat|each|off|fee|plan|tier|user|seat|unit|addon|setup|trial|credit|annual|quarterly|monthly)\\b)(?!.*local\\s+\\w+=)",
+    //   - Escaped dollar signs \$[1-9] (literal dollar in shell strings)
+    pattern: "^\\s+(?:echo|printf|return|if|\\[\\[).*(?<!\\\\)\\$[1-9](?![0-9.,])(?!\\/(?:mo(?:nth)?|yr|year|day|week|hr|hour)\\b)(?!\\s+(?:per|mo(?:nth)?|year|yr|day|week|hr|hour|flat|each|off|fee|plan|tier|user|seat|unit|addon|setup|trial|credit|annual|quarterly|monthly)\\b)(?!.*local\\s+\\w+=)",
     correction: "Use `local var=\"$1\"` pattern — never use positional parameters directly (SonarCloud S7679).",
     severity: "warn",
     systemPrompt: "Shell scripts: use `local var=\"$1\"` — never use $1 directly in function bodies.",
