@@ -2671,3 +2671,8 @@
   files: .agents/scripts/local-model-helper.sh
   check: shellcheck .agents/scripts/local-model-helper.sh
   check: file-exists .agents/scripts/local-model-helper.sh
+
+- [ ] v312 t1337.3 Verify Tier 3 simplification — ShellCheck clean, integrat... | PR #2399 | merged:2026-02-26
+  files: .agents/scripts/tests/test-tier3-simplified.sh
+  check: shellcheck .agents/scripts/tests/test-tier3-simplified.sh
+  check: file-exists .agents/scripts/tests/test-tier3-simplified.sh
