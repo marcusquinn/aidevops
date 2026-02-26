@@ -87,14 +87,31 @@ If you see a pattern (same type of failure, same error), create an improvement i
 
 **Duplicate work:** If two open PRs target the same issue or have very similar titles, flag it by commenting on the newer one.
 
-**Long-running workers:** Check the runtime of each running worker process with `ps axo pid,etime,command | grep '/full-loop'`. The `etime` column shows elapsed time. The task size check in Step 3 should prevent most of these, but as a safety net:
+**Long-running workers:** Check the runtime of each running worker process with `ps axo pid,etime,command | grep '/full-loop'`. The `etime` column shows elapsed time (format: `HH:MM` or `D-HH:MM:SS`). Parse it to get hours.
 
-- **2+ hours, no PR:** Comment on the GitHub issue telling the worker to PR what's done and file subtask issues for the rest.
-- **3+ hours, no PR:** Kill the worker (`kill <pid>`). The task needs decomposition — create subtask issues.
-- **3+ hours, has PR:** Likely stuck in a CI/review loop. Comment on the PR.
-- **6+ hours:** Kill regardless — zombied or infinite loop.
+For any worker running 2+ hours, **assess whether it's making progress** before deciding to kill:
 
-**Keep it lightweight.** This step should take seconds, not minutes. If nothing looks wrong, move on. The goal is to catch patterns over many pulses, not to do deep analysis on each one.
+1. **Check for recent activity.** Extract the issue/PR number from the command line, then:
+   - `gh pr list --repo <owner/repo> --head <branch-pattern> --json number,updatedAt` — has it opened a PR?
+   - If PR exists: `gh api repos/<owner/repo>/pulls/<number>/commits --jq '.[-1].commit.committer.date'` — when was the last commit?
+   - Check the worktree: `ls -lt ~/Git/<repo>-*/ 2>/dev/null | head -3` — are files being modified recently?
+
+2. **Use judgment, not fixed thresholds.** Consider:
+   - A 4-hour worker that pushed commits 10 minutes ago is making progress — leave it.
+   - A 2-hour worker with zero commits and no PR is stuck — kill it.
+   - A 6-hour worker with a PR stuck in a CI loop is wasting a slot — kill it and comment on the PR.
+   - A worker on a genuinely large task (migration, refactor) may need more time — but should have opened a PR by hour 2 at the latest.
+
+3. **Act on your assessment.** If you decide a worker is stuck or zombied, execute the kill:
+
+```bash
+kill <pid>
+gh issue comment <number> --repo <owner/repo> --body "Supervisor pulse: killed worker (PID <pid>, <runtime>, <reason — e.g. no commits in 3h, stuck in CI loop, no PR opened>). <next step — e.g. task needs decomposition, will re-dispatch, needs manual investigation>."
+```
+
+**The key rule: do not just observe and report — if a worker is stuck, kill it and free the slot.** An occupied slot producing nothing is worse than an empty slot that can be filled with new work.
+
+**Keep it lightweight.** Spend seconds per worker, not minutes. If a worker is under 2 hours, skip it. The goal is to catch stuck workers over many pulses, not to do deep analysis on each one.
 
 ## Step 3: Decide What to Work On
 
