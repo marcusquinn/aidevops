@@ -7,9 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+## [2.133.11] - 2026-02-26
 
-- Pulse scheduler setup guide in runners.md — plist template, reboot behavior, RunAtLoad (#2383)
+### Changed
+
+- Documentation: changelog for pulse scheduler setup guide
+- Documentation: add pulse scheduler setup guide to runners.md — plist creation, reboot behavior, RunAtLoad (#2383)
+
+### Fixed
+
+- add blocker-chain validation, worker time budgets, and dependency chain ordering (#2382)
 
 ## [2.133.10] - 2026-02-26
 

@@ -4,7 +4,7 @@ set -euo pipefail
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 2.133.10
+# Version: 2.133.11
 #
 # Quick Install:
 #   npm install -g aidevops && aidevops update          (recommended)
