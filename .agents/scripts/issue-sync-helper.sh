@@ -543,7 +543,10 @@ cmd_pull() {
 					if echo "$cl" | grep -qE 'logged:'; then
 						nl=$(echo "$cl" | sed -E "s/( logged:)/ assignee:${login}\1/")
 					else nl="${cl} assignee:${login}"; fi
-					sed_inplace "${ln}s|.*|${nl}|" "$todo_file"
+					# Escape sed replacement metacharacters (| & \) in $nl
+					local nl_escaped
+					nl_escaped=$(printf '%s' "$nl" | sed 's/[|&\\]/\\&/g')
+					sed_inplace "${ln}s|.*|${nl_escaped}|" "$todo_file"
 					assignee_synced=$((assignee_synced + 1))
 				fi
 			done < <(echo "$json" | jq -c '.[]' 2>/dev/null || true)
@@ -650,11 +653,11 @@ cmd_status() {
 	verify_gh_cli || return 1
 
 	local total_open
-	total_open=$(strip_code_fences <"$todo_file" | grep -cE '^\s*- \[ \] t[0-9]+' || echo "0")
+	total_open=$(strip_code_fences <"$todo_file" | grep -cE '^\s*- \[ \] t[0-9]+' || true)
 	local total_done
-	total_done=$(strip_code_fences <"$todo_file" | grep -cE '^\s*- \[x\] t[0-9]+' || echo "0")
+	total_done=$(strip_code_fences <"$todo_file" | grep -cE '^\s*- \[x\] t[0-9]+' || true)
 	local with_ref
-	with_ref=$(strip_code_fences <"$todo_file" | grep -cE '^\s*- \[ \] t[0-9]+.*ref:GH#' || echo "0")
+	with_ref=$(strip_code_fences <"$todo_file" | grep -cE '^\s*- \[ \] t[0-9]+.*ref:GH#' || true)
 	local without_ref=$((total_open - with_ref))
 
 	local gh_open
