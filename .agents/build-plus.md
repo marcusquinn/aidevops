@@ -113,6 +113,7 @@ Before implementing, check AGENTS.md domain index. If the task touches a special
 | Audio/voice | `content/production/audio.md` + `tools/voice/speech-to-speech.md` |
 | SEO/blog posts | `seo/` + `content/distribution/` |
 | WordPress | `tools/wordpress/wp-dev.md` |
+| UI/layout/design/CSS | `workflows/ui-verification.md` + `tools/browser/playwright-emulation.md` + `tools/browser/chrome-devtools.md` |
 | Browser automation | `tools/browser/browser-automation.md` |
 | Accessibility | `services/accessibility/accessibility-audit.md` |
 
@@ -136,9 +137,13 @@ Root-cause only — don't address symptoms. Use logs/print statements to inspect
 
 Test narrow-to-broad. Add tests if codebase has them. Iterate until all pass. Insufficient testing is the #1 failure mode.
 
+**UI changes require browser verification.** If the task involves CSS, layout, responsive design, UI components, or visual changes: run `workflows/ui-verification.md`. Take multi-device screenshots (mobile, tablet, desktop), check for browser console errors via Chrome DevTools, and run accessibility checks. Never self-assess that visual changes "look good" -- use Playwright device emulation for evidence.
+
 ### 9. Validate
 
 Verify against original intent. Verification hierarchy: tools (tests/lint/build) → browser (UI) → primary sources → self-review → ask user.
+
+For UI tasks, "browser (UI)" means actual Playwright screenshots across devices + Chrome DevTools console error check + accessibility scan. Include the UI verification report as evidence.
 
 ## Planning Workflow (Deliberation Mode)
 
