@@ -2589,3 +2589,7 @@
   files: .agents/scripts/observability-helper.sh
   check: shellcheck .agents/scripts/observability-helper.sh
   check: file-exists .agents/scripts/observability-helper.sh
+
+- [ ] v301 t1323 Fix TTSR shell-local-params rule false-positives on curre... | PR #2388 | merged:2026-02-26
+  files: .agents/plugins/opencode-aidevops/index.mjs
+  check: file-exists .agents/plugins/opencode-aidevops/index.mjs
