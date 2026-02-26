@@ -89,7 +89,7 @@ If you see a pattern (same type of failure, same error), create an improvement i
 
 **Long-running workers:** Check the runtime of each running worker process with `ps axo pid,etime,command | grep '/full-loop'`. The `etime` column shows elapsed time (format: `HH:MM` or `D-HH:MM:SS`). Parse it to get hours.
 
-For any worker running 2+ hours, **assess whether it's making progress** before deciding to kill:
+Workers now have a self-imposed 2-hour time budget (see full-loop.md rule 8), but the supervisor enforces a safety net. For any worker running 2+ hours, **assess whether it's making progress** before deciding to kill:
 
 1. **Check for recent activity.** Extract the issue/PR number from the command line, then:
    - `gh pr list --repo <owner/repo> --head <branch-pattern> --json number,updatedAt` — has it opened a PR?
@@ -112,6 +112,8 @@ gh issue comment <number> --repo <owner/repo> --body "Supervisor pulse: killed w
 **The key rule: do not just observe and report — if a worker is stuck, kill it and free the slot.** An occupied slot producing nothing is worse than an empty slot that can be filled with new work.
 
 **Keep it lightweight.** Spend seconds per worker, not minutes. If a worker is under 2 hours, skip it. The goal is to catch stuck workers over many pulses, not to do deep analysis on each one.
+
+**Post-kill triage:** After killing a long-running worker, check if the issue has `blocked-by:` references with unmerged prerequisites. If so, this was a dispatch error — the blocker-chain validation (Step 3) should have caught it. Label the issue `status:blocked` and do NOT re-dispatch until the chain is clear.
 
 ## Step 3: Decide What to Work On
 
@@ -136,10 +138,10 @@ Look at everything you fetched and pick up to **AVAILABLE** items — the highes
 
 1. **Read the issue body** with `gh issue view <number> --repo <owner/repo> --json body,title` to find the blocker reason. Look for patterns like `blocked-by: tXXX`, `**Blocked by:** tXXX`, `depends on #NNN`, or `blocked-by:tXXX` in the body text.
 
-2. **Check if the blocker is resolved.** For each blocker reference:
-   - If it's a task ID (e.g., `t047`): search closed issues with `gh issue list --repo <owner/repo> --state closed --search "t047" --json number,title,state --limit 5`. If found closed/merged, the blocker is resolved.
-   - If it's an issue number (e.g., `#123`): check `gh issue view 123 --repo <owner/repo> --json state`. If closed, the blocker is resolved.
-   - If it's a PR reference: check if the PR is merged.
+2. **Check if the blocker is resolved.** A blocker is resolved ONLY when its PR is **merged** (not just when the issue is closed). An issue can be closed without a merged PR (worker failed, issue was duplicate, etc.). For each blocker reference:
+   - If it's a task ID (e.g., `t047`): search for a **merged** PR: `gh pr list --repo <owner/repo> --state merged --search "t047" --json number,title --limit 3`. If no merged PR exists, the blocker is NOT resolved — even if the issue is closed.
+   - If it's an issue number (e.g., `#123`): check `gh issue view 123 --repo <owner/repo> --json state,stateReason`. If closed with `stateReason: COMPLETED` AND a linked merged PR exists, the blocker is resolved. If closed as `NOT_PLANNED`, the blocker may need re-evaluation.
+   - If it's a PR reference: check if the PR is merged with `gh pr view <number> --repo <owner/repo> --json state`. Only `MERGED` counts.
 
 3. **Auto-unblock resolved issues.** If ALL blockers are resolved:
    ```bash
@@ -165,14 +167,42 @@ This turns blocked issues from a dead end into an actively managed queue.
 
 **Deduplication — check running processes:** Before dispatching, check `ps axo command | grep '/full-loop'` for any running worker whose command line contains the issue/PR number you're about to dispatch. Different pulse runs may have used different title formats for the same work (e.g., "issue-2300-simplify-infra-scripts" vs "Issue #2300: t1337 Simplify Tier 3"). Extract the canonical number (e.g., `2300`, `t1337`) and check if ANY running worker references it. If so, skip — do not dispatch a duplicate.
 
+**Blocker-chain validation (MANDATORY before dispatch):** Before dispatching a worker for any issue, validate that its entire dependency chain is resolved — not just the immediate `status:blocked` label. This prevents the #1 cause of workers running 3-9 hours without producing PRs: they start work on tasks whose prerequisites aren't merged yet, then spin trying to work around missing schemas, APIs, or migrations.
+
+1. **Read the issue body** for `blocked-by:` references (task IDs like `t030` or issue numbers like `#284`).
+
+2. **Check the full chain recursively.** If task A is blocked by task B, and task B is blocked by task C, then A is not dispatchable even if B's label says `status:available`. For each blocker:
+   - Search for the blocker's PR: `gh pr list --repo <owner/repo> --state merged --search "<blocker_id>" --json number,title --limit 3`
+   - If no merged PR exists for the blocker, the task is NOT dispatchable.
+   - If the blocker itself has `blocked-by:` references, check those too (max depth: 5 to avoid infinite loops).
+
+3. **Label undispatchable issues.** If the chain is not fully resolved:
+   ```bash
+   gh issue edit <number> --repo <owner/repo> --add-label "status:blocked" 2>/dev/null || true
+   gh issue edit <number> --repo <owner/repo> --remove-label "status:available" 2>/dev/null || true
+   ```
+   Comment (once, check for existing supervisor comments first):
+   ```bash
+   gh issue comment <number> --repo <owner/repo> --body "Supervisor pulse: not dispatching — blocker chain incomplete. Unresolved: <list>. Will auto-dispatch when chain is fully merged."
+   ```
+
+4. **Do NOT dispatch workers for tasks with unresolved blocker chains.** This is a hard gate, not a suggestion. The cost of a 3-hour wasted worker session far exceeds the cost of waiting one more pulse cycle for blockers to merge.
+
 **Task size check — decompose before dispatching:** Before dispatching a worker for an issue, read the issue body with `gh issue view <number> --repo <owner/repo> --json body`. Ask yourself: can a single worker session (roughly 1-2 hours) complete this? Signs it's too big:
 
 - The issue describes multiple independent changes across different files/systems
 - It has a checklist with 5+ items
 - It uses words like "audit all", "refactor entire", "migrate everything"
 - It spans multiple repos or services
+- **It depends on schema/API changes from another task that isn't merged yet** — even if the blocker label was removed, check if the prerequisite PR actually landed on the target branch
 
 If the task looks too large, do NOT dispatch a worker. Instead, create subtask issues that break it into achievable chunks (each completable in one worker session), then label the parent issue `status:blocked` with `blocked-by:` references to the subtasks. The subtasks will be picked up by future pulses. This is far more productive than dispatching a worker that grinds for hours and produces nothing mergeable.
+
+**Dependency chain decomposition:** When a task chain has strict ordering (e.g., p004 phases where t041 depends on t030 which depends on t029), the supervisor must respect the ordering:
+- Only dispatch the **next unblocked task** in the chain, not all tasks simultaneously.
+- After a task's PR merges, the next pulse will detect the unblocked successor and dispatch it.
+- If multiple independent branches exist in the dependency graph (e.g., t034 and t036 both depend on t027 which is done), those CAN be dispatched in parallel.
+- Never dispatch two tasks from the same chain that have a dependency relationship between them.
 
 If you're unsure whether it needs decomposition, dispatch the worker — but prefer to err on the side of smaller tasks. A worker that finishes in 30 minutes and opens a clean PR is worth more than one that runs for 3 hours and gets killed.
 
