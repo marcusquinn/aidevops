@@ -7,9 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.133.3] - 2026-02-26
+
+### Added
+
+- add usage logging and disk management for local models (#2358)
+
+### Changed
+
+- Documentation: add changelog entry for dispatch CLI fix
+
 ### Fixed
 
-- Enforce `opencode run` for headless dispatch — agents with Claude identity repeatedly defaulted to wrong CLI (#2359)
+- enforce opencode run for headless dispatch — never use claude CLI (#2359)
 
 ## [2.133.2] - 2026-02-26
 
