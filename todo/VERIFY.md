@@ -2594,13 +2594,13 @@
   files: .agents/plugins/opencode-aidevops/index.mjs
   check: file-exists .agents/plugins/opencode-aidevops/index.mjs
 
-- [ ] v302 t1327.6 Opsec agent #auto-dispatch — create `.agents/tools/securi... | PR #unknown | merged:2026-02-26
+- [x] v302 t1327.6 Opsec agent #auto-dispatch — create `.agents/tools/securi... | PR #unknown | merged:2026-02-26 verified:2026-02-26
 
-- [ ] v303 t1331 Supervisor circuit breaker — pause on consecutive failure... | PR #unknown | merged:2026-02-26
+- [x] v303 t1331 Supervisor circuit breaker — pause on consecutive failure... | PR #unknown | merged:2026-02-26 verified:2026-02-26
 
-- [ ] v304 t1322 Support .aidevops.json project-level config in claim-task... | PR #unknown | merged:2026-02-26
+- [x] v304 t1322 Support .aidevops.json project-level config in claim-task... | PR #unknown | merged:2026-02-26 verified:2026-02-26
 
-- [ ] v305 t1336 Archive Tier 2 redundant orchestration scripts — archive ... | PR #2392 | merged:2026-02-26
+- [x] v305 t1336 Archive Tier 2 redundant orchestration scripts — archive ... | PR #2392 | merged:2026-02-26 verified:2026-02-26
   files: .agents/aidevops/architecture.md, .agents/business.md, .agents/memory/README.md, .agents/scripts/coderabbit-collector-helper.sh, .agents/scripts/commands/postflight-loop.md, .agents/scripts/commands/pr-loop.md, .agents/scripts/generate-claude-agents.sh, .agents/scripts/generate-claude-commands.sh, .agents/scripts/generate-opencode-commands.sh, .agents/scripts/test-task-id-collision.sh, .agents/subagent-index.toon, .agents/tools/automation/objective-runner.md, .agents/tools/code-review/coderabbit.md, .agents/workflows/plans.md, .agents/workflows/ralph-loop.md, README.md, tests/test-audit-e2e.sh, tests/test-smoke-help.sh
   check: file-exists .agents/aidevops/architecture.md
   check: file-exists .agents/business.md
@@ -2632,8 +2632,10 @@
   check: rg "plans" .agents/subagent-index.toon
   check: rg "ralph-loop" .agents/subagent-index.toon
 
-- [ ] v306 t1332 Supervisor stuck detection — advisory milestone checks — ... | PR #2393 | merged:2026-02-26
+- [x] v306 t1332 Supervisor stuck detection — advisory milestone checks — ... | PR #2393 | merged:2026-02-26 verified:2026-02-26
   files: .agents/scripts/commands/pulse.md, .agents/scripts/stuck-detection-helper.sh
   check: file-exists .agents/scripts/commands/pulse.md
   check: shellcheck .agents/scripts/stuck-detection-helper.sh
   check: file-exists .agents/scripts/stuck-detection-helper.sh
+
+- [ ] v307 t1327.3 Helper script #auto-dispatch — create `simplex-helper.sh`... | PR #unknown | merged:2026-02-26
