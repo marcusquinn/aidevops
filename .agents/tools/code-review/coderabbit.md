@@ -133,12 +133,32 @@ CodeRabbit analyzes:
 ## Automated Reviews
 
 CodeRabbit reviews every PR automatically via the GitHub App. No manual trigger
-scripts are needed. The pulse supervisor observes CodeRabbit findings from PR
-comments and can create tasks from them using AI judgment.
+scripts are needed.
+
+### Daily Full Codebase Review (Issue #2386)
+
+The supervisor pulse triggers a daily full codebase review via GitHub issue #2386
+(labelled `coderabbit-pulse`). The flow:
+
+1. **Trigger**: Supervisor posts a comment on #2386 mentioning `@coderabbitai`
+   with a request for a full codebase review and focus areas.
+2. **Review**: CodeRabbit runs its analysis and posts findings as a comment.
+3. **Issue creation**: The supervisor replies asking CodeRabbit to create one
+   GitHub issue per finding, using these conventions:
+   - Title: `coderabbit: <short description>`
+   - Labels: `coderabbit-pulse`, `auto-dispatch`
+   - Body: finding number, evidence, risk, recommended action
+4. **Pickup**: The normal supervisor pulse (Step 3 in `pulse.md`) picks up
+   these issues via `gh issue list` — they appear as open issues with the
+   `auto-dispatch` label and enter the standard priority queue.
+5. **Dispatch**: Workers implement fixes via the normal `/full-loop` pipeline.
+
+**Do not close issue #2386** — it is the persistent trigger point for daily reviews.
 
 > **Archived (t1336):** `review-pulse-helper.sh`, `coderabbit-pulse-helper.sh`,
 > and `coderabbit-task-creator-helper.sh` have been archived to `scripts/archived/`.
-> AI reads CodeRabbit PR comments directly and creates better-scoped tasks with context.
+> The daily review now uses CodeRabbit's native issue creation instead of custom
+> bash scripts for parsing and task creation.
 
 ## Troubleshooting
 

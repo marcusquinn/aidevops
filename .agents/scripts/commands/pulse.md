@@ -198,6 +198,9 @@ Look at everything you fetched and pick up to **AVAILABLE** items — the highes
 - Prefer PRs over issues (PRs are closer to done)
 - Prefer repos with `"priority": "product"` over `"priority": "tooling"` (from pulse-repos.json)
 - Prefer smaller/simpler tasks (faster throughput)
+- Issues labelled `auto-dispatch` (e.g., from CodeRabbit daily reviews) are pre-vetted
+  and ready for immediate dispatch — treat them as priority 6 (medium) unless their
+  body indicates security or critical severity, in which case treat as priority 5 (high)
 
 **Blocked issue resolution:** Issues labelled `status:blocked` must NOT be dispatched directly. But don't just skip them — investigate and try to unblock:
 
@@ -379,6 +382,58 @@ Run the session miner pulse. It has its own 20-hour interval guard, so this is a
 ```
 
 If it produces output (new suggestions), create a TODO entry or GitHub issue in the aidevops repo for the harness improvement. The session miner extracts user corrections and tool error patterns from past sessions and suggests harness rules that would prevent recurring issues.
+
+## Step 7b: CodeRabbit Daily Codebase Review
+
+Trigger a full codebase review via CodeRabbit once per day. This uses issue #2386
+as a persistent trigger point — CodeRabbit responds to `@coderabbitai` mentions
+in comments.
+
+**Guard**: Only run once per 24 hours. Check the last comment timestamp on #2386:
+
+```bash
+LAST_TRIGGER=$(gh api repos/<owner/repo>/issues/2386/comments \
+  --jq '[.[] | select(.body | test("@coderabbitai.*full codebase review"))] | last | .created_at // "1970-01-01"')
+HOURS_AGO=$(( ($(date +%s) - $(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$LAST_TRIGGER" +%s 2>/dev/null || echo 0)) / 3600 ))
+```
+
+If `HOURS_AGO < 24`, skip. Otherwise:
+
+**Step 1 — Trigger the review:**
+
+```bash
+gh issue comment 2386 --repo <owner/repo> --body '@coderabbitai Please perform a full codebase review.
+
+**Pulse timestamp**: '"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'
+**Triggered by**: aidevops supervisor daily pulse
+
+Focus areas:
+- Shell script quality (ShellCheck compliance, error handling)
+- Security (credential handling, input validation)
+- Code duplication and dead code
+- Documentation accuracy
+- Performance concerns'
+```
+
+**Step 2 — Request issue creation (next pulse cycle):**
+
+On the next pulse (2 minutes later), check if CodeRabbit has responded. If it has
+posted a review comment but no follow-up requesting issue creation exists yet:
+
+```bash
+gh issue comment 2386 --repo <owner/repo> --body '@coderabbitai Yes, please open issues for each finding. Use these conventions:
+
+- **Title format**: `coderabbit: <short description>`
+- **Labels**: `coderabbit-pulse`, `auto-dispatch`
+- **Body**: Include the finding number, evidence, risk, and recommended action
+- **One issue per finding** — keep them atomic so they can be worked independently'
+```
+
+CodeRabbit creates the issues. They enter the normal dispatch queue via Step 3
+(they appear as open issues with `auto-dispatch` label). No further action needed
+here — the standard priority pipeline handles the rest.
+
+See `tools/code-review/coderabbit.md` "Daily Full Codebase Review" for full details.
 
 ## Step 8: Strategic Review (Every 4h, Opus Tier)
 
