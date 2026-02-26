@@ -3,6 +3,7 @@
   "_docs": "See .agents/tools/context/model-routing.md for routing rules, .agents/tools/ai-assistants/fallback-chains.md for integration.",
 
   "tiers": {
+    "local":  { "models": ["local/llama.cpp"], "fallback": "haiku", "cost": 0 },
     "haiku":  { "models": ["anthropic/claude-haiku-4-5"] },
     "flash":  { "models": ["anthropic/claude-haiku-4-5"] },
     "sonnet": { "models": ["anthropic/claude-sonnet-4-6"] },
@@ -14,6 +15,13 @@
   },
 
   "providers": {
+    "local": {
+      "endpoint": "http://localhost:8080/v1/chat/completions",
+      "key_env": null,
+      "probe_path": "/v1/models",
+      "probe_timeout_seconds": 3,
+      "_comment": "llama.cpp or compatible OpenAI-API server. No API key needed. Use local-model-helper.sh status to check."
+    },
     "anthropic": {
       "endpoint": "https://api.anthropic.com/v1/messages",
       "key_env": "ANTHROPIC_API_KEY",

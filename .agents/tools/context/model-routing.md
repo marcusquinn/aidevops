@@ -22,7 +22,7 @@ model: haiku
 - **Purpose**: Route tasks to the cheapest model that can handle them well
 - **Philosophy**: Use the smallest model that produces acceptable quality
 - **Default**: sonnet (best balance of cost/capability for most tasks)
-- **Cost spectrum**: local (free) -> flash -> haiku -> sonnet -> pro -> opus (highest)
+- **Cost spectrum**: local (free) -> haiku -> flash -> sonnet -> pro -> opus (highest)
 
 ## Model Tiers
 
@@ -51,7 +51,7 @@ model: haiku
 **Fallback behaviour**: If a local model is not running or not installed, the routing depends on why `local` was selected:
 
 - **Privacy/on-device requirement**: FAIL — do not route to cloud. Return an error instructing the user to start the local server or pass `--allow-cloud` to explicitly override.
-- **Cost optimisation or experimentation**: Fall back to `flash` (cheapest cloud tier by blended cost).
+- **Cost optimisation or experimentation**: Fall back to `haiku` (next tier in the routing chain). Local has no same-tier fallback — it skips directly to the cheapest cloud tier.
 
 ### Use `flash` when:
 
@@ -106,7 +106,7 @@ tools:
 
 Valid values: `local`, `haiku`, `flash`, `sonnet`, `pro`, `opus`
 
-> **Note**: The `local` tier requires `local-model-helper.sh` to be set up and a model server running. If no local server is available, `local` in frontmatter will fall back to `haiku`. See `tools/local-models/local-models.md` for setup.
+> **Note**: The `local` tier requires `local-model-helper.sh` to be set up and a model server running. If no local server is available, `local` in frontmatter falls back to `haiku` (next tier in the routing chain — local has no same-tier fallback). See `tools/local-models/local-models.md` for setup.
 
 When `model:` is absent, `sonnet` is assumed (the default tier).
 
@@ -131,7 +131,7 @@ Concrete model subagents are defined across these paths (`tools/ai-assistants/mo
 
 | Tier | Subagent | Primary Model | Fallback |
 |------|----------|---------------|----------|
-| `local` | `tools/local-models/local-models.md` | llama.cpp (user GGUF) | FAIL (privacy) or flash (cost) |
+| `local` | `tools/local-models/local-models.md` | llama.cpp (user GGUF) | FAIL (privacy) or haiku (cost) |
 | `flash` | `models/flash.md` | gemini-2.5-flash | gpt-4.1-mini |
 | `haiku` | `models/haiku.md` | claude-haiku-4-5 | gemini-2.5-flash |
 | `sonnet` | `models/sonnet.md` | claude-sonnet-4 | gpt-4.1 |
@@ -182,7 +182,7 @@ Each tier defines a primary model and a fallback from a different provider. When
 
 | Tier | Primary | Fallback | When to Fallback |
 |------|---------|----------|------------------|
-| `local` | llama.cpp (localhost) | flash (cost-only) or FAIL (privacy) | Server not running, no model installed. Fails closed for privacy/on-device tasks; falls back to flash only for cost-optimisation use cases. |
+| `local` | llama.cpp (localhost) | haiku (cost-only) or FAIL (privacy) | Server not running, no model installed. Fails closed for privacy/on-device tasks; falls back to haiku (next tier in chain) for cost-optimisation use cases. No same-tier fallback exists — local skips directly to cloud. |
 | `flash` | gemini-2.5-flash | gpt-4.1-mini | No Google key |
 | `haiku` | claude-haiku-4-5 | gemini-2.5-flash | No Anthropic key |
 | `sonnet` | claude-sonnet-4 | gpt-4.1 | No Anthropic key |
@@ -253,7 +253,7 @@ Is the task privacy/on-device constrained?
   → NO: Is the task bulk/offline where local saves cost?
     → YES: Is a local model running and capable enough?
       → YES: local
-      → NO: flash (cheapest cloud fallback)
+      → NO: haiku (next tier in chain — local has no same-tier fallback)
     → NO: Is the task simple classification/formatting?
       → YES: haiku
       → NO: Does it need >50K tokens of context?
