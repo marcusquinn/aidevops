@@ -477,21 +477,15 @@ cmd_rate_limits() {
 
 	# JSON output
 	if [[ "$json_flag" == "true" ]]; then
-		echo "["
+		local json_arr="["
 		local first=true
 		for row in "${rows[@]}"; do
-			local pv a r rp2 t l tp2 s b
 			IFS='|' read -r pv a r rp2 t l tp2 s b <<<"$row"
-			[[ "$first" == "true" ]] || echo ","
+			[[ "$first" == "true" ]] || json_arr="${json_arr},"
 			first=false
-			printf '  %s' "$(jq -c -n --arg pv "$pv" --argjson a "${a:-0}" --argjson r "${r:-0}" \
-				--argjson rp "${rp2:-0}" --argjson t "${t:-0}" --argjson l "${l:-0}" \
-				--argjson tp "${tp2:-0}" --arg s "$s" --arg b "$b" \
-				--argjson ew "${ew:-1}" --argjson wp "${wp:-80}" \
-				'{provider:$pv,requests_used:$a,requests_limit:$r,requests_pct:$rp,tokens_used:$t,tokens_limit:$l,tokens_pct:$tp,status:$s,billing_type:$b,window_minutes:$ew,warn_pct:$wp}')"
+			json_arr="${json_arr}{\"provider\":\"$pv\",\"requests_used\":${a:-0},\"requests_limit\":${r:-0},\"requests_pct\":${rp2:-0},\"tokens_used\":${t:-0},\"tokens_limit\":${l:-0},\"tokens_pct\":${tp2:-0},\"status\":\"$s\",\"window_minutes\":${ew:-1}}"
 		done
-		echo ""
-		echo "]"
+		echo "${json_arr}]"
 		return 0
 	fi
 
@@ -499,40 +493,17 @@ cmd_rate_limits() {
 	echo ""
 	echo "Rate Limit Utilisation (${ew}min window, warn at ${wp}%)"
 	echo "========================================================================"
-	[[ -z "$config_file" ]] && {
-		print_warning "No rate-limits.json found. Copy .agents/configs/rate-limits.json.txt to ~/.config/aidevops/rate-limits.json"
-		echo ""
-	}
-	printf "\n  %-12s %-8s %-12s %-8s %-12s %-12s %-8s %-10s\n" \
-		"Provider" "Reqs" "Req Limit" "Req%" "Tokens" "Tok Limit" "Tok%" "Status"
-	printf "  %-12s %-8s %-12s %-8s %-12s %-12s %-8s %-10s\n" \
-		"--------" "----" "---------" "----" "------" "---------" "----" "------"
-
-	local has_warn=false
+	[[ -z "$config_file" ]] && print_warning "No rate-limits.json found"
+	printf "\n  %-12s %6s %10s %5s %8s %10s %5s %s\n" "Provider" "Reqs" "Limit" "Pct" "Tokens" "Limit" "Pct" "Status"
 	for row in "${rows[@]}"; do
-		local pv a r rp2 t l tp2 s b rd td sd
 		IFS='|' read -r pv a r rp2 t l tp2 s b <<<"$row"
-		rd="${a}/${r}"
-		[[ "$r" == "0" ]] && rd="${a}/n/a"
-		td="${t}/${l}"
-		[[ "$l" == "0" ]] && td="${t}/n/a"
-		case "$s" in
-		critical)
-			sd="${RED}CRITICAL${NC}"
-			has_warn=true
-			;;
-		warn)
-			sd="${YELLOW}WARN${NC}"
-			has_warn=true
-			;;
-		*) sd="${GREEN}ok${NC}" ;;
-		esac
-		printf "  %-12s %-8s %-12s %-8s %-12s %-12s %-8s " "$pv" "$a" "$rd" "${rp2}%" "$t" "$td" "${tp2}%"
-		printf "%-10b\n" "$sd"
+		local sd="$s"
+		[[ "$s" == "critical" ]] && sd="${RED}CRITICAL${NC}"
+		[[ "$s" == "warn" ]] && sd="${YELLOW}WARN${NC}"
+		[[ "$s" == "ok" ]] && sd="${GREEN}ok${NC}"
+		printf "  %-12s %6s %10s %4s%% %8s %10s %4s%% " "$pv" "$a" "${r:-n/a}" "$rp2" "$t" "${l:-n/a}" "$tp2"
+		printf "%b\n" "$sd"
 	done
-	echo ""
-	[[ "$has_warn" == "true" ]] && echo "  Providers at/above ${wp}% flagged as throttle-risk." && echo ""
-	[[ -n "$config_file" ]] && echo "  Config: $config_file" || echo "  Config: not found (copy .agents/configs/rate-limits.json.txt to ~/.config/aidevops/rate-limits.json)"
 	echo ""
 	return 0
 }
@@ -543,32 +514,17 @@ cmd_rate_limits() {
 
 cmd_help() {
 	cat <<EOF
-
-Observability Helper - LLM request tracking via JSONL log (t1307)
-=================================================================
+Observability Helper - LLM request tracking via JSONL log
 
 Usage: observability-helper.sh [command] [options]
-  or:  aidevops stats [command] [options]
 
 Commands:
-  ingest              Parse new entries from Claude JSONL logs
-  record              Manually record an LLM request
-  rate-limits         Show rate limit utilisation per provider (t1330)
-  help                Show this help
+  ingest       Parse new entries from Claude JSONL logs
+  record       Manually record an LLM request (--model X required)
+  rate-limits  Show rate limit utilisation (--json, --provider X, --window N)
+  help         This help
 
-Options:
-  --json              Output in JSON format (rate-limits)
-  --provider X        Filter by provider
-  --window N          Rolling window in minutes (default: 1)
-
-Record: --model X (required) [--provider X] [--input-tokens N] [--output-tokens N]
-        [--cache-read N] [--cache-write N] [--session X] [--project X]
-        [--stop-reason X] [--error X]
-
-Metrics log: $OBS_METRICS
-Query with jq:
-  jq -s 'group_by(.model) | map({model:.[0].model, n:length, cost:(map(.cost_total)|add)})' $OBS_METRICS
-
+Metrics: $OBS_METRICS
 EOF
 	return 0
 }
