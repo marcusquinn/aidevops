@@ -126,13 +126,36 @@ get_installed_version() {
 	return 0
 }
 
+# Portable timeout function (works on Linux and macOS)
+# Usage: timeout_sec 5 your_command arg1 arg2
+timeout_sec() {
+	local timeout="$1"
+	shift
+
+	if command -v timeout &>/dev/null; then
+		# Linux has native timeout
+		timeout "$timeout" "$@"
+	else
+		# macOS: use perl or gtimeout if available, otherwise run without timeout
+		if command -v perl &>/dev/null; then
+			perl -e 'alarm shift; exec @ARGV' "$timeout" "$@"
+		elif command -v gtimeout &>/dev/null; then
+			gtimeout "$timeout" "$@"
+		else
+			# No timeout available - run directly (will hang if command hangs)
+			"$@"
+		fi
+	fi
+}
+
 # Timeout for external package manager queries (seconds)
 readonly PKG_QUERY_TIMEOUT=30
 
 # Get latest npm version
 get_npm_latest() {
 	local pkg="$1"
-	timeout "$PKG_QUERY_TIMEOUT" npm view "$pkg" version 2>/dev/null || echo "unknown"
+	# Use timeout to prevent hanging on npm view
+	timeout_sec "$PKG_QUERY_TIMEOUT" npm view "$pkg" version 2>/dev/null || echo "unknown"
 	return 0
 }
 
@@ -140,7 +163,7 @@ get_npm_latest() {
 get_brew_latest() {
 	local pkg="$1"
 	if command -v brew &>/dev/null; then
-		timeout "$PKG_QUERY_TIMEOUT" brew info "$pkg" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown"
+		timeout_sec "$PKG_QUERY_TIMEOUT" brew info "$pkg" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown"
 	else
 		echo "unknown"
 	fi
@@ -150,7 +173,7 @@ get_brew_latest() {
 # Get latest pip version
 get_pip_latest() {
 	local pkg="$1"
-	timeout "$PKG_QUERY_TIMEOUT" pip index versions "$pkg" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown"
+	timeout_sec "$PKG_QUERY_TIMEOUT" pip index versions "$pkg" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown"
 	return 0
 }
 
