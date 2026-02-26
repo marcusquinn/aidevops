@@ -996,10 +996,10 @@ Respond with ONLY a valid JSON object in this exact format (no markdown, no expl
 	local judge_json
 	judge_json=$(grep -o '{.*}' "$judge_output_file" 2>/dev/null | head -1 || true)
 	if [[ -z "$judge_json" ]]; then
-		# Try multiline JSON extraction
+		# Try multiline JSON extraction via stdin (safe for paths with special chars)
 		judge_json=$(python3 -c "
 import sys, json, re
-text = open('${judge_output_file}').read()
+text = sys.stdin.read()
 m = re.search(r'\{.*\}', text, re.DOTALL)
 if m:
     try:
@@ -1007,7 +1007,7 @@ if m:
         print(json.dumps(obj))
     except Exception:
         pass
-" 2>/dev/null || true)
+" <"$judge_output_file" 2>/dev/null || true)
 	fi
 
 	if [[ -z "$judge_json" ]]; then
@@ -1034,12 +1034,16 @@ if m:
 	[[ -n "$winner" ]] && score_args+=(--winner "$winner")
 
 	for model_tier in "${models_with_output[@]}"; do
+		# Extract all scores in a single Python call (avoids 5 subprocesses per model)
+		local scores_line
+		scores_line=$(echo "$judge_json" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+s = d.get('scores', {}).get('${model_tier}', {})
+print(s.get('correctness', 0), s.get('completeness', 0), s.get('quality', 0), s.get('clarity', 0), s.get('adherence', 0))
+" 2>/dev/null || echo "0 0 0 0 0")
 		local corr comp qual clar adhr
-		corr=$(echo "$judge_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('scores',{}).get('${model_tier}',{}).get('correctness',0))" 2>/dev/null || echo "0")
-		comp=$(echo "$judge_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('scores',{}).get('${model_tier}',{}).get('completeness',0))" 2>/dev/null || echo "0")
-		qual=$(echo "$judge_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('scores',{}).get('${model_tier}',{}).get('quality',0))" 2>/dev/null || echo "0")
-		clar=$(echo "$judge_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('scores',{}).get('${model_tier}',{}).get('clarity',0))" 2>/dev/null || echo "0")
-		adhr=$(echo "$judge_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('scores',{}).get('${model_tier}',{}).get('adherence',0))" 2>/dev/null || echo "0")
+		read -r corr comp qual clar adhr <<<"$scores_line"
 
 		score_args+=(
 			--model "$model_tier"

@@ -49,7 +49,13 @@ detect_os_arch() {
 
 	case "$os" in
 	linux) echo "linux-${arch}" ;;
-	darwin) echo "darwin-amd64" ;;
+	darwin)
+		if [[ "$arch" == "arm64" ]]; then
+			echo "darwin-arm64"
+		else
+			echo "darwin-amd64"
+		fi
+		;;
 	*) echo "linux-${arch}" ;;
 	esac
 	return 0
@@ -149,11 +155,22 @@ cmd_validate() {
 		return 1
 	fi
 
-	# Basic TOML syntax check via matterbridge dry-run
-	# matterbridge exits non-zero if config is invalid
+	# Check binary exists and works
 	log "Validating config: $config_path"
-	if timeout 5 "$BINARY_PATH" -conf "$config_path" -version >/dev/null 2>&1; then
-		log "Binary OK"
+	if ! "$BINARY_PATH" -version >/dev/null 2>&1; then
+		die "Binary check failed"
+		return 1
+	fi
+	log "Binary OK"
+
+	# Attempt to parse config (matterbridge will fail fast on invalid TOML)
+	local parse_output
+	if ! parse_output=$(timeout 3 "$BINARY_PATH" -conf "$config_path" 2>&1); then
+		# Check if it's a config parse error vs expected "no credentials" error
+		if echo "$parse_output" | grep -qi "toml\|parse\|syntax"; then
+			die "Config parse error: $parse_output"
+			return 1
+		fi
 	fi
 
 	# Check for required sections
@@ -248,12 +265,22 @@ cmd_status() {
 cmd_logs() {
 	local follow=false
 	local tail_lines=50
-	local arg="${1:-}"
 
-	case "$arg" in
-	--follow | -f) follow=true ;;
-	--tail) tail_lines="${2:-50}" ;;
-	esac
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--follow | -f)
+			follow=true
+			shift
+			;;
+		--tail)
+			tail_lines="${2:-50}"
+			shift 2
+			;;
+		*)
+			shift
+			;;
+		esac
+	done
 
 	if [ ! -f "$LOG_FILE" ]; then
 		log "No log file found: $LOG_FILE"
