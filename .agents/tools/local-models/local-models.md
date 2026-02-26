@@ -45,6 +45,47 @@ tools:
 
 Every other tool wraps llama.cpp. Using it directly gives maximum control, minimum overhead, and no security surface area from unnecessary daemons.
 
+## Platform Support
+
+### Supported Platforms
+
+| Platform | Architecture | GPU Acceleration | Binary Format |
+|----------|-------------|-----------------|---------------|
+| macOS | ARM64 (Apple Silicon) | Metal (native) | `.tar.gz` |
+| macOS | x86_64 (Intel) | Metal | `.tar.gz` |
+| Linux | x86_64 | CPU only | `.tar.gz` |
+| Linux | x86_64 | Vulkan (NVIDIA, AMD, Intel) | `.tar.gz` |
+| Linux | x86_64 | ROCm (AMD) | `.tar.gz` |
+
+### NVIDIA/CUDA on Linux
+
+llama.cpp does **not** ship prebuilt Linux CUDA binaries. NVIDIA GPU users on Linux should use the **Vulkan** binary, which provides GPU acceleration via NVIDIA's Vulkan drivers (included in the standard NVIDIA driver package). Performance is comparable to CUDA for inference workloads.
+
+If you need CUDA-specific features (e.g., custom CUDA kernels, multi-GPU with NVLink), compile llama.cpp from source with `-DGGML_CUDA=ON`. See the [llama.cpp build guide](https://github.com/ggml-org/llama.cpp/blob/master/docs/build.md).
+
+### Linux ARM64
+
+No prebuilt Ubuntu ARM64 binary is available in llama.cpp releases. ARM64 Linux users (e.g., Raspberry Pi 5, AWS Graviton, Ampere Altra) should compile from source:
+
+```bash
+# Build llama.cpp on Linux ARM64
+git clone https://github.com/ggml-org/llama.cpp.git
+cd llama.cpp && cmake -B build && cmake --build build --config Release -j$(nproc)
+# Copy binaries to aidevops location
+cp build/bin/llama-server ~/.aidevops/local-models/bin/
+cp build/bin/llama-cli ~/.aidevops/local-models/bin/
+```
+
+### Binary Sizes by Platform
+
+| Platform | Size | Notes |
+|----------|------|-------|
+| macOS ARM64 | ~29 MB | Metal acceleration built-in |
+| macOS x64 | ~82 MB | Metal acceleration built-in |
+| Linux x64 (CPU) | ~23 MB | No GPU acceleration |
+| Linux Vulkan | ~40 MB | NVIDIA, AMD, Intel GPU support |
+| Linux ROCm | ~130 MB | AMD GPU (ROCm runtime required) |
+
 ## Installation
 
 llama.cpp releases weekly. The helper downloads the correct platform binary on first use — no bundling.
@@ -54,21 +95,12 @@ llama.cpp releases weekly. The helper downloads the correct platform binary on f
 local-model-helper.sh setup
 
 # What this does:
-# 1. Detects platform (macOS ARM/x64, Linux x64/Vulkan/ROCm)
-# 2. Downloads latest llama.cpp release binary (23-130 MB depending on platform)
+# 1. Detects platform and GPU (macOS ARM/x64, Linux x64/Vulkan/ROCm)
+# 2. Downloads latest llama.cpp release binary (.tar.gz, 23-130 MB)
 # 3. Installs huggingface-cli if not present (pip install huggingface_hub[cli])
 # 4. Creates ~/.aidevops/local-models/ directory structure
+# 5. Initializes usage tracking database (SQLite)
 ```
-
-### Binary Sizes by Platform
-
-| Platform | Size |
-|----------|------|
-| macOS ARM64 | 29 MB |
-| macOS x64 | 82 MB |
-| Linux x64 (CPU) | 23 MB |
-| Linux Vulkan | 40 MB |
-| Linux ROCm | 130 MB |
 
 ### Directory Structure
 
