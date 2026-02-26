@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Archive dispatch-dedup-helper.sh — replaced by intelligence guidance in pulse.md (#2351)
+
 ## [2.133.1] - 2026-02-26
 
 ### Changed
