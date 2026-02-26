@@ -871,7 +871,14 @@ cmd_cross_review() {
 		local file_b="${output_dir}/${model_names[1]}.txt"
 		if [[ -f "$file_a" && -f "$file_b" ]]; then
 			echo "Diff (${model_names[0]} vs ${model_names[1]}):"
-			diff --unified=3 "$file_a" "$file_b" 2>/dev/null | head -100 || echo "  (files are identical or diff unavailable)"
+			# diff exits 1 when files differ — capture separately to avoid pipefail
+			local diff_output diff_status
+			diff_output=$(diff --unified=3 "$file_a" "$file_b" 2>/dev/null) && diff_status=$? || diff_status=$?
+			if [[ "$diff_status" -le 1 && -n "$diff_output" ]]; then
+				echo "$diff_output" | head -100
+			else
+				echo "  (files are identical or diff unavailable)"
+			fi
 			echo ""
 		fi
 	fi
@@ -1023,9 +1030,54 @@ if m:
 	task_type=$(echo "$judge_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('task_type','general'))" 2>/dev/null || echo "general")
 	reasoning=$(echo "$judge_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('reasoning',''))" 2>/dev/null || true)
 
+	# Sanitize task_type: restrict to known allowlist
+	local -a valid_task_types=(general code review analysis debug refactor test docs security)
+	local task_type_valid=false
+	for vt in "${valid_task_types[@]}"; do
+		if [[ "$task_type" == "$vt" ]]; then
+			task_type_valid=true
+			break
+		fi
+	done
+	if [[ "$task_type_valid" != "true" ]]; then
+		task_type="general"
+	fi
+
+	# Sanitize winner: must be one of the models with output
+	local winner_valid=false
+	if [[ -n "$winner" ]]; then
+		for m in "${models_with_output[@]}"; do
+			if [[ "$winner" == "$m" ]]; then
+				winner_valid=true
+				break
+			fi
+		done
+		if [[ "$winner_valid" != "true" ]]; then
+			print_warning "Judge returned unknown winner '${winner}' — ignoring"
+			winner=""
+		fi
+	fi
+
 	echo "  Judge winner: ${winner:-unknown}"
 	[[ -n "$reasoning" ]] && echo "  Reasoning: ${reasoning}"
 	echo ""
+
+	# Helper: clamp a numeric value to integer in range 0-10
+	_clamp_score() {
+		local val="$1"
+		# Strip non-numeric characters, default to 0
+		val="${val//[^0-9]/}"
+		if [[ -z "$val" ]]; then
+			echo "0"
+			return 0
+		fi
+		if [[ "$val" -gt 10 ]]; then
+			echo "10"
+		else
+			echo "$val"
+		fi
+		return 0
+	}
 
 	# Build cmd_score arguments from judge JSON
 	local -a score_args=(
@@ -1046,6 +1098,13 @@ print(s.get('correctness', 0), s.get('completeness', 0), s.get('quality', 0), s.
 " 2>/dev/null || echo "0 0 0 0 0")
 		local corr comp qual clar adhr
 		read -r corr comp qual clar adhr <<<"$scores_line"
+
+		# Clamp all scores to valid integer range 0-10
+		corr=$(_clamp_score "$corr")
+		comp=$(_clamp_score "$comp")
+		qual=$(_clamp_score "$qual")
+		clar=$(_clamp_score "$clar")
+		adhr=$(_clamp_score "$adhr")
 
 		score_args+=(
 			--model "$model_tier"

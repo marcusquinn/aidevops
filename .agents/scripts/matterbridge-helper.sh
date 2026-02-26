@@ -165,22 +165,40 @@ cmd_validate() {
 		return 1
 	fi
 
-	# Check binary exists and works
+	# Check binary exists and is executable
 	log "Validating config: $config_path"
-	if ! "$BINARY_PATH" -version >/dev/null; then
-		die "Binary check failed"
+	if [ ! -x "$BINARY_PATH" ]; then
+		die "Binary not executable: $BINARY_PATH"
 		return 1
 	fi
-	log "Binary OK"
+	log "Binary OK: $BINARY_PATH"
 
 	# Attempt to parse config (matterbridge will fail fast on invalid TOML)
-	local parse_output
-	if ! parse_output=$(timeout 3 "$BINARY_PATH" -conf "$config_path" 2>&1); then
-		# Check if it's a config parse error vs expected "no credentials" error
+	# Use gtimeout on macOS if timeout is unavailable
+	local timeout_cmd="timeout"
+	if ! command -v timeout >/dev/null 2>&1; then
+		if command -v gtimeout >/dev/null 2>&1; then
+			timeout_cmd="gtimeout"
+		else
+			log "WARNING: timeout/gtimeout not found — skipping config parse check"
+			return 0
+		fi
+	fi
+
+	local parse_output parse_status
+	parse_output=$("$timeout_cmd" 5 "$BINARY_PATH" -conf "$config_path" 2>&1) && parse_status=$? || parse_status=$?
+
+	if [[ "$parse_status" -eq 124 ]]; then
+		# timeout exit code 124 = process timed out (likely hung on credentials)
+		log "Config parse: process timed out (expected if credentials are not configured)"
+	elif [[ "$parse_status" -ne 0 ]]; then
+		# Non-zero exit — check if it's a config parse error
 		if echo "$parse_output" | grep -qi "toml\|parse\|syntax"; then
 			die "Config parse error: $parse_output"
 			return 1
 		fi
+		# Other non-zero exits are expected (e.g., missing credentials)
+		log "Config parse: binary exited $parse_status (expected if credentials are not configured)"
 	fi
 
 	# Check for required sections
@@ -283,8 +301,13 @@ cmd_logs() {
 			shift
 			;;
 		--tail)
-			tail_lines="${2:-50}"
-			shift 2
+			if [[ -n "${2:-}" && "${2:-}" != -* ]]; then
+				tail_lines="$2"
+				shift 2
+			else
+				tail_lines=50
+				shift
+			fi
 			;;
 		*)
 			shift
