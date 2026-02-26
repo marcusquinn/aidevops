@@ -182,7 +182,7 @@ Read subagents on-demand. Full index: `subagent-index.toon`.
 | Infrastructure | `tools/infrastructure/cloud-gpu.md`, `tools/containers/orbstack.md`, `tools/containers/remote-dispatch.md` |
 | Accessibility | `services/accessibility/accessibility-audit.md` |
 | OpenAPI exploration | `tools/context/openapi-search.md` |
-| Local models | `tools/local-models/local-models.md`, `scripts/local-model-helper.sh` |
+| Local models | `tools/local-models/local-models.md`, `tools/local-models/huggingface.md`, `scripts/local-model-helper.sh` |
 | Model routing | `tools/context/model-routing.md`, `reference/orchestration.md` |
 | Orchestration | `reference/orchestration.md`, `tools/ai-assistants/headless-dispatch.md` |
 | Agent/MCP dev | `tools/build-agent/build-agent.md`, `tools/build-mcp/build-mcp.md`, `tools/mcp-toolkit/mcporter.md` |
