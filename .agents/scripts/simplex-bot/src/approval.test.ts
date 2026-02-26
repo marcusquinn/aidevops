@@ -16,6 +16,7 @@ describe("ApprovalManager", () => {
 
   beforeEach(() => {
     manager = new ApprovalManager();
+    noopReply.mockClear();
   });
 
   // ===========================================================================

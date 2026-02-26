@@ -57,16 +57,14 @@ export class ApprovalManager {
 
   /** Generate a short unique approval ID (4 hex chars) */
   private generateId(): string {
-    const bytes = new Uint8Array(2);
-    crypto.getRandomValues(bytes);
-    const id = Array.from(bytes)
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
-
-    // Avoid collisions with existing pending requests
-    if (this.pending.has(id)) {
-      return this.generateId();
-    }
+    let id: string;
+    do {
+      const bytes = new Uint8Array(2);
+      crypto.getRandomValues(bytes);
+      id = Array.from(bytes)
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
+    } while (this.pending.has(id));
     return id;
   }
 
@@ -243,8 +241,9 @@ export async function executeShellCommand(
   });
 
   // Race between command completion and timeout
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<never>((_, reject) => {
-    setTimeout(() => {
+    timeoutId = setTimeout(() => {
       proc.kill();
       reject(new Error(`Command timed out after ${Math.round(timeoutMs / 1000)}s`));
     }, timeoutMs);
@@ -260,12 +259,14 @@ export async function executeShellCommand(
       timeoutPromise,
     ]);
 
+    clearTimeout(timeoutId);
     return {
       exitCode,
       stdout: truncateOutput(stdout),
       stderr: truncateOutput(stderr),
     };
   } catch (err) {
+    clearTimeout(timeoutId);
     return {
       exitCode: -1,
       stdout: "",

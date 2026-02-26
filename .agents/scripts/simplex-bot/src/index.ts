@@ -572,15 +572,23 @@ function parseExecApprovalConfig(): Partial<ExecApprovalConfig> {
 
   const allowlist = parseListEnv(process.env.SIMPLEX_EXEC_ALLOWLIST);
   if (allowlist) {
-    config.allowlist = allowlist;
+    // Merge with defaults — default safe commands should persist (mirrors blocklist behaviour)
+    config.allowlist = [
+      ...new Set([
+        ...DEFAULT_EXEC_APPROVAL_CONFIG.allowlist,
+        ...allowlist,
+      ]),
+    ];
   }
 
   const blocklist = parseListEnv(process.env.SIMPLEX_EXEC_BLOCKLIST);
   if (blocklist) {
     // Merge with defaults rather than replacing — safety patterns should persist
     config.blocklist = [
-      ...DEFAULT_EXEC_APPROVAL_CONFIG.blocklist,
-      ...blocklist,
+      ...new Set([
+        ...DEFAULT_EXEC_APPROVAL_CONFIG.blocklist,
+        ...blocklist,
+      ]),
     ];
   }
 
@@ -592,8 +600,11 @@ function parseExecApprovalConfig(): Partial<ExecApprovalConfig> {
     }
   }
 
-  if (process.env.SIMPLEX_EXEC_REQUIRE_APPROVAL === "false") {
+  const requireApproval = process.env.SIMPLEX_EXEC_REQUIRE_APPROVAL?.toLowerCase();
+  if (requireApproval === "false") {
     config.requireApprovalByDefault = false;
+  } else if (requireApproval === "true") {
+    config.requireApprovalByDefault = true;
   }
 
   return config;

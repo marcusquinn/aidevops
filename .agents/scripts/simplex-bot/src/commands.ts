@@ -274,7 +274,14 @@ const approveCommand: CommandDefinition = {
   },
 };
 
-/** Reject a pending command execution */
+/**
+ * Reject a pending command execution.
+ *
+ * Authorization note: /reject intentionally has no identity check (unlike /approve
+ * which validates contactId). This allows any DM contact to reject suspicious
+ * commands — a safety-first design. To restrict rejection to the original
+ * requester, pass contactId to approvalManager.reject() (see approval.ts).
+ */
 const rejectCommand: CommandDefinition = {
   name: "reject",
   description: "Reject a pending command execution",
