@@ -65,6 +65,7 @@ aidevops gives your AI assistant superpowers for DevOps and infrastructure manag
 
 **Capabilities:**
 
+- **Autonomous Orchestration**: Supervisor dispatches AI workers, merges PRs, tracks tasks across repos
 - **Infrastructure**: Manage servers across Hetzner, Hostinger, Cloudron, Coolify
 - **Domains & DNS**: Purchase domains, manage DNS via Cloudflare, Spaceship, 101domains
 - **Git Platforms**: GitHub, GitLab, Gitea with full CLI integration
@@ -713,6 +714,7 @@ For new users, suggest this order based on their interests:
 5. Coolify or Vercel (deployment)
 6. OrbStack (containers)
 7. SonarCloud + Codacy (code quality)
+8. Supervisor pulse (autonomous task dispatch and PR management)
 
 ### SEO Professional
 
@@ -737,8 +739,9 @@ For new users, suggest this order based on their interests:
 5. Tailscale (mesh networking)
 6. OrbStack (containers)
 7. All code quality tools
-8. DataForSEO + Serper
-9. OpenClaw (mobile AI access)
+8. Supervisor pulse (autonomous orchestration)
+9. DataForSEO + Serper
+10. OpenClaw (mobile AI access)
 
 ### Mobile-First / Always-On
 
@@ -948,7 +951,7 @@ This keeps token usage efficient while giving you access to deep expertise when 
 
 ## Workflow Features
 
-aidevops isn't just about API integrations - it provides powerful workflow enhancements for any project.
+aidevops isn't just about API integrations - it provides powerful workflow enhancements for any project, including autonomous orchestration that dispatches AI workers, manages PRs across repos, and self-improves.
 
 ### Enable Features in Any Project
 
@@ -1123,10 +1126,14 @@ Ask the user:
 aidevops includes autonomous orchestration features that can work in the background:
 
 1. Supervisor pulse    - Dispatches AI workers every 2 min to implement tasks from TODO.md
-2. Strategic review    - Every 4h, an opus-tier review checks queue health, finds stuck
+2. Auto-pickup         - Workers claim #auto-dispatch tasks automatically
+3. Cross-repo visibility - Manages tasks, issues, and PRs across all repos in repos.json
+4. Strategic review    - Every 4h, an opus-tier review checks queue health, finds stuck
                          chains, identifies root causes, and creates self-improvement tasks
-3. Session miner       - Daily extraction of learning signals from past sessions
-4. Circuit breaker     - Auto-pauses dispatch if workers fail consecutively
+5. Model routing       - Cost-aware dispatch: local > haiku > flash > sonnet > pro > opus
+6. Budget tracking     - Per-provider spend limits, subscription-aware routing
+7. Session miner       - Daily extraction of learning signals from past sessions
+8. Circuit breaker     - Auto-pauses dispatch if workers fail consecutively
 
 These require API keys (Anthropic/OpenAI) and will make API calls on your behalf.
 
@@ -1142,6 +1149,9 @@ Here's how it works:
 - The supervisor pulse picks them up and launches AI workers
 - Workers create branches, implement changes, and open PRs
 - The pulse evaluates results, merges passing PRs, and cleans up
+- Cross-repo: the supervisor sees tasks, issues, and PRs across all repos in repos.json
+- Model routing picks the cheapest model that can handle each task (haiku for simple, opus for complex)
+- Budget tracking prevents overspend — set daily limits per provider
 - Every 4 hours, an opus-tier strategic review assesses the whole operation:
   finds blocked chains, stale state, idle capacity, and systemic issues
 - It creates self-improvement tasks when it finds root causes in the framework
@@ -1191,7 +1201,8 @@ Once services are configured:
 
 1. **Create your playground**: `mkdir ~/Git/aidevops-playground && cd ~/Git/aidevops-playground && git init && aidevops init`
 2. **Test a simple task**: "List my GitHub repos" or "Check my Hetzner servers"
-3. **Explore agents**: Type `@` to see available agents
-4. **Try a workflow**: `/create-prd` → `/generate-tasks` → `/feature` → build → `/release`
-5. **Enable orchestration**: `supervisor-helper.sh cron install` for autonomous task dispatch
-6. **Read the docs**: `@aidevops` for framework guidance
+3. **Enable orchestration**: `supervisor-helper.sh cron install` — autonomous task dispatch, PR management, cross-repo visibility, and strategic review
+4. **Explore agents**: Type `@` to see available agents
+5. **Try a workflow**: `/create-prd` → `/generate-tasks` → `/feature` → build → `/release`
+6. **Try autonomous mode**: Add `#auto-dispatch` to a TODO.md task and watch the supervisor pick it up
+7. **Read the docs**: `@aidevops` for framework guidance

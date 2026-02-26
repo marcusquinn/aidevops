@@ -566,6 +566,67 @@ configure_dirs() {
 	return 0
 }
 
+# Check orchestration features
+check_orchestration() {
+	echo -e "${BLUE}Autonomous Orchestration${NC}"
+
+	# Check supervisor pulse scheduler
+	local pulse_active=false
+	if launchctl list 2>/dev/null | grep -qF "com.aidevops.aidevops-supervisor-pulse"; then
+		pulse_active=true
+	elif launchctl list 2>/dev/null | grep -qF "com.aidevops.supervisor-pulse"; then
+		pulse_active=true
+	elif crontab -l 2>/dev/null | grep -qF "aidevops-supervisor-pulse"; then
+		pulse_active=true
+	fi
+
+	if [[ "$pulse_active" == "true" ]]; then
+		print_service "Supervisor Pulse" "ready" "dispatches workers, merges PRs every 2 min"
+	else
+		local supervisor_script="$HOME/.aidevops/agents/scripts/supervisor-helper.sh"
+		if [[ -x "$supervisor_script" ]]; then
+			print_service "Supervisor Pulse" "needs-setup" "supervisor-helper.sh cron install"
+		else
+			print_service "Supervisor Pulse" "needs-setup" "run aidevops update first"
+		fi
+	fi
+
+	# Auto-pickup is implicit when pulse is active
+	if [[ "$pulse_active" == "true" ]]; then
+		print_service "Auto-Pickup" "ready" "claims #auto-dispatch tasks from TODO.md"
+	else
+		print_service "Auto-Pickup" "optional" "requires supervisor pulse"
+	fi
+
+	# Cross-repo visibility depends on repos.json
+	local repos_config="$HOME/.config/aidevops/repos.json"
+	if [[ -f "$repos_config" ]] && command -v jq &>/dev/null; then
+		local repo_count
+		repo_count=$(jq -r '.initialized_repos | length' "$repos_config" 2>/dev/null || echo "0")
+		if [[ "$repo_count" -gt 0 ]]; then
+			print_service "Cross-Repo Visibility" "ready" "${repo_count} repo(s) managed"
+		else
+			print_service "Cross-Repo Visibility" "partial" "repos.json exists, no repos registered"
+		fi
+	else
+		print_service "Cross-Repo Visibility" "optional" "run aidevops init in your projects"
+	fi
+
+	# Model routing is always available
+	print_service "Model Routing" "ready" "cost-aware: local>haiku>flash>sonnet>pro>opus"
+
+	# Budget tracking
+	local budget_script="$HOME/.aidevops/agents/scripts/budget-tracker-helper.sh"
+	if [[ -x "$budget_script" ]]; then
+		print_service "Budget Tracking" "ready" "per-provider spend limits"
+	else
+		print_service "Budget Tracking" "optional" "budget-tracker-helper.sh not found"
+	fi
+
+	echo ""
+	return 0
+}
+
 # Check OpenClaw
 check_openclaw() {
 	echo -e "${BLUE}Personal AI (OpenClaw)${NC}"
@@ -612,6 +673,7 @@ show_status() {
 	check_browser
 	check_containers
 	check_networking
+	check_orchestration
 	check_openclaw
 	check_aws
 	check_wordpress
@@ -658,6 +720,7 @@ show_recommendations() {
 		echo "  • Coolify - Self-hosted PaaS"
 		echo ""
 		echo "Recommended:"
+		echo "  • Supervisor pulse - Autonomous task dispatch and PR management"
 		echo "  • SonarCloud + Codacy - Code quality"
 		echo "  • Snyk - Security scanning"
 		echo "  • AWS - Cloud services"
@@ -696,6 +759,7 @@ show_recommendations() {
 		echo "  3. Augment Context Engine (semantic search)"
 		echo ""
 		echo "Then add based on your needs:"
+		echo "  • Orchestration: supervisor-helper.sh cron install (autonomous workers)"
 		echo "  • Hosting: Hetzner, Cloudflare, Coolify, Vercel"
 		echo "  • Quality: SonarCloud, Codacy, CodeRabbit"
 		echo "  • SEO: DataForSEO, Serper"
@@ -817,10 +881,37 @@ show_guide() {
 		echo "All docker and docker compose commands work as normal."
 		echo "Docs: https://docs.orbstack.dev"
 		;;
+	orchestration | supervisor | pulse)
+		echo -e "${BLUE}Autonomous Orchestration Setup${NC}"
+		echo ""
+		echo "Orchestration lets aidevops work autonomously — dispatching AI workers,"
+		echo "merging PRs, evaluating results, and self-improving."
+		echo ""
+		echo "1. Enable supervisor pulse (every 2 min):"
+		echo "   supervisor-helper.sh cron install"
+		echo ""
+		echo "2. Add tasks with auto-dispatch tag in TODO.md:"
+		echo "   - [ ] t001 Implement feature X #auto-dispatch ~2h"
+		echo ""
+		echo "3. Monitor progress:"
+		echo "   supervisor-helper.sh dashboard --batch <batch-id>"
+		echo ""
+		echo "Features included:"
+		echo "  - Worker dispatch: launches AI workers for tagged tasks"
+		echo "  - Auto-pickup: claims tasks across all repos in repos.json"
+		echo "  - Cross-repo visibility: manages issues/PRs across repos"
+		echo "  - Strategic review: 4-hourly opus-tier queue health analysis"
+		echo "  - Model routing: cost-aware tier selection (haiku to opus)"
+		echo "  - Budget tracking: per-provider spend limits"
+		echo "  - Circuit breaker: pauses on consecutive failures"
+		echo "  - Session miner: extracts learning from past sessions"
+		echo ""
+		echo "Docs: ~/.aidevops/agents/reference/orchestration.md"
+		;;
 	*)
 		echo "Available guides: github, openai, anthropic, hetzner, cloudflare,"
 		echo "                  dataforseo, augment, sonarcloud, openclaw,"
-		echo "                  tailscale, orbstack"
+		echo "                  tailscale, orbstack, orchestration"
 		echo ""
 		echo "Usage: $0 guide <service>"
 		;;
@@ -843,7 +934,7 @@ show_help() {
 	echo "  guide <service>     - Show setup guide for a specific service"
 	echo "                        Services: github, openai, anthropic, hetzner, cloudflare,"
 	echo "                                  dataforseo, augment, sonarcloud, openclaw,"
-	echo "                                  tailscale, orbstack"
+	echo "                                  tailscale, orbstack, orchestration"
 	echo "  configure-dirs      - Interactively add git parent directories for repo-sync"
 	echo "  json                - Output status as JSON for programmatic use"
 	echo "  help                - Show this help message"
@@ -935,6 +1026,18 @@ output_json() {
 	json+=',"connected":'
 	tailscale status &>/dev/null 2>&1 && json+='true' || json+='false'
 	json+='}},'
+
+	# Orchestration
+	json+='"orchestration":{'
+	json+='"supervisor_pulse":'
+	local _pulse_json=false
+	if launchctl list 2>/dev/null | grep -qF "com.aidevops.aidevops-supervisor-pulse" ||
+		launchctl list 2>/dev/null | grep -qF "com.aidevops.supervisor-pulse" ||
+		crontab -l 2>/dev/null | grep -qF "aidevops-supervisor-pulse"; then
+		_pulse_json=true
+	fi
+	json+="$_pulse_json"
+	json+='},'
 
 	# OpenClaw
 	json+='"openclaw":{'
