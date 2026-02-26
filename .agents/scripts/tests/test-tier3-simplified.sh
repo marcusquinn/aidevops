@@ -98,38 +98,39 @@ test_syntax_check() {
 # 2. Help Output Tests
 # =============================================================================
 
+_check_help_keywords() {
+	local script="$1"
+	local keywords="$2"
+	local path="${SCRIPTS_DIR}/${script}"
+	local output
+	output=$("$path" help 2>&1) || true
+
+	local all_found=true
+	local saved_ifs="$IFS"
+	IFS='|'
+	for keyword in $keywords; do
+		if ! echo "$output" | grep -qi "$keyword"; then
+			print_result "help: $script contains '$keyword'" 1 "Missing keyword '$keyword' in help output"
+			all_found=false
+		fi
+	done
+	IFS="$saved_ifs"
+
+	if [[ "$all_found" == "true" ]]; then
+		print_result "help: $script" 0
+	fi
+	return 0
+}
+
 test_help_output() {
 	echo ""
 	echo "=== Help Output ==="
 
-	local -A scripts_and_keywords=(
-		["full-loop-helper.sh"]="start|resume|status|cancel|headless"
-		["fallback-chain-helper.sh"]="resolve|table|tier"
-		["budget-tracker-helper.sh"]="record|status|burn-rate|tail"
-		["issue-sync-helper.sh"]="push|pull|close|enrich|reconcile"
-		["observability-helper.sh"]="ingest|record|rate-limits"
-	)
-
-	for script in "${!scripts_and_keywords[@]}"; do
-		local path="${SCRIPTS_DIR}/${script}"
-		local keywords="${scripts_and_keywords[$script]}"
-		local output
-		output=$("$path" help 2>&1) || true
-
-		local all_found=true
-		local IFS='|'
-		for keyword in $keywords; do
-			if ! echo "$output" | grep -qi "$keyword"; then
-				print_result "help: $script contains '$keyword'" 1 "Missing keyword '$keyword' in help output"
-				all_found=false
-			fi
-		done
-		unset IFS
-
-		if [[ "$all_found" == "true" ]]; then
-			print_result "help: $script" 0
-		fi
-	done
+	_check_help_keywords "full-loop-helper.sh" "start|resume|status|cancel|headless"
+	_check_help_keywords "fallback-chain-helper.sh" "resolve|table|tier"
+	_check_help_keywords "budget-tracker-helper.sh" "record|status|burn-rate|tail"
+	_check_help_keywords "issue-sync-helper.sh" "push|pull|close|enrich|reconcile"
+	_check_help_keywords "observability-helper.sh" "ingest|record|rate-limits"
 	return 0
 }
 
@@ -178,10 +179,10 @@ test_full_loop_helper() {
 	# Test: start with no prompt
 	local rc=0
 	output=$("$helper" start "" 2>&1) || rc=$?
-	if [[ $rc -ne 0 ]] || echo "$output" | grep -qi "no prompt\|usage"; then
+	if [[ $rc -ne 0 ]]; then
 		print_result "full-loop: start (no prompt) fails" 0
 	else
-		print_result "full-loop: start (no prompt) fails" 1 "Expected error for empty prompt"
+		print_result "full-loop: start (no prompt) fails" 1 "Expected non-zero exit code, got rc=0. Output: $output"
 	fi
 
 	# Test: unknown command
@@ -214,7 +215,7 @@ test_fallback_chain_helper() {
 	# Trap ensures restoration even if set -e triggers an early exit
 	# shellcheck disable=SC2317
 	_restore_avail_helper() {
-		if [[ "$avail_hidden" == "true" && -f "$avail_backup" ]]; then
+		if [[ "${avail_hidden:-false}" == "true" && -f "${avail_backup:-}" ]]; then
 			mv -- "$avail_backup" "$avail_helper"
 			avail_hidden=false
 		fi
@@ -273,10 +274,10 @@ test_fallback_chain_helper() {
 	unset ANTHROPIC_API_KEY
 	local rc=0
 	output=$("$helper" resolve nonexistent --quiet 2>&1) || rc=$?
-	if [[ $rc -ne 0 ]] || echo "$output" | grep -qiE "unknown tier|error"; then
+	if [[ $rc -ne 0 ]]; then
 		print_result "fallback: unknown tier fails" 0
 	else
-		print_result "fallback: unknown tier fails" 1 "Expected error, got: $output (rc=$rc)"
+		print_result "fallback: unknown tier fails" 1 "Expected non-zero exit code, got rc=0. Output: $output"
 	fi
 
 	# Test: unknown command
@@ -366,10 +367,10 @@ test_budget_tracker_helper() {
 	# Test: record with missing required args
 	local rc_record=0
 	output=$("$helper" record 2>&1) || rc_record=$?
-	if [[ $rc_record -ne 0 ]] || echo "$output" | grep -qiE "usage|error|required"; then
+	if [[ $rc_record -ne 0 ]]; then
 		print_result "budget: record (missing args) fails" 0
 	else
-		print_result "budget: record (missing args) fails" 1 "Expected error, got rc=$rc_record"
+		print_result "budget: record (missing args) fails" 1 "Expected non-zero exit code, got rc=0. Output: $output"
 	fi
 
 	# Test: backward compat — removed commands return gracefully
@@ -428,10 +429,10 @@ test_issue_sync_helper() {
 	# Test: parse with no task ID
 	local rc_parse=0
 	output=$("$helper" parse 2>&1) || rc_parse=$?
-	if [[ $rc_parse -ne 0 ]] || echo "$output" | grep -qiE "usage|error|required"; then
+	if [[ $rc_parse -ne 0 ]]; then
 		print_result "issue-sync: parse (no task) fails" 0
 	else
-		print_result "issue-sync: parse (no task) fails" 1 "Expected error, got rc=$rc_parse"
+		print_result "issue-sync: parse (no task) fails" 1 "Expected non-zero exit code, got rc=0. Output: $output"
 	fi
 
 	# Note: push/pull/close/enrich/reconcile/status require gh CLI auth and a real repo.
@@ -492,10 +493,10 @@ test_observability_helper() {
 	# Test: record with missing model
 	local rc_obs_record=0
 	output=$("$helper" record 2>&1) || rc_obs_record=$?
-	if [[ $rc_obs_record -ne 0 ]] || echo "$output" | grep -qiE "usage|error|required"; then
+	if [[ $rc_obs_record -ne 0 ]]; then
 		print_result "observability: record (no model) fails" 0
 	else
-		print_result "observability: record (no model) fails" 1 "Expected error, got rc=$rc_obs_record"
+		print_result "observability: record (no model) fails" 1 "Expected non-zero exit code, got rc=0. Output: $output"
 	fi
 
 	# Test: ingest with no Claude logs (should succeed gracefully)
@@ -531,6 +532,20 @@ test_observability_helper() {
 	return 0
 }
 
+_check_line_count() {
+	local script="$1"
+	local max="$2"
+	local path="${SCRIPTS_DIR}/${script}"
+	local lines
+	lines=$(wc -l <"$path" | tr -d ' ')
+	if [[ "$lines" -le "$max" ]]; then
+		print_result "regression: $script <= $max lines ($lines)" 0
+	else
+		print_result "regression: $script <= $max lines ($lines)" 1 "Got $lines lines, max $max"
+	fi
+	return 0
+}
+
 # =============================================================================
 # 8. Cross-Script Regression Tests
 # =============================================================================
@@ -540,25 +555,11 @@ test_regressions() {
 	echo "=== Regression Checks ==="
 
 	# Verify line counts are within expected range (simplified)
-	local -A expected_max=(
-		["full-loop-helper.sh"]=600
-		["fallback-chain-helper.sh"]=300
-		["budget-tracker-helper.sh"]=350
-		["issue-sync-helper.sh"]=1000
-		["observability-helper.sh"]=700
-	)
-
-	for script in "${!expected_max[@]}"; do
-		local path="${SCRIPTS_DIR}/${script}"
-		local lines
-		lines=$(wc -l <"$path" | tr -d ' ')
-		local max="${expected_max[$script]}"
-		if [[ "$lines" -le "$max" ]]; then
-			print_result "regression: $script <= $max lines ($lines)" 0
-		else
-			print_result "regression: $script <= $max lines ($lines)" 1 "Got $lines lines, max $max"
-		fi
-	done
+	_check_line_count "full-loop-helper.sh" 600
+	_check_line_count "fallback-chain-helper.sh" 300
+	_check_line_count "budget-tracker-helper.sh" 350
+	_check_line_count "issue-sync-helper.sh" 1000
+	_check_line_count "observability-helper.sh" 700
 
 	# Verify all scripts have set -euo pipefail
 	for script in full-loop-helper.sh fallback-chain-helper.sh budget-tracker-helper.sh issue-sync-helper.sh observability-helper.sh; do
@@ -647,6 +648,7 @@ main() {
 	echo "================================================================"
 
 	setup
+	trap teardown EXIT INT TERM
 
 	test_syntax_check
 	test_help_output
@@ -658,6 +660,7 @@ main() {
 	test_regressions
 	test_shellcheck
 
+	trap - EXIT INT TERM
 	teardown
 
 	echo ""
