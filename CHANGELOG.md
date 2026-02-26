@@ -7,9 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.133.7] - 2026-02-26
+
+### Changed
+
+- Documentation: changelog for headless greeting fix
+
 ### Fixed
 
-- Root cause fix: global AGENTS.md greeting was overriding pulse autonomy directives in headless sessions (#2377)
+- skip greeting/question in headless command sessions (pulse, full-loop) (#2377)
 
 ## [2.133.6] - 2026-02-26
 
