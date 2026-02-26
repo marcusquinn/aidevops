@@ -192,16 +192,25 @@ detect_platform() {
 	Linux)
 		case "$arch" in
 		x86_64)
-			# Check for GPU acceleration
-			if suppress_stderr command -v vulkaninfo; then
-				platform="linux-vulkan"
-			elif suppress_stderr command -v rocminfo; then
+			# Check for GPU acceleration (order: ROCm > Vulkan > NVIDIA-via-Vulkan > CPU)
+			if suppress_stderr command -v rocminfo; then
 				platform="linux-rocm"
+			elif suppress_stderr command -v vulkaninfo; then
+				platform="linux-vulkan"
+			elif suppress_stderr command -v nvidia-smi; then
+				# NVIDIA GPU detected but no Vulkan SDK — use Vulkan binary anyway
+				# (NVIDIA drivers include Vulkan support; vulkaninfo just isn't installed)
+				platform="linux-vulkan"
 			else
 				platform="linux-x64"
 			fi
 			;;
-		aarch64) platform="linux-arm64" ;;
+		aarch64)
+			print_error "No prebuilt Linux ARM64 binary available. Compile from source:"
+			print_error "  git clone https://github.com/ggml-org/llama.cpp.git"
+			print_error "  cd llama.cpp && cmake -B build && cmake --build build --config Release -j\$(nproc)"
+			return 1
+			;;
 		*)
 			print_error "Unsupported Linux architecture: ${arch}"
 			return 1
@@ -633,13 +642,13 @@ sync_model_inventory() {
 # Get the release asset name pattern for the current platform
 get_release_asset_pattern() {
 	local platform="$1"
+	# llama.cpp releases use .tar.gz for macOS/Linux (changed from .zip circa b8100+)
 	case "$platform" in
-	macos-arm64) echo "llama-.*-bin-macos-arm64\\.zip" ;;
-	macos-x64) echo "llama-.*-bin-macos-x64\\.zip" ;;
-	linux-x64) echo "llama-.*-bin-ubuntu-x64\\.zip" ;;
-	linux-vulkan) echo "llama-.*-bin-ubuntu-vulkan-x64\\.zip" ;;
-	linux-rocm) echo "llama-.*-bin-ubuntu-x64-rocm\\.zip" ;;
-	linux-arm64) echo "llama-.*-bin-ubuntu-arm64\\.zip" ;;
+	macos-arm64) echo "llama-.*-bin-macos-arm64\\.tar\\.gz" ;;
+	macos-x64) echo "llama-.*-bin-macos-x64\\.tar\\.gz" ;;
+	linux-x64) echo "llama-.*-bin-ubuntu-x64\\.tar\\.gz" ;;
+	linux-vulkan) echo "llama-.*-bin-ubuntu-vulkan-x64\\.tar\\.gz" ;;
+	linux-rocm) echo "llama-.*-bin-ubuntu-rocm-.*-x64\\.tar\\.gz" ;;
 	*) return 1 ;;
 	esac
 	return 0
@@ -691,8 +700,8 @@ cmd_setup() {
 			return 2
 		fi
 
-		if ! suppress_stderr command -v unzip; then
-			print_error "unzip is required but not found"
+		if ! suppress_stderr command -v tar && ! suppress_stderr command -v unzip; then
+			print_error "tar or unzip is required but neither found"
 			return 2
 		fi
 
@@ -733,17 +742,30 @@ cmd_setup() {
 
 		local tmp_dir
 		tmp_dir="$(mktemp -d)"
-		local tmp_zip="${tmp_dir}/${asset_name}"
+		local tmp_archive="${tmp_dir}/${asset_name}"
 
-		if ! curl -sL -o "$tmp_zip" "$download_url"; then
+		if ! curl -sL -o "$tmp_archive" "$download_url"; then
 			print_error "Download failed: ${download_url}"
 			rm -rf "$tmp_dir"
 			return 1
 		fi
 
 		print_info "Extracting..."
-		if ! unzip -qo "$tmp_zip" -d "$tmp_dir/extracted"; then
-			print_error "Extraction failed"
+		mkdir -p "$tmp_dir/extracted"
+		if [[ "$asset_name" == *.tar.gz ]] || [[ "$asset_name" == *.tgz ]]; then
+			if ! tar -xzf "$tmp_archive" -C "$tmp_dir/extracted"; then
+				print_error "Extraction failed (tar.gz)"
+				rm -rf "$tmp_dir"
+				return 1
+			fi
+		elif [[ "$asset_name" == *.zip ]]; then
+			if ! unzip -qo "$tmp_archive" -d "$tmp_dir/extracted"; then
+				print_error "Extraction failed (zip)"
+				rm -rf "$tmp_dir"
+				return 1
+			fi
+		else
+			print_error "Unknown archive format: ${asset_name}"
 			rm -rf "$tmp_dir"
 			return 1
 		fi
