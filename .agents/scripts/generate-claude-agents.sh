@@ -328,10 +328,7 @@ Start a Ralph loop for iterative development.
 
 Arguments: $ARGUMENTS
 
-**Setup the loop:**
-```bash
-~/.aidevops/agents/scripts/ralph-loop-helper.sh setup $ARGUMENTS
-```'
+For end-to-end development, prefer `/full-loop` which handles the complete lifecycle.'
 
 # --- Full Loop ---
 write_command "full-loop" \

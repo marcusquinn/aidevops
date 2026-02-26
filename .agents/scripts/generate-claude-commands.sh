@@ -674,11 +674,13 @@ if should_generate "cancel-ralph"; then
 		"Cancel active Ralph Wiggum loop" \
 		'Cancel the active Ralph loop.
 
+Remove the state file to stop the loop:
+
 ```bash
-~/.aidevops/agents/scripts/ralph-loop-helper.sh cancel
+rm -f .agents/loop-state/ralph-loop.local.md .agents/loop-state/ralph-loop.local.state
 ```
 
-This removes the state file and stops the loop.'
+If no loop state file exists, no loop is active.'
 fi
 
 # --- ralph-status ---
@@ -687,8 +689,10 @@ if should_generate "ralph-status"; then
 		"Show current Ralph loop status" \
 		'Show the current Ralph loop status.
 
+Check the state file:
+
 ```bash
-~/.aidevops/agents/scripts/ralph-loop-helper.sh status
+cat .agents/loop-state/ralph-loop.local.md 2>/dev/null || echo "No active Ralph loop"
 ```
 
 Shows: active loop, iteration count, max iterations, completion promise, start time.'

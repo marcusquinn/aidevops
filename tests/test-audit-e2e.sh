@@ -304,20 +304,8 @@ test_checkpoint_1() {
 		fail "Config template not found at $config_template"
 	fi
 
-	# Check quality-sweep-helper.sh has collectors for SonarCloud and Codacy
-	local sweep_script="$SCRIPTS_DIR/quality-sweep-helper.sh"
-	if [[ -f "$sweep_script" ]]; then
-		local has_sonar=false has_codacy=false
-		if grep -q 'sonarcloud' "$sweep_script"; then has_sonar=true; fi
-		if grep -q 'codacy' "$sweep_script"; then has_codacy=true; fi
-		if [[ "$has_sonar" == "true" && "$has_codacy" == "true" ]]; then
-			pass "quality-sweep-helper.sh has SonarCloud and Codacy collectors"
-		else
-			fail "quality-sweep-helper.sh missing collectors (sonar=$has_sonar, codacy=$has_codacy)"
-		fi
-	else
-		fail "quality-sweep-helper.sh not found"
-	fi
+	# quality-sweep-helper.sh archived (t1336) — AI reads quality tool output directly
+	skip "quality-sweep-helper.sh archived (t1336) — AI reads SonarCloud/Codacy output directly via gh API"
 
 	# Check coderabbit-collector-helper.sh exists
 	if [[ -f "$SCRIPTS_DIR/coderabbit-collector-helper.sh" ]]; then
@@ -447,37 +435,10 @@ test_checkpoint_3() {
 		fi
 	fi
 
-	# Test coderabbit-task-creator-helper.sh
-	local crtch="$SCRIPTS_DIR/coderabbit-task-creator-helper.sh"
-	if [[ -f "$crtch" ]]; then
-		pass "coderabbit-task-creator-helper.sh exists"
-
-		# Verify it has scan and create commands
-		if grep -q 'cmd_scan\|cmd_create' "$crtch"; then
-			pass "coderabbit-task-creator-helper.sh has scan and create commands"
-		else
-			fail "coderabbit-task-creator-helper.sh missing scan/create commands"
-		fi
-
-		# Verify it uses claim-task-id.sh for ID allocation
-		if grep -q 'claim-task-id.sh' "$crtch"; then
-			pass "coderabbit-task-creator-helper.sh uses claim-task-id.sh for ID allocation"
-		else
-			fail "coderabbit-task-creator-helper.sh does not use claim-task-id.sh"
-			gap "GAP-3: Task IDs not allocated via claim-task-id.sh (collision risk)"
-		fi
-	else
-		skip "coderabbit-task-creator-helper.sh not found"
-	fi
-
-	# Check audit-task-creator-helper.sh (t1032.4 — generalised task creator)
-	local atch="$SCRIPTS_DIR/audit-task-creator-helper.sh"
-	if [[ -f "$atch" ]]; then
-		pass "audit-task-creator-helper.sh exists (generalised task creator from t1032.4)"
-	else
-		skip "audit-task-creator-helper.sh not found — t1032.4 not yet implemented"
-		gap "GAP-3a: Generalised audit-task-creator-helper.sh (t1032.4) not yet created. Currently only coderabbit-task-creator-helper.sh exists."
-	fi
+	# coderabbit-task-creator-helper.sh and audit-task-creator-helper.sh archived (t1336)
+	# AI reads CodeRabbit PR comments directly and creates better-scoped tasks
+	skip "coderabbit-task-creator-helper.sh archived (t1336) — AI creates tasks from PR comments directly"
+	skip "audit-task-creator-helper.sh archived (t1336) — duplicate of coderabbit-task-creator-helper.sh"
 
 	return 0
 }
@@ -504,27 +465,9 @@ test_checkpoint_4() {
 		return 0
 	fi
 
-	# Check Phase 10b calls the task creator
-	if grep -q 'coderabbit-task-creator-helper.sh' "$pulse_script"; then
-		pass "Phase 10b calls coderabbit-task-creator-helper.sh"
-	else
-		skip "Phase 10b does not call coderabbit-task-creator-helper.sh"
-	fi
-
-	# Check if Phase 10b has been upgraded to unified orchestrator (t1032.5)
-	if grep -q 'code-audit-helper.sh' "$pulse_script"; then
-		pass "Phase 10b calls code-audit-helper.sh (unified orchestrator from t1032.5)"
-	else
-		skip "Phase 10b not yet upgraded to unified orchestrator — t1032.5 PR #1377 not merged"
-		gap "GAP-4a: Phase 10b still uses CodeRabbit-only path. Unified orchestrator wiring (t1032.5 PR #1377) not yet merged."
-	fi
-
-	# Check if Phase 10b has audit-task-creator-helper.sh fallback
-	if grep -q 'audit-task-creator-helper.sh' "$pulse_script"; then
-		pass "Phase 10b references audit-task-creator-helper.sh (generalised creator)"
-	else
-		skip "Phase 10b does not reference audit-task-creator-helper.sh — t1032.4/t1032.5 not merged"
-	fi
+	# Task creator scripts archived (t1336) — AI handles task creation from findings
+	skip "coderabbit-task-creator-helper.sh archived (t1336) — pulse uses AI judgment for task creation"
+	skip "audit-task-creator-helper.sh archived (t1336) — pulse uses AI judgment for task creation"
 
 	# Verify Phase 10b has 24h cooldown
 	if grep -q 'task_creation_cooldown' "$pulse_script"; then
@@ -735,7 +678,7 @@ test_checkpoint_8() {
 
 	# Step 1: Collectors exist
 	local collectors=0
-	for script in quality-sweep-helper.sh coderabbit-collector-helper.sh; do
+	for script in coderabbit-collector-helper.sh; do
 		if [[ -f "$SCRIPTS_DIR/$script" ]]; then
 			collectors=$((collectors + 1))
 		fi
