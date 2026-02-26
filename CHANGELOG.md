@@ -7,10 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.133.4] - 2026-02-26
+
+### Changed
+
+- Documentation: add changelog for pulse-repos.json and plist fix
+
 ### Fixed
 
-- Pulse reads repos from `pulse-repos.json` instead of hardcoding — adding a repo is now a JSON edit (#2361)
-- Plist updated to use `/pulse` command (reads `pulse.md`) instead of stale inline prompt
+- pulse.md reads repos from pulse-repos.json instead of hardcoding (#2361)
 
 ## [2.133.3] - 2026-02-26
 
