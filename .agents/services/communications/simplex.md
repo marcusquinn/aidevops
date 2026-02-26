@@ -916,16 +916,18 @@ Cross-reference: `.agents/tools/security/opsec.md` (when available), `.agents/to
 
 ## Integration with aidevops
 
-### Planned Components
+### Components
 
-| Component | File | Status |
-|-----------|------|--------|
-| This subagent doc | `.agents/services/communications/simplex.md` | t1327.2 |
+| Component | File | Task |
+|-----------|------|------|
+| Subagent doc | `.agents/services/communications/simplex.md` | t1327.2 |
 | Helper script | `.agents/scripts/simplex-helper.sh` | t1327.3 |
-| Bot framework | TypeScript/Bun scaffold | t1327.4 |
-| Mailbox transport | Extend `mail-helper.sh` | t1327.5 |
+| Bot framework | `.agents/scripts/simplex-bot/` (TypeScript/Bun) | t1327.4 |
+| Mailbox transport | `.agents/scripts/mail-helper.sh` (SimpleX + Matrix adapters) | t1327.5 |
 | Opsec agent | `.agents/tools/security/opsec.md` | t1327.6 |
-| Chat security | Prompt injection, leak detection | t1327.8-10 |
+| Prompt injection defense | `.agents/scripts/prompt-guard-helper.sh` | t1327.8 |
+| Outbound leak detection | `.agents/scripts/simplex-bot/src/leak-detector.ts` | t1327.9 |
+| Exec approval flow | `.agents/scripts/simplex-bot/src/approval.ts` | t1327.10 |
 
 ### Slash Command Coexistence
 
@@ -942,7 +944,7 @@ No technical conflict — SimpleX bot commands run in chat context, aidevops com
 ## Related
 
 - `.agents/services/communications/matrix-bot.md` — Matrix messaging integration (federated, user IDs)
-- `.agents/tools/security/opsec.md` — Operational security guidance (planned, t1327.6)
+- `.agents/tools/security/opsec.md` — Operational security guidance
 - `.agents/tools/voice/speech-to-speech.md` — Voice note transcription
 - `.agents/tools/ai-assistants/headless-dispatch.md` — Headless AI dispatch patterns
 - `.agents/services/networking/netbird.md` — Mesh VPN (complementary to SimpleX for infrastructure)
