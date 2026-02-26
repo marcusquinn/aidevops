@@ -60,10 +60,11 @@ detect_os_arch() {
 	case "$os" in
 	linux) echo "linux-${arch}" ;;
 	darwin)
+		# Matterbridge releases use darwin-arm64 and darwin-64bit (not darwin-amd64)
 		if [[ "$arch" == "arm64" ]]; then
 			echo "darwin-arm64"
 		else
-			echo "darwin-amd64"
+			echo "darwin-64bit"
 		fi
 		;;
 	*) echo "linux-${arch}" ;;

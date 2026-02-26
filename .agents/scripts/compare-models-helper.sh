@@ -772,7 +772,7 @@ cmd_cross_review() {
 	local -a model_names=()
 
 	for model_tier in "${model_array[@]}"; do
-		model_tier=$(echo "$model_tier" | tr -d ' ')
+		model_tier="${model_tier// /}"
 		[[ -z "$model_tier" ]] && continue
 
 		local runner_name="cross-review-${model_tier}-$$"
@@ -1856,18 +1856,22 @@ cmd_score() {
 		return 1
 	fi
 
-	# Insert comparison record (use parameter expansion for SQL escaping — SC2001)
-	local comp_id safe_task
+	# Insert comparison record (escape all string values for SQL safety)
+	local comp_id safe_task safe_type safe_eval safe_winner
 	safe_task="${task//\'/\'\'}"
-	comp_id=$(sqlite3 "$RESULTS_DB" "INSERT INTO comparisons (task_description, task_type, evaluator_model, winner_model) VALUES ('${safe_task}', '$task_type', '$evaluator', '$winner'); SELECT last_insert_rowid();")
+	safe_type="${task_type//\'/\'\'}"
+	safe_eval="${evaluator//\'/\'\'}"
+	safe_winner="${winner//\'/\'\'}"
+	comp_id=$(sqlite3 "$RESULTS_DB" "INSERT INTO comparisons (task_description, task_type, evaluator_model, winner_model) VALUES ('${safe_task}', '${safe_type}', '${safe_eval}', '${safe_winner}'); SELECT last_insert_rowid();")
 
-	# Insert scores for each model
+	# Insert scores for each model (escape all string values)
 	for entry in "${model_entries[@]}"; do
 		IFS='|' read -r m_id m_cor m_com m_qua m_cla m_adh m_ove m_lat m_tok m_str m_wea m_res <<<"$entry"
+		local safe_id="${m_id//\'/\'\'}"
 		local safe_str="${m_str//\'/\'\'}"
 		local safe_wea="${m_wea//\'/\'\'}"
 		local safe_res="${m_res//\'/\'\'}"
-		sqlite3 "$RESULTS_DB" "INSERT INTO comparison_scores (comparison_id, model_id, correctness, completeness, code_quality, clarity, adherence, overall, latency_ms, tokens_used, strengths, weaknesses, response_file) VALUES ($comp_id, '$m_id', $m_cor, $m_com, $m_qua, $m_cla, $m_adh, $m_ove, $m_lat, $m_tok, '${safe_str}', '${safe_wea}', '${safe_res}');"
+		sqlite3 "$RESULTS_DB" "INSERT INTO comparison_scores (comparison_id, model_id, correctness, completeness, code_quality, clarity, adherence, overall, latency_ms, tokens_used, strengths, weaknesses, response_file) VALUES ($comp_id, '${safe_id}', $m_cor, $m_com, $m_qua, $m_cla, $m_adh, $m_ove, $m_lat, $m_tok, '${safe_str}', '${safe_wea}', '${safe_res}');"
 	done
 
 	print_success "Comparison #$comp_id recorded ($task_type: ${#model_entries[@]} models scored)"
