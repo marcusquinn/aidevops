@@ -768,59 +768,6 @@ cmd_reconcile() {
 	return 0
 }
 
-cmd_parse() {
-	local task_id="${1:-}"
-	[[ -z "$task_id" ]] && {
-		print_error "Usage: issue-sync-helper.sh parse tNNN"
-		return 1
-	}
-	local project_root
-	project_root=$(find_project_root) || return 1
-	local todo_file="$project_root/TODO.md"
-
-	local block
-	block=$(extract_task_block "$task_id" "$todo_file")
-	echo "=== Task Block ==="
-	echo "$block"
-	echo ""
-	echo "=== Parsed Fields ==="
-	parse_task_line "$(echo "$block" | head -1)"
-	echo ""
-	echo "=== Subtasks ==="
-	extract_subtasks "$block"
-	echo ""
-	echo "=== Notes ==="
-	extract_notes "$block"
-	echo ""
-
-	local parsed
-	parsed=$(parse_task_line "$(echo "$block" | head -1)")
-	local plan_link
-	plan_link=$(echo "$parsed" | grep '^plan_link=' | cut -d= -f2-)
-	if [[ -n "$plan_link" ]]; then
-		echo "=== Plan Section ==="
-		local ps
-		ps=$(extract_plan_section "$plan_link" "$project_root")
-		if [[ -n "$ps" ]]; then
-			echo "Purpose:"
-			extract_plan_purpose "$ps"
-			echo ""
-			echo "Decisions:"
-			extract_plan_decisions "$ps"
-			echo ""
-			echo "Progress:"
-			extract_plan_progress "$ps"
-		else echo "(no plan found for: $plan_link)"; fi
-		echo ""
-	fi
-	echo "=== Related Files ==="
-	find_related_files "$task_id" "$project_root"
-	echo ""
-	echo "=== Composed Body ==="
-	compose_issue_body "$task_id" "$project_root"
-	return 0
-}
-
 # =============================================================================
 # Main
 # =============================================================================
@@ -838,7 +785,6 @@ Commands:
   close [tNNN]    Close issues for completed tasks
   reconcile       Fix mismatched ref:GH# values
   status          Show sync drift
-  parse [tNNN]    Debug: show parsed task context
   help            Show this help
 
 Options:
@@ -890,7 +836,6 @@ main() {
 	close) cmd_close "${positional_args[1]:-}" ;;
 	reconcile) cmd_reconcile ;;
 	status) cmd_status ;;
-	parse) cmd_parse "${positional_args[1]:-}" ;;
 	help) cmd_help ;;
 	*)
 		print_error "Unknown command: $command"
