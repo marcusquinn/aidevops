@@ -7,11 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.133.5] - 2026-02-26
+
+### Added
+
+- t1338.5 usage logging and disk management for local models (#2340)
+
+### Changed
+
+- Documentation: changelog for pulse autonomy fix and housekeeping
+
 ### Fixed
 
-- Pulse supervisor now acts autonomously in headless mode instead of asking "What would you like to action?" (#2368)
-- Merged PR #2340 (t1338.5: usage logging/disk management for local models)
-- Closed parent issue #2300 (all 5 subtasks merged — ~64% line reduction across infrastructure scripts)
+- enforce autonomous execution in pulse — never ask user for confirmation (#2368)
+- add prevention rules for top 5 recurring error patterns (#2367)
+- migrate repo-sync-helper.sh launchd label to sh.aidevops convention (#2365)
 
 ## [2.133.4] - 2026-02-26
 
