@@ -18,8 +18,8 @@
 #   recommend                     Hardware-aware model recommendations
 #   cleanup [--remove-stale]      Show/remove stale models (>30d unused)
 #   usage [--since DATE] [--json] Show usage statistics
-#   nudge [--size N] [--days N]   Session-start hook: warn if stale > N GB
-#   sync-inventory                Sync model inventory with disk
+#   inventory [--json] [--sync]   Show model inventory from database
+#   nudge [--json]                Session-start stale model check (>5 GB)
 #   benchmark --model M           Benchmark a model on local hardware
 #   help                          Show this help
 #
@@ -34,9 +34,9 @@
 # Integration:
 #   - OpenAI-compatible API at http://localhost:<port>/v1
 #   - model-availability-helper.sh check local → exit 0 if server running
-#   - Usage tracked in SQLite at ~/.aidevops/local-models/usage.db
-#   - Session tracking via AIDEVOPS_SESSION_ID env var (t1338.5)
-#   - Model inventory sync for downloaded models (t1338.5)
+#   - Usage tracked in SQLite at ~/.aidevops/.agent-workspace/memory/local-models.db
+#   - Tables: model_usage (per-request), model_inventory (downloaded models)
+#   - Session-start nudge: `nudge` command checks stale models > 5 GB
 #   - See tools/local-models/local-models.md for full documentation
 #
 # Exit codes:
@@ -47,7 +47,7 @@
 #   4 - Server already running / not running
 #
 # Author: AI DevOps Framework
-# Version: 1.1.0 (t1338.5: added session tracking, model inventory, nudge)
+# Version: 1.0.0
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
@@ -63,11 +63,19 @@ init_log_file
 readonly LOCAL_MODELS_DIR="${HOME}/.aidevops/local-models"
 readonly LOCAL_BIN_DIR="${LOCAL_MODELS_DIR}/bin"
 readonly LOCAL_MODELS_STORE="${LOCAL_MODELS_DIR}/models"
-readonly LOCAL_USAGE_DB="${LOCAL_MODELS_DIR}/usage.db"
 readonly LOCAL_CONFIG_FILE="${LOCAL_MODELS_DIR}/config.json"
 readonly LOCAL_PID_FILE="${LOCAL_MODELS_DIR}/llama-server.pid"
 readonly LLAMA_SERVER_BIN="${LOCAL_BIN_DIR}/llama-server"
 readonly LLAMA_CLI_BIN="${LOCAL_BIN_DIR}/llama-cli"
+
+# Usage/inventory database (t1338.5) — stored with other framework SQLite DBs
+readonly LOCAL_MODELS_DB_DIR="${HOME}/.aidevops/.agent-workspace/memory"
+readonly LOCAL_USAGE_DB="${LOCAL_MODELS_DB_DIR}/local-models.db"
+# Legacy DB path for migration
+readonly LOCAL_USAGE_DB_LEGACY="${LOCAL_MODELS_DIR}/usage.db"
+
+# Stale model nudge threshold (bytes) — 5 GB
+readonly STALE_NUDGE_THRESHOLD_BYTES=5368709120
 
 # Defaults (overridable via config.json or CLI flags)
 # Prefixed with LLAMA_ to avoid collision with shared-constants.sh readonly LLAMA_PORT
@@ -89,10 +97,48 @@ readonly HF_API="https://huggingface.co/api"
 # Utility Functions
 # =============================================================================
 
+# Escape single quotes for safe SQL string interpolation
+# Usage: sqlite3 "$db" "SELECT * FROM t WHERE col = '$(sql_escape "$val")';"
+sql_escape() {
+	local val="$1"
+	printf '%s' "${val//\'/\'\'}"
+	return 0
+}
+
+# Sanitize a value for use as a bare (unquoted) SQL integer.
+# Returns the value if it matches an integer pattern, otherwise returns the
+# provided default (or 0).  This prevents SQL injection via numeric parameters.
+# Usage: sqlite3 "$db" "INSERT INTO t (col) VALUES ($(sql_int "$val"));"
+sql_int() {
+	local val="$1"
+	local default="${2:-0}"
+	if [[ "$val" =~ ^-?[0-9]+$ ]]; then
+		printf '%s' "$val"
+	else
+		printf '%s' "$default"
+	fi
+	return 0
+}
+
+# Sanitize a value for use as a bare (unquoted) SQL real/float.
+# Returns the value if it matches a numeric pattern, otherwise returns the
+# provided default (or 0.0).
+sql_real() {
+	local val="$1"
+	local default="${2:-0.0}"
+	if [[ "$val" =~ ^-?[0-9]+\.?[0-9]*$ ]]; then
+		printf '%s' "$val"
+	else
+		printf '%s' "$default"
+	fi
+	return 0
+}
+
 # Ensure the local-models directory structure exists
 ensure_dirs() {
 	mkdir -p "$LOCAL_BIN_DIR" 2>/dev/null || true
 	mkdir -p "$LOCAL_MODELS_STORE" 2>/dev/null || true
+	mkdir -p "$LOCAL_MODELS_DB_DIR" 2>/dev/null || true
 	return 0
 }
 
@@ -224,122 +270,273 @@ detect_gpu() {
 	return 0
 }
 
-# Initialize the usage tracking SQLite database
-# Schema v2 (t1338.5): Added session_id to usage, model_inventory table
+# Initialize the usage tracking SQLite database (t1338.5)
+# Schema: model_usage (per-request logging with session ID),
+#          model_inventory (downloaded models with size tracking)
 init_usage_db() {
 	if ! suppress_stderr command -v sqlite3; then
 		print_warning "sqlite3 not found — usage tracking disabled"
 		return 0
 	fi
+
+	ensure_dirs
+
+	# Migrate from legacy DB path if it exists and new one doesn't
+	if [[ -f "$LOCAL_USAGE_DB_LEGACY" ]] && [[ ! -f "$LOCAL_USAGE_DB" ]]; then
+		_migrate_legacy_db
+	fi
+
 	if [[ ! -f "$LOCAL_USAGE_DB" ]]; then
 		log_stderr "init_usage_db" sqlite3 "$LOCAL_USAGE_DB" <<-'SQLEOF'
-			-- Per-request usage log with session tracking (t1338.5)
-			CREATE TABLE IF NOT EXISTS usage (
+			CREATE TABLE IF NOT EXISTS model_usage (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				model TEXT NOT NULL,
+				session_id TEXT DEFAULT '',
 				timestamp TEXT NOT NULL DEFAULT (datetime('now')),
 				tokens_in INTEGER DEFAULT 0,
 				tokens_out INTEGER DEFAULT 0,
 				duration_ms INTEGER DEFAULT 0,
-				tok_per_sec REAL DEFAULT 0.0,
-				session_id TEXT DEFAULT ''
+				tok_per_sec REAL DEFAULT 0.0
 			);
-			-- Model access summary (last-used tracking for cleanup)
-			CREATE TABLE IF NOT EXISTS model_access (
+			CREATE TABLE IF NOT EXISTS model_inventory (
 				model TEXT PRIMARY KEY,
-				first_used TEXT NOT NULL DEFAULT (datetime('now')),
+				file_path TEXT NOT NULL DEFAULT '',
+				repo_source TEXT DEFAULT '',
+				size_bytes INTEGER DEFAULT 0,
+				quantization TEXT DEFAULT '',
+				first_seen TEXT NOT NULL DEFAULT (datetime('now')),
 				last_used TEXT NOT NULL DEFAULT (datetime('now')),
 				total_requests INTEGER DEFAULT 0
 			);
-			-- Model inventory: tracks downloaded models with metadata (t1338.5)
-			CREATE TABLE IF NOT EXISTS model_inventory (
-				model_file TEXT PRIMARY KEY,
-				repo_source TEXT DEFAULT '',
-				size_bytes INTEGER DEFAULT 0,
-				quantization TEXT DEFAULT '',
-				downloaded_at TEXT NOT NULL DEFAULT (datetime('now')),
-				last_verified TEXT NOT NULL DEFAULT (datetime('now'))
-			);
-			CREATE INDEX IF NOT EXISTS idx_usage_model ON usage(model);
-			CREATE INDEX IF NOT EXISTS idx_usage_timestamp ON usage(timestamp);
-			CREATE INDEX IF NOT EXISTS idx_usage_session ON usage(session_id);
-			CREATE INDEX IF NOT EXISTS idx_inventory_downloaded ON model_inventory(downloaded_at);
+			CREATE INDEX IF NOT EXISTS idx_model_usage_model ON model_usage(model);
+			CREATE INDEX IF NOT EXISTS idx_model_usage_timestamp ON model_usage(timestamp);
+			CREATE INDEX IF NOT EXISTS idx_model_usage_session ON model_usage(session_id);
+			CREATE INDEX IF NOT EXISTS idx_model_inventory_last_used ON model_inventory(last_used);
 		SQLEOF
 		print_info "Initialized usage database at ${LOCAL_USAGE_DB}"
 	else
-		# Migrate existing database to v2 schema if needed (t1338.5)
-		_migrate_usage_db_v2
+		# Ensure schema is up to date (idempotent migrations)
+		_ensure_schema_current
 	fi
 	return 0
 }
 
-# Migrate usage.db to v2 schema (t1338.5)
-# Adds session_id column to usage table and model_inventory table
-_migrate_usage_db_v2() {
-	if ! suppress_stderr command -v sqlite3 || [[ ! -f "$LOCAL_USAGE_DB" ]]; then
-		return 0
+# Migrate legacy usage.db (old path, old table names) to new location/schema
+_migrate_legacy_db() {
+	local legacy_db="$LOCAL_USAGE_DB_LEGACY"
+	local migration_failed=false
+	print_info "Migrating legacy usage database to ${LOCAL_USAGE_DB}..."
+
+	# Backup the legacy DB before migration
+	backup_sqlite_db "$legacy_db" "pre-migrate-t1338.5" >/dev/null 2>&1 || true
+
+	# Create new DB with new schema
+	if ! log_stderr "migrate_legacy_db" sqlite3 "$LOCAL_USAGE_DB" <<-'SQLEOF'; then
+		CREATE TABLE IF NOT EXISTS model_usage (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			model TEXT NOT NULL,
+			session_id TEXT DEFAULT '',
+			timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+			tokens_in INTEGER DEFAULT 0,
+			tokens_out INTEGER DEFAULT 0,
+			duration_ms INTEGER DEFAULT 0,
+			tok_per_sec REAL DEFAULT 0.0
+		);
+		CREATE TABLE IF NOT EXISTS model_inventory (
+			model TEXT PRIMARY KEY,
+			file_path TEXT NOT NULL DEFAULT '',
+			repo_source TEXT DEFAULT '',
+			size_bytes INTEGER DEFAULT 0,
+			quantization TEXT DEFAULT '',
+			first_seen TEXT NOT NULL DEFAULT (datetime('now')),
+			last_used TEXT NOT NULL DEFAULT (datetime('now')),
+			total_requests INTEGER DEFAULT 0
+		);
+		CREATE INDEX IF NOT EXISTS idx_model_usage_model ON model_usage(model);
+		CREATE INDEX IF NOT EXISTS idx_model_usage_timestamp ON model_usage(timestamp);
+		CREATE INDEX IF NOT EXISTS idx_model_usage_session ON model_usage(session_id);
+		CREATE INDEX IF NOT EXISTS idx_model_inventory_last_used ON model_inventory(last_used);
+	SQLEOF
+		print_error "Failed to create new schema during migration"
+		return 1
 	fi
 
-	# Check if session_id column exists in usage table
-	local has_session_col
-	has_session_col="$(sqlite3 "$LOCAL_USAGE_DB" "SELECT COUNT(*) FROM pragma_table_info('usage') WHERE name='session_id';" 2>/dev/null || echo "0")"
+	# Copy data from legacy tables if they exist
+	local has_usage has_model_access
+	has_usage="$(sqlite3 "$legacy_db" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='usage';" 2>/dev/null || echo "0")"
+	has_model_access="$(sqlite3 "$legacy_db" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='model_access';" 2>/dev/null || echo "0")"
 
-	if [[ "$has_session_col" == "0" ]]; then
-		log_stderr "migrate_v2" sqlite3 "$LOCAL_USAGE_DB" "ALTER TABLE usage ADD COLUMN session_id TEXT DEFAULT '';" 2>/dev/null || true
-		log_stderr "migrate_v2" sqlite3 "$LOCAL_USAGE_DB" "CREATE INDEX IF NOT EXISTS idx_usage_session ON usage(session_id);" 2>/dev/null || true
-		print_info "Migrated usage table: added session_id column"
+	if [[ "$has_usage" == "1" ]]; then
+		# Use ATTACH DATABASE with explicit column mapping to avoid schema mismatch
+		if log_stderr "migrate_usage_rows" sqlite3 "$LOCAL_USAGE_DB" <<-SQLEOF; then
+			ATTACH DATABASE '$(sql_escape "$legacy_db")' AS legacy;
+			INSERT OR IGNORE INTO model_usage (model, session_id, timestamp, tokens_in, tokens_out, duration_ms, tok_per_sec)
+			SELECT model, '', timestamp, tokens_in, tokens_out, duration_ms, tok_per_sec
+			FROM legacy.usage;
+			DETACH DATABASE legacy;
+		SQLEOF
+			print_info "Migrated usage records to model_usage"
+		else
+			print_error "Failed to migrate usage records — legacy DB preserved"
+			migration_failed=true
+		fi
 	fi
 
-	# Check if model_inventory table exists
-	local has_inventory
-	has_inventory="$(sqlite3 "$LOCAL_USAGE_DB" "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='model_inventory';" 2>/dev/null || echo "0")"
+	if [[ "$has_model_access" == "1" ]]; then
+		# Use ATTACH DATABASE with explicit column mapping for model_access -> model_inventory
+		if log_stderr "migrate_model_access_rows" sqlite3 "$LOCAL_USAGE_DB" <<-SQLEOF; then
+			ATTACH DATABASE '$(sql_escape "$legacy_db")' AS legacy;
+			INSERT OR IGNORE INTO model_inventory (model, first_seen, last_used, total_requests)
+			SELECT model, first_used, last_used, total_requests
+			FROM legacy.model_access;
+			DETACH DATABASE legacy;
+		SQLEOF
+			print_info "Migrated model_access records to model_inventory"
+		else
+			print_error "Failed to migrate model_access records — legacy DB preserved"
+			migration_failed=true
+		fi
+	fi
 
-	if [[ "$has_inventory" == "0" ]]; then
-		log_stderr "migrate_v2" sqlite3 "$LOCAL_USAGE_DB" <<-'SQLEOF'
+	if [[ "$migration_failed" == "true" ]]; then
+		print_error "Migration partially failed. Legacy DB preserved at ${legacy_db}"
+		return 1
+	fi
+
+	print_success "Migration complete. Legacy DB preserved at ${legacy_db}"
+	return 0
+}
+
+# Ensure schema is current (add missing columns/tables idempotently)
+_ensure_schema_current() {
+	# Check if model_usage table exists (might be old schema with 'usage' table)
+	local has_model_usage has_model_inventory
+	has_model_usage="$(sqlite3 "$LOCAL_USAGE_DB" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='model_usage';" 2>/dev/null || echo "0")"
+	has_model_inventory="$(sqlite3 "$LOCAL_USAGE_DB" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='model_inventory';" 2>/dev/null || echo "0")"
+
+	if [[ "$has_model_usage" == "0" ]]; then
+		# Create model_usage table
+		log_stderr "ensure_schema_usage" sqlite3 "$LOCAL_USAGE_DB" <<-'SQLEOF'
+			CREATE TABLE IF NOT EXISTS model_usage (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				model TEXT NOT NULL,
+				session_id TEXT DEFAULT '',
+				timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+				tokens_in INTEGER DEFAULT 0,
+				tokens_out INTEGER DEFAULT 0,
+				duration_ms INTEGER DEFAULT 0,
+				tok_per_sec REAL DEFAULT 0.0
+			);
+			CREATE INDEX IF NOT EXISTS idx_model_usage_model ON model_usage(model);
+			CREATE INDEX IF NOT EXISTS idx_model_usage_timestamp ON model_usage(timestamp);
+			CREATE INDEX IF NOT EXISTS idx_model_usage_session ON model_usage(session_id);
+		SQLEOF
+
+		# Migrate from legacy 'usage' table if it exists (check separately to avoid prepare-time errors)
+		local has_legacy_usage
+		has_legacy_usage="$(sqlite3 "$LOCAL_USAGE_DB" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='usage';" 2>/dev/null || echo "0")"
+		if [[ "$has_legacy_usage" == "1" ]]; then
+			sqlite3 "$LOCAL_USAGE_DB" "INSERT OR IGNORE INTO model_usage (model, session_id, timestamp, tokens_in, tokens_out, duration_ms, tok_per_sec) SELECT model, '', timestamp, tokens_in, tokens_out, duration_ms, tok_per_sec FROM usage;" 2>/dev/null || true
+		fi
+	fi
+
+	if [[ "$has_model_inventory" == "0" ]]; then
+		# Create model_inventory table
+		log_stderr "ensure_schema_inventory" sqlite3 "$LOCAL_USAGE_DB" <<-'SQLEOF'
 			CREATE TABLE IF NOT EXISTS model_inventory (
-				model_file TEXT PRIMARY KEY,
+				model TEXT PRIMARY KEY,
+				file_path TEXT NOT NULL DEFAULT '',
 				repo_source TEXT DEFAULT '',
 				size_bytes INTEGER DEFAULT 0,
 				quantization TEXT DEFAULT '',
-				downloaded_at TEXT NOT NULL DEFAULT (datetime('now')),
-				last_verified TEXT NOT NULL DEFAULT (datetime('now'))
+				first_seen TEXT NOT NULL DEFAULT (datetime('now')),
+				last_used TEXT NOT NULL DEFAULT (datetime('now')),
+				total_requests INTEGER DEFAULT 0
 			);
-			CREATE INDEX IF NOT EXISTS idx_inventory_downloaded ON model_inventory(downloaded_at);
+			CREATE INDEX IF NOT EXISTS idx_model_inventory_last_used ON model_inventory(last_used);
 		SQLEOF
-		print_info "Migrated database: added model_inventory table"
+
+		# Migrate from legacy 'model_access' table if it exists
+		local has_legacy_access
+		has_legacy_access="$(sqlite3 "$LOCAL_USAGE_DB" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='model_access';" 2>/dev/null || echo "0")"
+		if [[ "$has_legacy_access" == "1" ]]; then
+			sqlite3 "$LOCAL_USAGE_DB" "INSERT OR IGNORE INTO model_inventory (model, first_seen, last_used, total_requests) SELECT model, first_used, last_used, total_requests FROM model_access;" 2>/dev/null || true
+		fi
 	fi
 
+	# Column-level drift detection: add missing columns idempotently.
+	# Each ALTER TABLE is wrapped individually so a failure on one column
+	# (e.g. column already exists) does not prevent subsequent columns from
+	# being checked.
+	local usage_cols
+	usage_cols="$(sqlite3 "$LOCAL_USAGE_DB" "PRAGMA table_info('model_usage');" 2>/dev/null || echo "")"
+	if [[ -n "$usage_cols" ]]; then
+		if ! printf '%s' "$usage_cols" | grep -q "session_id"; then
+			sqlite3 "$LOCAL_USAGE_DB" "ALTER TABLE model_usage ADD COLUMN session_id TEXT DEFAULT '';" 2>/dev/null || true
+		fi
+	fi
+
+	local inv_cols
+	inv_cols="$(sqlite3 "$LOCAL_USAGE_DB" "PRAGMA table_info('model_inventory');" 2>/dev/null || echo "")"
+	if [[ -n "$inv_cols" ]]; then
+		if ! printf '%s' "$inv_cols" | grep -q "file_path"; then
+			sqlite3 "$LOCAL_USAGE_DB" "ALTER TABLE model_inventory ADD COLUMN file_path TEXT NOT NULL DEFAULT '';" 2>/dev/null || true
+		fi
+		if ! printf '%s' "$inv_cols" | grep -q "repo_source"; then
+			sqlite3 "$LOCAL_USAGE_DB" "ALTER TABLE model_inventory ADD COLUMN repo_source TEXT DEFAULT '';" 2>/dev/null || true
+		fi
+		if ! printf '%s' "$inv_cols" | grep -q "size_bytes"; then
+			sqlite3 "$LOCAL_USAGE_DB" "ALTER TABLE model_inventory ADD COLUMN size_bytes INTEGER DEFAULT 0;" 2>/dev/null || true
+		fi
+		if ! printf '%s' "$inv_cols" | grep -q "quantization"; then
+			sqlite3 "$LOCAL_USAGE_DB" "ALTER TABLE model_inventory ADD COLUMN quantization TEXT DEFAULT '';" 2>/dev/null || true
+		fi
+		if ! printf '%s' "$inv_cols" | grep -q "first_seen"; then
+			sqlite3 "$LOCAL_USAGE_DB" "ALTER TABLE model_inventory ADD COLUMN first_seen TEXT NOT NULL DEFAULT '';" 2>/dev/null || true
+			sqlite3 "$LOCAL_USAGE_DB" "UPDATE model_inventory SET first_seen = datetime('now') WHERE first_seen = '';" 2>/dev/null || true
+		fi
+	fi
+
+	# Ensure indexes exist
+	sqlite3 "$LOCAL_USAGE_DB" <<-'SQLEOF' 2>/dev/null || true
+		CREATE INDEX IF NOT EXISTS idx_model_usage_model ON model_usage(model);
+		CREATE INDEX IF NOT EXISTS idx_model_usage_timestamp ON model_usage(timestamp);
+		CREATE INDEX IF NOT EXISTS idx_model_usage_session ON model_usage(session_id);
+		CREATE INDEX IF NOT EXISTS idx_model_inventory_last_used ON model_inventory(last_used);
+	SQLEOF
 	return 0
 }
 
-# Record a usage event with session tracking (t1338.5)
-# Session ID is captured from environment variables in priority order:
-#   1. AIDEVOPS_SESSION_ID - explicit session identifier
-#   2. CLAUDE_SESSION_ID - Claude Code session
-#   3. OPENCODE_SESSION_ID - opencode session
-#   4. Empty string if none set
+# Record a usage event (t1338.5: per-session logging)
 record_usage() {
 	local model="$1"
 	local tokens_in="${2:-0}"
 	local tokens_out="${3:-0}"
 	local duration_ms="${4:-0}"
 	local tok_per_sec="${5:-0.0}"
+	local session_id="${6:-${CLAUDE_SESSION_ID:-${OPENCODE_SESSION_ID:-}}}"
 
 	if ! suppress_stderr command -v sqlite3 || [[ ! -f "$LOCAL_USAGE_DB" ]]; then
 		return 0
 	fi
 
-	# Capture session ID from environment (t1338.5)
-	local session_id="${AIDEVOPS_SESSION_ID:-${CLAUDE_SESSION_ID:-${OPENCODE_SESSION_ID:-}}}"
-	# Sanitize for SQL (replace single quotes)
-	session_id="${session_id//\'/\'\'}"
+	local escaped_model escaped_session
+	escaped_model="$(sql_escape "$model")"
+	escaped_session="$(sql_escape "$session_id")"
+
+	# Sanitize numeric parameters to prevent SQL injection via integer/real fields
+	local safe_tokens_in safe_tokens_out safe_duration_ms safe_tok_per_sec
+	safe_tokens_in="$(sql_int "$tokens_in")"
+	safe_tokens_out="$(sql_int "$tokens_out")"
+	safe_duration_ms="$(sql_int "$duration_ms")"
+	safe_tok_per_sec="$(sql_real "$tok_per_sec")"
 
 	log_stderr "record_usage" sqlite3 "$LOCAL_USAGE_DB" <<-SQLEOF
-		INSERT INTO usage (model, tokens_in, tokens_out, duration_ms, tok_per_sec, session_id)
-		VALUES ('${model}', ${tokens_in}, ${tokens_out}, ${duration_ms}, ${tok_per_sec}, '${session_id}');
+		INSERT INTO model_usage (model, session_id, tokens_in, tokens_out, duration_ms, tok_per_sec)
+		VALUES ('${escaped_model}', '${escaped_session}', ${safe_tokens_in}, ${safe_tokens_out}, ${safe_duration_ms}, ${safe_tok_per_sec});
 
-		INSERT INTO model_access (model, total_requests)
-		VALUES ('${model}', 1)
+		INSERT INTO model_inventory (model, total_requests)
+		VALUES ('${escaped_model}', 1)
 		ON CONFLICT(model) DO UPDATE SET
 			last_used = datetime('now'),
 			total_requests = total_requests + 1;
@@ -347,41 +544,39 @@ record_usage() {
 	return 0
 }
 
-# Register a downloaded model in the inventory (t1338.5)
-# Arguments:
-#   $1 - model filename (required)
-#   $2 - repo source (e.g., "Qwen/Qwen3-8B-GGUF")
-#   $3 - size in bytes
-#   $4 - quantization (e.g., "Q4_K_M")
+# Register a model in the inventory when downloaded (t1338.5)
 register_model_inventory() {
-	local model_file="$1"
-	local repo_source="${2:-}"
-	local size_bytes="${3:-0}"
-	local quantization="${4:-}"
+	local model_name="$1"
+	local file_path="${2:-}"
+	local repo_source="${3:-}"
+	local size_bytes="${4:-0}"
+	local quantization="${5:-}"
 
 	if ! suppress_stderr command -v sqlite3 || [[ ! -f "$LOCAL_USAGE_DB" ]]; then
 		return 0
 	fi
 
-	# Sanitize for SQL
-	model_file="${model_file//\'/\'\'}"
-	repo_source="${repo_source//\'/\'\'}"
-	quantization="${quantization//\'/\'\'}"
+	local escaped_name escaped_path escaped_repo escaped_quant safe_size_bytes
+	escaped_name="$(sql_escape "$model_name")"
+	escaped_path="$(sql_escape "$file_path")"
+	escaped_repo="$(sql_escape "$repo_source")"
+	escaped_quant="$(sql_escape "$quantization")"
+	safe_size_bytes="$(sql_int "$size_bytes")"
 
-	log_stderr "register_inventory" sqlite3 "$LOCAL_USAGE_DB" <<-SQLEOF
-		INSERT INTO model_inventory (model_file, repo_source, size_bytes, quantization)
-		VALUES ('${model_file}', '${repo_source}', ${size_bytes}, '${quantization}')
-		ON CONFLICT(model_file) DO UPDATE SET
-			repo_source = COALESCE(NULLIF('${repo_source}', ''), repo_source),
-			size_bytes = CASE WHEN ${size_bytes} > 0 THEN ${size_bytes} ELSE size_bytes END,
-			quantization = COALESCE(NULLIF('${quantization}', ''), quantization),
-			last_verified = datetime('now');
+	log_stderr "register_model_inventory" sqlite3 "$LOCAL_USAGE_DB" <<-SQLEOF
+		INSERT INTO model_inventory (model, file_path, repo_source, size_bytes, quantization)
+		VALUES ('${escaped_name}', '${escaped_path}', '${escaped_repo}', ${safe_size_bytes}, '${escaped_quant}')
+		ON CONFLICT(model) DO UPDATE SET
+			file_path = '${escaped_path}',
+			repo_source = CASE WHEN '${escaped_repo}' != '' THEN '${escaped_repo}' ELSE repo_source END,
+			size_bytes = CASE WHEN ${safe_size_bytes} > 0 THEN ${safe_size_bytes} ELSE size_bytes END,
+			quantization = CASE WHEN '${escaped_quant}' != '' THEN '${escaped_quant}' ELSE quantization END;
 	SQLEOF
 	return 0
 }
 
-# Sync model inventory with actual files on disk (t1338.5)
-# Adds missing files, removes deleted files from inventory
+# Sync model_inventory with files on disk (t1338.5)
+# Scans LOCAL_MODELS_STORE and ensures every .gguf file is registered
 sync_model_inventory() {
 	if ! suppress_stderr command -v sqlite3 || [[ ! -f "$LOCAL_USAGE_DB" ]]; then
 		return 0
@@ -391,174 +586,45 @@ sync_model_inventory() {
 		return 0
 	fi
 
-	local added=0 removed=0
+	local models
+	models="$(find "$LOCAL_MODELS_STORE" -name "*.gguf" -type f 2>/dev/null)"
+	[[ -z "$models" ]] && return 0
 
-	# Add any files on disk that aren't in inventory
 	while IFS= read -r model_path; do
-		[[ -z "$model_path" ]] && continue
 		local name size_bytes quant
 		name="$(basename "$model_path")"
 
-		# Check if already in inventory
-		local in_db
-		in_db="$(sqlite3 "$LOCAL_USAGE_DB" "SELECT COUNT(*) FROM model_inventory WHERE model_file='${name//\'/\'\'}';" 2>/dev/null || echo "0")"
-
-		if [[ "$in_db" == "0" ]]; then
-			# Get file size
-			if [[ "$(uname -s)" == "Darwin" ]]; then
-				size_bytes="$(stat -f%z "$model_path" 2>/dev/null || echo "0")"
-			else
-				size_bytes="$(stat -c%s "$model_path" 2>/dev/null || echo "0")"
-			fi
-
-			# Extract quantization from filename
-			quant="$(echo "$name" | grep -oiE '(q[0-9]_[a-z0-9_]+|iq[0-9]_[a-z0-9]+|f16|f32|bf16)' | head -1 | tr '[:lower:]' '[:upper:]')"
-
-			register_model_inventory "$name" "" "$size_bytes" "$quant"
-			((added++))
-		fi
-	done < <(find "$LOCAL_MODELS_STORE" -name "*.gguf" -type f 2>/dev/null)
-
-	# Remove inventory entries for files that no longer exist
-	local db_files
-	db_files="$(sqlite3 "$LOCAL_USAGE_DB" "SELECT model_file FROM model_inventory;" 2>/dev/null || echo "")"
-	while IFS= read -r db_file; do
-		[[ -z "$db_file" ]] && continue
-		if [[ ! -f "${LOCAL_MODELS_STORE}/${db_file}" ]]; then
-			sqlite3 "$LOCAL_USAGE_DB" "DELETE FROM model_inventory WHERE model_file='${db_file//\'/\'\'}';" 2>/dev/null || true
-			((removed++))
-		fi
-	done <<<"$db_files"
-
-	[[ $added -gt 0 ]] && print_info "Inventory: added ${added} model(s)"
-	[[ $removed -gt 0 ]] && print_info "Inventory: removed ${removed} stale entry/entries"
-
-	return 0
-}
-
-# Get stale models info (unused for 30+ days, or never used) (t1338.5)
-# Arguments:
-#   $1 - threshold in days (default: 30)
-# Output: JSON array with model info, plus STALE_TOTAL_BYTES line
-get_stale_models_info() {
-	local threshold="${1:-$STALE_THRESHOLD_DAYS}"
-
-	if ! suppress_stderr command -v sqlite3; then
-		echo "[]"
-		echo "STALE_TOTAL_BYTES:0"
-		return 0
-	fi
-
-	# Sync inventory first to ensure accurate data
-	sync_model_inventory >/dev/null 2>&1
-
-	local now_epoch stale_total=0
-	now_epoch="$(date +%s)"
-
-	# Build stale models list
-	local stale_models=()
-
-	while IFS= read -r model_path; do
-		[[ -z "$model_path" ]] && continue
-		local name size_bytes days_unused
-		name="$(basename "$model_path")"
-
-		# Get file size
 		if [[ "$(uname -s)" == "Darwin" ]]; then
 			size_bytes="$(stat -f%z "$model_path" 2>/dev/null || echo "0")"
 		else
 			size_bytes="$(stat -c%s "$model_path" 2>/dev/null || echo "0")"
 		fi
 
-		# Check last used from database
-		days_unused=999999
-		if [[ -f "$LOCAL_USAGE_DB" ]]; then
-			local db_last
-			db_last="$(sqlite3 "$LOCAL_USAGE_DB" "SELECT last_used FROM model_access WHERE model='${name//\'/\'\'}' LIMIT 1;" 2>/dev/null || echo "")"
-			if [[ -n "$db_last" ]]; then
-				local last_epoch
-				last_epoch="$(date -j -f "%Y-%m-%d %H:%M:%S" "$db_last" +%s 2>/dev/null || date -d "$db_last" +%s 2>/dev/null || echo "0")"
-				if [[ "$last_epoch" -gt 0 ]]; then
-					days_unused="$(((now_epoch - last_epoch) / 86400))"
+		# Extract quantization from filename
+		quant="$(echo "$name" | grep -oiE '(q[0-9]_[a-z0-9_]+|iq[0-9]_[a-z0-9]+|f16|f32|bf16)' | head -1 | tr '[:lower:]' '[:upper:]')"
+
+		register_model_inventory "$name" "$model_path" "" "$size_bytes" "$quant"
+	done <<<"$models"
+
+	# Mark models in inventory that no longer exist on disk
+	local db_models
+	db_models="$(sqlite3 "$LOCAL_USAGE_DB" "SELECT model FROM model_inventory;" 2>/dev/null || echo "")"
+	if [[ -n "$db_models" ]]; then
+		while IFS= read -r db_model; do
+			local found=false
+			while IFS= read -r model_path; do
+				if [[ "$(basename "$model_path")" == "$db_model" ]]; then
+					found=true
+					break
 				fi
+			done <<<"$models"
+			if [[ "$found" == "false" ]]; then
+				# Model file removed from disk — update inventory (keep record for history)
+				local escaped_db_model
+				escaped_db_model="$(sql_escape "$db_model")"
+				sqlite3 "$LOCAL_USAGE_DB" "UPDATE model_inventory SET file_path = '' WHERE model = '${escaped_db_model}' AND file_path != '';" 2>/dev/null || true
 			fi
-		fi
-
-		# Fall back to file modification time
-		if [[ "$days_unused" == "999999" ]]; then
-			if [[ "$(uname -s)" == "Darwin" ]]; then
-				local mod_epoch
-				mod_epoch="$(stat -f%m "$model_path" 2>/dev/null || echo "0")"
-				if [[ "$mod_epoch" -gt 0 ]]; then
-					days_unused="$(((now_epoch - mod_epoch) / 86400))"
-				fi
-			else
-				local mod_epoch
-				mod_epoch="$(stat -c%Y "$model_path" 2>/dev/null || echo "0")"
-				if [[ "$mod_epoch" -gt 0 ]]; then
-					days_unused="$(((now_epoch - mod_epoch) / 86400))"
-				fi
-			fi
-		fi
-
-		# Check if stale
-		if [[ "$days_unused" -gt "$threshold" ]]; then
-			stale_total=$((stale_total + size_bytes))
-			stale_models+=("{\"name\":\"${name}\",\"size_bytes\":${size_bytes},\"days_unused\":${days_unused}}")
-		fi
-	done < <(find "$LOCAL_MODELS_STORE" -name "*.gguf" -type f 2>/dev/null)
-
-	# Output JSON
-	if [[ ${#stale_models[@]} -eq 0 ]]; then
-		echo "[]"
-	else
-		local IFS=','
-		echo "[${stale_models[*]}]"
-	fi
-
-	# Output total stale size (for parsing)
-	echo "STALE_TOTAL_BYTES:${stale_total}"
-	return 0
-}
-
-# Session-start nudge: warn if stale models exceed threshold (t1338.5)
-# Call this at session start (e.g., in shell init or local-model-helper.sh status)
-# Arguments:
-#   $1 - size threshold in GB (default: 5)
-#   $2 - days threshold (default: 30)
-# Output: Warning message if stale models exceed threshold, nothing otherwise
-session_start_nudge() {
-	local size_threshold_gb="${1:-5}"
-	local days_threshold="${2:-$STALE_THRESHOLD_DAYS}"
-
-	if [[ ! -d "$LOCAL_MODELS_STORE" ]]; then
-		return 0
-	fi
-
-	# Convert GB to bytes
-	local size_threshold_bytes=$((size_threshold_gb * 1073741824))
-
-	# Get stale models info
-	local stale_output
-	stale_output="$(get_stale_models_info "$days_threshold" 2>/dev/null)"
-
-	# Extract total stale bytes
-	local stale_total_bytes
-	stale_total_bytes="$(echo "$stale_output" | grep "STALE_TOTAL_BYTES:" | cut -d: -f2)"
-	stale_total_bytes="${stale_total_bytes:-0}"
-
-	if [[ "$stale_total_bytes" -gt "$size_threshold_bytes" ]]; then
-		local stale_human
-		stale_human="$(echo "$stale_total_bytes" | awk '{printf "%.1f GB", $1/1073741824}')"
-		local model_count
-		model_count="$(echo "$stale_output" | grep -c '"name"' 2>/dev/null || echo "0")"
-
-		echo ""
-		echo -e "${YELLOW}⚠️  Local model cleanup recommended${NC}"
-		echo -e "   ${model_count} model(s) unused for ${days_threshold}+ days: ${stale_human}"
-		echo -e "   Run: ${CYAN}local-model-helper.sh cleanup${NC} to review"
-		echo -e "   Run: ${CYAN}local-model-helper.sh cleanup --remove-stale${NC} to free space"
-		echo ""
+		done <<<"$db_models"
 	fi
 
 	return 0
@@ -1068,9 +1134,6 @@ cmd_status() {
 		echo "Models: none downloaded"
 	fi
 
-	# Session-start nudge for stale models > 5GB (t1338.5)
-	session_start_nudge 5 "$STALE_THRESHOLD_DAYS"
-
 	return 0
 }
 
@@ -1118,7 +1181,9 @@ cmd_models() {
 			fi
 			last_used=""
 			if suppress_stderr command -v sqlite3 && [[ -f "$LOCAL_USAGE_DB" ]]; then
-				last_used="$(sqlite3 "$LOCAL_USAGE_DB" "SELECT last_used FROM model_access WHERE model='${name}' LIMIT 1;" 2>/dev/null || echo "")"
+				local escaped_name_json
+				escaped_name_json="$(sql_escape "$name")"
+				last_used="$(sqlite3 "$LOCAL_USAGE_DB" "SELECT last_used FROM model_inventory WHERE model='${escaped_name_json}' LIMIT 1;" 2>/dev/null || echo "")"
 			fi
 			[[ "$first" == "true" ]] || echo ","
 			first=false
@@ -1157,8 +1222,9 @@ cmd_models() {
 		# Get last used from database
 		last_used_str="-"
 		if suppress_stderr command -v sqlite3 && [[ -f "$LOCAL_USAGE_DB" ]]; then
-			local db_last
-			db_last="$(sqlite3 "$LOCAL_USAGE_DB" "SELECT last_used FROM model_access WHERE model='${name}' LIMIT 1;" 2>/dev/null || echo "")"
+			local db_last escaped_name_tbl
+			escaped_name_tbl="$(sql_escape "$name")"
+			db_last="$(sqlite3 "$LOCAL_USAGE_DB" "SELECT last_used FROM model_inventory WHERE model='${escaped_name_tbl}' LIMIT 1;" 2>/dev/null || echo "")"
 			if [[ -n "$db_last" ]]; then
 				# Show relative time
 				local now_epoch last_epoch diff_days
@@ -1290,23 +1356,22 @@ cmd_download() {
 	# Verify the file exists
 	local downloaded_path="${LOCAL_MODELS_STORE}/${filename}"
 	if [[ -f "$downloaded_path" ]]; then
-		local size_human size_bytes
+		local size_human size_bytes_dl
 		if [[ "$(uname -s)" == "Darwin" ]]; then
-			size_bytes="$(stat -f%z "$downloaded_path" 2>/dev/null || echo "0")"
-			size_human="$(echo "$size_bytes" | awk '{
-				if ($1 >= 1073741824) printf "%.1f GB", $1/1073741824;
-				else printf "%.0f MB", $1/1048576;
-			}')"
+			size_bytes_dl="$(stat -f%z "$downloaded_path" 2>/dev/null || echo "0")"
 		else
-			size_bytes="$(stat -c%s "$downloaded_path" 2>/dev/null || echo "0")"
-			size_human="$(du -h "$downloaded_path" | awk '{print $1}')"
+			size_bytes_dl="$(stat -c%s "$downloaded_path" 2>/dev/null || echo "0")"
 		fi
+		size_human="$(echo "$size_bytes_dl" | awk '{
+			if ($1 >= 1073741824) printf "%.1f GB", $1/1073741824;
+			else printf "%.0f MB", $1/1048576;
+		}')"
 		print_success "Downloaded: ${filename} (${size_human})"
 
 		# Register in model inventory (t1338.5)
 		local dl_quant
 		dl_quant="$(echo "$filename" | grep -oiE '(q[0-9]_[a-z0-9_]+|iq[0-9]_[a-z0-9]+|f16|f32|bf16)' | head -1 | tr '[:lower:]' '[:upper:]')"
-		register_model_inventory "$filename" "$repo" "$size_bytes" "$dl_quant"
+		register_model_inventory "$filename" "$downloaded_path" "$repo" "$size_bytes_dl" "$dl_quant"
 	else
 		print_success "Download complete (file may be in a subdirectory)"
 	fi
@@ -1518,6 +1583,12 @@ cmd_cleanup() {
 		esac
 	done
 
+	# Validate threshold is a non-negative integer
+	if ! [[ "$threshold" =~ ^[0-9]+$ ]]; then
+		print_error "Invalid --threshold value '${threshold}'. Must be a non-negative integer (days)."
+		return 1
+	fi
+
 	if [[ ! -d "$LOCAL_MODELS_STORE" ]]; then
 		print_info "No models directory found"
 		return 0
@@ -1547,7 +1618,9 @@ cmd_cleanup() {
 			print_success "Removed: ${remove_model} (${size_human})"
 			# Clean up database entry
 			if suppress_stderr command -v sqlite3 && [[ -f "$LOCAL_USAGE_DB" ]]; then
-				sqlite3 "$LOCAL_USAGE_DB" "DELETE FROM model_access WHERE model='${remove_model}';" 2>/dev/null || true
+				local escaped_rm
+				escaped_rm="$(sql_escape "$remove_model")"
+				sqlite3 "$LOCAL_USAGE_DB" "DELETE FROM model_inventory WHERE model='${escaped_rm}';" 2>/dev/null || true
 			fi
 		else
 			print_error "Model not found: ${remove_model}"
@@ -1588,8 +1661,9 @@ cmd_cleanup() {
 		status_str="unknown"
 
 		if suppress_stderr command -v sqlite3 && [[ -f "$LOCAL_USAGE_DB" ]]; then
-			local db_last
-			db_last="$(sqlite3 "$LOCAL_USAGE_DB" "SELECT last_used FROM model_access WHERE model='${name}' LIMIT 1;" 2>/dev/null || echo "")"
+			local db_last escaped_name_cl
+			escaped_name_cl="$(sql_escape "$name")"
+			db_last="$(sqlite3 "$LOCAL_USAGE_DB" "SELECT last_used FROM model_inventory WHERE model='${escaped_name_cl}' LIMIT 1;" 2>/dev/null || echo "")"
 			if [[ -n "$db_last" ]]; then
 				local last_epoch
 				last_epoch="$(date -j -f "%Y-%m-%d %H:%M:%S" "$db_last" +%s 2>/dev/null || date -d "$db_last" +%s 2>/dev/null || echo "0")"
@@ -1650,11 +1724,12 @@ cmd_cleanup() {
 			while IFS= read -r model_path; do
 				local name days_unused_check
 				name="$(basename "$model_path")"
-				days_unused_check=0
+				days_unused_check=-1
 
 				if suppress_stderr command -v sqlite3 && [[ -f "$LOCAL_USAGE_DB" ]]; then
-					local db_last
-					db_last="$(sqlite3 "$LOCAL_USAGE_DB" "SELECT last_used FROM model_access WHERE model='${name}' LIMIT 1;" 2>/dev/null || echo "")"
+					local db_last escaped_name_rm
+					escaped_name_rm="$(sql_escape "$name")"
+					db_last="$(sqlite3 "$LOCAL_USAGE_DB" "SELECT last_used FROM model_inventory WHERE model='${escaped_name_rm}' LIMIT 1;" 2>/dev/null || echo "")"
 					if [[ -n "$db_last" ]]; then
 						local last_epoch
 						last_epoch="$(date -j -f "%Y-%m-%d %H:%M:%S" "$db_last" +%s 2>/dev/null || date -d "$db_last" +%s 2>/dev/null || echo "0")"
@@ -1664,8 +1739,8 @@ cmd_cleanup() {
 					fi
 				fi
 
-				# Fall back to mtime
-				if [[ "$days_unused_check" -eq 0 ]]; then
+				# Fall back to mtime only when DB lookup returned no result
+				if [[ "$days_unused_check" -lt 0 ]]; then
 					if [[ "$(uname -s)" == "Darwin" ]]; then
 						local mod_epoch
 						mod_epoch="$(stat -f%m "$model_path" 2>/dev/null || echo "0")"
@@ -1685,7 +1760,7 @@ cmd_cleanup() {
 					rm -f "$model_path"
 					print_success "Removed: ${name}"
 					if suppress_stderr command -v sqlite3 && [[ -f "$LOCAL_USAGE_DB" ]]; then
-						sqlite3 "$LOCAL_USAGE_DB" "DELETE FROM model_access WHERE model='${name}';" 2>/dev/null || true
+						sqlite3 "$LOCAL_USAGE_DB" "DELETE FROM model_inventory WHERE model='$(sql_escape "$name")';" 2>/dev/null || true
 					fi
 				fi
 			done <<<"$models"
@@ -1731,12 +1806,19 @@ cmd_usage() {
 
 	local where_clause=""
 	if [[ -n "$since" ]]; then
-		where_clause="WHERE u.timestamp >= '${since}'"
+		# Validate date format (YYYY-MM-DD with optional time) to prevent SQL injection
+		if ! [[ "$since" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}([[:space:]][0-9]{2}:[0-9]{2}(:[0-9]{2})?)?$ ]]; then
+			print_error "Invalid --since format. Use YYYY-MM-DD or 'YYYY-MM-DD HH:MM:SS'"
+			return 1
+		fi
+		local escaped_since
+		escaped_since="$(sql_escape "$since")"
+		where_clause="WHERE u.timestamp >= '${escaped_since}'"
 	fi
 
 	if [[ "$json_output" == "true" ]]; then
 		local json_sql
-		json_sql="SELECT model, COUNT(*) as requests, SUM(tokens_in) as total_tokens_in, SUM(tokens_out) as total_tokens_out, ROUND(AVG(tok_per_sec), 1) as avg_tok_per_sec, MAX(timestamp) as last_used FROM usage u ${where_clause} GROUP BY model ORDER BY last_used DESC;"
+		json_sql="SELECT model, COUNT(*) as requests, SUM(tokens_in) as total_tokens_in, SUM(tokens_out) as total_tokens_out, ROUND(AVG(tok_per_sec), 1) as avg_tok_per_sec, MAX(timestamp) as last_used FROM model_usage u ${where_clause} GROUP BY model ORDER BY last_used DESC;"
 		sqlite3 -json "$LOCAL_USAGE_DB" "$json_sql" 2>/dev/null
 		return 0
 	fi
@@ -1746,7 +1828,7 @@ cmd_usage() {
 	printf "%-35s %8s %10s %10s %10s %12s\n" "-----" "--------" "---------" "----------" "---------" "---------"
 
 	local usage_sql
-	usage_sql="SELECT model, COUNT(*) as requests, SUM(tokens_in) as total_tokens_in, SUM(tokens_out) as total_tokens_out, ROUND(AVG(tok_per_sec), 1) as avg_tok_per_sec, MAX(timestamp) as last_used FROM usage u ${where_clause} GROUP BY model ORDER BY last_used DESC;"
+	usage_sql="SELECT model, COUNT(*) as requests, SUM(tokens_in) as total_tokens_in, SUM(tokens_out) as total_tokens_out, ROUND(AVG(tok_per_sec), 1) as avg_tok_per_sec, MAX(timestamp) as last_used FROM model_usage u ${where_clause} GROUP BY model ORDER BY last_used DESC;"
 
 	sqlite3 -separator $'\t' "$LOCAL_USAGE_DB" "$usage_sql" 2>/dev/null |
 		while IFS=$'\t' read -r model requests tokens_in tokens_out avg_tps last_used; do
@@ -1763,7 +1845,7 @@ cmd_usage() {
 
 	# Summary
 	local summary_sql summary
-	summary_sql="SELECT COUNT(*) as total_requests, COALESCE(SUM(tokens_in), 0) as total_in, COALESCE(SUM(tokens_out), 0) as total_out FROM usage u ${where_clause};"
+	summary_sql="SELECT COUNT(*) as total_requests, COALESCE(SUM(tokens_in), 0) as total_in, COALESCE(SUM(tokens_out), 0) as total_out FROM model_usage u ${where_clause};"
 	summary="$(sqlite3 -separator $'\t' "$LOCAL_USAGE_DB" "$summary_sql" 2>/dev/null)"
 
 	if [[ -n "$summary" ]]; then
@@ -1888,6 +1970,194 @@ cmd_benchmark() {
 }
 
 # =============================================================================
+# Command: nudge (t1338.5 — session-start stale model notification)
+# =============================================================================
+# Called at session start to check if stale models exceed 5 GB.
+# Outputs a short message if cleanup is recommended, nothing otherwise.
+# Designed to be called from aidevops-update-check.sh or session init.
+
+cmd_nudge() {
+	local json_output=false
+	local threshold="${STALE_THRESHOLD_DAYS}"
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--json)
+			json_output=true
+			shift
+			;;
+		--threshold)
+			threshold="$2"
+			shift 2
+			;;
+		*) shift ;;
+		esac
+	done
+
+	# Validate threshold is a non-negative integer
+	if ! [[ "$threshold" =~ ^[0-9]+$ ]]; then
+		print_error "Invalid --threshold value '${threshold}'. Must be a non-negative integer (days)."
+		return 1
+	fi
+
+	# Quick exit if no models directory or no sqlite3
+	if [[ ! -d "$LOCAL_MODELS_STORE" ]]; then
+		return 0
+	fi
+
+	local models
+	models="$(find "$LOCAL_MODELS_STORE" -name "*.gguf" -type f 2>/dev/null)"
+	[[ -z "$models" ]] && return 0
+
+	local now_epoch stale_size_bytes stale_count
+	now_epoch="$(date +%s)"
+	stale_size_bytes=0
+	stale_count=0
+
+	while IFS= read -r model_path; do
+		local name size_bytes days_unused
+		name="$(basename "$model_path")"
+		days_unused=-1
+
+		if [[ "$(uname -s)" == "Darwin" ]]; then
+			size_bytes="$(stat -f%z "$model_path" 2>/dev/null || echo "0")"
+		else
+			size_bytes="$(stat -c%s "$model_path" 2>/dev/null || echo "0")"
+		fi
+
+		# Check last used from DB
+		if suppress_stderr command -v sqlite3 && [[ -f "$LOCAL_USAGE_DB" ]]; then
+			local db_last escaped_name_nudge
+			escaped_name_nudge="$(sql_escape "$name")"
+			db_last="$(sqlite3 "$LOCAL_USAGE_DB" "SELECT last_used FROM model_inventory WHERE model='${escaped_name_nudge}' LIMIT 1;" 2>/dev/null || echo "")"
+			if [[ -n "$db_last" ]]; then
+				local last_epoch
+				last_epoch="$(date -j -f "%Y-%m-%d %H:%M:%S" "$db_last" +%s 2>/dev/null || date -d "$db_last" +%s 2>/dev/null || echo "0")"
+				if [[ "$last_epoch" -gt 0 ]]; then
+					days_unused="$(((now_epoch - last_epoch) / 86400))"
+				fi
+			fi
+		fi
+
+		# Fall back to file modification time if DB lookup failed or returned no result
+		if [[ "$days_unused" -lt 0 ]]; then
+			if [[ "$(uname -s)" == "Darwin" ]]; then
+				local mod_epoch
+				mod_epoch="$(stat -f%m "$model_path" 2>/dev/null || echo "0")"
+				if [[ "$mod_epoch" -gt 0 ]]; then
+					days_unused="$(((now_epoch - mod_epoch) / 86400))"
+				fi
+			else
+				local mod_epoch
+				mod_epoch="$(stat -c%Y "$model_path" 2>/dev/null || echo "0")"
+				if [[ "$mod_epoch" -gt 0 ]]; then
+					days_unused="$(((now_epoch - mod_epoch) / 86400))"
+				fi
+			fi
+		fi
+
+		if [[ "$days_unused" -gt "$threshold" ]]; then
+			stale_size_bytes=$((stale_size_bytes + size_bytes))
+			stale_count=$((stale_count + 1))
+		fi
+	done <<<"$models"
+
+	# Only nudge if stale models exceed threshold (default 5 GB)
+	if [[ "$stale_size_bytes" -gt "$STALE_NUDGE_THRESHOLD_BYTES" ]]; then
+		local stale_human
+		stale_human="$(echo "$stale_size_bytes" | awk '{printf "%.1f GB", $1/1073741824}')"
+
+		if [[ "$json_output" == "true" ]]; then
+			cat <<-JSONEOF
+				{
+				  "stale_count": ${stale_count},
+				  "stale_size_bytes": ${stale_size_bytes},
+				  "stale_size_human": "${stale_human}",
+				  "threshold_days": ${threshold},
+				  "action": "local-model-helper.sh cleanup --remove-stale"
+				}
+			JSONEOF
+		else
+			echo "Local models: ${stale_count} stale model(s) using ${stale_human} (unused >${threshold}d). Run: local-model-helper.sh cleanup"
+		fi
+	fi
+
+	return 0
+}
+
+# =============================================================================
+# Command: inventory (t1338.5 — show model inventory from DB)
+# =============================================================================
+
+cmd_inventory() {
+	local json_output=false
+	local do_sync=false
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--json)
+			json_output=true
+			shift
+			;;
+		--sync)
+			do_sync=true
+			shift
+			;;
+		*) shift ;;
+		esac
+	done
+
+	if ! suppress_stderr command -v sqlite3; then
+		print_error "sqlite3 is required for inventory"
+		return 2
+	fi
+
+	if [[ ! -f "$LOCAL_USAGE_DB" ]]; then
+		print_info "No inventory data. Run: local-model-helper.sh setup"
+		return 0
+	fi
+
+	# Sync after precondition checks pass
+	if [[ "$do_sync" == "true" ]]; then
+		if sync_model_inventory; then
+			print_success "Model inventory synced with disk"
+		else
+			print_error "Failed to sync model inventory"
+			return 1
+		fi
+	fi
+
+	if [[ "$json_output" == "true" ]]; then
+		sqlite3 -json "$LOCAL_USAGE_DB" "SELECT model, file_path, repo_source, size_bytes, quantization, first_seen, last_used, total_requests FROM model_inventory ORDER BY last_used DESC;" 2>/dev/null
+		return 0
+	fi
+
+	printf "%-35s %10s %8s %8s %12s\n" "MODEL" "SIZE" "QUANT" "REQUESTS" "LAST_USED"
+	printf "%-35s %10s %8s %8s %12s\n" "-----" "----" "-----" "--------" "---------"
+
+	sqlite3 -separator $'\t' "$LOCAL_USAGE_DB" \
+		"SELECT model, size_bytes, quantization, total_requests, last_used FROM model_inventory ORDER BY last_used DESC;" 2>/dev/null |
+		while IFS=$'\t' read -r model size_bytes quant requests last_used; do
+			local display_model="$model"
+			if [[ ${#display_model} -gt 35 ]]; then
+				display_model="${display_model:0:32}..."
+			fi
+			local size_human
+			size_human="$(echo "$size_bytes" | awk '{
+				if ($1 >= 1073741824) printf "%.1f GB", $1/1073741824;
+				else if ($1 >= 1048576) printf "%.0f MB", $1/1048576;
+				else if ($1 > 0) printf "%.0f KB", $1/1024;
+				else printf "-";
+			}')"
+			[[ -z "$quant" ]] && quant="-"
+			printf "%-35s %10s %8s %8s %12s\n" \
+				"$display_model" "$size_human" "$quant" "$requests" "${last_used%% *}"
+		done
+
+	return 0
+}
+
+# =============================================================================
 # Command: help
 # =============================================================================
 
@@ -1909,8 +2179,8 @@ cmd_help() {
 		  recommend [--json]            Hardware-aware model recommendations
 		  cleanup [options]             Show/remove stale models
 		  usage [--since DATE] [--json] Show usage statistics
-		  nudge [--size N] [--days N]   Session-start hook: warn if stale > N GB
-		  sync-inventory                Sync model inventory with disk
+		  inventory [--json] [--sync]   Show model inventory from database
+		  nudge [--json]                Session-start stale model check (>5 GB)
 		  benchmark --model M           Benchmark a model on local hardware
 		  help                          Show this help
 
@@ -1927,10 +2197,6 @@ cmd_help() {
 		  --remove-stale     Remove models unused for >30 days
 		  --remove <file>    Remove a specific model
 		  --threshold <N>    Days before a model is considered stale (default: 30)
-
-		NUDGE OPTIONS:
-		  --size <N>         Size threshold in GB (default: 5)
-		  --days <N>         Days threshold for staleness (default: 30)
 
 		EXAMPLES:
 		  # First-time setup
@@ -1952,11 +2218,11 @@ cmd_help() {
 		  # View usage stats
 		  local-model-helper.sh usage
 
+		  # Check for stale models at session start
+		  local-model-helper.sh nudge
+
 		  # Clean up old models
 		  local-model-helper.sh cleanup
-
-		  # Session-start hook (add to .zshrc/.bashrc)
-		  local-model-helper.sh nudge --size 5
 
 		API:
 		  When running, the server exposes an OpenAI-compatible API at:
@@ -1970,43 +2236,6 @@ cmd_help() {
 		  tools/local-models/local-models.md    Full documentation
 		  tools/context/model-routing.md        Cost-aware routing (local = free tier)
 	HELPEOF
-	return 0
-}
-
-# =============================================================================
-# Command: nudge (session-start hook for stale model warning)
-# =============================================================================
-
-cmd_nudge() {
-	local size_gb=5
-	local days="$STALE_THRESHOLD_DAYS"
-
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--size)
-			size_gb="$2"
-			shift 2
-			;;
-		--days)
-			days="$2"
-			shift 2
-			;;
-		*) shift ;;
-		esac
-	done
-
-	session_start_nudge "$size_gb" "$days"
-	return 0
-}
-
-# =============================================================================
-# Command: sync-inventory
-# =============================================================================
-
-cmd_sync_inventory() {
-	ensure_dirs
-	init_usage_db
-	sync_model_inventory
 	return 0
 }
 
@@ -2032,8 +2261,8 @@ main() {
 	recommend) cmd_recommend "$@" ;;
 	cleanup) cmd_cleanup "$@" ;;
 	usage) cmd_usage "$@" ;;
+	inventory) cmd_inventory "$@" ;;
 	nudge) cmd_nudge "$@" ;;
-	sync-inventory) cmd_sync_inventory ;;
 	benchmark) cmd_benchmark "$@" ;;
 	help | --help | -h) cmd_help ;;
 	*)

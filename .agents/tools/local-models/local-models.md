@@ -24,7 +24,7 @@ tools:
 - **Models**: Any GGUF from HuggingFace (Qwen, Llama, DeepSeek, Mistral, Gemma, Phi)
 - **Binary**: Download-on-first-use via `local-model-helper.sh setup`
 - **API**: OpenAI-compatible at `http://localhost:8080/v1`
-- **Helper**: `local-model-helper.sh [setup|start|stop|status|models|download|search|recommend|cleanup|usage|benchmark]`
+- **Helper**: `local-model-helper.sh [setup|start|stop|status|models|download|search|recommend|cleanup|usage|inventory|nudge|benchmark]`
 
 **When to use local**: Privacy/compliance, offline work, bulk processing, experimentation, simple tasks where network latency exceeds local inference time. See `tools/context/model-routing.md` for routing rules.
 
@@ -79,8 +79,10 @@ local-model-helper.sh setup
 ├── models/                 # Downloaded GGUF files
 │   ├── qwen3-8b-q4_k_m.gguf
 │   └── ...
-├── usage.db                # SQLite usage tracking
 └── config.json             # Server defaults (port, context, threads)
+
+~/.aidevops/.agent-workspace/memory/
+└── local-models.db         # SQLite: model_usage + model_inventory tables
 ```
 
 ## Hardware Detection
@@ -273,7 +275,47 @@ local-model-helper.sh usage --since YYYY-MM-01
 local-model-helper.sh usage --json
 ```
 
-The usage database is at `~/.aidevops/local-models/usage.db` (SQLite, consistent with the framework's existing SQLite pattern for memory and pattern tracking).
+The usage database is at `~/.aidevops/.agent-workspace/memory/local-models.db` (SQLite, consistent with the framework's existing SQLite pattern for memory and pattern tracking).
+
+### Database Schema
+
+**model_usage** — per-request logging with session tracking:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER | Auto-increment primary key |
+| model | TEXT | Model filename |
+| session_id | TEXT | AI session ID (auto-detected from env) |
+| timestamp | TEXT | Request timestamp |
+| tokens_in | INTEGER | Input tokens |
+| tokens_out | INTEGER | Output tokens |
+| duration_ms | INTEGER | Request duration |
+| tok_per_sec | REAL | Tokens per second |
+
+**model_inventory** — downloaded model tracking with disk management:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| model | TEXT | Model filename (primary key) |
+| file_path | TEXT | Full path on disk |
+| repo_source | TEXT | HuggingFace repo (e.g., Qwen/Qwen3-8B-GGUF) |
+| size_bytes | INTEGER | File size in bytes |
+| quantization | TEXT | Quantization level (Q4_K_M, Q6_K, etc.) |
+| first_seen | TEXT | First download/registration time |
+| last_used | TEXT | Last usage timestamp |
+| total_requests | INTEGER | Total inference requests |
+
+### Session-Start Nudge
+
+At session start, call `local-model-helper.sh nudge` to check for stale models. If models unused for 30+ days exceed 5 GB total, a cleanup recommendation is shown:
+
+```bash
+# Called from session init (e.g., aidevops-update-check.sh)
+local-model-helper.sh nudge
+
+# Example output (only shown when stale > 5 GB):
+# Local models: 3 stale model(s) using 12.3 GB (unused >30d). Run: local-model-helper.sh cleanup
+```
 
 ## Disk Cleanup
 
