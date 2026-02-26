@@ -85,7 +85,7 @@ test_syntax_check() {
 
 	for script in "${scripts[@]}"; do
 		local path="${SCRIPTS_DIR}/${script}"
-		if bash -n "$path" 2>/dev/null; then
+		if bash -n "$path"; then
 			print_result "syntax: $script" 0
 		else
 			print_result "syntax: $script" 1 "Syntax error in $script"
@@ -209,8 +209,20 @@ test_fallback_chain_helper() {
 	# Temporarily hide model-availability-helper.sh so fallback-chain uses its
 	# lightweight API key check instead of HTTP probes (which fail with fake keys)
 	local avail_hidden=false
+	local avail_backup="${avail_helper}.bak.$$"
+
+	# Trap ensures restoration even if set -e triggers an early exit
+	# shellcheck disable=SC2317
+	_restore_avail_helper() {
+		if [[ "$avail_hidden" == "true" && -f "$avail_backup" ]]; then
+			mv -- "$avail_backup" "$avail_helper"
+			avail_hidden=false
+		fi
+	}
+	trap '_restore_avail_helper' RETURN
+
 	if [[ -x "$avail_helper" ]]; then
-		mv "$avail_helper" "${avail_helper}.bak"
+		mv -- "$avail_helper" "$avail_backup"
 		avail_hidden=true
 	fi
 
@@ -275,9 +287,10 @@ test_fallback_chain_helper() {
 		print_result "fallback: unknown command" 1 "Expected 'Unknown command'"
 	fi
 
-	# Restore model-availability-helper.sh
-	if [[ "$avail_hidden" == "true" ]]; then
-		mv "${avail_helper}.bak" "$avail_helper"
+	# Restore model-availability-helper.sh (also handled by RETURN trap as safety net)
+	if [[ "$avail_hidden" == "true" && -f "$avail_backup" ]]; then
+		mv -- "$avail_backup" "$avail_helper"
+		avail_hidden=false
 	fi
 
 	return 0
@@ -295,13 +308,11 @@ test_budget_tracker_helper() {
 
 	# Test: record a spend event
 	local output
-	output=$("$helper" record --provider anthropic --model anthropic/claude-sonnet-4-6 \
-		--input-tokens 1000 --output-tokens 500 --task t1337.3 2>&1) || true
-	local rc=$?
-	if [[ $rc -eq 0 ]]; then
+	if output=$("$helper" record --provider anthropic --model anthropic/claude-sonnet-4-6 \
+		--input-tokens 1000 --output-tokens 500 --task t1337.3 2>&1); then
 		print_result "budget: record spend event" 0
 	else
-		print_result "budget: record spend event" 1 "Exit code: $rc, output: $output"
+		print_result "budget: record spend event" 1 "Exit code: $?, output: $output"
 	fi
 
 	# Verify the log file was created and has content
@@ -313,9 +324,8 @@ test_budget_tracker_helper() {
 	fi
 
 	# Test: record with --cost override
-	output=$("$helper" record --provider openai --model openai/gpt-4.1 \
-		--input-tokens 500 --output-tokens 200 --cost 0.05 2>&1) || true
-	if [[ $? -eq 0 ]]; then
+	if output=$("$helper" record --provider openai --model openai/gpt-4.1 \
+		--input-tokens 500 --output-tokens 200 --cost 0.05 2>&1); then
 		print_result "budget: record with --cost override" 0
 	else
 		print_result "budget: record with --cost override" 1
@@ -443,15 +453,13 @@ test_observability_helper() {
 
 	# Test: record a metric
 	local output
-	output=$("$helper" record --model anthropic/claude-sonnet-4-6 \
+	if output=$("$helper" record --model anthropic/claude-sonnet-4-6 \
 		--input-tokens 5000 --output-tokens 2000 \
 		--cache-read 1000 --cache-write 500 \
-		--session test-session --project test-project 2>&1) || true
-	local rc=$?
-	if [[ $rc -eq 0 ]]; then
+		--session test-session --project test-project 2>&1); then
 		print_result "observability: record metric" 0
 	else
-		print_result "observability: record metric" 1 "Exit code: $rc, output: $output"
+		print_result "observability: record metric" 1 "Exit code: $?, output: $output"
 	fi
 
 	# Verify metrics file exists and has content
@@ -491,12 +499,10 @@ test_observability_helper() {
 	fi
 
 	# Test: ingest with no Claude logs (should succeed gracefully)
-	output=$("$helper" ingest --quiet 2>&1) || true
-	rc=$?
-	if [[ $rc -eq 0 ]]; then
+	if output=$("$helper" ingest --quiet 2>&1); then
 		print_result "observability: ingest (no logs) succeeds" 0
 	else
-		print_result "observability: ingest (no logs) succeeds" 1 "Exit code: $rc"
+		print_result "observability: ingest (no logs) succeeds" 1 "Exit code: $?"
 	fi
 
 	# Test: backward compat — removed commands return gracefully
@@ -614,9 +620,9 @@ test_shellcheck() {
 	fi
 
 	local all_clean=true
-	for script in full-loop-helper.sh fallback-chain-helper.sh budget-tracker-helper.sh issue-sync-helper.sh observability-helper.sh; do
+	for script in full-loop-helper.sh fallback-chain-helper.sh budget-tracker-helper.sh issue-sync-helper.sh observability-helper.sh tests/test-tier3-simplified.sh; do
 		local path="${SCRIPTS_DIR}/${script}"
-		if shellcheck -x -S warning "$path" 2>/dev/null; then
+		if shellcheck -x -S warning "$path"; then
 			print_result "shellcheck: $script" 0
 		else
 			print_result "shellcheck: $script" 1 "ShellCheck violations found"
