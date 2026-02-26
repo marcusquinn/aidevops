@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.134.0] - 2026-02-26
+
+### Added
+
+- add install/serve/pull aliases and update subcommand to local-model-helper.sh (t1338.4) (#2395)
+- finalize local-models subagent — integrate session nudge, fix stale markers (#2391)
+- add advisory stuck detection for supervisor workers (t1332) (#2393)
+- align local tier fallback to haiku and add local to routing table (t1338.1) (#2385)
+
+### Changed
+
+- Documentation: update model files from aidevops (t1133)
+- Documentation: add Tier 3 scripts audit report (t1337.1) (#2397)
+- Documentation: update model files from aidevops (t1133)
+- Documentation: update model files from aidevops (t1133)
+
+### Fixed
+
+- skip update check in headless/non-interactive sessions (#2400)
+- use jq -sr (raw output) in _count_usage_in_window to prevent JSON-quoted pipe-delimited output (#2389)
+- use Linux-first stat format in matterbridge test permissions check (t1328) (#2387)
+
 ## [2.133.11] - 2026-02-26
 
 ### Changed
