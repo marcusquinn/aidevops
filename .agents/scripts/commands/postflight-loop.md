@@ -31,11 +31,7 @@ Extract from $ARGUMENTS:
 
 ### Step 2: Run Postflight Loop
 
-Execute the quality loop helper:
-
-```bash
-~/.aidevops/agents/scripts/quality-loop-helper.sh postflight $ARGUMENTS
-```
+Monitor release health iteratively using `gh` CLI to check CI workflows, release tags, and version consistency.
 
 ### Step 3: Report Results
 

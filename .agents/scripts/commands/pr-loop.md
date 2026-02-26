@@ -35,11 +35,7 @@ Extract from $ARGUMENTS:
 
 ### Step 2: Run PR Review Loop
 
-Execute the quality loop helper:
-
-```bash
-~/.aidevops/agents/scripts/quality-loop-helper.sh pr-review $ARGUMENTS
-```
+Monitor the PR iteratively using `gh` CLI to check CI status, reviews, and merge readiness.
 
 ### Step 3: Monitor and Iterate
 

@@ -204,7 +204,7 @@ Built-in Ralph-able workflows:
 | PR Review | `/pr-loop` | `PR_APPROVED` |
 | Postflight | `/postflight-loop` | `RELEASE_HEALTHY` |
 
-These use `quality-loop-helper.sh` which applies Ralph patterns to quality workflows.
+These use the Ralph loop pattern for iterative quality checks. The AI reads check output and fixes issues intelligently rather than using mechanical retry loops.
 
 ## Saving Work
 

@@ -38,7 +38,7 @@ subagents:
 
 - `scripts/runner-helper.sh` - Create and manage named agent instances
 - Pulse supervisor (`scripts/commands/pulse.md`) - Cross-function task dispatch
-- `scripts/objective-runner-helper.sh` - Long-running objectives with guardrails
+- `/full-loop` - End-to-end development loop with AI-guided iteration
 
 <!-- AI-CONTEXT-END -->
 
@@ -52,7 +52,7 @@ The pattern maps company departments to named runners that:
 1. Have persistent identity and memory (via `runner-helper.sh`)
 2. Communicate through the mailbox system (via `mail-helper.sh`)
 3. Are coordinated by a stateless pulse loop (via pulse supervisor)
-4. Operate within safety guardrails (via `objective-runner-helper.sh`)
+4. Operate within safety guardrails (via `/full-loop` iteration limits)
 
 ### Architecture
 
@@ -156,24 +156,21 @@ gh issue create --repo <owner/repo> --title "Monthly close: Send summary" --labe
 
 ## Guardrails
 
-Company runners inherit safety from `objective-runner-helper.sh`:
+Company runners inherit safety from `/full-loop` and worktree isolation:
 
-- **Budget limits**: Max token/cost per run (prevent runaway agents)
-- **Scope constraints**: Path and tool whitelists per runner
-- **Checkpoint reviews**: Periodic human approval for sensitive operations
-- **Audit logging**: Every action logged with timestamps
+- **Scope constraints**: Path and tool whitelists per runner via AGENTS.md
+- **Audit logging**: Every action logged via git commits and PR history
 - **Rollback**: Git worktree isolation for reversible changes
+- **AI judgment**: `/full-loop` decides when to stop, retry, or escalate
 
 ### Sensitive Operations
 
-Finance and legal runners should always use checkpoint reviews:
+Finance and legal runners should use dedicated worktrees and PR review gates:
 
 ```bash
-objective-runner-helper.sh start "Process monthly invoices" \
-  --runner finance-reviewer \
-  --checkpoint-every 5 \
-  --max-cost 2.00 \
-  --allowed-tools "read,bash,quickfile"
+# Dispatch via full-loop with PR review gate
+Claude run --dir ~/Git/<repo> --agent Business --title "Process monthly invoices" \
+  "/full-loop Process monthly invoices — review Q1 expense reports" &
 ```
 
 ## Pre-flight Questions

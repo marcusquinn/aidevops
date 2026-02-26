@@ -25,7 +25,7 @@ tools:
 - **Review all changes**: `coderabbit --plain --type all`
 - **Compare branch**: `coderabbit --plain --base develop`
 - **Helper script**: `~/.aidevops/agents/scripts/coderabbit-cli.sh`
-- **Review pulse**: `~/.aidevops/agents/scripts/review-pulse-helper.sh` (daily full codebase review)
+- **PR reviews**: Automatic via CodeRabbit GitHub App on every PR
 - **Docs**: https://docs.coderabbit.ai/cli/overview
 
 ## CLI Modes
@@ -130,59 +130,15 @@ CodeRabbit analyzes:
 | Performance | Memory leaks, inefficient loops, resource cleanup |
 | Documentation | Markdown formatting, code blocks, broken links |
 
-## Daily Review Pulse
+## Automated Reviews
 
-The review pulse runs a full codebase review via CodeRabbit CLI, parses findings
-into structured JSON, filters false positives, and generates task suggestions.
+CodeRabbit reviews every PR automatically via the GitHub App. No manual trigger
+scripts are needed. The pulse supervisor observes CodeRabbit findings from PR
+comments and can create tasks from them using AI judgment.
 
-```bash
-# Run full codebase review (medium+ severity)
-~/.aidevops/agents/scripts/review-pulse-helper.sh run
-
-# View findings
-~/.aidevops/agents/scripts/review-pulse-helper.sh findings
-
-# Generate task suggestions (dry run)
-~/.aidevops/agents/scripts/review-pulse-helper.sh tasks --dry-run
-
-# Check status and history
-~/.aidevops/agents/scripts/review-pulse-helper.sh status
-~/.aidevops/agents/scripts/review-pulse-helper.sh history
-```
-
-The pulse runs automatically via GitHub Actions (`.github/workflows/review-pulse.yml`)
-daily at 3 AM UTC, or can be triggered manually via `workflow_dispatch`.
-
-Findings are stored in `~/.aidevops/.agent-workspace/work/review-pulse/findings/`
-as JSON files with severity classification, false positive filtering, and stats.
-
-## Auto-Task Creation (t166.3)
-
-The task creator reads findings from both the collector DB (PR reviews) and
-review-pulse JSON (CLI reviews), filters false positives, reclassifies severity,
-deduplicates, and generates TODO-compatible task lines with `#auto-dispatch` tags.
-
-```bash
-# Scan findings and show actionable items
-~/.aidevops/agents/scripts/coderabbit-task-creator-helper.sh scan
-
-# Create tasks (dry run first)
-~/.aidevops/agents/scripts/coderabbit-task-creator-helper.sh create --dry-run
-~/.aidevops/agents/scripts/coderabbit-task-creator-helper.sh create
-
-# Create tasks and dispatch via supervisor
-~/.aidevops/agents/scripts/coderabbit-task-creator-helper.sh create --dispatch
-
-# View processing statistics
-~/.aidevops/agents/scripts/coderabbit-task-creator-helper.sh stats
-
-# Manually verify a finding
-~/.aidevops/agents/scripts/coderabbit-task-creator-helper.sh verify 42 --false-positive
-```
-
-False positive detection includes: walkthrough summaries, summary tables, bot
-meta-comments, and empty bodies. Severity is reclassified using CodeRabbit's
-emoji markers and content pattern matching for higher accuracy.
+> **Archived (t1336):** `review-pulse-helper.sh`, `coderabbit-pulse-helper.sh`,
+> and `coderabbit-task-creator-helper.sh` have been archived to `scripts/archived/`.
+> AI reads CodeRabbit PR comments directly and creates better-scoped tasks with context.
 
 ## Troubleshooting
 

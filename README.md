@@ -445,7 +445,7 @@ aidevops implements proven agent design patterns identified by [Lance Martin (La
 | **Isolate Context** | Sub-agents with separate windows | Subagent files with specific tool permissions |
 | **Multi-Agent Orchestration** | Coordinate parallel agents | TOON mailbox, agent registry, stateless coordinator |
 | **Compaction Resilience** | Preserve context across compaction | OpenCode plugin injects dynamic state at compaction time |
-| **Ralph Loop** | Iterative execution until complete | `ralph-loop-helper.sh`, `full-loop-helper.sh` |
+| **Ralph Loop** | Iterative execution until complete | `/full-loop`, `full-loop-helper.sh` |
 | **Evolve Context** | Learn from sessions | `/remember`, `/recall` with SQLite FTS5 + opt-in semantic search |
 | **Pattern Tracking** | Learn what works/fails | `pattern-tracker-helper.sh`, `/patterns` command |
 | **Cost-Aware Routing** | Match model to task complexity | `model-routing.md` with 5-tier guidance, `/route` command |
@@ -1718,10 +1718,10 @@ Task → Implement → Check → Fix Issues → Re-check → ... → Complete
 
 ```bash
 # Run quality checks iteratively until all pass
-.agents/scripts/quality-loop-helper.sh preflight --auto-fix --max-iterations <MAX_ITERATIONS>
-
-# Or use the slash command
 /preflight-loop --auto-fix --max-iterations <MAX_ITERATIONS>
+
+# Or run linters directly
+.agents/scripts/linters-local.sh
 ```
 
 **Note:** Store any API credentials securely via environment variables or `.env` files (never commit credentials to version control).
