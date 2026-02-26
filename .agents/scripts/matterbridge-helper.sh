@@ -30,9 +30,19 @@ ensure_dirs() {
 }
 
 get_latest_version() {
-	local version
-	version=$(curl -fsSL "$LATEST_RELEASE_URL" 2>/dev/null | grep '"tag_name"' | head -1 | sed 's/.*"v\([^"]*\)".*/\1/')
-	echo "${version:-1.26.0}"
+	local version curl_output
+	if ! curl_output=$(curl -fsSL "$LATEST_RELEASE_URL" 2>&1); then
+		log "WARNING: Could not fetch latest version (curl failed) — using fallback"
+		echo "1.26.0"
+		return 0
+	fi
+	version=$(echo "$curl_output" | grep '"tag_name"' | head -1 | sed 's/.*"v\([^"]*\)".*/\1/')
+	if [[ -z "$version" ]]; then
+		log "WARNING: Could not parse version from API response — using fallback"
+		echo "1.26.0"
+		return 0
+	fi
+	echo "$version"
 	return 0
 }
 
@@ -157,7 +167,7 @@ cmd_validate() {
 
 	# Check binary exists and works
 	log "Validating config: $config_path"
-	if ! "$BINARY_PATH" -version >/dev/null 2>&1; then
+	if ! "$BINARY_PATH" -version >/dev/null; then
 		die "Binary check failed"
 		return 1
 	fi

@@ -975,17 +975,19 @@ Respond with ONLY a valid JSON object in this exact format (no markdown, no expl
 
 	echo "  Dispatching to judge (${judge_model})..."
 
+	local judge_err_log="${output_dir}/judge-errors.log"
+
 	"$runner_helper" create "$judge_runner" \
 		--model "$judge_model" \
 		--description "Cross-review judge" \
-		--workdir "$(pwd)" 2>/dev/null || true
+		--workdir "$(pwd)" 2>>"$judge_err_log" || true
 
 	"$runner_helper" run "$judge_runner" "$judge_prompt" \
 		--model "$judge_model" \
 		--timeout "120" \
-		--format text 2>/dev/null >"$judge_output_file" || true
+		--format text >"$judge_output_file" 2>>"$judge_err_log" || true
 
-	"$runner_helper" destroy "$judge_runner" --force 2>/dev/null || true
+	"$runner_helper" destroy "$judge_runner" --force 2>>"$judge_err_log" || true
 
 	if [[ ! -f "$judge_output_file" || ! -s "$judge_output_file" ]]; then
 		print_warning "Judge model returned no output — skipping scoring"
