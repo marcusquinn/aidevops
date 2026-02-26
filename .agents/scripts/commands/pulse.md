@@ -87,14 +87,12 @@ If you see a pattern (same type of failure, same error), create an improvement i
 
 **Duplicate work:** If two open PRs target the same issue or have very similar titles, flag it by commenting on the newer one.
 
-**Long-running workers:** Check the runtime of each running worker process with `ps axo pid,etime,command | grep '/full-loop'`. The `etime` column shows elapsed time. If any worker has been running for more than 3 hours, investigate:
+**Long-running workers:** Check the runtime of each running worker process with `ps axo pid,etime,command | grep '/full-loop'`. The `etime` column shows elapsed time.
 
-1. Check if the worker has produced a PR by searching open PRs for the issue/task number in the worker's command line.
-2. If a PR exists, the worker may be stuck in a loop (CI fix cycle, review feedback cycle). Comment on the PR noting the worker has been running for N hours and may be stuck.
-3. If no PR exists after 3+ hours, the worker is likely stuck before implementation. Consider killing it (`kill <pid>`) and letting the next pulse re-dispatch with a fresh worker. Before killing, check if the issue is genuinely complex (large refactor, architecture task) — those may legitimately take longer.
-4. If a worker has been running for 6+ hours with no PR, kill it and file a GitHub issue noting the failure pattern.
-
-Workers running 10+ hours are almost certainly stuck or zombied. Kill them to free slots.
+- **2+ hours:** Check if the worker has produced a PR by searching open PRs for the issue/task number. If no PR exists, comment on the GitHub issue telling the worker to stop trying to complete everything in one pass — it should PR whatever is done so far and create subtask issues for the remaining work. The comment should say something like: "Worker has been running 2+ hours with no PR. Please commit what you have, open a PR for the completed portion, and file GitHub issues for remaining subtasks. Smaller deliverables are better than stuck workers."
+- **3+ hours with no PR:** Kill the worker (`kill <pid>`). File a GitHub issue noting the task was too large for a single worker session and needs to be broken into subtasks before re-dispatch.
+- **3+ hours with a PR:** The worker is likely stuck in a CI fix or review feedback loop. Comment on the PR noting it may be stuck.
+- **6+ hours:** Kill regardless. A worker running this long is zombied or in an infinite loop.
 
 **Keep it lightweight.** This step should take seconds, not minutes. If nothing looks wrong, move on. The goal is to catch patterns over many pulses, not to do deep analysis on each one.
 
