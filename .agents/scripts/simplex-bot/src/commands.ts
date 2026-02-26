@@ -351,20 +351,153 @@ const versionCommand: CommandDefinition = {
 };
 
 // =============================================================================
+// Group Commands
+// =============================================================================
+
+/** Invite a user to a group (group only) */
+const inviteCommand: CommandDefinition = {
+  name: "invite",
+  description: "Invite a user to this group",
+  groupEnabled: true,
+  dmEnabled: false,
+  handler: async (ctx: CommandContext): Promise<string> => {
+    const user = ctx.args[0];
+    if (!user) {
+      return "Usage: /invite @username";
+    }
+    // Scaffold — in production this calls /_add_member
+    return (
+      "Invite request for " + user + " noted.\n\n" +
+      "(Group member management not yet connected. This is a scaffold.)"
+    );
+  },
+};
+
+/** Set a member's role in a group (group only) */
+const roleCommand: CommandDefinition = {
+  name: "role",
+  description: "Set member role (observer/member/admin)",
+  groupEnabled: true,
+  dmEnabled: false,
+  handler: async (ctx: CommandContext): Promise<string> => {
+    const user = ctx.args[0];
+    const role = ctx.args[1];
+    if (!user || !role) {
+      return "Usage: /role @username [observer|member|admin]";
+    }
+    const validRoles = ["observer", "author", "member", "moderator", "admin"];
+    if (!validRoles.includes(role.toLowerCase())) {
+      return "Valid roles: " + validRoles.join(", ");
+    }
+    return (
+      "Role change: " + user + " → " + role + "\n\n" +
+      "(Role management not yet connected. This is a scaffold.)"
+    );
+  },
+};
+
+/** Broadcast a message to all contacts (DM only) */
+const broadcastCommand: CommandDefinition = {
+  name: "broadcast",
+  description: "Send message to all connected contacts",
+  groupEnabled: false,
+  dmEnabled: true,
+  handler: async (ctx: CommandContext): Promise<string> => {
+    const message = ctx.args.join(" ");
+    if (!message) {
+      return "Usage: /broadcast [message]";
+    }
+    return (
+      "Broadcast queued: \"" + message + "\"\n\n" +
+      "(Broadcast delivery not yet connected. This is a scaffold.)"
+    );
+  },
+};
+
+// =============================================================================
+// Voice & File Commands
+// =============================================================================
+
+/** Process a voice note attachment */
+const voiceCommand: CommandDefinition = {
+  name: "voice",
+  description: "Process voice note (attach voice message before this command)",
+  groupEnabled: true,
+  dmEnabled: true,
+  handler: async (_ctx: CommandContext): Promise<string> => {
+    return [
+      "Voice processing:",
+      "1. Send a voice note in this chat",
+      "2. The bot will receive it as a file attachment",
+      "3. Once speech-to-speech agent is connected, it will be transcribed and processed",
+      "",
+      "(Voice transcription not yet connected. This is a scaffold.)",
+    ].join("\n");
+  },
+};
+
+/** Process a file attachment */
+const fileCommand: CommandDefinition = {
+  name: "file",
+  description: "Process file attachment (send file before this command)",
+  groupEnabled: true,
+  dmEnabled: true,
+  handler: async (_ctx: CommandContext): Promise<string> => {
+    return [
+      "File processing:",
+      "1. Send a file in this chat",
+      "2. The bot will auto-accept files within size limits",
+      "3. Supported: documents, images, code files",
+      "",
+      "(File analysis not yet connected. This is a scaffold.)",
+    ].join("\n");
+  },
+};
+
+/** Show active sessions and stats */
+const sessionsCommand: CommandDefinition = {
+  name: "sessions",
+  description: "Show active bot sessions",
+  groupEnabled: false,
+  dmEnabled: true,
+  handler: async (_ctx: CommandContext): Promise<string> => {
+    // Scaffold — in production this queries the SessionStore
+    return [
+      "Session management:",
+      "Active sessions and statistics will be shown here.",
+      "",
+      "(Session store query not yet connected. This is a scaffold.)",
+    ].join("\n");
+  },
+};
+
+// =============================================================================
 // Command Registry
 // =============================================================================
 
 /** All built-in commands */
 export const BUILTIN_COMMANDS: CommandDefinition[] = [
+  // Core commands
   helpCommand,
   statusCommand,
   askCommand,
+  pingCommand,
+  versionCommand,
+  // Task commands
   tasksCommand,
   taskCommand,
+  // Execution
   runCommand,
   approveCommand,
   rejectCommand,
   pendingCommand,
-  pingCommand,
-  versionCommand,
+  // Group commands
+  inviteCommand,
+  roleCommand,
+  broadcastCommand,
+  // Voice & file
+  voiceCommand,
+  fileCommand,
+  // Session management
+  sessionsCommand,
 ];
