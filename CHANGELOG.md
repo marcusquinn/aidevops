@@ -7,9 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.133.0] - 2026-02-26
+
 ### Added
 
 - Add design principles checklist to UI verification workflow (#2349)
+
+### Changed
+
+- Documentation: add changelog entry for design principles
 
 ## [2.132.0] - 2026-02-26
 
