@@ -660,131 +660,16 @@ map_tags_to_labels() {
 }
 
 # =============================================================================
-# Sanitization — Private Repo Name Scrubbing (security)
-# =============================================================================
-# When syncing tasks from a cross-repo TODO.md to a PUBLIC issue tracker,
-# private repo names must never appear in issue titles, bodies, or comments.
-# This prevents information leakage about private projects.
-
-# Cache for private repo names (populated once per run)
-_PRIVATE_REPO_NAMES_CACHE=""
-_PRIVATE_REPO_NAMES_LOADED=""
-
-# Build a list of private repo names from the supervisor DB.
-# Queries gh for each repo's visibility and caches the result.
-# Outputs newline-separated list of private repo short names (e.g., "myapp").
-_load_private_repo_names() {
-	if [[ -n "$_PRIVATE_REPO_NAMES_LOADED" ]]; then
-		echo "$_PRIVATE_REPO_NAMES_CACHE"
-		return 0
-	fi
-	_PRIVATE_REPO_NAMES_LOADED=1
-
-	local supervisor_db="${SUPERVISOR_DB:-$HOME/.aidevops/.agent-workspace/supervisor/supervisor.db}"
-	if [[ ! -f "$supervisor_db" ]]; then
-		return 0
-	fi
-
-	# Get all distinct repo paths from the DB
-	local repo_paths
-	repo_paths=$(sqlite3 "$supervisor_db" \
-		"SELECT DISTINCT repo FROM tasks WHERE repo IS NOT NULL AND repo != '';" \
-		2>/dev/null || echo "")
-
-	if [[ -z "$repo_paths" ]]; then
-		return 0
-	fi
-
-	local private_names=""
-	while IFS= read -r repo_path; do
-		[[ -z "$repo_path" ]] && continue
-		local canonical
-		canonical=$(realpath "$repo_path" 2>/dev/null || echo "")
-		[[ -z "$canonical" ]] && continue
-
-		# Derive slug from git remote
-		local remote_url
-		remote_url=$(git -C "$canonical" remote get-url origin 2>/dev/null || echo "")
-		[[ -z "$remote_url" ]] && continue
-		remote_url="${remote_url%.git}"
-		local slug
-		slug=$(echo "$remote_url" | sed -E 's|.*[:/]([^/]+/[^/]+)$|\1|' || echo "")
-		[[ -z "$slug" ]] && continue
-
-		# Check if repo is private (cache-friendly: gh caches auth)
-		local is_private
-		is_private=$(gh repo view "$slug" --json isPrivate --jq '.isPrivate' 2>/dev/null || echo "")
-		if [[ "$is_private" == "true" ]]; then
-			# Extract the short name (repo part of owner/repo)
-			local short_name="${slug#*/}"
-			private_names="${private_names:+${private_names}$'\n'}${short_name}"
-		fi
-	done <<<"$repo_paths"
-
-	_PRIVATE_REPO_NAMES_CACHE="$private_names"
-	echo "$private_names"
-	return 0
-}
-
-# Sanitize text by replacing private repo names with a generic placeholder.
-# Also strips cross-repo PR/issue references that could identify private repos
-# (e.g., "myapp#253" or "PR #253 in myapp").
-# Arguments:
-#   $1 - text to sanitize
-#   $2 - repo_slug of the TARGET issue tracker (sanitization only applies to public repos)
-# Returns: sanitized text on stdout
-_sanitize_for_public_repo() {
-	local text="$1"
-	local target_repo_slug="${2:-}"
-
-	# Only sanitize when target repo is public
-	if [[ -n "$target_repo_slug" ]]; then
-		local is_private
-		is_private=$(gh repo view "$target_repo_slug" --json isPrivate --jq '.isPrivate' 2>/dev/null || echo "")
-		if [[ "$is_private" == "true" ]]; then
-			# Target is private — no sanitization needed
-			echo "$text"
-			return 0
-		fi
-	fi
-
-	local private_names
-	private_names=$(_load_private_repo_names)
-
-	if [[ -z "$private_names" ]]; then
-		echo "$text"
-		return 0
-	fi
-
-	local result="$text"
-	while IFS= read -r name; do
-		[[ -z "$name" ]] && continue
-		# Replace patterns: "myapp", "myapp#NNN", "in myapp", "the myapp"
-		# Case-insensitive replacement using sed
-		result=$(printf '%s' "$result" | sed -E "s/${name}#[0-9]+/a private repo PR/gi")
-		result=$(printf '%s' "$result" | sed -E "s/(in|the|from|of|for) ${name}/\1 a managed private repo/gi")
-		result=$(printf '%s' "$result" | sed -E "s/${name} (CI|PR|pipeline|repo|project|branch|check)/private repo \1/gi")
-		result=$(printf '%s' "$result" | sed -E "s/${name}/a managed private repo/gi")
-	done <<<"$private_names"
-
-	echo "$result"
-	return 0
-}
-
-# =============================================================================
 # Compose — Issue Body
 # =============================================================================
 
 # Compose a rich issue body from all available task context.
-# Platform-agnostic: produces markdown suitable for GitHub, Gitea, or GitLab.
 # Arguments:
 #   $1 - task_id
 #   $2 - project_root
-#   $3 - repo_slug (optional, for sanitization — if omitted, no sanitization)
 compose_issue_body() {
 	local task_id="$1"
 	local project_root="$2"
-	local repo_slug="${3:-}"
 
 	local todo_file="$project_root/TODO.md"
 	if [[ ! -f "$todo_file" ]]; then
@@ -1013,11 +898,6 @@ compose_issue_body() {
 	# Footer
 	body="$body"$'\n\n'"---"$'\n'"*Synced from TODO.md by issue-sync-helper.sh*"
 
-	# Sanitize private repo names before publishing to public issue trackers
-	if [[ -n "$repo_slug" ]]; then
-		body=$(_sanitize_for_public_repo "$body" "$repo_slug")
-	fi
-
 	echo "$body"
 	return 0
 }
@@ -1118,139 +998,4 @@ add_pr_ref_to_todo() {
 
 	log_verbose "Added pr:#$pr_number to $task_id (t280: backfill proof-log)"
 	return 0
-}
-
-# Verify a completed task has evidence of real work (merged PR or verified: field).
-# Requires _DETECTED_PLATFORM and _PLATFORM_BASE_URL to be set (call init_platform first).
-# Arguments:
-#   $1 - task_line (or task block text)
-#   $2 - task_id
-#   $3 - repo_slug
-# Returns: 0 if verified, 1 if not
-task_has_completion_evidence() {
-	local task_line="$1"
-	local task_id="$2"
-	local repo_slug="$3"
-
-	# Check 1: Has verified:YYYY-MM-DD field (human-verified)
-	if echo "$task_line" | grep -qE 'verified:[0-9]{4}-[0-9]{2}-[0-9]{2}'; then
-		return 0
-	fi
-
-	# Check 2a: Has pr:#NNN field in the task line (supervisor-written proof-log format)
-	if echo "$task_line" | grep -qE 'pr:#[0-9]+'; then
-		return 0
-	fi
-
-	# Check 2b: Has a merged PR reference in the task line (e.g., "PR #NNN merged" in Notes)
-	if echo "$task_line" | grep -qiE 'PR #[0-9]+ merged|PR.*merged'; then
-		return 0
-	fi
-
-	# Check 3: Search platform for a merged PR/MR with this task ID in the title.
-	# Requires platform_find_merged_pr_by_task to be available (from issue-sync-helper.sh).
-	if [[ -n "$repo_slug" && -n "${_DETECTED_PLATFORM:-}" ]]; then
-		if declare -f platform_find_merged_pr_by_task >/dev/null 2>&1; then
-			local merged_pr_info
-			merged_pr_info=$(platform_find_merged_pr_by_task "$repo_slug" "$task_id" || echo "")
-			if [[ -n "$merged_pr_info" ]]; then
-				return 0
-			fi
-		fi
-	fi
-
-	return 1
-}
-
-# Build a PR/MR URL for a given number using the detected platform base URL.
-# Falls back to github.com format when base URL is unavailable.
-# Requires _DETECTED_PLATFORM and _PLATFORM_BASE_URL to be set.
-# Arguments:
-#   $1 - repo_slug
-#   $2 - pr_number
-_build_pr_url() {
-	local repo_slug="$1"
-	local pr_number="$2"
-	local base="${_PLATFORM_BASE_URL:-}"
-
-	case "${_DETECTED_PLATFORM:-github}" in
-	github)
-		echo "https://github.com/${repo_slug}/pull/${pr_number}"
-		;;
-	gitea)
-		if [[ -z "$base" ]]; then
-			print_error "_build_pr_url: _PLATFORM_BASE_URL is empty for gitea; was init_platform called?"
-			return 1
-		fi
-		echo "${base}/${repo_slug}/pulls/${pr_number}"
-		;;
-	gitlab)
-		if [[ -z "$base" ]]; then
-			print_error "_build_pr_url: _PLATFORM_BASE_URL is empty for gitlab; was init_platform called?"
-			return 1
-		fi
-		echo "${base}/${repo_slug}/-/merge_requests/${pr_number}"
-		;;
-	*)
-		echo "https://github.com/${repo_slug}/pull/${pr_number}"
-		;;
-	esac
-	return 0
-}
-
-# Find the closing/merged PR for a completed task (t220).
-# Outputs "number|url" on stdout if found, empty string if not.
-# Searches: task line notes, then platform merged PRs/MRs by title.
-# Requires _DETECTED_PLATFORM and _PLATFORM_BASE_URL to be set (call init_platform first).
-# Arguments:
-#   $1 - task_line (or task block text)
-#   $2 - task_id
-#   $3 - repo_slug
-find_closing_pr() {
-	local task_line="$1"
-	local task_id="$2"
-	local repo_slug="$3"
-
-	# Check 1 (t291): Extract pr:#NNN from TODO.md task line — most reliable source
-	local todo_pr
-	todo_pr=$(echo "$task_line" | grep -oE 'pr:#[0-9]+' | head -1 | grep -oE '[0-9]+' || echo "")
-	if [[ -n "$todo_pr" ]]; then
-		echo "${todo_pr}|$(_build_pr_url "$repo_slug" "$todo_pr")"
-		return 0
-	fi
-
-	# Check 2: Extract PR number from task line notes (e.g., "PR #123 merged")
-	local inline_pr
-	inline_pr=$(echo "$task_line" | grep -oiE 'PR #[0-9]+' | head -1 | grep -oE '[0-9]+' || echo "")
-	if [[ -n "$inline_pr" ]]; then
-		echo "${inline_pr}|$(_build_pr_url "$repo_slug" "$inline_pr")"
-		return 0
-	fi
-
-	# Check 3: Search platform for a merged PR/MR with this task ID in the title.
-	# Requires platform_find_merged_pr_by_task to be available (from issue-sync-helper.sh).
-	if [[ -n "$repo_slug" && -n "${_DETECTED_PLATFORM:-}" ]]; then
-		if declare -f platform_find_merged_pr_by_task >/dev/null 2>&1; then
-			local pr_info
-			pr_info=$(platform_find_merged_pr_by_task "$repo_slug" "$task_id" || echo "")
-			if [[ -n "$pr_info" ]]; then
-				echo "$pr_info"
-				return 0
-			fi
-
-			# Check 3b (t291): For subtask IDs (e.g., t214.6), also search by parent ID (t214)
-			local parent_id
-			parent_id=$(echo "$task_id" | grep -oE '^t[0-9]+' || echo "")
-			if [[ -n "$parent_id" && "$parent_id" != "$task_id" ]]; then
-				pr_info=$(platform_find_merged_pr_by_task "$repo_slug" "$parent_id" || echo "")
-				if [[ -n "$pr_info" ]]; then
-					echo "$pr_info"
-					return 0
-				fi
-			fi
-		fi
-	fi
-
-	echo ""
-	return 1
 }

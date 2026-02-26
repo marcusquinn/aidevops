@@ -1,12 +1,7 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC1091
-# Observability Helper - LLM request tracking via JSONL log (t1307, t1337.5)
-#
-# Parses Claude Code JSONL session logs and writes metrics to a simple JSONL
-# log file. AI agents can read/grep the log directly — no query interface needed.
-#
-# Usage: observability-helper.sh [command] [options]
-# Commands: ingest, record, rate-limits, help
+# Observability Helper — LLM request tracking via JSONL log (t1307, t1337.5)
+# Commands: ingest | record | rate-limits | help
 # Storage: ~/.aidevops/.agent-workspace/observability/metrics.jsonl
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
@@ -15,113 +10,52 @@ set -euo pipefail
 init_log_file
 
 readonly OBS_DIR="${HOME}/.aidevops/.agent-workspace/observability"
-readonly OBS_METRICS="${OBS_DIR}/metrics.jsonl"
-readonly OBS_OFFSETS="${OBS_DIR}/parse-offsets.json"
+readonly OBS_METRICS="${OBS_DIR}/metrics.jsonl" OBS_OFFSETS="${OBS_DIR}/parse-offsets.json"
 readonly CLAUDE_LOG_DIR="${HOME}/.claude/projects"
 readonly RATE_LIMITS_CONFIG_USER="${HOME}/.config/aidevops/rate-limits.json"
 readonly RATE_LIMITS_CONFIG_TEMPLATE="${SCRIPT_DIR}/../configs/rate-limits.json.txt"
-readonly DEFAULT_WARN_PCT=80
-readonly DEFAULT_WINDOW_MINUTES=1
-
-# =============================================================================
-# Storage
-# =============================================================================
+readonly DEFAULT_WARN_PCT=80 DEFAULT_WINDOW_MINUTES=1
 
 init_storage() {
 	mkdir -p "$OBS_DIR" 2>/dev/null || true
 	[[ -f "$OBS_METRICS" ]] || touch "$OBS_METRICS"
 	[[ -f "$OBS_OFFSETS" ]] || echo '{}' >"$OBS_OFFSETS"
-	return 0
 }
 
 get_offset() {
-	local file_path="$1"
-	if [[ ! -f "$OBS_OFFSETS" ]] || ! command -v jq &>/dev/null; then
+	[[ -f "$OBS_OFFSETS" ]] && command -v jq &>/dev/null || {
 		echo "0"
 		return 0
-	fi
-	local offset
-	offset=$(jq -r --arg f "$file_path" '.[$f] // 0' "$OBS_OFFSETS" 2>/dev/null) || offset="0"
-	echo "${offset:-0}"
-	return 0
+	}
+	jq -r --arg f "$1" '.[$f] // 0' "$OBS_OFFSETS" 2>/dev/null || echo "0"
 }
 
 set_offset() {
-	local file_path="$1"
-	local new_offset="$2"
 	command -v jq &>/dev/null || return 0
 	local tmp="${OBS_OFFSETS}.tmp"
-	jq --arg f "$file_path" --argjson o "$new_offset" '.[$f] = $o' "$OBS_OFFSETS" >"$tmp" 2>/dev/null && mv "$tmp" "$OBS_OFFSETS"
-	return 0
+	jq --arg f "$1" --argjson o "$2" '.[$f] = $o' "$OBS_OFFSETS" >"$tmp" 2>/dev/null && mv "$tmp" "$OBS_OFFSETS"
 }
-
-# =============================================================================
-# Pricing (per 1M tokens: input|output|cache_read|cache_write)
-# =============================================================================
-
-get_model_pricing() {
-	local model="$1"
-	local ms="${model#*/}"
-	ms="${ms%%-202*}"
-	case "$ms" in
-	*opus-4* | *claude-opus*) echo "15.0|75.0|1.50|18.75" ;;
-	*sonnet-4* | *claude-sonnet*) echo "3.0|15.0|0.30|3.75" ;;
-	*haiku-4* | *haiku-3* | *claude-haiku*) echo "0.80|4.0|0.08|1.0" ;;
-	*gpt-4.1-mini*) echo "0.40|1.60|0.10|0.40" ;;
-	*gpt-4.1*) echo "2.0|8.0|0.50|2.0" ;;
-	*o3*) echo "10.0|40.0|2.50|10.0" ;;
-	*o4-mini*) echo "1.10|4.40|0.275|1.10" ;;
-	*gemini-2.5-pro*) echo "1.25|10.0|0.3125|2.50" ;;
-	*gemini-2.5-flash*) echo "0.15|0.60|0.0375|0.15" ;;
-	*deepseek-r1*) echo "0.55|2.19|0.14|0.55" ;;
-	*deepseek-v3*) echo "0.27|1.10|0.07|0.27" ;;
-	*) echo "3.0|15.0|0.30|3.75" ;;
-	esac
-	return 0
-}
-
-# =============================================================================
-# Helpers
-# =============================================================================
 
 get_project_from_path() {
-	local file_path="$1"
 	local dir_name
-	dir_name=$(basename "$(dirname "$file_path")")
+	dir_name=$(basename "$(dirname "$1")")
 	local project
-	project=$(echo "$dir_name" | sed -E 's/^-Users-[^-]+-Git-//' | sed -E 's/-.*(feature|bugfix|hotfix|chore|refactor|experiment|release)-.*//')
+	project=$(echo "$dir_name" | sed -E 's/^-Users-[^-]+-Git-//; s/-.*(feature|bugfix|hotfix|chore|refactor|experiment|release)-.*//')
 	[[ -z "$project" || "$project" == "-" ]] && project="unknown"
 	echo "$project"
-	return 0
 }
 
-get_provider_from_model() {
-	local model="$1"
-	case "$model" in
-	claude-* | anthropic/*) echo "anthropic" ;;
-	gpt-* | openai/*) echo "openai" ;;
-	gemini-* | google/*) echo "google" ;;
-	deepseek-* | deepseek/*) echo "deepseek" ;;
-	grok-* | xai/*) echo "xai" ;;
-	*) echo "unknown" ;;
-	esac
-	return 0
-}
-
-# Calculate costs and echo pipe-delimited: cost_in|cost_out|cost_cr|cost_cw|cost_total
 _calc_costs() {
 	local input_tokens="$1" output_tokens="$2" cache_read="$3" cache_write="$4" model="$5"
-	local pricing input_price output_price cr_price cw_price
+	local pricing
 	pricing=$(get_model_pricing "$model")
+	local input_price output_price cr_price cw_price
 	IFS='|' read -r input_price output_price cr_price cw_price <<<"$pricing"
 	awk "BEGIN {
-		ci = $input_tokens / 1e6 * $input_price
-		co = $output_tokens / 1e6 * $output_price
-		cr = $cache_read / 1e6 * $cr_price
-		cw = $cache_write / 1e6 * $cw_price
-		printf \"%.8f|%.8f|%.8f|%.8f|%.8f\", ci, co, cr, cw, ci+co+cr+cw
+		ci=$input_tokens/1e6*$input_price; co=$output_tokens/1e6*$output_price
+		cr=$cache_read/1e6*$cr_price; cw=$cache_write/1e6*$cw_price
+		printf \"%.8f|%.8f|%.8f|%.8f|%.8f\",ci,co,cr,cw,ci+co+cr+cw
 	}"
-	return 0
 }
 
 # Write a metrics entry to the JSONL log.
@@ -245,10 +179,8 @@ cmd_ingest() {
 }
 
 cmd_record() {
-	local provider="" model="" input_tokens=0 output_tokens=0
-	local cache_read_tokens=0 cache_write_tokens=0
+	local provider="" model="" input_tokens=0 output_tokens=0 cache_read_tokens=0 cache_write_tokens=0
 	local session_id="" project="" stop_reason="" error_message=""
-
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--provider)
@@ -294,7 +226,6 @@ cmd_record() {
 		*) shift ;;
 		esac
 	done
-
 	[[ -z "$model" ]] && {
 		print_error "Usage: observability-helper.sh record --model X [options]"
 		return 1
@@ -305,20 +236,13 @@ cmd_record() {
 	costs=$(_calc_costs "$input_tokens" "$output_tokens" "$cache_read_tokens" "$cache_write_tokens" "$model")
 	IFS='|' read -r ci co ccr ccw ct <<<"$costs"
 
-	local recorded_at
-	recorded_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
 	_write_metric "$provider" "$model" "$session_id" "" "$project" \
 		"$input_tokens" "$output_tokens" "$cache_read_tokens" "$cache_write_tokens" \
-		"$ci" "$co" "$ccr" "$ccw" "$ct" "$stop_reason" "" "" "" "$recorded_at" "$error_message"
-
+		"$ci" "$co" "$ccr" "$ccw" "$ct" "$stop_reason" "" "" "" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$error_message"
 	print_success "Recorded: $model ($provider) - \$${ct}"
-	return 0
 }
 
-# =============================================================================
-# Rate Limit Tracking (t1330)
-# =============================================================================
+# Rate Limit Tracking
 
 _get_rate_limits_config() {
 	[[ -f "$RATE_LIMITS_CONFIG_USER" ]] && {
@@ -332,39 +256,25 @@ _get_rate_limits_config() {
 	return 1
 }
 
-_get_rl_field() {
-	local provider="$1" field="$2"
+# Read a field from rate-limits config. Usage: _rl_jq '.providers[$p][$f]' provider field [default]
+_rl_jq() {
+	local expr="$1" default="${4:-0}"
 	local config_file
 	config_file=$(_get_rate_limits_config) || {
-		echo "0"
+		echo "$default"
 		return 0
 	}
 	command -v jq &>/dev/null || {
-		echo "0"
+		echo "$default"
 		return 0
 	}
 	local val
-	val=$(jq -r --arg p "$provider" --arg f "$field" '.providers[$p][$f] // 0' "$config_file") || val="0"
-	echo "${val:-0}"
-	return 0
+	val=$(jq -r --arg p "${2:-}" --arg f "${3:-}" "$expr // empty" "$config_file" 2>/dev/null) || val=""
+	echo "${val:-$default}"
 }
 
-_get_config_val() {
-	local field="$1" default="$2"
-	local config_file
-	config_file=$(_get_rate_limits_config) || {
-		echo "$default"
-		return 0
-	}
-	command -v jq &>/dev/null || {
-		echo "$default"
-		return 0
-	}
-	local val
-	val=$(jq -r --arg f "$field" '.[$f] // empty' "$config_file") || val="$default"
-	echo "${val:-$default}"
-	return 0
-}
+_get_rl_field() { _rl_jq '.providers[$p][$f]' "$1" "$2" "0"; }
+_get_config_val() { _rl_jq '.[$f]' "" "$1" "$2"; }
 
 _count_usage_in_window() {
 	local provider="$1" window_minutes="$2"
@@ -372,36 +282,30 @@ _count_usage_in_window() {
 		echo "0|0"
 		return 0
 	}
-
 	local cutoff
 	if date --version &>/dev/null 2>&1; then
 		cutoff=$(date -u -d "-${window_minutes} minutes" +"%Y-%m-%dT%H:%M:%SZ")
-	else
-		cutoff=$(date -u -v-"${window_minutes}"M +"%Y-%m-%dT%H:%M:%SZ")
-	fi
-
-	local result
-	result=$(jq -sr --arg p "$provider" --arg c "$cutoff" '
+	else cutoff=$(date -u -v-"${window_minutes}"M +"%Y-%m-%dT%H:%M:%SZ"); fi
+	jq -sr --arg p "$provider" --arg c "$cutoff" '
 		[.[] | select(.provider == $p and .recorded_at >= $c)] |
 		"\(length)|\(map(.input_tokens + .output_tokens + .cache_read_tokens + .cache_write_tokens) | add // 0)"
-	' "$OBS_METRICS" 2>/dev/null) || result="0|0"
-	echo "${result:-0|0}"
-	return 0
+	' "$OBS_METRICS" 2>/dev/null || echo "0|0"
 }
 
-# Public API: called by model-availability-helper.sh
-# Returns: 0=ok, 1=warn, 2=critical. Outputs status string on stdout.
+# Public API: called by model-availability-helper.sh. Returns: 0=ok, 1=warn, 2=critical.
 check_rate_limit_risk() {
 	local provider="$1"
-	local wm rl tl wp
+	local wm
 	wm=$(_get_config_val "window_minutes" "$DEFAULT_WINDOW_MINUTES")
+	local wp
 	wp=$(_get_config_val "warn_pct" "$DEFAULT_WARN_PCT")
 	[[ "$wm" =~ ^[0-9]+$ && "$wm" -gt 0 ]] || wm="$DEFAULT_WINDOW_MINUTES"
 	[[ "$wp" =~ ^[0-9]+$ ]] || wp="$DEFAULT_WARN_PCT"
-
+	local rl
 	rl=$(_get_rl_field "$provider" "requests_per_min")
-	tl=$(_get_rl_field "$provider" "tokens_per_min")
 	[[ "$rl" =~ ^[0-9]+$ ]] || rl=0
+	local tl
+	tl=$(_get_rl_field "$provider" "tokens_per_min")
 	[[ "$tl" =~ ^[0-9]+$ ]] || tl=0
 	[[ "$rl" -eq 0 && "$tl" -eq 0 ]] && {
 		echo "ok"
@@ -411,21 +315,16 @@ check_rate_limit_risk() {
 	local usage ar at
 	usage=$(_count_usage_in_window "$provider" "$wm")
 	IFS='|' read -r ar at <<<"$usage"
-
 	local max_pct
-	max_pct=$(awk "BEGIN {
-		rp = ($rl > 0) ? $ar * 100 / $rl : 0
-		tp = ($tl > 0) ? $at * 100 / $tl : 0
-		print (rp > tp) ? rp : tp
-	}")
-
-	if [[ "$max_pct" -ge 95 ]]; then
+	max_pct=$(awk "BEGIN { rp=($rl>0)?$ar*100/$rl:0; tp=($tl>0)?$at*100/$tl:0; print (rp>tp)?rp:tp }")
+	[[ "$max_pct" -ge 95 ]] && {
 		echo "critical"
 		return 2
-	elif [[ "$max_pct" -ge "$wp" ]]; then
+	}
+	[[ "$max_pct" -ge "$wp" ]] && {
 		echo "warn"
 		return 1
-	fi
+	}
 	echo "ok"
 	return 0
 }
@@ -433,8 +332,7 @@ check_rate_limit_risk() {
 cmd_rate_limits() {
 	local json_flag=false provider_filter="" window_minutes=""
 	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--json)
+		case "$1" in --json)
 			json_flag=true
 			shift
 			;;
@@ -446,15 +344,14 @@ cmd_rate_limits() {
 			window_minutes="${2:-}"
 			shift 2
 			;;
-		*) shift ;;
-		esac
+		*) shift ;; esac
 	done
-
 	cmd_ingest --quiet >/dev/null 2>&1 || true
 
-	local config_file ew wp
+	local config_file
 	config_file=$(_get_rate_limits_config) || config_file=""
-	ew="${window_minutes:-$(_get_config_val "window_minutes" "$DEFAULT_WINDOW_MINUTES")}"
+	local ew="${window_minutes:-$(_get_config_val "window_minutes" "$DEFAULT_WINDOW_MINUTES")}"
+	local wp
 	wp=$(_get_config_val "warn_pct" "$DEFAULT_WARN_PCT")
 	[[ "$ew" =~ ^[0-9]+$ && "$ew" -gt 0 ]] || {
 		print_error "--window must be a positive integer"
@@ -483,13 +380,12 @@ cmd_rate_limits() {
 			done < <(jq -r '.provider' "$OBS_METRICS" 2>/dev/null | sort -u)
 		fi
 	fi
-
-	if [[ ${#providers[@]} -eq 0 ]]; then
-		if [[ "$json_flag" == "true" ]]; then echo "[]"; else print_info "No provider data. Run 'observability-helper.sh ingest' first."; fi
+	[[ ${#providers[@]} -eq 0 ]] && {
+		[[ "$json_flag" == "true" ]] && echo "[]" || print_info "No provider data. Run 'ingest' first."
 		return 0
-	fi
+	}
 
-	# Build rows: provider|reqs|req_limit|req%|tokens|tok_limit|tok%|status|billing
+	# Build rows
 	local -a rows=()
 	for prov in "${providers[@]}"; do
 		[[ -z "$prov" ]] && continue
@@ -511,130 +407,54 @@ cmd_rate_limits() {
 		rows+=("${prov}|${ar}|${rl}|${rp}|${at}|${tl}|${tp}|${st}|${bt}")
 	done
 
-	# JSON output
 	if [[ "$json_flag" == "true" ]]; then
-		echo "["
-		local first=true
+		local json_arr="[" first=true
 		for row in "${rows[@]}"; do
-			local pv a r rp2 t l tp2 s b
-			IFS='|' read -r pv a r rp2 t l tp2 s b <<<"$row"
-			[[ "$first" == "true" ]] || echo ","
+			IFS='|' read -r pv a r rp2 t l tp2 s _ <<<"$row"
+			[[ "$first" == "true" ]] || json_arr="${json_arr},"
 			first=false
-			printf '  %s' "$(jq -c -n --arg pv "$pv" --argjson a "${a:-0}" --argjson r "${r:-0}" \
-				--argjson rp "${rp2:-0}" --argjson t "${t:-0}" --argjson l "${l:-0}" \
-				--argjson tp "${tp2:-0}" --arg s "$s" --arg b "$b" \
-				--argjson ew "${ew:-1}" --argjson wp "${wp:-80}" \
-				'{provider:$pv,requests_used:$a,requests_limit:$r,requests_pct:$rp,tokens_used:$t,tokens_limit:$l,tokens_pct:$tp,status:$s,billing_type:$b,window_minutes:$ew,warn_pct:$wp}')"
+			json_arr="${json_arr}{\"provider\":\"$pv\",\"requests_used\":${a:-0},\"requests_limit\":${r:-0},\"requests_pct\":${rp2:-0},\"tokens_used\":${t:-0},\"tokens_limit\":${l:-0},\"tokens_pct\":${tp2:-0},\"status\":\"$s\",\"window_minutes\":${ew:-1}}"
 		done
-		echo ""
-		echo "]"
+		echo "${json_arr}]"
 		return 0
 	fi
 
-	# Table output
-	echo ""
-	echo "Rate Limit Utilisation (${ew}min window, warn at ${wp}%)"
-	echo "========================================================================"
-	[[ -z "$config_file" ]] && {
-		print_warning "No rate-limits.json found. Copy .agents/configs/rate-limits.json.txt to ~/.config/aidevops/rate-limits.json"
-		echo ""
-	}
-	printf "\n  %-12s %-8s %-12s %-8s %-12s %-12s %-8s %-10s\n" \
-		"Provider" "Reqs" "Req Limit" "Req%" "Tokens" "Tok Limit" "Tok%" "Status"
-	printf "  %-12s %-8s %-12s %-8s %-12s %-12s %-8s %-10s\n" \
-		"--------" "----" "---------" "----" "------" "---------" "----" "------"
-
-	local has_warn=false
+	printf "\nRate Limit Utilisation (%smin window, warn at %s%%)\n" "$ew" "$wp"
+	[[ -z "$config_file" ]] && print_warning "No rate-limits.json found"
+	printf "  %-12s %6s %10s %5s %8s %10s %5s %s\n" "Provider" "Reqs" "Limit" "Pct" "Tokens" "Limit" "Pct" "Status"
 	for row in "${rows[@]}"; do
-		local pv a r rp2 t l tp2 s b rd td sd
-		IFS='|' read -r pv a r rp2 t l tp2 s b <<<"$row"
-		rd="${a}/${r}"
-		[[ "$r" == "0" ]] && rd="${a}/n/a"
-		td="${t}/${l}"
-		[[ "$l" == "0" ]] && td="${t}/n/a"
-		case "$s" in
-		critical)
-			sd="${RED}CRITICAL${NC}"
-			has_warn=true
-			;;
-		warn)
-			sd="${YELLOW}WARN${NC}"
-			has_warn=true
-			;;
-		*) sd="${GREEN}ok${NC}" ;;
-		esac
-		printf "  %-12s %-8s %-12s %-8s %-12s %-12s %-8s " "$pv" "$a" "$rd" "${rp2}%" "$t" "$td" "${tp2}%"
-		printf "%-10b\n" "$sd"
+		IFS='|' read -r pv a r rp2 t l tp2 s _ <<<"$row"
+		local sd="$s"
+		[[ "$s" == "critical" ]] && sd="${RED}CRITICAL${NC}"
+		[[ "$s" == "warn" ]] && sd="${YELLOW}WARN${NC}"
+		[[ "$s" == "ok" ]] && sd="${GREEN}ok${NC}"
+		printf "  %-12s %6s %10s %4s%% %8s %10s %4s%% %b\n" "$pv" "$a" "${r:-n/a}" "$rp2" "$t" "${l:-n/a}" "$tp2" "$sd"
 	done
 	echo ""
-	[[ "$has_warn" == "true" ]] && echo "  Providers at/above ${wp}% flagged as throttle-risk." && echo ""
-	[[ -n "$config_file" ]] && echo "  Config: $config_file" || echo "  Config: not found (copy .agents/configs/rate-limits.json.txt to ~/.config/aidevops/rate-limits.json)"
-	echo ""
-	return 0
 }
-
-# =============================================================================
-# Help & Main
-# =============================================================================
 
 cmd_help() {
 	cat <<EOF
-
-Observability Helper - LLM request tracking via JSONL log (t1307)
-=================================================================
-
+Observability Helper — LLM request tracking via JSONL log
 Usage: observability-helper.sh [command] [options]
-  or:  aidevops stats [command] [options]
-
-Commands:
-  ingest              Parse new entries from Claude JSONL logs
-  record              Manually record an LLM request
-  rate-limits         Show rate limit utilisation per provider (t1330)
-  help                Show this help
-
-Options:
-  --json              Output in JSON format (rate-limits)
-  --provider X        Filter by provider
-  --window N          Rolling window in minutes (default: 1)
-
-Record: --model X (required) [--provider X] [--input-tokens N] [--output-tokens N]
-        [--cache-read N] [--cache-write N] [--session X] [--project X]
-        [--stop-reason X] [--error X]
-
-Metrics log: $OBS_METRICS
-Query with jq:
-  jq -s 'group_by(.model) | map({model:.[0].model, n:length, cost:(map(.cost_total)|add)})' $OBS_METRICS
-
+Commands: ingest | record (--model X) | rate-limits (--json, --provider, --window) | help
+Metrics: $OBS_METRICS
 EOF
-	return 0
 }
 
 main() {
 	local command="${1:-help}"
 	shift || true
 	init_storage || return 1
-
 	case "$command" in
-	ingest | parse | import) cmd_ingest "$@" ;;
-	record | r) cmd_record "$@" ;;
+	ingest | parse | import) cmd_ingest "$@" ;; record | r) cmd_record "$@" ;;
 	rate-limits | rate_limits | ratelimits | rl) cmd_rate_limits "$@" ;;
-	help | --help | -h) cmd_help ;;
-	summary | s | models | model | m | projects | project | p | costs | cost | c | trend | trends | t)
-		echo "Dashboard commands removed (t1337.5). Query metrics JSONL directly with jq."
-		echo "  Metrics: $OBS_METRICS"
-		return 0
-		;;
-	sync-budget | sync_budget | budget | prune | cleanup)
-		echo "Command '$command' removed (t1337.5). Metrics are now in JSONL format."
-		return 0
-		;;
-	*)
-		print_error "Unknown command: $command"
+	help | --help | -h) cmd_help ;; *)
+		print_error "Unknown: $command"
 		cmd_help
 		return 1
 		;;
 	esac
-	return $?
 }
 
 main "$@"
