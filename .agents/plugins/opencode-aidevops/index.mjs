@@ -809,16 +809,12 @@ function validatePositionalParams(filePath) {
         //   - $N followed by space + pricing/unit word (e.g. $5 flat, $3 fee, $9 per month)
         //   - Markdown table rows (lines starting with |)
         //   - $N followed by pipe (markdown table cell boundary)
-        if (/\$[1-9][0-9.,/]/.test(stripped)) {
-          continue;
-        }
-        if (/\$[1-9]\s+(?:per|mo(?:nth)?|year|yr|day|week|hr|hour|flat|each|off|fee|plan|tier|user|seat|unit|addon|setup|trial|credit|annual|quarterly|monthly)\b/.test(stripped)) {
-          continue;
-        }
-        if (/^\s*\|/.test(line)) {
-          continue;
-        }
-        if (/\$[1-9]\s*\|/.test(stripped)) {
+        if (
+          /\$[1-9][0-9.,/]/.test(stripped) ||
+          /\$[1-9]\s+(?:per|mo(?:nth)?|year|yr|day|week|hr|hour|flat|each|off|fee|plan|tier|user|seat|unit|addon|setup|trial|credit|annual|quarterly|monthly)\b/.test(stripped) ||
+          /^\s*\|/.test(line) ||
+          /\$[1-9]\s*\|/.test(stripped)
+        ) {
           continue;
         }
         details.push(`  Line ${i + 1}: direct positional parameter: ${trimmed.substring(0, 80)}`);
