@@ -787,12 +787,12 @@ cmd_update() {
 			fi
 			[[ -z "$installed" ]] && continue
 
-			# Get latest version (npm or brew)
+			# Get latest version (npm or brew) — timeout prevents hangs on slow registries
 			if [[ "$pkg_ref" == brew:* ]]; then
 				local brew_pkg="${pkg_ref#brew:}"
-				latest=$(brew info --json=v2 "$brew_pkg" 2>/dev/null | jq -r '.formulae[0].versions.stable // empty' 2>/dev/null || true)
+				latest=$(timeout 30 brew info --json=v2 "$brew_pkg" 2>/dev/null | jq -r '.formulae[0].versions.stable // empty' 2>/dev/null || true)
 			else
-				latest=$(npm view "$pkg_ref" version 2>/dev/null || true)
+				latest=$(timeout 30 npm view "$pkg_ref" version 2>/dev/null || true)
 			fi
 			[[ -z "$latest" ]] && continue
 
