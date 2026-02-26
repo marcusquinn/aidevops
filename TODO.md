@@ -77,7 +77,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t1327.2 Subagent documentation #auto-dispatch — create `.agents/services/communications/simplex.md` covering install, bot API, business addresses, protocol, voice/files, multi-platform, cross-device workarounds, self-hosted servers, upstream contributions, limitations ~4h model:opus ref:GH#2247 pr:#2369 completed:2026-02-26
   - [ ] t1327.3 Helper script #auto-dispatch — create `simplex-helper.sh` with install, init, bot-start/stop, send, connect, group, status, server subcommands ~3h model:sonnet blocked-by:t1327.1 ref:GH#2248
     - Notes: BLOCKED by supervisor: Blocked by: t1327.1
-  - [ ] t1327.4 Bot framework #auto-dispatch — TypeScript/Bun scaffold with WebSocket connection, command router, event handler, starter commands, voice/file handling, business address support ~4h model:sonnet blocked-by:t1327.1 ref:GH#2249
+  - [x] t1327.4 Bot framework #auto-dispatch — TypeScript/Bun scaffold with WebSocket connection, command router, event handler, starter commands, voice/file handling, business address support ~4h model:sonnet blocked-by:t1327.1 ref:GH#2249 pr:#2375 completed:2026-02-26
     - Notes: BLOCKED by supervisor: Blocked by: t1327.1
   - [x] t1327.5 Mailbox transport adapter #auto-dispatch — extend `mail-helper.sh` with SimpleX and Matrix transports for cross-machine agent communication, preserving existing message types and convoy tracking ~3h model:sonnet blocked-by:t1327.3 [proposed:auto-dispatch model:opus] ref:GH#2250 pr:#2372 completed:2026-02-26
     - Notes: BLOCKED by supervisor: Blocked by: t1327.3
