@@ -108,6 +108,23 @@ Based on your assessment, take action — but distinguish between safe mechanica
 3. **Dispatch recommendations** — if dispatchable work is sitting idle, recommend what to dispatch and why (what it unblocks). The pulse handles actual dispatch.
 4. **Stale worktree directories** — list directories that can likely be removed (merged PRs, closed branches), but do NOT `rm -rf` them. Output the list for human or pulse to action after confirming branches are merged.
 
+### Root cause analysis (self-improvement):
+
+For each finding, ask: **why did the framework allow this to happen?** Don't just fix the symptom — identify the missing automation, broken lifecycle hook, or prompt gap that caused it.
+
+Examples:
+- "Parent issue open with all subtasks done" → is the PR-merge lifecycle missing a step that checks and closes parent issues when the last subtask merges?
+- "Task stuck in `status:merging` after PR merged" → is the post-merge state transition failing silently? Is there a race condition?
+- "Cancelled tasks still `[ ]` in TODO.md" → is there no automation that syncs cancellation from issue labels back to TODO.md?
+
+**Before creating a self-improvement issue:**
+1. Search existing open issues: `gh issue list --repo <repo> --state open --json number,title --jq '.[] | select(.title | test("<keywords>"))'`
+2. Search TODO.md for related tasks: `rg '<keywords>' TODO.md`
+3. If a fix already exists (open issue, queued task, or recent PR), note it in the report instead of creating a duplicate. Reference the existing item.
+4. Only file a new issue if no existing work addresses the root cause.
+
+Self-improvement issues go in the **aidevops** repo (tooling), not in product repos — even if the symptom was observed in a product repo. The root cause is always in the framework.
+
 ### Actions you must NOT take:
 
 - Do NOT directly edit TODO.md (workers never edit TODO.md — the review is a supervisor function)
@@ -140,6 +157,10 @@ Strategic Review — {date} {time}
 
 ## TODOs Created (for pulse/human)
 1. {state fix or dispatch recommendation — with reasoning}
+2. ...
+
+## Self-Improvement (root causes)
+1. {finding} → {root cause hypothesis} → {existing fix or new issue filed}
 2. ...
 
 ## Resource Cleanup
