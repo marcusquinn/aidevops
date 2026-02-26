@@ -87,6 +87,15 @@ If you see a pattern (same type of failure, same error), create an improvement i
 
 **Duplicate work:** If two open PRs target the same issue or have very similar titles, flag it by commenting on the newer one.
 
+**Long-running workers:** Check the runtime of each running worker process with `ps axo pid,etime,command | grep '/full-loop'`. The `etime` column shows elapsed time. If any worker has been running for more than 3 hours, investigate:
+
+1. Check if the worker has produced a PR by searching open PRs for the issue/task number in the worker's command line.
+2. If a PR exists, the worker may be stuck in a loop (CI fix cycle, review feedback cycle). Comment on the PR noting the worker has been running for N hours and may be stuck.
+3. If no PR exists after 3+ hours, the worker is likely stuck before implementation. Consider killing it (`kill <pid>`) and letting the next pulse re-dispatch with a fresh worker. Before killing, check if the issue is genuinely complex (large refactor, architecture task) — those may legitimately take longer.
+4. If a worker has been running for 6+ hours with no PR, kill it and file a GitHub issue noting the failure pattern.
+
+Workers running 10+ hours are almost certainly stuck or zombied. Kill them to free slots.
+
 **Keep it lightweight.** This step should take seconds, not minutes. If nothing looks wrong, move on. The goal is to catch patterns over many pulses, not to do deep analysis on each one.
 
 ## Step 3: Decide What to Work On
@@ -108,20 +117,11 @@ Look at everything you fetched and pick up to **AVAILABLE** items — the highes
 - Prefer product repos over tooling repos (product value > tooling)
 - Prefer smaller/simpler tasks (faster throughput)
 
-**Deduplication (t2310):** Before dispatching each item, run the dedup helper to check if a worker is already running for the same issue, PR, or task. The helper normalizes titles by extracting canonical keys (issue-NNN, pr-NNN, task-tNNN) so that different title formats for the same work are correctly detected as duplicates.
+**Skip blocked issues:** Issues labelled `status:blocked` must NOT be dispatched. A blocked issue has unresolved dependencies — dispatching a worker for it wastes a slot and produces unusable output. Check the labels array in the GitHub JSON and skip any issue where labels include `status:blocked`.
 
-```bash
-# Check before dispatching — exit 0 means duplicate found, skip it
-if ~/.aidevops/agents/scripts/dispatch-dedup-helper.sh is-duplicate "Issue #<number>: <title>"; then
-  echo "Skipping: already has a running worker"
-else
-  # Safe to dispatch
-  opencode run --dir ~/Git/<repo> --title "Issue #<number>: <title>" \
-    "/full-loop Implement issue #<number> -- <description>" &
-fi
-```
+**Skip issues that already have an open PR:** If an issue number appears in the title or branch name of an open PR, a worker has already produced output for it. Do not dispatch another worker for the same issue. Check the PR list you already fetched — if any PR's `headRefName` or `title` contains the issue number, skip that issue.
 
-The helper extracts issue/PR/task numbers from any title format and checks both the process list and the supervisor DB. This prevents the same issue being dispatched multiple times with different title variations (e.g., "issue-2300-simplify-infra-scripts" vs "Issue #2300: t1337 Simplify Tier 3 infrastructure scripts").
+**Deduplication — check running processes:** Before dispatching, check `ps axo command | grep '/full-loop'` for any running worker whose command line contains the issue/PR number you're about to dispatch. Different pulse runs may have used different title formats for the same work (e.g., "issue-2300-simplify-infra-scripts" vs "Issue #2300: t1337 Simplify Tier 3"). Extract the canonical number (e.g., `2300`, `t1337`) and check if ANY running worker references it. If so, skip — do not dispatch a duplicate.
 
 ## Step 4: Dispatch Workers
 
