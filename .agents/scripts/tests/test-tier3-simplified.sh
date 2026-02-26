@@ -176,8 +176,8 @@ test_full_loop_helper() {
 	fi
 
 	# Test: start with no prompt
-	output=$("$helper" start "" 2>&1) || true
-	local rc=$?
+	local rc=0
+	output=$("$helper" start "" 2>&1) || rc=$?
 	if [[ $rc -ne 0 ]] || echo "$output" | grep -qi "no prompt\|usage"; then
 		print_result "full-loop: start (no prompt) fails" 0
 	else
@@ -271,8 +271,8 @@ test_fallback_chain_helper() {
 
 	# Test: unknown tier (with no API key set for unknown providers)
 	unset ANTHROPIC_API_KEY
-	output=$("$helper" resolve nonexistent --quiet 2>&1) || true
-	local rc=$?
+	local rc=0
+	output=$("$helper" resolve nonexistent --quiet 2>&1) || rc=$?
 	if [[ $rc -ne 0 ]] || echo "$output" | grep -qiE "unknown tier|error"; then
 		print_result "fallback: unknown tier fails" 0
 	else
@@ -376,10 +376,10 @@ test_budget_tracker_helper() {
 	local removed_cmds=("check" "recommend" "configure" "reset" "tier-drift" "prune")
 	local all_compat=true
 	for cmd in "${removed_cmds[@]}"; do
-		output=$("$helper" "$cmd" 2>&1) || true
-		rc=$?
-		if [[ $rc -ne 0 ]]; then
-			print_result "budget: backward compat '$cmd'" 1 "Exit code: $rc"
+		local cmd_rc=0
+		output=$("$helper" "$cmd" 2>&1) || cmd_rc=$?
+		if [[ $cmd_rc -ne 0 ]]; then
+			print_result "budget: backward compat '$cmd'" 1 "Exit code: $cmd_rc"
 			all_compat=false
 		fi
 	done
@@ -509,10 +509,10 @@ test_observability_helper() {
 	local removed_cmds=("summary" "models" "projects" "costs" "trend" "sync-budget" "prune")
 	local all_compat=true
 	for cmd in "${removed_cmds[@]}"; do
-		output=$("$helper" "$cmd" 2>&1) || true
-		rc=$?
-		if [[ $rc -ne 0 ]]; then
-			print_result "observability: backward compat '$cmd'" 1 "Exit code: $rc"
+		local cmd_rc=0
+		output=$("$helper" "$cmd" 2>&1) || cmd_rc=$?
+		if [[ $cmd_rc -ne 0 ]]; then
+			print_result "observability: backward compat '$cmd'" 1 "Exit code: $cmd_rc"
 			all_compat=false
 		fi
 	done
