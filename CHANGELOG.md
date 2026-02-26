@@ -7,10 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.133.9] - 2026-02-26
+
+### Changed
+
+- Documentation: changelog for tool check timeout fix
+
 ### Fixed
 
-- Tool version checks now timeout after 30s instead of hanging indefinitely on slow registries (#2286, #2380)
-- Update commands timeout after 120s to prevent infinite hangs during `aidevops update`
+- add timeouts to npm/brew/pip queries to prevent update hangs (#2286) (#2380)
 
 ## [2.133.8] - 2026-02-26
 
