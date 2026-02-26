@@ -87,12 +87,12 @@ If you see a pattern (same type of failure, same error), create an improvement i
 
 **Duplicate work:** If two open PRs target the same issue or have very similar titles, flag it by commenting on the newer one.
 
-**Long-running workers:** Check the runtime of each running worker process with `ps axo pid,etime,command | grep '/full-loop'`. The `etime` column shows elapsed time.
+**Long-running workers:** Check the runtime of each running worker process with `ps axo pid,etime,command | grep '/full-loop'`. The `etime` column shows elapsed time. The task size check in Step 3 should prevent most of these, but as a safety net:
 
-- **2+ hours:** Check if the worker has produced a PR by searching open PRs for the issue/task number. If no PR exists, comment on the GitHub issue telling the worker to stop trying to complete everything in one pass — it should PR whatever is done so far and create subtask issues for the remaining work. The comment should say something like: "Worker has been running 2+ hours with no PR. Please commit what you have, open a PR for the completed portion, and file GitHub issues for remaining subtasks. Smaller deliverables are better than stuck workers."
-- **3+ hours with no PR:** Kill the worker (`kill <pid>`). File a GitHub issue noting the task was too large for a single worker session and needs to be broken into subtasks before re-dispatch.
-- **3+ hours with a PR:** The worker is likely stuck in a CI fix or review feedback loop. Comment on the PR noting it may be stuck.
-- **6+ hours:** Kill regardless. A worker running this long is zombied or in an infinite loop.
+- **2+ hours, no PR:** Comment on the GitHub issue telling the worker to PR what's done and file subtask issues for the rest.
+- **3+ hours, no PR:** Kill the worker (`kill <pid>`). The task needs decomposition — create subtask issues.
+- **3+ hours, has PR:** Likely stuck in a CI/review loop. Comment on the PR.
+- **6+ hours:** Kill regardless — zombied or infinite loop.
 
 **Keep it lightweight.** This step should take seconds, not minutes. If nothing looks wrong, move on. The goal is to catch patterns over many pulses, not to do deep analysis on each one.
 
@@ -120,6 +120,17 @@ Look at everything you fetched and pick up to **AVAILABLE** items — the highes
 **Skip issues that already have an open PR:** If an issue number appears in the title or branch name of an open PR, a worker has already produced output for it. Do not dispatch another worker for the same issue. Check the PR list you already fetched — if any PR's `headRefName` or `title` contains the issue number, skip that issue.
 
 **Deduplication — check running processes:** Before dispatching, check `ps axo command | grep '/full-loop'` for any running worker whose command line contains the issue/PR number you're about to dispatch. Different pulse runs may have used different title formats for the same work (e.g., "issue-2300-simplify-infra-scripts" vs "Issue #2300: t1337 Simplify Tier 3"). Extract the canonical number (e.g., `2300`, `t1337`) and check if ANY running worker references it. If so, skip — do not dispatch a duplicate.
+
+**Task size check — decompose before dispatching:** Before dispatching a worker for an issue, read the issue body with `gh issue view <number> --repo <owner/repo> --json body`. Ask yourself: can a single worker session (roughly 1-2 hours) complete this? Signs it's too big:
+
+- The issue describes multiple independent changes across different files/systems
+- It has a checklist with 5+ items
+- It uses words like "audit all", "refactor entire", "migrate everything"
+- It spans multiple repos or services
+
+If the task looks too large, do NOT dispatch a worker. Instead, create subtask issues that break it into achievable chunks (each completable in one worker session), then label the parent issue `status:blocked` with `blocked-by:` references to the subtasks. The subtasks will be picked up by future pulses. This is far more productive than dispatching a worker that grinds for hours and produces nothing mergeable.
+
+If you're unsure whether it needs decomposition, dispatch the worker — but prefer to err on the side of smaller tasks. A worker that finishes in 30 minutes and opens a clean PR is worth more than one that runs for 3 hours and gets killed.
 
 ## Step 4: Dispatch Workers
 
