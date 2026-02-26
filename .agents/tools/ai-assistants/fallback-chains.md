@@ -1,260 +1,108 @@
 ---
-description: Fallback chain configuration for multi-provider model resolution
+description: Model routing table and availability checking for fallback resolution
 mode: subagent
 tools:
   read: true
   write: false
   edit: false
   bash: true
-  glob: true
-  grep: true
+  glob: false
+  grep: false
   webfetch: false
 ---
 
-# Fallback Chain Configuration
+# Model Routing & Fallback
 
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
-- **Script**: `scripts/fallback-chain-helper.sh [resolve|trigger|chain|status|validate|gateway]`
-- **Config**: `configs/fallback-chain-config.json` (from `.json.txt` template)
-- **Per-agent**: YAML frontmatter `fallback-chain:` in model tier files
-- **Database**: `~/.aidevops/.agent-workspace/fallback-chain.db`
-- **Triggers**: api_error, timeout, rate_limit, auth_error, overloaded
-- **Gateways**: OpenRouter, Cloudflare AI Gateway
+- **Script**: `scripts/fallback-chain-helper.sh [resolve|table|help]`
+- **Routing table**: `configs/model-routing-table.json`
+- **Availability**: `scripts/model-availability-helper.sh` (provider health probes)
+- **Routing rules**: `tools/context/model-routing.md` (AI reads this for decisions)
 
 <!-- AI-CONTEXT-END -->
 
 ## Overview
 
-The fallback chain system provides configurable, multi-provider model resolution with automatic failover. When a provider fails (API error, timeout, rate limit), the system walks a chain of alternative providers until one succeeds.
+The fallback system uses a **data-driven routing table** (JSON) that AI reads directly to understand available models per tier. The bash script only checks model availability — all routing decisions (which model to try, when to fall back, cooldown logic) are made by the AI agent.
 
-```text
-Request -> Primary Provider -> [FAIL] -> Fallback 1 -> [FAIL] -> Gateway Provider -> [OK]
-                                  |                        |
-                              cooldown                 cooldown
-```
+This follows the **Intelligence Over Scripts** principle: deterministic utilities (health checks) stay in bash; judgment calls (routing priority, error recovery) belong to the AI.
 
-## Configuration Layers
+## Routing Table
 
-Fallback chains are resolved with this priority:
-
-1. **Per-agent frontmatter** -- `fallback-chain:` in model tier `.md` files
-2. **Global config** -- `configs/fallback-chain-config.json` tier-specific chains
-3. **Global default** -- `configs/fallback-chain-config.json` `default` chain
-4. **Hardcoded** -- Built-in minimal chains matching `model-availability-helper.sh`
-
-### Per-Agent Frontmatter
-
-Add `fallback-chain:` to any model tier file's YAML frontmatter:
-
-```yaml
----
-model: anthropic/claude-sonnet-4-6
-model-tier: sonnet
-model-fallback: openai/gpt-4.1
-fallback-chain:
-  - anthropic/claude-sonnet-4-6
-  - openai/gpt-4.1
-  - google/gemini-2.5-pro
-  - openrouter/anthropic/claude-sonnet-4-6
----
-```
-
-### Global Config
-
-Edit `configs/fallback-chain-config.json` (copy from `.json.txt` template):
+The routing table at `configs/model-routing-table.json` defines models per tier:
 
 ```json
 {
-  "chains": {
-    "sonnet": [
-      "anthropic/claude-sonnet-4-6",
-      "openai/gpt-4.1",
-      "google/gemini-2.5-pro",
-      "openrouter/anthropic/claude-sonnet-4-6"
-    ]
+  "tiers": {
+    "haiku":  { "models": ["anthropic/claude-haiku-4-5"] },
+    "sonnet": { "models": ["anthropic/claude-sonnet-4-6"] },
+    "opus":   { "models": ["anthropic/claude-opus-4-6"] },
+    "coding": { "models": ["anthropic/claude-opus-4-6", "anthropic/claude-sonnet-4-6"] }
   }
 }
 ```
 
-## Model Spec Formats
-
-| Format | Example | Description |
-|--------|---------|-------------|
-| `provider/model` | `anthropic/claude-sonnet-4-6` | Direct provider API |
-| `openrouter/provider/model` | `openrouter/anthropic/claude-sonnet-4-6` | Via OpenRouter gateway |
-| `gateway/cf/provider/model` | `gateway/cf/anthropic/claude-sonnet-4-6` | Via Cloudflare AI Gateway |
-
-## Trigger Types
-
-Triggers activate fallback when specific error conditions are detected:
-
-| Trigger | HTTP Codes | Default Cooldown | Description |
-|---------|-----------|-----------------|-------------|
-| `api_error` | 500, 502, 503, 504 | 5 minutes | Server errors, connection failures |
-| `timeout` | -- | 3 minutes | Request exceeded timeout |
-| `rate_limit` | 429 | 1 minute | Rate limited by provider |
-| `auth_error` | 401, 403 | 1 hour | Invalid or expired API key |
-| `overloaded` | 529 | 2 minutes | Provider capacity exceeded |
-
-Triggers can be enabled/disabled and cooldowns customized in the config:
-
-```json
-{
-  "triggers": {
-    "rate_limit": {
-      "enabled": true,
-      "cooldown_seconds": 60
-    },
-    "auth_error": {
-      "enabled": true,
-      "cooldown_seconds": 3600
-    }
-  }
-}
-```
-
-## Gateway Providers
-
-Gateway providers route requests through a unified API, providing provider-level fallback without needing individual API keys for every provider.
-
-### OpenRouter
-
-OpenRouter provides access to 100+ models through a single API key.
-
-```bash
-# Check OpenRouter availability
-fallback-chain-helper.sh gateway openrouter
-
-# Models routed via OpenRouter use the format:
-# openrouter/provider/model
-# e.g., openrouter/anthropic/claude-sonnet-4-6
-```
-
-**Setup**: Set `OPENROUTER_API_KEY` environment variable or store via `aidevops secret set OPENROUTER_API_KEY`.
-
-### Cloudflare AI Gateway
-
-Cloudflare AI Gateway adds caching, rate limiting, and analytics on top of any provider.
-
-```bash
-# Check Cloudflare AI Gateway availability
-fallback-chain-helper.sh gateway cloudflare
-
-# Models routed via CF AI Gateway use the format:
-# gateway/cf/provider/model
-# e.g., gateway/cf/anthropic/claude-sonnet-4-6
-```
-
-**Setup**: Configure `account_id` and `gateway_id` in `configs/fallback-chain-config.json`. Set `CF_AIG_TOKEN` for authenticated gateways.
+Tiers: `haiku`, `flash`, `sonnet`, `pro`, `opus`, `coding`, `eval`, `health`
 
 ## CLI Usage
 
 ```bash
-# Resolve best model for a tier (walks the chain)
+# Resolve best available model for a tier
 fallback-chain-helper.sh resolve coding
-fallback-chain-helper.sh resolve sonnet --json
+fallback-chain-helper.sh resolve sonnet --json --quiet
 
-# Resolve with per-agent override
-fallback-chain-helper.sh resolve sonnet --agent models/sonnet.md
+# Print the full routing table
+fallback-chain-helper.sh table
 
-# Process an error trigger (puts failed provider in cooldown, returns next)
-fallback-chain-helper.sh trigger coding 429 --failed-model anthropic/claude-opus-4-6
-
-# Show chain for a tier
-fallback-chain-helper.sh chain opus
-
-# Show overall status (cooldowns, gateways, recent triggers)
-fallback-chain-helper.sh status
-
-# Validate configuration
-fallback-chain-helper.sh validate
-
-# Check gateway health
-fallback-chain-helper.sh gateway openrouter
-fallback-chain-helper.sh gateway cloudflare
+# Help
+fallback-chain-helper.sh help
 ```
+
+## How Resolution Works
+
+1. Script reads the routing table for the requested tier
+2. Walks the model list in order
+3. For each model, checks provider availability via `model-availability-helper.sh`
+4. Returns the first available model
+5. If all models exhausted, returns exit code 1
+
+No cooldowns, triggers, gateway probing, or SQLite database. The AI handles error recovery and routing decisions using the routing table as reference data.
 
 ## Integration
 
-### Supervisor (automatic)
+### Callers
 
-The supervisor's `resolve_model()` function automatically uses the fallback chain:
+| Caller | Function | How it calls |
+|--------|----------|-------------|
+| `model-availability-helper.sh` | `resolve_tier()` | `fallback-chain-helper.sh resolve <tier> --quiet` as extended fallback |
+| `model-availability-helper.sh` | `resolve_tier_chain()` | `fallback-chain-helper.sh resolve <tier> --quiet` for full chain |
+| `shared-constants.sh` | `resolve_model_tier()` | `fallback-chain-helper.sh resolve <tier> --quiet` with static fallback |
 
-```text
-resolve_model("coding")
-  -> fallback-chain-helper.sh resolve coding    (t132.4: full chain)
-  -> model-availability-helper.sh resolve coding (t132.3: primary/fallback)
-  -> static defaults                             (hardcoded last resort)
-```
+### AI Agent Usage
 
-### Model Availability Helper
+AI agents read `model-routing.md` for routing rules and the routing table for available models. When a provider fails at runtime, the AI decides the next action (retry, fall back, escalate) — not bash.
 
-The `resolve` command now falls through to the fallback chain when primary/fallback both fail:
+## Migration from v1
 
-```bash
-# Simple resolution (primary + single fallback)
-model-availability-helper.sh resolve coding
+v2 removed (moved to AI judgment):
+- SQLite database (cooldowns, trigger logs, gateway health)
+- Provider cooldown management
+- Trigger classification (429, 5xx, timeout detection)
+- Gateway probing (OpenRouter, Cloudflare AI Gateway)
+- Per-agent YAML frontmatter parsing
+- `chain`, `status`, `validate`, `gateway`, `trigger` commands
 
-# Full chain resolution (all configured providers + gateways)
-model-availability-helper.sh resolve-chain coding
-model-availability-helper.sh resolve-chain sonnet --agent models/sonnet.md
-```
-
-### Error Recovery in Workers
-
-Workers can use the trigger command to handle runtime errors:
-
-```bash
-# Worker encounters rate limit from Anthropic
-NEXT_MODEL=$(fallback-chain-helper.sh trigger coding 429 \
-  --failed-model anthropic/claude-opus-4-6 --quiet)
-
-# Re-dispatch with the fallback model
-opencode run -m "$NEXT_MODEL" "Continue the task..."
-```
-
-## Architecture
-
-```text
-                    ┌─────────────────────────────────────┐
-                    │        Fallback Chain Config          │
-                    │  (per-agent frontmatter > global)     │
-                    └──────────────┬──────────────────────┘
-                                   │
-                    ┌──────────────▼──────────────────────┐
-                    │     fallback-chain-helper.sh          │
-                    │  ┌─────────────────────────────────┐ │
-                    │  │ Trigger Detection                │ │
-                    │  │ (429, 5xx, timeout, auth, 529)   │ │
-                    │  └──────────┬──────────────────────┘ │
-                    │             │                         │
-                    │  ┌──────────▼──────────────────────┐ │
-                    │  │ Provider Cooldown Manager        │ │
-                    │  │ (SQLite, per-provider TTL)       │ │
-                    │  └──────────┬──────────────────────┘ │
-                    │             │                         │
-                    │  ┌──────────▼──────────────────────┐ │
-                    │  │ Chain Walker                     │ │
-                    │  │ (skip cooled-down providers)     │ │
-                    │  └──────────┬──────────────────────┘ │
-                    └─────────────┼───────────────────────┘
-                                  │
-              ┌───────────────────┼───────────────────┐
-              │                   │                   │
-     ┌────────▼──────┐  ┌────────▼──────┐  ┌────────▼──────┐
-     │ Direct Provider│  │  OpenRouter   │  │  CF AI Gateway │
-     │ (Anthropic,    │  │  (unified API)│  │  (cache+route) │
-     │  OpenAI, etc.) │  │              │  │               │
-     └───────────────┘  └──────────────┘  └───────────────┘
-```
+v2 kept:
+- `resolve <tier>` command (table lookup + availability check)
+- `is_model_available()` health check (delegates to model-availability-helper.sh)
+- Same exit codes and stdout interface
 
 ## Related
 
-- `scripts/model-availability-helper.sh` -- Provider health probes and tier resolution
-- `scripts/model-registry-helper.sh` -- Model registry with periodic sync
-- `scripts/supervisor-helper.sh` -- Autonomous task orchestration
-- `tools/ai-assistants/models/README.md` -- Model tier definitions
-- `services/hosting/cloudflare-platform/references/ai-gateway/README.md` -- CF AI Gateway reference
+- `tools/context/model-routing.md` — Routing rules and tier definitions (AI reads this)
+- `scripts/model-availability-helper.sh` — Provider health probes and tier resolution
+- `scripts/model-registry-helper.sh` — Model registry with periodic sync
+- `configs/model-routing-table.json` — The routing table data
