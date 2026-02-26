@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Pulse scheduler setup guide in runners.md — plist template, reboot behavior, RunAtLoad (#2383)
+
 ## [2.133.10] - 2026-02-26
 
 ### Changed
