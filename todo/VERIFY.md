@@ -2568,7 +2568,7 @@
   check: file-exists .agents/tools/context/model-routing.md
   check: rg "model-routing" .agents/subagent-index.toon
 
-- [ ] v297 t1338.3 Create huggingface.md subagent #auto-dispatch — new `.age... | PR #2335 | merged:2026-02-26
+- [x] v297 t1338.3 Create huggingface.md subagent #auto-dispatch — new `.age... | PR #2335 | merged:2026-02-26 verified:2026-02-26
   files: .agents/subagent-index.toon, .agents/tools/context/model-routing.md, .agents/tools/local-models/huggingface.md, .agents/tools/local-models/local-models.md
   check: file-exists .agents/subagent-index.toon
   check: file-exists .agents/tools/context/model-routing.md
@@ -2577,3 +2577,8 @@
   check: rg "model-routing" .agents/subagent-index.toon
   check: rg "huggingface" .agents/subagent-index.toon
   check: rg "local-models" .agents/subagent-index.toon
+
+- [ ] v298 t1328 Matterbridge agent for multi-platform chat bridging — sub... | PR #2387 | merged:2026-02-26
+  files: .agents/scripts/tests/test-matterbridge-helper.sh
+  check: shellcheck .agents/scripts/tests/test-matterbridge-helper.sh
+  check: file-exists .agents/scripts/tests/test-matterbridge-helper.sh
