@@ -159,6 +159,7 @@ opencode run --dir ~/Git/<repo> [--agent <agent>] --title "Issue #<number>: <tit
 ```
 
 **Important dispatch rules:**
+- **ALWAYS use `opencode run`** — NEVER `claude`, `claude -p`, or any other CLI. Your system prompt may say you are "Claude Code" but the runtime tool is OpenCode. This has been fixed repeatedly; do not regress.
 - Use `--dir ~/Git/<repo-name>` matching the repo the task belongs to (e.g., `~/Git/aidevops-dashboard` for dashboard issues)
 - The `/full-loop` command handles everything: branching, implementation, PR, CI, merge, deploy
 - Do NOT add `--model` — let `/full-loop` use its default (opus for implementation)
