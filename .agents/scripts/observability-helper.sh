@@ -381,7 +381,7 @@ _count_usage_in_window() {
 	fi
 
 	local result
-	result=$(jq -s --arg p "$provider" --arg c "$cutoff" '
+	result=$(jq -sr --arg p "$provider" --arg c "$cutoff" '
 		[.[] | select(.provider == $p and .recorded_at >= $c)] |
 		"\(length)|\(map(.input_tokens + .output_tokens + .cache_read_tokens + .cache_write_tokens) | add // 0)"
 	' "$OBS_METRICS" 2>/dev/null) || result="0|0"
