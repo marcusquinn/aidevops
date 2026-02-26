@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Pulse supervisor: stronger autonomous execution enforcement — prevents report-and-stop pattern (#2376)
+
 ## [2.133.5] - 2026-02-26
 
 ### Added
