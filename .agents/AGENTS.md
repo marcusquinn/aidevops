@@ -178,6 +178,7 @@ Read subagents on-demand. Full index: `subagent-index.toon`.
 | Infrastructure | `tools/infrastructure/cloud-gpu.md`, `tools/containers/orbstack.md`, `tools/containers/remote-dispatch.md` |
 | Accessibility | `services/accessibility/accessibility-audit.md` |
 | OpenAPI exploration | `tools/context/openapi-search.md` |
+| Local models | `tools/local-models/local-models.md`, `scripts/local-model-helper.sh` |
 | Model routing | `tools/context/model-routing.md`, `reference/orchestration.md` |
 | Orchestration | `reference/orchestration.md`, `tools/ai-assistants/headless-dispatch.md` |
 | Agent/MCP dev | `tools/build-agent/build-agent.md`, `tools/build-mcp/build-mcp.md`, `tools/mcp-toolkit/mcporter.md` |
@@ -189,7 +190,7 @@ Read subagents on-demand. Full index: `subagent-index.toon`.
 
 Key capabilities (details in `reference/orchestration.md`, `reference/services.md`, `reference/session.md`):
 
-- **Model routing**: haiku→flash→sonnet→pro→opus (cost-aware)
+- **Model routing**: local→haiku→flash→sonnet→pro→opus (cost-aware)
 - **Memory**: cross-session SQLite FTS5 (`/remember`, `/recall`)
 - **Orchestration**: supervisor dispatch, pulse scheduler, auto-pickup, cross-repo issue/PR/TODO visibility
 - **Skills**: `aidevops skills`, `/skills`
