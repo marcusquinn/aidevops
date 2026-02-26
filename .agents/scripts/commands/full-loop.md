@@ -90,6 +90,41 @@ If the first argument is a task ID (`t\d+`), claim it before starting work. This
 - The first argument is not a task ID (it's a description)
 - The `--no-claim` flag is passed
 
+### Step 0.6: Update Issue Label — `status:in-progress`
+
+After claiming the task, update the linked GitHub issue label to reflect that work has started. This gives at-a-glance visibility into which tasks have active workers.
+
+```bash
+# Find the linked issue number (from task ID search)
+ISSUE_NUM=$(gh issue list --repo "$(gh repo view --json nameWithOwner -q .nameWithOwner)" \
+  --state open --search "${TASK_ID}:" --json number,title --limit 5 \
+  | jq -r --arg tid "$TASK_ID" '[.[] | select(.title | test("^" + $tid + "[.:\\s]"))] | .[0].number // empty' 2>/dev/null || true)
+
+if [[ -n "$ISSUE_NUM" && "$ISSUE_NUM" != "null" ]]; then
+  REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+  gh issue edit "$ISSUE_NUM" --repo "$REPO" --add-label "status:in-progress" 2>/dev/null || true
+  for STALE in "status:available" "status:queued" "status:claimed"; do
+    gh issue edit "$ISSUE_NUM" --repo "$REPO" --remove-label "$STALE" 2>/dev/null || true
+  done
+fi
+```
+
+**Label vocabulary** — use these status labels at the appropriate lifecycle points:
+
+| Label | When to set | Set by |
+|-------|-------------|--------|
+| `status:available` | Issue created, no assignee | issue-sync-helper (automated) |
+| `status:queued` | Task queued for dispatch | Supervisor (contextual) |
+| `status:claimed` | Task has assignee, not yet started | issue-sync-helper (automated) |
+| `status:in-progress` | Worker actively coding | **Worker (this step)** |
+| `status:in-review` | PR opened, awaiting review | **Worker (Step 4)** |
+| `status:blocked` | Task has unresolved blockers | Worker or supervisor (contextual) |
+| `status:done` | PR merged | sync-on-pr-merge workflow (automated) |
+| `status:verify-failed` | Post-merge verification failed | Worker (contextual) |
+| `status:needs-testing` | Code merged, needs manual testing | Worker (contextual) |
+
+Only `status:available`, `status:claimed`, and `status:done` are fully automated. All other transitions are set contextually by the agent that best understands the current state. When setting a new status label, always remove the prior status labels to keep exactly one active.
+
 ### Step 1: Auto-Branch Setup
 
 The loop automatically handles branch setup when on main/master:
@@ -285,12 +320,26 @@ After task completion, the loop automatically:
 
 1. **Preflight**: Runs quality checks, auto-fixes issues
 2. **PR Create**: Verifies `gh auth`, rebases onto `origin/main`, pushes branch, creates PR with proper title/body
-3. **PR Review**: Monitors CI checks and review status
-4. **Merge**: Squash merge (without `--delete-branch` when in worktree)
-5. **Issue Closing Comment**: Post a summary comment on linked issues (see below)
-6. **Worktree Cleanup**: Return to main repo, pull, clean merged worktrees
-7. **Postflight**: Verifies release health after merge
-8. **Deploy**: Runs `setup.sh --non-interactive` (aidevops repos only)
+3. **Label Update**: Update linked issue to `status:in-review` (see below)
+4. **PR Review**: Monitors CI checks and review status
+5. **Merge**: Squash merge (without `--delete-branch` when in worktree)
+6. **Issue Closing Comment**: Post a summary comment on linked issues (see below)
+7. **Worktree Cleanup**: Return to main repo, pull, clean merged worktrees
+8. **Postflight**: Verifies release health after merge
+9. **Deploy**: Runs `setup.sh --non-interactive` (aidevops repos only)
+
+**Issue label update on PR create — `status:in-review`:**
+
+After creating the PR, update linked issues to `status:in-review`. Extract linked issue numbers from the PR body (`Fixes #NNN`, `Closes #NNN`, `Resolves #NNN`) and update each:
+
+```bash
+for ISSUE_NUM in $LINKED_ISSUES; do
+  gh issue edit "$ISSUE_NUM" --repo "$REPO" --add-label "status:in-review" 2>/dev/null || true
+  gh issue edit "$ISSUE_NUM" --repo "$REPO" --remove-label "status:in-progress" 2>/dev/null || true
+done
+```
+
+The `status:done` transition is handled automatically by the `sync-on-pr-merge` workflow when the PR merges — workers do not need to set it.
 
 **Issue closing comment (MANDATORY — do NOT skip):**
 

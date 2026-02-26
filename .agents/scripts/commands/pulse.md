@@ -156,6 +156,21 @@ opencode run --dir ~/Git/<repo> [--agent <agent>] --title "Issue #<number>: <tit
 - **Background each dispatch with `&`** so you can launch multiple workers in one pulse
 - Wait briefly between dispatches (`sleep 2`) to avoid race conditions on worktree creation
 
+**Issue label update on dispatch — `status:queued`:**
+
+When dispatching a worker for an issue, update the issue label to `status:queued` so the tracker reflects that work is about to start. The worker will transition it to `status:in-progress` when it begins coding, and `status:in-review` when it opens a PR.
+
+```bash
+# After successful dispatch for an issue
+gh issue edit <ISSUE_NUM> --repo <owner/repo> --add-label "status:queued" 2>/dev/null || true
+for STALE in "status:available" "status:claimed"; do
+  gh issue edit <ISSUE_NUM> --repo <owner/repo> --remove-label "$STALE" 2>/dev/null || true
+done
+```
+
+This is contextual — only set it when you actually dispatch a worker. The full label lifecycle is:
+`available` → `queued` (supervisor dispatches) → `in-progress` (worker starts) → `in-review` (PR opened) → `done` (PR merged, automated).
+
 ### Agent routing
 
 Not every task is code. Read the task description and route to the right primary agent using `--agent`. See `AGENTS.md` "Agent Routing" for the full table. Quick guide:
