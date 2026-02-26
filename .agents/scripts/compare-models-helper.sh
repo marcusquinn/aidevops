@@ -932,15 +932,24 @@ ${original_prompt}
 
 MODEL RESPONSES:
 "
+	# Bound per-model response size to keep judge payload within token limits
+	local max_chars_per_model=20000
 	local models_with_output=()
 	for model_tier in "${model_names[@]}"; do
 		local result_file="${output_dir}/${model_tier}.txt"
 		if [[ -f "$result_file" && -s "$result_file" ]]; then
 			local response_text
-			response_text=$(cat "$result_file")
+			response_text=$(head -c "$max_chars_per_model" "$result_file")
+			local file_size
+			file_size=$(wc -c <"$result_file" | tr -d ' ')
+			local truncated_marker=""
+			if [[ "$file_size" -gt "$max_chars_per_model" ]]; then
+				truncated_marker="
+[TRUNCATED — original ${file_size} chars, showing first ${max_chars_per_model}]"
+			fi
 			judge_prompt+="
 === MODEL: ${model_tier} ===
-${response_text}
+${response_text}${truncated_marker}
 "
 			models_with_output+=("$model_tier")
 		fi
@@ -1827,14 +1836,18 @@ cmd_score() {
 		return 1
 	fi
 
-	# Insert comparison record
-	local comp_id
-	comp_id=$(sqlite3 "$RESULTS_DB" "INSERT INTO comparisons (task_description, task_type, evaluator_model, winner_model) VALUES ('$(echo "$task" | sed "s/'/''/g")', '$task_type', '$evaluator', '$winner'); SELECT last_insert_rowid();")
+	# Insert comparison record (use parameter expansion for SQL escaping — SC2001)
+	local comp_id safe_task
+	safe_task="${task//\'/\'\'}"
+	comp_id=$(sqlite3 "$RESULTS_DB" "INSERT INTO comparisons (task_description, task_type, evaluator_model, winner_model) VALUES ('${safe_task}', '$task_type', '$evaluator', '$winner'); SELECT last_insert_rowid();")
 
 	# Insert scores for each model
 	for entry in "${model_entries[@]}"; do
 		IFS='|' read -r m_id m_cor m_com m_qua m_cla m_adh m_ove m_lat m_tok m_str m_wea m_res <<<"$entry"
-		sqlite3 "$RESULTS_DB" "INSERT INTO comparison_scores (comparison_id, model_id, correctness, completeness, code_quality, clarity, adherence, overall, latency_ms, tokens_used, strengths, weaknesses, response_file) VALUES ($comp_id, '$m_id', $m_cor, $m_com, $m_qua, $m_cla, $m_adh, $m_ove, $m_lat, $m_tok, '$(echo "$m_str" | sed "s/'/''/g")', '$(echo "$m_wea" | sed "s/'/''/g")', '$(echo "$m_res" | sed "s/'/''/g")');"
+		local safe_str="${m_str//\'/\'\'}"
+		local safe_wea="${m_wea//\'/\'\'}"
+		local safe_res="${m_res//\'/\'\'}"
+		sqlite3 "$RESULTS_DB" "INSERT INTO comparison_scores (comparison_id, model_id, correctness, completeness, code_quality, clarity, adherence, overall, latency_ms, tokens_used, strengths, weaknesses, response_file) VALUES ($comp_id, '$m_id', $m_cor, $m_com, $m_qua, $m_cla, $m_adh, $m_ove, $m_lat, $m_tok, '${safe_str}', '${safe_wea}', '${safe_res}');"
 	done
 
 	print_success "Comparison #$comp_id recorded ($task_type: ${#model_entries[@]} models scored)"
