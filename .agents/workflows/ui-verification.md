@@ -241,6 +241,72 @@ Compare before/after screenshots. Report findings with evidence:
 - [tablet-landscape] Navigation dropdown clips at right edge
 ```
 
+## Design Principles Checklist
+
+Every UI change must be evaluated against these principles. They are not suggestions -- they are quality gates. Check each applicable principle during verification (step 5) and report violations in the verification report (step 6).
+
+### Typography and Readability
+
+| Principle | Rule | How to verify |
+|-----------|------|---------------|
+| **Maximum paragraph width** | No paragraph text wider than 740px (approximately 75 characters per line) | Inspect `max-width` on text containers; screenshot at desktop-lg to confirm text does not stretch edge-to-edge |
+| **Minimum text size** | Body text minimum 16px (1rem). No text below 14px except legal footnotes or captions | Playwright `evaluate()` to check computed `font-size` on all text elements |
+| **Font family limit** | Maximum 3 font families: (1) headings/titles, (2) body/buttons/forms/blockquotes, (3) code/monospace | Inspect computed `font-family` values across the page; flag any fourth family |
+| **Font weight hierarchy** | Use distinct font weights to establish visual hierarchy (e.g., 700 headings, 400 body, 600 labels). Avoid using a single weight for everything | Check that headings are visually heavier than body text in screenshots |
+| **Line height** | Line spacing sufficient to prevent text overlap when wrapping. Minimum `line-height: 1.4` for body text, `1.2` for headings | Inspect computed `line-height`; verify wrapped text does not collide in screenshots |
+| **Letter spacing** | Letter spacing adequate to prevent character overlap. Default is usually fine; verify custom fonts do not collapse characters | Visual check in screenshots, especially at small sizes and bold weights |
+| **Widow and orphan control** | Avoid single words on a final line (widows) or single lines at the top of a column (orphans). Use `text-wrap: balance` or `text-wrap: pretty` where supported | Visual check in screenshots at multiple widths; verify headings and short paragraphs do not leave isolated words |
+
+### Layout and Spacing
+
+| Principle | Rule | How to verify |
+|-----------|------|---------------|
+| **Consistent padding** | Use a spacing scale (e.g., 4/8/12/16/24/32/48px). Padding should be consistent between similar elements | Inspect padding values; flag inconsistent spacing between sibling elements |
+| **Adequate padding for readability** | Text containers must have sufficient internal padding -- text should never touch container edges | Screenshot check; verify text has breathing room inside cards, sections, and containers |
+| **Consistent alignment** | Elements within a section should share alignment (left-aligned, centred, or right-aligned). Do not mix alignment arbitrarily | Visual check in screenshots; verify form labels, headings, and body text align consistently |
+| **Consistent sizing** | Similar elements (cards, buttons, icons) should be the same size. Avoid arbitrary size variation | Visual check; verify repeated elements are uniform |
+| **Logo padding** | Brand logos must have adequate clear space around them -- never crowded by adjacent elements | Screenshot check; verify logo has breathing room in header/nav |
+| **Graceful responsive adjustment** | Layout should adapt smoothly across breakpoints, not just snap between fixed layouts. Content should work for varying lengths (short titles, long titles, empty states) | Test with different content lengths at each breakpoint; verify no overflow, truncation, or collapse |
+
+### Interaction and Accessibility
+
+| Principle | Rule | How to verify |
+|-----------|------|---------------|
+| **Finger-friendly touch targets** | All interactive elements minimum 44x44px touch target (WCAG 2.5.8). Adequate spacing between adjacent targets to prevent mis-taps | Playwright `evaluate()` to measure element bounding boxes on mobile device emulation |
+| **Hover/rollover state changes** | All clickable elements must have a visible hover state change (colour, underline, shadow, scale) to signal interactivity | Playwright `hover()` + screenshot comparison; verify visual change on buttons, links, cards |
+| **Link text styling in paragraphs** | Links within paragraph text must be bold, underlined, and use a distinct colour to be identifiable without relying on colour alone | Inspect computed styles on `<a>` elements within `<p>` tags; verify `font-weight`, `text-decoration`, and `color` differ from surrounding text |
+| **Meaningful alt and title attributes** | All images must have descriptive `alt` text. Include relevant brand and subject keywords for SEO. Decorative images use `alt=""`. Interactive elements should have `title` attributes where helpful for screen readers | Playwright `evaluate()` to audit all `<img>` elements for `alt`; flag empty or generic values like "image" or "photo" |
+| **Information-relevant icons** | Icons should reinforce meaning, not decorate. Every icon should be understandable without its label, or be paired with a text label | Visual check; verify icons match their associated action or content |
+| **Scroll wheel behaviour** | Mouse scroll wheel must work as expected on all scrollable areas. Custom scroll containers, modals, carousels, and overflow regions must not trap, hijack, or block scroll events. Page scroll must not be intercepted by nested scrollable elements unexpectedly | Playwright `mouse.wheel()` on page body and any custom scroll containers; verify scroll position changes as expected and no scroll-trapping occurs |
+
+### Colour and Theming
+
+| Principle | Rule | How to verify |
+|-----------|------|---------------|
+| **Informational colour coding** | Use conventional colour associations (red=error/danger, amber=warning, green=success, blue=info). Colours should be distinct from each other and sympathetic to brand colours in hue and tone | Visual check; verify status colours are distinguishable and follow conventions |
+| **Text highlighting for both modes** | Any text highlighting (selection, search results, emphasis backgrounds) must maintain adequate contrast in both light and dark modes | Test with `colorScheme: 'light'` and `colorScheme: 'dark'`; run contrast check on highlighted elements |
+| **Brand logo links to home** | Brand logos in navigation areas must link to the home page (`/` or site root) | Playwright `evaluate()` to verify logo `<a>` element `href` is `/` or the site root URL |
+
+### Information Architecture
+
+| Principle | Rule | How to verify |
+|-----------|------|---------------|
+| **Clear information hierarchy** | Visual hierarchy must be established through layout position, font size, font weight, and whitespace -- not colour alone. The most important content should be the most visually prominent | Screenshot check; verify primary content/CTA is the first thing the eye is drawn to |
+| **Standard naming conventions** | CSS classes, component names, and design tokens should follow clear, hierarchical naming (e.g., BEM, utility-first, or design-token conventions). Names should be descriptive and consider future extensibility | Code review; verify naming is consistent and self-documenting |
+
+### Usability (Mom Test)
+
+After all technical checks pass, evaluate the page against the Mom Test heuristic (see `seo/mom-test-ux.md`):
+
+- **Clarity**: Can a non-technical user understand what the page wants them to do within 10 seconds?
+- **Simplicity**: Is there unnecessary complexity, clutter, or cognitive load?
+- **Consistency**: Do similar elements look and behave the same way across pages?
+- **Feedback**: Does every interaction produce a visible response?
+- **Discoverability**: Can users find what they need without instructions?
+- **Forgiveness**: Can users recover from mistakes easily?
+
+If the page fails any Mom Test principle at severity S1 (blocker) or S2 (major), it must be fixed before the task is considered complete.
+
 ## Quick Verification (Minimal)
 
 For small CSS tweaks where full verification is overkill, run the minimum:
@@ -249,17 +315,18 @@ For small CSS tweaks where full verification is overkill, run the minimum:
 # 1. Screenshot at 3 sizes (mobile, tablet, desktop)
 # 2. Check for console errors
 # 3. Run contrast check on affected components
+# 4. Spot-check: paragraph width, text size, touch targets
 ```
 
-The full workflow (6 steps) is for significant layout changes, new components, or responsive redesigns.
+The full workflow (6 steps + design principles) is for significant layout changes, new components, or responsive redesigns.
 
 ## Integration with Build Workflow
 
 This workflow slots into Build+ steps 8-9 (Testing and Validate):
 
 1. Steps 1-7 proceed as normal
-2. **Step 8 (Testing)**: If task involves UI changes, run UI Verification steps 1-5 alongside unit/integration tests
-3. **Step 9 (Validate)**: Include UI verification report as evidence. "Browser (UI)" in the verification hierarchy means *actual browser screenshots*, not self-assessment
+2. **Step 8 (Testing)**: If task involves UI changes, run UI Verification steps 1-5 alongside unit/integration tests. Check applicable design principles.
+3. **Step 9 (Validate)**: Include UI verification report as evidence. "Browser (UI)" in the verification hierarchy means *actual browser screenshots*, not self-assessment. Report any design principle violations with severity.
 
 ## When to Skip
 
@@ -269,7 +336,7 @@ This workflow slots into Build+ steps 8-9 (Testing and Validate):
 - Database migrations (unless they affect displayed data)
 - API-only changes (unless they affect rendered content)
 
-When in doubt, run at least the quick verification (3 screenshots + console error check). It takes under 30 seconds and catches layout regressions that code review cannot.
+When in doubt, run at least the quick verification (3 screenshots + console error check + design principle spot-check). It takes under 30 seconds and catches layout regressions that code review cannot.
 
 ## Related
 
