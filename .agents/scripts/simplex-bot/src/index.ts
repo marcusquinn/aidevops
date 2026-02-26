@@ -26,14 +26,16 @@ import type {
   CommandContext,
   CommandDefinition,
   ContactInfo,
+  ExecApprovalConfig,
   GroupInfo,
   NewChatItemsEvent,
   SimplexCommand,
   SimplexEvent,
   SimplexResponse,
 } from "./types";
-import { DEFAULT_BOT_CONFIG } from "./types";
-import { BUILTIN_COMMANDS } from "./commands";
+import { DEFAULT_BOT_CONFIG, DEFAULT_EXEC_APPROVAL_CONFIG } from "./types";
+import { BUILTIN_COMMANDS, getApprovalManager, setApprovalManager } from "./commands";
+import { ApprovalManager } from "./approval";
 import { scanForLeaks, redactLeaks, formatLeakWarning } from "./leak-detector";
 
 // =============================================================================
@@ -155,6 +157,11 @@ class SimplexAdapter {
     this.logger = new Logger(this.config.logLevel);
     this.router = new CommandRouter();
     this.router.registerAll(BUILTIN_COMMANDS);
+
+    // Initialise the exec approval manager with config
+    const approvalConfig: Partial<ExecApprovalConfig> = this.config.execApproval ?? {};
+    setApprovalManager(new ApprovalManager(approvalConfig));
+    this.logger.info("Exec approval flow initialised");
   }
 
   /** Register a custom command */
@@ -234,6 +241,8 @@ class SimplexAdapter {
       this.ws.close();
       this.ws = null;
     }
+    // Clean up approval manager timers
+    getApprovalManager().shutdown();
     this.logger.info("Disconnected from SimpleX CLI");
   }
 
@@ -549,14 +558,58 @@ function parseLogLevel(value: string | undefined): LogLevel {
   return DEFAULT_BOT_CONFIG.logLevel;
 }
 
+/** Parse a comma-separated env var into a string array, or return undefined */
+function parseListEnv(value: string | undefined): string[] | undefined {
+  if (!value) {
+    return undefined;
+  }
+  return value.split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+/** Build exec approval config from environment variables */
+function parseExecApprovalConfig(): Partial<ExecApprovalConfig> {
+  const config: Partial<ExecApprovalConfig> = {};
+
+  const allowlist = parseListEnv(process.env.SIMPLEX_EXEC_ALLOWLIST);
+  if (allowlist) {
+    config.allowlist = allowlist;
+  }
+
+  const blocklist = parseListEnv(process.env.SIMPLEX_EXEC_BLOCKLIST);
+  if (blocklist) {
+    // Merge with defaults rather than replacing — safety patterns should persist
+    config.blocklist = [
+      ...DEFAULT_EXEC_APPROVAL_CONFIG.blocklist,
+      ...blocklist,
+    ];
+  }
+
+  const timeoutStr = process.env.SIMPLEX_EXEC_TIMEOUT;
+  if (timeoutStr) {
+    const timeoutMs = Number(timeoutStr);
+    if (!Number.isNaN(timeoutMs) && timeoutMs > 0) {
+      config.approvalTimeoutMs = timeoutMs;
+    }
+  }
+
+  if (process.env.SIMPLEX_EXEC_REQUIRE_APPROVAL === "false") {
+    config.requireApprovalByDefault = false;
+  }
+
+  return config;
+}
+
 /** Entry point — configure and start the bot */
 async function main(): Promise<void> {
+  const execApproval = parseExecApprovalConfig();
+
   const config: Partial<BotConfig> = {
     port: Number(process.env.SIMPLEX_PORT) || DEFAULT_BOT_CONFIG.port,
     host: process.env.SIMPLEX_HOST || DEFAULT_BOT_CONFIG.host,
     displayName: process.env.SIMPLEX_BOT_NAME || DEFAULT_BOT_CONFIG.displayName,
     autoAcceptContacts: process.env.SIMPLEX_AUTO_ACCEPT === "true",
     logLevel: parseLogLevel(process.env.SIMPLEX_LOG_LEVEL),
+    execApproval: { ...DEFAULT_EXEC_APPROVAL_CONFIG, ...execApproval },
   };
 
   const bot = new SimplexAdapter(config);
