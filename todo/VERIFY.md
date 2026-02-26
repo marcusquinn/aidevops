@@ -2597,3 +2597,5 @@
 - [ ] v302 t1327.6 Opsec agent #auto-dispatch — create `.agents/tools/securi... | PR #unknown | merged:2026-02-26
 
 - [ ] v303 t1331 Supervisor circuit breaker — pause on consecutive failure... | PR #unknown | merged:2026-02-26
+
+- [ ] v304 t1322 Support .aidevops.json project-level config in claim-task... | PR #unknown | merged:2026-02-26
