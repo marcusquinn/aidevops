@@ -7,13 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.133.1] - 2026-02-26
+
+### Changed
+
+- Documentation: add changelog entry for supervisor pulse guidance improvements
+
 ### Fixed
 
-- Improve supervisor pulse guidance — prevent duplicate dispatch, skip blocked issues, detect stuck workers, decompose large tasks before dispatching (#2350)
-
-### Added
-
-- "Intelligence Over Scripts" core architectural principle in architecture.md
+- Improve supervisor pulse guidance — dedup, blocked issues, stuck workers (#2350)
 
 ## [2.133.0] - 2026-02-26
 
