@@ -176,13 +176,13 @@ test_full_loop_helper() {
 		print_result "full-loop: start --dry-run" 0 "(skipped: no git repo)"
 	fi
 
-	# Test: start with no prompt
+	# Test: start with no prompt — must fail AND produce an error message
 	local rc=0
 	output=$("$helper" start "" 2>&1) || rc=$?
-	if [[ $rc -ne 0 ]]; then
+	if [[ $rc -ne 0 ]] && echo "$output" | grep -qiE "no prompt|usage|required|missing|empty"; then
 		print_result "full-loop: start (no prompt) fails" 0
 	else
-		print_result "full-loop: start (no prompt) fails" 1 "Expected non-zero exit code, got rc=0. Output: $output"
+		print_result "full-loop: start (no prompt) fails" 1 "Expected non-zero exit AND error pattern. rc=$rc, output: $output"
 	fi
 
 	# Test: unknown command
@@ -270,14 +270,14 @@ test_fallback_chain_helper() {
 		print_result "fallback: resolve --json output" 1 "Got: $output"
 	fi
 
-	# Test: unknown tier (with no API key set for unknown providers)
+	# Test: unknown tier — must fail AND produce an error message
 	unset ANTHROPIC_API_KEY
 	local rc=0
 	output=$("$helper" resolve nonexistent --quiet 2>&1) || rc=$?
-	if [[ $rc -ne 0 ]]; then
+	if [[ $rc -ne 0 ]] && echo "$output" | grep -qiE "unknown|unsupported|invalid|error|fail|no.*tier|not found"; then
 		print_result "fallback: unknown tier fails" 0
 	else
-		print_result "fallback: unknown tier fails" 1 "Expected non-zero exit code, got rc=0. Output: $output"
+		print_result "fallback: unknown tier fails" 1 "Expected non-zero exit AND error pattern. rc=$rc, output: $output"
 	fi
 
 	# Test: unknown command
@@ -364,13 +364,13 @@ test_budget_tracker_helper() {
 		print_result "budget: tail shows header" 1 "Got: $output"
 	fi
 
-	# Test: record with missing required args
+	# Test: record with missing required args — must fail AND produce an error message
 	local rc_record=0
 	output=$("$helper" record 2>&1) || rc_record=$?
-	if [[ $rc_record -ne 0 ]]; then
+	if [[ $rc_record -ne 0 ]] && echo "$output" | grep -qiE "missing|required|usage|error|provider"; then
 		print_result "budget: record (missing args) fails" 0
 	else
-		print_result "budget: record (missing args) fails" 1 "Expected non-zero exit code, got rc=0. Output: $output"
+		print_result "budget: record (missing args) fails" 1 "Expected non-zero exit AND error pattern. rc=$rc_record, output: $output"
 	fi
 
 	# Test: backward compat — removed commands return gracefully
@@ -426,13 +426,13 @@ test_issue_sync_helper() {
 		print_result "issue-sync: unknown command" 1 "Expected 'Unknown command'"
 	fi
 
-	# Test: parse with no task ID
+	# Test: parse with no task ID — must fail AND produce an error message
 	local rc_parse=0
 	output=$("$helper" parse 2>&1) || rc_parse=$?
-	if [[ $rc_parse -ne 0 ]]; then
+	if [[ $rc_parse -ne 0 ]] && echo "$output" | grep -qiE "missing|required|usage|error|task"; then
 		print_result "issue-sync: parse (no task) fails" 0
 	else
-		print_result "issue-sync: parse (no task) fails" 1 "Expected non-zero exit code, got rc=0. Output: $output"
+		print_result "issue-sync: parse (no task) fails" 1 "Expected non-zero exit AND error pattern. rc=$rc_parse, output: $output"
 	fi
 
 	# Note: push/pull/close/enrich/reconcile/status require gh CLI auth and a real repo.
@@ -490,13 +490,13 @@ test_observability_helper() {
 		fi
 	fi
 
-	# Test: record with missing model
+	# Test: record with missing model — must fail AND produce an error message
 	local rc_obs_record=0
 	output=$("$helper" record 2>&1) || rc_obs_record=$?
-	if [[ $rc_obs_record -ne 0 ]]; then
+	if [[ $rc_obs_record -ne 0 ]] && echo "$output" | grep -qiE "missing|required|usage|error|model"; then
 		print_result "observability: record (no model) fails" 0
 	else
-		print_result "observability: record (no model) fails" 1 "Expected non-zero exit code, got rc=0. Output: $output"
+		print_result "observability: record (no model) fails" 1 "Expected non-zero exit AND error pattern. rc=$rc_obs_record, output: $output"
 	fi
 
 	# Test: ingest with no Claude logs (should succeed gracefully)
