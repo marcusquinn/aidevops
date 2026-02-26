@@ -2,7 +2,7 @@
 # shellcheck disable=SC1091
 # Budget Tracker Helper - Append-only cost log (t1337.3)
 # Appends spend events to a TSV file. AI reads the log to decide model routing.
-# Commands: record, status, burn-rate, help
+# Commands: record, status, burn-rate, tail, help
 # Log: ~/.aidevops/.agent-workspace/cost-log.tsv
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
@@ -22,11 +22,11 @@ init_cost_log() {
 	return 0
 }
 
-# Pricing: input|output per 1M tokens
+# Pricing: input|output per 1M tokens (hardcoded fallback)
 get_model_pricing() {
 	local model="$1"
-	local model_short="${model#*/}"
-	case "$model_short" in
+	local short="${model#*/}"
+	case "$short" in
 	*opus-4*) echo "15.0|75.0" ;;
 	*sonnet-4*) echo "3.0|15.0" ;;
 	*haiku-4*) echo "0.80|4.0" ;;
@@ -47,16 +47,11 @@ get_model_pricing() {
 }
 
 calculate_cost() {
-	local input_tokens="$1"
-	local output_tokens="$2"
-	local model="$3"
-
-	local pricing
+	local input_tokens="$1" output_tokens="$2" model="$3"
+	local pricing input_price output_price
 	pricing=$(get_model_pricing "$model")
-	local input_price output_price
-	input_price=$(echo "$pricing" | cut -d'|' -f1)
-	output_price=$(echo "$pricing" | cut -d'|' -f2)
-
+	input_price="${pricing%%|*}"
+	output_price="${pricing##*|}"
 	awk "BEGIN { printf \"%.6f\", ($input_tokens / 1000000.0 * $input_price) + ($output_tokens / 1000000.0 * $output_price) }"
 	return 0
 }
@@ -95,13 +90,8 @@ cmd_record() {
 			cost_override="${2:-}"
 			shift 2
 			;;
-		--requested-tier | --actual-tier)
-			# Accepted for backward compatibility, ignored
-			shift 2
-			;;
-		*)
-			shift
-			;;
+		--requested-tier | --actual-tier) shift 2 ;; # backward compat, ignored
+		*) shift ;;
 		esac
 	done
 
@@ -117,16 +107,13 @@ cmd_record() {
 		cost_usd=$(calculate_cost "$input_tokens" "$output_tokens" "$model")
 	fi
 
-	local ts
-	ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-
 	printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-		"$ts" "$provider" "$model" "$tier" "$task_id" \
+		"$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$provider" "$model" "$tier" "$task_id" \
 		"$input_tokens" "$output_tokens" "$cost_usd" >>"$COST_LOG"
-
 	return 0
 }
 
+# Summarise spend from the log. AI can also just read the TSV directly.
 cmd_status() {
 	local json_flag=false days=7 provider_filter=""
 
@@ -144,9 +131,7 @@ cmd_status() {
 			provider_filter="${2:-}"
 			shift 2
 			;;
-		*)
-			shift
-			;;
+		*) shift ;;
 		esac
 	done
 
@@ -160,78 +145,35 @@ cmd_status() {
 		cutoff=$(date -u -d "${days} days ago" +%Y-%m-%d 2>/dev/null) ||
 		cutoff="2000-01-01"
 
-	local agg
-	agg=$(awk -F'\t' -v cutoff="$cutoff" -v pf="$provider_filter" '
+	# Single awk pass: aggregate totals, by-provider, and by-day
+	awk -F'\t' -v cutoff="$cutoff" -v pf="$provider_filter" -v jf="$json_flag" '
 		NR == 1 { next }
 		{
-			day = substr($1, 1, 10); prov = $2
-			inp = $6 + 0; outp = $7 + 0; cost = $8 + 0
+			day = substr($1, 1, 10)
 			if (day < cutoff) next
-			if (pf != "" && prov != pf) next
-			tc += cost; ti += inp; to += outp; ec++
-			pc[prov] += cost; pe[prov]++; dc[day] += cost
+			if (pf != "" && $2 != pf) next
+			tc += $8; ti += $6; to += $7; ec++
+			pc[$2] += $8; pe[$2]++; dc[day] += $8
 		}
 		END {
-			printf "TOTAL\t%.2f\t%d\t%d\t%d\n", tc, ti, to, ec
-			for (p in pc) printf "PROV\t%s\t%.2f\t%d\n", p, pc[p], pe[p]
-			for (d in dc) printf "DAY\t%s\t%.2f\n", d, dc[d]
+			if (ec == 0) { print "No spend events in period."; exit }
+			if (jf == "true") {
+				printf "{\"days\":%d,\"total_cost_usd\":%.2f,\"input_tokens\":%d,\"output_tokens\":%d,\"events\":%d,\"by_provider\":[", NR-1, tc, ti, to, ec
+				f = 0; for (p in pc) { if (f) printf ","; printf "{\"provider\":\"%s\",\"cost\":%.2f,\"n\":%d}", p, pc[p], pe[p]; f = 1 }
+				printf "],\"by_day\":["; f = 0
+				for (d in dc) { if (f) printf ","; printf "{\"date\":\"%s\",\"cost\":%.2f}", d, dc[d]; f = 1 }
+				printf "]}\n"
+			} else {
+				printf "\nCost Log Status (last %d days)\n====================================\n\n", NR-1
+				printf "  Total cost:     $%.2f\n  Input tokens:   %d\n  Output tokens:  %d\n  Events:         %d\n\n", tc, ti, to, ec
+				printf "  By provider:\n"
+				for (p in pc) printf "    %-14s $%-10.2f %d events\n", p, pc[p], pe[p]
+				printf "\n  By day:\n"
+				for (d in dc) printf "    %s  $%.2f\n", d, dc[d]
+				printf "\n"
+			}
 		}
-	' "$COST_LOG")
-
-	if [[ -z "$agg" ]]; then
-		print_info "No spend events in the last ${days} days."
-		return 0
-	fi
-
-	# Parse the TOTAL line
-	local total_cost total_input total_output event_count
-	total_cost=$(echo "$agg" | awk -F'\t' '/^TOTAL/ { print $2 }')
-	total_input=$(echo "$agg" | awk -F'\t' '/^TOTAL/ { print $3 }')
-	total_output=$(echo "$agg" | awk -F'\t' '/^TOTAL/ { print $4 }')
-	event_count=$(echo "$agg" | awk -F'\t' '/^TOTAL/ { print $5 }')
-
-	if [[ "$json_flag" == "true" ]]; then
-		# Build provider array
-		local prov_json
-		prov_json=$(echo "$agg" | awk -F'\t' '
-			/^PROV/ {
-				if (first) printf ","
-				printf "{\"provider\":\"%s\",\"cost_usd\":%.2f,\"events\":%d}", $2, $3, $4
-				first = 1
-			}
-		')
-		local day_json
-		day_json=$(echo "$agg" | awk -F'\t' '
-			/^DAY/ {
-				if (first) printf ","
-				printf "{\"date\":\"%s\",\"cost_usd\":%.2f}", $2, $3
-				first = 1
-			}
-		')
-		printf '{"days":%d,"total_cost_usd":%.2f,"total_input_tokens":%d,"total_output_tokens":%d,"events":%d,"by_provider":[%s],"by_day":[%s]}\n' \
-			"$days" "$total_cost" "$total_input" "$total_output" "$event_count" \
-			"$prov_json" "$day_json"
-		return 0
-	fi
-
-	echo ""
-	echo "Cost Log Status (last ${days} days)"
-	echo "===================================="
-	echo ""
-	printf "  Total cost:     \$%s\n" "$total_cost"
-	printf "  Input tokens:   %s\n" "$total_input"
-	printf "  Output tokens:  %s\n" "$total_output"
-	printf "  Events:         %s\n" "$event_count"
-	echo ""
-
-	echo "  By provider:"
-	echo "$agg" | awk -F'\t' '/^PROV/ { printf "    %-14s $%-10s %d events\n", $2, $3, $4 }'
-	echo ""
-
-	echo "  By day:"
-	echo "$agg" | awk -F'\t' '/^DAY/ { printf "    %s  $%s\n", $2, $3 }' | sort
-	echo ""
-
+	' "$COST_LOG"
 	return 0
 }
 
@@ -249,9 +191,7 @@ cmd_burn_rate() {
 			shift
 			;;
 		*)
-			if [[ -z "$provider_filter" ]]; then
-				provider_filter="$1"
-			fi
+			if [[ -z "$provider_filter" ]]; then provider_filter="$1"; fi
 			shift
 			;;
 		esac
@@ -264,9 +204,11 @@ cmd_burn_rate() {
 
 	local today
 	today=$(date -u +%Y-%m-%d)
+	local hours_elapsed
+	hours_elapsed=$(date -u +%H)
+	hours_elapsed=$((hours_elapsed == 0 ? 1 : hours_elapsed))
 
-	local stats
-	stats=$(awk -F'\t' -v today="$today" -v pf="$provider_filter" '
+	awk -F'\t' -v today="$today" -v pf="$provider_filter" -v jf="$json_flag" -v hrs="$hours_elapsed" '
 		NR == 1 { next }
 		{
 			day = substr($1, 1, 10); cost = $8 + 0
@@ -277,43 +219,36 @@ cmd_burn_rate() {
 		END {
 			nd = 0; for (d in wd) nd++
 			avg = (nd > 0) ? wc / nd : 0
-			printf "%.2f\t%d\t%.2f\t%d", tc, te, avg, nd
+			hr = tc / hrs
+			label = (pf != "") ? pf : "all providers"
+			if (jf == "true") {
+				printf "{\"provider\":\"%s\",\"today_spend\":%.2f,\"hourly_rate\":%.2f,\"avg_daily\":%.2f,\"today_events\":%d}\n", label, tc, hr, avg, te
+			} else {
+				printf "\nBurn Rate: %s\n=========================\n\n", label
+				printf "  Today'\''s spend:   $%.2f\n  Hourly rate:     $%.2f/hr\n  Avg daily:       $%.2f (%d days)\n  Events today:    %d\n\n", tc, hr, avg, nd, te
+			}
 		}
-	' "$COST_LOG")
+	' "$COST_LOG"
+	return 0
+}
 
-	local today_spend today_events avg_daily n_days
-	today_spend=$(echo "$stats" | cut -f1)
-	today_events=$(echo "$stats" | cut -f2)
-	avg_daily=$(echo "$stats" | cut -f3)
-	n_days=$(echo "$stats" | cut -f4)
-
-	local hours_elapsed
-	hours_elapsed=$(date -u +%H)
-	hours_elapsed=$((hours_elapsed == 0 ? 1 : hours_elapsed))
-
-	local hourly_rate
-	hourly_rate=$(awk "BEGIN { printf \"%.2f\", $today_spend / $hours_elapsed }")
-
-	if [[ "$json_flag" == "true" ]]; then
-		printf '{"provider":"%s","today_spend":%.2f,"hourly_rate":%.2f,"avg_daily_7d":%.2f,"today_events":%d}\n' \
-			"${provider_filter:-all}" "$today_spend" "$hourly_rate" "$avg_daily" "$today_events"
-	else
-		echo ""
-		echo "Burn Rate: ${provider_filter:-all providers}"
-		echo "========================="
-		echo ""
-		printf "  Today's spend:   \$%s\n" "$today_spend"
-		printf "  Hourly rate:     \$%s/hr\n" "$hourly_rate"
-		printf "  7-day avg daily: \$%s (%d days with data)\n" "$avg_daily" "$n_days"
-		printf "  Events today:    %s\n" "$today_events"
-		echo ""
+# Show recent log entries (for AI to read directly)
+cmd_tail() {
+	local n=20
+	if [[ "${1:-}" =~ ^[0-9]+$ ]]; then
+		n="$1"
 	fi
-
+	if [[ ! -f "$COST_LOG" ]]; then
+		print_warning "No cost log found."
+		return 0
+	fi
+	head -1 "$COST_LOG"
+	tail -n "$n" "$COST_LOG"
 	return 0
 }
 
 cmd_help() {
-	cat <<EOF
+	cat <<'EOF'
 Budget Tracker Helper - Append-only cost log (t1337.3)
 
 Usage: budget-tracker-helper.sh [command] [options]
@@ -322,6 +257,7 @@ Commands:
   record            Append a spend event to the cost log
   status            Summarise spend (--days N, --provider X, --json)
   burn-rate [prov]  Calculate burn rate (--json)
+  tail [N]          Show last N log entries (default: 20)
   help              Show this help
 
 Record options:
@@ -329,9 +265,8 @@ Record options:
   --tier X          Tier name        --task X         Task ID
   --input-tokens N  Input tokens     --output-tokens N  Output tokens
   --cost N          Override cost (USD)
-
-Log file: $COST_LOG
 EOF
+	printf '\nLog file: %s\n' "$COST_LOG"
 	return 0
 }
 
@@ -339,39 +274,27 @@ main() {
 	local command="${1:-help}"
 	shift || true
 
-	# Initialize cost log for all commands except help
 	if [[ "$command" != "help" && "$command" != "--help" && "$command" != "-h" ]]; then
 		init_cost_log || return 1
 	fi
 
 	case "$command" in
-	record)
-		cmd_record "$@"
-		;;
-	status)
-		cmd_status "$@"
-		;;
-	burn-rate | burnrate | burn_rate)
-		cmd_burn_rate "$@"
-		;;
-	help | --help | -h)
-		cmd_help
-		;;
-	# Backward compatibility: accept old commands gracefully
+	record) cmd_record "$@" ;;
+	status) cmd_status "$@" ;;
+	burn-rate | burnrate | burn_rate) cmd_burn_rate "$@" ;;
+	tail) cmd_tail "$@" ;;
+	help | --help | -h) cmd_help ;;
+	# Backward compat: old commands return gracefully
 	check | recommend | configure | configure-period | reset | tier-drift | tier_drift | prune)
-		print_warning "Command '$command' removed in v2.0. Use 'status' or 'burn-rate' instead."
+		print_warning "Command '$command' removed in t1337.3. Use 'status' or 'burn-rate'."
 		return 0
 		;;
 	budget-check-tier | budget_check_tier)
-		# Old dispatch integration — return the requested tier unchanged
-		local _provider="${1:-}"
-		local _tier="${2:-sonnet}"
-		echo "$_tier"
+		echo "${2:-sonnet}" # Return requested tier unchanged
 		return 0
 		;;
 	budget-preferred-provider | budget_preferred_provider)
-		# Old dispatch integration — return empty (no preference)
-		echo ""
+		echo "" # No preference
 		return 0
 		;;
 	*)
