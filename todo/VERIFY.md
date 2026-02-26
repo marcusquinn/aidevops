@@ -2599,3 +2599,35 @@
 - [ ] v303 t1331 Supervisor circuit breaker — pause on consecutive failure... | PR #unknown | merged:2026-02-26
 
 - [ ] v304 t1322 Support .aidevops.json project-level config in claim-task... | PR #unknown | merged:2026-02-26
+
+- [ ] v305 t1336 Archive Tier 2 redundant orchestration scripts — archive ... | PR #2392 | merged:2026-02-26
+  files: .agents/aidevops/architecture.md, .agents/business.md, .agents/memory/README.md, .agents/scripts/coderabbit-collector-helper.sh, .agents/scripts/commands/postflight-loop.md, .agents/scripts/commands/pr-loop.md, .agents/scripts/generate-claude-agents.sh, .agents/scripts/generate-claude-commands.sh, .agents/scripts/generate-opencode-commands.sh, .agents/scripts/test-task-id-collision.sh, .agents/subagent-index.toon, .agents/tools/automation/objective-runner.md, .agents/tools/code-review/coderabbit.md, .agents/workflows/plans.md, .agents/workflows/ralph-loop.md, README.md, tests/test-audit-e2e.sh, tests/test-smoke-help.sh
+  check: file-exists .agents/aidevops/architecture.md
+  check: file-exists .agents/business.md
+  check: file-exists .agents/memory/README.md
+  check: shellcheck .agents/scripts/coderabbit-collector-helper.sh
+  check: file-exists .agents/scripts/coderabbit-collector-helper.sh
+  check: file-exists .agents/scripts/commands/postflight-loop.md
+  check: file-exists .agents/scripts/commands/pr-loop.md
+  check: shellcheck .agents/scripts/generate-claude-agents.sh
+  check: file-exists .agents/scripts/generate-claude-agents.sh
+  check: shellcheck .agents/scripts/generate-claude-commands.sh
+  check: file-exists .agents/scripts/generate-claude-commands.sh
+  check: shellcheck .agents/scripts/generate-opencode-commands.sh
+  check: file-exists .agents/scripts/generate-opencode-commands.sh
+  check: shellcheck .agents/scripts/test-task-id-collision.sh
+  check: file-exists .agents/scripts/test-task-id-collision.sh
+  check: file-exists .agents/subagent-index.toon
+  check: file-exists .agents/tools/automation/objective-runner.md
+  check: file-exists .agents/tools/code-review/coderabbit.md
+  check: file-exists .agents/workflows/plans.md
+  check: file-exists .agents/workflows/ralph-loop.md
+  check: file-exists README.md
+  check: shellcheck tests/test-audit-e2e.sh
+  check: file-exists tests/test-audit-e2e.sh
+  check: shellcheck tests/test-smoke-help.sh
+  check: file-exists tests/test-smoke-help.sh
+  check: rg "objective-runner" .agents/subagent-index.toon
+  check: rg "coderabbit" .agents/subagent-index.toon
+  check: rg "plans" .agents/subagent-index.toon
+  check: rg "ralph-loop" .agents/subagent-index.toon
