@@ -123,7 +123,9 @@ gh_add_labels() {
 	local IFS=','
 	for lbl in $labels; do [[ -n "$lbl" ]] && args+=("--add-label" "$lbl"); done
 	unset IFS
-	[[ ${#args[@]} -gt 0 ]] && gh issue edit "$num" --repo "$repo" "${args[@]}" 2>/dev/null || true
+	if [[ ${#args[@]} -gt 0 ]]; then
+		gh issue edit "$num" --repo "$repo" "${args[@]}" 2>/dev/null || true
+	fi
 	return 0
 }
 
@@ -133,7 +135,9 @@ gh_remove_labels() {
 	local IFS=','
 	for lbl in $labels; do [[ -n "$lbl" ]] && args+=("--remove-label" "$lbl"); done
 	unset IFS
-	[[ ${#args[@]} -gt 0 ]] && gh issue edit "$num" --repo "$repo" "${args[@]}" 2>/dev/null || true
+	if [[ ${#args[@]} -gt 0 ]]; then
+		gh issue edit "$num" --repo "$repo" "${args[@]}" 2>/dev/null || true
+	fi
 	return 0
 }
 
