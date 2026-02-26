@@ -24,7 +24,7 @@ tools:
 - **Models**: Any GGUF from HuggingFace (Qwen, Llama, DeepSeek, Mistral, Gemma, Phi)
 - **Binary**: Download-on-first-use via `local-model-helper.sh setup`
 - **API**: OpenAI-compatible at `http://localhost:8080/v1`
-- **Helper**: `local-model-helper.sh [setup|start|stop|status|models|download|search|recommend|cleanup|usage|benchmark]` (planned — not yet implemented; tracked in parent task t1338)
+- **Helper**: `local-model-helper.sh [setup|start|stop|status|models|download|search|recommend|cleanup|usage|benchmark]`
 
 **When to use local**: Privacy/compliance, offline work, bulk processing, experimentation, simple tasks where network latency exceeds local inference time. See `tools/context/model-routing.md` for routing rules.
 
@@ -345,6 +345,7 @@ local-model-helper.sh benchmark --model qwen3-8b-q4_k_m.gguf --model llama-3.1-8
 
 ## See Also
 
+- `tools/local-models/huggingface.md` — Model discovery, GGUF format, quantization guidance, trusted publishers
 - `tools/context/model-routing.md` — Cost-aware routing (local is the free tier)
 - `tools/infrastructure/cloud-gpu.md` — Cloud GPU deployment for larger models
 - `tools/ai-assistants/compare-models.md` — Model comparison including local
