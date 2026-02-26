@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.132.0] - 2026-02-26
+
+### Added
+
+- add agent-driven issue label lifecycle to full-loop and pulse (#2347)
+- add UI verification workflow for design/layout tasks (#2346)
+- auto-update TODO.md proof-log on PR merge (#2338)
+- t1338.4 create local-model-helper.sh for llama.cpp inference management (#2334)
+- add opus strategic review phase to supervisor pulse (t1340) (#2333)
+- PR-merge triggered issue-sync for closing hygiene (t1339)
+
+### Changed
+
+- Documentation: recommend subscription plans over API billing for regular use (#2345)
+
+### Fixed
+
+- strategic review — add root cause analysis with dedup against existing work (#2339)
+- strategic review — cross-repo discovery, action/TODO split, concurrency awareness (#2336)
+- add --repo flag to gh CLI calls in PR-merge sync jobs
+
 ## [2.131.0] - 2026-02-25
 
 ### Added
