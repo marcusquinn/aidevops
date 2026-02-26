@@ -192,14 +192,25 @@ main() {
 		echo "$runtime_hint"
 	fi
 
+	# Check for stale local models (nudge if >5 GB unused >30d)
+	local nudge_output=""
+	local script_dir
+	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	if [[ -x "${script_dir}/local-model-helper.sh" ]]; then
+		nudge_output="$("${script_dir}/local-model-helper.sh" nudge 2>/dev/null || true)"
+	fi
+	if [[ -n "$nudge_output" ]]; then
+		echo "$nudge_output"
+	fi
+
 	# Cache output for agents without Bash (e.g., Plan+)
 	local cache_dir="$HOME/.aidevops/cache"
 	mkdir -p "$cache_dir"
-	if [[ -n "$runtime_hint" ]]; then
-		printf '%s\n%s\n' "$output" "$runtime_hint" >"$cache_dir/session-greeting.txt"
-	else
-		echo "$output" >"$cache_dir/session-greeting.txt"
-	fi
+	{
+		echo "$output"
+		[[ -n "$runtime_hint" ]] && echo "$runtime_hint"
+		[[ -n "$nudge_output" ]] && echo "$nudge_output"
+	} >"$cache_dir/session-greeting.txt"
 
 	return 0
 }
