@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Pulse supervisor now acts autonomously in headless mode instead of asking "What would you like to action?" (#2368)
+- Merged PR #2340 (t1338.5: usage logging/disk management for local models)
+- Closed parent issue #2300 (all 5 subtasks merged — ~64% line reduction across infrastructure scripts)
+
 ## [2.133.4] - 2026-02-26
 
 ### Changed
