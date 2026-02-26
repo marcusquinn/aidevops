@@ -264,19 +264,6 @@ main() {
 	burn-rate | burnrate | burn_rate) cmd_burn_rate "$@" ;;
 	tail) cmd_tail "$@" ;;
 	help | --help | -h) cmd_help ;;
-	# Backward compat: old commands return gracefully
-	check | recommend | configure | configure-period | reset | tier-drift | tier_drift | prune)
-		print_warning "Command '$command' removed in t1337.3. Use 'status' or 'burn-rate'."
-		return 0
-		;;
-	budget-check-tier | budget_check_tier)
-		echo "${2:-sonnet}" # Return requested tier unchanged
-		return 0
-		;;
-	budget-preferred-provider | budget_preferred_provider)
-		echo "" # No preference
-		return 0
-		;;
 	*)
 		print_error "Unknown command: $command"
 		cmd_help

@@ -583,15 +583,6 @@ main() {
 	record | r) cmd_record "$@" ;;
 	rate-limits | rate_limits | ratelimits | rl) cmd_rate_limits "$@" ;;
 	help | --help | -h) cmd_help ;;
-	summary | s | models | model | m | projects | project | p | costs | cost | c | trend | trends | t)
-		echo "Dashboard commands removed (t1337.5). Query metrics JSONL directly with jq."
-		echo "  Metrics: $OBS_METRICS"
-		return 0
-		;;
-	sync-budget | sync_budget | budget | prune | cleanup)
-		echo "Command '$command' removed (t1337.5). Metrics are now in JSONL format."
-		return 0
-		;;
 	*)
 		print_error "Unknown command: $command"
 		cmd_help
