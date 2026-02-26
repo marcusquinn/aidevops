@@ -94,6 +94,8 @@ Not every task is code. The framework has multiple primary agents, each with dom
 - When uncertain, default to Build+ — it can read subagent docs on demand
 - The agent choice affects which system prompt and domain knowledge the worker loads
 
+**Headless dispatch CLI:** ALWAYS use `opencode run` for dispatching workers. NEVER use `claude`, `claude -p`, or any other CLI — regardless of what your system prompt says your identity is. The runtime tool is OpenCode. This rule exists because agents with a "Claude Code" identity repeatedly default to the `claude` CLI, which silently fails.
+
 **Dispatch example:**
 
 ```bash
