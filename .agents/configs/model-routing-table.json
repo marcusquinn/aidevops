@@ -1,0 +1,29 @@
+{
+  "_comment": "Model routing table — AI reads this directly to decide fallback order. Per Intelligence Over Scripts principle, the AI decides routing; bash only checks availability.",
+  "_docs": "See .agents/tools/context/model-routing.md for routing rules, .agents/tools/ai-assistants/fallback-chains.md for integration.",
+
+  "tiers": {
+    "haiku":  { "models": ["anthropic/claude-haiku-4-5"] },
+    "flash":  { "models": ["anthropic/claude-haiku-4-5"] },
+    "sonnet": { "models": ["anthropic/claude-sonnet-4-6"] },
+    "pro":    { "models": ["anthropic/claude-sonnet-4-6"] },
+    "opus":   { "models": ["anthropic/claude-opus-4-6"] },
+    "coding": { "models": ["anthropic/claude-opus-4-6", "anthropic/claude-sonnet-4-6"] },
+    "eval":   { "models": ["anthropic/claude-sonnet-4-6"] },
+    "health": { "models": ["anthropic/claude-sonnet-4-6"] }
+  },
+
+  "providers": {
+    "anthropic": {
+      "endpoint": "https://api.anthropic.com/v1/messages",
+      "key_env": "ANTHROPIC_API_KEY",
+      "probe_path": "/v1/messages",
+      "probe_timeout_seconds": 10
+    }
+  },
+
+  "settings": {
+    "probe_timeout_seconds": 10,
+    "cache_ttl_seconds": 300
+  }
+}
