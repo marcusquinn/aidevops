@@ -112,7 +112,9 @@ When `model:` is absent, `sonnet` is assumed (the default tier).
 
 ## Cost Estimation
 
-Approximate relative costs (sonnet = 1x baseline):
+**Subscription vs API billing:** Subscription plans (Claude Pro/Max, OpenAI Plus/Pro) are recommended for regular use — they provide generous allowances at a flat monthly rate. API billing is pay-per-token and adds up fast with autonomous orchestration (pulse, workers, strategic review). Reserve API keys for testing new providers or burst capacity beyond your subscription allowance.
+
+Approximate relative API costs (sonnet = 1x baseline):
 
 | Tier | Input Cost | Output Cost | Relative |
 |------|-----------|-------------|----------|
