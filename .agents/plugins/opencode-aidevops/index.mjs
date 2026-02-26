@@ -795,26 +795,30 @@ function validatePositionalParams(filePath) {
         ) {
           continue;
         }
+        // Strip escaped dollar signs before further checks so that lines with
+        // mixed content (e.g. "\$5 fee $1") still detect unescaped positional params.
+        // This replaces the previous whole-line skip for escaped dollars.
+        const stripped = trimmed.replace(/\\\$[1-9]/g, "");
+        // Skip if no unescaped $N remains after stripping escaped ones
+        if (!/\$[1-9]/.test(stripped)) {
+          continue;
+        }
         // Skip currency/pricing patterns (false-positives in markdown tables,
         // heredocs, and echo strings):
         //   - $N followed by digits, decimal, comma, or slash (e.g. $28/mo, $1.99, $1,000)
         //   - $N followed by space + pricing/unit word (e.g. $5 flat, $3 fee, $9 per month)
-        //   - Escaped dollar signs \$N (literal dollar in shell strings)
         //   - Markdown table rows (lines starting with |)
         //   - $N followed by pipe (markdown table cell boundary)
-        if (/\$[1-9][0-9.,/]/.test(trimmed)) {
+        if (/\$[1-9][0-9.,/]/.test(stripped)) {
           continue;
         }
-        if (/\$[1-9]\s+(?:per|mo(?:nth)?|year|yr|day|week|hr|hour|flat|each|off|fee|plan|tier|user|seat|unit|addon|setup|trial|credit|annual|quarterly|monthly)\b/.test(trimmed)) {
-          continue;
-        }
-        if (/\\\$[1-9]/.test(line)) {
+        if (/\$[1-9]\s+(?:per|mo(?:nth)?|year|yr|day|week|hr|hour|flat|each|off|fee|plan|tier|user|seat|unit|addon|setup|trial|credit|annual|quarterly|monthly)\b/.test(stripped)) {
           continue;
         }
         if (/^\s*\|/.test(line)) {
           continue;
         }
-        if (/\$[1-9]\s*\|/.test(trimmed)) {
+        if (/\$[1-9]\s*\|/.test(stripped)) {
           continue;
         }
         details.push(`  Line ${i + 1}: direct positional parameter: ${trimmed.substring(0, 80)}`);
