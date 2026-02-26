@@ -143,8 +143,8 @@ The supervisor pulse triggers a daily full codebase review via GitHub issue #238
 1. **Trigger**: Supervisor posts a comment on #2386 mentioning `@coderabbitai`
    with a request for a full codebase review and focus areas.
 2. **Review**: CodeRabbit runs its analysis and posts findings as a comment.
-3. **Issue creation**: The supervisor replies asking CodeRabbit to create one
-   GitHub issue per finding, using these conventions:
+3. **Issue creation**: On the next pulse cycle, the supervisor reads CodeRabbit's
+   findings and creates one GitHub issue per finding via `gh issue create`:
    - Title: `coderabbit: <short description>`
    - Labels: `coderabbit-pulse`, `auto-dispatch`
    - Body: finding number, evidence, risk, recommended action
@@ -155,10 +155,15 @@ The supervisor pulse triggers a daily full codebase review via GitHub issue #238
 
 **Do not close issue #2386** — it is the persistent trigger point for daily reviews.
 
+**Why the supervisor creates issues, not CodeRabbit:** CodeRabbit's sandbox does
+not have `gh` CLI access. It can analyse the codebase and post findings, but
+cannot create issues. The supervisor (which has `gh` access) parses the findings
+and creates the issues.
+
 > **Archived (t1336):** `review-pulse-helper.sh`, `coderabbit-pulse-helper.sh`,
 > and `coderabbit-task-creator-helper.sh` have been archived to `scripts/archived/`.
-> The daily review now uses CodeRabbit's native issue creation instead of custom
-> bash scripts for parsing and task creation.
+> The daily review now uses the supervisor to create issues from CodeRabbit's
+> findings, replacing the old bash scripts for parsing and task creation.
 
 ## Troubleshooting
 

@@ -415,23 +415,46 @@ Focus areas:
 - Performance concerns'
 ```
 
-**Step 2 — Request issue creation (next pulse cycle):**
+**Step 2 — Create issues from findings (next pulse cycle):**
 
-On the next pulse (2 minutes later), check if CodeRabbit has responded. If it has
-posted a review comment but no follow-up requesting issue creation exists yet:
+On the next pulse (2+ minutes later), check if CodeRabbit has responded with a
+review. If it has posted findings but no issues have been created from them yet:
+
+1. Read CodeRabbit's latest review comment on #2386.
+2. Parse each numbered finding (CodeRabbit uses numbered headings like "1)", "2)" etc.).
+3. For each finding, create a GitHub issue:
 
 ```bash
-gh issue comment 2386 --repo <owner/repo> --body '@coderabbitai Yes, please open issues for each finding. Use these conventions:
+gh issue create --repo <owner/repo> \
+  --title "coderabbit: <short description from finding>" \
+  --label "coderabbit-pulse,auto-dispatch" \
+  --body "**Finding #N: <title>**
 
-- **Title format**: `coderabbit: <short description>`
-- **Labels**: `coderabbit-pulse`, `auto-dispatch`
-- **Body**: Include the finding number, evidence, risk, and recommended action
-- **One issue per finding** — keep them atomic so they can be worked independently'
+**Evidence:** <evidence from CodeRabbit's review>
+
+**Risk:** <risk assessment>
+
+**Recommended Action:** <CodeRabbit's recommendation>
+
+---
+**Source:** https://github.com/<owner/repo>/issues/2386"
 ```
 
-CodeRabbit creates the issues. They enter the normal dispatch queue via Step 3
-(they appear as open issues with `auto-dispatch` label). No further action needed
-here — the standard priority pipeline handles the rest.
+4. After creating all issues, post a summary comment on #2386:
+
+```bash
+gh issue comment 2386 --repo <owner/repo> \
+  --body "Created issues #XXXX-#YYYY from CodeRabbit review (YYYY-MM-DD).
+  Issues labelled coderabbit-pulse + auto-dispatch for worker dispatch."
+```
+
+**Why the supervisor creates issues, not CodeRabbit:** CodeRabbit's sandbox does
+not have authenticated `gh` CLI access. It can generate the script but cannot
+execute it. The supervisor has `gh` access and creates the issues directly.
+
+The issues enter the normal dispatch queue via Step 3 (they appear as open issues
+with `auto-dispatch` label). No further action needed — the standard priority
+pipeline handles the rest.
 
 See `tools/code-review/coderabbit.md` "Daily Full Codebase Review" for full details.
 
