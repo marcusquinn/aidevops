@@ -2595,3 +2595,5 @@
   check: file-exists .agents/plugins/opencode-aidevops/index.mjs
 
 - [ ] v302 t1327.6 Opsec agent #auto-dispatch — create `.agents/tools/securi... | PR #unknown | merged:2026-02-26
+
+- [ ] v303 t1331 Supervisor circuit breaker — pause on consecutive failure... | PR #unknown | merged:2026-02-26
