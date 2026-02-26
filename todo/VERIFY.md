@@ -2560,4 +2560,10 @@
   check: file-exists .agents/tools/database/pglite-local-first.md
   check: rg "pglite-local-first" .agents/subagent-index.toon
 
-- [ ] v295 t1335 Archive Tier 1 redundant orchestration scripts — archive ... | PR #unknown | merged:2026-02-26
+- [x] v295 t1335 Archive Tier 1 redundant orchestration scripts — archive ... | PR #unknown | merged:2026-02-26 verified:2026-02-26
+
+- [ ] v296 t1338.1 Extend model-routing.md with local tier #auto-dispatch — ... | PR #2385 | merged:2026-02-26
+  files: .agents/configs/model-routing-table.json, .agents/tools/context/model-routing.md
+  check: file-exists .agents/configs/model-routing-table.json
+  check: file-exists .agents/tools/context/model-routing.md
+  check: rg "model-routing" .agents/subagent-index.toon
