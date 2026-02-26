@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Pulse worker kill decisions now intelligence-driven (check commits, PR activity, worktree state) instead of fixed time thresholds (#2381)
+
 ## [2.133.9] - 2026-02-26
 
 ### Changed
