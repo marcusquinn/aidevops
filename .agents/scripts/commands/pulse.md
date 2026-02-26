@@ -115,6 +115,71 @@ gh issue comment <number> --repo <owner/repo> --body "Supervisor pulse: killed w
 
 **Post-kill triage:** After killing a long-running worker, check if the issue has `blocked-by:` references with unmerged prerequisites. If so, this was a dispatch error — the blocker-chain validation (Step 3) should have caught it. Label the issue `status:blocked` and do NOT re-dispatch until the chain is clear.
 
+## Step 2b: Advisory Stuck Detection (t1332)
+
+For each running worker, check if a stuck detection milestone is due. This is an **advisory-only** system — it labels issues and posts comments but **NEVER kills workers, cancels tasks, or modifies task state**. The kill decision remains in Step 2a above.
+
+Milestones are configurable via `SUPERVISOR_STUCK_CHECK_MINUTES` (default: 30 60 120 minutes). At each milestone, use haiku-tier AI reasoning to evaluate whether the worker appears stuck.
+
+**For each running worker process:**
+
+1. **Check if a milestone is due.** Extract the issue number from the worker command line, then:
+
+```bash
+# Parse elapsed minutes from ps etime (format: MM:SS, HH:MM:SS, or D-HH:MM:SS)
+ELAPSED_MIN=<parsed from etime>
+
+# Check if a milestone is due for this issue
+MILESTONE=$(~/.aidevops/agents/scripts/stuck-detection-helper.sh check-milestone <issue_number> "$ELAPSED_MIN" --repo <owner/repo>)
+```
+
+If exit code is 1 (no milestone due), skip to the next worker. If exit code is 0, `$MILESTONE` contains the milestone value (e.g., 30, 60, or 120).
+
+2. **Evaluate with AI reasoning (haiku-tier).** Use the `ai-research` MCP tool (haiku model) or construct a lightweight prompt. Provide:
+   - The issue title and description (from the GitHub data you already fetched)
+   - Elapsed time and milestone
+   - Whether a PR exists for this issue
+   - Last commit timestamp (if PR exists)
+   - Whether the worktree has recent file modifications
+
+Ask the AI to respond with a JSON assessment:
+
+```json
+{
+  "is_stuck": true,
+  "confidence": 0.85,
+  "reasoning": "Worker has been running for 65 minutes with no PR opened and no commits pushed. The issue is a simple bug fix that should take ~30 minutes.",
+  "suggested_actions": "Consider killing the worker and re-dispatching. Check if the worker is blocked on a missing dependency."
+}
+```
+
+3. **Apply label if stuck with high confidence.** If `is_stuck` is true and `confidence >= 0.7`:
+
+```bash
+~/.aidevops/agents/scripts/stuck-detection-helper.sh label-stuck \
+  <issue_number> "$MILESTONE" "$ELAPSED_MIN" \
+  "<confidence>" "<reasoning>" "<suggested_actions>" \
+  --repo <owner/repo>
+```
+
+The helper applies the `stuck-detection` label and posts an advisory comment on the issue. It also records the milestone so it won't be re-checked.
+
+4. **Clear label on success.** When a worker's PR merges or the task completes successfully, clear the stuck-detection label:
+
+```bash
+~/.aidevops/agents/scripts/stuck-detection-helper.sh label-clear <issue_number> --repo <owner/repo>
+```
+
+Do this in Step 4 (Execute Dispatches) when you merge a PR, or in Step 2a when you observe a previously-stuck worker has made progress (new commits, PR opened).
+
+**Key rules for stuck detection:**
+- **ADVISORY ONLY** — never kill, cancel, or modify tasks based on stuck detection. The kill decision is separate (Step 2a).
+- **Haiku-tier AI** — use the cheapest model for evaluation (~$0.001 per check). Do not use opus or sonnet for stuck checks.
+- **Confidence threshold** — only label when confidence >= 0.7 (configurable via `SUPERVISOR_STUCK_CONFIDENCE_THRESHOLD`). Below threshold, log but don't label.
+- **One check per milestone** — the helper tracks which milestones have been checked per issue. A 60-minute check won't re-fire on the next pulse.
+- **Label cleanup** — always remove the label when the task succeeds. Stale labels create noise.
+- **Lightweight** — spend seconds per worker, not minutes. Skip workers under 30 minutes entirely.
+
 ## Step 3: Decide What to Work On
 
 Look at everything you fetched and pick up to **AVAILABLE** items — the highest-value actions right now.
@@ -216,6 +281,8 @@ Do it directly — no worker needed (doesn't count against concurrency):
 
 ```bash
 gh pr merge <number> --repo <owner/repo> --squash
+# Clear stuck-detection label if present (t1332)
+~/.aidevops/agents/scripts/stuck-detection-helper.sh label-clear <linked_issue_number> --repo <owner/repo> 2>/dev/null || true
 ```
 
 Output what you merged and continue to the next item.
@@ -333,7 +400,8 @@ See `scripts/commands/strategic-review.md` for the full review prompt.
 
 ## What You Must NOT Do
 
-- Do NOT maintain state files, databases, or logs (the circuit breaker and opus review helpers manage their own state files — those are the only exceptions)
+- Do NOT maintain state files, databases, or logs (the circuit breaker, stuck detection, and opus review helpers manage their own state files — those are the only exceptions)
+- Do NOT auto-kill workers based on stuck detection alone — stuck detection (Step 2b) is advisory only. The kill decision is separate (Step 2a) and requires your judgment
 - Do NOT dispatch more workers than available slots (max 6 total)
 - Do NOT try to implement anything yourself — you are the supervisor, not a worker
 - Do NOT read source code, run tests, or do any task work
