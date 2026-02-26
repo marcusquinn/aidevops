@@ -7,9 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.133.8] - 2026-02-26
+
 ### Added
 
-- Pulse blocked issue resolution: investigates blocker reasons, auto-unblocks when resolved, comments why still blocked (#2379)
+- pulse auto-resolves blocked issues — checks blockers, unblocks when resolved, comments why (#2379)
+
+### Changed
+
+- Documentation: changelog for blocked issue resolution
 
 ## [2.133.7] - 2026-02-26
 
