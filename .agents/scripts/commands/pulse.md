@@ -115,7 +115,34 @@ Look at everything you fetched and pick up to **AVAILABLE** items — the highes
 - Prefer repos with `"priority": "product"` over `"priority": "tooling"` (from pulse-repos.json)
 - Prefer smaller/simpler tasks (faster throughput)
 
-**Skip blocked issues:** Issues labelled `status:blocked` must NOT be dispatched. A blocked issue has unresolved dependencies — dispatching a worker for it wastes a slot and produces unusable output. The `gh issue list --json labels` output returns labels as objects — check that no label's `.name` field equals `status:blocked`.
+**Blocked issue resolution:** Issues labelled `status:blocked` must NOT be dispatched directly. But don't just skip them — investigate and try to unblock:
+
+1. **Read the issue body** with `gh issue view <number> --repo <owner/repo> --json body,title` to find the blocker reason. Look for patterns like `blocked-by: tXXX`, `**Blocked by:** tXXX`, `depends on #NNN`, or `blocked-by:tXXX` in the body text.
+
+2. **Check if the blocker is resolved.** For each blocker reference:
+   - If it's a task ID (e.g., `t047`): search closed issues with `gh issue list --repo <owner/repo> --state closed --search "t047" --json number,title,state --limit 5`. If found closed/merged, the blocker is resolved.
+   - If it's an issue number (e.g., `#123`): check `gh issue view 123 --repo <owner/repo> --json state`. If closed, the blocker is resolved.
+   - If it's a PR reference: check if the PR is merged.
+
+3. **Auto-unblock resolved issues.** If ALL blockers are resolved:
+   ```bash
+   gh issue edit <number> --repo <owner/repo> --remove-label "status:blocked" --add-label "status:available"
+   gh issue comment <number> --repo <owner/repo> --body "Supervisor pulse: blocker(s) resolved (<list resolved blockers>). Unblocking — available for dispatch."
+   ```
+   The issue is now dispatchable in this same pulse cycle — add it to your candidate list.
+
+4. **Comment on still-blocked issues** (once per issue, not every pulse). If the issue has NO supervisor comment explaining the block, add one:
+   ```bash
+   gh issue comment <number> --repo <owner/repo> --body "Supervisor pulse: this issue is blocked by <blocker list>. Current blocker status: <status of each>. Will auto-unblock when resolved."
+   ```
+   Check existing comments first (`gh api repos/<owner/repo>/issues/<number>/comments --jq '.[].body' | grep -c 'Supervisor pulse: this issue is blocked'`) — if a supervisor comment already exists, skip to avoid spam.
+
+5. **If no blocker reason is found** in the body, comment asking for clarification:
+   ```bash
+   gh issue comment <number> --repo <owner/repo> --body "Supervisor pulse: this issue is labelled status:blocked but no blocker reference found in the body. Please add 'blocked-by: tXXX' or remove the blocked label if this is ready for work."
+   ```
+
+This turns blocked issues from a dead end into an actively managed queue.
 
 **Skip issues that already have an open PR:** If an issue number appears in the title or branch name of an open PR, a worker has already produced output for it. Do not dispatch another worker for the same issue. Check the PR list you already fetched — if any PR's `headRefName` or `title` contains the issue number, skip that issue.
 
