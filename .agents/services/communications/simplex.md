@@ -19,7 +19,7 @@ tools:
 ## Quick Reference
 
 - **Type**: Decentralized encrypted messaging — no user identifiers, no phone numbers, no central servers
-- **License**: AGPL-3.0 (client + servers), MIT (TypeScript SDK)
+- **License**: AGPL-3.0 (client, servers, and TypeScript SDK)
 - **Apps**: iOS, Android, Desktop (Linux/macOS/Windows), Terminal CLI
 - **Bot API**: WebSocket JSON API via CLI (`simplex-chat -p 5225`)
 - **TypeScript SDK**: `simplex-chat` + `@simplex-chat/types` (npm)
@@ -413,7 +413,7 @@ type GroupMemberRole = "observer" | "author" | "member" | "moderator" | "admin" 
 
 ### Bot Profile Configuration
 
-Distinguish bot from regular user by setting `peerType: "bot"` in the profile. This enables:
+**Requires CLI v6.4.3+.** Distinguish bot from regular user by setting `peerType: "bot"` in the profile. This enables:
 
 - Command highlighting in messages (text starting with `/`)
 - Command menu UI when users type `/` or tap `//` button
@@ -535,6 +535,7 @@ Bot can automate acceptance of business connections and initial responses. Confi
 - Sent as file attachments (audio format)
 - Bot receives voice notes via `NewChatItems` event with file info
 - Bot can download the file from CLI's local filesystem
+- Sending voice notes requires encoding audio to the expected format and attaching via `APISendMessages` with `MsgContent` type `voice` — there is no dedicated voice API
 - Integration with speech-to-text for transcription (see `.agents/tools/voice/speech-to-speech.md`)
 
 ### File Transfer
@@ -831,6 +832,10 @@ XFTP handles large files but practical limits depend on:
 - Server-configured storage quota
 - 48-hour default retention on XFTP relays
 - Network conditions for chunk upload/download
+
+### AGPL-3.0 SDK License
+
+The TypeScript SDK (`simplex-chat`, `@simplex-chat/types`) is AGPL-3.0 licensed. Bot code that imports the SDK must be AGPL-3.0 compatible or use the raw WebSocket API directly (which does not create a derivative work). This affects distribution — internal-only bots are not affected by AGPL's source disclosure requirement.
 
 ### Push Notifications
 
