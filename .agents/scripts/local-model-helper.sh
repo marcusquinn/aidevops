@@ -8,16 +8,17 @@
 # Usage: local-model-helper.sh [command] [options]
 #
 # Commands:
-#   setup [--update]              Install/update llama.cpp + huggingface-cli
-#   start [--model M] [options]   Start llama-server with a model
+#   install [--update]            Install/update llama.cpp + huggingface-cli (alias: setup)
+#   serve [--model M] [options]   Start llama-server localhost:8080 (alias: start)
 #   stop                          Stop running llama-server
 #   status                        Show server status and loaded model
-#   models                        List downloaded GGUF models
-#   download <repo> [--quant Q]   Download a GGUF model from HuggingFace
+#   models                        List downloaded GGUF models with size/last-used
 #   search <query>                Search HuggingFace for GGUF models
+#   pull <repo> [--quant Q]       Download a GGUF model from HuggingFace (alias: download)
 #   recommend                     Hardware-aware model recommendations
-#   cleanup [--remove-stale]      Show/remove stale models (>30d unused)
-#   usage [--since DATE] [--json] Show usage statistics
+#   usage [--since DATE] [--json] Show usage statistics (SQLite)
+#   cleanup [--remove-stale]      Show/remove stale models (>30d threshold)
+#   update                        Check for new llama.cpp release
 #   inventory [--json] [--sync]   Show model inventory from database
 #   nudge [--json]                Session-start stale model check (>5 GB)
 #   benchmark --model M           Benchmark a model on local hardware
@@ -2180,6 +2181,83 @@ cmd_inventory() {
 }
 
 # =============================================================================
+# Command: update
+# =============================================================================
+# Check for a new llama.cpp release and report whether an upgrade is available.
+# Does not install automatically — use 'install --update' to upgrade.
+
+cmd_update() {
+	local json_output=false
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--json)
+			json_output=true
+			shift
+			;;
+		*) shift ;;
+		esac
+	done
+
+	if ! suppress_stderr command -v curl; then
+		print_error "curl is required but not found"
+		return 2
+	fi
+
+	if ! suppress_stderr command -v jq; then
+		print_error "jq is required but not found"
+		return 2
+	fi
+
+	print_info "Checking latest llama.cpp release..."
+
+	local release_json
+	release_json="$(curl -sL "$LLAMA_CPP_API")" || {
+		print_error "Failed to fetch llama.cpp release info from GitHub"
+		return 1
+	}
+
+	local latest_tag
+	latest_tag="$(echo "$release_json" | jq -r '.tag_name // empty')"
+	if [[ -z "$latest_tag" ]]; then
+		print_error "Could not determine latest release tag"
+		return 1
+	fi
+
+	local latest_date
+	latest_date="$(echo "$release_json" | jq -r '.published_at // empty' | cut -c1-10)"
+
+	local current_version="not installed"
+	local update_available=false
+
+	if [[ -x "$LLAMA_SERVER_BIN" ]]; then
+		current_version="$("$LLAMA_SERVER_BIN" --version 2>/dev/null | head -1 || echo "unknown")"
+		# Compare: if current version string does not contain the latest tag, update is available
+		if ! echo "$current_version" | grep -qF "$latest_tag"; then
+			update_available=true
+		fi
+	else
+		update_available=true
+	fi
+
+	if [[ "$json_output" == "true" ]]; then
+		printf '{"current":"%s","latest":"%s","latest_date":"%s","update_available":%s}\n' \
+			"$current_version" "$latest_tag" "$latest_date" "$update_available"
+	else
+		echo "llama.cpp update check"
+		echo "======================"
+		echo "Installed: ${current_version}"
+		echo "Latest:    ${latest_tag} (${latest_date})"
+		if [[ "$update_available" == "true" ]]; then
+			print_info "Update available. Run: local-model-helper.sh install --update"
+		else
+			print_success "Already up to date."
+		fi
+	fi
+
+	return 0
+}
+
+# =============================================================================
 # Command: help
 # =============================================================================
 
@@ -2191,16 +2269,17 @@ cmd_help() {
 		  local-model-helper.sh <command> [options]
 
 		COMMANDS:
-		  setup [--update]              Install/update llama.cpp + huggingface-cli
-		  start [--model M] [options]   Start llama-server with a model
+		  install [--update]            Install/update llama.cpp + huggingface-cli (alias: setup)
+		  serve [--model M] [options]   Start llama-server localhost:8080 (alias: start)
 		  stop                          Stop running llama-server
 		  status [--json]               Show server status and loaded model
-		  models [--json]               List downloaded GGUF models
-		  download <repo> [--quant Q]   Download a GGUF model from HuggingFace
+		  models [--json]               List downloaded GGUF models with size/last-used
 		  search <query> [--limit N]    Search HuggingFace for GGUF models
+		  pull <repo> [--quant Q]       Download a GGUF model from HuggingFace (alias: download)
 		  recommend [--json]            Hardware-aware model recommendations
-		  cleanup [options]             Show/remove stale models
-		  usage [--since DATE] [--json] Show usage statistics
+		  usage [--since DATE] [--json] Show usage statistics (SQLite)
+		  cleanup [options]             Show/remove stale models (>30d threshold)
+		  update [--json]               Check for new llama.cpp release
 		  inventory [--json] [--sync]   Show model inventory from database
 		  nudge [--json]                Session-start stale model check (>5 GB)
 		  benchmark --model M           Benchmark a model on local hardware
@@ -2221,18 +2300,21 @@ cmd_help() {
 		  --threshold <N>    Days before a model is considered stale (default: 30)
 
 		EXAMPLES:
-		  # First-time setup
-		  local-model-helper.sh setup
+		  # First-time install
+		  local-model-helper.sh install
+
+		  # Check for a new llama.cpp release
+		  local-model-helper.sh update
 
 		  # Get model recommendations for your hardware
 		  local-model-helper.sh recommend
 
-		  # Search and download a model
+		  # Search and pull a model
 		  local-model-helper.sh search "qwen3 8b"
-		  local-model-helper.sh download Qwen/Qwen3-8B-GGUF --quant Q4_K_M
+		  local-model-helper.sh pull Qwen/Qwen3-8B-GGUF --quant Q4_K_M
 
 		  # Start the server
-		  local-model-helper.sh start --model qwen3-8b-q4_k_m.gguf
+		  local-model-helper.sh serve --model qwen3-8b-q4_k_m.gguf
 
 		  # Check status
 		  local-model-helper.sh status
@@ -2273,16 +2355,17 @@ main() {
 	load_config
 
 	case "$command" in
-	setup) cmd_setup "$@" ;;
-	start) cmd_start "$@" ;;
+	install | setup) cmd_setup "$@" ;;
+	serve | start) cmd_start "$@" ;;
 	stop) cmd_stop ;;
 	status) cmd_status "$@" ;;
 	models) cmd_models "$@" ;;
-	download) cmd_download "$@" ;;
+	pull | download) cmd_download "$@" ;;
 	search) cmd_search "$@" ;;
 	recommend) cmd_recommend "$@" ;;
 	cleanup) cmd_cleanup "$@" ;;
 	usage) cmd_usage "$@" ;;
+	update) cmd_update "$@" ;;
 	inventory) cmd_inventory "$@" ;;
 	nudge) cmd_nudge "$@" ;;
 	benchmark) cmd_benchmark "$@" ;;
