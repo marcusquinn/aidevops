@@ -221,6 +221,66 @@ export const DEFAULT_LEAK_DETECTION_CONFIG: LeakDetectionConfig = {
 };
 
 // =============================================================================
+// Exec Approval Types
+// =============================================================================
+
+/** Classification for how a command should be handled by the approval system */
+export type ExecClassification = "allowed" | "approval-required" | "blocked";
+
+/** Configuration for the exec approval flow */
+export interface ExecApprovalConfig {
+  /** Commands that execute immediately without approval (e.g., "aidevops status") */
+  allowlist: string[];
+  /** Commands that are always rejected (e.g., "rm -rf", "shutdown") */
+  blocklist: string[];
+  /** Timeout in ms before a pending approval is auto-rejected (default: 60000) */
+  approvalTimeoutMs: number;
+  /** Whether to require approval for commands not in allowlist or blocklist (default: true) */
+  requireApprovalByDefault: boolean;
+}
+
+/** Default exec approval configuration */
+export const DEFAULT_EXEC_APPROVAL_CONFIG: ExecApprovalConfig = {
+  allowlist: [
+    "aidevops status",
+    "aidevops repos",
+    "aidevops features",
+  ],
+  blocklist: [
+    "rm -rf",
+    "shutdown",
+    "reboot",
+    "mkfs",
+    "dd if=",
+    "> /dev/",
+    ":(){ :|:& };:",
+  ],
+  approvalTimeoutMs: 60_000,
+  requireApprovalByDefault: true,
+};
+
+/** State of a pending approval request */
+export type ApprovalState = "pending" | "approved" | "rejected" | "expired";
+
+/** A pending command execution awaiting approval */
+export interface PendingApproval {
+  /** Short unique ID for the approval (e.g., "a3f7") */
+  id: string;
+  /** The command string to execute */
+  command: string;
+  /** Contact ID of the requester */
+  contactId: number;
+  /** Display name of the requester */
+  contactName: string;
+  /** When the request was created */
+  createdAt: number;
+  /** Current state */
+  state: ApprovalState;
+  /** Reply function bound to the original chat context */
+  reply: (text: string) => Promise<void>;
+}
+
+// =============================================================================
 // Bot Configuration
 // =============================================================================
 
@@ -246,6 +306,8 @@ export interface BotConfig {
   useTls: boolean;
   /** Outbound leak detection configuration */
   leakDetection: LeakDetectionConfig;
+  /** Exec approval flow configuration */
+  execApproval: ExecApprovalConfig;
 }
 
 /** Default bot configuration */
@@ -260,6 +322,7 @@ export const DEFAULT_BOT_CONFIG: BotConfig = {
   maxReconnectAttempts: 10,
   useTls: false,
   leakDetection: DEFAULT_LEAK_DETECTION_CONFIG,
+  execApproval: DEFAULT_EXEC_APPROVAL_CONFIG,
 };
 
 // =============================================================================
