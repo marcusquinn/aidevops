@@ -2648,11 +2648,11 @@
   check: file-exists .agents/tools/local-models/local-models.md
   check: rg "local-models" .agents/subagent-index.toon
 
-- [ ] v309 t1338.6 Update AGENTS.md domain index and subagent-index.toon #au... | PR #2394 | merged:2026-02-26
+- [x] v309 t1338.6 Update AGENTS.md domain index and subagent-index.toon #au... | PR #2394 | merged:2026-02-26 verified:2026-02-26
   files: .agents/AGENTS.md
   check: file-exists .agents/AGENTS.md
 
-- [ ] v310 t1337.2 Consolidate Tier 3 scripts — merge overlapping functions,... | PR #2398 | merged:2026-02-26
+- [x] v310 t1337.2 Consolidate Tier 3 scripts — merge overlapping functions,... | PR #2398 | merged:2026-02-26 verified:2026-02-26
   files: .agents/scripts/budget-tracker-helper.sh, .agents/scripts/full-loop-helper.sh, .agents/scripts/issue-sync-helper.sh, .agents/scripts/issue-sync-lib.sh, .agents/scripts/observability-helper.sh, .agents/scripts/shared-constants.sh
   check: shellcheck .agents/scripts/budget-tracker-helper.sh
   check: file-exists .agents/scripts/budget-tracker-helper.sh
@@ -2666,3 +2666,8 @@
   check: file-exists .agents/scripts/observability-helper.sh
   check: shellcheck .agents/scripts/shared-constants.sh
   check: file-exists .agents/scripts/shared-constants.sh
+
+- [ ] v311 t1338.4 Create local-model-helper.sh #auto-dispatch — new `.agent... | PR #2395 | merged:2026-02-26
+  files: .agents/scripts/local-model-helper.sh
+  check: shellcheck .agents/scripts/local-model-helper.sh
+  check: file-exists .agents/scripts/local-model-helper.sh
