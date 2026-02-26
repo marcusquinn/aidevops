@@ -2584,3 +2584,8 @@
   check: file-exists .agents/scripts/tests/test-matterbridge-helper.sh
 
 - [ ] v299 t1329 Cross-review judge pipeline and /cross-review slash comma... | PR #unknown | merged:2026-02-26
+
+- [ ] v300 t1330 Rate limit tracker for provider utilisation monitoring — ... | PR #2389 | merged:2026-02-26
+  files: .agents/scripts/observability-helper.sh
+  check: shellcheck .agents/scripts/observability-helper.sh
+  check: file-exists .agents/scripts/observability-helper.sh
