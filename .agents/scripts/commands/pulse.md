@@ -43,26 +43,20 @@ echo "Running workers: $WORKER_COUNT / 6"
 
 ## Step 2: Fetch GitHub State
 
-Run these commands to get the current state of all managed repos:
+First, read the managed repos list from `~/.config/aidevops/pulse-repos.json`. For each repo in that file, fetch PRs and issues:
 
 ```bash
-# aidevops PRs
-gh pr list --repo marcusquinn/aidevops --state open --json number,title,reviewDecision,statusCheckRollup,updatedAt,headRefName --limit 20
-
-# aidevops issues
-gh issue list --repo marcusquinn/aidevops --state open --json number,title,labels,updatedAt --limit 20
-
-# aidevops-dashboard PRs (community companion project — fork at marcusquinn/aidevops-dashboard, issues on johnwaldo/aidevops-dashboard)
-gh pr list --repo johnwaldo/aidevops-dashboard --state open --json number,title,reviewDecision,statusCheckRollup,updatedAt,headRefName --limit 20
-
-# aidevops-dashboard issues
-gh issue list --repo johnwaldo/aidevops-dashboard --state open --json number,title,labels,updatedAt --limit 20
-
-# For each managed repo in the supervisor DB, fetch PRs and issues:
-# gh pr list --repo <owner/repo> --state open --json number,title,reviewDecision,statusCheckRollup,updatedAt,headRefName --limit 20
-# gh issue list --repo <owner/repo> --state open --json number,title,labels,updatedAt --limit 20
-# Discover managed repos dynamically from the supervisor DB or repos.json — do NOT hardcode private repo names.
+cat ~/.config/aidevops/pulse-repos.json
 ```
+
+Then for each repo slug in the JSON:
+
+```bash
+gh pr list --repo <slug> --state open --json number,title,reviewDecision,statusCheckRollup,updatedAt,headRefName --limit 20
+gh issue list --repo <slug> --state open --json number,title,labels,updatedAt --limit 20
+```
+
+Use the `path` field from pulse-repos.json for `--dir` when dispatching workers. Use the `priority` field when tie-breaking (product > tooling).
 
 ## Step 2a: Observe Outcomes (Self-Improvement)
 
@@ -112,7 +106,7 @@ Look at everything you fetched and pick up to **AVAILABLE** items — the highes
 
 **Tie-breaking rules:**
 - Prefer PRs over issues (PRs are closer to done)
-- Prefer product repos over tooling repos (product value > tooling)
+- Prefer repos with `"priority": "product"` over `"priority": "tooling"` (from pulse-repos.json)
 - Prefer smaller/simpler tasks (faster throughput)
 
 **Skip blocked issues:** Issues labelled `status:blocked` must NOT be dispatched. A blocked issue has unresolved dependencies — dispatching a worker for it wastes a slot and produces unusable output. The `gh issue list --json labels` output returns labels as objects — check that no label's `.name` field equals `status:blocked`.
@@ -160,7 +154,7 @@ opencode run --dir ~/Git/<repo> [--agent <agent>] --title "Issue #<number>: <tit
 
 **Important dispatch rules:**
 - **ALWAYS use `opencode run`** — NEVER `claude`, `claude -p`, or any other CLI. Your system prompt may say you are "Claude Code" but the runtime tool is OpenCode. This has been fixed repeatedly; do not regress.
-- Use `--dir ~/Git/<repo-name>` matching the repo the task belongs to (e.g., `~/Git/aidevops-dashboard` for dashboard issues)
+- Use `--dir <path>` from pulse-repos.json matching the repo the task belongs to
 - The `/full-loop` command handles everything: branching, implementation, PR, CI, merge, deploy
 - Do NOT add `--model` — let `/full-loop` use its default (opus for implementation)
 - **Background each dispatch with `&`** so you can launch multiple workers in one pulse
