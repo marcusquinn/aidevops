@@ -268,6 +268,7 @@ jobs:
   #   2. Finds linked issues (from PR body Closes/Fixes/Resolves #NNN, or by task ID)
   #   3. Posts a closing comment with PR link
   #   4. Applies status:done label, removes stale status labels
+  #   5. Updates TODO.md with pr:#NNN proof-log and marks task [x]
   #
   # This ensures all closing paths (interactive, worker, pulse) get the same
   # hygiene treatment — previously only the TODO.md push path ran issue-sync.
@@ -280,7 +281,7 @@ jobs:
       group: issue-sync-pr-${{ github.event.pull_request.number }}
       cancel-in-progress: false
     permissions:
-      contents: read
+      contents: write
       issues: write
       pull-requests: write
 
@@ -392,6 +393,65 @@ jobs:
 
             echo "Updated labels on #$ISSUE_NUM (added status:done, removed stale)"
           done
+
+      - name: Checkout repo for TODO.md update
+        if: steps.extract.outputs.task_id != ''
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update TODO.md proof-log
+        if: steps.extract.outputs.task_id != ''
+        env:
+          TASK_ID: ${{ steps.extract.outputs.task_id }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+          TODAY=$(date +%Y-%m-%d)
+          PROOF="pr:#${PR_NUMBER} completed:${TODAY}"
+
+          # Check if task exists as unchecked in TODO.md
+          if ! grep -qE "^[[:space:]]*- \[ \] ${TASK_ID} " TODO.md; then
+            echo "Task $TASK_ID not found as unchecked in TODO.md — skipping proof-log"
+            # May already be [x], or may not exist in this repo's TODO.md
+            exit 0
+          fi
+
+          # Check if already marked complete with this PR
+          if grep -qE "^[[:space:]]*- \[x\] ${TASK_ID} .*pr:#${PR_NUMBER}" TODO.md; then
+            echo "Task $TASK_ID already has proof-log for PR #${PR_NUMBER}"
+            exit 0
+          fi
+
+          # Mark complete: [ ] -> [x], append proof-log
+          sed -i -E "s/^([[:space:]]*- )\[ \] (${TASK_ID} .*)\$/\1[x] \2 ${PROOF}/" TODO.md
+
+          # Verify the change was made
+          if ! grep -qE "^[[:space:]]*- \[x\] ${TASK_ID} .*pr:#${PR_NUMBER}" TODO.md; then
+            echo "::warning::Failed to update TODO.md for $TASK_ID — sed pattern did not match"
+            exit 0
+          fi
+
+          echo "Marked $TASK_ID complete with proof-log: $PROOF"
+
+          # Commit and push
+          git add TODO.md
+          git commit -m "chore: mark $TASK_ID complete ($PROOF) [skip ci]"
+
+          for i in 1 2 3; do
+            echo "Push attempt $i..."
+            git pull --rebase origin main || true
+            if git push; then
+              echo "Push succeeded on attempt $i"
+              exit 0
+            fi
+            sleep $((i * 3))
+          done
+          echo "::warning::Could not push TODO.md proof-log update (branch protection). Hygiene completed successfully."
 
   # =========================================================================
   # t1339: Apply conventional-commit labels to PRs
