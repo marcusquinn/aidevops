@@ -2559,3 +2559,5 @@
   check: file-exists .agents/subagent-index.toon
   check: file-exists .agents/tools/database/pglite-local-first.md
   check: rg "pglite-local-first" .agents/subagent-index.toon
+
+- [ ] v295 t1335 Archive Tier 1 redundant orchestration scripts — archive ... | PR #unknown | merged:2026-02-26
