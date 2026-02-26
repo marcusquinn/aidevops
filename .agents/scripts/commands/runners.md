@@ -29,18 +29,88 @@ For unattended operation, the `/pulse` command runs every 2 minutes via launchd.
 4. Uses AI (sonnet) to pick the highest-value items to fill available slots
 5. Dispatches workers via `opencode run "/full-loop ..."`, routing to the right agent
 
-See `pulse.md` for the full spec. Enable/disable with:
+See `pulse.md` for the full spec.
+
+### Pulse Scheduler Setup
+
+The pulse runs via a macOS launchd plist. If the plist doesn't exist (fresh install, new machine, or after a crash that deleted it), create it:
 
 ```bash
-# Enable automated pulse (every 2 minutes)
+# 1. Get the opencode binary path and user PATH for the plist
+which opencode        # e.g. /opt/homebrew/bin/opencode
+echo "$PATH"          # needed for EnvironmentVariables
+
+# 2. Create the plist
+cat > ~/Library/LaunchAgents/com.aidevops.aidevops-supervisor-pulse.plist << 'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.aidevops.aidevops-supervisor-pulse</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>-c</string>
+		<string>pgrep -f 'Supervisor Pulse' &gt;/dev/null &amp;&amp; exit 0; OPENCODE_PATH run "/pulse" --dir AIDEVOPS_DIR -m anthropic/claude-sonnet-4-6 --title "Supervisor Pulse"</string>
+	</array>
+	<key>StartInterval</key>
+	<integer>120</integer>
+	<key>StandardOutPath</key>
+	<string>HOME_DIR/.aidevops/logs/pulse.log</string>
+	<key>StandardErrorPath</key>
+	<string>HOME_DIR/.aidevops/logs/pulse.log</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>USER_PATH</string>
+		<key>HOME</key>
+		<string>HOME_DIR</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<false/>
+</dict>
+</plist>
+PLIST
+
+# 3. Replace placeholders with actual values
+sed -i '' "s|OPENCODE_PATH|$(which opencode)|g" ~/Library/LaunchAgents/com.aidevops.aidevops-supervisor-pulse.plist
+sed -i '' "s|AIDEVOPS_DIR|$HOME/Git/aidevops|g" ~/Library/LaunchAgents/com.aidevops.aidevops-supervisor-pulse.plist
+sed -i '' "s|HOME_DIR|$HOME|g" ~/Library/LaunchAgents/com.aidevops.aidevops-supervisor-pulse.plist
+sed -i '' "s|USER_PATH|$PATH|g" ~/Library/LaunchAgents/com.aidevops.aidevops-supervisor-pulse.plist
+
+# 4. Create log directory and load
+mkdir -p ~/.aidevops/logs
+launchctl load ~/Library/LaunchAgents/com.aidevops.aidevops-supervisor-pulse.plist
+```
+
+**Key settings:**
+- `RunAtLoad: true` — fires immediately on login/reboot (no waiting for first timer tick)
+- `KeepAlive: false` — each pulse is a one-shot run, not a long-lived daemon
+- `StartInterval: 120` — fires every 2 minutes
+- The `pgrep` guard prevents overlapping pulses (if a previous pulse is still running, skip)
+
+### Enable / Disable / Verify
+
+```bash
+# Enable automated pulse
 launchctl load ~/Library/LaunchAgents/com.aidevops.aidevops-supervisor-pulse.plist
 
 # Disable automated pulse
 launchctl unload ~/Library/LaunchAgents/com.aidevops.aidevops-supervisor-pulse.plist
 
-# Check if running
+# Check if loaded
 launchctl list | grep aidevops-supervisor-pulse
+
+# Check recent output
+tail -50 ~/.aidevops/logs/pulse.log
 ```
+
+### After Reboot
+
+The pulse auto-starts on login (`RunAtLoad: true`). Old workers don't survive reboot — the first pulse cycle sees 0 workers, 6 empty slots, and dispatches fresh work. No manual intervention needed.
 
 ## Interactive Mode: `/runners`
 
