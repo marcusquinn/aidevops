@@ -104,7 +104,7 @@ Memories are automatically recalled at key entry points to provide relevant cont
 - `conversation-starter.md`: Lines 10-24 (interactive session start)
 - `session-checkpoint-helper.sh`: `cmd_load()` (session resume)
 - `runner-helper.sh`: `cmd_run()` (runner dispatch)
-- `objective-runner-helper.sh`: `recall_objective_memories()` + `run_loop()` (objective runner)
+- `objective-runner-helper.sh`: archived (t1336) — `/full-loop` now handles iterative execution
 
 ## Slash Commands
 

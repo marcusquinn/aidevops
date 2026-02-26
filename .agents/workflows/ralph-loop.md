@@ -62,19 +62,15 @@ The loop creates a **self-referential feedback loop** where:
 
 ### v2: Fresh Sessions (Recommended)
 
+> **Note:** `ralph-loop-helper.sh` has been archived (t1336). Use `/full-loop` for
+> end-to-end development, or the `/ralph-loop` slash command for in-session loops.
+
 ```bash
-# External loop with fresh sessions per iteration
-~/.aidevops/agents/scripts/ralph-loop-helper.sh run \
-  "Build a REST API for todos" \
-  --tool opencode \
-  --max-iterations 20 \
-  --completion-promise "TASK_COMPLETE"
+# End-to-end development loop (recommended)
+/full-loop "Build a REST API for todos"
 
-# Check status
-~/.aidevops/agents/scripts/ralph-loop-helper.sh status
-
-# Cancel
-~/.aidevops/agents/scripts/ralph-loop-helper.sh cancel
+# Or use the slash command for in-session iteration
+/ralph-loop "Build a REST API for todos" --max-iterations 20 --completion-promise "TASK_COMPLETE"
 ```
 
 ### Auto-Branch Handling (Loop Mode)
@@ -112,11 +108,12 @@ This eliminates the interactive prompt that previously stalled loop agents.
 
 ## Commands
 
-### ralph-loop-helper.sh run (v2)
+### ralph-loop-helper.sh run (v2) — ARCHIVED
 
-Run external loop with fresh AI sessions per iteration.
+> **Archived (t1336):** This script has been moved to `scripts/archived/ralph-loop-helper.sh`.
+> Use `/full-loop` or `/ralph-loop` slash commands instead.
 
-**Usage:**
+**Original usage (for reference):**
 
 ```bash
 ralph-loop-helper.sh run "<prompt>" --tool <tool> [options]
@@ -414,15 +411,11 @@ This implementation works with:
 
 ### For Tools Without Hook Support
 
-If your AI CLI doesn't support stop hooks, use the external loop:
+Use `/full-loop` which handles the complete lifecycle including fresh sessions:
 
 ```bash
-# External bash loop (for tools without hook support)
-~/.aidevops/agents/scripts/ralph-loop-helper.sh external \
-  "Your prompt here" \
-  --max-iterations 20 \
-  --completion-promise "DONE" \
-  --tool opencode
+# Full development loop (works with any AI CLI)
+/full-loop "Your prompt here"
 ```
 
 ## Monitoring
@@ -445,27 +438,11 @@ When working with git worktrees, Ralph loops are aware of parallel sessions.
 ### Check All Worktrees
 
 ```bash
-# Show loops across all worktrees
-~/.aidevops/agents/scripts/ralph-loop-helper.sh status --all
+# Show active worktrees and their sessions
+~/.aidevops/agents/scripts/worktree-sessions.sh list
 ```
 
-Output shows:
-- Branch name for each active loop
-- Current iteration and max
-- Which worktree is current
-
-### Parallel Loop Warnings
-
-When starting a new loop, the helper automatically checks for other active loops:
-
-```text
-Other active Ralph loops detected:
-  - feature/other-task (iteration 5)
-
-Use 'ralph-loop-helper.sh status --all' to see details
-```
-
-This helps prevent confusion when multiple AI sessions are running in parallel.
+Output shows branch name, session status, and loop state for each worktree.
 
 ### Integration with worktree-sessions.sh
 
@@ -492,7 +469,7 @@ When using Ralph loops with PR review workflows, the loop uses adaptive timing b
 
 ### Adaptive Waiting Strategy
 
-The `quality-loop-helper.sh` uses three strategies:
+The `/full-loop` and `/pr-loop` commands use adaptive timing:
 
 1. **Service-aware initial wait**: Waits based on the slowest pending check
 2. **Exponential backoff**: Increases wait time between iterations (15s → 30s → 60s → 120s max)
@@ -585,13 +562,13 @@ opencode run "Continue with next task" --agent Build+ &
 ~/.aidevops/agents/scripts/worktree-helper.sh add feature/parallel-task
 ```
 
-### Integration with quality-loop-helper.sh
+### Session Spawning on Completion
 
-The `quality-loop-helper.sh` script can spawn new sessions on loop completion:
+After a successful loop, the AI can spawn new sessions for follow-up work:
 
 ```bash
-# After successful loop, offer to spawn next task
-~/.aidevops/agents/scripts/quality-loop-helper.sh preflight --on-complete spawn
+# After successful loop, start next task
+/full-loop "Next task description"
 ```
 
 ## Full Development Loop
@@ -653,13 +630,13 @@ For end-to-end automation from task conception to deployment, use the Full Devel
 └─────────────────┘
 ```
 
-| Phase | Script | Promise | Auto-Trigger |
+| Phase | Method | Promise | Auto-Trigger |
 |-------|--------|---------|--------------|
-| Task Development | `ralph-loop-helper.sh` | `TASK_COMPLETE` | Manual start |
-| Preflight | `quality-loop-helper.sh preflight` | `PREFLIGHT_PASS` | After task |
+| Task Development | `/full-loop` | `TASK_COMPLETE` | Manual start |
+| Preflight | `linters-local.sh` + AI fixes | `PREFLIGHT_PASS` | After task |
 | PR Creation | `gh pr create` | (PR URL) | After preflight |
-| PR Review | `quality-loop-helper.sh pr-review` | `PR_MERGED` | After PR create |
-| Postflight | `quality-loop-helper.sh postflight` | `RELEASE_HEALTHY` | After merge |
+| PR Review | `/pr-loop` (AI monitors CI + reviews) | `PR_MERGED` | After PR create |
+| Postflight | `/postflight-loop` (AI checks release) | `RELEASE_HEALTHY` | After merge |
 | Deploy | `./setup.sh` (aidevops only) | `DEPLOYED` | After postflight |
 
 ### Human Decision Points

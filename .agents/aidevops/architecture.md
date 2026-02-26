@@ -91,7 +91,7 @@ aidevops implements proven agent design patterns identified by Lance Martin (Lan
 | **Offload Context** | Write intermediate results to filesystem | `.agent-workspace/work/[project]/` for persistent files, session trajectories |
 | **Cache Context** | Prompt caching for cost efficiency | Stable instruction prefixes, avoid reordering between calls |
 | **Isolate Context** | Sub-agents with separate context windows | Subagent markdown files with specific tool permissions |
-| **Ralph Loop** | Iterative agent execution until task complete | `workflows/ralph-loop.md`, `ralph-loop-helper.sh`, `full-loop-helper.sh` |
+| **Ralph Loop** | Iterative agent execution until task complete | `workflows/ralph-loop.md`, `full-loop-helper.sh` |
 | **Evolve Context** | Learn from sessions, update memories | `/remember`, `/recall` with SQLite FTS5, `memory-helper.sh` |
 
 ### Key Implementation Details

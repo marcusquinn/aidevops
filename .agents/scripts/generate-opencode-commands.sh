@@ -32,7 +32,7 @@ command_count=0
 # =============================================================================
 # The agent-review command triggers a systematic review of agent instructions
 
-cat > "$OPENCODE_COMMAND_DIR/agent-review.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/agent-review.md" <<'EOF'
 ---
 description: Systematic review and improvement of agent instructions
 agent: Build+
@@ -60,7 +60,7 @@ echo -e "  ${GREEN}✓${NC} Created /agent-review command"
 # =============================================================================
 # Quality checks before version bump and release
 
-cat > "$OPENCODE_COMMAND_DIR/preflight.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/preflight.md" <<'EOF'
 ---
 description: Run quality checks before version bump and release
 agent: Build+
@@ -85,7 +85,7 @@ echo -e "  ${GREEN}✓${NC} Created /preflight command"
 # =============================================================================
 # Check code audit feedback on latest push to branch or PR
 
-cat > "$OPENCODE_COMMAND_DIR/postflight.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/postflight.md" <<'EOF'
 ---
 description: Check code audit feedback on latest push (branch or PR)
 agent: Build+
@@ -124,7 +124,7 @@ echo -e "  ${GREEN}✓${NC} Created /postflight command"
 # =============================================================================
 # Review external issues and PRs - validate problems and evaluate solutions
 
-cat > "$OPENCODE_COMMAND_DIR/review-issue-pr.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/review-issue-pr.md" <<'EOF'
 ---
 description: Review external issue or PR - validate problem and evaluate solution
 agent: Build+
@@ -153,7 +153,7 @@ echo -e "  ${GREEN}✓${NC} Created /review-issue-pr command"
 # =============================================================================
 # Full release workflow - direct execution, no subagent needed
 
-cat > "$OPENCODE_COMMAND_DIR/release.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/release.md" <<'EOF'
 ---
 description: Full release workflow with version bump, tag, and GitHub release
 agent: Build+
@@ -185,7 +185,7 @@ echo -e "  ${GREEN}✓${NC} Created /release command"
 # =============================================================================
 # Version management
 
-cat > "$OPENCODE_COMMAND_DIR/version-bump.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/version-bump.md" <<'EOF'
 ---
 description: Bump project version (major, minor, or patch)
 agent: Build+
@@ -210,7 +210,7 @@ echo -e "  ${GREEN}✓${NC} Created /version-bump command"
 # =============================================================================
 # Changelog management
 
-cat > "$OPENCODE_COMMAND_DIR/changelog.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/changelog.md" <<'EOF'
 ---
 description: Update CHANGELOG.md following Keep a Changelog format
 agent: Build+
@@ -233,7 +233,7 @@ echo -e "  ${GREEN}✓${NC} Created /changelog command"
 # =============================================================================
 # Run local linting tools (fast, offline)
 
-cat > "$OPENCODE_COMMAND_DIR/linters-local.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/linters-local.md" <<'EOF'
 ---
 description: Run local linting tools (ShellCheck, secretlint, pattern checks)
 agent: Build+
@@ -259,7 +259,7 @@ echo -e "  ${GREEN}✓${NC} Created /linters-local command"
 # =============================================================================
 # Run remote code auditing services
 
-cat > "$OPENCODE_COMMAND_DIR/code-audit-remote.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/code-audit-remote.md" <<'EOF'
 ---
 description: Run remote code auditing (CodeRabbit, Codacy, SonarCloud)
 agent: Build+
@@ -285,7 +285,7 @@ echo -e "  ${GREEN}✓${NC} Created /code-audit-remote command"
 # =============================================================================
 # Check against documented code standards
 
-cat > "$OPENCODE_COMMAND_DIR/code-standards.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/code-standards.md" <<'EOF'
 ---
 description: Check code against documented quality standards
 agent: Build+
@@ -311,7 +311,7 @@ echo -e "  ${GREEN}✓${NC} Created /code-standards command"
 # =============================================================================
 # Git branch workflows
 
-cat > "$OPENCODE_COMMAND_DIR/feature.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/feature.md" <<'EOF'
 ---
 description: Create and develop a feature branch
 agent: Build+
@@ -329,7 +329,7 @@ EOF
 ((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /feature command"
 
-cat > "$OPENCODE_COMMAND_DIR/bugfix.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/bugfix.md" <<'EOF'
 ---
 description: Create and resolve a bugfix branch
 agent: Build+
@@ -347,7 +347,7 @@ EOF
 ((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /bugfix command"
 
-cat > "$OPENCODE_COMMAND_DIR/hotfix.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/hotfix.md" <<'EOF'
 ---
 description: Urgent hotfix for critical production issues
 agent: Build+
@@ -370,7 +370,7 @@ echo -e "  ${GREEN}✓${NC} Created /hotfix command"
 # =============================================================================
 # List all API keys available in session
 
-cat > "$OPENCODE_COMMAND_DIR/list-keys.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/list-keys.md" <<'EOF'
 ---
 description: List all API keys available in session with their storage locations
 agent: Build+
@@ -412,7 +412,7 @@ echo -e "  ${GREEN}✓${NC} Created /list-keys command"
 # =============================================================================
 # Manual time logging for tasks
 
-cat > "$OPENCODE_COMMAND_DIR/log-time-spent.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/log-time-spent.md" <<'EOF'
 ---
 description: Log time spent on a task in TODO.md
 agent: Build+
@@ -461,7 +461,7 @@ echo -e "  ${GREEN}✓${NC} Created /log-time-spent command"
 # =============================================================================
 # Token-efficient context generation
 
-cat > "$OPENCODE_COMMAND_DIR/context.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/context.md" <<'EOF'
 ---
 description: Build token-efficient AI context for complex tasks
 agent: Build+
@@ -485,7 +485,7 @@ echo -e "  ${GREEN}✓${NC} Created /context command"
 # =============================================================================
 # Create a PR from current branch with auto-generated title and description
 
-cat > "$OPENCODE_COMMAND_DIR/create-pr.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/create-pr.md" <<'EOF'
 ---
 description: Create PR from current branch with title and description
 agent: Build+
@@ -516,7 +516,7 @@ EOF
 echo -e "  ${GREEN}✓${NC} Created /create-pr command"
 
 # Keep /pr as alias pointing to /create-pr for discoverability
-cat > "$OPENCODE_COMMAND_DIR/pr.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/pr.md" <<'EOF'
 ---
 description: Alias for /create-pr - Create PR from current branch
 agent: Build+
@@ -536,7 +536,7 @@ echo -e "  ${GREEN}✓${NC} Created /pr command (alias for /create-pr)"
 # =============================================================================
 # Generate Product Requirements Document
 
-cat > "$OPENCODE_COMMAND_DIR/create-prd.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/create-prd.md" <<'EOF'
 ---
 description: Generate a Product Requirements Document for a feature
 agent: Build+
@@ -574,7 +574,7 @@ echo -e "  ${GREEN}✓${NC} Created /create-prd command"
 # =============================================================================
 # Generate task list from PRD
 
-cat > "$OPENCODE_COMMAND_DIR/generate-tasks.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/generate-tasks.md" <<'EOF'
 ---
 description: Generate implementation tasks from a PRD
 agent: Build+
@@ -614,7 +614,7 @@ echo -e "  ${GREEN}✓${NC} Created /generate-tasks command"
 # =============================================================================
 # List tasks and plans with sorting, filtering, and grouping
 
-cat > "$OPENCODE_COMMAND_DIR/list-todo.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/list-todo.md" <<'EOF'
 ---
 description: List tasks and plans with sorting, filtering, and grouping
 agent: Build+
@@ -702,7 +702,7 @@ echo -e "  ${GREEN}✓${NC} Created /list-todo command"
 # =============================================================================
 # Save current discussion as task or plan (auto-detects complexity)
 
-cat > "$OPENCODE_COMMAND_DIR/save-todo.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/save-todo.md" <<'EOF'
 ---
 description: Save current discussion as task or plan (auto-detects complexity)
 agent: Build+
@@ -768,7 +768,7 @@ echo -e "  ${GREEN}✓${NC} Created /save-todo command"
 # =============================================================================
 # Show active plans and TODO.md status
 
-cat > "$OPENCODE_COMMAND_DIR/plan-status.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/plan-status.md" <<'EOF'
 ---
 description: Show active plans and TODO.md status
 agent: Build+
@@ -811,7 +811,7 @@ echo -e "  ${GREEN}✓${NC} Created /plan-status command"
 # =============================================================================
 # Basic keyword expansion from seed keywords
 
-cat > "$OPENCODE_COMMAND_DIR/keyword-research.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/keyword-research.md" <<'EOF'
 ---
 description: Keyword research with seed keyword expansion
 agent: SEO
@@ -853,7 +853,7 @@ echo -e "  ${GREEN}✓${NC} Created /keyword-research command"
 # =============================================================================
 # Google autocomplete long-tail expansion
 
-cat > "$OPENCODE_COMMAND_DIR/autocomplete-research.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/autocomplete-research.md" <<'EOF'
 ---
 description: Google autocomplete long-tail keyword expansion
 agent: SEO
@@ -892,7 +892,7 @@ echo -e "  ${GREEN}✓${NC} Created /autocomplete-research command"
 # =============================================================================
 # Full SERP analysis with weakness detection and KeywordScore
 
-cat > "$OPENCODE_COMMAND_DIR/keyword-research-extended.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/keyword-research-extended.md" <<'EOF'
 ---
 description: Full SERP analysis with weakness detection and KeywordScore
 agent: SEO
@@ -954,7 +954,7 @@ echo -e "  ${GREEN}✓${NC} Created /keyword-research-extended command"
 # =============================================================================
 # Keywords from Google Search Console and Bing Webmaster Tools
 
-cat > "$OPENCODE_COMMAND_DIR/webmaster-keywords.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/webmaster-keywords.md" <<'EOF'
 ---
 description: Keywords from GSC + Bing for your verified sites
 agent: SEO
@@ -1012,7 +1012,7 @@ echo -e "  ${GREEN}✓${NC} Created /webmaster-keywords command"
 # =============================================================================
 # Interactive setup wizard for new users
 
-cat > "$OPENCODE_COMMAND_DIR/onboarding.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/onboarding.md" <<'EOF'
 ---
 description: Interactive onboarding wizard - discover services, configure integrations
 ---
@@ -1029,7 +1029,7 @@ echo -e "  ${GREEN}✓${NC} Created /onboarding command"
 # =============================================================================
 # Run setup.sh to deploy latest agent changes locally
 
-cat > "$OPENCODE_COMMAND_DIR/setup-aidevops.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/setup-aidevops.md" <<'EOF'
 ---
 description: Deploy latest aidevops agent changes locally
 agent: Build+
@@ -1062,7 +1062,7 @@ echo -e "  ${GREEN}✓${NC} Created /setup-aidevops command"
 # =============================================================================
 # Start iterative AI development loop (Ralph Wiggum technique)
 
-cat > "$OPENCODE_COMMAND_DIR/ralph-loop.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/ralph-loop.md" <<'EOF'
 ---
 description: Start iterative AI development loop (Ralph Wiggum technique)
 agent: Build+
@@ -1085,10 +1085,7 @@ Arguments: $ARGUMENTS
 - `--max-iterations <n>` - Stop after N iterations (default: unlimited)
 - `--completion-promise <text>` - Phrase that signals completion
 
-**Setup the loop:**
-```bash
-~/.aidevops/agents/scripts/ralph-loop-helper.sh setup $ARGUMENTS
-```
+For end-to-end development, prefer `/full-loop` which handles the complete lifecycle.
 
 **How it works:**
 1. You work on the task
@@ -1114,7 +1111,7 @@ echo -e "  ${GREEN}✓${NC} Created /ralph-loop command"
 # =============================================================================
 # Cancel active Ralph loop
 
-cat > "$OPENCODE_COMMAND_DIR/cancel-ralph.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/cancel-ralph.md" <<'EOF'
 ---
 description: Cancel active Ralph Wiggum loop
 agent: Build+
@@ -1122,14 +1119,13 @@ agent: Build+
 
 Cancel the active Ralph loop.
 
-**Check and cancel:**
+Remove the state file to stop the loop:
+
 ```bash
-~/.aidevops/agents/scripts/ralph-loop-helper.sh cancel
+rm -f .agents/loop-state/ralph-loop.local.md .agents/loop-state/ralph-loop.local.state
 ```
 
-This removes the state file at `.agents/loop-state/ralph-loop.local.state` and stops the loop.
-
-If no loop is active, it will report "No active Ralph loop found."
+If no loop state file exists, no loop is active.
 EOF
 ((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /cancel-ralph command"
@@ -1139,7 +1135,7 @@ echo -e "  ${GREEN}✓${NC} Created /cancel-ralph command"
 # =============================================================================
 # Show Ralph loop status
 
-cat > "$OPENCODE_COMMAND_DIR/ralph-status.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/ralph-status.md" <<'EOF'
 ---
 description: Show current Ralph loop status
 agent: Build+
@@ -1148,8 +1144,9 @@ agent: Build+
 Show the current Ralph loop status.
 
 **Check status:**
+
 ```bash
-~/.aidevops/agents/scripts/ralph-loop-helper.sh status
+cat .agents/loop-state/ralph-loop.local.md 2>/dev/null || echo "No active Ralph loop"
 ```
 
 This shows:
@@ -1167,7 +1164,7 @@ echo -e "  ${GREEN}✓${NC} Created /ralph-status command"
 # =============================================================================
 # Iterative preflight checks until all pass
 
-cat > "$OPENCODE_COMMAND_DIR/preflight-loop.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/preflight-loop.md" <<'EOF'
 ---
 description: Run preflight checks in a loop until all pass (Ralph pattern)
 agent: Build+
@@ -1186,15 +1183,16 @@ Arguments: $ARGUMENTS
 - `--auto-fix` - Attempt to automatically fix issues
 - `--max-iterations N` - Max iterations (default: 10)
 
-**Run the loop:**
+**Run the checks:**
+
 ```bash
-~/.aidevops/agents/scripts/quality-loop-helper.sh preflight $ARGUMENTS
+~/.aidevops/agents/scripts/linters-local.sh
 ```
 
 **Completion promise:** `<promise>PREFLIGHT_PASS</promise>`
 
 This applies the Ralph Wiggum technique to quality checks:
-1. Run all preflight checks
+1. Run all preflight checks (linters-local.sh, shellcheck, markdown lint)
 2. If failures and --auto-fix: attempt fixes
 3. Re-run checks
 4. Repeat until all pass or max iterations
@@ -1213,7 +1211,7 @@ echo -e "  ${GREEN}✓${NC} Created /preflight-loop command"
 # =============================================================================
 # Iterative PR review monitoring
 
-cat > "$OPENCODE_COMMAND_DIR/pr-loop.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/pr-loop.md" <<'EOF'
 ---
 description: Monitor PR until approved or merged (Ralph pattern)
 agent: Build+
@@ -1233,10 +1231,7 @@ Arguments: $ARGUMENTS
 - `--wait-for-ci` - Wait for CI checks to complete
 - `--max-iterations N` - Max iterations (default: 10)
 
-**Run the loop:**
-```bash
-~/.aidevops/agents/scripts/quality-loop-helper.sh pr-review $ARGUMENTS
-```
+Read ~/.aidevops/agents/scripts/commands/pr-loop.md and follow its instructions.
 
 **Completion promises:**
 - `<promise>PR_APPROVED</promise>` - PR approved and ready to merge
@@ -1263,7 +1258,7 @@ echo -e "  ${GREEN}✓${NC} Created /pr-loop command"
 # =============================================================================
 # Release health monitoring
 
-cat > "$OPENCODE_COMMAND_DIR/postflight-loop.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/postflight-loop.md" <<'EOF'
 ---
 description: Monitor release health after deployment (Ralph pattern)
 agent: Build+
@@ -1282,10 +1277,7 @@ Arguments: $ARGUMENTS
 - `--monitor-duration Nm` - How long to monitor (e.g., 5m, 10m, 1h)
 - `--max-iterations N` - Max checks during monitoring (default: 5)
 
-**Run the loop:**
-```bash
-~/.aidevops/agents/scripts/quality-loop-helper.sh postflight $ARGUMENTS
-```
+Read ~/.aidevops/agents/scripts/commands/postflight-loop.md and follow its instructions.
 
 **Completion promise:** `<promise>RELEASE_HEALTHY</promise>`
 
@@ -1308,7 +1300,7 @@ echo -e "  ${GREEN}✓${NC} Created /postflight-loop command"
 # =============================================================================
 # Run a Ralph loop for a specific task ID
 
-cat > "$OPENCODE_COMMAND_DIR/ralph-task.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/ralph-task.md" <<'EOF'
 ---
 description: Run Ralph loop for a task from TODO.md by ID
 agent: Build+
@@ -1360,7 +1352,7 @@ echo -e "  ${GREEN}✓${NC} Created /ralph-task command"
 # =============================================================================
 # End-to-end development loop (task → preflight → PR → postflight → deploy)
 
-cat > "$OPENCODE_COMMAND_DIR/full-loop.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/full-loop.md" <<'EOF'
 ---
 description: Start end-to-end development loop (task → preflight → PR → postflight → deploy)
 agent: Build+
@@ -1398,7 +1390,7 @@ echo -e "  ${GREEN}✓${NC} Created /full-loop command"
 # =============================================================================
 # Simplify and refine code for clarity
 
-cat > "$OPENCODE_COMMAND_DIR/code-simplifier.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/code-simplifier.md" <<'EOF'
 ---
 description: Simplify and refine code for clarity, consistency, and maintainability
 agent: Build+
@@ -1430,7 +1422,7 @@ echo -e "  ${GREEN}✓${NC} Created /code-simplifier command"
 # =============================================================================
 # Review session for completeness before ending
 
-cat > "$OPENCODE_COMMAND_DIR/session-review.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/session-review.md" <<'EOF'
 ---
 description: Review session for completeness before ending
 agent: Build+
@@ -1460,7 +1452,7 @@ echo -e "  ${GREEN}✓${NC} Created /session-review command"
 # =============================================================================
 # Store a memory for cross-session recall
 
-cat > "$OPENCODE_COMMAND_DIR/remember.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/remember.md" <<'EOF'
 ---
 description: Store a memory for cross-session recall
 agent: Build+
@@ -1496,7 +1488,7 @@ echo -e "  ${GREEN}✓${NC} Created /remember command"
 # =============================================================================
 # Search memories from previous sessions
 
-cat > "$OPENCODE_COMMAND_DIR/recall.md" << 'EOF'
+cat >"$OPENCODE_COMMAND_DIR/recall.md" <<'EOF'
 ---
 description: Search memories from previous sessions
 agent: Build+
@@ -1529,24 +1521,24 @@ echo -e "  ${GREEN}✓${NC} Created /recall command"
 COMMANDS_DIR="$HOME/.aidevops/agents/scripts/commands"
 
 if [[ -d "$COMMANDS_DIR" ]]; then
-    for cmd_file in "$COMMANDS_DIR"/*.md; do
-        [[ -f "$cmd_file" ]] || continue
-        
-        cmd_name=$(basename "$cmd_file" .md)
-        
-        # Skip SKILL.md (not a command)
-        [[ "$cmd_name" == "SKILL" ]] && continue
-        
-        # Skip if already manually defined (avoid duplicates)
-        if [[ -f "$OPENCODE_COMMAND_DIR/$cmd_name.md" ]]; then
-            continue
-        fi
-        
-        # Copy command file directly (it already has proper frontmatter)
-        cp "$cmd_file" "$OPENCODE_COMMAND_DIR/$cmd_name.md"
-        ((++command_count))
-        echo -e "  ${GREEN}✓${NC} Auto-discovered /$cmd_name command"
-    done
+	for cmd_file in "$COMMANDS_DIR"/*.md; do
+		[[ -f "$cmd_file" ]] || continue
+
+		cmd_name=$(basename "$cmd_file" .md)
+
+		# Skip SKILL.md (not a command)
+		[[ "$cmd_name" == "SKILL" ]] && continue
+
+		# Skip if already manually defined (avoid duplicates)
+		if [[ -f "$OPENCODE_COMMAND_DIR/$cmd_name.md" ]]; then
+			continue
+		fi
+
+		# Copy command file directly (it already has proper frontmatter)
+		cp "$cmd_file" "$OPENCODE_COMMAND_DIR/$cmd_name.md"
+		((++command_count))
+		echo -e "  ${GREEN}✓${NC} Auto-discovered /$cmd_name command"
+	done
 fi
 
 # =============================================================================

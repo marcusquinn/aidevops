@@ -7,7 +7,7 @@
 #   3. Supervisor dedup Phase 0.5 resolves duplicates in DB
 #   4. Supervisor dedup Phase 0.5b resolves duplicates in TODO.md
 #   5. Pre-commit hook rejects duplicate task IDs
-#   6. coderabbit-task-creator-helper.sh references claim-task-id.sh correctly
+#   6. coderabbit-task-creator-helper.sh references claim-task-id.sh correctly (archived t1336 — skipped)
 #   7. claim-task-id.sh basic functionality
 #   8. get_highest_task_id accuracy (legacy, kept for regression)
 #   9. Edge cases
@@ -543,67 +543,8 @@ EOF
 test_coderabbit_path() {
 	echo ""
 	echo "=== Test 6: coderabbit-task-creator-helper.sh path verification ==="
-	info "Verifying claim-task-id.sh reference is correct"
-
-	local coderabbit_script="$SCRIPT_DIR/coderabbit-task-creator-helper.sh"
-	local claim_script="$SCRIPT_DIR/claim-task-id.sh"
-
-	# Check that the coderabbit script exists
-	if [[ -f "$coderabbit_script" ]]; then
-		pass "coderabbit-task-creator-helper.sh exists"
-	else
-		fail "coderabbit-task-creator-helper.sh not found at $coderabbit_script"
-		return
-	fi
-
-	# Check that claim-task-id.sh exists
-	if [[ -f "$claim_script" ]]; then
-		pass "claim-task-id.sh exists at $claim_script"
-	else
-		fail "claim-task-id.sh not found at $claim_script"
-		return
-	fi
-
-	# Check that claim-task-id.sh is executable
-	if [[ -x "$claim_script" ]]; then
-		pass "claim-task-id.sh is executable"
-	else
-		fail "claim-task-id.sh is not executable"
-	fi
-
-	# Verify the reference in coderabbit-task-creator uses SCRIPT_DIR/claim-task-id.sh
-	if grep -q '${SCRIPT_DIR}/claim-task-id.sh' "$coderabbit_script"; then
-		pass "coderabbit-task-creator references \${SCRIPT_DIR}/claim-task-id.sh"
-	else
-		fail "coderabbit-task-creator does NOT reference \${SCRIPT_DIR}/claim-task-id.sh"
-		info "Checking what it references instead..."
-		grep -n "claim\|dedup" "$coderabbit_script" || true
-	fi
-
-	# Verify it does NOT reference a broken path (e.g., dedup-task-id.sh or similar)
-	if grep -q 'dedup-task-id\.sh\|dedup_task_id\.sh' "$coderabbit_script"; then
-		fail "coderabbit-task-creator still references broken dedup-task-id.sh path"
-	else
-		pass "No broken path references found (no dedup-task-id.sh)"
-	fi
-
-	# Verify SCRIPT_DIR is set correctly in coderabbit-task-creator
-	if grep -q 'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE\[0\]}")" && pwd)"' "$coderabbit_script"; then
-		pass "SCRIPT_DIR is correctly defined in coderabbit-task-creator"
-	else
-		fail "SCRIPT_DIR definition not found or incorrect"
-	fi
-
-	# Verify both scripts are in the same directory
-	local coderabbit_dir claim_dir
-	coderabbit_dir=$(dirname "$coderabbit_script")
-	claim_dir=$(dirname "$claim_script")
-
-	if [[ "$coderabbit_dir" == "$claim_dir" ]]; then
-		pass "Both scripts are in the same directory ($coderabbit_dir)"
-	else
-		fail "Scripts are in different directories: $coderabbit_dir vs $claim_dir"
-	fi
+	info "coderabbit-task-creator-helper.sh archived (t1336) — skipping"
+	skip "coderabbit-task-creator-helper.sh archived to scripts/archived/ (t1336)"
 	return 0
 }
 

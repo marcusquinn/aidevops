@@ -211,8 +211,6 @@ CRITICAL_SCRIPTS=(
 	"mail-helper.sh"
 	"runner-helper.sh"
 	"full-loop-helper.sh"
-	"ralph-loop-helper.sh"
-	"quality-loop-helper.sh"
 	"pre-edit-check.sh"
 	"worktree-helper.sh"
 	"credential-helper.sh"
