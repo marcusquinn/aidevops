@@ -106,7 +106,7 @@ tools:
 
 Valid values: `local`, `haiku`, `flash`, `sonnet`, `pro`, `opus`
 
-> **Note**: The `local` tier is documented here but runtime support (helper scripts, availability checks) is being added in subtasks t1338.2-t1338.6. Until those land, `local` in frontmatter will fall back to `haiku`.
+> **Note**: The `local` tier requires `local-model-helper.sh` to be set up and a model server running. If no local server is available, `local` in frontmatter will fall back to `haiku`. See `tools/local-models/local-models.md` for setup.
 
 When `model:` is absent, `sonnet` is assumed (the default tier).
 
@@ -129,7 +129,7 @@ Concrete model subagents are defined across these paths (`tools/ai-assistants/mo
 
 | Tier | Subagent | Primary Model | Fallback |
 |------|----------|---------------|----------|
-| `local` | `tools/local-models/local-models.md` (planned: t1338.2) | llama.cpp (user GGUF) | FAIL (privacy) or flash (cost) |
+| `local` | `tools/local-models/local-models.md` | llama.cpp (user GGUF) | FAIL (privacy) or flash (cost) |
 | `flash` | `models/flash.md` | gemini-2.5-flash | gpt-4.1-mini |
 | `haiku` | `models/haiku.md` | claude-haiku-4-5 | gemini-2.5-flash |
 | `sonnet` | `models/sonnet.md` | claude-sonnet-4 | gpt-4.1 |
@@ -164,7 +164,7 @@ compare-models-helper.sh discover --json
 
 Discovery checks three sources (in order): environment variables, gopass encrypted secrets, plaintext `credentials.sh`. Use discovery output to constrain routing to models the user can actually access.
 
-For local models, use `local-model-helper.sh status` to check if a local model server is running (planned: t1338.4):
+For local models, use `local-model-helper.sh status` to check if a local model server is running:
 
 ```bash
 # Check if local model server is running and which model is loaded
@@ -308,9 +308,9 @@ budget-tracker records spend with both tiers for cost comparison.
 
 ## Related
 
-- `tools/local-models/local-models.md` — Local model setup, runtime management (llama.cpp) (planned: t1338.2)
-- `tools/local-models/huggingface.md` — Model discovery, GGUF format, quantization guidance (planned: t1338.3)
-- `scripts/local-model-helper.sh` — CLI for local model install, serve, search, cleanup (planned: t1338.4)
+- `tools/local-models/local-models.md` — Local model setup, runtime management (llama.cpp)
+- `tools/local-models/huggingface.md` — Model discovery, GGUF format, quantization guidance
+- `scripts/local-model-helper.sh` — CLI for local model install, serve, search, cleanup
 - `tools/ai-assistants/compare-models.md` — Full model comparison subagent
 - `tools/ai-assistants/models/README.md` — Model-specific subagent definitions
 - `scripts/compare-models-helper.sh` — CLI for model comparison and provider discovery

@@ -66,7 +66,7 @@ tools/automation/,Automation - cron scheduling objective runner and macOS AppleS
 tools/wordpress/,WordPress ecosystem - local dev and fleet,wp-dev|wp-admin|localwp|mainwp|wp-preferred|scf
 tools/containers/,Container runtimes - Docker and Linux VMs on macOS and remote dispatch via SSH/Tailscale,orbstack|remote-dispatch
 tools/infrastructure/,Infrastructure - cloud GPU deployment and compute,cloud-gpu
-tools/local-models/,Local AI model inference - llama.cpp setup GGUF models usage tracking disk cleanup,local-models
+tools/local-models/,Local AI model inference - llama.cpp setup GGUF models usage tracking disk cleanup,local-models|huggingface
 services/accessibility/,Unified web and email accessibility auditing - WCAG compliance remediation and monitoring,accessibility-audit
 services/hosting/,Hosting providers - DNS and cloud servers and local dev,local-hosting|localhost|hostinger|hetzner|cloudflare|cloudflare-platform|cloudron|closte
 services/networking/,Networking - mesh VPN and secure device connectivity,tailscale|netbird
