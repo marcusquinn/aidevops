@@ -208,9 +208,27 @@ Run the session miner pulse. It has its own 20-hour interval guard, so this is a
 
 If it produces output (new suggestions), create a TODO entry or GitHub issue in the aidevops repo for the harness improvement. The session miner extracts user corrections and tool error patterns from past sessions and suggests harness rules that would prevent recurring issues.
 
+## Step 8: Strategic Review (Every 4h, Opus Tier)
+
+Check if an opus-tier strategic review is due. The helper script enforces a 4-hour minimum interval:
+
+```bash
+if ~/.aidevops/agents/scripts/opus-review-helper.sh check 2>/dev/null; then
+  # Review is due — dispatch an opus session
+  opencode run --dir ~/Git/aidevops --model opus --title "Strategic Review $(date +%Y-%m-%d-%H%M)" \
+    "/strategic-review" &
+fi
+```
+
+The strategic review does what sonnet cannot: meta-reasoning about queue health, resource utilisation, stuck chains, stale state, and systemic issues. It can take corrective actions (merge ready PRs, file issues, clean worktrees, dispatch high-value work).
+
+This does NOT count against the 6-worker concurrency limit — it's a supervisor function, not a task worker.
+
+See `scripts/commands/strategic-review.md` for the full review prompt.
+
 ## What You Must NOT Do
 
-- Do NOT maintain state files, databases, or logs (the circuit breaker helper manages its own state file — that's the only exception)
+- Do NOT maintain state files, databases, or logs (the circuit breaker and opus review helpers manage their own state files — those are the only exceptions)
 - Do NOT dispatch more workers than available slots (max 6 total)
 - Do NOT try to implement anything yourself — you are the supervisor, not a worker
 - Do NOT read source code, run tests, or do any task work
