@@ -157,6 +157,70 @@ export interface CommandDefinition {
 }
 
 // =============================================================================
+// Leak Detection Types
+// =============================================================================
+
+/** Named leak pattern identifiers */
+export type LeakPatternName =
+  | "aws_access_key"
+  | "aws_secret_key"
+  | "github_token"
+  | "github_fine_grained"
+  | "gitlab_token"
+  | "slack_token"
+  | "discord_token"
+  | "generic_api_key"
+  | "bearer_token"
+  | "jwt"
+  | "database_url"
+  | "private_ip"
+  | "file_path"
+  | "private_key"
+  | "password_in_url"
+  | "high_entropy";
+
+/** A single leak match found by the scanner */
+export interface LeakMatch {
+  /** Which pattern matched */
+  patternName: LeakPatternName;
+  /** Human-readable description of the pattern */
+  description: string;
+  /** The actual text that matched (for redaction) */
+  matchedText: string;
+  /** Character index in the scanned text */
+  index: number;
+  /** Shannon entropy of the matched text */
+  entropy: number;
+}
+
+/** Result of scanning text for leaks */
+export interface LeakDetectionResult {
+  /** Whether any leaks were detected */
+  hasLeaks: boolean;
+  /** All matches found */
+  matches: LeakMatch[];
+  /** Length of the scanned text */
+  scannedLength: number;
+}
+
+/** Leak detection configuration */
+export interface LeakDetectionConfig {
+  /** Enable outbound leak detection (default: true) */
+  enabled: boolean;
+  /** Shannon entropy threshold for high-entropy token detection (default: 4.0) */
+  entropyThreshold: number;
+  /** Minimum token length for entropy analysis (default: 20) */
+  minTokenLength: number;
+}
+
+/** Default leak detection configuration */
+export const DEFAULT_LEAK_DETECTION_CONFIG: LeakDetectionConfig = {
+  enabled: true,
+  entropyThreshold: 4.0,
+  minTokenLength: 20,
+};
+
+// =============================================================================
 // Bot Configuration
 // =============================================================================
 
@@ -180,6 +244,8 @@ export interface BotConfig {
   maxReconnectAttempts: number;
   /** Enable TLS for WebSocket connection (default: false — local CLI uses plain WebSocket) */
   useTls: boolean;
+  /** Outbound leak detection configuration */
+  leakDetection: LeakDetectionConfig;
 }
 
 /** Default bot configuration */
@@ -193,6 +259,7 @@ export const DEFAULT_BOT_CONFIG: BotConfig = {
   reconnectInterval: 5000,
   maxReconnectAttempts: 10,
   useTls: false,
+  leakDetection: DEFAULT_LEAK_DETECTION_CONFIG,
 };
 
 // =============================================================================
