@@ -34,6 +34,7 @@ import type {
 } from "./types";
 import { DEFAULT_BOT_CONFIG } from "./types";
 import { BUILTIN_COMMANDS } from "./commands";
+import { scanForLeaks, redactLeaks, formatLeakWarning } from "./leak-detector";
 
 // =============================================================================
 // Logger
@@ -258,10 +259,29 @@ class SimplexAdapter {
     this.logger.debug(`Sent command: ${cmd} (corrId: ${command.corrId})`);
   }
 
-  /** Send a text message to a contact or group */
+  /** Send a text message to a contact or group (gated by leak detection) */
   async sendMessage(target: string, text: string): Promise<void> {
     // target format: @contactName or #groupName
-    await this.sendCommand(`${target} ${text}`);
+    const safeText = this.scanAndRedact(text);
+    await this.sendCommand(`${target} ${safeText}`);
+  }
+
+  /**
+   * Scan outbound text for credential/secret leaks and redact if found.
+   * This is the send-boundary gate — all outbound messages pass through here.
+   */
+  private scanAndRedact(text: string): string {
+    if (!this.config.leakDetection.enabled) {
+      return text;
+    }
+
+    const result = scanForLeaks(text);
+    if (!result.hasLeaks) {
+      return text;
+    }
+
+    this.logger.warn(formatLeakWarning(result));
+    return redactLeaks(text, result);
   }
 
   /** Handle incoming WebSocket message */
