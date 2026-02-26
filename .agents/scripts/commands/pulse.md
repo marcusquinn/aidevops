@@ -115,7 +115,7 @@ Look at everything you fetched and pick up to **AVAILABLE** items — the highes
 - Prefer product repos over tooling repos (product value > tooling)
 - Prefer smaller/simpler tasks (faster throughput)
 
-**Skip blocked issues:** Issues labelled `status:blocked` must NOT be dispatched. A blocked issue has unresolved dependencies — dispatching a worker for it wastes a slot and produces unusable output. Check the labels array in the GitHub JSON and skip any issue where labels include `status:blocked`.
+**Skip blocked issues:** Issues labelled `status:blocked` must NOT be dispatched. A blocked issue has unresolved dependencies — dispatching a worker for it wastes a slot and produces unusable output. The `gh issue list --json labels` output returns labels as objects — check that no label's `.name` field equals `status:blocked`.
 
 **Skip issues that already have an open PR:** If an issue number appears in the title or branch name of an open PR, a worker has already produced output for it. Do not dispatch another worker for the same issue. Check the PR list you already fetched — if any PR's `headRefName` or `title` contains the issue number, skip that issue.
 
