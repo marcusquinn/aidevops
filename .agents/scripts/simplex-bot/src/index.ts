@@ -23,7 +23,6 @@
 import type {
   BotConfig,
   ChatItem,
-  CommandContext,
   CommandDefinition,
   ContactInfo,
   ExecApprovalConfig,
@@ -37,6 +36,21 @@ import { DEFAULT_BOT_CONFIG, DEFAULT_EXEC_APPROVAL_CONFIG } from "./types";
 import { BUILTIN_COMMANDS, getApprovalManager, setApprovalManager } from "./commands";
 import { ApprovalManager } from "./approval";
 import { scanForLeaks, redactLeaks, formatLeakWarning } from "./leak-detector";
+import { loadConfig } from "./config";
+import { SessionStore } from "./session";
+import {
+  handleContactConnected,
+  handleContactRequest,
+  handleBusinessRequest,
+  handleNewChatItems,
+  handleGroupInvitation,
+  handleMemberJoined,
+  handleBotRemovedFromGroup,
+  handleMemberConnected,
+  handleFileReady,
+  handleFileComplete,
+  handleNonTextMessage,
+} from "./handlers";
 
 // =============================================================================
 // Logger
@@ -53,7 +67,7 @@ const LOG_LEVELS: Record<LogLevel, number> = {
 };
 
 /** Level-filtered console logger for bot output */
-class Logger {
+export class Logger {
   private level: number;
 
   /** Create a logger that filters messages below the given level */
@@ -95,7 +109,7 @@ class Logger {
 // =============================================================================
 
 /** Routes incoming messages to registered command handlers */
-class CommandRouter {
+export class CommandRouter {
   private commands: Map<string, CommandDefinition> = new Map();
 
   /** Register a single command definition */
@@ -138,11 +152,12 @@ class CommandRouter {
 // =============================================================================
 
 /** WebSocket adapter connecting to SimpleX CLI for message handling */
-class SimplexAdapter {
+export class SimplexAdapter {
   private ws: WebSocket | null = null;
   private config: BotConfig;
   private logger: Logger;
   private router: CommandRouter;
+  private sessions: SessionStore;
   private corrIdCounter = 0;
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -151,12 +166,13 @@ class SimplexAdapter {
   private contactNames: Map<number, string> = new Map();
   private groupNames: Map<number, string> = new Map();
 
-  /** Initialize adapter with optional config overrides */
-  constructor(config: Partial<BotConfig> = {}) {
-    this.config = { ...DEFAULT_BOT_CONFIG, ...config };
+  /** Initialize adapter with config (use loadConfig() for file-based config) */
+  constructor(config: BotConfig) {
+    this.config = config;
     this.logger = new Logger(this.config.logLevel);
     this.router = new CommandRouter();
     this.router.registerAll(BUILTIN_COMMANDS);
+    this.sessions = new SessionStore(this.config.dataDir);
 
     // Initialise the exec approval manager with config
     const approvalConfig: Partial<ExecApprovalConfig> = this.config.execApproval ?? {};
@@ -177,7 +193,6 @@ class SimplexAdapter {
     this.logger.info(`Connecting to SimpleX CLI at ${url}...`);
 
     return new Promise((resolve, reject) => {
-      // Track whether this Promise has settled to prevent hanging on reconnect failures
       let settled = false;
 
       try {
@@ -202,7 +217,6 @@ class SimplexAdapter {
             this.scheduleReconnect();
           }
           this.intentionalDisconnect = false;
-          // Reject if the Promise hasn't settled (connection failed before onopen)
           if (!settled) {
             settled = true;
             reject(new Error(`Connection to ${url} closed before opening`));
@@ -211,9 +225,6 @@ class SimplexAdapter {
 
         this.ws.onerror = (event: Event) => {
           this.logger.error("WebSocket error", event);
-          // On initial connection failure, suppress reconnect so the caller
-          // can handle the error (e.g., process.exit in main).
-          // Mid-session errors let onclose handle reconnect naturally.
           if (!this.hasConnected && this.ws) {
             this.intentionalDisconnect = true;
             this.ws.close();
@@ -241,6 +252,7 @@ class SimplexAdapter {
       this.ws.close();
       this.ws = null;
     }
+    this.sessions.close();
     // Clean up approval manager timers
     getApprovalManager().shutdown();
     this.logger.info("Disconnected from SimpleX CLI");
@@ -252,7 +264,7 @@ class SimplexAdapter {
   }
 
   /** Send a command to SimpleX CLI */
-  private async sendCommand(cmd: string): Promise<void> {
+  async sendCommand(cmd: string): Promise<void> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       this.logger.error("Cannot send command: not connected");
       return;
@@ -303,7 +315,6 @@ class SimplexAdapter {
       return;
     }
 
-    // Ignore correlated responses (command results) — we only care about events
     if (response.corrId) {
       this.logger.debug(`Response for corrId ${response.corrId}:`, response.resp?.type);
       return;
@@ -314,62 +325,116 @@ class SimplexAdapter {
       return;
     }
 
+    this.dispatchEvent(event);
+  }
+
+  /** Dispatch an event to the appropriate handler */
+  private dispatchEvent(event: SimplexEvent): void {
+    const contactDeps = {
+      config: this.config,
+      logger: this.logger,
+      sessions: this.sessions,
+      sendCommand: (cmd: string) => this.sendCommand(cmd),
+      cacheContactName: (id: number, name: string) => this.contactNames.set(id, name),
+      cacheGroupName: (id: number, name: string) => this.groupNames.set(id, name),
+    };
+
+    const groupDeps = {
+      logger: this.logger,
+      sessions: this.sessions,
+      sendCommand: (cmd: string) => this.sendCommand(cmd),
+      cacheGroupName: (id: number, name: string) => this.groupNames.set(id, name),
+      autoJoinGroups: this.config.autoJoinGroups,
+    };
+
+    const fileDeps = {
+      logger: this.logger,
+      sessions: this.sessions,
+      sendCommand: (cmd: string) => this.sendCommand(cmd),
+      replyToItem: (item: ChatItem, text: string) => this.replyToItem(item, text),
+      autoAcceptFiles: this.config.autoAcceptFiles,
+      maxFileSize: this.config.maxFileSize,
+    };
+
+    const messageDeps = {
+      logger: this.logger,
+      router: this.router,
+      sessions: this.sessions,
+      replyToItem: (item: ChatItem, text: string) => this.replyToItem(item, text),
+      cacheContactName: (id: number, name: string) => this.contactNames.set(id, name),
+      cacheGroupName: (id: number, name: string) => this.groupNames.set(id, name),
+      buildContactInfo: (id: number) => this.buildContactInfo(id),
+      buildGroupInfo: (id: number) => this.buildGroupInfo(id),
+      onNonTextMessage: (item: ChatItem, msgType: string) =>
+        handleNonTextMessage(item, msgType, fileDeps),
+    };
+
     switch (event.type) {
       case "newChatItems":
-        void this.handleNewChatItems(event as NewChatItemsEvent).catch((err) => {
+        void handleNewChatItems(event as NewChatItemsEvent, messageDeps).catch((err) => {
           this.logger.error("Error handling newChatItems:", err);
         });
         break;
+
       case "contactConnected":
-        void this.handleContactConnected(event).catch((err) => {
+        void handleContactConnected(event, contactDeps).catch((err) => {
           this.logger.error("Error handling contactConnected:", err);
         });
         break;
+
+      case "receivedContactRequest":
+        void handleContactRequest(event, contactDeps).catch((err) => {
+          this.logger.error("Error handling receivedContactRequest:", err);
+        });
+        break;
+
+      case "acceptingBusinessRequest":
+        void handleBusinessRequest(event, contactDeps).catch((err) => {
+          this.logger.error("Error handling acceptingBusinessRequest:", err);
+        });
+        break;
+
+      case "receivedGroupInvitation":
+        void handleGroupInvitation(event, groupDeps).catch((err) => {
+          this.logger.error("Error handling receivedGroupInvitation:", err);
+        });
+        break;
+
+      case "joinedGroupMember":
+        void handleMemberJoined(event, groupDeps).catch((err) => {
+          this.logger.error("Error handling joinedGroupMember:", err);
+        });
+        break;
+
+      case "deletedMemberUser":
+        void handleBotRemovedFromGroup(event, groupDeps).catch((err) => {
+          this.logger.error("Error handling deletedMemberUser:", err);
+        });
+        break;
+
+      case "memberConnected":
+        void handleMemberConnected(event, groupDeps).catch((err) => {
+          this.logger.error("Error handling memberConnected:", err);
+        });
+        break;
+
+      case "rcvFileDescrReady":
+        void handleFileReady(event, fileDeps).catch((err) => {
+          this.logger.error("Error handling rcvFileDescrReady:", err);
+        });
+        break;
+
+      case "rcvFileComplete":
+        void handleFileComplete(event, fileDeps).catch((err) => {
+          this.logger.error("Error handling rcvFileComplete:", err);
+        });
+        break;
+
       default:
-        // Tolerate unknown events (per API spec)
+        // Tolerate unknown events (per API spec — forward compatibility)
         this.logger.debug(`Unhandled event type: ${event.type}`);
         break;
     }
-  }
-
-  /** Cache contact and group display names from a chat item for reply routing */
-  private cacheDisplayNames(chatDir: ChatItem["chatItem"]["chatDir"]): void {
-    if (chatDir?.contactId !== undefined && chatDir.contact?.localDisplayName) {
-      this.contactNames.set(chatDir.contactId, chatDir.contact.localDisplayName);
-    }
-    if (chatDir?.groupId !== undefined && chatDir.groupInfo?.localDisplayName) {
-      this.groupNames.set(chatDir.groupId, chatDir.groupInfo.localDisplayName);
-    }
-  }
-
-  /** Extract text content from a chat item, or null if not a text message */
-  private extractTextContent(item: ChatItem): string | null {
-    const content = item?.chatItem?.content;
-    if (content?.type !== "rcvMsgContent") {
-      return null;
-    }
-    const msgContent = content.msgContent;
-    if (msgContent?.type !== "text" || !msgContent.text) {
-      this.logger.debug(`Non-text message type: ${msgContent?.type}`);
-      return null;
-    }
-    return msgContent.text;
-  }
-
-  /** Check whether a command is allowed in the current chat context */
-  private isCommandAllowed(
-    cmdDef: CommandDefinition,
-    chatDir: ChatItem["chatItem"]["chatDir"],
-  ): { allowed: boolean; reason?: string } {
-    const isGroup = chatDir?.groupId !== undefined;
-    const isDm = chatDir?.contactId !== undefined;
-    if (isGroup && !cmdDef.groupEnabled) {
-      return { allowed: false, reason: `/${cmdDef.name} is not available in group chats.` };
-    }
-    if (isDm && !cmdDef.dmEnabled) {
-      return { allowed: false, reason: `/${cmdDef.name} is not available in direct messages.` };
-    }
-    return { allowed: true };
   }
 
   /** Build a ContactInfo object from cached display names */
@@ -382,79 +447,6 @@ class SimplexAdapter {
   private buildGroupInfo(groupId: number): GroupInfo {
     const name = this.groupNames.get(groupId) ?? "";
     return { groupId, localDisplayName: name, groupProfile: { displayName: name } };
-  }
-
-  /** Handle new chat items (incoming messages) */
-  private async handleNewChatItems(event: NewChatItemsEvent): Promise<void> {
-    for (const item of event.chatItems ?? []) {
-      const chatDir = item?.chatItem?.chatDir;
-      this.cacheDisplayNames(chatDir);
-
-      const text = this.extractTextContent(item);
-      if (!text) {
-        continue;
-      }
-
-      this.logger.debug(`Received message: ${text.substring(0, 100)}`);
-
-      const parsed = this.router.parse(text);
-      if (!parsed) {
-        this.logger.debug("Not a command, ignoring");
-        continue;
-      }
-
-      const cmdDef = this.router.get(parsed.command);
-      if (!cmdDef) {
-        this.logger.debug(`Unknown command: /${parsed.command}`);
-        await this.replyToItem(item, `Unknown command: /${parsed.command}. Type /help for available commands.`);
-        continue;
-      }
-
-      const permission = this.isCommandAllowed(cmdDef, chatDir);
-      if (!permission.allowed) {
-        await this.replyToItem(item, permission.reason ?? "Command not allowed.");
-        continue;
-      }
-
-      const ctx: CommandContext = {
-        command: parsed.command,
-        args: parsed.args,
-        rawText: text,
-        chatItem: item,
-        contact: chatDir?.contactId !== undefined
-          ? this.buildContactInfo(chatDir.contactId)
-          : undefined,
-        group: chatDir?.groupId !== undefined
-          ? this.buildGroupInfo(chatDir.groupId)
-          : undefined,
-        reply: async (replyText: string) => {
-          await this.replyToItem(item, replyText);
-        },
-      };
-
-      try {
-        await this.executeCommand(cmdDef, ctx);
-      } catch (err) {
-        this.logger.error(`Unhandled error in command /${parsed.command}:`, err);
-      }
-    }
-  }
-
-  /** Execute a command handler */
-  private async executeCommand(
-    cmdDef: CommandDefinition,
-    ctx: CommandContext,
-  ): Promise<void> {
-    try {
-      this.logger.info(`Executing command: /${cmdDef.name}`);
-      const result = await cmdDef.handler(ctx);
-      if (result) {
-        await ctx.reply(result);
-      }
-    } catch (err) {
-      this.logger.error(`Command /${cmdDef.name} failed:`, err);
-      await ctx.reply(`Error executing /${cmdDef.name}: ${String(err)}`);
-    }
   }
 
   /** Reply to a chat item using cached display names */
@@ -492,31 +484,6 @@ class SimplexAdapter {
     await this.sendMessage(target, text);
   }
 
-  /** Handle new contact connection — caches display name for reply routing */
-  private async handleContactConnected(event: SimplexEvent): Promise<void> {
-    const contact = (event as Record<string, unknown>).contact as
-      | { localDisplayName?: string; contactId?: number }
-      | undefined;
-    const name = contact?.localDisplayName ?? "unknown";
-    this.logger.info(`New contact connected: ${name}`);
-
-    // Cache display name for reply routing
-    if (contact?.contactId !== undefined && contact.localDisplayName) {
-      this.contactNames.set(contact.contactId, contact.localDisplayName);
-    }
-
-    if (this.config.autoAcceptContacts && this.config.welcomeMessage) {
-      try {
-        await this.sendMessage(`@${name}`, this.config.welcomeMessage);
-      } catch (err) {
-        this.logger.error(
-          `Failed to send welcome message to ${name}:`,
-          err,
-        );
-      }
-    }
-  }
-
   /** Schedule reconnection attempt with linear backoff (capped at 6x interval) */
   private scheduleReconnect(): void {
     if (
@@ -549,79 +516,12 @@ class SimplexAdapter {
 // Main
 // =============================================================================
 
-/** Validate and parse log level from environment */
-function parseLogLevel(value: string | undefined): LogLevel {
-  const valid: LogLevel[] = ["debug", "info", "warn", "error"];
-  if (value && valid.includes(value as LogLevel)) {
-    return value as LogLevel;
-  }
-  return DEFAULT_BOT_CONFIG.logLevel;
-}
-
-/** Parse a comma-separated env var into a string array, or return undefined */
-function parseListEnv(value: string | undefined): string[] | undefined {
-  if (!value) {
-    return undefined;
-  }
-  return value.split(",").map((s) => s.trim()).filter(Boolean);
-}
-
-/** Build exec approval config from environment variables */
-function parseExecApprovalConfig(): Partial<ExecApprovalConfig> {
-  const config: Partial<ExecApprovalConfig> = {};
-
-  const allowlist = parseListEnv(process.env.SIMPLEX_EXEC_ALLOWLIST);
-  if (allowlist) {
-    // Merge with defaults — default safe commands should persist (mirrors blocklist behaviour)
-    config.allowlist = [
-      ...new Set([
-        ...DEFAULT_EXEC_APPROVAL_CONFIG.allowlist,
-        ...allowlist,
-      ]),
-    ];
-  }
-
-  const blocklist = parseListEnv(process.env.SIMPLEX_EXEC_BLOCKLIST);
-  if (blocklist) {
-    // Merge with defaults rather than replacing — safety patterns should persist
-    config.blocklist = [
-      ...new Set([
-        ...DEFAULT_EXEC_APPROVAL_CONFIG.blocklist,
-        ...blocklist,
-      ]),
-    ];
-  }
-
-  const timeoutStr = process.env.SIMPLEX_EXEC_TIMEOUT;
-  if (timeoutStr) {
-    const timeoutMs = Number(timeoutStr);
-    if (!Number.isNaN(timeoutMs) && timeoutMs > 0) {
-      config.approvalTimeoutMs = timeoutMs;
-    }
-  }
-
-  const requireApproval = process.env.SIMPLEX_EXEC_REQUIRE_APPROVAL?.toLowerCase();
-  if (requireApproval === "false") {
-    config.requireApprovalByDefault = false;
-  } else if (requireApproval === "true") {
-    config.requireApprovalByDefault = true;
-  }
-
-  return config;
-}
-
 /** Entry point — configure and start the bot */
 async function main(): Promise<void> {
-  const execApproval = parseExecApprovalConfig();
+  const config = loadConfig();
 
-  const config: Partial<BotConfig> = {
-    port: Number(process.env.SIMPLEX_PORT) || DEFAULT_BOT_CONFIG.port,
-    host: process.env.SIMPLEX_HOST || DEFAULT_BOT_CONFIG.host,
-    displayName: process.env.SIMPLEX_BOT_NAME || DEFAULT_BOT_CONFIG.displayName,
-    autoAcceptContacts: process.env.SIMPLEX_AUTO_ACCEPT === "true",
-    logLevel: parseLogLevel(process.env.SIMPLEX_LOG_LEVEL),
-    execApproval: { ...DEFAULT_EXEC_APPROVAL_CONFIG, ...execApproval },
-  };
+  console.log(`SimpleX Bot v1.0.0`);
+  console.log(`Config: port=${config.port}, host=${config.host}, businessAddress=${config.businessAddress}`);
 
   const bot = new SimplexAdapter(config);
 
@@ -645,7 +545,7 @@ async function main(): Promise<void> {
     console.error(
       "\nMake sure SimpleX CLI is running as WebSocket server:",
     );
-    console.error(`  simplex-chat -p ${config.port ?? 5225}`);
+    console.error(`  simplex-chat -p ${config.port}`);
     process.exit(1);
   }
 }

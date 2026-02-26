@@ -14,6 +14,42 @@ cd .agents/scripts/simplex-bot
 bun install
 ```
 
+## Configuration
+
+The bot loads config from three sources (highest priority first):
+
+1. **Environment variables** — `SIMPLEX_PORT`, `SIMPLEX_HOST`, etc.
+2. **Config file** — `~/.config/aidevops/simplex-bot.json`
+3. **Defaults** — built-in defaults
+
+### Config File
+
+```json
+{
+  "port": 5225,
+  "host": "127.0.0.1",
+  "displayName": "AIBot",
+  "autoAcceptContacts": false,
+  "businessAddress": false,
+  "autoAcceptFiles": false,
+  "autoJoinGroups": false,
+  "logLevel": "info",
+  "sessionIdleTimeout": 300
+}
+```
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SIMPLEX_PORT` | `5225` | WebSocket port for SimpleX CLI |
+| `SIMPLEX_HOST` | `127.0.0.1` | WebSocket host |
+| `SIMPLEX_BOT_NAME` | `AIBot` | Bot display name |
+| `SIMPLEX_AUTO_ACCEPT` | `false` | Auto-accept contact requests |
+| `SIMPLEX_LOG_LEVEL` | `info` | Log level (debug/info/warn/error) |
+| `SIMPLEX_TLS` | `false` | Use TLS for WebSocket |
+| `SIMPLEX_BUSINESS_ADDRESS` | `false` | Enable business address mode |
+
 ## Usage
 
 ```bash
@@ -23,32 +59,50 @@ bun run start
 # Development mode (auto-reload)
 bun run dev
 
-# With custom port
-SIMPLEX_PORT=5226 bun run start
+# Type checking
+bun run typecheck
 ```
-
-## Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SIMPLEX_PORT` | `5225` | WebSocket port for SimpleX CLI |
-| `SIMPLEX_HOST` | `127.0.0.1` | WebSocket host |
-| `SIMPLEX_BOT_NAME` | `AIBot` | Bot display name |
-| `SIMPLEX_AUTO_ACCEPT` | `false` | Auto-accept contact requests |
-| `SIMPLEX_LOG_LEVEL` | `info` | Log level (debug/info/warn/error) |
 
 ## Built-in Commands
 
-| Command | Description |
-|---------|-------------|
-| `/help` | Show available commands |
-| `/status` | Show aidevops system status |
-| `/ask <question>` | Ask AI a question |
-| `/tasks` | List open tasks |
-| `/task <description>` | Create a new task |
-| `/run <command>` | Execute aidevops CLI command (requires approval) |
-| `/ping` | Check bot responsiveness |
-| `/version` | Show bot version |
+### Core
+
+| Command | DM | Group | Description |
+|---------|:--:|:-----:|-------------|
+| `/help` | Y | Y | Show available commands |
+| `/status` | Y | Y | Show aidevops system status |
+| `/ask <question>` | Y | Y | Ask AI a question |
+| `/ping` | Y | Y | Check bot responsiveness |
+| `/version` | Y | Y | Show bot version |
+
+### Tasks
+
+| Command | DM | Group | Description |
+|---------|:--:|:-----:|-------------|
+| `/tasks` | Y | Y | List open tasks from TODO.md |
+| `/task <description>` | Y | - | Create a new task |
+
+### Execution
+
+| Command | DM | Group | Description |
+|---------|:--:|:-----:|-------------|
+| `/run <command>` | Y | - | Execute aidevops CLI command (requires approval) |
+
+### Group Management
+
+| Command | DM | Group | Description |
+|---------|:--:|:-----:|-------------|
+| `/invite @user` | - | Y | Invite user to group |
+| `/role @user <role>` | - | Y | Set member role |
+| `/broadcast <msg>` | Y | - | Send to all contacts |
+
+### Voice & File
+
+| Command | DM | Group | Description |
+|---------|:--:|:-----:|-------------|
+| `/voice` | Y | Y | Process voice note attachment |
+| `/file` | Y | Y | Process file attachment |
+| `/sessions` | Y | - | Show active bot sessions |
 
 ## Architecture
 
@@ -56,14 +110,41 @@ SIMPLEX_PORT=5226 bun run start
 SimpleX CLI (WebSocket :5225)
     |
 SimplexAdapter (src/index.ts)
+    |--- ContactHandler (handlers/contact.ts)
+    |--- MessageHandler (handlers/message.ts)
+    |--- GroupHandler (handlers/group.ts)
+    |--- FileHandler (handlers/file.ts)
     |
 CommandRouter -> CommandHandlers (src/commands.ts)
     |
-aidevops CLI / AI model routing
+SessionStore (src/session.ts) — SQLite WAL
+    |
+Config (src/config.ts) — env > file > defaults
+    |
+Runner (src/runner.ts) — aidevops CLI bridge
 ```
 
 The bot is designed as a channel-agnostic gateway. SimpleX is the first adapter.
 Future adapters (Matrix, etc.) can plug into the same command router.
+
+### Event Handling
+
+| Event | Handler | Description |
+|-------|---------|-------------|
+| `newChatItems` | message.ts | Incoming messages, command routing |
+| `contactConnected` | contact.ts | New contact via address |
+| `receivedContactRequest` | contact.ts | Contact request (auto-accept off) |
+| `acceptingBusinessRequest` | contact.ts | Business address connection |
+| `receivedGroupInvitation` | group.ts | Bot invited to group |
+| `joinedGroupMember` | group.ts | Member joined group |
+| `deletedMemberUser` | group.ts | Bot removed from group |
+| `rcvFileDescrReady` | file.ts | Incoming file ready |
+| `rcvFileComplete` | file.ts | File download complete |
+
+### Business Address Mode
+
+When `businessAddress: true`, each connecting customer gets a dedicated group chat.
+This enables support-team patterns where multiple agents can join the customer's group.
 
 ## Adding Custom Commands
 
@@ -89,3 +170,5 @@ bot.registerCommand(myCommand);
 - `.agents/services/communications/simplex.md` — SimpleX subagent documentation
 - `.agents/scripts/simplex-helper.sh` — CLI helper script
 - `.agents/tools/security/opsec.md` — Operational security guidance
+- `todo/tasks/t1327-brief.md` — Task brief with full architecture decisions
+- `todo/tasks/t1327.1-research.md` — Research report with API details

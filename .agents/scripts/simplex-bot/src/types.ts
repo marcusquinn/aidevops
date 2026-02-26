@@ -90,6 +90,51 @@ export interface ContactConnectedEvent extends SimplexEvent {
   contact: ContactInfo;
 }
 
+/** Contact request event (when auto-accept is off) */
+export interface ContactRequestEvent extends SimplexEvent {
+  type: "receivedContactRequest";
+  contactRequest: {
+    contactRequestId: number;
+    localDisplayName: string;
+    profile: {
+      displayName: string;
+      fullName?: string;
+    };
+  };
+}
+
+/** Business address request event (per-customer group chat) */
+export interface BusinessRequestEvent extends SimplexEvent {
+  type: "acceptingBusinessRequest";
+  groupInfo: GroupInfo;
+}
+
+/** Group invitation event */
+export interface GroupInvitationEvent extends SimplexEvent {
+  type: "receivedGroupInvitation";
+  groupInfo: GroupInfo;
+}
+
+/** Group member event (join, leave, connect) */
+export interface GroupMemberEvent extends SimplexEvent {
+  type: "joinedGroupMember" | "deletedMemberUser" | "memberConnected";
+  groupInfo: GroupInfo;
+  member: {
+    groupMemberId: number;
+    localDisplayName: string;
+    memberRole: string;
+  };
+}
+
+/** File event (ready, complete) */
+export interface FileEvent extends SimplexEvent {
+  type: "rcvFileDescrReady" | "rcvFileComplete";
+  fileId: number;
+  fileName?: string;
+  fileSize?: number;
+  filePath?: string;
+}
+
 /** Contact info */
 export interface ContactInfo {
   contactId: number;
@@ -308,6 +353,18 @@ export interface BotConfig {
   leakDetection: LeakDetectionConfig;
   /** Exec approval flow configuration */
   execApproval: ExecApprovalConfig;
+  /** Enable business address mode (per-customer group chats) */
+  businessAddress: boolean;
+  /** Auto-accept incoming files */
+  autoAcceptFiles: boolean;
+  /** Maximum file size to auto-accept in bytes (default: 50MB) */
+  maxFileSize: number;
+  /** Auto-join group invitations */
+  autoJoinGroups: boolean;
+  /** Session idle timeout in seconds (default: 300) */
+  sessionIdleTimeout: number;
+  /** Data directory for bot state (default: ~/.aidevops/.agent-workspace/simplex-bot) */
+  dataDir?: string;
 }
 
 /** Default bot configuration */
@@ -323,6 +380,11 @@ export const DEFAULT_BOT_CONFIG: BotConfig = {
   useTls: false,
   leakDetection: DEFAULT_LEAK_DETECTION_CONFIG,
   execApproval: DEFAULT_EXEC_APPROVAL_CONFIG,
+  businessAddress: false,
+  autoAcceptFiles: false,
+  maxFileSize: 50 * 1024 * 1024,
+  autoJoinGroups: false,
+  sessionIdleTimeout: 300,
 };
 
 // =============================================================================
