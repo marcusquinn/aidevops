@@ -38,7 +38,7 @@ tools:
 |-----------|-----------|--------|-----------|--------|
 | License | MIT | MIT | Closed frontend | AGPL |
 | Speed | Fastest (baseline) | 20-70% slower | Same engine | Same engine |
-| Security | No daemon, localhost only | 175k+ exposed instances (Jan 2024), multiple CVEs | Desktop-safe | Desktop-safe |
+| Security | No daemon, localhost only | 175k+ exposed instances (Jan 2026), multiple CVEs | Desktop-safe | Desktop-safe |
 | Binary size | 23-130 MB (platform-dependent) | ~200 MB | ~500 MB+ | ~300 MB+ |
 | HuggingFace access | Direct GGUF download | Walled library | HF browser built-in | HF download |
 | Control | Full (quantization, context, sampling) | Abstracted | GUI-mediated | GUI-mediated |

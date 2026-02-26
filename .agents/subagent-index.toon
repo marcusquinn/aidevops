@@ -128,7 +128,7 @@ code-audit-helper.sh,Run remote auditing (CodeRabbit Codacy SonarCloud)
 chrome-webstore-helper.sh,Chrome Web Store release automation (setup publish status upload-secrets)
 version-manager.sh,Version bumps and releases
 linter-manager.sh,Install and manage linters
-local-model-helper.sh,Local AI model management via llama.cpp (setup start stop status models download search recommend cleanup usage benchmark) [planned]
+local-model-helper.sh,Local AI model management via llama.cpp (setup start stop status models download search recommend cleanup usage inventory nudge benchmark)
 github-cli-helper.sh,GitHub operations
 coolify-helper.sh,Coolify deployment management
 uncloud-helper.sh,Uncloud multi-machine container orchestration
