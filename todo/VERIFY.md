@@ -2631,3 +2631,9 @@
   check: rg "coderabbit" .agents/subagent-index.toon
   check: rg "plans" .agents/subagent-index.toon
   check: rg "ralph-loop" .agents/subagent-index.toon
+
+- [ ] v306 t1332 Supervisor stuck detection — advisory milestone checks — ... | PR #2393 | merged:2026-02-26
+  files: .agents/scripts/commands/pulse.md, .agents/scripts/stuck-detection-helper.sh
+  check: file-exists .agents/scripts/commands/pulse.md
+  check: shellcheck .agents/scripts/stuck-detection-helper.sh
+  check: file-exists .agents/scripts/stuck-detection-helper.sh
