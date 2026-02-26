@@ -55,30 +55,7 @@ set_offset() {
 	return 0
 }
 
-# =============================================================================
-# Pricing (per 1M tokens: input|output|cache_read|cache_write)
-# =============================================================================
-
-get_model_pricing() {
-	local model="$1"
-	local ms="${model#*/}"
-	ms="${ms%%-202*}"
-	case "$ms" in
-	*opus-4* | *claude-opus*) echo "15.0|75.0|1.50|18.75" ;;
-	*sonnet-4* | *claude-sonnet*) echo "3.0|15.0|0.30|3.75" ;;
-	*haiku-4* | *haiku-3* | *claude-haiku*) echo "0.80|4.0|0.08|1.0" ;;
-	*gpt-4.1-mini*) echo "0.40|1.60|0.10|0.40" ;;
-	*gpt-4.1*) echo "2.0|8.0|0.50|2.0" ;;
-	*o3*) echo "10.0|40.0|2.50|10.0" ;;
-	*o4-mini*) echo "1.10|4.40|0.275|1.10" ;;
-	*gemini-2.5-pro*) echo "1.25|10.0|0.3125|2.50" ;;
-	*gemini-2.5-flash*) echo "0.15|0.60|0.0375|0.15" ;;
-	*deepseek-r1*) echo "0.55|2.19|0.14|0.55" ;;
-	*deepseek-v3*) echo "0.27|1.10|0.07|0.27" ;;
-	*) echo "3.0|15.0|0.30|3.75" ;;
-	esac
-	return 0
-}
+# get_model_pricing() and get_provider_from_model() are in shared-constants.sh (t1337.2)
 
 # =============================================================================
 # Helpers
@@ -92,19 +69,6 @@ get_project_from_path() {
 	project=$(echo "$dir_name" | sed -E 's/^-Users-[^-]+-Git-//' | sed -E 's/-.*(feature|bugfix|hotfix|chore|refactor|experiment|release)-.*//')
 	[[ -z "$project" || "$project" == "-" ]] && project="unknown"
 	echo "$project"
-	return 0
-}
-
-get_provider_from_model() {
-	local model="$1"
-	case "$model" in
-	claude-* | anthropic/*) echo "anthropic" ;;
-	gpt-* | openai/*) echo "openai" ;;
-	gemini-* | google/*) echo "google" ;;
-	deepseek-* | deepseek/*) echo "deepseek" ;;
-	grok-* | xai/*) echo "xai" ;;
-	*) echo "unknown" ;;
-	esac
 	return 0
 }
 

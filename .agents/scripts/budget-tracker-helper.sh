@@ -22,36 +22,16 @@ init_cost_log() {
 	return 0
 }
 
-# Pricing: input|output per 1M tokens (hardcoded fallback)
-get_model_pricing() {
-	local model="$1"
-	local short="${model#*/}"
-	case "$short" in
-	*opus-4*) echo "15.0|75.0" ;;
-	*sonnet-4*) echo "3.0|15.0" ;;
-	*haiku-4*) echo "0.80|4.0" ;;
-	*haiku-3*) echo "0.25|1.25" ;;
-	*gpt-4.1-mini*) echo "0.40|1.60" ;;
-	*gpt-4.1*) echo "2.0|8.0" ;;
-	*o3*) echo "10.0|40.0" ;;
-	*o4-mini*) echo "1.10|4.40" ;;
-	*gemini-2.5-pro*) echo "1.25|10.0" ;;
-	*gemini-2.5-flash*) echo "0.15|0.60" ;;
-	*gemini-3-pro*) echo "1.25|10.0" ;;
-	*gemini-3-flash*) echo "0.10|0.40" ;;
-	*deepseek-r1*) echo "0.55|2.19" ;;
-	*deepseek-v3*) echo "0.27|1.10" ;;
-	*) echo "3.0|15.0" ;;
-	esac
-	return 0
-}
+# get_model_pricing() is in shared-constants.sh (consolidated in t1337.2)
+# Returns: input|output|cache_read|cache_write — budget-tracker uses first two.
 
 calculate_cost() {
 	local input_tokens="$1" output_tokens="$2" model="$3"
-	local pricing input_price output_price
+	local pricing
 	pricing=$(get_model_pricing "$model")
-	input_price="${pricing%%|*}"
-	output_price="${pricing##*|}"
+	local input_price="${pricing%%|*}"
+	local output_price
+	output_price=$(echo "$pricing" | cut -d'|' -f2)
 	awk "BEGIN { printf \"%.6f\", ($input_tokens / 1000000.0 * $input_price) + ($output_tokens / 1000000.0 * $output_price) }"
 	return 0
 }
