@@ -127,7 +127,51 @@ get_git_context() {
 	return 0
 }
 
+is_headless() {
+	# Detect non-interactive/headless mode from multiple signals.
+	# The --interactive flag overrides all headless detection (used by
+	# AGENTS.md greeting flow when the model intentionally wants the
+	# full update check despite running inside a Bash tool with no TTY).
+	local arg
+	for arg in "$@"; do
+		if [[ "$arg" == "--interactive" ]]; then
+			return 1
+		fi
+	done
+	# 1. Explicit env vars set by dispatch systems
+	if [[ "${FULL_LOOP_HEADLESS:-}" == "true" ]]; then
+		return 0
+	fi
+	if [[ "${OPENCODE_HEADLESS:-}" == "true" ]]; then
+		return 0
+	fi
+	if [[ "${AIDEVOPS_HEADLESS:-}" == "true" ]]; then
+		return 0
+	fi
+	# 2. CLI flag: --headless passed to this script
+	for arg in "$@"; do
+		if [[ "$arg" == "--headless" ]]; then
+			return 0
+		fi
+	done
+	# 3. No TTY on stdin (piped input, e.g. opencode run / claude -p)
+	#    This catches cases where the model ignores AGENTS.md skip rules.
+	if [[ ! -t 0 ]]; then
+		return 0
+	fi
+	return 1
+}
+
 main() {
+	# In headless/non-interactive mode, skip the network call entirely.
+	# This is the #1 fix for "update check kills non-interactive sessions".
+	if is_headless "$@"; then
+		local current
+		current=$(get_version)
+		echo "aidevops v$current (headless - skipped update check)"
+		return 0
+	fi
+
 	local current remote app_info app_name app_version git_context
 	current=$(get_version)
 	remote=$(get_remote_version)
