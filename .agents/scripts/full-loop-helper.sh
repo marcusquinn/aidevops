@@ -227,17 +227,50 @@ cmd_start() {
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-		--max-task-iterations) MAX_TASK_ITERATIONS="$2"; shift 2 ;;
-		--max-preflight-iterations) MAX_PREFLIGHT_ITERATIONS="$2"; shift 2 ;;
-		--max-pr-iterations) MAX_PR_ITERATIONS="$2"; shift 2 ;;
-		--skip-preflight) SKIP_PREFLIGHT=true; shift ;;
-		--skip-postflight) SKIP_POSTFLIGHT=true; shift ;;
-		--no-auto-pr) NO_AUTO_PR=true; shift ;;
-		--no-auto-deploy) NO_AUTO_DEPLOY=true; shift ;;
-		--headless) HEADLESS=true; shift ;;
-		--dry-run) DRY_RUN=true; shift ;;
-		--background | --bg) background=true; shift ;;
-		*) print_error "Unknown option: $1"; return 1 ;;
+		--max-task-iterations)
+			MAX_TASK_ITERATIONS="$2"
+			shift 2
+			;;
+		--max-preflight-iterations)
+			MAX_PREFLIGHT_ITERATIONS="$2"
+			shift 2
+			;;
+		--max-pr-iterations)
+			MAX_PR_ITERATIONS="$2"
+			shift 2
+			;;
+		--skip-preflight)
+			SKIP_PREFLIGHT=true
+			shift
+			;;
+		--skip-postflight)
+			SKIP_POSTFLIGHT=true
+			shift
+			;;
+		--no-auto-pr)
+			NO_AUTO_PR=true
+			shift
+			;;
+		--no-auto-deploy)
+			NO_AUTO_DEPLOY=true
+			shift
+			;;
+		--headless)
+			HEADLESS=true
+			shift
+			;;
+		--dry-run)
+			DRY_RUN=true
+			shift
+			;;
+		--background | --bg)
+			background=true
+			shift
+			;;
+		*)
+			print_error "Unknown option: $1"
+			return 1
+			;;
 		esac
 	done
 
@@ -259,13 +292,10 @@ cmd_start() {
 	fi
 
 	echo ""
-	echo -e "${BOLD}${BLUE}╔════════════════════════════════════════════════════════════╗${NC}"
-	echo -e "${BOLD}${BLUE}║           FULL DEVELOPMENT LOOP - STARTING                 ║${NC}"
-	echo -e "${BOLD}${BLUE}╚════════════════════════════════════════════════════════════╝${NC}"
-	echo ""
-	echo -e "${CYAN}Task:${NC} $prompt"
-	echo -e "${CYAN}Branch:${NC} $(get_current_branch)"
-	echo -e "${CYAN}Headless:${NC} $HEADLESS"
+	echo -e "${BOLD}${BLUE}=== FULL DEVELOPMENT LOOP - STARTING ===${NC}"
+	echo -e "  Task:     $prompt"
+	echo -e "  Branch:   $(get_current_branch)"
+	echo -e "  Headless: $HEADLESS"
 	echo ""
 
 	if [[ "${DRY_RUN:-false}" == "true" ]]; then
@@ -430,9 +460,7 @@ cmd_logs() {
 
 cmd_complete() {
 	echo ""
-	echo -e "${BOLD}${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
-	echo -e "${BOLD}${GREEN}║           FULL DEVELOPMENT LOOP - COMPLETE                 ║${NC}"
-	echo -e "${BOLD}${GREEN}╚════════════════════════════════════════════════════════════╝${NC}"
+	echo -e "${BOLD}${GREEN}=== FULL DEVELOPMENT LOOP - COMPLETE ===${NC}"
 	echo ""
 
 	load_state 2>/dev/null || true
@@ -456,58 +484,23 @@ cmd_complete() {
 
 show_help() {
 	cat <<'EOF'
-Full Development Loop Orchestrator (Simplified)
+Full Development Loop Orchestrator
 
-Per "Intelligence Over Scripts": This script handles state and background
-execution. The AI reads full-loop.md for all decision-making guidance.
+Usage: full-loop-helper.sh <command> [options]
 
-USAGE:
-    full-loop-helper.sh <command> [options]
+Commands:
+  start "<prompt>"  Start loop    resume   Resume from current phase
+  status            Show status   cancel   Cancel active loop
+  logs [N]          Show logs     help     This help
 
-COMMANDS:
-    start "<prompt>"    Start a new full development loop
-    resume              Resume from the current phase
-    status              Show current loop status
-    cancel              Cancel the active loop
-    logs [N]            Show last N lines of background logs (default: 50)
-    help                Show this help
+Options:
+  --max-task-iterations N    (default: 50)   --skip-preflight
+  --max-preflight-iterations N (default: 5)  --skip-postflight
+  --max-pr-iterations N      (default: 20)   --no-auto-pr
+  --headless    Worker mode   --dry-run       --no-auto-deploy
+  --background  Run in bg     FULL_LOOP_HEADLESS=true (env)
 
-OPTIONS:
-    --max-task-iterations N       Max iterations for task (default: 50)
-    --max-preflight-iterations N  Max iterations for preflight (default: 5)
-    --max-pr-iterations N         Max iterations for PR review (default: 20)
-    --skip-preflight              Skip preflight checks
-    --skip-postflight             Skip postflight monitoring
-    --no-auto-pr                  Don't auto-create PR
-    --no-auto-deploy              Don't auto-run setup.sh
-    --headless                    Headless worker mode (no prompts)
-    --dry-run                     Show what would happen
-    --background, --bg            Run in background
-
-PHASES:
-    1. Task Development   - AI implements the task
-    2. Preflight          - AI runs quality checks
-    3. PR Creation        - AI creates pull request
-    4. PR Review          - AI monitors CI and reviews
-    5. Postflight         - AI verifies release health
-    6. Deploy             - AI runs setup.sh (aidevops only)
-
-EXAMPLES:
-    # Start full loop
-    full-loop-helper.sh start "Implement feature X"
-
-    # Background mode (recommended for long tasks)
-    full-loop-helper.sh start "Fix bug Y" --background
-
-    # Headless mode (used by supervisor)
-    full-loop-helper.sh start "Task Z" --headless --background
-
-    # Check status
-    full-loop-helper.sh status
-
-ENVIRONMENT:
-    FULL_LOOP_HEADLESS=true    Same as --headless flag
-
+Phases: task -> preflight -> pr-create -> pr-review -> postflight -> deploy
 EOF
 }
 
@@ -527,7 +520,11 @@ main() {
 	logs) cmd_logs "$@" ;;
 	_run_foreground) cmd_run_foreground "$@" ;;
 	help | --help | -h) show_help ;;
-	*) print_error "Unknown command: $command"; show_help; return 1 ;;
+	*)
+		print_error "Unknown command: $command"
+		show_help
+		return 1
+		;;
 	esac
 }
 
