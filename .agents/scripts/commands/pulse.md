@@ -87,6 +87,13 @@ If you see a pattern (same type of failure, same error), create an improvement i
 
 **Duplicate work:** If two open PRs target the same issue or have very similar titles, flag it by commenting on the newer one.
 
+**Long-running workers:** Check the runtime of each running worker process with `ps axo pid,etime,command | grep '/full-loop'`. The `etime` column shows elapsed time. The task size check in Step 3 should prevent most of these, but as a safety net:
+
+- **2+ hours, no PR:** Comment on the GitHub issue telling the worker to PR what's done and file subtask issues for the rest.
+- **3+ hours, no PR:** Kill the worker (`kill <pid>`). The task needs decomposition — create subtask issues.
+- **3+ hours, has PR:** Likely stuck in a CI/review loop. Comment on the PR.
+- **6+ hours:** Kill regardless — zombied or infinite loop.
+
 **Keep it lightweight.** This step should take seconds, not minutes. If nothing looks wrong, move on. The goal is to catch patterns over many pulses, not to do deep analysis on each one.
 
 ## Step 3: Decide What to Work On
@@ -108,20 +115,22 @@ Look at everything you fetched and pick up to **AVAILABLE** items — the highes
 - Prefer product repos over tooling repos (product value > tooling)
 - Prefer smaller/simpler tasks (faster throughput)
 
-**Deduplication (t2310):** Before dispatching each item, run the dedup helper to check if a worker is already running for the same issue, PR, or task. The helper normalizes titles by extracting canonical keys (issue-NNN, pr-NNN, task-tNNN) so that different title formats for the same work are correctly detected as duplicates.
+**Skip blocked issues:** Issues labelled `status:blocked` must NOT be dispatched. A blocked issue has unresolved dependencies — dispatching a worker for it wastes a slot and produces unusable output. The `gh issue list --json labels` output returns labels as objects — check that no label's `.name` field equals `status:blocked`.
 
-```bash
-# Check before dispatching — exit 0 means duplicate found, skip it
-if ~/.aidevops/agents/scripts/dispatch-dedup-helper.sh is-duplicate "Issue #<number>: <title>"; then
-  echo "Skipping: already has a running worker"
-else
-  # Safe to dispatch
-  opencode run --dir ~/Git/<repo> --title "Issue #<number>: <title>" \
-    "/full-loop Implement issue #<number> -- <description>" &
-fi
-```
+**Skip issues that already have an open PR:** If an issue number appears in the title or branch name of an open PR, a worker has already produced output for it. Do not dispatch another worker for the same issue. Check the PR list you already fetched — if any PR's `headRefName` or `title` contains the issue number, skip that issue.
 
-The helper extracts issue/PR/task numbers from any title format and checks both the process list and the supervisor DB. This prevents the same issue being dispatched multiple times with different title variations (e.g., "issue-2300-simplify-infra-scripts" vs "Issue #2300: t1337 Simplify Tier 3 infrastructure scripts").
+**Deduplication — check running processes:** Before dispatching, check `ps axo command | grep '/full-loop'` for any running worker whose command line contains the issue/PR number you're about to dispatch. Different pulse runs may have used different title formats for the same work (e.g., "issue-2300-simplify-infra-scripts" vs "Issue #2300: t1337 Simplify Tier 3"). Extract the canonical number (e.g., `2300`, `t1337`) and check if ANY running worker references it. If so, skip — do not dispatch a duplicate.
+
+**Task size check — decompose before dispatching:** Before dispatching a worker for an issue, read the issue body with `gh issue view <number> --repo <owner/repo> --json body`. Ask yourself: can a single worker session (roughly 1-2 hours) complete this? Signs it's too big:
+
+- The issue describes multiple independent changes across different files/systems
+- It has a checklist with 5+ items
+- It uses words like "audit all", "refactor entire", "migrate everything"
+- It spans multiple repos or services
+
+If the task looks too large, do NOT dispatch a worker. Instead, create subtask issues that break it into achievable chunks (each completable in one worker session), then label the parent issue `status:blocked` with `blocked-by:` references to the subtasks. The subtasks will be picked up by future pulses. This is far more productive than dispatching a worker that grinds for hours and produces nothing mergeable.
+
+If you're unsure whether it needs decomposition, dispatch the worker — but prefer to err on the side of smaller tasks. A worker that finishes in 30 minutes and opens a clean PR is worth more than one that runs for 3 hours and gets killed.
 
 ## Step 4: Dispatch Workers
 

@@ -60,6 +60,8 @@ Every agent session — interactive, worker, or supervisor — should improve th
 - Flagging stale tasks that are blocked but not marked as such
 - Running the session miner pulse (`scripts/session-miner-pulse.sh`) to extract learning from past sessions
 
+**Intelligence over scripts:** When fixing orchestration or supervisor bugs, improve the guidance in agent docs (e.g., `pulse.md`, `full-loop.md`) — do NOT create new bash scripts, helper utilities, or deterministic state-tracking layers. The framework previously had 37,000 lines of fragile bash orchestration that was never reliable. It was replaced with intelligence-guided agents for good reason. Helper scripts are for deterministic utilities (version bumping, credential lookup), not for decisions requiring judgment (dispatch priority, stuck detection, dedup). See `aidevops/architecture.md` "Intelligence Over Scripts" for the full rationale.
+
 **Autonomous operation:** When the user says "continue", "monitor", or "keep going" — enter autonomous mode: use sleep/wait loops, maintain a perpetual todo to survive compaction, only interrupt for blocking errors that require user input.
 
 ---
