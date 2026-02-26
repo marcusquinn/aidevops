@@ -22,18 +22,43 @@ model: haiku
 - **Purpose**: Route tasks to the cheapest model that can handle them well
 - **Philosophy**: Use the smallest model that produces acceptable quality
 - **Default**: sonnet (best balance of cost/capability for most tasks)
+- **Cost spectrum**: local (free) -> flash -> haiku -> sonnet -> pro -> opus (highest)
 
 ## Model Tiers
 
 | Tier | Model | Cost | Best For |
 |------|-------|------|----------|
-| `haiku` | claude-haiku-4-5 | Lowest | Triage, classification, simple transforms, formatting |
-| `flash` | gemini-2.5-flash | Low | Large context reads, summarization, bulk processing |
+| `local` | llama.cpp (user-selected GGUF) | Free ($0) | Privacy-sensitive tasks, offline work, bulk processing, experimentation |
+| `flash` | gemini-2.5-flash | Lowest (~0.20x) | Large context reads, summarization, bulk processing |
+| `haiku` | claude-haiku-4-5 | Low (~0.25x) | Triage, classification, simple transforms, formatting |
 | `sonnet` | claude-sonnet-4 | Medium | Code implementation, review, most development tasks |
 | `pro` | gemini-2.5-pro | Medium-High | Large codebase analysis, complex reasoning with big context |
 | `opus` | claude-opus-4 | Highest | Architecture decisions, complex multi-step reasoning, novel problems |
 
 ## Routing Rules
+
+### Use `local` when:
+
+- Data must stay on-device (privacy, compliance, air-gapped environments)
+- Working offline (no internet after initial model download)
+- Bulk processing where per-token cost matters (RAG indexing, embeddings, batch transforms)
+- Experimenting with open models (Qwen, Llama, DeepSeek, Mistral, Gemma, Phi)
+- Simple tasks where network latency exceeds local inference time
+- The task fits within the local model's capability (typically <32K context, simpler reasoning)
+
+**Limitations**: Local models are smaller and less capable than cloud models. Do not route complex reasoning, large-context analysis, or architecture decisions to local.
+
+**Fallback behaviour**: If a local model is not running or not installed, the routing depends on why `local` was selected:
+
+- **Privacy/on-device requirement**: FAIL — do not route to cloud. Return an error instructing the user to start the local server or pass `--allow-cloud` to explicitly override.
+- **Cost optimisation or experimentation**: Fall back to `flash` (cheapest cloud tier by blended cost).
+
+### Use `flash` when:
+
+- Reading large files or codebases (>50K tokens of context)
+- Summarizing documents, PRs, or discussions
+- Bulk processing (many small tasks in sequence)
+- Initial research sweeps before deeper analysis
 
 ### Use `haiku` when:
 
@@ -42,13 +67,6 @@ model: haiku
 - Generating commit messages from diffs
 - Answering factual questions about code (no reasoning needed)
 - Routing decisions (which subagent to use)
-
-### Use `flash` when:
-
-- Reading large files or codebases (>50K tokens of context)
-- Summarizing documents, PRs, or discussions
-- Bulk processing (many small tasks in sequence)
-- Initial research sweeps before deeper analysis
 
 ### Use `sonnet` when (default):
 
@@ -86,7 +104,9 @@ tools:
 ---
 ```
 
-Valid values: `haiku`, `flash`, `sonnet`, `pro`, `opus`
+Valid values: `local`, `haiku`, `flash`, `sonnet`, `pro`, `opus`
+
+> **Note**: The `local` tier is documented here but runtime support (helper scripts, availability checks) is being added in subtasks t1338.2-t1338.6. Until those land, `local` in frontmatter will fall back to `haiku`.
 
 When `model:` is absent, `sonnet` is assumed (the default tier).
 
@@ -96,20 +116,22 @@ Approximate relative costs (sonnet = 1x baseline):
 
 | Tier | Input Cost | Output Cost | Relative |
 |------|-----------|-------------|----------|
-| haiku | 0.25x | 0.25x | ~0.25x |
+| local | 0x | 0x | $0 (electricity only) |
 | flash | 0.15x | 0.30x | ~0.20x |
+| haiku | 0.25x | 0.25x | ~0.25x |
 | sonnet | 1x | 1x | 1x |
 | pro | 1.25x | 2.5x | ~1.5x |
 | opus | 3x | 3x | ~3x |
 
 ## Model-Specific Subagents
 
-Concrete model subagents are defined in `tools/ai-assistants/models/`:
+Concrete model subagents are defined across these paths (`tools/ai-assistants/models/` for cloud tiers, `tools/local-models/` for the local tier):
 
 | Tier | Subagent | Primary Model | Fallback |
 |------|----------|---------------|----------|
-| `haiku` | `models/haiku.md` | claude-haiku-4-5 | gemini-2.5-flash |
+| `local` | `tools/local-models/local-models.md` (planned: t1338.2) | llama.cpp (user GGUF) | FAIL (privacy) or flash (cost) |
 | `flash` | `models/flash.md` | gemini-2.5-flash | gpt-4.1-mini |
+| `haiku` | `models/haiku.md` | claude-haiku-4-5 | gemini-2.5-flash |
 | `sonnet` | `models/sonnet.md` | claude-sonnet-4 | gpt-4.1 |
 | `pro` | `models/pro.md` | gemini-2.5-pro | claude-sonnet-4 |
 | `opus` | `models/opus.md` | claude-opus-4 | o3 |
@@ -142,14 +164,25 @@ compare-models-helper.sh discover --json
 
 Discovery checks three sources (in order): environment variables, gopass encrypted secrets, plaintext `credentials.sh`. Use discovery output to constrain routing to models the user can actually access.
 
+For local models, use `local-model-helper.sh status` to check if a local model server is running (planned: t1338.4):
+
+```bash
+# Check if local model server is running and which model is loaded
+local-model-helper.sh status
+
+# List downloaded local models
+local-model-helper.sh models
+```
+
 ## Fallback Routing
 
 Each tier defines a primary model and a fallback from a different provider. When the primary provider is unavailable (no API key configured, key invalid, or API down), route to the fallback:
 
 | Tier | Primary | Fallback | When to Fallback |
 |------|---------|----------|------------------|
-| `haiku` | claude-haiku-4-5 | gemini-2.5-flash | No Anthropic key |
+| `local` | llama.cpp (localhost) | flash (cost-only) or FAIL (privacy) | Server not running, no model installed. Fails closed for privacy/on-device tasks; falls back to flash only for cost-optimisation use cases. |
 | `flash` | gemini-2.5-flash | gpt-4.1-mini | No Google key |
+| `haiku` | claude-haiku-4-5 | gemini-2.5-flash | No Anthropic key |
 | `sonnet` | claude-sonnet-4 | gpt-4.1 | No Anthropic key |
 | `pro` | gemini-2.5-pro | claude-sonnet-4 | No Google key |
 | `opus` | claude-opus-4 | o3 | No Anthropic key |
@@ -211,21 +244,32 @@ Exit codes: 0=available, 1=unavailable, 2=rate-limited, 3=API-key-invalid.
 ## Decision Flowchart
 
 ```text
-Is the task simple classification/formatting?
-  → YES: haiku
-  → NO: Does it need >50K tokens of context?
-    → YES: Is deep reasoning also needed?
-      → YES: pro
-      → NO: flash
-    → NO: Is it a novel architecture/design problem?
-      → YES: opus
-      → NO: sonnet
+Is the task privacy/on-device constrained?
+  → YES: Is a local model running and capable enough?
+    → YES: local
+    → NO: FAIL (require --allow-cloud to override)
+  → NO: Is the task bulk/offline where local saves cost?
+    → YES: Is a local model running and capable enough?
+      → YES: local
+      → NO: flash (cheapest cloud fallback)
+    → NO: Is the task simple classification/formatting?
+      → YES: haiku
+      → NO: Does it need >50K tokens of context?
+        → YES: Is deep reasoning also needed?
+          → YES: pro
+          → NO: flash
+        → NO: Is it a novel architecture/design problem?
+          → YES: opus
+          → NO: sonnet
 ```
 
 ## Examples
 
 | Task | Recommended | Why |
 |------|-------------|-----|
+| "Process these 1000 log entries locally" | local | Bulk processing, no cloud cost |
+| "Summarize this doc (offline/air-gapped)" | local | No internet available |
+| "Quick chat completion (privacy-sensitive)" | local | Data stays on-device |
 | "Rename variable X to Y across files" | haiku | Simple text transform |
 | "Summarize this 200-page PDF" | flash | Large context, low reasoning |
 | "Fix this React component bug" | sonnet | Code + reasoning |
@@ -264,6 +308,9 @@ budget-tracker records spend with both tiers for cost comparison.
 
 ## Related
 
+- `tools/local-models/local-models.md` — Local model setup, runtime management (llama.cpp) (planned: t1338.2)
+- `tools/local-models/huggingface.md` — Model discovery, GGUF format, quantization guidance (planned: t1338.3)
+- `scripts/local-model-helper.sh` — CLI for local model install, serve, search, cleanup (planned: t1338.4)
 - `tools/ai-assistants/compare-models.md` — Full model comparison subagent
 - `tools/ai-assistants/models/README.md` — Model-specific subagent definitions
 - `scripts/compare-models-helper.sh` — CLI for model comparison and provider discovery
