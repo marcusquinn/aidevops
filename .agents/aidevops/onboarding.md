@@ -1146,8 +1146,21 @@ Here's how it works:
   finds blocked chains, stale state, idle capacity, and systemic issues
 - It creates self-improvement tasks when it finds root causes in the framework
 
-Cost: the pulse uses sonnet-tier (~$0.50/day active). The strategic review uses
-opus (~$1-2/day). Workers use the model specified per task.
+Cost depends on how you access the models:
+
+Subscription plans (recommended for regular use):
+- Claude Max ($100-200/mo) or Pro ($20/mo) give generous allowances
+- OpenAI Pro ($200/mo) or Plus ($20/mo) for GPT models
+- Subscriptions are significantly cheaper than API for sustained daily use
+- The pulse, workers, and strategic review all run within your allowance
+
+API billing (for testing and occasional use only):
+- Pay-per-token pricing adds up fast with autonomous orchestration
+- A busy day with 10+ workers can cost $20-50+ on API billing
+- Reserve API keys for testing new providers or burst capacity
+
+Recommendation: use a subscription plan as your primary provider.
+Configure API keys as fallback only.
 
 You stay in control — the supervisor only dispatches tasks you've tagged.
 ```
