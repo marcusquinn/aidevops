@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Root cause fix: global AGENTS.md greeting was overriding pulse autonomy directives in headless sessions (#2377)
+
 ## [2.133.6] - 2026-02-26
 
 ### Added
