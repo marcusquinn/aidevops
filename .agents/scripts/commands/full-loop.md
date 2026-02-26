@@ -284,7 +284,36 @@ When running as a headless worker (dispatched by the supervisor via `opencode ru
    When proceeding, document the choice: `feat: add retry logic (chose exponential backoff — matches existing patterns)`
    When exiting, be specific: `BLOCKED: Task says 'update auth endpoint' but 3 exist (JWT, OAuth, API key). Need clarification.`
 
-8. **Cross-repo routing** — If you discover mid-task that the fix belongs in a different repo (e.g., working in awardsapp but the bug is in an aidevops framework script), do NOT create tasks or TODO entries in the current repo. Instead, file a GitHub issue in the correct repo:
+8. **Worker time budget and progressive PR (MANDATORY for headless workers):**
+
+   Workers MUST be aware of elapsed time and act progressively to avoid the systemic pattern of running 3-9 hours without producing any PR. The goal is: **always produce a PR, even if partial.**
+
+   **Time checkpoints:**
+
+   - **At 45 minutes:** Self-check — have you made meaningful progress? If you're stuck on a dependency (missing schema, unmerged prerequisite, missing API), do NOT keep trying to work around it. Instead:
+     1. Commit what you have (even if incomplete)
+     2. Exit cleanly with: `BLOCKED: dependency not available — <specific dependency>. Partial work committed on branch.`
+     3. The supervisor will re-dispatch when the dependency merges.
+
+   - **At 90 minutes:** If you have working code (even partial), begin the PR phase immediately:
+     1. Commit all work with `feat: partial implementation of <task> (time budget)`
+     2. Create a draft PR with `gh pr create --draft` explaining what's done and what remains
+     3. File subtask issues for remaining work
+     4. Exit cleanly — a partial PR is infinitely more valuable than no PR after 3 hours
+
+   - **At 120 minutes (hard limit):** Stop all implementation work. PR whatever you have:
+     1. If you have ANY commits: create a draft PR with a clear "What's done / What remains" section
+     2. If you have NO commits (completely stuck): exit with a detailed `BLOCKED:` message explaining exactly what prevented progress
+     3. Never exceed 2 hours without either a PR or a clear exit message
+
+   **Dependency detection (early exit):** At the START of task development, before writing any code, verify that the task's prerequisites exist in the codebase:
+   - If the task references tables, APIs, or schemas from another task, check if they exist: `rg 'tableName\|functionName' --type ts`
+   - If the task says "blocked-by: tXXX" in TODO.md or the issue body, check if tXXX's PR is merged: `gh pr list --state merged --search "tXXX"`
+   - If prerequisites are missing, exit immediately with `BLOCKED: prerequisite tXXX not merged — <specific missing item>`. Do not attempt to implement the missing prerequisite yourself.
+
+   **Why this matters:** 5 workers running 4+ hours each with no PRs = 20+ hours of wasted compute. A worker that exits after 10 minutes with "BLOCKED: t030 not merged, profile table doesn't exist" saves 3h 50m and gives the supervisor actionable information.
+
+9. **Cross-repo routing** — If you discover mid-task that the fix belongs in a different repo (e.g., working in awardsapp but the bug is in an aidevops framework script), do NOT create tasks or TODO entries in the current repo. Instead, file a GitHub issue in the correct repo:
 
    ```bash
    gh issue create --repo <owner/correct-repo> --title "<description>" \
