@@ -1,28 +1,9 @@
 #!/usr/bin/env bash
-# =============================================================================
-# Full Development Loop Orchestrator (Simplified)
-# =============================================================================
-# Chains the complete development workflow:
-#   Task -> Preflight -> PR Create -> PR Review -> Postflight -> Deploy
-#
-# Per "Intelligence Over Scripts" (architecture.md): This script handles only
-# deterministic utilities (state management, background execution, worktree).
-# All decision-making logic is in full-loop.md — the AI reads that and acts.
-#
-# Usage:
-#   full-loop-helper.sh start "<prompt>" [options]
-#   full-loop-helper.sh status
-#   full-loop-helper.sh cancel
-#   full-loop-helper.sh resume
-#
-# Author: AI DevOps Framework
-# =============================================================================
+# Full Development Loop Orchestrator — state management for AI-driven dev workflow.
+# Phases: task -> preflight -> pr-create -> pr-review -> postflight -> deploy
+# Decision logic lives in full-loop.md; this script handles state + background exec.
 
 set -euo pipefail
-
-# =============================================================================
-# Constants
-# =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
@@ -30,59 +11,20 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 readonly SCRIPT_DIR
 readonly STATE_DIR=".agents/loop-state"
 readonly STATE_FILE="${STATE_DIR}/full-loop.local.state"
-
-# Default settings
-readonly DEFAULT_MAX_TASK_ITERATIONS=50
-readonly DEFAULT_MAX_PREFLIGHT_ITERATIONS=5
-readonly DEFAULT_MAX_PR_ITERATIONS=20
-
-# Phase names
-readonly PHASE_TASK="task"
-readonly PHASE_PREFLIGHT="preflight"
-readonly PHASE_PR_CREATE="pr-create"
-readonly PHASE_PR_REVIEW="pr-review"
-readonly PHASE_POSTFLIGHT="postflight"
-readonly PHASE_DEPLOY="deploy"
-readonly PHASE_COMPLETE="complete"
-
+readonly DEFAULT_MAX_TASK_ITERATIONS=50 DEFAULT_MAX_PREFLIGHT_ITERATIONS=5 DEFAULT_MAX_PR_ITERATIONS=20
 readonly BOLD='\033[1m'
 
-# Headless mode: set via --headless flag or FULL_LOOP_HEADLESS env var
 HEADLESS="${FULL_LOOP_HEADLESS:-false}"
 
-# =============================================================================
-# Helper Functions
-# =============================================================================
-
-is_headless() {
-	[[ "$HEADLESS" == "true" ]]
-}
+is_headless() { [[ "$HEADLESS" == "true" ]]; }
 
 print_phase() {
-	local phase="$1"
-	local description="$2"
-	echo ""
-	echo -e "${BOLD}${CYAN}=== Phase: ${phase} ===${NC}"
-	echo -e "${CYAN}${description}${NC}"
-	echo ""
-}
-
-# =============================================================================
-# State Management
-# =============================================================================
-
-init_state_dir() {
-	mkdir -p "$STATE_DIR"
+	printf "\n${BOLD}${CYAN}=== Phase: %s ===${NC}\n${CYAN}%s${NC}\n\n" "$1" "$2"
 }
 
 save_state() {
-	local phase="$1"
-	local prompt="$2"
-	local pr_number="${3:-}"
-	local started_at="${4:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
-
-	init_state_dir
-
+	local phase="$1" prompt="$2" pr_number="${3:-}" started_at="${4:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
+	mkdir -p "$STATE_DIR"
 	cat >"$STATE_FILE" <<EOF
 ---
 active: true
@@ -105,126 +47,84 @@ EOF
 }
 
 load_state() {
-	if [[ ! -f "$STATE_FILE" ]]; then
-		return 1
-	fi
-
-	CURRENT_PHASE=$(grep '^phase:' "$STATE_FILE" | cut -d: -f2 | tr -d ' "')
-	STARTED_AT=$(grep '^started_at:' "$STATE_FILE" | cut -d: -f2- | tr -d ' "')
-	PR_NUMBER=$(grep '^pr_number:' "$STATE_FILE" | cut -d: -f2 | tr -d ' "')
-	MAX_TASK_ITERATIONS=$(grep '^max_task_iterations:' "$STATE_FILE" | cut -d: -f2 | tr -d ' ')
-	MAX_PREFLIGHT_ITERATIONS=$(grep '^max_preflight_iterations:' "$STATE_FILE" | cut -d: -f2 | tr -d ' ')
-	MAX_PR_ITERATIONS=$(grep '^max_pr_iterations:' "$STATE_FILE" | cut -d: -f2 | tr -d ' ')
-	SKIP_PREFLIGHT=$(grep '^skip_preflight:' "$STATE_FILE" | cut -d: -f2 | tr -d ' ')
-	SKIP_POSTFLIGHT=$(grep '^skip_postflight:' "$STATE_FILE" | cut -d: -f2 | tr -d ' ')
-	NO_AUTO_PR=$(grep '^no_auto_pr:' "$STATE_FILE" | cut -d: -f2 | tr -d ' ')
-	NO_AUTO_DEPLOY=$(grep '^no_auto_deploy:' "$STATE_FILE" | cut -d: -f2 | tr -d ' ')
-	HEADLESS=$(grep '^headless:' "$STATE_FILE" | cut -d: -f2 | tr -d ' ')
+	[[ -f "$STATE_FILE" ]] || return 1
+	# Single-pass parse of YAML frontmatter
+	eval "$(awk -F': ' '/^---$/{n++;next} n==1 && NF>=2{
+		gsub(/[" ]/, "", $2); k=$1; gsub(/-/, "_", k)
+		print toupper(k) "=" $2
+	}' "$STATE_FILE")"
+	CURRENT_PHASE="$PHASE"
 	HEADLESS="${HEADLESS:-false}"
-
 	SAVED_PROMPT=$(sed -n '/^---$/,/^---$/d; p' "$STATE_FILE")
 }
 
-clear_state() {
-	rm -f "$STATE_FILE"
-}
-
-is_loop_active() {
-	[[ -f "$STATE_FILE" ]] && grep -q '^active: true' "$STATE_FILE"
-}
-
-# =============================================================================
-# Detection Functions
-# =============================================================================
+is_loop_active() { [[ -f "$STATE_FILE" ]] && grep -q '^active: true' "$STATE_FILE"; }
 
 is_aidevops_repo() {
-	local repo_root
-	repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
-	[[ "$repo_root" == *"/aidevops"* ]] || [[ -f "$repo_root/.aidevops-repo" ]]
+	local r
+	r=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+	[[ "$r" == *"/aidevops"* ]] || [[ -f "$r/.aidevops-repo" ]]
 }
-
-get_current_branch() {
-	git branch --show-current 2>/dev/null || echo ""
-}
-
+get_current_branch() { git branch --show-current 2>/dev/null || echo ""; }
 is_on_feature_branch() {
-	local branch
-	branch=$(get_current_branch)
-	[[ -n "$branch" && "$branch" != "main" && "$branch" != "master" ]]
+	local b
+	b=$(get_current_branch)
+	[[ -n "$b" && "$b" != "main" && "$b" != "master" ]]
 }
 
-# =============================================================================
-# Phase Output Functions
-# =============================================================================
-# These functions emit phase markers that the AI reads. The AI handles
-# the actual work based on full-loop.md guidance.
-
+# Phase emitters — AI reads these markers and acts per full-loop.md
 emit_task_phase() {
-	local prompt="$1"
 	print_phase "Task Development" "AI will iterate on task until TASK_COMPLETE"
-	echo "PROMPT: $prompt"
-	echo ""
-	echo "The AI should now implement the task following full-loop.md guidance."
-	echo "When complete, the AI emits: <promise>TASK_COMPLETE</promise>"
+	echo "PROMPT: $1"
+	echo "When complete, emit: <promise>TASK_COMPLETE</promise>"
 }
-
 emit_preflight_phase() {
 	print_phase "Preflight" "AI runs quality checks"
-	if [[ "${SKIP_PREFLIGHT:-false}" == "true" ]]; then
-		print_warning "Preflight skipped by user request"
+	[[ "${SKIP_PREFLIGHT:-false}" == "true" ]] && {
+		print_warning "Preflight skipped"
 		echo "<promise>PREFLIGHT_SKIPPED</promise>"
 		return 0
-	fi
-	echo "The AI should run quality checks following full-loop.md guidance."
+	}
+	echo "Run quality checks per full-loop.md guidance."
 }
-
 emit_pr_create_phase() {
 	print_phase "PR Creation" "AI creates pull request"
-	if [[ "${NO_AUTO_PR:-false}" == "true" ]] && ! is_headless; then
-		print_warning "Auto PR creation disabled. Create PR manually."
+	[[ "${NO_AUTO_PR:-false}" == "true" ]] && ! is_headless && {
+		print_warning "Auto PR disabled"
 		return 0
-	fi
-	echo "The AI should create PR following full-loop.md guidance."
+	}
+	echo "Create PR per full-loop.md guidance."
 }
-
 emit_pr_review_phase() {
 	print_phase "PR Review" "AI monitors CI and reviews"
-	echo "The AI should monitor PR following full-loop.md guidance."
+	echo "Monitor PR per full-loop.md guidance."
 }
-
 emit_postflight_phase() {
 	print_phase "Postflight" "AI verifies release health"
-	if [[ "${SKIP_POSTFLIGHT:-false}" == "true" ]]; then
-		print_warning "Postflight skipped by user request"
+	[[ "${SKIP_POSTFLIGHT:-false}" == "true" ]] && {
+		print_warning "Postflight skipped"
 		echo "<promise>POSTFLIGHT_SKIPPED</promise>"
 		return 0
-	fi
-	echo "The AI should verify release following full-loop.md guidance."
+	}
+	echo "Verify release per full-loop.md guidance."
 }
-
 emit_deploy_phase() {
 	print_phase "Deploy" "AI deploys changes"
-	if ! is_aidevops_repo; then
-		print_info "Not an aidevops repo, skipping deploy phase"
+	! is_aidevops_repo && {
+		print_info "Not aidevops repo, skipping deploy"
 		return 0
-	fi
-	if [[ "${NO_AUTO_DEPLOY:-false}" == "true" ]]; then
-		print_warning "Auto deploy disabled. Run manually: ./setup.sh"
+	}
+	[[ "${NO_AUTO_DEPLOY:-false}" == "true" ]] && {
+		print_warning "Auto deploy disabled"
 		return 0
-	fi
-	echo "The AI should run setup.sh following full-loop.md guidance."
+	}
+	echo "Run setup.sh per full-loop.md guidance."
 }
-
-# =============================================================================
-# Main Commands
-# =============================================================================
 
 cmd_start() {
 	local prompt="$1"
 	shift
-
 	local background=false
-
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--max-task-iterations)
@@ -274,251 +174,146 @@ cmd_start() {
 		esac
 	done
 
-	if [[ -z "$prompt" ]]; then
-		print_error "No prompt provided"
-		echo "Usage: full-loop-helper.sh start \"<prompt>\" [options]"
+	[[ -z "$prompt" ]] && {
+		print_error "Usage: full-loop-helper.sh start \"<prompt>\" [options]"
 		return 1
-	fi
-
-	if is_loop_active; then
-		print_warning "A loop is already active. Use 'resume' to continue or 'cancel' to stop."
+	}
+	is_loop_active && {
+		print_warning "Loop already active. Use 'resume' or 'cancel'."
 		return 1
-	fi
-
-	if ! is_on_feature_branch; then
-		print_error "Must be on a feature branch to start full loop"
-		print_info "Create a branch first: git checkout -b feature/your-feature"
+	}
+	is_on_feature_branch || {
+		print_error "Must be on a feature branch"
 		return 1
-	fi
+	}
 
-	echo ""
-	echo -e "${BOLD}${BLUE}=== FULL DEVELOPMENT LOOP - STARTING ===${NC}"
-	echo -e "  Task:     $prompt"
-	echo -e "  Branch:   $(get_current_branch)"
-	echo -e "  Headless: $HEADLESS"
-	echo ""
-
-	if [[ "${DRY_RUN:-false}" == "true" ]]; then
+	printf "\n${BOLD}${BLUE}=== FULL DEVELOPMENT LOOP - STARTING ===${NC}\n  Task: %s\n  Branch: %s | Headless: %s\n\n" \
+		"$prompt" "$(get_current_branch)" "$HEADLESS"
+	[[ "${DRY_RUN:-false}" == "true" ]] && {
 		print_info "Dry run - no changes made"
 		return 0
-	fi
+	}
 
-	save_state "$PHASE_TASK" "$prompt"
+	save_state "task" "$prompt"
 	SAVED_PROMPT="$prompt"
 
 	if [[ "$background" == "true" ]]; then
-		local log_file="${STATE_DIR}/full-loop.log"
-		local pid_file="${STATE_DIR}/full-loop.pid"
-
 		mkdir -p "$STATE_DIR"
-
-		print_info "Starting full loop in background..."
-
 		export MAX_TASK_ITERATIONS MAX_PREFLIGHT_ITERATIONS MAX_PR_ITERATIONS
-		export SKIP_PREFLIGHT SKIP_POSTFLIGHT NO_AUTO_PR NO_AUTO_DEPLOY
-		export FULL_LOOP_HEADLESS="$HEADLESS"
-		export SAVED_PROMPT="$prompt"
-
-		nohup "$0" _run_foreground "$prompt" >"$log_file" 2>&1 &
-		local pid=$!
-		echo "$pid" >"$pid_file"
-
-		print_success "Full loop started in background (PID: $pid)"
-		print_info "Check status: full-loop-helper.sh status"
-		print_info "View logs: full-loop-helper.sh logs"
+		export SKIP_PREFLIGHT SKIP_POSTFLIGHT NO_AUTO_PR NO_AUTO_DEPLOY FULL_LOOP_HEADLESS="$HEADLESS"
+		nohup "$0" _run_foreground "$prompt" >"${STATE_DIR}/full-loop.log" 2>&1 &
+		echo "$!" >"${STATE_DIR}/full-loop.pid"
+		print_success "Background loop started (PID: $!). Use 'status' or 'logs' to monitor."
 		return 0
 	fi
-
 	emit_task_phase "$prompt"
 }
 
-cmd_run_foreground() {
-	local prompt="$1"
-	emit_task_phase "$prompt"
-	# In foreground mode, AI continues iterating. This script just emits markers.
-}
-
-cmd_resume() {
-	if ! is_loop_active; then
-		print_error "No active loop to resume"
-		return 1
-	fi
-
-	load_state
-
-	print_info "Resuming from phase: $CURRENT_PHASE"
-
-	case "$CURRENT_PHASE" in
-	"$PHASE_TASK")
-		save_state "$PHASE_PREFLIGHT" "$SAVED_PROMPT" "" "$STARTED_AT"
-		emit_preflight_phase
-		;;
-	"$PHASE_PREFLIGHT")
-		save_state "$PHASE_PR_CREATE" "$SAVED_PROMPT" "" "$STARTED_AT"
-		emit_pr_create_phase
-		;;
-	"$PHASE_PR_CREATE")
-		save_state "$PHASE_PR_REVIEW" "$SAVED_PROMPT" "" "$STARTED_AT"
-		emit_pr_review_phase
-		;;
-	"$PHASE_PR_REVIEW")
-		save_state "$PHASE_POSTFLIGHT" "$SAVED_PROMPT" "$PR_NUMBER" "$STARTED_AT"
-		emit_postflight_phase
-		;;
-	"$PHASE_POSTFLIGHT")
-		save_state "$PHASE_DEPLOY" "$SAVED_PROMPT" "$PR_NUMBER" "$STARTED_AT"
-		emit_deploy_phase
-		;;
-	"$PHASE_DEPLOY")
-		save_state "$PHASE_COMPLETE" "$SAVED_PROMPT" "$PR_NUMBER" "$STARTED_AT"
-		cmd_complete
-		;;
-	"$PHASE_COMPLETE")
-		cmd_complete
-		;;
-	*)
-		print_error "Unknown phase: $CURRENT_PHASE"
-		return 1
-		;;
+# Phase transition map: current -> next phase + emit function
+_next_phase() {
+	case "$1" in
+	task) echo "preflight emit_preflight_phase" ;;
+	preflight) echo "pr-create emit_pr_create_phase" ;;
+	pr-create) echo "pr-review emit_pr_review_phase" ;;
+	pr-review) echo "postflight emit_postflight_phase" ;;
+	postflight) echo "deploy emit_deploy_phase" ;;
+	deploy) echo "complete cmd_complete" ;;
+	complete) echo "complete cmd_complete" ;;
+	*) return 1 ;;
 	esac
 }
 
+cmd_resume() {
+	is_loop_active || {
+		print_error "No active loop to resume"
+		return 1
+	}
+	load_state
+	print_info "Resuming from phase: $CURRENT_PHASE"
+	local transition
+	transition=$(_next_phase "$CURRENT_PHASE") || {
+		print_error "Unknown phase: $CURRENT_PHASE"
+		return 1
+	}
+	local next_phase="${transition%% *}" emit_fn="${transition#* }"
+	save_state "$next_phase" "$SAVED_PROMPT" "${PR_NUMBER:-}" "$STARTED_AT"
+	$emit_fn
+}
+
 cmd_status() {
-	if ! is_loop_active; then
+	is_loop_active || {
 		echo "No active full loop"
 		return 0
-	fi
-
+	}
 	load_state
-
-	echo ""
-	echo -e "${BOLD}Full Development Loop Status${NC}"
-	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	echo -e "Phase:    ${CYAN}$CURRENT_PHASE${NC}"
-	echo -e "Started:  $STARTED_AT"
-	echo -e "PR:       ${PR_NUMBER:-none}"
-	echo -e "Headless: $HEADLESS"
-	echo ""
-	echo "Prompt:"
-	echo "$SAVED_PROMPT" | head -5
-	echo ""
+	printf "\n${BOLD}Full Loop Status${NC}\nPhase: ${CYAN}%s${NC} | Started: %s | PR: %s | Headless: %s\nPrompt: %s\n\n" \
+		"$CURRENT_PHASE" "$STARTED_AT" "${PR_NUMBER:-none}" "$HEADLESS" "$(echo "$SAVED_PROMPT" | head -3)"
 }
 
 cmd_cancel() {
-	if ! is_loop_active; then
+	is_loop_active || {
 		print_warning "No active loop to cancel"
 		return 0
-	fi
-
+	}
 	local pid_file="${STATE_DIR}/full-loop.pid"
 	if [[ -f "$pid_file" ]]; then
 		local pid
 		pid=$(cat "$pid_file")
-		if kill -0 "$pid" 2>/dev/null; then
-			print_info "Stopping background process (PID: $pid)..."
+		kill -0 "$pid" 2>/dev/null && {
 			kill "$pid" 2>/dev/null || true
 			sleep 1
 			kill -9 "$pid" 2>/dev/null || true
-		fi
+		}
 		rm -f "$pid_file"
 	fi
-
-	clear_state
-
-	# Clean up sub-loop state files
-	rm -f ".agents/loop-state/ralph-loop.local.state" 2>/dev/null
-	rm -f ".agents/loop-state/quality-loop.local.state" 2>/dev/null
-
+	rm -f "$STATE_FILE" ".agents/loop-state/ralph-loop.local.state" ".agents/loop-state/quality-loop.local.state" 2>/dev/null
 	print_success "Full loop cancelled"
 }
 
 cmd_logs() {
-	local log_file="${STATE_DIR}/full-loop.log"
-	local lines="${1:-50}"
-
-	if [[ ! -f "$log_file" ]]; then
-		print_warning "No log file found. Start a loop with --background first."
+	local log_file="${STATE_DIR}/full-loop.log" lines="${1:-50}"
+	[[ -f "$log_file" ]] || {
+		print_warning "No log file. Start with --background first."
 		return 1
-	fi
-
+	}
 	local pid_file="${STATE_DIR}/full-loop.pid"
 	if [[ -f "$pid_file" ]]; then
 		local pid
 		pid=$(cat "$pid_file")
-		if kill -0 "$pid" 2>/dev/null; then
-			print_info "Background process running (PID: $pid)"
-		else
-			print_warning "Background process not running (was PID: $pid)"
-		fi
+		kill -0 "$pid" 2>/dev/null && print_info "Running (PID: $pid)" || print_warning "Not running (was PID: $pid)"
 	fi
-
-	echo ""
-	echo -e "${BOLD}Full Loop Logs (last $lines lines)${NC}"
-	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	printf "\n${BOLD}Full Loop Logs (last %d lines)${NC}\n" "$lines"
 	tail -n "$lines" "$log_file"
 }
 
 cmd_complete() {
-	echo ""
-	echo -e "${BOLD}${GREEN}=== FULL DEVELOPMENT LOOP - COMPLETE ===${NC}"
-	echo ""
-
 	load_state 2>/dev/null || true
-
-	echo -e "${GREEN}All phases completed successfully!${NC}"
-	echo ""
-	echo "Summary:"
-	echo "  - Task: Implemented"
-	echo "  - Preflight: Passed"
-	echo "  - PR: #${PR_NUMBER:-unknown} merged"
-	echo "  - Postflight: Healthy"
-	if is_aidevops_repo; then
-		echo "  - Deploy: Complete"
-	fi
-	echo ""
-
-	clear_state
-
+	printf "\n${BOLD}${GREEN}=== FULL DEVELOPMENT LOOP - COMPLETE ===${NC}\n"
+	printf "Task: done | Preflight: passed | PR: #%s | Postflight: healthy" "${PR_NUMBER:-unknown}"
+	is_aidevops_repo && printf " | Deploy: done"
+	printf "\n\n"
+	rm -f "$STATE_FILE"
 	echo "<promise>FULL_LOOP_COMPLETE</promise>"
 }
 
 show_help() {
 	cat <<'EOF'
 Full Development Loop Orchestrator
-
 Usage: full-loop-helper.sh <command> [options]
-
-Commands:
-  start "<prompt>"  Start loop    resume   Resume from current phase
-  status            Show status   cancel   Cancel active loop
-  logs [N]          Show logs     help     This help
-
-Options:
-  --max-task-iterations N    (default: 50)   --skip-preflight
-  --max-preflight-iterations N (default: 5)  --skip-postflight
-  --max-pr-iterations N      (default: 20)   --no-auto-pr
-  --headless    Worker mode   --dry-run       --no-auto-deploy
-  --background  Run in bg     FULL_LOOP_HEADLESS=true (env)
-
+Commands: start "<prompt>" | resume | status | cancel | logs [N] | help
+Options: --max-task-iterations N (50) | --max-preflight-iterations N (5)
+  --max-pr-iterations N (20) | --skip-preflight | --skip-postflight
+  --no-auto-pr | --no-auto-deploy | --headless | --dry-run | --background
 Phases: task -> preflight -> pr-create -> pr-review -> postflight -> deploy
 EOF
 }
 
-# =============================================================================
-# Main Entry Point
-# =============================================================================
-
 main() {
 	local command="${1:-help}"
 	shift || true
-
 	case "$command" in
-	start) cmd_start "$@" ;;
-	resume) cmd_resume ;;
-	status) cmd_status ;;
-	cancel) cmd_cancel ;;
-	logs) cmd_logs "$@" ;;
-	_run_foreground) cmd_run_foreground "$@" ;;
+	start) cmd_start "$@" ;; resume) cmd_resume ;; status) cmd_status ;;
+	cancel) cmd_cancel ;; logs) cmd_logs "$@" ;; _run_foreground) emit_task_phase "$@" ;;
 	help | --help | -h) show_help ;;
 	*)
 		print_error "Unknown command: $command"
