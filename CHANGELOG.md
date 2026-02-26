@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Enforce `opencode run` for headless dispatch — agents with Claude identity repeatedly defaulted to wrong CLI (#2359)
+
 ## [2.133.2] - 2026-02-26
 
 ### Changed
