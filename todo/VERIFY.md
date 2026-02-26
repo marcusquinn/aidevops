@@ -2578,18 +2578,20 @@
   check: rg "huggingface" .agents/subagent-index.toon
   check: rg "local-models" .agents/subagent-index.toon
 
-- [ ] v298 t1328 Matterbridge agent for multi-platform chat bridging — sub... | PR #2387 | merged:2026-02-26
+- [x] v298 t1328 Matterbridge agent for multi-platform chat bridging — sub... | PR #2387 | merged:2026-02-26 verified:2026-02-26
   files: .agents/scripts/tests/test-matterbridge-helper.sh
   check: shellcheck .agents/scripts/tests/test-matterbridge-helper.sh
   check: file-exists .agents/scripts/tests/test-matterbridge-helper.sh
 
-- [ ] v299 t1329 Cross-review judge pipeline and /cross-review slash comma... | PR #unknown | merged:2026-02-26
+- [x] v299 t1329 Cross-review judge pipeline and /cross-review slash comma... | PR #unknown | merged:2026-02-26 verified:2026-02-26
 
-- [ ] v300 t1330 Rate limit tracker for provider utilisation monitoring — ... | PR #2389 | merged:2026-02-26
+- [x] v300 t1330 Rate limit tracker for provider utilisation monitoring — ... | PR #2389 | merged:2026-02-26 verified:2026-02-26
   files: .agents/scripts/observability-helper.sh
   check: shellcheck .agents/scripts/observability-helper.sh
   check: file-exists .agents/scripts/observability-helper.sh
 
-- [ ] v301 t1323 Fix TTSR shell-local-params rule false-positives on curre... | PR #2388 | merged:2026-02-26
+- [x] v301 t1323 Fix TTSR shell-local-params rule false-positives on curre... | PR #2388 | merged:2026-02-26 verified:2026-02-26
   files: .agents/plugins/opencode-aidevops/index.mjs
   check: file-exists .agents/plugins/opencode-aidevops/index.mjs
+
+- [ ] v302 t1327.6 Opsec agent #auto-dispatch — create `.agents/tools/securi... | PR #unknown | merged:2026-02-26
