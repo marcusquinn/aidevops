@@ -52,7 +52,7 @@ readonly LOG_FILE="$HOME/.aidevops/logs/repo-sync.log"
 readonly STATE_FILE="$HOME/.aidevops/cache/repo-sync-state.json"
 readonly CRON_MARKER="# aidevops-repo-sync"
 readonly DEFAULT_INTERVAL=1440
-readonly LAUNCHD_LABEL="com.aidevops.aidevops-repo-sync"
+readonly LAUNCHD_LABEL="sh.aidevops.repo-sync"
 readonly LAUNCHD_DIR="$HOME/Library/LaunchAgents"
 readonly LAUNCHD_PLIST="${LAUNCHD_DIR}/${LAUNCHD_LABEL}.plist"
 readonly INSTALL_DIR="$HOME/Git/aidevops"
@@ -565,6 +565,15 @@ cmd_enable() {
 	if [[ "$backend" == "launchd" ]]; then
 		local interval_seconds=$((interval * 60))
 
+		# Migrate from old label if present (com.aidevops -> sh.aidevops)
+		local old_label="com.aidevops.aidevops-repo-sync"
+		local old_plist="${LAUNCHD_DIR}/${old_label}.plist"
+		if launchctl list 2>/dev/null | grep -qF "$old_label"; then
+			launchctl unload -w "$old_plist" 2>/dev/null || true
+			log_info "Unloaded old LaunchAgent: $old_label"
+		fi
+		rm -f "$old_plist"
+
 		mkdir -p "$LAUNCHD_DIR"
 
 		# Create named symlink so macOS System Settings shows "aidevops-repo-sync"
@@ -671,6 +680,18 @@ cmd_disable() {
 		if [[ -f "$LAUNCHD_PLIST" ]]; then
 			had_entry=true
 			rm -f "$LAUNCHD_PLIST"
+		fi
+
+		# Also clean up old label if present (com.aidevops -> sh.aidevops migration)
+		local old_label="com.aidevops.aidevops-repo-sync"
+		local old_plist="${LAUNCHD_DIR}/${old_label}.plist"
+		if launchctl list 2>/dev/null | grep -qF "$old_label"; then
+			launchctl unload -w "$old_plist" 2>/dev/null || true
+			had_entry=true
+		fi
+		if [[ -f "$old_plist" ]]; then
+			rm -f "$old_plist"
+			had_entry=true
 		fi
 
 		# Also remove any lingering cron entry
@@ -1049,7 +1070,7 @@ SAFETY:
     - Worktrees are ignored — only main checkouts are synced
 
 SCHEDULER BACKENDS:
-    macOS:  launchd LaunchAgent (~/Library/LaunchAgents/com.aidevops.aidevops-repo-sync.plist)
+    macOS:  launchd LaunchAgent (~/Library/LaunchAgents/sh.aidevops.repo-sync.plist)
             - Runs daily (every 1440 minutes by default)
     Linux:  cron (daily at 3am, crontab entry with # aidevops-repo-sync marker)
 
