@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.139.0] - 2026-02-27
+
+### Added
+
+- Pre-fetch all repo state before pulse to prevent single-repo tunnel vision (#2471)
+- Pulse wrapper injects open PRs/issues for all 7 repos into seed prompt
+
+### Changed
+
+- Pulse Step 2: "Use Pre-Fetched State" replaces "Fetch State" — agent no longer re-fetches
+- Strengthen "Intelligence Over Determinism" as core harness principle (#2467)
+- Simplify pulse.md from 622 to 137 lines — trust intelligence over deterministic rules (#2465)
+
+### Fixed
+
+- StatusContext vs CheckRun handling in pulse state (`.state` vs `.conclusion` field)
+- Empty reviewDecision string handling (GitHub returns "" not null)
+- Replace arbitrary 5-minute time budget with "run until done, then exit" (#2466)
+- Auto-detect non-interactive terminals in setup.sh (#2468)
+- Pulse closes open issues labelled status:done (#2456)
+- Add mandatory OPEN state check before dispatching workers (#2455)
+
 ## [2.138.0] - 2026-02-27
 
 ### Added
