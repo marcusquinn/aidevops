@@ -99,7 +99,7 @@ google-search-console,npx mcp-server-gsc@latest,service-account,seo/google-searc
 mcporter,npx mcporter,none,tools/mcp-toolkit/mcporter.md,Discover call compose and generate CLIs for any MCP server
 -->
 
-<!--TOON:workflows[13]{name,file,purpose}:
+<!--TOON:workflows[14]{name,file,purpose}:
 git-workflow,workflows/git-workflow.md,Branch naming and commit conventions
 plans,workflows/plans.md,Complex execution plans
 release,workflows/release.md,Semver and changelog generation
@@ -113,9 +113,10 @@ review-issue-pr,workflows/review-issue-pr.md,External issue/PR triage
 bug-fixing,workflows/bug-fixing.md,Bug fix workflow
 feature-development,workflows/feature-development.md,Feature development workflow
 conversation-starter,workflows/conversation-starter.md,Session greeting and auto-recall
+mission-skill-learning,workflows/mission-skill-learning.md,Auto-capture reusable patterns from missions and suggest promotion
 -->
 
-<!--TOON:scripts[94]{name,purpose}:
+<!--TOON:scripts[95]{name,purpose}:
 accessibility-helper.sh,Accessibility and contrast testing (WCAG compliance WAVE API for websites and emails)
 accessibility-audit-helper.sh,Accessibility audit CLI wrapping axe-core WAVE API WebAIM contrast and Lighthouse a11y
 auto-update-helper.sh,Automatic update polling daemon (enable disable status check logs)
@@ -151,6 +152,7 @@ session-checkpoint-helper.sh,Persist session state to survive context compaction
 mail-helper.sh,TOON-based inter-agent mailbox system
 memory-helper.sh,Cross-session memory (SQLite FTS5)
 memory-embeddings-helper.sh,Semantic memory search with vector embeddings (opt-in)
+mission-skill-learner.sh,Auto-capture reusable patterns from missions (scan score promote track)
 pattern-tracker-helper.sh,Success/failure pattern tracking and analysis
 pdf-helper.sh,PDF operations (info fields fill merge text)
 unstract-helper.sh,Unstract self-hosted document processing (install start stop)
