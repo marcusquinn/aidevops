@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091
 set -euo pipefail
 
 # QuickFile Integration Helper for AI DevOps Framework

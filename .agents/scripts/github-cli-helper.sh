@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2034
+# shellcheck disable=SC2034
 
 # GitHub CLI Helper Script
 # Comprehensive GitHub management using GitHub CLI (gh)

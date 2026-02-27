@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091
 # =============================================================================
 # Rosetta Audit Helper - Detect x86 Homebrew binaries on Apple Silicon
 # =============================================================================

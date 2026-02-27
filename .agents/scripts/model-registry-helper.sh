@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091
 
 # Model Registry Helper - Provider/Model Registry with Periodic Sync
 # Maintains a SQLite registry of AI models from configured providers,

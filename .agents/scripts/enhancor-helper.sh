@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1090,SC1091
 
 # Enhancor Helper - REST API client for Enhancor AI
 # Part of AI DevOps Framework
@@ -37,6 +36,7 @@ load_api_key() {
 
 	local cred_file="${HOME}/.config/aidevops/credentials.sh"
 	if [[ -f "${cred_file}" ]]; then
+		# shellcheck disable=SC1090  # credentials path resolved at runtime
 		source "${cred_file}"
 	fi
 

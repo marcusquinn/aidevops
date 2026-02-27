@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2317
+# shellcheck disable=SC2317
 
 # Snyk Security Helper Script
 # Comprehensive security scanning using Snyk CLI

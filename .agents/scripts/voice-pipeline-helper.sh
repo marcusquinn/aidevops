@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2034,SC2155
+# shellcheck disable=SC2034,SC2155
 
 # Voice Pipeline Helper Script
 # Implements the CapCut cleanup + ElevenLabs transformation chain

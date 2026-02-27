@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2129,SC2153,SC2317
+# shellcheck disable=SC2129,SC2153,SC2317
 set -euo pipefail
 
 # Setup Local API Keys - Secure User-Private Storage

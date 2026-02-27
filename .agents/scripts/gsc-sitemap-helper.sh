@@ -7,7 +7,6 @@ set -euo pipefail
 
 # Source shared constants
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=shared-constants.sh
 source "${SCRIPT_DIR}/shared-constants.sh" 2>/dev/null || true
 
 # Configuration

@@ -1,0 +1,5 @@
+# ShellCheck configuration for aidevops
+# Resolves SC1091 ("Not following: ... was not specified as input") by telling
+# ShellCheck to look in the same directory as the script being checked.
+# This handles source "./shared-constants.sh" and source "./_common.sh" patterns.
+source-path=SCRIPTDIR

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2034,SC2155
+# shellcheck disable=SC2034,SC2155
 
 # Pipecat Helper Script
 # Manages the Pipecat local voice agent: setup, start, stop, status, client

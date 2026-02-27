@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2034
+# shellcheck disable=SC2034
 
 # Chrome Web Store Helper Script
 # Automate Chrome extension publishing via Chrome Web Store API

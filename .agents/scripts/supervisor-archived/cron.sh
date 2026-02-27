@@ -11,7 +11,6 @@
 # shellcheck source=launchd.sh
 _CRON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "${_CRON_DIR}/launchd.sh" ]]; then
-	# shellcheck disable=SC1091
 	source "${_CRON_DIR}/launchd.sh"
 fi
 

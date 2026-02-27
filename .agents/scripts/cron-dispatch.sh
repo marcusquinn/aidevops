@@ -15,7 +15,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 # Source shared-constants for resolve_model_tier() (t132.7)
-# shellcheck source=shared-constants.sh
 source "${SCRIPT_DIR}/shared-constants.sh"
 
 # Configuration

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2119,SC2120,SC2155
+# shellcheck disable=SC2119,SC2120,SC2155
 set -euo pipefail
 
 # Crawl4AI Examples Script

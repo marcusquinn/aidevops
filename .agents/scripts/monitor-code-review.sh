@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2155,SC2317
+# shellcheck disable=SC2155,SC2317
 set -euo pipefail
 
 # Code Review Monitoring and Auto-Fix Script (Enhanced Version)

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2001,SC2034
+# shellcheck disable=SC2001,SC2034
 
 # Site Crawler Helper Script
 # SEO site auditing with Screaming Frog-like capabilities

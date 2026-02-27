@@ -88,7 +88,6 @@ sanitize_filename() {
 # Activate Python venv if it exists
 activate_venv() {
 	if [[ -f "${VENV_DIR}/bin/activate" ]]; then
-		# shellcheck disable=SC1091
 		source "${VENV_DIR}/bin/activate"
 		return 0
 	fi

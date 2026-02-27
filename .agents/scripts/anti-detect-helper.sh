@@ -117,7 +117,6 @@ setup_camoufox() {
     fi
 
     # Install camoufox + browserforge
-    # shellcheck disable=SC1091
     source "$VENV_DIR/bin/activate"
     pip install --quiet --upgrade camoufox browserforge 2>/dev/null || {
         echo -e "${YELLOW}Warning: pip install failed. Trying with --break-system-packages...${NC}"
@@ -501,7 +500,6 @@ launch_camoufox() {
     local url="$3"
     local disposable="$4"
 
-    # shellcheck disable=SC1091
     source "$VENV_DIR/bin/activate" 2>/dev/null || {
         echo -e "${RED}Error: Camoufox venv not found. Run: anti-detect-helper.sh setup${NC}" >&2
         return 1
@@ -800,7 +798,6 @@ test_detection() {
 
     echo -e "${BLUE}Testing bot detection (engine: $engine)...${NC}"
 
-    # shellcheck disable=SC1091
     source "$VENV_DIR/bin/activate" 2>/dev/null || true
 
     local config_arg=""
@@ -923,7 +920,6 @@ warmup_profile() {
 
     echo -e "${BLUE}Warming up profile '$profile_name' for ${duration}m...${NC}"
 
-    # shellcheck disable=SC1091
     source "$VENV_DIR/bin/activate" 2>/dev/null || {
         echo -e "${RED}Error: Camoufox venv not found. Run: anti-detect-helper.sh setup${NC}" >&2
         return 1

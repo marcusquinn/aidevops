@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2034
+# shellcheck disable=SC2034
 
 # GitLab CLI Helper Script
 # Comprehensive GitLab management using GitLab CLI (glab)

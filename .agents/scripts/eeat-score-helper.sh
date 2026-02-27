@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2034
+# shellcheck disable=SC2034
 
 # E-E-A-T Score Helper Script
 # Content quality scoring using Google's E-E-A-T framework

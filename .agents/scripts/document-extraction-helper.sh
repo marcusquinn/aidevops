@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091
 set -euo pipefail
 
 # Document Extraction Helper for AI DevOps Framework
@@ -45,7 +44,7 @@ ensure_workspace() {
 # Activate or create Python virtual environment
 activate_venv() {
 	if [[ -d "${VENV_DIR}/bin" ]]; then
-		# shellcheck disable=SC1091
+		# shellcheck disable=SC1091  # venv activate doesn't exist at lint time
 		source "${VENV_DIR}/bin/activate"
 		return 0
 	fi

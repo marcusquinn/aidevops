@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2034,SC2155,SC2317
+# shellcheck disable=SC2034,SC2155,SC2317
 
 # Updown.io Helper Script
 # Managed by AI DevOps Framework

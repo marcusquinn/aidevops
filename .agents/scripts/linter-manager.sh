@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091
 set -euo pipefail
 
 # Linter Manager - CodeFactor-Inspired Multi-Language Linter Installation

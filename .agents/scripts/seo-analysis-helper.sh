@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2034,SC2129,SC2155
+# shellcheck disable=SC2034,SC2129,SC2155
 
 # SEO Analysis Helper Script
 # Analyzes exported SEO data for ranking opportunities and content cannibalization

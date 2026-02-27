@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091
 set -euo pipefail
 
 # =============================================================================
@@ -125,7 +124,6 @@ get_sonar_token() {
 
 	# Fallback to credentials.sh
 	if [[ -z "$token" ]] && [[ -f "${HOME}/.config/aidevops/credentials.sh" ]]; then
-		# shellcheck disable=SC1091
 		source "${HOME}/.config/aidevops/credentials.sh"
 		token="${SONAR_TOKEN:-}"
 	fi

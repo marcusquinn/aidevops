@@ -19,11 +19,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
-# shellcheck source=shared-constants.sh
-# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/shared-constants.sh"
 # shellcheck source=issue-sync-lib.sh
-# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/issue-sync-lib.sh"
 
 # =============================================================================
