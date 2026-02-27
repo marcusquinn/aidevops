@@ -53,6 +53,7 @@ Scan the pre-fetched state above. Act immediately on each item — don't build a
 
 - **Green CI + no blocking reviews** → merge: `gh pr merge <number> --repo <slug> --squash`. If the PR resolves an issue, the issue should be closed with a comment linking to the merged PR.
 - **Failing CI or changes requested** → dispatch a worker to fix it (counts against worker slots)
+- **Wrong issue linked** (PR comment contains `issue-mismatch-check`) → fix the PR body directly. Extract the task ID from the PR title, find the correct issue (`gh issue list --search "<task_id>:"`), and update the PR body to replace the wrong `Closes #NNN` with the correct one: `gh pr edit <number> --repo <slug> --body "$(updated body)"`. Then reopen any issue that was incorrectly closed by the wrong linkage. This is a safe mechanical fix — no worker slot needed.
 - **Open 6+ hours with no recent commits** → something is stuck. Comment on the PR, consider closing it and re-filing the issue.
 - **Two PRs targeting the same issue** → flag the duplicate by commenting on the newer one
 - **Recently closed without merge** → a worker failed. Look for patterns. If the same failure repeats, file an improvement issue.

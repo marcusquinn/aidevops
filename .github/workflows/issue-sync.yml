@@ -542,19 +542,74 @@ jobs:
             exit 0
           fi
 
+          # Extract task ID from PR title (e.g., "t1357.1: Create mission template")
+          TASK_ID=$(echo "$PR_TITLE" | grep -oE '^t[0-9]+(\.[0-9]+)*' || true)
+
           # Check for GitHub closing keywords or ref:GH# pattern
+          HAS_CLOSING_KEYWORD=false
           if echo "$PR_BODY" | grep -qiE '(closes|fixes|resolves)\s+#[0-9]+'; then
-            echo "PR body contains issue closing keyword"
-            exit 0
+            HAS_CLOSING_KEYWORD=true
           fi
 
           if echo "$PR_BODY" | grep -qE 'ref:GH#[0-9]+'; then
-            echo "PR body contains ref:GH# reference"
+            HAS_CLOSING_KEYWORD=true
+          fi
+
+          # Cross-validate: if PR has both a task ID and closing keywords,
+          # verify the linked issue matches the task ID. Workers sometimes
+          # link the wrong issue when multiple issues share similar keywords
+          # (e.g., 12 subtasks of the same parent all containing "mission").
+          if [[ "$HAS_CLOSING_KEYWORD" == "true" && -n "$TASK_ID" ]]; then
+            # Extract all issue numbers from closing keywords
+            LINKED_ISSUES=$(echo "$PR_BODY" | grep -oiE '(closes|fixes|resolves)\s+#[0-9]+' | grep -oE '[0-9]+' || true)
+            MISMATCH_FOUND=false
+            MISMATCH_DETAILS=""
+
+            for ISSUE_NUM in $LINKED_ISSUES; do
+              # Get the issue title
+              ISSUE_TITLE=$(gh issue view "$ISSUE_NUM" --repo "$REPO" --json title --jq '.title' 2>/dev/null || echo "")
+              if [[ -z "$ISSUE_TITLE" ]]; then
+                continue  # Issue not found — skip (could be in another repo)
+              fi
+
+              # Extract task ID from issue title (e.g., "t1357.4: Add POC mode")
+              ISSUE_TASK_ID=$(echo "$ISSUE_TITLE" | grep -oE '^t[0-9]+(\.[0-9]+)*' || true)
+
+              # If the issue has a task ID and it doesn't match the PR's task ID, flag it
+              if [[ -n "$ISSUE_TASK_ID" && "$ISSUE_TASK_ID" != "$TASK_ID" ]]; then
+                MISMATCH_FOUND=true
+                MISMATCH_DETAILS="${MISMATCH_DETAILS}\n- \`Closes #${ISSUE_NUM}\` links to issue titled \"${ISSUE_TITLE}\" (task ${ISSUE_TASK_ID}), but this PR is for task ${TASK_ID}"
+              fi
+            done
+
+            if [[ "$MISMATCH_FOUND" == "true" ]]; then
+              echo "::warning::PR task ID ($TASK_ID) does not match linked issue task ID. This will close the wrong issue on merge."
+              # Post a one-time comment
+              EXISTING=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json comments --jq '[.comments[] | select(.body | contains("issue-mismatch-check"))] | length' 2>/dev/null || echo "0")
+              if [[ "$EXISTING" == "0" ]]; then
+                # Find the correct issue for this task ID
+                CORRECT_ISSUE=$(gh issue list --repo "$REPO" --state all --search "${TASK_ID}:" --json number,title \
+                  --jq --arg tid "$TASK_ID" '[.[] | select(.title | test("^" + $tid + "[.:\\s]"))] | .[0].number // empty' 2>/dev/null || true)
+                SUGGESTION=""
+                if [[ -n "$CORRECT_ISSUE" && "$CORRECT_ISSUE" != "null" ]]; then
+                  SUGGESTION="The correct issue for task \`${TASK_ID}\` appears to be #${CORRECT_ISSUE}."
+                fi
+
+                gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$(printf '<!-- issue-mismatch-check -->\n**Wrong issue linked.** This PR is for task `%s` but the closing keywords reference a different task:\n%b\n\n%s\n\nPlease update the PR body to close the correct issue.' "$TASK_ID" "$MISMATCH_DETAILS" "$SUGGESTION")"
+              fi
+              exit 0
+            fi
+
+            echo "PR body contains issue closing keyword with correct task ID match"
             exit 0
           fi
 
-          # Check if a task ID in the title has a matching open issue
-          TASK_ID=$(echo "$PR_TITLE" | grep -oE '^t[0-9]+(\.[0-9]+)*' || true)
+          if [[ "$HAS_CLOSING_KEYWORD" == "true" ]]; then
+            echo "PR body contains issue closing keyword (no task ID to cross-validate)"
+            exit 0
+          fi
+
+          # No closing keyword found — check if a matching issue exists
           if [[ -n "$TASK_ID" ]]; then
             ISSUE_NUM=$(gh issue list --repo "$REPO" --state open --search "${TASK_ID}:" --json number --jq '.[0].number' 2>/dev/null || true)
             if [[ -n "$ISSUE_NUM" && "$ISSUE_NUM" != "null" ]]; then
