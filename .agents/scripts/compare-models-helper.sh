@@ -666,6 +666,12 @@ _cross_review_judge_score() {
 	shift 4
 	local -a model_names=("$@")
 
+	# Validate judge_model identifier (used in filenames and runner names)
+	if [[ ! "$judge_model" =~ ^[A-Za-z0-9._-]+$ ]]; then
+		print_error "Invalid judge model identifier: $judge_model"
+		return 1
+	fi
+
 	local runner_helper="${SCRIPT_DIR}/runner-helper.sh"
 	if [[ ! -x "$runner_helper" ]]; then
 		print_warning "runner-helper.sh not found — skipping judge scoring"
@@ -842,18 +848,23 @@ print(r)
 	echo ""
 
 	# Helper: clamp a numeric value to integer in range 0-10
+	# Handles decimals correctly (e.g. 8.5 → 9 via rounding, not 85)
 	_clamp_score() {
 		local val="$1"
-		# Strip non-numeric characters, default to 0
-		val="${val//[^0-9]/}"
-		if [[ -z "$val" ]]; then
+		# Accept only valid numeric format (digits with optional single decimal point)
+		if [[ ! "$val" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
 			echo "0"
 			return 0
 		fi
-		if [[ "$val" -gt 10 ]]; then
+		# Round to nearest integer and clamp to 0-10
+		local int_val
+		int_val=$(printf '%.0f' "$val" 2>/dev/null || echo "0")
+		if [[ "$int_val" -gt 10 ]]; then
 			echo "10"
+		elif [[ "$int_val" -lt 0 ]]; then
+			echo "0"
 		else
-			echo "$val"
+			echo "$int_val"
 		fi
 		return 0
 	}
@@ -969,6 +980,11 @@ cmd_cross_review() {
 				return 1
 			}
 			judge_model="$2"
+			# Validate judge model identifier (used in filenames)
+			if [[ ! "$judge_model" =~ ^[A-Za-z0-9._-]+$ ]]; then
+				print_error "Invalid judge model identifier: $judge_model (only alphanumeric, dots, hyphens, underscores)"
+				return 1
+			fi
 			shift 2
 			;;
 		*)

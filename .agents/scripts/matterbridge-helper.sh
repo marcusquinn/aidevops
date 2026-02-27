@@ -342,6 +342,7 @@ cmd_update() {
 		die "Binary not found: $BINARY_PATH. Run: matterbridge-helper.sh setup"
 		return 1
 	fi
+	ensure_dirs
 
 	local current_version new_version
 	local version_err_file="${LOG_FILE}.version-err"
