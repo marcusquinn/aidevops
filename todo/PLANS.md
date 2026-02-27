@@ -24,14 +24,16 @@ Each plan includes:
 
 ### [2026-02-27] Fix Worker PR Lookup Race Condition
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~1.5h (ai:45m test:30m read:15m)
 **TODO:** t1343
 **Logged:** 2026-02-27
+**Completed:** 2026-02-27
+**PR:** #2423
 **Brief:** [todo/tasks/t1343-brief.md](tasks/t1343-brief.md)
 
 <!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
-p033,Fix Worker PR Lookup Race Condition,planning,0,1,,bugfix|supervisor|lifecycle|race-condition,1.5h,45m,30m,15m,2026-02-27T00:00Z,
+p033,Fix Worker PR Lookup Race Condition,completed,1,1,,bugfix|supervisor|lifecycle|race-condition,1.5h,45m,30m,15m,2026-02-27T00:00Z,2026-02-27T00:00Z
 -->
 
 #### Purpose
@@ -48,9 +50,9 @@ The archived `issue-sync.sh` (lines 409-447) had deterministic logic for this: l
 
 #### Execution (single phase)
 
-- [ ] Add "check issue state before modifying" rule to `pulse.md` and worker guidance
-- [ ] Add PR lookup fallback (`gh pr list --search`) to `planning-detail.md`
-- [ ] Document the #2250 scenario as a concrete example
+- [x] Add "check issue state before modifying" rule to `pulse.md` and worker guidance
+- [x] Add PR lookup fallback (`gh pr list --search`) to `planning-detail.md`
+- [x] Document the #2250 scenario as a concrete example
 
 #### Decision Log
 
@@ -59,17 +61,31 @@ The archived `issue-sync.sh` (lines 409-447) had deterministic logic for this: l
 | 2026-02-27 | Guidance-only fix, no new scripts                       | Per "Intelligence Over Scripts" principle — the archived bash logic was replaced by AI reasoning, so the fix must improve the AI guidance                                |
 | 2026-02-27 | Three-layer fix (state check + PR fallback + skip rule) | Each layer catches a different failure mode: state check prevents modifying closed issues, PR fallback finds cross-session PRs, skip rule prevents redundant transitions |
 
+#### Outcomes & Retrospective
+
+**What was delivered:**
+- Added mandatory OPEN state check before issue label modifications in pulse guidance
+- Added `gh pr list --search` fallback for cross-session PR lookup
+- Documented the #2250 race condition scenario as a concrete example
+
+**Time Summary:**
+- Estimated: 1.5h
+- Actual: ~1h
+- PR: #2423 merged 2026-02-27
+
 ---
 
 ### [2026-02-27] Add Local Dev / `.local` Domains to Build+ Domain Expertise Check
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~15m
 **TODO:** t1344
 **Logged:** 2026-02-27
+**Completed:** 2026-02-27
+**PR:** #2453
 
 <!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
-p034,Add Local Dev to Build+ Domain Expertise Check,planning,0,1,,bugfix|agent|build-plus|local-hosting,15m,10m,5m,0m,2026-02-27T00:00Z,
+p034,Add Local Dev to Build+ Domain Expertise Check,completed,1,1,,bugfix|agent|build-plus|local-hosting,15m,10m,5m,0m,2026-02-27T00:00Z,2026-02-27T00:00Z
 -->
 
 #### Purpose
@@ -82,19 +98,31 @@ Observed in an awardsapp session: agent suggested Caddy for `awardsapp.local` HT
 
 #### Execution (single phase)
 
-- [ ] Add row to `build-plus.md` Domain Expertise Check table: `Local dev / .local domains / ports / proxy / HTTPS / LocalWP → services/hosting/local-hosting.md`
+- [x] Add row to `build-plus.md` Domain Expertise Check table: `Local dev / .local domains / ports / proxy / HTTPS / LocalWP → services/hosting/local-hosting.md`
+
+#### Outcomes & Retrospective
+
+**What was delivered:**
+- Added `Local dev / .local domains / ports / proxy / HTTPS / LocalWP → services/hosting/local-hosting.md` row to Build+ Domain Expertise Check table
+
+**Time Summary:**
+- Estimated: 15m
+- Actual: ~15m
+- PR: #2453 merged 2026-02-27
 
 ---
 
 ### [2026-02-27] Add Cross-Repo Improvement Guidance to AGENTS.md
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~30m
 **TODO:** t1345
 **Logged:** 2026-02-27
+**Completed:** 2026-02-27
+**PR:** #2443
 
 <!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
-p035,Add Cross-Repo Improvement Guidance to AGENTS.md,planning,0,1,,docs|agent|framework|workflow,30m,20m,5m,5m,2026-02-27T00:00Z,
+p035,Add Cross-Repo Improvement Guidance to AGENTS.md,completed,1,1,,docs|agent|framework|workflow,30m,20m,5m,5m,2026-02-27T00:00Z,2026-02-27T00:00Z
 -->
 
 #### Purpose
@@ -107,21 +135,33 @@ Observed in an awardsapp session: a `build-plus.md` improvement was made to `~/.
 
 #### Execution (single phase)
 
-- [ ] Add section to root `AGENTS.md` (developer guide) explaining: framework improvements must be made in `~/Git/aidevops/` or captured as todos/plans in that repo's TODO.md. Recommend PLANS.md entries for non-trivial improvements to ensure clarity of objectives
-- [ ] Add matching guidance to `.agents/AGENTS.md` (user guide) so agents working on other repos know to create todos (and PLANS.md entries for non-trivial changes) in the aidevops repo rather than editing the installed copy
+- [x] Add section to root `AGENTS.md` (developer guide) explaining: framework improvements must be made in `~/Git/aidevops/` or captured as todos/plans in that repo's TODO.md. Recommend PLANS.md entries for non-trivial improvements to ensure clarity of objectives
+- [x] Add matching guidance to `.agents/AGENTS.md` (user guide) so agents working on other repos know to create todos (and PLANS.md entries for non-trivial changes) in the aidevops repo rather than editing the installed copy
+
+#### Outcomes & Retrospective
+
+**What was delivered:**
+- Added "Framework Improvements" section to root `AGENTS.md` and `.agents/AGENTS.md` directing agents to make changes in the source repo, not the installed copy
+- Prevents future loss of improvements on `aidevops update`
+
+**Time Summary:**
+- Estimated: 30m
+- Actual: ~20m
+- PR: #2443 merged 2026-02-27
 
 ---
 
 ### [2026-02-25] Local AI Model Support
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~13.5h (ai:10h test:2h read:1.5h)
 **TODO:** t1338
 **Logged:** 2026-02-25
+**Completed:** 2026-02-26
 **Brief:** [todo/tasks/t1338-brief.md](tasks/t1338-brief.md)
 
 <!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
-p032,Local AI Model Support,planning,0,4,,feature|local-models|infrastructure|model-routing,13.5h,10h,2h,1.5h,2026-02-25T00:00Z,
+p032,Local AI Model Support,completed,4,4,,feature|local-models|infrastructure|model-routing,13.5h,10h,2h,1.5h,2026-02-25T00:00Z,2026-02-26T00:00Z
 -->
 
 #### Purpose
@@ -157,27 +197,27 @@ Add local AI model inference to aidevops via llama.cpp + HuggingFace, completing
 
 **Phase 1: Foundation (t1338.1, t1338.3) ~3h**
 
-- [ ] Extend `model-routing.md` with `local` tier — routing rules, cost table, decision flowchart, provider discovery
-- [ ] Create `huggingface.md` subagent — model discovery, GGUF format, quantization guide, hardware-tier recommendations
+- [x] Extend `model-routing.md` with `local` tier — routing rules, cost table, decision flowchart, provider discovery
+- [x] Create `huggingface.md` subagent — model discovery, GGUF format, quantization guide, hardware-tier recommendations
 
 These two are independent and can run in parallel. model-routing extension is the architectural anchor; HuggingFace guide is reference material needed by the helper script.
 
 **Phase 2: Documentation (t1338.2) ~2h**
 
-- [ ] Create `local-models.md` subagent — llama.cpp setup guide, platform matrix, server management, hardware detection
+- [x] Create `local-models.md` subagent — llama.cpp setup guide, platform matrix, server management, hardware detection
 
 Depends on Phase 1 (references model-routing integration points).
 
 **Phase 3: Implementation (t1338.4) ~6h**
 
-- [ ] Create `local-model-helper.sh` — 11 subcommands covering full lifecycle
+- [x] Create `local-model-helper.sh` — 11 subcommands covering full lifecycle
 
 The main implementation. Depends on Phase 2 for design decisions. Largest single task — consider splitting into 2 PRs (install/serve/stop/status in first, search/pull/recommend/usage/cleanup/update in second).
 
 **Phase 4: Polish (t1338.5, t1338.6) ~2.5h**
 
-- [ ] Usage logging SQLite schema + disk management logic
-- [ ] Update AGENTS.md domain index + subagent-index.toon
+- [x] Usage logging SQLite schema + disk management logic
+- [x] Update AGENTS.md domain index + subagent-index.toon
 
 #### Decision Log
 
@@ -201,18 +241,34 @@ The main implementation. Depends on Phase 2 for design decisions. Largest single
 | Large model downloads fail mid-transfer                  | `huggingface-cli` handles resume; document manual resume              |
 | GPU detection unreliable across platforms                | Graceful fallback to CPU-only with clear messaging                    |
 
+#### Outcomes & Retrospective
+
+**What was delivered:**
+- `tools/local-models/local-models.md` — llama.cpp setup guide, platform matrix, server management
+- `tools/local-models/huggingface.md` — GGUF model discovery, quantization guide, hardware-tier recommendations
+- `scripts/local-model-helper.sh` — 11 subcommands: install, serve, stop, status, models, search, pull, recommend, usage, cleanup, update
+- Extended `model-routing.md` with `local` tier ($0 cost, no fallback)
+- SQLite usage logging + 30-day disk cleanup nudges
+- AGENTS.md domain index + subagent-index.toon updated
+
+**Time Summary:**
+- Estimated: 13.5h
+- Actual: ~13h (6 subtasks, all merged 2026-02-26)
+- PRs: #2385, #2390, #2335, #2395, #2340, #2394
+
 ---
 
 ### [2026-02-22] Manifest-Driven Brief Generation
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~8h (ai:6h test:2h)
 **TODO:** t1312, t1313
 **Logged:** 2026-02-22
+**Completed:** 2026-02-23
 **Reference:** https://github.com/doodledood/manifest-dev (MIT, 40 stars)
 
 <!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
-p031,Manifest-Driven Brief Generation,planning,0,2,,feature|workflow|brief|quality,8h,6h,2h,0m,2026-02-22T00:00Z,
+p031,Manifest-Driven Brief Generation,completed,2,2,,feature|workflow|brief|quality,8h,6h,2h,0m,2026-02-22T00:00Z,2026-02-23T00:00Z
 -->
 
 #### Purpose
@@ -301,18 +357,33 @@ Key findings that validate this approach:
 | verify-brief.sh false positives        | Medium     | Medium | Each method has clear pass/fail semantics. Subagent method is the most subjective — use specific prompts, not vague "review this" |
 | Workers ignore verification failures   | Low        | High   | Integration with task-complete-helper.sh makes it a hard gate, not advisory                                                       |
 
+#### Outcomes & Retrospective
+
+**What was delivered:**
+- `/define` slash command (`scripts/commands/define.md`) — structured interview with task-type probing angles
+- `reference/define-probes/` — compact probing angle files (coding, feature, bugfix, refactor, shell)
+- Extended `templates/brief-template.md` with `verify:` block syntax
+- `scripts/verify-brief.sh` — extracts and runs bash/codebase/subagent/manual verification blocks
+- Integrated with `task-complete-helper.sh` as completion gate
+
+**Time Summary:**
+- Estimated: 8h
+- Actual: ~6h
+- PRs: #2183 (t1312), #2187 (t1313) merged 2026-02-23
+
 ---
 
 ### [2026-02-22] Harness Engineering: oh-my-pi Learnings
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~20h (ai:14h test:4h research:2h)
 **TODO:** t1302, t1303, t1304, t1305, t1306, t1307, t1308, t1309, t1310
 **Logged:** 2026-02-22
+**Completed:** 2026-02-25
 **Reference:** https://blog.can.ac/2026/02/12/the-harness-problem/ | https://github.com/can1357/oh-my-pi (cloned to ~/Git/oh-my-pi)
 
 <!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
-p030,Harness Engineering: oh-my-pi Learnings,planning,0,5,,feature|harness|edit-tool|observability|orchestration|opencode,20h,14h,4h,2h,2026-02-22T00:00Z,
+p030,Harness Engineering: oh-my-pi Learnings,completed,5,5,,feature|harness|edit-tool|observability|orchestration|opencode,20h,14h,4h,2h,2026-02-22T00:00Z,2026-02-25T00:00Z
 -->
 
 #### Purpose
