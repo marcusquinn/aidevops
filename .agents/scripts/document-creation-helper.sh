@@ -402,9 +402,9 @@ detect_tools() {
 # ============================================================================
 
 cmd_status() {
-	printf "${BOLD}Document Conversion Tools Status${NC}\n\n"
+	printf '%b\n\n' "${BOLD}Document Conversion Tools Status${NC}"
 
-	printf "${BOLD}Tier 1 - Minimal (text conversions):${NC}\n"
+	printf '%b\n' "${BOLD}Tier 1 - Minimal (text conversions):${NC}"
 	if has_cmd pandoc; then
 		log_ok "pandoc $(pandoc --version | head -1 | awk '{print $2}')"
 	else
@@ -416,7 +416,7 @@ cmd_status() {
 		log_warn "poppler - NOT INSTALLED (brew install poppler)"
 	fi
 
-	printf "\n${BOLD}Tier 2 - Standard (programmatic creation):${NC}\n"
+	printf '\n%b\n' "${BOLD}Tier 2 - Standard (programmatic creation):${NC}"
 	if [[ -d "${VENV_DIR}" ]]; then
 		log_ok "Python venv: ${VENV_DIR}"
 	else
@@ -438,7 +438,7 @@ cmd_status() {
 		log_warn "openpyxl - NOT INSTALLED"
 	fi
 
-	printf "\n${BOLD}Tier 3 - Full (highest fidelity):${NC}\n"
+	printf '\n%b\n' "${BOLD}Tier 3 - Full (highest fidelity):${NC}"
 	if has_cmd soffice || has_cmd libreoffice; then
 		local lo_version
 		lo_version=$(soffice --version 2>/dev/null || libreoffice --version 2>/dev/null || echo "unknown")
@@ -447,7 +447,7 @@ cmd_status() {
 		log_warn "LibreOffice - NOT INSTALLED (brew install --cask libreoffice)"
 	fi
 
-	printf "\n${BOLD}OCR tools:${NC}\n"
+	printf '\n%b\n' "${BOLD}OCR tools:${NC}"
 	if has_cmd tesseract; then
 		local tess_version
 		tess_version=$(tesseract --version 2>&1 | head -1)
@@ -466,14 +466,14 @@ cmd_status() {
 		log_info "GLM-OCR - not installed (ollama pull glm-ocr)"
 	fi
 
-	printf "\n${BOLD}Specialist tools:${NC}\n"
+	printf '\n%b\n' "${BOLD}Specialist tools:${NC}"
 	if has_cmd mineru; then
 		log_ok "MinerU (layout-aware PDF to markdown)"
 	else
 		log_info "MinerU - not installed (optional: pip install 'mineru[all]')"
 	fi
 
-	printf "\n${BOLD}Advanced conversion providers:${NC}\n"
+	printf '\n%b\n' "${BOLD}Advanced conversion providers:${NC}"
 	if has_reader_lm; then
 		log_ok "Reader-LM (Jina, 1.5B via Ollama - HTML to markdown with table preservation)"
 	else
@@ -648,9 +648,9 @@ cmd_install() {
 # ============================================================================
 
 cmd_formats() {
-	printf "${BOLD}Supported Format Conversions${NC}\n\n"
+	printf '%b\n\n' "${BOLD}Supported Format Conversions${NC}"
 
-	printf "${BOLD}Input formats:${NC}\n"
+	printf '%b\n' "${BOLD}Input formats:${NC}"
 	printf "  Documents:      md, odt, docx, rtf, html, epub, latex/tex\n"
 	printf "  Email:          eml, msg (MIME parsing with attachments)\n"
 	printf "  PDF:            pdf (text extraction + image extraction)\n"
@@ -658,13 +658,13 @@ cmd_formats() {
 	printf "  Presentations:  pptx, odp\n"
 	printf "  Data:           json, xml, rst, org\n"
 
-	printf "\n${BOLD}Output formats:${NC}\n"
+	printf '\n%b\n' "${BOLD}Output formats:${NC}"
 	printf "  Documents:      md, odt, docx, rtf, html, epub, latex/tex\n"
 	printf "  PDF:            pdf (via pandoc+engine or LibreOffice)\n"
 	printf "  Spreadsheets:   xlsx, ods, csv, tsv\n"
 	printf "  Presentations:  pptx, odp\n"
 
-	printf "\n${BOLD}Best quality paths:${NC}\n"
+	printf '\n%b\n' "${BOLD}Best quality paths:${NC}"
 	printf "  eml/msg -> md:    email-to-markdown.py (extracts attachments)\n"
 	printf "  odt/docx -> pdf:  LibreOffice headless (preserves layout)\n"
 	printf "  md -> docx/odt:   pandoc (excellent)\n"
@@ -1528,7 +1528,7 @@ cmd_template() {
 
 	case "${subcmd}" in
 	list)
-		printf "${BOLD}Stored Templates${NC}\n\n"
+		printf '%b\n\n' "${BOLD}Stored Templates${NC}"
 		if [[ -d "${TEMPLATE_DIR}" ]]; then
 			find "${TEMPLATE_DIR}" -type f | while read -r f; do
 				local rel="${f#"${TEMPLATE_DIR}/"}"
@@ -2702,10 +2702,10 @@ cmd_import_emails() {
 
 	printf "\n"
 	log_ok "Batch import complete"
-	printf "${BOLD}Summary:${NC}\n"
+	printf '%b\n' "${BOLD}Summary:${NC}"
 	printf "  Processed:  %d / %d emails\n" "$((processed - failed))" "${total}"
 	if [[ "${failed}" -gt 0 ]]; then
-		printf "  ${RED}Failed:     %d${NC}\n" "${failed}"
+		printf '  %bFailed:     %d%b\n' "${RED}" "${failed}" "${NC}"
 	fi
 	printf "  Duration:   %s\n" "${total_time_fmt}"
 	printf "  Output:     %s\n" "${output_dir}"
@@ -3988,9 +3988,9 @@ cmd_link_documents() {
 # ============================================================================
 
 cmd_help() {
-	printf "${BOLD}%s${NC} - Document format conversion and creation\n\n" "${SCRIPT_NAME}"
+	printf '%b%s%b - Document format conversion and creation\n\n' "${BOLD}" "${SCRIPT_NAME}" "${NC}"
 	printf "Usage: %s <command> [options]\n\n" "${SCRIPT_NAME}"
-	printf "${BOLD}Commands:${NC}\n"
+	printf '%b\n' "${BOLD}Commands:${NC}"
 	printf "  convert           Convert between document formats\n"
 	printf "  import-emails     Batch import .eml directory or mbox file to markdown\n"
 	printf "  create            Create a document from a template + data\n"
@@ -4006,7 +4006,7 @@ cmd_help() {
 	printf "  formats           Show supported format conversions\n"
 	printf "  status            Show installed tools and availability\n"
 	printf "  help              Show this help\n"
-	printf "\n${BOLD}Examples:${NC}\n"
+	printf '\n%b\n' "${BOLD}Examples:${NC}"
 	printf "  %s convert report.pdf --to odt\n" "${SCRIPT_NAME}"
 	printf "  %s convert letter.odt --to pdf\n" "${SCRIPT_NAME}"
 	printf "  %s convert notes.md --to docx\n" "${SCRIPT_NAME}"
