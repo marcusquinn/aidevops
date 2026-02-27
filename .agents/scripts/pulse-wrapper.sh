@@ -263,8 +263,8 @@ cleanup_orphans() {
 			continue
 		fi
 
-		# Skip active workers, pulse, and strategic reviews
-		if echo "$cmd" | grep -qE '/full-loop|Supervisor Pulse|Strategic Review'; then
+		# Skip active workers, pulse, strategic reviews, and language servers
+		if echo "$cmd" | grep -qE '/full-loop|Supervisor Pulse|Strategic Review|language-server|eslintServer'; then
 			continue
 		fi
 
@@ -292,7 +292,7 @@ cleanup_orphans() {
 		cmd=$(echo "$line" | cut -d' ' -f5-)
 
 		[[ "$tty" != "??" ]] && continue
-		echo "$cmd" | grep -qE '/full-loop|Supervisor Pulse|Strategic Review' && continue
+		echo "$cmd" | grep -qE '/full-loop|Supervisor Pulse|Strategic Review|language-server|eslintServer' && continue
 
 		local age_seconds
 		age_seconds=$(_get_process_age "$pid")
