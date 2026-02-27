@@ -150,7 +150,6 @@ const userWorker = env.DISPATCHER.get(workerName);
 ### Website Builder
 
 - Deploy static assets + Worker code
-- See [api.md](./api.md#static-assets) for full implementation
 - Salt hashes for asset isolation
 
 ## Best Practices
@@ -180,4 +179,4 @@ const userWorker = env.DISPATCHER.get(workerName);
 - Enable bulk operations
 - Filter efficiently
 
-See [README.md](./README.md), [configuration.md](./configuration.md), [api.md](./api.md), [gotchas.md](./gotchas.md)
+See [README.md](./README.md), [gotchas.md](./gotchas.md)

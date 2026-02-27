@@ -154,5 +154,3 @@ const config = {
 ## Defense in Depth
 
 Combine DDoS with WAF, Rate Limiting, Bot Management. Layer protections at different levels.
-
-See [configuration.md](./configuration.md) for rule structure details.

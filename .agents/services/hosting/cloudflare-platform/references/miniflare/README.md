@@ -53,8 +53,6 @@ await mf.dispose();
 
 ## See Also
 
-- [configuration.md](./configuration.md) - Config options, bindings, wrangler.toml
-- [api.md](./api.md) - Programmatic API, methods, event dispatching
 - [patterns.md](./patterns.md) - Testing patterns, CI, mocking
 - [gotchas.md](./gotchas.md) - Compatibility issues, limits, debugging
 

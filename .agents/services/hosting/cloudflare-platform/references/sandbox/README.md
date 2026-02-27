@@ -85,8 +85,6 @@ EXPOSE 8080 3000  # Required for wrangler dev
 
 ## Resources
 
-- [Configuration](./configuration.md) - Config, CLI, environment
-- [API Reference](./api.md) - Programmatic API, testing
 - [Patterns](./patterns.md) - Common workflows, CI/CD
 - [Gotchas](./gotchas.md) - Issues, limits, best practices
 - [Official Docs](https://developers.cloudflare.com/sandbox/)

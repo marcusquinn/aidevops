@@ -78,8 +78,6 @@ wrangler dev --persist-to=./.wrangler/state
 
 ## In This Reference
 
-- [configuration.md](./configuration.md) - wrangler.toml setup, TypeScript types, binding configuration
-- [api.md](./api.md) - D1Database API, prepared statements, batch operations, testing
 - [patterns.md](./patterns.md) - Pagination, bulk operations, caching, multi-tenant patterns
 - [gotchas.md](./gotchas.md) - SQL injection prevention, error handling, performance pitfalls
 

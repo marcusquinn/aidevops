@@ -369,8 +369,6 @@ DSPyGround complements other AI DevOps Framework components:
 - **Documentation**: Generate optimized technical writing prompts
 - **Monitoring**: Develop prompts for alert analysis and response
 
-## 🔗 **Related Documentation**
+## Related Documentation
 
-- [DSPy Integration Guide](./DSPY-INTEGRATION.md) - Core DSPy framework integration
 - [AI DevOps Framework Overview](../README.md) - Main framework documentation
-- [MCP Integrations](./MCP-INTEGRATIONS.md) - Model Context Protocol integrations

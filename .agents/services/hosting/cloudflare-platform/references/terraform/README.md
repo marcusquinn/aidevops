@@ -70,7 +70,5 @@ terraform validate      # Validate configuration
 
 ## See Also
 
-- [Configuration Reference](./configuration.md) - Resources for zones, DNS, workers, KV, R2, D1, Pages, rulesets
-- [API Reference](./api.md) - Data sources for existing resources
 - [Patterns & Use Cases](./patterns.md) - Architecture patterns, multi-env setup, CI/CD integration
 - [Troubleshooting & Best Practices](./gotchas.md) - Common issues, security, best practices

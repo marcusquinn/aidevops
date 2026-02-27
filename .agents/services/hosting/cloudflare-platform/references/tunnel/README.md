@@ -70,8 +70,6 @@ ingress:
 
 ## In This Reference
 
-- [configuration.md](./configuration.md) - Config file options, ingress rules, TLS settings
-- [api.md](./api.md) - Cloudflare API, remotely-managed tunnels, programmatic control
 - [patterns.md](./patterns.md) - Docker, Kubernetes, HA, service types, use cases
 - [gotchas.md](./gotchas.md) - Troubleshooting, limitations, best practices
 

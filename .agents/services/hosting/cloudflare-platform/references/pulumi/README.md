@@ -116,4 +116,4 @@ import * as cloudflare from "@pulumi/cloudflare";
 - `*Bindings` - Connect resources to Workers
 
 ---
-See: [configuration.md](./configuration.md), [api.md](./api.md), [patterns.md](./patterns.md), [gotchas.md](./gotchas.md)
+See: [patterns.md](./patterns.md), [gotchas.md](./gotchas.md)

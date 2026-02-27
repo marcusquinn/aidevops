@@ -54,8 +54,6 @@ export class MyWorkflow extends WorkflowEntrypoint<Env, Params> {
 
 ## Further Reading
 
-- [configuration.md](./configuration.md) - wrangler.toml, step config
-- [api.md](./api.md) - Step APIs, instance management
 - [patterns.md](./patterns.md) - Common workflows, orchestration
 - [gotchas.md](./gotchas.md) - Timeouts, limits, debugging
 

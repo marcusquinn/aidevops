@@ -136,4 +136,4 @@ const worker = new cloudflare.WorkerScript("worker", {
 ```
 
 ---
-See: [README.md](./README.md), [configuration.md](./configuration.md), [api.md](./api.md), [gotchas.md](./gotchas.md)
+See: [README.md](./README.md), [gotchas.md](./gotchas.md)

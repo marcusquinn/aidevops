@@ -40,7 +40,7 @@ Request → Dispatch Worker → Determines user Worker → env.DISPATCHER.get("c
 
 ## Quick Start
 
-See [configuration.md](./configuration.md), [api.md](./api.md), [patterns.md](./patterns.md), [gotchas.md](./gotchas.md)
+See [patterns.md](./patterns.md), [gotchas.md](./gotchas.md)
 
 ## Refs
 

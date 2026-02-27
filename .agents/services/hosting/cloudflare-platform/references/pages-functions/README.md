@@ -53,7 +53,5 @@ export function onRequest(context) {
 
 ## See Also
 
-- [configuration.md](./configuration.md) - Routes, headers, redirects, wrangler config
-- [api.md](./api.md) - EventContext, handlers, bindings
 - [patterns.md](./patterns.md) - Auth, CORS, rate limiting, forms, caching
 - [gotchas.md](./gotchas.md) - Common issues, debugging, limits

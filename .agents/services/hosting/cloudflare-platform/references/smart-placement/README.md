@@ -79,8 +79,6 @@ wrangler tail your-worker-name --header cf-placement
 
 ## In This Reference
 
-- [configuration.md](./configuration.md) - wrangler.toml setup, placement hints, dashboard config
-- [api.md](./api.md) - Placement Status API, cf-placement header, monitoring
 - [patterns.md](./patterns.md) - Frontend/backend split, database workers, SSR patterns
 - [gotchas.md](./gotchas.md) - Troubleshooting INSUFFICIENT_INVOCATIONS, performance issues
 

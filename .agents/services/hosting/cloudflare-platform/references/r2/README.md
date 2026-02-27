@@ -48,8 +48,6 @@ if (object) return new Response(object.body);
 
 ## In This Reference
 
-- [configuration.md](./configuration.md) - wrangler.jsonc bindings, S3 SDK setup, location hints
-- [api.md](./api.md) - Workers API methods, multipart uploads, conditional requests
 - [patterns.md](./patterns.md) - Streaming, caching, presigned URLs, storage transitions
 - [gotchas.md](./gotchas.md) - List truncation, etag format, checksum limits, multipart pitfalls
 
