@@ -49,6 +49,12 @@ You are the mission orchestrator — a project manager that reads a mission stat
 
 **State lives in git.** The mission state file (`mission.md`) is the single source of truth. Update it after every significant action. Commit and push after updates so the pulse supervisor and other sessions can see current state. Never maintain separate state files, databases, or logs.
 
+**Autonomous by default, pause when uncertain.** The orchestrator proceeds autonomously through milestones unless it encounters a situation requiring human judgment:
+
+- **Proceed**: Dispatching features, monitoring progress, recording completions, advancing milestones, re-dispatching transient failures
+- **Pause and report**: Budget threshold exceeded, same milestone failed 3 times, fundamental approach failure requiring architectural rethink, external dependency needs human action (account creation, payment, approval)
+- **Never pause for**: Style choices, library selection between equivalent options, minor scope questions — make the call, document it in the decision log, move on
+
 ## Execution Loop
 
 On each invocation, read the mission state file and determine the current phase:
@@ -77,15 +83,27 @@ For each pending feature in the current milestone:
 **Full mode dispatch:**
 
 ```bash
-Claude run --dir {repo_path} --title "Mission {mission_id} - {feature_title}" \
+opencode run --dir {repo_path} --title "Mission {mission_id} - {feature_title}" \
   "/full-loop Implement {task_id} -- {feature_description}. Mission context: {mission_goal}. Milestone: {milestone_name}. Constraints: {relevant_constraints}" &
 sleep 2
+```
+
+Route non-code features with `--agent` (see AGENTS.md "Agent Routing"):
+
+```bash
+# Content feature (e.g., write documentation, blog post)
+opencode run --dir {repo_path} --agent Content --title "Mission {mission_id} - {feature_title}" \
+  "/full-loop Implement {task_id} -- {feature_description}" &
+
+# Research feature (e.g., evaluate libraries, compare services)
+opencode run --dir {repo_path} --agent Research --title "Mission {mission_id} - {feature_title}" \
+  "/full-loop Implement {task_id} -- {feature_description}" &
 ```
 
 **POC mode dispatch:**
 
 ```bash
-Claude run --dir {repo_path} --title "Mission {mission_id} - {feature_title}" \
+opencode run --dir {repo_path} --title "Mission {mission_id} - {feature_title}" \
   "/full-loop --poc {feature_description}. Mission context: {mission_goal}. Commit directly, skip ceremony." &
 sleep 2
 ```
@@ -315,8 +333,10 @@ When a mission enters a domain that aidevops has no existing knowledge of, the o
 2. **Use the cheapest model for research**: Research tasks should use haiku or sonnet tier — never opus. The goal is information gathering, not complex reasoning.
 
 3. **Research sources** (in priority order):
-   - **context7 MCP**: `resolve-library-id` then `get-library-docs` — for libraries and frameworks
-   - **`gh api`**: Fetch README and docs from GitHub repos — for open-source tools
+   - **context7 MCP**: `resolve-library-id` then `get-library-docs` — for libraries and frameworks. This is the primary source for API docs, usage patterns, and configuration options. Always try this first.
+   - **Augment Context Engine**: Semantic codebase search — for understanding how the mission's existing codebase works, finding integration points, and discovering patterns
+   - **`gh api`**: Fetch README and docs from GitHub repos — for open-source tools. Use `gh api repos/{owner}/{repo}/contents/{path}` for specific files, `gh api repos/{owner}/{repo}/git/trees/{branch}?recursive=1` to discover file structure.
+   - **`ai-research` MCP**: Spawn a focused research query via Anthropic API without burning orchestrator context. Use `model: haiku` for cost efficiency. Good for "what are the options for X?" questions.
    - **Official documentation**: Use `webfetch` only for URLs found in README files or package metadata — never construct documentation URLs
    - **Existing code**: Search the mission's codebase for existing patterns (`rg`, `git ls-files`)
 
@@ -444,6 +464,104 @@ A worker fails when: its PR is closed without merge, its process dies without ou
 3. Report: what was completed, what remains, how much more budget is needed
 4. Wait for user decision: increase budget, reduce scope, or abandon
 
+## Session Resilience
+
+Missions run over days. Sessions die — compaction, OOM, network drops, machine restarts. The orchestrator must recover from a cold start by reading current state, not by assuming a previous step completed.
+
+### Cold Start Recovery
+
+On every invocation, the orchestrator reads the mission state file and determines what to do from the state alone. It never relies on in-memory state from a previous session.
+
+**Recovery checklist** (run on every invocation):
+
+1. Read the mission state file — what is the current `status`?
+2. For each milestone: what is its status? Are there dispatched features with no completion evidence?
+3. Check `ps` for running workers — are any still alive from a previous session?
+4. Check `gh pr list` for open PRs matching mission features — any ready to merge?
+5. Check git log for recent commits matching mission features (POC mode)
+6. Resume from the current state — don't re-dispatch completed features
+
+**State file is the checkpoint.** Every significant action updates the state file and commits it. If the orchestrator dies mid-action, the next invocation picks up from the last committed state. This is why "commit and push after updates" is mandatory — an uncommitted state change is invisible to the next session.
+
+### Compaction Survival
+
+If context compaction occurs during a long orchestration session, preserve:
+
+1. Mission ID and state file path
+2. Current milestone number and status
+3. Which features are dispatched/completed/failed
+4. Budget spent so far
+5. Next action to take
+
+Write a checkpoint to `~/.aidevops/.agent-workspace/tmp/mission-{id}-checkpoint.md` before any long-running operation. On compaction recovery, read the checkpoint and the mission state file to reconstruct context.
+
+## Pulse Integration
+
+The pulse supervisor (`scripts/commands/pulse.md`) detects active missions and invokes the orchestrator. This section describes how the two interact.
+
+### How Pulse Finds Missions
+
+Pulse checks for mission state files in two locations:
+
+1. **Repo-attached missions**: `{repo_root}/todo/missions/*/mission.md` for each pulse-enabled repo
+2. **Homeless missions**: `~/.aidevops/missions/*/mission.md`
+
+A mission with `status: active` in its frontmatter is a candidate for orchestration.
+
+### What Pulse Does
+
+Pulse does not run the full orchestration loop. It performs lightweight checks:
+
+1. Are there dispatched features with no running worker? (Worker died — re-dispatch)
+2. Are there completed features that haven't been recorded? (Update state file)
+3. Has the mission been idle for 30+ minutes with pending work? (Something is stuck — investigate)
+4. Is the budget threshold exceeded? (Pause the mission)
+
+For complex orchestration decisions (re-planning, milestone validation, research), pulse dispatches a dedicated orchestrator session:
+
+```bash
+opencode run --dir {repo_path} --title "Mission {mission_id}: orchestrate" \
+  "Read {mission_state_path} and continue orchestration. Current milestone: {N}. Resume from current state." &
+```
+
+### State Transitions Pulse Can Make
+
+| Transition | When |
+|------------|------|
+| Feature: `dispatched` -> `completed` | Merged PR found for feature's task ID |
+| Feature: `dispatched` -> `failed` | Worker process dead, no PR, no commits |
+| Mission: `active` -> `paused` | Budget threshold exceeded |
+| Re-dispatch a failed feature | Transient failure detected (worker died, no error evidence) |
+
+Pulse does NOT: advance milestones, run validation, create fix tasks, or modify the milestone plan. Those require the full orchestrator's judgment.
+
+## Cross-Repo Missions
+
+Some missions span multiple repositories (e.g., "Build a SaaS" might need a frontend repo, backend repo, and infrastructure repo).
+
+### Multi-Repo Patterns
+
+- **Primary repo**: The repo where the mission state file lives. All orchestration happens from here.
+- **Secondary repos**: Other repos that features are dispatched into. Workers use `--dir {secondary_repo_path}` in dispatch commands.
+- **Cross-repo features**: A feature in the mission state file specifies which repo it targets:
+
+```markdown
+| 1.1 | API endpoints | t042 | pending | ~3h | | | backend-repo |
+| 1.2 | Frontend pages | t043 | pending | ~3h | | | frontend-repo |
+```
+
+### Dispatch to Secondary Repos
+
+```bash
+# Feature targeting a different repo
+opencode run --dir ~/Git/{secondary-repo} --title "Mission {mission_id} - {feature_title}" \
+  "/full-loop Implement {task_id} -- {feature_description}. Mission context: {mission_goal}." &
+```
+
+### Cross-Repo Task IDs
+
+Each repo has its own task ID namespace. When creating tasks in secondary repos, use `claim-task-id.sh --repo-path {secondary_repo}` to get IDs from that repo's counter. Record the mapping in the mission state file so the orchestrator can track features across repos.
+
 ## Related
 
 - `scripts/commands/mission.md` — Creates the mission state file (scoping interview)
@@ -454,3 +572,4 @@ A worker fails when: its PR is closed without merge, its process dies without ou
 - `tools/build-agent/build-agent.md` — Agent lifecycle tiers (draft for mission agents)
 - `reference/orchestration.md` — Model routing and dispatch patterns
 - `tools/browser/browser-automation.md` — Browser QA for milestone validation
+- `tools/context/model-routing.md` — Cost-aware model selection for mission workers
