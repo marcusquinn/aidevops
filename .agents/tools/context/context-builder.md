@@ -85,7 +85,7 @@ npx repomix@latest . --stdout | pbcopy
 
 **NEVER blindly pack a remote repository.** Follow this escalation:
 
-1. **Fetch README first** - `webfetch "https://github.com/{user}/{repo}"` (~1-5K tokens)
+1. **Fetch README first** - `gh api repos/{owner}/{repo}/contents/README.md --jq '.content' | base64 -d` (~1-5K tokens)
 2. **Check repo size** - `gh api repos/{user}/{repo} --jq '.size'` (size in KB)
 3. **Apply size thresholds**:
 

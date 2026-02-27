@@ -120,7 +120,21 @@ Before implementing, check AGENTS.md domain index. If the task touches a special
 
 ### 3-4. Investigate & Research
 
-Explore codebase, search for relevant code, identify root cause. For external research: use context7 MCP for library docs, `gh api` for GitHub content, `webfetch` only for URLs from user messages or tool output (never construct URLs — 47% failure rate on guessed URLs).
+Explore codebase, search for relevant code, identify root cause.
+
+**External content lookup — use the right tool:**
+
+| Need | Use | NOT |
+|------|-----|-----|
+| GitHub file content | `gh api repos/{owner}/{repo}/contents/{path}` | `webfetch` on `raw.githubusercontent.com` |
+| GitHub repo overview | `gh api repos/{owner}/{repo}` + `--jq '.description'` | `webfetch` on `github.com` URLs |
+| Discover files in a repo | `gh api repos/{owner}/{repo}/git/trees/{branch}?recursive=1` | Guessing paths |
+| Library/framework docs | Context7 MCP (`resolve-library-id` then `get-library-docs`) | `webfetch` on docs sites |
+| npm/package info | `gh api` to fetch README from the repo, or Context7 | `webfetch` on npmjs.com |
+| PR/issue details | `gh pr view`, `gh issue view`, `gh api` | `webfetch` on github.com |
+| User-provided URL | `webfetch` (the one valid use case) | N/A |
+
+**Why:** 47% of webfetch calls fail. 70% of those failures are agents inventing `raw.githubusercontent.com` paths that don't exist. `gh api` handles auth, returns structured JSON, and gives clear 404s. Context7 MCP returns curated docs without guessing URL structures.
 
 ### 5. Plan
 
