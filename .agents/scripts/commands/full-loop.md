@@ -416,6 +416,7 @@ After task completion, the loop automatically:
 
 1. **Preflight**: Runs quality checks, auto-fixes issues
 2. **PR Create**: Verifies `gh auth`, rebases onto `origin/main`, pushes branch, creates PR with proper title/body
+   **Issue linkage in PR body (MANDATORY):** The PR body MUST include `Closes #NNN` (or `Fixes`/`Resolves`) for every related issue — this is the ONLY mechanism that creates a GitHub PR-issue link. Before writing the PR body, search for ALL open issues related to your task: `gh issue list --state open --search "<task description keywords>"`. Issues may exist under different title formats (e.g., `coderabbit: Fix X` and `t1234: Fix X` for the same task). Include closing keywords for every match. A comment like "Resolved by PR #NNN" does NOT create a link — only closing keywords in the PR body do.
 3. **Label Update**: Update linked issue to `status:in-review` (see below)
 4. **PR Review**: Monitors CI checks and review status
 5. **Merge**: Squash merge (without `--delete-branch` when in worktree)
