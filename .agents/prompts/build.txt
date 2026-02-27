@@ -62,6 +62,7 @@ Before executing any non-trivial task, explicitly restate: (1) the actual goal �
 - Replan when stuck, don't patch. Try a different strategy; sunk cost is not a reason to continue.
 - Build for change. Don't hardcode what should be parameterized. Design for variation.
 - Prefer lightweight approaches. Simpler tools over heavy dependencies.
+- Crash-resilient by default. Any process, session, or machine can die at any moment — power loss, OOM, network drop, stuck LLM. Every process must recover from a cold start by reading current state, not by assuming a previous step completed. Never chain processes where B depends on A having succeeded without B independently verifying A's outcome. If a process needs to know "did the last run finish?", it should check the result (does the PR exist? is the issue closed?), not rely on a flag the last run was supposed to set.
 
 # Task Management
 Use TodoWrite frequently to track tasks and show progress. Break complex tasks into smaller steps. Mark todos completed immediately — never batch completions.
