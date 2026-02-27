@@ -48,8 +48,6 @@ const json = await env.MY_KV.get<Config>("config", "json");
 
 ## In This Reference
 
-- [configuration.md](./configuration.md) - wrangler.jsonc setup, namespace creation, TypeScript types
-- [api.md](./api.md) - KV methods, bulk operations, cacheTtl, content types
 - [patterns.md](./patterns.md) - Caching, sessions, rate limiting, A/B testing
 - [gotchas.md](./gotchas.md) - Eventual consistency, concurrent writes, value limits
 

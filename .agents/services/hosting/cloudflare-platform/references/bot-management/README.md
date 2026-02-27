@@ -59,8 +59,6 @@ export default {
 
 ## In This Reference
 
-- [configuration.md](./configuration.md) - Product tiers, WAF rule setup, JavaScript Detections, ML auto-updates
-- [api.md](./api.md) - Workers BotManagement interface, WAF fields, JA4 Signals
 - [patterns.md](./patterns.md) - E-commerce, API protection, mobile app allowlisting, SEO-friendly handling
 - [gotchas.md](./gotchas.md) - False positives/negatives, score=0 issues, JSD limitations, CSP requirements
 

@@ -144,6 +144,4 @@ if (bucket < rolloutPercent) return newFeature(request);
 
 ## See Also
 
-- [API](./api.md) - Runtime APIs
 - [Gotchas](./gotchas.md) - Common issues
-- [Configuration](./configuration.md) - Setup

@@ -8,8 +8,6 @@ R2 Data Catalog is a managed Apache Iceberg REST catalog built directly into R2 
 
 ## In This Reference
 
-- **[configuration.md](./configuration.md)** - Setup, deployment, configuration
-- **[api.md](./api.md)** - API endpoints, methods, interfaces
 - **[patterns.md](./patterns.md)** - Common patterns, use cases, examples
 - **[gotchas.md](./gotchas.md)** - Troubleshooting, best practices, limitations
 

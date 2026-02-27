@@ -28,7 +28,5 @@ Zone overrides take precedence over account overrides.
 
 ## See Also
 
-- [configuration.md](./configuration.md) - Dashboard & rule setup
-- [api.md](./api.md) - API endpoints & management
 - [patterns.md](./patterns.md) - Protection strategies
 - [gotchas.md](./gotchas.md) - False positives & tuning

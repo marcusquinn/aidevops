@@ -119,8 +119,6 @@ npx wrangler deploy           # Deploy + auto-apply migrations
 
 ## In This Reference
 
-- [Configuration](./configuration.md) - wrangler.jsonc setup, migrations, bindings
-- [API](./api.md) - Class structure, storage APIs, alarms, WebSockets
 - [Patterns](./patterns.md) - Rate limiting, locks, real-time collab, sessions
 - [Gotchas](./gotchas.md) - Limits, common issues, troubleshooting
 

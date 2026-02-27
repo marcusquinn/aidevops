@@ -54,7 +54,5 @@ Private, high-performance connectivity to Cloudflare's network. **Enterprise-onl
 
 ## See Also
 
-- [configuration.md](./configuration.md) - BGP, routing, setup
-- [api.md](./api.md) - API endpoints, SDKs
 - [patterns.md](./patterns.md) - HA, hybrid cloud, failover
 - [gotchas.md](./gotchas.md) - Troubleshooting, limits

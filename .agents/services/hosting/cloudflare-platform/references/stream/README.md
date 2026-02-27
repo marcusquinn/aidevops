@@ -99,8 +99,6 @@ curl -X POST \
 
 ## In This Reference
 
-- [configuration.md](./configuration.md) - Setup, environment variables, wrangler config
-- [api.md](./api.md) - Upload, playback, live streaming, management APIs
 - [patterns.md](./patterns.md) - Full-stack flows, state management, best practices
 - [gotchas.md](./gotchas.md) - Error codes, troubleshooting, limits
 

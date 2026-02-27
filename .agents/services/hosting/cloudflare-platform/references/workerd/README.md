@@ -42,8 +42,6 @@ workerd test config.capnp
 
 ## See Also
 
-- [configuration.md](./configuration.md) - Config format, services, bindings
-- [api.md](./api.md) - Runtime APIs, C++ embedding
 - [patterns.md](./patterns.md) - Multi-service, DO, proxies
 - [gotchas.md](./gotchas.md) - Common errors, debugging
 

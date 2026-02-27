@@ -67,8 +67,6 @@ npx wrangler pages deployment tail --project-name=my-project
 
 ## In This Reference
 
-- [configuration.md](./configuration.md) - wrangler.jsonc, build, env vars
-- [api.md](./api.md) - Functions API, bindings, context
 - [patterns.md](./patterns.md) - Full-stack patterns, frameworks
 - [gotchas.md](./gotchas.md) - Build issues, limits, debugging
 

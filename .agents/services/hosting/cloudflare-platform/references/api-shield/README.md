@@ -4,8 +4,6 @@ Expert guidance for API Shield - comprehensive API security suite for discovery,
 
 ## In This Reference
 
-- **[configuration.md](./configuration.md)** - Setup, session identifiers, rules, token/mTLS configs
-- **[api.md](./api.md)** - Endpoint management, discovery, validation APIs, GraphQL operations
 - **[patterns.md](./patterns.md)** - Common patterns, progressive rollout, OWASP mappings, workflows
 - **[gotchas.md](./gotchas.md)** - Troubleshooting, false positives, performance, best practices
 

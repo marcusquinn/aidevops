@@ -87,7 +87,5 @@ curl -I https://example.com/asset.jpg | grep -i cache
 
 ## See Also
 
-- [Configuration](./configuration.md) - Setup, API, and Cache Rules
-- [API Reference](./api.md) - Purging, monitoring, and management APIs
 - [Patterns](./patterns.md) - Best practices and architecture patterns
 - [Gotchas](./gotchas.md) - Common issues, troubleshooting, limits

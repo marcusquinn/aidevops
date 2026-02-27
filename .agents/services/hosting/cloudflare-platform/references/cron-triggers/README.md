@@ -82,7 +82,5 @@ curl "http://localhost:8787/__scheduled?cron=*/5+*+*+*+*"
 
 ## See Also
 
-- [configuration.md](./configuration.md) - wrangler config, env-specific schedules
-- [api.md](./api.md) - ScheduledController, handler params
 - [patterns.md](./patterns.md) - Use cases, batch processing, monitoring
 - [gotchas.md](./gotchas.md) - Timezone issues, debugging, limits

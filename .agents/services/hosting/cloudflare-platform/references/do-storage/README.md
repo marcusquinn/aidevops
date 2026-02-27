@@ -50,8 +50,6 @@ export class Counter extends DurableObject {
 
 ## In This Reference
 
-- [configuration.md](./configuration.md) - wrangler.jsonc migrations, SQLite vs KV setup
-- [api.md](./api.md) - SQL exec/cursors, KV methods, transactions, alarms, PITR
 - [patterns.md](./patterns.md) - Schema migrations, caching, rate limiting, batch processing
 - [gotchas.md](./gotchas.md) - Concurrency gates, transaction rules, SQL limits, async pitfalls
 

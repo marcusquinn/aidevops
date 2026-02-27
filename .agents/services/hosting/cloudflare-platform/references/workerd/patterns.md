@@ -226,4 +226,4 @@ export default {
 };
 ```
 
-See [configuration.md](./configuration.md) for config syntax, [api.md](./api.md) for runtime APIs, [gotchas.md](./gotchas.md) for common errors.
+See [gotchas.md](./gotchas.md) for common errors.

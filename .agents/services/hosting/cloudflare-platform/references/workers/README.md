@@ -81,8 +81,6 @@ async tail(events: TraceItem[], env: Env, ctx: ExecutionContext): Promise<void>
 
 ## In This Reference
 
-- [Configuration](./configuration.md) - wrangler.jsonc setup, bindings, environments
-- [API](./api.md) - Runtime APIs, bindings, execution context
 - [Patterns](./patterns.md) - Common workflows, testing, optimization
 - [Gotchas](./gotchas.md) - Common issues, limits, troubleshooting
 

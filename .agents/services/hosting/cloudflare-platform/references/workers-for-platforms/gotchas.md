@@ -138,4 +138,4 @@ interface Fetcher {
 7. **Not using wildcard routes** → Hit route limits, DNS issues
 8. **Assuming DO/mTLS interception** → Outbound Worker doesn't catch these
 
-See [README.md](./README.md), [configuration.md](./configuration.md), [api.md](./api.md), [patterns.md](./patterns.md)
+See [README.md](./README.md), [patterns.md](./patterns.md)

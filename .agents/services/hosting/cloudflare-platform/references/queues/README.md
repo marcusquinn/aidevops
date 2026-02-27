@@ -57,8 +57,6 @@ export default {
 
 ## In This Reference
 
-- [configuration.md](./configuration.md) - wrangler.jsonc setup, producer/consumer config, DLQ
-- [api.md](./api.md) - Send/batch methods, queue handler, ack/retry, pull API
 - [patterns.md](./patterns.md) - Async tasks, buffering, rate limiting, event workflows
 - [gotchas.md](./gotchas.md) - Idempotency, retry limits, content types, cost optimization
 

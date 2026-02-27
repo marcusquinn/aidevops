@@ -4,8 +4,6 @@ Expert guidance for building real-time audio/video/data applications using Cloud
 
 ## In This Reference
 
-- **[configuration.md](./configuration.md)** - Setup, deployment, environment variables, Wrangler config
-- **[api.md](./api.md)** - Sessions, tracks, endpoints, request/response patterns
 - **[patterns.md](./patterns.md)** - Architecture patterns, use cases, integration examples
 - **[gotchas.md](./gotchas.md)** - Common issues, debugging, performance, security
 

@@ -91,7 +91,5 @@ wrangler tail --status error      # Filter by status
 
 ## In This Reference
 
-- [configuration.md](./configuration.md) - wrangler.jsonc setup, environments, bindings
-- [api.md](./api.md) - Programmatic API (`unstable_startWorker`, `getPlatformProxy`)
 - [patterns.md](./patterns.md) - Common workflows and development patterns
 - [gotchas.md](./gotchas.md) - Common pitfalls, limits, and troubleshooting

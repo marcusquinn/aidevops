@@ -144,4 +144,4 @@ export class MyWorkflow extends WorkflowEntrypoint<Env, MyParams> {
 - [Limits](https://developers.cloudflare.com/workflows/reference/limits/)
 - [Pricing](https://developers.cloudflare.com/workflows/reference/pricing/)
 
-See: [README.md](./README.md), [configuration.md](./configuration.md), [api.md](./api.md), [patterns.md](./patterns.md)
+See: [README.md](./README.md), [patterns.md](./patterns.md)

@@ -186,5 +186,4 @@ export default {
 ## See Also
 
 - [README.md](./README.md) - Overview
-- [api.md](./api.md) - EventContext, bindings
 - [gotchas.md](./gotchas.md) - Common issues

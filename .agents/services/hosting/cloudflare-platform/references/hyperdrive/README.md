@@ -54,8 +54,6 @@ export default {
 
 ## See Also
 
-- [configuration.md](./configuration.md) - Setup, wrangler config
-- [api.md](./api.md) - Binding APIs, query patterns
 - [patterns.md](./patterns.md) - Use cases, ORMs
 - [gotchas.md](./gotchas.md) - Limits, troubleshooting
 

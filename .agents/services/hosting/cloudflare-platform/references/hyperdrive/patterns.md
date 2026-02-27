@@ -1,6 +1,6 @@
 # Patterns
 
-See [README.md](./README.md), [configuration.md](./configuration.md), [api.md](./api.md).
+See [README.md](./README.md)
 
 ## High-Traffic Read-Heavy
 

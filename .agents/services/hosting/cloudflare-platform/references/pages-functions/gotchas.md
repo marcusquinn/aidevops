@@ -147,6 +147,4 @@ In `_worker.js`: `return env.ASSETS.fetch(request)` for static assets.
 ## See Also
 
 - [README.md](./README.md) - Overview
-- [configuration.md](./configuration.md) - wrangler.json
-- [api.md](./api.md) - EventContext, bindings
 - [patterns.md](./patterns.md) - Common patterns
