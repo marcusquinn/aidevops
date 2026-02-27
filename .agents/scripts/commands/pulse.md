@@ -420,6 +420,30 @@ Focus areas:
 On the next pulse (2+ minutes later), check if CodeRabbit has responded with a
 review. If it has posted findings but no issues have been created from them yet:
 
+**Idempotency guard:** Before creating issues, check if issues already exist for
+this review cycle. Search for issues created today with the `coderabbit-pulse` label:
+
+```bash
+EXISTING=$(gh issue list --repo <owner/repo> --label "coderabbit-pulse" \
+  --json createdAt --jq '[.[] | select(.createdAt | startswith("'"$(date -u +%Y-%m-%d)"'"))] | length')
+if [ "$EXISTING" -gt 0 ]; then
+  echo "Issues already created for today's review — skipping."
+  # Skip to next step
+fi
+```
+
+Also check if a summary comment was already posted on #2386 for today:
+
+```bash
+ALREADY_POSTED=$(gh api "repos/<owner/repo>/issues/2386/comments" \
+  --jq '[.[] | select(.body | test("Created issues.*from CodeRabbit review")) | select(.created_at | startswith("'"$(date -u +%Y-%m-%d)"'"))] | length')
+if [ "$ALREADY_POSTED" -gt 0 ]; then
+  echo "Summary already posted — skipping."
+fi
+```
+
+If neither guard triggers, proceed:
+
 1. Read CodeRabbit's latest review comment on #2386.
 2. Parse each numbered finding (CodeRabbit uses numbered headings like "1)", "2)" etc.).
 3. For each finding, create a GitHub issue:
@@ -456,7 +480,7 @@ The issues enter the normal dispatch queue via Step 3 (they appear as open issue
 with `auto-dispatch` label). No further action needed — the standard priority
 pipeline handles the rest.
 
-See `tools/code-review/coderabbit.md` "Daily Full Codebase Review" for full details.
+See `.agents/tools/code-review/coderabbit.md` "Daily Full Codebase Review" for full details.
 
 ## Step 8: Strategic Review (Every 4h, Opus Tier)
 
