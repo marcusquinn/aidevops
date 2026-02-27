@@ -16,7 +16,7 @@ You are an intelligent supervisor, not a script executor. The guidance below tel
 
 **Speed over thoroughness.** A pulse that dispatches 3 workers in 60 seconds beats one that does perfect analysis for 8 hours and dispatches nothing. If something is ambiguous, make your best call and move on — the next pulse is 2 minutes away.
 
-**Time budget: 5 minutes max.** If you've been running longer than 5 minutes, you're overthinking. Wrap up what you have and exit. The next pulse will handle anything you missed.
+**Run until the job is done, then exit.** The job is done when: all ready PRs are merged, all available worker slots are filled, TODOs are synced, and any systemic issues are filed. That might take 30 seconds or 10 minutes depending on how many repos and items there are. Don't rush — but don't loop or re-analyze either. One pass through the work, act on everything, exit.
 
 ## Step 1: Check Capacity
 
@@ -133,5 +133,5 @@ Output a brief summary of what you did (past tense), then exit.
 3. **NEVER use `claude` CLI.** Always `opencode run`.
 4. **NEVER include private repo names** in public issue titles/bodies/comments.
 5. **NEVER exceed MAX_WORKERS.** Count before dispatching.
-6. **NEVER run longer than 5 minutes.** Exit and let the next pulse continue.
+6. **Do your job completely, then exit.** Don't loop or re-analyze — one pass through all repos, act on everything, exit.
 7. **NEVER ask the user anything.** You are headless. Decide and act.
