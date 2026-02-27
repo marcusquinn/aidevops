@@ -451,7 +451,7 @@ Evaluate oh-my-pi's YAML-defined swarm orchestration with `reports_to`/`waits_fo
 
 ### [2026-02-21] Cloudflare Code Mode MCP Integration
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~4h (ai:3h test:1h)
 **TODO:** t1289, t1290, t1291, t1292, t1293
 **Logged:** 2026-02-21
@@ -587,7 +587,7 @@ MCP config:
 
 ### [2026-02-21] OpenAPI Search MCP Integration
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~2h (ai:1.5h test:30m)
 **TODO:** t1288, t1288.1, t1288.2, t1288.3, t1288.4, t1288.5, t1288.6
 **Logged:** 2026-02-21
@@ -688,7 +688,7 @@ This is valuable when agents need to discover or understand third-party APIs wit
 
 ### [2026-02-21] MCPorter MCP Toolkit Agent
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~4h (ai:3h test:1h)
 **TODO:** t1294, t1294.1, t1294.2, t1294.3, t1294.4, t1294.5
 **Logged:** 2026-02-21
@@ -777,7 +777,7 @@ MCPorter complements (does not replace) existing infrastructure:
 
 ### [2026-02-21] Context Optimisation: Slim Always-Loaded Harness
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~9h (ai:7h test:1.5h read:30m)
 **TODO:** t1281, t1282, t1283
 **Logged:** 2026-02-21
@@ -899,7 +899,7 @@ ON-DEMAND (loaded when session touches the domain):
 
 ### [2026-02-18] Dual-CLI Architecture: OpenCode Primary + Claude Code Fallback
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~20h (ai:14h test:4h read:2h)
 **TODO:** t1160, t1161, t1162, t1163, t1164, t1165
 **Logged:** 2026-02-18
@@ -3097,7 +3097,7 @@ s020,p018,opencode run --format json streams structured events,Captured step_sta
 
 ### [2026-02-03] Dashboard Token Storage Hardening
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~3h (ai:1.5h test:1h read:30m)
 
 <!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
@@ -3288,7 +3288,7 @@ d003,p002,Keep original Python implementation,JSON parsing cleaner in Python - o
 
 ### [2025-12-21] Evaluate Merging build-agent and build-mcp into aidevops
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~4h (ai:2h test:1h read:1h)
 
 <!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
@@ -3352,7 +3352,7 @@ d002,p017,Clear input after token set,Prevents token sitting in inspectable inpu
 
 ### [2025-12-21] OCR Invoice/Receipt Extraction Pipeline
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~3d (ai:1.5d test:1d read:0.5d)
 **Source:** [pontusab's X post](https://x.com/pontusab/status/2002345525174284449)
 
@@ -3623,7 +3623,7 @@ s023,p005,6h estimate was 14x over (actual 25m),All 4 phases in single session,A
 
 ### [2025-12-21] SEO Machine Integration for aidevops
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~2d (ai:1d test:0.5d read:0.5d)
 **Source:** [TheCraigHewitt/seomachine](https://github.com/TheCraigHewitt/seomachine)
 
@@ -4960,7 +4960,7 @@ d040,p014,Cloudflare Workers AI as privacy-preserving cloud,Data at edge; no log
 
 ### [2026-01-31] Claude-Flow Inspirations - Selective Feature Adoption
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~3d (ai:2d test:0.5d read:0.5d)
 **Source:** [ruvnet/claude-flow](https://github.com/ruvnet/claude-flow) - Analysis of v3 features
 
@@ -5840,7 +5840,7 @@ Harden the Higgsfield Playwright automator from "works in testing" to "reliable 
 
 ### [2026-02-25] SimpleX Chat Agent and Command Integration
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~29h (ai:21h test:5h read:3h)
 **TODO:** t1327
 **Logged:** 2026-02-25
