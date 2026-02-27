@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Require bidirectional PR-issue links in pulse audit trail (#2474)
+- Require audit trail comments on all pulse issue state changes (#2473)
+
+### Fixed
+
+- Add Python >= 3.10 pre-check before cisco-ai-skill-scanner install (#2472)
+
 ## [2.139.0] - 2026-02-27
 
 ### Added
