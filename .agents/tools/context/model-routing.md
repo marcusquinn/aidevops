@@ -29,11 +29,19 @@ model: haiku
 | Tier | Model | Cost | Best For |
 |------|-------|------|----------|
 | `local` | llama.cpp (user-selected GGUF) | Free ($0) | Privacy-sensitive tasks, offline work, bulk processing, experimentation |
-| `flash` | gemini-2.5-flash | Lowest (~0.20x) | Large context reads, summarization, bulk processing |
-| `haiku` | claude-haiku-4-5 | Low (~0.25x) | Triage, classification, simple transforms, formatting |
-| `sonnet` | claude-sonnet-4 | Medium | Code implementation, review, most development tasks |
-| `pro` | gemini-2.5-pro | Medium-High | Large codebase analysis, complex reasoning with big context |
-| `opus` | claude-opus-4 | Highest | Architecture decisions, complex multi-step reasoning, novel problems |
+| `flash` | gemini-2.5-flash-preview-05-20 | Lowest (~0.20x) | Large context reads, summarization, bulk processing |
+| `haiku` | claude-haiku-4-5-20251001 | Low (~0.25x) | Triage, classification, simple transforms, formatting |
+| `sonnet` | claude-sonnet-4-6 | Medium | Code implementation, review, most development tasks |
+| `pro` | gemini-2.5-pro-preview-06-05 | Medium-High | Large codebase analysis, complex reasoning with big context |
+| `opus` | claude-opus-4-6 | Highest | Architecture decisions, complex multi-step reasoning, novel problems |
+
+## Model ID Convention
+
+**Always use fully-qualified model IDs** — the exact string accepted by the provider API. Short-form names like `claude-sonnet-4` or `claude-opus-4` cause `ProviderModelNotFoundError` at dispatch time. The canonical model ID for each tier is defined in the subagent frontmatter (`models/*.md`) and must match what the provider API accepts.
+
+When referencing models in docs, scripts, or dispatch commands, use the full ID from the subagent frontmatter (e.g., `claude-sonnet-4-6`, not `claude-sonnet-4`). For provider-prefixed contexts (CLI `--model` flags, fallback chains), use `anthropic/claude-sonnet-4-6` or `google/gemini-2.5-pro-preview-06-05`.
+
+**Tier names vs model IDs**: Tier names (`haiku`, `sonnet`, `opus`) are abstract routing labels. They are resolved to concrete model IDs at dispatch time by reading the corresponding subagent frontmatter. Never pass a tier name where a model ID is expected.
 
 ## Routing Rules
 
@@ -132,11 +140,11 @@ Concrete model subagents are defined across these paths (`tools/ai-assistants/mo
 | Tier | Subagent | Primary Model | Fallback |
 |------|----------|---------------|----------|
 | `local` | `tools/local-models/local-models.md` | llama.cpp (user GGUF) | FAIL (privacy) or haiku (cost) |
-| `flash` | `models/flash.md` | gemini-2.5-flash | gpt-4.1-mini |
-| `haiku` | `models/haiku.md` | claude-haiku-4-5 | gemini-2.5-flash |
-| `sonnet` | `models/sonnet.md` | claude-sonnet-4 | gpt-4.1 |
-| `pro` | `models/pro.md` | gemini-2.5-pro | claude-sonnet-4 |
-| `opus` | `models/opus.md` | claude-opus-4 | o3 |
+| `flash` | `models/flash.md` | gemini-2.5-flash-preview-05-20 | gpt-4.1-mini |
+| `haiku` | `models/haiku.md` | claude-haiku-4-5-20251001 | gemini-2.5-flash-preview-05-20 |
+| `sonnet` | `models/sonnet.md` | claude-sonnet-4-6 | gpt-4.1 |
+| `pro` | `models/pro.md` | gemini-2.5-pro-preview-06-05 | claude-sonnet-4-6 |
+| `opus` | `models/opus.md` | claude-opus-4-6 | o3 |
 
 Cross-provider reviewers: `models/gemini-reviewer.md`, `models/gpt-reviewer.md`
 
@@ -183,11 +191,11 @@ Each tier defines a primary model and a fallback from a different provider. When
 | Tier | Primary | Fallback | When to Fallback |
 |------|---------|----------|------------------|
 | `local` | llama.cpp (localhost) | haiku (cost-only) or FAIL (privacy) | Server not running, no model installed. Fails closed for privacy/on-device tasks; falls back to haiku (next tier in chain) for cost-optimisation use cases. No same-tier fallback exists — local skips directly to cloud. |
-| `flash` | gemini-2.5-flash | gpt-4.1-mini | No Google key |
-| `haiku` | claude-haiku-4-5 | gemini-2.5-flash | No Anthropic key |
-| `sonnet` | claude-sonnet-4 | gpt-4.1 | No Anthropic key |
-| `pro` | gemini-2.5-pro | claude-sonnet-4 | No Google key |
-| `opus` | claude-opus-4 | o3 | No Anthropic key |
+| `flash` | gemini-2.5-flash-preview-05-20 | gpt-4.1-mini | No Google key |
+| `haiku` | claude-haiku-4-5-20251001 | gemini-2.5-flash-preview-05-20 | No Anthropic key |
+| `sonnet` | claude-sonnet-4-6 | gpt-4.1 | No Anthropic key |
+| `pro` | gemini-2.5-pro-preview-06-05 | claude-sonnet-4-6 | No Google key |
+| `opus` | claude-opus-4-6 | o3 | No Anthropic key |
 
 The supervisor resolves fallbacks automatically during headless dispatch. For interactive sessions, the orchestrating agent should run `compare-models-helper.sh discover` to check availability before selecting a model.
 

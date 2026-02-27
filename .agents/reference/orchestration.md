@@ -60,7 +60,7 @@ Cost-aware routing matches task complexity to the optimal model tier. Use the ch
 
 **Pre-dispatch availability**: `model-availability-helper.sh check <provider>` — cached health probes (~1-2s) verify providers are responding before dispatch. Exit codes: 0=available, 1=unavailable, 2=rate-limited, 3=invalid-key.
 
-**Fallback chains**: Each tier has a primary model and cross-provider fallback (e.g., opus: claude-opus-4 → o3). The supervisor and `fallback-chain-helper.sh` handle this automatically.
+**Fallback chains**: Each tier has a primary model and cross-provider fallback (e.g., opus: claude-opus-4-6 → o3). The supervisor and `fallback-chain-helper.sh` handle this automatically.
 
 **Budget-aware routing** (t1100): Two strategies based on billing model:
 

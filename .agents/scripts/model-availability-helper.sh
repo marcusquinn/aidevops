@@ -115,25 +115,25 @@ get_tier_models() {
 	if _is_opencode_available; then
 		case "$tier" in
 		haiku) echo "opencode/claude-haiku-4-5|opencode/gemini-3-flash" ;;
-		flash) echo "google/gemini-2.5-flash|opencode/gemini-3-flash" ;;
-		sonnet) echo "opencode/claude-sonnet-4|anthropic/claude-sonnet-4-6" ;;
-		pro) echo "google/gemini-2.5-pro|opencode/gemini-3-pro" ;;
+		flash) echo "google/gemini-2.5-flash-preview-05-20|opencode/gemini-3-flash" ;;
+		sonnet) echo "opencode/claude-sonnet-4-6|anthropic/claude-sonnet-4-6" ;;
+		pro) echo "google/gemini-2.5-pro-preview-06-05|opencode/gemini-3-pro" ;;
 		opus) echo "opencode/claude-opus-4-6|anthropic/claude-opus-4-6" ;;
-		health) echo "opencode/claude-sonnet-4-6|google/gemini-2.5-flash" ;;
-		eval) echo "opencode/claude-sonnet-4-6|google/gemini-2.5-flash" ;;
+		health) echo "opencode/claude-sonnet-4-6|google/gemini-2.5-flash-preview-05-20" ;;
+		eval) echo "opencode/claude-sonnet-4-6|google/gemini-2.5-flash-preview-05-20" ;;
 		coding) echo "opencode/claude-opus-4-6|anthropic/claude-opus-4-6" ;;
 		*) return 1 ;;
 		esac
 	else
 		case "$tier" in
-		haiku) echo "anthropic/claude-haiku-4-5|google/gemini-2.5-flash" ;;
+		haiku) echo "anthropic/claude-haiku-4-5-20251001|google/gemini-2.5-flash-preview-05-20" ;;
 
-		flash) echo "google/gemini-2.5-flash|openai/gpt-4.1-mini" ;;
+		flash) echo "google/gemini-2.5-flash-preview-05-20|openai/gpt-4.1-mini" ;;
 		sonnet) echo "anthropic/claude-sonnet-4-6|openai/gpt-4.1" ;;
-		pro) echo "google/gemini-2.5-pro|anthropic/claude-sonnet-4-6" ;;
+		pro) echo "google/gemini-2.5-pro-preview-06-05|anthropic/claude-sonnet-4-6" ;;
 		opus) echo "anthropic/claude-opus-4-6|openai/o3" ;;
-		health) echo "anthropic/claude-sonnet-4-6|google/gemini-2.5-flash" ;;
-		eval) echo "anthropic/claude-sonnet-4-6|google/gemini-2.5-flash" ;;
+		health) echo "anthropic/claude-sonnet-4-6|google/gemini-2.5-flash-preview-05-20" ;;
+		eval) echo "anthropic/claude-sonnet-4-6|google/gemini-2.5-flash-preview-05-20" ;;
 		coding) echo "anthropic/claude-opus-4-6|openai/o3" ;;
 		*) return 1 ;;
 		esac
@@ -1535,7 +1535,7 @@ cmd_help() {
 	echo "Examples:"
 	echo "  model-availability-helper.sh check anthropic"
 	echo "  model-availability-helper.sh check opencode"
-	echo "  model-availability-helper.sh check opencode/claude-sonnet-4"
+	echo "  model-availability-helper.sh check opencode/claude-sonnet-4-6"
 	echo "  model-availability-helper.sh check anthropic/claude-sonnet-4-6"
 	echo "  model-availability-helper.sh check sonnet"
 	echo "  model-availability-helper.sh probe --all"

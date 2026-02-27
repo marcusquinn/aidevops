@@ -425,7 +425,7 @@ Add to Claude Desktop config (`Developer > Edit Config`):
       "command": "npx",
       "args": ["-y", "@steipete/peekaboo"],
       "env": {
-        "PEEKABOO_AI_PROVIDERS": "openai/gpt-5.1,anthropic/claude-opus-4"
+        "PEEKABOO_AI_PROVIDERS": "openai/gpt-5.1,anthropic/claude-opus-4-6"
       }
     }
   }
@@ -494,7 +494,7 @@ peekaboo config add openai
 peekaboo config add anthropic
 
 # Or set environment variable
-export PEEKABOO_AI_PROVIDERS="openai/gpt-5.1,anthropic/claude-opus-4"
+export PEEKABOO_AI_PROVIDERS="openai/gpt-5.1,anthropic/claude-opus-4-6"
 ```
 
 ### Using Ollama (Local)

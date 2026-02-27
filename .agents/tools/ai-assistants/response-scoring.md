@@ -118,7 +118,7 @@ Send the prompt to each model and record the responses:
 # Record response with metadata
 response-scoring-helper.sh record \
   --prompt 1 \
-  --model claude-sonnet-4 \
+  --model claude-sonnet-4-6 \
   --text "def fizzbuzz():\n    for i in range(1, 101):\n        ..." \
   --time 2.3 \
   --tokens 150 \
@@ -210,7 +210,7 @@ This enables:
 ### Configuration
 
 - **Disable sync**: Set `SCORING_NO_PATTERN_SYNC=1` environment variable
-- **Model tier mapping**: Full model names (e.g., `claude-sonnet-4`) are automatically mapped to routing tiers (`sonnet`)
+- **Model tier mapping**: Full model names (e.g., `claude-sonnet-4-6`) are automatically mapped to routing tiers (`sonnet`)
 
 ## Database Schema
 

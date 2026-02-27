@@ -62,7 +62,7 @@ Target: $ARGUMENTS
 
 ```bash
 # Full evaluation workflow
-/score-responses --prompt "Write a Python function to merge two sorted lists" --models "claude-sonnet-4,gpt-4o,gemini-2.5-pro"
+/score-responses --prompt "Write a Python function to merge two sorted lists" --models "claude-sonnet-4-6,gpt-4o,gemini-2.5-pro"
 
 # View existing comparisons
 /score-responses --leaderboard

@@ -91,7 +91,7 @@ get_tier_success_rate() {
 }
 
 # Map a model_id to its aidevops tier for pattern lookup
-# Usage: model_id_to_tier "claude-sonnet-4" -> "sonnet"
+# Usage: model_id_to_tier "claude-sonnet-4-6" -> "sonnet"
 model_id_to_tier() {
 	local model_id="$1"
 	case "$model_id" in

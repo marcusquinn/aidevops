@@ -6,10 +6,10 @@
     "_comment": "Per-tier fallback chains. Anthropic ONLY. Never use openrouter, openai, or google providers for worker dispatch.",
 
     "haiku": [
-      "anthropic/claude-haiku-4-5"
+      "anthropic/claude-haiku-4-5-20251001"
     ],
     "flash": [
-      "anthropic/claude-haiku-4-5"
+      "anthropic/claude-haiku-4-5-20251001"
     ],
     "sonnet": [
       "anthropic/claude-sonnet-4-6"

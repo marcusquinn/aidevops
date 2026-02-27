@@ -293,7 +293,7 @@ show_mcp_config() {
       "command": "npx",
       "args": ["-y", "@steipete/peekaboo"],
       "env": {
-        "PEEKABOO_AI_PROVIDERS": "openai/gpt-5.1,anthropic/claude-opus-4"
+        "PEEKABOO_AI_PROVIDERS": "openai/gpt-5.1,anthropic/claude-opus-4-6"
       }
     }
   }
