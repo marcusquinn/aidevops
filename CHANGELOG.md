@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Elevate git traceability to mission-level principle in build.txt (#2480)
+- Add TODO→issue→PR chain requirement to build.txt (previously only in subagent docs)
+- Add git-readiness check guidance for untracked projects
+- Add duplicate issue detection guidance to pulse.md (#2480)
+- Add state-diff gate to pulse-wrapper.sh to skip LLM when repo state unchanged
+
 ## [2.139.1] - 2026-02-27
 
 ### Changed
