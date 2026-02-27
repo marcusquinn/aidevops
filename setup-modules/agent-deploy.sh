@@ -407,7 +407,7 @@ install_beads_binary() {
 			mkdir -p "$install_dir"
 			install -m 755 "$bd_binary" "$install_dir/bd"
 			# Ensure ~/.local/bin is in PATH
-			if ! echo "$PATH" | grep -q "$HOME/.local/bin"; then
+			if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
 				export PATH="$HOME/.local/bin:$PATH"
 				print_info "Added ~/.local/bin to PATH for this session"
 			fi

@@ -236,7 +236,7 @@ setup_shell_linting_tools() {
 		# Prefer arm64 if present (universal/fat binaries report both architectures)
 		local sc_file_output
 		sc_file_output=$(file "$sc_path" 2>/dev/null)
-		if echo "$sc_file_output" | grep -q 'arm64'; then
+		if [[ "$sc_file_output" == *"arm64"* ]]; then
 			sc_arch="arm64"
 		else
 			sc_arch=$(echo "$sc_file_output" | grep -oE '(x86_64)' | head -1)

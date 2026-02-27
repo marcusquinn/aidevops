@@ -643,8 +643,10 @@ run_provider() {
 					rate_limit_record "$provider" "$retry_after"
 					if [[ "$attempt" -lt "$max_retries" ]]; then
 						attempt=$((attempt + 1))
-						log_warn "Provider '${provider}' returned 429 — retry ${attempt}/${max_retries} in ${backoff}s"
-						sleep "$backoff" 2>/dev/null || true
+						local jitter=$((RANDOM % backoff))
+						local backoff_with_jitter=$((backoff + jitter))
+						log_warn "Provider '${provider}' returned 429 — retry ${attempt}/${max_retries} in ${backoff_with_jitter}s"
+						sleep "$backoff_with_jitter" 2>/dev/null || true
 						backoff=$((backoff * 2))
 						continue
 					fi
