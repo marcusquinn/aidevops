@@ -489,6 +489,37 @@ else
 	fail "Missing helpful error message when all fallbacks fail"
 fi
 
+# Test: Python version pre-check before cisco-ai-skill-scanner install (t1351)
+PLUGINS_SH="$REPO_DIR/setup-modules/plugins.sh"
+if [[ -f "$PLUGINS_SH" ]]; then
+	if grep -q 'check_python_for_skill_scanner' "$PLUGINS_SH"; then
+		pass "plugins.sh has Python version pre-check for skill scanner (t1351)"
+	else
+		fail "plugins.sh missing Python version pre-check (t1351)"
+	fi
+
+	if grep -q 'Python >= 3.10' "$PLUGINS_SH"; then
+		pass "plugins.sh shows clear Python version requirement in error message"
+	else
+		fail "plugins.sh missing clear Python version requirement message"
+	fi
+
+	if grep -qE 'brew install python|uv python install' "$PLUGINS_SH"; then
+		pass "plugins.sh shows fix instructions for missing Python"
+	else
+		fail "plugins.sh missing fix instructions for Python version"
+	fi
+else
+	skip "plugins.sh not found (tests may need updating after modularization)"
+fi
+
+# Test: security-helper.sh has Python version pre-check (t1351)
+if grep -q 'check_python_for_skill_scanner' "$SCRIPTS_DIR/security-helper.sh"; then
+	pass "security-helper.sh has Python version pre-check for skill scanner"
+else
+	fail "security-helper.sh missing Python version pre-check"
+fi
+
 # ============================================================
 # CROSS-CUTTING: Script Quality
 # ============================================================
