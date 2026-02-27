@@ -14,7 +14,7 @@ Every agent call to markdown-formatter failed, wasting tool calls and preventing
 
 ## How
 
-### Root Cause (two bugs)
+### Root Cause (three bugs)
 
 1. **Action mismatch**: MCP tool exposed `["format", "lint", "fix", "check"]` but bash script only handled `["format", "advanced", "cleanup", "help"]`. Actions `lint`, `check`, `fix` hit the `*` default case and returned exit 1.
 

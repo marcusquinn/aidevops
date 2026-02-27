@@ -82,7 +82,6 @@ create_markdownlint_config() {
   "MD046": {
     "style": "fenced"
   }
-    return 0
 }
 EOF
 
@@ -122,8 +121,6 @@ fix_markdown_with_markdownlint() {
 	# Run markdownlint with fix option
 	if [[ -f "$target" ]]; then
 		print_info "Fixing: $target"
-		markdownlint --fix "$target"
-
 		if markdownlint --fix "$target"; then
 			print_success "Fixed markdown issues in: $target"
 		else
@@ -131,9 +128,7 @@ fix_markdown_with_markdownlint() {
 		fi
 	elif [[ -d "$target" ]]; then
 		print_info "Fixing all markdown files in: $target"
-		markdownlint --fix "$target/**/*.md"
-
-		if markdownlint --fix "$target"/*.md; then
+		if markdownlint --fix "$target/**/*.md"; then
 			print_success "Fixed markdown issues in directory: $target"
 		else
 			print_warning "Some issues may require manual fixing"
@@ -236,7 +231,7 @@ show_help() {
 
 # Main function
 main() {
-	local _arg1="$1"
+	local _arg1="${1:-}"
 	local command="${1:-fix}"
 	local target="${2:-.}"
 

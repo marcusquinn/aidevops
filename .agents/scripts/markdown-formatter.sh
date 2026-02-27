@@ -100,7 +100,11 @@ process_directory() {
 	# Find all markdown files
 	while IFS= read -r -d '' file; do
 		((total_files++)) || true
-		if fix_markdown_file "$file"; then
+		local before_hash after_hash
+		before_hash=$(sha256sum "$file" | awk '{print $1}')
+		fix_markdown_file "$file"
+		after_hash=$(sha256sum "$file" | awk '{print $1}')
+		if [[ "$before_hash" != "$after_hash" ]]; then
 			((changed_files++)) || true
 		fi
 	done < <(find "$dir" -name "*.md" -type f -print0)
@@ -192,9 +196,9 @@ apply_advanced_fixes() {
 		return 0
 	else
 		rm "$temp_file"
-		return 1
+		print_info "No advanced fixes needed: $file"
+		return 0
 	fi
-	return 0
 }
 
 # Clean up backup files
@@ -260,7 +264,7 @@ show_help() {
 
 # Main function
 main() {
-	local _arg1="$1"
+	local _arg1="${1:-}"
 	local command="${1:-format}"
 	local target="${2:-.}"
 
