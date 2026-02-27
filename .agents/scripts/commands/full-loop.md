@@ -105,7 +105,12 @@ After claiming the task, update the linked GitHub issue label to reflect that wo
 ```bash
 # Find the linked issue number — check multiple sources (#2452 fix):
 # 1. Already extracted from "issue #NNN" in arguments (Step 0)
-# 2. Search by task ID if we have one
+# 2. Extract from TODO.md ref:GH#NNN (authoritative — set during task creation)
+if [[ -z "$ISSUE_NUM" || "$ISSUE_NUM" == "null" ]] && [[ -n "$TASK_ID" ]]; then
+  ISSUE_NUM=$(grep -E "^\s*-\s*\[.\]\s*${TASK_ID}[[:space:]]" TODO.md 2>/dev/null \
+    | sed -En 's/.*ref:GH#([0-9]+).*/\1/p' | head -1)
+fi
+# 3. Fallback: search GitHub issues by task ID prefix
 if [[ -z "$ISSUE_NUM" || "$ISSUE_NUM" == "null" ]] && [[ -n "$TASK_ID" ]]; then
   ISSUE_NUM=$(gh issue list --repo "$(gh repo view --json nameWithOwner -q .nameWithOwner)" \
     --state open --search "${TASK_ID}:" --json number,title --limit 5 \
@@ -460,7 +465,13 @@ After task completion, the loop automatically:
 
 1. **Preflight**: Runs quality checks, auto-fixes issues
 2. **PR Create**: Verifies `gh auth`, rebases onto `origin/main`, pushes branch, creates PR with proper title/body
-   **Issue linkage in PR body (MANDATORY):** The PR body MUST include `Closes #NNN` (or `Fixes`/`Resolves`) for every related issue — this is the ONLY mechanism that creates a GitHub PR-issue link. Before writing the PR body, search for ALL open issues related to your task: `gh issue list --state open --search "<task description keywords>"`. Issues may exist under different title formats (e.g., `coderabbit: Fix X` and `t1234: Fix X` for the same task). Include closing keywords for every match. A comment like "Resolved by PR #NNN" does NOT create a link — only closing keywords in the PR body do.
+   **Issue linkage in PR body (MANDATORY):** The PR body MUST include `Closes #NNN` (or `Fixes`/`Resolves`) for every related issue — this is the ONLY mechanism that creates a GitHub PR-issue link.
+
+   **Primary source: use `$ISSUE_NUM` from Step 0.** The issue number resolved during dispatch (from arguments, TODO.md `ref:GH#`, or `gh issue list` by task ID) is the authoritative source. Always include `Closes #$ISSUE_NUM` in the PR body. Do NOT re-search by keywords — keyword search across issues with similar titles (e.g., multiple subtasks of the same parent) returns wrong matches.
+
+   **Secondary: search for additional related issues only.** After including the primary `$ISSUE_NUM`, optionally search for duplicate or related issues (e.g., CodeRabbit-created issues for the same task): `gh issue list --state open --search "<task_id>:"`. Only add `Closes` for issues whose title starts with the same task ID prefix. Never add `Closes` for an issue you found by keyword similarity alone — verify the task ID matches.
+
+   A comment like "Resolved by PR #NNN" does NOT create a link — only closing keywords in the PR body do.
 3. **Label Update**: Update linked issue to `status:in-review` (see below)
 4. **PR Review**: Monitors CI checks and review status
 5. **Merge**: Squash merge (without `--delete-branch` when in worktree)
