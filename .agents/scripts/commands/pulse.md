@@ -45,11 +45,13 @@ Repo slugs and paths come from `~/.config/aidevops/repos.json`. Use `slug` for a
 
 ## Step 3: Act on What You See
 
-Scan the pre-fetched state above. Act immediately on each item — don't build a plan, just do it:
+Scan the pre-fetched state above. Act immediately on each item — don't build a plan, just do it.
+
+**Audit trail principle:** Every state change you make (merge, close, label, dispatch) MUST have a comment explaining WHY you did it and linking to evidence. GitHub issues are the audit trail — a future human or agent reading the issue history should understand exactly what happened and why without needing to check logs. No silent closes, no silent merges, no silent label changes.
 
 ### PRs — merge, fix, or flag
 
-- **Green CI + no blocking reviews** → merge: `gh pr merge <number> --repo <slug> --squash`
+- **Green CI + no blocking reviews** → merge: `gh pr merge <number> --repo <slug> --squash`. If the PR resolves an issue, the issue should be closed with a comment linking to the merged PR.
 - **Failing CI or changes requested** → dispatch a worker to fix it (counts against worker slots)
 - **Open 6+ hours with no recent commits** → something is stuck. Comment on the PR, consider closing it and re-filing the issue.
 - **Two PRs targeting the same issue** → flag the duplicate by commenting on the newer one
@@ -57,7 +59,10 @@ Scan the pre-fetched state above. Act immediately on each item — don't build a
 
 ### Issues — close, unblock, or dispatch
 
-- **`status:done` label or body says "completed"** → close it with a brief comment
+When closing any issue, ALWAYS add a comment first explaining: (1) why you're closing it, and (2) which PR(s) delivered the work (link them: `Resolved by #N`). If the work was done before the issue existed (synced from a completed TODO), say so and link the most relevant PRs. An issue closed without a comment is an audit failure.
+
+- **Has a merged PR that resolves it** → comment linking the PR, then close
+- **`status:done` label or body says "completed"** → find the PR(s) that delivered the work, comment with links, then close. If no PR exists (pre-existing completed work), explain that in the comment.
 - **`status:blocked` but blockers are resolved** (merged PR exists for each `blocked-by:` ref) → remove `status:blocked`, add `status:available`, comment explaining what unblocked it. It's now dispatchable this cycle.
 - **Too large for one worker session** (multiple independent changes, 5+ checklist items, "audit all", "migrate everything") → create subtask issues, label parent `status:blocked` with `blocked-by:` refs to subtasks
 - **`status:available` or no status label** → dispatch a worker (see below)
@@ -127,8 +132,9 @@ Output a brief summary of what you did (past tense), then exit.
 
 1. **NEVER modify closed issues.** Check state before any label/comment change. If state is not `OPEN`, skip it.
 2. **NEVER dispatch for closed issues.** Verify with `gh issue view` if uncertain.
-3. **NEVER use `claude` CLI.** Always `opencode run`.
-4. **NEVER include private repo names** in public issue titles/bodies/comments.
-5. **NEVER exceed MAX_WORKERS.** Count before dispatching.
-6. **Do your job completely, then exit.** Don't loop or re-analyze — one pass through all repos, act on everything, exit.
-7. **NEVER ask the user anything.** You are headless. Decide and act.
+3. **NEVER close an issue without a comment.** The comment must explain why and link to the PR(s) or evidence. Silent closes are audit failures.
+4. **NEVER use `claude` CLI.** Always `opencode run`.
+5. **NEVER include private repo names** in public issue titles/bodies/comments.
+6. **NEVER exceed MAX_WORKERS.** Count before dispatching.
+7. **Do your job completely, then exit.** Don't loop or re-analyze — one pass through all repos, act on everything, exit.
+8. **NEVER ask the user anything.** You are headless. Decide and act.
