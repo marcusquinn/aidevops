@@ -343,6 +343,8 @@ See `.agents/tools/terminal/terminal-title.md` for customization options.
 
 **Collaborator compatibility:** Projects initialized with `aidevops init` include pointer files (`.cursorrules`, `.windsurfrules`, etc.) that reference `AGENTS.md`, helping collaborators using other editors find project context. aidevops does not install into or configure those tools.
 
+**Repo courtesy files:** `aidevops init` scaffolds standard repo files if they don't exist: `README.md`, `LICENCE` (MIT), `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`. Author name and email are auto-detected from git config. Existing files are never overwritten.
+
 ## **Core Capabilities**
 
 **AI-First Infrastructure Management:**
@@ -430,6 +432,22 @@ Scan results are logged to [`.agents/SKILL-SCAN-RESULTS.md`](.agents/SKILL-SCAN-
 - [vercel-labs/add-skill](https://github.com/vercel-labs/add-skill) - The upstream CLI tool (aidevops uses its own implementation)
 - [anthropics/skills](https://github.com/anthropics/skills) - Official Anthropic example skills
 - [agentskills/agentskills](https://github.com/agentskills/agentskills) - Specification source and reference library
+
+## **Agent Sources (Private Repos)**
+
+Sync agents from private Git repositories into the framework. Private repos keep their own agents, helper scripts, and slash commands — `aidevops sources sync` deploys them alongside the core agents.
+
+```bash
+aidevops sources add ~/Git/my-private-agents     # Register a local repo
+aidevops sources add-remote git@github.com:u/r.git  # Clone and register a remote repo
+aidevops sources list                             # List configured sources
+aidevops sources sync                             # Sync all sources
+aidevops sources remove my-private-agents         # Remove a source
+```
+
+**How it works:** Private repos contain a `.agents/` directory with agent subdirectories. Agents with `mode: primary` in their frontmatter are symlinked to the agents root for auto-discovery as primary agent tabs. Markdown files with `agent:` frontmatter are deployed as `/slash` commands. All sources sync automatically during `aidevops update`.
+
+**Reference:** `.agents/aidevops/agent-sources.md`
 
 ## **Agent Design Patterns**
 

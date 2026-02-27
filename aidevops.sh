@@ -928,6 +928,169 @@ cmd_uninstall() {
 	echo "  OR: brew install marcusquinn/tap/aidevops && aidevops update"
 }
 
+# Scaffold standard repo courtesy files if they don't exist
+# Creates: README.md, LICENCE, CHANGELOG.md, CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md
+scaffold_repo_courtesy_files() {
+	local project_root="$1"
+	local created=0
+
+	# Derive repo name from directory
+	local repo_name
+	repo_name=$(basename "$project_root")
+
+	# Try to get author from git config
+	local author_name
+	author_name=$(git -C "$project_root" config user.name 2>/dev/null || echo "")
+
+	local current_year
+	current_year=$(date +%Y)
+
+	print_info "Checking repo courtesy files..."
+
+	# README.md
+	if [[ ! -f "$project_root/README.md" ]]; then
+		local readme_content="# $repo_name"
+		if [[ -f "$project_root/.aidevops.json" ]]; then
+			local description
+			description=$(jq -r '.description // empty' "$project_root/.aidevops.json" 2>/dev/null || echo "")
+			if [[ -n "$description" ]]; then
+				readme_content="$readme_content"$'\n\n'"$description"
+			fi
+		fi
+		if [[ -f "$project_root/LICENCE" ]] || [[ -f "$project_root/LICENSE" ]]; then
+			readme_content="$readme_content"$'\n\n'"## Licence"$'\n\n'"See [LICENCE](LICENCE) for details."
+		fi
+		printf '%s\n' "$readme_content" >"$project_root/README.md"
+		((created++))
+	fi
+
+	# LICENCE (MIT default)
+	if [[ ! -f "$project_root/LICENCE" ]] && [[ ! -f "$project_root/LICENSE" ]]; then
+		local licence_holder="${author_name:-$(whoami)}"
+		cat >"$project_root/LICENCE" <<LICEOF
+MIT License
+
+Copyright (c) $current_year $licence_holder
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+LICEOF
+		((created++))
+	fi
+
+	# CHANGELOG.md
+	if [[ ! -f "$project_root/CHANGELOG.md" ]]; then
+		cat >"$project_root/CHANGELOG.md" <<'CHEOF'
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+CHEOF
+		((created++))
+	fi
+
+	# CONTRIBUTING.md
+	if [[ ! -f "$project_root/CONTRIBUTING.md" ]]; then
+		local contrib_content="# Contributing to $repo_name"
+		contrib_content="$contrib_content"$'\n\n'"Thanks for your interest in contributing!"
+		contrib_content="$contrib_content"$'\n\n'"## Quick Start"
+		contrib_content="$contrib_content"$'\n\n'"1. Fork the repository"
+		contrib_content="$contrib_content"$'\n'"2. Create a branch: \`git checkout -b feature/your-feature\`"
+		contrib_content="$contrib_content"$'\n'"3. Make your changes"
+		contrib_content="$contrib_content"$'\n'"4. Commit with conventional commits: \`git commit -m \"feat: add new feature\"\`"
+		contrib_content="$contrib_content"$'\n'"5. Push and open a PR"
+		contrib_content="$contrib_content"$'\n\n'"## Commit Messages"
+		contrib_content="$contrib_content"$'\n\n'"We use [Conventional Commits](https://www.conventionalcommits.org/):"
+		contrib_content="$contrib_content"$'\n\n'"- \`feat:\` - New feature"
+		contrib_content="$contrib_content"$'\n'"- \`fix:\` - Bug fix"
+		contrib_content="$contrib_content"$'\n'"- \`docs:\` - Documentation only"
+		contrib_content="$contrib_content"$'\n'"- \`refactor:\` - Code change that neither fixes a bug nor adds a feature"
+		contrib_content="$contrib_content"$'\n'"- \`chore:\` - Maintenance tasks"
+		printf '%s\n' "$contrib_content" >"$project_root/CONTRIBUTING.md"
+		((created++))
+	fi
+
+	# SECURITY.md
+	if [[ ! -f "$project_root/SECURITY.md" ]]; then
+		local security_email=""
+		local git_email
+		git_email=$(git -C "$project_root" config user.email 2>/dev/null || echo "")
+		if [[ -n "$git_email" ]]; then
+			security_email="$git_email"
+		fi
+		cat >"$project_root/SECURITY.md" <<SECEOF
+# Security Policy
+
+## Reporting a Vulnerability
+
+If you discover a security vulnerability, please report it privately.
+SECEOF
+		if [[ -n "$security_email" ]]; then
+			cat >>"$project_root/SECURITY.md" <<SECEOF
+
+**Email:** $security_email
+
+Please do not open public issues for security vulnerabilities.
+SECEOF
+		fi
+		((created++))
+	fi
+
+	# CODE_OF_CONDUCT.md
+	if [[ ! -f "$project_root/CODE_OF_CONDUCT.md" ]]; then
+		cat >"$project_root/CODE_OF_CONDUCT.md" <<'COCEOF'
+# Contributor Covenant Code of Conduct
+
+## Our Pledge
+
+We as members, contributors, and leaders pledge to make participation in our
+community a harassment-free experience for everyone.
+
+## Our Standards
+
+Examples of behavior that contributes to a positive environment:
+
+- Using welcoming and inclusive language
+- Being respectful of differing viewpoints and experiences
+- Gracefully accepting constructive criticism
+- Focusing on what is best for the community
+
+## Attribution
+
+This Code of Conduct is adapted from the [Contributor Covenant](https://www.contributor-covenant.org),
+version 2.1.
+COCEOF
+		((created++))
+	fi
+
+	if [[ $created -gt 0 ]]; then
+		print_success "Created $created repo courtesy file(s) (README, LICENCE, CHANGELOG, etc.)"
+	else
+		print_info "Repo courtesy files already exist"
+	fi
+
+	return 0
+}
+
 # Init command - initialize aidevops in a project
 cmd_init() {
 	local features="${1:-all}"
@@ -1353,6 +1516,9 @@ SOPSEOF
 	else
 		print_info "Collaborator pointer files already exist"
 	fi
+
+	# Scaffold repo courtesy files (README, LICENCE, CHANGELOG, etc.)
+	scaffold_repo_courtesy_files "$project_root"
 
 	# Generate MODELS.md (per-repo model performance leaderboard, t1129)
 	local generate_models_script="$AGENTS_DIR/scripts/generate-models-md.sh"
