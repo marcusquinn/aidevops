@@ -100,6 +100,18 @@ fi
 
 This prevents the race condition where a worker's delayed lifecycle transition overwrites a supervisor's correct closure (observed: Issue #2250 — supervisor closed with merged PR evidence at 19:29, worker added `needs-review` at 19:55 because its DB lacked the PR URL).
 
+**Close open issues labelled `status:done`:** For each repo, check if any open issues have the `status:done` label. These are issues where a worker completed the work and labelled it done, but the issue was never closed (e.g., the worker's PR merged but the issue-sync workflow didn't fire, or the close command failed silently). Close them:
+
+```bash
+# For each pulse-enabled repo:
+DONE_ISSUES=$(gh issue list --repo <slug> --state open --label "status:done" --json number,title --jq '.[] | .number' 2>/dev/null || echo "")
+for num in $DONE_ISSUES; do
+  gh issue close "$num" --repo <slug> --comment "Supervisor pulse: closing — issue was labelled status:done but left open." 2>/dev/null || true
+done
+```
+
+This is idempotent and safe to run every pulse. Observed: awardsapp issues #288, #292, #293 were labelled `status:done` but remained open for 3+ hours because the pulse assumed the label meant they were already closed.
+
 **Stale PRs:** If any open PR was last updated more than 6 hours ago, something is stuck. Check if it has a worker branch with no recent commits. If so, create a GitHub issue:
 
 ```bash
