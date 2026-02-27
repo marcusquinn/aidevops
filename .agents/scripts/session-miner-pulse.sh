@@ -55,6 +55,8 @@ check_lock() {
 		# Cross-platform file mtime: Linux (stat -c) first, macOS (stat -f) fallback
 		local lock_mtime
 		lock_mtime=$(stat -c %Y "${LOCK_FILE}" 2>/dev/null || stat -f %m "${LOCK_FILE}" 2>/dev/null || echo 0)
+		# Guard: ensure numeric (stat -f on Linux produces multi-line text, not a number)
+		[[ "${lock_mtime}" =~ ^[0-9]+$ ]] || lock_mtime=0
 		lock_age=$(($(date +%s) - lock_mtime))
 		# Stale lock (>1 hour)
 		if [[ "${lock_age}" -gt 3600 ]]; then
@@ -275,6 +277,8 @@ main() {
 	local db_size
 	# Cross-platform file size: Linux (stat -c) first, macOS (stat -f) fallback
 	db_size=$(stat -c %s "${db_path}" 2>/dev/null || stat -f %z "${db_path}" 2>/dev/null || echo 0)
+	# Guard: ensure numeric (stat -f on Linux produces multi-line text, not a number)
+	[[ "${db_size}" =~ ^[0-9]+$ ]] || db_size=0
 	if [[ "${db_size}" -lt 1000 ]]; then
 		log_info "Database too small (${db_size} bytes). Nothing to mine."
 		release_lock
