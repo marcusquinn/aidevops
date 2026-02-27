@@ -96,12 +96,11 @@ check_dedup() {
 #######################################
 _kill_tree() {
 	local pid="$1"
-	# Find all child processes recursively
-	local -a children
-	mapfile -t children < <(pgrep -P "$pid" 2>/dev/null || true)
-	for child in "${children[@]}"; do
+	# Find all child processes recursively (bash 3.2 compatible — no mapfile)
+	local child
+	while IFS= read -r child; do
 		[[ -n "$child" ]] && _kill_tree "$child"
-	done
+	done < <(pgrep -P "$pid" 2>/dev/null || true)
 	kill "$pid" 2>/dev/null || true
 	return 0
 }
@@ -113,11 +112,10 @@ _kill_tree() {
 #######################################
 _force_kill_tree() {
 	local pid="$1"
-	local -a children
-	mapfile -t children < <(pgrep -P "$pid" 2>/dev/null || true)
-	for child in "${children[@]}"; do
+	local child
+	while IFS= read -r child; do
 		[[ -n "$child" ]] && _force_kill_tree "$child"
-	done
+	done < <(pgrep -P "$pid" 2>/dev/null || true)
 	kill -9 "$pid" 2>/dev/null || true
 	return 0
 }
