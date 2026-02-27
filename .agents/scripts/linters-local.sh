@@ -42,14 +42,16 @@ print_header() {
 }
 
 # Collect all shell scripts to lint, including modularised subdirectories
-# (e.g. memory/, supervisor-modules/, setup/) but excluding _archive/.
+# (e.g. memory/, supervisor-modules/, setup/) but excluding archived code.
+# Excludes: _archive/, archived/, supervisor-archived/ — these are versioned
+# for reference but not actively maintained (reduces lint noise).
 # Also includes setup-modules/ and setup.sh from the repo root.
 # Populates the ALL_SH_FILES array for use by check functions.
 collect_shell_files() {
 	ALL_SH_FILES=()
 	while IFS= read -r -d '' f; do
 		ALL_SH_FILES+=("$f")
-	done < <(find .agents/scripts -name "*.sh" -not -path "*/_archive/*" -print0 2>/dev/null | sort -z)
+	done < <(find .agents/scripts -name "*.sh" -not -path "*/_archive/*" -not -path "*/archived/*" -not -path "*/supervisor-archived/*" -print0 2>/dev/null | sort -z)
 
 	# Include setup-modules/ (extracted setup.sh modules) if present
 	while IFS= read -r -d '' f; do

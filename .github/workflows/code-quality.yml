@@ -112,6 +112,8 @@ jobs:
         echo "Validating shell scripts with ShellCheck..."
         errors=0
 
+        # Exclude archived code from lint — these are versioned for reference
+        # but not actively maintained. Reduces noise-to-signal ratio in CI.
         while IFS= read -r file; do
           if shellcheck -S error "$file" > /dev/null 2>&1; then
             echo "OK $file"
@@ -120,7 +122,7 @@ jobs:
             shellcheck -S error -f gcc "$file" 2>&1
             errors=$((errors + 1))
           fi
-        done < <(git ls-files '*.sh')
+        done < <(git ls-files '*.sh' | grep -v 'archived/')
 
         if [ "$errors" -gt 0 ]; then
           echo ""
