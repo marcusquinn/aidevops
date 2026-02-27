@@ -743,6 +743,12 @@ Respond with ONLY a valid JSON object in this exact format (no markdown, no expl
   }
 }"
 
+	# Sanitize judge_model before using in filenames/runner names
+	if [[ ! "$judge_model" =~ ^[A-Za-z0-9._-]+$ ]]; then
+		print_warning "Invalid judge model identifier: $judge_model — skipping scoring"
+		return 0
+	fi
+
 	# Dispatch to judge model
 	local judge_runner="cross-review-judge-$$"
 	local judge_output_file="${output_dir}/judge-${judge_model}.json"

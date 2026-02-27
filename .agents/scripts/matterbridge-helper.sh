@@ -344,6 +344,9 @@ cmd_update() {
 	fi
 	ensure_dirs
 
+	# Ensure DATA_DIR exists before writing temp files (LOG_FILE lives under DATA_DIR)
+	ensure_dirs
+
 	local current_version new_version
 	local version_err_file="${LOG_FILE}.version-err"
 	current_version="$("$BINARY_PATH" -version 2>"$version_err_file" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown")"
