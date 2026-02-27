@@ -64,6 +64,7 @@ When closing any issue, ALWAYS add a comment first explaining: (1) why you're cl
 - **Has a merged PR that resolves it** → comment linking the PR, then close
 - **`status:done` label or body says "completed"** → find the PR(s) that delivered the work, comment with links, then close. If no PR exists (pre-existing completed work), explain that in the comment.
 - **`status:blocked` but blockers are resolved** (merged PR exists for each `blocked-by:` ref) → remove `status:blocked`, add `status:available`, comment explaining what unblocked it. It's now dispatchable this cycle.
+- **Duplicate issues for the same task ID** (multiple open issues whose titles start with the same `tNNN:` prefix) → keep the one referenced by `ref:GH#` in TODO.md; close the others with a comment like "Duplicate of #NNN — closing in favour of the canonical issue." This happens when issue-sync-helper and a manual/agent creation race, or when a task ID is reused after a collision. Check TODO.md's `ref:GH#` to determine which is canonical. If neither is referenced, keep the older one.
 - **Too large for one worker session** (multiple independent changes, 5+ checklist items, "audit all", "migrate everything") → create subtask issues, label parent `status:blocked` with `blocked-by:` refs to subtasks
 - **`status:available` or no status label** → dispatch a worker (see below)
 

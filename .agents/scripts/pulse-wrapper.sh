@@ -41,6 +41,8 @@ RAM_RESERVE_MB="${RAM_RESERVE_MB:-8192}"       # 8 GB reserved for OS + user app
 MAX_WORKERS_CAP="${MAX_WORKERS_CAP:-8}"        # Hard ceiling regardless of RAM
 REPOS_JSON="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 STATE_FILE="${HOME}/.aidevops/logs/pulse-state.txt"
+STATE_HASH_FILE="${HOME}/.aidevops/logs/pulse-state-hash.txt"
+FORCE_PULSE="${FORCE_PULSE:-false}" # Set to "true" to bypass state-diff gate
 
 #######################################
 # Ensure log directory exists
@@ -291,6 +293,51 @@ prefetch_state() {
 }
 
 #######################################
+# Check if state has changed since last pulse
+#
+# Compares a SHA-256 hash of the current state file against the
+# previous hash. If identical, there's nothing new to act on —
+# skip the LLM pulse entirely. This saves ~$0.02-0.10 per idle
+# cycle (720 cycles/day at 2-min intervals).
+#
+# Returns: 0 if state changed (pulse needed), 1 if unchanged (skip)
+#######################################
+check_state_changed() {
+	if [[ "$FORCE_PULSE" == "true" ]]; then
+		echo "[pulse-wrapper] FORCE_PULSE=true — skipping state-diff gate" >>"$LOGFILE"
+		return 0
+	fi
+
+	if [[ ! -f "$STATE_FILE" ]]; then
+		return 0
+	fi
+
+	# Hash only the repo data, not the timestamp header (line 1 changes every run)
+	local current_hash
+	current_hash=$(tail -n +2 "$STATE_FILE" | shasum -a 256 | cut -d' ' -f1)
+
+	if [[ ! -f "$STATE_HASH_FILE" ]]; then
+		# First run — no previous hash to compare
+		echo "$current_hash" >"$STATE_HASH_FILE"
+		return 0
+	fi
+
+	local previous_hash
+	previous_hash=$(cat "$STATE_HASH_FILE" 2>/dev/null || echo "")
+
+	# Save current hash for next comparison
+	echo "$current_hash" >"$STATE_HASH_FILE"
+
+	if [[ "$current_hash" == "$previous_hash" ]]; then
+		echo "[pulse-wrapper] State unchanged (hash: ${current_hash:0:12}…) — skipping LLM pulse" >>"$LOGFILE"
+		return 1
+	fi
+
+	echo "[pulse-wrapper] State changed (${previous_hash:0:12}… → ${current_hash:0:12}…) — launching pulse" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
 # Run the pulse — no hard timeout
 #
 # The pulse runs until opencode exits naturally. If opencode enters its
@@ -354,6 +401,12 @@ main() {
 	cleanup_orphans
 	calculate_max_workers
 	prefetch_state
+
+	# Gate: only launch the LLM pulse if repo state actually changed
+	if ! check_state_changed; then
+		return 0
+	fi
+
 	run_pulse
 	return 0
 }
