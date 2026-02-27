@@ -50,22 +50,29 @@ gh issue list --repo <slug> --state open --json number,title,labels,updatedAt --
 
 Scan everything you fetched. Act immediately on each item — don't build a plan, just do it:
 
-### Merge ready PRs (highest priority — doesn't use worker slots)
+### PRs — merge, fix, or flag
 
-If a PR has passing CI and no blocking reviews: `gh pr merge <number> --repo <slug> --squash`. Done. Next item.
+- **Green CI + no blocking reviews** → merge: `gh pr merge <number> --repo <slug> --squash`
+- **Failing CI or changes requested** → dispatch a worker to fix it (counts against worker slots)
+- **Open 6+ hours with no recent commits** → something is stuck. Comment on the PR, consider closing it and re-filing the issue.
+- **Two PRs targeting the same issue** → flag the duplicate by commenting on the newer one
+- **Recently closed without merge** → a worker failed. Look for patterns. If the same failure repeats, file an improvement issue.
 
-### Close issues that are already done
+### Issues — close, unblock, or dispatch
 
-If an open issue has `status:done` label, or its body says "Status: completed", or it clearly references merged work — close it with a brief comment explaining why.
+- **`status:done` label or body says "completed"** → close it with a brief comment
+- **`status:blocked` but blockers are resolved** (merged PR exists for each `blocked-by:` ref) → remove `status:blocked`, add `status:available`, comment explaining what unblocked it. It's now dispatchable this cycle.
+- **Too large for one worker session** (multiple independent changes, 5+ checklist items, "audit all", "migrate everything") → create subtask issues, label parent `status:blocked` with `blocked-by:` refs to subtasks
+- **`status:available` or no status label** → dispatch a worker (see below)
 
 ### Kill stuck workers
 
-Check `ps axo pid,etime,command | grep '/full-loop' | grep '\.opencode'`. Any worker running 3+ hours with no open PR is stuck. Kill it: `kill <pid>`. Comment on the issue explaining why. This frees a slot.
+Check `ps axo pid,etime,command | grep '/full-loop' | grep '\.opencode'`. Any worker running 3+ hours with no open PR is likely stuck. Kill it: `kill <pid>`. Comment on the issue explaining why. This frees a slot. If the worker has recent commits or an open PR with activity, leave it alone — it's making progress.
 
 ### Dispatch workers for open issues
 
-For each open issue with `status:available` (or no status label):
-1. Skip if a worker is already running for it (check `ps` output)
+For each dispatchable issue:
+1. Skip if a worker is already running for it (check `ps` output for the issue number)
 2. Skip if an open PR already exists for it (check PR list)
 3. Read the issue body briefly — if it has `blocked-by:` references, check if those are resolved (merged PR exists). If not, skip it.
 4. Dispatch:
@@ -86,11 +93,14 @@ gh issue edit <number> --repo <slug> --add-label "status:queued" --remove-label 
 
 ### Priority order
 
-1. PRs with green CI → merge
-2. Issues labelled `priority:high` or `bug`
-3. Product repos (`"priority": "product"` in repos.json) over tooling
-4. Smaller/simpler tasks over large ones
-5. Oldest issues
+1. PRs with green CI → merge (free — no worker slot needed)
+2. PRs with failing CI or review feedback → fix (uses a slot, but closer to done than new issues)
+3. Issues labelled `priority:high` or `bug`
+4. Product repos (`"priority": "product"` in repos.json) over tooling
+5. Smaller/simpler tasks over large ones (faster throughput)
+6. Oldest issues
+
+**Label lifecycle** (for your awareness — workers manage their own transitions): `available` → `queued` (you dispatch) → `in-progress` (worker starts) → `in-review` (PR opened) → `done` (PR merged)
 
 ### Cross-repo TODO sync
 
