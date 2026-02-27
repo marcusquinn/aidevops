@@ -337,6 +337,7 @@ check_requirements() {
 		# Only modify rc files during interactive setup (not updates)
 		# Users may intentionally remove these lines; re-adding on every update is harmful
 		if [[ "$NON_INTERACTIVE" != "true" ]]; then
+			# shellcheck disable=SC2016 # brew_line is written to rc files; must expand at shell startup, not now
 			local brew_line='eval "$(/opt/homebrew/bin/brew shellenv)"'
 			local fixed_rc=false
 			local rc_file
@@ -373,6 +374,7 @@ check_requirements() {
 
 			# Only modify rc files during interactive setup (not updates)
 			if [[ "$NON_INTERACTIVE" != "true" ]]; then
+				# shellcheck disable=SC2016 # intel_brew_line is written to rc files; must expand at shell startup, not now
 				local intel_brew_line='eval "$(/usr/local/bin/brew shellenv)"'
 				local intel_fixed_rc=false
 				local intel_rc

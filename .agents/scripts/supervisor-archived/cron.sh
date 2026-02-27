@@ -1213,6 +1213,7 @@ EOF
 
 	# Wrapper script with cleanup handlers (matches cmd_dispatch pattern)
 	local wrapper_script="${SUPERVISOR_DIR}/pids/${task_id}-decompose-wrapper.sh"
+	# shellcheck disable=SC2016 # echo statements generate a child script; variables must expand at child runtime
 	{
 		echo '#!/usr/bin/env bash'
 		echo 'cleanup_children() {'

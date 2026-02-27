@@ -1399,12 +1399,14 @@ _exec_create_task() {
 			log_warn "AI Actions: commit_and_push_todo failed for $task_id — reverting TODO.md append (t1261)"
 			# Revert the append: remove the task line we just added
 			local escaped_task_id
+			# shellcheck disable=SC2016 # sed replacement pattern is intentionally literal
 			escaped_task_id=$(printf '%s' "$task_id" | sed 's/[.[\*^$()+?{|\\]/\\&/g')
 			sed -i '' "/^- \[ \] ${escaped_task_id} /d" "$todo_file" 2>/dev/null || true
 		fi
 	fi
 
 	if [[ "$commit_ok" != "true" ]]; then
+		# shellcheck disable=SC2016 # $task_id and $error are jq variable references
 		jq -n --arg task_id "$task_id" --arg error "commit_failed" \
 			'{"created": false, "task_id": $task_id, "error": $error}'
 		return 1
@@ -2148,6 +2150,7 @@ _exec_propose_auto_dispatch() {
 
 		# Apply the change
 		local escaped_old
+		# shellcheck disable=SC2016 # sed replacement pattern is intentionally literal
 		escaped_old=$(printf '%s\n' "$task_line" | sed 's/[[\.*^$()+?{|]/\\&/g')
 		sed -i.bak "s|${escaped_old}|${new_line}|" "$todo_file"
 		rm -f "${todo_file}.bak"
@@ -2175,6 +2178,7 @@ _exec_propose_auto_dispatch() {
 	local new_line="${task_line}${annotation}"
 
 	local escaped_old
+	# shellcheck disable=SC2016 # sed replacement pattern is intentionally literal
 	escaped_old=$(printf '%s\n' "$task_line" | sed 's/[[\.*^$()+?{|]/\\&/g')
 	sed -i.bak "s|${escaped_old}|${new_line}|" "$todo_file"
 	rm -f "${todo_file}.bak"

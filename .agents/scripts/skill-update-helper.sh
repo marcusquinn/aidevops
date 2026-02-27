@@ -538,6 +538,7 @@ get_skill_diff_summary() {
 	fi
 
 	# Format as code block for readability
+	# shellcheck disable=SC2016 # backticks are literal markdown, not command substitution
 	printf '```\n%s\n```\n' "$diff_stat"
 	return 0
 }

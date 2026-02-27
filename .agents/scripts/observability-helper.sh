@@ -273,7 +273,9 @@ _rl_jq() {
 	echo "${val:-$default}"
 }
 
+# shellcheck disable=SC2016 # $p and $f are jq variable references, not shell variables
 _get_rl_field() { _rl_jq '.providers[$p][$f]' "$1" "$2" "0"; }
+# shellcheck disable=SC2016 # $f is a jq variable reference, not a shell variable
 _get_config_val() { _rl_jq '.[$f]' "" "$1" "$2"; }
 
 _count_usage_in_window() {
