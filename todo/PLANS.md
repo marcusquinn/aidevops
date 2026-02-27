@@ -11,6 +11,7 @@ Based on [OpenAI's PLANS.md](https://cookbook.openai.com/articles/codex_exec_pla
 ## Format
 
 Each plan includes:
+
 - **Status**: Planning / In Progress (Phase X/Y) / Blocked / Completed
 - **Time Estimate**: `~2w (ai:1w test:0.5w read:0.5w)`
 - **Timestamps**: `logged:`, `started:`, `completed:`
@@ -53,10 +54,61 @@ The archived `issue-sync.sh` (lines 409-447) had deterministic logic for this: l
 
 #### Decision Log
 
-| Date | Decision | Rationale |
-|------|----------|-----------|
-| 2026-02-27 | Guidance-only fix, no new scripts | Per "Intelligence Over Scripts" principle — the archived bash logic was replaced by AI reasoning, so the fix must improve the AI guidance |
+| Date       | Decision                                                | Rationale                                                                                                                                                                |
+| ---------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-02-27 | Guidance-only fix, no new scripts                       | Per "Intelligence Over Scripts" principle — the archived bash logic was replaced by AI reasoning, so the fix must improve the AI guidance                                |
 | 2026-02-27 | Three-layer fix (state check + PR fallback + skip rule) | Each layer catches a different failure mode: state check prevents modifying closed issues, PR fallback finds cross-session PRs, skip rule prevents redundant transitions |
+
+---
+
+### [2026-02-27] Add Local Dev / `.local` Domains to Build+ Domain Expertise Check
+
+**Status:** Planning
+**Estimate:** ~15m
+**TODO:** t1344
+**Logged:** 2026-02-27
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p034,Add Local Dev to Build+ Domain Expertise Check,planning,0,1,,bugfix|agent|build-plus|local-hosting,15m,10m,5m,0m,2026-02-27T00:00Z,
+-->
+
+#### Purpose
+
+Build+'s step 2b Domain Expertise Check table routes agents to specialist subagents before implementing. It's missing an entry for local development infrastructure. Without it, agents encountering `.local` domain, port, Traefik, HTTPS, or LocalWP issues default to guessing instead of reading `services/hosting/local-hosting.md`.
+
+#### Context
+
+Observed in an awardsapp session: agent suggested Caddy for `awardsapp.local` HTTPS proxy when the actual stack is dnsmasq + Traefik + mkcert managed by `localdev-helper.sh`. The `local-hosting.md` subagent documents the full architecture but Build+ had no trigger to read it.
+
+#### Execution (single phase)
+
+- [ ] Add row to `build-plus.md` Domain Expertise Check table: `Local dev / .local domains / ports / proxy / HTTPS / LocalWP → services/hosting/local-hosting.md`
+
+---
+
+### [2026-02-27] Add Cross-Repo Improvement Guidance to AGENTS.md
+
+**Status:** Planning
+**Estimate:** ~30m
+**TODO:** t1345
+**Logged:** 2026-02-27
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p035,Add Cross-Repo Improvement Guidance to AGENTS.md,planning,0,1,,docs|agent|framework|workflow,30m,20m,5m,5m,2026-02-27T00:00Z,
+-->
+
+#### Purpose
+
+When agents working on other repos (e.g. awardsapp) discover aidevops framework improvements, they currently edit the installed copy at `~/.aidevops/agents/` which is overwritten on next `aidevops update`. There's no guidance telling agents to make changes on the source repo or capture them as todos there, with PLANS.md entries recommended for clarity of objectives when the improvement is non-trivial.
+
+#### Context
+
+Observed in an awardsapp session: a `build-plus.md` improvement was made to `~/.aidevops/agents/build-plus.md` (the installed copy). This edit will be lost on next `aidevops update` because `setup.sh` copies from `~/Git/aidevops/.agents/` to `~/.aidevops/agents/`. The agent had no guidance that improvements must go to the source repo.
+
+#### Execution (single phase)
+
+- [ ] Add section to root `AGENTS.md` (developer guide) explaining: framework improvements must be made in `~/Git/aidevops/` or captured as todos/plans in that repo's TODO.md. Recommend PLANS.md entries for non-trivial improvements to ensure clarity of objectives
+- [ ] Add matching guidance to `.agents/AGENTS.md` (user guide) so agents working on other repos know to create todos (and PLANS.md entries for non-trivial changes) in the aidevops repo rather than editing the installed copy
 
 ---
 
@@ -80,26 +132,26 @@ Add local AI model inference to aidevops via llama.cpp + HuggingFace, completing
 
 **Why llama.cpp (not Ollama, LM Studio, or Jan.ai):**
 
-| Criterion | llama.cpp | Ollama | LM Studio | Jan.ai |
-|-----------|-----------|--------|-----------|--------|
-| License | MIT | MIT | Closed frontend | AGPL |
-| Speed | Fastest (baseline) | 20-70% slower | Same (uses llama.cpp) | Same (uses llama.cpp) |
-| Security | No daemon, localhost only | 175k+ exposed instances (Jan 2026), multiple CVEs | Desktop-safe | Desktop-safe |
-| Binary size | 23-40 MB | ~200 MB | ~500 MB+ | ~300 MB+ |
-| HuggingFace access | Direct GGUF download | Walled library | HF browser built-in | HF download |
-| Control | Full (quantization, context, sampling) | Abstracted | GUI-mediated | GUI-mediated |
+| Criterion          | llama.cpp                              | Ollama                                            | LM Studio             | Jan.ai                |
+| ------------------ | -------------------------------------- | ------------------------------------------------- | --------------------- | --------------------- |
+| License            | MIT                                    | MIT                                               | Closed frontend       | AGPL                  |
+| Speed              | Fastest (baseline)                     | 20-70% slower                                     | Same (uses llama.cpp) | Same (uses llama.cpp) |
+| Security           | No daemon, localhost only              | 175k+ exposed instances (Jan 2026), multiple CVEs | Desktop-safe          | Desktop-safe          |
+| Binary size        | 23-40 MB                               | ~200 MB                                           | ~500 MB+              | ~300 MB+              |
+| HuggingFace access | Direct GGUF download                   | Walled library                                    | HF browser built-in   | HF download           |
+| Control            | Full (quantization, context, sampling) | Abstracted                                        | GUI-mediated          | GUI-mediated          |
 
 **Key decision: download-on-first-use, not bundled.** llama.cpp releases weekly (b8152 current, daily commits). Bundling means stale binaries. Platform-specific (macOS ARM 29 MB, Linux x64 23 MB, Linux Vulkan 40 MB). Optional feature — not every user wants local models.
 
 **Binary sizes by platform (b8152):**
 
-| Platform | Size |
-|----------|------|
-| macOS ARM64 | 29 MB |
-| macOS x64 | 82 MB |
-| Linux x64 (CPU) | 23 MB |
-| Linux Vulkan | 40 MB |
-| Linux ROCm | 130 MB |
+| Platform        | Size   |
+| --------------- | ------ |
+| macOS ARM64     | 29 MB  |
+| macOS x64       | 82 MB  |
+| Linux x64 (CPU) | 23 MB  |
+| Linux Vulkan    | 40 MB  |
+| Linux ROCm      | 130 MB |
 
 #### Execution Phases
 
@@ -129,25 +181,25 @@ The main implementation. Depends on Phase 2 for design decisions. Largest single
 
 #### Decision Log
 
-| Date | Decision | Rationale |
-|------|----------|-----------|
-| 2026-02-25 | llama.cpp as primary runtime | MIT license, fastest, most secure, every other tool wraps it anyway |
-| 2026-02-25 | Download-on-first-use, not bundled | Weekly releases, platform-specific, optional feature |
-| 2026-02-25 | Single model-routing.md (extend, not new file) | Local is just another tier in the same routing decision |
-| 2026-02-25 | HuggingFace as model source (not Ollama library) | Largest open repo, no walled garden, GGUF is standard |
-| 2026-02-25 | SQLite for usage logging | Consistent with existing framework pattern |
-| 2026-02-25 | 30-day cleanup threshold | Models are 2-50+ GB; generous but prevents unbounded disk growth |
-| 2026-02-25 | No Ollama fallback in v1 | Users with Ollama can point at its API manually; add if demand exists |
+| Date       | Decision                                         | Rationale                                                             |
+| ---------- | ------------------------------------------------ | --------------------------------------------------------------------- |
+| 2026-02-25 | llama.cpp as primary runtime                     | MIT license, fastest, most secure, every other tool wraps it anyway   |
+| 2026-02-25 | Download-on-first-use, not bundled               | Weekly releases, platform-specific, optional feature                  |
+| 2026-02-25 | Single model-routing.md (extend, not new file)   | Local is just another tier in the same routing decision               |
+| 2026-02-25 | HuggingFace as model source (not Ollama library) | Largest open repo, no walled garden, GGUF is standard                 |
+| 2026-02-25 | SQLite for usage logging                         | Consistent with existing framework pattern                            |
+| 2026-02-25 | 30-day cleanup threshold                         | Models are 2-50+ GB; generous but prevents unbounded disk growth      |
+| 2026-02-25 | No Ollama fallback in v1                         | Users with Ollama can point at its API manually; add if demand exists |
 
 #### Risks
 
-| Risk | Mitigation |
-|------|------------|
-| llama.cpp binary API changes between releases | Pin to known-good release in helper script, test on update |
-| HuggingFace API rate limits for search | Cache search results, fallback to `huggingface-cli` |
+| Risk                                                     | Mitigation                                                            |
+| -------------------------------------------------------- | --------------------------------------------------------------------- |
+| llama.cpp binary API changes between releases            | Pin to known-good release in helper script, test on update            |
+| HuggingFace API rate limits for search                   | Cache search results, fallback to `huggingface-cli`                   |
 | Model recommendations become stale as new models release | Recommend by capability tier, not specific model names where possible |
-| Large model downloads fail mid-transfer | `huggingface-cli` handles resume; document manual resume |
-| GPU detection unreliable across platforms | Graceful fallback to CPU-only with clear messaging |
+| Large model downloads fail mid-transfer                  | `huggingface-cli` handles resume; document manual resume              |
+| GPU detection unreliable across platforms                | Graceful fallback to CPU-only with clear messaging                    |
 
 ---
 
@@ -176,29 +228,30 @@ Both address the same root problem: task briefs vary wildly in quality, and auto
 
 **What manifest-dev does well (steal):**
 
-| Concept | Their Implementation | Our Adaptation |
-|---------|---------------------|----------------|
-| Structured interview | 30KB `/define` SKILL.md with domain grounding, pre-mortem, backcasting, outside view | Lighter `/define` slash command (~2KB) with probing angles per task type |
-| Concrete options | AskUserQuestion tool: 2-4 options, one recommended | Agent instruction: present numbered options with recommendation |
-| Per-criterion verification | YAML `verify:` blocks (bash, codebase, subagent, research, manual) | Same schema, minus `research` method (not needed for our domain) |
-| Task-type guidance | 8 task files (CODING.md, FEATURE.md, BUG.md, etc.) with quality gates, risks, scenarios | Compact probing angle files in `reference/define-probes/` |
-| Verify-fix loop | /do -> /verify -> fix -> /verify until all pass | verify-brief.sh as completion gate in task-complete-helper.sh |
-| Escalation protocol | /escalate with 3+ attempts required | Adapt as structured escalation guidance (not a separate command) |
+| Concept                    | Their Implementation                                                                    | Our Adaptation                                                           |
+| -------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Structured interview       | 30KB `/define` SKILL.md with domain grounding, pre-mortem, backcasting, outside view    | Lighter `/define` slash command (~2KB) with probing angles per task type |
+| Concrete options           | AskUserQuestion tool: 2-4 options, one recommended                                      | Agent instruction: present numbered options with recommendation          |
+| Per-criterion verification | YAML `verify:` blocks (bash, codebase, subagent, research, manual)                      | Same schema, minus `research` method (not needed for our domain)         |
+| Task-type guidance         | 8 task files (CODING.md, FEATURE.md, BUG.md, etc.) with quality gates, risks, scenarios | Compact probing angle files in `reference/define-probes/`                |
+| Verify-fix loop            | /do -> /verify -> fix -> /verify until all pass                                         | verify-brief.sh as completion gate in task-complete-helper.sh            |
+| Escalation protocol        | /escalate with 3+ attempts required                                                     | Adapt as structured escalation guidance (not a separate command)         |
 
 **What manifest-dev over-engineers (don't steal):**
 
-| Concept | Why Skip |
-|---------|----------|
-| Separate manifest file + discovery log | Our brief IS the output — no intermediate state needed |
-| manifest-verifier agent | Over-engineered for brief validation — the interview itself is the quality gate |
-| Global Invariants as separate concept | Our brief's AC section covers this |
-| Amendment protocol (INV-G1.1) | Too formal for our ephemeral briefs |
-| 10 specialized review agents | We have existing linters + code-standards.md + qlty |
-| Workflow enforcement hooks (Python) | We use pre-edit-check.sh + pre-commit hooks |
+| Concept                                | Why Skip                                                                        |
+| -------------------------------------- | ------------------------------------------------------------------------------- |
+| Separate manifest file + discovery log | Our brief IS the output — no intermediate state needed                          |
+| manifest-verifier agent                | Over-engineered for brief validation — the interview itself is the quality gate |
+| Global Invariants as separate concept  | Our brief's AC section covers this                                              |
+| Amendment protocol (INV-G1.1)          | Too formal for our ephemeral briefs                                             |
+| 10 specialized review agents           | We have existing linters + code-standards.md + qlty                             |
+| Workflow enforcement hooks (Python)    | We use pre-edit-check.sh + pre-commit hooks                                     |
 
 **LLM first principles (from their LLM_CODING_CAPABILITIES.md, 20KB research doc):**
 
 Key findings that validate this approach:
+
 - LLMs achieve 92% on single-function tasks but drop to 23% on complex multi-file tasks
 - "Clear acceptance criteria play to their strength" (goal-oriented RL training)
 - Context drift in long sessions causes "context rot" — external state (the brief) compensates
@@ -231,22 +284,22 @@ Key findings that validate this approach:
 
 #### Decision Log
 
-| Date | Decision | Rationale |
-|------|----------|-----------|
-| 2026-02-22 | Adapt ideas, don't adopt the plugin | manifest-dev is a Claude Code plugin (Python hooks, Claude-specific skills). We're tool-agnostic. Extract the ideas, implement in our architecture. |
+| Date       | Decision                                          | Rationale                                                                                                                                                                   |
+| ---------- | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-02-22 | Adapt ideas, don't adopt the plugin               | manifest-dev is a Claude Code plugin (Python hooks, Claude-specific skills). We're tool-agnostic. Extract the ideas, implement in our architecture.                         |
 | 2026-02-22 | Lighter interview than manifest-dev's 30KB prompt | Their `/define` is comprehensive but heavy (~30KB loaded per invocation). Our probing angles are compact reference files (~500 bytes each), loaded on-demand per task type. |
-| 2026-02-22 | Skip `research` verification method | manifest-dev includes web research verification for API compatibility checks. Our briefs are about code changes — bash + codebase + subagent covers our needs. |
-| 2026-02-22 | Verification blocks are optional | Existing briefs without `verify:` blocks still work. Gradual adoption — new briefs from `/define` include them, old briefs can be retrofitted. |
-| 2026-02-22 | Subagent verification uses task's model tier | manifest-dev defaults to opus for verification. We use the task's assigned model tier or default to sonnet (cost-aware). |
+| 2026-02-22 | Skip `research` verification method               | manifest-dev includes web research verification for API compatibility checks. Our briefs are about code changes — bash + codebase + subagent covers our needs.              |
+| 2026-02-22 | Verification blocks are optional                  | Existing briefs without `verify:` blocks still work. Gradual adoption — new briefs from `/define` include them, old briefs can be retrofitted.                              |
+| 2026-02-22 | Subagent verification uses task's model tier      | manifest-dev defaults to opus for verification. We use the task's assigned model tier or default to sonnet (cost-aware).                                                    |
 
 #### Risks
 
-| Risk | Likelihood | Impact | Mitigation |
-|------|-----------|--------|------------|
-| Interview adds friction to quick tasks | Medium | Low | `/define` is optional — users can still create briefs manually for simple tasks |
-| Probing angles become stale | Low | Low | Angles are generic domain knowledge, not project-specific. Update when new failure patterns emerge. |
-| verify-brief.sh false positives | Medium | Medium | Each method has clear pass/fail semantics. Subagent method is the most subjective — use specific prompts, not vague "review this" |
-| Workers ignore verification failures | Low | High | Integration with task-complete-helper.sh makes it a hard gate, not advisory |
+| Risk                                   | Likelihood | Impact | Mitigation                                                                                                                        |
+| -------------------------------------- | ---------- | ------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| Interview adds friction to quick tasks | Medium     | Low    | `/define` is optional — users can still create briefs manually for simple tasks                                                   |
+| Probing angles become stale            | Low        | Low    | Angles are generic domain knowledge, not project-specific. Update when new failure patterns emerge.                               |
+| verify-brief.sh false positives        | Medium     | Medium | Each method has clear pass/fail semantics. Subagent method is the most subjective — use specific prompts, not vague "review this" |
+| Workers ignore verification failures   | Low        | High   | Integration with task-complete-helper.sh makes it a hard gate, not advisory                                                       |
 
 ---
 
@@ -272,16 +325,16 @@ Deep analysis of oh-my-pi revealed 10+ patterns applicable to aidevops, ranging 
 
 **Key findings from oh-my-pi analysis:**
 
-| Pattern | Impact | Feasibility |
-|---------|--------|-------------|
-| TTSR (real-time stream rules) | High -- policy enforcement during generation | Blocked in OpenCode (no stream hooks); needs upstream PR |
-| Soft TTSR (system prompt + message transform) | Medium -- preventative enforcement | Available now via unused OpenCode plugin hooks |
-| Hashline edit format | High -- 5-14% success improvement, 20-61% token reduction | Custom tooling only (can't replace Claude Code's str_replace) |
-| Intent tracing | Medium -- tool-level chain-of-thought for observability | Implementable in OpenCode plugin |
-| SQLite observability | High -- cost/performance tracking, budget enforcement | No equivalent exists in aidevops |
-| Steering messages | Medium -- user interruption mid-execution | OpenCode architecture question |
-| Swarm DAG execution | Medium -- dependency-resolved multi-agent orchestration | Enhances existing supervisor dispatch |
-| Blob/artifact storage | Low-medium -- session compactness | Platform-dependent |
+| Pattern                                       | Impact                                                    | Feasibility                                                   |
+| --------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------- |
+| TTSR (real-time stream rules)                 | High -- policy enforcement during generation              | Blocked in OpenCode (no stream hooks); needs upstream PR      |
+| Soft TTSR (system prompt + message transform) | Medium -- preventative enforcement                        | Available now via unused OpenCode plugin hooks                |
+| Hashline edit format                          | High -- 5-14% success improvement, 20-61% token reduction | Custom tooling only (can't replace Claude Code's str_replace) |
+| Intent tracing                                | Medium -- tool-level chain-of-thought for observability   | Implementable in OpenCode plugin                              |
+| SQLite observability                          | High -- cost/performance tracking, budget enforcement     | No equivalent exists in aidevops                              |
+| Steering messages                             | Medium -- user interruption mid-execution                 | OpenCode architecture question                                |
+| Swarm DAG execution                           | Medium -- dependency-resolved multi-agent orchestration   | Enhances existing supervisor dispatch                         |
+| Blob/artifact storage                         | Low-medium -- session compactness                         | Platform-dependent                                            |
 
 **OpenCode plugin hooks we're NOT using yet:**
 
@@ -387,14 +440,14 @@ MCP config:
 
 **Key metrics:**
 
-| Metric | Before | After | Improvement |
-|--------|--------|-------|-------------|
-| API reference tokens per product | ~2,000-5,000 | ~1,000 (fixed) | 60-80% reduction |
-| API coverage | 59 products (static) | 2,500+ endpoints (live) | 42x more endpoints |
-| Reference file count | 310 | ~214 | 31% fewer files |
-| Reference disk size | 773KB | ~523KB | 32% smaller |
-| Maintenance burden | Daily skill sync | Zero (Cloudflare-maintained) | Eliminated for API ops |
-| API accuracy | Snapshot (can drift) | Live OpenAPI spec | Always current |
+| Metric                           | Before               | After                        | Improvement            |
+| -------------------------------- | -------------------- | ---------------------------- | ---------------------- |
+| API reference tokens per product | ~2,000-5,000         | ~1,000 (fixed)               | 60-80% reduction       |
+| API coverage                     | 59 products (static) | 2,500+ endpoints (live)      | 42x more endpoints     |
+| Reference file count             | 310                  | ~214                         | 31% fewer files        |
+| Reference disk size              | 773KB                | ~523KB                       | 32% smaller            |
+| Maintenance burden               | Daily skill sync     | Zero (Cloudflare-maintained) | Eliminated for API ops |
+| API accuracy                     | Snapshot (can drift) | Live OpenAPI spec            | Always current         |
 
 #### Execution Phases
 
@@ -438,21 +491,21 @@ MCP config:
 
 #### Decision Log
 
-| Date | Decision | Rationale |
-|------|----------|-----------|
-| 2026-02-21 | Add Code Mode MCP alongside existing skill (not replace) | They solve different problems: Code Mode for operations (live API), skill for development guidance (patterns, gotchas, SDK usage). Together they cover the full spectrum at lower total context cost. |
+| Date       | Decision                                                          | Rationale                                                                                                                                                                                                                                                                    |
+| ---------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-02-21 | Add Code Mode MCP alongside existing skill (not replace)          | They solve different problems: Code Mode for operations (live API), skill for development guidance (patterns, gotchas, SDK usage). Together they cover the full spectrum at lower total context cost.                                                                        |
 | 2026-02-21 | Remove api.md + configuration.md but keep README/patterns/gotchas | api.md and configuration.md contain API endpoint details and wrangler.toml config that Code Mode's live OpenAPI spec supersedes. README (overview/decision support), patterns (best practices), and gotchas (pitfalls) contain development wisdom that no API spec provides. |
-| 2026-02-21 | OAuth 2.1 as primary auth, API token as CI/CD fallback | OAuth provides scoped per-session permissions (more secure). API tokens needed for headless/CI environments where OAuth flow isn't possible. |
-| 2026-02-21 | Subtasks chained sequentially (blocked-by) | Each phase builds on the previous. Config must exist before routing can reference it. Routing must be updated before docs are trimmed. Testing validates the complete stack. |
+| 2026-02-21 | OAuth 2.1 as primary auth, API token as CI/CD fallback            | OAuth provides scoped per-session permissions (more secure). API tokens needed for headless/CI environments where OAuth flow isn't possible.                                                                                                                                 |
+| 2026-02-21 | Subtasks chained sequentially (blocked-by)                        | Each phase builds on the previous. Config must exist before routing can reference it. Routing must be updated before docs are trimmed. Testing validates the complete stack.                                                                                                 |
 
 #### Risks
 
-| Risk | Likelihood | Impact | Mitigation |
-|------|-----------|--------|------------|
-| Code Mode MCP server downtime | Low | Medium | API token fallback in cloudflare.md; skill docs still available for manual reference |
-| OAuth flow not supported in headless dispatch | Medium | Low | API token auth documented as CI/CD alternative; workers use token-based auth |
-| Removing api.md/configuration.md breaks skill auto-update | Low | Low | Update skill-sources.json notes; daily auto-update (t1081) will re-import from upstream but our trimmed state is intentional |
-| Code Mode search() returns too many results for complex queries | Low | Low | Subagent doc includes query refinement patterns (filter by path, tags, method) |
+| Risk                                                            | Likelihood | Impact | Mitigation                                                                                                                   |
+| --------------------------------------------------------------- | ---------- | ------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| Code Mode MCP server downtime                                   | Low        | Medium | API token fallback in cloudflare.md; skill docs still available for manual reference                                         |
+| OAuth flow not supported in headless dispatch                   | Medium     | Low    | API token auth documented as CI/CD alternative; workers use token-based auth                                                 |
+| Removing api.md/configuration.md breaks skill auto-update       | Low        | Low    | Update skill-sources.json notes; daily auto-update (t1081) will re-import from upstream but our trimmed state is intentional |
+| Code Mode search() returns too many results for complex queries | Low        | Low    | Subagent doc includes query refinement patterns (filter by path, tags, method)                                               |
 
 #### Relationship to Other Tasks
 
@@ -501,16 +554,17 @@ This is valuable when agents need to discover or understand third-party APIs wit
 
 **Agent enablement**:
 
-| Agent | Enabled | Rationale |
-|-------|---------|-----------|
-| Build+ | Yes | Primary development agent — API integration is core workflow |
-| AI-DevOps | Yes | Infrastructure and integration work |
-| Research | Yes | API discovery and evaluation |
-| Others | No | Not relevant to their domains |
+| Agent     | Enabled | Rationale                                                    |
+| --------- | ------- | ------------------------------------------------------------ |
+| Build+    | Yes     | Primary development agent — API integration is core workflow |
+| AI-DevOps | Yes     | Infrastructure and integration work                          |
+| Research  | Yes     | API discovery and evaluation                                 |
+| Others    | No      | Not relevant to their domains                                |
 
 #### Execution Phases
 
 **Phase 1: Subagent documentation (t1288.1, ~30m)**
+
 - Create `.agents/tools/context/openapi-search.md` following context7.md pattern
 - Frontmatter: `openapi-search_*: true` in tools section
 - AI-CONTEXT-START block with: purpose, MCP URL, tool names, common API IDs
@@ -519,26 +573,31 @@ This is valuable when agents need to discover or understand third-party APIs wit
 - All AI assistant configurations (remote URL — same for all)
 
 **Phase 2: Config templates (t1288.2, ~20m, blocked-by Phase 1)**
+
 - Create `configs/openapi-search-config.json.txt` — comprehensive template
 - Create `configs/mcp-templates/openapi-search.json` — per-assistant snippets
 - Remote URL config only — no env vars, no API keys, no local binary
 
 **Phase 3: OpenCode agent generation (t1288.3, ~15m, blocked-by Phase 2)**
+
 - Add `openapi-search` MCP to `generate-opencode-agents.sh`
 - Global config: `"enabled": false`
 - Enable `openapi-search_*: true` for Build+, AI-DevOps, Research agents
 
 **Phase 4: CLI config function (t1288.4, ~15m, blocked-by Phase 2)**
+
 - Add `configure_openapi_search_mcp()` to `ai-cli-config.sh`
 - Configure for all detected AI assistants
 - No prerequisites check needed (remote URL)
 
 **Phase 5: Index and docs updates (t1288.5, ~15m, blocked-by Phase 1)**
+
 - Add to `mcp-integrations.md` under Development Tools / Context section
 - Register in `subagent-index.toon`
 - Update AGENTS.md domain index if needed
 
 **Phase 6: Verification (t1288.6, ~15m, blocked-by Phases 3-5)**
+
 - Run `generate-opencode-agents.sh`, verify MCP in config
 - Test verification prompt: "Search for the Stripe API and show me the create payment intent endpoint"
 - Run `linters-local.sh` and markdownlint
@@ -581,26 +640,28 @@ Adding MCPorter as an aidevops agent provides:
 6. **Testing** — quick CLI-based MCP validation without restarting editors
 
 MCPorter complements (does not replace) existing infrastructure:
+
 - `mcp-index-helper.sh` — token-aware on-demand loading (MCPorter doesn't solve token cost)
 - `setup-mcp-integrations.sh` — initial setup automation (MCPorter is for runtime use)
 - `validate-mcp-integrations.sh` — validation (MCPorter's `list` can augment this)
 
 #### Key Capabilities to Document
 
-| Capability | Command | aidevops Use Case |
-|---|---|---|
-| Discovery | `mcporter list` | See all MCPs across all editors |
-| Tool calling | `mcporter call server.tool args` | Test MCP tools from CLI |
-| CLI generation | `mcporter generate-cli` | Create standalone CLIs from MCPs |
-| Typed clients | `mcporter emit-ts` | TypeScript wrappers for MCP servers |
-| OAuth auth | `mcporter auth <server>` | Handle OAuth for hosted MCPs |
-| Daemon | `mcporter daemon start/stop/status` | Keep stateful servers warm |
-| Ad-hoc | `mcporter list --http-url <url>` | Test MCPs without config changes |
-| Config mgmt | `mcporter config list/add/remove` | Manage MCP configs |
+| Capability     | Command                             | aidevops Use Case                   |
+| -------------- | ----------------------------------- | ----------------------------------- |
+| Discovery      | `mcporter list`                     | See all MCPs across all editors     |
+| Tool calling   | `mcporter call server.tool args`    | Test MCP tools from CLI             |
+| CLI generation | `mcporter generate-cli`             | Create standalone CLIs from MCPs    |
+| Typed clients  | `mcporter emit-ts`                  | TypeScript wrappers for MCP servers |
+| OAuth auth     | `mcporter auth <server>`            | Handle OAuth for hosted MCPs        |
+| Daemon         | `mcporter daemon start/stop/status` | Keep stateful servers warm          |
+| Ad-hoc         | `mcporter list --http-url <url>`    | Test MCPs without config changes    |
+| Config mgmt    | `mcporter config list/add/remove`   | Manage MCP configs                  |
 
 #### Execution Phases
 
 **Phase 1: Subagent documentation (t1294.1, ~1.5h)**
+
 - Create `.agents/tools/mcp-toolkit/mcporter.md` following `add-new-mcp-to-aidevops.md` template
 - Include AI-CONTEXT-START block with quick reference, install, key commands
 - Document all major capabilities with examples
@@ -608,20 +669,24 @@ MCPorter complements (does not replace) existing infrastructure:
 - Include verification prompt and troubleshooting
 
 **Phase 2: Config templates (t1294.2, ~30m, blocked-by Phase 1)**
+
 - Create `configs/mcp-templates/mcporter.json` with per-assistant snippets
 - Not an MCP server itself — it's a CLI tool, so config is about making it available
 - Document `config/mcporter.json` for projects that want MCPorter's own config
 
 **Phase 3: Integration updates (t1294.3, ~30m, blocked-by Phase 1)**
+
 - Update `mcp-integrations.md` — add MCPorter under Development Tools
 - Update `mcp-discovery.md` — reference MCPorter as alternative discovery method
 - Cross-reference with existing MCP infrastructure
 
 **Phase 4: Index registration (t1294.4, ~15m, blocked-by Phase 3)**
+
 - Add to `subagent-index.toon`
 - Update AGENTS.md domain index (Agent/MCP dev row)
 
 **Phase 5: Verification (t1294.5, ~30m, blocked-by Phase 4)**
+
 - Test `npx mcporter list` discovers existing MCPs
 - Test `mcporter call context7.resolve-library-id libraryName=react`
 - Verify subagent doc loads correctly via agent invocation
@@ -725,6 +790,7 @@ ON-DEMAND (loaded when session touches the domain):
 #### Execution Phases
 
 **Phase 1: Deduplicate (t1281, ~3h)**
+
 - Establish build.txt as single source of truth for universal rules
 - Remove duplicated content from downstream files, replace with pointers
 - Preserve any unique content that exists only in downstream files
@@ -732,6 +798,7 @@ ON-DEMAND (loaded when session touches the domain):
 - Verification: `wc -c` each file, trace inheritance chain
 
 **Phase 2: Tier AGENTS.md (t1282, ~4h, blocked-by t1281)**
+
 - Split .agents/AGENTS.md into slim core + 4 reference files
 - Compress progressive disclosure table to 1-line-per-domain format
 - Create reference/planning-detail.md, orchestration.md, services.md, session.md
@@ -739,6 +806,7 @@ ON-DEMAND (loaded when session touches the domain):
 - Verification: every original section heading traceable to exactly one file
 
 **Phase 3: Tighten language (t1283, ~2h, blocked-by t1282)**
+
 - Compress explanatory paragraphs to directive statements
 - Move "why" explanations to comments or reference files
 - Trim generic coding advice from build-plus.md (models know how to code)
@@ -749,7 +817,7 @@ ON-DEMAND (loaded when session touches the domain):
 
 - d001: DSPy evaluated and rejected — solves structured pipeline optimisation (input→output with training data), not behavioural instruction compression for interactive agents. Would increase tokens via few-shot examples. 2026-02-21
 - d002: Chose 3-pass sequential approach over single rewrite — each pass is independently verifiable and reversible. If pass 1 causes issues, passes 2-3 can be deferred. 2026-02-21
-- d003: reference/ directory chosen over splitting into multiple AGENTS-*.md files — cleaner separation, avoids Claude Code auto-loading multiple AGENTS.md files from the same directory. 2026-02-21
+- d003: reference/ directory chosen over splitting into multiple AGENTS-\*.md files — cleaner separation, avoids Claude Code auto-loading multiple AGENTS.md files from the same directory. 2026-02-21
 - d004: Opus tier required for all three passes — the model must understand the full context of why each rule exists to safely reorganise without losing intent. Sonnet might optimise too literally, removing content that appears redundant but serves a distinct purpose in its specific loading context. 2026-02-21
 
 #### Risks
@@ -813,31 +881,31 @@ Container pool (Phase 5):
 
 **CLI flag mapping (reference):**
 
-| Concept | OpenCode | Claude Code |
-|---------|----------|-------------|
-| Run one-shot | `opencode run "prompt"` | `claude -p "prompt"` |
-| Model selection | `-m provider/model` | `--model alias` (strips provider prefix) |
-| Output format | `--format json` | `--output-format json` |
-| Session title | `--title "name"` | N/A (no equivalent) |
-| Autonomous mode | `OPENCODE_PERMISSION='{"*":"allow"}'` | `--permission-mode bypassPermissions` |
-| Agent selection | `--agent name` | `--agent name` |
-| Inline agents | N/A | `--agents '{"name": {...}}'` |
-| System prompt | Per-agent in config | `--append-system-prompt "text"` |
-| MCP injection | Config in opencode.json | `--mcp-config file --strict-mcp-config` |
-| Cost cap | N/A (our budget-tracker) | `--max-budget-usd N` |
-| Fallback model | N/A (our fallback-chain) | `--fallback-model alias` |
-| Continue session | `-s SESSION_ID` | `--resume ID` |
-| Prompt position | Positional (last arg) | Named (`-p "prompt"`) |
+| Concept          | OpenCode                              | Claude Code                              |
+| ---------------- | ------------------------------------- | ---------------------------------------- |
+| Run one-shot     | `opencode run "prompt"`               | `claude -p "prompt"`                     |
+| Model selection  | `-m provider/model`                   | `--model alias` (strips provider prefix) |
+| Output format    | `--format json`                       | `--output-format json`                   |
+| Session title    | `--title "name"`                      | N/A (no equivalent)                      |
+| Autonomous mode  | `OPENCODE_PERMISSION='{"*":"allow"}'` | `--permission-mode bypassPermissions`    |
+| Agent selection  | `--agent name`                        | `--agent name`                           |
+| Inline agents    | N/A                                   | `--agents '{"name": {...}}'`             |
+| System prompt    | Per-agent in config                   | `--append-system-prompt "text"`          |
+| MCP injection    | Config in opencode.json               | `--mcp-config file --strict-mcp-config`  |
+| Cost cap         | N/A (our budget-tracker)              | `--max-budget-usd N`                     |
+| Fallback model   | N/A (our fallback-chain)              | `--fallback-model alias`                 |
+| Continue session | `-s SESSION_ID`                       | `--resume ID`                            |
+| Prompt position  | Positional (last arg)                 | Named (`-p "prompt"`)                    |
 
 **Accepted limitations (no Claude Code equivalent):**
 
-| Feature | Impact | Mitigation |
-|---------|--------|------------|
-| Warm server mode (`opencode serve`) | Workers cold-boot (~2-3s each) | Acceptable for task-level dispatch |
-| Tab-switchable agents | Workers get one task, don't need switching | N/A |
-| Session titles | Cosmetic — we track by PID/task-ID | N/A |
-| OpenCode SDK/HTTP API | Supervisor is bash-based, doesn't use SDK | N/A |
-| On-demand MCP loading | `--strict-mcp-config` per invocation | Different mechanism, same outcome |
+| Feature                             | Impact                                     | Mitigation                         |
+| ----------------------------------- | ------------------------------------------ | ---------------------------------- |
+| Warm server mode (`opencode serve`) | Workers cold-boot (~2-3s each)             | Acceptable for task-level dispatch |
+| Tab-switchable agents               | Workers get one task, don't need switching | N/A                                |
+| Session titles                      | Cosmetic — we track by PID/task-ID         | N/A                                |
+| OpenCode SDK/HTTP API               | Supervisor is bash-based, doesn't use SDK  | N/A                                |
+| On-demand MCP loading               | `--strict-mcp-config` per invocation       | Different mechanism, same outcome  |
 
 **OAuth and containerization details:**
 
@@ -876,6 +944,7 @@ Make `aidevops setup` and `aidevops update` deploy equivalent configuration to C
 - [ ] t1161.4 Wire `update_claude_config()` into setup.sh (conditional on `claude` binary)
 
 **Key design decisions:**
+
 - Slash commands generated from same source as OpenCode commands, with minor format adaptation (OpenCode `agent: Build+` frontmatter ignored by Claude Code)
 - MCP registration uses existing `configs/mcp-templates/` `claude_code_command` entries
 - `settings.json` merge strategy: read existing, deep-merge new permissions, preserve hooks
@@ -955,30 +1024,30 @@ Scale beyond a single subscription's rate limits by running Claude Code CLI inst
 
 #### Decision Log
 
-| Date | Decision | Rationale |
-|------|----------|-----------|
-| 2026-02-18 | OpenCode stays primary, Claude Code is fallback | OpenCode supports multi-provider routing (OpenRouter, Groq, DeepSeek). Claude CLI is Anthropic-only. Keep the broader capability as primary. |
-| 2026-02-18 | Phase 0 is pure refactor with no behavior change | The 12+ duplicated CLI branches are a maintenance burden and bug risk. Centralizing into `build_cli_cmd()` is valuable regardless of Claude CLI support. |
-| 2026-02-18 | `SUPERVISOR_CLI` env var for explicit override | Auto-detection is the default, but operators need a way to force a specific CLI for testing or when both are installed but one is preferred. |
-| 2026-02-18 | Config parity is conditional on `command -v claude` | Users without Claude Code installed should not see errors or slowdowns. The entire Claude Code config path is a no-op if the binary is absent. |
-| 2026-02-18 | `--strict-mcp-config` for worker MCP isolation | Prevents workers from accidentally using the user's full MCP set. Each worker gets exactly the MCPs it needs, nothing more. |
+| Date       | Decision                                                       | Rationale                                                                                                                                                                                             |
+| ---------- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-02-18 | OpenCode stays primary, Claude Code is fallback                | OpenCode supports multi-provider routing (OpenRouter, Groq, DeepSeek). Claude CLI is Anthropic-only. Keep the broader capability as primary.                                                          |
+| 2026-02-18 | Phase 0 is pure refactor with no behavior change               | The 12+ duplicated CLI branches are a maintenance burden and bug risk. Centralizing into `build_cli_cmd()` is valuable regardless of Claude CLI support.                                              |
+| 2026-02-18 | `SUPERVISOR_CLI` env var for explicit override                 | Auto-detection is the default, but operators need a way to force a specific CLI for testing or when both are installed but one is preferred.                                                          |
+| 2026-02-18 | Config parity is conditional on `command -v claude`            | Users without Claude Code installed should not see errors or slowdowns. The entire Claude Code config path is a no-op if the binary is absent.                                                        |
+| 2026-02-18 | `--strict-mcp-config` for worker MCP isolation                 | Prevents workers from accidentally using the user's full MCP set. Each worker gets exactly the MCPs it needs, nothing more.                                                                           |
 | 2026-02-18 | OAuth detection via test invocation, not token file inspection | Claude Code stores OAuth in the macOS keychain (not a file we can inspect). The only reliable test is whether `claude -p` succeeds without `ANTHROPIC_API_KEY`. Cache the result for the pulse cycle. |
-| 2026-02-18 | Containerization as Phase 5 (after everything else is tested) | Containers add complexity (networking, volume mounts, token management). Only pursue after the single-host dual-CLI path is proven stable. |
-| 2026-02-18 | `CLAUDE_CODE_OAUTH_TOKEN` env var for container auth | `claude setup-token` generates long-lived tokens specifically for headless/CI use. Each container gets a unique token from a separate subscription account. |
-| 2026-02-18 | OrbStack as container runtime | Already installed (v2.0.5), supports both local containers and remote VMs, lighter than Docker Desktop on macOS. |
-| 2026-02-18 | All tasks model:opus | Sensitive infrastructure work touching the dispatch core. Wrong decisions here break all autonomous orchestration. Opus-tier reasoning is warranted. |
+| 2026-02-18 | Containerization as Phase 5 (after everything else is tested)  | Containers add complexity (networking, volume mounts, token management). Only pursue after the single-host dual-CLI path is proven stable.                                                            |
+| 2026-02-18 | `CLAUDE_CODE_OAUTH_TOKEN` env var for container auth           | `claude setup-token` generates long-lived tokens specifically for headless/CI use. Each container gets a unique token from a separate subscription account.                                           |
+| 2026-02-18 | OrbStack as container runtime                                  | Already installed (v2.0.5), supports both local containers and remote VMs, lighter than Docker Desktop on macOS.                                                                                      |
+| 2026-02-18 | All tasks model:opus                                           | Sensitive infrastructure work touching the dispatch core. Wrong decisions here break all autonomous orchestration. Opus-tier reasoning is warranted.                                                  |
 
 #### Risks
 
-| Risk | Likelihood | Impact | Mitigation |
-|------|-----------|--------|------------|
-| Claude CLI behavior differs from OpenCode in subtle ways | Medium | High | Phase 0.7 integration test catches differences before production use |
-| OAuth token expires mid-batch | Medium | Medium | Auth failure detection + automatic fallback to OpenCode + API key |
-| Claude Code updates break our generated config | Low | Medium | `update_claude_config()` is idempotent, re-runs on every `aidevops update` |
-| Claude Code rewrites "OpenCode" in AGENTS.md at load time | Confirmed | Low | Cosmetic only — doesn't affect functionality. Documented as known behavior. |
-| Container networking issues (DNS, port conflicts) | Medium | Medium | OrbStack handles networking; fallback to host-only dispatch |
-| Multiple subscriptions = multiple billing accounts to manage | Low | Low | Container pool config tracks which token belongs to which account |
-| Rate limit changes by Anthropic | Low | High | Per-container rate tracking adapts automatically; pool manager skips limited containers |
+| Risk                                                         | Likelihood | Impact | Mitigation                                                                              |
+| ------------------------------------------------------------ | ---------- | ------ | --------------------------------------------------------------------------------------- |
+| Claude CLI behavior differs from OpenCode in subtle ways     | Medium     | High   | Phase 0.7 integration test catches differences before production use                    |
+| OAuth token expires mid-batch                                | Medium     | Medium | Auth failure detection + automatic fallback to OpenCode + API key                       |
+| Claude Code updates break our generated config               | Low        | Medium | `update_claude_config()` is idempotent, re-runs on every `aidevops update`              |
+| Claude Code rewrites "OpenCode" in AGENTS.md at load time    | Confirmed  | Low    | Cosmetic only — doesn't affect functionality. Documented as known behavior.             |
+| Container networking issues (DNS, port conflicts)            | Medium     | Medium | OrbStack handles networking; fallback to host-only dispatch                             |
+| Multiple subscriptions = multiple billing accounts to manage | Low        | Low    | Container pool config tracks which token belongs to which account                       |
+| Rate limit changes by Anthropic                              | Low        | High   | Per-container rate tracking adapts automatically; pool manager skips limited containers |
 
 #### Surprises & Discoveries
 
@@ -1043,6 +1112,7 @@ Cron (*/2) → supervisor-helper.sh pulse
 **AI integration points today:** Only `evaluate.sh` uses AI (to assess worker output quality). Dispatch is purely mechanical. No phase reasons about what to do next.
 
 **Existing infrastructure to leverage (not reinvent):**
+
 - `memory-helper.sh` — cross-session learning, pattern storage, recall
 - `pattern-tracker-helper.sh` — success/failure rates by model tier, task type
 - `mail-helper.sh` — async inter-agent communication, status reports
@@ -1182,19 +1252,19 @@ Specific AI-driven audits that run as part of Phase 13:
 
 #### Decision Log
 
-| Date | Decision | Rationale |
-|------|----------|-----------|
-| 2026-02-18 | Additive phase (13), not replacement of existing phases | Mechanical phases are fast and reliable. AI adds reasoning, doesn't replace plumbing. |
-| 2026-02-18 | Opus tier for reasoning, sonnet for routine checks | Complex reasoning (issue triage, priority assessment) needs opus. Simple checks (is PR merged?) don't. |
-| 2026-02-18 | 30-minute default interval | Balance between responsiveness and cost. 48 opus calls/day at ~$0.50 each = ~$24/day. Configurable. |
-| 2026-02-18 | Structured JSON action output, not free-form | Enables validation before execution. AI proposes, executor validates and acts. |
-| 2026-02-18 | Read-only first (Phase 13a), write actions later (Phase 13b) | Build trust in AI reasoning before letting it modify state. |
-| 2026-02-18 | Subtask dispatch fix (t1085.4) as part of this plan | Directly addresses the stalled t1081/t1082 subtasks and is a prerequisite for AI-created subtasks. |
-| 2026-02-18 | Use mailbox + memory + patterns, don't reinvent | ai-context.sh was building its own data gathering. Existing infrastructure (memory recall, pattern tracker, mailbox) already solves cross-session learning and inter-agent comms. Wire them together instead. |
-| 2026-02-18 | AI reasoning should store decisions in memory | Without memory, each reasoning cycle is stateless — no continuity, no learning from past decisions. Memory gives the AI a "what did I do last time?" capability. |
-| 2026-02-18 | Add self-improvement as a core reasoning area | The supervisor should proactively identify efficiency gaps (token waste, model mismatches, missing automation, repeated failures) and create tasks to fix them. This is the path to maximum utility from minimal token use. |
-| 2026-02-18 | Phase 14 (not 13) for AI reasoning | t1082.2 (PR #1610) claimed Phase 13 for skill update PRs. AI reasoning becomes Phase 14. |
-| 2026-02-18 | Add escalate_model action type | When a task fails at sonnet tier, the AI should be able to recommend escalation to opus (or de-escalation from opus to sonnet for simple tasks). Pattern tracker data drives these recommendations. |
+| Date       | Decision                                                     | Rationale                                                                                                                                                                                                                   |
+| ---------- | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-02-18 | Additive phase (13), not replacement of existing phases      | Mechanical phases are fast and reliable. AI adds reasoning, doesn't replace plumbing.                                                                                                                                       |
+| 2026-02-18 | Opus tier for reasoning, sonnet for routine checks           | Complex reasoning (issue triage, priority assessment) needs opus. Simple checks (is PR merged?) don't.                                                                                                                      |
+| 2026-02-18 | 30-minute default interval                                   | Balance between responsiveness and cost. 48 opus calls/day at ~$0.50 each = ~$24/day. Configurable.                                                                                                                         |
+| 2026-02-18 | Structured JSON action output, not free-form                 | Enables validation before execution. AI proposes, executor validates and acts.                                                                                                                                              |
+| 2026-02-18 | Read-only first (Phase 13a), write actions later (Phase 13b) | Build trust in AI reasoning before letting it modify state.                                                                                                                                                                 |
+| 2026-02-18 | Subtask dispatch fix (t1085.4) as part of this plan          | Directly addresses the stalled t1081/t1082 subtasks and is a prerequisite for AI-created subtasks.                                                                                                                          |
+| 2026-02-18 | Use mailbox + memory + patterns, don't reinvent              | ai-context.sh was building its own data gathering. Existing infrastructure (memory recall, pattern tracker, mailbox) already solves cross-session learning and inter-agent comms. Wire them together instead.               |
+| 2026-02-18 | AI reasoning should store decisions in memory                | Without memory, each reasoning cycle is stateless — no continuity, no learning from past decisions. Memory gives the AI a "what did I do last time?" capability.                                                            |
+| 2026-02-18 | Add self-improvement as a core reasoning area                | The supervisor should proactively identify efficiency gaps (token waste, model mismatches, missing automation, repeated failures) and create tasks to fix them. This is the path to maximum utility from minimal token use. |
+| 2026-02-18 | Phase 14 (not 13) for AI reasoning                           | t1082.2 (PR #1610) claimed Phase 13 for skill update PRs. AI reasoning becomes Phase 14.                                                                                                                                    |
+| 2026-02-18 | Add escalate_model action type                               | When a task fails at sonnet tier, the AI should be able to recommend escalation to opus (or de-escalation from opus to sonnet for simple tasks). Pattern tracker data drives these recommendations.                         |
 
 #### Surprises & Discoveries
 
@@ -1218,6 +1288,7 @@ Specific AI-driven audits that run as part of Phase 13:
 Two-layer approach:
 
 **Layer 1 (t1081): User-side daily refresh**
+
 - `auto-update-helper.sh cmd_check()` already runs every 10 min via cron
 - After the existing version check + `setup.sh --non-interactive`, add a daily skill check
 - Gate: check `last_skill_check` timestamp in `auto-update-state.json`, skip if <24h
@@ -1226,6 +1297,7 @@ Two-layer approach:
 - Repo version wins on next `aidevops update` (no conflict risk)
 
 **Layer 2 (t1082): Maintainer PR pipeline**
+
 - New `skill-update-helper.sh pr` subcommand
 - For each skill with upstream changes: create worktree, re-import via `add-skill-helper.sh add <url> --force`, commit, open PR
 - PR goes through normal pr-loop (CI, review, merge)
@@ -1233,12 +1305,14 @@ Two-layer approach:
 - One PR per skill for independent review (configurable)
 
 **Key decisions:**
+
 - [2026-02-17] Daily frequency (not hourly) to respect GitHub API rate limits and avoid churn
 - [2026-02-17] User auto-update is a "preview" -- repo version is authoritative
 - [2026-02-17] One PR per skill (not batched) for independent review cycles
 - [2026-02-17] Supervisor phase is opt-in, not default (maintainers enable explicitly)
 
 **Implementation order:**
+
 1. t1081.2 -- Ensure skill-update-helper.sh works headlessly
 2. t1081.1 -- Wire daily check into auto-update-helper.sh
 3. t1081.3 -- State file schema update
@@ -1307,6 +1381,7 @@ cloudron-helper.sh uninstall-app <server> <app-id>
 ```
 
 API calls:
+
 - `POST /api/v1/apps/install` — `{ "appStoreId": "io.element.synapse", "subdomain": "matrix", "domain": "yourdomain.com" }`
 - `GET /api/v1/apps/:id` — poll until `installationState === "installed"` and `runState === "running"`
 - `DELETE /api/v1/apps/:id/uninstall`
@@ -1471,15 +1546,15 @@ Output: normalised markdown + optional .pageindex.json
 
 #### Decision Log
 
-| Date | Decision | Rationale |
-|------|----------|-----------|
-| 2026-02-14 | Post-conversion step, not per-converter | Applies uniformly to all converters; avoids duplicating logic in each converter function |
-| 2026-02-14 | Subcommand in document-creation-helper.sh, not separate script | Keeps document pipeline unified; reuses existing Python venv |
-| 2026-02-14 | Auto-enabled by default with --no-normalise opt-out | Normalised output is always better; users who need raw output can skip |
+| Date       | Decision                                                       | Rationale                                                                                |
+| ---------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| 2026-02-14 | Post-conversion step, not per-converter                        | Applies uniformly to all converters; avoids duplicating logic in each converter function |
+| 2026-02-14 | Subcommand in document-creation-helper.sh, not separate script | Keeps document pipeline unified; reuses existing Python venv                             |
+| 2026-02-14 | Auto-enabled by default with --no-normalise opt-out            | Normalised output is always better; users who need raw output can skip                   |
 
 #### Surprises & Discoveries
 
-*(none yet)*
+_(none yet)_
 
 ### [2026-02-13] Continual Improvement Audit Loop
 
@@ -1491,14 +1566,14 @@ Output: normalised markdown + optional .pageindex.json
 
 Close the loop between daily code audits and automated fixes so that all quality badges trend toward maximum scores every day:
 
-| Badge | Current | Target | Source |
-|-------|---------|--------|--------|
-| Code Quality Analysis | failing | passing | GitHub Actions CI (SonarCloud scan) |
-| Quality Gate | passed | passed | SonarCloud |
-| CodeFactor | A | A | CodeFactor |
-| Maintainability | D | A | Codacy |
-| Code Quality | A | A | Qlty |
-| CodeRabbit | AI Reviews | AI Reviews | CodeRabbit (issue #753) |
+| Badge                 | Current    | Target     | Source                              |
+| --------------------- | ---------- | ---------- | ----------------------------------- |
+| Code Quality Analysis | failing    | passing    | GitHub Actions CI (SonarCloud scan) |
+| Quality Gate          | passed     | passed     | SonarCloud                          |
+| CodeFactor            | A          | A          | CodeFactor                          |
+| Maintainability       | D          | A          | Codacy                              |
+| Code Quality          | A          | A          | Qlty                                |
+| CodeRabbit            | AI Reviews | AI Reviews | CodeRabbit (issue #753)             |
 
 The **Maintainability D** is the primary gap. The CI failure is a SonarCloud PR analysis error (not a code quality issue).
 
@@ -1581,13 +1656,13 @@ CREATE TABLE audit_snapshots (
 
 **Severity mapping across services:**
 
-| Our Scale | CodeRabbit | Codacy | SonarCloud | CodeFactor |
-|-----------|-----------|--------|------------|------------|
-| critical | Critical (emoji) | Critical | BLOCKER | — |
-| high | Major (emoji) | Error | CRITICAL | Major |
-| medium | Minor (emoji) | Warning | MAJOR | Minor |
-| low | Suggestion | Info | MINOR | Style |
-| info | — | — | INFO | — |
+| Our Scale | CodeRabbit       | Codacy   | SonarCloud | CodeFactor |
+| --------- | ---------------- | -------- | ---------- | ---------- |
+| critical  | Critical (emoji) | Critical | BLOCKER    | —          |
+| high      | Major (emoji)    | Error    | CRITICAL   | Major      |
+| medium    | Minor (emoji)    | Warning  | MAJOR      | Minor      |
+| low       | Suggestion       | Info     | MINOR      | Style      |
+| info      | —                | —        | INFO       | —          |
 
 **Service API endpoints:**
 
@@ -1649,13 +1724,13 @@ CREATE TABLE audit_snapshots (
 
 #### Decision Log
 
-| Date | Decision | Rationale |
-|------|----------|-----------|
-| 2026-02-13 | Unified SQLite DB, not per-service DBs | Single query point for dedup, trend, and dashboard. CodeRabbit collector keeps its own DB for backward compat but also writes to unified. |
-| 2026-02-13 | Collectors as functions in code-audit-helper.sh, not separate scripts | Reduces file proliferation. Each collector is ~100-150 lines. The orchestrator calls them. |
-| 2026-02-13 | Defer CodeFactor collector | Already A-grade. Focus on Codacy (D maintainability) and SonarCloud (CI failure) first. |
-| 2026-02-13 | Keep CodeRabbit pulse on issue #753 | Async model works well. CodeRabbit reviews via GitHub comments, collector picks up results. No change needed. |
-| 2026-02-13 | Rename task-creator to audit-task-creator | Reflects multi-source scope. Symlink preserves backward compat for any scripts referencing old name. |
+| Date       | Decision                                                              | Rationale                                                                                                                                 |
+| ---------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-02-13 | Unified SQLite DB, not per-service DBs                                | Single query point for dedup, trend, and dashboard. CodeRabbit collector keeps its own DB for backward compat but also writes to unified. |
+| 2026-02-13 | Collectors as functions in code-audit-helper.sh, not separate scripts | Reduces file proliferation. Each collector is ~100-150 lines. The orchestrator calls them.                                                |
+| 2026-02-13 | Defer CodeFactor collector                                            | Already A-grade. Focus on Codacy (D maintainability) and SonarCloud (CI failure) first.                                                   |
+| 2026-02-13 | Keep CodeRabbit pulse on issue #753                                   | Async model works well. CodeRabbit reviews via GitHub comments, collector picks up results. No change needed.                             |
+| 2026-02-13 | Rename task-creator to audit-task-creator                             | Reflects multi-source scope. Symlink preserves backward compat for any scripts referencing old name.                                      |
 
 #### Surprises & Discoveries
 
@@ -1679,6 +1754,7 @@ Automate the detection and cleanup of obsolete git stashes that accumulate from 
 **Problem:** Over time, stashes accumulate silently (9 found in this session). Most are autostashes from rebase cycles containing single-line TODO.md changes that have long since been superseded. Manually auditing each stash is tedious — you have to `git stash show` each one, cross-reference with HEAD, and decide. This is exactly the kind of routine maintenance that should be automated.
 
 **Safety constraint:** Users may have intentionally stashed work-in-progress. The tool must distinguish between:
+
 - **Autostashes** (from `--autostash`) — safe to drop if content is in HEAD
 - **Superseded changes** — files modified more recently in git history
 - **User-created stashes** — named stashes or stashes with non-planning files that aren't in HEAD
@@ -1713,11 +1789,13 @@ stash-audit-helper.sh clean --dry-run # Show what would be dropped
 ```
 
 **Integration points:**
+
 - Supervisor pulse Phase 6 (cleanup) — call `stash-audit-helper.sh clean` after worktree cleanup
 - `session-review` workflow — show stash status as part of session end checklist
 - `worktree-helper.sh clean` — audit stashes after removing merged worktrees
 
 **Safety nets:**
+
 - `git fsck --unreachable` can recover dropped stashes for ~30 days (document this)
 - `--dry-run` is the default for any automated invocation (supervisor must pass `--auto` to actually drop)
 - Log every drop to `~/.aidevops/logs/stash-audit.log` with stash content summary
@@ -1750,15 +1828,15 @@ Split oversized shell scripts into logical modules to improve maintainability, r
 
 **Scripts by size (500+ lines):**
 
-| Script | Lines | Priority | Notes |
-|--------|-------|----------|-------|
-| supervisor-helper.sh | 14,644 | Critical | Crashes linter UIs, impossible to review |
-| memory-helper.sh | 2,505 | High | Growing, clear domain boundaries |
-| issue-sync-helper.sh | 1,971 | Medium | Moderate size, self-contained |
-| keyword-research-helper.sh | 1,809 | Low | Domain-specific, less churn |
-| generate-opencode-commands.sh | 1,625 | Low | Codegen, rarely edited |
-| quality-sweep-helper.sh | 1,603 | Low | Stable |
-| 15+ scripts at 1,100-1,500 | — | Low | Monitor, split if they grow |
+| Script                        | Lines  | Priority | Notes                                    |
+| ----------------------------- | ------ | -------- | ---------------------------------------- |
+| supervisor-helper.sh          | 14,644 | Critical | Crashes linter UIs, impossible to review |
+| memory-helper.sh              | 2,505  | High     | Growing, clear domain boundaries         |
+| issue-sync-helper.sh          | 1,971  | Medium   | Moderate size, self-contained            |
+| keyword-research-helper.sh    | 1,809  | Low      | Domain-specific, less churn              |
+| generate-opencode-commands.sh | 1,625  | Low      | Codegen, rarely edited                   |
+| quality-sweep-helper.sh       | 1,603  | Low      | Stable                                   |
+| 15+ scripts at 1,100-1,500    | —      | Low      | Monitor, split if they grow              |
 
 #### Approach: Source-Based Module Architecture
 
@@ -1810,11 +1888,11 @@ scripts/
 
 #### Decision Log
 
-| Date | Decision | Rationale |
-|------|----------|-----------|
+| Date       | Decision                                       | Rationale                                                                     |
+| ---------- | ---------------------------------------------- | ----------------------------------------------------------------------------- |
 | 2026-02-12 | Source-based modules, not separate executables | Preserves single CLI interface, avoids IPC complexity, globals work naturally |
-| 2026-02-12 | Start with supervisor-helper.sh only | Highest impact, others can wait |
-| 2026-02-12 | Eager source (not lazy) | Simpler, shell startup cost is negligible for CLI tools |
+| 2026-02-12 | Start with supervisor-helper.sh only           | Highest impact, others can wait                                               |
+| 2026-02-12 | Eager source (not lazy)                        | Simpler, shell startup cost is negligible for CLI tools                       |
 
 #### Surprises & Discoveries
 
@@ -1842,38 +1920,38 @@ Add comprehensive email testing capabilities to aidevops, covering both visual r
 
 **Email on Acid capabilities mapped to implementation tiers:**
 
-| EOA Feature | Our Implementation | Tier |
-|-------------|-------------------|------|
-| 100+ client screenshots (Outlook, Gmail, Apple Mail, mobile) | EOA API v5 — POST HTML, poll results, download screenshots | API (paid) |
-| Webmail rendering (Gmail/Outlook.com/Yahoo in Chrome/Edge/Firefox) | Playwright device emulation + logged-in webmail accounts | Local (free) |
-| Dark mode previews | Playwright `colorScheme: 'dark'` + EOA dark mode clients | Both |
-| Mobile viewport previews | Playwright 100+ device presets (iPhone/Pixel/iPad) | Local (free) |
-| Outlook Word rendering engine | EOA API only — no local emulator exists | API only |
-| Native mobile app rendering (Gmail app, Outlook app) | EOA API only — proprietary rendering engines | API only |
-| Spam filter testing (SpamAssassin, Barracuda, etc.) | EOA spam API (3 methods: eoa, smtp, seed) | API (paid) |
-| Accessibility checks (WCAG, contrast ratio, table roles) | axe-core via Playwright + custom email-specific rules | Local (free) |
-| Image validation (broken src, alt text, file sizes) | HTML parsing + URL validation | Local (free) |
-| Link validation | Playwright crawl or curl | Local (free) |
-| CSS inlining check | HTML parsing | Local (free) |
-| Subject line analysis | Custom rules (length, spam triggers, personalization) | Local (free) |
-| Unsubscribe header validation | Header parsing | Local (free) |
-| HTML weight/size analysis | File size + ratio calculations | Local (free) |
-| Campaign Precheck workflow | Orchestrated multi-step check | Local (free) |
+| EOA Feature                                                        | Our Implementation                                         | Tier         |
+| ------------------------------------------------------------------ | ---------------------------------------------------------- | ------------ |
+| 100+ client screenshots (Outlook, Gmail, Apple Mail, mobile)       | EOA API v5 — POST HTML, poll results, download screenshots | API (paid)   |
+| Webmail rendering (Gmail/Outlook.com/Yahoo in Chrome/Edge/Firefox) | Playwright device emulation + logged-in webmail accounts   | Local (free) |
+| Dark mode previews                                                 | Playwright `colorScheme: 'dark'` + EOA dark mode clients   | Both         |
+| Mobile viewport previews                                           | Playwright 100+ device presets (iPhone/Pixel/iPad)         | Local (free) |
+| Outlook Word rendering engine                                      | EOA API only — no local emulator exists                    | API only     |
+| Native mobile app rendering (Gmail app, Outlook app)               | EOA API only — proprietary rendering engines               | API only     |
+| Spam filter testing (SpamAssassin, Barracuda, etc.)                | EOA spam API (3 methods: eoa, smtp, seed)                  | API (paid)   |
+| Accessibility checks (WCAG, contrast ratio, table roles)           | axe-core via Playwright + custom email-specific rules      | Local (free) |
+| Image validation (broken src, alt text, file sizes)                | HTML parsing + URL validation                              | Local (free) |
+| Link validation                                                    | Playwright crawl or curl                                   | Local (free) |
+| CSS inlining check                                                 | HTML parsing                                               | Local (free) |
+| Subject line analysis                                              | Custom rules (length, spam triggers, personalization)      | Local (free) |
+| Unsubscribe header validation                                      | Header parsing                                             | Local (free) |
+| HTML weight/size analysis                                          | File size + ratio calculations                             | Local (free) |
+| Campaign Precheck workflow                                         | Orchestrated multi-step check                              | Local (free) |
 
 **Existing email agents (naming context):**
 
-| File | Purpose | Naming Pattern |
-|------|---------|---------------|
-| `services/email/email-health-check.md` | DNS/auth/blacklist validation | `email-health-check` |
-| `services/email/ses.md` | SES sending provider | `ses` |
-| `content/distribution/email.md` | Newsletter strategy/content | `email` (content) |
-| `services/hosting/cloudflare-platform/references/email-routing/` | CF email routing | infrastructure |
+| File                                                             | Purpose                       | Naming Pattern       |
+| ---------------------------------------------------------------- | ----------------------------- | -------------------- |
+| `services/email/email-health-check.md`                           | DNS/auth/blacklist validation | `email-health-check` |
+| `services/email/ses.md`                                          | SES sending provider          | `ses`                |
+| `content/distribution/email.md`                                  | Newsletter strategy/content   | `email` (content)    |
+| `services/hosting/cloudflare-platform/references/email-routing/` | CF email routing              | infrastructure       |
 
 **New agents follow the same `services/email/` pattern:**
 
-| New File | Purpose |
-|----------|---------|
-| `services/email/email-design-test.md` | Visual rendering testing |
+| New File                                | Purpose                       |
+| --------------------------------------- | ----------------------------- |
+| `services/email/email-design-test.md`   | Visual rendering testing      |
 | `services/email/email-delivery-test.md` | Spam filter + inbox placement |
 
 **Email lifecycle in aidevops after this plan:**
@@ -1964,40 +2042,40 @@ Add comprehensive accessibility and colour contrast testing to aidevops, coverin
 
 **WebAIM tools mapped to implementation:**
 
-| WebAIM Tool | Our Implementation | Cost |
-|-------------|-------------------|------|
-| Contrast Checker | WebAIM API (fcolor/bcolor params, returns ratio + AA/AAA pass/fail) | Free, no key |
-| Link Contrast Checker | WebAIM API + 3:1 ratio check for links distinguished by colour alone | Free, no key |
-| WAVE | WAVE API (wave.webaim.org/api/) — reporttype 1-4, returns errors/contrast/alerts/features/structure/ARIA with XPath/CSS selectors | Paid ($0.025-0.04/credit, 100 free) |
-| WCAG 2.2 Checklist | axe-core rules mapped to WCAG success criteria, compliance report generator | Free (axe-core OSS) |
+| WebAIM Tool           | Our Implementation                                                                                                                | Cost                                |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| Contrast Checker      | WebAIM API (fcolor/bcolor params, returns ratio + AA/AAA pass/fail)                                                               | Free, no key                        |
+| Link Contrast Checker | WebAIM API + 3:1 ratio check for links distinguished by colour alone                                                              | Free, no key                        |
+| WAVE                  | WAVE API (wave.webaim.org/api/) — reporttype 1-4, returns errors/contrast/alerts/features/structure/ARIA with XPath/CSS selectors | Paid ($0.025-0.04/credit, 100 free) |
+| WCAG 2.2 Checklist    | axe-core rules mapped to WCAG success criteria, compliance report generator                                                       | Free (axe-core OSS)                 |
 
 **WCAG 2.2 coverage by tool:**
 
-| WCAG Principle | axe-core | WAVE | Lighthouse | Manual Review |
-|----------------|----------|------|------------|---------------|
-| 1. Perceivable (alt text, contrast, adaptable, distinguishable) | Strong | Strong | Partial | Captions, audio descriptions |
-| 2. Operable (keyboard, timing, seizures, navigation) | Partial | Partial | Partial | Keyboard testing, timing |
-| 3. Understandable (readable, predictable, input assistance) | Partial | Partial | Minimal | Language, error prevention |
-| 4. Robust (compatible, parsing, name/role/value) | Strong | Strong | Partial | AT compatibility |
+| WCAG Principle                                                  | axe-core | WAVE    | Lighthouse | Manual Review                |
+| --------------------------------------------------------------- | -------- | ------- | ---------- | ---------------------------- |
+| 1. Perceivable (alt text, contrast, adaptable, distinguishable) | Strong   | Strong  | Partial    | Captions, audio descriptions |
+| 2. Operable (keyboard, timing, seizures, navigation)            | Partial  | Partial | Partial    | Keyboard testing, timing     |
+| 3. Understandable (readable, predictable, input assistance)     | Partial  | Partial | Minimal    | Language, error prevention   |
+| 4. Robust (compatible, parsing, name/role/value)                | Strong   | Strong  | Partial    | AT compatibility             |
 
 **Contrast ratio thresholds (WCAG 2.1):**
 
-| Criterion | Level | Normal Text | Large Text | UI Components |
-|-----------|-------|-------------|------------|---------------|
-| SC 1.4.3 Contrast (Minimum) | AA | 4.5:1 | 3:1 | — |
-| SC 1.4.6 Contrast (Enhanced) | AAA | 7:1 | 4.5:1 | — |
-| SC 1.4.11 Non-text Contrast | AA | — | — | 3:1 |
+| Criterion                    | Level | Normal Text | Large Text | UI Components |
+| ---------------------------- | ----- | ----------- | ---------- | ------------- |
+| SC 1.4.3 Contrast (Minimum)  | AA    | 4.5:1       | 3:1        | —             |
+| SC 1.4.6 Contrast (Enhanced) | AAA   | 7:1         | 4.5:1      | —             |
+| SC 1.4.11 Non-text Contrast  | AA    | —           | —          | 3:1           |
 
 Large text = >= 18pt (24px) or >= 14pt (18.66px) bold.
 
 **Existing tools that touch accessibility:**
 
-| Tool | What it does | Gap |
-|------|-------------|-----|
-| `pagespeed-helper.sh` | Runs Lighthouse (includes a11y category) | A11y buried in report, no dedicated command, no WCAG mapping |
-| `axe-cli.md` | iOS Simulator automation tool | NOT axe-core web accessibility — naming collision only |
-| `playwright-emulation.md` | 100+ device presets, forced-colors/high-contrast mode | No a11y scanning, just visual emulation |
-| `email-health-check-helper.sh` | DNS/auth/blacklist validation | No content-level a11y checks |
+| Tool                           | What it does                                          | Gap                                                          |
+| ------------------------------ | ----------------------------------------------------- | ------------------------------------------------------------ |
+| `pagespeed-helper.sh`          | Runs Lighthouse (includes a11y category)              | A11y buried in report, no dedicated command, no WCAG mapping |
+| `axe-cli.md`                   | iOS Simulator automation tool                         | NOT axe-core web accessibility — naming collision only       |
+| `playwright-emulation.md`      | 100+ device presets, forced-colors/high-contrast mode | No a11y scanning, just visual emulation                      |
+| `email-health-check-helper.sh` | DNS/auth/blacklist validation                         | No content-level a11y checks                                 |
 
 **New agent location:** `services/accessibility/accessibility-audit.md` — new directory under services, parallel to `services/email/`, `services/hosting/`, etc.
 
@@ -2110,11 +2188,13 @@ Redesign the content creation agent layer to support multi-media (text, image, v
 **Problem:** Content isn't "a video" or "a blog post" -- it's a story expressed through different media and distributed across channels. The same research, narrative, and hooks can become a YouTube video, a blog post, a podcast episode, a social thread, a newsletter, a slideshow, or a book chapter. Current agent structure treats each output format as independent, duplicating research and strategy work.
 
 **Knowledge sources ingested (session 2026-02-09):**
+
 - 14 AI content creation guides (Miko's Lab) covering: niche selection, audience research (Reddit mining, 11-dimension framework), competitor reverse-engineering (Gemini 3), facial engineering for character consistency, Sora 2 Pro prompt structure (6-section master template), Veo 3.1 ingredients-to-video, seed bracketing (60% cost reduction), 8K camera model prompting, emotional block cues for natural AI speech, Nanobanana Pro JSON prompts for image gen, voice pipeline (CapCut -> ElevenLabs), slideshow workflows, UGC conversion frameworks, content agency production pipelines, A/B hook testing methodology
 - YouTube competitor research system (channel intel, topic research, script writing, SEO optimization) -- merged as PR #811
 - YouTube Data API v3 integration (youtube-helper.sh) with SA auth, quota tracking, 8 commands
 
 **Existing agents that touch content creation:**
+
 - `youtube.md` + `youtube/` -- YouTube-specific (channel-intel, topic-research, script-writer, optimizer, pipeline)
 - `video.md` + `tools/video/` -- Remotion, Higgsfield, yt-dlp, video prompt design
 - `tools/vision/` -- Image gen, understanding, editing
@@ -2249,6 +2329,7 @@ Create `issue-sync-helper.sh` — a dedicated bi-directional sync tool between T
 #### Context
 
 **Existing pieces to consolidate:**
+
 - `supervisor-helper.sh` `create_github_issue()` (line 4612) — creates bare-bones issues from task ID + one-liner
 - `supervisor-helper.sh` `update_todo_with_issue_ref()` (line 4712) — adds `ref:GH#NNN` to TODO.md
 - `github-cli-helper.sh` `create_issue()` / `close_issue()` — generic gh wrapper, no TODO awareness
@@ -2343,12 +2424,14 @@ Create a plugin architecture for aidevops that allows private extension repos (`
 #### Context from Discussion
 
 **Repos to support:**
+
 - `~/Git/aidevops-pro` (github.com/marcusquinn/aidevops-pro) - Pro features
 - `~/Git/aidevops-anon` (gitea.marcusquinn.com/marcus/aidevops-anon) - Anonymous/private features
 
 **Key design decisions:**
 
 1. **Namespaced directories** - Plugins get their own namespace to avoid clashes:
+
    ```
    ~/.aidevops/agents/
    ├── tools/              # Main repo
@@ -2361,6 +2444,7 @@ Create a plugin architecture for aidevops that allows private extension repos (`
    ```
 
 2. **Plugin structure mirrors main** - Same `.agents/` pattern:
+
    ```
    ~/Git/aidevops-pro/
    ├── AGENTS.md           # Points to main framework
@@ -2375,17 +2459,20 @@ Create a plugin architecture for aidevops that allows private extension repos (`
    ```
 
 3. **Plugin AGENTS.md points to base** - Minimal, references main framework:
+
    ```markdown
    # aidevops-pro Plugin
-   
+
    For framework documentation: `~/.aidevops/agents/AGENTS.md`
    For architecture: `~/.aidevops/agents/aidevops/architecture.md`
-   
+
    ## Plugin Development
+
    This plugin deploys to `~/.aidevops/agents/pro/` (namespaced).
    ```
 
 4. **`.aidevops.json` plugin config**:
+
    ```json
    {
      "version": "2.93.2",
@@ -2401,18 +2488,21 @@ Create a plugin architecture for aidevops that allows private extension repos (`
 5. **`aidevops update` deploys main + plugins** - Single command updates everything
 
 **CI/CD for private repos (simplified):**
+
 - No SonarCloud/Codacy/CodeRabbit (require public repos for free tier)
 - Local-only: `linters-local.sh` (ShellCheck, Secretlint, Markdownlint)
 - Minimal GHA: ShellCheck + Secretlint + Markdownlint only
 - Gitea: Local linting only (or Gitea Actions if enabled)
 
 **Development workflow:**
+
 - Work in plugin repo directly (`~/Git/aidevops-pro/`)
 - Run `aidevops update` to redeploy all (main + plugins)
 - Plugin changes immediately visible in `~/.aidevops/agents/pro/`
 - AI assistant reads plugin AGENTS.md which points to main framework docs
 
 **Symlink option for rapid iteration:**
+
 - `.plugin-dev/` in main repo (gitignored)
 - Symlinks to plugin `.agents/` directories
 - Useful when testing plugin content against main repo changes
@@ -2503,15 +2593,18 @@ Address findings from Claude Opus 4.6 full codebase review. Harden shell script 
 #### Context from Review
 
 **Review corrections (verified against actual codebase):**
+
 - Review claimed 168/170 scripts missing `set -e` -- actual count is **70/170** (100 already have it)
 - Review claimed 17% shared-constants.sh adoption -- confirmed **29/170 scripts** source it
 - Review claimed 95 scripts with blanket ShellCheck disable -- confirmed **95 scripts**
 - Review claimed 12 dead fix scripts -- confirmed **12 scripts with 0 non-script references**, all only touched by `.agent->.agents` rename commit
 
 **Rejected recommendation:**
+
 - **#10 (organize scripts by domain subdirectories)** -- REJECTED. Scripts are intentionally cross-domain (e.g., `seo-export-helper.sh` used by SEO, git, and content workflows). Flat namespace with `{service}-helper.sh` naming convention is the design pattern. Subdirectories would create import path complexity and break existing references.
 
 **Key design principles for all changes:**
+
 1. Read existing code to understand intent before modifying
 2. Non-destructive: archive, don't delete; preserve knowledge
 3. Test for regressions after every change
@@ -2611,12 +2704,14 @@ Enable cross-provider model routing so that any aidevops session can dispatch ta
 #### Context from Discussion
 
 **Current state:**
+
 - `model-routing.md` exists as a design doc with 5 tiers (haiku/flash/sonnet/pro/opus) and routing rules
 - All 195 subagents have `model:` in YAML frontmatter, but it's advisory only
 - `runner-helper.sh` supports `--model` but hardcodes `DEFAULT_MODEL` to a single Claude model
 - No fallback, no availability checking, no quality-based escalation
 
 **Key discovery (Context7 research):**
+
 - OpenCode already supports per-agent model selection natively across 75+ providers
 - The Task tool does NOT accept a model parameter -- by design
 - Instead, each subagent definition in `opencode.json` can specify its own `model:` field
@@ -2625,6 +2720,7 @@ Enable cross-provider model routing so that any aidevops session can dispatch ta
 - No application-level automatic fallback exists in OpenCode itself
 
 **Implication:** We don't need to patch the Task tool. We need to:
+
 1. Define model-specific subagents in opencode.json (e.g., `gemini-reviewer`, `claude-auditor`)
 2. Map our tier system to concrete agent definitions
 3. Build fallback/escalation logic in supervisor-helper.sh
@@ -2744,6 +2840,7 @@ Replace plaintext `mcp-env.sh` credential storage with gopass (GPG-encrypted, gi
 Evaluated 5 tools: gopass (6.7k stars, 8+ years, GPG/age, team-ready), psst (61 stars, AI-native but v0.3.0), mcp-secrets-vault (4 stars, env var wrapper), rsec (7 stars, cloud vaults only), cross-keychain (library, not CLI). gopass selected as primary for maturity, zero runtime deps, team sharing, and ecosystem (browser integration, git credentials, Kubernetes, Terraform). psst documented as alternative for solo devs who prefer simpler UX.
 
 Key design decisions:
+
 - gopass as encrypted backend, thin shell wrapper for AI-native features (subprocess injection + output redaction)
 - Rename mcp-env.sh to credentials.sh (83 files, 261 references) with backward-compatible symlink
 - credentials.sh kept as fallback for MCP server launching and non-gopass workflows
@@ -2824,6 +2921,7 @@ Eliminate `curl | sh` installs by downloading scripts to disk, verifying integri
 #### Context from Discussion
 
 Targets include:
+
 - `setup.sh` (multiple install blocks)
 - `.agents/scripts/qlty-cli.sh`
 - `.agents/scripts/coderabbit-cli.sh`
@@ -2875,11 +2973,12 @@ Build a stateless supervisor pulse that manages long-running parallel objectives
 Discovered during Tabby tab dispatch experiments that aidevops has all the worker components but no supervisor loop. The gap: nothing evaluates whether a dispatched task succeeded, retries on failure, or updates TODO.md on completion. This is the "brain stem" connecting the existing "limbs."
 
 Key design decisions:
+
 - Supervisor is stateless bash pulse (not a long-running AI session) for token efficiency
 - State lives in SQLite (supervisor.db), not in-memory
 - Workers are opencode run in isolated worktrees
 - Evaluation uses cheap model (Sonnet) for ambiguous outcomes
-- Cron-triggered (*/5 min) or fswatch on TODO.md
+- Cron-triggered (\*/5 min) or fswatch on TODO.md
 
 #### Progress
 
@@ -2985,18 +3084,21 @@ Create an optional OpenCode plugin that provides native integration for aidevops
 #### Context from Discussion
 
 **Key decisions:**
+
 - Plugin is **optional enhancement**, not replacement for current multi-tool approach
 - aidevops remains compatible with Claude, Cursor, Windsurf, etc.
 - Plugin loads agents from `~/.aidevops/agents/` at runtime
 - Should detect and complement oh-my-opencode if both installed
 
 **Architecture (from aidevops-plugin.md):**
+
 - Agent loader from `~/.aidevops/agents/`
 - MCP registration programmatically
 - Pre-commit quality hooks (ShellCheck)
 - aidevops CLI exposed as tool
 
 **When to build:**
+
 - When OpenCode becomes dominant enough
 - When users request native plugin experience
 - When hooks become essential (quality gates)
@@ -3053,6 +3155,7 @@ Implement Claude Code PreToolUse hooks to mechanically block destructive git and
 #### Context from Discussion
 
 **Commands to block:**
+
 - `git checkout -- <files>` - discards uncommitted changes
 - `git restore <files>` - same as checkout (newer syntax)
 - `git reset --hard` - destroys all uncommitted changes
@@ -3063,12 +3166,14 @@ Implement Claude Code PreToolUse hooks to mechanically block destructive git and
 - `git stash drop/clear` - permanently deletes stashes
 
 **Safe patterns (allowlisted):**
+
 - `git checkout -b <branch>` - creates new branch
 - `git restore --staged` - only unstages, doesn't discard
 - `git clean -n` / `--dry-run` - preview only
 - `rm -rf /tmp/...`, `/var/tmp/...`, `$TMPDIR/...` - temp dirs
 
 **Key decisions:**
+
 - Adapt for aidevops: install to `~/.aidevops/hooks/` not `.claude/hooks/`
 - Support both Claude Code and OpenCode (if hooks compatible)
 - Add installer to `setup.sh` for automatic deployment
@@ -3126,17 +3231,20 @@ Evaluate whether `build-agent.md` and `build-mcp.md` should be merged into `aide
 #### Context from Discussion
 
 **Current structure:**
+
 - `build-agent.md` - Agent design, ~50-100 instruction budget, subagent: `agent-review.md`
 - `build-mcp.md` - MCP development (TypeScript/Bun/Elysia), subagents: server-patterns, transports, deployment, api-wrapper
 - `aidevops.md` - Framework operations, already references build-agent as "Related Main Agent"
 - All three are `mode: subagent` - called from aidevops context
 
 **Options to evaluate:**
+
 1. **Merge fully** - Combine into aidevops.md with expanded subagent folders
 2. **Keep separate but link better** - Improve cross-references, keep modularity
 3. **Hybrid** - Move build-agent into aidevops/, keep build-mcp separate (MCP is more specialized)
 
 **Key considerations:**
+
 - Token efficiency: Fewer main agents = less context switching
 - Modularity: build-mcp has specialized TypeScript/Bun stack knowledge
 - User mental model: Are these distinct domains or one "framework development" domain?
@@ -3184,6 +3292,7 @@ p004,OCR Invoice/Receipt Extraction Pipeline,planning,0,5,,accounting|ocr|automa
 #### Purpose
 
 Add OCR extraction capabilities to the accounting agent for automated invoice and receipt processing. This enables:
+
 - Scanning/photographing paper receipts and invoices
 - Automatic extraction of vendor, amount, date, VAT, line items
 - Integration with QuickFile for expense recording and purchase invoice creation
@@ -3194,11 +3303,13 @@ Add OCR extraction capabilities to the accounting agent for automated invoice an
 **Reference:** @pontusab's OCR extraction pipeline approach (X post - details to be added when available)
 
 **Integration points:**
+
 - `accounts.md` - Main agent, add OCR as new capability
 - `services/accounting/quickfile.md` - Target for extracted data (purchases, expenses)
 - `tools/browser/` - Potential for receipt image capture workflows
 
 **Key considerations:**
+
 - OCR accuracy requirements for financial data
 - Multi-currency and VAT handling
 - Receipt image storage and retention
@@ -3261,6 +3372,7 @@ p006,Uncloud Integration for aidevops,completed,4,4,,deployment|docker|orchestra
 Add Uncloud as a deployment provider option in aidevops. Uncloud is a lightweight container orchestration tool that enables multi-machine Docker deployments without complex Kubernetes infrastructure. It aligns with aidevops philosophy of simplicity and developer experience.
 
 **Why Uncloud:**
+
 - Docker Compose format (familiar, no new DSL)
 - WireGuard mesh networking (zero-config, secure)
 - No control plane (decentralized, fewer failure points)
@@ -3271,14 +3383,16 @@ Add Uncloud as a deployment provider option in aidevops. Uncloud is a lightweigh
 #### Context from Discussion
 
 **Key capabilities identified:**
+
 - Deploy anywhere: cloud VMs, bare metal, hybrid
 - Zero-downtime rolling deployments
 - Built-in Caddy reverse proxy with auto HTTPS
 - Service discovery via internal DNS
-- Managed DNS subdomain (*.uncld.dev) for quick access
+- Managed DNS subdomain (\*.uncld.dev) for quick access
 - Direct image push to machines without registry (Unregistry)
 
 **Integration architecture:**
+
 - `tools/deployment/uncloud.md` - Main subagent (alongside coolify.md, vercel.md)
 - `tools/deployment/uncloud-setup.md` - Installation and machine setup
 - `scripts/uncloud-helper.sh` - CLI wrapper for common operations
@@ -3286,11 +3400,11 @@ Add Uncloud as a deployment provider option in aidevops. Uncloud is a lightweigh
 
 **Comparison with existing providers:**
 
-| Provider | Type | Best For |
-|----------|------|----------|
-| Coolify | Self-hosted PaaS | Single-server apps, managed experience |
-| Vercel | Serverless | Static sites, JAMstack, Next.js |
-| Uncloud | Multi-machine orchestration | Cross-server deployments, Docker clusters |
+| Provider | Type                        | Best For                                  |
+| -------- | --------------------------- | ----------------------------------------- |
+| Coolify  | Self-hosted PaaS            | Single-server apps, managed experience    |
+| Vercel   | Serverless                  | Static sites, JAMstack, Next.js           |
+| Uncloud  | Multi-machine orchestration | Cross-server deployments, Docker clusters |
 
 #### Progress
 
@@ -3344,22 +3458,26 @@ Add AI-powered image SEO capabilities to the SEO agent. Use Moondream.ai vision 
 #### Context from Discussion
 
 **Architecture:**
+
 - `seo/moondream.md` - Moondream.ai vision API integration subagent
 - `seo/image-seo.md` - Image SEO orchestrator (coordinates moondream + upscale)
 - `seo/upscale.md` - Image upscaling services (API provider TBD after research)
 
 **Integration points:**
+
 - Update `seo.md` main agent to reference image-seo capabilities
 - `image-seo.md` can call both `moondream.md` and `upscale.md` as needed
 - Workflow: analyze image → generate names/tags → optionally upscale
 
 **Key capabilities:**
+
 - SEO-friendly filename generation from image content
 - Alt text generation for accessibility (WCAG compliance)
 - Tag/keyword extraction for image metadata
 - Quality upscaling before publishing (optional)
 
 **Research needed:**
+
 - Moondream.ai API documentation and integration patterns
 - Best upscaling API services (candidates: Replicate, DeepAI, Let's Enhance, etc.)
 
@@ -3422,6 +3540,7 @@ s023,p005,6h estimate was 14x over (actual 25m),All 4 phases in single session,A
 #### Outcomes & Retrospective
 
 **Delivered:**
+
 - `seo/moondream.md` (230 lines) - Full Moondream 3 API reference with SEO-specific prompts for alt text, filename, and tag generation
 - `seo/image-seo.md` (200 lines) - Orchestrator with single/batch workflows, WordPress integration, WCAG guidelines, Schema.org output
 - `seo/upscale.md` (175 lines) - 4 upscaling providers with decision tree and complete optimization pipeline
@@ -3446,12 +3565,14 @@ p007,SEO Machine Integration for aidevops,planning,0,5,,seo|content|agents,2d,1d
 Fork and adapt SEO Machine capabilities into aidevops to add comprehensive SEO content creation workflows. SEO Machine is a Claude Code workspace with specialized agents and Python analysis modules that fill significant gaps in aidevops content capabilities.
 
 **What SEO Machine provides:**
+
 - 6 custom commands (`/research`, `/write`, `/rewrite`, `/analyze-existing`, `/optimize`, `/performance-review`)
 - 7 specialized agents (content-analyzer, seo-optimizer, meta-creator, internal-linker, keyword-mapper, editor, performance)
 - 5 Python analysis modules (search intent, keyword density, readability, content length, SEO quality rating)
 - Context-driven system (brand voice, style guide, examples, internal links map)
 
 **Why fork vs integrate:**
+
 - SEO Machine is Claude Code-specific (`.claude/` structure)
 - aidevops needs multi-tool compatibility (OpenCode, Cursor, Windsurf, etc.)
 - Can leverage existing aidevops SEO tools (DataForSEO, GSC, E-E-A-T, site-crawler)
@@ -3461,24 +3582,25 @@ Fork and adapt SEO Machine capabilities into aidevops to add comprehensive SEO c
 
 **Gap analysis - what aidevops gains:**
 
-| Capability | SEO Machine | aidevops Current | Action |
-|------------|-------------|------------------|--------|
-| Content Writing | `/write` command | Basic `content.md` | Add writing workflow |
-| Content Optimization | `/optimize` with scoring | Missing | Add optimization agents |
-| Readability Scoring | Python (Flesch, etc.) | Missing | Port to scripts/ |
-| Keyword Density | Python analyzer | Missing | Port to scripts/ |
-| Search Intent | Python classifier | Missing | Port to scripts/ |
-| Content Length Comparison | SERP competitor analysis | Missing | Port to scripts/ |
-| SEO Quality Rating | 0-100 scoring | Missing | Port to scripts/ |
-| Brand Voice/Context | Context files system | Missing | Add context management |
-| Internal Linking | Agent + map file | Missing | Add linking strategy |
-| Meta Creator | Dedicated agent | Missing | Add meta generation |
-| Editor (Human Voice) | Dedicated agent | Missing | Add humanization |
-| E-E-A-T Analysis | Not mentioned | ✅ `eeat-score.md` | Keep existing |
-| Site Crawling | Not mentioned | ✅ `site-crawler.md` | Keep existing |
-| Keyword Research | DataForSEO | ✅ DataForSEO, Serper, GSC | Keep existing |
+| Capability                | SEO Machine              | aidevops Current           | Action                  |
+| ------------------------- | ------------------------ | -------------------------- | ----------------------- |
+| Content Writing           | `/write` command         | Basic `content.md`         | Add writing workflow    |
+| Content Optimization      | `/optimize` with scoring | Missing                    | Add optimization agents |
+| Readability Scoring       | Python (Flesch, etc.)    | Missing                    | Port to scripts/        |
+| Keyword Density           | Python analyzer          | Missing                    | Port to scripts/        |
+| Search Intent             | Python classifier        | Missing                    | Port to scripts/        |
+| Content Length Comparison | SERP competitor analysis | Missing                    | Port to scripts/        |
+| SEO Quality Rating        | 0-100 scoring            | Missing                    | Port to scripts/        |
+| Brand Voice/Context       | Context files system     | Missing                    | Add context management  |
+| Internal Linking          | Agent + map file         | Missing                    | Add linking strategy    |
+| Meta Creator              | Dedicated agent          | Missing                    | Add meta generation     |
+| Editor (Human Voice)      | Dedicated agent          | Missing                    | Add humanization        |
+| E-E-A-T Analysis          | Not mentioned            | ✅ `eeat-score.md`         | Keep existing           |
+| Site Crawling             | Not mentioned            | ✅ `site-crawler.md`       | Keep existing           |
+| Keyword Research          | DataForSEO               | ✅ DataForSEO, Serper, GSC | Keep existing           |
 
 **Architecture decisions:**
+
 - Adapt agents to aidevops subagent pattern under `seo/` and `content/`
 - Port Python modules to `~/.aidevops/agents/scripts/seo-*.py`
 - Create context system compatible with multi-project use
@@ -3562,15 +3684,16 @@ Apply OpenCode's latest agent configuration features to our Build+ and Plan+ age
 
 **Research findings from OpenCode docs (2025-12-21):**
 
-| Feature | OpenCode Latest | Our Current State | Action |
-|---------|-----------------|-------------------|--------|
-| `disable` option | Supports `"disable": true` per agent | Not using | Disable built-in `build` and `plan` |
-| `default_agent` | Supports `"default_agent": "Build+"` | Not set | Set Build+ as default |
-| `maxSteps` | Cost control for expensive ops | Not configured | Consider adding for subagents |
-| Granular bash permissions | `"git status": "allow"` patterns | Plan+ denies all bash | Allow read-only git commands |
-| Agent ordering | JSON key order determines Tab order | Build+ first | Already correct |
+| Feature                   | OpenCode Latest                      | Our Current State     | Action                              |
+| ------------------------- | ------------------------------------ | --------------------- | ----------------------------------- |
+| `disable` option          | Supports `"disable": true` per agent | Not using             | Disable built-in `build` and `plan` |
+| `default_agent`           | Supports `"default_agent": "Build+"` | Not set               | Set Build+ as default               |
+| `maxSteps`                | Cost control for expensive ops       | Not configured        | Consider adding for subagents       |
+| Granular bash permissions | `"git status": "allow"` patterns     | Plan+ denies all bash | Allow read-only git commands        |
+| Agent ordering            | JSON key order determines Tab order  | Build+ first          | Already correct                     |
 
 **Key decisions:**
+
 - Disable OpenCode's default `build` and `plan` agents so only our Build+ and Plan+ appear
 - Set `default_agent` to `Build+` for consistent startup behavior
 - Add granular bash permissions to Plan+ allowing read-only git commands (`git status`, `git log*`, `git diff`, `git branch`)
@@ -3644,6 +3767,7 @@ p009,Beads Integration for aidevops Tasks & Plans,completed,3,3,,beads|tasks|syn
 #### Purpose
 
 Integrate Beads task management concepts and bi-directional sync into aidevops Tasks & Plans system. This provides:
+
 - Dependency graph awareness (blocked-by, blocks, parent-child)
 - Hierarchical task IDs with sub-sub-task support (t001.1.1)
 - Automatic "ready" detection for unblocked tasks
@@ -3655,6 +3779,7 @@ Integrate Beads task management concepts and bi-directional sync into aidevops T
 #### Context from Discussion
 
 **Ecosystem reviewed:**
+
 - `steveyegge/beads` - Core CLI, Go, SQLite + JSONL, MCP server
 - `Dicklesworthstone/beads_viewer` - Advanced TUI with graph analytics
 - `mantoni/beads-ui` - Web UI with live updates
@@ -3663,6 +3788,7 @@ Integrate Beads task management concepts and bi-directional sync into aidevops T
 - `zjrosen/perles` - BQL query language TUI
 
 **What aidevops gains:**
+
 - Dependency graph (blocks, parent-child, discovered-from)
 - Hash-based IDs for conflict-free merging
 - `bd ready` for unblocked task detection
@@ -3670,6 +3796,7 @@ Integrate Beads task management concepts and bi-directional sync into aidevops T
 - MCP server for Claude Desktop
 
 **What aidevops keeps:**
+
 - Time tracking with breakdown (`~4h (ai:2h test:1h)`)
 - Decision logs and retrospectives
 - TOON machine-readable blocks
@@ -3684,6 +3811,7 @@ PLANS.md ←→ (command-led sync) ←→ .beads/issues.jsonl
 ```
 
 **Sync guarantees:**
+
 - Command-led only (no automatic sync to prevent race conditions)
 - Lock file during sync operations
 - Checksum verification before/after
@@ -3768,6 +3896,7 @@ disc001,p009,Implementation faster than estimated,All core functionality already
 #### Outcomes & Retrospective
 
 **What was delivered:**
+
 - `beads-sync-helper.sh` (597 lines) - bi-directional sync with lock file, checksums, conflict detection
 - `todo-ready.sh` - show tasks with no open blockers
 - `beads.md` subagent (289 lines) - comprehensive documentation
@@ -3778,15 +3907,18 @@ disc001,p009,Implementation faster than estimated,All core functionality already
 - AGENTS.md integration docs
 
 **What went well:**
+
 - Core sync script is robust with proper locking and checksums
 - Documentation is comprehensive with install commands for all UI repos
 - Integration with existing TODO.md format is seamless
 
 **What could improve:**
+
 - Beads UI repos (beads_viewer, beads-ui, bdui, perles) are documented but not auto-installed
 - Could add optional UI installation to setup.sh
 
 **Time Summary:**
+
 - Estimated: 2d
 - Actual: 1.5d
 - Variance: -25% (faster)
@@ -3832,17 +3964,18 @@ Add automatic MCP installation/configuration to setup.sh so users get working MC
 
 **MCP Categories:**
 
-| Category | MCPs | Install Method | Auth |
-|----------|------|----------------|------|
-| **Remote (no install)** | context7, socket | Just enable | No |
-| **Bun packages** | chrome-devtools, gsc | `bun install -g` | gsc needs OAuth |
-| **Brew packages** | localwp | `brew install` | Needs Local WP app |
-| **Docker** | MCP_DOCKER | Docker Desktop | No |
-| **NPX** | sentry | `npx @sentry/mcp-server` | Access token |
-| **NPM + Auth** | augment-context-engine | `npm install -g @augmentcode/auggie` | `auggie login` |
-| **Custom** | amazon-order-history | Git clone + build | Amazon auth |
+| Category                | MCPs                   | Install Method                       | Auth               |
+| ----------------------- | ---------------------- | ------------------------------------ | ------------------ |
+| **Remote (no install)** | context7, socket       | Just enable                          | No                 |
+| **Bun packages**        | chrome-devtools, gsc   | `bun install -g`                     | gsc needs OAuth    |
+| **Brew packages**       | localwp                | `brew install`                       | Needs Local WP app |
+| **Docker**              | MCP_DOCKER             | Docker Desktop                       | No                 |
+| **NPX**                 | sentry                 | `npx @sentry/mcp-server`             | Access token       |
+| **NPM + Auth**          | augment-context-engine | `npm install -g @augmentcode/auggie` | `auggie login`     |
+| **Custom**              | amazon-order-history   | Git clone + build                    | Amazon auth        |
 
 **Priority Order:**
+
 1. Remote MCPs (context7, socket) - just enable, no install
 2. Simple packages (chrome-devtools) - auto-install
 3. Auth-required (gsc, sentry) - install + guide user to auth
@@ -3912,6 +4045,7 @@ Implement remaining agent design pattern improvements identified from Lance Mart
 #### Context from Discussion
 
 **What aidevops already does well:**
+
 - Give agents a computer (filesystem + shell)
 - Multi-layer action space (per-agent MCP filtering)
 - Progressive disclosure (subagent tables, read-on-demand)
@@ -3921,13 +4055,13 @@ Implement remaining agent design pattern improvements identified from Lance Mart
 
 **Remaining opportunities:**
 
-| Priority | Improvement | Estimate | Description |
-|----------|-------------|----------|-------------|
-| Medium | YAML frontmatter in source subagents | ~2h | Add frontmatter to all `.agents/**/*.md` for better progressive disclosure |
-| Medium | Automatic session reflection | ~4h | Auto-distill sessions to memory on completion |
-| Low | Cache-aware prompt structure | ~1h | Document stable-prefix patterns for better cache hits |
-| Low | Tool description indexing | ~3h | Cursor-style MCP description sync for on-demand retrieval |
-| Low | Memory consolidation | ~2h | Periodic reflection over memories to merge/prune |
+| Priority | Improvement                          | Estimate | Description                                                                |
+| -------- | ------------------------------------ | -------- | -------------------------------------------------------------------------- |
+| Medium   | YAML frontmatter in source subagents | ~2h      | Add frontmatter to all `.agents/**/*.md` for better progressive disclosure |
+| Medium   | Automatic session reflection         | ~4h      | Auto-distill sessions to memory on completion                              |
+| Low      | Cache-aware prompt structure         | ~1h      | Document stable-prefix patterns for better cache hits                      |
+| Low      | Tool description indexing            | ~3h      | Cursor-style MCP description sync for on-demand retrieval                  |
+| Low      | Memory consolidation                 | ~2h      | Periodic reflection over memories to merge/prune                           |
 
 #### Progress
 
@@ -3999,26 +4133,28 @@ Create a comprehensive skill import system that allows rapid adoption of externa
 
 **AI Assistant Compatibility Matrix:**
 
-| Assistant | Config Location | Skills Format | AGENTS.md | Pointer Support |
-|-----------|----------------|---------------|-----------|-----------------|
-| OpenCode | `.opencode/skills/` | SKILL.md | Yes | Yes (description) |
-| Codex (OpenAI) | `.codex/skills/` | SKILL.md | Yes (hierarchical) | Yes |
-| Claude Code | `.claude/skills/` | SKILL.md | Yes | Yes |
-| Amp (Sourcegraph) | `.claude/skills/`, `~/.config/amp/tools/` | SKILL.md | Yes | Yes |
-| Droid (Factory) | `.factory/droids/` | Markdown+YAML | Yes | Yes |
-| Cursor | `.cursorrules` | Plain MD | No | Symlinks only |
-| Windsurf | `.windsurf/rules/` | MD+frontmatter | Yes | Yes |
-| Cline | `.clinerules/` | Markdown | No | Symlinks only |
-| Continue | `config.yaml` | YAML rules | No | No |
-| Aider | `.aider.conf.yml` | YAML+CONVENTIONS.md | No | Yes (read:) |
-| Roo, Goose, Copilot, Gemini | SKILL.md | SKILL.md | Yes | Yes |
+| Assistant                   | Config Location                           | Skills Format       | AGENTS.md          | Pointer Support   |
+| --------------------------- | ----------------------------------------- | ------------------- | ------------------ | ----------------- |
+| OpenCode                    | `.opencode/skills/`                       | SKILL.md            | Yes                | Yes (description) |
+| Codex (OpenAI)              | `.codex/skills/`                          | SKILL.md            | Yes (hierarchical) | Yes               |
+| Claude Code                 | `.claude/skills/`                         | SKILL.md            | Yes                | Yes               |
+| Amp (Sourcegraph)           | `.claude/skills/`, `~/.config/amp/tools/` | SKILL.md            | Yes                | Yes               |
+| Droid (Factory)             | `.factory/droids/`                        | Markdown+YAML       | Yes                | Yes               |
+| Cursor                      | `.cursorrules`                            | Plain MD            | No                 | Symlinks only     |
+| Windsurf                    | `.windsurf/rules/`                        | MD+frontmatter      | Yes                | Yes               |
+| Cline                       | `.clinerules/`                            | Markdown            | No                 | Symlinks only     |
+| Continue                    | `config.yaml`                             | YAML rules          | No                 | No                |
+| Aider                       | `.aider.conf.yml`                         | YAML+CONVENTIONS.md | No                 | Yes (read:)       |
+| Roo, Goose, Copilot, Gemini | SKILL.md                                  | SKILL.md            | Yes                | Yes               |
 
 **Key Standards:**
+
 - **agentskills.io specification**: Universal SKILL.md format with YAML frontmatter
 - **skills.sh CLI**: `npx skills add <owner/repo>` - supports 17+ AI assistants
 - **AGENTS.md hierarchical**: Codex, Amp, Droid, Windsurf support directory-scoped AGENTS.md
 
 **Example Skills to Import:**
+
 - `dmmulroy/cloudflare-skill` - 60+ Cloudflare products (conflicts with existing cloudflare.md)
 - `remotion-dev/skills` - Video creation in React
 - `vercel-labs/agent-skills` - React best practices
@@ -4027,6 +4163,7 @@ Create a comprehensive skill import system that allows rapid adoption of externa
 - `trailofbits/skills` - Security auditing
 
 **Architecture Decision:**
+
 - Source of truth: `.agents/` (aidevops format)
 - `setup.sh` generates symlinks to `~/.config/opencode/skills/`, `~/.codex/skills/`, `~/.claude/skills/`, `~/.config/amp/tools/`
 - Nesting: Simple skills → single .md file; Complex skills → folder with subagents
@@ -4097,21 +4234,21 @@ d025,p012,Merge conflicts require human decision,Preserves existing knowledge,20
 
 #### Files to Create
 
-| File | Purpose |
-|------|---------|
-| `.agents/configs/skill-sources.json` | Registry of imported skills with upstream tracking |
-| `.agents/scripts/add-skill-helper.sh` | Fetch, analyse, convert, merge skills |
-| `.agents/scripts/skill-update-helper.sh` | Check all tracked skills for updates |
-| `.agents/scripts/commands/add-skill.md` | `/add-skill` command definition |
-| `.agents/tools/build-agent/add-skill.md` | Subagent with conversion/merge logic |
+| File                                     | Purpose                                            |
+| ---------------------------------------- | -------------------------------------------------- |
+| `.agents/configs/skill-sources.json`     | Registry of imported skills with upstream tracking |
+| `.agents/scripts/add-skill-helper.sh`    | Fetch, analyse, convert, merge skills              |
+| `.agents/scripts/skill-update-helper.sh` | Check all tracked skills for updates               |
+| `.agents/scripts/commands/add-skill.md`  | `/add-skill` command definition                    |
+| `.agents/tools/build-agent/add-skill.md` | Subagent with conversion/merge logic               |
 
 #### Files to Update
 
-| File | Changes |
-|------|---------|
-| `setup.sh` | Generate symlinks to all AI assistant skill locations |
-| `generate-skills.sh` | Create SKILL.md stubs pointing to .agents/ source |
-| `AGENTS.md` | Document /add-skill command in quick reference |
+| File                 | Changes                                               |
+| -------------------- | ----------------------------------------------------- |
+| `setup.sh`           | Generate symlinks to all AI assistant skill locations |
+| `generate-skills.sh` | Create SKILL.md stubs pointing to .agents/ source     |
+| `AGENTS.md`          | Document /add-skill command in quick reference        |
 
 #### Surprises & Discoveries
 
@@ -4136,6 +4273,7 @@ p011,Memory Auto-Capture,completed,5,5,,memory|automation|context,1d,6h,4h,2h,20
 #### Purpose
 
 Add automatic memory capture to aidevops, inspired by claude-mem but tool-agnostic. Currently, memory requires manual `/remember` invocation. Auto-capture will:
+
 - Capture working solutions, failed approaches, and decisions automatically
 - Work across all AI tools (OpenCode, Cursor, Claude Code, Windsurf)
 - Use progressive disclosure to minimize token usage
@@ -4144,12 +4282,14 @@ Add automatic memory capture to aidevops, inspired by claude-mem but tool-agnost
 #### Context from Discussion
 
 **Why not use claude-mem as dependency:**
+
 - Claude Code only (plugin architecture)
 - Heavy dependencies (Bun, uv, Chroma, Node.js worker)
 - AGPL license (viral, requires source disclosure)
 - aidevops needs tool-agnostic solution
 
 **What we'll implement:**
+
 - Agent instructions for auto-capture (not lifecycle hooks)
 - Semantic classification into memory types
 - Deduplication via FTS5 similarity
@@ -4232,6 +4372,7 @@ p013,Multi-Agent Orchestration & Token Efficiency,planning,0,8,,orchestration|to
 #### Purpose
 
 Evolve aidevops from single-session workflows to scalable multi-agent orchestration with:
+
 - Inter-agent communication (TOON mailbox with lifecycle cleanup)
 - Token-efficient AGENTS.md (lossless compression, ~60% reduction)
 - Custom system prompt (eliminates harness tool preference conflicts)
@@ -4242,6 +4383,7 @@ Evolve aidevops from single-session workflows to scalable multi-agent orchestrat
 - User feedback loop pipeline for continuous improvement
 
 **Key principles (user preferences):**
+
 - Shell scripts over compiled binaries (transparency, editability)
 - TOON format for structured data (token efficiency)
 - TUI over web UI for visualization
@@ -4252,6 +4394,7 @@ Evolve aidevops from single-session workflows to scalable multi-agent orchestrat
 - Extend existing systems, don't re-implement
 
 **Inspiration from Gas Town (cherry-picked, not wholesale):**
+
 - Mailbox pattern for inter-agent communication
 - Convoy concept for grouping related tasks
 - Stateless coordinator (but NOT persistent Mayor - avoids context bloat)
@@ -4259,6 +4402,7 @@ Evolve aidevops from single-session workflows to scalable multi-agent orchestrat
 - Formulas for repeatable workflows
 
 **What we already have (extend, don't rebuild):**
+
 - Worktrees: `worktree-helper.sh`, `wt` (Worktrunk)
 - Task tracking: Beads + TODO.md + PLANS.md
 - Iterative loops: Ralph Loop v2 + Full Loop
@@ -4271,6 +4415,7 @@ Evolve aidevops from single-session workflows to scalable multi-agent orchestrat
 #### Context from Discussion
 
 **The harness conflict problem:**
+
 - OpenCode's anthropic-auth plugin enables `claude-code-20250219` beta flag
 - This activates Claude Code's system prompt which says "use specialized tools"
 - Our AGENTS.md says "NEVER use mcp_glob, use git ls-files/fd/rg instead"
@@ -4278,12 +4423,14 @@ Evolve aidevops from single-session workflows to scalable multi-agent orchestrat
 - Solution: Custom `prompt` field replaces default system prompt entirely
 
 **The compaction problem:**
+
 - Sessions routinely hit 200K tokens with multiple compactions
 - Critical rules (tool preferences, git check) lost after compaction
 - OpenCode's `experimental.session.compacting` hook can inject rules
 - Solution: aidevops plugin injects critical rules into every compaction
 
 **Token efficiency analysis (current AGENTS.md):**
+
 - 778 lines (~10K tokens) loaded every session
 - Violates "50-100 instructions" principle from build-agent.md
 - ~360 lines are duplicated content (already in subagents)
@@ -4291,6 +4438,7 @@ Evolve aidevops from single-session workflows to scalable multi-agent orchestrat
 - Target: ~300 lines (~3.5K tokens) with zero content loss
 
 **Multi-agent scaling design:**
+
 - Coordinator is STATELESS (pulse, not persistent) - reads state, dispatches, exits
 - Workers are Ralph Loops with mailbox awareness
 - Mailbox is TOON files with archive→remember→prune lifecycle
@@ -4398,8 +4546,8 @@ d034,p013,Model routing via subagent YAML frontmatter,Cheap models for routing; 
 
 - [ ] (2026-01-23) Phase 6: Stateless Coordinator ~4h
   - Create `coordinator-helper.sh` (pulse script, not persistent)
-  - Reads: registry.toon + outbox/*.toon + TODO.md
-  - Writes: inbox/*.toon (dispatch instructions)
+  - Reads: registry.toon + outbox/\*.toon + TODO.md
+  - Writes: inbox/\*.toon (dispatch instructions)
   - Stores: /remember (notable outcomes from worker reports)
   - Trigger: manual, cron, or fswatch on outbox/
   - Context budget per pulse: ~20K tokens (reads state, dispatches, exits)
@@ -4466,27 +4614,27 @@ disc005,p013,Gas Town uses same Beads ecosystem,beads directory and bd CLI in ga
 
 #### Files to Create
 
-| File | Purpose | Phase |
-|------|---------|-------|
-| `prompts/build.txt` | Custom system prompt (tool prefs, context budget, security) | 1 |
-| `opencode-aidevops-plugin/index.ts` | Compaction hook plugin | 2 |
-| `opencode-aidevops-plugin/package.json` | Plugin package manifest | 2 |
-| `subagent-index.toon` | Compressed subagent discovery index | 3 |
-| `workflows/pre-edit.md` | Detailed pre-edit git check (moved from AGENTS.md) | 3 |
-| `scripts/mail-helper.sh` | Mailbox send/check/archive/prune/status/watch | 4 |
-| `scripts/coordinator-helper.sh` | Stateless coordinator pulse script | 6 |
-| TUI app (bdui extension or new) | Agent/convoy/mailbox dashboard | 8 |
+| File                                    | Purpose                                                     | Phase |
+| --------------------------------------- | ----------------------------------------------------------- | ----- |
+| `prompts/build.txt`                     | Custom system prompt (tool prefs, context budget, security) | 1     |
+| `opencode-aidevops-plugin/index.ts`     | Compaction hook plugin                                      | 2     |
+| `opencode-aidevops-plugin/package.json` | Plugin package manifest                                     | 2     |
+| `subagent-index.toon`                   | Compressed subagent discovery index                         | 3     |
+| `workflows/pre-edit.md`                 | Detailed pre-edit git check (moved from AGENTS.md)          | 3     |
+| `scripts/mail-helper.sh`                | Mailbox send/check/archive/prune/status/watch               | 4     |
+| `scripts/coordinator-helper.sh`         | Stateless coordinator pulse script                          | 6     |
+| TUI app (bdui extension or new)         | Agent/convoy/mailbox dashboard                              | 8     |
 
 #### Files to Modify
 
-| File | Changes | Phase |
-|------|---------|-------|
-| `opencode.json` | Add `"prompt": "{file:./prompts/build.txt}"` to build agent | 1 |
-| `AGENTS.md` | Compress to ~300 lines (pointers only, TOON tables) | 3 |
-| `scripts/loop-common.sh` | Add mailbox check to re-anchor, status report on completion | 5 |
-| `scripts/worktree-sessions.sh` | Add agent identity and registration | 5 |
-| `scripts/ralph-loop-helper.sh` | Add mailbox awareness to worker startup/completion | 5 |
-| `scripts/generate-opencode-agents.sh` | Add model routing from frontmatter | 7 |
+| File                                  | Changes                                                     | Phase |
+| ------------------------------------- | ----------------------------------------------------------- | ----- |
+| `opencode.json`                       | Add `"prompt": "{file:./prompts/build.txt}"` to build agent | 1     |
+| `AGENTS.md`                           | Compress to ~300 lines (pointers only, TOON tables)         | 3     |
+| `scripts/loop-common.sh`              | Add mailbox check to re-anchor, status report on completion | 5     |
+| `scripts/worktree-sessions.sh`        | Add agent identity and registration                         | 5     |
+| `scripts/ralph-loop-helper.sh`        | Add mailbox awareness to worker startup/completion          | 5     |
+| `scripts/generate-opencode-agents.sh` | Add model routing from frontmatter                          | 7     |
 
 #### User Feedback Loop (Future Phase 9+)
 
@@ -4521,6 +4669,7 @@ p014,Document Extraction Subagent & Workflow,planning,0,2,,document-extraction|d
 #### Purpose
 
 Create a comprehensive document extraction capability in aidevops that:
+
 1. Supports fully local/on-premise processing for sensitive documents (GDPR/HIPAA compliance)
 2. Integrates PII detection and anonymization (Microsoft Presidio)
 3. Uses advanced document parsing (Docling) for layout understanding
@@ -4528,6 +4677,7 @@ Create a comprehensive document extraction capability in aidevops that:
 5. Supports multiple LLM backends (Ollama local, Cloudflare Workers AI, cloud APIs)
 
 **Key components:**
+
 - **Docling** (51k stars): Parse PDF, DOCX, PPTX, XLSX, HTML, images with layout understanding
 - **ExtractThinker** (1.5k stars): LLM-powered extraction with Pydantic contracts
 - **Presidio** (6.7k stars): PII detection and anonymization (Microsoft)
@@ -4540,6 +4690,7 @@ Document → Docling (parse) → Presidio (PII scan) → ExtractThinker (extract
 ```
 
 **Relationship to existing Unstract subagent:**
+
 - Unstract = cloud/self-hosted platform with visual Prompt Studio
 - This = code-first, fully local, privacy-preserving alternative
 - Both can coexist - Unstract for complex workflows, this for quick local extraction
@@ -4547,6 +4698,7 @@ Document → Docling (parse) → Presidio (PII scan) → ExtractThinker (extract
 #### Context from Discussion
 
 **Why build this:**
+
 - Existing Unstract integration requires Docker and platform setup
 - Need lightweight, code-first extraction for quick tasks
 - Privacy requirements demand fully local processing option
@@ -4554,13 +4706,13 @@ Document → Docling (parse) → Presidio (PII scan) → ExtractThinker (extract
 
 **Technology choices:**
 
-| Component | Tool | Why |
-|-----------|------|-----|
-| Document Parsing | Docling | Best layout understanding, 51k stars, LF AI project |
-| LLM Extraction | ExtractThinker | ORM-style contracts, multi-loader support |
-| PII Detection | Presidio | Microsoft-backed, extensible, MIT license |
-| Local LLM | Ollama | Easy setup, wide model support |
-| Cloud LLM (private) | Cloudflare Workers AI | Data doesn't leave Cloudflare, no logging |
+| Component           | Tool                  | Why                                                 |
+| ------------------- | --------------------- | --------------------------------------------------- |
+| Document Parsing    | Docling               | Best layout understanding, 51k stars, LF AI project |
+| LLM Extraction      | ExtractThinker        | ORM-style contracts, multi-loader support           |
+| PII Detection       | Presidio              | Microsoft-backed, extensible, MIT license           |
+| Local LLM           | Ollama                | Easy setup, wide model support                      |
+| Cloud LLM (private) | Cloudflare Workers AI | Data doesn't leave Cloudflare, no logging           |
 
 **Architecture:**
 
@@ -4709,29 +4861,29 @@ d040,p014,Cloudflare Workers AI as privacy-preserving cloud,Data at edge; no log
 
 #### Files to Create
 
-| File | Purpose | Phase |
-|------|---------|-------|
-| `tools/document-extraction/document-extraction.md` | Main orchestrator subagent | 6 |
-| `tools/document-extraction/docling.md` | Document parsing subagent | 2 |
-| `tools/document-extraction/extractthinker.md` | LLM extraction subagent | 4 |
-| `tools/document-extraction/presidio.md` | PII detection/anonymization subagent | 3 |
-| `tools/document-extraction/local-llm.md` | Local LLM configuration subagent | 5 |
-| `tools/document-extraction/contracts/invoice.md` | Invoice extraction contract | 4 |
-| `tools/document-extraction/contracts/receipt.md` | Receipt extraction contract | 4 |
-| `tools/document-extraction/contracts/driver-license.md` | ID extraction contract | 4 |
-| `tools/document-extraction/contracts/contract.md` | Legal contract extraction | 4 |
-| `scripts/document-extraction-helper.sh` | Main CLI wrapper | 6 |
-| `scripts/docling-helper.sh` | Docling operations | 2 |
-| `scripts/presidio-helper.sh` | PII operations | 3 |
-| `scripts/extractthinker-helper.sh` | Extraction operations | 4 |
+| File                                                    | Purpose                              | Phase |
+| ------------------------------------------------------- | ------------------------------------ | ----- |
+| `tools/document-extraction/document-extraction.md`      | Main orchestrator subagent           | 6     |
+| `tools/document-extraction/docling.md`                  | Document parsing subagent            | 2     |
+| `tools/document-extraction/extractthinker.md`           | LLM extraction subagent              | 4     |
+| `tools/document-extraction/presidio.md`                 | PII detection/anonymization subagent | 3     |
+| `tools/document-extraction/local-llm.md`                | Local LLM configuration subagent     | 5     |
+| `tools/document-extraction/contracts/invoice.md`        | Invoice extraction contract          | 4     |
+| `tools/document-extraction/contracts/receipt.md`        | Receipt extraction contract          | 4     |
+| `tools/document-extraction/contracts/driver-license.md` | ID extraction contract               | 4     |
+| `tools/document-extraction/contracts/contract.md`       | Legal contract extraction            | 4     |
+| `scripts/document-extraction-helper.sh`                 | Main CLI wrapper                     | 6     |
+| `scripts/docling-helper.sh`                             | Docling operations                   | 2     |
+| `scripts/presidio-helper.sh`                            | PII operations                       | 3     |
+| `scripts/extractthinker-helper.sh`                      | Extraction operations                | 4     |
 
 #### Files to Modify
 
-| File | Changes | Phase |
-|------|---------|-------|
-| `subagent-index.toon` | Add document-extraction subagents | 8 |
-| `AGENTS.md` | Add to progressive disclosure table | 8 |
-| `setup.sh` | Add optional Python env setup | 8 |
+| File                  | Changes                             | Phase |
+| --------------------- | ----------------------------------- | ----- |
+| `subagent-index.toon` | Add document-extraction subagents   | 8     |
+| `AGENTS.md`           | Add to progressive disclosure table | 8     |
+| `setup.sh`            | Add optional Python env setup       | 8     |
 
 ---
 
@@ -4750,12 +4902,14 @@ p015,Claude-Flow Inspirations - Selective Feature Adoption,planning,0,4,,memory|
 Selectively adopt high-value concepts from Claude-Flow v3 while maintaining aidevops' lightweight, shell-script-based philosophy. Claude-Flow is a heavy orchestration platform (~340MB, TypeScript) - we cherry-pick concepts, not implementation.
 
 **What Claude-Flow does well:**
+
 - HNSW vector memory (150x-12,500x faster semantic search)
 - 3-tier cost-aware routing (WASM → Haiku → Opus)
 - Self-learning routing (SONA neural architecture)
 - Swarm consensus (Byzantine fault-tolerant coordination)
 
 **What aidevops already has:**
+
 - SQLite FTS5 memory (fast keyword search)
 - Task tool with model parameter
 - Session distillation for pattern capture
@@ -4767,15 +4921,16 @@ Selectively adopt high-value concepts from Claude-Flow v3 while maintaining aide
 
 **Analysis summary (2026-01-31):**
 
-| Feature | Claude-Flow | aidevops Current | Adoption Priority |
-|---------|-------------|------------------|-------------------|
-| Vector memory | HNSW (semantic) | FTS5 (keyword) | Medium |
-| Cost routing | 3-tier automatic | Manual model param | High |
-| Self-learning | SONA neural | Manual patterns | Medium |
-| Swarm consensus | Byzantine/Raft | Mailbox async | Low |
-| WASM transforms | Agent Booster | N/A | Low |
+| Feature         | Claude-Flow      | aidevops Current   | Adoption Priority |
+| --------------- | ---------------- | ------------------ | ----------------- |
+| Vector memory   | HNSW (semantic)  | FTS5 (keyword)     | Medium            |
+| Cost routing    | 3-tier automatic | Manual model param | High              |
+| Self-learning   | SONA neural      | Manual patterns    | Medium            |
+| Swarm consensus | Byzantine/Raft   | Mailbox async      | Low               |
+| WASM transforms | Agent Booster    | N/A                | Low               |
 
 **Key decisions:**
+
 - **Vector memory**: Add optional HNSW alongside FTS5, not replace
 - **Cost routing**: Add model hints to Task tool, document routing guidance
 - **Self-learning**: Track success patterns in memory, surface in `/recall`
@@ -4858,24 +5013,24 @@ d038,p015,Use all-MiniLM-L6-v2 via ONNX for embeddings,Small fast no Python requ
 
 #### Files to Create
 
-| File | Purpose | Phase |
-|------|---------|-------|
-| `tools/context/model-routing.md` | Model tier guidance and routing logic | 1 |
-| `scripts/commands/route.md` | `/route` command for model suggestions | 1 |
-| `scripts/memory-embeddings-helper.sh` | Vector embedding operations | 2 |
-| `scripts/pattern-tracker-helper.sh` | Success/failure pattern analysis | 3 |
-| `scripts/commands/patterns.md` | `/patterns` command definition | 3 |
-| `aidevops/claude-flow-comparison.md` | Feature comparison documentation | 4 |
+| File                                  | Purpose                                | Phase |
+| ------------------------------------- | -------------------------------------- | ----- |
+| `tools/context/model-routing.md`      | Model tier guidance and routing logic  | 1     |
+| `scripts/commands/route.md`           | `/route` command for model suggestions | 1     |
+| `scripts/memory-embeddings-helper.sh` | Vector embedding operations            | 2     |
+| `scripts/pattern-tracker-helper.sh`   | Success/failure pattern analysis       | 3     |
+| `scripts/commands/patterns.md`        | `/patterns` command definition         | 3     |
+| `aidevops/claude-flow-comparison.md`  | Feature comparison documentation       | 4     |
 
 #### Files to Modify
 
-| File | Changes | Phase |
-|------|---------|-------|
-| Subagent YAML frontmatter | Add `model:` field where appropriate | 1 |
-| `scripts/memory-helper.sh` | Add `--semantic` flag, pattern types | 2, 3 |
-| `memory/README.md` | Document semantic search, patterns | 4 |
-| `AGENTS.md` | Add model routing guidance | 4 |
-| `subagent-index.toon` | Add new subagents | 4 |
+| File                       | Changes                              | Phase |
+| -------------------------- | ------------------------------------ | ----- |
+| Subagent YAML frontmatter  | Add `model:` field where appropriate | 1     |
+| `scripts/memory-helper.sh` | Add `--semantic` flag, pattern types | 2, 3  |
+| `memory/README.md`         | Document semantic search, patterns   | 4     |
+| `AGENTS.md`                | Add model routing guidance           | 4     |
+| `subagent-index.toon`      | Add new subagents                    | 4     |
 
 ---
 
@@ -4898,11 +5053,13 @@ Document and implement patterns for running parallel OpenCode sessions locally, 
 **Key insight from source:** `opencode run "prompt"` enables headless dispatch without containers or hosting costs. `opencode run --attach` connects to a warm server for faster dispatch. Each session can have its own AGENTS.md and memory namespace.
 
 **What we're NOT doing:**
+
 - Fly.io Sprites or cloud hosting (overkill for local use)
 - Containers (unnecessary complexity for trusted code)
 - New orchestration frameworks (extend existing mailbox)
 
 **What we ARE doing:**
+
 - Document `opencode run` headless patterns and `opencode serve` server mode
 - Create runner-helper.sh for namespaced agent dispatch
 - Integrate with existing memory system (per-runner namespaces)
@@ -4913,12 +5070,12 @@ Document and implement patterns for running parallel OpenCode sessions locally, 
 
 **Complexity/Maintenance/Context Analysis:**
 
-| Approach | Complexity | Maintenance | Context Hazard | User Attention |
-|----------|------------|-------------|----------------|----------------|
-| Fly.io Sprites | High | High | Low (isolated) | High (new concepts) |
-| Local containers | Medium | Medium | Low (isolated) | Medium |
-| Local parallel sessions | Low | Low | Medium (shared fs) | Low |
-| Matrix bot + local claude | Medium | Low | Low (per-room) | Medium (initial setup) |
+| Approach                  | Complexity | Maintenance | Context Hazard     | User Attention         |
+| ------------------------- | ---------- | ----------- | ------------------ | ---------------------- |
+| Fly.io Sprites            | High       | High        | Low (isolated)     | High (new concepts)    |
+| Local containers          | Medium     | Medium      | Low (isolated)     | Medium                 |
+| Local parallel sessions   | Low        | Low         | Medium (shared fs) | Low                    |
+| Matrix bot + local claude | Medium     | Low         | Low (per-room)     | Medium (initial setup) |
 
 **Decision:** Start with local parallel sessions. Add Matrix bot if chat-triggered UX is desired. Skip containers unless isolation is required.
 
@@ -4939,6 +5096,7 @@ Document and implement patterns for running parallel OpenCode sessions locally, 
 ```
 
 **Key patterns from source post (adapted for OpenCode):**
+
 1. `opencode run "prompt"` - headless dispatch
 2. `opencode run --attach http://localhost:4096` - warm server dispatch
 3. `opencode run -s $session_id` - session resumption
@@ -5032,21 +5190,21 @@ d042,p016,Document model providers generically,Models evolve quickly keep option
 
 #### Files to Create
 
-| File | Purpose | Phase |
-|------|---------|-------|
-| `tools/ai-assistants/headless-dispatch.md` | Document `claude -p` patterns | 1 |
-| `scripts/droid-helper.sh` | Namespaced agent dispatch | 2 |
-| `scripts/matrix-dispatch-helper.sh` | Matrix bot integration | 4 |
-| Example droids in `.agent-workspace/droids/` | Reference implementations | 5 |
+| File                                         | Purpose                       | Phase |
+| -------------------------------------------- | ----------------------------- | ----- |
+| `tools/ai-assistants/headless-dispatch.md`   | Document `claude -p` patterns | 1     |
+| `scripts/droid-helper.sh`                    | Namespaced agent dispatch     | 2     |
+| `scripts/matrix-dispatch-helper.sh`          | Matrix bot integration        | 4     |
+| Example droids in `.agent-workspace/droids/` | Reference implementations     | 5     |
 
 #### Files to Modify
 
-| File | Changes | Phase |
-|------|---------|-------|
-| `scripts/memory-helper.sh` | Add `--namespace` flag | 3 |
-| `memory/README.md` | Document namespace feature | 3 |
-| `AGENTS.md` | Add parallel agent guidance | 5 |
-| `subagent-index.toon` | Add new subagents | 5 |
+| File                       | Changes                     | Phase |
+| -------------------------- | --------------------------- | ----- |
+| `scripts/memory-helper.sh` | Add `--namespace` flag      | 3     |
+| `memory/README.md`         | Document namespace feature  | 3     |
+| `AGENTS.md`                | Add parallel agent guidance | 5     |
+| `subagent-index.toon`      | Add new subagents           | 5     |
 
 ---
 
@@ -5065,12 +5223,14 @@ p017,Self-Improving Agent System,planning,0,6,,agents|self-improvement|automatio
 Create a self-improving agent system that can review its own performance, refine agents based on learnings, test changes in isolated sessions, and contribute improvements back to the community with proper privacy filtering.
 
 **Key capabilities:**
+
 1. **Review** - Analyze memory for success/failure patterns, identify gaps
 2. **Refine** - Generate and apply improvements to agents/scripts
 3. **Test** - Validate changes in isolated OpenCode sessions
 4. **PR** - Contribute improvements with privacy filtering for public repos
 
 **Safety guardrails:**
+
 - Worktree isolation for all changes
 - Human approval required for PRs
 - Mandatory privacy filter before public contributions
@@ -5100,6 +5260,7 @@ Create a self-improving agent system that can review its own performance, refine
 ```
 
 **What we already have:**
+
 - `agent-review.md` - Manual review process
 - `memory-helper.sh` - Pattern storage (SUCCESS/FAILURE types)
 - `session-distill-helper.sh` - Extract learnings
@@ -5107,6 +5268,7 @@ Create a self-improving agent system that can review its own performance, refine
 - OpenCode server API - Isolated session testing
 
 **Privacy filter components:**
+
 1. Secretlint scan for credentials
 2. Pattern-based redaction (emails, IPs, local URLs, home paths, API keys)
 3. Project-specific patterns from `.aidevops/privacy-patterns.txt`
@@ -5123,7 +5285,7 @@ Create a self-improving agent system that can review its own performance, refine
 
 # Output:
 # === Self-Improvement Analysis ===
-# 
+#
 # FAILURE patterns found: 3
 # - SC2086 unquoted variables (5 occurrences)
 # - SC2155 declare and assign separately (2 occurrences)
@@ -5219,32 +5381,32 @@ d046,p017,Worktree isolation for all changes,Easy rollback and doesn't affect ma
 
 #### Files to Create
 
-| File | Purpose | Phase |
-|------|---------|-------|
-| `scripts/self-improve-helper.sh` | Main self-improvement script | 1-5 |
-| `scripts/privacy-filter-helper.sh` | Privacy filtering for PRs | 4 |
-| `scripts/agent-test-helper.sh` | Agent testing framework | 3 |
-| `scripts/commands/self-improve.md` | /self-improve command | 6 |
-| `tools/build-agent/self-improvement.md` | Self-improvement subagent | 6 |
-| `tools/security/privacy-filter.md` | Privacy filter documentation | 4 |
+| File                                    | Purpose                      | Phase |
+| --------------------------------------- | ---------------------------- | ----- |
+| `scripts/self-improve-helper.sh`        | Main self-improvement script | 1-5   |
+| `scripts/privacy-filter-helper.sh`      | Privacy filtering for PRs    | 4     |
+| `scripts/agent-test-helper.sh`          | Agent testing framework      | 3     |
+| `scripts/commands/self-improve.md`      | /self-improve command        | 6     |
+| `tools/build-agent/self-improvement.md` | Self-improvement subagent    | 6     |
+| `tools/security/privacy-filter.md`      | Privacy filter documentation | 4     |
 
 #### Files to Modify
 
-| File | Changes | Phase |
-|------|---------|-------|
-| `memory-helper.sh` | Add pattern query helpers | 1 |
-| `agent-review.md` | Link to self-improvement | 6 |
-| `AGENTS.md` | Add self-improvement guidance | 6 |
-| `subagent-index.toon` | Add new subagents | 6 |
+| File                  | Changes                       | Phase |
+| --------------------- | ----------------------------- | ----- |
+| `memory-helper.sh`    | Add pattern query helpers     | 1     |
+| `agent-review.md`     | Link to self-improvement      | 6     |
+| `AGENTS.md`           | Add self-improvement guidance | 6     |
+| `subagent-index.toon` | Add new subagents             | 6     |
 
 #### Related Tasks
 
-| Task | Description | Dependency |
-|------|-------------|------------|
-| t116 | Self-improving agent system (main task) | This plan |
-| t117 | Privacy filter for public PRs | Blocks t116.4 |
-| t118 | Agent testing framework | Related |
-| t115 | OpenCode server documentation | Prerequisite knowledge |
+| Task | Description                             | Dependency             |
+| ---- | --------------------------------------- | ---------------------- |
+| t116 | Self-improving agent system (main task) | This plan              |
+| t117 | Privacy filter for public PRs           | Blocks t116.4          |
+| t118 | Agent testing framework                 | Related                |
+| t115 | OpenCode server documentation           | Prerequisite knowledge |
 
 ---
 
@@ -5267,13 +5429,13 @@ Batch-create 12 SEO tool subagents (t083-t094) in a single sprint. All follow an
 
 **Corrections identified during audit (2026-02-05):**
 
-| Task | Issue | Fix |
-|------|-------|-----|
+| Task                   | Issue                                | Fix                                                              |
+| ---------------------- | ------------------------------------ | ---------------------------------------------------------------- |
 | t084 Rich Results Test | Google deprecated the standalone API | Use URL-based testing only; document browser automation approach |
-| t086 Screaming Frog | CLI requires paid license ($259/yr) | Document free tier limits (500 URLs); note license requirement |
-| t088 Sitebulb | No public API or CLI exists | Change scope to "document manual workflow" or decline |
-| t089 ContentKing | Acquired by Conductor in 2022 | Verify post-acquisition API status; may need different endpoint |
-| t087 Semrush | API has pricing tiers | Document free tier (10 requests/day) and paid tiers |
+| t086 Screaming Frog    | CLI requires paid license ($259/yr)  | Document free tier limits (500 URLs); note license requirement   |
+| t088 Sitebulb          | No public API or CLI exists          | Change scope to "document manual workflow" or decline            |
+| t089 ContentKing       | Acquired by Conductor in 2022        | Verify post-acquisition API status; may need different endpoint  |
+| t087 Semrush           | API has pricing tiers                | Document free tier (10 requests/day) and paid tiers              |
 
 #### Progress
 
@@ -5327,20 +5489,20 @@ d052,p020,t088 Sitebulb scope changed to manual workflow,No public API or CLI ex
 
 #### Related Tasks
 
-| Task | Description | Phase |
-|------|-------------|-------|
-| t083 | Bing Webmaster Tools | 1 |
-| t084 | Rich Results Test | 1 |
-| t085 | Schema Validator | 1 |
-| t086 | Screaming Frog | 3 |
-| t087 | Semrush | 1 |
-| t088 | Sitebulb | 3 |
-| t089 | ContentKing/Conductor | 2 |
-| t090 | WebPageTest | 1 |
-| t091 | Programmatic SEO | 2 |
-| t092 | Schema Markup | 1 |
-| t093 | Page CRO | 2 |
-| t094 | Analytics Tracking | 1 |
+| Task | Description           | Phase |
+| ---- | --------------------- | ----- |
+| t083 | Bing Webmaster Tools  | 1     |
+| t084 | Rich Results Test     | 1     |
+| t085 | Schema Validator      | 1     |
+| t086 | Screaming Frog        | 3     |
+| t087 | Semrush               | 1     |
+| t088 | Sitebulb              | 3     |
+| t089 | ContentKing/Conductor | 2     |
+| t090 | WebPageTest           | 1     |
+| t091 | Programmatic SEO      | 2     |
+| t092 | Schema Markup         | 1     |
+| t093 | Page CRO              | 2     |
+| t094 | Analytics Tracking    | 1     |
 
 ---
 
@@ -5360,6 +5522,7 @@ Create a comprehensive voice integration for aidevops supporting both local and 
 **Dual-track philosophy:** Every voice capability should have both a local option (privacy, offline, no cost) and an API option (higher quality, lower latency, easier setup). Users choose based on their needs.
 
 **Key capabilities:**
+
 1. **Transcription** (audio/video → text) - Local: Whisper/faster-whisper. API: Groq, ElevenLabs Scribe, Deepgram, Soniox
 2. **TTS** (text → speech) - Local: Qwen3-TTS, Piper. API: Cartesia Sonic, ElevenLabs, OpenAI TTS
 3. **STT** (realtime speech → text) - Local: Whisper.cpp. API: Soniox, Deepgram, Google
@@ -5370,6 +5533,7 @@ Create a comprehensive voice integration for aidevops supporting both local and 
 #### Context from Discussion
 
 **Pipecat ecosystem (v0.0.101, 10.2k stars, Feb 2026):**
+
 - Python framework for voice/multimodal AI agents
 - 50+ service integrations (STT, TTS, LLM, S2S, transport)
 - Daily.co WebRTC transport for real-time audio
@@ -5377,6 +5541,7 @@ Create a comprehensive voice integration for aidevops supporting both local and 
 - Voice UI Kit for web-based voice interfaces
 
 **Local model options:**
+
 - **Qwen3-TTS** (0.6B/1.7B, Apache-2.0): 10 languages, voice clone/design, streaming, vLLM support
 - **Piper** (MIT): Fast local TTS, many voices, low resource usage
 - **Whisper Large v3 Turbo** (1.5GB): Best accuracy/speed tradeoff for local transcription
@@ -5384,14 +5549,14 @@ Create a comprehensive voice integration for aidevops supporting both local and 
 
 **Task sequencing:**
 
-| Phase | Tasks | Dependency | Rationale |
-|-------|-------|------------|-----------|
-| 1 | t072 Transcription | None | Foundation - most broadly useful |
-| 2 | t071 TTS/STT Models | None (parallel with Phase 1) | Model catalog for other phases |
-| 3 | t081 Local Pipecat | t071, t072 | Local voice agent pipeline |
-| 4 | t080 NVIDIA Nemotron | t081 | Cloud voice agent with open models |
-| 5 | t114 OpenCode bridge | t081 | Connect voice pipeline to AI |
-| 6 | t112, t113 Shortcuts | t114 | Quick dispatch from desktop/mobile |
+| Phase | Tasks                | Dependency                   | Rationale                          |
+| ----- | -------------------- | ---------------------------- | ---------------------------------- |
+| 1     | t072 Transcription   | None                         | Foundation - most broadly useful   |
+| 2     | t071 TTS/STT Models  | None (parallel with Phase 1) | Model catalog for other phases     |
+| 3     | t081 Local Pipecat   | t071, t072                   | Local voice agent pipeline         |
+| 4     | t080 NVIDIA Nemotron | t081                         | Cloud voice agent with open models |
+| 5     | t114 OpenCode bridge | t081                         | Connect voice pipeline to AI       |
+| 6     | t112, t113 Shortcuts | t114                         | Quick dispatch from desktop/mobile |
 
 #### Progress
 
@@ -5502,37 +5667,37 @@ disc008,p019,GPT-4o-Realtime is most mature S2S option,First Pipecat S2S provide
 
 #### Files to Create
 
-| File | Purpose | Phase |
-|------|---------|-------|
-| `tools/voice/transcription.md` | Transcription subagent | 1 |
-| `scripts/transcription-helper.sh` | Transcription CLI | 1 |
-| `tools/voice/voice-models.md` | Voice AI model catalog | 2 |
-| `tools/voice/pipecat.md` | Pipecat voice agent subagent | 3 |
-| `scripts/pipecat-helper.sh` | Pipecat CLI | 3 |
-| `tools/voice/pipecat-opencode.md` | OpenCode voice bridge | 5 |
-| `tools/voice/voiceink-shortcut.md` | macOS voice shortcut | 6 |
-| `tools/voice/ios-shortcut.md` | iPhone voice shortcut | 6 |
+| File                               | Purpose                      | Phase |
+| ---------------------------------- | ---------------------------- | ----- |
+| `tools/voice/transcription.md`     | Transcription subagent       | 1     |
+| `scripts/transcription-helper.sh`  | Transcription CLI            | 1     |
+| `tools/voice/voice-models.md`      | Voice AI model catalog       | 2     |
+| `tools/voice/pipecat.md`           | Pipecat voice agent subagent | 3     |
+| `scripts/pipecat-helper.sh`        | Pipecat CLI                  | 3     |
+| `tools/voice/pipecat-opencode.md`  | OpenCode voice bridge        | 5     |
+| `tools/voice/voiceink-shortcut.md` | macOS voice shortcut         | 6     |
+| `tools/voice/ios-shortcut.md`      | iPhone voice shortcut        | 6     |
 
 #### Files to Modify
 
-| File | Changes | Phase |
-|------|---------|-------|
-| `subagent-index.toon` | Add voice subagents | 1-6 |
-| `AGENTS.md` | Add voice integration to progressive disclosure table | 6 |
-| `README.md` | Update Voice Integration section | 6 |
+| File                  | Changes                                               | Phase |
+| --------------------- | ----------------------------------------------------- | ----- |
+| `subagent-index.toon` | Add voice subagents                                   | 1-6   |
+| `AGENTS.md`           | Add voice integration to progressive disclosure table | 6     |
+| `README.md`           | Update Voice Integration section                      | 6     |
 
 #### Related Tasks
 
-| Task | Description | Phase |
-|------|-------------|-------|
-| t072 | Audio/Video Transcription subagent | 1 |
-| t071 | Voice AI models catalog | 2 |
-| t081 | Local Pipecat voice agent | 3 |
-| t080 | NVIDIA Nemotron voice agents | 4 |
-| t114 | Pipecat-OpenCode bridge | 5 |
-| t112 | VoiceInk macOS shortcut | 6 |
-| t113 | iPhone voice shortcut | 6 |
-| t027 | hyprwhspr Linux STT (related) | - |
+| Task | Description                        | Phase |
+| ---- | ---------------------------------- | ----- |
+| t072 | Audio/Video Transcription subagent | 1     |
+| t071 | Voice AI models catalog            | 2     |
+| t081 | Local Pipecat voice agent          | 3     |
+| t080 | NVIDIA Nemotron voice agents       | 4     |
+| t114 | Pipecat-OpenCode bridge            | 5     |
+| t112 | VoiceInk macOS shortcut            | 6     |
+| t113 | iPhone voice shortcut              | 6     |
+| t027 | hyprwhspr Linux STT (related)      | -     |
 
 ---
 
@@ -5594,11 +5759,11 @@ Harden the Higgsfield Playwright automator from "works in testing" to "reliable 
 
 #### Decision Log
 
-| Date | Decision | Rationale |
-|------|----------|-----------|
-| 2026-02-10 | Start with retry + credit guard | Prevents wasted credits, highest ROI |
-| 2026-02-10 | Unlimited model auto-select as Phase 2 | Maximizes Creator plan value |
-| 2026-02-10 | Batch ops before output org | Productivity multiplier > file management |
+| Date       | Decision                               | Rationale                                 |
+| ---------- | -------------------------------------- | ----------------------------------------- |
+| 2026-02-10 | Start with retry + credit guard        | Prevents wasted credits, highest ROI      |
+| 2026-02-10 | Unlimited model auto-select as Phase 2 | Maximizes Creator plan value              |
+| 2026-02-10 | Batch ops before output org            | Productivity multiplier > file management |
 
 ---
 
@@ -5632,15 +5797,15 @@ No existing aidevops integration covers secure messaging at this level. Matrix (
 
 **SimpleX Protocol Key Properties:**
 
-| Property | Detail |
-|----------|--------|
-| Identity | No user identifiers — connections are pairs of uni-directional queues |
-| Encryption | Double ratchet (X3DH, Curve448) + AES-GCM + per-queue NaCl layer |
-| Routing | 2-hop onion routing — sender IP hidden from recipient's server |
-| Servers | Stateless — messages in memory only, deleted after delivery |
-| Files | XFTP — separate protocol, files split across multiple servers |
-| Calls | WebRTC with E2E encryption, ICE via chat protocol |
-| Platforms | iOS, Android, Desktop (Mac/Win/Linux), Terminal CLI |
+| Property   | Detail                                                                |
+| ---------- | --------------------------------------------------------------------- |
+| Identity   | No user identifiers — connections are pairs of uni-directional queues |
+| Encryption | Double ratchet (X3DH, Curve448) + AES-GCM + per-queue NaCl layer      |
+| Routing    | 2-hop onion routing — sender IP hidden from recipient's server        |
+| Servers    | Stateless — messages in memory only, deleted after delivery           |
+| Files      | XFTP — separate protocol, files split across multiple servers         |
+| Calls      | WebRTC with E2E encryption, ICE via chat protocol                     |
+| Platforms  | iOS, Android, Desktop (Mac/Win/Linux), Terminal CLI                   |
 
 **Bot API Architecture:**
 
@@ -5677,29 +5842,31 @@ Starter commands: `/help`, `/status`, `/ask <q>`, `/run <cmd>`, `/task <desc>`, 
 
 **Opsec Agent Scope (existing aidevops tools + confirmed additions):**
 
-| Category | Tools / Existing Agents |
-|----------|-------------------------|
-| Messaging | SimpleX (this task), Matrix (`matrix-bot.md`) |
-| Mesh VPN | NetBird (`services/networking/netbird.md`) |
-| VPN | Mullvad, IVPN (confirmed for use) |
-| Secrets | gopass, Bitwarden/Vaultwarden, Enpass, SOPS, multi-tenant |
-| Encryption | gocryptfs, encryption-stack, SOPS |
-| Browsers | Brave (recommended), CamoFox/anti-detect, fingerprint-profiles, stealth-patches |
-| Network | proxy-integration, IP reputation, CDN origin IP |
-| Security | privacy-filter, Shannon entropy, Tirith |
-| Threat modeling | STRIDE, attack trees, risk matrices (guidance, not tooling) |
+| Category        | Tools / Existing Agents                                                         |
+| --------------- | ------------------------------------------------------------------------------- |
+| Messaging       | SimpleX (this task), Matrix (`matrix-bot.md`)                                   |
+| Mesh VPN        | NetBird (`services/networking/netbird.md`)                                      |
+| VPN             | Mullvad, IVPN (confirmed for use)                                               |
+| Secrets         | gopass, Bitwarden/Vaultwarden, Enpass, SOPS, multi-tenant                       |
+| Encryption      | gocryptfs, encryption-stack, SOPS                                               |
+| Browsers        | Brave (recommended), CamoFox/anti-detect, fingerprint-profiles, stealth-patches |
+| Network         | proxy-integration, IP reputation, CDN origin IP                                 |
+| Security        | privacy-filter, Shannon entropy, Tirith                                         |
+| Threat modeling | STRIDE, attack trees, risk matrices (guidance, not tooling)                     |
 
 Note: Additional tools (Tor, YubiKey, Whonix, Tails, etc.) assessed and added as needs arise.
 
 #### Execution Phases
 
 **Phase 1: Research & Foundation** (~2h)
+
 - [ ] Deep-read SimpleX bot API types reference (COMMANDS.md, EVENTS.md, TYPES.md)
 - [ ] Review TypeScript SDK source (`simplex-chat` npm package)
 - [ ] Test SimpleX CLI installation and basic operations
 - [ ] Review existing `matrix-bot.md`, `ip-reputation-helper.sh`, and `mail-helper.sh` patterns
 
 **Phase 2: Subagent Documentation** (~4h)
+
 - [ ] Create `.agents/services/communications/simplex.md` — comprehensive knowledge base
   - Installation (CLI, desktop, mobile)
   - Bot API reference (WebSocket protocol, commands, events)
@@ -5714,6 +5881,7 @@ Note: Additional tools (Tor, YubiKey, Whonix, Tails, etc.) assessed and added as
   - Integration with other aidevops capabilities
 
 **Phase 3: Helper Script** (~3h)
+
 - [ ] Create `simplex-helper.sh` with subcommands:
   - `install` — download and install SimpleX CLI
   - `init` — guided setup wizard (create profile, configure servers, create address)
@@ -5725,6 +5893,7 @@ Note: Additional tools (Tor, YubiKey, Whonix, Tails, etc.) assessed and added as
   - `server <setup|status>` — self-hosted SMP server management
 
 **Phase 4: Bot Framework** (~4h)
+
 - [ ] Create TypeScript/Bun bot scaffold as **channel-agnostic gateway** (inspired by OpenClaw/IronClaw gateway pattern):
   - Channel abstraction layer — SimpleX as first adapter, Matrix/others plug in later
   - WebSocket connection to SimpleX CLI (first channel adapter)
@@ -5743,6 +5912,7 @@ Note: Additional tools (Tor, YubiKey, Whonix, Tails, etc.) assessed and added as
   - Reference: OpenClaw gateway pattern (225K stars), IronClaw WASM channels
 
 **Phase 4b: Mailbox Transport Adapter** (~3h)
+
 - [ ] Extend `mail-helper.sh` with SimpleX transport:
   - New subcommand: `mail-helper.sh transport <simplex|matrix|local>` to configure transport
   - `local` (default): existing SQLite-only, same-machine mailbox
@@ -5758,6 +5928,7 @@ Note: Additional tools (Tor, YubiKey, Whonix, Tails, etc.) assessed and added as
 - [ ] Test: agent on machine A sends task_dispatch via SimpleX to agent on machine B
 
 **Phase 5: Opsec Agent** (~3h)
+
 - [ ] Create `.agents/tools/security/opsec.md`:
   - Threat modeling frameworks (STRIDE, attack trees, risk matrices)
   - Secure communications (SimpleX vs Matrix — comparison, when to use which)
@@ -5781,6 +5952,7 @@ Note: Additional tools (Tor, YubiKey, Whonix, Tails, etc.) assessed and added as
   - Note: additional tools (Tor, YubiKey, Whonix, Tails) assessed as needs arise
 
 **Phase 6: Chat Security** (~6h, inspired by IronClaw/OpenClaw)
+
 - [ ] Prompt injection defense for chat inputs (t1327.8):
   - Pattern detection: role-play attacks, instruction override, delimiter injection, encoding tricks
   - Content sanitization before passing to AI model
@@ -5803,6 +5975,7 @@ Note: Additional tools (Tor, YubiKey, Whonix, Tails, etc.) assessed and added as
 **Phase 7: Matterbridge Integration** — split to t1328
 
 **Phase 8: Integration & Testing** (~4h)
+
 - [ ] Update `subagent-index.toon` with simplex and opsec entries
 - [ ] Update both `AGENTS.md` files (domain index)
 - [ ] End-to-end test: install CLI, create bot, send/receive messages
@@ -5813,23 +5986,23 @@ Note: Additional tools (Tor, YubiKey, Whonix, Tails, etc.) assessed and added as
 
 #### Decision Log
 
-| Date | Decision | Rationale |
-|------|----------|-----------|
-| 2026-02-25 | SimpleX over Signal/Telegram | Only platform with zero user identifiers — true anonymity |
-| 2026-02-25 | Bot via WebSocket API, not direct SMP | Officially supported, avoids reimplementing complex protocol |
-| 2026-02-25 | TypeScript/Bun for bot, not Haskell | Aligns with aidevops ecosystem, TypeScript SDK available |
-| 2026-02-25 | No MCP server — CLI agents sufficient | MCP adds context bloat with no capability the bot + helper script don't provide |
-| 2026-02-25 | Extend existing mailbox, not new protocol | mail-helper.sh already has message types, agent registration, convoy tracking — add SimpleX/Matrix as transport adapters |
-| 2026-02-25 | Opsec scoped to existing aidevops tools + confirmed | NetBird, Mullvad, IVPN, Brave, CamoFox + existing agents. Others assessed as needs arise |
-| 2026-02-25 | Slash commands coexist without conflict | Separate contexts (SimpleX chat vs terminal) — document clearly |
-| 2026-02-25 | Business address for multi-agent support | Per-customer group chats ideal for support bots with escalation |
-| 2026-02-25 | Voice/video calls as future phase | Depends on aidevops gaining real-time audio/video processing |
-| 2026-02-25 | Self-hosted SMP server guidance included | Maximum privacy requires own infrastructure — document setup |
-| 2026-02-25 | Matterbridge for SimpleX-Matrix bridging | Existing adapter (matterbridge-simplex) bridges SimpleX to 40+ platforms via Matterbridge — unifies with existing Matrix integration |
-| 2026-02-25 | Privacy gradient via bridging | Users choose SimpleX (max privacy) or Matrix/Telegram (convenience) — same conversation, different privacy levels |
-| 2026-02-25 | Bot as channel-agnostic gateway | Inspired by OpenClaw (225K stars) gateway pattern — SimpleX as first adapter, Matrix/others plug in later without rewriting core |
-| 2026-02-25 | Chat security as dedicated phase | IronClaw/OpenClaw both treat inbound DMs as untrusted — prompt injection defense, leak detection, exec approvals are real gaps in aidevops |
-| 2026-02-25 | Matterbridge split to t1328 | Separate agent — Matterbridge is a general-purpose bridge tool, not SimpleX-specific |
+| Date       | Decision                                            | Rationale                                                                                                                                  |
+| ---------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-02-25 | SimpleX over Signal/Telegram                        | Only platform with zero user identifiers — true anonymity                                                                                  |
+| 2026-02-25 | Bot via WebSocket API, not direct SMP               | Officially supported, avoids reimplementing complex protocol                                                                               |
+| 2026-02-25 | TypeScript/Bun for bot, not Haskell                 | Aligns with aidevops ecosystem, TypeScript SDK available                                                                                   |
+| 2026-02-25 | No MCP server — CLI agents sufficient               | MCP adds context bloat with no capability the bot + helper script don't provide                                                            |
+| 2026-02-25 | Extend existing mailbox, not new protocol           | mail-helper.sh already has message types, agent registration, convoy tracking — add SimpleX/Matrix as transport adapters                   |
+| 2026-02-25 | Opsec scoped to existing aidevops tools + confirmed | NetBird, Mullvad, IVPN, Brave, CamoFox + existing agents. Others assessed as needs arise                                                   |
+| 2026-02-25 | Slash commands coexist without conflict             | Separate contexts (SimpleX chat vs terminal) — document clearly                                                                            |
+| 2026-02-25 | Business address for multi-agent support            | Per-customer group chats ideal for support bots with escalation                                                                            |
+| 2026-02-25 | Voice/video calls as future phase                   | Depends on aidevops gaining real-time audio/video processing                                                                               |
+| 2026-02-25 | Self-hosted SMP server guidance included            | Maximum privacy requires own infrastructure — document setup                                                                               |
+| 2026-02-25 | Matterbridge for SimpleX-Matrix bridging            | Existing adapter (matterbridge-simplex) bridges SimpleX to 40+ platforms via Matterbridge — unifies with existing Matrix integration       |
+| 2026-02-25 | Privacy gradient via bridging                       | Users choose SimpleX (max privacy) or Matrix/Telegram (convenience) — same conversation, different privacy levels                          |
+| 2026-02-25 | Bot as channel-agnostic gateway                     | Inspired by OpenClaw (225K stars) gateway pattern — SimpleX as first adapter, Matrix/others plug in later without rewriting core           |
+| 2026-02-25 | Chat security as dedicated phase                    | IronClaw/OpenClaw both treat inbound DMs as untrusted — prompt injection defense, leak detection, exec approvals are real gaps in aidevops |
+| 2026-02-25 | Matterbridge split to t1328                         | Separate agent — Matterbridge is a general-purpose bridge tool, not SimpleX-specific                                                       |
 
 #### Surprises & Discoveries
 
@@ -5919,11 +6092,11 @@ m001,p00X,Phase 1: Description,Xh,,YYYY-MM-DDTHH:MMZ,,pending
 
 #### Time Tracking
 
-| Phase | Estimated | Actual | Variance |
-|-------|-----------|--------|----------|
-| Phase 1 | Xh | - | - |
-| Phase 2 | Xh | - | - |
-| **Total** | **Xh** | **-** | **-** |
+| Phase     | Estimated | Actual | Variance |
+| --------- | --------- | ------ | -------- |
+| Phase 1   | Xh        | -      | -        |
+| Phase 2   | Xh        | -      | -        |
+| **Total** | **Xh**    | **-**  | **-**    |
 
 <!--TOON:time_tracking{plan_id,total_est,total_actual,variance_pct}:
 p00X,Xh,,
@@ -5938,18 +6111,22 @@ When a plan is complete, add this section and move to Completed Plans:
 #### Outcomes & Retrospective
 
 **What was delivered:**
+
 - Deliverable 1
 - Deliverable 2
 
 **What went well:**
+
 - Success 1
 - Success 2
 
 **What could improve:**
+
 - Learning 1
 - Learning 2
 
 **Time Summary:**
+
 - Estimated: Xd
 - Actual: Xd
 - Variance: ±X%
