@@ -48,12 +48,24 @@ EOF
 
 load_state() {
 	[[ -f "$STATE_FILE" ]] || return 1
-	# Single-pass parse of YAML frontmatter
-	eval "$(awk -F': ' '/^---$/{n++;next} n==1 && NF>=2{
+	# Single-pass parse of YAML frontmatter — safe variable assignment via declare
+	local _key _val _line
+	while IFS= read -r _line; do
+		_key="${_line%%=*}"
+		_val="${_line#*=}"
+		# Allowlist: only set known state variables
+		case "$_key" in
+		PHASE | ACTIVE | ITERATION | MAX_TASK_ITERATIONS | MAX_PREFLIGHT_ITERATIONS | \
+			MAX_PR_ITERATIONS | SKIP_PREFLIGHT | SKIP_POSTFLIGHT | NO_AUTO_PR | \
+			NO_AUTO_DEPLOY | HEADLESS)
+			printf -v "$_key" '%s' "$_val"
+			;;
+		esac
+	done < <(awk -F': ' '/^---$/{n++;next} n==1 && NF>=2{
 		gsub(/[" ]/, "", $2); k=$1; gsub(/-/, "_", k)
 		print toupper(k) "=" $2
-	}' "$STATE_FILE")"
-	CURRENT_PHASE="$PHASE"
+	}' "$STATE_FILE")
+	CURRENT_PHASE="${PHASE:-}"
 	HEADLESS="${HEADLESS:-false}"
 	SAVED_PROMPT=$(sed -n '/^---$/,/^---$/d; p' "$STATE_FILE")
 }

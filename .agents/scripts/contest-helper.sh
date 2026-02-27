@@ -1015,8 +1015,8 @@ _record_contest_scores() {
 			# Clamp to 1-5 range
 			for var in int_correct int_complete int_quality int_clarity; do
 				local val="${!var}"
-				[[ "$val" -lt 1 ]] && eval "$var=1"
-				[[ "$val" -gt 5 ]] && eval "$var=5"
+				[[ "$val" -lt 1 ]] && printf -v "$var" '%d' 1
+				[[ "$val" -gt 5 ]] && printf -v "$var" '%d' 5
 			done
 
 			"$scoring_helper" score \

@@ -482,7 +482,7 @@ _run_cleanups() {
 		local line
 		while IFS= read -r line; do
 			[[ -z "$line" ]] && continue
-			eval "$line" 2>/dev/null || true
+			bash -c "$line" 2>/dev/null || true
 		done <<<"$reversed"
 	fi
 	# Restore parent scope (pop from save stack)
