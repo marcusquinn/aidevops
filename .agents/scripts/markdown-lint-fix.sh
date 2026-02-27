@@ -17,57 +17,55 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 # Common constants
 # Print functions
 print_header() {
-    local message="$1"
-    echo -e "${PURPLE}📝 $message${NC}"
-    return 0
+	local message="$1"
+	echo -e "${PURPLE}📝 $message${NC}"
+	return 0
 }
 
 # Check if markdownlint-cli is installed
 check_markdownlint() {
-    if command -v markdownlint &> /dev/null; then
-        return 0
-    else
-        return 1
-    fi
-    return 0
+	if command -v markdownlint &>/dev/null; then
+		return 0
+	else
+		return 1
+	fi
 }
 
 # Install markdownlint-cli
 install_markdownlint() {
-    print_header "Installing markdownlint-cli"
-    
-    if command -v npm &> /dev/null; then
-        # Use --ignore-scripts to prevent execution of postinstall scripts for security
-        print_info "Installing markdownlint-cli via npm..."
-        npm install -g --ignore-scripts markdownlint-cli
-        
-        if check_markdownlint; then
-            print_success "markdownlint-cli installed successfully"
-            return 0
-        else
-            print_error "Installation failed"
-            return 1
-        fi
-    else
-        print_error "npm not found. Please install Node.js and npm first."
-        print_info "Visit: https://nodejs.org/"
-        return 1
-    fi
-    return 0
+	print_header "Installing markdownlint-cli"
+
+	if command -v npm &>/dev/null; then
+		# Use --ignore-scripts to prevent execution of postinstall scripts for security
+		print_info "Installing markdownlint-cli via npm..."
+		npm install -g --ignore-scripts markdownlint-cli
+
+		if check_markdownlint; then
+			print_success "markdownlint-cli installed successfully"
+			return 0
+		else
+			print_error "Installation failed"
+			return 1
+		fi
+	else
+		print_error "npm not found. Please install Node.js and npm first."
+		print_info "Visit: https://nodejs.org/"
+		return 1
+	fi
 }
 
 # Create markdownlint configuration
 create_markdownlint_config() {
-    local config_file=".markdownlint.json"
-    
-    if [[ -f "$config_file" ]]; then
-        print_info "markdownlint config already exists: $config_file"
-        return 0
-    fi
-    
-    print_info "Creating markdownlint configuration: $config_file"
-    
-    cat > "$config_file" << 'EOF'
+	local config_file=".markdownlint.json"
+
+	if [[ -f "$config_file" ]]; then
+		print_info "markdownlint config already exists: $config_file"
+		return 0
+	fi
+
+	print_info "Creating markdownlint configuration: $config_file"
+
+	cat >"$config_file" <<'EOF'
 {
   "default": true,
   "MD013": {
@@ -82,98 +80,94 @@ create_markdownlint_config() {
   "MD046": {
     "style": "fenced"
   }
-    return 0
 }
 EOF
-    
-    if [[ -f "$config_file" ]]; then
-        print_success "markdownlint configuration created"
-        return 0
-    else
-        print_error "Failed to create configuration"
-        return 1
-    fi
+
+	if [[ -f "$config_file" ]]; then
+		print_success "markdownlint configuration created"
+		return 0
+	else
+		print_error "Failed to create configuration"
+		return 1
+	fi
 }
 
 # Fix markdown files using markdownlint
 fix_markdown_with_markdownlint() {
-    local target="$1"
-    
-    print_header "Fixing Markdown Issues with markdownlint"
-    
-    # Check if markdownlint is available
-    if ! check_markdownlint; then
-        print_warning "markdownlint-cli not found"
-        read -r -p "Install markdownlint-cli? (y/N): " install_confirm
-        
-        if [[ $install_confirm =~ ^[Yy]$ ]]; then
-            if ! install_markdownlint; then
-                return 1
-            fi
-        else
-            print_info "Skipping markdownlint fixes"
-            return 0
-        fi
-    fi
-    
-    # Create config if it doesn't exist
-    create_markdownlint_config
-    
-    # Run markdownlint with fix option
-    if [[ -f "$target" ]]; then
-        print_info "Fixing: $target"
-        markdownlint --fix "$target"
-        
-        if markdownlint --fix "$target"; then
-            print_success "Fixed markdown issues in: $target"
-        else
-            print_warning "Some issues may require manual fixing in: $target"
-        fi
-    elif [[ -d "$target" ]]; then
-        print_info "Fixing all markdown files in: $target"
-        markdownlint --fix "$target/**/*.md"
-        
-        if markdownlint --fix "$target"/*.md; then
-            print_success "Fixed markdown issues in directory: $target"
-        else
-            print_warning "Some issues may require manual fixing"
-        fi
-    else
-        print_error "Target not found: $target"
-        return 1
-    fi
-    
-    return 0
+	local target="$1"
+
+	print_header "Fixing Markdown Issues with markdownlint"
+
+	# Check if markdownlint is available
+	if ! check_markdownlint; then
+		print_warning "markdownlint-cli not found"
+		read -r -p "Install markdownlint-cli? (y/N): " install_confirm
+
+		if [[ $install_confirm =~ ^[Yy]$ ]]; then
+			if ! install_markdownlint; then
+				return 1
+			fi
+		else
+			print_info "Skipping markdownlint fixes"
+			return 0
+		fi
+	fi
+
+	# Create config if it doesn't exist
+	create_markdownlint_config
+
+	# Run markdownlint with fix option
+	if [[ -f "$target" ]]; then
+		print_info "Fixing: $target"
+		if markdownlint --fix "$target"; then
+			print_success "Fixed markdown issues in: $target"
+		else
+			print_warning "Some issues may require manual fixing in: $target"
+		fi
+	elif [[ -d "$target" ]]; then
+		print_info "Fixing all markdown files in: $target"
+		if markdownlint --fix "$target/**/*.md"; then
+			print_success "Fixed markdown issues in directory: $target"
+		else
+			print_warning "Some issues may require manual fixing"
+		fi
+	else
+		print_error "Target not found: $target"
+		return 1
+	fi
+
+	return 0
 }
 
 # Manual fixes for common Codacy issues
 apply_manual_fixes() {
-    local file="$1"
-    local temp_file
-    temp_file=$(mktemp)
-    _save_cleanup_scope; trap '_run_cleanups' RETURN
-    push_cleanup "rm -f '${temp_file}'"
-    local changes_made=0
-    
-    print_info "Applying manual fixes to: $file"
-    
-    # Create backup
-    cp "$file" "${file}.bak"
-    
-    # Apply manual fixes
-    {
-        # Remove trailing whitespace
-        sed 's/[[:space:]]*$//' "$file" |
-        
-        # Fix list markers - use consistent dashes
-        sed 's/^[[:space:]]*\*[[:space:]]/- /' |
-        sed 's/^[[:space:]]*+[[:space:]]/- /' |
-        
-        # Fix emphasis markers - use ** for bold
-        sed 's/__\([^_]*\)__/**\1**/g' |
-        
-        # Remove excessive blank lines (max 2 consecutive)
-        awk '
+	local file="$1"
+	local temp_file
+	temp_file=$(mktemp)
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	push_cleanup "rm -f '${temp_file}'"
+	local changes_made=0
+
+	print_info "Applying manual fixes to: $file"
+
+	# Create backup
+	cp "$file" "${file}.bak"
+
+	# Apply manual fixes
+	{
+		# Remove trailing whitespace
+		sed 's/[[:space:]]*$//' "$file" |
+
+			# Fix list markers - use consistent dashes
+			sed 's/^[[:space:]]*\*[[:space:]]/- /' |
+			sed 's/^[[:space:]]*+[[:space:]]/- /' |
+
+			# Fix emphasis markers - use ** for bold
+			sed 's/__\([^_]*\)__/**\1**/g' |
+
+			# Remove excessive blank lines (max 2 consecutive)
+			awk '
         BEGIN { blank_count = 0 }
         /^[[:space:]]*$/ { 
             blank_count++
@@ -181,103 +175,102 @@ apply_manual_fixes() {
             next
         }
         { blank_count = 0; print }'
-        
-    } > "$temp_file"
-    
-    # Check if changes were made
-    if ! cmp -s "$file" "$temp_file"; then
-        mv "$temp_file" "$file"
-        changes_made=1
-        print_success "Applied manual fixes to: $file"
-    else
-        rm "$temp_file"
-        print_info "No manual fixes needed: $file"
-    fi
-    
-    # Remove backup if no changes were made
-    if [[ $changes_made -eq 0 ]]; then
-        rm "${file}.bak"
-    fi
-    
-    return $changes_made
-    return 0
+
+	} >"$temp_file"
+
+	# Check if changes were made
+	if ! cmp -s "$file" "$temp_file"; then
+		mv "$temp_file" "$file"
+		changes_made=1
+		print_success "Applied manual fixes to: $file"
+	else
+		rm "$temp_file"
+		print_info "No manual fixes needed: $file"
+	fi
+
+	# Remove backup if no changes were made
+	if [[ $changes_made -eq 0 ]]; then
+		rm "${file}.bak"
+	fi
+
+	return 0
 }
 
 # Show help message
 show_help() {
-    print_header "Markdown Lint Fix Help"
-    echo ""
-    echo "Usage: $0 [command] [target]"
-    echo ""
-    echo "Commands:"
-    echo "  fix [file|dir]       - Fix markdown issues (default)"
-    echo "  manual [file|dir]    - Apply manual fixes only"
-    echo "  install              - Install markdownlint-cli"
-    echo "  config               - Create markdownlint configuration"
-    echo "  help                 - Show this help message"
-    echo ""
-    echo "Examples:"
-    echo "  $0 README.md"
-    echo "  $0 fix .agents/"
-    echo "  $0 manual ."
-    echo "  $0 install"
-    echo ""
-    echo "This script fixes common Codacy markdown formatting issues:"
-    echo "  • Trailing whitespace"
-    echo "  • Inconsistent list markers"
-    echo "  • Inconsistent emphasis markers"
-    echo "  • Excessive blank lines"
-    echo "  • Line length issues"
-    echo "  • Header formatting"
-    echo ""
-    echo "Requires: markdownlint-cli (will offer to install if missing)"
-    return 0
+	print_header "Markdown Lint Fix Help"
+	echo ""
+	echo "Usage: $0 [command] [target]"
+	echo ""
+	echo "Commands:"
+	echo "  fix [file|dir]       - Fix markdown issues (default)"
+	echo "  manual [file|dir]    - Apply manual fixes only"
+	echo "  install              - Install markdownlint-cli"
+	echo "  config               - Create markdownlint configuration"
+	echo "  help                 - Show this help message"
+	echo ""
+	echo "Examples:"
+	echo "  $0 README.md"
+	echo "  $0 fix .agents/"
+	echo "  $0 manual ."
+	echo "  $0 install"
+	echo ""
+	echo "This script fixes common Codacy markdown formatting issues:"
+	echo "  • Trailing whitespace"
+	echo "  • Inconsistent list markers"
+	echo "  • Inconsistent emphasis markers"
+	echo "  • Excessive blank lines"
+	echo "  • Line length issues"
+	echo "  • Header formatting"
+	echo ""
+	echo "Requires: markdownlint-cli (will offer to install if missing)"
+	return 0
 }
 
 # Main function
 main() {
-    local _arg1="$1"
-    local command="${1:-fix}"
-    local target="${2:-.}"
+	local _arg1="${1:-}"
+	local command="${1:-fix}"
+	local target="${2:-.}"
 
-    # Handle case where first argument is a file/directory
-    if [[ -f "$_arg1" || -d "$_arg1" ]]; then
-        command="fix"
-        target="$_arg1"
-    fi
+	# Handle case where first argument is a file/directory
+	if [[ -f "$_arg1" || -d "$_arg1" ]]; then
+		command="fix"
+		target="$_arg1"
+	fi
 
-    case "$command" in
-        "fix")
-            fix_markdown_with_markdownlint "$target"
-            ;;
-        "manual")
-            if [[ -f "$target" && "$target" == *.md ]]; then
-                apply_manual_fixes "$target"
-            elif [[ -d "$target" ]]; then
-                find "$target" -name "*.md" -type f | while read -r file; do
-                    apply_manual_fixes "$file"
-                done
-            else
-                print_error "Invalid target: $target"
-                return 1
-            fi
-            ;;
-        "install")
-            install_markdownlint
-            ;;
-        "config")
-            create_markdownlint_config
-            ;;
-        "help"|"--help"|"-h")
-            show_help
-            ;;
-        *)
-            print_error "$ERROR_UNKNOWN_COMMAND $command"
-            show_help
-            return 1
-            ;;
-    esac
-    return 0
+	case "$command" in
+	"fix")
+		fix_markdown_with_markdownlint "$target"
+		;;
+	"manual")
+		if [[ -f "$target" && "$target" == *.md ]]; then
+			apply_manual_fixes "$target"
+		elif [[ -d "$target" ]]; then
+			find "$target" -name "*.md" -type f | while read -r file; do
+				apply_manual_fixes "$file"
+			done
+		else
+			print_error "Invalid target: $target"
+			return 1
+		fi
+		;;
+	"install")
+		install_markdownlint
+		;;
+	"config")
+		create_markdownlint_config
+		;;
+	"help" | "--help" | "-h")
+		show_help
+		;;
+	*)
+		print_error "$ERROR_UNKNOWN_COMMAND $command"
+		show_help
+		return 1
+		;;
+	esac
+	return 0
 }
 
 # Execute main function with all arguments

@@ -8,7 +8,19 @@ export default tool({
   },
   async execute(args) {
     const target = args.target || "."
-    const result = await Bun.$`bash ${import.meta.dir}/../../.agents/scripts/markdown-formatter.sh ${args.action} ${target}`.text()
-    return result.trim()
+    const proc = Bun.spawn(
+      ["bash", `${import.meta.dir}/../../.agents/scripts/markdown-formatter.sh`, args.action, target],
+      { stdout: "pipe", stderr: "pipe" },
+    )
+    const [stdout, stderr] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ])
+    await proc.exited
+    const output = (stdout + (stderr ? "\n" + stderr : "")).trim()
+    if (proc.exitCode !== 0) {
+      return `[exit ${proc.exitCode}] ${output}`
+    }
+    return output
   },
 })
