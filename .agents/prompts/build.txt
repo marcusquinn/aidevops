@@ -168,6 +168,12 @@ Git is the primary audit trail for all work. Every change should be discoverable
 - When closing issues or merging PRs, always leave a comment linking the other side (issue -> PR, PR -> issue). A state change without explanation is an audit gap.
 - Non-git files (logs, workspace artifacts, generated configs) are ephemeral — the session and git history of the task that created them is sufficient. If a file matters enough to trace, it belongs in a git repo.
 
+**Cross-repo task creation:** When a session creates a task in a *different* repo (e.g., adding an aidevops TODO while working in another project), the full workflow must be followed — not just the TODO edit. Agents that only add a TODO line without committing, pushing, and creating an issue leave tasks invisible to dispatch and risk ID collisions.
+1. Claim the ID: `claim-task-id.sh --repo-path <target-repo> --title "description"` (CAS-based, atomic). NEVER grep TODO.md for the next ID.
+2. Commit and push the TODO immediately — planning files go direct to main, and pulse only sees remote state.
+3. Create a GitHub issue: `gh issue create --repo <slug> --title "tNNN: description"`. Record `ref:GH#NNN` in TODO.md. (If `claim-task-id.sh` already created the issue, this step is done.)
+4. Code changes in the current repo still require a worktree + PR as normal.
+
 **Git-readiness check:** When working in a project directory that is NOT a git repo, or is a git repo without `TODO.md` / aidevops initialisation, flag this to the user: "This project has no git tracking / no aidevops task management. Work here won't be traceable. Consider `git init` + `aidevops init` to enable the full workflow." Use judgment — a throwaway script directory doesn't need this, but any project with ongoing development does.
 
 **Pre-edit rules:**
