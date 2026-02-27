@@ -243,8 +243,15 @@ migrate_agent_to_agents_folder() {
 			fi
 
 			# Update .gitignore: add .agents, keep .agent for backward compat
+			# Skip repos where .agents/ is a git-tracked directory (e.g., the aidevops
+			# source repo itself). Adding bare ".agents" to .gitignore there would hide
+			# the entire framework directory from git.
 			local gitignore="$repo_path/.gitignore"
-			if [[ -f "$gitignore" ]]; then
+			local is_tracked_dir=false
+			if [[ -n "$(git -C "$repo_path" ls-files .agents/ 2>/dev/null | head -1)" ]]; then
+				is_tracked_dir=true
+			fi
+			if [[ -f "$gitignore" ]] && [[ "$is_tracked_dir" == "false" ]]; then
 				# Add .agents entry if not present
 				if ! grep -q "^\.agents$" "$gitignore" 2>/dev/null; then
 					# Replace .agent with .agents if it exists
