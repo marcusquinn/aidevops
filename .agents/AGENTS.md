@@ -191,7 +191,7 @@ Read subagents on-demand. Full index: `subagent-index.toon`.
 | OpenAPI exploration | `tools/context/openapi-search.md` |
 | Local models | `tools/local-models/local-models.md`, `tools/local-models/huggingface.md`, `scripts/local-model-helper.sh` |
 | Model routing | `tools/context/model-routing.md`, `reference/orchestration.md` |
-| Orchestration | `reference/orchestration.md`, `tools/ai-assistants/headless-dispatch.md`, `scripts/commands/pulse.md` |
+| Orchestration | `reference/orchestration.md`, `tools/ai-assistants/headless-dispatch.md`, `scripts/commands/pulse.md`, `scripts/commands/dashboard.md` |
 | Agent/MCP dev | `tools/build-agent/build-agent.md`, `tools/build-mcp/build-mcp.md`, `tools/mcp-toolkit/mcporter.md` |
 | Framework | `aidevops/architecture.md`, `scripts/commands/skills.md` |
 
