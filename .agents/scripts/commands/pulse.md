@@ -39,8 +39,17 @@ The circuit breaker trips after 3 consecutive task failures (configurable via `S
 ## Step 1: Count Running Workers
 
 ```bash
-# Count running full-loop workers (macOS pgrep has no -c flag)
-WORKER_COUNT=$(pgrep -f '/full-loop' 2>/dev/null | wc -l | tr -d ' ')
+# Count running full-loop workers — IMPORTANT: each opencode run spawns TWO
+# processes (a node launcher + the .opencode binary). Only count the .opencode
+# binaries to avoid 2x inflation. Filter by the binary path, not just '/full-loop'.
+WORKER_COUNT=0
+while IFS= read -r pid; do
+  cmd=$(ps -p "$pid" -o command= 2>/dev/null || true)
+  # Only count the .opencode binary, not the node launcher
+  if echo "$cmd" | grep -q '\.opencode'; then
+    WORKER_COUNT=$((WORKER_COUNT + 1))
+  fi
+done < <(pgrep -f '/full-loop' 2>/dev/null || true)
 echo "Running workers: $WORKER_COUNT / 6"
 ```
 
@@ -87,7 +96,7 @@ If you see a pattern (same type of failure, same error), create an improvement i
 
 **Duplicate work:** If two open PRs target the same issue or have very similar titles, flag it by commenting on the newer one.
 
-**Long-running workers:** Check the runtime of each running worker process with `ps axo pid,etime,command | grep '/full-loop'`. The `etime` column shows elapsed time (format: `HH:MM` or `D-HH:MM:SS`). Parse it to get hours.
+**Long-running workers:** Check the runtime of each running worker process with `ps axo pid,etime,command | grep '/full-loop' | grep '\.opencode'` (filter to `.opencode` binaries only — each worker has a `node` launcher + `.opencode` binary; only check the binary to avoid double-counting). The `etime` column shows elapsed time (format: `HH:MM` or `D-HH:MM:SS`). Parse it to get hours.
 
 Workers now have a self-imposed 2-hour time budget (see full-loop.md rule 8), but the supervisor enforces a safety net. For any worker running 2+ hours, **assess whether it's making progress** before deciding to kill:
 
@@ -230,7 +239,7 @@ This turns blocked issues from a dead end into an actively managed queue.
 
 **Skip issues that already have an open PR:** If an issue number appears in the title or branch name of an open PR, a worker has already produced output for it. Do not dispatch another worker for the same issue. Check the PR list you already fetched — if any PR's `headRefName` or `title` contains the issue number, skip that issue.
 
-**Deduplication — check running processes:** Before dispatching, check `ps axo command | grep '/full-loop'` for any running worker whose command line contains the issue/PR number you're about to dispatch. Different pulse runs may have used different title formats for the same work (e.g., "issue-2300-simplify-infra-scripts" vs "Issue #2300: t1337 Simplify Tier 3"). Extract the canonical number (e.g., `2300`, `t1337`) and check if ANY running worker references it. If so, skip — do not dispatch a duplicate.
+**Deduplication — check running processes:** Before dispatching, check `ps axo command | grep '/full-loop' | grep '\.opencode'` for any running worker whose command line contains the issue/PR number you're about to dispatch (filter to `.opencode` binaries to avoid double-counting node launchers). Different pulse runs may have used different title formats for the same work (e.g., "issue-2300-simplify-infra-scripts" vs "Issue #2300: t1337 Simplify Tier 3"). Extract the canonical number (e.g., `2300`, `t1337`) and check if ANY running worker references it. If so, skip — do not dispatch a duplicate.
 
 **Blocker-chain validation (MANDATORY before dispatch):** Before dispatching a worker for any issue, validate that its entire dependency chain is resolved — not just the immediate `status:blocked` label. This prevents the #1 cause of workers running 3-9 hours without producing PRs: they start work on tasks whose prerequisites aren't merged yet, then spin trying to work around missing schemas, APIs, or migrations.
 
