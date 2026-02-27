@@ -47,7 +47,7 @@ Repo slugs and paths come from `~/.config/aidevops/repos.json`. Use `slug` for a
 
 Scan the pre-fetched state above. Act immediately on each item — don't build a plan, just do it.
 
-**Audit trail principle:** Every state change you make (merge, close, label, dispatch) MUST have a comment explaining WHY you did it and linking to evidence. GitHub issues are the audit trail — a future human or agent reading the issue history should understand exactly what happened and why without needing to check logs. No silent closes, no silent merges, no silent label changes.
+**Audit trail principle:** Every state change you make (merge, close, label, dispatch) MUST have a comment explaining WHY you did it and linking to evidence. Links must be **bidirectional** — the issue comment references the PR, AND the PR comment references the issue. GitHub only auto-links when PR bodies contain `Closes #N` or `Resolves #N`; if the PR body doesn't already reference the issue, add a comment on the PR too (e.g., `gh pr comment <number> --repo <slug> --body "Resolves #<issue>"`). A future human or agent reading either the issue or the PR should be able to trace the full story without checking logs.
 
 ### PRs — merge, fix, or flag
 
