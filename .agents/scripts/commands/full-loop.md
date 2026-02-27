@@ -58,7 +58,8 @@ If the first argument is NOT a task ID (it's a description):
 
   ```bash
   # Extract issue number from supervisor dispatch format: "Implement issue #2452 ..."
-  ISSUE_NUM=$(echo "$ARGUMENTS" | grep -oP '(?i)issue\s+#?\K\d+' | head -1)
+  # Use portable sed (POSIX) — grep -oP is GNU-only and fails on macOS/BSD
+  ISSUE_NUM=$(echo "$ARGUMENTS" | sed -En 's/.*[Ii][Ss][Ss][Uu][Ee][[:space:]]*#*([0-9]+).*/\1/p' | head -1)
   ```
 
 **Example session titles:**
