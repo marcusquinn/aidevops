@@ -62,7 +62,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 - [x] t1346 fix: agents looking for workflows/pulse.md but file is at scripts/commands/pulse.md — session miner detected 75 `file_not_found` errors for `~/.aidevops/agents/workflows/pulse.md`. The pulse command doc is at `.agents/scripts/commands/pulse.md`. Fix: update any references in AGENTS.md / domain index that point to `workflows/pulse.md`, or add a symlink. #bugfix #agent #auto-dispatch ~30m ref:GH#2457 logged:2026-02-27 pr:#2459 completed:2026-02-27
 
-- [ ] t1347 fix: markdown-formatter MCP tool has 81% error rate — session miner detected 13/16 calls failing with exit code 1. Investigate why markdown-formatter exits with code 1 on most calls and fix. #bugfix #mcp #auto-dispatch ~1h ref:GH#2458 logged:2026-02-27
+- [x] t1347 fix: markdown-formatter MCP tool has 81% error rate — session miner detected 13/16 calls failing with exit code 1. Investigate why markdown-formatter exits with code 1 on most calls and fix. #bugfix #mcp #auto-dispatch ~1h ref:GH#2458 logged:2026-02-27 completed:2026-02-27
 
 - [x] t1343 Fix worker PR lookup race condition in issue lifecycle — worker's issue lifecycle transition overwrites supervisor's correct closure by adding `needs-review` to already-closed issues. Three fixes needed in AI guidance docs: (1) check issue state before modifying labels, (2) fallback PR lookup via `gh pr list --search` when DB lookup fails, (3) skip transitions on already-resolved issues. Observed on #2250 where supervisor correctly closed with PR #2268 but worker flagged 25min later. Guidance-only fix per Intelligence Over Scripts principle. #bugfix #supervisor #auto-dispatch ~1.5h ref:GH#2419 logged:2026-02-27 pr:#2423 completed:2026-02-27
 
