@@ -131,33 +131,27 @@ _generate_supervisor_pulse_plist() {
 
 	local label="com.aidevops.aidevops-supervisor-pulse"
 
-	# Build ProgramArguments array
-	local prog_args
-	prog_args="<string>${script_path}</string>
-		<string>pulse</string>"
-	if [[ -n "$batch_arg" ]]; then
-		# batch_arg is "--batch id" — split into two strings
-		local batch_id
-		batch_id="${batch_arg#--batch }"
-		prog_args="${prog_args}
-		<string>--batch</string>
-		<string>${batch_id}</string>"
+	# Use pulse-wrapper.sh which handles dedup (PID file with staleness),
+	# timeout (kills opencode if it hangs after completing), and cleanup.
+	# This replaces the old pgrep-based dedup guard that failed when
+	# opencode run entered idle state without exiting (t1345).
+	local wrapper_path
+	wrapper_path="$(dirname "$script_path")/../scripts/pulse-wrapper.sh"
+	# Resolve to absolute path
+	if [[ -f "$HOME/.aidevops/agents/scripts/pulse-wrapper.sh" ]]; then
+		wrapper_path="$HOME/.aidevops/agents/scripts/pulse-wrapper.sh"
 	fi
 
-	# Build EnvironmentVariables dict
+	# Build EnvironmentVariables dict — wrapper reads these
 	local env_dict
 	env_dict="<key>PATH</key>
 		<string>${env_path}</string>
-		<key>SUPERVISOR_PULSE_LOCK_TIMEOUT</key>
-		<string>1800</string>
-		<key>SUPERVISOR_AI_TIMEOUT</key>
-		<string>600</string>"
-	# SUPERVISOR_PULSE_LOCK_TIMEOUT=1800s (30 min): prevents concurrent pulses when
-	# Phase 14 AI reasoning runs long (108KB+ context can take 6+ min). The default
-	# 600s was shorter than the total pulse duration, causing concurrent pulses that
-	# interfered with each other via Phase 4e orphan killing (t1301).
-	# SUPERVISOR_AI_TIMEOUT=600s (10 min): gives the AI CLI more time to respond to
-	# large context prompts before portable_timeout fires (t1301).
+		<key>HOME</key>
+		<string>${HOME}</string>
+		<key>PULSE_TIMEOUT</key>
+		<string>600</string>
+		<key>PULSE_STALE_THRESHOLD</key>
+		<string>900</string>"
 	if [[ -n "$gh_token" ]]; then
 		env_dict="${env_dict}
 		<key>GH_TOKEN</key>
@@ -173,7 +167,8 @@ _generate_supervisor_pulse_plist() {
 	<string>${label}</string>
 	<key>ProgramArguments</key>
 	<array>
-		${prog_args}
+		<string>/bin/bash</string>
+		<string>${wrapper_path}</string>
 	</array>
 	<key>StartInterval</key>
 	<integer>${interval_seconds}</integer>
