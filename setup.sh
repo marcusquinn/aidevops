@@ -552,9 +552,20 @@ main() {
 		deploy_aidevops_agents
 		sync_agent_sources
 		setup_safety_hooks
-		generate_agent_skills
-		create_skill_symlinks
-		scan_imported_skills
+
+		# Parallelise independent skill operations (t1356: ~84s serial -> ~18s parallel)
+		# generate_agent_skills (18s), create_skill_symlinks (<1s), and
+		# scan_imported_skills (66s serial, ~10s with parallel scanning) are independent.
+		generate_agent_skills &
+		local _pid_skills=$!
+		create_skill_symlinks &
+		local _pid_symlinks=$!
+		scan_imported_skills &
+		local _pid_scan=$!
+		wait "$_pid_skills" 2>/dev/null || print_warning "Agent skills generation encountered issues (non-critical)"
+		wait "$_pid_symlinks" 2>/dev/null || print_warning "Skill symlink creation encountered issues (non-critical)"
+		wait "$_pid_scan" 2>/dev/null || print_warning "Skill security scan encountered issues (non-critical)"
+
 		inject_agents_reference
 		update_opencode_config
 		update_claude_config
