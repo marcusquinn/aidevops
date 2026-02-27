@@ -35,20 +35,17 @@ AVAILABLE=$((MAX_WORKERS - WORKER_COUNT))
 
 If `AVAILABLE <= 0`: you can still merge ready PRs, but don't dispatch new workers.
 
-## Step 2: Fetch State
+## Step 2: Use Pre-Fetched State
 
-Read repos from `~/.config/aidevops/repos.json` (filter: `pulse: true`, exclude `local_only: true`). Use the `slug` field for all `gh` commands — NEVER guess org names. Use `path` for `--dir` when dispatching.
+**The wrapper has ALREADY fetched open PRs and issues for all pulse-enabled repos.** The data is in your prompt above (between `--- PRE-FETCHED STATE ---` markers). Do NOT re-fetch with `gh pr list` or `gh issue list` — that wastes time and was the root cause of the "only processes first repo" bug (the agent would spend all its context analyzing the first repo's fetch results and never reach the others).
 
-For each repo:
+**Use the pre-fetched data directly.** It contains every open PR and issue across all repos with their status, labels, CI state, and review decisions. If you need more detail on a specific item (e.g., reading an issue body for `blocked-by:` references), fetch only that one item with `gh issue view`.
 
-```bash
-gh pr list --repo <slug> --state open --json number,title,reviewDecision,statusCheckRollup,updatedAt,headRefName --limit 20
-gh issue list --repo <slug> --state open --json number,title,labels,updatedAt --limit 20
-```
+Repo slugs and paths come from `~/.config/aidevops/repos.json`. Use `slug` for all `gh` commands, `path` for `--dir` when dispatching.
 
 ## Step 3: Act on What You See
 
-Scan everything you fetched. Act immediately on each item — don't build a plan, just do it:
+Scan the pre-fetched state above. Act immediately on each item — don't build a plan, just do it:
 
 ### PRs — merge, fix, or flag
 

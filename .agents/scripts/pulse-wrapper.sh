@@ -39,6 +39,8 @@ ORPHAN_MAX_AGE="${ORPHAN_MAX_AGE:-7200}"       # 2 hours — kill orphans older 
 RAM_PER_WORKER_MB="${RAM_PER_WORKER_MB:-1024}" # 1 GB per worker
 RAM_RESERVE_MB="${RAM_RESERVE_MB:-8192}"       # 8 GB reserved for OS + user apps
 MAX_WORKERS_CAP="${MAX_WORKERS_CAP:-8}"        # Hard ceiling regardless of RAM
+REPOS_JSON="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
+STATE_FILE="${HOME}/.aidevops/logs/pulse-state.txt"
 
 #######################################
 # Ensure log directory exists
@@ -172,6 +174,123 @@ _get_process_age() {
 }
 
 #######################################
+# Pre-fetch state for ALL pulse-enabled repos
+#
+# Runs gh pr list + gh issue list for each repo in parallel, formats
+# a compact summary, and writes it to STATE_FILE. This is injected
+# into the pulse prompt so the agent sees all repos from the start —
+# preventing the "only processes first repo" problem.
+#
+# This is a deterministic data-fetch utility. The intelligence about
+# what to DO with this data stays in pulse.md.
+#######################################
+prefetch_state() {
+	local repos_json="$REPOS_JSON"
+
+	if [[ ! -f "$repos_json" ]]; then
+		echo "[pulse-wrapper] repos.json not found at $repos_json — skipping prefetch" >>"$LOGFILE"
+		echo "ERROR: repos.json not found" >"$STATE_FILE"
+		return 1
+	fi
+
+	echo "[pulse-wrapper] Pre-fetching state for all pulse-enabled repos..." >>"$LOGFILE"
+
+	# Extract pulse-enabled, non-local-only repos as slug|path pairs
+	local repo_entries
+	repo_entries=$(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | "\(.slug)|\(.path)"' "$repos_json")
+
+	if [[ -z "$repo_entries" ]]; then
+		echo "[pulse-wrapper] No pulse-enabled repos found" >>"$LOGFILE"
+		echo "No pulse-enabled repos found in repos.json" >"$STATE_FILE"
+		return 1
+	fi
+
+	# Temp dir for parallel fetches
+	local tmpdir
+	tmpdir=$(mktemp -d)
+
+	# Launch parallel gh fetches for each repo
+	local pids=()
+	local idx=0
+	while IFS='|' read -r slug path; do
+		(
+			local outfile="${tmpdir}/${idx}.txt"
+			{
+				echo "## ${slug} (${path})"
+				echo ""
+
+				# PRs
+				local pr_json
+				pr_json=$(gh pr list --repo "$slug" --state open \
+					--json number,title,reviewDecision,statusCheckRollup,updatedAt,headRefName \
+					--limit 20 2>/dev/null) || pr_json="[]"
+
+				local pr_count
+				pr_count=$(echo "$pr_json" | jq 'length')
+
+				if [[ "$pr_count" -gt 0 ]]; then
+					echo "### Open PRs ($pr_count)"
+					echo "$pr_json" | jq -r '.[] | "- PR #\(.number): \(.title) [checks: \(if .statusCheckRollup == null or (.statusCheckRollup | length) == 0 then "none" elif (.statusCheckRollup | all((.conclusion // .state) == "SUCCESS")) then "PASS" elif (.statusCheckRollup | any((.conclusion // .state) == "FAILURE")) then "FAIL" else "PENDING" end)] [review: \(if .reviewDecision == null or .reviewDecision == "" then "NONE" else .reviewDecision end)] [branch: \(.headRefName)] [updated: \(.updatedAt)]"'
+				else
+					echo "### Open PRs (0)"
+					echo "- None"
+				fi
+
+				echo ""
+
+				# Issues
+				local issue_json
+				issue_json=$(gh issue list --repo "$slug" --state open \
+					--json number,title,labels,updatedAt \
+					--limit 20 2>/dev/null) || issue_json="[]"
+
+				local issue_count
+				issue_count=$(echo "$issue_json" | jq 'length')
+
+				if [[ "$issue_count" -gt 0 ]]; then
+					echo "### Open Issues ($issue_count)"
+					echo "$issue_json" | jq -r '.[] | "- Issue #\(.number): \(.title) [labels: \(if (.labels | length) == 0 then "none" else (.labels | map(.name) | join(", ")) end)] [updated: \(.updatedAt)]"'
+				else
+					echo "### Open Issues (0)"
+					echo "- None"
+				fi
+
+				echo ""
+			} >"$outfile"
+		) &
+		pids+=($!)
+		idx=$((idx + 1))
+	done <<<"$repo_entries"
+
+	# Wait for all parallel fetches
+	for pid in "${pids[@]}"; do
+		wait "$pid" 2>/dev/null || true
+	done
+
+	# Assemble state file in repo order
+	{
+		echo "# Pre-fetched Repo State ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
+		echo ""
+		echo "This state was fetched by pulse-wrapper.sh BEFORE the pulse started."
+		echo "Do NOT re-fetch — act on this data directly. See pulse.md Step 2."
+		echo ""
+		local i=0
+		while [[ -f "${tmpdir}/${i}.txt" ]]; do
+			cat "${tmpdir}/${i}.txt"
+			i=$((i + 1))
+		done
+	} >"$STATE_FILE"
+
+	# Clean up
+	rm -rf "$tmpdir"
+
+	local repo_count
+	repo_count=$(echo "$repo_entries" | wc -l | tr -d ' ')
+	echo "[pulse-wrapper] Pre-fetched state for $repo_count repos → $STATE_FILE" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
 # Run the pulse — no hard timeout
 #
 # The pulse runs until opencode exits naturally. If opencode enters its
@@ -187,8 +306,20 @@ run_pulse() {
 	start_epoch=$(date +%s)
 	echo "[pulse-wrapper] Starting pulse at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$LOGFILE"
 
+	# Build the prompt: /pulse + pre-fetched state
+	local prompt="/pulse"
+	if [[ -f "$STATE_FILE" ]]; then
+		local state_content
+		state_content=$(cat "$STATE_FILE")
+		prompt="/pulse
+
+--- PRE-FETCHED STATE (from pulse-wrapper.sh) ---
+${state_content}
+--- END PRE-FETCHED STATE ---"
+	fi
+
 	# Run opencode — blocks until it exits (or is killed by next invocation's stale check)
-	"$OPENCODE_BIN" run "/pulse" \
+	"$OPENCODE_BIN" run "$prompt" \
 		--dir "$PULSE_DIR" \
 		-m "$PULSE_MODEL" \
 		--title "Supervisor Pulse" \
@@ -222,6 +353,7 @@ main() {
 
 	cleanup_orphans
 	calculate_max_workers
+	prefetch_state
 	run_pulse
 	return 0
 }
