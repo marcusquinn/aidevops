@@ -10,11 +10,11 @@
 #   3. Calculates dynamic worker concurrency from available RAM
 #   4. Lets the pulse run to completion — no hard timeout
 #
-# Lifecycle: launchd fires every 120s. If a pulse is still running, the
-# dedup check skips. If a pulse has been running longer than PULSE_STALE_THRESHOLD
-# (default 30 min), it's assumed stuck (opencode idle bug) and killed so the
-# next invocation can start fresh. This is the ONLY kill mechanism — no
-# arbitrary timeouts that would interrupt active work.
+# Lifecycle: launchd fires every 120s. The wrapper polls the pulse process
+# every 30s. If the pulse exceeds PULSE_STALE_THRESHOLD (default 30 min),
+# it's killed as stuck. Previous design used `wait` which blocked the wrapper
+# indefinitely — launchd wouldn't fire new invocations, making stale detection
+# dead code. The poll loop fixes this.
 #
 # Called by launchd every 120s via the supervisor-pulse plist.
 
@@ -187,7 +187,7 @@ run_pulse() {
 	start_epoch=$(date +%s)
 	echo "[pulse-wrapper] Starting pulse at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$LOGFILE"
 
-	# Run opencode — blocks until it exits (or is killed by next invocation's stale check)
+	# Run opencode in background
 	"$OPENCODE_BIN" run "/pulse" \
 		--dir "$PULSE_DIR" \
 		-m "$PULSE_MODEL" \
@@ -199,8 +199,25 @@ run_pulse() {
 
 	echo "[pulse-wrapper] opencode PID: $opencode_pid" >>"$LOGFILE"
 
-	# Wait for natural exit
-	wait "$opencode_pid" 2>/dev/null || true
+	# Poll instead of bare `wait` — this lets the wrapper exit within
+	# PULSE_STALE_THRESHOLD so launchd can fire the next invocation.
+	# Without this, `wait` blocks indefinitely, launchd never fires a
+	# new wrapper, and the stale detection in check_dedup() is dead code.
+	local poll_interval=30
+	while kill -0 "$opencode_pid" 2>/dev/null; do
+		local age
+		age=$(_get_process_age "$opencode_pid")
+		if [[ "$age" -gt "$PULSE_STALE_THRESHOLD" ]]; then
+			echo "[pulse-wrapper] Pulse exceeded stale threshold (${age}s > ${PULSE_STALE_THRESHOLD}s) — killing" >>"$LOGFILE"
+			_kill_tree "$opencode_pid"
+			sleep 2
+			if kill -0 "$opencode_pid" 2>/dev/null; then
+				_force_kill_tree "$opencode_pid"
+			fi
+			break
+		fi
+		sleep "$poll_interval"
+	done
 
 	# Clean up PID file
 	rm -f "$PIDFILE"
