@@ -433,6 +433,8 @@ cmd_log() {
 		echo "Total runs: ${total_runs}"
 		echo ""
 		local start_pattern
+		# Single quotes intentional: escaping regex metacharacters for sed, not shell expansion
+		# shellcheck disable=SC2016
 		start_pattern=$(grep "^## v[0-9]" "$log_file" | tail -"$last_n" | head -1 | sed 's/[[\.*^$()+?{|]/\\&/g')
 		if [[ -n "$start_pattern" ]]; then
 			sed -n "/${start_pattern}/,\$p" "$log_file"

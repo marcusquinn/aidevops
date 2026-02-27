@@ -82,9 +82,18 @@ install_qlty() {
 	print_info "Installing Qlty CLI..."
 
 	# Install using the official installer
-	# Use --proto =https to enforce HTTPS and prevent protocol downgrade
+	# Download to temp file first to avoid piping curl directly into bash (Codacy security rule)
 	if command -v curl &>/dev/null; then
-		curl --proto '=https' -sSL https://qlty.sh | bash
+		local installer
+		installer=$(mktemp)
+		if curl --proto '=https' --fail -sSL https://qlty.sh -o "$installer"; then
+			bash "$installer"
+			rm -f "$installer"
+		else
+			rm -f "$installer"
+			print_error "Failed to download Qlty installer"
+			return 1
+		fi
 	else
 		print_error "curl is required to install Qlty CLI"
 		return 1
