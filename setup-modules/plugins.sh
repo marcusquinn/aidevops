@@ -9,6 +9,76 @@ IFS=$'\n\t'
 trap 'rc=$?; echo "[ERROR] ${BASH_SOURCE[0]}:${LINENO} exit $rc" >&2' ERR
 shopt -s inherit_errexit 2>/dev/null || true
 
+# Check if Python >= 3.10 is available (required by cisco-ai-skill-scanner).
+# Returns 0 if a compatible Python is found (or installed via uv), 1 otherwise.
+# On failure, prints a clear diagnostic with the version found and fix instructions.
+check_python_for_skill_scanner() {
+	local required_major=3
+	local required_minor=10
+
+	# Helper: test whether a python binary meets the minimum version
+	_python_version_ok() {
+		local py_bin="$1"
+		local ver_output
+		ver_output=$("$py_bin" --version 2>/dev/null) || return 1
+		# "Python 3.11.5" -> extract major.minor
+		local major minor
+		major=$(echo "$ver_output" | sed -E 's/Python ([0-9]+)\..*/\1/')
+		minor=$(echo "$ver_output" | sed -E 's/Python [0-9]+\.([0-9]+).*/\1/')
+		if [[ "$major" -gt "$required_major" ]] ||
+			{ [[ "$major" -eq "$required_major" ]] && [[ "$minor" -ge "$required_minor" ]]; }; then
+			return 0
+		fi
+		return 1
+	}
+
+	# 1. Check default python3
+	if command -v python3 &>/dev/null && _python_version_ok python3; then
+		return 0
+	fi
+
+	# 2. Check common versioned binaries (Homebrew, system)
+	local py_bin
+	for py_bin in python3.13 python3.12 python3.11 python3.10; do
+		if command -v "$py_bin" &>/dev/null && _python_version_ok "$py_bin"; then
+			return 0
+		fi
+	done
+
+	# 3. If uv is available, install Python 3.11 and retry
+	if command -v uv &>/dev/null; then
+		print_info "No Python >= 3.10 found. Installing Python 3.11 via uv..."
+		if uv python install 3.11 2>/dev/null; then
+			# uv installs to its managed path; check if python3.11 is now available
+			if command -v python3.11 &>/dev/null && _python_version_ok python3.11; then
+				print_success "Python 3.11 installed via uv"
+				return 0
+			fi
+			# uv may have installed it but not on PATH — check uv's python path
+			local uv_py
+			uv_py=$(uv python find 3.11 2>/dev/null) || true
+			if [[ -n "$uv_py" ]] && _python_version_ok "$uv_py"; then
+				print_success "Python 3.11 installed via uv (at $uv_py)"
+				return 0
+			fi
+		fi
+	fi
+
+	# 4. No compatible Python found — emit clear error
+	local found_version="not installed"
+	if command -v python3 &>/dev/null; then
+		found_version=$(python3 --version 2>/dev/null || echo "unknown")
+	fi
+
+	print_warning "cisco-ai-skill-scanner requires Python >= 3.10, but found: $found_version"
+	print_info "Fix options:"
+	print_info "  1. brew install python@3.11          (macOS)"
+	print_info "  2. uv python install 3.11            (cross-platform, recommended)"
+	print_info "  3. sudo apt install python3.11       (Debian/Ubuntu)"
+	print_info "After installing, re-run: aidevops update"
+	return 1
+}
+
 sanitize_plugin_namespace() {
 	local ns="$1"
 	# Strip any path components, keep only the final directory name
@@ -324,12 +394,19 @@ scan_imported_skills() {
 	fi
 
 	# Install skill-scanner if not present
+	# Pre-check: cisco-ai-skill-scanner requires Python >= 3.10
 	# Fallback chain: uv -> pipx -> venv+symlink -> pip3 --user (legacy)
 	# PEP 668 (Ubuntu 24.04+) blocks pip3 --user, so we try isolated methods first
 	if ! command -v skill-scanner &>/dev/null; then
+		# Verify Python >= 3.10 is available (or install it via uv)
+		if ! check_python_for_skill_scanner; then
+			print_warning "Skipping Cisco Skill Scanner install (Python >= 3.10 required)"
+			return 0
+		fi
+
 		local installed=false
 
-		# 1. uv tool install (preferred - fast, isolated)
+		# 1. uv tool install (preferred - fast, isolated, manages its own Python)
 		if [[ "$installed" == "false" ]] && command -v uv &>/dev/null; then
 			print_info "Installing Cisco Skill Scanner via uv..."
 			if run_with_spinner "Installing cisco-ai-skill-scanner" uv tool install cisco-ai-skill-scanner; then

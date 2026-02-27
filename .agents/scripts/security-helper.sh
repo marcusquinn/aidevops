@@ -68,6 +68,59 @@ check_command() {
 	command -v "$cmd" &>/dev/null
 }
 
+# Check if Python >= 3.10 is available (required by cisco-ai-skill-scanner).
+# Returns 0 if compatible Python found (or installed via uv), 1 otherwise.
+check_python_for_skill_scanner() {
+	local required_major=3
+	local required_minor=10
+
+	_py_ver_ok() {
+		local py_bin="$1"
+		local ver_output
+		ver_output=$("$py_bin" --version 2>/dev/null) || return 1
+		local major minor
+		major=$(echo "$ver_output" | sed -E 's/Python ([0-9]+)\..*/\1/')
+		minor=$(echo "$ver_output" | sed -E 's/Python [0-9]+\.([0-9]+).*/\1/')
+		[[ "$major" -gt "$required_major" ]] && return 0
+		[[ "$major" -eq "$required_major" && "$minor" -ge "$required_minor" ]] && return 0
+		return 1
+	}
+
+	# Check default python3 and versioned binaries
+	local py_bin
+	for py_bin in python3 python3.13 python3.12 python3.11 python3.10; do
+		if check_command "$py_bin" && _py_ver_ok "$py_bin"; then
+			return 0
+		fi
+	done
+
+	# If uv is available, install Python 3.11 and retry
+	if check_command uv; then
+		echo -e "${CYAN}No Python >= 3.10 found. Installing Python 3.11 via uv...${NC}"
+		if uv python install 3.11 2>/dev/null; then
+			local uv_py
+			uv_py=$(uv python find 3.11 2>/dev/null) || true
+			if [[ -n "$uv_py" ]] && _py_ver_ok "$uv_py"; then
+				echo -e "${GREEN}Python 3.11 installed via uv${NC}"
+				return 0
+			fi
+		fi
+	fi
+
+	# No compatible Python found
+	local found_version="not installed"
+	if check_command python3; then
+		found_version=$(python3 --version 2>/dev/null || echo "unknown")
+	fi
+	echo -e "${YELLOW}cisco-ai-skill-scanner requires Python >= 3.10, but found: $found_version${NC}"
+	echo "Fix options:"
+	echo "  1. brew install python@3.11          (macOS)"
+	echo "  2. uv python install 3.11            (cross-platform, recommended)"
+	echo "  3. sudo apt install python3.11       (Debian/Ubuntu)"
+	echo "After installing, re-run the command."
+	return 1
+}
+
 print_status() {
 	local name="$1"
 	local installed="$2"
@@ -856,6 +909,9 @@ cmd_install() {
 		;;
 	skill-scanner | cisco-ai-skill-scanner)
 		echo "Installing Cisco Skill Scanner..."
+		if ! check_python_for_skill_scanner; then
+			return 1
+		fi
 		if check_command uv; then
 			uv tool install cisco-ai-skill-scanner
 		elif check_command pip3; then
@@ -887,13 +943,17 @@ cmd_install() {
 			fi
 		fi
 
-		# Cisco Skill Scanner
+		# Cisco Skill Scanner (requires Python >= 3.10)
 		if ! check_command skill-scanner; then
-			echo -e "${CYAN}Installing Cisco Skill Scanner...${NC}"
-			if check_command uv; then
-				uv tool install cisco-ai-skill-scanner || true
-			elif check_command pip3; then
-				pip3 install --user cisco-ai-skill-scanner || true
+			if check_python_for_skill_scanner; then
+				echo -e "${CYAN}Installing Cisco Skill Scanner...${NC}"
+				if check_command uv; then
+					uv tool install cisco-ai-skill-scanner || true
+				elif check_command pip3; then
+					pip3 install --user cisco-ai-skill-scanner || true
+				fi
+			else
+				echo -e "${YELLOW}Skipping Cisco Skill Scanner (Python >= 3.10 required)${NC}"
 			fi
 		fi
 
