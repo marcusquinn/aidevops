@@ -276,7 +276,9 @@ else
 fi
 
 # Generate mission ID (ISO date + short hash)
-MISSION_ID="m-$(date +%Y%m%d)-$(echo "$MISSION_DESC" | md5sum | cut -c1-6)"
+# macOS uses md5, Linux uses md5sum — handle both
+HASH=$(printf '%s' "$MISSION_DESC" | { md5 -q 2>/dev/null || md5sum | cut -d' ' -f1; } | cut -c1-6)
+MISSION_ID="m-$(date +%Y%m%d)-${HASH}"
 MISSION_DIR="$MISSION_HOME/$MISSION_ID"
 ```
 
