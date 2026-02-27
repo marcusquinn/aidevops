@@ -24,7 +24,7 @@ tools:
 
 - **Use instead**: `/full-loop "objective description"` for iterative task execution
 - **Runner dispatch**: `runner-helper.sh` for single-shot named agents
-- **Batch tasks**: `supervisor-helper.sh` for multi-task orchestration
+- **Multi-task dispatch**: `/runners` for parallel task dispatch, `/pulse` for autonomous orchestration
 - **Archived script**: `scripts/archived/objective-runner-helper.sh` (1,334 lines, reference only)
 
 <!-- AI-CONTEXT-END -->
@@ -41,5 +41,6 @@ See `scripts/archived/objective-runner-helper.sh` for the original implementatio
 
 - `/full-loop` - End-to-end development loop (replacement)
 - `scripts/runner-helper.sh` - Single-shot named agents
-- `scripts/supervisor-helper.sh` - Batch task orchestration
+- `scripts/commands/runners.md` - Parallel task dispatch via `/runners`
+- `scripts/commands/pulse.md` - Autonomous orchestration via `/pulse`
 - `workflows/plans.md` - Task planning and tracking

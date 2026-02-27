@@ -583,12 +583,7 @@ check_orchestration() {
 	if [[ "$pulse_active" == "true" ]]; then
 		print_service "Supervisor Pulse" "ready" "dispatches workers, merges PRs every 2 min"
 	else
-		local supervisor_script="$HOME/.aidevops/agents/scripts/supervisor-helper.sh"
-		if [[ -x "$supervisor_script" ]]; then
-			print_service "Supervisor Pulse" "needs-setup" "supervisor-helper.sh cron install"
-		else
-			print_service "Supervisor Pulse" "needs-setup" "run aidevops update first"
-		fi
+		print_service "Supervisor Pulse" "needs-setup" "see scripts/commands/runners.md for setup"
 	fi
 
 	# Auto-pickup is implicit when pulse is active

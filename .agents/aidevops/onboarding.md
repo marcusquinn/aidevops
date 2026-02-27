@@ -1179,17 +1179,15 @@ If **yes**:
 
 ```bash
 # Enable the supervisor pulse (every 2 min)
-~/.aidevops/agents/scripts/supervisor-helper.sh cron install
-
-# Verify it's running
-~/.aidevops/agents/scripts/supervisor-helper.sh cron status
+# See scripts/commands/runners.md for macOS (launchd) and Linux (cron) setup
+# The pulse dispatches workers, merges PRs, and manages cross-repo work
 ```
 
 If **no**:
 
 ```text
-No problem. You can enable it anytime:
-  supervisor-helper.sh cron install
+No problem. You can enable it anytime — see scripts/commands/runners.md
+for setup instructions (launchd on macOS, cron on Linux).
 
 The strategic review, session miner, and circuit breaker all run as steps
 within the pulse — enabling the pulse enables everything.
@@ -1201,7 +1199,7 @@ Once services are configured:
 
 1. **Create your playground**: `mkdir ~/Git/aidevops-playground && cd ~/Git/aidevops-playground && git init && aidevops init`
 2. **Test a simple task**: "List my GitHub repos" or "Check my Hetzner servers"
-3. **Enable orchestration**: `supervisor-helper.sh cron install` — autonomous task dispatch, PR management, cross-repo visibility, and strategic review
+3. **Enable orchestration**: set up the pulse scheduler (see `scripts/commands/runners.md`) — autonomous task dispatch, PR management, cross-repo visibility, and strategic review
 4. **Explore agents**: Type `@` to see available agents
 5. **Try a workflow**: `/create-prd` → `/generate-tasks` → `/feature` → build → `/release`
 6. **Try autonomous mode**: Add `#auto-dispatch` to a TODO.md task and watch the supervisor pick it up

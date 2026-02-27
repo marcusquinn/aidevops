@@ -401,9 +401,9 @@ Worktrees are registered to the creating session's PID in a SQLite registry. Thi
 
 **How it works**:
 
-- `worktree-helper.sh add` and `supervisor-helper.sh dispatch` register ownership
+- `worktree-helper.sh add` registers ownership when creating worktrees
 - `worktree-helper.sh remove` and `clean` refuse to touch worktrees owned by other live processes
-- `supervisor-helper.sh cleanup` skips worktrees owned by other sessions
+- Cleanup operations skip worktrees owned by other sessions
 - Stale entries (dead PIDs, missing directories) are auto-pruned
 
 **Commands**:

@@ -1,10 +1,10 @@
 ---
-description: Quick health check of supervisor batch queue, workers, PRs, and system resources
+description: Quick health check of worker status, PRs, TODO queue, and system resources
 agent: Build+
 mode: subagent
 ---
 
-Quick diagnostic of the supervisor queue. Shows batch status, stuck tasks, open PRs, and issues.
+Quick diagnostic of the dispatch system. Shows worker status, open PRs, TODO queue, and worktrees.
 
 Arguments: $ARGUMENTS
 
@@ -13,8 +13,12 @@ Arguments: $ARGUMENTS
 Run these commands in parallel and present a unified report:
 
 ```bash
-# 1. Active batch status
-~/.aidevops/agents/scripts/supervisor-helper.sh status 2>&1
+# 1. Active workers (count opencode /full-loop processes)
+MAX_WORKERS=$(cat ~/.aidevops/logs/pulse-max-workers 2>/dev/null || echo 4)
+WORKER_COUNT=$(ps axo command | grep '/full-loop' | grep -v grep | wc -l | tr -d ' ')
+AVAILABLE=$((MAX_WORKERS - WORKER_COUNT))
+echo "=== Worker Status ==="
+echo "Running: $WORKER_COUNT / $MAX_WORKERS (available slots: $AVAILABLE)"
 
 # 2. TODO.md queue analysis (subtask-aware)
 # Count ALL open items including subtasks — subtasks are the actual dispatchable units
@@ -29,14 +33,12 @@ if [[ -f "$TODO_FILE" ]]; then
     grep -v 'blocked-by:' | \
     grep -c '#auto-dispatch' 2>/dev/null || echo 0)
   # Subtasks whose parent has #auto-dispatch (inherited dispatchability)
-  # For each open subtask, check if its parent line has #auto-dispatch
   inherited=0
   while IFS= read -r line; do
     task_id=$(echo "$line" | grep -oE 't[0-9]+\.[0-9]+' | head -1)
     if [[ -n "$task_id" ]]; then
       parent_id=$(echo "$task_id" | sed 's/\.[0-9]*$//')
       if grep -qE "^- \[.\] ${parent_id} .*#auto-dispatch" "$TODO_FILE" 2>/dev/null; then
-        # Check not blocked or claimed
         if ! echo "$line" | grep -qE 'assignee:|started:'; then
           if ! echo "$line" | grep -qE 'blocked-by:'; then
             inherited=$((inherited + 1))
@@ -62,14 +64,23 @@ gh pr list --state open --json number,title,headRefName,createdAt,statusCheckRol
 # 4. Active worktrees (worker sessions)
 git worktree list 2>/dev/null
 
-# 5. System resources
-~/.aidevops/agents/scripts/supervisor-helper.sh db \
-  "SELECT id, state, retries FROM tasks WHERE state NOT IN ('deployed','cancelled','failed') ORDER BY state;" 2>/dev/null
+# 5. Pulse scheduler status
+if [[ "$(uname)" == "Darwin" ]]; then
+  launchctl list 2>/dev/null | grep -i 'aidevops.*pulse' || echo "No launchd pulse found"
+else
+  crontab -l 2>/dev/null | grep -i 'pulse' || echo "No cron pulse found"
+fi
 ```
 
 ## Report Format
 
 Present results as a concise dashboard:
+
+### Worker Status
+
+- **Running**: X / Y max (Z available slots)
+- Flag if all slots are full (no capacity for new work)
+- Flag if 0 workers running but dispatchable tasks exist (possible scheduler issue)
 
 ### Queue Depth (subtask-aware)
 
@@ -79,30 +90,23 @@ Present results as a concise dashboard:
 - **Claimed/in-progress**: C (assigned to workers or interactive sessions)
 - Flag if dispatchable count is 0 but open count is high (queue stall)
 
-### Batch Status
-
-- Batch name, total/completed/queued/running/failed counts
-- Any tasks stuck in retrying or evaluating for >10 minutes
-
 ### Action Items
 
 Flag these for the user (most important first):
 
 1. **PRs ready to merge** — all CI green, no review comments
 2. **PRs with CI failures** — need investigation
-3. **Tasks stuck** — in retrying/evaluating too long
-4. **Tasks at max retries** — need manual intervention or re-queue
-5. **Stale worktrees** — for tasks already deployed/merged
-6. **Subtasks missing #auto-dispatch** — parent has tag but subtasks don't (dispatch gap)
+3. **Stale worktrees** — for tasks already deployed/merged
+4. **Subtasks missing #auto-dispatch** — parent has tag but subtasks don't (dispatch gap)
+5. **Pulse scheduler not running** — if no launchd/cron entry found
 
 ### System Health
 
-- Load, memory, worker count
-- Cron pulse status: `~/.aidevops/agents/scripts/supervisor-helper.sh cron status 2>&1`
+- Worker count, available slots
+- Pulse scheduler status (launchd on macOS, cron on Linux)
+- Recent pulse log: `tail -20 ~/.aidevops/logs/pulse.log`
 
 ## Arguments
 
-- No arguments: check the most recent active batch
-- `--batch <id>`: check a specific batch
-- `--all`: show all batches including completed
-- `--fix`: auto-fix simple issues (merge green PRs, clean stale worktrees, reset stuck tasks)
+- No arguments: show current system status
+- `--fix`: auto-fix simple issues (merge green PRs, clean stale worktrees)

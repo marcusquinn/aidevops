@@ -1,52 +1,34 @@
 # Orchestration & Model Routing — Detail Reference
 
 Loaded on-demand when working with the supervisor, model routing, or pattern tracking.
-Core pointers are in `AGENTS.md`. Full docs: `tools/ai-assistants/headless-dispatch.md`, `supervisor-helper.sh help`.
+Core pointers are in `AGENTS.md`. Full docs: `tools/ai-assistants/headless-dispatch.md`, `scripts/commands/pulse.md`.
 
-## Supervisor CLI
+## Supervisor
 
 `opencode` is the ONLY supported CLI for worker dispatch. Never use `claude` CLI.
 
-`supervisor-helper.sh` manages parallel task execution with SQLite state machine.
+The `/pulse` command is the autonomous supervisor — an AI-driven agent that reads GitHub state (issues, PRs) and TODO.md directly, then dispatches workers via `opencode run "/full-loop ..."`. No SQLite state machine, no batches — GitHub and TODO.md are the database.
 
 ```bash
-# Add tasks and create batch
-supervisor-helper.sh add t001 --repo "$(pwd)" --description "Task description"
-supervisor-helper.sh batch "my-batch" --concurrency 3 --tasks "t001,t002,t003"
-
-# Task claiming (t165 — provider-agnostic, TODO.md primary)
-supervisor-helper.sh claim t001     # Adds assignee: to TODO.md, optional GH sync
-supervisor-helper.sh unclaim t001   # Releases claim (removes assignee:)
-# Claiming is automatic during dispatch. Manual claim/unclaim for coordination.
-
-# Install pulse scheduler (REQUIRED for autonomous operation)
-# macOS: installs ~/Library/LaunchAgents/com.aidevops.supervisor-pulse.plist
-# Linux: installs crontab entry
-supervisor-helper.sh cron install
+# Interactive dispatch of specific tasks
+/runners t001 t002 t003
 
 # Manual pulse (scheduler does this automatically every 2 minutes)
-supervisor-helper.sh pulse --batch <batch-id>
+/pulse
 
-# Monitor
-supervisor-helper.sh dashboard --batch <batch-id>
-supervisor-helper.sh status <batch-id>
+# Install pulse scheduler (REQUIRED for autonomous operation)
+# See scripts/commands/runners.md for macOS (launchd) and Linux (cron) setup
 ```
 
 ## Task Claiming
 
-(t165): TODO.md `assignee:` field is the authoritative claim source. Works offline, with any git host. GitHub Issue sync is optional best-effort (requires `gh` CLI + `ref:GH#` in TODO.md). GH Issue creation is opt-in: use `--with-issue` flag or `SUPERVISOR_AUTO_ISSUE=true`.
+(t165): TODO.md `assignee:` field is the authoritative claim source. Works offline, with any git host. GitHub Issue sync is optional best-effort (requires `gh` CLI + `ref:GH#` in TODO.md). The `/full-loop` command claims the task automatically before starting work — if already claimed by another, the loop stops.
 
 **Assignee ownership** (t1017): NEVER remove or change `assignee:` on a task without explicit user confirmation. The assignee may be a contributor on another host whose work you cannot see.
-- `unclaim` requires `--force` to release a task claimed by someone else
-- The full-loop claims the task automatically before starting work — if already claimed by another, the loop stops
 
 ## Pulse Scheduler
 
-Mandatory for autonomous operation. Without it, the supervisor is passive and requires manual `pulse` calls. The pulse cycle: check workers -> evaluate outcomes -> dispatch next -> cleanup. On macOS, `cron install` uses launchd (no cron dependency); on Linux, it uses crontab.
-
-## Session Memory Monitoring + Respawn
-
-(t264, t264.1): Long-running OpenCode/Bun sessions accumulate WebKit malloc dirty pages that are never returned to the OS (25GB+ observed). Phase 11 of the pulse cycle checks the parent session's `phys_footprint` when a batch wave completes (no running/queued tasks). If memory exceeds `SUPERVISOR_SELF_MEM_LIMIT` (default: 8192MB), it saves a checkpoint, logs the respawn event to `~/.aidevops/logs/respawn-history.log`, and exits cleanly for the next cron pulse to start fresh. Use `supervisor-helper.sh mem-check` to inspect memory and `supervisor-helper.sh respawn-history` to review respawn patterns.
+Mandatory for autonomous operation. Without it, you must dispatch workers manually via `/runners`. The pulse cycle: check capacity -> scan GitHub state (pre-fetched) -> merge ready PRs -> dispatch workers for open issues -> sync TODOs. On macOS it uses launchd; on Linux, crontab. See `scripts/commands/runners.md` for setup instructions.
 
 ## Model Routing
 
