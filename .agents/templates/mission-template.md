@@ -67,6 +67,8 @@ preferences:
 
 Milestones are sequential. Features within each milestone are parallelisable.
 
+**TODO integration (Full mode):** Each feature becomes a TODO entry tagged `mission:{id}` (e.g., `mission:m001`). This tag lets the pulse supervisor correlate features back to their mission. Example TODO format: `- [ ] t042 Implement user auth #mission:m001 ~3h`
+
 ### Milestone 1: {Name}
 
 **Status:** pending  <!-- pending | active | validating | passed | failed | skipped -->

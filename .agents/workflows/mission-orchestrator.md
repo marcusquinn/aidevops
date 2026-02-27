@@ -35,6 +35,8 @@ tools:
 
 **Lifecycle**: `/mission` creates the state file (planning) -> orchestrator drives execution (active) -> milestone validation -> completion or re-plan
 
+**Pulse integration**: The pulse supervisor (`scripts/commands/pulse.md` Step 3.5) automatically detects active missions via `pulse-wrapper.sh` prefetch. It handles lightweight operations: dispatching pending features, detecting milestone completion, advancing milestones, and tracking budget. The orchestrator handles heavyweight operations: re-planning on failure, validation design, and research. In Full mode, mission features are regular TODO entries tagged `mission:{id}` (e.g., `mission:m001`) so they flow through the standard issue/PR pipeline.
+
 **Self-organisation principle**: The orchestrator creates what it needs (folders, agents, scripts) as it discovers needs — not upfront. Every created artifact is temporary (draft tier) unless promoted.
 
 <!-- AI-CONTEXT-END -->
