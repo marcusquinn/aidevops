@@ -389,14 +389,44 @@ When a mission enters a domain that aidevops has no existing knowledge of, the o
 
 ## Budget Management
 
-The orchestrator tracks spend against the mission budget and takes action at thresholds.
+The orchestrator tracks spend against the mission budget and takes action at thresholds. The budget analysis engine (`scripts/budget-analysis-helper.sh`) provides the analytical foundation — cost estimation, tiered recommendations, and spend forecasting.
+
+### Pre-Execution Budget Analysis
+
+Before dispatching the first milestone, run a budget feasibility check:
+
+```bash
+# Estimate cost for remaining work based on milestone complexity
+~/.aidevops/agents/scripts/budget-analysis-helper.sh recommend --goal "{mission_goal}" --json
+
+# Analyse what the stated budget buys at each model tier
+~/.aidevops/agents/scripts/budget-analysis-helper.sh analyse --budget {remaining_budget_usd} --hours {remaining_hours} --json
+
+# If historical data exists, calibrate against actual patterns
+~/.aidevops/agents/scripts/budget-analysis-helper.sh forecast --days 7 --json
+```
+
+Use the `recommend` output to validate that the mission's budget covers at least the MVP tier. If the budget is insufficient for even the MVP, pause and report to the user with the tiered breakdown showing what each budget level achieves.
+
+### Per-Feature Cost Estimation
+
+Before dispatching each feature, estimate its cost:
+
+```bash
+~/.aidevops/agents/scripts/budget-analysis-helper.sh estimate --task "{feature_description}" --tier {worker_tier} --json
+```
+
+Compare the estimate against remaining budget. If the feature's estimated cost (high end of range) would exceed the remaining budget, either:
+- Switch to a cheaper model tier (use the "Alternative Tiers" from the estimate output)
+- Defer the feature to a later milestone
+- Pause and report to the user
 
 ### Tracking
 
 After each worker completes (PR merged or POC commit landed):
 
-1. Estimate tokens used (from worker session length and model tier)
-2. Estimate cost (tokens x model rate)
+1. Record spend via budget-tracker-helper.sh: `budget-tracker-helper.sh record --provider {provider} --model {model} --task {task_id} --input-tokens {N} --output-tokens {N}`
+2. Estimate cost (tokens x model rate from `shared-constants.sh get_model_pricing`)
 3. Estimate time (wall clock from dispatch to completion)
 4. Update the budget tracking table in the mission state file
 
@@ -405,9 +435,9 @@ After each worker completes (PR merged or POC commit landed):
 | Budget Used | Action |
 |-------------|--------|
 | < 60% | Continue normally |
-| 60-80% | Log a warning in the progress log. Consider switching remaining features to cheaper model tier. |
-| 80-100% (alert threshold) | Pause the mission. Report to user: "Mission {id} has used {X}% of {category} budget. Remaining work: {milestones left}. Options: increase budget, reduce scope, or continue at risk." |
-| > 100% | Stop dispatching new features. Complete in-progress work only. Report overage. |
+| 60-80% | Log a warning in the progress log. Run `budget-analysis-helper.sh analyse --budget {remaining_usd} --json` to check if remaining work fits. Consider switching remaining features to cheaper model tier. |
+| 80-100% (alert threshold) | Pause the mission. Run `budget-analysis-helper.sh recommend --goal "{remaining_work_description}" --json` to show what the remaining budget can achieve. Report to user: "Mission {id} has used {X}% of {category} budget. Remaining work: {milestones left}. Options: increase budget, reduce scope, or continue at risk." |
+| > 100% | Stop dispatching new features. Complete in-progress work only. Report overage with `budget-tracker-helper.sh status --json`. |
 
 ### Cost Optimisation
 
@@ -415,6 +445,7 @@ After each worker completes (PR merged or POC commit landed):
 - In POC mode, default to sonnet for everything (skip opus decomposition)
 - Batch small features into single worker sessions when possible
 - Skip preflight/postflight in POC mode to reduce token overhead
+- Use `budget-analysis-helper.sh estimate --task "{desc}" --json` to compare tier costs before choosing — the "Alternative Tiers" output shows the cost at each tier for the same task
 
 ## Mode-Specific Behaviour
 
@@ -575,3 +606,6 @@ Each repo has its own task ID namespace. When creating tasks in secondary repos,
 - `reference/orchestration.md` — Model routing and dispatch patterns
 - `tools/browser/browser-automation.md` — Browser QA for milestone validation
 - `tools/context/model-routing.md` — Cost-aware model selection for mission workers
+- `scripts/budget-analysis-helper.sh` — Budget analysis engine (t1357.7) — tiered recommendations, cost estimation, spend forecasting
+- `scripts/budget-tracker-helper.sh` — Append-only cost log for historical spend data
+- `scripts/commands/budget-analysis.md` — `/budget-analysis` command for interactive use
