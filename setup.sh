@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
-set -euo pipefail
+
+# Shell safety baseline
+set -Eeuo pipefail
+IFS=$'\n\t'
+# shellcheck disable=SC2154  # rc is assigned by $? in the trap string
+trap 'rc=$?; echo "[ERROR] ${BASH_SOURCE[0]}:${LINENO} exit $rc" >&2' ERR
+shopt -s inherit_errexit 2>/dev/null || true
 
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure

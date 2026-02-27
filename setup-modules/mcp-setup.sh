@@ -2,6 +2,13 @@
 # MCP setup functions: install_mcp_packages, resolve_mcp_binary, localwp, augment, seo, analytics, quickfile, browser-tools, opencode-plugins
 # Part of aidevops setup.sh modularization (t316.3)
 
+# Shell safety baseline
+set -Eeuo pipefail
+IFS=$'\n\t'
+# shellcheck disable=SC2154  # rc is assigned by $? in the trap string
+trap 'rc=$?; echo "[ERROR] ${BASH_SOURCE[0]}:${LINENO} exit $rc" >&2' ERR
+shopt -s inherit_errexit 2>/dev/null || true
+
 install_mcp_packages() {
 	print_info "Installing MCP server packages globally (eliminates npx startup delay)..."
 
