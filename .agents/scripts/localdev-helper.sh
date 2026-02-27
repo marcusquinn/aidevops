@@ -1050,8 +1050,8 @@ remove_all_branches() {
 	else
 		# Fallback: remove route files matching the pattern
 		local pattern="$CONFD_DIR/${app}--*.yml"
-		# shellcheck disable=SC2086
 		local files
+		# shellcheck disable=SC2086 # glob pattern must be word-split by ls
 		files="$(ls $pattern 2>/dev/null || true)"
 		if [[ -n "$files" ]]; then
 			echo "$files" | while IFS= read -r f; do

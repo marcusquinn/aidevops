@@ -300,6 +300,7 @@ execute_wp_via_ssh() {
 	localwp)
 		# LocalWP - direct local access
 		local expanded_path="${local_path/#\~/$HOME}"
+		# shellcheck disable=SC2086 # wp_command is intentionally word-split into multiple args
 		(cd "$expanded_path" && wp $wp_command)
 		return $?
 		;;
