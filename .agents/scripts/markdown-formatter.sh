@@ -120,7 +120,6 @@ process_directory() {
 		print_info "No formatting issues found"
 		return 0
 	fi
-	return 0
 }
 
 # Advanced markdown fixes

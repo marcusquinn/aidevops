@@ -29,7 +29,6 @@ check_markdownlint() {
 	else
 		return 1
 	fi
-	return 0
 }
 
 # Install markdownlint-cli
@@ -53,7 +52,6 @@ install_markdownlint() {
 		print_info "Visit: https://nodejs.org/"
 		return 1
 	fi
-	return 0
 }
 
 # Create markdownlint configuration
