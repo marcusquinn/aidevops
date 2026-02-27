@@ -7,8 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.139.0] - 2026-02-27
-
 ### Added
 
 - Pre-fetch all repo state before pulse to prevent single-repo tunnel vision (#2471)
