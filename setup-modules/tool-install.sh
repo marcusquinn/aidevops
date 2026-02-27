@@ -231,21 +231,21 @@ setup_shell_linting_tools() {
 
 	# Check shellcheck
 	if command -v shellcheck >/dev/null 2>&1; then
-		local sc_path sc_arch
-		sc_path=$(command -v shellcheck)
-		# Prefer arm64 if present (universal/fat binaries report both architectures)
-		local sc_file_output
-		sc_file_output=$(file "$sc_path" 2>/dev/null)
-		if [[ "$sc_file_output" == *"arm64"* ]]; then
-			sc_arch="arm64"
-		else
-			sc_arch=$(echo "$sc_file_output" | grep -oE '(x86_64)' | head -1)
+		local sc_version sc_rosetta=false
+		sc_version=$(shellcheck --version 2>/dev/null | grep 'version:' | awk '{print $2}' || echo "unknown")
+		# Rosetta detection (macOS Apple Silicon only, requires `file` command)
+		if [[ "$PLATFORM_MACOS" == "true" ]] && [[ "$PLATFORM_ARM64" == "true" ]] && command -v file >/dev/null 2>&1; then
+			local sc_file_output
+			sc_file_output=$(file "$(command -v shellcheck)" 2>/dev/null || echo "")
+			if [[ "$sc_file_output" == *"x86_64"* ]] && [[ "$sc_file_output" != *"arm64"* ]]; then
+				sc_rosetta=true
+			fi
 		fi
-		if [[ "$(uname -m)" == "arm64" ]] && [[ "$sc_arch" == "x86_64" ]]; then
+		if [[ "$sc_rosetta" == "true" ]]; then
 			print_warning "shellcheck found but running under Rosetta (x86_64)"
 			print_info "  Run 'rosetta-audit-helper.sh migrate' to fix"
 		else
-			print_success "shellcheck found ($(shellcheck --version 2>/dev/null | grep 'version:' | awk '{print $2}'))"
+			print_success "shellcheck found ($sc_version)"
 		fi
 	else
 		missing_tools+=("shellcheck")
