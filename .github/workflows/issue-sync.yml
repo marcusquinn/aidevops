@@ -515,3 +515,60 @@ jobs:
             gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "$LABEL"
             echo "Applied label '$LABEL' to PR #$PR_NUMBER (prefix: $PREFIX)"
           fi
+
+  check-issue-link:
+    name: Check PR-Issue Linkage
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.merged != true &&
+      (github.event.action == 'opened' || github.event.action == 'edited')
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Check for issue reference in PR body
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Skip PRs that don't need issue linkage
+          if echo "$PR_TITLE" | grep -qiE '^(chore\(release\)|release:)'; then
+            echo "Release PR — issue link not required"
+            exit 0
+          fi
+
+          # Check for GitHub closing keywords or ref:GH# pattern
+          if echo "$PR_BODY" | grep -qiE '(closes|fixes|resolves)\s+#[0-9]+'; then
+            echo "PR body contains issue closing keyword"
+            exit 0
+          fi
+
+          if echo "$PR_BODY" | grep -qE 'ref:GH#[0-9]+'; then
+            echo "PR body contains ref:GH# reference"
+            exit 0
+          fi
+
+          # Check if a task ID in the title has a matching open issue
+          TASK_ID=$(echo "$PR_TITLE" | grep -oE '^t[0-9]+(\.[0-9]+)*' || true)
+          if [[ -n "$TASK_ID" ]]; then
+            ISSUE_NUM=$(gh issue list --repo "$REPO" --state open --search "${TASK_ID}:" --json number --jq '.[0].number' 2>/dev/null || true)
+            if [[ -n "$ISSUE_NUM" && "$ISSUE_NUM" != "null" ]]; then
+              echo "::warning::PR has task ID $TASK_ID with matching issue #$ISSUE_NUM but no closing keyword in body. Add 'Closes #$ISSUE_NUM' to the PR body for automatic linkage."
+              # Post a one-time comment (check if we already commented)
+              EXISTING=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json comments --jq '[.comments[] | select(.body | contains("issue-link-check"))] | length' 2>/dev/null || echo "0")
+              if [[ "$EXISTING" == "0" ]]; then
+                gh pr comment "$PR_NUMBER" --repo "$REPO" --body "<!-- issue-link-check -->
+          **Missing issue link.** This PR has task ID \`$TASK_ID\` with a matching open issue #$ISSUE_NUM, but the PR body doesn't contain a closing keyword.
+
+          Add \`Closes #$ISSUE_NUM\` to the PR description so GitHub auto-links and auto-closes the issue on merge."
+              fi
+              exit 0
+            fi
+          fi
+
+          echo "No issue reference found — this is acceptable for chore/docs PRs without tracked issues"
