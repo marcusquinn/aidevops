@@ -200,6 +200,7 @@ Require API keys. Store via `aidevops secret set <KEY_NAME>`.
 | Provider | Quality | Voices | Voice Clone | Streaming | Docs |
 |----------|---------|--------|-------------|-----------|------|
 | **ElevenLabs** | Highest | 1000+ | Yes (instant) | Yes | https://elevenlabs.io/docs/api-reference/text-to-speech |
+| **MiniMax (Hailuo)** | High | Multiple | Yes (10s clip) | Yes | https://www.minimax.io/ |
 | **OpenAI TTS** | High | 6 built-in | No | Yes | https://platform.openai.com/docs/api-reference/audio/createSpeech |
 | **Google Cloud TTS** | High | 400+ | No | Yes | https://cloud.google.com/text-to-speech/docs |
 | **HF Inference** | Varies | Model-dependent | Model-dependent | Some | https://huggingface.co/docs/api-inference/tasks/text-to-speech |
@@ -212,6 +213,36 @@ curl -X POST "https://api.elevenlabs.io/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM" 
   -H "Content-Type: application/json" \
   -d '{"text": "Hello world", "model_id": "eleven_multilingual_v2"}'
 ```
+
+#### MiniMax / Hailuo (Best Value for Talking-Head Content)
+
+MiniMax offers the best quality-to-cost ratio for talking-head video voiceovers. Default output is already natural-sounding with minimal configuration.
+
+- **Cost**: $5/month for 120 minutes of generation
+- **Voice clone**: Works well with just a 10-second reference clip
+- **Default quality**: High out of the box — less tuning needed than ElevenLabs
+- **Access**: Via Higgsfield platform (web UI) or direct MiniMax API
+- **Best for**: Talking-head videos, AI influencer content, organic social
+
+```bash
+# Via MiniMax API
+curl -X POST "https://api.minimax.chat/v1/t2a_v2" \
+  -H "Authorization: Bearer ${MINIMAX_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "speech-02-hd",
+    "text": "Hello world",
+    "voice_setting": {"voice_id": "your-cloned-voice-id"}
+  }'
+```
+
+**Voice cloning workflow**:
+
+1. Record or source a 10-30 second clean audio clip (single speaker, no background noise)
+2. Upload via MiniMax voice clone API or Higgsfield web UI
+3. Use the cloned voice ID in subsequent TTS requests
+
+**When to choose MiniMax over ElevenLabs**: When you need good-enough quality at lower cost and simpler setup. ElevenLabs remains higher quality for premium content, but MiniMax closes the gap for most talking-head use cases.
 
 #### OpenAI TTS
 
@@ -254,11 +285,13 @@ The voice bridge (`voice-bridge.py:99-115`) implements `FasterWhisperSTT`. The s
 | **Voice bridge (default)** | EdgeTTS | Whisper MLX (macOS) / Faster Whisper |
 | **Podcast/audiobook** | Qwen3-TTS 1.7B or ElevenLabs | — |
 | **Dialogue generation** | Dia 1.6B | — |
+| **Talking-head video** | MiniMax or ElevenLabs (cloned) | — |
 | **Voice cloning** | Qwen3-TTS Base or F5-TTS | — |
 | **Voice design (from description)** | Qwen3-TTS VoiceDesign | — |
 | **Multilingual (10+ langs)** | Qwen3-TTS or FacebookMMS | Whisper Large v3 |
 | **Lightweight/embedded** | Kokoro (82M) or Piper | Whisper Tiny/Base |
 | **Highest quality (cloud)** | ElevenLabs | ElevenLabs Scribe v2 |
+| **Best value (cloud)** | MiniMax ($5/mo, 120 min) | Groq Whisper |
 | **Free cloud** | EdgeTTS | Groq Whisper |
 | **Meeting transcription** | — | Whisper Large v3 Turbo or Groq |
 | **YouTube transcription** | — | See `transcription.md` pipeline |
