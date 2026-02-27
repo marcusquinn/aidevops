@@ -3,3 +3,11 @@
 # ShellCheck to look in the same directory as the script being checked.
 # This handles source "./shared-constants.sh" and source "./_common.sh" patterns.
 source-path=SCRIPTDIR
+
+# Project-wide false positives from library/sourced-file architecture:
+# SC2329: "Function is never invoked" — false positive for library functions
+#         called indirectly via source or test runners
+# SC2317: "Command appears unreachable" — false positive for library functions
+#         and return/exit guard patterns
+disable=SC2329
+disable=SC2317
