@@ -454,6 +454,18 @@ PORT=3100 npm run dev
 PORT=3100
 ```
 
+**Stale lock file (Next.js 16+):** Next.js creates a file-based lock at `.next/dev/lock` when the dev server starts. If the process is killed ungracefully (`kill -9`, system restart, OOM, power loss), the lock file survives and blocks restart with `Unable to acquire lock`. Port-killing alone (`lsof -ti:PORT | xargs kill -9`) does not clean it up — the lock is file-based, not port-based.
+
+```bash
+# Clean up stale lock before starting
+rm -f .next/dev/lock && PORT=3100 npm run dev
+
+# Recommended: add to package.json scripts for resilience
+"dev": "rm -f .next/dev/lock && next dev --port ${PORT:-3000}"
+```
+
+For monorepos where the Next.js app is in a subdirectory (e.g., `apps/web/`), the lock path is `apps/web/.next/dev/lock`. See the Turbostarter section below for the monorepo-specific pattern.
+
 ### Vite (Vue, React, Svelte)
 
 ```bash
@@ -590,6 +602,21 @@ pnpm dev:web
 cd apps/web && pnpm dev
 ```
 
+**6. Stale lock file cleanup (Next.js 16+)**:
+
+The dev server lock at `apps/web/.next/dev/lock` survives ungraceful shutdowns and blocks restart with `Unable to acquire lock`. Add lock cleanup to your start commands:
+
+```bash
+# Recommended: clean lock before starting (monorepo root)
+rm -f apps/web/.next/dev/lock && pnpm dev:web
+
+# Or add to apps/web/package.json for automatic cleanup
+"dev": "rm -f .next/dev/lock && next dev --port 3100"
+
+# Terminal profile / Tabby start command (includes lock cleanup + port kill)
+rm -f apps/web/.next/dev/lock; lsof -ti:3100 | xargs kill -9 2>/dev/null; pnpm dev:web
+```
+
 ### Docker Compose Projects
 
 For projects using Docker Compose, expose the app port and let Traefik route to it:
@@ -686,6 +713,25 @@ localdev-helper.sh list
 ```
 
 **Common cause**: A previous dev server didn't shut down cleanly. Check with `lsof` and kill the orphaned process.
+
+### Next.js Stale Lock File
+
+**Symptom**: `Unable to acquire lock` when starting `next dev`, even after killing the port process.
+
+**Cause**: Next.js 16+ creates a file-based lock at `.next/dev/lock`. Ungraceful shutdowns (`kill -9`, system restart, OOM) leave the lock file behind. Killing the port process does not remove it.
+
+```bash
+# Fix: remove the stale lock file
+rm -f .next/dev/lock
+
+# For monorepos (e.g., Turbostarter)
+rm -f apps/web/.next/dev/lock
+
+# Then start normally
+npm run dev
+```
+
+**Prevention**: Add `rm -f .next/dev/lock &&` to your dev script in `package.json`. See the Next.js and Turbostarter sections above for recommended patterns.
 
 ### Traefik Issues
 
