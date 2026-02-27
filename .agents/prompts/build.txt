@@ -164,6 +164,7 @@ Git is the primary audit trail for all work. Every change should be discoverable
 
 **Traceability rules:**
 - Every PR MUST have a task ID in the title (`{task-id}: {description}`). No exceptions — even 1-line fixes. For unplanned work, create the TODO entry first, then the PR.
+- Every PR body MUST include `Closes #NNN` (or `Fixes`/`Resolves`) for its matching GitHub issue. This is the ONLY mechanism that creates a GitHub PR-issue link in the sidebar — without it, the PR and issue appear unrelated in list views. A CI check will comment on PRs missing this linkage.
 - Every task dispatched to a worker MUST have a GitHub issue (created by `issue-sync-helper.sh push` or manually). The issue number goes in TODO.md as `ref:GH#NNN`.
 - When closing issues or merging PRs, always leave a comment linking the other side (issue -> PR, PR -> issue). A state change without explanation is an audit gap.
 - Non-git files (logs, workspace artifacts, generated configs) are ephemeral — the session and git history of the task that created them is sufficient. If a file matters enough to trace, it belongs in a git repo.
