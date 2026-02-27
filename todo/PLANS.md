@@ -21,6 +21,45 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-02-27] Fix Worker PR Lookup Race Condition
+
+**Status:** Planning
+**Estimate:** ~1.5h (ai:45m test:30m read:15m)
+**TODO:** t1343
+**Logged:** 2026-02-27
+**Brief:** [todo/tasks/t1343-brief.md](tasks/t1343-brief.md)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p033,Fix Worker PR Lookup Race Condition,planning,0,1,,bugfix|supervisor|lifecycle|race-condition,1.5h,45m,30m,15m,2026-02-27T00:00Z,
+-->
+
+#### Purpose
+
+Fix a race condition where a worker's issue lifecycle transition overwrites a supervisor's correct closure. Observed on issue #2250: supervisor correctly closed with merged PR #2268 at 19:29, but a worker added `needs-review` at 19:55/19:59 because its own PR lookup returned empty.
+
+#### Context
+
+The archived `issue-sync.sh` (lines 409-447) had deterministic logic for this: look up PR in DB, check if merged via `gh pr view`, close or flag. When this was migrated to AI-guided reasoning (t1335-t1337), the edge case of cross-session PR ownership was lost. The AI worker doesn't know to:
+
+1. Check if the issue is already closed before modifying it
+2. Search GitHub for PRs when its own DB has no record
+3. Defer to the supervisor's prior resolution
+
+#### Execution (single phase)
+
+- [ ] Add "check issue state before modifying" rule to `pulse.md` and worker guidance
+- [ ] Add PR lookup fallback (`gh pr list --search`) to `planning-detail.md`
+- [ ] Document the #2250 scenario as a concrete example
+
+#### Decision Log
+
+| Date | Decision | Rationale |
+|------|----------|-----------|
+| 2026-02-27 | Guidance-only fix, no new scripts | Per "Intelligence Over Scripts" principle — the archived bash logic was replaced by AI reasoning, so the fix must improve the AI guidance |
+| 2026-02-27 | Three-layer fix (state check + PR fallback + skip rule) | Each layer catches a different failure mode: state check prevents modifying closed issues, PR fallback finds cross-session PRs, skip rule prevents redundant transitions |
+
+---
+
 ### [2026-02-25] Local AI Model Support
 
 **Status:** Planning
