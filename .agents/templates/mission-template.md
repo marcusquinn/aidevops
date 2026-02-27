@@ -142,7 +142,9 @@ Milestones are sequential. Features within each milestone are parallelisable.
 |------|----------|--------|-------------|-----------|
 | | | | | |
 
-<!-- Append rows as spend occurs. Budget analysis engine (t1357.7) will automate this. -->
+<!-- Append rows as spend occurs. Use budget-analysis-helper.sh for cost estimation and tiered recommendations.
+     Run: budget-analysis-helper.sh analyse --budget <remaining_usd> --json to check remaining capacity.
+     Run: budget-analysis-helper.sh estimate --task "<feature>" --json for per-feature cost estimates. -->
 
 ## Decision Log
 
