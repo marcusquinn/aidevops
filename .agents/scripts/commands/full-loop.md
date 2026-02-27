@@ -102,10 +102,17 @@ ISSUE_NUM=$(gh issue list --repo "$(gh repo view --json nameWithOwner -q .nameWi
 
 if [[ -n "$ISSUE_NUM" && "$ISSUE_NUM" != "null" ]]; then
   REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
-  gh issue edit "$ISSUE_NUM" --repo "$REPO" --add-label "status:in-progress" 2>/dev/null || true
-  for STALE in "status:available" "status:queued" "status:claimed"; do
-    gh issue edit "$ISSUE_NUM" --repo "$REPO" --remove-label "$STALE" 2>/dev/null || true
-  done
+
+  # t1343: Check issue state before modifying — fail closed (only modify if explicitly OPEN)
+  ISSUE_STATE=$(gh issue view "$ISSUE_NUM" --repo "$REPO" --json state -q .state 2>/dev/null || echo "UNKNOWN")
+  if [[ "$ISSUE_STATE" != "OPEN" ]]; then
+    echo "[t1343] Issue #$ISSUE_NUM state is $ISSUE_STATE (not OPEN) — skipping label update"
+  else
+    gh issue edit "$ISSUE_NUM" --repo "$REPO" --add-label "status:in-progress" 2>/dev/null || true
+    for STALE in "status:available" "status:queued" "status:claimed"; do
+      gh issue edit "$ISSUE_NUM" --repo "$REPO" --remove-label "$STALE" 2>/dev/null || true
+    done
+  fi
 fi
 ```
 
@@ -417,12 +424,40 @@ After task completion, the loop automatically:
 8. **Postflight**: Verifies release health after merge
 9. **Deploy**: Runs `setup.sh --non-interactive` (aidevops repos only)
 
+**Issue-state guard before any label/comment modification (t1343 — MANDATORY):**
+
+Before modifying any linked issue (adding labels, posting comments, or changing state), ALWAYS check its current state. Use fail-closed semantics — only proceed when state is explicitly `OPEN`:
+
+```bash
+for ISSUE_NUM in $LINKED_ISSUES; do
+  ISSUE_STATE=$(gh issue view "$ISSUE_NUM" --repo "$REPO" --json state -q .state 2>/dev/null || echo "UNKNOWN")
+  if [[ "$ISSUE_STATE" != "OPEN" ]]; then
+    # Fail closed: skip on CLOSED, UNKNOWN, empty, or any non-OPEN state.
+    # CLOSED = already resolved by another session. UNKNOWN = gh failure/timeout.
+    # Either way, do NOT modify — modifications on ambiguous state cause noise.
+    echo "[t1343] Skipping issue #$ISSUE_NUM — state is $ISSUE_STATE (not OPEN)"
+    continue
+  fi
+  # ... proceed with label/comment updates only for OPEN issues
+done
+```
+
+This prevents the race condition where a worker's delayed lifecycle transition overwrites a supervisor's correct closure. If the issue is already closed with a merged PR, any further label changes (`needs-review`, `status:in-review`, etc.) are noise. The fail-closed design also protects against transient `gh` failures — if the state check fails, modifications are skipped rather than allowed.
+
+**PR lookup fallback (t1343):** When checking whether a merged PR exists for the current task (e.g., before deciding to flag an issue as `needs-review`), do NOT rely solely on your session's local state. Use the fallback chain from `planning-detail.md` "PR Lookup Fallback" — check local state first, then `gh pr list --state merged --search "<task_id>"`, then issue timeline cross-references. If ANY source confirms a merged PR, the task has PR evidence.
+
 **Issue label update on PR create — `status:in-review`:**
 
 After creating the PR, update linked issues to `status:in-review`. Extract linked issue numbers from the PR body (`Fixes #NNN`, `Closes #NNN`, `Resolves #NNN`) and update each:
 
 ```bash
 for ISSUE_NUM in $LINKED_ISSUES; do
+  # t1343: Check issue state before modifying — fail closed (only modify if explicitly OPEN)
+  ISSUE_STATE=$(gh issue view "$ISSUE_NUM" --repo "$REPO" --json state -q .state 2>/dev/null || echo "UNKNOWN")
+  if [[ "$ISSUE_STATE" != "OPEN" ]]; then
+    echo "[t1343] Skipping issue #$ISSUE_NUM — state is $ISSUE_STATE (not OPEN)"
+    continue
+  fi
   gh issue edit "$ISSUE_NUM" --repo "$REPO" --add-label "status:in-review" 2>/dev/null || true
   gh issue edit "$ISSUE_NUM" --repo "$REPO" --remove-label "status:in-progress" 2>/dev/null || true
 done

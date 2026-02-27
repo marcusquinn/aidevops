@@ -84,6 +84,39 @@ Add these tags to tasks that need human action before they can proceed. The supe
 
 CRITICAL — prevents false completion cascade:
 
+### PR Lookup Fallback (t1343)
+
+When verifying whether a merged PR exists for a task, NEVER rely on a single data source. Workers and supervisors may run in different sessions with different local state. Use this fallback chain:
+
+1. **Local DB/memory** — check your own session's record of the PR URL
+2. **GitHub search** — if local lookup fails, search GitHub directly:
+
+   ```bash
+   gh pr list --repo <owner/repo> --state merged --search "<task_id>" --json number,title,mergedAt --limit 5
+   ```
+
+3. **Issue cross-reference** — check the linked issue timeline for cross-referenced PRs, then verify merge state:
+
+   ```bash
+   # Extract PR numbers from cross-referenced timeline events
+   PR_NUMBERS=$(gh api repos/<owner/repo>/issues/<issue_number>/timeline \
+     --jq '[.[] | select(.event=="cross-referenced" and .source.issue.pull_request != null) | .source.issue.number] | unique[]')
+
+   # Verify each candidate PR is actually merged (not just linked)
+   for pr in $PR_NUMBERS; do
+     MERGED=$(gh pr view "$pr" --repo <owner/repo> --json mergedAt -q '.mergedAt // empty' 2>/dev/null)
+     if [[ -n "$MERGED" ]]; then
+       echo "Confirmed merged PR #$pr (merged at $MERGED)"
+       # Accept as evidence — no need to check further
+       break
+     fi
+   done
+   ```
+
+   IMPORTANT: Cross-referenced timeline events only establish a link — they do NOT confirm merge state. Always verify `mergedAt` via the pulls API before accepting a cross-referenced PR as completion evidence.
+
+If ANY source confirms a merged PR (with verified `mergedAt`), treat the task as having PR evidence. The race condition in Issue #2250 occurred because a worker only checked its own DB (source 1), missed the PR created by a different session, and incorrectly flagged the issue as `needs-review`.
+
 - NEVER mark a task `[x]` unless a merged PR exists with real deliverables for that task
 - Use `task-complete-helper.sh <task-id> --pr <number>` or `task-complete-helper.sh <task-id> --verified` to mark tasks complete in interactive sessions
 - The helper enforces proof-log requirements: every completion MUST have `pr:#NNN` or `verified:YYYY-MM-DD`

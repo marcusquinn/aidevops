@@ -80,6 +80,25 @@ Use the `path` field from pulse-repos.json for `--dir` when dispatching workers.
 
 Check for patterns that indicate systemic problems. Use the GitHub data you already fetched — no extra state needed.
 
+**Issue-state guard (t1343 — MANDATORY before any issue modification):** Before adding labels, posting comments, or modifying any issue, ALWAYS check its current state first. Use fail-closed semantics — only modify when state is explicitly `OPEN`:
+
+```bash
+STATE=$(gh issue view <number> --repo <owner/repo> --json state -q .state 2>/dev/null || echo "UNKNOWN")
+if [[ "$STATE" == "OPEN" ]]; then
+  # Proceed with label/comment modifications
+  gh issue edit <number> --repo <owner/repo> --add-label "needs-review" 2>/dev/null || true
+else
+  # Fail closed: CLOSED, UNKNOWN, empty, or any non-OPEN value — skip all modifications
+  echo "[t1343] Issue #<number> state is $STATE (not OPEN) — skipping modification"
+fi
+```
+
+- If `STATE` is `OPEN`: proceed with your intended modification.
+- If `STATE` is `CLOSED`: do NOT add `needs-review`, `status:*`, or any other label. Do NOT post comments suggesting the issue needs action. A closed issue with a merged PR is resolved — modifying it creates noise and confuses the lifecycle.
+- If `STATE` is empty, `UNKNOWN`, or any other value: skip modification, log a warning, and move on. Fail closed — never modify on unknown state. Transient `gh` failures or timeouts must not allow accidental writes.
+
+This prevents the race condition where a worker's delayed lifecycle transition overwrites a supervisor's correct closure (observed: Issue #2250 — supervisor closed with merged PR evidence at 19:29, worker added `needs-review` at 19:55 because its DB lacked the PR URL).
+
 **Stale PRs:** If any open PR was last updated more than 6 hours ago, something is stuck. Check if it has a worker branch with no recent commits. If so, create a GitHub issue:
 
 ```bash
