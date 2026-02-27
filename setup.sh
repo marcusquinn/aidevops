@@ -671,10 +671,10 @@ main() {
 	fi
 
 	# Enable supervisor pulse scheduler
-	# Uses pulse-wrapper.sh which handles timeout, dedup, and process cleanup.
+	# Uses pulse-wrapper.sh which handles dedup, orphan cleanup, and RAM-based concurrency.
 	# macOS: launchd plist invoking wrapper | Linux: cron entry invoking wrapper
-	# The wrapper invokes `opencode run "/pulse"` (AI-guided supervisor) with a
-	# hard timeout to prevent hangs when opencode enters idle state without exiting.
+	# The plist is ALWAYS regenerated on setup.sh to pick up config changes (env vars,
+	# thresholds). Only the first-install prompt is gated on _pulse_installed.
 	if [[ "${AIDEVOPS_SUPERVISOR_PULSE:-true}" != "false" ]]; then
 		local wrapper_script="$HOME/.aidevops/agents/scripts/pulse-wrapper.sh"
 		local pulse_label="com.aidevops.aidevops-supervisor-pulse"
@@ -686,24 +686,20 @@ main() {
 		if [[ "$(uname -s)" == "Darwin" ]]; then
 			local pulse_plist="$HOME/Library/LaunchAgents/${pulse_label}.plist"
 			if _launchd_has_agent "$pulse_label"; then
-				# Check if it's the old format (needs upgrade to wrapper-based)
-				if [[ -f "$pulse_plist" ]] && grep -q "pulse-wrapper" "$pulse_plist" 2>/dev/null; then
-					_pulse_installed=true
-				fi
-				# Old format will fall through to upgrade path
+				_pulse_installed=true
 			fi
 		fi
-		# Both platforms: check cron
 		if [[ "$_pulse_installed" == "false" ]] && crontab -l 2>/dev/null | grep -qF "pulse-wrapper" 2>/dev/null; then
 			_pulse_installed=true
 		fi
 
-		if [[ "$_pulse_installed" == "false" && -f "$wrapper_script" ]]; then
-			# Detect opencode binary location
-			local opencode_bin
-			opencode_bin=$(command -v opencode 2>/dev/null || echo "/opt/homebrew/bin/opencode")
+		# Detect opencode binary location
+		local opencode_bin
+		opencode_bin=$(command -v opencode 2>/dev/null || echo "/opt/homebrew/bin/opencode")
 
-			local _do_install=true
+		# First install: prompt user. Upgrades: always regenerate silently.
+		local _do_install=true
+		if [[ "$_pulse_installed" == "false" && -f "$wrapper_script" ]]; then
 			if [[ "$NON_INTERACTIVE" != "true" ]]; then
 				echo ""
 				echo "The supervisor pulse enables autonomous orchestration:"
@@ -718,29 +714,33 @@ main() {
 					print_info "Skipped. Enable later: ./setup.sh (re-run)"
 				fi
 			fi
+		elif [[ "$_pulse_installed" == "false" ]]; then
+			# Wrapper not deployed yet — skip (will install on next run after rsync)
+			_do_install=false
+		fi
 
-			if [[ "$_do_install" == "true" ]]; then
-				mkdir -p "$HOME/.aidevops/logs"
+		if [[ "$_do_install" == "true" && -f "$wrapper_script" ]]; then
+			mkdir -p "$HOME/.aidevops/logs"
 
-				if [[ "$(uname -s)" == "Darwin" ]]; then
-					# macOS: use launchd plist with wrapper
-					local pulse_plist="$HOME/Library/LaunchAgents/${pulse_label}.plist"
+			if [[ "$(uname -s)" == "Darwin" ]]; then
+				# macOS: use launchd plist with wrapper
+				local pulse_plist="$HOME/Library/LaunchAgents/${pulse_label}.plist"
 
-					# Unload old plist if upgrading
-					if _launchd_has_agent "$pulse_label"; then
-						launchctl unload "$pulse_plist" 2>/dev/null || true
-						pkill -f 'Supervisor Pulse' 2>/dev/null || true
-					fi
+				# Unload old plist if upgrading
+				if _launchd_has_agent "$pulse_label"; then
+					launchctl unload "$pulse_plist" 2>/dev/null || true
+					pkill -f 'Supervisor Pulse' 2>/dev/null || true
+				fi
 
-					# Also clean up old label if present
-					local old_plist="$HOME/Library/LaunchAgents/com.aidevops.supervisor-pulse.plist"
-					if [[ -f "$old_plist" ]]; then
-						launchctl unload "$old_plist" 2>/dev/null || true
-						rm -f "$old_plist"
-					fi
+				# Also clean up old label if present
+				local old_plist="$HOME/Library/LaunchAgents/com.aidevops.supervisor-pulse.plist"
+				if [[ -f "$old_plist" ]]; then
+					launchctl unload "$old_plist" 2>/dev/null || true
+					rm -f "$old_plist"
+				fi
 
-					# Write the plist
-					cat >"$pulse_plist" <<PLIST
+				# Write the plist (always regenerated to pick up config changes)
+				cat >"$pulse_plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -779,27 +779,28 @@ main() {
 </plist>
 PLIST
 
-					if launchctl load "$pulse_plist" 2>/dev/null; then
-						print_info "Supervisor pulse enabled (launchd, every 2 min)"
+				if launchctl load "$pulse_plist" 2>/dev/null; then
+					if [[ "$_pulse_installed" == "true" ]]; then
+						print_info "Supervisor pulse updated (launchd config regenerated)"
 					else
-						print_warning "Failed to load supervisor pulse LaunchAgent"
+						print_info "Supervisor pulse enabled (launchd, every 2 min)"
 					fi
 				else
-					# Linux: use cron entry with wrapper
-					# Remove old-style cron entries (direct opencode invocation)
-					(
-						crontab -l 2>/dev/null | grep -v 'aidevops: supervisor-pulse'
-						echo "*/2 * * * * OPENCODE_BIN=${opencode_bin} PULSE_DIR=${_aidevops_dir} /bin/bash ${wrapper_script} >> $HOME/.aidevops/logs/pulse-wrapper.log 2>&1 # aidevops: supervisor-pulse"
-					) | crontab - 2>/dev/null || true
-					if crontab -l 2>/dev/null | grep -qF "aidevops: supervisor-pulse"; then
-						print_info "Supervisor pulse enabled (cron, every 2 min). Disable: crontab -e and remove the supervisor-pulse line"
-					else
-						print_warning "Failed to install supervisor pulse cron entry. See runners.md for manual setup."
-					fi
+					print_warning "Failed to load supervisor pulse LaunchAgent"
+				fi
+			else
+				# Linux: use cron entry with wrapper
+				# Remove old-style cron entries (direct opencode invocation)
+				(
+					crontab -l 2>/dev/null | grep -v 'aidevops: supervisor-pulse'
+					echo "*/2 * * * * OPENCODE_BIN=${opencode_bin} PULSE_DIR=${_aidevops_dir} /bin/bash ${wrapper_script} >> $HOME/.aidevops/logs/pulse-wrapper.log 2>&1 # aidevops: supervisor-pulse"
+				) | crontab - 2>/dev/null || true
+				if crontab -l 2>/dev/null | grep -qF "aidevops: supervisor-pulse"; then
+					print_info "Supervisor pulse enabled (cron, every 2 min). Disable: crontab -e and remove the supervisor-pulse line"
+				else
+					print_warning "Failed to install supervisor pulse cron entry. See runners.md for manual setup."
 				fi
 			fi
-		elif [[ ! -f "$wrapper_script" ]]; then
-			print_warning "pulse-wrapper.sh not found — supervisor pulse not installed"
 		fi
 	fi
 
