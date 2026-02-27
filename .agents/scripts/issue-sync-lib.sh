@@ -44,6 +44,15 @@ strip_code_fences() {
 	return 0
 }
 
+# Escape a string for use in Extended Regular Expressions (ERE).
+# Task IDs like t001.1 contain dots that are regex wildcards — this prevents
+# t001.1 from matching t001x1 in grep -E or awk patterns.
+# Usage: local escaped; escaped=$(_escape_ere "$task_id")
+_escape_ere() {
+	local input="$1"
+	printf '%s' "$input" | sed -E 's/[][(){}.^$*+?|\\]/\\&/g'
+}
+
 # Find project root (contains TODO.md)
 find_project_root() {
 	local dir="$PWD"
@@ -922,8 +931,10 @@ fix_gh_ref_in_todo() {
 	fi
 
 	# Find line number outside code fences, then replace only that line
+	local task_id_ere
+	task_id_ere=$(_escape_ere "$task_id")
 	local line_num
-	line_num=$(awk -v pat="^[[:space:]]*- \\[.\\] ${task_id} .*ref:GH#${old_number}" \
+	line_num=$(awk -v pat="^[[:space:]]*- \\[.\\] ${task_id_ere} .*ref:GH#${old_number}" \
 		'/^[[:space:]]*```/{f=!f; next} !f && $0 ~ pat {print NR; exit}' "$todo_file")
 	[[ -z "$line_num" ]] && {
 		log_verbose "$task_id with ref:GH#$old_number not found outside code fences"
@@ -944,14 +955,16 @@ add_gh_ref_to_todo() {
 	local task_id="$1"
 	local issue_number="$2"
 	local todo_file="$3"
+	local task_id_ere
+	task_id_ere=$(_escape_ere "$task_id")
 
 	# Check if ref already exists outside code fences
-	if strip_code_fences <"$todo_file" | grep -qE "^\s*- \[.\] ${task_id} .*ref:GH#${issue_number}"; then
+	if strip_code_fences <"$todo_file" | grep -qE "^\s*- \[.\] ${task_id_ere} .*ref:GH#${issue_number}"; then
 		return 0
 	fi
 
 	# Check if any GH ref exists outside code fences (might be different number)
-	if strip_code_fences <"$todo_file" | grep -qE "^\s*- \[.\] ${task_id} .*ref:GH#"; then
+	if strip_code_fences <"$todo_file" | grep -qE "^\s*- \[.\] ${task_id_ere} .*ref:GH#"; then
 		log_verbose "$task_id already has a GH ref, skipping"
 		return 0
 	fi
@@ -959,7 +972,7 @@ add_gh_ref_to_todo() {
 	# Find the line number of the task OUTSIDE code fences, then apply sed to that specific line.
 	# This prevents modifying format examples inside code-fenced blocks.
 	local line_num
-	line_num=$(awk -v pat="^[[:space:]]*- \\[.\\] ${task_id} " \
+	line_num=$(awk -v pat="^[[:space:]]*- \\[.\\] ${task_id_ere} " \
 		'/^[[:space:]]*```/{f=!f; next} !f && $0 ~ pat {print NR; exit}' "$todo_file")
 	[[ -z "$line_num" ]] && {
 		log_verbose "$task_id not found outside code fences"
@@ -996,21 +1009,23 @@ add_pr_ref_to_todo() {
 	local task_id="$1"
 	local pr_number="$2"
 	local todo_file="$3"
+	local task_id_ere
+	task_id_ere=$(_escape_ere "$task_id")
 
 	# Check if pr: ref already exists outside code fences
-	if strip_code_fences <"$todo_file" | grep -qE "^\s*- \[.\] ${task_id} .*pr:#${pr_number}"; then
+	if strip_code_fences <"$todo_file" | grep -qE "^\s*- \[.\] ${task_id_ere} .*pr:#${pr_number}"; then
 		return 0
 	fi
 
 	# Check if any pr: ref already exists outside code fences (don't duplicate)
-	if strip_code_fences <"$todo_file" | grep -qE "^\s*- \[.\] ${task_id} .*pr:#"; then
+	if strip_code_fences <"$todo_file" | grep -qE "^\s*- \[.\] ${task_id_ere} .*pr:#"; then
 		log_verbose "$task_id already has a pr: ref, skipping"
 		return 0
 	fi
 
 	# Find line number outside code fences, then modify only that line
 	local line_num
-	line_num=$(awk -v pat="^[[:space:]]*- \\[.\\] ${task_id} " \
+	line_num=$(awk -v pat="^[[:space:]]*- \\[.\\] ${task_id_ere} " \
 		'/^[[:space:]]*```/{f=!f; next} !f && $0 ~ pat {print NR; exit}' "$todo_file")
 	[[ -z "$line_num" ]] && {
 		log_verbose "$task_id not found outside code fences for pr: ref"

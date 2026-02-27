@@ -188,9 +188,11 @@ _close_comment() {
 
 _do_close() {
 	local task_id="$1" issue_number="$2" todo_file="$3" repo="$4"
+	local task_id_ere
+	task_id_ere=$(_escape_ere "$task_id")
 	local task_with_notes task_line pr_info pr_num="" pr_url=""
 	task_with_notes=$(extract_task_block "$task_id" "$todo_file")
-	task_line=$(strip_code_fences <"$todo_file" | grep -E "^\s*- \[.\] ${task_id} " | head -1 || echo "")
+	task_line=$(strip_code_fences <"$todo_file" | grep -E "^\s*- \[.\] ${task_id_ere} " | head -1 || echo "")
 	[[ -z "$task_with_notes" ]] && task_with_notes="$task_line"
 
 	pr_info=$(_find_closing_pr "$task_with_notes" "$task_id" "$repo" 2>/dev/null || echo "")
@@ -198,7 +200,7 @@ _do_close() {
 		pr_num="${pr_info%%|*}"
 		pr_url="${pr_info#*|}"
 		[[ "$DRY_RUN" != "true" && -n "$pr_num" ]] && add_pr_ref_to_todo "$task_id" "$pr_num" "$todo_file"
-		task_line=$(strip_code_fences <"$todo_file" | grep -E "^\s*- \[.\] ${task_id} " | head -1 || echo "")
+		task_line=$(strip_code_fences <"$todo_file" | grep -E "^\s*- \[.\] ${task_id_ere} " | head -1 || echo "")
 		task_with_notes=$(extract_task_block "$task_id" "$todo_file")
 		[[ -z "$task_with_notes" ]] && task_with_notes="$task_line"
 	fi
@@ -253,6 +255,8 @@ cmd_push() {
 	local created=0 skipped=0
 	for task_id in "${tasks[@]}"; do
 		log_verbose "Processing $task_id..."
+		local task_id_ere
+		task_id_ere=$(_escape_ere "$task_id")
 		local existing
 		existing=$(gh_find_issue_by_title "$repo" "${task_id}:" "all" 50)
 		if [[ -n "$existing" && "$existing" != "null" ]]; then
@@ -262,7 +266,7 @@ cmd_push() {
 		fi
 
 		local task_line
-		task_line=$(strip_code_fences <"$todo_file" | grep -E "^\s*- \[.\] ${task_id} " | head -1 || echo "")
+		task_line=$(strip_code_fences <"$todo_file" | grep -E "^\s*- \[.\] ${task_id_ere} " | head -1 || echo "")
 		[[ -z "$task_line" ]] && {
 			print_warning "Task $task_id not found in TODO.md"
 			continue
@@ -348,8 +352,10 @@ cmd_enrich() {
 
 	local enriched=0
 	for task_id in "${tasks[@]}"; do
+		local task_id_ere
+		task_id_ere=$(_escape_ere "$task_id")
 		local task_line
-		task_line=$(strip_code_fences <"$todo_file" | grep -E "^\s*- \[.\] ${task_id} " | head -1 || echo "")
+		task_line=$(strip_code_fences <"$todo_file" | grep -E "^\s*- \[.\] ${task_id_ere} " | head -1 || echo "")
 		local num
 		num=$(echo "$task_line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
 		[[ -z "$num" ]] && num=$(gh_find_issue_by_title "$repo" "${task_id}:" "all" 50)
@@ -404,10 +410,12 @@ cmd_pull() {
 			title=$(echo "$issue_line" | jq -r '.title' 2>/dev/null || echo "")
 			tid=$(echo "$title" | grep -oE '^t[0-9]+(\.[0-9]+)*' || echo "")
 			[[ -z "$tid" ]] && continue
+			local tid_ere
+			tid_ere=$(_escape_ere "$tid")
 
 			# Ref sync
-			if ! grep -qE "^\s*- \[.\] ${tid} .*ref:GH#${num}" "$todo_file" 2>/dev/null; then
-				if ! grep -qE "^\s*- \[.\] ${tid} " "$todo_file" 2>/dev/null; then
+			if ! grep -qE "^\s*- \[.\] ${tid_ere} .*ref:GH#${num}" "$todo_file" 2>/dev/null; then
+				if ! grep -qE "^\s*- \[.\] ${tid_ere} " "$todo_file" 2>/dev/null; then
 					if [[ "$state" == "open" ]]; then
 						print_warning "ORPHAN: #$num ($tid: $title) — no TODO.md entry"
 						orphan_open=$((orphan_open + 1))
@@ -430,7 +438,7 @@ cmd_pull() {
 			login=$(echo "$issue_line" | jq -r '.assignees[0].login // empty' 2>/dev/null || echo "")
 			[[ -z "$login" ]] && continue
 			local tl
-			tl=$(strip_code_fences <"$todo_file" | grep -E "^\s*- \[.\] ${tid} " | head -1 || echo "")
+			tl=$(strip_code_fences <"$todo_file" | grep -E "^\s*- \[.\] ${tid_ere} " | head -1 || echo "")
 			[[ -z "$tl" ]] && continue
 			echo "$tl" | grep -qE 'assignee:[A-Za-z0-9._@-]+' && continue
 			if [[ "$DRY_RUN" == "true" ]]; then
@@ -440,7 +448,7 @@ cmd_pull() {
 			fi
 			local ln
 			# Use awk to get line number while skipping code-fenced blocks
-			ln=$(awk -v pat="^[[:space:]]*- \\[.\\] ${tid} " '/^[[:space:]]*```/{f=!f; next} !f && $0 ~ pat {print NR; exit}' "$todo_file")
+			ln=$(awk -v pat="^[[:space:]]*- \\[.\\] ${tid_ere} " '/^[[:space:]]*```/{f=!f; next} !f && $0 ~ pat {print NR; exit}' "$todo_file")
 			if [[ -n "$ln" ]]; then
 				local cl
 				cl=$(sed -n "${ln}p" "$todo_file")
@@ -469,8 +477,10 @@ cmd_close() {
 
 	# Single-task mode
 	if [[ -n "$target_task" ]]; then
+		local target_ere
+		target_ere=$(_escape_ere "$target_task")
 		local task_line
-		task_line=$(strip_code_fences <"$todo_file" | grep -E "^\s*- \[.\] ${target_task} " | head -1 || echo "")
+		task_line=$(strip_code_fences <"$todo_file" | grep -E "^\s*- \[.\] ${target_ere} " | head -1 || echo "")
 		local num
 		num=$(echo "$task_line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
 		if [[ -z "$num" ]]; then
@@ -511,8 +521,10 @@ cmd_close() {
 		local task_id
 		task_id=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
 		[[ -z "$task_id" ]] && continue
+		local task_id_ere
+		task_id_ere=$(_escape_ere "$task_id")
 		local mapped
-		mapped=$(echo "$map" | grep -E "^${task_id}\|" | head -1 || echo "")
+		mapped=$(echo "$map" | grep -E "^${task_id_ere}\|" | head -1 || echo "")
 		[[ -z "$mapped" ]] && continue
 		local issue_num="${mapped#*|}"
 		local ref
@@ -556,7 +568,9 @@ cmd_status() {
 		local tid
 		tid=$(echo "$il" | jq -r '.title' 2>/dev/null | grep -oE '^t[0-9]+(\.[0-9]+)*' || echo "")
 		[[ -z "$tid" ]] && continue
-		grep -qE "^\s*- \[x\] ${tid} " "$todo_file" 2>/dev/null && {
+		local tid_ere
+		tid_ere=$(_escape_ere "$tid")
+		grep -qE "^\s*- \[x\] ${tid_ere} " "$todo_file" 2>/dev/null && {
 			drift=$((drift + 1))
 			print_warning "DRIFT: #$(echo "$il" | jq -r '.number') ($tid) open but completed"
 		}
@@ -611,11 +625,13 @@ cmd_reconcile() {
 		num=$(echo "$il" | jq -r '.number' 2>/dev/null || echo "")
 		tid=$(echo "$il" | jq -r '.title' 2>/dev/null | grep -oE '^t[0-9]+(\.[0-9]+)*' || echo "")
 		[[ -z "$tid" ]] && continue
-		grep -qE "^\s*- \[x\] ${tid} " "$todo_file" 2>/dev/null && {
+		local tid_ere
+		tid_ere=$(_escape_ere "$tid")
+		grep -qE "^\s*- \[x\] ${tid_ere} " "$todo_file" 2>/dev/null && {
 			print_warning "STALE: #$num ($tid) open but done"
 			stale=$((stale + 1))
 		}
-		grep -qE "^\s*- \[.\] ${tid} " "$todo_file" 2>/dev/null || orphans=$((orphans + 1))
+		grep -qE "^\s*- \[.\] ${tid_ere} " "$todo_file" 2>/dev/null || orphans=$((orphans + 1))
 	done < <(echo "$open_json" | jq -c '.[]' 2>/dev/null || true)
 
 	printf "\n=== Reconciliation ===\nRefs OK: %d | fixed: %d | stale: %d | orphans: %d\n" "$ref_ok" "$ref_fixed" "$stale" "$orphans"
