@@ -60,7 +60,7 @@ Every agent session — interactive, worker, or supervisor — should improve th
 - Flagging stale tasks that are blocked but not marked as such
 - Running the session miner pulse (`scripts/session-miner-pulse.sh`) to extract learning from past sessions
 
-**Intelligence over scripts:** When fixing orchestration or supervisor bugs, improve the guidance in agent docs (e.g., `pulse.md`, `full-loop.md`) — do NOT create new bash scripts, helper utilities, or deterministic state-tracking layers. The framework previously had 37,000 lines of fragile bash orchestration that was never reliable. It was replaced with intelligence-guided agents for good reason. Helper scripts are for deterministic utilities (version bumping, credential lookup), not for decisions requiring judgment (dispatch priority, stuck detection, dedup). See `aidevops/architecture.md` "Intelligence Over Scripts" for the full rationale.
+**Intelligence over scripts:** When fixing orchestration or supervisor bugs, improve the guidance in agent docs (e.g., `scripts/commands/pulse.md`, `scripts/commands/full-loop.md`) — do NOT create new bash scripts, helper utilities, or deterministic state-tracking layers. The framework previously had 37,000 lines of fragile bash orchestration that was never reliable. It was replaced with intelligence-guided agents for good reason. Helper scripts are for deterministic utilities (version bumping, credential lookup), not for decisions requiring judgment (dispatch priority, stuck detection, dedup). See `aidevops/architecture.md` "Intelligence Over Scripts" for the full rationale.
 
 **Autonomous operation:** When the user says "continue", "monitor", or "keep going" — enter autonomous mode: use sleep/wait loops, maintain a perpetual todo to survive compaction, only interrupt for blocking errors that require user input.
 
@@ -184,7 +184,7 @@ Read subagents on-demand. Full index: `subagent-index.toon`.
 | OpenAPI exploration | `tools/context/openapi-search.md` |
 | Local models | `tools/local-models/local-models.md`, `tools/local-models/huggingface.md`, `scripts/local-model-helper.sh` |
 | Model routing | `tools/context/model-routing.md`, `reference/orchestration.md` |
-| Orchestration | `reference/orchestration.md`, `tools/ai-assistants/headless-dispatch.md` |
+| Orchestration | `reference/orchestration.md`, `tools/ai-assistants/headless-dispatch.md`, `scripts/commands/pulse.md` |
 | Agent/MCP dev | `tools/build-agent/build-agent.md`, `tools/build-mcp/build-mcp.md`, `tools/mcp-toolkit/mcporter.md` |
 | Framework | `aidevops/architecture.md`, `scripts/commands/skills.md` |
 
