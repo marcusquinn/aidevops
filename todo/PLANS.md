@@ -22,6 +22,136 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-02-27] Mission System — Autonomous Long-Running Project Orchestration
+
+**Status:** Planning
+**Estimate:** ~28h core + ~24h dependent features = ~52h total
+**TODO:** t1357 (core), t1358-t1362 (dependent features)
+**Logged:** 2026-02-27
+**Brief:** [todo/tasks/t1357-brief.md](tasks/t1357-brief.md)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged}:
+p034,Mission System,planning,0,3,,plan|feature|orchestration|mission,52h,38h,10h,4h,2026-02-27T00:00Z
+-->
+
+#### Purpose
+
+Close the gap between "I have an idea" and "autonomous execution." Current aidevops handles task-level work (`/full-loop`) and supervisor dispatch (`/pulse`), but nothing takes a high-level goal and drives it to completion over days. Missions extend beyond code into research, procurement, infrastructure setup, and 3rd-party communication — making aidevops a true autonomous project agent.
+
+Inspired by Factory.ai Missions (multi-day autonomous coding, Feb 2026) but significantly broader in scope. Factory solves "multi-day coding tasks." This solves "autonomous project lifecycle from idea to delivery."
+
+#### Architecture
+
+```text
+/mission "Build a CRM with contacts, deals, and email"
+    │
+    ▼
+Phase 1: SCOPING (interactive interview, opus-tier)
+    ├── Goal, mode (POC/Full), budget, constraints, preferences
+    ├── Existing repo / new repo / homeless (no repo yet)
+    └── Budget analysis: "For $X you get Y; for $A you get B"
+    │
+    ▼
+Phase 2: DECOMPOSITION (opus-tier)
+    ├── Research phase (if needed)
+    ├── 3-7 milestones (sequential)
+    ├── 2-5 features per milestone (parallelisable)
+    ├── Resource requirements (accounts, services, credentials)
+    └── Creates mission.md + TODO entries + GitHub issues
+    │
+    ▼
+Phase 3: EXECUTION (autonomous, pulse-integrated)
+    ├── For each milestone (sequential):
+    │   ├── Dispatch features as workers
+    │   ├── Self-organise: create agents/scripts as needed
+    │   ├── Track budget (time, money, tokens)
+    │   └── On complete → milestone validation
+    │       ├── Pass → advance
+    │       └── Fail → create fix tasks, re-validate
+    │
+    ▼
+Phase 4: COMPLETION
+    ├── Final validation, budget reconciliation
+    ├── Offer improvements back to aidevops
+    └── Summary report
+```
+
+#### Mission Homes
+
+- `~/.aidevops/missions/{id}/` — homeless missions (POC drafting, no repo yet)
+- `todo/missions/{id}/` — missions attached to a project repo
+- Migration: homeless → repo-attached when `aidevops init` + `git init` runs
+
+#### POC vs Full Mode
+
+| Aspect | POC Mode | Full Mode |
+|---|---|---|
+| Branching | Main (dedicated repo) or single branch (existing) | Worktrees + PRs per feature |
+| Briefs | Inline in mission.md | Full brief per feature |
+| Code review | Skip | Standard PR review + quality gates |
+| Testing | Basic smoke tests | Full test suite + lint + type-check |
+| Commits | Informal, batch OK | Conventional commits per feature |
+| Browser QA | On demand | Every milestone validation |
+
+#### Progress
+
+- [ ] (2026-02-27) Phase 1: Foundation — template, command, orchestrator agent ~12h
+  - [ ] t1357.1 Mission state file template ~2h
+  - [ ] t1357.2 `/mission` command ~6h
+  - [ ] t1357.3 Mission orchestrator agent ~4h
+- [ ] Phase 2: Execution modes — POC mode, pulse integration ~6h
+  - [ ] t1357.4 POC mode in `/full-loop` ~2h
+  - [ ] t1357.5 Pulse integration ~4h
+- [ ] Phase 3: Validation & budget — milestone validation, budget engine ~8h
+  - [ ] t1357.6 Milestone validation worker ~4h
+  - [ ] t1357.7 Budget analysis engine ~4h
+- [ ] Dependent features ~24h
+  - [ ] t1358 Payment agent ~8h
+  - [ ] t1359 Browser QA in validation ~4h
+  - [ ] t1360 Email agent for missions ~4h
+  - [ ] t1361 Skill learning ~4h
+  - [ ] t1362 Progress dashboard ~4h
+
+#### Context from Discussion
+
+**Key design decisions:**
+- Mission state in git (markdown), not a database — consistent with "GitHub + TODO.md are the database" principle
+- Orchestrator as pulse extension, not separate daemon — avoids new process management
+- POC mode is a flag, not a separate system — same pipeline, fewer gates
+- Milestones sequential, features within milestones parallelisable — Factory found this works better than broad parallelism
+- One orchestrator layer, not recursive — Factory notes recursive depth as open question; one layer suffices for our scale
+- Budget analysis before execution — mission agent should tell you what you'll get for your budget before starting
+- Mission-specific agents are draft-tier — temporary tools, promoted if generally useful
+
+**Factory.ai Missions analysis (Feb 2026):**
+- Median mission: ~2 hours. 65% run >1 hour. 37% run >4 hours. 14% run >24 hours.
+- Missions use ~2x token weight per message vs normal sessions (19K vs 11K)
+- Multi-model: orchestrator (opus), workers (sonnet), validators (varies), research (cheapest)
+- Key insight: "serial execution with targeted parallelization has worked better than broad parallelism"
+- Open questions they identified: parallelization balance, correctness over long horizons, worker scope, recursive management depth
+
+**What aidevops already has (strong overlap):**
+- Worker dispatch, task decomposition, fresh context per worker, multi-model routing, git as source of truth, validation (preflight/postflight), failure recovery, skill/memory, browser QA, task briefs, worker efficiency, autonomous operation
+
+**What's genuinely new:**
+- Mission-level orchestration (goal → milestones → features → validation → completion)
+- Milestone validation (pause after milestone N, validate integration, then proceed)
+- Mission state persistence (durable entity grouping tasks into a coherent goal)
+- Automatic re-planning (validation failure → create fix tasks)
+- POC/shortcut mode
+- Budget feasibility analysis and outcome-level recommendations
+- Self-organising mission folders
+- Autonomous procurement (payment agent)
+- 3rd-party communication (email agent)
+
+#### Decision Log
+
+(To be populated during implementation)
+
+#### Surprises & Discoveries
+
+(To be populated during implementation)
+
 ### [2026-02-27] Fix Worker PR Lookup Race Condition
 
 **Status:** Completed
