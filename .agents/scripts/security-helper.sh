@@ -534,7 +534,7 @@ cmd_skill_scan() {
 			return 0
 		fi
 
-		echo -e "Scanning ${skill_count} imported skills..."
+		echo -e "Scanning ${skill_count} imported skills (parallel)..."
 		echo ""
 
 		local total_findings=0
@@ -543,6 +543,20 @@ cmd_skill_scan() {
 		local total_critical=0
 		local total_high=0
 		local total_medium=0
+
+		# Parallelise skill scanning to avoid serial Python cold-start overhead.
+		# Each skill-scanner invocation cold-starts Python + litellm (~7.7s).
+		# Running 8 skills serially = ~62s; parallel = ~8s (1 cold-start latency).
+		local scan_tmpdir
+		scan_tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/skill-scan-XXXXXX")
+		# shellcheck disable=SC2064
+		trap "rm -rf '$scan_tmpdir'" RETURN
+
+		# Phase 1: Launch all scans in parallel
+		local scan_index=0
+		local scan_pids=()
+		local scan_names=()
+		local scan_paths=()
 
 		while IFS= read -r skill_json; do
 			local name local_path
@@ -566,10 +580,25 @@ cmd_skill_scan() {
 				scan_target="$(dirname "$full_path")"
 			fi
 
-			echo -e "${CYAN}Scanning${NC}: $name ($local_path)"
+			# Launch scan in background, write output to indexed temp file
+			$scanner_cmd scan "$scan_target" --format json >"$scan_tmpdir/$scan_index.json" 2>/dev/null &
+			scan_pids+=($!)
+			scan_names+=("$name")
+			scan_paths+=("$local_path")
+			scan_index=$((scan_index + 1))
+		done < <(jq -c '.skills[]' "$skill_sources" 2>/dev/null)
 
-			local scan_output
-			scan_output=$($scanner_cmd scan "$scan_target" --format json 2>/dev/null) || true
+		# Phase 2: Collect results in order (preserves deterministic output)
+		local i
+		for i in "${!scan_pids[@]}"; do
+			wait "${scan_pids[$i]}" 2>/dev/null || true
+
+			echo -e "${CYAN}Scanning${NC}: ${scan_names[$i]} (${scan_paths[$i]})"
+
+			local scan_output=""
+			if [[ -s "$scan_tmpdir/$i.json" ]]; then
+				scan_output=$(cat "$scan_tmpdir/$i.json")
+			fi
 
 			if [[ -n "$scan_output" ]]; then
 				local findings
@@ -601,7 +630,7 @@ cmd_skill_scan() {
 			fi
 
 			skills_scanned=$((skills_scanned + 1))
-		done < <(jq -c '.skills[]' "$skill_sources" 2>/dev/null)
+		done
 
 		local safe_count=$((skills_scanned - skills_with_issues))
 
