@@ -61,6 +61,7 @@ Scan the pre-fetched state above. Act immediately on each item — don't build a
 
 When closing any issue, ALWAYS add a comment first explaining: (1) why you're closing it, and (2) which PR(s) delivered the work (link them: `Resolved by #N`). If the work was done before the issue existed (synced from a completed TODO), say so and link the most relevant PRs. An issue closed without a comment is an audit failure.
 
+- **`persistent` label** → NEVER close. These are long-running tracking issues (e.g., daily CodeRabbit reviews). If a PR body incorrectly references one with `Closes #N`, that's a hallucinated link — ignore it. A CI guard will auto-reopen if accidentally closed.
 - **Has a merged PR that resolves it** → comment linking the PR, then close
 - **`status:done` label or body says "completed"** → find the PR(s) that delivered the work, comment with links, then close. If no PR exists (pre-existing completed work), explain that in the comment.
 - **`status:blocked` but blockers are resolved** (merged PR exists for each `blocked-by:` ref) → remove `status:blocked`, add `status:available`, comment explaining what unblocked it. It's now dispatchable this cycle.
