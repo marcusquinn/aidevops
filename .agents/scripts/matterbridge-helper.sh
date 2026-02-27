@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # matterbridge-helper.sh — Manage Matterbridge multi-platform chat bridge
-# Usage: matterbridge-helper.sh [setup|start|stop|status|logs|validate|update|simplex-bridge]
+# Usage: matterbridge-helper.sh [setup|start|stop|status|logs|validate|update]
 set -euo pipefail
 
 BINARY_PATH="/usr/local/bin/matterbridge"
@@ -9,9 +9,6 @@ DATA_DIR="$HOME/.aidevops/.agent-workspace/matterbridge"
 PID_FILE="$DATA_DIR/matterbridge.pid"
 LOG_FILE="$DATA_DIR/matterbridge.log"
 LATEST_RELEASE_URL="https://api.github.com/repos/42wim/matterbridge/releases/latest"
-SIMPLEX_BRIDGE_DIR="$DATA_DIR/simplex-bridge"
-SIMPLEX_COMPOSE_FILE="${SIMPLEX_COMPOSE_FILE:-}"
-AGENTS_DIR="${AGENTS_DIR:-$HOME/.aidevops/agents}"
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -33,9 +30,20 @@ ensure_dirs() {
 }
 
 get_latest_version() {
-	local version
-	version=$(curl -fsSL "$LATEST_RELEASE_URL" 2>/dev/null | grep '"tag_name"' | head -1 | sed 's/.*"v\([^"]*\)".*/\1/')
-	echo "${version:-1.26.0}"
+	local version curl_output curl_status
+	curl_output=$(curl -fsSL "$LATEST_RELEASE_URL" 2>&1) && curl_status=0 || curl_status=$?
+	if [[ "$curl_status" -ne 0 ]]; then
+		log "WARNING: Could not fetch latest version (curl exit $curl_status) — using fallback"
+		echo "1.26.0"
+		return 0
+	fi
+	version=$(echo "$curl_output" | grep '"tag_name"' | head -1 | sed 's/.*"v\([^"]*\)".*/\1/')
+	if [[ -z "$version" ]]; then
+		log "WARNING: Could not parse version from API response — using fallback"
+		echo "1.26.0"
+		return 0
+	fi
+	echo "$version"
 	return 0
 }
 
@@ -52,7 +60,14 @@ detect_os_arch() {
 
 	case "$os" in
 	linux) echo "linux-${arch}" ;;
-	darwin) echo "darwin-amd64" ;;
+	darwin)
+		# Matterbridge releases use darwin-arm64 and darwin-64bit (not darwin-amd64)
+		if [[ "$arch" == "arm64" ]]; then
+			echo "darwin-arm64"
+		else
+			echo "darwin-64bit"
+		fi
+		;;
 	*) echo "linux-${arch}" ;;
 	esac
 	return 0
@@ -152,11 +167,40 @@ cmd_validate() {
 		return 1
 	fi
 
-	# Basic TOML syntax check via matterbridge dry-run
-	# matterbridge exits non-zero if config is invalid
+	# Check binary exists and is executable
 	log "Validating config: $config_path"
-	if timeout 5 "$BINARY_PATH" -conf "$config_path" -version >/dev/null 2>&1; then
-		log "Binary OK"
+	if [ ! -x "$BINARY_PATH" ]; then
+		die "Binary not executable: $BINARY_PATH"
+		return 1
+	fi
+	log "Binary OK: $BINARY_PATH"
+
+	# Attempt to parse config (matterbridge will fail fast on invalid TOML)
+	# Use gtimeout on macOS if timeout is unavailable
+	local timeout_cmd="timeout"
+	if ! command -v timeout >/dev/null 2>&1; then
+		if command -v gtimeout >/dev/null 2>&1; then
+			timeout_cmd="gtimeout"
+		else
+			log "WARNING: timeout/gtimeout not found — skipping config parse check"
+			return 0
+		fi
+	fi
+
+	local parse_output parse_status
+	parse_output=$("$timeout_cmd" 5 "$BINARY_PATH" -conf "$config_path" 2>&1) && parse_status=$? || parse_status=$?
+
+	if [[ "$parse_status" -eq 124 ]]; then
+		# timeout exit code 124 = process timed out (likely hung on credentials)
+		log "Config parse: process timed out (expected if credentials are not configured)"
+	elif [[ "$parse_status" -ne 0 ]]; then
+		# Non-zero exit — check if it's a config parse error
+		if echo "$parse_output" | grep -qi "toml\|parse\|syntax"; then
+			die "Config parse error: $parse_output"
+			return 1
+		fi
+		# Other non-zero exits are expected (e.g., missing credentials)
+		log "Config parse: binary exited $parse_status (expected if credentials are not configured)"
 	fi
 
 	# Check for required sections
@@ -216,18 +260,24 @@ cmd_stop() {
 	local pid
 	pid="$(cat "$PID_FILE")"
 	log "Stopping (PID: $pid)..."
-	kill "$pid" 2>/dev/null || true
+	# kill may fail if process exited between is_running check and here (race condition)
+	local kill_err
+	kill_err=$(kill "$pid" 2>&1) || {
+		if [[ -n "$kill_err" ]]; then
+			log "WARNING: kill failed: $kill_err"
+		fi
+	}
 
-	local timeout=10
+	local stop_timeout=10
 	local count=0
-	while is_running && [ $count -lt $timeout ]; do
+	while is_running && [ $count -lt $stop_timeout ]; do
 		sleep 1
 		count=$((count + 1))
 	done
 
 	if is_running; then
 		log "Force killing..."
-		kill -9 "$pid" 2>/dev/null || true
+		kill -9 "$pid" 2>&1 | while IFS= read -r line; do log "WARNING: $line"; done || true
 	fi
 
 	rm -f "$PID_FILE"
@@ -251,12 +301,27 @@ cmd_status() {
 cmd_logs() {
 	local follow=false
 	local tail_lines=50
-	local arg="${1:-}"
 
-	case "$arg" in
-	--follow | -f) follow=true ;;
-	--tail) tail_lines="${2:-50}" ;;
-	esac
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--follow | -f)
+			follow=true
+			shift
+			;;
+		--tail)
+			if [[ -n "${2:-}" && "${2:-}" != -* ]]; then
+				tail_lines="$2"
+				shift 2
+			else
+				tail_lines=50
+				shift
+			fi
+			;;
+		*)
+			shift
+			;;
+		esac
+	done
 
 	if [ ! -f "$LOG_FILE" ]; then
 		log "No log file found: $LOG_FILE"
@@ -273,8 +338,17 @@ cmd_logs() {
 }
 
 cmd_update() {
+	if [ ! -f "$BINARY_PATH" ]; then
+		die "Binary not found: $BINARY_PATH. Run: matterbridge-helper.sh setup"
+		return 1
+	fi
+	# Ensure DATA_DIR exists before writing temp files (LOG_FILE lives under DATA_DIR)
+	ensure_dirs
+
 	local current_version new_version
-	current_version="$("$BINARY_PATH" -version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown")"
+	local version_err_file="${LOG_FILE}.version-err"
+	current_version="$("$BINARY_PATH" -version 2>"$version_err_file" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown")"
+	rm -f "$version_err_file"
 	new_version="$(get_latest_version)"
 
 	if [ "$current_version" = "$new_version" ]; then
@@ -308,247 +382,6 @@ cmd_update() {
 	return 0
 }
 
-# ── simplex bridge (Docker Compose) ──────────────────────────────────────────
-
-_find_compose_file() {
-	# Priority: env var > simplex-bridge dir > agents configs dir
-	if [ -n "$SIMPLEX_COMPOSE_FILE" ] && [ -f "$SIMPLEX_COMPOSE_FILE" ]; then
-		echo "$SIMPLEX_COMPOSE_FILE"
-		return 0
-	fi
-	if [ -f "$SIMPLEX_BRIDGE_DIR/docker-compose.yml" ]; then
-		echo "$SIMPLEX_BRIDGE_DIR/docker-compose.yml"
-		return 0
-	fi
-	if [ -f "$AGENTS_DIR/configs/matterbridge-simplex-compose.yml" ]; then
-		echo "$AGENTS_DIR/configs/matterbridge-simplex-compose.yml"
-		return 0
-	fi
-	# Check repo-local path (for development)
-	local script_dir
-	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-	local repo_compose="${script_dir}/../configs/matterbridge-simplex-compose.yml"
-	if [ -f "$repo_compose" ]; then
-		echo "$repo_compose"
-		return 0
-	fi
-	echo ""
-	return 1
-}
-
-_ensure_simplex_bridge_dir() {
-	mkdir -p "$SIMPLEX_BRIDGE_DIR"
-	mkdir -p "$SIMPLEX_BRIDGE_DIR/data/simplex"
-	return 0
-}
-
-cmd_simplex_bridge() {
-	local action="${1:-help}"
-	shift || true
-
-	case "$action" in
-	up | start)
-		_simplex_bridge_up "$@"
-		;;
-	down | stop)
-		_simplex_bridge_down "$@"
-		;;
-	status | ps)
-		_simplex_bridge_status
-		;;
-	logs)
-		_simplex_bridge_logs "$@"
-		;;
-	init | setup)
-		_simplex_bridge_init "$@"
-		;;
-	help | --help | -h)
-		_simplex_bridge_help
-		;;
-	*)
-		log "Unknown simplex-bridge action: $action"
-		_simplex_bridge_help
-		return 1
-		;;
-	esac
-
-	return 0
-}
-
-_simplex_bridge_up() {
-	local compose_file
-	compose_file="$(_find_compose_file)" || {
-		die "No compose file found. Run: matterbridge-helper.sh simplex-bridge init"
-		return 1
-	}
-
-	if ! command -v docker >/dev/null 2>&1; then
-		die "Docker not found. Install Docker or OrbStack first."
-		return 1
-	fi
-
-	# Check for matterbridge.toml in the compose file directory
-	local compose_dir
-	compose_dir="$(dirname "$compose_file")"
-	if [ ! -f "$compose_dir/matterbridge.toml" ] && [ ! -f "$SIMPLEX_BRIDGE_DIR/matterbridge.toml" ]; then
-		log "WARNING: No matterbridge.toml found. The bridge will not connect to any platforms."
-		log "Copy the template: cp configs/matterbridge-simplex.toml.example matterbridge.toml"
-	fi
-
-	# Check for SimpleX database
-	if [ ! -d "$SIMPLEX_BRIDGE_DIR/data/simplex" ] || [ -z "$(ls -A "$SIMPLEX_BRIDGE_DIR/data/simplex" 2>/dev/null)" ]; then
-		log "WARNING: No SimpleX database found in $SIMPLEX_BRIDGE_DIR/data/simplex/"
-		log "Run simplex-chat CLI first to create a profile, then copy database files."
-		log "See: matterbridge-helper.sh simplex-bridge init"
-	fi
-
-	log "Starting SimpleX bridge stack..."
-	docker compose -f "$compose_file" up --build -d "$@"
-	log "SimpleX bridge started. Check status: matterbridge-helper.sh simplex-bridge status"
-	return 0
-}
-
-_simplex_bridge_down() {
-	local compose_file
-	compose_file="$(_find_compose_file)" || {
-		die "No compose file found."
-		return 1
-	}
-
-	log "Stopping SimpleX bridge stack..."
-	docker compose -f "$compose_file" down "$@"
-	log "SimpleX bridge stopped."
-	return 0
-}
-
-_simplex_bridge_status() {
-	local compose_file
-	compose_file="$(_find_compose_file)" || {
-		log "No compose file found. SimpleX bridge not configured."
-		return 0
-	}
-
-	log "Compose file: $compose_file"
-	log "Data dir: $SIMPLEX_BRIDGE_DIR"
-
-	if command -v docker >/dev/null 2>&1; then
-		docker compose -f "$compose_file" ps 2>/dev/null || log "No containers running"
-	else
-		log "Docker not available"
-	fi
-
-	# Check for SimpleX database
-	if [ -d "$SIMPLEX_BRIDGE_DIR/data/simplex" ]; then
-		local db_count
-		db_count="$(find "$SIMPLEX_BRIDGE_DIR/data/simplex" -name 'simplex_v1_*' 2>/dev/null | wc -l | tr -d ' ')"
-		log "SimpleX database files: $db_count"
-	else
-		log "SimpleX database: not found"
-	fi
-
-	return 0
-}
-
-_simplex_bridge_logs() {
-	local compose_file
-	compose_file="$(_find_compose_file)" || {
-		die "No compose file found."
-		return 1
-	}
-
-	docker compose -f "$compose_file" logs "$@"
-	return 0
-}
-
-_simplex_bridge_init() {
-	_ensure_simplex_bridge_dir
-
-	# Copy compose file to working directory if not present
-	local compose_file
-	compose_file="$(_find_compose_file)" || true
-
-	if [ -z "$compose_file" ] || [ ! -f "$SIMPLEX_BRIDGE_DIR/docker-compose.yml" ]; then
-		local template=""
-		# Find template from agents dir or repo
-		if [ -f "$AGENTS_DIR/configs/matterbridge-simplex-compose.yml" ]; then
-			template="$AGENTS_DIR/configs/matterbridge-simplex-compose.yml"
-		else
-			local script_dir
-			script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-			local repo_template="${script_dir}/../configs/matterbridge-simplex-compose.yml"
-			if [ -f "$repo_template" ]; then
-				template="$repo_template"
-			fi
-		fi
-
-		if [ -n "$template" ]; then
-			cp "$template" "$SIMPLEX_BRIDGE_DIR/docker-compose.yml"
-			log "Copied compose template to $SIMPLEX_BRIDGE_DIR/docker-compose.yml"
-		else
-			die "No compose template found. Ensure aidevops is installed."
-			return 1
-		fi
-	else
-		log "Compose file already exists: $SIMPLEX_BRIDGE_DIR/docker-compose.yml"
-	fi
-
-	# Copy config template if not present
-	if [ ! -f "$SIMPLEX_BRIDGE_DIR/matterbridge.toml" ]; then
-		local config_template=""
-		if [ -f "$AGENTS_DIR/configs/matterbridge-simplex.toml.example" ]; then
-			config_template="$AGENTS_DIR/configs/matterbridge-simplex.toml.example"
-		else
-			local script_dir
-			script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-			local repo_config="${script_dir}/../configs/matterbridge-simplex.toml.example"
-			if [ -f "$repo_config" ]; then
-				config_template="$repo_config"
-			fi
-		fi
-
-		if [ -n "$config_template" ]; then
-			cp "$config_template" "$SIMPLEX_BRIDGE_DIR/matterbridge.toml"
-			chmod 600 "$SIMPLEX_BRIDGE_DIR/matterbridge.toml"
-			log "Copied config template to $SIMPLEX_BRIDGE_DIR/matterbridge.toml"
-		else
-			log "WARNING: No config template found. Create matterbridge.toml manually."
-		fi
-	else
-		log "Config already exists: $SIMPLEX_BRIDGE_DIR/matterbridge.toml"
-	fi
-
-	log ""
-	log "Next steps:"
-	log "  1. Run simplex-chat CLI to create a profile and join/create the chat to bridge"
-	log "  2. Copy database: cp ~/.simplex/simplex_v1_* $SIMPLEX_BRIDGE_DIR/data/simplex/"
-	log "  3. Set permissions: chmod -R 777 $SIMPLEX_BRIDGE_DIR/data/"
-	log "  4. Get chat ID: simplex-chat -e '/i #group_name'"
-	log "  5. Edit $SIMPLEX_BRIDGE_DIR/matterbridge.toml with platform credentials"
-	log "  6. Start: matterbridge-helper.sh simplex-bridge up"
-	return 0
-}
-
-_simplex_bridge_help() {
-	cat <<'HELP'
-matterbridge-helper.sh simplex-bridge — Manage SimpleX-Matterbridge Docker stack
-
-Actions:
-  init               Set up working directory with compose + config templates
-  up                 Start the 3-container stack (simplex, matterbridge, adapter)
-  down               Stop and remove containers
-  status             Show container status and database info
-  logs [--follow]    Show container logs (pass -f for follow)
-
-Environment:
-  SIMPLEX_COMPOSE_FILE   Override compose file path
-  SIMPLEX_CHAT_ID        SimpleX chat ID to bridge (default: 1)
-  SIMPLEX_CHAT_TYPE      Chat type: contact or group (default: group)
-
-Docs: .agents/services/communications/matterbridge.md
-HELP
-	return 0
-}
-
 cmd_help() {
 	cat <<'HELP'
 matterbridge-helper.sh — Manage Matterbridge multi-platform chat bridge
@@ -561,7 +394,6 @@ Commands:
   status             Show running status
   logs [--follow]    Show/follow log output
   update             Update to latest release
-  simplex-bridge     Manage SimpleX bridge Docker stack (init|up|down|status|logs)
 
 Config: ~/.config/aidevops/matterbridge.toml (override: MATTERBRIDGE_CONFIG)
 Docs:   .agents/services/communications/matterbridge.md
@@ -583,7 +415,6 @@ main() {
 	status) cmd_status "$@" ;;
 	logs) cmd_logs "$@" ;;
 	update) cmd_update "$@" ;;
-	simplex-bridge) cmd_simplex_bridge "$@" ;;
 	help | --help | -h) cmd_help ;;
 	*)
 		echo "Unknown command: $cmd" >&2
