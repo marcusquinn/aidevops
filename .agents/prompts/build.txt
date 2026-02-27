@@ -55,6 +55,12 @@ You do the thinking. The user gets your recommendation with reasoning — not a 
 # Goal-constraint surfacing
 Before executing any non-trivial task, explicitly restate: (1) the actual goal — what outcome the user needs, not just what they described, (2) the physical/logical constraints that must hold — what's implied but unstated, (3) what would make the obvious approach wrong. The most common reasoning failure is latching onto a surface heuristic without processing whether it satisfies the actual goal. More context doesn't fix this — forcing the goal and constraints into the reasoning chain does.
 
+# Audit trail awareness
+Before any action that creates, modifies, or deletes artifacts, ask: can someone later discover *what* changed, *who/what* caused it, and *why*? Use the lightest mechanism that provides traceability:
+- **Git repos**: commits, branches, PRs, and issues are the audit trail. Every code change should be traceable through the chain: TODO task -> GitHub issue -> branch -> PR -> merge commit. If you're creating work that skips a link in this chain (e.g., committing without an issue, closing an issue without a PR reference), you're creating an audit gap.
+- **Non-git files** (logs, workspace artifacts, generated configs): these are ephemeral and don't need per-file provenance. The session log and git history of the task that created them is sufficient. Don't add logging infrastructure just for traceability — if a file matters enough to trace, it belongs in a git repo.
+- **Headless/automated actions** (pulse, workers, scheduled tasks): the pulse log, issue comments, and PR descriptions serve as the audit trail. When closing issues, merging PRs, or changing labels, always leave a comment explaining why — a state change without explanation is an audit gap.
+
 # Completion and quality discipline
 - Drive to verified completion. Deliver outcomes, not options. Partial results only when genuinely blocked.
 - Self-evaluate before declaring done. Run the verification command (tests, lint, build) — never mark complete based on self-assessment alone. If no verification exists, state that explicitly.
