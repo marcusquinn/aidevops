@@ -13,33 +13,33 @@ Sync agents from private Git repositories into `~/.aidevops/agents/custom/<sourc
 ## Directory Structure
 
 ```text
-# Private repo (e.g., ~/Git/planning-jersey-agents/)
-planning-jersey-agents/
+# Private repo (e.g., ~/Git/my-private-agents/)
+my-private-agents/
 ├── .agents/
-│   └── planning-permission/
-│       ├── planning-permission.md        # mode: primary → OpenCode tab
-│       ├── govje-planning.md             # mode: subagent → technical docs
-│       ├── govje-planning-helper.sh      # CLI tool
-│       ├── jersey-planning-download.md   # agent: → /jersey-planning-download
-│       └── jersey-planning-search.md     # agent: → /jersey-planning-search
+│   └── my-agent/
+│       ├── my-agent.md              # mode: primary → OpenCode tab
+│       ├── data-processing.md       # mode: subagent → technical docs
+│       ├── my-agent-helper.sh       # CLI tool
+│       ├── run-pipeline.md          # agent: → /run-pipeline
+│       └── check-status.md          # agent: → /check-status
 ├── AGENTS.md
 └── .gitignore
 
 # After sync → deployed to:
 ~/.aidevops/agents/
-├── planning-permission.md → symlink to custom/planning-jersey-agents/...
+├── my-agent.md → symlink to custom/my-private-agents/...
 └── custom/
-    └── planning-jersey-agents/
-        └── planning-permission/
-            ├── planning-permission.md
-            ├── govje-planning.md
-            ├── govje-planning-helper.sh
-            ├── jersey-planning-download.md
-            └── jersey-planning-search.md
+    └── my-private-agents/
+        └── my-agent/
+            ├── my-agent.md
+            ├── data-processing.md
+            ├── my-agent-helper.sh
+            ├── run-pipeline.md
+            └── check-status.md
 
 ~/.config/opencode/command/
-├── jersey-planning-download.md → symlink
-└── jersey-planning-search.md → symlink
+├── run-pipeline.md → symlink
+└── check-status.md → symlink
 ```
 
 ## File Detection Rules
@@ -53,11 +53,11 @@ During sync, each `.md` file in an agent directory is classified by its YAML fro
 | `agent: <Name>` | Slash command | Symlink to `~/.config/opencode/command/` |
 | (none / other) | Regular file | Synced only |
 
-The agent's own doc (filename matching directory name, e.g., `planning-permission/planning-permission.md`) is identified by `mode:`. All other `.md` files with `agent:` are slash commands.
+The agent's own doc (filename matching directory name, e.g., `my-agent/my-agent.md`) is identified by `mode:`. All other `.md` files with `agent:` are slash commands.
 
 ### Collision Handling
 
-Slash commands use flat names by default (`/jersey-planning-download`). If a command name collides with an existing command from a different source, the source slug is appended automatically: `/jersey-planning-download-planning-jersey-agents`.
+Slash commands use flat names by default (`/run-pipeline`). If a command name collides with an existing command from a different source, the source slug is appended automatically: `/run-pipeline-my-private-agents`.
 
 Primary agents that collide with core agents (real files, not symlinks) are skipped with a warning.
 
@@ -92,11 +92,11 @@ Sources are tracked in `~/.aidevops/agents/configs/agent-sources.json`:
   "version": "1.0.0",
   "sources": [
     {
-      "name": "planning-jersey-agents",
-      "local_path": "/Users/me/Git/planning-jersey-agents",
+      "name": "my-private-agents",
+      "local_path": "/Users/me/Git/my-private-agents",
       "remote_url": "",
-      "added_at": "2026-02-27T01:00:00.000Z",
-      "last_synced": "2026-02-27T01:51:42.454Z",
+      "added_at": "2026-01-15T10:00:00.000Z",
+      "last_synced": "2026-01-15T10:05:00.000Z",
       "agent_count": 1
     }
   ]
