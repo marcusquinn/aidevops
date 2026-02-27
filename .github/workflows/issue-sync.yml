@@ -11,7 +11,7 @@ on:
     branches: [main]
     types: [closed, opened, edited]
   issues:
-    types: [opened]
+    types: [opened, closed]
   workflow_dispatch:
     inputs:
       command:
@@ -572,3 +572,31 @@ jobs:
           fi
 
           echo "No issue reference found — this is acceptable for chore/docs PRs without tracked issues"
+
+  guard-persistent-issues:
+    name: Reopen Persistent Issues
+    if: >-
+      github.event_name == 'issues' &&
+      github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      issues: write
+
+    steps:
+      - name: Reopen if persistent label
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_LABELS: ${{ join(github.event.issue.labels.*.name, ',') }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if echo "$ISSUE_LABELS" | grep -q 'persistent'; then
+            gh issue reopen "$ISSUE_NUMBER" --repo "$REPO" \
+              --comment "Auto-reopened: this issue has the \`persistent\` label and should not be closed. If closure was intentional, remove the \`persistent\` label first."
+            # Remove status:done if it was added
+            gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --remove-label "status:done" 2>/dev/null || true
+            echo "Reopened persistent issue #$ISSUE_NUMBER"
+          else
+            echo "Issue #$ISSUE_NUMBER is not persistent — closure allowed"
+          fi
