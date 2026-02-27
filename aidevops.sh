@@ -148,16 +148,25 @@ register_repo() {
 
 	# Auto-detect GitHub slug from git remote
 	local slug=""
-	slug=$(get_repo_slug "$repo_path" 2>/dev/null) || true
+	local is_local_only="false"
+	if ! slug=$(get_repo_slug "$repo_path" 2>/dev/null); then
+		slug=""
+		# No remote origin — mark as local_only
+		if ! git -C "$repo_path" remote get-url origin &>/dev/null; then
+			is_local_only="true"
+		fi
+	fi
 
 	# Check if repo already registered
 	if jq -e --arg path "$repo_path" '.initialized_repos[] | select(.path == $path)' "$REPOS_FILE" &>/dev/null; then
-		# Update existing entry, preserving pulse/priority if already set
+		# Update existing entry, preserving pulse/priority/local_only if already set
 		local temp_file="${REPOS_FILE}.tmp"
-		jq --arg path "$repo_path" --arg version "$version" --arg features "$features" --arg slug "$slug" \
+		jq --arg path "$repo_path" --arg version "$version" --arg features "$features" \
+			--arg slug "$slug" --argjson local_only "$is_local_only" \
 			'(.initialized_repos[] | select(.path == $path)) |= (
 				. + {path: $path, version: $version, features: ($features | split(",")), updated: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}
 				| if $slug != "" then .slug = $slug else . end
+				| if $local_only then .local_only = true else . end
 			)' \
 			"$REPOS_FILE" >"$temp_file" && mv "$temp_file" "$REPOS_FILE"
 	else
@@ -167,6 +176,8 @@ register_repo() {
 		# shellcheck disable=SC2016  # jq expressions use $var syntax, not shell expansion
 		if [[ -n "$slug" ]]; then
 			new_entry='{path: $path, slug: $slug, version: $version, features: ($features | split(",")), initialized: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}'
+		elif [[ "$is_local_only" == "true" ]]; then
+			new_entry='{path: $path, local_only: true, version: $version, features: ($features | split(",")), initialized: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}'
 		else
 			new_entry='{path: $path, version: $version, features: ($features | split(",")), initialized: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}'
 		fi

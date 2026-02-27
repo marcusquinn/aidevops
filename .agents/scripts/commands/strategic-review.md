@@ -15,7 +15,7 @@ First, discover all managed repos. Then gather state for EVERY repo — not just
 
 ```bash
 # 1. Read the managed repos list (filter to pulse-enabled repos)
-jq '[.initialized_repos[] | select(.pulse == true)]' ~/.config/aidevops/repos.json
+jq '[.initialized_repos[] | select(.pulse == true and .local_only != true)]' ~/.config/aidevops/repos.json
 ```
 
 For EACH repo in that list, run ALL of the following. Do not skip any repo.

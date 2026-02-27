@@ -64,8 +64,8 @@ echo "Running workers: $WORKER_COUNT / $MAX_WORKERS"
 Read the managed repos list from `~/.config/aidevops/repos.json`. Filter to repos with `"pulse": true` — these are the repos the supervisor actively manages. Repos without `pulse: true` are registered but not supervised.
 
 ```bash
-# Read repos.json and filter to pulse-enabled repos
-jq '[.initialized_repos[] | select(.pulse == true)]' ~/.config/aidevops/repos.json
+# Read repos.json and filter to pulse-enabled repos (exclude local_only repos)
+jq '[.initialized_repos[] | select(.pulse == true and .local_only != true)]' ~/.config/aidevops/repos.json
 ```
 
 Then for each pulse-enabled repo's `slug` field:

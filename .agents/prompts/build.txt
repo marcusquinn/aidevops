@@ -142,6 +142,8 @@ When referencing specific functions or code include the pattern `file_path:line_
 - ALWAYS resolve repo slugs from `~/.config/aidevops/repos.json` (the `slug` field). NEVER guess or construct `owner/repo` from memory.
 - If a repo has no slug in repos.json, resolve it from `git -C <path> remote get-url origin` and parse `owner/repo`.
 - For pulse/supervisor operations, filter repos.json to entries with `"pulse": true`.
+- Repos with `"local_only": true` have no GitHub remote — skip all `gh` operations on them.
+- Repo paths may be nested (e.g., `~/Git/cloudron/netbird-app`) — never assume repos are only at `~/Git/<name>`.
 
 # Security Rules
 - NEVER expose credentials in output/logs
