@@ -33,7 +33,11 @@ See `pulse.md` for the full spec.
 
 ### Pulse Scheduler Setup
 
-The pulse runs via a macOS launchd plist. If the plist doesn't exist (fresh install, new machine, or after a crash that deleted it), create it:
+The pulse scheduler runs every 2 minutes and dispatches workers. Setup depends on your OS.
+
+#### macOS (launchd)
+
+If the plist doesn't exist (fresh install, new machine, or after a crash that deleted it), create it:
 
 ```bash
 # 1. Get the opencode binary path and user PATH for the plist
@@ -92,25 +96,51 @@ launchctl load ~/Library/LaunchAgents/com.aidevops.aidevops-supervisor-pulse.pli
 - `StartInterval: 120` — fires every 2 minutes
 - The `pgrep` guard prevents overlapping pulses (if a previous pulse is still running, skip)
 
+#### Linux (cron)
+
+One cron entry with a pgrep guard to prevent overlapping pulses:
+
+```bash
+mkdir -p ~/.aidevops/logs
+
+# Add to crontab (every 2 minutes)
+(crontab -l 2>/dev/null; echo "*/2 * * * * pgrep -f 'Supervisor Pulse' >/dev/null || $(which opencode) run \"/pulse\" --dir $HOME/Git/aidevops -m anthropic/claude-sonnet-4-6 --title \"Supervisor Pulse\" >> $HOME/.aidevops/logs/pulse.log 2>&1 # aidevops: supervisor-pulse") | crontab -
+```
+
+**Key settings:**
+- `*/2 * * * *` — fires every 2 minutes
+- `pgrep` guard prevents overlapping pulses (if a previous pulse is still running, skip)
+- Uses full path to `opencode` since cron has a minimal `PATH`
+
 ### Enable / Disable / Verify
 
 ```bash
-# Enable automated pulse
+## macOS
+# Enable
 launchctl load ~/Library/LaunchAgents/com.aidevops.aidevops-supervisor-pulse.plist
-
-# Disable automated pulse
+# Disable
 launchctl unload ~/Library/LaunchAgents/com.aidevops.aidevops-supervisor-pulse.plist
-
-# Check if loaded
+# Check
 launchctl list | grep aidevops-supervisor-pulse
 
-# Check recent output
+## Linux
+# Check
+crontab -l | grep supervisor-pulse
+# Disable
+crontab -l | grep -v 'supervisor-pulse' | crontab -
+# Re-enable — run the install command above
+
+# Both platforms — check recent output
 tail -50 ~/.aidevops/logs/pulse.log
 ```
 
 ### After Reboot
 
-The pulse auto-starts on login (`RunAtLoad: true`). Old workers don't survive reboot — the first pulse cycle sees 0 workers, 6 empty slots, and dispatches fresh work. No manual intervention needed.
+**macOS:** The pulse auto-starts on login (`RunAtLoad: true`).
+
+**Linux:** Cron runs automatically after reboot — no extra config needed.
+
+Old workers don't survive reboot on either platform — the first pulse cycle sees 0 workers, 6 empty slots, and dispatches fresh work. No manual intervention needed.
 
 ## Interactive Mode: `/runners`
 

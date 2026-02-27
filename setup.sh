@@ -663,49 +663,58 @@ main() {
 	fi
 
 	# Enable supervisor pulse scheduler if not already installed
-	# This is REQUIRED for autonomous task orchestration (dispatch, evaluation, cleanup)
-	local supervisor_script="$HOME/.aidevops/agents/scripts/supervisor-helper.sh"
-	if [[ -x "$supervisor_script" ]] && [[ "${AIDEVOPS_SUPERVISOR_PULSE:-true}" != "false" ]]; then
+	# The pulse dispatches AI workers via opencode run "/pulse" every 2 minutes.
+	# macOS: launchd plist | Linux: cron entry
+	local opencode_path
+	opencode_path=$(command -v opencode 2>/dev/null) || opencode_path=""
+	if [[ -n "$opencode_path" ]] && [[ "${AIDEVOPS_SUPERVISOR_PULSE:-true}" != "false" ]]; then
 		local _pulse_installed=false
-		if _launchd_has_agent "com.aidevops.aidevops-supervisor-pulse"; then
-			_pulse_installed=true
-		elif _launchd_has_agent "com.aidevops.supervisor-pulse"; then
-			# Old label — re-running install will migrate to new label
-			if bash "$supervisor_script" cron install >/dev/null 2>&1; then
-				print_info "Supervisor pulse LaunchAgent migrated to new label"
-			else
-				print_warning "Supervisor pulse label migration failed. Run: supervisor-helper.sh cron install"
+		local _aidevops_dir
+		_aidevops_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+		if [[ "$(uname -s)" == "Darwin" ]]; then
+			# macOS: check launchd
+			if _launchd_has_agent "com.aidevops.aidevops-supervisor-pulse"; then
+				_pulse_installed=true
 			fi
-			_pulse_installed=true
-		elif crontab -l 2>/dev/null | grep -qF "aidevops-supervisor-pulse"; then
-			if [[ "$(uname -s)" == "Darwin" ]]; then
-				# macOS: cron entry exists but no launchd plist — migrate
-				if bash "$supervisor_script" cron install >/dev/null 2>&1; then
-					print_info "Supervisor pulse migrated from cron to launchd"
-				else
-					print_warning "Supervisor pulse cron→launchd migration failed. Run: supervisor-helper.sh cron install"
-				fi
-			fi
+		fi
+		# Both platforms: check cron
+		if [[ "$_pulse_installed" == "false" ]] && crontab -l 2>/dev/null | grep -qF "aidevops: supervisor-pulse"; then
 			_pulse_installed=true
 		fi
+
 		if [[ "$_pulse_installed" == "false" ]]; then
+			local _install_pulse=false
 			if [[ "$NON_INTERACTIVE" == "true" ]]; then
-				bash "$supervisor_script" cron install >/dev/null 2>&1 || true
-				print_info "Supervisor pulse enabled (every 2 min). Disable: supervisor-helper.sh cron uninstall"
+				_install_pulse=true
 			else
 				echo ""
 				echo "The supervisor pulse enables autonomous orchestration:"
-				echo "  - Dispatches AI workers to implement tasks from TODO.md"
-				echo "  - Evaluates results, merges passing PRs, cleans up branches"
-				echo "  - Auto-picks up #auto-dispatch tasks across all managed repos"
+				echo "  - Dispatches AI workers to implement tasks from GitHub issues"
+				echo "  - Merges passing PRs, observes outcomes, files improvement issues"
 				echo "  - 4-hourly strategic review (opus-tier) for queue health"
 				echo "  - Circuit breaker pauses dispatch on consecutive failures"
 				echo ""
 				read -r -p "Enable supervisor pulse? [Y/n]: " enable_pulse
 				if [[ "$enable_pulse" =~ ^[Yy]?$ || -z "$enable_pulse" ]]; then
-					bash "$supervisor_script" cron install
+					_install_pulse=true
 				else
-					print_info "Skipped. Enable later: supervisor-helper.sh cron install"
+					print_info "Skipped. Enable later — see: runners.md 'Pulse Scheduler Setup'"
+				fi
+			fi
+
+			if [[ "$_install_pulse" == "true" ]]; then
+				mkdir -p "$HOME/.aidevops/logs"
+				local _pulse_cmd="$opencode_path run \"/pulse\" --dir $_aidevops_dir -m anthropic/claude-sonnet-4-6 --title \"Supervisor Pulse\""
+				# Install as cron entry (works on both macOS and Linux)
+				(
+					crontab -l 2>/dev/null | grep -v 'aidevops: supervisor-pulse'
+					echo "*/2 * * * * pgrep -f 'Supervisor Pulse' >/dev/null || $_pulse_cmd >> $HOME/.aidevops/logs/pulse.log 2>&1 # aidevops: supervisor-pulse"
+				) | crontab - 2>/dev/null || true
+				if crontab -l 2>/dev/null | grep -qF "aidevops: supervisor-pulse"; then
+					print_info "Supervisor pulse enabled (cron, every 2 min). Disable: crontab -e and remove the supervisor-pulse line"
+				else
+					print_warning "Failed to install supervisor pulse cron entry. See runners.md for manual setup."
 				fi
 			fi
 		fi
@@ -758,7 +767,7 @@ main() {
 	echo "2. Setup Git CLI tools and authentication (shown during setup)"
 	echo "3. Setup API keys: bash .agents/scripts/setup-local-api-keys.sh setup"
 	echo "4. Test access: ./.agents/scripts/servers-helper.sh list"
-	echo "5. Enable orchestration: supervisor-helper.sh cron install (autonomous task dispatch)"
+	echo "5. Enable orchestration: see runners.md 'Pulse Scheduler Setup' (autonomous task dispatch)"
 	echo "6. Read documentation: ~/.aidevops/agents/AGENTS.md"
 	echo ""
 	echo "For development on aidevops framework itself:"
@@ -809,8 +818,7 @@ main() {
 	echo "• Circuit breaker          - Pauses dispatch on consecutive failures"
 	echo ""
 	echo "  The supervisor pulse was offered during setup. If skipped, enable later:"
-	echo "  supervisor-helper.sh cron install"
-	echo "  See: ~/.aidevops/agents/reference/orchestration.md"
+	echo "  See: ~/.aidevops/agents/scripts/commands/runners.md 'Pulse Scheduler Setup'"
 	echo ""
 	echo "  Run /onboarding in your AI assistant to configure services interactively."
 	echo ""
