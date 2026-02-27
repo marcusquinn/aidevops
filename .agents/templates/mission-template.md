@@ -4,6 +4,7 @@ title: "{Mission Title}"
 status: planning  # planning | scoping | active | paused | blocked | validating | completed | abandoned
 mode: full  # poc | full
 repo: ""  # repo path once attached, empty for homeless missions
+plan: "p{NNN}"
 created: "{YYYY-MM-DD}"
 started: ""
 completed: ""
@@ -15,18 +16,34 @@ budget:
   alert_threshold_pct: 80
 
 model_routing:
-  orchestrator: opus
-  workers: sonnet
-  research: haiku
-  validation: sonnet
+  orchestrator: opus  # scoping + decomposition
+  workers: sonnet  # feature implementation
+  research: haiku  # cheapest tier for information gathering
+  validation: sonnet  # milestone validation
 
 preferences:
   tech_stack: []  # e.g., [typescript, react, postgres]
   deploy_target: ""  # e.g., vercel, coolify, cloudron
-  test_framework: ""
-  ci_provider: ""
+  test_strategy: ""  # e.g., unit+e2e, unit-only, manual
+  review_mode: ""  # e.g., self-merge, human-review, ai-review
   coding_style: ""  # reference to code-standards or project conventions
+  max_parallel_workers: 2
 ---
+
+<!--
+  Mission state file — the durable entity that groups tasks into a coherent goal.
+  Lives at: todo/missions/{mission_id}-mission.md (or project root for single-mission repos)
+  Created by: /mission command (Phase 1: Scoping)
+  Updated by: mission orchestrator during execution
+  Consumed by: pulse supervisor for dispatch, budget engine for tracking
+
+  State in git (markdown), not a database — consistent with "GitHub + TODO.md are the database".
+  Milestones sequential, features within milestones parallelisable.
+-->
+
+<!--TOON:mission{id,title,status,mode,phase,total_phases,budget_usd,budget_hours,budget_tokens,model_routing,repo,plan,logged,started,completed}:
+m{NNN},{Mission Title},{status},{mode},1,4,{budget_usd},{budget_hours},{budget_tokens},{model_routing},{repo},p{NNN},{YYYY-MM-DDTHH:MMZ},,
+-->
 
 # {Mission Title}
 
@@ -65,7 +82,11 @@ preferences:
 
 ## Milestones
 
-Milestones are sequential. Features within each milestone are parallelisable.
+Milestones are sequential. Each must pass validation before the next begins.
+Features within a milestone are parallelisable (up to `max_parallel_workers`).
+
+<!--TOON:milestones[0]{id,title,status,features_total,features_done,estimate,started,completed}:
+-->
 
 ### Milestone 1: {Name}
 
@@ -79,6 +100,11 @@ Milestones are sequential. Features within each milestone are parallelisable.
 | 1.2 | {Feature description} | {tNNN} | pending | ~{X}h | | |
 | 1.3 | {Feature description} | {tNNN} | pending | ~{X}h | | |
 
+#### Validation Criteria
+
+- [ ] {Specific, testable criterion — e.g., "API returns 200 for /contacts endpoint"}
+- [ ] {Integration criterion — e.g., "Frontend renders data from API without errors"}
+
 ### Milestone 2: {Name}
 
 **Status:** pending
@@ -90,7 +116,12 @@ Milestones are sequential. Features within each milestone are parallelisable.
 | 2.1 | {Feature description} | {tNNN} | pending | ~{X}h | | |
 | 2.2 | {Feature description} | {tNNN} | pending | ~{X}h | | |
 
-<!-- Add more milestones as needed. Template:
+#### Validation Criteria
+
+- [ ] {criterion}
+- [ ] {criterion}
+
+<!-- Add more milestones as needed (typical range: 3-7). Template:
 
 ### Milestone N: {Name}
 
@@ -102,9 +133,18 @@ Milestones are sequential. Features within each milestone are parallelisable.
 |---|---------|---------|--------|----------|--------|----|
 | N.1 | {Feature description} | {tNNN} | pending | ~{X}h | | |
 
+#### Validation Criteria
+
+- [ ] {criterion}
+
 -->
 
 ## Resources
+
+External accounts, services, credentials, or purchases needed before or during execution.
+
+<!--TOON:resources[0]{id,type,name,status,needed_by,cost,notes}:
+-->
 
 ### Accounts & Credentials
 
@@ -126,6 +166,11 @@ Milestones are sequential. Features within each milestone are parallelisable.
 
 ## Budget Tracking
 
+Updated by the mission orchestrator after each worker session.
+
+<!--TOON:budget_log[0]{date,phase,task_id,model,tokens_k,cost_usd,hours,notes}:
+-->
+
 ### Summary
 
 | Category | Budget | Spent | Remaining | % Used |
@@ -135,6 +180,18 @@ Milestones are sequential. Features within each milestone are parallelisable.
 | Tokens | {X} | 0 | {X} | 0% |
 
 **Alert threshold:** {80}% — pause and report when any category exceeds this.
+
+### Budget Analysis
+
+<!-- Populated during Scoping phase by budget engine (t1357.7) -->
+
+**Feasibility:** {feasible / stretch / over-budget}
+
+| Scenario | Budget | Outcome |
+|----------|--------|---------|
+| Minimum viable | ${X} / {Y}h | {What you get — core functionality only} |
+| Recommended | ${X} / {Y}h | {What you get — full scope with testing} |
+| Comprehensive | ${X} / {Y}h | {What you get — full scope + polish + docs} |
 
 ### Spend Log
 
@@ -146,24 +203,30 @@ Milestones are sequential. Features within each milestone are parallelisable.
 
 ## Decision Log
 
-Decisions made during mission execution. Each entry captures what was decided, why, and what alternatives were considered.
+Decisions made during mission execution. Each entry captures what was decided, why, and what alternatives were considered. Prevents re-litigating settled questions.
 
-| # | Date | Decision | Rationale | Alternatives Considered |
-|---|------|----------|-----------|------------------------|
-| 1 | | | | |
+<!--TOON:decisions[0]{id,date,phase,decision,rationale,alternatives_considered}:
+-->
+
+| # | Date | Phase | Decision | Rationale | Alternatives Considered |
+|---|------|-------|----------|-----------|------------------------|
+| 1 | | | | | |
 
 <!-- Append decisions as they occur. Include trade-offs and constraints that drove the choice. -->
 
 ## Mission Agents
 
-Temporary agents created for this mission. Draft-tier by default — promoted to custom/ or shared/ if generally useful.
+Temporary agents created for this mission. Draft-tier by default — promoted to custom/ or shared/ if generally useful after mission completion.
+
+<!--TOON:mission_agents[0]{name,purpose,tier,created,promoted}:
+-->
 
 | Agent | Purpose | Path | Promote? |
 |-------|---------|------|----------|
-| | | `{mission-dir}/agents/{name}.md` | pending |
+| | | `draft/{mission_id}/{name}.md` | pending |
 
 <!-- Mission agents are created on-demand as the orchestrator discovers needs.
-     They live in the mission's agents/ subfolder.
+     They live in draft/{mission_id}/ within the agents directory.
      After mission completion, review for promotion to the framework. -->
 
 ## Research
@@ -188,7 +251,7 @@ Timestamped log of significant events during mission execution.
 
 ## Retrospective
 
-_Completed after mission finishes._
+_Completed after mission reaches Completed or Abandoned status._
 
 ### Outcomes
 
@@ -212,3 +275,4 @@ _Completed after mission finishes._
 ### Framework Improvements
 
 - {Improvements to offer back to aidevops — new agents, scripts, patterns discovered}
+- {Issues filed: GH#NNN}
