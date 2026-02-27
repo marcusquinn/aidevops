@@ -99,9 +99,10 @@ google-search-console,npx mcp-server-gsc@latest,service-account,seo/google-searc
 mcporter,npx mcporter,none,tools/mcp-toolkit/mcporter.md,Discover call compose and generate CLIs for any MCP server
 -->
 
-<!--TOON:workflows[13]{name,file,purpose}:
+<!--TOON:workflows[14]{name,file,purpose}:
 git-workflow,workflows/git-workflow.md,Branch naming and commit conventions
 plans,workflows/plans.md,Complex execution plans
+mission-orchestrator,workflows/mission-orchestrator.md,Autonomous multi-day mission execution with milestone validation
 release,workflows/release.md,Semver and changelog generation
 version-bump,workflows/version-bump.md,Version bump automation
 pr,workflows/pr.md,PR creation and review
