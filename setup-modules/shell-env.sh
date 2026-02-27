@@ -2,6 +2,13 @@
 # Shell environment setup functions: oh-my-zsh, shell-compat, aliases, terminal-title
 # Part of aidevops setup.sh modularization (t316.3)
 
+# Shell safety baseline
+set -Eeuo pipefail
+IFS=$'\n\t'
+# shellcheck disable=SC2154  # rc is assigned by $? in the trap string
+trap 'rc=$?; echo "[ERROR] ${BASH_SOURCE[0]}:${LINENO} exit $rc" >&2' ERR
+shopt -s inherit_errexit 2>/dev/null || true
+
 detect_running_shell() {
 	if [[ -n "${ZSH_VERSION:-}" ]]; then
 		echo "zsh"

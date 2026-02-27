@@ -2,6 +2,13 @@
 # Plugin functions: deploy_plugins, sanitize_plugin_namespace, generate_agent_skills, create_skill_symlinks, check_skill_updates, scan_imported_skills, multi-tenant
 # Part of aidevops setup.sh modularization (t316.3)
 
+# Shell safety baseline
+set -Eeuo pipefail
+IFS=$'\n\t'
+# shellcheck disable=SC2154  # rc is assigned by $? in the trap string
+trap 'rc=$?; echo "[ERROR] ${BASH_SOURCE[0]}:${LINENO} exit $rc" >&2' ERR
+shopt -s inherit_errexit 2>/dev/null || true
+
 sanitize_plugin_namespace() {
 	local ns="$1"
 	# Strip any path components, keep only the final directory name
@@ -499,4 +506,3 @@ check_tool_updates() {
 
 	return 0
 }
-
