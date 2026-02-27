@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.142.1] - 2026-02-27
+
+### Added
+
+- add CI guard to auto-reopen issues with persistent label (#2489)
+
+### Changed
+
+- Performance: parallelise skill scanning and stub generation to fix update timeout (#2493)
+
+### Fixed
+
+- skip .gitignore modification for repos with tracked .agents/ directory (#2491)
+
 ## [2.142.0] - 2026-02-27
 
 ### Added
