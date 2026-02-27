@@ -126,7 +126,7 @@ webfetch("https://docs.example.com/")  # May return 50K+ tokens
 # resolve-library-id → get-library-docs
 
 # BETTER - use gh api for GitHub content (handles auth, structured JSON)
-gh api repos/{owner}/{repo}/contents/README.md --jq '.content' | base64 -d
+gh api repos/{owner}/{repo}/readme --jq '.content' | base64 -d
 
 # AVOID - raw.githubusercontent.com URLs have 70% failure rate (agents guess wrong paths)
 # webfetch("https://raw.githubusercontent.com/user/repo/main/README.md")  # DON'T

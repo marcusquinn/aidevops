@@ -127,7 +127,7 @@ Explore codebase, search for relevant code, identify root cause.
 | Need | Use | NOT |
 |------|-----|-----|
 | GitHub file content | `gh api repos/{owner}/{repo}/contents/{path}` | `webfetch` on `raw.githubusercontent.com` |
-| GitHub repo overview | `gh api repos/{owner}/{repo}` + `--jq '.description'` | `webfetch` on `github.com` URLs |
+| GitHub repo overview | `gh api repos/{owner}/{repo} --jq '.description'` | `webfetch` on `github.com` URLs |
 | Discover files in a repo | `gh api repos/{owner}/{repo}/git/trees/{branch}?recursive=1` | Guessing paths |
 | Library/framework docs | Context7 MCP (`resolve-library-id` then `get-library-docs`) | `webfetch` on docs sites |
 | npm/package info | `gh api` to fetch README from the repo, or Context7 | `webfetch` on npmjs.com |

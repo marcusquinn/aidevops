@@ -28,13 +28,16 @@ Strengthen agent guidance across build-plus.md, context-guardrails.md, and conte
 ## Acceptance Criteria
 
 - [ ] build-plus.md contains a "what to use instead of webfetch" decision table
+
   ```yaml
   verify:
     method: codebase
     pattern: "gh api.*repos"
     path: ".agents/build-plus.md"
   ```
+
 - [ ] context-guardrails.md no longer recommends raw.githubusercontent.com
+
   ```yaml
   verify:
     method: codebase
@@ -42,7 +45,9 @@ Strengthen agent guidance across build-plus.md, context-guardrails.md, and conte
     path: ".agents/tools/context/context-guardrails.md"
     expect: absent
   ```
+
 - [ ] context-builder.md uses gh api instead of webfetch for GitHub repos
+
   ```yaml
   verify:
     method: codebase
@@ -50,7 +55,9 @@ Strengthen agent guidance across build-plus.md, context-guardrails.md, and conte
     path: ".agents/tools/context/context-builder.md"
     expect: absent
   ```
+
 - [ ] No raw.githubusercontent.com recommended as a positive pattern in any agent doc
+
   ```yaml
   verify:
     method: bash
