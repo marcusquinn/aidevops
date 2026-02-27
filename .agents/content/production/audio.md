@@ -61,8 +61,8 @@ AI Video Output → CapCut AI Voice Cleanup → ElevenLabs Transformation → Fi
 For consistent channel narration across multiple videos:
 
 ```bash
-# 1. Record or extract clean voice sample (3-5 minutes minimum)
-# 2. Upload to ElevenLabs voice library
+# 1. Record or extract clean voice sample (10-30 seconds minimum for instant clone)
+# 2. Upload to ElevenLabs voice library (or MiniMax with 10s clip)
 # 3. Use cloned voice for all channel content
 
 # Voice bridge for interactive voice (development/testing)
@@ -70,9 +70,25 @@ voice-helper.sh talk              # Start voice conversation
 voice-helper.sh voices            # List available TTS voices
 ```
 
+**Critical: NEVER use pre-made ElevenLabs voices for realistic content.** Pre-made voices are widely recognised and immediately signal "AI-generated" to audiences. Instead:
+
+- **Voice Design**: Create a unique voice from a natural language description (e.g., "warm female voice, mid-30s, slight British accent, confident and approachable")
+- **Instant Voice Clone**: Upload a 10-30 second clean audio clip of the target voice
+- **Professional Voice Clone**: Upload 3-5 minutes for highest fidelity (recommended for AI influencer personas)
+
+**Voice cloning source quality rules:**
+
+- Single speaker, no overlapping voices
+- Quiet environment, no background music or noise
+- Clear pronunciation, natural speaking pace
+- If cloning from existing content (YouTube, podcast), run through CapCut cleanup first (see Critical 2-Step Voice Workflow above)
+
+**Alternative: MiniMax TTS** — For talking-head content where ElevenLabs is overkill, MiniMax offers good default quality at $5/month for 120 minutes. Voice clone works with just a 10-second clip. See `tools/voice/voice-models.md` for full comparison.
+
 **Voice consistency checklist:**
 
 - [ ] Same voice model across all channel content
+- [ ] NEVER use pre-made voices for realism content
 - [ ] Consistent speaking pace (words per minute)
 - [ ] Matching emotional tone for content type
 - [ ] Standardized pronunciation for brand terms
@@ -557,7 +573,8 @@ Distribution (content/distribution/)
 **Cross-references**:
 
 - **Script writing**: `content/production/writing.md` - Dialogue pacing, emotional cues
-- **Video production**: `content/production/video.md` - Audio sync, dialogue timing
+- **Video production**: `content/production/video.md` - Audio sync, dialogue timing, longform talking-head pipeline
+- **Voice models**: `tools/voice/voice-models.md` - TTS model comparison (ElevenLabs, MiniMax, Qwen3-TTS)
 - **Voice pipeline**: `voice-pipeline-helper.sh` - CapCut cleanup + ElevenLabs transformation chain
 - **Voice tools**: `tools/voice/speech-to-speech.md` - Advanced voice pipeline
 - **Voice helper**: `voice-helper.sh` - Local voice processing
