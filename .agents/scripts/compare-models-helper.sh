@@ -1014,7 +1014,7 @@ Respond with ONLY a valid JSON object in this exact format (no markdown, no expl
 
 	# Extract JSON from judge output (strip any surrounding text)
 	local judge_json
-	judge_json=$(grep -o '{.*}' "$judge_output_file" 2>/dev/null | head -1 || true)
+	judge_json=$(grep -o '{.*}' "$judge_output_file" 2>>"$judge_err_log" | head -1 || true)
 	if [[ -z "$judge_json" ]]; then
 		# Try multiline JSON extraction via stdin (safe for paths with special chars)
 		judge_json=$(python3 -c "
@@ -1027,7 +1027,7 @@ if m:
         print(json.dumps(obj))
     except Exception:
         pass
-" <"$judge_output_file" 2>/dev/null || true)
+" <"$judge_output_file" 2>>"$judge_err_log" || true)
 	fi
 
 	if [[ -z "$judge_json" ]]; then
@@ -1046,7 +1046,7 @@ r = ''.join(c for c in r if c.isprintable() or c in (' ', '\t'))
 print(d.get('winner', ''))
 print(d.get('task_type', 'general'))
 print(r)
-" 2>/dev/null || true)
+" 2>>"$judge_err_log" || true)
 
 	local winner task_type reasoning
 	if [[ -n "$parsed_fields" ]]; then
@@ -1124,7 +1124,7 @@ import sys, json
 d = json.load(sys.stdin)
 s = d.get('scores', {}).get('${model_tier}', {})
 print(s.get('correctness', 0), s.get('completeness', 0), s.get('quality', 0), s.get('clarity', 0), s.get('adherence', 0))
-" 2>/dev/null || echo "0 0 0 0 0")
+" 2>>"$judge_err_log" || echo "0 0 0 0 0")
 		local corr comp qual clar adhr
 		read -r corr comp qual clar adhr <<<"$scores_line"
 

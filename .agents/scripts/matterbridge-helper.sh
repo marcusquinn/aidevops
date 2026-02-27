@@ -30,9 +30,10 @@ ensure_dirs() {
 }
 
 get_latest_version() {
-	local version curl_output
-	if ! curl_output=$(curl -fsSL "$LATEST_RELEASE_URL" 2>&1); then
-		log "WARNING: Could not fetch latest version (curl failed) — using fallback"
+	local version curl_output curl_status
+	curl_output=$(curl -fsSL "$LATEST_RELEASE_URL" 2>&1) && curl_status=0 || curl_status=$?
+	if [[ "$curl_status" -ne 0 ]]; then
+		log "WARNING: Could not fetch latest version (curl exit $curl_status) — using fallback"
 		echo "1.26.0"
 		return 0
 	fi
@@ -259,18 +260,24 @@ cmd_stop() {
 	local pid
 	pid="$(cat "$PID_FILE")"
 	log "Stopping (PID: $pid)..."
-	kill "$pid" 2>/dev/null || true
+	# kill may fail if process exited between is_running check and here (race condition)
+	local kill_err
+	kill_err=$(kill "$pid" 2>&1) || {
+		if [[ -n "$kill_err" ]]; then
+			log "WARNING: kill failed: $kill_err"
+		fi
+	}
 
-	local timeout=10
+	local stop_timeout=10
 	local count=0
-	while is_running && [ $count -lt $timeout ]; do
+	while is_running && [ $count -lt $stop_timeout ]; do
 		sleep 1
 		count=$((count + 1))
 	done
 
 	if is_running; then
 		log "Force killing..."
-		kill -9 "$pid" 2>/dev/null || true
+		kill -9 "$pid" 2>&1 | while IFS= read -r line; do log "WARNING: $line"; done || true
 	fi
 
 	rm -f "$PID_FILE"
@@ -332,7 +339,9 @@ cmd_logs() {
 
 cmd_update() {
 	local current_version new_version
-	current_version="$("$BINARY_PATH" -version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown")"
+	local version_err_file="${LOG_FILE}.version-err"
+	current_version="$("$BINARY_PATH" -version 2>"$version_err_file" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown")"
+	rm -f "$version_err_file"
 	new_version="$(get_latest_version)"
 
 	if [ "$current_version" = "$new_version" ]; then
