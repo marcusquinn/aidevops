@@ -30,8 +30,10 @@ tools:
 |------|---------|
 | `templates/mission-template.md` | State file format |
 | `scripts/commands/mission.md` | `/mission` command (scoping + creation) |
+| `scripts/commands/dashboard.md` | `/dashboard` command (progress dashboard) |
 | `scripts/commands/pulse.md` | Supervisor dispatch (detects active missions) |
 | `scripts/commands/full-loop.md` | Worker execution per feature |
+| `scripts/mission-dashboard-helper.sh` | CLI + browser dashboard (t1362) |
 
 **Lifecycle**: `/mission` creates the state file (planning) -> orchestrator drives execution (active) -> milestone validation -> completion or re-plan
 
@@ -609,8 +611,10 @@ Each repo has its own task ID namespace. When creating tasks in secondary repos,
 ## Related
 
 - `scripts/commands/mission.md` — Creates the mission state file (scoping interview)
+- `scripts/commands/dashboard.md` — Progress dashboard (CLI + browser)
 - `scripts/commands/pulse.md` — Supervisor that detects active missions and invokes this orchestrator
 - `scripts/commands/full-loop.md` — Worker execution pattern for individual features
+- `scripts/mission-dashboard-helper.sh` — Dashboard helper script (t1362)
 - `templates/mission-template.md` — Mission state file format
 - `workflows/mission-skill-learning.md` — Skill learning: auto-capture patterns, promote artifacts, track recurring patterns
 - `scripts/mission-skill-learner.sh` — CLI for scanning, scoring, promoting mission artifacts
