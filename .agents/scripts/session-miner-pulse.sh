@@ -52,7 +52,10 @@ log_error() {
 check_lock() {
 	if [[ -f "${LOCK_FILE}" ]]; then
 		local lock_age
-		lock_age=$(($(date +%s) - $(stat -f %m "${LOCK_FILE}" 2>/dev/null || echo 0)))
+		# Cross-platform file mtime: Linux (stat -c) first, macOS (stat -f) fallback
+		local lock_mtime
+		lock_mtime=$(stat -c %Y "${LOCK_FILE}" 2>/dev/null || stat -f %m "${LOCK_FILE}" 2>/dev/null || echo 0)
+		lock_age=$(($(date +%s) - lock_mtime))
 		# Stale lock (>1 hour)
 		if [[ "${lock_age}" -gt 3600 ]]; then
 			log_info "Removing stale lock (${lock_age}s old)"
@@ -270,7 +273,8 @@ main() {
 
 	# Check DB size
 	local db_size
-	db_size=$(stat -f %z "${db_path}" 2>/dev/null || echo 0)
+	# Cross-platform file size: Linux (stat -c) first, macOS (stat -f) fallback
+	db_size=$(stat -c %s "${db_path}" 2>/dev/null || stat -f %z "${db_path}" 2>/dev/null || echo 0)
 	if [[ "${db_size}" -lt 1000 ]]; then
 		log_info "Database too small (${db_size} bytes). Nothing to mine."
 		release_lock
