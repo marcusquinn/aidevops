@@ -608,7 +608,7 @@ validate_opencode_config() {
 		local validation_output
 		if ! validation_output=$(opencode --version 2>&1); then
 			# If opencode fails to start, config might be invalid
-			if echo "$validation_output" | grep -q "Configuration is invalid"; then
+			if [[ "$validation_output" == *"Configuration is invalid"* ]]; then
 				needs_repair=true
 				issues="${issues}\n  - OpenCode reports invalid configuration"
 			fi

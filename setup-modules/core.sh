@@ -330,7 +330,7 @@ check_requirements() {
 	print_info "Checking system requirements..."
 
 	# Ensure Homebrew is in PATH (macOS Apple Silicon)
-	if [[ -x "/opt/homebrew/bin/brew" ]] && ! echo "$PATH" | grep -q "/opt/homebrew/bin"; then
+	if [[ -x "/opt/homebrew/bin/brew" ]] && [[ ":$PATH:" != *":/opt/homebrew/bin:"* ]]; then
 		eval "$(/opt/homebrew/bin/brew shellenv)"
 		print_warning "Homebrew not in PATH - added for this session"
 
@@ -364,7 +364,7 @@ check_requirements() {
 	# Also check Intel Mac Homebrew location
 	# Skip entirely on Apple Silicon (ARM brew exists) — Intel brew shellenv prepends
 	# /usr/local/bin to PATH, causing x86 binaries to shadow ARM ones (GH#1510)
-	if [[ -x "/usr/local/bin/brew" ]] && ! echo "$PATH" | grep -q "/usr/local/bin"; then
+	if [[ -x "/usr/local/bin/brew" ]] && [[ ":$PATH:" != *":/usr/local/bin:"* ]]; then
 		# On Apple Silicon with dual brew, do NOT add Intel brew to PATH — it breaks ARM brew
 		if [[ -x "/opt/homebrew/bin/brew" ]]; then
 			print_info "Intel Homebrew found but skipped (Apple Silicon uses /opt/homebrew)"

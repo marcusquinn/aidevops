@@ -43,104 +43,105 @@ readonly DOCKER_IMAGE="unclecode/crawl4ai:latest"
 readonly DOCKER_CONTAINER="crawl4ai"
 readonly DOCKER_PORT="11235"
 readonly MCP_PORT="3009"
+readonly CRAWL4AI_STARTUP_WAIT="${CRAWL4AI_STARTUP_WAIT:-5}" # seconds to wait for container readiness
 readonly HELP_SHOW_MESSAGE="Show this help message"
 
 # Print functions
 print_header() {
-    local message="$1"
-    echo -e "${PURPLE}🚀 $message${NC}"
-    return 0
+	local message="$1"
+	echo -e "${PURPLE}🚀 $message${NC}"
+	return 0
 }
 
 # Check if Docker is available
 check_docker() {
-    if ! command -v docker &> /dev/null; then
-        print_error "Docker is not installed. Please install Docker first."
-        return 1
-    fi
-    
-    if ! docker info &> /dev/null; then
-        print_error "Docker daemon is not running. Please start Docker."
-        return 1
-    fi
-    
-    return 0
+	if ! command -v docker &>/dev/null; then
+		print_error "Docker is not installed. Please install Docker first."
+		return 1
+	fi
+
+	if ! docker info &>/dev/null; then
+		print_error "Docker daemon is not running. Please start Docker."
+		return 1
+	fi
+
+	return 0
 }
 
 # Check if Python is available
 check_python() {
-    if ! command -v python3 &> /dev/null; then
-        print_error "Python 3 is not installed. Please install Python 3.8+ first."
-        return 1
-    fi
-    
-    local python_version python_major python_minor
-    python_version=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-    python_major=${python_version%.*}
-    python_minor=${python_version#*.}
-    
-    if [[ "$python_major" -lt 3 ]] || { [[ "$python_major" -eq 3 ]] && [[ "$python_minor" -lt 8 ]]; }; then
-        print_error "Python 3.8+ is required. Current version: $python_version"
-        return 1
-    fi
-    
-    return 0
+	if ! command -v python3 &>/dev/null; then
+		print_error "Python 3 is not installed. Please install Python 3.8+ first."
+		return 1
+	fi
+
+	local python_version python_major python_minor
+	python_version=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+	python_major=${python_version%.*}
+	python_minor=${python_version#*.}
+
+	if [[ "$python_major" -lt 3 ]] || { [[ "$python_major" -eq 3 ]] && [[ "$python_minor" -lt 8 ]]; }; then
+		print_error "Python 3.8+ is required. Current version: $python_version"
+		return 1
+	fi
+
+	return 0
 }
 
 # Install Crawl4AI Python package
 install_crawl4ai() {
-    print_header "Installing Crawl4AI Python Package"
-    
-    if ! check_python; then
-        return 1
-    fi
-    
-    print_info "Installing Crawl4AI with pip..."
-    if pip3 install -U crawl4ai; then
-        print_success "Crawl4AI installed successfully"
-    else
-        print_error "Failed to install Crawl4AI"
-        return 1
-    fi
-    
-    print_info "Running post-installation setup..."
-    if crawl4ai-setup; then
-        print_success "Crawl4AI setup completed"
-    else
-        print_warning "Setup completed with warnings. Run 'crawl4ai-doctor' to check."
-    fi
-    
-    print_info "Verifying installation..."
-    if crawl4ai-doctor; then
-        print_success "Crawl4AI installation verified"
-    else
-        print_warning "Installation verification completed with warnings"
-    fi
-    
-    return 0
+	print_header "Installing Crawl4AI Python Package"
+
+	if ! check_python; then
+		return 1
+	fi
+
+	print_info "Installing Crawl4AI with pip..."
+	if pip3 install -U crawl4ai; then
+		print_success "Crawl4AI installed successfully"
+	else
+		print_error "Failed to install Crawl4AI"
+		return 1
+	fi
+
+	print_info "Running post-installation setup..."
+	if crawl4ai-setup; then
+		print_success "Crawl4AI setup completed"
+	else
+		print_warning "Setup completed with warnings. Run 'crawl4ai-doctor' to check."
+	fi
+
+	print_info "Verifying installation..."
+	if crawl4ai-doctor; then
+		print_success "Crawl4AI installation verified"
+	else
+		print_warning "Installation verification completed with warnings"
+	fi
+
+	return 0
 }
 
 # Setup Docker deployment
 docker_setup() {
-    print_header "Setting up Crawl4AI Docker Deployment"
-    
-    if ! check_docker; then
-        return 1
-    fi
-    
-    print_info "Pulling Crawl4AI Docker image..."
-    if docker pull "$DOCKER_IMAGE"; then
-        print_success "Docker image pulled successfully"
-    else
-        print_error "Failed to pull Docker image"
-        return 1
-    fi
-    
-    # Create environment file if it doesn't exist
-    local env_file="$CONFIG_DIR/.crawl4ai.env"
-    if [[ ! -f "$env_file" ]]; then
-        print_info "Creating environment configuration..."
-        cat > "$env_file" << 'EOF'
+	print_header "Setting up Crawl4AI Docker Deployment"
+
+	if ! check_docker; then
+		return 1
+	fi
+
+	print_info "Pulling Crawl4AI Docker image..."
+	if docker pull "$DOCKER_IMAGE"; then
+		print_success "Docker image pulled successfully"
+	else
+		print_error "Failed to pull Docker image"
+		return 1
+	fi
+
+	# Create environment file if it doesn't exist
+	local env_file="$CONFIG_DIR/.crawl4ai.env"
+	if [[ ! -f "$env_file" ]]; then
+		print_info "Creating environment configuration..."
+		cat >"$env_file" <<'EOF'
 # Crawl4AI Environment Configuration
 # Add your API keys here for LLM integration
 
@@ -161,87 +162,87 @@ docker_setup() {
 # LLM_PROVIDER=openai/gpt-4o-mini
 # LLM_TEMPERATURE=0.7
 EOF
-        print_success "Environment file created at $env_file"
-        print_warning "Please edit $env_file to add your API keys"
-    fi
-    
-    return 0
+		print_success "Environment file created at $env_file"
+		print_warning "Please edit $env_file to add your API keys"
+	fi
+
+	return 0
 }
 
 # Start Docker container
 docker_start() {
-    print_header "Starting Crawl4AI Docker Container"
-    
-    if ! check_docker; then
-        return 1
-    fi
-    
-    # Stop existing container if running
-    if docker ps -q -f name="$DOCKER_CONTAINER" | grep -q .; then
-        print_info "Stopping existing container..."
-        docker stop "$DOCKER_CONTAINER" > /dev/null 2>&1
-        docker rm "$DOCKER_CONTAINER" > /dev/null 2>&1
-    fi
-    
-    local env_file="$CONFIG_DIR/.crawl4ai.env"
-    local docker_args=(
-        "-d"
-        "-p" "$DOCKER_PORT:$DOCKER_PORT"
-        "--name" "$DOCKER_CONTAINER"
-        "--shm-size=1g"
-    )
-    
-    if [[ -f "$env_file" ]]; then
-        docker_args+=("--env-file" "$env_file")
-    fi
-    
-    docker_args+=("$DOCKER_IMAGE")
-    
-    print_info "Starting Docker container..."
-    if docker run "${docker_args[@]}"; then
-        print_success "Crawl4AI container started successfully"
-        print_info "Dashboard: http://localhost:$DOCKER_PORT/dashboard"
-        print_info "Playground: http://localhost:$DOCKER_PORT/playground"
-        print_info "API: http://localhost:$DOCKER_PORT"
-    else
-        print_error "Failed to start Docker container"
-        return 1
-    fi
-    
-    return 0
+	print_header "Starting Crawl4AI Docker Container"
+
+	if ! check_docker; then
+		return 1
+	fi
+
+	# Stop existing container if running
+	if docker ps -q -f name="$DOCKER_CONTAINER" | grep -q .; then
+		print_info "Stopping existing container..."
+		docker stop "$DOCKER_CONTAINER" >/dev/null 2>&1
+		docker rm "$DOCKER_CONTAINER" >/dev/null 2>&1
+	fi
+
+	local env_file="$CONFIG_DIR/.crawl4ai.env"
+	local docker_args=(
+		"-d"
+		"-p" "$DOCKER_PORT:$DOCKER_PORT"
+		"--name" "$DOCKER_CONTAINER"
+		"--shm-size=1g"
+	)
+
+	if [[ -f "$env_file" ]]; then
+		docker_args+=("--env-file" "$env_file")
+	fi
+
+	docker_args+=("$DOCKER_IMAGE")
+
+	print_info "Starting Docker container..."
+	if docker run "${docker_args[@]}"; then
+		print_success "Crawl4AI container started successfully"
+		print_info "Dashboard: http://localhost:$DOCKER_PORT/dashboard"
+		print_info "Playground: http://localhost:$DOCKER_PORT/playground"
+		print_info "API: http://localhost:$DOCKER_PORT"
+	else
+		print_error "Failed to start Docker container"
+		return 1
+	fi
+
+	return 0
 }
 
 # Stop Docker container
 docker_stop() {
-    print_header "Stopping Crawl4AI Docker Container"
+	print_header "Stopping Crawl4AI Docker Container"
 
-    if ! check_docker; then
-        return 1
-    fi
+	if ! check_docker; then
+		return 1
+	fi
 
-    if docker ps -q -f name="$DOCKER_CONTAINER" | grep -q .; then
-        print_info "Stopping container..."
-        if docker stop "$DOCKER_CONTAINER" && docker rm "$DOCKER_CONTAINER"; then
-            print_success "Container stopped and removed"
-        else
-            print_error "Failed to stop container"
-            return 1
-        fi
-    else
-        print_warning "Container is not running"
-    fi
+	if docker ps -q -f name="$DOCKER_CONTAINER" | grep -q .; then
+		print_info "Stopping container..."
+		if docker stop "$DOCKER_CONTAINER" && docker rm "$DOCKER_CONTAINER"; then
+			print_success "Container stopped and removed"
+		else
+			print_error "Failed to stop container"
+			return 1
+		fi
+	else
+		print_warning "Container is not running"
+	fi
 
-    return 0
+	return 0
 }
 
 # Setup MCP server integration
 mcp_setup() {
-    print_header "Setting up Crawl4AI MCP Server Integration"
+	print_header "Setting up Crawl4AI MCP Server Integration"
 
-    local mcp_config="$CONFIG_DIR/crawl4ai-mcp-config.json"
+	local mcp_config="$CONFIG_DIR/crawl4ai-mcp-config.json"
 
-    print_info "Creating MCP server configuration..."
-    cat > "$mcp_config" << EOF
+	print_info "Creating MCP server configuration..."
+	cat >"$mcp_config" <<EOF
 {
   "provider": "crawl4ai",
   "description": "Crawl4AI MCP server for AI-powered web crawling and data extraction",
@@ -270,24 +271,24 @@ mcp_setup() {
 }
 EOF
 
-    print_success "MCP configuration created at $mcp_config"
-    print_info "To use with Claude Desktop, add this to your MCP settings:"
-    print_info "  \"crawl4ai\": {"
-    print_info "    \"command\": \"npx\","
-    print_info "    \"args\": [\"crawl4ai-mcp-server@latest\"]"
-    print_info "  }"
+	print_success "MCP configuration created at $mcp_config"
+	print_info "To use with Claude Desktop, add this to your MCP settings:"
+	print_info "  \"crawl4ai\": {"
+	print_info "    \"command\": \"npx\","
+	print_info "    \"args\": [\"crawl4ai-mcp-server@latest\"]"
+	print_info "  }"
 
-    return 0
+	return 0
 }
 
 # Setup CapSolver integration for CAPTCHA solving
 capsolver_setup() {
-    print_header "Setting up CapSolver Integration for CAPTCHA Solving"
+	print_header "Setting up CapSolver Integration for CAPTCHA Solving"
 
-    local capsolver_config="$CONFIG_DIR/capsolver-config.json"
+	local capsolver_config="$CONFIG_DIR/capsolver-config.json"
 
-    print_info "Creating CapSolver configuration..."
-    cat > "$capsolver_config" << EOF
+	print_info "Creating CapSolver configuration..."
+	cat >"$capsolver_config" <<EOF
 {
   "provider": "capsolver",
   "description": "CapSolver configuration for automated CAPTCHA solving with Crawl4AI",
@@ -409,11 +410,11 @@ capsolver_setup() {
 }
 EOF
 
-    print_success "CapSolver configuration created at $capsolver_config"
+	print_success "CapSolver configuration created at $capsolver_config"
 
-    # Create Python example script
-    local example_script="$CONFIG_DIR/capsolver-example.py"
-    cat > "$example_script" << 'EOF'
+	# Create Python example script
+	local example_script="$CONFIG_DIR/capsolver-example.py"
+	cat >"$example_script" <<'EOF'
 #!/usr/bin/env python3
 """
 CapSolver + Crawl4AI Integration Example
@@ -560,54 +561,55 @@ if __name__ == "__main__":
     asyncio.run(main())
 EOF
 
-    chmod +x "$example_script"
-    print_success "Python example script created at $example_script"
+	chmod +x "$example_script"
+	print_success "Python example script created at $example_script"
 
-    print_info "CapSolver Integration Setup Complete!"
-    print_info ""
-    print_info "📋 Next Steps:"
-    print_info "1. Get API key: https://dashboard.capsolver.com/dashboard/overview"
-    print_info "2. Install Python SDK: pip install capsolver"
-    print_info "3. Set API key in example script: $example_script"
-    print_info "4. Run example: python3 $example_script"
-    print_info ""
-    print_info "📚 Supported CAPTCHA Types:"
-    print_info "• reCAPTCHA v2/v3 (including Enterprise)"
-    print_info "• Cloudflare Turnstile & Challenge"
-    print_info "• AWS WAF"
-    print_info "• GeeTest v3/v4"
-    print_info "• Image-to-Text OCR"
-    print_info ""
-    print_info "💰 Pricing: Starting from $0.4/1000 requests"
-    print_info "🔗 Documentation: https://docs.capsolver.com/"
+	print_info "CapSolver Integration Setup Complete!"
+	print_info ""
+	print_info "📋 Next Steps:"
+	print_info "1. Get API key: https://dashboard.capsolver.com/dashboard/overview"
+	print_info "2. Install Python SDK: pip install capsolver"
+	print_info "3. Set API key in example script: $example_script"
+	print_info "4. Run example: python3 $example_script"
+	print_info ""
+	print_info "📚 Supported CAPTCHA Types:"
+	print_info "• reCAPTCHA v2/v3 (including Enterprise)"
+	print_info "• Cloudflare Turnstile & Challenge"
+	print_info "• AWS WAF"
+	print_info "• GeeTest v3/v4"
+	print_info "• Image-to-Text OCR"
+	print_info ""
+	print_info "💰 Pricing: Starting from $0.4/1000 requests"
+	print_info "🔗 Documentation: https://docs.capsolver.com/"
 
-    return 0
+	return 0
 }
 
 # Perform web crawling operation
 crawl_url() {
-    local url="$1"
-    local output_file="$3"
+	local url="$1"
+	local output_file="$3"
 
-    if [[ -z "$url" ]]; then
-        print_error "URL is required"
-        return 1
-    fi
+	if [[ -z "$url" ]]; then
+		print_error "URL is required"
+		return 1
+	fi
 
-    print_header "Crawling URL: $url"
+	print_header "Crawling URL: $url"
 
-    # Check if Docker container is running
-    if ! docker ps -q -f name="$DOCKER_CONTAINER" | grep -q .; then
-        print_warning "Docker container is not running. Starting it..."
-        if ! docker_start; then
-            return 1
-        fi
-        sleep 5  # Wait for container to be ready
-    fi
+	# Check if Docker container is running
+	if ! docker ps -q -f name="$DOCKER_CONTAINER" | grep -q .; then
+		print_warning "Docker container is not running. Starting it..."
+		if ! docker_start; then
+			return 1
+		fi
+		sleep "$CRAWL4AI_STARTUP_WAIT"
+	fi
 
-    local api_url="http://localhost:$DOCKER_PORT/crawl"
-    local payload
-    payload=$(cat << EOF
+	local api_url="http://localhost:$DOCKER_PORT/crawl"
+	local payload
+	payload=$(
+		cat <<EOF
 {
   "urls": ["$url"],
   "crawler_config": {
@@ -619,55 +621,56 @@ crawl_url() {
     return 0
 }
 EOF
-)
+	)
 
-    print_info "Sending crawl request..."
-    local response
-    if response=$(curl -s -X POST "$api_url" \
-        -H $CONTENT_TYPE_JSON \
-        -d "$payload"); then
+	print_info "Sending crawl request..."
+	local response
+	if response=$(curl -s -X POST "$api_url" \
+		-H $CONTENT_TYPE_JSON \
+		-d "$payload"); then
 
-        if [[ -n "$output_file" ]]; then
-            echo "$response" > "$output_file"
-            print_success "Results saved to $output_file"
-        else
-            echo "$response" | jq '.'
-        fi
+		if [[ -n "$output_file" ]]; then
+			echo "$response" >"$output_file"
+			print_success "Results saved to $output_file"
+		else
+			echo "$response" | jq '.'
+		fi
 
-        print_success "Crawl completed successfully"
-    else
-        print_error "Failed to crawl URL"
-        return 1
-    fi
+		print_success "Crawl completed successfully"
+	else
+		print_error "Failed to crawl URL"
+		return 1
+	fi
 
-    return 0
+	return 0
 }
 
 # Extract structured data
 extract_structured() {
-    local url="$1"
-    local schema="$2"
-    local output_file="$3"
+	local url="$1"
+	local schema="$2"
+	local output_file="$3"
 
-    if [[ -z "$url" || -z "$schema" ]]; then
-        print_error "URL and schema are required"
-        return 1
-    fi
+	if [[ -z "$url" || -z "$schema" ]]; then
+		print_error "URL and schema are required"
+		return 1
+	fi
 
-    print_header "Extracting structured data from: $url"
+	print_header "Extracting structured data from: $url"
 
-    # Check if Docker container is running
-    if ! docker ps -q -f name="$DOCKER_CONTAINER" | grep -q .; then
-        print_warning "Docker container is not running. Starting it..."
-        if ! docker_start; then
-            return 1
-        fi
-        sleep 5
-    fi
+	# Check if Docker container is running
+	if ! docker ps -q -f name="$DOCKER_CONTAINER" | grep -q .; then
+		print_warning "Docker container is not running. Starting it..."
+		if ! docker_start; then
+			return 1
+		fi
+		sleep "$CRAWL4AI_STARTUP_WAIT"
+	fi
 
-    local api_url="http://localhost:$DOCKER_PORT/crawl"
-    local payload
-    payload=$(cat << EOF
+	local api_url="http://localhost:$DOCKER_PORT/crawl"
+	local payload
+	payload=$(
+		cat <<EOF
 {
   "urls": ["$url"],
   "crawler_config": {
@@ -688,59 +691,59 @@ extract_structured() {
     return 0
 }
 EOF
-)
+	)
 
-    print_info "Sending extraction request..."
-    local response
-    if response=$(curl -s -X POST "$api_url" \
-        -H $CONTENT_TYPE_JSON \
-        -d "$payload"); then
+	print_info "Sending extraction request..."
+	local response
+	if response=$(curl -s -X POST "$api_url" \
+		-H $CONTENT_TYPE_JSON \
+		-d "$payload"); then
 
-        if [[ -n "$output_file" ]]; then
-            echo "$response" > "$output_file"
-            print_success "Results saved to $output_file"
-        else
-            echo "$response" | jq '.results[0].extracted_content'
-        fi
+		if [[ -n "$output_file" ]]; then
+			echo "$response" >"$output_file"
+			print_success "Results saved to $output_file"
+		else
+			echo "$response" | jq '.results[0].extracted_content'
+		fi
 
-        print_success "Extraction completed successfully"
-    else
-        print_error "Failed to extract data"
-        return 1
-    fi
+		print_success "Extraction completed successfully"
+	else
+		print_error "Failed to extract data"
+		return 1
+	fi
 
-    return 0
+	return 0
 }
 
 # Crawl with CAPTCHA solving capabilities
 captcha_crawl() {
-    local url="$1"
-    local captcha_type="$2"
-    local site_key="$3"
-    local output_file="$4"
+	local url="$1"
+	local captcha_type="$2"
+	local site_key="$3"
+	local output_file="$4"
 
-    if [[ -z "$url" || -z "$captcha_type" ]]; then
-        print_error "URL and CAPTCHA type are required"
-        print_info "Usage: captcha-crawl <url> <captcha_type> [site_key] [output_file]"
-        print_info "CAPTCHA types: recaptcha_v2, recaptcha_v3, turnstile, aws_waf"
-        return 1
-    fi
+	if [[ -z "$url" || -z "$captcha_type" ]]; then
+		print_error "URL and CAPTCHA type are required"
+		print_info "Usage: captcha-crawl <url> <captcha_type> [site_key] [output_file]"
+		print_info "CAPTCHA types: recaptcha_v2, recaptcha_v3, turnstile, aws_waf"
+		return 1
+	fi
 
-    print_header "Crawling with CAPTCHA Solving: $url"
-    print_info "CAPTCHA Type: $captcha_type"
+	print_header "Crawling with CAPTCHA Solving: $url"
+	print_info "CAPTCHA Type: $captcha_type"
 
-    # Check if Docker container is running
-    if ! docker ps -q -f name="$DOCKER_CONTAINER" | grep -q .; then
-        print_warning "Docker container is not running. Starting it..."
-        if ! docker_start; then
-            return 1
-        fi
-        sleep 5
-    fi
+	# Check if Docker container is running
+	if ! docker ps -q -f name="$DOCKER_CONTAINER" | grep -q .; then
+		print_warning "Docker container is not running. Starting it..."
+		if ! docker_start; then
+			return 1
+		fi
+		sleep "$CRAWL4AI_STARTUP_WAIT"
+	fi
 
-    # Create Python script for CAPTCHA crawling
-    local temp_script="/tmp/captcha_crawl_$$.py"
-    cat > "$temp_script" << EOF
+	# Create Python script for CAPTCHA crawling
+	local temp_script="/tmp/captcha_crawl_$$.py"
+	cat >"$temp_script" <<EOF
 #!/usr/bin/env python3
 import asyncio
 import capsolver
@@ -883,165 +886,165 @@ if __name__ == "__main__":
         print(result[:500] + "..." if len(result) > 500 else result)
 EOF
 
-    # Check if CapSolver API key is set
-    if [[ -z "$CAPSOLVER_API_KEY" ]]; then
-        print_error "CAPSOLVER_API_KEY environment variable not set"
-        print_info "Set it with: export CAPSOLVER_API_KEY='CAP-xxxxxxxxxxxxxxxxxxxxx'"
-        print_info "Get your API key from: https://dashboard.capsolver.com/dashboard/overview"
-        rm -f "$temp_script"
-        return 1
-    fi
+	# Check if CapSolver API key is set
+	if [[ -z "$CAPSOLVER_API_KEY" ]]; then
+		print_error "CAPSOLVER_API_KEY environment variable not set"
+		print_info "Set it with: export CAPSOLVER_API_KEY='CAP-xxxxxxxxxxxxxxxxxxxxx'"
+		print_info "Get your API key from: https://dashboard.capsolver.com/dashboard/overview"
+		rm -f "$temp_script"
+		return 1
+	fi
 
-    print_info "Running CAPTCHA-enabled crawl..."
-    if python3 "$temp_script"; then
-        print_success "CAPTCHA crawl completed successfully"
-        if [[ -n "$output_file" ]]; then
-            python3 "$temp_script" > "$output_file" 2>&1
-            print_info "Results saved to: $output_file"
-        fi
-    else
-        print_error "CAPTCHA crawl failed"
-        rm -f "$temp_script"
-        return 1
-    fi
+	print_info "Running CAPTCHA-enabled crawl..."
+	if python3 "$temp_script"; then
+		print_success "CAPTCHA crawl completed successfully"
+		if [[ -n "$output_file" ]]; then
+			python3 "$temp_script" >"$output_file" 2>&1
+			print_info "Results saved to: $output_file"
+		fi
+	else
+		print_error "CAPTCHA crawl failed"
+		rm -f "$temp_script"
+		return 1
+	fi
 
-    rm -f "$temp_script"
-    return 0
+	rm -f "$temp_script"
+	return 0
 }
 
 # Check service status
 check_status() {
-    print_header "Checking Crawl4AI Service Status"
+	print_header "Checking Crawl4AI Service Status"
 
-    # Check Python package
-    if command -v crawl4ai-doctor &> /dev/null; then
-        print_info "Python package: Installed"
-        if crawl4ai-doctor &> /dev/null; then
-            print_success "Python package: Working"
-        else
-            print_warning "Python package: Issues detected"
-        fi
-    else
-        print_warning "Python package: Not installed"
-    fi
+	# Check Python package
+	if command -v crawl4ai-doctor &>/dev/null; then
+		print_info "Python package: Installed"
+		if crawl4ai-doctor &>/dev/null; then
+			print_success "Python package: Working"
+		else
+			print_warning "Python package: Issues detected"
+		fi
+	else
+		print_warning "Python package: Not installed"
+	fi
 
-    # Check Docker container
-    if check_docker; then
-        if docker ps -q -f name="$DOCKER_CONTAINER" | grep -q .; then
-            print_success "Docker container: Running"
+	# Check Docker container
+	if check_docker; then
+		if docker ps -q -f name="$DOCKER_CONTAINER" | grep -q .; then
+			print_success "Docker container: Running"
 
-            # Check API health
-            local health_url="http://localhost:$DOCKER_PORT/health"
-            if curl -s "$health_url" &> /dev/null; then
-                print_success "API endpoint: Healthy"
-                print_info "Dashboard: http://localhost:$DOCKER_PORT/dashboard"
-                print_info "Playground: http://localhost:$DOCKER_PORT/playground"
-            else
-                print_warning "API endpoint: Not responding"
-            fi
-        else
-            print_warning "Docker container: Not running"
-        fi
-    else
-        print_warning "Docker: Not available"
-    fi
+			# Check API health
+			local health_url="http://localhost:$DOCKER_PORT/health"
+			if curl -s "$health_url" &>/dev/null; then
+				print_success "API endpoint: Healthy"
+				print_info "Dashboard: http://localhost:$DOCKER_PORT/dashboard"
+				print_info "Playground: http://localhost:$DOCKER_PORT/playground"
+			else
+				print_warning "API endpoint: Not responding"
+			fi
+		else
+			print_warning "Docker container: Not running"
+		fi
+	else
+		print_warning "Docker: Not available"
+	fi
 
-    # Check MCP configuration
-    local mcp_config="$CONFIG_DIR/crawl4ai-mcp-config.json"
-    if [[ -f "$mcp_config" ]]; then
-        print_success "MCP configuration: Available"
-    else
-        print_warning "MCP configuration: Not setup"
-    fi
+	# Check MCP configuration
+	local mcp_config="$CONFIG_DIR/crawl4ai-mcp-config.json"
+	if [[ -f "$mcp_config" ]]; then
+		print_success "MCP configuration: Available"
+	else
+		print_warning "MCP configuration: Not setup"
+	fi
 
-    return 0
+	return 0
 }
 
 # Show help
 show_help() {
-    echo "Crawl4AI Helper Script"
-    echo "Usage: $0 [command] [options]"
-    echo ""
-    echo "Commands:"
-    echo "  install                     - Install Crawl4AI Python package"
-    echo "  docker-setup               - Setup Docker deployment with monitoring"
-    echo "  docker-start               - Start Docker container"
-    echo "  docker-stop                - Stop Docker container"
-    echo "  mcp-setup                  - Setup MCP server integration"
-    echo "  capsolver-setup            - Setup CapSolver CAPTCHA solving integration"
-    echo "  crawl [url] [format] [file] - Crawl URL and extract content"
-    echo "  extract [url] [schema] [file] - Extract structured data"
-    echo "  captcha-crawl [url] [type] [key] [file] - Crawl with CAPTCHA solving"
-    echo "  status                     - Check Crawl4AI service status"
-    echo "  help                       - $HELP_SHOW_MESSAGE"
-    echo ""
-    echo "Examples:"
-    echo "  $0 install"
-    echo "  $0 docker-setup"
-    echo "  $0 docker-start"
-    echo "  $0 crawl https://example.com markdown output.json"
-    echo "  $0 extract https://example.com '{\"title\":\"h1\"}' data.json"
-    echo "  $0 captcha-crawl https://example.com recaptcha_v2 6LfW6wATAAAAAHLqO2pb8bDBahxlMxNdo9g947u9"
-    echo "  $0 status"
-    echo ""
-    echo "Documentation:"
-    echo "  GitHub: https://github.com/unclecode/crawl4ai"
-    echo "  Docs: https://docs.crawl4ai.com/"
-    echo "  Framework docs: .agents/CRAWL4AI.md"
-    return 0
+	echo "Crawl4AI Helper Script"
+	echo "Usage: $0 [command] [options]"
+	echo ""
+	echo "Commands:"
+	echo "  install                     - Install Crawl4AI Python package"
+	echo "  docker-setup               - Setup Docker deployment with monitoring"
+	echo "  docker-start               - Start Docker container"
+	echo "  docker-stop                - Stop Docker container"
+	echo "  mcp-setup                  - Setup MCP server integration"
+	echo "  capsolver-setup            - Setup CapSolver CAPTCHA solving integration"
+	echo "  crawl [url] [format] [file] - Crawl URL and extract content"
+	echo "  extract [url] [schema] [file] - Extract structured data"
+	echo "  captcha-crawl [url] [type] [key] [file] - Crawl with CAPTCHA solving"
+	echo "  status                     - Check Crawl4AI service status"
+	echo "  help                       - $HELP_SHOW_MESSAGE"
+	echo ""
+	echo "Examples:"
+	echo "  $0 install"
+	echo "  $0 docker-setup"
+	echo "  $0 docker-start"
+	echo "  $0 crawl https://example.com markdown output.json"
+	echo "  $0 extract https://example.com '{\"title\":\"h1\"}' data.json"
+	echo "  $0 captcha-crawl https://example.com recaptcha_v2 6LfW6wATAAAAAHLqO2pb8bDBahxlMxNdo9g947u9"
+	echo "  $0 status"
+	echo ""
+	echo "Documentation:"
+	echo "  GitHub: https://github.com/unclecode/crawl4ai"
+	echo "  Docs: https://docs.crawl4ai.com/"
+	echo "  Framework docs: .agents/CRAWL4AI.md"
+	return 0
 }
 
 # Main function
 main() {
-    # Assign positional parameters to local variables
-    local command="${1:-help}"
-    local param2="$2"
-    local param3="$3"
-    local param4="$4"
-    local param5="$5"
+	# Assign positional parameters to local variables
+	local command="${1:-help}"
+	local param2="$2"
+	local param3="$3"
+	local param4="$4"
+	local param5="$5"
 
-    # Main command handler
-    case "$command" in
-        "install")
-            install_crawl4ai
-            ;;
-        "docker-setup")
-            docker_setup
-            ;;
-        "docker-start")
-            docker_start
-            ;;
-        "docker-stop")
-            docker_stop
-            ;;
-        "mcp-setup")
-            mcp_setup
-            ;;
-        "capsolver-setup")
-            capsolver_setup
-            ;;
-        "crawl")
-            crawl_url "$param2" "$param3" "$param4"
-            ;;
-        "extract")
-            extract_structured "$param2" "$param3" "$param4"
-            ;;
-        "captcha-crawl")
-            captcha_crawl "$param2" "$param3" "$param4" "$param5"
-            ;;
-        "status")
-            check_status
-            ;;
-        "help"|"-h"|"--help"|"")
-            show_help
-            ;;
-        *)
-            print_error "$ERROR_UNKNOWN_COMMAND $command"
-            show_help
-            return 1
-            ;;
-    esac
-    return 0
+	# Main command handler
+	case "$command" in
+	"install")
+		install_crawl4ai
+		;;
+	"docker-setup")
+		docker_setup
+		;;
+	"docker-start")
+		docker_start
+		;;
+	"docker-stop")
+		docker_stop
+		;;
+	"mcp-setup")
+		mcp_setup
+		;;
+	"capsolver-setup")
+		capsolver_setup
+		;;
+	"crawl")
+		crawl_url "$param2" "$param3" "$param4"
+		;;
+	"extract")
+		extract_structured "$param2" "$param3" "$param4"
+		;;
+	"captcha-crawl")
+		captcha_crawl "$param2" "$param3" "$param4" "$param5"
+		;;
+	"status")
+		check_status
+		;;
+	"help" | "-h" | "--help" | "")
+		show_help
+		;;
+	*)
+		print_error "$ERROR_UNKNOWN_COMMAND $command"
+		show_help
+		return 1
+		;;
+	esac
+	return 0
 }
 
 main "$@"

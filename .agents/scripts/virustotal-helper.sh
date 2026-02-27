@@ -22,7 +22,7 @@ set -euo pipefail
 # Constants
 readonly VT_API_BASE="https://www.virustotal.com/api/v3"
 readonly VERSION="1.0.0"
-readonly RATE_LIMIT_DELAY=16 # 4 req/min = 1 every 15s, add 1s buffer
+readonly RATE_LIMIT_DELAY="${VT_RATE_LIMIT_DELAY:-16}" # 4 req/min = 1 every 15s, add 1s buffer
 
 # =============================================================================
 # Helper Functions

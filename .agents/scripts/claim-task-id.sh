@@ -422,10 +422,11 @@ allocate_online() {
 
 		if [[ $attempt -gt 1 ]]; then
 			log_info "Retry attempt ${attempt}/${CAS_MAX_RETRIES}..."
-			# Brief backoff: 0.1s * attempt, capped at 1.0s
+			# Brief backoff: 0.1s * attempt, capped at 1.0s, plus jitter to avoid thundering herd
 			local capped=$((attempt > 10 ? 10 : attempt))
+			local jitter_ms=$((RANDOM % 300))
 			local backoff
-			backoff=$(awk "BEGIN {printf \"%.1f\", $capped * 0.1}")
+			backoff=$(awk "BEGIN {printf \"%.1f\", $capped * 0.1 + $jitter_ms / 1000}")
 			sleep "$backoff" 2>/dev/null || true
 		fi
 

@@ -24,8 +24,8 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 # Configuration
 readonly CODACY_CONFIG_DIR=".codacy"
 readonly CODACY_CONFIG_FILE="$CODACY_CONFIG_DIR/codacy.yaml"
-readonly CHUNK_SIZE=5  # Number of files/tools per chunk
-readonly TIMEOUT=120    # Timeout per chunk in seconds
+readonly CHUNK_SIZE=5 # Number of files/tools per chunk
+readonly TIMEOUT=120  # Timeout per chunk in seconds
 
 # Tool categories with estimated runtimes
 # Tool categories with estimated runtimes
@@ -37,514 +37,514 @@ TIMESTAMP_FILE=".agents/tmp/codacy-timestamp.log"
 
 # Print functions
 print_header() {
-    local message="$1"
-    echo -e "${PURPLE}🔍 $message${NC}"
-    return 0
+	local message="$1"
+	echo -e "${PURPLE}🔍 $message${NC}"
+	return 0
 }
 
 print_progress() {
-    local current="$1"
-    local total="$2"
-    local message="${3:-Processing}"
-    
-    # Calculate percentage
-    local percentage
-    percentage=$((current * 100 / total))
-    local bar_length=30
-    local filled_length
-    filled_length=$((percentage * bar_length / 100))
-    
-    # Create progress bar
-    local bar=""
-    for ((i=0; i<filled_length; i++)); do
-        bar+="█"
-    done
-    for ((i=filled_length; i<bar_length; i++)); do
-        bar+="░"
-    done
-    
-    echo -e "${CYAN}📊 [$bar] $percentage% - $message ($current/$total)${NC}"
-    return 0
+	local current="$1"
+	local total="$2"
+	local message="${3:-Processing}"
+
+	# Calculate percentage
+	local percentage
+	percentage=$((current * 100 / total))
+	local bar_length=30
+	local filled_length
+	filled_length=$((percentage * bar_length / 100))
+
+	# Create progress bar
+	local bar=""
+	for ((i = 0; i < filled_length; i++)); do
+		bar+="█"
+	done
+	for ((i = filled_length; i < bar_length; i++)); do
+		bar+="░"
+	done
+
+	echo -e "${CYAN}📊 [$bar] $percentage% - $message ($current/$total)${NC}"
+	return 0
 }
 
 # Initialize progress tracking
 init_progress() {
-    mkdir -p "$(dirname "$PROGRESS_FILE")"
-    echo "$(date -Iseconds) - Starting chunked Codacy analysis" > "$PROGRESS_FILE"
-    echo "$(date -Iseconds) - Chunked analysis initiated" > "$TIMESTAMP_FILE"
-    return 0
+	mkdir -p "$(dirname "$PROGRESS_FILE")"
+	echo "$(date -Iseconds) - Starting chunked Codacy analysis" >"$PROGRESS_FILE"
+	echo "$(date -Iseconds) - Chunked analysis initiated" >"$TIMESTAMP_FILE"
+	return 0
 }
 
 # Update progress
 update_progress() {
-    local message="$1"
-    echo "$(date -Iseconds) - $message" >> "$PROGRESS_FILE"
-    return 0
+	local message="$1"
+	echo "$(date -Iseconds) - $message" >>"$PROGRESS_FILE"
+	return 0
 }
 
 # Show current progress
 show_progress() {
-    if [[ -f "$PROGRESS_FILE" ]]; then
-        print_header "Analysis Progress"
-        cat "$PROGRESS_FILE"
-        return 0
-    else
-        print_warning "No progress file found"
-        return 1
-    fi
-    return 0
+	if [[ -f "$PROGRESS_FILE" ]]; then
+		print_header "Analysis Progress"
+		cat "$PROGRESS_FILE"
+		return 0
+	else
+		print_warning "No progress file found"
+		return 1
+	fi
+	return 0
 }
 
 # Check if Codacy CLI is ready
 check_codacy_ready() {
-    if ! command -v codacy-cli &> /dev/null; then
-        print_error "Codacy CLI not installed"
-        return 1
-    fi
+	if ! command -v codacy-cli &>/dev/null; then
+		print_error "Codacy CLI not installed"
+		return 1
+	fi
 
-    if [[ ! -f "$CODACY_CONFIG_FILE" ]]; then
-        print_error "Codacy configuration not found"
-        print_info "Run: bash .agents/scripts/codacy-cli.sh init"
-        return 1
-    fi
+	if [[ ! -f "$CODACY_CONFIG_FILE" ]]; then
+		print_error "Codacy configuration not found"
+		print_info "Run: bash .agents/scripts/codacy-cli.sh init"
+		return 1
+	fi
 
-    # Load API key from environment (set via credentials.sh, sourced by .zshrc)
-    # CODACY_PROJECT_TOKEN is the standard env var name
-    if [[ -z "${CODACY_API_TOKEN:-}" && -n "${CODACY_PROJECT_TOKEN:-}" ]]; then
-        export CODACY_API_TOKEN="$CODACY_PROJECT_TOKEN"
-    fi
+	# Load API key from environment (set via credentials.sh, sourced by .zshrc)
+	# CODACY_PROJECT_TOKEN is the standard env var name
+	if [[ -z "${CODACY_API_TOKEN:-}" && -n "${CODACY_PROJECT_TOKEN:-}" ]]; then
+		export CODACY_API_TOKEN="$CODACY_PROJECT_TOKEN"
+	fi
 
-    return 0
+	return 0
 }
 
 # Get list of configured tools
 get_configured_tools() {
-    if ! command -v yq &> /dev/null; then
-        print_error "yq not found. Please install: pip install yq or brew install yq"
-        return 1
-    fi
+	if ! command -v yq &>/dev/null; then
+		print_error "yq not found. Please install: pip install yq or brew install yq"
+		return 1
+	fi
 
-    local tools
-    tools=$(yq eval '.tools[] | select(.) | .name' "$CODACY_CONFIG_FILE" 2>/dev/null | grep -v null)
-    echo "$tools"
-    return 0
+	local tools
+	tools=$(yq eval '.tools[] | select(.) | .name' "$CODACY_CONFIG_FILE" 2>/dev/null | grep -v null)
+	echo "$tools"
+	return 0
 }
 
 # List available tools with categories
 list_tools() {
-    print_header "Available Codacy Tools"
-    
-    local tools
-    tools=$(get_configured_tools)
-    
-    if [[ -z "$tools" ]]; then
-        print_error "No tools configured or unable to read configuration"
-        return 1
-    fi
+	print_header "Available Codacy Tools"
 
-    local total_tools
-    total_tools=$(echo "$tools" | wc -l | tr -d ' ')
-    
-    print_info "Total configured tools: $total_tools"
-    echo ""
+	local tools
+	tools=$(get_configured_tools)
 
-    # Display by categories
-    local categories=("fast")
-    for category in "${categories[@]}"; do
-        echo "${PURPLE}📂 $category category:${NC}"
-        local category_tools="$TOOL_CATEGORIES_fast"
-        local found_tools=""
-        
-        while IFS= read -r tool; do
-            if echo "$category_tools" | grep -q "$tool"; then
-                found_tools="$found_tools $tool"
-                print_info "  ✓ $tool"
-            fi
-        done <<< "$tools"
-        
-        if [[ -z "$found_tools" ]]; then
-            print_warning "  (No tools from this category configured)"
-        fi
-        echo ""
-    done
+	if [[ -z "$tools" ]]; then
+		print_error "No tools configured or unable to read configuration"
+		return 1
+	fi
 
-    echo "${CYAN}⏱️  Estimated runtimes:${NC}"
-    print_info "  Fast tools: ~30 seconds per 100 files"
-    print_info "  Medium tools: ~2 minutes per 100 files"
-    print_info "  Slow tools: ~5+ minutes per 100 files"
-    
-    return 0
+	local total_tools
+	total_tools=$(echo "$tools" | wc -l | tr -d ' ')
+
+	print_info "Total configured tools: $total_tools"
+	echo ""
+
+	# Display by categories
+	local categories=("fast")
+	for category in "${categories[@]}"; do
+		echo "${PURPLE}📂 $category category:${NC}"
+		local category_tools="$TOOL_CATEGORIES_fast"
+		local found_tools=""
+
+		while IFS= read -r tool; do
+			if [[ "$category_tools" == *"$tool"* ]]; then
+				found_tools="$found_tools $tool"
+				print_info "  ✓ $tool"
+			fi
+		done <<<"$tools"
+
+		if [[ -z "$found_tools" ]]; then
+			print_warning "  (No tools from this category configured)"
+		fi
+		echo ""
+	done
+
+	echo "${CYAN}⏱️  Estimated runtimes:${NC}"
+	print_info "  Fast tools: ~30 seconds per 100 files"
+	print_info "  Medium tools: ~2 minutes per 100 files"
+	print_info "  Slow tools: ~5+ minutes per 100 files"
+
+	return 0
 }
 
 # Quick analysis with fast tools only
 run_quick_analysis() {
-    print_header "Running Quick Analysis (Fast Tools Only)"
-    init_progress
+	print_header "Running Quick Analysis (Fast Tools Only)"
+	init_progress
 
-    local fast_tools="$TOOL_CATEGORIES_fast"
-    local total_tools=0
-    local completed_tools=0
+	local fast_tools="$TOOL_CATEGORIES_fast"
+	local total_tools=0
+	local completed_tools=0
 
-    # Count tools
-    for tool in $fast_tools; do
-        if get_configured_tools | grep -q "^$tool$"; then
-            ((total_tools++)) || true
-        fi
-    done
+	# Count tools
+	for tool in $fast_tools; do
+		if get_configured_tools | grep -q "^$tool$"; then
+			((total_tools++)) || true
+		fi
+	done
 
-    if [[ $total_tools -eq 0 ]]; then
-        print_warning "No fast tools configured"
-        return 1
-    fi
+	if [[ $total_tools -eq 0 ]]; then
+		print_warning "No fast tools configured"
+		return 1
+	fi
 
-    print_info "Running $total_tools fast tools..."
-    
-    local start_time
-    start_time=$(date +%s)
-    local results_file=".agents/tmp/codacy-quick-results.sarif"
+	print_info "Running $total_tools fast tools..."
 
-    for tool in $fast_tools; do
-        if get_configured_tools | grep -q "^$tool$"; then
-            ((completed_tools++)) || true
-            print_progress $completed_tools $total_tools "$tool"
-            
-            print_info "Running: $tool"
-            update_progress "Running $tool analysis"
-            
-            local tool_start
-            tool_start=$(date +%s)
-            local cmd="codacy-cli analyze --tool $tool --format sarif --output .agents/tmp/codacy-$tool.sarif"
-            
-            # Run with timeout
-            timeout $TIMEOUT bash -c "$cmd" 2>/dev/null
-            local exit_code=$?
-            
-            local tool_end
-            tool_end=$(date +%s)
-            local tool_duration
-            tool_duration=$((tool_end - tool_start))
-            
-            if [[ $exit_code -eq 124 ]]; then
-                print_warning "⏰ $tool timed out after ${tool_duration}s"
-                update_progress "$tool timed out after ${tool_duration}s"
-            elif [[ $exit_code -eq 0 ]]; then
-                print_success "✓ $tool completed in ${tool_duration}s"
-                update_progress "$tool completed successfully in ${tool_duration}s"
-                
-                # Merge results if file exists
-                if [[ -f ".agents/tmp/codacy-$tool.sarif" ]]; then
-                    if [[ ! -f "$results_file" ]]; then
-                        cp ".agents/tmp/codacy-$tool.sarif" "$results_file"
-                    else
-                        # Simple merge (in production, use proper SARIF merge)
-                        cat ".agents/tmp/codacy-$tool.sarif" >> "$results_file"
-                    fi
-                fi
-            else
-                print_error "✗ $tool failed after ${tool_duration}s"
-                update_progress "$tool failed after ${tool_duration}s"
-            fi
-        fi
-    done
+	local start_time
+	start_time=$(date +%s)
+	local results_file=".agents/tmp/codacy-quick-results.sarif"
 
-    local end_time
-    end_time=$(date +%s)
-    local total_duration
-    total_duration=$((end_time - start_time))
+	for tool in $fast_tools; do
+		if get_configured_tools | grep -q "^$tool$"; then
+			((completed_tools++)) || true
+			print_progress $completed_tools $total_tools "$tool"
 
-    print_success "Quick analysis completed in ${total_duration}s ($completed_tools/$total_tools tools)"
-    update_progress "Quick analysis completed: $completed_tools/$total_tools tools in ${total_duration}s"
+			print_info "Running: $tool"
+			update_progress "Running $tool analysis"
 
-    if [[ -f "$results_file" ]]; then
-        print_info "Results saved to: $results_file"
-        print_info "Issues found: $(grep -c '\"ruleId"' "$results_file" 2>/dev/null || echo "unknown")"
-    fi
+			local tool_start
+			tool_start=$(date +%s)
+			local cmd="codacy-cli analyze --tool $tool --format sarif --output .agents/tmp/codacy-$tool.sarif"
 
-    return 0
+			# Run with timeout
+			timeout $TIMEOUT bash -c "$cmd" 2>/dev/null
+			local exit_code=$?
+
+			local tool_end
+			tool_end=$(date +%s)
+			local tool_duration
+			tool_duration=$((tool_end - tool_start))
+
+			if [[ $exit_code -eq 124 ]]; then
+				print_warning "⏰ $tool timed out after ${tool_duration}s"
+				update_progress "$tool timed out after ${tool_duration}s"
+			elif [[ $exit_code -eq 0 ]]; then
+				print_success "✓ $tool completed in ${tool_duration}s"
+				update_progress "$tool completed successfully in ${tool_duration}s"
+
+				# Merge results if file exists
+				if [[ -f ".agents/tmp/codacy-$tool.sarif" ]]; then
+					if [[ ! -f "$results_file" ]]; then
+						cp ".agents/tmp/codacy-$tool.sarif" "$results_file"
+					else
+						# Simple merge (in production, use proper SARIF merge)
+						cat ".agents/tmp/codacy-$tool.sarif" >>"$results_file"
+					fi
+				fi
+			else
+				print_error "✗ $tool failed after ${tool_duration}s"
+				update_progress "$tool failed after ${tool_duration}s"
+			fi
+		fi
+	done
+
+	local end_time
+	end_time=$(date +%s)
+	local total_duration
+	total_duration=$((end_time - start_time))
+
+	print_success "Quick analysis completed in ${total_duration}s ($completed_tools/$total_tools tools)"
+	update_progress "Quick analysis completed: $completed_tools/$total_tools tools in ${total_duration}s"
+
+	if [[ -f "$results_file" ]]; then
+		print_info "Results saved to: $results_file"
+		print_info "Issues found: $(grep -c '\"ruleId"' "$results_file" 2>/dev/null || echo "unknown")"
+	fi
+
+	return 0
 }
 
 # Chunked full analysis
 run_chunked_analysis() {
-    print_header "Running Chunked Full Analysis"
-    init_progress
+	print_header "Running Chunked Full Analysis"
+	init_progress
 
-    local tools
-    tools=$(get_configured_tools)
-    
-    if [[ -z "$tools" ]]; then
-        print_error "No tools configured"
-        return 1
-    fi
+	local tools
+	tools=$(get_configured_tools)
 
-    local total_tools
-    total_tools=$(echo "$tools" | wc -l | tr -d ' ')
-    local completed_tools=0
+	if [[ -z "$tools" ]]; then
+		print_error "No tools configured"
+		return 1
+	fi
 
-    print_info "Running $total_tools tools in chunks of $CHUNK_SIZE..."
-    
-    local start_time
-    start_time=$(date +%s)
-    local results_file=".agents/tmp/codacy-chunked-results.sarif"
-    local chunk_num=1
+	local total_tools
+	total_tools=$(echo "$tools" | wc -l | tr -d ' ')
+	local completed_tools=0
 
-    # Process tools in chunks
-    local tool_array=()
-    while IFS= read -r tool; do
-        tool_array+=("$tool")
-    done <<< "$tools"
+	print_info "Running $total_tools tools in chunks of $CHUNK_SIZE..."
 
-    for ((i=0; i<${#tool_array[@]}; i+=CHUNK_SIZE)); do
-        local chunk_start
-        chunk_start=$((i + 1))
-        local chunk_end
-        chunk_end=$((i + CHUNK_SIZE))
-        if [[ $chunk_end -gt ${#tool_array[@]} ]]; then
-            chunk_end=${#tool_array[@]}
-        fi
+	local start_time
+	start_time=$(date +%s)
+	local results_file=".agents/tmp/codacy-chunked-results.sarif"
+	local chunk_num=1
 
-        print_progress $chunk_start $total_tools "Processing chunk $chunk_num"
-        update_progress "Starting chunk $chunk_num (tools $chunk_start-$chunk_end)"
+	# Process tools in chunks
+	local tool_array=()
+	while IFS= read -r tool; do
+		tool_array+=("$tool")
+	done <<<"$tools"
 
-        local chunk_tools=""
-        for ((j=i; j<chunk_end; j++)); do
-            chunk_tools="$chunk_tools ${tool_array[j]}"
-        done
+	for ((i = 0; i < ${#tool_array[@]}; i += CHUNK_SIZE)); do
+		local chunk_start
+		chunk_start=$((i + 1))
+		local chunk_end
+		chunk_end=$((i + CHUNK_SIZE))
+		if [[ $chunk_end -gt ${#tool_array[@]} ]]; then
+			chunk_end=${#tool_array[@]}
+		fi
 
-        print_info "Chunk $chunk_num: Running ${tool_array[i]} to ${tool_array[((chunk_end-1))]}..."
-        
-        local chunk_start_time
-        chunk_start_time=$(date +%s)
-        local chunk_result_file=".agents/tmp/codacy-chunk-$chunk_num.sarif"
-        
-        # Run chunk with extended timeout
-        local cmd="codacy-cli analyze --tools $(echo $chunk_tools | tr ' ' ',') --format sarif --output $chunk_result_file"
-        print_info "Executing: $(echo $chunk_tools | wc -w | tr -d ' ') tools"
-        
-        timeout $((TIMEOUT * 2)) bash -c "$cmd" 2>/dev/null
-        local exit_code=$?
-        
-        local chunk_end_time
-        chunk_end_time=$(date +%s)
-        local chunk_duration
-        chunk_duration=$((chunk_end_time - chunk_start_time))
+		print_progress $chunk_start $total_tools "Processing chunk $chunk_num"
+		update_progress "Starting chunk $chunk_num (tools $chunk_start-$chunk_end)"
 
-        if [[ $exit_code -eq 124 ]]; then
-            print_warning "⏰ Chunk $chunk_num timed out after ${chunk_duration}s"
-            update_progress "Chunk $chunk_num timed out"
-        elif [[ $exit_code -eq 0 ]]; then
-            print_success "✓ Chunk $chunk_num completed in ${chunk_duration}s"
-            update_progress "Chunk $chunk_num completed in ${chunk_duration}s"
-            
-            # Merge chunk results
-            if [[ -f "$chunk_result_file" ]]; then
-                if [[ ! -f "$results_file" ]]; then
-                    cp "$chunk_result_file" "$results_file"
-                else
-                    cat "$chunk_result_file" >> "$results_file"
-                fi
-            fi
-        else
-            print_error "✗ Chunk $chunk_num failed after ${chunk_duration}s"
-            update_progress "Chunk $chunk_num failed"
-        fi
+		local chunk_tools=""
+		for ((j = i; j < chunk_end; j++)); do
+			chunk_tools="$chunk_tools ${tool_array[j]}"
+		done
 
-        # Update progress
-        completed_tools=$chunk_end
-        ((chunk_num++)) || true
-        
-        # Brief pause between chunks
-        if [[ $chunk_end -lt ${#tool_array[@]} ]]; then
-            print_info "Pausing briefly before next chunk..."
-            sleep 2
-        fi
-    done
+		print_info "Chunk $chunk_num: Running ${tool_array[i]} to ${tool_array[((chunk_end - 1))]}..."
 
-    local end_time
-    end_time=$(date +%s)
-    local total_duration
-    total_duration=$((end_time - start_time))
+		local chunk_start_time
+		chunk_start_time=$(date +%s)
+		local chunk_result_file=".agents/tmp/codacy-chunk-$chunk_num.sarif"
 
-    print_success "Chunked analysis completed in ${total_duration}s ($completed_tools/$total_tools tools)"
-    update_progress "Chunked analysis completed: $completed_tools/$total_tools tools in ${total_duration}s"
+		# Run chunk with extended timeout
+		local cmd="codacy-cli analyze --tools $(echo $chunk_tools | tr ' ' ',') --format sarif --output $chunk_result_file"
+		print_info "Executing: $(echo $chunk_tools | wc -w | tr -d ' ') tools"
 
-    if [[ -f "$results_file" ]]; then
-        print_info "Results saved to: $results_file"
-        local issues_count
-        issues_count=$(grep -c '"ruleId"' "$results_file" 2>/dev/null || echo "unknown")
-        print_info "Total issues found: $issues_count"
-    fi
+		timeout $((TIMEOUT * 2)) bash -c "$cmd" 2>/dev/null
+		local exit_code=$?
 
-    return 0
+		local chunk_end_time
+		chunk_end_time=$(date +%s)
+		local chunk_duration
+		chunk_duration=$((chunk_end_time - chunk_start_time))
+
+		if [[ $exit_code -eq 124 ]]; then
+			print_warning "⏰ Chunk $chunk_num timed out after ${chunk_duration}s"
+			update_progress "Chunk $chunk_num timed out"
+		elif [[ $exit_code -eq 0 ]]; then
+			print_success "✓ Chunk $chunk_num completed in ${chunk_duration}s"
+			update_progress "Chunk $chunk_num completed in ${chunk_duration}s"
+
+			# Merge chunk results
+			if [[ -f "$chunk_result_file" ]]; then
+				if [[ ! -f "$results_file" ]]; then
+					cp "$chunk_result_file" "$results_file"
+				else
+					cat "$chunk_result_file" >>"$results_file"
+				fi
+			fi
+		else
+			print_error "✗ Chunk $chunk_num failed after ${chunk_duration}s"
+			update_progress "Chunk $chunk_num failed"
+		fi
+
+		# Update progress
+		completed_tools=$chunk_end
+		((chunk_num++)) || true
+
+		# Brief pause between chunks
+		if [[ $chunk_end -lt ${#tool_array[@]} ]]; then
+			print_info "Pausing briefly before next chunk..."
+			sleep 2
+		fi
+	done
+
+	local end_time
+	end_time=$(date +%s)
+	local total_duration
+	total_duration=$((end_time - start_time))
+
+	print_success "Chunked analysis completed in ${total_duration}s ($completed_tools/$total_tools tools)"
+	update_progress "Chunked analysis completed: $completed_tools/$total_tools tools in ${total_duration}s"
+
+	if [[ -f "$results_file" ]]; then
+		print_info "Results saved to: $results_file"
+		local issues_count
+		issues_count=$(grep -c '"ruleId"' "$results_file" 2>/dev/null || echo "unknown")
+		print_info "Total issues found: $issues_count"
+	fi
+
+	return 0
 }
 
 # Run single tool analysis
 run_tool_analysis() {
-    local tool="$1"
+	local tool="$1"
 
-    if [[ -z "$tool" ]]; then
-        print_error "Tool name required"
-        print_info "Available tools:"
-        get_configured_tools
-        return 1
-    fi
+	if [[ -z "$tool" ]]; then
+		print_error "Tool name required"
+		print_info "Available tools:"
+		get_configured_tools
+		return 1
+	fi
 
-    print_header "Running Single Tool Analysis: $tool"
+	print_header "Running Single Tool Analysis: $tool"
 
-    if ! get_configured_tools | grep -q "^$tool$"; then
-        print_error "Tool '$tool' not configured"
-        return 1
-    fi
+	if ! get_configured_tools | grep -q "^$tool$"; then
+		print_error "Tool '$tool' not configured"
+		return 1
+	fi
 
-    init_progress
-    update_progress "Starting $tool analysis"
+	init_progress
+	update_progress "Starting $tool analysis"
 
-    local start_time
-    start_time=$(date +%s)
-    local result_file=".agents/tmp/codacy-$tool-single.sarif"
+	local start_time
+	start_time=$(date +%s)
+	local result_file=".agents/tmp/codacy-$tool-single.sarif"
 
-    local cmd="codacy-cli analyze --tool $tool --format sarif --output $result_file"
-    print_info "Executing: $cmd"
+	local cmd="codacy-cli analyze --tool $tool --format sarif --output $result_file"
+	print_info "Executing: $cmd"
 
-    timeout $TIMEOUT bash -c "$cmd" 2>/dev/null
-    local exit_code=$?
+	timeout $TIMEOUT bash -c "$cmd" 2>/dev/null
+	local exit_code=$?
 
-    local end_time
-    end_time=$(date +%s)
-    local duration
-    duration=$((end_time - start_time))
+	local end_time
+	end_time=$(date +%s)
+	local duration
+	duration=$((end_time - start_time))
 
-    if [[ $exit_code -eq 124 ]]; then
-        print_error "Analysis timed out after ${duration}s"
-        update_progress "$tool analysis timed out"
-        return 1
-    elif [[ $exit_code -eq 0 ]]; then
-        print_success "$tool analysis completed in ${duration}s"
-        update_progress "$tool analysis completed successfully in ${duration}s"
-        
-        if [[ -f "$result_file" ]]; then
-            print_info "Results saved to: $result_file"
-            local issues
-            issues=$(grep -c '"ruleId"' "$result_file" 2>/dev/null || echo "0")
-            print_info "Issues found: $issues"
-        fi
-        return 0
-    else
-        print_error "$tool analysis failed after ${duration}s"
-        update_progress "$tool analysis failed"
-        return 1
-    fi
-    return 0
+	if [[ $exit_code -eq 124 ]]; then
+		print_error "Analysis timed out after ${duration}s"
+		update_progress "$tool analysis timed out"
+		return 1
+	elif [[ $exit_code -eq 0 ]]; then
+		print_success "$tool analysis completed in ${duration}s"
+		update_progress "$tool analysis completed successfully in ${duration}s"
+
+		if [[ -f "$result_file" ]]; then
+			print_info "Results saved to: $result_file"
+			local issues
+			issues=$(grep -c '"ruleId"' "$result_file" 2>/dev/null || echo "0")
+			print_info "Issues found: $issues"
+		fi
+		return 0
+	else
+		print_error "$tool analysis failed after ${duration}s"
+		update_progress "$tool analysis failed"
+		return 1
+	fi
+	return 0
 }
 
 # Show analysis status
 show_status() {
-    print_header "Codacy Chunked Analysis Status"
-    
-    # Show progress
-    show_progress
-    
-    echo ""
-    print_info "Recent Analysis Files:"
-    find .agents/tmp -name "codacy-*.sarif" -newer "$TIMESTAMP_FILE" 2>/dev/null | head -5 | while read -r file; do
-        local age
-        age=$(find "$file" -mmin +1 2>/dev/null || echo "0")
-        local size
-        size=$(du -h "$file" 2>/dev/null | cut -f1 || echo "unknown")
-        print_info "  $(basename "$file") (size: $size)"
-    done
+	print_header "Codacy Chunked Analysis Status"
 
-    echo ""
-    print_info "System Status:"
-    check_codacy_ready && print_success "Codacy CLI: Ready" || print_warning "Codacy CLI: Not ready"
-    
-    return 0
+	# Show progress
+	show_progress
+
+	echo ""
+	print_info "Recent Analysis Files:"
+	find .agents/tmp -name "codacy-*.sarif" -newer "$TIMESTAMP_FILE" 2>/dev/null | head -5 | while read -r file; do
+		local age
+		age=$(find "$file" -mmin +1 2>/dev/null || echo "0")
+		local size
+		size=$(du -h "$file" 2>/dev/null | cut -f1 || echo "unknown")
+		print_info "  $(basename "$file") (size: $size)"
+	done
+
+	echo ""
+	print_info "System Status:"
+	check_codacy_ready && print_success "Codacy CLI: Ready" || print_warning "Codacy CLI: Not ready"
+
+	return 0
 }
 
 # Clean up temporary files
 cleanup() {
-    print_info "Cleaning up temporary files..."
-    rm -f .agents/tmp/codacy-*.sarif
-    rm -f "$PROGRESS_FILE" "$TIMESTAMP_FILE"
-    print_success "Cleanup completed"
-    return 0
+	print_info "Cleaning up temporary files..."
+	rm -f .agents/tmp/codacy-*.sarif
+	rm -f "$PROGRESS_FILE" "$TIMESTAMP_FILE"
+	print_success "Cleanup completed"
+	return 0
 }
 
 # Show help
 show_help() {
-    print_header "Codacy CLI Chunked Analysis Help"
-    echo ""
-    echo "Usage: $0 [command] [options]"
-    echo ""
-    echo "Commands:"
-    echo "  quick           - Fast analysis with essential tools only (~30s-2m)"
-    echo "  chunked        - Full analysis in chunks with progress (~5-15m)"
-    echo "  tools           - List available tools and their categories"
-    echo "  analyze <tool> - Run analysis with specific tool"
-    echo "  status          - Show analysis status and progress"
-    echo "  cleanup         - Clean up temporary files"
-    echo "  help            - Show this help message"
-    echo ""
-    echo "Examples:"
-    echo "  $0 quick                    # Fast analysis for quick feedback"
-    echo "  $0 chunked                  # Full analysis in manageable chunks"
-    echo "  $0 analyze shellcheck       # Run single tool analysis"
-    echo "  $0 status                   # Check progress"
-    echo ""
-    echo "Features:"
-    echo "  • Progress tracking with timestamps"
-    echo "  • Timeout protection for long-running tools"
-    echo "  • Categorized tool execution"
-    echo "  • Chunked processing for large repositories"
-    echo "  • Detailed progress feedback"
-    echo ""
-    return 0
+	print_header "Codacy CLI Chunked Analysis Help"
+	echo ""
+	echo "Usage: $0 [command] [options]"
+	echo ""
+	echo "Commands:"
+	echo "  quick           - Fast analysis with essential tools only (~30s-2m)"
+	echo "  chunked        - Full analysis in chunks with progress (~5-15m)"
+	echo "  tools           - List available tools and their categories"
+	echo "  analyze <tool> - Run analysis with specific tool"
+	echo "  status          - Show analysis status and progress"
+	echo "  cleanup         - Clean up temporary files"
+	echo "  help            - Show this help message"
+	echo ""
+	echo "Examples:"
+	echo "  $0 quick                    # Fast analysis for quick feedback"
+	echo "  $0 chunked                  # Full analysis in manageable chunks"
+	echo "  $0 analyze shellcheck       # Run single tool analysis"
+	echo "  $0 status                   # Check progress"
+	echo ""
+	echo "Features:"
+	echo "  • Progress tracking with timestamps"
+	echo "  • Timeout protection for long-running tools"
+	echo "  • Categorized tool execution"
+	echo "  • Chunked processing for large repositories"
+	echo "  • Detailed progress feedback"
+	echo ""
+	return 0
 }
 
 # Main function
 main() {
-    local _arg2="$2"
-    local command="${1:-help}"
+	local _arg2="$2"
+	local command="${1:-help}"
 
-    # Ensure temp directory exists
-    mkdir -p .agents/tmp
+	# Ensure temp directory exists
+	mkdir -p .agents/tmp
 
-    case "$command" in
-        "quick")
-            if check_codacy_ready; then
-                run_quick_analysis
-            else
-                return 1
-            fi
-            ;;
-        "chunked")
-            if check_codacy_ready; then
-                run_chunked_analysis
-            else
-                return 1
-            fi
-            ;;
-        "tools")
-            list_tools
-            ;;
-        "analyze")
-            run_tool_analysis "$_arg2"
-            ;;
-        "status")
-            show_status
-            ;;
-        "cleanup")
-            cleanup
-            ;;
-        "help"|"--help"|"-h")
-            show_help
-            ;;
-        *)
-            print_error "$ERROR_UNKNOWN_COMMAND $command"
-            show_help
-            return 1
-            ;;
-    esac
-    return 0
+	case "$command" in
+	"quick")
+		if check_codacy_ready; then
+			run_quick_analysis
+		else
+			return 1
+		fi
+		;;
+	"chunked")
+		if check_codacy_ready; then
+			run_chunked_analysis
+		else
+			return 1
+		fi
+		;;
+	"tools")
+		list_tools
+		;;
+	"analyze")
+		run_tool_analysis "$_arg2"
+		;;
+	"status")
+		show_status
+		;;
+	"cleanup")
+		cleanup
+		;;
+	"help" | "--help" | "-h")
+		show_help
+		;;
+	*)
+		print_error "$ERROR_UNKNOWN_COMMAND $command"
+		show_help
+		return 1
+		;;
+	esac
+	return 0
 }
 
 # Execute main function with all arguments
