@@ -147,7 +147,47 @@ gh issue comment <number> --repo <owner/repo> --body "Supervisor pulse: killed w
 
 **Post-kill triage:** After killing a long-running worker, check if the issue has `blocked-by:` references with unmerged prerequisites. If so, this was a dispatch error — the blocker-chain validation (Step 3) should have caught it. Label the issue `status:blocked` and do NOT re-dispatch until the chain is clear.
 
-## Step 2b: Advisory Stuck Detection (t1332)
+## Step 2b: Cross-Repo TODO→Issue Sync
+
+For each pulse-enabled repo, check if there are TODO.md tasks that don't have corresponding GitHub issues. This ensures all managed repos get their tasks synced — not just repos with the issue-sync GitHub Actions workflow.
+
+**Use the existing `issue-sync-helper.sh push` command** — it already handles parsing TODO.md, deduplicating against existing issues, creating issues via `gh issue create`, and writing `ref:GH#` back to TODO.md. Run it from each repo's working directory so it finds the correct TODO.md:
+
+```bash
+# For each pulse-enabled repo (from repos.json, excluding local_only):
+REPOS=$(jq -c '.initialized_repos[] | select(.pulse == true and .local_only != true)' ~/.config/aidevops/repos.json)
+
+echo "$REPOS" | while IFS= read -r repo; do
+  path=$(echo "$repo" | jq -r '.path')
+  slug=$(echo "$repo" | jq -r '.slug')
+
+  # Skip repos without a TODO.md
+  [[ ! -f "$path/TODO.md" ]] && continue
+
+  # Run push from the repo's directory (helper uses find_project_root from $PWD)
+  (cd "$path" && ~/.aidevops/agents/scripts/issue-sync-helper.sh push --repo "$slug" 2>&1) || true
+
+  # If any refs were added to TODO.md, commit and push so they persist
+  if git -C "$path" diff --quiet TODO.md 2>/dev/null; then
+    : # No changes
+  else
+    git -C "$path" add TODO.md
+    git -C "$path" commit -m "chore: sync GitHub issue refs to TODO.md [skip ci]" 2>/dev/null || true
+    git -C "$path" push 2>/dev/null || true
+  fi
+done
+```
+
+**Key rules:**
+- The helper must run from the **repo's own directory** (`cd "$path"`) because `find_project_root()` walks up from `$PWD` to find TODO.md. The `--repo` flag only sets the GitHub slug for API calls.
+- The helper's `cmd_push` already handles: parsing task lines, skipping tasks with existing `ref:GH#`, deduplicating against GitHub issues by title prefix, creating labels, and writing refs back.
+- After the helper modifies TODO.md (adding `ref:GH#` refs), the supervisor commits and pushes those changes so they're visible to workers and future pulses.
+- **Privacy**: the helper creates issues on the task's own repo (via `--repo <slug>`), so private repo tasks stay on their own repo's issue tracker. No cross-repo leakage.
+- **Idempotency**: the helper checks for existing issues by title prefix before creating. Running this every pulse is safe — it will skip tasks that already have issues.
+- If a repo doesn't have TODO.md, skip it silently.
+- If `issue-sync-helper.sh` fails for a repo (e.g., auth issues, network), continue to the next repo — don't let one failure block the entire sync.
+
+## Step 2c: Advisory Stuck Detection (t1332)
 
 For each running worker, check if a stuck detection milestone is due. This is an **advisory-only** system — it labels issues and posts comments but **NEVER kills workers, cancels tasks, or modifies task state**. The kill decision remains in Step 2a above.
 
@@ -535,7 +575,7 @@ See `scripts/commands/strategic-review.md` for the full review prompt.
 ## What You Must NOT Do
 
 - Do NOT maintain state files, databases, or logs (the circuit breaker, stuck detection, and opus review helpers manage their own state files — those are the only exceptions)
-- Do NOT auto-kill workers based on stuck detection alone — stuck detection (Step 2b) is advisory only. The kill decision is separate (Step 2a) and requires your judgment
+- Do NOT auto-kill workers based on stuck detection alone — stuck detection (Step 2c) is advisory only. The kill decision is separate (Step 2a) and requires your judgment
 - Do NOT dispatch more workers than available slots (max MAX_WORKERS total, read from Step 1)
 - Do NOT try to implement anything yourself — you are the supervisor, not a worker
 - Do NOT read source code, run tests, or do any task work
