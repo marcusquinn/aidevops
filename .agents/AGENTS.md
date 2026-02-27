@@ -146,6 +146,13 @@ Planning files go direct to main. Code changes need worktree + PR. Workers NEVER
 
 **Cross-repo awareness**: The supervisor manages tasks across all repos in `~/.config/aidevops/repos.json` where `pulse: true`. Each repo entry has a `slug` field (`owner/repo`) — ALWAYS use this for `gh` commands, never guess org names. Use `gh issue list --repo <slug>` and `gh pr list --repo <slug>` for each pulse-enabled repo to get the full picture. Repos with `"local_only": true` have no GitHub remote — skip `gh` operations on them. Repo paths may be nested (e.g., `~/Git/cloudron/netbird-app`), not just `~/Git/<name>`.
 
+**Cross-repo task creation**: When a session creates a task in a *different* repo (e.g., adding an aidevops TODO while working in another project), follow the full workflow — not just the TODO edit:
+
+1. **Claim the ID atomically**: Run `claim-task-id.sh --repo-path <target-repo> --title "description"`. This allocates the next ID via CAS on the counter branch and optionally creates the GitHub issue. NEVER grep TODO.md to guess the next ID — concurrent sessions will collide.
+2. **Add the TODO entry and commit+push immediately**: Planning files go direct to main. The supervisor/pulse only sees remote state, so an uncommitted TODO entry is invisible to dispatch. Push right after committing.
+3. **Create a GitHub issue for dispatch**: If `claim-task-id.sh` was run with `--no-issue`, or you added the TODO manually, create the issue separately: `gh issue create --repo <slug> --title "tNNN: description" --body "..."`. Record the issue number in TODO.md as `ref:GH#NNN`.
+4. **Code changes still need a worktree + PR**: The TODO/issue creation above is planning — it goes direct to main. If the task also involves code changes in the *current* repo, those follow the normal worktree + PR flow.
+
 Full rules: `reference/planning-detail.md`
 
 ## Git Workflow
