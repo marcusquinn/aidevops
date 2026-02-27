@@ -212,3 +212,16 @@ _Completed after mission finishes._
 ### Framework Improvements
 
 - {Improvements to offer back to aidevops — new agents, scripts, patterns discovered}
+
+### Skill Learning
+
+_Auto-populated by `mission-skill-learner.sh scan` at mission completion._
+
+| Artifact | Type | Score | Promoted To | Notes |
+|----------|------|-------|-------------|-------|
+| | | | | |
+
+<!-- Run: mission-skill-learner.sh scan {mission-dir}
+     Promote: mission-skill-learner.sh promote <path> [draft|custom]
+     Patterns: mission-skill-learner.sh patterns --mission {mission_id}
+     See: workflows/mission-skill-learning.md -->

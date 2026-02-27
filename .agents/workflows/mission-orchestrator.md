@@ -175,8 +175,19 @@ Set milestone status to `validating`, then verify:
    - Outcomes vs original goal
    - Budget accuracy (budgeted vs actual)
    - Lessons learned
-4. Review mission agents and scripts for promotion (see "Improvement Feedback" below)
-5. Commit and push the final state
+4. Run skill learning scan to capture reusable patterns (see `workflows/mission-skill-learning.md`):
+
+   ```bash
+   mission-skill-learner.sh scan {mission-dir}
+   ```
+
+   - Review promotion suggestions in the output
+   - Promote high-scoring artifacts: `mission-skill-learner.sh promote <path> draft`
+   - Update the mission's "Mission Agents" table with promotion decisions
+   - Decisions and lessons are automatically stored in cross-session memory
+
+5. Review mission agents and scripts for promotion (see "Improvement Feedback" below)
+6. Commit and push the final state
 
 ## Self-Organisation
 
@@ -275,10 +286,10 @@ Every mission is an opportunity to improve the framework. The orchestrator shoul
 ### How to Report
 
 1. **During execution**: Note observations in the mission's decision log. Don't interrupt the mission to file issues.
-2. **At completion**: Review the decision log and mission agents. For each improvement:
+2. **At completion**: Run `mission-skill-learner.sh scan {mission-dir}` to auto-capture artifacts and patterns. Then review the decision log and mission agents. For each improvement:
    - File a GitHub issue on the aidevops repo: `gh issue create --repo {aidevops_slug} --title "Mission feedback: {description}" --body "{details}"`
    - Record the issue number in the mission's "Framework Improvements" section
-3. **For reusable agents**: Move to `~/.aidevops/agents/draft/` and create a TODO entry for promotion review
+3. **For reusable agents**: Use `mission-skill-learner.sh promote <path> draft` to move to `~/.aidevops/agents/draft/`. The skill learner scores artifacts and tracks promotions in memory for pattern detection across missions. See `workflows/mission-skill-learning.md` for the full promotion lifecycle.
 
 ### What NOT to Do
 
@@ -568,6 +579,8 @@ Each repo has its own task ID namespace. When creating tasks in secondary repos,
 - `scripts/commands/pulse.md` — Supervisor that detects active missions and invokes this orchestrator
 - `scripts/commands/full-loop.md` — Worker execution pattern for individual features
 - `templates/mission-template.md` — Mission state file format
+- `workflows/mission-skill-learning.md` — Skill learning: auto-capture patterns, promote artifacts, track recurring patterns
+- `scripts/mission-skill-learner.sh` — CLI for scanning, scoring, promoting mission artifacts
 - `workflows/plans.md` — Task decomposition patterns
 - `tools/build-agent/build-agent.md` — Agent lifecycle tiers (draft for mission agents)
 - `reference/orchestration.md` — Model routing and dispatch patterns
