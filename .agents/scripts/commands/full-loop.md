@@ -157,10 +157,29 @@ done
 
 if [[ -n "$MODEL_SHORT" && -n "$ISSUE_NUM" && "$ISSUE_NUM" != "null" ]]; then
   REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+
+  # Remove stale dispatched:* labels so attribution is unambiguous
+  for OLD in "dispatched:opus" "dispatched:sonnet" "dispatched:haiku"; do
+    if [[ "$OLD" != "dispatched:${MODEL_SHORT}" ]]; then
+      if ! gh issue edit "$ISSUE_NUM" --repo "$REPO" --remove-label "$OLD" 2>/dev/null; then
+        : # Label not present — expected, not an error
+      fi
+    fi
+  done
+
   # Create the label if it doesn't exist yet
-  gh label create "dispatched:${MODEL_SHORT}" --repo "$REPO" \
-    --description "Task dispatched to ${MODEL_SHORT} model" --color "1D76DB" 2>/dev/null || true
-  gh issue edit "$ISSUE_NUM" --repo "$REPO" --add-label "dispatched:${MODEL_SHORT}" 2>/dev/null || true
+  if ! LABEL_ERR=$(gh label create "dispatched:${MODEL_SHORT}" --repo "$REPO" \
+    --description "Task dispatched to ${MODEL_SHORT} model" --color "1D76DB" 2>&1); then
+    # "already exists" is expected — only warn on other failures
+    if [[ "$LABEL_ERR" != *"already exists"* ]]; then
+      echo "[dispatch-label] Warning: label create failed for dispatched:${MODEL_SHORT} on ${REPO}: ${LABEL_ERR}" >&2
+    fi
+  fi
+
+  if ! EDIT_ERR=$(gh issue edit "$ISSUE_NUM" --repo "$REPO" \
+    --add-label "dispatched:${MODEL_SHORT}" 2>&1); then
+    echo "[dispatch-label] Warning: could not add dispatched:${MODEL_SHORT} to issue #${ISSUE_NUM} on ${REPO}: ${EDIT_ERR}" >&2
+  fi
 fi
 ```
 

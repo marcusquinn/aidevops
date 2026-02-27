@@ -18,6 +18,16 @@ set -euo pipefail
 #######################################
 PULSE_TIMEOUT="${PULSE_TIMEOUT:-600}"                 # 10 minutes max per pulse
 PULSE_STALE_THRESHOLD="${PULSE_STALE_THRESHOLD:-900}" # 15 min = definitely stuck
+
+# Validate numeric configuration
+if ! [[ "$PULSE_TIMEOUT" =~ ^[0-9]+$ ]]; then
+	echo "[pulse-wrapper] Invalid PULSE_TIMEOUT: $PULSE_TIMEOUT — using default 600" >&2
+	PULSE_TIMEOUT=600
+fi
+if ! [[ "$PULSE_STALE_THRESHOLD" =~ ^[0-9]+$ ]]; then
+	echo "[pulse-wrapper] Invalid PULSE_STALE_THRESHOLD: $PULSE_STALE_THRESHOLD — using default 900" >&2
+	PULSE_STALE_THRESHOLD=900
+fi
 PIDFILE="${HOME}/.aidevops/logs/pulse.pid"
 LOGFILE="${HOME}/.aidevops/logs/pulse.log"
 OPENCODE_BIN="${OPENCODE_BIN:-/opt/homebrew/bin/opencode}"
@@ -83,10 +93,10 @@ check_dedup() {
 _kill_tree() {
 	local pid="$1"
 	# Find all child processes recursively
-	local children
-	children=$(pgrep -P "$pid" 2>/dev/null || true)
-	for child in $children; do
-		_kill_tree "$child"
+	local -a children
+	mapfile -t children < <(pgrep -P "$pid" 2>/dev/null || true)
+	for child in "${children[@]}"; do
+		[[ -n "$child" ]] && _kill_tree "$child"
 	done
 	kill "$pid" 2>/dev/null || true
 	return 0
@@ -99,10 +109,10 @@ _kill_tree() {
 #######################################
 _force_kill_tree() {
 	local pid="$1"
-	local children
-	children=$(pgrep -P "$pid" 2>/dev/null || true)
-	for child in $children; do
-		_force_kill_tree "$child"
+	local -a children
+	mapfile -t children < <(pgrep -P "$pid" 2>/dev/null || true)
+	for child in "${children[@]}"; do
+		[[ -n "$child" ]] && _force_kill_tree "$child"
 	done
 	kill -9 "$pid" 2>/dev/null || true
 	return 0
@@ -118,9 +128,9 @@ _get_process_age() {
 	local pid="$1"
 	local etime
 	# macOS ps etime format: MM:SS or HH:MM:SS or D-HH:MM:SS
-	etime=$(ps -p "$pid" -o etime= 2>/dev/null | tr -d ' ') || echo "0"
+	etime=$(ps -p "$pid" -o etime= 2>/dev/null | tr -d ' ') || etime=""
 
-	if [[ -z "$etime" || "$etime" == "0" ]]; then
+	if [[ -z "$etime" ]]; then
 		echo "0"
 		return 0
 	fi

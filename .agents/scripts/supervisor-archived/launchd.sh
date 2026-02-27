@@ -142,6 +142,12 @@ _generate_supervisor_pulse_plist() {
 		wrapper_path="$HOME/.aidevops/agents/scripts/pulse-wrapper.sh"
 	fi
 
+	# Validate wrapper exists before generating plist
+	if [[ ! -f "$wrapper_path" ]]; then
+		echo "ERROR: pulse-wrapper.sh not found at $wrapper_path" >&2
+		return 1
+	fi
+
 	# Build EnvironmentVariables dict — wrapper reads these
 	local env_dict
 	env_dict="<key>PATH</key>
