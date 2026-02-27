@@ -647,6 +647,263 @@ cmd_providers() {
 # Dispatch the same review prompt to multiple models, collect results, diff.
 # =============================================================================
 
+# Judge scoring for cross-review (t1329)
+# Dispatches all model outputs to a judge model, parses structured JSON scores,
+# records results via cmd_score, and feeds into the pattern tracker.
+# Defined before cmd_cross_review (its caller) for readability.
+#
+# Args:
+#   $1 - original prompt
+#   $2 - models_str (comma-separated)
+#   $3 - output_dir
+#   $4 - judge_model tier
+#   $5+ - model_names array
+_cross_review_judge_score() {
+	local original_prompt="$1"
+	local models_str="$2"
+	local output_dir="$3"
+	local judge_model="$4"
+	shift 4
+	local -a model_names=("$@")
+
+	local runner_helper="${SCRIPT_DIR}/runner-helper.sh"
+	if [[ ! -x "$runner_helper" ]]; then
+		print_warning "runner-helper.sh not found — skipping judge scoring"
+		return 0
+	fi
+
+	echo "=== JUDGE SCORING (${judge_model}) ==="
+	echo ""
+
+	# Build judge prompt: include original prompt + all model responses
+	local judge_prompt
+	judge_prompt="You are a neutral judge evaluating AI model responses. Score each response on a 1-10 scale.
+
+ORIGINAL PROMPT:
+${original_prompt}
+
+MODEL RESPONSES:
+"
+	# Bound per-model response size to keep judge payload within token limits
+	local max_chars_per_model=20000
+	local models_with_output=()
+	for model_tier in "${model_names[@]}"; do
+		local result_file="${output_dir}/${model_tier}.txt"
+		if [[ -f "$result_file" && -s "$result_file" ]]; then
+			local response_text
+			response_text=$(head -c "$max_chars_per_model" "$result_file")
+			local file_size
+			file_size=$(wc -c <"$result_file" | tr -d ' ')
+			local truncated_marker=""
+			if [[ "$file_size" -gt "$max_chars_per_model" ]]; then
+				truncated_marker="
+[TRUNCATED — original ${file_size} chars, showing first ${max_chars_per_model}]"
+			fi
+			judge_prompt+="
+=== MODEL: ${model_tier} ===
+${response_text}${truncated_marker}
+"
+			models_with_output+=("$model_tier")
+		fi
+	done
+
+	if [[ ${#models_with_output[@]} -lt 2 ]]; then
+		print_warning "Not enough model outputs for judge scoring (need 2+)"
+		return 0
+	fi
+
+	judge_prompt+="
+SCORING INSTRUCTIONS:
+Score each model on these criteria (1-10 scale):
+- correctness: Factual accuracy and technical correctness
+- completeness: Coverage of all requirements and edge cases
+- quality: Code quality, best practices, maintainability
+- clarity: Clear explanation, good formatting, readability
+- adherence: Following the original prompt instructions precisely
+
+Respond with ONLY a valid JSON object in this exact format (no markdown, no explanation):
+{
+  \"task_type\": \"general\",
+  \"winner\": \"<model_tier_of_best_response>\",
+  \"reasoning\": \"<one sentence explaining the winner>\",
+  \"scores\": {
+    \"<model_tier>\": {
+      \"correctness\": <1-10>,
+      \"completeness\": <1-10>,
+      \"quality\": <1-10>,
+      \"clarity\": <1-10>,
+      \"adherence\": <1-10>
+    }
+  }
+}"
+
+	# Dispatch to judge model
+	local judge_runner="cross-review-judge-$$"
+	local judge_output_file="${output_dir}/judge-${judge_model}.json"
+
+	echo "  Dispatching to judge (${judge_model})..."
+
+	local judge_err_log="${output_dir}/judge-errors.log"
+
+	"$runner_helper" create "$judge_runner" \
+		--model "$judge_model" \
+		--description "Cross-review judge" \
+		--workdir "$(pwd)" 2>>"$judge_err_log" || true
+
+	"$runner_helper" run "$judge_runner" "$judge_prompt" \
+		--model "$judge_model" \
+		--timeout "120" \
+		--format text >"$judge_output_file" 2>>"$judge_err_log" || true
+
+	"$runner_helper" destroy "$judge_runner" --force 2>>"$judge_err_log" || true
+
+	if [[ ! -f "$judge_output_file" || ! -s "$judge_output_file" ]]; then
+		print_warning "Judge model returned no output — skipping scoring"
+		return 0
+	fi
+
+	# Extract JSON from judge output (strip any surrounding text)
+	local judge_json
+	judge_json=$(grep -o '{.*}' "$judge_output_file" 2>>"$judge_err_log" | head -1 || true)
+	if [[ -z "$judge_json" ]]; then
+		# Try multiline JSON extraction via stdin (safe for paths with special chars)
+		judge_json=$(python3 -c "
+import sys, json, re
+text = sys.stdin.read()
+m = re.search(r'\{.*\}', text, re.DOTALL)
+if m:
+    try:
+        obj = json.loads(m.group())
+        print(json.dumps(obj))
+    except Exception:
+        pass
+" <"$judge_output_file" 2>>"$judge_err_log" || true)
+	fi
+
+	if [[ -z "$judge_json" ]]; then
+		print_warning "Could not parse judge JSON output. Raw output saved to: $judge_output_file"
+		return 0
+	fi
+
+	# Parse winner, task_type, and reasoning in a single Python call
+	local parsed_fields
+	parsed_fields=$(echo "$judge_json" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+# Truncate reasoning to 500 chars and strip control characters
+r = d.get('reasoning', '')[:500]
+r = ''.join(c for c in r if c.isprintable() or c in (' ', '\t'))
+print(d.get('winner', ''))
+print(d.get('task_type', 'general'))
+print(r)
+" 2>>"$judge_err_log" || true)
+
+	local winner task_type reasoning
+	if [[ -n "$parsed_fields" ]]; then
+		winner=$(echo "$parsed_fields" | head -1)
+		task_type=$(echo "$parsed_fields" | sed -n '2p')
+		reasoning=$(echo "$parsed_fields" | sed -n '3p')
+	else
+		winner=""
+		task_type="general"
+		reasoning=""
+	fi
+
+	# Sanitize task_type: restrict to known allowlist
+	local -a valid_task_types=(general code review analysis debug refactor test docs security)
+	local task_type_valid=false
+	for vt in "${valid_task_types[@]}"; do
+		if [[ "$task_type" == "$vt" ]]; then
+			task_type_valid=true
+			break
+		fi
+	done
+	if [[ "$task_type_valid" != "true" ]]; then
+		task_type="general"
+	fi
+
+	# Sanitize winner: must be one of the models with output
+	local winner_valid=false
+	if [[ -n "$winner" ]]; then
+		for m in "${models_with_output[@]}"; do
+			if [[ "$winner" == "$m" ]]; then
+				winner_valid=true
+				break
+			fi
+		done
+		if [[ "$winner_valid" != "true" ]]; then
+			print_warning "Judge returned unknown winner '${winner}' — ignoring"
+			winner=""
+		fi
+	fi
+
+	echo "  Judge winner: ${winner:-unknown}"
+	[[ -n "$reasoning" ]] && echo "  Reasoning: ${reasoning}"
+	echo ""
+
+	# Helper: clamp a numeric value to integer in range 0-10
+	_clamp_score() {
+		local val="$1"
+		# Strip non-numeric characters, default to 0
+		val="${val//[^0-9]/}"
+		if [[ -z "$val" ]]; then
+			echo "0"
+			return 0
+		fi
+		if [[ "$val" -gt 10 ]]; then
+			echo "10"
+		else
+			echo "$val"
+		fi
+		return 0
+	}
+
+	# Build cmd_score arguments from judge JSON
+	local -a score_args=(
+		--task "$original_prompt"
+		--type "$task_type"
+		--evaluator "$judge_model"
+	)
+	[[ -n "$winner" ]] && score_args+=(--winner "$winner")
+
+	for model_tier in "${models_with_output[@]}"; do
+		# Extract all scores in a single Python call (avoids 5 subprocesses per model)
+		local scores_line
+		scores_line=$(echo "$judge_json" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+s = d.get('scores', {}).get('${model_tier}', {})
+print(s.get('correctness', 0), s.get('completeness', 0), s.get('quality', 0), s.get('clarity', 0), s.get('adherence', 0))
+" 2>>"$judge_err_log" || echo "0 0 0 0 0")
+		local corr comp qual clar adhr
+		read -r corr comp qual clar adhr <<<"$scores_line"
+
+		# Clamp all scores to valid integer range 0-10
+		corr=$(_clamp_score "$corr")
+		comp=$(_clamp_score "$comp")
+		qual=$(_clamp_score "$qual")
+		clar=$(_clamp_score "$clar")
+		adhr=$(_clamp_score "$adhr")
+
+		score_args+=(
+			--model "$model_tier"
+			--correctness "$corr"
+			--completeness "$comp"
+			--quality "$qual"
+			--clarity "$clar"
+			--adherence "$adhr"
+		)
+	done
+
+	# Record scores via cmd_score (also syncs to pattern tracker)
+	cmd_score "${score_args[@]}"
+
+	echo "Judge scores recorded. Judge output: $judge_output_file"
+	echo ""
+
+	return 0
+}
+
 #######################################
 # Cross-model review: dispatch same prompt to multiple models (t132.8, t1329)
 # Usage: compare-models-helper.sh cross-review --prompt "review this code" \
@@ -906,262 +1163,6 @@ cmd_cross_review() {
 		_cross_review_judge_score \
 			"$prompt" "$models_str" "$output_dir" "$judge_model" "${model_names[@]}"
 	fi
-
-	return 0
-}
-
-# Judge scoring for cross-review (t1329)
-# Dispatches all model outputs to a judge model, parses structured JSON scores,
-# records results via cmd_score, and feeds into the pattern tracker.
-#
-# Args:
-#   $1 - original prompt
-#   $2 - models_str (comma-separated)
-#   $3 - output_dir
-#   $4 - judge_model tier
-#   $5+ - model_names array
-_cross_review_judge_score() {
-	local original_prompt="$1"
-	local models_str="$2"
-	local output_dir="$3"
-	local judge_model="$4"
-	shift 4
-	local -a model_names=("$@")
-
-	local runner_helper="${SCRIPT_DIR}/runner-helper.sh"
-	if [[ ! -x "$runner_helper" ]]; then
-		print_warning "runner-helper.sh not found — skipping judge scoring"
-		return 0
-	fi
-
-	echo "=== JUDGE SCORING (${judge_model}) ==="
-	echo ""
-
-	# Build judge prompt: include original prompt + all model responses
-	local judge_prompt
-	judge_prompt="You are a neutral judge evaluating AI model responses. Score each response on a 1-10 scale.
-
-ORIGINAL PROMPT:
-${original_prompt}
-
-MODEL RESPONSES:
-"
-	# Bound per-model response size to keep judge payload within token limits
-	local max_chars_per_model=20000
-	local models_with_output=()
-	for model_tier in "${model_names[@]}"; do
-		local result_file="${output_dir}/${model_tier}.txt"
-		if [[ -f "$result_file" && -s "$result_file" ]]; then
-			local response_text
-			response_text=$(head -c "$max_chars_per_model" "$result_file")
-			local file_size
-			file_size=$(wc -c <"$result_file" | tr -d ' ')
-			local truncated_marker=""
-			if [[ "$file_size" -gt "$max_chars_per_model" ]]; then
-				truncated_marker="
-[TRUNCATED — original ${file_size} chars, showing first ${max_chars_per_model}]"
-			fi
-			judge_prompt+="
-=== MODEL: ${model_tier} ===
-${response_text}${truncated_marker}
-"
-			models_with_output+=("$model_tier")
-		fi
-	done
-
-	if [[ ${#models_with_output[@]} -lt 2 ]]; then
-		print_warning "Not enough model outputs for judge scoring (need 2+)"
-		return 0
-	fi
-
-	judge_prompt+="
-SCORING INSTRUCTIONS:
-Score each model on these criteria (1-10 scale):
-- correctness: Factual accuracy and technical correctness
-- completeness: Coverage of all requirements and edge cases
-- quality: Code quality, best practices, maintainability
-- clarity: Clear explanation, good formatting, readability
-- adherence: Following the original prompt instructions precisely
-
-Respond with ONLY a valid JSON object in this exact format (no markdown, no explanation):
-{
-  \"task_type\": \"general\",
-  \"winner\": \"<model_tier_of_best_response>\",
-  \"reasoning\": \"<one sentence explaining the winner>\",
-  \"scores\": {
-    \"<model_tier>\": {
-      \"correctness\": <1-10>,
-      \"completeness\": <1-10>,
-      \"quality\": <1-10>,
-      \"clarity\": <1-10>,
-      \"adherence\": <1-10>
-    }
-  }
-}"
-
-	# Dispatch to judge model
-	local judge_runner="cross-review-judge-$$"
-	local judge_output_file="${output_dir}/judge-${judge_model}.json"
-
-	echo "  Dispatching to judge (${judge_model})..."
-
-	local judge_err_log="${output_dir}/judge-errors.log"
-
-	"$runner_helper" create "$judge_runner" \
-		--model "$judge_model" \
-		--description "Cross-review judge" \
-		--workdir "$(pwd)" 2>>"$judge_err_log" || true
-
-	"$runner_helper" run "$judge_runner" "$judge_prompt" \
-		--model "$judge_model" \
-		--timeout "120" \
-		--format text >"$judge_output_file" 2>>"$judge_err_log" || true
-
-	"$runner_helper" destroy "$judge_runner" --force 2>>"$judge_err_log" || true
-
-	if [[ ! -f "$judge_output_file" || ! -s "$judge_output_file" ]]; then
-		print_warning "Judge model returned no output — skipping scoring"
-		return 0
-	fi
-
-	# Extract JSON from judge output (strip any surrounding text)
-	local judge_json
-	judge_json=$(grep -o '{.*}' "$judge_output_file" 2>>"$judge_err_log" | head -1 || true)
-	if [[ -z "$judge_json" ]]; then
-		# Try multiline JSON extraction via stdin (safe for paths with special chars)
-		judge_json=$(python3 -c "
-import sys, json, re
-text = sys.stdin.read()
-m = re.search(r'\{.*\}', text, re.DOTALL)
-if m:
-    try:
-        obj = json.loads(m.group())
-        print(json.dumps(obj))
-    except Exception:
-        pass
-" <"$judge_output_file" 2>>"$judge_err_log" || true)
-	fi
-
-	if [[ -z "$judge_json" ]]; then
-		print_warning "Could not parse judge JSON output. Raw output saved to: $judge_output_file"
-		return 0
-	fi
-
-	# Parse winner, task_type, and reasoning in a single Python call
-	local parsed_fields
-	parsed_fields=$(echo "$judge_json" | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-# Truncate reasoning to 500 chars and strip control characters
-r = d.get('reasoning', '')[:500]
-r = ''.join(c for c in r if c.isprintable() or c in (' ', '\t'))
-print(d.get('winner', ''))
-print(d.get('task_type', 'general'))
-print(r)
-" 2>>"$judge_err_log" || true)
-
-	local winner task_type reasoning
-	if [[ -n "$parsed_fields" ]]; then
-		winner=$(echo "$parsed_fields" | head -1)
-		task_type=$(echo "$parsed_fields" | sed -n '2p')
-		reasoning=$(echo "$parsed_fields" | sed -n '3p')
-	else
-		winner=""
-		task_type="general"
-		reasoning=""
-	fi
-
-	# Sanitize task_type: restrict to known allowlist
-	local -a valid_task_types=(general code review analysis debug refactor test docs security)
-	local task_type_valid=false
-	for vt in "${valid_task_types[@]}"; do
-		if [[ "$task_type" == "$vt" ]]; then
-			task_type_valid=true
-			break
-		fi
-	done
-	if [[ "$task_type_valid" != "true" ]]; then
-		task_type="general"
-	fi
-
-	# Sanitize winner: must be one of the models with output
-	local winner_valid=false
-	if [[ -n "$winner" ]]; then
-		for m in "${models_with_output[@]}"; do
-			if [[ "$winner" == "$m" ]]; then
-				winner_valid=true
-				break
-			fi
-		done
-		if [[ "$winner_valid" != "true" ]]; then
-			print_warning "Judge returned unknown winner '${winner}' — ignoring"
-			winner=""
-		fi
-	fi
-
-	echo "  Judge winner: ${winner:-unknown}"
-	[[ -n "$reasoning" ]] && echo "  Reasoning: ${reasoning}"
-	echo ""
-
-	# Helper: clamp a numeric value to integer in range 0-10
-	_clamp_score() {
-		local val="$1"
-		# Strip non-numeric characters, default to 0
-		val="${val//[^0-9]/}"
-		if [[ -z "$val" ]]; then
-			echo "0"
-			return 0
-		fi
-		if [[ "$val" -gt 10 ]]; then
-			echo "10"
-		else
-			echo "$val"
-		fi
-		return 0
-	}
-
-	# Build cmd_score arguments from judge JSON
-	local -a score_args=(
-		--task "$original_prompt"
-		--type "$task_type"
-		--evaluator "$judge_model"
-	)
-	[[ -n "$winner" ]] && score_args+=(--winner "$winner")
-
-	for model_tier in "${models_with_output[@]}"; do
-		# Extract all scores in a single Python call (avoids 5 subprocesses per model)
-		local scores_line
-		scores_line=$(echo "$judge_json" | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-s = d.get('scores', {}).get('${model_tier}', {})
-print(s.get('correctness', 0), s.get('completeness', 0), s.get('quality', 0), s.get('clarity', 0), s.get('adherence', 0))
-" 2>>"$judge_err_log" || echo "0 0 0 0 0")
-		local corr comp qual clar adhr
-		read -r corr comp qual clar adhr <<<"$scores_line"
-
-		# Clamp all scores to valid integer range 0-10
-		corr=$(_clamp_score "$corr")
-		comp=$(_clamp_score "$comp")
-		qual=$(_clamp_score "$qual")
-		clar=$(_clamp_score "$clar")
-		adhr=$(_clamp_score "$adhr")
-
-		score_args+=(
-			--model "$model_tier"
-			--correctness "$corr"
-			--completeness "$comp"
-			--quality "$qual"
-			--clarity "$clar"
-			--adherence "$adhr"
-		)
-	done
-
-	# Record scores via cmd_score (also syncs to pattern tracker)
-	cmd_score "${score_args[@]}"
-
-	echo "Judge scores recorded. Judge output: $judge_output_file"
-	echo ""
 
 	return 0
 }
