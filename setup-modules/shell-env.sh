@@ -202,13 +202,13 @@ setup_shell_compatibility() {
 
 	for src_file in "${bash_files[@]}"; do
 		local n
-		# grep -c outputs "0" on no match (exit 1); "|| true" prevents exit
-		# without appending a second "0" line (which breaks arithmetic)
-		n=$(grep -cE '^\s*export\s+[A-Z]' "$src_file" 2>/dev/null) || true
+		# grep -c exits 1 on no match; handle inside subshell to avoid ERR trap noise
+		# with inherit_errexit, || true after $() may still fire the trap in some Bash versions
+		n=$(grep -cE '^\s*export\s+[A-Z]' "$src_file" 2>/dev/null || :)
 		total_exports=$((total_exports + ${n:-0}))
-		n=$(grep -cE '^\s*alias\s+' "$src_file" 2>/dev/null) || true
+		n=$(grep -cE '^\s*alias\s+' "$src_file" 2>/dev/null || :)
 		total_aliases=$((total_aliases + ${n:-0}))
-		n=$(grep -cE 'PATH.*=' "$src_file" 2>/dev/null) || true
+		n=$(grep -cE 'PATH.*=' "$src_file" 2>/dev/null || :)
 		total_paths=$((total_paths + ${n:-0}))
 	done
 

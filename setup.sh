@@ -500,6 +500,12 @@ main() {
 
 	parse_args "$@"
 
+	# Auto-detect non-interactive terminals (CI/CD, agent shells, piped stdin)
+	# Must run after parse_args so explicit --interactive flag takes precedence
+	if [[ "$INTERACTIVE_MODE" != "true" && ! -t 0 ]]; then
+		NON_INTERACTIVE=true
+	fi
+
 	# Guard: --interactive and --non-interactive are mutually exclusive
 	if [[ "$INTERACTIVE_MODE" == "true" && "$NON_INTERACTIVE" == "true" ]]; then
 		print_error "--interactive and --non-interactive cannot be used together"
