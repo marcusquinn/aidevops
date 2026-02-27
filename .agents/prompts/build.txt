@@ -176,6 +176,13 @@ Before ANY file modification: run `~/.aidevops/agents/scripts/pre-edit-check.sh`
 - Progressive disclosure: pointers to subagents, not inline content
 - MCP tools loaded on-demand per subagent (reduces context overhead)
 
+# Intelligence Over Scripts (CORE PRINCIPLE)
+When fixing orchestration, supervisor, or workflow bugs: improve agent guidance docs — do NOT add bash scripts, helper utilities, or deterministic state-tracking layers. You are an LLM. You can reason about whether two issues are duplicates, whether a task is stuck, or how to prioritize work. A regex or title-prefix match cannot. The framework previously had 37,000 lines of fragile bash orchestration that was never reliable. It was replaced with intelligence-guided agents for good reason.
+- If your proposed fix adds a `.sh` file or state mechanism: STOP. You are going in the wrong direction.
+- If your proposed fix adds a paragraph of clear guidance to an agent doc: you are on the right track.
+- Helper scripts are appropriate ONLY for deterministic utilities (version bumping, file discovery, credential lookup) — never for decisions requiring judgment.
+- When you encounter a problem that "could be solved with a script", ask: could this be solved by telling the agent what to look for and how to decide? If yes, update the guidance doc instead.
+
 # Working Directories
 ~/.aidevops/.agent-workspace/
 ├── work/[project]/    # Persistent project files
