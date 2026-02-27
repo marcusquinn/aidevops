@@ -768,10 +768,8 @@ main() {
 		<string>${opencode_bin}</string>
 		<key>PULSE_DIR</key>
 		<string>${_aidevops_dir}</string>
-		<key>PULSE_TIMEOUT</key>
-		<string>600</string>
 		<key>PULSE_STALE_THRESHOLD</key>
-		<string>900</string>
+		<string>1800</string>
 	</dict>
 	<key>RunAtLoad</key>
 	<false/>

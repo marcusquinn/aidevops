@@ -1,13 +1,20 @@
 #!/usr/bin/env bash
-# pulse-wrapper.sh - Wrapper for supervisor pulse with timeout and dedup
+# pulse-wrapper.sh - Wrapper for supervisor pulse with dedup and lifecycle management
 #
 # Solves: opencode run enters idle state after completing the pulse prompt
 # but never exits, blocking all future pulses via the pgrep dedup guard.
 #
 # This wrapper:
 #   1. Uses a PID file with staleness check (not pgrep) for dedup
-#   2. Runs opencode run with a hard timeout (default: 10 min)
-#   3. Guarantees the process is killed if it hangs after completion
+#   2. Cleans up orphaned opencode processes before each pulse
+#   3. Calculates dynamic worker concurrency from available RAM
+#   4. Lets the pulse run to completion — no hard timeout
+#
+# Lifecycle: launchd fires every 120s. If a pulse is still running, the
+# dedup check skips. If a pulse has been running longer than PULSE_STALE_THRESHOLD
+# (default 30 min), it's assumed stuck (opencode idle bug) and killed so the
+# next invocation can start fresh. This is the ONLY kill mechanism — no
+# arbitrary timeouts that would interrupt active work.
 #
 # Called by launchd every 120s via the supervisor-pulse plist.
 
@@ -16,17 +23,12 @@ set -euo pipefail
 #######################################
 # Configuration
 #######################################
-PULSE_TIMEOUT="${PULSE_TIMEOUT:-600}"                 # 10 minutes max per pulse
-PULSE_STALE_THRESHOLD="${PULSE_STALE_THRESHOLD:-900}" # 15 min = definitely stuck
+PULSE_STALE_THRESHOLD="${PULSE_STALE_THRESHOLD:-1800}" # 30 min = definitely stuck (opencode idle bug)
 
 # Validate numeric configuration
-if ! [[ "$PULSE_TIMEOUT" =~ ^[0-9]+$ ]]; then
-	echo "[pulse-wrapper] Invalid PULSE_TIMEOUT: $PULSE_TIMEOUT — using default 600" >&2
-	PULSE_TIMEOUT=600
-fi
 if ! [[ "$PULSE_STALE_THRESHOLD" =~ ^[0-9]+$ ]]; then
-	echo "[pulse-wrapper] Invalid PULSE_STALE_THRESHOLD: $PULSE_STALE_THRESHOLD — using default 900" >&2
-	PULSE_STALE_THRESHOLD=900
+	echo "[pulse-wrapper] Invalid PULSE_STALE_THRESHOLD: $PULSE_STALE_THRESHOLD — using default 1800" >&2
+	PULSE_STALE_THRESHOLD=1800
 fi
 PIDFILE="${HOME}/.aidevops/logs/pulse.pid"
 LOGFILE="${HOME}/.aidevops/logs/pulse.log"
@@ -170,12 +172,22 @@ _get_process_age() {
 }
 
 #######################################
-# Run the pulse with timeout
+# Run the pulse — no hard timeout
+#
+# The pulse runs until opencode exits naturally. If opencode enters its
+# idle-state bug (file watcher keeps process alive after session completes),
+# the NEXT launchd invocation's check_dedup() will detect the stale process
+# (age > PULSE_STALE_THRESHOLD) and kill it. This is correct because:
+#   - Active pulses doing real work are never interrupted
+#   - Stuck pulses are detected by the next invocation (120s later)
+#   - The stale threshold (30 min) is generous enough for any real workload
 #######################################
 run_pulse() {
+	local start_epoch
+	start_epoch=$(date +%s)
 	echo "[pulse-wrapper] Starting pulse at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$LOGFILE"
 
-	# Start opencode run in background
+	# Run opencode — blocks until it exits (or is killed by next invocation's stale check)
 	"$OPENCODE_BIN" run "/pulse" \
 		--dir "$PULSE_DIR" \
 		-m "$PULSE_MODEL" \
@@ -185,35 +197,18 @@ run_pulse() {
 	local opencode_pid=$!
 	echo "$opencode_pid" >"$PIDFILE"
 
-	echo "[pulse-wrapper] opencode PID: $opencode_pid, timeout: ${PULSE_TIMEOUT}s" >>"$LOGFILE"
+	echo "[pulse-wrapper] opencode PID: $opencode_pid" >>"$LOGFILE"
 
-	# Wait for completion OR timeout
-	local waited=0
-	local check_interval=5
-
-	while kill -0 "$opencode_pid" 2>/dev/null; do
-		if [[ "$waited" -ge "$PULSE_TIMEOUT" ]]; then
-			echo "[pulse-wrapper] Timeout after ${PULSE_TIMEOUT}s — killing opencode PID $opencode_pid and children" >>"$LOGFILE"
-			_kill_tree "$opencode_pid"
-			sleep 2
-			# Force kill if graceful shutdown didn't work
-			if kill -0 "$opencode_pid" 2>/dev/null; then
-				echo "[pulse-wrapper] Force killing PID $opencode_pid" >>"$LOGFILE"
-				_force_kill_tree "$opencode_pid"
-			fi
-			break
-		fi
-		sleep "$check_interval"
-		waited=$((waited + check_interval))
-	done
+	# Wait for natural exit
+	wait "$opencode_pid" 2>/dev/null || true
 
 	# Clean up PID file
 	rm -f "$PIDFILE"
 
-	# Wait to collect exit status (avoid zombie)
-	wait "$opencode_pid" 2>/dev/null || true
-
-	echo "[pulse-wrapper] Pulse completed at $(date -u +%Y-%m-%dT%H:%M:%SZ) (ran ${waited}s)" >>"$LOGFILE"
+	local end_epoch
+	end_epoch=$(date +%s)
+	local duration=$((end_epoch - start_epoch))
+	echo "[pulse-wrapper] Pulse completed at $(date -u +%Y-%m-%dT%H:%M:%SZ) (ran ${duration}s)" >>"$LOGFILE"
 	return 0
 }
 
