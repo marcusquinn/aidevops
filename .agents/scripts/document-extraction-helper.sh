@@ -522,7 +522,7 @@ resolve_llm_backend() {
 	cloud)
 		# Prefer Gemini Flash for cost efficiency, fall back to OpenAI
 		if [[ -n "${GOOGLE_API_KEY:-}" ]] || [[ -n "${GEMINI_API_KEY:-}" ]]; then
-			llm_backend="google/gemini-2.5-flash"
+			llm_backend="google/gemini-2.5-flash-preview-05-20"
 		elif [[ -n "${OPENAI_API_KEY:-}" ]]; then
 			llm_backend="openai/gpt-4o"
 		elif [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
@@ -542,7 +542,7 @@ resolve_llm_backend() {
 		if command -v ollama &>/dev/null; then
 			llm_backend="ollama/llama3.2"
 		elif [[ -n "${GOOGLE_API_KEY:-}" ]] || [[ -n "${GEMINI_API_KEY:-}" ]]; then
-			llm_backend="google/gemini-2.5-flash"
+			llm_backend="google/gemini-2.5-flash-preview-05-20"
 		elif [[ -n "${OPENAI_API_KEY:-}" ]]; then
 			llm_backend="openai/gpt-4o"
 		else

@@ -219,7 +219,7 @@ sync_subagents() {
 			continue
 		fi
 
-		# Extract short model_id from full ID (e.g., anthropic/claude-sonnet-4-6 -> claude-sonnet-4)
+		# Extract short model_id from full ID (e.g., anthropic/claude-sonnet-4-6 -> claude-sonnet-4-6)
 		local model_short
 		model_short="${model_full#*/}"
 		# Strip trailing date suffix (e.g., -20250514)
@@ -1244,23 +1244,23 @@ cmd_route() {
 	# Defaults if registry is empty
 	case "$tier" in
 	haiku)
-		primary_model="${primary_model:-claude-haiku-4-5}"
-		fallback_model="${fallback_model:-gemini-2.5-flash}"
+		primary_model="${primary_model:-claude-haiku-4-5-20251001}"
+		fallback_model="${fallback_model:-gemini-2.5-flash-preview-05-20}"
 		;;
 	flash)
-		primary_model="${primary_model:-gemini-2.5-flash}"
+		primary_model="${primary_model:-gemini-2.5-flash-preview-05-20}"
 		fallback_model="${fallback_model:-gpt-4.1-mini}"
 		;;
 	sonnet)
-		primary_model="${primary_model:-claude-sonnet-4}"
+		primary_model="${primary_model:-claude-sonnet-4-6}"
 		fallback_model="${fallback_model:-gpt-4.1}"
 		;;
 	pro)
-		primary_model="${primary_model:-gemini-2.5-pro}"
-		fallback_model="${fallback_model:-claude-sonnet-4}"
+		primary_model="${primary_model:-gemini-2.5-pro-preview-06-05}"
+		fallback_model="${fallback_model:-claude-sonnet-4-6}"
 		;;
 	opus)
-		primary_model="${primary_model:-claude-opus-4}"
+		primary_model="${primary_model:-claude-opus-4-6}"
 		fallback_model="${fallback_model:-o3}"
 		;;
 	esac

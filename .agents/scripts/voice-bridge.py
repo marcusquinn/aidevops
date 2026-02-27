@@ -249,7 +249,7 @@ class OpenCodeBridge:
     opencode run if no server is available.
     """
 
-    def __init__(self, model="opencode/claude-sonnet-4", cwd=None, server_port=4096):
+    def __init__(self, model="opencode/claude-sonnet-4-6", cwd=None, server_port=4096):
         self.model = model
         self.session_id = None
         self.cwd = cwd or os.getcwd()
@@ -676,8 +676,8 @@ Examples:
     )
     parser.add_argument(
         "--model",
-        default="opencode/claude-sonnet-4",
-        help="OpenCode model (default: opencode/claude-sonnet-4)",
+        default="opencode/claude-sonnet-4-6",
+        help="OpenCode model (default: opencode/claude-sonnet-4-6)",
     )
     parser.add_argument(
         "--cwd",

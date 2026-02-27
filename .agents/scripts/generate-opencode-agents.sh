@@ -212,11 +212,11 @@ SKIP_CUSTOM_PROMPT = set()
 # Maps tier names to actual model identifiers
 # Agents declare their tier; the coordinator uses this for cost-effective routing
 MODEL_TIERS = {
-    "haiku": "anthropic/claude-haiku-4-5",     # Triage, routing, simple tasks
-    "sonnet": "anthropic/claude-sonnet-4-6",   # Code, review, implementation
-    "opus": "anthropic/claude-opus-4-6",       # Architecture, complex reasoning
-    "flash": "google/gemini-2.5-flash",        # Fast, cheap, large context
-    "pro": "google/gemini-2.5-pro",            # Capable, large context
+    "haiku": "anthropic/claude-haiku-4-5-20251001",  # Triage, routing, simple tasks
+    "sonnet": "anthropic/claude-sonnet-4-6",         # Code, review, implementation
+    "opus": "anthropic/claude-opus-4-6",             # Architecture, complex reasoning
+    "flash": "google/gemini-2.5-flash-preview-05-20", # Fast, cheap, large context
+    "pro": "google/gemini-2.5-pro-preview-06-05",    # Capable, large context
 }
 
 # Default model tier per agent (overridden by frontmatter 'model:' field)

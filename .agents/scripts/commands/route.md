@@ -42,7 +42,7 @@ Pattern data: {success_rate}% success rate from {N} samples (or "no data")
 6. If the task is ambiguous, suggest the tier and note what would push it up or down:
 
 ```text
-Recommended: sonnet (claude-sonnet-4)
+Recommended: sonnet (claude-sonnet-4-6)
 Reason: Code modification with moderate reasoning
 Cost: ~1x baseline
 Pattern data: 85% success rate from 12 samples

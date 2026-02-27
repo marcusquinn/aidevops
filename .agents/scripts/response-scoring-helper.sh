@@ -502,7 +502,7 @@ _sync_comparison_to_patterns() {
 	return 0
 }
 
-# Map a full model name (e.g., "claude-sonnet-4") to a tier (e.g., "sonnet").
+# Map a full model name (e.g., "claude-sonnet-4-6") to a tier (e.g., "sonnet").
 # Falls back to the full name if no tier match is found.
 _model_to_tier() {
 	local model_id="$1"
@@ -1249,7 +1249,7 @@ cmd_help() {
 	echo ""
 	echo "Workflow:"
 	echo "  1. Create a prompt:  response-scoring-helper.sh prompt add --title \"FizzBuzz\" --text \"Write FizzBuzz in Python\""
-	echo "  2. Record responses: response-scoring-helper.sh record --prompt 1 --model claude-sonnet-4 --text \"...\""
+	echo "  2. Record responses: response-scoring-helper.sh record --prompt 1 --model claude-sonnet-4-6 --text \"...\""
 	echo "  3. Score responses:  response-scoring-helper.sh score --response 1 --correctness 5 --completeness 4 --code-quality 5 --clarity 4"
 	echo "  4. Compare results:  response-scoring-helper.sh compare --prompt 1"
 	echo "  5. View rankings:    response-scoring-helper.sh leaderboard"

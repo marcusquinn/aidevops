@@ -55,7 +55,7 @@ Target: $ARGUMENTS
 
 ```bash
 # Compare specific models (offline)
-/compare-models-free claude-sonnet-4 gpt-4o
+/compare-models-free claude-sonnet-4-6 gpt-4o
 
 # Get recommendation for a task (offline)
 /compare-models-free --task "summarization"

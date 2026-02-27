@@ -36,7 +36,7 @@ Full comparison with optional live data fetch from provider pricing pages.
 
 ```bash
 # Compare specific models
-/compare-models claude-sonnet-4 gpt-4o gemini-2.5-pro
+/compare-models claude-sonnet-4-6 gpt-4o gemini-2.5-pro
 
 # Compare by task suitability
 /compare-models --task "code review"
@@ -58,7 +58,7 @@ Useful when working without internet or to avoid token spend on web fetches.
 ### Step 1: Parse Arguments
 
 ```text
-Positional: model names (partial match supported, e.g. "sonnet" matches "claude-sonnet-4")
+Positional: model names (partial match supported, e.g. "sonnet" matches "claude-sonnet-4-6")
 Options:
   --task DESCRIPTION    Recommend models for a specific task type
   --tier low|medium|high  Filter by cost tier
@@ -78,7 +78,7 @@ Run the helper script to get structured model data:
 ~/.aidevops/agents/scripts/compare-models-helper.sh list
 
 # Compare specific models
-~/.aidevops/agents/scripts/compare-models-helper.sh compare claude-sonnet-4 gpt-4o
+~/.aidevops/agents/scripts/compare-models-helper.sh compare claude-sonnet-4-6 gpt-4o
 
 # Get recommendation for a task
 ~/.aidevops/agents/scripts/compare-models-helper.sh recommend "code review"
@@ -106,8 +106,8 @@ Output a structured comparison table:
 
 | Model | Provider | Context | Input $/1M | Output $/1M | Tier | Best For |
 |-------|----------|---------|-----------|------------|------|----------|
-| claude-opus-4 | Anthropic | 200K | $15.00 | $75.00 | high | Architecture, novel problems |
-| claude-sonnet-4 | Anthropic | 200K | $3.00 | $15.00 | medium | Code, review, most tasks |
+| claude-opus-4-6 | Anthropic | 200K | $15.00 | $75.00 | high | Architecture, novel problems |
+| claude-sonnet-4-6 | Anthropic | 200K | $3.00 | $15.00 | medium | Code, review, most tasks |
 | gpt-4o | OpenAI | 128K | $2.50 | $10.00 | medium | General purpose, multimodal |
 | gemini-2.5-pro | Google | 1M | $1.25 | $10.00 | medium | Large context analysis |
 
