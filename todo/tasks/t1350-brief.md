@@ -23,19 +23,21 @@ Agents running `setup.sh` without `--non-interactive` flag get stuck or fail sil
 ## How
 
 1. **setup.sh**: After `parse_args`, add:
+
    ```bash
    if [[ "$INTERACTIVE_MODE" != "true" && ! -t 0 ]]; then
      NON_INTERACTIVE=true
    fi
    ```
-2. **setup-modules/shell-env.sh**: Change `$(grep -cE ... 2>/dev/null) || true` to `$(grep -cE ... 2>/dev/null || echo "0")` to handle no-match inside the subshell, avoiding ERR trap noise with `inherit_errexit`.
+
+2. **setup-modules/shell-env.sh**: Change `$(grep -cE ... 2>/dev/null || echo "0")` to `$(grep -cE ... 2>/dev/null || :)` — use a no-op fallback so `n` only contains grep's single numeric output; `${n:-0}` in the arithmetic expression handles the empty case.
 
 ## Acceptance Criteria
 
 - [ ] `echo "" | bash setup.sh` runs without hanging or exiting early (auto-detects non-interactive)
 - [ ] `bash setup.sh --interactive` still works (explicit flag takes precedence)
 - [ ] ShellCheck passes on both modified files
-- [ ] `grep -c` calls in shell-env.sh use `|| echo "0"` inside subshell
+- [ ] `grep -c` calls in shell-env.sh use `|| :` (no-op) inside subshell, relying on `${n:-0}` for the arithmetic fallback
 
 ## Context & Decisions
 
