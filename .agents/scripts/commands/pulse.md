@@ -83,11 +83,14 @@ Check for patterns that indicate systemic problems. Use the GitHub data you alre
 **Issue-state guard (t1343 — MANDATORY before any issue modification):** Before adding labels, posting comments, or modifying any issue, ALWAYS check its current state first:
 
 ```bash
-STATE=$(gh issue view <number> --repo <owner/repo> --json state -q .state)
+STATE=$(gh issue view <number> --repo <owner/repo> --json state -q .state 2>/dev/null || echo "UNKNOWN")
 ```
 
-- If `STATE` is `CLOSED`: do NOT add `needs-review`, `status:*`, or any other label. Do NOT post comments suggesting the issue needs action. A closed issue with a merged PR is resolved — modifying it creates noise and confuses the lifecycle.
+Use fail-closed semantics — only modify when state is explicitly `OPEN`:
+
 - If `STATE` is `OPEN`: proceed with your intended modification.
+- If `STATE` is `CLOSED`: do NOT add `needs-review`, `status:*`, or any other label. Do NOT post comments suggesting the issue needs action. A closed issue with a merged PR is resolved — modifying it creates noise and confuses the lifecycle.
+- If `STATE` is empty, `UNKNOWN`, or any other value: skip modification, log a warning (`echo "[t1343] Issue #<number> state is $STATE (not OPEN) — skipping modification"`), and move on. Fail closed — never modify on unknown state. Transient `gh` failures or timeouts must not allow accidental writes.
 
 This prevents the race condition where a worker's delayed lifecycle transition overwrites a supervisor's correct closure (observed: Issue #2250 — supervisor closed with merged PR evidence at 19:29, worker added `needs-review` at 19:55 because its DB lacked the PR URL).
 

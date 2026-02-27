@@ -95,13 +95,27 @@ When verifying whether a merged PR exists for a task, NEVER rely on a single dat
    gh pr list --repo <owner/repo> --state merged --search "<task_id>" --json number,title,mergedAt --limit 5
    ```
 
-3. **Issue cross-reference** — check the linked issue for PR references in comments:
+3. **Issue cross-reference** — check the linked issue timeline for cross-referenced PRs, then verify merge state:
 
    ```bash
-   gh api repos/<owner/repo>/issues/<issue_number>/timeline --jq '[.[] | select(.event=="cross-referenced") | .source.issue.pull_request.html_url // empty] | unique[]'
+   # Extract PR numbers from cross-referenced timeline events
+   PR_NUMBERS=$(gh api repos/<owner/repo>/issues/<issue_number>/timeline \
+     --jq '[.[] | select(.event=="cross-referenced" and .source.issue.pull_request != null) | .source.issue.number] | unique[]')
+
+   # Verify each candidate PR is actually merged (not just linked)
+   for pr in $PR_NUMBERS; do
+     MERGED=$(gh pr view "$pr" --repo <owner/repo> --json mergedAt -q '.mergedAt // empty' 2>/dev/null)
+     if [[ -n "$MERGED" ]]; then
+       echo "Confirmed merged PR #$pr (merged at $MERGED)"
+       # Accept as evidence — no need to check further
+       break
+     fi
+   done
    ```
 
-If ANY source confirms a merged PR, treat the task as having PR evidence. The race condition in Issue #2250 occurred because a worker only checked its own DB (source 1), missed the PR created by a different session, and incorrectly flagged the issue as `needs-review`.
+   IMPORTANT: Cross-referenced timeline events only establish a link — they do NOT confirm merge state. Always verify `mergedAt` via the pulls API before accepting a cross-referenced PR as completion evidence.
+
+If ANY source confirms a merged PR (with verified `mergedAt`), treat the task as having PR evidence. The race condition in Issue #2250 occurred because a worker only checked its own DB (source 1), missed the PR created by a different session, and incorrectly flagged the issue as `needs-review`.
 
 - NEVER mark a task `[x]` unless a merged PR exists with real deliverables for that task
 - Use `task-complete-helper.sh <task-id> --pr <number>` or `task-complete-helper.sh <task-id> --verified` to mark tasks complete in interactive sessions
