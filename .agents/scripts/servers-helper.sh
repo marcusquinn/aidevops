@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2029
+# shellcheck disable=SC2029
 set -euo pipefail
 
 # Global Servers Helper Script

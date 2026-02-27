@@ -387,7 +387,27 @@ When running as a headless worker (dispatched by the supervisor via `opencode ru
      --body "Discovered while working on <current-task> in <current-repo>. <details>"
    ```
 
+   **If creating TODOs/PLANS in another repo** (e.g., adding a TODO to `~/Git/aidevops/TODO.md` while working in awardsapp): always commit and push them immediately so the issue-sync workflow picks them up. Uncommitted TODOs are invisible to the supervisor and issue-sync.
+
+   ```bash
+   git -C ~/Git/<target-repo> add TODO.md todo/PLANS.md
+   git -C ~/Git/<target-repo> commit -m "chore: add t{id} TODO from <current-repo> session"
+   git -C ~/Git/<target-repo> push origin main
+   ```
+
    Then continue with your assigned task in the current repo. The pulse supervisor will pick up the cross-repo issue on its next cycle. This prevents framework-level work from being tracked in app repos and vice versa.
+
+10. **Issue-task alignment (MANDATORY)** — Before linking your PR to an issue or claiming a task, verify your work matches the issue's actual description. Workers have hijacked issues by using a task ID for completely unrelated work (e.g., PR "Fix ShellCheck noise" closed issue "Add local dev row to build-plus.md" because both used t1344).
+
+    **Before creating a PR that references an issue:**
+    - Read the issue title and body: `gh issue view <number> --repo <owner/repo>`
+    - Verify your PR's changes actually implement what the issue describes
+    - If your work is unrelated to the issue, create a new issue for your work instead
+
+    **If you discover your assigned task is already done or the issue was closed:**
+    - Check if the closing PR actually implemented the task (read the PR diff)
+    - If the PR was unrelated work that incorrectly closed the issue, reopen it and comment explaining the mismatch
+    - Do NOT silently reuse a task ID for different work
 
 **README gate (MANDATORY - do NOT skip):**
 
@@ -416,6 +436,7 @@ After task completion, the loop automatically:
 
 1. **Preflight**: Runs quality checks, auto-fixes issues
 2. **PR Create**: Verifies `gh auth`, rebases onto `origin/main`, pushes branch, creates PR with proper title/body
+   **Issue linkage in PR body (MANDATORY):** The PR body MUST include `Closes #NNN` (or `Fixes`/`Resolves`) for every related issue — this is the ONLY mechanism that creates a GitHub PR-issue link. Before writing the PR body, search for ALL open issues related to your task: `gh issue list --state open --search "<task description keywords>"`. Issues may exist under different title formats (e.g., `coderabbit: Fix X` and `t1234: Fix X` for the same task). Include closing keywords for every match. A comment like "Resolved by PR #NNN" does NOT create a link — only closing keywords in the PR body do.
 3. **Label Update**: Update linked issue to `status:in-review` (see below)
 4. **PR Review**: Monitors CI checks and review status
 5. **Merge**: Squash merge (without `--delete-branch` when in worktree)

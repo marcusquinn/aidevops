@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091
 # quality-feedback-helper.sh - Retrieve code quality feedback via GitHub API
 # Consolidates feedback from Codacy, CodeRabbit, SonarCloud, CodeFactor, etc.
 #

@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091
 
 # Model Availability Helper - Probe before dispatch
 # Lightweight provider health checks using direct HTTP API calls.

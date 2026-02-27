@@ -1648,7 +1648,6 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 	set -euo pipefail
 	# When run standalone, source common helpers
 	SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-	# shellcheck source=_common.sh
 	source "$SCRIPT_DIR/_common.sh"
 
 	# Colour codes (may not be set when run standalone)

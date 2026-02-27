@@ -15,7 +15,7 @@
 #   capabilities  Show capability matrix
 #   providers     List supported providers
 #   discover      Detect available providers and models from local config
-#   cross-review  Dispatch same prompt to multiple models, diff results, optionally score via judge (t132.8, t1329)
+#   cross-review  Dispatch same prompt to multiple models, diff results (t132.8)
 #   help          Show this help
 #
 # Author: AI DevOps Framework
@@ -30,7 +30,7 @@ set -euo pipefail
 # Pattern Tracker Integration (t1098)
 # =============================================================================
 # Reads live success/failure data from the pattern tracker memory DB.
-# Same DB as pattern-tracker-helper.sh (archived) — no duplication of storage.
+# Same DB as pattern-tracker-helper.sh — no duplication of storage.
 
 readonly PATTERN_DB="${AIDEVOPS_MEMORY_DIR:-$HOME/.aidevops/.agent-workspace/memory}/memory.db"
 readonly -a PATTERN_VALID_MODELS=(haiku flash sonnet pro opus)
@@ -496,13 +496,13 @@ cmd_recommend() {
 		echo ""
 		echo "Pattern Tracker Insights:"
 		local pattern_lines
-		pattern_lines=$(get_all_tier_patterns)
+		pattern_lines=$(get_all_tier_patterns "")
 		if [[ -n "$pattern_lines" ]]; then
 			while IFS='|' read -r ptier prate psample; do
 				printf "  %-10s %d%% success (n=%d)\n" "$ptier:" "$prate" "$psample"
 			done <<<"$pattern_lines"
 		else
-			echo "  (no model-tagged patterns — record with /remember)"
+			echo "  (no model-tagged patterns — record with pattern-tracker-helper.sh)"
 		fi
 	fi
 
@@ -643,208 +643,281 @@ cmd_providers() {
 }
 
 # =============================================================================
-# Cross-Model Review (t132.8, t1329)
+# Cross-Model Review (t132.8)
 # Dispatch the same review prompt to multiple models, collect results, diff.
-# Optional --score flag dispatches outputs to a judge model for structured scoring.
 # =============================================================================
 
-#######################################
-# Resolve Anthropic API auth header (API key or OAuth)
-# Outputs: header string on stdout (e.g. "x-api-key: sk-...")
-# Returns: 0 on success, 1 if no auth available
-#######################################
-_resolve_cross_review_auth() {
-	local auth_file="${HOME}/.local/share/opencode/auth.json"
+# Judge scoring for cross-review (t1329)
+# Dispatches all model outputs to a judge model, parses structured JSON scores,
+# records results via cmd_score, and feeds into the pattern tracker.
+# Defined before cmd_cross_review (its caller) for readability.
+#
+# Args:
+#   $1 - original prompt
+#   $2 - models_str (comma-separated)
+#   $3 - output_dir
+#   $4 - judge_model tier
+#   $5+ - model_names array
+_cross_review_judge_score() {
+	local original_prompt="$1"
+	local models_str="$2"
+	local output_dir="$3"
+	local judge_model="$4"
+	shift 4
+	local -a model_names=("$@")
 
-	# Priority 1: environment variable
-	if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
-		echo "x-api-key: ${ANTHROPIC_API_KEY}"
+	# Validate judge_model identifier (used in filenames and runner names)
+	if [[ ! "$judge_model" =~ ^[A-Za-z0-9._-]+$ ]]; then
+		print_error "Invalid judge model identifier: $judge_model"
+		return 1
+	fi
+
+	local runner_helper="${SCRIPT_DIR}/runner-helper.sh"
+	if [[ ! -x "$runner_helper" ]]; then
+		print_warning "runner-helper.sh not found — skipping judge scoring"
 		return 0
 	fi
 
-	# Priority 2: OAuth token from OpenCode auth.json
-	if [[ -f "$auth_file" ]] && command -v jq &>/dev/null; then
-		local auth_type
-		auth_type=$(jq -r '.anthropic.type // empty' "$auth_file" 2>/dev/null)
+	echo "=== JUDGE SCORING (${judge_model}) ==="
+	echo ""
 
-		if [[ "$auth_type" == "oauth" ]]; then
-			local access_token expires_at now_ms
-			access_token=$(jq -r '.anthropic.access // empty' "$auth_file" 2>/dev/null)
-			expires_at=$(jq -r '.anthropic.expires // 0' "$auth_file" 2>/dev/null)
-			now_ms=$(($(date +%s) * 1000))
-			if [[ -n "$access_token" && "$expires_at" -gt "$now_ms" ]]; then
-				echo "Authorization: Bearer ${access_token}"
-				return 0
-			fi
-		elif [[ "$auth_type" == "api" ]]; then
-			local api_key
-			api_key=$(jq -r '.anthropic.key // empty' "$auth_file" 2>/dev/null)
-			if [[ -n "$api_key" ]]; then
-				echo "x-api-key: ${api_key}"
-				return 0
-			fi
-		fi
-	fi
+	# Build judge prompt: include original prompt + all model responses
+	local judge_prompt
+	judge_prompt="You are a neutral judge evaluating AI model responses. Score each response on a 1-10 scale.
 
-	return 1
-}
-
-#######################################
-# Judge cross-review outputs via a judge model (t1329)
-# Reads model output files from output_dir, calls judge model API,
-# returns structured JSON scores to stdout.
-# Usage: _judge_cross_review <output_dir> <models_csv> <prompt> <judge_model> <task_type>
-# Returns: 0 on success (JSON on stdout), 1 on failure
-#######################################
-_judge_cross_review() {
-	local output_dir="$1"
-	local models_csv="$2"
-	local original_prompt="$3"
-	local judge_model="$4"
-	local task_type="${5:-general}"
-
-	# Require curl and jq
-	if ! command -v curl &>/dev/null || ! command -v jq &>/dev/null; then
-		print_error "Judge scoring requires curl and jq"
-		return 1
-	fi
-
-	# Resolve auth
-	local auth_header
-	auth_header=$(_resolve_cross_review_auth) || {
-		print_error "Judge scoring requires Anthropic API key (ANTHROPIC_API_KEY or OpenCode OAuth)"
-		return 1
-	}
-
-	# Build model outputs section for the judge prompt
-	local outputs_text=""
-	local -a model_array=()
-	IFS=',' read -ra model_array <<<"$models_csv"
-
-	for model_tier in "${model_array[@]}"; do
-		model_tier=$(echo "$model_tier" | tr -d ' ')
-		local result_file="${output_dir}/${model_tier}.txt"
-		if [[ -f "$result_file" && -s "$result_file" ]]; then
-			local response_text
-			response_text=$(cat "$result_file")
-			outputs_text="${outputs_text}
-
-=== MODEL: ${model_tier} ===
-${response_text}"
-		fi
-	done
-
-	if [[ -z "$outputs_text" ]]; then
-		print_error "No model outputs found to judge in $output_dir"
-		return 1
-	fi
-
-	# Build judge system prompt
-	local system_prompt
-	system_prompt='You are an expert AI model evaluator. You will be given a prompt and responses from multiple AI models. Score each model on five criteria (1-10 scale) and declare a winner.
-
-Scoring criteria:
-- correctness (1-10): Factual accuracy and technical correctness
-- completeness (1-10): Coverage of all requirements and edge cases
-- quality (1-10): Code quality, best practices, structure (or writing quality for non-code)
-- clarity (1-10): Clear explanation, good formatting, readability
-- adherence (1-10): Following instructions precisely, staying on-task
-
-Respond with ONLY a valid JSON object in this exact format (no markdown, no explanation):
-{
-  "scores": {
-    "<model_name>": {
-      "correctness": <1-10>,
-      "completeness": <1-10>,
-      "quality": <1-10>,
-      "clarity": <1-10>,
-      "adherence": <1-10>,
-      "overall": <1-10>,
-      "strengths": "<brief strengths>",
-      "weaknesses": "<brief weaknesses>"
-    }
-  },
-  "winner": "<model_name>",
-  "winner_reasoning": "<1-2 sentence rationale for winner>",
-  "task_type": "<code|analysis|text|review|general>"
-}'
-
-	local user_prompt
-	user_prompt="ORIGINAL PROMPT:
+ORIGINAL PROMPT:
 ${original_prompt}
 
 MODEL RESPONSES:
-${outputs_text}
+"
+	# Bound per-model response size to keep judge payload within token limits
+	local max_chars_per_model=20000
+	local models_with_output=()
+	for model_tier in "${model_names[@]}"; do
+		local result_file="${output_dir}/${model_tier}.txt"
+		if [[ -f "$result_file" && -s "$result_file" ]]; then
+			local response_text
+			response_text=$(head -c "$max_chars_per_model" "$result_file")
+			local file_size
+			file_size=$(wc -c <"$result_file" | tr -d ' ')
+			local truncated_marker=""
+			if [[ "$file_size" -gt "$max_chars_per_model" ]]; then
+				truncated_marker="
+[TRUNCATED — original ${file_size} chars, showing first ${max_chars_per_model}]"
+			fi
+			judge_prompt+="
+=== MODEL: ${model_tier} ===
+${response_text}${truncated_marker}
+"
+			models_with_output+=("$model_tier")
+		fi
+	done
 
-Score each model and declare a winner."
-
-	# Resolve judge model to full model ID
-	local judge_model_id
-	judge_model_id=$(resolve_model_tier "$judge_model" 2>/dev/null || echo "$judge_model")
-
-	# Anthropic Messages API expects raw model IDs without provider prefix
-	if [[ "$judge_model_id" == anthropic/* ]]; then
-		judge_model_id="${judge_model_id#anthropic/}"
-	elif [[ "$judge_model_id" == */* ]]; then
-		print_error "--judge must resolve to an Anthropic model when using Anthropic judge API (got: $judge_model_id)"
-		return 1
+	if [[ ${#models_with_output[@]} -lt 2 ]]; then
+		print_warning "Not enough model outputs for judge scoring (need 2+)"
+		return 0
 	fi
 
-	# Build API request body
-	local request_body
-	request_body=$(jq -n \
-		--arg model "$judge_model_id" \
-		--arg system "$system_prompt" \
-		--arg user "$user_prompt" \
-		'{model: $model, max_tokens: 1024, system: $system, messages: [{role: "user", content: $user}]}')
+	judge_prompt+="
+SCORING INSTRUCTIONS:
+Score each model on these criteria (1-10 scale):
+- correctness: Factual accuracy and technical correctness
+- completeness: Coverage of all requirements and edge cases
+- quality: Code quality, best practices, maintainability
+- clarity: Clear explanation, good formatting, readability
+- adherence: Following the original prompt instructions precisely
 
-	# Build curl config via process substitution to avoid exposing auth in ps
-	local header_name
-	header_name="${auth_header%%:*}"
-	local curl_config
-	curl_config="header = \"Content-Type: application/json\"
-header = \"anthropic-version: 2023-06-01\"
-header = \"${auth_header}\""
-	if [[ "$header_name" == "Authorization" ]]; then
-		curl_config="${curl_config}
-header = \"anthropic-beta: oauth-2025-04-20\""
+Respond with ONLY a valid JSON object in this exact format (no markdown, no explanation):
+{
+  \"task_type\": \"general\",
+  \"winner\": \"<model_tier_of_best_response>\",
+  \"reasoning\": \"<one sentence explaining the winner>\",
+  \"scores\": {
+    \"<model_tier>\": {
+      \"correctness\": <1-10>,
+      \"completeness\": <1-10>,
+      \"quality\": <1-10>,
+      \"clarity\": <1-10>,
+      \"adherence\": <1-10>
+    }
+  }
+}"
+
+	# Sanitize judge_model before using in filenames/runner names
+	if [[ ! "$judge_model" =~ ^[A-Za-z0-9._-]+$ ]]; then
+		print_warning "Invalid judge model identifier: $judge_model — skipping scoring"
+		return 0
 	fi
 
-	# Call judge model API (headers via --config to keep secrets out of process list)
-	local response
-	response=$(curl -s --max-time 120 \
-		--config <(printf '%s\n' "$curl_config") \
-		-d "$request_body" \
-		"https://api.anthropic.com/v1/messages") || {
-		print_error "Judge API call failed (curl error)"
-		return 1
+	# Dispatch to judge model
+	local judge_runner="cross-review-judge-$$"
+	local judge_output_file="${output_dir}/judge-${judge_model}.json"
+
+	echo "  Dispatching to judge (${judge_model})..."
+
+	local judge_err_log="${output_dir}/judge-errors.log"
+
+	"$runner_helper" create "$judge_runner" \
+		--model "$judge_model" \
+		--description "Cross-review judge" \
+		--workdir "$(pwd)" 2>>"$judge_err_log" || true
+
+	"$runner_helper" run "$judge_runner" "$judge_prompt" \
+		--model "$judge_model" \
+		--timeout "120" \
+		--format text >"$judge_output_file" 2>>"$judge_err_log" || true
+
+	"$runner_helper" destroy "$judge_runner" --force 2>>"$judge_err_log" || true
+
+	if [[ ! -f "$judge_output_file" || ! -s "$judge_output_file" ]]; then
+		print_warning "Judge model returned no output — skipping scoring"
+		return 0
+	fi
+
+	# Extract JSON from judge output (strip any surrounding text)
+	local judge_json
+	judge_json=$(grep -o '{.*}' "$judge_output_file" 2>>"$judge_err_log" | head -1 || true)
+	if [[ -z "$judge_json" ]]; then
+		# Try multiline JSON extraction via stdin (safe for paths with special chars)
+		judge_json=$(python3 -c "
+import sys, json, re
+text = sys.stdin.read()
+m = re.search(r'\{.*\}', text, re.DOTALL)
+if m:
+    try:
+        obj = json.loads(m.group())
+        print(json.dumps(obj))
+    except Exception:
+        pass
+" <"$judge_output_file" 2>>"$judge_err_log" || true)
+	fi
+
+	if [[ -z "$judge_json" ]]; then
+		print_warning "Could not parse judge JSON output. Raw output saved to: $judge_output_file"
+		return 0
+	fi
+
+	# Parse winner, task_type, and reasoning in a single Python call
+	local parsed_fields
+	parsed_fields=$(echo "$judge_json" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+# Truncate reasoning to 500 chars and strip control characters
+r = d.get('reasoning', '')[:500]
+r = ''.join(c for c in r if c.isprintable() or c in (' ', '\t'))
+print(d.get('winner', ''))
+print(d.get('task_type', 'general'))
+print(r)
+" 2>>"$judge_err_log" || true)
+
+	local winner task_type reasoning
+	if [[ -n "$parsed_fields" ]]; then
+		winner=$(echo "$parsed_fields" | head -1)
+		task_type=$(echo "$parsed_fields" | sed -n '2p')
+		reasoning=$(echo "$parsed_fields" | sed -n '3p')
+	else
+		winner=""
+		task_type="general"
+		reasoning=""
+	fi
+
+	# Sanitize task_type: restrict to known allowlist
+	local -a valid_task_types=(general code review analysis debug refactor test docs security)
+	local task_type_valid=false
+	for vt in "${valid_task_types[@]}"; do
+		if [[ "$task_type" == "$vt" ]]; then
+			task_type_valid=true
+			break
+		fi
+	done
+	if [[ "$task_type_valid" != "true" ]]; then
+		task_type="general"
+	fi
+
+	# Sanitize winner: must be one of the models with output
+	local winner_valid=false
+	if [[ -n "$winner" ]]; then
+		for m in "${models_with_output[@]}"; do
+			if [[ "$winner" == "$m" ]]; then
+				winner_valid=true
+				break
+			fi
+		done
+		if [[ "$winner_valid" != "true" ]]; then
+			print_warning "Judge returned unknown winner '${winner}' — ignoring"
+			winner=""
+		fi
+	fi
+
+	echo "  Judge winner: ${winner:-unknown}"
+	[[ -n "$reasoning" ]] && echo "  Reasoning: ${reasoning}"
+	echo ""
+
+	# Helper: clamp a numeric value to integer in range 0-10
+	# Handles decimals correctly (e.g. 8.5 → 9 via rounding, not 85)
+	_clamp_score() {
+		local val="$1"
+		# Accept only valid numeric format (digits with optional single decimal point)
+		if [[ ! "$val" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+			echo "0"
+			return 0
+		fi
+		# Round to nearest integer and clamp to 0-10
+		local int_val
+		int_val=$(printf '%.0f' "$val" 2>/dev/null || echo "0")
+		if [[ "$int_val" -gt 10 ]]; then
+			echo "10"
+		elif [[ "$int_val" -lt 0 ]]; then
+			echo "0"
+		else
+			echo "$int_val"
+		fi
+		return 0
 	}
 
-	# Extract text content from response
-	local ai_text
-	ai_text=$(echo "$response" | jq -r '.content[]? | select(.type == "text") | .text')
+	# Build cmd_score arguments from judge JSON
+	local -a score_args=(
+		--task "$original_prompt"
+		--type "$task_type"
+		--evaluator "$judge_model"
+	)
+	[[ -n "$winner" ]] && score_args+=(--winner "$winner")
 
-	if [[ -z "$ai_text" ]]; then
-		local api_error
-		api_error=$(echo "$response" | jq -r '.error.message // empty')
-		print_error "Judge API returned no content (error: ${api_error:-unknown})"
-		return 1
-	fi
+	for model_tier in "${models_with_output[@]}"; do
+		# Extract all scores in a single Python call (avoids 5 subprocesses per model)
+		local scores_line
+		scores_line=$(echo "$judge_json" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+s = d.get('scores', {}).get('${model_tier}', {})
+print(s.get('correctness', 0), s.get('completeness', 0), s.get('quality', 0), s.get('clarity', 0), s.get('adherence', 0))
+" 2>>"$judge_err_log" || echo "0 0 0 0 0")
+		local corr comp qual clar adhr
+		read -r corr comp qual clar adhr <<<"$scores_line"
 
-	# Strip markdown code fences if present — extract full JSON object without truncation
-	local clean_json
-	clean_json=$(echo "$ai_text" | sed -n '/^{/,/^}/p')
-	if [[ -z "$clean_json" ]]; then
-		clean_json="$ai_text"
-	fi
+		# Clamp all scores to valid integer range 0-10
+		corr=$(_clamp_score "$corr")
+		comp=$(_clamp_score "$comp")
+		qual=$(_clamp_score "$qual")
+		clar=$(_clamp_score "$clar")
+		adhr=$(_clamp_score "$adhr")
 
-	# Validate it's parseable JSON
-	if ! echo "$clean_json" | jq . &>/dev/null; then
-		print_error "Judge returned invalid JSON"
-		return 1
-	fi
+		score_args+=(
+			--model "$model_tier"
+			--correctness "$corr"
+			--completeness "$comp"
+			--quality "$qual"
+			--clarity "$clar"
+			--adherence "$adhr"
+		)
+	done
 
-	echo "$clean_json"
+	# Record scores via cmd_score (also syncs to pattern tracker)
+	cmd_score "${score_args[@]}"
+
+	echo "Judge scores recorded. Judge output: $judge_output_file"
+	echo ""
+
 	return 0
 }
 
@@ -852,13 +925,14 @@ header = \"anthropic-beta: oauth-2025-04-20\""
 # Cross-model review: dispatch same prompt to multiple models (t132.8, t1329)
 # Usage: compare-models-helper.sh cross-review --prompt "review this code" \
 #          --models "sonnet,opus,pro" [--workdir path] [--timeout N] [--output dir]
-#          [--score] [--judge opus] [--task-type code]
+#          [--score] [--judge <model>]
 # Dispatches via runner-helper.sh in parallel, collects outputs, produces summary.
-# With --score: dispatches outputs to judge model for structured scoring and DB recording.
+# With --score: feeds outputs to a judge model (default: opus) for structured scoring
+# and records results in the model-comparisons DB + pattern tracker.
 #######################################
 cmd_cross_review() {
 	local prompt="" models_str="" workdir="" review_timeout="600" output_dir=""
-	local do_score=0 judge_model="opus" task_type="general"
+	local score_flag=false judge_model="opus"
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -903,7 +977,7 @@ cmd_cross_review() {
 			shift 2
 			;;
 		--score)
-			do_score=1
+			score_flag=true
 			shift
 			;;
 		--judge)
@@ -912,14 +986,11 @@ cmd_cross_review() {
 				return 1
 			}
 			judge_model="$2"
-			shift 2
-			;;
-		--task-type)
-			[[ $# -lt 2 ]] && {
-				print_error "--task-type requires a value"
+			# Validate judge model identifier (used in filenames)
+			if [[ ! "$judge_model" =~ ^[A-Za-z0-9._-]+$ ]]; then
+				print_error "Invalid judge model identifier: $judge_model (only alphanumeric, dots, hyphens, underscores)"
 				return 1
-			}
-			task_type="$2"
+			fi
 			shift 2
 			;;
 		*)
@@ -980,8 +1051,14 @@ cmd_cross_review() {
 	local -a model_names=()
 
 	for model_tier in "${model_array[@]}"; do
-		model_tier=$(echo "$model_tier" | tr -d ' ')
+		model_tier="${model_tier// /}"
 		[[ -z "$model_tier" ]] && continue
+
+		# Sanitize model identifier to prevent path traversal (reject chars outside safe set)
+		if [[ ! "$model_tier" =~ ^[A-Za-z0-9._-]+$ ]]; then
+			print_warning "Skipping invalid model identifier: $model_tier"
+			continue
+		fi
 
 		local runner_name="cross-review-${model_tier}-$$"
 		runner_names+=("$runner_name")
@@ -993,27 +1070,34 @@ cmd_cross_review() {
 
 		echo "  Dispatching to ${model_tier} (${resolved_model})..."
 
-		# Create runner, dispatch, capture output
+		# Create runner, dispatch, capture output (errors logged per-model for debugging)
+		local model_err_log="${output_dir}/${model_tier}-errors.log"
 		(
+			local model_failed=0
+
 			"$runner_helper" create "$runner_name" \
 				--model "$model_tier" \
 				--description "Cross-review: $model_tier" \
-				--workdir "$workdir" 2>/dev/null || true
+				--workdir "$workdir" 2>>"$model_err_log" || model_failed=1
 
 			local result_file="${output_dir}/${model_tier}.txt"
 			"$runner_helper" run "$runner_name" "$prompt" \
 				--model "$model_tier" \
 				--timeout "$review_timeout" \
-				--format json 2>/dev/null >"${output_dir}/${model_tier}.json" || true
+				--format json 2>>"$model_err_log" >"${output_dir}/${model_tier}.json" || model_failed=1
 
 			# Extract text response from JSON
 			if [[ -f "${output_dir}/${model_tier}.json" ]]; then
 				jq -r '.parts[]? | select(.type == "text") | .text' \
-					"${output_dir}/${model_tier}.json" 2>/dev/null >"$result_file" || true
+					"${output_dir}/${model_tier}.json" 2>>"$model_err_log" >"$result_file" || model_failed=1
 			fi
 
-			# Clean up runner
-			"$runner_helper" destroy "$runner_name" --force 2>/dev/null || true
+			# Clean up runner (always attempt cleanup, even on failure)
+			"$runner_helper" destroy "$runner_name" --force 2>>"$model_err_log" || true
+
+			# Fail if no usable output was produced
+			[[ -s "$result_file" ]] || model_failed=1
+			exit "$model_failed"
 		) &
 		pids+=($!)
 	done
@@ -1024,7 +1108,8 @@ cmd_cross_review() {
 	local failed=0
 	for i in "${!pids[@]}"; do
 		if ! wait "${pids[$i]}" 2>/dev/null; then
-			echo "  ${model_names[$i]}: failed"
+			local err_log="${output_dir}/${model_names[$i]}-errors.log"
+			echo "  ${model_names[$i]}: failed (see ${err_log})"
 			failed=$((failed + 1))
 		else
 			echo "  ${model_names[$i]}: done"
@@ -1079,7 +1164,14 @@ cmd_cross_review() {
 		local file_b="${output_dir}/${model_names[1]}.txt"
 		if [[ -f "$file_a" && -f "$file_b" ]]; then
 			echo "Diff (${model_names[0]} vs ${model_names[1]}):"
-			diff --unified=3 "$file_a" "$file_b" || echo "  (files are identical or diff unavailable)"
+			# diff exits 1 when files differ — capture separately to avoid pipefail
+			local diff_output diff_status
+			diff_output=$(diff --unified=3 "$file_a" "$file_b" 2>/dev/null) && diff_status=$? || diff_status=$?
+			if [[ "$diff_status" -le 1 && -n "$diff_output" ]]; then
+				echo "$diff_output" | head -100
+			else
+				echo "  (files are identical or diff unavailable)"
+			fi
 			echo ""
 		fi
 	fi
@@ -1087,164 +1179,11 @@ cmd_cross_review() {
 	echo "Full results saved to: $output_dir"
 	echo ""
 
-	# ==========================================================================
-	# Judge scoring pipeline (t1329) — activated by --score flag
-	# ==========================================================================
-	if [[ "$do_score" -eq 1 ]]; then
-		echo "=== JUDGE SCORING ==="
-		echo ""
-		echo "Judge model: ${judge_model}"
-		echo "Task type:   ${task_type}"
-		echo ""
-		echo "Dispatching outputs to judge model..."
-
-		local judge_json
-		if ! judge_json=$(_judge_cross_review "$output_dir" "$models_str" "$prompt" "$judge_model" "$task_type"); then
-			print_error "Judge scoring failed — raw outputs still saved to $output_dir"
-			return 1
-		fi
-
-		# Save judge output
-		local judge_file="${output_dir}/judge-scores.json"
-		echo "$judge_json" >"$judge_file"
-
-		# Display structured scores
-		echo ""
-		echo "Judge Scores:"
-		echo "-------------"
-		printf "%-22s %6s %6s %6s %6s %7s\n" "Model" "Corr" "Comp" "Qual" "Clar" "Overall"
-		printf "%-22s %6s %6s %6s %6s %7s\n" "-----" "----" "----" "----" "----" "-------"
-
-		local winner=""
-		winner=$(echo "$judge_json" | jq -r '.winner // empty')
-		local winner_reasoning=""
-		winner_reasoning=$(echo "$judge_json" | jq -r '.winner_reasoning // empty')
-		local judge_task_type=""
-		judge_task_type=$(echo "$judge_json" | jq -r '.task_type // empty')
-		[[ -n "$judge_task_type" ]] && task_type="$judge_task_type"
-
-		# Build cmd_score args from judge JSON
-		local score_args=(--task "$prompt" --type "$task_type" --evaluator "$judge_model" --winner "$winner")
-
-		local -a scored_models=()
-		while IFS= read -r model_name; do
-			scored_models+=("$model_name")
-		done < <(echo "$judge_json" | jq -r '.scores | keys[]')
-
-		for model_name in "${scored_models[@]}"; do
-			# Consolidate jq calls into a single pass using --arg for safe variable passing
-			local m_corr m_comp m_qual m_clar m_adh m_overall m_str m_wea
-			read -r m_corr m_comp m_qual m_clar m_adh m_overall m_str m_wea <<<"$(echo "$judge_json" | jq -r --arg mn "$model_name" '
-				.scores[$mn] |
-				[
-					(.correctness // 0),
-					(.completeness // 0),
-					(.quality // 0),
-					(.clarity // 0),
-					(.adherence // 0),
-					(.overall // 0),
-					(.strengths // ""),
-					(.weaknesses // "")
-				] | @tsv
-			')"
-
-			local result_file="${output_dir}/${model_name}.txt"
-			printf "%-22s %6s %6s %6s %6s %7s\n" \
-				"$model_name" "$m_corr" "$m_comp" "$m_qual" "$m_clar" "$m_overall"
-
-			# Accumulate args for cmd_score (1-10 scale matches model-comparisons DB)
-			score_args+=(
-				--model "$model_name"
-				--correctness "$m_corr"
-				--completeness "$m_comp"
-				--quality "$m_qual"
-				--clarity "$m_clar"
-				--adherence "$m_adh"
-				--strengths "$m_str"
-				--weaknesses "$m_wea"
-				--response "${result_file:-}"
-			)
-		done
-
-		echo ""
-		if [[ -n "$winner" ]]; then
-			echo "  Winner: ${winner}"
-		fi
-		if [[ -n "$winner_reasoning" ]]; then
-			echo "  Reasoning: ${winner_reasoning}"
-		fi
-		echo ""
-
-		# Record scores in model-comparisons DB via cmd_score
-		echo "Recording scores in model-comparisons DB..."
-		if cmd_score "${score_args[@]}"; then
-			print_success "Scores recorded in model-comparisons DB"
-		else
-			print_warning "cmd_score recording failed (scores still in $judge_file)"
-		fi
-
-		# Feed winner/loser data into pattern tracker (archived — graceful fallback)
-		local pt_helper="${SCRIPT_DIR}/archived/pattern-tracker-helper.sh"
-		if [[ -x "$pt_helper" && -n "$winner" ]]; then
-			echo "Syncing results to pattern tracker..."
-			local winner_tier loser_args=() winner_overall_score=0
-			winner_tier=$(model_id_to_tier "$winner")
-			[[ -z "$winner_tier" ]] && winner_tier="$winner"
-
-			for model_name in "${scored_models[@]}"; do
-				# Extract scores in a single jq pass using --arg for safe variable passing
-				local m_ove raw_corr raw_comp raw_qual raw_clar
-				read -r m_ove raw_corr raw_comp raw_qual raw_clar <<<"$(echo "$judge_json" | jq -r --arg mn "$model_name" '
-					.scores[$mn] | [(.overall // 0), (.correctness // 0), (.completeness // 0), (.quality // 0), (.clarity // 0)] | @tsv
-				')"
-				local m_tier
-				m_tier=$(model_id_to_tier "$model_name")
-				[[ -z "$m_tier" ]] && m_tier="$model_name"
-
-				# Normalize 1-10 to 1-5 for pattern tracker
-				local norm_corr norm_comp norm_qual norm_clar
-				norm_corr=$(awk "BEGIN{v=int($raw_corr/2+0.5); if(v<1)v=1; if(v>5)v=5; print v}")
-				norm_comp=$(awk "BEGIN{v=int($raw_comp/2+0.5); if(v<1)v=1; if(v>5)v=5; print v}")
-				norm_qual=$(awk "BEGIN{v=int($raw_qual/2+0.5); if(v<1)v=1; if(v>5)v=5; print v}")
-				norm_clar=$(awk "BEGIN{v=int($raw_clar/2+0.5); if(v<1)v=1; if(v>5)v=5; print v}")
-
-				"$pt_helper" score \
-					--model "$m_tier" \
-					--task-type "$task_type" \
-					--correctness "$norm_corr" \
-					--completeness "$norm_comp" \
-					--code-quality "$norm_qual" \
-					--clarity "$norm_clar" \
-					--source "cross-review-judge" \
-					>/dev/null 2>&1 || true
-
-				if [[ "$model_name" == "$winner" ]]; then
-					winner_overall_score="$m_ove"
-				elif [[ "$model_name" != "$winner" ]]; then
-					loser_args+=(--loser "$m_tier")
-				fi
-			done
-
-			# Record A/B comparison in pattern tracker
-			if [[ -n "$winner_tier" && "${#loser_args[@]}" -gt 0 ]]; then
-				local winner_avg_norm
-				winner_avg_norm=$(awk "BEGIN{printf \"%.1f\", $winner_overall_score / 2}")
-				"$pt_helper" ab-compare \
-					--winner "$winner_tier" \
-					"${loser_args[@]}" \
-					--task-type "$task_type" \
-					--winner-score "$winner_avg_norm" \
-					--models-compared "${#scored_models[@]}" \
-					--source "cross-review-judge" \
-					>/dev/null 2>&1 || true
-			fi
-
-			print_success "Pattern tracker updated"
-		fi
-
-		echo ""
-		echo "Judge output saved to: $judge_file"
-		echo ""
+	# Judge scoring pipeline (t1329)
+	# When --score is set, dispatch all outputs to a judge model for structured scoring.
+	if [[ "$score_flag" == "true" ]]; then
+		_cross_review_judge_score \
+			"$prompt" "$models_str" "$output_dir" "$judge_model" "${model_names[@]}"
 	fi
 
 	return 0
@@ -1277,7 +1216,8 @@ cmd_patterns() {
 		echo "No pattern data available."
 		echo ""
 		echo "Record patterns to populate this view:"
-		echo "  /remember \"SUCCESS: code-review with sonnet — completed successfully\""
+		echo "  pattern-tracker-helper.sh record --outcome success --model sonnet --task-type code-review \\"
+		echo "    --description \"Completed code review successfully\""
 		echo ""
 		echo "The supervisor also records patterns automatically after each task."
 		return 0
@@ -1341,8 +1281,8 @@ cmd_patterns() {
 	fi
 
 	echo ""
-	echo "Data source: cross-session memory (memory.db)"
-	echo "Record more: /remember \"SUCCESS: <task-type> with <tier> — <description>\""
+	echo "Data source: pattern-tracker-helper.sh (memory.db)"
+	echo "Record more: pattern-tracker-helper.sh record --outcome success --model <tier> ..."
 	echo ""
 	return 0
 }
@@ -1405,16 +1345,11 @@ cmd_help() {
 	echo "    --prompt 'Audit the architecture of this project' \\"
 	echo "    --models 'opus,pro' --timeout 900"
 	echo "  compare-models-helper.sh cross-review \\"
-	echo "    --prompt 'Review this PR diff for bugs' \\"
-	echo "    --models 'sonnet,opus' --score"
+	echo "    --prompt 'Review this PR diff' --models 'sonnet,gemini-pro' \\"
+	echo "    --score                          # auto-score via judge model (default: opus)"
 	echo "  compare-models-helper.sh cross-review \\"
-	echo "    --prompt 'Review this PR diff for bugs' \\"
-	echo "    --models 'sonnet,opus,pro' --score --judge opus --task-type review"
-	echo ""
-	echo "Cross-review options:"
-	echo "  --score          Auto-score outputs via judge model (default: opus)"
-	echo "  --judge <model>  Judge model tier (default: opus)"
-	echo "  --task-type <t>  Task type for scoring: code|review|analysis|text|general"
+	echo "    --prompt 'Review this PR diff' --models 'sonnet,gemini-pro' \\"
+	echo "    --score --judge sonnet            # use sonnet as judge instead"
 	echo ""
 	echo "Data is embedded in this script. Last updated: 2025-02-08."
 	echo "For live pricing, use /compare-models (with web fetch)."
@@ -1956,14 +1891,37 @@ cmd_score() {
 		return 1
 	fi
 
-	# Insert comparison record
-	local comp_id
-	comp_id=$(sqlite3 "$RESULTS_DB" "INSERT INTO comparisons (task_description, task_type, evaluator_model, winner_model) VALUES ('$(echo "$task" | sed "s/'/''/g")', '$task_type', '$evaluator', '$winner'); SELECT last_insert_rowid();")
+	# Insert comparison record (escape all string values for SQL safety)
+	local comp_id safe_task safe_type safe_eval safe_winner
+	safe_task="${task//\'/\'\'}"
+	safe_type="${task_type//\'/\'\'}"
+	safe_eval="${evaluator//\'/\'\'}"
+	safe_winner="${winner//\'/\'\'}"
+	comp_id=$(sqlite3 "$RESULTS_DB" "INSERT INTO comparisons (task_description, task_type, evaluator_model, winner_model) VALUES ('${safe_task}', '${safe_type}', '${safe_eval}', '${safe_winner}'); SELECT last_insert_rowid();")
 
-	# Insert scores for each model
+	# Insert scores for each model (escape strings, validate numerics)
 	for entry in "${model_entries[@]}"; do
 		IFS='|' read -r m_id m_cor m_com m_qua m_cla m_adh m_ove m_lat m_tok m_str m_wea m_res <<<"$entry"
-		sqlite3 "$RESULTS_DB" "INSERT INTO comparison_scores (comparison_id, model_id, correctness, completeness, code_quality, clarity, adherence, overall, latency_ms, tokens_used, strengths, weaknesses, response_file) VALUES ($comp_id, '$m_id', $m_cor, $m_com, $m_qua, $m_cla, $m_adh, $m_ove, $m_lat, $m_tok, '$(echo "$m_str" | sed "s/'/''/g")', '$(echo "$m_wea" | sed "s/'/''/g")', '$(echo "$m_res" | sed "s/'/''/g")');"
+
+		# Validate all numeric fields — reject non-integer values to prevent SQL injection
+		for n in m_cor m_com m_qua m_cla m_adh m_ove m_lat m_tok; do
+			if ! [[ "${!n}" =~ ^[0-9]+$ ]]; then
+				print_error "Invalid numeric value for ${n}: ${!n}"
+				return 1
+			fi
+		done
+		# Clamp score fields to valid 0-10 range
+		for s in m_cor m_com m_qua m_cla m_adh m_ove; do
+			if ((${!s} > 10)); then
+				printf -v "$s" "10"
+			fi
+		done
+
+		local safe_id="${m_id//\'/\'\'}"
+		local safe_str="${m_str//\'/\'\'}"
+		local safe_wea="${m_wea//\'/\'\'}"
+		local safe_res="${m_res//\'/\'\'}"
+		sqlite3 "$RESULTS_DB" "INSERT INTO comparison_scores (comparison_id, model_id, correctness, completeness, code_quality, clarity, adherence, overall, latency_ms, tokens_used, strengths, weaknesses, response_file) VALUES ($comp_id, '${safe_id}', $m_cor, $m_com, $m_qua, $m_cla, $m_adh, $m_ove, $m_lat, $m_tok, '${safe_str}', '${safe_wea}', '${safe_res}');"
 	done
 
 	print_success "Comparison #$comp_id recorded ($task_type: ${#model_entries[@]} models scored)"
@@ -1990,9 +1948,9 @@ cmd_score() {
 	fi
 	echo ""
 
-	# Sync to unified pattern tracker backbone (t1094) — archived, graceful fallback
+	# Sync to unified pattern tracker backbone (t1094)
 	# Scores are 1-10 here; normalize to 1-5 for pattern tracker compatibility.
-	local pt_helper="${SCRIPT_DIR}/archived/pattern-tracker-helper.sh"
+	local pt_helper="${SCRIPT_DIR}/pattern-tracker-helper.sh"
 	if [[ -x "$pt_helper" ]]; then
 		local winner_tier=""
 		local loser_args=()
@@ -2077,15 +2035,25 @@ cmd_results() {
 		esac
 	done
 
-	local where_clause=""
-	if [[ -n "$model_filter" ]]; then
-		where_clause="WHERE cs.model_id LIKE '%${model_filter}%'"
+	# Validate limit is numeric (used in SQL LIMIT clause)
+	if ! [[ "$limit" =~ ^[0-9]+$ ]]; then
+		print_error "Invalid --limit value: $limit (must be a positive integer)"
+		return 1
 	fi
-	if [[ -n "$type_filter" ]]; then
+
+	# Escape string values for SQL safety (prevent injection via --model/--type args)
+	local safe_model_filter="${model_filter//\'/\'\'}"
+	local safe_type_filter="${type_filter//\'/\'\'}"
+
+	local where_clause=""
+	if [[ -n "$safe_model_filter" ]]; then
+		where_clause="WHERE cs.model_id LIKE '%${safe_model_filter}%'"
+	fi
+	if [[ -n "$safe_type_filter" ]]; then
 		if [[ -n "$where_clause" ]]; then
-			where_clause="$where_clause AND c.task_type = '$type_filter'"
+			where_clause="$where_clause AND c.task_type = '${safe_type_filter}'"
 		else
-			where_clause="WHERE c.task_type = '$type_filter'"
+			where_clause="WHERE c.task_type = '${safe_type_filter}'"
 		fi
 	fi
 

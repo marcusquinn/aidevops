@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091
 
 # Shannon AI Pentester Helper Script
 # Autonomous exploit-driven web application security testing
@@ -114,7 +113,6 @@ check_api_key() {
     fi
     # Source credentials if available
     if [[ -f "${HOME}/.config/aidevops/credentials.sh" ]]; then
-        # shellcheck disable=SC1091
         source "${HOME}/.config/aidevops/credentials.sh"
         if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
             return 0

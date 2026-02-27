@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.137.0] - 2026-02-27
+
+### Added
+
+- add longform talking-head video pipeline with MiniMax TTS, VEED Fabric, and InfiniteTalk (#2445)
+
+### Changed
+
+- Refactor: merge pulse-repos.json into repos.json with slug field (#2448)
+
+### Fixed
+
+- add local_only field and support nested repo paths (#2449)
+- strengthen webfetch error prevention guidance based on 46.8% failure rate analysis (#2444)
+- always regenerate pulse plist on setup.sh upgrades (#2442)
+
 ## [2.135.1] - 2026-02-27
 
 ### Changed

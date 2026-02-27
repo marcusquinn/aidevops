@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2034,SC2086,SC2162
+# shellcheck disable=SC2034,SC2086,SC2162
 set -euo pipefail
 
 # Twilio Helper Script

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2016,SC2154
+# shellcheck disable=SC2016,SC2154
 
 # 🔧 SonarCloud Auto-Fix Script
 # Applies fixes for common SonarCloud shell script issues

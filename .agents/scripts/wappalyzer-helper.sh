@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091
 
 # Wappalyzer OSS Provider Helper
 # Local/offline technology stack detection using Wappalyzer's detection engine

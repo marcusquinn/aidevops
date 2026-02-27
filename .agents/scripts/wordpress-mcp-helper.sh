@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2034
+# shellcheck disable=SC2034
 set -euo pipefail
 
 # WordPress MCP Adapter Helper Script

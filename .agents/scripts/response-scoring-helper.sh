@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2001
+# shellcheck disable=SC2001
 
 # Response Scoring Helper - Evaluate AI Model Responses Side-by-Side
 # Stores prompts, responses, and structured scores in SQLite for comparison.

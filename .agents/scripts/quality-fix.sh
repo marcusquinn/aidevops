@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2001,SC2016,SC2129,SC2155
+# shellcheck disable=SC2001,SC2016,SC2129,SC2155
 # Universal Quality Fix Script
 # Automatically resolves common quality issues across all platforms
 
@@ -218,7 +218,7 @@ validate_fixes() {
 	local validation_errors=0
 
 	while IFS= read -r -d '' file; do
-		if [[ -f "$file" ]] && ! shellcheck -x "$file" >/dev/null 2>&1; then
+		if [[ -f "$file" ]] && ! shellcheck -x -P SCRIPTDIR "$file" >/dev/null 2>&1; then
 			((validation_errors++))
 			print_warning "ShellCheck issues remain in $file"
 		fi

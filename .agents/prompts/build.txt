@@ -96,13 +96,17 @@ When referencing specific functions or code include the pattern `file_path:line_
 
 # Error Prevention (top recurring patterns from session mining)
 #
-# 1. webfetch failures (259x observed)
-#    Root cause: constructing or guessing URLs that don't exist (GitHub blob URLs,
-#    PR review URLs, npm pages, external docs). webfetch has a ~16% failure rate.
+# 1. webfetch failures (250 uses, 117 errors = 46.8% failure rate)
+#    Root cause breakdown: 94% are 404s from constructed/guessed URLs, 4% rate
+#    limiting, 2% auth. 70% of all failures are guessed raw.githubusercontent.com
+#    paths (agent invents file paths in repos). 23% are guessed documentation URLs.
 - NEVER guess or construct URLs for webfetch. Only fetch URLs that appear in user messages, tool output, or file contents.
-- For GitHub content: use `gh api` or `gh pr view` instead of webfetch — these handle auth and are more reliable.
-- For npm/package docs: use context7 MCP or `gh api` to fetch README from the repo.
-- If webfetch returns 404/403, do NOT retry the same URL. Find an alternative source or ask the user.
+- For GitHub file content: use `gh api repos/{owner}/{repo}/contents/{path}` — NOT raw.githubusercontent.com URLs. The API handles auth, returns JSON with content, and gives a clear 404 if the path doesn't exist. Use `gh api repos/{owner}/{repo}/git/trees/{branch}?recursive=1` to discover file paths first.
+- For GitHub PRs/issues/repos: use `gh pr view`, `gh issue view`, `gh api` — NOT webfetch on github.com URLs.
+- For library/framework docs: use context7 MCP (`resolve-library-id` then `get-library-docs`) — NOT webfetch on documentation sites. Documentation URL structures change frequently and cause 404s.
+- For npm/package info: use `gh api` to fetch README from the repo, or context7 MCP.
+- If webfetch returns 404/403, do NOT retry the same URL or a variation. The URL was likely constructed/guessed. Find an alternative source (gh api, context7, ask the user).
+- If webfetch returns 429 (rate limited), wait before retrying. Do not make multiple rapid requests to the same domain.
 #
 # 2. markdown-formatter exit codes (200x observed — FIXED in t1345)
 #    Root cause was two bugs: (a) MCP tool exposed actions "lint","check","fix" but
@@ -113,26 +117,35 @@ When referencing specific functions or code include the pattern `file_path:line_
 - markdown-formatter supports actions: format, fix, lint, check, advanced, cleanup.
 - If markdown-formatter still fails, check that .agents/scripts/markdown-formatter.sh exists and is executable.
 #
-# 3. read:file_not_found (169x observed)
+# 3. read:file_not_found (53x observed)
 #    Root cause: assuming file paths from memory, AGENTS.md references, or prior
 #    sessions. Files move between releases and worktrees have different paths.
 - Before Read: run `git ls-files '<pattern>'` or `fd -g '<pattern>'` to confirm the file exists at the expected path.
 - In worktrees: the path prefix changes (e.g., `~/Git/repo.branch-name/` not `~/Git/repo/`). Always use the worktree path.
 - AGENTS.md references like `prompts/build.txt` are relative — resolve against the actual repo root, which may be `.agents/prompts/build.txt`.
 #
-# 4. edit:other (80x observed)
+# 4. edit:other (14x observed)
 #    Root causes: (a) identical oldString/newString (no-op), (b) permission denied
 #    on protected files, (c) editing files in wrong worktree.
 - Before Edit: confirm oldString differs from newString. If the content is already correct, skip the edit.
 - Permission errors mean the file is protected by user rules. Do not retry — check if you're in the right worktree or if the file requires a different workflow.
 - On "multiple matches" errors: include more surrounding context lines (5+) to make oldString unique, or use replaceAll if all instances should change.
 #
-# 5. glob:other (50x observed)
+# 5. glob:other (24x observed)
 #    Root cause: using Glob tool when it's blocked by permissions or searching
 #    non-existent directories. Glob is the LAST RESORT per File Discovery rules.
 - NEVER use Glob as primary file discovery. Use `git ls-files` (tracked) or `fd` (untracked) — these are faster and not subject to permission restrictions.
 - If Glob fails with permission error, switch to `git ls-files` or `fd` immediately — do not retry Glob.
 - If Glob fails with "No such directory", verify the directory exists before searching inside it.
+#
+# 6. repo slug hallucination (observed: agent fabricated "anomalyco/" org prefix)
+#    Root cause: repos.json had no slug field, so agents guessed org names from
+#    unrelated context (e.g., OpenCode's org). Now repos.json stores the slug.
+- ALWAYS resolve repo slugs from `~/.config/aidevops/repos.json` (the `slug` field). NEVER guess or construct `owner/repo` from memory.
+- If a repo has no slug in repos.json, resolve it from `git -C <path> remote get-url origin` and parse `owner/repo`.
+- For pulse/supervisor operations, filter repos.json to entries with `"pulse": true`.
+- Repos with `"local_only": true` have no GitHub remote — skip all `gh` operations on them.
+- Repo paths may be nested (e.g., `~/Git/cloudron/netbird-app`) — never assume repos are only at `~/Git/<name>`.
 
 # Security Rules
 - NEVER expose credentials in output/logs
@@ -164,6 +177,13 @@ Before ANY file modification: run `~/.aidevops/agents/scripts/pre-edit-check.sh`
 - YAML frontmatter in subagents declares: tools, model tier, MCP dependencies
 - Progressive disclosure: pointers to subagents, not inline content
 - MCP tools loaded on-demand per subagent (reduces context overhead)
+
+# Intelligence Over Scripts (CORE PRINCIPLE)
+When fixing orchestration, supervisor, or workflow bugs: improve agent guidance docs — do NOT add bash scripts, helper utilities, or deterministic state-tracking layers. You are an LLM. You can reason about whether two issues are duplicates, whether a task is stuck, or how to prioritize work. A regex or title-prefix match cannot. The framework previously had 37,000 lines of fragile bash orchestration that was never reliable. It was replaced with intelligence-guided agents for good reason.
+- If your proposed fix adds a `.sh` file or state mechanism: STOP. You are going in the wrong direction.
+- If your proposed fix adds a paragraph of clear guidance to an agent doc: you are on the right track.
+- Helper scripts are appropriate ONLY for deterministic utilities (version bumping, file discovery, credential lookup) — never for decisions requiring judgment.
+- When you encounter a problem that "could be solved with a script", ask: could this be solved by telling the agent what to look for and how to decide? If yes, update the guidance doc instead.
 
 # Working Directories
 ~/.aidevops/.agent-workspace/

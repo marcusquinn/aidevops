@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091
 
 # Vercel CLI Helper Script
 # Comprehensive Vercel deployment and project management using Vercel CLI

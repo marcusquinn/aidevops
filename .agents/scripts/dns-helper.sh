@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2153,SC2155
+# shellcheck disable=SC2153,SC2155
 set -euo pipefail
 
 # DNS Management Helper Script

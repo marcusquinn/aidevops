@@ -778,7 +778,11 @@ See `tools/video/real-video-enhancer.md` for full documentation.
 
 - `tools/video/video-prompt-design.md` - Veo 3 Meta Framework (7-component prompting)
 - `tools/video/higgsfield.md` - Higgsfield API integration
+- `tools/video/heygen-skill.md` - HeyGen Avatar API (talking-head generation)
+- `tools/video/muapi.md` - MuAPI (VEED lipsync, face swap, VFX)
 - `tools/video/remotion.md` - Programmatic video editing
+- `tools/voice/voice-models.md` - TTS model comparison (ElevenLabs, MiniMax, Qwen3-TTS)
+- `tools/voice/qwen3-tts.md` - Qwen3-TTS setup and voice cloning
 - `content/production/image.md` - Image generation (Nanobanana Pro, Midjourney, Freepik)
 - `content/production/audio.md` - Voice pipeline (CapCut cleanup + ElevenLabs), `voice-pipeline-helper.sh`
 - `content/production/characters.md` - Character consistency (Facial Engineering, Character Bibles)
@@ -790,6 +794,9 @@ See `tools/video/real-video-enhancer.md` for full documentation.
 - [Sora 2 Documentation](https://openai.com/sora)
 - [Veo 3.1 Documentation](https://deepmind.google/technologies/veo/)
 - [Higgsfield Platform](https://platform.higgsfield.ai)
+- [HeyGen Platform](https://www.heygen.com/)
+- [MiniMax / Hailuo](https://www.minimax.io/)
+- [VEED](https://www.veed.io/)
 - [Topaz Video AI](https://www.topazlabs.com/topaz-video-ai)
 
 ### Helper Scripts
@@ -826,7 +833,170 @@ video-gen-helper.sh models
 topaz-upscale-helper.sh --input ./raw/ --output ./upscaled/ --scale 1.5
 ```
 
+## Longform Talking-Head Pipeline (30s+)
+
+For talking-head videos (AI influencers, paid ads, organic content), the pipeline is **audio-driven** rather than prompt-driven. The voice audio controls lip movement and timing, so audio quality is the single biggest determinant of perceived realism.
+
+### Pipeline Overview
+
+```text
+Starting Image → Script → Voice Audio → Talking-Head Video → Post-Processing
+     (1)           (2)        (3)              (4)                (5)
+```
+
+Each step gates the next. A weak starting image or robotic audio ruins everything downstream.
+
+### Step 1: Generate Starting Image
+
+Use Nanobanana Pro with JSON prompts (see `content/production/image.md`) for precise color grading control. The JSON `color` and `lighting` fields prevent the flat greyscale look common in default AI generations.
+
+**Critical**: The starting image must be high-resolution and photorealistic. Video models amplify any artifacts in the source image.
+
+```text
+Tool routing:
+├─ Character/person → Nanobanana Pro (JSON color grading) or Freepik
+├─ Need 4K refinement → Seedream 4 post-processing
+└─ Face consistency across series → Ideogram face swap
+```
+
+See `content/production/image.md` "Nanobanana Pro JSON Prompt Schema" for the full JSON structure with color palette hex codes.
+
+### Step 2: Generate Script
+
+Write scripts that sound like natural speech, not written text. Key rules:
+
+- **Contractions**: "it's", "don't", "we're" — never "it is", "do not"
+- **Short sentences**: 8-12 words per sentence for natural pacing
+- **Conversational fillers**: Occasional "so", "actually", "honestly" add authenticity
+- **Read aloud test**: If it sounds awkward spoken, rewrite it
+
+Use emotional block cues from `content/production/audio.md` to mark delivery changes:
+
+```text
+[excited]This completely changed how I work.[/excited]
+[confident]The build quality is incredible, and it just works.[/confident]
+```
+
+### Step 3: Generate Voice Audio
+
+**This is the most important step.** A perfect video with robotic audio gets scrolled past immediately.
+
+#### Tool Selection
+
+| Tool | Quality | Cost | Voice Clone | Best For |
+|------|---------|------|-------------|----------|
+| **ElevenLabs** | Highest | $5-99/mo | Yes (instant, 10-30s clip) | Maximum realism, custom voices |
+| **MiniMax TTS** | High | $5/mo (120 min) | Yes (10s clip) | Easiest setup, best value |
+| **Qwen3-TTS** | High | Free (local, CUDA) | Yes (3s clip) | Self-hosted, open source |
+
+#### ElevenLabs Best Practices
+
+- **NEVER use pre-made voices** for realism — they are widely recognised and signal "AI" immediately
+- Use **Voice Design** to create a unique voice from a text description, or **Instant Voice Clone** with a 10-30 second clean audio clip
+- For voice cloning: record in a quiet room, single speaker, clear pronunciation, no background music
+- Always run through the CapCut cleanup pipeline first if cloning from existing content (see `content/production/audio.md`)
+
+#### MiniMax TTS
+
+MiniMax (Hailuo) offers the best quality-to-effort ratio for talking-head content:
+
+- Default voice output is already natural-sounding with minimal configuration
+- Voice clone works well with just a 10-second reference clip
+- $5/month for 120 minutes of generation — best value in the category
+- API available via Higgsfield platform (web UI) or direct MiniMax API
+
+#### Qwen3-TTS (Open Source)
+
+Solid self-hosted alternative requiring CUDA GPU. See `tools/voice/qwen3-tts.md` for full setup.
+
+- 3-second reference clip for voice cloning
+- Instruction-controlled emotion and prosody
+- 97ms streaming latency for real-time applications
+
+### Step 4: Generate Talking-Head Video
+
+Feed the starting image + voice audio to a talking-head model. These models animate the face to match the audio, handling lip sync, facial expressions, and head movement.
+
+#### Model Selection
+
+| Model | Quality | Cost | Open Source | Best For |
+|-------|---------|------|-------------|----------|
+| **HeyGen Avatar 4** | High | Subscription | No | Best all-around, easiest workflow |
+| **VEED Fabric 1.0** | Highest | Higher than HeyGen | No | Maximum quality, premium content |
+| **InfiniteTalk** | Good | Free (self-hosted) | Yes | Budget/self-hosted, decent quality |
+
+#### HeyGen Avatar 4
+
+Best all-around model for talking-head generation. Handles lip sync, expressions, and natural head movement well. See `tools/video/heygen-skill.md` for full API integration.
+
+**Workflow**:
+
+1. Upload starting image as photo avatar (see `heygen-skill/rules/photo-avatars.md`)
+2. Upload voice audio as audio asset (see `heygen-skill/rules/assets.md`)
+3. Generate video with audio input (see `heygen-skill/rules/video-generation.md`)
+
+#### VEED Fabric 1.0
+
+Higher quality than HeyGen but at a premium price point. Best for content where maximum realism justifies the cost (paid ads, brand content).
+
+- Accessible via MuAPI lipsync endpoint: `POST /api/v1/veed-lipsync` (see `tools/video/muapi.md`)
+- Also available via VEED's direct platform
+
+#### InfiniteTalk (Open Source)
+
+Voice-to-video model for self-hosted talking-head generation. Decent quality for an open-source solution.
+
+- GitHub: search for "InfiniteTalk voice-to-video"
+- Requires GPU for inference
+- Good for high-volume generation where API costs would be prohibitive
+- Quality gap vs HeyGen/VEED is narrowing with each release
+
+### Step 5: Post-Processing
+
+After generating the talking-head video:
+
+1. **Upscale** if needed: `real-video-enhancer-helper.sh upscale input.mp4 output.mp4 --scale 2`
+2. **Denoise**: `real-video-enhancer-helper.sh denoise input.mp4 output.mp4` (removes compression artifacts)
+3. **Film grain**: Add subtle grain for organic aesthetic (see Post-Production Guidelines below)
+4. **Audio mix**: Layer ambient sound and music behind the voice (see `content/production/audio.md` 4-Layer Audio Design)
+
+### Longform Assembly (30s+ Videos)
+
+For videos longer than a single generation window:
+
+1. **Split script into segments** matching the model's maximum duration (e.g., 10s for HeyGen)
+2. **Generate each segment** with the same starting image and voice settings for consistency
+3. **Stitch segments** in a video editor or with ffmpeg:
+
+```bash
+# Concatenate segments
+printf "file '%s'\n" segment_*.mp4 > concat.txt
+ffmpeg -f concat -safe 0 -i concat.txt -c copy longform_output.mp4
+```
+
+4. **Add B-roll cuts** between segments to hide any transition artifacts
+5. **Final audio pass**: Replace stitched audio with the original full-length voice track for seamless audio continuity
+
+### Use Case Routing
+
+| Use Case | Starting Image | Voice | Video Model | Post-Processing |
+|----------|---------------|-------|-------------|-----------------|
+| **Paid ads** | Nanobanana Pro (brand colors) | ElevenLabs (custom clone) | VEED Fabric | Full pipeline |
+| **Organic social** | Nanobanana Pro or Freepik | MiniMax (default voice) | HeyGen Avatar 4 | Light denoise |
+| **AI influencer** | Nanobanana Pro (consistent character) | ElevenLabs (cloned persona) | HeyGen Avatar 4 | Film grain + upscale |
+| **Budget/volume** | Freepik | Qwen3-TTS (local) | InfiniteTalk | Minimal |
+
 ## Quick Start Checklist
+
+**For Longform Talking-Head (30s+)**:
+- [ ] Generate high-quality starting image (Nanobanana Pro with JSON color grading)
+- [ ] Write conversational script with emotional block cues
+- [ ] Generate voice audio (ElevenLabs custom clone or MiniMax)
+- [ ] NEVER use pre-made ElevenLabs voices for realism content
+- [ ] Feed image + audio to talking-head model (HeyGen/VEED/InfiniteTalk)
+- [ ] For 30s+: split into segments, stitch, replace audio with full track
+- [ ] Post-process: denoise, optional upscale, optional film grain
+- [ ] Layer ambient audio and music behind voice track
 
 **For UGC/Social Content (Sora 2)**:
 - [ ] Use 6-section master template

@@ -144,7 +144,7 @@ Completion: NEVER mark `[x]` without merged PR (`pr:#NNN`) or `verified:YYYY-MM-
 
 Planning files go direct to main. Code changes need worktree + PR. Workers NEVER edit TODO.md.
 
-**Cross-repo awareness**: The supervisor manages tasks across all `repos.json` repos. When querying queue status, check GitHub for all active tasks across repos, not just the current repo's TODO.md. Use `gh issue list --repo <slug>` and `gh pr list --repo <slug>` for each managed repo to get the full picture.
+**Cross-repo awareness**: The supervisor manages tasks across all repos in `~/.config/aidevops/repos.json` where `pulse: true`. Each repo entry has a `slug` field (`owner/repo`) — ALWAYS use this for `gh` commands, never guess org names. Use `gh issue list --repo <slug>` and `gh pr list --repo <slug>` for each pulse-enabled repo to get the full picture. Repos with `"local_only": true` have no GitHub remote — skip `gh` operations on them. Repo paths may be nested (e.g., `~/Git/cloudron/netbird-app`), not just `~/Git/<name>`.
 
 Full rules: `reference/planning-detail.md`
 

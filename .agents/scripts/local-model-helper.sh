@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091
 
 # Local Model Helper - llama.cpp inference management for aidevops
 # Hardware-aware setup, HuggingFace GGUF model management, usage tracking,

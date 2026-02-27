@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091
 set -euo pipefail
 
 # Agent Browser Helper - Headless Browser Automation CLI for AI Agents

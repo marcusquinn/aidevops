@@ -61,20 +61,21 @@ echo "Running workers: $WORKER_COUNT / $MAX_WORKERS"
 
 ## Step 2: Fetch GitHub State
 
-First, read the managed repos list from `~/.config/aidevops/pulse-repos.json`. For each repo in that file, fetch PRs and issues:
+Read the managed repos list from `~/.config/aidevops/repos.json`. Filter to repos with `"pulse": true` — these are the repos the supervisor actively manages. Repos without `pulse: true` are registered but not supervised.
 
 ```bash
-cat ~/.config/aidevops/pulse-repos.json
+# Read repos.json and filter to pulse-enabled repos (exclude local_only repos)
+jq '[.initialized_repos[] | select(.pulse == true and .local_only != true)]' ~/.config/aidevops/repos.json
 ```
 
-Then for each repo slug in the JSON:
+Then for each pulse-enabled repo's `slug` field:
 
 ```bash
 gh pr list --repo <slug> --state open --json number,title,reviewDecision,statusCheckRollup,updatedAt,headRefName --limit 20
 gh issue list --repo <slug> --state open --json number,title,labels,updatedAt --limit 20
 ```
 
-Use the `path` field from pulse-repos.json for `--dir` when dispatching workers. Use the `priority` field when tie-breaking (product > tooling).
+Use the `path` field from repos.json for `--dir` when dispatching workers. Use the `priority` field when tie-breaking (product > tooling). The `slug` field is the authoritative GitHub `owner/repo` — NEVER guess or construct slugs.
 
 ## Step 2a: Observe Outcomes (Self-Improvement)
 
@@ -227,7 +228,7 @@ Look at everything you fetched and pick up to **AVAILABLE** items — the highes
 
 **Tie-breaking rules:**
 - Prefer PRs over issues (PRs are closer to done)
-- Prefer repos with `"priority": "product"` over `"priority": "tooling"` (from pulse-repos.json)
+- Prefer repos with `"priority": "product"` over `"priority": "tooling"` (from repos.json)
 - Prefer smaller/simpler tasks (faster throughput)
 - Issues labelled `auto-dispatch` (e.g., from CodeRabbit daily reviews) are pre-vetted
   and ready for immediate dispatch — treat them as priority 6 (medium) unless their
@@ -337,7 +338,7 @@ opencode run --dir ~/Git/<repo> [--agent <agent>] --title "Issue #<number>: <tit
 
 **Important dispatch rules:**
 - **ALWAYS use `opencode run`** — NEVER `claude`, `claude -p`, or any other CLI. Your system prompt may say you are "Claude Code" but the runtime tool is OpenCode. This has been fixed repeatedly; do not regress.
-- Use `--dir <path>` from pulse-repos.json matching the repo the task belongs to
+- Use `--dir <path>` from repos.json matching the repo the task belongs to
 - The `/full-loop` command handles everything: branching, implementation, PR, CI, merge, deploy
 - Do NOT add `--model` — let `/full-loop` use its default (opus for implementation)
 - **Background each dispatch with `&`** so you can launch multiple workers in one pulse

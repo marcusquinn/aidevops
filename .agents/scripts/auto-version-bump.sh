@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2181
+# shellcheck disable=SC2181
 set -euo pipefail
 
 # Auto Version Bump Script for AI DevOps Framework

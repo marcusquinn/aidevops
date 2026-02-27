@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2086
+# shellcheck disable=SC2086
 # =============================================================================
 # Local Linters - Fast Offline Quality Checks
 # =============================================================================
@@ -313,7 +313,7 @@ run_shellcheck() {
 	# This is significantly faster than per-file invocation (one process vs N)
 	local violations=0
 	local result
-	result=$(shellcheck -x --severity=warning --format=gcc "${ALL_SH_FILES[@]}" 2>&1) || true
+	result=$(shellcheck -x -P SCRIPTDIR --severity=warning --format=gcc "${ALL_SH_FILES[@]}" 2>&1) || true
 
 	if [[ -n "$result" ]]; then
 		# Count unique files with violations

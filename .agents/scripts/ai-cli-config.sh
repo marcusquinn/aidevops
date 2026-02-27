@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091
 # AI CLI Configuration Script
 # Configures MCP integrations for all detected AI assistants
 #

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2034,SC2086
+# shellcheck disable=SC2034,SC2086
 
 # SEO Data Export Helper Script
 # Unified router for exporting SEO data from multiple platforms to TOON format

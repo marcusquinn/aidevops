@@ -30,8 +30,6 @@ _ISSUE_SYNC_LIB_LOADED=1
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 fi
-# shellcheck source=shared-constants.sh
-# shellcheck disable=SC1091  # path resolved at runtime; file exists in deployed environment
 source "${SCRIPT_DIR}/shared-constants.sh"
 
 # =============================================================================

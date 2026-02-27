@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091
 set -euo pipefail
 
 # OCR Receipt/Invoice Extraction Helper for AI DevOps Framework
@@ -75,7 +74,6 @@ check_extraction_venv() {
 # Activate the document-extraction venv
 activate_venv() {
     if [[ -d "${VENV_DIR}/bin" ]]; then
-        # shellcheck disable=SC1091
         source "${VENV_DIR}/bin/activate"
         return 0
     fi

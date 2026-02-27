@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2001,SC2034,SC2181,SC2317
+# shellcheck disable=SC2001,SC2034,SC2181,SC2317
 set -euo pipefail
 
 # Version Manager for AI DevOps Framework

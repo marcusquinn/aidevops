@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091
 
 # MCP Registration Script for Claude Code
 # Reads configs/mcp-templates/*.json and registers MCP servers via `claude mcp add-json`.

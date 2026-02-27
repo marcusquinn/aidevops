@@ -35,7 +35,6 @@ set -euo pipefail
 # ============================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
-# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/shared-constants.sh" 2>/dev/null || true
 
 # Fallback colours if shared-constants.sh not loaded

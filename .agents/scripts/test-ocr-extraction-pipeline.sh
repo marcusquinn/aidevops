@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091
 set -euo pipefail
 
 # Test Suite for OCR Invoice/Receipt Extraction Pipeline (t012.5)
