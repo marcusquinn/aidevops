@@ -284,9 +284,191 @@ prefetch_state() {
 	# Clean up
 	rm -rf "$tmpdir"
 
+	# Append mission state
+	prefetch_missions "$repo_entries" >>"$STATE_FILE"
+
 	local repo_count
 	repo_count=$(echo "$repo_entries" | wc -l | tr -d ' ')
 	echo "[pulse-wrapper] Pre-fetched state for $repo_count repos → $STATE_FILE" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# Pre-fetch active mission state files
+#
+# Scans todo/missions/ and ~/.aidevops/missions/ for mission.md files
+# with status: active|paused|blocked|validating. Extracts a compact
+# summary (id, status, current milestone, pending features) so the
+# pulse agent can act on missions without reading full state files.
+#
+# Arguments:
+#   $1 - repo_entries (slug|path pairs, one per line)
+# Output: mission summary to stdout (appended to STATE_FILE by caller)
+#######################################
+prefetch_missions() {
+	local repo_entries="$1"
+	local found_any=false
+
+	# Collect mission files from repo-attached locations
+	local mission_files=()
+	while IFS='|' read -r slug path; do
+		local missions_dir="${path}/todo/missions"
+		if [[ -d "$missions_dir" ]]; then
+			while IFS= read -r mfile; do
+				[[ -n "$mfile" ]] && mission_files+=("${slug}|${path}|${mfile}")
+			done < <(find "$missions_dir" -name "mission.md" -type f 2>/dev/null || true)
+		fi
+	done <<<"$repo_entries"
+
+	# Also check homeless missions
+	local homeless_dir="${HOME}/.aidevops/missions"
+	if [[ -d "$homeless_dir" ]]; then
+		while IFS= read -r mfile; do
+			[[ -n "$mfile" ]] && mission_files+=("|homeless|${mfile}")
+		done < <(find "$homeless_dir" -name "mission.md" -type f 2>/dev/null || true)
+	fi
+
+	if [[ ${#mission_files[@]} -eq 0 ]]; then
+		return 0
+	fi
+
+	local active_count=0
+
+	for entry in "${mission_files[@]}"; do
+		local slug path mfile
+		IFS='|' read -r slug path mfile <<<"$entry"
+
+		# Extract frontmatter status — look for status: in YAML frontmatter
+		local status
+		status=$(_extract_frontmatter_field "$mfile" "status")
+
+		# Only include active/paused/blocked/validating missions
+		case "$status" in
+		active | paused | blocked | validating) ;;
+		*) continue ;;
+		esac
+
+		if [[ "$found_any" == false ]]; then
+			echo ""
+			echo "# Active Missions"
+			echo ""
+			echo "Mission state files detected by pulse-wrapper.sh. See pulse.md Step 3.5."
+			echo ""
+			found_any=true
+		fi
+
+		local mission_id
+		mission_id=$(_extract_frontmatter_field "$mfile" "id")
+		local title
+		title=$(_extract_frontmatter_field "$mfile" "title")
+		local mode
+		mode=$(_extract_frontmatter_field "$mfile" "mode")
+		local mission_dir
+		mission_dir=$(dirname "$mfile")
+
+		echo "## Mission: ${mission_id} — ${title}"
+		echo ""
+		echo "- **Status:** ${status}"
+		echo "- **Mode:** ${mode}"
+		echo "- **Repo:** ${slug:-homeless}"
+		echo "- **Path:** ${mfile}"
+		echo ""
+
+		# Extract milestone summaries — find lines matching "### Milestone N:"
+		# and their status lines
+		_extract_milestone_summary "$mfile"
+
+		echo ""
+		active_count=$((active_count + 1))
+	done
+
+	if [[ "$active_count" -gt 0 ]]; then
+		echo "[pulse-wrapper] Found $active_count active mission(s)" >>"$LOGFILE"
+	fi
+	return 0
+}
+
+#######################################
+# Extract a field value from YAML frontmatter
+# Arguments:
+#   $1 - file path
+#   $2 - field name
+# Output: field value to stdout (trimmed, comments stripped)
+#######################################
+_extract_frontmatter_field() {
+	local file="$1"
+	local field="$2"
+
+	# Read frontmatter (between first --- and second ---)
+	local in_frontmatter=false
+	local value=""
+	while IFS= read -r line; do
+		if [[ "$line" == "---" ]]; then
+			if [[ "$in_frontmatter" == true ]]; then
+				break
+			fi
+			in_frontmatter=true
+			continue
+		fi
+		if [[ "$in_frontmatter" == true ]]; then
+			# Match field: value (strip inline comments and quotes)
+			if [[ "$line" =~ ^${field}:[[:space:]]*(.*) ]]; then
+				value="${BASH_REMATCH[1]}"
+				# Strip inline comments (# ...)
+				value="${value%%#*}"
+				# Trim whitespace
+				value=$(echo "$value" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+				# Strip surrounding quotes
+				value="${value#\"}"
+				value="${value%\"}"
+				break
+			fi
+		fi
+	done <"$file"
+
+	echo "$value"
+	return 0
+}
+
+#######################################
+# Extract milestone summary from a mission state file
+# Outputs a compact table of milestones and their feature statuses
+# Arguments:
+#   $1 - mission.md file path
+# Output: milestone summary to stdout
+#######################################
+_extract_milestone_summary() {
+	local file="$1"
+	local current_milestone=""
+	local milestone_status=""
+
+	while IFS= read -r line; do
+		# Detect milestone headers: ### Milestone N: Name
+		if [[ "$line" =~ ^###[[:space:]]+Milestone[[:space:]]+([0-9]+):[[:space:]]+(.*) ]]; then
+			current_milestone="${BASH_REMATCH[1]}: ${BASH_REMATCH[2]}"
+		fi
+
+		# Detect milestone status: **Status:** value
+		if [[ -n "$current_milestone" && "$line" =~ \*\*Status:\*\*[[:space:]]*(.*) ]]; then
+			milestone_status="${BASH_REMATCH[1]}"
+			# Strip HTML comments
+			milestone_status="${milestone_status%%<!--*}"
+			milestone_status=$(echo "$milestone_status" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+			echo "- **Milestone ${current_milestone}** — ${milestone_status}"
+			current_milestone=""
+		fi
+
+		# Detect feature rows in tables: | N.N | Feature | tNNN | status | ...
+		if [[ "$line" =~ ^\|[[:space:]]*([0-9]+\.[0-9]+)[[:space:]]*\|[[:space:]]*(.*)\|[[:space:]]*(t[0-9.]+)[[:space:]]*\|[[:space:]]*([a-z]+)[[:space:]]*\| ]]; then
+			local feat_num="${BASH_REMATCH[1]}"
+			local feat_name="${BASH_REMATCH[2]}"
+			local task_id="${BASH_REMATCH[3]}"
+			local feat_status="${BASH_REMATCH[4]}"
+			# Trim feature name
+			feat_name=$(echo "$feat_name" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+			echo "  - F${feat_num}: ${feat_name} (${task_id}) — ${feat_status}"
+		fi
+	done <"$file"
 	return 0
 }
 
