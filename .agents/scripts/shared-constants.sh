@@ -277,6 +277,51 @@ print_info() {
 	return $?
 }
 
+# =============================================================================
+# Shared Logging Functions (issue #2411)
+# =============================================================================
+# Consolidated log_info/log_error/log_success/log_warn to eliminate duplication
+# across 70+ scripts. Each script can customize the prefix label by setting
+# LOG_PREFIX before sourcing this file (default: "INFO"/"ERROR"/"OK"/"WARN").
+#
+# Usage:
+#   LOG_PREFIX="CODACY"  # Optional: set before sourcing for custom labels
+#   source shared-constants.sh
+#   log_info "Processing..."   # Output: [CODACY] Processing...
+#
+# If LOG_PREFIX is not set, labels default to level names:
+#   log_info  -> [INFO]
+#   log_error -> [ERROR]
+#   log_success -> [OK]
+#   log_warn  -> [WARN]
+#
+# All log functions write to stderr and return 0.
+# Scripts that need different behavior can still override after sourcing.
+
+log_info() {
+	local label="${LOG_PREFIX:-INFO}"
+	echo -e "${BLUE}[${label}]${NC} $*" >&2
+	return 0
+}
+
+log_error() {
+	local label="${LOG_PREFIX:+${LOG_PREFIX}}"
+	echo -e "${RED}[${label:-ERROR}]${NC} $*" >&2
+	return 0
+}
+
+log_success() {
+	local label="${LOG_PREFIX:-OK}"
+	echo -e "${GREEN}[${label}]${NC} $*" >&2
+	return 0
+}
+
+log_warn() {
+	local label="${LOG_PREFIX:-WARN}"
+	echo -e "${YELLOW}[${label}]${NC} $*" >&2
+	return 0
+}
+
 # Validate required parameter
 validate_required_param() {
 	local param_name="$1"

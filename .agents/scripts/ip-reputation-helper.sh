@@ -480,28 +480,8 @@ disable_colors() {
 }
 
 # =============================================================================
-# Logging
+# Logging: uses shared log_* from shared-constants.sh
 # =============================================================================
-
-log_info() {
-	echo -e "$(c_cyan)[INFO]$(c_nc) $*" >&2
-	return 0
-}
-
-log_warn() {
-	echo -e "$(c_yellow)[WARN]$(c_nc) $*" >&2
-	return 0
-}
-
-log_error() {
-	echo -e "$(c_red)[ERROR]$(c_nc) $*" >&2
-	return 0
-}
-
-log_success() {
-	echo -e "$(c_green)[OK]$(c_nc) $*" >&2
-	return 0
-}
 
 # =============================================================================
 # Provider Management

@@ -11,13 +11,10 @@ set -euo pipefail
 WORK_DIR="${HOME}/.aidevops/.agent-workspace/tmp"
 GSC_SCRIPT="${WORK_DIR}/gsc-add-user.js"
 
-log_info() { echo -e "${BLUE}[INFO]${NC} $1"; return 0; }
-log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; return 0; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; return 0; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; return 0; }
+# Logging: uses shared log_* from shared-constants.sh
 
 show_help() {
-    cat << 'HELP'
+	cat <<'HELP'
 Usage: gsc-add-user-helper.sh <command> [options]
 
 Commands:
@@ -42,54 +39,54 @@ Requirements:
   - Chrome browser with logged-in Google session
   - User must have Owner access to GSC properties
 HELP
-    return 0
+	return 0
 }
 
 get_chrome_profile_path() {
-    case "$(uname -s)" in
-        Darwin)
-            echo "${HOME}/Library/Application Support/Google/Chrome/Default"
-            ;;
-        Linux)
-            echo "${HOME}/.config/google-chrome/Default"
-            ;;
-        MINGW*|CYGWIN*|MSYS*)
-            echo "${LOCALAPPDATA}/Google/Chrome/User Data/Default"
-            ;;
-        *)
-            log_error "Unsupported OS"
-            exit 1
-            ;;
-    esac
-    return 0
+	case "$(uname -s)" in
+	Darwin)
+		echo "${HOME}/Library/Application Support/Google/Chrome/Default"
+		;;
+	Linux)
+		echo "${HOME}/.config/google-chrome/Default"
+		;;
+	MINGW* | CYGWIN* | MSYS*)
+		echo "${LOCALAPPDATA}/Google/Chrome/User Data/Default"
+		;;
+	*)
+		log_error "Unsupported OS"
+		exit 1
+		;;
+	esac
+	return 0
 }
 
 ensure_playwright() {
-    if ! command -v npx &> /dev/null; then
-        log_error "npx not found. Please install Node.js"
-        exit 1
-    fi
-    
-    # Check if playwright is available
-    if ! npx playwright --version &> /dev/null 2>&1; then
-        log_info "Installing Playwright..."
-        npm install playwright
-    fi
-    return 0
+	if ! command -v npx &>/dev/null; then
+		log_error "npx not found. Please install Node.js"
+		exit 1
+	fi
+
+	# Check if playwright is available
+	if ! npx playwright --version &>/dev/null 2>&1; then
+		log_info "Installing Playwright..."
+		npm install playwright
+	fi
+	return 0
 }
 
 create_add_script() {
-    local service_account="$1"
-    local excludes="$2"
-    local dry_run="$3"
-    local single_domain="${4:-}"
-    
-    local chrome_profile
-    chrome_profile="$(get_chrome_profile_path)"
-    
-    mkdir -p "${WORK_DIR}"
-    
-    cat > "${GSC_SCRIPT}" << SCRIPT
+	local service_account="$1"
+	local excludes="$2"
+	local dry_run="$3"
+	local single_domain="${4:-}"
+
+	local chrome_profile
+	chrome_profile="$(get_chrome_profile_path)"
+
+	mkdir -p "${WORK_DIR}"
+
+	cat >"${GSC_SCRIPT}" <<SCRIPT
 import { chromium } from 'playwright';
 
 const SERVICE_ACCOUNT = "${service_account}";
@@ -181,16 +178,16 @@ async function main() {
 
 main().catch(console.error);
 SCRIPT
-    return 0
+	return 0
 }
 
 create_list_script() {
-    local chrome_profile
-    chrome_profile="$(get_chrome_profile_path)"
-    
-    mkdir -p "${WORK_DIR}"
-    
-    cat > "${GSC_SCRIPT}" << SCRIPT
+	local chrome_profile
+	chrome_profile="$(get_chrome_profile_path)"
+
+	mkdir -p "${WORK_DIR}"
+
+	cat >"${GSC_SCRIPT}" <<SCRIPT
 import { chromium } from 'playwright';
 
 async function main() {
@@ -216,106 +213,106 @@ async function main() {
 
 main().catch(console.error);
 SCRIPT
-    return 0
+	return 0
 }
 
 run_script() {
-    cd "${WORK_DIR}" || exit
-    node "${GSC_SCRIPT}"
-    return 0
+	cd "${WORK_DIR}" || exit
+	node "${GSC_SCRIPT}"
+	return 0
 }
 
 cmd_add() {
-    local service_account=""
-    local excludes=""
-    local dry_run="false"
-    local single_domain=""
-    
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --exclude)
-                if [[ -n "$excludes" ]]; then
-                    excludes="${excludes}, "
-                fi
-                excludes="${excludes}'$2'"
-                shift 2
-                ;;
-            --dry-run)
-                dry_run="true"
-                shift
-                ;;
-            *)
-                if [[ -z "$service_account" ]]; then
-                    service_account="$1"
-                elif [[ -z "$single_domain" ]]; then
-                    single_domain="$1"
-                fi
-                shift
-                ;;
-        esac
-    done
-    
-    if [[ -z "$service_account" ]]; then
-        log_error "Service account email required"
-        show_help
-        exit 1
-    fi
-    
-    ensure_playwright
-    create_add_script "$service_account" "$excludes" "$dry_run" "$single_domain"
-    
-    log_info "Adding ${service_account} to GSC properties..."
-    [[ "$dry_run" == "true" ]] && log_warn "DRY RUN - no changes will be made"
-    [[ -n "$excludes" ]] && log_info "Excluding: ${excludes}"
-    
-    run_script
-    return 0
+	local service_account=""
+	local excludes=""
+	local dry_run="false"
+	local single_domain=""
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--exclude)
+			if [[ -n "$excludes" ]]; then
+				excludes="${excludes}, "
+			fi
+			excludes="${excludes}'$2'"
+			shift 2
+			;;
+		--dry-run)
+			dry_run="true"
+			shift
+			;;
+		*)
+			if [[ -z "$service_account" ]]; then
+				service_account="$1"
+			elif [[ -z "$single_domain" ]]; then
+				single_domain="$1"
+			fi
+			shift
+			;;
+		esac
+	done
+
+	if [[ -z "$service_account" ]]; then
+		log_error "Service account email required"
+		show_help
+		exit 1
+	fi
+
+	ensure_playwright
+	create_add_script "$service_account" "$excludes" "$dry_run" "$single_domain"
+
+	log_info "Adding ${service_account} to GSC properties..."
+	[[ "$dry_run" == "true" ]] && log_warn "DRY RUN - no changes will be made"
+	[[ -n "$excludes" ]] && log_info "Excluding: ${excludes}"
+
+	run_script
+	return 0
 }
 
 cmd_list() {
-    ensure_playwright
-    create_list_script
-    
-    log_info "Listing all GSC properties..."
-    run_script
-    return 0
+	ensure_playwright
+	create_list_script
+
+	log_info "Listing all GSC properties..."
+	run_script
+	return 0
 }
 
 cmd_check() {
-    local service_account="$1"
-    
-    if [[ -z "$service_account" ]]; then
-        log_error "Service account email required"
-        exit 1
-    fi
-    
-    # Use the GSC MCP to check access
-    log_info "Checking GSC API access for ${service_account}..."
-    log_info "Run: opencode mcp call google-search-console list-sites"
-    return 0
+	local service_account="$1"
+
+	if [[ -z "$service_account" ]]; then
+		log_error "Service account email required"
+		exit 1
+	fi
+
+	# Use the GSC MCP to check access
+	log_info "Checking GSC API access for ${service_account}..."
+	log_info "Run: opencode mcp call google-search-console list-sites"
+	return 0
 }
 
 # Main
 case "${1:-}" in
-    add)
-        shift
-        cmd_add "$@"
-        ;;
-    list)
-        cmd_list
-        ;;
-    check)
-        shift
-        cmd_check "${1:-}"
-        ;;
-    -h|--help|help|"")
-        show_help
-        ;;
-    *)
-        log_error "Unknown command: $1"
-        show_help
-        exit 1
-        ;;
+add)
+	shift
+	cmd_add "$@"
+	;;
+list)
+	cmd_list
+	;;
+check)
+	shift
+	cmd_check "${1:-}"
+	;;
+-h | --help | help | "")
+	show_help
+	;;
+*)
+	log_error "Unknown command: $1"
+	show_help
+	exit 1
+	;;
 esac
 
 exit 0

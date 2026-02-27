@@ -44,25 +44,10 @@ readonly AUDIT_CONFIG="configs/code-audit-config.json"
 readonly AUDIT_CONFIG_TEMPLATE="configs/code-audit-config.json.txt"
 
 # =============================================================================
-# Logging
+# Logging: uses shared log_* from shared-constants.sh with CODACY prefix
 # =============================================================================
-
-log_info() {
-	echo -e "${BLUE}[CODACY]${NC} $*" >&2
-	return 0
-}
-log_success() {
-	echo -e "${GREEN}[CODACY]${NC} $*" >&2
-	return 0
-}
-log_warn() {
-	echo -e "${YELLOW}[CODACY]${NC} $*" >&2
-	return 0
-}
-log_error() {
-	echo -e "${RED}[CODACY]${NC} $*" >&2
-	return 0
-}
+# shellcheck disable=SC2034  # Used by shared-constants.sh log_* functions
+LOG_PREFIX="CODACY"
 
 # =============================================================================
 # SQLite wrapper: sets busy_timeout on every connection (t135.3 pattern)

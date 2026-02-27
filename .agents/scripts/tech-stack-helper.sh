@@ -115,25 +115,8 @@ provider_display_name() {
 }
 
 # =============================================================================
-# Logging — thin wrappers over shared print_* (all output to stderr for logging)
+# Logging: uses shared log_* from shared-constants.sh
 # =============================================================================
-
-log_info() {
-	print_info "$1" >&2
-	return 0
-}
-log_success() {
-	print_success "$1" >&2
-	return 0
-}
-log_warning() {
-	print_warning "$1" >&2
-	return 0
-}
-log_error() {
-	print_error "$1"
-	return 0
-} # print_error already writes to stderr
 
 # =============================================================================
 # Dependencies

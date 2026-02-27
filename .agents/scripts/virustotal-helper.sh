@@ -28,29 +28,9 @@ readonly RATE_LIMIT_DELAY="${VT_RATE_LIMIT_DELAY:-16}" # 4 req/min = 1 every 15s
 # Helper Functions
 # =============================================================================
 
-log_info() {
-	local msg="$1"
-	echo -e "${BLUE}[virustotal]${NC} ${msg}" >&2
-	return 0
-}
-
-log_success() {
-	local msg="$1"
-	echo -e "${GREEN}[OK]${NC} ${msg}" >&2
-	return 0
-}
-
-log_warning() {
-	local msg="$1"
-	echo -e "${YELLOW}[WARN]${NC} ${msg}" >&2
-	return 0
-}
-
-log_error() {
-	local msg="$1"
-	echo -e "${RED}[ERROR]${NC} ${msg}" >&2
-	return 0
-}
+# Logging: uses shared log_* from shared-constants.sh with virustotal prefix
+# shellcheck disable=SC2034  # Used by shared-constants.sh log_* functions
+LOG_PREFIX="virustotal"
 
 print_usage() {
 	cat <<'EOF'

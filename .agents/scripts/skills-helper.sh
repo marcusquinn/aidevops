@@ -39,25 +39,9 @@ SKILL_SOURCES="${AGENTS_DIR}/configs/skill-sources.json"
 # Helper Functions
 # =============================================================================
 
-log_info() {
-	echo -e "${BLUE}[skills]${NC} $1" >&2
-	return 0
-}
-
-log_success() {
-	echo -e "${GREEN}[OK]${NC} $1" >&2
-	return 0
-}
-
-log_warning() {
-	echo -e "${YELLOW}[WARN]${NC} $1" >&2
-	return 0
-}
-
-log_error() {
-	echo -e "${RED}[ERROR]${NC} $1" >&2
-	return 0
-}
+# Logging: uses shared log_* from shared-constants.sh with skills prefix
+# shellcheck disable=SC2034  # Used by shared-constants.sh log_* functions
+LOG_PREFIX="skills"
 
 show_help() {
 	cat <<'EOF'

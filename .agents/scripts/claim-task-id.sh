@@ -91,10 +91,7 @@ _REMOTE_NAME_SET=false
 _COUNTER_BRANCH_SET=false
 
 # Logging (all to stderr so stdout is machine-readable)
-log_info() { echo -e "${BLUE}[INFO]${NC} $*" >&2; }
-log_success() { echo -e "${GREEN}[OK]${NC} $*" >&2; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $*" >&2; }
-log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
+# Logging: uses shared log_* from shared-constants.sh
 
 # Load project-level config from .aidevops.json in the repo root.
 # Populates REMOTE_NAME and COUNTER_BRANCH unless already set by CLI flags.
