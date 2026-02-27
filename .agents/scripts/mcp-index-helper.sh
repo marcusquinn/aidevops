@@ -31,10 +31,7 @@ readonly OPENCODE_CONFIG="$HOME/.config/opencode/opencode.json"
 # shellcheck disable=SC2034  # Used for future cache invalidation
 readonly CACHE_TTL_HOURS=24
 
-log_info() { echo -e "${BLUE}[INFO]${NC} $*"; }
-log_success() { echo -e "${GREEN}[OK]${NC} $*"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
+# Logging: uses shared log_* from shared-constants.sh
 
 #######################################
 # Initialize SQLite database with FTS5

@@ -39,22 +39,9 @@ readonly SONARCLOUD_API_BASE="https://sonarcloud.io/api"
 # Logging
 # =============================================================================
 
-log_info() {
-	echo -e "${BLUE}[SONARCLOUD]${NC} $*"
-	return 0
-}
-log_success() {
-	echo -e "${GREEN}[SONARCLOUD]${NC} $*"
-	return 0
-}
-log_warn() {
-	echo -e "${YELLOW}[SONARCLOUD]${NC} $*"
-	return 0
-}
-log_error() {
-	echo -e "${RED}[SONARCLOUD]${NC} $*" >&2
-	return 0
-}
+# Logging: uses shared log_* from shared-constants.sh with SONARCLOUD prefix
+# shellcheck disable=SC2034  # Used by shared-constants.sh log_* functions
+LOG_PREFIX="SONARCLOUD"
 
 # =============================================================================
 # SQLite wrapper: sets busy_timeout on every connection (t135.3 pattern)

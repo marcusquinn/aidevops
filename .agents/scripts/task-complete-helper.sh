@@ -45,11 +45,7 @@ REPO_PATH="$PWD"
 NO_PUSH=false
 VERIFY_BRIEF=false
 
-# Logging
-log_info() { echo -e "${BLUE}[INFO]${NC} $*" >&2; }
-log_success() { echo -e "${GREEN}[OK]${NC} $*" >&2; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $*" >&2; }
-log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
+# Logging: uses shared log_* from shared-constants.sh
 
 # Show help
 show_help() {

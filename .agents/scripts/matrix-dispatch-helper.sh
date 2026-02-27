@@ -52,13 +52,9 @@ readonly OPENCODE_HOST="${OPENCODE_HOST:-127.0.0.1}"
 
 readonly BOLD='\033[1m'
 
-#######################################
-# Logging
-#######################################
-log_info() { echo -e "${BLUE}[MATRIX]${NC} $*"; }
-log_success() { echo -e "${GREEN}[MATRIX]${NC} $*"; }
-log_warn() { echo -e "${YELLOW}[MATRIX]${NC} $*"; }
-log_error() { echo -e "${RED}[MATRIX]${NC} $*" >&2; }
+# Logging: uses shared log_* from shared-constants.sh with MATRIX prefix
+# shellcheck disable=SC2034  # Used by shared-constants.sh log_* functions
+LOG_PREFIX="MATRIX"
 
 #######################################
 # Check dependencies

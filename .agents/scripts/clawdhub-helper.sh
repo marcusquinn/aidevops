@@ -28,28 +28,12 @@ CLAWDHUB_BASE_URL="https://clawdhub.com"
 CLAWDHUB_API="${CLAWDHUB_BASE_URL}/api/v1"
 TEMP_DIR="${TMPDIR:-/tmp}/clawdhub-fetch"
 
-log_info() {
-    echo -e "${BLUE}[clawdhub]${NC} $1"
-    return 0
-}
-
-log_success() {
-    echo -e "${GREEN}[OK]${NC} $1"
-    return 0
-}
-
-log_warning() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
-    return 0
-}
-
-log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-    return 0
-}
+# Logging: uses shared log_* from shared-constants.sh with clawdhub prefix
+# shellcheck disable=SC2034  # Used by shared-constants.sh log_* functions
+LOG_PREFIX="clawdhub"
 
 show_help() {
-    cat << 'EOF'
+	cat <<'EOF'
 ClawdHub Helper - Fetch skills from clawdhub.com using browser automation
 
 USAGE:
@@ -88,85 +72,86 @@ NOTES:
     - Search uses ClawdHub's vector/semantic search API
     - API endpoints used: /api/v1/skills/{slug}, /api/search?q={query}
 EOF
-    return 0
+	return 0
 }
 
 # Parse ClawdHub URL or shorthand into slug
 # Accepts: "slug", "owner/slug", "https://clawdhub.com/owner/slug"
 parse_clawdhub_input() {
-    local input="$1"
+	local input="$1"
 
-    # Strip URL prefix
-    input="${input#https://clawdhub.com/}"
-    input="${input#http://clawdhub.com/}"
-    input="${input#clawdhub.com/}"
+	# Strip URL prefix
+	input="${input#https://clawdhub.com/}"
+	input="${input#http://clawdhub.com/}"
+	input="${input#clawdhub.com/}"
 
-    # Strip leading/trailing slashes
-    input="${input#/}"
-    input="${input%/}"
+	# Strip leading/trailing slashes
+	input="${input#/}"
+	input="${input%/}"
 
-    # If format is "owner/slug", extract just the slug (last segment)
-    if [[ "$input" == */* ]]; then
-        echo "${input##*/}"
-    else
-        echo "$input"
-    fi
-    return 0
+	# If format is "owner/slug", extract just the slug (last segment)
+	if [[ "$input" == */* ]]; then
+		echo "${input##*/}"
+	else
+		echo "$input"
+	fi
+	return 0
 }
 
 # Fetch skill metadata from API
 fetch_skill_info() {
-    local slug="$1"
+	local slug="$1"
 
-    local response
-    response=$(curl -s --connect-timeout 10 --max-time 30 "${CLAWDHUB_API}/skills/${slug}")
+	local response
+	response=$(curl -s --connect-timeout 10 --max-time 30 "${CLAWDHUB_API}/skills/${slug}")
 
-    if echo "$response" | python3 -c "import sys,json; json.load(sys.stdin)" 2>/dev/null; then
-        echo "$response"
-    else
-        log_error "Failed to fetch skill info for: $slug"
-        return 1
-    fi
-    return 0
+	if echo "$response" | python3 -c "import sys,json; json.load(sys.stdin)" 2>/dev/null; then
+		echo "$response"
+	else
+		log_error "Failed to fetch skill info for: $slug"
+		return 1
+	fi
+	return 0
 }
 
 # Extract SKILL.md content using Playwright
 # The ClawdHub SPA renders SKILL.md as HTML on the skill detail page.
 # We use Playwright to navigate, wait for render, and extract the markdown content.
 fetch_skill_content_playwright() {
-    local slug="$1"
-    local output_dir="$2"
+	local slug="$1"
+	local output_dir="$2"
 
-    mkdir -p "$output_dir"
+	mkdir -p "$output_dir"
 
-    # First get the owner handle from API to construct the full URL
-    local info
-    info=$(fetch_skill_info "$slug") || return 1
+	# First get the owner handle from API to construct the full URL
+	local info
+	info=$(fetch_skill_info "$slug") || return 1
 
-    local owner
-    owner=$(echo "$info" | python3 -c "import sys,json; print(json.load(sys.stdin).get('owner',{}).get('handle',''))" 2>/dev/null)
+	local owner
+	owner=$(echo "$info" | python3 -c "import sys,json; print(json.load(sys.stdin).get('owner',{}).get('handle',''))" 2>/dev/null)
 
-    if [[ -z "$owner" ]]; then
-        log_error "Could not determine owner for skill: $slug"
-        return 1
-    fi
+	if [[ -z "$owner" ]]; then
+		log_error "Could not determine owner for skill: $slug"
+		return 1
+	fi
 
-    local skill_url="${CLAWDHUB_BASE_URL}/${owner}/${slug}"
-    log_info "Fetching SKILL.md from: $skill_url"
+	local skill_url="${CLAWDHUB_BASE_URL}/${owner}/${slug}"
+	log_info "Fetching SKILL.md from: $skill_url"
 
-    # Create a temporary Node.js project with Playwright to extract SKILL.md
-    local pw_dir
-    pw_dir=$(mktemp -d "${TMPDIR:-/tmp}/clawdhub-pw-XXXXXX")
-    _save_cleanup_scope; trap '_run_cleanups' RETURN
-    push_cleanup "rm -rf '${pw_dir}'"
+	# Create a temporary Node.js project with Playwright to extract SKILL.md
+	local pw_dir
+	pw_dir=$(mktemp -d "${TMPDIR:-/tmp}/clawdhub-pw-XXXXXX")
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	push_cleanup "rm -rf '${pw_dir}'"
 
-    # Create package.json for the temporary project
-    cat > "$pw_dir/package.json" << 'PKGJSON'
+	# Create package.json for the temporary project
+	cat >"$pw_dir/package.json" <<'PKGJSON'
 {"name":"clawdhub-fetch","private":true,"type":"module","dependencies":{"playwright":"^1.50.0"}}
 PKGJSON
 
-    # Create the extraction script
-    cat > "$pw_dir/fetch.mjs" << 'PLAYWRIGHT_SCRIPT'
+	# Create the extraction script
+	cat >"$pw_dir/fetch.mjs" <<'PLAYWRIGHT_SCRIPT'
 import { chromium } from 'playwright';
 import { writeFileSync } from 'fs';
 
@@ -281,43 +266,43 @@ try {
 }
 PLAYWRIGHT_SCRIPT
 
-    local output_file="${output_dir}/SKILL.md"
+	local output_file="${output_dir}/SKILL.md"
 
-    # Install playwright and run the fetch script
-    log_info "Installing Playwright (temporary)..."
-    if (cd "$pw_dir" && npm install --silent 2>/dev/null && npx playwright install chromium --with-deps 2>/dev/null); then
-        log_info "Running browser extraction..."
-        if (cd "$pw_dir" && node fetch.mjs "$skill_url" "$output_file" 2>/dev/null); then
-            rm -rf "$pw_dir"
-            if [[ -f "$output_file" && -s "$output_file" ]]; then
-                log_success "Extracted SKILL.md ($(wc -c < "$output_file" | tr -d ' ') bytes)"
-                return 0
-            fi
-        fi
-    fi
+	# Install playwright and run the fetch script
+	log_info "Installing Playwright (temporary)..."
+	if (cd "$pw_dir" && npm install --silent 2>/dev/null && npx playwright install chromium --with-deps 2>/dev/null); then
+		log_info "Running browser extraction..."
+		if (cd "$pw_dir" && node fetch.mjs "$skill_url" "$output_file" 2>/dev/null); then
+			rm -rf "$pw_dir"
+			if [[ -f "$output_file" && -s "$output_file" ]]; then
+				log_success "Extracted SKILL.md ($(wc -c <"$output_file" | tr -d ' ') bytes)"
+				return 0
+			fi
+		fi
+	fi
 
-    rm -rf "$pw_dir"
-    log_warning "Playwright extraction failed, trying clawdhub CLI fallback..."
+	rm -rf "$pw_dir"
+	log_warning "Playwright extraction failed, trying clawdhub CLI fallback..."
 
-    # Fallback: try clawdhub CLI
-    if command -v npx &>/dev/null; then
-        log_info "Trying: npx clawdhub install $slug"
-        if (cd "$output_dir" && npx --yes clawdhub@latest install "$slug" --force 2>/dev/null); then
-            # clawdhub installs to ./skills/<slug>/SKILL.md
-            local installed_skill
-            installed_skill=$(find "$output_dir" -name "SKILL.md" -type f 2>/dev/null | head -1)
-            if [[ -n "$installed_skill" && -f "$installed_skill" ]]; then
-                if [[ "$installed_skill" != "$output_file" ]]; then
-                    cp "$installed_skill" "$output_file"
-                fi
-                log_success "Fetched via clawdhub CLI"
-                return 0
-            fi
-        fi
-    fi
+	# Fallback: try clawdhub CLI
+	if command -v npx &>/dev/null; then
+		log_info "Trying: npx clawdhub install $slug"
+		if (cd "$output_dir" && npx --yes clawdhub@latest install "$slug" --force 2>/dev/null); then
+			# clawdhub installs to ./skills/<slug>/SKILL.md
+			local installed_skill
+			installed_skill=$(find "$output_dir" -name "SKILL.md" -type f 2>/dev/null | head -1)
+			if [[ -n "$installed_skill" && -f "$installed_skill" ]]; then
+				if [[ "$installed_skill" != "$output_file" ]]; then
+					cp "$installed_skill" "$output_file"
+				fi
+				log_success "Fetched via clawdhub CLI"
+				return 0
+			fi
+		fi
+	fi
 
-    log_error "Could not fetch SKILL.md for: $slug"
-    return 1
+	log_error "Could not fetch SKILL.md for: $slug"
+	return 1
 }
 
 # =============================================================================
@@ -325,67 +310,67 @@ PLAYWRIGHT_SCRIPT
 # =============================================================================
 
 cmd_fetch() {
-    local input="$1"
-    shift || true
+	local input="$1"
+	shift || true
 
-    local output_dir=""
+	local output_dir=""
 
-    # Parse options
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --output)
-                output_dir="$2"
-                shift 2
-                ;;
-            *)
-                log_error "Unknown option: $1"
-                return 1
-                ;;
-        esac
-    done
+	# Parse options
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--output)
+			output_dir="$2"
+			shift 2
+			;;
+		*)
+			log_error "Unknown option: $1"
+			return 1
+			;;
+		esac
+	done
 
-    local slug
-    slug=$(parse_clawdhub_input "$input")
+	local slug
+	slug=$(parse_clawdhub_input "$input")
 
-    if [[ -z "$slug" ]]; then
-        log_error "Could not parse slug from: $input"
-        return 1
-    fi
+	if [[ -z "$slug" ]]; then
+		log_error "Could not parse slug from: $input"
+		return 1
+	fi
 
-    log_info "Skill slug: $slug"
+	log_info "Skill slug: $slug"
 
-    # Set default output directory
-    if [[ -z "$output_dir" ]]; then
-        output_dir="${TEMP_DIR}/${slug}"
-    fi
+	# Set default output directory
+	if [[ -z "$output_dir" ]]; then
+		output_dir="${TEMP_DIR}/${slug}"
+	fi
 
-    # Fetch the skill content
-    fetch_skill_content_playwright "$slug" "$output_dir"
-    return $?
+	# Fetch the skill content
+	fetch_skill_content_playwright "$slug" "$output_dir"
+	return $?
 }
 
 cmd_search() {
-    local query="$1"
+	local query="$1"
 
-    if [[ -z "$query" ]]; then
-        log_error "Search query required"
-        return 1
-    fi
+	if [[ -z "$query" ]]; then
+		log_error "Search query required"
+		return 1
+	fi
 
-    log_info "Searching ClawdHub for: $query"
+	log_info "Searching ClawdHub for: $query"
 
-    local encoded_query
-    encoded_query=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$query'))" 2>/dev/null || echo "$query")
+	local encoded_query
+	encoded_query=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$query'))" 2>/dev/null || echo "$query")
 
-    local response
-    response=$(curl -s --connect-timeout 10 --max-time 30 "${CLAWDHUB_API}/search?q=${encoded_query}")
+	local response
+	response=$(curl -s --connect-timeout 10 --max-time 30 "${CLAWDHUB_API}/search?q=${encoded_query}")
 
-    if ! echo "$response" | python3 -c "import sys,json; json.load(sys.stdin)" 2>/dev/null; then
-        log_error "Search failed"
-        return 1
-    fi
+	if ! echo "$response" | python3 -c "import sys,json; json.load(sys.stdin)" 2>/dev/null; then
+		log_error "Search failed"
+		return 1
+	fi
 
-    echo "$response" | python3 -c "
+	echo "$response" | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
 results = data.get('results', [])
@@ -402,26 +387,26 @@ else:
             print(f'    {summary}')
         print()
 "
-    return 0
+	return 0
 }
 
 cmd_info() {
-    local input="$1"
+	local input="$1"
 
-    local slug
-    slug=$(parse_clawdhub_input "$input")
+	local slug
+	slug=$(parse_clawdhub_input "$input")
 
-    if [[ -z "$slug" ]]; then
-        log_error "Could not parse slug from: $input"
-        return 1
-    fi
+	if [[ -z "$slug" ]]; then
+		log_error "Could not parse slug from: $input"
+		return 1
+	fi
 
-    log_info "Fetching info for: $slug"
+	log_info "Fetching info for: $slug"
 
-    local response
-    response=$(fetch_skill_info "$slug") || return 1
+	local response
+	response=$(fetch_skill_info "$slug") || return 1
 
-    echo "$response" | python3 -c "
+	echo "$response" | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
 skill = data.get('skill', {})
@@ -439,7 +424,7 @@ print(f'  Downloads: {stats.get(\"downloads\", 0)}')
 print(f'  Installs: {stats.get(\"installsCurrent\", 0)}')
 print()
 "
-    return 0
+	return 0
 }
 
 # =============================================================================
@@ -447,41 +432,41 @@ print()
 # =============================================================================
 
 main() {
-    local command="${1:-help}"
-    shift || true
+	local command="${1:-help}"
+	shift || true
 
-    case "$command" in
-        fetch)
-            if [[ $# -lt 1 ]]; then
-                log_error "Slug or URL required"
-                echo "Usage: clawdhub-helper.sh fetch <slug|url> [--output <dir>]"
-                return 1
-            fi
-            cmd_fetch "$@"
-            ;;
-        search)
-            if [[ $# -lt 1 ]]; then
-                log_error "Search query required"
-                return 1
-            fi
-            cmd_search "$@"
-            ;;
-        info)
-            if [[ $# -lt 1 ]]; then
-                log_error "Slug or URL required"
-                return 1
-            fi
-            cmd_info "$@"
-            ;;
-        help|--help|-h)
-            show_help
-            ;;
-        *)
-            log_error "Unknown command: $command"
-            show_help
-            return 1
-            ;;
-    esac
+	case "$command" in
+	fetch)
+		if [[ $# -lt 1 ]]; then
+			log_error "Slug or URL required"
+			echo "Usage: clawdhub-helper.sh fetch <slug|url> [--output <dir>]"
+			return 1
+		fi
+		cmd_fetch "$@"
+		;;
+	search)
+		if [[ $# -lt 1 ]]; then
+			log_error "Search query required"
+			return 1
+		fi
+		cmd_search "$@"
+		;;
+	info)
+		if [[ $# -lt 1 ]]; then
+			log_error "Slug or URL required"
+			return 1
+		fi
+		cmd_info "$@"
+		;;
+	help | --help | -h)
+		show_help
+		;;
+	*)
+		log_error "Unknown command: $command"
+		show_help
+		return 1
+		;;
+	esac
 }
 
 main "$@"

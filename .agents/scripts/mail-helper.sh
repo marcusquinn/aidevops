@@ -59,13 +59,9 @@ readonly MATRIX_BOT_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/aidevops/matrix-bo
 readonly MAIL_ENVELOPE_PREFIX="[AIDEVOPS-MAIL]"
 readonly MAIL_ENVELOPE_VERSION="1"
 
-#######################################
-# Logging
-#######################################
-log_info() { echo -e "${BLUE}[MAIL]${NC} $*"; }
-log_success() { echo -e "${GREEN}[MAIL]${NC} $*"; }
-log_warn() { echo -e "${YELLOW}[MAIL]${NC} $*"; }
-log_error() { echo -e "${RED}[MAIL]${NC} $*" >&2; }
+# Logging: uses shared log_* from shared-constants.sh with MAIL prefix
+# shellcheck disable=SC2034  # Used by shared-constants.sh log_* functions
+LOG_PREFIX="MAIL"
 
 #######################################
 # SQLite wrapper: sets busy_timeout on every connection (t135.3)

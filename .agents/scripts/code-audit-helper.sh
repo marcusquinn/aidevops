@@ -40,25 +40,10 @@ readonly AUDIT_CONFIG="configs/code-audit-config.json"
 readonly KNOWN_SERVICES="coderabbit codacy sonarcloud codefactor"
 
 # =============================================================================
-# Logging
+# Logging: uses shared log_* from shared-constants.sh with AUDIT prefix
 # =============================================================================
-
-log_info() {
-	echo -e "${BLUE}[AUDIT]${NC} $*" >&2
-	return 0
-}
-log_success() {
-	echo -e "${GREEN}[AUDIT]${NC} $*" >&2
-	return 0
-}
-log_warn() {
-	echo -e "${YELLOW}[AUDIT]${NC} $*" >&2
-	return 0
-}
-log_error() {
-	echo -e "${RED}[AUDIT]${NC} $*" >&2
-	return 0
-}
+# shellcheck disable=SC2034  # Used by shared-constants.sh log_* functions
+LOG_PREFIX="AUDIT"
 
 # =============================================================================
 # SQLite wrapper: sets busy_timeout on every connection (t135.3 pattern)

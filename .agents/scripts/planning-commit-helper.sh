@@ -24,21 +24,9 @@ set -euo pipefail
 # Planning file patterns
 readonly PLANNING_PATTERNS="^TODO\.md$|^todo/"
 
-log_info() {
-	echo -e "${BLUE}[plan]${NC} $1"
-}
-
-log_success() {
-	echo -e "${GREEN}[plan]${NC} $1"
-}
-
-log_warning() {
-	echo -e "${YELLOW}[plan]${NC} $1"
-}
-
-log_error() {
-	echo -e "${RED}[plan]${NC} $1" >&2
-}
+# Logging: uses shared log_* from shared-constants.sh with plan prefix
+# shellcheck disable=SC2034  # Used by shared-constants.sh log_* functions
+LOG_PREFIX="plan"
 
 # Check if we're in a git repository
 check_git_repo() {

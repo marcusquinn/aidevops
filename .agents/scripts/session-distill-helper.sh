@@ -32,10 +32,7 @@ readonly DISTILL_OUTPUT="$SESSION_DIR/distill-output.json"
 
 # shellcheck disable=SC2034  # Available for future use
 
-log_info() { echo -e "${BLUE}[INFO]${NC} $*"; }
-log_success() { echo -e "${GREEN}[OK]${NC} $*"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
+# Logging: uses shared log_* from shared-constants.sh
 
 #######################################
 # Ensure session directory exists

@@ -88,11 +88,11 @@ readonly OPENCODE_URL="http://${OPENCODE_HOST}:${OPENCODE_PORT}" # NOSONAR - loc
 readonly BOLD='\033[1m'
 readonly DIM='\033[2m'
 
-# Logging
-log_info() { echo -e "${BLUE}[TEST]${NC} $*"; }
+# Logging: uses shared log_* from shared-constants.sh with TEST prefix
+# shellcheck disable=SC2034  # Used by shared-constants.sh log_* functions
+LOG_PREFIX="TEST"
 log_pass() { echo -e "${GREEN}[PASS]${NC} $*"; }
 log_fail() { echo -e "${RED}[FAIL]${NC} $*"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 log_header() { echo -e "${PURPLE}${BOLD}$*${NC}"; }
 
 #######################################

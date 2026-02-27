@@ -50,8 +50,8 @@ TOTAL_CRITERIA=0
 # Results array (for JSON output)
 declare -a RESULTS=()
 
-# Logging
-log_info() { echo -e "${BLUE}[INFO]${NC} $*" >&2; }
+# Logging: uses shared log_info/log_error/log_success/log_warn from shared-constants.sh
+# Script-specific log levels kept inline
 log_pass() { echo -e "${GREEN}[PASS]${NC} $*" >&2; }
 log_fail() { echo -e "${RED}[FAIL]${NC} $*" >&2; }
 log_skip() { echo -e "${YELLOW}[SKIP]${NC} $*" >&2; }

@@ -34,9 +34,9 @@ C_YELLOW="\033[1;33m"
 C_BLUE="\033[0;34m"
 C_NC="\033[0m"
 
-log_info() { echo -e "${C_BLUE}[VERIFY]${C_NC} $*"; }
-log_warn() { echo -e "${C_YELLOW}[WARN]${C_NC} $*" >&2; }
-log_error() { echo -e "${C_RED}[ERROR]${C_NC} $*" >&2; }
+# Logging: uses shared log_* from shared-constants.sh with VERIFY prefix
+# shellcheck disable=SC2034  # Used by shared-constants.sh log_* functions
+LOG_PREFIX="VERIFY"
 
 # Find project root
 find_project_root() {

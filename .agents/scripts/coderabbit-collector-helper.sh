@@ -37,25 +37,10 @@ readonly COLLECTOR_DB="${COLLECTOR_DATA_DIR}/reviews.db"
 readonly CODERABBIT_BOT_LOGIN="coderabbitai"
 
 # =============================================================================
-# Logging
+# Logging: uses shared log_* from shared-constants.sh with COLLECTOR prefix
 # =============================================================================
-
-log_info() {
-	echo -e "${BLUE}[COLLECTOR]${NC} $*"
-	return 0
-}
-log_success() {
-	echo -e "${GREEN}[COLLECTOR]${NC} $*"
-	return 0
-}
-log_warn() {
-	echo -e "${YELLOW}[COLLECTOR]${NC} $*"
-	return 0
-}
-log_error() {
-	echo -e "${RED}[COLLECTOR]${NC} $*" >&2
-	return 0
-}
+# shellcheck disable=SC2034  # Used by shared-constants.sh log_* functions
+LOG_PREFIX="COLLECTOR"
 
 # =============================================================================
 # SQLite wrapper: sets busy_timeout on every connection (t135.3 pattern)

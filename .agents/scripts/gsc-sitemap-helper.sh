@@ -25,10 +25,7 @@ readonly DEFAULT_SITEMAP="sitemap.xml"
 [[ -z "${BLUE+x}" ]] && BLUE='\033[0;34m'
 [[ -z "${NC+x}" ]] && NC='\033[0m'
 
-log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
+# Logging: uses shared log_* from shared-constants.sh
 
 show_help() {
 	cat <<'HELP'

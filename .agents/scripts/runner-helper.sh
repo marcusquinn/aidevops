@@ -53,13 +53,9 @@ readonly DEFAULT_MODEL="anthropic/claude-sonnet-4-6"
 
 readonly BOLD='\033[1m'
 
-#######################################
-# Logging
-#######################################
-log_info() { echo -e "${BLUE}[RUNNER]${NC} $*"; }
-log_success() { echo -e "${GREEN}[RUNNER]${NC} $*"; }
-log_warn() { echo -e "${YELLOW}[RUNNER]${NC} $*"; }
-log_error() { echo -e "${RED}[RUNNER]${NC} $*" >&2; }
+# Logging: uses shared log_* from shared-constants.sh with RUNNER prefix
+# shellcheck disable=SC2034  # Used by shared-constants.sh log_* functions
+LOG_PREFIX="RUNNER"
 
 #######################################
 # Mailbox bookend: check inbox before work

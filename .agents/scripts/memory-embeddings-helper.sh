@@ -38,80 +38,77 @@ EMBEDDINGS_DB="$MEMORY_DIR/embeddings.db"
 PYTHON_SCRIPT="$MEMORY_DIR/.embeddings-engine.py"
 CONFIG_FILE="$MEMORY_DIR/.embeddings-config"
 
-log_info() { echo -e "${BLUE}[INFO]${NC} $*"; }
-log_success() { echo -e "${GREEN}[OK]${NC} $*"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
+# Logging: uses shared log_* from shared-constants.sh
 
 #######################################
 # Resolve namespace to correct DB paths
 #######################################
 resolve_embeddings_namespace() {
-    local namespace="$1"
+	local namespace="$1"
 
-    if [[ -z "$namespace" ]]; then
-        MEMORY_DIR="$MEMORY_BASE_DIR"
-        MEMORY_DB="$MEMORY_DIR/memory.db"
-        EMBEDDINGS_DB="$MEMORY_DIR/embeddings.db"
-        PYTHON_SCRIPT="$MEMORY_BASE_DIR/.embeddings-engine.py"
-        CONFIG_FILE="$MEMORY_BASE_DIR/.embeddings-config"
-        return 0
-    fi
+	if [[ -z "$namespace" ]]; then
+		MEMORY_DIR="$MEMORY_BASE_DIR"
+		MEMORY_DB="$MEMORY_DIR/memory.db"
+		EMBEDDINGS_DB="$MEMORY_DIR/embeddings.db"
+		PYTHON_SCRIPT="$MEMORY_BASE_DIR/.embeddings-engine.py"
+		CONFIG_FILE="$MEMORY_BASE_DIR/.embeddings-config"
+		return 0
+	fi
 
-    if [[ ! "$namespace" =~ ^[a-zA-Z][a-zA-Z0-9_-]*$ ]]; then
-        log_error "Invalid namespace: '$namespace'"
-        return 1
-    fi
+	if [[ ! "$namespace" =~ ^[a-zA-Z][a-zA-Z0-9_-]*$ ]]; then
+		log_error "Invalid namespace: '$namespace'"
+		return 1
+	fi
 
-    EMBEDDINGS_NAMESPACE="$namespace"
-    MEMORY_DIR="$MEMORY_BASE_DIR/namespaces/$namespace"
-    MEMORY_DB="$MEMORY_DIR/memory.db"
-    EMBEDDINGS_DB="$MEMORY_DIR/embeddings.db"
-    # Python script and config stay in base dir (shared across namespaces)
-    PYTHON_SCRIPT="$MEMORY_BASE_DIR/.embeddings-engine.py"
-    CONFIG_FILE="$MEMORY_BASE_DIR/.embeddings-config"
-    return 0
+	EMBEDDINGS_NAMESPACE="$namespace"
+	MEMORY_DIR="$MEMORY_BASE_DIR/namespaces/$namespace"
+	MEMORY_DB="$MEMORY_DIR/memory.db"
+	EMBEDDINGS_DB="$MEMORY_DIR/embeddings.db"
+	# Python script and config stay in base dir (shared across namespaces)
+	PYTHON_SCRIPT="$MEMORY_BASE_DIR/.embeddings-engine.py"
+	CONFIG_FILE="$MEMORY_BASE_DIR/.embeddings-config"
+	return 0
 }
 
 #######################################
 # Read configured provider (default: local)
 #######################################
 get_provider() {
-    if [[ -f "$CONFIG_FILE" ]]; then
-        local provider
-        provider=$(grep '^provider=' "$CONFIG_FILE" 2>/dev/null | cut -d= -f2 || true)
-        if [[ "$provider" == "openai" || "$provider" == "local" ]]; then
-            echo "$provider"
-            return 0
-        fi
-    fi
-    echo "local"
-    return 0
+	if [[ -f "$CONFIG_FILE" ]]; then
+		local provider
+		provider=$(grep '^provider=' "$CONFIG_FILE" 2>/dev/null | cut -d= -f2 || true)
+		if [[ "$provider" == "openai" || "$provider" == "local" ]]; then
+			echo "$provider"
+			return 0
+		fi
+	fi
+	echo "local"
+	return 0
 }
 
 #######################################
 # Get embedding dimension for current provider
 #######################################
 get_embedding_dim() {
-    local provider
-    provider=$(get_provider)
-    if [[ "$provider" == "openai" ]]; then
-        echo "$OPENAI_EMBEDDING_DIM"
-    else
-        echo "$LOCAL_EMBEDDING_DIM"
-    fi
-    return 0
+	local provider
+	provider=$(get_provider)
+	if [[ "$provider" == "openai" ]]; then
+		echo "$OPENAI_EMBEDDING_DIM"
+	else
+		echo "$LOCAL_EMBEDDING_DIM"
+	fi
+	return 0
 }
 
 #######################################
 # Save provider configuration
 #######################################
 save_config() {
-    local provider="$1"
-    mkdir -p "$(dirname "$CONFIG_FILE")"
-    echo "provider=$provider" > "$CONFIG_FILE"
-    echo "configured_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$CONFIG_FILE"
-    return 0
+	local provider="$1"
+	mkdir -p "$(dirname "$CONFIG_FILE")"
+	echo "provider=$provider" >"$CONFIG_FILE"
+	echo "configured_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$CONFIG_FILE"
+	return 0
 }
 
 #######################################
@@ -119,77 +116,77 @@ save_config() {
 # NEVER prints the key to stdout in normal operation
 #######################################
 get_openai_key() {
-    # Check environment variable first
-    if [[ -n "${OPENAI_API_KEY:-}" ]]; then
-        echo "$OPENAI_API_KEY"
-        return 0
-    fi
+	# Check environment variable first
+	if [[ -n "${OPENAI_API_KEY:-}" ]]; then
+		echo "$OPENAI_API_KEY"
+		return 0
+	fi
 
-    # Check aidevops secret store (gopass)
-    if command -v gopass &>/dev/null; then
-        local key
-        key=$(gopass show -o "aidevops/openai-api-key" 2>/dev/null || echo "")
-        if [[ -n "$key" ]]; then
-            echo "$key"
-            return 0
-        fi
-    fi
+	# Check aidevops secret store (gopass)
+	if command -v gopass &>/dev/null; then
+		local key
+		key=$(gopass show -o "aidevops/openai-api-key" 2>/dev/null || echo "")
+		if [[ -n "$key" ]]; then
+			echo "$key"
+			return 0
+		fi
+	fi
 
-    # Check credentials file
-    local creds_file="$HOME/.config/aidevops/credentials.sh"
-    if [[ -f "$creds_file" ]]; then
-        local key
-        # shellcheck disable=SC1090
-        key=$(source "$creds_file" 2>/dev/null && echo "${OPENAI_API_KEY:-}")
-        if [[ -n "$key" ]]; then
-            echo "$key"
-            return 0
-        fi
-    fi
+	# Check credentials file
+	local creds_file="$HOME/.config/aidevops/credentials.sh"
+	if [[ -f "$creds_file" ]]; then
+		local key
+		# shellcheck disable=SC1090
+		key=$(source "$creds_file" 2>/dev/null && echo "${OPENAI_API_KEY:-}")
+		if [[ -n "$key" ]]; then
+			echo "$key"
+			return 0
+		fi
+	fi
 
-    return 1
+	return 1
 }
 
 #######################################
 # Check if dependencies are installed for current provider
 #######################################
 check_deps() {
-    local provider
-    provider=$(get_provider)
+	local provider
+	provider=$(get_provider)
 
-    if [[ "$provider" == "openai" ]]; then
-        # OpenAI provider needs: python3, numpy, curl (for API calls)
-        if ! command -v python3 &>/dev/null; then
-            return 1
-        fi
-        if ! python3 -c "import numpy" &>/dev/null 2>&1; then
-            return 1
-        fi
-        if ! get_openai_key >/dev/null 2>&1; then
-            return 1
-        fi
-        return 0
-    fi
+	if [[ "$provider" == "openai" ]]; then
+		# OpenAI provider needs: python3, numpy, curl (for API calls)
+		if ! command -v python3 &>/dev/null; then
+			return 1
+		fi
+		if ! python3 -c "import numpy" &>/dev/null 2>&1; then
+			return 1
+		fi
+		if ! get_openai_key >/dev/null 2>&1; then
+			return 1
+		fi
+		return 0
+	fi
 
-    # Local provider needs: python3, sentence-transformers, numpy
-    local missing=()
+	# Local provider needs: python3, sentence-transformers, numpy
+	local missing=()
 
-    if ! command -v python3 &>/dev/null; then
-        missing+=("python3")
-    fi
+	if ! command -v python3 &>/dev/null; then
+		missing+=("python3")
+	fi
 
-    if ! python3 -c "import sentence_transformers" &>/dev/null 2>&1; then
-        missing+=("sentence-transformers")
-    fi
+	if ! python3 -c "import sentence_transformers" &>/dev/null 2>&1; then
+		missing+=("sentence-transformers")
+	fi
 
-    if ! python3 -c "import numpy" &>/dev/null 2>&1; then
-        missing+=("numpy")
-    fi
+	if ! python3 -c "import numpy" &>/dev/null 2>&1; then
+		missing+=("numpy")
+	fi
 
-    if [[ ${#missing[@]} -gt 0 ]]; then
-        return 1
-    fi
-    return 0
+	if [[ ${#missing[@]} -gt 0 ]]; then
+		return 1
+	fi
+	return 0
 }
 
 #######################################
@@ -197,39 +194,39 @@ check_deps() {
 # Returns 0 if embeddings are configured and deps are met
 #######################################
 is_available() {
-    if [[ ! -f "$CONFIG_FILE" ]]; then
-        return 1
-    fi
-    check_deps
-    return $?
+	if [[ ! -f "$CONFIG_FILE" ]]; then
+		return 1
+	fi
+	check_deps
+	return $?
 }
 
 #######################################
 # Print missing dependency instructions
 #######################################
 print_setup_instructions() {
-    local provider
-    provider=$(get_provider)
+	local provider
+	provider=$(get_provider)
 
-    log_error "Missing dependencies for semantic memory ($provider provider)."
-    echo ""
+	log_error "Missing dependencies for semantic memory ($provider provider)."
+	echo ""
 
-    if [[ "$provider" == "openai" ]]; then
-        echo "For OpenAI provider:"
-        echo "  1. pip install numpy"
-        echo "  2. Set API key: aidevops secret set openai-api-key"
-        echo "     Or: export OPENAI_API_KEY=sk-..."
-    else
-        echo "For local provider:"
-        echo "  pip install sentence-transformers numpy"
-    fi
+	if [[ "$provider" == "openai" ]]; then
+		echo "For OpenAI provider:"
+		echo "  1. pip install numpy"
+		echo "  2. Set API key: aidevops secret set openai-api-key"
+		echo "     Or: export OPENAI_API_KEY=sk-..."
+	else
+		echo "For local provider:"
+		echo "  pip install sentence-transformers numpy"
+	fi
 
-    echo ""
-    echo "Or run:"
-    echo "  memory-embeddings-helper.sh setup [--provider local|openai]"
-    echo ""
-    echo "This is opt-in. FTS5 keyword search (memory-helper.sh recall) works without this."
-    return 1
+	echo ""
+	echo "Or run:"
+	echo "  memory-embeddings-helper.sh setup [--provider local|openai]"
+	echo ""
+	echo "This is opt-in. FTS5 keyword search (memory-helper.sh recall) works without this."
+	return 1
 }
 
 #######################################
@@ -237,9 +234,9 @@ print_setup_instructions() {
 # Supports both local and OpenAI providers
 #######################################
 create_python_engine() {
-    mkdir -p "$MEMORY_DIR"
-    mkdir -p "$(dirname "$PYTHON_SCRIPT")"
-    cat > "$PYTHON_SCRIPT" << 'PYEOF'
+	mkdir -p "$MEMORY_DIR"
+	mkdir -p "$(dirname "$PYTHON_SCRIPT")"
+	cat >"$PYTHON_SCRIPT" <<'PYEOF'
 #!/usr/bin/env python3
 """Embedding engine for aidevops semantic memory.
 
@@ -658,260 +655,281 @@ if __name__ == "__main__":
         print(f"Unknown command: {command}")
         sys.exit(1)
 PYEOF
-    chmod +x "$PYTHON_SCRIPT"
-    return 0
+	chmod +x "$PYTHON_SCRIPT"
+	return 0
 }
 
 #######################################
 # Setup: install dependencies and configure provider
 #######################################
 cmd_setup() {
-    local provider="local"
+	local provider="local"
 
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --provider|-p) provider="$2"; shift 2 ;;
-            *) shift ;;
-        esac
-    done
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--provider | -p)
+			provider="$2"
+			shift 2
+			;;
+		*) shift ;;
+		esac
+	done
 
-    if [[ "$provider" != "local" && "$provider" != "openai" ]]; then
-        log_error "Invalid provider: $provider (use 'local' or 'openai')"
-        return 1
-    fi
+	if [[ "$provider" != "local" && "$provider" != "openai" ]]; then
+		log_error "Invalid provider: $provider (use 'local' or 'openai')"
+		return 1
+	fi
 
-    log_info "Setting up semantic memory embeddings (provider: $provider)..."
+	log_info "Setting up semantic memory embeddings (provider: $provider)..."
 
-    if [[ "$provider" == "openai" ]]; then
-        # OpenAI provider: needs python3, numpy, and API key
-        if ! command -v python3 &>/dev/null; then
-            log_error "Python 3 is required. Install it first."
-            return 1
-        fi
+	if [[ "$provider" == "openai" ]]; then
+		# OpenAI provider: needs python3, numpy, and API key
+		if ! command -v python3 &>/dev/null; then
+			log_error "Python 3 is required. Install it first."
+			return 1
+		fi
 
-        if ! python3 -c "import numpy" &>/dev/null 2>&1; then
-            log_info "Installing numpy..."
-            pip install --quiet numpy
-        fi
+		if ! python3 -c "import numpy" &>/dev/null 2>&1; then
+			log_info "Installing numpy..."
+			pip install --quiet numpy
+		fi
 
-        # Check for API key
-        if ! get_openai_key >/dev/null 2>&1; then
-            log_warn "OpenAI API key not found."
-            echo ""
-            echo "Set it with one of:"
-            echo "  aidevops secret set openai-api-key"
-            echo "  export OPENAI_API_KEY=sk-..."
-            echo ""
-            echo "Provider configured but key needed before use."
-        else
-            log_success "OpenAI API key found"
-        fi
+		# Check for API key
+		if ! get_openai_key >/dev/null 2>&1; then
+			log_warn "OpenAI API key not found."
+			echo ""
+			echo "Set it with one of:"
+			echo "  aidevops secret set openai-api-key"
+			echo "  export OPENAI_API_KEY=sk-..."
+			echo ""
+			echo "Provider configured but key needed before use."
+		else
+			log_success "OpenAI API key found"
+		fi
 
-        save_config "openai"
-        create_python_engine
+		save_config "openai"
+		create_python_engine
 
-        # Test with a simple embedding if key is available
-        if get_openai_key >/dev/null 2>&1; then
-            log_info "Testing OpenAI embedding..."
-            local api_key
-            api_key=$(get_openai_key)
-            if OPENAI_API_KEY="$api_key" python3 "$PYTHON_SCRIPT" embed openai "test" > /dev/null 2>&1; then
-                log_success "OpenAI embeddings working"
-            else
-                log_warn "OpenAI test embedding failed. Check your API key."
-            fi
-        fi
-    else
-        # Local provider: needs python3, sentence-transformers, numpy
-        if ! command -v python3 &>/dev/null; then
-            log_error "Python 3 is required. Install it first."
-            return 1
-        fi
+		# Test with a simple embedding if key is available
+		if get_openai_key >/dev/null 2>&1; then
+			log_info "Testing OpenAI embedding..."
+			local api_key
+			api_key=$(get_openai_key)
+			if OPENAI_API_KEY="$api_key" python3 "$PYTHON_SCRIPT" embed openai "test" >/dev/null 2>&1; then
+				log_success "OpenAI embeddings working"
+			else
+				log_warn "OpenAI test embedding failed. Check your API key."
+			fi
+		fi
+	else
+		# Local provider: needs python3, sentence-transformers, numpy
+		if ! command -v python3 &>/dev/null; then
+			log_error "Python 3 is required. Install it first."
+			return 1
+		fi
 
-        log_info "Installing Python dependencies..."
-        pip install --quiet sentence-transformers numpy
+		log_info "Installing Python dependencies..."
+		pip install --quiet sentence-transformers numpy
 
-        save_config "local"
-        create_python_engine
+		save_config "local"
+		create_python_engine
 
-        log_info "Downloading model ($LOCAL_MODEL_NAME, ~90MB)..."
-        python3 "$PYTHON_SCRIPT" embed local "test" > /dev/null
-    fi
+		log_info "Downloading model ($LOCAL_MODEL_NAME, ~90MB)..."
+		python3 "$PYTHON_SCRIPT" embed local "test" >/dev/null
+	fi
 
-    log_success "Semantic memory setup complete (provider: $provider)."
-    log_info "Run 'memory-embeddings-helper.sh index' to index existing memories."
-    return 0
+	log_success "Semantic memory setup complete (provider: $provider)."
+	log_info "Run 'memory-embeddings-helper.sh index' to index existing memories."
+	return 0
 }
 
 #######################################
 # Switch or show provider
 #######################################
 cmd_provider() {
-    local new_provider="${1:-}"
+	local new_provider="${1:-}"
 
-    if [[ -z "$new_provider" ]]; then
-        local current
-        current=$(get_provider)
-        log_info "Current provider: $current"
-        if [[ -f "$CONFIG_FILE" ]]; then
-            local configured_at
-            configured_at=$(grep '^configured_at=' "$CONFIG_FILE" 2>/dev/null | cut -d= -f2 || true)
-            if [[ -n "$configured_at" ]]; then
-                log_info "Configured at: $configured_at"
-            fi
-        fi
-        echo ""
-        echo "Available providers:"
-        echo "  local   - all-MiniLM-L6-v2 (384d, ~90MB, no API key)"
-        echo "  openai  - text-embedding-3-small (1536d, requires API key)"
-        echo ""
-        echo "Switch with: memory-embeddings-helper.sh provider <local|openai>"
-        return 0
-    fi
+	if [[ -z "$new_provider" ]]; then
+		local current
+		current=$(get_provider)
+		log_info "Current provider: $current"
+		if [[ -f "$CONFIG_FILE" ]]; then
+			local configured_at
+			configured_at=$(grep '^configured_at=' "$CONFIG_FILE" 2>/dev/null | cut -d= -f2 || true)
+			if [[ -n "$configured_at" ]]; then
+				log_info "Configured at: $configured_at"
+			fi
+		fi
+		echo ""
+		echo "Available providers:"
+		echo "  local   - all-MiniLM-L6-v2 (384d, ~90MB, no API key)"
+		echo "  openai  - text-embedding-3-small (1536d, requires API key)"
+		echo ""
+		echo "Switch with: memory-embeddings-helper.sh provider <local|openai>"
+		return 0
+	fi
 
-    if [[ "$new_provider" != "local" && "$new_provider" != "openai" ]]; then
-        log_error "Invalid provider: $new_provider (use 'local' or 'openai')"
-        return 1
-    fi
+	if [[ "$new_provider" != "local" && "$new_provider" != "openai" ]]; then
+		log_error "Invalid provider: $new_provider (use 'local' or 'openai')"
+		return 1
+	fi
 
-    local old_provider
-    old_provider=$(get_provider)
+	local old_provider
+	old_provider=$(get_provider)
 
-    if [[ "$old_provider" == "$new_provider" ]]; then
-        log_info "Already using provider: $new_provider"
-        return 0
-    fi
+	if [[ "$old_provider" == "$new_provider" ]]; then
+		log_info "Already using provider: $new_provider"
+		return 0
+	fi
 
-    save_config "$new_provider"
-    log_success "Switched provider: $old_provider -> $new_provider"
+	save_config "$new_provider"
+	log_success "Switched provider: $old_provider -> $new_provider"
 
-    if [[ -f "$EMBEDDINGS_DB" ]]; then
-        log_warn "Existing embeddings were created with '$old_provider' provider."
-        log_warn "Run 'memory-embeddings-helper.sh rebuild' to re-index with '$new_provider'."
-    fi
+	if [[ -f "$EMBEDDINGS_DB" ]]; then
+		log_warn "Existing embeddings were created with '$old_provider' provider."
+		log_warn "Run 'memory-embeddings-helper.sh rebuild' to re-index with '$new_provider'."
+	fi
 
-    return 0
+	return 0
 }
 
 #######################################
 # Index all existing memories
 #######################################
 cmd_index() {
-    if ! check_deps; then
-        print_setup_instructions
-        return 1
-    fi
+	if ! check_deps; then
+		print_setup_instructions
+		return 1
+	fi
 
-    if [[ ! -f "$MEMORY_DB" ]]; then
-        log_error "Memory database not found at $MEMORY_DB"
-        log_error "Store some memories first with: memory-helper.sh store --content \"...\""
-        return 1
-    fi
+	if [[ ! -f "$MEMORY_DB" ]]; then
+		log_error "Memory database not found at $MEMORY_DB"
+		log_error "Store some memories first with: memory-helper.sh store --content \"...\""
+		return 1
+	fi
 
-    local provider
-    provider=$(get_provider)
+	local provider
+	provider=$(get_provider)
 
-    create_python_engine
+	create_python_engine
 
-    log_info "Indexing memories with $provider provider..."
+	log_info "Indexing memories with $provider provider..."
 
-    local result
-    if [[ "$provider" == "openai" ]]; then
-        local api_key
-        api_key=$(get_openai_key) || { log_error "OpenAI API key not found"; return 1; }
-        result=$(OPENAI_API_KEY="$api_key" python3 "$PYTHON_SCRIPT" index "$provider" "$MEMORY_DB" "$EMBEDDINGS_DB")
-    else
-        result=$(python3 "$PYTHON_SCRIPT" index "$provider" "$MEMORY_DB" "$EMBEDDINGS_DB")
-    fi
+	local result
+	if [[ "$provider" == "openai" ]]; then
+		local api_key
+		api_key=$(get_openai_key) || {
+			log_error "OpenAI API key not found"
+			return 1
+		}
+		result=$(OPENAI_API_KEY="$api_key" python3 "$PYTHON_SCRIPT" index "$provider" "$MEMORY_DB" "$EMBEDDINGS_DB")
+	else
+		result=$(python3 "$PYTHON_SCRIPT" index "$provider" "$MEMORY_DB" "$EMBEDDINGS_DB")
+	fi
 
-    local indexed skipped total
-    if command -v jq &>/dev/null; then
-        indexed=$(echo "$result" | jq -r '.indexed')
-        skipped=$(echo "$result" | jq -r '.skipped')
-        total=$(echo "$result" | jq -r '.total')
-    else
-        indexed=$(echo "$result" | python3 -c "import sys,json; print(json.load(sys.stdin)['indexed'])")
-        skipped=$(echo "$result" | python3 -c "import sys,json; print(json.load(sys.stdin)['skipped'])")
-        total=$(echo "$result" | python3 -c "import sys,json; print(json.load(sys.stdin)['total'])")
-    fi
+	local indexed skipped total
+	if command -v jq &>/dev/null; then
+		indexed=$(echo "$result" | jq -r '.indexed')
+		skipped=$(echo "$result" | jq -r '.skipped')
+		total=$(echo "$result" | jq -r '.total')
+	else
+		indexed=$(echo "$result" | python3 -c "import sys,json; print(json.load(sys.stdin)['indexed'])")
+		skipped=$(echo "$result" | python3 -c "import sys,json; print(json.load(sys.stdin)['skipped'])")
+		total=$(echo "$result" | python3 -c "import sys,json; print(json.load(sys.stdin)['total'])")
+	fi
 
-    log_success "Indexed $indexed new memories ($skipped unchanged, $total total) [provider: $provider]"
-    return 0
+	log_success "Indexed $indexed new memories ($skipped unchanged, $total total) [provider: $provider]"
+	return 0
 }
 
 #######################################
 # Search memories semantically
 #######################################
 cmd_search() {
-    local query=""
-    local limit=5
-    local format="text"
-    local hybrid=false
+	local query=""
+	local limit=5
+	local format="text"
+	local hybrid=false
 
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --limit|-l) limit="$2"; shift 2 ;;
-            --json) format="json"; shift ;;
-            --format) format="$2"; shift 2 ;;
-            --hybrid) hybrid=true; shift ;;
-            *)
-                if [[ -z "$query" ]]; then
-                    query="$1"
-                fi
-                shift
-                ;;
-        esac
-    done
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--limit | -l)
+			limit="$2"
+			shift 2
+			;;
+		--json)
+			format="json"
+			shift
+			;;
+		--format)
+			format="$2"
+			shift 2
+			;;
+		--hybrid)
+			hybrid=true
+			shift
+			;;
+		*)
+			if [[ -z "$query" ]]; then
+				query="$1"
+			fi
+			shift
+			;;
+		esac
+	done
 
-    if [[ -z "$query" ]]; then
-        log_error "Query is required: memory-embeddings-helper.sh search \"your query\""
-        return 1
-    fi
+	if [[ -z "$query" ]]; then
+		log_error "Query is required: memory-embeddings-helper.sh search \"your query\""
+		return 1
+	fi
 
-    if ! check_deps; then
-        print_setup_instructions
-        return 1
-    fi
+	if ! check_deps; then
+		print_setup_instructions
+		return 1
+	fi
 
-    if [[ ! -f "$EMBEDDINGS_DB" ]]; then
-        log_error "Embeddings index not found. Run: memory-embeddings-helper.sh index"
-        return 1
-    fi
+	if [[ ! -f "$EMBEDDINGS_DB" ]]; then
+		log_error "Embeddings index not found. Run: memory-embeddings-helper.sh index"
+		return 1
+	fi
 
-    local provider
-    provider=$(get_provider)
+	local provider
+	provider=$(get_provider)
 
-    create_python_engine
+	create_python_engine
 
-    local search_cmd="search"
-    if [[ "$hybrid" == true ]]; then
-        search_cmd="hybrid"
-    fi
+	local search_cmd="search"
+	if [[ "$hybrid" == true ]]; then
+		search_cmd="hybrid"
+	fi
 
-    local result
-    if [[ "$provider" == "openai" ]]; then
-        local api_key
-        api_key=$(get_openai_key) || { log_error "OpenAI API key not found"; return 1; }
-        result=$(OPENAI_API_KEY="$api_key" python3 "$PYTHON_SCRIPT" "$search_cmd" "$provider" "$EMBEDDINGS_DB" "$MEMORY_DB" "$query" "$limit")
-    else
-        result=$(python3 "$PYTHON_SCRIPT" "$search_cmd" "$provider" "$EMBEDDINGS_DB" "$MEMORY_DB" "$query" "$limit")
-    fi
+	local result
+	if [[ "$provider" == "openai" ]]; then
+		local api_key
+		api_key=$(get_openai_key) || {
+			log_error "OpenAI API key not found"
+			return 1
+		}
+		result=$(OPENAI_API_KEY="$api_key" python3 "$PYTHON_SCRIPT" "$search_cmd" "$provider" "$EMBEDDINGS_DB" "$MEMORY_DB" "$query" "$limit")
+	else
+		result=$(python3 "$PYTHON_SCRIPT" "$search_cmd" "$provider" "$EMBEDDINGS_DB" "$MEMORY_DB" "$query" "$limit")
+	fi
 
-    if [[ "$format" == "json" ]]; then
-        echo "$result"
-    else
-        local method_label="Semantic"
-        if [[ "$hybrid" == true ]]; then
-            method_label="Hybrid (FTS5+Semantic)"
-        fi
+	if [[ "$format" == "json" ]]; then
+		echo "$result"
+	else
+		local method_label="Semantic"
+		if [[ "$hybrid" == true ]]; then
+			method_label="Hybrid (FTS5+Semantic)"
+		fi
 
-        echo ""
-        echo "=== $method_label Search: \"$query\" [$provider] ==="
-        echo ""
-        if command -v jq &>/dev/null; then
-            echo "$result" | jq -r '.[] | "[\(.type)] (score: \(.score)) \(.confidence)\n  \(.content)\n  Tags: \(.tags // "none")\n  Created: \(.created_at)\n  Method: \(.search_method)\n"'
-        else
-            python3 -c "
+		echo ""
+		echo "=== $method_label Search: \"$query\" [$provider] ==="
+		echo ""
+		if command -v jq &>/dev/null; then
+			echo "$result" | jq -r '.[] | "[\(.type)] (score: \(.score)) \(.confidence)\n  \(.content)\n  Tags: \(.tags // "none")\n  Created: \(.created_at)\n  Method: \(.search_method)\n"'
+		else
+			python3 -c "
 import json, sys
 results = json.loads(sys.stdin.read())
 for r in results:
@@ -921,49 +939,52 @@ for r in results:
     print(f'  Created: {r[\"created_at\"]}')
     print(f'  Method: {r.get(\"search_method\", \"semantic\")}')
     print()
-" <<< "$result"
-        fi
-    fi
-    return 0
+" <<<"$result"
+		fi
+	fi
+	return 0
 }
 
 #######################################
 # Add single memory to index
 #######################################
 cmd_add() {
-    local memory_id="$1"
+	local memory_id="$1"
 
-    if [[ -z "$memory_id" ]]; then
-        log_error "Memory ID required: memory-embeddings-helper.sh add <memory_id>"
-        return 1
-    fi
+	if [[ -z "$memory_id" ]]; then
+		log_error "Memory ID required: memory-embeddings-helper.sh add <memory_id>"
+		return 1
+	fi
 
-    if ! check_deps; then
-        print_setup_instructions
-        return 1
-    fi
+	if ! check_deps; then
+		print_setup_instructions
+		return 1
+	fi
 
-    local provider
-    provider=$(get_provider)
+	local provider
+	provider=$(get_provider)
 
-    create_python_engine
+	create_python_engine
 
-    local result
-    if [[ "$provider" == "openai" ]]; then
-        local api_key
-        api_key=$(get_openai_key) || { log_error "OpenAI API key not found"; return 1; }
-        result=$(OPENAI_API_KEY="$api_key" python3 "$PYTHON_SCRIPT" add "$provider" "$MEMORY_DB" "$EMBEDDINGS_DB" "$memory_id")
-    else
-        result=$(python3 "$PYTHON_SCRIPT" add "$provider" "$MEMORY_DB" "$EMBEDDINGS_DB" "$memory_id")
-    fi
+	local result
+	if [[ "$provider" == "openai" ]]; then
+		local api_key
+		api_key=$(get_openai_key) || {
+			log_error "OpenAI API key not found"
+			return 1
+		}
+		result=$(OPENAI_API_KEY="$api_key" python3 "$PYTHON_SCRIPT" add "$provider" "$MEMORY_DB" "$EMBEDDINGS_DB" "$memory_id")
+	else
+		result=$(python3 "$PYTHON_SCRIPT" add "$provider" "$MEMORY_DB" "$EMBEDDINGS_DB" "$memory_id")
+	fi
 
-    if echo "$result" | grep -q '"error"'; then
-        log_error "$(echo "$result" | python3 -c "import sys,json; print(json.load(sys.stdin)['error'])" 2>/dev/null || echo "$result")"
-        return 1
-    fi
+	if echo "$result" | grep -q '"error"'; then
+		log_error "$(echo "$result" | python3 -c "import sys,json; print(json.load(sys.stdin)['error'])" 2>/dev/null || echo "$result")"
+		return 1
+	fi
 
-    log_success "Indexed memory: $memory_id [$provider]"
-    return 0
+	log_success "Indexed memory: $memory_id [$provider]"
+	return 0
 }
 
 #######################################
@@ -972,124 +993,124 @@ cmd_add() {
 # Designed to be fast and non-blocking
 #######################################
 cmd_auto_index() {
-    local memory_id="${1:-}"
+	local memory_id="${1:-}"
 
-    if [[ -z "$memory_id" ]]; then
-        return 0
-    fi
+	if [[ -z "$memory_id" ]]; then
+		return 0
+	fi
 
-    # Quick checks: bail fast if not configured
-    if [[ ! -f "$CONFIG_FILE" ]]; then
-        return 0
-    fi
+	# Quick checks: bail fast if not configured
+	if [[ ! -f "$CONFIG_FILE" ]]; then
+		return 0
+	fi
 
-    if [[ ! -f "$EMBEDDINGS_DB" ]]; then
-        return 0
-    fi
+	if [[ ! -f "$EMBEDDINGS_DB" ]]; then
+		return 0
+	fi
 
-    # Check deps silently
-    if ! check_deps 2>/dev/null; then
-        return 0
-    fi
+	# Check deps silently
+	if ! check_deps 2>/dev/null; then
+		return 0
+	fi
 
-    local provider
-    provider=$(get_provider)
+	local provider
+	provider=$(get_provider)
 
-    create_python_engine 2>/dev/null
+	create_python_engine 2>/dev/null
 
-    # Run in background to avoid slowing down store
-    if [[ "$provider" == "openai" ]]; then
-        local api_key
-        api_key=$(get_openai_key 2>/dev/null) || return 0
-        (OPENAI_API_KEY="$api_key" python3 "$PYTHON_SCRIPT" add "$provider" "$MEMORY_DB" "$EMBEDDINGS_DB" "$memory_id" >/dev/null 2>&1) &
-    else
-        (python3 "$PYTHON_SCRIPT" add "$provider" "$MEMORY_DB" "$EMBEDDINGS_DB" "$memory_id" >/dev/null 2>&1) &
-    fi
-    disown 2>/dev/null || true
+	# Run in background to avoid slowing down store
+	if [[ "$provider" == "openai" ]]; then
+		local api_key
+		api_key=$(get_openai_key 2>/dev/null) || return 0
+		(OPENAI_API_KEY="$api_key" python3 "$PYTHON_SCRIPT" add "$provider" "$MEMORY_DB" "$EMBEDDINGS_DB" "$memory_id" >/dev/null 2>&1) &
+	else
+		(python3 "$PYTHON_SCRIPT" add "$provider" "$MEMORY_DB" "$EMBEDDINGS_DB" "$memory_id" >/dev/null 2>&1) &
+	fi
+	disown 2>/dev/null || true
 
-    return 0
+	return 0
 }
 
 #######################################
 # Show index status
 #######################################
 cmd_status() {
-    local provider
-    provider=$(get_provider)
+	local provider
+	provider=$(get_provider)
 
-    log_info "Provider: $provider"
+	log_info "Provider: $provider"
 
-    if [[ "$provider" == "local" ]]; then
-        log_info "Model: $LOCAL_MODEL_NAME (${LOCAL_EMBEDDING_DIM}d)"
-    else
-        log_info "Model: $OPENAI_MODEL_NAME (${OPENAI_EMBEDDING_DIM}d)"
-    fi
+	if [[ "$provider" == "local" ]]; then
+		log_info "Model: $LOCAL_MODEL_NAME (${LOCAL_EMBEDDING_DIM}d)"
+	else
+		log_info "Model: $OPENAI_MODEL_NAME (${OPENAI_EMBEDDING_DIM}d)"
+	fi
 
-    if [[ ! -f "$EMBEDDINGS_DB" ]]; then
-        log_info "Embeddings index: not created"
-        log_info "Run 'memory-embeddings-helper.sh setup' to enable semantic search"
-        return 0
-    fi
+	if [[ ! -f "$EMBEDDINGS_DB" ]]; then
+		log_info "Embeddings index: not created"
+		log_info "Run 'memory-embeddings-helper.sh setup' to enable semantic search"
+		return 0
+	fi
 
-    if ! check_deps; then
-        log_warn "Dependencies not installed for $provider provider"
-        log_info "Run 'memory-embeddings-helper.sh setup --provider $provider' to install"
-        return 0
-    fi
+	if ! check_deps; then
+		log_warn "Dependencies not installed for $provider provider"
+		log_info "Run 'memory-embeddings-helper.sh setup --provider $provider' to install"
+		return 0
+	fi
 
-    create_python_engine
+	create_python_engine
 
-    local result
-    result=$(python3 "$PYTHON_SCRIPT" status "$EMBEDDINGS_DB")
+	local result
+	result=$(python3 "$PYTHON_SCRIPT" status "$EMBEDDINGS_DB")
 
-    local count size_mb
-    if command -v jq &>/dev/null; then
-        count=$(echo "$result" | jq -r '.count')
-        size_mb=$(echo "$result" | jq -r '.size_mb')
-        local providers_info
-        providers_info=$(echo "$result" | jq -r '.providers | to_entries | map("\(.key): \(.value)") | join(", ")')
-        log_info "Embeddings index: $count memories indexed (${size_mb}MB)"
-        if [[ -n "$providers_info" ]]; then
-            log_info "By provider: $providers_info"
-        fi
-    else
-        count=$(echo "$result" | python3 -c "import sys,json; print(json.load(sys.stdin)['count'])")
-        size_mb=$(echo "$result" | python3 -c "import sys,json; print(json.load(sys.stdin)['size_mb'])")
-        log_info "Embeddings index: $count memories indexed (${size_mb}MB)"
-    fi
+	local count size_mb
+	if command -v jq &>/dev/null; then
+		count=$(echo "$result" | jq -r '.count')
+		size_mb=$(echo "$result" | jq -r '.size_mb')
+		local providers_info
+		providers_info=$(echo "$result" | jq -r '.providers | to_entries | map("\(.key): \(.value)") | join(", ")')
+		log_info "Embeddings index: $count memories indexed (${size_mb}MB)"
+		if [[ -n "$providers_info" ]]; then
+			log_info "By provider: $providers_info"
+		fi
+	else
+		count=$(echo "$result" | python3 -c "import sys,json; print(json.load(sys.stdin)['count'])")
+		size_mb=$(echo "$result" | python3 -c "import sys,json; print(json.load(sys.stdin)['size_mb'])")
+		log_info "Embeddings index: $count memories indexed (${size_mb}MB)"
+	fi
 
-    log_info "Database: $EMBEDDINGS_DB"
+	log_info "Database: $EMBEDDINGS_DB"
 
-    # Compare with memory DB
-    if [[ -f "$MEMORY_DB" ]]; then
-        local total_memories
-        total_memories=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM learnings;" 2>/dev/null || echo "?")
-        local unindexed=$((total_memories - count))
-        log_info "Total memories: $total_memories ($unindexed unindexed)"
-    fi
-    return 0
+	# Compare with memory DB
+	if [[ -f "$MEMORY_DB" ]]; then
+		local total_memories
+		total_memories=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM learnings;" 2>/dev/null || echo "?")
+		local unindexed=$((total_memories - count))
+		log_info "Total memories: $total_memories ($unindexed unindexed)"
+	fi
+	return 0
 }
 
 #######################################
 # Rebuild entire index
 #######################################
 cmd_rebuild() {
-    log_info "Rebuilding embeddings index..."
+	log_info "Rebuilding embeddings index..."
 
-    if [[ -f "$EMBEDDINGS_DB" ]]; then
-        rm "$EMBEDDINGS_DB"
-        log_info "Removed old index"
-    fi
+	if [[ -f "$EMBEDDINGS_DB" ]]; then
+		rm "$EMBEDDINGS_DB"
+		log_info "Removed old index"
+	fi
 
-    cmd_index
-    return 0
+	cmd_index
+	return 0
 }
 
 #######################################
 # Show help
 #######################################
 cmd_help() {
-    cat <<'EOF'
+	cat <<'EOF'
 memory-embeddings-helper.sh - Semantic memory search (opt-in)
 
 PROVIDERS:
@@ -1151,53 +1172,53 @@ EXAMPLES:
 
 This is opt-in. FTS5 keyword search (memory-helper.sh recall) works without this.
 EOF
-    return 0
+	return 0
 }
 
 #######################################
 # Main entry point
 #######################################
 main() {
-    # Parse global flags before command
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --namespace|-n)
-                if [[ $# -lt 2 ]]; then
-                    log_error "--namespace requires a value"
-                    return 1
-                fi
-                resolve_embeddings_namespace "$2" || return 1
-                shift 2
-                ;;
-            *)
-                break
-                ;;
-        esac
-    done
+	# Parse global flags before command
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--namespace | -n)
+			if [[ $# -lt 2 ]]; then
+				log_error "--namespace requires a value"
+				return 1
+			fi
+			resolve_embeddings_namespace "$2" || return 1
+			shift 2
+			;;
+		*)
+			break
+			;;
+		esac
+	done
 
-    local command="${1:-help}"
-    shift || true
+	local command="${1:-help}"
+	shift || true
 
-    if [[ -n "$EMBEDDINGS_NAMESPACE" ]]; then
-        log_info "Using namespace: $EMBEDDINGS_NAMESPACE"
-    fi
+	if [[ -n "$EMBEDDINGS_NAMESPACE" ]]; then
+		log_info "Using namespace: $EMBEDDINGS_NAMESPACE"
+	fi
 
-    case "$command" in
-        setup) cmd_setup "$@" ;;
-        index) cmd_index ;;
-        search) cmd_search "$@" ;;
-        add) cmd_add "${1:-}" ;;
-        auto-index) cmd_auto_index "${1:-}" ;;
-        status) cmd_status ;;
-        rebuild) cmd_rebuild ;;
-        provider) cmd_provider "${1:-}" ;;
-        help|--help|-h) cmd_help ;;
-        *)
-            log_error "Unknown command: $command"
-            cmd_help
-            return 1
-            ;;
-    esac
+	case "$command" in
+	setup) cmd_setup "$@" ;;
+	index) cmd_index ;;
+	search) cmd_search "$@" ;;
+	add) cmd_add "${1:-}" ;;
+	auto-index) cmd_auto_index "${1:-}" ;;
+	status) cmd_status ;;
+	rebuild) cmd_rebuild ;;
+	provider) cmd_provider "${1:-}" ;;
+	help | --help | -h) cmd_help ;;
+	*)
+		log_error "Unknown command: $command"
+		cmd_help
+		return 1
+		;;
+	esac
 }
 
 main "$@"
