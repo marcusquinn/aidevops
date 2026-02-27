@@ -749,8 +749,10 @@ An "always switch branches for TODO.md" rule fails the 80% universal applicabili
 **Claim flow:**
 
 ```bash
-supervisor-helper.sh claim tNNN    # Add assignee:identity + started:ISO to task line, sync to GH issue
-supervisor-helper.sh unclaim tNNN  # Remove assignee: + started:, sync to GH issue
+# Claim: add assignee:<identity> started:<ISO> to task line in TODO.md, sync to GH issue
+# Unclaim: remove assignee: + started: fields, sync to GH issue
+# The /full-loop command handles claiming automatically before starting work.
+# Race protection: git push rejection = someone else claimed first — pull, re-check, abort.
 ```
 
 **How it works:**

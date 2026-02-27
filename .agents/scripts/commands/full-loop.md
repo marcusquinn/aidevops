@@ -81,8 +81,9 @@ Claim → Branch Setup → Task Development → Preflight → PR Create → PR R
 If the first argument is a task ID (`t\d+`), claim it before starting work. This prevents two agents (or a human and an agent) from working on the same task concurrently.
 
 ```bash
-# Claim the task — adds assignee: to TODO.md
-~/.aidevops/agents/scripts/supervisor-helper.sh claim "$TASK_ID" "$(pwd)"
+# Claim the task — adds assignee:<identity> started:<ISO> to TODO.md task line
+# Uses git pull → grep assignee: → add fields → commit + push
+# Race protection: git push rejection = someone else claimed first
 ```
 
 **Exit codes:**
