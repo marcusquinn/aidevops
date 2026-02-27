@@ -909,6 +909,7 @@ When creating an agent, determine which tier it belongs to. This affects where i
 |------|----------|---------------------|-------------|---------|
 | **Draft** | `~/.aidevops/agents/draft/` | Yes | No | R&D, experimental, auto-created by orchestration |
 | **Custom** | `~/.aidevops/agents/custom/` | Yes | No | User's permanent private agents |
+| **Sourced** | `~/.aidevops/agents/custom/<source>/` | Yes | In private repo | Agents synced from private Git repos |
 | **Shared** | `.agents/` in repo | Yes (deployed) | Yes | Open-source, submitted via PR |
 
 **When creating an agent, ask the user:**
@@ -917,7 +918,8 @@ When creating an agent, determine which tier it belongs to. This affects where i
 Where should this agent live?
 1. Draft  - Experimental, for review later (draft/)
 2. Custom - Private, stays on your machine (custom/)
-3. Shared - Add to aidevops for everyone (PR to .agents/)
+3. Sourced - In a private Git repo, synced via agent-sources (custom/<source>/)
+4. Shared - Add to aidevops for everyone (PR to .agents/)
 ```
 
 #### Draft Agents

@@ -2899,6 +2899,14 @@ cmd_help() {
 	echo "  aidevops repo-sync config    # Show/edit configuration"
 	echo "  aidevops repo-sync logs      # View sync logs"
 	echo ""
+	echo "Agent Sources (private repos):"
+	echo "  aidevops sources add <path>  # Add a local repo as agent source"
+	echo "  aidevops sources add-remote <url> # Clone and add remote repo"
+	echo "  aidevops sources remove <n>  # Remove a source (keeps agents)"
+	echo "  aidevops sources list        # List configured sources"
+	echo "  aidevops sources status      # Show sync status"
+	echo "  aidevops sources sync        # Sync all sources to custom/"
+	echo ""
 	echo "Plugins:"
 	echo "  aidevops plugin add <url>    # Install a plugin from git repo"
 	echo "  aidevops plugin list         # List installed plugins"
@@ -3032,6 +3040,19 @@ main() {
 	skills)
 		shift
 		cmd_skills "$@"
+		;;
+	sources | agent-sources)
+		shift
+		local sources_helper="$AGENTS_DIR/scripts/agent-sources-helper.sh"
+		if [[ ! -f "$sources_helper" ]]; then
+			sources_helper="$INSTALL_DIR/.agents/scripts/agent-sources-helper.sh"
+		fi
+		if [[ -f "$sources_helper" ]]; then
+			bash "$sources_helper" "$@"
+		else
+			print_error "agent-sources-helper.sh not found. Run: aidevops update"
+			exit 1
+		fi
 		;;
 	plugin | plugins)
 		shift

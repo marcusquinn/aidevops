@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Private agent repositories synced into ~/.aidevops/agents/custom/. Paths are local directories or Git URLs.",
+  "version": "1.0.0",
+  "sources": []
+}
