@@ -387,7 +387,27 @@ When running as a headless worker (dispatched by the supervisor via `opencode ru
      --body "Discovered while working on <current-task> in <current-repo>. <details>"
    ```
 
+   **If creating TODOs/PLANS in another repo** (e.g., adding a TODO to `~/Git/aidevops/TODO.md` while working in awardsapp): always commit and push them immediately so the issue-sync workflow picks them up. Uncommitted TODOs are invisible to the supervisor and issue-sync.
+
+   ```bash
+   git -C ~/Git/<target-repo> add TODO.md todo/PLANS.md
+   git -C ~/Git/<target-repo> commit -m "chore: add t{id} TODO from <current-repo> session"
+   git -C ~/Git/<target-repo> push origin main
+   ```
+
    Then continue with your assigned task in the current repo. The pulse supervisor will pick up the cross-repo issue on its next cycle. This prevents framework-level work from being tracked in app repos and vice versa.
+
+10. **Issue-task alignment (MANDATORY)** — Before linking your PR to an issue or claiming a task, verify your work matches the issue's actual description. Workers have hijacked issues by using a task ID for completely unrelated work (e.g., PR "Fix ShellCheck noise" closed issue "Add local dev row to build-plus.md" because both used t1344).
+
+    **Before creating a PR that references an issue:**
+    - Read the issue title and body: `gh issue view <number> --repo <owner/repo>`
+    - Verify your PR's changes actually implement what the issue describes
+    - If your work is unrelated to the issue, create a new issue for your work instead
+
+    **If you discover your assigned task is already done or the issue was closed:**
+    - Check if the closing PR actually implemented the task (read the PR diff)
+    - If the PR was unrelated work that incorrectly closed the issue, reopen it and comment explaining the mismatch
+    - Do NOT silently reuse a task ID for different work
 
 **README gate (MANDATORY - do NOT skip):**
 
