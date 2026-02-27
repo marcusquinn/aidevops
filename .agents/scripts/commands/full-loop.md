@@ -54,6 +54,13 @@ If the first argument is a task ID (e.g., `t061`):
 If the first argument is NOT a task ID (it's a description):
 - Use the description directly for the session title
 - Call `session-rename` tool with a concise version if the description is very long (truncate to ~60 chars)
+- **Extract issue number if present (#2452 fix):** If `$ARGUMENTS` contains `issue #NNN` or `Issue #NNN`, extract the issue number for the OPEN state check in Step 0.6. Store it as `$ISSUE_NUM` so the state check fires even without a task ID:
+
+  ```bash
+  # Extract issue number from supervisor dispatch format: "Implement issue #2452 ..."
+  # Use portable sed (POSIX) — grep -oP is GNU-only and fails on macOS/BSD
+  ISSUE_NUM=$(echo "$ARGUMENTS" | sed -En 's/.*[Ii][Ss][Ss][Uu][Ee][[:space:]]*#*([0-9]+).*/\1/p' | head -1)
+  ```
 
 **Example session titles:**
 - Task ID `t061` with description "Improve session title format" → `"t061: Improve session title format"`
@@ -95,18 +102,28 @@ If the first argument is a task ID (`t\d+`), claim it before starting work. This
 After claiming the task, update the linked GitHub issue label to reflect that work has started. This gives at-a-glance visibility into which tasks have active workers.
 
 ```bash
-# Find the linked issue number (from task ID search)
-ISSUE_NUM=$(gh issue list --repo "$(gh repo view --json nameWithOwner -q .nameWithOwner)" \
-  --state open --search "${TASK_ID}:" --json number,title --limit 5 \
-  | jq -r --arg tid "$TASK_ID" '[.[] | select(.title | test("^" + $tid + "[.:\\s]"))] | .[0].number // empty' 2>/dev/null || true)
+# Find the linked issue number — check multiple sources (#2452 fix):
+# 1. Already extracted from "issue #NNN" in arguments (Step 0)
+# 2. Search by task ID if we have one
+if [[ -z "$ISSUE_NUM" || "$ISSUE_NUM" == "null" ]] && [[ -n "$TASK_ID" ]]; then
+  ISSUE_NUM=$(gh issue list --repo "$(gh repo view --json nameWithOwner -q .nameWithOwner)" \
+    --state open --search "${TASK_ID}:" --json number,title --limit 5 \
+    | jq -r --arg tid "$TASK_ID" '[.[] | select(.title | test("^" + $tid + "[.:\\s]"))] | .[0].number // empty' 2>/dev/null || true)
+fi
 
 if [[ -n "$ISSUE_NUM" && "$ISSUE_NUM" != "null" ]]; then
   REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
 
-  # t1343: Check issue state before modifying — fail closed (only modify if explicitly OPEN)
+  # t1343 + #2452: Check issue state — if CLOSED, abort the entire worker session.
+  # This is the worker-side defense against being dispatched for a closed issue.
+  # The supervisor checks OPEN state before dispatch (pulse.md Step 3), but if
+  # the issue was closed between dispatch and worker startup, catch it here.
   ISSUE_STATE=$(gh issue view "$ISSUE_NUM" --repo "$REPO" --json state -q .state 2>/dev/null || echo "UNKNOWN")
   if [[ "$ISSUE_STATE" != "OPEN" ]]; then
-    echo "[t1343] Issue #$ISSUE_NUM state is $ISSUE_STATE (not OPEN) — skipping label update"
+    echo "[t1343/#2452] Issue #$ISSUE_NUM state is $ISSUE_STATE (not OPEN) — aborting worker"
+    echo "ABORTED: Issue #$ISSUE_NUM is $ISSUE_STATE. Nothing to implement."
+    # In headless mode, exit cleanly. In interactive mode, inform the user.
+    exit 0
   else
     gh issue edit "$ISSUE_NUM" --repo "$REPO" --add-label "status:in-progress" 2>/dev/null || true
     for STALE in "status:available" "status:queued" "status:claimed"; do
@@ -379,6 +396,12 @@ When running as a headless worker (dispatched by the supervisor via `opencode ru
    - If prerequisites are missing, exit immediately with `BLOCKED: prerequisite tXXX not merged — <specific missing item>`. Do not attempt to implement the missing prerequisite yourself.
 
    **Why this matters:** 5 workers running 4+ hours each with no PRs = 20+ hours of wasted compute. A worker that exits after 10 minutes with "BLOCKED: t030 not merged, profile table doesn't exist" saves 3h 50m and gives the supervisor actionable information.
+
+   **Push/PR failure recovery (#2452 pattern):** If `git push` or `gh pr create` fails, do NOT silently continue working. This is the root cause of workers that commit code but never produce a PR — they hit a push failure (auth, branch protection, network) and keep iterating on code instead of addressing the failure. On any push or PR creation failure:
+   1. Log the exact error message
+   2. Retry once after `git pull --rebase origin main` (handles diverged branches)
+   3. If retry fails, exit immediately with: `BLOCKED: push/PR creation failed — <exact error>. Commits exist on local branch <branch-name> in worktree <path>.`
+   4. Do NOT continue implementing code after a push failure — the work is unrecoverable without a PR
 
 9. **Cross-repo routing** — If you discover mid-task that the fix belongs in a different repo (e.g., working in awardsapp but the bug is in an aidevops framework script), do NOT create tasks or TODO entries in the current repo. Instead, file a GitHub issue in the correct repo:
 
@@ -684,10 +707,10 @@ loop until **PR is merged** (max: 20):
   parallel:
     ci = session "Check CI status"
     review = session "Check review status"
-  
+
   if **CI failed**:
     session "Fix CI issues and push"
-  
+
   if **changes requested**:
     session "Evaluate review feedback: verify factual claims against runtime/docs/project conventions, dismiss incorrect suggestions with evidence, address valid ones, then push"
 

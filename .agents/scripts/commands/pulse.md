@@ -145,6 +145,7 @@ Workers now have a self-imposed 2-hour time budget (see full-loop.md rule 8), bu
    - A 2-hour worker with zero commits and no PR is stuck — kill it.
    - A 6-hour worker with a PR stuck in a CI loop is wasting a slot — kill it and comment on the PR.
    - A worker on a genuinely large task (migration, refactor) may need more time — but should have opened a PR by hour 2 at the latest.
+   - **A worker with local commits but no PR (#2452 pattern):** This indicates the worker committed code but failed during push or PR creation (e.g., branch protection, auth failure, push rejection). Kill it and comment with the specific failure pattern so the issue can be re-dispatched with the right fix. Check the worktree for unpushed commits: `git -C ~/Git/<repo>-<branch>/ log --oneline origin/main..HEAD 2>/dev/null`.
 
 3. **Act on your assessment.** If you decide a worker is stuck or zombied, execute the kill:
 
@@ -319,6 +320,20 @@ This turns blocked issues from a dead end into an actively managed queue.
 
 **Deduplication — check running processes:** Before dispatching, check `ps axo command | grep '/full-loop' | grep '\.opencode'` for any running worker whose command line contains the issue/PR number you're about to dispatch (filter to `.opencode` binaries to avoid double-counting node launchers). Different pulse runs may have used different title formats for the same work (e.g., "issue-2300-simplify-infra-scripts" vs "Issue #2300: t1337 Simplify Tier 3"). Extract the canonical number (e.g., `2300`, `t1337`) and check if ANY running worker references it. If so, skip — do not dispatch a duplicate.
 
+**Issue OPEN state verification (MANDATORY before dispatch — t1343):** Before dispatching a worker for any issue, verify the issue is actually OPEN. The `gh issue list --state open` fetch in Step 2 is necessary but not sufficient — issues can be closed between fetch and dispatch, and issues discovered via TODO.md cross-references or blocker-chain resolution may not have gone through the open-issues filter. This check prevents the #2452 failure pattern where a worker was dispatched for closed issue #2411, wasting 6h48m.
+
+```bash
+# MANDATORY: verify issue is OPEN before dispatch (fail-closed)
+STATE=$(gh issue view <number> --repo <owner/repo> --json state -q .state 2>/dev/null || echo "UNKNOWN")
+if [[ "$STATE" != "OPEN" ]]; then
+  echo "[t1343] Issue #<number> state is $STATE (not OPEN) — skipping dispatch"
+  # Do NOT dispatch. Do NOT label. Move to next candidate.
+  continue
+fi
+```
+
+This is a hard gate — if the state check fails (network error, gh timeout), the issue is skipped (`UNKNOWN` is not `OPEN`). The cost of skipping one valid issue for one pulse cycle (2 minutes) is negligible compared to the cost of dispatching a worker for a closed issue (6+ hours wasted).
+
 **Blocker-chain validation (MANDATORY before dispatch):** Before dispatching a worker for any issue, validate that its entire dependency chain is resolved — not just the immediate `status:blocked` label. This prevents the #1 cause of workers running 3-9 hours without producing PRs: they start work on tasks whose prerequisites aren't merged yet, then spin trying to work around missing schemas, APIs, or migrations.
 
 1. **Read the issue body** for `blocked-by:` references (task IDs like `t030` or issue numbers like `#284`).
@@ -383,9 +398,18 @@ opencode run --dir ~/Git/<repo> [--agent <agent>] --title "PR #<number>: <title>
 
 ### For issues that need implementation:
 
+**Defense-in-depth: re-verify OPEN state immediately before dispatch.** The Step 3 check may be minutes old by the time you reach this point (especially if you merged PRs or ran other checks first). This 1-second `gh` call prevents the 6h+ waste of dispatching for a just-closed issue:
+
 ```bash
-opencode run --dir ~/Git/<repo> [--agent <agent>] --title "Issue #<number>: <title>" \
-  "/full-loop Implement issue #<number> (<url>) -- <brief description>" &
+# Re-verify issue is OPEN right before dispatch (t1343 / #2452)
+STATE=$(gh issue view <number> --repo <owner/repo> --json state -q .state 2>/dev/null || echo "UNKNOWN")
+if [[ "$STATE" != "OPEN" ]]; then
+  echo "[t1343] Issue #<number> state is $STATE at dispatch time — skipping"
+  # Skip this issue, move to next candidate
+else
+  opencode run --dir ~/Git/<repo> [--agent <agent>] --title "Issue #<number>: <title>" \
+    "/full-loop Implement issue #<number> (<url>) -- <brief description>" &
+fi
 ```
 
 **Important dispatch rules:**
