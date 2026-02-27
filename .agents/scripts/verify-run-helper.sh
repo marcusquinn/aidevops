@@ -169,9 +169,10 @@ execute_check() {
 	# ShellCheck <path>
 	if [[ "$directive" =~ ^shellcheck\ (.+) ]]; then
 		local sc_path="${BASH_REMATCH[1]}"
-		# Use -x to follow sourced files (shared-constants.sh etc.) and
+		# Use -x to follow sourced files (shared-constants.sh etc.),
+		# -P SCRIPTDIR to resolve relative sources, and
 		# -S warning to ignore info-level SC1091/SC2329
-		output=$(shellcheck -x -S warning "$project_root/$sc_path" 2>&1) && exit_code=0 || exit_code=$?
+		output=$(shellcheck -x -P SCRIPTDIR -S warning "$project_root/$sc_path" 2>&1) && exit_code=0 || exit_code=$?
 		if [[ $exit_code -eq 0 ]]; then
 			RESULT_SUMMARY="0 issues"
 			return 0

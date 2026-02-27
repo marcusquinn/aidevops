@@ -50,7 +50,6 @@ set -euo pipefail
 # Source shared constants (provides sed_inplace, print_*, color constants)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly SCRIPT_DIR
-# shellcheck source=shared-constants.sh
 source "${SCRIPT_DIR}/shared-constants.sh"
 
 readonly AIDEVOPS_DIR="${HOME}/.aidevops"

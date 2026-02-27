@@ -2402,7 +2402,6 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 	SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 	# Source dependencies
-	# shellcheck source=_common.sh
 	source "$SCRIPT_DIR/_common.sh"
 	# shellcheck source=ai-context.sh
 	source "$SCRIPT_DIR/ai-context.sh"

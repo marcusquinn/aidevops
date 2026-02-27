@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091
 # Observability Helper — LLM request tracking via JSONL log (t1307, t1337.5)
 # Commands: ingest | record | rate-limits | help
 # Storage: ~/.aidevops/.agent-workspace/observability/metrics.jsonl

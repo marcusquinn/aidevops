@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091
 set -euo pipefail
 
 # DSPy Helper Script for AI DevOps Framework
@@ -10,7 +9,6 @@ set -euo pipefail
 
 # Load shared constants and functions
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=.agents/scripts/shared-constants.sh
 source "$SCRIPT_DIR/shared-constants.sh"
 
 # Use shared print functions with fallback for compatibility

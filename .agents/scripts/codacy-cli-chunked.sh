@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2015,SC2034,SC2086,SC2155,SC2317
+# shellcheck disable=SC2015,SC2034,SC2086,SC2155,SC2317
 set -euo pipefail
 
 # Codacy CLI v2 Chunked Analysis Script

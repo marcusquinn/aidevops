@@ -1,0 +1,44 @@
+# ShellCheck configuration for aidevops
+# Resolves SC1091 ("Not following: ... was not specified as input") by telling
+# ShellCheck to look in the same directory as the script being checked.
+# This handles source "./shared-constants.sh" and source "./_common.sh" patterns.
+source-path=SCRIPTDIR
+
+# Project-wide accepted patterns and false positives:
+#
+# Library/sourced-file architecture:
+# SC2329: "Function is never invoked" — false positive for library functions
+#         called indirectly via source or test runners
+# SC2317: "Command appears unreachable" — false positive for library functions
+#         and return/exit guard patterns
+# SC2034: "Variable appears unused" — false positive for variables set in
+#         sourced files and used by the sourcing script
+#
+# Intentional coding patterns:
+# SC2001: "See if you can use ${var//search/replace}" — sed is preferred for
+#         complex patterns and multi-character replacements
+# SC2059: "Don't use variables in printf format" — intentional for dynamic
+#         format strings in helper scripts
+# SC2012: "Use find instead of ls" — ls is intentional for simple listings
+#         where non-alphanumeric filenames are not expected
+# SC2030/SC2031: "PATH modified in subshell" — intentional for isolated
+#         environment setup in subshells
+# SC2015: "A && B || C is not if-then-else" — intentional pattern where
+#         C is a safe fallback (logging, default value)
+# SC2129: "Consider using { cmd1; cmd2; } >> file" — style preference
+# SC2153: "Possible misspelling" — false positive for UPPER/lower conventions
+# SC2004: "$/${} unnecessary on arithmetic variables" — style preference
+# SC2009: "Consider using pgrep" — ps|grep is intentional for portability
+disable=SC2329
+disable=SC2317
+disable=SC2034
+disable=SC2001
+disable=SC2059
+disable=SC2012
+disable=SC2030
+disable=SC2031
+disable=SC2015
+disable=SC2129
+disable=SC2153
+disable=SC2004
+disable=SC2009

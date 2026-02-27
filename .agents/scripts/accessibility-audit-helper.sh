@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091
 
 # Accessibility Audit Helper — unified CLI wrapping axe-core, WAVE, WebAIM contrast, Lighthouse a11y
 # Complements accessibility-helper.sh (Lighthouse/pa11y/email/contrast-calc) with

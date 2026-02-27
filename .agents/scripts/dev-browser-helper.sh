@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2162
+# shellcheck disable=SC2162
 
 # Dev-Browser Helper - Stateful Browser Automation
 # Part of AI DevOps Framework

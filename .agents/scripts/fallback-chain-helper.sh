@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091
 
 # Fallback Chain Helper v2.0 — Simplified model routing
 # Reads a JSON routing table and checks model availability.

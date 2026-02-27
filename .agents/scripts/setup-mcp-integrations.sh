@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2016
+# shellcheck disable=SC2016
 
 # 🚀 Advanced MCP Integrations Setup Script
 # Sets up powerful Model Context Protocol integrations for AI-assisted development

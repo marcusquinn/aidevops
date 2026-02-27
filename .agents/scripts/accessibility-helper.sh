@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091
 
 # Accessibility & Contrast Testing Helper Script
 # WCAG compliance auditing for websites and HTML emails

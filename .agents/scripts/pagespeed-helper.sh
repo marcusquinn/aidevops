@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2154
+# shellcheck disable=SC2154
 
 # 🚀 PageSpeed Insights & Lighthouse Helper Script
 # Comprehensive website performance auditing and optimization guidance

@@ -28,7 +28,6 @@ LOOP_COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly LOOP_COMMON_DIR
 
 # Source shared constants for cleanup stack utilities (t196)
-# shellcheck source=shared-constants.sh
 source "${LOOP_COMMON_DIR}/shared-constants.sh"
 
 readonly LOOP_MAIL_HELPER="${LOOP_COMMON_DIR}/mail-helper.sh"

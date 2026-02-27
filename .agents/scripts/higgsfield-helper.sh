@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091
 
 # Higgsfield Helper - UI automation for Higgsfield AI via Playwright
 # Part of AI DevOps Framework

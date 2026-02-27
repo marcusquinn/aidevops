@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2034,SC2154,SC2155,SC2162,SC2181,SC2317
+# shellcheck disable=SC2034,SC2154,SC2155,SC2162,SC2181,SC2317
 set -euo pipefail
 
 # Git Platforms Helper Script

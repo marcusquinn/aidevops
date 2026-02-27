@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091
 # finding-to-task-helper.sh — Convert quality sweep findings into TODO tasks.
 #
 # t245.3: Finding-to-task pipeline — group findings, create TODO tasks, auto-dispatch.

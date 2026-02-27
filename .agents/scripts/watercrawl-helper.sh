@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2034,SC2129
+# shellcheck disable=SC2034,SC2129
 set -euo pipefail
 
 # WaterCrawl Helper Script

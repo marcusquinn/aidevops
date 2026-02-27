@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091
 
 # Gitea CLI Helper Script
 # Comprehensive Gitea management using tea (Gitea CLI) and API

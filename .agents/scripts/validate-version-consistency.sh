@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2317
+# shellcheck disable=SC2317
 
 # AI DevOps Framework - Version Consistency Validator
 # Validates that all version references are synchronized across the framework

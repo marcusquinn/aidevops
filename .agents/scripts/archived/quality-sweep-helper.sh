@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091
 # quality-sweep-helper.sh — Unified quality debt sweep: fetch, normalize, and store
 # findings from code quality tools (SonarCloud, Codacy, CodeFactor, CodeRabbit).
 #

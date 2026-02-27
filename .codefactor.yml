@@ -3,6 +3,9 @@
 
 exclude_paths:
   - ".agents/scripts/_archive/**"
+  - ".agents/scripts/archived/**"
+  - ".agents/scripts/supervisor-archived/**"
+  - "tests/**"
   - "backups/**"
   - "node_modules/**"
   - "dist/**"

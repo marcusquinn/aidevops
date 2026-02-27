@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2012,SC2153
+# shellcheck disable=SC2012,SC2153
 set -euo pipefail
 
 # Seed Bracket Helper Script

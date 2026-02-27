@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091
 
 # Coolify CLI Helper Script
 # Comprehensive Coolify self-hosted deployment and management using Coolify CLI

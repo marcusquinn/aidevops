@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2034,SC2155
+# shellcheck disable=SC2034,SC2155
 
 # Transcription Helper Script
 # Transcribe audio/video from YouTube, URLs, or local files
