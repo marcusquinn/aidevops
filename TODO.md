@@ -62,7 +62,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 - [x] t1348 fix: ProviderModelNotFoundError in task tool — session miner detected 7 failures (2.0% error rate). Agents dispatching sub-tasks with stale/invalid model IDs. Fix: audit model IDs in agent docs and scripts, update model-routing.md with currently-valid IDs, document fallback behavior. #bugfix #models #auto-dispatch ~1h ref:GH#2460 logged:2026-02-27 pr:#2463 completed:2026-02-27
 
-- [ ] t1349 fix: webfetch 404 errors — session miner detected 117 failures fetching raw.githubusercontent.com URLs that don't exist. Agents should use `gh api` or Context7 MCP for code/file lookups instead of raw GitHub URLs. Add guidance to build-plus.md and prompts/build.txt. #bugfix #agent #auto-dispatch ~30m ref:GH#2461 logged:2026-02-27
+- [x] t1349 fix: webfetch 404 errors — session miner detected 117 failures fetching raw.githubusercontent.com URLs that don't exist. Agents should use `gh api` or Context7 MCP for code/file lookups instead of raw GitHub URLs. Add guidance to build-plus.md and prompts/build.txt. #bugfix #agent #auto-dispatch ~30m ref:GH#2461 logged:2026-02-27 pr:#2462 completed:2026-02-27
 
 - [ ] t1350 fix: setup.sh exits early in non-interactive terminals — agent deployment never runs. Two issues in setup-modules/shell-env.sh: (1) `read` fails on non-tty stdin with `set -Eeuo pipefail`, killing the function before agent deploy runs; (2) `grep -c` ERR trap noise. Fix: auto-detect non-interactive terminals with `[[ ! -t 0 ]] && NON_INTERACTIVE=true` near top of setup.sh, and move `|| true` inside subshell for grep calls. #bugfix #setup #auto-dispatch ~30m ref:GH#2464 logged:2026-02-27
 
