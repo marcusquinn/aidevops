@@ -331,6 +331,7 @@ cmd_check() {
 	fi
 
 	# Test 4: Check SSH agent forwarding
+	# shellcheck disable=SC2016 # $SSH_AUTH_SOCK must expand on the remote host, not locally
 	if "${ssh_cmd[@]}" 'test -n "$SSH_AUTH_SOCK"' 2>/dev/null; then
 		_log_success "SSH agent forwarding: working"
 	else

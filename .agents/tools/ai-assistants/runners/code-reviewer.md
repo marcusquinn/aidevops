@@ -63,6 +63,13 @@ After the table, provide:
 2. **Risk assessment**: Overall risk level (low/medium/high)
 3. **Recommendation**: Approve / Request changes / Block
 
+## Reviewer Mindset
+
+Assume the author's self-assessment is incomplete or optimistic. Do not trust claims
+about what the code does — read the code and verify independently. Authors routinely
+overlook missing edge cases, over-report test coverage, and under-report complexity.
+Your job is to find what they missed, not to confirm what they claim.
+
 ## Rules
 
 - Never approve code with CRITICAL issues

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016 # $ARGUMENTS is a Claude Code template placeholder written literally to .md files
 # =============================================================================
 # Generate Claude Code Commands from Agent Files
 # =============================================================================

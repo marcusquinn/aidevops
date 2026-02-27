@@ -90,6 +90,54 @@ readonly TEMPLATE_SUFFIX=".txt"
 readonly TEMP_PREFIX="tmp_"
 
 # =============================================================================
+# Credentials File Security
+# =============================================================================
+# Shared utility for ensuring credentials files have secure permissions.
+# All scripts that write to credentials.sh MUST call ensure_credentials_file
+# before their first write to guarantee 0600 permissions on the file and
+# 0700 on the parent directory.
+#
+# Usage:
+#   ensure_credentials_file "$CREDENTIALS_FILE"
+#   echo "export KEY=\"value\"" >> "$CREDENTIALS_FILE"
+
+readonly CREDENTIALS_DIR_PERMS="700"
+readonly CREDENTIALS_FILE_PERMS="600"
+
+# Ensure credentials file exists with secure permissions (0600).
+# Creates parent directory with 0700 if missing.
+# Idempotent: safe to call multiple times.
+# Arguments:
+#   $1 - path to credentials file (required)
+ensure_credentials_file() {
+	local cred_file="$1"
+
+	if [[ -z "$cred_file" ]]; then
+		print_shared_error "ensure_credentials_file: file path required"
+		return 1
+	fi
+
+	local cred_dir
+	cred_dir="$(dirname "$cred_file")"
+
+	# Ensure parent directory exists with restricted permissions
+	if [[ ! -d "$cred_dir" ]]; then
+		mkdir -p "$cred_dir"
+		chmod "$CREDENTIALS_DIR_PERMS" "$cred_dir"
+	fi
+
+	# Create file if it doesn't exist
+	if [[ ! -f "$cred_file" ]]; then
+		: >"$cred_file"
+	fi
+
+	# Enforce 0600 regardless of current permissions
+	chmod "$CREDENTIALS_FILE_PERMS" "$cred_file" 2>/dev/null || true
+
+	return 0
+}
+
+# =============================================================================
 # Pattern Tracking Constants
 # =============================================================================
 # All pattern-related memory types (dedicated + supervisor-generated)

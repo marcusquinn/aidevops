@@ -122,8 +122,68 @@ fi
 | `status:done` | PR merged | sync-on-pr-merge workflow (automated) |
 | `status:verify-failed` | Post-merge verification failed | Worker (contextual) |
 | `status:needs-testing` | Code merged, needs manual testing | Worker (contextual) |
+| `dispatched:{model}` | Worker started on task | **Worker (Step 0.7)** |
 
 Only `status:available`, `status:claimed`, and `status:done` are fully automated. All other transitions are set contextually by the agent that best understands the current state. When setting a new status label, always remove the prior status labels to keep exactly one active.
+
+### Step 0.7: Label Dispatch Model — `dispatched:{model}`
+
+After setting `status:in-progress`, tag the issue with the model running this worker. This provides observability into which model solved each task — essential for cost/quality analysis.
+
+**Detect the current model** from the system prompt or environment. The model name appears in the system prompt as "You are powered by the model named X" or via `ANTHROPIC_MODEL` / `CLAUDE_MODEL` environment variables. Map to a short label:
+
+| Model contains | Label |
+|----------------|-------|
+| `opus` | `dispatched:opus` |
+| `sonnet` | `dispatched:sonnet` |
+| `haiku` | `dispatched:haiku` |
+| unknown | skip labeling |
+
+```bash
+# Detect model — check env vars first, fall back to known model identity
+MODEL_SHORT=""
+for VAR in "$ANTHROPIC_MODEL" "$CLAUDE_MODEL"; do
+  case "$VAR" in
+    *opus*)   MODEL_SHORT="opus" ;;
+    *sonnet*) MODEL_SHORT="sonnet" ;;
+    *haiku*)  MODEL_SHORT="haiku" ;;
+  esac
+  [[ -n "$MODEL_SHORT" ]] && break
+done
+
+# Fallback: the agent knows its own model from the system prompt.
+# If env vars are empty, set MODEL_SHORT based on your model identity.
+# Example: if you are claude-opus-4-6, set MODEL_SHORT="opus"
+
+if [[ -n "$MODEL_SHORT" && -n "$ISSUE_NUM" && "$ISSUE_NUM" != "null" ]]; then
+  REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+
+  # Remove stale dispatched:* labels so attribution is unambiguous
+  for OLD in "dispatched:opus" "dispatched:sonnet" "dispatched:haiku"; do
+    if [[ "$OLD" != "dispatched:${MODEL_SHORT}" ]]; then
+      if ! gh issue edit "$ISSUE_NUM" --repo "$REPO" --remove-label "$OLD" 2>/dev/null; then
+        : # Label not present — expected, not an error
+      fi
+    fi
+  done
+
+  # Create the label if it doesn't exist yet
+  if ! LABEL_ERR=$(gh label create "dispatched:${MODEL_SHORT}" --repo "$REPO" \
+    --description "Task dispatched to ${MODEL_SHORT} model" --color "1D76DB" 2>&1); then
+    # "already exists" is expected — only warn on other failures
+    if [[ "$LABEL_ERR" != *"already exists"* ]]; then
+      echo "[dispatch-label] Warning: label create failed for dispatched:${MODEL_SHORT} on ${REPO}: ${LABEL_ERR}" >&2
+    fi
+  fi
+
+  if ! EDIT_ERR=$(gh issue edit "$ISSUE_NUM" --repo "$REPO" \
+    --add-label "dispatched:${MODEL_SHORT}" 2>&1); then
+    echo "[dispatch-label] Warning: could not add dispatched:${MODEL_SHORT} to issue #${ISSUE_NUM} on ${REPO}: ${EDIT_ERR}" >&2
+  fi
+fi
+```
+
+**For interactive sessions** (not headless dispatch): If you are working on a task interactively and the issue exists, apply the label based on your own model identity. This ensures all task work is attributed, not just headless dispatches.
 
 ### Step 1: Auto-Branch Setup
 

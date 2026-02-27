@@ -1479,6 +1479,7 @@ get_task_assignee() {
 	local assignee=""
 	# Strip backtick-quoted segments to avoid matching `assignee:foo` in descriptions
 	local stripped_line
+	# shellcheck disable=SC2016 # sed pattern with backticks is intentionally literal
 	stripped_line=$(echo "$task_line" | sed 's/`[^`]*`//g')
 	# Take the last assignee:value match (metadata fields are at the end of the line)
 	assignee=$(echo "$stripped_line" | grep -oE ' assignee:[A-Za-z0-9._@-]+' | tail -1 | sed 's/^ *assignee://' || echo "")

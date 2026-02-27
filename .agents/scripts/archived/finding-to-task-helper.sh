@@ -309,6 +309,7 @@ task_exists_in_todo() {
             ;;
         rule)
             # Check if there's an open task referencing this rule
+            # shellcheck disable=SC2016 # sed replacement pattern is intentionally literal
             if grep -qF "$group_key" "$todo_file" 2>/dev/null && \
                grep -qE "^[[:space:]]*- \[ \] t[0-9].*$(echo "$group_key" | sed 's/[.[\*^$()+?{|]/\\&/g')" "$todo_file" 2>/dev/null; then
                 return 0
