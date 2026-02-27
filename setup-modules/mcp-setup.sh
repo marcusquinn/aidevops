@@ -309,7 +309,9 @@ setup_browser_tools() {
 
 				# Bun's installer may only write to the running shell's rc file.
 				# Ensure Bun PATH is in all shell rc files for cross-shell compat.
+				# shellcheck disable=SC2016 # written to rc files; must expand at shell startup, not now
 				local bun_path_line='export BUN_INSTALL="$HOME/.bun"'
+				# shellcheck disable=SC2016 # written to rc files; must expand at shell startup, not now
 				local bun_export_line='export PATH="$BUN_INSTALL/bin:$PATH"'
 				local bun_rc
 				while IFS= read -r bun_rc; do

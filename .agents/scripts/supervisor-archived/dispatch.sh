@@ -1048,6 +1048,7 @@ do_prompt_repeat() {
 	# Wrapper script with cleanup handlers (t253)
 	# t1190: Use timestamped filename to prevent overwrite race condition.
 	local wrapper_script="${SUPERVISOR_DIR}/pids/${task_id}-prompt-repeat-wrapper-${pr_dispatch_ts}.sh"
+	# shellcheck disable=SC2016 # echo statements generate a child script; variables must expand at child runtime
 	{
 		echo '#!/usr/bin/env bash'
 		# t1190: Wrapper-level sentinel written before running dispatch script.
@@ -3095,6 +3096,7 @@ cmd_dispatch() {
 	# t253: Add cleanup handlers to prevent orphaned children when wrapper exits
 	# t1190: Use timestamped filename (matches dispatch_ts) to prevent overwrite race.
 	local wrapper_script="${SUPERVISOR_DIR}/pids/${task_id}-wrapper-${dispatch_ts}.sh"
+	# shellcheck disable=SC2016 # echo statements generate a child script; variables must expand at child runtime
 	{
 		echo '#!/usr/bin/env bash'
 		# t1190: Wrapper-level sentinel — written before running the dispatch script.
@@ -3648,6 +3650,7 @@ Task description: ${tdesc:-$task_id}"
 	# t253: Add cleanup handlers to prevent orphaned children when wrapper exits
 	# t1190: Use timestamped filename to prevent overwrite race condition.
 	local wrapper_script="${SUPERVISOR_DIR}/pids/${task_id}-reprompt-wrapper-${reprompt_dispatch_ts}.sh"
+	# shellcheck disable=SC2016 # echo statements generate a child script; variables must expand at child runtime
 	{
 		echo '#!/usr/bin/env bash'
 		# t1190: Wrapper-level sentinel written before running dispatch script.

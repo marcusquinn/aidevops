@@ -403,6 +403,7 @@ check_optional_deps() {
 }
 
 add_local_bin_to_path() {
+	# shellcheck disable=SC2016 # path_line is written to rc files; must expand at shell startup, not now
 	local path_line='export PATH="$HOME/.local/bin:$PATH"'
 	local added_to=""
 	local already_in=""

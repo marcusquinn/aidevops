@@ -905,6 +905,7 @@ check_review_threads() {
 
 	# GraphQL query to fetch all review threads with resolution status
 	local graphql_query
+	# shellcheck disable=SC2016 # $owner, $repo, $pr are GraphQL variables, not shell variables
 	graphql_query='query($owner: String!, $repo: String!, $pr: Int!) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $pr) {
@@ -989,6 +990,7 @@ resolve_bot_review_threads() {
 
 	# Fetch all unresolved threads with author info
 	local graphql_query
+	# shellcheck disable=SC2016 # $owner, $repo, $pr are GraphQL variables, not shell variables
 	graphql_query='query($owner: String!, $repo: String!, $pr: Int!) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $pr) {
@@ -1042,6 +1044,7 @@ resolve_bot_review_threads() {
 	while IFS= read -r thread_id; do
 		[[ -z "$thread_id" ]] && continue
 		local resolve_mutation
+		# shellcheck disable=SC2016 # $threadId is a GraphQL variable, not a shell variable
 		resolve_mutation='mutation($threadId: ID!) {
   resolveReviewThread(input: {threadId: $threadId}) {
     thread {
@@ -1369,6 +1372,7 @@ Instructions:
 	# Wrapper script (t183): captures dispatch errors in log file
 	# t253: Add cleanup handlers to prevent orphaned children when wrapper exits
 	local wrapper_script="${SUPERVISOR_DIR}/pids/${task_id}-review-fix-wrapper.sh"
+	# shellcheck disable=SC2016 # echo statements generate a child script; variables must expand at child runtime
 	{
 		echo '#!/usr/bin/env bash'
 		echo '# t253: Recursive cleanup to kill all descendant processes'
