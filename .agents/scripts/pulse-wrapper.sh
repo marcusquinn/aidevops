@@ -33,6 +33,10 @@ LOGFILE="${HOME}/.aidevops/logs/pulse.log"
 OPENCODE_BIN="${OPENCODE_BIN:-/opt/homebrew/bin/opencode}"
 PULSE_DIR="${PULSE_DIR:-${HOME}/Git/aidevops}"
 PULSE_MODEL="${PULSE_MODEL:-anthropic/claude-sonnet-4-6}"
+ORPHAN_MAX_AGE="${ORPHAN_MAX_AGE:-7200}"       # 2 hours — kill orphans older than this
+RAM_PER_WORKER_MB="${RAM_PER_WORKER_MB:-1024}" # 1 GB per worker
+RAM_RESERVE_MB="${RAM_RESERVE_MB:-8192}"       # 8 GB reserved for OS + user apps
+MAX_WORKERS_CAP="${MAX_WORKERS_CAP:-8}"        # Hard ceiling regardless of RAM
 
 #######################################
 # Ensure log directory exists
@@ -223,7 +227,126 @@ main() {
 		return 0
 	fi
 
+	cleanup_orphans
+	calculate_max_workers
 	run_pulse
+	return 0
+}
+
+#######################################
+# Kill orphaned opencode processes
+#
+# Criteria (ALL must be true):
+#   - No TTY (headless — not a user's terminal tab)
+#   - Not a current worker (/full-loop not in command)
+#   - Not the supervisor pulse (Supervisor Pulse not in command)
+#   - Not a strategic review (Strategic Review not in command)
+#   - Older than ORPHAN_MAX_AGE seconds
+#
+# These are completed headless sessions where opencode entered idle
+# state with a file watcher and never exited.
+#######################################
+cleanup_orphans() {
+	local killed=0
+	local total_mb=0
+
+	while IFS= read -r line; do
+		local pid tty etime rss cmd
+		pid=$(echo "$line" | awk '{print $1}')
+		tty=$(echo "$line" | awk '{print $2}')
+		etime=$(echo "$line" | awk '{print $3}')
+		rss=$(echo "$line" | awk '{print $4}')
+		cmd=$(echo "$line" | cut -d' ' -f5-)
+
+		# Skip interactive sessions (has a real TTY)
+		if [[ "$tty" != "??" ]]; then
+			continue
+		fi
+
+		# Skip active workers, pulse, and strategic reviews
+		if echo "$cmd" | grep -qE '/full-loop|Supervisor Pulse|Strategic Review'; then
+			continue
+		fi
+
+		# Skip young processes
+		local age_seconds
+		age_seconds=$(_get_process_age "$pid")
+		if [[ "$age_seconds" -lt "$ORPHAN_MAX_AGE" ]]; then
+			continue
+		fi
+
+		# This is an orphan — kill it
+		local mb=$((rss / 1024))
+		kill "$pid" 2>/dev/null || true
+		killed=$((killed + 1))
+		total_mb=$((total_mb + mb))
+	done < <(ps axo pid,tty,etime,rss,command | grep '\.opencode' | grep -v grep | grep -v 'bash-language-server')
+
+	# Also kill orphaned node launchers (parent of .opencode processes)
+	while IFS= read -r line; do
+		local pid tty etime rss cmd
+		pid=$(echo "$line" | awk '{print $1}')
+		tty=$(echo "$line" | awk '{print $2}')
+		etime=$(echo "$line" | awk '{print $3}')
+		rss=$(echo "$line" | awk '{print $4}')
+		cmd=$(echo "$line" | cut -d' ' -f5-)
+
+		[[ "$tty" != "??" ]] && continue
+		echo "$cmd" | grep -qE '/full-loop|Supervisor Pulse|Strategic Review' && continue
+
+		local age_seconds
+		age_seconds=$(_get_process_age "$pid")
+		[[ "$age_seconds" -lt "$ORPHAN_MAX_AGE" ]] && continue
+
+		kill "$pid" 2>/dev/null || true
+		local mb=$((rss / 1024))
+		killed=$((killed + 1))
+		total_mb=$((total_mb + mb))
+	done < <(ps axo pid,tty,etime,rss,command | grep 'node.*opencode' | grep -v grep | grep -v '\.opencode')
+
+	if [[ "$killed" -gt 0 ]]; then
+		echo "[pulse-wrapper] Cleaned up $killed orphaned opencode processes (freed ~${total_mb}MB)" >>"$LOGFILE"
+	fi
+	return 0
+}
+
+#######################################
+# Calculate max workers from available RAM
+#
+# Formula: (free_ram - RAM_RESERVE_MB) / RAM_PER_WORKER_MB
+# Clamped to [1, MAX_WORKERS_CAP]
+#
+# Writes MAX_WORKERS to a file that pulse.md reads via bash.
+#######################################
+calculate_max_workers() {
+	local free_mb
+	if [[ "$(uname)" == "Darwin" ]]; then
+		# macOS: use vm_stat for free + inactive (reclaimable) pages
+		local page_size free_pages inactive_pages
+		page_size=$(sysctl -n hw.pagesize 2>/dev/null || echo 16384)
+		free_pages=$(vm_stat 2>/dev/null | awk '/Pages free/ {gsub(/\./,"",$3); print $3}')
+		inactive_pages=$(vm_stat 2>/dev/null | awk '/Pages inactive/ {gsub(/\./,"",$3); print $3}')
+		free_mb=$(((free_pages + inactive_pages) * page_size / 1024 / 1024))
+	else
+		# Linux: use MemAvailable from /proc/meminfo
+		free_mb=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 8192)
+	fi
+
+	local available_mb=$((free_mb - RAM_RESERVE_MB))
+	local max_workers=$((available_mb / RAM_PER_WORKER_MB))
+
+	# Clamp to [1, MAX_WORKERS_CAP]
+	if [[ "$max_workers" -lt 1 ]]; then
+		max_workers=1
+	elif [[ "$max_workers" -gt "$MAX_WORKERS_CAP" ]]; then
+		max_workers="$MAX_WORKERS_CAP"
+	fi
+
+	# Write to a file that pulse.md can read
+	local max_workers_file="${HOME}/.aidevops/logs/pulse-max-workers"
+	echo "$max_workers" >"$max_workers_file"
+
+	echo "[pulse-wrapper] Available RAM: ${free_mb}MB, reserve: ${RAM_RESERVE_MB}MB, max workers: ${max_workers}" >>"$LOGFILE"
 	return 0
 }
 
