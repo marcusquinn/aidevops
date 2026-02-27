@@ -60,6 +60,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
+- [ ] t1351 fix: Cisco AI Skill Scanner requires Python 3.10+ but installation fails silently — on systems with Python < 3.10, `pip3 install --user cisco-ai-skill-scanner` fails with a confusing "no matching distribution found" error, no pre-check is performed, and the suggested fallback (`uv tool install`) also requires Python 3.10+. Fix: add Python version pre-check in setup-modules/skills.sh before attempting cisco-ai-skill-scanner install; if Python < 3.10, emit clear error with exact version found and fix instructions (brew install python@3.11 or uv python install 3.11); if uv is available, use `uv python install 3.11 && uv tool install cisco-ai-skill-scanner` as primary path. #bugfix #setup #auto-dispatch ~30m ref:GH#2470 logged:2026-02-27
+
 - [x] t1348 fix: ProviderModelNotFoundError in task tool — session miner detected 7 failures (2.0% error rate). Agents dispatching sub-tasks with stale/invalid model IDs. Fix: audit model IDs in agent docs and scripts, update model-routing.md with currently-valid IDs, document fallback behavior. #bugfix #models #auto-dispatch ~1h ref:GH#2460 logged:2026-02-27 pr:#2463 completed:2026-02-27
 
 - [x] t1349 fix: webfetch 404 errors — session miner detected 117 failures fetching raw.githubusercontent.com URLs that don't exist. Agents should use `gh api` or Context7 MCP for code/file lookups instead of raw GitHub URLs. Add guidance to build-plus.md and prompts/build.txt. #bugfix #agent #auto-dispatch ~30m ref:GH#2461 logged:2026-02-27 pr:#2462 completed:2026-02-27
