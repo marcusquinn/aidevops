@@ -242,10 +242,55 @@ cmd_add_remote() {
 cmd_remove() {
 	local name="$1"
 	ensure_config
+
+	# Clean up symlinks before removing config
+	cleanup_source_symlinks "${name}"
+
 	remove_source_from_config "${name}"
 	success "Removed source: ${name}"
 	info "Synced agents in custom/${name}/ were NOT deleted. Remove manually if needed:"
 	echo "  rm -rf ${CUSTOM_DIR}/${name}/"
+	return 0
+}
+
+# Remove symlinks created by a source (primary agents + slash commands)
+cleanup_source_symlinks() {
+	local name="$1"
+	local source_dir="${CUSTOM_DIR}/${name}"
+
+	[[ -d "${source_dir}" ]] || return 0
+
+	# Remove primary agent symlinks from agents root
+	for agent_dir in "${source_dir}"/*/; do
+		[[ -d "${agent_dir}" ]] || continue
+		local agent_name
+		agent_name="$(basename "${agent_dir}")"
+		local link="${AGENTS_DIR}/${agent_name}.md"
+		if [[ -L "${link}" ]]; then
+			local target
+			target="$(readlink "${link}")"
+			if [[ "${target}" == *"${name}"* ]]; then
+				rm -f "${link}"
+				info "  Removed primary agent symlink: ${agent_name}"
+			fi
+		fi
+	done
+
+	# Remove slash command symlinks from OpenCode command dir
+	local opencode_cmd_dir="${HOME}/.config/opencode/command"
+	if [[ -d "${opencode_cmd_dir}" ]]; then
+		for link in "${opencode_cmd_dir}"/*.md; do
+			[[ -L "${link}" ]] || continue
+			local target
+			target="$(readlink "${link}")"
+			if [[ "${target}" == *"${name}"* ]]; then
+				rm -f "${link}"
+				local cmd_name
+				cmd_name="$(basename "${link}" .md)"
+				info "  Removed slash command: /${cmd_name}"
+			fi
+		done
+	fi
 	return 0
 }
 
@@ -363,6 +408,8 @@ cmd_sync() {
 	mkdir -p "${CUSTOM_DIR}"
 	local total_agents=0
 	local total_sources=0
+	local total_primary=0
+	local total_commands=0
 
 	local i=0
 	while [[ ${i} -lt ${count} ]]; do
@@ -408,6 +455,10 @@ cmd_sync() {
 			# rsync the agent directory (preserves permissions, handles deletions)
 			rsync -a --delete "${agent_dir}" "${dest_dir}/${agent_name}/"
 			((agent_count++))
+
+			# Post-sync: register primary agents and deploy slash commands
+			sync_primary_agent "${dest_dir}/${agent_name}" "${agent_name}"
+			sync_slash_commands "${dest_dir}/${agent_name}" "${agent_name}" "${name}"
 		done
 
 		update_last_synced "${name}" "${agent_count}"
@@ -418,7 +469,80 @@ cmd_sync() {
 	done
 
 	echo ""
-	success "Sync complete: ${total_agents} agent(s) from ${total_sources} source(s)"
+	local summary="Sync complete: ${total_agents} agent(s) from ${total_sources} source(s)"
+	[[ ${total_primary} -gt 0 ]] && summary="${summary}, ${total_primary} primary agent(s)"
+	[[ ${total_commands} -gt 0 ]] && summary="${summary}, ${total_commands} slash command(s)"
+	success "${summary}"
+	return 0
+}
+
+# Register a primary agent by symlinking its .md to the agents root
+# This makes it discoverable by generate-opencode-agents.sh auto-discovery
+sync_primary_agent() {
+	local agent_dir="$1"
+	local agent_name="$2"
+	local agent_md="${agent_dir}/${agent_name}.md"
+
+	[[ -f "${agent_md}" ]] || return 0
+
+	# Check frontmatter for mode: primary (BSD sed compatible)
+	local mode
+	mode="$(sed -n '/^---$/,/^---$/p' "${agent_md}" 2>/dev/null | grep '^mode:' | head -1 | sed 's/^mode:[[:space:]]*//')" || true
+	[[ "${mode}" == "primary" ]] || return 0
+
+	# Symlink to agents root for auto-discovery
+	local link_target="${AGENTS_DIR}/${agent_name}.md"
+	if [[ -L "${link_target}" ]]; then
+		rm -f "${link_target}"
+	elif [[ -f "${link_target}" ]]; then
+		# Don't overwrite a real file (core agent)
+		warn "  Skipping primary agent ${agent_name}: conflicts with core agent"
+		return 0
+	fi
+
+	ln -s "${agent_md}" "${link_target}"
+	info "  Registered primary agent: ${agent_name}"
+	((total_primary++)) || true
+	return 0
+}
+
+# Deploy slash commands from an agent directory to OpenCode command dir
+# Slash commands are .md files with 'agent:' in frontmatter (not the agent doc itself, not subagents)
+sync_slash_commands() {
+	local agent_dir="$1"
+	local agent_name="$2"
+	local source_name="$3"
+	local opencode_cmd_dir="${HOME}/.config/opencode/command"
+
+	mkdir -p "${opencode_cmd_dir}"
+
+	for md_file in "${agent_dir}"/*.md; do
+		[[ -f "${md_file}" ]] || continue
+		local filename
+		filename="$(basename "${md_file}")"
+
+		# Skip the agent doc itself (filename matches directory name)
+		[[ "${filename}" == "${agent_name}.md" ]] && continue
+
+		# Check if this is a slash command (has 'agent:' in frontmatter, BSD sed compatible)
+		if ! sed -n '/^---$/,/^---$/p' "${md_file}" 2>/dev/null | grep -q '^agent:'; then
+			continue
+		fi
+
+		local cmd_name="${filename%.md}"
+		local target="${opencode_cmd_dir}/${cmd_name}.md"
+
+		# Collision detection: only suffix if a different file already exists
+		if [[ -f "${target}" ]] && ! [[ -L "${target}" && "$(readlink "${target}")" == "${md_file}" ]]; then
+			local suffixed_name="${cmd_name}-${source_name}"
+			target="${opencode_cmd_dir}/${suffixed_name}.md"
+			warn "  Command collision: /${cmd_name} exists, deploying as /${suffixed_name}"
+		fi
+
+		# Symlink rather than copy — stays in sync without re-running
+		ln -sf "${md_file}" "${target}"
+		((total_commands++)) || true
+	done
 	return 0
 }
 
