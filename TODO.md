@@ -60,7 +60,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
-- [ ] t1346 fix: agents looking for workflows/pulse.md but file is at scripts/commands/pulse.md — session miner detected 75 `file_not_found` errors for `~/.aidevops/agents/workflows/pulse.md`. The pulse command doc is at `.agents/scripts/commands/pulse.md`. Fix: update any references in AGENTS.md / domain index that point to `workflows/pulse.md`, or add a symlink. #bugfix #agent #auto-dispatch ~30m ref:GH#2457 logged:2026-02-27
+- [x] t1346 fix: agents looking for workflows/pulse.md but file is at scripts/commands/pulse.md — session miner detected 75 `file_not_found` errors for `~/.aidevops/agents/workflows/pulse.md`. The pulse command doc is at `.agents/scripts/commands/pulse.md`. Fix: update any references in AGENTS.md / domain index that point to `workflows/pulse.md`, or add a symlink. #bugfix #agent #auto-dispatch ~30m ref:GH#2457 logged:2026-02-27 pr:#2459 completed:2026-02-27
 
 - [ ] t1347 fix: markdown-formatter MCP tool has 81% error rate — session miner detected 13/16 calls failing with exit code 1. Investigate why markdown-formatter exits with code 1 on most calls and fix. #bugfix #mcp #auto-dispatch ~1h ref:GH#2458 logged:2026-02-27
 
