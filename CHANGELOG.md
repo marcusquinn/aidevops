@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Documentation: add crash-resilience principle to build.txt — every process must recover from cold start by reading current state, not assuming previous steps completed
+- Documentation: add Next.js stale lock file knowledge to local-hosting.md (t1352, PR #2482)
+- Documentation: add cross-repo task creation guidance to AGENTS.md and build.txt (t1353, PR #2483)
+
+### Fixed
+
+- Remove state-diff gate from pulse wrapper — it violated crash-resilience by assuming the previous pulse succeeded, creating a deadlock when a pulse crashed without acting (PR #2481)
+
 ## [2.140.0] - 2026-02-27
 
 ### Changed
