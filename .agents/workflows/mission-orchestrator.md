@@ -157,8 +157,15 @@ Set milestone status to `validating`, then verify:
    - Outcomes vs original goal
    - Budget accuracy (budgeted vs actual)
    - Lessons learned
-4. Review mission agents and scripts for promotion (see "Improvement Feedback" below)
-5. Commit and push the final state
+4. **Run skill learning** (see `workflows/mission-skill-learning.md`):
+   a. Scan mission artifacts: `mission-skill-learning.sh scan {mission-dir}`
+   b. Score for promotion: `mission-skill-learning.sh score {mission-dir}`
+   c. Read `workflows/mission-skill-learning.md` for evaluation guidance
+   d. Promote valuable artifacts: `mission-skill-learning.sh promote {path}`
+   e. Store patterns in memory: `mission-skill-learning.sh remember {mission-dir}`
+   f. Record decisions in the mission's Skill Learning section
+5. Review remaining improvement feedback (see "Improvement Feedback" below)
+6. Commit and push the final state
 
 ## Self-Organisation
 
@@ -232,15 +239,7 @@ Include the agent path in the worker dispatch prompt:
 /full-loop Implement {task_id} -- {description}. Read {mission-dir}/agents/{name}.md for project-specific patterns before starting.
 ```
 
-**After mission completion**, review each mission agent:
-
-| Outcome | Action |
-|---------|--------|
-| Generally useful beyond this mission | Move to `~/.aidevops/agents/draft/` with a TODO for promotion review |
-| Project-specific but reusable within the project | Leave in the project's mission directory |
-| One-off, no longer needed | Delete |
-
-Record the decision in the mission's "Mission Agents" table.
+**After mission completion**, the skill learning system (`workflows/mission-skill-learning.md`) evaluates each mission agent automatically. It scans, scores, and recommends promotion decisions. The orchestrator runs this as part of Phase 5. Manual review is still possible — see the mission's Skill Learning section for recorded decisions.
 
 ## Improvement Feedback to aidevops
 
@@ -260,7 +259,7 @@ Every mission is an opportunity to improve the framework. The orchestrator shoul
 2. **At completion**: Review the decision log and mission agents. For each improvement:
    - File a GitHub issue on the aidevops repo: `gh issue create --repo {aidevops_slug} --title "Mission feedback: {description}" --body "{details}"`
    - Record the issue number in the mission's "Framework Improvements" section
-3. **For reusable agents**: Move to `~/.aidevops/agents/draft/` and create a TODO entry for promotion review
+3. **For reusable agents and scripts**: The skill learning system handles promotion automatically at Phase 5. See `workflows/mission-skill-learning.md` for the evaluation criteria and `scripts/mission-skill-learning.sh` for the helper commands.
 
 ### What NOT to Do
 

@@ -164,7 +164,21 @@ Temporary agents created for this mission. Draft-tier by default — promoted to
 
 <!-- Mission agents are created on-demand as the orchestrator discovers needs.
      They live in the mission's agents/ subfolder.
-     After mission completion, review for promotion to the framework. -->
+     After mission completion, skill learning evaluates for promotion. -->
+
+## Skill Learning
+
+_Completed at Phase 5 by the skill learning system (`workflows/mission-skill-learning.md`)._
+
+Artifacts evaluated for promotion to the framework's agent/script library.
+
+| Artifact | Type | Score | Decision | Target | Notes |
+|----------|------|-------|----------|--------|-------|
+| | | | | | |
+
+<!-- Decisions: DELETE (low value), KEEP (mission-specific), PROMOTE (to draft/ or custom/).
+     Score: 0-10 from mission-skill-learning.sh. Orchestrator may override based on content review.
+     Patterns stored in cross-session memory via 'mission-skill-learning.sh remember'. -->
 
 ## Research
 
