@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.138.0] - 2026-02-27
+
+### Added
+
+- add cross-repo TODO-to-issue sync in supervisor pulse (#2451)
+
+### Changed
+
+- Documentation: add Intelligence Over Scripts to system prompt and PR issue-linkage guidance (#2446)
+
+### Fixed
+
+- prevent worker issue hijacking and require cross-repo TODO commit+push (#2450)
+
 ## [2.137.0] - 2026-02-27
 
 ### Added
