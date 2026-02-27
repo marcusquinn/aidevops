@@ -338,6 +338,11 @@ cmd_logs() {
 }
 
 cmd_update() {
+	if [ ! -f "$BINARY_PATH" ]; then
+		die "Binary not found: $BINARY_PATH. Run: matterbridge-helper.sh setup"
+		return 1
+	fi
+
 	local current_version new_version
 	local version_err_file="${LOG_FILE}.version-err"
 	current_version="$("$BINARY_PATH" -version 2>"$version_err_file" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown")"

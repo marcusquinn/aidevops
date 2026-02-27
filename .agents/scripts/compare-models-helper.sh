@@ -775,6 +775,12 @@ cmd_cross_review() {
 		model_tier="${model_tier// /}"
 		[[ -z "$model_tier" ]] && continue
 
+		# Sanitize model identifier to prevent path traversal (reject chars outside safe set)
+		if [[ ! "$model_tier" =~ ^[A-Za-z0-9._-]+$ ]]; then
+			print_warning "Skipping invalid model identifier: $model_tier"
+			continue
+		fi
+
 		local runner_name="cross-review-${model_tier}-$$"
 		runner_names+=("$runner_name")
 		model_names+=("$model_tier")
@@ -788,25 +794,31 @@ cmd_cross_review() {
 		# Create runner, dispatch, capture output (errors logged per-model for debugging)
 		local model_err_log="${output_dir}/${model_tier}-errors.log"
 		(
+			local model_failed=0
+
 			"$runner_helper" create "$runner_name" \
 				--model "$model_tier" \
 				--description "Cross-review: $model_tier" \
-				--workdir "$workdir" 2>>"$model_err_log" || true
+				--workdir "$workdir" 2>>"$model_err_log" || model_failed=1
 
 			local result_file="${output_dir}/${model_tier}.txt"
 			"$runner_helper" run "$runner_name" "$prompt" \
 				--model "$model_tier" \
 				--timeout "$review_timeout" \
-				--format json 2>>"$model_err_log" >"${output_dir}/${model_tier}.json" || true
+				--format json 2>>"$model_err_log" >"${output_dir}/${model_tier}.json" || model_failed=1
 
 			# Extract text response from JSON
 			if [[ -f "${output_dir}/${model_tier}.json" ]]; then
 				jq -r '.parts[]? | select(.type == "text") | .text' \
-					"${output_dir}/${model_tier}.json" 2>>"$model_err_log" >"$result_file" || true
+					"${output_dir}/${model_tier}.json" 2>>"$model_err_log" >"$result_file" || model_failed=1
 			fi
 
-			# Clean up runner
+			# Clean up runner (always attempt cleanup, even on failure)
 			"$runner_helper" destroy "$runner_name" --force 2>>"$model_err_log" || true
+
+			# Fail if no usable output was produced
+			[[ -s "$result_file" ]] || model_failed=1
+			exit "$model_failed"
 		) &
 		pids+=($!)
 	done
@@ -1864,9 +1876,24 @@ cmd_score() {
 	safe_winner="${winner//\'/\'\'}"
 	comp_id=$(sqlite3 "$RESULTS_DB" "INSERT INTO comparisons (task_description, task_type, evaluator_model, winner_model) VALUES ('${safe_task}', '${safe_type}', '${safe_eval}', '${safe_winner}'); SELECT last_insert_rowid();")
 
-	# Insert scores for each model (escape all string values)
+	# Insert scores for each model (escape strings, validate numerics)
 	for entry in "${model_entries[@]}"; do
 		IFS='|' read -r m_id m_cor m_com m_qua m_cla m_adh m_ove m_lat m_tok m_str m_wea m_res <<<"$entry"
+
+		# Validate all numeric fields — reject non-integer values to prevent SQL injection
+		for n in m_cor m_com m_qua m_cla m_adh m_ove m_lat m_tok; do
+			if ! [[ "${!n}" =~ ^[0-9]+$ ]]; then
+				print_error "Invalid numeric value for ${n}: ${!n}"
+				return 1
+			fi
+		done
+		# Clamp score fields to valid 0-10 range
+		for s in m_cor m_com m_qua m_cla m_adh m_ove; do
+			if ((${!s} > 10)); then
+				printf -v "$s" "10"
+			fi
+		done
+
 		local safe_id="${m_id//\'/\'\'}"
 		local safe_str="${m_str//\'/\'\'}"
 		local safe_wea="${m_wea//\'/\'\'}"
