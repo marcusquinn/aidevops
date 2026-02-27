@@ -198,6 +198,9 @@ Look at everything you fetched and pick up to **AVAILABLE** items — the highes
 - Prefer PRs over issues (PRs are closer to done)
 - Prefer repos with `"priority": "product"` over `"priority": "tooling"` (from pulse-repos.json)
 - Prefer smaller/simpler tasks (faster throughput)
+- Issues labelled `auto-dispatch` (e.g., from CodeRabbit daily reviews) are pre-vetted
+  and ready for immediate dispatch — treat them as priority 6 (medium) unless their
+  body indicates security or critical severity, in which case treat as priority 5 (high)
 
 **Blocked issue resolution:** Issues labelled `status:blocked` must NOT be dispatched directly. But don't just skip them — investigate and try to unblock:
 
@@ -379,6 +382,105 @@ Run the session miner pulse. It has its own 20-hour interval guard, so this is a
 ```
 
 If it produces output (new suggestions), create a TODO entry or GitHub issue in the aidevops repo for the harness improvement. The session miner extracts user corrections and tool error patterns from past sessions and suggests harness rules that would prevent recurring issues.
+
+## Step 7b: CodeRabbit Daily Codebase Review
+
+Trigger a full codebase review via CodeRabbit once per day. This uses issue #2386
+as a persistent trigger point — CodeRabbit responds to `@coderabbitai` mentions
+in comments.
+
+**Guard**: Only run once per 24 hours. Check the last comment timestamp on #2386:
+
+```bash
+LAST_TRIGGER=$(gh api repos/<owner/repo>/issues/2386/comments \
+  --jq '[.[] | select(.body | test("@coderabbitai.*full codebase review"))] | last | .created_at // "1970-01-01"')
+HOURS_AGO=$(( ($(date +%s) - $(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$LAST_TRIGGER" +%s 2>/dev/null || echo 0)) / 3600 ))
+```
+
+If `HOURS_AGO < 24`, skip. Otherwise:
+
+**Step 1 — Trigger the review:**
+
+```bash
+gh issue comment 2386 --repo <owner/repo> --body '@coderabbitai Please perform a full codebase review.
+
+**Pulse timestamp**: '"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'
+**Triggered by**: aidevops supervisor daily pulse
+
+Focus areas:
+- Shell script quality (ShellCheck compliance, error handling)
+- Security (credential handling, input validation)
+- Code duplication and dead code
+- Documentation accuracy
+- Performance concerns'
+```
+
+**Step 2 — Create issues from findings (next pulse cycle):**
+
+On the next pulse (2+ minutes later), check if CodeRabbit has responded with a
+review. If it has posted findings but no issues have been created from them yet:
+
+**Idempotency guard:** Before creating issues, check if issues already exist for
+this review cycle. Search for issues created today with the `coderabbit-pulse` label:
+
+```bash
+EXISTING=$(gh issue list --repo <owner/repo> --label "coderabbit-pulse" \
+  --json createdAt --jq '[.[] | select(.createdAt | startswith("'"$(date -u +%Y-%m-%d)"'"))] | length')
+if [ "$EXISTING" -gt 0 ]; then
+  echo "Issues already created for today's review — skipping."
+  # Skip to next step
+fi
+```
+
+Also check if a summary comment was already posted on #2386 for today:
+
+```bash
+ALREADY_POSTED=$(gh api "repos/<owner/repo>/issues/2386/comments" \
+  --jq '[.[] | select(.body | test("Created issues.*from CodeRabbit review")) | select(.created_at | startswith("'"$(date -u +%Y-%m-%d)"'"))] | length')
+if [ "$ALREADY_POSTED" -gt 0 ]; then
+  echo "Summary already posted — skipping."
+fi
+```
+
+If neither guard triggers, proceed:
+
+1. Read CodeRabbit's latest review comment on #2386.
+2. Parse each numbered finding (CodeRabbit uses numbered headings like "1)", "2)" etc.).
+3. For each finding, create a GitHub issue:
+
+```bash
+gh issue create --repo <owner/repo> \
+  --title "coderabbit: <short description from finding>" \
+  --label "coderabbit-pulse,auto-dispatch" \
+  --body "**Finding #N: <title>**
+
+**Evidence:** <evidence from CodeRabbit's review>
+
+**Risk:** <risk assessment>
+
+**Recommended Action:** <CodeRabbit's recommendation>
+
+---
+**Source:** https://github.com/<owner/repo>/issues/2386"
+```
+
+4. After creating all issues, post a summary comment on #2386:
+
+```bash
+gh issue comment 2386 --repo <owner/repo> \
+  --body "Created issues #XXXX-#YYYY from CodeRabbit review (YYYY-MM-DD).
+  Issues labelled coderabbit-pulse + auto-dispatch for worker dispatch."
+```
+
+**Why the supervisor creates issues, not CodeRabbit:** CodeRabbit's sandbox does
+not have authenticated `gh` CLI access. It can generate the script but cannot
+execute it. The supervisor has `gh` access and creates the issues directly.
+
+The issues enter the normal dispatch queue via Step 3 (they appear as open issues
+with `auto-dispatch` label). No further action needed — the standard priority
+pipeline handles the rest.
+
+See `.agents/tools/code-review/coderabbit.md` "Daily Full Codebase Review" for full details.
 
 ## Step 8: Strategic Review (Every 4h, Opus Tier)
 
