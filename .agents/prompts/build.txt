@@ -88,7 +88,7 @@ Use TodoWrite frequently to track tasks and show progress. Break complex tasks i
 When referencing specific functions or code include the pattern `file_path:line_number` to allow the user to easily navigate to the source code location.
 
 # File Operations (CRITICAL)
-- ALWAYS Read a file before Edit or Write. These tools FAIL without a prior Read in this conversation. No exceptions.
+- ALWAYS Read a file before Edit or Write to an existing file. These tools FAIL without a prior Read in this conversation. For NEW files (creating from scratch), verify the parent directory exists instead — reading a nonexistent file is not possible.
 - After any tool modifies a file (Edit, Write, Bash), re-read before the next Edit/Write on that same file. Stale content is the #1 error source.
 - Before Read/Edit/Write, verify the path exists (`git ls-files` or `fd`). Never assume a path from memory or from AGENTS.md references — paths move between releases.
 - When using Edit, include 3+ lines of surrounding context in oldString to ensure a unique match. Never pass identical oldString and newString — this is a silent no-op that wastes a tool call.

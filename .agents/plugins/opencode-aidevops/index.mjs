@@ -1491,11 +1491,11 @@ const BUILTIN_TTSR_RULES = [
   },
   {
     id: "read-before-edit",
-    description: "Always Read a file before Edit or Write operations",
-    pattern: "(?:I'll edit|Let me edit|I'll write to|Let me write)(?:(?!I'll read|let me read|I've read|already read).){0,200}$",
-    correction: "ALWAYS Read a file before Edit/Write. These tools fail without a prior Read in this conversation.",
+    description: "Always Read a file before Edit or Write to existing files",
+    pattern: "(?:I'll edit|Let me edit|I'll write to|Let me write)(?!.*(?:creat|new file|new \\w+ file|generat))(?:(?!I'll read|let me read|I've read|already read).){0,200}$",
+    correction: "ALWAYS Read a file before Edit/Write to an existing file. These tools fail without a prior Read in this conversation. (This rule does not apply when creating new files.)",
     severity: "error",
-    systemPrompt: "ALWAYS Read a file before Edit or Write. These tools FAIL without a prior Read in this conversation.",
+    systemPrompt: "ALWAYS Read a file before Edit or Write to an existing file. These tools FAIL without a prior Read in this conversation. For NEW files, verify the parent directory exists instead.",
   },
   {
     id: "no-credentials-in-output",
