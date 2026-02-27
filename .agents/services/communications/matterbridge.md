@@ -76,8 +76,12 @@ curl -L https://github.com/42wim/matterbridge/releases/latest/download/matterbri
   -o /usr/local/bin/matterbridge
 chmod +x /usr/local/bin/matterbridge
 
-# macOS
-curl -L https://github.com/42wim/matterbridge/releases/latest/download/matterbridge-1.26.0-darwin-amd64 \
+# macOS (Intel)
+curl -L https://github.com/42wim/matterbridge/releases/latest/download/matterbridge-1.26.0-darwin-64bit \
+  -o /usr/local/bin/matterbridge
+
+# macOS (Apple Silicon)
+curl -L https://github.com/42wim/matterbridge/releases/latest/download/matterbridge-1.26.0-darwin-arm64 \
   -o /usr/local/bin/matterbridge
 chmod +x /usr/local/bin/matterbridge
 
