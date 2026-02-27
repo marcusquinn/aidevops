@@ -14,8 +14,8 @@ The sonnet pulse handles mechanical dispatch (pick next task, check blocked-by, 
 First, discover all managed repos. Then gather state for EVERY repo — not just aidevops.
 
 ```bash
-# 1. Read the managed repos list
-cat ~/.config/aidevops/pulse-repos.json
+# 1. Read the managed repos list (filter to pulse-enabled repos)
+jq '[.initialized_repos[] | select(.pulse == true)]' ~/.config/aidevops/repos.json
 ```
 
 For EACH repo in that list, run ALL of the following. Do not skip any repo.
@@ -48,7 +48,7 @@ git worktree list
 pgrep -f '/full-loop' 2>/dev/null | wc -l | tr -d ' '
 ```
 
-**Critical: product repos have higher priority than tooling repos.** Check pulse-repos.json for the `priority` field. Issues in product repos are more urgent than issues in tooling repos.
+**Critical: product repos have higher priority than tooling repos.** Check repos.json for the `priority` field on pulse-enabled repos. Issues in product repos are more urgent than issues in tooling repos.
 
 ## Step 2: Assess Queue Health
 

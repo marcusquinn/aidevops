@@ -533,6 +533,7 @@ main() {
 		migrate_loop_state_directories
 		migrate_agent_to_agents_folder
 		migrate_mcp_env_to_credentials
+		migrate_pulse_repos_to_repos_json
 		cleanup_deprecated_paths
 		cleanup_deprecated_mcps
 		cleanup_stale_bun_opencode
@@ -585,6 +586,7 @@ main() {
 		confirm_step "Migrate loop state from .claude/.agent/ to .agents/loop-state/" && migrate_loop_state_directories
 		confirm_step "Migrate .agent -> .agents in user projects" && migrate_agent_to_agents_folder
 		confirm_step "Migrate mcp-env.sh -> credentials.sh" && migrate_mcp_env_to_credentials
+		confirm_step "Migrate pulse-repos.json into repos.json" && migrate_pulse_repos_to_repos_json
 		confirm_step "Cleanup deprecated agent paths" && cleanup_deprecated_paths
 		confirm_step "Cleanup deprecated MCP entries (hetzner, serper, etc.)" && cleanup_deprecated_mcps
 		confirm_step "Cleanup stale bun opencode install" && cleanup_stale_bun_opencode
