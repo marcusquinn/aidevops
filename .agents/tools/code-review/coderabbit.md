@@ -148,7 +148,7 @@ The supervisor pulse triggers a daily full codebase review via GitHub issue #238
    - Title: `coderabbit: <short description>`
    - Labels: `coderabbit-pulse`, `auto-dispatch`
    - Body: finding number, evidence, risk, recommended action
-4. **Pickup**: The normal supervisor pulse (Step 3 in `pulse.md`) picks up
+4. **Pickup**: The normal supervisor pulse (Step 3 in `scripts/commands/pulse.md`) picks up
    these issues via `gh issue list` — they appear as open issues with the
    `auto-dispatch` label and enter the standard priority queue.
 5. **Dispatch**: Workers implement fixes via the normal `/full-loop` pipeline.

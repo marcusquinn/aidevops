@@ -29,7 +29,7 @@ For unattended operation, the `/pulse` command runs every 2 minutes via launchd.
 4. Uses AI (sonnet) to pick the highest-value items to fill available slots
 5. Dispatches workers via `opencode run "/full-loop ..."`, routing to the right agent
 
-See `pulse.md` for the full spec.
+See `scripts/commands/pulse.md` for the full spec.
 
 ### Pulse Scheduler Setup
 

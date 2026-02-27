@@ -116,7 +116,7 @@ if [[ -n "$ISSUE_NUM" && "$ISSUE_NUM" != "null" ]]; then
 
   # t1343 + #2452: Check issue state — if CLOSED, abort the entire worker session.
   # This is the worker-side defense against being dispatched for a closed issue.
-  # The supervisor checks OPEN state before dispatch (pulse.md Step 3), but if
+  # The supervisor checks OPEN state before dispatch (scripts/commands/pulse.md Step 3), but if
   # the issue was closed between dispatch and worker startup, catch it here.
   ISSUE_STATE=$(gh issue view "$ISSUE_NUM" --repo "$REPO" --json state -q .state 2>/dev/null || echo "UNKNOWN")
   if [[ "$ISSUE_STATE" != "OPEN" ]]; then

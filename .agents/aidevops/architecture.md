@@ -55,11 +55,11 @@ Key integrations:
 
 aidevops previously had a 37,000-line deterministic supervisor in bash (SQLite state DB, phase-based pipelines, grace periods, heartbeat windows, stale-state GC, dedup helpers). It was fragile, never reliable, and impossible to maintain. Every edge case spawned another script, another phase, another grace period — compounding complexity without improving outcomes.
 
-The current architecture deliberately replaced all of that with a simple pattern: an AI agent reads `pulse.md` (guidance), fetches live state from GitHub (the only state DB), reasons about what to do, and acts. When the agent makes mistakes, the fix is **better guidance in the agent doc** — not a new bash script, helper, or deterministic gate.
+The current architecture deliberately replaced all of that with a simple pattern: an AI agent reads `scripts/commands/pulse.md` (guidance), fetches live state from GitHub (the only state DB), reasons about what to do, and acts. When the agent makes mistakes, the fix is **better guidance in the agent doc** — not a new bash script, helper, or deterministic gate.
 
 **When you encounter a supervisor/orchestration bug:**
 
-1. Improve the guidance in the relevant agent doc (e.g., `pulse.md`, `full-loop.md`)
+1. Improve the guidance in the relevant agent doc (e.g., `scripts/commands/pulse.md`, `scripts/commands/full-loop.md`)
 2. Add the missing knowledge the agent needed to make the right decision
 3. Never create a bash script to enforce what the agent should reason about
 4. Never add state files, databases, or tracking layers
