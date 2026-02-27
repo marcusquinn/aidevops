@@ -284,7 +284,7 @@ cmd_set() {
 		read -rs value
 		echo ""
 
-		mkdir -p "$CONFIG_DIR"
+		ensure_credentials_file "$CREDENTIALS_FILE"
 		if [[ -f "$CREDENTIALS_FILE" ]] && grep -q "^export ${name}=" "$CREDENTIALS_FILE" 2>/dev/null; then
 			local tmp_file="${CREDENTIALS_FILE}.tmp"
 			grep -v "^export ${name}=" "$CREDENTIALS_FILE" >"$tmp_file"
