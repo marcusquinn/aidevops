@@ -60,6 +60,10 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
+- [ ] t1348 fix: ProviderModelNotFoundError in task tool — session miner detected 7 failures (2.0% error rate). Agents dispatching sub-tasks with stale/invalid model IDs. Fix: audit model IDs in agent docs and scripts, update model-routing.md with currently-valid IDs, document fallback behavior. #bugfix #models #auto-dispatch ~1h ref:GH#2460 logged:2026-02-27
+
+- [ ] t1349 fix: webfetch 404 errors — session miner detected 117 failures fetching raw.githubusercontent.com URLs that don't exist. Agents should use `gh api` or Context7 MCP for code/file lookups instead of raw GitHub URLs. Add guidance to build-plus.md and prompts/build.txt. #bugfix #agent #auto-dispatch ~30m ref:GH#2461 logged:2026-02-27
+
 - [x] t1346 fix: agents looking for workflows/pulse.md but file is at scripts/commands/pulse.md — session miner detected 75 `file_not_found` errors for `~/.aidevops/agents/workflows/pulse.md`. The pulse command doc is at `.agents/scripts/commands/pulse.md`. Fix: update any references in AGENTS.md / domain index that point to `workflows/pulse.md`, or add a symlink. #bugfix #agent #auto-dispatch ~30m ref:GH#2457 logged:2026-02-27 pr:#2459 completed:2026-02-27
 
 - [x] t1347 fix: markdown-formatter MCP tool has 81% error rate — session miner detected 13/16 calls failing with exit code 1. Investigate why markdown-formatter exits with code 1 on most calls and fix. #bugfix #mcp #auto-dispatch ~1h ref:GH#2458 logged:2026-02-27 completed:2026-02-27
