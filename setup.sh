@@ -538,6 +538,7 @@ main() {
 		cleanup_stale_bun_opencode
 		validate_opencode_config
 		deploy_aidevops_agents
+		sync_agent_sources
 		setup_safety_hooks
 		generate_agent_skills
 		create_skill_symlinks
@@ -591,6 +592,7 @@ main() {
 		confirm_step "Extract OpenCode prompts" && extract_opencode_prompts
 		confirm_step "Check OpenCode prompt drift" && check_opencode_prompt_drift
 		confirm_step "Deploy aidevops agents to ~/.aidevops/agents/" && deploy_aidevops_agents
+		confirm_step "Sync agents from private repositories" && sync_agent_sources
 		confirm_step "Install Claude Code safety hooks (block destructive commands)" && setup_safety_hooks
 		confirm_step "Setup multi-tenant credential storage" && setup_multi_tenant_credentials
 		confirm_step "Generate agent skills (SKILL.md files)" && generate_agent_skills

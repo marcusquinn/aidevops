@@ -43,6 +43,19 @@ scan_imported_skills() {
 	return 0
 }
 
+# Sync agents from private repositories into custom/
+sync_agent_sources() {
+	local helper_script="${HOME}/.aidevops/agents/scripts/agent-sources-helper.sh"
+	if [[ -f "${helper_script}" ]]; then
+		echo "Syncing agent sources from private repositories..."
+		bash "${helper_script}" sync
+	else
+		# Helper not deployed yet — will be available after first full setup
+		:
+	fi
+	return 0
+}
+
 # Inject agents reference into AI assistant configs
 inject_agents_reference() {
 	# TODO: Extract from setup.sh lines 3661-3743
