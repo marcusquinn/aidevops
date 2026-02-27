@@ -921,8 +921,15 @@ fix_gh_ref_in_todo() {
 		return 0
 	fi
 
-	# Replace the old ref with the new one (handle indented subtasks)
-	sed_inplace -E "s/^([[:space:]]*- \[.\] ${task_id} .*)ref:GH#${old_number}/\1ref:GH#${new_number}/" "$todo_file"
+	# Find line number outside code fences, then replace only that line
+	local line_num
+	line_num=$(awk -v pat="^[[:space:]]*- \\[.\\] ${task_id} .*ref:GH#${old_number}" \
+		'/^[[:space:]]*```/{f=!f; next} !f && $0 ~ pat {print NR; exit}' "$todo_file")
+	[[ -z "$line_num" ]] && {
+		log_verbose "$task_id with ref:GH#$old_number not found outside code fences"
+		return 0
+	}
+	sed_inplace "${line_num}s|ref:GH#${old_number}|ref:GH#${new_number}|" "$todo_file"
 	log_verbose "Fixed ref:GH#$old_number -> ref:GH#$new_number for $task_id"
 	return 0
 }
@@ -938,24 +945,41 @@ add_gh_ref_to_todo() {
 	local issue_number="$2"
 	local todo_file="$3"
 
-	# Check if ref already exists (match both top-level and indented subtasks)
-	if grep -qE "^\s*- \[.\] ${task_id} .*ref:GH#${issue_number}" "$todo_file"; then
+	# Check if ref already exists outside code fences
+	if strip_code_fences <"$todo_file" | grep -qE "^\s*- \[.\] ${task_id} .*ref:GH#${issue_number}"; then
 		return 0
 	fi
 
-	# Check if any GH ref exists (might be different number)
-	if grep -qE "^\s*- \[.\] ${task_id} .*ref:GH#" "$todo_file"; then
+	# Check if any GH ref exists outside code fences (might be different number)
+	if strip_code_fences <"$todo_file" | grep -qE "^\s*- \[.\] ${task_id} .*ref:GH#"; then
 		log_verbose "$task_id already has a GH ref, skipping"
 		return 0
 	fi
 
-	# Add ref before logged: or at end of line (handle indented subtasks)
-	if grep -qE "^\s*- \[.\] ${task_id} .*logged:" "$todo_file"; then
-		sed_inplace -E "s/^([[:space:]]*- \[.\] ${task_id} .*)( logged:)/\1 ref:GH#${issue_number}\2/" "$todo_file"
+	# Find the line number of the task OUTSIDE code fences, then apply sed to that specific line.
+	# This prevents modifying format examples inside code-fenced blocks.
+	local line_num
+	line_num=$(awk -v pat="^[[:space:]]*- \\[.\\] ${task_id} " \
+		'/^[[:space:]]*```/{f=!f; next} !f && $0 ~ pat {print NR; exit}' "$todo_file")
+	[[ -z "$line_num" ]] && {
+		log_verbose "$task_id not found outside code fences"
+		return 0
+	}
+
+	# Read the target line and insert ref
+	local target_line
+	target_line=$(sed -n "${line_num}p" "$todo_file")
+	local new_line
+	if echo "$target_line" | grep -qE 'logged:'; then
+		new_line=$(echo "$target_line" | sed -E "s/( logged:)/ ref:GH#${issue_number}\1/")
 	else
-		# Append at end of line
-		sed_inplace -E "s/^([[:space:]]*- \[.\] ${task_id} .*)/\1 ref:GH#${issue_number}/" "$todo_file"
+		new_line="${target_line} ref:GH#${issue_number}"
 	fi
+
+	# Replace only the specific line
+	local new_line_escaped
+	new_line_escaped=$(printf '%s' "$new_line" | sed 's/[|&\\]/\\&/g')
+	sed_inplace "${line_num}s|.*|${new_line_escaped}|" "$todo_file"
 
 	log_verbose "Added ref:GH#$issue_number to $task_id"
 	return 0
@@ -973,26 +997,40 @@ add_pr_ref_to_todo() {
 	local pr_number="$2"
 	local todo_file="$3"
 
-	# Check if pr: ref already exists for this PR number
-	if grep -qE "^\s*- \[.\] ${task_id} .*pr:#${pr_number}" "$todo_file"; then
+	# Check if pr: ref already exists outside code fences
+	if strip_code_fences <"$todo_file" | grep -qE "^\s*- \[.\] ${task_id} .*pr:#${pr_number}"; then
 		return 0
 	fi
 
-	# Check if any pr: ref already exists (don't duplicate)
-	if grep -qE "^\s*- \[.\] ${task_id} .*pr:#" "$todo_file"; then
+	# Check if any pr: ref already exists outside code fences (don't duplicate)
+	if strip_code_fences <"$todo_file" | grep -qE "^\s*- \[.\] ${task_id} .*pr:#"; then
 		log_verbose "$task_id already has a pr: ref, skipping"
 		return 0
 	fi
 
-	# Add pr:#NNN before logged: or completed: or at end of line
-	if grep -qE "^\s*- \[.\] ${task_id} .* logged:" "$todo_file"; then
-		sed_inplace -E "s/^([[:space:]]*- \[.\] ${task_id} .*)( logged:)/\1 pr:#${pr_number}\2/" "$todo_file"
-	elif grep -qE "^\s*- \[.\] ${task_id} .* completed:" "$todo_file"; then
-		sed_inplace -E "s/^([[:space:]]*- \[.\] ${task_id} .*)( completed:)/\1 pr:#${pr_number}\2/" "$todo_file"
+	# Find line number outside code fences, then modify only that line
+	local line_num
+	line_num=$(awk -v pat="^[[:space:]]*- \\[.\\] ${task_id} " \
+		'/^[[:space:]]*```/{f=!f; next} !f && $0 ~ pat {print NR; exit}' "$todo_file")
+	[[ -z "$line_num" ]] && {
+		log_verbose "$task_id not found outside code fences for pr: ref"
+		return 0
+	}
+
+	local target_line
+	target_line=$(sed -n "${line_num}p" "$todo_file")
+	local new_line
+	if echo "$target_line" | grep -qE ' logged:'; then
+		new_line=$(echo "$target_line" | sed -E "s/( logged:)/ pr:#${pr_number}\1/")
+	elif echo "$target_line" | grep -qE ' completed:'; then
+		new_line=$(echo "$target_line" | sed -E "s/( completed:)/ pr:#${pr_number}\1/")
 	else
-		# Append at end of line
-		sed_inplace -E "s/^([[:space:]]*- \[.\] ${task_id} .*)/\1 pr:#${pr_number}/" "$todo_file"
+		new_line="${target_line} pr:#${pr_number}"
 	fi
+
+	local new_line_escaped
+	new_line_escaped=$(printf '%s' "$new_line" | sed 's/[|&\\]/\\&/g')
+	sed_inplace "${line_num}s|.*|${new_line_escaped}|" "$todo_file"
 
 	log_verbose "Added pr:#$pr_number to $task_id (t280: backfill proof-log)"
 	return 0
