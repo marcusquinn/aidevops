@@ -498,7 +498,7 @@ cmd_publish() {
 	# Build extension if build command provided
 	if [[ -n "$build_cmd" ]]; then
 		print_info "Running build command: $build_cmd"
-		if ! eval "$build_cmd"; then
+		if ! bash -c "$build_cmd"; then
 			print_error "$ERROR_BUILD_FAILED"
 			return 1
 		fi
@@ -509,7 +509,7 @@ cmd_publish() {
 
 	if [[ -n "$zip_cmd" ]]; then
 		print_info "Running zip command: $zip_cmd"
-		if ! eval "$zip_cmd"; then
+		if ! bash -c "$zip_cmd"; then
 			print_error "$ERROR_ZIP_FAILED"
 			return 1
 		fi

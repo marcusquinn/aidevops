@@ -297,7 +297,7 @@ exec_bash() {
 
 	local output
 	local rc=0
-	output=$(cd "$repo_path" && eval "$run_cmd" 2>&1) || rc=$?
+	output=$(cd "$repo_path" && bash -c "$run_cmd" 2>&1) || rc=$?
 
 	if [[ "$VERBOSE" == "true" && -n "$output" ]]; then
 		echo "$output" | head -20 >&2
