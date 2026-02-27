@@ -88,8 +88,42 @@ init_repos_file() {
 				rm -f "$temp_file"
 			fi
 		fi
+		# Migrate: backfill slug for entries missing it (detect from git remote)
+		local needs_slug
+		needs_slug=$(jq '[.initialized_repos[] | select(.slug == null or .slug == "")] | length' "$REPOS_FILE" 2>/dev/null) || needs_slug="0"
+		if [[ "$needs_slug" -gt 0 ]]; then
+			local temp_file="${REPOS_FILE}.tmp"
+			local repo_path slug
+			# Build a map of path->slug for repos missing slugs
+			while IFS= read -r repo_path; do
+				# Expand ~ to $HOME for git operations
+				local expanded_path="${repo_path/#\~/$HOME}"
+				slug=$(get_repo_slug "$expanded_path" 2>/dev/null) || slug=""
+				if [[ -n "$slug" ]]; then
+					jq --arg path "$repo_path" --arg slug "$slug" \
+						'(.initialized_repos[] | select(.path == $path and (.slug == null or .slug == ""))) |= . + {slug: $slug}' \
+						"$REPOS_FILE" >"$temp_file" && mv "$temp_file" "$REPOS_FILE"
+				fi
+			done < <(jq -r '.initialized_repos[] | select(.slug == null or .slug == "") | .path' "$REPOS_FILE" 2>/dev/null)
+		fi
 	fi
 	return 0
+}
+
+# Detect GitHub slug (owner/repo) from git remote origin
+# Usage: get_repo_slug <path>
+get_repo_slug() {
+	local repo_path="$1"
+	local remote_url
+	remote_url=$(git -C "$repo_path" remote get-url origin 2>/dev/null) || return 1
+	# Strip protocol/host prefix and .git suffix to get owner/repo
+	local slug
+	slug=$(echo "$remote_url" | sed 's|.*github\.com[:/]||;s|\.git$||')
+	if [[ -n "$slug" && "$slug" == *"/"* ]]; then
+		echo "$slug"
+		return 0
+	fi
+	return 1
 }
 
 # Register a repo in repos.json
@@ -112,18 +146,32 @@ register_repo() {
 		return 0
 	fi
 
+	# Auto-detect GitHub slug from git remote
+	local slug=""
+	slug=$(get_repo_slug "$repo_path" 2>/dev/null) || true
+
 	# Check if repo already registered
 	if jq -e --arg path "$repo_path" '.initialized_repos[] | select(.path == $path)' "$REPOS_FILE" &>/dev/null; then
-		# Update existing entry
+		# Update existing entry, preserving pulse/priority if already set
 		local temp_file="${REPOS_FILE}.tmp"
-		jq --arg path "$repo_path" --arg version "$version" --arg features "$features" \
-			'(.initialized_repos[] | select(.path == $path)) |= {path: $path, version: $version, features: ($features | split(",")), updated: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}' \
+		jq --arg path "$repo_path" --arg version "$version" --arg features "$features" --arg slug "$slug" \
+			'(.initialized_repos[] | select(.path == $path)) |= (
+				. + {path: $path, version: $version, features: ($features | split(",")), updated: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}
+				| if $slug != "" then .slug = $slug else . end
+			)' \
 			"$REPOS_FILE" >"$temp_file" && mv "$temp_file" "$REPOS_FILE"
 	else
-		# Add new entry
+		# Add new entry with slug
 		local temp_file="${REPOS_FILE}.tmp"
-		jq --arg path "$repo_path" --arg version "$version" --arg features "$features" \
-			'.initialized_repos += [{path: $path, version: $version, features: ($features | split(",")), initialized: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}]' \
+		local new_entry
+		# shellcheck disable=SC2016  # jq expressions use $var syntax, not shell expansion
+		if [[ -n "$slug" ]]; then
+			new_entry='{path: $path, slug: $slug, version: $version, features: ($features | split(",")), initialized: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}'
+		else
+			new_entry='{path: $path, version: $version, features: ($features | split(",")), initialized: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}'
+		fi
+		jq --arg path "$repo_path" --arg version "$version" --arg features "$features" --arg slug "$slug" \
+			".initialized_repos += [$new_entry]" \
 			"$REPOS_FILE" >"$temp_file" && mv "$temp_file" "$REPOS_FILE"
 	fi
 	return 0

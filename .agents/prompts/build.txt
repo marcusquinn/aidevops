@@ -135,6 +135,13 @@ When referencing specific functions or code include the pattern `file_path:line_
 - NEVER use Glob as primary file discovery. Use `git ls-files` (tracked) or `fd` (untracked) — these are faster and not subject to permission restrictions.
 - If Glob fails with permission error, switch to `git ls-files` or `fd` immediately — do not retry Glob.
 - If Glob fails with "No such directory", verify the directory exists before searching inside it.
+#
+# 6. repo slug hallucination (observed: agent fabricated "anomalyco/" org prefix)
+#    Root cause: repos.json had no slug field, so agents guessed org names from
+#    unrelated context (e.g., OpenCode's org). Now repos.json stores the slug.
+- ALWAYS resolve repo slugs from `~/.config/aidevops/repos.json` (the `slug` field). NEVER guess or construct `owner/repo` from memory.
+- If a repo has no slug in repos.json, resolve it from `git -C <path> remote get-url origin` and parse `owner/repo`.
+- For pulse/supervisor operations, filter repos.json to entries with `"pulse": true`.
 
 # Security Rules
 - NEVER expose credentials in output/logs

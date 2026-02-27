@@ -860,3 +860,61 @@ migrate_loop_state_directories() {
 
 	return 0
 }
+
+# Migrate pulse-repos.json into repos.json
+# pulse-repos.json had slug/path/priority for supervisor-managed repos.
+# Now repos.json is the single source of truth with slug, pulse, and priority fields.
+migrate_pulse_repos_to_repos_json() {
+	local pulse_file="$HOME/.config/aidevops/pulse-repos.json"
+	local repos_file="$HOME/.config/aidevops/repos.json"
+
+	if [[ ! -f "$pulse_file" ]]; then
+		return 0
+	fi
+
+	if ! command -v jq &>/dev/null; then
+		print_warning "jq not installed — skipping pulse-repos.json migration"
+		return 0
+	fi
+
+	if [[ ! -f "$repos_file" ]]; then
+		print_warning "repos.json not found — skipping pulse-repos.json migration"
+		return 0
+	fi
+
+	local migrated=0
+	local slug path priority
+
+	# Read each entry from pulse-repos.json and merge into repos.json
+	while IFS=$'\t' read -r slug path priority; do
+		[[ -z "$slug" ]] && continue
+		# Expand ~ in path
+		local expanded_path="${path/#\~/$HOME}"
+
+		# Check if this repo exists in repos.json by path
+		if jq -e --arg path "$expanded_path" '.initialized_repos[] | select(.path == $path)' "$repos_file" &>/dev/null; then
+			# Update existing entry: add slug, pulse, priority
+			local temp_file="${repos_file}.tmp"
+			jq --arg path "$expanded_path" --arg slug "$slug" --arg priority "$priority" \
+				'(.initialized_repos[] | select(.path == $path)) |= . + {slug: $slug, pulse: true, priority: $priority}' \
+				"$repos_file" >"$temp_file" && mv "$temp_file" "$repos_file"
+			((migrated++)) || true
+		else
+			# Add new entry from pulse-repos.json
+			local temp_file="${repos_file}.tmp"
+			jq --arg path "$expanded_path" --arg slug "$slug" --arg priority "$priority" \
+				'.initialized_repos += [{path: $path, slug: $slug, pulse: true, priority: $priority}]' \
+				"$repos_file" >"$temp_file" && mv "$temp_file" "$repos_file"
+			((migrated++)) || true
+		fi
+	done < <(jq -r '.repos[]? | [.slug, .path, .priority] | @tsv' "$pulse_file" 2>/dev/null)
+
+	if [[ $migrated -gt 0 ]]; then
+		print_success "Migrated $migrated repo(s) from pulse-repos.json into repos.json"
+		# Rename old file so it's not read again, but keep as backup
+		mv "$pulse_file" "${pulse_file}.migrated"
+		print_info "Renamed pulse-repos.json to pulse-repos.json.migrated"
+	fi
+
+	return 0
+}
