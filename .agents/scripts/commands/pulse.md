@@ -80,6 +80,17 @@ Use the `path` field from pulse-repos.json for `--dir` when dispatching workers.
 
 Check for patterns that indicate systemic problems. Use the GitHub data you already fetched — no extra state needed.
 
+**Issue-state guard (t1343 — MANDATORY before any issue modification):** Before adding labels, posting comments, or modifying any issue, ALWAYS check its current state first:
+
+```bash
+STATE=$(gh issue view <number> --repo <owner/repo> --json state -q .state)
+```
+
+- If `STATE` is `CLOSED`: do NOT add `needs-review`, `status:*`, or any other label. Do NOT post comments suggesting the issue needs action. A closed issue with a merged PR is resolved — modifying it creates noise and confuses the lifecycle.
+- If `STATE` is `OPEN`: proceed with your intended modification.
+
+This prevents the race condition where a worker's delayed lifecycle transition overwrites a supervisor's correct closure (observed: Issue #2250 — supervisor closed with merged PR evidence at 19:29, worker added `needs-review` at 19:55 because its DB lacked the PR URL).
+
 **Stale PRs:** If any open PR was last updated more than 6 hours ago, something is stuck. Check if it has a worker branch with no recent commits. If so, create a GitHub issue:
 
 ```bash

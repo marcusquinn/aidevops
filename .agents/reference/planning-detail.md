@@ -84,6 +84,25 @@ Add these tags to tasks that need human action before they can proceed. The supe
 
 CRITICAL — prevents false completion cascade:
 
+### PR Lookup Fallback (t1343)
+
+When verifying whether a merged PR exists for a task, NEVER rely on a single data source. Workers and supervisors may run in different sessions with different local state. Use this fallback chain:
+
+1. **Local DB/memory** — check your own session's record of the PR URL
+2. **GitHub search** — if local lookup fails, search GitHub directly:
+
+   ```bash
+   gh pr list --repo <owner/repo> --state merged --search "<task_id>" --json number,title,mergedAt --limit 5
+   ```
+
+3. **Issue cross-reference** — check the linked issue for PR references in comments:
+
+   ```bash
+   gh api repos/<owner/repo>/issues/<issue_number>/timeline --jq '[.[] | select(.event=="cross-referenced") | .source.issue.pull_request.html_url // empty] | unique[]'
+   ```
+
+If ANY source confirms a merged PR, treat the task as having PR evidence. The race condition in Issue #2250 occurred because a worker only checked its own DB (source 1), missed the PR created by a different session, and incorrectly flagged the issue as `needs-review`.
+
 - NEVER mark a task `[x]` unless a merged PR exists with real deliverables for that task
 - Use `task-complete-helper.sh <task-id> --pr <number>` or `task-complete-helper.sh <task-id> --verified` to mark tasks complete in interactive sessions
 - The helper enforces proof-log requirements: every completion MUST have `pr:#NNN` or `verified:YYYY-MM-DD`
