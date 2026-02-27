@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.142.0] - 2026-02-27
+
+### Added
+
+- add CI check for PR-issue linkage via closing keywords (#2486)
+
+### Fixed
+
+- scope TTSR read-before-edit rule to existing files only (#2487) (#2488)
+- handle bare array format in pulse-repos.json migration (#2485)
+- guard Rosetta detection against missing file command (t1354) (#2484)
+
 ## [2.141.0] - 2026-02-27
 
 ### Changed
