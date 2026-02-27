@@ -581,6 +581,26 @@ cmd_status() {
 		print_warning "Ed25519 SSH key - not found"
 	fi
 	echo ""
+
+	# Integrity check: verify subagent generation is complete (t1356, #2490)
+	local opencode_agent_dir="$HOME/.config/opencode/agent"
+	if [[ -d "$AGENTS_DIR" ]] && [[ -d "$opencode_agent_dir" ]]; then
+		local expected_subagents actual_subagents
+		expected_subagents=$(find "$AGENTS_DIR" -mindepth 2 -name "*.md" -type f \
+			-not -path "*/loop-state/*" -not -name "*-skill.md" \
+			-not -name "AGENTS.md" -not -name "README.md" 2>/dev/null | wc -l | tr -d ' ')
+		actual_subagents=$(find "$opencode_agent_dir" -name "*.md" -type f 2>/dev/null | wc -l | tr -d ' ')
+
+		if [[ "$expected_subagents" -gt 0 ]]; then
+			local delta_pct=$(((expected_subagents - actual_subagents) * 100 / expected_subagents))
+			if [[ "$delta_pct" -gt 10 ]]; then
+				print_header "Integrity"
+				print_error "Subagent stubs incomplete: ${actual_subagents}/${expected_subagents} (${delta_pct}% missing)"
+				print_warning "Run: bash ~/.aidevops/agents/scripts/generate-opencode-agents.sh"
+				echo ""
+			fi
+		fi
+	fi
 }
 
 # Update/upgrade command

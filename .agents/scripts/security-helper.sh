@@ -520,7 +520,9 @@ cmd_skill_scan() {
 	local skill_sources="${agents_dir}/configs/skill-sources.json"
 
 	if [[ "$target" == "all" ]]; then
-		# Scan all imported skills
+		# Scan all imported skills using batch mode (scan-all) to amortise
+		# Python cold-start cost. Serial per-file invocations took ~66s (8s each
+		# for 8 skills); batch mode loads Python once (~8s total). See #2490.
 		if [[ ! -f "$skill_sources" ]] || ! check_command jq; then
 			echo -e "${YELLOW}No skill-sources.json found or jq not available.${NC}"
 			return 1
@@ -534,15 +536,21 @@ cmd_skill_scan() {
 			return 0
 		fi
 
-		echo -e "Scanning ${skill_count} imported skills..."
+		echo -e "Scanning ${skill_count} imported skills (batch mode)..."
 		echo ""
 
-		local total_findings=0
-		local skills_with_issues=0
+		# Build a temp directory with symlinks to each skill's scan target.
+		# scan-all expects a flat directory of skill directories.
+		local batch_dir
+		batch_dir=$(mktemp -d "${TMPDIR:-/tmp}/skill-scan-batch-XXXXXX") || {
+			echo -e "${RED}Failed to create temp directory for batch scan${NC}"
+			return 1
+		}
+		# shellcheck disable=SC2064
+		trap "rm -rf '$batch_dir'" RETURN
+
 		local skills_scanned=0
-		local total_critical=0
-		local total_high=0
-		local total_medium=0
+		local skill_names=()
 
 		while IFS= read -r skill_json; do
 			local name local_path
@@ -566,42 +574,89 @@ cmd_skill_scan() {
 				scan_target="$(dirname "$full_path")"
 			fi
 
-			echo -e "${CYAN}Scanning${NC}: $name ($local_path)"
-
-			local scan_output
-			scan_output=$($scanner_cmd scan "$scan_target" --format json 2>/dev/null) || true
-
-			if [[ -n "$scan_output" ]]; then
-				local findings
-				findings=$(echo "$scan_output" | jq -r '.total_findings // 0' 2>/dev/null || echo "0")
-				local max_severity
-				max_severity=$(echo "$scan_output" | jq -r '.max_severity // "SAFE"' 2>/dev/null || echo "SAFE")
-
-				if [[ "$findings" -gt 0 ]]; then
-					total_findings=$((total_findings + findings))
-					skills_with_issues=$((skills_with_issues + 1))
-					echo -e "  ${RED}ISSUES${NC}: $findings findings (max severity: $max_severity)"
-
-					# Track severity counts
-					local skill_critical skill_high skill_medium
-					skill_critical=$(echo "$scan_output" | jq '[.findings[]? | select(.severity == "CRITICAL")] | length' 2>/dev/null || echo "0")
-					skill_high=$(echo "$scan_output" | jq '[.findings[]? | select(.severity == "HIGH")] | length' 2>/dev/null || echo "0")
-					skill_medium=$(echo "$scan_output" | jq '[.findings[]? | select(.severity == "MEDIUM")] | length' 2>/dev/null || echo "0")
-					total_critical=$((total_critical + skill_critical))
-					total_high=$((total_high + skill_high))
-					total_medium=$((total_medium + skill_medium))
-
-					# Show critical/high findings inline
-					echo "$scan_output" | jq -r '.findings[]? | select(.severity == "CRITICAL" or .severity == "HIGH") | "  [\(.severity)] \(.rule_id): \(.description)"' 2>/dev/null || true
-				else
-					echo -e "  ${GREEN}SAFE${NC}"
-				fi
-			else
-				echo -e "  ${GREEN}SAFE${NC} (no output from scanner)"
-			fi
-
+			# Create symlink in batch directory (use skill name to avoid collisions)
+			ln -sf "$scan_target" "$batch_dir/$name" 2>/dev/null || true
+			skill_names+=("$name")
 			skills_scanned=$((skills_scanned + 1))
+			echo -e "${CYAN}Queued${NC}: $name ($local_path)"
 		done < <(jq -c '.skills[]' "$skill_sources" 2>/dev/null)
+
+		if [[ "$skills_scanned" -eq 0 ]]; then
+			echo -e "${GREEN}No skills found to scan.${NC}"
+			return 0
+		fi
+
+		# Run batch scan (single Python cold-start instead of N)
+		echo ""
+		echo -e "${CYAN}Running batch scan on ${skills_scanned} skills...${NC}"
+
+		local batch_output
+		batch_output=$($scanner_cmd scan-all "$batch_dir" --format json 2>/dev/null) || true
+
+		# Parse batch results
+		local total_findings=0
+		local skills_with_issues=0
+		local total_critical=0
+		local total_high=0
+		local total_medium=0
+
+		if [[ -n "$batch_output" ]]; then
+			# scan-all JSON output has a .results array with per-skill entries
+			# Each entry has .skill_path, .total_findings, .max_severity, .findings[]
+			local result_count
+			result_count=$(echo "$batch_output" | jq '.results | length' 2>/dev/null || echo "0")
+
+			if [[ "$result_count" -gt 0 ]]; then
+				# Process each result
+				local i
+				for ((i = 0; i < result_count; i++)); do
+					local skill_path findings max_severity
+					skill_path=$(echo "$batch_output" | jq -r ".results[$i].skill_path // \"\"" 2>/dev/null || echo "")
+					findings=$(echo "$batch_output" | jq -r ".results[$i].total_findings // 0" 2>/dev/null || echo "0")
+					max_severity=$(echo "$batch_output" | jq -r ".results[$i].max_severity // \"SAFE\"" 2>/dev/null || echo "SAFE")
+
+					# Extract skill name from path (last component)
+					local skill_name
+					skill_name=$(basename "$skill_path" 2>/dev/null || echo "unknown")
+
+					if [[ "$findings" -gt 0 ]]; then
+						total_findings=$((total_findings + findings))
+						skills_with_issues=$((skills_with_issues + 1))
+						echo -e "${RED}ISSUES${NC}: $skill_name - $findings findings (max severity: $max_severity)"
+
+						# Track severity counts
+						local skill_critical skill_high skill_medium
+						skill_critical=$(echo "$batch_output" | jq "[.results[$i].findings[]? | select(.severity == \"CRITICAL\")] | length" 2>/dev/null || echo "0")
+						skill_high=$(echo "$batch_output" | jq "[.results[$i].findings[]? | select(.severity == \"HIGH\")] | length" 2>/dev/null || echo "0")
+						skill_medium=$(echo "$batch_output" | jq "[.results[$i].findings[]? | select(.severity == \"MEDIUM\")] | length" 2>/dev/null || echo "0")
+						total_critical=$((total_critical + skill_critical))
+						total_high=$((total_high + skill_high))
+						total_medium=$((total_medium + skill_medium))
+
+						# Show critical/high findings inline
+						echo "$batch_output" | jq -r ".results[$i].findings[]? | select(.severity == \"CRITICAL\" or .severity == \"HIGH\") | \"  [\(.severity)] \(.rule_id): \(.description)\"" 2>/dev/null || true
+					else
+						echo -e "${GREEN}SAFE${NC}: $skill_name"
+					fi
+				done
+			else
+				# No .results array — try top-level fields (single-result format)
+				local findings
+				findings=$(echo "$batch_output" | jq -r '.total_findings // 0' 2>/dev/null || echo "0")
+				total_findings=$findings
+				if [[ "$findings" -gt 0 ]]; then
+					skills_with_issues=1
+					total_critical=$(echo "$batch_output" | jq '[.findings[]? | select(.severity == "CRITICAL")] | length' 2>/dev/null || echo "0")
+					total_high=$(echo "$batch_output" | jq '[.findings[]? | select(.severity == "HIGH")] | length' 2>/dev/null || echo "0")
+					total_medium=$(echo "$batch_output" | jq '[.findings[]? | select(.severity == "MEDIUM")] | length' 2>/dev/null || echo "0")
+					echo "$batch_output" | jq -r '.findings[]? | select(.severity == "CRITICAL" or .severity == "HIGH") | "  [\(.severity)] \(.rule_id): \(.description)"' 2>/dev/null || true
+				else
+					echo -e "${GREEN}All skills passed batch scan${NC}"
+				fi
+			fi
+		else
+			echo -e "${GREEN}SAFE${NC} (no output from scanner)"
+		fi
 
 		local safe_count=$((skills_scanned - skills_with_issues))
 
@@ -613,7 +668,7 @@ cmd_skill_scan() {
 		echo "═══════════════════════════════════════"
 
 		# Log results to SKILL-SCAN-RESULTS.md
-		local notes="Routine scan"
+		local notes="Routine scan (batch)"
 		if [[ "$skills_with_issues" -gt 0 ]]; then
 			notes="${skills_with_issues} skill(s) with findings"
 		fi

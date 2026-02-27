@@ -99,6 +99,45 @@ _run_generator() {
 	return 0
 }
 
+# Verify subagent generation completed successfully (t1356, #2490)
+# Compares generated subagent count against source file count.
+# If delta > 10%, prints a warning with the manual recovery command.
+_check_opencode_agent_integrity() {
+	local agents_dir="$HOME/.aidevops/agents"
+	local agent_output_dir="$HOME/.config/opencode/agent"
+
+	# Skip if directories don't exist
+	if [[ ! -d "$agents_dir" ]] || [[ ! -d "$agent_output_dir" ]]; then
+		return 0
+	fi
+
+	# Count source subagent files (subfolder .md files, excluding AGENTS.md/README.md/SKILL.md)
+	local expected_count
+	expected_count=$(find "$agents_dir" -mindepth 2 -name "*.md" -type f \
+		-not -path "*/loop-state/*" -not -name "*-skill.md" \
+		-not -name "AGENTS.md" -not -name "README.md" 2>/dev/null | wc -l | tr -d ' ')
+
+	# Count generated subagent stubs
+	local actual_count
+	actual_count=$(find "$agent_output_dir" -name "*.md" -type f 2>/dev/null | wc -l | tr -d ' ')
+
+	# Skip check if expected count is 0 (no source files)
+	if [[ "$expected_count" -eq 0 ]]; then
+		return 0
+	fi
+
+	# Calculate delta percentage
+	local delta_pct=$(((expected_count - actual_count) * 100 / expected_count))
+
+	if [[ "$delta_pct" -gt 10 ]]; then
+		print_warning "Subagent generation may be incomplete: ${actual_count}/${expected_count} stubs generated (${delta_pct}% missing)"
+		print_warning "This can happen if setup.sh was interrupted or exceeded a timeout."
+		print_info "To recover, run: bash ~/.aidevops/agents/scripts/generate-opencode-agents.sh"
+	fi
+
+	return 0
+}
+
 update_opencode_config() {
 	print_info "Updating OpenCode configuration..."
 
@@ -127,6 +166,12 @@ update_opencode_config() {
 		"Generating OpenCode agent configuration..." \
 		"OpenCode agents configured (11 primary in JSON, subagents as markdown)" \
 		"OpenCode agent generation encountered issues"
+
+	# Integrity check: verify subagent generation completed (t1356, #2490)
+	# If setup.sh exceeds the tool timeout (120s), generate-opencode-agents.sh
+	# may be killed mid-generation, leaving a partial set of subagent stubs.
+	# Compare generated count vs expected count and warn if incomplete.
+	_check_opencode_agent_integrity
 
 	# Regenerate subagent index for plugin startup (t1040)
 	_run_generator ".agents/scripts/subagent-index-helper.sh" \
