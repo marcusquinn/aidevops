@@ -26,23 +26,31 @@ BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
+# Print an informational message in blue
 info() {
 	echo -e "${BLUE}[INFO]${NC} $1"
 	return 0
 }
+
+# Print a success message in green
 success() {
 	echo -e "${GREEN}[OK]${NC} $1"
 	return 0
 }
+
+# Print a warning message in yellow
 warn() {
 	echo -e "${YELLOW}[WARN]${NC} $1"
 	return 0
 }
+
+# Print an error message in red and return non-zero
 error() {
 	echo -e "${RED}[ERROR]${NC} $1"
 	return 1
 }
 
+# Display usage information and available commands
 show_help() {
 	echo "agent-sources-helper.sh — Sync agents from private repositories"
 	echo ""
@@ -60,6 +68,7 @@ show_help() {
 	return 0
 }
 
+# Ensure the agent-sources.json config file exists, creating it with defaults if missing
 ensure_config() {
 	if [[ ! -f "${CONFIG_FILE}" ]]; then
 		mkdir -p "$(dirname "${CONFIG_FILE}")"
@@ -77,36 +86,44 @@ DEFAULTJSON
 }
 
 # Read sources from config using node (available everywhere aidevops runs)
+# Returns: JSON array of all configured sources
 get_sources_json() {
-	node -e "
+	CONFIG_PATH="${CONFIG_FILE}" node -e "
         const fs = require('fs');
-        const cfg = JSON.parse(fs.readFileSync('${CONFIG_FILE}', 'utf8'));
+        const cfg = JSON.parse(fs.readFileSync(process.env.CONFIG_PATH, 'utf8'));
         console.log(JSON.stringify(cfg.sources || []));
     " 2>/dev/null || echo "[]"
 	return 0
 }
 
+# Returns: integer count of configured sources
 get_source_count() {
-	node -e "
+	CONFIG_PATH="${CONFIG_FILE}" node -e "
         const fs = require('fs');
-        const cfg = JSON.parse(fs.readFileSync('${CONFIG_FILE}', 'utf8'));
+        const cfg = JSON.parse(fs.readFileSync(process.env.CONFIG_PATH, 'utf8'));
         console.log((cfg.sources || []).length);
     " 2>/dev/null || echo "0"
 	return 0
 }
 
+# Returns: value of a specific field for a source at the given index
+# Args: $1=index (integer), $2=field name (string)
 get_source_field() {
 	local index="$1"
 	local field="$2"
-	node -e "
+	SOURCE_INDEX="$index" SOURCE_FIELD="$field" CONFIG_PATH="${CONFIG_FILE}" node -e "
         const fs = require('fs');
-        const cfg = JSON.parse(fs.readFileSync('${CONFIG_FILE}', 'utf8'));
-        const src = (cfg.sources || [])[${index}];
-        console.log(src ? src['${field}'] || '' : '');
+        const cfg = JSON.parse(fs.readFileSync(process.env.CONFIG_PATH, 'utf8'));
+        const idx = parseInt(process.env.SOURCE_INDEX, 10);
+        const field = process.env.SOURCE_FIELD;
+        const src = (cfg.sources || [])[idx];
+        console.log(src ? src[field] || '' : '');
     " 2>/dev/null || echo ""
 	return 0
 }
 
+# Add or update a source entry in the config file
+# Args: $1=name, $2=local_path, $3=remote_url (optional)
 add_source_to_config() {
 	local name="$1"
 	local local_path="$2"
@@ -141,6 +158,8 @@ add_source_to_config() {
 	return 0
 }
 
+# Remove a source entry from the config file by name
+# Args: $1=name
 remove_source_from_config() {
 	local name="$1"
 	SOURCE_NAME="$name" CONFIG_PATH="${CONFIG_FILE}" node -e "
@@ -152,6 +171,8 @@ remove_source_from_config() {
 	return 0
 }
 
+# Update the last_synced timestamp and agent_count for a source
+# Args: $1=name, $2=agent_count
 update_last_synced() {
 	local name="$1"
 	local agent_count="$2"
@@ -170,6 +191,9 @@ update_last_synced() {
 
 # ── Commands ──
 
+# Register a local repository as an agent source
+# Validates the repo has a .agents/ directory and records it in config
+# Args: $1=path to local repository
 cmd_add() {
 	local repo_path="$1"
 
@@ -205,7 +229,9 @@ cmd_add() {
 	# Count agents
 	local agent_count=0
 	for agent_dir in "${repo_path}/.agents"/*/; do
-		[[ -d "${agent_dir}" ]] && ((agent_count++)) || true
+		if [[ -d "${agent_dir}" ]]; then
+			agent_count=$((agent_count + 1))
+		fi
 	done
 	info "Found ${agent_count} agent(s) in .agents/"
 
@@ -215,6 +241,8 @@ cmd_add() {
 	return 0
 }
 
+# Clone a remote Git repository and register it as an agent source
+# Args: $1=remote Git URL
 cmd_add_remote() {
 	local remote_url="$1"
 	local clone_dir="${AIDEVOPS_GIT_DIR:-${HOME}/Git}"
@@ -239,6 +267,8 @@ cmd_add_remote() {
 	return 0
 }
 
+# Remove a source from config and clean up its symlinks (keeps synced agent files)
+# Args: $1=source name
 cmd_remove() {
 	local name="$1"
 	ensure_config
@@ -294,6 +324,7 @@ cleanup_source_symlinks() {
 	return 0
 }
 
+# List all configured agent sources with their paths and last sync times
 cmd_list() {
 	ensure_config
 	local count
@@ -328,6 +359,7 @@ cmd_list() {
 	return 0
 }
 
+# Show detailed status for all sources: path, remote, sync state, git status, deploy count
 cmd_status() {
 	ensure_config
 	local count
@@ -362,7 +394,9 @@ cmd_status() {
 		else
 			local agent_count=0
 			for agent_dir in "${path}/.agents"/*/; do
-				[[ -d "${agent_dir}" ]] && ((agent_count++)) || true
+				if [[ -d "${agent_dir}" ]]; then
+					agent_count=$((agent_count + 1))
+				fi
 			done
 			echo -e "    Status:      ${GREEN}OK${NC} (${agent_count} agents)"
 
@@ -370,7 +404,9 @@ cmd_status() {
 			if [[ -d "${CUSTOM_DIR}/${name}" ]]; then
 				local synced_count=0
 				for synced_dir in "${CUSTOM_DIR}/${name}"/*/; do
-					[[ -d "${synced_dir}" ]] && ((synced_count++)) || true
+					if [[ -d "${synced_dir}" ]]; then
+						synced_count=$((synced_count + 1))
+					fi
 				done
 				echo "    Deployed:    ${synced_count} agents in custom/${name}/"
 			else
@@ -394,6 +430,7 @@ cmd_status() {
 	return 0
 }
 
+# Sync all configured sources: pull latest, rsync agents, register primary agents, deploy commands
 cmd_sync() {
 	ensure_config
 	local count
@@ -548,6 +585,7 @@ sync_slash_commands() {
 
 # ── Main ──
 
+# Parse command and dispatch to the appropriate handler
 main() {
 	local command="${1:-help}"
 	shift || true
