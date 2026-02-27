@@ -496,7 +496,7 @@ cmd_recommend() {
 		echo ""
 		echo "Pattern Tracker Insights:"
 		local pattern_lines
-		pattern_lines=$(get_all_tier_patterns)
+		pattern_lines=$(get_all_tier_patterns "")
 		if [[ -n "$pattern_lines" ]]; then
 			while IFS='|' read -r ptier prate psample; do
 				printf "  %-10s %d%% success (n=%d)\n" "$ptier:" "$prate" "$psample"
