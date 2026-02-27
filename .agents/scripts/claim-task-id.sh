@@ -516,6 +516,28 @@ create_github_issue() {
 		log_warn "issue-sync-helper.sh push returned no issue number, falling back to bare creation"
 	fi
 
+	# t1446: Broader dedup check before bare issue creation
+	# GitHub search matches across the full title (not just prefix), catching
+	# duplicates with different title formats (e.g., "t1344:" vs "coderabbit:")
+	local repo_slug
+	repo_slug=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")
+	if [[ -n "$repo_slug" ]]; then
+		# Extract the descriptive part of the title (after any "tNNN: " or "prefix: " pattern)
+		local search_terms
+		search_terms=$(printf '%s' "$title" | sed 's/^[a-zA-Z0-9_-]*: *//')
+		if [[ -n "$search_terms" ]]; then
+			local existing_issue
+			existing_issue=$(gh issue list --repo "$repo_slug" \
+				--state all --search "$search_terms" \
+				--json number --limit 1 -q '.[0].number' 2>/dev/null || echo "")
+			if [[ -n "$existing_issue" && "$existing_issue" != "null" ]]; then
+				log_info "Found existing issue #$existing_issue matching title, skipping duplicate creation"
+				echo "$existing_issue"
+				return 0
+			fi
+		fi
+	fi
+
 	# Fallback: bare issue creation (no labels, minimal body)
 	local gh_args=(issue create --title "$title")
 
