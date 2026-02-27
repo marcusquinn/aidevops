@@ -342,8 +342,6 @@ cmd_update() {
 		die "Binary not found: $BINARY_PATH. Run: matterbridge-helper.sh setup"
 		return 1
 	fi
-	ensure_dirs
-
 	# Ensure DATA_DIR exists before writing temp files (LOG_FILE lives under DATA_DIR)
 	ensure_dirs
 

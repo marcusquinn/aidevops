@@ -2035,15 +2035,25 @@ cmd_results() {
 		esac
 	done
 
-	local where_clause=""
-	if [[ -n "$model_filter" ]]; then
-		where_clause="WHERE cs.model_id LIKE '%${model_filter}%'"
+	# Validate limit is numeric (used in SQL LIMIT clause)
+	if ! [[ "$limit" =~ ^[0-9]+$ ]]; then
+		print_error "Invalid --limit value: $limit (must be a positive integer)"
+		return 1
 	fi
-	if [[ -n "$type_filter" ]]; then
+
+	# Escape string values for SQL safety (prevent injection via --model/--type args)
+	local safe_model_filter="${model_filter//\'/\'\'}"
+	local safe_type_filter="${type_filter//\'/\'\'}"
+
+	local where_clause=""
+	if [[ -n "$safe_model_filter" ]]; then
+		where_clause="WHERE cs.model_id LIKE '%${safe_model_filter}%'"
+	fi
+	if [[ -n "$safe_type_filter" ]]; then
 		if [[ -n "$where_clause" ]]; then
-			where_clause="$where_clause AND c.task_type = '$type_filter'"
+			where_clause="$where_clause AND c.task_type = '${safe_type_filter}'"
 		else
-			where_clause="WHERE c.task_type = '$type_filter'"
+			where_clause="WHERE c.task_type = '${safe_type_filter}'"
 		fi
 	fi
 
