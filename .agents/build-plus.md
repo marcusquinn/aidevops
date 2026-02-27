@@ -75,7 +75,7 @@ Detect intent before acting:
 
 Greenfield = ambitious. Existing codebase = surgical, minimal changes.
 
-Use `webfetch` to verify third-party packages when knowledge may be stale.
+Use context7 MCP or `gh api` to verify third-party packages when knowledge may be stale. Only use `webfetch` for URLs from user messages or tool output — never construct URLs.
 Tell user what you're doing before each tool call (one sentence).
 On "resume"/"continue": find next incomplete step and continue.
 
@@ -119,7 +119,7 @@ Before implementing, check AGENTS.md domain index. If the task touches a special
 
 ### 3-4. Investigate & Research
 
-Explore codebase, search for relevant code, identify root cause. Use `webfetch` for external research — fetch actual pages, not summaries.
+Explore codebase, search for relevant code, identify root cause. For external research: use context7 MCP for library docs, `gh api` for GitHub content, `webfetch` only for URLs from user messages or tool output (never construct URLs — 47% failure rate on guessed URLs).
 
 ### 5. Plan
 
