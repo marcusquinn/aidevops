@@ -907,7 +907,7 @@ migrate_pulse_repos_to_repos_json() {
 				"$repos_file" >"$temp_file" && mv "$temp_file" "$repos_file"
 			((migrated++)) || true
 		fi
-	done < <(jq -r '.repos[]? | [.slug, .path, .priority] | @tsv' "$pulse_file" 2>/dev/null)
+	done < <(jq -r '(.repos? // .)[] | [.slug, .path, .priority] | @tsv' "$pulse_file" 2>/dev/null)
 
 	if [[ $migrated -gt 0 ]]; then
 		print_success "Migrated $migrated repo(s) from pulse-repos.json into repos.json"
