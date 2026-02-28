@@ -208,6 +208,9 @@ repomix-output.*
 *-repomix-*.json
 .osgrep
 
+# Bundle detection cache (runtime artifact)
+.aidevops.json
+
 # ML model caches (downloaded at runtime)
 mlx_models/
 __pycache__/
