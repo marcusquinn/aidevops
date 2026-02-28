@@ -21,6 +21,14 @@
 set -euo pipefail
 
 #######################################
+# PATH normalisation
+# The MCP shell environment may have a minimal PATH that excludes /bin
+# and other standard directories, causing `env bash` to fail. Ensure
+# essential directories are always present.
+#######################################
+export PATH="/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:${PATH}"
+
+#######################################
 # Configuration
 #######################################
 PULSE_STALE_THRESHOLD="${PULSE_STALE_THRESHOLD:-1800}" # 30 min = definitely stuck (opencode idle bug)

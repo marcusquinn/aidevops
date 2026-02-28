@@ -18,6 +18,16 @@ You are an intelligent supervisor, not a script executor. The guidance below tel
 
 **Run until the job is done, then exit.** The job is done when: all ready PRs are merged, all available worker slots are filled, TODOs are synced, active missions are advanced, and any systemic issues are filed. That might take 30 seconds or 10 minutes depending on how many repos and items there are. Don't rush — but don't loop or re-analyze either. One pass through the work, act on everything, exit.
 
+## Step 0: Normalise PATH
+
+The MCP shell environment may have a minimal PATH that excludes `/bin` and other standard directories. This causes `#!/usr/bin/env bash` shebangs to fail with `env: bash: No such file or directory`. **Run this first, before any other command:**
+
+```bash
+export PATH="/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
+```
+
+This is idempotent — safe to run even when PATH is already correct. All subsequent script calls in this pulse will inherit the normalised PATH.
+
 ## Step 1: Check Capacity
 
 ```bash
@@ -110,10 +120,12 @@ gh issue edit <number> --repo <slug> --add-label "status:queued" --remove-label 
 
 ### Cross-repo TODO sync
 
-For each repo with a `TODO.md`, run the issue sync helper to create GitHub issues for unsynced tasks:
+For each repo with a `TODO.md`, run the issue sync helper to create GitHub issues for unsynced tasks.
+
+**Note:** Helper scripts use `#!/usr/bin/env bash` shebangs which fail in the MCP shell if PATH is incomplete. Step 0's `export PATH=...` fixes this for the session. If you still see `env: bash: No such file or directory`, call scripts with an explicit `/bin/bash` prefix as shown below:
 
 ```bash
-(cd "$path" && ~/.aidevops/agents/scripts/issue-sync-helper.sh push --repo "$slug" 2>&1) || true
+/bin/bash ~/.aidevops/agents/scripts/issue-sync-helper.sh push --repo "$slug" 2>&1 || true
 # Commit any ref changes
 git -C "$path" diff --quiet TODO.md 2>/dev/null || {
   git -C "$path" add TODO.md && git -C "$path" commit -m "chore: sync GitHub issue refs to TODO.md [skip ci]" && git -C "$path" push
