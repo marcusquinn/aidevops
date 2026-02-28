@@ -285,7 +285,7 @@ test_code_extraction_link() {
 	local body="Click here to verify your account: https://app.example.com/verify?token=abc123def456&email=user@test.com"
 
 	local match
-	match=$(echo "$body" | grep -oP 'https?://[^\s<>"]+[?&](token|code|confirm|activate|verify|key)=[^\s<>"&]+' || true)
+	match=$(echo "$body" | grep -oE 'https?://[^ <>"]+[?&](token|code|confirm|activate|verify|key)=[^ <>"&]+' || true)
 	assert_not_empty "Confirmation link pattern matches" "$match"
 	assert_contains "Link contains verify param" "verify" "$match"
 }
@@ -296,7 +296,7 @@ test_code_extraction_activation_url() {
 	local body="Please activate your account by visiting: https://dashboard.vendor.com/activate/a1b2c3d4e5f6"
 
 	local match
-	match=$(echo "$body" | grep -oP 'https?://[^\s<>"]+/(confirm|activate|verify|validate|approve)/[^\s<>"]+' || true)
+	match=$(echo "$body" | grep -oE 'https?://[^ <>"]+/(confirm|activate|verify|validate|approve)/[^ <>"]+' || true)
 	assert_not_empty "Activation URL pattern matches" "$match"
 	assert_contains "URL contains activate path" "activate" "$match"
 }
@@ -313,7 +313,7 @@ test_code_extraction_multiple() {
 
 	# Count link matches
 	local link_count
-	link_count=$(echo "$body" | grep -coP 'https?://[^\s<>"]+[?&](token|code|confirm|activate|verify|key)=[^\s<>"&]+' || echo "0")
+	link_count=$(echo "$body" | grep -coE 'https?://[^ <>"]+[?&](token|code|confirm|activate|verify|key)=[^ <>"&]+' || echo "0")
 	assert_eq "Found 1 confirmation link" "1" "$link_count"
 }
 
@@ -323,11 +323,11 @@ test_code_extraction_no_false_positives() {
 	local body="Thank you for your interest in our API. We have received your request and will review it within 2-3 business days. Our team will contact you at the email address provided."
 
 	local otp_match
-	otp_match=$(echo "$body" | grep -oP '[Cc]ode[:\s]*([0-9]{6})' || true)
+	otp_match=$(echo "$body" | grep -oE '[Cc]ode[: ]*([0-9]{6})' || true)
 	assert_eq "No false OTP in normal email" "" "$otp_match"
 
 	local link_match
-	link_match=$(echo "$body" | grep -oP 'https?://[^\s<>"]+[?&](token|code|confirm|activate|verify|key)=[^\s<>"&]+' || true)
+	link_match=$(echo "$body" | grep -oE 'https?://[^ <>"]+[?&](token|code|confirm|activate|verify|key)=[^ <>"&]+' || true)
 	assert_eq "No false link in normal email" "" "$link_match"
 }
 

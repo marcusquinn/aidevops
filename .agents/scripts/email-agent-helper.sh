@@ -444,12 +444,19 @@ cmd_send() {
 		"
 	fi
 
+	# Build SES message as JSON for safe escaping of all characters
+	local ses_message_json
+	ses_message_json=$(jq -n \
+		--arg subject "$subject" \
+		--arg body "$body" \
+		'{Subject: {Data: $subject}, Body: {Text: {Data: $body}}}')
+
 	# Build SES send command
 	local ses_args=(
 		ses send-email
 		--source "$from_email"
 		--destination "ToAddresses=$to_email"
-		--message "Subject={Data='$(sql_escape "$subject")'},Body={Text={Data='$(sql_escape "$body")'}}"
+		--message "$ses_message_json"
 	)
 
 	# Add In-Reply-To header if replying
@@ -497,12 +504,12 @@ cmd_send() {
 		fi
 	fi
 
-	# Standard send
+	# Standard send — reuse ses_message_json built above
 	local ses_result
 	ses_result=$(aws ses send-email \
 		--source "$from_email" \
 		--destination "ToAddresses=$to_email" \
-		--message "Subject={Data='$(sql_escape "$subject")'},Body={Text={Data='$(sql_escape "$body")'}}" \
+		--message "$ses_message_json" \
 		--query 'MessageId' --output text 2>&1) || {
 		print_error "Failed to send email: $ses_result"
 		return 1
@@ -548,7 +555,12 @@ cmd_poll() {
 				print_error "--since requires a value"
 				return 1
 			}
-			since="$2"
+			# Validate and normalize to ISO 8601 (YYYY-MM-DDTHH:MM:SSZ)
+			# Accept: ISO 8601 with/without time, with Z/+offset, or date-only
+			since=$(date -d "$2" -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) || {
+				print_error "Invalid date format for --since: '$2' (expected ISO 8601, e.g. 2026-01-15T00:00:00Z or 2026-01-15)"
+				return 1
+			}
 			shift 2
 			;;
 		*)
@@ -766,7 +778,7 @@ extract_codes_from_text() {
 				if [[ "$exists" -eq 0 ]]; then
 					db "$DB_FILE" "
 						INSERT INTO extracted_codes (message_id, mission_id, code_type, code_value, confidence)
-						VALUES ('$(sql_escape "$msg_id")', '$(sql_escape "$mission_id")', '$code_type', '$(sql_escape "$code_value")', 0.9);
+						VALUES ('$(sql_escape "$msg_id")', '$(sql_escape "$mission_id")', '$(sql_escape "$code_type")', '$(sql_escape "$code_value")', 0.9);
 					"
 					found=$((found + 1))
 					log_info "Extracted $code_type: ${code_value:0:4}*** from $msg_id"
