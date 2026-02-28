@@ -197,6 +197,115 @@ EOF
 			echo "[WARN] Failed to add estimated_cost column (may already exist)" >&2
 	fi
 
+	# Create entity system tables if missing (t1363.1 migration)
+	local has_entities
+	has_entities=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='entities';" 2>/dev/null || echo "0")
+	if [[ "$has_entities" == "0" ]]; then
+		log_info "Creating entity system tables (t1363.1)..."
+		db "$MEMORY_DB" <<'ENTITY_SQL'
+-- Entities: people, agents, or services that interact across channels
+CREATE TABLE IF NOT EXISTS entities (
+    id TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    entity_type TEXT NOT NULL DEFAULT 'person' CHECK(entity_type IN ('person', 'agent', 'service', 'group')),
+    privacy_level TEXT NOT NULL DEFAULT 'standard' CHECK(privacy_level IN ('public', 'standard', 'sensitive', 'restricted')),
+    notes TEXT DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+-- Entity channels: cross-channel identity linking
+CREATE TABLE IF NOT EXISTS entity_channels (
+    id TEXT PRIMARY KEY,
+    entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    channel TEXT NOT NULL CHECK(channel IN ('matrix', 'simplex', 'email', 'cli', 'slack', 'discord', 'web', 'sms', 'other')),
+    channel_identifier TEXT NOT NULL,
+    display_name TEXT DEFAULT '',
+    verified INTEGER NOT NULL DEFAULT 0,
+    verified_at TEXT DEFAULT NULL,
+    verified_by TEXT DEFAULT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    UNIQUE(channel, channel_identifier)
+);
+CREATE INDEX IF NOT EXISTS idx_entity_channels_entity ON entity_channels(entity_id);
+CREATE INDEX IF NOT EXISTS idx_entity_channels_lookup ON entity_channels(channel, channel_identifier);
+
+-- Conversations: per-entity+channel active threads
+CREATE TABLE IF NOT EXISTS conversations (
+    id TEXT PRIMARY KEY,
+    entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    channel TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'idle', 'closed', 'archived')),
+    summary TEXT DEFAULT '',
+    pending_actions TEXT DEFAULT '',
+    interaction_count INTEGER NOT NULL DEFAULT 0,
+    first_interaction_at TEXT DEFAULT NULL,
+    last_interaction_at TEXT DEFAULT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_conversations_entity ON conversations(entity_id);
+CREATE INDEX IF NOT EXISTS idx_conversations_status ON conversations(status);
+
+-- Interactions: immutable raw log (append-only source of truth)
+CREATE TABLE IF NOT EXISTS interactions (
+    id TEXT PRIMARY KEY,
+    entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    channel TEXT NOT NULL,
+    direction TEXT NOT NULL CHECK(direction IN ('inbound', 'outbound')),
+    content_summary TEXT NOT NULL,
+    content_hash TEXT DEFAULT NULL,
+    metadata TEXT DEFAULT '{}',
+    conversation_id TEXT DEFAULT NULL REFERENCES conversations(id),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_interactions_entity ON interactions(entity_id);
+CREATE INDEX IF NOT EXISTS idx_interactions_conversation ON interactions(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_interactions_created ON interactions(created_at);
+
+-- Interactions FTS5 for full-text search
+CREATE VIRTUAL TABLE IF NOT EXISTS interactions_fts USING fts5(
+    id UNINDEXED,
+    entity_id UNINDEXED,
+    content_summary,
+    channel UNINDEXED,
+    created_at UNINDEXED,
+    tokenize='porter unicode61'
+);
+
+-- Entity profiles: versioned relationship model
+CREATE TABLE IF NOT EXISTS entity_profiles (
+    id TEXT PRIMARY KEY,
+    entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    profile_type TEXT NOT NULL CHECK(profile_type IN ('preference', 'need', 'expectation', 'style', 'capability', 'context')),
+    content TEXT NOT NULL,
+    confidence TEXT NOT NULL DEFAULT 'medium' CHECK(confidence IN ('high', 'medium', 'low')),
+    evidence_ids TEXT DEFAULT '',
+    supersedes_id TEXT DEFAULT NULL REFERENCES entity_profiles(id),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_entity_profiles_entity ON entity_profiles(entity_id);
+CREATE INDEX IF NOT EXISTS idx_entity_profiles_type ON entity_profiles(entity_id, profile_type);
+
+-- Capability gaps: self-evolution loop
+CREATE TABLE IF NOT EXISTS capability_gaps (
+    id TEXT PRIMARY KEY,
+    entity_id TEXT DEFAULT NULL REFERENCES entities(id),
+    gap_type TEXT NOT NULL CHECK(gap_type IN ('missing_feature', 'poor_response', 'slow_response', 'wrong_channel', 'knowledge_gap', 'integration_gap')),
+    description TEXT NOT NULL,
+    evidence_ids TEXT DEFAULT '',
+    frequency INTEGER NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'detected' CHECK(status IN ('detected', 'todo_created', 'in_progress', 'resolved', 'wont_fix')),
+    todo_task_id TEXT DEFAULT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    resolved_at TEXT DEFAULT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_capability_gaps_status ON capability_gaps(status);
+CREATE INDEX IF NOT EXISTS idx_capability_gaps_entity ON capability_gaps(entity_id);
+ENTITY_SQL
+		log_success "Entity system tables created (t1363.1)"
+	fi
+
 	return 0
 }
 
@@ -303,8 +412,118 @@ CREATE TABLE IF NOT EXISTS pattern_metadata (
     tokens_out INTEGER DEFAULT NULL,
     estimated_cost REAL DEFAULT NULL
 );
+
+-- =============================================================================
+-- Entity System Tables (t1363.1 — multi-channel relationship continuity)
+-- =============================================================================
+-- Layer 0: Immutable raw interaction log
+-- Layer 1: Per-conversation context (tactical)
+-- Layer 2: Entity relationship model (strategic)
+
+-- Entities: people, agents, or services that interact across channels
+CREATE TABLE IF NOT EXISTS entities (
+    id TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    entity_type TEXT NOT NULL DEFAULT 'person' CHECK(entity_type IN ('person', 'agent', 'service', 'group')),
+    privacy_level TEXT NOT NULL DEFAULT 'standard' CHECK(privacy_level IN ('public', 'standard', 'sensitive', 'restricted')),
+    notes TEXT DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+-- Entity channels: cross-channel identity linking
+-- Each row links an entity to a channel-specific identifier
+CREATE TABLE IF NOT EXISTS entity_channels (
+    id TEXT PRIMARY KEY,
+    entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    channel TEXT NOT NULL CHECK(channel IN ('matrix', 'simplex', 'email', 'cli', 'slack', 'discord', 'web', 'sms', 'other')),
+    channel_identifier TEXT NOT NULL,
+    display_name TEXT DEFAULT '',
+    verified INTEGER NOT NULL DEFAULT 0,
+    verified_at TEXT DEFAULT NULL,
+    verified_by TEXT DEFAULT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    UNIQUE(channel, channel_identifier)
+);
+CREATE INDEX IF NOT EXISTS idx_entity_channels_entity ON entity_channels(entity_id);
+CREATE INDEX IF NOT EXISTS idx_entity_channels_lookup ON entity_channels(channel, channel_identifier);
+
+-- Interactions: Layer 0 immutable raw log (append-only source of truth)
+CREATE TABLE IF NOT EXISTS interactions (
+    id TEXT PRIMARY KEY,
+    entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    channel TEXT NOT NULL,
+    direction TEXT NOT NULL CHECK(direction IN ('inbound', 'outbound')),
+    content_summary TEXT NOT NULL,
+    content_hash TEXT DEFAULT NULL,
+    metadata TEXT DEFAULT '{}',
+    conversation_id TEXT DEFAULT NULL REFERENCES conversations(id),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_interactions_entity ON interactions(entity_id);
+CREATE INDEX IF NOT EXISTS idx_interactions_conversation ON interactions(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_interactions_created ON interactions(created_at);
+
+-- Interactions FTS5 for full-text search on interaction content
+CREATE VIRTUAL TABLE IF NOT EXISTS interactions_fts USING fts5(
+    id UNINDEXED,
+    entity_id UNINDEXED,
+    content_summary,
+    channel UNINDEXED,
+    created_at UNINDEXED,
+    tokenize='porter unicode61'
+);
+
+-- Conversations: Layer 1 per-entity+channel active threads
+CREATE TABLE IF NOT EXISTS conversations (
+    id TEXT PRIMARY KEY,
+    entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    channel TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'idle', 'closed', 'archived')),
+    summary TEXT DEFAULT '',
+    pending_actions TEXT DEFAULT '',
+    interaction_count INTEGER NOT NULL DEFAULT 0,
+    first_interaction_at TEXT DEFAULT NULL,
+    last_interaction_at TEXT DEFAULT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_conversations_entity ON conversations(entity_id);
+CREATE INDEX IF NOT EXISTS idx_conversations_status ON conversations(status);
+
+-- Entity profiles: Layer 2 versioned relationship model
+-- Uses supersedes_id pattern from existing learning_relations
+CREATE TABLE IF NOT EXISTS entity_profiles (
+    id TEXT PRIMARY KEY,
+    entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    profile_type TEXT NOT NULL CHECK(profile_type IN ('preference', 'need', 'expectation', 'style', 'capability', 'context')),
+    content TEXT NOT NULL,
+    confidence TEXT NOT NULL DEFAULT 'medium' CHECK(confidence IN ('high', 'medium', 'low')),
+    evidence_ids TEXT DEFAULT '',
+    supersedes_id TEXT DEFAULT NULL REFERENCES entity_profiles(id),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_entity_profiles_entity ON entity_profiles(entity_id);
+CREATE INDEX IF NOT EXISTS idx_entity_profiles_type ON entity_profiles(entity_id, profile_type);
+
+-- Capability gaps: self-evolution loop — detected from interaction patterns
+-- Gap detection → TODO creation → system upgrade → better service
+CREATE TABLE IF NOT EXISTS capability_gaps (
+    id TEXT PRIMARY KEY,
+    entity_id TEXT DEFAULT NULL REFERENCES entities(id),
+    gap_type TEXT NOT NULL CHECK(gap_type IN ('missing_feature', 'poor_response', 'slow_response', 'wrong_channel', 'knowledge_gap', 'integration_gap')),
+    description TEXT NOT NULL,
+    evidence_ids TEXT DEFAULT '',
+    frequency INTEGER NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'detected' CHECK(status IN ('detected', 'todo_created', 'in_progress', 'resolved', 'wont_fix')),
+    todo_task_id TEXT DEFAULT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    resolved_at TEXT DEFAULT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_capability_gaps_status ON capability_gaps(status);
+CREATE INDEX IF NOT EXISTS idx_capability_gaps_entity ON capability_gaps(entity_id);
 EOF
-		log_success "Database initialized with relational versioning support"
+		log_success "Database initialized with relational versioning and entity system support"
 	else
 		# Migrate existing database if needed
 		migrate_db
@@ -440,5 +659,15 @@ auto_prune() {
 generate_id() {
 	# Use timestamp + random for uniqueness
 	echo "mem_$(date +%Y%m%d%H%M%S)_$(head -c 4 /dev/urandom | xxd -p)"
+	return 0
+}
+
+#######################################
+# Generate unique entity ID
+# Prefix distinguishes entity-system records from memory records
+#######################################
+generate_entity_id() {
+	local prefix="${1:-ent}"
+	echo "${prefix}_$(date +%Y%m%d%H%M%S)_$(head -c 4 /dev/urandom | xxd -p)"
 	return 0
 }
