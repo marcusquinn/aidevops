@@ -23,7 +23,7 @@ pro,gemini-2.5-pro,Capable large context
 grok,grok-3,Research and real-time web knowledge
 -->
 
-<!--TOON:subagents[57]{folder,purpose,key_files}:
+<!--TOON:subagents[58]{folder,purpose,key_files}:
 aidevops/,Framework internals - extending aidevops and architecture and plugins,setup|architecture|troubleshooting|self-improving-agents|claude-flow-comparison|plugins
 business/,Company orchestration - runner configs for company functions,company-runners
 memory/,Cross-session memory - SQLite FTS5 storage,README
@@ -76,6 +76,7 @@ services/crm/,CRM integration - contact management,fluentcrm
 services/analytics/,Website analytics - GA4 reporting,google-analytics
 services/monitoring/,Error monitoring and debugging,sentry|socket
 services/accounting/,Accounting integration - invoicing,quickfile
+services/payments/,Payment processing and autonomous procurement - Stripe Issuing virtual cards budget enforcement receipt capture,stripe|revenuecat|superwall|procurement
 services/database/,Database schemas - multi-org isolation Drizzle ORM and PostgreSQL RLS,multi-org-isolation|postgres-drizzle-skill
 tools/database/,Embedded database - PGlite local-first Postgres for desktop and extension apps,pglite-local-first
 services/document-processing/,Document processing - LLM-powered extraction,unstract
@@ -118,7 +119,7 @@ conversation-starter,workflows/conversation-starter.md,Session greeting and auto
 mission-skill-learning,workflows/mission-skill-learning.md,Auto-capture reusable patterns from missions and suggest promotion
 -->
 
-<!--TOON:scripts[96]{name,purpose}:
+<!--TOON:scripts[97]{name,purpose}:
 accessibility-helper.sh,Accessibility and contrast testing (WCAG compliance WAVE API for websites and emails)
 browser-qa-worker.sh,Browser QA visual testing — Playwright screenshots broken links console errors for milestone validation
 accessibility-audit-helper.sh,Accessibility audit CLI wrapping axe-core WAVE API WebAIM contrast and Lighthouse a11y
@@ -159,6 +160,7 @@ memory-embeddings-helper.sh,Semantic memory search with vector embeddings (opt-i
 mission-skill-learner.sh,Auto-capture reusable patterns from missions (scan score promote track)
 pattern-tracker-helper.sh,Success/failure pattern tracking and analysis
 pdf-helper.sh,PDF operations (info fields fill merge text)
+procurement-helper.sh,Autonomous procurement - virtual card management budget enforcement receipt capture audit trail for missions (create-card freeze-card close-card list-cards check-budget allocate spend capture-receipt export-ledger audit reconcile status)
 unstract-helper.sh,Unstract self-hosted document processing (install start stop)
 document-extraction-helper.sh,Document extraction with PII redaction (extract batch pii-scan pii-redact convert install status schemas)
 frontmatter-helper.sh,YAML frontmatter enforcement for markdown files (enforce check show batch)
