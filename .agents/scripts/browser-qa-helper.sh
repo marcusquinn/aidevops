@@ -376,7 +376,7 @@ cmd_a11y() {
 	fi
 
 	local contrast_script="${SCRIPT_DIR}/accessibility/playwright-contrast.mjs"
-	local results=()
+	local contrast_json='[]'
 
 	for page_path in $pages; do
 		local full_url="${url%/}${page_path}"
@@ -386,10 +386,15 @@ cmd_a11y() {
 		if [[ -f "$contrast_script" ]]; then
 			local contrast_result
 			contrast_result=$(node "$contrast_script" "$full_url" --format json --level "$level" 2>/dev/null) || contrast_result='{"error": "contrast check failed"}'
-			results+=("{\"page\": \"${page_path}\", \"contrast\": ${contrast_result}}")
+			contrast_json=$(jq -c \
+				--arg page "$page_path" \
+				--argjson contrast "$contrast_result" \
+				'. + [{page: $page, contrast: $contrast}]' <<<"$contrast_json")
 		else
 			log_warn "Contrast script not found at ${contrast_script}"
-			results+=("{\"page\": \"${page_path}\", \"contrast\": {\"error\": \"script not found\"}}")
+			contrast_json=$(jq -c \
+				--arg page "$page_path" \
+				'. + [{page: $page, contrast: {error: "script not found"}}]' <<<"$contrast_json")
 		fi
 	done
 
@@ -554,19 +559,7 @@ run().catch(err => {
 });
 SCRIPT
 
-	# Serialize contrast results as JSON array for the generated script
-	local contrast_json="["
-	local first=true
-	for entry in "${results[@]}"; do
-		if [[ "$first" == "true" ]]; then
-			first=false
-		else
-			contrast_json="${contrast_json},"
-		fi
-		contrast_json="${contrast_json}${entry}"
-	done
-	contrast_json="${contrast_json}]"
-
+	# Pass contrast results as JSON via process.argv[2]
 	local exit_code=0
 	node "$script_file" "$contrast_json" || exit_code=$?
 	rm -f "$script_file"
