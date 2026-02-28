@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.145.1] - 2026-02-28
+
+### Added
+
+- cross-repo worktree cleanup with squash-merge detection (#2616)
+
 ## [2.145.0] - 2026-02-28
 
 ### Added
