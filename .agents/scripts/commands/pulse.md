@@ -91,9 +91,10 @@ gh issue edit <number> --repo <slug> --add-label "status:queued" --remove-label 
 **Dispatch rules:**
 - ALWAYS use `opencode run` — NEVER `claude` or `claude -p`
 - Background with `&`, sleep 2 between dispatches
-- Do NOT add `--model` — let `/full-loop` use its default
+- Do NOT add `--model` — let `/full-loop` use its default. Bundle presets (t1364.6) handle per-project model defaults automatically.
 - Use `--dir <path>` from repos.json
 - Route non-code tasks with `--agent`: SEO, Content, Marketing, Business, Research (see AGENTS.md "Agent Routing")
+- **Bundle-aware agent routing (t1364.6):** Before dispatching, check if the target repo has a bundle with `agent_routing` overrides. Run `bundle-helper.sh get agent_routing <repo-path>` — if the task domain (code, seo, content, marketing) has a non-default agent, use `--agent <name>`. Example: a content-site bundle routes `marketing` tasks to the Marketing agent instead of Build+. Explicit `--agent` flags in the issue body always override bundle defaults.
 
 ### Priority order
 

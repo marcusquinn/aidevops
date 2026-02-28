@@ -271,9 +271,39 @@ main() {
 	name=$(echo "$job" | jq -r '.name')
 	task=$(echo "$job" | jq -r '.task')
 	workdir=$(echo "$job" | jq -r '.workdir')
-	timeout=$(echo "$job" | jq -r '.timeout // 600')
-	model=$(echo "$job" | jq -r '.model // "anthropic/claude-sonnet-4-6"')
+	timeout=$(echo "$job" | jq -r '.timeout // ""')
+	model=$(echo "$job" | jq -r '.model // ""')
 	notify=$(echo "$job" | jq -r '.notify // "none"')
+
+	# Apply bundle defaults if job config doesn't specify model/timeout (t1364.6)
+	local bundle_helper="${SCRIPT_DIR}/bundle-helper.sh"
+	local effective_workdir="${workdir:-.}"
+	if [[ -z "$model" || -z "$timeout" ]] && [[ -x "$bundle_helper" ]]; then
+		local bundle_json
+		bundle_json=$("$bundle_helper" resolve "$effective_workdir" 2>/dev/null) || true
+		if [[ -n "$bundle_json" ]]; then
+			if [[ -z "$model" ]]; then
+				local bundle_model
+				bundle_model=$(echo "$bundle_json" | jq -r '.model_defaults.implementation // empty' 2>/dev/null) || true
+				if [[ -n "$bundle_model" ]]; then
+					model="$bundle_model"
+					log_info "Bundle: using model default '${model}' from project bundle"
+				fi
+			fi
+			if [[ -z "$timeout" ]]; then
+				local bundle_timeout
+				bundle_timeout=$(echo "$bundle_json" | jq -r '.dispatch.default_timeout_minutes // empty' 2>/dev/null) || true
+				if [[ -n "$bundle_timeout" ]]; then
+					timeout=$((bundle_timeout * 60))
+					log_info "Bundle: using timeout ${timeout}s from project bundle"
+				fi
+			fi
+		fi
+	fi
+
+	# Apply framework defaults for anything still unset
+	model="${model:-anthropic/claude-sonnet-4-6}"
+	timeout="${timeout:-600}"
 
 	# Resolve tier names to full model strings (t132.7)
 	model=$(resolve_model_tier "$model")
