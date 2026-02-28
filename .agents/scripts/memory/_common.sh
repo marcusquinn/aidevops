@@ -311,6 +311,40 @@ EOF
 		log_success "Entity memory tables created (t1363.1)"
 	fi
 
+	# Create conversation_summaries table if missing (t1363.2 migration)
+	# Versioned, immutable conversation summaries with source range references.
+	local has_conv_summaries
+	has_conv_summaries=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='conversation_summaries';" 2>/dev/null || echo "0")
+	if [[ "$has_conv_summaries" == "0" ]]; then
+		log_info "Creating conversation_summaries table (t1363.2)..."
+		db "$MEMORY_DB" <<'EOF'
+CREATE TABLE IF NOT EXISTS conversation_summaries (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    source_range_start TEXT NOT NULL,
+    source_range_end TEXT NOT NULL,
+    source_interaction_count INTEGER DEFAULT 0,
+    tone_profile TEXT DEFAULT '{}',
+    pending_actions TEXT DEFAULT '[]',
+    supersedes_id TEXT DEFAULT NULL,
+    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+    FOREIGN KEY (supersedes_id) REFERENCES conversation_summaries(id)
+);
+CREATE INDEX IF NOT EXISTS idx_conv_summaries_conv ON conversation_summaries(conversation_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_conv_summaries_supersedes ON conversation_summaries(supersedes_id);
+EOF
+		log_success "conversation_summaries table created (t1363.2)"
+	fi
+
+	# Add channel index to conversations if missing (t1363.2)
+	local has_conv_channel_idx
+	has_conv_channel_idx=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_conversations_channel';" 2>/dev/null || echo "0")
+	if [[ "$has_conv_channel_idx" == "0" ]]; then
+		db "$MEMORY_DB" "CREATE INDEX IF NOT EXISTS idx_conversations_channel ON conversations(channel, status);" 2>/dev/null || true
+	fi
+
 	return 0
 }
 
