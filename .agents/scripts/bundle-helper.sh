@@ -337,10 +337,8 @@ cmd_detect() {
 
 	# Cache the detection result
 	local comma_separated
-	comma_separated=$(
-		IFS=','
-		echo "${matches[*]}"
-	)
+	comma_separated=$(printf '%s,' "${matches[@]}")
+	comma_separated="${comma_separated%,}"
 	_write_cached_detection "$project_path" "$comma_separated"
 
 	printf '%s\n' "${matches[@]}"
