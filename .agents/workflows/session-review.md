@@ -24,12 +24,14 @@ tools:
 **Review Categories**:
 1. Objective completion - all goals achieved?
 2. Workflow adherence - aidevops best practices followed?
-3. Knowledge capture - learnings documented?
-4. Session health - time to end or continue?
+3. Conversation value extraction - all insight, direction, and value captured?
+4. Knowledge capture - learnings documented?
+5. Session health - time to end or continue?
 
 **Key Outputs**:
 - Completion score (0-100%)
 - Outstanding items list
+- Conversation value extraction report
 - Knowledge capture recommendations
 - Session continuation advice
 
@@ -165,9 +167,52 @@ This will:
 2. Extract learnings with appropriate types (ERROR_FIX, WORKING_SOLUTION, etc.)
 3. Store them to memory automatically
 
-### Step 5: Knowledge Capture Assessment
+### Step 5: Conversation Value Extraction
 
-Identify learnings that should be preserved beyond what auto-distill captured:
+**MANDATORY**: Re-read the entire conversation from the beginning. Auto-distill (Step 4) only captures what made it into git commits. The conversation itself contains insights, user direction, design decisions, and observations that may not have been captured in any artifact.
+
+**What to look for:**
+
+| Signal | Example | Capture To |
+|--------|---------|------------|
+| User direction or philosophy | "always look to solve root causes" | Agent docs, memory |
+| Design decisions with rationale | "POC mode is a flag, not a separate system" | PLANS.md, brief, memory |
+| Observations about system behaviour | "the pulse completed 8 tasks in 40 min" | Memory |
+| Root cause analyses | "workers search by keyword instead of using authoritative ID" | Code fix + memory |
+| Patterns that recur | "three-layer defense: prevent, detect, correct" | Agent docs, memory |
+| User preferences or constraints | "skip ceremony for prototypes" | Memory |
+| Unfinished threads | "we should also check X" — but never did | TODO.md or issue |
+| Side discoveries | "GitHub parses Closes #NNN in prose text" | Docs, memory |
+| Implicit standards | user corrects an approach — that correction is a standard | Agent docs |
+
+**Process:**
+
+1. Scan the conversation chronologically for each signal type above
+2. For each finding, check: is this already captured in a commit, PR, memory, TODO, or doc?
+3. If not captured: capture it now (store to memory, add to docs, create a TODO, or file an issue)
+4. If partially captured: verify the capture is complete and accurate
+5. Pay special attention to user corrections and redirections — these reveal gaps in the framework's defaults
+
+**The goal is zero knowledge loss.** Every insight from the conversation should be traceable to at least one artifact. A session that produced good work but lost the reasoning behind it has failed at knowledge capture.
+
+**Output format:**
+
+```text
+## Conversation Value Extraction
+
+### Newly Captured
+- {insight}: stored to {location} (memory/docs/TODO/issue)
+
+### Already Captured
+- {insight}: found in {location}
+
+### Unfinished Threads
+- {thread}: created {TODO/issue} for follow-up
+```
+
+### Step 6: Knowledge Capture Assessment
+
+Identify learnings that should be preserved beyond what auto-distill and conversation extraction captured:
 
 | Knowledge Type | Capture Location | Priority |
 |----------------|------------------|----------|
@@ -201,7 +246,7 @@ Identify learnings that should be preserved beyond what auto-distill captured:
 - {preference to remember for future sessions}
 ```
 
-### Step 6: Session Health Assessment
+### Step 7: Session Health Assessment
 
 Determine if session should continue or end:
 
@@ -264,6 +309,19 @@ Determine if session should continue or end:
 
 ### Improvements Needed
 {list}
+
+---
+
+## Conversation Value Extraction
+
+### Newly Captured
+{insights stored to memory/docs/TODO/issues during this review}
+
+### Already Captured
+{insights already in artifacts}
+
+### Unfinished Threads
+{threads that need follow-up TODOs or issues}
 
 ---
 
