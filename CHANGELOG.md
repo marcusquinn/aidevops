@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.145.0] - 2026-02-28
+
+### Added
+
+- wire parallel model verification into pipeline (t1364.3) (#2598)
+- wire bundle config into dispatch, quality gates, and agent routing (t1364.6) (#2596)
+- wire parallel model verification into pipeline (t1364.3) (#2580)
+- add cross-provider verification agent and helper script (t1364.2) (#2576)
+- define high-stakes operation taxonomy and verification triggers (t1364.1) (#2572)
+- add /security-audit command for external repo security auditing (#2567)
+- add automatic worktree cleanup for merged PRs (#2551)
+- add mission email helper for 3rd-party communication (t1360) (#2553)
+- add procurement agent for autonomous mission purchases (t1358) (#2550)
+- replace hardcoded thresholds with AI judgment (t1363.6) (#2547)
+- add entity memory architecture doc and integration tests (t1363.7) (#2545)
+
+### Changed
+
+- Documentation: add entity memory architecture doc, update memory README, add integration tests (t1363.7) (#2548)
+
+### Fixed
+
+- stop pulse from creating spam summary issues and duplicate task issues (#2615)
+- add PATH normalisation to pulse for MCP shell compatibility (#2614)
+- change shebang to #!/bin/bash in issue-sync scripts for headless PATH compatibility (#2611)
+- replace dirname with parameter expansion in session-miner-pulse.sh (#2609)
+- replace dirname with pure-bash parameter expansion in issue-sync scripts (#2603)
+- prevent framework from leaving uncommitted changes in project repos (#2574)
+- pass --interactive flag to aidevops-update-check.sh in AGENTS.md greeting (#2557)
+- derive repo name from git remote URL instead of basename in cmd_init (#2549)
+
 ## [2.144.0] - 2026-02-28
 
 ### Added
