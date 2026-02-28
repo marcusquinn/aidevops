@@ -2783,6 +2783,34 @@ cmd_dispatch() {
 		return 3
 	fi
 
+	# Pre-dispatch task verification (t1364.3): check if the task description
+	# contains high-stakes indicators. If so, invoke cross-provider verification
+	# before committing a worker. This catches dangerous tasks (production deploys,
+	# database migrations, force pushes) before they consume an expensive session.
+	local verify_helper="${SCRIPT_DIR}/../verify-operation-helper.sh"
+	if [[ -f "$verify_helper" && "${VERIFY_ENABLED:-true}" == "true" ]]; then
+		# shellcheck source=../verify-operation-helper.sh
+		source "$verify_helper"
+		local task_risk
+		task_risk=$(check_task_high_stakes "$tdesc")
+		if [[ "$task_risk" == "critical" || "$task_risk" == "high" ]]; then
+			log_info "Task $task_id flagged as $task_risk-risk — invoking verification (t1364.3)"
+			local verify_result
+			verify_result=$(verify_operation "$tdesc" "$task_risk" "task_id=$task_id repo=$trepo") || true
+			case "$verify_result" in
+			blocked:*)
+				log_error "Task $task_id BLOCKED by verification: ${verify_result#blocked:}"
+				cmd_transition "$task_id" "failed" --error "Verification blocked: ${verify_result#blocked:}" 2>/dev/null || true
+				return 1
+				;;
+			concerns:*)
+				log_warn "Task $task_id verification concerns: ${verify_result#concerns:}"
+				# Log concern but proceed — the worker will handle it
+				;;
+			esac
+		fi
+	fi
+
 	# Resolve AI CLI (initial — may be re-resolved after model resolution for OAuth routing)
 	local ai_cli
 	ai_cli=$(resolve_ai_cli) || return 1

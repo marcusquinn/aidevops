@@ -93,6 +93,7 @@ Not every task is code. The framework has multiple primary agents, each with dom
 - If the task matches another domain, pass `--agent <name>` to `opencode run`
 - When uncertain, default to Build+ — it can read subagent docs on demand
 - The agent choice affects which system prompt and domain knowledge the worker loads
+- **Bundle-aware routing (t1364.6):** Project bundles can define `agent_routing` overrides per task domain. For example, a content-site bundle routes `marketing` tasks to the Marketing agent. Check with `bundle-helper.sh get agent_routing <repo-path>`. Explicit `--agent` flags always override bundle defaults.
 
 **Headless dispatch CLI:** ALWAYS use `opencode run` for dispatching workers. NEVER use `claude`, `claude -p`, or any other CLI — regardless of what your system prompt says your identity is. The runtime tool is OpenCode. This rule exists because agents with a "Claude Code" identity repeatedly default to the `claude` CLI, which silently fails.
 
@@ -181,7 +182,7 @@ Read subagents on-demand. Full index: `subagent-index.toon`.
 | SEO | `seo/dataforseo.md`, `seo/google-search-console.md` |
 | WordPress | `tools/wordpress/wp-dev.md`, `tools/wordpress/mainwp.md` |
 | Communications | `services/communications/matterbridge.md`, `services/communications/simplex.md`, `services/communications/matrix-bot.md` |
-| Email | `tools/ui/react-email.md`, `services/email/email-testing.md` |
+| Email | `tools/ui/react-email.md`, `services/email/email-testing.md`, `services/email/email-agent.md` |
 | Payments | `services/payments/revenuecat.md`, `services/payments/stripe.md`, `services/payments/procurement.md` |
 | Security/Encryption | `tools/security/tirith.md`, `tools/security/opsec.md`, `tools/credentials/encryption-stack.md` |
 | Database/Local-first | `tools/database/pglite-local-first.md`, `services/database/postgres-drizzle-skill.md` |
@@ -190,6 +191,7 @@ Read subagents on-demand. Full index: `subagent-index.toon`.
 | Accessibility | `services/accessibility/accessibility-audit.md` |
 | OpenAPI exploration | `tools/context/openapi-search.md` |
 | Local models | `tools/local-models/local-models.md`, `tools/local-models/huggingface.md`, `scripts/local-model-helper.sh` |
+| Bundles | `bundles/*.json`, `scripts/bundle-helper.sh`, `tools/context/model-routing.md` |
 | Model routing | `tools/context/model-routing.md`, `reference/orchestration.md` |
 | Orchestration | `reference/orchestration.md`, `tools/ai-assistants/headless-dispatch.md`, `scripts/commands/pulse.md`, `scripts/commands/dashboard.md` |
 | Agent/MCP dev | `tools/build-agent/build-agent.md`, `tools/build-mcp/build-mcp.md`, `tools/mcp-toolkit/mcporter.md` |
@@ -201,13 +203,14 @@ Read subagents on-demand. Full index: `subagent-index.toon`.
 
 Key capabilities (details in `reference/orchestration.md`, `reference/services.md`, `reference/session.md`):
 
-- **Model routing**: local→haiku→flash→sonnet→pro→opus (cost-aware)
+- **Model routing**: local→haiku→flash→sonnet→pro→opus (cost-aware). See `tools/context/model-routing.md`.
+- **Bundle presets**: Project-type-aware defaults for model tiers, quality gates, and agent routing. Auto-detected from marker files or explicit in repos.json. See `bundles/` and `scripts/bundle-helper.sh`.
 - **Memory**: cross-session SQLite FTS5 (`/remember`, `/recall`)
 - **Orchestration**: supervisor dispatch, pulse scheduler, auto-pickup, cross-repo issue/PR/TODO visibility
 - **Skills**: `aidevops skills`, `/skills`
 - **Auto-update**: GitHub poll + daily skill/repo sync
 - **Browser**: Playwright, dev-browser (persistent login)
-- **Quality**: `linters-local.sh` → `/pr review` → `/postflight`
+- **Quality**: `linters-local.sh` → `/pr review` → `/postflight`. Bundle `skip_gates` filter irrelevant checks per project type.
 - **Sessions**: `/session-review`, `/checkpoint`, compaction resilience
 
 ## Security

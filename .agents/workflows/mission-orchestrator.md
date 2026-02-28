@@ -368,7 +368,7 @@ When a mission feature requires a capability, check these sources in order:
 | Deployment | `tools/deployment/coolify.md`, `vercel.md` | `services/hosting/` |
 | Secret management | `tools/credentials/gopass.md` | `aidevops secret` |
 | Domain/DNS | `services/dns/` | Helper scripts per provider |
-| Email | `services/email/` | SES helper |
+| Email | `services/email/` | SES helper, email-agent-helper.sh (autonomous 3rd-party communication) |
 | Documentation | `tools/document/document-creation.md` | Pandoc, PDF tools |
 | Model routing | `tools/context/model-routing.md` | `/route`, budget tracker |
 | Memory/learning | `memory/README.md` | `/remember`, `/recall` |
@@ -675,3 +675,5 @@ Each repo has its own task ID namespace. When creating tasks in secondary repos,
 - `scripts/budget-analysis-helper.sh` — Budget analysis engine (t1357.7) — tiered recommendations, cost estimation, spend forecasting
 - `scripts/budget-tracker-helper.sh` — Append-only cost log for historical spend data
 - `scripts/commands/budget-analysis.md` — `/budget-analysis` command for interactive use
+- `services/email/email-agent.md` — Email agent for autonomous 3rd-party communication (t1360)
+- `scripts/email-agent-helper.sh` — Email agent CLI: send, poll, extract-codes, thread, conversations

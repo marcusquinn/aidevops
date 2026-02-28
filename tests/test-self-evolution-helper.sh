@@ -98,9 +98,22 @@ assert_not_contains() {
 }
 
 # Helper: create a test entity and log some interactions
+# Returns entity ID on stdout. Uses tail -1 to extract the ID from
+# entity-helper.sh output (which may include log lines before the ID).
+# Validates the ID starts with "ent_" to catch format changes early.
 setup_test_entity() {
+	local raw_output
+	raw_output=$("$ENTITY_HELPER" create --name "Test User" --type person --channel cli --channel-id "test-user-1" 2>/dev/null) || true
 	local entity_id
-	entity_id=$("$ENTITY_HELPER" create --name "Test User" --type person --channel cli --channel-id "test-user-1" 2>/dev/null | tail -1)
+	entity_id=$(echo "$raw_output" | tail -1)
+
+	# Validate entity ID format — catch upstream changes early
+	if [[ -z "$entity_id" || ! "$entity_id" =~ ^ent_ ]]; then
+		echo "INVALID_ENTITY_ID" >&2
+		echo ""
+		return 1
+	fi
+
 	echo "$entity_id"
 	return 0
 }
@@ -286,13 +299,10 @@ test_list_gaps_with_data() {
 	"$ENTITY_HELPER" migrate >/dev/null 2>&1
 	"$EVOL_HELPER" migrate >/dev/null 2>&1
 
-	# Insert test gaps directly
-	local gap1_id
-	gap1_id=$(insert_test_gap "Missing Kubernetes deployment support" "" 5)
-	local gap2_id
-	gap2_id=$(insert_test_gap "No monitoring integration" "" 2)
-	local gap3_id
-	gap3_id=$(insert_test_gap "Resolved feature" "" 1 "resolved")
+	# Insert test gaps directly (IDs unused — side effect is DB insertion)
+	insert_test_gap "Missing Kubernetes deployment support" "" 5 >/dev/null
+	insert_test_gap "No monitoring integration" "" 2 >/dev/null
+	insert_test_gap "Resolved feature" "" 1 "resolved" >/dev/null
 
 	# List all gaps
 	local output
@@ -583,6 +593,62 @@ test_gap_lifecycle() {
 }
 
 # =============================================================================
+# Test: Pulse scan --force bypasses interval guard
+# =============================================================================
+test_pulse_force_bypass() {
+	echo ""
+	echo "=== Test: Pulse Scan --force Bypass ==="
+
+	"$ENTITY_HELPER" migrate >/dev/null 2>&1
+	"$EVOL_HELPER" migrate >/dev/null 2>&1
+
+	# Write a recent timestamp to the state file to simulate a recent scan.
+	# This activates the interval guard so we can test --force bypasses it.
+	local state_dir="${HOME}/.aidevops/logs"
+	local state_file="${state_dir}/self-evolution-last-run"
+	mkdir -p "$state_dir"
+	local original_state=""
+	if [[ -f "$state_file" ]]; then
+		original_state=$(cat "$state_file")
+	fi
+	# Write current epoch — makes interval guard think a scan just ran
+	date +%s >"$state_file"
+
+	# Without --force, should be skipped by interval guard
+	local output_no_force
+	local rc_no_force=0
+	output_no_force=$("$EVOL_HELPER" pulse-scan --dry-run 2>&1) || rc_no_force=$?
+	assert_success "$rc_no_force" "pulse-scan without --force exits successfully"
+	# Interval guard message contains both "interval" and "Next scan" substrings
+	assert_contains "$output_no_force" "interval" "interval guard message mentions interval"
+	assert_contains "$output_no_force" "Next scan" "interval guard message mentions next scan"
+	assert_not_contains "$output_no_force" "Self-Evolution Pulse Scan" "scan header absent when guard blocks"
+
+	# With --force, should bypass interval guard and run
+	local output_force
+	local rc_force=0
+	output_force=$("$EVOL_HELPER" pulse-scan --force --dry-run 2>&1) || rc_force=$?
+	assert_success "$rc_force" "--force pulse-scan exits successfully"
+	assert_contains "$output_force" "Self-Evolution Pulse Scan" "--force bypasses interval guard"
+
+	# Run --force twice in quick succession — both should execute
+	local output_force2
+	local rc_force2=0
+	output_force2=$("$EVOL_HELPER" pulse-scan --force --dry-run 2>&1) || rc_force2=$?
+	assert_success "$rc_force2" "second --force pulse-scan exits successfully"
+	assert_contains "$output_force2" "Self-Evolution Pulse Scan" "consecutive --force scans both run"
+
+	# Restore original state file
+	if [[ -n "$original_state" ]]; then
+		echo "$original_state" >"$state_file"
+	else
+		rm -f "$state_file"
+	fi
+
+	return 0
+}
+
+# =============================================================================
 # Test: Unknown command
 # =============================================================================
 test_unknown_command() {
@@ -634,6 +700,7 @@ main() {
 	test_gap_evidence
 	test_stats
 	test_pulse_scan_dry_run
+	test_pulse_force_bypass
 	test_gap_lifecycle
 	test_unknown_command
 
