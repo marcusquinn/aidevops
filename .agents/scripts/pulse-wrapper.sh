@@ -526,6 +526,33 @@ ${state_content}
 }
 
 #######################################
+# Clean up worktrees for merged/closed PRs
+#
+# Runs worktree-helper.sh clean --auto to remove worktrees whose
+# branches have been merged or deleted on the remote. This prevents
+# stale worktrees from accumulating on disk after PR merges.
+#
+# Safety: skips worktrees with uncommitted changes or owned by
+# active sessions (handled by worktree-helper.sh).
+#######################################
+cleanup_worktrees() {
+	local helper="${HOME}/.aidevops/agents/scripts/worktree-helper.sh"
+	if [[ ! -x "$helper" ]]; then
+		return 0
+	fi
+
+	# Run from the main repo directory (worktree-helper needs a git context)
+	local cleaned_output
+	cleaned_output=$(bash "$helper" clean --auto 2>&1) || true
+
+	# Log only if something was cleaned
+	if echo "$cleaned_output" | grep -q "Removing\|removed"; then
+		echo "[pulse-wrapper] Worktree cleanup: $(echo "$cleaned_output" | grep -c 'Removing') worktree(s) removed" >>"$LOGFILE"
+	fi
+	return 0
+}
+
+#######################################
 # Main
 #######################################
 main() {
@@ -534,6 +561,7 @@ main() {
 	fi
 
 	cleanup_orphans
+	cleanup_worktrees
 	calculate_max_workers
 	prefetch_state
 	run_pulse
