@@ -1003,6 +1003,12 @@ check_scan_interval() {
 	fi
 	local now
 	now=$(date +%s)
+	# Guard against future timestamps (clock skew, corruption) that would
+	# permanently suppress scans by making elapsed always negative.
+	if [[ "$last_run" -gt "$now" ]]; then
+		log_warn "State timestamp is in the future (${last_run} > ${now}), allowing scan"
+		return 0
+	fi
 	local interval_seconds=$((PULSE_INTERVAL_HOURS * 3600))
 	local elapsed=$((now - last_run))
 
@@ -1019,8 +1025,14 @@ check_scan_interval() {
 # Record pulse scan timestamp
 #######################################
 record_scan_timestamp() {
-	mkdir -p "$EVOL_STATE_DIR"
-	date +%s >"$EVOL_STATE_FILE"
+	if ! mkdir -p "$EVOL_STATE_DIR" 2>/dev/null; then
+		log_warn "Failed to create state directory: $EVOL_STATE_DIR"
+		return 1
+	fi
+	if ! date +%s >"$EVOL_STATE_FILE" 2>/dev/null; then
+		log_warn "Failed to write scan timestamp to: $EVOL_STATE_FILE"
+		return 1
+	fi
 	return 0
 }
 
@@ -1184,8 +1196,10 @@ SELECT '  Detected: ' || (SELECT COUNT(*) FROM capability_gaps WHERE status = 'd
     char(10) || '  Total evidence links: ' || (SELECT COUNT(*) FROM gap_evidence);
 EOF
 
-	# Record scan timestamp for interval guard
-	record_scan_timestamp
+	# Record scan timestamp for interval guard (non-fatal if persistence fails)
+	if ! record_scan_timestamp; then
+		log_warn "Pulse scan completed, but failed to persist interval state"
+	fi
 
 	return 0
 }
