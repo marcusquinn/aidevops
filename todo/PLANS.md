@@ -22,6 +22,86 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-02-28] Multi-Model Orchestration Improvements — Parallel Verification + Bundle Presets
+
+**Status:** Planning
+**Estimate:** ~20h (ai:14h test:4h read:2h)
+**TODO:** t1364 (parent), t1364.1-t1364.3 (verification), t1364.4-t1364.6 (bundles)
+**Logged:** 2026-02-28
+**Brief:** [todo/tasks/t1364-brief.md](tasks/t1364-brief.md)
+**Research:** [#2558](https://github.com/marcusquinn/aidevops/issues/2558) — Perplexity Computer + Microsoft Amplifier comparison
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged}:
+p035,Multi-Model Orchestration Improvements,planning,0,2,,plan|feature|orchestration|models,20h,14h,4h,2h,2026-02-28T00:00Z
+-->
+
+#### Purpose
+
+Two near-term improvements from the multi-model orchestration research review (#2558):
+
+1. **Parallel model verification** catches single-model hallucinations before destructive operations cause irreversible damage. Different providers have different failure modes, so correlated errors are rare. Targeted verification only — not full council-style parallel invocation on every task. Cost: minimal (only triggered on flagged operations).
+
+2. **Bundle-based project presets** right-size tooling per project type. Currently every project gets identical treatment — ShellCheck runs on content sites (waste), haiku is used for complex web-app architecture (under-provisioned). Bundles pre-configure model tier defaults, quality gates, and agent routing per project type.
+
+Inspired by Perplexity Computer (model council for reliability) and Microsoft Amplifier (modular architecture with swappable policies).
+
+#### Architecture
+
+```text
+Workstream 1: Parallel Model Verification
+  t1364.1 Taxonomy → t1364.2 Agent + Script → t1364.3 Pipeline Integration
+  
+  Operation detected → Check taxonomy → Match? → Invoke cross-provider verifier
+                                          │              │
+                                          No             ├── Verified → Proceed
+                                          │              ├── Concerns → Warn/Block
+                                          ▼              └── Disagree → Escalate to opus
+                                        Proceed
+
+Workstream 2: Bundle-Based Project Presets
+  t1364.4 Schema + Defaults → t1364.5 Detection + Resolution → t1364.6 Pipeline Integration
+  
+  Repo path → Check repos.json → Explicit bundle? → Use it
+                                       │
+                                       No → Auto-detect from markers
+                                              │
+                                              ├── package.json → web-app
+                                              ├── Dockerfile → infrastructure
+                                              ├── *.sh → cli-tool
+                                              ├── wp-config.php → content-site
+                                              └── Cargo.toml/go.mod → library
+                                              │
+                                              ▼
+                                        Compose bundles → Apply to dispatch/quality/routing
+```
+
+#### Progress
+
+- [ ] (2026-02-28) Phase 1: Verification workstream ~9h
+  - [ ] t1364.1 Define taxonomy and trigger rules ~2h
+  - [ ] t1364.2 Create verification agent and helper script ~4h
+  - [ ] t1364.3 Wire into pipeline ~3h
+- [ ] (2026-02-28) Phase 2: Bundle workstream ~10h
+  - [ ] t1364.4 Design schema and default bundles ~3h
+  - [ ] t1364.5 Create detection and resolution logic ~4h
+  - [ ] t1364.6 Wire into dispatch, quality, routing ~3h
+
+#### Context from Discussion
+
+- **Source**: Issue #2558 — research review comparing aidevops against Perplexity Computer and Microsoft Amplifier
+- **Scope decision**: Only near-term items (1 and 4) from the 5 proposed improvements. Mid-term items (confidence-weighted selection, modular supervisor decomposition) deferred.
+- **Verification approach**: Targeted, not universal. Full council-style parallel invocation on every task would be expensive and slow. Only high-stakes operations warrant the cost of a second model call.
+- **Bundle composition**: Multiple bundles can combine (e.g., web-app + infrastructure). Union for quality gates, most-restrictive for model defaults.
+- **Cross-provider preference**: Anthropic primary → Google verifier (and vice versa) because different providers have different failure modes. Same-provider different-model is acceptable but less effective.
+
+#### Decision Log
+
+(To be populated during implementation)
+
+#### Surprises & Discoveries
+
+(To be populated during implementation)
+
 ### [2026-02-27] Mission System — Autonomous Long-Running Project Orchestration
 
 **Status:** Planning
