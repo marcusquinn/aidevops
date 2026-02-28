@@ -28,7 +28,11 @@ _ISSUE_SYNC_LIB_LOADED=1
 # Source shared-constants.sh to make the library self-contained.
 # Resolves SCRIPT_DIR from BASH_SOURCE so it works when sourced from any location.
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
-	SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	# Pure-bash dirname replacement — avoids external binary dependency
+	_lib_path="${BASH_SOURCE[0]%/*}"
+	[[ "$_lib_path" == "${BASH_SOURCE[0]}" ]] && _lib_path="."
+	SCRIPT_DIR="$(cd "$_lib_path" && pwd)"
+	unset _lib_path
 fi
 source "${SCRIPT_DIR}/shared-constants.sh"
 
@@ -61,7 +65,8 @@ find_project_root() {
 			echo "$dir"
 			return 0
 		fi
-		dir="$(dirname "$dir")"
+		dir="${dir%/*}"
+		[[ -z "$dir" ]] && dir="/"
 	done
 	print_error "No TODO.md found in directory tree"
 	return 1
