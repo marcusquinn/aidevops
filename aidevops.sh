@@ -1296,8 +1296,23 @@ EOF
 	print_success "Created .aidevops.json"
 
 	# Derive repo name for scaffolding
+	# In worktrees, basename gives the worktree dir name (e.g., "repo-chore-foo"),
+	# not the actual repo name. Prefer: git remote URL > main worktree basename > cwd basename.
 	local repo_name
-	repo_name=$(basename "$project_root")
+	local remote_url
+	remote_url=$(git -C "$project_root" remote get-url origin 2>/dev/null || true)
+	if [[ -n "$remote_url" ]]; then
+		repo_name=$(basename "$remote_url" .git)
+	else
+		# No remote — try main worktree path (first line of `git worktree list`)
+		local main_wt
+		main_wt=$(git -C "$project_root" worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')
+		if [[ -n "$main_wt" ]]; then
+			repo_name=$(basename "$main_wt")
+		else
+			repo_name=$(basename "$project_root")
+		fi
+	fi
 
 	# Create .agents/ directory for project-specific agent context
 	# (The aidevops framework is loaded globally via ~/.aidevops/agents/ — this
