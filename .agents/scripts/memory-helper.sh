@@ -11,9 +11,9 @@
 # - Contextual disambiguation (atomic, self-contained memories)
 #
 # Usage:
-#   memory-helper.sh store --content "learning" [--type TYPE] [--tags "a,b"] [--session-id ID]
+#   memory-helper.sh store --content "learning" [--type TYPE] [--tags "a,b"] [--session-id ID] [--entity ent_xxx]
 #   memory-helper.sh store --content "new info" --supersedes mem_xxx --relation updates
-#   memory-helper.sh recall --query "search terms" [--limit 5] [--type TYPE] [--max-age-days 30]
+#   memory-helper.sh recall --query "search terms" [--limit 5] [--type TYPE] [--max-age-days 30] [--entity ent_xxx]
 #   memory-helper.sh history <id>             # Show version history for a memory
 #   memory-helper.sh stats                    # Show memory statistics
 #   memory-helper.sh prune [--older-than-days 90] [--dry-run]  # Remove stale entries
@@ -125,6 +125,7 @@ STORE OPTIONS:
     --supersedes <id>     ID of memory this updates/extends/derives from
     --relation <type>     Relation type: updates, extends, derives
     --auto                Mark as auto-captured (sets source=auto, tracked separately)
+    --entity <id>         Link learning to an entity (e.g., ent_xxx)
 
 VALID TYPES:
     WORKING_SOLUTION, FAILED_APPROACH, CODEBASE_PATTERN, USER_PREFERENCE,
@@ -145,6 +146,8 @@ RECALL OPTIONS:
     --type <type>         Filter by type
     --max-age-days <n>    Only recent entries
     --project <path>      Filter by project path
+    --entity <id>         Filter by entity (only memories linked to this entity)
+                          Combines with --project for cross-query (entity + project)
     --recent [n]          Show n most recent entries (default: 10)
     --shared              Also search global memory (when using --namespace)
     --auto-only           Show only auto-captured memories
@@ -252,6 +255,19 @@ EXAMPLES:
     memory-helper.sh dedup --dry-run
     memory-helper.sh dedup
     memory-helper.sh dedup --exact-only
+
+ENTITY EXAMPLES:
+    # Store a learning linked to an entity
+    memory-helper.sh store --content "Prefers concise responses" --entity ent_xxx --type USER_PREFERENCE
+
+    # Recall all memories for an entity
+    memory-helper.sh recall --query "preferences" --entity ent_xxx
+
+    # Recent memories for an entity
+    memory-helper.sh recall --recent --entity ent_xxx
+
+    # Cross-query: entity + project (what does this person know about this project?)
+    memory-helper.sh recall --query "deployment" --entity ent_xxx --project ~/Git/myproject
 
 NAMESPACE EXAMPLES:
     # Store in a runner-specific namespace

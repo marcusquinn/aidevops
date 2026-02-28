@@ -197,6 +197,25 @@ EOF
 			echo "[WARN] Failed to add estimated_cost column (may already exist)" >&2
 	fi
 
+	# Create learning_entities junction table if missing (t1363.3 migration)
+	# Links learnings to entities — enables entity-scoped memory queries.
+	# Supports M:M: a learning can relate to multiple entities.
+	local has_learning_entities
+	has_learning_entities=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='learning_entities';" 2>/dev/null || echo "0")
+	if [[ "$has_learning_entities" == "0" ]]; then
+		log_info "Creating learning_entities junction table (t1363.3)..."
+		db "$MEMORY_DB" <<'EOF'
+CREATE TABLE IF NOT EXISTS learning_entities (
+    learning_id TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    PRIMARY KEY (learning_id, entity_id)
+);
+CREATE INDEX IF NOT EXISTS idx_learning_entities_entity ON learning_entities(entity_id);
+EOF
+		log_success "learning_entities junction table created (t1363.3)"
+	fi
+
 	# Create entity memory tables if missing (t1363.1 migration)
 	# Part of the conversational memory system (p035).
 	# These tables extend memory.db with entity tracking, cross-channel identity,
@@ -406,6 +425,16 @@ CREATE TABLE IF NOT EXISTS learning_relations (
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Learning-entity junction table (t1363.3) — links learnings to entities
+-- Enables entity-scoped memory queries (e.g., "what do I know about this person?")
+CREATE TABLE IF NOT EXISTS learning_entities (
+    learning_id TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    PRIMARY KEY (learning_id, entity_id)
+);
+CREATE INDEX IF NOT EXISTS idx_learning_entities_entity ON learning_entities(entity_id);
+
 -- Extended pattern metadata (t1095, t1114) — companion table for pattern records
 -- Stores structured fields that can't go in FTS5 (strategy, quality, failure_mode, tokens, cost)
 CREATE TABLE IF NOT EXISTS pattern_metadata (
@@ -545,6 +574,36 @@ auto_prune() {
 
 	# Update marker
 	touch "$prune_marker"
+	return 0
+}
+
+#######################################
+# Validate that an entity_id exists in the entities table
+# Returns 0 if valid, 1 if not found
+#######################################
+validate_entity_id() {
+	local entity_id="$1"
+	local escaped_id="${entity_id//"'"/"''"}"
+	local exists
+	exists=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM entities WHERE id = '$escaped_id';" 2>/dev/null || echo "0")
+	if [[ "$exists" == "0" ]]; then
+		return 1
+	fi
+	return 0
+}
+
+#######################################
+# Link a learning to an entity in the junction table
+#######################################
+link_learning_entity() {
+	local learning_id="$1"
+	local entity_id="$2"
+	local escaped_learning="${learning_id//"'"/"''"}"
+	local escaped_entity="${entity_id//"'"/"''"}"
+	db "$MEMORY_DB" <<EOF
+INSERT OR IGNORE INTO learning_entities (learning_id, entity_id)
+VALUES ('$escaped_learning', '$escaped_entity');
+EOF
 	return 0
 }
 
