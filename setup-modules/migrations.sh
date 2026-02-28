@@ -251,37 +251,55 @@ migrate_agent_to_agents_folder() {
 			fi
 
 			# Update .gitignore: remove legacy bare ".agents" (now tracked),
-			# add runtime artifact ignores, migrate .agent/ paths
+			# add runtime artifact ignores, migrate .agent/ paths.
+			# SKIP in non-interactive mode (e.g. auto-update cron) to avoid
+			# leaving uncommitted changes in user repos (issue #2570 bug 1).
 			local gitignore="$repo_path/.gitignore"
-			if [[ -f "$gitignore" ]]; then
-				# Remove legacy bare ".agents" and ".agent" entries (added by older versions)
-				# .agents/ is now a real committed directory, not a symlink to ignore
-				if grep -q "^\.agents$" "$gitignore" 2>/dev/null; then
-					sed -i '' '/^\.agents$/d' "$gitignore" 2>/dev/null ||
-						sed -i '/^\.agents$/d' "$gitignore" 2>/dev/null || true
-					print_info "  Removed legacy bare .agents from .gitignore in $(basename "$repo_path")"
+			if [[ "${NON_INTERACTIVE:-false}" == "true" ]]; then
+				if [[ -f "$gitignore" ]]; then
+					local needs_gitignore_update=false
+					if grep -q "^\.agents$" "$gitignore" 2>/dev/null ||
+						grep -q "^\.agent$" "$gitignore" 2>/dev/null ||
+						grep -q "^\.agent/loop-state/" "$gitignore" 2>/dev/null ||
+						! grep -q "^\.agents/loop-state/" "$gitignore" 2>/dev/null; then
+						needs_gitignore_update=true
+					fi
+					if [[ "$needs_gitignore_update" == "true" ]]; then
+						print_warning "  $(basename "$repo_path")/.gitignore needs migration (skipped in non-interactive mode)"
+						print_info "  Run 'aidevops init' in $(basename "$repo_path") or 'setup.sh -i' to apply"
+					fi
 				fi
-				if grep -q "^\.agent$" "$gitignore" 2>/dev/null; then
-					sed -i '' '/^\.agent$/d' "$gitignore" 2>/dev/null ||
-						sed -i '/^\.agent$/d' "$gitignore" 2>/dev/null || true
-				fi
+			else
+				if [[ -f "$gitignore" ]]; then
+					# Remove legacy bare ".agents" and ".agent" entries (added by older versions)
+					# .agents/ is now a real committed directory, not a symlink to ignore
+					if grep -q "^\.agents$" "$gitignore" 2>/dev/null; then
+						sed -i '' '/^\.agents$/d' "$gitignore" 2>/dev/null ||
+							sed -i '/^\.agents$/d' "$gitignore" 2>/dev/null || true
+						print_info "  Removed legacy bare .agents from .gitignore in $(basename "$repo_path")"
+					fi
+					if grep -q "^\.agent$" "$gitignore" 2>/dev/null; then
+						sed -i '' '/^\.agent$/d' "$gitignore" 2>/dev/null ||
+							sed -i '/^\.agent$/d' "$gitignore" 2>/dev/null || true
+					fi
 
-				# Migrate .agent/loop-state/ -> .agents/loop-state/
-				if grep -q "^\.agent/loop-state/" "$gitignore" 2>/dev/null; then
-					sed -i '' 's|^\.agent/loop-state/|.agents/loop-state/|' "$gitignore" 2>/dev/null ||
-						sed -i 's|^\.agent/loop-state/|.agents/loop-state/|' "$gitignore" 2>/dev/null || true
-				fi
+					# Migrate .agent/loop-state/ -> .agents/loop-state/
+					if grep -q "^\.agent/loop-state/" "$gitignore" 2>/dev/null; then
+						sed -i '' 's|^\.agent/loop-state/|.agents/loop-state/|' "$gitignore" 2>/dev/null ||
+							sed -i 's|^\.agent/loop-state/|.agents/loop-state/|' "$gitignore" 2>/dev/null || true
+					fi
 
-				# Add runtime artifact ignores if not present
-				if ! grep -q "^\.agents/loop-state/" "$gitignore" 2>/dev/null; then
-					{
-						echo ""
-						echo "# aidevops runtime artifacts"
-						echo ".agents/loop-state/"
-						echo ".agents/tmp/"
-						echo ".agents/memory/"
-					} >>"$gitignore"
-					print_info "  Added .agents/ runtime artifact ignores in $(basename "$repo_path")"
+					# Add runtime artifact ignores if not present
+					if ! grep -q "^\.agents/loop-state/" "$gitignore" 2>/dev/null; then
+						{
+							echo ""
+							echo "# aidevops runtime artifacts"
+							echo ".agents/loop-state/"
+							echo ".agents/tmp/"
+							echo ".agents/memory/"
+						} >>"$gitignore"
+						print_info "  Added .agents/ runtime artifact ignores in $(basename "$repo_path")"
+					fi
 				fi
 			fi
 		done < <(jq -r '.initialized_repos[].path' "$repos_file" 2>/dev/null)
