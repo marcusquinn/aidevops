@@ -17,7 +17,7 @@
 #   remove <path|branch>   Remove a worktree
 #   status                 Show current worktree info
 #   switch <branch>        Open/create worktree for branch (prints path)
-#   clean                  Remove worktrees for merged branches
+#   clean [--auto]         Remove worktrees for merged branches
 #   help                   Show this help
 #
 # Examples:
@@ -679,6 +679,12 @@ cmd_switch() {
 }
 
 cmd_clean() {
+	local auto_mode=false
+	if [[ "${1:-}" == "--auto" ]]; then
+		auto_mode=true
+		shift
+	fi
+
 	echo -e "${BOLD}Checking for worktrees with merged branches...${NC}"
 	echo ""
 
@@ -755,9 +761,14 @@ cmd_clean() {
 		return 0
 	fi
 
-	echo ""
-	echo -e "${YELLOW}Remove these worktrees? [y/N]${NC}"
-	read -r response
+	local response="n"
+	if [[ "$auto_mode" == "true" ]]; then
+		response="y"
+	else
+		echo ""
+		echo -e "${YELLOW}Remove these worktrees? [y/N]${NC}"
+		read -r response
+	fi
 
 	if [[ "$response" =~ ^[Yy]$ ]]; then
 		# Re-iterate and remove
@@ -923,7 +934,8 @@ COMMANDS
   
   switch <branch>        Get/create worktree for branch (prints path)
   
-  clean                  Remove worktrees for merged branches
+  clean [--auto]         Remove worktrees for merged branches
+                         --auto: skip confirmation prompt (for automated cleanup)
                          Skips worktrees owned by other active sessions (t189)
   
   registry [list|prune]  View or prune the ownership registry (t189, t197)
