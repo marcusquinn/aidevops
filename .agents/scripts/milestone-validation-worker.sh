@@ -197,6 +197,18 @@ reset_validation_state() {
 # Argument Parsing
 # =============================================================================
 
+# Require a non-empty value for a flag that takes an argument.
+# Usage: require_value "--flag-name" "${2-}" || return 2
+require_value() {
+	local flag="$1"
+	local value="${2-}"
+	if [[ -z "$value" || "$value" == --* ]]; then
+		log_error "$flag requires a value"
+		return 2
+	fi
+	return 0
+}
+
 parse_args() {
 	if [[ $# -lt 2 ]]; then
 		log_error "Missing required arguments: mission-file and milestone-number"
@@ -212,7 +224,8 @@ parse_args() {
 		local arg="$1"
 		case "$arg" in
 		--repo-path)
-			REPO_PATH="${2:-}"
+			require_value "$arg" "${2-}" || return 2
+			REPO_PATH="$2"
 			shift 2
 			;;
 		--browser-tests)
@@ -220,11 +233,17 @@ parse_args() {
 			shift
 			;;
 		--browser-url)
-			BROWSER_URL="${2:-http://localhost:3000}"
+			require_value "$arg" "${2-}" || return 2
+			BROWSER_URL="$2"
 			shift 2
 			;;
 		--max-retries)
-			MAX_RETRIES="${2:-3}"
+			require_value "$arg" "${2-}" || return 2
+			if ! echo "$2" | grep -qE '^[0-9]+$'; then
+				log_error "--max-retries requires a numeric value, got: $2"
+				return 2
+			fi
+			MAX_RETRIES="$2"
 			shift 2
 			;;
 		--create-fix-tasks)
