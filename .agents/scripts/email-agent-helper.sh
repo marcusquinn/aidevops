@@ -264,9 +264,10 @@ render_template() {
 
 	# Parse and apply variable substitutions
 	if [[ -n "$vars_string" ]]; then
-		local IFS=','
+		local -a pairs
+		IFS=',' read -ra pairs <<<"$vars_string"
 		local pair
-		for pair in $vars_string; do
+		for pair in "${pairs[@]}"; do
 			local key="${pair%%=*}"
 			local value="${pair#*=}"
 			# Replace {{key}} with value

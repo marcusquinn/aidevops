@@ -43,59 +43,76 @@ Key files to reference:
 ## Acceptance Criteria
 
 - [ ] `email-agent-helper.sh send` sends a templated email via SES with variable substitution
+
   ```yaml
   verify:
     method: codebase
     pattern: "cmd_send"
     path: ".agents/scripts/email-agent-helper.sh"
   ```
+
 - [ ] `email-agent-helper.sh poll` retrieves new emails from S3 and converts to structured data
+
   ```yaml
   verify:
     method: codebase
     pattern: "cmd_poll"
     path: ".agents/scripts/email-agent-helper.sh"
   ```
+
 - [ ] `email-agent-helper.sh extract-codes` detects verification codes and confirmation links
+
   ```yaml
   verify:
     method: codebase
     pattern: "cmd_extract_codes"
     path: ".agents/scripts/email-agent-helper.sh"
   ```
+
 - [ ] `email-agent-helper.sh thread` shows conversation history for a mission
+
   ```yaml
   verify:
     method: codebase
     pattern: "cmd_thread"
     path: ".agents/scripts/email-agent-helper.sh"
   ```
+
 - [ ] Subagent documentation at `services/email/email-agent.md` with YAML frontmatter
+
   ```yaml
   verify:
     method: codebase
     pattern: "mode: subagent"
     path: ".agents/services/email/email-agent.md"
   ```
+
 - [ ] Config template at `configs/email-agent-config.json.txt`
+
   ```yaml
   verify:
     method: bash
     run: "test -f configs/email-agent-config.json.txt"
   ```
+
 - [ ] Test suite passes
+
   ```yaml
   verify:
     method: bash
     run: "bash tests/test-email-agent-helper.sh"
   ```
+
 - [ ] ShellCheck clean on helper script
+
   ```yaml
   verify:
     method: bash
     run: "shellcheck .agents/scripts/email-agent-helper.sh"
   ```
+
 - [ ] Updated subagent-index.toon with email-agent entry
+
   ```yaml
   verify:
     method: codebase
