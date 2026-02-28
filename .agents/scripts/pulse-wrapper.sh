@@ -534,14 +534,17 @@ ${state_content}
 }
 
 #######################################
-# Clean up worktrees for merged/closed PRs
+# Clean up worktrees for merged/closed PRs across ALL managed repos
 #
-# Runs worktree-helper.sh clean --auto to remove worktrees whose
-# branches have been merged or deleted on the remote. This prevents
-# stale worktrees from accumulating on disk after PR merges.
+# Iterates repos.json and runs worktree-helper.sh clean --auto --force-merged
+# in each repo directory. This prevents stale worktrees from accumulating
+# on disk after PR merges — including squash merges that git branch --merged
+# cannot detect.
 #
-# Safety: skips worktrees with uncommitted changes or owned by
-# active sessions (handled by worktree-helper.sh).
+# --force-merged: uses gh pr list to detect squash merges and force-removes
+# dirty worktrees when the PR is confirmed merged (dirty state = abandoned WIP).
+#
+# Safety: skips worktrees owned by active sessions (handled by worktree-helper.sh).
 #######################################
 cleanup_worktrees() {
 	local helper="${HOME}/.aidevops/agents/scripts/worktree-helper.sh"
@@ -549,14 +552,48 @@ cleanup_worktrees() {
 		return 0
 	fi
 
-	# Run from the main repo directory (worktree-helper needs a git context)
-	local cleaned_output
-	cleaned_output=$(bash "$helper" clean --auto 2>&1) || true
+	local repos_json="${HOME}/.config/aidevops/repos.json"
+	local total_removed=0
 
-	# Log only if something was cleaned
-	if echo "$cleaned_output" | grep -q "Removing\|removed"; then
-		echo "[pulse-wrapper] Worktree cleanup: $(echo "$cleaned_output" | grep -c 'Removing') worktree(s) removed" >>"$LOGFILE"
+	if [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
+		# Iterate all repos, skip local_only (no GitHub remote for PR detection)
+		local repo_paths
+		repo_paths=$(jq -r '.[] | select(.local_only != true) | .path' "$repos_json" 2>/dev/null || echo "")
+
+		local repo_path
+		while IFS= read -r repo_path; do
+			[[ -z "$repo_path" ]] && continue
+			[[ ! -d "$repo_path/.git" ]] && continue
+
+			local cleaned_output
+			cleaned_output=$(git -C "$repo_path" worktree list 2>/dev/null | wc -l)
+			# Skip repos with only 1 worktree (the main one) — nothing to clean
+			if [[ "$cleaned_output" -le 1 ]]; then
+				continue
+			fi
+
+			# Run helper in a subshell cd'd to the repo (it uses git rev-parse --show-toplevel)
+			local clean_result
+			clean_result=$(cd "$repo_path" && bash "$helper" clean --auto --force-merged 2>&1) || true
+
+			local count
+			count=$(echo "$clean_result" | grep -c 'Removing' || echo "0")
+			if [[ "$count" -gt 0 ]]; then
+				local repo_name
+				repo_name=$(basename "$repo_path")
+				echo "[pulse-wrapper] Worktree cleanup ($repo_name): $count worktree(s) removed" >>"$LOGFILE"
+				total_removed=$((total_removed + count))
+			fi
+		done <<<"$repo_paths"
+	else
+		# Fallback: just clean the current repo (legacy behaviour)
+		local cleaned_output
+		cleaned_output=$(bash "$helper" clean --auto --force-merged 2>&1) || true
+		if echo "$cleaned_output" | grep -q "Removing\|removed"; then
+			echo "[pulse-wrapper] Worktree cleanup: $(echo "$cleaned_output" | grep -c 'Removing') worktree(s) removed" >>"$LOGFILE"
+		fi
 	fi
+
 	return 0
 }
 

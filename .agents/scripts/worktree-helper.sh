@@ -17,7 +17,7 @@
 #   remove <path|branch>   Remove a worktree
 #   status                 Show current worktree info
 #   switch <branch>        Open/create worktree for branch (prints path)
-#   clean [--auto]         Remove worktrees for merged branches
+#   clean [--auto] [--force-merged]  Remove worktrees for merged branches
 #   help                   Show this help
 #
 # Examples:
@@ -680,10 +680,15 @@ cmd_switch() {
 
 cmd_clean() {
 	local auto_mode=false
-	if [[ "${1:-}" == "--auto" ]]; then
-		auto_mode=true
+	local force_merged=false
+	while [[ $# -gt 0 ]]; do
+		case "${1:-}" in
+		--auto) auto_mode=true ;;
+		--force-merged) force_merged=true ;;
+		*) break ;;
+		esac
 		shift
-	fi
+	done
 
 	echo -e "${BOLD}Checking for worktrees with merged branches...${NC}"
 	echo ""
@@ -697,6 +702,13 @@ cmd_clean() {
 
 	# Fetch to get current remote branch state (detects deleted branches)
 	git fetch --prune origin 2>/dev/null || true
+
+	# Build a lookup of merged PR branches for squash-merge detection.
+	# gh pr list only returns squash-merged PRs that git branch --merged misses.
+	local merged_pr_branches=""
+	if command -v gh &>/dev/null; then
+		merged_pr_branches=$(gh pr list --state merged --limit 200 --json headRefName --jq '.[].headRefName' 2>/dev/null || echo "")
+	fi
 
 	while IFS= read -r line; do
 		if [[ "$line" =~ ^worktree\ (.+)$ ]]; then
@@ -719,14 +731,13 @@ cmd_clean() {
 					! git show-ref --verify --quiet "refs/remotes/origin/$worktree_branch" 2>/dev/null; then
 					is_merged=true
 					merge_type="remote deleted"
-				fi
-
-				# Safety check: skip if worktree has uncommitted changes
-				if [[ "$is_merged" == "true" ]] && worktree_has_changes "$worktree_path"; then
-					echo -e "  ${RED}$worktree_branch${NC} (has uncommitted changes - skipping)"
-					echo "    $worktree_path"
-					echo ""
-					is_merged=false
+				# Check 3: Squash-merge detection via GitHub PR state
+				# GitHub squash merges create a new commit — the original branch is NOT
+				# an ancestor of the target, so git branch --merged misses it. The remote
+				# branch may still exist if "auto-delete head branches" is off.
+				elif [[ -n "$merged_pr_branches" ]] && echo "$merged_pr_branches" | grep -qx "$worktree_branch"; then
+					is_merged=true
+					merge_type="squash-merged PR"
 				fi
 
 				# Ownership check (t189): skip if owned by another active session
@@ -739,6 +750,19 @@ cmd_clean() {
 					echo "    $worktree_path"
 					echo ""
 					is_merged=false
+				fi
+
+				# Dirty check: behaviour depends on --force-merged flag
+				if [[ "$is_merged" == "true" ]] && worktree_has_changes "$worktree_path"; then
+					if [[ "$force_merged" == "true" ]]; then
+						# PR is confirmed merged — dirty state is abandoned WIP, safe to force-remove
+						merge_type="$merge_type, dirty (force)"
+					else
+						echo -e "  ${RED}$worktree_branch${NC} (has uncommitted changes - skipping)"
+						echo "    $worktree_path"
+						echo ""
+						is_merged=false
+					fi
 				fi
 
 				if [[ "$is_merged" == "true" ]]; then
@@ -780,13 +804,10 @@ cmd_clean() {
 			elif [[ -z "$line" ]]; then
 				if [[ -n "$worktree_branch" ]] && [[ "$worktree_branch" != "$default_branch" ]]; then
 					local should_remove=false
+					local use_force=false
 
-					# Safety check: never remove worktrees with uncommitted changes
-					if worktree_has_changes "$worktree_path"; then
-						echo -e "${RED}Skipping $worktree_branch - has uncommitted changes${NC}"
-						should_remove=false
 					# Ownership check (t189): never remove worktrees owned by other sessions
-					elif is_worktree_owned_by_others "$worktree_path"; then
+					if is_worktree_owned_by_others "$worktree_path"; then
 						local rm_owner_info
 						rm_owner_info=$(check_worktree_owner "$worktree_path")
 						local rm_owner_pid
@@ -800,17 +821,40 @@ cmd_clean() {
 					elif branch_was_pushed "$worktree_branch" &&
 						! git show-ref --verify --quiet "refs/remotes/origin/$worktree_branch" 2>/dev/null; then
 						should_remove=true
+					# Check 3: Squash-merged PR
+					elif [[ -n "$merged_pr_branches" ]] && echo "$merged_pr_branches" | grep -qx "$worktree_branch"; then
+						should_remove=true
+					fi
+
+					# If should_remove but has changes, need --force-merged to proceed
+					if [[ "$should_remove" == "true" ]] && worktree_has_changes "$worktree_path"; then
+						if [[ "$force_merged" == "true" ]]; then
+							use_force=true
+						else
+							echo -e "${RED}Skipping $worktree_branch - has uncommitted changes${NC}"
+							should_remove=false
+						fi
 					fi
 
 					if [[ "$should_remove" == "true" ]]; then
 						echo -e "${BLUE}Removing $worktree_branch...${NC}"
-						# Clean up aidevops runtime files before removal
+						# Clean up heavy directories first to speed up removal
+						# (node_modules, .next, .turbo can have 100k+ files)
+						rm -rf "$worktree_path/node_modules" 2>/dev/null || true
+						rm -rf "$worktree_path/.next" 2>/dev/null || true
+						rm -rf "$worktree_path/.turbo" 2>/dev/null || true
+						# Clean up aidevops runtime files
 						rm -rf "$worktree_path/.agents/loop-state" 2>/dev/null || true
 						rm -rf "$worktree_path/.agents/tmp" 2>/dev/null || true
 						rm -f "$worktree_path/.agents/.DS_Store" 2>/dev/null || true
 						rmdir "$worktree_path/.agent" 2>/dev/null || true
-						# Don't use --force to prevent data loss
-						if ! git worktree remove "$worktree_path" 2>/dev/null; then
+
+						local remove_flag=""
+						if [[ "$use_force" == "true" ]]; then
+							remove_flag="--force"
+						fi
+						# shellcheck disable=SC2086
+						if ! git worktree remove $remove_flag "$worktree_path" 2>/dev/null; then
 							echo -e "${RED}Failed to remove $worktree_branch - may have uncommitted changes${NC}"
 						else
 							# Unregister ownership (t189)
@@ -934,8 +978,12 @@ COMMANDS
   
   switch <branch>        Get/create worktree for branch (prints path)
   
-  clean [--auto]         Remove worktrees for merged branches
+  clean [--auto] [--force-merged]
+                         Remove worktrees for merged branches
                          --auto: skip confirmation prompt (for automated cleanup)
+                         --force-merged: force-remove dirty worktrees when PR is
+                           confirmed merged (dirty state = abandoned WIP). Also
+                           detects squash merges via gh pr list.
                          Skips worktrees owned by other active sessions (t189)
   
   registry [list|prune]  View or prune the ownership registry (t189, t197)
