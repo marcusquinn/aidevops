@@ -50,6 +50,11 @@ readonly VALID_GAP_STATUSES="detected todo_created resolved wont_fix"
 # Minimum interactions to consider for pattern scanning
 readonly MIN_INTERACTIONS_FOR_SCAN=3
 
+# Pulse interval guard — minimum hours between automatic scans
+readonly PULSE_INTERVAL_HOURS=6
+readonly EVOL_STATE_DIR="${HOME}/.aidevops/logs"
+readonly EVOL_STATE_FILE="${EVOL_STATE_DIR}/self-evolution-last-run"
+
 #######################################
 # SQLite wrapper (same as entity/memory system)
 #######################################
@@ -64,6 +69,24 @@ evol_db() {
 evol_sql_escape() {
 	local val="$1"
 	echo "${val//\'/\'\'}"
+	return 0
+}
+
+#######################################
+# SQL-escape a value for use in LIKE patterns
+# Escapes single quotes AND LIKE wildcards (%, _)
+# Use with: LIKE '...' ESCAPE '\'
+#######################################
+evol_sql_escape_like() {
+	local val="$1"
+	# Escape backslash first (so it doesn't double-escape later replacements)
+	val="${val//\\/\\\\}"
+	# Escape LIKE wildcards
+	val="${val//%/\\%}"
+	val="${val//_/\\_}"
+	# Escape single quotes for SQL string literal
+	val="${val//\'/\'\'}"
+	echo "$val"
 	return 0
 }
 
@@ -174,7 +197,10 @@ cmd_scan_patterns() {
 			format="json"
 			shift
 			;;
-		*) shift ;;
+		*)
+			log_warn "scan-patterns: unknown option: $1"
+			shift
+			;;
 		esac
 	done
 
@@ -381,7 +407,10 @@ cmd_detect_gaps() {
 			dry_run=true
 			shift
 			;;
-		*) shift ;;
+		*)
+			log_warn "detect-gaps: unknown option: $1"
+			shift
+			;;
 		esac
 	done
 
@@ -569,7 +598,10 @@ cmd_create_todo() {
 			repo_path="$2"
 			shift 2
 			;;
-		*) shift ;;
+		*)
+			log_warn "create-todo: unknown option: $1"
+			shift
+			;;
 		esac
 	done
 
@@ -772,7 +804,10 @@ cmd_list_gaps() {
 			sort_by="$2"
 			shift 2
 			;;
-		*) shift ;;
+		*)
+			log_warn "list-gaps: unknown option: $1"
+			shift
+			;;
 		esac
 	done
 
@@ -863,7 +898,10 @@ cmd_update_gap() {
 			todo_ref="$2"
 			shift 2
 			;;
-		*) shift ;;
+		*)
+			log_warn "update-gap: unknown option: $1"
+			shift
+			;;
 		esac
 	done
 
@@ -924,7 +962,10 @@ cmd_resolve_gap() {
 			todo_ref="$2"
 			shift 2
 			;;
-		*) shift ;;
+		*)
+			log_warn "resolve-gap: unknown option: $1"
+			shift
+			;;
 		esac
 	done
 
@@ -943,6 +984,40 @@ cmd_resolve_gap() {
 }
 
 #######################################
+# Check pulse scan interval guard
+# Returns 0 if enough time has passed, 1 if too soon
+#######################################
+check_scan_interval() {
+	if [[ ! -f "$EVOL_STATE_FILE" ]]; then
+		return 0
+	fi
+
+	local last_run
+	last_run=$(cat "$EVOL_STATE_FILE" 2>/dev/null || echo "0")
+	local now
+	now=$(date +%s)
+	local interval_seconds=$((PULSE_INTERVAL_HOURS * 3600))
+	local elapsed=$((now - last_run))
+
+	if [[ "$elapsed" -lt "$interval_seconds" ]]; then
+		local remaining=$(((interval_seconds - elapsed) / 60))
+		log_info "Pulse scan ran ${elapsed}s ago (interval: ${interval_seconds}s). Next scan in ~${remaining}m. Use --force to override."
+		return 1
+	fi
+
+	return 0
+}
+
+#######################################
+# Record pulse scan timestamp
+#######################################
+record_scan_timestamp() {
+	mkdir -p "$EVOL_STATE_DIR"
+	date +%s >"$EVOL_STATE_FILE"
+	return 0
+}
+
+#######################################
 # Pulse scan — integration point for supervisor pulse
 # Runs the full self-evolution cycle:
 #   1. Scan recent interactions for patterns
@@ -957,6 +1032,7 @@ cmd_pulse_scan() {
 	local auto_todo_threshold=3
 	local repo_path=""
 	local dry_run=false
+	local force=false
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -976,9 +1052,21 @@ cmd_pulse_scan() {
 			dry_run=true
 			shift
 			;;
-		*) shift ;;
+		--force)
+			force=true
+			shift
+			;;
+		*)
+			log_warn "Unknown option: $1"
+			shift
+			;;
 		esac
 	done
+
+	# Interval guard — skip if scanned recently (unless --force)
+	if [[ "$force" != true ]] && ! check_scan_interval; then
+		return 0
+	fi
 
 	init_evol_db
 
@@ -1089,6 +1177,9 @@ SELECT '  Detected: ' || (SELECT COUNT(*) FROM capability_gaps WHERE status = 'd
     char(10) || '  Total evidence links: ' || (SELECT COUNT(*) FROM gap_evidence);
 EOF
 
+	# Record scan timestamp for interval guard
+	record_scan_timestamp
+
 	return 0
 }
 
@@ -1104,7 +1195,10 @@ cmd_stats() {
 			format="json"
 			shift
 			;;
-		*) shift ;;
+		*)
+			log_warn "stats: unknown option: $1"
+			shift
+			;;
 		esac
 	done
 
@@ -1259,6 +1353,7 @@ PULSE-SCAN OPTIONS:
     --auto-todo-threshold <n>  Frequency threshold for auto-TODO (default: 3)
     --repo-path <path>  Repository path for TODO creation
     --dry-run           Scan without creating TODOs
+    --force             Skip interval guard (default: 6h between scans)
 
 SELF-EVOLUTION LOOP:
     The self-evolution loop is the core differentiator of the entity memory
@@ -1314,6 +1409,9 @@ EXAMPLES:
 
     # Run full pulse scan (for supervisor integration)
     self-evolution-helper.sh pulse-scan --auto-todo-threshold 3
+
+    # Force pulse scan (bypass 6h interval guard)
+    self-evolution-helper.sh pulse-scan --force
 
     # List detected gaps sorted by frequency
     self-evolution-helper.sh list-gaps --status detected --sort frequency
