@@ -250,6 +250,7 @@ Commands:
     hybrid <provider> <emb_db> <mem_db> <query> [limit] - Hybrid FTS5+semantic (RRF)
     index <provider> <memory_db> <embeddings_db>     - Index all memories
     add <provider> <memory_db> <embeddings_db> <id>  - Index single memory
+    find-similar <provider> <emb_db> <mem_db> <text> <type> [threshold] - Semantic dedup
     status <embeddings_db>                           - Show index stats
 """
 
@@ -630,6 +631,72 @@ def cmd_status(embeddings_db: str):
     }))
 
 
+def cmd_find_similar(provider: str, embeddings_db: str, memory_db: str,
+                     content: str, mem_type: str, threshold: float = 0.85):
+    """Find semantically similar memory for dedup.
+
+    Returns the most similar existing memory of the same type if its
+    cosine similarity exceeds the threshold. Used by check_duplicate()
+    in _common.sh to replace exact-string dedup with semantic similarity.
+
+    Output: JSON with {id, score, content} of best match, or {} if none.
+    """
+    dim = get_embedding_dim(provider)
+
+    # Embed the candidate content (same format as indexing)
+    combined = f"[{mem_type}] {content}"
+    query_embedding = embed_text(combined, provider)
+
+    db_path = Path(embeddings_db)
+    if not db_path.exists():
+        print(json.dumps({}))
+        return
+
+    emb_conn = init_embeddings_db(embeddings_db)
+    rows = emb_conn.execute(
+        "SELECT memory_id, embedding, embedding_dim FROM embeddings WHERE provider = ?",
+        (provider,)
+    ).fetchall()
+    emb_conn.close()
+
+    if not rows:
+        print(json.dumps({}))
+        return
+
+    # Find best match
+    best_id = None
+    best_score = 0.0
+    for memory_id, emb_blob, emb_dim in rows:
+        actual_dim = emb_dim if emb_dim else dim
+        stored_embedding = unpack_embedding(emb_blob, actual_dim)
+        score = cosine_similarity(query_embedding, stored_embedding)
+        if score > best_score:
+            best_score = score
+            best_id = memory_id
+
+    if best_id is None or best_score < threshold:
+        print(json.dumps({}))
+        return
+
+    # Verify the match is the same type in memory DB
+    mem_conn = sqlite3.connect(memory_db)
+    row = mem_conn.execute(
+        "SELECT id, content, type FROM learnings WHERE id = ? AND type = ?",
+        (best_id, mem_type)
+    ).fetchone()
+    mem_conn.close()
+
+    if not row:
+        print(json.dumps({}))
+        return
+
+    print(json.dumps({
+        "id": row[0],
+        "content": row[1][:200],
+        "score": round(best_score, 4),
+    }))
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print(__doc__)
@@ -651,6 +718,10 @@ if __name__ == "__main__":
         cmd_add(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5])
     elif command == "status":
         cmd_status(sys.argv[2])
+    elif command == "find-similar":
+        cmd_find_similar(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5],
+                         sys.argv[6],
+                         float(sys.argv[7]) if len(sys.argv) > 7 else 0.85)
     else:
         print(f"Unknown command: {command}")
         sys.exit(1)
@@ -1032,6 +1103,79 @@ cmd_auto_index() {
 }
 
 #######################################
+# Find semantically similar memory for dedup (t1363.6)
+# Replaces exact-string dedup with semantic similarity.
+# Returns the matching memory ID on stdout if a similar memory exists
+# above the threshold, or empty string if no match.
+#
+# Arguments:
+#   $1 - content text to check
+#   $2 - memory type (e.g., WORKING_SOLUTION)
+#   $3 - similarity threshold (default: 0.85)
+#
+# Exit: 0 if similar found (ID on stdout), 1 if no match
+#######################################
+cmd_find_similar() {
+	local content="${1:-}"
+	local mem_type="${2:-}"
+	local threshold="${3:-0.85}"
+
+	if [[ -z "$content" || -z "$mem_type" ]]; then
+		return 1
+	fi
+
+	# Quick checks: bail fast if not configured
+	if [[ ! -f "$CONFIG_FILE" ]]; then
+		return 1
+	fi
+
+	if [[ ! -f "$EMBEDDINGS_DB" ]]; then
+		return 1
+	fi
+
+	# Check deps silently
+	if ! check_deps 2>/dev/null; then
+		return 1
+	fi
+
+	local provider
+	provider=$(get_provider)
+
+	create_python_engine 2>/dev/null
+
+	local result
+	if [[ "$provider" == "openai" ]]; then
+		local api_key
+		api_key=$(get_openai_key 2>/dev/null) || return 1
+		result=$(OPENAI_API_KEY="$api_key" python3 "$PYTHON_SCRIPT" find-similar \
+			"$provider" "$EMBEDDINGS_DB" "$MEMORY_DB" "$content" "$mem_type" "$threshold" 2>/dev/null) || return 1
+	else
+		result=$(python3 "$PYTHON_SCRIPT" find-similar \
+			"$provider" "$EMBEDDINGS_DB" "$MEMORY_DB" "$content" "$mem_type" "$threshold" 2>/dev/null) || return 1
+	fi
+
+	# Parse result — empty JSON object means no match
+	if [[ -z "$result" || "$result" == "{}" ]]; then
+		return 1
+	fi
+
+	# Extract the matching memory ID
+	local match_id
+	if command -v jq &>/dev/null; then
+		match_id=$(echo "$result" | jq -r '.id // empty' 2>/dev/null)
+	else
+		match_id=$(echo "$result" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('id',''))" 2>/dev/null)
+	fi
+
+	if [[ -n "$match_id" ]]; then
+		echo "$match_id"
+		return 0
+	fi
+
+	return 1
+}
+
+#######################################
 # Show index status
 #######################################
 cmd_status() {
@@ -1128,6 +1272,7 @@ COMMANDS:
   search "query" --limit 10        Search with custom limit
   add <memory_id>                  Index single memory
   auto-index <memory_id>           Auto-index hook (called by memory-helper.sh)
+  find-similar "text" TYPE [0.85]  Semantic dedup check (used by check_duplicate)
   status                           Show index stats and provider info
   rebuild                          Rebuild entire index
   provider [local|openai]          Show or switch embedding provider
@@ -1209,6 +1354,7 @@ main() {
 	search) cmd_search "$@" ;;
 	add) cmd_add "${1:-}" ;;
 	auto-index) cmd_auto_index "${1:-}" ;;
+	find-similar) cmd_find_similar "$@" ;;
 	status) cmd_status ;;
 	rebuild) cmd_rebuild ;;
 	provider) cmd_provider "${1:-}" ;;

@@ -361,8 +361,17 @@ export interface BotConfig {
   maxFileSize: number;
   /** Auto-join group invitations */
   autoJoinGroups: boolean;
-  /** Session idle timeout in seconds (default: 300) */
+  /** Session idle timeout in seconds (default: 300, used as fallback when AI judgment unavailable) */
   sessionIdleTimeout: number;
+  /**
+   * Enable AI-judged thresholds (t1363.6).
+   * When true, replaces fixed sessionIdleTimeout with AI judgment via
+   * conversation-helper.sh idle-check, and uses entity-preference-aware
+   * response sizing instead of fixed maxPromptLength.
+   * Falls back to deterministic thresholds when AI is unavailable.
+   * Default: auto-detected (true if ai-research-helper.sh exists)
+   */
+  useIntelligentThresholds?: boolean;
   /** Data directory for bot state (default: ~/.aidevops/.agent-workspace/simplex-bot) */
   dataDir?: string;
 }
