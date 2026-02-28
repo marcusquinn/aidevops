@@ -1,0 +1,15 @@
+# Support Inquiry - for technical support or billing questions to vendors
+Hello,
+
+I am contacting you regarding {{INQUIRY_TOPIC}} for our account ({{ACCOUNT_IDENTIFIER}}).
+
+{{INQUIRY_DETAILS}}
+
+Environment details:
+{{ENVIRONMENT_INFO}}
+
+Could you please advise on the best way to resolve this? We are available for a call or further email correspondence.
+
+Thank you,
+{{SENDER_NAME}}
+{{COMPANY_NAME}}

@@ -1,0 +1,4 @@
+# Generic - minimal template for custom messages
+{{BODY}}
+
+{{SIGNATURE}}

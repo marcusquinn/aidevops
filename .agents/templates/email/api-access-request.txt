@@ -1,0 +1,16 @@
+# API Access Request - for requesting developer/API access from vendors
+Hello,
+
+I am writing to request API access for {{COMPANY_NAME}}.
+
+Use case: {{USE_CASE}}
+
+We would like to integrate your service into our platform and would appreciate access to your developer API. Please let us know the next steps for obtaining API credentials.
+
+If you need any additional information about our use case or company, please don't hesitate to ask.
+
+Thank you for your time.
+
+Best regards,
+{{SENDER_NAME}}
+{{COMPANY_NAME}}

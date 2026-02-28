@@ -1,0 +1,16 @@
+# Verification Response - for responding to identity/business verification requests
+Hello,
+
+Thank you for your verification request. Please find the requested information below.
+
+Company: {{COMPANY_NAME}}
+Contact: {{CONTACT_NAME}}
+Website: {{WEBSITE_URL}}
+
+{{VERIFICATION_DETAILS}}
+
+Please let me know if you need any additional documentation or information to complete the verification process.
+
+Best regards,
+{{SENDER_NAME}}
+{{COMPANY_NAME}}
