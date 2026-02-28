@@ -471,7 +471,7 @@ After task completion, the loop automatically:
 
    **Secondary: search for additional related issues only.** After including the primary `$ISSUE_NUM`, optionally search for duplicate or related issues (e.g., CodeRabbit-created issues for the same task): `gh issue list --state open --search "<task_id>:"`. Only add `Closes` for issues whose title starts with the same task ID prefix. Never add `Closes` for an issue you found by keyword similarity alone — verify the task ID matches.
 
-   A comment like "Resolved by PR #NNN" does NOT create a link — only closing keywords in the PR body do.
+   A comment like "Resolved by PR #NNN" does NOT create a link — only closing keywords in the PR body do. **Caution:** GitHub parses `Closes #NNN` anywhere in the PR body — including explanatory prose. If describing a bug that involved wrong issue linkage, use backtick-escaped references (`` `Closes #NNN` ``) or rephrase to avoid the pattern. PR #2512 itself closed the wrong issue because its description mentioned `Closes #2498` when explaining the original bug.
 3. **Label Update**: Update linked issue to `status:in-review` (see below)
 4. **PR Review**: Monitors CI checks and review status
 5. **Merge**: Squash merge (without `--delete-branch` when in worktree)
