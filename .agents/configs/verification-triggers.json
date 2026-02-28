@@ -1,0 +1,155 @@
+{
+  "_comment": "Verification trigger patterns for high-stakes operation detection (t1364.1). Machine-readable companion to reference/high-stakes-operations.md. Agent judgment overrides pattern matching.",
+  "_docs": "See .agents/reference/high-stakes-operations.md for full taxonomy, risk levels, and policy schema.",
+
+  "version": "1.0.0",
+
+  "categories": {
+    "git_destructive": {
+      "risk_level": "critical",
+      "default_gate": "block",
+      "command_patterns": [
+        "git push --force",
+        "git push -f ",
+        "git push --force-with-lease",
+        "git push.*--delete",
+        "git reset --hard",
+        "git rebase.*origin/",
+        "git filter-branch",
+        "git reflog expire",
+        "git gc --prune",
+        "git branch -D ",
+        "git tag -d ",
+        "git push origin :refs/tags/"
+      ],
+      "context_signals": {
+        "branch_patterns": ["main", "master", "release/*", "production"],
+        "description": "Severity increases when operating on protected branches"
+      }
+    },
+
+    "production_deploy": {
+      "risk_level": "critical",
+      "default_gate": "block",
+      "command_patterns": [
+        "coolify deploy.*--env production",
+        "coolify deploy.*--env prod",
+        "vercel --prod",
+        "vercel deploy --prod",
+        "docker stack deploy.*prod",
+        "kubectl apply.*--namespace prod",
+        "kubectl apply.*-n prod",
+        "helm upgrade.*--namespace prod",
+        "fly deploy.*--env production",
+        "railway up.*--environment production",
+        "kamal deploy"
+      ],
+      "context_signals": {
+        "env_vars": ["NODE_ENV=production", "RAILS_ENV=production", "DEPLOY_ENV=production"],
+        "file_patterns": ["**/deploy-production*", "**/prod.env", "**/.env.production"],
+        "description": "Presence of production environment indicators"
+      }
+    },
+
+    "data_migration": {
+      "risk_level": "high",
+      "default_gate": "warn",
+      "command_patterns": [
+        "DROP TABLE",
+        "DROP COLUMN",
+        "DROP DATABASE",
+        "DROP SCHEMA",
+        "ALTER TABLE.*DROP",
+        "TRUNCATE TABLE",
+        "DELETE FROM.*WHERE",
+        "UPDATE.*SET.*WHERE",
+        "pg_restore.*--clean",
+        "mysql.*< .*\\.sql",
+        "psql.*< .*\\.sql",
+        "drizzle-kit push",
+        "prisma migrate deploy",
+        "prisma db push"
+      ],
+      "context_signals": {
+        "file_patterns": ["**/migrations/down*", "**/migrations/*drop*", "**/migrations/*delete*"],
+        "connection_strings": ["host=prod", "host=production", "@prod-", "@production-"],
+        "description": "Destructive SQL or migration commands targeting production data"
+      }
+    },
+
+    "security_sensitive": {
+      "risk_level": "high",
+      "default_gate": "warn",
+      "command_patterns": [
+        "chmod 777",
+        "chmod -R 777",
+        "chmod o\\+w",
+        "chown.*root",
+        "iptables -F",
+        "iptables -P.*ACCEPT",
+        "ufw disable",
+        "ufw allow.*0\\.0\\.0\\.0",
+        "security-group.*--ingress.*0\\.0\\.0\\.0/0",
+        "openssl.*-nodes",
+        "ssh-keygen.*-f.*id_rsa",
+        "gopass rm",
+        "gopass move"
+      ],
+      "context_signals": {
+        "file_patterns": ["**/*.pem", "**/*.key", "**/.env*", "**/credentials.*", "**/secrets.*", "**/.htpasswd", "**/authorized_keys"],
+        "commit_patterns": ["password", "secret", "token", "api_key", "private_key"],
+        "description": "Operations affecting auth, encryption, or access control"
+      }
+    },
+
+    "financial": {
+      "risk_level": "high",
+      "default_gate": "warn",
+      "command_patterns": [
+        "stripe.*price.*update",
+        "stripe.*product.*update",
+        "stripe.*subscription.*cancel",
+        "stripe.*refund.*create",
+        "stripe.*webhook.*update",
+        "revenuecat.*offering.*update"
+      ],
+      "context_signals": {
+        "file_patterns": ["**/stripe/**", "**/revenuecat/**", "**/billing/**", "**/payments/**", "**/invoices/**"],
+        "api_patterns": ["api.stripe.com", "api.revenuecat.com"],
+        "description": "Payment processing, pricing, or billing configuration changes"
+      }
+    },
+
+    "infrastructure_destruction": {
+      "risk_level": "critical",
+      "default_gate": "block",
+      "command_patterns": [
+        "terraform destroy",
+        "terraform apply.*-destroy",
+        "pulumi destroy",
+        "aws.*delete-",
+        "aws.*terminate-",
+        "gcloud.*delete",
+        "az.*delete",
+        "doctl.*delete",
+        "hcloud.*delete",
+        "docker volume rm",
+        "docker system prune -a",
+        "rm -rf /",
+        "rm -rf /*"
+      ],
+      "context_signals": {
+        "file_patterns": ["**/*.tfstate", "**/Pulumi.*.yaml", "**/terraform.tfvars"],
+        "description": "Infrastructure-as-code destruction or cloud resource deletion"
+      }
+    }
+  },
+
+  "policy_defaults": {
+    "enabled": true,
+    "default_gate": "warn",
+    "cross_provider": true,
+    "verifier_tier": "sonnet",
+    "escalation_tier": "opus"
+  }
+}
