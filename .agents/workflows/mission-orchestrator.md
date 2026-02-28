@@ -147,10 +147,20 @@ Delegate to the milestone validation worker (`workflows/milestone-validation.md`
 ~/.aidevops/agents/scripts/milestone-validation-worker.sh \
   "$MISSION_FILE" "$MILESTONE_NUM"
 
-# UI milestone with browser tests
+# UI milestone with browser tests (project has playwright.config.ts)
 ~/.aidevops/agents/scripts/milestone-validation-worker.sh \
   "$MISSION_FILE" "$MILESTONE_NUM" \
   --browser-tests --browser-url http://localhost:3000
+
+# UI milestone with browser QA (no test suite needed — visual smoke test)
+~/.aidevops/agents/scripts/milestone-validation-worker.sh \
+  "$MISSION_FILE" "$MILESTONE_NUM" \
+  --browser-qa --browser-url http://localhost:3000
+
+# Both browser tests and browser QA
+~/.aidevops/agents/scripts/milestone-validation-worker.sh \
+  "$MISSION_FILE" "$MILESTONE_NUM" \
+  --browser-tests --browser-qa --browser-url http://localhost:3000
 ```
 
 **What the worker checks:**
@@ -163,9 +173,15 @@ Delegate to the milestone validation worker (`workflows/milestone-validation.md`
 
 2. **Browser tests** (when `--browser-tests` flag is passed):
    - Runs Playwright test suite if `playwright.config.{ts,js,mjs}` exists
-   - Use for UI milestones to verify visual correctness
+   - Use for UI milestones with an existing test suite
 
-3. **Custom validation criteria** (from milestone's `**Validation:**` field):
+3. **Browser QA** (when `--browser-qa` flag is passed):
+   - Screenshots key pages, checks for broken links, console errors, empty pages
+   - Works without a test suite — ideal for POC-mode missions
+   - Extracts flow URLs from mission acceptance criteria when `--mission-file` is provided
+   - See `workflows/browser-qa.md` for details
+
+4. **Custom validation criteria** (from milestone's `**Validation:**` field):
    - Recorded for agent-level evaluation
 
 **Exit codes:**
@@ -636,7 +652,9 @@ Each repo has its own task ID namespace. When creating tasks in secondary repos,
 ## Related
 
 - `workflows/milestone-validation.md` — Milestone validation worker (Phase 4 delegate)
+- `workflows/browser-qa.md` — Browser QA visual testing for milestone validation (t1359)
 - `scripts/milestone-validation-worker.sh` — Validation runner script (tests, build, lint, browser)
+- `scripts/browser-qa-worker.sh` — Browser QA shell wrapper (screenshots, links, errors)
 - `scripts/commands/mission.md` — Creates the mission state file (scoping interview)
 - `scripts/commands/dashboard.md` — Progress dashboard (CLI + browser)
 - `scripts/commands/pulse.md` — Supervisor that detects active missions and invokes this orchestrator
