@@ -28,7 +28,9 @@ _ISSUE_SYNC_LIB_LOADED=1
 # Source shared-constants.sh to make the library self-contained.
 # Resolves SCRIPT_DIR from BASH_SOURCE so it works when sourced from any location.
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
-	SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	# Use pure-bash parameter expansion instead of dirname (external binary).
+	# See issue #2602 — dirname may not be in PATH in headless/MCP environments.
+	SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 fi
 source "${SCRIPT_DIR}/shared-constants.sh"
 

@@ -18,7 +18,13 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+# Defensive PATH export — ensures coreutils (sed, grep, awk, jq, gh) are available
+# in headless/MCP environments where PATH may be minimal.
+export PATH="/usr/local/bin:/usr/bin:/bin:${PATH:-}"
+
+# Use pure-bash parameter expansion instead of dirname (which is an external binary
+# and may not be in PATH in headless/MCP environments). See issue #2602.
+SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
 # shellcheck source=issue-sync-lib.sh
 source "${SCRIPT_DIR}/issue-sync-lib.sh"
