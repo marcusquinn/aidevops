@@ -1,0 +1,53 @@
+{
+  "$schema": "./schema.json",
+  "name": "content-site",
+  "description": "Content-focused websites: WordPress, static site generators (Hugo, Jekyll, Astro), or CMS-driven sites. Lower model tiers for implementation (content changes are simpler), higher for SEO and content strategy.",
+  "version": "1.0.0",
+  "markers": [
+    "wp-config.php",
+    "wp-content/",
+    "hugo.toml",
+    "hugo.yaml",
+    "_config.yml",
+    "astro.config.*",
+    "gatsby-config.*"
+  ],
+  "model_defaults": {
+    "implementation": "haiku",
+    "review": "haiku",
+    "triage": "haiku",
+    "architecture": "sonnet",
+    "verification": "haiku",
+    "documentation": "sonnet"
+  },
+  "quality_gates": [
+    "markdownlint",
+    "secretlint"
+  ],
+  "skip_gates": [
+    "shellcheck",
+    "shfmt",
+    "return-statements",
+    "positional-parameters",
+    "string-literals",
+    "eslint",
+    "typescript-check"
+  ],
+  "agent_routing": {
+    "code": "Build+",
+    "seo": "SEO",
+    "content": "Content",
+    "marketing": "Marketing"
+  },
+  "dispatch": {
+    "max_concurrent_workers": 3,
+    "default_timeout_minutes": 20,
+    "auto_dispatch": true
+  },
+  "tool_allowlist": [
+    "markdownlint",
+    "pagespeed",
+    "stagehand",
+    "playwright"
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "$schema": "./schema.json",
+  "name": "web-app",
+  "description": "Full-stack web applications: React, Next.js, Vue, Svelte, or similar frontend frameworks with API backends. Targets projects with package.json and frontend tooling.",
+  "version": "1.0.0",
+  "markers": [
+    "package.json",
+    "tsconfig.json",
+    "next.config.*",
+    "vite.config.*",
+    "nuxt.config.*",
+    "svelte.config.*",
+    "angular.json"
+  ],
+  "model_defaults": {
+    "implementation": "sonnet",
+    "review": "sonnet",
+    "triage": "haiku",
+    "architecture": "opus",
+    "verification": "sonnet",
+    "documentation": "haiku"
+  },
+  "quality_gates": [
+    "eslint",
+    "prettier",
+    "typescript-check",
+    "secretlint",
+    "jest",
+    "vitest"
+  ],
+  "skip_gates": [
+    "shellcheck",
+    "shfmt",
+    "return-statements",
+    "positional-parameters"
+  ],
+  "agent_routing": {
+    "code": "Build+",
+    "seo": "SEO",
+    "content": "Content",
+    "accessibility": "Build+"
+  },
+  "dispatch": {
+    "max_concurrent_workers": 3,
+    "default_timeout_minutes": 30,
+    "auto_dispatch": true
+  },
+  "tool_allowlist": [
+    "eslint",
+    "prettier",
+    "typescript",
+    "jest",
+    "vitest",
+    "playwright",
+    "stagehand",
+    "pagespeed"
+  ]
+}

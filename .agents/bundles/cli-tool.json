@@ -1,0 +1,50 @@
+{
+  "$schema": "./schema.json",
+  "name": "cli-tool",
+  "description": "CLI tools and shell script projects. Targets repos dominated by Bash, Python CLI, or Go/Rust command-line utilities. Emphasises ShellCheck, explicit returns, and positional parameter hygiene.",
+  "version": "1.0.0",
+  "markers": [
+    "*.sh",
+    "Makefile",
+    "setup.py",
+    "pyproject.toml",
+    "Cargo.toml",
+    "go.mod"
+  ],
+  "model_defaults": {
+    "implementation": "sonnet",
+    "review": "sonnet",
+    "triage": "haiku",
+    "architecture": "sonnet",
+    "verification": "haiku",
+    "documentation": "haiku"
+  },
+  "quality_gates": [
+    "shellcheck",
+    "shfmt",
+    "secretlint",
+    "return-statements",
+    "positional-parameters",
+    "string-literals"
+  ],
+  "skip_gates": [
+    "eslint",
+    "prettier",
+    "typescript-check"
+  ],
+  "agent_routing": {
+    "code": "Build+",
+    "documentation": "Build+"
+  },
+  "dispatch": {
+    "max_concurrent_workers": 2,
+    "default_timeout_minutes": 20,
+    "auto_dispatch": true
+  },
+  "tool_allowlist": [
+    "shellcheck",
+    "shfmt",
+    "qlty",
+    "secretlint"
+  ]
+}

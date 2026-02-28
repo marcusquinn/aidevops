@@ -1,0 +1,53 @@
+{
+  "$schema": "./schema.json",
+  "name": "agent",
+  "description": "AI DevOps agent and MCP server development. Meta-bundle for developing the aidevops framework itself. Includes shell script quality gates, markdown linting, TOON validation, and agent review tooling.",
+  "version": "1.0.0",
+  "markers": [
+    ".agents/",
+    "AGENTS.md",
+    "setup.sh",
+    ".aidevops.json",
+    "subagent-index.toon"
+  ],
+  "model_defaults": {
+    "implementation": "sonnet",
+    "review": "sonnet",
+    "triage": "haiku",
+    "architecture": "opus",
+    "verification": "sonnet",
+    "documentation": "sonnet"
+  },
+  "quality_gates": [
+    "shellcheck",
+    "shfmt",
+    "secretlint",
+    "markdownlint",
+    "toon-lint",
+    "return-statements",
+    "positional-parameters",
+    "string-literals",
+    "sonarcloud"
+  ],
+  "skip_gates": [],
+  "agent_routing": {
+    "code": "Build+",
+    "agent-design": "Build+",
+    "documentation": "Build+",
+    "research": "Research"
+  },
+  "dispatch": {
+    "max_concurrent_workers": 3,
+    "default_timeout_minutes": 30,
+    "auto_dispatch": true
+  },
+  "tool_allowlist": [
+    "shellcheck",
+    "shfmt",
+    "markdownlint",
+    "secretlint",
+    "qlty",
+    "toon",
+    "context7"
+  ]
+}

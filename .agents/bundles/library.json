@@ -1,0 +1,62 @@
+{
+  "$schema": "./schema.json",
+  "name": "library",
+  "description": "Reusable libraries and packages: npm modules, Python packages, Rust crates, Go modules. Emphasises thorough testing, API design review, and documentation quality since consumers depend on stability.",
+  "version": "1.0.0",
+  "markers": [
+    "package.json",
+    "pyproject.toml",
+    "setup.py",
+    "setup.cfg",
+    "Cargo.toml",
+    "go.mod",
+    "lib/",
+    "src/index.ts",
+    "src/lib.rs"
+  ],
+  "model_defaults": {
+    "implementation": "sonnet",
+    "review": "opus",
+    "triage": "haiku",
+    "architecture": "opus",
+    "verification": "sonnet",
+    "documentation": "sonnet"
+  },
+  "quality_gates": [
+    "eslint",
+    "prettier",
+    "typescript-check",
+    "jest",
+    "vitest",
+    "pytest",
+    "cargo-clippy",
+    "cargo-test",
+    "go-vet",
+    "go-test",
+    "secretlint"
+  ],
+  "skip_gates": [
+    "shellcheck",
+    "shfmt"
+  ],
+  "agent_routing": {
+    "code": "Build+",
+    "documentation": "Build+"
+  },
+  "dispatch": {
+    "max_concurrent_workers": 2,
+    "default_timeout_minutes": 30,
+    "auto_dispatch": true
+  },
+  "tool_allowlist": [
+    "eslint",
+    "prettier",
+    "typescript",
+    "jest",
+    "vitest",
+    "pytest",
+    "cargo",
+    "go",
+    "socket"
+  ]
+}
