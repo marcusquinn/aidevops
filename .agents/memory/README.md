@@ -39,6 +39,58 @@ sqlite3 --version
 
 **Architecture Decision: SQLite FTS5 over PostgreSQL** - SQLite was chosen for memory storage to minimize deployment complexity and eliminate external dependencies. No separate database server required, no connection management, and FTS5 provides fast full-text search out of the box. This aligns with the aidevops philosophy of self-contained, portable tooling.
 
+## Entity Memory System
+
+The memory system extends beyond project-scoped learnings to include **entity memory** — tracking relationships with people, agents, and services across all communication channels. This enables relationship continuity that survives session resets and context compaction.
+
+**Architecture:** Three-layer design sharing the same `memory.db` database. See `reference/entity-memory-architecture.md` for the full architecture document.
+
+| Layer | Purpose | Script | Tables |
+|-------|---------|--------|--------|
+| Layer 0 | Raw interaction log (immutable, append-only) | `entity-helper.sh` | `interactions`, `interactions_fts` |
+| Layer 1 | Per-conversation context (tactical summaries) | `conversation-helper.sh` | `conversations`, `conversation_summaries` |
+| Layer 2 | Entity relationship model (strategic profiles) | `entity-helper.sh` | `entities`, `entity_channels`, `entity_profiles`, `capability_gaps` |
+| Loop | Self-evolution (gap detection → TODO → upgrade) | `self-evolution-helper.sh` | `capability_gaps`, `gap_evidence` |
+
+**Key concepts:**
+
+- **Entities** — people, agents, or services the system interacts with
+- **Cross-channel identity** — link Matrix, SimpleX, email, CLI identities to the same entity (with confidence levels: confirmed/suggested/inferred)
+- **Versioned profiles** — entity preferences and needs are never updated in place; new versions supersede old ones via `supersedes_id` chain
+- **Immutable interactions** — Layer 0 is append-only; all other layers are derived from it
+- **Self-evolution loop** — interaction patterns → capability gap detection → automatic TODO creation → system upgrade → better service
+
+**Quick entity examples:**
+
+```bash
+# Create an entity with initial channel link
+entity-helper.sh create --name "Marcus" --type person \
+    --channel matrix --channel-id "@marcus:server.com"
+
+# Link additional channel
+entity-helper.sh link ent_xxx --channel email \
+    --channel-id "marcus@example.com" --verified
+
+# Log an interaction (Layer 0 — immutable)
+entity-helper.sh log-interaction ent_xxx \
+    --channel matrix --content "How's the deployment going?"
+
+# Create a conversation and load context
+conversation-helper.sh create --entity ent_xxx --channel matrix \
+    --channel-id "!room:server" --topic "Deployment discussion"
+conversation-helper.sh context conv_xxx --recent-messages 10
+
+# Store a memory linked to an entity
+memory-helper.sh store --content "Prefers concise responses" \
+    --entity ent_xxx --type USER_PREFERENCE
+
+# Recall memories for an entity
+memory-helper.sh recall --query "preferences" --entity ent_xxx
+
+# Run self-evolution scan
+self-evolution-helper.sh pulse-scan --auto-todo-threshold 3
+```
+
 ## Quick Start
 
 ```bash
