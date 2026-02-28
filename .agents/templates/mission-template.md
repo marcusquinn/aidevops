@@ -67,6 +67,8 @@ preferences:
 
 Milestones are sequential. Features within each milestone are parallelisable.
 
+**TODO integration (Full mode):** Each feature becomes a TODO entry tagged `mission:{id}` (e.g., `mission:m001`). This tag lets the pulse supervisor correlate features back to their mission. Example TODO format: `- [ ] t042 Implement user auth #mission:m001 ~3h`
+
 ### Milestone 1: {Name}
 
 **Status:** pending  <!-- pending | active | validating | passed | failed | skipped -->
@@ -142,7 +144,9 @@ Milestones are sequential. Features within each milestone are parallelisable.
 |------|----------|--------|-------------|-----------|
 | | | | | |
 
-<!-- Append rows as spend occurs. Budget analysis engine (t1357.7) will automate this. -->
+<!-- Append rows as spend occurs. Use budget-analysis-helper.sh for cost estimation and tiered recommendations.
+     Run: budget-analysis-helper.sh analyse --budget <remaining_usd> --json to check remaining capacity.
+     Run: budget-analysis-helper.sh estimate --task "<feature>" --json for per-feature cost estimates. -->
 
 ## Decision Log
 
@@ -212,3 +216,16 @@ _Completed after mission finishes._
 ### Framework Improvements
 
 - {Improvements to offer back to aidevops — new agents, scripts, patterns discovered}
+
+### Skill Learning
+
+_Auto-populated by `mission-skill-learner.sh scan` at mission completion._
+
+| Artifact | Type | Score | Promoted To | Notes |
+|----------|------|-------|-------------|-------|
+| | | | | |
+
+<!-- Run: mission-skill-learner.sh scan {mission-dir}
+     Promote: mission-skill-learner.sh promote <path> [draft|custom]
+     Patterns: mission-skill-learner.sh patterns --mission {mission_id}
+     See: workflows/mission-skill-learning.md -->

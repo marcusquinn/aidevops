@@ -152,6 +152,113 @@ Phase 4: COMPLETION
 
 (To be populated during implementation)
 
+### [2026-02-27] Conversational Memory and Entity Relationship System
+
+**Status:** Planning
+**Estimate:** ~27h (ai:20h test:4h read:3h)
+**TODO:** t1363
+**Logged:** 2026-02-27
+**Brief:** [todo/tasks/t1363-brief.md](tasks/t1363-brief.md)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged}:
+p035,Conversational Memory Entity Relationship System,planning,0,3,,plan|feature|memory|entity|communications,27h,20h,4h,3h,2026-02-27T00:00Z
+-->
+
+#### Purpose
+
+Give aidevops multi-channel agents (Matrix, SimpleX, email, CLI) the ability to maintain relationship continuity with individuals across all channels — and self-evolve capabilities based on observed interaction patterns. Currently, memory is project-scoped ("CORS fixed with nginx") with no concept of entities ("Marcus prefers concise responses and repeatedly asks about deployment status"). Each channel interaction starts from zero relationship context.
+
+The differentiator: entity interaction patterns → capability gap detection → automatic TODO creation → system upgrade → better service. No chatbot platform does this. Everyone does conversation memory. Nobody does "the system upgrades itself based on what users actually need."
+
+#### Core Principles
+
+1. **Immutability**: Raw interactions (Layer 0) are append-only, never edited. All higher layers (summaries, profiles, inferences) are derived and reference back to source records. History is precious.
+2. **Model-agnosticism**: The memory layer IS the continuity, not the model's context window. Whether Opus or a local Qwen model handles today's conversation, the entity relationship provides equivalent context.
+3. **Intelligence over determinism**: Replace hardcoded thresholds (sessionIdleTimeout=300, pruneAge=90d, exact-string dedup) with AI judgment calls (haiku-tier, ~$0.001 each).
+4. **Privacy-first**: Channel-level privacy filtering. Private SimpleX DM content never surfaces in public Matrix rooms without explicit consent.
+
+#### Architecture
+
+```text
+Layer 0: RAW INTERACTION LOG (immutable, append-only)
+├── Every message across all channels
+├── Source of truth — all other layers derived from this
+└── Retention: indefinite (user can request privacy deletion)
+
+Layer 1: PER-CONVERSATION CONTEXT (tactical)
+├── Active threads per entity+channel
+├── Summaries with source range references
+├── Tone/style profile, pending actions
+└── AI-judged idle detection (not fixed timeout)
+
+Layer 2: ENTITY RELATIONSHIP MODEL (strategic)
+├── Identity: cross-channel linking (Matrix + SimpleX + email = same person)
+├── Inferred needs, expectations, preferences (versioned, with evidence)
+├── Capability gaps → automatic TODO creation
+└── Satisfaction signals
+
+Self-Evolution Loop:
+  Interactions → Pattern detection → Gap identification → TODO → Upgrade → Better service
+```
+
+#### Progress
+
+- [ ] (2026-02-27) Phase 1: Foundation — schema, entity management, conversation lifecycle ~13h
+  - [ ] t1363.1 Schema + entity-helper.sh ~6h
+  - [ ] t1363.2 conversation-helper.sh ~4h
+  - [ ] t1363.3 Memory system integration ~3h
+- [ ] Phase 2: Intelligence — self-evolution, threshold replacement ~6h
+  - [ ] t1363.4 Self-evolution loop ~4h
+  - [ ] t1363.6 Intelligent threshold replacement ~2h
+- [ ] Phase 3: Channel integration + docs ~6h
+  - [ ] t1363.5 Matrix bot integration ~3h
+  - [ ] t1363.7 Architecture doc + tests ~3h
+
+#### Context from Discussion
+
+**Key design decisions:**
+- Same SQLite database (memory.db), new tables — enables cross-queries between entity and project memories without cross-DB joins
+- Three layers, not two — Layer 0 (immutable raw log) is the critical addition over the OpenClaw approach. Summaries and profiles are derived, not primary.
+- Versioned entity profiles using existing `supersedes_id` pattern from Supermemory-inspired memory system — profiles are never updated in place
+- Identity resolution requires confirmation — never auto-link entities across channels. Suggest, don't assume.
+- AI judgment for thresholds — haiku-tier calls (~$0.001) handle outliers that no fixed threshold can. Per Intelligence Over Determinism principle.
+- Flat-file conversation dumps (OpenClaw approach) rejected — structured summaries with source references at ~2k tokens recover 80% of continuity at 10% of the cost, and raw data always available in Layer 0
+
+**What aidevops already has (strong overlap):**
+- SQLite FTS5 memory with relational versioning (updates/extends/derives)
+- Dual timestamps (created_at vs event_date)
+- Memory namespaces (per-runner isolation)
+- Semantic search via embeddings (opt-in)
+- Matrix bot with per-room sessions and compaction
+- SimpleX bot framework with WebSocket API
+- Mail system with transport adapters (local/SimpleX/Matrix)
+- Auto-capture with privacy filters
+- Memory graduation (local → shared docs)
+
+**What's genuinely new:**
+- Entity concept (person/agent/service with cross-channel identity)
+- Per-conversation context that survives compaction and session resets
+- Entity relationship model (inferred needs, expectations, capability gaps)
+- Self-evolution loop (gap detection → TODO creation with evidence)
+- Privacy-aware cross-channel context loading
+- AI-judged thresholds replacing hardcoded values
+- Immutable interaction log as source of truth
+
+**Deterministic → intelligent upgrades identified:**
+- `sessionIdleTimeout: 300` → AI judges "has this conversation naturally paused?"
+- `DEFAULT_MAX_AGE_DAYS=90` → AI judges "is this memory still relevant to active entity relationships?"
+- Exact-string dedup → semantic similarity via existing embeddings
+- Fixed compaction at token limit → AI judges "what's worth preserving for this entity?"
+- Fixed `maxPromptLength: 4000` → dynamic based on entity's observed preference for detail level
+
+#### Decision Log
+
+(To be populated during implementation)
+
+#### Surprises & Discoveries
+
+(To be populated during implementation)
+
 ### [2026-02-27] Fix Worker PR Lookup Race Condition
 
 **Status:** Completed

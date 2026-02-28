@@ -30,10 +30,14 @@ tools:
 |------|---------|
 | `templates/mission-template.md` | State file format |
 | `scripts/commands/mission.md` | `/mission` command (scoping + creation) |
+| `scripts/commands/dashboard.md` | `/dashboard` command (progress dashboard) |
 | `scripts/commands/pulse.md` | Supervisor dispatch (detects active missions) |
 | `scripts/commands/full-loop.md` | Worker execution per feature |
+| `scripts/mission-dashboard-helper.sh` | CLI + browser dashboard (t1362) |
 
 **Lifecycle**: `/mission` creates the state file (planning) -> orchestrator drives execution (active) -> milestone validation -> completion or re-plan
+
+**Pulse integration**: The pulse supervisor (`scripts/commands/pulse.md` Step 3.5) automatically detects active missions via `pulse-wrapper.sh` prefetch. It handles lightweight operations: dispatching pending features, detecting milestone completion, advancing milestones, and tracking budget. The orchestrator handles heavyweight operations: re-planning on failure, validation design, and research. In Full mode, mission features are regular TODO entries tagged `mission:{id}` (e.g., `mission:m001`) so they flow through the standard issue/PR pipeline.
 
 **Self-organisation principle**: The orchestrator creates what it needs (folders, agents, scripts) as it discovers needs — not upfront. Every created artifact is temporary (draft tier) unless promoted.
 
@@ -175,8 +179,19 @@ Set milestone status to `validating`, then verify:
    - Outcomes vs original goal
    - Budget accuracy (budgeted vs actual)
    - Lessons learned
-4. Review mission agents and scripts for promotion (see "Improvement Feedback" below)
-5. Commit and push the final state
+4. Run skill learning scan to capture reusable patterns (see `workflows/mission-skill-learning.md`):
+
+   ```bash
+   mission-skill-learner.sh scan {mission-dir}
+   ```
+
+   - Review promotion suggestions in the output
+   - Promote high-scoring artifacts: `mission-skill-learner.sh promote <path> draft`
+   - Update the mission's "Mission Agents" table with promotion decisions
+   - Decisions and lessons are automatically stored in cross-session memory
+
+5. Review mission agents and scripts for promotion (see "Improvement Feedback" below)
+6. Commit and push the final state
 
 ## Self-Organisation
 
@@ -275,10 +290,10 @@ Every mission is an opportunity to improve the framework. The orchestrator shoul
 ### How to Report
 
 1. **During execution**: Note observations in the mission's decision log. Don't interrupt the mission to file issues.
-2. **At completion**: Review the decision log and mission agents. For each improvement:
+2. **At completion**: Run `mission-skill-learner.sh scan {mission-dir}` to auto-capture artifacts and patterns. Then review the decision log and mission agents. For each improvement:
    - File a GitHub issue on the aidevops repo: `gh issue create --repo {aidevops_slug} --title "Mission feedback: {description}" --body "{details}"`
    - Record the issue number in the mission's "Framework Improvements" section
-3. **For reusable agents**: Move to `~/.aidevops/agents/draft/` and create a TODO entry for promotion review
+3. **For reusable agents**: Use `mission-skill-learner.sh promote <path> draft` to move to `~/.aidevops/agents/draft/`. The skill learner scores artifacts and tracks promotions in memory for pattern detection across missions. See `workflows/mission-skill-learning.md` for the full promotion lifecycle.
 
 ### What NOT to Do
 
@@ -387,14 +402,44 @@ When a mission enters a domain that aidevops has no existing knowledge of, the o
 
 ## Budget Management
 
-The orchestrator tracks spend against the mission budget and takes action at thresholds.
+The orchestrator tracks spend against the mission budget and takes action at thresholds. The budget analysis engine (`scripts/budget-analysis-helper.sh`) provides the analytical foundation — cost estimation, tiered recommendations, and spend forecasting.
+
+### Pre-Execution Budget Analysis
+
+Before dispatching the first milestone, run a budget feasibility check:
+
+```bash
+# Estimate cost for remaining work based on milestone complexity
+~/.aidevops/agents/scripts/budget-analysis-helper.sh recommend --goal "{mission_goal}" --json
+
+# Analyse what the stated budget buys at each model tier
+~/.aidevops/agents/scripts/budget-analysis-helper.sh analyse --budget {remaining_budget_usd} --hours {remaining_hours} --json
+
+# If historical data exists, calibrate against actual patterns
+~/.aidevops/agents/scripts/budget-analysis-helper.sh forecast --days 7 --json
+```
+
+Use the `recommend` output to validate that the mission's budget covers at least the MVP tier. If the budget is insufficient for even the MVP, pause and report to the user with the tiered breakdown showing what each budget level achieves.
+
+### Per-Feature Cost Estimation
+
+Before dispatching each feature, estimate its cost:
+
+```bash
+~/.aidevops/agents/scripts/budget-analysis-helper.sh estimate --task "{feature_description}" --tier {worker_tier} --json
+```
+
+Compare the estimate against remaining budget. If the feature's estimated cost (high end of range) would exceed the remaining budget, either:
+- Switch to a cheaper model tier (use the "Alternative Tiers" from the estimate output)
+- Defer the feature to a later milestone
+- Pause and report to the user
 
 ### Tracking
 
 After each worker completes (PR merged or POC commit landed):
 
-1. Estimate tokens used (from worker session length and model tier)
-2. Estimate cost (tokens x model rate)
+1. Record spend via budget-tracker-helper.sh: `budget-tracker-helper.sh record --provider {provider} --model {model} --task {task_id} --input-tokens {N} --output-tokens {N}`
+2. Estimate cost (tokens x model rate from `shared-constants.sh get_model_pricing`)
 3. Estimate time (wall clock from dispatch to completion)
 4. Update the budget tracking table in the mission state file
 
@@ -403,9 +448,9 @@ After each worker completes (PR merged or POC commit landed):
 | Budget Used | Action |
 |-------------|--------|
 | < 60% | Continue normally |
-| 60-80% | Log a warning in the progress log. Consider switching remaining features to cheaper model tier. |
-| 80-100% (alert threshold) | Pause the mission. Report to user: "Mission {id} has used {X}% of {category} budget. Remaining work: {milestones left}. Options: increase budget, reduce scope, or continue at risk." |
-| > 100% | Stop dispatching new features. Complete in-progress work only. Report overage. |
+| 60-80% | Log a warning in the progress log. Run `budget-analysis-helper.sh analyse --budget {remaining_usd} --json` to check if remaining work fits. Consider switching remaining features to cheaper model tier. |
+| 80-100% (alert threshold) | Pause the mission. Run `budget-analysis-helper.sh recommend --goal "{remaining_work_description}" --json` to show what the remaining budget can achieve. Report to user: "Mission {id} has used {X}% of {category} budget. Remaining work: {milestones left}. Options: increase budget, reduce scope, or continue at risk." |
+| > 100% | Stop dispatching new features. Complete in-progress work only. Report overage with `budget-tracker-helper.sh status --json`. |
 
 ### Cost Optimisation
 
@@ -413,6 +458,7 @@ After each worker completes (PR merged or POC commit landed):
 - In POC mode, default to sonnet for everything (skip opus decomposition)
 - Batch small features into single worker sessions when possible
 - Skip preflight/postflight in POC mode to reduce token overhead
+- Use `budget-analysis-helper.sh estimate --task "{desc}" --json` to compare tier costs before choosing — the "Alternative Tiers" output shows the cost at each tier for the same task
 
 ## Mode-Specific Behaviour
 
@@ -565,11 +611,18 @@ Each repo has its own task ID namespace. When creating tasks in secondary repos,
 ## Related
 
 - `scripts/commands/mission.md` — Creates the mission state file (scoping interview)
+- `scripts/commands/dashboard.md` — Progress dashboard (CLI + browser)
 - `scripts/commands/pulse.md` — Supervisor that detects active missions and invokes this orchestrator
 - `scripts/commands/full-loop.md` — Worker execution pattern for individual features
+- `scripts/mission-dashboard-helper.sh` — Dashboard helper script (t1362)
 - `templates/mission-template.md` — Mission state file format
+- `workflows/mission-skill-learning.md` — Skill learning: auto-capture patterns, promote artifacts, track recurring patterns
+- `scripts/mission-skill-learner.sh` — CLI for scanning, scoring, promoting mission artifacts
 - `workflows/plans.md` — Task decomposition patterns
 - `tools/build-agent/build-agent.md` — Agent lifecycle tiers (draft for mission agents)
 - `reference/orchestration.md` — Model routing and dispatch patterns
 - `tools/browser/browser-automation.md` — Browser QA for milestone validation
 - `tools/context/model-routing.md` — Cost-aware model selection for mission workers
+- `scripts/budget-analysis-helper.sh` — Budget analysis engine (t1357.7) — tiered recommendations, cost estimation, spend forecasting
+- `scripts/budget-tracker-helper.sh` — Append-only cost log for historical spend data
+- `scripts/commands/budget-analysis.md` — `/budget-analysis` command for interactive use

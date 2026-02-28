@@ -245,10 +245,23 @@ Does this decomposition look right?
 
 **Budget feasibility analysis:**
 
+Use the budget analysis engine to validate feasibility and generate tiered recommendations:
+
+```bash
+# Get tiered outcome recommendations for the mission goal
+~/.aidevops/agents/scripts/budget-analysis-helper.sh recommend --goal "{mission_desc}" --json
+
+# Analyse what the stated budget buys at each model tier
+~/.aidevops/agents/scripts/budget-analysis-helper.sh analyse --budget {cost_budget} --hours {time_budget} --json
+
+# If historical data exists, check forecast for calibration
+~/.aidevops/agents/scripts/budget-analysis-helper.sh forecast --days 7 --json
+```
+
 Before presenting, internally verify:
 - Total feature estimates fit within time budget (with 20% buffer)
-- Model costs fit within token budget
-- If budget is insufficient, present tiered outcomes:
+- Model costs fit within token budget (use `analyse` output to compare)
+- If budget is insufficient, present tiered outcomes from `recommend` output:
 
 ```text
 Budget analysis:
@@ -260,6 +273,8 @@ For {cost_budget} and {time_budget}:
 
 Recommendation: commit to Tier {N}, with Tier {N+1} as stretch goal.
 ```
+
+The budget analysis engine uses model pricing from `shared-constants.sh`, task complexity heuristics, and historical spend data from `budget-tracker-helper.sh` to calibrate estimates against actual patterns.
 
 ### Step 6: Mission File Creation
 
@@ -650,3 +665,6 @@ Next steps:
 - `templates/mission-template.md` — Mission state file template (t1357.1)
 - `tools/build-agent/build-agent.md` — Agent lifecycle (draft tier for mission agents)
 - `reference/orchestration.md` — Model routing for mission workers
+- `scripts/budget-analysis-helper.sh` — Budget analysis engine (t1357.7) — tiered recommendations, cost estimation, spend forecasting
+- `scripts/budget-tracker-helper.sh` — Append-only cost log for historical spend data
+- `scripts/commands/budget-analysis.md` — `/budget-analysis` command for interactive use
