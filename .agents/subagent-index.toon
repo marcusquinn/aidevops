@@ -37,7 +37,7 @@ tools/build-mcp/,MCP development - creating MCP servers and plugins,build-mcp|se
 tools/mcp-toolkit/,MCP runtime toolkit - discover call compose and generate CLIs/typed clients for MCP servers,mcporter
 tools/ai-assistants/,AI tool integration - OpenCode headless dispatch model comparison and response scoring,agno|capsolver|claude-code|compare-models|response-scoring|overview|openclaw|opencode-server|headless-dispatch
 tools/ai-orchestration/,AI orchestration - visual builders and multi-agent,overview|langflow|crewai|autogen|openprose
-tools/browser/,Browser automation - scraping and testing,agent-browser|stagehand|playwright|playwright-cli|playwright-emulation|playwriter|crawl4ai|watercrawl|pagespeed|peekaboo|curl-copy|chrome-webstore-release
+tools/browser/,Browser automation - scraping testing and QA,agent-browser|browser-automation|browser-qa|stagehand|playwright|playwright-cli|playwright-emulation|playwriter|crawl4ai|watercrawl|pagespeed|peekaboo|curl-copy|chrome-webstore-release
 tools/mobile/,Mobile development - iOS/macOS build test simulator and emulator automation,agent-device|xcodebuild-mcp|ios-simulator-mcp|maestro|axe-cli|minisim
 tools/pdf/,PDF processing - form filling and digital signatures,overview|libpdf
 tools/accessibility/,Accessibility and contrast testing - WCAG compliance for websites and emails,accessibility
@@ -99,7 +99,7 @@ google-search-console,npx mcp-server-gsc@latest,service-account,seo/google-searc
 mcporter,npx mcporter,none,tools/mcp-toolkit/mcporter.md,Discover call compose and generate CLIs for any MCP server
 -->
 
-<!--TOON:workflows[15]{name,file,purpose}:
+<!--TOON:workflows[16]{name,file,purpose}:
 git-workflow,workflows/git-workflow.md,Branch naming and commit conventions
 plans,workflows/plans.md,Complex execution plans
 release,workflows/release.md,Semver and changelog generation
@@ -107,7 +107,7 @@ version-bump,workflows/version-bump.md,Version bump automation
 pr,workflows/pr.md,PR creation and review
 preflight,workflows/preflight.md,Pre-commit quality checks
 postflight,workflows/postflight.md,Post-release verification
-milestone-validation,workflows/milestone-validation.md,Milestone validation for mission system — tests build lint browser QA
+milestone-validation,workflows/milestone-validation.md,Milestone validation worker for mission orchestration with browser QA
 browser-qa,workflows/browser-qa.md,Playwright-based visual QA — screenshots broken links console errors for milestone validation
 ralph-loop,workflows/ralph-loop.md,Iterative AI development loops
 session-review,workflows/session-review.md,Session completeness review
@@ -121,6 +121,7 @@ mission-skill-learning,workflows/mission-skill-learning.md,Auto-capture reusable
 <!--TOON:scripts[96]{name,purpose}:
 accessibility-helper.sh,Accessibility and contrast testing (WCAG compliance WAVE API for websites and emails)
 browser-qa-worker.sh,Browser QA visual testing — Playwright screenshots broken links console errors for milestone validation
+browser-qa-helper.sh,Playwright-based visual QA for milestone validation (smoke screenshots links a11y)
 accessibility-audit-helper.sh,Accessibility audit CLI wrapping axe-core WAVE API WebAIM contrast and Lighthouse a11y
 auto-update-helper.sh,Automatic update polling daemon (enable disable status check logs)
 list-keys-helper.sh,List all API keys with storage locations

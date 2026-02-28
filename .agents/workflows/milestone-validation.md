@@ -1,5 +1,5 @@
 ---
-description: Milestone validation — verify milestone completion by running tests, build, linting, and optional browser tests, then report results and create fix tasks on failure
+description: Milestone validation — verify milestone completion by running tests, build, linting, browser QA, and integration checks, then report results and create fix tasks on failure
 mode: subagent
 model: sonnet  # validation is structured checking, not complex reasoning
 tools:
@@ -7,6 +7,9 @@ tools:
   write: true
   edit: true
   bash: true
+  glob: true
+  grep: true
+  webfetch: true
   task: true
 ---
 
@@ -27,10 +30,23 @@ tools:
 |------|---------|
 | `scripts/milestone-validation-worker.sh` | Validation runner script |
 | `workflows/mission-orchestrator.md` | Orchestrator that invokes validation |
+| `tools/browser/browser-qa.md` | Browser QA subagent for visual validation |
+| `scripts/browser-qa-helper.sh` | Playwright-based visual testing CLI |
+| `scripts/accessibility/playwright-contrast.mjs` | Contrast/accessibility checks |
 | `templates/mission-template.md` | Mission state file format |
 | `workflows/postflight.md` | Similar pattern for release validation |
 
 <!-- AI-CONTEXT-END -->
+
+## How to Think
+
+You are a QA engineer validating a milestone. Your job is to run every check that could catch a regression, layout bug, broken link, or missing feature — then report clearly what passed and what failed. You are not implementing features; you are verifying them.
+
+**Validation is pass/fail, not subjective.** Every check must have a clear criterion. "Looks good" is not a validation result. "All 5 pages render without console errors, all links return 2xx, hero image loads in <3s" is.
+
+**Fail fast, report everything.** Don't stop at the first failure. Run all checks, collect all failures, then report them together. The orchestrator needs the full picture to create targeted fix tasks.
+
+**Use the cheapest tool that works.** For most checks, `curl` + status codes is sufficient. Use Playwright only when you need to verify rendered output, JavaScript-dependent content, or visual layout. Use Stagehand only when page structure is unknown and you need AI to interpret it.
 
 ## When to Use
 
@@ -56,6 +72,20 @@ It is triggered when:
 | **Test suite** | Runs the project's test framework | `npm test`, `pytest`, `cargo test`, `go test` |
 | **Build** | Verifies the project builds cleanly | `npm run build`, `cargo build`, `go build` |
 | **Linter** | Runs project linting | `npm run lint`, `ruff`, `tsc --noEmit`, `shellcheck` |
+
+### Browser QA (UI Milestones)
+
+When the milestone's validation criteria mention UI, pages, visual, layout, responsive, or the milestone features include frontend components, run the browser QA pipeline via `scripts/browser-qa-helper.sh`:
+
+| Check | What it does | Command |
+|-------|-------------|---------|
+| **Smoke test** | Console errors, network failures, basic rendering | `browser-qa-helper.sh smoke --url URL --pages "/ /about"` |
+| **Screenshots** | Multi-viewport visual capture | `browser-qa-helper.sh screenshot --url URL --viewports desktop,mobile` |
+| **Broken links** | Crawl internal links, verify 2xx responses | `browser-qa-helper.sh links --url URL --depth 2` |
+| **Accessibility** | WCAG contrast, ARIA, heading hierarchy, labels | `browser-qa-helper.sh a11y --url URL --level AA` |
+| **Full pipeline** | All of the above in sequence | `browser-qa-helper.sh run --url URL --pages "/ /about"` |
+
+See `tools/browser/browser-qa.md` for the full browser QA subagent documentation, including severity mapping and content verification patterns.
 
 ### Optional Checks
 
@@ -117,6 +147,24 @@ The orchestrator invokes validation as part of Phase 4:
   mission.md 1 --report-only --verbose
 ```
 
+### Browser QA (Standalone)
+
+For direct browser QA without the full validation pipeline:
+
+```bash
+# Full QA suite
+browser-qa-helper.sh run --url http://localhost:3000 --pages "/ /about /dashboard" --format json
+
+# Screenshot comparison
+browser-qa-helper.sh screenshot --url http://localhost:3000 --pages "/" --viewports desktop,mobile
+
+# Broken link check
+browser-qa-helper.sh links --url http://localhost:3000
+
+# Accessibility check
+browser-qa-helper.sh a11y --url http://localhost:3000
+```
+
 ### Exit Codes
 
 | Code | Meaning |
@@ -127,6 +175,21 @@ The orchestrator invokes validation as part of Phase 4:
 | `3` | Mission state error — milestone not ready for validation |
 
 ## Failure Handling
+
+### Severity Classification
+
+| Finding | Severity | Blocks Milestone? |
+|---------|----------|-------------------|
+| Build fails, tests crash | Critical | Yes |
+| Page returns 5xx, blank page | Critical | Yes |
+| Console error on load | Critical | Yes |
+| Broken internal link (404) | Major | Yes |
+| Layout break at required viewport | Major | Yes |
+| Missing content from acceptance criteria | Major | Yes |
+| Contrast ratio failure (AA) | Major | Yes (if a11y is in criteria) |
+| Missing alt text | Minor | No (note in report) |
+| Heading hierarchy skip | Minor | No (note in report) |
+| Console warning (not error) | Minor | No (note in report) |
 
 ### On Validation Failure
 
@@ -162,6 +225,39 @@ In Full mode, fix tasks are created as GitHub issues:
 ```
 
 Issues are labelled `bug` and `mission:{id}` for traceability.
+
+## Dev Server Management
+
+The validation worker must start and stop the dev server cleanly:
+
+```bash
+# Detect and start
+if [[ -f "package.json" ]]; then
+  # Check for dev script
+  if jq -e '.scripts.dev' package.json &>/dev/null; then
+    npm run dev &
+    DEV_PID=$!
+  elif jq -e '.scripts.start' package.json &>/dev/null; then
+    npm start &
+    DEV_PID=$!
+  fi
+fi
+
+# Wait for server to be ready
+for i in {1..30}; do
+  curl -s http://localhost:3000 >/dev/null 2>&1 && break
+  sleep 1
+done
+
+# ... run validation ...
+
+# Cleanup
+if [[ -n "${DEV_PID:-}" ]]; then
+  kill "$DEV_PID" 2>/dev/null || true
+fi
+```
+
+**Port detection**: Check `package.json` scripts for port numbers, or try common ports (3000, 3001, 5173, 8080, 8000).
 
 ## Integration with Mission Orchestrator
 
@@ -204,11 +300,13 @@ Milestone validation and postflight (`workflows/postflight.md`) serve similar pu
 ## Related
 
 - `workflows/mission-orchestrator.md` — Invokes this worker at Phase 4
-- `workflows/browser-qa.md` — Browser QA visual testing (t1359)
+- `tools/browser/browser-qa.md` — Browser QA subagent (visual testing details)
+- `scripts/browser-qa-helper.sh` — CLI for Playwright-based visual testing
+- `tools/browser/browser-automation.md` — Browser tool selection guide
+- `scripts/accessibility/playwright-contrast.mjs` — Contrast/accessibility checks
 - `workflows/postflight.md` — Similar validation pattern for releases
 - `workflows/preflight.md` — Pre-commit quality checks
 - `scripts/commands/full-loop.md` — Worker execution per feature
 - `scripts/browser-qa-worker.sh` — Browser QA shell wrapper
 - `scripts/browser-qa/browser-qa.mjs` — Playwright QA engine
 - `templates/mission-template.md` — Mission state file format
-- `tools/browser/browser-automation.md` — Playwright for browser tests

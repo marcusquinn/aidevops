@@ -176,7 +176,7 @@ Read subagents on-demand. Full index: `subagent-index.toon`.
 | Code quality | `tools/code-review/code-standards.md` |
 | Git/PRs/Releases | `workflows/git-workflow.md`, `tools/git/github-cli.md`, `workflows/release.md` |
 | Documents/PDF | `tools/document/document-creation.md`, `tools/pdf/overview.md`, `tools/conversion/pandoc.md` |
-| Browser/Mobile | `tools/browser/browser-automation.md`, `mobile-app-dev.md`, `browser-extension-dev.md` |
+| Browser/Mobile | `tools/browser/browser-automation.md`, `tools/browser/browser-qa.md`, `mobile-app-dev.md`, `browser-extension-dev.md` |
 | Content/Video/Voice | `content.md`, `tools/video/video-prompt-design.md`, `tools/voice/speech-to-speech.md` |
 | SEO | `seo/dataforseo.md`, `seo/google-search-console.md` |
 | WordPress | `tools/wordpress/wp-dev.md`, `tools/wordpress/mainwp.md` |
