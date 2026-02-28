@@ -171,12 +171,19 @@ EOF
 
 #######################################
 # Deduplicate memories
-# Removes exact and near-duplicate entries, keeping the oldest (most established)
-# Merges tags from removed entries into the surviving one
+# Removes exact, near-duplicate, and semantic duplicate entries.
+# Keeps the oldest (most established) entry; merges tags from removed entries.
+#
+# Phases:
+#   1. Exact duplicates (same content string)
+#   2. Near-duplicates (normalized content match — punctuation removed)
+#   3. Semantic duplicates (AI-judged similarity via ai-threshold-judge.sh)
+#      Only runs with --semantic flag to control API costs (~$0.001/pair)
 #######################################
 cmd_dedup() {
 	local dry_run=false
 	local include_near=true
+	local include_semantic=false
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -186,6 +193,10 @@ cmd_dedup() {
 			;;
 		--exact-only)
 			include_near=false
+			shift
+			;;
+		--semantic)
+			include_semantic=true
 			shift
 			;;
 		*) shift ;;
@@ -358,16 +369,98 @@ EOF
 		fi
 	fi
 
-	local total_removed=$((exact_removed + near_removed))
+	# Phase 3: Semantic duplicates (AI-judged similarity)
+	# Only runs with --semantic flag to control API costs (~$0.001/pair)
+	local semantic_removed=0
+	if [[ "$include_semantic" == true ]]; then
+		local threshold_judge
+		threshold_judge="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/ai-threshold-judge.sh"
+
+		if [[ -x "$threshold_judge" ]]; then
+			log_info "Scanning for semantic duplicates (AI-judged)..."
+
+			# Get entries grouped by type (only compare within same type)
+			local types
+			types=$(db "$MEMORY_DB" "SELECT DISTINCT type FROM learnings;")
+
+			while IFS= read -r check_type; do
+				[[ -z "$check_type" ]] && continue
+				local type_esc="${check_type//"'"/"''"}"
+
+				# Get entries of this type (limit to 50 to control costs)
+				local entries
+				entries=$(db "$MEMORY_DB" "SELECT id, substr(content, 1, 200), created_at FROM learnings WHERE type = '$type_esc' ORDER BY created_at ASC LIMIT 50;")
+
+				# Compare pairs (O(n^2) but limited to 50 entries per type)
+				local ids_arr=() contents_arr=() dates_arr=()
+				while IFS='|' read -r eid econtent edate; do
+					[[ -z "$eid" ]] && continue
+					ids_arr+=("$eid")
+					contents_arr+=("$econtent")
+					dates_arr+=("$edate")
+				done <<<"$entries"
+
+				local len=${#ids_arr[@]}
+				local removed_set=""
+				for ((i = 0; i < len; i++)); do
+					# Skip if already marked for removal
+					echo "$removed_set" | grep -qF "${ids_arr[$i]}" && continue
+
+					for ((j = i + 1; j < len; j++)); do
+						echo "$removed_set" | grep -qF "${ids_arr[$j]}" && continue
+
+						local verdict
+						verdict=$("$threshold_judge" judge-dedup-similarity \
+							--content-a "${contents_arr[$i]}" \
+							--content-b "${contents_arr[$j]}" 2>/dev/null || echo "distinct")
+
+						if [[ "$verdict" == "duplicate" ]]; then
+							# Keep older entry (index i), remove newer (index j)
+							local remove_id="${ids_arr[$j]}"
+							local keep_id="${ids_arr[$i]}"
+							local remove_esc="${remove_id//"'"/"''"}"
+							local keep_esc="${keep_id//"'"/"''"}"
+
+							if [[ "$dry_run" == true ]]; then
+								log_info "[DRY RUN] Semantic dup: remove $remove_id (keep $keep_id): ${contents_arr[$j]:0:50}..."
+							else
+								# Merge tags
+								local keep_tags remove_tags
+								keep_tags=$(db "$MEMORY_DB" "SELECT tags FROM learnings WHERE id = '$keep_esc';")
+								remove_tags=$(db "$MEMORY_DB" "SELECT tags FROM learnings WHERE id = '$remove_esc';")
+								if [[ -n "$remove_tags" ]]; then
+									local merged_tags
+									merged_tags=$(echo "$keep_tags,$remove_tags" | tr ',' '\n' | sort -u | grep -v '^$' | tr '\n' ',' | sed 's/,$//')
+									local merged_tags_esc="${merged_tags//"'"/"''"}"
+									db "$MEMORY_DB" "UPDATE learnings SET tags = '$merged_tags_esc' WHERE id = '$keep_esc';"
+								fi
+
+								db "$MEMORY_DB" "UPDATE learning_relations SET supersedes_id = '$keep_esc' WHERE supersedes_id = '$remove_esc';" 2>/dev/null || true
+								db "$MEMORY_DB" "DELETE FROM learning_relations WHERE id = '$remove_esc';" 2>/dev/null || true
+								db "$MEMORY_DB" "DELETE FROM learning_access WHERE id = '$remove_esc';"
+								db "$MEMORY_DB" "DELETE FROM learnings WHERE id = '$remove_esc';"
+							fi
+							semantic_removed=$((semantic_removed + 1))
+							removed_set="${removed_set} ${remove_id}"
+						fi
+					done
+				done
+			done <<<"$types"
+		else
+			log_warn "ai-threshold-judge.sh not found — skipping semantic dedup"
+		fi
+	fi
+
+	local total_removed=$((exact_removed + near_removed + semantic_removed))
 
 	if [[ "$total_removed" -eq 0 ]]; then
 		log_success "No duplicates found"
 	elif [[ "$dry_run" == true ]]; then
-		log_info "[DRY RUN] Would remove $total_removed duplicates ($exact_removed exact, $near_removed near)"
+		log_info "[DRY RUN] Would remove $total_removed duplicates ($exact_removed exact, $near_removed near, $semantic_removed semantic)"
 	else
 		# Rebuild FTS index
 		db "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');"
-		log_success "Removed $total_removed duplicates ($exact_removed exact, $near_removed near)"
+		log_success "Removed $total_removed duplicates ($exact_removed exact, $near_removed near, $semantic_removed semantic)"
 	fi
 
 	return 0
@@ -375,11 +468,15 @@ EOF
 
 #######################################
 # Prune old/stale entries
+# With --ai-judged: uses AI to evaluate each candidate entry's relevance
+# instead of a flat age cutoff. Falls back to type-aware heuristics.
+# Without --ai-judged: uses the original flat age threshold (DEFAULT_MAX_AGE_DAYS).
 #######################################
 cmd_prune() {
 	local older_than_days=$DEFAULT_MAX_AGE_DAYS
 	local dry_run=false
 	local keep_accessed=true
+	local ai_judged=false
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -395,11 +492,135 @@ cmd_prune() {
 			keep_accessed=false
 			shift
 			;;
+		--ai-judged)
+			ai_judged=true
+			shift
+			;;
 		*) shift ;;
 		esac
 	done
 
 	init_db
+
+	# Validate older_than_days is a positive integer
+	if ! [[ "$older_than_days" =~ ^[0-9]+$ ]]; then
+		log_error "--older-than-days must be a positive integer"
+		return 1
+	fi
+
+	if [[ "$ai_judged" == true ]]; then
+		_prune_ai_judged "$older_than_days" "$dry_run" "$keep_accessed"
+	else
+		_prune_flat_threshold "$older_than_days" "$dry_run" "$keep_accessed"
+	fi
+
+	return 0
+}
+
+#######################################
+# AI-judged prune: evaluate each candidate individually
+# Uses ai-threshold-judge.sh for borderline entries
+#######################################
+_prune_ai_judged() {
+	local older_than_days="$1"
+	local dry_run="$2"
+	local keep_accessed="$3"
+
+	local threshold_judge
+	threshold_judge="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/ai-threshold-judge.sh"
+
+	if [[ ! -x "$threshold_judge" ]]; then
+		log_warn "ai-threshold-judge.sh not found — falling back to flat threshold"
+		_prune_flat_threshold "$older_than_days" "$dry_run" "$keep_accessed"
+		return 0
+	fi
+
+	# Use a lower minimum age (60 days) — the AI judge decides the rest
+	local min_age=60
+	if [[ "$older_than_days" -lt "$min_age" ]]; then
+		min_age="$older_than_days"
+	fi
+
+	local candidates
+	if [[ "$keep_accessed" == true ]]; then
+		candidates=$(db "$MEMORY_DB" "SELECT l.id, l.type, l.confidence, substr(l.content, 1, 300), CAST(julianday('now') - julianday(l.created_at) AS INTEGER) FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-$min_age days') AND a.id IS NULL;")
+	else
+		candidates=$(db "$MEMORY_DB" "SELECT l.id, l.type, l.confidence, substr(l.content, 1, 300), CAST(julianday('now') - julianday(l.created_at) AS INTEGER), CASE WHEN a.id IS NOT NULL THEN 'true' ELSE 'false' END FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-$min_age days');")
+	fi
+
+	if [[ -z "$candidates" ]]; then
+		log_success "No entries to prune"
+		return 0
+	fi
+
+	local prune_count=0
+	local keep_count=0
+	local prune_ids=""
+
+	while IFS='|' read -r mem_id mem_type mem_confidence mem_content age_days accessed_flag; do
+		[[ -z "$mem_id" ]] && continue
+		local accessed="${accessed_flag:-false}"
+
+		local verdict
+		verdict=$("$threshold_judge" judge-prune-relevance \
+			--content "$mem_content" \
+			--age-days "$age_days" \
+			--type "$mem_type" \
+			--accessed "$accessed" \
+			--confidence "${mem_confidence:-medium}" 2>/dev/null || echo "keep")
+
+		if [[ "$verdict" == "prune" ]]; then
+			if [[ "$dry_run" == true ]]; then
+				log_info "[DRY RUN] Would prune $mem_id ($mem_type, ${age_days}d): ${mem_content:0:50}..."
+			fi
+			if [[ -n "$prune_ids" ]]; then
+				prune_ids="${prune_ids},'${mem_id//\'/\'\'}'"
+			else
+				prune_ids="'${mem_id//\'/\'\'}'"
+			fi
+			prune_count=$((prune_count + 1))
+		else
+			keep_count=$((keep_count + 1))
+		fi
+	done <<<"$candidates"
+
+	if [[ "$prune_count" -eq 0 ]]; then
+		log_success "No entries to prune (AI judge kept all $keep_count candidates)"
+		return 0
+	fi
+
+	if [[ "$dry_run" == true ]]; then
+		log_info "[DRY RUN] Would prune $prune_count entries (AI judge kept $keep_count)"
+		return 0
+	fi
+
+	# Backup before bulk delete
+	local prune_backup
+	prune_backup=$(backup_sqlite_db "$MEMORY_DB" "pre-prune")
+	if [[ $? -ne 0 || -z "$prune_backup" ]]; then
+		log_warn "Backup failed before prune — proceeding cautiously"
+	fi
+
+	db "$MEMORY_DB" "DELETE FROM learning_relations WHERE id IN ($prune_ids);" 2>/dev/null || true
+	db "$MEMORY_DB" "DELETE FROM learning_relations WHERE supersedes_id IN ($prune_ids);" 2>/dev/null || true
+	db "$MEMORY_DB" "DELETE FROM learning_access WHERE id IN ($prune_ids);" 2>/dev/null || true
+	db "$MEMORY_DB" "DELETE FROM learnings WHERE id IN ($prune_ids);" 2>/dev/null || true
+
+	db "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');"
+	log_success "Pruned $prune_count entries (AI-judged, kept $keep_count)"
+	log_info "Rebuilt search index"
+
+	cleanup_sqlite_backups "$MEMORY_DB" 5
+	return 0
+}
+
+#######################################
+# Flat threshold prune: original behavior (age-based cutoff)
+#######################################
+_prune_flat_threshold() {
+	local older_than_days="$1"
+	local dry_run="$2"
+	local keep_accessed="$3"
 
 	# Build query to find stale entries
 	local count
@@ -433,44 +654,40 @@ WHERE created_at < datetime('now', '-$older_than_days days')
 LIMIT 20;
 EOF
 		fi
-	else
-		# Validate older_than_days is a positive integer
-		if ! [[ "$older_than_days" =~ ^[0-9]+$ ]]; then
-			log_error "--older-than-days must be a positive integer"
-			return 1
-		fi
-
-		# Backup before bulk delete (t188)
-		local prune_backup
-		prune_backup=$(backup_sqlite_db "$MEMORY_DB" "pre-prune")
-		if [[ $? -ne 0 || -z "$prune_backup" ]]; then
-			log_warn "Backup failed before prune — proceeding cautiously"
-		fi
-
-		# Use efficient single DELETE with subquery
-		local subquery
-		if [[ "$keep_accessed" == true ]]; then
-			subquery="SELECT l.id FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-$older_than_days days') AND a.id IS NULL"
-		else
-			subquery="SELECT id FROM learnings WHERE created_at < datetime('now', '-$older_than_days days')"
-		fi
-
-		# Delete from all tables using the subquery (much faster than loop)
-		# Clean up relations first to avoid orphaned references
-		db "$MEMORY_DB" "DELETE FROM learning_relations WHERE id IN ($subquery);"
-		db "$MEMORY_DB" "DELETE FROM learning_relations WHERE supersedes_id IN ($subquery);"
-		db "$MEMORY_DB" "DELETE FROM learning_access WHERE id IN ($subquery);"
-		db "$MEMORY_DB" "DELETE FROM learnings WHERE id IN ($subquery);"
-
-		log_success "Pruned $count stale entries"
-
-		# Rebuild FTS index
-		db "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');"
-		log_info "Rebuilt search index"
-
-		# Clean up old backups (t188)
-		cleanup_sqlite_backups "$MEMORY_DB" 5
+		return 0
 	fi
+
+	# Backup before bulk delete (t188)
+	local prune_backup
+	prune_backup=$(backup_sqlite_db "$MEMORY_DB" "pre-prune")
+	if [[ $? -ne 0 || -z "$prune_backup" ]]; then
+		log_warn "Backup failed before prune — proceeding cautiously"
+	fi
+
+	# Use efficient single DELETE with subquery
+	local subquery
+	if [[ "$keep_accessed" == true ]]; then
+		subquery="SELECT l.id FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-$older_than_days days') AND a.id IS NULL"
+	else
+		subquery="SELECT id FROM learnings WHERE created_at < datetime('now', '-$older_than_days days')"
+	fi
+
+	# Delete from all tables using the subquery (much faster than loop)
+	# Clean up relations first to avoid orphaned references
+	db "$MEMORY_DB" "DELETE FROM learning_relations WHERE id IN ($subquery);"
+	db "$MEMORY_DB" "DELETE FROM learning_relations WHERE supersedes_id IN ($subquery);"
+	db "$MEMORY_DB" "DELETE FROM learning_access WHERE id IN ($subquery);"
+	db "$MEMORY_DB" "DELETE FROM learnings WHERE id IN ($subquery);"
+
+	log_success "Pruned $count stale entries"
+
+	# Rebuild FTS index
+	db "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');"
+	log_info "Rebuilt search index"
+
+	# Clean up old backups (t188)
+	cleanup_sqlite_backups "$MEMORY_DB" 5
+	return 0
 }
 
 #######################################
