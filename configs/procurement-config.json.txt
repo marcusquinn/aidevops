@@ -1,0 +1,16 @@
+{
+  "provider": "stripe",
+  "description": "Procurement configuration for autonomous mission purchases",
+  "currency": "GBP",
+  "cardholder_id": "YOUR_STRIPE_CARDHOLDER_ID_HERE",
+  "revolut_account_id": "YOUR_REVOLUT_ACCOUNT_ID_HERE",
+  "approval_thresholds": {
+    "auto": 50,
+    "auto_with_notification": 200,
+    "manual": 500
+  },
+  "reserve_percentage": 20,
+  "allowed_mccs": [4816, 5045, 5734, 5817, 5818, 7372, 7379],
+  "notification_channel": "matterbridge",
+  "vaultwarden_org": "aidevops-missions"
+}
