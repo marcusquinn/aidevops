@@ -996,6 +996,11 @@ check_scan_interval() {
 
 	local last_run
 	last_run=$(cat "$EVOL_STATE_FILE" 2>/dev/null || echo "0")
+	# Validate numeric — treat corrupted state file as stale (allow scan)
+	if ! [[ "$last_run" =~ ^[0-9]+$ ]]; then
+		log_warn "Invalid timestamp in state file, allowing scan"
+		return 0
+	fi
 	local now
 	now=$(date +%s)
 	local interval_seconds=$((PULSE_INTERVAL_HOURS * 3600))
@@ -1059,7 +1064,7 @@ cmd_pulse_scan() {
 			shift
 			;;
 		*)
-			log_warn "Unknown option: $1"
+			log_warn "pulse-scan: unknown option: $1"
 			shift
 			;;
 		esac

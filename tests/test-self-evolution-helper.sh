@@ -619,7 +619,15 @@ test_pulse_force_bypass() {
 	local rc_no_force=0
 	output_no_force=$("$EVOL_HELPER" pulse-scan --dry-run 2>&1) || rc_no_force=$?
 	assert_success "$rc_no_force" "pulse-scan without --force exits successfully"
-	assert_contains "$output_no_force" "interval\|Next scan" "interval guard blocks scan without --force"
+	# Check for interval guard message — split into two assertions for portability
+	# (basic grep \| alternation is non-portable across BSD/GNU)
+	if echo "$output_no_force" | grep -qE "interval|Next scan"; then
+		echo -e "  ${GREEN}PASS${NC}: interval guard blocks scan without --force"
+		PASS=$((PASS + 1))
+	else
+		echo -e "  ${RED}FAIL${NC}: interval guard blocks scan without --force (expected interval guard message)"
+		FAIL=$((FAIL + 1))
+	fi
 	assert_not_contains "$output_no_force" "Self-Evolution Pulse Scan" "scan header absent when guard blocks"
 
 	# With --force, should bypass interval guard and run
