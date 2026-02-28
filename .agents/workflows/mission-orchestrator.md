@@ -138,21 +138,48 @@ For stuck features (dispatched but no progress in 2+ hours):
 
 **When**: All features in a milestone are `completed`.
 
-Set milestone status to `validating`, then verify:
+Delegate to the milestone validation worker (`workflows/milestone-validation.md`, `scripts/milestone-validation-worker.sh`). The worker auto-detects the project's tech stack and runs the appropriate checks.
+
+**Dispatch validation:**
+
+```bash
+# Basic validation
+~/.aidevops/agents/scripts/milestone-validation-worker.sh \
+  "$MISSION_FILE" "$MILESTONE_NUM"
+
+# UI milestone with browser tests
+~/.aidevops/agents/scripts/milestone-validation-worker.sh \
+  "$MISSION_FILE" "$MILESTONE_NUM" \
+  --browser-tests --browser-url http://localhost:3000
+```
+
+**What the worker checks:**
 
 1. **Automated checks** (always run):
-   - Tests pass (`npm test`, `pytest`, or whatever the project uses)
-   - Build succeeds
-   - Linter passes
+   - Dependencies installed (auto-installs if missing)
+   - Tests pass (auto-detects: `npm test`, `pytest`, `cargo test`, `go test`, `shellcheck`)
+   - Build succeeds (auto-detects: `npm run build`, `cargo build`, `go build`)
+   - Linter passes (auto-detects: `npm run lint`, `ruff`, `tsc --noEmit`)
 
-2. **Integration checks** (from milestone validation criteria):
-   - Run the specific validation commands listed in the milestone's `Validation:` field
-   - For UI milestones: use browser automation (`playwright`, `stagehand`) to verify visual correctness
-   - For API milestones: run endpoint smoke tests
+2. **Browser tests** (when `--browser-tests` flag is passed):
+   - Runs Playwright test suite if `playwright.config.{ts,js,mjs}` exists
+   - Use for UI milestones to verify visual correctness
 
-3. **Budget check**:
-   - Calculate total spend so far vs budget
-   - If approaching alert threshold (default 80%), pause and report
+3. **Custom validation criteria** (from milestone's `**Validation:**` field):
+   - Recorded for agent-level evaluation
+
+**Exit codes:**
+
+| Code | Meaning | Orchestrator action |
+|------|---------|---------------------|
+| `0` | Passed | Advance to next milestone |
+| `1` | Failed | Fix tasks created automatically; re-validate after fixes |
+| `2` | Config error | Pause mission, report to user |
+| `3` | State error | Milestone not ready for validation |
+
+**Budget check** (orchestrator responsibility, not in the worker):
+- Calculate total spend so far vs budget
+- If approaching alert threshold (default 80%), pause and report
 
 **On validation pass:**
 - Set milestone status to `passed`
@@ -162,11 +189,9 @@ Set milestone status to `validating`, then verify:
 - Continue to Phase 2 for the next milestone
 
 **On validation failure:**
-- Set milestone status to `failed`
-- Identify what failed and why
-- Create fix tasks (new features in the current milestone)
-- Re-dispatch fixes
-- Re-validate after fixes complete
+- Worker sets milestone status to `failed` and creates fix tasks (GitHub issues in Full mode)
+- Orchestrator re-dispatches fixes as workers
+- Re-validates after fixes complete
 - If the same milestone fails 3 times, pause the mission and report to the user
 
 ### Phase 5: Mission Completion
@@ -610,6 +635,8 @@ Each repo has its own task ID namespace. When creating tasks in secondary repos,
 
 ## Related
 
+- `workflows/milestone-validation.md` — Milestone validation worker (Phase 4 delegate)
+- `scripts/milestone-validation-worker.sh` — Validation runner script (tests, build, lint, browser)
 - `scripts/commands/mission.md` — Creates the mission state file (scoping interview)
 - `scripts/commands/dashboard.md` — Progress dashboard (CLI + browser)
 - `scripts/commands/pulse.md` — Supervisor that detects active missions and invokes this orchestrator

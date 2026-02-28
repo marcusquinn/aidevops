@@ -107,6 +107,7 @@ version-bump,workflows/version-bump.md,Version bump automation
 pr,workflows/pr.md,PR creation and review
 preflight,workflows/preflight.md,Pre-commit quality checks
 postflight,workflows/postflight.md,Post-release verification
+milestone-validation,workflows/milestone-validation.md,Milestone validation for mission system — tests build lint browser
 ralph-loop,workflows/ralph-loop.md,Iterative AI development loops
 session-review,workflows/session-review.md,Session completeness review
 review-issue-pr,workflows/review-issue-pr.md,External issue/PR triage
@@ -147,6 +148,7 @@ ip-reputation-helper.sh,IP reputation checker - multi-provider risk scoring for 
 beads-sync-helper.sh,Sync TODO.md/PLANS.md with Beads graph
 todo-ready.sh,Show tasks with no open blockers
 full-loop-helper.sh,End-to-end development loop (task to PR to deploy)
+milestone-validation-worker.sh,Milestone validation for missions — auto-detect tech stack run tests build lint and optional Playwright browser tests
 session-review-helper.sh,Gather session context for review
 session-checkpoint-helper.sh,Persist session state to survive context compaction
 mail-helper.sh,TOON-based inter-agent mailbox system
