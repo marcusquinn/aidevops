@@ -181,6 +181,18 @@ record_warning() {
 	return 0
 }
 
+# Reset validation state for retry attempts
+reset_validation_state() {
+	VALIDATION_PASSED=true
+	VALIDATION_FAILURES=()
+	VALIDATION_WARNINGS=()
+	VALIDATION_CHECKS_RUN=0
+	VALIDATION_CHECKS_PASSED=0
+	VALIDATION_CHECKS_FAILED=0
+	VALIDATION_CHECKS_SKIPPED=0
+	return 0
+}
+
 # =============================================================================
 # Argument Parsing
 # =============================================================================
@@ -1020,25 +1032,48 @@ main() {
 		record_warning "Git pull" "Pull failed (exit $pull_exit) — validating current state"
 	fi
 
-	# Run validation checks
-	check_dependencies "$REPO_PATH"
-	run_test_suite "$REPO_PATH"
-	run_build "$REPO_PATH"
-	run_linter "$REPO_PATH"
-	run_browser_tests "$REPO_PATH" "$BROWSER_URL"
-	run_custom_validation "$REPO_PATH" "$validation_criteria"
+	# Run validation checks with retry support
+	local attempt=1
+	while [[ $attempt -le $MAX_RETRIES ]]; do
+		if [[ $attempt -gt 1 ]]; then
+			log_info "Retry attempt $attempt/$MAX_RETRIES..."
+			reset_validation_state
+			# Brief pause before retry to allow transient issues to resolve
+			sleep 2
+		fi
 
-	# Generate report
+		check_dependencies "$REPO_PATH"
+		run_test_suite "$REPO_PATH"
+		run_build "$REPO_PATH"
+		run_linter "$REPO_PATH"
+		run_browser_tests "$REPO_PATH" "$BROWSER_URL"
+		run_custom_validation "$REPO_PATH" "$validation_criteria"
+
+		if [[ "$VALIDATION_PASSED" == "true" ]]; then
+			break
+		fi
+
+		if [[ $attempt -lt $MAX_RETRIES ]]; then
+			log_warn "Validation failed on attempt $attempt/$MAX_RETRIES — retrying..."
+		fi
+		attempt=$((attempt + 1))
+	done
+
+	# Generate report (for final attempt)
 	generate_report "$MISSION_FILE" "$MILESTONE_NUM"
 
 	# Update mission state based on results
 	if [[ "$VALIDATION_PASSED" == "true" ]]; then
+		local attempt_note=""
+		if [[ $attempt -gt 1 ]]; then
+			attempt_note=" (passed on attempt $attempt)"
+		fi
 		update_milestone_status "$MISSION_FILE" "$MILESTONE_NUM" "passed"
-		append_progress_log "$MISSION_FILE" "Milestone $MILESTONE_NUM validated" "All checks passed ($VALIDATION_CHECKS_PASSED/$VALIDATION_CHECKS_RUN)"
+		append_progress_log "$MISSION_FILE" "Milestone $MILESTONE_NUM validated" "All checks passed ($VALIDATION_CHECKS_PASSED/$VALIDATION_CHECKS_RUN)${attempt_note}"
 		return 0
 	else
 		update_milestone_status "$MISSION_FILE" "$MILESTONE_NUM" "failed"
-		append_progress_log "$MISSION_FILE" "Milestone $MILESTONE_NUM validation failed" "${#VALIDATION_FAILURES[@]} failure(s): ${VALIDATION_FAILURES[*]}"
+		append_progress_log "$MISSION_FILE" "Milestone $MILESTONE_NUM validation failed" "${#VALIDATION_FAILURES[@]} failure(s) after $MAX_RETRIES attempt(s): ${VALIDATION_FAILURES[*]}"
 
 		# Create fix tasks
 		create_fix_tasks "$MISSION_FILE" "$MILESTONE_NUM" "$REPO_PATH"
