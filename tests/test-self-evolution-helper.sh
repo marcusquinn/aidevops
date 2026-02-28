@@ -602,27 +602,46 @@ test_pulse_force_bypass() {
 	"$ENTITY_HELPER" migrate >/dev/null 2>&1
 	"$EVOL_HELPER" migrate >/dev/null 2>&1
 
-	# Run pulse-scan twice in quick succession with --force
-	# Both should execute (not be skipped by interval guard)
-	local output1
-	local rc1=0
-	output1=$("$EVOL_HELPER" pulse-scan --force --dry-run 2>&1) || rc1=$?
-	assert_success "$rc1" "first --force pulse-scan exits successfully"
-	assert_contains "$output1" "Self-Evolution Pulse Scan" "first scan runs"
+	# Write a recent timestamp to the state file to simulate a recent scan.
+	# This activates the interval guard so we can test --force bypasses it.
+	local state_dir="${HOME}/.aidevops/logs"
+	local state_file="${state_dir}/self-evolution-last-run"
+	mkdir -p "$state_dir"
+	local original_state=""
+	if [[ -f "$state_file" ]]; then
+		original_state=$(cat "$state_file")
+	fi
+	# Write current epoch — makes interval guard think a scan just ran
+	date +%s >"$state_file"
 
-	local output2
-	local rc2=0
-	output2=$("$EVOL_HELPER" pulse-scan --force --dry-run 2>&1) || rc2=$?
-	assert_success "$rc2" "second --force pulse-scan exits successfully"
-	assert_contains "$output2" "Self-Evolution Pulse Scan" "second scan runs (not skipped by interval guard)"
+	# Without --force, should be skipped by interval guard
+	local output_no_force
+	local rc_no_force=0
+	output_no_force=$("$EVOL_HELPER" pulse-scan --dry-run 2>&1) || rc_no_force=$?
+	assert_success "$rc_no_force" "pulse-scan without --force exits successfully"
+	assert_contains "$output_no_force" "interval\|Next scan" "interval guard blocks scan without --force"
+	assert_not_contains "$output_no_force" "Self-Evolution Pulse Scan" "scan header absent when guard blocks"
 
-	# Without --force, should be skipped (interval guard active from first run)
-	# Note: we use --dry-run so no state file is written, but the --force test
-	# above uses --dry-run too, so the state file IS written by the non-dry-run
-	# path. Since both calls above used --dry-run, the interval guard won't
-	# have a state file to check, so a third call without --force should also
-	# succeed. To properly test the guard, we'd need a non-dry-run call first.
-	# This test validates that --force is accepted and doesn't cause errors.
+	# With --force, should bypass interval guard and run
+	local output_force
+	local rc_force=0
+	output_force=$("$EVOL_HELPER" pulse-scan --force --dry-run 2>&1) || rc_force=$?
+	assert_success "$rc_force" "--force pulse-scan exits successfully"
+	assert_contains "$output_force" "Self-Evolution Pulse Scan" "--force bypasses interval guard"
+
+	# Run --force twice in quick succession — both should execute
+	local output_force2
+	local rc_force2=0
+	output_force2=$("$EVOL_HELPER" pulse-scan --force --dry-run 2>&1) || rc_force2=$?
+	assert_success "$rc_force2" "second --force pulse-scan exits successfully"
+	assert_contains "$output_force2" "Self-Evolution Pulse Scan" "consecutive --force scans both run"
+
+	# Restore original state file
+	if [[ -n "$original_state" ]]; then
+		echo "$original_state" >"$state_file"
+	else
+		rm -f "$state_file"
+	fi
 
 	return 0
 }
