@@ -113,18 +113,18 @@ set_aws_credentials() {
 
 	# Try gopass first, then env vars
 	if command -v gopass &>/dev/null; then
-		local key_id
+		local key_id secret_key
 		key_id=$(gopass show -o "aidevops/AWS_ACCESS_KEY_ID" 2>/dev/null || echo "")
-		if [[ -n "$key_id" ]]; then
+		secret_key=$(gopass show -o "aidevops/AWS_SECRET_ACCESS_KEY" 2>/dev/null || echo "")
+		if [[ -n "$key_id" && -n "$secret_key" ]]; then
 			export AWS_ACCESS_KEY_ID="$key_id"
-			export AWS_SECRET_ACCESS_KEY
-			AWS_SECRET_ACCESS_KEY=$(gopass show -o "aidevops/AWS_SECRET_ACCESS_KEY" 2>/dev/null || echo "")
+			export AWS_SECRET_ACCESS_KEY="$secret_key"
 			return 0
 		fi
 	fi
 
 	# Fall back to existing env vars or credentials.sh
-	if [[ -z "${AWS_ACCESS_KEY_ID:-}" ]]; then
+	if [[ -z "${AWS_ACCESS_KEY_ID:-}" || -z "${AWS_SECRET_ACCESS_KEY:-}" ]]; then
 		local creds_file="${HOME}/.config/aidevops/credentials.sh"
 		if [[ -f "$creds_file" ]]; then
 			# shellcheck disable=SC1090
@@ -132,8 +132,8 @@ set_aws_credentials() {
 		fi
 	fi
 
-	if [[ -z "${AWS_ACCESS_KEY_ID:-}" ]]; then
-		print_error "AWS credentials not found. Set via: aidevops secret set AWS_ACCESS_KEY_ID"
+	if [[ -z "${AWS_ACCESS_KEY_ID:-}" || -z "${AWS_SECRET_ACCESS_KEY:-}" ]]; then
+		print_error "AWS credentials not found. Set via: aidevops secret set AWS_ACCESS_KEY_ID && aidevops secret set AWS_SECRET_ACCESS_KEY"
 		return 1
 	fi
 	return 0
@@ -444,21 +444,6 @@ cmd_send() {
 		"
 	fi
 
-	# Build SES message as JSON for safe escaping of all characters
-	local ses_message_json
-	ses_message_json=$(jq -n \
-		--arg subject "$subject" \
-		--arg body "$body" \
-		'{Subject: {Data: $subject}, Body: {Text: {Data: $body}}}')
-
-	# Build SES send command
-	local ses_args=(
-		ses send-email
-		--source "$from_email"
-		--destination "ToAddresses=$to_email"
-		--message "$ses_message_json"
-	)
-
 	# Add In-Reply-To header if replying
 	if [[ -n "$reply_to_msg" ]]; then
 		local original_message_id
@@ -504,16 +489,33 @@ cmd_send() {
 		fi
 	fi
 
-	# Standard send — reuse ses_message_json built above
+	# Standard send — build JSON input for safe escaping of all characters
+	local ses_input_json ses_tmpfile
+	ses_input_json=$(jq -n \
+		--arg from "$from_email" \
+		--arg to "$to_email" \
+		--arg subject "$subject" \
+		--arg body "$body" \
+		'{
+			Source: $from,
+			Destination: { ToAddresses: [$to] },
+			Message: {
+				Subject: { Data: $subject },
+				Body: { Text: { Data: $body } }
+			}
+		}')
+	ses_tmpfile=$(mktemp)
+	printf '%s' "$ses_input_json" >"$ses_tmpfile"
+
 	local ses_result
 	ses_result=$(aws ses send-email \
-		--source "$from_email" \
-		--destination "ToAddresses=$to_email" \
-		--message "$ses_message_json" \
+		--cli-input-json "file://${ses_tmpfile}" \
 		--query 'MessageId' --output text 2>&1) || {
+		rm -f "$ses_tmpfile"
 		print_error "Failed to send email: $ses_result"
 		return 1
 	}
+	rm -f "$ses_tmpfile"
 
 	local msg_id
 	msg_id=$(generate_id "msg")
@@ -557,10 +559,17 @@ cmd_poll() {
 			}
 			# Validate and normalize to ISO 8601 (YYYY-MM-DDTHH:MM:SSZ)
 			# Accept: ISO 8601 with/without time, with Z/+offset, or date-only
-			since=$(date -d "$2" -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) || {
+			# GNU date uses -d, BSD/macOS date uses -j -f
+			if since=$(date -d "$2" -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null); then
+				: # GNU date succeeded
+			elif since=$(date -j -u -f '%Y-%m-%dT%H:%M:%SZ' "$2" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null); then
+				: # BSD date with full ISO format
+			elif since=$(date -j -u -f '%Y-%m-%d' "$2" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null); then
+				: # BSD date with date-only format
+			else
 				print_error "Invalid date format for --since: '$2' (expected ISO 8601, e.g. 2026-01-15T00:00:00Z or 2026-01-15)"
 				return 1
-			}
+			fi
 			shift 2
 			;;
 		*)
@@ -631,7 +640,7 @@ cmd_poll() {
 		# Filter by date if --since specified
 		if [[ -n "$since" ]]; then
 			local obj_date
-			obj_date=$(echo "$objects_json" | jq -r ".Contents[] | select(.Key == \"$s3_key\") | .LastModified" 2>/dev/null)
+			obj_date=$(echo "$objects_json" | jq -r --arg s3_key "$s3_key" '.Contents[] | select(.Key == $s3_key) | .LastModified' 2>/dev/null)
 			if [[ -n "$obj_date" && "$obj_date" < "$since" ]]; then
 				continue
 			fi
@@ -757,7 +766,12 @@ extract_codes_from_text() {
 				[[ -z "$match" ]] && continue
 				# Extract just the code value (capture group)
 				local code_value
-				code_value=$(echo "$match" | grep -oE '[0-9A-Za-z_-]{4,}' | head -1 || echo "$match")
+				# Require at least one digit to avoid matching keywords like "code" or "Token"
+				code_value=$(echo "$match" | grep -oE '[0-9A-Za-z_-]{4,}' | grep '[0-9]' | head -1 || echo "")
+				if [[ -z "$code_value" ]]; then
+					# Fallback: try extracting pure digit sequences
+					code_value=$(echo "$match" | grep -oE '[0-9]{4,}' | head -1 || echo "")
+				fi
 				[[ -z "$code_value" ]] && continue
 
 				local code_type="otp"
