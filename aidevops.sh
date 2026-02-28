@@ -1295,18 +1295,104 @@ EOF
 	# Plugins deploy to ~/.aidevops/agents/<namespace>/ (namespaced, no collisions)
 	print_success "Created .aidevops.json"
 
-	# Create .agents symlink (or migrate from legacy .agent)
-	if [[ -L "$project_root/.agent" || -d "$project_root/.agent" ]]; then
-		# Migrate legacy .agent symlink to .agents
+	# Derive repo name for scaffolding
+	local repo_name
+	repo_name=$(basename "$project_root")
+
+	# Create .agents/ directory for project-specific agent context
+	# (The aidevops framework is loaded globally via ~/.aidevops/agents/ — this
+	# directory is for project-specific agents, conventions, and architecture docs)
+	if [[ -L "$project_root/.agents" ]]; then
+		# Migrate legacy symlink to real directory
+		rm -f "$project_root/.agents"
+		print_info "Removed legacy .agents symlink (framework is loaded globally now)"
+	fi
+	# Also clean up legacy .agent symlink/directory
+	if [[ -L "$project_root/.agent" ]]; then
 		rm -f "$project_root/.agent"
-		ln -s "$AGENTS_DIR" "$project_root/.agents"
-		print_success "Migrated .agent -> .agents symlink"
-	elif [[ ! -e "$project_root/.agents" ]]; then
-		print_info "Creating .agents symlink..."
-		ln -s "$AGENTS_DIR" "$project_root/.agents"
-		print_success "Created .agents -> $AGENTS_DIR"
-	else
-		print_warning ".agents already exists, skipping symlink"
+		print_info "Removed legacy .agent symlink"
+	elif [[ -d "$project_root/.agent" && ! -d "$project_root/.agents" ]]; then
+		mv "$project_root/.agent" "$project_root/.agents"
+		print_success "Migrated .agent/ -> .agents/ directory"
+	fi
+
+	if [[ ! -d "$project_root/.agents" ]]; then
+		mkdir -p "$project_root/.agents"
+		print_success "Created .agents/ directory"
+	fi
+
+	# Scaffold .agents/AGENTS.md if missing
+	if [[ ! -f "$project_root/.agents/AGENTS.md" ]]; then
+		cat >"$project_root/.agents/AGENTS.md" <<'AGENTSEOF'
+# Agent Instructions
+
+This directory contains project-specific agent context. The [aidevops](https://aidevops.sh)
+framework is loaded separately via the global config (`~/.aidevops/agents/`).
+
+## Purpose
+
+Files in `.agents/` provide project-specific instructions that AI assistants
+read when working in this repository. Use this for:
+
+- Domain-specific conventions not covered by the framework
+- Project architecture decisions and patterns
+- API design rules, data models, naming conventions
+- Integration details (third-party services, deployment targets)
+
+## Adding Agents
+
+Create `.md` files in this directory for domain-specific context:
+
+```text
+.agents/
+  AGENTS.md              # This file - overview and index
+  api-patterns.md        # API design conventions
+  deployment.md          # Deployment procedures
+  data-model.md          # Database schema and relationships
+```
+
+Each file is read on demand by AI assistants when relevant to the task.
+AGENTSEOF
+		print_success "Created .agents/AGENTS.md"
+	fi
+
+	# Scaffold root AGENTS.md if missing
+	if [[ ! -f "$project_root/AGENTS.md" ]]; then
+		cat >"$project_root/AGENTS.md" <<ROOTAGENTSEOF
+# $repo_name
+
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Build**: \`# TODO: add build command\`
+- **Test**: \`# TODO: add test command\`
+- **Deploy**: \`# TODO: add deploy command\`
+
+## Project Overview
+
+<!-- Brief description of what this project does and why it exists. -->
+
+## Architecture
+
+<!-- Key architectural decisions, tech stack, directory structure. -->
+
+## Conventions
+
+- Commits: [Conventional Commits](https://www.conventionalcommits.org/)
+- Branches: \`feature/\`, \`bugfix/\`, \`hotfix/\`, \`refactor/\`, \`chore/\`
+
+## Key Files
+
+| File | Purpose |
+|------|---------|
+| \`.agents/AGENTS.md\` | Project-specific agent instructions |
+| \`TODO.md\` | Task tracking |
+| \`CHANGELOG.md\` | Version history |
+
+<!-- AI-CONTEXT-END -->
+ROOTAGENTSEOF
+		print_success "Created AGENTS.md"
 	fi
 
 	# Create planning files if enabled
@@ -1534,27 +1620,60 @@ SOPSEOF
 		fi
 	fi
 
-	# Add to .gitignore if needed
+	# Add aidevops runtime artifacts to .gitignore
+	# Note: .agents/ itself is NOT ignored — it contains committed project-specific agents.
+	# Only runtime artifacts (loop state, tmp, memory) are ignored.
 	local gitignore="$project_root/.gitignore"
 	if [[ -f "$gitignore" ]]; then
-		if ! grep -q "^\.agents$" "$gitignore" 2>/dev/null; then
+		local gitignore_updated=false
+
+		# Remove legacy bare ".agents" entry if present (was added by older versions)
+		if grep -q "^\.agents$" "$gitignore" 2>/dev/null; then
+			sed -i '' '/^\.agents$/d' "$gitignore" 2>/dev/null ||
+				sed -i '/^\.agents$/d' "$gitignore" 2>/dev/null || true
+			# Also remove the "# aidevops" comment if it's now orphaned
+			sed -i '' '/^# aidevops$/{ N; /^# aidevops\n$/d; }' "$gitignore" 2>/dev/null || true
+			print_info "Removed legacy bare .agents from .gitignore (now tracked)"
+			gitignore_updated=true
+		fi
+
+		# Remove legacy bare ".agent" entry if present
+		if grep -q "^\.agent$" "$gitignore" 2>/dev/null; then
+			sed -i '' '/^\.agent$/d' "$gitignore" 2>/dev/null ||
+				sed -i '/^\.agent$/d' "$gitignore" 2>/dev/null || true
+			gitignore_updated=true
+		fi
+
+		# Add runtime artifact ignores
+		if ! grep -q "^\.agents/loop-state/" "$gitignore" 2>/dev/null; then
 			{
 				echo ""
-				echo "# aidevops"
-				echo ".agents"
+				echo "# aidevops runtime artifacts"
+				echo ".agents/loop-state/"
+				echo ".agents/tmp/"
+				echo ".agents/memory/"
 			} >>"$gitignore"
-			print_success "Added .agents to .gitignore"
-			# Also add legacy .agent for backward compatibility
-			if ! grep -q "^\.agent$" "$gitignore" 2>/dev/null; then
-				echo ".agent" >>"$gitignore"
-			fi
+			print_success "Added .agents/ runtime artifact ignores to .gitignore"
+			gitignore_updated=true
 		fi
+
+		# Add .aidevops.json to gitignore (local config, not committed)
+		if ! grep -q "^\.aidevops\.json$" "$gitignore" 2>/dev/null; then
+			echo ".aidevops.json" >>"$gitignore"
+			gitignore_updated=true
+		fi
+
 		# Add .beads if beads is enabled
 		if [[ "$enable_beads" == "true" ]]; then
 			if ! grep -q "^\.beads$" "$gitignore" 2>/dev/null; then
 				echo ".beads" >>"$gitignore"
 				print_success "Added .beads to .gitignore"
+				gitignore_updated=true
 			fi
+		fi
+
+		if [[ "$gitignore_updated" == "true" ]]; then
+			print_info "Updated .gitignore"
 		fi
 	fi
 

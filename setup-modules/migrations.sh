@@ -225,13 +225,13 @@ migrate_agent_to_agents_folder() {
 			[[ -z "$repo_path" ]] && continue
 			[[ ! -d "$repo_path" ]] && continue
 
-			# Migrate .agent symlink to .agents
+			# Migrate legacy .agent symlink/directory to .agents real directory
 			if [[ -L "$repo_path/.agent" ]]; then
-				local target
-				target=$(readlink "$repo_path/.agent")
 				rm -f "$repo_path/.agent"
-				ln -s "$target" "$repo_path/.agents" 2>/dev/null || true
-				print_info "  Migrated symlink: $repo_path/.agent -> .agents"
+				if [[ ! -d "$repo_path/.agents" ]]; then
+					mkdir -p "$repo_path/.agents"
+				fi
+				print_info "  Removed legacy .agent symlink in $(basename "$repo_path")"
 				((migrated++)) || true
 			elif [[ -d "$repo_path/.agent" && ! -L "$repo_path/.agent" ]]; then
 				# Real directory (not symlink) - rename it
@@ -242,32 +242,46 @@ migrate_agent_to_agents_folder() {
 				fi
 			fi
 
-			# Update .gitignore: add .agents, keep .agent for backward compat
-			# Skip repos where .agents/ is a git-tracked directory (e.g., the aidevops
-			# source repo itself). Adding bare ".agents" to .gitignore there would hide
-			# the entire framework directory from git.
-			local gitignore="$repo_path/.gitignore"
-			local is_tracked_dir=false
-			if [[ -n "$(git -C "$repo_path" ls-files .agents/ 2>/dev/null | head -1)" ]]; then
-				is_tracked_dir=true
+			# Migrate legacy .agents symlink to real directory
+			if [[ -L "$repo_path/.agents" ]]; then
+				rm -f "$repo_path/.agents"
+				mkdir -p "$repo_path/.agents"
+				print_info "  Replaced .agents symlink with real directory in $(basename "$repo_path")"
+				((migrated++)) || true
 			fi
-			if [[ -f "$gitignore" ]] && [[ "$is_tracked_dir" == "false" ]]; then
-				# Add .agents entry if not present
-				if ! grep -q "^\.agents$" "$gitignore" 2>/dev/null; then
-					# Replace .agent with .agents if it exists
-					if grep -q "^\.agent$" "$gitignore" 2>/dev/null; then
-						sed -i '' 's/^\.agent$/.agents/' "$gitignore" 2>/dev/null ||
-							sed -i 's/^\.agent$/.agents/' "$gitignore" 2>/dev/null || true
-					else
-						echo ".agents" >>"$gitignore"
-					fi
-					print_info "  Updated .gitignore in $(basename "$repo_path")"
+
+			# Update .gitignore: remove legacy bare ".agents" (now tracked),
+			# add runtime artifact ignores, migrate .agent/ paths
+			local gitignore="$repo_path/.gitignore"
+			if [[ -f "$gitignore" ]]; then
+				# Remove legacy bare ".agents" and ".agent" entries (added by older versions)
+				# .agents/ is now a real committed directory, not a symlink to ignore
+				if grep -q "^\.agents$" "$gitignore" 2>/dev/null; then
+					sed -i '' '/^\.agents$/d' "$gitignore" 2>/dev/null ||
+						sed -i '/^\.agents$/d' "$gitignore" 2>/dev/null || true
+					print_info "  Removed legacy bare .agents from .gitignore in $(basename "$repo_path")"
+				fi
+				if grep -q "^\.agent$" "$gitignore" 2>/dev/null; then
+					sed -i '' '/^\.agent$/d' "$gitignore" 2>/dev/null ||
+						sed -i '/^\.agent$/d' "$gitignore" 2>/dev/null || true
 				fi
 
-				# Update .agent/loop-state/ -> .agents/loop-state/
+				# Migrate .agent/loop-state/ -> .agents/loop-state/
 				if grep -q "^\.agent/loop-state/" "$gitignore" 2>/dev/null; then
 					sed -i '' 's|^\.agent/loop-state/|.agents/loop-state/|' "$gitignore" 2>/dev/null ||
 						sed -i 's|^\.agent/loop-state/|.agents/loop-state/|' "$gitignore" 2>/dev/null || true
+				fi
+
+				# Add runtime artifact ignores if not present
+				if ! grep -q "^\.agents/loop-state/" "$gitignore" 2>/dev/null; then
+					{
+						echo ""
+						echo "# aidevops runtime artifacts"
+						echo ".agents/loop-state/"
+						echo ".agents/tmp/"
+						echo ".agents/memory/"
+					} >>"$gitignore"
+					print_info "  Added .agents/ runtime artifact ignores in $(basename "$repo_path")"
 				fi
 			fi
 		done < <(jq -r '.initialized_repos[].path' "$repos_file" 2>/dev/null)
@@ -280,20 +294,13 @@ migrate_agent_to_agents_folder() {
 			repo_dir=$(dirname "$agent_path")
 
 			if [[ -L "$agent_path" ]]; then
-				# Symlink: migrate or clean up stale
-				if [[ ! -e "$repo_dir/.agents" ]]; then
-					local target
-					target=$(readlink "$agent_path")
-					rm -f "$agent_path"
-					ln -s "$target" "$repo_dir/.agents" 2>/dev/null || true
-					print_info "  Migrated symlink: $agent_path -> .agents"
-					((migrated++)) || true
-				else
-					# .agents already exists, remove stale .agent symlink
-					rm -f "$agent_path"
-					print_info "  Removed stale symlink: $agent_path (.agents already exists)"
-					((migrated++)) || true
+				# Symlink: remove and create real directory
+				rm -f "$agent_path"
+				if [[ ! -d "$repo_dir/.agents" ]]; then
+					mkdir -p "$repo_dir/.agents"
 				fi
+				print_info "  Removed legacy .agent symlink: $agent_path"
+				((migrated++)) || true
 			elif [[ -d "$agent_path" ]]; then
 				# Directory: rename to .agents if .agents doesn't exist
 				if [[ ! -e "$repo_dir/.agents" ]]; then
