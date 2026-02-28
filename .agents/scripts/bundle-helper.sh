@@ -1,31 +1,72 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Bundle Helper - Load and resolve project bundle presets
+# Bundle Helper - Detect, resolve, and query project bundle presets
 # =============================================================================
 # Loads bundle definitions from .agents/bundles/ and resolves the effective
 # configuration for a project. Supports explicit bundle assignment (via
-# repos.json "bundle" field) and auto-detection from marker files.
+# repos.json "bundle" field or .aidevops.json), auto-detection from marker
+# files, and a cli-tool fallback.
 #
 # Usage:
-#   bundle-helper.sh load <bundle-name>         Load a single bundle by name
-#   bundle-helper.sh detect [project-path]      Auto-detect bundle from markers
-#   bundle-helper.sh resolve [project-path]     Resolve effective bundle (explicit or detected)
-#   bundle-helper.sh list                       List all available bundles
-#   bundle-helper.sh validate [bundle-name]     Validate bundle JSON against schema
-#   bundle-helper.sh get <field> [project-path] Get a specific field from resolved bundle
-#   bundle-helper.sh compose <b1> <b2> [...]    Compose multiple bundles into one
-#   bundle-helper.sh help                       Show this help
+#   bundle-helper.sh detect [project-path]        Auto-detect bundle from markers
+#   bundle-helper.sh resolve [project-path]       Resolve effective bundle (priority chain)
+#   bundle-helper.sh show [project-path]          Human-readable bundle summary
+#   bundle-helper.sh list                         List all available bundles
+#   bundle-helper.sh validate [bundle-name]       Validate bundle JSON against schema
+#   bundle-helper.sh load <bundle-name>           Load a single bundle by name
+#   bundle-helper.sh get <field> [project-path]   Get a specific field from resolved bundle
+#   bundle-helper.sh compose <b1> <b2> [...]      Compose multiple bundles into one
+#   bundle-helper.sh help                         Show this help
+#
+# Resolution priority chain:
+#   1. repos.json "bundle" field (explicit per-repo)
+#   2. .aidevops.json "bundle" field (per-project config)
+#   3. Auto-detection from marker files
+#   4. Fallback: cli-tool (most conservative)
+#
+# Integration API (source this script, then call functions):
+#   get_bundle_config <project-path>    Get full resolved bundle JSON
+#   get_quality_gates <project-path>    Get quality gates array
+#   get_model_default <task> <path>     Get model tier for a task type
+#   should_skip_gate <gate> <path>      Check if a gate should be skipped
 #
 # Examples:
-#   bundle-helper.sh load web-app
 #   bundle-helper.sh detect ~/Git/my-nextjs-app
 #   bundle-helper.sh resolve ~/Git/my-project
-#   bundle-helper.sh get model_defaults.implementation ~/Git/my-project
+#   bundle-helper.sh show .
+#   bundle-helper.sh get model_defaults.implementation ~/Git/my-app
 #   bundle-helper.sh compose web-app infrastructure
+#
+#   # Integration API usage from another script:
+#   source "$(dirname "$0")/bundle-helper.sh" --source-only
+#   tier=$(get_model_default "implementation" ~/Git/my-app)
+#   if should_skip_gate "shellcheck" ~/Git/my-app; then echo "skip"; fi
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
-source "${SCRIPT_DIR}/shared-constants.sh"
+
+# Support --source-only mode for integration API
+# When sourced with --source-only, only define functions — don't run main()
+_BUNDLE_HELPER_SOURCE_ONLY=false
+for _arg in "$@"; do
+	if [[ "$_arg" == "--source-only" ]]; then
+		_BUNDLE_HELPER_SOURCE_ONLY=true
+		break
+	fi
+done
+
+# Source shared-constants if available (provides print_error, print_info, etc.)
+if [[ -f "${SCRIPT_DIR}/shared-constants.sh" ]]; then
+	# shellcheck source=shared-constants.sh
+	source "${SCRIPT_DIR}/shared-constants.sh"
+else
+	# Minimal fallback if shared-constants.sh is not available
+	print_error() { echo "ERROR: $*" >&2; }
+	print_success() { echo "OK: $*"; }
+	print_warning() { echo "WARN: $*" >&2; }
+	print_info() { echo "INFO: $*" >&2; }
+	readonly ERROR_UNKNOWN_COMMAND="Unknown command"
+fi
 
 set -euo pipefail
 
@@ -51,6 +92,140 @@ _resolve_bundles_dir() {
 }
 
 REPOS_JSON="${HOME}/.config/aidevops/repos.json"
+FALLBACK_BUNDLE="cli-tool"
+
+# =============================================================================
+# Internal Utilities
+# =============================================================================
+
+# Expand tilde in a path to the actual home directory.
+# repos.json stores paths like ~/Git/project — these need expansion for comparison.
+# Arguments:
+#   $1 - path that may contain a leading tilde
+# Output: expanded path to stdout
+_expand_tilde() {
+	local path="$1"
+	# shellcheck disable=SC2088  # Intentional: matching literal tilde from JSON, not shell expansion
+	if [[ "$path" == "~/"* ]]; then
+		echo "${HOME}/${path#\~/}"
+	elif [[ "$path" == "~" ]]; then
+		echo "${HOME}"
+	else
+		echo "$path"
+	fi
+}
+
+# Resolve a project path to an absolute path.
+# Arguments:
+#   $1 - project path (may be relative, may contain tilde)
+# Output: absolute path to stdout
+# Returns: 0 on success, 1 if path not found
+_resolve_project_path() {
+	local raw_path="${1:-.}"
+	local expanded
+	expanded="$(_expand_tilde "$raw_path")"
+
+	if [[ -d "$expanded" ]]; then
+		(cd "$expanded" && pwd)
+		return 0
+	fi
+
+	print_error "Project path not found: ${raw_path}"
+	return 1
+}
+
+# Read the "bundle" field from a project's .aidevops.json.
+# Arguments:
+#   $1 - absolute project path
+# Output: bundle name(s) to stdout (may be comma-separated), empty if not set
+_read_project_config_bundle() {
+	local project_path="$1"
+	local config_file="${project_path}/.aidevops.json"
+
+	if [[ -f "$config_file" ]]; then
+		jq -r '.bundle // empty' "$config_file" 2>/dev/null || true
+	fi
+}
+
+# Read the cached detected bundle from .aidevops.json.
+# Arguments:
+#   $1 - absolute project path
+# Output: cached bundle name(s) to stdout, empty if not cached
+_read_cached_detection() {
+	local project_path="$1"
+	local config_file="${project_path}/.aidevops.json"
+
+	if [[ -f "$config_file" ]]; then
+		jq -r '.detected_bundle // empty' "$config_file" 2>/dev/null || true
+	fi
+}
+
+# Write detected bundle to .aidevops.json cache.
+# Creates the file if it doesn't exist; merges if it does.
+# Arguments:
+#   $1 - absolute project path
+#   $2 - detected bundle name(s), comma-separated
+_write_cached_detection() {
+	local project_path="$1"
+	local detected="$2"
+	local config_file="${project_path}/.aidevops.json"
+	local timestamp
+	timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+	# Use atomic write (mktemp + mv) to prevent race conditions
+	local tmpfile
+	tmpfile=$(mktemp "${config_file}.XXXXXX") || {
+		print_warning "Could not create temp file for ${config_file}"
+		return 0
+	}
+
+	if [[ -f "$config_file" ]]; then
+		# Merge into existing file
+		jq --arg d "$detected" --arg t "$timestamp" \
+			'.detected_bundle = $d | .detected_bundle_at = $t' \
+			"$config_file" >"$tmpfile" 2>/dev/null || {
+			rm -f "$tmpfile"
+			print_warning "Could not update cache in ${config_file}"
+			return 0
+		}
+	else
+		# Create new file
+		jq -n --arg d "$detected" --arg t "$timestamp" \
+			'{detected_bundle: $d, detected_bundle_at: $t}' >"$tmpfile" 2>/dev/null || {
+			rm -f "$tmpfile"
+			print_warning "Could not create cache file ${config_file}"
+			return 0
+		}
+	fi
+
+	mv -f "$tmpfile" "$config_file" || {
+		rm -f "$tmpfile"
+		print_warning "Could not write cache file ${config_file}"
+		return 0
+	}
+
+	return 0
+}
+
+# Look up a project in repos.json by its absolute path.
+# Handles tilde expansion in repos.json paths.
+# Arguments:
+#   $1 - absolute project path
+# Output: bundle field value to stdout, empty if not found
+_lookup_repos_json_bundle() {
+	local project_path="$1"
+
+	if [[ ! -f "$REPOS_JSON" ]]; then
+		return 0
+	fi
+
+	# repos.json paths may use ~/... so we need to expand them for comparison
+	jq -r --arg path "$project_path" --arg home "$HOME" '
+		[.[] | select(
+			(.path | gsub("^~"; $home)) == $path
+		) | .bundle // empty] | first // empty
+	' "$REPOS_JSON" 2>/dev/null || true
+}
 
 # =============================================================================
 # Core Functions
@@ -96,14 +271,39 @@ cmd_load() {
 # Detect which bundle(s) match a project based on marker files.
 # Arguments:
 #   $1 - project path (defaults to current directory)
+#   --force - skip cache, re-detect from markers
 # Output: newline-separated list of matching bundle names
 # Returns: 0 if at least one match, 1 if no matches
 cmd_detect() {
-	local project_path="${1:-.}"
-	project_path="$(cd "$project_path" 2>/dev/null && pwd)" || {
-		print_error "Project path not found: $1"
-		return 1
-	}
+	local project_path=""
+	local force=false
+
+	# Parse arguments
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--force)
+			force=true
+			shift
+			;;
+		*)
+			project_path="$1"
+			shift
+			;;
+		esac
+	done
+
+	project_path="$(_resolve_project_path "${project_path:-.}")" || return 1
+
+	# Check cache unless --force
+	if [[ "$force" == "false" ]]; then
+		local cached
+		cached="$(_read_cached_detection "$project_path")"
+		if [[ -n "$cached" ]]; then
+			# Convert comma-separated to newline-separated
+			echo "$cached" | tr ',' '\n'
+			return 0
+		fi
+	fi
 
 	local matches=()
 
@@ -117,9 +317,14 @@ cmd_detect() {
 
 		while IFS= read -r marker; do
 			[[ -z "$marker" ]] && continue
-			# Check if marker exists in project (supports glob patterns)
+			# Check if marker exists in project (supports glob patterns).
+			# compgen -G has a quirk: patterns ending in / return the literal
+			# pattern even when nothing matches. Verify with -e as a safeguard.
+			local match_path="${project_path}/${marker}"
 			# shellcheck disable=SC2086
-			if compgen -G "${project_path}/${marker}" >/dev/null 2>&1; then
+			local matched
+			matched=$(compgen -G "$match_path" 2>/dev/null | head -1) || true
+			if [[ -n "$matched" && -e "$matched" ]]; then
 				matches+=("$basename")
 				break
 			fi
@@ -130,33 +335,48 @@ cmd_detect() {
 		return 1
 	fi
 
+	# Cache the detection result
+	local comma_separated
+	comma_separated=$(printf '%s,' "${matches[@]}")
+	comma_separated="${comma_separated%,}"
+	_write_cached_detection "$project_path" "$comma_separated"
+
 	printf '%s\n' "${matches[@]}"
 	return 0
 }
 
 # Resolve the effective bundle for a project.
-# Priority: explicit assignment in repos.json > auto-detection > no bundle.
+# Priority chain: repos.json > .aidevops.json > auto-detect > cli-tool fallback.
 # Arguments:
 #   $1 - project path (defaults to current directory)
+#   --force - force re-detection (skip cache)
 # Output: resolved bundle JSON to stdout
-# Returns: 0 on success, 1 if no bundle found
+# Returns: 0 on success
 cmd_resolve() {
-	local project_path="${1:-.}"
-	project_path="$(cd "$project_path" 2>/dev/null && pwd)" || {
-		print_error "Project path not found: $1"
-		return 1
-	}
+	local project_path=""
+	local force_flag=""
+
+	# Parse arguments
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--force)
+			force_flag="--force"
+			shift
+			;;
+		*)
+			project_path="$1"
+			shift
+			;;
+		esac
+	done
+
+	project_path="$(_resolve_project_path "${project_path:-.}")" || return 1
 
 	# 1. Check repos.json for explicit bundle assignment
-	local explicit_bundle=""
-	if [[ -f "$REPOS_JSON" ]]; then
-		explicit_bundle=$(jq -r --arg path "$project_path" \
-			'.[] | select(.path == $path) | .bundle // empty' \
-			"$REPOS_JSON" 2>/dev/null) || true
-	fi
+	local explicit_bundle
+	explicit_bundle="$(_lookup_repos_json_bundle "$project_path")"
 
 	if [[ -n "$explicit_bundle" ]]; then
-		# Explicit bundle may be comma-separated for composition
 		local bundle_names
 		IFS=',' read -ra bundle_names <<<"$explicit_bundle"
 		if [[ ${#bundle_names[@]} -eq 1 ]]; then
@@ -168,27 +388,176 @@ cmd_resolve() {
 		fi
 	fi
 
-	# 2. Auto-detect from markers
+	# 2. Check .aidevops.json for explicit bundle assignment
+	local project_bundle
+	project_bundle="$(_read_project_config_bundle "$project_path")"
+
+	if [[ -n "$project_bundle" ]]; then
+		local bundle_names
+		IFS=',' read -ra bundle_names <<<"$project_bundle"
+		if [[ ${#bundle_names[@]} -eq 1 ]]; then
+			cmd_load "${bundle_names[0]}"
+			return $?
+		else
+			cmd_compose "${bundle_names[@]}"
+			return $?
+		fi
+	fi
+
+	# 3. Auto-detect from markers
 	local detected
-	detected=$(cmd_detect "$project_path" 2>/dev/null) || true
-
-	if [[ -z "$detected" ]]; then
-		print_info "No bundle detected for ${project_path}. Using framework defaults."
-		return 1
-	fi
-
-	local detected_array
-	mapfile -t detected_array <<<"$detected"
-
-	if [[ ${#detected_array[@]} -eq 1 ]]; then
-		cmd_load "${detected_array[0]}"
-		return $?
+	if [[ -n "$force_flag" ]]; then
+		detected=$(cmd_detect "$project_path" --force 2>/dev/null) || true
 	else
-		# Multiple matches: compose them
-		print_info "Multiple bundles detected: ${detected_array[*]}. Composing."
-		cmd_compose "${detected_array[@]}"
-		return $?
+		detected=$(cmd_detect "$project_path" 2>/dev/null) || true
 	fi
+
+	if [[ -n "$detected" ]]; then
+		local detected_array
+		mapfile -t detected_array <<<"$detected"
+
+		if [[ ${#detected_array[@]} -eq 1 ]]; then
+			cmd_load "${detected_array[0]}"
+			return $?
+		else
+			# Multiple matches: compose them
+			print_info "Multiple bundles detected: ${detected_array[*]}. Composing." >&2
+			cmd_compose "${detected_array[@]}"
+			return $?
+		fi
+	fi
+
+	# 4. Fallback to cli-tool (most conservative)
+	print_info "No bundle detected for ${project_path}. Using fallback: ${FALLBACK_BUNDLE}" >&2
+	cmd_load "$FALLBACK_BUNDLE"
+	return $?
+}
+
+# Show a human-readable summary of the resolved bundle for a project.
+# Arguments:
+#   $1 - project path (defaults to current directory)
+#   --force - force re-detection
+# Output: formatted summary to stdout
+# Returns: 0
+cmd_show() {
+	local project_path=""
+	local force_flag=""
+
+	# Parse arguments
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--force)
+			force_flag="--force"
+			shift
+			;;
+		*)
+			project_path="$1"
+			shift
+			;;
+		esac
+	done
+
+	local resolved_path
+	resolved_path="$(_resolve_project_path "${project_path:-.}")" || return 1
+
+	# Determine resolution source for display
+	local source="unknown"
+	local explicit_bundle
+	explicit_bundle="$(_lookup_repos_json_bundle "$resolved_path")"
+	if [[ -n "$explicit_bundle" ]]; then
+		source="repos.json (explicit)"
+	else
+		local project_bundle
+		project_bundle="$(_read_project_config_bundle "$resolved_path")"
+		if [[ -n "$project_bundle" ]]; then
+			source=".aidevops.json (explicit)"
+		else
+			local detected
+			if [[ -n "$force_flag" ]]; then
+				detected=$(cmd_detect "$resolved_path" --force 2>/dev/null) || true
+			else
+				detected=$(cmd_detect "$resolved_path" 2>/dev/null) || true
+			fi
+			if [[ -n "$detected" ]]; then
+				source="auto-detected"
+			else
+				source="fallback (${FALLBACK_BUNDLE})"
+			fi
+		fi
+	fi
+
+	# Resolve the bundle
+	local resolved
+	if [[ -n "$force_flag" ]]; then
+		resolved=$(cmd_resolve "$resolved_path" --force 2>/dev/null) || {
+			print_error "Could not resolve bundle for ${resolved_path}"
+			return 1
+		}
+	else
+		resolved=$(cmd_resolve "$resolved_path" 2>/dev/null) || {
+			print_error "Could not resolve bundle for ${resolved_path}"
+			return 1
+		}
+	fi
+
+	# Format output
+	local name description
+	name=$(echo "$resolved" | jq -r '.name // "unknown"')
+	description=$(echo "$resolved" | jq -r '.description // "No description"')
+
+	echo "Bundle Summary for: ${resolved_path}"
+	echo "============================================================"
+	echo ""
+	printf "  %-20s %s\n" "Name:" "$name"
+	printf "  %-20s %s\n" "Source:" "$source"
+	printf "  %-20s %s\n" "Description:" "$description"
+	echo ""
+
+	echo "  Model Defaults:"
+	echo "$resolved" | jq -r '.model_defaults | to_entries[] | "    \(.key): \(.value)"' 2>/dev/null || true
+	echo ""
+
+	echo "  Quality Gates:"
+	echo "$resolved" | jq -r '.quality_gates[]? // empty' 2>/dev/null | while IFS= read -r gate; do
+		echo "    + ${gate}"
+	done
+	echo ""
+
+	local skip_gates
+	skip_gates=$(echo "$resolved" | jq -r '.skip_gates[]? // empty' 2>/dev/null)
+	if [[ -n "$skip_gates" ]]; then
+		echo "  Skip Gates:"
+		echo "$skip_gates" | while IFS= read -r gate; do
+			echo "    - ${gate}"
+		done
+		echo ""
+	fi
+
+	echo "  Agent Routing:"
+	echo "$resolved" | jq -r '.agent_routing | to_entries[]? | "    \(.key) -> \(.value)"' 2>/dev/null || true
+	echo ""
+
+	echo "  Dispatch:"
+	local max_workers timeout auto_dispatch
+	max_workers=$(echo "$resolved" | jq -r '.dispatch.max_concurrent_workers // "3"')
+	timeout=$(echo "$resolved" | jq -r '.dispatch.default_timeout_minutes // "30"')
+	auto_dispatch=$(echo "$resolved" | jq -r '.dispatch.auto_dispatch // "true"')
+	printf "    %-28s %s\n" "max_concurrent_workers:" "$max_workers"
+	printf "    %-28s %s\n" "default_timeout_minutes:" "$timeout"
+	printf "    %-28s %s\n" "auto_dispatch:" "$auto_dispatch"
+	echo ""
+
+	local tools
+	tools=$(echo "$resolved" | jq -r '.tool_allowlist[]? // empty' 2>/dev/null)
+	if [[ -n "$tools" ]]; then
+		echo "  Tool Allowlist:"
+		echo "$tools" | while IFS= read -r tool; do
+			echo "    * ${tool}"
+		done
+		echo ""
+	fi
+
+	return 0
 }
 
 # List all available bundles with their descriptions.
@@ -273,6 +642,13 @@ cmd_validate() {
 		json_name=$(jq -r '.name // empty' "$bundle_file" 2>/dev/null) || true
 		if [[ "$json_name" != "$bn" ]]; then
 			print_warning "${bn}: name field '${json_name}' does not match filename"
+		fi
+
+		# Check markers array exists (needed for auto-detection)
+		local has_markers
+		has_markers=$(jq -e '.markers | type == "array" and length > 0' "$bundle_file" 2>/dev/null) || true
+		if [[ "$has_markers" != "true" ]]; then
+			print_warning "${bn}: No markers defined (auto-detection will not work)"
 		fi
 
 		print_success "${bn}: Valid"
@@ -435,31 +811,36 @@ cmd_compose() {
 # Returns: 0
 cmd_help() {
 	cat <<'EOF'
-Bundle Helper - Load and resolve project bundle presets
+Bundle Helper - Detect, resolve, and query project bundle presets
 
 USAGE:
     bundle-helper.sh <command> [options]
 
 COMMANDS:
-    load <name>              Load a single bundle by name
-    detect [path]            Auto-detect bundle from project marker files
-    resolve [path]           Resolve effective bundle (explicit > detected)
+    detect [path] [--force]  Auto-detect bundle from project marker files
+    resolve [path] [--force] Resolve effective bundle (priority chain)
+    show [path] [--force]    Human-readable bundle summary
     list                     List all available bundles
     validate [name]          Validate bundle(s) against schema
+    load <name>              Load a single bundle by name
     get <field> [path]       Get a specific field from resolved bundle
     compose <b1> <b2> ...    Compose multiple bundles into one
     help                     Show this help
+
+OPTIONS:
+    --force                  Skip detection cache, re-scan marker files
+
+RESOLUTION PRIORITY CHAIN:
+    1. repos.json "bundle" field (explicit per-repo assignment)
+    2. .aidevops.json "bundle" field (per-project config)
+    3. Auto-detection from marker files in the project directory
+    4. Fallback: cli-tool (most conservative bundle)
 
 FIELD EXAMPLES (for 'get' command):
     model_defaults.implementation    Primary model tier for code changes
     model_defaults.review            Model tier for code review
     quality_gates                    Array of quality checks to run
     dispatch.max_concurrent_workers  Max parallel workers
-
-BUNDLE RESOLUTION ORDER:
-    1. Explicit: repos.json "bundle" field for the project path
-    2. Auto-detect: marker files in the project directory
-    3. Fallback: framework defaults (no bundle)
 
 COMPOSITION RULES:
     model_defaults   Most-restrictive (highest) tier wins per task type
@@ -469,15 +850,27 @@ COMPOSITION RULES:
     dispatch         Most-restrictive values (lowest concurrency, shortest timeout)
     tool_allowlist   Union of all tools
 
+INTEGRATION API:
+    Source this script with --source-only to use functions in other scripts:
+
+    source bundle-helper.sh --source-only
+    config=$(get_bundle_config ~/Git/my-app)
+    gates=$(get_quality_gates ~/Git/my-app)
+    tier=$(get_model_default "implementation" ~/Git/my-app)
+    if should_skip_gate "shellcheck" ~/Git/my-app; then echo "skip"; fi
+
 EXAMPLES:
     # List available bundles
     bundle-helper.sh list
 
-    # Load a specific bundle
-    bundle-helper.sh load web-app
+    # Show bundle for current project
+    bundle-helper.sh show .
 
-    # Auto-detect bundle for current project
-    bundle-helper.sh detect .
+    # Auto-detect bundle for a project
+    bundle-helper.sh detect ~/Git/my-nextjs-app
+
+    # Force re-detection (skip cache)
+    bundle-helper.sh detect ~/Git/my-app --force
 
     # Get the implementation model tier for a project
     bundle-helper.sh get model_defaults.implementation ~/Git/my-app
@@ -489,6 +882,131 @@ EXAMPLES:
     bundle-helper.sh validate
 EOF
 	return 0
+}
+
+# =============================================================================
+# Integration API Functions
+# =============================================================================
+# These functions are designed to be sourced by other scripts:
+#   source "$(dirname "$0")/bundle-helper.sh" --source-only
+#
+# They handle bundles directory resolution internally and provide a clean
+# interface for querying bundle configuration.
+# =============================================================================
+
+# Get the full resolved bundle configuration for a project.
+# Arguments:
+#   $1 - project path (defaults to current directory)
+# Output: full bundle JSON to stdout
+# Returns: 0 on success, 1 on error
+get_bundle_config() {
+	local project_path="${1:-.}"
+
+	# Ensure bundles dir is resolved
+	if [[ -z "$BUNDLES_DIR" ]]; then
+		_resolve_bundles_dir || return 1
+	fi
+
+	cmd_resolve "$project_path"
+}
+
+# Get the quality gates array for a project.
+# Arguments:
+#   $1 - project path (defaults to current directory)
+# Output: newline-separated list of quality gate names
+# Returns: 0 on success, 1 on error
+get_quality_gates() {
+	local project_path="${1:-.}"
+
+	# Ensure bundles dir is resolved
+	if [[ -z "$BUNDLES_DIR" ]]; then
+		_resolve_bundles_dir || return 1
+	fi
+
+	local resolved
+	resolved=$(cmd_resolve "$project_path" 2>/dev/null) || {
+		return 1
+	}
+
+	echo "$resolved" | jq -r '.quality_gates[]? // empty' 2>/dev/null
+}
+
+# Get the model default tier for a specific task type.
+# Arguments:
+#   $1 - task type (e.g., "implementation", "review", "triage")
+#   $2 - project path (defaults to current directory)
+# Output: model tier name (e.g., "sonnet", "opus") to stdout
+# Returns: 0 on success, 1 if not found
+get_model_default() {
+	local task_type="$1"
+	local project_path="${2:-.}"
+
+	if [[ -z "$task_type" ]]; then
+		print_error "Task type is required (e.g., implementation, review, triage)"
+		return 1
+	fi
+
+	# Ensure bundles dir is resolved
+	if [[ -z "$BUNDLES_DIR" ]]; then
+		_resolve_bundles_dir || return 1
+	fi
+
+	local resolved
+	resolved=$(cmd_resolve "$project_path" 2>/dev/null) || {
+		return 1
+	}
+
+	local tier
+	tier=$(echo "$resolved" | jq -r --arg task "$task_type" '.model_defaults[$task] // empty' 2>/dev/null) || true
+
+	if [[ -z "$tier" ]]; then
+		return 1
+	fi
+
+	echo "$tier"
+	return 0
+}
+
+# Check if a quality gate should be skipped for a project.
+# A gate should be skipped if it appears in skip_gates but not in quality_gates,
+# or if it's not relevant to the resolved bundle.
+# Arguments:
+#   $1 - gate name (e.g., "shellcheck", "eslint")
+#   $2 - project path (defaults to current directory)
+# Returns: 0 if gate should be skipped, 1 if gate should run
+should_skip_gate() {
+	local gate_name="$1"
+	local project_path="${2:-.}"
+
+	if [[ -z "$gate_name" ]]; then
+		print_error "Gate name is required"
+		return 1
+	fi
+
+	# Ensure bundles dir is resolved
+	if [[ -z "$BUNDLES_DIR" ]]; then
+		_resolve_bundles_dir || return 1
+	fi
+
+	local resolved
+	resolved=$(cmd_resolve "$project_path" 2>/dev/null) || {
+		# No bundle resolved — don't skip anything
+		return 1
+	}
+
+	# Skip a gate only if it is in skip_gates AND not in quality_gates.
+	# quality_gates takes precedence — if a gate appears in both, it should run.
+	local should_skip
+	should_skip=$(echo "$resolved" | jq -r --arg gate "$gate_name" \
+		'(([.skip_gates[]?] | index($gate)) != null) and (([.quality_gates[]?] | index($gate)) == null)' \
+		2>/dev/null) || true
+
+	if [[ "$should_skip" == "true" ]]; then
+		return 0
+	fi
+
+	# Gate is not skippable (either not in skip_gates, or overridden by quality_gates)
+	return 1
 }
 
 # =============================================================================
@@ -513,10 +1031,13 @@ main() {
 		cmd_load "${1:?Bundle name required}"
 		;;
 	detect)
-		cmd_detect "${1:-.}"
+		cmd_detect "$@"
 		;;
 	resolve)
-		cmd_resolve "${1:-.}"
+		cmd_resolve "$@"
+		;;
+	show)
+		cmd_show "$@"
 		;;
 	list)
 		cmd_list
@@ -541,4 +1062,7 @@ main() {
 	esac
 }
 
-main "$@"
+# Only run main() when executed directly, not when sourced with --source-only
+if [[ "$_BUNDLE_HELPER_SOURCE_ONLY" == "false" ]]; then
+	main "$@"
+fi
