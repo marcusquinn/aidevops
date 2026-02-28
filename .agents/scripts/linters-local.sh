@@ -620,6 +620,60 @@ check_remote_cli_status() {
 	return 0
 }
 
+# =============================================================================
+# Bundle-Aware Gate Filtering (t1364.6)
+# =============================================================================
+# Resolves the project bundle and checks whether a gate should be skipped.
+# Bundle skip_gates override: if a bundle says skip a gate, it's skipped.
+# BUNDLE_SKIP_GATES is populated once in main() and checked per gate.
+
+BUNDLE_SKIP_GATES=""
+
+# Load bundle skip_gates for the current project directory.
+# Populates BUNDLE_SKIP_GATES (newline-separated gate names).
+# Returns: 0 always (bundle is optional — missing bundle is not an error)
+load_bundle_gates() {
+	local bundle_helper="${SCRIPT_DIR}/bundle-helper.sh"
+	if [[ ! -x "$bundle_helper" ]]; then
+		return 0
+	fi
+
+	local bundle_json
+	bundle_json=$("$bundle_helper" resolve "." 2>/dev/null) || true
+	if [[ -z "$bundle_json" ]]; then
+		return 0
+	fi
+
+	BUNDLE_SKIP_GATES=$(echo "$bundle_json" | jq -r '.skip_gates[]? // empty' 2>/dev/null) || true
+
+	local bundle_name
+	bundle_name=$(echo "$bundle_json" | jq -r '.name // "unknown"' 2>/dev/null) || true
+	if [[ -n "$BUNDLE_SKIP_GATES" ]]; then
+		local skip_count
+		skip_count=$(echo "$BUNDLE_SKIP_GATES" | wc -l | tr -d ' ')
+		print_info "Bundle '${bundle_name}': skipping ${skip_count} gates"
+	else
+		print_info "Bundle '${bundle_name}': no gates skipped"
+	fi
+	return 0
+}
+
+# Check if a gate should be skipped based on bundle config.
+# Arguments:
+#   $1 - gate name (e.g., "shellcheck", "return-statements")
+# Returns: 0 if gate should be SKIPPED, 1 if gate should RUN
+should_skip_gate() {
+	local gate_name="$1"
+	if [[ -z "$BUNDLE_SKIP_GATES" ]]; then
+		return 1
+	fi
+	if echo "$BUNDLE_SKIP_GATES" | grep -qxF "$gate_name"; then
+		print_info "Skipping '${gate_name}' (bundle skip_gates)"
+		return 0
+	fi
+	return 1
+}
+
 main() {
 	print_header
 
@@ -628,33 +682,54 @@ main() {
 	# Collect shell files once (includes modularised subdirectories, excludes _archive/)
 	collect_shell_files
 
-	# Run all local quality checks
-	check_sonarcloud_status || exit_code=1
-	echo ""
+	# Load bundle config for gate filtering (t1364.6)
+	load_bundle_gates
 
-	check_return_statements || exit_code=1
-	echo ""
+	# Run all local quality checks (respecting bundle skip_gates)
+	if ! should_skip_gate "sonarcloud"; then
+		check_sonarcloud_status || exit_code=1
+		echo ""
+	fi
 
-	check_positional_parameters || exit_code=1
-	echo ""
+	if ! should_skip_gate "return-statements"; then
+		check_return_statements || exit_code=1
+		echo ""
+	fi
 
-	check_string_literals || exit_code=1
-	echo ""
+	if ! should_skip_gate "positional-parameters"; then
+		check_positional_parameters || exit_code=1
+		echo ""
+	fi
 
-	run_shfmt
-	echo ""
+	if ! should_skip_gate "string-literals"; then
+		check_string_literals || exit_code=1
+		echo ""
+	fi
 
-	run_shellcheck || exit_code=1
-	echo ""
+	if ! should_skip_gate "shfmt"; then
+		run_shfmt
+		echo ""
+	fi
 
-	check_secrets || exit_code=1
-	echo ""
+	if ! should_skip_gate "shellcheck"; then
+		run_shellcheck || exit_code=1
+		echo ""
+	fi
 
-	check_markdown_lint || exit_code=1
-	echo ""
+	if ! should_skip_gate "secretlint"; then
+		check_secrets || exit_code=1
+		echo ""
+	fi
 
-	check_toon_syntax || exit_code=1
-	echo ""
+	if ! should_skip_gate "markdownlint"; then
+		check_markdown_lint || exit_code=1
+		echo ""
+	fi
+
+	if ! should_skip_gate "toon-syntax"; then
+		check_toon_syntax || exit_code=1
+		echo ""
+	fi
 
 	check_remote_cli_status
 	echo ""

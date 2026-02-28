@@ -289,6 +289,73 @@ Is the task privacy/on-device constrained?
 | "Write unit tests for this module" | sonnet | Code generation |
 | "Evaluate 3 database options for our use case" | opus | Complex trade-off analysis |
 
+## Bundle-Based Project Presets (t1364.6)
+
+Bundles pre-configure model tier defaults per project type, so a content site doesn't use opus for simple text changes and a web app doesn't use haiku for complex refactors.
+
+### How Bundles Interact with Model Routing
+
+Each bundle defines `model_defaults` — a mapping from task type to recommended tier:
+
+```json
+{
+  "model_defaults": {
+    "implementation": "sonnet",
+    "review": "sonnet",
+    "triage": "haiku",
+    "architecture": "opus",
+    "verification": "sonnet",
+    "documentation": "haiku"
+  }
+}
+```
+
+### Precedence (highest wins)
+
+1. **Explicit `model:` tag in TODO.md** — always wins. If a task says `model:opus`, that's what it gets regardless of bundle.
+2. **Subagent frontmatter `model:`** — the subagent's declared tier for its domain.
+3. **Bundle `model_defaults`** — project-type-appropriate defaults from the resolved bundle.
+4. **Framework default** — `sonnet` (the global fallback).
+
+### Resolution Flow
+
+```text
+Task dispatched for repo X
+  ├── Task has explicit model: tag? → Use it
+  ├── Subagent has model: in frontmatter? → Use it
+  ├── Repo has bundle? (explicit in repos.json or auto-detected)
+  │   ├── YES → Look up task type in bundle.model_defaults
+  │   │   ├── Found → Use bundle tier
+  │   │   └── Not found → Fall through to framework default
+  │   └── NO → Fall through to framework default
+  └── Framework default: sonnet
+```
+
+### Bundle Composition
+
+When multiple bundles apply (e.g., a project is both a web-app and has infrastructure), they compose:
+- **model_defaults**: most-restrictive (highest) tier wins per task type
+- This prevents under-provisioning — if either bundle says `opus` for architecture, that's what's used
+
+### CLI
+
+```bash
+# Check what model a bundle recommends for implementation
+bundle-helper.sh get model_defaults.implementation ~/Git/my-project
+
+# See the full resolved bundle for a project
+bundle-helper.sh resolve ~/Git/my-project
+
+# List available bundles
+bundle-helper.sh list
+```
+
+### Integration Points
+
+- **cron-dispatch.sh**: Reads bundle `model_defaults.implementation` when no explicit model is configured for a cron job
+- **pulse.md**: Supervisor uses bundle `agent_routing` to select the right agent for non-code tasks
+- **linters-local.sh**: Reads bundle `skip_gates` to skip irrelevant quality checks (e.g., ShellCheck on a pure web-app)
+
 ## Tier Drift Detection (t1191)
 
 When tasks are requested at one tier but executed at another (e.g., `model:sonnet` in
