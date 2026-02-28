@@ -18,11 +18,12 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Bridge Matrix chat rooms to aidevops runners via OpenCode
+- **Purpose**: Bridge Matrix chat rooms to aidevops runners via OpenCode with entity-aware context
 - **Script**: `matrix-dispatch-helper.sh [setup|start|stop|status|map|unmap|mappings|sessions|test|logs]`
 - **Config**: `~/.config/aidevops/matrix-bot.json` (600 permissions)
 - **Data**: `~/.aidevops/.agent-workspace/matrix-bot/`
-- **Session DB**: `~/.aidevops/.agent-workspace/matrix-bot/sessions.db` (SQLite, WAL mode)
+- **Session DB**: `~/.aidevops/.agent-workspace/memory/memory.db` (shared entity tables, SQLite WAL)
+- **Entity helper**: `entity-helper.sh` (identity resolution, Layer 0/1 interaction logging)
 - **SDK**: `matrix-bot-sdk`, `better-sqlite3` (npm)
 - **Requires**: Node.js >= 18, jq, OpenCode server, Matrix homeserver
 
@@ -44,9 +45,21 @@ matrix-dispatch-helper.sh start --daemon
 │                  │     │ (Node.js)        │     │                  │
 │ User types:      │────▶│ 1. Parse prefix  │────▶│ runner-helper.sh │
 │ !ai Review auth  │     │ 2. Check perms   │     │ → AI session     │
-│                  │◀────│ 3. Lookup runner  │◀────│ → response       │
-│ AI response      │     │ 4. Dispatch      │     │                  │
+│                  │◀────│ 3. Resolve entity │◀────│ → response       │
+│ AI response      │     │ 4. Load context  │     │                  │
+│                  │     │ 5. Dispatch      │     │                  │
 └──────────────────┘     └──────────────────┘     └──────────────────┘
+                                │
+                                ▼
+                    ┌──────────────────────┐
+                    │ memory.db (shared)   │
+                    │ ├── entities         │  Layer 2: Entity profiles
+                    │ ├── entity_channels  │  Cross-channel identity
+                    │ ├── interactions     │  Layer 0: Immutable log
+                    │ ├── conversations    │  Layer 1: Context summaries
+                    │ └── matrix_room_     │  Room-to-entity mapping
+                    │     sessions         │
+                    └──────────────────────┘
 ```
 
 **Message flow**:
@@ -55,21 +68,25 @@ matrix-dispatch-helper.sh start --daemon
 2. Bot receives message via Matrix sync
 3. Bot checks user permissions (allowedUsers config)
 4. Bot looks up room-to-runner mapping
-5. Bot loads conversation context (compacted summary + recent messages) from SQLite
-6. Bot dispatches contextual prompt to runner via `runner-helper.sh`
-7. Runner executes via OpenCode (headless or warm server)
-8. Bot records both user message and AI response in the session store
-9. Bot posts response back to the Matrix room
-10. Bot adds reaction emoji (hourglass while processing, checkmark on success, X on failure)
+5. **Entity resolution**: Bot resolves Matrix user ID (`@user:server`) to an entity via `entity-helper.sh` (creates entity if new)
+6. **Layer 0 logging**: Bot logs the user message as an immutable interaction (append-only, never deleted)
+7. **Context loading**: Bot loads entity profile (preferences, communication style) + conversation summary + recent interactions
+8. **Privacy filtering**: Cross-channel information is filtered based on channel privacy level
+9. Bot dispatches entity-aware contextual prompt to runner via `runner-helper.sh`
+10. Runner executes via OpenCode (headless or warm server)
+11. Bot logs the AI response to Layer 0 and posts it back to the Matrix room
+12. Bot adds reaction emoji (hourglass while processing, checkmark on success, X on failure)
 
 **Session lifecycle**:
 
-1. First message in a room creates a session in SQLite
-2. Subsequent messages include conversation history as context
-3. After `sessionIdleTimeout` seconds of inactivity, the bot compacts the session (asks the AI to summarise the conversation)
-4. The compacted summary is stored; the detailed message log is pruned
-5. Next message in that room primes a new session with the compacted context
-6. On graceful shutdown (SIGINT/SIGTERM), all active sessions are compacted before exit
+1. First message in a room creates a session in `matrix_room_sessions` (shared memory.db)
+2. Entity is resolved from Matrix user ID and linked to the session
+3. All messages are logged to Layer 0 (immutable `interactions` table) via `entity-helper.sh`
+4. Subsequent messages include entity profile + conversation summary + recent interactions as context
+5. After `sessionIdleTimeout` seconds of inactivity, the bot compacts the session (AI summarises the conversation)
+6. The compacted summary is stored in the `conversations` table (Layer 1); **Layer 0 interactions are never deleted**
+7. Next message in that room primes a new session with the entity profile and conversation summary
+8. On graceful shutdown (SIGINT/SIGTERM), all active sessions are compacted before exit
 
 ## Setup
 
@@ -253,18 +270,38 @@ matrix-dispatch-helper.sh unmap '!dev-room:server'
 - **Auto-join**: Bot automatically joins rooms when invited
 - **Session persistence**: Each room maintains conversation context across messages
 
-## Session Persistence
+## Session Persistence and Entity Integration
 
-Each Matrix room maintains a persistent conversation session backed by SQLite. This gives a continuous conversation feel without keeping AI sessions alive indefinitely.
+Each Matrix room maintains a persistent conversation session backed by the shared `memory.db` entity tables. This gives a continuous conversation feel with entity-aware context — the bot knows who you are, your preferences, and your conversation history across sessions.
 
 ### How It Works
 
-1. **Message arrives** in room -- bot checks for existing session context
-2. **Context loaded** -- compacted summary + recent messages prepended to prompt
-3. **Response received** -- both user message and AI response recorded in SQLite
-4. **Idle timeout** (default 300s) -- bot asks the AI to summarise the conversation
-5. **Summary stored** -- compacted context saved, detailed message log pruned
-6. **Next message** -- new session primed with the compacted summary
+1. **Message arrives** in room -- bot resolves Matrix user ID to entity via `entity-helper.sh`
+2. **Interaction logged** -- message recorded in Layer 0 (immutable, append-only `interactions` table)
+3. **Context loaded** -- entity profile + conversation summary + recent interactions prepended to prompt
+4. **Response received** -- AI response also logged to Layer 0
+5. **Idle timeout** (default 300s) -- bot asks the AI to summarise the conversation
+6. **Summary stored** -- conversation summary saved to Layer 1 (`conversations` table); **Layer 0 interactions are never deleted**
+7. **Next message** -- session primed with entity profile and conversation summary
+
+### Entity Resolution
+
+When a Matrix user sends a message, the bot resolves their Matrix user ID to an entity:
+
+- **Known user**: Exact match on `entity_channels` table (channel=matrix, channel_id=@user:server)
+- **New user**: Creates a new entity via `entity-helper.sh create` with the Matrix user ID linked
+- **Cross-channel**: If the same person is linked on other channels (SimpleX, email), their full profile is available
+
+Entity resolution is cached per bot session to avoid repeated lookups.
+
+### Privacy-Aware Context
+
+When loading entity context for a prompt:
+
+1. **Entity profile** (Layer 2) -- preferences, communication style, known needs
+2. **Conversation summary** (Layer 1) -- previous conversation context for this room
+3. **Recent interactions** (Layer 0) -- last N messages from this channel only
+4. **Privacy filter** -- emails, IPs, and API keys are redacted; cross-channel private information is not leaked
 
 ### Session Management
 
@@ -288,10 +325,16 @@ When the bot receives SIGINT or SIGTERM, it compacts all active sessions before 
 
 ### Storage
 
-- **Database**: `~/.aidevops/.agent-workspace/matrix-bot/sessions.db`
+- **Database**: `~/.aidevops/.agent-workspace/memory/memory.db` (shared with entity system)
 - **Mode**: SQLite WAL (concurrent reads, single writer)
-- **Tables**: `sessions` (per-room state), `message_log` (conversation history)
-- **Compaction**: Summarises conversation, stores summary, prunes message log
+- **Tables**:
+  - `matrix_room_sessions` -- per-room session state (room-to-entity mapping, activity tracking)
+  - `interactions` -- Layer 0 immutable interaction log (shared across all channels)
+  - `conversations` -- Layer 1 conversation summaries
+  - `entities` / `entity_channels` -- Layer 2 entity identity and cross-channel linking
+  - `entity_profiles` -- Layer 2 versioned entity preferences and needs
+- **Compaction**: Summarises conversation to Layer 1; Layer 0 interactions are never deleted
+- **Legacy**: Old `sessions.db` is still supported for backward compatibility (auto-detected)
 
 ## Operations
 
@@ -378,7 +421,9 @@ runner-helper.sh edit code-reviewer
 
 ## Related
 
+- `scripts/entity-helper.sh` - Entity memory system (identity resolution, Layer 0/1/2)
 - `scripts/runner-helper.sh` - Runner management
+- `scripts/memory-helper.sh` - Memory system (shared memory.db)
 - `scripts/cron-dispatch.sh` - Cron-triggered dispatch (similar pattern)
 - `tools/ai-assistants/headless-dispatch.md` - Headless dispatch patterns
 - `tools/ai-assistants/opencode-server.md` - OpenCode server API
