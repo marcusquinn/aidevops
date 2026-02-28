@@ -185,9 +185,9 @@ cmd_is_memory_relevant() {
 
 	init_judgment_cache
 
-	# Generate cache key from content hash
+	# Generate cache key from content hash (sha256 for SonarCloud compliance)
 	local cache_key
-	cache_key="relevance:$(echo -n "$content" | md5sum | cut -d' ' -f1)"
+	cache_key="relevance:$(echo -n "$content" | sha256sum | cut -d' ' -f1)"
 	local cached
 	cached=$(get_cached_judgment "$cache_key")
 	if [[ -n "$cached" ]]; then
