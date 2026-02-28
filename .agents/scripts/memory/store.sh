@@ -23,6 +23,7 @@ cmd_store() {
 	local supersedes_id=""
 	local relation_type=""
 	local auto_captured=0
+	local entity_id=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -70,6 +71,10 @@ cmd_store() {
 			auto_captured=1
 			source="auto"
 			shift
+			;;
+		--entity)
+			entity_id="$2"
+			shift 2
 			;;
 		*)
 			# Allow content as positional argument
@@ -227,6 +232,16 @@ INSERT INTO learning_relations (id, supersedes_id, relation_type, created_at)
 VALUES ('$id', '$escaped_supersedes', '$relation_type', '$created_at');
 EOF
 		log_info "Relation: $id $relation_type $supersedes_id"
+	fi
+
+	# Link to entity if --entity was provided (t1363.3)
+	if [[ -n "$entity_id" ]]; then
+		if ! validate_entity_id "$entity_id"; then
+			log_warn "Entity '$entity_id' not found — learning stored but not linked to entity"
+		else
+			link_learning_entity "$id" "$entity_id"
+			log_info "Linked to entity: $entity_id"
+		fi
 	fi
 
 	log_success "Stored learning: $id"

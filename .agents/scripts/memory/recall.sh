@@ -24,6 +24,7 @@ cmd_recall() {
 	local shared_mode=false
 	local auto_only=false
 	local manual_only=false
+	local entity_filter=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -47,11 +48,20 @@ cmd_recall() {
 			project_filter="$2"
 			shift 2
 			;;
+		--entity | -e)
+			entity_filter="$2"
+			shift 2
+			;;
 		--recent)
 			recent_mode=true
-			limit="${2:-10}"
-			shift
-			[[ "${1:-}" =~ ^[0-9]+$ ]] && shift
+			# Only consume next arg as limit if it's a number (not another flag)
+			if [[ "${2:-}" =~ ^[0-9]+$ ]]; then
+				limit="$2"
+				shift 2
+			else
+				limit=10
+				shift
+			fi
 			;;
 		--semantic | --similar)
 			semantic_mode=true
@@ -97,6 +107,24 @@ cmd_recall() {
 
 	init_db
 
+	# Validate --entity if provided (t1363.3)
+	if [[ -n "$entity_filter" ]]; then
+		if ! validate_entity_id "$entity_filter"; then
+			log_error "Entity not found: $entity_filter"
+			return 1
+		fi
+	fi
+
+	# Build entity JOIN/filter clauses (t1363.3)
+	# When --entity is set, INNER JOIN learning_entities to scope results
+	local entity_join=""
+	local entity_where=""
+	if [[ -n "$entity_filter" ]]; then
+		local escaped_entity="${entity_filter//"'"/"''"}"
+		entity_join="INNER JOIN learning_entities le ON l.id = le.learning_id"
+		entity_where="AND le.entity_id = '$escaped_entity'"
+	fi
+
 	# Build auto-capture filter clause
 	local auto_filter=""
 	if [[ "$auto_only" == true ]]; then
@@ -108,7 +136,7 @@ cmd_recall() {
 	# Handle --recent mode (no query required)
 	if [[ "$recent_mode" == true ]]; then
 		local results
-		results=$(db -json "$MEMORY_DB" "SELECT l.id, l.content, l.type, l.tags, l.confidence, l.created_at, COALESCE(a.last_accessed_at, '') as last_accessed_at, COALESCE(a.access_count, 0) as access_count, COALESCE(a.auto_captured, 0) as auto_captured FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE 1=1 $auto_filter ORDER BY l.created_at DESC LIMIT $limit;")
+		results=$(db -json "$MEMORY_DB" "SELECT l.id, l.content, l.type, l.tags, l.confidence, l.created_at, COALESCE(a.last_accessed_at, '') as last_accessed_at, COALESCE(a.access_count, 0) as access_count, COALESCE(a.auto_captured, 0) as auto_captured FROM learnings l LEFT JOIN learning_access a ON l.id = a.id $entity_join WHERE 1=1 $entity_where $auto_filter ORDER BY l.created_at DESC LIMIT $limit;")
 		if [[ "$format" == "json" ]]; then
 			echo "$results"
 		else
@@ -188,6 +216,16 @@ cmd_recall() {
 		auto_join_filter="AND COALESCE(learning_access.auto_captured, 0) = 0"
 	fi
 
+	# Build entity JOIN for FTS5 query (t1363.3)
+	# FTS5 tables can't use aliases for bm25(), so we use full table names
+	local entity_fts_join=""
+	local entity_fts_where=""
+	if [[ -n "$entity_filter" ]]; then
+		local escaped_entity="${entity_filter//"'"/"''"}"
+		entity_fts_join="INNER JOIN learning_entities ON learnings.id = learning_entities.learning_id"
+		entity_fts_where="AND learning_entities.entity_id = '$escaped_entity'"
+	fi
+
 	# Search using FTS5 with BM25 ranking
 	# Note: FTS5 tables require special handling - can't use table alias in bm25()
 	local results
@@ -206,7 +244,8 @@ SELECT
     bm25(learnings) as score
 FROM learnings
 LEFT JOIN learning_access ON learnings.id = learning_access.id
-WHERE learnings MATCH '$escaped_query' $extra_filters $auto_join_filter
+$entity_fts_join
+WHERE learnings MATCH '$escaped_query' $extra_filters $auto_join_filter $entity_fts_where
 ORDER BY score
 LIMIT $limit;
 EOF
@@ -300,6 +339,9 @@ EOF
 		local header_suffix=""
 		if [[ -n "$MEMORY_NAMESPACE" ]]; then
 			header_suffix=" [namespace: $MEMORY_NAMESPACE]"
+		fi
+		if [[ -n "$entity_filter" ]]; then
+			header_suffix="${header_suffix} [entity: $entity_filter]"
 		fi
 
 		echo ""
