@@ -157,9 +157,8 @@ cmd_resolve() {
 
 	if [[ -n "$explicit_bundle" ]]; then
 		# Explicit bundle may be comma-separated for composition
-		local IFS=','
 		local bundle_names
-		read -ra bundle_names <<<"$explicit_bundle"
+		IFS=',' read -ra bundle_names <<<"$explicit_bundle"
 		if [[ ${#bundle_names[@]} -eq 1 ]]; then
 			cmd_load "${bundle_names[0]}"
 			return $?
