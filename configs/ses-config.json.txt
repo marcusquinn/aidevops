@@ -13,7 +13,8 @@
       "verified_emails": [
         "noreply@yourdomain.com",
         "support@yourdomain.com"
-      ]
+      ],
+      "inbound_mailbox": "your-ses-inbound-bucket/production"
     },
     "staging": {
       "aws_access_key_id": "YOUR_STAGING_AWS_ACCESS_KEY_ID_HERE",
@@ -26,7 +27,8 @@
       ],
       "verified_emails": [
         "test@yourdomain.com"
-      ]
+      ],
+      "inbound_mailbox": "your-ses-inbound-bucket/staging"
     },
     "client-project": {
       "aws_access_key_id": "YOUR_CLIENT_AWS_ACCESS_KEY_ID_HERE",

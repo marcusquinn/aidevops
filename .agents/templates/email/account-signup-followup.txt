@@ -1,0 +1,15 @@
+# Account Signup Follow-up - for following up on pending account approvals
+Hello,
+
+I recently signed up for an account on {{SERVICE_NAME}} and am writing to follow up on the status of my application.
+
+Account email: {{ACCOUNT_EMAIL}}
+Signup date: {{SIGNUP_DATE}}
+
+{{ADDITIONAL_CONTEXT}}
+
+Could you please provide an update on when the account will be activated? We are looking to begin integration work soon.
+
+Thank you,
+{{SENDER_NAME}}
+{{COMPANY_NAME}}
