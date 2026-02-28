@@ -65,6 +65,7 @@ else
 	print_success() { echo "OK: $*"; }
 	print_warning() { echo "WARN: $*" >&2; }
 	print_info() { echo "INFO: $*" >&2; }
+	readonly ERROR_UNKNOWN_COMMAND="Unknown command"
 fi
 
 set -euo pipefail
@@ -171,24 +172,37 @@ _write_cached_detection() {
 	local timestamp
 	timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
+	# Use atomic write (mktemp + mv) to prevent race conditions
+	local tmpfile
+	tmpfile=$(mktemp "${config_file}.XXXXXX") || {
+		print_warning "Could not create temp file for ${config_file}"
+		return 0
+	}
+
 	if [[ -f "$config_file" ]]; then
 		# Merge into existing file
-		local tmp
-		tmp=$(jq --arg d "$detected" --arg t "$timestamp" \
+		jq --arg d "$detected" --arg t "$timestamp" \
 			'.detected_bundle = $d | .detected_bundle_at = $t' \
-			"$config_file" 2>/dev/null) || {
+			"$config_file" >"$tmpfile" 2>/dev/null || {
+			rm -f "$tmpfile"
 			print_warning "Could not update cache in ${config_file}"
 			return 0
 		}
-		echo "$tmp" >"$config_file"
 	else
 		# Create new file
 		jq -n --arg d "$detected" --arg t "$timestamp" \
-			'{detected_bundle: $d, detected_bundle_at: $t}' >"$config_file" 2>/dev/null || {
+			'{detected_bundle: $d, detected_bundle_at: $t}' >"$tmpfile" 2>/dev/null || {
+			rm -f "$tmpfile"
 			print_warning "Could not create cache file ${config_file}"
 			return 0
 		}
 	fi
+
+	mv -f "$tmpfile" "$config_file" || {
+		rm -f "$tmpfile"
+		print_warning "Could not write cache file ${config_file}"
+		return 0
+	}
 
 	return 0
 }
@@ -982,17 +996,18 @@ should_skip_gate() {
 		return 1
 	}
 
-	# Check if gate is in skip_gates
-	local in_skip
-	in_skip=$(echo "$resolved" | jq -r --arg gate "$gate_name" \
-		'[.skip_gates[]? // empty] | index($gate) // empty' 2>/dev/null) || true
+	# Skip a gate only if it is in skip_gates AND not in quality_gates.
+	# quality_gates takes precedence — if a gate appears in both, it should run.
+	local should_skip
+	should_skip=$(echo "$resolved" | jq -r --arg gate "$gate_name" \
+		'(([.skip_gates[]?] | index($gate)) != null) and (([.quality_gates[]?] | index($gate)) == null)' \
+		2>/dev/null) || true
 
-	if [[ -n "$in_skip" ]]; then
-		# Gate is explicitly in skip_gates — skip it
+	if [[ "$should_skip" == "true" ]]; then
 		return 0
 	fi
 
-	# Gate is not in skip_gates — it should run
+	# Gate is not skippable (either not in skip_gates, or overridden by quality_gates)
 	return 1
 }
 
