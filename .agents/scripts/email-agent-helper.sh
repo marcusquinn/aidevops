@@ -764,10 +764,11 @@ extract_codes_from_text() {
 		if [[ -n "$matches" ]]; then
 			while IFS= read -r match; do
 				[[ -z "$match" ]] && continue
-				# Extract just the code value (capture group)
-				local code_value
-				# Require at least one digit to avoid matching keywords like "code" or "Token"
-				code_value=$(echo "$match" | grep -oE '[0-9A-Za-z_-]{4,}' | grep '[0-9]' | head -1 || echo "")
+				# Extract just the code value — strip leading label (e.g. "Code: ", "Token is ")
+				# then require at least one digit to avoid matching keywords
+				local code_value normalized
+				normalized=$(echo "$match" | sed -E 's/^[[:alpha:]][[:alpha:] ]*(:[[:space:]]*|[[:space:]]+is[[:space:]]+)//')
+				code_value=$(echo "$normalized" | grep -oE '[0-9A-Za-z_-]{4,}' | grep '[0-9]' | head -1 || echo "")
 				if [[ -z "$code_value" ]]; then
 					# Fallback: try extracting pure digit sequences
 					code_value=$(echo "$match" | grep -oE '[0-9]{4,}' | head -1 || echo "")
@@ -877,23 +878,27 @@ cmd_extract_codes() {
 		extract_codes_from_text "$message_id" "$msg_mission" "$body_text"
 	elif [[ -n "$mission_id" ]]; then
 		# Extract from all unprocessed messages in mission
-		local messages
-		messages=$(db -separator '|' "$DB_FILE" "
-			SELECT m.id, m.body_text FROM messages m
+		# Fetch IDs only — body_text may contain pipes and newlines that break
+		# pipe-separated parsing, so we fetch each body in a separate query.
+		local message_ids
+		message_ids=$(db "$DB_FILE" "
+			SELECT m.id FROM messages m
 			LEFT JOIN extracted_codes ec ON m.id = ec.message_id
 			WHERE m.mission_id = '$(sql_escape "$mission_id")'
 			AND m.direction = 'inbound'
 			AND ec.id IS NULL
 			AND m.body_text IS NOT NULL;
 		")
-		if [[ -z "$messages" ]]; then
+		if [[ -z "$message_ids" ]]; then
 			print_info "No unprocessed inbound messages for mission $mission_id"
 			return 0
 		fi
-		while IFS='|' read -r mid body; do
+		while IFS= read -r mid; do
 			[[ -z "$mid" ]] && continue
+			local body
+			body=$(db "$DB_FILE" "SELECT body_text FROM messages WHERE id = '$(sql_escape "$mid")';")
 			extract_codes_from_text "$mid" "$mission_id" "$body"
-		done <<<"$messages"
+		done <<<"$message_ids"
 	else
 		print_error "Specify --message <id> or --mission <id>"
 		return 1
