@@ -16,7 +16,7 @@
 #   memory-helper.sh recall --query "search terms" [--limit 5] [--type TYPE] [--max-age-days 30] [--entity ent_xxx]
 #   memory-helper.sh history <id>             # Show version history for a memory
 #   memory-helper.sh stats                    # Show memory statistics
-#   memory-helper.sh prune [--older-than-days 90] [--dry-run]  # Remove stale entries
+#   memory-helper.sh prune [--older-than-days 90] [--dry-run] [--intelligent]  # Remove stale entries
 #   memory-helper.sh validate                 # Check for stale/low-quality entries
 #   memory-helper.sh export [--format json|toon]  # Export all memories
 #

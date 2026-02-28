@@ -797,15 +797,104 @@ async function dispatchViaAPI(prompt, runnerName) {
 }
 
 // Truncate long messages for Matrix
+// t1363.6: maxLen can be dynamically determined by ai-judgment-helper.sh
 function truncateResponse(text, maxLen = 4000) {
     if (text.length <= maxLen) return text;
     return text.substring(0, maxLen - 50) + "\n\n... (truncated, full response in runner logs)";
 }
 
+// t1363.6: Get optimal response length for an entity via AI judgment
+// Falls back to config.maxPromptLength or 4000 if AI judgment unavailable
+function getOptimalResponseLength(config, roomId) {
+    const defaultLen = config.maxPromptLength || 4000;
+    if (!config.useIntelligentThresholds) return defaultLen;
+
+    try {
+        const { execSync } = require("child_process");
+        const scriptDir = process.env.HOME + "/.aidevops/agents/scripts";
+        const aiHelper = scriptDir + "/ai-judgment-helper.sh";
+
+        // Look up entity for this room (if entity system is available)
+        const entityHelper = scriptDir + "/entity-helper.sh";
+        let entityId = "";
+        try {
+            // Try to find entity linked to this Matrix room
+            const entityResult = execSync(
+                entityHelper + " suggest matrix " + JSON.stringify(roomId),
+                { timeout: 5000, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }
+            ).trim();
+            if (entityResult && !entityResult.startsWith("[")) {
+                entityId = entityResult.split("|")[0] || "";
+            }
+        } catch { /* no entity found — use default */ }
+
+        if (!entityId) return defaultLen;
+
+        const result = execSync(
+            aiHelper + " optimal-response-length --entity " + JSON.stringify(entityId) + " --channel matrix --default " + defaultLen,
+            { timeout: 10000, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }
+        ).trim();
+
+        const len = parseInt(result, 10);
+        if (len >= 1000 && len <= 16000) return len;
+    } catch (err) {
+        console.log("[MATRIX-BOT] AI response length judgment unavailable, using default: " + err.message);
+    }
+    return defaultLen;
+}
+
 // Compact idle sessions: summarise context, store it, destroy upstream session
+// t1363.6: When useIntelligentThresholds is enabled, uses conversation-helper.sh
+// idle-check (AI-judged) instead of fixed sessionIdleTimeout
 async function compactIdleSessions(config) {
     const idleTimeout = config.sessionIdleTimeout || 300;
-    const idleSessions = store.getIdleSessions(idleTimeout);
+
+    let idleSessions;
+    if (config.useIntelligentThresholds && idleTimeout > 0) {
+        // t1363.6: AI-judged idle detection
+        // First get sessions that have been idle for at least 2 minutes (minimum threshold)
+        // Then use conversation-helper.sh to judge if they're truly idle
+        const candidates = store.getIdleSessions(120); // 2-minute minimum
+        idleSessions = [];
+
+        for (const session of candidates) {
+            try {
+                const { execSync } = require("child_process");
+                const convHelper = process.env.HOME + "/.aidevops/agents/scripts/conversation-helper.sh";
+
+                // Get recent messages for AI judgment context
+                const recentMsgs = store.getRecentMessages(session.room_id, 5);
+                const msgText = recentMsgs.map(m => m.role + ": " + m.content.substring(0, 150)).join("\\n");
+
+                // Use ai-research-helper.sh directly for a quick idle check
+                const aiHelper = process.env.HOME + "/.aidevops/agents/scripts/ai-research-helper.sh";
+                const elapsed = Math.floor((Date.now() - new Date(session.last_active).getTime()) / 1000);
+                const prompt = "Given these recent messages from a conversation (most recent first) and that " + elapsed + " seconds have passed since the last message, is this conversation idle (naturally concluded or paused) or still active (expecting a response)?\\n\\nRecent messages:\\n" + msgText + "\\n\\nRespond with ONLY one word: idle or active";
+
+                const result = execSync(
+                    aiHelper + " --prompt " + JSON.stringify(prompt) + " --model haiku --max-tokens 10 --quiet",
+                    { timeout: 15000, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }
+                ).trim().toLowerCase();
+
+                if (result === "idle") {
+                    idleSessions.push(session);
+                    console.log("[MATRIX-BOT] AI judged room " + session.room_id + " as idle (elapsed: " + elapsed + "s)");
+                } else {
+                    console.log("[MATRIX-BOT] AI judged room " + session.room_id + " as active (elapsed: " + elapsed + "s)");
+                }
+            } catch (err) {
+                // Fallback: use the fixed timeout for this session
+                console.log("[MATRIX-BOT] AI idle check failed for " + session.room_id + ", using fixed timeout: " + err.message);
+                const elapsed = (Date.now() - new Date(session.last_active).getTime()) / 1000;
+                if (elapsed > idleTimeout) {
+                    idleSessions.push(session);
+                }
+            }
+        }
+    } else {
+        // Original fixed-timeout behavior
+        idleSessions = store.getIdleSessions(idleTimeout);
+    }
 
     for (const session of idleSessions) {
         console.log(`[MATRIX-BOT] Compacting idle session for room ${session.room_id} (${session.message_count} messages, idle since ${session.last_active})`);
@@ -855,10 +944,23 @@ async function main() {
     const config = loadConfig();
     const idleTimeout = config.sessionIdleTimeout || 300;
 
+    // t1363.6: Enable intelligent thresholds if configured or if AI helper exists
+    if (config.useIntelligentThresholds === undefined) {
+        try {
+            const fs = require("fs");
+            config.useIntelligentThresholds = fs.existsSync(
+                process.env.HOME + "/.aidevops/agents/scripts/ai-research-helper.sh"
+            );
+        } catch { config.useIntelligentThresholds = false; }
+    }
+
     console.log(`[MATRIX-BOT] Starting with homeserver: ${config.homeserverUrl}`);
     console.log(`[MATRIX-BOT] Bot prefix: ${config.botPrefix || "!ai"}`);
     console.log(`[MATRIX-BOT] Room mappings: ${Object.keys(config.roomMappings || {}).length}`);
-    console.log(`[MATRIX-BOT] Session idle timeout: ${idleTimeout}s`);
+    console.log(`[MATRIX-BOT] Session idle timeout: ${idleTimeout}s${config.useIntelligentThresholds ? " (AI-judged)" : " (fixed)"}`);
+    if (config.useIntelligentThresholds) {
+        console.log("[MATRIX-BOT] Intelligent thresholds enabled (t1363.6): idle detection, response sizing");
+    }
 
     const matrixStorage = new SimpleFsStorageProvider(`${process.env.HOME}/.aidevops/.agent-workspace/matrix-bot/bot-storage.json`);
     const client = new MatrixClient(config.homeserverUrl, config.accessToken, matrixStorage);
@@ -965,7 +1067,9 @@ async function main() {
             store.addMessage(roomId, "assistant", response);
 
             // Truncate and send response
-            const truncated = truncateResponse(response, config.maxPromptLength || 4000);
+            // t1363.6: Use AI-judged response length when intelligent thresholds enabled
+            const maxLen = getOptimalResponseLength(config, roomId);
+            const truncated = truncateResponse(response, maxLen);
             await client.sendText(roomId, truncated);
 
             // React with checkmark

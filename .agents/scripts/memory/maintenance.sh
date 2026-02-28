@@ -375,11 +375,13 @@ EOF
 
 #######################################
 # Prune old/stale entries
+# t1363.6: Added --intelligent flag to use AI judgment instead of fixed age threshold
 #######################################
 cmd_prune() {
 	local older_than_days=$DEFAULT_MAX_AGE_DAYS
 	local dry_run=false
 	local keep_accessed=true
+	local intelligent=false
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -395,9 +397,27 @@ cmd_prune() {
 			keep_accessed=false
 			shift
 			;;
+		--intelligent)
+			intelligent=true
+			shift
+			;;
 		*) shift ;;
 		esac
 	done
+
+	# t1363.6: AI-judged pruning — delegates to ai-judgment-helper.sh
+	if [[ "$intelligent" == true ]]; then
+		local ai_judgment_helper
+		ai_judgment_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/ai-judgment-helper.sh"
+		if [[ -x "$ai_judgment_helper" ]]; then
+			local ai_args=("batch-prune-check" "--older-than-days" "$older_than_days")
+			[[ "$dry_run" == true ]] && ai_args+=("--dry-run")
+			"$ai_judgment_helper" "${ai_args[@]}"
+			return $?
+		else
+			log_warn "AI judgment helper not available, falling back to age-based pruning"
+		fi
+	fi
 
 	init_db
 

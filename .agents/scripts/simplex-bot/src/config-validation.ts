@@ -25,6 +25,7 @@ export const VALID_CONFIG_KEYS: ReadonlySet<string> = new Set([
   "allowedContacts",
   "groupPermissions",
   "sessionIdleTimeout",
+  "useIntelligentThresholds",
   "maxPromptLength",
   "responseTimeout",
   "dataDir",

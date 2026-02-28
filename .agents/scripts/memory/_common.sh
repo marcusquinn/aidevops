@@ -574,7 +574,11 @@ EOF
 
 #######################################
 # Auto-prune stale entries (called opportunistically on store)
-# Only runs if last prune was >24h ago, to avoid overhead on every store
+# Only runs if last prune was >24h ago, to avoid overhead on every store.
+#
+# t1363.6: When ai-judgment-helper.sh is available, uses AI judgment to
+# evaluate borderline memories instead of the fixed DEFAULT_MAX_AGE_DAYS
+# threshold. Falls back to the deterministic threshold when AI is unavailable.
 #######################################
 auto_prune() {
 	local prune_marker="$MEMORY_DIR/.last_auto_prune"
@@ -592,7 +596,16 @@ auto_prune() {
 		fi
 	fi
 
-	# Run lightweight prune: remove entries >90 days old that were never accessed
+	# t1363.6: Try AI-judged pruning first (evaluates relevance, not just age)
+	local ai_judgment_helper="${SCRIPT_DIR}/../ai-judgment-helper.sh"
+	if [[ -x "$ai_judgment_helper" ]]; then
+		# AI judgment: batch-evaluate old memories (limit to 50 per cycle to control cost)
+		"$ai_judgment_helper" batch-prune-check --older-than-days 60 --limit 50 2>/dev/null || true
+		touch "$prune_marker"
+		return 0
+	fi
+
+	# Fallback: deterministic prune — remove entries >DEFAULT_MAX_AGE_DAYS old, never accessed
 	local stale_count
 	stale_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-$DEFAULT_MAX_AGE_DAYS days') AND a.id IS NULL;" 2>/dev/null || echo "0")
 
@@ -601,6 +614,7 @@ auto_prune() {
 		db "$MEMORY_DB" "DELETE FROM learning_relations WHERE id IN ($subquery);" 2>/dev/null || true
 		db "$MEMORY_DB" "DELETE FROM learning_relations WHERE supersedes_id IN ($subquery);" 2>/dev/null || true
 		db "$MEMORY_DB" "DELETE FROM learning_access WHERE id IN ($subquery);" 2>/dev/null || true
+		db "$MEMORY_DB" "DELETE FROM learning_entities WHERE learning_id IN ($subquery);" 2>/dev/null || true
 		db "$MEMORY_DB" "DELETE FROM learnings WHERE id IN ($subquery);" 2>/dev/null || true
 		db "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');" 2>/dev/null || true
 		log_info "Auto-pruned $stale_count stale entries (>$DEFAULT_MAX_AGE_DAYS days, never accessed)"
