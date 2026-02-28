@@ -39,7 +39,7 @@ Add ~/.aidevops/agents/AGENTS.md to context for AI DevOps capabilities.
 ## aidevops Framework Status
 
 **On interactive conversation start** (skip this section entirely for headless/command sessions like `/pulse`, `/full-loop`, etc.):
-1. If you have Bash tool: Run `bash ~/.aidevops/agents/scripts/aidevops-update-check.sh`
+1. If you have Bash tool: Run `bash ~/.aidevops/agents/scripts/aidevops-update-check.sh --interactive`
 2. If no Bash tool: Read `~/.aidevops/cache/session-greeting.txt` (cached by agents with Bash)
 3. Greet with: "Hi!\n\nWe're running https://aidevops.sh v{version}.\n\nWhat would you like to work on?"
 4. Then respond to the user's actual message
