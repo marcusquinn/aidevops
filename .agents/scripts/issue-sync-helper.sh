@@ -18,7 +18,7 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
 # shellcheck source=issue-sync-lib.sh
 source "${SCRIPT_DIR}/issue-sync-lib.sh"
