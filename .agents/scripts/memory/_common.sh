@@ -574,7 +574,12 @@ EOF
 
 #######################################
 # Auto-prune stale entries (called opportunistically on store)
-# Only runs if last prune was >24h ago, to avoid overhead on every store
+# Only runs if last prune was >24h ago, to avoid overhead on every store.
+#
+# Uses AI-judged relevance (t1363.6) for borderline entries instead of
+# a flat DEFAULT_MAX_AGE_DAYS cutoff. The AI judge considers memory type,
+# entity context, and access patterns. Falls back to type-aware heuristics
+# when AI is unavailable.
 #######################################
 auto_prune() {
 	local prune_marker="$MEMORY_DIR/.last_auto_prune"
@@ -592,18 +597,59 @@ auto_prune() {
 		fi
 	fi
 
-	# Run lightweight prune: remove entries >90 days old that were never accessed
-	local stale_count
-	stale_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-$DEFAULT_MAX_AGE_DAYS days') AND a.id IS NULL;" 2>/dev/null || echo "0")
+	local threshold_judge="${SCRIPT_DIR}/ai-threshold-judge.sh"
 
-	if [[ "$stale_count" -gt 0 ]]; then
-		local subquery="SELECT l.id FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-$DEFAULT_MAX_AGE_DAYS days') AND a.id IS NULL"
-		db "$MEMORY_DB" "DELETE FROM learning_relations WHERE id IN ($subquery);" 2>/dev/null || true
-		db "$MEMORY_DB" "DELETE FROM learning_relations WHERE supersedes_id IN ($subquery);" 2>/dev/null || true
-		db "$MEMORY_DB" "DELETE FROM learning_access WHERE id IN ($subquery);" 2>/dev/null || true
-		db "$MEMORY_DB" "DELETE FROM learnings WHERE id IN ($subquery);" 2>/dev/null || true
+	# Get candidates: entries older than 60 days that were never accessed
+	# (60 days is the minimum threshold for any type — the judge decides the rest)
+	local candidates
+	candidates=$(db "$MEMORY_DB" "SELECT l.id, l.type, l.confidence, substr(l.content, 1, 300), CAST(julianday('now') - julianday(l.created_at) AS INTEGER) FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-60 days') AND a.id IS NULL;" 2>/dev/null || echo "")
+
+	if [[ -z "$candidates" ]]; then
+		touch "$prune_marker"
+		return 0
+	fi
+
+	local prune_ids=""
+	local prune_count=0
+	local keep_count=0
+
+	while IFS='|' read -r mem_id mem_type mem_confidence mem_content age_days; do
+		[[ -z "$mem_id" ]] && continue
+
+		local verdict="keep"
+		if [[ -x "$threshold_judge" ]]; then
+			verdict=$("$threshold_judge" judge-prune-relevance \
+				--content "$mem_content" \
+				--age-days "$age_days" \
+				--type "$mem_type" \
+				--accessed "false" \
+				--confidence "${mem_confidence:-medium}" 2>/dev/null || echo "keep")
+		else
+			# Inline fallback: original flat threshold
+			if [[ "$age_days" -gt "$DEFAULT_MAX_AGE_DAYS" ]]; then
+				verdict="prune"
+			fi
+		fi
+
+		if [[ "$verdict" == "prune" ]]; then
+			if [[ -n "$prune_ids" ]]; then
+				prune_ids="${prune_ids},'${mem_id//\'/\'\'}'"
+			else
+				prune_ids="'${mem_id//\'/\'\'}'"
+			fi
+			prune_count=$((prune_count + 1))
+		else
+			keep_count=$((keep_count + 1))
+		fi
+	done <<<"$candidates"
+
+	if [[ "$prune_count" -gt 0 && -n "$prune_ids" ]]; then
+		db "$MEMORY_DB" "DELETE FROM learning_relations WHERE id IN ($prune_ids);" 2>/dev/null || true
+		db "$MEMORY_DB" "DELETE FROM learning_relations WHERE supersedes_id IN ($prune_ids);" 2>/dev/null || true
+		db "$MEMORY_DB" "DELETE FROM learning_access WHERE id IN ($prune_ids);" 2>/dev/null || true
+		db "$MEMORY_DB" "DELETE FROM learnings WHERE id IN ($prune_ids);" 2>/dev/null || true
 		db "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');" 2>/dev/null || true
-		log_info "Auto-pruned $stale_count stale entries (>$DEFAULT_MAX_AGE_DAYS days, never accessed)"
+		log_info "Auto-pruned $prune_count entries (AI-judged relevance, kept $keep_count borderline)"
 	fi
 
 	# Update marker

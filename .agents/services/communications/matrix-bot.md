@@ -203,7 +203,7 @@ curl -X POST "https://matrix.example.com/_matrix/client/v3/login" \
   },
   "botPrefix": "!ai",
   "ignoreOwnMessages": true,
-  "maxPromptLength": 4000,
+  "maxPromptLength": 3000,
   "responseTimeout": 600,
   "sessionIdleTimeout": 300
 }
@@ -220,9 +220,9 @@ curl -X POST "https://matrix.example.com/_matrix/client/v3/login" \
 | `roomMappings` | `{}` | Room ID to runner name mapping |
 | `botPrefix` | `!ai` | Command prefix to trigger the bot |
 | `ignoreOwnMessages` | `true` | Ignore messages from the bot itself |
-| `maxPromptLength` | `4000` | Max response length before truncation |
+| `maxPromptLength` | `3000` | Max response length before truncation (channel-appropriate default) |
 | `responseTimeout` | `600` | Max seconds to wait for runner response |
-| `sessionIdleTimeout` | `300` | Seconds of inactivity before compacting a session |
+| `sessionIdleTimeout` | `300` | Fallback idle timeout in seconds (AI-judged idle detection is primary) |
 
 ## Room-to-Runner Mapping
 
