@@ -42,7 +42,13 @@ This means any layer of contextual distillation — from raw messages to convers
 Current aidevops memory is project-scoped and content-typed. It knows "CORS was fixed with nginx headers" but has no concept of "Marcus prefers concise responses and repeatedly asks about deployment status." The Matrix bot has per-room sessions with fixed 300s idle timeout compaction, but no cross-channel entity awareness.
 
 ### Strategic problem
-aidevops is heading toward multi-channel persistent agents (Matrix rooms, SimpleX DMs, email threads, chat channels). Without entity-scoped memory, each channel interaction starts from zero relationship context. A person who's had 50 conversations across Matrix and SimpleX would feel like they're talking to a stranger every time.
+aidevops is heading toward multi-channel persistent agents (Matrix rooms, SimpleX DMs, email threads, chat channels, chatbots). Without entity-scoped memory, each channel interaction starts from zero relationship context. A person who's had 50 conversations across Matrix and SimpleX would feel like they're talking to a stranger every time.
+
+### UX north star
+The benchmark is "an attentive person" — someone who remembers what you discussed, knows your preferences, picks up where you left off, and proactively anticipates what you need. Not a system that "knows facts about you" but one that maintains genuine conversational and relational continuity. This quality must hold regardless of which model is behind the conversation on any given day.
+
+### Agent-to-agent relationships
+Entities include other AI agents (`entity_type: agent`), not just people. As aidevops instances communicate across machines via SimpleX/Matrix mail transports, they build relationship models of each other — capabilities, reliability, response patterns. This enables intelligent routing ("agent X is better at SEO tasks") and collaborative memory ("agent X discovered this pattern while working on project Y"). This is a future extension of the core entity system, not a Phase 1 requirement.
 
 ### The self-evolution gap
 Nobody in the AI agent space is doing "the system files tasks to upgrade itself based on patterns in user interactions." Every chatbot does conversation memory. The differentiator is: entity interaction patterns → capability gap detection → automatic TODO creation → system upgrade → better service → updated entity model. This is the feedback loop that makes the system compound over time.
