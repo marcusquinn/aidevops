@@ -135,8 +135,9 @@ browser-qa-helper.sh links --url http://localhost:3000 --depth 2
 
 **Common findings**:
 - 404s from renamed/deleted pages
-- Links to placeholder URLs (`#`, `javascript:void(0)`)
 - Links to API endpoints that return errors without auth
+
+> **Note**: The crawler only follows absolute internal `http*` URLs. Placeholder links (`#`, `javascript:void(0)`) are not detected — use a regex-based scan or manual review for those.
 
 ### Step 5: Accessibility Checks
 

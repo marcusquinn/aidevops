@@ -99,7 +99,7 @@ google-search-console,npx mcp-server-gsc@latest,service-account,seo/google-searc
 mcporter,npx mcporter,none,tools/mcp-toolkit/mcporter.md,Discover call compose and generate CLIs for any MCP server
 -->
 
-<!--TOON:workflows[15]{name,file,purpose}:
+<!--TOON:workflows[16]{name,file,purpose}:
 git-workflow,workflows/git-workflow.md,Branch naming and commit conventions
 plans,workflows/plans.md,Complex execution plans
 release,workflows/release.md,Semver and changelog generation
@@ -107,7 +107,7 @@ version-bump,workflows/version-bump.md,Version bump automation
 pr,workflows/pr.md,PR creation and review
 preflight,workflows/preflight.md,Pre-commit quality checks
 postflight,workflows/postflight.md,Post-release verification
-milestone-validation,workflows/milestone-validation.md,Milestone validation for mission system — tests build lint browser QA
+milestone-validation,workflows/milestone-validation.md,Milestone validation worker for mission orchestration with browser QA
 browser-qa,workflows/browser-qa.md,Playwright-based visual QA — screenshots broken links console errors for milestone validation
 ralph-loop,workflows/ralph-loop.md,Iterative AI development loops
 session-review,workflows/session-review.md,Session completeness review
@@ -116,7 +116,6 @@ bug-fixing,workflows/bug-fixing.md,Bug fix workflow
 feature-development,workflows/feature-development.md,Feature development workflow
 conversation-starter,workflows/conversation-starter.md,Session greeting and auto-recall
 mission-skill-learning,workflows/mission-skill-learning.md,Auto-capture reusable patterns from missions and suggest promotion
-milestone-validation,workflows/milestone-validation.md,Milestone validation worker for mission orchestration with browser QA
 -->
 
 <!--TOON:scripts[96]{name,purpose}:

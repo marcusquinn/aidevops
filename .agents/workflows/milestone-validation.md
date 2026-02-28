@@ -252,7 +252,9 @@ done
 # ... run validation ...
 
 # Cleanup
-kill "$DEV_PID" 2>/dev/null || true
+if [[ -n "${DEV_PID:-}" ]]; then
+  kill "$DEV_PID" 2>/dev/null || true
+fi
 ```
 
 **Port detection**: Check `package.json` scripts for port numbers, or try common ports (3000, 3001, 5173, 8080, 8000).

@@ -33,6 +33,21 @@ get_viewport_dimensions() {
 	return 0
 }
 
+# Escape a string for safe embedding in a JavaScript string literal (single-quoted).
+# Handles backslashes, single quotes, backticks, newlines, and dollar signs.
+# Args: $1 = raw string
+# Output: escaped string (without surrounding quotes)
+js_escape_string() {
+	local raw="$1"
+	raw="${raw//\\/\\\\}"
+	raw="${raw//\'/\\\'}"
+	raw="${raw//\`/\\\`}"
+	raw="${raw//\$/\\\$}"
+	raw="${raw//$'\n'/\\n}"
+	printf '%s' "$raw"
+	return 0
+}
+
 # =============================================================================
 # Prerequisite Checks
 # =============================================================================
@@ -46,12 +61,8 @@ check_playwright() {
 
 	# Check if playwright is available (don't install browsers, just check)
 	if ! npx --no-install playwright --version &>/dev/null 2>&1; then
-		log_warn "Playwright not installed. Run: npm install playwright && npx playwright install"
-		log_info "Attempting to use @playwright/mcp instead..."
-		if ! npx --no-install @playwright/mcp --help &>/dev/null 2>&1; then
-			log_error "Neither playwright nor @playwright/mcp found. Install one first."
-			return 1
-		fi
+		log_error "Playwright not installed. Run: npm install playwright && npx playwright install"
+		return 1
 	fi
 	return 0
 }
@@ -142,21 +153,29 @@ cmd_screenshot() {
 		dims=$(get_viewport_dimensions "$vp")
 		local width="${dims%%x*}"
 		local height="${dims##*x}"
-		viewport_array="${viewport_array}{ name: '${vp}', width: ${width}, height: ${height} },"
+		local safe_vp
+		safe_vp=$(js_escape_string "$vp")
+		viewport_array="${viewport_array}{ name: '${safe_vp}', width: ${width}, height: ${height} },"
 	done
 
 	local pages_array=""
 	for page in $pages; do
-		pages_array="${pages_array}'${page}',"
+		local safe_page
+		safe_page=$(js_escape_string "$page")
+		pages_array="${pages_array}'${safe_page}',"
 	done
+
+	local safe_url safe_output_dir
+	safe_url=$(js_escape_string "$url")
+	safe_output_dir=$(js_escape_string "$output_dir")
 
 	cat >"$script_file" <<SCRIPT
 import { chromium } from 'playwright';
 
-const baseUrl = '${url}'.replace(/\/\$/, '');
+const baseUrl = '${safe_url}'.replace(/\/\$/, '');
 const viewports = [${viewport_array}];
 const pages = [${pages_array}];
-const outputDir = '${output_dir}';
+const outputDir = '${safe_output_dir}';
 const timeout = ${timeout};
 const fullPage = ${full_page};
 
@@ -199,8 +218,8 @@ run().catch(err => {
 SCRIPT
 
 	log_info "Capturing screenshots for ${pages} at viewports: ${viewports}"
-	node "$script_file"
-	local exit_code=$?
+	local exit_code=0
+	node "$script_file" || exit_code=$?
 	rm -f "$script_file"
 	return $exit_code
 }
@@ -311,8 +330,8 @@ run().catch(err => {
 SCRIPT
 
 	log_info "Checking links from ${url} (depth: ${depth})"
-	node "$script_file" "$url" "$depth" "$timeout"
-	local exit_code=$?
+	local exit_code=0
+	node "$script_file" "$url" "$depth" "$timeout" || exit_code=$?
 	rm -f "$script_file"
 	return $exit_code
 }
@@ -380,20 +399,26 @@ cmd_a11y() {
 
 	local pages_array=""
 	for page_path in $pages; do
-		pages_array="${pages_array}'${page_path}',"
+		local safe_page
+		safe_page=$(js_escape_string "$page_path")
+		pages_array="${pages_array}'${safe_page}',"
 	done
+
+	local safe_url
+	safe_url=$(js_escape_string "$url")
 
 	cat >"$script_file" <<SCRIPT
 import { chromium } from 'playwright';
 
-const baseUrl = '${url}'.replace(/\/\$/, '');
+const baseUrl = '${safe_url}'.replace(/\/\$/, '');
 const pages = [${pages_array}];
 
 async function run() {
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext();
   const page = await context.newPage();
-  const results = [];
+  const a11yResults = [];
+  const contrastData = JSON.parse(process.argv[2] || '[]');
 
   for (const pagePath of pages) {
     const url = baseUrl + pagePath;
@@ -510,14 +535,17 @@ async function run() {
         };
       });
 
-      results.push({ page: pagePath, ...a11yData });
+      // Merge contrast data for this page if available
+      const contrast = contrastData.find(c => c.page === pagePath);
+      a11yResults.push({ page: pagePath, ...a11yData, contrast: contrast ? contrast.contrast : null });
     } catch (err) {
-      results.push({ page: pagePath, error: err.message });
+      const contrast = contrastData.find(c => c.page === pagePath);
+      a11yResults.push({ page: pagePath, error: err.message, contrast: contrast ? contrast.contrast : null });
     }
   }
 
   await browser.close();
-  console.log(JSON.stringify(results, null, 2));
+  console.log(JSON.stringify(a11yResults, null, 2));
 }
 
 run().catch(err => {
@@ -526,8 +554,21 @@ run().catch(err => {
 });
 SCRIPT
 
-	node "$script_file"
-	local exit_code=$?
+	# Serialize contrast results as JSON array for the generated script
+	local contrast_json="["
+	local first=true
+	for entry in "${results[@]}"; do
+		if [[ "$first" == "true" ]]; then
+			first=false
+		else
+			contrast_json="${contrast_json},"
+		fi
+		contrast_json="${contrast_json}${entry}"
+	done
+	contrast_json="${contrast_json}]"
+
+	local exit_code=0
+	node "$script_file" "$contrast_json" || exit_code=$?
 	rm -f "$script_file"
 	return $exit_code
 }
@@ -580,13 +621,18 @@ cmd_smoke() {
 
 	local pages_array=""
 	for page_path in $pages; do
-		pages_array="${pages_array}'${page_path}',"
+		local safe_page
+		safe_page=$(js_escape_string "$page_path")
+		pages_array="${pages_array}'${safe_page}',"
 	done
+
+	local safe_url
+	safe_url=$(js_escape_string "$url")
 
 	cat >"$script_file" <<SCRIPT
 import { chromium } from 'playwright';
 
-const baseUrl = '${url}'.replace(/\/\$/, '');
+const baseUrl = '${safe_url}'.replace(/\/\$/, '');
 const pages = [${pages_array}];
 const timeout = ${timeout};
 
@@ -674,8 +720,8 @@ run().catch(err => {
 SCRIPT
 
 	log_info "Running smoke test on ${url} for pages: ${pages}"
-	node "$script_file"
-	local exit_code=$?
+	local exit_code=0
+	node "$script_file" || exit_code=$?
 	rm -f "$script_file"
 	return $exit_code
 }
