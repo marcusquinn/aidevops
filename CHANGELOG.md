@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.144.0] - 2026-02-28
+
+### Added
+
+- replace hardcoded thresholds with AI judgment (t1363.6) (#2539)
+- add self-evolution loop for capability gap detection (t1363.4) (#2538)
+- add mission-aware browser QA for milestone validation (t1359) (#2541)
+- integrate entity system into Matrix bot (t1363.5) (#2537)
+
+### Changed
+
+- Refactor: replace .agents symlink with real directory scaffold in aidevops init (#2544)
+
 ## [2.142.1] - 2026-02-27
 
 ### Added
