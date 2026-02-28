@@ -1025,13 +1025,23 @@ check_scan_interval() {
 # Record pulse scan timestamp
 #######################################
 record_scan_timestamp() {
+	# Graceful degradation: persistence errors are logged but never propagated.
+	# A successful scan must not be reported as failed due to timestamp issues.
 	if ! mkdir -p "$EVOL_STATE_DIR" 2>/dev/null; then
 		log_warn "Failed to create state directory: $EVOL_STATE_DIR"
-		return 1
+		return 0
 	fi
-	if ! date +%s >"$EVOL_STATE_FILE" 2>/dev/null; then
-		log_warn "Failed to write scan timestamp to: $EVOL_STATE_FILE"
-		return 1
+	# Atomic write: temp file + mv prevents partial/corrupt state files
+	local tmp_file="${EVOL_STATE_FILE}.tmp.$$"
+	if ! date +%s >"$tmp_file" 2>/dev/null; then
+		log_warn "Failed to write scan timestamp to temp file: $tmp_file"
+		rm -f "$tmp_file" 2>/dev/null
+		return 0
+	fi
+	if ! mv -f "$tmp_file" "$EVOL_STATE_FILE" 2>/dev/null; then
+		log_warn "Failed to atomically update state file: $EVOL_STATE_FILE"
+		rm -f "$tmp_file" 2>/dev/null
+		return 0
 	fi
 	return 0
 }
@@ -1196,10 +1206,8 @@ SELECT '  Detected: ' || (SELECT COUNT(*) FROM capability_gaps WHERE status = 'd
     char(10) || '  Total evidence links: ' || (SELECT COUNT(*) FROM gap_evidence);
 EOF
 
-	# Record scan timestamp for interval guard (non-fatal if persistence fails)
-	if ! record_scan_timestamp; then
-		log_warn "Pulse scan completed, but failed to persist interval state"
-	fi
+	# Record scan timestamp for interval guard (always succeeds — errors logged internally)
+	record_scan_timestamp
 
 	return 0
 }
