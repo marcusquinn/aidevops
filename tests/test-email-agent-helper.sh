@@ -129,66 +129,18 @@ db() {
 # ============================================================================
 
 test_database_init() {
-	echo "Test: Database initialization"
+	echo "Test: Database initialization via helper's init_db()"
 
-	# Source shared-constants for the helper functions
-	local shared_constants="${REPO_ROOT}/.agents/scripts/shared-constants.sh"
-	if [[ ! -f "$shared_constants" ]]; then
-		echo "  SKIP: shared-constants.sh not found"
-		return 0
-	fi
-
-	# Initialize database directly.
-	# NOTE: This schema MUST match init_db() in email-agent-helper.sh.
-	# If you change the production schema, update this test schema too.
-	db "$TEST_DB" <<'SQL'
-PRAGMA journal_mode=WAL;
-PRAGMA busy_timeout=5000;
-
-CREATE TABLE IF NOT EXISTS conversations (
-    id          TEXT PRIMARY KEY,
-    mission_id  TEXT NOT NULL,
-    subject     TEXT NOT NULL,
-    to_email    TEXT NOT NULL,
-    from_email  TEXT NOT NULL,
-    status      TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','waiting','completed','failed')),
-    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
-    updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
-);
-
-CREATE TABLE IF NOT EXISTS messages (
-    id          TEXT PRIMARY KEY,
-    conv_id     TEXT NOT NULL REFERENCES conversations(id),
-    mission_id  TEXT NOT NULL,
-    direction   TEXT NOT NULL CHECK(direction IN ('outbound','inbound')),
-    from_email  TEXT NOT NULL,
-    to_email    TEXT NOT NULL,
-    subject     TEXT NOT NULL,
-    body_text   TEXT,
-    body_html   TEXT,
-    message_id  TEXT,
-    in_reply_to TEXT,
-    ses_message_id TEXT,
-    s3_key      TEXT,
-    raw_path    TEXT,
-    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
-);
-
-CREATE TABLE IF NOT EXISTS extracted_codes (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    message_id  TEXT NOT NULL REFERENCES messages(id),
-    mission_id  TEXT NOT NULL,
-    code_type   TEXT NOT NULL CHECK(code_type IN ('otp','token','link','api_key','password','other')),
-    code_value  TEXT NOT NULL,
-    confidence  REAL NOT NULL DEFAULT 1.0,
-    used        INTEGER NOT NULL DEFAULT 0,
-    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_conv_mission ON conversations(mission_id);
-CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conv_id);
-CREATE INDEX IF NOT EXISTS idx_msg_mission ON messages(mission_id);
-SQL
+	# Use the helper's real init_db() function to create the test database.
+	# This ensures the test schema always matches production — any schema
+	# change in the helper is automatically picked up here.
+	(
+		export EMAIL_AGENT_WORKSPACE="$TEST_WORKSPACE"
+		export EMAIL_AGENT_DB="$TEST_DB"
+		# shellcheck disable=SC1090
+		source "$HELPER"
+		init_db
+	)
 
 	# Verify tables exist
 	local tables
@@ -196,6 +148,16 @@ SQL
 	assert_contains "conversations table exists" "conversations" "$tables"
 	assert_contains "messages table exists" "messages" "$tables"
 	assert_contains "extracted_codes table exists" "extracted_codes" "$tables"
+
+	# Verify all indexes were created (catches drift from init_db)
+	local indexes
+	indexes=$(db "$TEST_DB" "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%' ORDER BY name;")
+	assert_contains "idx_conv_mission index exists" "idx_conv_mission" "$indexes"
+	assert_contains "idx_msg_conv index exists" "idx_msg_conv" "$indexes"
+	assert_contains "idx_msg_mission index exists" "idx_msg_mission" "$indexes"
+	assert_contains "idx_msg_message_id index exists" "idx_msg_message_id" "$indexes"
+	assert_contains "idx_codes_mission index exists" "idx_codes_mission" "$indexes"
+	assert_contains "idx_codes_message index exists" "idx_codes_message" "$indexes"
 
 	# Verify WAL mode
 	local journal_mode
@@ -361,53 +323,54 @@ test_code_storage() {
 test_extract_codes_integration() {
 	echo "Test: Integration - extract-codes via helper CLI"
 
-	# This test exercises the actual helper's extract-codes command end-to-end:
-	# seed the helper's workspace DB with a message, invoke extract-codes, verify results.
-	# The helper uses a readonly DB_FILE path, so we set up data at that location.
+	# This test exercises the actual helper's extract-codes command end-to-end
+	# using an isolated test database (via EMAIL_AGENT_DB env var override).
+	# No production data is touched.
 
-	local helper_workspace="${HOME}/.aidevops/.agent-workspace/email-agent"
-	local helper_db="${helper_workspace}/conversations.db"
-	local had_existing_db=0
+	local int_db="${TEST_WORKSPACE}/integration-test.db"
 
-	# Back up existing DB if present
-	if [[ -f "$helper_db" ]]; then
-		had_existing_db=1
-		cp "$helper_db" "${helper_db}.test-backup"
-	fi
-
-	# Ensure the helper's DB is initialized (the helper does this on ensure_db)
-	mkdir -p "$helper_workspace"
-	bash "$HELPER" status >/dev/null 2>&1 || true
+	# Initialize the DB using the helper's real init_db (via ensure_db on status)
+	EMAIL_AGENT_WORKSPACE="$TEST_WORKSPACE" EMAIL_AGENT_DB="$int_db" \
+		bash "$HELPER" status >/dev/null 2>&1 || true
 
 	# Seed: conversation + inbound message with an OTP and a confirmation link
-	db "$helper_db" "
-		INSERT OR IGNORE INTO conversations (id, mission_id, subject, to_email, from_email)
+	db "$int_db" "
+		INSERT INTO conversations (id, mission_id, subject, to_email, from_email)
 		VALUES ('conv-int-001', 'MINT', 'Signup Verification', 'user@test.com', 'noreply@vendor.com');
 	"
-	db "$helper_db" "
-		INSERT OR IGNORE INTO messages (id, conv_id, mission_id, direction, from_email, to_email, subject, body_text)
+	db "$int_db" "
+		INSERT INTO messages (id, conv_id, mission_id, direction, from_email, to_email, subject, body_text)
 		VALUES ('msg-int-001', 'conv-int-001', 'MINT', 'inbound', 'noreply@vendor.com', 'user@test.com',
 			'Signup Verification',
 			'Welcome! Your verification code is 593017. You can also verify at https://app.vendor.com/verify?token=xYz789AbC123');
 	"
 
-	# Run the helper's extract-codes command
+	# Run the helper's extract-codes command against the isolated test DB
 	local output
-	output=$(bash "$HELPER" extract-codes --message msg-int-001 2>&1 || true)
+	output=$(EMAIL_AGENT_WORKSPACE="$TEST_WORKSPACE" EMAIL_AGENT_DB="$int_db" \
+		bash "$HELPER" extract-codes --message msg-int-001 2>&1 || true)
 
-	# Verify OTP was extracted
+	# Verify OTP was extracted with correct code_value and code_type
 	local otp_val
-	otp_val=$(db "$helper_db" "SELECT code_value FROM extracted_codes WHERE message_id = 'msg-int-001' AND code_type = 'otp';")
-	assert_eq "Integration: OTP extracted" "593017" "$otp_val"
+	otp_val=$(db "$int_db" "SELECT code_value FROM extracted_codes WHERE message_id = 'msg-int-001' AND code_type = 'otp';")
+	assert_eq "Integration: OTP code_value extracted" "593017" "$otp_val"
 
-	# Verify confirmation link was extracted
+	local otp_type
+	otp_type=$(db "$int_db" "SELECT code_type FROM extracted_codes WHERE message_id = 'msg-int-001' AND code_value = '593017';")
+	assert_eq "Integration: OTP code_type is 'otp'" "otp" "$otp_type"
+
+	# Verify confirmation link was extracted with correct code_type
 	local link_count
-	link_count=$(db "$helper_db" "SELECT count(*) FROM extracted_codes WHERE message_id = 'msg-int-001' AND code_type = 'link';")
+	link_count=$(db "$int_db" "SELECT count(*) FROM extracted_codes WHERE message_id = 'msg-int-001' AND code_type = 'link';")
 	assert_eq "Integration: confirmation link extracted" "1" "$link_count"
 
-	# Verify total extracted count
+	local link_val
+	link_val=$(db "$int_db" "SELECT code_value FROM extracted_codes WHERE message_id = 'msg-int-001' AND code_type = 'link';")
+	assert_contains "Integration: link contains verify URL" "https://app.vendor.com/verify" "$link_val"
+
+	# Verify total extracted count (at least OTP + link)
 	local total
-	total=$(db "$helper_db" "SELECT count(*) FROM extracted_codes WHERE message_id = 'msg-int-001';")
+	total=$(db "$int_db" "SELECT count(*) FROM extracted_codes WHERE message_id = 'msg-int-001';")
 	TESTS_RUN=$((TESTS_RUN + 1))
 	if [[ "$total" -ge 2 ]]; then
 		TESTS_PASSED=$((TESTS_PASSED + 1))
@@ -418,15 +381,7 @@ test_extract_codes_integration() {
 		echo "    Helper output: ${output:0:300}"
 	fi
 
-	# Clean up test data from the helper's DB
-	db "$helper_db" "DELETE FROM extracted_codes WHERE message_id = 'msg-int-001';" 2>/dev/null || true
-	db "$helper_db" "DELETE FROM messages WHERE id = 'msg-int-001';" 2>/dev/null || true
-	db "$helper_db" "DELETE FROM conversations WHERE id = 'conv-int-001';" 2>/dev/null || true
-
-	# Restore original DB if we backed it up
-	if [[ "$had_existing_db" -eq 1 ]]; then
-		mv "${helper_db}.test-backup" "$helper_db"
-	fi
+	# Cleanup: int_db is inside TEST_WORKSPACE, removed by trap
 }
 
 # ============================================================================

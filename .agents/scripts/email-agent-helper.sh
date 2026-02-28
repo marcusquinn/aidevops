@@ -33,8 +33,9 @@ readonly CONFIG_DIR="${SCRIPT_DIR}/../configs"
 readonly CONFIG_FILE="${CONFIG_DIR}/email-agent-config.json"
 readonly EMAIL_TO_MD_SCRIPT="${SCRIPT_DIR}/email-to-markdown.py"
 readonly THREAD_RECON_SCRIPT="${SCRIPT_DIR}/email-thread-reconstruction.py"
-readonly WORKSPACE_DIR="${HOME}/.aidevops/.agent-workspace/email-agent"
-readonly DB_FILE="${WORKSPACE_DIR}/conversations.db"
+# WORKSPACE_DIR and DB_FILE are overridable via env vars for testing
+readonly WORKSPACE_DIR="${EMAIL_AGENT_WORKSPACE:-${HOME}/.aidevops/.agent-workspace/email-agent}"
+readonly DB_FILE="${EMAIL_AGENT_DB:-${WORKSPACE_DIR}/conversations.db}"
 
 # Verification code patterns (extended regex, most specific first)
 readonly -a CODE_PATTERNS=(
@@ -1322,4 +1323,7 @@ main() {
 	esac
 }
 
-main "$@"
+# Allow sourcing for tests: only run main when executed directly
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+	main "$@"
+fi
