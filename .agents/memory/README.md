@@ -474,6 +474,17 @@ remains at `memory/memory.db` and is always accessible without `--namespace`.
 ```text
 ~/.aidevops/.agent-workspace/memory/
 ├── memory.db           # Global SQLite database with FTS5
+│   ├── learnings        # Project memories (FTS5)
+│   ├── learning_access  # Access tracking
+│   ├── learning_relations # Relational versioning
+│   ├── entities         # Entity records (person/agent/service)
+│   ├── entity_channels  # Cross-channel identity links
+│   ├── interactions     # Raw interaction log (Layer 0, immutable)
+│   ├── interactions_fts # Interaction search index (FTS5)
+│   ├── conversations    # Conversation lifecycle state
+│   ├── conversation_summaries # Versioned summaries (Layer 1)
+│   ├── entity_profiles  # Versioned preferences (Layer 2)
+│   └── capability_gaps  # Self-evolution gap tracking
 ├── embeddings.db       # Optional: vector embeddings for semantic search
 ├── namespaces/         # Per-runner isolated memory
 │   ├── code-reviewer/
@@ -482,6 +493,98 @@ remains at `memory/memory.db` and is always accessible without `--namespace`.
 │       └── memory.db
 └── preferences/        # Optional: markdown preference files
 ```
+
+## Entity Memory (Relationship Continuity)
+
+Entity memory gives agents the ability to maintain relationship continuity with
+individuals across all channels (Matrix, SimpleX, email, CLI). It extends the
+existing project-scoped memory with a three-layer architecture for tracking
+entities (people, agents, services) and their interactions.
+
+**Full architecture**: `reference/entity-memory-architecture.md`
+
+### Three Layers
+
+| Layer | Purpose | Script | Mutability |
+|-------|---------|--------|------------|
+| Layer 0 | Raw interaction log | `entity-helper.sh log-interaction` | **Immutable** (append-only) |
+| Layer 1 | Per-conversation context | `conversation-helper.sh` | Summaries immutable (supersedes chain) |
+| Layer 2 | Entity relationship model | `entity-helper.sh` | Profiles immutable (supersedes chain) |
+
+### Quick Start
+
+```bash
+# Create an entity with initial channel link
+entity-helper.sh create --name "Marcus" --type person \
+    --channel matrix --channel-id "@marcus:server.com"
+
+# Link additional channel identity
+entity-helper.sh link ent_xxx --channel email \
+    --channel-id "marcus@example.com" --verified
+
+# Suggest matches for an unknown identity
+entity-helper.sh suggest simplex "~user123"
+
+# Log an interaction (Layer 0 — immutable)
+entity-helper.sh log-interaction ent_xxx \
+    --channel matrix --content "How's the deployment going?"
+
+# Create a conversation and add messages
+conversation-helper.sh create --entity ent_xxx --channel matrix \
+    --channel-id "!room:server" --topic "Deployment"
+conversation-helper.sh add-message conv_xxx --content "All green!"
+
+# Load context for an AI model (combines all three layers)
+conversation-helper.sh context conv_xxx --recent-messages 20
+
+# Update entity profile (versioned — creates new entry, supersedes old)
+entity-helper.sh profile-update ent_xxx \
+    --key "communication_style" --value "prefers concise responses" \
+    --evidence "observed across 5 conversations"
+
+# Generate conversation summary (immutable, with source range refs)
+conversation-helper.sh summarise conv_xxx
+
+# AI-judged idle detection (replaces fixed timeout)
+conversation-helper.sh idle-check --all
+
+# View entity context (privacy-filtered)
+entity-helper.sh context ent_xxx --privacy-filter --limit 10
+
+# Entity system statistics
+entity-helper.sh stats
+```
+
+### Identity Resolution
+
+Cross-channel identity linking follows a "suggest, don't assume" principle:
+
+- **`suggest`**: Proposes entity matches for an unknown channel identity
+- **`link`**: Creates a link (defaults to `suggested` confidence)
+- **`link --verified`**: Creates a confirmed link
+- **`verify`**: Upgrades an existing link to `confirmed`
+
+Confidence levels: `confirmed` (user verified) > `suggested` (system proposed) > `inferred` (pattern match).
+
+### Immutability Guarantees
+
+- **Interactions** (Layer 0): Never updated or deleted. Append-only source of truth.
+- **Summaries** (Layer 1): Never edited. New summaries supersede old ones via `supersedes_id`.
+- **Profiles** (Layer 2): Never updated in place. Each change creates a new version with evidence.
+
+This ensures a complete audit trail of how the system's understanding of each entity evolved over time.
+
+### Self-Evolution Loop
+
+The capability gap system detects what users need but the system cannot provide:
+
+```bash
+# Gaps are detected during interactions and recorded with evidence
+# High-frequency gaps are promoted to TODO tasks automatically
+# Resolution is tracked: detected → todo_created → resolved
+```
+
+See `reference/entity-memory-architecture.md` for the full self-evolution loop design.
 
 ## CLI Reference
 
