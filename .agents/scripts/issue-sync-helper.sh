@@ -18,7 +18,15 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+# Use pure-bash parameter expansion instead of dirname (external binary) to avoid
+# "dirname: command not found" in headless/MCP environments where PATH is restricted.
+# Defensive PATH export ensures downstream tools (gh, git, jq, sed, awk) are findable.
+export PATH="/usr/local/bin:/usr/bin:/bin:${PATH:-}"
+
+_script_path="${BASH_SOURCE[0]%/*}"
+[[ "$_script_path" == "${BASH_SOURCE[0]}" ]] && _script_path="."
+SCRIPT_DIR="$(cd "$_script_path" && pwd)" || exit
+unset _script_path
 source "${SCRIPT_DIR}/shared-constants.sh"
 # shellcheck source=issue-sync-lib.sh
 source "${SCRIPT_DIR}/issue-sync-lib.sh"
