@@ -96,6 +96,9 @@ What do you need?
     |
     +-> TEST your own app (dev server)?
             |
+            +-> Mission milestone QA (smoke + screenshots + links + a11y)?
+            |       --> browser-qa-helper.sh (full pipeline)
+            |       --> See tools/browser/browser-qa.md
             +-> Mobile E2E (Android/iOS/React Native/Flutter)?
             |       --> Maestro (YAML flows, no compilation, built-in flakiness tolerance)
             |       --> See tools/mobile/maestro.md

@@ -147,7 +147,7 @@ Set milestone status to `validating`, then verify:
 
 2. **Integration checks** (from milestone validation criteria):
    - Run the specific validation commands listed in the milestone's `Validation:` field
-   - For UI milestones: use browser automation (`playwright`, `stagehand`) to verify visual correctness
+   - For UI milestones: use browser QA pipeline (`tools/browser/browser-qa.md`) via `scripts/browser-qa-helper.sh` — smoke test, screenshots, broken links, accessibility, content verification
    - For API milestones: run endpoint smoke tests
 
 3. **Budget check**:
@@ -621,7 +621,10 @@ Each repo has its own task ID namespace. When creating tasks in secondary repos,
 - `workflows/plans.md` — Task decomposition patterns
 - `tools/build-agent/build-agent.md` — Agent lifecycle tiers (draft for mission agents)
 - `reference/orchestration.md` — Model routing and dispatch patterns
-- `tools/browser/browser-automation.md` — Browser QA for milestone validation
+- `tools/browser/browser-automation.md` — Browser tool selection guide
+- `tools/browser/browser-qa.md` — Browser QA subagent for milestone validation (t1359)
+- `workflows/milestone-validation.md` — Milestone validation worker (t1357.6)
+- `scripts/browser-qa-helper.sh` — Playwright-based visual testing CLI (t1359)
 - `tools/context/model-routing.md` — Cost-aware model selection for mission workers
 - `scripts/budget-analysis-helper.sh` — Budget analysis engine (t1357.7) — tiered recommendations, cost estimation, spend forecasting
 - `scripts/budget-tracker-helper.sh` — Append-only cost log for historical spend data

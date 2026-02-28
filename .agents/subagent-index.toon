@@ -37,7 +37,7 @@ tools/build-mcp/,MCP development - creating MCP servers and plugins,build-mcp|se
 tools/mcp-toolkit/,MCP runtime toolkit - discover call compose and generate CLIs/typed clients for MCP servers,mcporter
 tools/ai-assistants/,AI tool integration - OpenCode headless dispatch model comparison and response scoring,agno|capsolver|claude-code|compare-models|response-scoring|overview|openclaw|opencode-server|headless-dispatch
 tools/ai-orchestration/,AI orchestration - visual builders and multi-agent,overview|langflow|crewai|autogen|openprose
-tools/browser/,Browser automation - scraping and testing,agent-browser|stagehand|playwright|playwright-cli|playwright-emulation|playwriter|crawl4ai|watercrawl|pagespeed|peekaboo|curl-copy|chrome-webstore-release
+tools/browser/,Browser automation - scraping testing and QA,agent-browser|browser-automation|browser-qa|stagehand|playwright|playwright-cli|playwright-emulation|playwriter|crawl4ai|watercrawl|pagespeed|peekaboo|curl-copy|chrome-webstore-release
 tools/mobile/,Mobile development - iOS/macOS build test simulator and emulator automation,agent-device|xcodebuild-mcp|ios-simulator-mcp|maestro|axe-cli|minisim
 tools/pdf/,PDF processing - form filling and digital signatures,overview|libpdf
 tools/accessibility/,Accessibility and contrast testing - WCAG compliance for websites and emails,accessibility
@@ -114,10 +114,12 @@ bug-fixing,workflows/bug-fixing.md,Bug fix workflow
 feature-development,workflows/feature-development.md,Feature development workflow
 conversation-starter,workflows/conversation-starter.md,Session greeting and auto-recall
 mission-skill-learning,workflows/mission-skill-learning.md,Auto-capture reusable patterns from missions and suggest promotion
+milestone-validation,workflows/milestone-validation.md,Milestone validation worker for mission orchestration with browser QA
 -->
 
 <!--TOON:scripts[95]{name,purpose}:
 accessibility-helper.sh,Accessibility and contrast testing (WCAG compliance WAVE API for websites and emails)
+browser-qa-helper.sh,Playwright-based visual QA for milestone validation (smoke screenshots links a11y)
 accessibility-audit-helper.sh,Accessibility audit CLI wrapping axe-core WAVE API WebAIM contrast and Lighthouse a11y
 auto-update-helper.sh,Automatic update polling daemon (enable disable status check logs)
 list-keys-helper.sh,List all API keys with storage locations
