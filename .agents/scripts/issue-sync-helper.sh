@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # shellcheck disable=SC2155
 # =============================================================================
 # aidevops Issue Sync Helper (Simplified)
