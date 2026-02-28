@@ -1595,6 +1595,144 @@ EOF
 }
 
 #######################################
+# Resolve an entity by channel + channel_id (t1363.6)
+# Used by integrations (e.g., matrix bot) to find which entity
+# is associated with a given channel identity.
+# Returns entity JSON on stdout, or exits 1 if not found.
+#######################################
+cmd_resolve() {
+	local channel=""
+	local channel_id=""
+	local format="json"
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--channel)
+			channel="$2"
+			shift 2
+			;;
+		--channel-id)
+			channel_id="$2"
+			shift 2
+			;;
+		--json)
+			format="json"
+			shift
+			;;
+		*) shift ;;
+		esac
+	done
+
+	if [[ -z "$channel" || -z "$channel_id" ]]; then
+		log_error "Usage: entity-helper.sh resolve --channel <type> --channel-id <id>"
+		return 1
+	fi
+
+	init_entity_db
+
+	local esc_channel
+	esc_channel=$(sql_escape "$channel")
+	local esc_channel_id
+	esc_channel_id=$(sql_escape "$channel_id")
+
+	local entity_id
+	entity_id=$(entity_db "$ENTITY_MEMORY_DB" \
+		"SELECT entity_id FROM entity_channels WHERE channel = '$esc_channel' AND channel_id = '$esc_channel_id' LIMIT 1;" \
+		2>/dev/null || echo "")
+
+	if [[ -z "$entity_id" ]]; then
+		return 1
+	fi
+
+	# Return entity details as JSON
+	entity_db -json "$ENTITY_MEMORY_DB" \
+		"SELECT * FROM entities WHERE id = '$entity_id';"
+
+	return 0
+}
+
+#######################################
+# Get a specific profile key for an entity (t1363.6)
+# Returns the current (non-superseded) value for the given key.
+# Used by integrations to look up specific preferences.
+#######################################
+cmd_get_profile() {
+	local entity_id="${1:-}"
+	local key=""
+	local format="text"
+
+	shift || true
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--key)
+			key="$2"
+			shift 2
+			;;
+		--json)
+			format="json"
+			shift
+			;;
+		*) shift ;;
+		esac
+	done
+
+	if [[ -z "$entity_id" || -z "$key" ]]; then
+		log_error "Usage: entity-helper.sh get-profile <entity_id> --key <profile_key>"
+		return 1
+	fi
+
+	init_entity_db
+
+	local esc_id
+	esc_id=$(sql_escape "$entity_id")
+	local esc_key
+	esc_key=$(sql_escape "$key")
+
+	if [[ "$format" == "json" ]]; then
+		local result
+		result=$(
+			entity_db -json "$ENTITY_MEMORY_DB" <<EOF
+SELECT ep.id, ep.profile_key, ep.profile_value, ep.confidence, ep.created_at
+FROM entity_profiles ep
+WHERE ep.entity_id = '$esc_id'
+  AND ep.profile_key = '$esc_key'
+  AND ep.id NOT IN (SELECT supersedes_id FROM entity_profiles WHERE supersedes_id IS NOT NULL)
+ORDER BY ep.created_at DESC
+LIMIT 1;
+EOF
+		)
+		if [[ -z "$result" || "$result" == "[]" ]]; then
+			return 1
+		fi
+		# Return single object, not array
+		if command -v jq &>/dev/null; then
+			echo "$result" | jq '.[0] // empty'
+		else
+			echo "$result"
+		fi
+	else
+		local value
+		value=$(
+			entity_db "$ENTITY_MEMORY_DB" <<EOF
+SELECT ep.profile_value
+FROM entity_profiles ep
+WHERE ep.entity_id = '$esc_id'
+  AND ep.profile_key = '$esc_key'
+  AND ep.id NOT IN (SELECT supersedes_id FROM entity_profiles WHERE supersedes_id IS NOT NULL)
+ORDER BY ep.created_at DESC
+LIMIT 1;
+EOF
+		)
+		if [[ -z "$value" ]]; then
+			return 1
+		fi
+		echo "$value"
+	fi
+
+	return 0
+}
+
+#######################################
 # Show help
 #######################################
 cmd_help() {
@@ -1622,9 +1760,11 @@ IDENTITY LINKING:
     suggest         Suggest entity matches for a channel identity
     verify <id>     Verify a channel link (upgrade to confirmed)
     channels <id>   List channels for an entity
+    resolve         Resolve entity by channel + channel_id
 
 PROFILES (versioned):
     profile <id>            Show current profile
+    get-profile <id>        Get a specific profile key (for integrations)
     profile-update <id>     Add/update a profile entry (creates new version)
     profile-history <id>    Show profile version history
 
@@ -1726,7 +1866,9 @@ main() {
 	suggest) cmd_suggest "$@" ;;
 	verify) cmd_verify "$@" ;;
 	channels) cmd_channels "$@" ;;
+	resolve) cmd_resolve "$@" ;;
 	profile) cmd_profile "$@" ;;
+	get-profile) cmd_get_profile "$@" ;;
 	profile-update) cmd_profile_update "$@" ;;
 	profile-history) cmd_profile_history "$@" ;;
 	log-interaction) cmd_log_interaction "$@" ;;

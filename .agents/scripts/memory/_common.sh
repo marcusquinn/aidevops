@@ -511,6 +511,10 @@ normalize_content() {
 
 #######################################
 # Check for duplicate memory before storing
+# Uses a three-tier approach (t1363.6):
+#   1. Exact content match (cheapest, instant)
+#   2. Normalized content match (catches whitespace/punctuation/case)
+#   3. Semantic similarity via existing embeddings (catches paraphrases)
 # Returns 0 if duplicate found (with ID on stdout), 1 if no duplicate
 #######################################
 check_duplicate() {
@@ -569,6 +573,94 @@ EOF
 		return 0
 	fi
 
+	# 3. Semantic similarity check via existing embeddings (t1363.6)
+	# Catches paraphrased duplicates that differ in wording but convey the same insight.
+	# Only runs when embeddings are configured — graceful no-op otherwise.
+	local semantic_id
+	semantic_id=$(check_semantic_duplicate "$content" "$type")
+	if [[ -n "$semantic_id" ]]; then
+		echo "$semantic_id"
+		return 0
+	fi
+
+	return 1
+}
+
+#######################################
+# Check for semantically similar duplicates using existing embeddings (t1363.6)
+# Uses the embeddings engine to find memories with cosine similarity >= 0.92
+# (high threshold to avoid false positives — only catches clear paraphrases).
+# Returns matching ID on stdout if found, empty otherwise.
+# Gracefully returns empty if embeddings are not configured.
+#######################################
+check_semantic_duplicate() {
+	local content="$1"
+	local type="$2"
+
+	# Locate the embeddings helper relative to this script
+	local embeddings_script
+	embeddings_script="$(dirname "${BASH_SOURCE[0]}")/../memory-embeddings-helper.sh"
+
+	# Bail if embeddings not available
+	if [[ ! -x "$embeddings_script" ]]; then
+		return 1
+	fi
+
+	# Check if embeddings are configured (config file exists)
+	local config_file="${MEMORY_BASE_DIR}/.embeddings-config"
+	if [[ ! -f "$config_file" ]]; then
+		return 1
+	fi
+
+	# Check if embeddings DB exists
+	local embeddings_db="${MEMORY_DIR}/embeddings.db"
+	if [[ ! -f "$embeddings_db" ]]; then
+		return 1
+	fi
+
+	# Search for semantically similar memories (limit to 3 candidates)
+	local ns_args=()
+	if [[ -n "${MEMORY_NAMESPACE:-}" ]]; then
+		ns_args=("--namespace" "$MEMORY_NAMESPACE")
+	fi
+
+	local search_result
+	search_result=$("$embeddings_script" "${ns_args[@]}" search "$content" --limit 3 --json 2>/dev/null || echo "")
+
+	if [[ -z "$search_result" || "$search_result" == "[]" ]]; then
+		return 1
+	fi
+
+	# Parse results: look for same-type entries with similarity >= 0.92
+	# High threshold ensures we only catch clear paraphrases, not merely related content
+	local semantic_threshold="0.92"
+	local match_id
+	if command -v jq &>/dev/null; then
+		match_id=$(echo "$search_result" | jq -r \
+			--arg type "$type" \
+			--arg threshold "$semantic_threshold" \
+			'[.[] | select(.type == $type and (.score | tonumber) >= ($threshold | tonumber))] | first | .id // empty' \
+			2>/dev/null || echo "")
+	else
+		# Fallback: use python for JSON parsing
+		match_id=$(python3 -c "
+import json, sys
+try:
+    results = json.loads(sys.stdin.read())
+    for r in results:
+        if r.get('type') == '$type' and float(r.get('score', 0)) >= $semantic_threshold:
+            print(r['id'])
+            break
+except Exception:
+    pass
+" <<<"$search_result" 2>/dev/null || echo "")
+	fi
+
+	if [[ -n "$match_id" ]]; then
+		echo "$match_id"
+		return 0
+	fi
+
 	return 1
 }
 
@@ -576,10 +668,13 @@ EOF
 # Auto-prune stale entries (called opportunistically on store)
 # Only runs if last prune was >24h ago, to avoid overhead on every store.
 #
-# Uses AI-judged relevance (t1363.6) for borderline entries instead of
-# a flat DEFAULT_MAX_AGE_DAYS cutoff. The AI judge considers memory type,
-# entity context, and access patterns. Falls back to type-aware heuristics
-# when AI is unavailable.
+# Entity-relevance-aware pruning (t1363.6):
+#   Instead of a fixed DEFAULT_MAX_AGE_DAYS cutoff for all entries, the prune
+#   logic now considers entity relationships:
+#   - Entries linked to entities (via learning_entities) are preserved 3x longer
+#     because they represent relationship knowledge that compounds over time.
+#   - Unlinked entries still use the base threshold (DEFAULT_MAX_AGE_DAYS).
+#   - Entries that have been accessed are never auto-pruned (unchanged).
 #######################################
 auto_prune() {
 	local prune_marker="$MEMORY_DIR/.last_auto_prune"
@@ -597,59 +692,63 @@ auto_prune() {
 		fi
 	fi
 
-	local threshold_judge="${SCRIPT_DIR}/ai-threshold-judge.sh"
+	# Entity-linked entries get 3x the retention period (e.g., 270 days vs 90)
+	# because relationship knowledge compounds over time and is harder to re-derive.
+	local entity_retention_multiplier=3
+	local entity_max_age_days=$((DEFAULT_MAX_AGE_DAYS * entity_retention_multiplier))
 
-	# Get candidates: entries older than 60 days that were never accessed
-	# (60 days is the minimum threshold for any type — the judge decides the rest)
-	local candidates
-	candidates=$(db "$MEMORY_DB" "SELECT l.id, l.type, l.confidence, substr(l.content, 1, 300), CAST(julianday('now') - julianday(l.created_at) AS INTEGER) FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-60 days') AND a.id IS NULL;" 2>/dev/null || echo "")
+	# Check if learning_entities table exists (may not on older DBs before t1363.3)
+	local has_learning_entities
+	has_learning_entities=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='learning_entities';" 2>/dev/null || echo "0")
 
-	if [[ -z "$candidates" ]]; then
-		touch "$prune_marker"
-		return 0
-	fi
+	if [[ "$has_learning_entities" == "1" ]]; then
+		# Two-tier pruning: unlinked entries at base threshold, entity-linked at extended threshold
 
-	local prune_ids=""
-	local prune_count=0
-	local keep_count=0
+		# Tier 1: Prune unlinked entries older than DEFAULT_MAX_AGE_DAYS, never accessed
+		local unlinked_stale_count
+		unlinked_stale_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings l LEFT JOIN learning_access a ON l.id = a.id LEFT JOIN learning_entities le ON l.id = le.learning_id WHERE l.created_at < datetime('now', '-$DEFAULT_MAX_AGE_DAYS days') AND a.id IS NULL AND le.learning_id IS NULL;" 2>/dev/null || echo "0")
 
-	while IFS='|' read -r mem_id mem_type mem_confidence mem_content age_days; do
-		[[ -z "$mem_id" ]] && continue
-
-		local verdict="keep"
-		if [[ -x "$threshold_judge" ]]; then
-			verdict=$("$threshold_judge" judge-prune-relevance \
-				--content "$mem_content" \
-				--age-days "$age_days" \
-				--type "$mem_type" \
-				--accessed "false" \
-				--confidence "${mem_confidence:-medium}" 2>/dev/null || echo "keep")
-		else
-			# Inline fallback: original flat threshold
-			if [[ "$age_days" -gt "$DEFAULT_MAX_AGE_DAYS" ]]; then
-				verdict="prune"
-			fi
+		if [[ "$unlinked_stale_count" -gt 0 ]]; then
+			local unlinked_subquery="SELECT l.id FROM learnings l LEFT JOIN learning_access a ON l.id = a.id LEFT JOIN learning_entities le ON l.id = le.learning_id WHERE l.created_at < datetime('now', '-$DEFAULT_MAX_AGE_DAYS days') AND a.id IS NULL AND le.learning_id IS NULL"
+			db "$MEMORY_DB" "DELETE FROM learning_relations WHERE id IN ($unlinked_subquery);" 2>/dev/null || true
+			db "$MEMORY_DB" "DELETE FROM learning_relations WHERE supersedes_id IN ($unlinked_subquery);" 2>/dev/null || true
+			db "$MEMORY_DB" "DELETE FROM learning_access WHERE id IN ($unlinked_subquery);" 2>/dev/null || true
+			db "$MEMORY_DB" "DELETE FROM learnings WHERE id IN ($unlinked_subquery);" 2>/dev/null || true
+			log_info "Auto-pruned $unlinked_stale_count unlinked stale entries (>$DEFAULT_MAX_AGE_DAYS days, never accessed)"
 		fi
 
-		if [[ "$verdict" == "prune" ]]; then
-			if [[ -n "$prune_ids" ]]; then
-				prune_ids="${prune_ids},'${mem_id//\'/\'\'}'"
-			else
-				prune_ids="'${mem_id//\'/\'\'}'"
-			fi
-			prune_count=$((prune_count + 1))
-		else
-			keep_count=$((keep_count + 1))
-		fi
-	done <<<"$candidates"
+		# Tier 2: Prune entity-linked entries older than extended threshold, never accessed
+		local linked_stale_count
+		linked_stale_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings l LEFT JOIN learning_access a ON l.id = a.id INNER JOIN learning_entities le ON l.id = le.learning_id WHERE l.created_at < datetime('now', '-$entity_max_age_days days') AND a.id IS NULL;" 2>/dev/null || echo "0")
 
-	if [[ "$prune_count" -gt 0 && -n "$prune_ids" ]]; then
-		db "$MEMORY_DB" "DELETE FROM learning_relations WHERE id IN ($prune_ids);" 2>/dev/null || true
-		db "$MEMORY_DB" "DELETE FROM learning_relations WHERE supersedes_id IN ($prune_ids);" 2>/dev/null || true
-		db "$MEMORY_DB" "DELETE FROM learning_access WHERE id IN ($prune_ids);" 2>/dev/null || true
-		db "$MEMORY_DB" "DELETE FROM learnings WHERE id IN ($prune_ids);" 2>/dev/null || true
-		db "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');" 2>/dev/null || true
-		log_info "Auto-pruned $prune_count entries (AI-judged relevance, kept $keep_count borderline)"
+		if [[ "$linked_stale_count" -gt 0 ]]; then
+			local linked_subquery="SELECT l.id FROM learnings l LEFT JOIN learning_access a ON l.id = a.id INNER JOIN learning_entities le ON l.id = le.learning_id WHERE l.created_at < datetime('now', '-$entity_max_age_days days') AND a.id IS NULL"
+			db "$MEMORY_DB" "DELETE FROM learning_entities WHERE learning_id IN ($linked_subquery);" 2>/dev/null || true
+			db "$MEMORY_DB" "DELETE FROM learning_relations WHERE id IN ($linked_subquery);" 2>/dev/null || true
+			db "$MEMORY_DB" "DELETE FROM learning_relations WHERE supersedes_id IN ($linked_subquery);" 2>/dev/null || true
+			db "$MEMORY_DB" "DELETE FROM learning_access WHERE id IN ($linked_subquery);" 2>/dev/null || true
+			db "$MEMORY_DB" "DELETE FROM learnings WHERE id IN ($linked_subquery);" 2>/dev/null || true
+			log_info "Auto-pruned $linked_stale_count entity-linked stale entries (>$entity_max_age_days days, never accessed)"
+		fi
+
+		local total_pruned=$((unlinked_stale_count + linked_stale_count))
+		if [[ "$total_pruned" -gt 0 ]]; then
+			db "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');" 2>/dev/null || true
+		fi
+	else
+		# Fallback: no entity tables — use original fixed-threshold pruning
+		local stale_count
+		stale_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-$DEFAULT_MAX_AGE_DAYS days') AND a.id IS NULL;" 2>/dev/null || echo "0")
+
+		if [[ "$stale_count" -gt 0 ]]; then
+			local subquery="SELECT l.id FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-$DEFAULT_MAX_AGE_DAYS days') AND a.id IS NULL"
+			db "$MEMORY_DB" "DELETE FROM learning_relations WHERE id IN ($subquery);" 2>/dev/null || true
+			db "$MEMORY_DB" "DELETE FROM learning_relations WHERE supersedes_id IN ($subquery);" 2>/dev/null || true
+			db "$MEMORY_DB" "DELETE FROM learning_access WHERE id IN ($subquery);" 2>/dev/null || true
+			db "$MEMORY_DB" "DELETE FROM learnings WHERE id IN ($subquery);" 2>/dev/null || true
+			db "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');" 2>/dev/null || true
+			log_info "Auto-pruned $stale_count stale entries (>$DEFAULT_MAX_AGE_DAYS days, never accessed)"
+		fi
 	fi
 
 	# Update marker

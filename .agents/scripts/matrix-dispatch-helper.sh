@@ -870,6 +870,8 @@ import * as store from "./session-store.mjs";
 
 const CONFIG_PATH = process.env.MATRIX_BOT_CONFIG || `${process.env.HOME}/.config/aidevops/matrix-bot.json`;
 const RUNNER_HELPER = `${process.env.HOME}/.aidevops/agents/scripts/runner-helper.sh`;
+const CONVERSATION_HELPER = `${process.env.HOME}/.aidevops/agents/scripts/conversation-helper.sh`;
+const ENTITY_HELPER = `${process.env.HOME}/.aidevops/agents/scripts/entity-helper.sh`;
 const OPENCODE_HOST = process.env.OPENCODE_HOST || "127.0.0.1";
 const OPENCODE_PORT = process.env.OPENCODE_PORT || "4096";
 
@@ -1054,61 +1056,109 @@ function truncateResponse(text, maxLen = 4000) {
     return text.substring(0, maxLen - 50) + "\n\n... (truncated, full response in runner logs)";
 }
 
-// Check if a session is idle using AI judgment (conversation-helper.sh)
-// Falls back to the configured timeout if conversation-helper is unavailable.
-async function isSessionIdle(session, fallbackTimeout) {
-    const { execSync } = require("child_process");
-    const convHelper = `${process.env.HOME}/.aidevops/agents/scripts/conversation-helper.sh`;
+// Entity-preference-aware prompt length (t1363.6)
+// Looks up the entity's preferred detail level from their profile.
+// Falls back to config.maxPromptLength or 4000 if no entity preference exists.
+async function getEntityAwareMaxLength(config, roomId) {
+    const fallback = config.maxPromptLength || 4000;
 
-    // Try AI-judged idle detection via conversation-helper.sh
     try {
-        const fs = require("fs");
-        if (fs.existsSync(convHelper)) {
-            // Build a temporary conversation context for the idle check
-            const messages = store.getMessages(session.room_id, 5);
-            if (messages && messages.length > 0) {
-                const elapsed = Math.floor((Date.now() - new Date(session.last_active).getTime()) / 1000);
-                const msgText = messages.map(m => `${m.role}: ${m.content.substring(0, 150)}`).join("\n");
+        // Resolve entity for this room via entity-helper.sh
+        const result = await new Promise((resolve, reject) => {
+            const proc = spawn(ENTITY_HELPER, ["resolve", "--channel", "matrix", "--channel-id", roomId, "--json"], {
+                env: process.env,
+                timeout: 5000,
+            });
+            let stdout = "";
+            proc.stdout.on("data", (d) => { stdout += d.toString(); });
+            proc.on("close", (code) => { resolve(code === 0 ? stdout.trim() : ""); });
+            proc.on("error", () => { resolve(""); });
+        });
 
-                // Use ai-research-helper.sh directly for a quick idle judgment
-                const aiResearch = `${process.env.HOME}/.aidevops/agents/scripts/ai-research-helper.sh`;
-                if (fs.existsSync(aiResearch)) {
-                    const prompt = `Given these recent messages (most recent first) and that ${elapsed} seconds have passed since the last message, is this conversation idle (naturally concluded or paused) or still active (expecting a response)?\n\nRecent messages:\n${msgText}\n\nRespond with ONLY one word: 'idle' or 'active'`;
-                    const result = execSync(
-                        `"${aiResearch}" --model haiku --max-tokens 10 --prompt "${prompt.replace(/"/g, '\\"')}"`,
-                        { timeout: 15000, encoding: "utf-8" }
-                    ).trim().toLowerCase();
+        if (!result) return fallback;
 
-                    if (result === "idle" || result === "active") {
-                        return result === "idle";
-                    }
-                }
-            }
+        const entity = JSON.parse(result);
+        if (!entity || !entity.id) return fallback;
+
+        // Look up detail_level preference from entity profiles
+        const profileResult = await new Promise((resolve, reject) => {
+            const proc = spawn(ENTITY_HELPER, ["get-profile", entity.id, "--key", "detail_level", "--json"], {
+                env: process.env,
+                timeout: 5000,
+            });
+            let stdout = "";
+            proc.stdout.on("data", (d) => { stdout += d.toString(); });
+            proc.on("close", (code) => { resolve(code === 0 ? stdout.trim() : ""); });
+            proc.on("error", () => { resolve(""); });
+        });
+
+        if (!profileResult) return fallback;
+
+        const profile = JSON.parse(profileResult);
+        const detailLevel = (profile.profile_value || "").toLowerCase();
+
+        // Map detail preferences to prompt lengths
+        // Concise users get shorter responses; detailed users get longer ones
+        const lengthMap = { concise: 2000, brief: 3000, normal: 4000, detailed: 6000, verbose: 8000 };
+        return lengthMap[detailLevel] || fallback;
+    } catch {
+        return fallback;
+    }
+}
+
+// Conversation-natural-pause detection (t1363.6)
+// Uses conversation-helper.sh idle-check for AI-judged idle detection
+// instead of a fixed sessionIdleTimeout. Falls back to the fixed timeout
+// if conversation-helper.sh is unavailable.
+async function checkConversationIdle(roomId, fallbackIdleSeconds) {
+    try {
+        // Try conversation-helper.sh idle-check for AI-judged detection
+        const result = await new Promise((resolve) => {
+            const proc = spawn(CONVERSATION_HELPER, ["idle-check", roomId], {
+                env: process.env,
+                timeout: 10000,
+            });
+            let stdout = "";
+            proc.stdout.on("data", (d) => { stdout += d.toString(); });
+            proc.on("close", (code) => {
+                // exit 0 = idle, exit 1 = active
+                resolve({ available: true, idle: code === 0, output: stdout.trim() });
+            });
+            proc.on("error", () => {
+                resolve({ available: false, idle: false, output: "" });
+            });
+        });
+
+        if (result.available) {
+            return result.idle;
         }
-    } catch (err) {
-        // AI judgment unavailable — fall through to timeout-based check
-        console.log(`[MATRIX-BOT] AI idle check unavailable: ${err.message}, using timeout fallback`);
+    } catch {
+        // Fall through to time-based check
     }
 
-    // Fallback: use configured timeout (improved from flat 300s)
-    const elapsed = Math.floor((Date.now() - new Date(session.last_active).getTime()) / 1000);
-    return elapsed > fallbackTimeout;
+    // Fallback: use the fixed timeout from config
+    return null; // null signals "use legacy check"
 }
 
 // Compact idle sessions: summarise context, store it, destroy upstream session
-// Uses AI-judged idle detection (t1363.6) instead of fixed timeout.
+// Uses AI-judged idle detection via conversation-helper.sh (t1363.6),
+// falling back to fixed sessionIdleTimeout when unavailable.
 async function compactIdleSessions(config) {
-    const fallbackTimeout = config.sessionIdleTimeout || 300;
-    // Get all sessions with any activity (the AI judge decides if they're idle)
-    const allSessions = store.getIdleSessions(0);
+    const idleTimeout = config.sessionIdleTimeout || 300;
+    // Get candidates using the fixed timeout as a pre-filter (cheap SQL query).
+    // Then refine with AI judgment per-session (more expensive but accurate).
+    const idleCandidates = store.getIdleSessions(idleTimeout);
 
-    for (const session of allSessions) {
-        // Use AI judgment for idle detection, with fallback to configured timeout
-        const idle = config.sessionIdleTimeout === 0
-            ? true  // Shutdown mode: compact everything
-            : await isSessionIdle(session, fallbackTimeout);
-
-        if (!idle) continue;
+    for (const session of idleCandidates) {
+        // AI-judged idle check: ask conversation-helper.sh if this conversation
+        // has naturally paused, rather than relying solely on elapsed time (t1363.6).
+        const aiIdleResult = await checkConversationIdle(session.room_id, idleTimeout);
+        if (aiIdleResult === false) {
+            // AI says conversation is still active — skip compaction
+            console.log(`[MATRIX-BOT] AI judges room ${session.room_id} still active — skipping compaction`);
+            continue;
+        }
+        // aiIdleResult === true (AI says idle) or null (AI unavailable, use time-based)
 
         console.log(`[MATRIX-BOT] Compacting idle session for room ${session.room_id} (${session.message_count} messages, idle since ${session.last_active})`);
 
@@ -1160,7 +1210,7 @@ async function main() {
     console.log(`[MATRIX-BOT] Starting with homeserver: ${config.homeserverUrl}`);
     console.log(`[MATRIX-BOT] Bot prefix: ${config.botPrefix || "!ai"}`);
     console.log(`[MATRIX-BOT] Room mappings: ${Object.keys(config.roomMappings || {}).length}`);
-    console.log(`[MATRIX-BOT] Session idle: AI-judged (fallback: ${idleTimeout}s)`);
+    console.log(`[MATRIX-BOT] Session idle timeout: ${idleTimeout}s (pre-filter; AI-judged idle detection active)`);
     console.log(`[MATRIX-BOT] Entity integration: enabled (Layer 0/1 via entity-helper.sh)`);
 
     const matrixStorage = new SimpleFsStorageProvider(`${process.env.HOME}/.aidevops/.agent-workspace/matrix-bot/bot-storage.json`);
@@ -1277,8 +1327,10 @@ async function main() {
             // Record the assistant response (logs to Layer 0)
             store.addMessage(roomId, "assistant", response);
 
-            // Truncate and send response (dynamic length based on channel)
-            const maxLen = config.maxPromptLength || 3000; // Matrix default: 3000 (was 4000)
+            // Entity-preference-aware truncation (t1363.6):
+            // Look up the entity's preferred detail level to determine max response length.
+            // Falls back to config.maxPromptLength or 4000 if no entity preference exists.
+            const maxLen = await getEntityAwareMaxLength(config, roomId);
             const truncated = truncateResponse(response, maxLen);
             await client.sendText(roomId, truncated);
 
