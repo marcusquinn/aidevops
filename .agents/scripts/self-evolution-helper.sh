@@ -50,6 +50,11 @@ readonly VALID_GAP_STATUSES="detected todo_created resolved wont_fix"
 # Minimum interactions to consider for pattern scanning
 readonly MIN_INTERACTIONS_FOR_SCAN=3
 
+# Pulse interval guard — minimum hours between automatic scans
+readonly PULSE_INTERVAL_HOURS=6
+readonly EVOL_STATE_DIR="${HOME}/.aidevops/logs"
+readonly EVOL_STATE_FILE="${EVOL_STATE_DIR}/self-evolution-last-run"
+
 #######################################
 # SQLite wrapper (same as entity/memory system)
 #######################################
@@ -64,6 +69,26 @@ evol_db() {
 evol_sql_escape() {
 	local val="$1"
 	echo "${val//\'/\'\'}"
+	return 0
+}
+
+#######################################
+# SQL-escape a value for use in LIKE patterns
+# Escapes single quotes AND LIKE wildcards (%, _)
+# Use with: LIKE '...' ESCAPE '\'
+# Currently unused — available for future LIKE-based dedup queries.
+#######################################
+# shellcheck disable=SC2329  # utility function, may be called by future code
+evol_sql_escape_like() {
+	local val="$1"
+	# Escape backslash first (so it doesn't double-escape later replacements)
+	val="${val//\\/\\\\}"
+	# Escape LIKE wildcards
+	val="${val//%/\\%}"
+	val="${val//_/\\_}"
+	# Escape single quotes for SQL string literal
+	val="${val//\'/\'\'}"
+	echo "$val"
 	return 0
 }
 
@@ -174,7 +199,10 @@ cmd_scan_patterns() {
 			format="json"
 			shift
 			;;
-		*) shift ;;
+		*)
+			log_warn "scan-patterns: unknown option: $1"
+			shift
+			;;
 		esac
 	done
 
@@ -381,7 +409,10 @@ cmd_detect_gaps() {
 			dry_run=true
 			shift
 			;;
-		*) shift ;;
+		*)
+			log_warn "detect-gaps: unknown option: $1"
+			shift
+			;;
 		esac
 	done
 
@@ -446,10 +477,10 @@ cmd_detect_gaps() {
 		fi
 
 		# Check for existing similar gap (deduplication)
-		# Use LIKE matching on description — AI dedup would be better but
-		# this is the heuristic fallback. The key insight: if the same gap
-		# description appears again, increment frequency rather than creating
-		# a duplicate.
+		# Exact match on description — AI dedup would be better but this is
+		# the heuristic fallback. The key insight: if the same gap description
+		# appears again, increment frequency rather than creating a duplicate.
+		# For fuzzy matching, use evol_sql_escape_like() with LIKE queries.
 		local esc_desc
 		esc_desc=$(evol_sql_escape "$description")
 		local existing_gap_id
@@ -569,7 +600,10 @@ cmd_create_todo() {
 			repo_path="$2"
 			shift 2
 			;;
-		*) shift ;;
+		*)
+			log_warn "create-todo: unknown option: $1"
+			shift
+			;;
 		esac
 	done
 
@@ -772,7 +806,10 @@ cmd_list_gaps() {
 			sort_by="$2"
 			shift 2
 			;;
-		*) shift ;;
+		*)
+			log_warn "list-gaps: unknown option: $1"
+			shift
+			;;
 		esac
 	done
 
@@ -863,7 +900,10 @@ cmd_update_gap() {
 			todo_ref="$2"
 			shift 2
 			;;
-		*) shift ;;
+		*)
+			log_warn "update-gap: unknown option: $1"
+			shift
+			;;
 		esac
 	done
 
@@ -924,7 +964,10 @@ cmd_resolve_gap() {
 			todo_ref="$2"
 			shift 2
 			;;
-		*) shift ;;
+		*)
+			log_warn "resolve-gap: unknown option: $1"
+			shift
+			;;
 		esac
 	done
 
@@ -943,6 +986,67 @@ cmd_resolve_gap() {
 }
 
 #######################################
+# Check pulse scan interval guard
+# Returns 0 if enough time has passed, 1 if too soon
+#######################################
+check_scan_interval() {
+	if [[ ! -f "$EVOL_STATE_FILE" ]]; then
+		return 0
+	fi
+
+	local last_run
+	last_run=$(cat "$EVOL_STATE_FILE" 2>/dev/null || echo "0")
+	# Validate numeric — treat corrupted state file as stale (allow scan)
+	if ! [[ "$last_run" =~ ^[0-9]+$ ]]; then
+		log_warn "Invalid timestamp in state file, allowing scan"
+		return 0
+	fi
+	local now
+	now=$(date +%s)
+	# Guard against future timestamps (clock skew, corruption) that would
+	# permanently suppress scans by making elapsed always negative.
+	if [[ "$last_run" -gt "$now" ]]; then
+		log_warn "State timestamp is in the future (${last_run} > ${now}), allowing scan"
+		return 0
+	fi
+	local interval_seconds=$((PULSE_INTERVAL_HOURS * 3600))
+	local elapsed=$((now - last_run))
+
+	if [[ "$elapsed" -lt "$interval_seconds" ]]; then
+		local remaining=$(((interval_seconds - elapsed) / 60))
+		log_info "Pulse scan ran ${elapsed}s ago (interval: ${interval_seconds}s). Next scan in ~${remaining}m. Use --force to override."
+		return 1
+	fi
+
+	return 0
+}
+
+#######################################
+# Record pulse scan timestamp
+#######################################
+record_scan_timestamp() {
+	# Graceful degradation: persistence errors are logged but never propagated.
+	# A successful scan must not be reported as failed due to timestamp issues.
+	if ! mkdir -p "$EVOL_STATE_DIR" 2>/dev/null; then
+		log_warn "Failed to create state directory: $EVOL_STATE_DIR"
+		return 0
+	fi
+	# Atomic write: temp file + mv prevents partial/corrupt state files
+	local tmp_file="${EVOL_STATE_FILE}.tmp.$$"
+	if ! date +%s >"$tmp_file" 2>/dev/null; then
+		log_warn "Failed to write scan timestamp to temp file: $tmp_file"
+		rm -f "$tmp_file" 2>/dev/null
+		return 0
+	fi
+	if ! mv -f "$tmp_file" "$EVOL_STATE_FILE" 2>/dev/null; then
+		log_warn "Failed to atomically update state file: $EVOL_STATE_FILE"
+		rm -f "$tmp_file" 2>/dev/null
+		return 0
+	fi
+	return 0
+}
+
+#######################################
 # Pulse scan — integration point for supervisor pulse
 # Runs the full self-evolution cycle:
 #   1. Scan recent interactions for patterns
@@ -957,6 +1061,7 @@ cmd_pulse_scan() {
 	local auto_todo_threshold=3
 	local repo_path=""
 	local dry_run=false
+	local force=false
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -976,9 +1081,21 @@ cmd_pulse_scan() {
 			dry_run=true
 			shift
 			;;
-		*) shift ;;
+		--force)
+			force=true
+			shift
+			;;
+		*)
+			log_warn "pulse-scan: unknown option: $1"
+			shift
+			;;
 		esac
 	done
+
+	# Interval guard — skip if scanned recently (unless --force)
+	if [[ "$force" != true ]] && ! check_scan_interval; then
+		return 0
+	fi
 
 	init_evol_db
 
@@ -1089,6 +1206,9 @@ SELECT '  Detected: ' || (SELECT COUNT(*) FROM capability_gaps WHERE status = 'd
     char(10) || '  Total evidence links: ' || (SELECT COUNT(*) FROM gap_evidence);
 EOF
 
+	# Record scan timestamp for interval guard (always succeeds — errors logged internally)
+	record_scan_timestamp
+
 	return 0
 }
 
@@ -1104,7 +1224,10 @@ cmd_stats() {
 			format="json"
 			shift
 			;;
-		*) shift ;;
+		*)
+			log_warn "stats: unknown option: $1"
+			shift
+			;;
 		esac
 	done
 
@@ -1259,6 +1382,7 @@ PULSE-SCAN OPTIONS:
     --auto-todo-threshold <n>  Frequency threshold for auto-TODO (default: 3)
     --repo-path <path>  Repository path for TODO creation
     --dry-run           Scan without creating TODOs
+    --force             Skip interval guard (default: 6h between scans)
 
 SELF-EVOLUTION LOOP:
     The self-evolution loop is the core differentiator of the entity memory
@@ -1314,6 +1438,9 @@ EXAMPLES:
 
     # Run full pulse scan (for supervisor integration)
     self-evolution-helper.sh pulse-scan --auto-todo-threshold 3
+
+    # Force pulse scan (bypass 6h interval guard)
+    self-evolution-helper.sh pulse-scan --force
 
     # List detected gaps sorted by frequency
     self-evolution-helper.sh list-gaps --status detected --sort frequency
