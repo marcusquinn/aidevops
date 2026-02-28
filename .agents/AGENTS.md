@@ -181,7 +181,7 @@ Read subagents on-demand. Full index: `subagent-index.toon`.
 | SEO | `seo/dataforseo.md`, `seo/google-search-console.md` |
 | WordPress | `tools/wordpress/wp-dev.md`, `tools/wordpress/mainwp.md` |
 | Communications | `services/communications/matterbridge.md`, `services/communications/simplex.md`, `services/communications/matrix-bot.md` |
-| Email | `tools/ui/react-email.md`, `services/email/email-testing.md` |
+| Email | `tools/ui/react-email.md`, `services/email/email-testing.md`, `services/email/email-agent.md` |
 | Payments | `services/payments/revenuecat.md`, `services/payments/stripe.md`, `services/payments/procurement.md` |
 | Security/Encryption | `tools/security/tirith.md`, `tools/security/opsec.md`, `tools/credentials/encryption-stack.md` |
 | Database/Local-first | `tools/database/pglite-local-first.md`, `services/database/postgres-drizzle-skill.md` |

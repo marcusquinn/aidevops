@@ -1,0 +1,11 @@
+{
+  "default_from_email": "missions@yourdomain.com",
+  "aws_region": "eu-west-2",
+  "s3_receive_bucket": "your-mission-emails-bucket",
+  "s3_receive_prefix": "incoming/",
+  "poll_interval_seconds": 300,
+  "max_conversations_per_mission": 20,
+  "code_extraction_confidence_threshold": 0.7,
+  "notification_channel": "matterbridge",
+  "templates_dir": "templates/email"
+}
