@@ -125,6 +125,7 @@ STORE OPTIONS:
     --supersedes <id>     ID of memory this updates/extends/derives from
     --relation <type>     Relation type: updates, extends, derives
     --auto                Mark as auto-captured (sets source=auto, tracked separately)
+    --entity <id>         Link memory to an entity (from entity-helper.sh)
 
 VALID TYPES:
     WORKING_SOLUTION, FAILED_APPROACH, CODEBASE_PATTERN, USER_PREFERENCE,
@@ -145,6 +146,7 @@ RECALL OPTIONS:
     --type <type>         Filter by type
     --max-age-days <n>    Only recent entries
     --project <path>      Filter by project path
+    --entity <id>         Filter by entity (from entity-helper.sh)
     --recent [n]          Show n most recent entries (default: 10)
     --shared              Also search global memory (when using --namespace)
     --auto-only           Show only auto-captured memories
@@ -252,6 +254,20 @@ EXAMPLES:
     memory-helper.sh dedup --dry-run
     memory-helper.sh dedup
     memory-helper.sh dedup --exact-only
+
+ENTITY EXAMPLES:
+    # Store a memory linked to an entity
+    memory-helper.sh store --content "Prefers concise responses" \
+        --type USER_PREFERENCE --entity ent_xxx
+
+    # Recall memories for a specific entity
+    memory-helper.sh recall --query "preferences" --entity ent_xxx
+
+    # Cross-query: entity + project
+    memory-helper.sh recall --query "deployment" --entity ent_xxx --project myapp
+
+    # Recent memories for an entity
+    memory-helper.sh recall --recent --entity ent_xxx
 
 NAMESPACE EXAMPLES:
     # Store in a runner-specific namespace

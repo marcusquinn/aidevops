@@ -311,6 +311,24 @@ EOF
 		log_success "Entity memory tables created (t1363.1)"
 	fi
 
+	# Create learning_entities table if missing (t1363.3 migration)
+	# Links learnings to entities for entity-scoped recall
+	local has_learning_entities
+	has_learning_entities=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='learning_entities';" 2>/dev/null || echo "0")
+	if [[ "$has_learning_entities" == "0" ]]; then
+		log_info "Creating learning_entities table (t1363.3)..."
+		db "$MEMORY_DB" <<'EOF'
+CREATE TABLE IF NOT EXISTS learning_entities (
+    learning_id TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    PRIMARY KEY (learning_id, entity_id)
+);
+CREATE INDEX IF NOT EXISTS idx_learning_entities_entity ON learning_entities(entity_id);
+EOF
+		log_success "learning_entities table created (t1363.3)"
+	fi
+
 	return 0
 }
 
@@ -417,6 +435,119 @@ CREATE TABLE IF NOT EXISTS pattern_metadata (
     tokens_out INTEGER DEFAULT NULL,
     estimated_cost REAL DEFAULT NULL
 );
+
+-- Entity tables (t1363.1) — conversational memory system (p035)
+-- Layer 2: Entity relationship model
+CREATE TABLE IF NOT EXISTS entities (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL CHECK(type IN ('person', 'agent', 'service')),
+    display_name TEXT DEFAULT NULL,
+    aliases TEXT DEFAULT '',
+    notes TEXT DEFAULT '',
+    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+-- Cross-channel identity linking
+CREATE TABLE IF NOT EXISTS entity_channels (
+    entity_id TEXT NOT NULL,
+    channel TEXT NOT NULL CHECK(channel IN ('matrix', 'simplex', 'email', 'cli', 'slack', 'discord', 'telegram', 'irc', 'web')),
+    channel_id TEXT NOT NULL,
+    display_name TEXT DEFAULT NULL,
+    confidence TEXT DEFAULT 'suggested' CHECK(confidence IN ('confirmed', 'suggested', 'inferred')),
+    verified_at TEXT DEFAULT NULL,
+    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    PRIMARY KEY (channel, channel_id),
+    FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_entity_channels_entity ON entity_channels(entity_id);
+
+-- Layer 0: Raw interaction log (immutable, append-only)
+CREATE TABLE IF NOT EXISTS interactions (
+    id TEXT PRIMARY KEY,
+    entity_id TEXT NOT NULL,
+    channel TEXT NOT NULL,
+    channel_id TEXT DEFAULT NULL,
+    conversation_id TEXT DEFAULT NULL,
+    direction TEXT NOT NULL DEFAULT 'inbound' CHECK(direction IN ('inbound', 'outbound', 'system')),
+    content TEXT NOT NULL,
+    metadata TEXT DEFAULT '{}',
+    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_interactions_entity ON interactions(entity_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_interactions_conversation ON interactions(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_interactions_channel ON interactions(channel, channel_id, created_at DESC);
+
+-- Layer 1: Per-conversation context
+CREATE TABLE IF NOT EXISTS conversations (
+    id TEXT PRIMARY KEY,
+    entity_id TEXT NOT NULL,
+    channel TEXT NOT NULL,
+    channel_id TEXT DEFAULT NULL,
+    topic TEXT DEFAULT '',
+    summary TEXT DEFAULT '',
+    status TEXT DEFAULT 'active' CHECK(status IN ('active', 'idle', 'closed')),
+    interaction_count INTEGER DEFAULT 0,
+    first_interaction_at TEXT DEFAULT NULL,
+    last_interaction_at TEXT DEFAULT NULL,
+    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_conversations_entity ON conversations(entity_id, status);
+
+-- Layer 2: Versioned entity profiles
+CREATE TABLE IF NOT EXISTS entity_profiles (
+    id TEXT PRIMARY KEY,
+    entity_id TEXT NOT NULL,
+    profile_key TEXT NOT NULL,
+    profile_value TEXT NOT NULL,
+    evidence TEXT DEFAULT '',
+    confidence TEXT DEFAULT 'medium' CHECK(confidence IN ('high', 'medium', 'low')),
+    supersedes_id TEXT DEFAULT NULL,
+    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE,
+    FOREIGN KEY (supersedes_id) REFERENCES entity_profiles(id)
+);
+CREATE INDEX IF NOT EXISTS idx_entity_profiles_entity ON entity_profiles(entity_id, profile_key);
+CREATE INDEX IF NOT EXISTS idx_entity_profiles_supersedes ON entity_profiles(supersedes_id);
+
+-- Capability gaps detected from entity interactions
+CREATE TABLE IF NOT EXISTS capability_gaps (
+    id TEXT PRIMARY KEY,
+    entity_id TEXT DEFAULT NULL,
+    description TEXT NOT NULL,
+    evidence TEXT DEFAULT '',
+    frequency INTEGER DEFAULT 1,
+    status TEXT DEFAULT 'detected' CHECK(status IN ('detected', 'todo_created', 'resolved', 'wont_fix')),
+    todo_ref TEXT DEFAULT NULL,
+    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_capability_gaps_status ON capability_gaps(status);
+
+-- FTS5 index for searching interactions
+CREATE VIRTUAL TABLE IF NOT EXISTS interactions_fts USING fts5(
+    id UNINDEXED,
+    entity_id UNINDEXED,
+    content,
+    channel UNINDEXED,
+    created_at UNINDEXED,
+    tokenize='porter unicode61'
+);
+
+-- Entity-memory linking (t1363.3) — companion table linking learnings to entities
+-- Enables entity-scoped recall and cross-queries (entity + project)
+CREATE TABLE IF NOT EXISTS learning_entities (
+    learning_id TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    PRIMARY KEY (learning_id, entity_id)
+);
+CREATE INDEX IF NOT EXISTS idx_learning_entities_entity ON learning_entities(entity_id);
 EOF
 		log_success "Database initialized with relational versioning support"
 	else

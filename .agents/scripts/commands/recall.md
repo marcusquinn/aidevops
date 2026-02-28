@@ -66,7 +66,10 @@ This suggests: {interpretation for current task}
 | `/recall {query}` | Search by keywords |
 | `/recall --type WORKING_SOLUTION` | Filter by type |
 | `/recall --project myapp` | Filter by project |
+| `/recall --entity ent_xxx` | Filter by entity |
+| `/recall --entity ent_xxx --project myapp` | Cross-query: entity + project |
 | `/recall --recent` | Show 10 most recent |
+| `/recall --recent --entity ent_xxx` | Recent for entity |
 | `/recall --stats` | Show memory statistics |
 
 ## Examples
@@ -110,6 +113,22 @@ AI: Found 8 memories for project "wordpress-plugin":
     2. [DECISION] Using SCF instead of ACF for custom fields
     3. [WORKING_SOLUTION] Fixed activation hook by checking PHP version first
     ...
+```
+
+**Entity-scoped search:**
+
+```text
+User: /recall --entity ent_abc123 --query "preferences"
+AI: Found 3 memories for "preferences" [entity: ent_abc123]:
+
+    1. [USER_PREFERENCE] Prefers concise responses
+       Tags: communication | Project: global | 2 days ago
+
+    2. [USER_PREFERENCE] Wants deployment status updates daily
+       Tags: ops,deployment | Project: api-gateway | 1 week ago
+
+    3. [CONTEXT] Usually asks about CI/CD pipeline issues
+       Tags: ci,patterns | Project: global | 2 weeks ago
 ```
 
 **Recent memories:**

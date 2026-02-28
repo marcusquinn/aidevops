@@ -23,6 +23,7 @@ cmd_store() {
 	local supersedes_id=""
 	local relation_type=""
 	local auto_captured=0
+	local entity_id=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -70,6 +71,10 @@ cmd_store() {
 			auto_captured=1
 			source="auto"
 			shift
+			;;
+		--entity)
+			entity_id="$2"
+			shift 2
 			;;
 		*)
 			# Allow content as positional argument
@@ -157,6 +162,18 @@ cmd_store() {
 
 	init_db
 
+	# Validate entity_id exists if provided (t1363.3)
+	if [[ -n "$entity_id" ]]; then
+		local escaped_entity="${entity_id//"'"/"''"}"
+		local entity_exists
+		entity_exists=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM entities WHERE id = '$escaped_entity';" 2>/dev/null || echo "0")
+		if [[ "$entity_exists" == "0" ]]; then
+			log_error "Entity not found: $entity_id"
+			log_error "Create one first with: entity-helper.sh create --name \"Name\""
+			return 1
+		fi
+	fi
+
 	# Deduplication: skip if content already exists (unless it's a relational update)
 	if [[ -z "$supersedes_id" ]]; then
 		local existing_id
@@ -227,6 +244,16 @@ INSERT INTO learning_relations (id, supersedes_id, relation_type, created_at)
 VALUES ('$id', '$escaped_supersedes', '$relation_type', '$created_at');
 EOF
 		log_info "Relation: $id $relation_type $supersedes_id"
+	fi
+
+	# Link to entity if provided (t1363.3)
+	if [[ -n "$entity_id" ]]; then
+		local escaped_entity="${entity_id//"'"/"''"}"
+		db "$MEMORY_DB" <<EOF
+INSERT OR IGNORE INTO learning_entities (learning_id, entity_id)
+VALUES ('$id', '$escaped_entity');
+EOF
+		log_info "Linked to entity: $entity_id"
 	fi
 
 	log_success "Stored learning: $id"
