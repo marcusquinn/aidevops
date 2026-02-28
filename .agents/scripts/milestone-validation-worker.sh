@@ -105,6 +105,26 @@ VALIDATION_CHECKS_FAILED=0
 VALIDATION_CHECKS_SKIPPED=0
 
 # =============================================================================
+# Helpers
+# =============================================================================
+
+# Detect the Node.js package manager for a given repo path.
+# Prints one of: bun, pnpm, yarn, npm (default).
+detect_pkg_manager() {
+	local repo_path="$1"
+	if [[ -f "$repo_path/bun.lockb" ]] || [[ -f "$repo_path/bun.lock" ]]; then
+		echo "bun"
+	elif [[ -f "$repo_path/pnpm-lock.yaml" ]]; then
+		echo "pnpm"
+	elif [[ -f "$repo_path/yarn.lock" ]]; then
+		echo "yarn"
+	else
+		echo "npm"
+	fi
+	return 0
+}
+
+# =============================================================================
 # Help
 # =============================================================================
 
@@ -462,17 +482,9 @@ run_test_suite() {
 			local test_output
 			local test_exit=0
 
-			# Detect package manager
-			local pkg_cmd="npm"
-			if [[ -f "$repo_path/bun.lockb" ]] || [[ -f "$repo_path/bun.lock" ]]; then
-				pkg_cmd="bun"
-			elif [[ -f "$repo_path/pnpm-lock.yaml" ]]; then
-				pkg_cmd="pnpm"
-			elif [[ -f "$repo_path/yarn.lock" ]]; then
-				pkg_cmd="yarn"
-			fi
+			local pkg_cmd
+			pkg_cmd=$(detect_pkg_manager "$repo_path")
 
-			# --prefix is npm-only; use cd for portability across package managers
 			test_output=$(cd "$repo_path" && $pkg_cmd test 2>&1) || test_exit=$?
 
 			if [[ $test_exit -eq 0 ]]; then
@@ -584,17 +596,9 @@ run_build() {
 			local build_output
 			local build_exit=0
 
-			# Detect package manager
-			local pkg_cmd="npm"
-			if [[ -f "$repo_path/bun.lockb" ]] || [[ -f "$repo_path/bun.lock" ]]; then
-				pkg_cmd="bun"
-			elif [[ -f "$repo_path/pnpm-lock.yaml" ]]; then
-				pkg_cmd="pnpm"
-			elif [[ -f "$repo_path/yarn.lock" ]]; then
-				pkg_cmd="yarn"
-			fi
+			local pkg_cmd
+			pkg_cmd=$(detect_pkg_manager "$repo_path")
 
-			# --prefix is npm-only; use cd for portability across package managers
 			build_output=$(cd "$repo_path" && $pkg_cmd run build 2>&1) || build_exit=$?
 
 			if [[ $build_exit -eq 0 ]]; then
@@ -662,16 +666,9 @@ run_linter() {
 			local lint_output
 			local lint_exit=0
 
-			local pkg_cmd="npm"
-			if [[ -f "$repo_path/bun.lockb" ]] || [[ -f "$repo_path/bun.lock" ]]; then
-				pkg_cmd="bun"
-			elif [[ -f "$repo_path/pnpm-lock.yaml" ]]; then
-				pkg_cmd="pnpm"
-			elif [[ -f "$repo_path/yarn.lock" ]]; then
-				pkg_cmd="yarn"
-			fi
+			local pkg_cmd
+			pkg_cmd=$(detect_pkg_manager "$repo_path")
 
-			# --prefix is npm-only; use cd for portability across package managers
 			lint_output=$(cd "$repo_path" && $pkg_cmd run lint 2>&1) || lint_exit=$?
 
 			if [[ $lint_exit -eq 0 ]]; then
@@ -804,17 +801,10 @@ check_dependencies() {
 	if [[ -f "$repo_path/package.json" ]]; then
 		if [[ ! -d "$repo_path/node_modules" ]]; then
 			log_info "Installing dependencies..."
-			local pkg_cmd="npm"
-			if [[ -f "$repo_path/bun.lockb" ]] || [[ -f "$repo_path/bun.lock" ]]; then
-				pkg_cmd="bun"
-			elif [[ -f "$repo_path/pnpm-lock.yaml" ]]; then
-				pkg_cmd="pnpm"
-			elif [[ -f "$repo_path/yarn.lock" ]]; then
-				pkg_cmd="yarn"
-			fi
+			local pkg_cmd
+			pkg_cmd=$(detect_pkg_manager "$repo_path")
 
 			local install_exit=0
-			# --prefix is npm-only; use cd for portability across package managers
 			(cd "$repo_path" && $pkg_cmd install) >/dev/null 2>&1 || install_exit=$?
 
 			if [[ $install_exit -ne 0 ]]; then
