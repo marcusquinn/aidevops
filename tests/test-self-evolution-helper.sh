@@ -299,13 +299,10 @@ test_list_gaps_with_data() {
 	"$ENTITY_HELPER" migrate >/dev/null 2>&1
 	"$EVOL_HELPER" migrate >/dev/null 2>&1
 
-	# Insert test gaps directly
-	local gap1_id
-	gap1_id=$(insert_test_gap "Missing Kubernetes deployment support" "" 5)
-	local gap2_id
-	gap2_id=$(insert_test_gap "No monitoring integration" "" 2)
-	local gap3_id
-	gap3_id=$(insert_test_gap "Resolved feature" "" 1 "resolved")
+	# Insert test gaps directly (IDs unused — side effect is DB insertion)
+	insert_test_gap "Missing Kubernetes deployment support" "" 5 >/dev/null
+	insert_test_gap "No monitoring integration" "" 2 >/dev/null
+	insert_test_gap "Resolved feature" "" 1 "resolved" >/dev/null
 
 	# List all gaps
 	local output

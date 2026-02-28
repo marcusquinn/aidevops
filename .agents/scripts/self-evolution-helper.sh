@@ -76,7 +76,9 @@ evol_sql_escape() {
 # SQL-escape a value for use in LIKE patterns
 # Escapes single quotes AND LIKE wildcards (%, _)
 # Use with: LIKE '...' ESCAPE '\'
+# Currently unused — available for future LIKE-based dedup queries.
 #######################################
+# shellcheck disable=SC2329  # utility function, may be called by future code
 evol_sql_escape_like() {
 	local val="$1"
 	# Escape backslash first (so it doesn't double-escape later replacements)
@@ -475,10 +477,10 @@ cmd_detect_gaps() {
 		fi
 
 		# Check for existing similar gap (deduplication)
-		# Use LIKE matching on description — AI dedup would be better but
-		# this is the heuristic fallback. The key insight: if the same gap
-		# description appears again, increment frequency rather than creating
-		# a duplicate.
+		# Exact match on description — AI dedup would be better but this is
+		# the heuristic fallback. The key insight: if the same gap description
+		# appears again, increment frequency rather than creating a duplicate.
+		# For fuzzy matching, use evol_sql_escape_like() with LIKE queries.
 		local esc_desc
 		esc_desc=$(evol_sql_escape "$description")
 		local existing_gap_id
