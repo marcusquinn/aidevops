@@ -15,15 +15,17 @@
 #   milestone-number   Milestone number to validate (e.g., 1, 2, 3)
 #
 # Options:
-#   --repo-path <path>     Path to project repository (default: inferred from mission file)
-#   --browser-tests        Run Playwright browser tests (for UI milestones)
-#   --browser-url <url>    Base URL for browser tests (default: http://localhost:3000)
-#   --max-retries <n>      Max validation retry attempts (default: 3)
-#   --create-fix-tasks     Create fix tasks on failure (default: true)
-#   --no-fix-tasks         Skip fix task creation on failure
-#   --report-only          Run validation but don't update mission state
-#   --verbose              Verbose output
-#   --help                 Show this help message
+#   --repo-path <path>         Path to project repository (default: inferred from mission file)
+#   --browser-tests            Run Playwright browser tests (for UI milestones)
+#   --browser-qa               Run visual QA via browser-qa-worker.sh (screenshots, links, errors)
+#   --browser-qa-flows <json>  JSON array of URLs for browser QA (default: extracted from mission)
+#   --browser-url <url>        Base URL for browser tests/QA (default: http://localhost:3000)
+#   --max-retries <n>          Max validation retry attempts (default: 3)
+#   --create-fix-tasks         Create fix tasks on failure (default: true)
+#   --no-fix-tasks             Skip fix task creation on failure
+#   --report-only              Run validation but don't update mission state
+#   --verbose                  Verbose output
+#   --help                     Show this help message
 #
 # Exit codes:
 #   0 - Validation passed
@@ -34,6 +36,7 @@
 # Examples:
 #   milestone-validation-worker.sh ~/Git/myproject/todo/missions/m-20260227-abc123/mission.md 1
 #   milestone-validation-worker.sh mission.md 2 --browser-tests --browser-url http://localhost:8080
+#   milestone-validation-worker.sh mission.md 2 --browser-qa --browser-url http://localhost:3000
 #   milestone-validation-worker.sh mission.md 1 --report-only --verbose
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
@@ -43,14 +46,10 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 set -euo pipefail
 
 # =============================================================================
-# Colors and Logging
+# Logging
 # =============================================================================
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+# Colors (RED, GREEN, YELLOW, BLUE, NC) provided by shared-constants.sh
 
 _mv_timestamp() {
 	date -u +"%Y-%m-%dT%H:%M:%SZ"
@@ -89,8 +88,10 @@ MISSION_FILE=""
 MILESTONE_NUM=""
 REPO_PATH=""
 BROWSER_TESTS=false
+BROWSER_QA=false
+BROWSER_QA_FLOWS=""
 BROWSER_URL="http://localhost:3000"
-MAX_RETRIES=3
+MV_MAX_RETRIES=3
 CREATE_FIX_TASKS=true
 REPORT_ONLY=false
 VERBOSE=false
@@ -210,6 +211,14 @@ require_value() {
 }
 
 parse_args() {
+	# Check for --help before positional arg validation
+	for arg in "$@"; do
+		if [[ "$arg" == "--help" || "$arg" == "-h" ]]; then
+			show_help
+			exit 0
+		fi
+	done
+
 	if [[ $# -lt 2 ]]; then
 		log_error "Missing required arguments: mission-file and milestone-number"
 		show_help
@@ -232,6 +241,15 @@ parse_args() {
 			BROWSER_TESTS=true
 			shift
 			;;
+		--browser-qa)
+			BROWSER_QA=true
+			shift
+			;;
+		--browser-qa-flows)
+			require_value "$arg" "${2-}" || return 2
+			BROWSER_QA_FLOWS="$2"
+			shift 2
+			;;
 		--browser-url)
 			require_value "$arg" "${2-}" || return 2
 			BROWSER_URL="$2"
@@ -243,7 +261,7 @@ parse_args() {
 				log_error "--max-retries requires a numeric value, got: $2"
 				return 2
 			fi
-			MAX_RETRIES="$2"
+			MV_MAX_RETRIES="$2"
 			shift 2
 			;;
 		--create-fix-tasks)
@@ -802,6 +820,78 @@ run_browser_tests() {
 	return 0
 }
 
+# Run browser QA (visual testing via browser-qa-worker.sh)
+run_browser_qa() {
+	local base_url="$1"
+
+	if [[ "$BROWSER_QA" != "true" ]]; then
+		record_skip "Browser QA" "Not requested (use --browser-qa)"
+		return 0
+	fi
+
+	log_info "Running browser QA..."
+
+	local bqa_script="${SCRIPT_DIR}/browser-qa-worker.sh"
+	if [[ ! -f "$bqa_script" ]]; then
+		record_skip "Browser QA" "browser-qa-worker.sh not found"
+		return 0
+	fi
+
+	# Determine output directory
+	local qa_output_dir
+	local mission_dir
+	mission_dir="$(dirname "$MISSION_FILE")"
+	if [[ -d "$mission_dir" ]]; then
+		qa_output_dir="${mission_dir}/assets/qa"
+	else
+		qa_output_dir="/tmp/browser-qa-$(date +%Y%m%d-%H%M%S)"
+	fi
+
+	# Build arguments
+	local bqa_args=()
+	bqa_args+=("--url" "$base_url")
+	bqa_args+=("--output-dir" "$qa_output_dir")
+	bqa_args+=("--format" "summary")
+
+	if [[ -n "$BROWSER_QA_FLOWS" ]]; then
+		bqa_args+=("--flows" "$BROWSER_QA_FLOWS")
+	elif [[ -n "$MISSION_FILE" && -n "$MILESTONE_NUM" ]]; then
+		bqa_args+=("--mission-file" "$MISSION_FILE")
+		bqa_args+=("--milestone" "$MILESTONE_NUM")
+	fi
+
+	if [[ "$VERBOSE" == "true" ]]; then
+		bqa_args+=("--verbose")
+	fi
+
+	local bqa_output
+	local bqa_exit=0
+	bqa_output=$(bash "$bqa_script" "${bqa_args[@]}" 2>&1) || bqa_exit=$?
+
+	if [[ "$VERBOSE" == "true" ]]; then
+		echo "$bqa_output"
+	fi
+
+	case $bqa_exit in
+	0)
+		record_pass "Browser QA (visual testing)"
+		;;
+	1)
+		local failure_summary
+		failure_summary=$(echo "$bqa_output" | grep -E '(FAIL|failed|error|broken)' | head -10 || echo "Exit code: $bqa_exit")
+		record_fail "Browser QA (visual testing)" "$failure_summary"
+		;;
+	2)
+		record_skip "Browser QA" "Configuration error — check Playwright installation"
+		;;
+	*)
+		record_fail "Browser QA (visual testing)" "Unexpected exit code: $bqa_exit"
+		;;
+	esac
+
+	return 0
+}
+
 # Run milestone-specific validation criteria
 run_custom_validation() {
 	local repo_path="$1"
@@ -1053,9 +1143,9 @@ main() {
 
 	# Run validation checks with retry support
 	local attempt=1
-	while [[ $attempt -le $MAX_RETRIES ]]; do
+	while [[ $attempt -le $MV_MAX_RETRIES ]]; do
 		if [[ $attempt -gt 1 ]]; then
-			log_info "Retry attempt $attempt/$MAX_RETRIES..."
+			log_info "Retry attempt $attempt/$MV_MAX_RETRIES..."
 			reset_validation_state
 			# Brief pause before retry to allow transient issues to resolve
 			sleep 2
@@ -1066,14 +1156,15 @@ main() {
 		run_build "$REPO_PATH"
 		run_linter "$REPO_PATH"
 		run_browser_tests "$REPO_PATH" "$BROWSER_URL"
+		run_browser_qa "$BROWSER_URL"
 		run_custom_validation "$REPO_PATH" "$validation_criteria"
 
 		if [[ "$VALIDATION_PASSED" == "true" ]]; then
 			break
 		fi
 
-		if [[ $attempt -lt $MAX_RETRIES ]]; then
-			log_warn "Validation failed on attempt $attempt/$MAX_RETRIES — retrying..."
+		if [[ $attempt -lt $MV_MAX_RETRIES ]]; then
+			log_warn "Validation failed on attempt $attempt/$MV_MAX_RETRIES — retrying..."
 		fi
 		attempt=$((attempt + 1))
 	done
@@ -1092,7 +1183,7 @@ main() {
 		return 0
 	else
 		update_milestone_status "$MISSION_FILE" "$MILESTONE_NUM" "failed"
-		append_progress_log "$MISSION_FILE" "Milestone $MILESTONE_NUM validation failed" "${#VALIDATION_FAILURES[@]} failure(s) after $MAX_RETRIES attempt(s): ${VALIDATION_FAILURES[*]}"
+		append_progress_log "$MISSION_FILE" "Milestone $MILESTONE_NUM validation failed" "${#VALIDATION_FAILURES[@]} failure(s) after $MV_MAX_RETRIES attempt(s): ${VALIDATION_FAILURES[*]}"
 
 		# Create fix tasks
 		create_fix_tasks "$MISSION_FILE" "$MILESTONE_NUM" "$REPO_PATH"

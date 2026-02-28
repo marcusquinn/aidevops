@@ -61,8 +61,11 @@ It is triggered when:
 
 | Check | When | Flag |
 |-------|------|------|
-| **Playwright browser tests** | UI milestones | `--browser-tests` |
+| **Playwright browser tests** | UI milestones with existing test suite | `--browser-tests` |
+| **Browser QA (visual testing)** | UI milestones, especially POC mode without test suite | `--browser-qa` |
 | **Custom validation criteria** | Per-milestone criteria from mission file | Automatic (reads `**Validation:**` field) |
+
+**Browser QA vs Browser Tests**: `--browser-tests` runs the project's own Playwright test suite (requires `playwright.config.{ts,js}`). `--browser-qa` runs generic visual QA — screenshots, broken link detection, console error capture — that works even without a test suite. Both can be used together. See `workflows/browser-qa.md` for details.
 
 ### Framework Detection
 
@@ -90,10 +93,24 @@ The orchestrator invokes validation as part of Phase 4:
 ~/.aidevops/agents/scripts/milestone-validation-worker.sh \
   ~/Git/myproject/todo/missions/m-20260227-abc123/mission.md 1
 
-# With browser tests for UI milestone
+# With browser tests for UI milestone (project has playwright.config.ts)
 ~/.aidevops/agents/scripts/milestone-validation-worker.sh \
   ~/Git/myproject/todo/missions/m-20260227-abc123/mission.md 2 \
   --browser-tests --browser-url http://localhost:3000
+
+# With browser QA for visual testing (no test suite needed)
+~/.aidevops/agents/scripts/milestone-validation-worker.sh \
+  ~/Git/myproject/todo/missions/m-20260227-abc123/mission.md 2 \
+  --browser-qa --browser-url http://localhost:3000
+
+# Both browser tests and browser QA
+~/.aidevops/agents/scripts/milestone-validation-worker.sh \
+  mission.md 2 --browser-tests --browser-qa --browser-url http://localhost:3000
+
+# Browser QA with custom flows
+~/.aidevops/agents/scripts/milestone-validation-worker.sh \
+  mission.md 2 --browser-qa --browser-url http://localhost:3000 \
+  --browser-qa-flows '["/", "/about", "/login"]'
 
 # Report-only (don't update mission state)
 ~/.aidevops/agents/scripts/milestone-validation-worker.sh \
@@ -180,15 +197,18 @@ Milestone validation and postflight (`workflows/postflight.md`) serve similar pu
 |--------|---------------------|------------|
 | **Scope** | One milestone within a mission | One release of the entire project |
 | **Trigger** | All milestone features complete | After git tag + GitHub release |
-| **Checks** | Tests, build, lint, browser | CI/CD, SonarCloud, security, secrets |
+| **Checks** | Tests, build, lint, browser tests, browser QA | CI/CD, SonarCloud, security, secrets |
 | **On failure** | Create fix tasks, re-validate | Rollback or hotfix release |
 | **State** | Mission state file | Git tags, GitHub releases |
 
 ## Related
 
 - `workflows/mission-orchestrator.md` — Invokes this worker at Phase 4
+- `workflows/browser-qa.md` — Browser QA visual testing (t1359)
 - `workflows/postflight.md` — Similar validation pattern for releases
 - `workflows/preflight.md` — Pre-commit quality checks
 - `scripts/commands/full-loop.md` — Worker execution per feature
+- `scripts/browser-qa-worker.sh` — Browser QA shell wrapper
+- `scripts/browser-qa/browser-qa.mjs` — Playwright QA engine
 - `templates/mission-template.md` — Mission state file format
 - `tools/browser/browser-automation.md` — Playwright for browser tests
