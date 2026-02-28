@@ -9,6 +9,7 @@
 #   ~/.aidevops/agents/scripts/pre-edit-check.sh
 #   ~/.aidevops/agents/scripts/pre-edit-check.sh --loop-mode --task "description"
 #   ~/.aidevops/agents/scripts/pre-edit-check.sh --check-command "git push --force origin main"
+#   ~/.aidevops/agents/scripts/pre-edit-check.sh --verify-op "git push --force origin main"
 #
 # Exit codes:
 #   0 - OK to proceed (on feature branch in worktree, or docs-only on main)
@@ -21,6 +22,11 @@
 #   verification trigger patterns from configs/verification-triggers.json.
 #   If matched, outputs REQUIRES_VERIFICATION=1 with category and risk level.
 #   See reference/high-stakes-operations.md for the full taxonomy.
+#
+# Operation verification (--verify-op, t1364.3):
+#   When --verify-op is passed, the script invokes verify-operation-helper.sh
+#   to classify the operation risk and optionally invoke cross-provider
+#   verification for high-stakes operations.
 #
 # AI assistants should call this before any Edit/Write tool and:
 # - Exit 1: STOP and present branch creation options
@@ -40,6 +46,7 @@ set -euo pipefail
 LOOP_MODE=false
 TASK_DESC=""
 CHECK_COMMAND=""
+VERIFY_OP=""
 
 while [[ $# -gt 0 ]]; do
 	case $1 in
@@ -53,6 +60,10 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--check-command)
 		CHECK_COMMAND="$2"
+		shift 2
+		;;
+	--verify-op)
+		VERIFY_OP="$2"
 		shift 2
 		;;
 	*)
@@ -203,6 +214,63 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 BOLD='\033[1m'
 
+# =============================================================================
+# Operation Verification (t1364.3)
+# =============================================================================
+# When --verify-op is passed, check the operation against the risk taxonomy
+# and invoke cross-provider verification for high-stakes operations.
+# Uses verify-operation-helper.sh CLI (t1364.2) for classification and verification.
+
+run_operation_verification() {
+	local operation="$1"
+	local script_dir
+	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 0
+	local verify_helper="${script_dir}/verify-operation-helper.sh"
+
+	if [[ ! -x "$verify_helper" ]]; then
+		return 0 # Helper not installed — skip verification silently
+	fi
+
+	# Use the CLI check command to classify the operation
+	local check_output
+	check_output=$("$verify_helper" check --operation "$operation" 2>/dev/null) || return 0
+
+	local risk_tier
+	risk_tier=$(echo "$check_output" | grep '^risk_tier:' | awk '{print $2}') || risk_tier="standard"
+
+	if [[ "$risk_tier" == "standard" || "$risk_tier" == "unknown" ]]; then
+		return 0 # No verification needed
+	fi
+
+	# Build context from git state
+	local branch repo_root
+	branch=$(git branch --show-current 2>/dev/null || echo "unknown")
+	repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "unknown")
+
+	# Invoke full verification for critical/high operations
+	local verify_result
+	verify_result=$("$verify_helper" verify \
+		--operation "$operation" \
+		--risk-tier "$risk_tier" \
+		--repo "$repo_root" \
+		--branch "$branch" 2>/dev/null) || true
+
+	case "$verify_result" in
+	BLOCK*)
+		echo -e "${RED}Operation blocked by verification. Aborting.${NC}"
+		exit 1
+		;;
+	WARN*)
+		if [[ "${FULL_LOOP_HEADLESS:-false}" == "true" ]]; then
+			echo -e "${YELLOW}Verification raised concerns in headless mode — proceeding with caution${NC}"
+		else
+			echo -e "${YELLOW}Verification raised concerns. Review above and proceed with caution.${NC}"
+		fi
+		;;
+	esac
+	return 0
+}
+
 # Check if we're in a git repository
 if ! git rev-parse --is-inside-work-tree &>/dev/null; then
 	echo -e "${YELLOW}Not in a git repository - no branch check needed${NC}"
@@ -344,6 +412,11 @@ else
 				fi
 			fi
 		fi
+		# Operation verification gate (t1364.3)
+		if [[ -n "$VERIFY_OP" ]]; then
+			run_operation_verification "$VERIFY_OP"
+		fi
+
 		echo -e "${GREEN}OK${NC} - On branch: ${BOLD}$current_branch${NC} (in worktree)"
 		exit 0
 	fi
