@@ -138,7 +138,9 @@ test_database_init() {
 		return 0
 	fi
 
-	# Initialize database directly
+	# Initialize database directly.
+	# NOTE: This schema MUST match init_db() in email-agent-helper.sh.
+	# If you change the production schema, update this test schema too.
 	db "$TEST_DB" <<'SQL'
 PRAGMA journal_mode=WAL;
 PRAGMA busy_timeout=5000;
@@ -354,6 +356,77 @@ test_code_storage() {
 	local used
 	used=$(db "$TEST_DB" "SELECT used FROM extracted_codes WHERE code_value = '847291';")
 	assert_eq "Code marked as used" "1" "$used"
+}
+
+test_extract_codes_integration() {
+	echo "Test: Integration - extract-codes via helper CLI"
+
+	# This test exercises the actual helper's extract-codes command end-to-end:
+	# seed the helper's workspace DB with a message, invoke extract-codes, verify results.
+	# The helper uses a readonly DB_FILE path, so we set up data at that location.
+
+	local helper_workspace="${HOME}/.aidevops/.agent-workspace/email-agent"
+	local helper_db="${helper_workspace}/conversations.db"
+	local had_existing_db=0
+
+	# Back up existing DB if present
+	if [[ -f "$helper_db" ]]; then
+		had_existing_db=1
+		cp "$helper_db" "${helper_db}.test-backup"
+	fi
+
+	# Ensure the helper's DB is initialized (the helper does this on ensure_db)
+	mkdir -p "$helper_workspace"
+	bash "$HELPER" status >/dev/null 2>&1 || true
+
+	# Seed: conversation + inbound message with an OTP and a confirmation link
+	db "$helper_db" "
+		INSERT OR IGNORE INTO conversations (id, mission_id, subject, to_email, from_email)
+		VALUES ('conv-int-001', 'MINT', 'Signup Verification', 'user@test.com', 'noreply@vendor.com');
+	"
+	db "$helper_db" "
+		INSERT OR IGNORE INTO messages (id, conv_id, mission_id, direction, from_email, to_email, subject, body_text)
+		VALUES ('msg-int-001', 'conv-int-001', 'MINT', 'inbound', 'noreply@vendor.com', 'user@test.com',
+			'Signup Verification',
+			'Welcome! Your verification code is 593017. You can also verify at https://app.vendor.com/verify?token=xYz789AbC123');
+	"
+
+	# Run the helper's extract-codes command
+	local output
+	output=$(bash "$HELPER" extract-codes --message msg-int-001 2>&1 || true)
+
+	# Verify OTP was extracted
+	local otp_val
+	otp_val=$(db "$helper_db" "SELECT code_value FROM extracted_codes WHERE message_id = 'msg-int-001' AND code_type = 'otp';")
+	assert_eq "Integration: OTP extracted" "593017" "$otp_val"
+
+	# Verify confirmation link was extracted
+	local link_count
+	link_count=$(db "$helper_db" "SELECT count(*) FROM extracted_codes WHERE message_id = 'msg-int-001' AND code_type = 'link';")
+	assert_eq "Integration: confirmation link extracted" "1" "$link_count"
+
+	# Verify total extracted count
+	local total
+	total=$(db "$helper_db" "SELECT count(*) FROM extracted_codes WHERE message_id = 'msg-int-001';")
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if [[ "$total" -ge 2 ]]; then
+		TESTS_PASSED=$((TESTS_PASSED + 1))
+		echo "  PASS: Integration: at least 2 codes/links extracted (got $total)"
+	else
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+		echo "  FAIL: Integration: expected >= 2 codes/links, got $total"
+		echo "    Helper output: ${output:0:300}"
+	fi
+
+	# Clean up test data from the helper's DB
+	db "$helper_db" "DELETE FROM extracted_codes WHERE message_id = 'msg-int-001';" 2>/dev/null || true
+	db "$helper_db" "DELETE FROM messages WHERE id = 'msg-int-001';" 2>/dev/null || true
+	db "$helper_db" "DELETE FROM conversations WHERE id = 'conv-int-001';" 2>/dev/null || true
+
+	# Restore original DB if we backed it up
+	if [[ "$had_existing_db" -eq 1 ]]; then
+		mv "${helper_db}.test-backup" "$helper_db"
+	fi
 }
 
 # ============================================================================
@@ -618,6 +691,8 @@ main() {
 	test_code_extraction_no_false_positives
 	echo ""
 	test_code_storage
+	echo ""
+	test_extract_codes_integration
 	echo ""
 
 	# Template tests

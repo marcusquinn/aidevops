@@ -222,6 +222,10 @@ SQL
 	return 0
 }
 
+# Escape a string for safe use in SQLite single-quoted literals.
+# Returns the escaped string WITHOUT surrounding single quotes.
+# Callers MUST wrap the result in single quotes, e.g.:
+#   WHERE col = '$(sql_escape "$var")'
 sql_escape() {
 	local input="$1"
 	echo "${input//\'/\'\'}"
@@ -1221,7 +1225,8 @@ Send Options:
 
 Poll Options:
   --mission <id>       Mission ID (required)
-  --since <ISO-date>   Only poll emails after this date
+  --since <ISO-date>   Only poll emails after this date (ISO 8601 format,
+                       e.g. 2026-01-15T00:00:00Z or 2026-01-15)
 
 Extract Options:
   --message <msg-id>   Extract codes from specific message
