@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aidevops.sh/schemas/bundle.json",
+  "title": "AI DevOps Bundle Preset",
+  "description": "A bundle is a named collection of model, tool, and quality gate configurations for a project type. Bundles right-size tooling so that each project gets appropriate model tiers and quality checks instead of one-size-fits-all defaults.",
+  "type": "object",
+  "required": ["name", "description", "model_defaults", "quality_gates", "agent_routing"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "JSON Schema reference for editor validation."
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "description": "Unique bundle identifier in lowercase kebab-case. Must match the filename (without .json)."
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable description of what project types this bundle targets."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "Semantic version of this bundle definition.",
+      "default": "1.0.0"
+    },
+    "markers": {
+      "type": "array",
+      "description": "File patterns used for auto-detection. If any marker file exists in a project root, this bundle is a candidate. Glob patterns supported.",
+      "items": {
+        "type": "string"
+      },
+      "examples": [["package.json", "tsconfig.json"], ["Dockerfile", "*.tf"]]
+    },
+    "model_defaults": {
+      "type": "object",
+      "description": "Default model tier for each task type. Tiers: local, haiku, flash, sonnet, pro, opus. During composition (multiple bundles), the most-restrictive (highest) tier wins.",
+      "properties": {
+        "implementation": {
+          "$ref": "#/$defs/model_tier",
+          "description": "Model tier for writing/modifying code."
+        },
+        "review": {
+          "$ref": "#/$defs/model_tier",
+          "description": "Model tier for code review and PR analysis."
+        },
+        "triage": {
+          "$ref": "#/$defs/model_tier",
+          "description": "Model tier for issue triage, classification, routing."
+        },
+        "architecture": {
+          "$ref": "#/$defs/model_tier",
+          "description": "Model tier for design decisions and system architecture."
+        },
+        "verification": {
+          "$ref": "#/$defs/model_tier",
+          "description": "Model tier for cross-provider verification of high-stakes operations."
+        },
+        "documentation": {
+          "$ref": "#/$defs/model_tier",
+          "description": "Model tier for generating or updating documentation."
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/model_tier"
+      }
+    },
+    "quality_gates": {
+      "type": "array",
+      "description": "Quality checks to run for this project type. During composition (multiple bundles), gates are unioned (all unique gates from all bundles run).",
+      "items": {
+        "$ref": "#/$defs/quality_gate"
+      },
+      "uniqueItems": true
+    },
+    "skip_gates": {
+      "type": "array",
+      "description": "Quality gates to explicitly skip for this project type. Overrides quality_gates when a gate is irrelevant (e.g., shellcheck on a pure TypeScript project).",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "agent_routing": {
+      "type": "object",
+      "description": "Maps task domains to preferred primary agents. Keys are domain names, values are agent names from the agent routing table.",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "dispatch": {
+      "type": "object",
+      "description": "Worker dispatch configuration for this project type.",
+      "properties": {
+        "max_concurrent_workers": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10,
+          "default": 3,
+          "description": "Maximum parallel workers for this project."
+        },
+        "default_timeout_minutes": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 120,
+          "default": 30,
+          "description": "Default timeout for dispatched workers."
+        },
+        "auto_dispatch": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether tasks tagged #auto-dispatch should be picked up automatically."
+        }
+      },
+      "additionalProperties": false
+    },
+    "tool_allowlist": {
+      "type": "array",
+      "description": "MCP tools and CLI tools that are relevant for this project type. Used for context: agents can prioritise these tools. Empty array means no restriction.",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "extends": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "description": "Name of another bundle to inherit from. The current bundle's values override the parent's. Only single inheritance is supported."
+    }
+  },
+  "$defs": {
+    "model_tier": {
+      "type": "string",
+      "enum": ["local", "haiku", "flash", "sonnet", "pro", "opus"],
+      "description": "Model routing tier. See .agents/tools/context/model-routing.md for tier definitions."
+    },
+    "quality_gate": {
+      "type": "string",
+      "enum": [
+        "shellcheck",
+        "shfmt",
+        "secretlint",
+        "markdownlint",
+        "toon-lint",
+        "sonarcloud",
+        "return-statements",
+        "positional-parameters",
+        "string-literals",
+        "eslint",
+        "prettier",
+        "typescript-check",
+        "jest",
+        "vitest",
+        "pytest",
+        "cargo-clippy",
+        "cargo-test",
+        "go-vet",
+        "go-test",
+        "hadolint",
+        "terraform-validate",
+        "ansible-lint"
+      ],
+      "description": "Named quality gate. Maps to checks in linters-local.sh or external tools."
+    }
+  }
+}

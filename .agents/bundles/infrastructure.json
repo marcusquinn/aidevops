@@ -1,0 +1,59 @@
+{
+  "$schema": "./schema.json",
+  "name": "infrastructure",
+  "description": "Infrastructure-as-Code, Docker, CI/CD, and cloud configuration projects. Targets repos with Dockerfiles, Terraform, Ansible, or Kubernetes manifests. High verification tier because infrastructure mistakes are costly and hard to reverse.",
+  "version": "1.0.0",
+  "markers": [
+    "Dockerfile",
+    "docker-compose.yml",
+    "docker-compose.yaml",
+    "*.tf",
+    "*.tfvars",
+    "ansible.cfg",
+    "playbook.yml",
+    "k8s/",
+    ".github/workflows/"
+  ],
+  "model_defaults": {
+    "implementation": "sonnet",
+    "review": "opus",
+    "triage": "haiku",
+    "architecture": "opus",
+    "verification": "opus",
+    "documentation": "sonnet"
+  },
+  "quality_gates": [
+    "shellcheck",
+    "shfmt",
+    "secretlint",
+    "hadolint",
+    "terraform-validate",
+    "ansible-lint"
+  ],
+  "skip_gates": [
+    "eslint",
+    "prettier",
+    "typescript-check",
+    "jest",
+    "vitest"
+  ],
+  "agent_routing": {
+    "code": "Build+",
+    "infrastructure": "Build+",
+    "security": "Build+"
+  },
+  "dispatch": {
+    "max_concurrent_workers": 2,
+    "default_timeout_minutes": 45,
+    "auto_dispatch": false
+  },
+  "tool_allowlist": [
+    "shellcheck",
+    "hadolint",
+    "terraform",
+    "ansible-lint",
+    "coolify",
+    "secretlint",
+    "socket"
+  ]
+}
