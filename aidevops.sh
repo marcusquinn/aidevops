@@ -1672,8 +1672,15 @@ SOPSEOF
 			gitignore_updated=true
 		fi
 
-		# Add .aidevops.json to gitignore (local config, not committed)
+		# Add .aidevops.json to gitignore (local config, not committed).
+		# If .aidevops.json is already tracked by git (committed by older framework
+		# versions), untrack it first — adding a tracked file to .gitignore is a
+		# no-op and the file keeps showing in git diff on every re-init (#2570 bug 3).
 		if ! grep -q "^\.aidevops\.json$" "$gitignore" 2>/dev/null; then
+			if git -C "$project_root" ls-files --error-unmatch .aidevops.json &>/dev/null; then
+				git -C "$project_root" rm --cached .aidevops.json &>/dev/null || true
+				print_info "Untracked .aidevops.json from git (was committed by older version)"
+			fi
 			echo ".aidevops.json" >>"$gitignore"
 			gitignore_updated=true
 		fi
@@ -1740,6 +1747,43 @@ SOPSEOF
 	# Register repo in repos.json
 	register_repo "$project_root" "$aidevops_version" "$features_list"
 
+	# Auto-commit initialized files so they don't linger as mystery unstaged
+	# changes (#2570 bug 2). Collect all files that cmd_init creates/modifies.
+	local init_files=()
+	[[ -f "$project_root/.gitignore" ]] && init_files+=(".gitignore")
+	[[ -d "$project_root/.agents" ]] && init_files+=(".agents/")
+	[[ -f "$project_root/AGENTS.md" ]] && init_files+=("AGENTS.md")
+	[[ -f "$project_root/TODO.md" ]] && init_files+=("TODO.md")
+	[[ -d "$project_root/todo" ]] && init_files+=("todo/")
+	[[ -f "$project_root/MODELS.md" ]] && init_files+=("MODELS.md")
+	[[ -f "$project_root/LICENCE" ]] && init_files+=("LICENCE")
+	[[ -f "$project_root/CHANGELOG.md" ]] && init_files+=("CHANGELOG.md")
+	[[ -f "$project_root/README.md" ]] && init_files+=("README.md")
+	[[ -f "$project_root/.cursorrules" ]] && init_files+=(".cursorrules")
+	[[ -f "$project_root/.windsurfrules" ]] && init_files+=(".windsurfrules")
+	[[ -f "$project_root/.clinerules" ]] && init_files+=(".clinerules")
+	[[ -d "$project_root/.github" ]] && init_files+=(".github/")
+	[[ -f "$project_root/.sops.yaml" ]] && init_files+=(".sops.yaml")
+	[[ -d "$project_root/schemas" ]] && init_files+=("schemas/")
+	[[ -d "$project_root/migrations" ]] && init_files+=("migrations/")
+	[[ -d "$project_root/seeds" ]] && init_files+=("seeds/")
+
+	local committed=false
+	if [[ ${#init_files[@]} -gt 0 ]]; then
+		# Stage all init files (--force not needed; .aidevops.json is gitignored above)
+		if git -C "$project_root" add -- "${init_files[@]}" 2>/dev/null; then
+			# Only commit if there are staged changes
+			if ! git -C "$project_root" diff --cached --quiet 2>/dev/null; then
+				if git -C "$project_root" commit -m "chore: initialize aidevops v${aidevops_version}" 2>/dev/null; then
+					committed=true
+					print_success "Committed initialized files"
+				else
+					print_warning "Auto-commit failed (pre-commit hook rejected?)"
+				fi
+			fi
+		fi
+	fi
+
 	echo ""
 	print_success "AI DevOps initialized!"
 	echo ""
@@ -1754,19 +1798,31 @@ SOPSEOF
 	[[ -f "$project_root/MODELS.md" ]] && echo "  ✓ MODELS.md (per-repo model performance leaderboard)"
 	echo ""
 	echo "Next steps:"
+	local step=1
+	if [[ "$committed" != "true" ]]; then
+		echo "  ${step}. Commit the initialized files: git add -A && git commit -m 'chore: initialize aidevops'"
+		((step++))
+	fi
 	if [[ "$enable_beads" == "true" ]]; then
-		echo "  1. Add tasks to TODO.md with dependencies (blocked-by:t001)"
-		echo "  2. Run /ready to see unblocked tasks"
-		echo "  3. Run /sync-beads to sync with Beads graph"
-		echo "  4. Use 'bd' CLI for graph visualization"
+		echo "  ${step}. Add tasks to TODO.md with dependencies (blocked-by:t001)"
+		((step++))
+		echo "  ${step}. Run /ready to see unblocked tasks"
+		((step++))
+		echo "  ${step}. Run /sync-beads to sync with Beads graph"
+		((step++))
+		echo "  ${step}. Use 'bd' CLI for graph visualization"
 	elif [[ "$enable_database" == "true" ]]; then
-		echo "  1. Add schema files to schemas/"
-		echo "  2. Run diff to generate migrations"
-		echo "  3. See .agents/workflows/sql-migrations.md"
+		echo "  ${step}. Add schema files to schemas/"
+		((step++))
+		echo "  ${step}. Run diff to generate migrations"
+		((step++))
+		echo "  ${step}. See .agents/workflows/sql-migrations.md"
 	else
-		echo "  1. Add tasks to TODO.md"
-		echo "  2. Use /create-prd for complex features"
-		echo "  3. Use /feature to start development"
+		echo "  ${step}. Add tasks to TODO.md"
+		((step++))
+		echo "  ${step}. Use /create-prd for complex features"
+		((step++))
+		echo "  ${step}. Use /feature to start development"
 	fi
 
 	return 0
