@@ -259,6 +259,46 @@ Also verify:
 git status --short
 ```
 
+### Step 1.5: Operation Verification (t1364.3)
+
+Before executing high-stakes operations (production deploys, database migrations, force pushes, secret rotation), the pipeline invokes cross-provider model verification. This catches single-model hallucinations before destructive operations cause irreversible damage.
+
+**How it works:**
+
+```bash
+# The pre-edit-check.sh now accepts --verify-op for operation-level checks
+~/.aidevops/agents/scripts/pre-edit-check.sh --verify-op "git push --force origin main"
+
+# Or source the helper directly for programmatic use
+source ~/.aidevops/agents/scripts/verify-operation-helper.sh
+risk=$(check_operation "terraform destroy")        # Returns: critical, high, moderate, low
+result=$(verify_operation "terraform destroy" "$risk")  # Returns: verified, concerns:*, blocked:*
+```
+
+**Risk taxonomy:**
+
+| Level | Examples | Action |
+|-------|----------|--------|
+| critical | Force push to main, `rm -rf /`, drop database, deploy to production, expose secrets | Block (headless) or require confirmation (interactive) |
+| high | Force push, hard reset, branch deletion, DB migration, npm publish | Verify via cross-provider model call |
+| moderate | Package installs, config changes, permission changes | Log only (verify in `block` policy mode) |
+| low | Code edits, docs, tests | No verification |
+
+**Pipeline integration points:**
+
+- **pre-edit-check.sh**: Pass `--verify-op "command"` to verify before execution
+- **dispatch.sh**: Automatically screens task descriptions for high-stakes indicators before committing a worker
+- **full-loop**: Verification runs at branch setup and before destructive git operations
+
+**Configuration** (environment variables):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VERIFY_ENABLED` | `true` | Enable/disable verification globally |
+| `VERIFY_POLICY` | `warn` | `warn` (log concerns), `block` (stop on concerns), `skip` (disable) |
+| `VERIFY_TIMEOUT` | `30` | Seconds to wait for verifier response |
+| `VERIFY_MODEL` | `haiku` | Model tier for verification (cheapest sufficient) |
+
 ### Step 2: Start Full Loop
 
 **Supervisor dispatch** (headless mode - t174):
