@@ -181,3 +181,9 @@ await db.transaction(async (tx) => {
 - **Index Types**: https://www.postgresql.org/docs/current/indexes-types.html
 - **JSON Functions**: https://www.postgresql.org/docs/current/functions-json.html
 - **Row Level Security**: https://www.postgresql.org/docs/current/ddl-rowsecurity.html
+
+### Related Subagents
+
+- **Vector search**: `tools/database/vector-search.md` — decision guide for vector databases including pgvector with Drizzle
+- **Multi-org isolation**: `services/database/multi-org-isolation.md` — tenant isolation schema with RLS
+- **PGlite local-first**: `tools/database/pglite-local-first.md` — embedded Postgres for desktop/extension apps

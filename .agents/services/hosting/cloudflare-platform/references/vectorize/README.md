@@ -680,6 +680,11 @@ try {
 - [Wrangler Commands](https://developers.cloudflare.com/workers/wrangler/commands/#vectorize)
 - [Discord: #vectorize](https://discord.cloudflare.com)
 
+## Related
+
+- **Vector search decision guide**: `tools/database/vector-search.md` — compare Vectorize with zvec, pgvector, and other vector databases for per-tenant RAG
+- **Multi-org isolation**: `services/database/multi-org-isolation.md` — tenant isolation schema patterns
+
 ---
 
 **Version:** V2 (GA) - Requires Wrangler 3.71.0+
