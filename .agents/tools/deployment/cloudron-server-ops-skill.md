@@ -190,7 +190,7 @@ Use `--server` and `--token` to run commands non-interactively. Get API tokens f
 ```bash
 cloudron update \
   --server my.example.com \
-  --token 001e7174c4cbad2272 \
+  --token <api-token> \
   --app blog.example.com \
   --image username/image:tag
 ```

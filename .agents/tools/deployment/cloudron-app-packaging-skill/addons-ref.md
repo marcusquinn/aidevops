@@ -17,7 +17,7 @@ Options:
 
 MySQL 8.0. Database is pre-created.
 
-```
+```text
 CLOUDRON_MYSQL_URL          # full connection URL
 CLOUDRON_MYSQL_USERNAME
 CLOUDRON_MYSQL_PASSWORD
@@ -38,7 +38,7 @@ Debug: `cloudron exec` then `mysql --user=$CLOUDRON_MYSQL_USERNAME --password=$C
 
 PostgreSQL 14.9.
 
-```
+```text
 CLOUDRON_POSTGRESQL_URL
 CLOUDRON_POSTGRESQL_USERNAME
 CLOUDRON_POSTGRESQL_PASSWORD
@@ -59,7 +59,7 @@ Debug: `PGPASSWORD=$CLOUDRON_POSTGRESQL_PASSWORD psql -h $CLOUDRON_POSTGRESQL_HO
 
 MongoDB 8.0.
 
-```
+```text
 CLOUDRON_MONGODB_URL
 CLOUDRON_MONGODB_USERNAME
 CLOUDRON_MONGODB_PASSWORD
@@ -77,7 +77,7 @@ Options:
 
 Redis 8.4. Data is persistent.
 
-```
+```text
 CLOUDRON_REDIS_URL
 CLOUDRON_REDIS_HOST
 CLOUDRON_REDIS_PORT
@@ -92,7 +92,7 @@ Options:
 
 LDAP v3 authentication.
 
-```
+```text
 CLOUDRON_LDAP_SERVER
 CLOUDRON_LDAP_HOST
 CLOUDRON_LDAP_PORT
@@ -115,7 +115,7 @@ Cannot be added to an existing app — reinstall required.
 
 OpenID Connect authentication.
 
-```
+```text
 CLOUDRON_OIDC_PROVIDER_NAME
 CLOUDRON_OIDC_DISCOVERY_URL
 CLOUDRON_OIDC_ISSUER
@@ -137,7 +137,7 @@ Options:
 
 Outgoing email (SMTP relay).
 
-```
+```text
 CLOUDRON_MAIL_SMTP_SERVER
 CLOUDRON_MAIL_SMTP_PORT           # STARTTLS disabled on this port
 CLOUDRON_MAIL_SMTPS_PORT
@@ -158,7 +158,7 @@ Options:
 
 Incoming email (IMAP/POP3).
 
-```
+```text
 CLOUDRON_MAIL_IMAP_SERVER
 CLOUDRON_MAIL_IMAP_PORT
 CLOUDRON_MAIL_IMAPS_PORT
@@ -176,7 +176,7 @@ May be disabled if the server is not receiving email for the domain. Handle abse
 
 Full email capabilities (SMTP + IMAP + ManageSieve). For webmail applications.
 
-```
+```text
 CLOUDRON_EMAIL_SMTP_SERVER
 CLOUDRON_EMAIL_SMTP_PORT
 CLOUDRON_EMAIL_SMTPS_PORT
@@ -230,7 +230,7 @@ Files: `/etc/certs/tls_cert.pem`, `/etc/certs/tls_key.pem` (read-only). App rest
 
 STUN/TURN service.
 
-```
+```text
 CLOUDRON_TURN_SERVER
 CLOUDRON_TURN_PORT
 CLOUDRON_TURN_TLS_PORT
@@ -241,7 +241,7 @@ CLOUDRON_TURN_SECRET
 
 Create Docker containers (restricted). Only superadmins can install/exec apps with this addon.
 
-```
+```text
 CLOUDRON_DOCKER_HOST              # tcp://<IP>:<port>
 ```
 
