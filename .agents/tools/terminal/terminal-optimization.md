@@ -89,6 +89,7 @@ done | tr '\n' ':' | sed 's/:$//')
 |---------|--------|---------|---------|
 | `find` | `fd` | 5-10x | `brew install fd` |
 | `grep` | `ripgrep (rg)` | 5-20x | `brew install ripgrep` |
+| `grep` in PDFs/docs | `ripgrep-all (rga)` | N/A (new capability) | `brew install ripgrep-all` |
 | `cat` | `bat` | Syntax highlighting | `brew install bat` |
 | `ls` | `eza` | Better output | `brew install eza` |
 | `du` | `dust` | Visual tree | `brew install dust` |
@@ -97,6 +98,22 @@ done | tr '\n' ':' | sed 's/:$//')
 | `sed` | `sd` | Simpler syntax | `brew install sd` |
 | `curl` | `xh` | Colorized HTTP | `brew install xh` |
 | `man` | `tldr` | Quick examples | `brew install tldr` |
+
+### Search Tool Hierarchy
+
+`fd`, `rg`, and `rga` are complementary — same ecosystem, same `.gitignore` awareness:
+
+| Tool | Purpose | Use when |
+|------|---------|----------|
+| `fd` | Find files by **name, type, size, date** | "Find all `.ts` files modified today" |
+| `rg` | Search **text file contents** by pattern | "Find where `handleAuth` is called" |
+| `rga` | Search **inside non-text files** (PDF, DOCX, SQLite, zip, tar) | "Find 'invoice' in downloaded PDFs" |
+
+- `fd` replaces `find` — file discovery by metadata
+- `rg` replaces `grep` — content search in source/text files
+- `rga` extends `rg` — same syntax, but reaches inside binary/document formats
+
+`rga` supported formats: PDF, DOCX/XLSX/PPTX, ODT, SQLite, compressed archives (zip, tar, gz), and more via adapters.
 
 ### 4. Shell Aliases
 
