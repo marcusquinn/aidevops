@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.147.0] - 2026-03-01
+
+### Added
+
+- add daily multi-tool code quality sweep across all repos (#2631)
+
 ## [2.146.4] - 2026-03-01
 
 ### Changed
