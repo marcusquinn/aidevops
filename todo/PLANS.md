@@ -22,6 +22,98 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-03-01] PaddleOCR Integration — Screenshot and Scene Text OCR
+
+**Status:** Planning
+**Estimate:** ~5h (ai:3.5h test:1h read:30m)
+**TODO:** t1369 (parent), t1369.1-t1369.5 (subtasks)
+**Logged:** 2026-03-01
+**Brief:** [todo/tasks/t1369-brief.md](tasks/t1369-brief.md)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged}:
+p036,PaddleOCR Integration,planning,0,2,,plan|feature|ocr|document,5h,3.5h,1h,30m,2026-03-01T00:00Z
+-->
+
+#### Purpose
+
+Add scene text / screenshot OCR capability to aidevops. Current stack (MinerU + Docling + ExtractThinker + LibPDF) handles document parsing and structured extraction well, but cannot read text from screenshots, photos, UI captures, signs, or other non-document images.
+
+PaddleOCR (71k stars, Apache-2.0, PaddlePaddle/PaddleOCR) fills this gap:
+
+- **PP-OCRv5**: text detection + recognition from any image, 100+ languages, lightweight
+- **PaddleOCR-VL** (0.9B): vision-language model for document understanding, runs locally
+- **Native MCP server**: ships with PaddleOCR 3.1.0+, integrates directly with Claude Desktop and our agent framework
+- **Scene text strength**: designed for varied lighting, angles, fonts — not just clean documents
+
+**What this is NOT**: a replacement for MinerU or Docling. Those tools excel at document-to-markdown and structured extraction respectively. PaddleOCR is the specialist for raw OCR from arbitrary images.
+
+#### Architecture
+
+```text
+Current Document Pipeline:
+  PDF/DOCX → Docling (parsing) → ExtractThinker (LLM extraction) → Structured JSON
+  PDF      → MinerU (layout-aware) → Markdown/JSON for LLM
+  PDF      → LibPDF (manipulation) → Text with positions
+
+NEW — Scene Text Pipeline:
+  Screenshot/Photo/Image → PaddleOCR (PP-OCRv5) → Raw text + bounding boxes
+  Screenshot/Photo/Image → PaddleOCR-VL (0.9B)  → Structured understanding
+  
+  Integration points:
+  ├── paddleocr-helper.sh ocr <image>     → CLI text extraction
+  ├── PaddleOCR MCP Server (stdio/HTTP)   → Agent framework integration
+  └── Python API                          → Pipeline composition with Docling/ExtractThinker
+
+Tool Selection (overview.md):
+  ┌─────────────────────┬──────────────┬─────────────────────────────────┐
+  │ Input               │ Tool         │ Output                          │
+  ├─────────────────────┼──────────────┼─────────────────────────────────┤
+  │ Screenshot/photo    │ PaddleOCR    │ Raw text + bounding boxes       │
+  │ Complex PDF layout  │ MinerU       │ Markdown/JSON (layout-aware)    │
+  │ Invoice/receipt     │ Docling+ET   │ Structured JSON (schema-mapped) │
+  │ PDF form/signing    │ LibPDF       │ Modified PDF                    │
+  │ Simple text PDF     │ Pandoc       │ Markdown                        │
+  └─────────────────────┴──────────────┴─────────────────────────────────┘
+```
+
+#### Subtask Breakdown
+
+| ID | Task | Est | Model | Dependencies |
+|----|------|-----|-------|-------------|
+| t1369.1 | PaddleOCR subagent doc (`tools/ocr/paddleocr.md`) | ~2h | sonnet | none |
+| t1369.2 | OCR overview + tool selection guide (`tools/ocr/overview.md`) | ~30m | sonnet | none |
+| t1369.3 | `paddleocr-helper.sh` (install, ocr, serve, status) | ~1.5h | sonnet | none |
+| t1369.4 | Update cross-references and indexes | ~30m | sonnet | t1369.1, t1369.2 |
+| t1369.5 | Installation verification + screenshot OCR test | ~30m | sonnet | t1369.3 |
+
+t1369.1-t1369.3 can run in parallel. t1369.4 depends on docs being written. t1369.5 depends on the helper script.
+
+#### Progress
+
+- [ ] (2026-03-01) Phase 1: Core docs and helper script ~4h
+  - [ ] t1369.1 PaddleOCR subagent doc
+  - [ ] t1369.2 OCR overview doc
+  - [ ] t1369.3 paddleocr-helper.sh
+- [ ] (2026-03-01) Phase 2: Integration and verification ~1h
+  - [ ] t1369.4 Cross-references and indexes
+  - [ ] t1369.5 Installation and OCR test
+
+#### Decision Log
+
+| Date | Decision | Rationale |
+|------|----------|-----------|
+| 2026-03-01 | Add PaddleOCR, don't replace MinerU/Docling | Different tools for different jobs — scene text vs document parsing |
+| 2026-03-01 | PaddleOCR over Tesseract | Better accuracy on scene text, active development, MCP server, 100+ languages |
+| 2026-03-01 | PaddleOCR over EasyOCR | 3x stars, more active, better benchmarks, native MCP server |
+| 2026-03-01 | Create new `tools/ocr/` directory | OCR is a distinct domain from PDF manipulation or document extraction |
+| 2026-03-01 | Default to PP-OCRv5, document VL as optional | PP-OCRv5 is lightweight and sufficient for most OCR; VL needs more resources |
+
+#### Surprises & Discoveries
+
+(To be filled during implementation)
+
+---
+
 ### [2026-02-28] Multi-Model Orchestration Improvements — Parallel Verification + Bundle Presets
 
 **Status:** Planning
