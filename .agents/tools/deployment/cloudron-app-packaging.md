@@ -134,7 +134,7 @@ Need web terminal access or complex deps?
 | Cron jobs | `scheduler` | (config in manifest) |
 | TLS certs | `tls` | `/etc/certs/tls_*.pem` |
 
-**Note**: `localstorage` is MANDATORY for all apps that need persistent data.
+**Note**: `localstorage` is MANDATORY for all apps that need persistent data. For full env var lists and addon options, see [addons-ref.md](cloudron-app-packaging-skill/addons-ref.md).
 
 ### Process Model Selection
 
@@ -340,7 +340,7 @@ fastcgi_temp_path /run/nginx/fastcgi;
 server {
     listen 8000;  # Internal port, never 80/443
     root /app/code/public;
-    
+
     location / {
         try_files $uri $uri/ /index.php?$query_string;
     }
@@ -491,72 +491,13 @@ exec /usr/bin/supervisord --configuration /app/code/supervisord.conf
 
 ## Addon Environment Variables
 
-### PostgreSQL
+For the full environment variable reference for all addons (mysql, postgresql, mongodb, redis, ldap, oidc, sendmail, recvmail, email, proxyauth, scheduler, tls, turn, docker) including addon-specific options, see [addons-ref.md](cloudron-app-packaging-skill/addons-ref.md).
 
-```bash
-CLOUDRON_POSTGRESQL_URL=postgres://user:pass@host:5432/dbname
-CLOUDRON_POSTGRESQL_HOST=postgresql
-CLOUDRON_POSTGRESQL_PORT=5432
-CLOUDRON_POSTGRESQL_USERNAME=username
-CLOUDRON_POSTGRESQL_PASSWORD=password
-CLOUDRON_POSTGRESQL_DATABASE=dbname
-```
-
-### MySQL
-
-```bash
-CLOUDRON_MYSQL_URL=mysql://user:pass@host:3306/dbname
-CLOUDRON_MYSQL_HOST=mysql
-CLOUDRON_MYSQL_PORT=3306
-CLOUDRON_MYSQL_USERNAME=username
-CLOUDRON_MYSQL_PASSWORD=password
-CLOUDRON_MYSQL_DATABASE=dbname
-```
-
-### Redis
-
-```bash
-CLOUDRON_REDIS_URL=redis://:password@host:6379
-CLOUDRON_REDIS_HOST=redis
-CLOUDRON_REDIS_PORT=6379
-CLOUDRON_REDIS_PASSWORD=password
-```
-
-**Note**: Cloudron Redis REQUIRES authentication.
-
-### Sendmail (SMTP)
-
-```bash
-CLOUDRON_MAIL_SMTP_SERVER=mail
-CLOUDRON_MAIL_SMTP_PORT=587
-CLOUDRON_MAIL_SMTP_USERNAME=username
-CLOUDRON_MAIL_SMTP_PASSWORD=password
-CLOUDRON_MAIL_FROM=app@domain.com
-CLOUDRON_MAIL_DOMAIN=domain.com
-```
-
-### LDAP
-
-```bash
-CLOUDRON_LDAP_URL=ldap://host:389
-CLOUDRON_LDAP_SERVER=ldap
-CLOUDRON_LDAP_PORT=389
-CLOUDRON_LDAP_BIND_DN=cn=admin,dc=cloudron
-CLOUDRON_LDAP_BIND_PASSWORD=password
-CLOUDRON_LDAP_USERS_BASE_DN=ou=users,dc=cloudron
-CLOUDRON_LDAP_GROUPS_BASE_DN=ou=groups,dc=cloudron
-```
-
-### OIDC (OAuth)
-
-```bash
-CLOUDRON_OIDC_ISSUER=https://my.cloudron.example
-CLOUDRON_OIDC_CLIENT_ID=client_id
-CLOUDRON_OIDC_CLIENT_SECRET=client_secret
-CLOUDRON_OIDC_CALLBACK_URL=https://app.domain.com/callback
-```
+**Key pattern**: Read env vars at runtime on every start — values can change across restarts. Run DB migrations on each start.
 
 ### General Variables (Always Available)
+
+These are always set, regardless of which addons are declared:
 
 ```bash
 CLOUDRON_APP_ORIGIN=https://app.domain.com  # Full URL with protocol
