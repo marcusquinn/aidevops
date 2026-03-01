@@ -533,3 +533,9 @@ export interface SessionContext {
   metadata?: Record<string, unknown>;
 }
 ```
+
+## Related
+
+- **Vector search per-tenant isolation**: `tools/database/vector-search.md` — decision guide for vector databases (zvec, pgvector, Vectorize) with per-tenant RAG isolation patterns that complement this schema
+- **PGlite local-first**: `tools/database/pglite-local-first.md` — embedded Postgres for desktop/extension apps
+- **Postgres + Drizzle**: `services/database/postgres-drizzle-skill.md` — schema patterns and query optimization
