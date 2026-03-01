@@ -34,6 +34,7 @@ tools:
 | Merge/split | LibPDF | Full page manipulation |
 | Text extraction | LibPDF | With position information |
 | PDF to markdown/JSON | MinerU | Layout-aware, OCR, formula support |
+| Scanned PDF OCR | PaddleOCR | Scene text, 100+ languages, bounding boxes |
 | Render to image | pdf.js | LibPDF doesn't render (yet) |
 
 **Subagents**:
@@ -142,5 +143,7 @@ const { bytes: signed } = await pdf.sign({
 - `libpdf.md` - Detailed LibPDF usage guide
 - `tools/document/document-creation.md` - Unified document format conversion and creation
 - `tools/conversion/mineru.md` - PDF to markdown/JSON (layout-aware, OCR)
+- `tools/ocr/overview.md` - OCR tool selection guide (PaddleOCR, GLM-OCR, MinerU, Docling)
+- `tools/ocr/paddleocr.md` - PaddleOCR scene text OCR for scanned PDFs and images
 - `tools/conversion/pandoc.md` - General document format conversion
 - `tools/browser/playwright.md` - For PDF rendering/screenshots

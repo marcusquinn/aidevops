@@ -266,6 +266,8 @@ Use this stack when you need custom Pydantic schemas, PII redaction, or fully lo
 - `tools/document/docstrange.md` - DocStrange: simpler single-install alternative (NanoNets, 7B model, schema extraction)
 - `tools/conversion/pandoc.md` - Document format conversion
 - `tools/conversion/mineru.md` - PDF to markdown (layout-aware)
+- `tools/ocr/overview.md` - OCR tool selection guide (when to use which tool)
+- `tools/ocr/paddleocr.md` - PaddleOCR scene text OCR (screenshots, photos, scanned PDFs)
 - `tools/ocr/glm-ocr.md` - Local OCR via Ollama
 - `services/document-processing/unstract.md` - Self-hosted document processing (alternative)
 - `todo/tasks/prd-document-extraction.md` - Full PRD
