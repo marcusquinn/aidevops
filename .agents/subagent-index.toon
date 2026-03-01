@@ -23,7 +23,7 @@ pro,gemini-2.5-pro,Capable large context
 grok,grok-3,Research and real-time web knowledge
 -->
 
-<!--TOON:subagents[58]{folder,purpose,key_files}:
+<!--TOON:subagents[59]{folder,purpose,key_files}:
 aidevops/,Framework internals - extending aidevops and architecture and plugins,setup|architecture|troubleshooting|self-improving-agents|claude-flow-comparison|plugins
 business/,Company orchestration - runner configs for company functions,company-runners
 memory/,Cross-session memory - SQLite FTS5 storage,README
@@ -56,7 +56,7 @@ tools/vision/,Vision AI - image generation understanding and editing with local 
 tools/voice/,Voice AI - TTS/STT/S2S model catalog voice bridge Pipecat pipeline and cloud voice agents,voice-models|voice-ai-models|speech-to-speech|cloud-voice-agents|voice-bridge|hyprwhspr|pipecat-opencode|transcription|buzz|qwen3-tts
 tools/research/,Website research - tech stack detection and analysis providers,providers/crft-lookup
 tools/data-extraction/,Data extraction - scraping business data,outscraper
-tools/deployment/,Deployment automation - self-hosted PaaS and orchestration,coolify|coolify-cli|vercel|cloudron-app-packaging|uncloud
+tools/deployment/,Deployment automation - self-hosted PaaS and orchestration,coolify|coolify-cli|vercel|cloudron-app-packaging|cloudron-app-packaging-skill|cloudron-app-publishing-skill|cloudron-server-ops-skill|uncloud
 tools/git/,Git operations - GitHub/GitLab/Gitea CLIs and diff tools,github-cli|gitlab-cli|gitea-cli|github-actions|worktrunk|lumen|jujutsu|conflict-resolution
 tools/credentials/,Secret management - API keys vaults and encryption stack,api-key-setup|api-key-management|vaultwarden|gopass|psst|multi-tenant|list-keys|sops|gocryptfs|encryption-stack
 tools/security/,Security tools - terminal guards privacy filtering IP reputation scanning and opsec,tirith|shannon|cdn-origin-ip|privacy-filter|ip-reputation|opsec
