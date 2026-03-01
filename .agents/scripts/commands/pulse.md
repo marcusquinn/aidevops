@@ -285,6 +285,51 @@ git -C <repo_path> push
 
 This ensures the next pulse cycle (and any concurrent sessions) see the updated state.
 
+## Step 3.7: Act on Quality Review Findings
+
+Each pulse-enabled repo has a persistent "Daily Code Quality Review" issue (labels: `quality-review` + `persistent`). The `pulse-wrapper.sh` daily sweep posts findings from ShellCheck, Qlty, SonarCloud, Codacy, and CodeRabbit as comments on these issues.
+
+**Check for new findings once per pulse.** For each repo, read the latest comment on the quality review issue:
+
+```bash
+# Get the quality review issue number (cached by the sweep)
+QUALITY_ISSUE=$(gh issue list --repo <slug> --label "quality-review" --label "persistent" --state open --json number --jq '.[0].number' 2>/dev/null)
+
+# Read the latest comment
+LATEST_COMMENT=$(gh api "repos/<slug>/issues/${QUALITY_ISSUE}/comments" --jq '.[-1].body' 2>/dev/null)
+```
+
+**Triage findings using judgment.** Read the comment and decide which findings are worth creating issues for. Not every finding warrants action — use these guidelines:
+
+- **Create an issue** for: security vulnerabilities, bugs, errors (ShellCheck errors, SonarCloud bugs/vulnerabilities), significant code smells that affect maintainability
+- **Skip** (don't create issues for): style nits, informational warnings in vendored/third-party code, SC1091 (source not found — these are expected for sourced scripts), findings in archived directories, CodeRabbit suggestions that are purely cosmetic
+- **Batch related findings** into a single issue when they share a root cause (e.g., "10 scripts missing `local` for variables" = 1 issue, not 10)
+
+**Create issues for actionable findings:**
+
+```bash
+gh issue create --repo <slug> \
+  --title "quality: <concise description of the finding>" \
+  --label "auto-dispatch" \
+  --body "Found by daily quality sweep on <date>.
+
+**Source**: <tool name> (ShellCheck/Qlty/SonarCloud/Codacy/CodeRabbit)
+**Severity**: <high/medium/low>
+**Files affected**: <list>
+
+**Finding**: <description>
+
+**Recommended fix**: <what to do>
+
+Ref: quality review issue #${QUALITY_ISSUE}"
+```
+
+**Dedup rule (Hard Rule 9 applies):** Before creating, search for existing issues: `gh issue list --repo <slug> --search "quality: <description>" --state open`. If a similar issue exists, skip it.
+
+**Rate limit:** Create at most 3 issues per repo per pulse cycle from quality findings. The sweep runs daily — there's no rush. Prioritise high-severity findings.
+
+**NEVER close the quality review issue itself** — it has the `persistent` label (Hard Rule from Step 3).
+
 ## Step 4: Record and Exit
 
 ```bash
