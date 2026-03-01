@@ -570,7 +570,39 @@ Workers are injected with an efficiency protocol via the supervisor dispatch pro
 
 4. **Research offloading** — Spawn Task sub-agents for heavy codebase exploration (reading 500+ line files, understanding patterns across multiple files). Sub-agents get fresh context windows and return concise summaries, saving the parent worker's context for implementation.
 
-5. **Parallel sub-work** — For independent subtasks (e.g., tests + docs), workers can use the Task tool to spawn sub-agents. This is faster than sequential execution when subtasks don't modify the same files.
+5. **Parallel sub-work (MANDATORY for independent subtasks)** — Workers MUST use the Task tool to run independent operations concurrently, not serially. This is not optional — serial execution of independent work wastes time proportional to the number of subtasks.
+
+   **When to parallelise** (use Task tool with multiple concurrent calls):
+   - Reading/analyzing multiple independent files or directories
+   - Running independent quality checks (lint + typecheck + test)
+   - Generating tests for separate modules that don't share state
+   - Researching multiple parts of the codebase simultaneously
+   - Creating independent documentation sections
+   - Any two+ operations where neither depends on the other's output
+
+   **When to stay sequential** (do NOT parallelise):
+   - Operations that modify the same files (merge conflicts)
+   - Steps where output of one feeds input of the next
+   - Git operations (add → commit → push must be sequential)
+   - Operations that depend on a shared resource (same DB table, same API endpoint)
+
+   **How**: Call the Task tool multiple times in a single message. Each Task call spawns a sub-agent with a fresh context window. Sub-agents return concise results that the parent worker uses to continue.
+
+   ```text
+   # WRONG — serial execution of independent research
+   Task("Read src/auth/ and summarise patterns")
+   # wait for result
+   Task("Read src/api/ and summarise patterns")
+   # wait for result
+   Task("Read src/utils/ and summarise patterns")
+
+   # RIGHT — parallel execution of independent research
+   Task("Read src/auth/ and summarise patterns")  ─┐
+   Task("Read src/api/ and summarise patterns")   ─┤ all in one message
+   Task("Read src/utils/ and summarise patterns") ─┘
+   ```
+
+   **Throughput impact**: 3 independent 2-minute tasks take 6 minutes serial vs 2 minutes parallel. Over a typical worker session with 4-6 parallelisable operations, this saves 30-60% of wall-clock time.
 
 6. **Checkpoint after each subtask** — Workers call `session-checkpoint-helper.sh save` after completing each subtask. If the session restarts or compacts, the worker can resume from the last checkpoint instead of restarting from scratch.
 
@@ -588,7 +620,7 @@ Workers are injected with an efficiency protocol via the supervisor dispatch pro
 | Context compacts → worker restarts from zero | Checkpoint + TodoWrite → resume from last subtask |
 | Complex task done linearly → 1 failure = full restart | Subtask tracking → only redo the failed subtask |
 | No internal structure → steps skipped or repeated | Explicit subtask list → nothing missed |
-| All work sequential → slower | Independent subtasks parallelised via Task tool |
+| All work sequential → 3x slower for 3 independent tasks | Independent subtasks parallelised via Task tool (mandatory) |
 | ShellCheck failures found in CI 5-10 min later | Pre-push gate catches violations instantly |
 
 ### Token Cost
