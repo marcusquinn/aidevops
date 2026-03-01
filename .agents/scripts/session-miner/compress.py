@@ -172,39 +172,128 @@ def compress_errors(chunks_dir: Path) -> dict:
     return {"patterns": error_patterns}
 
 
+def compress_git_correlation(chunks_dir: Path) -> dict:
+    """Compress git correlation chunks into productivity summaries.
+
+    Groups sessions by project, computes per-project and overall productivity
+    metrics, and identifies the most/least productive session patterns.
+    """
+    # Load summary chunk first
+    summary_file = chunks_dir / "git_summary.json"
+    summary = {}
+    if summary_file.exists():
+        try:
+            chunk = json.loads(summary_file.read_text(encoding="utf-8"))
+            summary = chunk.get("data", {})
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # Collect all productive session records
+    by_project = defaultdict(list)
+    all_sessions = []
+
+    for chunk_file in sorted(chunks_dir.glob("git_*.json")):
+        if chunk_file.name == "git_summary.json":
+            continue
+        try:
+            chunk = json.loads(chunk_file.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+
+        for record in chunk.get("records", []):
+            project = record.get("session_dir", "unknown")
+            by_project[project].append(record)
+            all_sessions.append(record)
+
+    # Per-project productivity
+    project_stats = {}
+    for project, sessions in sorted(by_project.items(), key=lambda x: -len(x[1])):
+        productive = [s for s in sessions if s.get("commits_count", 0) > 0]
+        total_commits = sum(s.get("commits_count", 0) for s in sessions)
+        total_insertions = sum(s.get("insertions", 0) for s in sessions)
+        total_deletions = sum(s.get("deletions", 0) for s in sessions)
+        project_stats[project] = {
+            "sessions": len(sessions),
+            "productive_sessions": len(productive),
+            "total_commits": total_commits,
+            "total_lines_changed": total_insertions + total_deletions,
+            "avg_commits_per_message": round(
+                sum(s.get("commits_per_message", 0) for s in productive)
+                / max(len(productive), 1), 3,
+            ),
+        }
+
+    # Top productive sessions (by commits_per_message, min 2 commits)
+    top_productive = sorted(
+        [s for s in all_sessions if s.get("commits_count", 0) >= 2],
+        key=lambda s: s.get("commits_per_message", 0),
+        reverse=True,
+    )[:10]
+
+    top_sessions = [
+        {
+            "title": s.get("session_title", "")[:100],
+            "project": s.get("session_dir", ""),
+            "commits": s.get("commits_count", 0),
+            "messages": s.get("user_messages", 0),
+            "ratio": s.get("commits_per_message", 0),
+            "duration_min": s.get("duration_minutes", 0),
+        }
+        for s in top_productive
+    ]
+
+    return {
+        "summary": summary,
+        "project_stats": project_stats,
+        "top_productive_sessions": top_sessions,
+    }
+
+
 def main():
     print(f"Compressing chunks from {CHUNKS_DIR}", file=sys.stderr)
-    
+
     steerage = compress_steerage(CHUNKS_DIR)
     errors = compress_errors(CHUNKS_DIR)
-    
+    git_correlation = compress_git_correlation(CHUNKS_DIR)
+
     # Load stats
     stats_file = CHUNKS_DIR / "stats.json"
     stats = {}
     if stats_file.exists():
         stats = json.loads(stats_file.read_text(encoding="utf-8")).get("data", {})
-    
+
     output = {
         "steerage": steerage,
         "steerage_counts": {k: len(v) for k, v in steerage.items()},
         "errors": errors,
         "stats": stats,
+        "git_correlation": git_correlation,
     }
-    
+
     OUTPUT.write_text(json.dumps(output, indent=2, ensure_ascii=False), encoding="utf-8")
-    
+
     total_steerage = sum(len(v) for v in steerage.values())
     total_errors = len(errors.get("patterns", []))
     file_size = OUTPUT.stat().st_size
-    
+
     print(f"Output: {OUTPUT}", file=sys.stderr)
     print(f"  {total_steerage} unique steerage signals", file=sys.stderr)
     print(f"  {total_errors} error patterns", file=sys.stderr)
     print(f"  {file_size / 1024:.1f} KB", file=sys.stderr)
-    
+
     # Print category breakdown
     for cat, signals in sorted(steerage.items(), key=lambda x: -len(x[1])):
         print(f"  steerage/{cat}: {len(signals)} unique signals", file=sys.stderr)
+
+    # Print git correlation summary
+    git_summary = git_correlation.get("summary", {})
+    if git_summary:
+        print(
+            f"  git: {git_summary.get('productive_sessions', 0)}"
+            f"/{git_summary.get('total_sessions', 0)} productive sessions,"
+            f" {git_summary.get('total_commits', 0)} commits",
+            file=sys.stderr,
+        )
 
 
 if __name__ == "__main__":

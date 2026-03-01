@@ -2,9 +2,10 @@
 """
 Session Miner — Phase 1: Extract high-signal data from coding assistant sessions.
 
-Extracts two categories of learning signal from local session databases:
+Extracts three categories of learning signal from local session databases:
 1. User steerage: corrections, preferences, guidance, workflow patterns
 2. Model errors: tool failures with surrounding context (what failed, what fixed it)
+3. Git correlation: cross-references sessions with git commit outcomes
 
 Output format is tool-agnostic — works with OpenCode now, adaptable to
 Claude Code, Cursor, or any tool that stores session data.
@@ -17,6 +18,7 @@ Usage:
     python3 extract.py --format jsonl     # JSONL output (default)
     python3 extract.py --format chunks    # Pre-chunked for model analysis
     python3 extract.py --limit 100        # Limit sessions processed
+    python3 extract.py --no-git           # Skip git correlation extraction
 """
 
 import argparse
@@ -24,6 +26,7 @@ import json
 import os
 import re
 import sqlite3
+import subprocess
 import sys
 from collections import defaultdict
 from datetime import datetime
@@ -416,6 +419,217 @@ def extract_error_stats(conn: sqlite3.Connection) -> dict:
     return stats
 
 
+def _find_git_root(directory: str) -> Optional[str]:
+    """Find the git root for a directory, or None if not a git repo."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", directory, "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
+    return None
+
+
+def _git_log_in_window(
+    repo_path: str, start_epoch_ms: int, end_epoch_ms: int, buffer_minutes: int = 60,
+) -> list[dict]:
+    """Query git log for commits within a time window.
+
+    Args:
+        repo_path: Path to git repository root.
+        start_epoch_ms: Session start time (epoch milliseconds).
+        end_epoch_ms: Session end time (epoch milliseconds).
+        buffer_minutes: Extra minutes after session end to capture delayed commits.
+
+    Returns:
+        List of commit dicts with hash, timestamp, subject, and diff stats.
+    """
+    # Convert ms to seconds for git --after/--before (ISO 8601)
+    start_ts = datetime.fromtimestamp(start_epoch_ms / 1000).isoformat()
+    end_ts = datetime.fromtimestamp(
+        end_epoch_ms / 1000 + buffer_minutes * 60
+    ).isoformat()
+
+    try:
+        # Get commit metadata
+        result = subprocess.run(
+            [
+                "git", "-C", repo_path, "log",
+                f"--after={start_ts}", f"--before={end_ts}",
+                "--format=%H|%aI|%s",
+            ],
+            capture_output=True, text=True, timeout=15,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return []
+
+        commits = []
+        for line in result.stdout.strip().split("\n"):
+            if not line:
+                continue
+            parts = line.split("|", 2)
+            if len(parts) < 3:
+                continue
+            commit_hash, timestamp, subject = parts
+            commits.append({
+                "hash": commit_hash[:12],
+                "timestamp": timestamp,
+                "subject": subject[:200],
+            })
+
+        if not commits:
+            return []
+
+        # Get aggregate diff stats for the commit range
+        hash_list = [c["hash"] for c in commits]
+        stat_result = subprocess.run(
+            [
+                "git", "-C", repo_path, "diff", "--shortstat",
+                f"{hash_list[-1]}~1..{hash_list[0]}",
+            ],
+            capture_output=True, text=True, timeout=15,
+        )
+        if stat_result.returncode == 0 and stat_result.stdout.strip():
+            stat_line = stat_result.stdout.strip()
+            # Parse "N files changed, N insertions(+), N deletions(-)"
+            files_m = re.search(r"(\d+) files? changed", stat_line)
+            ins_m = re.search(r"(\d+) insertions?", stat_line)
+            del_m = re.search(r"(\d+) deletions?", stat_line)
+            for commit in commits:
+                commit["_aggregate"] = True  # Mark: stats are aggregate, not per-commit
+            if commits:
+                commits[0]["diff_stats"] = {
+                    "files_changed": int(files_m.group(1)) if files_m else 0,
+                    "insertions": int(ins_m.group(1)) if ins_m else 0,
+                    "deletions": int(del_m.group(1)) if del_m else 0,
+                }
+
+        return commits
+
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return []
+
+
+def extract_git_correlation(
+    conn: sqlite3.Connection, limit: Optional[int] = None,
+) -> list[dict]:
+    """Extract git-commit correlation data for sessions.
+
+    For each session with a project directory, finds commits produced during
+    (or shortly after) the session and computes productivity metrics.
+
+    Returns:
+        List of per-session git correlation records.
+    """
+    print("Extracting git correlation data...", file=sys.stderr)
+
+    query = """
+    SELECT
+        s.id as session_id,
+        s.title as session_title,
+        s.directory as session_dir,
+        s.time_created as session_start,
+        s.time_updated as session_end,
+        COUNT(DISTINCT m.id) as total_messages,
+        SUM(CASE WHEN json_extract(m.data, '$.role') = 'user' THEN 1 ELSE 0 END) as user_messages
+    FROM session s
+    LEFT JOIN message m ON m.session_id = s.id
+    WHERE s.directory IS NOT NULL AND s.directory != ''
+    GROUP BY s.id
+    ORDER BY s.time_created DESC
+    """
+    if limit:
+        query += f" LIMIT {int(limit)}"
+
+    # Cache git root lookups to avoid repeated subprocess calls
+    git_root_cache: dict[str, Optional[str]] = {}
+    correlations = []
+    skipped = 0
+
+    for row in conn.execute(query):
+        session_dir = row["session_dir"]
+        if not session_dir or not os.path.isdir(session_dir):
+            skipped += 1
+            continue
+
+        # Resolve git root (cached)
+        if session_dir not in git_root_cache:
+            git_root_cache[session_dir] = _find_git_root(session_dir)
+        git_root = git_root_cache[session_dir]
+
+        if not git_root:
+            skipped += 1
+            continue
+
+        # Query git log for the session window
+        commits = _git_log_in_window(
+            git_root, row["session_start"], row["session_end"],
+        )
+
+        user_msg_count = row["user_messages"] or 0
+        total_msg_count = row["total_messages"] or 0
+        commits_count = len(commits)
+
+        # Compute diff stats from the first commit (which has aggregate stats)
+        files_changed = 0
+        insertions = 0
+        deletions = 0
+        if commits and "diff_stats" in commits[0]:
+            stats = commits[0]["diff_stats"]
+            files_changed = stats.get("files_changed", 0)
+            insertions = stats.get("insertions", 0)
+            deletions = stats.get("deletions", 0)
+
+        # Productivity ratios (avoid division by zero)
+        commits_per_message = (
+            round(commits_count / user_msg_count, 3) if user_msg_count > 0 else 0
+        )
+        lines_per_message = (
+            round((insertions + deletions) / user_msg_count, 1)
+            if user_msg_count > 0 else 0
+        )
+
+        # Session duration in minutes
+        duration_min = round(
+            (row["session_end"] - row["session_start"]) / 1000 / 60, 1,
+        )
+
+        record = {
+            "type": "git_correlation",
+            "session_title": row["session_title"] or "",
+            "session_dir": _sanitize_path(session_dir),
+            "session_start": row["session_start"],
+            "session_end": row["session_end"],
+            "duration_minutes": duration_min,
+            "user_messages": user_msg_count,
+            "total_messages": total_msg_count,
+            "commits_count": commits_count,
+            "files_changed": files_changed,
+            "insertions": insertions,
+            "deletions": deletions,
+            "commits_per_message": commits_per_message,
+            "lines_per_message": lines_per_message,
+            "commits": [
+                {"hash": c["hash"], "subject": c["subject"]}
+                for c in commits
+            ] if commits else [],
+        }
+        correlations.append(record)
+
+    print(
+        f"  Found {len(correlations)} sessions with git data "
+        f"({skipped} skipped — no git repo or dir missing)",
+        file=sys.stderr,
+    )
+    productive = sum(1 for c in correlations if c["commits_count"] > 0)
+    print(f"  {productive} sessions produced commits", file=sys.stderr)
+
+    return correlations
+
+
 def _sanitize_path(path: str) -> str:
     """Strip user-specific path components, keep only project-relevant parts."""
     if not path:
@@ -459,11 +673,12 @@ def _summarize_tool_input(tool: str, tool_input: Any) -> str:
 
 
 def build_chunks(steerage: list[dict], errors: list[dict], stats: dict,
+                 git_correlations: Optional[list[dict]] = None,
                  max_chunk_bytes: int = 80_000) -> list[dict]:
     """Build analysis-ready chunks that fit within model context.
 
     Each chunk is self-contained with:
-    - A batch of steerage or error records
+    - A batch of steerage, error, or git correlation records
     - Enough context for the model to extract patterns
     - Metadata for deduplication
     """
@@ -549,6 +764,76 @@ def build_chunks(steerage: list[dict], errors: list[dict], stats: dict,
                 "records": current_chunk,
             })
 
+    # Chunk git correlations (split productive vs non-productive)
+    if git_correlations:
+        productive = [r for r in git_correlations if r["commits_count"] > 0]
+        unproductive = [r for r in git_correlations if r["commits_count"] == 0]
+
+        # Productivity summary (always included, small)
+        total_sessions = len(git_correlations)
+        total_commits = sum(r["commits_count"] for r in git_correlations)
+        total_insertions = sum(r["insertions"] for r in git_correlations)
+        total_deletions = sum(r["deletions"] for r in git_correlations)
+        avg_duration = (
+            round(sum(r["duration_minutes"] for r in git_correlations) / total_sessions, 1)
+            if total_sessions > 0 else 0
+        )
+        avg_commits_per_msg = (
+            round(
+                sum(r["commits_per_message"] for r in productive) / len(productive), 3,
+            )
+            if productive else 0
+        )
+
+        chunks.append({
+            "chunk_id": "git_summary",
+            "chunk_type": "git_correlation",
+            "category": "summary",
+            "data": {
+                "total_sessions": total_sessions,
+                "productive_sessions": len(productive),
+                "unproductive_sessions": len(unproductive),
+                "productivity_rate": round(len(productive) / max(total_sessions, 1), 3),
+                "total_commits": total_commits,
+                "total_insertions": total_insertions,
+                "total_deletions": total_deletions,
+                "avg_session_duration_min": avg_duration,
+                "avg_commits_per_message": avg_commits_per_msg,
+            },
+        })
+
+        # Chunk productive sessions (these have the interesting data)
+        for batch_name, batch in [("productive", productive), ("unproductive", unproductive)]:
+            current_chunk = []
+            current_size = 0
+
+            for record in batch:
+                record_json = json.dumps(record)
+                record_size = len(record_json.encode("utf-8"))
+
+                if current_size + record_size > max_chunk_bytes and current_chunk:
+                    chunks.append({
+                        "chunk_id": f"git_{batch_name}_{len(chunks)}",
+                        "chunk_type": "git_correlation",
+                        "category": batch_name,
+                        "record_count": len(current_chunk),
+                        "records": current_chunk,
+                    })
+                    current_chunk = []
+                    current_size = 0
+
+                current_chunk.append(record)
+                current_size += record_size
+
+            if current_chunk:
+                chunks.append({
+                    "chunk_id": f"git_{batch_name}_{len(chunks)}",
+                    "chunk_type": "git_correlation",
+                    "category": batch_name,
+                    "record_count": len(current_chunk),
+                    "records": current_chunk,
+                })
+
     return chunks
 
 
@@ -601,6 +886,8 @@ def main():
                         help="Limit records extracted per category")
     parser.add_argument("--output", type=Path, default=OUTPUT_DIR,
                         help=f"Output directory (default: {OUTPUT_DIR})")
+    parser.add_argument("--no-git", action="store_true",
+                        help="Skip git correlation extraction")
     args = parser.parse_args()
 
     print(f"Session Miner — Extracting from {args.db}", file=sys.stderr)
@@ -618,22 +905,32 @@ def main():
         # Phase 1c: Aggregate stats
         stats = extract_error_stats(conn)
 
+        # Phase 1d: Extract git correlation (unless disabled)
+        git_correlations = None
+        if not args.no_git:
+            git_correlations = extract_git_correlation(conn, limit=args.limit)
+
         # Phase 2: Build chunks for model analysis
         if args.format == "chunks":
-            chunks = build_chunks(steerage, errors, stats)
+            chunks = build_chunks(steerage, errors, stats, git_correlations)
             out_path = write_output(chunks, args.output, fmt="chunks")
             print(f"\nOutput: {out_path}/", file=sys.stderr)
             print(f"  {len(chunks)} chunks written", file=sys.stderr)
             print(f"  {len(steerage)} steerage signals", file=sys.stderr)
             print(f"  {len(errors)} error sequences", file=sys.stderr)
+            if git_correlations is not None:
+                productive = sum(1 for c in git_correlations if c["commits_count"] > 0)
+                print(f"  {len(git_correlations)} git correlations ({productive} productive)", file=sys.stderr)
         else:
             all_records = [{"type": "stats", **stats}] + steerage + errors
+            if git_correlations:
+                all_records.extend(git_correlations)
             out_path = write_output(all_records, args.output, fmt="jsonl")
             print(f"\nOutput: {out_path}", file=sys.stderr)
             print(f"  {len(steerage)} steerage + {len(errors)} errors", file=sys.stderr)
 
         # Print summary to stdout
-        print(json.dumps({
+        summary = {
             "steerage_count": len(steerage),
             "error_count": len(errors),
             "steerage_categories": dict(
@@ -647,7 +944,18 @@ def main():
             ),
             "error_categories": stats.get("error_categories", {}),
             "output": str(out_path),
-        }, indent=2))
+        }
+        if git_correlations is not None:
+            productive = [c for c in git_correlations if c["commits_count"] > 0]
+            summary["git_correlation"] = {
+                "total_sessions": len(git_correlations),
+                "productive_sessions": len(productive),
+                "total_commits": sum(c["commits_count"] for c in git_correlations),
+                "avg_commits_per_message": round(
+                    sum(c["commits_per_message"] for c in productive) / max(len(productive), 1), 3,
+                ),
+            }
+        print(json.dumps(summary, indent=2))
 
     finally:
         conn.close()

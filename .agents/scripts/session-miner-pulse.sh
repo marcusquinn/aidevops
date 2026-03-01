@@ -214,6 +214,40 @@ if uncovered:
     for p in uncovered[:5]:
         print(f'  - {p[\"tool\"]}:{p[\"error_category\"]} ({p[\"count\"]}x) — consider adding prevention rule')
     print()
+
+# Git correlation / productivity analysis
+git_data = data.get('git_correlation', {})
+git_summary = git_data.get('summary', {})
+if git_summary:
+    total_s = git_summary.get('total_sessions', 0)
+    productive_s = git_summary.get('productive_sessions', 0)
+    rate = git_summary.get('productivity_rate', 0)
+    total_commits = git_summary.get('total_commits', 0)
+    avg_cpm = git_summary.get('avg_commits_per_message', 0)
+    print('### Git Productivity')
+    print(f'  Sessions with git data: {total_s}')
+    print(f'  Productive sessions (>=1 commit): {productive_s} ({rate:.0%})')
+    print(f'  Total commits: {total_commits}')
+    print(f'  Avg commits/message (productive): {avg_cpm:.3f}')
+    print()
+
+    # Per-project breakdown
+    project_stats = git_data.get('project_stats', {})
+    if project_stats:
+        print('### Productivity by Project')
+        for project, ps in sorted(project_stats.items(), key=lambda x: -x[1].get('total_commits', 0))[:10]:
+            print(f'  {project}: {ps[\"productive_sessions\"]}/{ps[\"sessions\"]} productive, '
+                  f'{ps[\"total_commits\"]} commits, {ps[\"total_lines_changed\"]} lines')
+        print()
+
+    # Top productive sessions
+    top_sessions = git_data.get('top_productive_sessions', [])
+    if top_sessions:
+        print('### Most Productive Sessions')
+        for s in top_sessions[:5]:
+            print(f'  {s[\"title\"][:60]} — {s[\"commits\"]} commits/{s[\"messages\"]} msgs '
+                  f'(ratio: {s[\"ratio\"]:.2f}, {s[\"duration_min\"]:.0f}min)')
+        print()
 " 2>/dev/null
 	return $?
 }
