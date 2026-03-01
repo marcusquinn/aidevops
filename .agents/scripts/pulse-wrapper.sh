@@ -598,6 +598,420 @@ cleanup_worktrees() {
 }
 
 #######################################
+# Update pinned health issue for a single repo
+#
+# Creates or updates a pinned GitHub issue with live status:
+#   - Open PRs and issues counts
+#   - Active headless workers (from ps)
+#   - System resources (CPU, RAM)
+#   - Last pulse timestamp
+#
+# One issue per runner (GitHub user) per repo. Uses labels
+# "supervisor" + "$runner_user" for dedup. Issue number cached
+# in ~/.aidevops/logs/ to avoid repeated lookups.
+#
+# Arguments:
+#   $1 - repo slug (owner/repo)
+#   $2 - repo path (local filesystem)
+# Returns: 0 always (best-effort, never breaks the pulse)
+#######################################
+_update_health_issue_for_repo() {
+	local repo_slug="$1"
+	local repo_path="$2"
+
+	[[ -z "$repo_slug" ]] && return 0
+
+	# Per-runner identity
+	local runner_user
+	runner_user=$(gh api user --jq '.login' 2>/dev/null || whoami)
+	local runner_prefix="[Supervisor:${runner_user}]"
+
+	# Cache file for this runner + repo (slug with / replaced by -)
+	local slug_safe="${repo_slug//\//-}"
+	local cache_dir="${HOME}/.aidevops/logs"
+	local health_issue_file="${cache_dir}/health-issue-${runner_user}-${slug_safe}"
+	local health_issue_number=""
+
+	mkdir -p "$cache_dir"
+
+	# Try cached issue number first
+	if [[ -f "$health_issue_file" ]]; then
+		health_issue_number=$(cat "$health_issue_file" 2>/dev/null || echo "")
+	fi
+
+	# Validate cached issue still exists and is open
+	if [[ -n "$health_issue_number" ]]; then
+		local issue_state
+		issue_state=$(gh issue view "$health_issue_number" --repo "$repo_slug" --json state --jq '.state' 2>/dev/null || echo "")
+		if [[ "$issue_state" != "OPEN" ]]; then
+			_unpin_health_issue "$health_issue_number" "$repo_slug"
+			health_issue_number=""
+			rm -f "$health_issue_file" 2>/dev/null || true
+		fi
+	fi
+
+	# Search by labels (more reliable than title search)
+	if [[ -z "$health_issue_number" ]]; then
+		local label_results
+		label_results=$(gh issue list --repo "$repo_slug" \
+			--label "supervisor" --label "$runner_user" \
+			--state open --json number,title \
+			--jq '[.[] | select(.title | startswith("[Supervisor:"))] | sort_by(.number) | reverse' 2>/dev/null || echo "[]")
+
+		health_issue_number=$(printf '%s' "$label_results" | jq -r '.[0].number // empty' 2>/dev/null || echo "")
+
+		# Dedup: close all but the newest
+		local dup_count
+		dup_count=$(printf '%s' "$label_results" | jq 'length' 2>/dev/null || echo "0")
+		if [[ "${dup_count:-0}" -gt 1 ]]; then
+			local dup_numbers
+			dup_numbers=$(printf '%s' "$label_results" | jq -r '.[1:][].number' 2>/dev/null || echo "")
+			while IFS= read -r dup_num; do
+				[[ -z "$dup_num" ]] && continue
+				_unpin_health_issue "$dup_num" "$repo_slug"
+				gh issue close "$dup_num" --repo "$repo_slug" \
+					--comment "Closing duplicate supervisor health issue — superseded by #${health_issue_number}." 2>/dev/null || true
+			done <<<"$dup_numbers"
+		fi
+	fi
+
+	# Fallback: title-based search
+	if [[ -z "$health_issue_number" ]]; then
+		health_issue_number=$(gh issue list --repo "$repo_slug" \
+			--search "in:title ${runner_prefix}" \
+			--state open --json number,title \
+			--jq "[.[] | select(.title | startswith(\"${runner_prefix}\"))][0].number" 2>/dev/null || echo "")
+		# Backfill labels
+		if [[ -n "$health_issue_number" ]]; then
+			gh label create "$runner_user" --repo "$repo_slug" --color "0E8A16" \
+				--description "Supervisor runner: ${runner_user}" --force 2>/dev/null || true
+			gh issue edit "$health_issue_number" --repo "$repo_slug" \
+				--add-label "supervisor" --add-label "$runner_user" 2>/dev/null || true
+		fi
+	fi
+
+	# Create the issue if it doesn't exist
+	if [[ -z "$health_issue_number" ]]; then
+		gh label create "supervisor" --repo "$repo_slug" --color "1D76DB" \
+			--description "Supervisor health dashboard" --force 2>/dev/null || true
+		gh label create "$runner_user" --repo "$repo_slug" --color "0E8A16" \
+			--description "Supervisor runner: ${runner_user}" --force 2>/dev/null || true
+
+		health_issue_number=$(gh issue create --repo "$repo_slug" \
+			--title "${runner_prefix} starting..." \
+			--body "Live supervisor status for **${runner_user}**. Updated each pulse. Pin this issue for at-a-glance monitoring." \
+			--label "supervisor" --label "$runner_user" 2>/dev/null | grep -oE '[0-9]+$' || echo "")
+
+		if [[ -z "$health_issue_number" ]]; then
+			echo "[pulse-wrapper] Health issue: could not create for ${repo_slug}" >>"$LOGFILE"
+			return 0
+		fi
+
+		# Pin (best-effort — requires admin)
+		local node_id
+		node_id=$(gh issue view "$health_issue_number" --repo "$repo_slug" --json id --jq '.id' 2>/dev/null || echo "")
+		if [[ -n "$node_id" ]]; then
+			gh api graphql -f query="
+				mutation {
+					pinIssue(input: {issueId: \"${node_id}\"}) {
+						issue { number }
+					}
+				}" >/dev/null 2>&1 || true
+		fi
+		echo "[pulse-wrapper] Health issue: created and pinned #${health_issue_number} for ${runner_user} in ${repo_slug}" >>"$LOGFILE"
+	fi
+
+	# Ensure pinned (idempotent)
+	local active_node_id
+	active_node_id=$(gh issue view "$health_issue_number" --repo "$repo_slug" --json id --jq '.id' 2>/dev/null || echo "")
+	if [[ -n "$active_node_id" ]]; then
+		gh api graphql -f query="
+			mutation {
+				pinIssue(input: {issueId: \"${active_node_id}\"}) {
+					issue { number }
+				}
+			}" >/dev/null 2>&1 || true
+	fi
+
+	# Cache the issue number
+	echo "$health_issue_number" >"$health_issue_file"
+
+	# --- Gather stats from gh CLI ---
+	local now_iso
+	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+	# Open PRs
+	local pr_json
+	pr_json=$(gh pr list --repo "$repo_slug" --state open \
+		--json number,title,headRefName,updatedAt,reviewDecision,statusCheckRollup \
+		--limit 20 2>/dev/null) || pr_json="[]"
+	local pr_count
+	pr_count=$(echo "$pr_json" | jq 'length')
+
+	# Open issues (exclude supervisor issues)
+	local issue_json
+	issue_json=$(gh issue list --repo "$repo_slug" --state open \
+		--json number,title,labels,updatedAt \
+		--limit 30 2>/dev/null) || issue_json="[]"
+	local issue_count
+	issue_count=$(echo "$issue_json" | jq '[.[] | select(.labels | map(.name) | index("supervisor") | not)] | length')
+	local total_issue_count
+	total_issue_count=$(echo "$issue_json" | jq 'length')
+
+	# Active headless workers (opencode processes for this repo)
+	local workers_md=""
+	local worker_count=0
+	local worker_lines
+	worker_lines=$(ps axo pid,tty,etime,command 2>/dev/null | grep '\.opencode' | grep -v grep | grep -v 'bash-language-server' || true)
+
+	if [[ -n "$worker_lines" ]]; then
+		local worker_table=""
+		while IFS= read -r line; do
+			local w_pid w_tty w_etime w_cmd
+			w_pid=$(echo "$line" | awk '{print $1}')
+			w_tty=$(echo "$line" | awk '{print $2}')
+			w_etime=$(echo "$line" | awk '{print $3}')
+			w_cmd=$(echo "$line" | cut -d' ' -f4-)
+
+			# Only count headless workers (no TTY)
+			[[ "$w_tty" != "??" ]] && continue
+
+			# Extract title if present (--title "...")
+			local w_title="headless"
+			if [[ "$w_cmd" =~ --title[[:space:]]+\"([^\"]+)\" ]] || [[ "$w_cmd" =~ --title[[:space:]]+([^[:space:]]+) ]]; then
+				w_title="${BASH_REMATCH[1]}"
+			fi
+
+			# Extract dir if present
+			local w_dir=""
+			if [[ "$w_cmd" =~ --dir[[:space:]]+([^[:space:]]+) ]]; then
+				w_dir="${BASH_REMATCH[1]}"
+			fi
+
+			# Only include workers for this repo (or all if dir not detectable)
+			if [[ -n "$w_dir" && "$w_dir" != "$repo_path"* ]]; then
+				continue
+			fi
+
+			local w_title_short="${w_title:0:60}"
+			[[ ${#w_title} -gt 60 ]] && w_title_short="${w_title_short}..."
+			worker_table="${worker_table}| ${w_pid} | ${w_etime} | ${w_title_short} |
+"
+			worker_count=$((worker_count + 1))
+		done <<<"$worker_lines"
+
+		if [[ "$worker_count" -gt 0 ]]; then
+			workers_md="| PID | Uptime | Title |
+| --- | --- | --- |
+${worker_table}"
+		fi
+	fi
+
+	if [[ "$worker_count" -eq 0 ]]; then
+		workers_md="_No active workers_"
+	fi
+
+	# PRs table
+	local prs_md=""
+	if [[ "$pr_count" -gt 0 ]]; then
+		prs_md="| # | Title | Branch | Checks | Review | Updated |
+| --- | --- | --- | --- | --- | --- |
+"
+		prs_md="${prs_md}$(echo "$pr_json" | jq -r '.[] | "| #\(.number) | \(.title[:60]) | `\(.headRefName)` | \(if .statusCheckRollup == null or (.statusCheckRollup | length) == 0 then "none" elif (.statusCheckRollup | all((.conclusion // .state) == "SUCCESS")) then "PASS" elif (.statusCheckRollup | any((.conclusion // .state) == "FAILURE")) then "FAIL" else "PENDING" end) | \(if .reviewDecision == null or .reviewDecision == "" then "NONE" else .reviewDecision end) | \(.updatedAt[:16]) |"')"
+	else
+		prs_md="_No open PRs_"
+	fi
+
+	# System resources
+	local sys_cpu_cores sys_load_1m sys_load_5m sys_memory sys_procs
+	sys_cpu_cores=$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo "?")
+	sys_procs=$(ps aux 2>/dev/null | wc -l | tr -d ' ')
+
+	if [[ "$(uname)" == "Darwin" ]]; then
+		local load_str
+		load_str=$(sysctl -n vm.loadavg 2>/dev/null || echo "{ 0 0 0 }")
+		sys_load_1m=$(echo "$load_str" | awk '{print $2}')
+		sys_load_5m=$(echo "$load_str" | awk '{print $3}')
+
+		local page_size vm_free vm_inactive
+		page_size=$(sysctl -n hw.pagesize 2>/dev/null || echo "16384")
+		vm_free=$(vm_stat 2>/dev/null | awk '/Pages free/ {gsub(/\./,"",$3); print $3}')
+		vm_inactive=$(vm_stat 2>/dev/null | awk '/Pages inactive/ {gsub(/\./,"",$3); print $3}')
+		if [[ -n "$vm_free" ]]; then
+			local avail_mb=$(((${vm_free:-0} + ${vm_inactive:-0}) * page_size / 1048576))
+			if [[ "$avail_mb" -lt 1024 ]]; then
+				sys_memory="HIGH pressure (${avail_mb}MB free)"
+			elif [[ "$avail_mb" -lt 4096 ]]; then
+				sys_memory="medium (${avail_mb}MB free)"
+			else
+				sys_memory="low (${avail_mb}MB free)"
+			fi
+		else
+			sys_memory="unknown"
+		fi
+	elif [[ -f /proc/loadavg ]]; then
+		read -r sys_load_1m sys_load_5m _ </proc/loadavg
+		local mem_avail
+		mem_avail=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo "")
+		if [[ -n "$mem_avail" ]]; then
+			if [[ "$mem_avail" -lt 1024 ]]; then
+				sys_memory="HIGH pressure (${mem_avail}MB free)"
+			elif [[ "$mem_avail" -lt 4096 ]]; then
+				sys_memory="medium (${mem_avail}MB free)"
+			else
+				sys_memory="low (${mem_avail}MB free)"
+			fi
+		else
+			sys_memory="unknown"
+		fi
+	else
+		sys_load_1m="?"
+		sys_load_5m="?"
+		sys_memory="unknown"
+	fi
+
+	local sys_load_ratio="?"
+	if [[ -n "${sys_load_1m:-}" && "${sys_cpu_cores:-0}" -gt 0 && "${sys_cpu_cores}" != "?" ]]; then
+		sys_load_ratio=$(awk "BEGIN {printf \"%d\", (${sys_load_1m} / ${sys_cpu_cores}) * 100}" 2>/dev/null || echo "?")
+	fi
+
+	# Worktree count for this repo
+	local wt_count=0
+	if [[ -d "${repo_path}/.git" ]]; then
+		wt_count=$(git -C "$repo_path" worktree list 2>/dev/null | wc -l | tr -d ' ')
+	fi
+
+	# Max workers
+	local max_workers="?"
+	local max_workers_file="${HOME}/.aidevops/logs/pulse-max-workers"
+	if [[ -f "$max_workers_file" ]]; then
+		max_workers=$(cat "$max_workers_file" 2>/dev/null || echo "?")
+	fi
+
+	# --- Assemble body ---
+	local body
+	body="## Queue Health Dashboard
+
+**Last pulse**: \`${now_iso}\`
+**Runner**: \`${runner_user}\`
+**Repo**: \`${repo_slug}\`
+
+### Summary
+
+| Metric | Count |
+| --- | --- |
+| Open PRs | ${pr_count} |
+| Open Issues | ${issue_count} |
+| Active Workers | ${worker_count} |
+| Max Workers | ${max_workers} |
+| Worktrees | ${wt_count} |
+
+### Open PRs
+
+${prs_md}
+
+### Active Workers
+
+${workers_md}
+
+### System Resources
+
+| Metric | Value |
+| --- | --- |
+| CPU | ${sys_load_ratio}% used (${sys_cpu_cores} cores, load: ${sys_load_1m}/${sys_load_5m}) |
+| Memory | ${sys_memory} |
+| Processes | ${sys_procs} |
+
+---
+_Auto-updated by supervisor pulse. Do not edit manually._"
+
+	# Update the issue body
+	gh issue edit "$health_issue_number" --repo "$repo_slug" --body "$body" >/dev/null 2>&1 || {
+		echo "[pulse-wrapper] Health issue: failed to update body for #${health_issue_number}" >>"$LOGFILE"
+		return 0
+	}
+
+	# Build title with stats
+	local title_parts="${pr_count} PRs, ${issue_count} issues, ${worker_count} workers"
+	local title_time
+	title_time=$(date -u +"%H:%M")
+	local health_title="${runner_prefix} ${title_parts} at ${title_time} UTC"
+
+	# Only update title if stats changed
+	local current_title
+	current_title=$(gh issue view "$health_issue_number" --repo "$repo_slug" --json title --jq '.title' 2>/dev/null || echo "")
+	local current_stats="${current_title% at [0-9][0-9]:[0-9][0-9] UTC}"
+	local new_stats="${health_title% at [0-9][0-9]:[0-9][0-9] UTC}"
+	if [[ "$current_stats" != "$new_stats" ]]; then
+		gh issue edit "$health_issue_number" --repo "$repo_slug" --title "$health_title" >/dev/null 2>&1 || true
+	fi
+
+	return 0
+}
+
+#######################################
+# Unpin a health issue (best-effort)
+# Arguments:
+#   $1 - issue number
+#   $2 - repo slug
+#######################################
+_unpin_health_issue() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	[[ -z "$issue_number" || -z "$repo_slug" ]] && return 0
+
+	local issue_node_id
+	issue_node_id=$(gh issue view "$issue_number" --repo "$repo_slug" --json id --jq '.id' 2>/dev/null || echo "")
+	[[ -z "$issue_node_id" ]] && return 0
+
+	gh api graphql -f query="
+		mutation {
+			unpinIssue(input: {issueId: \"${issue_node_id}\"}) {
+				issue { number }
+			}
+		}" >/dev/null 2>&1 || true
+
+	return 0
+}
+
+#######################################
+# Update health issues for ALL pulse-enabled repos
+#
+# Iterates repos.json and calls _update_health_issue_for_repo for each
+# non-local-only repo with a slug. Runs sequentially to avoid gh API
+# rate limiting. Best-effort — failures in one repo don't block others.
+#######################################
+update_health_issues() {
+	command -v gh &>/dev/null || return 0
+	gh auth status &>/dev/null 2>&1 || return 0
+
+	local repos_json="$REPOS_JSON"
+	if [[ ! -f "$repos_json" ]]; then
+		return 0
+	fi
+
+	local repo_entries
+	repo_entries=$(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | "\(.slug)|\(.path)"' "$repos_json" 2>/dev/null || echo "")
+
+	if [[ -z "$repo_entries" ]]; then
+		return 0
+	fi
+
+	local updated=0
+	while IFS='|' read -r slug path; do
+		[[ -z "$slug" ]] && continue
+		_update_health_issue_for_repo "$slug" "$path" || true
+		updated=$((updated + 1))
+	done <<<"$repo_entries"
+
+	if [[ "$updated" -gt 0 ]]; then
+		echo "[pulse-wrapper] Health issues: updated $updated repo(s)" >>"$LOGFILE"
+	fi
+	return 0
+}
+
+#######################################
 # Main
 #######################################
 main() {
@@ -610,6 +1024,7 @@ main() {
 	calculate_max_workers
 	prefetch_state
 	run_pulse
+	update_health_issues
 	return 0
 }
 
