@@ -355,6 +355,8 @@ The AI will iterate on the task until outputting:
 6. Conventional commits used (for auto-changelog)
 7. **Headless rules observed** (see below)
 
+**Parallelism rule (t217)**: When your task involves multiple independent operations (reading several files, running lint + typecheck + tests, researching separate modules), use the Task tool to run them concurrently in a single message — not one at a time. Serial execution of independent work wastes wall-clock time proportional to the number of subtasks. See `tools/ai-assistants/headless-dispatch.md` "Worker Efficiency Protocol" point 5 for criteria and examples.
+
 **Replanning rule**: If your approach isn't working after a reasonable attempt, step back
 and try a fundamentally different strategy before giving up. A fresh approach often
 succeeds where incremental fixes to a broken one fail.
