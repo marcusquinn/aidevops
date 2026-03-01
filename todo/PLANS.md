@@ -22,6 +22,152 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-03-01] Vector Search Agent — zvec and Per-Tenant RAG for SaaS
+
+**Status:** Planning
+**Estimate:** ~7h (ai:5h test:1h read:1h)
+**TODO:** t1370 (parent), t1370.1-t1370.5 (subtasks)
+**Logged:** 2026-03-01
+**Brief:** [todo/tasks/t1370-brief.md](tasks/t1370-brief.md)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged}:
+p037,Vector Search Agent,planning,0,2,,plan|feature|database|vector-search|rag,7h,5h,1h,1h,2026-03-01T00:00Z
+-->
+
+#### Purpose
+
+Add a unified vector search decision guide and implementation reference for SaaS app development. The framework currently has database agents (Postgres/Drizzle, PGlite, multi-org isolation) and a Cloudflare Vectorize reference, but no single place to compare vector search options or design per-tenant RAG pipelines.
+
+The catalyst is **zvec** (alibaba/zvec, 8.4k stars, Apache-2.0) — an in-process C++ vector database built on Alibaba's Proxima engine. It fills a specific gap as a **server-side embedded vector DB** that doesn't require Postgres or a hosted service, with native Node.js and Python bindings.
+
+**Why zvec matters for multi-tenant SaaS:**
+
+- **Collection-per-tenant isolation**: Each org gets its own collection (or DB file) — physical isolation without running N server instances. Creating/destroying a collection is a single function call.
+- **In-process, zero network hop**: Vector search runs in the same process as your app server. No vector DB service to manage, no network latency on queries.
+- **Dense + sparse + hybrid**: Native multi-vector queries (dense semantic + sparse lexical) in a single call, with built-in rerankers (RRF, weighted, cross-encoder).
+- **Built-in embedding pipeline**: Ships with embedding functions (local Sentence Transformers, OpenAI, Jina v5, Qwen, BM25, SPLADE) — no separate embedding service needed.
+- **Performance ceiling**: Sub-millisecond search on billions of vectors. INT8 quantization for reduced memory.
+
+**What this is NOT**: A replacement for our internal memory system (stays on SQLite FTS5) or code search (stays on osgrep). This is for SaaS app development where users/orgs upload their own documents for RAG.
+
+#### Architecture
+
+```text
+Vector Search Option Landscape:
+
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │                    Deployment Model Spectrum                           │
+  │                                                                       │
+  │  Embedded/In-Process          Server-Side              Hosted/Cloud   │
+  │  ├── zvec (C++ native)        ├── pgvector (Postgres)  ├── Pinecone   │
+  │  ├── PGlite+pgvector (WASM)   ├── Qdrant (Rust)        ├── Weaviate  │
+  │  └── SQLite+vss (limited)     └── Milvus (distributed) └── Vectorize │
+  │                                                                       │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+Per-Tenant RAG Pipeline (using zvec as example):
+
+  User uploads file (PDF/DOCX/TXT/HTML)
+    │
+    ▼
+  [Chunking] ─── Split by type (Docling for PDF, custom for text)
+    │              Chunk size: 512-1024 tokens, 128-token overlap
+    │
+    ▼
+  [Embedding] ─── zvec built-in: DefaultLocalDense (384d, free)
+    │              or OpenAI text-embedding-4 (1536d, API cost)
+    │              or Jina v5 (1024d, Matryoshka to 256d)
+    │
+    ▼
+  [Store] ─── zvec collection per tenant: /data/vectors/{org_id}/
+    │          Schema: id, content_chunk, embedding(dense), sparse_embedding
+    │          Metadata: source_file, chunk_index, uploaded_at
+    │          Index: HNSW (default) or IVF (memory-constrained)
+    │
+    ▼
+  [Query] ─── User asks question
+    │          1. Embed query (same model as storage)
+    │          2. Search tenant's collection (topk=20)
+    │          3. Rerank (cross-encoder or RRF if hybrid)
+    │          4. Return top-5 chunks with metadata
+    │
+    ▼
+  [LLM Context] ─── Assemble prompt: system + retrieved chunks + user query
+                     Token budget: reserve for response, fill with chunks
+
+Tenant Isolation Comparison:
+
+  ┌──────────────────────┬───────────────┬──────────────┬──────────────────┐
+  │ Approach             │ Isolation     │ Ops Cost     │ Best For         │
+  ├──────────────────────┼───────────────┼──────────────┼──────────────────┤
+  │ zvec collection/org  │ Physical      │ Low          │ <10k tenants     │
+  │ Vectorize namespace  │ Logical       │ Low          │ <50k tenants     │
+  │ pgvector + RLS       │ Logical (DB)  │ Medium       │ Already on PG    │
+  │ Metadata filter      │ Logical       │ Low          │ Simple cases     │
+  │ Separate DB/index    │ Physical      │ High         │ Regulated/ent.   │
+  └──────────────────────┴───────────────┴──────────────┴──────────────────┘
+```
+
+#### zvec Feature Summary
+
+| Feature | Details |
+|---------|---------|
+| **Language** | C++ core, Python 3.10-3.12, Node.js bindings |
+| **License** | Apache 2.0 |
+| **Platforms** | Linux (x86_64, ARM64), macOS (ARM64) |
+| **Index types** | HNSW (best recall/speed), IVF (memory-efficient), Flat (exact) |
+| **Vector types** | Dense (FP32, FP16, INT8), Sparse |
+| **Metrics** | Euclidean, Cosine, Dot-product, Inner-product |
+| **Quantization** | INT8 (reduced memory, minimal recall loss) |
+| **Embeddings** | Local (all-MiniLM-L6-v2, 384d), OpenAI, Jina v5, Qwen, BM25, SPLADE |
+| **Rerankers** | RRF (rank fusion), Weighted, Cross-encoder (ms-marco-MiniLM-L6-v2), Qwen |
+| **Hybrid search** | Multi-vector queries (dense+sparse) in single call |
+| **Schema** | Collections with typed fields, DDL (add/alter/drop columns) |
+| **Operations** | Insert, Update, Upsert, Delete, DeleteByFilter, Fetch, Query, GroupByQuery |
+| **Scale** | Sub-millisecond on billions of vectors (Cohere 10M benchmark) |
+| **Persistence** | Filesystem-based (directory per collection) |
+
+#### Subtask Breakdown
+
+| ID | Task | Est | Model | Dependencies |
+|----|------|-----|-------|-------------|
+| t1370.1 | Decision guide (`tools/database/vector-search.md`) | ~2h | sonnet | none |
+| t1370.2 | zvec reference section (within or alongside vector-search.md) | ~2h | sonnet | none |
+| t1370.3 | Per-tenant RAG architecture section | ~1.5h | sonnet | t1370.1 |
+| t1370.4 | Cross-references and index updates | ~30m | sonnet | t1370.1, t1370.2 |
+| t1370.5 | Installation verification and basic ops test | ~1h | sonnet | t1370.2 |
+
+t1370.1 and t1370.2 can run in parallel. t1370.3 depends on the decision guide structure. t1370.4 depends on docs being written. t1370.5 depends on the zvec reference.
+
+#### Progress
+
+- [ ] (2026-03-01) Phase 1: Core docs ~4h
+  - [ ] t1370.1 Decision guide with comparison matrix
+  - [ ] t1370.2 zvec feature reference
+  - [ ] t1370.3 Per-tenant RAG architecture
+- [ ] (2026-03-01) Phase 2: Integration and verification ~1.5h
+  - [ ] t1370.4 Cross-references and indexes
+  - [ ] t1370.5 Installation and basic ops test
+
+#### Decision Log
+
+| Date | Decision | Rationale |
+|------|----------|-----------|
+| 2026-03-01 | Unified decision guide, not separate per-tool docs | Developers need to compare at decision time; 5 separate docs = 5 files to read for one decision |
+| 2026-03-01 | zvec gets deepest coverage | Newest option, least known, richest feature set (embeddings, rerankers, hybrid) — others well-documented elsewhere |
+| 2026-03-01 | Collection-per-tenant as recommended pattern | Physical isolation without N server instances; zvec makes this cheap (single function call) |
+| 2026-03-01 | No helper script | zvec is a library (pip/npm), not a CLI tool — helper scripts are for tools with CLI interfaces |
+| 2026-03-01 | Agent doc only, not MCP integration | zvec is for app development, not for aidevops internal use — no MCP server needed |
+
+#### Surprises & Discoveries
+
+- zvec ships with built-in embedding functions (local + API) and rerankers — most vector DBs require you to bring your own embedding pipeline
+- Jina v5 embeddings support Matryoshka dimensions (1024 down to 32) — can reduce storage 4-32x with controlled recall trade-off
+- zvec's BM25 embedding function runs locally with no API key — useful for sparse/lexical matching in hybrid search without external dependencies
+- Node.js bindings exist (`@zvec/zvec`) but examples directory only has C++ — Node.js API may be less mature than Python
+
+---
+
 ### [2026-03-01] PaddleOCR Integration — Screenshot and Scene Text OCR
 
 **Status:** Planning
