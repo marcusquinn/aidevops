@@ -127,13 +127,25 @@ setup_file_discovery_tools() {
 		print_success "ripgrep found: $rg_version"
 	fi
 
+	# Check for ripgrep-all (searches inside PDFs, DOCX, SQLite, archives)
+	if ! command -v rga >/dev/null 2>&1; then
+		missing_tools+=("rga")
+		missing_packages+=("ripgrep-all")
+		missing_names+=("ripgrep-all (search inside PDFs/docs/archives)")
+	else
+		local rga_version
+		rga_version=$(rga --version 2>/dev/null | head -1 || echo "unknown")
+		print_success "ripgrep-all found: $rga_version"
+	fi
+
 	# Offer to install missing tools
 	if [[ ${#missing_tools[@]} -gt 0 ]]; then
 		print_warning "Missing file discovery tools: ${missing_names[*]}"
 		echo ""
 		echo "  These tools provide 10x faster file discovery than built-in glob:"
-		echo "    fd      - Fast alternative to 'find', respects .gitignore"
-		echo "    ripgrep - Fast alternative to 'grep', respects .gitignore"
+		echo "    fd          - Fast alternative to 'find', respects .gitignore"
+		echo "    ripgrep     - Fast alternative to 'grep', respects .gitignore"
+		echo "    ripgrep-all - Extends ripgrep to search inside PDFs, DOCX, SQLite, archives"
 		echo ""
 		echo "  AI agents use these for efficient codebase navigation."
 		echo ""
@@ -202,18 +214,18 @@ setup_file_discovery_tools() {
 				print_info "Skipped file discovery tools installation"
 				echo ""
 				echo "  Manual installation:"
-				echo "    macOS:        brew install fd ripgrep"
-				echo "    Ubuntu/Debian: sudo apt install fd-find ripgrep"
-				echo "    Fedora:       sudo dnf install fd-find ripgrep"
-				echo "    Arch:         sudo pacman -S fd ripgrep"
+				echo "    macOS:        brew install fd ripgrep ripgrep-all"
+				echo "    Ubuntu/Debian: sudo apt install fd-find ripgrep  # rga: cargo install ripgrep_all"
+				echo "    Fedora:       sudo dnf install fd-find ripgrep   # rga: cargo install ripgrep_all"
+				echo "    Arch:         sudo pacman -S fd ripgrep ripgrep-all"
 			fi
 		else
 			echo ""
 			echo "  Manual installation:"
-			echo "    macOS:        brew install fd ripgrep"
-			echo "    Ubuntu/Debian: sudo apt install fd-find ripgrep"
-			echo "    Fedora:       sudo dnf install fd-find ripgrep"
-			echo "    Arch:         sudo pacman -S fd ripgrep"
+			echo "    macOS:        brew install fd ripgrep ripgrep-all"
+			echo "    Ubuntu/Debian: sudo apt install fd-find ripgrep  # rga: cargo install ripgrep_all"
+			echo "    Fedora:       sudo dnf install fd-find ripgrep   # rga: cargo install ripgrep_all"
+			echo "    Arch:         sudo pacman -S fd ripgrep ripgrep-all"
 		fi
 	else
 		print_success "All file discovery tools installed!"

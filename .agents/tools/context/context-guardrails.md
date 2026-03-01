@@ -155,8 +155,12 @@ Before using `mcp_glob`, check if faster alternatives work:
 | Git-tracked files | `git ls-files '*.md'` | `mcp_glob` |
 | Untracked files | `fd -e md` | `mcp_glob` |
 | System-wide search | `fd -g '*.md' ~/.config/` | `mcp_glob` |
+| Search text file contents | `rg 'pattern'` | `mcp_grep` |
+| Search inside PDFs/DOCX/zips | `rga 'pattern'` | None (unique capability) |
 
 **Why?** `mcp_glob` is CPU-intensive on large codebases. CLI tools are 10x faster.
+
+**Tool roles:** `fd` finds files by name/metadata, `rg` searches text file contents, `rga` (ripgrep-all) searches inside non-text files (PDF, DOCX, SQLite, archives). Same syntax as `rg` but with document adapters.
 
 ## Agent Capability Check
 

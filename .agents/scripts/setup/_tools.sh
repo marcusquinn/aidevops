@@ -8,7 +8,7 @@ setup_git_clis() {
 	return 0
 }
 
-# Setup file discovery tools (fd, rg)
+# Setup file discovery tools (fd, rg, rga)
 setup_file_discovery_tools() {
 	# TODO: Extract from setup.sh lines 2042-2167
 	:
