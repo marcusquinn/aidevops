@@ -73,7 +73,7 @@ The result: AI agents that work *with* your development process, not around it �
 [![Services Supported](https://img.shields.io/badge/Services%20Supported-30+-brightgreen.svg)](#comprehensive-service-coverage)
 [![AGENTS.md](https://img.shields.io/badge/AGENTS.md-Compliant-blue.svg)](https://agents.md/)
 [![AI Optimized](https://img.shields.io/badge/AI%20Optimized-Yes-brightgreen.svg)](https://github.com/marcusquinn/aidevops/blob/main/AGENTS.md)
-[![MCP Servers](https://img.shields.io/badge/MCP%20Servers-19-orange.svg)](#mcp-integrations)
+[![MCP Servers](https://img.shields.io/badge/MCP%20Servers-20-orange.svg)](#mcp-integrations)
 [![API Integrations](https://img.shields.io/badge/API%20Integrations-30+-blue.svg)](#comprehensive-service-coverage)
 
 <!-- AI-CONTEXT-START -->
@@ -96,9 +96,9 @@ The result: AI agents that work *with* your development process, not around it �
 ### Agent Structure
 
 - 11 primary agents (Build+, SEO, Marketing, etc.) with specialist @subagents on demand
-- 735+ subagent markdown files organized by domain
-- 201 helper scripts in `.agents/scripts/`
-- 53 slash commands for common workflows
+- 780+ subagent markdown files organized by domain
+- 290+ helper scripts in `.agents/scripts/`
+- 58 slash commands for common workflows
 
 <!-- AI-CONTEXT-END -->
 
@@ -356,11 +356,42 @@ See `.agents/tools/terminal/terminal-title.md` for customization options.
 
 **Autonomous Orchestration:**
 
+- **Missions** - Multi-day autonomous projects: `/mission` scopes a high-level goal into milestones and features, dispatched by the supervisor (`mission-dashboard-helper.sh`)
 - **Supervisor** - SQLite state machine dispatches tasks to parallel AI agents with retry cycles, batch management, and cron scheduling
 - **Runners** - Named headless agent instances with persistent identity, instructions, and memory namespaces
 - **`/runners` command** - Batch dispatch from task IDs, PR URLs, or descriptions with concurrency control and progress monitoring
 - **Mailbox** - SQLite-backed inter-agent messaging for coordination across parallel sessions
 - **Worktree isolation** - Each agent works on its own branch in a separate directory, no merge conflicts
+- **Budget tracking** - Append-only cost log (`budget-tracker-helper.sh`) with burn-rate analysis and `/budget-analysis` command for model routing decisions
+- **Observability** - LLM request capture plugin (`observability.mjs`) for cost tracking, performance analysis, and debugging
+- **Rate limits** - Per-provider rate limit configuration (`rate-limits.json`) with throttle-risk warnings
+
+**Project Intelligence:**
+
+- **Bundles** - Project-type presets (web-app, library, cli-tool, content-site, infrastructure, agent) that auto-configure model tiers, quality gates, and agent routing per repo (`bundle-helper.sh`)
+- **TTSR rules** - Soft rule engine (`ttsr-rule-loader.sh`) with `.agents/rules/` directory for AI output correction (e.g., no-edit-on-main, no-glob-for-discovery)
+- **Cross-review** - `/cross-review` dispatches the same prompt to multiple AI models in parallel, diffs results, and optionally auto-scores via a judge model
+- **Local models** - Run AI models locally via llama.cpp for free, private, offline inference (`local-model-helper.sh`) with HuggingFace GGUF model management
+- **Tech stack lookup** - `/tech-stack` detects technology stacks of URLs or finds sites using specific technologies (Wappalyzer, httpx, nuclei, BuiltWith)
+- **IP reputation** - `ip-reputation-helper.sh` checks IP addresses against multiple reputation databases (Spamhaus, ProxyCheck, AbuseIPDB) before VPS purchase or deployment
+
+**Conversational Memory & Entity System:**
+
+- **Entity memory** - Cross-channel relationship continuity (`entity-helper.sh`): people, agents, and services tracked across Matrix, SimpleX, email, and CLI with versioned profiles
+- **Conversational memory** - Per-conversation context management (`conversation-helper.sh`): idle detection, immutable summaries, tone profile extraction
+- **Three-layer architecture** - Layer 0 (immutable raw log), Layer 1 (tactical summaries), Layer 2 (strategic entity profiles) in shared SQLite
+
+**Communications:**
+
+- **SimpleX bot** - Channel-agnostic gateway with SimpleX Chat as first adapter for AI agent dispatch (`simplex-bot/`)
+- **Matterbridge** - Multi-platform chat bridge connecting 20+ platforms including Matrix, Discord, Telegram, Slack, IRC, WhatsApp, XMPP (`matterbridge-helper.sh`)
+- **Localdev** - Local development environment manager with dnsmasq, Traefik, mkcert for production-like `.local` domains with HTTPS (`localdev-helper.sh`)
+
+**MCP Toolkit:**
+
+- **MCPorter** - Discover, call, compose, and generate CLIs/typed clients for MCP servers (`mcporter` npm package)
+- **OpenAPI Search** - Search and explore any OpenAPI specification via MCP (zero install, Cloudflare Worker)
+- **Cloudflare Code Mode** - Full Cloudflare API (2,500+ endpoints) via 2 tools in ~1,000 tokens
 
 **Unified Interface:**
 
@@ -455,17 +486,17 @@ aidevops implements proven agent design patterns identified by [Lance Martin (La
 
 | Pattern | Description | aidevops Implementation |
 |---------|-------------|------------------------|
-| **Give Agents a Computer** | Filesystem + shell for persistent context | `~/.aidevops/.agent-workspace/`, 201 helper scripts |
+| **Give Agents a Computer** | Filesystem + shell for persistent context | `~/.aidevops/.agent-workspace/`, 290+ helper scripts |
 | **Multi-Layer Action Space** | Few tools, push actions to computer | Per-agent MCP filtering (~12-20 tools each) |
 | **Progressive Disclosure** | Load context on-demand | Subagent routing with content summaries, YAML frontmatter, read-on-demand |
 | **Offload Context** | Write results to filesystem | `.agent-workspace/work/[project]/` for persistence |
 | **Cache Context** | Prompt caching for cost | Stable instruction prefixes |
 | **Isolate Context** | Sub-agents with separate windows | Subagent files with specific tool permissions |
-| **Multi-Agent Orchestration** | Coordinate parallel agents | TOON mailbox, agent registry, stateless coordinator |
+| **Multi-Agent Orchestration** | Coordinate parallel agents | TOON mailbox, agent registry, supervisor dispatch |
 | **Compaction Resilience** | Preserve context across compaction | OpenCode plugin injects dynamic state at compaction time |
 | **Ralph Loop** | Iterative execution until complete | `/full-loop`, `full-loop-helper.sh` |
 | **Evolve Context** | Learn from sessions | `/remember`, `/recall` with SQLite FTS5 + opt-in semantic search |
-| **Pattern Tracking** | Learn what works/fails | `pattern-tracker-helper.sh`, `/patterns` command |
+| **Pattern Tracking** | Learn what works/fails | `/patterns` command, memory system |
 | **Cost-Aware Routing** | Match model to task complexity | `model-routing.md` with 5-tier guidance, `/route` command |
 | **Model Comparison** | Compare models side-by-side | `/compare-models` (live data), `/compare-models-free` (offline) |
 | **Response Scoring** | Evaluate actual model outputs | `/score-responses` with structured criteria |
@@ -476,12 +507,12 @@ See `.agents/aidevops/architecture.md` for detailed implementation notes and ref
 
 ### Multi-Agent Orchestration
 
-Run multiple AI agents in parallel on separate branches, coordinated through a lightweight mailbox system. Each agent works independently in its own git worktree while a stateless coordinator manages task distribution and status reporting.
+Run multiple AI agents in parallel on separate branches, coordinated through a lightweight mailbox system. Each agent works independently in its own git worktree while the supervisor manages task distribution and status reporting.
 
 **Architecture:**
 
 ```text
-Coordinator (pulse loop)
+Supervisor (pulse loop)
 ├── Agent Registry (TOON format - who's active, what branch, idle/busy)
 ├── Mailbox System (SQLite WAL-mode, indexed queries)
 │   ├── task_assignment → worker inbox
@@ -495,15 +526,16 @@ Coordinator (pulse loop)
 | Component | Script | Purpose |
 |-----------|--------|---------|
 | Mailbox | `mail-helper.sh` | SQLite-backed inter-agent messaging (send, check, broadcast, archive) |
-| Coordinator | `coordinator-helper.sh` | Stateless pulse loop: collect reports, dispatch tasks, track idle workers |
 | Supervisor | `supervisor-helper.sh` | Autonomous multi-task orchestration with SQLite state machine, batches, retry cycles, cron scheduling, auto-pickup from TODO.md |
 | Registry | `mail-helper.sh register` | Agent registration with role, branch, worktree, heartbeat |
 | Model routing | `model-routing.md`, `/route` | Cost-aware 5-tier routing guidance (haiku/flash/sonnet/pro/opus) |
+| Budget tracking | `budget-tracker-helper.sh` | Append-only cost log for model routing decisions |
+| Observability | `observability.mjs` plugin | LLM request capture for cost tracking and performance analysis |
 
 **How it works:**
 
 1. Each agent registers on startup (`mail-helper.sh register --role worker`)
-2. Coordinator runs periodic pulses (`coordinator-helper.sh pulse`)
+2. Supervisor runs periodic pulses (`supervisor-helper.sh pulse`)
 3. Pulse collects status reports, dispatches queued tasks to idle workers
 4. Agents send completion reports back via mailbox
 5. SQLite WAL mode + `busy_timeout` handles concurrent access (79x faster than previous file-based system)
@@ -597,7 +629,7 @@ Agents that learn from experience and contribute improvements:
 
 | Phase | Description |
 |-------|-------------|
-| **Review** | Analyze memory for success/failure patterns (`pattern-tracker-helper.sh`) |
+| **Review** | Analyze memory for success/failure patterns (memory system) |
 | **Refine** | Generate and apply improvements to agents |
 | **Test** | Validate in isolated OpenCode sessions |
 | **PR** | Contribute to community with privacy filtering |
@@ -880,6 +912,8 @@ See `.agents/tools/ocr/glm-ocr.md` for batch processing, PDF workflows, and Peek
 - **[Twilio](https://www.twilio.com/)**: SMS, voice calls, WhatsApp, phone verification (Verify API), call recording & transcription
 - **[Telfon](https://mytelfon.com/)**: Twilio-powered cloud phone system with iOS/Android/Chrome apps for end-user calling interface
 - **[Matrix](https://matrix.org/)**: Self-hosted chat with bot integration for AI runner dispatch (`matrix-dispatch-helper.sh`)
+- **[SimpleX Chat](https://simplex.chat/)**: Privacy-first messaging with AI bot gateway for agent dispatch (`simplex-bot/`)
+- **[Matterbridge](https://github.com/42wim/matterbridge)**: Multi-platform chat bridge connecting 20+ platforms (Matrix, Discord, Telegram, Slack, IRC, WhatsApp, XMPP) with SimpleX adapter (`matterbridge-helper.sh`)
 
 ### **Animation & Video**
 
@@ -903,12 +937,17 @@ See `.agents/tools/ocr/glm-ocr.md` for batch processing, PDF workflows, and Peek
 ### **AI & Documentation**
 
 - **[Context7](https://context7.io/)**: Real-time documentation access for libraries and frameworks
+- **[Local Models](https://github.com/ggml-org/llama.cpp)**: Run AI models locally via llama.cpp for free, private, offline inference with HuggingFace GGUF model management (`local-model-helper.sh`)
+
+### **Local Development**
+
+- **[Localdev](https://mkcert.dev/)**: Local development environment manager with dnsmasq, Traefik, and mkcert for production-like `.local` domains with HTTPS on port 443 (`localdev-helper.sh`)
 
 ## **MCP Integrations**
 
 **Model Context Protocol servers for real-time AI assistant integration.** The framework configures these MCPs for **[OpenCode](https://opencode.ai/)** (TUI, Desktop, and Extension for Zed/VSCode).
 
-### **All Supported MCPs (19 available)**
+### **All Supported MCPs (20 available)**
 
 MCP packages are installed globally via `bun install -g` for instant startup (no `npx` registry lookups). Run `setup.sh` or `aidevops update-tools` to update to latest versions.
 
@@ -932,6 +971,8 @@ MCP packages are installed globally via `bun install -g` for instant startup (no
 | [shadcn](https://ui.shadcn.com/) | UI component library | Per-agent | No |
 | [Socket](https://socket.dev/) | Dependency security | Per-agent | No |
 | [Unstract](https://github.com/Zipstack/unstract) | Document data extraction | Per-agent | Yes |
+| [OpenAPI Search](https://openapi-mcp.openapisearch.com/mcp) | Search and explore any OpenAPI spec | Per-agent | No |
+| [Cloudflare Code Mode](https://mcp.cloudflare.com/mcp) | Full Cloudflare API (2,500+ endpoints via 2 tools) | Per-agent | Yes (Cloudflare) |
 
 **Tier explanation:**
 - **Global** - Tools always available (loaded into every session)
@@ -963,6 +1004,8 @@ These use direct API calls via curl, avoiding MCP server startup entirely:
 - [llm-tldr](https://github.com/parcadei/llm-tldr) - Semantic code analysis with 95% token savings (tree, structure, CFG, DFG, impact analysis)
 - [Context7](https://context7.com/) - Real-time documentation access for thousands of libraries
 - [Repomix](https://github.com/yamadashy/repomix) - Pack codebases into AI-friendly context
+- [OpenAPI Search](https://openapi-mcp.openapisearch.com/mcp) - Search and explore any OpenAPI specification (zero install, Cloudflare Worker)
+- [MCPorter](https://github.com/steipete/mcporter) - Discover, call, compose, and generate CLIs/typed clients for MCP servers
 
 **Browser Automation** (8 tools + anti-detect stack, [benchmarked](#browser-automation)):
 
@@ -1006,6 +1049,8 @@ These use direct API calls via curl, avoiding MCP server startup entirely:
 
 - [PageSpeed Insights](https://developers.google.com/speed/docs/insights/v5/get-started) - Website performance auditing
 - [Snyk](https://snyk.io/) - Security vulnerability scanning
+- [Cloudflare Code Mode](https://mcp.cloudflare.com/mcp) - Full Cloudflare API (2,500+ endpoints) via 2 tools in ~1,000 tokens (DNS, WAF, DDoS, R2, Workers, Zero Trust)
+- **IP Reputation** - Multi-provider IP reputation checking (Spamhaus, ProxyCheck, AbuseIPDB) for VPS/proxy vetting (`ip-reputation-helper.sh`)
 
 **WordPress & Development:**
 
@@ -1407,7 +1452,7 @@ aidevops is registered as a **Claude Code plugin marketplace**. Install with two
 /plugin install aidevops@aidevops
 ```
 
-This installs the complete framework: 11 primary agents, 735+ subagents, and 201 helper scripts.
+This installs the complete framework: 11 primary agents, 780+ subagents, and 290+ helper scripts.
 
 ### Importing External Skills
 
@@ -1493,7 +1538,7 @@ Primary agents as registered in `subagent-index.toon` (11 total). MCPs are loade
 
 ### **Example Subagents with MCP Integration**
 
-These are examples of subagents that have supporting MCPs enabled. See `.agents/` for the full list of 735+ subagents organized by domain.
+These are examples of subagents that have supporting MCPs enabled. See `.agents/` for the full list of 780+ subagents organized by domain.
 
 | Agent | Purpose | MCPs Enabled |
 |-------|---------|--------------|
@@ -1640,6 +1685,10 @@ Configure time tracking per-repo via `.aidevops.json`.
 | `/list-keys` | List all configured API keys and their storage locations |
 | `/performance` | Web performance audit (Core Web Vitals, Lighthouse, PageSpeed) |
 | `/pr` | Unified PR workflow (orchestrates all checks) |
+| `/cross-review` | Dispatch prompt to multiple AI models, diff results, auto-score |
+| `/tech-stack` | Detect technology stacks of URLs or find sites using specific technologies |
+| `/mission` | Scope a high-level goal into milestones and features for autonomous execution |
+| `/budget-analysis` | Analyze AI model spend, burn rate, and cost optimization opportunities |
 
 **Content Workflow**:
 
@@ -1910,12 +1959,14 @@ memory-helper.sh recall "how to optimize queries" --semantic
 **Pattern tracking:**
 
 ```bash
-# Record what worked
-pattern-tracker-helper.sh record --outcome success --task-type bugfix \
-    --model sonnet --description "Structured debugging found root cause"
+# Record what worked (via memory system)
+memory-helper.sh store --type SUCCESS_PATTERN --content "Structured debugging found root cause" --tags "bugfix,sonnet"
+
+# Record what failed
+memory-helper.sh store --type FAILURE_PATTERN --content "Blind refactor without tests caused regressions" --tags "refactor"
 
 # Get suggestions for a new task
-pattern-tracker-helper.sh suggest "refactor the auth middleware"
+memory-helper.sh recall "refactor auth middleware" --semantic
 ```
 
 **Auto-capture:** AI agents automatically store memories using `--auto` flag when they detect working solutions, failed approaches, or decisions. Privacy filters strip `<private>` tags and reject secret patterns.
@@ -2143,7 +2194,7 @@ aidevops/
 ├── .agents/                        # Agents and documentation
 │   ├── AGENTS.md                  # User guide (deployed to ~/.aidevops/agents/)
 │   ├── *.md                       # 11 primary agents
-│   ├── scripts/                   # 201 helper scripts
+│   ├── scripts/                   # 290+ helper scripts
 │   ├── tools/                     # Cross-domain utilities (video, browser, git, etc.)
 │   ├── services/                  # External service integrations
 │   └── workflows/                 # Development process guides
