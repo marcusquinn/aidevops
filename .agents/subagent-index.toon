@@ -48,7 +48,7 @@ tools/code-review/,Code quality - linting and security scanning,code-standards|c
 tools/context/,Context optimization - semantic search and indexing,augment-context-engine|context-builder|context7|toon|mcp-discovery|github-search|model-routing|openapi-search
 tools/conversion/,Format conversion - document transformation,pandoc
 tools/document/,Document extraction - conversion structured data extraction schemas and workflow orchestration,document-extraction|extraction-schemas|extraction-workflow|docstrange
-tools/ocr/,OCR and text extraction - local document processing via Ollama,glm-ocr
+tools/ocr/,OCR and text extraction - scene text screenshots documents and local processing,overview|paddleocr|glm-ocr|ocr-research
 tools/accounts/,Accounting tools - receipt OCR subscription audit,receipt-ocr|subscription-audit
 tools/ai-generation/,AI generation management - ComfyUI install nodes models workflows via comfy-cli,comfy-cli
 tools/video/,Video creation and generation - programmatic editing and AI generation APIs,remotion|higgsfield|runway|wavespeed|yt-dlp|video-prompt-design|real-video-enhancer
@@ -119,7 +119,7 @@ conversation-starter,workflows/conversation-starter.md,Session greeting and auto
 mission-skill-learning,workflows/mission-skill-learning.md,Auto-capture reusable patterns from missions and suggest promotion
 -->
 
-<!--TOON:scripts[98]{name,purpose}:
+<!--TOON:scripts[99]{name,purpose}:
 accessibility-helper.sh,Accessibility and contrast testing (WCAG compliance WAVE API for websites and emails)
 browser-qa-worker.sh,Browser QA visual testing — Playwright screenshots broken links console errors for milestone validation
 browser-qa-helper.sh,Playwright-based visual QA for milestone validation (smoke screenshots links a11y)
@@ -166,6 +166,7 @@ unstract-helper.sh,Unstract self-hosted document processing (install start stop)
 document-extraction-helper.sh,Document extraction with PII redaction (extract batch pii-scan pii-redact convert install status schemas)
 frontmatter-helper.sh,YAML frontmatter enforcement for markdown files (enforce check show batch)
 ocr-receipt-helper.sh,OCR receipt/invoice extraction pipeline with QuickFile integration (scan extract batch quickfile preview status install)
+paddleocr-helper.sh,PaddleOCR scene text OCR (install ocr serve stop status models)
 quickfile-helper.sh,QuickFile purchase/expense recording bridge - supplier resolution and MCP instruction generation (record-purchase record-expense supplier-resolve batch-record preview status)
 cloudron-package-helper.sh,Cloudron app packaging workflow (init scaffold build test)
 email-agent-helper.sh,Autonomous email agent for mission 3rd-party communication (send poll extract-codes thread conversations status)
