@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.147.2] - 2026-03-01
+
+### Fixed
+
+- grep -c with || echo produces multiline output breaking arithmetic (#2637)
+- replace Python 3.10+ union type syntax with Optional for 3.9 compat (#2635)
+
 ## [2.147.1] - 2026-03-01
 
 ### Added
