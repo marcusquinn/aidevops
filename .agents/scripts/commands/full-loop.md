@@ -131,7 +131,9 @@ if [[ -n "$ISSUE_NUM" && "$ISSUE_NUM" != "null" ]]; then
     # In headless mode, exit cleanly. In interactive mode, inform the user.
     exit 0
   else
-    gh issue edit "$ISSUE_NUM" --repo "$REPO" --add-label "status:in-progress" 2>/dev/null || true
+    # Self-assign to prevent duplicate work by other runners/humans
+    WORKER_USER=$(gh api user --jq '.login' 2>/dev/null || whoami)
+    gh issue edit "$ISSUE_NUM" --repo "$REPO" --add-assignee "$WORKER_USER" --add-label "status:in-progress" 2>/dev/null || true
     for STALE in "status:available" "status:queued" "status:claimed"; do
       gh issue edit "$ISSUE_NUM" --repo "$REPO" --remove-label "$STALE" 2>/dev/null || true
     done
