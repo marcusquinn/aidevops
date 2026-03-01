@@ -116,16 +116,16 @@ Document structure analysis: detects tables, figures, headers, and converts tabl
 ## Python API
 
 ```python
+import paddle
+paddle.set_flags({"FLAGS_use_mkldnn": False})  # Required on Linux CPU (PaddlePaddle 3.3.0)
 from paddleocr import PaddleOCR
 
 # Basic OCR (auto-downloads PP-OCRv5 models on first run)
-ocr = PaddleOCR(use_angle_cls=True, lang='en')
-result = ocr.ocr('screenshot.png', cls=True)
-
-# Each result contains: [[bounding_box], (text, confidence)]
-for line in result[0]:
-    bbox, (text, confidence) = line[0], line[1]
-    print(f"{text} ({confidence:.2f})")
+# PaddleOCR 3.4.0: use .predict(), not .ocr(); enable_mkldnn=False for Linux CPU
+ocr = PaddleOCR(lang='en', enable_mkldnn=False)
+for result in ocr.predict('screenshot.png'):
+    for text, score in zip(result['rec_texts'], result['rec_scores']):
+        print(f"{text} ({score:.2f})")
 ```
 
 ```python
@@ -203,12 +203,17 @@ paddleocr_mcp --pipeline OCR --ppocr_source self_hosted --server_url http://127.
 ### Screenshot OCR
 
 ```bash
-# Python one-liner
+# Using the helper script (recommended — handles API version differences)
+paddleocr-helper.sh ocr screenshot.png
+
+# Python one-liner (PaddleOCR 3.4.0+)
 python -c "
+import paddle; paddle.set_flags({'FLAGS_use_mkldnn': False})
 from paddleocr import PaddleOCR
-ocr = PaddleOCR(use_angle_cls=True, lang='en')
-for line in ocr.ocr('screenshot.png')[0]:
-    print(line[1][0])
+ocr = PaddleOCR(lang='en', enable_mkldnn=False)
+for r in ocr.predict('screenshot.png'):
+    for text in r['rec_texts']:
+        print(text)
 "
 ```
 
@@ -217,13 +222,15 @@ for line in ocr.ocr('screenshot.png')[0]:
 ```bash
 # Process all images in a directory
 python -c "
-import glob
+import glob, paddle
+paddle.set_flags({'FLAGS_use_mkldnn': False})
 from paddleocr import PaddleOCR
-ocr = PaddleOCR(use_angle_cls=True, lang='en')
+ocr = PaddleOCR(lang='en', enable_mkldnn=False)
 for img in sorted(glob.glob('images/*.png')):
     print(f'=== {img} ===')
-    for line in ocr.ocr(img)[0]:
-        print(line[1][0])
+    for r in ocr.predict(img):
+        for text in r['rec_texts']:
+            print(text)
 "
 ```
 
@@ -231,12 +238,7 @@ for img in sorted(glob.glob('images/*.png')):
 
 ```bash
 # Capture region and OCR
-import -window root /tmp/capture.png && python -c "
-from paddleocr import PaddleOCR
-ocr = PaddleOCR(use_angle_cls=True, lang='en')
-for line in ocr.ocr('/tmp/capture.png')[0]:
-    print(line[1][0])
-"
+import -window root /tmp/capture.png && paddleocr-helper.sh ocr /tmp/capture.png
 ```
 
 ### Multi-Language OCR
@@ -244,10 +246,12 @@ for line in ocr.ocr('/tmp/capture.png')[0]:
 ```bash
 # Chinese + English mixed text
 python -c "
+import paddle; paddle.set_flags({'FLAGS_use_mkldnn': False})
 from paddleocr import PaddleOCR
-ocr = PaddleOCR(use_angle_cls=True, lang='ch')  # 'ch' handles Chinese + English
-for line in ocr.ocr('mixed_text.png')[0]:
-    print(f'{line[1][0]} ({line[1][1]:.2f})')
+ocr = PaddleOCR(lang='ch', enable_mkldnn=False)  # 'ch' handles Chinese + English
+for r in ocr.predict('mixed_text.png'):
+    for text, score in zip(r['rec_texts'], r['rec_scores']):
+        print(f'{text} ({score:.2f})')
 "
 ```
 
@@ -334,6 +338,27 @@ PDF document     --> MinerU    --> Markdown/JSON (layout-aware)
 
 The PaddleOCR MCP server integrates directly with Claude Desktop and the aidevops agent framework. Configure it in your MCP config (see MCP Server Setup above), then agents can call OCR tools directly.
 
+## Platform-Specific Notes
+
+### Verified: Linux x86_64 (Ubuntu 24.04, Python 3.12)
+
+Tested 2026-03-01 with PaddleOCR 3.4.0 + PaddlePaddle 3.3.0 (CPU):
+
+- **Installation**: Clean install via `paddleocr-helper.sh install` -- no issues
+- **OneDNN crash**: PaddlePaddle 3.3.0 crashes with `NotImplementedError: ConvertPirAttribute2RuntimeAttribute not support [pir::ArrayAttribute<pir::DoubleAttribute>]` when OneDNN/MKL-DNN is enabled (default on Linux CPU). **Fix**: `enable_mkldnn=False` in PaddleOCR constructor, plus `paddle.set_flags({"FLAGS_use_mkldnn": False})`. The helper script applies this automatically.
+- **API changes in 3.4.0**: `show_log` parameter removed (causes `ValueError`), `use_angle_cls` deprecated (use `use_textline_orientation`), `.ocr()` deprecated (use `.predict()` which returns `OCRResult` objects). The helper script handles both APIs.
+- **Model cache**: Models download from HuggingFace on first use to `~/.paddlex/official_models/` (not `~/.paddleocr/` as in older versions). ~100MB for PP-OCRv5 server det + mobile rec models.
+- **Startup speed**: Set `PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True` to skip connectivity check (~5s savings).
+- **OCR accuracy**: Excellent on screenshot-like images with varied fonts and sizes. 42 text regions detected from an 800x600 test screenshot with >95% confidence on most lines.
+
+### macOS Apple Silicon
+
+Not yet verified. Expected to work with CPU backend (`pip install paddlepaddle`). MPS acceleration available via PaddlePaddle 3.0+. Report issues to the aidevops repo.
+
+### Linux with NVIDIA GPU
+
+Not yet verified. Install `paddlepaddle-gpu` for CUDA 12 support. The OneDNN workaround should not be needed on GPU (the crash is specific to the OneDNN CPU backend).
+
 ## Troubleshooting
 
 ### PaddlePaddle Installation Issues
@@ -349,20 +374,54 @@ pip install paddlepaddle-gpu
 pip install paddlepaddle
 ```
 
+### OneDNN Crash on Linux CPU (PaddlePaddle 3.3.0)
+
+PaddlePaddle 3.3.0 has a bug where OneDNN/MKL-DNN crashes during inference on Linux CPU with:
+
+```text
+NotImplementedError: ConvertPirAttribute2RuntimeAttribute not support
+[pir::ArrayAttribute<pir::DoubleAttribute>] (onednn_instruction.cc:116)
+```
+
+**Fix**: Disable OneDNN before creating the PaddleOCR instance:
+
+```python
+import paddle
+paddle.set_flags({"FLAGS_use_mkldnn": False})
+from paddleocr import PaddleOCR
+ocr = PaddleOCR(lang="en", enable_mkldnn=False)
+```
+
+The `paddleocr-helper.sh` applies this fix automatically. This may be resolved in a future PaddlePaddle release.
+
+### PaddleOCR 3.4.0 API Changes
+
+PaddleOCR 3.4.0 (Jan 2026) introduced breaking API changes:
+
+| Old API | New API | Notes |
+|---------|---------|-------|
+| `PaddleOCR(show_log=False)` | Removed | Causes `ValueError: Unknown argument` |
+| `PaddleOCR(use_angle_cls=True)` | `PaddleOCR(use_textline_orientation=True)` | Deprecated, still works with warning |
+| `ocr.ocr(image)` | `ocr.predict(image)` | Returns `OCRResult` objects, not nested lists |
+
+The `paddleocr-helper.sh` handles both old and new APIs automatically.
+
 ### Model Download Failures
 
 ```bash
 # Models auto-download on first use (~100MB for PP-OCRv5)
+# PaddleOCR 3.4.0 caches models in ~/.paddlex/official_models/
+# Older versions use ~/.paddleocr/
 # If download fails, check network and retry
-# Models are cached in ~/.paddleocr/
+# Set PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True to skip connectivity check
 ```
 
 ### Slow Performance on CPU
 
-- Enable MKL-DNN: `PaddleOCR(enable_mkldnn=True)`
 - Reduce image size before OCR (resize to max 1920px width)
 - Use PP-OCRv5 mobile models for faster inference
 - For batch processing, reuse the `PaddleOCR()` instance (model loads once)
+- **Note**: `enable_mkldnn=True` can improve CPU performance but crashes on PaddlePaddle 3.3.0 (see above). Test before enabling.
 
 ### MCP Server Not Responding
 
