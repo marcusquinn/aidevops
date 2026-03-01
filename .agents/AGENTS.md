@@ -210,7 +210,7 @@ Key capabilities (details in `reference/orchestration.md`, `reference/services.m
 - **Skills**: `aidevops skills`, `/skills`
 - **Auto-update**: GitHub poll + daily skill/repo sync
 - **Browser**: Playwright, dev-browser (persistent login)
-- **Quality**: `linters-local.sh` → `/pr review` → `/postflight`. Bundle `skip_gates` filter irrelevant checks per project type.
+- **Quality**: Write-time per-edit linting → `linters-local.sh` → `/pr review` → `/postflight`. Fix violations at edit time, not commit time. See `prompts/build.txt` "Write-Time Quality Enforcement". Bundle `skip_gates` filter irrelevant checks per project type.
 - **Sessions**: `/session-review`, `/checkpoint`, compaction resilience
 
 ## Security

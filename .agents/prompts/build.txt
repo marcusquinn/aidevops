@@ -204,6 +204,22 @@ Git is the primary audit trail for all work. Every change should be discoverable
 - Explicit returns in all functions
 - Conventional commits: feat:, fix:, docs:, refactor:, chore:, perf:
 
+# Write-Time Quality Enforcement
+# Inspired by Plankton (github.com/alexfazio/plankton) — adapted for runtime-agnostic use.
+# Plankton uses Claude Code PostToolUse hooks to lint on every edit. OpenCode does not yet
+# have equivalent hooks (feature requested: anomalyco/opencode). Until then, enforce via
+# prompt-level discipline and explicit tool calls.
+#
+# Linter config protection (soft rule):
+- When a linter reports violations, fix the code — not the linter config.
+- If a rule is genuinely wrong for the project (false positive, architectural pattern), modifying the config is acceptable — but document the rationale in a comment in the config file and in the commit message. Never disable a rule solely to silence a violation.
+- Existing config customisations (e.g., .shellcheckrc disables, .markdownlint.json overrides) are intentional project decisions. Respect them; don't revert without understanding why they exist.
+#
+# Per-edit quality feedback:
+- After editing code files (shell, Python, TypeScript, markdown), run the relevant linter on the modified file before proceeding to the next edit. For shell: `shellcheck <file>`. For markdown: `markdownlint-cli2 <file>`. For project-wide: `linters-local.sh`.
+- Fix violations immediately rather than accumulating them for a batch fix at commit time. Write-time feedback produces better code than post-hoc correction.
+- When available, use the `quality-check` MCP tool or `linters-local.sh` for comprehensive checks before committing.
+
 # Agent Framework
 - Agents are defined in `~/.aidevops/agents/`
 - Subagents provide domain expertise (read on demand, not upfront)
