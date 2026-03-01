@@ -88,14 +88,18 @@ Check `ps axo pid,etime,command | grep '/full-loop' | grep '\.opencode'`. Any wo
 For each dispatchable issue:
 1. Skip if a worker is already running for it (check `ps` output for the issue number)
 2. Skip if an open PR already exists for it (check PR list)
-3. Read the issue body briefly — if it has `blocked-by:` references, check if those are resolved (merged PR exists). If not, skip it.
-4. Dispatch:
+3. Skip if the issue is already assigned to someone else (another runner or human is working on it). Check the `assignees` field in the pre-fetched state or via `gh issue view`. Issues assigned to YOU are fine to re-dispatch if no worker is running.
+4. Read the issue body briefly — if it has `blocked-by:` references, check if those are resolved (merged PR exists). If not, skip it.
+5. Dispatch:
 
 ```bash
+# Assign the issue to prevent duplicate work by other runners/humans
+RUNNER_USER=$(gh api user --jq '.login' 2>/dev/null || whoami)
+gh issue edit <number> --repo <slug> --add-assignee "$RUNNER_USER" --add-label "status:queued" --remove-label "status:available" 2>/dev/null || true
+
 opencode run --dir <path> --title "Issue #<number>: <title>" \
   "/full-loop Implement issue #<number> (<url>) -- <brief description>" &
 sleep 2
-gh issue edit <number> --repo <slug> --add-label "status:queued" --remove-label "status:available" 2>/dev/null || true
 ```
 
 **Dispatch rules:**

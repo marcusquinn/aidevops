@@ -246,10 +246,10 @@ prefetch_state() {
 
 				echo ""
 
-				# Issues
+				# Issues (include assignees for dispatch dedup)
 				local issue_json
 				issue_json=$(gh issue list --repo "$slug" --state open \
-					--json number,title,labels,updatedAt \
+					--json number,title,labels,updatedAt,assignees \
 					--limit 20 2>/dev/null) || issue_json="[]"
 
 				local issue_count
@@ -257,7 +257,7 @@ prefetch_state() {
 
 				if [[ "$issue_count" -gt 0 ]]; then
 					echo "### Open Issues ($issue_count)"
-					echo "$issue_json" | jq -r '.[] | "- Issue #\(.number): \(.title) [labels: \(if (.labels | length) == 0 then "none" else (.labels | map(.name) | join(", ")) end)] [updated: \(.updatedAt)]"'
+					echo "$issue_json" | jq -r '.[] | "- Issue #\(.number): \(.title) [labels: \(if (.labels | length) == 0 then "none" else (.labels | map(.name) | join(", ")) end)] [assignees: \(if (.assignees | length) == 0 then "none" else (.assignees | map(.login) | join(", ")) end)] [updated: \(.updatedAt)]"'
 				else
 					echo "### Open Issues (0)"
 					echo "- None"
@@ -977,8 +977,13 @@ _Auto-updated by supervisor pulse. Do not edit manually._"
 		return 0
 	}
 
-	# Build title with stats
-	local title_parts="${pr_count} PRs, ${assigned_issue_count} assigned, ${worker_count} workers"
+	# Build title with stats (correct pluralization)
+	local pr_label="PRs"
+	[[ "$pr_count" -eq 1 ]] && pr_label="PR"
+	local assigned_label="assigned"
+	local worker_label="workers"
+	[[ "$worker_count" -eq 1 ]] && worker_label="worker"
+	local title_parts="${pr_count} ${pr_label}, ${assigned_issue_count} ${assigned_label}, ${worker_count} ${worker_label}"
 	local title_time
 	title_time=$(date -u +"%H:%M")
 	local health_title="${runner_prefix} ${title_parts} at ${title_time} UTC"
