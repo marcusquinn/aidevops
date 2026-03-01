@@ -120,7 +120,6 @@ Your App Process
 |------|----------|----------|
 | FP32 dense | `DataType.VECTOR_FP32` | Default for most embeddings |
 | FP16 dense | `DataType.VECTOR_FP16` | Half memory, slight precision loss |
-| FP64 dense | `DataType.VECTOR_FP64` | Maximum precision |
 | INT8 dense | `DataType.VECTOR_INT8` | Quantized (4x memory reduction) |
 | FP32 sparse | `DataType.SPARSE_VECTOR_FP32` | BM25/SPLADE sparse vectors |
 | FP16 sparse | `DataType.SPARSE_VECTOR_FP16` | Sparse with half precision |
@@ -151,17 +150,17 @@ schema = zvec.CollectionSchema(
     name="documents",
     fields=[
         zvec.FieldSchema(
-            "category",
-            zvec.DataType.STRING,
-            index_param=zvec.InvertIndexParam(),  # Inverted index for filtering
+            name="price",
+            data_type=zvec.DataType.INT32,
+            index_param=zvec.InvertIndexParam(enable_range_optimization=True),
         ),
     ],
     vectors=[
         zvec.VectorSchema(
-            "embedding",
-            zvec.DataType.VECTOR_FP32,
+            name="embedding",
+            data_type=zvec.DataType.VECTOR_FP32,
             dimension=384,
-            index_param=zvec.HnswIndexParam(ef_construction=200, m=16),
+            index_param=zvec.HnswIndexParam(metric_type=zvec.MetricType.COSINE),
         ),
     ],
 )
@@ -181,6 +180,7 @@ schema = zvec.CollectionSchema(
 
 ```python
 zvec.HnswIndexParam(
+    metric_type=zvec.MetricType.COSINE,  # Distance metric (L2, IP, COSINE)
     ef_construction=200,  # Build-time quality (higher = better recall, slower build)
     m=16,                 # Max connections per node (higher = better recall, more memory)
 )
@@ -214,9 +214,20 @@ zvec.InvertIndexParam()
 ### Creating Indexes After Collection Creation
 
 ```python
-collection.create_index("embedding", zvec.HnswIndexParam(ef_construction=200, m=16))
-collection.create_index("category", zvec.InvertIndexParam())
-collection.drop_index("embedding")  # Remove an index
+# Replace or create a vector index
+collection.create_index(
+    field_name="embedding",
+    index_param=zvec.HnswIndexParam(metric_type=zvec.MetricType.COSINE),
+)
+
+# Create an inverted index on a scalar field for filtering
+collection.create_index(
+    field_name="category",
+    index_param=zvec.InvertIndexParam(),
+)
+
+# Drop a scalar field index (vector indexes cannot be dropped)
+collection.drop_index(field_name="category")
 ```
 
 ## Quantization
@@ -266,8 +277,8 @@ Zvec ships with embedding functions that run locally or call APIs. No separate e
 
 | Function | Model | Dimensions | Speed | Dependency |
 |----------|-------|------------|-------|------------|
-| `DefaultLocalDenseEmbedding` | all-MiniLM-L6-v2 | 384 | ~1k sent/sec CPU | `sentence-transformers` |
-| `DefaultLocalSparseEmbedding` | SPLADE cocondenser | ~30k (sparse) | ~500 sent/sec CPU | `sentence-transformers` |
+| `DefaultLocalDenseEmbedding` | all-MiniLM-L6-v2 | 384 | ~1k sent/sec CPU | `sentence-transformers` (~80MB) |
+| `DefaultLocalSparseEmbedding` | SPLADE cocondenser | ~30k (sparse) | ~500 sent/sec CPU | `sentence-transformers` (~100MB) |
 | `BM25EmbeddingFunction` | DashText BM25 | variable (sparse) | Fast | `dashtext` |
 
 ### API-Based Embeddings
@@ -284,15 +295,15 @@ Zvec ships with embedding functions that run locally or call APIs. No separate e
 ```python
 from zvec.extension import DefaultLocalDenseEmbedding
 
-emb = DefaultLocalDenseEmbedding()  # Downloads all-MiniLM-L6-v2 on first run (~50MB)
+emb = DefaultLocalDenseEmbedding()  # Downloads all-MiniLM-L6-v2 on first run (~80MB)
 vector = emb.embed("Machine learning is a subset of AI")
 len(vector)  # 384
 
-# GPU acceleration
-emb_gpu = DefaultLocalDenseEmbedding(device="cuda")
+# Use ModelScope mirror (recommended for China)
+emb_ms = DefaultLocalDenseEmbedding(model_source="modelscope")
 
-# Apple Silicon
-emb_mps = DefaultLocalDenseEmbedding(device="mps")
+# Release model memory when done
+DefaultLocalDenseEmbedding.clear_cache()
 ```
 
 ### Local Sparse Embedding (SPLADE)
@@ -328,16 +339,40 @@ bm25_custom = BM25EmbeddingFunction(
 )
 ```
 
+### Qwen Dense Embedding
+
+```python
+from zvec.extension import QwenDenseEmbedding
+
+emb = QwenDenseEmbedding(
+    model="text-embedding-v4",  # Uses latest model by default
+    dimension=256,              # Required: embedding dimension
+    # api_key="..."            # Or set DASHSCOPE_API_KEY env var
+)
+vector = emb.embed("Vector database")
+```
+
+### Qwen Sparse Embedding
+
+```python
+from zvec.extension import QwenSparseEmbedding
+
+emb = QwenSparseEmbedding(
+    dimension=256,    # Required by DashScope API
+    # api_key="..."  # Or set DASHSCOPE_API_KEY env var
+)
+sparse_vec = emb.embed("sparse vector search")
+```
+
 ### OpenAI Embedding
 
 ```python
 from zvec.extension import OpenAIDenseEmbedding
 
 emb = OpenAIDenseEmbedding(
-    model="text-embedding-3-small",  # 1536 dims, cost-efficient
-    # model="text-embedding-3-large",  # 3072 dims, highest quality
-    dimension=1024,  # Custom dimension (Matryoshka)
-    # api_key="sk-..."  # Or set OPENAI_API_KEY env var
+    model="text-embedding-4",  # Uses latest model by default
+    dimension=256,             # Required: embedding dimension
+    # api_key="sk-..."        # Or set OPENAI_API_KEY env var
 )
 vector = emb.embed("Hello world")
 ```
@@ -352,10 +387,40 @@ emb = JinaDenseEmbedding(
     model="jina-embeddings-v5-text-small",  # 1024 dims default, 32K context
     dimension=256,  # Reduce to 256 dims (4x storage savings)
     task="retrieval.query",  # Optimize for search queries
-    # task="retrieval.passage",  # Use for documents
     # api_key="jina_..."  # Or set JINA_API_KEY env var
 )
+
+# For document indexing, use a separate instance
+doc_emb = JinaDenseEmbedding(
+    model="jina-embeddings-v5-text-small",
+    dimension=256,
+    task="retrieval.passage",
+)
 ```
+
+**Jina supported tasks:**
+
+| Task | Use case |
+|------|----------|
+| `retrieval.query` | Encode search queries for retrieval |
+| `retrieval.passage` | Encode documents/passages for retrieval |
+| `text-matching` | Symmetric similarity (duplicate detection) |
+| `classification` | Encode text for classification tasks |
+| `separation` | Encode text for clustering/topic separation |
+
+**Available models:**
+
+| Model | Parameters | Max length | Default dims |
+|-------|-----------|------------|--------------|
+| `jina-embeddings-v5-text-small` | 677M | 32768 | 1024 |
+| `jina-embeddings-v5-text-nano` | 239M | 8192 | 768 |
+
+### Embedding Notes
+
+- **Thread safety**: All embedding functions are thread-safe for multi-threaded use.
+- **Model download**: Local models download on first use (~80-100MB). Ensure network connectivity.
+- **Memory management**: Call `clear_cache()` on local embedding classes to release model memory.
+- **Text only**: Zvec currently supports text modality embeddings only.
 
 ## Rerankers
 
@@ -375,8 +440,8 @@ reranker = RrfReRanker(
 
 results = collection.query(
     vectors=[
-        zvec.VectorQuery("dense_emb", vector=dense_vec),
-        zvec.VectorQuery("sparse_emb", vector=sparse_vec),
+        zvec.VectorQuery(field_name="dense_emb", vector=dense_vec),
+        zvec.VectorQuery(field_name="sparse_emb", vector=sparse_vec),
     ],
     topk=50,
     reranker=reranker,
@@ -415,7 +480,7 @@ reranker = DefaultLocalReRanker(
 )
 
 results = collection.query(
-    vectors=zvec.VectorQuery("embedding", vector=query_vec),
+    vectors=zvec.VectorQuery(field_name="embedding", vector=query_vec),
     topk=50,  # Retrieve more candidates for re-ranking
     reranker=reranker,
 )
@@ -428,11 +493,19 @@ from zvec.extension import QwenReRanker
 
 reranker = QwenReRanker(
     query="search query",
+    model="gte-rerank-v2",
     topn=10,
     rerank_field="content",
     # api_key="..."  # Or set DASHSCOPE_API_KEY env var
 )
 ```
+
+### Reranker Selection Guide
+
+- **RRF / Weighted**: Use for multi-vector fusion (dense + sparse). No model needed.
+- **DefaultLocalReRanker**: Use for single-vector results when you need deep semantic re-ranking. Runs locally, free.
+- **QwenReRanker**: Use when you need API-based re-ranking with Qwen models.
+- All reranking functions are thread-safe.
 
 ## Hybrid Search
 
@@ -490,11 +563,37 @@ collection.insert([
 query = "what is deep learning"
 results = collection.query(
     vectors=[
-        zvec.VectorQuery("dense", vector=dense_emb.embed(query)),
-        zvec.VectorQuery("sparse", vector=sparse_query_emb.embed(query)),
+        zvec.VectorQuery(field_name="dense", vector=dense_emb.embed(query)),
+        zvec.VectorQuery(field_name="sparse", vector=sparse_query_emb.embed(query)),
     ],
     topk=10,
     reranker=RrfReRanker(topn=5),
+)
+```
+
+### Two-Stage Retrieval Pattern
+
+Use fast vector recall first, then apply precise cross-encoder re-ranking:
+
+```python
+from zvec.extension import DefaultLocalDenseEmbedding, DefaultLocalReRanker
+
+dense_emb = DefaultLocalDenseEmbedding()
+query = "machine learning tutorial"
+query_vec = dense_emb.embed(query)
+
+# Stage 1: Fast recall (top-100 candidates)
+# Stage 2: Precise re-ranking (top-10 final results)
+reranker = DefaultLocalReRanker(
+    query=query,
+    rerank_field="content",
+    topn=10,
+)
+
+results = collection.query(
+    vectors=zvec.VectorQuery(field_name="dense", vector=query_vec),
+    topk=100,
+    reranker=reranker,
 )
 ```
 
@@ -519,7 +618,7 @@ zvec.init(
 )
 ```
 
-`init()` can only be called once. Subsequent calls raise `RuntimeError`. Parameters set to `None` fall back to environment-aware defaults (cgroup-friendly for Docker/K8s).
+`init()` can only be called once. Subsequent calls raise `RuntimeError`. Parameters set to `None` fall back to environment-aware defaults (cgroup-friendly for Docker/K8s). Call at application startup before any collection operations.
 
 ### Collection Lifecycle
 
@@ -565,20 +664,25 @@ collection.update(zvec.Doc(id="doc_1", fields={"category": "science"}))
 docs = collection.fetch("doc_1")           # Single
 docs = collection.fetch(["doc_1", "doc_2"])  # Batch
 
-# Delete
-collection.delete("doc_1")
-collection.delete(["doc_1", "doc_2"])
-collection.delete_by_filter("publish_year < 1900")
+# Delete by ID
+collection.delete(ids="doc_1")
+collection.delete(ids=["doc_1", "doc_2"])
 
-# Flush (force writes to disk)
-collection.flush()
+# Delete by filter condition
+collection.delete_by_filter(filter="publish_year < 1900")
 ```
 
 ### Query API
 
+All write operations (insert, upsert, update, delete) are immediately visible for querying -- real-time, no eventual consistency delay.
+
 ```python
+# Single-vector search
 results = collection.query(
-    vectors=zvec.VectorQuery("embedding", vector=[0.1, 0.2, 0.3, 0.4]),
+    vectors=zvec.VectorQuery(
+        field_name="embedding",
+        vector=[0.1, 0.2, 0.3, 0.4],
+    ),
     topk=10,
     filter="category == 'tech' AND publish_year > 2020",
     include_vector=False,       # Whether to return vector data
@@ -586,38 +690,51 @@ results = collection.query(
     reranker=None,              # Optional reranker
 )
 
-# Query by document ID (use stored vector)
+# Query by document ID (reuse stored vector)
 results = collection.query(
-    vectors=zvec.VectorQuery("embedding", id="doc_1"),
+    vectors=zvec.VectorQuery(field_name="embedding", id="doc_1"),
     topk=10,
 )
 
 # Multi-vector query with index-specific params
 results = collection.query(
     vectors=[
-        zvec.VectorQuery("dense", vector=dense_vec, param=zvec.HnswQueryParam(ef=300)),
-        zvec.VectorQuery("sparse", vector=sparse_vec),
+        zvec.VectorQuery(
+            field_name="dense",
+            vector=dense_vec,
+            param=zvec.HnswQueryParam(ef=300),
+        ),
+        zvec.VectorQuery(field_name="sparse", vector=sparse_vec),
     ],
     topk=50,
     reranker=RrfReRanker(topn=10),
 )
+
+# Conditional filtering only (no vector search)
+results = collection.query(filter="publish_year < 1999", topk=50)
 ```
 
-### Schema Evolution
+### Schema Evolution (DDL)
+
+Schema changes are performed without downtime, data re-ingestion, or reindexing.
 
 ```python
-# Add a column
-collection.add_column(
-    zvec.FieldSchema("new_field", zvec.DataType.STRING, nullable=True),
-    expression="",  # Default value expression
-)
+# Add a numerical column (string/bool support coming soon)
+new_field = zvec.FieldSchema(name="rating", data_type=zvec.DataType.INT32)
+collection.add_column(field_schema=new_field, expression="5")  # Default for existing docs
 
-# Drop a column
-collection.drop_column("old_field")
+# Drop a column (irreversible -- deletes field data from all documents)
+collection.drop_column(field_name="old_field")
 
 # Rename a column
-collection.alter_column("old_name", new_name="new_name")
+collection.alter_column(old_name="publish_year", new_name="release_year")
+
+# Change data type (if compatible, e.g., INT32 -> INT64)
+updated = zvec.FieldSchema(name="rating", data_type=zvec.DataType.FLOAT)
+collection.alter_column(field_schema=updated)
 ```
+
+**Limitations**: Cannot add or drop vector fields (coming soon). `add_column()` currently only supports numerical scalar types.
 
 ## Node.js API
 
