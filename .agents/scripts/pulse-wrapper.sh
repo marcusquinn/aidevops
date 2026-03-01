@@ -249,17 +249,25 @@ prefetch_state() {
 				echo ""
 
 				# Issues (include assignees for dispatch dedup)
+				# Filter out supervisor/persistent/quality-review issues — these are
+				# managed by pulse-wrapper.sh and must not be touched by the pulse agent.
+				# Exposing them in pre-fetched state causes the LLM to close them as
+				# "stale", creating churn (wrapper recreates them on the next cycle).
 				local issue_json
 				issue_json=$(gh issue list --repo "$slug" --state open \
 					--json number,title,labels,updatedAt,assignees \
-					--limit 20 2>/dev/null) || issue_json="[]"
+					--limit 50 2>/dev/null) || issue_json="[]"
+
+				# Remove issues with supervisor, persistent, or quality-review labels
+				local filtered_json
+				filtered_json=$(echo "$issue_json" | jq '[.[] | select(.labels | map(.name) | (index("supervisor") or index("persistent") or index("quality-review")) | not)]')
 
 				local issue_count
-				issue_count=$(echo "$issue_json" | jq 'length')
+				issue_count=$(echo "$filtered_json" | jq 'length')
 
 				if [[ "$issue_count" -gt 0 ]]; then
 					echo "### Open Issues ($issue_count)"
-					echo "$issue_json" | jq -r '.[] | "- Issue #\(.number): \(.title) [labels: \(if (.labels | length) == 0 then "none" else (.labels | map(.name) | join(", ")) end)] [assignees: \(if (.assignees | length) == 0 then "none" else (.assignees | map(.login) | join(", ")) end)] [updated: \(.updatedAt)]"'
+					echo "$filtered_json" | jq -r '.[] | "- Issue #\(.number): \(.title) [labels: \(if (.labels | length) == 0 then "none" else (.labels | map(.name) | join(", ")) end)] [assignees: \(if (.assignees | length) == 0 then "none" else (.assignees | map(.login) | join(", ")) end)] [updated: \(.updatedAt)]"'
 				else
 					echo "### Open Issues (0)"
 					echo "- None"
