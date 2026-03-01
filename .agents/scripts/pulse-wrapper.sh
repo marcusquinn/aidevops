@@ -765,6 +765,9 @@ _update_health_issue_for_repo() {
 		echo "[pulse-wrapper] Health issue: created and pinned #${health_issue_number} for ${runner_user} in ${repo_slug}" >>"$LOGFILE"
 	fi
 
+	# Unpin closed/stale supervisor issues to free pin slots (max 3 per repo)
+	_cleanup_stale_pinned_issues "$repo_slug" "$runner_user"
+
 	# Ensure pinned (idempotent)
 	local active_node_id
 	active_node_id=$(gh issue view "$health_issue_number" --repo "$repo_slug" --json id --jq '.id' 2>/dev/null || echo "")
@@ -792,15 +795,13 @@ _update_health_issue_for_repo() {
 	local pr_count
 	pr_count=$(echo "$pr_json" | jq 'length')
 
-	# Open issues (exclude supervisor issues)
-	local issue_json
-	issue_json=$(gh issue list --repo "$repo_slug" --state open \
-		--json number,title,labels,updatedAt \
-		--limit 30 2>/dev/null) || issue_json="[]"
-	local issue_count
-	issue_count=$(echo "$issue_json" | jq '[.[] | select(.labels | map(.name) | index("supervisor") | not)] | length')
+	# Open issues — assigned to this runner (actionable) vs total
+	local assigned_issue_count
+	assigned_issue_count=$(gh issue list --repo "$repo_slug" --state open \
+		--assignee "$runner_user" --json number --jq 'length' 2>/dev/null || echo "0")
 	local total_issue_count
-	total_issue_count=$(echo "$issue_json" | jq 'length')
+	total_issue_count=$(gh issue list --repo "$repo_slug" --state open \
+		--json number,labels --jq '[.[] | select(.labels | map(.name) | index("supervisor") | not)] | length' 2>/dev/null || echo "0")
 
 	# Active headless workers (opencode processes for this repo)
 	local workers_md=""
@@ -945,7 +946,8 @@ ${worker_table}"
 | Metric | Count |
 | --- | --- |
 | Open PRs | ${pr_count} |
-| Open Issues | ${issue_count} |
+| Assigned Issues | ${assigned_issue_count} |
+| Total Issues | ${total_issue_count} |
 | Active Workers | ${worker_count} |
 | Max Workers | ${max_workers} |
 | Worktrees | ${wt_count} |
@@ -976,7 +978,7 @@ _Auto-updated by supervisor pulse. Do not edit manually._"
 	}
 
 	# Build title with stats
-	local title_parts="${pr_count} PRs, ${issue_count} issues, ${worker_count} workers"
+	local title_parts="${pr_count} PRs, ${assigned_issue_count} assigned, ${worker_count} workers"
 	local title_time
 	title_time=$(date -u +"%H:%M")
 	local health_title="${runner_prefix} ${title_parts} at ${title_time} UTC"
@@ -989,6 +991,64 @@ _Auto-updated by supervisor pulse. Do not edit manually._"
 	if [[ "$current_stats" != "$new_stats" ]]; then
 		gh issue edit "$health_issue_number" --repo "$repo_slug" --title "$health_title" >/dev/null 2>&1 || true
 	fi
+
+	return 0
+}
+
+#######################################
+# Unpin closed/stale supervisor issues to free pin slots
+#
+# GitHub allows max 3 pinned issues per repo. Old supervisor issues
+# that were closed (manually or by dedup) may still be pinned, blocking
+# the active health issue from being pinned. This function finds all
+# pinned issues in the repo and unpins any that are closed.
+#
+# Arguments:
+#   $1 - repo slug
+#   $2 - runner user (for logging)
+#######################################
+_cleanup_stale_pinned_issues() {
+	local repo_slug="$1"
+	local runner_user="$2"
+	local owner="${repo_slug%%/*}"
+	local name="${repo_slug##*/}"
+
+	# Query all pinned issues via GraphQL
+	local pinned_json
+	pinned_json=$(gh api graphql -f query="
+		query {
+			repository(owner: \"${owner}\", name: \"${name}\") {
+				pinnedIssues(first: 10) {
+					nodes {
+						issue {
+							id
+							number
+							state
+							title
+						}
+					}
+				}
+			}
+		}" 2>/dev/null || echo "")
+
+	[[ -z "$pinned_json" ]] && return 0
+
+	# Unpin any closed issues
+	local closed_pinned
+	closed_pinned=$(echo "$pinned_json" | jq -r '.data.repository.pinnedIssues.nodes[] | select(.issue.state == "CLOSED") | "\(.issue.id)|\(.issue.number)"' 2>/dev/null || echo "")
+
+	[[ -z "$closed_pinned" ]] && return 0
+
+	while IFS='|' read -r node_id issue_num; do
+		[[ -z "$node_id" ]] && continue
+		gh api graphql -f query="
+			mutation {
+				unpinIssue(input: {issueId: \"${node_id}\"}) {
+					issue { number }
+				}
+			}" >/dev/null 2>&1 || true
+		echo "[pulse-wrapper] Health issue: unpinned closed issue #${issue_num} in ${repo_slug}" >>"$LOGFILE"
+	done <<<"$closed_pinned"
 
 	return 0
 }
