@@ -419,15 +419,28 @@ cmd_ocr() {
 	fi
 
 	# Build the Python OCR script
+	# PaddleOCR 3.4.0 API changes (verified on Linux x86_64, 2026-03-01):
+	#   - show_log parameter removed (ValueError: Unknown argument)
+	#   - use_angle_cls deprecated -> use_textline_orientation
+	#   - .ocr() deprecated -> .predict() returns OCRResult objects
+	#   - OneDNN/MKL-DNN crashes on Linux CPU (PaddlePaddle 3.3.0) -> enable_mkldnn=False
+	#   - PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK speeds up startup
 	local python_script
 	python_script="$(
 		cat <<'PYEOF'
 import sys
 import json
 
-# Suppress PaddlePaddle warnings
+# Suppress PaddlePaddle warnings and skip model source connectivity check
 import os
 os.environ["GLOG_minloglevel"] = "2"
+os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
+
+# Disable OneDNN to avoid PaddlePaddle 3.3.0 crash on Linux CPU:
+# NotImplementedError: ConvertPirAttribute2RuntimeAttribute not support
+# [pir::ArrayAttribute<pir::DoubleAttribute>] (onednn_instruction.cc:116)
+import paddle
+paddle.set_flags({"FLAGS_use_mkldnn": False})
 
 from paddleocr import PaddleOCR
 
@@ -437,10 +450,10 @@ output_format = sys.argv[3]
 det_model = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] else None
 rec_model = sys.argv[5] if len(sys.argv) > 5 and sys.argv[5] else None
 
+# PaddleOCR 3.4.0: use_angle_cls/show_log removed, use enable_mkldnn=False
 kwargs = {
-    "use_angle_cls": True,
     "lang": lang,
-    "show_log": False,
+    "enable_mkldnn": False,
 }
 if det_model:
     kwargs["det_model_dir"] = det_model
@@ -448,49 +461,96 @@ if rec_model:
     kwargs["rec_model_dir"] = rec_model
 
 ocr = PaddleOCR(**kwargs)
-result = ocr.ocr(image_path, cls=True)
 
-if result is None or len(result) == 0:
+# PaddleOCR 3.4.0: .predict() returns OCRResult objects with rec_texts/rec_scores/rec_polys
+# Fall back to legacy .ocr() for older versions
+try:
+    results = list(ocr.predict(image_path))
+    use_new_api = True
+except (AttributeError, TypeError):
+    results = ocr.ocr(image_path, cls=True)
+    use_new_api = False
+
+if not results:
     if output_format == "json":
         print("[]")
     sys.exit(0)
 
-if output_format == "json":
-    entries = []
-    for page in result:
-        if page is None:
-            continue
-        for line in page:
-            box = line[0]
-            text = line[1][0]
-            confidence = line[1][1]
-            entries.append({
-                "text": text,
-                "confidence": round(confidence, 4),
-                "box": box,
-            })
-    print(json.dumps(entries, ensure_ascii=False, indent=2))
+if use_new_api:
+    # New API: OCRResult with rec_texts, rec_scores, rec_polys (list of 4-point polygons)
+    for result in results:
+        texts = result.get("rec_texts", [])
+        scores = result.get("rec_scores", [])
+        polys = result.get("rec_polys", [])
 
-elif output_format == "tsv":
-    print("text\tconfidence\tx1\ty1\tx2\ty2\tx3\ty3\tx4\ty4")
-    for page in result:
-        if page is None:
+        if not texts:
             continue
-        for line in page:
-            box = line[0]
-            text = line[1][0]
-            confidence = line[1][1]
-            coords = "\t".join(f"{p[0]:.0f}\t{p[1]:.0f}" for p in box)
-            print(f"{text}\t{confidence:.4f}\t{coords}")
+
+        if output_format == "json":
+            entries = []
+            for i, text in enumerate(texts):
+                entry = {
+                    "text": text,
+                    "confidence": round(float(scores[i]), 4) if i < len(scores) else 0.0,
+                }
+                if i < len(polys):
+                    box = polys[i].tolist() if hasattr(polys[i], "tolist") else polys[i]
+                    entry["box"] = box
+                entries.append(entry)
+            print(json.dumps(entries, ensure_ascii=False, indent=2))
+
+        elif output_format == "tsv":
+            print("text\tconfidence\tx1\ty1\tx2\ty2\tx3\ty3\tx4\ty4")
+            for i, text in enumerate(texts):
+                score = float(scores[i]) if i < len(scores) else 0.0
+                if i < len(polys):
+                    box = polys[i].tolist() if hasattr(polys[i], "tolist") else polys[i]
+                    coords = "\t".join(f"{p[0]:.0f}\t{p[1]:.0f}" for p in box)
+                else:
+                    coords = "\t".join(["0"] * 8)
+                print(f"{text}\t{score:.4f}\t{coords}")
+
+        else:
+            for text in texts:
+                print(text)
 
 else:
-    # Plain text output
-    for page in result:
-        if page is None:
-            continue
-        for line in page:
-            text = line[1][0]
-            print(text)
+    # Legacy API: [[box, (text, confidence)], ...]
+    if output_format == "json":
+        entries = []
+        for page in results:
+            if page is None:
+                continue
+            for line in page:
+                box = line[0]
+                text = line[1][0]
+                confidence = line[1][1]
+                entries.append({
+                    "text": text,
+                    "confidence": round(confidence, 4),
+                    "box": box,
+                })
+        print(json.dumps(entries, ensure_ascii=False, indent=2))
+
+    elif output_format == "tsv":
+        print("text\tconfidence\tx1\ty1\tx2\ty2\tx3\ty3\tx4\ty4")
+        for page in results:
+            if page is None:
+                continue
+            for line in page:
+                box = line[0]
+                text = line[1][0]
+                confidence = line[1][1]
+                coords = "\t".join(f"{p[0]:.0f}\t{p[1]:.0f}" for p in box)
+                print(f"{text}\t{confidence:.4f}\t{coords}")
+
+    else:
+        for page in results:
+            if page is None:
+                continue
+            for line in page:
+                text = line[1][0]
+                print(text)
 PYEOF
 	)"
 
@@ -574,20 +634,26 @@ import sys
 import os
 
 os.environ["GLOG_minloglevel"] = "2"
+os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
+
+# Disable OneDNN to avoid PaddlePaddle 3.3.0 crash on Linux CPU
+import paddle
+paddle.set_flags({"FLAGS_use_mkldnn": False})
 
 port = int(sys.argv[1]) if len(sys.argv) > 1 else 8868
 
 try:
-    # PaddleOCR 3.1.0+ native MCP server
-    from paddleocr.tools.mcp import main as mcp_main
+    # PaddleOCR MCP server (paddleocr-mcp package)
+    from paddleocr_mcp import main as mcp_main
     mcp_main(port=port)
 except ImportError:
-    # Fallback: simple HTTP OCR endpoint for older versions
+    # Fallback: simple HTTP OCR endpoint
     import json
     from http.server import HTTPServer, BaseHTTPRequestHandler
     from paddleocr import PaddleOCR
 
-    ocr_engine = PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
+    # PaddleOCR 3.4.0: removed show_log/use_angle_cls, added enable_mkldnn
+    ocr_engine = PaddleOCR(lang="en", enable_mkldnn=False)
 
     class OCRHandler(BaseHTTPRequestHandler):
         def do_POST(self):
@@ -602,18 +668,32 @@ except ImportError:
                     self.end_headers()
                     self.wfile.write(json.dumps({"error": "Invalid image path"}).encode())
                     return
-                result = ocr_engine.ocr(image_path, cls=True)
                 entries = []
-                if result:
-                    for page in result:
-                        if page is None:
-                            continue
-                        for line in page:
-                            entries.append({
-                                "text": line[1][0],
-                                "confidence": round(line[1][1], 4),
-                                "box": line[0],
-                            })
+                try:
+                    # New API (3.4.0+): .predict() returns OCRResult
+                    for result in ocr_engine.predict(image_path):
+                        texts = result.get("rec_texts", [])
+                        scores = result.get("rec_scores", [])
+                        polys = result.get("rec_polys", [])
+                        for i, text in enumerate(texts):
+                            entry = {"text": text, "confidence": round(float(scores[i]), 4) if i < len(scores) else 0.0}
+                            if i < len(polys):
+                                box = polys[i].tolist() if hasattr(polys[i], "tolist") else polys[i]
+                                entry["box"] = box
+                            entries.append(entry)
+                except (AttributeError, TypeError):
+                    # Legacy API fallback
+                    result = ocr_engine.ocr(image_path, cls=True)
+                    if result:
+                        for page in result:
+                            if page is None:
+                                continue
+                            for line in page:
+                                entries.append({
+                                    "text": line[1][0],
+                                    "confidence": round(line[1][1], 4),
+                                    "box": line[0],
+                                })
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
