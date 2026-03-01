@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.146.3] - 2026-03-01
+
+### Fixed
+
+- make dispatch dedup resilient to worker crashes across machines (#2629)
+
 ## [2.146.2] - 2026-03-01
 
 ### Fixed
