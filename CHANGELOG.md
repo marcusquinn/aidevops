@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.146.0] - 2026-03-01
+
+### Added
+
+- add pinned health issue dashboard per repo per runner (#2624)
+- add orphaned PR scanner to supervisor pulse (t216) (#2622)
+- enforce Task tool parallelism for independent subtasks in worker dispatch prompt (#2621)
+
+### Fixed
+
+- harden ampcode-cli.sh with array whitelists and safe arg handling (t105) (#2623)
+
 ## [2.145.1] - 2026-02-28
 
 ### Added
