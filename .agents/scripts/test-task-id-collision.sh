@@ -119,7 +119,7 @@ EOF
 
 	# Verify counter file was updated
 	local final_counter
-	final_counter=$(cat "$test_repo/.task-counter" 2>/dev/null | tr -d '[:space:]')
+	final_counter=$(tr -d '[:space:]' <"$test_repo/.task-counter" 2>/dev/null)
 	info "Final .task-counter value: $final_counter"
 
 	if [[ "$final_counter" -gt 200 ]]; then
@@ -185,7 +185,7 @@ EOF
 
 	# Verify counter was updated locally
 	local new_counter
-	new_counter=$(cat "$test_repo/.task-counter" 2>/dev/null | tr -d '[:space:]')
+	new_counter=$(tr -d '[:space:]' <"$test_repo/.task-counter" 2>/dev/null)
 	if [[ "$new_counter" == "181" ]]; then
 		pass "Local counter updated to 181 (next available after t180)"
 	else
@@ -822,7 +822,7 @@ EOF
 
 	# Verify counter was updated
 	local new_counter
-	new_counter=$(cat "$test_repo/.task-counter" 2>/dev/null | tr -d '[:space:]')
+	new_counter=$(tr -d '[:space:]' <"$test_repo/.task-counter" 2>/dev/null)
 	if [[ "$new_counter" == "605" ]]; then
 		pass "Counter updated to 605 after batch allocation"
 	else
