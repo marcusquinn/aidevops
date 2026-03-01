@@ -84,6 +84,22 @@ When closing any issue, ALWAYS add a comment first explaining: (1) why you're cl
 
 Check `ps axo pid,etime,command | grep '/full-loop' | grep '\.opencode'`. Any worker running 3+ hours with no open PR is likely stuck. Kill it: `kill <pid>`. Comment on the issue explaining why. This frees a slot. If the worker has recent commits or an open PR with activity, leave it alone — it's making progress.
 
+### Struggle-ratio check (t1367)
+
+The "Active Workers" section in the pre-fetched state includes a `struggle_ratio` for each worker that has a worktree. This metric is `messages / max(1, commits)` — a high ratio means the worker is sending many messages but producing few commits (thrashing).
+
+**How to interpret the flags:**
+
+- **No flag**: Worker is operating normally. No action needed.
+- **`struggling`**: ratio > threshold (default 30), elapsed > 30 min, zero commits. The worker is active but has produced nothing. Consider checking its PR/branch for signs of a loop (repeated CI failures, same error in multiple commits). If the issue is clearly beyond the worker's capability, kill it and re-file with more context.
+- **`thrashing`**: ratio > 50, elapsed > 1 hour. The worker has been unproductive for a long time. Strongly consider killing it (`kill <pid>`) and re-dispatching with a simpler scope or more context in the issue body.
+
+**This is an informational signal, not an auto-kill trigger.** Workers doing legitimate research or planning may have high message counts with few commits — that's expected for the first 30 minutes. The flags only activate after the minimum elapsed time. Use your judgment: a worker with `struggle_ratio: 45` at 35 minutes that just made its first commit is recovering, not stuck.
+
+**Configuration** (env vars in pulse-wrapper.sh):
+- `STRUGGLE_RATIO_THRESHOLD` — ratio above which to flag (default: 30)
+- `STRUGGLE_MIN_ELAPSED_MINUTES` — minimum runtime before flagging (default: 30)
+
 ### Dispatch workers for open issues
 
 For each dispatchable issue:

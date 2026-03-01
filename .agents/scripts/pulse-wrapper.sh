@@ -494,12 +494,108 @@ _extract_milestone_summary() {
 }
 
 #######################################
-# Pre-fetch active worker processes (t216)
+# Compute struggle ratio for a single worker (t1367)
+#
+# struggle_ratio = messages / max(1, commits)
+# High ratio with elapsed time indicates a worker that is active but
+# not producing useful output (thrashing). This is an informational
+# signal — the supervisor LLM decides what to do with it.
+#
+# Arguments:
+#   $1 - worker PID
+#   $2 - worker elapsed seconds
+#   $3 - worker command line
+# Output: "ratio|commits|messages|flag" to stdout
+#   flag: "" (normal), "struggling", or "thrashing"
+#######################################
+_compute_struggle_ratio() {
+	local pid="$1"
+	local elapsed_seconds="$2"
+	local cmd="$3"
+
+	local threshold="${STRUGGLE_RATIO_THRESHOLD:-30}"
+	local min_elapsed="${STRUGGLE_MIN_ELAPSED_MINUTES:-30}"
+	local min_elapsed_seconds=$((min_elapsed * 60))
+
+	# Extract --dir from command line
+	local worktree_dir=""
+	if [[ "$cmd" =~ --dir[[:space:]]+([^[:space:]]+) ]]; then
+		worktree_dir="${BASH_REMATCH[1]}"
+	fi
+
+	# No worktree — can't compute
+	if [[ -z "$worktree_dir" || ! -d "$worktree_dir" ]]; then
+		echo "n/a|0|0|"
+		return 0
+	fi
+
+	# Count commits since worker start
+	local commits=0
+	if [[ -d "${worktree_dir}/.git" || -f "${worktree_dir}/.git" ]]; then
+		local since_seconds_ago="${elapsed_seconds}"
+		commits=$(git -C "$worktree_dir" log --oneline --since="${since_seconds_ago} seconds ago" 2>/dev/null | wc -l | tr -d ' ') || commits=0
+	fi
+
+	# Estimate message count from OpenCode session DB
+	local messages=0
+	local db_path="${HOME}/.local/share/opencode/opencode.db"
+
+	if [[ -f "$db_path" ]]; then
+		# Extract title from command to match session
+		local session_title=""
+		if [[ "$cmd" =~ --title[[:space:]]+\"([^\"]+)\" ]] || [[ "$cmd" =~ --title[[:space:]]+([^[:space:]]+) ]]; then
+			session_title="${BASH_REMATCH[1]}"
+		fi
+
+		if [[ -n "$session_title" ]]; then
+			# Query message count for the most recent session matching this title
+			# Use sqlite3 with a LIKE match on session title
+			local escaped_title="${session_title//\'/\'\'}"
+			messages=$(sqlite3 "$db_path" "
+				SELECT COUNT(*)
+				FROM message m
+				JOIN session s ON m.session_id = s.id
+				WHERE s.title LIKE '%${escaped_title}%'
+				AND s.time_created > strftime('%s', 'now') - ${elapsed_seconds}
+			" 2>/dev/null) || messages=0
+		fi
+	fi
+
+	# Fallback: estimate from elapsed time if DB query failed
+	# Conservative heuristic: ~2 messages per minute for an active worker
+	if [[ "$messages" -eq 0 && "$elapsed_seconds" -gt 300 ]]; then
+		local elapsed_minutes=$((elapsed_seconds / 60))
+		messages=$((elapsed_minutes * 2))
+	fi
+
+	# Compute ratio
+	local denominator=$((commits > 0 ? commits : 1))
+	local ratio=$((messages / denominator))
+
+	# Determine flag
+	local flag=""
+	if [[ "$elapsed_seconds" -ge "$min_elapsed_seconds" ]]; then
+		if [[ "$ratio" -gt 50 && "$elapsed_seconds" -ge 3600 ]]; then
+			flag="thrashing"
+		elif [[ "$ratio" -gt "$threshold" && "$commits" -eq 0 ]]; then
+			flag="struggling"
+		fi
+	fi
+
+	echo "${ratio}|${commits}|${messages}|${flag}"
+	return 0
+}
+
+#######################################
+# Pre-fetch active worker processes (t216, t1367)
 #
 # Captures a snapshot of running worker processes so the pulse agent
 # can cross-reference open PRs with active workers. This is the
 # deterministic data-fetch part — the intelligence about which PRs
 # are orphaned stays in pulse.md.
+#
+# t1367: Also computes struggle_ratio for each worker with a worktree.
+# High ratio = active but unproductive (thrashing). Informational only.
 #
 # Output: worker summary to stdout (appended to STATE_FILE by caller)
 #######################################
@@ -512,6 +608,7 @@ prefetch_active_workers() {
 	echo ""
 	echo "Snapshot of running worker processes at $(date -u +%Y-%m-%dT%H:%M:%SZ)."
 	echo "Use this to determine whether a PR has an active worker (not orphaned)."
+	echo "Struggle ratio: messages/max(1,commits) — high ratio + time = thrashing. See pulse.md."
 	echo ""
 
 	if [[ -z "$worker_lines" ]]; then
@@ -526,7 +623,27 @@ prefetch_active_workers() {
 			pid=$(echo "$line" | awk '{print $1}')
 			etime=$(echo "$line" | awk '{print $2}')
 			cmd=$(echo "$line" | cut -d' ' -f3-)
-			echo "- PID $pid (uptime: $etime): $cmd"
+
+			# Compute elapsed seconds for struggle ratio
+			local elapsed_seconds
+			elapsed_seconds=$(_get_process_age "$pid")
+
+			# Compute struggle ratio (t1367)
+			local sr_result
+			sr_result=$(_compute_struggle_ratio "$pid" "$elapsed_seconds" "$cmd")
+			local sr_ratio sr_commits sr_messages sr_flag
+			IFS='|' read -r sr_ratio sr_commits sr_messages sr_flag <<<"$sr_result"
+
+			local sr_display=""
+			if [[ "$sr_ratio" != "n/a" ]]; then
+				sr_display=" [struggle_ratio: ${sr_ratio} (${sr_messages}msgs/${sr_commits}commits)"
+				if [[ -n "$sr_flag" ]]; then
+					sr_display="${sr_display} **${sr_flag}**"
+				fi
+				sr_display="${sr_display}]"
+			fi
+
+			echo "- PID $pid (uptime: $etime): $cmd${sr_display}"
 		done
 	fi
 
