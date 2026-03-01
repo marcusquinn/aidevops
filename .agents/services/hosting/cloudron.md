@@ -18,13 +18,13 @@ tools:
 ## Quick Reference
 
 - **Type**: Self-hosted app platform (100+ apps), auto-updates/backups/SSL
-- **Auth**: API token from Dashboard > Settings > API Access
+- **Auth**: API token from Dashboard > Settings > API Access (9.1+: passkey/OIDC login)
 - **Config**: `configs/cloudron-config.json`
 - **Commands**: `cloudron-helper.sh [servers|connect|status|apps|install-app|update-app|restart-app|logs|backup-app|domains|add-domain|users|add-user] [server] [args]`
+- **CLI ops**: `cloudron-server-ops-skill.md` (full CLI reference from upstream)
+- **Packaging**: `cloudron-app-packaging.md` (native guide), `cloudron-app-packaging-skill.md` (upstream skill)
+- **Publishing**: `cloudron-app-publishing-skill.md` (community packages via CloudronVersions.json)
 - **API test**: `curl -H "Authorization: Bearer TOKEN" https://cloudron.domain.com/api/v1/cloudron/status`
-- **App ops**: `install-app [server] [app] [subdomain]`, `update-app`, `restart-app`, `logs`
-- **Backup**: `backup-system`, `backup-app`, `list-backups`, `restore-backup`
-- **User mgmt**: `users`, `add-user`, `update-user`, `reset-password`
 - **SSH access**: `ssh root@cloudron.domain.com` for direct server diagnosis
 - **Forum**: [forum.cloudron.io](https://forum.cloudron.io) for known issues and solutions
 - **Docker**: `docker ps -a` (states), `docker logs <container>`, `docker exec -it mysql mysql`
@@ -33,17 +33,33 @@ tools:
 
 Cloudron is a complete solution for running apps on your server, providing easy app installation, automatic updates, backups, and domain management.
 
+## What's New in 9.1
+
+Cloudron 9.1 (released to unstable 2026-03-01) introduces major features:
+
+- **Custom app build and deploy**: `cloudron install` uploads package source and builds on-server. Source is backed up and rebuilt on restore. CLI-driven workflow for developers building custom apps or patching existing packages.
+- **Community packages**: Install third-party apps from a `CloudronVersions.json` URL via the dashboard. Cloudron tracks the URL and auto-checks for updates. See `cloudron-app-publishing-skill.md`.
+- **Passkey authentication**: FIDO2/WebAuthn passkey support for Cloudron login. Tested with Bitwarden, YubiKey 5, Nitrokey, and native browser/OS support.
+- **OIDC CLI login**: CLI uses browser-based OIDC login to support passkeys. Pre-obtained API tokens still work for CI/CD pipelines.
+- **Addon upgrades**: MongoDB 8, Redis 8.4, Node.js 24.x
+- **ACME ARI support**: RFC 9773 for certificate renewal information
+- **Backup integrity verification UI**: Verify backup integrity from the dashboard
+- **Improved progress reporting**: Percentage complete and elapsed/estimated time for backups and installations
+- **Better event log UI**: Separate notifications view
+
+**Source**: [forum.cloudron.io/topic/14976](https://forum.cloudron.io/topic/14976/what-s-coming-in-9-1)
+
 ## Provider Overview
 
 ### **Cloudron Characteristics:**
 
 - **Service Type**: Self-hosted app platform and server management
-- **App Ecosystem**: 100+ pre-configured apps available
+- **App Ecosystem**: 100+ pre-configured apps + community packages (9.1+)
 - **Management**: Web-based dashboard for complete server management
 - **Automation**: Automatic updates, backups, and SSL certificates
 - **Multi-tenancy**: Support for multiple users and domains
 - **API Support**: REST API for automation and integration
-- **Security**: Built-in firewall, automatic security updates
+- **Security**: Built-in firewall, automatic security updates, passkey auth (9.1+)
 
 ### **Best Use Cases:**
 
@@ -479,4 +495,16 @@ done
 
 ---
 
-**Cloudron provides a comprehensive app platform with excellent management capabilities, making it ideal for organizations needing easy-to-manage, self-hosted applications.** 🚀
+## Related Skills and Subagents
+
+| Resource | Path | Purpose |
+|----------|------|---------|
+| App packaging (native) | `tools/deployment/cloudron-app-packaging.md` | Full packaging guide with aidevops helper scripts |
+| App packaging (upstream) | `tools/deployment/cloudron-app-packaging-skill.md` | Official Cloudron skill with manifest/addon refs |
+| App publishing | `tools/deployment/cloudron-app-publishing-skill.md` | CloudronVersions.json and community packages |
+| Server ops | `tools/deployment/cloudron-server-ops-skill.md` | Full CLI reference for managing installed apps |
+| Git reference | `tools/deployment/cloudron-git-reference.md` | Using git.cloudron.io for packaging patterns |
+| Helper script | `scripts/cloudron-helper.sh` | Multi-server management via API |
+| Package helper | `scripts/cloudron-package-helper.sh` | Local packaging development workflow |
+
+**Cloudron provides a comprehensive app platform with excellent management capabilities, making it ideal for organizations needing easy-to-manage, self-hosted applications.**
