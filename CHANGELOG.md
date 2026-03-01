@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.146.2] - 2026-03-01
+
+### Fixed
+
+- self-assign issues on dispatch, correct title pluralization (#2628)
+
 ## [2.146.1] - 2026-03-01
 
 ### Fixed
