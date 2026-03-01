@@ -141,22 +141,26 @@ if [[ -n "$ISSUE_NUM" && "$ISSUE_NUM" != "null" ]]; then
 fi
 ```
 
-**Label vocabulary** — use these status labels at the appropriate lifecycle points:
+**Label and assignment lifecycle** — labels and GitHub issue assignees work together to coordinate work across multiple machines and contributors:
 
-| Label | When to set | Set by |
-|-------|-------------|--------|
-| `status:available` | Issue created, no assignee | issue-sync-helper (automated) |
-| `status:queued` | Task queued for dispatch | Supervisor (contextual) |
-| `status:claimed` | Task has assignee, not yet started | issue-sync-helper (automated) |
-| `status:in-progress` | Worker actively coding | **Worker (this step)** |
-| `status:in-review` | PR opened, awaiting review | **Worker (Step 4)** |
-| `status:blocked` | Task has unresolved blockers | Worker or supervisor (contextual) |
-| `status:done` | PR merged | sync-on-pr-merge workflow (automated) |
-| `status:verify-failed` | Post-merge verification failed | Worker (contextual) |
-| `status:needs-testing` | Code merged, needs manual testing | Worker (contextual) |
-| `dispatched:{model}` | Worker started on task | **Worker (Step 0.7)** |
+| Label | Assignee | When | Set by |
+|-------|----------|------|--------|
+| `status:available` | none | Issue created or recovered from stale state | issue-sync-helper, or pulse (recovery) |
+| `status:queued` | runner user | Pulse dispatches a worker | **Supervisor pulse** |
+| `status:in-progress` | worker user | Worker starts coding | **Worker (this step)** |
+| `status:in-review` | worker user | PR opened, awaiting review | **Worker (Step 4)** |
+| `status:blocked` | unchanged | Task has unresolved blockers | Worker or supervisor (contextual) |
+| `status:done` | unchanged | PR merged | sync-on-pr-merge workflow (automated) |
+| `status:verify-failed` | unchanged | Post-merge verification failed | Worker (contextual) |
+| `status:needs-testing` | unchanged | Code merged, needs manual testing | Worker (contextual) |
+| `dispatched:{model}` | unchanged | Worker started on task | **Worker (Step 0.7)** |
 
-Only `status:available`, `status:claimed`, and `status:done` are fully automated. All other transitions are set contextually by the agent that best understands the current state. When setting a new status label, always remove the prior status labels to keep exactly one active.
+**Assignment rules:**
+- The pulse assigns the issue to the runner user at dispatch time (before the worker starts). This prevents other runners/humans from picking up the same issue.
+- The worker self-assigns in this step as defense-in-depth (covers manual dispatch, interactive sessions).
+- If a worker crashes and the issue goes stale (3+ hours with no PR), the pulse recovers it: relabels to `status:available`, unassigns, and comments explaining the recovery.
+
+**Consistency rule:** When setting a new status label, always remove the prior status labels to keep exactly one active.
 
 ### Step 0.7: Label Dispatch Model — `dispatched:{model}`
 

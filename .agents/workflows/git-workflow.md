@@ -392,13 +392,14 @@ fi
 # - "feature"/"enhancement" label → feature/
 # - Default → feature/
 
-# 4. Create branch
+# 4. Create worktree for the issue (main repo stays on main)
 git checkout main && git pull origin main
-git checkout -b {type}/{issue_number}-{slug-from-title}
-# Example: feature/42-add-user-dashboard
+~/.aidevops/agents/scripts/worktree-helper.sh add {type}/{issue_number}-{slug-from-title}
+# Creates: ~/Git/{repo}-{type}-{issue_number}-{slug}/
+# Example: ~/Git/myapp-feature-42-add-user-dashboard/
 
 # 5. Inform user
-echo "Created branch {type}/{issue_number}-{slug} linked to issue #{issue_number}"
+echo "Created worktree for {type}/{issue_number}-{slug} linked to issue #{issue_number}"
 ```
 
 ### Platform Detection
