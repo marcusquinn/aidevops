@@ -196,7 +196,7 @@ test_stdin_input() {
 	setup
 
 	local output
-	output=$(cat "${TEST_DIR}/standard-business.txt" | "$PARSER" parse - "$CONTACTS_DIR" 2>&1) || true
+	output=$("$PARSER" parse - "$CONTACTS_DIR" <"${TEST_DIR}/standard-business.txt" 2>&1) || true
 
 	assert_file_exists "${CONTACTS_DIR}/john.doe@acmecorp.com.toon" "TOON file created from stdin"
 
