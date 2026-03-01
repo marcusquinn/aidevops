@@ -168,6 +168,137 @@ t1370.1 and t1370.2 can run in parallel. t1370.3 depends on the decision guide s
 
 ---
 
+### [2026-03-01] UI/UX Inspiration Skill and Brand Identity System
+
+**Status:** Planning
+**Estimate:** ~11.75h (ai:8h test:2h read:1.75h)
+**TODO:** t1371 (catalogue), t1372 (skill + interview), t1373 (brand identity), t1374 (wiring)
+**Logged:** 2026-03-01
+**Briefs:** [t1371](tasks/t1371-brief.md), [t1372](tasks/t1372-brief.md), [t1373](tasks/t1373-brief.md), [t1374](tasks/t1374-brief.md)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged}:
+p038,UI/UX Inspiration Skill and Brand Identity System,planning,0,3,,plan|feature|design|content,11.75h,8h,2h,1.75h,2026-03-01T00:00Z
+-->
+
+#### Purpose
+
+Add a comprehensive UI/UX design intelligence system to aidevops that bridges the gap between design agents and content agents. Currently, design decisions (colours, typography, layout) and content decisions (copywriting voice, imagery style) are made independently — a project can have beautiful UI with copy that reads like a different brand.
+
+**Three problems solved:**
+
+1. **No design reference data.** LLMs default to generic "blue SaaS" designs. The catalogue provides 67 UI styles, 96 colour palettes, 57 font pairings, and 100 industry-specific reasoning rules as structured TOON data agents read directly.
+
+2. **No design-content bridge.** A designer picks "Glassmorphism + Trust Blue" but the copywriter doesn't know that means "confident, technical, concise." The brand identity template defines both visual and verbal identity in one file that all agents read.
+
+3. **No style interview.** Projects start design work without understanding the user's aesthetic preferences. The interview workflow presents example sites, asks the user to share sites they like, extracts patterns, and synthesises a brand identity before any implementation begins.
+
+**Seed data source:** [nextlevelbuilder/ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill) (MIT, 36k stars). CSV data converted to TOON. No Python runtime, no premium API dependency, no external service.
+
+#### Architecture
+
+```text
+New files:
+  .agents/tools/design/
+    ui-ux-catalogue.toon      ← t1371: Structured design knowledge (TOON)
+    ui-ux-inspiration.md      ← t1372: Skill entry point + interview + URL study
+    brand-identity.md         ← t1373: Bridge agent + per-project template
+
+Per-project (created by interview workflow):
+  context/brand-identity.toon ← Filled-in brand identity for this project
+
+Relationship map:
+  brand-identity.toon (per-project)
+      ├── read by: tools/design/ui-ux-inspiration.md  (design decisions)
+      ├── read by: content/guidelines.md               (copywriting voice)
+      ├── read by: content/platform-personas.md         (channel adaptation)
+      ├── read by: content/production/image.md          (imagery style)
+      ├── read by: content/production/characters.md     (character design)
+      └── read by: workflows/ui-verification.md         (quality gates)
+
+Catalogue TOON sections:
+  styles[67]           ← UI styles with CSS keywords, accessibility, anti-patterns
+  palettes[96]         ← Industry-mapped colour palettes with hex values
+  typography[57]       ← Font pairings with Google Fonts imports
+  industry_patterns[100] ← Product type → style/colour/typography mapping
+  buttons_and_forms[]  ← Button variants + form elements + states per UI style
+  inspiration[]        ← User-added site analyses (extensible)
+
+Brand identity dimensions:
+  visual_style | voice_and_tone | copywriting_patterns | imagery
+  iconography | buttons_and_forms | media_and_motion | brand_positioning
+```
+
+#### Interview Workflow
+
+```text
+New/Rebranding Project:
+
+  1. Present curated examples (15+ URLs across 4+ style categories)
+     ├── Minimal: stripe.com, linear.app, notion.so
+     ├── Bold: vercel.com, figma.com, arc.net
+     ├── Premium: apple.com, tesla.com, bang-olufsen.com
+     └── Playful: duolingo.com, notion.so/templates, mailchimp.com
+
+  2. Ask user to share sites/apps they already like
+     └── Accept: URLs, bookmarks export, or "I like sites like X"
+
+  3. For each URL, extract via Playwright:
+     ├── Visual: colours, typography, layout, border-radius, spacing scale
+     ├── Interactive: button styles, form fields, hover states, transitions
+     ├── Content: copy tone, CTA language, headline style, vocabulary
+     ├── Media: photography vs illustration, icon library, image treatment
+     └── Motion: animation approach, transition timing, loading patterns
+
+  4. Synthesise findings into draft brand-identity.toon
+     └── Present to user for approval/adjustment
+
+  5. Save to project's context/brand-identity.toon
+     └── All agents now read this for design and content decisions
+```
+
+#### Subtask Breakdown
+
+| ID | Task | Est | Model | Dependencies |
+|----|------|-----|-------|-------------|
+| t1371 | UI/UX catalogue TOON (seed from upstream CSVs) | ~4h | sonnet | none |
+| t1372 | Skill entry point + interview + URL study workflow | ~3h | sonnet | t1371, t1373 |
+| t1373 | Brand identity bridge agent + template | ~3.5h | sonnet | t1371 |
+| t1374 | Wire into agent index + update cross-references | ~1.25h | sonnet | t1371, t1372, t1373 |
+
+t1371 runs first (no dependencies). t1373 can start after t1371 (needs catalogue for style references). t1372 needs both t1371 and t1373 (references both). t1374 is the final wiring step.
+
+#### Progress
+
+- [ ] (2026-03-01) Phase 1: Foundation ~4h
+  - [ ] t1371 UI/UX catalogue TOON file
+- [ ] (2026-03-01) Phase 2: Agents ~6.5h
+  - [ ] t1373 Brand identity bridge agent (can start after t1371)
+  - [ ] t1372 Skill entry point + interview workflow (after t1371 + t1373)
+- [ ] (2026-03-01) Phase 3: Integration ~1.25h
+  - [ ] t1374 Wire into indexes and cross-references
+
+#### Decision Log
+
+| Date | Decision | Rationale |
+|------|----------|-----------|
+| 2026-03-01 | TOON over markdown for catalogue | Structured tabular data (67 styles x 20+ fields) is better in TOON. More token-efficient for LLM consumption. |
+| 2026-03-01 | No Python search engine | Upstream uses BM25 over CSVs. LLM reads TOON directly and reasons better than keyword matching. Zero dependencies. |
+| 2026-03-01 | No premium API dependency | Upstream premium (uupm.cc) wraps same data as hosted MCP API. We use MIT-licensed local data only. |
+| 2026-03-01 | Brand identity as bridge, not replacement | guidelines.md stays for structural rules. brand-identity.toon adds voice/visual identity on top. Per-project, not global. |
+| 2026-03-01 | Interview before implementation | User explicitly requested. Prevents starting design work without understanding aesthetic preferences. |
+| 2026-03-01 | Buttons and forms as first-class dimension | User explicitly requested. Most-touched interactive elements. Both visual (design) and verbal (CTA copy, error messages). |
+| 2026-03-01 | Copywriting patterns in brand identity | User noted brand character comes from copy style, imagery, iconography, media — not just visual design. |
+| 2026-03-01 | `.agents/tools/design/` location | Existing directory with design-inspiration.md. Natural home for design skill files. |
+
+#### Surprises & Discoveries
+
+- Upstream repo (36k stars) is essentially a CSV database with a Python BM25 search wrapper. The data is the value, not the tooling.
+- The premium product adds API access (rate-limited), not additional data. All CSV data is MIT-licensed and in the public repo.
+- Our existing `workflows/ui-verification.md` already has comprehensive design quality gates (typography, spacing, accessibility, interaction) — the new skill complements rather than duplicates.
+- `content/guidelines.md` is hardcoded to one client (Trinity Joinery). The brand identity system parameterises this — each project gets its own voice.
+
+---
+
 ### [2026-03-01] PaddleOCR Integration — Screenshot and Scene Text OCR
 
 **Status:** Planning
@@ -6768,5 +6899,5 @@ p00X,Deliverable 1; Deliverable 2,Success 1; Success 2,Learning 1; Learning 2,Xd
 ## Analytics
 
 <!--TOON:analytics{total_plans,active,completed,archived,avg_lead_time_days,avg_variance_pct}:
-9,9,0,0,,
+10,10,0,0,,
 -->
