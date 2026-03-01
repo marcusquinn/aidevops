@@ -225,8 +225,7 @@ cmd_audit() {
 	local repo_path="${1:-$(pwd)}"
 	local repo_root
 
-	repo_root=$(get_repo_root "$repo_path")
-	if [[ $? -ne 0 ]]; then
+	if ! repo_root=$(get_repo_root "$repo_path"); then
 		return 1
 	fi
 
@@ -301,8 +300,7 @@ cmd_list() {
 	local repo_path="${1:-$(pwd)}"
 	local repo_root
 
-	repo_root=$(get_repo_root "$repo_path")
-	if [[ $? -ne 0 ]]; then
+	if ! repo_root=$(get_repo_root "$repo_path"); then
 		return 1
 	fi
 
@@ -327,8 +325,7 @@ cmd_clean() {
 	local repo_path="${1:-$(pwd)}"
 	local repo_root
 
-	repo_root=$(get_repo_root "$repo_path")
-	if [[ $? -ne 0 ]]; then
+	if ! repo_root=$(get_repo_root "$repo_path"); then
 		return 1
 	fi
 
@@ -404,8 +401,7 @@ cmd_auto_clean() {
 	local repo_path="${1:-$(pwd)}"
 	local repo_root
 
-	repo_root=$(get_repo_root "$repo_path")
-	if [[ $? -ne 0 ]]; then
+	if ! repo_root=$(get_repo_root "$repo_path"); then
 		return 1
 	fi
 
