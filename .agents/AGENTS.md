@@ -187,7 +187,7 @@ Read subagents on-demand. Full index: `subagent-index.toon`.
 | Payments | `services/payments/revenuecat.md`, `services/payments/stripe.md`, `services/payments/procurement.md` |
 | Security/Encryption | `tools/security/tirith.md`, `tools/security/opsec.md`, `tools/credentials/encryption-stack.md` |
 | Database/Local-first | `tools/database/pglite-local-first.md`, `services/database/postgres-drizzle-skill.md` |
-| Vector Search | `tools/database/vector-search.md` |
+| Vector Search | `tools/database/vector-search.md`, `tools/database/vector-search/zvec.md` |
 | Local Development | `services/hosting/local-hosting.md` |
 | Infrastructure | `tools/infrastructure/cloud-gpu.md`, `tools/containers/orbstack.md`, `tools/containers/remote-dispatch.md` |
 | Accessibility | `services/accessibility/accessibility-audit.md` |
