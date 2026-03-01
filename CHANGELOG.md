@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.147.1] - 2026-03-01
+
+### Added
+
+- add Qlty CLI to setup.sh tool installation (#2633)
+
 ## [2.147.0] - 2026-03-01
 
 ### Added
