@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.147.3] - 2026-03-01
+
+### Added
+
+- add Step 3.7 to pulse.md — act on quality review findings (#2638)
+
 ## [2.147.2] - 2026-03-01
 
 ### Fixed
