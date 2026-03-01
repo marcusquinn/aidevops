@@ -135,34 +135,35 @@ CodeRabbit analyzes:
 CodeRabbit reviews every PR automatically via the GitHub App. No manual trigger
 scripts are needed.
 
-### Daily Full Codebase Review (Issue #2386)
+### Daily Code Quality Review (Multi-Tool, Multi-Repo)
 
-The supervisor pulse triggers a daily full codebase review via GitHub issue #2386
-(labelled `coderabbit-pulse`). The flow:
+The supervisor pulse runs a daily code quality sweep across ALL pulse-enabled
+repos in `repos.json`. CodeRabbit is one of several tools in this sweep.
 
-1. **Trigger**: Supervisor posts a comment on #2386 mentioning `@coderabbitai`
-   with a request for a full codebase review and focus areas.
-2. **Review**: CodeRabbit runs its analysis and posts findings as a comment.
-3. **Issue creation**: On the next pulse cycle, the supervisor reads CodeRabbit's
-   findings and creates one GitHub issue per finding via `gh issue create`:
-   - Title: `coderabbit: <short description>`
-   - Labels: `coderabbit-pulse`, `auto-dispatch`
-   - Body: finding number, evidence, risk, recommended action
-4. **Pickup**: The normal supervisor pulse (Step 3 in `scripts/commands/pulse.md`) picks up
-   these issues via `gh issue list` — they appear as open issues with the
-   `auto-dispatch` label and enter the standard priority queue.
-5. **Dispatch**: Workers implement fixes via the normal `/full-loop` pipeline.
+**Implementation**: `pulse-wrapper.sh` function `run_daily_quality_sweep()` runs
+once per 24h (timestamp-guarded). For each repo it:
 
-**Do not close issue #2386** — it is the persistent trigger point for daily reviews.
+1. Ensures a persistent "Daily Code Quality Review" issue exists (labels:
+   `quality-review`, `persistent`; pinned).
+2. Runs all available quality tools and posts a single summary comment:
+   - **ShellCheck** — local analysis of `.sh` files
+   - **Qlty** — maintainability smells (if `~/.qlty/bin/qlty` installed)
+   - **SonarCloud** — quality gate status + open issues (public API, no auth)
+   - **Codacy** — open issues count (requires `CODACY_API_TOKEN` in gopass)
+   - **CodeRabbit** — `@coderabbitai` mention triggers full codebase review
+3. On the next pulse, the supervisor reads findings and creates actionable
+   GitHub issues (title: `quality: <description>`, labels: `auto-dispatch`).
 
-**Why the supervisor creates issues, not CodeRabbit:** CodeRabbit's sandbox does
-not have `gh` CLI access. It can analyse the codebase and post findings, but
-cannot create issues. The supervisor (which has `gh` access) parses the findings
-and creates the issues.
+**Do not close the "Daily Code Quality Review" issue** in any repo — it is the
+persistent trigger point for daily reviews.
+
+**Legacy**: Issue #2386 in `marcusquinn/aidevops` was the original single-repo
+CodeRabbit-only review issue. It has been superseded by the multi-repo
+persistent quality review issues created by `run_daily_quality_sweep()`.
 
 > **Archived (t1336):** `review-pulse-helper.sh`, `coderabbit-pulse-helper.sh`,
 > and `coderabbit-task-creator-helper.sh` have been archived to `scripts/archived/`.
-> The daily review now uses the supervisor to create issues from CodeRabbit's
+> The daily review now uses the supervisor to create issues from quality tool
 > findings, replacing the old bash scripts for parsing and task creation.
 
 ## Troubleshooting
