@@ -77,6 +77,7 @@ When closing any issue, ALWAYS add a comment first explaining: (1) why you're cl
 - **`status:blocked` but blockers are resolved** (merged PR exists for each `blocked-by:` ref) → remove `status:blocked`, add `status:available`, comment explaining what unblocked it. It's now dispatchable this cycle.
 - **Duplicate issues for the same task ID** (multiple open issues whose titles start with the same `tNNN:` prefix) → keep the one referenced by `ref:GH#` in TODO.md; close the others with a comment like "Duplicate of #NNN — closing in favour of the canonical issue." This happens when issue-sync-helper and a manual/agent creation race, or when a task ID is reused after a collision. Check TODO.md's `ref:GH#` to determine which is canonical. If neither is referenced, keep the older one.
 - **Too large for one worker session** (multiple independent changes, 5+ checklist items, "audit all", "migrate everything") → create subtask issues, label parent `status:blocked` with `blocked-by:` refs to subtasks
+- **`status:queued` or `status:in-progress`** → likely being worked on (possibly on another machine). Check the `updatedAt` timestamp: if the issue was updated within the last 3 hours, skip it. If it's been 3+ hours with no open PR and no recent commits on a related branch, the worker likely died — relabel to `status:available`, unassign, and comment explaining the recovery. It's now dispatchable.
 - **`status:available` or no status label** → dispatch a worker (see below)
 
 ### Kill stuck workers
@@ -86,11 +87,12 @@ Check `ps axo pid,etime,command | grep '/full-loop' | grep '\.opencode'`. Any wo
 ### Dispatch workers for open issues
 
 For each dispatchable issue:
-1. Skip if a worker is already running for it (check `ps` output for the issue number)
+1. Skip if a worker is already running for it locally (check `ps` output for the issue number)
 2. Skip if an open PR already exists for it (check PR list)
-3. Skip if the issue is already assigned to someone else (another runner or human is working on it). Check the `assignees` field in the pre-fetched state or via `gh issue view`. Issues assigned to YOU are fine to re-dispatch if no worker is running.
-4. Read the issue body briefly — if it has `blocked-by:` references, check if those are resolved (merged PR exists). If not, skip it.
-5. Dispatch:
+3. Skip if the issue has `status:queued`, `status:in-progress`, or `status:in-review` labels — but only if the issue was updated within the last 3 hours. These labels indicate a worker is handling it (possibly on another machine). If the label is stale (3+ hours, no PR, no recent branch activity), the worker likely died — recover the issue: relabel to `status:available`, unassign, and comment explaining the recovery. It becomes dispatchable this cycle.
+4. Skip if the issue is assigned and was updated within the last 3 hours — someone is actively working on it. If assigned but stale (3+ hours, no PR), treat as abandoned: unassign and relabel to `status:available`.
+5. Read the issue body briefly — if it has `blocked-by:` references, check if those are resolved (merged PR exists). If not, skip it.
+6. Dispatch:
 
 ```bash
 # Assign the issue to prevent duplicate work by other runners/humans
