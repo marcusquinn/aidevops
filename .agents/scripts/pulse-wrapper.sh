@@ -295,6 +295,9 @@ prefetch_state() {
 	# Append mission state
 	prefetch_missions "$repo_entries" >>"$STATE_FILE"
 
+	# Append active worker snapshot for orphaned PR detection (t216)
+	prefetch_active_workers >>"$STATE_FILE"
+
 	local repo_count
 	repo_count=$(echo "$repo_entries" | wc -l | tr -d ' ')
 	echo "[pulse-wrapper] Pre-fetched state for $repo_count repos → $STATE_FILE" >>"$LOGFILE"
@@ -477,6 +480,47 @@ _extract_milestone_summary() {
 			echo "  - F${feat_num}: ${feat_name} (${task_id}) — ${feat_status}"
 		fi
 	done <"$file"
+	return 0
+}
+
+#######################################
+# Pre-fetch active worker processes (t216)
+#
+# Captures a snapshot of running worker processes so the pulse agent
+# can cross-reference open PRs with active workers. This is the
+# deterministic data-fetch part — the intelligence about which PRs
+# are orphaned stays in pulse.md.
+#
+# Output: worker summary to stdout (appended to STATE_FILE by caller)
+#######################################
+prefetch_active_workers() {
+	local worker_lines
+	worker_lines=$(ps axo pid,etime,command 2>/dev/null | grep '/full-loop' | grep '\.opencode' | grep -v grep || true)
+
+	echo ""
+	echo "# Active Workers"
+	echo ""
+	echo "Snapshot of running worker processes at $(date -u +%Y-%m-%dT%H:%M:%SZ)."
+	echo "Use this to determine whether a PR has an active worker (not orphaned)."
+	echo ""
+
+	if [[ -z "$worker_lines" ]]; then
+		echo "- No active workers"
+	else
+		local count
+		count=$(echo "$worker_lines" | wc -l | tr -d ' ')
+		echo "### Running Workers ($count)"
+		echo ""
+		echo "$worker_lines" | while IFS= read -r line; do
+			local pid etime cmd
+			pid=$(echo "$line" | awk '{print $1}')
+			etime=$(echo "$line" | awk '{print $2}')
+			cmd=$(echo "$line" | cut -d' ' -f3-)
+			echo "- PID $pid (uptime: $etime): $cmd"
+		done
+	fi
+
+	echo ""
 	return 0
 }
 

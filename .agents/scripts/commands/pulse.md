@@ -49,7 +49,7 @@ If `AVAILABLE <= 0`: you can still merge ready PRs, but don't dispatch new worke
 
 **The wrapper has ALREADY fetched open PRs and issues for all pulse-enabled repos.** The data is in your prompt above (between `--- PRE-FETCHED STATE ---` markers). Do NOT re-fetch with `gh pr list` or `gh issue list` — that wastes time and was the root cause of the "only processes first repo" bug (the agent would spend all its context analyzing the first repo's fetch results and never reach the others).
 
-**Use the pre-fetched data directly.** It contains every open PR and issue across all repos with their status, labels, CI state, and review decisions. If you need more detail on a specific item (e.g., reading an issue body for `blocked-by:` references), fetch only that one item with `gh issue view`.
+**Use the pre-fetched data directly.** It contains every open PR and issue across all repos with their status, labels, CI state, and review decisions. It also includes an "Active Workers" section listing all running worker processes — use this to cross-reference PRs with active workers (for orphaned PR detection in Step 3). If you need more detail on a specific item (e.g., reading an issue body for `blocked-by:` references), fetch only that one item with `gh issue view`.
 
 Repo slugs and paths come from `~/.config/aidevops/repos.json`. Use `slug` for all `gh` commands, `path` for `--dir` when dispatching.
 
@@ -131,6 +131,49 @@ git -C "$path" diff --quiet TODO.md 2>/dev/null || {
   git -C "$path" add TODO.md && git -C "$path" commit -m "chore: sync GitHub issue refs to TODO.md [skip ci]" && git -C "$path" push
 } 2>/dev/null || true
 ```
+
+### Orphaned PR scanner (t216)
+
+After processing PRs and issues above, scan for **orphaned PRs** — open PRs with no active worker and no recent activity. These occur when a worker process dies (OOM, SIGKILL, context exhaustion) after creating a PR but before completing the full-loop. Without this scan, orphaned PRs sit open indefinitely, blocking re-dispatch of their issues.
+
+**How to detect orphaned PRs:**
+
+For each open PR in the pre-fetched state:
+
+1. **Check for an active worker.** Use the "Active Workers" section in the pre-fetched state above. Look for a worker process whose command line contains the PR's issue number or branch name. If a worker is running, the PR is NOT orphaned — skip it. If the Active Workers section shows "No active workers", all PRs without recent activity are candidates.
+2. **Check recency.** Parse the PR's `updatedAt` from the pre-fetched state. If the PR was updated within the last 2 hours, it's likely still being worked on (worker may have just exited and the next pulse will evaluate it). Skip it.
+3. **Check for `status:orphaned` label.** If the PR already has this label, it was flagged in a previous pulse. Don't re-comment — but check if it's now older than 24 hours since being flagged. If so, close it.
+
+**What counts as orphaned:** An open PR that has had no updates for 6+ hours AND has no active worker process. The 6-hour threshold matches the existing "stuck PR" heuristic in the PRs section above, but this scanner specifically handles the re-dispatch path.
+
+**Actions for orphaned PRs:**
+
+1. **Comment on the PR** explaining it appears orphaned:
+
+```bash
+gh pr comment <number> --repo <slug> --body "This PR appears orphaned — no active worker process found and no activity for 6+ hours. Flagging for re-dispatch. If work is still in progress, remove the \`status:orphaned\` label."
+```
+
+2. **Add the `status:orphaned` label:**
+
+```bash
+gh pr edit <number> --repo <slug> --add-label "status:orphaned" 2>/dev/null || true
+```
+
+3. **Flag the corresponding issue for re-dispatch.** Find the issue referenced in the PR title (task ID pattern `tNNN:` or `Issue #NNN`). If the issue exists and is labelled `status:in-progress` or `status:in-review`, relabel it to `status:available` so the next dispatch cycle picks it up:
+
+```bash
+gh issue edit <issue_number> --repo <slug> --add-label "status:available" --remove-label "status:in-progress" --remove-label "status:in-review" 2>/dev/null || true
+gh issue comment <issue_number> --repo <slug> --body "Re-opened for dispatch — PR #<number> appears orphaned (no worker, no activity for 6+ hours). See PR comment for details."
+```
+
+**False positive prevention:**
+
+- NEVER flag a PR as orphaned if a worker process is running for it (even if the PR hasn't been updated recently — the worker may be running tests or waiting for CI)
+- NEVER flag a PR that was updated in the last 2 hours — give workers time to complete
+- NEVER flag a PR that has the `persistent` label
+- NEVER flag a PR that has passing CI and approved reviews — it should be merged, not flagged (handle it in the PRs section above instead)
+- If uncertain whether a PR is truly orphaned, skip it — the next pulse is 2 minutes away
 
 ## Step 3.5: Mission Awareness
 
