@@ -28,7 +28,7 @@ import sys
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 
 # --- Configuration ---
@@ -141,7 +141,7 @@ def classify_error(error_text: str) -> str:
     return "other"
 
 
-def extract_steerage(conn: sqlite3.Connection, limit: int | None = None) -> list[dict]:
+def extract_steerage(conn: sqlite3.Connection, limit: Optional[int] = None) -> list[dict]:
     """Extract user steerage signals from sessions.
 
     Returns tool-agnostic records with:
@@ -238,7 +238,7 @@ def extract_steerage(conn: sqlite3.Connection, limit: int | None = None) -> list
     return steerage_records
 
 
-def extract_errors(conn: sqlite3.Connection, limit: int | None = None) -> list[dict]:
+def extract_errors(conn: sqlite3.Connection, limit: Optional[int] = None) -> list[dict]:
     """Extract tool error sequences with surrounding context.
 
     For each error, captures:
