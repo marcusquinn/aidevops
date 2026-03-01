@@ -49,6 +49,8 @@ RAM_RESERVE_MB="${RAM_RESERVE_MB:-8192}"       # 8 GB reserved for OS + user app
 MAX_WORKERS_CAP="${MAX_WORKERS_CAP:-8}"        # Hard ceiling regardless of RAM
 REPOS_JSON="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 STATE_FILE="${HOME}/.aidevops/logs/pulse-state.txt"
+QUALITY_SWEEP_INTERVAL="${QUALITY_SWEEP_INTERVAL:-86400}" # 24 hours between sweeps
+QUALITY_SWEEP_LAST_RUN="${HOME}/.aidevops/logs/quality-sweep-last-run"
 
 #######################################
 # Ensure log directory exists
@@ -1121,6 +1123,382 @@ update_health_issues() {
 }
 
 #######################################
+# Daily Code Quality Sweep
+#
+# Runs once per 24h (guarded by timestamp file). For each pulse-enabled
+# repo, ensures a persistent "Daily Code Quality Review" issue exists,
+# then runs available quality tools and posts a summary comment.
+#
+# Tools checked (in order):
+#   1. ShellCheck — local, always available for repos with .sh files
+#   2. Qlty CLI — local, if installed (~/.qlty/bin/qlty)
+#   3. CodeRabbit — via @coderabbitai mention on the persistent issue
+#   4. Codacy — via API if CODACY_API_TOKEN available
+#   5. SonarCloud — via API if sonar-project.properties exists
+#
+# The supervisor (LLM) reads the comment on the next pulse and creates
+# actionable GitHub issues for findings that warrant fixes.
+#######################################
+run_daily_quality_sweep() {
+	# Timestamp guard — run at most once per QUALITY_SWEEP_INTERVAL
+	if [[ -f "$QUALITY_SWEEP_LAST_RUN" ]]; then
+		local last_run
+		last_run=$(cat "$QUALITY_SWEEP_LAST_RUN" 2>/dev/null || echo "0")
+		local now
+		now=$(date +%s)
+		local elapsed=$((now - last_run))
+		if [[ "$elapsed" -lt "$QUALITY_SWEEP_INTERVAL" ]]; then
+			return 0
+		fi
+	fi
+
+	command -v gh &>/dev/null || return 0
+	gh auth status &>/dev/null 2>&1 || return 0
+
+	local repos_json="$REPOS_JSON"
+	if [[ ! -f "$repos_json" ]]; then
+		return 0
+	fi
+
+	local repo_entries
+	repo_entries=$(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | "\(.slug)|\(.path)"' "$repos_json" 2>/dev/null || echo "")
+
+	if [[ -z "$repo_entries" ]]; then
+		return 0
+	fi
+
+	echo "[pulse-wrapper] Starting daily code quality sweep..." >>"$LOGFILE"
+
+	local swept=0
+	while IFS='|' read -r slug path; do
+		[[ -z "$slug" ]] && continue
+		[[ ! -d "$path" ]] && continue
+		_quality_sweep_for_repo "$slug" "$path" || true
+		swept=$((swept + 1))
+	done <<<"$repo_entries"
+
+	# Update timestamp
+	date +%s >"$QUALITY_SWEEP_LAST_RUN"
+
+	echo "[pulse-wrapper] Quality sweep complete: $swept repo(s) swept" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# Ensure persistent quality review issue exists for a repo
+#
+# Creates or finds the "Daily Code Quality Review" issue. Uses labels
+# "quality-review" + "persistent" for dedup. Pins the issue.
+#
+# Arguments:
+#   $1 - repo slug
+# Output: issue number to stdout
+# Returns: 0 on success, 1 if issue could not be created/found
+#######################################
+_ensure_quality_issue() {
+	local repo_slug="$1"
+	local slug_safe="${repo_slug//\//-}"
+	local cache_file="${HOME}/.aidevops/logs/quality-issue-${slug_safe}"
+
+	mkdir -p "${HOME}/.aidevops/logs"
+
+	# Try cached issue number
+	local issue_number=""
+	if [[ -f "$cache_file" ]]; then
+		issue_number=$(cat "$cache_file" 2>/dev/null || echo "")
+	fi
+
+	# Validate cached issue is still open
+	if [[ -n "$issue_number" ]]; then
+		local state
+		state=$(gh issue view "$issue_number" --repo "$repo_slug" --json state --jq '.state' 2>/dev/null || echo "")
+		if [[ "$state" != "OPEN" ]]; then
+			issue_number=""
+			rm -f "$cache_file" 2>/dev/null || true
+		fi
+	fi
+
+	# Search by labels
+	if [[ -z "$issue_number" ]]; then
+		issue_number=$(gh issue list --repo "$repo_slug" \
+			--label "quality-review" --label "persistent" \
+			--state open --json number \
+			--jq '.[0].number // empty' 2>/dev/null || echo "")
+	fi
+
+	# Create if missing
+	if [[ -z "$issue_number" ]]; then
+		# Ensure labels exist
+		gh label create "quality-review" --repo "$repo_slug" --color "7057FF" \
+			--description "Daily code quality review" --force 2>/dev/null || true
+		gh label create "persistent" --repo "$repo_slug" --color "FBCA04" \
+			--description "Persistent issue — do not close" --force 2>/dev/null || true
+
+		issue_number=$(gh issue create --repo "$repo_slug" \
+			--title "Daily Code Quality Review" \
+			--body "Persistent issue for daily code quality sweeps across multiple tools (CodeRabbit, Qlty, ShellCheck, Codacy, SonarCloud). The supervisor posts findings here and creates actionable issues from them. **Do not close this issue.**" \
+			--label "quality-review" --label "persistent" 2>/dev/null | grep -oE '[0-9]+$' || echo "")
+
+		if [[ -z "$issue_number" ]]; then
+			echo "[pulse-wrapper] Quality sweep: could not create issue for ${repo_slug}" >>"$LOGFILE"
+			return 1
+		fi
+
+		# Pin (best-effort)
+		local node_id
+		node_id=$(gh issue view "$issue_number" --repo "$repo_slug" --json id --jq '.id' 2>/dev/null || echo "")
+		if [[ -n "$node_id" ]]; then
+			gh api graphql -f query="
+				mutation {
+					pinIssue(input: {issueId: \"${node_id}\"}) {
+						issue { number }
+					}
+				}" >/dev/null 2>&1 || true
+		fi
+
+		echo "[pulse-wrapper] Quality sweep: created and pinned issue #${issue_number} in ${repo_slug}" >>"$LOGFILE"
+	fi
+
+	# Cache
+	echo "$issue_number" >"$cache_file"
+	echo "$issue_number"
+	return 0
+}
+
+#######################################
+# Run quality sweep for a single repo
+#
+# Gathers findings from all available tools and posts a single
+# summary comment on the persistent quality review issue.
+#
+# Arguments:
+#   $1 - repo slug
+#   $2 - repo path
+#######################################
+_quality_sweep_for_repo() {
+	local repo_slug="$1"
+	local repo_path="$2"
+
+	local issue_number
+	issue_number=$(_ensure_quality_issue "$repo_slug") || return 0
+
+	local now_iso
+	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+	local findings=""
+	local tool_count=0
+
+	# --- 1. ShellCheck ---
+	local shellcheck_section=""
+	if command -v shellcheck &>/dev/null; then
+		local sh_files
+		sh_files=$(find "$repo_path" -name "*.sh" -not -path "*/archived/*" -not -path "*/node_modules/*" -not -path "*/.git/*" -type f 2>/dev/null | head -100)
+
+		if [[ -n "$sh_files" ]]; then
+			local sc_errors=0
+			local sc_warnings=0
+			local sc_summary=""
+			local sc_details=""
+
+			while IFS= read -r shfile; do
+				[[ -z "$shfile" ]] && continue
+				local result
+				result=$(shellcheck -f gcc "$shfile" 2>/dev/null || true)
+				if [[ -n "$result" ]]; then
+					local file_errors
+					file_errors=$(echo "$result" | grep -c ':.*: error:' || echo "0")
+					local file_warnings
+					file_warnings=$(echo "$result" | grep -c ':.*: warning:' || echo "0")
+					sc_errors=$((sc_errors + file_errors))
+					sc_warnings=$((sc_warnings + file_warnings))
+
+					# Capture first 3 findings per file for the summary
+					local rel_path="${shfile#"$repo_path"/}"
+					local top_findings
+					top_findings=$(echo "$result" | head -3 | while IFS= read -r line; do
+						echo "  - \`${rel_path}\`: ${line##*: }"
+					done)
+					if [[ -n "$top_findings" ]]; then
+						sc_details="${sc_details}${top_findings}
+"
+					fi
+				fi
+			done <<<"$sh_files"
+
+			local file_count
+			file_count=$(echo "$sh_files" | wc -l | tr -d ' ')
+			shellcheck_section="### ShellCheck ($file_count files scanned)
+
+- **Errors**: ${sc_errors}
+- **Warnings**: ${sc_warnings}
+"
+			if [[ -n "$sc_details" ]]; then
+				shellcheck_section="${shellcheck_section}
+**Top findings:**
+${sc_details}"
+			fi
+			if [[ "$sc_errors" -eq 0 && "$sc_warnings" -eq 0 ]]; then
+				shellcheck_section="${shellcheck_section}
+_All clear — no issues found._
+"
+			fi
+			tool_count=$((tool_count + 1))
+		fi
+	fi
+
+	# --- 2. Qlty CLI ---
+	local qlty_section=""
+	local qlty_bin="${HOME}/.qlty/bin/qlty"
+	if [[ -x "$qlty_bin" ]] && [[ -f "${repo_path}/.qlty.toml" ]]; then
+		local qlty_output
+		qlty_output=$("$qlty_bin" smells --all 2>/dev/null | head -50) || qlty_output=""
+
+		if [[ -n "$qlty_output" ]]; then
+			local smell_count
+			smell_count=$(echo "$qlty_output" | wc -l | tr -d ' ')
+			qlty_section="### Qlty Maintainability Smells
+
+- **Total smells**: ${smell_count}
+
+\`\`\`
+$(echo "$qlty_output" | head -30)
+\`\`\`
+"
+			if [[ "$smell_count" -gt 30 ]]; then
+				qlty_section="${qlty_section}
+_(showing first 30 of ${smell_count} — run \`qlty smells --all\` for full list)_
+"
+			fi
+		else
+			qlty_section="### Qlty Maintainability Smells
+
+_No smells detected or qlty analysis returned empty._
+"
+		fi
+		tool_count=$((tool_count + 1))
+	fi
+
+	# --- 3. SonarCloud (public API — no auth needed for public repos) ---
+	local sonar_section=""
+	if [[ -f "${repo_path}/sonar-project.properties" ]]; then
+		local project_key
+		project_key=$(grep '^sonar.projectKey=' "${repo_path}/sonar-project.properties" 2>/dev/null | cut -d= -f2)
+		local org_key
+		org_key=$(grep '^sonar.organization=' "${repo_path}/sonar-project.properties" 2>/dev/null | cut -d= -f2)
+
+		if [[ -n "$project_key" && -n "$org_key" ]]; then
+			# SonarCloud public API — quality gate status
+			local sonar_status
+			sonar_status=$(curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=${project_key}" 2>/dev/null || echo "")
+
+			if [[ -n "$sonar_status" ]] && echo "$sonar_status" | jq -e '.projectStatus' &>/dev/null; then
+				local gate_status
+				gate_status=$(echo "$sonar_status" | jq -r '.projectStatus.status // "UNKNOWN"')
+				local conditions
+				conditions=$(echo "$sonar_status" | jq -r '.projectStatus.conditions[]? | "- **\(.metricKey)**: \(.actualValue) (\(.status))"' 2>/dev/null || echo "")
+
+				sonar_section="### SonarCloud Quality Gate
+
+- **Status**: ${gate_status}
+${conditions}
+"
+			fi
+
+			# Fetch open issues summary
+			local sonar_issues
+			sonar_issues=$(curl -s "https://sonarcloud.io/api/issues/search?componentKeys=${project_key}&statuses=OPEN,CONFIRMED,REOPENED&ps=1&facets=severities,types" 2>/dev/null || echo "")
+
+			if [[ -n "$sonar_issues" ]] && echo "$sonar_issues" | jq -e '.total' &>/dev/null; then
+				local total_issues
+				total_issues=$(echo "$sonar_issues" | jq -r '.total // 0')
+				local severity_breakdown
+				severity_breakdown=$(echo "$sonar_issues" | jq -r '.facets[]? | select(.property == "severities") | .values[]? | "  - \(.val): \(.count)"' 2>/dev/null || echo "")
+				local type_breakdown
+				type_breakdown=$(echo "$sonar_issues" | jq -r '.facets[]? | select(.property == "types") | .values[]? | "  - \(.val): \(.count)"' 2>/dev/null || echo "")
+
+				sonar_section="${sonar_section}
+- **Open issues**: ${total_issues}
+- **By severity**:
+${severity_breakdown}
+- **By type**:
+${type_breakdown}
+"
+			fi
+			tool_count=$((tool_count + 1))
+		fi
+	fi
+
+	# --- 4. Codacy (API — requires token from gopass) ---
+	local codacy_section=""
+	local codacy_token=""
+	if command -v gopass &>/dev/null; then
+		codacy_token=$(gopass show -o "aidevops/CODACY_API_TOKEN" 2>/dev/null || echo "")
+	fi
+	if [[ -n "$codacy_token" ]]; then
+		local codacy_org="${repo_slug%%/*}"
+		local codacy_repo="${repo_slug##*/}"
+		local codacy_response
+		codacy_response=$(curl -s -H "api-token: ${codacy_token}" \
+			"https://app.codacy.com/api/v3/organizations/gh/${codacy_org}/repositories/${codacy_repo}/issues/search" \
+			-X POST -H "Content-Type: application/json" -d '{"limit":1}' 2>/dev/null || echo "")
+
+		if [[ -n "$codacy_response" ]] && echo "$codacy_response" | jq -e '.pagination' &>/dev/null; then
+			local codacy_total
+			codacy_total=$(echo "$codacy_response" | jq -r '.pagination.total // 0')
+			codacy_section="### Codacy
+
+- **Open issues**: ${codacy_total}
+- **Dashboard**: https://app.codacy.com/gh/${codacy_org}/${codacy_repo}/dashboard
+"
+			tool_count=$((tool_count + 1))
+		fi
+	fi
+
+	# --- 5. CodeRabbit trigger ---
+	# Always include @coderabbitai mention to trigger a full codebase review
+	local coderabbit_section="### CodeRabbit
+
+@coderabbitai Please run a full codebase review of this repository. Focus on:
+- Security vulnerabilities and credential exposure
+- Shell script quality (error handling, quoting, race conditions)
+- Code duplication and maintainability
+- Documentation accuracy
+"
+	tool_count=$((tool_count + 1))
+
+	# --- Assemble comment ---
+	if [[ "$tool_count" -eq 0 ]]; then
+		echo "[pulse-wrapper] Quality sweep: no tools available for ${repo_slug}" >>"$LOGFILE"
+		return 0
+	fi
+
+	local comment_body="## Daily Code Quality Sweep
+
+**Date**: ${now_iso}
+**Repo**: \`${repo_slug}\`
+**Tools run**: ${tool_count}
+
+---
+
+${shellcheck_section}
+${qlty_section}
+${sonar_section}
+${codacy_section}
+${coderabbit_section}
+
+---
+_Auto-generated by pulse-wrapper.sh daily quality sweep. The supervisor will review findings and create actionable issues._"
+
+	# Post comment
+	gh issue comment "$issue_number" --repo "$repo_slug" --body "$comment_body" >/dev/null 2>&1 || {
+		echo "[pulse-wrapper] Quality sweep: failed to post comment on #${issue_number} in ${repo_slug}" >>"$LOGFILE"
+		return 0
+	}
+
+	echo "[pulse-wrapper] Quality sweep: posted findings on #${issue_number} in ${repo_slug} (${tool_count} tools)" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
 # Main
 #######################################
 main() {
@@ -1133,6 +1511,7 @@ main() {
 	calculate_max_workers
 	prefetch_state
 	run_pulse
+	run_daily_quality_sweep
 	update_health_issues
 	return 0
 }
