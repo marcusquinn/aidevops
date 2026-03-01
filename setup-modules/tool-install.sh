@@ -290,6 +290,70 @@ setup_shell_linting_tools() {
 	return 0
 }
 
+setup_qlty_cli() {
+	print_info "Setting up Qlty CLI (multi-linter code quality)..."
+
+	local qlty_bin="${HOME}/.qlty/bin/qlty"
+
+	# Check if already installed
+	if [[ -x "$qlty_bin" ]]; then
+		local qlty_version
+		qlty_version=$("$qlty_bin" --version 2>/dev/null | head -1 || echo "unknown")
+		print_success "Qlty CLI already installed: $qlty_version"
+		return 0
+	fi
+
+	# Also check PATH in case it's installed elsewhere
+	if command -v qlty >/dev/null 2>&1; then
+		local qlty_version
+		qlty_version=$(qlty --version 2>/dev/null | head -1 || echo "unknown")
+		print_success "Qlty CLI found in PATH: $qlty_version"
+		return 0
+	fi
+
+	print_info "Qlty provides universal code quality analysis for 40+ languages"
+	echo "  - Runs 70+ static analysis tools (ShellCheck, ESLint, etc.)"
+	echo "  - Detects code smells and maintainability issues"
+	echo "  - Used by the daily code quality sweep (pulse-wrapper.sh)"
+	echo ""
+
+	local install_qlty="Y"
+	if [[ "${NON_INTERACTIVE:-}" != "true" ]]; then
+		read -r -p "Install Qlty CLI? [Y/n]: " install_qlty
+	fi
+
+	if [[ "$install_qlty" =~ ^[Yy]?$ ]]; then
+		if command -v curl >/dev/null 2>&1; then
+			if verified_install "Qlty CLI" "https://qlty.sh"; then
+				# Verify installation
+				if [[ -x "$qlty_bin" ]]; then
+					local qlty_version
+					qlty_version=$("$qlty_bin" --version 2>/dev/null | head -1 || echo "unknown")
+					print_success "Qlty CLI installed: $qlty_version"
+					print_info "Ensure ~/.qlty/bin is in your PATH"
+					print_info "Documentation: ~/.aidevops/agents/tools/code-review/qlty.md"
+				elif command -v qlty >/dev/null 2>&1; then
+					print_success "Qlty CLI installed: $(qlty --version 2>/dev/null | head -1)"
+				else
+					print_warning "Qlty CLI install script ran but binary not found at $qlty_bin"
+					print_info "Try restarting your shell or check ~/.qlty/bin/"
+				fi
+			else
+				print_warning "Qlty CLI installation failed"
+				print_info "Install manually: curl -fsSL https://qlty.sh | bash"
+			fi
+		else
+			print_warning "curl not found — cannot install Qlty CLI"
+			print_info "Install manually: curl -fsSL https://qlty.sh | bash"
+		fi
+	else
+		print_info "Skipped Qlty CLI installation"
+		print_info "Install later: curl -fsSL https://qlty.sh | bash"
+	fi
+
+	return 0
+}
+
 setup_rosetta_audit() {
 	# Skip on non-Apple-Silicon or non-macOS
 	if [[ "$(uname)" != "Darwin" ]] || [[ "$(uname -m)" != "arm64" ]]; then

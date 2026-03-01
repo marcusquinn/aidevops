@@ -595,6 +595,7 @@ main() {
 		confirm_step "Setup Git CLIs (gh, glab, tea)" && setup_git_clis
 		confirm_step "Setup file discovery tools (fd, ripgrep)" && setup_file_discovery_tools
 		confirm_step "Setup shell linting tools (shellcheck, shfmt)" && setup_shell_linting_tools
+		confirm_step "Setup Qlty CLI (multi-linter code quality)" && setup_qlty_cli
 		confirm_step "Rosetta audit (Apple Silicon x86 migration)" && setup_rosetta_audit
 		confirm_step "Setup Worktrunk (git worktree management)" && setup_worktrunk
 		confirm_step "Setup SSH key" && setup_ssh_key
