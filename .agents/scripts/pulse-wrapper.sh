@@ -1305,9 +1305,9 @@ _quality_sweep_for_repo() {
 				result=$(shellcheck -f gcc "$shfile" 2>/dev/null || true)
 				if [[ -n "$result" ]]; then
 					local file_errors
-					file_errors=$(echo "$result" | grep -c ':.*: error:' || echo "0")
+					file_errors=$(echo "$result" | grep -c ':.*: error:') || file_errors=0
 					local file_warnings
-					file_warnings=$(echo "$result" | grep -c ':.*: warning:' || echo "0")
+					file_warnings=$(echo "$result" | grep -c ':.*: warning:') || file_warnings=0
 					sc_errors=$((sc_errors + file_errors))
 					sc_warnings=$((sc_warnings + file_warnings))
 
