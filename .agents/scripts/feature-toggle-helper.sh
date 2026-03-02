@@ -21,17 +21,14 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 
-# Delegate to config-helper.sh if available
+# Delegate to config-helper.sh (the canonical implementation)
 CONFIG_HELPER="${SCRIPT_DIR}/config-helper.sh"
 if [[ -x "$CONFIG_HELPER" ]]; then
 	exec bash "$CONFIG_HELPER" "$@"
 fi
 
-# Fallback: source shared-constants and run legacy mode
-# This path is only hit if config-helper.sh is missing (shouldn't happen)
-echo "[WARN] config-helper.sh not found, using legacy mode" >&2
-source "${SCRIPT_DIR}/shared-constants.sh"
-
-echo "[ERROR] Legacy feature-toggle-helper.sh is deprecated." >&2
-echo "  Run 'aidevops update' to get the new JSONC config system." >&2
+# config-helper.sh is missing — fail deterministically
+echo "[ERROR] config-helper.sh not found at: ${CONFIG_HELPER}" >&2
+echo "  This script requires config-helper.sh to function." >&2
+echo "  Run 'aidevops update' to restore the JSONC config system." >&2
 exit 1

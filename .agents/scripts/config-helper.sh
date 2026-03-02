@@ -23,10 +23,13 @@
 #   User config: ~/.config/aidevops/config.jsonc
 #   Old config:  ~/.config/aidevops/feature-toggles.conf (migrated on first use)
 
-set -euo pipefail
+# Apply strict mode only when executed directly (not when sourced by another script)
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+	set -euo pipefail
+fi
 
 # Resolve script directory (works when sourced or executed)
-_CONFIG_HELPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+_CONFIG_HELPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 2>/dev/null || exit
 
 # Only source shared-constants.sh when running standalone (not when sourced by it)
 if [[ -z "${_SHARED_CONSTANTS_LOADED:-}" ]]; then
@@ -48,19 +51,32 @@ _JSONC_MERGED_CACHE=""
 _JSONC_CACHE_MTIME=""
 
 # ---------------------------------------------------------------------------
+# Validate a dotpath contains only safe characters (letters, digits, _, .)
+# Returns 0 if valid, 1 if invalid. Prevents injection via dotpath args.
+# ---------------------------------------------------------------------------
+_validate_dotpath() {
+	local dotpath="$1"
+	if [[ ! "$dotpath" =~ ^[a-zA-Z_][a-zA-Z0-9_.]*$ ]]; then
+		echo "[ERROR] Invalid config key: $dotpath (only letters, digits, _, . allowed)" >&2
+		return 1
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # JSONC → JSON stripping (remove // and /* */ comments, trailing commas)
 # Uses jq if available, falls back to sed for basic stripping.
 # ---------------------------------------------------------------------------
 _strip_jsonc() {
 	local file="$1"
 	if [[ ! -r "$file" ]]; then
-		echo "{}"
-		return 0
+		echo "[config] Cannot read JSONC file: $file" >&2
+		return 1
 	fi
 
 	# Strategy: use a line-by-line approach that's aware of string context.
 	# 1. Remove // comments only when not inside a JSON string value
-	# 2. Remove /* */ block comments (single-line only — multi-line handled by grep -v)
+	# 2. Remove /* */ block comments (handles multiple per line via while loop)
 	# 3. Remove trailing commas before } or ]
 	#
 	# We use awk for context-aware comment stripping, then jq for validation.
@@ -79,8 +95,10 @@ _strip_jsonc() {
 				next
 			}
 		}
-		# Remove single-line block comments: /* ... */
-		gsub(/\/\*[^*]*\*\//, "", line)
+		# Remove all single-line block comments: /* ... */ (loop for multiple per line)
+		while (match(line, /\/\*[^*]*\*\//)) {
+			line = substr(line, 1, RSTART - 1) substr(line, RSTART + RLENGTH)
+		}
 		# Check for block comment start without end
 		idx = index(line, "/*")
 		if (idx > 0) {
@@ -108,15 +126,18 @@ _strip_jsonc() {
 		}
 		print result
 	}
-	' "$file" 2>/dev/null |
+	' "$file" |
 		sed -e 's/,[[:space:]]*}/}/g' -e 's/,[[:space:]]*\]/]/g') || {
-		echo "{}"
-		return 0
+		echo "[config] Failed to strip JSONC comments from: $file" >&2
+		return 1
 	}
 
 	# Validate with jq
 	if command -v jq &>/dev/null; then
-		echo "$stripped" | jq '.' 2>/dev/null || echo "{}"
+		echo "$stripped" | jq '.' 2>/dev/null || {
+			echo "[config] Invalid JSON after stripping comments from: $file" >&2
+			return 1
+		}
 	else
 		echo "$stripped"
 	fi
@@ -129,8 +150,13 @@ _strip_jsonc() {
 _merge_configs() {
 	local defaults_json user_json
 
-	defaults_json=$(_strip_jsonc "$JSONC_DEFAULTS")
-	user_json=$(_strip_jsonc "$JSONC_USER")
+	defaults_json=$(_strip_jsonc "$JSONC_DEFAULTS") || {
+		echo "[config] Failed to parse defaults — config system unavailable" >&2
+		echo "{}"
+		return 1
+	}
+	# User config may not exist yet — that's normal, fall back to empty
+	user_json=$(_strip_jsonc "$JSONC_USER" 2>/dev/null) || user_json="{}"
 
 	if command -v jq &>/dev/null; then
 		# Deep merge: defaults * user (user wins on conflicts)
@@ -185,11 +211,9 @@ _jsonc_get() {
 	local merged
 	merged=$(_get_merged_config)
 
-	# Convert dot-path to jq path: updates.auto_update -> .updates.auto_update
-	local jq_path=".${dotpath}"
-
+	# Use jq --arg to safely pass dotpath (no shell interpolation into filter)
 	local value
-	value=$(echo "$merged" | jq -r "$jq_path // empty" 2>/dev/null) || value=""
+	value=$(echo "$merged" | jq -r --arg p "$dotpath" 'getpath($p | split(".")) // empty' 2>/dev/null) || value=""
 
 	if [[ -n "$value" && "$value" != "null" ]]; then
 		echo "$value"
@@ -212,9 +236,11 @@ _jsonc_get_raw() {
 	fi
 
 	local json
-	json=$(_strip_jsonc "$file")
-	local jq_path=".${dotpath}"
-	echo "$json" | jq -r "$jq_path // empty" 2>/dev/null || echo ""
+	json=$(_strip_jsonc "$file") || {
+		echo ""
+		return 0
+	}
+	echo "$json" | jq -r --arg p "$dotpath" 'getpath($p | split(".")) // empty' 2>/dev/null || echo ""
 	return 0
 }
 
@@ -343,20 +369,21 @@ _migrate_conf_to_jsonc() {
 		# Map to new dotpath
 		dotpath=$(_legacy_key_to_dotpath "$key")
 
-		# Build nested JSON using jq
-		# Convert dotpath to jq setpath: "updates.auto_update" -> ["updates","auto_update"]
-		local jq_path_array
-		jq_path_array=$(echo "$dotpath" | sed 's/\./","/g' | sed 's/^/["/' | sed 's/$/"]/')
-
-		# Determine value type (boolean, number, or string)
-		local jq_value
+		# Use jq --arg for safe dotpath and value passing (no shell interpolation)
 		case "$value" in
-		true | false) jq_value="$value" ;;
-		[0-9]*) jq_value="$value" ;;
-		*) jq_value="\"$value\"" ;;
+		true | false)
+			json=$(echo "$json" | jq --arg p "$dotpath" --argjson v "$value" \
+				'setpath($p | split("."); $v)' 2>/dev/null) || continue
+			;;
+		[0-9]*)
+			json=$(echo "$json" | jq --arg p "$dotpath" --argjson v "$value" \
+				'setpath($p | split("."); $v)' 2>/dev/null) || continue
+			;;
+		*)
+			json=$(echo "$json" | jq --arg p "$dotpath" --arg v "$value" \
+				'setpath($p | split("."); $v)' 2>/dev/null) || continue
+			;;
 		esac
-
-		json=$(echo "$json" | jq "setpath($jq_path_array; $jq_value)" 2>/dev/null) || continue
 	done <"$OLD_CONF_USER"
 
 	# Only write if we got some values
@@ -399,10 +426,12 @@ cmd_list() {
 		return 1
 	fi
 
-	local defaults_json user_json merged_json
-	defaults_json=$(_strip_jsonc "$JSONC_DEFAULTS")
-	user_json=$(_strip_jsonc "$JSONC_USER")
-	merged_json=$(_get_merged_config)
+	local defaults_json user_json
+	defaults_json=$(_strip_jsonc "$JSONC_DEFAULTS") || {
+		echo "[ERROR] Cannot read defaults config" >&2
+		return 1
+	}
+	user_json=$(_strip_jsonc "$JSONC_USER" 2>/dev/null) || user_json="{}"
 
 	echo ""
 	echo -e "\033[1mConfiguration\033[0m"
@@ -428,9 +457,8 @@ cmd_list() {
 		[[ -z "$dotpath" ]] && continue
 
 		local user_val env_val effective source
-		local jq_path=".${dotpath}"
 
-		user_val=$(echo "$user_json" | jq -r "$jq_path // empty" 2>/dev/null) || user_val=""
+		user_val=$(echo "$user_json" | jq -r --arg p "$dotpath" 'getpath($p | split(".")) // empty' 2>/dev/null) || user_val=""
 
 		# Check env override
 		env_val=""
@@ -520,12 +548,14 @@ cmd_set() {
 	# Support legacy flat keys
 	dotpath=$(_legacy_key_to_dotpath "$dotpath")
 
+	# Validate dotpath contains only safe characters
+	_validate_dotpath "$dotpath" || return 1
+
 	# Validate key exists in defaults
 	local defaults_json
-	defaults_json=$(_strip_jsonc "$JSONC_DEFAULTS")
-	local jq_path=".${dotpath}"
+	defaults_json=$(_strip_jsonc "$JSONC_DEFAULTS") || return 1
 	local default_val
-	default_val=$(echo "$defaults_json" | jq -r "$jq_path // empty" 2>/dev/null) || default_val=""
+	default_val=$(echo "$defaults_json" | jq -r --arg p "$dotpath" 'getpath($p | split(".")) // empty' 2>/dev/null) || default_val=""
 
 	if [[ -z "$default_val" ]]; then
 		echo "[ERROR] Unknown config key: $dotpath" >&2
@@ -533,8 +563,7 @@ cmd_set() {
 		return 1
 	fi
 
-	# Determine value type from default and coerce
-	local jq_value
+	# Validate value type from default and reject invalid input early
 	case "$default_val" in
 	true | false)
 		local lower_value
@@ -543,17 +572,12 @@ cmd_set() {
 			echo "[ERROR] Config '$dotpath' expects true or false, got: $value" >&2
 			return 1
 		fi
-		jq_value="$lower_value"
 		;;
 	[0-9]*)
 		if ! [[ "$value" =~ ^[0-9]+$ ]]; then
 			echo "[ERROR] Config '$dotpath' expects a number, got: $value" >&2
 			return 1
 		fi
-		jq_value="$value"
-		;;
-	*)
-		jq_value="\"$value\""
 		;;
 	esac
 
@@ -577,17 +601,35 @@ HEADER
 
 	# Read existing user config, set the value, write back
 	local user_json
-	user_json=$(_strip_jsonc "$JSONC_USER")
+	user_json=$(_strip_jsonc "$JSONC_USER") || user_json="{}"
 
-	# Convert dotpath to jq setpath array
-	local jq_path_array
-	jq_path_array=$(echo "$dotpath" | sed 's/\./","/g' | sed 's/^/["/' | sed 's/$/"]/')
-
+	# Use jq --arg for safe dotpath and value passing (no shell interpolation into filter)
 	local updated
-	updated=$(echo "$user_json" | jq "setpath($jq_path_array; $jq_value)" 2>/dev/null) || {
-		echo "[ERROR] Failed to update config" >&2
-		return 1
-	}
+	case "$default_val" in
+	true | false)
+		local lower_value
+		lower_value=$(echo "$value" | tr '[:upper:]' '[:lower:]')
+		updated=$(echo "$user_json" | jq --arg p "$dotpath" --argjson v "$lower_value" \
+			'setpath($p | split("."); $v)' 2>/dev/null) || {
+			echo "[ERROR] Failed to update config" >&2
+			return 1
+		}
+		;;
+	[0-9]*)
+		updated=$(echo "$user_json" | jq --arg p "$dotpath" --argjson v "$value" \
+			'setpath($p | split("."); $v)' 2>/dev/null) || {
+			echo "[ERROR] Failed to update config" >&2
+			return 1
+		}
+		;;
+	*)
+		updated=$(echo "$user_json" | jq --arg p "$dotpath" --arg v "$value" \
+			'setpath($p | split("."); $v)' 2>/dev/null) || {
+			echo "[ERROR] Failed to update config" >&2
+			return 1
+		}
+		;;
+	esac
 
 	# Write back with JSONC header preserved
 	{
@@ -630,6 +672,9 @@ cmd_reset() {
 		# Support legacy flat keys
 		dotpath=$(_legacy_key_to_dotpath "$dotpath")
 
+		# Validate dotpath contains only safe characters
+		_validate_dotpath "$dotpath" || return 1
+
 		# Reset a single key by removing it from user config
 		if [[ ! -f "$JSONC_USER" ]]; then
 			echo "[INFO] No user config file exists — already using defaults" >&2
@@ -642,14 +687,11 @@ cmd_reset() {
 		fi
 
 		local user_json
-		user_json=$(_strip_jsonc "$JSONC_USER")
+		user_json=$(_strip_jsonc "$JSONC_USER") || user_json="{}"
 
-		# Convert dotpath to jq delpaths array
-		local jq_path_array
-		jq_path_array=$(echo "$dotpath" | sed 's/\./","/g' | sed 's/^/["/' | sed 's/$/"]/')
-
+		# Use jq --arg for safe dotpath passing (no shell interpolation into filter)
 		local updated
-		updated=$(echo "$user_json" | jq "delpaths([${jq_path_array}])" 2>/dev/null) || {
+		updated=$(echo "$user_json" | jq --arg p "$dotpath" 'delpaths([$p | split(".")])' 2>/dev/null) || {
 			echo "[ERROR] Failed to reset config key" >&2
 			return 1
 		}

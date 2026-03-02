@@ -393,10 +393,12 @@ check_skill_freshness() {
 		return 0
 	fi
 
-	local freshness_hours="${AIDEVOPS_SKILL_FRESHNESS_HOURS:-$DEFAULT_SKILL_FRESHNESS_HOURS}"
+	# Read from JSONC config (handles env var > user config > defaults priority)
+	local freshness_hours
+	freshness_hours=$(get_feature_toggle skill_freshness_hours "$DEFAULT_SKILL_FRESHNESS_HOURS")
 	# Validate freshness_hours is a positive integer (non-numeric crashes under set -e)
 	if ! [[ "$freshness_hours" =~ ^[0-9]+$ ]] || [[ "$freshness_hours" -eq 0 ]]; then
-		log_warn "AIDEVOPS_SKILL_FRESHNESS_HOURS='${freshness_hours}' is not a positive integer — using default (${DEFAULT_SKILL_FRESHNESS_HOURS}h)"
+		log_warn "updates.skill_freshness_hours='${freshness_hours}' is not a positive integer — using default (${DEFAULT_SKILL_FRESHNESS_HOURS}h)"
 		freshness_hours="$DEFAULT_SKILL_FRESHNESS_HOURS"
 	fi
 	local freshness_seconds=$((freshness_hours * 3600))
@@ -511,9 +513,11 @@ check_openclaw_freshness() {
 		return 0
 	fi
 
-	local freshness_hours="${AIDEVOPS_OPENCLAW_FRESHNESS_HOURS:-$DEFAULT_OPENCLAW_FRESHNESS_HOURS}"
+	# Read from JSONC config (handles env var > user config > defaults priority)
+	local freshness_hours
+	freshness_hours=$(get_feature_toggle openclaw_freshness_hours "$DEFAULT_OPENCLAW_FRESHNESS_HOURS")
 	if ! [[ "$freshness_hours" =~ ^[0-9]+$ ]] || [[ "$freshness_hours" -eq 0 ]]; then
-		log_warn "AIDEVOPS_OPENCLAW_FRESHNESS_HOURS='${freshness_hours}' is not a positive integer — using default (${DEFAULT_OPENCLAW_FRESHNESS_HOURS}h)"
+		log_warn "updates.openclaw_freshness_hours='${freshness_hours}' is not a positive integer — using default (${DEFAULT_OPENCLAW_FRESHNESS_HOURS}h)"
 		freshness_hours="$DEFAULT_OPENCLAW_FRESHNESS_HOURS"
 	fi
 	local freshness_seconds=$((freshness_hours * 3600))
@@ -718,10 +722,11 @@ check_tool_freshness() {
 		return 0
 	fi
 
+	# Read from JSONC config (handles env var > user config > defaults priority)
 	local freshness_hours
-	freshness_hours="${AIDEVOPS_TOOL_FRESHNESS_HOURS:-$DEFAULT_TOOL_FRESHNESS_HOURS}"
+	freshness_hours=$(get_feature_toggle tool_freshness_hours "$DEFAULT_TOOL_FRESHNESS_HOURS")
 	if ! [[ "$freshness_hours" =~ ^[0-9]+$ ]] || [[ "$freshness_hours" -eq 0 ]]; then
-		log_warn "AIDEVOPS_TOOL_FRESHNESS_HOURS='${freshness_hours}' is not a positive integer — using default (${DEFAULT_TOOL_FRESHNESS_HOURS}h)"
+		log_warn "updates.tool_freshness_hours='${freshness_hours}' is not a positive integer — using default (${DEFAULT_TOOL_FRESHNESS_HOURS}h)"
 		freshness_hours="$DEFAULT_TOOL_FRESHNESS_HOURS"
 	fi
 	local freshness_seconds
@@ -757,10 +762,11 @@ check_tool_freshness() {
 	fi
 
 	# Check user idle time — only update when user is away
+	# Read from JSONC config (handles env var > user config > defaults priority)
 	local idle_hours
-	idle_hours="${AIDEVOPS_TOOL_IDLE_HOURS:-$DEFAULT_TOOL_IDLE_HOURS}"
+	idle_hours=$(get_feature_toggle tool_idle_hours "$DEFAULT_TOOL_IDLE_HOURS")
 	if ! [[ "$idle_hours" =~ ^[0-9]+$ ]] || [[ "$idle_hours" -eq 0 ]]; then
-		log_warn "AIDEVOPS_TOOL_IDLE_HOURS='${idle_hours}' is not a positive integer — using default (${DEFAULT_TOOL_IDLE_HOURS}h)"
+		log_warn "updates.tool_idle_hours='${idle_hours}' is not a positive integer — using default (${DEFAULT_TOOL_IDLE_HOURS}h)"
 		idle_hours="$DEFAULT_TOOL_IDLE_HOURS"
 	fi
 	local idle_threshold_seconds

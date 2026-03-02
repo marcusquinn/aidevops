@@ -1343,7 +1343,7 @@ _load_feature_toggles_legacy() {
 			key="${line%%=*}"
 			value="${line#*=}"
 			[[ "$key" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || continue
-			eval "_FT_${key}=\"\${value}\""
+			printf -v "_FT_${key}" '%s' "$value"
 		done <"$FEATURE_TOGGLES_DEFAULTS"
 	fi
 
@@ -1354,7 +1354,7 @@ _load_feature_toggles_legacy() {
 			key="${line%%=*}"
 			value="${line#*=}"
 			[[ "$key" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || continue
-			eval "_FT_${key}=\"\${value}\""
+			printf -v "_FT_${key}" '%s' "$value"
 		done <"$FEATURE_TOGGLES_USER"
 	fi
 
@@ -1365,7 +1365,7 @@ _load_feature_toggles_legacy() {
 		if [[ -n "$env_var" ]]; then
 			env_val="${!env_var:-}"
 			if [[ -n "$env_val" ]]; then
-				eval "_FT_${tk}=\"\${env_val}\""
+				printf -v "_FT_${tk}" '%s' "$env_val"
 			fi
 		fi
 	done
