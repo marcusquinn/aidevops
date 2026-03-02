@@ -930,7 +930,9 @@ EOF
 main() {
 	# Auto-migrate on first use if legacy config exists and no JSONC config yet
 	if [[ -f "$OLD_CONF_USER" && ! -f "$JSONC_USER" ]]; then
-		_migrate_conf_to_jsonc 2>/dev/null || true
+		if ! _migrate_conf_to_jsonc 2>/dev/null; then
+			echo "[WARN] Auto-migration from legacy config failed. Run 'aidevops config migrate' manually." >&2
+		fi
 	fi
 
 	local command="${1:-help}"

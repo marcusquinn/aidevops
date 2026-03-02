@@ -1391,7 +1391,9 @@ _load_config() {
 		local jsonc_user="${JSONC_USER:-${HOME}/.config/aidevops/config.jsonc}"
 		if [[ -f "$FEATURE_TOGGLES_USER" && ! -f "$jsonc_user" ]]; then
 			if type _migrate_conf_to_jsonc &>/dev/null; then
-				_migrate_conf_to_jsonc 2>/dev/null || true
+				if ! _migrate_conf_to_jsonc 2>/dev/null; then
+					echo "[WARN] Auto-migration from legacy config failed. Run 'aidevops config migrate' manually." >&2
+				fi
 			fi
 		fi
 	else
