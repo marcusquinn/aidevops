@@ -1,36 +1,40 @@
 # AI DevOps Framework
 
-**[aidevops.sh](https://aidevops.sh)** — Maximise development and operations efficiency across everything you do. "Dev" means all development: personal, business, and technical. AI agents that handle the automatable work so your time is preserved for real-world discovery and decisions that AI cannot yet reach.
+**[aidevops.sh](https://aidevops.sh)** — An AI operations platform for launching and managing development, business, marketing, and creative projects. 11 specialist AI agents handle the automatable work across every domain so your time is preserved for real-world discovery and decisions that AI cannot yet reach.
 
-*"List all my servers and websites, and check each for theme and plugin update needs, SEO and page loading performance scores, and give me a list of recommended priorities"* - **One conversation, complete operations management.**
+*"Scope a mission to redesign the landing pages — break it into milestones, dispatch workers in parallel, validate each milestone, and track budget across the whole project"* - **One conversation, autonomous multi-day project execution.**
 
 ## **The Philosophy**
 
 **Maximum value for your time and money.** **[aidevops](https://aidevops.sh)** is built on these principles:
 
-- **Resource efficiency** - Use the right model tier, avoid redundant work, minimise waste. Then maximise utilisation — idle capacity is wasted potential
+- **Autonomous orchestration** - An AI supervisor runs every 2 minutes, dispatching parallel workers, merging PRs, detecting stuck processes, and advancing multi-day missions — no human babysitting required
+- **Multi-domain agents** - 11 specialist agents (code, SEO, marketing, content, legal, sales, research, video, business, accounts, health) with 780+ subagents loaded on demand
+- **Multi-model safety** - High-stakes operations (force push, production deploy, data migration) are verified by a second cross-provider model before execution — different providers have different failure modes, so correlated hallucinations are rare
+- **Resource efficiency** - Cost-aware model routing (local → haiku → flash → sonnet → pro → opus), project-type bundles that auto-configure quality gates and model tiers, budget tracking with burn-rate analysis
 - **Self-healing** - When something breaks, diagnose the root cause, create tasks, and fix it. Every error is a live test case for a permanent solution
-- **Self-improving** - When patterns of failure or inefficiency emerge, improve the framework itself
+- **Self-improving** - When patterns of failure or inefficiency emerge, improve the framework itself. Session mining extracts learnings from past sessions automatically
 - **Gap awareness** - Every session is an opportunity to identify what's missing — gaps in automation, documentation, coverage, or processes — and create tasks to fill them
 - **Git-first workflow** - Protected branches, PR reviews, quality gates before merge. Sane vibe-coding through structure
 - **Parallel agents** - Multiple AI sessions running full [Ralph loops](#ralph-loop---iterative-ai-development) on separate branches via [git worktrees](#git-worktrees---parallel-branch-development)
 - **Progressive discovery** - `/slash` commands and `@subagent` mentions load knowledge into context only when needed
 - **Open-source ready** - Contribute to any project the same way you work on your own. Clone a repo, develop solutions to issues locally, and submit pull requests — the same full-loop workflow works everywhere
 
-The result: AI agents that work *with* your development process, not around it — absorbing everything automatable so you can focus on what matters.
+The result: an AI operations platform that manages projects across every business domain — absorbing everything automatable so you can focus on what matters.
 
 **Built on proven patterns**: aidevops implements [industry-standard agent design patterns](#agent-design-patterns) - including multi-layer action spaces, context isolation, and iterative execution loops.
 
 ## **Why This Framework?**
 
-**Beyond Single-Repo Limitations:** VS Code and Web UIs work on one repo at a time. CLI AI assistants can manage your entire infrastructure when given the right tools, access, and guidance.
+**Beyond single-task AI.** Most AI coding tools handle one conversation, one repo, one task at a time. aidevops manages your entire operation — dispatching parallel AI agents across multiple repos, routing tasks to domain-specialist agents, and running autonomously for days on multi-milestone projects.
 
-**DevOps Superpowers for AI:**
+**What makes it different:**
 
-- **Multi-Service Management**: 30+ APIs (hosting, Git, security, monitoring, deployment)
-- **Real-Time Operations**: SSH, domain management, database operations
-- **Cross-Service Intelligence**: Connect patterns across your entire ecosystem
-- **Unlimited Scope**: Full access to your development infrastructure for bug fixes and feature development
+- **Autonomous supervisor** - AI pulse runs every 2 minutes: merges ready PRs, dispatches workers, kills stuck processes, advances missions, triages quality findings — no human in the loop
+- **Cross-domain intelligence** - 11 agents spanning code, business, marketing, legal, sales, content, video, research, SEO, health, and accounts — each with domain expertise and specialist subagents
+- **Multi-model safety** - Destructive operations verified by a second AI model from a different provider before execution
+- **30+ service integrations** - Hosting, Git platforms, DNS, security, monitoring, deployment, payments, communications
+- **Mission orchestration** - Multi-day autonomous projects broken into milestones with validation, budget tracking, and automatic advancement
 
 ---
 
@@ -356,7 +360,9 @@ See `.agents/tools/terminal/terminal-title.md` for customization options.
 
 **Autonomous Orchestration:**
 
-- **Missions** - Multi-day autonomous projects: `/mission` scopes a high-level goal into milestones and features, dispatched by the supervisor (`mission-dashboard-helper.sh`)
+- **[Pulse supervisor](#pulse-supervisor--autonomous-ai-operations)** - Autonomous AI supervisor runs every 2 minutes via launchd — merges ready PRs, dispatches workers, kills stuck processes, detects orphaned PRs, syncs TODO state with GitHub, triages quality findings, and advances missions. No human in the loop
+- **[Missions](#missions--multi-day-autonomous-projects)** - Multi-day autonomous projects: `/mission` scopes a high-level goal into milestones and features. The pulse dispatches workers, validates milestones, tracks budget, and advances through the project automatically (`mission-dashboard-helper.sh`)
+- **[Multi-model verification](#multi-model-verification--cross-provider-safety)** - Destructive operations (force push, production deploy, data migration) are verified by a second AI model from a different provider before execution. Different providers have different failure modes, so correlated hallucinations are rare
 - **Supervisor** - SQLite state machine dispatches tasks to parallel AI agents with retry cycles, batch management, and cron scheduling
 - **Runners** - Named headless agent instances with persistent identity, instructions, and memory namespaces
 - **`/runners` command** - Batch dispatch from task IDs, PR URLs, or descriptions with concurrency control and progress monitoring
@@ -368,7 +374,7 @@ See `.agents/tools/terminal/terminal-title.md` for customization options.
 
 **Project Intelligence:**
 
-- **Bundles** - Project-type presets (web-app, library, cli-tool, content-site, infrastructure, agent) that auto-configure model tiers, quality gates, and agent routing per repo (`bundle-helper.sh`)
+- **[Bundles](#project-bundles--auto-configuration)** - Project-type presets that auto-configure model tiers, quality gates, and agent routing per repo. 6 built-in bundles (web-app, library, cli-tool, content-site, infrastructure, agent) with auto-detection from marker files (`bundle-helper.sh`)
 - **TTSR rules** - Soft rule engine (`ttsr-rule-loader.sh`) with `.agents/rules/` directory for AI output correction (e.g., no-edit-on-main, no-glob-for-discovery)
 - **Cross-review** - `/cross-review` dispatches the same prompt to multiple AI models in parallel, diffs results, and optionally auto-scores via a judge model
 - **Local models** - Run AI models locally via llama.cpp for free, private, offline inference (`local-model-helper.sh`) with HuggingFace GGUF model management
@@ -546,9 +552,130 @@ Supervisor (pulse loop)
 
 **Subagent index** (`.agents/subagent-index.toon`): Compressed TOON routing table listing all agents, subagents, workflows, and scripts with model tier assignments - enables fast agent discovery without loading full markdown files.
 
+### Pulse Supervisor — Autonomous AI Operations
+
+The pulse is the heartbeat of aidevops — an autonomous AI supervisor that runs every 2 minutes via launchd. There is no human at the terminal. It manages the entire development pipeline across all repos registered with `pulse: true`.
+
+**What it does each cycle:**
+
+| Phase | Action |
+|-------|--------|
+| **Capacity check** | Circuit breaker, dynamic worker slots calculated from available RAM |
+| **Merge ready PRs** | Green CI + no blocking reviews → squash merge (free — no worker slot needed) |
+| **Fix failing PRs** | Dispatch a worker to fix CI failures or address review feedback |
+| **Detect stuck work** | PRs open 6+ hours with no activity → flag or close and re-file |
+| **Dispatch workers** | Route open issues to available worker slots, respecting priority and `blocked-by:` dependencies |
+| **Advance missions** | Check active multi-day missions, dispatch features, validate milestones, track budget |
+| **Triage quality** | Read daily quality sweep findings (ShellCheck, SonarCloud, Codacy, CodeRabbit), create issues for actionable findings |
+| **Sync TODOs** | Create GitHub issues for unsynced TODO entries, commit ref changes |
+| **Kill stuck workers** | Workers running 3+ hours with no PR are killed to free slots |
+| **Detect orphaned PRs** | Open PRs with no active worker and no activity for 6+ hours are flagged for re-dispatch |
+
+**Operational intelligence:**
+
+- **Struggle-ratio** — computes `messages / max(1, commits)` for each active worker. High ratio (>30) with >30 min elapsed and zero commits flags the worker as "struggling". Ratio >50 after 1 hour flags "thrashing". Informational signal — the supervisor LLM decides the action (kill, wait, re-dispatch with more context)
+- **Circuit breaker** — prevents cascading failures by tracking success/failure rates and tripping when error rate exceeds threshold
+- **Dynamic concurrency** — worker slot count adapts to available RAM, not a hardcoded constant
+- **Stale assignment recovery** — tasks assigned to workers that died (no active process, no PR, 3+ hours stale) are automatically unassigned and made available for re-dispatch
+- **Priority ordering** — green PRs (free merge) > failing PRs (closer to done) > high-priority/bug issues > active mission features > product repos > smaller tasks > oldest
+
+**The pulse is an LLM, not a script.** It reads issue bodies, assesses context, and uses judgment. When it encounters something unexpected — an issue body that says "completed", a task with no clear description, a label that doesn't match reality — it handles it the way a competent human manager would.
+
+```bash
+# Pulse runs automatically via launchd (every 2 minutes)
+# Manual trigger:
+opencode run "/pulse"
+```
+
+**See:** `.agents/scripts/commands/pulse.md` for the full supervisor specification.
+
 ## **Autonomous Orchestration & Parallel Agents**
 
-**Why this matters:** Long-running tasks -- batch PR reviews, multi-site SEO audits, large refactors -- are where AI agents deliver the most value. Instead of babysitting one task at a time, the supervisor dispatches work to parallel agents, each in its own git worktree, with automatic retry, progress tracking, and batch completion reporting.
+**Why this matters:** Long-running tasks -- batch PR reviews, multi-site audits, large refactors, multi-day feature projects -- are where AI agents deliver the most value. Instead of babysitting one task at a time, the supervisor dispatches work to parallel agents, each in its own git worktree, with automatic retry, progress tracking, and batch completion reporting.
+
+### Missions — Multi-Day Autonomous Projects
+
+Missions are the highest-level orchestration primitive — autonomous multi-day projects that break a high-level goal into milestones, features, and validation criteria. The pulse supervisor advances them automatically.
+
+```bash
+# Scope a mission interactively
+/mission "Redesign the landing pages for mobile-first with A/B testing"
+```
+
+**How missions work:**
+
+1. `/mission` scopes the goal into milestones with features and acceptance criteria
+2. Each feature becomes a TODO entry tagged `mission:mNNN` with a GitHub issue
+3. The pulse dispatches features as regular workers (respecting `MAX_WORKERS`)
+4. When all features in a milestone complete, the pulse dispatches a **validation worker** to verify integration
+5. Passed milestones advance automatically — the next milestone's features are dispatched
+6. Budget tracking pauses the mission if any category exceeds the alert threshold (default 80%)
+
+**Two execution modes:**
+
+| Mode | Workflow | Best for |
+|------|----------|----------|
+| **Full** | Worktree + PR per feature, standard review flow | Production code, collaborative projects |
+| **POC** | Direct commits, skip ceremony | Prototypes, experiments, proof-of-concept |
+
+**Mission state** is tracked in a JSON file committed to the repo. Each pulse cycle reads the state, acts on it, and commits updates — so any session (or the next pulse) can pick up where the last one left off.
+
+**See:** `.agents/workflows/mission-orchestrator.md` for the full orchestrator specification, `.agents/scripts/commands/dashboard.md` for the mission progress dashboard.
+
+### Multi-Model Verification — Cross-Provider Safety
+
+High-stakes operations are verified by a second AI model from a different provider before execution. This catches single-model hallucinations before destructive operations cause irreversible damage.
+
+**When verification triggers:**
+
+| Risk Level | Examples | Action |
+|------------|----------|--------|
+| **Critical** | `git push --force` to main, `DROP DATABASE`, production deploy | Blocked unless second model agrees |
+| **High** | Force push to feature branch, data migration, secret exposure | Warned, verification recommended |
+| **Medium** | Bulk file deletion, config changes | Logged |
+| **Low** | Normal edits, test runs | No verification |
+
+**How it works:**
+
+1. `pre-edit-check.sh` screens operations against the high-stakes taxonomy
+2. For critical/high operations, `verify-operation-helper.sh` sends the operation context to a second model (different provider than the primary)
+3. The verifier independently assesses whether the operation is safe
+4. On disagreement, the operation is blocked (critical) or warned (high)
+5. All verification decisions are logged for audit
+
+**Why cross-provider?** Same-provider models share training data and failure modes. A Claude hallucination is unlikely to be reproduced by Gemini or GPT, and vice versa. The verification uses the cheapest model tier (haiku-equivalent) — cost is minimal per check.
+
+**Configuration:** Per-repo via `.agents/reference/high-stakes-operations.md`. Opt-out with `VERIFY_ENABLED=false` (not recommended).
+
+**See:** `.agents/tools/verification/parallel-verify.md` for the verification agent specification.
+
+### Project Bundles — Auto-Configuration
+
+Bundles are project-type presets that auto-configure model tiers, quality gates, and agent routing per repo. Instead of manually configuring each project, bundles detect what kind of project you're working on and apply sensible defaults.
+
+**Built-in bundles:**
+
+| Bundle | Auto-detected by | Model default | Quality gates | Agent routing |
+|--------|-----------------|---------------|---------------|---------------|
+| `web-app` | `package.json` + framework markers | sonnet | Full (lint, test, build, a11y) | Build+ default |
+| `library` | `package.json` with `main`/`exports` | sonnet | Full + API docs check | Build+ default |
+| `cli-tool` | `bin` field in package.json | sonnet | ShellCheck, test | Build+ default |
+| `content-site` | CMS markers, `wp-config.php` | haiku | Lighthouse, SEO | Marketing for content tasks |
+| `infrastructure` | `Dockerfile`, `terraform/`, `ansible/` | sonnet | ShellCheck, security scan | Build+ default |
+| `agent` | `AGENTS.md`, `.agents/` | opus | Agent review, prompt quality | Build+ default |
+
+**Resolution priority:** Explicit `bundle` field in `repos.json` > `.aidevops.json` project config > auto-detection from marker files.
+
+**CLI:**
+
+```bash
+bundle-helper.sh detect <repo-path>    # Auto-detect bundle type
+bundle-helper.sh resolve <repo-path>   # Show resolved config (with overrides)
+bundle-helper.sh show <bundle-name>    # Show bundle defaults
+bundle-helper.sh list                  # List all available bundles
+```
+
+**See:** `.agents/bundles/` for bundle definitions, `.agents/scripts/bundle-helper.sh` for the CLI.
 
 ### Parallel Agents & Headless Dispatch
 
@@ -2276,17 +2403,19 @@ See `.agents/tools/credentials/multi-tenant.md` for complete documentation.
 
 **For You:**
 
-- Unified infrastructure management across all services
-- AI-powered automation with standardized commands
-- Enterprise-grade security and quality assurance
-- Time savings through consistent interfaces
+- Autonomous project management — dispatch a mission and let AI agents handle milestones, validation, and delivery across days
+- Cross-domain operations — code, business, marketing, legal, sales, content, video, research, SEO, health, and accounts managed through one platform
+- Multi-model safety — destructive operations verified by a second AI provider before execution
+- Enterprise-grade quality — multi-platform analysis, automated security monitoring, continual improvement loops
+- Infrastructure management — 30+ service integrations with standardized commands across all providers
 
-**For Your AI Assistant:**
+**For Your AI Agents:**
 
-- Structured access to entire DevOps ecosystem
-- Real-time documentation via Context7 MCP
-- Quality control with automated fixes
-- Performance monitoring with and continual improvement of agents' token efficiency, tool use, and file location consistency
+- Autonomous supervisor — pulse runs every 2 minutes, merging PRs, dispatching workers, killing stuck processes, advancing missions
+- Operational intelligence — struggle-ratio detection, orphaned PR recovery, circuit breaker, dynamic concurrency
+- Cost-aware routing — 5-tier model selection (local → haiku → flash → sonnet → pro → opus) with budget tracking
+- Progressive context — 780+ subagents loaded on demand, project bundles auto-configuring quality gates and model tiers
+- Self-improving — session mining extracts learnings, quality findings auto-create tasks, patterns feed back into agent prompts
 
 **Get Started:**
 
@@ -2304,4 +2433,4 @@ brew install marcusquinn/tap/aidevops && aidevops update
 bash <(curl -fsSL https://aidevops.sh/install)
 ```
 
-**Transform your AI assistant into a powerful infrastructure management tool with seamless access to all your servers and services.**
+**An AI operations platform for launching and managing projects across every business domain — from code to content, infrastructure to invoicing.**
