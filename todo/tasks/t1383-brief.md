@@ -106,13 +106,17 @@ const output = execSync(
 
 The `http.createServer` callback is `async` but has no top-level try/catch. If `handleDispatch` throws an unexpected error, the response may hang. The `parseBody` rejection for "body too large" calls `req.destroy()` but the promise rejection may not be caught if the request was already destroyed.
 
-**Recommendation:** Add `process.on('uncaughtException')` and `process.on('unhandledRejection')` handlers that log and optionally restart. Wrap the main request handler in try/catch.
+**Recommendation (two layers):**
+
+1. **Crash handlers (last resort):** Add `process.on('uncaughtException')` and `process.on('unhandledRejection')` handlers that capture telemetry (error message, stack, timestamp), log the error to stderr/file, then call `process.exit(1)`. Do NOT attempt in-process recovery — after an uncaught exception the process state is undefined and continuing risks silent corruption. The process supervisor (Cloudron) will automatically restart the service, which is the correct recovery mechanism.
+
+2. **Per-request error handling:** Separately, wrap the main `http.createServer` request handler in a try/catch so that individual request failures return a proper HTTP 500 response without crashing the process. This is the primary error boundary — most errors should be caught here, not by the crash handlers above.
 
 #### C. No rate limiting on dispatch endpoint
 
 An authenticated attacker (or compromised token) can spam `/dispatch` rapidly. The `workers.size >= maxWorkers` check prevents spawning too many workers, but rapid requests still consume CPU for validation, git operations, etc.
 
-**Recommendation:** Add basic rate limiting (e.g., max 10 dispatches per minute per IP). Low priority since auth is required.
+**Recommendation:** Add rate limiting on `/dispatch`. Prefer keying on validated client identity (authenticated token or client ID from the auth layer) rather than raw IP, since this service runs behind Cloudron's reverse proxy where multiple legitimate clients may share an IP (NAT, corporate proxies, VPNs). If IP-based limiting is used as a fallback, require trusted `X-Forwarded-For` or `X-Real-IP` headers from the proxy and reject requests where these headers are absent or untrusted. Log suspected proxy bypass attempts (e.g., requests with no forwarded header arriving on the external interface). Low priority since auth is already required.
 
 #### D. Worker process cleanup on server shutdown
 
@@ -139,10 +143,10 @@ PR #2 addresses all critical and high findings. The `main` branch is currently v
 These should be implemented in a follow-up PR on the cloudron app:
 
 1. **Replace `execSync` in `countWorkers()`** — use `workers.size` as primary, remove `ps` grep
-2. **Add global error handlers** — `process.on('uncaughtException')`, `process.on('unhandledRejection')`, wrap request handler in try/catch
+2. **Add global error handlers** — `process.on('uncaughtException')` / `process.on('unhandledRejection')` that log and `process.exit(1)` (no in-process recovery; Cloudron restarts the service). Separately wrap request handler in try/catch for per-request error handling.
 3. **Add graceful shutdown** — `SIGTERM`/`SIGINT` handlers to clean up worker processes
 4. **Validate taskId after fallback assignment** — move validation to after line 283
-5. **Consider rate limiting** — basic per-IP rate limit on `/dispatch` (low priority)
+5. **Add rate limiting** — key on authenticated client identity (token/client ID), not raw IP. If IP-based fallback is needed, require trusted `X-Forwarded-For`/`X-Real-IP` from Cloudron proxy. (Low priority — auth already required.)
 
 ### Priority 3: Operational improvements
 
