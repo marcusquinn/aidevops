@@ -749,10 +749,8 @@ cmd_scan() {
 # Usage: curl -s https://example.com | prompt-guard-helper.sh scan-stdin
 #        cat untrusted-file.md | prompt-guard-helper.sh scan-stdin
 cmd_scan_stdin() {
-	if [ -t 0 ]; then
-		_pg_log_warn "stdin is a terminal — expected piped input, not interactive"
-		_pg_log_warn "Usage: echo 'text' | prompt-guard-helper.sh scan-stdin"
-		return 1
+	if [[ -t 0 ]]; then
+		_pg_log_warn "Reading from stdin (Ctrl+D to end, Ctrl+C to cancel)"
 	fi
 
 	local content
