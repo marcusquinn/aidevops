@@ -345,8 +345,8 @@ bm25_custom = BM25EmbeddingFunction(
 from zvec.extension import QwenDenseEmbedding
 
 emb = QwenDenseEmbedding(
-    model="text-embedding-v4",  # Uses latest model by default
-    dimension=256,              # Required: embedding dimension
+    256,                        # Required: embedding dimension (first positional arg)
+    model="text-embedding-v4",  # Specify the model to use, e.g., "text-embedding-v4"
     # api_key="..."            # Or set DASHSCOPE_API_KEY env var
 )
 vector = emb.embed("Vector database")
