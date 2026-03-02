@@ -103,7 +103,7 @@ t1375,Prompt injection scanner — tool-agnostic defense for aidevops and agenti
 
 - [x] t1381 fix: setup.sh should not delete oh-my-opencode.json without opt-in — `cleanup_deprecated_paths()` in `setup-modules/migrations.sh` unconditionally deletes `~/.config/opencode/oh-my-opencode.json`; add `preserve_oh_my_opencode: true` check in settings.json; default to preserve (non-destructive); require explicit `--overwrite` flag or config opt-in to delete; docs updated. #bugfix #setup #auto-dispatch ~1h model:sonnet blocked-by:t1379 ref:GH#2724 logged:2026-03-02 pr:#2725 completed:2026-03-02
 
-- [ ] t1383 chore: review Gemini Code Assist value across PRs and extract improvements for cloudron app — analyse Gemini's inline comments on aidevops-cloudron-app PR #1 and PR #2 to assess: (1) what findings were genuinely valuable vs noise, (2) which PR #2 findings are still unaddressed and should be fixed, (3) whether Gemini's security-severity ratings were accurate. Cross-reference with CodeRabbit findings on same PRs. Output: list of actionable fixes to apply to cloudron app. #enhancement #code-review ~1h model:opus ref:GH#2736 logged:2026-03-02
+- [x] t1383 chore: review Gemini Code Assist value across PRs and extract improvements for cloudron app — analyse Gemini's inline comments on aidevops-cloudron-app PR #1 and PR #2 to assess: (1) what findings were genuinely valuable vs noise, (2) which PR #2 findings are still unaddressed and should be fixed, (3) whether Gemini's security-severity ratings were accurate. Cross-reference with CodeRabbit findings on same PRs. Output: list of actionable fixes to apply to cloudron app. #enhancement #code-review ~1h model:opus ref:GH#2736 logged:2026-03-02 pr:#2738 completed:2026-03-03
 
 ## Backlog
 
