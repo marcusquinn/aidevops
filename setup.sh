@@ -29,6 +29,7 @@ CLEAN_MODE=false
 INTERACTIVE_MODE=false
 NON_INTERACTIVE="${AIDEVOPS_NON_INTERACTIVE:-false}"
 UPDATE_TOOLS_MODE=false
+OVERWRITE_MODE=false
 # Platform constants (used across all setup modules)
 PLATFORM_MACOS=$([[ "$(uname -s)" == "Darwin" ]] && echo true || echo false)
 PLATFORM_LINUX=$([[ "$(uname -s)" == "Linux" ]] && echo true || echo false)
@@ -236,6 +237,77 @@ find_python3() {
 		return 0
 	fi
 	return 1
+}
+
+# Read a setting from ~/.config/aidevops/settings.json
+# Usage: get_aidevops_setting "key" "default_value"
+# Returns: the value of the key, or default if key/file missing
+# Example: get_aidevops_setting "preserve_oh_my_opencode" "true"
+get_aidevops_setting() {
+	local key="$1"
+	local default_value="${2:-}"
+	local settings_file="$HOME/.config/aidevops/settings.json"
+
+	if [[ ! -f "$settings_file" ]] || ! command -v jq &>/dev/null; then
+		echo "$default_value"
+		return 0
+	fi
+
+	local value
+	value=$(jq -r --arg k "$key" '.[$k] // empty' "$settings_file" 2>/dev/null) || true
+	if [[ -z "$value" ]]; then
+		echo "$default_value"
+	else
+		echo "$value"
+	fi
+	return 0
+}
+
+# Check whether a user file should be overwritten during cleanup/migration.
+# Non-destructive by default: if a preserve_<key> setting is true (or absent),
+# the file is preserved unless --overwrite was passed or the user confirms interactively.
+# Usage: should_overwrite_user_file "setting_key" "file_description"
+# Returns: 0 if overwrite is allowed, 1 if file should be preserved
+should_overwrite_user_file() {
+	local setting_key="$1"
+	local description="$2"
+	local preserve_setting
+	preserve_setting=$(get_aidevops_setting "$setting_key" "true")
+
+	# If user explicitly set preserve to false, allow overwrite
+	if [[ "$preserve_setting" == "false" ]]; then
+		return 0
+	fi
+
+	# If --overwrite flag was passed, allow overwrite
+	if [[ "$OVERWRITE_MODE" == "true" ]]; then
+		return 0
+	fi
+
+	# In non-interactive mode without --overwrite, preserve the file
+	if [[ "$NON_INTERACTIVE" == "true" ]]; then
+		print_info "Preserving $description (set \"$setting_key\": false in ~/.config/aidevops/settings.json to allow removal, or use --overwrite)"
+		return 1
+	fi
+
+	# Interactive mode: ask the user
+	echo ""
+	echo -e "${YELLOW}Found:${NC} $description"
+	echo -e "This file is preserved by default. Override with --overwrite or set"
+	echo -e "\"$setting_key\": false in ~/.config/aidevops/settings.json"
+	echo ""
+	echo -n -e "${GREEN}Remove this file? [y/N]: ${NC}"
+	read -r response
+	response=$(echo "$response" | tr '[:upper:]' '[:lower:]')
+	case "$response" in
+	y | yes)
+		return 0
+		;;
+	*)
+		print_info "Preserved $description"
+		return 1
+		;;
+	esac
 }
 
 # Install a package globally via npm, with sudo when needed on Linux.
@@ -471,6 +543,10 @@ parse_args() {
 			UPDATE_TOOLS_MODE=true
 			shift
 			;;
+		--overwrite)
+			OVERWRITE_MODE=true
+			shift
+			;;
 		--help | -h)
 			echo "Usage: ./setup.sh [OPTIONS]"
 			echo ""
@@ -478,10 +554,13 @@ parse_args() {
 			echo "  --clean            Remove stale files before deploying (cleans ~/.aidevops/agents/)"
 			echo "  --interactive, -i  Ask confirmation before each step"
 			echo "  --non-interactive, -n  Deploy agents only, skip all optional installs (no prompts)"
+			echo "  --overwrite        Force removal of user files that are preserved by default"
 			echo "  --update, -u       Check for and offer to update outdated tools after setup"
 			echo "  --help             Show this help message"
 			echo ""
 			echo "Default behavior adds/overwrites files without removing deleted agents."
+			echo "User config files (e.g. oh-my-opencode.json) are preserved by default."
+			echo "Override with --overwrite or set preserve_<key>: false in settings.json."
 			echo "Use --clean after removing or renaming agents to sync deletions."
 			echo "Use --interactive to control each step individually."
 			echo "Use --non-interactive for CI/CD or AI agent shells (no stdin required)."

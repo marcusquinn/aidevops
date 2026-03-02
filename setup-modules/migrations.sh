@@ -50,27 +50,33 @@ cleanup_deprecated_paths() {
 		print_info "Cleaned up $cleaned deprecated agent path(s)"
 	fi
 
-	# Auto-remove oh-my-opencode remnants (no longer supported)
+	# Remove oh-my-opencode remnants (no longer supported) — but respect user preference.
+	# Default: preserve user files. Override with --overwrite flag or settings.json.
+	# See: ~/.config/aidevops/settings.json { "preserve_oh_my_opencode": true }
 	local omo_config="$HOME/.config/opencode/oh-my-opencode.json"
 	if [[ -f "$omo_config" ]]; then
-		rm -f "$omo_config"
-		print_info "Removed oh-my-opencode config"
+		if should_overwrite_user_file "preserve_oh_my_opencode" "oh-my-opencode config ($omo_config)"; then
+			rm -f "$omo_config"
+			print_info "Removed oh-my-opencode config"
+		fi
 	fi
 
 	# Remove osgrep — disproportionate CPU/disk cost (74GB indexes, 4 CPU cores on startup)
 	# rg + fd + LLM comprehension covers the same ground at zero resource cost
 	cleanup_osgrep
 
-	# Remove oh-my-opencode from plugin array if present
+	# Remove oh-my-opencode from plugin array if present — guarded by same setting
 	local opencode_config
 	opencode_config=$(find_opencode_config 2>/dev/null) || true
 	if [[ -n "$opencode_config" ]] && [[ -f "$opencode_config" ]] && command -v jq &>/dev/null; then
 		if jq -e '.plugin | index("oh-my-opencode")' "$opencode_config" >/dev/null 2>&1; then
-			local tmp_file
-			tmp_file=$(mktemp)
-			trap 'rm -f "${tmp_file:-}"' RETURN
-			jq '.plugin = [.plugin[] | select(. != "oh-my-opencode")]' "$opencode_config" >"$tmp_file" && mv "$tmp_file" "$opencode_config"
-			print_info "Removed oh-my-opencode from OpenCode plugin list"
+			if should_overwrite_user_file "preserve_oh_my_opencode" "oh-my-opencode plugin entry in OpenCode config"; then
+				local tmp_file
+				tmp_file=$(mktemp)
+				trap 'rm -f "${tmp_file:-}"' RETURN
+				jq '.plugin = [.plugin[] | select(. != "oh-my-opencode")]' "$opencode_config" >"$tmp_file" && mv "$tmp_file" "$opencode_config"
+				print_info "Removed oh-my-opencode from OpenCode plugin list"
+			fi
 		fi
 	fi
 
