@@ -29,7 +29,6 @@ CLEAN_MODE=false
 INTERACTIVE_MODE=false
 NON_INTERACTIVE="${AIDEVOPS_NON_INTERACTIVE:-false}"
 UPDATE_TOOLS_MODE=false
-OVERWRITE_MODE=false
 # Platform constants (used across all setup modules)
 PLATFORM_MACOS=$([[ "$(uname -s)" == "Darwin" ]] && echo true || echo false)
 PLATFORM_LINUX=$([[ "$(uname -s)" == "Linux" ]] && echo true || echo false)
@@ -73,6 +72,18 @@ print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+
+# Source shared-constants for feature toggle support (is_feature_enabled)
+# Try repo-local first, then deployed location
+_SHARED_CONSTANTS="${BASH_SOURCE[0]%/*}/.agents/scripts/shared-constants.sh"
+if [[ ! -f "$_SHARED_CONSTANTS" ]]; then
+	_SHARED_CONSTANTS="$HOME/.aidevops/agents/scripts/shared-constants.sh"
+fi
+if [[ -f "$_SHARED_CONSTANTS" ]]; then
+	# shellcheck disable=SC1090  # Dynamic path resolved at runtime
+	source "$_SHARED_CONSTANTS"
+fi
+unset _SHARED_CONSTANTS
 
 # Check if a launchd agent is loaded (SIGPIPE-safe for pipefail, t1265)
 _launchd_has_agent() {
@@ -237,77 +248,6 @@ find_python3() {
 		return 0
 	fi
 	return 1
-}
-
-# Read a setting from ~/.config/aidevops/settings.json
-# Usage: get_aidevops_setting "key" "default_value"
-# Returns: the value of the key, or default if key/file missing
-# Example: get_aidevops_setting "preserve_oh_my_opencode" "true"
-get_aidevops_setting() {
-	local key="$1"
-	local default_value="${2:-}"
-	local settings_file="$HOME/.config/aidevops/settings.json"
-
-	if [[ ! -f "$settings_file" ]] || ! command -v jq &>/dev/null; then
-		echo "$default_value"
-		return 0
-	fi
-
-	local value
-	value=$(jq -r --arg k "$key" '.[$k] // empty' "$settings_file" 2>/dev/null) || true
-	if [[ -z "$value" ]]; then
-		echo "$default_value"
-	else
-		echo "$value"
-	fi
-	return 0
-}
-
-# Check whether a user file should be overwritten during cleanup/migration.
-# Non-destructive by default: if a preserve_<key> setting is true (or absent),
-# the file is preserved unless --overwrite was passed or the user confirms interactively.
-# Usage: should_overwrite_user_file "setting_key" "file_description"
-# Returns: 0 if overwrite is allowed, 1 if file should be preserved
-should_overwrite_user_file() {
-	local setting_key="$1"
-	local description="$2"
-	local preserve_setting
-	preserve_setting=$(get_aidevops_setting "$setting_key" "true")
-
-	# If user explicitly set preserve to false, allow overwrite
-	if [[ "$preserve_setting" == "false" ]]; then
-		return 0
-	fi
-
-	# If --overwrite flag was passed, allow overwrite
-	if [[ "$OVERWRITE_MODE" == "true" ]]; then
-		return 0
-	fi
-
-	# In non-interactive mode without --overwrite, preserve the file
-	if [[ "$NON_INTERACTIVE" == "true" ]]; then
-		print_info "Preserving $description (set \"$setting_key\": false in ~/.config/aidevops/settings.json to allow removal, or use --overwrite)"
-		return 1
-	fi
-
-	# Interactive mode: ask the user
-	echo ""
-	echo -e "${YELLOW}Found:${NC} $description"
-	echo -e "This file is preserved by default. Override with --overwrite or set"
-	echo -e "\"$setting_key\": false in ~/.config/aidevops/settings.json"
-	echo ""
-	echo -n -e "${GREEN}Remove this file? [y/N]: ${NC}"
-	read -r response
-	response=$(echo "$response" | tr '[:upper:]' '[:lower:]')
-	case "$response" in
-	y | yes)
-		return 0
-		;;
-	*)
-		print_info "Preserved $description"
-		return 1
-		;;
-	esac
 }
 
 # Install a package globally via npm, with sudo when needed on Linux.
@@ -543,10 +483,6 @@ parse_args() {
 			UPDATE_TOOLS_MODE=true
 			shift
 			;;
-		--overwrite)
-			OVERWRITE_MODE=true
-			shift
-			;;
 		--help | -h)
 			echo "Usage: ./setup.sh [OPTIONS]"
 			echo ""
@@ -554,13 +490,10 @@ parse_args() {
 			echo "  --clean            Remove stale files before deploying (cleans ~/.aidevops/agents/)"
 			echo "  --interactive, -i  Ask confirmation before each step"
 			echo "  --non-interactive, -n  Deploy agents only, skip all optional installs (no prompts)"
-			echo "  --overwrite        Force removal of user files that are preserved by default"
 			echo "  --update, -u       Check for and offer to update outdated tools after setup"
 			echo "  --help             Show this help message"
 			echo ""
 			echo "Default behavior adds/overwrites files without removing deleted agents."
-			echo "User config files (e.g. oh-my-opencode.json) are preserved by default."
-			echo "Override with --overwrite or set preserve_<key>: false in settings.json."
 			echo "Use --clean after removing or renaming agents to sync deletions."
 			echo "Use --interactive to control each step individually."
 			echo "Use --non-interactive for CI/CD or AI agent shells (no stdin required)."
@@ -651,7 +584,9 @@ main() {
 		validate_opencode_config
 		deploy_aidevops_agents
 		sync_agent_sources
-		setup_safety_hooks
+		if is_feature_enabled safety_hooks 2>/dev/null; then
+			setup_safety_hooks
+		fi
 		init_settings_json
 
 		# Parallelise independent skill operations (t1356: ~84s serial -> ~18s parallel)
@@ -668,8 +603,16 @@ main() {
 		wait "$_pid_scan" 2>/dev/null || print_warning "Skill security scan encountered issues (non-critical)"
 
 		inject_agents_reference
-		update_opencode_config
-		update_claude_config
+		if is_feature_enabled manage_opencode_config 2>/dev/null; then
+			update_opencode_config
+		else
+			print_info "OpenCode config management disabled via feature toggle"
+		fi
+		if is_feature_enabled manage_claude_config 2>/dev/null; then
+			update_claude_config
+		else
+			print_info "Claude config management disabled via feature toggle"
+		fi
 		disable_ondemand_mcps
 	else
 		# Required steps (always run)
@@ -753,18 +696,9 @@ main() {
 
 	# Enable auto-update if not already enabled
 	# Check both launchd (macOS) and cron (Linux) for existing installation
-	# Priority: env var AIDEVOPS_AUTO_UPDATE > settings.json auto_update > default true
+	# Respects feature toggle: aidevops config set auto_update false
 	local auto_update_script="$HOME/.aidevops/agents/scripts/auto-update-helper.sh"
-	local _auto_update_setting="${AIDEVOPS_AUTO_UPDATE:-}"
-	if [[ -z "$_auto_update_setting" ]]; then
-		# No env var — check settings.json (requires jq; defaults to "true")
-		if [[ -f "$HOME/.config/aidevops/settings.json" ]] && command -v jq &>/dev/null; then
-			_auto_update_setting=$(jq -r 'if has("auto_update") then .auto_update | tostring else "true" end' "$HOME/.config/aidevops/settings.json" 2>/dev/null) || _auto_update_setting="true"
-		else
-			_auto_update_setting="true"
-		fi
-	fi
-	if [[ -x "$auto_update_script" ]] && [[ "$_auto_update_setting" != "false" ]]; then
+	if [[ -x "$auto_update_script" ]] && is_feature_enabled auto_update 2>/dev/null; then
 		local _auto_update_installed=false
 		if _launchd_has_agent "com.aidevops.aidevops-auto-update"; then
 			_auto_update_installed=true
@@ -812,16 +746,8 @@ main() {
 	# macOS: launchd plist invoking wrapper | Linux: cron entry invoking wrapper
 	# The plist is ALWAYS regenerated on setup.sh to pick up config changes (env vars,
 	# thresholds). Only the first-install prompt is gated on _pulse_installed.
-	# Priority: env var AIDEVOPS_SUPERVISOR_PULSE > settings.json supervisor_pulse > default true
-	local _pulse_setting="${AIDEVOPS_SUPERVISOR_PULSE:-}"
-	if [[ -z "$_pulse_setting" ]]; then
-		if [[ -f "$HOME/.config/aidevops/settings.json" ]] && command -v jq &>/dev/null; then
-			_pulse_setting=$(jq -r 'if has("supervisor_pulse") then .supervisor_pulse | tostring else "true" end' "$HOME/.config/aidevops/settings.json" 2>/dev/null) || _pulse_setting="true"
-		else
-			_pulse_setting="true"
-		fi
-	fi
-	if [[ "$_pulse_setting" != "false" ]]; then
+	# Respects feature toggle: aidevops config set supervisor_pulse false
+	if is_feature_enabled supervisor_pulse 2>/dev/null; then
 		local wrapper_script="$HOME/.aidevops/agents/scripts/pulse-wrapper.sh"
 		local pulse_label="com.aidevops.aidevops-supervisor-pulse"
 		local _aidevops_dir
@@ -952,17 +878,9 @@ PLIST
 
 	# Enable repo-sync scheduler if not already installed
 	# Keeps local git repos up to date with daily ff-only pulls
-	# Priority: env var AIDEVOPS_REPO_SYNC > settings.json repo_sync > default true
+	# Respects feature toggle: aidevops config set repo_sync false
 	local repo_sync_script="$HOME/.aidevops/agents/scripts/repo-sync-helper.sh"
-	local _repo_sync_setting="${AIDEVOPS_REPO_SYNC:-}"
-	if [[ -z "$_repo_sync_setting" ]]; then
-		if [[ -f "$HOME/.config/aidevops/settings.json" ]] && command -v jq &>/dev/null; then
-			_repo_sync_setting=$(jq -r 'if has("repo_sync") then .repo_sync | tostring else "true" end' "$HOME/.config/aidevops/settings.json" 2>/dev/null) || _repo_sync_setting="true"
-		else
-			_repo_sync_setting="true"
-		fi
-	fi
-	if [[ -x "$repo_sync_script" ]] && [[ "$_repo_sync_setting" != "false" ]]; then
+	if [[ -x "$repo_sync_script" ]] && is_feature_enabled repo_sync 2>/dev/null; then
 		local _repo_sync_installed=false
 		if _launchd_has_agent "com.aidevops.aidevops-repo-sync"; then
 			_repo_sync_installed=true
@@ -1076,7 +994,8 @@ PLIST
 	fi
 
 	# Offer to launch onboarding for new users (only if not running inside OpenCode and not non-interactive)
-	if [[ "$NON_INTERACTIVE" != "true" ]] && [[ -z "${OPENCODE_SESSION:-}" ]] && command -v opencode &>/dev/null; then
+	# Respects feature toggle: aidevops config set onboarding_prompt false
+	if [[ "$NON_INTERACTIVE" != "true" ]] && [[ -z "${OPENCODE_SESSION:-}" ]] && is_feature_enabled onboarding_prompt 2>/dev/null && command -v opencode &>/dev/null; then
 		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 		echo ""
 		echo "Ready to configure your services?"

@@ -100,6 +100,12 @@ _run_generator() {
 }
 
 update_opencode_config() {
+	# Respect feature toggle (env var or config file)
+	if ! is_feature_enabled manage_opencode_config 2>/dev/null; then
+		print_info "OpenCode config management disabled via feature toggle"
+		return 0
+	fi
+
 	print_info "Updating OpenCode configuration..."
 
 	# Generate OpenCode commands (independent of opencode.json — writes to ~/.config/opencode/command/)
@@ -139,6 +145,12 @@ update_opencode_config() {
 }
 
 update_claude_config() {
+	# Respect feature toggle (env var or config file)
+	if ! is_feature_enabled manage_claude_config 2>/dev/null; then
+		print_info "Claude config management disabled via feature toggle"
+		return 0
+	fi
+
 	# Guard: only run if claude binary exists (t1161)
 	if ! command -v claude &>/dev/null; then
 		print_info "Claude Code not found — skipping Claude config (install: https://claude.ai/download)"

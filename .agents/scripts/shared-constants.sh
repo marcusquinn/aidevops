@@ -1284,66 +1284,128 @@ get_provider_from_model() {
 }
 
 # =============================================================================
-# User Settings Reader (~/.config/aidevops/settings.json)
+# Feature Toggles Loader (issue #2721)
 # =============================================================================
-# Provides a single function to read user preferences from settings.json.
-# Settings file is optional — all keys have sensible defaults.
-# Environment variables always override settings.json values.
+# Loads user-configurable feature toggles from:
+#   1. Defaults file (shipped with aidevops, overwritten on update)
+#   2. User overrides (~/.config/aidevops/feature-toggles.conf)
+#   3. Environment variables (highest priority)
 #
-# Supported keys (all optional, defaults shown):
-#   auto_update: true          - Enable/disable the auto-update launchd/cron job
-#   supervisor_pulse: true     - Enable/disable the supervisor pulse scheduler
-#   repo_sync: true            - Enable/disable the daily repo sync job
-#   update_interval: 10        - Minutes between auto-update checks
+# All toggle values are exported as AIDEVOPS_FT_<KEY> (uppercase).
+# Scripts check toggles via: get_feature_toggle <key> [default]
 #
-# Usage:
-#   value=$(get_setting "auto_update" "true")
-#   if [[ "$(get_setting "auto_update" "true")" == "false" ]]; then ...
-#
-# The settings file is NOT created automatically. Users create it manually
-# or via `aidevops config set <key> <value>` (future CLI command).
+# The loader is idempotent — safe to call multiple times.
 
-readonly AIDEVOPS_SETTINGS_FILE="${HOME}/.config/aidevops/settings.json"
+FEATURE_TOGGLES_DEFAULTS="${HOME}/.aidevops/agents/configs/feature-toggles.conf.defaults"
+FEATURE_TOGGLES_USER="${HOME}/.config/aidevops/feature-toggles.conf"
 
-# Read a value from ~/.config/aidevops/settings.json.
-# Falls back to the provided default if the file doesn't exist,
-# the key is missing, or jq is not available.
-# Arguments:
-#   $1 - JSON key name (required, top-level only)
-#   $2 - default value if key is missing (required)
-# Output: the value on stdout (string — caller interprets type)
-# Returns: 0 always (missing file/key is not an error)
-get_setting() {
+# Map from toggle key to environment variable name (for env override lookup).
+# Only toggles with existing env var conventions are mapped here.
+_ft_env_map() {
 	local key="$1"
-	local default_value="$2"
+	case "$key" in
+	auto_update) echo "AIDEVOPS_AUTO_UPDATE" ;;
+	update_interval) echo "AIDEVOPS_UPDATE_INTERVAL" ;;
+	skill_auto_update) echo "AIDEVOPS_SKILL_AUTO_UPDATE" ;;
+	skill_freshness_hours) echo "AIDEVOPS_SKILL_FRESHNESS_HOURS" ;;
+	tool_auto_update) echo "AIDEVOPS_TOOL_AUTO_UPDATE" ;;
+	tool_freshness_hours) echo "AIDEVOPS_TOOL_FRESHNESS_HOURS" ;;
+	tool_idle_hours) echo "AIDEVOPS_TOOL_IDLE_HOURS" ;;
+	supervisor_pulse) echo "AIDEVOPS_SUPERVISOR_PULSE" ;;
+	repo_sync) echo "AIDEVOPS_REPO_SYNC" ;;
+	openclaw_auto_update) echo "AIDEVOPS_OPENCLAW_AUTO_UPDATE" ;;
+	openclaw_freshness_hours) echo "AIDEVOPS_OPENCLAW_FRESHNESS_HOURS" ;;
+	*) echo "" ;;
+	esac
+	return 0
+}
 
-	# No settings file — return default
-	if [[ ! -f "$AIDEVOPS_SETTINGS_FILE" ]]; then
-		echo "$default_value"
-		return 0
+# Load feature toggles (called once when shared-constants.sh is sourced).
+# Reads defaults, then user overrides, then env vars.
+# Results are stored in _FT_* variables (not exported — use get_feature_toggle).
+_load_feature_toggles() {
+	# Source defaults file (sets variables in current scope)
+	if [[ -r "$FEATURE_TOGGLES_DEFAULTS" ]]; then
+		# Read key=value pairs, skipping comments and blank lines
+		local line key value
+		while IFS= read -r line || [[ -n "$line" ]]; do
+			# Skip comments and blank lines
+			[[ -z "$line" || "$line" == \#* ]] && continue
+			# Parse key=value
+			key="${line%%=*}"
+			value="${line#*=}"
+			# Validate key is alphanumeric + underscore
+			[[ "$key" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || continue
+			# Store as _FT_<key>
+			eval "_FT_${key}=\"\${value}\""
+		done <"$FEATURE_TOGGLES_DEFAULTS"
 	fi
 
-	# No jq — return default
-	if ! command -v jq &>/dev/null; then
-		echo "$default_value"
-		return 0
+	# Source user overrides (same format, overwrites defaults)
+	if [[ -r "$FEATURE_TOGGLES_USER" ]]; then
+		local line key value
+		while IFS= read -r line || [[ -n "$line" ]]; do
+			[[ -z "$line" || "$line" == \#* ]] && continue
+			key="${line%%=*}"
+			value="${line#*=}"
+			[[ "$key" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || continue
+			eval "_FT_${key}=\"\${value}\""
+		done <"$FEATURE_TOGGLES_USER"
 	fi
 
-	# Use has() to distinguish "key missing" from "key is false/null".
-	# jq's // (alternative operator) treats false and null as empty,
-	# which would make {"auto_update": false} indistinguishable from {}.
-	local value
-	value=$(jq -r --arg k "$key" \
-		'if has($k) then .[$k] | tostring else "___MISSING___" end' \
-		"$AIDEVOPS_SETTINGS_FILE" 2>/dev/null) || value="___MISSING___"
+	# Environment variable overrides (highest priority)
+	# Only for toggles that have a known env var mapping
+	local toggle_keys="auto_update update_interval skill_auto_update skill_freshness_hours tool_auto_update tool_freshness_hours tool_idle_hours supervisor_pulse repo_sync openclaw_auto_update openclaw_freshness_hours manage_opencode_config manage_claude_config session_greeting safety_hooks shell_aliases onboarding_prompt"
+	local tk env_var env_val
+	for tk in $toggle_keys; do
+		env_var=$(_ft_env_map "$tk")
+		if [[ -n "$env_var" ]]; then
+			env_val="${!env_var:-}"
+			if [[ -n "$env_val" ]]; then
+				eval "_FT_${tk}=\"\${env_val}\""
+			fi
+		fi
+	done
 
-	if [[ "$value" == "___MISSING___" || "$value" == "null" ]]; then
-		echo "$default_value"
-	else
+	return 0
+}
+
+# Get a feature toggle value.
+# Usage: get_feature_toggle <key> [default]
+# Returns the value on stdout. If the toggle is not set, returns the default
+# (or empty string if no default provided).
+# Example: if [[ "$(get_feature_toggle auto_update true)" == "false" ]]; then ...
+get_feature_toggle() {
+	local key="$1"
+	local default="${2:-}"
+	local var_name="_FT_${key}"
+	local value="${!var_name:-}"
+
+	if [[ -n "$value" ]]; then
 		echo "$value"
+	else
+		echo "$default"
 	fi
 	return 0
 }
+
+# Check if a feature toggle is enabled (true).
+# Usage: if is_feature_enabled auto_update; then ...
+# Returns 0 (true) if the toggle value is "true" (case-insensitive).
+# Returns 1 (false) for "false", empty, or any other value.
+is_feature_enabled() {
+	local key="$1"
+	local value
+	value="$(get_feature_toggle "$key" "true")"
+	# Lowercase comparison
+	local lower
+	lower=$(echo "$value" | tr '[:upper:]' '[:lower:]')
+	[[ "$lower" == "true" ]]
+	return $?
+}
+
+# Load toggles immediately when shared-constants.sh is sourced
+_load_feature_toggles
 
 # This ensures all constants are available when this file is sourced
 export CONTENT_TYPE_JSON CONTENT_TYPE_FORM USER_AGENT

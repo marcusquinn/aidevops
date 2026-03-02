@@ -3252,6 +3252,7 @@ cmd_help() {
 	echo "  repos [cmd]        Manage registered projects (list/add/remove/clean)"
 	echo "  ip-check <cmd>     IP reputation checks (check/batch/report/providers)"
 	echo "  secret <cmd>       Manage secrets (set/list/run/init/import/status)"
+	echo "  config <cmd>       Feature toggles (list/get/set/reset/path/help)"
 	echo "  stats <cmd>        LLM usage analytics (summary/models/projects/costs/trend)"
 	echo "  detect             Find and register aidevops projects"
 	echo "  uninstall          Remove aidevops from your system"
@@ -3286,6 +3287,13 @@ cmd_help() {
 	echo "  aidevops secret init         # Initialize gopass encrypted store"
 	echo "  aidevops secret import       # Import from credentials.sh to gopass"
 	echo "  aidevops secret status       # Show backend status"
+	echo ""
+	echo "Feature Toggles:"
+	echo "  aidevops config list         # List all toggles with current values"
+	echo "  aidevops config get <key>    # Get a toggle value"
+	echo "  aidevops config set <k> <v>  # Set a toggle (true/false)"
+	echo "  aidevops config reset [key]  # Reset toggle(s) to defaults"
+	echo "  aidevops config path         # Show config file path"
 	echo ""
 	echo "LLM Stats:"
 	echo "  aidevops stats               # Show usage summary (last 30 days)"
@@ -3512,6 +3520,19 @@ main() {
 			bash "$obs_helper" "$@"
 		else
 			print_error "observability-helper.sh not found. Run: aidevops update"
+			exit 1
+		fi
+		;;
+	config | configure)
+		shift
+		local ft_helper="$AGENTS_DIR/scripts/feature-toggle-helper.sh"
+		if [[ ! -f "$ft_helper" ]]; then
+			ft_helper="$INSTALL_DIR/.agents/scripts/feature-toggle-helper.sh"
+		fi
+		if [[ -f "$ft_helper" ]]; then
+			bash "$ft_helper" "$@"
+		else
+			print_error "feature-toggle-helper.sh not found. Run: aidevops update"
 			exit 1
 		fi
 		;;

@@ -25,13 +25,7 @@
 #   auto-update-helper.sh logs [--tail N]  View update logs
 #   auto-update-helper.sh help             Show this help
 #
-# Configuration (settings.json — persistent, survives shell restarts):
-#   ~/.config/aidevops/settings.json      Optional JSON config file
-#     { "auto_update": false }            Disable auto-update checks
-#     { "supervisor_pulse": false }        Disable supervisor pulse
-#     { "repo_sync": false }              Disable daily repo sync
-#
-# Configuration (env vars — override settings.json):
+# Configuration:
 #   AIDEVOPS_AUTO_UPDATE=true|false        Override enable/disable (env var)
 #   AIDEVOPS_UPDATE_INTERVAL=10           Minutes between checks (default: 10)
 #   AIDEVOPS_SKILL_AUTO_UPDATE=false      Disable daily skill freshness check
@@ -41,8 +35,6 @@
 #   AIDEVOPS_TOOL_AUTO_UPDATE=false       Disable 6-hourly tool freshness check
 #   AIDEVOPS_TOOL_FRESHNESS_HOURS=6       Hours between tool checks (default: 6)
 #   AIDEVOPS_TOOL_IDLE_HOURS=6            Required user idle hours before tool updates (default: 6)
-#
-# Priority: env var > settings.json > default (true)
 #
 # Logs: ~/.aidevops/logs/auto-update.log
 
@@ -392,12 +384,12 @@ update_state() {
 #######################################
 # Check skill freshness and auto-update if stale (24h gate)
 # Called from cmd_check after the main aidevops update logic.
-# Respects AIDEVOPS_SKILL_AUTO_UPDATE=false to opt out.
+# Respects feature toggle: aidevops config set skill_auto_update false
 #######################################
 check_skill_freshness() {
-	# Opt-out via env var
-	if [[ "${AIDEVOPS_SKILL_AUTO_UPDATE:-}" == "false" ]]; then
-		log_info "Skill auto-update disabled via AIDEVOPS_SKILL_AUTO_UPDATE=false"
+	# Opt-out via feature toggle (env var or config file)
+	if ! is_feature_enabled skill_auto_update 2>/dev/null; then
+		log_info "Skill auto-update disabled via feature toggle"
 		return 0
 	fi
 
@@ -504,13 +496,13 @@ update_skill_check_timestamp() {
 #######################################
 # Check openclaw freshness and auto-update if stale (24h gate)
 # Called from cmd_check after skill freshness check.
-# Respects AIDEVOPS_OPENCLAW_AUTO_UPDATE=false to opt out.
+# Respects feature toggle: aidevops config set openclaw_auto_update false
 # Only runs if openclaw CLI is installed.
 #######################################
 check_openclaw_freshness() {
-	# Opt-out via env var
-	if [[ "${AIDEVOPS_OPENCLAW_AUTO_UPDATE:-}" == "false" ]]; then
-		log_info "OpenClaw auto-update disabled via AIDEVOPS_OPENCLAW_AUTO_UPDATE=false"
+	# Opt-out via feature toggle (env var or config file)
+	if ! is_feature_enabled openclaw_auto_update 2>/dev/null; then
+		log_info "OpenClaw auto-update disabled via feature toggle"
 		return 0
 	fi
 
@@ -717,12 +709,12 @@ get_user_idle_seconds() {
 # Only runs when user has been idle for AIDEVOPS_TOOL_IDLE_HOURS.
 # Delegates to tool-version-check.sh --update --quiet.
 # Called from cmd_check after other freshness checks.
-# Respects AIDEVOPS_TOOL_AUTO_UPDATE=false to opt out.
+# Respects feature toggle: aidevops config set tool_auto_update false
 #######################################
 check_tool_freshness() {
-	# Opt-out via env var
-	if [[ "${AIDEVOPS_TOOL_AUTO_UPDATE:-}" == "false" ]]; then
-		log_info "Tool auto-update disabled via AIDEVOPS_TOOL_AUTO_UPDATE=false"
+	# Opt-out via feature toggle (env var or config file)
+	if ! is_feature_enabled tool_auto_update 2>/dev/null; then
+		log_info "Tool auto-update disabled via feature toggle"
 		return 0
 	fi
 
@@ -865,15 +857,9 @@ update_tool_check_timestamp() {
 cmd_check() {
 	ensure_dirs
 
-	# Respect env var override, then settings.json
-	if [[ "${AIDEVOPS_AUTO_UPDATE:-}" == "false" ]]; then
-		log_info "Auto-update disabled via AIDEVOPS_AUTO_UPDATE=false"
-		return 0
-	fi
-
-	# Check settings.json (only when env var is not set)
-	if [[ -z "${AIDEVOPS_AUTO_UPDATE:-}" ]] && [[ "$(get_setting "auto_update" "true")" == "false" ]]; then
-		log_info "Auto-update disabled via settings.json (auto_update: false)"
+	# Respect feature toggle (env var or config file)
+	if ! is_feature_enabled auto_update 2>/dev/null; then
+		log_info "Auto-update disabled via feature toggle (env var or aidevops config)"
 		return 0
 	fi
 
@@ -982,12 +968,6 @@ cmd_check() {
 #######################################
 cmd_enable() {
 	ensure_dirs
-
-	# Warn if settings.json disables auto-update (scheduler will install but checks will no-op)
-	if [[ "$(get_setting "auto_update" "true")" == "false" ]]; then
-		print_warning "settings.json has auto_update: false — scheduler will install but checks will be skipped"
-		print_info "To enable: set auto_update to true in ~/.config/aidevops/settings.json"
-	fi
 
 	local interval="${AIDEVOPS_UPDATE_INTERVAL:-$DEFAULT_INTERVAL}"
 	local script_path="$HOME/.aidevops/agents/scripts/auto-update-helper.sh"
@@ -1284,30 +1264,22 @@ cmd_status() {
 		fi
 	fi
 
-	# Check settings.json overrides
-	local _settings_auto_update
-	_settings_auto_update="$(get_setting "auto_update" "true")"
-	if [[ "$_settings_auto_update" == "false" ]]; then
+	# Check feature toggle overrides (env var or config file)
+	if ! is_feature_enabled auto_update 2>/dev/null; then
 		echo ""
-		echo -e "  ${YELLOW}Note: settings.json has auto_update: false (checks will be skipped)${NC}"
+		echo -e "  ${YELLOW}Note: auto_update disabled (overrides scheduler)${NC}"
 	fi
-
-	# Check env var overrides (env vars take priority over settings.json)
-	if [[ "${AIDEVOPS_AUTO_UPDATE:-}" == "false" ]]; then
+	if ! is_feature_enabled skill_auto_update 2>/dev/null; then
 		echo ""
-		echo -e "  ${YELLOW}Note: AIDEVOPS_AUTO_UPDATE=false is set (overrides scheduler and settings.json)${NC}"
+		echo -e "  ${YELLOW}Note: skill_auto_update disabled (skill freshness disabled)${NC}"
 	fi
-	if [[ "${AIDEVOPS_SKILL_AUTO_UPDATE:-}" == "false" ]]; then
+	if ! is_feature_enabled openclaw_auto_update 2>/dev/null; then
 		echo ""
-		echo -e "  ${YELLOW}Note: AIDEVOPS_SKILL_AUTO_UPDATE=false is set (skill freshness disabled)${NC}"
+		echo -e "  ${YELLOW}Note: openclaw_auto_update disabled (OpenClaw auto-update disabled)${NC}"
 	fi
-	if [[ "${AIDEVOPS_OPENCLAW_AUTO_UPDATE:-}" == "false" ]]; then
+	if ! is_feature_enabled tool_auto_update 2>/dev/null; then
 		echo ""
-		echo -e "  ${YELLOW}Note: AIDEVOPS_OPENCLAW_AUTO_UPDATE=false is set (OpenClaw auto-update disabled)${NC}"
-	fi
-	if [[ "${AIDEVOPS_TOOL_AUTO_UPDATE:-}" == "false" ]]; then
-		echo ""
-		echo -e "  ${YELLOW}Note: AIDEVOPS_TOOL_AUTO_UPDATE=false is set (tool auto-update disabled)${NC}"
+		echo -e "  ${YELLOW}Note: tool_auto_update disabled (tool auto-update disabled)${NC}"
 	fi
 
 	echo ""
@@ -1366,21 +1338,8 @@ COMMANDS:
     logs --follow       Follow log output in real-time
     help                Show this help
 
-CONFIGURATION FILE:
-    ~/.config/aidevops/settings.json     Persistent user preferences (optional)
-
-    Supported keys (all default to true):
-      "auto_update": false               Disable auto-update checks
-      "supervisor_pulse": false           Disable supervisor pulse scheduler
-      "repo_sync": false                  Disable daily repo sync
-
-    Example:
-      echo '{"auto_update": false}' > ~/.config/aidevops/settings.json
-
-    Priority: environment variable > settings.json > default (true)
-
 ENVIRONMENT:
-    AIDEVOPS_AUTO_UPDATE=false           Disable auto-update (overrides settings.json)
+    AIDEVOPS_AUTO_UPDATE=false           Disable auto-update (overrides scheduler)
     AIDEVOPS_UPDATE_INTERVAL=10          Minutes between checks (default: 10)
     AIDEVOPS_SKILL_AUTO_UPDATE=false     Disable daily skill freshness check
     AIDEVOPS_SKILL_FRESHNESS_HOURS=24    Hours between skill checks (default: 24)
