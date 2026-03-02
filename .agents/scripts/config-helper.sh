@@ -794,8 +794,10 @@ cmd_validate() {
 	# Validate defaults file
 	if [[ -f "$JSONC_DEFAULTS" ]]; then
 		local defaults_json
-		defaults_json=$(_strip_jsonc "$JSONC_DEFAULTS")
-		if echo "$defaults_json" | jq '.' >/dev/null 2>&1; then
+		if ! defaults_json=$(_strip_jsonc "$JSONC_DEFAULTS"); then
+			echo "[ERROR] Defaults file has invalid JSONC: $JSONC_DEFAULTS" >&2
+			exit_code=1
+		elif echo "$defaults_json" | jq -e '.' >/dev/null 2>&1; then
 			echo "[OK] Defaults file is valid JSON" >&2
 		else
 			echo "[ERROR] Defaults file has invalid JSON" >&2
@@ -808,8 +810,10 @@ cmd_validate() {
 	# Validate user config
 	if [[ -f "$JSONC_USER" ]]; then
 		local user_json
-		user_json=$(_strip_jsonc "$JSONC_USER")
-		if echo "$user_json" | jq '.' >/dev/null 2>&1; then
+		if ! user_json=$(_strip_jsonc "$JSONC_USER"); then
+			echo "[ERROR] User config has invalid JSONC: $JSONC_USER" >&2
+			exit_code=1
+		elif echo "$user_json" | jq -e '.' >/dev/null 2>&1; then
 			echo "[OK] User config is valid JSON" >&2
 		else
 			echo "[ERROR] User config has invalid JSON: $JSONC_USER" >&2
