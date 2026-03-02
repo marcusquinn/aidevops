@@ -1379,10 +1379,12 @@ _load_feature_toggles_legacy() {
 _AIDEVOPS_CONFIG_MODE=""
 
 _load_config() {
-	# Prefer JSONC if jq is available and defaults file exists.
-	# JSONC_DEFAULTS is set by config-helper.sh (sourced above).
+	# Prefer JSONC if jq is available, defaults file exists, AND config-helper.sh
+	# functions (config_get/config_enabled) are loaded. Without the functions,
+	# having jq + defaults is not enough — callers would fail at runtime.
 	local jsonc_defaults="${JSONC_DEFAULTS:-${HOME}/.aidevops/agents/configs/aidevops.defaults.jsonc}"
-	if command -v jq &>/dev/null && [[ -r "$jsonc_defaults" ]]; then
+	if command -v jq &>/dev/null && [[ -r "$jsonc_defaults" ]] &&
+		type config_get &>/dev/null && type config_enabled &>/dev/null; then
 		_AIDEVOPS_CONFIG_MODE="jsonc"
 		# config-helper.sh functions are already available via source above
 		# Auto-migrate legacy .conf if it exists and no JSONC user config yet

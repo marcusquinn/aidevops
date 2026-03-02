@@ -155,8 +155,17 @@ _merge_configs() {
 		echo "{}"
 		return 1
 	}
-	# User config may not exist yet — that's normal, fall back to empty
-	user_json=$(_strip_jsonc "$JSONC_USER" 2>/dev/null) || user_json="{}"
+	# User config may not exist yet — that's normal, fall back to empty.
+	# But if it exists and is malformed, report the error — don't silently ignore.
+	if [[ -f "$JSONC_USER" ]]; then
+		user_json=$(_strip_jsonc "$JSONC_USER") || {
+			echo "[config] Malformed user config: $JSONC_USER — ignoring overrides" >&2
+			echo "  Run 'aidevops config validate' to diagnose, or 'aidevops config reset' to fix." >&2
+			user_json="{}"
+		}
+	else
+		user_json="{}"
+	fi
 
 	if command -v jq &>/dev/null; then
 		# Deep merge: defaults * user (user wins on conflicts)
@@ -431,7 +440,14 @@ cmd_list() {
 		echo "[ERROR] Cannot read defaults config" >&2
 		return 1
 	}
-	user_json=$(_strip_jsonc "$JSONC_USER" 2>/dev/null) || user_json="{}"
+	if [[ -f "$JSONC_USER" ]]; then
+		user_json=$(_strip_jsonc "$JSONC_USER") || {
+			echo "[WARN] Malformed user config: $JSONC_USER — showing defaults only" >&2
+			user_json="{}"
+		}
+	else
+		user_json="{}"
+	fi
 
 	echo ""
 	echo -e "\033[1mConfiguration\033[0m"
@@ -601,7 +617,10 @@ HEADER
 
 	# Read existing user config, set the value, write back
 	local user_json
-	user_json=$(_strip_jsonc "$JSONC_USER") || user_json="{}"
+	user_json=$(_strip_jsonc "$JSONC_USER") || {
+		echo "[ERROR] Malformed user config: $JSONC_USER — fix or reset before setting values" >&2
+		return 1
+	}
 
 	# Use jq --arg for safe dotpath and value passing (no shell interpolation into filter)
 	local updated
@@ -687,7 +706,10 @@ cmd_reset() {
 		fi
 
 		local user_json
-		user_json=$(_strip_jsonc "$JSONC_USER") || user_json="{}"
+		user_json=$(_strip_jsonc "$JSONC_USER") || {
+			echo "[ERROR] Malformed user config: $JSONC_USER — consider 'aidevops config reset' to remove it" >&2
+			return 1
+		}
 
 		# Use jq --arg for safe dotpath passing (no shell interpolation into filter)
 		local updated
@@ -795,6 +817,52 @@ cmd_validate() {
 		fi
 	else
 		echo "[INFO] No user config file (using defaults only)" >&2
+	fi
+
+	# JSON Schema validation (if schema file exists and a validator is available)
+	if [[ -f "$JSONC_SCHEMA" && $exit_code -eq 0 ]]; then
+		local merged_json
+		merged_json=$(_get_merged_config)
+
+		if command -v ajv &>/dev/null; then
+			# ajv-cli: fast, Node-based JSON Schema validator
+			local tmpfile
+			tmpfile=$(mktemp) || {
+				echo "[WARN] Cannot create temp file for schema validation" >&2
+				return $exit_code
+			}
+			echo "$merged_json" >"$tmpfile"
+			if ajv validate -s "$JSONC_SCHEMA" -d "$tmpfile" --strict=false >&2; then
+				echo "[OK] Config passes JSON Schema validation" >&2
+			else
+				echo "[ERROR] Config fails JSON Schema validation (see above)" >&2
+				exit_code=1
+			fi
+			rm -f "$tmpfile"
+		elif command -v python3 &>/dev/null && python3 -c "import jsonschema" 2>/dev/null; then
+			# Python jsonschema module — pass schema path as argv[1] to avoid injection
+			if echo "$merged_json" | python3 -c '
+import sys, json
+try:
+    from jsonschema import validate, ValidationError
+    schema = json.load(open(sys.argv[1]))
+    instance = json.load(sys.stdin)
+    validate(instance=instance, schema=schema)
+except ValidationError as e:
+    print(f"Validation error: {e.message}", file=sys.stderr)
+    sys.exit(1)
+except Exception as e:
+    print(f"Schema validation unavailable: {e}", file=sys.stderr)
+    sys.exit(2)
+' "$JSONC_SCHEMA"; then
+				echo "[OK] Config passes JSON Schema validation" >&2
+			else
+				echo "[ERROR] Config fails JSON Schema validation (see above)" >&2
+				exit_code=1
+			fi
+		else
+			echo "[INFO] No JSON Schema validator found (install ajv-cli or python3-jsonschema for schema checks)" >&2
+		fi
 	fi
 
 	return $exit_code
