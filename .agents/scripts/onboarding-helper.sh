@@ -26,6 +26,10 @@ set -euo pipefail
 
 readonly DIM='\033[2m'
 
+# Settings file (canonical config — see settings-helper.sh)
+readonly SETTINGS_FILE="$HOME/.config/aidevops/settings.json"
+readonly SETTINGS_HELPER="${SCRIPT_DIR}/settings-helper.sh"
+
 # Credential file locations
 readonly CREDENTIALS_FILE="$HOME/.config/aidevops/credentials.sh"
 readonly CODERABBIT_KEY_FILE="$HOME/.config/coderabbit/api_key"
@@ -35,6 +39,35 @@ if [[ -f "$CREDENTIALS_FILE" ]]; then
 	# shellcheck source=/dev/null
 	source "$CREDENTIALS_FILE"
 fi
+
+# Ensure settings.json exists with defaults
+_ensure_settings() {
+	if [[ -x "$SETTINGS_HELPER" ]]; then
+		bash "$SETTINGS_HELPER" init >/dev/null 2>&1
+	fi
+	return 0
+}
+
+# Read a setting from settings.json
+_get_setting() {
+	local key="$1"
+	if [[ -x "$SETTINGS_HELPER" ]]; then
+		bash "$SETTINGS_HELPER" get "$key" 2>/dev/null
+	else
+		echo "null"
+	fi
+	return 0
+}
+
+# Write a setting to settings.json
+_set_setting() {
+	local key="$1"
+	local value="$2"
+	if [[ -x "$SETTINGS_HELPER" ]]; then
+		bash "$SETTINGS_HELPER" set "$key" "$value" >/dev/null 2>&1
+	fi
+	return 0
+}
 
 # Check if an environment variable is set and not a placeholder
 is_configured() {
@@ -558,11 +591,30 @@ configure_dirs() {
 		echo ""
 		echo "Added $added directory/directories."
 		echo "Run 'aidevops repo-sync check' to sync now."
+
+		# Sync directories to settings.json
+		_sync_dirs_to_settings "$config_file"
 	elif [[ ${#current_dirs[@]} -eq 0 ]]; then
 		echo "No directories added. Using default: ~/Git"
 	fi
 
 	echo ""
+	return 0
+}
+
+# Sync git_parent_dirs from repos.json into settings.json
+_sync_dirs_to_settings() {
+	local config_file="$1"
+
+	if [[ ! -f "$config_file" ]] || ! command -v jq &>/dev/null; then
+		return 0
+	fi
+
+	local dirs_json
+	dirs_json=$(jq -c '[.git_parent_dirs[]? // empty]' "$config_file" 2>/dev/null || echo '["~/Git"]')
+
+	_set_setting "repo_sync.directories" "$dirs_json"
+	_set_setting "repo_sync.enabled" "true"
 	return 0
 }
 
@@ -916,6 +968,67 @@ show_guide() {
 	return 0
 }
 
+# Save user's work type to settings.json (called by AI agent during onboarding)
+save_work_type() {
+	local work_type="$1"
+
+	_ensure_settings
+	_set_setting "user.work_type" "$work_type"
+	echo "Saved work type: $work_type"
+	return 0
+}
+
+# Save user's familiar concepts to settings.json (called by AI agent during onboarding)
+save_concepts() {
+	local concepts="$1"
+
+	_ensure_settings
+
+	# Accept comma-separated list or JSON array
+	if [[ "$concepts" == \[* ]]; then
+		_set_setting "user.familiar_concepts" "$concepts"
+	else
+		# Convert comma-separated to JSON array
+		local json_array
+		json_array=$(echo "$concepts" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | jq -R . | jq -s .)
+		_set_setting "user.familiar_concepts" "$json_array"
+	fi
+	echo "Saved familiar concepts"
+	return 0
+}
+
+# Save orchestration preference to settings.json
+save_orchestration() {
+	local enabled="$1"
+
+	_ensure_settings
+	_set_setting "orchestration.enabled" "$enabled"
+	echo "Saved orchestration.enabled: $enabled"
+	return 0
+}
+
+# Show current settings summary
+show_settings() {
+	_ensure_settings
+
+	echo ""
+	echo -e "${BLUE}Current Settings${NC}"
+	echo "================"
+	echo ""
+
+	if [[ -x "$SETTINGS_HELPER" ]]; then
+		bash "$SETTINGS_HELPER" list
+	else
+		echo "Settings helper not found. Settings file: $SETTINGS_FILE"
+		if [[ -f "$SETTINGS_FILE" ]]; then
+			jq '.' "$SETTINGS_FILE" 2>/dev/null || cat "$SETTINGS_FILE"
+		else
+			echo "(not created yet — run /onboarding)"
+		fi
+	fi
+	return 0
+}
+
 # Show help
 show_help() {
 	echo "Onboarding Helper - Interactive setup and service status for aidevops"
@@ -931,6 +1044,10 @@ show_help() {
 	echo "                                  dataforseo, augment, sonarcloud, openclaw,"
 	echo "                                  tailscale, orbstack, orchestration"
 	echo "  configure-dirs      - Interactively add git parent directories for repo-sync"
+	echo "  settings            - Show current settings from settings.json"
+	echo "  save-work-type <t>  - Save work type (web, devops, seo, wordpress)"
+	echo "  save-concepts <c>   - Save familiar concepts (comma-separated or JSON array)"
+	echo "  save-orchestration  - Save orchestration enabled/disabled (true/false)"
 	echo "  json                - Output status as JSON for programmatic use"
 	echo "  help                - Show this help message"
 	echo ""
@@ -939,7 +1056,11 @@ show_help() {
 	echo "  $0 recommend devops"
 	echo "  $0 guide openai"
 	echo "  $0 configure-dirs"
+	echo "  $0 save-work-type devops"
+	echo "  $0 save-concepts 'git,terminal,api-keys'"
+	echo "  $0 settings"
 	echo ""
+	echo "Settings file: $SETTINGS_FILE"
 	echo "Use /onboarding in Claude Code for the full interactive experience."
 	return 0
 }
@@ -1053,11 +1174,22 @@ main() {
 	local command="${1:-status}"
 	local arg="${2:-}"
 
+	# Ensure settings.json exists on any invocation
+	_ensure_settings
+
 	case "$command" in
 	status)
 		show_status
 		;;
 	recommend | recommendations)
+		# If no arg, try to use saved work_type from settings
+		if [[ -z "$arg" ]]; then
+			local saved_type
+			saved_type=$(_get_setting "user.work_type")
+			if [[ "$saved_type" != "null" && -n "$saved_type" ]]; then
+				arg="$saved_type"
+			fi
+		fi
 		show_recommendations "$arg"
 		;;
 	guide | setup)
@@ -1068,6 +1200,30 @@ main() {
 		;;
 	configure-dirs | dirs)
 		configure_dirs
+		;;
+	settings)
+		show_settings
+		;;
+	save-work-type)
+		if [[ -z "$arg" ]]; then
+			print_error "Usage: $0 save-work-type <web|devops|seo|wordpress>"
+			return 1
+		fi
+		save_work_type "$arg"
+		;;
+	save-concepts)
+		if [[ -z "$arg" ]]; then
+			print_error "Usage: $0 save-concepts <comma-separated or JSON array>"
+			return 1
+		fi
+		save_concepts "$arg"
+		;;
+	save-orchestration)
+		if [[ -z "$arg" ]]; then
+			print_error "Usage: $0 save-orchestration <true|false>"
+			return 1
+		fi
+		save_orchestration "$arg"
 		;;
 	help | --help | -h)
 		show_help

@@ -25,6 +25,8 @@ subagents:
 
 - **Command**: `/onboarding` or `@onboarding`
 - **Script**: `~/.aidevops/agents/scripts/onboarding-helper.sh`
+- **Settings**: `~/.config/aidevops/settings.json` (canonical config file)
+- **Settings helper**: `~/.aidevops/agents/scripts/settings-helper.sh`
 - **Purpose**: Interactive wizard to discover, configure, and verify aidevops integrations
 
 **CRITICAL - OpenCode Setup**: NEVER manually write `opencode.json`. Always run:
@@ -33,12 +35,15 @@ subagents:
 ~/.aidevops/agents/scripts/generate-opencode-agents.sh
 ```
 
+**Settings file**: All onboarding choices are persisted to `~/.config/aidevops/settings.json`. This file is the canonical config — users can edit it directly or via `/onboarding`. Created with documented defaults on first run.
+
 **Workflow**:
 1. Welcome & explain aidevops capabilities
 2. Ask about user's work/interests for personalized suggestions
-3. Show current setup status (configured vs needs setup)
-4. Guide through setting up selected services
-5. Verify configurations work
+3. **Save choices to settings.json** (work type, concepts, orchestration preference)
+4. Show current setup status (configured vs needs setup)
+5. Guide through setting up selected services
+6. Verify configurations work
 
 <!-- AI-CONTEXT-END -->
 
@@ -205,7 +210,19 @@ For example:
 5. Something else (describe it)
 ```
 
-Based on their answer, highlight relevant services.
+Based on their answer, highlight relevant services and **save the choice**:
+
+```bash
+# Save work type (maps 1=web, 2=devops, 3=seo, 4=wordpress)
+~/.aidevops/agents/scripts/onboarding-helper.sh save-work-type devops
+```
+
+Also save the concept familiarity from Step 2:
+
+```bash
+# Save familiar concepts (from Step 2 responses)
+~/.aidevops/agents/scripts/onboarding-helper.sh save-concepts 'git,terminal,api-keys'
+```
 
 ### Step 4: Show Current Status
 
@@ -1178,12 +1195,18 @@ You stay in control — the supervisor only dispatches tasks you've tagged.
 If **yes**:
 
 ```bash
-# Enable the supervisor pulse (every 2 min)
+# Save preference and enable the supervisor pulse (every 2 min)
+~/.aidevops/agents/scripts/onboarding-helper.sh save-orchestration true
 # See scripts/commands/runners.md for macOS (launchd) and Linux (cron) setup
 # The pulse dispatches workers, merges PRs, and manages cross-repo work
 ```
 
 If **no**:
+
+```bash
+# Save preference
+~/.aidevops/agents/scripts/onboarding-helper.sh save-orchestration false
+```
 
 ```text
 No problem. You can enable it anytime — see scripts/commands/runners.md
@@ -1192,6 +1215,38 @@ for setup instructions (launchd on macOS, cron on Linux).
 The strategic review, session miner, and circuit breaker all run as steps
 within the pulse — enabling the pulse enables everything.
 ```
+
+## Settings File
+
+All onboarding choices are saved to `~/.config/aidevops/settings.json`. This is the canonical config file for aidevops — users can edit it directly with any text editor.
+
+**View current settings:**
+
+```bash
+~/.aidevops/agents/scripts/settings-helper.sh list
+```
+
+**Edit a setting:**
+
+```bash
+~/.aidevops/agents/scripts/settings-helper.sh set orchestration.enabled true
+~/.aidevops/agents/scripts/settings-helper.sh set user.work_type devops
+~/.aidevops/agents/scripts/settings-helper.sh set repo_sync.directories '["~/Git","~/Projects"]'
+```
+
+**Export as clean JSON (no docs):**
+
+```bash
+~/.aidevops/agents/scripts/settings-helper.sh json
+```
+
+**Reset to defaults:**
+
+```bash
+~/.aidevops/agents/scripts/settings-helper.sh reset
+```
+
+Settings sections: `user` (profile), `orchestration` (autonomous workers), `repo_sync` (daily pulls), `quality` (linting), `model_routing` (AI providers), `notifications`, `ui` (display). Each setting has inline documentation — run `settings-helper.sh list` to see descriptions.
 
 ## Next Steps After Setup
 

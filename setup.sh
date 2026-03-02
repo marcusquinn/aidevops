@@ -577,6 +577,27 @@ parse_args() {
 	return 0
 }
 
+# Initialize ~/.config/aidevops/settings.json with documented defaults.
+# Idempotent — merges missing keys without overwriting existing values.
+init_settings_json() {
+	local settings_helper="$HOME/.aidevops/agents/scripts/settings-helper.sh"
+	if [[ -x "$settings_helper" ]]; then
+		if bash "$settings_helper" init >/dev/null 2>&1; then
+			print_info "Settings file initialized: ~/.config/aidevops/settings.json"
+		fi
+	else
+		# Fallback: try from repo directory (first run before deployment)
+		local repo_helper
+		repo_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.agents/scripts/settings-helper.sh"
+		if [[ -x "$repo_helper" ]]; then
+			if bash "$repo_helper" init >/dev/null 2>&1; then
+				print_info "Settings file initialized: ~/.config/aidevops/settings.json"
+			fi
+		fi
+	fi
+	return 0
+}
+
 # Main setup function
 main() {
 	# Bootstrap first (handles curl install)
@@ -631,6 +652,7 @@ main() {
 		deploy_aidevops_agents
 		sync_agent_sources
 		setup_safety_hooks
+		init_settings_json
 
 		# Parallelise independent skill operations (t1356: ~84s serial -> ~18s parallel)
 		# generate_agent_skills (18s), create_skill_symlinks (<1s), and
@@ -698,6 +720,7 @@ main() {
 		confirm_step "Deploy aidevops agents to ~/.aidevops/agents/" && deploy_aidevops_agents
 		confirm_step "Sync agents from private repositories" && sync_agent_sources
 		confirm_step "Install Claude Code safety hooks (block destructive commands)" && setup_safety_hooks
+		confirm_step "Initialize settings.json (canonical config file)" && init_settings_json
 		confirm_step "Setup multi-tenant credential storage" && setup_multi_tenant_credentials
 		confirm_step "Generate agent skills (SKILL.md files)" && generate_agent_skills
 		confirm_step "Create symlinks for imported skills" && create_skill_symlinks
