@@ -3525,14 +3525,22 @@ main() {
 		;;
 	config | configure)
 		shift
-		local ft_helper="$AGENTS_DIR/scripts/feature-toggle-helper.sh"
-		if [[ ! -f "$ft_helper" ]]; then
-			ft_helper="$INSTALL_DIR/.agents/scripts/feature-toggle-helper.sh"
+		# Prefer JSONC config-helper.sh, fall back to legacy feature-toggle-helper.sh
+		local config_helper="$AGENTS_DIR/scripts/config-helper.sh"
+		if [[ ! -f "$config_helper" ]]; then
+			config_helper="$INSTALL_DIR/.agents/scripts/config-helper.sh"
 		fi
-		if [[ -f "$ft_helper" ]]; then
-			bash "$ft_helper" "$@"
+		if [[ ! -f "$config_helper" ]]; then
+			# Legacy fallback
+			config_helper="$AGENTS_DIR/scripts/feature-toggle-helper.sh"
+		fi
+		if [[ ! -f "$config_helper" ]]; then
+			config_helper="$INSTALL_DIR/.agents/scripts/feature-toggle-helper.sh"
+		fi
+		if [[ -f "$config_helper" ]]; then
+			bash "$config_helper" "$@"
 		else
-			print_error "feature-toggle-helper.sh not found. Run: aidevops update"
+			print_error "config-helper.sh not found. Run: aidevops update"
 			exit 1
 		fi
 		;;

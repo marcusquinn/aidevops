@@ -100,9 +100,9 @@ _run_generator() {
 }
 
 update_opencode_config() {
-	# Respect feature toggle (env var or config file)
+	# Respect config (env var or config file)
 	if ! is_feature_enabled manage_opencode_config 2>/dev/null; then
-		print_info "OpenCode config management disabled via feature toggle"
+		print_info "OpenCode config management disabled via config (integrations.manage_opencode_config)"
 		return 0
 	fi
 
@@ -145,9 +145,9 @@ update_opencode_config() {
 }
 
 update_claude_config() {
-	# Respect feature toggle (env var or config file)
+	# Respect config (env var or config file)
 	if ! is_feature_enabled manage_claude_config 2>/dev/null; then
-		print_info "Claude config management disabled via feature toggle"
+		print_info "Claude config management disabled via config (integrations.manage_claude_config)"
 		return 0
 	fi
 

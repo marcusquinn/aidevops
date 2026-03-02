@@ -1284,23 +1284,35 @@ get_provider_from_model() {
 }
 
 # =============================================================================
-# Feature Toggles Loader (issue #2721)
+# Configuration Loader (issue #2730 — JSONC config system)
 # =============================================================================
-# Loads user-configurable feature toggles from:
+# Loads user-configurable settings from JSONC config files:
 #   1. Defaults file (shipped with aidevops, overwritten on update)
-#   2. User overrides (~/.config/aidevops/feature-toggles.conf)
+#      ~/.aidevops/agents/configs/aidevops.defaults.jsonc
+#   2. User overrides (~/.config/aidevops/config.jsonc)
 #   3. Environment variables (highest priority)
 #
-# All toggle values are exported as AIDEVOPS_FT_<KEY> (uppercase).
-# Scripts check toggles via: get_feature_toggle <key> [default]
+# Requires jq for JSONC parsing. Falls back to legacy .conf if jq unavailable.
 #
-# The loader is idempotent — safe to call multiple times.
+# Scripts check config via:
+#   config_get <dotpath> [default]       — get any config value
+#   config_enabled <dotpath>             — check boolean config
+#   get_feature_toggle <key> [default]   — backward-compatible (flat key)
+#   is_feature_enabled <key>             — backward-compatible (flat key)
 
+# Source config-helper.sh (provides _jsonc_get, config_get, config_enabled, etc.)
+_CONFIG_HELPER="${BASH_SOURCE[0]%/*}/config-helper.sh"
+if [[ -r "$_CONFIG_HELPER" ]]; then
+	# shellcheck source=config-helper.sh
+	source "$_CONFIG_HELPER"
+fi
+
+# Legacy paths (kept for backward compatibility and migration)
 FEATURE_TOGGLES_DEFAULTS="${HOME}/.aidevops/agents/configs/feature-toggles.conf.defaults"
 FEATURE_TOGGLES_USER="${HOME}/.config/aidevops/feature-toggles.conf"
 
-# Map from toggle key to environment variable name (for env override lookup).
-# Only toggles with existing env var conventions are mapped here.
+# Map from legacy toggle key to environment variable name.
+# Used by both the new JSONC system and the legacy fallback.
 _ft_env_map() {
 	local key="$1"
 	case "$key" in
@@ -1320,28 +1332,21 @@ _ft_env_map() {
 	return 0
 }
 
-# Load feature toggles (called once when shared-constants.sh is sourced).
-# Reads defaults, then user overrides, then env vars.
-# Results are stored in _FT_* variables (not exported — use get_feature_toggle).
-_load_feature_toggles() {
-	# Source defaults file (sets variables in current scope)
+# ---------------------------------------------------------------------------
+# Legacy fallback: load from .conf files when jq is not available
+# ---------------------------------------------------------------------------
+_load_feature_toggles_legacy() {
 	if [[ -r "$FEATURE_TOGGLES_DEFAULTS" ]]; then
-		# Read key=value pairs, skipping comments and blank lines
 		local line key value
 		while IFS= read -r line || [[ -n "$line" ]]; do
-			# Skip comments and blank lines
 			[[ -z "$line" || "$line" == \#* ]] && continue
-			# Parse key=value
 			key="${line%%=*}"
 			value="${line#*=}"
-			# Validate key is alphanumeric + underscore
 			[[ "$key" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || continue
-			# Store as _FT_<key>
 			eval "_FT_${key}=\"\${value}\""
 		done <"$FEATURE_TOGGLES_DEFAULTS"
 	fi
 
-	# Source user overrides (same format, overwrites defaults)
 	if [[ -r "$FEATURE_TOGGLES_USER" ]]; then
 		local line key value
 		while IFS= read -r line || [[ -n "$line" ]]; do
@@ -1353,8 +1358,6 @@ _load_feature_toggles() {
 		done <"$FEATURE_TOGGLES_USER"
 	fi
 
-	# Environment variable overrides (highest priority)
-	# Only for toggles that have a known env var mapping
 	local toggle_keys="auto_update update_interval skill_auto_update skill_freshness_hours tool_auto_update tool_freshness_hours tool_idle_hours supervisor_pulse repo_sync openclaw_auto_update openclaw_freshness_hours manage_opencode_config manage_claude_config session_greeting safety_hooks shell_aliases onboarding_prompt"
 	local tk env_var env_val
 	for tk in $toggle_keys; do
@@ -1370,42 +1373,94 @@ _load_feature_toggles() {
 	return 0
 }
 
-# Get a feature toggle value.
+# ---------------------------------------------------------------------------
+# Detect which config system to use and load accordingly
+# ---------------------------------------------------------------------------
+_AIDEVOPS_CONFIG_MODE=""
+
+_load_config() {
+	# Prefer JSONC if jq is available and defaults file exists.
+	# JSONC_DEFAULTS is set by config-helper.sh (sourced above).
+	local jsonc_defaults="${JSONC_DEFAULTS:-${HOME}/.aidevops/agents/configs/aidevops.defaults.jsonc}"
+	if command -v jq &>/dev/null && [[ -r "$jsonc_defaults" ]]; then
+		_AIDEVOPS_CONFIG_MODE="jsonc"
+		# config-helper.sh functions are already available via source above
+		# Auto-migrate legacy .conf if it exists and no JSONC user config yet
+		local jsonc_user="${JSONC_USER:-${HOME}/.config/aidevops/config.jsonc}"
+		if [[ -f "$FEATURE_TOGGLES_USER" && ! -f "$jsonc_user" ]]; then
+			if type _migrate_conf_to_jsonc &>/dev/null; then
+				_migrate_conf_to_jsonc 2>/dev/null || true
+			fi
+		fi
+	else
+		_AIDEVOPS_CONFIG_MODE="legacy"
+		_load_feature_toggles_legacy
+	fi
+
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Backward-compatible API: get_feature_toggle / is_feature_enabled
+# These accept flat legacy keys (e.g. "auto_update") and route to the
+# appropriate backend (JSONC or legacy .conf).
+# ---------------------------------------------------------------------------
+
+# Get a feature toggle / config value.
 # Usage: get_feature_toggle <key> [default]
-# Returns the value on stdout. If the toggle is not set, returns the default
-# (or empty string if no default provided).
-# Example: if [[ "$(get_feature_toggle auto_update true)" == "false" ]]; then ...
+# Accepts both legacy flat keys and new dotpath keys.
 get_feature_toggle() {
 	local key="$1"
 	local default="${2:-}"
-	local var_name="_FT_${key}"
-	local value="${!var_name:-}"
 
-	if [[ -n "$value" ]]; then
-		echo "$value"
+	if [[ "$_AIDEVOPS_CONFIG_MODE" == "jsonc" ]]; then
+		# Map legacy key to dotpath if needed
+		local dotpath
+		if type _legacy_key_to_dotpath &>/dev/null; then
+			dotpath=$(_legacy_key_to_dotpath "$key")
+		else
+			dotpath="$key"
+		fi
+		config_get "$dotpath" "$default"
 	else
-		echo "$default"
+		# Legacy mode: read from _FT_* variables
+		local var_name="_FT_${key}"
+		local value="${!var_name:-}"
+		if [[ -n "$value" ]]; then
+			echo "$value"
+		else
+			echo "$default"
+		fi
 	fi
 	return 0
 }
 
-# Check if a feature toggle is enabled (true).
+# Check if a feature toggle / config boolean is enabled (true).
 # Usage: if is_feature_enabled auto_update; then ...
-# Returns 0 (true) if the toggle value is "true" (case-insensitive).
-# Returns 1 (false) for "false", empty, or any other value.
 is_feature_enabled() {
 	local key="$1"
-	local value
-	value="$(get_feature_toggle "$key" "true")"
-	# Lowercase comparison
-	local lower
-	lower=$(echo "$value" | tr '[:upper:]' '[:lower:]')
-	[[ "$lower" == "true" ]]
-	return $?
+
+	if [[ "$_AIDEVOPS_CONFIG_MODE" == "jsonc" ]]; then
+		local dotpath
+		if type _legacy_key_to_dotpath &>/dev/null; then
+			dotpath=$(_legacy_key_to_dotpath "$key")
+		else
+			dotpath="$key"
+		fi
+		config_enabled "$dotpath"
+		return $?
+	else
+		local value
+		value="$(get_feature_toggle "$key" "true")"
+		local lower
+		lower=$(echo "$value" | tr '[:upper:]' '[:lower:]')
+		[[ "$lower" == "true" ]]
+		return $?
+	fi
 }
 
-# Load toggles immediately when shared-constants.sh is sourced
-_load_feature_toggles
+# Load config immediately when shared-constants.sh is sourced
+_load_config
 
 # This ensures all constants are available when this file is sourced
 export CONTENT_TYPE_JSON CONTENT_TYPE_FORM USER_AGENT

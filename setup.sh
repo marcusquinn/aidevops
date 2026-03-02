@@ -73,7 +73,7 @@ print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-# Source shared-constants for feature toggle support (is_feature_enabled)
+# Source shared-constants for config support (is_feature_enabled / config_enabled)
 # Try repo-local first, then deployed location
 _SHARED_CONSTANTS="${BASH_SOURCE[0]%/*}/.agents/scripts/shared-constants.sh"
 if [[ ! -f "$_SHARED_CONSTANTS" ]]; then
@@ -606,12 +606,12 @@ main() {
 		if is_feature_enabled manage_opencode_config 2>/dev/null; then
 			update_opencode_config
 		else
-			print_info "OpenCode config management disabled via feature toggle"
+			print_info "OpenCode config management disabled via config (integrations.manage_opencode_config)"
 		fi
 		if is_feature_enabled manage_claude_config 2>/dev/null; then
 			update_claude_config
 		else
-			print_info "Claude config management disabled via feature toggle"
+			print_info "Claude config management disabled via config (integrations.manage_claude_config)"
 		fi
 		disable_ondemand_mcps
 	else
@@ -696,7 +696,7 @@ main() {
 
 	# Enable auto-update if not already enabled
 	# Check both launchd (macOS) and cron (Linux) for existing installation
-	# Respects feature toggle: aidevops config set auto_update false
+	# Respects config: aidevops config set updates.auto_update false
 	local auto_update_script="$HOME/.aidevops/agents/scripts/auto-update-helper.sh"
 	if [[ -x "$auto_update_script" ]] && is_feature_enabled auto_update 2>/dev/null; then
 		local _auto_update_installed=false
@@ -746,7 +746,7 @@ main() {
 	# macOS: launchd plist invoking wrapper | Linux: cron entry invoking wrapper
 	# The plist is ALWAYS regenerated on setup.sh to pick up config changes (env vars,
 	# thresholds). Only the first-install prompt is gated on _pulse_installed.
-	# Respects feature toggle: aidevops config set supervisor_pulse false
+	# Respects config: aidevops config set orchestration.supervisor_pulse false
 	if is_feature_enabled supervisor_pulse 2>/dev/null; then
 		local wrapper_script="$HOME/.aidevops/agents/scripts/pulse-wrapper.sh"
 		local pulse_label="com.aidevops.aidevops-supervisor-pulse"
@@ -878,7 +878,7 @@ PLIST
 
 	# Enable repo-sync scheduler if not already installed
 	# Keeps local git repos up to date with daily ff-only pulls
-	# Respects feature toggle: aidevops config set repo_sync false
+	# Respects config: aidevops config set orchestration.repo_sync false
 	local repo_sync_script="$HOME/.aidevops/agents/scripts/repo-sync-helper.sh"
 	if [[ -x "$repo_sync_script" ]] && is_feature_enabled repo_sync 2>/dev/null; then
 		local _repo_sync_installed=false
@@ -994,7 +994,7 @@ PLIST
 	fi
 
 	# Offer to launch onboarding for new users (only if not running inside OpenCode and not non-interactive)
-	# Respects feature toggle: aidevops config set onboarding_prompt false
+	# Respects config: aidevops config set ui.onboarding_prompt false
 	if [[ "$NON_INTERACTIVE" != "true" ]] && [[ -z "${OPENCODE_SESSION:-}" ]] && is_feature_enabled onboarding_prompt 2>/dev/null && command -v opencode &>/dev/null; then
 		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 		echo ""
