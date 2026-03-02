@@ -156,12 +156,12 @@ _merge_configs() {
 		return 1
 	}
 	# User config may not exist yet — that's normal, fall back to empty.
-	# But if it exists and is malformed, report the error — don't silently ignore.
+	# But if it exists and is malformed, propagate the error — don't silently ignore.
 	if [[ -f "$JSONC_USER" ]]; then
 		user_json=$(_strip_jsonc "$JSONC_USER") || {
-			echo "[config] Malformed user config: $JSONC_USER — ignoring overrides" >&2
+			echo "[config] Malformed user config: $JSONC_USER" >&2
 			echo "  Run 'aidevops config validate' to diagnose, or 'aidevops config reset' to fix." >&2
-			user_json="{}"
+			return 1
 		}
 	else
 		user_json="{}"
