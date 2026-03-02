@@ -522,11 +522,12 @@ After task completion, the loop automatically:
    A comment like "Resolved by PR #NNN" does NOT create a link — only closing keywords in the PR body do. **Caution:** GitHub parses `Closes #NNN` anywhere in the PR body — including explanatory prose. If describing a bug that involved wrong issue linkage, use backtick-escaped references (`` `Closes #NNN` ``) or rephrase to avoid the pattern. PR #2512 itself closed the wrong issue because its description mentioned `Closes #2498` when explaining the original bug.
 3. **Label Update**: Update linked issue to `status:in-review` (see below)
 4. **PR Review**: Monitors CI checks and review status
-5. **Merge**: Squash merge (without `--delete-branch` when in worktree)
-6. **Issue Closing Comment**: Post a summary comment on linked issues (see below)
-7. **Worktree Cleanup**: Return to main repo, pull, clean merged worktrees
-8. **Postflight**: Verifies release health after merge
-9. **Deploy**: Runs `setup.sh --non-interactive` (aidevops repos only)
+5. **Review Bot Gate (t1382)**: Wait for AI review bots before merge (see below)
+6. **Merge**: Squash merge (without `--delete-branch` when in worktree)
+7. **Issue Closing Comment**: Post a summary comment on linked issues (see below)
+8. **Worktree Cleanup**: Return to main repo, pull, clean merged worktrees
+9. **Postflight**: Verifies release health after merge
+10. **Deploy**: Runs `setup.sh --non-interactive` (aidevops repos only)
 
 **Issue-state guard before any label/comment modification (t1343 — MANDATORY):**
 
@@ -568,6 +569,41 @@ done
 ```
 
 The `status:done` transition is handled automatically by the `sync-on-pr-merge` workflow when the PR merges — workers do not need to set it.
+
+**Review Bot Gate (t1382 — MANDATORY before merge):**
+
+Before merging any PR, wait for AI code review bots to post their reviews. This is a defense-in-depth gate with three layers:
+
+1. **CI layer**: The `review-bot-gate` GitHub Actions workflow (`.github/workflows/review-bot-gate.yml`) runs as a required status check. It checks for comments/reviews from known bots (CodeRabbit, Gemini Code Assist, Augment Code, Copilot) and fails until at least one has posted. The workflow re-triggers on `pull_request_review` and `issue_comment` events, so it automatically passes once a bot reviews.
+
+2. **Agent layer (this rule)**: After creating the PR and before merging, the agent MUST verify that at least one AI review bot has posted. Use the helper script:
+
+   ```bash
+   REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+   RESULT=$(~/.aidevops/agents/scripts/review-bot-gate-helper.sh check "$PR_NUMBER" "$REPO")
+   # Returns: PASS (bots found), WAITING (no bots yet), SKIP (label present)
+   ```
+
+   **If WAITING**: Poll every 60 seconds for up to 10 minutes (configurable via `REVIEW_BOT_WAIT_MAX=600`). Most bots post within 2-5 minutes. If still waiting after the timeout:
+   - In **interactive mode**: warn the user and ask whether to proceed or wait longer
+   - In **headless mode**: proceed with merge but log a warning — the CI gate will block if configured as a required check
+
+   **If PASS**: Proceed to merge. Read the bot reviews and address any critical/security findings before merging. Non-critical suggestions can be noted for follow-up.
+
+   **If SKIP**: The PR has the `skip-review-gate` label — proceed to merge. Use this for docs-only PRs or repos without review bots.
+
+3. **Branch protection layer**: For repos with review bots configured, add `review-bot-gate` as a required status check in GitHub Settings > Branches > Branch protection rules. This is the hard enforcement — even if the agent skips the wait, GitHub blocks the merge.
+
+**Why this matters**: PR #1 on aidevops-cloudron-app was merged before review bots posted, losing all security findings. The bots found real issues that would have been caught if the merge had waited 3 minutes.
+
+**Known review bots** (from `workflows/pr.md`):
+
+| Bot | Login pattern | Typical review time |
+|-----|---------------|-------------------|
+| CodeRabbit | `coderabbitai` | 1-3 minutes |
+| Gemini Code Assist | `gemini-code-assist[bot]` | 2-5 minutes |
+| Augment Code | `augment-code[bot]` | 2-4 minutes |
+| GitHub Copilot | `copilot[bot]` | 1-3 minutes |
 
 **Issue closing comment (MANDATORY — do NOT skip):**
 

@@ -42,14 +42,31 @@ Monitor the PR iteratively using `gh` CLI to check CI status, reviews, and merge
 The script performs these checks each iteration:
 
 1. **CI Status** - Check all GitHub Actions workflows
-2. **Review Status** - Check for approvals or change requests
-3. **Merge Readiness** - Verify PR can be merged
+2. **Review Bot Gate (t1382)** - Verify AI review bots have posted (see below)
+3. **Review Status** - Check for approvals or change requests
+4. **Merge Readiness** - Verify PR can be merged
 
 If issues are found:
 - CI failures: Report and wait for fixes
 - Changes requested: **Verify before acting** (see below), then address valid feedback
 - Unresolved AI feedback (COMMENTED): Some bots (e.g., Gemini Code Assist) post as `COMMENTED` rather than `CHANGES_REQUESTED`, so GitHub's `reviewDecision` stays `NONE`. The loop detects unresolved review threads and surfaces this feedback for action.
 - Stale review: Auto-trigger re-review (unless `--no-auto-trigger`)
+
+### Review Bot Gate (t1382)
+
+Before proceeding to merge, the loop MUST verify that at least one AI review bot has posted. This prevents the pattern where PRs are merged before bots finish analysis, losing security findings.
+
+```bash
+# Check if bots have posted
+RESULT=$(~/.aidevops/agents/scripts/review-bot-gate-helper.sh check "$PR_NUMBER" "$REPO")
+# Returns: PASS (bots found), WAITING (no bots yet), SKIP (label present)
+```
+
+**If WAITING**: The loop continues polling. Most bots post within 2-5 minutes. The `review-bot-gate` CI check (if configured as required) also blocks merge at the GitHub level.
+
+**If PASS**: Read the bot reviews and address critical/security findings before merging. Non-critical suggestions can be noted for follow-up.
+
+**If SKIP**: The PR has the `skip-review-gate` label — proceed without waiting.
 
 ### AI Bot Review Verification
 

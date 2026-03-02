@@ -416,6 +416,27 @@ tea pulls create \
 
 **Recommendation**: Use squash for feature branches to keep main history clean.
 
+### Pre-Merge: Review Bot Gate (t1382)
+
+Before merging any PR, verify that AI code review bots have posted their reviews. This is enforced at three layers:
+
+1. **CI check**: `.github/workflows/review-bot-gate.yml` — add as required status check in branch protection
+2. **Agent check**: `review-bot-gate-helper.sh check <PR> [REPO]` — returns PASS/WAITING/SKIP
+3. **Agent rule**: `prompts/build.txt` — agents must wait for bots before merging
+
+```bash
+# Check if bots have reviewed
+~/.aidevops/agents/scripts/review-bot-gate-helper.sh check 123
+
+# Wait up to 10 minutes for bots to post
+~/.aidevops/agents/scripts/review-bot-gate-helper.sh wait 123
+
+# List all bot activity on a PR
+~/.aidevops/agents/scripts/review-bot-gate-helper.sh list 123
+```
+
+To bypass for docs-only PRs or repos without bots, add the `skip-review-gate` label.
+
 ### GitHub
 
 ```bash

@@ -1,0 +1,205 @@
+name: Review Bot Gate
+
+# Blocks merge until AI code review bots have posted their reviews.
+# Process gap: PRs were merged before CodeRabbit/Gemini posted findings,
+# losing security-relevant feedback. This workflow polls for bot reviews
+# and only passes when at least one configured bot has reviewed.
+#
+# To enforce: add "review-bot-gate" as a required status check in
+# GitHub branch protection settings for each repo.
+#
+# t1382: https://github.com/marcusquinn/aidevops/issues/2735
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  pull_request_review:
+    types: [submitted]
+  issue_comment:
+    types: [created]
+
+# Cancel in-progress runs when a new event fires (e.g., new push)
+concurrency:
+  group: review-bot-gate-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  review-bot-gate:
+    name: Wait for AI Review Bots
+    runs-on: ubuntu-latest
+    # Only run on PRs (issue_comment fires for PR comments too)
+    if: >
+      github.event_name == 'pull_request' ||
+      github.event_name == 'pull_request_review' ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request)
+
+    permissions:
+      pull-requests: read
+      contents: read
+
+    steps:
+      - name: Check for AI review bot activity
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          echo "Checking PR #${PR_NUMBER} for AI review bot activity..."
+
+          # Known review bot patterns (case-insensitive matching on login)
+          # Add new bots here as they are configured
+          KNOWN_BOTS=(
+            "coderabbitai"
+            "gemini-code-assist[bot]"
+            "augment-code[bot]"
+            "augmentcode[bot]"
+            "copilot[bot]"
+          )
+
+          # Minimum wait time (seconds) after PR creation before we check
+          # Gives bots time to start their analysis
+          MIN_WAIT_SECONDS=120
+
+          # Get PR creation time
+          PR_CREATED=$(gh pr view "$PR_NUMBER" --repo "$REPO" \
+            --json createdAt -q '.createdAt')
+          PR_CREATED_EPOCH=$(date -d "$PR_CREATED" +%s 2>/dev/null || \
+            date -j -f "%Y-%m-%dT%H:%M:%SZ" "$PR_CREATED" +%s 2>/dev/null || \
+            echo "0")
+          NOW_EPOCH=$(date +%s)
+          ELAPSED=$((NOW_EPOCH - PR_CREATED_EPOCH))
+
+          echo "PR created: ${PR_CREATED} (${ELAPSED}s ago)"
+
+          if [[ "$ELAPSED" -lt "$MIN_WAIT_SECONDS" ]]; then
+            echo "::warning::PR is only ${ELAPSED}s old (minimum ${MIN_WAIT_SECONDS}s). Review bots may not have posted yet."
+          fi
+
+          # Check PR reviews (formal GitHub reviews from bots)
+          echo ""
+          echo "=== Checking PR reviews ==="
+          REVIEWS=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" \
+            --paginate --jq '.[].user.login' 2>/dev/null || echo "")
+
+          # Check PR comments (some bots post as issue comments, not reviews)
+          echo "=== Checking PR comments ==="
+          COMMENTS=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --paginate --jq '.[].user.login' 2>/dev/null || echo "")
+
+          # Check review comments (inline code comments)
+          echo "=== Checking review comments ==="
+          REVIEW_COMMENTS=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/comments" \
+            --paginate --jq '.[].user.login' 2>/dev/null || echo "")
+
+          # Combine all commenters
+          ALL_COMMENTERS=$(echo -e "${REVIEWS}\n${COMMENTS}\n${REVIEW_COMMENTS}" | \
+            sort -u | tr '[:upper:]' '[:lower:]')
+
+          echo ""
+          echo "All commenters found:"
+          echo "$ALL_COMMENTERS" | grep -v '^$' | sed 's/^/  - /'
+
+          # Check which known bots have posted
+          FOUND_BOTS=""
+          MISSING_BOTS=""
+
+          for bot in "${KNOWN_BOTS[@]}"; do
+            # Use grep pattern matching (bot patterns may contain [bot] suffix)
+            bot_lower=$(echo "$bot" | tr '[:upper:]' '[:lower:]')
+            # Strip [bot] for matching since GitHub may or may not include it
+            bot_base=$(echo "$bot_lower" | sed 's/\[bot\]$//')
+
+            if echo "$ALL_COMMENTERS" | grep -qi "$bot_base"; then
+              FOUND_BOTS="${FOUND_BOTS}${bot} "
+              echo "FOUND: ${bot}"
+            else
+              MISSING_BOTS="${MISSING_BOTS}${bot} "
+              echo "MISSING: ${bot}"
+            fi
+          done
+
+          echo ""
+          echo "Found bots: ${FOUND_BOTS:-none}"
+          echo "Missing bots: ${MISSING_BOTS:-none}"
+
+          # Gate logic: require at least ONE known bot to have reviewed
+          # This is intentionally lenient — not all repos have all bots.
+          # The goal is to catch the case where NO bots have reviewed at all.
+          if [[ -n "$FOUND_BOTS" ]]; then
+            echo ""
+            echo "PASS: At least one AI review bot has posted feedback."
+            echo "gate_passed=true" >> "$GITHUB_OUTPUT"
+            echo "found_bots=${FOUND_BOTS}" >> "$GITHUB_OUTPUT"
+            echo "missing_bots=${MISSING_BOTS}" >> "$GITHUB_OUTPUT"
+          else
+            echo ""
+            echo "WAITING: No AI review bots have posted yet."
+            echo "This check will re-run when a bot posts a review or comment."
+            echo ""
+            echo "Expected bots: ${KNOWN_BOTS[*]}"
+            echo ""
+            echo "If no bots are configured on this repo, add 'skip-review-gate'"
+            echo "label to the PR to bypass this check."
+            echo "gate_passed=false" >> "$GITHUB_OUTPUT"
+            echo "found_bots=" >> "$GITHUB_OUTPUT"
+            echo "missing_bots=${MISSING_BOTS}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check for skip label
+        id: skip
+        if: steps.check.outputs.gate_passed != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          LABELS=$(gh pr view "$PR_NUMBER" --repo "$REPO" \
+            --json labels -q '.labels[].name' 2>/dev/null || echo "")
+
+          if echo "$LABELS" | grep -q "skip-review-gate"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "SKIP: 'skip-review-gate' label found — bypassing review bot gate."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Gate result
+        if: steps.check.outputs.gate_passed != 'true' && steps.skip.outputs.skip != 'true'
+        run: |
+          echo "::error::No AI review bots have posted on this PR yet."
+          echo ""
+          echo "This PR cannot be merged until at least one AI code review bot"
+          echo "(CodeRabbit, Gemini Code Assist, etc.) has posted its review."
+          echo ""
+          echo "What to do:"
+          echo "  1. Wait a few minutes for bots to complete their analysis"
+          echo "  2. This check re-runs automatically when a bot posts"
+          echo "  3. If no bots are configured, add 'skip-review-gate' label"
+          echo ""
+          echo "Missing bots: ${{ steps.check.outputs.missing_bots }}"
+          exit 1
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Review Bot Gate"
+            echo ""
+            if [[ "${{ steps.check.outputs.gate_passed }}" == "true" ]]; then
+              echo "**Status**: PASSED"
+              echo ""
+              echo "**Bots that reviewed**: ${{ steps.check.outputs.found_bots }}"
+              if [[ -n "${{ steps.check.outputs.missing_bots }}" ]]; then
+                echo ""
+                echo "**Bots not yet reviewed**: ${{ steps.check.outputs.missing_bots }}"
+              fi
+            elif [[ "${{ steps.skip.outputs.skip }}" == "true" ]]; then
+              echo "**Status**: SKIPPED (skip-review-gate label)"
+            else
+              echo "**Status**: WAITING"
+              echo ""
+              echo "No AI review bots have posted yet. This check will re-run"
+              echo "automatically when a bot posts a review or comment."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
