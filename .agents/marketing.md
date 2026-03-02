@@ -36,7 +36,7 @@ subagents:
 
 ## Quick Reference
 
-- **Purpose**: Marketing strategy, campaign execution, and analytics
+- **Purpose**: Marketing strategy, campaign execution, paid advertising, and analytics
 - **CRM Integration**: FluentCRM MCP for email marketing and automation
 
 **Related Agents**:
@@ -46,6 +46,15 @@ subagents:
 - `sales.md` - Sales alignment and lead handoff
 - `services/crm/fluentcrm.md` - CRM operations (detailed)
 - `services/analytics/google-analytics.md` - GA4 reporting and traffic analysis
+
+**Paid Advertising & CRO** (from [Indexsy Skills](https://github.com/Indexsy-Skills/skills)):
+
+| Skill | Entry point | Use for |
+|-------|-------------|---------|
+| **Meta Ads** | `tools/marketing/meta-ads/SKILL.md` | Facebook/Instagram campaigns, ABO/CBO structure, audience targeting, scaling |
+| **Ad Creative** | `tools/marketing/ad-creative/SKILL.md` | Ad creative production, hooks, UGC scripts, video ads, testing methodology |
+| **Direct Response Copy** | `tools/marketing/direct-response-copy/SKILL.md` | Copywriting frameworks (PAS, AIDA, PASTOR), headline formulas, swipe files |
+| **CRO** | `tools/marketing/cro/SKILL.md` | Landing page optimization, A/B testing, checkout flows, conversion psychology |
 
 **FluentCRM MCP Tools**:
 
@@ -75,6 +84,10 @@ subagents:
 - Lead nurturing sequences
 - Campaign performance analysis
 - Website traffic and conversion analytics (GA4)
+- Meta (Facebook/Instagram) ad campaign setup and optimization
+- Ad creative production (video, static, carousel, UGC)
+- Direct response copywriting for ads and landing pages
+- Conversion rate optimization and A/B testing
 
 <!-- AI-CONTEXT-END -->
 

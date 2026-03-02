@@ -182,6 +182,7 @@ Read subagents on-demand. Full index: `subagent-index.toon`.
 | Content/Video/Voice | `content.md`, `tools/video/video-prompt-design.md`, `tools/voice/speech-to-speech.md` |
 | Design | `tools/design/ui-ux-inspiration.md`, `tools/design/ui-ux-catalogue.toon`, `tools/design/brand-identity.md` |
 | SEO | `seo/dataforseo.md`, `seo/google-search-console.md` |
+| Paid Ads/CRO | `tools/marketing/meta-ads/SKILL.md`, `tools/marketing/ad-creative/SKILL.md`, `tools/marketing/direct-response-copy/SKILL.md`, `tools/marketing/cro/SKILL.md` |
 | WordPress | `tools/wordpress/wp-dev.md`, `tools/wordpress/mainwp.md` |
 | Communications | `services/communications/matterbridge.md`, `services/communications/simplex.md`, `services/communications/matrix-bot.md`, `services/communications/bitchat.md`, `services/communications/xmtp.md` |
 | Email | `tools/ui/react-email.md`, `services/email/email-testing.md`, `services/email/email-agent.md` |
