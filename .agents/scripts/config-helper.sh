@@ -169,7 +169,10 @@ _merge_configs() {
 
 	if command -v jq &>/dev/null; then
 		# Deep merge: defaults * user (user wins on conflicts)
-		echo "$defaults_json" | jq --argjson user "$user_json" '. * $user' 2>/dev/null || echo "$defaults_json"
+		echo "$defaults_json" | jq --argjson user "$user_json" '. * $user' 2>/dev/null || {
+			echo "[config] Deep merge failed, using defaults only" >&2
+			echo "$defaults_json"
+		}
 	else
 		# No jq — return defaults only (user overrides not applied)
 		echo "$defaults_json"
