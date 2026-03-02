@@ -1,4 +1,5 @@
 ---
+name: cloudron-app-packaging
 description: "Official Cloudron app packaging skill - Dockerfile patterns, manifest, addons, build methods"
 mode: subagent
 imported_from: external

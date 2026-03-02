@@ -1,4 +1,5 @@
 ---
+name: cloudron-server-ops
 description: "Manage apps on a Cloudron server using the cloudron CLI"
 mode: subagent
 imported_from: external

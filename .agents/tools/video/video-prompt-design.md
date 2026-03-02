@@ -1,4 +1,5 @@
 ---
+name: video-prompt-design
 description: "Video prompt design - AI video generation prompt engineering for Veo 3 and similar models using the 7-component meta prompt framework"
 mode: subagent
 upstream_url: https://github.com/snubroot/Veo-3-Meta-Framework

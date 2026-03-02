@@ -1,4 +1,5 @@
 ---
+name: cloudron-app-publishing
 description: "Distribute Cloudron apps via CloudronVersions.json version catalogs"
 mode: subagent
 imported_from: external

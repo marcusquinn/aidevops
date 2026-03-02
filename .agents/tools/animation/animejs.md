@@ -1,4 +1,5 @@
 ---
+name: animejs
 description: "Anime.js - Lightweight JavaScript animation library for CSS, SVG, DOM attributes and JS objects"
 mode: subagent
 imported_from: context7

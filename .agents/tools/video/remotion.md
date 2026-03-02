@@ -1,4 +1,5 @@
 ---
+name: remotion
 description: "Remotion - Programmatic video creation with React. Animations, compositions, media handling, captions, and rendering."
 mode: subagent
 imported_from: external

@@ -1,4 +1,5 @@
 ---
+name: heygen
 description: "Best practices for HeyGen - AI avatar video creation API"
 mode: subagent
 imported_from: https://github.com/heygen-com/skills

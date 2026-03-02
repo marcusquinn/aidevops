@@ -1,4 +1,5 @@
 ---
+name: caldav-calendar
 description: "Sync and query CalDAV calendars (iCloud, Google, Fastmail, Nextcloud, etc.) using vdirsyncer + khal"
 mode: subagent
 imported_from: clawdhub

@@ -1,4 +1,5 @@
 ---
+name: proxmox-full
 description: "Complete Proxmox VE hypervisor management via REST API - VMs, containers, snapshots, backups, storage"
 mode: subagent
 imported_from: clawdhub
