@@ -346,7 +346,7 @@ from zvec.extension import QwenDenseEmbedding
 
 emb = QwenDenseEmbedding(
     256,                        # Required: embedding dimension (first positional arg)
-    model="text-embedding-v4",  # Specify the model to use, e.g., "text-embedding-v4"
+    model="text-embedding-v3",  # DashScope model (text-embedding-v1/v2/v3)
     # api_key="..."            # Or set DASHSCOPE_API_KEY env var
 )
 vector = emb.embed("Vector database")
@@ -762,11 +762,11 @@ collection.insert([
   new zvec.Doc("doc_1", { embedding: [0.1, 0.2, 0.3, ...] }),
 ]);
 
-// Query
-const results = collection.query(
-  new zvec.VectorQuery("embedding", { vector: [0.1, 0.2, 0.3, ...] }),
-  { topk: 10 }
-);
+// Query (synchronous -- Node.js bindings use querySync)
+const results = collection.querySync({
+  vectors: new zvec.VectorQuery({ fieldName: "embedding", vector: [0.1, 0.2, 0.3, ...] }),
+  topk: 10,
+});
 
 // Optimize
 collection.optimize();
@@ -858,7 +858,7 @@ Configuration: HNSW with `m=15`, `ef_search=180`, INT8 quantization.
 ### Reproducing Benchmarks
 
 ```bash
-pip install zvec==v0.1.1
+pip install zvec==0.1.1
 pip install vectordbbench
 
 # 10M benchmark
