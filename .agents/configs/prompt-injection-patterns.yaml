@@ -1,0 +1,533 @@
+# Prompt Injection Patterns — aidevops (t1375.1)
+# ================================================================
+# Comprehensive pattern database for prompt injection detection.
+# Merges aidevops inline patterns (t1327.8) with net-new patterns
+# from Lasso Security's claude-hooks (MIT, github.com/lasso-security/claude-hooks).
+#
+# FORMAT:
+#   Each category contains a list of patterns with:
+#     severity: CRITICAL | HIGH | MEDIUM | LOW
+#     description: Human-readable description
+#     pattern: PCRE-compatible regex (rg/grep -P)
+#
+# SEVERITY MAPPING (Lasso → aidevops):
+#   Lasso "high"   → CRITICAL or HIGH (based on directness of attack)
+#   Lasso "medium" → MEDIUM
+#   Lasso "low"    → LOW
+#
+# CATEGORIES:
+#   instruction_override    — Direct instruction override/ignore/reset
+#   role_play               — Jailbreak, persona switching, restriction bypass
+#   delimiter_injection     — Fake system blocks, ChatML, XML tags
+#   encoding_tricks         — Base64, hex, Unicode, leetspeak, homoglyphs
+#   system_prompt_extraction — Attempts to reveal system prompt
+#   social_engineering      — Urgency, authority claims, emotional manipulation
+#   data_exfiltration       — Attempts to leak data via URLs/encoding
+#   context_manipulation    — Token smuggling, history manipulation, false claims
+#
+# ADDING PATTERNS:
+#   1. Choose the appropriate category
+#   2. Add severity, description, and PCRE pattern
+#   3. Run: prompt-guard-helper.sh test
+#
+# LICENSE:
+#   Lasso-originated patterns are MIT licensed (Lasso Security, 2026).
+#   aidevops patterns are part of the aidevops framework.
+# ================================================================
+
+# ================================================================
+# INSTRUCTION OVERRIDE
+# ================================================================
+instruction_override:
+  # --- Direct Override (existing aidevops, CRITICAL) ---
+  - severity: CRITICAL
+    description: "Ignore previous instructions"
+    pattern: '[Ii]gnore\s+(all\s+)?(previous|prior|above|earlier|preceding)\s+(instructions|prompts|rules|directives|guidelines|context)'
+
+  - severity: CRITICAL
+    description: "Disregard system prompt"
+    pattern: '[Dd]isregard\s+(the\s+)?(system\s+)?(prompt|instructions|rules|guidelines|directives)'
+
+  - severity: CRITICAL
+    description: "Override system instructions"
+    pattern: '[Oo]verride\s+(all\s+)?(system\s+)?(instructions|rules|constraints|guidelines|safety)'
+
+  - severity: CRITICAL
+    description: "New instructions directive"
+    pattern: '[Nn]ew\s+(system\s+)?instructions?:\s'
+
+  - severity: CRITICAL
+    description: "You are now a different AI"
+    pattern: '[Yy]ou\s+are\s+now\s+(a\s+)?(different|new|another|my|an?\s+unrestricted)'
+
+  - severity: CRITICAL
+    description: "Forget everything"
+    pattern: '[Ff]orget\s+(everything|all|what)\s+(you|that|about)'
+
+  - severity: CRITICAL
+    description: "Reset to factory"
+    pattern: '[Rr]eset\s+(to\s+)?(factory|default|original|initial)\s+(settings|state|mode|instructions)'
+
+  - severity: HIGH
+    description: "Do not follow rules"
+    pattern: '[Dd]o\s+not\s+(follow|obey|adhere\s+to|comply\s+with)\s+(the\s+)?(rules|instructions|guidelines|constraints|safety)'
+
+  - severity: HIGH
+    description: "Pretend you have no restrictions"
+    pattern: '[Pp]retend\s+(you\s+)?(have\s+)?(no|don.t\s+have\s+any)\s+(restrictions|rules|guidelines|constraints|limitations|safety)'
+
+  - severity: HIGH
+    description: "Act as if no rules"
+    pattern: '[Aa]ct\s+(as\s+if|like)\s+(there\s+are\s+)?(no|you\s+have\s+no)\s+(rules|restrictions|guidelines|constraints|limitations)'
+
+  # --- Lasso net-new: Replace instructions ---
+  - severity: HIGH
+    description: "Replace instructions with new ones"
+    pattern: '(?i)\breplace\s+(your\s+)?(instructions?|prompt|guidelines?|rules?)\s+with'
+
+  # --- Lasso net-new: Not follow previous ---
+  - severity: HIGH
+    description: "Instructs to not follow previous guidelines"
+    pattern: '(?i)\b(do\s+)?not\s+follow\s+(your\s+)?(previous|original|initial)\s+(instructions?|rules?|guidelines?)'
+
+  # --- Lasso net-new: New system prompt injection ---
+  - severity: HIGH
+    description: "Attempts to inject new system prompt"
+    pattern: '(?i)\b(new|updated|revised|real)\s+system\s+prompt\b'
+
+  - severity: HIGH
+    description: "System prompt injection marker"
+    pattern: '(?i)\bsystem\s+prompt\s*(:|=|override)'
+
+  - severity: HIGH
+    description: "Attempts to set new instructions"
+    pattern: '(?i)\b(this\s+is\s+)?(your\s+)?new\s+(instructions?|task|objective|mission|directive)'
+
+  - severity: HIGH
+    description: "Redefine behavior going forward"
+    pattern: '(?i)\bfrom\s+now\s+on[,\s]+(you\s+)?(will|must|should|are)'
+
+  # --- Lasso net-new: Priority manipulation ---
+  - severity: MEDIUM
+    description: "Priority manipulation attempt"
+    pattern: '(?i)\b(highest|top|maximum|critical)\s+priority\s*(:|instruction|override)?'
+
+  - severity: MEDIUM
+    description: "Priority level manipulation"
+    pattern: '(?i)\bpriority\s*(level)?\s*[:=]\s*(1|one|highest|critical|urgent)'
+
+  - severity: HIGH
+    description: "Takes priority over other instructions"
+    pattern: '(?i)\bthis\s+(instruction|command|task|directive)\s+(takes?\s+)?(priority|precedence)\s+over'
+
+  - severity: HIGH
+    description: "Claims higher importance than existing instructions"
+    pattern: '(?i)\b(more\s+)?important\s+than\s+(your\s+)?(original|previous|other)\s+(instructions?|rules?)'
+
+  # --- Lasso net-new: Reset/Clear attempts ---
+  - severity: HIGH
+    description: "Attempts to reset context"
+    pattern: '(?i)\breset\s+(your\s+)?(context|memory|instructions?|state|conversation)'
+
+  - severity: HIGH
+    description: "Attempts to clear memory/context"
+    pattern: '(?i)\bclear\s+(your\s+)?(memory|context|instructions?|history|state)'
+
+  - severity: MEDIUM
+    description: "Start fresh without prior context"
+    pattern: '(?i)\bstart\s+(fresh|over|anew)\s+(without|ignoring|from\s+scratch)'
+
+  - severity: HIGH
+    description: "Attempts to wipe memory"
+    pattern: '(?i)\bwipe\s+(your\s+)?(memory|context|slate)'
+
+# ================================================================
+# ROLE PLAY / JAILBREAK
+# ================================================================
+role_play:
+  # --- Existing aidevops ---
+  - severity: HIGH
+    description: "DAN jailbreak"
+    pattern: '[Dd]o\s+[Aa]nything\s+[Nn]ow|DAN\s+(mode|prompt|jailbreak)'
+
+  - severity: HIGH
+    description: "Developer mode jailbreak"
+    pattern: '[Dd]eveloper\s+[Mm]ode\s+(enabled|activated|on)|enable\s+developer\s+mode'
+
+  - severity: HIGH
+    description: "Jailbreak keyword"
+    pattern: '[Jj]ailbreak|[Uu]nfiltered\s+mode|[Gg]od\s+mode|[Uu]ncensored\s+mode'
+
+  - severity: HIGH
+    description: "Evil/unrestricted persona"
+    pattern: '([Aa]ct|[Bb]ehave|[Rr]espond)\s+(as|like)\s+(an?\s+)?(evil|malicious|unrestricted|unfiltered|uncensored|unethical)'
+
+  - severity: HIGH
+    description: "Opposite day"
+    pattern: '[Oo]pposite\s+[Dd]ay|[Rr]everse\s+[Mm]ode|[Aa]nti-?(safety|rules|guidelines)'
+
+  - severity: MEDIUM
+    description: "Roleplay as system"
+    pattern: '([Rr]oleplay|[Pp]retend|[Ii]magine|[Ss]uppose)\s+(you\s+are|you.re|that\s+you\s+are|that\s+you.re?)\s+(a\s+)?(system|admin|root|superuser|developer|hacker)'
+
+  - severity: MEDIUM
+    description: "Hypothetical bypass"
+    pattern: '([Hh]ypothetically|[Ii]n\s+theory|[Ii]f\s+you\s+could|[Ii]f\s+there\s+were\s+no\s+rules)\s*,?\s*(how\s+would|what\s+would|could\s+you)'
+
+  - severity: LOW
+    description: "Generic persona switch"
+    pattern: '([Aa]ct|[Bb]ehave|[Rr]espond)\s+(as|like)\s+(a|an|the)\s+\w+\s+(who|that|with)\s+(no|ignores?|doesn.t\s+follow)\s+(rules|restrictions|guidelines)'
+
+  # --- Lasso net-new: DAN variants ---
+  - severity: HIGH
+    description: "DAN persona activation"
+    pattern: '(?i)\byou\s+are\s+(now\s+)?DAN\b'
+
+  - severity: HIGH
+    description: "DAN mode/persona/version"
+    pattern: '(?i)\bDAN\s+(mode|persona|character|version)\b'
+
+  # --- Lasso net-new: Restriction bypass ---
+  - severity: HIGH
+    description: "Restriction bypass attempt"
+    pattern: '(?i)\b(without|ignore|bypass|disable|remove)\s+(your\s+)?(restrictions?|filters?|safeguards?|limitations?|guardrails?)'
+
+  - severity: HIGH
+    description: "Safety filter disable attempt"
+    pattern: '(?i)\b(remove|turn\s+off|disable|deactivate)\s+(your\s+)?(ethical|safety|content)\s+(guidelines?|filters?|restrictions?)'
+
+  - severity: HIGH
+    description: "No-rules mode request"
+    pattern: '(?i)\b(no|without|free\s+from)\s+(rules?|restrictions?|limitations?|boundaries|constraints)'
+
+  - severity: HIGH
+    description: "Unrestricted mode request"
+    pattern: '(?i)\bunrestricted\s+(mode|access|version|output)'
+
+  - severity: HIGH
+    description: "Uncensored mode request"
+    pattern: '(?i)\buncensored\s+(mode|version|response|output)'
+
+  # --- Lasso net-new: Hypothetical/fictional framing ---
+  - severity: MEDIUM
+    description: "Hypothetical bypass framing"
+    pattern: '(?i)\bin\s+a\s+(hypothetical|fictional|imaginary)\s+(world|scenario|situation)\s+where\s+(you|AI|there)'
+
+  - severity: MEDIUM
+    description: "Hypothetical unrestricted framing"
+    pattern: '(?i)\bif\s+you\s+(were|had|could)\s+(be\s+)?(?:no|without|free\s+from)\s+(restrictions?|rules?|limitations?)'
+
+  - severity: LOW
+    description: "Purpose-based bypass framing"
+    pattern: '(?i)\bfor\s+(educational|research|fiction|creative)\s+purposes?\s+only'
+
+  # --- Lasso net-new: Split personality / evil twin ---
+  - severity: MEDIUM
+    description: "Split personality manipulation"
+    pattern: '(?i)\b(two|dual|split|multiple)\s+(personalities?|modes?|personas?|sides?)\b'
+
+  - severity: HIGH
+    description: "Evil twin persona attempt"
+    pattern: '(?i)\b(evil|shadow|dark|unrestricted|uncensored)\s+(twin|version|mode|side|alter\s*ego)\b'
+
+  - severity: HIGH
+    description: "Dark side persona request"
+    pattern: '(?i)\byour\s+(evil|dark|shadow|unrestricted)\s+(side|self|version)'
+
+# ================================================================
+# DELIMITER INJECTION
+# ================================================================
+delimiter_injection:
+  # --- Existing aidevops ---
+  - severity: HIGH
+    description: "Markdown system block"
+    pattern: '```system\b|```\s*system\s*\n|<\|system\|>|<\|im_start\|>\s*system'
+
+  - severity: HIGH
+    description: "XML system tags"
+    pattern: '<system>|</system>|<\/?system_prompt>|<\/?instructions>'
+
+  - severity: HIGH
+    description: "ChatML injection"
+    pattern: '<\|im_start\|>|<\|im_end\|>|<\|endoftext\|>'
+
+  - severity: MEDIUM
+    description: "Embedded instructions block"
+    pattern: '---\s*(SYSTEM|INSTRUCTIONS|RULES)\s*---|===\s*(SYSTEM|INSTRUCTIONS|RULES)\s*==='
+
+  # --- Lasso net-new: Fake delimiter markers ---
+  - severity: HIGH
+    description: "Fake end-of-prompt marker"
+    pattern: '(?i)\bend\s+(of\s+)?(system\s+)?(prompt|instructions?)\b.*\b(new|begin|start)'
+
+  - severity: HIGH
+    description: "Fake system message markers"
+    pattern: '(?i)\[/?system\]|\{/?system\}|</?system\s*>'
+
+  - severity: MEDIUM
+    description: "Fake equals delimiter markers"
+    pattern: '(?i)={3,}\s*(end|new|begin|start)\s*(of\s+)?(prompt|instructions?|system)'
+
+  - severity: MEDIUM
+    description: "Fake section delimiter"
+    pattern: '(?i)---+\s*(system|instructions?|prompt)\s*(start|end|override)'
+
+  - severity: HIGH
+    description: "Fake system block markers"
+    pattern: '(?i)\[\[SYSTEM\]\]|\(\(SYSTEM\)\)|\{\{SYSTEM\}\}'
+
+  # --- Lasso net-new: Fake instruction block markers ---
+  - severity: HIGH
+    description: "Fake instruction block markers"
+    pattern: '(?i)\[INST\]|\[/INST\]|\[SYS\]|\[/SYS\]'
+
+# ================================================================
+# ENCODING TRICKS
+# ================================================================
+encoding_tricks:
+  # --- Existing aidevops ---
+  - severity: MEDIUM
+    description: "Base64 encoded payload"
+    pattern: '[Dd]ecode\s+(this|the\s+following)\s+(base64|b64)|[Ee]xecute\s+(the\s+)?(decoded|base64)'
+
+  - severity: MEDIUM
+    description: "Hex encoded payload"
+    pattern: '[Dd]ecode\s+(this|the\s+following)\s+hex|\\x[0-9a-fA-F]{2}(\\x[0-9a-fA-F]{2}){3,}'
+
+  - severity: MEDIUM
+    description: "Unicode escape sequences"
+    pattern: '\\u[0-9a-fA-F]{4}(\\u[0-9a-fA-F]{4}){3,}'
+
+  - severity: MEDIUM
+    description: "ROT13 or cipher reference"
+    pattern: '[Dd]ecode\s+(this\s+)?(ROT13|rot13|caesar|cipher)|[Aa]pply\s+(ROT13|rot13)'
+
+  - severity: LOW
+    description: "Leetspeak obfuscation"
+    pattern: '1gn0r3\s+pr3v10us|0v3rr1d3|syst3m\s+pr0mpt|j41lbr34k'
+
+  # --- Lasso net-new: Base64 with payload ---
+  - severity: MEDIUM
+    description: "Base64 encoded payload with data"
+    pattern: '(?i)\bbase64\s*(encoded|string|payload)?\s*[:\s]\s*[A-Za-z0-9+/]{20,}={0,2}'
+
+  - severity: HIGH
+    description: "Decoded content execution request"
+    pattern: '(?i)\bexecute\s+(the\s+)?decoded\s+(base64|content|string)'
+
+  # --- Lasso net-new: Hex variants ---
+  - severity: MEDIUM
+    description: "Hex byte array"
+    pattern: '0x[0-9a-fA-F]{2}(\s*,?\s*0x[0-9a-fA-F]{2}){5,}'
+
+  - severity: MEDIUM
+    description: "Labeled hex payload"
+    pattern: '(?i)hex\s*(string|encoded|code)?\s*[:=]\s*[0-9a-fA-F\s]{12,}'
+
+  # --- Lasso net-new: Homoglyph attacks ---
+  - severity: HIGH
+    description: "Cyrillic homoglyphs detected (lookalike letters)"
+    pattern: '[\x{0430}\x{0435}\x{043E}\x{0440}\x{0441}\x{0443}\x{0445}\x{0456}]{3,}'
+
+  - severity: HIGH
+    description: "Greek homoglyphs detected"
+    pattern: '[\x{03B1}\x{03B5}\x{03BF}\x{03C1}\x{03BD}\x{03C4}]{2,}'
+
+  # --- Lasso net-new: Leetspeak variants ---
+  - severity: MEDIUM
+    description: "Leetspeak instruction keywords"
+    pattern: '(?i)\b(1gn0r3|f0rg3t|d1sr3g4rd|0v3rr1d3)\b'
+
+  - severity: MEDIUM
+    description: "Leetspeak system/prompt terms"
+    pattern: '(?i)\b(syst3m|pr0mpt|1nstruct10n[s5]?)\b'
+
+  - severity: HIGH
+    description: "Leetspeak jailbreak terms"
+    pattern: '(?i)\b(j41lbr34k|byp4ss|h4ck)\b'
+
+  # --- Lasso net-new: Reverse text execution ---
+  - severity: MEDIUM
+    description: "Reverse text with execution"
+    pattern: '(?i)\breverse\s+(this|the\s+following)\s+(text|string|message)\s+and\s+(execute|follow)'
+
+  # --- Lasso net-new: URL encoded payload ---
+  - severity: MEDIUM
+    description: "URL encoded payload"
+    pattern: '(?i)\burl\s*(encoded|encoding)\s*[:=]'
+
+  # --- Lasso net-new: Acrostic/steganographic ---
+  - severity: LOW
+    description: "Acrostic/steganographic instruction"
+    pattern: '(?i)\bread\s+(the\s+)?(first|last|nth)\s+(letter|character)\s+of\s+each'
+
+# ================================================================
+# SYSTEM PROMPT EXTRACTION
+# ================================================================
+system_prompt_extraction:
+  # --- Existing aidevops ---
+  - severity: CRITICAL
+    description: "Reveal system prompt"
+    pattern: '([Rr]eveal|[Ss]how|[Dd]isplay|[Pp]rint|[Oo]utput|[Rr]epeat|[Rr]ecite)\s+(your\s+)?(system\s+)?(prompt|instructions|rules|guidelines|directives|initial\s+prompt)'
+
+  - severity: CRITICAL
+    description: "What are your instructions"
+    pattern: '[Ww]hat\s+(are|were)\s+(your|the)\s+(system\s+)?(instructions|rules|guidelines|directives|constraints|prompt)'
+
+  - severity: CRITICAL
+    description: "Copy system prompt verbatim"
+    pattern: '([Cc]opy|[Pp]aste|[Rr]eproduce|[Dd]ump)\s+(the\s+)?(entire\s+)?(system\s+)?(prompt|instructions|context)(\s+verbatim)?'
+
+  # --- Lasso net-new: Extraction variants ---
+  - severity: HIGH
+    description: "Prompt repetition extraction"
+    pattern: '(?i)\brepeat\s+(your\s+)?(system\s+)?(prompt|instructions?)\s+(back|verbatim|exactly)'
+
+  - severity: MEDIUM
+    description: "Initial instruction extraction"
+    pattern: '(?i)\bwhat\s+(were\s+)?you\s+told\s+(to\s+do|at\s+the\s+(start|beginning))'
+
+# ================================================================
+# SOCIAL ENGINEERING
+# ================================================================
+social_engineering:
+  # --- Existing aidevops ---
+  - severity: MEDIUM
+    description: "Urgency pressure"
+    pattern: '([Tt]his\s+is\s+(an?\s+)?emergency|[Uu]rgent|[Ii]mmediately|[Rr]ight\s+now|[Ll]ife\s+or\s+death)\s*[,!:]\s*([Yy]ou\s+must|[Ii]gnore|[Bb]ypass|[Oo]verride|[Ss]kip)'
+
+  - severity: MEDIUM
+    description: "Authority claim"
+    pattern: '[Ii]\s+(am|.m)\s+(the\s+)?(admin|administrator|developer|owner|creator|CEO|CTO)\s+(of\s+this|and\s+I)'
+
+  - severity: LOW
+    description: "Emotional manipulation"
+    pattern: '([Pp]lease|[Ii]\s+beg\s+you|[Ii]\s+really\s+need|[Mm]y\s+life\s+depends)\s*,?\s*(just\s+)?(ignore|bypass|skip|override)\s+(the\s+)?(rules|safety|restrictions|guidelines)'
+
+# ================================================================
+# DATA EXFILTRATION
+# ================================================================
+data_exfiltration:
+  # --- Existing aidevops ---
+  - severity: HIGH
+    description: "Exfiltrate via URL"
+    pattern: '([Ss]end|[Pp]ost|[Tt]ransmit|[Ee]xfiltrate|[Ll]eak)\s+(the\s+)?(data|information|content|secrets?|keys?|tokens?|credentials?)\s+(to|via|through|using)\s+(https?://|a\s+URL|an?\s+endpoint)'
+
+  - severity: HIGH
+    description: "Encode and send"
+    pattern: '([Ee]ncode|[Bb]ase64|[Hh]ex)\s+(and\s+)?(send|transmit|post|include\s+in)'
+
+# ================================================================
+# CONTEXT MANIPULATION
+# ================================================================
+context_manipulation:
+  # --- Existing aidevops ---
+  - severity: MEDIUM
+    description: "Token smuggling"
+    pattern: '[Ii]nsert\s+(the\s+following\s+)?(into|at\s+the\s+beginning|at\s+the\s+end\s+of)\s+(the\s+)?(context|conversation|prompt|system)'
+
+  - severity: MEDIUM
+    description: "Conversation history manipulation"
+    pattern: '([Mm]odify|[Cc]hange|[Aa]lter|[Ee]dit)\s+(the\s+)?(conversation|chat)\s+(history|context|log)'
+
+  - severity: LOW
+    description: "Invisible characters"
+    pattern: '[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]'
+
+  - severity: LOW
+    description: "Zero-width characters"
+    pattern: '[\xE2\x80\x8B\xE2\x80\x8C\xE2\x80\x8D\xEF\xBB\xBF]'
+
+  # --- Lasso net-new: False authority claims ---
+  - severity: HIGH
+    description: "False authority invocation (AI company)"
+    pattern: '(?i)\b(anthropic|openai|claude\s*team|google|meta)\s+(says?|requires?|demands?|orders?|instructs?)\b'
+
+  - severity: HIGH
+    description: "Fake official message"
+    pattern: '(?i)\b(official|authorized|verified)\s+(instruction|message|update|command)\s+from\s+(anthropic|openai|claude)'
+
+  - severity: HIGH
+    description: "Fake admin message"
+    pattern: '(?i)\b(system\s+)?(administrator|admin|root|superuser)\s+(message|override|instruction|command)'
+
+  - severity: HIGH
+    description: "Fake developer mode claim"
+    pattern: '(?i)\bdeveloper\s+(mode|override|access)\s+(enabled|activated|granted)'
+
+  - severity: HIGH
+    description: "Fake maintenance mode"
+    pattern: '(?i)\bmaintenance\s+(mode|override)\s*(enabled|active|[:\s])'
+
+  - severity: HIGH
+    description: "Fake internal/debug mode"
+    pattern: '(?i)\b(internal|debug|test)\s+mode\s+(enabled|activated|on)'
+
+  # --- Lasso net-new: Hidden instructions in comments ---
+  - severity: HIGH
+    description: "Instruction hidden in HTML comment"
+    pattern: '<!--\s*(ignore|disregard|override|system|instruction|prompt|forget)'
+
+  - severity: HIGH
+    description: "Instruction hidden in code comment"
+    pattern: '/\*\s*(ignore|disregard|override|system|instruction|prompt|forget)'
+
+  - severity: MEDIUM
+    description: "Instruction in single-line comment"
+    pattern: '//\s*(ignore|system|override|instruction|execute)'
+
+  # --- Lasso net-new: JSON/XML structure manipulation ---
+  - severity: MEDIUM
+    description: "System role in JSON structure"
+    pattern: '(?i)"\s*(system|role|instruction|prompt)\s*"\s*:\s*"'
+
+  - severity: HIGH
+    description: "Fake system role JSON"
+    pattern: '(?i)\{"role"\s*:\s*"system"'
+
+  - severity: MEDIUM
+    description: "Fake instruction type JSON"
+    pattern: '(?i)\{"type"\s*:\s*"(instruction|command|system)"'
+
+  - severity: HIGH
+    description: "Fake system XML/HTML tags"
+    pattern: '(?i)<system[^>]*>|<instruction[^>]*>|<override[^>]*>'
+
+  # --- Lasso net-new: Hidden/invisible markers ---
+  - severity: MEDIUM
+    description: "Hidden/system markdown tags"
+    pattern: '(?i)\[hidden\]|\[invisible\]|\[system\]|\[admin\]'
+
+  - severity: HIGH
+    description: "Hidden content HTML tags"
+    pattern: '(?i)<hidden>|<invisible>|<secret>'
+
+  # --- Lasso net-new: False context claims ---
+  - severity: HIGH
+    description: "Fake previous conversation injection"
+    pattern: '(?i)\bprevious\s+conversation\s+(summary|context|history)\s*:'
+
+  - severity: HIGH
+    description: "Fake admin user profile"
+    pattern: '(?i)\buser\s+(profile|context|role)\s*[:\s].*\b(admin|root|developer|superuser)'
+
+  - severity: HIGH
+    description: "Fake previous agreement claim"
+    pattern: '(?i)\bin\s+our\s+(last|previous)\s+conversation\s+you\s+(agreed|said|confirmed)'
+
+  - severity: HIGH
+    description: "Fake prior confirmation claim"
+    pattern: '(?i)\byou\s+(previously|earlier|already)\s+(said|agreed|confirmed|promised)\s+that'
+
+  # --- Lasso net-new: Instruction boundary manipulation ---
+  - severity: HIGH
+    description: "Instruction boundary manipulation"
+    pattern: '(?i)\bignore\s+everything\s+(before|after|above|below)\s+this\s+(line|point|marker)'
+
+  - severity: HIGH
+    description: "Fake real instruction marker"
+    pattern: '(?i)\b(real|actual|true)\s+(instruction|prompt|task|command)\s*(starts?|begins?)?\s*(here|below|now)'
+
+  - severity: HIGH
+    description: "Dismisses previous content as fake"
+    pattern: '(?i)\bthe\s+above\s+(was|is)\s+(just\s+)?(a\s+)?(test|joke|fake|distraction)'
