@@ -360,9 +360,9 @@ See `.agents/tools/terminal/terminal-title.md` for customization options.
 
 **Autonomous Orchestration:**
 
-- **[Pulse supervisor](#pulse-supervisor--autonomous-ai-operations)** - Autonomous AI supervisor runs every 2 minutes via launchd — merges ready PRs, dispatches workers, kills stuck processes, detects orphaned PRs, syncs TODO state with GitHub, triages quality findings, and advances missions. No human in the loop
-- **[Missions](#missions--multi-day-autonomous-projects)** - Multi-day autonomous projects: `/mission` scopes a high-level goal into milestones and features. The pulse dispatches workers, validates milestones, tracks budget, and advances through the project automatically (`mission-dashboard-helper.sh`)
-- **[Multi-model verification](#multi-model-verification--cross-provider-safety)** - Destructive operations (force push, production deploy, data migration) are verified by a second AI model from a different provider before execution. Different providers have different failure modes, so correlated hallucinations are rare
+- **[Pulse supervisor](#pulse-supervisor---autonomous-ai-operations)** - Autonomous AI supervisor runs every 2 minutes via launchd — merges ready PRs, dispatches workers, kills stuck processes, detects orphaned PRs, syncs TODO state with GitHub, triages quality findings, and advances missions. No human in the loop
+- **[Missions](#missions---multi-day-autonomous-projects)** - Multi-day autonomous projects: `/mission` scopes a high-level goal into milestones and features. The pulse dispatches workers, validates milestones, tracks budget, and advances through the project automatically (`mission-dashboard-helper.sh`)
+- **[Multi-model verification](#multi-model-verification---cross-provider-safety)** - Destructive operations (force push, production deploy, data migration) are verified by a second AI model from a different provider before execution. Different providers have different failure modes, so correlated hallucinations are rare
 - **Supervisor** - SQLite state machine dispatches tasks to parallel AI agents with retry cycles, batch management, and cron scheduling
 - **Runners** - Named headless agent instances with persistent identity, instructions, and memory namespaces
 - **`/runners` command** - Batch dispatch from task IDs, PR URLs, or descriptions with concurrency control and progress monitoring
@@ -374,7 +374,7 @@ See `.agents/tools/terminal/terminal-title.md` for customization options.
 
 **Project Intelligence:**
 
-- **[Bundles](#project-bundles--auto-configuration)** - Project-type presets that auto-configure model tiers, quality gates, and agent routing per repo. 6 built-in bundles (web-app, library, cli-tool, content-site, infrastructure, agent) with auto-detection from marker files (`bundle-helper.sh`)
+- **[Bundles](#project-bundles---auto-configuration)** - Project-type presets that auto-configure model tiers, quality gates, and agent routing per repo. 6 built-in bundles (web-app, library, cli-tool, content-site, infrastructure, agent) with auto-detection from marker files (`bundle-helper.sh`)
 - **TTSR rules** - Soft rule engine (`ttsr-rule-loader.sh`) with `.agents/rules/` directory for AI output correction (e.g., no-edit-on-main, no-glob-for-discovery)
 - **Cross-review** - `/cross-review` dispatches the same prompt to multiple AI models in parallel, diffs results, and optionally auto-scores via a judge model
 - **Local models** - Run AI models locally via llama.cpp for free, private, offline inference (`local-model-helper.sh`) with HuggingFace GGUF model management
@@ -552,7 +552,11 @@ Supervisor (pulse loop)
 
 **Subagent index** (`.agents/subagent-index.toon`): Compressed TOON routing table listing all agents, subagents, workflows, and scripts with model tier assignments - enables fast agent discovery without loading full markdown files.
 
-### Pulse Supervisor — Autonomous AI Operations
+## **Autonomous Orchestration & Parallel Agents**
+
+**Why this matters:** Long-running tasks -- batch PR reviews, multi-site audits, large refactors, multi-day feature projects -- are where AI agents deliver the most value. Instead of babysitting one task at a time, the supervisor dispatches work to parallel agents, each in its own git worktree, with automatic retry, progress tracking, and batch completion reporting.
+
+### Pulse Supervisor - Autonomous AI Operations
 
 The pulse is the heartbeat of aidevops — an autonomous AI supervisor that runs every 2 minutes via launchd. There is no human at the terminal. It manages the entire development pipeline across all repos registered with `pulse: true`.
 
@@ -589,11 +593,7 @@ opencode run "/pulse"
 
 **See:** `.agents/scripts/commands/pulse.md` for the full supervisor specification.
 
-## **Autonomous Orchestration & Parallel Agents**
-
-**Why this matters:** Long-running tasks -- batch PR reviews, multi-site audits, large refactors, multi-day feature projects -- are where AI agents deliver the most value. Instead of babysitting one task at a time, the supervisor dispatches work to parallel agents, each in its own git worktree, with automatic retry, progress tracking, and batch completion reporting.
-
-### Missions — Multi-Day Autonomous Projects
+### Missions - Multi-Day Autonomous Projects
 
 Missions are the highest-level orchestration primitive — autonomous multi-day projects that break a high-level goal into milestones, features, and validation criteria. The pulse supervisor advances them automatically.
 
@@ -622,7 +622,7 @@ Missions are the highest-level orchestration primitive — autonomous multi-day 
 
 **See:** `.agents/workflows/mission-orchestrator.md` for the full orchestrator specification, `.agents/scripts/commands/dashboard.md` for the mission progress dashboard.
 
-### Multi-Model Verification — Cross-Provider Safety
+### Multi-Model Verification - Cross-Provider Safety
 
 High-stakes operations are verified by a second AI model from a different provider before execution. This catches single-model hallucinations before destructive operations cause irreversible damage.
 
@@ -649,7 +649,7 @@ High-stakes operations are verified by a second AI model from a different provid
 
 **See:** `.agents/tools/verification/parallel-verify.md` for the verification agent specification.
 
-### Project Bundles — Auto-Configuration
+### Project Bundles - Auto-Configuration
 
 Bundles are project-type presets that auto-configure model tiers, quality gates, and agent routing per repo. Instead of manually configuring each project, bundles detect what kind of project you're working on and apply sensible defaults.
 
