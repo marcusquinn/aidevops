@@ -437,6 +437,21 @@ Published benchmarks (Cohere 10M dataset, 16 vCPU / 64GB, INT8):
 5. **No ACID** — Not a database in the transactional sense. Use application-level locking for concurrent writes.
 6. **Memory per collection** — Each open collection consumes memory for its HNSW graph. Close idle tenant collections with an LRU cache.
 
+## Platform Compatibility — Verified
+
+Tested on 2026-03-02 with zvec 0.2.0 (`manylinux_2_28_x86_64` wheel), Python 3.12.3.
+
+| Platform | Install | Import | Notes |
+|----------|---------|--------|-------|
+| Linux x86_64 (AMD Ryzen 9 3900, Zen 2) | OK (`pip install zvec` succeeds, 20.4 MB wheel) | FAIL — `Illegal instruction (core dumped)`, exit 132 | Precompiled C++ binary likely requires AVX-512 or other instructions absent on Zen 2 (which has AVX2 but not AVX-512). |
+| Linux x86_64 (Intel w/ AVX-512) | Not tested | Expected OK | Alibaba's CI likely targets Intel Xeon. |
+| macOS ARM64 | Not tested | Expected OK (per upstream docs) | Separate `macosx_11_0_arm64` wheel available on PyPI. |
+| Windows | No wheel available | N/A | Upstream documents Linux and macOS only. |
+
+**Implication for aidevops users**: zvec cannot be used on AMD Zen 2 (or older) CPUs without building from source. If your server runs AMD Ryzen/EPYC Zen 2 or earlier, use pgvector or a hosted alternative instead. This is a zvec upstream issue — the precompiled wheel targets a CPU instruction set newer than Zen 2.
+
+**Upstream issue**: Not yet filed. The `manylinux_2_28` tag implies glibc 2.28+ compatibility but does not guarantee CPU instruction compatibility. The wheel should either ship multiple variants or fall back to a baseline instruction set.
+
 ## Platform Support Matrix
 
 | Platform | zvec | pgvector | Vectorize | PGlite+pgvector | Pinecone | Qdrant | Weaviate |
