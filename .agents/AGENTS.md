@@ -180,6 +180,7 @@ Read subagents on-demand. Full index: `subagent-index.toon`.
 | OCR | `tools/ocr/overview.md`, `tools/ocr/paddleocr.md`, `tools/ocr/glm-ocr.md` |
 | Browser/Mobile | `tools/browser/browser-automation.md`, `tools/browser/browser-qa.md`, `mobile-app-dev.md`, `browser-extension-dev.md` |
 | Content/Video/Voice | `content.md`, `tools/video/video-prompt-design.md`, `tools/voice/speech-to-speech.md` |
+| Design | `tools/design/ui-ux-inspiration.md`, `tools/design/ui-ux-catalogue.toon`, `tools/design/brand-identity.md` |
 | SEO | `seo/dataforseo.md`, `seo/google-search-console.md` |
 | WordPress | `tools/wordpress/wp-dev.md`, `tools/wordpress/mainwp.md` |
 | Communications | `services/communications/matterbridge.md`, `services/communications/simplex.md`, `services/communications/matrix-bot.md` |

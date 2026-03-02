@@ -855,6 +855,8 @@ See `tools/video/enhancor.md` for complete API reference, examples, and integrat
 
 ## Cross-References
 
+- **Brand identity**: `tools/design/brand-identity.md` — when a project has `context/brand-identity.toon`, check it for imagery style, iconography, colour palette, and visual identity parameters before generating images
+- **Design catalogue**: `tools/design/ui-ux-catalogue.toon` — 96 colour palettes, 67 UI styles, and industry-specific design patterns for style selection
 - **Model comparison**: `tools/vision/image-generation.md` — detailed comparison of DALL-E 3, Midjourney, FLUX, SD XL
 - **Video production**: `content/production/video.md` — frame-to-video workflow, Veo 3.1 ingredients
 - **Character consistency**: `content/production/characters.md` — Facial Engineering Framework, character bibles

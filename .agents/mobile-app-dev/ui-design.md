@@ -141,7 +141,7 @@ Use vision AI tools for icon generation:
 
 ## Design Inspiration Resources
 
-See `tools/design/design-inspiration.md` for the full catalogue of 60+ design inspiration resources.
+See `tools/design/design-inspiration.md` for the full catalogue of 60+ design inspiration resources. For structured design intelligence — UI styles, colour palettes, font pairings, and industry-specific patterns — see `tools/design/ui-ux-catalogue.toon`. For brand identity and style interviews, see `tools/design/brand-identity.md` and `tools/design/ui-ux-inspiration.md`.
 
 **Quick picks for mobile app design**:
 
