@@ -319,20 +319,9 @@ PATTERNS
 }
 
 _pg_get_patterns() {
-	# Try YAML patterns first if configured
-	local yaml_file="${PROMPT_GUARD_YAML_PATTERNS:-}"
-	if [[ -n "$yaml_file" ]]; then
-		local yaml_patterns
-		yaml_patterns=$(_pg_load_yaml_patterns "$yaml_file" 2>/dev/null) || true
-		if [[ -n "$yaml_patterns" ]]; then
-			echo "$yaml_patterns"
-			_pg_log_info "Loaded patterns from YAML: $yaml_file" 2>/dev/null || true
-			return 0
-		fi
-		_pg_log_warn "YAML patterns unavailable ($yaml_file), falling back to inline patterns" 2>/dev/null || true
-	fi
-
-	# Fallback: inline patterns (always available)
+	# Inline patterns — always available as fallback.
+	# YAML vs inline routing is handled by _pg_scan_message() which calls
+	# _pg_load_yaml_patterns() directly. This function is the inline-only path.
 	_pg_get_inline_patterns
 	return 0
 }
@@ -1338,36 +1327,32 @@ cmd_test() {
 	fi
 
 	total=$((total + 1))
-	# Test YAML loading with a temporary YAML file (if yq or python3 available)
-	local yaml_test_available="false"
-	if command -v yq &>/dev/null || command -v python3 &>/dev/null; then
-		yaml_test_available="true"
-	fi
-	if [[ "$yaml_test_available" == "true" ]]; then
-		local tmp_yaml
-		tmp_yaml=$(mktemp /tmp/pg-test-XXXXXX.yaml)
-		cat >"$tmp_yaml" <<'YAML_EOF'
-patterns:
-  - pattern: "YAML_TEST_PATTERN_12345"
+	# Test YAML loading with a temporary YAML file (pure-bash parser — no yq/python3 needed)
+	# Format: category-keyed blocks with severity as list item start trigger
+	local tmp_yaml
+	tmp_yaml=$(mktemp /tmp/pg-test-XXXXXX.yaml)
+	cat >"$tmp_yaml" <<'YAML_EOF'
+yaml_test:
+  - severity: "HIGH"
     description: "Test YAML pattern"
-    severity: "HIGH"
-    category: "yaml_test"
+    pattern: 'YAML_TEST_PATTERN_12345'
 YAML_EOF
-		PROMPT_GUARD_YAML_PATTERNS="$tmp_yaml"
-		local yaml_result
-		yaml_result=$(PROMPT_GUARD_QUIET="true" _pg_scan_message "This contains YAML_TEST_PATTERN_12345 in it" 2>/dev/null) || true
-		PROMPT_GUARD_YAML_PATTERNS="$saved_yaml"
-		rm -f "$tmp_yaml"
-		if [[ "$yaml_result" == *"yaml_test"* ]]; then
-			echo -e "  ${GREEN}PASS${NC} YAML pattern loading works"
-			passed=$((passed + 1))
-		else
-			echo -e "  ${RED}FAIL${NC} YAML pattern loading failed: $yaml_result"
-			failed=$((failed + 1))
-		fi
+	# Reset cache so the new file is loaded
+	_PG_YAML_PATTERNS_LOADED=""
+	_PG_YAML_PATTERNS_CACHE=""
+	PROMPT_GUARD_YAML_PATTERNS="$tmp_yaml"
+	local yaml_result
+	yaml_result=$(PROMPT_GUARD_QUIET="true" _pg_scan_message "This contains YAML_TEST_PATTERN_12345 in it" 2>/dev/null) || true
+	PROMPT_GUARD_YAML_PATTERNS="$saved_yaml"
+	_PG_YAML_PATTERNS_LOADED=""
+	_PG_YAML_PATTERNS_CACHE=""
+	rm -f "$tmp_yaml"
+	if [[ "$yaml_result" == *"yaml_test"* ]]; then
+		echo -e "  ${GREEN}PASS${NC} YAML pattern loading works"
+		passed=$((passed + 1))
 	else
-		echo -e "  ${YELLOW}SKIP${NC} YAML loading test (no yq or python3 available)"
-		passed=$((passed + 1)) # Don't penalize for missing tools
+		echo -e "  ${RED}FAIL${NC} YAML pattern loading failed: $yaml_result"
+		failed=$((failed + 1))
 	fi
 
 	# ── Summary ─────────────────────────────────────────────────
