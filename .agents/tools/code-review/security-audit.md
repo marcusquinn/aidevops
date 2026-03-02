@@ -43,6 +43,7 @@ mcp:
 | CORS configuration | Web server code present |
 | Auth / rate limiting | API server code present |
 | Insecure HTTP URLs | Always |
+| Prompt injection patterns | AI/agent code present |
 | Security automation (Dependabot) | Always |
 
 <!-- AI-CONTEXT-END -->
@@ -298,7 +299,27 @@ rg -n 'http://' \
   grep -v 'localhost\|127\.0\.0\.1\|0\.0\.0\.0\|example\.com' | head -20
 ```
 
-#### 3.12 Security Automation (Always)
+#### 3.12 Prompt Injection Patterns (When AI/agent code present)
+
+If the project processes untrusted content through AI/LLM pipelines (user uploads, web scraping, API responses, chat inputs), check for prompt injection defenses:
+
+```bash
+# Check for prompt injection scanning in the codebase
+rg -in '(prompt.?inject|prompt.?guard|content.?scan|injection.?detect)' \
+  --glob '*.{js,ts,py,go,rs,sh,yaml,yml}' -l
+
+# Check for untrusted content ingestion without scanning
+rg -in '(webfetch|fetch|requests\.get|urllib|curl)' \
+  --glob '*.{js,ts,py,go,rs,sh}' -l | head -10
+
+# Check for LLM/AI framework usage (indicates prompt injection risk)
+rg -in '(openai|anthropic|langchain|llama|ollama|ai\.run|completion)' \
+  --glob '*.{js,ts,py,go,rs}' -l | head -10
+```
+
+For aidevops projects, verify `prompt-guard-helper.sh` integration. See `tools/security/prompt-injection-defender.md` for defense patterns and integration guidance.
+
+#### 3.13 Security Automation (Always)
 
 ```bash
 # Dependabot
@@ -389,11 +410,15 @@ Use this exact structure for the audit report:
 
 {http:// references in source code}
 
-### 11. Security Automation -- **{PASS/FAIL/WARN}**
+### 11. Prompt Injection Defense -- **{PASS/FAIL/WARN/SKIP}**
+
+{prompt injection scanning presence, untrusted content handling, or "No AI/agent code found (SKIP)"}
+
+### 12. Security Automation -- **{PASS/FAIL/WARN}**
 
 {Dependabot/Renovate, CI scanning, SECURITY.md}
 
-### 12. Security Architecture -- **{assessment}**
+### 13. Security Architecture -- **{assessment}**
 
 {qualitative assessment of auth, validation, error handling}
 
@@ -439,6 +464,7 @@ This audit reuses existing aidevops security infrastructure where applicable:
 
 - **`security-helper.sh scan-deps`**: For dependency vulnerability scanning via OSV-Scanner
 - **`secretlint-helper.sh`**: For credential detection
+- **`prompt-guard-helper.sh`**: For prompt injection pattern scanning (chat, content, stdin). See `tools/security/prompt-injection-defender.md` for integration patterns.
 - **ShellCheck**: For shell script analysis (via `linters-local.sh` patterns)
 
-The audit adds categories not covered by existing commands: GitHub Actions supply chain, Docker security, CORS, auth/rate limiting, and the structured severity report.
+The audit adds categories not covered by existing commands: GitHub Actions supply chain, Docker security, CORS, auth/rate limiting, prompt injection defense, and the structured severity report.

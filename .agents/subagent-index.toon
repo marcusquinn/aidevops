@@ -60,7 +60,7 @@ tools/data-extraction/,Data extraction - scraping business data,outscraper
 tools/deployment/,Deployment automation - self-hosted PaaS and orchestration,coolify|coolify-cli|vercel|cloudron-app-packaging|cloudron-app-packaging-skill|cloudron-app-publishing-skill|cloudron-server-ops-skill|uncloud
 tools/git/,Git operations - GitHub/GitLab/Gitea CLIs and diff tools,github-cli|gitlab-cli|gitea-cli|github-actions|worktrunk|lumen|jujutsu|conflict-resolution
 tools/credentials/,Secret management - API keys vaults and encryption stack,api-key-setup|api-key-management|vaultwarden|gopass|psst|multi-tenant|list-keys|sops|gocryptfs|encryption-stack
-tools/security/,Security tools - terminal guards privacy filtering IP reputation scanning and opsec,tirith|shannon|cdn-origin-ip|privacy-filter|ip-reputation|opsec
+tools/security/,Security tools - terminal guards privacy filtering IP reputation scanning prompt injection defense and opsec,tirith|shannon|cdn-origin-ip|privacy-filter|ip-reputation|opsec|prompt-injection-defender
 tools/task-management/,Task tracking - dependency graphs,beads
 tools/terminal/,Terminal integration - tab titles,terminal-title
 tools/automation/,Automation - cron scheduling objective runner and macOS AppleScript/JXA,cron-agent|objective-runner|mac|macos-automator
@@ -122,7 +122,7 @@ conversation-starter,workflows/conversation-starter.md,Session greeting and auto
 mission-skill-learning,workflows/mission-skill-learning.md,Auto-capture reusable patterns from missions and suggest promotion
 -->
 
-<!--TOON:scripts[99]{name,purpose}:
+<!--TOON:scripts[100]{name,purpose}:
 accessibility-helper.sh,Accessibility and contrast testing (WCAG compliance WAVE API for websites and emails)
 browser-qa-worker.sh,Browser QA visual testing — Playwright screenshots broken links console errors for milestone validation
 browser-qa-helper.sh,Playwright-based visual QA for milestone validation (smoke screenshots links a11y)
@@ -220,4 +220,5 @@ planning-commit-helper.sh,Planning file auto-commit helper (next-id complete com
 multi-org-helper.sh,Multi-org management CLI (init create delete list switch use status info set-plan context)
 simplex-helper.sh,SimpleX Chat CLI helper (install init bot-start bot-stop send send-group connect address group status server)
 skills-helper.sh,Skill discovery and exploration CLI (search browse describe info list categories recommend)
+prompt-guard-helper.sh,Prompt injection defense - scan content for injection patterns with YAML pattern loading and policy enforcement (check scan-stdin scan-file patterns test)
 -->
