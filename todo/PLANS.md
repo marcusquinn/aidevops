@@ -22,6 +22,126 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-03-02] Prompt Injection Scanner — Tool-Agnostic Defense for aidevops and Agentic Apps
+
+**Status:** Planning
+**Estimate:** ~7.5h (ai:5.5h test:1h read:1h)
+**TODO:** t1375 (parent), t1375.1-t1375.5 (subtasks)
+**Logged:** 2026-03-02
+**Brief:** [todo/tasks/t1375-brief.md](tasks/t1375-brief.md)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged}:
+p039,Prompt Injection Scanner,planning,0,3,,plan|feature|security|prompt-injection,7.5h,5.5h,1h,1h,2026-03-02T00:00Z
+-->
+
+#### Purpose
+
+Extend aidevops prompt injection defense from chat-only (t1327.8) to all untrusted content ingestion points, and create developer guidance for building injection-resistant agentic apps.
+
+**Three problems solved:**
+
+1. **Zero defense on content ingestion.** aidevops agents routinely fetch web content (webfetch), read untrusted repos (PRs, dependencies), and call external MCP tools. Any of these can contain hidden instructions that manipulate agent behavior. The existing `prompt-guard-helper.sh` only covers inbound chat messages in the SimpleX/Matrix bot framework.
+
+2. **Pattern coverage gaps.** Our existing scanner has ~40 patterns focused on chat-style attacks. Lasso Security's [claude-hooks](https://github.com/lasso-security/claude-hooks) (MIT, 119 stars) adds ~29 net-new patterns covering: homoglyph attacks (Cyrillic/Greek lookalikes), zero-width Unicode manipulation, fake JSON/XML system roles, HTML/code comment injection, priority manipulation, fake delimiters, split personality/evil twin, acrostic/steganographic instructions, and fake previous conversation claims.
+
+3. **No developer guidance.** Dev agents building agentic apps have no knowledge of prompt injection defense. They'll build apps that process untrusted inputs (user uploads, web scraping, API responses) without any scanning or sanitization.
+
+**Catalyst:** [lasso-security/claude-hooks](https://github.com/lasso-security/claude-hooks) — Lasso Security's prompt injection defender for Claude Code. Their research paper ["The Hidden Backdoor in Claude Coding Assistant"](https://www.lasso.security/blog/the-hidden-backdoor-in-claude-coding-assistant) demonstrates indirect prompt injection is a real, exploited attack vector against coding agents. Their `patterns.yaml` (MIT) is the most comprehensive open-source pattern database for this threat.
+
+**What this is NOT:** A Claude Code-specific integration. Lasso's hooks use Claude Code's `PostToolUse` hook system — we use OpenCode primarily. This task creates a tool-agnostic scanner callable from any context (shell script), and an agent doc that teaches integration patterns for any AI tool or agentic app.
+
+#### Architecture
+
+```text
+Existing state (t1327.8):
+  Chat message → prompt-guard-helper.sh check → allow/warn/block
+  (Only used by SimpleX/Matrix bot framework, ~40 inline patterns)
+
+Target state:
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ Untrusted content sources          Pattern sources              │
+  │                                                                 │
+  │  webfetch results ──┐              ┌── patterns.yaml (primary)  │
+  │  MCP tool outputs ──┤              │   (Lasso-compatible YAML)  │
+  │  PR content ────────┤──→ scanner ──┤                            │
+  │  repo file reads ───┤              ├── inline patterns (fallback│
+  │  chat messages ─────┘              │   when YAML unavailable)   │
+  │                                    └── custom patterns (env var)│
+  │                                                                 │
+  │  New subcommand: scan-stdin (pipeline use)                      │
+  │  Policy: warn (content) or block (chat)                         │
+  └─────────────────────────────────────────────────────────────────┘
+
+Pattern gap analysis (Lasso patterns NOT in our prompt-guard-helper.sh):
+
+  Category                              Net-new patterns
+  ─────────────────────────────────────────────────────
+  Homoglyph attacks (Cyrillic/Greek)    2
+  Zero-width Unicode (specific ranges)  2
+  Fake JSON system roles                3
+  HTML comment injection                2
+  Code comment injection                2
+  Priority manipulation                 4
+  Fake delimiter markers                4
+  Split personality / evil twin         3
+  Acrostic/steganographic               1
+  Fake previous conversation claims     3
+  System prompt extraction variants     2
+  URL encoded payload detection         1
+  ─────────────────────────────────────────────────────
+  Total net-new                         ~29
+
+Agent doc teaches:
+  1. aidevops agents: when to scan (webfetch, MCP, untrusted repos)
+  2. App developers: how to integrate scanning in their own apps
+  3. Claude Code users: how to install Lasso's hooks directly
+  4. Pattern extension: how to add custom patterns
+  5. Layered defense: patterns are layer 1, not the only layer
+```
+
+#### Subtask Breakdown
+
+| ID | Task | Est | Model | Dependencies |
+|----|------|-----|-------|-------------|
+| t1375.1 | YAML pattern loading + merge Lasso patterns + scan-stdin | ~2h | sonnet | none |
+| t1375.2 | Agent doc (`tools/security/prompt-injection-defender.md`) | ~2h | sonnet | none |
+| t1375.3 | Wire into build-plus.md, build.txt, opsec.md | ~1.5h | sonnet | t1375.2 |
+| t1375.4 | Cross-references (subagent-index, AGENTS.md, security-audit) | ~30m | sonnet | t1375.2 |
+| t1375.5 | Testing and verification | ~1h | sonnet | t1375.1 |
+
+t1375.1 and t1375.2 can run in parallel. t1375.3 and t1375.4 depend on the agent doc. t1375.5 depends on the pattern changes.
+
+#### Progress
+
+- [ ] (2026-03-02) Phase 1: Core implementation ~4h
+  - [ ] t1375.1 YAML pattern loading, Lasso pattern merge, scan-stdin subcommand
+  - [ ] t1375.2 Agent doc for aidevops + agentic app developers
+- [ ] (2026-03-02) Phase 2: Integration ~2h
+  - [ ] t1375.3 Wire into build-plus.md, build.txt, opsec.md
+  - [ ] t1375.4 Cross-references and index updates
+- [ ] (2026-03-02) Phase 3: Verification ~1h
+  - [ ] t1375.5 Test suite, new pattern verification, ShellCheck
+
+#### Decision Log
+
+| Date | Decision | Rationale |
+|------|----------|-----------|
+| 2026-03-02 | Extend prompt-guard-helper.sh, don't build new scanner | Already has pattern engine, policy system, logging, test suite (993 lines). Adding YAML loading + patterns is cheaper than starting fresh |
+| 2026-03-02 | Lasso-compatible YAML format for patterns | Same schema means we can periodically pull upstream pattern updates without format conversion |
+| 2026-03-02 | Warn, don't block for content scanning | Chat inputs can be blocked (user rephrases). Webfetch/MCP outputs can't — agent needs to see content but be warned |
+| 2026-03-02 | Tool-agnostic shell script, not Claude Code hooks | We use OpenCode primarily. Shell script works with any AI tool. Lasso's hooks are Claude Code-specific |
+| 2026-03-02 | Reference Lasso, don't fork | They maintain their repo (MIT), we maintain ours. Pattern format compatibility enables sharing |
+| 2026-03-02 | Pattern-based is layer 1, not the only layer | Regex catches known patterns but misses novel attacks. Agent doc must teach layered defense |
+
+#### Surprises & Discoveries
+
+- We already have `prompt-guard-helper.sh` (993 lines, t1327.8) with a solid pattern matching engine — this was built for SimpleX/Matrix chat but the architecture is general-purpose
+- Lasso's `patterns.yaml` has ~29 patterns we don't have, particularly in homoglyph/Unicode and context manipulation categories
+- Our existing `shannon.md` (entropy detection) is complementary — Shannon detects high-entropy strings (secrets), prompt-guard detects semantic injection patterns
+- Lasso's Python hook reads from stdin JSON (Claude Code's hook protocol) — our shell script reads from arguments/files/stdin text. Different interfaces, same patterns.
+
+---
+
 ### [2026-03-01] Vector Search Agent — zvec and Per-Tenant RAG for SaaS
 
 **Status:** Planning
