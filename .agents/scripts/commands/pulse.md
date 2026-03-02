@@ -142,17 +142,28 @@ sleep 2
 
 ### Cross-repo TODO sync
 
-For each repo with a `TODO.md`, run the issue sync helper to create GitHub issues for unsynced tasks.
+Sync GitHub issue refs and close completed issues. **Issue creation (push) is handled
+exclusively by CI** (GitHub Actions `issue-sync.yml` on TODO.md push to main) to prevent
+duplicate issues from concurrent local + CI execution. Local sessions use `pull` (sync
+refs back to TODO.md) and `close` (close issues for completed tasks).
 
 **Note:** Helper scripts use `#!/usr/bin/env bash` shebangs which fail in the MCP shell if PATH is incomplete. Step 0's `export PATH=...` fixes this for the session. If you still see `env: bash: No such file or directory`, call scripts with an explicit `/bin/bash` prefix as shown below:
 
 ```bash
-/bin/bash ~/.aidevops/agents/scripts/issue-sync-helper.sh push --repo "$slug" 2>&1 || true
+# Pull: sync issue refs from GitHub to TODO.md (safe, idempotent)
+/bin/bash ~/.aidevops/agents/scripts/issue-sync-helper.sh pull --repo "$slug" 2>&1 || true
+# Close: close issues for completed tasks (safe, idempotent)
+/bin/bash ~/.aidevops/agents/scripts/issue-sync-helper.sh close --repo "$slug" 2>&1 || true
 # Commit any ref changes
 git -C "$path" diff --quiet TODO.md 2>/dev/null || {
   git -C "$path" add TODO.md && git -C "$path" commit -m "chore: sync GitHub issue refs to TODO.md [skip ci]" && git -C "$path" push
 } 2>/dev/null || true
 ```
+
+**Why not push locally?** When TODO.md merges to main, CI runs `push` to create issues.
+If the local pulse also runs `push`, both see "no existing issue" and both create one —
+producing duplicates. Single-task issue creation still works via `claim-task-id.sh` (which
+creates issues at claim time, before TODO.md hits main).
 
 ### Orphaned PR scanner (t216)
 
@@ -285,7 +296,7 @@ In Full mode, mission features are regular TODO entries tagged with `mission:mNN
 - They appear in `gh issue list` like any other task
 - They follow the standard label lifecycle (`available` → `queued` → `in-progress` → `done`)
 - The `mission:mNNN` tag lets the pulse correlate features back to their mission
-- Issue sync works normally — `issue-sync-helper.sh push` creates GitHub issues for them
+- Issue sync works normally — CI creates GitHub issues when TODO.md is pushed to main
 
 In POC mode, features are tracked only in the mission state file (no TODO entries, no GitHub issues). The pulse dispatches them directly from the state file.
 

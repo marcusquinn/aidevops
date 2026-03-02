@@ -38,6 +38,7 @@ source "${SCRIPT_DIR}/issue-sync-lib.sh"
 VERBOSE="${VERBOSE:-false}"
 DRY_RUN="${DRY_RUN:-false}"
 FORCE_CLOSE="${FORCE_CLOSE:-false}"
+FORCE_PUSH="${FORCE_PUSH:-false}"
 REPO_SLUG=""
 
 log_verbose() {
@@ -241,6 +242,24 @@ cmd_push() {
 	local target_task="${1:-}"
 	_init_cmd || return 1
 	local repo="$_CMD_REPO" todo_file="$_CMD_TODO" project_root="$_CMD_ROOT"
+
+	# Guard: issue creation from TODO.md should only happen in ONE place to
+	# prevent duplicates. CI (GitHub Actions issue-sync.yml) is the single
+	# authority for bulk push. Local sessions use claim-task-id.sh (which
+	# creates issues at claim time) or target a single task explicitly.
+	#
+	# The race condition: when TODO.md merges to main, both CI and local
+	# pulse/supervisor run "push" simultaneously. Both see "no existing issue"
+	# and both create one — producing duplicates (observed: t1365, t1366,
+	# t1367, t1370.x, t1375.x all had duplicate issues).
+	#
+	# Fix: bulk push (no target_task) is CI-only unless --force is passed.
+	# Single-task push (claim-task-id.sh path) is always allowed.
+	if [[ -z "$target_task" && "${GITHUB_ACTIONS:-}" != "true" && "$FORCE_PUSH" != "true" ]]; then
+		print_info "Bulk push skipped — CI is the single authority for issue creation from TODO.md"
+		print_info "Use 'issue-sync-helper.sh push <task_id>' for single tasks, or --force-push to override"
+		return 0
+	fi
 
 	local tasks=()
 	if [[ -n "$target_task" ]]; then
@@ -653,6 +672,10 @@ Issue Sync Helper — stateless TODO.md <-> GitHub Issues sync via gh CLI.
 Usage: issue-sync-helper.sh [command] [options]
 Commands: push [tNNN] | enrich [tNNN] | pull | close [tNNN] | reconcile | status | help
 Options: --repo SLUG | --dry-run | --verbose | --force (skip evidence on close)
+         --force-push (allow bulk push outside CI — use with caution, risk of duplicates)
+
+Note: Bulk push (no task ID) is CI-only by default to prevent duplicate issues.
+      Use 'push <task_id>' for single tasks, or --force-push to override.
 EOF
 }
 
@@ -674,6 +697,10 @@ main() {
 			;;
 		--force)
 			FORCE_CLOSE="true"
+			shift
+			;;
+		--force-push)
+			FORCE_PUSH="true"
 			shift
 			;;
 		help | --help | -h)
