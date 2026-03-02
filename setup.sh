@@ -730,8 +730,18 @@ main() {
 
 	# Enable auto-update if not already enabled
 	# Check both launchd (macOS) and cron (Linux) for existing installation
+	# Priority: env var AIDEVOPS_AUTO_UPDATE > settings.json auto_update > default true
 	local auto_update_script="$HOME/.aidevops/agents/scripts/auto-update-helper.sh"
-	if [[ -x "$auto_update_script" ]] && [[ "${AIDEVOPS_AUTO_UPDATE:-true}" != "false" ]]; then
+	local _auto_update_setting="${AIDEVOPS_AUTO_UPDATE:-}"
+	if [[ -z "$_auto_update_setting" ]]; then
+		# No env var — check settings.json (requires jq; defaults to "true")
+		if [[ -f "$HOME/.config/aidevops/settings.json" ]] && command -v jq &>/dev/null; then
+			_auto_update_setting=$(jq -r 'if has("auto_update") then .auto_update | tostring else "true" end' "$HOME/.config/aidevops/settings.json" 2>/dev/null) || _auto_update_setting="true"
+		else
+			_auto_update_setting="true"
+		fi
+	fi
+	if [[ -x "$auto_update_script" ]] && [[ "$_auto_update_setting" != "false" ]]; then
 		local _auto_update_installed=false
 		if _launchd_has_agent "com.aidevops.aidevops-auto-update"; then
 			_auto_update_installed=true
@@ -779,7 +789,16 @@ main() {
 	# macOS: launchd plist invoking wrapper | Linux: cron entry invoking wrapper
 	# The plist is ALWAYS regenerated on setup.sh to pick up config changes (env vars,
 	# thresholds). Only the first-install prompt is gated on _pulse_installed.
-	if [[ "${AIDEVOPS_SUPERVISOR_PULSE:-true}" != "false" ]]; then
+	# Priority: env var AIDEVOPS_SUPERVISOR_PULSE > settings.json supervisor_pulse > default true
+	local _pulse_setting="${AIDEVOPS_SUPERVISOR_PULSE:-}"
+	if [[ -z "$_pulse_setting" ]]; then
+		if [[ -f "$HOME/.config/aidevops/settings.json" ]] && command -v jq &>/dev/null; then
+			_pulse_setting=$(jq -r 'if has("supervisor_pulse") then .supervisor_pulse | tostring else "true" end' "$HOME/.config/aidevops/settings.json" 2>/dev/null) || _pulse_setting="true"
+		else
+			_pulse_setting="true"
+		fi
+	fi
+	if [[ "$_pulse_setting" != "false" ]]; then
 		local wrapper_script="$HOME/.aidevops/agents/scripts/pulse-wrapper.sh"
 		local pulse_label="com.aidevops.aidevops-supervisor-pulse"
 		local _aidevops_dir
@@ -910,8 +929,17 @@ PLIST
 
 	# Enable repo-sync scheduler if not already installed
 	# Keeps local git repos up to date with daily ff-only pulls
+	# Priority: env var AIDEVOPS_REPO_SYNC > settings.json repo_sync > default true
 	local repo_sync_script="$HOME/.aidevops/agents/scripts/repo-sync-helper.sh"
-	if [[ -x "$repo_sync_script" ]] && [[ "${AIDEVOPS_REPO_SYNC:-}" != "false" ]]; then
+	local _repo_sync_setting="${AIDEVOPS_REPO_SYNC:-}"
+	if [[ -z "$_repo_sync_setting" ]]; then
+		if [[ -f "$HOME/.config/aidevops/settings.json" ]] && command -v jq &>/dev/null; then
+			_repo_sync_setting=$(jq -r 'if has("repo_sync") then .repo_sync | tostring else "true" end' "$HOME/.config/aidevops/settings.json" 2>/dev/null) || _repo_sync_setting="true"
+		else
+			_repo_sync_setting="true"
+		fi
+	fi
+	if [[ -x "$repo_sync_script" ]] && [[ "$_repo_sync_setting" != "false" ]]; then
 		local _repo_sync_installed=false
 		if _launchd_has_agent "com.aidevops.aidevops-repo-sync"; then
 			_repo_sync_installed=true

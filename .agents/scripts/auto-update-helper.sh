@@ -25,7 +25,13 @@
 #   auto-update-helper.sh logs [--tail N]  View update logs
 #   auto-update-helper.sh help             Show this help
 #
-# Configuration:
+# Configuration (settings.json — persistent, survives shell restarts):
+#   ~/.config/aidevops/settings.json      Optional JSON config file
+#     { "auto_update": false }            Disable auto-update checks
+#     { "supervisor_pulse": false }        Disable supervisor pulse
+#     { "repo_sync": false }              Disable daily repo sync
+#
+# Configuration (env vars — override settings.json):
 #   AIDEVOPS_AUTO_UPDATE=true|false        Override enable/disable (env var)
 #   AIDEVOPS_UPDATE_INTERVAL=10           Minutes between checks (default: 10)
 #   AIDEVOPS_SKILL_AUTO_UPDATE=false      Disable daily skill freshness check
@@ -35,6 +41,8 @@
 #   AIDEVOPS_TOOL_AUTO_UPDATE=false       Disable 6-hourly tool freshness check
 #   AIDEVOPS_TOOL_FRESHNESS_HOURS=6       Hours between tool checks (default: 6)
 #   AIDEVOPS_TOOL_IDLE_HOURS=6            Required user idle hours before tool updates (default: 6)
+#
+# Priority: env var > settings.json > default (true)
 #
 # Logs: ~/.aidevops/logs/auto-update.log
 
@@ -857,9 +865,15 @@ update_tool_check_timestamp() {
 cmd_check() {
 	ensure_dirs
 
-	# Respect env var override
+	# Respect env var override, then settings.json
 	if [[ "${AIDEVOPS_AUTO_UPDATE:-}" == "false" ]]; then
 		log_info "Auto-update disabled via AIDEVOPS_AUTO_UPDATE=false"
+		return 0
+	fi
+
+	# Check settings.json (only when env var is not set)
+	if [[ -z "${AIDEVOPS_AUTO_UPDATE:-}" ]] && [[ "$(get_setting "auto_update" "true")" == "false" ]]; then
+		log_info "Auto-update disabled via settings.json (auto_update: false)"
 		return 0
 	fi
 
@@ -968,6 +982,12 @@ cmd_check() {
 #######################################
 cmd_enable() {
 	ensure_dirs
+
+	# Warn if settings.json disables auto-update (scheduler will install but checks will no-op)
+	if [[ "$(get_setting "auto_update" "true")" == "false" ]]; then
+		print_warning "settings.json has auto_update: false — scheduler will install but checks will be skipped"
+		print_info "To enable: set auto_update to true in ~/.config/aidevops/settings.json"
+	fi
 
 	local interval="${AIDEVOPS_UPDATE_INTERVAL:-$DEFAULT_INTERVAL}"
 	local script_path="$HOME/.aidevops/agents/scripts/auto-update-helper.sh"
@@ -1264,10 +1284,18 @@ cmd_status() {
 		fi
 	fi
 
-	# Check env var overrides
+	# Check settings.json overrides
+	local _settings_auto_update
+	_settings_auto_update="$(get_setting "auto_update" "true")"
+	if [[ "$_settings_auto_update" == "false" ]]; then
+		echo ""
+		echo -e "  ${YELLOW}Note: settings.json has auto_update: false (checks will be skipped)${NC}"
+	fi
+
+	# Check env var overrides (env vars take priority over settings.json)
 	if [[ "${AIDEVOPS_AUTO_UPDATE:-}" == "false" ]]; then
 		echo ""
-		echo -e "  ${YELLOW}Note: AIDEVOPS_AUTO_UPDATE=false is set (overrides scheduler)${NC}"
+		echo -e "  ${YELLOW}Note: AIDEVOPS_AUTO_UPDATE=false is set (overrides scheduler and settings.json)${NC}"
 	fi
 	if [[ "${AIDEVOPS_SKILL_AUTO_UPDATE:-}" == "false" ]]; then
 		echo ""
@@ -1338,8 +1366,21 @@ COMMANDS:
     logs --follow       Follow log output in real-time
     help                Show this help
 
+CONFIGURATION FILE:
+    ~/.config/aidevops/settings.json     Persistent user preferences (optional)
+
+    Supported keys (all default to true):
+      "auto_update": false               Disable auto-update checks
+      "supervisor_pulse": false           Disable supervisor pulse scheduler
+      "repo_sync": false                  Disable daily repo sync
+
+    Example:
+      echo '{"auto_update": false}' > ~/.config/aidevops/settings.json
+
+    Priority: environment variable > settings.json > default (true)
+
 ENVIRONMENT:
-    AIDEVOPS_AUTO_UPDATE=false           Disable auto-update (overrides scheduler)
+    AIDEVOPS_AUTO_UPDATE=false           Disable auto-update (overrides settings.json)
     AIDEVOPS_UPDATE_INTERVAL=10          Minutes between checks (default: 10)
     AIDEVOPS_SKILL_AUTO_UPDATE=false     Disable daily skill freshness check
     AIDEVOPS_SKILL_FRESHNESS_HOURS=24    Hours between skill checks (default: 24)

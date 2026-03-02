@@ -1283,6 +1283,68 @@ get_provider_from_model() {
 	return 0
 }
 
+# =============================================================================
+# User Settings Reader (~/.config/aidevops/settings.json)
+# =============================================================================
+# Provides a single function to read user preferences from settings.json.
+# Settings file is optional — all keys have sensible defaults.
+# Environment variables always override settings.json values.
+#
+# Supported keys (all optional, defaults shown):
+#   auto_update: true          - Enable/disable the auto-update launchd/cron job
+#   supervisor_pulse: true     - Enable/disable the supervisor pulse scheduler
+#   repo_sync: true            - Enable/disable the daily repo sync job
+#   update_interval: 10        - Minutes between auto-update checks
+#
+# Usage:
+#   value=$(get_setting "auto_update" "true")
+#   if [[ "$(get_setting "auto_update" "true")" == "false" ]]; then ...
+#
+# The settings file is NOT created automatically. Users create it manually
+# or via `aidevops config set <key> <value>` (future CLI command).
+
+readonly AIDEVOPS_SETTINGS_FILE="${HOME}/.config/aidevops/settings.json"
+
+# Read a value from ~/.config/aidevops/settings.json.
+# Falls back to the provided default if the file doesn't exist,
+# the key is missing, or jq is not available.
+# Arguments:
+#   $1 - JSON key name (required, top-level only)
+#   $2 - default value if key is missing (required)
+# Output: the value on stdout (string — caller interprets type)
+# Returns: 0 always (missing file/key is not an error)
+get_setting() {
+	local key="$1"
+	local default_value="$2"
+
+	# No settings file — return default
+	if [[ ! -f "$AIDEVOPS_SETTINGS_FILE" ]]; then
+		echo "$default_value"
+		return 0
+	fi
+
+	# No jq — return default
+	if ! command -v jq &>/dev/null; then
+		echo "$default_value"
+		return 0
+	fi
+
+	# Use has() to distinguish "key missing" from "key is false/null".
+	# jq's // (alternative operator) treats false and null as empty,
+	# which would make {"auto_update": false} indistinguishable from {}.
+	local value
+	value=$(jq -r --arg k "$key" \
+		'if has($k) then .[$k] | tostring else "___MISSING___" end' \
+		"$AIDEVOPS_SETTINGS_FILE" 2>/dev/null) || value="___MISSING___"
+
+	if [[ "$value" == "___MISSING___" || "$value" == "null" ]]; then
+		echo "$default_value"
+	else
+		echo "$value"
+	fi
+	return 0
+}
+
 # This ensures all constants are available when this file is sourced
 export CONTENT_TYPE_JSON CONTENT_TYPE_FORM USER_AGENT
 export HTTP_OK HTTP_CREATED HTTP_BAD_REQUEST HTTP_UNAUTHORIZED HTTP_FORBIDDEN HTTP_NOT_FOUND HTTP_INTERNAL_ERROR
