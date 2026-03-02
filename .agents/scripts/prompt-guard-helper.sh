@@ -156,13 +156,15 @@ _pg_load_yaml_patterns() {
 		return 1
 	fi
 
-	_PG_YAML_PATTERNS_LOADED="true"
-
 	local yaml_file
 	yaml_file=$(_pg_find_yaml_patterns) || {
 		_pg_log_info "YAML patterns not found, using inline fallback"
 		return 1
 	}
+
+	# Only mark loaded after successful file discovery (prevents transient failures
+	# from permanently disabling YAML loading on subsequent calls)
+	_PG_YAML_PATTERNS_LOADED="true"
 
 	local patterns=""
 	local current_category=""
@@ -242,44 +244,6 @@ _pg_load_yaml_patterns() {
 
 # YAML pattern file path (Lasso-compatible format)
 PROMPT_GUARD_YAML_PATTERNS="${PROMPT_GUARD_YAML_PATTERNS:-}"
-
-# Load patterns from YAML file (Lasso-compatible format)
-# YAML format: list of objects with fields: pattern, description, severity, category
-# Falls back silently if yq/python not available or file missing
-_pg_load_yaml_patterns() {
-	local yaml_file="$1"
-
-	if [[ ! -f "$yaml_file" ]]; then
-		return 1
-	fi
-
-	# Try yq first (fastest)
-	if command -v yq &>/dev/null; then
-		yq -r '.patterns[] | "\(.severity // "MEDIUM")|\(.category // "yaml_pattern")|\(.description // "YAML pattern")|\(.pattern)"' "$yaml_file" 2>/dev/null && return 0
-	fi
-
-	# Try python3 with PyYAML
-	if command -v python3 &>/dev/null; then
-		python3 -c "
-import yaml, sys
-try:
-    with open('$yaml_file') as f:
-        data = yaml.safe_load(f)
-    for p in data.get('patterns', []):
-        sev = p.get('severity', 'MEDIUM').upper()
-        cat = p.get('category', 'yaml_pattern')
-        desc = p.get('description', 'YAML pattern')
-        pat = p.get('pattern', '')
-        if pat:
-            print(f'{sev}|{cat}|{desc}|{pat}')
-except Exception:
-    sys.exit(1)
-" 2>/dev/null && return 0
-	fi
-
-	# No YAML parser available
-	return 1
-}
 
 _pg_get_inline_patterns() {
 	# --- CRITICAL: Direct instruction override ---
@@ -749,7 +713,8 @@ cmd_scan() {
 #        cat untrusted-file.md | prompt-guard-helper.sh scan-stdin
 cmd_scan_stdin() {
 	if [[ -t 0 ]]; then
-		_pg_log_warn "Reading from stdin (Ctrl+D to end, Ctrl+C to cancel)"
+		_pg_log_error "scan-stdin requires piped input, not a TTY. Usage: echo 'text' | prompt-guard-helper.sh scan-stdin"
+		return 1
 	fi
 
 	local content
