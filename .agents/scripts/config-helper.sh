@@ -45,6 +45,7 @@ JSONC_USER="${JSONC_USER:-${HOME}/.config/aidevops/config.jsonc}"
 JSONC_SCHEMA="${JSONC_SCHEMA:-${HOME}/.aidevops/agents/configs/aidevops-config.schema.json}"
 OLD_CONF_USER="${OLD_CONF_USER:-${HOME}/.config/aidevops/feature-toggles.conf}"
 OLD_CONF_DEFAULTS="${OLD_CONF_DEFAULTS:-${HOME}/.aidevops/agents/configs/feature-toggles.conf.defaults}"
+MIGRATE_FAILED_FLAG="${MIGRATE_FAILED_FLAG:-${HOME}/.aidevops/migrate_failed}"
 
 # Cache for merged config (avoid re-parsing on every call)
 _JSONC_MERGED_CACHE=""
@@ -933,8 +934,16 @@ EOF
 main() {
 	# Auto-migrate on first use if legacy config exists and no JSONC config yet
 	if [[ -f "$OLD_CONF_USER" && ! -f "$JSONC_USER" ]]; then
-		if ! _migrate_conf_to_jsonc 2>/dev/null; then
-			echo "[WARN] Auto-migration from legacy config failed. Run 'aidevops config migrate' manually." >&2
+		local migrate_stderr migrate_rc
+		migrate_stderr=$(_migrate_conf_to_jsonc 2>&1 >/dev/null) && migrate_rc=0 || migrate_rc=$?
+		if [[ "$migrate_rc" -ne 0 ]]; then
+			echo "[WARN] Auto-migration from legacy config failed (exit ${migrate_rc}). Run 'aidevops config migrate' manually." >&2
+			if [[ -n "$migrate_stderr" ]]; then
+				echo "[WARN] Migration error: ${migrate_stderr}" >&2
+			fi
+			touch "$MIGRATE_FAILED_FLAG"
+		else
+			rm -f "$MIGRATE_FAILED_FLAG"
 		fi
 	fi
 
