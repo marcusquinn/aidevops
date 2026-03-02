@@ -370,8 +370,8 @@ sparse_vec = emb.embed("sparse vector search")
 from zvec.extension import OpenAIDenseEmbedding
 
 emb = OpenAIDenseEmbedding(
-    model="text-embedding-4",  # Uses latest model by default
-    dimension=256,             # Required: embedding dimension
+    model="text-embedding-3-small",  # 1536 dims native, supports shortening
+    dimension=256,                    # Required: embedding dimension
     # api_key="sk-..."        # Or set OPENAI_API_KEY env var
 )
 vector = emb.embed("Hello world")
