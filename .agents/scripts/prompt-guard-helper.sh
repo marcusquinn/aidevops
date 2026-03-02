@@ -172,7 +172,7 @@ _pg_load_yaml_patterns() {
 	while IFS= read -r line; do
 		# Skip comments and empty lines
 		[[ "$line" =~ ^[[:space:]]*# ]] && continue
-		[[ -z "${line// /}" ]] && continue
+		[[ "$line" =~ ^[[:space:]]*$ ]] && continue
 
 		# Category header (top-level key ending with colon, no leading whitespace)
 		if [[ "$line" =~ ^([a-z_]+):$ ]]; then
@@ -749,6 +749,12 @@ cmd_scan() {
 # Usage: curl -s https://example.com | prompt-guard-helper.sh scan-stdin
 #        cat untrusted-file.md | prompt-guard-helper.sh scan-stdin
 cmd_scan_stdin() {
+	if [ -t 0 ]; then
+		_pg_log_warn "stdin is a terminal — expected piped input, not interactive"
+		_pg_log_warn "Usage: echo 'text' | prompt-guard-helper.sh scan-stdin"
+		return 1
+	fi
+
 	local content
 	if ! content=$(cat); then
 		_pg_log_error "Failed to read from stdin"
