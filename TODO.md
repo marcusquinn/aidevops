@@ -99,9 +99,9 @@ t1375,Prompt injection scanner — tool-agnostic defense for aidevops and agenti
 
 - [x] t1379 feat: standalone config file for aidevops settings — `~/.config/aidevops/settings.json` as canonical config; all settings configurable via /onboarding also readable/writable in this file; file created with documented defaults on first run; /onboarding reads from and writes to this file; docs explain each setting. #feature #config #auto-dispatch ~2h model:sonnet ref:GH#2723 logged:2026-03-02 pr:#2726 completed:2026-03-02
 
-- [ ] t1380 feat: auto-update opt-out and configurable update behaviour — `auto_update: false` in `~/.config/aidevops/settings.json` disables daily update launchd job; setup.sh reads this config before scheduling; docs updated. #feature #config #auto-dispatch ~1h model:sonnet blocked-by:t1379 ref:GH#2722 logged:2026-03-02
+- [x] t1380 feat: auto-update opt-out and configurable update behaviour — `auto_update: false` in `~/.config/aidevops/settings.json` disables daily update launchd job; setup.sh reads this config before scheduling; docs updated. #feature #config #auto-dispatch ~1h model:sonnet blocked-by:t1379 ref:GH#2722 logged:2026-03-02 pr:#2727 completed:2026-03-02
 
-- [ ] t1381 fix: setup.sh should not delete oh-my-opencode.json without opt-in — `cleanup_deprecated_paths()` in `setup-modules/migrations.sh` unconditionally deletes `~/.config/opencode/oh-my-opencode.json`; add `preserve_oh_my_opencode: true` check in settings.json; default to preserve (non-destructive); require explicit `--overwrite` flag or config opt-in to delete; docs updated. #bugfix #setup #auto-dispatch ~1h model:sonnet blocked-by:t1379 ref:GH#2724 logged:2026-03-02
+- [x] t1381 fix: setup.sh should not delete oh-my-opencode.json without opt-in — `cleanup_deprecated_paths()` in `setup-modules/migrations.sh` unconditionally deletes `~/.config/opencode/oh-my-opencode.json`; add `preserve_oh_my_opencode: true` check in settings.json; default to preserve (non-destructive); require explicit `--overwrite` flag or config opt-in to delete; docs updated. #bugfix #setup #auto-dispatch ~1h model:sonnet blocked-by:t1379 ref:GH#2724 logged:2026-03-02 pr:#2725 completed:2026-03-02
 
 ## Backlog
 
