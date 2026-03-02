@@ -22,6 +22,9 @@
 #   prompt-guard-helper.sh check-file <file>             Check message from file
 #   prompt-guard-helper.sh scan-file <file>              Scan message from file
 #   prompt-guard-helper.sh sanitize-file <file>          Sanitize message from file
+#   prompt-guard-helper.sh check-stdin                   Check message from stdin (piped content)
+#   prompt-guard-helper.sh scan-stdin                    Scan message from stdin (piped content)
+#   prompt-guard-helper.sh sanitize-stdin                Sanitize message from stdin (piped content)
 #   prompt-guard-helper.sh log [--tail N] [--json]       View flagged attempt log
 #   prompt-guard-helper.sh stats                         Show detection statistics
 #   prompt-guard-helper.sh status                        Show configuration and pattern counts
@@ -1192,6 +1195,9 @@ COMMANDS:
     check-file <file>            Check message from file
     scan-file <file>             Scan message from file
     sanitize-file <file>         Sanitize message from file
+    check-stdin                  Check message from stdin (piped content)
+    scan-stdin                   Scan message from stdin (piped content)
+    sanitize-stdin               Sanitize message from stdin (piped content)
     log [--tail N] [--json]      View flagged attempt log
     stats                        Show detection statistics
     status                       Show configuration and pattern counts
@@ -1247,6 +1253,9 @@ EXAMPLES:
     if ! prompt-guard-helper.sh check "$message" 2>/dev/null; then
         echo "Message blocked by prompt guard"
     fi
+
+    # Scan piped content in a pipeline
+    curl -s "$url" | prompt-guard-helper.sh scan-stdin
 
     # View recent flagged attempts
     prompt-guard-helper.sh log --tail 50
@@ -1306,6 +1315,33 @@ main() {
 		fi
 		local content
 		content=$(cat "$file")
+		cmd_sanitize "$content"
+		;;
+	check-stdin)
+		local content
+		content=$(cat)
+		if [[ -z "$content" ]]; then
+			_pg_log_error "No input received on stdin"
+			return 1
+		fi
+		cmd_check "$content"
+		;;
+	scan-stdin)
+		local content
+		content=$(cat)
+		if [[ -z "$content" ]]; then
+			_pg_log_error "No input received on stdin"
+			return 1
+		fi
+		cmd_scan "$content"
+		;;
+	sanitize-stdin)
+		local content
+		content=$(cat)
+		if [[ -z "$content" ]]; then
+			_pg_log_error "No input received on stdin"
+			return 1
+		fi
 		cmd_sanitize "$content"
 		;;
 	log)
