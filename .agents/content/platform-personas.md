@@ -9,6 +9,8 @@ model: haiku
 
 Adapt your core brand voice for each platform. The base voice comes from `content/guidelines.md` and project-level `context/brand-voice.md` -- this subagent defines how to shift that voice per channel.
 
+**Brand identity integration**: When a project has `context/brand-identity.toon`, read it first for the base voice and visual identity before applying platform shifts below. The brand identity defines tone, vocabulary, imagery style, and personality that should carry through to every channel. See `tools/design/brand-identity.md`.
+
 ## How to Use
 
 1. Establish your core voice in `content/guidelines.md` or `context/brand-voice.md`

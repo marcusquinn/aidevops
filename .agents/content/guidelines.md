@@ -31,6 +31,8 @@ tools:
 
 These guidelines define the standard for creating high-quality, human-sounding, SEO-optimized content for our websites (specifically tailored for local businesses like Trinity Joinery).
 
+**Brand identity override**: When a project has `context/brand-identity.toon`, the brand voice and visual identity come from there. This file provides structural copywriting rules only — tone, vocabulary, and personality are defined per-project in the brand identity. See `tools/design/brand-identity.md` for the bridge agent that creates and maintains brand identity files.
+
 ## Tone of Voice
 
 - **Authentic & Local:** Sound like a local expert, not a generic corporation. Use "We make..." instead of "Trinity Joinery crafts...".
