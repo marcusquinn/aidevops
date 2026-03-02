@@ -253,7 +253,7 @@ cmd_push() {
 	# and both create one — producing duplicates (observed: t1365, t1366,
 	# t1367, t1370.x, t1375.x all had duplicate issues).
 	#
-	# Fix: bulk push (no target_task) is CI-only unless --force is passed.
+	# Fix: bulk push (no target_task) is CI-only unless --force-push is passed.
 	# Single-task push (claim-task-id.sh path) is always allowed.
 	if [[ -z "$target_task" && "${GITHUB_ACTIONS:-}" != "true" && "$FORCE_PUSH" != "true" ]]; then
 		print_info "Bulk push skipped — CI is the single authority for issue creation from TODO.md"
