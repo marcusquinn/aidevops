@@ -464,5 +464,7 @@ See `tools/security/opsec.md` for full platform trust matrix and threat modeling
 
 - `services/communications/matrix-bot.md` — Matrix bot for aidevops runner dispatch
 - `services/communications/simplex.md` — SimpleX install, bot API, self-hosted servers
+- `services/communications/bitchat.md` — Bitchat (Bluetooth mesh, offline P2P)
+- `services/communications/xmtp.md` — XMTP (Web3 messaging, agent SDK, payments)
 - `tools/security/opsec.md` — Platform trust matrix, E2E status, metadata warnings
 - `tools/ai-assistants/headless-dispatch.md` — Headless dispatch patterns
