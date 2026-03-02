@@ -644,7 +644,14 @@ check_skill_frontmatter() {
 	fi
 
 	local skill_count
-	skill_count=$(jq '.skills | length' "$skill_sources" 2>/dev/null || echo "0")
+	if ! skill_count=$(jq -er '
+		if (.skills | type) == "array" then (.skills | length)
+		else error(".skills must be an array")
+		end
+	' "$skill_sources" 2>/dev/null); then
+		print_error "Invalid $skill_sources (cannot parse .skills array)"
+		return 1
+	fi
 
 	if [[ "$skill_count" -eq 0 ]]; then
 		print_info "No imported skills to validate"
@@ -654,6 +661,12 @@ check_skill_frontmatter() {
 	local errors=0
 	local checked=0
 
+	local skill_entries
+	if ! skill_entries=$(jq -er '.skills[] | "\(.name)|\(.local_path)"' "$skill_sources" 2>/dev/null); then
+		print_error "Failed to read skill entries from $skill_sources"
+		return 1
+	fi
+
 	while IFS='|' read -r name local_path; do
 		if [[ ! -f "$local_path" ]]; then
 			print_warning "Skill file missing: $local_path (skill: $name)"
@@ -661,12 +674,14 @@ check_skill_frontmatter() {
 			continue
 		fi
 
-		# Extract name from YAML frontmatter
+		# Extract name from YAML frontmatter (initial block only)
 		local fm_name
 		fm_name=$(awk '
-			/^---$/ { in_fm = !in_fm; next }
-			in_fm && /^name:/ {
-				sub(/^name: */, "")
+			NR == 1 && /^---$/ { in_fm = 1; next }
+			in_fm && /^---$/ { exit }
+			in_fm && /^[[:space:]]*name:[[:space:]]*/ {
+				sub(/^[[:space:]]*name:[[:space:]]*/, "")
+				sub(/[[:space:]]+#.*$/, "")
 				gsub(/^["'"'"']|["'"'"']$/, "")
 				print
 				exit
@@ -682,7 +697,7 @@ check_skill_frontmatter() {
 		fi
 
 		((checked++)) || true
-	done < <(jq -r '.skills[] | "\(.name)|\(.local_path)"' "$skill_sources" 2>/dev/null)
+	done <<<"$skill_entries"
 
 	if [[ $errors -eq 0 ]]; then
 		print_success "Skill frontmatter: $checked skills validated, all have correct 'name' field"
