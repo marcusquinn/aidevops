@@ -325,13 +325,14 @@ encoding_tricks:
     pattern: '(?i)hex\s*(string|encoded|code)?\s*[:=]\s*[0-9a-fA-F\s]{12,}'
 
   # --- Lasso net-new: Homoglyph attacks ---
+  # Use literal Unicode chars for portability (rg, grep -P, grep -E all handle UTF-8)
   - severity: HIGH
     description: "Cyrillic homoglyphs detected (lookalike letters)"
-    pattern: '[\x{0430}\x{0435}\x{043E}\x{0440}\x{0441}\x{0443}\x{0445}\x{0456}]{3,}'
+    pattern: '[аеорсухі]{3,}'
 
   - severity: HIGH
     description: "Greek homoglyphs detected"
-    pattern: '[\x{03B1}\x{03B5}\x{03BF}\x{03C1}\x{03BD}\x{03C4}]{2,}'
+    pattern: '[αεορντ]{2,}'
 
   # --- Lasso net-new: Leetspeak variants ---
   - severity: MEDIUM
