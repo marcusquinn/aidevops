@@ -105,7 +105,7 @@ prompt-guard-helper.sh scan "$content"
 # Large or file-based content (downloaded files, uploads, PR diffs):
 prompt-guard-helper.sh scan-file /path/to/untrusted-content.txt
 
-# Piped content in pipelines (added by t1375.1 / PR #2715):
+# Piped content in pipelines (requires prompt-guard-helper.sh v1.x+, added by t1375.1 / PR #2715):
 curl -s "$url" | prompt-guard-helper.sh scan-stdin
 ```
 
