@@ -83,6 +83,31 @@ When local search returns no results, the `/skills` command suggests searching t
 
 **CLI**: `aidevops [init|update|auto-update|status|repos|skill|skills|detect|features|uninstall]`. See `/onboarding` for setup wizard.
 
+## User Settings
+
+Persistent user preferences are stored in `~/.config/aidevops/settings.json`. This file is optional — all keys default to sensible values. Environment variables always take priority over settings.json.
+
+**Supported keys:**
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `auto_update` | `true` | Enable/disable the auto-update launchd/cron job |
+| `supervisor_pulse` | `true` | Enable/disable the supervisor pulse scheduler |
+| `repo_sync` | `true` | Enable/disable the daily repo sync job |
+
+**Example** — disable auto-update and supervisor pulse:
+
+```json
+{
+  "auto_update": false,
+  "supervisor_pulse": false
+}
+```
+
+**Priority**: environment variable > settings.json > default (`true`).
+
+**Shell access**: Scripts that source `shared-constants.sh` can read settings via `get_setting "key" "default"`.
+
 ## Auto-Update
 
 Automatic polling for new releases. Checks GitHub every 10 minutes and runs `aidevops update` when a new version is available. Safe to run while AI sessions are active.
@@ -95,7 +120,9 @@ Automatic polling for new releases. Checks GitHub every 10 minutes and runs `aid
 
 **Scheduler**: macOS uses launchd (`~/Library/LaunchAgents/com.aidevops.auto-update.plist`); Linux uses cron. Auto-migrates existing cron entries on macOS when `enable` is run.
 
-**Env override**: `AIDEVOPS_AUTO_UPDATE=false` disables even if scheduler is installed.
+**Config file**: `~/.config/aidevops/settings.json` — set `"auto_update": false` to persistently disable auto-update. This is the recommended way to opt out (survives shell restarts, no env var needed). The file is optional; all keys default to `true`.
+
+**Env override**: `AIDEVOPS_AUTO_UPDATE=false` disables even if scheduler is installed. Env vars take priority over settings.json.
 
 **Logs**: `~/.aidevops/logs/auto-update.log`
 
@@ -117,9 +144,11 @@ Automatic daily `git pull` for all git repos in configured parent directories. K
 
 **Scheduler**: macOS uses launchd (`~/Library/LaunchAgents/com.aidevops.aidevops-repo-sync.plist`); Linux uses cron (daily at 3am).
 
+**Config file**: `~/.config/aidevops/settings.json` — set `"repo_sync": false` to persistently disable. Env vars take priority.
+
 **Env overrides**:
 
-- `AIDEVOPS_REPO_SYNC=false` — disable even if scheduler is installed
+- `AIDEVOPS_REPO_SYNC=false` — disable even if scheduler is installed (overrides settings.json)
 - `AIDEVOPS_REPO_SYNC_INTERVAL=1440` — minutes between syncs (default: 1440 = daily)
 
 **Configuration** (`~/.config/aidevops/repos.json`):
