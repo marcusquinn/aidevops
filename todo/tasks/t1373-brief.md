@@ -68,7 +68,7 @@ The file contains:
 
 1. Create `.agents/tools/design/brand-identity.md` with YAML frontmatter (mode: subagent, tools: read, write, edit, bash, webfetch, task)
 2. The brand-identity.toon template uses TOON sections for each dimension — structured enough for machine parsing, readable enough for humans
-3. The agent integration instructions are directive: "Before generating UI, check `context/brand-identity.toon`. If present, all design decisions must align." Not optional guidance.
+3. The agent integration instructions are directive: "Before generating UI, check `context/brand-identity.toon`. If present, all design decisions must align. Also check `context/inspiration/` for project-specific design patterns." Not optional guidance.
 4. The "from scratch" workflow references t1372's interview process — doesn't duplicate it
 5. The "from existing site" workflow references t1372's URL study — doesn't duplicate it
 6. Include a complete example brand-identity.toon for a fictional SaaS product to show what a filled-in template looks like

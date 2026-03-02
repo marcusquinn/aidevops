@@ -203,8 +203,12 @@ New files:
     ui-ux-inspiration.md      ← t1372: Skill entry point + interview + URL study
     brand-identity.md         ← t1373: Bridge agent + per-project template
 
-Per-project (created by interview workflow):
-  context/brand-identity.toon ← Filled-in brand identity for this project
+Per-project (created by interview workflow, in project's own repo):
+  context/
+    brand-identity.toon        ← Filled-in brand identity for this project
+    inspiration/               ← Extracted design patterns from studied URLs
+      stripe.toon              ← Example: patterns extracted from stripe.com
+      linear.toon              ← Example: patterns extracted from linear.app
 
 Relationship map:
   brand-identity.toon (per-project)
@@ -215,13 +219,17 @@ Relationship map:
       ├── read by: content/production/characters.md     (character design)
       └── read by: workflows/ui-verification.md         (quality gates)
 
-Catalogue TOON sections:
-  styles[67]           ← UI styles with CSS keywords, accessibility, anti-patterns
-  palettes[96]         ← Industry-mapped colour palettes with hex values
-  typography[57]       ← Font pairings with Google Fonts imports
-  industry_patterns[100] ← Product type → style/colour/typography mapping
-  buttons_and_forms[]  ← Button variants + form elements + states per UI style
-  inspiration[]        ← User-added site analyses (extensible)
+Catalogue TOON sections (shared framework — .agents/tools/design/):
+  styles[67]              ← UI styles with CSS keywords, accessibility, anti-patterns
+  palettes[96]            ← Industry-mapped colour palettes with hex values
+  typography[57]          ← Font pairings with Google Fonts imports
+  industry_patterns[100]  ← Product type → style/colour/typography mapping
+  buttons_and_forms[]     ← Button variants + form elements + states per UI style
+  inspiration_template[]  ← Entry format template ONLY (no actual entries)
+
+Inspiration entries (per-project — context/inspiration/):
+  Extracted patterns from studied URLs stay in project repos (typically private).
+  Avoids leaking competitive intelligence into the public aidevops repo.
 
 Brand identity dimensions:
   visual_style | voice_and_tone | copywriting_patterns | imagery
@@ -252,8 +260,9 @@ New/Rebranding Project:
   4. Synthesise findings into draft brand-identity.toon
      └── Present to user for approval/adjustment
 
-  5. Save to project's context/brand-identity.toon
-     └── All agents now read this for design and content decisions
+  5. Save to project repo:
+     ├── context/brand-identity.toon  ← Brand identity (all agents read)
+     └── context/inspiration/*.toon   ← Extracted patterns (private to project)
 ```
 
 #### Subtask Breakdown
@@ -289,6 +298,7 @@ t1371 runs first (no dependencies). t1373 can start after t1371 (needs catalogue
 | 2026-03-01 | Buttons and forms as first-class dimension | User explicitly requested. Most-touched interactive elements. Both visual (design) and verbal (CTA copy, error messages). |
 | 2026-03-01 | Copywriting patterns in brand identity | User noted brand character comes from copy style, imagery, iconography, media — not just visual design. |
 | 2026-03-01 | `.agents/tools/design/` location | Existing directory with design-inspiration.md. Natural home for design skill files. |
+| 2026-03-01 | Inspiration entries in project repos, not shared catalogue | Studied URLs reveal competitive intelligence (what sites you're analysing). Curated example URLs (stripe.com, etc.) are fine in the public repo — they're well-known references. Extracted patterns go to per-project `context/inspiration/` in private repos. |
 
 #### Surprises & Discoveries
 

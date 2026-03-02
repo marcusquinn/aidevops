@@ -18,14 +18,14 @@ Sections:
 3. **`typography`** — 57 font pairings with: category, heading/body fonts, mood keywords, best-for, Google Fonts URL, CSS import, Tailwind config
 4. **`industry_patterns`** — 100 reasoning rules mapping: UI category -> recommended pattern, style priority, colour mood, typography mood, key effects, decision rules (JSON conditions), anti-patterns, severity
 5. **`buttons_and_forms`** — Button styles (primary/secondary/ghost/destructive), form field patterns (input, select, textarea, checkbox, radio, toggle), validation states, loading states, disabled states. Mapped to the 67 UI styles so each style has consistent interactive element guidance.
-6. **`inspiration`** — Empty section with template structure for user-added entries. Each entry: URL, site name, extracted patterns (layout, colour, typography, iconography, imagery, copy tone, button/form style), widgets worth reusing, when to use, when not to use.
+6. **`inspiration_template`** — Template-only section documenting the entry format for per-project inspiration files. No actual entries in the shared catalogue — extracted patterns go to each project's `context/inspiration/` directory (typically private repos). Template fields: URL, site name, extracted patterns (layout, colour, typography, iconography, imagery, copy tone, button/form style), widgets worth reusing, when to use, when not to use.
 
 ## Why
 
 - LLMs default to generic "blue SaaS" designs without structured reference data
 - The upstream repo proved this data improves design output (36k stars)
 - Having it in TOON means zero runtime dependencies (no Python, no API, no premium subscription)
-- The catalogue + inspiration pattern lets users build a custom design library over time
+- The catalogue + per-project inspiration pattern lets users build a custom design library over time (inspiration entries stay in private project repos, not the shared framework)
 - Buttons and forms are the most-touched interactive elements and need style-consistent guidance per UI style
 
 ## How (Approach)
@@ -33,7 +33,7 @@ Sections:
 1. Fetch CSV files from `gh api repos/nextlevelbuilder/ui-ux-pro-max-skill/contents/src/ui-ux-pro-max/data/` (already explored in conversation)
 2. Parse each CSV and convert to TOON sections using the `<!--TOON:section[count]{fields}: ... -->` format
 3. For `buttons_and_forms`: synthesise from the existing style data (each style's CSS keywords, design system variables, and implementation checklist contain button/form guidance) plus standard patterns from Apple HIG, Material Design 3, and our own `workflows/ui-verification.md` interaction principles
-4. For `inspiration`: create empty section with template showing the expected entry format
+4. For `inspiration_template`: create template-only section documenting the entry format. Actual inspiration entries are written to per-project `context/inspiration/` directories, not the shared catalogue. This avoids leaking competitive intelligence (studied URLs) into the public repo.
 5. Keep total file size under 250KB to remain within comfortable context window limits
 6. If data exceeds 250KB, split into `ui-ux-catalogue.toon` (styles + palettes + typography + buttons_and_forms) and `ui-ux-industry-patterns.toon` (industry_patterns + inspiration)
 
@@ -50,11 +50,11 @@ Key files:
     method: bash
     run: "bun run ~/.aidevops/agents/scripts/toon-helper.ts decode .agents/tools/design/ui-ux-catalogue.toon 2>&1 | grep -v error"
   ```
-- [ ] Contains all 6 sections: styles, palettes, typography, industry_patterns, buttons_and_forms, inspiration
+- [ ] Contains all 6 sections: styles, palettes, typography, industry_patterns, buttons_and_forms, inspiration_template
   ```yaml
   verify:
     method: codebase
-    pattern: "TOON:(styles|palettes|typography|industry_patterns|buttons_and_forms|inspiration)"
+    pattern: "TOON:(styles|palettes|typography|industry_patterns|buttons_and_forms|inspiration_template)"
     path: ".agents/tools/design/ui-ux-catalogue.toon"
   ```
 - [ ] styles section has 67+ entries with fields: name, type, keywords, primary_colors, effects, best_for, not_for, accessibility, performance, mobile, css_keywords
@@ -67,7 +67,7 @@ Key files:
 - [ ] typography section has 57+ entries with Google Fonts URLs
 - [ ] industry_patterns section has 100+ entries
 - [ ] buttons_and_forms section covers: primary, secondary, ghost, destructive button variants + input, select, textarea, checkbox, radio, toggle form elements
-- [ ] inspiration section has empty template with documented entry format
+- [ ] inspiration_template section documents the entry format for per-project `context/inspiration/` files (no actual entries in shared catalogue)
 - [ ] File size under 250KB
   ```yaml
   verify:
@@ -83,7 +83,7 @@ Key files:
 - **No Python search engine**: The upstream repo uses BM25 over CSVs. We skip this because the LLM can read the TOON directly and reason over it better than keyword matching. Zero dependencies.
 - **No premium API dependency**: The upstream premium product (uupm.cc) wraps the same data as a hosted MCP API. We use the MIT-licensed local data only.
 - **Buttons and forms added**: Not in upstream data. User specifically requested these as they're the most-touched interactive elements.
-- **Inspiration section starts empty**: Will be populated by t1372's URL study workflow.
+- **Inspiration template only in shared catalogue**: Actual inspiration entries (extracted patterns from studied URLs) go to per-project `context/inspiration/` directories. This avoids leaking competitive intelligence (which sites you're studying) into the public aidevops repo. The shared catalogue provides only the entry format template.
 
 ## Relevant Files
 

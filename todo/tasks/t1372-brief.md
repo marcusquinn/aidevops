@@ -27,11 +27,13 @@ Key sections:
    - Screenshot at 3 breakpoints (mobile 375px, tablet 768px, desktop 1440px)
    - Extract: CSS custom properties, computed font stacks, colour usage, spacing scale, border-radius patterns, button styles, form field styles, icon library detection, image treatment (photography vs illustration, filters, aspect ratios)
    - Also extract: copy tone (formal/casual, sentence length, vocabulary level, use of humour, CTA language), imagery style (photography/illustration/3D/abstract, mood, subjects), iconography (outline/filled/duotone, library, sizing)
-   - Write structured entry to inspiration section of ui-ux-catalogue.toon
+   - Write structured entry to the project's `context/inspiration/` directory (not the shared catalogue — avoids leaking competitive intelligence into the public repo)
 5. **Bulk URL Import** — workflow for processing a bookmarks folder or URL list:
    - Accept: plain URL list (one per line), HTML bookmarks export, or comma-separated
    - Process each URL through the study workflow
+   - Write all entries to the project's `context/inspiration/` directory
    - Generate summary report: common patterns across all URLs, style convergence, recommended catalogue styles that match
+   - Note: the skill instructions must clearly direct output to per-project directories, never to the shared `ui-ux-catalogue.toon`
 6. **Buttons & Forms Focus** — specific guidance on extracting and applying button/form styling:
    - Button variants: primary, secondary, ghost, destructive, icon-only
    - Form elements: input fields, selects, textareas, checkboxes, radios, toggles, date pickers
@@ -42,7 +44,7 @@ Key sections:
 
 - No existing aidevops skill bridges "I like this site's design" to "here's how to replicate that feel"
 - The interview workflow prevents the common failure mode of starting design work without understanding the user's aesthetic preferences
-- Bulk URL import enables building a personal design library over time from accumulated bookmarks
+- Bulk URL import enables building a per-project design library over time from accumulated bookmarks (stored in project's private repo, not the shared framework)
 - Buttons and forms are where users interact most — inconsistent interactive element styling is the most visible design flaw
 
 ## How (Approach)
@@ -100,6 +102,13 @@ Key files:
     pattern: "ui-verification\\.md|ui-ux-catalogue\\.toon|brand-identity\\.md|design-inspiration\\.md"
     path: ".agents/tools/design/ui-ux-inspiration.md"
   ```
+- [ ] URL study workflow directs output to per-project `context/inspiration/` directory, NOT to the shared catalogue
+  ```yaml
+  verify:
+    method: codebase
+    pattern: "context/inspiration"
+    path: ".agents/tools/design/ui-ux-inspiration.md"
+  ```
 - [ ] No hardcoded client-specific content (must be project-agnostic)
 - [ ] Lint clean (markdown-formatter)
 
@@ -110,6 +119,7 @@ Key files:
 - **Example URLs curated, not generated**: The interview presents real, stable sites as style examples. These are hand-picked from design-inspiration.md resources, not AI-generated URLs (which would 404).
 - **Copy tone extraction**: User specifically noted that brand character comes from copywriting style, imagery, iconography, and media — not just visual design. The URL study must extract verbal identity alongside visual.
 - **Buttons and forms**: User specifically requested these. They're the primary interaction surface and the most visible indicator of design consistency.
+- **Inspiration entries in project repos, not shared catalogue**: Extracted patterns from studied URLs go to per-project `context/inspiration/` directories. This avoids two problems: (1) leaking competitive intelligence (which sites you're studying) into the public aidevops repo, (2) mixing project-specific preferences into the shared framework. The shared catalogue contains only the entry format template. Curated example URLs for the interview (stripe.com, linear.app, etc.) are fine in the shared repo — they're well-known public references, same category as the 60+ URLs already in design-inspiration.md.
 
 ## Relevant Files
 
