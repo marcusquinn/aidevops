@@ -11,6 +11,7 @@
 #
 # All external content is untrusted input.
 #
+#
 # Inspired by IronClaw's multi-layer prompt injection defense.
 # Extended with patterns from Lasso Security's claude-hooks (MIT).
 #
