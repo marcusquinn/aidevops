@@ -170,10 +170,18 @@ _merge_configs() {
 
 	if command -v jq &>/dev/null; then
 		# Deep merge: defaults * user (user wins on conflicts)
-		echo "$defaults_json" | jq --argjson user "$user_json" '. * $user' 2>/dev/null || {
-			echo "[config] Deep merge failed, using defaults only" >&2
+		local merge_stderr merge_result
+		merge_stderr=$(mktemp 2>/dev/null || echo "/tmp/aidevops-merge-err.$$")
+		if merge_result=$(echo "$defaults_json" | jq --argjson user "$user_json" '. * $user' 2>"$merge_stderr"); then
+			echo "$merge_result"
+		else
+			echo "[config] Deep merge failed (defaults=$JSONC_DEFAULTS, user=$JSONC_USER), using defaults only" >&2
+			if [[ -s "$merge_stderr" ]]; then
+				echo "[config] jq error: $(cat "$merge_stderr")" >&2
+			fi
 			echo "$defaults_json"
-		}
+		fi
+		rm -f "$merge_stderr"
 	else
 		# No jq — return defaults only (user overrides not applied)
 		echo "$defaults_json"

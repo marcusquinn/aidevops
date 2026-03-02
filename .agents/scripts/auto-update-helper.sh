@@ -975,7 +975,14 @@ cmd_check() {
 cmd_enable() {
 	ensure_dirs
 
-	local interval="${AIDEVOPS_UPDATE_INTERVAL:-$DEFAULT_INTERVAL}"
+	# Read from JSONC config (handles env var > user config > defaults priority)
+	local interval
+	interval=$(get_feature_toggle update_interval "$DEFAULT_INTERVAL")
+	# Validate interval is a positive integer
+	if ! [[ "$interval" =~ ^[0-9]+$ ]] || [[ "$interval" -eq 0 ]]; then
+		log_warn "updates.update_interval_minutes='${interval}' is not a positive integer — using default (${DEFAULT_INTERVAL}m)"
+		interval="$DEFAULT_INTERVAL"
+	fi
 	local script_path="$HOME/.aidevops/agents/scripts/auto-update-helper.sh"
 
 	# Verify the script exists at the deployed location
@@ -1257,8 +1264,9 @@ cmd_status() {
 		idle_secs=$(get_user_idle_seconds)
 		idle_h=$((idle_secs / 3600))
 		idle_m=$(((idle_secs % 3600) / 60))
+		# Read from JSONC config (handles env var > user config > defaults priority)
 		local idle_threshold
-		idle_threshold="${AIDEVOPS_TOOL_IDLE_HOURS:-$DEFAULT_TOOL_IDLE_HOURS}"
+		idle_threshold=$(get_feature_toggle tool_idle_hours "$DEFAULT_TOOL_IDLE_HOURS")
 		# Validate idle_threshold is a positive integer (mirrors check_tool_freshness)
 		if ! [[ "$idle_threshold" =~ ^[0-9]+$ ]] || [[ "$idle_threshold" -eq 0 ]]; then
 			idle_threshold="$DEFAULT_TOOL_IDLE_HOURS"
