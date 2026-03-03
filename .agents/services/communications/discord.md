@@ -1,5 +1,5 @@
 ---
-description: Discord Bot integration — discord.js setup, slash commands, interactive components, gateway events, security considerations (no E2E, AI features, content scanning), Matterbridge, and aidevops dispatch
+description: Discord bot integration — discord.js (TypeScript), bot setup (Developer Portal, intents, OAuth2), DM/guild/thread messaging, slash commands, interactive components v2, role-based routing, access control, privacy/security assessment, aidevops runner dispatch, Matterbridge bridging
 mode: subagent
 tools:
   read: true
@@ -18,268 +18,434 @@ tools:
 
 ## Quick Reference
 
-- **Type**: Community/gaming platform — no E2E encryption, Discord staff can access all messages
-- **License**: Proprietary. Bot SDK: discord.js (Apache-2.0)
-- **Bot tool**: discord.js (TypeScript, official community SDK, 25k+ stars)
-- **Protocol**: Discord API (HTTP REST + WebSocket Gateway)
-- **Encryption**: TLS in transit, at rest encryption — NO end-to-end encryption
-- **Script**: `discord-dispatch-helper.sh [setup|start|stop|status|map|unmap|mappings|test|logs]`
-- **Config**: `~/.config/aidevops/discord-bot.json` (600 permissions)
-- **Data**: `~/.aidevops/.agent-workspace/discord-bot/`
-- **Docs**: https://discord.com/developers/docs | https://discord.js.org/
-- **App Management**: https://discord.com/developers/applications
+- **Type**: Centralized chat platform — guild-based channels, DMs, threads, forums, voice, video, streaming
+- **License**: Proprietary (closed-source server, closed-source clients)
+- **Bot SDK**: `discord.js` v14+ (TypeScript/Node.js, Apache-2.0)
+- **API**: Discord REST API v10 + Gateway WebSocket (real-time events)
+- **Developer Portal**: [discord.com/developers/applications](https://discord.com/developers/applications)
+- **Docs**: [discord.js.org](https://discord.js.org/) | [discord.com/developers/docs](https://discord.com/developers/docs)
+- **Repo**: [github.com/discordjs/discord.js](https://github.com/discordjs/discord.js) (25K+ stars)
+- **Requires**: Node.js >= 18, bot token from Developer Portal
 
-**Quick start**:
+**Key characteristics**: Discord is the dominant platform for developer communities, open-source projects, and gaming. It provides rich bot APIs with slash commands, interactive components (buttons, selects, modals), threads, forums, and voice channels. However, Discord is a centralized, closed-source platform with significant privacy trade-offs.
 
-```bash
-discord-dispatch-helper.sh setup          # Interactive wizard
-discord-dispatch-helper.sh map 123456789012345678 general-assistant
-discord-dispatch-helper.sh start --daemon
-```
+**When to use Discord vs other protocols**:
+
+| Criterion | Discord | Matrix | SimpleX | XMTP |
+|-----------|---------|--------|---------|------|
+| Server model | Centralized (Discord Inc.) | Federated | Decentralized relays | Decentralized nodes |
+| E2E encryption | No | Optional (Megolm) | Yes (double ratchet) | Yes (MLS) |
+| User identifiers | Username + discriminator | `@user:server` | None | Wallet/DID |
+| Bot ecosystem | Mature (slash commands, components) | Mature (SDK, bridges) | Growing (WebSocket API) | First-class (Agent SDK) |
+| Community features | Guilds, roles, threads, forums, voice, stage | Rooms, spaces | Groups (experimental) | Groups (MLS) |
+| Data ownership | Discord Inc. owns all data | Self-hostable | User-controlled | User-controlled |
+| Best for | Community engagement, developer support | Team collaboration, bridges | Maximum privacy | Web3/agent messaging |
 
 <!-- AI-CONTEXT-END -->
 
 ## Architecture
 
 ```text
-┌──────────────────────────┐
-│ Discord Server (Guild)    │
-│                           │
-│ User sends message,       │
-│ slash command, or         │
-│ interacts with component  │
-└────────────┬─────────────┘
-             │
-             │  Gateway (WebSocket)         +    REST API (HTTP)
-             │  (real-time events)               (commands, responses)
-             │
-┌────────────▼─────────────┐     ┌──────────────────────┐
-│ discord.js Bot (Bun/Node) │     │ aidevops Dispatch     │
-│                           │     │                       │
-│ ├─ Gateway event handlers │────▶│ runner-helper.sh      │
-│ ├─ Slash commands         │     │ → AI session          │
-│ ├─ Interactive components │◀────│ → response            │
-│ ├─ Access control         │     │                       │
-│ └─ Entity resolution      │     │                       │
-└────────────┬─────────────┘     └──────────────────────┘
-             │
-┌────────────▼─────────────┐
-│ memory.db (shared)        │
-│ ├── entities              │  Entity profiles
-│ ├── entity_channels       │  Cross-channel identity
-│ ├── interactions          │  Layer 0: Immutable log
-│ └── conversations         │  Layer 1: Context summaries
-└───────────────────────────┘
+┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
+│ Discord Client   │     │ Discord Gateway  │     │ Bot Process      │
+│ (Desktop, Mobile,│     │ (WebSocket)      │     │ (Node.js)        │
+│  Browser)        │     │                  │     │                  │
+│                  │────▶│ Events:          │────▶│ 1. Parse event   │
+│ User sends:      │     │ - messageCreate  │     │ 2. Check perms   │
+│ /ask Review auth │     │ - interactionCr. │     │ 3. Route command  │
+│                  │◀────│ - guildMemberAdd │◀────│ 4. Dispatch       │
+│ Bot response     │     │ - threadCreate   │     │ 5. Respond        │
+└──────────────────┘     └──────────────────┘     └──────────────────┘
+                                │                        │
+                                ▼                        ▼
+                    ┌──────────────────────┐  ┌──────────────────────┐
+                    │ Discord REST API v10 │  │ aidevops Runner      │
+                    │ - Send messages      │  │ runner-helper.sh     │
+                    │ - Manage channels    │  │ → AI session         │
+                    │ - Register commands  │  │ → response           │
+                    │ - Upload files       │  │                      │
+                    └──────────────────────┘  └──────────────────────┘
 ```
 
-**Message flow**:
+**Message flow (slash command)**:
 
-1. User sends message, slash command, or interacts with a component in a Discord guild or DM
-2. Discord delivers event via Gateway WebSocket connection
-3. discord.js client receives event, checks access control (guild/channel/user/role allowlists)
-4. Bot looks up channel-to-runner mapping
-5. Entity resolution: Discord user ID (`123456789012345678`) resolved to entity via `entity-helper.sh`
-6. Layer 0 logging: user message logged as immutable interaction
-7. Context loading: entity profile + conversation summary + recent interactions
-8. Bot dispatches entity-aware prompt to runner via `runner-helper.sh`
-9. Runner executes via headless dispatch
-10. Bot posts response back to Discord channel, thread, or DM
-11. Bot adds reaction emoji (eyes while processing, checkmark on success, X on failure)
+1. User types `/ask prompt:Review auth.ts` in a guild channel
+2. Discord Gateway sends `interactionCreate` event to bot
+3. Bot validates user has required role (e.g., `@developer`)
+4. Bot defers reply (shows "thinking..." indicator, 15-minute window)
+5. Bot dispatches prompt to aidevops runner via `runner-helper.sh`
+6. Runner executes via headless AI session
+7. Bot edits deferred reply with the AI response
+8. If response exceeds 2000 chars, bot sends as file attachment or paginated embeds
+
+## Bot Setup
+
+### 1. Create Application
+
+1. Go to [discord.com/developers/applications](https://discord.com/developers/applications)
+2. Click "New Application", name it (e.g., "aidevops Bot")
+3. Note the **Application ID** (used for OAuth2 and command registration)
+
+### 2. Create Bot User
+
+1. In the application, go to **Bot** tab
+2. Click "Add Bot" (if not auto-created)
+3. Copy the **Bot Token** — store securely:
+
+```bash
+aidevops secret set DISCORD_BOT_TOKEN
+# Or fallback: add to ~/.config/aidevops/credentials.sh
+# DISCORD_BOT_TOKEN="your-token-here"
+```
+
+4. Configure bot settings:
+   - **Public Bot**: Off (prevents others from adding your bot)
+   - **Requires OAuth2 Code Grant**: Off (not needed for bot-only usage)
+   - **Message Content Intent**: On (required to read message content — see Intents below)
+
+### 3. Configure Gateway Intents
+
+Discord requires declaring which events your bot needs. Privileged intents require manual approval for bots in 100+ guilds.
+
+| Intent | Privileged | Required for |
+|--------|-----------|--------------|
+| `Guilds` | No | Guild/channel structure, roles |
+| `GuildMessages` | No | Message events in guild channels |
+| `GuildMembers` | Yes | Member join/leave, role changes |
+| `MessageContent` | Yes | Reading message text (non-slash-command) |
+| `DirectMessages` | No | DM events |
+| `GuildMessageReactions` | No | Reaction events |
+| `GuildVoiceStates` | No | Voice channel join/leave |
+
+**Recommendation**: Use slash commands as the primary interaction method. This avoids needing the `MessageContent` privileged intent entirely. Only enable `MessageContent` if you need prefix-based commands (e.g., `!ai prompt`).
+
+Enable intents in Developer Portal: **Bot** tab > **Privileged Gateway Intents**.
+
+### 4. OAuth2 Bot Invite
+
+Generate an invite URL to add the bot to guilds:
+
+1. Go to **OAuth2** > **URL Generator**
+2. Select scopes: `bot`, `applications.commands`
+3. Select bot permissions:
+   - Send Messages
+   - Send Messages in Threads
+   - Embed Links
+   - Attach Files
+   - Read Message History
+   - Use Slash Commands
+   - Add Reactions
+   - Use External Emojis
+   - Manage Threads (if bot creates threads)
+4. Copy the generated URL and open it to invite the bot
+
+**Permission integer** (for the above set): `326417591296`
+
+```text
+https://discord.com/oauth2/authorize?client_id=YOUR_APP_ID&permissions=326417591296&scope=bot+applications.commands
+```
 
 ## Installation
 
-### Prerequisites
-
-1. **Discord account** with access to the [Discord Developer Portal](https://discord.com/developers/applications)
-2. **Node.js >= 18** or **Bun** runtime
-3. **A Discord server (guild)** where you have Manage Server permission to add bots
-
-### Step 1: Create a Discord Application
-
-1. Go to https://discord.com/developers/applications and click **New Application**
-2. Name the application (e.g., "aidevops Bot")
-3. Note the **Application ID** and **Public Key** from the General Information page
-
-### Step 2: Create a Bot User
-
-1. Navigate to **Bot** section > **Add Bot**
-2. Configure: set username, avatar, disable **Public Bot** if restricting access
-3. Under **Privileged Gateway Intents**, enable **MESSAGE CONTENT INTENT** (required to read message content). Optionally enable SERVER MEMBERS and PRESENCE intents.
-
-**Note**: MESSAGE_CONTENT is a privileged intent. Auto-approved for <100 servers. For 100+ servers, apply for verification through Discord.
-
-### Step 3: Generate Bot Invite URL
-
-Navigate to **OAuth2 > URL Generator**:
-
-1. **Scopes**: Select `bot` and `applications.commands`
-2. **Bot Permissions**: Send Messages, Send Messages in Threads, Create Public/Private Threads, Embed Links, Attach Files, Add Reactions, Use Slash Commands, Read Message History, View Channels
-3. Copy the generated URL and open it in a browser to invite the bot to your server
-
-### Step 4: Obtain and Store the Bot Token
-
-Navigate to **Bot** > **Reset Token**. Copy immediately — shown only once. Store securely:
-
 ```bash
-# Via gopass (preferred)
-gopass insert aidevops/discord/bot-token
-
-# Or via credentials.sh fallback
-# Added to ~/.config/aidevops/credentials.sh (600 permissions)
+mkdir discord-bot && cd discord-bot
+npm init -y
+npm i discord.js
+npm i -D typescript tsx @types/node
 ```
 
-**CRITICAL**: Never commit the bot token to version control. Never share it. Anyone with the token has full control of the bot in all guilds it has joined.
-
-### Step 5: Install Dependencies
-
-```bash
-# Using Bun (preferred)
-bun add discord.js
-
-# Using npm
-npm install discord.js
-```
-
-## Bot API Integration
-
-### Basic discord.js Bot with Slash Commands
+### Minimal Bot
 
 ```typescript
-import { Client, GatewayIntentBits, Events, REST, Routes, SlashCommandBuilder } from "discord.js";
+import { Client, GatewayIntentBits, Events } from "discord.js";
 
 const client = new Client({
   intents: [
-    GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent, GatewayIntentBits.DirectMessages,
-    GatewayIntentBits.GuildMessageReactions,
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.DirectMessages,
   ],
 });
 
-// Register slash commands (global — takes up to 1h; use guild commands for dev)
-const commands = [
-  new SlashCommandBuilder().setName("ai").setDescription("Send a prompt to the AI assistant")
-    .addStringOption((opt) => opt.setName("prompt").setDescription("Your prompt").setRequired(true)),
-  new SlashCommandBuilder().setName("status").setDescription("Check bot and runner status"),
-];
-const rest = new REST().setToken(process.env.DISCORD_BOT_TOKEN!);
-await rest.put(Routes.applicationCommands(process.env.DISCORD_APP_ID!), {
-  body: commands.map((cmd) => cmd.toJSON()),
+client.once(Events.ClientReady, (c) => {
+  console.log(`Logged in as ${c.user.tag}`);
 });
 
-// Handle slash commands
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
-  if (interaction.commandName === "ai") {
-    const prompt = interaction.options.getString("prompt", true);
-    await interaction.deferReply(); // gives 15 min instead of 3 sec
-    try {
-      const response = await dispatchToRunner(prompt, interaction.user.id, interaction.channelId);
-      await interaction.editReply(response);
-    } catch (error) {
-      await interaction.editReply(`Error: ${error.message}`);
-    }
-  }
-  if (interaction.commandName === "status") {
-    await interaction.reply({ content: "Bot is running.", ephemeral: true });
+
+  if (interaction.commandName === "ping") {
+    await interaction.reply("Pong!");
   }
 });
 
-// Handle DMs and @mentions
-client.on(Events.MessageCreate, async (message) => {
-  if (message.author.bot) return;
-  const isDM = !message.guild;
-  const isMention = message.guild && message.mentions.has(client.user!);
-  if (!isDM && !isMention) return;
-
-  const prompt = isDM ? message.content : message.content.replace(/<@!?\d+>/g, "").trim();
-  if (!prompt) { await message.reply("Send me a prompt and I'll help!"); return; }
-
-  await message.react("\u{1F440}");
-  try {
-    const response = await dispatchToRunner(prompt, message.author.id, message.channelId);
-    await message.reply(response);
-    await message.reactions.cache.get("\u{1F440}")?.users.remove(client.user!);
-    await message.react("\u2705");
-  } catch (error) {
-    await message.reply(`Error: ${error.message}`);
-    await message.react("\u274C");
-  }
-});
-
-client.once(Events.ClientReady, (c) => console.log(`Discord bot ready as ${c.user.tag}`));
-await client.login(process.env.DISCORD_BOT_TOKEN);
+// Token from environment or gopass
+const token = process.env.DISCORD_BOT_TOKEN;
+if (!token) throw new Error("DISCORD_BOT_TOKEN not set");
+client.login(token);
 ```
 
-### Thread and Forum Messaging
+## Slash Commands
+
+Slash commands are the recommended interaction method. They provide auto-complete, validation, and do not require the `MessageContent` intent.
+
+### Registering Commands
 
 ```typescript
-import { ChannelType } from "discord.js";
+import { REST, Routes, SlashCommandBuilder } from "discord.js";
 
+const commands = [
+  new SlashCommandBuilder()
+    .setName("ask")
+    .setDescription("Ask the AI a question")
+    .addStringOption((opt) =>
+      opt
+        .setName("prompt")
+        .setDescription("Your question or instruction")
+        .setRequired(true)
+    )
+    .addStringOption((opt) =>
+      opt
+        .setName("runner")
+        .setDescription("Which runner to use")
+        .addChoices(
+          { name: "Code Reviewer", value: "code-reviewer" },
+          { name: "SEO Analyst", value: "seo-analyst" },
+          { name: "Ops Monitor", value: "ops-monitor" }
+        )
+    ),
+  new SlashCommandBuilder()
+    .setName("status")
+    .setDescription("Check bot and runner status"),
+].map((cmd) => cmd.toJSON());
+
+const rest = new REST().setToken(process.env.DISCORD_BOT_TOKEN!);
+
+// Register globally (takes up to 1 hour to propagate)
+await rest.put(Routes.applicationCommands(process.env.DISCORD_APP_ID!), {
+  body: commands,
+});
+
+// Or register per-guild (instant, good for development)
+await rest.put(
+  Routes.applicationGuildCommands(
+    process.env.DISCORD_APP_ID!,
+    "GUILD_ID"
+  ),
+  { body: commands }
+);
+```
+
+### Handling Commands
+
+```typescript
+client.on(Events.InteractionCreate, async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+
+  if (interaction.commandName === "ask") {
+    const prompt = interaction.options.getString("prompt", true);
+    const runner = interaction.options.getString("runner") ?? "code-reviewer";
+
+    // Defer reply — gives 15 minutes to respond (vs 3 seconds default)
+    await interaction.deferReply();
+
+    try {
+      const result = await dispatchToRunner(runner, prompt);
+
+      if (result.length <= 2000) {
+        await interaction.editReply(result);
+      } else {
+        // Send as file attachment for long responses
+        const buffer = Buffer.from(result, "utf-8");
+        await interaction.editReply({
+          content: "Response attached (exceeded 2000 char limit):",
+          files: [{ attachment: buffer, name: "response.md" }],
+        });
+      }
+    } catch (err) {
+      await interaction.editReply(`Error: ${(err as Error).message}`);
+    }
+  }
+});
+```
+
+## Interactive Components v2
+
+Discord's component system supports buttons, select menus, modals, and the newer container-based layouts.
+
+### Buttons
+
+```typescript
+import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+} from "discord.js";
+
+const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+  new ButtonBuilder()
+    .setCustomId("approve")
+    .setLabel("Approve")
+    .setStyle(ButtonStyle.Success),
+  new ButtonBuilder()
+    .setCustomId("reject")
+    .setLabel("Reject")
+    .setStyle(ButtonStyle.Danger)
+);
+
+await interaction.reply({ content: "Review this PR?", components: [row] });
+
+// Handle button click
+client.on(Events.InteractionCreate, async (i) => {
+  if (!i.isButton()) return;
+  if (i.customId === "approve") {
+    await i.update({ content: "Approved!", components: [] });
+  }
+});
+```
+
+### Select Menus
+
+```typescript
+import {
+  ActionRowBuilder,
+  StringSelectMenuBuilder,
+} from "discord.js";
+
+const select = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+  new StringSelectMenuBuilder()
+    .setCustomId("runner-select")
+    .setPlaceholder("Choose a runner")
+    .addOptions(
+      { label: "Code Reviewer", value: "code-reviewer" },
+      { label: "SEO Analyst", value: "seo-analyst" },
+      { label: "Ops Monitor", value: "ops-monitor" }
+    )
+);
+
+await interaction.reply({ content: "Select runner:", components: [select] });
+```
+
+### Modals (Text Input Forms)
+
+```typescript
+import {
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  ActionRowBuilder,
+} from "discord.js";
+
+const modal = new ModalBuilder()
+  .setCustomId("task-modal")
+  .setTitle("Create Task");
+
+const titleInput = new TextInputBuilder()
+  .setCustomId("task-title")
+  .setLabel("Task Title")
+  .setStyle(TextInputStyle.Short)
+  .setRequired(true);
+
+const descInput = new TextInputBuilder()
+  .setCustomId("task-desc")
+  .setLabel("Description")
+  .setStyle(TextInputStyle.Paragraph)
+  .setRequired(false);
+
+modal.addComponents(
+  new ActionRowBuilder<TextInputBuilder>().addComponents(titleInput),
+  new ActionRowBuilder<TextInputBuilder>().addComponents(descInput)
+);
+
+// Show modal (only from button/command interactions)
+await interaction.showModal(modal);
+
+// Handle modal submit
+client.on(Events.InteractionCreate, async (i) => {
+  if (!i.isModalSubmit()) return;
+  if (i.customId === "task-modal") {
+    const title = i.fields.getTextInputValue("task-title");
+    const desc = i.fields.getTextInputValue("task-desc");
+    await i.reply(`Task created: **${title}**\n${desc}`);
+  }
+});
+```
+
+## Messaging Patterns
+
+### Guild Channel Messages
+
+```typescript
+// Send to a specific channel
+const channel = await client.channels.fetch("CHANNEL_ID");
+if (channel?.isTextBased()) {
+  await channel.send("Hello from the bot!");
+}
+
+// Send embed
+import { EmbedBuilder } from "discord.js";
+
+const embed = new EmbedBuilder()
+  .setTitle("Runner Status")
+  .setColor(0x00ff00)
+  .addFields(
+    { name: "code-reviewer", value: "Online", inline: true },
+    { name: "seo-analyst", value: "Busy", inline: true }
+  )
+  .setTimestamp();
+
+await channel.send({ embeds: [embed] });
+```
+
+### Direct Messages
+
+```typescript
+// Send DM to a user
+const user = await client.users.fetch("USER_ID");
+await user.send("Your task has been completed.");
+
+// Reply to DM
+client.on(Events.MessageCreate, async (message) => {
+  if (message.author.bot) return;
+  if (!message.guild) {
+    // This is a DM
+    await message.reply("I received your DM. Use /ask in a server for AI help.");
+  }
+});
+```
+
+### Threads
+
+```typescript
 // Create a thread from a message
 const thread = await message.startThread({
   name: "AI Discussion",
   autoArchiveDuration: 60, // minutes: 60, 1440, 4320, 10080
 });
-await thread.send("Thread created. I'll respond here.");
+await thread.send("Thread created for this discussion.");
 
-// Create a forum post
-const forumChannel = await client.channels.fetch(forumChannelId);
-if (forumChannel?.type === ChannelType.GuildForum) {
-  await forumChannel.threads.create({
-    name: "Analysis Report",
-    message: { content: "Here's the analysis..." },
-    appliedTags: [tagId],
+// Create a thread in a channel (without a parent message)
+if (channel.isTextBased() && "threads" in channel) {
+  const thread = await channel.threads.create({
+    name: "Task t1385.7 Discussion",
+    autoArchiveDuration: 1440,
   });
+  await thread.send("Tracking task t1385.7 here.");
 }
 ```
 
-### Interactive Components (Buttons, Selects, Modals)
+### Forum Channels
 
 ```typescript
-import {
-  ActionRowBuilder, ButtonBuilder, ButtonStyle,
-  StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle,
-} from "discord.js";
-
-// Buttons
-const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-  new ButtonBuilder().setCustomId("run_tests").setLabel("Run Tests").setStyle(ButtonStyle.Secondary),
-  new ButtonBuilder().setCustomId("deploy").setLabel("Deploy").setStyle(ButtonStyle.Primary),
-);
-
-await interaction.reply({ content: "Choose an action:", components: [row] });
-
-// Handle button clicks
-client.on(Events.InteractionCreate, async (interaction) => {
-  if (!interaction.isButton()) return;
-  if (interaction.customId === "run_tests") {
-    await interaction.update({ content: "Running tests...", components: [] });
-  }
-});
-
-// Select menus
-const selectRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-  new StringSelectMenuBuilder()
-    .setCustomId("runner_select")
-    .setPlaceholder("Choose a runner")
-    .addOptions(
-      { label: "Code Reviewer", value: "code-reviewer" },
-      { label: "SEO Analyst", value: "seo-analyst" },
-      { label: "General Assistant", value: "general-assistant" }
-    )
-);
-
-// Modals — show in response to button/command interaction
-const modal = new ModalBuilder().setCustomId("prompt_modal").setTitle("AI Prompt").addComponents(
-  new ActionRowBuilder<TextInputBuilder>().addComponents(
-    new TextInputBuilder()
-      .setCustomId("prompt_input")
-      .setLabel("Enter your prompt")
-      .setStyle(TextInputStyle.Paragraph)
-      .setRequired(true)
-  )
-);
-await interaction.showModal(modal);
+// Post to a forum channel
+const forum = await client.channels.fetch("FORUM_CHANNEL_ID");
+if (forum?.type === ChannelType.GuildForum) {
+  const thread = await forum.threads.create({
+    name: "Bug Report: Auth failure",
+    message: { content: "Description of the bug..." },
+    appliedTags: ["BUG_TAG_ID"],
+  });
+}
 ```
 
 ### File Uploads
@@ -287,314 +453,484 @@ await interaction.showModal(modal);
 ```typescript
 import { AttachmentBuilder } from "discord.js";
 
-const attachment = new AttachmentBuilder(Buffer.from(reportContent), {
-  name: "report.md",
-  description: "Analysis report",
-});
-await message.reply({ content: "Here's the report:", files: [attachment] });
+// From buffer
+const buffer = Buffer.from("file content here", "utf-8");
+const attachment = new AttachmentBuilder(buffer, { name: "output.md" });
+await channel.send({ files: [attachment] });
+
+// From file path
+await channel.send({ files: ["./report.pdf"] });
 ```
 
-### Role-Based Routing and Permission Checks
+### Reactions and Typing
 
 ```typescript
-// Role-based runner routing
-function getRunnerForRoles(member: GuildMember): string {
-  if (member.roles.cache.has(ADMIN_ROLE_ID)) return "admin-assistant";
-  if (member.roles.cache.has(DEV_ROLE_ID)) return "code-reviewer";
-  if (member.roles.cache.has(MARKETING_ROLE_ID)) return "seo-analyst";
-  return "general-assistant";
+// Add reaction
+await message.react("✅");
+await message.react("⏳"); // hourglass while processing
+
+// Show typing indicator (resets after 10 seconds or when message sent)
+await channel.sendTyping();
+```
+
+## Role-Based Routing
+
+Map Discord roles to aidevops runners. Users with specific roles get routed to the appropriate AI personality.
+
+### Configuration
+
+```json
+{
+  "guildId": "YOUR_GUILD_ID",
+  "botToken": "stored-in-gopass",
+  "roleRouting": {
+    "developer": "code-reviewer",
+    "seo-team": "seo-analyst",
+    "ops": "ops-monitor",
+    "content": "content-writer"
+  },
+  "channelRouting": {
+    "dev-chat": "code-reviewer",
+    "seo-room": "seo-analyst"
+  },
+  "defaultRunner": "code-reviewer",
+  "allowedRoles": ["developer", "seo-team", "ops", "content", "admin"],
+  "adminRoles": ["admin"],
+  "maxPromptLength": 3000,
+  "responseTimeout": 600
 }
-
-// Permission check before dispatch
-client.on(Events.MessageCreate, async (message) => {
-  if (!message.guild || message.author.bot) return;
-  const member = await message.guild.members.fetch(message.author.id);
-  if (!member.roles.cache.has(ALLOWED_ROLE_ID)) {
-    await message.react("\u{1F6AB}");
-    return;
-  }
-  const runner = getRunnerForRoles(member);
-  const response = await dispatchToRunner(message.content, message.author.id, message.channelId, runner);
-  await message.reply(response);
-});
 ```
 
-### Access Control
+### Routing Logic
 
 ```typescript
-// Allowlists — empty set = allow all
-const ALLOWED_GUILDS = new Set(["123456789012345678"]);
-const ALLOWED_CHANNELS = new Set(["111111111111111111"]);
-const ALLOWED_USERS = new Set<string>([]);   // empty = allow all
-const REQUIRED_ROLES = new Set<string>([]);  // empty = no role requirement
+function resolveRunner(
+  interaction: ChatInputCommandInteraction,
+  config: BotConfig
+): string {
+  // 1. Explicit runner choice from command option
+  const explicit = interaction.options.getString("runner");
+  if (explicit) return explicit;
 
-function isAllowed(userId: string, channelId: string, guildId: string | null, memberRoles?: string[]): boolean {
-  if (ALLOWED_GUILDS.size > 0 && guildId && !ALLOWED_GUILDS.has(guildId)) return false;
-  if (ALLOWED_CHANNELS.size > 0 && !ALLOWED_CHANNELS.has(channelId)) return false;
-  if (ALLOWED_USERS.size > 0 && !ALLOWED_USERS.has(userId)) return false;
-  if (REQUIRED_ROLES.size > 0 && memberRoles && !memberRoles.some((r) => REQUIRED_ROLES.has(r))) return false;
+  // 2. Channel-based routing
+  const channelName = (interaction.channel as TextChannel)?.name;
+  if (channelName && config.channelRouting[channelName]) {
+    return config.channelRouting[channelName];
+  }
+
+  // 3. Role-based routing (highest role wins)
+  const member = interaction.member as GuildMember;
+  for (const [roleName, runner] of Object.entries(config.roleRouting)) {
+    if (member.roles.cache.some((r) => r.name === roleName)) {
+      return runner;
+    }
+  }
+
+  // 4. Default
+  return config.defaultRunner;
+}
+```
+
+## Access Control
+
+### Guild/Channel/User/Role Allowlists
+
+```typescript
+function checkAccess(
+  interaction: ChatInputCommandInteraction,
+  config: BotConfig
+): boolean {
+  const member = interaction.member as GuildMember;
+
+  // Guild allowlist (if configured)
+  if (config.allowedGuilds?.length) {
+    if (!config.allowedGuilds.includes(interaction.guildId!)) return false;
+  }
+
+  // Channel allowlist (if configured)
+  if (config.allowedChannels?.length) {
+    if (!config.allowedChannels.includes(interaction.channelId)) return false;
+  }
+
+  // User allowlist (if configured)
+  if (config.allowedUsers?.length) {
+    if (!config.allowedUsers.includes(interaction.user.id)) return false;
+  }
+
+  // Role allowlist (user must have at least one allowed role)
+  if (config.allowedRoles?.length) {
+    const hasRole = config.allowedRoles.some((roleName) =>
+      member.roles.cache.some((r) => r.name === roleName)
+    );
+    if (!hasRole) return false;
+  }
+
   return true;
 }
 ```
 
-## Security Considerations
+### Rate Limiting
 
-**CRITICAL: Read this section carefully before deploying any bot that processes sensitive information via Discord.**
+```typescript
+const rateLimits = new Map<string, number[]>();
 
-### Encryption
+function checkRateLimit(
+  userId: string,
+  maxRequests: number = 10,
+  windowMs: number = 60_000
+): boolean {
+  const now = Date.now();
+  const timestamps = rateLimits.get(userId) ?? [];
+  const recent = timestamps.filter((t) => now - t < windowMs);
 
-Discord provides **TLS in transit** and **encryption at rest** on Discord's servers. There is **NO end-to-end encryption**. Discord has full technical access to ALL message content, including:
+  if (recent.length >= maxRequests) return false;
 
-- All guild channel messages (text, voice chat text, forum posts)
-- All direct messages (1:1 and group DMs)
-- All file uploads, images, and embedded media
-- All message edits and their full history
-- All deleted messages (retained server-side)
-- Voice channel audio (processed server-side, not E2E encrypted)
-
-### Staff Access
-
-Discord's Trust & Safety team can and does read messages when investigating reports. Discord's privacy policy grants them broad access to user content for enforcement of Terms of Service and Community Guidelines. Unlike corporate platforms like Slack, there is no admin export tool for server owners — but Discord itself has unrestricted access to all data.
-
-### Metadata Collection
-
-Discord stores comprehensive metadata beyond message content: full message history with timestamps, edit/deletion history (deleted messages retained server-side), file upload/download records, reaction usage, read state tracking, voice channel participation, screen sharing activity, online/idle/gaming status, IP addresses, device info, client version, guild membership history, friend/block lists, and search queries.
-
-### AI Training and Data Processing
-
-**WARNING**: Discord has introduced and expanded AI features with data processing implications:
-
-- **Clyde AI** (discontinued March 2024): AI chatbot that processed messages, establishing the precedent of AI processing message content.
-- **Message summaries and AutoMod AI**: Server-side AI processing of message content for summaries, conversation topics, and content moderation.
-- **Discord's privacy policy** allows using data for "service improvement" and "developing new features," including AI/ML. The scope is not fully transparent.
-- **User opt-out**: Users can toggle some data usage in Privacy & Safety settings, but effectiveness for AI processing specifically is unclear.
-- **Third-party bot data**: Messages processed by third-party bots are subject to each bot developer's privacy policy, not Discord's.
-
-**Practical impact**: Assume any message sent on Discord may be processed by AI systems. Discord's privacy policy supports this usage.
-
-### Push Notifications
-
-Delivered via FCM (Android) and APNs (iOS). Message previews visible to Google/Apple during transit by default. Users can disable previews in notification settings, but this is a per-user choice, not a server-wide control.
-
-### Open Source and Auditability
-
-Discord platform is entirely closed source — no independent audit possible. discord.js is open source (Apache-2.0) so bot code is auditable, but Discord's server-side processing is not. Discord clients (desktop, mobile) are closed source with no reproducible builds.
-
-### Jurisdiction and Legal
-
-- **Entity**: Discord Inc. — San Francisco, California, USA
-- **Jurisdiction**: Subject to US law including CLOUD Act, FISA Section 702, and National Security Letters
-- **Data residency**: No user-selectable data residency. All data on Google Cloud Platform. No EU residency option.
-- **Government requests**: Discord publishes a transparency report and complies with valid legal process.
-- **GDPR**: Compliant for EU users. Users can request data export/deletion. Messages in servers you've left may persist.
-
-### Bot-Specific Security
-
-- Bot tokens grant access to ALL guilds the bot is in — a compromised token exposes every server
-- **MESSAGE_CONTENT privileged intent** gives access to full text of all messages in guilds. Broad permission.
-- Bots can be added to any server by anyone with **Manage Server** permission — scope creep risk. Disable "Public Bot" in developer portal.
-- **No token rotation API**: Tokens must be manually reset in the developer portal if compromised.
-- Excessive rate limit violations can result in bot account termination.
-
-### Content Scanning
-
-Discord actively scans for CSAM and prohibited content using PhotoDNA and custom ML models. Automated content analysis applies to all messages and media uploads, server-side, regardless of privacy settings.
-
-### Comparison with Other Platforms
-
-| Aspect | Discord | Slack | Matrix (self-hosted) | SimpleX |
-|--------|---------|-------|---------------------|---------|
-| E2E encryption | No | No | Yes (Megolm) | Yes (Double ratchet) |
-| Platform content access | Full | Full | None (if E2E on) | None (stateless) |
-| AI training risk | Yes (policy allows) | Opt-out required | No | No |
-| Content scanning | Yes (automated) | Limited | No | No |
-| Open source server | No | No | Yes (Synapse) | Yes (SMP) |
-| Self-hostable | No | No | Yes | Yes |
-| Jurisdiction | USA (Discord Inc.) | USA (Salesforce) | Self-determined | Self-determined |
-
-**Summary**: Similar privacy profile to Slack — no E2E, platform has full access, AI features process content. Discord has less corporate oversight (no admin export tool) but broader platform access and active content scanning. **Not suitable for sensitive communications.** Use for community engagement and casual team communication.
-
-## aidevops Integration
-
-### discord-dispatch-helper.sh
-
-The helper script follows the same pattern as other dispatch helpers:
-
-```bash
-# Setup wizard — prompts for token, application ID, guild/channel mappings
-discord-dispatch-helper.sh setup
-
-# Map Discord channels to runners
-discord-dispatch-helper.sh map 123456789012345678 code-reviewer
-discord-dispatch-helper.sh map 987654321098765432 seo-analyst
-
-# List mappings
-discord-dispatch-helper.sh mappings
-
-# Remove a mapping
-discord-dispatch-helper.sh unmap 123456789012345678
-
-# Start/stop the bot
-discord-dispatch-helper.sh start --daemon
-discord-dispatch-helper.sh stop
-discord-dispatch-helper.sh status
-
-# Test dispatch
-discord-dispatch-helper.sh test code-reviewer "Review src/auth.ts"
-
-# View logs
-discord-dispatch-helper.sh logs
-discord-dispatch-helper.sh logs --follow
-```
-
-### Runner Dispatch
-
-The bot dispatches to runners via `runner-helper.sh`, which handles:
-
-- Runner AGENTS.md (personality/instructions)
-- Headless session management
-- Memory namespace isolation
-- Entity-aware context loading
-- Run logging
-
-### Entity Resolution
-
-When a Discord user sends a message, the bot resolves their Discord user ID to an entity:
-
-- **Known user**: Match on `entity_channels` table (`channel=discord`, `channel_id=123456789012345678`)
-- **New user**: Creates entity via `entity-helper.sh create` with Discord user ID linked
-- **Cross-channel**: If the same person is linked on other channels (Matrix, Slack, SimpleX, email), their full profile is available
-- **Profile enrichment**: Discord's user API provides username, display name, avatar, and guild-specific nickname — used to populate entity profile on first contact
-
-### Configuration
-
-`~/.config/aidevops/discord-bot.json` (600 permissions):
-
-```json
-{
-  "botToken": "",
-  "applicationId": "",
-  "allowedGuilds": ["123456789012345678"],
-  "allowedChannels": ["111111111111111111", "222222222222222222"],
-  "allowedUsers": [],
-  "requiredRoles": [],
-  "defaultRunner": "",
-  "channelMappings": {
-    "111111111111111111": "code-reviewer",
-    "222222222222222222": "seo-analyst"
-  },
-  "respondToMentions": true,
-  "respondToDMs": true,
-  "ignoreOwnMessages": true,
-  "maxPromptLength": 3000,
-  "responseTimeout": 600,
-  "sessionIdleTimeout": 300
+  recent.push(now);
+  rateLimits.set(userId, recent);
+  return true;
 }
 ```
 
-**Note**: `respondToMentions` is enabled by default. Discord bots are typically invoked via `@mention` or slash commands. Set `respondToDMs` to `false` if you want to restrict the bot to guild channels only.
+## Privacy and Security Assessment
+
+### What Discord Sees
+
+Discord is a centralized platform. All messages pass through and are stored on Discord's servers.
+
+| Data | Discord access | Notes |
+|------|---------------|-------|
+| Message content | Full access | Stored server-side, no E2E encryption |
+| Message metadata | Full access | Timestamps, sender, channel, guild |
+| User identity | Full access | Email, IP, device info, payment info |
+| Voice/video | Full access | Processed server-side, not E2E |
+| File uploads | Full access | Stored on Discord CDN |
+| Bot interactions | Full access | All slash commands, button clicks |
+| Presence/activity | Full access | Online status, game activity, Spotify |
+
+### AI Training Warning
+
+**Discord's privacy policy permits using data for AI/ML features and service improvement.** Discord has introduced AI-powered features:
+
+- **Clyde** (AI chatbot, powered by OpenAI — paused but precedent set)
+- **Conversation summaries** (AI-generated channel summaries)
+- **AutoMod AI** (AI-powered content moderation)
+- **Topic suggestions** (AI-generated channel topics)
+
+Users should assume:
+
+1. All Discord messages are accessible to Discord Inc.
+2. Message content may be used for AI model training and feature development
+3. Discord staff can access any message for trust & safety review
+4. Push notifications route through FCM (Google) or APNs (Apple)
+5. Discord's CDN and infrastructure is hosted on Google Cloud
+
+**Opt-out**: Users can disable some AI features in Settings > Privacy & Safety, but this does not prevent Discord from accessing or storing the data — only from surfacing AI features in the UI.
+
+### Comparison with E2E Encrypted Alternatives
+
+| Aspect | Discord | Matrix (E2E) | SimpleX | Signal |
+|--------|---------|-------------|---------|--------|
+| E2E encryption | No | Optional | Yes | Yes |
+| Server reads messages | Yes | No (with E2E) | No | No |
+| AI training risk | Yes | No (self-hosted) | No | No |
+| Metadata collection | Extensive | Moderate | Minimal | Minimal |
+| Open-source server | No | Yes | Yes | Partial |
+| Data portability | Limited (GDPR export) | Full | Full | Limited |
+
+### Recommendations
+
+- **Do not send secrets, credentials, or sensitive business data** through Discord
+- **Use Discord for community engagement**, not for confidential communications
+- **For sensitive AI dispatch**, prefer Matrix or SimpleX — use Discord only for non-sensitive prompts
+- **Inform users** that their messages to the bot are processed by Discord and the AI runner
+- **Bot token security**: Store in gopass, never commit to repos, rotate if compromised
+- **Minimal permissions**: Request only the bot permissions you need
+- **Audit logging**: Log all bot dispatches locally for accountability
+
+## Integration with aidevops Runners
+
+### Dispatch Pattern
+
+```typescript
+import { execSync } from "node:child_process";
+
+async function dispatchToRunner(
+  runner: string,
+  prompt: string
+): Promise<string> {
+  // Sanitize prompt (remove potential injection)
+  const sanitized = prompt.replace(/[`$\\]/g, "");
+
+  const result = execSync(
+    `runner-helper.sh dispatch "${runner}" "${sanitized}"`,
+    {
+      encoding: "utf-8",
+      timeout: 600_000, // 10 minutes
+      env: { ...process.env, RUNNER_TIMEOUT: "600" },
+    }
+  );
+
+  return result.trim();
+}
+```
+
+### Recommended Architecture
+
+```text
+┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
+│ Discord Guild    │     │ Discord Bot      │     │ aidevops Runner  │
+│                  │     │ (Node.js)        │     │                  │
+│ /ask prompt      │────▶│ 1. Parse command │────▶│ runner-helper.sh │
+│ /status          │     │ 2. Check roles   │     │ → AI session     │
+│ Button clicks    │◀────│ 3. Route runner  │◀────│ → response       │
+│                  │     │ 4. Dispatch      │     │                  │
+│ AI response      │     │ 5. Format reply  │     │                  │
+└──────────────────┘     └──────────────────┘     └──────────────────┘
+```
+
+### Recommended Slash Commands
+
+| Command | Description | Runner |
+|---------|-------------|--------|
+| `/ask <prompt>` | General AI question | Role-based routing |
+| `/review <file>` | Code review request | `code-reviewer` |
+| `/seo <url>` | SEO analysis | `seo-analyst` |
+| `/status` | Bot and runner status | (local) |
+| `/deploy <project>` | Trigger deployment | `ops-monitor` |
+| `/task <description>` | Create a task | (local — creates TODO entry) |
+
+### Thread-Per-Request Pattern
+
+For longer conversations, create a thread per AI request:
+
+```typescript
+client.on(Events.InteractionCreate, async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+  if (interaction.commandName !== "ask") return;
+
+  const prompt = interaction.options.getString("prompt", true);
+
+  // Create thread for this conversation
+  const reply = await interaction.reply({
+    content: `Processing: *${prompt.slice(0, 100)}...*`,
+    fetchReply: true,
+  });
+
+  const thread = await reply.startThread({
+    name: `AI: ${prompt.slice(0, 90)}`,
+    autoArchiveDuration: 60,
+  });
+
+  // Dispatch and post result in thread
+  const result = await dispatchToRunner("code-reviewer", prompt);
+  await thread.send(result.slice(0, 2000));
+});
+```
+
+## Voice Channels
+
+Discord bots can join voice channels for audio interactions. This requires the `@discordjs/voice` package.
+
+```bash
+npm i @discordjs/voice @discordjs/opus sodium-native
+```
+
+```typescript
+import {
+  joinVoiceChannel,
+  createAudioPlayer,
+  createAudioResource,
+} from "@discordjs/voice";
+
+// Join voice channel
+const connection = joinVoiceChannel({
+  channelId: "VOICE_CHANNEL_ID",
+  guildId: "GUILD_ID",
+  adapterCreator: guild.voiceAdapterCreator,
+});
+
+// Play audio
+const player = createAudioPlayer();
+const resource = createAudioResource("./response.mp3");
+player.play(resource);
+connection.subscribe(player);
+```
+
+Voice integration enables speech-to-text → AI dispatch → text-to-speech workflows. See `tools/voice/speech-to-speech.md` for the audio pipeline.
 
 ## Matterbridge Integration
 
-Discord is natively supported by [Matterbridge](https://github.com/42wim/matterbridge) using the Discord Bot API.
+Discord is natively supported by [Matterbridge](https://github.com/42wim/matterbridge). See `services/communications/matterbridge.md` for full configuration.
 
-```text
-Discord Server (Guild)
-    │
-    │  Discord Bot API (via bot token)
-    │
-Matterbridge (Go binary)
-    │
-    ├── Matrix rooms
-    ├── Slack channels
-    ├── Telegram groups
-    ├── SimpleX contacts
-    ├── IRC channels
-    └── 40+ other platforms
-```
-
-### Matterbridge Configuration
-
-Add to `matterbridge.toml`:
+### Quick Config
 
 ```toml
-[discord.myserver]
-Token = "Bot YOUR_BOT_TOKEN"
-Server = "123456789012345678"  # Guild ID
-## Optional: auto-create webhooks for better username display
-AutoWebhooks = true
-```
+[discord]
+  [discord.myserver]
+  Token="Bot YOUR_BOT_TOKEN"
+  Server="My Server Name"
+  # Use webhooks for better username/avatar spoofing
+  # WebhookURL="https://discord.com/api/webhooks/..."
 
-Gateway configuration:
-
-```toml
 [[gateway]]
-name = "dev-bridge"
-enable = true
+name="discord-matrix-bridge"
+enable=true
 
-[[gateway.inout]]
-account = "discord.myserver"
-channel = "ID:111111111111111111"  # Channel ID (use ID: prefix)
+  [[gateway.inout]]
+  account="discord.myserver"
+  channel="general"
 
-[[gateway.inout]]
-account = "matrix.myserver"
-channel = "#dev:matrix.example.com"
+  [[gateway.inout]]
+  account="matrix.home"
+  channel="#general:example.com"
 ```
 
-**Privacy warning**: Bridging Discord to E2E-encrypted platforms (Matrix, SimpleX) means those messages will be stored unencrypted on Discord's servers and subject to content scanning. Inform users on the encrypted side. See `services/communications/matterbridge.md` for full bridging considerations.
+### Bridge Considerations
+
+- Discord messages bridged to Matrix/SimpleX lose E2E encryption at the bridge boundary
+- Discord-side messages are always visible to Discord Inc. regardless of bridge
+- Matterbridge uses a bot token — the bridge bot needs appropriate permissions in the Discord guild
+- Webhook mode provides better username/avatar display for bridged messages
+- File attachments are re-uploaded to the destination platform
+
+### Privacy Gradient
+
+Users who need privacy use Matrix or SimpleX directly. Discord serves as the convenience/community layer. Messages flow between platforms transparently via Matterbridge, but users should understand that anything sent through Discord is accessible to Discord Inc.
+
+## Deployment
+
+### Process Management
+
+```bash
+# PM2 (recommended for production)
+npm i -g pm2
+pm2 start src/bot.ts --interpreter tsx --name discord-bot
+pm2 save
+pm2 startup
+
+# Or systemd
+cat > /etc/systemd/system/discord-bot.service <<'EOF'
+[Unit]
+Description=Discord aidevops bot
+After=network.target
+
+[Service]
+Type=simple
+User=discord-bot
+WorkingDirectory=/opt/discord-bot
+ExecStart=/usr/bin/node --import tsx src/bot.ts
+Restart=on-failure
+RestartSec=5
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now discord-bot
+```
+
+### Docker
+
+```dockerfile
+FROM node:20-slim
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --omit=dev
+COPY . .
+CMD ["node", "--import", "tsx", "src/bot.ts"]
+```
+
+### Health Monitoring
+
+```typescript
+// Heartbeat check
+client.on(Events.ClientReady, () => {
+  setInterval(() => {
+    const ping = client.ws.ping;
+    if (ping > 500) {
+      console.warn(`High gateway latency: ${ping}ms`);
+    }
+  }, 30_000);
+});
+
+// Reconnection handling (discord.js handles this automatically)
+client.on(Events.ShardReconnecting, () => {
+  console.log("Reconnecting to Discord gateway...");
+});
+
+client.on(Events.ShardError, (error) => {
+  console.error("Gateway error:", error);
+});
+```
 
 ## Limitations
 
-### No End-to-End Encryption
+### Message Length
 
-Discord does not support E2E encryption. All messages are readable by Discord Inc. and subject to automated content scanning. Discord's Trust & Safety operations depend on server-side content access.
+Discord messages are limited to 2000 characters. AI responses frequently exceed this. Strategies:
 
-### MESSAGE_CONTENT Privileged Intent
-
-Required to read message text in guild channels. Auto-approved for <100 servers. For 100+ servers, apply through the Developer Portal — process takes weeks and requires demonstrating a valid use case.
+1. **File attachment**: Send long responses as `.md` or `.txt` files
+2. **Pagination**: Split into multiple messages (risk of rate limiting)
+3. **Embeds**: Up to 4096 chars in embed description, 6000 total across all embeds
+4. **Thread**: Create a thread and post multiple messages
 
 ### Rate Limits
 
-| API | Rate Limit | Notes |
-|-----|-----------|-------|
-| Global | 50 requests per second | Across all routes |
-| Per-route | Varies (typically 5-10/sec) | Returns `X-RateLimit-*` headers |
-| `POST /channels/{id}/messages` | 5 per 5 seconds per channel | |
-| Gateway | 120 events per 60 seconds | Outbound (identify, heartbeat, etc.) |
-| Slash command registration (global) | 200 per day | Global commands take up to 1 hour to propagate |
-| Slash command registration (guild) | 200 per day per guild | Guild commands update instantly |
+Discord enforces strict rate limits:
 
-discord.js handles rate limiting automatically with internal queuing.
+| Scope | Limit |
+|-------|-------|
+| Global | 50 requests/second |
+| Per-channel message send | 5/5s |
+| Per-guild slash command response | 5/5s |
+| Interaction response | 3 seconds (or defer) |
+| Deferred interaction edit | 15 minutes |
 
-### File Upload Limits
+discord.js handles rate limiting automatically with request queuing.
 
-25 MB (free), 50 MB (Nitro Basic / Boost L2), 100 MB (Boost L3), 500 MB (Nitro). Bot uploads follow the same limits. For larger files, upload to external storage and share a link.
+### Interaction Timeouts
 
-### Slash Command Propagation
+- **Initial response**: 3 seconds (use `deferReply()` for longer operations)
+- **Deferred response edit**: 15 minutes
+- **Component interactions**: 3 seconds (use `deferUpdate()`)
+- **Modal submit**: 3 seconds
 
-Global slash commands take **up to 1 hour** to propagate. Use **guild-specific commands** during development (instant updates). Switch to global commands for production.
+### No E2E Encryption
 
-### No Self-Hosting
+Discord does not support E2E encryption. All messages are readable by Discord. This is a fundamental platform limitation, not a configuration issue.
 
-Cloud-only platform. No self-hosted option. All data on Google Cloud Platform. For data sovereignty, use Matrix, Mattermost, or Rocket.Chat.
+### Privileged Intents
 
-### Bot Must Be in Guild
+Bots in 100+ guilds must apply for privileged intents (`MessageContent`, `GuildMembers`, `GuildPresences`) through the Developer Portal. Approval is not guaranteed. Design bots to work without `MessageContent` by using slash commands.
 
-A bot can only access messages in guilds where it has been explicitly added, and only in channels where its role has View Channel permission.
+### Closed Source
+
+Discord's server and clients are closed-source. There is no way to audit what Discord does with message data, verify encryption claims, or self-host. This is a trust-the-provider model.
+
+## Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| Bot not responding to slash commands | Verify commands are registered (`Routes.applicationCommands`); check guild vs global |
+| "Missing Access" error | Bot lacks required permissions in the channel; re-invite with correct permissions |
+| "Missing Intent" error | Enable the required intent in Developer Portal > Bot > Privileged Intents |
+| Interaction timeout (3s) | Use `deferReply()` before long operations |
+| Rate limited | discord.js queues automatically; reduce message frequency if persistent |
+| Bot offline after deploy | Check token is correct; verify `client.login()` is called; check process manager logs |
+| Slash commands not appearing | Global commands take up to 1 hour; use guild commands for instant testing |
+| Cannot read message content | Enable `MessageContent` intent, or switch to slash commands |
 
 ## Related
 
-- `services/communications/slack.md` — Slack bot integration (similar privacy profile, corporate focus)
-- `services/communications/matrix-bot.md` — Matrix bot integration (E2E encrypted, self-hostable)
-- `services/communications/simplex.md` — SimpleX Chat (no identifiers, maximum privacy)
-- `services/communications/matterbridge.md` — Multi-platform chat bridging
-- `scripts/entity-helper.sh` — Entity memory system (identity resolution, Layer 0/1/2)
-- `scripts/runner-helper.sh` — Runner management
+- `services/communications/matterbridge.md` — Multi-platform chat bridge (native Discord support)
+- `services/communications/matrix-bot.md` — Matrix bot integration (federated, E2E capable)
+- `services/communications/simplex.md` — SimpleX Chat (maximum privacy, no identifiers)
+- `services/communications/xmtp.md` — XMTP (Web3 messaging, agent SDK)
 - `tools/security/opsec.md` — Operational security guidance
+- `tools/voice/speech-to-speech.md` — Voice pipeline for audio interactions
 - `tools/ai-assistants/headless-dispatch.md` — Headless AI dispatch patterns
-- discord.js: https://discord.js.org/
-- discord.js Guide: https://discordjs.guide/
-- Discord API: https://discord.com/developers/docs
+- discord.js Docs: https://discord.js.org/
+- Discord Developer Docs: https://discord.com/developers/docs
 - Discord Developer Portal: https://discord.com/developers/applications
-- Discord Privacy Policy: https://discord.com/privacy
-- Discord Transparency Report: https://discord.com/safety/transparency

@@ -1,5 +1,5 @@
 ---
-description: Microsoft Teams Bot integration — Azure Bot Framework setup, Adaptive Cards, threading, RSC permissions, security considerations (no E2E, Copilot data processing), Matterbridge, and aidevops dispatch
+description: Microsoft Teams bot integration — Azure Bot Framework, Teams app manifest, DM/channel/group messaging, Adaptive Cards, threading, file handling, Graph API, access control, runner dispatch, Matterbridge native support, privacy/security assessment
 mode: subagent
 tools:
   read: true
@@ -18,156 +18,172 @@ tools:
 
 ## Quick Reference
 
-- **Type**: Microsoft 365 corporate messaging — no E2E encryption, tenant admin has full access
-- **License**: Proprietary (Microsoft). Bot Framework SDK: `botbuilder` (MIT)
-- **Bot tool**: Azure Bot Framework + Teams Bot SDK (TypeScript)
-- **Protocol**: Bot Framework Protocol (HTTP webhook)
-- **Encryption**: TLS in transit, Microsoft-managed at rest — NO end-to-end encryption
-- **Script**: `msteams-dispatch-helper.sh [setup|start|stop|status|map|unmap|mappings|test|logs]`
+- **Type**: Enterprise messaging platform — Azure Bot Framework webhook-based bot
+- **License**: Proprietary (Microsoft 365)
+- **Bot Framework**: Azure Bot Service + Bot Framework SDK (Node.js / C# / Python / Java)
+- **Auth**: Azure App ID + Client Secret + Tenant ID (Azure AD / Entra ID)
 - **Config**: `~/.config/aidevops/msteams-bot.json` (600 permissions)
 - **Data**: `~/.aidevops/.agent-workspace/msteams-bot/`
-- **Docs**: https://learn.microsoft.com/en-us/microsoftteams/platform/ | https://learn.microsoft.com/en-us/azure/bot-service/
-- **App Management**: https://dev.teams.microsoft.com/apps | https://portal.azure.com
+- **SDK**: `botbuilder` + `botbuilder-teams` (npm) or `botframework-connector` (REST)
+- **Requires**: Node.js >= 18, Azure subscription, Teams admin consent
+- **Matterbridge**: Native support via Graph API (see `matterbridge.md`)
+- **Docs**: [Bot Framework docs](https://learn.microsoft.com/en-us/microsoftteams/platform/bots/what-are-bots) | [Graph API](https://learn.microsoft.com/en-us/graph/api/overview)
 
-**Quick start**:
+**Key characteristics**: Teams bots are webhook-based — Microsoft pushes activities to your HTTPS endpoint. No persistent WebSocket connection. The bot must be publicly reachable (or use ngrok/dev tunnels for development). All messages pass through Microsoft's servers in plaintext — no E2E encryption.
 
-```bash
-msteams-dispatch-helper.sh setup          # Interactive wizard
-msteams-dispatch-helper.sh map <channel-id> general-assistant
-msteams-dispatch-helper.sh start --daemon
-```
+**When to use Teams vs other platforms**:
+
+| Criterion | Teams | Matrix | SimpleX | Slack |
+|-----------|-------|--------|---------|-------|
+| Identity model | Azure AD (Entra ID) | `@user:server` | None | Workspace email |
+| Encryption | TLS in transit only | Megolm (optional E2E) | Double ratchet (E2E) | TLS in transit only |
+| Data residency | Microsoft 365 tenant | Self-hosted | Local device | Salesforce cloud |
+| Bot SDK | Bot Framework (mature) | `matrix-bot-sdk` | WebSocket JSON API | Bolt SDK |
+| Admin control | Full (compliance, eDiscovery, DLP) | Server admin | None (decentralized) | Workspace admin |
+| Best for | Enterprise orgs on M365 | Self-hosted teams | Maximum privacy | Startup/dev teams |
 
 <!-- AI-CONTEXT-END -->
 
 ## Architecture
 
 ```text
-┌──────────────────────┐
-│ Teams Client          │
-│ (Desktop/Web/Mobile)  │
-│                       │
-│ User sends message    │
-│ or @mentions bot      │
-└──────────┬───────────┘
-           │
-           │  Bot Framework Protocol (HTTPS)
-           │
-┌──────────▼───────────┐
-│ Azure Bot Service     │
-│                       │
-│ ├─ App ID             │  Azure AD app registration
-│ ├─ Client Secret      │  Authentication
-│ └─ Tenant ID          │  Scope restriction
-└──────────┬───────────┘
-           │
-           │  HTTP POST (webhook)
-           │
-┌──────────▼───────────┐     ┌──────────────────────┐
-│ Bot App (Bun/Node)    │     │ aidevops Dispatch     │
-│                       │     │                       │
-│ ├─ Activity handlers  │────▶│ runner-helper.sh      │
-│ ├─ Adaptive Cards     │     │ → AI session          │
-│ ├─ Access control     │◀────│ → response            │
-│ ├─ Entity resolution  │     │                       │
-│ └─ Thread management  │     │                       │
-└──────────┬───────────┘     └──────────────────────┘
-           │
-┌──────────▼───────────┐
-│ memory.db (shared)    │
-│ ├── entities          │  Entity profiles
-│ ├── entity_channels   │  Cross-channel identity
-│ ├── interactions      │  Layer 0: Immutable log
-│ └── conversations     │  Layer 1: Context summaries
-└───────────────────────┘
+┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
+│ Teams Client      │     │ Microsoft Bot    │     │ Your Bot Server  │
+│ (Desktop, Web,   │     │ Framework Service│     │ (Node.js/Express)│
+│  Mobile)          │     │ (Azure)          │     │                  │
+│                   │     │                  │     │                  │
+│ User sends msg   │────▶│ 1. Auth + route  │────▶│ 1. Verify JWT    │
+│ in channel/DM    │     │ 2. Wrap as       │     │ 2. Parse activity│
+│                  │◀────│    Activity JSON  │◀────│ 3. Dispatch to   │
+│ Bot response     │     │ 3. Deliver resp  │     │    runner         │
+│ (Adaptive Card)  │     │                  │     │ 4. Send response │
+└──────────────────┘     └──────────────────┘     └──────────────────┘
+                                │
+                                ▼
+                    ┌──────────────────────┐
+                    │ Microsoft Graph API  │
+                    │ ├── Channel messages │
+                    │ ├── File uploads     │
+                    │ ├── User profiles    │
+                    │ ├── Team membership  │
+                    │ └── Chat history     │
+                    └──────────────────────┘
 ```
 
 **Message flow**:
 
-1. User sends message or @mentions bot in Teams (personal chat, channel, or group chat)
-2. Teams delivers activity to Azure Bot Service
-3. Azure Bot Service authenticates and forwards to bot's webhook endpoint
-4. Bot app receives activity, checks access control (tenant/team/channel/user allowlists)
-5. Bot looks up channel-to-runner mapping
-6. Entity resolution: Azure AD object ID resolved to entity via `entity-helper.sh`
-7. Layer 0 logging: user message logged as immutable interaction
-8. Context loading: entity profile + conversation summary + recent interactions
-9. Bot dispatches entity-aware prompt to runner via `runner-helper.sh`
-10. Runner executes via headless dispatch
-11. Bot posts response back as Adaptive Card or text in the conversation
-12. Bot adds typing indicator while processing
+1. User sends message in Teams (DM, channel, or group chat)
+2. Teams client sends to Microsoft Bot Framework Service
+3. Bot Framework authenticates and wraps message as an Activity JSON object
+4. Activity POSTed to your bot's HTTPS messaging endpoint
+5. Bot verifies JWT token (issued by `login.botframework.com`)
+6. Bot processes message, optionally dispatches to aidevops runner
+7. Bot sends response back via Bot Framework Connector REST API
+8. Bot Framework delivers response to Teams client
 
-## Installation
+**Key difference from Matrix/SimpleX**: The bot never connects outbound — Microsoft pushes to your endpoint. Your server must be HTTPS-reachable from the internet (or use Azure Bot Service's built-in hosting).
 
-### Prerequisites
+## Prerequisites
 
-1. **Microsoft 365 tenant** with Teams enabled
-2. **Azure subscription** for Bot registration (free tier available)
-3. **Node.js >= 18** or **Bun** runtime
-4. **Azure CLI** (`az`) installed for setup automation
+### Azure Resources
 
-### Step 1: Azure Bot Registration
+1. **Azure subscription** — free tier sufficient for development
+2. **Azure Bot resource** — created in Azure Portal or via `az` CLI
+3. **Azure AD (Entra ID) app registration** — provides App ID and client secret
+4. **Teams admin consent** — tenant admin must approve the bot for the organization
 
-1. Go to https://portal.azure.com
-2. Create a new **Azure Bot** resource (Search: "Azure Bot")
-3. Choose **Multi Tenant** or **Single Tenant** (single tenant for internal bots)
-4. Note the generated **App ID** (also called Microsoft App ID)
-5. Go to **Configuration** > **Manage Password** to create a **Client Secret**
-6. Note your **Tenant ID** from Azure Active Directory > Overview
+### Credentials
 
-Alternatively, use Azure CLI:
+| Credential | Source | Storage |
+|------------|--------|---------|
+| App ID (Client ID) | Azure AD app registration | `msteams-bot.json` |
+| Client Secret | Azure AD app registration > Certificates & secrets | `gopass` or `msteams-bot.json` |
+| Tenant ID | Azure AD > Overview | `msteams-bot.json` |
+| Bot Framework endpoint | Your server's public HTTPS URL | Azure Bot resource config |
 
 ```bash
-# Login to Azure
-az login
-
-# Create app registration
-az ad app create --display-name "aidevops-teams-bot" \
-  --sign-in-audience AzureADMyOrg
-
-# Note the appId from output, then create a secret
-az ad app credential reset --id <app-id> --append
-
-# Create the Bot resource
-az bot create \
-  --resource-group <rg-name> \
-  --name "aidevops-teams-bot" \
-  --app-type SingleTenant \
-  --appid <app-id> \
-  --tenant-id <tenant-id>
+# Store credentials securely
+aidevops secret set MSTEAMS_APP_ID
+aidevops secret set MSTEAMS_CLIENT_SECRET
+aidevops secret set MSTEAMS_TENANT_ID
 ```
 
-### Step 2: Teams App Manifest
+## Setup
 
-Create a `manifest.json` for sideloading or Teams Admin Center deployment:
+### 1. Azure AD App Registration
+
+```bash
+# Via Azure CLI
+az ad app create --display-name "aidevops-teams-bot" \
+  --sign-in-audience "AzureADMyOrg"
+
+# Note the appId from output
+# Create client secret (valid 2 years)
+az ad app credential reset --id <appId> --years 2
+
+# Note the password (client secret) — shown only once
+```
+
+Or via Azure Portal:
+
+1. Azure Portal > Azure Active Directory > App registrations > New registration
+2. Name: `aidevops-teams-bot`
+3. Supported account types: "Accounts in this organizational directory only" (single tenant)
+4. Register, note the Application (client) ID
+5. Certificates & secrets > New client secret > note the value
+
+### 2. Azure Bot Resource
+
+```bash
+# Create bot resource linked to the app registration
+az bot create --resource-group mygroup \
+  --name aidevops-teams-bot \
+  --app-type SingleTenant \
+  --appid <appId> \
+  --tenant-id <tenantId>
+
+# Configure messaging endpoint
+az bot update --resource-group mygroup \
+  --name aidevops-teams-bot \
+  --endpoint "https://your-server.example.com/api/messages"
+
+# Enable Teams channel
+az bot msteams create --resource-group mygroup \
+  --name aidevops-teams-bot
+```
+
+### 3. Teams App Manifest
+
+Create a Teams app package (`manifest.json` + icons) for sideloading or publishing:
 
 ```json
 {
   "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
   "manifestVersion": "1.17",
   "version": "1.0.0",
-  "id": "<app-id>",
+  "id": "<appId>",
   "developer": {
-    "name": "aidevops",
-    "websiteUrl": "https://aidevops.sh",
-    "privacyUrl": "https://aidevops.sh/privacy",
-    "termsOfUseUrl": "https://aidevops.sh/terms"
+    "name": "Your Org",
+    "websiteUrl": "https://example.com",
+    "privacyUrl": "https://example.com/privacy",
+    "termsOfUseUrl": "https://example.com/terms"
   },
   "name": {
-    "short": "aidevops Bot",
-    "full": "aidevops AI DevOps Assistant"
+    "short": "AI DevOps Bot",
+    "full": "AI DevOps Runner Dispatch Bot"
   },
   "description": {
-    "short": "AI-powered DevOps assistant",
-    "full": "AI-powered DevOps assistant for code review, task management, and automation."
+    "short": "Dispatch AI tasks from Teams",
+    "full": "Dispatch tasks to aidevops runners from Microsoft Teams channels and DMs."
   },
   "icons": {
-    "outline": "outline.png",
-    "color": "color.png"
+    "outline": "outline-32x32.png",
+    "color": "color-192x192.png"
   },
-  "accentColor": "#1a1a2e",
+  "accentColor": "#4F6BED",
   "bots": [
     {
-      "botId": "<app-id>",
+      "botId": "<appId>",
       "scopes": ["personal", "team", "groupChat"],
       "supportsFiles": true,
       "isNotificationOnly": false,
@@ -175,21 +191,17 @@ Create a `manifest.json` for sideloading or Teams Admin Center deployment:
         {
           "scopes": ["personal", "team", "groupChat"],
           "commands": [
-            {
-              "title": "help",
-              "description": "Show available commands"
-            },
-            {
-              "title": "status",
-              "description": "Check bot and runner status"
-            }
+            { "title": "help", "description": "Show available commands" },
+            { "title": "status", "description": "Check runner status" },
+            { "title": "ask", "description": "Ask the AI a question" },
+            { "title": "review", "description": "Request code review" }
           ]
         }
       ]
     }
   ],
   "permissions": ["identity", "messageTeamMembers"],
-  "validDomains": [],
+  "validDomains": ["your-server.example.com"],
   "authorization": {
     "permissions": {
       "resourceSpecific": [
@@ -200,6 +212,14 @@ Create a `manifest.json` for sideloading or Teams Admin Center deployment:
         {
           "name": "ChatMessage.Read.Chat",
           "type": "Application"
+        },
+        {
+          "name": "TeamSettings.Read.Group",
+          "type": "Application"
+        },
+        {
+          "name": "ChannelMessage.Send.Group",
+          "type": "Application"
         }
       ]
     }
@@ -207,690 +227,778 @@ Create a `manifest.json` for sideloading or Teams Admin Center deployment:
 }
 ```
 
-### Step 3: Deploy the App
+**RSC (Resource-Specific Consent) permissions** allow the bot to access team/chat data without tenant-wide admin consent. Users grant permissions when installing the app in their team or chat.
 
-**Option A: Sideloading (development)**
-
-1. Package `manifest.json` + icons into a `.zip` file
-2. In Teams > Apps > Manage your apps > Upload a custom app
-3. Select the `.zip` file
-4. The bot appears in the app catalogue for your tenant
-
-**Option B: Teams Admin Center (production)**
-
-1. Go to https://admin.teams.microsoft.com/policies/manage-apps
-2. Upload the app package
-3. Configure app setup policies to deploy to users/groups
-4. Optionally pin the app in the Teams sidebar
-
-### Step 4: Install Dependencies
+Package the manifest:
 
 ```bash
-# Using Bun (preferred)
-bun add botbuilder botframework-connector
+# Create app package (ZIP with manifest.json + icons)
+zip -j aidevops-teams-bot.zip manifest.json outline-32x32.png color-192x192.png
 
-# Using npm
-npm install botbuilder botframework-connector
+# Sideload via Teams Admin Center or Teams client
+# Teams > Apps > Manage your apps > Upload a custom app
 ```
 
-### Step 5: Store Credentials
+### 4. Bot Server (Node.js)
 
 ```bash
-# Via gopass (preferred)
-gopass insert aidevops/msteams/app-id          # Azure App ID
-gopass insert aidevops/msteams/client-secret   # Azure Client Secret
-gopass insert aidevops/msteams/tenant-id       # Azure AD Tenant ID
-
-# Or via credentials.sh fallback
-# Added to ~/.config/aidevops/credentials.sh (600 permissions)
+mkdir msteams-bot && cd msteams-bot
+npm init -y
+npm install botbuilder express
 ```
 
-## Bot API Integration
+Minimal bot server:
 
-### Basic Teams Bot
+```javascript
+const { BotFrameworkAdapter, TeamsActivityHandler, CardFactory } = require("botbuilder");
+const express = require("express");
 
-```typescript
-import {
-  CloudAdapter,
-  ConfigurationBotFrameworkAuthentication,
-  TurnContext,
-  ActivityTypes,
-  CardFactory,
-} from "botbuilder";
-import { createServer } from "http";
-
-const botAuth = new ConfigurationBotFrameworkAuthentication({
-  MicrosoftAppId: process.env.MSTEAMS_APP_ID,
-  MicrosoftAppPassword: process.env.MSTEAMS_CLIENT_SECRET,
-  MicrosoftAppTenantId: process.env.MSTEAMS_TENANT_ID,
-  MicrosoftAppType: "SingleTenant",
+const adapter = new BotFrameworkAdapter({
+  appId: process.env.MSTEAMS_APP_ID,
+  appPassword: process.env.MSTEAMS_CLIENT_SECRET,
 });
 
-const adapter = new CloudAdapter(botAuth);
-
 // Error handler
-adapter.onTurnError = async (context: TurnContext, error: Error) => {
+adapter.onTurnError = async (context, error) => {
   console.error(`Bot error: ${error.message}`);
-  await context.sendActivity("An error occurred. Please try again.");
+  await context.sendActivity("An error occurred processing your request.");
 };
 
-// Message handler
-async function onMessage(context: TurnContext): Promise<void> {
-  if (context.activity.type !== ActivityTypes.Message) return;
+class AIDevOpsBot extends TeamsActivityHandler {
+  async onMessage(context) {
+    const text = context.activity.text?.replace(/<at>.*<\/at>/g, "").trim();
+    if (!text) return;
 
-  const text = context.activity.text?.replace(/<at>.*?<\/at>/g, "").trim();
-  if (!text) return;
+    // Access control: check AAD object ID
+    const userId = context.activity.from.aadObjectId;
+    if (!isAllowedUser(userId)) {
+      await context.sendActivity("You are not authorized to use this bot.");
+      return;
+    }
 
-  const userId = context.activity.from.aadObjectId; // Azure AD object ID
-  const channelId = context.activity.channelData?.channel?.id
-    || context.activity.conversation.id;
-
-  // Send typing indicator
-  await context.sendActivity({ type: ActivityTypes.Typing });
-
-  try {
     // Dispatch to runner (placeholder — integrate with runner-helper.sh)
-    const response = await dispatchToRunner(text, userId, channelId);
+    await context.sendActivity({ type: "typing" });
+    const result = await dispatchToRunner(text, context);
+    await context.sendActivity(result);
+  }
 
-    // Reply with Adaptive Card
-    const card = CardFactory.adaptiveCard({
-      type: "AdaptiveCard",
-      version: "1.5",
-      body: [
-        {
-          type: "TextBlock",
-          text: response,
-          wrap: true,
-          fontType: "Default",
-        },
-      ],
-    });
-
-    await context.sendActivity({ attachments: [card] });
-  } catch (error) {
-    await context.sendActivity(`Error: ${error.message}`);
+  // Handle bot installed in team
+  async onTeamsMembersAdded(membersAdded, teamInfo, context) {
+    for (const member of membersAdded) {
+      if (member.id === context.activity.recipient.id) {
+        await context.sendActivity(
+          "AI DevOps Bot installed. Mention me with a task to get started."
+        );
+      }
+    }
   }
 }
 
-// HTTP server for webhook
-const server = createServer(async (req, res) => {
-  if (req.url === "/api/messages" && req.method === "POST") {
-    let body = "";
-    req.on("data", (chunk) => (body += chunk));
-    req.on("end", async () => {
-      try {
-        await adapter.process(req, res, async (context) => {
-          await onMessage(context);
-        });
-      } catch (err) {
-        res.writeHead(500);
-        res.end();
-      }
-    });
-  } else {
-    res.writeHead(200);
-    res.end("OK");
-  }
+const bot = new AIDevOpsBot();
+const app = express();
+app.use(express.json());
+
+app.post("/api/messages", async (req, res) => {
+  await adapter.process(req, res, (context) => bot.run(context));
 });
 
-server.listen(3978, () => {
-  console.log("Teams bot listening on port 3978");
+app.listen(3978, () => console.log("Bot listening on port 3978"));
+```
+
+### 5. Development Tunneling
+
+For local development, expose your bot endpoint:
+
+```bash
+# Using Azure Dev Tunnels (recommended)
+devtunnel create --allow-anonymous
+devtunnel port create -p 3978
+devtunnel host
+
+# Or ngrok
+ngrok http 3978
+
+# Update the Azure Bot messaging endpoint to the tunnel URL
+az bot update --resource-group mygroup \
+  --name aidevops-teams-bot \
+  --endpoint "https://<tunnel-id>.devtunnels.ms/api/messages"
+```
+
+## Messaging
+
+### Conversation Types
+
+| Type | Scope | Bot Mention Required | Threading |
+|------|-------|---------------------|-----------|
+| Personal (DM) | 1:1 with bot | No | Flat (no threads) |
+| Channel | Team channel | Yes (`@BotName`) | Posts with reply threads |
+| Group chat | Multi-user chat | Yes (`@BotName`) | Flat (no threads) |
+
+### Sending Messages
+
+```javascript
+// Reply to current conversation
+await context.sendActivity("Hello from the bot!");
+
+// Send Adaptive Card
+const card = CardFactory.adaptiveCard({
+  type: "AdaptiveCard",
+  $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+  version: "1.5",
+  body: [
+    { type: "TextBlock", text: "Task Result", weight: "Bolder", size: "Large" },
+    { type: "TextBlock", text: "Code review completed.", wrap: true },
+    {
+      type: "FactSet",
+      facts: [
+        { title: "Status", value: "Passed" },
+        { title: "Issues", value: "0 critical, 2 warnings" },
+        { title: "Duration", value: "45s" },
+      ],
+    },
+  ],
+  actions: [
+    { type: "Action.OpenUrl", title: "View PR", url: "https://github.com/..." },
+  ],
 });
+await context.sendActivity({ attachments: [card] });
+
+// Proactive message (outside of a conversation turn)
+const { MicrosoftAppCredentials, ConnectorClient } = require("botframework-connector");
+const credentials = new MicrosoftAppCredentials(appId, appPassword);
+const client = new ConnectorClient(credentials, {
+  baseUri: context.activity.serviceUrl,
+});
+await client.conversations.sendToConversation(conversationId, {
+  type: "message",
+  text: "Proactive notification: deployment complete.",
+});
+```
+
+### Threading (Posts vs Replies)
+
+Teams channels use a Posts + Replies model:
+
+```javascript
+// Reply to a specific thread (channel)
+const replyActivity = {
+  type: "message",
+  text: "Thread reply",
+  conversation: {
+    id: `${channelId};messageid=${parentMessageId}`,
+  },
+};
+await context.sendActivity(replyActivity);
+
+// Create a new top-level post in a channel
+// Requires Graph API — Bot Framework sends replies by default
+const { Client } = require("@microsoft/microsoft-graph-client");
+const graphClient = Client.init({
+  authProvider: (done) => done(null, accessToken),
+});
+await graphClient
+  .api(`/teams/${teamId}/channels/${channelId}/messages`)
+  .post({ body: { content: "New top-level post" } });
 ```
 
 ### Adaptive Cards
 
-Adaptive Cards are the primary rich content format for Teams bots. They support text, images, buttons, inputs, and complex layouts.
+Adaptive Cards are the primary rich content format in Teams. They support:
 
-```typescript
-// Rich response card with actions
-const responseCard = CardFactory.adaptiveCard({
+- Text, images, media
+- Input forms (text, date, choice sets, toggles)
+- Action buttons (submit, open URL, show card)
+- Data binding and templating
+- Version 1.5 supported in Teams
+
+```javascript
+// Card with user input
+const inputCard = CardFactory.adaptiveCard({
   type: "AdaptiveCard",
   version: "1.5",
   body: [
+    { type: "TextBlock", text: "Dispatch Task", weight: "Bolder" },
     {
-      type: "TextBlock",
-      text: "Analysis Complete",
-      size: "Large",
-      weight: "Bolder",
+      type: "Input.Text",
+      id: "taskPrompt",
+      placeholder: "Describe the task...",
+      isMultiline: true,
     },
     {
-      type: "TextBlock",
-      text: "Found 3 issues in the codebase.",
-      wrap: true,
-    },
-    {
-      type: "FactSet",
-      facts: [
-        { title: "Critical", value: "1" },
-        { title: "Warning", value: "2" },
-        { title: "Info", value: "0" },
+      type: "Input.ChoiceSet",
+      id: "runner",
+      label: "Runner",
+      choices: [
+        { title: "Code Reviewer", value: "code-reviewer" },
+        { title: "SEO Analyst", value: "seo-analyst" },
       ],
     },
   ],
   actions: [
     {
       type: "Action.Submit",
-      title: "Fix All",
-      data: { action: "fix_all", scope: "codebase" },
-    },
-    {
-      type: "Action.Submit",
-      title: "Show Details",
-      data: { action: "show_details" },
-    },
-    {
-      type: "Action.OpenUrl",
-      title: "View PR",
-      url: "https://github.com/org/repo/pull/42",
+      title: "Dispatch",
+      data: { action: "dispatch" },
     },
   ],
 });
 
-await context.sendActivity({ attachments: [responseCard] });
-
-// Handle card action submissions
-async function onMessage(context: TurnContext): Promise<void> {
-  // Card action submissions come as messages with value property
-  if (context.activity.value) {
-    const action = context.activity.value.action;
-    if (action === "fix_all") {
-      await context.sendActivity({ type: ActivityTypes.Typing });
-      const result = await dispatchToRunner("fix all issues", userId, channelId);
-      await context.sendActivity(result);
-      return;
-    }
+// Handle card submit
+async onAdaptiveCardInvoke(context) {
+  const data = context.activity.value.action.data;
+  if (data.action === "dispatch") {
+    const result = await dispatchToRunner(data.taskPrompt, data.runner);
+    return { statusCode: 200, type: "application/vnd.microsoft.activity.message", value: result };
   }
-  // ... normal message handling
 }
 ```
 
-### Threading Model
+**Adaptive Card reference**: [adaptivecards.io](https://adaptivecards.io/) | [Designer](https://adaptivecards.io/designer/)
 
-Teams has a distinct threading model that differs from Slack:
+## File Handling
 
-- **Channels**: Messages are either top-level "Posts" or replies within a thread
-- **Personal/Group chats**: Flat conversation (no threading)
-- **Thread context**: `context.activity.conversation.id` contains the thread ID for channel replies
+File handling differs between DMs and channels:
 
-```typescript
-// Reply in a thread (channels only)
-// The conversation ID includes the thread reference
-const conversationId = context.activity.conversation.id;
+| Context | Upload mechanism | Storage |
+|---------|-----------------|---------|
+| Personal (DM) | Inline attachment (base64 or URL) | Bot Framework blob storage |
+| Channel | SharePoint via Graph API | Team's SharePoint document library |
+| Group chat | OneDrive via Graph API | Sender's OneDrive |
 
-// To start a new thread in a channel, use proactive messaging
-import { MicrosoftAppCredentials, ConnectorClient } from "botframework-connector";
+### Receiving Files
 
-async function postToChannel(
-  serviceUrl: string,
-  channelId: string,
-  message: string
-): Promise<void> {
-  const credentials = new MicrosoftAppCredentials(
-    process.env.MSTEAMS_APP_ID!,
-    process.env.MSTEAMS_CLIENT_SECRET!
-  );
-  const client = new ConnectorClient(credentials, { baseUri: serviceUrl });
+```javascript
+async onMessage(context) {
+  const attachments = context.activity.attachments || [];
 
-  await client.conversations.createConversation({
-    isGroup: true,
-    channelData: { channel: { id: channelId } },
-    activity: {
-      type: ActivityTypes.Message,
-      text: message,
-    },
-  });
-}
-
-// Reply to an existing thread
-async function replyToThread(context: TurnContext, message: string): Promise<void> {
-  await context.sendActivity(message);
-  // Replies automatically go to the thread context of the incoming message
-}
-```
-
-### File Handling
-
-File handling differs between personal chats and channels:
-
-```typescript
-// DM (personal chat): files sent as attachments via Bot Framework
-// Channels: files stored in SharePoint, referenced via Graph API
-
-// Receive file attachments (personal chat)
-if (context.activity.attachments?.length) {
-  for (const attachment of context.activity.attachments) {
-    if (attachment.contentUrl) {
-      // Download file content
-      const response = await fetch(attachment.contentUrl, {
-        headers: {
-          Authorization: `Bearer ${await getToken()}`,
-        },
+  for (const attachment of attachments) {
+    if (attachment.contentType === "application/vnd.microsoft.teams.file.download.info") {
+      // Channel/group file — download from SharePoint/OneDrive
+      const downloadUrl = attachment.content.downloadUrl;
+      const response = await fetch(downloadUrl, {
+        headers: { Authorization: `Bearer ${graphToken}` },
       });
-      const content = await response.text();
-      // Process file content
+      const buffer = await response.arrayBuffer();
+      // Process file...
+    } else if (attachment.contentUrl) {
+      // DM file — direct download
+      const response = await fetch(attachment.contentUrl, {
+        headers: { Authorization: `Bearer ${botToken}` },
+      });
+      const buffer = await response.arrayBuffer();
+      // Process file...
     }
   }
 }
+```
 
-// Send file to personal chat
+### Sending Files
+
+```javascript
+// DM: send as inline attachment
+const fileBuffer = fs.readFileSync("report.pdf");
+const base64 = fileBuffer.toString("base64");
 await context.sendActivity({
   attachments: [
     {
-      contentType: "application/vnd.microsoft.teams.file.download.info",
-      name: "report.md",
-      content: {
-        downloadUrl: "<pre-uploaded-url>",
-        uniqueId: "<file-id>",
-        fileType: "md",
-      },
+      contentType: "application/pdf",
+      contentUrl: `data:application/pdf;base64,${base64}`,
+      name: "report.pdf",
     },
   ],
 });
+
+// Channel: upload to SharePoint via Graph API, then share link
+const uploadSession = await graphClient
+  .api(
+    `/teams/${teamId}/channels/${channelId}/filesFolder/root:/${fileName}:/createUploadSession`
+  )
+  .post({});
+// Upload file chunks to uploadSession.uploadUrl
+// Then send message with file card
 ```
 
-For channel file operations, use the Microsoft Graph API:
+## Graph API Integration
 
-```typescript
-// Upload to SharePoint (channel files)
-import { Client } from "@microsoft/microsoft-graph-client";
+The Microsoft Graph API provides access to Teams data beyond what the Bot Framework offers:
 
-const graphClient = Client.init({
-  authProvider: async (done) => {
-    const token = await getGraphToken();
-    done(null, token);
-  },
+```javascript
+const { Client } = require("@microsoft/microsoft-graph-client");
+const {
+  ClientSecretCredential,
+} = require("@azure/identity");
+const {
+  TokenCredentialAuthenticationProvider,
+} = require("@microsoft/microsoft-graph-client/authProviders/azureTokenCredentials");
+
+const credential = new ClientSecretCredential(tenantId, appId, clientSecret);
+const authProvider = new TokenCredentialAuthenticationProvider(credential, {
+  scopes: ["https://graph.microsoft.com/.default"],
 });
+const graphClient = Client.initWithMiddleware({ authProvider });
 
-// Upload file to team's SharePoint
+// List teams the bot is installed in
+const teams = await graphClient.api("/me/joinedTeams").get();
+
+// Get channel messages (requires ChannelMessage.Read.All)
+const messages = await graphClient
+  .api(`/teams/${teamId}/channels/${channelId}/messages`)
+  .top(50)
+  .get();
+
+// Get user profile
+const user = await graphClient.api(`/users/${aadObjectId}`).get();
+
+// Send channel notification
 await graphClient
-  .api(`/teams/${teamId}/channels/${channelId}/filesFolder/content`)
-  .put(fileBuffer);
+  .api(`/teams/${teamId}/channels/${channelId}/messages`)
+  .post({
+    body: { contentType: "html", content: "<b>Deployment complete</b>" },
+  });
 ```
 
-### Access Control
+**Graph API permissions** (configured in Azure AD app registration):
 
-```typescript
-// Tenant allowlist (restrict to specific tenants)
-const ALLOWED_TENANTS = new Set([process.env.MSTEAMS_TENANT_ID]);
+| Permission | Type | Use |
+|------------|------|-----|
+| `ChannelMessage.Read.All` | Application | Read channel messages |
+| `ChannelMessage.Send` | Application | Send channel messages |
+| `Chat.Read` | Delegated | Read DM/group chat messages |
+| `Files.ReadWrite.All` | Application | Upload/download files |
+| `User.Read.All` | Application | Look up user profiles |
+| `Team.ReadBasic.All` | Application | List teams |
+| `TeamsActivity.Send` | Application | Send activity feed notifications |
 
-// Team/channel allowlist
-const ALLOWED_CHANNELS = new Set(["19:abc123@thread.tacv2"]);
+## Access Control
 
-// User allowlist (Azure AD object IDs)
-const ALLOWED_USERS = new Set(["aad-object-id-1", "aad-object-id-2"]);
+### AAD Object ID Allowlists
 
-function isAllowed(context: TurnContext): boolean {
-  const tenantId = context.activity.channelData?.tenant?.id;
-  const userId = context.activity.from.aadObjectId;
-  const channelId = context.activity.channelData?.channel?.id;
+The primary access control mechanism is Azure AD (Entra ID) object ID allowlists. Every Teams user has a unique, immutable `aadObjectId` in the activity payload.
 
-  // Tenant check (always enforce for multi-tenant bots)
-  if (ALLOWED_TENANTS.size > 0 && !ALLOWED_TENANTS.has(tenantId)) {
-    return false;
-  }
-
-  // Channel check (skip for personal chats)
-  if (channelId && ALLOWED_CHANNELS.size > 0 && !ALLOWED_CHANNELS.has(channelId)) {
-    return false;
-  }
-
-  // User check
-  if (ALLOWED_USERS.size > 0 && !ALLOWED_USERS.has(userId)) {
-    return false;
-  }
-
-  return true;
-}
-
-// Apply in message handler
-async function onMessage(context: TurnContext): Promise<void> {
-  if (!isAllowed(context)) {
-    await context.sendActivity("Access denied.");
-    return;
-  }
-  // ... dispatch
+```json
+{
+  "allowedUsers": [
+    "00000000-0000-0000-0000-000000000001",
+    "00000000-0000-0000-0000-000000000002"
+  ],
+  "allowedTeams": [
+    "team-id-1"
+  ],
+  "allowedChannels": [
+    "19:channel-id@thread.tacv2"
+  ],
+  "adminUsers": [
+    "00000000-0000-0000-0000-000000000001"
+  ]
 }
 ```
 
-## Security Considerations
+```javascript
+function isAllowedUser(aadObjectId) {
+  const config = loadConfig();
 
-**CRITICAL: Read this section carefully before deploying any bot that processes sensitive information via Microsoft Teams.**
+  // Admin users always allowed
+  if (config.adminUsers?.includes(aadObjectId)) return true;
 
-### Encryption
+  // If allowlist is empty, all users in the tenant are allowed
+  if (!config.allowedUsers?.length) return true;
 
-Microsoft Teams provides **TLS 1.2+ in transit** and **Microsoft-managed encryption at rest** (BitLocker for disk-level encryption + per-file encryption using unique keys). There is **NO end-to-end encryption**. Microsoft has full technical access to ALL message content, including:
+  return config.allowedUsers.includes(aadObjectId);
+}
 
-- All channel messages (standard and private channels)
-- All direct messages (1:1 and group chats)
-- All file uploads and SharePoint content
-- All message edits and their full history
-- All deleted messages (retained per retention policies, recoverable by admins)
-- Meeting recordings, transcripts, and chat
+function isAllowedConversation(context) {
+  const config = loadConfig();
+  const conversationType = context.activity.conversation.conversationType;
 
-### Tenant Admin Access
+  if (conversationType === "personal") {
+    return isAllowedUser(context.activity.from.aadObjectId);
+  }
 
-Microsoft 365 tenant administrators have full access to ALL message data by design. This is a core feature of the platform, not a limitation:
+  if (conversationType === "channel") {
+    const channelId = context.activity.channelData?.channel?.id;
+    const teamId = context.activity.channelData?.team?.id;
 
-| Tool | Capability |
-|------|-----------|
-| **Compliance Center** | Search and export all messages across all users, channels, and chats. Content search spans Teams, Exchange, SharePoint, and OneDrive simultaneously. |
-| **eDiscovery** | Legal holds, case management, review sets. Preserves messages even if users delete them. Standard and Premium tiers. |
-| **Content Search** | Keyword-based search across all Teams content. Results exportable as PST or individual messages. |
-| **Audit Logs** | Every action logged — message sends, edits, deletes, file access, bot interactions, admin actions. Retained 90 days (standard) to 10 years (premium). |
-| **Communication Compliance** | AI-powered policy matching that scans messages for policy violations (harassment, sensitive info, regulatory compliance). Processes message content in real-time. |
-| **Data Loss Prevention (DLP)** | Scans messages and files for sensitive information (credit cards, SSNs, custom patterns). Can block or flag messages before delivery. |
-| **Information Barriers** | Prevents communication between specific groups (e.g., investment banking and advisory). |
+    if (config.allowedChannels?.length && !config.allowedChannels.includes(channelId)) {
+      return false;
+    }
+    if (config.allowedTeams?.length && !config.allowedTeams.includes(teamId)) {
+      return false;
+    }
+    return isAllowedUser(context.activity.from.aadObjectId);
+  }
 
-### Metadata Collection
-
-Microsoft stores comprehensive metadata beyond message content:
-
-- Full message history with timestamps and edit history
-- Deletion logs (deleted messages recoverable via eDiscovery)
-- File upload, download, and sharing records (SharePoint audit)
-- Reactions and emoji usage
-- Read receipts (when enabled)
-- Presence status history (Available, Busy, Away, Do Not Disturb)
-- Login times, IP addresses, device information, client versions
-- Meeting attendance, duration, join/leave times
-- Call logs (duration, participants, quality metrics)
-- Search queries within Teams
-- App and bot interaction logs
-- Channel membership and join/leave history
-
-### AI Training and Copilot Data Processing
-
-**CRITICAL WARNING**: Microsoft has integrated Copilot directly into Teams as a core feature.
-
-- **Copilot for Microsoft 365**: Copilot processes Teams messages to provide meeting summaries, chat summaries, action item extraction, and contextual answers. It accesses the full message history the user has access to. Copilot is licensed per-user and enabled by default for licensed users.
-- **Copilot in meetings**: When enabled, Copilot processes meeting transcripts and chat in real-time to generate summaries, notes, and follow-up actions. Meeting participants may not always be aware of the scope of AI processing.
-- **Data boundary**: Microsoft states that Copilot data is processed within the Microsoft 365 compliance boundary and that customer data is not used to train foundation models. However, the scope of AI processing within the compliance boundary is extensive — Copilot indexes and reasons over all accessible Teams content.
-- **Tenant admin control**: Admins can disable Copilot per-user or tenant-wide via Microsoft 365 admin center. They can also configure which data sources Copilot can access. However, the default deployment enables broad access for all licensed users.
-- **Semantic Index**: Microsoft 365 builds a semantic index across Teams, Exchange, SharePoint, and OneDrive to power Copilot. This index processes and organises all content for AI retrieval.
-- **Third-party AI apps**: Apps from the Teams app store may access message content within their consented permissions. Each app's data handling is governed by the publisher's privacy policy, not Microsoft's.
-
-**Practical impact**: Assume that any message sent in Teams is processed by Microsoft's AI systems (Copilot, communication compliance, DLP) unless the tenant admin has explicitly disabled all AI features. The default configuration enables extensive AI processing.
-
-### Push Notifications
-
-Push notifications are delivered via:
-
-- **Windows**: Windows Notification Service (WNS)
-- **Android**: Firebase Cloud Messaging (FCM) — Google infrastructure
-- **iOS**: Apple Push Notification Service (APNs)
-
-Notification content includes message previews by default, making content visible to the respective platform provider during transit. Admins can configure notification content policies but cannot fully eliminate platform exposure.
-
-### Open Source and Auditability
-
-- **Teams platform**: Entirely CLOSED source. No independent audit of Teams' data handling, encryption implementation, Copilot processing, or compliance tooling is possible.
-- **Bot Framework SDK**: Open source under MIT license (`botbuilder`, `botframework-connector`, etc.). Bot code is auditable; Microsoft's server-side processing is not.
-- **Teams clients**: Desktop client is Electron-based but closed source. Mobile clients are closed source. Web client is obfuscated JavaScript. No reproducible builds.
-- **Azure Bot Service**: Closed source relay. Messages transit through Microsoft's infrastructure before reaching the bot endpoint.
-
-### Jurisdiction and Legal
-
-- **Entity**: Microsoft Corporation — headquartered in Redmond, Washington, USA
-- **Jurisdiction**: Subject to US federal law, including the CLOUD Act (compels disclosure of data stored abroad), FISA Section 702, and National Security Letters
-- **EU Data Boundary**: Available for Enterprise customers. Microsoft has committed to processing and storing EU customer data within the EU, but implementation is phased and some metadata may still transit US infrastructure. Microsoft US personnel may access EU-resident data under specific circumstances for support and security.
-- **Government requests**: Microsoft publishes a transparency report. Law enforcement requests are processed per Microsoft's Law Enforcement Requests Report. Microsoft has challenged government requests in court (notably the Ireland email case, superseded by CLOUD Act).
-
-### Bot-Specific Security
-
-- Azure Bot registration requires an Azure subscription (free tier available for development)
-- Bot Framework uses a webhook model — the bot must be publicly accessible via HTTPS, or use Azure Bot Service as a proxy (ngrok for development, Azure App Service or similar for production)
-- App ID and Client Secret authenticate the bot with Azure Bot Service — treat the client secret as a critical credential
-- RSC (Resource-Specific Consent) permissions scope bot access per team or chat, reducing over-privileged access
-- **Token validation**: Always validate incoming activities using the Bot Framework authentication library. Unvalidated webhooks are vulnerable to spoofing.
-- **Single-tenant vs multi-tenant**: Single-tenant bots are restricted to one Azure AD tenant (recommended for internal bots). Multi-tenant bots can be installed in any tenant (requires more careful access control).
-
-### Comparison with Other Platforms
-
-| Aspect | Teams | Slack | Matrix (self-hosted) | Signal |
-|--------|-------|-------|---------------------|--------|
-| E2E encryption | No | No | Yes (Megolm) | Yes (Signal Protocol) |
-| Server access to content | Full | Full | None (if E2E on) | None (sealed sender) |
-| Admin message export | Yes (all plans) | Yes (Business+ for DMs) | Server admin only | No |
-| AI processing default | Copilot enabled | Opt-out required | No | No |
-| Compliance features | Most mature | Moderate | Basic | None |
-| Open source server | No | No | Yes (Synapse) | Partial |
-| User identifiers | Azure AD / email | Workspace email | `@user:server` | Phone number |
-| Metadata retention | Comprehensive | Comprehensive | Moderate | Minimal |
-| Self-hostable | No | No | Yes | No |
-| Jurisdiction | USA (Microsoft) | USA (Salesforce) | Self-determined | USA (Signal Foundation) |
-
-**Summary**: Microsoft Teams is a **corporate compliance platform** with messaging capabilities, not a privacy-focused messenger. No E2E encryption, full admin export and eDiscovery, aggressive AI integration (Copilot processes messages by default), comprehensive metadata retention, and closed-source infrastructure. The compliance features (eDiscovery, DLP, information barriers, communication compliance) are the most mature of any enterprise messaging platform. **Treat all Teams messages as fully observable by the tenant admin, Microsoft, and — if Copilot is enabled — processed by AI systems.** Teams is designed for enterprise communication where corporate oversight and regulatory compliance are expected. Never use it for sensitive personal communication or information that should not be accessible to the employer or Microsoft.
-
-## aidevops Integration
-
-### msteams-dispatch-helper.sh
-
-The helper script follows the same pattern as `slack-dispatch-helper.sh`:
-
-```bash
-# Setup wizard — prompts for App ID, client secret, tenant ID, channel mappings
-msteams-dispatch-helper.sh setup
-
-# Map Teams channels to runners
-msteams-dispatch-helper.sh map "19:abc123@thread.tacv2" code-reviewer
-msteams-dispatch-helper.sh map "19:def456@thread.tacv2" seo-analyst
-
-# List mappings
-msteams-dispatch-helper.sh mappings
-
-# Remove a mapping
-msteams-dispatch-helper.sh unmap "19:abc123@thread.tacv2"
-
-# Start/stop the bot
-msteams-dispatch-helper.sh start --daemon
-msteams-dispatch-helper.sh stop
-msteams-dispatch-helper.sh status
-
-# Test dispatch
-msteams-dispatch-helper.sh test code-reviewer "Review src/auth.ts"
-
-# View logs
-msteams-dispatch-helper.sh logs
-msteams-dispatch-helper.sh logs --follow
+  // Group chat
+  return isAllowedUser(context.activity.from.aadObjectId);
+}
 ```
 
-### Azure Bot Service Configuration
+### Tenant Isolation
 
-The bot requires a publicly accessible HTTPS endpoint for Azure Bot Service to deliver activities. Options:
+Single-tenant bots (recommended) only accept requests from one Azure AD tenant. Multi-tenant bots accept from any tenant — use only if you need cross-org access.
 
-| Method | Use Case | Setup Complexity |
-|--------|----------|-----------------|
-| **ngrok / cloudflared** | Development / testing | Low |
-| **Azure App Service** | Production (Microsoft-hosted) | Medium |
-| **Self-hosted + reverse proxy** | Production (self-managed) | Medium |
-| **Azure Bot Service (direct line)** | Alternative protocol | Medium |
+The `appType` in the Azure Bot resource controls this:
 
-Configure the messaging endpoint in Azure Portal > Bot resource > Configuration:
+| Type | Accepts from | Use case |
+|------|-------------|----------|
+| `SingleTenant` | One tenant only | Internal org bot |
+| `MultiTenant` | Any Azure AD tenant | Published app / ISV |
+| `UserAssignedMSI` | Managed identity | Azure-hosted bots |
 
-```text
-Messaging endpoint: https://your-domain.com/api/messages
-```
+## Configuration
 
-### Runner Dispatch
-
-The bot dispatches to runners via `runner-helper.sh`, which handles:
-
-- Runner AGENTS.md (personality/instructions)
-- Headless session management
-- Memory namespace isolation
-- Entity-aware context loading
-- Run logging
-
-### Entity Resolution
-
-When a Teams user sends a message, the bot resolves their Azure AD object ID to an entity:
-
-- **Known user**: Match on `entity_channels` table (`channel=msteams`, `channel_id=aad-object-id`)
-- **New user**: Creates entity via `entity-helper.sh create` with Azure AD object ID linked
-- **Cross-channel**: If the same person is linked on other channels (Slack, Matrix, email), their full profile is available
-- **Profile enrichment**: Azure AD provides display name, email, job title, department — used to populate entity profile on first contact via Graph API `users/{id}` endpoint
-
-### Configuration
+### Config File
 
 `~/.config/aidevops/msteams-bot.json` (600 permissions):
 
 ```json
 {
-  "appId": "<azure-app-id>",
-  "clientSecret": "<azure-client-secret>",
-  "tenantId": "<azure-tenant-id>",
-  "appType": "SingleTenant",
-  "webhookPort": 3978,
-  "webhookPath": "/api/messages",
-  "allowedTenants": ["<tenant-id>"],
-  "allowedChannels": [],
+  "appId": "00000000-0000-0000-0000-000000000000",
+  "tenantId": "00000000-0000-0000-0000-000000000000",
+  "botEndpoint": "https://your-server.example.com/api/messages",
   "allowedUsers": [],
+  "allowedTeams": [],
+  "allowedChannels": [],
+  "adminUsers": [],
   "defaultRunner": "",
   "channelMappings": {
-    "19:abc123@thread.tacv2": "code-reviewer",
-    "19:def456@thread.tacv2": "seo-analyst"
+    "19:channel-id@thread.tacv2": "code-reviewer",
+    "19:another-channel@thread.tacv2": "seo-analyst"
   },
-  "useAdaptiveCards": true,
+  "botPrefix": "",
   "maxPromptLength": 3000,
-  "responseTimeout": 600,
-  "sessionIdleTimeout": 300
+  "responseTimeout": 600
 }
 ```
 
-## Matterbridge Integration
+**Note**: `botPrefix` is empty by default because Teams bots are triggered by @mention, not a text prefix. In DMs, all messages are delivered to the bot without mention.
 
-Microsoft Teams is supported by [Matterbridge](https://github.com/42wim/matterbridge), but with important limitations.
+### Configuration Options
 
-```text
-Teams Workspace
-    │
-    │  Teams Bot API or Incoming Webhook
-    │
-Matterbridge (Go binary)
-    │
-    ├── Slack channels
-    ├── Matrix rooms
-    ├── Discord channels
-    ├── Telegram groups
-    ├── IRC channels
-    └── 40+ other platforms
+| Option | Default | Description |
+|--------|---------|-------------|
+| `appId` | (required) | Azure AD application (client) ID |
+| `tenantId` | (required) | Azure AD tenant ID |
+| `botEndpoint` | (required) | Public HTTPS URL for bot messaging endpoint |
+| `allowedUsers` | `[]` (all tenant users) | AAD object IDs of allowed users |
+| `allowedTeams` | `[]` (all) | Team IDs where bot responds |
+| `allowedChannels` | `[]` (all) | Channel IDs where bot responds |
+| `adminUsers` | `[]` | AAD object IDs with admin privileges |
+| `defaultRunner` | `""` | Runner for unmapped channels (empty = ignore) |
+| `channelMappings` | `{}` | Channel ID to runner name mapping |
+| `botPrefix` | `""` | Optional text prefix (in addition to @mention) |
+| `maxPromptLength` | `3000` | Max prompt length before truncation |
+| `responseTimeout` | `600` | Max seconds to wait for runner response |
+
+## Runner Dispatch Integration
+
+The bot dispatches to aidevops runners following the same pattern as the Matrix bot:
+
+```javascript
+const { execSync } = require("child_process");
+
+async function dispatchToRunner(prompt, context) {
+  const channelId = context.activity.channelData?.channel?.id;
+  const config = loadConfig();
+
+  // Resolve runner from channel mapping or default
+  const runner = config.channelMappings[channelId] || config.defaultRunner;
+  if (!runner) {
+    return "No runner configured for this channel.";
+  }
+
+  try {
+    // Dispatch via runner-helper.sh
+    const result = execSync(
+      `runner-helper.sh dispatch "${runner}" "${prompt.replace(/"/g, '\\"')}"`,
+      { timeout: config.responseTimeout * 1000, encoding: "utf-8" }
+    );
+    return result.trim();
+  } catch (error) {
+    return `Runner dispatch failed: ${error.message}`;
+  }
+}
 ```
 
-### Matterbridge Configuration
+### Channel-to-Runner Mapping
 
-Add to `matterbridge.toml`:
+Same pattern as Matrix room mappings:
 
-```toml
-[msteams.myorg]
-## Option 1: Incoming Webhook (send-only — cannot receive messages FROM Teams)
-WebhookURL = "https://outlook.office.com/webhook/..."
+| Channel | Runner | Purpose |
+|---------|--------|---------|
+| `#dev` | `code-reviewer` | Code review, security analysis |
+| `#seo` | `seo-analyst` | SEO audits, keyword research |
+| `#ops` | `ops-monitor` | Server health, deployment status |
+| `#general` | (default runner) | General AI assistance |
 
-## Option 2: Bot Framework (bidirectional — requires Azure Bot registration)
-## TenantID = "<tenant-id>"
-## ClientID = "<app-id>"
-## ClientSecret = "<client-secret>"
-## TeamID = "<team-id>"
-```
+## Matterbridge Native Support
 
-Gateway configuration:
+Matterbridge has native Microsoft Teams support via the Graph API. This is the simplest way to bridge Teams to other platforms without building a custom bot.
 
 ```toml
+# matterbridge.toml — Teams bridge configuration
+[msteams]
+  [msteams.work]
+  TenantID = "your-tenant-id"
+  ClientID = "your-app-id"
+  ClientSecret = "your-client-secret"
+  TeamID = "your-team-id"
+
 [[gateway]]
-name = "dev-bridge"
+name = "teams-matrix-bridge"
 enable = true
 
-[[gateway.inout]]
-account = "msteams.myorg"
-channel = "General"
+  [[gateway.inout]]
+  account = "msteams.work"
+  channel = "General"
 
-[[gateway.inout]]
-account = "slack.myworkspace"
-channel = "dev-general"
-
-[[gateway.inout]]
-account = "matrix.myserver"
-channel = "#dev:matrix.example.com"
+  [[gateway.inout]]
+  account = "matrix.home"
+  channel = "#general:example.com"
 ```
 
-**Matterbridge limitations with Teams**:
+**Matterbridge Teams notes**:
 
-- **Webhook mode is send-only**: Incoming Webhooks can post TO Teams but cannot receive messages FROM Teams. Use Bot Framework mode for bidirectional bridging.
-- **Bot Framework mode requires Azure setup**: Same Azure Bot registration and permissions as direct integration.
-- **Rich content**: Adaptive Cards are not bridged — only plain text crosses the bridge. Messages from other platforms arrive as plain text in Teams.
+- Uses Graph API (not Bot Framework) — simpler setup, no webhook endpoint needed
+- Requires `ChannelMessage.Read.All` and `ChannelMessage.Send` Graph API permissions
+- Bridges channel messages only (not DMs or group chats)
+- Build note: Teams support adds ~2.5GB to Matterbridge compile memory; use `-tags nomsteams` to exclude if not needed
+- See `matterbridge.md` for full configuration reference
 
-**Privacy warning**: Bridging Teams to other platforms means messages from E2E-encrypted platforms (Matrix, SimpleX) will be stored unencrypted on Microsoft's servers. Users on the encrypted side should be informed. See `services/communications/matterbridge.md` for full bridging considerations.
+## Deployment
+
+### Azure App Service (Recommended)
+
+```bash
+# Create App Service
+az webapp create --resource-group mygroup \
+  --plan myplan --name aidevops-teams-bot \
+  --runtime "NODE:18-lts"
+
+# Configure environment
+az webapp config appsettings set --resource-group mygroup \
+  --name aidevops-teams-bot --settings \
+  MSTEAMS_APP_ID="<appId>" \
+  MSTEAMS_CLIENT_SECRET="<secret>" \
+  MSTEAMS_TENANT_ID="<tenantId>"
+
+# Deploy
+az webapp deployment source config-zip --resource-group mygroup \
+  --name aidevops-teams-bot --src bot.zip
+```
+
+### Docker (Self-Hosted)
+
+```dockerfile
+FROM node:20-slim
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --production
+COPY . .
+EXPOSE 3978
+CMD ["node", "index.js"]
+```
+
+```bash
+docker run -d \
+  --name msteams-bot \
+  --restart unless-stopped \
+  -p 3978:3978 \
+  -e MSTEAMS_APP_ID="<appId>" \
+  -e MSTEAMS_CLIENT_SECRET="<secret>" \
+  -e MSTEAMS_TENANT_ID="<tenantId>" \
+  aidevops-teams-bot:latest
+```
+
+**Note**: The bot must be reachable via HTTPS from the internet. Use a reverse proxy (Caddy, Nginx) with TLS termination in front of the Docker container.
+
+### Systemd
+
+```ini
+# /etc/systemd/system/msteams-bot.service
+[Unit]
+Description=AI DevOps Teams Bot
+After=network.target
+
+[Service]
+Type=simple
+User=msteams-bot
+WorkingDirectory=/opt/msteams-bot
+ExecStart=/usr/bin/node index.js
+Restart=on-failure
+RestartSec=5
+EnvironmentFile=/etc/msteams-bot/env
+
+[Install]
+WantedBy=multi-user.target
+```
+
+## Privacy and Security Assessment
+
+### No E2E Encryption
+
+**Teams does not support end-to-end encryption for messages.** All messages are:
+
+- Encrypted in transit (TLS 1.2+)
+- Encrypted at rest in Microsoft 365 storage
+- **Accessible in plaintext to Microsoft and tenant administrators**
+
+This means:
+
+- Microsoft can read all message content (subject to their privacy policy)
+- Tenant admins can access all messages via compliance tools
+- eDiscovery searches can surface any Teams message
+- Data Loss Prevention (DLP) policies scan message content server-side
+- Legal holds preserve messages even if users delete them
+
+**Comparison**: Matrix (with E2E enabled) and SimpleX encrypt messages so that only participants can read them. Teams is architecturally equivalent to email — the server operator has full access.
+
+### Microsoft 365 Data Processing
+
+All Teams data is stored and processed within the Microsoft 365 ecosystem:
+
+| Data type | Storage | Retention | Admin access |
+|-----------|---------|-----------|--------------|
+| Chat messages | Exchange Online | Configurable (default: indefinite) | eDiscovery, Content Search |
+| Channel messages | SharePoint/Exchange | Configurable | eDiscovery, Content Search |
+| Files (channels) | SharePoint Online | SharePoint retention policies | SharePoint admin |
+| Files (DMs) | OneDrive for Business | OneDrive retention policies | OneDrive admin |
+| Call recordings | OneDrive/SharePoint | Configurable | Admin center |
+| Meeting transcripts | Exchange Online | Configurable | eDiscovery |
+
+### Copilot AI Training Warning
+
+**Microsoft Copilot for Microsoft 365 processes Teams messages.** Key implications:
+
+- **Copilot in Teams** is integrated directly into the Teams chat interface
+- Copilot can summarize conversations, generate meeting notes, and answer questions about chat history
+- Microsoft's privacy policy permits using customer data to improve AI models (with opt-out options for enterprise customers)
+- Enterprise customers with Microsoft 365 E3/E5 can configure data processing agreements
+- **Default behavior**: Copilot features have access to Teams chat data within the tenant
+
+**Mitigations for enterprise customers**:
+
+- Configure Microsoft Purview sensitivity labels to restrict Copilot access to specific channels
+- Use Information Barriers to prevent Copilot from cross-referencing sensitive conversations
+- Review and configure the Microsoft 365 Copilot data residency and processing settings
+- Disable Copilot for specific users or groups via admin policies
+- Monitor Copilot usage via Microsoft 365 audit logs
+
+**For sensitive communications**: Do not use Teams. Use SimpleX (zero-knowledge, E2E encrypted) or Matrix with E2E encryption enabled. Teams is appropriate for enterprise collaboration where compliance and admin oversight are features, not bugs.
+
+### Compliance and eDiscovery
+
+Teams messages are subject to Microsoft 365 compliance features:
+
+| Feature | Impact |
+|---------|--------|
+| **eDiscovery** | All messages searchable by compliance officers |
+| **Legal Hold** | Messages preserved even if deleted by users |
+| **Retention Policies** | Automatic deletion or preservation per policy |
+| **DLP** | Content scanned for sensitive data patterns |
+| **Communication Compliance** | Messages monitored for policy violations |
+| **Audit Logs** | All bot interactions logged in Microsoft 365 audit |
+| **Information Barriers** | Restrict communication between groups |
+
+**Bot-specific implications**:
+
+- All messages sent to/from the bot are subject to the same compliance policies as user messages
+- Bot responses containing sensitive data (code, credentials, internal URLs) will be captured by eDiscovery
+- Ensure bot responses do not include secrets, API keys, or credentials — they will be stored in Microsoft 365 and accessible to compliance tools
+- Consider using Adaptive Cards with ephemeral content for sensitive responses (though even these may be logged)
+
+### Push Notifications
+
+Teams push notifications are delivered via:
+
+- **Windows**: Windows Notification Service (WNS)
+- **iOS**: Apple Push Notification Service (APNs)
+- **Android**: Firebase Cloud Messaging (FCM)
+
+Each notification service receives metadata about the notification (that a message was received) but not the message content. However, notification previews may include message text depending on user settings.
+
+### Network Requirements
+
+The bot server must allow outbound connections to:
+
+| Endpoint | Purpose |
+|----------|---------|
+| `login.botframework.com` | JWT token validation |
+| `login.microsoftonline.com` | Azure AD authentication |
+| `graph.microsoft.com` | Graph API calls |
+| `smba.trafficmanager.net` | Bot Framework connector |
+| `*.botframework.com` | Bot Framework services |
+
+Inbound: HTTPS (443) from Microsoft Bot Framework to your messaging endpoint.
+
+### Security Recommendations
+
+1. **Single-tenant only** — restrict bot to your Azure AD tenant
+2. **AAD object ID allowlists** — restrict which users can interact with the bot
+3. **Channel allowlists** — restrict which channels the bot responds in
+4. **No secrets in responses** — bot responses are stored in Microsoft 365 compliance systems
+5. **Credential storage** — use gopass or Azure Key Vault, never store in code or config
+6. **HTTPS only** — bot endpoint must use TLS 1.2+
+7. **JWT validation** — always verify the Bot Framework JWT token on incoming requests
+8. **Rate limiting** — implement per-user rate limits to prevent abuse
+9. **Audit logging** — log all bot interactions locally (in addition to Microsoft 365 audit)
+10. **Sensitivity labels** — apply Microsoft Purview labels to restrict Copilot/eDiscovery access where needed
+
+## Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| Bot not receiving messages | Verify messaging endpoint URL in Azure Bot resource; check HTTPS certificate |
+| 401 Unauthorized | Verify App ID and Client Secret; check token validation logic |
+| Bot not appearing in Teams | Sideload the app manifest ZIP; check Teams admin policies |
+| Messages not delivered to channel | Ensure bot is @mentioned; check RSC permissions |
+| File upload fails | Verify Graph API permissions (`Files.ReadWrite.All`); check SharePoint access |
+| Adaptive Card not rendering | Validate card JSON at adaptivecards.io/designer; check version compatibility |
+| Proactive messages fail | Store and reuse `serviceUrl` and `conversationId` from previous activities |
+| Rate limited by Bot Framework | Implement exponential backoff; reduce message frequency |
+| Graph API 403 | Check application permissions in Azure AD; ensure admin consent granted |
 
 ## Limitations
 
-### No End-to-End Encryption
+### Platform Lock-In
 
-Teams does not support E2E encryption for messages. Microsoft-managed encryption at rest (BitLocker + per-file keys) protects against physical disk theft but not against Microsoft or tenant admin access. This is a fundamental platform design choice — compliance, eDiscovery, and Copilot features depend on server-side access to plaintext content.
+Teams bots are tightly coupled to the Microsoft ecosystem:
 
-### Azure Subscription Required
+- Azure AD required for authentication
+- Bot Framework required for message routing
+- Graph API required for advanced features
+- No self-hosted alternative — Microsoft controls the infrastructure
 
-Bot registration requires an Azure subscription. The free tier supports development and low-volume production, but production bots with high message volume may incur costs. Azure Bot Service pricing applies for premium channels and higher throughput.
+### Message Format Constraints
 
-### Copilot Processes Chat Data by Default
+- Adaptive Cards are Teams-specific — they do not render on other platforms
+- HTML support is limited to a subset of tags
+- Markdown support differs from standard CommonMark
+- Message size limit: 28 KB for text, 40 KB for Adaptive Cards
 
-For tenants with Copilot for Microsoft 365 licenses, Copilot processes Teams messages by default. Admins must explicitly disable Copilot access to Teams data if this is not desired. Users may not be aware that AI systems are processing their conversations.
+### Threading Model
 
-### Complex Setup
+- DMs and group chats are flat (no threading)
+- Channel posts support reply threads, but the API for creating top-level posts requires Graph API (not Bot Framework)
+- Thread context is lost when bridging to platforms with different threading models
 
-Teams bot deployment involves multiple systems:
+### Closed Source
 
-1. Azure Portal (Bot registration, App ID, client secret)
-2. Azure AD (app registration, API permissions)
-3. Teams Admin Center (app policies, deployment)
-4. App manifest (JSON, icons, RSC permissions)
-5. Webhook endpoint (public HTTPS required)
+Teams client and server are proprietary. There is no way to:
 
-This is significantly more complex than Slack (1 portal, OAuth) or Telegram (BotFather, single token).
-
-### File Handling Asymmetry
-
-- **Personal/group chats**: Files sent as Bot Framework attachments (direct upload/download)
-- **Channels**: Files stored in SharePoint via Graph API (different authentication, different API surface)
-
-This split requires the bot to detect conversation type and use different file handling paths.
-
-### Rate Limits
-
-| Operation | Rate Limit | Notes |
-|-----------|-----------|-------|
-| Bot messages (per conversation) | ~1 message per second | Varies by conversation type |
-| Bot messages (per tenant) | Varies | Microsoft doesn't publish exact limits |
-| Graph API | 10,000 requests per 10 minutes per app | Per tenant |
-| Adaptive Card actions | No specific limit | Subject to message rate limits |
-| Proactive messages | Throttled | Must have prior conversation context |
-
-Rate limits are enforced by Azure Bot Service and are less transparent than Slack's documented limits.
-
-### No Self-Hosting
-
-Teams is a SaaS-only platform within Microsoft 365. There is no self-hosted option. All data is stored on Microsoft's infrastructure (Azure datacenters). Organizations requiring full data sovereignty must use alternatives (Mattermost, Matrix, Rocket.Chat).
-
-### App Approval Process
-
-Deploying a bot org-wide requires:
-
-- **Sideloading**: Must be enabled by admin (disabled by default in many tenants)
-- **Admin approval**: Teams Admin Center approval required for org-wide deployment
-- **Microsoft Store**: Publishing to the public Teams app store requires Microsoft review and validation
-- **RSC consent**: Resource-Specific Consent must be granted per team/chat where the bot operates
+- Audit the server-side code
+- Verify encryption claims independently
+- Self-host the Teams infrastructure
+- Modify the client behavior
 
 ## Related
 
-- `services/communications/slack.md` — Slack bot integration (closest comparison — corporate, no E2E)
-- `services/communications/matrix-bot.md` — Matrix bot integration (E2E encrypted, self-hostable)
-- `services/communications/simplex.md` — SimpleX Chat (no identifiers, maximum privacy)
-- `services/communications/matterbridge.md` — Multi-platform chat bridging
-- `scripts/entity-helper.sh` — Entity memory system (identity resolution, Layer 0/1/2)
-- `scripts/runner-helper.sh` — Runner management
+- `services/communications/matterbridge.md` — Multi-platform bridge (native Teams support)
+- `services/communications/matrix-bot.md` — Matrix bot integration (self-hosted, E2E optional)
+- `services/communications/simplex.md` — SimpleX Chat (zero-knowledge, E2E encrypted)
 - `tools/security/opsec.md` — Operational security guidance
-- `tools/ai-assistants/headless-dispatch.md` — Headless AI dispatch patterns
-- Azure Bot Framework: https://learn.microsoft.com/en-us/azure/bot-service/
-- Teams Platform: https://learn.microsoft.com/en-us/microsoftteams/platform/
+- `tools/ai-assistants/headless-dispatch.md` — Headless dispatch patterns
+- `scripts/runner-helper.sh` — Runner management
+- Bot Framework Docs: https://learn.microsoft.com/en-us/microsoftteams/platform/bots/what-are-bots
 - Adaptive Cards: https://adaptivecards.io/
-- Microsoft Graph API: https://learn.microsoft.com/en-us/graph/
-- Microsoft Privacy: https://privacy.microsoft.com/
+- Graph API: https://learn.microsoft.com/en-us/graph/api/overview
+- Teams App Manifest: https://learn.microsoft.com/en-us/microsoftteams/platform/resources/schema/manifest-schema
