@@ -189,7 +189,25 @@ sleep 2
 4. Active mission features (keeps multi-day projects moving — see Step 3.5)
 5. Product repos (`"priority": "product"` in repos.json) over tooling
 6. Smaller/simpler tasks over large ones (faster throughput)
-7. Oldest issues
+7. `quality-debt` issues (unactioned review feedback from merged PRs)
+8. Oldest issues
+
+### Quality-debt concurrency cap (30%)
+
+Issues labelled `quality-debt` (created by `quality-feedback-helper.sh scan-merged`) represent unactioned review feedback from merged PRs. These are important but should not crowd out new feature work.
+
+**Rule: quality-debt issues may consume at most 30% of available worker slots.** Calculate: `QUALITY_DEBT_MAX = floor(MAX_WORKERS * 0.30)` (minimum 1). Count running workers whose command line contains a `quality-debt` issue number, plus open `quality-debt` issues with `status:in-progress` or `status:queued` labels. If the count >= `QUALITY_DEBT_MAX`, skip remaining quality-debt issues and dispatch higher-priority work instead.
+
+```bash
+# Count active quality-debt workers
+QUALITY_DEBT_ACTIVE=$(gh issue list --repo <slug> --label "quality-debt" --label "status:in-progress" --state open --json number --jq 'length' 2>/dev/null || echo 0)
+QUALITY_DEBT_QUEUED=$(gh issue list --repo <slug> --label "quality-debt" --label "status:queued" --state open --json number --jq 'length' 2>/dev/null || echo 0)
+QUALITY_DEBT_CURRENT=$((QUALITY_DEBT_ACTIVE + QUALITY_DEBT_QUEUED))
+QUALITY_DEBT_MAX=$(( MAX_WORKERS * 30 / 100 ))
+[[ "$QUALITY_DEBT_MAX" -lt 1 ]] && QUALITY_DEBT_MAX=1
+```
+
+If `QUALITY_DEBT_CURRENT >= QUALITY_DEBT_MAX`, do not dispatch more quality-debt issues this cycle.
 
 **Label lifecycle** (for your awareness — workers manage their own transitions): `available` → `queued` (you dispatch) → `in-progress` (worker starts) → `in-review` (PR opened) → `done` (PR merged)
 
