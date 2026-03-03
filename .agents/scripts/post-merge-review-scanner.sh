@@ -34,23 +34,24 @@ get_lookback_date() {
 # Fetch actionable bot comments for a PR. Output: "bot|path|snippet" per line.
 fetch_actionable() {
 	local repo="$1" pr="$2"
-	local jq_f='[.[] | select(.user.login | test("'"$BOT_RE"'";"i"))
+	local jq_f='[.[] | select((.user.login // "") | test("'"$BOT_RE"'";"i"))
 		| select((.body // "") | test("'"$ACT_RE"'";"i"))
-		| "\(.user.login)|\(.path // "")|\((.body // "") | gsub("\n";" ") | .[:200])"] | .[]'
-	{ gh api "repos/${repo}/pulls/${pr}/comments" --paginate 2>/dev/null || echo '[]'; } |
-		jq -r "$jq_f"
-	local jq_r='[.[] | select(.user.login | test("'"$BOT_RE"'";"i"))
+		| "\((.user.login // ""))|\(.path // "")|\((.body // "") | gsub("\n";" ") | .[:200])"] | .[]'
+	{ gh api "repos/${repo}/pulls/${pr}/comments" --paginate || echo '[]'; } |
+		jq -r "$jq_f" || true
+	local jq_r='[.[] | select((.user.login // "") | test("'"$BOT_RE"'";"i"))
 		| select((.body // "") | test("'"$ACT_RE"'";"i"))
-		| "\(.user.login)||\((.body // "") | gsub("\n";" ") | .[:200])"] | .[]'
-	{ gh api "repos/${repo}/pulls/${pr}/reviews" --paginate 2>/dev/null || echo '[]'; } |
-		jq -r "$jq_r"
+		| "\((.user.login // ""))||\((.body // "") | gsub("\n";" ") | .[:200])"] | .[]'
+	{ gh api "repos/${repo}/pulls/${pr}/reviews" --paginate || echo '[]'; } |
+		jq -r "$jq_r" || true
 }
 
 issue_exists() {
 	local repo="$1" pr="$2" count
 	local title_query="Review followup: PR #${pr} —"
 	count=$(gh issue list --repo "$repo" --label "$SCANNER_LABEL" \
-		--search "in:title \"${title_query}\"" --state all --json number --jq 'length' 2>/dev/null || echo "0")
+		--search "in:title \"${title_query}\"" --state all --limit 100 \
+		--json number --jq 'length' || echo "0")
 	[[ "$count" -gt 0 ]]
 }
 
@@ -62,7 +63,7 @@ create_issue() {
 		return 0
 	fi
 	gh label create "$SCANNER_LABEL" --repo "$repo" \
-		--description "Unaddressed review bot feedback" --color "D4C5F9" 2>/dev/null || true
+		--description "Unaddressed review bot feedback" --color "D4C5F9" || true
 	local body
 	body="## Unaddressed review bot suggestions
 
@@ -83,7 +84,7 @@ do_scan() {
 	log "Scanning ${repo} since ${since_date} (${SCANNER_DAYS}d)"
 	local pr_numbers
 	pr_numbers=$(gh pr list --state merged --search "merged:>${since_date}" \
-		--repo "$repo" --limit "$SCANNER_PR_LIMIT" --json number --jq '.[].number' 2>/dev/null || echo "")
+		--repo "$repo" --limit "$SCANNER_PR_LIMIT" --json number --jq '.[].number' || echo "")
 	if [[ -z "$pr_numbers" ]]; then
 		log "No merged PRs found"
 		return 0
@@ -103,15 +104,15 @@ do_scan() {
 		hits=$(fetch_actionable "$repo" "$pr")
 		[[ -z "$hits" ]] && continue
 		local pr_title summary=""
-		pr_title=$(gh pr view "$pr" --repo "$repo" --json title --jq '.title' 2>/dev/null || echo "Unknown")
+		pr_title=$(gh pr view "$pr" --repo "$repo" --json title --jq '.title' || echo "Unknown")
 		while IFS='|' read -r bot path snippet; do
 			local ref=""
 			[[ -n "$path" ]] && ref=" (\`${path}\`)"
-			summary="${summary}- **${bot}**${ref}: ${snippet}...\n"
+			printf -v summary '%s- **%s**%s: %s...\n' "$summary" "$bot" "$ref" "$snippet"
 		done <<<"$hits"
 		[[ -z "$summary" ]] && continue
 		log "PR #${pr}: creating issue"
-		create_issue "$repo" "$pr" "$pr_title" "$(printf '%b' "$summary")" "$dry_run"
+		create_issue "$repo" "$pr" "$pr_title" "$summary" "$dry_run"
 		issues_created=$((issues_created + 1))
 	done <<<"$pr_numbers"
 	log "Done. Issues created: ${issues_created}"
@@ -125,7 +126,7 @@ main() {
 		return 2
 	fi
 	if [[ -z "$repo" ]]; then
-		repo=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")
+		repo=$(gh repo view --json nameWithOwner -q .nameWithOwner || echo "")
 		[[ -z "$repo" ]] && {
 			echo "ERROR: Cannot determine repo" >&2
 			return 1
