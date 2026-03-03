@@ -1,5 +1,5 @@
 ---
-description: Nostr — decentralized relay-based protocol, bot integration via nostr-tools (TypeScript), NIP-01 events, NIP-04/NIP-44 encrypted DMs, keypair identity, censorship-resistant messaging, and limitations
+description: Nostr — decentralized relay-based messaging protocol with keypair identity, NIP-01 events, NIP-04/NIP-44 encrypted DMs, NIP-17 gift-wrapped DMs, nostr-tools SDK (TypeScript), DM-only bot scope, pubkey allowlist access control
 mode: subagent
 tools:
   read: true
@@ -12,495 +12,525 @@ tools:
   task: false
 ---
 
-# Nostr Bot Integration
+# Nostr
 
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
-- **Type**: Decentralized protocol — censorship-resistant, relay-based
-- **License**: Protocol is open (no license needed), nostr-tools (MIT)
-- **Bot tool**: nostr-tools (TypeScript, npm)
-- **Protocol**: Nostr (Notes and Other Stuff Transmitted by Relays) — NIP-01 events over WebSocket
-- **Encryption**: NIP-04 DMs (secp256k1 ECDH + AES-256-CBC), NIP-44 (improved, versioned encryption)
-- **Identity**: Keypair-based (nsec/npub) — no phone, no email, no server account
-- **NIPs**: https://github.com/nostr-protocol/nips (protocol specification)
-- **nostr-tools**: https://github.com/nbd-wtf/nostr-tools
-- **Relay list**: https://nostr.watch/
+- **Type**: Decentralized relay-based messaging protocol — keypair identity, no phone/email required, censorship-resistant
+- **License**: Public domain / MIT (protocol and most clients/libraries)
+- **Protocol**: NIP-01 (events), NIP-04 (encrypted DMs, legacy), NIP-44 (versioned encryption), NIP-17 (gift-wrapped DMs)
+- **Transport**: WebSocket connections to relay servers
+- **SDK**: `nostr-tools` (npm, TypeScript) — event creation, signing, relay management, NIP implementations
+- **Identity**: secp256k1 keypair — `nsec` (private key), `npub` (public key), NIP-19 bech32 encoding
+- **Repo**: [github.com/nbd-wtf/nostr-tools](https://github.com/nbd-wtf/nostr-tools) | [github.com/nostr-protocol/nips](https://github.com/nostr-protocol/nips)
+- **Relay list**: [nostr.watch](https://nostr.watch/) | [relay.tools](https://relay.tools/)
+- **Clients**: Damus (iOS), Amethyst (Android), Primal (web/mobile), Snort (web), Coracle (web)
 
-**Key differentiator**: Nostr requires no account creation, no phone number, no email, no server registration. Identity is a cryptographic keypair. Anyone can run a relay. No single entity can censor or deplatform a user. This makes it the strongest option for censorship-resistant, pseudonymous communication.
+**Key differentiator**: Nostr is radically simple — the entire protocol is JSON events signed with secp256k1 keys, relayed over WebSockets. No accounts, no servers to run, no registration. Identity is a keypair. Anyone can run a relay. Censorship resistance comes from relay redundancy — if one relay drops your events, others still have them.
 
-**When to use Nostr over other protocols**:
+**When to use Nostr vs other protocols**:
 
-| Criterion | Nostr | SimpleX | Matrix |
-|-----------|-------|---------|--------|
-| Identity | Keypair (nsec/npub) | None (pairwise) | `@user:server` |
-| Censorship resistance | Strongest (multi-relay) | Strong (no central server) | Moderate (federated) |
-| Metadata privacy | Weak (relay sees pubkeys) | Strongest (no IDs) | Moderate |
-| PII required | None | None | Optional but common |
-| Bot ecosystem | Growing (nostr-tools) | Growing (WebSocket API) | Mature (SDK, bridges) |
-| Message persistence | Relay-dependent | None (ephemeral) | Full history |
-| Best for | Censorship resistance, pseudonymous comms | Maximum privacy, agent-to-agent | Team collaboration, bridges |
+| Criterion | Nostr | SimpleX | Matrix | XMTP | Bitchat |
+|-----------|-------|---------|--------|------|---------|
+| Identity model | secp256k1 keypair (npub) | None | `@user:server` | Wallet/DID | Pubkey fingerprint |
+| Encryption (DMs) | NIP-04 (ECDH+AES), NIP-44 (XChaCha20) | Double ratchet (X3DH) | Megolm (optional) | MLS + post-quantum | Noise XX |
+| Metadata privacy | Low (NIP-04), High (NIP-17) | High | Medium | Medium | High |
+| Relay architecture | Redundant WebSocket relays | Stateless SMP relays | Federated servers | Decentralized nodes | BLE mesh |
+| Bot/agent SDK | `nostr-tools` (TypeScript) | WebSocket JSON API | `matrix-bot-sdk` | `@xmtp/agent-sdk` | None |
+| Native payments | Lightning Network (NIP-57 zaps) | No | No | In-conversation | No |
+| Best for | Public social + private DMs, censorship resistance | Maximum privacy | Team collaboration | Web3/agent messaging | Offline/local comms |
 
 <!-- AI-CONTEXT-END -->
 
 ## Architecture
 
 ```text
-┌──────────────────────────┐
-│ Nostr Clients             │
-│ (Damus, Amethyst, Primal, │
-│  Snort, Coracle, etc.)    │
-└──────────┬───────────────┘
-           │ NIP-01 Events (JSON over WebSocket)
-           │ Signed with secp256k1 keypair
-           │
-┌──────────▼───────────────┐     ┌──────────────────────────┐
-│ Nostr Relays              │     │ Additional Relays         │
-│ (wss://relay.damus.io,    │     │ (redundancy, reach)       │
-│  wss://nos.lol, etc.)     │     │ Self-hosted relay option   │
-└──────────┬───────────────┘     └──────────────────────────┘
-           │
-           │ Bot subscribes to events
-           │ (filters: DMs to bot pubkey,
-           │  mentions, specific kinds)
-           │
-┌──────────▼───────────────┐
-│ Bot Process               │
-│ (TypeScript/Bun)          │
-│                           │
-│ ├─ Relay pool manager     │
-│ ├─ DM decryption (NIP-04/ │
-│ │   NIP-44)               │
-│ ├─ Command router         │
-│ ├─ Pubkey allowlist       │
-│ └─ aidevops dispatch      │
-└───────────────────────────┘
+┌──────────────────────┐     ┌──────────────────────┐
+│ Nostr Client          │     │ Nostr Client          │
+│ (Damus, Amethyst,     │     │ (Primal, Snort,       │
+│  Primal, or Bot)      │     │  Coracle, or Bot)     │
+│                       │     │                       │
+│ ┌──────────────────┐  │     │  ┌──────────────────┐ │
+│ │ nostr-tools SDK  │  │     │  │ nostr-tools SDK  │ │
+│ │ ├─ Event signing │  │     │  │ ├─ Event signing │ │
+│ │ ├─ NIP-04/44 enc │  │     │  │ ├─ NIP-04/44 dec │ │
+│ │ ├─ Relay pool    │  │     │  │ ├─ Relay pool    │ │
+│ │ └─ Subscriptions │  │     │  │ └─ Subscriptions │ │
+│ └──────────────────┘  │     │  └──────────────────┘ │
+└──────────┬────────────┘     └──────────┬────────────┘
+           │                             │
+           │  WebSocket (wss://)         │
+           │                             │
+    ┌──────▼─────────────────────────────▼──────┐
+    │           Nostr Relay Network              │
+    │                                            │
+    │  ┌──────────┐ ┌──────────┐ ┌──────────┐   │
+    │  │ Relay 1  │ │ Relay 2  │ │ Relay 3  │   │
+    │  │ (public) │ │ (paid)   │ │ (private)│   │
+    │  └──────────┘ └──────────┘ └──────────┘   │
+    │                                            │
+    │  Independent operators, no coordination    │
+    │  Events stored per relay policy            │
+    └────────────────────────────────────────────┘
 ```
 
-**Message flow**: User encrypts DM (NIP-04/NIP-44) → signs event (secp256k1) → publishes to relays → bot subscribes with filter for kind 4 events to its pubkey → decrypts → processes → publishes encrypted response.
+**Message flow (NIP-04 DM)**:
 
-## Installation
+1. Sender generates shared secret via secp256k1 ECDH (sender privkey + recipient pubkey)
+2. Message encrypted with AES-256-CBC using the shared secret
+3. Encrypted content wrapped in a kind-4 event, signed with sender's privkey
+4. Event published to sender's relay set via WebSocket
+5. Recipient subscribes to kind-4 events addressed to their pubkey
+6. Recipient decrypts using the same ECDH shared secret (recipient privkey + sender pubkey)
 
-### nostr-tools Setup (TypeScript/Bun)
+**Message flow (NIP-17 gift-wrapped DM)**:
 
-```bash
-mkdir nostr-bot && cd nostr-bot
-bun init -y
-bun add nostr-tools
-```
+1. Sender creates a kind-14 event (chat message) with NIP-44 encryption
+2. Event wrapped in a kind-13 "seal" — encrypted to recipient, signed by sender
+3. Seal wrapped in a kind-1059 "gift wrap" — signed by a random throwaway key
+4. Gift wrap published to recipient's relay set
+5. Relay sees only the throwaway key — sender pubkey, recipient pubkey, and timestamps are hidden
+6. Recipient unwraps gift wrap, decrypts seal, reads the original message
 
-### Key Generation
+## Protocol
 
-```typescript
-import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools"
+### NIP-01: Basic Protocol
 
-const sk = generateSecretKey() // Uint8Array (32 bytes)
-const pk = getPublicKey(sk)    // hex string
-const nsec = nip19.nsecEncode(sk) // nsec1... (NEVER log in production)
-const npub = nip19.npubEncode(pk) // npub1...
-```
-
-**Key storage**: Use `gopass` or environment variables — never commit to source control. See `.agents/tools/credentials/gopass.md`.
-
-```bash
-gopass insert aidevops/nostr-bot/nsec   # preferred
-export NOSTR_BOT_NSEC="nsec1..."        # alternative
-```
-
-### Relay Selection
-
-| Relay | Notes |
-|-------|-------|
-| `wss://relay.damus.io` | Popular, reliable |
-| `wss://relay.nostr.band` | Good search/discovery |
-| `wss://nos.lol` | Community relay |
-| `wss://purplepag.es` | Profile/contact list relay |
-
-**Self-hosted relay** options: `strfry` (C++, high-performance), `nostr-rs-relay` (Rust), `nostream` (TypeScript).
-
-### Event Subscription
-
-```typescript
-import { SimplePool } from "nostr-tools"
-
-const pool = new SimplePool()
-const relays = ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.nostr.band"]
-
-const sub = pool.subscribeMany(relays, [{
-  kinds: [4],                                   // NIP-04 encrypted DMs
-  "#p": [botPublicKey],                         // addressed to bot
-  since: Math.floor(Date.now() / 1000),         // only new events
-}], {
-  onevent(event) { /* decrypt and process */ },
-  oneose() { console.log("Listening for new events") },
-})
-```
-
-## Bot API Integration
-
-### NIP-01: Basic Event Structure
-
-```typescript
-interface NostrEvent {
-  id: string         // sha256 of serialized event
-  pubkey: string     // hex public key of creator
-  created_at: number // Unix timestamp
-  kind: number       // event type
-  tags: string[][]   // metadata tags
-  content: string    // event content (may be encrypted)
-  sig: string        // secp256k1 schnorr signature
-}
-```
-
-### Event Kinds
-
-| Kind | NIP | Description |
-|------|-----|-------------|
-| 0 | NIP-01 | User metadata (profile) |
-| 1 | NIP-01 | Text note (public post) |
-| 3 | NIP-02 | Contact list / follow list |
-| 4 | NIP-04 | Encrypted direct message |
-| 5 | NIP-09 | Event deletion request |
-| 7 | NIP-25 | Reaction (like, emoji) |
-| 1059 | NIP-17 | Gift-wrapped event (metadata-hiding DM) |
-| 10002 | NIP-65 | Relay list metadata |
-| 30023 | NIP-23 | Long-form content |
-
-### NIP-04: Encrypted Direct Messages
-
-```typescript
-import { nip04, finalizeEvent } from "nostr-tools"
-
-// Decrypt incoming DM
-async function decryptDM(event: NostrEvent, botSk: Uint8Array): Promise<string> {
-  return nip04.decrypt(botSk, event.pubkey, event.content)
-}
-
-// Send encrypted DM
-async function sendDM(recipientPk: string, msg: string, botSk: Uint8Array) {
-  const ciphertext = await nip04.encrypt(botSk, recipientPk, msg)
-  return finalizeEvent({
-    kind: 4,
-    created_at: Math.floor(Date.now() / 1000),
-    tags: [["p", recipientPk]],
-    content: ciphertext,
-  }, botSk)
-}
-```
-
-### NIP-44: Versioned Encryption (Recommended)
-
-NIP-44 improves on NIP-04 with versioned encryption, padding (hides message length), and XChaCha20:
-
-```typescript
-import { nip44 } from "nostr-tools"
-
-const convKey = nip44.v2.utils.getConversationKey(sk, recipientPubkey)
-const ciphertext = nip44.v2.encrypt(message, convKey)
-const plaintext = nip44.v2.decrypt(ciphertext, convKey)
-```
-
-### NIP-17: Gift-Wrapped DMs (Metadata-Hiding)
-
-NIP-17 wraps DMs in multiple layers to hide metadata from relays. Adoption is still limited but represents the future of Nostr private messaging:
-
-- **Seal**: Inner event encrypted to recipient, contains actual DM
-- **Gift wrap**: Outer event with randomized pubkey and timestamp
-- Relays see only the gift wrap — cannot determine sender, recipient, or timing
-
-### Basic Bot Example
-
-```typescript
-import { SimplePool, finalizeEvent, getPublicKey, nip04, nip19 } from "nostr-tools"
-
-const RELAYS = ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.nostr.band"]
-
-// Load bot key from secure storage
-const botNsec = process.env.NOSTR_BOT_NSEC
-if (!botNsec) throw new Error("NOSTR_BOT_NSEC not set")
-const { data: botSecretKey } = nip19.decode(botNsec) as { data: Uint8Array }
-const botPublicKey = getPublicKey(botSecretKey)
-
-// Pubkey allowlist (hex pubkeys of authorized users)
-const ALLOWED_PUBKEYS = new Set<string>([
-  // "hex_pubkey_1", "hex_pubkey_2",
-])
-
-const pool = new SimplePool()
-
-pool.subscribeMany(RELAYS, [{
-  kinds: [4], "#p": [botPublicKey], since: Math.floor(Date.now() / 1000),
-}], {
-  async onevent(event) {
-    if (ALLOWED_PUBKEYS.size > 0 && !ALLOWED_PUBKEYS.has(event.pubkey)) return
-
-    try {
-      const plaintext = await nip04.decrypt(botSecretKey, event.pubkey, event.content)
-      const response = await handleCommand(plaintext)
-      const ciphertext = await nip04.encrypt(botSecretKey, event.pubkey, response)
-      const reply = finalizeEvent({
-        kind: 4, created_at: Math.floor(Date.now() / 1000),
-        tags: [["p", event.pubkey]], content: ciphertext,
-      }, botSecretKey)
-      await Promise.any(pool.publish(RELAYS, reply))
-    } catch (err) {
-      console.error("Error processing DM:", err)
-    }
-  },
-  oneose() { console.log("Listening for DMs...") },
-})
-
-async function handleCommand(text: string): Promise<string> {
-  const cmd = text.trim().toLowerCase()
-  if (cmd === "/help") return "/help — This message\n/status — System status\n/ask <q> — Ask AI"
-  if (cmd === "/status") return "Bot online. Connected to " + RELAYS.length + " relays."
-  if (cmd.startsWith("/ask ")) return "Processing: " + text.slice(5).trim()
-  return 'Unknown command. Type "/help" for available commands.'
-}
-
-process.on("SIGINT", () => { pool.close(RELAYS); process.exit(0) })
-```
-
-### Relay Management
-
-```typescript
-const pool = new SimplePool()
-
-// Publish to multiple relays
-await Promise.any(pool.publish(relays, signedEvent))
-
-// Query events
-const events = await pool.querySync(relays, { kinds: [1], authors: [pubkey], limit: 10 })
-const event = await pool.get(relays, { ids: [eventId] })
-
-pool.close(relays)
-```
-
-### Access Control
-
-Access control is pubkey-based. Maintain an allowlist of authorized hex pubkeys, loaded from config. If the allowlist is empty, the bot is open to all. Check `event.pubkey` against the allowlist before processing any command.
-
-## Security Considerations
-
-### Encryption
-
-NIP-04 DMs use secp256k1 ECDH to derive a shared secret, then AES-256-CBC to encrypt message content. The encrypted content is stored in the event's `content` field. However, the event envelope (sender pubkey, recipient pubkey tag, timestamp, event kind) is **visible to all relays**.
-
-NIP-44 improves on NIP-04 with versioned encryption, message padding (hides exact length), and XChaCha20 instead of AES-256-CBC.
-
-NIP-17 (gift-wrapping) hides metadata by wrapping events in layers — inner seal encrypted to recipient, outer gift wrap with random pubkey and randomized timestamp. Relay sees only the gift wrap.
-
-**Adoption status**: NIP-04 is universally supported. NIP-44 has growing support. NIP-17 is still limited.
-
-### Metadata Exposure
-
-**THIS IS THE KEY WEAKNESS OF NOSTR DMs.**
-
-With NIP-04 (current standard), relay operators can see:
-
-- **WHO** is messaging **WHOM** (sender and recipient pubkeys)
-- **WHEN** messages are sent (timestamps)
-- That the event **IS** a DM (kind 4)
-- They **CANNOT** see message content (encrypted)
-
-Pubkeys are pseudonymous but can be linked to real identities if the user publishes identifying info in their profile (kind 0), links their npub publicly, uses a NIP-05 identifier on a known domain, or reuses pubkeys across contexts.
-
-NIP-17 gift-wrapping addresses this but adoption is limited. Until widely supported, treat Nostr DMs as having **weaker metadata privacy than SimpleX or Signal**.
-
-### Decentralization
-
-No single entity controls the network. Relays are independently operated — anyone can run one. Users choose which relays to use. A relay operator can see all events on their relay but not events on other relays. Censorship requires cooperation of ALL relays a user publishes to.
-
-### No PII Required
-
-Identity is purely keypair-based. No phone number, no email, no username registration, no server account. No SIM-swapping attacks, no email-based recovery attacks, pseudonymous by default. This is a significant privacy advantage.
-
-### Push Notifications
-
-No push notifications in the traditional sense. Clients maintain WebSocket connections or poll periodically. No Google FCM or Apple APNs metadata exposure. Some clients use optional push services with a trust trade-off.
-
-### AI Training Risk
-
-The protocol itself has no AI training risk. Public notes (kind 1) are **public by design** — anyone can read and train on them. Encrypted DMs (kind 4) are not accessible to relays. Individual relay operators set their own data policies.
-
-### Open Source
-
-Protocol specification is fully open ([NIPs repository](https://github.com/nostr-protocol/nips)). All major clients (Damus, Amethyst, Primal, Snort) and relay implementations (strfry, nostr-rs-relay, nostream) are open-source. nostr-tools is MIT licensed. No proprietary components.
-
-### Key Management
-
-- Private key (nsec) security is **critical** — if compromised, attacker can impersonate the user **permanently**
-- No key rotation mechanism in the base protocol — a compromised key cannot be revoked
-- NIP-46 (Nostr Connect) allows delegated signing without exposing nsec
-- Hardware key storage via NIP-46 signers is the gold standard for high-value identities
-- **Recommendation**: Generate a dedicated keypair for the bot, separate from any personal identity
-
-### Relay Trust
-
-You must trust relay operators not to censor events or log/correlate metadata. Use multiple relays for redundancy. Self-hosting eliminates relay trust entirely. Paid relays offer better reliability but introduce a payment metadata link.
-
-### Comparison with Other Protocols
-
-| Aspect | Nostr | SimpleX | Signal | Matrix |
-|--------|-------|---------|--------|--------|
-| PII required | None | None | Phone number | Optional |
-| DM content privacy | Encrypted | Encrypted | Encrypted | Encrypted |
-| DM metadata privacy | Weak (pubkeys visible) | Strongest (no IDs) | Good (sealed sender) | Moderate |
-| Censorship resistance | Strongest | Strong | Moderate | Moderate |
-| Key compromise impact | Permanent impersonation | Per-connection | Account takeover | Account takeover |
-| Decentralization | Full (relay-based) | Full (no servers needed) | Centralized | Federated |
-
-**Summary**: Nostr is best for censorship resistance and pseudonymous public communication. For private messaging, SimpleX offers stronger metadata privacy. For bot integration where censorship resistance matters more than metadata hiding, Nostr is the superior choice.
-
-## aidevops Integration
-
-### Helper Script Pattern
-
-```bash
-#!/usr/bin/env bash
-# ~/.aidevops/agents/scripts/nostr-dispatch-helper.sh
-set -euo pipefail
-
-nostr_dispatch() {
-  local sender_pubkey="$1"
-  local command="$2"
-
-  if ! is_authorized "$sender_pubkey"; then
-    echo "Unauthorized sender: $sender_pubkey"
-    return 1
-  fi
-
-  case "$command" in
-    /status)  aidevops status; return 0 ;;
-    /pulse)   aidevops pulse; return 0 ;;
-    /ask\ *)  aidevops research "${command#/ask }"; return 0 ;;
-    *)        echo "Unknown command: $command"; return 1 ;;
-  esac
-}
-
-is_authorized() {
-  local pubkey="$1"
-  local config_file="${HOME}/.config/aidevops/nostr-bot.json"
-  if [[ ! -f "$config_file" ]]; then
-    echo "No config found: $config_file"
-    return 1
-  fi
-  if jq -e --arg pk "$pubkey" '.allowed_users[] | select(. == $pk)' "$config_file" > /dev/null 2>&1; then
-    return 0
-  fi
-  return 1
-}
-```
-
-### Configuration
-
-Config path: `~/.config/aidevops/nostr-bot.json`
+The foundation of Nostr — every piece of data is a signed JSON event:
 
 ```json
 {
-  "bot_nsec_gopass_path": "aidevops/nostr-bot/nsec",
+  "id": "<32-byte SHA-256 hex of serialized event>",
+  "pubkey": "<32-byte secp256k1 pubkey hex of creator>",
+  "created_at": 1234567890,
+  "kind": 1,
+  "tags": [["p", "<pubkey>"], ["e", "<event-id>"]],
+  "content": "Hello Nostr!",
+  "sig": "<64-byte Schnorr signature hex>"
+}
+```
+
+**Event kinds relevant to bots**:
+
+| Kind | NIP | Description |
+|------|-----|-------------|
+| 0 | NIP-01 | Metadata (profile name, about, picture) |
+| 1 | NIP-01 | Short text note (public post) |
+| 4 | NIP-04 | Encrypted direct message (legacy) |
+| 14 | NIP-17 | Chat message (gift-wrapped DM, preferred) |
+| 9735 | NIP-57 | Zap receipt (Lightning payment) |
+| 10002 | NIP-65 | Relay list metadata |
+
+### NIP-04: Encrypted Direct Messages (Legacy)
+
+- **Encryption**: secp256k1 ECDH shared secret + AES-256-CBC
+- **Event kind**: 4
+- **Tags**: `["p", "<recipient-pubkey>"]`
+- **Content**: `<base64-ciphertext>?iv=<base64-iv>`
+
+**Limitations**:
+
+- Sender and recipient pubkeys visible to relays (metadata leak)
+- Timestamps visible (timing analysis possible)
+- No forward secrecy — compromised key decrypts all past messages
+- AES-256-CBC without authentication (no AEAD)
+- Superseded by NIP-44 encryption + NIP-17 gift wrapping
+
+### NIP-44: Versioned Encryption
+
+- **Encryption**: XChaCha20-Poly1305 (AEAD) with secp256k1 ECDH + HKDF
+- **Improvements over NIP-04**: Authenticated encryption, padding to resist length analysis, versioned for future algorithm upgrades
+- **Used by**: NIP-17 gift-wrapped DMs, NIP-59 gift wraps
+
+### NIP-17: Private Direct Messages (Gift-Wrapped)
+
+- **Event kinds**: 14 (chat message), 13 (seal), 1059 (gift wrap)
+- **Privacy**: Hides sender pubkey, recipient pubkey, and timestamps from relays
+- **Encryption**: NIP-44 (XChaCha20-Poly1305)
+- **Relay routing**: Published to recipient's NIP-65 relay list, not sender's
+
+**Three-layer wrapping**:
+
+1. **Kind 14** (rumor): The actual chat message, unsigned
+2. **Kind 13** (seal): Rumor encrypted to recipient with NIP-44, signed by sender
+3. **Kind 1059** (gift wrap): Seal encrypted to recipient, signed by random throwaway key with randomized timestamp
+
+Relays see only the throwaway key and a randomized timestamp — no metadata about the actual conversation.
+
+### NIP-65: Relay List Metadata
+
+Users publish kind-10002 events listing their preferred relays (read, write, or both). Bots should read a recipient's NIP-65 relay list to know where to publish gift-wrapped DMs.
+
+## Identity
+
+### Keypair Model
+
+Nostr identity is a secp256k1 keypair:
+
+| Format | Prefix | Description |
+|--------|--------|-------------|
+| Hex pubkey | (none) | 32-byte hex, used in events |
+| npub | `npub1...` | NIP-19 bech32-encoded public key (human-readable) |
+| nsec | `nsec1...` | NIP-19 bech32-encoded private key (secret) |
+| nprofile | `nprofile1...` | NIP-19 pubkey + relay hints |
+
+**No registration, no server, no phone number.** Generate a keypair and you have an identity. The same keypair works across all Nostr clients and relays.
+
+### Key Management for Bots
+
+```bash
+# Generate keypair (do NOT log or expose the nsec)
+# Store nsec via gopass or credentials.sh (600 permissions)
+aidevops secret set NOSTR_BOT_NSEC
+
+# The npub is public — safe to share and configure
+# Derive npub from nsec programmatically at runtime
+```
+
+**Security rules**:
+
+- NEVER log, print, or expose the `nsec` private key
+- Store via `gopass` (preferred) or `~/.config/aidevops/credentials.sh` (600 permissions)
+- Derive the `npub` at runtime from the stored `nsec`
+- Use a dedicated keypair for the bot — never reuse a personal identity
+
+## Installation
+
+### nostr-tools SDK
+
+```bash
+# Install SDK
+npm install nostr-tools
+
+# Or with Bun (faster)
+bun add nostr-tools
+```
+
+**Bun compatibility**: nostr-tools is pure TypeScript with no native modules — fully compatible with Bun. Use `bun:sqlite` for local state if needed.
+
+### Key Dependencies
+
+| Package | Purpose |
+|---------|---------|
+| `nostr-tools` | Event creation, signing, relay management, NIP implementations |
+| `@noble/secp256k1` | Cryptographic primitives (bundled with nostr-tools) |
+| `websocket-polyfill` | WebSocket for Node.js (not needed with Bun) |
+
+## Bot Implementation
+
+### DM-Only Bot (Current Scope)
+
+The aidevops Nostr bot operates in DM-only mode — it listens for encrypted direct messages from allowed pubkeys and dispatches to runners. It does not post publicly.
+
+```typescript
+import {
+  generateSecretKey,
+  getPublicKey,
+  finalizeEvent,
+  nip04,
+  nip19,
+  SimplePool,
+} from "nostr-tools";
+
+// Load bot private key from secure storage (never hardcode)
+const sk = hexToBytes(process.env.NOSTR_BOT_SK_HEX!);
+const pk = getPublicKey(sk);
+
+console.log(`Bot pubkey: ${nip19.npubEncode(pk)}`);
+
+// Allowed pubkeys (access control)
+const ALLOWED_PUBKEYS = new Set(
+  (process.env.NOSTR_ALLOWED_PUBKEYS || "").split(",").filter(Boolean)
+);
+
+// Connect to relays
+const pool = new SimplePool();
+const relays = [
+  "wss://relay.damus.io",
+  "wss://nos.lol",
+  "wss://relay.nostr.band",
+];
+
+// Subscribe to kind-4 DMs addressed to this bot
+const sub = pool.subscribeMany(
+  relays,
+  [{ kinds: [4], "#p": [pk], since: Math.floor(Date.now() / 1000) }],
+  {
+    onevent: async (event) => {
+      // Access control: check sender pubkey
+      if (!ALLOWED_PUBKEYS.has(event.pubkey)) {
+        console.log(`Ignored DM from unauthorized pubkey: ${event.pubkey}`);
+        return;
+      }
+
+      // Decrypt NIP-04 message
+      const plaintext = await nip04.decrypt(sk, event.pubkey, event.content);
+      console.log(`DM from ${event.pubkey}: ${plaintext}`);
+
+      // Dispatch to aidevops runner
+      const response = await dispatchToRunner(plaintext);
+
+      // Encrypt and send reply
+      const ciphertext = await nip04.encrypt(sk, event.pubkey, response);
+      const replyEvent = finalizeEvent(
+        {
+          kind: 4,
+          created_at: Math.floor(Date.now() / 1000),
+          tags: [["p", event.pubkey]],
+          content: ciphertext,
+        },
+        sk
+      );
+
+      await Promise.any(pool.publish(relays, replyEvent));
+    },
+  }
+);
+```
+
+### Access Control via Pubkey Allowlist
+
+The bot only processes DMs from pubkeys in the allowlist. This is the primary access control mechanism.
+
+```bash
+# Environment variable: comma-separated hex pubkeys
+NOSTR_ALLOWED_PUBKEYS="<hex-pubkey-1>,<hex-pubkey-2>"
+
+# Or store in config
+# ~/.config/aidevops/nostr-bot.json (600 permissions)
+```
+
+**Config file format**:
+
+```json
+{
+  "botSkHex": "DO_NOT_STORE_HERE_USE_GOPASS",
+  "allowedPubkeys": [
+    "abc123...",
+    "def456..."
+  ],
   "relays": [
     "wss://relay.damus.io",
     "wss://nos.lol",
     "wss://relay.nostr.band"
   ],
-  "allowed_users": [
-    "hex_pubkey_of_authorized_user_1",
-    "hex_pubkey_of_authorized_user_2"
-  ],
-  "self_hosted_relay": null,
-  "log_level": "info"
+  "dmProtocol": "nip-04",
+  "responseTimeout": 600
 }
 ```
 
-### Entity Resolution
+**Note**: The `botSkHex` field should reference a gopass secret or environment variable, not contain the actual key. The config template shows the field for documentation; the actual implementation reads from `NOSTR_BOT_SK_HEX` env var or `aidevops secret get NOSTR_BOT_SK_HEX`.
 
-Nostr uses hex pubkeys internally and bech32-encoded npub/nsec for display:
+### NIP-17 Gift-Wrapped DMs (Planned)
 
-```typescript
-import { nip19, nip05 } from "nostr-tools"
+NIP-17 provides metadata-private DMs. Implementation requires:
 
-const { data: hexPubkey } = nip19.decode("npub1...")  // npub → hex
-const npub = nip19.npubEncode(hexPubkey)              // hex → npub
+1. Read recipient's NIP-65 relay list to find their inbox relays
+2. Create kind-14 rumor (unsigned chat message)
+3. Wrap in kind-13 seal (NIP-44 encrypted to recipient, signed by bot)
+4. Wrap in kind-1059 gift wrap (NIP-44 encrypted to recipient, signed by throwaway key)
+5. Publish gift wrap to recipient's inbox relays
 
-// NIP-05 resolution (user@domain.com → pubkey)
-const profile = await nip05.queryProfile("user@domain.com")
-// profile.pubkey, profile.relays
+nostr-tools provides `nip44` and `nip59` modules for this. Migration from NIP-04 to NIP-17 is recommended when client support is widespread.
+
+## Relay Architecture
+
+### How Relays Work
+
+- Relays are WebSocket servers that store and forward Nostr events
+- Anyone can run a relay — no permission or coordination needed
+- Each relay has its own storage policy (retention, size limits, paid/free)
+- Clients connect to multiple relays for redundancy
+- Events are identified by their SHA-256 hash — duplicates are idempotent
+
+### Relay Selection for Bots
+
+| Relay type | Use case | Examples |
+|------------|----------|---------|
+| Public free | Development, testing | `wss://relay.damus.io`, `wss://nos.lol` |
+| Public paid | Production, reliability | `wss://relay.nostr.band` (freemium) |
+| Private/self-hosted | Maximum control | Run your own `nostr-rs-relay` or `strfry` |
+
+**Recommendations for bot deployment**:
+
+- Use 3-5 relays for redundancy
+- Include at least one paid relay for reliability
+- Consider self-hosting a relay for full control over data retention
+- Read recipients' NIP-65 relay lists to ensure delivery
+
+### Self-Hosted Relay Options
+
+| Software | Language | Notes |
+|----------|----------|-------|
+| [nostr-rs-relay](https://github.com/scsibug/nostr-rs-relay) | Rust | SQLite backend, lightweight |
+| [strfry](https://github.com/hoytech/strfry) | C++ | High performance, LMDB backend |
+| [nostream](https://github.com/Cameri/nostream) | TypeScript | PostgreSQL, Docker-ready |
+
+## Deployment
+
+### Process Management
+
+```bash
+# Using PM2
+npm i -g pm2
+pm2 start src/nostr-bot.ts --interpreter tsx --name nostr-bot
+pm2 save
+pm2 startup
+
+# Using systemd (Linux)
+# Create /etc/systemd/system/nostr-bot.service
+# ExecStart=/usr/bin/bun run /opt/nostr-bot/src/bot.ts
+# Environment=NOSTR_BOT_SK_HEX=<from-gopass>
 ```
 
-### Runner Dispatch
+### Docker
 
-The bot dispatches tasks via the standard pattern: receive DM → validate sender pubkey → parse command → dispatch via `nostr-dispatch-helper.sh` → collect result → send encrypted DM response.
+```dockerfile
+FROM oven/bun:1-slim
+WORKDIR /app
+COPY package.json bun.lockb ./
+RUN bun install --frozen-lockfile
+COPY . .
+CMD ["bun", "run", "src/bot.ts"]
+```
 
-## Matterbridge Integration
+**Environment variables** (passed via Docker secrets or env file):
 
-**NO native Matterbridge support for Nostr.**
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `NOSTR_BOT_SK_HEX` | Yes | Bot's secp256k1 private key (hex) |
+| `NOSTR_ALLOWED_PUBKEYS` | Yes | Comma-separated hex pubkeys |
+| `NOSTR_RELAYS` | No | Comma-separated relay URLs (defaults to public relays) |
+| `NOSTR_DM_PROTOCOL` | No | `nip-04` (default) or `nip-17` |
 
-Matterbridge does not include a Nostr gateway. Bridging would require a custom gateway implementation.
+## Privacy and Security Assessment
 
-### Bridging Feasibility
+### Strengths
 
-| Aspect | Assessment |
-|--------|------------|
-| Technical feasibility | Moderate — Nostr's event model maps to messages |
-| Effort | High — requires custom Matterbridge gateway plugin |
-| Public notes (kind 1) | Straightforward to bridge (plain text) |
-| DMs (kind 4) | Complex — requires bot to decrypt/re-encrypt |
-| Identity mapping | Difficult — Nostr pubkeys don't map to usernames |
-| Direction | Nostr→other is easier; other→Nostr requires signing |
+- **No phone/email required** — keypair identity only, no PII needed
+- **Decentralized** — no single entity controls the network or can shut it down
+- **Censorship-resistant** — events replicated across multiple independent relays
+- **Open protocol** — anyone can build clients, relays, or tools
+- **Lightning payments** — NIP-57 zaps enable native Bitcoin payments
+- **No AI training risk from protocol** — the protocol itself doesn't collect data; individual relay operators set their own policies
 
-**Alternative**: Bot-level bridging — bot decrypts Nostr DM, re-sends via Matrix/SimpleX, and vice versa. Simpler but less scalable than a proper Matterbridge gateway.
+### Weaknesses
+
+- **NIP-04 metadata exposure** — sender pubkey, recipient pubkey, and timestamps visible to relays (use NIP-17 to mitigate)
+- **No forward secrecy** — NIP-04 uses static ECDH; compromised key decrypts all past messages (NIP-44 improves but still no ratchet)
+- **Relay trust** — relays see event metadata (pubkeys, timestamps, kinds) unless NIP-17 gift wrapping is used
+- **Pubkey correlation** — the same pubkey is used across all interactions, enabling activity correlation across relays
+- **No push notifications** — clients must poll relays or maintain persistent WebSocket connections
+- **Key management burden** — losing the nsec means losing the identity permanently; no recovery mechanism
+
+### Threat Model
+
+Nostr protects against:
+
+- **Platform deplatforming** — no single entity can ban a pubkey from the network
+- **Server seizure** — events exist on multiple independent relays
+- **Censorship** — relay redundancy means censoring requires blocking all relays
+- **Identity theft** — secp256k1 signatures are cryptographically unforgeable
+
+Nostr does **not** protect against:
+
+- **Metadata analysis (NIP-04)** — relays see who talks to whom and when
+- **Key compromise** — all past NIP-04 DMs decryptable with the private key
+- **Relay collusion** — relays could share metadata to build social graphs
+- **Sybil attacks** — creating fake identities is free (no proof of work or stake)
+- **Spam** — open protocol means anyone can send events; filtering is client-side
+
+### Comparison with SimpleX Privacy
+
+| Aspect | Nostr (NIP-04) | Nostr (NIP-17) | SimpleX |
+|--------|---------------|----------------|---------|
+| Sender identity visible to relay | Yes | No (throwaway key) | No (stateless) |
+| Recipient identity visible to relay | Yes | No (encrypted) | No (queue-based) |
+| Timestamps visible | Yes | No (randomized) | No (memory-only) |
+| Forward secrecy | No | No | Yes (double ratchet) |
+| User identifiers | Pubkey (persistent) | Pubkey (hidden in transit) | None |
+
+**Recommendation**: For maximum DM privacy on Nostr, use NIP-17 gift-wrapped messages. For maximum privacy overall, SimpleX remains stronger due to its lack of persistent identifiers and double-ratchet forward secrecy.
 
 ## Limitations
 
-### NIP-04 DM Metadata Visibility
+### No Forward Secrecy
 
-With NIP-04, relay operators can see sender/recipient pubkeys and timestamps for all DMs. Content is encrypted but the social graph is exposed. NIP-17 gift-wrapping addresses this but adoption is limited.
+Neither NIP-04 nor NIP-44 implements a ratcheting protocol. A compromised private key can decrypt all past encrypted messages. This is a fundamental limitation compared to Signal/SimpleX double-ratchet protocols.
 
-### No Rich Interactive Elements
+### Metadata Exposure (NIP-04)
 
-No protocol-level support for inline buttons, keyboards, interactive forms, menus, typing indicators, or read receipts. Bot interaction is text-command-based only.
+NIP-04 DMs expose sender pubkey, recipient pubkey, and timestamps to every relay that stores the event. NIP-17 mitigates this but requires client support on both sides.
 
-### Relay Reliability
+### Relay Dependence
 
-Relays are independently operated with varying uptime, no SLA. Free relays may rate-limit or filter. **Mitigation**: Connect to multiple relays; self-host for critical bots.
+While decentralized, the bot depends on relays being online and storing events. Free public relays may have aggressive retention policies or rate limits. Paid or self-hosted relays provide more reliability.
 
-### No Guaranteed Message Delivery
+### No Offline Support
 
-If all relays are offline or the bot is offline, messages may be lost. No delivery receipts in the base protocol. **Mitigation**: Use `since` filter on reconnect; use relays with good retention policies.
+Nostr requires internet connectivity to relay servers. Unlike Bitchat, there is no mesh or offline capability.
 
-### Key Management Complexity
+### Key Recovery
 
-No key rotation — a compromised nsec is permanently compromised. No account recovery. NIP-46 adds complexity but improves security. **Mitigation**: Dedicated bot keypairs in gopass, rotate by creating new identity.
+There is no key recovery mechanism. If the bot's `nsec` is lost, the identity is permanently lost. Backup the key securely.
 
-### Small Ecosystem
+### Client Ecosystem Fragmentation
 
-Significantly fewer users than mainstream messengers. Developer tooling less mature. Documentation scattered across NIPs. Rapidly evolving protocol.
+NIP-17 support varies across clients. Some clients only support NIP-04 DMs. The bot should support both protocols and prefer NIP-17 when the recipient's client supports it.
 
-### No Voice or Video Calls
+### No Native Group DMs (Yet)
 
-The protocol does not include voice/video capabilities. Some clients experiment with WebRTC signaling over Nostr events but there is no standardized NIP.
+NIP-17 supports group DMs by including multiple `p` tags, but client support is inconsistent. For group coordination, consider using NIP-28 public channels or a different protocol.
 
-### Client Compatibility
+## Integration with aidevops
 
-Different clients support different NIP subsets. A NIP-44 DM may not be readable by NIP-04-only clients. Bot should handle both for maximum compatibility. NIP-17 support is very limited.
+### Bot Architecture
 
-### Spam
+```text
+┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
+│ Nostr Client      │     │ Nostr Bot        │     │ aidevops Runner  │
+│ (Damus, Amethyst, │     │ (Bun/Node.js)    │     │                  │
+│  Primal, etc.)    │     │                  │     │ runner-helper.sh │
+│                   │────▶│ 1. Receive DM    │────▶│ → AI session     │
+│ User sends DM:    │     │ 2. Check pubkey  │     │ → response       │
+│ "Review auth.ts"  │◀────│ 3. Decrypt       │◀────│                  │
+│                   │     │ 4. Dispatch      │     │                  │
+│ AI response DM    │     │ 5. Encrypt reply │     │                  │
+└──────────────────┘     └──────────────────┘     └──────────────────┘
+```
 
-Public relays are susceptible to spam. No built-in protocol-level filtering. Relays implement their own anti-spam (proof of work, payment, allowlists). Bots should implement pubkey allowlisting.
+### Potential Components
+
+| Component | File | Description |
+|-----------|------|-------------|
+| Subagent doc | `.agents/services/communications/nostr.md` | This file (t1385.5) |
+| Helper script | `.agents/scripts/nostr-helper.sh` | Setup, key management, relay config |
+| Bot process | `.agents/scripts/nostr-bot/` (TypeScript/Bun) | DM listener + runner dispatch |
+
+### Matterbridge Integration
+
+Nostr does not have a native Matterbridge adapter. A custom adapter could bridge Nostr DMs or public channels to other platforms via Matterbridge's REST API, following the same pattern as the SimpleX adapter (`matterbridge-simplex`).
+
+### Use Cases for aidevops
+
+| Scenario | Value |
+|----------|-------|
+| Censorship-resistant dispatch | Send commands to AI runners from any Nostr client, anywhere |
+| Lightning-integrated bots | Accept zap payments for premium AI services |
+| Cross-client access | Same bot reachable from Damus, Amethyst, Primal, or any NIP-04/17 client |
+| Pseudonymous operations | Operate AI runners without revealing real identity |
+| Decentralized notifications | Bot publishes status updates to followers (kind-1 notes) |
 
 ## Related
 
-- `.agents/services/communications/simplex.md` — SimpleX Chat (strongest metadata privacy)
-- `.agents/services/communications/matrix-bot.md` — Matrix messaging (federated, mature ecosystem)
-- `.agents/services/communications/bitchat.md` — BitChat (Bitcoin-native messaging)
-- `.agents/services/communications/xmtp.md` — XMTP (Ethereum-native messaging)
-- `.agents/services/communications/matterbridge.md` — Matterbridge (cross-platform bridging)
-- `.agents/tools/security/opsec.md` — Operational security guidance
-- `.agents/tools/credentials/gopass.md` — Secret management (for nsec storage)
-- `.agents/tools/ai-assistants/headless-dispatch.md` — Headless AI dispatch patterns
+- `services/communications/simplex.md` — SimpleX Chat (zero-knowledge, strongest DM privacy)
+- `services/communications/matrix-bot.md` — Matrix bot integration (federated, mature ecosystem)
+- `services/communications/xmtp.md` — XMTP (Web3 messaging, wallet identity)
+- `services/communications/bitchat.md` — Bitchat (Bluetooth mesh, offline)
+- `services/communications/matterbridge.md` — Multi-platform chat bridge
+- `tools/security/opsec.md` — Operational security guidance
 - Nostr NIPs: https://github.com/nostr-protocol/nips
 - nostr-tools: https://github.com/nbd-wtf/nostr-tools
 - Nostr relay list: https://nostr.watch/
-- Awesome Nostr: https://github.com/aljazceru/awesome-nostr
