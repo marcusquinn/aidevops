@@ -22,7 +22,7 @@ tools:
 - **License**: BlueBubbles (Apache-2.0), imsg CLI (MIT, [github.com/steipete/imsg](https://github.com/steipete/imsg))
 - **Bot tools**: BlueBubbles REST API (recommended, full-featured) OR imsg CLI (simple send-only)
 - **Protocol**: Apple Push Notification service (APNs) + iMessage protocol
-- **Encryption**: E2E (ECDSA P-256 for newer devices, RSA-2048 + AES-128-CTR for legacy)
+- **Encryption**: E2E (PQ3 with AES-256-CTR on iOS 17.4+; classic: RSA-OAEP/ECIES key wrapping + AES-128-CTR; ECDSA P-256 for signing)
 - **BlueBubbles server**: [github.com/BlueBubblesApp/bluebubbles-server](https://github.com/BlueBubblesApp/bluebubbles-server)
 - **BlueBubbles docs**: [docs.bluebubbles.app](https://docs.bluebubbles.app/)
 - **Requirement**: macOS host with Messages.app (always-on Mac, Apple ID signed in)
@@ -246,9 +246,17 @@ app.listen(3000);
 
 ### Encryption
 
-- **Newer devices (2020+)**: ECDSA P-256 key agreement, AES-256-GCM message encryption
-- **Legacy devices**: RSA-2048 key exchange + AES-128-CTR message encryption
-- **Group chats**: Each message individually encrypted per recipient (no group key)
+iMessage uses E2E encryption with different cryptographic primitives depending on protocol version:
+
+| Component | Classic iMessage | PQ3 (iOS 17.4+) |
+|-----------|-----------------|------------------|
+| Content encryption | AES-128-CTR (per-message key) | AES-256-CTR |
+| Key wrapping | RSA-OAEP (modulus size not specified by Apple); ECIES on P-256 available since iOS 13 | Post-quantum key establishment (Kyber-768 + P-256 ECDH) |
+| Signing / authentication | ECDSA P-256 (sender authentication, not content encryption) | ECDSA P-256 |
+| Attachment encryption | AES-256-CTR (random 256-bit key) | AES-256-CTR |
+| Forward secrecy | Limited — keys rotate on device changes, not per-message | Periodic rekeying via post-quantum ratchet |
+
+- **Group chats**: Each message individually encrypted per recipient device (no group key)
 - **Key verification**: Contact Key Verification (iOS 17.2+) — manual verification like Signal's safety numbers
 - Apple **cannot** read iMessage content in transit
 
