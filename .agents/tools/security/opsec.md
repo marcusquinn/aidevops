@@ -119,6 +119,8 @@ Platforms that use or may use your data for AI training:
 | **Nostr** | Never (protocol) | Nothing from protocol | N/A — relay operators set own policies |
 | **Urbit** | Never | Nothing | N/A — fully sovereign |
 
+**Comprehensive comparison**: For detailed matrices covering encryption protocols, metadata exposure, identity requirements, AI training policies, push notification privacy, open source status, self-hosting options, and runner dispatch suitability across all 15 platforms, see `services/communications/privacy-comparison.md`.
+
 ### SimpleX vs Matrix Comparison
 
 | Dimension | SimpleX | Matrix |
