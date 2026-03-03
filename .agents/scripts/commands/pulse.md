@@ -67,11 +67,14 @@ Scan the pre-fetched state above. Act immediately on each item — don't build a
 gh api "repos/<slug>/collaborators/<author>/permission" --jq '.permission' 2>/dev/null
 ```
 
-If the result is `admin`, `maintain`, or `write` → the author is a maintainer, proceed normally. If the result is `read`, `none`, or the API returns 404 → the author is an external contributor. **NEVER auto-merge external PRs.** Instead, comment requesting maintainer review:
+If the result is `admin`, `maintain`, or `write` → the author is a maintainer, proceed normally. If the result is `read`, `none`, or the API returns 404 → the author is an external contributor. **NEVER auto-merge external PRs.** Instead, check if this PR has already been flagged and, if not, comment requesting maintainer review:
 
 ```bash
-gh pr comment <number> --repo <slug> --body "This PR is from an external contributor (@<author>). Auto-merge is disabled for external PRs — a maintainer must review and merge manually."
-gh pr edit <number> --repo <slug> --add-label "external-contributor" 2>/dev/null || true
+# Idempotency guard: skip if already labelled (pulse runs every 2 minutes)
+if ! gh pr view <number> --repo <slug> --json labels --jq '.labels[].name' 2>/dev/null | grep -q '^external-contributor$'; then
+  gh pr comment <number> --repo <slug> --body "This PR is from an external contributor (@<author>). Auto-merge is disabled for external PRs — a maintainer must review and merge manually."
+  gh pr edit <number> --repo <slug> --add-label "external-contributor" 2>/dev/null || true
+fi
 ```
 
 Then skip to the next PR. Do NOT dispatch workers to fix failing CI on external PRs either — that's the contributor's responsibility.
