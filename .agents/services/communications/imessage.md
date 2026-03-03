@@ -118,12 +118,13 @@ BlueBubbles is a full-featured iMessage bridge that exposes a REST API and webho
 
 ### Installation
 
-```bash
-# Download latest release from GitHub
-# https://github.com/BlueBubblesApp/bluebubbles-server/releases
+Download the DMG from [BlueBubbles GitHub Releases](https://github.com/BlueBubblesApp/bluebubbles-server/releases) and install manually. The `bluebubbles` Homebrew cask is deprecated (disabled 2026-09-01) due to a macOS Gatekeeper issue — do not use `brew install --cask bluebubbles`.
 
-# Or via Homebrew cask (if available)
-brew install --cask bluebubbles
+```bash
+# 1. Download latest .dmg from GitHub Releases:
+#    https://github.com/BlueBubblesApp/bluebubbles-server/releases
+# 2. Open the .dmg and drag BlueBubbles to /Applications
+# 3. On first launch, right-click > Open to bypass Gatekeeper
 
 # Launch and complete setup wizard:
 # 1. Grant Full Disk Access
@@ -407,11 +408,12 @@ check_and_restart() {
   local app_name="$1"
   local bundle_id="$2"
 
-  if ! pgrep -f "$app_name" > /dev/null 2>&1; then
+  # Use pgrep -x for exact process name match (avoids substring false positives)
+  if ! pgrep -x "$app_name" > /dev/null 2>&1; then
     echo "$(date): $app_name not running, restarting..."
     open -a "$app_name"
     sleep 5
-    if pgrep -f "$app_name" > /dev/null 2>&1; then
+    if pgrep -x "$app_name" > /dev/null 2>&1; then
       echo "$(date): $app_name restarted successfully"
     else
       echo "$(date): ERROR: Failed to restart $app_name"
@@ -486,9 +488,11 @@ iMessage uses end-to-end encryption managed by Apple:
 | Component | Detail |
 |-----------|--------|
 | Key exchange | IDS (Identity Services) — Apple-managed key directory |
-| Encryption (legacy) | RSA-2048 + AES-128-CTR per message |
-| Encryption (modern) | ECDSA P-256 + AES-256-CTR (devices since ~2020) |
-| Forward secrecy | Limited — keys rotate on device changes, not per-message |
+| Key wrapping (classic) | RSA-OAEP (per Apple docs; modulus size not specified) + AES-128-CTR per message |
+| Key wrapping (iOS 13+) | ECIES on NIST P-256 (available since iOS 13) + AES-128-CTR per message |
+| Encryption (PQ3, iOS 17.4+) | Post-quantum key establishment + AES-256-CTR for payloads and attachments |
+| Signing / authentication | ECDSA P-256 — used for sender authentication, not content encryption |
+| Forward secrecy | Limited in classic iMessage — keys rotate on device changes, not per-message; PQ3 adds periodic rekeying |
 | Key verification | Contact Key Verification (iOS 17.2+) — optional manual verification |
 | Group encryption | Each message encrypted separately per recipient device |
 
