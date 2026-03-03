@@ -1,5 +1,5 @@
 ---
-description: iMessage / BlueBubbles — Apple encrypted messaging, BlueBubbles REST API bot integration, imsg CLI send-only, macOS-only requirement, security model, SMS fallback risks
+description: iMessage/BlueBubbles bot integration — BlueBubbles REST API (recommended), imsg CLI (send-only), macOS requirements, messaging features, access control, privacy/security assessment, and aidevops runner dispatch
 mode: subagent
 tools:
   read: true
@@ -18,95 +18,302 @@ tools:
 
 ## Quick Reference
 
-- **Type**: Apple's encrypted messaging — E2E encrypted, Apple ecosystem only
-- **License**: BlueBubbles (Apache-2.0), imsg CLI (MIT, [github.com/steipete/imsg](https://github.com/steipete/imsg))
-- **Bot tools**: BlueBubbles REST API (recommended, full-featured) OR imsg CLI (simple send-only)
-- **Protocol**: Apple Push Notification service (APNs) + iMessage protocol
-- **Encryption**: E2E (ECDSA P-256 for newer devices, RSA-2048 + AES-128-CTR for legacy)
-- **BlueBubbles server**: [github.com/BlueBubblesApp/bluebubbles-server](https://github.com/BlueBubblesApp/bluebubbles-server)
-- **BlueBubbles docs**: [docs.bluebubbles.app](https://docs.bluebubbles.app/)
-- **Requirement**: macOS host with Messages.app (always-on Mac, Apple ID signed in)
-- **Platforms**: iMessage users only (iPhone, iPad, Mac, Apple Watch, Apple Vision Pro)
-
-**Key differentiator**: iMessage is the default messaging platform for over 1 billion Apple users. Unlike open protocols (Matrix, SimpleX, XMTP), iMessage has no official bot API — BlueBubbles provides an unofficial bridge by wrapping Messages.app on a macOS host. This makes it the only viable path for programmatic iMessage interaction.
+- **Type**: Apple iMessage bot integration via two paths: BlueBubbles (full-featured) or imsg CLI (send-only)
+- **Platform**: macOS only (Messages.app required as iMessage relay)
+- **BlueBubbles**: REST API, webhook-based, DMs/groups/reactions/attachments/typing/read receipts
+- **imsg CLI**: Swift-based, send-only, no incoming message handling
+- **BlueBubbles repo**: [github.com/BlueBubblesApp/bluebubbles-server](https://github.com/BlueBubblesApp/bluebubbles-server) (Apache-2.0)
+- **imsg repo**: [github.com/steipete/imsg](https://github.com/steipete/imsg) (MIT)
+- **Encryption**: iMessage uses E2E encryption (Apple-managed keys); BlueBubbles accesses messages locally on the Mac
+- **Identifier**: Apple ID (email) or phone number required
+- **Privacy**: Apple cannot read message content; metadata (who, when, IP) visible to Apple
 
 **When to use iMessage vs other protocols**:
 
 | Criterion | iMessage (BlueBubbles) | SimpleX | Matrix | Signal |
-|-----------|----------------------|---------|--------|--------|
-| User base | 1B+ Apple users | Growing niche | Enterprise/tech | 40M+ |
-| Identity | Apple ID / phone | None | `@user:server` | Phone number |
-| E2E encryption | Yes (closed source) | Yes (audited) | Optional (Megolm) | Yes (audited) |
-| Official bot API | No (unofficial only) | WebSocket JSON | First-class SDK | No |
-| Open source | No (BlueBubbles is) | Yes (AGPL-3.0) | Yes | Yes |
-| Platform | Apple-only | Cross-platform | Cross-platform | Cross-platform |
-| Best for | Reaching Apple users | Privacy-first | Team collaboration | Privacy + mainstream |
+|-----------|------------------------|---------|--------|--------|
+| User identifiers | Apple ID / phone | None | `@user:server` | Phone |
+| E2E encryption | Yes (Apple-managed) | Yes (user-managed) | Optional | Yes |
+| Server requirement | macOS host + Messages.app | SMP relays | Homeserver | Signal servers |
+| Bot ecosystem | BlueBubbles REST API | WebSocket API | Mature SDK | Limited |
+| Best for | Reaching Apple users natively | Maximum privacy | Team collaboration | Secure 1:1 |
+| Open source | Server: yes; protocol: no | Fully open | Fully open | Partially open |
 
 <!-- AI-CONTEXT-END -->
 
 ## Architecture
 
 ```text
-Path 1: BlueBubbles (bidirectional)       Path 2: imsg CLI (send-only)
-
-┌───────────────────┐                     ┌───────────────────┐
-│ iPhone / iPad /   │                     │ aidevops runner / │
-│ Mac Users         │                     │ cron job / script │
-└────────┬──────────┘                     └────────┬──────────┘
-         │ iMessage (E2E via APNs)                 │ shell exec
-┌────────▼──────────┐                     ┌────────▼──────────┐
-│ macOS Host        │                     │ imsg CLI (Swift)  │
-│ ├─ Messages.app   │                     │ → Messages.app    │
-│ ├─ BlueBubbles    │                     │ → iMessage / SMS  │
-│ │  (Electron,     │                     └───────────────────┘
-│ │   private APIs) │
-│ └─ REST :1234     │
-│    + WebSocket    │
-└────────┬──────────┘
-         │ HTTP REST + WebSocket
-┌────────▼──────────┐
-│ Bot Process       │
-│ ├─ Webhook recv   │
-│ ├─ Command router │
-│ └─ aidevops       │
-└───────────────────┘
+┌──────────────────────┐
+│ iPhone / iPad /       │
+│ Mac (sender)          │
+│                       │
+│ Messages.app          │
+└──────────┬───────────┘
+           │ iMessage Protocol (E2E encrypted)
+           │ Apple Push Notification service (APNs)
+           │
+┌──────────▼───────────┐
+│ Apple iMessage        │
+│ Servers (relay only)  │
+│ (cannot read content) │
+└──────────┬───────────┘
+           │
+┌──────────▼───────────┐
+│ macOS Host            │
+│ Messages.app          │
+│ (signed-in Apple ID)  │
+│                       │
+│ ┌──────────────────┐  │
+│ │ BlueBubbles       │  │
+│ │ Server            │  │
+│ │ (reads Messages   │  │
+│ │  SQLite DB +      │  │
+│ │  AppleScript)     │  │
+│ └────────┬─────────┘  │
+│          │ REST API    │
+│          │ + Webhooks  │
+└──────────┼───────────┘
+           │
+┌──────────▼───────────┐
+│ Bot Process            │
+│ (any language/runtime) │
+│                        │
+│ ├─ Webhook receiver    │
+│ ├─ Command router      │
+│ ├─ aidevops dispatch   │
+│ └─ Response sender     │
+└────────────────────────┘
 ```
 
-**Message flow (BlueBubbles)**: User sends iMessage → APNs delivers to macOS host → Messages.app decrypts → BlueBubbles detects via private API → fires webhook/WebSocket to bot → bot replies via REST API → BlueBubbles instructs Messages.app → encrypted send via APNs.
+**Message flow (inbound)**:
 
-## Installation
+1. Sender's device encrypts message with iMessage protocol (RSA/ECDSA + AES)
+2. Encrypted message relayed via APNs to recipient's Apple ID
+3. macOS host's Messages.app decrypts and stores in local SQLite database
+4. BlueBubbles server detects new message (filesystem events on chat.db)
+5. BlueBubbles fires webhook to bot process with message payload
+6. Bot processes message and responds via BlueBubbles REST API
+7. BlueBubbles sends response through Messages.app (AppleScript)
+8. Messages.app encrypts and sends via iMessage protocol
 
-### Path 1: BlueBubbles Server (Recommended)
+**Message flow (imsg CLI — send-only)**:
 
-**Requirements**:
+1. Bot calls `imsg send` with recipient and message text
+2. imsg uses AppleScript to send via Messages.app
+3. Messages.app encrypts and sends via iMessage protocol
+4. No inbound message handling — imsg is fire-and-forget
 
-- macOS 11 (Big Sur) or later
-- Apple ID signed into Messages.app
-- Always-on Mac (Mac mini recommended for servers)
-- Full Disk Access permission for BlueBubbles
-- Accessibility permission for BlueBubbles
+## Integration Path 1: BlueBubbles (Recommended)
 
-**Setup**:
+BlueBubbles is a full-featured iMessage bridge that exposes a REST API and webhook system. It runs as a macOS application alongside Messages.app.
 
-1. Download BlueBubbles `.dmg` from [GitHub releases](https://github.com/BlueBubblesApp/bluebubbles-server/releases)
-2. Install to `/Applications`, open, grant Full Disk Access + Accessibility permissions
-3. Sign into Messages.app with your Apple ID (must be running)
-4. Configure: set server password, port (default: 1234), enable Private API
-5. Verify: `curl -s "http://localhost:1234/api/v1/server?password=YOUR_PASSWORD" | jq .`
+### Requirements
 
-**Private API setup** (required for full features):
+- **macOS** 11 (Big Sur) or later
+- **Messages.app** signed in with an Apple ID
+- **Full Disk Access** granted to BlueBubbles (System Settings > Privacy & Security)
+- **Accessibility** permissions for AppleScript automation
+- **Persistent macOS session** — Messages.app must remain running (no sleep/logout)
 
-BlueBubbles uses a "Private API" helper that hooks into macOS internals for features like typing indicators, read receipts, reactions, and message editing. This requires:
+### Installation
 
-1. Disable SIP (System Integrity Protection) — **only on the server Mac**
-2. Install the Private API helper bundle
-3. Restart BlueBubbles
+```bash
+# Download latest release from GitHub
+# https://github.com/BlueBubblesApp/bluebubbles-server/releases
 
-See: [docs.bluebubbles.app/private-api](https://docs.bluebubbles.app/server/private-api-setup)
+# Or via Homebrew cask (if available)
+brew install --cask bluebubbles
 
-**Headless / VM setup**: Prevent display sleep (`sudo pmset -a displaysleep 0 sleep 0`), create a launchd plist (`sh.aidevops.messages-keepalive.plist`) with `KeepAlive: true` to keep Messages.app running. For macOS VMs, use screen sharing for initial setup, then run headless.
+# Launch and complete setup wizard:
+# 1. Grant Full Disk Access
+# 2. Grant Accessibility permissions
+# 3. Configure server password
+# 4. Set up Cloudflare tunnel or local network access
+# 5. Verify Messages.app is signed in
+```
 
-### Path 2: imsg CLI (Send-Only)
+### Server Configuration
+
+BlueBubbles server exposes configuration via its GUI and config file:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Server port | `1234` | Local REST API port |
+| Password | (required) | API authentication password |
+| Proxy service | Cloudflare | Tunnel for remote access (Cloudflare, Ngrok, or Dynamic DNS) |
+| Check interval | `1000ms` | How often to poll chat.db for new messages |
+| Auto-start | Off | Launch BlueBubbles on macOS login |
+
+**Headless/VM considerations**:
+
+- Messages.app requires an active GUI session — headless macOS VMs need a virtual display
+- Use `caffeinate -d` or Amphetamine to prevent sleep
+- For Mac mini servers: enable auto-login, disable screen lock
+- For VMs (UTM, Parallels): ensure GPU passthrough or virtual display is configured
+- iCloud sign-in may require 2FA — complete interactively before going headless
+
+### REST API
+
+BlueBubbles exposes a comprehensive REST API. All requests require the server password as a query parameter or header.
+
+#### Authentication
+
+```bash
+# Query parameter authentication
+curl "http://localhost:1234/api/v1/chat?password=YOUR_PASSWORD"
+
+# Or header authentication
+curl -H "Authorization: Bearer YOUR_PASSWORD" \
+  "http://localhost:1234/api/v1/chat"
+```
+
+#### Key Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/chat` | List all chats (DMs and groups) |
+| GET | `/api/v1/chat/:guid/message` | Get messages for a chat |
+| POST | `/api/v1/message/text` | Send a text message |
+| POST | `/api/v1/message/attachment` | Send an attachment |
+| POST | `/api/v1/message/react` | Send a reaction (tapback) |
+| GET | `/api/v1/contact` | List contacts |
+| GET | `/api/v1/handle` | List handles (phone/email addresses) |
+| GET | `/api/v1/server/info` | Server status and version |
+| GET | `/api/v1/fcm/client` | Firebase Cloud Messaging config |
+
+#### Sending Messages
+
+```bash
+# Send text message to individual
+curl -X POST "http://localhost:1234/api/v1/message/text" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "chatGuid": "iMessage;-;+1234567890",
+    "message": "Hello from the bot!",
+    "method": "apple-script",
+    "password": "YOUR_PASSWORD"
+  }'
+
+# Send text to group chat
+curl -X POST "http://localhost:1234/api/v1/message/text" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "chatGuid": "iMessage;+;chat123456",
+    "message": "Hello group!",
+    "method": "apple-script",
+    "password": "YOUR_PASSWORD"
+  }'
+
+# Send attachment
+curl -X POST "http://localhost:1234/api/v1/message/attachment" \
+  -F "chatGuid=iMessage;-;+1234567890" \
+  -F "attachment=@/path/to/file.png" \
+  -F "password=YOUR_PASSWORD"
+
+# Send reaction (tapback)
+curl -X POST "http://localhost:1234/api/v1/message/react" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "chatGuid": "iMessage;-;+1234567890",
+    "selectedMessageGuid": "p:0/MESSAGE-GUID",
+    "reaction": "love",
+    "password": "YOUR_PASSWORD"
+  }'
+```
+
+**Chat GUID format**:
+
+| Type | Format | Example |
+|------|--------|---------|
+| DM (phone) | `iMessage;-;+{number}` | `iMessage;-;+14155551234` |
+| DM (email) | `iMessage;-;{email}` | `iMessage;-;user@example.com` |
+| Group | `iMessage;+;chat{id}` | `iMessage;+;chat123456789` |
+| SMS fallback | `SMS;-;+{number}` | `SMS;-;+14155551234` |
+
+**Reaction types**: `love`, `like`, `dislike`, `laugh`, `emphasize`, `question`
+
+#### Webhooks
+
+BlueBubbles can send webhooks for real-time event notification:
+
+```bash
+# Configure webhook URL in BlueBubbles settings
+# Or via API:
+curl -X POST "http://localhost:1234/api/v1/server/webhook" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "http://localhost:8080/webhook",
+    "password": "YOUR_PASSWORD"
+  }'
+```
+
+**Webhook events**:
+
+| Event | Description |
+|-------|-------------|
+| `new-message` | New message received (DM or group) |
+| `updated-message` | Message edited or unsent |
+| `typing-indicator` | Contact started/stopped typing |
+| `read-receipt` | Message read by recipient |
+| `group-name-change` | Group chat renamed |
+| `participant-added` | Member added to group |
+| `participant-removed` | Member removed from group |
+| `participant-left` | Member left group |
+| `chat-read-status-changed` | Chat marked read/unread |
+
+**Webhook payload example** (`new-message`):
+
+```json
+{
+  "type": "new-message",
+  "data": {
+    "guid": "p:0/XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX",
+    "text": "Hello bot!",
+    "chatGuid": "iMessage;-;+14155551234",
+    "handle": {
+      "address": "+14155551234"
+    },
+    "dateCreated": 1700000000000,
+    "isFromMe": false,
+    "hasAttachments": false,
+    "attachments": [],
+    "associatedMessageGuid": null,
+    "associatedMessageType": null
+  }
+}
+```
+
+### Messaging Features
+
+| Feature | Supported | Notes |
+|---------|-----------|-------|
+| Send/receive text | Yes | DMs and groups |
+| Attachments (images, files) | Yes | Send and receive |
+| Reactions (tapbacks) | Yes | Love, like, dislike, laugh, emphasize, question |
+| Reply threading | Yes | Via `selectedMessageGuid` |
+| Edit messages | Yes | Detected via `updated-message` webhook |
+| Unsend messages | Yes | Detected via `updated-message` webhook |
+| Typing indicators | Yes | Inbound only (outbound requires private API) |
+| Read receipts | Yes | Inbound and outbound |
+| Group chat management | Partial | Read members; add/remove requires AppleScript |
+| Contact info | Yes | Name, phone, email from Contacts.app |
+| SMS fallback | Yes | When recipient not on iMessage |
+| Rich links | Yes | URL previews generated by Messages.app |
+| Mentions | No | iMessage does not have a mention protocol |
+| Stickers/Memoji | No | Not exposed via API |
+
+## Integration Path 2: imsg CLI (Simple Send-Only)
+
+[imsg](https://github.com/steipete/imsg) is a lightweight Swift CLI for sending iMessages. It is send-only — no incoming message handling.
+
+### Requirements
+
+- **macOS** 12 (Monterey) or later
+- **Messages.app** signed in with an Apple ID
+- **Accessibility** permissions for the terminal app running imsg
+
+### Installation
 
 ```bash
 # Install via Homebrew
@@ -117,302 +324,355 @@ git clone https://github.com/steipete/imsg.git
 cd imsg
 swift build -c release
 cp .build/release/imsg /usr/local/bin/
-
-# Verify
-imsg --version
 ```
 
-**Usage**:
+### Usage
 
 ```bash
-# Send a message to a phone number
-imsg send "+1234567890" "Hello from aidevops"
+# Send text message
+imsg send "+14155551234" "Hello from the CLI!"
 
-# Send to an email (Apple ID)
-imsg send "user@example.com" "Deployment complete"
+# Send to email address
+imsg send "user@example.com" "Hello via email handle"
 
-# Send to a group chat (by group name)
-imsg send --group "DevOps Team" "Build passed"
+# Send to group (by group name)
+imsg send --group "Family" "Hello family!"
+
+# Check if recipient has iMessage
+imsg check "+14155551234"
 ```
 
-**Limitations**: imsg can only send messages. It cannot receive, read, or react to messages. For bidirectional communication, use BlueBubbles.
+### When to Use imsg vs BlueBubbles
 
-## Bot API (BlueBubbles)
+| Criterion | imsg | BlueBubbles |
+|-----------|------|-------------|
+| Direction | Send only | Send and receive |
+| Setup complexity | Minimal (brew install) | Moderate (GUI app + permissions) |
+| Incoming messages | No | Yes (webhooks) |
+| Reactions/tapbacks | No | Yes |
+| Attachments | No | Yes |
+| Typing indicators | No | Yes |
+| Best for | Notifications, alerts, one-way updates | Interactive bots, two-way conversations |
 
-### REST API Endpoints
+**Recommendation**: Use imsg for simple notification pipelines (CI alerts, monitoring). Use BlueBubbles for anything interactive.
 
-All requests require the `password` query parameter or `Authorization` header.
+## macOS Host Requirements
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/v1/message` | GET | List messages (with pagination, filtering) |
-| `/api/v1/message/:guid` | GET | Get specific message |
-| `/api/v1/message/text` | POST | Send text message |
-| `/api/v1/message/:chatGuid/tapback` | POST | Send reaction/tapback |
-| `/api/v1/message/:guid/edit` | PUT | Edit a sent message |
-| `/api/v1/message/:guid/unsend` | POST | Unsend a message |
-| `/api/v1/chat` | GET | List chats (DMs and groups) |
-| `/api/v1/chat/:guid` | GET | Get specific chat |
-| `/api/v1/chat/new` | POST | Create new chat |
-| `/api/v1/contact` | GET | List contacts |
-| `/api/v1/attachment/:guid` | GET | Download attachment |
-| `/api/v1/attachment/upload` | POST | Upload attachment |
-| `/api/v1/server` | GET | Server info and status |
-| `/api/v1/handle` | GET | List handles (phone numbers/emails) |
+Both integration paths require a dedicated macOS host running Messages.app.
 
-### WebSocket Real-Time Events
+### Hardware Options
 
-Connect to `ws://localhost:1234` for real-time events:
+| Option | Pros | Cons |
+|--------|------|------|
+| Mac mini (dedicated) | Reliable, always-on, native macOS | Hardware cost (~$600+) |
+| Mac mini (shared) | Lower cost if already owned | Contention with other uses |
+| macOS VM (UTM/Parallels) | No dedicated hardware | Requires Apple Silicon host, licensing |
+| Cloud Mac (MacStadium, AWS EC2 Mac) | No local hardware | $50-200/month, latency |
 
-| Event | Description |
-|-------|-------------|
-| `new-message` | New message received |
-| `updated-message` | Message edited or tapback added |
-| `typing-indicator` | Contact started/stopped typing |
-| `group-name-change` | Group chat renamed |
-| `participant-added` | Member added to group |
-| `participant-removed` | Member removed from group |
-| `chat-read-status-changed` | Chat marked as read |
+### Keepalive Configuration
 
-### Features
+Messages.app must remain running and the Mac must not sleep:
 
-| Feature | BlueBubbles API | imsg CLI |
-|---------|----------------|----------|
-| Send DM | Yes | Yes |
-| Send group message | Yes | Yes (by name) |
-| Receive messages | Yes (webhook/WebSocket) | No |
-| Reactions/tapbacks | Yes (Private API) | No |
-| Edit message | Yes (Private API, macOS 13+) | No |
-| Unsend message | Yes (Private API, macOS 13+) | No |
-| Reply threading | Yes (Private API) | No |
-| Attachments (send) | Yes | No |
-| Attachments (receive) | Yes | No |
-| Typing indicators | Yes (Private API) | No |
-| Read receipts | Yes (Private API) | No |
-| Contact info | Yes | No |
-| Group management | Limited | No |
-| Message search | Yes | No |
+```bash
+# Prevent sleep (run in background)
+caffeinate -d &
 
-### Access Control Patterns
+# Or use pmset (persistent across reboots)
+sudo pmset -a sleep 0
+sudo pmset -a disablesleep 1
 
-```typescript
-// allowlist of Apple IDs / phone numbers permitted to interact with bot
-const ALLOWED_SENDERS = new Set([
-  "+1234567890",
-  "admin@example.com",
-]);
+# Auto-login (System Settings > Users & Groups > Login Options)
+# Set automatic login to the user running Messages.app
 
-function isAuthorized(handle: string): boolean {
-  return ALLOWED_SENDERS.has(handle);
+# Launch Messages.app on login
+osascript -e 'tell application "System Events" to make login item at end with properties {path:"/System/Applications/Messages.app", hidden:true}'
+
+# Verify Messages.app is running
+pgrep -x Messages && echo "Running" || echo "Not running"
+
+# Restart Messages.app if crashed
+if ! pgrep -x Messages > /dev/null; then
+  open -a Messages
+fi
+```
+
+### Monitoring Script
+
+```bash
+#!/bin/bash
+# imessage-keepalive.sh — ensure Messages.app and BlueBubbles stay running
+# Run via launchd: sh.aidevops.imessage-keepalive
+
+check_and_restart() {
+  local app_name="$1"
+  local bundle_id="$2"
+
+  if ! pgrep -f "$app_name" > /dev/null 2>&1; then
+    echo "$(date): $app_name not running, restarting..."
+    open -a "$app_name"
+    sleep 5
+    if pgrep -f "$app_name" > /dev/null 2>&1; then
+      echo "$(date): $app_name restarted successfully"
+    else
+      echo "$(date): ERROR: Failed to restart $app_name"
+      return 1
+    fi
+  fi
+  return 0
 }
+
+check_and_restart "Messages" "com.apple.MobileSMS"
+check_and_restart "BlueBubbles" "com.bluebubbles.server"
 ```
 
-### Webhook-Based Message Handling
+## Access Control
 
-```typescript
-import express from "express";
+### BlueBubbles API Security
 
-const app = express();
-app.use(express.json());
+- **Password authentication**: All API requests require the server password
+- **Network binding**: Bind to `127.0.0.1` for local-only access; use Cloudflare tunnel for remote
+- **Firewall**: Block port 1234 from external access if not using a tunnel
 
-const BB_PASSWORD = process.env.BLUEBUBBLES_PASSWORD;
-const BB_URL = process.env.BLUEBUBBLES_URL || "http://localhost:1234";
+### Bot-Level Access Control
 
-app.post("/webhook", async (req, res) => {
-  const { type, data } = req.body;
-  if (type !== "new-message" || data.isFromMe) { res.sendStatus(200); return; }
+Implement access control in the bot process, not in BlueBubbles:
 
-  const { text, handle, chats } = data;
-  if (!isAuthorized(handle?.address)) { res.sendStatus(200); return; }
+```text
+Access control patterns:
 
-  if (text.startsWith("/")) {
-    const chatGuid = chats?.[0]?.guid;
-    const response = await handleCommand(text.slice(1).trim());
-    await fetch(`${BB_URL}/api/v1/message/text?password=${BB_PASSWORD}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chatGuid, message: response, method: "private-api" }),
-    });
-  }
-  res.sendStatus(200);
-});
+1. Allowlist by phone/email
+   - Maintain a list of approved senders
+   - Ignore messages from unknown handles
+   - Log rejected messages for audit
 
-app.listen(3000);
+2. Allowlist by group
+   - Only respond in specific group chats
+   - Ignore DMs or vice versa
+
+3. Command-level permissions
+   - Different commands available to different users
+   - Admin commands restricted to specific handles
+
+4. Rate limiting
+   - Per-sender message rate limits
+   - Global rate limit to prevent abuse
+   - Cooldown period after rapid messages
+
+5. Content filtering
+   - Scan inbound messages for prompt injection (prompt-guard-helper.sh)
+   - Sanitize before passing to AI models
+   - Block messages matching abuse patterns
 ```
 
-**Webhook setup**: In BlueBubbles, navigate to API & Webhooks → add URL `http://your-bot-host:3000/webhook` → select events (`new-message`, `updated-message`).
+### Credential Storage
 
-## Security Considerations
+```bash
+# Store BlueBubbles password securely
+aidevops secret set BLUEBUBBLES_PASSWORD
 
-### Encryption
+# Or in credentials.sh (600 permissions)
+# BLUEBUBBLES_PASSWORD="your-server-password"
+# BLUEBUBBLES_URL="http://localhost:1234"
 
-- **Newer devices (2020+)**: ECDSA P-256 key agreement, AES-256-GCM message encryption
-- **Legacy devices**: RSA-2048 key exchange + AES-128-CTR message encryption
-- **Group chats**: Each message individually encrypted per recipient (no group key)
-- **Key verification**: Contact Key Verification (iOS 17.2+) — manual verification like Signal's safety numbers
-- Apple **cannot** read iMessage content in transit
+# Never expose the password in logs or bot output
+```
 
-### Metadata
+## Privacy and Security Assessment
 
-Apple sees metadata despite E2E encryption: sender/recipient identifiers (phone/Apple ID), timestamps, IP addresses, device info. Apple retains metadata for up to 30 days. Message content, attachments, and reactions are NOT visible to Apple.
+### iMessage Encryption
 
-### iCloud Backups (CRITICAL)
+iMessage uses end-to-end encryption managed by Apple:
 
-Default iCloud backups are **NOT E2E encrypted** — Apple holds the keys, meaning Apple and law enforcement (with warrant) can access message content from backups. **Advanced Data Protection** (opt-in, iOS 16.3+) enables E2E encrypted backups. **Recommendation**: Enable Advanced Data Protection or disable iCloud backup for Messages. This is the single biggest practical privacy risk for iMessage.
+| Component | Detail |
+|-----------|--------|
+| Key exchange | IDS (Identity Services) — Apple-managed key directory |
+| Encryption (legacy) | RSA-2048 + AES-128-CTR per message |
+| Encryption (modern) | ECDSA P-256 + AES-256-CTR (devices since ~2020) |
+| Forward secrecy | Limited — keys rotate on device changes, not per-message |
+| Key verification | Contact Key Verification (iOS 17.2+) — optional manual verification |
+| Group encryption | Each message encrypted separately per recipient device |
 
-### Push Notifications
+**What Apple can see**:
 
-Delivered via APNs. Apple sees notification metadata (device token, timestamp) but **not** message content. Push tokens linkable to Apple ID. No way to use iMessage without APNs.
+- **Message content**: No — E2E encrypted, Apple does not hold decryption keys
+- **Metadata**: Yes — who you message, when, your IP address, device info
+- **Contact graph**: Yes — Apple knows your communication partners via IDS lookups
+- **Push notifications**: APNs sees notification metadata (not content)
+- **iCloud backups**: If iCloud Backup is enabled without Advanced Data Protection, Apple can access message backups (they hold the backup encryption key)
 
-### AI Training
+**What Apple cannot see**:
 
-Apple states they do **not** use iMessage content for AI training. Apple Intelligence features process data on-device where possible; server-side processing uses "Private Cloud Compute" with published transparency logs. No third-party AI model has access to iMessage content via Apple's systems.
+- Message text, images, attachments (E2E encrypted in transit)
+- Message content in iCloud with Advanced Data Protection enabled (E2E encrypted at rest)
 
-### Open Source Status
+### Advanced Data Protection
 
-- **iMessage protocol + Apple servers**: CLOSED source — no independent audit of E2E implementation (though security researchers including Johns Hopkins have analyzed and found it sound)
-- **BlueBubbles**: OPEN source (Apache-2.0) — auditable bridge layer
-- **imsg CLI**: OPEN source (MIT) — auditable send-only tool
-- Apple publishes a [Platform Security Guide](https://support.apple.com/guide/security/welcome/web) with protocol details (self-reported, not independently verified)
+With Advanced Data Protection (ADP) enabled:
 
-### Jurisdiction
+- iCloud message backups are E2E encrypted — Apple cannot access them
+- Recovery key or recovery contact required (no Apple-assisted recovery)
+- Available on iOS 16.2+, macOS 13.1+
 
-Apple Inc., USA (Cupertino, CA). Subject to US law enforcement (NSLs, FISA, subpoenas). Apple has historically fought for user privacy (FBI vs Apple, 2016) and publishes transparency reports. Non-US user data may transit US infrastructure.
+**Recommendation**: Enable ADP on the macOS host running the bot to ensure message backups are E2E encrypted.
 
-### Bot-Specific Security
+### BlueBubbles Security Model
 
-- BlueBubbles Mac has access to **all decrypted messages** for the signed-in Apple ID — secure the host: FileVault, strong password, auto-lock, firewall, minimal software
-- REST API must be localhost-only or behind reverse proxy with TLS + auth — **never** expose port 1234 to the internet
-- Use a **dedicated Apple ID** for the bot, not a personal one
-- Store BlueBubbles password via gopass or env vars — never in code or logs
+BlueBubbles accesses messages by reading the local Messages.app SQLite database (`~/Library/Messages/chat.db`). This means:
 
-### SMS Fallback (CRITICAL)
+| Aspect | Implication |
+|--------|-------------|
+| Message access | BlueBubbles reads decrypted messages from the local database |
+| No protocol interception | Does not intercept or modify the iMessage protocol |
+| Local only | Messages are only accessible on the Mac where Messages.app runs |
+| Full Disk Access | Required permission — grants broad filesystem access |
+| AppleScript | Used for sending — requires Accessibility permission |
+| No Apple account access | BlueBubbles does not have Apple ID credentials |
 
-When iMessage is unavailable, messages **fall back to SMS** which is **completely unencrypted**. There is **no way to prevent this programmatically**. Users can disable it per-device (Settings > Messages > "Send as SMS" off), but bots cannot control this. **Recommendation**: Check the BlueBubbles `service` field (`iMessage` vs `SMS`) before sending sensitive content.
+**Threat model**:
 
-### Comparison Summary
+- **Mac compromise** = full message access (same as any local app with Full Disk Access)
+- **Network exposure** = API password protects against unauthorized access; use tunnel + firewall
+- **BlueBubbles server compromise** = attacker can read/send messages as the bot's Apple ID
+- **Apple cooperation** = Apple can provide metadata (not content) to law enforcement
 
-Strong privacy for a mainstream platform:
+### Comparison with Other Protocols
 
-| Aspect | iMessage | Signal | WhatsApp | SimpleX |
-|--------|----------|--------|----------|---------|
-| E2E encryption | Yes | Yes | Yes | Yes |
-| Open source | No | Yes | No (client) | Yes |
-| Metadata collection | Moderate (30d) | Minimal | Extensive | None |
-| Independent audit | No | Yes | Yes (protocol) | Yes |
-| iCloud backup risk | Yes (default) | N/A | Yes (default) | N/A |
-| SMS fallback | Yes (unencrypted) | No | No | No |
-| Closed protocol | Yes | No | Yes | No |
+| Aspect | iMessage | Signal | SimpleX | Matrix |
+|--------|----------|--------|---------|--------|
+| E2E encryption | Yes (Apple-managed) | Yes (user-managed) | Yes (user-managed) | Optional (Megolm) |
+| Forward secrecy | Limited | Yes (per-message) | Yes (double ratchet) | Yes (Megolm ratchet) |
+| Metadata protection | Low (Apple sees metadata) | Moderate (sealed sender) | High (no identifiers) | Low (server sees metadata) |
+| Open protocol | No (closed, proprietary) | Partially open | Fully open | Fully open |
+| Independent audit | Apple publishes security guide; no independent protocol audit | Independently audited | Independently audited | Independently audited |
+| Key verification | Contact Key Verification (iOS 17.2+) | Safety numbers | QR code / fingerprint | Cross-signing |
+| AI training | Apple states iMessage content is not used for AI training | Not used | Not applicable | Depends on server |
 
-**Bottom line**: Better than WhatsApp (less metadata harvesting by the service provider). Worse than Signal (Apple still sees metadata, protocol is closed source, iCloud backup is a practical risk). The iCloud backup issue and SMS fallback are the biggest real-world privacy risks.
+### Apple Privacy Policy Summary
+
+- Apple's privacy policy states iMessage content is **not** used for advertising or AI model training
+- iMessage data is **not** sold to third parties
+- Apple may provide metadata to law enforcement with valid legal process
+- Siri suggestions may use on-device message analysis (local, not sent to Apple)
+- With ADP disabled, iCloud backups are accessible to Apple (and thus to law enforcement with warrant)
+
+### Recommendations
+
+1. **Enable Advanced Data Protection** on the macOS host
+2. **Disable iCloud Backup for Messages** if ADP is not available
+3. **Use a dedicated Apple ID** for the bot — not a personal account
+4. **Bind BlueBubbles to localhost** and use Cloudflare tunnel for remote access
+5. **Rotate the BlueBubbles server password** periodically
+6. **Monitor the macOS host** for unauthorized access (FileVault, firewall, login alerts)
+7. **Do not store sensitive data in iMessage conversations** — metadata is visible to Apple
 
 ## Integration with aidevops
 
-### Components
+### Runner Dispatch Pattern
 
-| Component | Purpose |
-|-----------|---------|
-| `imessage-dispatch-helper.sh` | Shell helper for sending notifications via imsg CLI |
-| BlueBubbles webhook handler | Receives inbound messages, dispatches to runners |
-| `entity-helper.sh` | Resolves user identifiers (phone/Apple ID) to aidevops entities |
-| Config file | `~/.config/aidevops/imessage-bot.json` |
+```text
+┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
+│ iMessage User    │     │ Bot Process       │     │ aidevops Runner  │
+│                  │     │ (webhook handler) │     │                  │
+│ Sends:           │────▶│ 1. Receive webhook│────▶│ runner-helper.sh │
+│ "/ask How do I   │     │ 2. Check perms    │     │ → AI session     │
+│  deploy X?"      │     │ 3. Parse command  │     │ → response       │
+│                  │◀────│ 4. Dispatch       │◀────│                  │
+│ Gets AI response │     │ 5. Send response  │     │                  │
+└──────────────────┘     └──────────────────┘     └──────────────────┘
+```
 
-### imessage-dispatch-helper.sh Pattern
+### Bot Webhook Handler (Conceptual)
 
 ```bash
-#!/usr/bin/env bash
-# imessage-dispatch-helper.sh — send notifications via iMessage
-set -euo pipefail
+# Minimal webhook handler pattern (pseudocode)
+# Receives BlueBubbles webhook, dispatches to runner, sends response
 
-send_imessage() {
-  local recipient="$1"
-  local message="$2"
-  if ! command -v imsg &>/dev/null; then
-    echo "ERROR: imsg not installed. brew install steipete/tap/imsg" >&2
-    return 1
-  fi
-  imsg send "$recipient" "$message"
-  return 0
-}
-# Usage: imessage-dispatch-helper.sh "+1234567890" "Build #42 passed"
+# 1. Start webhook listener on port 8080
+# 2. On POST /webhook:
+#    - Parse JSON payload
+#    - Check event type == "new-message"
+#    - Check sender is in allowlist
+#    - Extract message text and chatGuid
+#    - If message starts with command prefix:
+#      - Dispatch to runner via runner-helper.sh
+#      - Send response via BlueBubbles API
+#    - Log interaction
 ```
 
-### BlueBubbles Webhook to Runner Dispatch
+### Integration Components
 
-Flow: iMessage user sends command → BlueBubbles webhook → verify sender via entity-helper.sh → parse command → dispatch via runner-helper.sh → return result → reply via BlueBubbles API.
+| Component | Status | Description |
+|-----------|--------|-------------|
+| Subagent doc | This file | iMessage integration reference |
+| BlueBubbles setup | Manual | Install BlueBubbles on macOS host |
+| Bot webhook handler | To build | Receives webhooks, dispatches to runners |
+| imsg notifications | Available | `brew install steipete/tap/imsg` for send-only |
+| Keepalive monitor | Template above | Ensures Messages.app + BlueBubbles stay running |
 
-### Entity Resolution
+### Matterbridge Integration
 
-```bash
-# Resolve phone/Apple ID to aidevops entity
-entity-helper.sh resolve "+1234567890"
-# → { "entity": "marcus", "role": "admin", "platforms": ["imessage", "matrix"] }
+iMessage is **not** natively supported by Matterbridge. However, BlueBubbles can bridge to other platforms:
 
-# Check authorization
-entity-helper.sh check-auth "+1234567890" "deploy"
-# → exit 0 (authorized) or exit 1 (denied)
-```
+1. **BlueBubbles API → custom adapter → Matterbridge API**: Write a small adapter that translates BlueBubbles webhooks to Matterbridge API messages
+2. **BlueBubbles → bot → Matrix → Matterbridge**: Route through Matrix as an intermediary
 
-### Configuration
-
-```json
-{
-  "server_url": "http://localhost:1234",
-  "server_password_ref": "gopass:aidevops/bluebubbles/password",
-  "webhook_port": 3000,
-  "webhook_path": "/webhook",
-  "allowed_handles": [
-    "+1234567890",
-    "admin@example.com"
-  ],
-  "command_prefix": "/",
-  "send_method": "private-api",
-  "notifications": {
-    "build_status": true,
-    "deploy_alerts": true,
-    "error_alerts": true
-  }
-}
-```
-
-Store at `~/.config/aidevops/imessage-bot.json`. Server password must reference a gopass secret, never stored in plaintext in the config file.
-
-## Matterbridge Integration
-
-### No Native Support
-
-Matterbridge does **not** have native support for iMessage. There is no official or community gateway for iMessage in the Matterbridge ecosystem.
-
-### Custom Gateway Feasibility
-
-A custom gateway could bridge BlueBubbles REST API → custom Node.js adapter → Matterbridge API (:4242) → Matrix, Telegram, Discord, SimpleX, etc.
-
-**Considerations**: Poll BlueBubbles or listen on WebSocket for inbound; send via REST API for outbound. Main complexity is identity mapping and iMessage-specific features (tapbacks → reactions). Inherits all BlueBubbles limitations. Effort: medium.
-
-**Alternative**: For simple 1:1 bridging (e.g., iMessage ↔ Matrix), a direct bridge bot avoids the Matterbridge abstraction — BlueBubbles webhook receives iMessage, bot forwards to Matrix via matrix-bot-sdk, and vice versa.
+See `services/communications/matterbridge.md` for Matterbridge configuration.
 
 ## Limitations
 
-- **macOS only**: Requires always-on Mac with Messages.app. No Linux/Windows. Mac mini (M-series, ~$500-600) recommended. macOS VMs possible on Apple hardware only.
-- **Apple ID required**: Dedicated Apple ID needed, phone number for verification, mandatory 2FA. Apple may lock accounts used for automated messaging.
-- **No official bot API**: BlueBubbles uses unofficial private APIs + AppleScript — can break with macOS updates. Apple has not endorsed third-party iMessage automation and could actively block it.
-- **SMS fallback is unencrypted**: Non-iMessage recipients silently get SMS. No programmatic prevention. Check `service` field in API responses.
-- **BlueBubbles requirements**: Electron app (~200-400MB RAM), Full Disk Access + Accessibility permissions, Private API requires SIP disabled, restart needed after macOS updates.
-- **Group management limited**: Programmatic group creation supported but minimal admin controls compared to Matrix/Telegram.
-- **Rate limiting**: Apple imposes undocumented limits. Bulk messaging violates Apple ToS. Implement bot-side rate limiting (max 10-20 messages/minute).
-- **No cross-platform**: Apple-only. No web client. RCS (iOS 18+) improves SMS interop but is not iMessage.
-- **Unofficial integration risk**: Apple may break private APIs with any macOS update. Treat iMessage as a "best-effort" integration, not mission-critical.
+### Platform Lock-In
+
+- **macOS only** — iMessage protocol is proprietary and requires Apple hardware/software
+- **Apple ID required** — bot needs a dedicated Apple ID with iMessage enabled
+- **No Linux/Windows** — cannot run on non-Apple platforms
+- **No official API** — BlueBubbles is a third-party workaround, not an Apple-supported integration
+
+### Reliability Concerns
+
+- **Messages.app crashes** — requires monitoring and auto-restart
+- **macOS updates** — may break BlueBubbles compatibility temporarily
+- **Apple ID lockouts** — unusual activity (bot-like patterns) may trigger Apple security
+- **iCloud sync conflicts** — if the Apple ID is signed in on multiple devices, message delivery may be inconsistent
+- **AppleScript fragility** — sending relies on AppleScript automation, which Apple may restrict in future macOS versions
+
+### Feature Gaps
+
+- **No mention system** — iMessage has no @mention protocol
+- **No bot profile** — cannot distinguish bot from regular user in the UI
+- **No command menus** — unlike Telegram or SimpleX, no native command discovery
+- **Limited group management** — creating groups and managing members programmatically is fragile
+- **No message search API** — BlueBubbles can query the local database, but no full-text search endpoint
+
+### Legal and ToS Considerations
+
+- BlueBubbles accesses Messages.app via AppleScript and direct database reads — this is not an Apple-sanctioned integration method
+- Apple's Terms of Service do not explicitly prohibit this use, but automated messaging at scale could trigger account restrictions
+- Use a dedicated Apple ID for the bot to isolate risk from personal accounts
+- Do not use for spam or unsolicited messaging — Apple may disable the Apple ID
+
+## Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| Messages.app not running | Check `pgrep -x Messages`; restart with `open -a Messages` |
+| BlueBubbles can't read messages | Grant Full Disk Access in System Settings > Privacy & Security |
+| Send fails via AppleScript | Grant Accessibility permission to BlueBubbles |
+| Mac sleeping | Run `caffeinate -d &` or `sudo pmset -a sleep 0` |
+| API returns 401 | Check server password in request |
+| Webhook not firing | Verify webhook URL is reachable from the Mac; check BlueBubbles logs |
+| iMessage not activating | Verify Apple ID is signed in to Messages.app; check internet connection |
+| SMS instead of iMessage | Recipient may not have iMessage; check with `imsg check` |
+| Apple ID locked | Too many automated messages; wait 24h or contact Apple support |
+| macOS update broke BlueBubbles | Check BlueBubbles GitHub releases for compatible version |
 
 ## Related
 
-- `services/communications/simplex.md` — SimpleX Chat (zero-knowledge, no identifiers)
-- `services/communications/matrix-bot.md` — Matrix bot integration (federated, official SDK)
-- `services/communications/matterbridge.md` — Multi-platform chat bridge
-- `services/communications/twilio.md` — SMS/voice via Twilio (for non-Apple messaging)
-- `tools/security/opsec.md` — Operational security guidance
-- `tools/credentials/gopass.md` — Secure credential storage
-- BlueBubbles: https://bluebubbles.app/
-- BlueBubbles GitHub: https://github.com/BlueBubblesApp/bluebubbles-server
-- BlueBubbles API Docs: https://docs.bluebubbles.app/
+- `.agents/services/communications/simplex.md` — SimpleX messaging (maximum privacy, no identifiers)
+- `.agents/services/communications/matrix-bot.md` — Matrix bot for runner dispatch
+- `.agents/services/communications/matterbridge.md` — Multi-platform chat bridge
+- `.agents/services/communications/twilio.md` — SMS/voice via Twilio (cross-platform)
+- `.agents/tools/security/opsec.md` — Operational security guidance
+- `.agents/tools/ai-assistants/headless-dispatch.md` — Headless AI dispatch patterns
+- BlueBubbles docs: https://docs.bluebubbles.app/
+- Apple iMessage security: https://support.apple.com/guide/security/imessage-security-overview-secd9764312f/web
 - imsg CLI: https://github.com/steipete/imsg
-- Apple Platform Security Guide: https://support.apple.com/guide/security/welcome/web
