@@ -1,5 +1,5 @@
 ---
-description: WhatsApp bot integration via Baileys (unofficial) — E2E encrypted messaging owned by Meta, Signal Protocol encryption but extensive metadata harvesting
+description: WhatsApp bot integration via Baileys (TypeScript, unofficial WhatsApp Web API) — QR linking, multi-device, messaging features, access control, privacy/security assessment, aidevops runner dispatch, Matterbridge bridging
 mode: subagent
 tools:
   read: true
@@ -12,729 +12,952 @@ tools:
   task: false
 ---
 
-# WhatsApp Bot Integration
+# WhatsApp Bot Integration (Baileys)
 
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
-- **Type**: E2E encrypted messaging owned by Meta — content encrypted but metadata extensively harvested
-- **License**: Baileys (MIT, unofficial), WhatsApp Business API (proprietary, official)
-- **Bot tool**: Baileys (TypeScript, 10k+ stars, unofficial WhatsApp Web API)
-- **Protocol**: Signal Protocol (same as Signal app)
-- **Encryption**: E2E by default (Signal Protocol — Curve25519, AES-256, HMAC-SHA256)
-- **Docs**: https://github.com/WhiskeySockets/Baileys | https://developers.facebook.com/docs/whatsapp/
-- **Config**: `~/.config/aidevops/whatsapp-bot.json` (600 permissions)
-- **Helper**: `whatsapp-dispatch-helper.sh [setup|start|stop|status|test|logs]`
+- **Type**: WhatsApp Web API client — unofficial, reverse-engineered protocol
+- **Library**: [Baileys](https://github.com/WhiskeySockets/Baileys) (TypeScript, MIT, 10K+ stars)
+- **Runtime**: Node.js 18+ or Bun
+- **Protocol**: WhatsApp multi-device (linked device, no phone required after pairing)
+- **Encryption**: Signal Protocol E2E for message content (implemented by WhatsApp, not Baileys)
+- **Auth**: QR code scan or pairing code from WhatsApp mobile app
+- **Session store**: Pluggable — file, SQLite, Redis, PostgreSQL
+- **Docs**: https://github.com/WhiskeySockets/Baileys | https://whiskeysockets.github.io/Baileys/
+- **npm**: `@whiskeysockets/baileys`
 
-**Key differentiator**: WhatsApp has the largest messenger user base globally (2B+ users). Message content is E2E encrypted using the Signal Protocol — the same protocol used by Signal. However, Meta collects extensive metadata (contacts, timing, groups, device info, usage patterns) and uses it for ad targeting across Meta platforms. Think of it as: "your letters are sealed, but the postal service photographs every envelope and sells that data."
+**Key differentiator**: Baileys connects as a linked device to an existing WhatsApp account, giving access to the full WhatsApp feature set (DMs, groups, media, reactions, polls, status broadcasts) without the WhatsApp Business API's approval process or per-conversation pricing. However, it is unofficial and carries ToS violation risk.
 
-**When to use WhatsApp over other messengers**:
+**When to use WhatsApp (Baileys) vs other protocols**:
 
-| Criterion | WhatsApp | Signal | SimpleX | Matrix |
-|-----------|----------|--------|---------|--------|
-| User base | 2B+ (largest) | ~40M | Small | ~100M |
-| Content encryption | Signal Protocol | Signal Protocol | Double ratchet | Megolm/Olm |
-| Metadata privacy | Poor (Meta harvests) | Good (minimal) | Excellent (none) | Moderate |
-| User identifiers | Phone number | Phone number | None | `@user:server` |
-| Bot ecosystem | Unofficial (Baileys) + official Business API | Minimal | Growing | Mature |
-| Open source client | No | Yes | Yes (AGPL-3.0) | Yes |
-| Best for | Reaching existing users | Privacy-conscious users | Maximum privacy | Federation, bridges |
+| Criterion | WhatsApp (Baileys) | WhatsApp Business API | SimpleX | Matrix |
+|-----------|--------------------|-----------------------|---------|--------|
+| Official API | No (reverse-engineered) | Yes (Meta-approved) | N/A | N/A |
+| Cost | Free (library is MIT) | Per-conversation pricing | Free | Free |
+| Approval required | No | Yes (Meta review) | No | No |
+| Account ban risk | Yes (ToS violation) | No | No | No |
+| Phone number required | Yes | Yes | No | Optional |
+| E2E encryption | Signal Protocol | Signal Protocol | Double ratchet | Megolm (optional) |
+| Metadata privacy | Poor (Meta harvests) | Poor (Meta harvests) | Excellent | Moderate |
+| Group messaging | Yes (1024 members) | Limited | Yes (experimental) | Yes (production) |
+| Media support | Full | Full | Full | Full |
+| Bot ecosystem | Community libraries | Official SDK | Growing | Mature |
+| Best for | Existing WhatsApp users, rapid prototyping | Production business messaging | Maximum privacy | Team collaboration |
 
 <!-- AI-CONTEXT-END -->
 
 ## Architecture
 
 ```text
-┌──────────────────────┐
-│ WhatsApp Mobile App   │
-│ (iOS / Android)       │
-│                       │
-│ User sends message    │
-└──────────┬───────────┘
-           │ Signal Protocol (E2E encrypted)
-           │
-┌──────────▼───────────┐     ┌──────────────────────┐
-│ WhatsApp Servers      │     │ Meta Metadata         │
-│ (Meta infrastructure) │     │ Collection            │
-│                       │     │                       │
-│ Cannot read content   │     │ Records: who, when,   │
-│ (E2E encrypted)       │     │ how often, groups,    │
-│                       │     │ contacts, device,     │
-│ Routes messages only  │     │ IP, location          │
-└──────────┬───────────┘     └──────────────────────┘
-           │
-┌──────────▼───────────┐
-│ WhatsApp Web          │
-│ Multi-Device Protocol │
-│ (no phone needed      │
-│  after initial link)  │
-└──────────┬───────────┘
-           │ WebSocket
-           │
-┌──────────▼───────────┐
-│ Baileys Library       │
-│ (TypeScript)          │
-│                       │
-│ Unofficial WA Web API │
-│ Handles encryption,   │
-│ session management,   │
-│ message parsing       │
-└──────────┬───────────┘
-           │
-┌──────────▼───────────┐
-│ Bot Process            │
-│ (TypeScript/Bun)       │
-│                        │
-│ ├─ Command router      │
-│ ├─ Message handler     │
-│ ├─ Media handler       │
-│ ├─ Access control      │
-│ └─ aidevops dispatch   │
-└────────────────────────┘
++---------------------------+
+| WhatsApp Mobile App       |
+| (iOS / Android)           |
+| - Primary device          |
+| - Scans QR to link bot    |
++-------------+-------------+
+              |
+              | WhatsApp multi-device protocol
+              | (Signal Protocol E2E encryption)
+              |
++-------------v-------------+     +---------------------------+
+| WhatsApp Servers          |     | Meta Infrastructure       |
+| (Closed-source)           |     | - Metadata collection     |
+|                           |     | - Contact graph           |
+| - Message relay           |     | - Usage analytics         |
+| - Media storage           |     | - Ad targeting signals    |
+| - Push notifications      |     | - AI model training data  |
++-------------+-------------+     +---------------------------+
+              |
+              | Noise protocol (encrypted transport)
+              |
++-------------v-------------+
+| Baileys Client            |
+| (Node.js / Bun process)   |
+|                           |
+| +-- Auth store (session)  |
+| +-- Message handler       |
+| +-- Media encoder/decoder |
+| +-- Group manager         |
+| +-- Event emitter         |
++-------------+-------------+
+              |
+              | Application logic
+              |
++-------------v-------------+
+| Bot Process               |
+| (TypeScript / Bun)        |
+|                           |
+| +-- Command router        |
+| +-- Access control        |
+| +-- aidevops dispatch     |
+| +-- Matterbridge relay    |
++---------------------------+
 ```
 
 **Message flow**:
 
-1. User sends message via WhatsApp mobile app
-2. Message encrypted with Signal Protocol (Curve25519, AES-256, HMAC-SHA256)
-3. Encrypted message routed through Meta's servers (content unreadable to Meta)
-4. Meta records metadata: sender, recipient, timestamp, group, device info, IP
-5. Multi-device protocol delivers to linked WhatsApp Web session
-6. Baileys receives via WebSocket, decrypts using stored session keys
-7. Bot process handles message, dispatches to aidevops runner
-8. Response sent back through Baileys → WhatsApp servers → recipient
+1. Bot process starts Baileys, loads session from auth store
+2. If no session: generates QR code for scanning with WhatsApp mobile app
+3. After linking: Baileys maintains a persistent WebSocket to WhatsApp servers
+4. Incoming messages arrive as events (`messages.upsert`)
+5. Bot processes message, optionally dispatches to aidevops runner
+6. Outgoing messages sent via Baileys API, encrypted by Signal Protocol layer
+7. WhatsApp servers relay to recipient(s)
+
+**Multi-device model**: Baileys registers as a "linked device" (like WhatsApp Web/Desktop). The primary phone does not need to stay online after initial pairing. Sessions persist across restarts if the auth store is preserved.
 
 ## Installation
 
-### Prerequisites
-
-- **Node.js** >= 18 or **Bun** >= 1.0
-- **WhatsApp account** with active phone number
-- A phone to scan QR code during initial setup (only needed once)
-
-### Baileys Library Setup
+### npm / Bun
 
 ```bash
-# Using Bun (recommended)
-bun add @whiskeysockets/baileys
-
-# Using npm
+# npm
 npm install @whiskeysockets/baileys
 
-# Additional dependencies
-bun add qrcode-terminal  # QR code display in terminal
-bun add pino              # Logger (required by Baileys)
+# Bun (recommended — faster, native WebSocket)
+bun add @whiskeysockets/baileys
+
+# Optional: better performance for protobuf
+npm install @bufbuild/protobuf
 ```
 
-### QR Code Authentication
+### Dependencies
 
-Baileys authenticates by emulating WhatsApp Web. On first run, you scan a QR code with your phone's WhatsApp app to link the device.
+| Package | Purpose | Required |
+|---------|---------|----------|
+| `@whiskeysockets/baileys` | WhatsApp Web API client | Yes |
+| `qrcode-terminal` | QR code display in terminal | Yes (for QR linking) |
+| `pino` | Logging (Baileys uses pino internally) | Yes |
+| `link-preview-js` | URL preview generation | Optional |
+| `sharp` | Image processing (thumbnails, stickers) | Optional |
+| `fluent-ffmpeg` | Audio/video processing | Optional |
+
+### Minimal Setup
 
 ```typescript
 import makeWASocket, {
   DisconnectReason,
   useMultiFileAuthState,
-} from "@whiskeysockets/baileys";
-import { Boom } from "@hapi/boom";
-import qrcode from "qrcode-terminal";
+  WASocket,
+  proto,
+  downloadMediaMessage,
+} from "@whiskeysockets/baileys"
+import { Boom } from "@hapi/boom"
+import pino from "pino"
+import QRCode from "qrcode-terminal"
 
-async function connectToWhatsApp() {
-  // Auth state persisted to filesystem — survives restarts
-  const { state, saveCreds } = await useMultiFileAuthState("auth_info_baileys");
+async function startBot(): Promise<void> {
+  // Auth state persisted to ./auth_info/ directory
+  const { state, saveCreds } = await useMultiFileAuthState("./auth_info")
 
-  const sock = makeWASocket({
+  const sock: WASocket = makeWASocket({
     auth: state,
-    printQRInTerminal: true, // Display QR in terminal
-  });
+    logger: pino({ level: "warn" }),
+    printQRInTerminal: true,
+    // Browser identification shown in WhatsApp linked devices list
+    browser: ["aidevops Bot", "Chrome", "1.0.0"],
+  })
 
-  // Save credentials whenever they update
-  sock.ev.on("creds.update", saveCreds);
+  // Save credentials on update (session persistence)
+  sock.ev.on("creds.update", saveCreds)
 
   // Handle connection state changes
   sock.ev.on("connection.update", (update) => {
-    const { connection, lastDisconnect, qr } = update;
+    const { connection, lastDisconnect, qr } = update
 
     if (qr) {
-      // QR code displayed — scan with phone
-      // WhatsApp app > Settings > Linked Devices > Link a Device
-      console.log("Scan QR code with WhatsApp mobile app");
+      // QR code displayed by printQRInTerminal option
+      console.log("Scan QR code with WhatsApp mobile app")
     }
 
     if (connection === "close") {
-      const reason = (lastDisconnect?.error as Boom)?.output?.statusCode;
-      if (reason !== DisconnectReason.loggedOut) {
-        // Reconnect on non-logout disconnections
-        connectToWhatsApp();
-      } else {
-        console.log("Logged out — delete auth_info_baileys/ and restart");
+      const reason = (lastDisconnect?.error as Boom)?.output?.statusCode
+      const shouldReconnect = reason !== DisconnectReason.loggedOut
+      console.log(`Connection closed: ${reason}. Reconnect: ${shouldReconnect}`)
+      if (shouldReconnect) {
+        startBot() // Recursive reconnect
       }
     }
 
     if (connection === "open") {
-      console.log("Connected to WhatsApp");
+      console.log("Connected to WhatsApp")
     }
-  });
+  })
 
-  return sock;
+  // Handle incoming messages
+  sock.ev.on("messages.upsert", async ({ messages, type }) => {
+    if (type !== "notify") return
+
+    for (const msg of messages) {
+      // Skip own messages and protocol messages
+      if (msg.key.fromMe) continue
+      if (!msg.message) continue
+
+      const sender = msg.key.remoteJid!
+      const text =
+        msg.message.conversation ||
+        msg.message.extendedTextMessage?.text ||
+        ""
+
+      console.log(`[${sender}]: ${text}`)
+
+      // Echo example — replace with command router
+      if (text.startsWith("/ping")) {
+        await sock.sendMessage(sender, { text: "pong" })
+      }
+    }
+  })
 }
+
+startBot()
 ```
 
-### Multi-Device Support
+## QR Code Linking
 
-After the initial QR code scan, the bot runs independently — the phone does not need to stay online. WhatsApp's multi-device protocol syncs encryption keys across linked devices.
+### Terminal QR (Default)
 
-**Limitations**:
+```typescript
+const sock = makeWASocket({
+  auth: state,
+  printQRInTerminal: true, // Prints QR to stdout
+})
+```
 
-- Maximum 4 linked devices per WhatsApp account
-- Phone must remain registered (active SIM / WhatsApp account)
-- If the phone's WhatsApp is uninstalled, all linked devices are disconnected
-- Linked devices are automatically unlinked after 14 days of phone inactivity
+### Pairing Code (Phone Number)
+
+Alternative to QR scanning — enter a code on the phone instead:
+
+```typescript
+const sock = makeWASocket({
+  auth: state,
+  printQRInTerminal: false,
+})
+
+// Request pairing code for a phone number
+if (!sock.authState.creds.registered) {
+  const code = await sock.requestPairingCode("+1234567890")
+  console.log(`Enter this code on your phone: ${code}`)
+  // User enters code in WhatsApp > Linked Devices > Link with phone number
+}
+```
 
 ### Session Persistence
 
-Auth state is stored in the `auth_info_baileys/` directory. This directory contains:
+After initial QR/pairing, the session is stored in the auth state directory. Subsequent starts reconnect automatically without QR scanning.
 
-- Session encryption keys
-- Device registration data
-- Pre-keys and identity keys
+```typescript
+// File-based (default — simple, good for single instance)
+const { state, saveCreds } = await useMultiFileAuthState("./auth_info")
 
-**Back up this directory securely** — it grants full access to the WhatsApp account. Set file permissions to 700:
+// Custom store (SQLite, Redis, PostgreSQL — for production)
+// Implement AuthenticationState interface:
+// - get/set for creds (SignalIdentity)
+// - get/set/delete for keys (pre-keys, sessions, sender-keys)
+```
+
+**Session invalidation**: WhatsApp may invalidate linked device sessions after ~14 days of inactivity or if the primary phone unlinks the device. Monitor `connection.update` for `DisconnectReason.loggedOut` and alert for re-linking.
+
+## Multi-Device Support
+
+Baileys operates as a linked device under WhatsApp's multi-device architecture:
+
+- **No phone dependency**: After initial QR pairing, the phone does not need to stay online
+- **Up to 4 linked devices**: WhatsApp allows 4 linked devices per account (phone + 3 companions, or phone + 4 with WhatsApp Business)
+- **Independent encryption**: Each linked device has its own Signal Protocol session keys
+- **Message sync**: Messages are delivered to all linked devices independently by WhatsApp servers
+- **History sync**: On linking, WhatsApp sends recent message history (configurable, default ~3 months)
+
+### Running Multiple Bots
+
+Each bot needs a separate WhatsApp account (phone number). You cannot run multiple Baileys instances on the same account — they share the linked device slots.
 
 ```bash
-chmod 700 auth_info_baileys/
+# Bot 1: uses phone number +1...
+node bot.js --auth-dir ./auth_bot1
+
+# Bot 2: uses phone number +44...
+node bot.js --auth-dir ./auth_bot2
 ```
 
-## Bot API Integration
+## Messaging Features
 
-### Message Handling
+### Text Messages
 
 ```typescript
-import makeWASocket, { useMultiFileAuthState } from "@whiskeysockets/baileys";
+// Simple text
+await sock.sendMessage(jid, { text: "Hello!" })
 
-async function startBot() {
-  const { state, saveCreds } = await useMultiFileAuthState("auth_info_baileys");
-  const sock = makeWASocket({ auth: state, printQRInTerminal: true });
-  sock.ev.on("creds.update", saveCreds);
+// With mentions
+await sock.sendMessage(groupJid, {
+  text: "@user1 @user2 check this out",
+  mentions: ["user1@s.whatsapp.net", "user2@s.whatsapp.net"],
+})
 
-  // Listen for incoming messages
-  sock.ev.on("messages.upsert", async ({ messages, type }) => {
-    if (type !== "notify") return; // Only process new messages
+// Reply to a message
+await sock.sendMessage(jid, { text: "Replying to you" }, { quoted: originalMsg })
 
-    for (const msg of messages) {
-      // Skip own messages
-      if (msg.key.fromMe) continue;
-
-      // Extract sender and chat info
-      const chatId = msg.key.remoteJid!; // JID of chat (DM or group)
-      const isGroup = chatId.endsWith("@g.us");
-      const sender = isGroup ? msg.key.participant! : chatId;
-      const pushName = msg.pushName || "Unknown"; // Display name
-
-      // Extract text content
-      const text =
-        msg.message?.conversation ||
-        msg.message?.extendedTextMessage?.text ||
-        "";
-
-      if (!text) continue; // Skip non-text messages
-
-      console.log(`[${isGroup ? "GROUP" : "DM"}] ${pushName}: ${text}`);
-
-      // Command routing
-      if (text.startsWith("/")) {
-        await handleCommand(sock, chatId, sender, text);
-      }
-    }
-  });
-
-  return sock;
-}
-
-async function handleCommand(
-  sock: ReturnType<typeof makeWASocket>,
-  chatId: string,
-  sender: string,
-  text: string,
-) {
-  const [command, ...args] = text.slice(1).split(" ");
-  const prompt = args.join(" ");
-
-  switch (command) {
-    case "help":
-      await sock.sendMessage(chatId, {
-        text: "Available commands:\n/help - Show this message\n/ask <question> - Ask AI\n/status - System status",
-      });
-      break;
-
-    case "ask":
-      if (!prompt) {
-        await sock.sendMessage(chatId, { text: "Usage: /ask <question>" });
-        return;
-      }
-      // Dispatch to aidevops runner
-      await sock.sendMessage(chatId, {
-        text: "Processing your request...",
-      });
-      // runner-helper.sh dispatch would go here
-      break;
-
-    case "status":
-      await sock.sendMessage(chatId, { text: "Bot is running." });
-      break;
-
-    default:
-      await sock.sendMessage(chatId, {
-        text: `Unknown command: /${command}`,
-      });
-  }
-}
-
-startBot();
+// With link preview
+await sock.sendMessage(jid, {
+  text: "Check out https://example.com",
+  // Baileys auto-generates preview if link-preview-js is installed
+})
 ```
 
-### Media Support
-
-Baileys supports sending and receiving various media types:
+### Media Messages
 
 ```typescript
-// Send image
-await sock.sendMessage(chatId, {
-  image: { url: "./photo.jpg" }, // or Buffer
-  caption: "Image caption",
-});
+import { readFileSync } from "fs"
 
-// Send video
-await sock.sendMessage(chatId, {
-  video: { url: "./video.mp4" },
+// Image
+await sock.sendMessage(jid, {
+  image: readFileSync("./photo.jpg"),
+  caption: "Photo caption",
+  mimetype: "image/jpeg",
+})
+
+// Image from URL
+await sock.sendMessage(jid, {
+  image: { url: "https://example.com/photo.jpg" },
+  caption: "From URL",
+})
+
+// Video
+await sock.sendMessage(jid, {
+  video: readFileSync("./video.mp4"),
   caption: "Video caption",
-  gifPlayback: false, // true for GIF-style playback
-});
+  mimetype: "video/mp4",
+})
 
-// Send audio (voice note)
-await sock.sendMessage(chatId, {
-  audio: { url: "./audio.ogg" },
+// Audio (voice note)
+await sock.sendMessage(jid, {
+  audio: readFileSync("./voice.ogg"),
   mimetype: "audio/ogg; codecs=opus",
-  ptt: true, // true = voice note, false = audio file
-});
+  ptt: true, // Push-to-talk (voice note UI)
+})
 
-// Send document
-await sock.sendMessage(chatId, {
-  document: { url: "./report.pdf" },
+// Document
+await sock.sendMessage(jid, {
+  document: readFileSync("./report.pdf"),
   mimetype: "application/pdf",
   fileName: "report.pdf",
-});
+})
 
-// Send sticker
-await sock.sendMessage(chatId, {
-  sticker: { url: "./sticker.webp" },
-});
+// Sticker
+await sock.sendMessage(jid, {
+  sticker: readFileSync("./sticker.webp"),
+  // Must be 512x512 WebP
+})
 
-// Download received media
-import { downloadMediaMessage } from "@whiskeysockets/baileys";
-const buffer = await downloadMediaMessage(msg, "buffer", {});
+// Location
+await sock.sendMessage(jid, {
+  location: { degreesLatitude: 51.5074, degreesLongitude: -0.1278 },
+})
+
+// Contact card (vCard)
+await sock.sendMessage(jid, {
+  contacts: {
+    displayName: "John Doe",
+    contacts: [
+      {
+        vcard:
+          "BEGIN:VCARD\nVERSION:3.0\nFN:John Doe\nTEL:+1234567890\nEND:VCARD",
+      },
+    ],
+  },
+})
 ```
 
-### Reactions, Read Receipts, and Polls
+### Downloading Media
+
+```typescript
+import { downloadMediaMessage } from "@whiskeysockets/baileys"
+import { writeFileSync } from "fs"
+
+sock.ev.on("messages.upsert", async ({ messages }) => {
+  for (const msg of messages) {
+    if (msg.message?.imageMessage) {
+      const buffer = await downloadMediaMessage(msg, "buffer", {})
+      writeFileSync("./downloaded.jpg", buffer as Buffer)
+    }
+  }
+})
+```
+
+### Reactions
 
 ```typescript
 // Send reaction
-await sock.sendMessage(chatId, {
-  react: { text: "👍", key: msg.key },
-});
+await sock.sendMessage(jid, {
+  react: {
+    text: "👍", // Emoji reaction
+    key: originalMsg.key, // Message to react to
+  },
+})
 
 // Remove reaction
-await sock.sendMessage(chatId, {
-  react: { text: "", key: msg.key },
-});
-
-// Mark message as read
-await sock.readMessages([msg.key]);
-
-// Send poll (WhatsApp polls)
-await sock.sendMessage(chatId, {
-  poll: {
-    name: "What should we deploy?",
-    values: ["Frontend", "Backend", "Both", "Neither"],
-    selectableCount: 1, // single-select (use higher for multi-select)
+await sock.sendMessage(jid, {
+  react: {
+    text: "", // Empty string removes reaction
+    key: originalMsg.key,
   },
-});
-
-// Send status/stories broadcast
-await sock.sendMessage("status@broadcast", {
-  text: "System maintenance at 3 AM UTC",
-});
+})
 ```
 
-### Access Control
+### Polls
 
 ```typescript
-// Allowlist-based access control
+// Create poll
+await sock.sendMessage(jid, {
+  poll: {
+    name: "What should we work on next?",
+    values: ["Feature A", "Feature B", "Bug fixes", "Documentation"],
+    selectableCount: 1, // Single choice (use higher for multi-select)
+  },
+})
+
+// Poll votes arrive as messages.update events
+sock.ev.on("messages.update", (updates) => {
+  for (const update of updates) {
+    if (update.update?.pollUpdates) {
+      // Process poll votes
+      const pollVotes = update.update.pollUpdates
+      console.log("Poll votes:", pollVotes)
+    }
+  }
+})
+```
+
+### Read Receipts and Presence
+
+```typescript
+// Mark message as read
+await sock.readMessages([msg.key])
+
+// Send typing indicator
+await sock.sendPresenceUpdate("composing", jid)
+
+// Clear typing indicator
+await sock.sendPresenceUpdate("paused", jid)
+
+// Set online/offline presence
+await sock.sendPresenceUpdate("available")
+await sock.sendPresenceUpdate("unavailable")
+```
+
+### Status Broadcasts
+
+```typescript
+// Post text status
+await sock.sendMessage("status@broadcast", { text: "Bot is online!" })
+
+// Post image status
+await sock.sendMessage("status@broadcast", {
+  image: readFileSync("./status.jpg"),
+  caption: "Daily update",
+})
+```
+
+## Group Management
+
+```typescript
+// Create group
+const group = await sock.groupCreate("Project Team", [
+  "user1@s.whatsapp.net",
+  "user2@s.whatsapp.net",
+])
+console.log("Group JID:", group.id)
+
+// Get group metadata
+const metadata = await sock.groupMetadata(groupJid)
+console.log("Members:", metadata.participants.length)
+
+// Add members
+await sock.groupParticipantsUpdate(groupJid, ["user3@s.whatsapp.net"], "add")
+
+// Remove members
+await sock.groupParticipantsUpdate(groupJid, ["user3@s.whatsapp.net"], "remove")
+
+// Promote to admin
+await sock.groupParticipantsUpdate(groupJid, ["user1@s.whatsapp.net"], "promote")
+
+// Demote from admin
+await sock.groupParticipantsUpdate(groupJid, ["user1@s.whatsapp.net"], "demote")
+
+// Update group subject (name)
+await sock.groupUpdateSubject(groupJid, "New Group Name")
+
+// Update group description
+await sock.groupUpdateDescription(groupJid, "New description")
+
+// Group settings
+await sock.groupSettingUpdate(groupJid, "announcement") // Only admins can send
+await sock.groupSettingUpdate(groupJid, "not_announcement") // All can send
+await sock.groupSettingUpdate(groupJid, "locked") // Only admins edit info
+await sock.groupSettingUpdate(groupJid, "unlocked") // All can edit info
+
+// Leave group
+await sock.groupLeave(groupJid)
+
+// Get invite code
+const code = await sock.groupInviteCode(groupJid)
+console.log(`https://chat.whatsapp.com/${code}`)
+```
+
+## JID Format
+
+WhatsApp uses JIDs (Jabber IDs) to identify chats:
+
+| Type | Format | Example |
+|------|--------|---------|
+| Individual | `<phone>@s.whatsapp.net` | `1234567890@s.whatsapp.net` |
+| Group | `<id>@g.us` | `120363012345678901@g.us` |
+| Status broadcast | `status@broadcast` | `status@broadcast` |
+| Business | `<phone>@s.whatsapp.net` | Same as individual |
+
+**Phone number format**: Country code + number, no `+` prefix, no spaces or dashes.
+
+## Access Control
+
+### Allowlist Pattern
+
+```typescript
+// Configuration
 const ALLOWED_USERS = new Set([
-  "44123456789@s.whatsapp.net", // Phone number JID format
-  "44987654321@s.whatsapp.net",
-]);
+  "1234567890@s.whatsapp.net", // Admin
+  "0987654321@s.whatsapp.net", // Developer
+])
 
-const ADMIN_USERS = new Set(["44123456789@s.whatsapp.net"]);
+const ALLOWED_GROUPS = new Set([
+  "120363012345678901@g.us", // Dev team group
+])
 
-function isAllowed(sender: string): boolean {
-  // Empty allowlist = allow all
-  if (ALLOWED_USERS.size === 0) return true;
-  return ALLOWED_USERS.has(sender);
+const ADMIN_USERS = new Set([
+  "1234567890@s.whatsapp.net", // Can run privileged commands
+])
+
+function isAuthorized(jid: string, sender: string): boolean {
+  // Check individual DM
+  if (jid.endsWith("@s.whatsapp.net")) {
+    return ALLOWED_USERS.has(jid)
+  }
+  // Check group + sender within group
+  if (jid.endsWith("@g.us")) {
+    return ALLOWED_GROUPS.has(jid) && ALLOWED_USERS.has(sender)
+  }
+  return false
 }
 
 function isAdmin(sender: string): boolean {
-  return ADMIN_USERS.has(sender);
-}
-
-// In message handler
-sock.ev.on("messages.upsert", async ({ messages, type }) => {
-  if (type !== "notify") return;
-  for (const msg of messages) {
-    if (msg.key.fromMe) continue;
-    const sender = msg.key.remoteJid?.endsWith("@g.us")
-      ? msg.key.participant!
-      : msg.key.remoteJid!;
-
-    if (!isAllowed(sender)) {
-      console.log(`Blocked message from unauthorized user: ${sender}`);
-      continue;
-    }
-    // Process message...
-  }
-});
-```
-
-### Group Management
-
-```typescript
-// Get group metadata
-const groupMeta = await sock.groupMetadata(groupId);
-console.log(groupMeta.subject); // Group name
-console.log(groupMeta.participants); // Member list
-
-// Check if bot is admin
-const botJid = sock.user?.id;
-const botParticipant = groupMeta.participants.find(
-  (p) => p.id === botJid,
-);
-const isBotAdmin = botParticipant?.admin === "admin" || botParticipant?.admin === "superadmin";
-
-// Only respond to mentions in groups (optional)
-const mentionedJids = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
-if (isGroup && !mentionedJids.includes(botJid!)) {
-  return; // Only respond when @mentioned in groups
+  return ADMIN_USERS.has(sender)
 }
 ```
 
-## Security Considerations
-
-### Encryption: What IS Protected
-
-WhatsApp uses the **Signal Protocol** for end-to-end encryption — the same protocol used by Signal. This is genuinely strong encryption:
-
-- **Key exchange**: Extended Triple Diffie-Hellman (X3DH) with Curve25519
-- **Message encryption**: AES-256 in CBC mode
-- **Message authentication**: HMAC-SHA256
-- **Forward secrecy**: Double Ratchet algorithm — compromise of current keys does not reveal past messages
-- **Key verification**: QR code / 60-digit security code for manual verification
-
-**What Meta cannot read**: Message text, images, videos, voice notes, documents, and call audio are end-to-end encrypted. Meta's servers transport ciphertext they cannot decrypt.
-
-### Metadata: What IS Harvested
-
-**This is the critical privacy issue with WhatsApp.** Despite strong content encryption, Meta collects extensive metadata:
-
-| Metadata Category | What Meta Collects | Used For |
-|-------------------|--------------------|----------|
-| **Social graph** | Who you message, how often, when | Ad targeting, "People You May Know" |
-| **Group data** | Group names, participants, activity | Interest profiling, social mapping |
-| **Phone contacts** | All contacts uploaded (even non-WhatsApp users) | Cross-platform identity linking |
-| **Device info** | Phone model, OS, carrier, battery level, signal strength | Device fingerprinting |
-| **IP addresses** | Connection IPs, approximate location | Location-based ad targeting |
-| **Usage patterns** | Session duration, frequency, feature usage | Engagement profiling |
-| **Profile data** | Photo, status, about text, last seen | Identity enrichment |
-| **Business interactions** | Messages to/from business accounts | Commerce targeting |
-| **Payments** | Transaction details (where available) | Financial profiling |
-| **Registration** | Phone number, verification timestamps | Core identity |
-
-**The analogy**: Your letters are sealed with the strongest encryption available, but the postal service photographs every envelope — recording sender, recipient, timestamp, weight, and frequency — and sells that data to advertisers.
-
-### Server Access
-
-- **Content**: Meta **CANNOT** read message content (E2E encryption is mathematically enforced)
-- **Metadata**: Meta **HAS** and **USES** all metadata listed above for ad targeting across Facebook, Instagram, and WhatsApp
-- **Backups**: Cloud backups (Google Drive / iCloud) are **NOT** E2E encrypted by default. WhatsApp offers optional E2E encrypted backups — users must explicitly enable this. Unencrypted backups are accessible to Google/Apple and law enforcement.
-
-### Push Notifications
-
-- iOS: Push notifications via Apple Push Notification service (APNs)
-- Android: Push notifications via Firebase Cloud Messaging (FCM / Google)
-- Notification metadata (sender, timing) is visible to Apple/Google
-- Message content is not included in push payloads (only notification trigger)
-
-### AI Training and Data Use
-
-**CRITICAL WARNING**: Meta's privacy policy explicitly permits using WhatsApp metadata for AI model training and advertising:
-
-- WhatsApp metadata feeds Meta's advertising algorithms across all Meta platforms
-- Meta has integrated AI features into WhatsApp (Meta AI chatbot) that process conversations users opt into
-- WhatsApp Business API messages may be processed by Meta's AI systems for business insights
-- Meta's terms of service allow them to update data usage policies with notice but without requiring explicit consent
-- Business accounts interacting via the official Business API have additional data shared with Meta for "business messaging quality" and analytics
-
-### Open Source Status
-
-- **Client**: CLOSED source — no independent audit of client-side behavior
-- **Server**: CLOSED source — no verification of server-side data handling
-- **Protocol**: Signal Protocol is open source and independently audited, but WhatsApp's implementation is unverifiable
-- **Baileys**: MIT-licensed OPEN source reverse-engineering of WhatsApp Web protocol — community-maintained, not endorsed by Meta
-
-### Jurisdiction
-
-- **Meta Platforms, Inc.** — headquartered in Menlo Park, California, USA
-- **Meta Platforms Ireland Ltd** — data controller for EU/EEA users
-- Subject to GDPR in the EU, but Meta has been fined repeatedly (e.g., EUR 225M in 2021, EUR 1.2B in 2023) for privacy violations
-- Subject to US CLOUD Act — US government can compel data disclosure
-- WhatsApp has cooperated with law enforcement by providing metadata (not message content)
-
-### Bot-Specific Risks
-
-| Risk | Severity | Detail |
-|------|----------|--------|
-| **Account ban** | HIGH | WhatsApp actively detects and bans unofficial API usage (Baileys). Detection methods include behavioral analysis, API call patterns, and protocol version checks. Bans are permanent for the phone number. |
-| **Phone number exposure** | MEDIUM | Bot requires a real phone number. This phone number is visible to all contacts and group members. |
-| **Business API cost** | LOW | Official WhatsApp Business API requires Meta business verification, monthly fees, and per-message pricing. Avoids ban risk but grants Meta more data access. |
-| **Session hijacking** | HIGH | The `auth_info_baileys/` directory contains full session credentials. Anyone with access can impersonate the WhatsApp account. Secure with 700 permissions and encrypted backups. |
-| **Rate limiting** | MEDIUM | WhatsApp has aggressive anti-spam detection. Sending too many messages too quickly triggers temporary or permanent bans. |
-
-### Comparison: Content Security vs Metadata Privacy
-
-| Messenger | Content Security | Metadata Privacy | Open Source | Overall Privacy |
-|-----------|-----------------|-------------------|-------------|-----------------|
-| Signal | Excellent (Signal Protocol) | Good (minimal collection) | Yes | Excellent |
-| SimpleX | Excellent (Double Ratchet) | Excellent (no identifiers) | Yes (AGPL-3.0) | Best available |
-| WhatsApp | Excellent (Signal Protocol) | **Poor** (Meta harvests) | No | **Poor overall** |
-| Matrix | Good (Megolm/Olm) | Moderate (server-dependent) | Yes | Good (self-hosted) |
-| Telegram | Moderate (MTProto, not default E2E) | Poor (phone number, server-side) | Partial (client only) | Moderate |
-
-**Bottom line**: WhatsApp's content encryption is as strong as Signal's. But metadata privacy is among the worst of mainstream messengers because Meta's entire business model depends on harvesting this data for advertising. Use WhatsApp when you need to reach users who are already on it — not when privacy is the primary requirement.
-
-## aidevops Integration
-
-### Helper Script
-
-`whatsapp-dispatch-helper.sh` follows the same pattern as `matrix-dispatch-helper.sh` and `simplex-helper.sh`:
-
-```bash
-# Setup (interactive wizard)
-whatsapp-dispatch-helper.sh setup
-
-# Start bot (foreground)
-whatsapp-dispatch-helper.sh start
-
-# Start bot (daemon)
-whatsapp-dispatch-helper.sh start --daemon
-
-# Stop bot
-whatsapp-dispatch-helper.sh stop
-
-# Check status
-whatsapp-dispatch-helper.sh status
-
-# Test dispatch
-whatsapp-dispatch-helper.sh test "Ask a question"
-
-# View logs
-whatsapp-dispatch-helper.sh logs
-whatsapp-dispatch-helper.sh logs --follow
-```
-
-### Configuration
-
-`~/.config/aidevops/whatsapp-bot.json` (600 permissions):
-
-```json
-{
-  "authDir": "~/.aidevops/.agent-workspace/whatsapp-bot/auth_info_baileys",
-  "allowedUsers": [
-    "44123456789@s.whatsapp.net"
-  ],
-  "adminUsers": [
-    "44123456789@s.whatsapp.net"
-  ],
-  "botPrefix": "/",
-  "defaultRunner": "general",
-  "groupMappings": {
-    "120363012345678901@g.us": "code-reviewer"
-  },
-  "ignoreOwnMessages": true,
-  "maxPromptLength": 3000,
-  "responseTimeout": 600,
-  "sessionIdleTimeout": 300,
-  "respondToMentionsOnly": true
-}
-```
-
-### Runner Dispatch
-
-The bot dispatches to aidevops runners via `runner-helper.sh`:
-
-```bash
-# Create runners for WhatsApp chats
-runner-helper.sh create general \
-  --description "General AI assistant for WhatsApp"
-
-runner-helper.sh create code-reviewer \
-  --description "Code review and security analysis"
-```
-
-### Entity Resolution
-
-WhatsApp users are resolved to entities via `entity-helper.sh`:
-
-- **Channel**: `whatsapp`
-- **Channel ID**: Phone number JID (e.g., `44123456789@s.whatsapp.net`)
-- **Display name**: Push name from WhatsApp profile
-- **Cross-channel**: Can link to same entity on Matrix, SimpleX, email
-
-### Session State Management
-
-Baileys auth state is stored at `~/.aidevops/.agent-workspace/whatsapp-bot/auth_info_baileys/`. This directory must be:
-
-- Persisted across bot restarts (contains session keys)
-- Backed up securely (grants full account access)
-- Set to 700 permissions
-- Never committed to version control
-
-Conversation sessions follow the same Layer 0/1/2 model as the Matrix bot, stored in the shared `memory.db`.
-
-## Matterbridge Integration
-
-Matterbridge has native WhatsApp support via [whatsmeow](https://github.com/tulir/whatsmeow) (Go WhatsApp library, similar to Baileys but in Go).
-
-```text
-WhatsApp (whatsmeow)
-    │
-Matterbridge
-    │
-    ├── Matrix rooms
-    ├── SimpleX contacts
-    ├── Telegram groups
-    ├── Discord channels
-    ├── Slack workspaces
-    ├── IRC channels
-    └── 40+ other platforms
-```
-
-### Matterbridge Configuration
-
-`matterbridge.toml`:
-
-```toml
-[whatsapp.mywhatsapp]
-# No token needed — QR code auth on first run
-# Matterbridge will display QR in terminal
-
-[[gateway]]
-name = "whatsapp-bridge"
-enable = true
-
-[[gateway.inout]]
-account = "whatsapp.mywhatsapp"
-channel = "120363012345678901@g.us"  # WhatsApp group JID
-
-[[gateway.inout]]
-account = "matrix.mymatrix"
-channel = "#bridged-room:example.com"
-```
-
-**Key details**:
-
-- Uses whatsmeow (Go) — more stable than Baileys for bridging
-- Same QR code auth flow as Baileys
-- Same account ban risk as any unofficial WhatsApp API usage
-- Bridges text, images, videos, documents
-- Does not bridge reactions, polls, or voice notes
-- See `services/communications/matterbridge.md` for full Matterbridge setup
-
-## Limitations
-
-### Unofficial API (Account Ban Risk)
-
-Baileys and whatsmeow are unofficial reverse-engineered libraries. WhatsApp's Terms of Service prohibit automated or bulk messaging via unofficial clients. Meta actively detects and permanently bans accounts using unofficial APIs. There is no appeal process for bans.
-
-**Mitigation**: Use a dedicated phone number for the bot (not your personal number). Accept that the account may be banned at any time.
-
-### Phone Number Required
-
-Every WhatsApp account requires a phone number. Unlike SimpleX (no identifiers) or Matrix (email optional), there is no way to use WhatsApp without a phone number. This phone number is visible to all contacts.
-
-### No Official Bot API for Personal Accounts
-
-The official WhatsApp Business API is only available for business accounts with Meta business verification. Personal accounts have no official bot API — Baileys is the only option, with all the ban risks that entails.
-
-### WhatsApp Business API Costs
-
-The official Business API has per-conversation pricing:
-
-| Category | Approximate Cost (varies by country) |
-|----------|--------------------------------------|
-| Marketing | $0.05 - $0.15 per conversation |
-| Utility | $0.03 - $0.08 per conversation |
-| Authentication | $0.02 - $0.06 per conversation |
-| Service | Free (first 1000/month), then $0.03+ |
-
-Plus Business Solution Provider (BSP) fees if using a third-party platform.
-
-### File Size Limits
-
-| Media Type | Maximum Size |
-|------------|-------------|
-| Image | 16 MB |
-| Video | 16 MB |
-| Audio | 16 MB |
-| Document | 100 MB |
-| Sticker | 500 KB (static), 500 KB (animated) |
+### Command Permission Levels
+
+| Level | Commands | Who |
+|-------|----------|-----|
+| Public | `/help`, `/status`, `/ping` | All allowed users |
+| Standard | `/ask`, `/search`, `/summarize` | Allowed users |
+| Privileged | `/run`, `/deploy`, `/task` | Admin users only |
+| Owner | `/config`, `/allow`, `/deny` | Bot owner only |
 
 ### Rate Limiting
 
-WhatsApp has aggressive anti-spam detection:
+```typescript
+const rateLimits = new Map<string, number[]>()
+const MAX_REQUESTS = 10
+const WINDOW_MS = 60_000 // 1 minute
 
-- Sending too many messages in a short period triggers warnings or bans
-- New accounts have lower sending limits
-- Business API has defined rate limits (varies by tier)
-- Unofficial API usage has unpredictable limits — no documented thresholds
+function isRateLimited(sender: string): boolean {
+  const now = Date.now()
+  const timestamps = rateLimits.get(sender) || []
+  const recent = timestamps.filter((t) => now - t < WINDOW_MS)
+  if (recent.length >= MAX_REQUESTS) return true
+  recent.push(now)
+  rateLimits.set(sender, recent)
+  return false
+}
+```
 
-### Multi-Device Limitations
+## Privacy and Security Assessment
 
-- Maximum 4 linked devices per account (1 phone + 4 companions)
-- Linked devices are unlinked after 14 days of phone inactivity
-- Broadcast lists and status updates have device-specific limitations
-- Some features may not be available on linked devices
+### What Is Protected (Signal Protocol E2E)
 
-### No Federation
+WhatsApp uses the Signal Protocol for end-to-end encryption of message content:
 
-WhatsApp is a centralized, closed platform. There is no federation, no self-hosted servers, no alternative clients (officially). All traffic routes through Meta's infrastructure. You cannot run your own WhatsApp server.
+- **Message text**: E2E encrypted between sender and recipient devices
+- **Media files**: E2E encrypted (images, videos, audio, documents)
+- **Voice/video calls**: E2E encrypted
+- **Group messages**: Each message encrypted per-member (sender keys)
+- **Status broadcasts**: E2E encrypted to viewers
 
-### Group Limitations
+Baileys does not implement encryption itself — it uses WhatsApp's built-in Signal Protocol implementation via the linked device protocol. The encryption is handled by the WhatsApp client layer, not by Baileys.
 
-- Maximum 1024 members per group
-- Community groups: up to 5000 members across linked groups
-- Admin-only messaging available but reduces bot utility
-- No threaded conversations (all messages in single timeline)
+### What Is NOT Protected (Metadata Harvesting)
+
+**Meta collects extensive metadata** regardless of E2E encryption:
+
+| Data Category | What Meta Collects | Used For |
+|---------------|-------------------|----------|
+| **Contact graph** | Who you message, how often, when | Social graph analysis, ad targeting |
+| **Group membership** | All groups, members, join/leave times | Interest profiling |
+| **Usage patterns** | Online/offline times, app usage duration | Behavioral profiling |
+| **Device info** | Phone model, OS, IP address, battery level | Device fingerprinting |
+| **Location** | IP-based location, shared locations | Geographic targeting |
+| **Phone number** | Required for account creation | Identity linking across Meta services |
+| **Message timing** | Send/receive timestamps, read receipts | Activity pattern analysis |
+| **Media metadata** | File sizes, types, frequency | Content profiling |
+| **Business interactions** | Messages to business accounts | Commercial interest profiling |
+| **Push notifications** | Via FCM (Google) / APNs (Apple) | Google/Apple learn message timing |
+
+### Critical Privacy Warnings
+
+1. **Meta's privacy policy** explicitly allows using metadata for ad targeting across Facebook, Instagram, and WhatsApp
+2. **WhatsApp Business API messages** may be processed by Meta's AI systems for business features
+3. **Backups** (Google Drive / iCloud) are encrypted with a user-provided password OR Meta-held key — if the user chose Meta-held key, Meta can read backed-up messages
+4. **Link previews** are generated server-side for some content, potentially exposing URLs to Meta
+5. **Phone number is mandatory** — ties the account to a real-world identity
+6. **Closed-source server** — no way to verify what the server actually does with data
+7. **AI features** (Meta AI in WhatsApp) process message content when invoked by users
+
+### Terms of Service Risk (Baileys)
+
+**Baileys is an unofficial, reverse-engineered client.** Using it violates WhatsApp's Terms of Service:
+
+| Risk | Likelihood | Impact | Mitigation |
+|------|-----------|--------|------------|
+| **Account ban** | Medium-High | Loss of WhatsApp account | Use a dedicated number, not personal |
+| **IP ban** | Low-Medium | Need new IP to reconnect | Use residential proxy or VPN |
+| **Legal action** | Very Low | Cease and desist | Baileys is MIT-licensed; Meta targets large-scale abuse |
+| **API changes** | High | Bot breaks until Baileys updates | Pin Baileys version, monitor releases |
+| **Rate limiting** | Medium | Temporary send restrictions | Implement delays between messages |
+
+**Mitigation strategy**:
+
+- Use a **dedicated phone number** (prepaid SIM) — never your personal number
+- Implement **human-like delays** between messages (2-5 seconds)
+- Avoid **bulk messaging** or rapid group operations
+- Keep **message volume reasonable** (not thousands per day)
+- Monitor the [Baileys GitHub](https://github.com/WhiskeySockets/Baileys) for breaking changes
+- Have a **fallback plan** (WhatsApp Business API, or alternative protocol) if banned
+
+### Comparison with Privacy-Respecting Alternatives
+
+| Aspect | WhatsApp | SimpleX | Matrix | XMTP |
+|--------|----------|---------|--------|------|
+| Message content | E2E encrypted | E2E encrypted | E2E optional | E2E encrypted |
+| Metadata collection | Extensive (Meta) | Minimal (stateless) | Moderate (server) | Minimal (nodes) |
+| Identity required | Phone number | None | Optional | Wallet/DID |
+| Server source code | Closed | Open (AGPL-3.0) | Open (Apache-2.0) | Open (MIT) |
+| Data used for ads | Yes | No | No | No |
+| Regulatory compliance | GDPR (with caveats) | GDPR-friendly | GDPR-friendly | GDPR-friendly |
+| Recommendation | Use only when recipients are already on WhatsApp | Preferred for privacy | Preferred for teams | Preferred for Web3 |
+
+**Bottom line**: WhatsApp provides strong message content encryption but poor metadata privacy. Use it when you need to reach people who are already on WhatsApp. For new deployments where you control both ends, prefer SimpleX (maximum privacy) or Matrix (team collaboration).
+
+## aidevops Runner Dispatch Integration
+
+### Command Router Pattern
+
+```typescript
+import { WASocket, proto } from "@whiskeysockets/baileys"
+
+interface CommandContext {
+  sock: WASocket
+  msg: proto.IWebMessageInfo
+  sender: string
+  jid: string
+  args: string
+  isAdmin: boolean
+  isGroup: boolean
+}
+
+type CommandHandler = (ctx: CommandContext) => Promise<void>
+
+const commands = new Map<string, CommandHandler>()
+
+// Register commands
+commands.set("/help", async (ctx) => {
+  const helpText = [
+    "*Available Commands:*",
+    "/help - Show this message",
+    "/status - Bot status",
+    "/ask <question> - Ask AI a question",
+    "/task <description> - Create a task",
+    "/run <command> - Run a command (admin only)",
+  ].join("\n")
+  await ctx.sock.sendMessage(ctx.jid, { text: helpText })
+})
+
+commands.set("/ask", async (ctx) => {
+  if (!ctx.args) {
+    await ctx.sock.sendMessage(ctx.jid, { text: "Usage: /ask <question>" })
+    return
+  }
+  await ctx.sock.sendPresenceUpdate("composing", ctx.jid)
+
+  // Dispatch to aidevops runner
+  const response = await dispatchToRunner("general", ctx.args, ctx.sender)
+  await ctx.sock.sendMessage(ctx.jid, { text: response })
+})
+
+commands.set("/run", async (ctx) => {
+  if (!ctx.isAdmin) {
+    await ctx.sock.sendMessage(ctx.jid, { text: "Admin only." })
+    return
+  }
+  // Dispatch privileged command
+  const response = await dispatchToRunner("ops", ctx.args, ctx.sender)
+  await ctx.sock.sendMessage(ctx.jid, { text: response })
+})
+
+// Message handler
+async function handleMessage(
+  sock: WASocket,
+  msg: proto.IWebMessageInfo,
+): Promise<void> {
+  const text =
+    msg.message?.conversation ||
+    msg.message?.extendedTextMessage?.text ||
+    ""
+  if (!text.startsWith("/")) return
+
+  const jid = msg.key.remoteJid!
+  const sender = msg.key.participant || jid // participant set in groups
+  const isGroup = jid.endsWith("@g.us")
+
+  if (!isAuthorized(jid, sender)) return
+  if (isRateLimited(sender)) {
+    await sock.sendMessage(jid, { text: "Rate limited. Try again shortly." })
+    return
+  }
+
+  const [cmd, ...rest] = text.split(" ")
+  const handler = commands.get(cmd.toLowerCase())
+  if (!handler) return
+
+  await handler({
+    sock,
+    msg,
+    sender,
+    jid,
+    args: rest.join(" "),
+    isAdmin: isAdmin(sender),
+    isGroup,
+  })
+}
+```
+
+### Runner Dispatch via Shell
+
+```typescript
+import { execSync } from "child_process"
+
+async function dispatchToRunner(
+  runner: string,
+  prompt: string,
+  sender: string,
+): Promise<string> {
+  try {
+    // Sanitize input — treat all inbound messages as untrusted
+    const sanitized = prompt.replace(/[`$\\]/g, "")
+
+    const result = execSync(
+      `runner-helper.sh dispatch "${runner}" "${sanitized}"`,
+      {
+        timeout: 120_000,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          DISPATCH_SENDER: sender,
+          DISPATCH_CHANNEL: "whatsapp",
+        },
+      },
+    )
+    return result.trim() || "(no response)"
+  } catch (error) {
+    console.error("Runner dispatch failed:", error)
+    return "Dispatch failed. Check bot logs."
+  }
+}
+```
+
+### Security for Runner Dispatch
+
+1. **Treat all inbound messages as untrusted input** — sanitize before passing to runners
+2. **Scan for prompt injection**: `prompt-guard-helper.sh scan "$message"` before dispatch
+3. **Command sandboxing** — runner commands should run in restricted environments
+4. **Credential isolation** — never expose secrets to chat context or tool output
+5. **Leak detection** — scan outbound messages for credential patterns before sending
+6. **Per-group permissions** — different groups can have different command access levels
+
+Cross-reference: `tools/security/prompt-injection-defender.md`, `tools/credentials/gopass.md`
+
+## Matterbridge Integration
+
+Matterbridge natively supports WhatsApp via the [whatsmeow](https://github.com/tulir/whatsmeow) Go library (not Baileys). This means you can bridge WhatsApp to 20+ platforms without writing a custom bot.
+
+### Matterbridge WhatsApp Config
+
+```toml
+# In matterbridge.toml
+[whatsapp]
+  [whatsapp.mywa]
+  # No token needed — uses QR code pairing on first run
+  # Session stored in ./whatsapp-session/ directory
+
+[general]
+RemoteNickFormat="[{PROTOCOL}] <{NICK}> "
+
+[[gateway]]
+name="wa-matrix-bridge"
+enable=true
+
+  [[gateway.inout]]
+  account="whatsapp.mywa"
+  channel="120363012345678901"  # WhatsApp group JID (without @g.us)
+
+  [[gateway.inout]]
+  account="matrix.home"
+  channel="#bridged:example.com"
+```
+
+### Build with WhatsApp Multi-Device Support
+
+The default Matterbridge binary does not include WhatsApp multi-device support due to GPL3 licensing of whatsmeow. Build from source with the tag:
+
+```bash
+# Build with WhatsApp multidevice support
+go install -tags whatsappmulti github.com/42wim/matterbridge@master
+
+# Without MS Teams (saves ~2.5GB RAM during build) + with WhatsApp
+go install -tags nomsteams,whatsappmulti github.com/42wim/matterbridge@master
+```
+
+### First Run (QR Pairing)
+
+On first run, Matterbridge prints a QR code to the terminal. Scan it with WhatsApp on your phone (Settings > Linked Devices > Link a Device).
+
+### Baileys vs Matterbridge (whatsmeow)
+
+| Aspect | Baileys (custom bot) | Matterbridge (whatsmeow) |
+|--------|---------------------|--------------------------|
+| Language | TypeScript/Node.js | Go |
+| Use case | Custom bot logic, AI dispatch | Platform bridging |
+| Flexibility | Full API access | Bridge-only |
+| Setup | Code required | Config file only |
+| Maintenance | You maintain bot code | Matterbridge community |
+| Best for | aidevops runner integration | Cross-platform chat bridging |
+
+**Recommendation**: Use Matterbridge for pure bridging (WhatsApp <-> Matrix/Discord/etc.). Use Baileys for custom bot logic with aidevops runner dispatch. They can coexist on different WhatsApp accounts.
+
+### Privacy at Bridge Boundaries
+
+E2E encryption is broken at the bridge. Messages are decrypted by the bridge process and re-encrypted (or sent plaintext) for the destination platform. The bridge host has access to all message content in plaintext. See `tools/security/opsec.md` for implications.
+
+## Connection Management
+
+### Reconnection Strategy
+
+```typescript
+sock.ev.on("connection.update", (update) => {
+  const { connection, lastDisconnect } = update
+
+  if (connection === "close") {
+    const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode
+
+    switch (statusCode) {
+      case DisconnectReason.loggedOut:
+        // Session invalidated — need new QR scan
+        console.error("Logged out. Delete auth_info/ and restart for new QR.")
+        break
+      case DisconnectReason.restartRequired:
+        // Normal restart — reconnect immediately
+        startBot()
+        break
+      case DisconnectReason.connectionClosed:
+      case DisconnectReason.connectionLost:
+      case DisconnectReason.timedOut:
+        // Network issue — reconnect with backoff
+        setTimeout(() => startBot(), 5000)
+        break
+      default:
+        // Unknown — reconnect with longer backoff
+        setTimeout(() => startBot(), 15000)
+    }
+  }
+})
+```
+
+### Health Monitoring
+
+```typescript
+let lastMessageTime = Date.now()
+
+// Update on any message
+sock.ev.on("messages.upsert", () => {
+  lastMessageTime = Date.now()
+})
+
+// Periodic health check
+setInterval(() => {
+  const silentMinutes = (Date.now() - lastMessageTime) / 60_000
+  if (silentMinutes > 30) {
+    console.warn(`No messages for ${silentMinutes.toFixed(0)} minutes`)
+    // Optionally: send a keepalive or alert
+  }
+}, 300_000) // Check every 5 minutes
+```
+
+## Limitations
+
+### Account Ban Risk
+
+Baileys is unofficial. WhatsApp actively detects and bans accounts using unofficial clients. Risk increases with:
+
+- High message volume
+- Rapid group operations
+- Bulk contact additions
+- Automated behavior without human-like delays
+
+**Mitigation**: Dedicated number, rate limiting, human-like delays. See [Terms of Service Risk](#terms-of-service-risk-baileys).
+
+### No Voice/Video Calls
+
+Baileys does not support voice or video calls. WhatsApp's call protocol is separate from the messaging protocol and is not reverse-engineered in Baileys.
+
+### History Sync Limitations
+
+On linking, WhatsApp sends recent history, but:
+
+- History may be incomplete (depends on WhatsApp's sync behavior)
+- Very old messages may not be synced
+- Media from old messages may not be downloadable
+
+### Platform Dependency
+
+WhatsApp is a closed-source platform controlled by Meta. Any protocol change can break Baileys without warning. The library maintainers typically update within days, but downtime is possible.
+
+### Group Size
+
+WhatsApp groups support up to 1024 members. For larger communities, WhatsApp Communities (groups of groups) support more, but Baileys support for Communities features may lag behind the official app.
+
+### No Desktop-Only Account
+
+A phone number and the WhatsApp mobile app are required for initial setup. There is no way to create a WhatsApp account without a phone.
 
 ## Related
 
-- `.agents/services/communications/simplex.md` — SimpleX (maximum privacy, no identifiers)
-- `.agents/services/communications/matrix-bot.md` — Matrix bot integration (federated, self-hosted)
-- `.agents/services/communications/matterbridge.md` — Matterbridge cross-platform bridging
-- `.agents/services/communications/bitchat.md` — BitChat (Bitcoin-native messaging)
-- `.agents/services/communications/xmtp.md` — XMTP (Ethereum-native messaging)
-- `.agents/tools/security/opsec.md` — Operational security guidance
-- `.agents/tools/voice/speech-to-speech.md` — Voice note transcription
-- `.agents/tools/ai-assistants/headless-dispatch.md` — Headless AI dispatch patterns
+- `services/communications/simplex.md` — SimpleX (maximum privacy, no identifiers)
+- `services/communications/matrix-bot.md` — Matrix bot for aidevops runner dispatch
+- `services/communications/matterbridge.md` — Multi-platform chat bridge (native WhatsApp support)
+- `services/communications/xmtp.md` — XMTP (Web3 messaging, wallet identity)
+- `services/communications/twilio.md` — Twilio (official WhatsApp Business API via CPaaS)
+- `tools/security/opsec.md` — Platform trust matrix, metadata warnings
+- `tools/security/prompt-injection-defender.md` — Prompt injection defense for bot inputs
 - Baileys GitHub: https://github.com/WhiskeySockets/Baileys
-- WhatsApp Business API: https://developers.facebook.com/docs/whatsapp/
-- Signal Protocol: https://signal.org/docs/
-- whatsmeow (Go library): https://github.com/tulir/whatsmeow
+- Baileys Docs: https://whiskeysockets.github.io/Baileys/
+- WhatsApp Security Whitepaper: https://www.whatsapp.com/security/WhatsApp-Security-Whitepaper.pdf
+- Matterbridge WhatsApp: https://github.com/42wim/matterbridge (build with `-tags whatsappmulti`)
