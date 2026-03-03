@@ -2292,6 +2292,7 @@ bash .agents/scripts/continue-cli.sh review
 **Wiki Guides:**
 
 - **[Getting Started](.wiki/Getting-Started.md)** - Installation and setup
+- **[Configuration Reference](docs/configuration.md)** - All JSONC/JSON config options, types, defaults, and examples
 - **[CLI Reference](.wiki/CLI-Reference.md)** - aidevops command documentation
 - **[MCP Integrations](.wiki/MCP-Integrations.md)** - MCP servers setup
 - **[Providers](.wiki/Providers.md)** - Service provider configurations
@@ -2332,6 +2333,35 @@ aidevops/
 
 ## **Configuration & Setup**
 
+aidevops is configured through two JSONC/JSON files that control framework behaviour, model routing, quality gates, and user preferences. Both are optional -- sensible defaults apply out of the box.
+
+| File | Purpose | CLI |
+|------|---------|-----|
+| [`~/.config/aidevops/config.jsonc`](docs/configuration.md#configjsonc--full-reference) | Framework config: updates, models, safety, quality, orchestration, paths | `aidevops config` |
+| [`~/.config/aidevops/settings.json`](docs/configuration.md#settingsjson--full-reference) | User preferences: onboarding, UI, model routing defaults | `settings-helper.sh` |
+
+**Quick examples:**
+
+```bash
+# Disable automatic updates
+aidevops config set updates.auto_update false
+
+# Use opus-tier verification for destructive operations
+aidevops config set safety.verification_tier opus
+
+# View all current config values
+aidevops config list
+
+# Validate config against schema
+aidevops config validate
+```
+
+**Precedence:** Environment variables (`AIDEVOPS_*`) > config file > built-in defaults. See the **[full configuration reference](docs/configuration.md)** for every option, type, default, and example.
+
+### Service Credentials
+
+Service-specific credentials (hosting, DNS, Git platforms, etc.) use a separate template system:
+
 ```bash
 # 1. Copy and customize configuration templates
 cp configs/hostinger-config.json.txt configs/hostinger-config.json
@@ -2344,6 +2374,8 @@ cp configs/hetzner-config.json.txt configs/hetzner-config.json
 # 3. Install MCP integrations (optional)
 bash .agents/scripts/setup-mcp-integrations.sh all
 ```
+
+See [docs/configuration.md](docs/configuration.md#service-configuration-templates) for details on the template system and credential security.
 
 ## **Security & Best Practices**
 
