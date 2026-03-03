@@ -1,5 +1,5 @@
 ---
-description: Google Chat Bot integration — HTTP webhook/REST API setup, card messages, security considerations (no E2E, Gemini AI training), Matterbridge (unsupported), and aidevops dispatch
+description: Google Chat bot integration — HTTP webhook mode, Google Cloud project setup, service account auth, DM/space messaging, Adaptive Cards, access control, and aidevops runner dispatch
 mode: subagent
 tools:
   read: true
@@ -18,530 +18,732 @@ tools:
 
 ## Quick Reference
 
-- **Type**: Google Workspace messaging — no E2E encryption, Google has full access
-- **License**: Proprietary (Google). No official TypeScript SDK — HTTP API + webhook
-- **Bot tool**: Google Chat API (HTTP webhook mode, REST API)
-- **Protocol**: Google Chat API (HTTP/JSON)
-- **Encryption**: TLS in transit, Google-managed at rest — NO end-to-end encryption
-- **Script**: `google-chat-dispatch-helper.sh [setup|start|stop|status|map|unmap|mappings|test|logs]`
+- **Purpose**: Bridge Google Chat DMs and spaces to aidevops runners via HTTP webhook endpoint
+- **Mode**: HTTP endpoint (Google sends events to your URL) — not WebSocket, not polling
 - **Config**: `~/.config/aidevops/google-chat-bot.json` (600 permissions)
 - **Data**: `~/.aidevops/.agent-workspace/google-chat-bot/`
-- **Docs**: https://developers.google.com/workspace/chat/api/reference/rest | https://developers.google.com/workspace/chat
-- **Console**: https://console.cloud.google.com/apis/api/chat.googleapis.com
+- **Auth**: Google Cloud service account (JWT) for outbound messages; Google-signed bearer token for inbound verification
+- **Requires**: Google Workspace account, Google Cloud project, public HTTPS URL, Node.js >= 18, jq
+- **No Matterbridge support**: Google Chat has no native Matterbridge gateway — this is a standalone integration
 
 **Quick start**:
 
 ```bash
-google-chat-dispatch-helper.sh setup          # Interactive wizard
-google-chat-dispatch-helper.sh map spaces/AAAA general-assistant
-google-chat-dispatch-helper.sh start --daemon
+# 1. Create Google Cloud project and enable Chat API (see Setup below)
+# 2. Configure the bot
+google-chat-helper.sh setup          # Interactive wizard
+# 3. Expose endpoint publicly (pick one)
+tailscale funnel 8443                # Tailscale Funnel
+# or: caddy reverse-proxy --from chat-bot.example.com --to localhost:8443
+# or: cloudflared tunnel --url http://localhost:8443
+# 4. Start the bot
+google-chat-helper.sh start --daemon
 ```
+
+**Privacy/security warning**: Google Chat is a Google Workspace product. All messages are stored server-side, accessible to workspace admins, and subject to Google's data processing policies. **Google has integrated Gemini AI directly into Chat** — workspace data may be used for AI feature improvement unless the workspace admin configures data processing agreements (DPAs) and opts out. There is no E2E encryption. See [Privacy and Security Assessment](#privacy-and-security-assessment) for full analysis.
 
 <!-- AI-CONTEXT-END -->
 
 ## Architecture
 
 ```text
-┌──────────────────────────┐
-│ Google Chat Space         │
-│                           │
-│ User sends message        │
-│ or @mentions bot          │
-└────────────┬─────────────┘
-             │
-             │  HTTP POST (webhook push)        OR      Pub/Sub subscription
-             │  (Google pushes events to URL)           (async event delivery)
-             │
-             │  ⚠ Requires public URL:
-             │    Tailscale Funnel (recommended)
-             │    Caddy reverse proxy
-             │    Cloudflare Tunnel
-             │    ngrok
-             │
-┌────────────▼─────────────┐     ┌──────────────────────┐
-│ Webhook Handler (Bun)    │     │ aidevops Dispatch     │
-│                           │     │                       │
-│ ├─ Event router           │────▶│ runner-helper.sh      │
-│ ├─ Message handler        │     │ → AI session          │
-│ ├─ Card action handler    │◀────│ → response            │
-│ ├─ Access control         │     │                       │
-│ └─ Entity resolution      │     │                       │
-└────────────┬─────────────┘     └──────────────────────┘
-             │
-┌────────────▼─────────────┐
-│ memory.db (shared)        │
-│ ├── entities              │  Entity profiles
-│ ├── entity_channels       │  Cross-channel identity
-│ ├── interactions          │  Layer 0: Immutable log
-│ └── conversations         │  Layer 1: Context summaries
-└───────────────────────────┘
+┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
+│ Google Chat      │     │ Public HTTPS URL │     │ Bot Server       │
+│ (Workspace)      │     │ (Tailscale/Caddy │     │ (Node.js :8443)  │
+│                  │     │  /Cloudflare)    │     │                  │
+│ User types:      │────▶│ TLS termination  │────▶│ 1. Verify token  │
+│ @BotName review  │     │ + proxy          │     │ 2. Parse event   │
+│ auth.ts          │     │                  │     │ 3. Check perms   │
+│                  │◀────│                  │◀────│ 4. Dispatch      │
+│ AI response      │     │                  │     │    to runner     │
+│ (Card or text)   │     │                  │     │ 5. Return card   │
+└──────────────────┘     └──────────────────┘     └──────────────────┘
+                                                        │
+                                                        ▼
+                                                  ┌──────────────┐
+                                                  │ runner-       │
+                                                  │ helper.sh    │
+                                                  │ → AI session │
+                                                  └──────────────┘
 ```
 
-**Message flow**: User sends message/mention → Google pushes HTTP POST to webhook URL → handler verifies authenticity and checks access control → space-to-runner mapping lookup → entity resolution via `entity-helper.sh` → Layer 0 logging → context loading (entity profile + conversation summary) → dispatch to runner via `runner-helper.sh` → response sent back via REST API → emoji reaction added (success/failure).
+**Message flow**:
 
-## Installation
+1. User mentions the bot or sends a DM in Google Chat
+2. Google sends an HTTP POST to the bot's configured endpoint URL
+3. Bot verifies the request bearer token against Google's public keys (JWKS)
+4. Bot parses the event (message, added-to-space, removed-from-space, card-clicked)
+5. Bot checks user email against the allowlist
+6. Bot dispatches the prompt to a runner via `runner-helper.sh`
+7. Runner executes via headless AI session
+8. Bot formats the response as a Card v2 or plain text and returns it in the HTTP response body
+9. Google Chat renders the response to the user
+
+**Key difference from Matrix/SimpleX**: Google Chat uses a synchronous HTTP request-response model. Google sends an event, the bot must respond within 30 seconds. For longer tasks, the bot returns an acknowledgment card immediately and posts the full response asynchronously via the Chat API.
+
+## Setup
 
 ### Prerequisites
 
-1. **Google Workspace account** — consumer Google accounts cannot create Chat bots
-2. **Google Cloud project** with billing enabled
-3. **Node.js >= 18** or **Bun** runtime
-4. **Public URL** for webhook delivery (see architecture diagram above)
+1. **Google Workspace account** — Google Chat bots require Workspace (free Gmail accounts cannot create Chat apps)
+2. **Google Cloud project** — for Chat API access and service account credentials
+3. **Public HTTPS URL** — Google must reach your bot endpoint over the internet
+4. **Node.js >= 18** — bot runtime
+5. **jq** — JSON processing
 
-### Step 1: Create a Google Cloud Project
-
-1. Go to https://console.cloud.google.com and create a new project (or select an existing one)
-2. Note the **Project ID** — you will need it for API calls
-
-### Step 2: Enable the Google Chat API
+### Step 1: Google Cloud Project
 
 ```bash
-# Via gcloud CLI
-gcloud services enable chat.googleapis.com --project=YOUR_PROJECT_ID
+# Create project (or use existing)
+gcloud projects create aidevops-chat-bot --name="aidevops Chat Bot"
+gcloud config set project aidevops-chat-bot
 
-# Or via Console: APIs & Services > Library > search "Google Chat API" > Enable
+# Enable the Chat API
+gcloud services enable chat.googleapis.com
+
+# Create service account for outbound API calls
+gcloud iam service-accounts create chat-bot \
+  --display-name="Chat Bot Service Account"
+
+# Download service account key (store securely)
+gcloud iam service-accounts keys create \
+  ~/.config/aidevops/google-chat-sa-key.json \
+  --iam-account=chat-bot@aidevops-chat-bot.iam.gserviceaccount.com
+
+# Restrict permissions on key file
+chmod 600 ~/.config/aidevops/google-chat-sa-key.json
 ```
 
-### Step 3: Create a Service Account
+### Step 2: Configure Chat App
+
+1. Go to [Google Cloud Console > APIs & Services > Google Chat API > Configuration](https://console.cloud.google.com/apis/api/chat.googleapis.com/hangouts-chat)
+2. Set:
+   - **App name**: aidevops Bot (or your preferred name)
+   - **Avatar URL**: (optional)
+   - **Description**: AI DevOps assistant
+   - **Functionality**: Check "Receive 1:1 messages" and "Join spaces and group conversations"
+   - **Connection settings**: Select "HTTP endpoint URL"
+   - **HTTP endpoint URL**: `https://your-public-url.example.com/google-chat`
+   - **Authentication Audience**: Select "HTTP endpoint URL" (default)
+   - **Visibility**: Select who can discover and use the bot (specific people or entire domain)
+3. Click **Save**
+
+### Step 3: Public URL
+
+Google Chat requires a publicly accessible HTTPS endpoint. Three recommended options:
+
+#### Option A: Tailscale Funnel (Simplest)
 
 ```bash
-# Create service account and download key
-gcloud iam service-accounts create aidevops-chat-bot \
-  --display-name="aidevops Chat Bot" --project=YOUR_PROJECT_ID
-
-gcloud iam service-accounts keys create /tmp/chat-bot-sa-key.json \
-  --iam-account=aidevops-chat-bot@YOUR_PROJECT_ID.iam.gserviceaccount.com
-
-# Store securely via gopass (preferred) — then delete the plaintext key
-gopass insert -m aidevops/google-chat/service-account-key < /tmp/chat-bot-sa-key.json
-rm /tmp/chat-bot-sa-key.json
-```
-
-### Step 4: Configure the Chat App
-
-1. Go to https://console.cloud.google.com/apis/api/chat.googleapis.com/hangouts-chat > **Configuration**
-2. Set app name ("aidevops Bot"), description, functionality (1:1 messages + spaces)
-3. Connection settings: **HTTP endpoint URL** — enter your public webhook URL
-4. Set visibility (who can discover and install the bot) and click **Save**
-
-### Step 5: Set Up a Public URL
-
-Google Chat requires a publicly accessible HTTPS endpoint — **no Socket Mode equivalent**. Recommended: Tailscale Funnel (no open ports, persistent URL). Alternatives: Caddy reverse proxy, Cloudflare Tunnel, ngrok.
-
-```bash
-# Expose local port via Tailscale Funnel
-tailscale funnel 8443
-# Endpoint: https://your-machine.your-tailnet.ts.net:8443
-```
-
-### Step 6: Install Dependencies
-
-```bash
-# Using Bun (preferred)
-bun add googleapis google-auth-library
-
-# Using npm
-npm install googleapis google-auth-library
-```
-
-## Bot API Integration
-
-### HTTP Webhook Handler
-
-Google Chat delivers events as HTTP POST requests with JSON payloads. This is the primary integration mode — there is no WebSocket or Socket Mode equivalent.
-
-```typescript
-import { google } from "googleapis";
-import { GoogleAuth } from "google-auth-library";
-
-const PORT = Number(process.env.PORT) || 8443;
-
-// Authenticate with service account
-const auth = new GoogleAuth({
-  keyFile: process.env.GOOGLE_CHAT_SA_KEY_PATH,
-  scopes: ["https://www.googleapis.com/auth/chat.bot"],
-});
-const chat = google.chat({ version: "v1", auth });
-
-// Webhook handler (Bun.serve)
-Bun.serve({
-  port: PORT,
-  async fetch(req) {
-    if (req.method !== "POST") {
-      return new Response("Method not allowed", { status: 405 });
-    }
-
-    const event = await req.json();
-
-    // Route by event type
-    switch (event.type) {
-      case "ADDED_TO_SPACE":
-        return handleAddedToSpace(event);
-      case "MESSAGE":
-        return handleMessage(event);
-      case "CARD_CLICKED":
-        return handleCardClicked(event);
-      case "REMOVED_FROM_SPACE":
-        return handleRemovedFromSpace(event);
-      default:
-        return Response.json({ text: "" });
-    }
-  },
-});
-
-async function handleAddedToSpace(event: any): Promise<Response> {
-  return Response.json({ text: "Hello! I'm the aidevops assistant. Mention me or send a DM." });
-}
-
-async function handleMessage(event: any): Promise<Response> {
-  const userMessage = event.message.argumentText?.trim() || event.message.text?.trim();
-  if (!userMessage) return Response.json({ text: "Send me a prompt and I'll help!" });
-
-  try {
-    const response = await dispatchToRunner(userMessage, event.user, event.space.name);
-    return Response.json({ text: response });
-  } catch (error) {
-    return Response.json({ text: `Error: ${error.message}` });
-  }
-}
-
-async function handleCardClicked(event: any): Promise<Response> {
-  return Response.json({ text: `Action "${event.action.actionMethodName}" received.` });
-}
-
-async function handleRemovedFromSpace(_event: any): Promise<Response> {
-  return Response.json({});
-}
-
-console.log(`Google Chat webhook handler running on port ${PORT}`);
-```
-
-### Sending Messages via REST API
-
-Synchronous webhook responses work for simple replies. For async responses (long-running tasks), use the REST API:
-
-```typescript
-// Send a message to a space
-async function sendMessage(spaceName: string, text: string, threadKey?: string) {
-  const requestBody: any = { text };
-
-  if (threadKey) {
-    requestBody.thread = { threadKey };
-    // Reply in existing thread
-  }
-
-  const res = await chat.spaces.messages.create({
-    parent: spaceName,
-    requestBody,
-    // messageReplyOption: "REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD",
-  });
-
-  return res.data;
-}
-
-// Send to a specific space
-await sendMessage("spaces/AAAAxxxxxx", "Deployment complete.");
-```
-
-### Card Messages
-
-Google Chat supports rich card messages with headers, sections, widgets, and buttons (Cards v2):
-
-```typescript
-// Minimal card with header, decorated text, and action button
-const requestBody = {
-  cardsV2: [{
-    cardId: "status-card",
-    card: {
-      header: { title: "Deployment Status", subtitle: "v2.3.1" },
-      sections: [{
-        widgets: [
-          { decoratedText: { topLabel: "Status", text: "Deployed", startIcon: { knownIcon: "STAR" } } },
-          { buttonList: { buttons: [{
-            text: "View Logs",
-            onClick: { action: { actionMethodName: "view_logs", parameters: [{ key: "id", value: "dep-123" }] } },
-          }] } },
-        ],
-      }],
-    },
-  }],
-};
-
-await chat.spaces.messages.create({ parent: spaceName, requestBody });
-```
-
-See: https://developers.google.com/workspace/chat/api/reference/rest/v1/cards
-
-### Reactions and Typing Indicators
-
-```typescript
-// Add an emoji reaction to a message
-await chat.spaces.messages.reactions.create({
-  parent: event.message.name, // "spaces/AAAA/messages/BBBB"
-  requestBody: {
-    emoji: { unicode: "U+1F440" }, // eyes emoji
-  },
-});
-
-// Note: Google Chat does not have a typing indicator API.
-// The bot cannot show "typing..." status to users.
-```
-
-### Access Control
-
-```typescript
-// Space allowlist
-const ALLOWED_SPACES = new Set(["spaces/AAAAxxxx", "spaces/BBBByyyy"]);
-
-// User allowlist (Google Workspace email addresses)
-const ALLOWED_USERS = new Set(["admin@company.com", "dev@company.com"]);
-
-function isAllowed(user: any, spaceName: string): boolean {
-  if (ALLOWED_SPACES.size > 0 && !ALLOWED_SPACES.has(spaceName)) {
-    return false;
-  }
-  if (ALLOWED_USERS.size > 0 && !ALLOWED_USERS.has(user.email)) {
-    return false;
-  }
-  return true;
-}
-
-// Apply in webhook handler
-async function handleMessage(event: any): Promise<Response> {
-  if (!isAllowed(event.user, event.space.name)) {
-    return Response.json({ text: "Access denied." });
-  }
-  // ... dispatch
-}
-```
-
-## Security Considerations
-
-**CRITICAL: Read this section carefully before deploying any bot that processes sensitive information via Google Chat.**
-
-### Encryption
-
-Google Chat provides **TLS 1.2+ in transit** and **AES-256 at rest** using Google-managed encryption keys. There is **NO end-to-end encryption**. Google has full technical access to ALL message content — space messages, DMs, file uploads, message edits, deleted messages (retained per retention policies), and card interactions.
-
-### Google's Data Access
-
-Google Chat is a Google Workspace product. All messages are stored on Google's servers. Google retains the technical ability to access all content. Workspace admins have full access via Admin Console, Google Vault (eDiscovery — legal holds, search, export of all Chat data including DMs and deleted messages), and audit logs.
-
-### Metadata Collection
-
-Google stores comprehensive metadata: full message history with timestamps, edit/deletion history, space membership, reactions, file sharing records, read receipts, login times, IP addresses, device info, user agents, search queries, bot interaction logs, and usage patterns.
-
-### AI Training and Data Processing
-
-**CRITICAL WARNING**: Google has integrated **Gemini AI directly into Google Chat**. This is arguably the most aggressive AI integration of any major messaging platform.
-
-- **Gemini in Chat**: Gemini can summarise conversations, answer questions about chat history, generate content, and suggest replies — all by processing message content on Google's servers. This is enabled by default in many Workspace configurations.
-- **Gemini app in spaces**: Users can @mention Gemini directly in Chat spaces. Gemini reads and processes the conversation context to generate responses. Other users in the space may invoke Gemini on messages you sent.
-- **Google's AI terms**: Google's Generative AI Additional Terms of Service and Privacy Notice govern how Chat data is processed by Gemini. Under default Workspace terms, Google states it does not use Workspace Core Services data to train its AI models — but this is a policy commitment, not a technical guarantee, and applies only to organisations with Workspace agreements.
-- **Workspace admin control**: Admins can disable Gemini features in Chat via Admin Console (Apps > Google Workspace > Google Chat > Gemini settings). However, the **default configuration enables Gemini** in most Workspace editions.
-- **Data processing agreements (DPAs)**: Enterprise customers can negotiate DPAs that restrict Google's data processing. But default Workspace terms are broad, and Google has been fined for GDPR violations. Without a specific DPA, assume Google processes Chat data for service improvement.
-- **Smart features**: Beyond Gemini, Google Chat has "smart features" (Smart Reply, smart compose) that process message content to generate suggestions. These can be disabled at the organisation level.
-
-**Practical impact**: Assume that any message sent in Google Chat is processed by Gemini and Google's AI systems unless the Workspace admin has explicitly disabled all AI features and smart features, AND has a specific DPA in place.
-
-### Push Notifications
-
-Push notifications are delivered via **Firebase Cloud Messaging (FCM)** for Android and **Apple Push Notification Service (APNs)** for iOS. FCM is Google's own service — Google sees all notification metadata and content. On Android, notification content is unencrypted in transit to the device via FCM. Admins cannot configure notification content redaction.
-
-### Open Source and Auditability
-
-Google Chat is entirely **closed source** — no independent audit of data handling, encryption, or access controls is possible. Google client libraries (`googleapis`, `google-auth-library`) are open source under Apache 2.0, so bot-side code is auditable, but Google's server-side processing is opaque. Clients (web, mobile) are closed source with no reproducible builds.
-
-### Jurisdiction and Legal
-
-**Entity**: Google LLC, Mountain View, California, USA. Subject to US federal law including the CLOUD Act, FISA Section 702, and National Security Letters. EU data residency is available on Enterprise plans but controls storage location only — Google US personnel may still access EU-resident data. Google publishes a Transparency Report for government requests.
-
-### Bot-Specific Security
-
-- **Service account auth**: Bot authenticates as a service account with access only to spaces where it has been added
-- **Webhook verification**: Google includes a bearer token in the `Authorization` header. Verification is recommended but **not enforced** — bots can function without checking, creating a security risk if the webhook URL is discovered
-- **Public URL exposure**: If the URL leaks and payload verification is not implemented, anyone can send fake events to the bot
-
-### Comparison with Other Platforms
-
-| Aspect | Google Chat | Slack | Matrix (self-hosted) | SimpleX |
-|--------|-------------|-------|---------------------|---------|
-| E2E encryption | No | No | Yes (Megolm) | Yes (Double ratchet) |
-| Server access to content | Full (Google) | Full (Salesforce) | None (if E2E on) | None (stateless) |
-| Admin message export | Yes (Vault) | Yes (all plans) | Server admin only | N/A |
-| AI integration default | Gemini (most aggressive) | Opt-out required | No | No |
-| Open source server | No | No | Yes (Synapse) | Yes (SMP) |
-| User identifiers | Google Workspace email | Workspace email | `@user:server` | None |
-| Metadata retention | Comprehensive | Comprehensive | Moderate | Minimal |
-| Self-hostable | No | No | Yes | Yes |
-| Jurisdiction | USA (Google) | USA (Salesforce) | Self-determined | Self-determined |
-
-**Summary**: Google Chat is among the **least private** mainstream messaging platforms, comparable to Slack and Microsoft Teams. No E2E encryption, full admin and platform access to all content, and **Gemini AI integration that actively processes conversations by default**. Google's AI integration is arguably the most aggressive of the three major corporate platforms. **Treat all Google Chat messages as fully observable by the Workspace admin AND Google.** Use Google Chat for work communication where corporate oversight is expected and acceptable. Never use it for sensitive personal communication, confidential legal matters, or information that should not be accessible to the organisation owner or Google.
-
-## aidevops Integration
-
-### google-chat-dispatch-helper.sh
-
-The helper script follows the same pattern as `slack-dispatch-helper.sh` and `matrix-dispatch-helper.sh`:
-
-```bash
-# Setup wizard — prompts for project ID, service account, webhook URL
-google-chat-dispatch-helper.sh setup
-
-# Map Google Chat spaces to runners
-google-chat-dispatch-helper.sh map spaces/AAAAxxxx code-reviewer
-google-chat-dispatch-helper.sh map spaces/BBBByyyy seo-analyst
-
-# List mappings
-google-chat-dispatch-helper.sh mappings
-
-# Remove a mapping
-google-chat-dispatch-helper.sh unmap spaces/AAAAxxxx
-
-# Start/stop the webhook handler
-google-chat-dispatch-helper.sh start --daemon
-google-chat-dispatch-helper.sh stop
-google-chat-dispatch-helper.sh status
-
-# Test dispatch
-google-chat-dispatch-helper.sh test code-reviewer "Review src/auth.ts"
-
-# View logs
-google-chat-dispatch-helper.sh logs
-google-chat-dispatch-helper.sh logs --follow
-```
-
-### Public URL Setup
-
-The webhook handler requires a public URL. Tailscale Funnel is the recommended approach:
-
-```bash
-# Start the webhook handler on a local port
-google-chat-dispatch-helper.sh start --port 8443
-
-# Expose via Tailscale Funnel
+# Expose local port via Tailscale's global network
+# Requires Tailscale installed and logged in
 tailscale funnel 8443
 
-# Configure the public URL in Google Cloud Console:
-# https://your-machine.your-tailnet.ts.net:8443
+# This gives you a URL like: https://your-machine.tail12345.ts.net/
+# Use this URL in the Chat API configuration
 ```
 
-### Runner Dispatch
+**Pros**: Zero config, automatic TLS, no domain needed.
+**Cons**: Requires Tailscale account, URL changes if machine name changes.
 
-The bot dispatches to runners via `runner-helper.sh`, which handles:
+#### Option B: Caddy Reverse Proxy
 
-- Runner AGENTS.md (personality/instructions)
-- Headless session management
-- Memory namespace isolation
-- Entity-aware context loading
-- Run logging
+```bash
+# With a domain pointing to your server
+caddy reverse-proxy --from chat-bot.example.com --to localhost:8443
 
-### Entity Resolution
+# Or in Caddyfile
+# chat-bot.example.com {
+#     reverse_proxy localhost:8443
+# }
+```
 
-When a Google Chat user sends a message, the bot resolves their Google user identity to an entity:
+**Pros**: Automatic HTTPS via Let's Encrypt, stable URL, production-grade.
+**Cons**: Requires domain and DNS configuration.
 
-- **Known user**: Match on `entity_channels` table (`channel=google-chat`, `channel_id=users/USER_ID`)
-- **New user**: Creates entity via `entity-helper.sh create` with Google user ID linked
-- **Cross-channel**: If the same person is linked on other channels (Slack, Matrix, email), their full profile is available
-- **Profile enrichment**: Google Chat's user object provides display name and email (Workspace directory) — used to populate entity profile on first contact
+#### Option C: Cloudflare Tunnel
 
-### Configuration
+```bash
+# Install cloudflared
+brew install cloudflared  # macOS
+# or: curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
+
+# Create tunnel
+cloudflared tunnel create chat-bot
+cloudflared tunnel route dns chat-bot chat-bot.example.com
+
+# Run tunnel
+cloudflared tunnel --url http://localhost:8443 run chat-bot
+```
+
+**Pros**: No open ports, Cloudflare DDoS protection, stable URL.
+**Cons**: Requires Cloudflare account and domain on Cloudflare DNS.
+
+### Step 4: Bot Configuration
+
+```bash
+# Interactive setup wizard
+google-chat-helper.sh setup
+
+# Or manual configuration
+```
+
+## Configuration
+
+### Config File
 
 `~/.config/aidevops/google-chat-bot.json` (600 permissions):
 
 ```json
 {
-  "projectId": "your-gcp-project-id",
-  "serviceAccountKeyPath": "",
-  "webhookPort": 8443,
-  "allowedSpaces": ["spaces/AAAAxxxx", "spaces/BBBByyyy"],
-  "allowedUsers": [],
-  "defaultRunner": "",
+  "projectId": "aidevops-chat-bot",
+  "serviceAccountKeyPath": "~/.config/aidevops/google-chat-sa-key.json",
+  "listenPort": 8443,
+  "endpointPath": "/google-chat",
+  "allowedUsers": [
+    "admin@example.com",
+    "dev@example.com"
+  ],
   "spaceMappings": {
-    "spaces/AAAAxxxx": "code-reviewer",
-    "spaces/BBBByyyy": "seo-analyst"
+    "spaces/AAAA1234": "code-reviewer",
+    "spaces/BBBB5678": "seo-analyst"
   },
-  "verifyWebhookToken": true,
-  "maxPromptLength": 3000,
-  "responseTimeout": 600,
-  "sessionIdleTimeout": 300
+  "defaultRunner": "",
+  "maxResponseLength": 4096,
+  "responseTimeout": 30,
+  "asyncResponseTimeout": 600,
+  "verifyGoogleTokens": true
 }
 ```
 
-**Notes**:
+### Configuration Options
 
-- `serviceAccountKeyPath` should point to the key file or be empty if using `gopass` for credential retrieval
-- `verifyWebhookToken` should always be `true` in production — set to `false` only during local development
-- Google Chat bots are invoked via @mention or DM — there is no text prefix or slash command equivalent
+| Option | Default | Description |
+|--------|---------|-------------|
+| `projectId` | (required) | Google Cloud project ID |
+| `serviceAccountKeyPath` | (required) | Path to service account JSON key file |
+| `listenPort` | `8443` | Local port for the HTTP server |
+| `endpointPath` | `/google-chat` | URL path for the webhook endpoint |
+| `allowedUsers` | `[]` (all domain users) | Email addresses allowed to use the bot |
+| `spaceMappings` | `{}` | Space name to runner mapping |
+| `defaultRunner` | `""` | Runner for unmapped spaces (empty = ignore) |
+| `maxResponseLength` | `4096` | Max response text length before truncation |
+| `responseTimeout` | `30` | Seconds before returning async acknowledgment |
+| `asyncResponseTimeout` | `600` | Max seconds for async runner response |
+| `verifyGoogleTokens` | `true` | Verify inbound request bearer tokens against Google JWKS |
 
-## Matterbridge Integration
+## Authentication
 
-Google Chat is **NOT natively supported** by [Matterbridge](https://github.com/42wim/matterbridge). There is no built-in gateway for Google Chat.
+### Inbound (Google to Bot)
 
-### Bridging Feasibility
+Google signs every HTTP request to the bot with a bearer token (JWT). The bot must verify this token to prevent spoofed requests.
 
-Bridging would require a custom Go gateway using the Matterbridge plugin architecture + Google Chat API. Challenges: webhook-only model (no Socket Mode) complicates bidirectional bridging, service account auth adds complexity, and Workspace-only nature limits adoption. The Matterbridge project has not prioritised Google Chat support.
+**Verification flow**:
 
-**Alternative**: Use Google Chat API directly in a custom bridge, or use a paid integration platform (Zapier, Make, Workato) as an intermediary.
+1. Extract `Authorization: Bearer <token>` header from the request
+2. Decode the JWT header to get the `kid` (key ID)
+3. Fetch Google's public keys from `https://www.googleapis.com/service_accounts/v1/jwk/chat@system.gserviceaccount.com`
+4. Verify the JWT signature using the matching public key
+5. Validate claims: `iss` = `chat@system.gserviceaccount.com`, `aud` = your project number or endpoint URL
 
-**Privacy warning**: Bridging Google Chat to E2E-encrypted platforms (Matrix, SimpleX) means messages from encrypted platforms will be stored unencrypted on Google's servers. Users on the encrypted side should be informed. See `services/communications/matterbridge.md` for full bridging considerations.
+```typescript
+import { createRemoteJWKSet, jwtVerify } from "jose";
+
+const GOOGLE_CHAT_JWKS = createRemoteJWKSet(
+  new URL("https://www.googleapis.com/service_accounts/v1/jwk/chat@system.gserviceaccount.com")
+);
+
+async function verifyGoogleChatToken(token: string, audience: string): Promise<boolean> {
+  const { payload } = await jwtVerify(token, GOOGLE_CHAT_JWKS, {
+    issuer: "chat@system.gserviceaccount.com",
+    audience,
+  });
+  return true;
+}
+```
+
+### Outbound (Bot to Google)
+
+To send messages asynchronously (after the initial 30s window), the bot authenticates using the service account:
+
+```typescript
+import { GoogleAuth } from "google-auth-library";
+
+const auth = new GoogleAuth({
+  keyFile: config.serviceAccountKeyPath,
+  scopes: ["https://www.googleapis.com/auth/chat.bot"],
+});
+
+const client = await auth.getClient();
+
+// Send async message to a space
+const response = await client.request({
+  url: "https://chat.googleapis.com/v1/spaces/SPACE_ID/messages",
+  method: "POST",
+  data: {
+    text: "Here is the analysis result...",
+  },
+});
+```
+
+## Event Types
+
+Google Chat sends these event types to the bot endpoint:
+
+| Event Type | Trigger | Typical Action |
+|------------|---------|----------------|
+| `ADDED_TO_SPACE` | Bot added to a space or DM started | Send welcome message, log space |
+| `REMOVED_FROM_SPACE` | Bot removed from a space | Clean up, log removal |
+| `MESSAGE` | User sends a message mentioning the bot or in a DM | Parse prompt, dispatch to runner |
+| `CARD_CLICKED` | User clicks a button on an interactive card | Handle card action |
+
+### Event Payload Structure
+
+```json
+{
+  "type": "MESSAGE",
+  "eventTime": "2025-01-15T10:30:00.000Z",
+  "space": {
+    "name": "spaces/AAAA1234",
+    "type": "ROOM",
+    "displayName": "Dev Team"
+  },
+  "message": {
+    "name": "spaces/AAAA1234/messages/abcdef.123456",
+    "sender": {
+      "name": "users/1234567890",
+      "displayName": "Jane Developer",
+      "email": "jane@example.com",
+      "type": "HUMAN"
+    },
+    "text": "@aidevops Review src/auth.ts for security vulnerabilities",
+    "argumentText": "Review src/auth.ts for security vulnerabilities",
+    "thread": {
+      "name": "spaces/AAAA1234/threads/abcdef"
+    }
+  },
+  "user": {
+    "name": "users/1234567890",
+    "displayName": "Jane Developer",
+    "email": "jane@example.com",
+    "type": "HUMAN"
+  }
+}
+```
+
+**Key fields**:
+
+- `message.argumentText` — the message text with the bot mention stripped (use this as the prompt)
+- `user.email` — for access control checks
+- `space.name` — for space-to-runner mapping
+- `message.thread.name` — for threading responses
+
+## Messaging
+
+### Synchronous Response (< 30 seconds)
+
+For fast responses, return the message directly in the HTTP response body:
+
+```json
+{
+  "text": "Here is the review result:\n\n**auth.ts** looks good. No critical vulnerabilities found."
+}
+```
+
+### Asynchronous Response (> 30 seconds)
+
+For longer tasks (AI runner dispatch), return an acknowledgment immediately and post the result later:
+
+**Step 1**: Return acknowledgment card in HTTP response:
+
+```json
+{
+  "cardsV2": [{
+    "cardId": "processing",
+    "card": {
+      "header": {
+        "title": "Processing your request...",
+        "subtitle": "This may take a few minutes"
+      },
+      "sections": [{
+        "widgets": [{
+          "decoratedText": {
+            "text": "Dispatching to code-reviewer runner",
+            "startIcon": { "knownIcon": "CLOCK" }
+          }
+        }]
+      }]
+    }
+  }]
+}
+```
+
+**Step 2**: Post the full response via the Chat API:
+
+```bash
+# Using the REST API directly
+curl -X POST \
+  "https://chat.googleapis.com/v1/spaces/SPACE_ID/messages" \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "Analysis complete. Here are the results...",
+    "thread": { "name": "spaces/SPACE_ID/threads/THREAD_ID" },
+    "threadReply": true
+  }'
+```
+
+### Card v2 (Adaptive Cards)
+
+Google Chat supports rich interactive cards for structured responses:
+
+```json
+{
+  "cardsV2": [{
+    "cardId": "review-result",
+    "card": {
+      "header": {
+        "title": "Code Review: auth.ts",
+        "subtitle": "2 issues found",
+        "imageUrl": "https://example.com/icon.png",
+        "imageType": "CIRCLE"
+      },
+      "sections": [
+        {
+          "header": "Critical",
+          "widgets": [{
+            "decoratedText": {
+              "topLabel": "Line 42",
+              "text": "SQL injection vulnerability in user input handling",
+              "startIcon": { "knownIcon": "BOOKMARK" }
+            }
+          }]
+        },
+        {
+          "header": "Warning",
+          "widgets": [{
+            "decoratedText": {
+              "topLabel": "Line 87",
+              "text": "Missing rate limiting on login endpoint",
+              "startIcon": { "knownIcon": "DESCRIPTION" }
+            }
+          }]
+        },
+        {
+          "widgets": [{
+            "buttonList": {
+              "buttons": [
+                {
+                  "text": "View Full Report",
+                  "onClick": {
+                    "openLink": { "url": "https://github.com/org/repo/pull/123" }
+                  }
+                },
+                {
+                  "text": "Re-run Analysis",
+                  "onClick": {
+                    "action": {
+                      "function": "rerun_analysis",
+                      "parameters": [{ "key": "file", "value": "auth.ts" }]
+                    }
+                  }
+                }
+              ]
+            }
+          }]
+        }
+      ]
+    }
+  }]
+}
+```
+
+### Card Limitations
+
+| Feature | Limit |
+|---------|-------|
+| Cards per message | 1 |
+| Sections per card | 100 |
+| Widgets per section | 100 |
+| Text length | 4096 characters per widget |
+| Button text | 40 characters |
+| Image URL | Must be publicly accessible HTTPS |
+
+## Space-to-Runner Mapping
+
+Each Google Chat space maps to a runner, similar to the Matrix bot pattern:
+
+```bash
+# Map spaces to runners (space names from Chat API)
+google-chat-helper.sh map 'spaces/AAAA1234' code-reviewer
+google-chat-helper.sh map 'spaces/BBBB5678' seo-analyst
+
+# List mappings
+google-chat-helper.sh mappings
+
+# Remove a mapping
+google-chat-helper.sh unmap 'spaces/AAAA1234'
+```
+
+### Recommended Space Layout
+
+| Space | Runner | Purpose |
+|-------|--------|---------|
+| Dev Team | `code-reviewer` | Code review, security analysis |
+| SEO | `seo-analyst` | SEO audits, keyword research |
+| Ops | `ops-monitor` | Server health, deployment status |
+| DMs | (default runner) | General AI assistance |
+
+### DM Handling
+
+When a user sends a direct message to the bot (no space context), the bot uses the `defaultRunner`. If no default runner is configured, the bot responds with a help message listing available commands.
+
+## Access Control
+
+### User Allowlist
+
+Restrict bot access to specific Google Workspace users:
+
+```json
+{
+  "allowedUsers": [
+    "admin@example.com",
+    "dev-team@example.com",
+    "contractor@example.com"
+  ]
+}
+```
+
+When `allowedUsers` is empty (`[]`), all users in the Google Workspace domain who can discover the bot are allowed.
+
+### Domain-Level Control
+
+Google Workspace admins control bot visibility at the organizational level:
+
+1. **Google Admin Console** > Apps > Google Workspace > Google Chat
+2. **Chat apps settings** > Allow users to install Chat apps
+3. **Allowlisting**: Restrict which Chat apps users can install
+
+### Permission Checks
+
+The bot verifies permissions in this order:
+
+1. **Google token verification** — is this request genuinely from Google?
+2. **Domain check** — is the user from an allowed Workspace domain?
+3. **User allowlist** — is this specific user permitted?
+4. **Space mapping** — is this space mapped to a runner?
+
+## Operations
+
+### Start/Stop
+
+```bash
+# Start in daemon mode (background)
+google-chat-helper.sh start --daemon
+
+# Start in foreground (for debugging)
+google-chat-helper.sh start
+
+# Stop the bot
+google-chat-helper.sh stop
+
+# Check status
+google-chat-helper.sh status
+```
+
+### Monitoring
+
+```bash
+# View latest logs
+google-chat-helper.sh logs
+
+# Follow logs in real-time
+google-chat-helper.sh logs --follow
+
+# View more history
+google-chat-helper.sh logs --tail 200
+```
+
+### Testing
+
+```bash
+# Test dispatch without Google Chat (directly to runner)
+google-chat-helper.sh test code-reviewer "Review src/auth.ts"
+
+# Send a test event payload
+google-chat-helper.sh test-event message "Test message from CLI"
+
+# Verify Google token validation
+google-chat-helper.sh test-auth
+```
+
+### Health Check
+
+The bot exposes a health endpoint for monitoring:
+
+```bash
+# GET /health returns 200 OK with status JSON
+curl http://localhost:8443/health
+# {"status":"ok","uptime":3600,"spaces":3,"lastEvent":"2025-01-15T10:30:00Z"}
+```
+
+## Integration with Runners
+
+The bot dispatches to runners via `runner-helper.sh`, identical to the Matrix bot pattern:
+
+```bash
+# Create runners for Google Chat spaces
+runner-helper.sh create code-reviewer \
+  --description "Reviews code for security and quality"
+
+runner-helper.sh create seo-analyst \
+  --description "SEO analysis and keyword research"
+
+# Edit runner instructions
+runner-helper.sh edit code-reviewer
+```
+
+### Dispatch Flow
+
+1. Bot receives message event from Google
+2. Bot resolves space to runner (or uses default for DMs)
+3. Bot calls `runner-helper.sh dispatch <runner> "<prompt>"` with user context
+4. Runner executes via headless AI session
+5. Bot formats the response as a Card v2 or plain text
+6. If within 30s window: returns in HTTP response
+7. If async: posts via Chat API to the original thread
+
+## Privacy and Security Assessment
+
+### Data Handling
+
+| Aspect | Status | Notes |
+|--------|--------|-------|
+| **E2E encryption** | None | Messages are encrypted in transit (TLS) but not end-to-end |
+| **Server-side storage** | All messages stored | Google retains all Chat messages server-side |
+| **Admin access** | Full | Workspace admins can read all messages, including DMs |
+| **Data residency** | Google-controlled | Data stored in Google's infrastructure per Workspace settings |
+| **Retention** | Admin-configurable | Workspace admins set retention policies via Vault |
+| **Export** | Google Vault / Takeout | Admins can export all Chat data |
+
+### Gemini AI Integration Warning
+
+**Google has integrated Gemini AI directly into Google Chat.** This has significant privacy implications:
+
+- **Gemini in Chat**: Workspace users can interact with Gemini directly in Chat spaces
+- **AI features**: Smart compose, summarization, and other AI features process message content
+- **Training data**: Under Google's default terms, Workspace data may be used to improve Google AI products
+- **Opt-out**: Workspace admins can configure Data Processing Agreements (DPAs) and disable AI features
+- **Enterprise controls**: Enterprise customers can negotiate specific data processing terms
+
+**Recommendation**: Before deploying a Chat bot that handles sensitive data:
+
+1. Review your organization's Google Workspace DPA
+2. Verify Gemini AI features are configured per your data policy
+3. Check Google Admin Console > Apps > Additional Google services > Gemini for settings
+4. Consider whether sensitive prompts/responses should flow through Google Chat at all
+
+### Comparison with Other Platforms
+
+| Aspect | Google Chat | Matrix (self-hosted) | SimpleX |
+|--------|-------------|---------------------|---------|
+| E2E encryption | No | Yes (Megolm) | Yes (Double ratchet) |
+| Server-side storage | Google-controlled | Self-controlled | None (stateless relays) |
+| User identifiers | Google account email | `@user:server` | None |
+| Admin surveillance | Full access | Self-hosted = you control | Not possible |
+| AI training risk | Yes (Gemini) | No | No |
+| Metadata exposure | Full to Google | Self-controlled | Minimal |
+| Open source | No | Yes (Synapse) | Yes (AGPL-3.0) |
+
+**Bottom line**: Google Chat is appropriate for organizations already committed to Google Workspace where convenience outweighs privacy concerns. For sensitive communications, prefer Matrix (self-hosted) or SimpleX.
+
+### Bot-Specific Security
+
+1. **Token verification**: Always verify Google's bearer tokens on inbound requests (`verifyGoogleTokens: true`)
+2. **Service account key**: Store with 600 permissions, never commit to git
+3. **User allowlist**: Restrict bot access to specific users, not entire domain
+4. **Prompt sanitization**: Treat all inbound messages as untrusted input — scan with `prompt-guard-helper.sh` before passing to AI
+5. **Response filtering**: Scan outbound messages for credential patterns before sending
+6. **Network**: Bot server should not be directly internet-accessible — use a reverse proxy (Caddy/Cloudflare) with TLS termination
+7. **Logging**: Log all events for audit trail but redact sensitive content from logs
+
+### Push Notifications
+
+Google Chat uses Firebase Cloud Messaging (FCM) for push notifications on mobile devices. This means:
+
+- Google's FCM infrastructure knows when a user receives a Chat notification
+- Notification content may be visible to FCM (depending on notification type)
+- This is standard for all Google Workspace mobile notifications
 
 ## Limitations
 
-### Google Workspace Required
+### 30-Second Response Window
 
-Google Chat bots can only be created within Google Workspace organisations. Consumer Google accounts (`@gmail.com`) cannot create or configure Chat apps. This limits deployment to organisations with paid Workspace subscriptions.
+Google Chat expects an HTTP response within 30 seconds. For longer tasks:
 
-### Public URL Required
+- Return an acknowledgment card immediately
+- Post the full response asynchronously via the Chat API
+- The async approach requires the `chat.bot` scope on the service account
 
-Google Chat delivers webhook events via HTTP POST to a public URL. There is **no Socket Mode, WebSocket, or long-polling alternative**. You must expose a publicly accessible HTTPS endpoint. This is a fundamental architectural difference from Slack (which offers Socket Mode) and adds operational complexity for developers behind NAT or firewalls.
+### No Native Matterbridge Support
 
-### No End-to-End Encryption
+Google Chat is not supported as a native Matterbridge gateway. Bridging to other platforms requires:
 
-Google Chat does not support E2E encryption. All messages are readable by Google and Workspace administrators. This is a platform design choice — Google Vault eDiscovery and Gemini AI features depend on server-side access to message content.
+- Custom API bridge using Matterbridge's REST API
+- Or a separate relay bot that forwards messages between platforms
 
-### Gemini AI Processes Chat Data by Default
+### Workspace Requirement
 
-Gemini is integrated directly into Google Chat and processes conversation content by default in most Workspace editions. Users can @mention Gemini in spaces, and Gemini reads the full conversation context. Workspace admins can disable this, but it requires explicit action.
+Google Chat bots require Google Workspace. They cannot be used with free Gmail accounts. This limits deployment to organizations with Workspace subscriptions.
 
-### Limited Bot Interactivity
+### Card Rendering Differences
 
-Compared to Slack and Discord: no slash commands (bots respond to @mentions and DMs only), no modal dialogs (dialog cards are less flexible than Slack's `views.open`), no app home tab, no shortcut menus, and card messages are less flexible than Slack Block Kit.
+Card v2 rendering varies slightly between:
 
-### No Socket Mode Equivalent
+- Google Chat web (chat.google.com)
+- Google Chat in Gmail sidebar
+- Google Chat mobile apps
+- Google Chat in Google Workspace apps
 
-Every Google Chat bot must expose a public HTTPS endpoint or use Pub/Sub. No outbound-only connections. Firewall/NAT traversal required, local development needs a tunnel (Tailscale Funnel, ngrok), and the public endpoint adds security surface.
+Test cards across all target platforms before deploying.
 
 ### Rate Limits
 
-| API | Rate Limit | Notes |
-|-----|-----------|-------|
-| Chat API (per project) | 60 requests per minute per space | Applies to messages.create, messages.update |
-| Chat API (global) | 600 requests per minute per project | Aggregate across all spaces |
-| Webhook responses | Synchronous (must reply within 30 seconds) | For async work, respond immediately and use REST API later |
-| File attachments | Via Google Drive API | Separate Drive API quotas apply |
+| Operation | Limit |
+|-----------|-------|
+| Incoming messages | 60 per minute per space |
+| Outgoing messages (API) | 60 per minute per space |
+| Card actions | 60 per minute per space |
+| Spaces the bot can be in | 50,000 |
 
-### Service Account Complexity
+### Thread Limitations
 
-Setting up a Google Chat bot requires: Google Cloud project creation, Chat API enablement, service account creation and key management, Chat app configuration in Admin Console, OAuth consent screen configuration, and Workspace admin approval. This is significantly more complex than Slack or Discord (create app, paste token).
+- Threads are space-scoped — no cross-space threading
+- Thread names are opaque strings assigned by Google
+- Bot cannot create threads proactively — only reply to existing ones or start new top-level messages
 
-### No Consumer Support
+## Troubleshooting
 
-Unlike Telegram, Discord, or Slack (free workspaces), Google Chat bots are exclusively for Google Workspace organisations. There is no way to create a public bot that any Google user can interact with.
+| Issue | Solution |
+|-------|----------|
+| Bot not receiving events | Verify public URL is accessible; check Chat API configuration |
+| 401 Unauthorized | Verify service account key is valid; check `chat.bot` scope |
+| Token verification fails | Ensure `verifyGoogleTokens` is true; check clock sync (JWT expiry) |
+| Bot not visible to users | Check Chat app visibility settings in Google Cloud Console |
+| Async messages not posting | Verify service account has `chat.bot` scope; check space name format |
+| Cards not rendering | Validate Card v2 JSON structure; check for unsupported widget types |
+| Rate limited | Reduce message frequency; implement exponential backoff |
+| Bot removed from space | Check `REMOVED_FROM_SPACE` events in logs; re-add bot to space |
 
 ## Related
 
-- `services/communications/slack.md` — Slack bot integration (closest comparable — corporate, no E2E, but has Socket Mode)
-- `services/communications/matrix-bot.md` — Matrix bot integration (E2E encrypted, self-hostable)
-- `services/communications/simplex.md` — SimpleX Chat (no identifiers, maximum privacy)
-- `services/communications/matterbridge.md` — Multi-platform chat bridging (no Google Chat support)
-- `scripts/entity-helper.sh` — Entity memory system (identity resolution, Layer 0/1/2)
-- `scripts/runner-helper.sh` — Runner management
-- `tools/security/opsec.md` — Operational security guidance
+- `services/communications/matrix-bot.md` — Matrix bot for aidevops runner dispatch (self-hosted, E2E encrypted)
+- `services/communications/simplex.md` — SimpleX Chat (zero-knowledge, no user identifiers)
+- `services/communications/matterbridge.md` — Multi-platform chat bridge (40+ platforms)
+- `tools/security/opsec.md` — Platform trust matrix, E2E status, metadata warnings
+- `tools/security/prompt-injection-defender.md` — Prompt injection scanning for untrusted input
 - `tools/ai-assistants/headless-dispatch.md` — Headless AI dispatch patterns
-- Google Chat API: https://developers.google.com/workspace/chat
-- Google Chat REST reference: https://developers.google.com/workspace/chat/api/reference/rest
-- Google Cloud Console: https://console.cloud.google.com
-- Google Workspace Admin: https://admin.google.com
-- Google Vault: https://vault.google.com
-- Google Transparency Report: https://transparencyreport.google.com
+- `scripts/runner-helper.sh` — Runner management
+- Google Chat API docs: https://developers.google.com/workspace/chat/api/reference/rest
+- Google Chat Card v2: https://developers.google.com/workspace/chat/api/reference/rest/v1/cards
+- Google Workspace DPA: https://workspace.google.com/terms/dpa_terms.html
