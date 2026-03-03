@@ -14,4 +14,4 @@ Brief description of changes.
 - [ ] I have tested my changes locally
 - [ ] I have followed the commit message conventions
 - [ ] I have updated documentation if needed
-- [ ] This PR does not add third-party integrations or change architecture (if it does, maintainer approval is required — see [CONTRIBUTING.md](../CONTRIBUTING.md#scope-of-contributions))
+- [ ] For architectural changes or new integrations, I have obtained maintainer approval (see [CONTRIBUTING.md](../CONTRIBUTING.md#scope-of-contributions))
