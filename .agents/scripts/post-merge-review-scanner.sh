@@ -7,7 +7,8 @@
 #
 # Usage: post-merge-review-scanner.sh {scan|dry-run|help} [REPO]
 # Env:   SCANNER_DAYS (default 7), SCANNER_MAX_ISSUES (default 10),
-#        SCANNER_LABEL (default review-followup)
+#        SCANNER_LABEL (default review-followup),
+#        SCANNER_PR_LIMIT (default 1000)
 #
 # t1386: https://github.com/marcusquinn/aidevops/issues/2785
 set -euo pipefail
@@ -15,6 +16,7 @@ set -euo pipefail
 SCANNER_DAYS="${SCANNER_DAYS:-7}"
 SCANNER_MAX_ISSUES="${SCANNER_MAX_ISSUES:-10}"
 SCANNER_LABEL="${SCANNER_LABEL:-review-followup}"
+SCANNER_PR_LIMIT="${SCANNER_PR_LIMIT:-1000}"
 BOT_RE="coderabbitai|gemini-code-assist|claude-review|gpt-review"
 ACT_RE="should|consider|fix|change|update|refactor|missing|add"
 
@@ -33,21 +35,22 @@ get_lookback_date() {
 fetch_actionable() {
 	local repo="$1" pr="$2"
 	local jq_f='[.[] | select(.user.login | test("'"$BOT_RE"'";"i"))
-		| select(.body | test("'"$ACT_RE"'";"i"))
-		| "\(.user.login)|\(.path // "")|\(.body | gsub("\n";" ") | .[:200])"] | .[]'
+		| select((.body // "") | test("'"$ACT_RE"'";"i"))
+		| "\(.user.login)|\(.path // "")|\((.body // "") | gsub("\n";" ") | .[:200])"] | .[]'
 	{ gh api "repos/${repo}/pulls/${pr}/comments" --paginate 2>/dev/null || echo '[]'; } |
-		jq -r "$jq_f" 2>/dev/null || true
+		jq -r "$jq_f"
 	local jq_r='[.[] | select(.user.login | test("'"$BOT_RE"'";"i"))
-		| select(.body | test("'"$ACT_RE"'";"i"))
-		| "\(.user.login)||\(.body | gsub("\n";" ") | .[:200])"] | .[]'
+		| select((.body // "") | test("'"$ACT_RE"'";"i"))
+		| "\(.user.login)||\((.body // "") | gsub("\n";" ") | .[:200])"] | .[]'
 	{ gh api "repos/${repo}/pulls/${pr}/reviews" --paginate 2>/dev/null || echo '[]'; } |
-		jq -r "$jq_r" 2>/dev/null || true
+		jq -r "$jq_r"
 }
 
 issue_exists() {
 	local repo="$1" pr="$2" count
+	local title_query="Review followup: PR #${pr} —"
 	count=$(gh issue list --repo "$repo" --label "$SCANNER_LABEL" \
-		--search "PR #${pr}" --state open --json number --jq 'length' 2>/dev/null || echo "0")
+		--search "in:title \"${title_query}\"" --state all --json number --jq 'length' 2>/dev/null || echo "0")
 	[[ "$count" -gt 0 ]]
 }
 
@@ -80,7 +83,7 @@ do_scan() {
 	log "Scanning ${repo} since ${since_date} (${SCANNER_DAYS}d)"
 	local pr_numbers
 	pr_numbers=$(gh pr list --state merged --search "merged:>${since_date}" \
-		--repo "$repo" --json number --jq '.[].number' 2>/dev/null || echo "")
+		--repo "$repo" --limit "$SCANNER_PR_LIMIT" --json number --jq '.[].number' 2>/dev/null || echo "")
 	if [[ -z "$pr_numbers" ]]; then
 		log "No merged PRs found"
 		return 0
@@ -108,7 +111,7 @@ do_scan() {
 		done <<<"$hits"
 		[[ -z "$summary" ]] && continue
 		log "PR #${pr}: creating issue"
-		create_issue "$repo" "$pr" "$pr_title" "$(echo -e "$summary")" "$dry_run"
+		create_issue "$repo" "$pr" "$pr_title" "$(printf '%b' "$summary")" "$dry_run"
 		issues_created=$((issues_created + 1))
 	done <<<"$pr_numbers"
 	log "Done. Issues created: ${issues_created}"
