@@ -65,12 +65,14 @@ analyze_session() {
 
 	# Check for error patterns in recent commits
 	local error_fixes
-	error_fixes=$(echo "$recent_commits" | grep -ci "fix\|error\|bug\|issue" || echo "0")
+	error_fixes=$(echo "$recent_commits" | grep -ci "fix\|error\|bug\|issue" || true)
+	[[ -z "$error_fixes" ]] && error_fixes=0
 
 	# Check TODO.md for completed tasks
 	local completed_tasks
 	if [[ -f "TODO.md" ]]; then
-		completed_tasks=$(grep -c "^\- \[x\]" TODO.md 2>/dev/null || echo "0")
+		completed_tasks=$(grep -c "^\- \[x\]" TODO.md 2>/dev/null || true)
+		[[ -z "$completed_tasks" ]] && completed_tasks=0
 	else
 		completed_tasks="0"
 	fi
