@@ -589,7 +589,7 @@ Tracks onboarding state. Written by `/onboarding`, readable by scripts.
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `onboarding.completed` | boolean | `false` | Whether the user has completed `/onboarding`. |
-| `onboarding.work_type` | string | `""` | User's primary work type (e.g., `"web"`, `"devops"`, `"seo"`, `"wordpress"`). |
+| `onboarding.work_type` | string | `""` | User's primary work type (e.g., `"web"`, `"devops"`, `"seo"`, `"WordPress"`). |
 | `onboarding.familiarity` | array | `[]` | Concepts the user is familiar with (e.g., `["git", "terminal", "api_keys"]`). |
 
 ### ui
@@ -637,16 +637,16 @@ Service-specific credentials (Hostinger, Hetzner, GitHub, etc.) use a separate t
 
 ```bash
 # Copy template to working file
-cp configs/hostinger-config.json.txt configs/hostinger-config.json
+cp ~/Git/aidevops/configs/hostinger-config.json.txt ~/Git/aidevops/configs/hostinger-config.json
 
 # Edit with actual credentials
-${EDITOR:-vi} configs/hostinger-config.json
+${EDITOR:-vi} ~/Git/aidevops/configs/hostinger-config.json
 
 # Secure permissions
-chmod 600 configs/*-config.json
+chmod 600 ~/Git/aidevops/configs/*-config.json
 ```
 
-See `.agents/aidevops/configs.md` for the full service configuration reference.
+See [the full service configuration reference](../.agents/aidevops/configs.md).
 
 ## Schema Validation
 
