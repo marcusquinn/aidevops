@@ -1,5 +1,5 @@
 ---
-description: Signal — E2E encrypted messaging gold standard, signal-cli bot integration (JSON-RPC), registration, daemon mode, group messaging, security model, matterbridge bridging, and limitations
+description: Signal bot integration via signal-cli — registration, JSON-RPC daemon mode, DM/group messaging, attachments, reactions, access control, privacy/security assessment, aidevops runner dispatch, and Matterbridge bridging
 mode: subagent
 tools:
   read: true
@@ -12,37 +12,35 @@ tools:
   task: false
 ---
 
-# Signal Bot Integration
+# Signal Bot Integration (signal-cli)
 
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
-- **Type**: E2E encrypted messaging — gold standard for privacy
-- **License**: AGPL-3.0 (client + server)
-- **Bot tool**: signal-cli (Java/native, GPLv3) — NOT an official bot API
-- **Protocol**: Signal Protocol (Double Ratchet + X3DH)
-- **Encryption**: E2E by default for ALL messages (Curve25519, AES-256, HMAC-SHA256)
-- **Registration**: Requires phone number (E.164 format, e.g., `+14155551234`)
-- **Daemon mode**: `signal-cli -a +NUMBER daemon --http --receive-mode=on-connection`
-- **API**: JSON-RPC over HTTP + Server-Sent Events for incoming messages
-- **Data**: `~/.local/share/signal-cli/` (account data, keys, message store)
-- **Docs**: https://github.com/AsamK/signal-cli | https://signal.org/docs/
-- **User base**: 40M+ monthly active users (largest E2E encrypted messenger)
+- **Type**: E2E encrypted messaging — phone number required, minimal metadata, sealed sender
+- **License**: GPL-3.0 (signal-cli); GPL-3.0 (libsignal)
+- **Bot tool**: [signal-cli](https://github.com/AsamK/signal-cli) (Java/GraalVM native, 4.2K stars)
+- **Daemon API**: JSON-RPC 2.0 over HTTP (`:8080`), TCP (`:7583`), Unix socket, stdin/stdout, D-Bus
+- **SSE endpoint**: `GET /api/v1/events` (incoming messages as Server-Sent Events)
+- **Data**: `~/.local/share/signal-cli/data/` (SQLite: `account.db`)
+- **Registration**: SMS/voice verification + CAPTCHA, or QR code link to existing account
+- **Protocol**: Signal Protocol (Double Ratchet + X3DH, Curve25519, AES-256-CBC, HMAC-SHA256)
+- **Docs**: https://github.com/AsamK/signal-cli/wiki
 
-**Key differentiator**: Signal is the gold standard for mainstream encrypted messaging. E2E encryption is on by default for ALL messages — no opt-in required. The Signal Protocol is the most widely adopted secure messaging protocol, also used by WhatsApp, Google Messages (RCS), and Facebook Messenger.
+**Key differentiator**: Signal is the gold standard for mainstream encrypted messaging. E2E encrypted by default for all messages, sealed sender hides sender identity from the server, minimal metadata collection, phone number required but hidden from other users via usernames. Signal Foundation is a non-profit — no AI training on chat data. Independent security audits. 1B+ installs.
 
-**When to use Signal over SimpleX**:
+**When to use Signal over other platforms**:
 
-| Criterion | Signal | SimpleX |
-|-----------|--------|---------|
-| User identifiers | Phone number | None |
-| E2E encryption | Default, all messages | Default, all messages |
-| Server metadata | Minimal (sealed sender) | Stateless (memory only) |
-| User base | 40M+ MAU | Growing niche |
-| Bot ecosystem | signal-cli (unofficial) | WebSocket API (official) |
-| Group scalability | Production-grade (1000+) | Experimental (1000+) |
-| Best for | Privacy-conscious mainstream users | Maximum privacy, zero identifiers |
+| Criterion | Signal | SimpleX | Matrix |
+|-----------|--------|---------|--------|
+| User identifiers | Phone number (hidden via usernames) | None | `@user:server` |
+| E2E encryption | Default, all messages | Default, all messages | Opt-in (rooms) |
+| Server metadata | Minimal (sealed sender) | Stateless (memory only) | Full history stored |
+| User base | 1B+ installs, mainstream | Niche, privacy-focused | Technical, federated |
+| Bot ecosystem | signal-cli (JSON-RPC) | WebSocket API | Mature (SDK, bridges) |
+| Group scalability | 1000 members | Experimental (1000+) | Production-grade |
+| Best for | Mainstream secure comms, wide reach | Maximum privacy, zero-knowledge | Team collaboration, bridges |
 
 <!-- AI-CONTEXT-END -->
 
@@ -50,159 +48,273 @@ tools:
 
 ```text
 ┌──────────────────────┐
-│ Signal Mobile/         │
-│ Desktop App            │
-│ (iOS, Android,         │
-│  Linux, macOS, Win)    │
-└──────────┬────────────┘
+│ Signal Mobile/Desktop │
+│ (iOS, Android,        │
+│  Linux, macOS, Win)   │
+└──────────┬───────────┘
            │ Signal Protocol (E2E encrypted)
-           │ Double Ratchet + X3DH
+           │ Sealed sender (hides sender from server)
            │
-┌──────────▼────────────┐
-│ Signal Servers          │
-│ (sealed sender,         │
-│  minimal metadata,      │
-│  message queuing)       │
-└──────────┬────────────┘
+┌──────────▼───────────┐
+│ Signal Servers         │
+│ (minimal metadata,     │
+│  no message content)   │
+└──────────┬───────────┘
            │
-┌──────────▼────────────┐
-│ signal-cli Daemon       │
-│ (JSON-RPC over HTTP     │
-│  + SSE for events)      │
-└──────────┬────────────┘
-           │ JSON-RPC / SSE
-┌──────────▼────────────┐
-│ Bot Process             │
-│ ├─ Command router       │
-│ ├─ Message handler      │
-│ ├─ Group handler        │
-│ └─ aidevops dispatch    │
-└─────────────────────────┘
+┌──────────▼───────────┐
+│ signal-cli daemon      │
+│ (JSON-RPC on :8080     │
+│  or TCP :7583          │
+│  or Unix socket)       │
+└──────────┬───────────┘
+           │ JSON-RPC 2.0 / SSE
+           │
+┌──────────▼───────────┐
+│ Bot Process            │
+│ (any language)         │
+│                        │
+│ ├─ Command router      │
+│ ├─ Message handler     │
+│ ├─ Access control      │
+│ └─ aidevops dispatch   │
+└────────────────────────┘
 ```
 
 **Message flow**:
 
-1. Sender's app encrypts message with Signal Protocol (Double Ratchet + X3DH, Curve25519)
-2. Message encrypted with AES-256-CBC, authenticated with HMAC-SHA256
-3. Sealed sender envelope hides sender identity from Signal servers
-4. Signal server queues encrypted message for recipient
-5. Recipient's app (or signal-cli) retrieves and decrypts
-6. Server deletes message after delivery confirmation
+1. Sender's app encrypts message with Signal Protocol (Double Ratchet + X3DH)
+2. Sealed sender wraps the encrypted message, hiding sender identity from server
+3. Message delivered via Signal servers (no content access, minimal metadata)
+4. signal-cli daemon receives and decrypts locally
+5. JSON-RPC notification pushed to bot via SSE or stdout
+6. Bot processes and responds via JSON-RPC `send` method
 
 ## Installation
 
-### signal-cli (Native Binary — Recommended)
+### JVM Build (requires JRE 25+)
 
 ```bash
-# Download latest native binary (no Java required)
-# Check https://github.com/AsamK/signal-cli/releases for latest version
-SIGNAL_CLI_VERSION="0.13.12"
-curl -fsSLo signal-cli.tar.gz \
-  "https://github.com/AsamK/signal-cli/releases/download/v${SIGNAL_CLI_VERSION}/signal-cli-${SIGNAL_CLI_VERSION}-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m).tar.gz"
+VERSION=$(curl -Ls -o /dev/null -w %{url_effective} \
+  https://github.com/AsamK/signal-cli/releases/latest | sed -e 's/^.*\/v//')
+curl -L -O "https://github.com/AsamK/signal-cli/releases/download/v${VERSION}/signal-cli-${VERSION}.tar.gz"
+sudo tar xf "signal-cli-${VERSION}.tar.gz" -C /opt
+sudo ln -sf "/opt/signal-cli-${VERSION}/bin/signal-cli" /usr/local/bin/
 
-tar xf signal-cli.tar.gz
-sudo mv signal-cli-${SIGNAL_CLI_VERSION}/bin/signal-cli /usr/local/bin/
-sudo mv signal-cli-${SIGNAL_CLI_VERSION}/lib/ /usr/local/lib/signal-cli/
+# Verify
 signal-cli --version
 ```
 
-### signal-cli (Java)
+### GraalVM Native Binary (no JRE required, experimental)
 
 ```bash
-# Requires Java 21+
-SIGNAL_CLI_VERSION="0.13.12"
-curl -fsSLo signal-cli.tar.gz \
-  "https://github.com/AsamK/signal-cli/releases/download/v${SIGNAL_CLI_VERSION}/signal-cli-${SIGNAL_CLI_VERSION}.tar.gz"
+VERSION=$(curl -Ls -o /dev/null -w %{url_effective} \
+  https://github.com/AsamK/signal-cli/releases/latest | sed -e 's/^.*\/v//')
+curl -L -O "https://github.com/AsamK/signal-cli/releases/download/v${VERSION}/signal-cli-${VERSION}-Linux-native.tar.gz"
+sudo tar xf "signal-cli-${VERSION}-Linux-native.tar.gz" -C /opt
+sudo ln -sf /opt/signal-cli /usr/local/bin/
 
-tar xf signal-cli.tar.gz
-sudo mv signal-cli-${SIGNAL_CLI_VERSION} /opt/signal-cli
-sudo ln -sf /opt/signal-cli/bin/signal-cli /usr/local/bin/signal-cli
 signal-cli --version
 ```
 
-### macOS / Docker
+### Docker / OCI Container
 
 ```bash
-# macOS
-brew install signal-cli
+# Official OCI image
+docker pull ghcr.io/asamk/signal-cli
 
-# Docker
-docker run --rm -v ~/.local/share/signal-cli:/home/.local/share/signal-cli \
-  registry.gitlab.com/packaging/signal-cli/signal-cli-native:latest --version
+# Run daemon in HTTP mode
+docker run -d --name signal-cli \
+  -v signal-cli-data:/home/.local/share/signal-cli \
+  -p 8080:8080 \
+  ghcr.io/asamk/signal-cli:latest \
+  daemon --http 0.0.0.0:8080
 ```
+
+### Package Managers
+
+| Manager | Package |
+|---------|---------|
+| Arch Linux (AUR) | `signal-cli` |
+| Flathub | `org.asamk.SignalCli` |
+| Debian/Ubuntu | [packaging.gitlab.io](https://packaging.gitlab.io/signal-cli/installation/standalone/) |
+| FreeBSD | `net-im/signal-cli` |
+| Alpine | `signal-cli` |
+| Fedora/EPEL (RPM) | [signal-cli-rpm](https://github.com/pbiering/signal-cli-rpm) |
+
+**Note**: No native Homebrew formula exists. On macOS, use the JVM or native binary install.
+
+### Build from Source
+
+```bash
+git clone https://github.com/AsamK/signal-cli.git
+cd signal-cli
+./gradlew build
+./gradlew installDist       # JVM wrapper in build/install/signal-cli/bin
+./gradlew nativeCompile     # GraalVM native binary (experimental)
+```
+
+### Native Library Requirements
+
+Bundled for: x86_64 Linux, Windows, macOS. Other architectures (e.g., aarch64) must provide `libsignal-client` native library — see the [wiki](https://github.com/AsamK/signal-cli/wiki/Provide-native-lib-for-libsignal).
 
 ## Registration
 
-Signal requires a phone number for registration. Two methods are available.
-
-### Method 1: Link to Existing Account (Recommended for Bots)
-
-Link signal-cli as a secondary device to an existing Signal account. Avoids needing a separate phone number.
+### SMS Verification
 
 ```bash
-# Generate linking URI — displays a QR code or URI
-signal-cli link -n "aidevops-bot"
+# Step 1: Request SMS code (usually requires CAPTCHA — see below)
+signal-cli -a +1234567890 register
 
-# Scan the QR code from your Signal app:
-# Signal app > Settings > Linked Devices > Link New Device
-# Credentials stored in ~/.local/share/signal-cli/data/
+# Step 2: Enter verification code
+signal-cli -a +1234567890 verify 123-456
 ```
 
-### Method 2: Register New Number (SMS/Voice Verification)
+### Voice Verification (landline numbers)
 
 ```bash
-# Step 1: Request verification (may need CAPTCHA from https://signalcaptchas.org/registration/generate.html)
-signal-cli -a +14155551234 register --captcha "CAPTCHA_TOKEN"
+# Step 1: Attempt SMS first (will fail for landlines)
+signal-cli -a +1234567890 register
 
-# Step 2: Verify with SMS code
-signal-cli -a +14155551234 verify 123456
+# Step 2: Wait 60 seconds, then request voice call
+signal-cli -a +1234567890 register --voice
 
-# Step 3: Set profile name (required)
-signal-cli -a +14155551234 updateProfile --given-name "AI Bot" --family-name "DevOps"
+# Step 3: Enter code from voice call
+signal-cli -a +1234567890 verify 123-456
 ```
 
-### Verify Installation
+### CAPTCHA (almost always required)
+
+Registration requires solving a CAPTCHA from the **same external IP** as signal-cli:
+
+1. Open https://signalcaptchas.org/registration/generate.html in a browser
+2. Solve the CAPTCHA
+3. Right-click "Open Signal" link, copy the URL
+4. Register with the token:
 
 ```bash
-signal-cli -a +14155551234 listAccounts
-signal-cli -a +14155551234 send -m "Hello from signal-cli" +14155559876
+signal-cli -a +1234567890 register \
+  --captcha "signalcaptcha://signal-recaptcha-v2.somecode.registration.somelongcode"
 ```
 
-## Daemon Mode (JSON-RPC API)
+### QR Code Linking (link to existing Signal account)
 
-For bot integration, run signal-cli as a persistent daemon with HTTP JSON-RPC and Server-Sent Events.
+This is the recommended approach for bots — keeps the primary phone active:
 
 ```bash
-# Basic daemon (default port 8080)
-signal-cli -a +14155551234 daemon --http --receive-mode=on-connection
+# Generate link URI (pipe to qrencode for QR display)
+signal-cli link -n "aidevops-bot" | tee >(xargs -L 1 qrencode -t utf8)
 
-# Custom port
-signal-cli -a +14155551234 daemon --http=localhost:7583 --receive-mode=on-connection
+# Scan the QR code with the primary Signal app:
+# Settings > Linked Devices > Link New Device
 
-# Unix socket for local-only access
-signal-cli -a +14155551234 daemon --socket=/tmp/signal-cli.socket
+# After linking, sync contacts and groups
+signal-cli -a +1234567890 receive
 ```
 
-### Receive Modes
+**Limits**: Signal allows up to 5 linked devices per primary account.
 
-| Mode | Description | Use case |
-|------|-------------|----------|
-| `on-connection` | Fetch messages when client connects via SSE | Real-time bots |
-| `manual` | Only receive when explicitly requested | Polling-based bots |
+### PIN Protection
 
-### systemd Service
+```bash
+# Verify with PIN if registration lock is set
+signal-cli -a +1234567890 verify 123-456 --pin YOUR_PIN
+
+# Set a registration lock PIN
+signal-cli -a +1234567890 setPin YOUR_PIN
+
+# Remove PIN
+signal-cli -a +1234567890 removePin
+```
+
+## Daemon Mode
+
+signal-cli runs as a persistent daemon exposing a JSON-RPC 2.0 interface. Multiple transport modes can run simultaneously.
+
+### JSON-RPC over HTTP (recommended for bots)
+
+```bash
+# Single account
+signal-cli -a +1234567890 daemon --http
+# Listens on localhost:8080
+
+# Custom bind address
+signal-cli -a +1234567890 daemon --http 0.0.0.0:8080
+
+# Multi-account
+signal-cli daemon --http
+```
+
+**HTTP endpoints**:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/rpc` | POST | JSON-RPC request (single or batch) |
+| `/api/v1/events` | GET | Server-Sent Events stream (incoming messages) |
+| `/api/v1/check` | GET | Health check (200 OK) |
+
+### JSON-RPC over TCP
+
+```bash
+signal-cli -a +1234567890 daemon --tcp
+# Default: localhost:7583
+
+signal-cli -a +1234567890 daemon --tcp 0.0.0.0:7583
+```
+
+### JSON-RPC over Unix Socket
+
+```bash
+signal-cli -a +1234567890 daemon --socket
+# Default: $XDG_RUNTIME_DIR/signal-cli/socket
+
+signal-cli -a +1234567890 daemon --socket /path/to/custom.socket
+```
+
+### JSON-RPC over stdin/stdout
+
+```bash
+signal-cli -a +1234567890 jsonRpc
+# Reads JSON-RPC from stdin, responds on stdout (one JSON object per line)
+```
+
+### D-Bus
+
+```bash
+signal-cli -a +1234567890 daemon --dbus        # User bus
+signal-cli -a +1234567890 daemon --dbus-system  # System bus
+```
+
+D-Bus name: `org.asamk.Signal`. Object path: `/org/asamk/Signal` (multi-account: `/org/asamk/Signal/_<phonenumber>` where `+` becomes `_`).
+
+### Multiple Transports Simultaneously
+
+```bash
+signal-cli -a +1234567890 daemon --http --socket --dbus
+```
+
+### Daemon Options
+
+| Option | Description |
+|--------|-------------|
+| `--ignore-attachments` | Don't download attachments |
+| `--ignore-stories` | Don't receive story messages |
+| `--send-read-receipts` | Auto-send read receipts for received messages |
+| `--no-receive-stdout` | Don't print received messages to stdout |
+| `--receive-mode` | `on-start` (default), `on-connection`, or `manual` |
+
+### Systemd Service
 
 ```ini
 # /etc/systemd/system/signal-cli.service
 [Unit]
-Description=signal-cli daemon
+Description=signal-cli JSON-RPC daemon
 After=network.target
 
 [Service]
 Type=simple
-User=signal-bot
-ExecStart=/usr/local/bin/signal-cli -a +14155551234 daemon --http=localhost:7583 --receive-mode=on-connection
-Restart=always
+User=signal-cli
+ExecStart=/usr/local/bin/signal-cli -a +1234567890 daemon --http 127.0.0.1:8080
+Restart=on-failure
 RestartSec=10
 
 [Install]
@@ -211,398 +323,694 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now signal-cli.service
+sudo systemctl enable --now signal-cli
+sudo journalctl -fu signal-cli
 ```
 
-## Bot API Integration
+## JSON-RPC API
 
-### JSON-RPC Commands
+### Protocol
 
-signal-cli daemon exposes a JSON-RPC 2.0 API over HTTP.
+Standard JSON-RPC 2.0. Each request is a single-line JSON object with a unique `id`.
 
-```bash
-# Send text message to individual
-curl -s -X POST http://localhost:7583/api/v1/rpc \
-  -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","method":"send","params":{"recipient":["+14155559876"],"message":"Hello!"},"id":1}'
+### Request Format
 
-# Send to group
-curl -s -X POST http://localhost:7583/api/v1/rpc \
-  -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","method":"send","params":{"groupId":"BASE64_GROUP_ID","message":"Hello group!"},"id":2}'
-
-# Send with attachment
-curl -s -X POST http://localhost:7583/api/v1/rpc \
-  -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","method":"send","params":{"recipient":["+14155559876"],"message":"Report","attachments":["/path/to/report.pdf"]},"id":3}'
+```json
+{"jsonrpc":"2.0","method":"send","params":{"recipient":["+0987654321"],"message":"Hello"},"id":"1"}
 ```
 
-### Receiving Messages (Server-Sent Events)
+### Response Format
 
-```bash
-curl -N http://localhost:7583/api/v1/events
+```json
+{"jsonrpc":"2.0","result":{"timestamp":1631458508784},"id":"1"}
 ```
 
-SSE events are JSON objects:
+### Error Format
+
+```json
+{"jsonrpc":"2.0","error":{"code":-32600,"message":"method field must be set","data":null},"id":null}
+```
+
+### Multi-Account Mode
+
+When daemon started without `-a`, include `account` in params:
+
+```json
+{"jsonrpc":"2.0","method":"listGroups","params":{"account":"+1234567890"},"id":"1"}
+```
+
+### Incoming Message Notification (SSE / stdout)
 
 ```json
 {
-  "envelope": {
-    "source": "+14155559876",
-    "sourceUuid": "a1b2c3d4-e5f6-...",
-    "sourceName": "Alice",
-    "timestamp": 1700000000000,
-    "dataMessage": {
-      "message": "/status",
-      "timestamp": 1700000000000,
-      "groupInfo": null,
-      "attachments": [],
-      "mentions": [],
-      "quote": null,
-      "reaction": null
-    }
-  }
-}
-```
-
-### Key JSON-RPC Methods
-
-| Method | Description |
-|--------|-------------|
-| `send` | Send message (text, attachments, quotes, reactions) |
-| `sendReaction` | Send emoji reaction (`emoji`, `targetAuthor`, `targetTimestamp`) |
-| `sendReceipt` | Send read/delivery receipt (`type`, `targetTimestamps`) |
-| `sendTyping` | Send typing indicator |
-| `listGroups` | List all groups |
-| `listContacts` | List all contacts |
-| `getContactName` | Get contact profile name |
-| `updateGroup` | Modify group settings |
-| `quitGroup` | Leave a group |
-| `joinGroup` | Join via group invite link |
-| `updateProfile` | Update bot's profile name/avatar |
-| `getUserStatus` | Check if number is registered on Signal |
-
-### Basic Bot Implementation (Bun/TypeScript)
-
-```typescript
-// signal-bot.ts — minimal Signal bot using signal-cli JSON-RPC + SSE
-const SIGNAL_CLI_URL = "http://localhost:7583"
-
-// Allowed users (E.164 phone numbers)
-const ALLOWED_USERS = new Set(["+14155559876", "+14155559877"])
-
-// JSON-RPC helper
-async function rpc(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
-  const resp = await fetch(`${SIGNAL_CLI_URL}/api/v1/rpc`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", method, params, id: Date.now() }),
-  })
-  const json = await resp.json()
-  if (json.error) throw new Error(`RPC error: ${json.error.message}`)
-  return json.result
-}
-
-// Send message to individual or group
-async function sendMessage(recipient: string, message: string, groupId?: string): Promise<void> {
-  const params: Record<string, unknown> = { message }
-  if (groupId) { params.groupId = groupId } else { params.recipient = [recipient] }
-  await rpc("send", params)
-}
-
-// SSE event listener — main loop
-async function listen(): Promise<void> {
-  const response = await fetch(`${SIGNAL_CLI_URL}/api/v1/events`)
-  if (!response.body) throw new Error("No response body from SSE endpoint")
-
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ""
-
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split("\n")
-    buffer = lines.pop() || ""
-
-    for (const line of lines) {
-      if (!line.startsWith("data:")) continue
-      const data = line.slice(5).trim()
-      if (!data) continue
-
-      try {
-        const event = JSON.parse(data)
-        const env = event.envelope
-        if (!env?.dataMessage?.message) continue
-
-        const source = env.source
-        const groupId = env.dataMessage.groupInfo?.groupId
-        const text = env.dataMessage.message.trim()
-
-        // Access control
-        if (!ALLOWED_USERS.has(source)) {
-          if (!groupId) await sendMessage(source, "Unauthorized.")
-          continue
-        }
-
-        // Command routing
-        if (text.startsWith("/")) {
-          const [cmd] = text.slice(1).split(/\s+/)
-          switch (cmd.toLowerCase()) {
-            case "help":
-              await sendMessage(source, "/help /status /ping /whoami", groupId)
-              break
-            case "status":
-              await sendMessage(source, `Online. Uptime: ${process.uptime().toFixed(0)}s`, groupId)
-              break
-            case "ping":
-              await sendMessage(source, "pong", groupId)
-              break
-            default:
-              await sendMessage(source, `Unknown: /${cmd}`, groupId)
-          }
-        }
-      } catch (err) {
-        console.error("SSE parse error:", err)
+  "jsonrpc": "2.0",
+  "method": "receive",
+  "params": {
+    "envelope": {
+      "source": "+1234567890",
+      "sourceNumber": "+1234567890",
+      "sourceUuid": "a1b2c3d4-...",
+      "sourceName": "Contact Name",
+      "sourceDevice": 1,
+      "timestamp": 1631458508784,
+      "dataMessage": {
+        "timestamp": 1631458508784,
+        "message": "Hello!",
+        "expiresInSeconds": 0,
+        "viewOnce": false,
+        "mentions": [],
+        "attachments": [],
+        "contacts": []
       }
     }
   }
 }
-
-listen().catch((err) => { console.error("Bot crashed:", err); process.exit(1) })
 ```
 
-## Security Considerations
+### Key Methods
 
-> **CRITICAL**: Signal is the gold standard for mainstream encrypted messaging. This section details the full security model — essential reading for any integration.
+**Messaging:**
 
-### Encryption
+| Method | Description | Key Params |
+|--------|-------------|------------|
+| `send` | Send message | `recipient`, `message`, `attachments`, `groupId`, `mention`, `quoteTimestamp`, `editTimestamp`, `sticker`, `viewOnce`, `textStyle` |
+| `sendReaction` | React to message | `emoji`, `targetAuthor`, `targetTimestamp`, `remove`, `recipient`/`groupId` |
+| `sendTyping` | Typing indicator | `recipient`/`groupId`, `stop` |
+| `sendReceipt` | Read/viewed receipt | `recipient`, `targetTimestamp`, `type` |
+| `remoteDelete` | Delete sent message | `targetTimestamp`, `recipient`/`groupId` |
+| `sendPollCreate` | Create poll | `question`, `options`, `recipient`/`groupId` |
+| `sendPollVote` | Vote in poll | `pollAuthor`, `pollTimestamp`, `options` |
 
-Signal Protocol is the most widely deployed E2E encryption protocol in the world.
+**Groups:**
 
-- **Key agreement**: Extended Triple Diffie-Hellman (X3DH) with Curve25519
-- **Ratchet**: Double Ratchet algorithm — forward secrecy AND future secrecy (post-compromise security)
-- **Message encryption**: AES-256-CBC
-- **Message authentication**: HMAC-SHA256
-- **Key derivation**: HKDF
-- **E2E by DEFAULT**: Every message — text, voice, video, file — is E2E encrypted. No opt-in, no "secret chat" mode. This is the single most important security property.
+| Method | Description | Key Params |
+|--------|-------------|------------|
+| `updateGroup` | Create/update group | `groupId`, `name`, `description`, `members`, `removeMember`, `admin`, `removeAdmin`, `link`, `setPermissionAddMember`, `setPermissionEditDetails`, `setPermissionSendMessages`, `expiration` |
+| `quitGroup` | Leave group | `groupId`, `delete` |
+| `joinGroup` | Join via link | `uri` |
+| `listGroups` | List all groups | — |
 
-### Metadata Protection
+**Account:**
 
-- **Sealed sender**: Hides sender identity from Signal servers. Server knows the recipient but not the sender.
-- **Server stores ONLY**: Phone number (hashed), registration date, last connection date.
-- **Server does NOT store**: Message content, contacts, groups, profile info, message timestamps, delivery metadata.
-- **Proven in court**: Multiple grand jury subpoenas (2016, 2021) — Signal could only provide: phone number, registration date, last connection date. Nothing else exists on their servers.
+| Method | Description |
+|--------|-------------|
+| `register` / `verify` / `unregister` | Registration lifecycle |
+| `updateAccount` | Device name, username, discoverability |
+| `updateProfile` | Name, about, emoji, avatar |
+| `listContacts` / `listIdentities` / `listDevices` | Query account state |
+| `getUserStatus` | Check if numbers are registered on Signal |
+| `block` / `unblock` | Block/unblock contacts or groups |
+| `startLink` / `finishLink` | Device linking (multi-account mode) |
+| `subscribeReceive` / `unsubscribeReceive` | Manual receive mode control |
 
-### Push Notifications
+### HTTP Example (curl)
 
-- Uses FCM (Android) and APNs (iOS) — push contains **no message content**, only a "new message available" signal
-- Actual message fetched E2E encrypted directly from Signal servers
-- Minimal metadata exposure — push service knows "a message arrived" but not content, sender, or type
+```bash
+# Send a message
+curl -s -X POST http://localhost:8080/api/v1/rpc \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"send","params":{"recipient":["+0987654321"],"message":"Hello from signal-cli"},"id":"1"}'
 
-### AI Training and Data Monetization
+# List groups
+curl -s -X POST http://localhost:8080/api/v1/rpc \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"listGroups","id":"2"}'
 
-- Signal Foundation is a **501(c)(3) non-profit**
-- Explicitly does **NOT** use any user data for AI training
-- **No ads**, no tracking, no data monetization — ever
-- Structurally enforced by non-profit charter, not just a policy choice
+# Subscribe to incoming messages (SSE)
+curl -N http://localhost:8080/api/v1/events
 
-### Open Source and Auditing
+# Health check
+curl http://localhost:8080/api/v1/check
+```
 
-- **Client + Server**: Open source, AGPL-3.0 (Signal-Android, Signal-iOS, Signal-Desktop, Signal-Server)
-- **Regular independent security audits** by Trail of Bits, NCC Group, Cure53
-- **Reproducible builds** for Android — published APK verifiable against source
-- Signal Protocol formally verified by academic researchers
+## Messaging Features
 
-### Jurisdiction
+### Send Messages
 
-- **Signal Foundation**, Mountain View, California, USA
-- Subject to US law (FISA, NSLs) — but minimal data to hand over makes legal pressure largely ineffective
-- 2021 grand jury subpoena response is public record
+```bash
+# DM by phone number
+signal-cli -a +1234567890 send -m "Hello" +0987654321
 
-### Bot-Specific Security
+# DM by username
+signal-cli -a +1234567890 send -m "Hello" u:username.000
 
-- signal-cli is unofficial but well-maintained (GPLv3, active development)
-- Bot messages are **still E2E encrypted** — signal-cli implements the full Signal Protocol
-- Bot's decryption keys stored locally in `~/.local/share/signal-cli/` — **secure the host machine**
-- HTTP API has **no built-in authentication** — bind to localhost only, or use a reverse proxy with auth
-- Run signal-cli under a dedicated system user with minimal privileges
+# Group message
+signal-cli -a +1234567890 send -m "Hello group" -g GROUP_ID_BASE64
 
-### Phone Number Requirement
+# Pipe from stdin
+echo "alert: disk full" | signal-cli -a +1234567890 send --message-from-stdin +0987654321
 
-- Signal requires a phone number — this is the **primary privacy weakness**
-- Phone numbers are personally identifiable and linkable to real identities
-- Signal developing **usernames** to reduce dependency
-- For bots: use a dedicated VoIP or prepaid number not linked to personal identity
+# Note to self
+signal-cli -a +1234567890 send -m "Reminder" --note-to-self
+```
+
+### Attachments
+
+```bash
+# Send files
+signal-cli -a +1234567890 send -m "See attached" -a /path/to/file.pdf /path/to/image.png +0987654321
+
+# View-once media
+signal-cli -a +1234567890 send -m "" -a /path/to/photo.jpg --view-once +0987654321
+
+# Data URI attachment
+signal-cli -a +1234567890 send -a "data:image/png;filename=test.png;base64,..." +0987654321
+```
+
+### Reactions
+
+```bash
+# Add reaction
+signal-cli -a +1234567890 sendReaction -e "👍" -a +0987654321 -t 1631458508784 +0987654321
+
+# Remove reaction
+signal-cli -a +1234567890 sendReaction -e "👍" -a +0987654321 -t 1631458508784 -r +0987654321
+```
+
+### Typing Indicators
+
+```bash
+signal-cli -a +1234567890 sendTyping +0987654321
+signal-cli -a +1234567890 sendTyping -s +0987654321       # stop typing
+signal-cli -a +1234567890 sendTyping -g GROUP_ID           # group typing
+```
+
+### Read/Viewed Receipts
+
+```bash
+signal-cli -a +1234567890 sendReceipt +0987654321 -t 1631458508784
+signal-cli -a +1234567890 sendReceipt +0987654321 -t 1631458508784 --type viewed
+```
+
+### Mentions
+
+```bash
+# Format: start:length:recipientNumber (UTF-16 code units)
+signal-cli -a +1234567890 send -m "Hi X!" --mention "3:1:+0987654321" -g GROUP_ID
+```
+
+### Quotes (Reply)
+
+```bash
+signal-cli -a +1234567890 send -m "My reply" \
+  --quote-timestamp 1631458508784 \
+  --quote-author +0987654321 \
+  --quote-message "Original message" \
+  +0987654321
+```
+
+### Stickers
+
+```bash
+signal-cli -a +1234567890 send --sticker "PACK_ID:STICKER_ID" +0987654321
+```
+
+### Text Styles
+
+```bash
+# Format: start:length:STYLE (BOLD, ITALIC, SPOILER, STRIKETHROUGH, MONOSPACE)
+signal-cli -a +1234567890 send -m "Something BIG!" --text-style "10:3:BOLD"
+```
+
+### Edit Messages
+
+```bash
+signal-cli -a +1234567890 send -m "Corrected message" --edit-timestamp ORIGINAL_TIMESTAMP +0987654321
+```
+
+### Remote Delete
+
+```bash
+signal-cli -a +1234567890 remoteDelete -t TIMESTAMP +0987654321
+```
+
+### Link Previews
+
+```bash
+signal-cli -a +1234567890 send -m "Check https://example.com" \
+  --preview-url "https://example.com" \
+  --preview-title "Example" \
+  --preview-description "Description" \
+  --preview-image /path/to/img.jpg \
+  +0987654321
+```
+
+### Polls
+
+```bash
+# Create poll
+signal-cli -a +1234567890 sendPollCreate -q "Favorite color?" -o "Red" "Blue" "Green" +0987654321
+
+# Vote (option index, 0-based)
+signal-cli -a +1234567890 sendPollVote --poll-author +1234567890 --poll-timestamp TIMESTAMP -o 0 +0987654321
+```
+
+## Group Management
+
+### Create Group
+
+```bash
+signal-cli -a +1234567890 updateGroup -n "Group Name" -m +0987654321 +1112223333
+```
+
+### Update Group
+
+```bash
+# Change name
+signal-cli -a +1234567890 updateGroup -g GROUP_ID -n "New Name"
+
+# Set description
+signal-cli -a +1234567890 updateGroup -g GROUP_ID -d "Group description"
+
+# Set avatar
+signal-cli -a +1234567890 updateGroup -g GROUP_ID -a /path/to/avatar.jpg
+
+# Add members
+signal-cli -a +1234567890 updateGroup -g GROUP_ID -m +NEW_MEMBER
+
+# Remove members
+signal-cli -a +1234567890 updateGroup -g GROUP_ID -r +MEMBER_TO_REMOVE
+
+# Set message expiration (seconds)
+signal-cli -a +1234567890 updateGroup -g GROUP_ID -e 3600
+```
+
+### Admin Controls
+
+```bash
+# Promote to admin
+signal-cli -a +1234567890 updateGroup -g GROUP_ID --admin +MEMBER
+
+# Demote from admin
+signal-cli -a +1234567890 updateGroup -g GROUP_ID --remove-admin +MEMBER
+
+# Ban/unban members
+signal-cli -a +1234567890 updateGroup -g GROUP_ID --ban +MEMBER
+signal-cli -a +1234567890 updateGroup -g GROUP_ID --unban +MEMBER
+```
+
+### Permissions
+
+```bash
+# Who can add members: every-member | only-admins
+signal-cli -a +1234567890 updateGroup -g GROUP_ID --set-permission-add-member only-admins
+
+# Who can edit details: every-member | only-admins
+signal-cli -a +1234567890 updateGroup -g GROUP_ID --set-permission-edit-details only-admins
+
+# Announcement group (only admins can send): every-member | only-admins
+signal-cli -a +1234567890 updateGroup -g GROUP_ID --set-permission-send-messages only-admins
+```
+
+### Group Links
+
+```bash
+# Enable group link
+signal-cli -a +1234567890 updateGroup -g GROUP_ID --link enabled
+signal-cli -a +1234567890 updateGroup -g GROUP_ID --link enabled-with-approval
+
+# Disable / reset link
+signal-cli -a +1234567890 updateGroup -g GROUP_ID --link disabled
+signal-cli -a +1234567890 updateGroup -g GROUP_ID --reset-link
+
+# Join via link
+signal-cli -a +1234567890 joinGroup --uri "https://signal.group/#..."
+```
+
+### Leave Group
+
+```bash
+signal-cli -a +1234567890 quitGroup -g GROUP_ID
+signal-cli -a +1234567890 quitGroup -g GROUP_ID --delete  # also delete local data
+```
+
+### List Groups
+
+```bash
+signal-cli -a +1234567890 listGroups
+signal-cli -a +1234567890 listGroups -d       # detailed (includes members, invite link)
+signal-cli -a +1234567890 listGroups -o json   # JSON output
+```
+
+## Access Control
+
+signal-cli does **not** have built-in allowlists. Access control must be implemented at the application layer by filtering on sender identifiers in received message envelopes.
+
+### Recipient Identifiers
+
+signal-cli supports identifying recipients by:
+
+| Type | Format | Example |
+|------|--------|---------|
+| Phone number (E.164) | `+XXXXXXXXXXX` | `+1234567890` |
+| ACI (Account Identity UUID) | `a1b2c3d4-...` | `a1b2c3d4-e5f6-7890-abcd-ef1234567890` |
+| PNI (Phone Number Identity) | `PNI:a1b2c3d4-...` | `PNI:a1b2c3d4-...` |
+| Username | `u:username.NNN` | `u:alice.042` |
+
+### Application-Level Allowlist Pattern
+
+Filter incoming messages by sender phone number or UUID in the JSON-RPC envelope:
+
+```python
+# Example: Python allowlist filter
+ALLOWED = {"+1234567890", "+0987654321"}
+
+def handle_message(envelope):
+    sender = envelope.get("sourceNumber", "")
+    if sender not in ALLOWED:
+        return  # silently ignore
+    # process message...
+```
+
+### Blocking
+
+```bash
+# Block a contact (no messages received from them)
+signal-cli -a +1234567890 block +BLOCKED_NUMBER
+
+# Block a group
+signal-cli -a +1234567890 block -g GROUP_ID
+
+# Unblock
+signal-cli -a +1234567890 unblock +BLOCKED_NUMBER
+```
+
+### Trust Management
+
+```bash
+# Trust on first use (default)
+signal-cli --trust-new-identities on-first-use
+
+# Always trust new keys (insecure — testing only)
+signal-cli --trust-new-identities always
+
+# Never trust without manual verification
+signal-cli --trust-new-identities never
+
+# Verify a specific contact's safety number
+signal-cli -a +1234567890 trust -v VERIFIED_SAFETY_NUMBER +0987654321
+
+# Trust all known keys for a contact (TOFU — insecure)
+signal-cli -a +1234567890 trust -a +0987654321
+
+# List identities and trust status
+signal-cli -a +1234567890 listIdentities
+```
+
+## Privacy and Security Assessment
+
+### Signal Protocol
+
+| Component | Detail |
+|-----------|--------|
+| Key agreement | X3DH (Extended Triple Diffie-Hellman) with Curve25519 |
+| Message encryption | Double Ratchet (forward secrecy + break-in recovery) |
+| Symmetric cipher | AES-256-CBC |
+| MAC | HMAC-SHA256 |
+| Sealed sender | Hides sender identity from Signal servers |
+| Contact discovery | SGX enclaves (private set intersection) |
+
+### What Signal Servers Store
+
+- Phone number (hashed) and push tokens
+- Registration date
+- Last connection date
+
+### What Signal Servers Do NOT Store
+
+- Message content (E2E encrypted)
+- Contact lists
+- Group memberships or metadata
+- Profile data (encrypted client-side)
+- Who messages whom (sealed sender)
+
+### Metadata Exposure
+
+| Data | Visibility |
+|------|------------|
+| Message content | Never visible to server |
+| Sender identity | Hidden via sealed sender |
+| Recipient identity | Server knows delivery target |
+| Timing | Server sees delivery timestamps |
+| IP address | Transient, in-transit only |
+| Group membership | Not stored server-side |
+| Push notifications | FCM/APNs see device received a notification (no content, no sender) |
 
 ### Comparison with Other Platforms
 
-| Property | Signal | SimpleX | Matrix | Telegram | WhatsApp |
-|----------|--------|---------|--------|----------|----------|
-| E2E encryption | Default, all | Default, all | Opt-in (rooms) | Opt-in (secret chats) | Default, all |
-| User identifier | Phone number | None | @user:server | Phone/username | Phone number |
-| Server metadata | Minimal | None (stateless) | Full history | Full history | Moderate |
-| Open source | Client + server | Client + server | Client + server | Client only | Neither |
-| Non-profit | Yes (501c3) | Yes | Yes (Foundation) | No (commercial) | No (Meta) |
-| AI training | Never | Never | No (Foundation) | Yes (since 2024) | Yes (Meta) |
+| Aspect | Signal | SimpleX | Matrix | Telegram |
+|--------|--------|---------|--------|----------|
+| E2E default | Yes (all) | Yes (all) | No (opt-in) | No (opt-in, 1:1 only) |
+| User identifiers | Phone (hidden) | None | `@user:server` | Phone + username |
+| Server metadata | Minimal | None (stateless) | Full | Full |
+| Sealed sender | Yes | N/A (no IDs) | No | No |
+| Open source | Client + server | Client + server | Client + server | Client only |
+| Security audits | Independent, published | Independent, published | Varies | None published |
+| Operator | Non-profit foundation | Open-source project | Foundation + companies | For-profit company |
 
-**Summary**: Strongest privacy of any **mainstream** messenger. Only SimpleX offers better metadata privacy (no identifiers at all), but Signal has vastly larger user base (~40M+ vs niche) and more mature ecosystem.
+### Key Storage
+
+All cryptographic keys stored locally:
+
+```text
+~/.local/share/signal-cli/data/
+├── +1234567890/
+│   ├── account.db        # SQLite: identity keys, pre-keys, sessions, contacts, groups
+│   └── ...
+├── attachments/           # Downloaded attachments
+└── avatars/               # Downloaded avatars
+```
+
+No private key material is ever sent to the server.
+
+### Bot Security Model
+
+When running bots that accept messages from untrusted users:
+
+1. **Treat all inbound messages as untrusted input** — sanitize before passing to AI models or shell commands
+2. **Implement application-level allowlists** — filter by E.164 phone number or UUID in message envelopes
+3. **Command sandboxing** — bot commands from chat should run in restricted environments
+4. **Credential isolation** — never expose secrets to chat context or tool output
+5. **Leak detection** — scan outbound messages for credential patterns before sending
+6. **Per-group permissions** — different groups can have different command access levels
+7. **Prompt injection defense** — scan inbound messages with `prompt-guard-helper.sh` before AI dispatch
+
+Cross-reference: `tools/security/opsec.md`, `tools/credentials/gopass.md`, `tools/security/prompt-injection-defender.md`
+
+## Configuration
+
+### Data Storage
+
+```text
+Default: $XDG_DATA_HOME/signal-cli/data/
+Fallback: ~/.local/share/signal-cli/data/
+
+# Override with:
+signal-cli --config /custom/path ...
+```
+
+### Logging
+
+```bash
+# Log to file with sensitive data scrubbed
+signal-cli --log-file /var/log/signal-cli.log --scrub-log -a +1234567890 daemon --http
+
+# Verbose logging (repeat -v for more detail)
+signal-cli -vvv -a +1234567890 daemon --http
+```
+
+### Database Backup
+
+```bash
+# Backup before upgrading (migrations prevent downgrade)
+cp ~/.local/share/signal-cli/data/+1234567890/account.db \
+   ~/.local/share/signal-cli/data/+1234567890/account.db.bak.$(date +%Y%m%d)
+```
+
+### Environment Options
+
+| Option | Description |
+|--------|-------------|
+| `--service-environment live` | Production Signal servers (default) |
+| `--service-environment staging` | Staging servers (testing) |
+| `--trust-new-identities` | `on-first-use` (default), `always`, `never` |
+| `--disable-send-log` | Disable message resend log |
 
 ## Integration with aidevops
 
-### Components
+### Runner Dispatch Pattern
 
-| Component | File | Purpose |
-|-----------|------|---------|
+```text
+Signal User
+    │
+    │ "!ai Review the auth module"
+    │
+    ▼
+signal-cli daemon (HTTP :8080)
+    │
+    │ SSE event → bot process
+    │
+    ▼
+Bot Process (TypeScript/Python/Shell)
+    │
+    ├─ Check sender against allowlist
+    ├─ Parse command prefix (!ai)
+    ├─ Resolve entity (entity-helper.sh)
+    ├─ Load context (entity profile + conversation history)
+    │
+    ▼
+runner-helper.sh dispatch
+    │
+    ▼
+AI Session → Response
+    │
+    ▼
+signal-cli send → Signal User
+```
+
+### Minimal Bot Example (Shell)
+
+```bash
+#!/usr/bin/env bash
+# Minimal signal-cli bot using HTTP daemon + SSE
+# Requires: signal-cli daemon --http running on :8080, jq, curl
+
+ACCOUNT="+1234567890"
+ALLOWED="+0987654321"
+
+# Listen for incoming messages via SSE
+curl -sN http://localhost:8080/api/v1/events | while read -r line; do
+  # SSE lines prefixed with "data:"
+  data="${line#data:}"
+  [[ -z "$data" || "$data" == "$line" ]] && continue
+
+  sender=$(echo "$data" | jq -r '.params.envelope.sourceNumber // empty')
+  message=$(echo "$data" | jq -r '.params.envelope.dataMessage.message // empty')
+
+  [[ -z "$message" || "$sender" != "$ALLOWED" ]] && continue
+
+  # Echo bot: reply with the same message
+  curl -s -X POST http://localhost:8080/api/v1/rpc \
+    -H "Content-Type: application/json" \
+    -d "{\"jsonrpc\":\"2.0\",\"method\":\"send\",\"params\":{\"recipient\":[\"$sender\"],\"message\":\"Echo: $message\"},\"id\":\"$(date +%s)\"}"
+done
+```
+
+### Components (planned)
+
+| Component | File | Description |
+|-----------|------|-------------|
 | Subagent doc | `.agents/services/communications/signal.md` | This file |
-| Helper script | `.agents/scripts/signal-dispatch-helper.sh` | Signal bot dispatch |
-| Config | `~/.config/aidevops/signal-bot.json` | Bot configuration |
-
-### Configuration
-
-```json
-{
-  "account": "+14155551234",
-  "daemon_url": "http://localhost:7583",
-  "allowed_users": ["+14155559876", "+14155559877"],
-  "allowed_groups": ["BASE64_GROUP_ID_1"],
-  "command_prefix": "/",
-  "dispatch_enabled": true
-}
-```
-
-### Dispatch Pattern
-
-```bash
-# signal-dispatch-helper.sh pattern
-# 1. Receive message via SSE
-# 2. Check access control (phone number + UUID allowlist)
-# 3. Parse command
-# 4. Dispatch to aidevops runner or respond directly
-
-# Entity resolution:
-# - Phone number (+E.164) → user identity
-# - Group ID (base64) → channel context
-# - UUID → stable user identifier (survives number change)
-```
-
-### Runner Dispatch
-
-Signal messages can trigger aidevops task execution:
-
-```bash
-# User sends: /run deploy staging
-# Bot parses: command=run, args=["deploy", "staging"]
-# Bot dispatches: aidevops runner with task context
-# Bot responds: "Task dispatched. Tracking ID: t1234"
-# Bot follows up: "Deploy complete. PR #567 merged."
-```
+| Helper script | `.agents/scripts/signal-helper.sh` | Registration, daemon management, send/receive |
+| Bot framework | `.agents/scripts/signal-bot/` | TypeScript/Bun bot with command routing |
+| Entity integration | `.agents/scripts/entity-helper.sh` | Identity resolution for Signal users |
 
 ## Matterbridge Integration
 
-signal-cli has native support in [Matterbridge](https://github.com/42wim/matterbridge) for bridging Signal to 40+ platforms.
+Matterbridge does **not** natively support Signal. Integration requires an intermediary adapter.
+
+### Option 1: signal-cli-rest-api + Matterbridge API
+
+[signal-cli-rest-api](https://github.com/bbernhard/signal-cli-rest-api) wraps signal-cli in a REST API. Connect it to Matterbridge via the [Matterbridge API gateway](https://github.com/42wim/matterbridge/wiki/API).
 
 ```text
-Signal (via signal-cli)
-    │
-Matterbridge
-    │
-    ├── Matrix rooms
-    ├── Telegram groups
-    ├── Discord channels
-    ├── Slack workspaces
-    ├── SimpleX chats
-    ├── IRC channels
-    └── 40+ other platforms
+Signal
+  │
+signal-cli daemon
+  │
+signal-cli-rest-api (Docker)
+  │
+Custom middleware (translates REST ↔ Matterbridge API)
+  │
+Matterbridge API (:4242)
+  │
+  ├── Matrix rooms
+  ├── Discord channels
+  ├── Telegram groups
+  └── 40+ other platforms
 ```
 
-### Matterbridge Configuration
+### Option 2: Custom JSON-RPC ↔ Matterbridge API Bridge
 
-```toml
-# matterbridge.toml — Signal gateway
+Write a lightweight middleware that:
 
-[signal.mybot]
-Number = "+14155551234"
-SignalCLIConfig = "/home/signal-bot/.local/share/signal-cli"
+1. Subscribes to signal-cli SSE events (`GET /api/v1/events`)
+2. Forwards messages to Matterbridge API (`POST /api/messages`)
+3. Polls Matterbridge API for outbound messages
+4. Sends them via signal-cli JSON-RPC (`POST /api/v1/rpc`)
 
-[gateway.bridge-main]
-name = "main-bridge"
-enable = true
+### Privacy Warning
 
-  [[gateway.bridge-main.inout]]
-  account = "signal.mybot"
-  channel = "BASE64_GROUP_ID"
+Bridging Signal to unencrypted platforms (Discord, Slack, IRC) breaks E2E encryption at the bridge boundary. Messages are decrypted by the bridge process and re-sent in plaintext (or re-encrypted by the destination platform). The bridge host has access to all message content.
 
-  [[gateway.bridge-main.inout]]
-  account = "matrix.mybot"
-  channel = "#devops:matrix.example.com"
-```
-
-### Key Details
-
-- Matterbridge uses signal-cli's dbus or JSON-RPC interface
-- Bridges both DM and group messages
-- Supports text, images, and file attachments
-- Signal group to platform channel mapping is 1:1 per gateway
-- Requires signal-cli registered and running as daemon
-
-**Privacy gradient**: Users who need maximum privacy use Signal directly. Users who prefer convenience use bridged platforms. Messages flow between platforms transparently via Matterbridge.
+See `services/communications/matterbridge.md` and `tools/security/opsec.md` for full implications.
 
 ## Limitations
 
 ### Phone Number Required
 
-Signal requires a phone number for registration. This is the main privacy limitation — phone numbers are personally identifiable. Signal is developing username support but phone numbers remain mandatory for account creation.
+A phone number is mandatory for registration. Must be able to receive SMS or voice calls at least once for verification. Landline numbers work via voice verification.
 
-**Mitigation**: Use a dedicated VoIP or prepaid number for bot accounts.
+### No Multi-Device for CLI as Primary
 
-### No Official Bot API
+When signal-cli registers as a **primary** device, the phone loses its Signal session. To use both phone and CLI simultaneously, link signal-cli as a **secondary** device via QR code.
 
-signal-cli is unofficial. Signal does not provide an official bot API or SDK:
+### Version Expiry
 
-- No guaranteed API stability between signal-cli versions
-- Feature parity with official apps may lag
-- Breaking changes in Signal Protocol updates may require signal-cli updates
-
-**Mitigation**: Pin signal-cli version, test updates in staging before production.
-
-### Java Dependency
-
-signal-cli requires Java 21+ (Java distribution) or native GraalVM builds (~100MB+).
-
-**Mitigation**: Use native binary builds where available, or Docker containers.
-
-### No Rich Interactive Elements
-
-Signal does not support inline keyboards, buttons, interactive cards, or bot command menus. Bot interaction is limited to plain text, attachments, reactions, and quoted replies.
-
-### Group Admin Features Limited
-
-signal-cli has limited group admin capabilities compared to the official app. Advanced features (permissions, disappearing messages timer, group link management) may be unavailable. Group v2 features require signal-cli to be up-to-date.
+signal-cli must be kept up-to-date. Signal Server makes incompatible changes, and official clients expire after approximately 3 months. Releases older than 3 months may stop working.
 
 ### Rate Limiting
 
-Signal enforces rate limits on message sending. No official documentation on exact limits. Implement backoff and queuing in bot code. Group messages count against rate limits per recipient.
+Signal Server enforces rate limits on registration, sending, and other operations. Rate limit challenges can be solved:
 
-### Single Account Per Daemon
+```bash
+# Solve rate limit challenge
+signal-cli -a +1234567890 submitRateLimitChallenge \
+  --challenge TOKEN \
+  --captcha "signalcaptcha://..."
+```
 
-Each signal-cli daemon instance handles one Signal account. Multiple bot identities require multiple daemon processes on different ports.
+CAPTCHA for rate limits: https://signalcaptchas.org/challenge/generate.html
 
-### Linked Device Limitations
+### No Voice/Video Calls
 
-When signal-cli is linked as a secondary device: depends on primary device being online periodically for key sync; if primary is removed, linked device loses access; message history before linking is unavailable.
+signal-cli does not support voice or video calls. It handles text messaging, attachments, and protocol-level features only.
+
+### No Story Creation
+
+signal-cli can receive stories (or ignore them with `--ignore-stories`) but cannot create them.
+
+### Single Instance Per Number
+
+Cannot run two signal-cli instances for the same account simultaneously. Use daemon mode with multiple transport interfaces instead.
+
+### Database Migrations
+
+Upgrading signal-cli may migrate the SQLite database, preventing downgrade. Always backup before upgrading.
+
+### Entropy Requirement
+
+Cryptographic operations require sufficient random entropy. Embedded or idle systems may need `haveged` or similar entropy daemon.
+
+### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 1 | User-fixable error |
+| 2 | Unexpected error |
+| 3 | Server or IO error |
+| 4 | Sending failed (untrusted key) |
+| 5 | Rate limiting error |
 
 ## Related
 
-- `.agents/services/communications/simplex.md` — SimpleX Chat (zero-identifier messaging, strongest metadata privacy)
-- `.agents/services/communications/matrix-bot.md` — Matrix messaging integration (federated, user IDs)
-- `.agents/services/communications/matterbridge.md` — Cross-platform message bridging
-- `.agents/tools/security/opsec.md` — Operational security guidance
-- `.agents/tools/voice/speech-to-speech.md` — Voice note transcription
-- `.agents/tools/ai-assistants/headless-dispatch.md` — Headless AI dispatch patterns
-- Signal Protocol specification: https://signal.org/docs/
-- signal-cli repository: https://github.com/AsamK/signal-cli
-- Signal Foundation: https://signalfoundation.org/
-- Signal source code: https://github.com/signalapp/
+- `services/communications/simplex.md` — SimpleX Chat (zero-knowledge, no identifiers)
+- `services/communications/matrix-bot.md` — Matrix bot for aidevops runner dispatch
+- `services/communications/matterbridge.md` — Multi-platform chat bridge (40+ platforms)
+- `tools/security/opsec.md` — Platform trust matrix, E2E status, metadata warnings
+- `tools/security/prompt-injection-defender.md` — Prompt injection defense for chat bots
+- `tools/credentials/gopass.md` — Secure credential storage
+- `tools/ai-assistants/headless-dispatch.md` — Headless AI dispatch patterns
+- Signal Protocol spec: https://signal.org/docs/
+- signal-cli wiki: https://github.com/AsamK/signal-cli/wiki
+- signal-cli-rest-api: https://github.com/bbernhard/signal-cli-rest-api
