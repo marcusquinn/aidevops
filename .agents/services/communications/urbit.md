@@ -703,6 +703,8 @@ No protocol-level support for voice or video calls. Some experimental integratio
 - `.agents/services/communications/matrix-bot.md` — Matrix messaging (federated, mature ecosystem)
 - `.agents/services/communications/bitchat.md` — BitChat (Bitcoin-native messaging)
 - `.agents/services/communications/xmtp.md` — XMTP (Ethereum-native messaging)
+- `.agents/services/communications/discord.md` — Discord bot integration (community, slash commands)
+- `.agents/services/communications/msteams.md` — Microsoft Teams bot integration (enterprise, Azure Bot Framework)
 - `.agents/services/communications/matterbridge.md` — Matterbridge (cross-platform bridging)
 - `.agents/tools/security/opsec.md` — Operational security guidance
 - `.agents/tools/credentials/gopass.md` — Secret management (for ship code storage)
