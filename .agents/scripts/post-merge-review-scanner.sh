@@ -38,12 +38,12 @@ fetch_actionable() {
 		| select((.body // "") | test("'"$ACT_RE"'";"i"))
 		| "\((.user.login // ""))|\(.path // "")|\((.body // "") | gsub("\n";" ") | .[:200])"] | .[]'
 	{ gh api "repos/${repo}/pulls/${pr}/comments" --paginate || echo '[]'; } |
-		jq -r "$jq_f" || true
+		jq -r "$jq_f"
 	local jq_r='[.[] | select((.user.login // "") | test("'"$BOT_RE"'";"i"))
 		| select((.body // "") | test("'"$ACT_RE"'";"i"))
 		| "\((.user.login // ""))||\((.body // "") | gsub("\n";" ") | .[:200])"] | .[]'
 	{ gh api "repos/${repo}/pulls/${pr}/reviews" --paginate || echo '[]'; } |
-		jq -r "$jq_r" || true
+		jq -r "$jq_r"
 }
 
 issue_exists() {
