@@ -80,6 +80,17 @@ When closing any issue, ALWAYS add a comment first explaining: (1) why you're cl
 - **`status:queued` or `status:in-progress`** → likely being worked on (possibly on another machine). Check the `updatedAt` timestamp: if the issue was updated within the last 3 hours, skip it. If it's been 3+ hours with no open PR and no recent commits on a related branch, the worker likely died — relabel to `status:available`, unassign, and comment explaining the recovery. It's now dispatchable.
 - **`status:available` or no status label** → dispatch a worker (see below)
 
+### External issues and PRs — scope check
+
+Issues and PRs from non-maintainers (check `authorAssociation`: `NONE`, `FIRST_TIMER`, `FIRST_TIME_CONTRIBUTOR`, `CONTRIBUTOR`) require a scope check before dispatching workers. Architectural decisions — what the project integrates with, supports, tests against, or bundles — are maintainer-only.
+
+- **Destructive behaviour reports** (aidevops deletes files, overwrites configs, breaks the user's setup) → valid bug, dispatch a fix. The fix should be "stop being destructive" (add a config toggle, preserve user files), not "add integration with their tool".
+- **Feature requests for third-party integrations** (add support for tool X, test against framework Y, bundle library Z) → label `needs-maintainer-review`, do NOT dispatch a worker. Comment acknowledging the request and explaining it needs maintainer decision on scope.
+- **PRs that add dependencies, integrations, or change architecture** → do NOT merge autonomously. Label `needs-maintainer-review`. These require explicit maintainer approval regardless of CI status.
+- **Bug fixes and documentation PRs** → normal review process, can be merged if CI passes and changes are scoped correctly.
+
+The principle: fix our bugs, but don't commit to supporting external tools without maintainer sign-off. Compatibility is best-effort, not guaranteed.
+
 ### Kill stuck workers
 
 Check `ps axo pid,etime,command | grep '/full-loop' | grep '\.opencode'`. Any worker running 3+ hours with no open PR is likely stuck. Kill it: `kill <pid>`. Comment on the issue explaining why. This frees a slot. If the worker has recent commits or an open PR with activity, leave it alone — it's making progress.

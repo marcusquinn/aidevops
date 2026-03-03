@@ -40,6 +40,27 @@ We use [Conventional Commits](https://www.conventionalcommits.org/):
 - Markdown: Follow `.markdownlint.json` rules
 - Quality target: SonarCloud A-grade
 
+## Scope of Contributions
+
+aidevops is an opinionated framework. Architectural decisions — what the project integrates with, supports, tests against, or bundles — are made by maintainers.
+
+**What we welcome from everyone:**
+
+- Bug reports (especially destructive behaviour — deleting files, breaking configs)
+- Feature requests (we'll assess fit and priority)
+- Bug fixes and documentation improvements via PR
+
+**What requires maintainer approval before implementation:**
+
+- Adding integrations with third-party tools or services
+- Changing default behaviours or configuration structure
+- Adding new dependencies
+- Modifying the agent framework architecture
+
+**Third-party compatibility:** aidevops aims not to break other tools in your environment (we won't delete your files or overwrite your configs without opt-in). However, we don't guarantee compatibility with specific third-party tools and don't maintain test coverage for them. If you encounter a clash, report it — we'll fix destructive behaviour on our side, but we won't add integration code or test suites for external projects.
+
+If you're unsure whether your contribution is in scope, open an issue first to discuss before investing time in a PR.
+
 ## Questions?
 
 Open an issue or start a discussion. We're happy to help!

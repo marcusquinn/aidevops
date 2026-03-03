@@ -24,5 +24,8 @@ What you expected to happen.
 - aidevops version: [run `aidevops --version`]
 - Shell: [e.g., zsh, bash]
 
+**Does this involve a third-party tool?**
+If the bug involves a clash with another tool (e.g., aidevops overwrites or deletes files managed by another tool), please name the tool and describe the conflict. We fix destructive behaviour on our side but don't guarantee compatibility with external tools. See [CONTRIBUTING.md](../../CONTRIBUTING.md#scope-of-contributions).
+
 **Additional context**
 Any other relevant information.
