@@ -253,10 +253,13 @@ Minimal bot server:
 const { BotFrameworkAdapter, TeamsActivityHandler, CardFactory } = require("botbuilder");
 const express = require("express");
 
-const adapter = new BotFrameworkAdapter({
-  appId: process.env.MSTEAMS_APP_ID,
-  appPassword: process.env.MSTEAMS_CLIENT_SECRET,
-});
+const appId = process.env.MSTEAMS_APP_ID;
+const appPassword = process.env.MSTEAMS_CLIENT_SECRET;
+if (!appId || !appPassword) {
+  throw new Error("MSTEAMS_APP_ID and MSTEAMS_CLIENT_SECRET must be set");
+}
+
+const adapter = new BotFrameworkAdapter({ appId, appPassword });
 
 // Error handler
 adapter.onTurnError = async (context, error) => {
@@ -392,10 +395,7 @@ await context.sendActivity(replyActivity);
 
 // Create a new top-level post in a channel
 // Requires Graph API — Bot Framework sends replies by default
-const { Client } = require("@microsoft/microsoft-graph-client");
-const graphClient = Client.init({
-  authProvider: (done) => done(null, accessToken),
-});
+// (assumes graphClient is initialized as shown in "Graph API Integration" section)
 await graphClient
   .api(`/teams/${teamId}/channels/${channelId}/messages`)
   .post({ body: { content: "New top-level post" } });
@@ -650,9 +650,11 @@ The `appType` in the Azure Bot resource controls this:
 
 `~/.config/aidevops/msteams-bot.json` (600 permissions):
 
+> **Security**: Store `appId` and `clientSecret` in gopass (`aidevops secret set msteams-app-id`, `aidevops secret set msteams-client-secret`), not in this JSON file. Reference them via environment variables or `credentials.sh`. The values below are placeholders only.
+
 ```json
 {
-  "appId": "00000000-0000-0000-0000-000000000000",
+  "appId": "stored-in-gopass",
   "tenantId": "00000000-0000-0000-0000-000000000000",
   "botEndpoint": "https://your-server.example.com/api/messages",
   "allowedUsers": [],
@@ -694,7 +696,10 @@ The `appType` in the Azure Bot resource controls this:
 The bot dispatches to aidevops runners following the same pattern as the Matrix bot:
 
 ```javascript
-const { execSync } = require("child_process");
+const { execFile } = require("child_process");
+const { promisify } = require("util");
+
+const execFileAsync = promisify(execFile);
 
 async function dispatchToRunner(prompt, context) {
   const channelId = context.activity.channelData?.channel?.id;
@@ -707,12 +712,14 @@ async function dispatchToRunner(prompt, context) {
   }
 
   try {
-    // Dispatch via runner-helper.sh
-    const result = execSync(
-      `runner-helper.sh dispatch "${runner}" "${prompt.replace(/"/g, '\\"')}"`,
+    // Use execFile with array args to prevent command injection
+    // (never use execSync with string interpolation)
+    const { stdout } = await execFileAsync(
+      "runner-helper.sh",
+      ["dispatch", runner, prompt],
       { timeout: config.responseTimeout * 1000, encoding: "utf-8" }
     );
-    return result.trim();
+    return stdout.trim();
   } catch (error) {
     return `Runner dispatch failed: ${error.message}`;
   }

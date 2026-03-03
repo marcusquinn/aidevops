@@ -236,7 +236,7 @@ google-chat-helper.sh setup
 
 ### Inbound (Google to Bot)
 
-Google signs every HTTP request to the bot with a bearer token (JWT). The bot must verify this token to prevent spoofed requests.
+> **CRITICAL**: Google signs every HTTP request to the bot with a bearer token (JWT). The bot **MUST** verify this token on every request to prevent spoofed requests. Without verification, anyone who discovers the webhook URL can send forged events to the bot. This is not optional — implement it before deploying to production.
 
 **Verification flow**:
 

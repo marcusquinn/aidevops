@@ -445,7 +445,10 @@ sse.listen({
       if (data.json?.["add-nodes"]) {
         const nodes = data.json["add-nodes"].nodes
         for (const [index, node] of Object.entries(nodes)) {
-          const post = (node as { post: { author: string; contents: { text?: string }[] } }).post
+          // Runtime type check instead of unsafe type assertion
+          const nodeObj = node as Record<string, unknown>
+          if (!nodeObj?.post || typeof nodeObj.post !== "object") continue
+          const post = nodeObj.post as { author: string; contents: { text?: string }[] }
           if (post.author !== SHIP_NAME) {
             const textContent = post.contents
               .filter((c: { text?: string }) => c.text)
