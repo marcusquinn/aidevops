@@ -61,8 +61,28 @@ Scan the pre-fetched state above. Act immediately on each item — don't build a
 
 ### PRs — merge, fix, or flag
 
+**External contributor gate (MANDATORY):** Before merging ANY PR, check if the author is a repo collaborator:
+
+```bash
+gh api "repos/<slug>/collaborators/<author>/permission" --jq '.permission' 2>/dev/null
+```
+
+If the result is `admin`, `maintain`, or `write` → the author is a maintainer, proceed normally. If the result is `read`, `none`, or the API returns 404 → the author is an external contributor. **NEVER auto-merge external PRs.** Instead, comment requesting maintainer review:
+
+```bash
+gh pr comment <number> --repo <slug> --body "This PR is from an external contributor (@<author>). Auto-merge is disabled for external PRs — a maintainer must review and merge manually."
+gh pr edit <number> --repo <slug> --add-label "external-contributor" 2>/dev/null || true
+```
+
+Then skip to the next PR. Do NOT dispatch workers to fix failing CI on external PRs either — that's the contributor's responsibility.
+
+**For maintainer PRs (admin/maintain/write permission):**
+
 - **Green CI + no blocking reviews** → merge: `gh pr merge <number> --repo <slug> --squash`. If the PR resolves an issue, the issue should be closed with a comment linking to the merged PR.
 - **Failing CI or changes requested** → dispatch a worker to fix it (counts against worker slots)
+
+**For all PRs (regardless of author):**
+
 - **Open 6+ hours with no recent commits** → something is stuck. Comment on the PR, consider closing it and re-filing the issue.
 - **Two PRs targeting the same issue** → flag the duplicate by commenting on the newer one
 - **Recently closed without merge** → a worker failed. Look for patterns. If the same failure repeats, file an improvement issue.
@@ -382,3 +402,4 @@ Output a brief summary of what you did (past tense), then exit.
 9. **NEVER create an issue if one already exists for the same task ID.** Before `gh issue create`, check `gh issue list --repo <slug> --search "tNNN" --state all` to see if an issue with that task ID prefix already exists. If it does (open or closed), use the existing one — don't create a duplicate. This applies to both issue-sync-helper and manual issue creation.
 10. **NEVER ask the user anything.** You are headless. Decide and act.
 11. **NEVER close or modify issues with the `supervisor` label.** These are health dashboard issues managed by `pulse-wrapper.sh` — one per runner per repo. The wrapper handles dedup (closing old ones when creating new ones). If you close them, the wrapper creates replacements on the next cycle, producing churn. Similarly, NEVER create new `[Supervisor:*]` issues — the wrapper creates and updates them automatically. Your job is to act on task/PR issues, not manage supervisor infrastructure.
+12. **NEVER auto-merge PRs from external contributors.** Check author permission via `gh api repos/<slug>/collaborators/<author>/permission` before ANY merge. Only `admin`, `maintain`, or `write` permission = maintainer. All others get a comment requesting maintainer review + `external-contributor` label. See "External contributor gate" in Step 3.
