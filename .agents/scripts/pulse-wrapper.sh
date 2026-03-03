@@ -748,7 +748,7 @@ cleanup_worktrees() {
 			clean_result=$(cd "$repo_path" && bash "$helper" clean --auto --force-merged 2>&1) || true
 
 			local count
-			count=$(echo "$clean_result" | grep -c 'Removing' || echo "0")
+			count=$(echo "$clean_result" | grep -c 'Removing') || count=0
 			if [[ "$count" -gt 0 ]]; then
 				local repo_name
 				repo_name=$(basename "$repo_path")
@@ -760,8 +760,10 @@ cleanup_worktrees() {
 		# Fallback: just clean the current repo (legacy behaviour)
 		local cleaned_output
 		cleaned_output=$(bash "$helper" clean --auto --force-merged 2>&1) || true
-		if echo "$cleaned_output" | grep -q "Removing\|removed"; then
-			echo "[pulse-wrapper] Worktree cleanup: $(echo "$cleaned_output" | grep -c 'Removing') worktree(s) removed" >>"$LOGFILE"
+		local fallback_count
+		fallback_count=$(echo "$cleaned_output" | grep -c 'Removing') || fallback_count=0
+		if [[ "$fallback_count" -gt 0 ]]; then
+			echo "[pulse-wrapper] Worktree cleanup: $fallback_count worktree(s) removed" >>"$LOGFILE"
 		fi
 	fi
 
