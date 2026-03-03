@@ -64,16 +64,18 @@ Scan the pre-fetched state above. Act immediately on each item — don't build a
 **External contributor gate (MANDATORY):** Before merging ANY PR, check if the author is a repo collaborator. The permission check must **fail closed** — if the API call itself fails, do NOT auto-merge and do NOT assume the author is external.
 
 ```bash
-# Capture both output and exit code — do NOT discard stderr blindly
-perm=$(gh api "repos/<slug>/collaborators/<author>/permission" --jq '.permission' 2>/dev/null)
-rc=$?
+# Use -i to capture HTTP headers+body so we can distinguish 200/404/other status codes.
+# Do NOT use --jq here — it suppresses the headers we need.
+response=$(gh api -i "repos/<slug>/collaborators/<author>/permission" 2>&1) || true
+http_status=$(echo "$response" | head -1 | grep -oE '[0-9]{3}' | head -1)
+perm=$(echo "$response" | tail -1 | jq -r '.permission // empty' 2>/dev/null)
 ```
 
 **Three distinct outcomes:**
 
-1. **rc=0 and perm is `admin`, `maintain`, or `write`** → the author is a maintainer. Proceed normally with CI checks and auto-merge.
+1. **http_status=200 and perm is `admin`, `maintain`, or `write`** → the author is a maintainer. Proceed normally with CI checks and auto-merge.
 
-2. **rc=0 and perm is `read` or `none`, OR the API returned 404 (user not a collaborator)** → the author is an external contributor. **NEVER auto-merge external PRs.** Instead, check if this PR has already been flagged and, if not, comment requesting maintainer review:
+2. **http_status=200 and perm is `read` or `none`, OR http_status=404 (user not a collaborator)** → the author is an external contributor. **NEVER auto-merge external PRs.** Instead, check if this PR has already been flagged and, if not, comment requesting maintainer review:
 
 ```bash
 # Idempotency guard: skip if already labelled (pulse runs every 2 minutes)
@@ -85,12 +87,12 @@ fi
 
 Then skip to the next PR. Do NOT dispatch workers to fix failing CI on external PRs either — that's the contributor's responsibility.
 
-3. **rc!=0 and NOT a 404 (i.e., 403, 429, 5xx, auth failure, network error)** → the permission check itself failed. **Fail closed: do NOT auto-merge, do NOT label as external-contributor.** Post a distinct comment asking for manual intervention:
+3. **Any other http_status (403, 429, 5xx) or empty/missing status (network error, auth failure)** → the permission check itself failed. **Fail closed: do NOT auto-merge, do NOT label as external-contributor.** Post a distinct comment asking for manual intervention:
 
 ```bash
 # Only comment once — check for existing permission-failure comment
 if ! gh pr view <number> --repo <slug> --json comments --jq '.comments[].body' 2>/dev/null | grep -qF 'Permission check failed'; then
-  gh pr comment <number> --repo <slug> --body "Permission check failed for this PR (gh api returned exit code $rc). Unable to determine if @<author> is a maintainer or external contributor. **A maintainer must review and merge this PR manually.** This is a fail-closed safety measure — the pulse will not auto-merge until the permission API succeeds."
+  gh pr comment <number> --repo <slug> --body "Permission check failed for this PR (HTTP $http_status from collaborator permission API). Unable to determine if @<author> is a maintainer or external contributor. **A maintainer must review and merge this PR manually.** This is a fail-closed safety measure — the pulse will not auto-merge until the permission API succeeds."
 fi
 ```
 
@@ -422,4 +424,4 @@ Output a brief summary of what you did (past tense), then exit.
 9. **NEVER create an issue if one already exists for the same task ID.** Before `gh issue create`, check `gh issue list --repo <slug> --search "tNNN" --state all` to see if an issue with that task ID prefix already exists. If it does (open or closed), use the existing one — don't create a duplicate. This applies to both issue-sync-helper and manual issue creation.
 10. **NEVER ask the user anything.** You are headless. Decide and act.
 11. **NEVER close or modify issues with the `supervisor` label.** These are health dashboard issues managed by `pulse-wrapper.sh` — one per runner per repo. The wrapper handles dedup (closing old ones when creating new ones). If you close them, the wrapper creates replacements on the next cycle, producing churn. Similarly, NEVER create new `[Supervisor:*]` issues — the wrapper creates and updates them automatically. Your job is to act on task/PR issues, not manage supervisor infrastructure.
-12. **NEVER auto-merge PRs from external contributors or when the permission check fails.** Check author permission via `gh api repos/<slug>/collaborators/<author>/permission` before ANY merge. Only `admin`, `maintain`, or `write` permission = maintainer. `read`/`none`/404 = external contributor (comment + label). API failure (403/429/5xx/network) = fail closed (distinct comment requesting manual intervention, no label, no merge). See "External contributor gate" in Step 3.
+12. **NEVER auto-merge PRs from external contributors or when the permission check fails.** Check author permission via `gh api -i repos/<slug>/collaborators/<author>/permission` before ANY merge — use `-i` to capture the HTTP status code. Only HTTP 200 with `admin`, `maintain`, or `write` permission = maintainer. HTTP 200 with `read`/`none`, or HTTP 404 = external contributor (comment + label). Any other HTTP status (403/429/5xx) or network failure = fail closed (distinct comment requesting manual intervention, no label, no merge). See "External contributor gate" in Step 3.
