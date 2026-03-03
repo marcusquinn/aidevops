@@ -121,6 +121,7 @@ check_dependencies() {
 # CREDENTIAL MANAGEMENT
 # ------------------------------------------------------------------------------
 
+# shellcheck disable=SC2120 # Optional arg with default — callers use the default
 load_credentials() {
 	local env_file="${1:-.env}"
 
