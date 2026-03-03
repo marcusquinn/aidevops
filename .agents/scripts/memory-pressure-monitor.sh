@@ -7,7 +7,7 @@
 #
 # Usage:
 #   memory-pressure-monitor.sh              # Single check (for launchd)
-#   memory-pressure-monitor.sh --daemon     # Continuous monitoring (30s interval)
+#   memory-pressure-monitor.sh --daemon     # Continuous monitoring (60s interval)
 #   memory-pressure-monitor.sh --status     # Print current memory state
 #   memory-pressure-monitor.sh --install    # Install launchd plist
 #   memory-pressure-monitor.sh --uninstall  # Remove launchd plist
@@ -33,7 +33,7 @@ readonly WARN_THRESHOLD="${MEMORY_WARN_THRESHOLD:-40}"
 readonly CRIT_THRESHOLD="${MEMORY_CRIT_THRESHOLD:-20}"
 readonly COOLDOWN_SECS="${MEMORY_COOLDOWN_SECS:-300}"
 readonly NOTIFY_ENABLED="${MEMORY_NOTIFY:-true}"
-readonly DAEMON_INTERVAL=30
+readonly DAEMON_INTERVAL=60
 
 readonly LOG_DIR="${MEMORY_LOG_DIR:-${HOME}/.aidevops/logs}"
 readonly LOG_FILE="${LOG_DIR}/memory-pressure.log"
@@ -320,7 +320,7 @@ cmd_install() {
 		<string>${script_path}</string>
 	</array>
 	<key>StartInterval</key>
-	<integer>30</integer>
+	<integer>60</integer>
 	<key>StandardOutPath</key>
 	<string>${LOG_DIR}/memory-pressure-launchd.log</string>
 	<key>StandardErrorPath</key>
@@ -352,7 +352,7 @@ PLIST
 	echo "Installed and loaded: ${LAUNCHD_LABEL}"
 	echo "Plist: ${PLIST_PATH}"
 	echo "Log: ${LOG_FILE}"
-	echo "Check interval: 30 seconds"
+	echo "Check interval: 60 seconds"
 }
 
 cmd_uninstall() {
@@ -393,8 +393,8 @@ main() {
 		echo ""
 		echo "  --check     Single check (default, for launchd)"
 		echo "  --status    Print current memory state and monitor status"
-		echo "  --daemon    Continuous monitoring (30s interval)"
-		echo "  --install   Install launchd plist (runs every 30s)"
+		echo "  --daemon    Continuous monitoring (60s interval)"
+		echo "  --install   Install launchd plist (runs every 60s)"
 		echo "  --uninstall Remove launchd plist and state files"
 		echo ""
 		echo "Environment:"
