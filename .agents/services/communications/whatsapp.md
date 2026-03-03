@@ -20,13 +20,13 @@ tools:
 
 - **Type**: WhatsApp Web API client — unofficial, reverse-engineered protocol
 - **Library**: [Baileys](https://github.com/WhiskeySockets/Baileys) (TypeScript, MIT, 10K+ stars)
-- **Runtime**: Node.js 18+ or Bun
+- **Runtime**: Node.js 20+ or Bun
 - **Protocol**: WhatsApp multi-device (linked device, no phone required after pairing)
 - **Encryption**: Signal Protocol E2E for message content (implemented by WhatsApp, not Baileys)
 - **Auth**: QR code scan or pairing code from WhatsApp mobile app
-- **Session store**: Pluggable — file, SQLite, Redis, PostgreSQL
+- **Session store**: File-based example (`useMultiFileAuthState`) included; SQLite, Redis, PostgreSQL require custom `AuthenticationState` implementation
 - **Docs**: https://github.com/WhiskeySockets/Baileys | https://whiskeysockets.github.io/Baileys/
-- **npm**: `@whiskeysockets/baileys`
+- **npm**: `baileys` (formerly `@whiskeysockets/baileys`, which may stop receiving updates)
 
 **Key differentiator**: Baileys connects as a linked device to an existing WhatsApp account, giving access to the full WhatsApp feature set (DMs, groups, media, reactions, polls, status broadcasts) without the WhatsApp Business API's approval process or per-conversation pricing. However, it is unofficial and carries ToS violation risk.
 
@@ -114,10 +114,10 @@ tools:
 
 ```bash
 # npm
-npm install @whiskeysockets/baileys
+npm install baileys
 
 # Bun (recommended — faster, native WebSocket)
-bun add @whiskeysockets/baileys
+bun add baileys
 
 # Optional: better performance for protobuf
 npm install @bufbuild/protobuf
@@ -127,7 +127,7 @@ npm install @bufbuild/protobuf
 
 | Package | Purpose | Required |
 |---------|---------|----------|
-| `@whiskeysockets/baileys` | WhatsApp Web API client | Yes |
+| `baileys` | WhatsApp Web API client | Yes |
 | `qrcode-terminal` | QR code display in terminal | Yes (for QR linking) |
 | `pino` | Logging (Baileys uses pino internally) | Yes |
 | `link-preview-js` | URL preview generation | Optional |
@@ -143,7 +143,7 @@ import makeWASocket, {
   WASocket,
   proto,
   downloadMediaMessage,
-} from "@whiskeysockets/baileys"
+} from "baileys"
 import { Boom } from "@hapi/boom"
 import pino from "pino"
 import QRCode from "qrcode-terminal"
@@ -177,7 +177,7 @@ async function startBot(): Promise<void> {
       const shouldReconnect = reason !== DisconnectReason.loggedOut
       console.log(`Connection closed: ${reason}. Reconnect: ${shouldReconnect}`)
       if (shouldReconnect) {
-        startBot() // Recursive reconnect
+        setTimeout(() => startBot(), 3000) // Reconnect after backoff delay
       }
     }
 
@@ -237,7 +237,7 @@ const sock = makeWASocket({
 
 // Request pairing code for a phone number
 if (!sock.authState.creds.registered) {
-  const code = await sock.requestPairingCode("+1234567890")
+  const code = await sock.requestPairingCode("1234567890")
   console.log(`Enter this code on your phone: ${code}`)
   // User enters code in WhatsApp > Linked Devices > Link with phone number
 }
@@ -251,10 +251,11 @@ After initial QR/pairing, the session is stored in the auth state directory. Sub
 // File-based (default — simple, good for single instance)
 const { state, saveCreds } = await useMultiFileAuthState("./auth_info")
 
-// Custom store (SQLite, Redis, PostgreSQL — for production)
-// Implement AuthenticationState interface:
+// Custom store (production — requires your own implementation)
+// Implement AuthenticationState interface for SQLite, Redis, or PostgreSQL:
 // - get/set for creds (SignalIdentity)
 // - get/set/delete for keys (pre-keys, sessions, sender-keys)
+// Note: useMultiFileAuthState is a non-production example only
 ```
 
 **Session invalidation**: WhatsApp may invalidate linked device sessions after ~14 days of inactivity or if the primary phone unlinks the device. Monitor `connection.update` for `DisconnectReason.loggedOut` and alert for re-linking.
@@ -372,7 +373,7 @@ await sock.sendMessage(jid, {
 ### Downloading Media
 
 ```typescript
-import { downloadMediaMessage } from "@whiskeysockets/baileys"
+import { downloadMediaMessage } from "baileys"
 import { writeFileSync } from "fs"
 
 sock.ev.on("messages.upsert", async ({ messages }) => {
@@ -662,7 +663,7 @@ Baileys does not implement encryption itself — it uses WhatsApp's built-in Sig
 ### Command Router Pattern
 
 ```typescript
-import { WASocket, proto } from "@whiskeysockets/baileys"
+import { WASocket, proto } from "baileys"
 
 interface CommandContext {
   sock: WASocket
@@ -753,7 +754,7 @@ async function handleMessage(
 ### Runner Dispatch via Shell
 
 ```typescript
-import { execSync } from "child_process"
+import { execFileSync } from "child_process"
 
 async function dispatchToRunner(
   runner: string,
@@ -761,11 +762,11 @@ async function dispatchToRunner(
   sender: string,
 ): Promise<string> {
   try {
-    // Sanitize input — treat all inbound messages as untrusted
-    const sanitized = prompt.replace(/[`$\\]/g, "")
-
-    const result = execSync(
-      `runner-helper.sh dispatch "${runner}" "${sanitized}"`,
+    // execFileSync bypasses the shell entirely — no injection risk
+    // Arguments are passed as an array, never interpolated into a command string
+    const result = execFileSync(
+      "./runner-helper.sh",
+      ["dispatch", runner, prompt],
       {
         timeout: 120_000,
         encoding: "utf-8",
@@ -786,12 +787,14 @@ async function dispatchToRunner(
 
 ### Security for Runner Dispatch
 
-1. **Treat all inbound messages as untrusted input** — sanitize before passing to runners
-2. **Scan for prompt injection**: `prompt-guard-helper.sh scan "$message"` before dispatch
-3. **Command sandboxing** — runner commands should run in restricted environments
-4. **Credential isolation** — never expose secrets to chat context or tool output
-5. **Leak detection** — scan outbound messages for credential patterns before sending
-6. **Per-group permissions** — different groups can have different command access levels
+1. **Use `execFileSync` with argument arrays** — never `execSync` with string interpolation. `execFileSync` bypasses the shell entirely, eliminating injection via `;`, `|`, `&&`, `$()`, backticks, and all other shell metacharacters. No input sanitization regex can match this level of safety.
+2. **Treat all inbound messages as untrusted input** — even with `execFileSync`, validate that runner names match an allowlist and prompts don't exceed length limits
+3. **Scan for prompt injection**: `prompt-guard-helper.sh scan "$message"` before dispatch
+4. **Prefer JSON IPC over shell dispatch** — for complex payloads, write a JSON file and pass the path as an argument, or use stdin piping with `execFileSync` (set `input` option). This avoids argument length limits and encoding issues.
+5. **Command sandboxing** — runner commands should run in restricted environments
+6. **Credential isolation** — never expose secrets to chat context or tool output
+7. **Leak detection** — scan outbound messages for credential patterns before sending
+8. **Per-group permissions** — different groups can have different command access levels
 
 Cross-reference: `tools/security/prompt-injection-defender.md`, `tools/credentials/gopass.md`
 
@@ -830,10 +833,10 @@ The default Matterbridge binary does not include WhatsApp multi-device support d
 
 ```bash
 # Build with WhatsApp multidevice support
-go install -tags whatsappmulti github.com/42wim/matterbridge@master
+go install -tags whatsappmulti github.com/42wim/matterbridge@latest
 
 # Without MS Teams (saves ~2.5GB RAM during build) + with WhatsApp
-go install -tags nomsteams,whatsappmulti github.com/42wim/matterbridge@master
+go install -tags nomsteams,whatsappmulti github.com/42wim/matterbridge@latest
 ```
 
 ### First Run (QR Pairing)
@@ -874,8 +877,8 @@ sock.ev.on("connection.update", (update) => {
         console.error("Logged out. Delete auth_info/ and restart for new QR.")
         break
       case DisconnectReason.restartRequired:
-        // Normal restart — reconnect immediately
-        startBot()
+        // Normal restart — reconnect after short delay to avoid stack growth
+        setTimeout(() => startBot(), 1000)
         break
       case DisconnectReason.connectionClosed:
       case DisconnectReason.connectionLost:
