@@ -462,9 +462,28 @@ See `tools/security/opsec.md` for full platform trust matrix and threat modeling
 
 ## Related
 
+### Platforms with native Matterbridge support
+
 - `services/communications/matrix-bot.md` — Matrix bot for aidevops runner dispatch
-- `services/communications/simplex.md` — SimpleX install, bot API, self-hosted servers
+- `services/communications/simplex.md` — SimpleX (via custom adapter)
+- `services/communications/telegram.md` — Telegram Bot API
+- `services/communications/signal.md` — Signal (via signal-cli)
+- `services/communications/whatsapp.md` — WhatsApp (via whatsmeow)
+- `services/communications/slack.md` — Slack Bot API
+- `services/communications/discord.md` — Discord Bot API
+- `services/communications/msteams.md` — MS Teams (webhook/Bot Framework)
+- `services/communications/nextcloud-talk.md` — Nextcloud Talk API
+
+### Platforms without native Matterbridge support
+
+- `services/communications/nostr.md` — Nostr (would require custom gateway)
+- `services/communications/imessage.md` — iMessage (would require BlueBubbles gateway)
+- `services/communications/google-chat.md` — Google Chat (would require custom gateway)
+- `services/communications/urbit.md` — Urbit (would require Eyre HTTP gateway)
+
+### Other
+
 - `services/communications/bitchat.md` — Bitchat (Bluetooth mesh, offline P2P)
 - `services/communications/xmtp.md` — XMTP (Web3 messaging, agent SDK, payments)
-- `tools/security/opsec.md` — Platform trust matrix, E2E status, metadata warnings
+- `tools/security/opsec.md` — Platform trust matrix, privacy comparison, AI training risks
 - `tools/ai-assistants/headless-dispatch.md` — Headless dispatch patterns

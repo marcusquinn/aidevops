@@ -70,19 +70,54 @@ AI agents that process untrusted content (web pages, MCP tool outputs, user uplo
 
 ## Platform Trust Matrix
 
-### Messaging Platforms
+### Messaging Platforms — Privacy Comparison
 
-| Platform | E2E Default | Metadata | Training on data | Server location | Self-host |
-|----------|-------------|----------|-----------------|-----------------|-----------|
-| **SimpleX** | Yes (all) | Minimal (no user IDs) | No | Self-hostable | Yes |
-| **Signal** | Yes (all) | Phone number required | No | US (Open Whisper) | Partial (server) |
-| **Matrix/Element** | Optional (E2E rooms) | Room membership visible to server | No | Self-hostable | Yes |
-| **iMessage** | Yes (Apple-to-Apple) | iCloud backup breaks E2E | No | Apple (US) | No |
-| **WhatsApp** | Yes (messages) | Metadata to Meta | No | Meta (US) | No |
-| **Telegram** | No (default) | All to Telegram | No | Dubai/US | No |
-| **Discord** | No | All to Discord | Yes (ToS) | US | No |
-| **Slack** | No | All to Salesforce | Yes (Enterprise AI) | US | No |
-| **Teams** | No | All to Microsoft | Yes (M365 Copilot) | US/EU | Partial |
+| Platform | E2E Default | E2E Scope | Metadata Exposure | Phone/Email Required | Push Notification Privacy | AI Training Policy | Open Source | Self-Hostable | Bot API Maturity |
+|----------|-------------|-----------|-------------------|---------------------|--------------------------|-------------------|-------------|---------------|-----------------|
+| **SimpleX** | Yes | All messages | Minimal (no user IDs, stateless relays) | No | Self-hosted push proxy available | None — non-profit, no data access | Client + server + protocol | Yes (SMP + XFTP) | Growing (WebSocket) |
+| **Signal** | Yes | All messages | Minimal (sealed sender, phone hash only) | Phone number | Minimal (no content in push) | None — 501(c)(3) non-profit | Client + server | Partial (server) | Unofficial (signal-cli) |
+| **Matrix/Element** | Optional | Per-room (Megolm) | Room membership visible to homeserver | Optional | Depends on homeserver config | None — protocol is open | Client + server + protocol | Yes (Synapse/Dendrite) | Mature (SDK, bridges) |
+| **Nextcloud Talk** | Partial | 1:1 calls (WebRTC) | Your server only — no third party | Nextcloud account | Self-hosted push proxy | None — you own the server | Client + server (AGPL-3.0) | Yes (full stack) | Growing (webhook) |
+| **XMTP** | Yes | All messages | Wallet address (pseudonymous) | No (wallet-based) | Varies by client | None — protocol is open | Protocol + SDK | Partial (nodes) | Growing |
+| **Bitchat** | Yes | All messages | Bitcoin identity (pseudonymous) | No | None (P2P) | None — protocol is open | Full stack | Yes (P2P) | Experimental |
+| **Nostr** | Partial | DMs only (NIP-04/44) | Pubkeys + timestamps visible to relays | No (keypair only) | None (client polling) | None from protocol — relay-dependent | Protocol + clients | Yes (relays) | Growing |
+| **Urbit** | Yes | All inter-ship | Ship-to-ship only — no central metadata | No (Urbit ID) | None (always-on ship) | None — fully sovereign | Runtime + OS (MIT) | Yes (personal server) | Experimental |
+| **iMessage** | Yes | Apple-to-Apple only | Apple sees metadata; iCloud backup risk | Apple ID | APNs (Apple sees metadata) | No (Apple policy) | Closed source | No | Unofficial (BlueBubbles) |
+| **Telegram** | No | Secret Chats only (not bots/groups) | Telegram sees all non-Secret-Chat data | Phone number | FCM/APNs (metadata exposed) | Unclear — AI features exist | Client only (GPLv2) | No | Official (Bot API) |
+| **WhatsApp** | Yes | Message content only | Extensive metadata to Meta (social graph, usage, device) | Phone number | FCM/APNs (metadata exposed) | Yes — Meta uses metadata for AI/ads | Closed source | No | Unofficial (Baileys) |
+| **Slack** | No | None | Full access by Salesforce + workspace admins | Email | FCM/APNs (content in preview) | Yes — default ON, admin must opt out | Closed source | No | Official (Bolt SDK) |
+| **Discord** | No | None | Full access by Discord Inc. | Email | FCM/APNs (content in preview) | Yes — data used for AI features | Closed source | No | Official (discord.js) |
+| **Google Chat** | No | None | Full access by Google + workspace admins | Google account | FCM (Google sees everything) | Yes — Gemini processes chat data | Closed source | No | Official (Chat API) |
+| **MS Teams** | No | None | Full access by Microsoft + tenant admins | M365 account | WNS/FCM/APNs | Yes — Copilot processes chat data | Closed source | No | Official (Bot Framework) |
+
+### Privacy Tiers — Threat Model Recommendations
+
+| Threat Tier | Recommended Platforms | Avoid |
+|-------------|----------------------|-------|
+| **T1** (data brokers) | Any E2E platform + VPN | Unencrypted email, SMS |
+| **T2** (platform operator) | Signal, SimpleX, Matrix (self-hosted), Nextcloud Talk | Slack, Discord, Teams, Google Chat |
+| **T3** (network observer) | SimpleX, Signal + Mullvad VPN, Nostr + Tor | Any platform without E2E |
+| **T4** (nation-state) | SimpleX (no identifiers), Urbit (sovereign), Nostr (censorship-resistant) | Any platform requiring phone/email, any closed-source server |
+| **T5** (physical access) | SimpleX (disappearing messages) + full-disk encryption | Any platform with cloud backups enabled |
+
+### AI Training Risk Summary
+
+Platforms that use or may use your data for AI training:
+
+| Platform | AI Training Status | What's Processed | How to Opt Out |
+|----------|-------------------|-----------------|----------------|
+| **Slack** | Default ON | All messages for AI/ML models | Workspace admin must email Slack to opt out |
+| **Discord** | Active | Messages for AI features (summaries, Clyde) | User settings > Privacy > toggle off |
+| **Google Chat** | Active (Gemini) | Chat content for Gemini AI | Workspace admin disables Gemini features |
+| **MS Teams** | Active (Copilot) | Chat content for Copilot | Tenant admin configures Copilot access |
+| **WhatsApp** | Metadata only | Metadata for ad targeting + AI; Business API messages for AI | Cannot opt out of metadata collection |
+| **Telegram** | Unclear | Unknown — AI features exist (translation, etc.) | No known opt-out |
+| **Signal** | Never | Nothing | N/A — non-profit, no data access |
+| **SimpleX** | Never | Nothing | N/A — no data access possible |
+| **Nextcloud Talk** | Never (self-hosted) | Nothing leaves your server | N/A — you control everything |
+| **Matrix** | Never (protocol) | Nothing (self-hosted homeserver) | N/A — you control the server |
+| **Nostr** | Never (protocol) | Nothing from protocol | N/A — relay operators set own policies |
+| **Urbit** | Never | Nothing | N/A — fully sovereign |
 
 ### SimpleX vs Matrix Comparison
 
@@ -267,10 +302,35 @@ sudo fwupdmgr update
 
 ## Related
 
+### Security Tools
+
 - `tools/security/prompt-injection-defender.md` — Prompt injection defense for AI agents and agentic apps
-- `services/communications/simplex.md` — SimpleX install, bot API, self-hosted servers
 - `tools/security/tirith.md` — Terminal command security guard
 - `tools/credentials/encryption-stack.md` — gopass, SOPS, gocryptfs
 - `tools/credentials/gopass.md` — Secret management
 - `tools/browser/browser-automation.md` — Playwright, CamoFox integration
-- `services/communications/matterbridge.md` — Multi-platform chat bridging (security warnings)
+
+### Communications — Privacy-First (recommended for T2-T4)
+
+- `services/communications/simplex.md` — SimpleX: zero-knowledge, no user IDs, E2E everything
+- `services/communications/signal.md` — Signal: gold standard E2E, minimal metadata, non-profit
+- `services/communications/matrix-bot.md` — Matrix: self-hosted, federated, E2E per-room
+- `services/communications/nextcloud-talk.md` — Nextcloud Talk: self-hosted, you own everything
+- `services/communications/nostr.md` — Nostr: decentralized, censorship-resistant, keypair identity
+- `services/communications/urbit.md` — Urbit: maximum sovereignty, personal server OS
+- `services/communications/xmtp.md` — XMTP: wallet-based E2E messaging
+- `services/communications/bitchat.md` — Bitchat: Bitcoin-identity P2P messaging
+
+### Communications — Mainstream (T1 only, AI training risks)
+
+- `services/communications/telegram.md` — Telegram: no default E2E, server-side storage, unclear AI policy
+- `services/communications/whatsapp.md` — WhatsApp: E2E content but extensive Meta metadata harvesting
+- `services/communications/imessage.md` — iMessage: Apple E2E, iCloud backup risk, closed source
+- `services/communications/slack.md` — Slack: no E2E, AI training default-on, full admin access
+- `services/communications/discord.md` — Discord: no E2E, AI features process content
+- `services/communications/google-chat.md` — Google Chat: no E2E, Gemini processes chat data
+- `services/communications/msteams.md` — MS Teams: no E2E, Copilot processes chat data
+
+### Bridging
+
+- `services/communications/matterbridge.md` — Multi-platform chat bridging (security warnings — bridging reduces privacy to the weakest link)
