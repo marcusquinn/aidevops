@@ -219,21 +219,27 @@ const commands = [
     .setDescription("Check bot and runner status"),
 ].map((cmd) => cmd.toJSON());
 
-const rest = new REST().setToken(process.env.DISCORD_BOT_TOKEN!);
+const token = process.env.DISCORD_BOT_TOKEN;
+const appId = process.env.DISCORD_APP_ID;
+if (!token || !appId) {
+  throw new Error("DISCORD_BOT_TOKEN and DISCORD_APP_ID must be set");
+}
+
+const rest = new REST().setToken(token);
 
 // Register globally (takes up to 1 hour to propagate)
-await rest.put(Routes.applicationCommands(process.env.DISCORD_APP_ID!), {
+await rest.put(Routes.applicationCommands(appId), {
   body: commands,
 });
 
 // Or register per-guild (instant, good for development)
-await rest.put(
-  Routes.applicationGuildCommands(
-    process.env.DISCORD_APP_ID!,
-    "GUILD_ID"
-  ),
-  { body: commands }
-);
+const guildId = process.env.DISCORD_GUILD_ID;
+if (guildId) {
+  await rest.put(
+    Routes.applicationGuildCommands(appId, guildId),
+    { body: commands }
+  );
+}
 ```
 
 ### Handling Commands
@@ -652,17 +658,20 @@ Users should assume:
 ### Dispatch Pattern
 
 ```typescript
-import { execSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 async function dispatchToRunner(
   runner: string,
   prompt: string
 ): Promise<string> {
-  // Sanitize prompt (remove potential injection)
-  const sanitized = prompt.replace(/[`$\\]/g, "");
-
-  const result = execSync(
-    `runner-helper.sh dispatch "${runner}" "${sanitized}"`,
+  // Use execFile with array args to prevent command injection
+  // (never use execSync with string interpolation)
+  const { stdout } = await execFileAsync(
+    "runner-helper.sh",
+    ["dispatch", runner, prompt],
     {
       encoding: "utf-8",
       timeout: 600_000, // 10 minutes
@@ -670,7 +679,7 @@ async function dispatchToRunner(
     }
   );
 
-  return result.trim();
+  return stdout.trim();
 }
 ```
 

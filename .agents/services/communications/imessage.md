@@ -161,13 +161,12 @@ BlueBubbles exposes a comprehensive REST API. All requests require the server pa
 #### Authentication
 
 ```bash
-# Query parameter authentication
-curl "http://localhost:1234/api/v1/chat?password=YOUR_PASSWORD"
-
-# Or header authentication
+# Header authentication (recommended — avoids password in URL/logs)
 curl -H "Authorization: Bearer YOUR_PASSWORD" \
   "http://localhost:1234/api/v1/chat"
 ```
+
+> **Security note**: BlueBubbles also supports `?password=` query parameter authentication, but this is **not recommended** — query strings are logged by web servers, proxies, and browser history. Always use the `Authorization` header instead.
 
 #### Key Endpoints
 
@@ -189,37 +188,37 @@ curl -H "Authorization: Bearer YOUR_PASSWORD" \
 # Send text message to individual
 curl -X POST "http://localhost:1234/api/v1/message/text" \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_PASSWORD" \
   -d '{
     "chatGuid": "iMessage;-;+1234567890",
     "message": "Hello from the bot!",
-    "method": "apple-script",
-    "password": "YOUR_PASSWORD"
+    "method": "apple-script"
   }'
 
 # Send text to group chat
 curl -X POST "http://localhost:1234/api/v1/message/text" \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_PASSWORD" \
   -d '{
     "chatGuid": "iMessage;+;chat123456",
     "message": "Hello group!",
-    "method": "apple-script",
-    "password": "YOUR_PASSWORD"
+    "method": "apple-script"
   }'
 
 # Send attachment
 curl -X POST "http://localhost:1234/api/v1/message/attachment" \
+  -H "Authorization: Bearer YOUR_PASSWORD" \
   -F "chatGuid=iMessage;-;+1234567890" \
-  -F "attachment=@/path/to/file.png" \
-  -F "password=YOUR_PASSWORD"
+  -F "attachment=@/path/to/file.png"
 
 # Send reaction (tapback)
 curl -X POST "http://localhost:1234/api/v1/message/react" \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_PASSWORD" \
   -d '{
     "chatGuid": "iMessage;-;+1234567890",
     "selectedMessageGuid": "p:0/MESSAGE-GUID",
-    "reaction": "love",
-    "password": "YOUR_PASSWORD"
+    "reaction": "love"
   }'
 ```
 

@@ -201,11 +201,13 @@ npm install @slack/bolt
 ```typescript
 import { App } from "@slack/bolt";
 
-const app = new App({
-  token: process.env.SLACK_BOT_TOKEN,       // xoxb-...
-  appToken: process.env.SLACK_APP_TOKEN,     // xapp-... (Socket Mode)
-  socketMode: true,
-});
+const token = process.env.SLACK_BOT_TOKEN;       // xoxb-...
+const appToken = process.env.SLACK_APP_TOKEN;     // xapp-... (Socket Mode)
+if (!token || !appToken) {
+  throw new Error("SLACK_BOT_TOKEN and SLACK_APP_TOKEN must be set");
+}
+
+const app = new App({ token, appToken, socketMode: true });
 
 // Listen for messages mentioning the bot
 app.event("app_mention", async ({ event, say }) => {
@@ -583,11 +585,13 @@ When a Slack user sends a message, the bot resolves their Slack user ID to an en
 
 `~/.config/aidevops/slack-bot.json` (600 permissions):
 
+> **Security**: Store `botToken`, `appToken`, and `signingSecret` in gopass (`aidevops secret set slack-bot-token`), not in this JSON file. Reference them via environment variables or `credentials.sh`. The values below are placeholders only.
+
 ```json
 {
-  "botToken": "xoxb-...",
-  "appToken": "xapp-...",
-  "signingSecret": "",
+  "botToken": "stored-in-gopass",
+  "appToken": "stored-in-gopass",
+  "signingSecret": "stored-in-gopass",
   "socketMode": true,
   "allowedChannels": ["C04ABCDEF", "C04GHIJKL"],
   "allowedUsers": [],

@@ -520,9 +520,9 @@ bot.command("run", adminOnly, async (ctx) => {
 
   await ctx.reply(`Dispatching: ${command}`);
 
-  // Dispatch via runner-helper.sh
+  // Dispatch via runner-helper.sh (use array args to prevent command injection)
   const proc = Bun.spawn(
-    ["bash", "-c", `runner-helper.sh dispatch "${command}"`],
+    ["runner-helper.sh", "dispatch", command],
     { stdout: "pipe", stderr: "pipe" }
   );
   const output = await new Response(proc.stdout).text();
