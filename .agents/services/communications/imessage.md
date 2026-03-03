@@ -406,14 +406,13 @@ fi
 
 check_and_restart() {
   local app_name="$1"
-  local bundle_id="$2"
 
   # Use pgrep -x for exact process name match (avoids substring false positives)
-  if ! pgrep -x "$app_name" > /dev/null 2>&1; then
+  if ! pgrep -x "$app_name" > /dev/null; then
     echo "$(date): $app_name not running, restarting..."
     open -a "$app_name"
     sleep 5
-    if pgrep -x "$app_name" > /dev/null 2>&1; then
+    if pgrep -x "$app_name" > /dev/null; then
       echo "$(date): $app_name restarted successfully"
     else
       echo "$(date): ERROR: Failed to restart $app_name"
@@ -423,8 +422,8 @@ check_and_restart() {
   return 0
 }
 
-check_and_restart "Messages" "com.apple.MobileSMS"
-check_and_restart "BlueBubbles" "com.bluebubbles.server"
+check_and_restart "Messages"      # com.apple.MobileSMS
+check_and_restart "BlueBubbles"   # com.bluebubbles.server
 ```
 
 ## Access Control
