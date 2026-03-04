@@ -288,7 +288,7 @@ Git is the primary audit trail for all work. Every change should be discoverable
 # 9. GitHub discussions: `gh api repos/{slug}/discussions` (if enabled).
 #    Long-form design discussions, RFCs, community Q&A.
 # 10. GitHub wiki: `gh api repos/{slug}/pages` or clone the wiki repo
-#    (`git clone {repo}.wiki.git`). Persistent documentation that may contain
+#    (`git clone https://github.com/{slug}.wiki.git`). Persistent documentation that may contain
 #    architectural decisions, onboarding guides, or historical context.
 #
 # Examples:
