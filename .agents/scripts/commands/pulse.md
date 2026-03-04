@@ -106,12 +106,12 @@ if [[ $label_exit -ne 0 || $comment_exit -ne 0 ]]; then
 elif [[ "$has_label" == "true" || "$has_comment" == "true" ]]; then
   # Already flagged. Re-add label if missing (comment exists but label doesn't).
   if [[ "$has_label" == "false" ]]; then
-    gh api "repos/<slug>/issues/<number>/labels" -X POST -f 'labels[]=external-contributor' 2>/dev/null || true
+    gh api "repos/<slug>/issues/<number>/labels" -X POST -f 'labels[]=external-contributor' || true
   fi
 else
   # Both API calls succeeded AND neither label nor comment exists — safe to post.
   gh pr comment <number> --repo <slug> --body "This PR is from an external contributor (@<author>). Auto-merge is disabled for external PRs — a maintainer must review and merge manually." \
-    && gh api "repos/<slug>/issues/<number>/labels" -X POST -f 'labels[]=external-contributor' 2>/dev/null || true
+    && gh api "repos/<slug>/issues/<number>/labels" -X POST -f 'labels[]=external-contributor' || true
 fi
 ```
 
