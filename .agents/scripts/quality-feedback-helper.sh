@@ -589,7 +589,6 @@ _scan_single_pr() {
 		 elif ($body | test("high-priority\\.svg|severity:.*high|HIGH"; "i")) then "high"
 		 elif ($body | test("medium-priority\\.svg|severity:.*medium|MEDIUM"; "i")) then "medium"
 		 elif ($body | test("low-priority\\.svg|severity:.*low|LOW|nit"; "i")) then "low"
-		 elif ($reviewer == "human") then "medium"
 		 else "medium"
 		 end) as $severity |
 
@@ -636,7 +635,6 @@ _scan_single_pr() {
 		 elif ($body | test("high-priority\\.svg|severity:.*high|HIGH"; "i")) then "high"
 		 elif ($body | test("medium-priority\\.svg|severity:.*medium|MEDIUM"; "i")) then "medium"
 		 elif ($body | test("low-priority\\.svg|severity:.*low|LOW|nit"; "i")) then "low"
-		 elif ($reviewer == "human") then "medium"
 		 else "medium"
 		 end) as $severity |
 
