@@ -1888,12 +1888,17 @@ ${type_breakdown}
 		fi
 	fi
 
-	# --- 5. CodeRabbit trigger (conditional — t1390) ---
+	# --- 5. CodeRabbit trigger (conditional — t1390, t1392) ---
 	# Only trigger @coderabbitai active review when quality degrades:
 	#   - Quality gate status changes to FAIL/ERROR
 	#   - Issue count increases by CODERABBIT_ISSUE_SPIKE+ since last sweep
 	#   - New high/critical severity findings appear
 	# Otherwise post a passive monitoring line to avoid repetitive requests.
+	#
+	# t1392 fix: When prev_gate is UNKNOWN (first run / no state file), the
+	# previous issue count defaults to 0, causing a false "spike" equal to the
+	# total issue count (e.g., 113 - 0 = 113 >= 10 threshold). First run is
+	# now treated as a calibration sweep — save baseline, skip active trigger.
 	local coderabbit_section=""
 	local prev_state
 	prev_state=$(_load_sweep_state "$repo_slug")
@@ -1904,34 +1909,53 @@ ${type_breakdown}
 	[[ "$prev_issues" =~ ^[0-9]+$ ]] || prev_issues=0
 	[[ "$prev_high_critical" =~ ^[0-9]+$ ]] || prev_high_critical=0
 
+	local is_first_run=false
+	if [[ "$prev_gate" == "UNKNOWN" ]]; then
+		is_first_run=true
+	fi
+
 	local issue_delta=$((sweep_total_issues - prev_issues))
 	local high_critical_delta=$((sweep_high_critical - prev_high_critical))
 	local trigger_active=false
 	local trigger_reasons=""
 
-	# Condition 1: Quality gate is failing
-	if [[ "$sweep_gate_status" == "ERROR" || "$sweep_gate_status" == "WARN" ]]; then
-		trigger_active=true
-		trigger_reasons="quality gate ${sweep_gate_status}"
-	fi
-
-	# Condition 2: Issue count spiked by threshold or more
-	if [[ "$issue_delta" -ge "$CODERABBIT_ISSUE_SPIKE" ]]; then
-		trigger_active=true
-		if [[ -n "$trigger_reasons" ]]; then
-			trigger_reasons="${trigger_reasons}, issue spike +${issue_delta}"
-		else
-			trigger_reasons="issue spike +${issue_delta}"
+	if [[ "$is_first_run" == true ]]; then
+		# First run (no previous state): establish baseline, never trigger.
+		# Condition 1 (gate failing) is still checked — a failing gate on
+		# first observation is a real problem, not a delta artifact.
+		if [[ "$sweep_gate_status" == "ERROR" || "$sweep_gate_status" == "WARN" ]]; then
+			trigger_active=true
+			trigger_reasons="quality gate ${sweep_gate_status} (first run)"
 		fi
-	fi
+		# Conditions 2 & 3 (issue spike, new high/critical) are skipped on
+		# first run because there is no valid baseline to compute deltas from.
+	else
+		# Subsequent runs: full delta-based trigger logic.
 
-	# Condition 3: New high/critical severity findings
-	if [[ "$high_critical_delta" -gt 0 ]]; then
-		trigger_active=true
-		if [[ -n "$trigger_reasons" ]]; then
-			trigger_reasons="${trigger_reasons}, +${high_critical_delta} high/critical"
-		else
-			trigger_reasons="+${high_critical_delta} high/critical findings"
+		# Condition 1: Quality gate is failing
+		if [[ "$sweep_gate_status" == "ERROR" || "$sweep_gate_status" == "WARN" ]]; then
+			trigger_active=true
+			trigger_reasons="quality gate ${sweep_gate_status}"
+		fi
+
+		# Condition 2: Issue count spiked by threshold or more
+		if [[ "$issue_delta" -ge "$CODERABBIT_ISSUE_SPIKE" ]]; then
+			trigger_active=true
+			if [[ -n "$trigger_reasons" ]]; then
+				trigger_reasons="${trigger_reasons}, issue spike +${issue_delta}"
+			else
+				trigger_reasons="issue spike +${issue_delta}"
+			fi
+		fi
+
+		# Condition 3: New high/critical severity findings
+		if [[ "$high_critical_delta" -gt 0 ]]; then
+			trigger_active=true
+			if [[ -n "$trigger_reasons" ]]; then
+				trigger_reasons="${trigger_reasons}, +${high_critical_delta} high/critical"
+			else
+				trigger_reasons="+${high_critical_delta} high/critical findings"
+			fi
 		fi
 	fi
 
@@ -1948,9 +1972,13 @@ ${type_breakdown}
 "
 		echo "[pulse-wrapper] CodeRabbit: active review triggered for ${repo_slug} (${trigger_reasons})" >>"$LOGFILE"
 	else
+		local first_run_note=""
+		if [[ "$is_first_run" == true ]]; then
+			first_run_note=" (first run — baseline established)"
+		fi
 		coderabbit_section="### CodeRabbit
 
-_Monitoring: ${sweep_total_issues} issues (delta: ${issue_delta}), gate ${sweep_gate_status}, ${sweep_high_critical} high/critical — no active review needed._
+_Monitoring: ${sweep_total_issues} issues (delta: ${issue_delta}), gate ${sweep_gate_status}, ${sweep_high_critical} high/critical — no active review needed.${first_run_note}_
 "
 	fi
 	tool_count=$((tool_count + 1))
