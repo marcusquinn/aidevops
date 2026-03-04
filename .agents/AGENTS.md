@@ -53,6 +53,13 @@ Every agent session — interactive, worker, or supervisor — should improve th
 
 **Response: create a GitHub issue, not a workaround.** When you observe a systemic problem, file a GitHub issue describing the pattern, root cause hypothesis, and proposed fix. This enters the existing task queue and gets picked up by the next available worker. Never patch around a broken process — fix the process.
 
+**Route to the correct repo.** Not every improvement belongs in the current project. Before creating a self-improvement task, determine whether the problem is project-specific or framework-level:
+
+- **Framework-level** — route to the aidevops repo. Indicators: the observation references files under `~/.aidevops/`, framework scripts (`ai-actions.sh`, `ai-lifecycle.sh`, `supervisor/`, `dispatch.sh`, `pre-edit-check.sh`, helper scripts), agent prompt behaviour, supervisor/pulse logic, or cross-repo orchestration. Use `claim-task-id.sh --repo-path <aidevops-repo-path> --title "description"` and `gh issue create --repo <aidevops-slug>` (resolve the slug from `~/.config/aidevops/repos.json`). The fix belongs in the framework, not in the project that happened to trigger it.
+- **Project-specific** — route to the current repo. Indicators: the observation is about this project's CI, code patterns, dependencies, or domain logic.
+
+If uncertain, ask: "Would this fix apply to every repo the framework manages, or only this one?" Framework-wide problems go to aidevops; project-specific problems stay local. Never create framework tasks in a project repo — they become invisible to framework maintainers and pollute the project's task namespace.
+
 **What counts as self-improvement:**
 - Filing issues for repeated failure patterns
 - Improving agent prompts when workers consistently misunderstand instructions

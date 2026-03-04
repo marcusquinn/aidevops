@@ -200,6 +200,8 @@ Git is the primary audit trail for all work. Every change should be discoverable
 3. Create a GitHub issue: `gh issue create --repo <slug> --title "tNNN: description"`. Record `ref:GH#NNN` in TODO.md. (If `claim-task-id.sh` already created the issue, this step is done.)
 4. Code changes in the current repo still require a worktree + PR as normal.
 
+**Self-improvement repo routing:** When creating self-improvement tasks (see AGENTS.md "Self-Improvement"), route to the correct repo — not the repo you happen to be running in. Heuristic: if the observation references files under `~/.aidevops/`, framework scripts (`ai-actions.sh`, `ai-lifecycle.sh`, `supervisor/`, `dispatch.sh`, `pre-edit-check.sh`, helper scripts), agent prompt behaviour, or supervisor/pulse/orchestration logic, the task belongs in the aidevops repo. Use `claim-task-id.sh --repo-path <aidevops-path>` and `gh issue create --repo <aidevops-slug>`. Project-specific problems (CI, code, dependencies, domain logic) stay in the current repo. Framework tasks filed in project repos are invisible to framework maintainers and pollute the project's ID namespace.
+
 **Git-readiness check:** When working in a project directory that is NOT a git repo, or is a git repo without `TODO.md` / aidevops initialisation, flag this to the user: "This project has no git tracking / no aidevops task management. Work here won't be traceable. Consider `git init` + `aidevops init` to enable the full workflow." Use judgment — a throwaway script directory doesn't need this, but any project with ongoing development does.
 
 **Pre-edit rules:**
