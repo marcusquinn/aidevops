@@ -44,7 +44,7 @@ QUALITY_SWEEP_INTERVAL="${QUALITY_SWEEP_INTERVAL:-86400}" # 24 hours between swe
 # Bash arithmetic evaluates variable contents as expressions, so unsanitised strings
 # like "a[$(cmd)]" would execute arbitrary commands.
 _validate_int() {
-	local name="$1" value="$2" default="$3"
+	local name="$1" value="$2" default="$3" min="${4:-0}"
 	if ! [[ "$value" =~ ^[0-9]+$ ]]; then
 		echo "[pulse-wrapper] Invalid ${name}: ${value} — using default ${default}" >&2
 		printf '%s' "$default"
@@ -52,12 +52,20 @@ _validate_int() {
 	fi
 	# Canonicalize to base-10: strip leading zeros to prevent bash octal interpretation
 	# e.g., "08" (invalid octal) or "01024" (octal 532) become "8" and "1024"
-	printf '%d' "$((10#$value))"
+	local canonical
+	canonical=$(printf '%d' "$((10#$value))")
+	# Enforce minimum to prevent divide-by-zero for divisor-backed settings
+	if ((canonical < min)); then
+		echo "[pulse-wrapper] ${name}=${canonical} below minimum ${min} — using default ${default}" >&2
+		printf '%s' "$default"
+		return 0
+	fi
+	printf '%s' "$canonical"
 	return 0
 }
 PULSE_STALE_THRESHOLD=$(_validate_int PULSE_STALE_THRESHOLD "$PULSE_STALE_THRESHOLD" 1800)
 ORPHAN_MAX_AGE=$(_validate_int ORPHAN_MAX_AGE "$ORPHAN_MAX_AGE" 7200)
-RAM_PER_WORKER_MB=$(_validate_int RAM_PER_WORKER_MB "$RAM_PER_WORKER_MB" 1024)
+RAM_PER_WORKER_MB=$(_validate_int RAM_PER_WORKER_MB "$RAM_PER_WORKER_MB" 1024 1)
 RAM_RESERVE_MB=$(_validate_int RAM_RESERVE_MB "$RAM_RESERVE_MB" 8192)
 MAX_WORKERS_CAP=$(_validate_int MAX_WORKERS_CAP "$MAX_WORKERS_CAP" 8)
 QUALITY_SWEEP_INTERVAL=$(_validate_int QUALITY_SWEEP_INTERVAL "$QUALITY_SWEEP_INTERVAL" 86400)
@@ -1891,6 +1899,10 @@ ${type_breakdown}
 	prev_state=$(_load_sweep_state "$repo_slug")
 	local prev_gate prev_issues prev_high_critical
 	IFS='|' read -r prev_gate prev_issues prev_high_critical <<<"$prev_state"
+	# Validate numeric fields from state file before arithmetic — corrupted or
+	# missing values would cause $(( )) to fail or produce nonsense deltas.
+	[[ "$prev_issues" =~ ^[0-9]+$ ]] || prev_issues=0
+	[[ "$prev_high_critical" =~ ^[0-9]+$ ]] || prev_high_critical=0
 
 	local issue_delta=$((sweep_total_issues - prev_issues))
 	local high_critical_delta=$((sweep_high_critical - prev_high_critical))
