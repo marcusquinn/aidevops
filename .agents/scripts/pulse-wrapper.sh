@@ -1908,15 +1908,25 @@ ${type_breakdown}
 	local high_critical_delta=$((sweep_high_critical - prev_high_critical))
 	local trigger_active=false
 	local trigger_reasons=""
+	local is_baseline_run=false
 
-	# Condition 1: Quality gate is failing
+	# First-run baseline detection (t1392): When prev_gate is UNKNOWN, this is
+	# the first sweep (no state file exists). Deltas are computed against zero,
+	# which makes any non-zero current value look like a spike. Skip delta-based
+	# triggers on the first run — just save the baseline and post passive status.
+	if [[ "$prev_gate" == "UNKNOWN" ]]; then
+		is_baseline_run=true
+		echo "[pulse-wrapper] CodeRabbit: first run for ${repo_slug} — establishing baseline (gate=${sweep_gate_status}, issues=${sweep_total_issues}, high_critical=${sweep_high_critical})" >>"$LOGFILE"
+	fi
+
+	# Condition 1: Quality gate is failing (always checked, even on baseline)
 	if [[ "$sweep_gate_status" == "ERROR" || "$sweep_gate_status" == "WARN" ]]; then
 		trigger_active=true
 		trigger_reasons="quality gate ${sweep_gate_status}"
 	fi
 
-	# Condition 2: Issue count spiked by threshold or more
-	if [[ "$issue_delta" -ge "$CODERABBIT_ISSUE_SPIKE" ]]; then
+	# Condition 2: Issue count spiked by threshold or more (skip on baseline)
+	if [[ "$is_baseline_run" == false && "$issue_delta" -ge "$CODERABBIT_ISSUE_SPIKE" ]]; then
 		trigger_active=true
 		if [[ -n "$trigger_reasons" ]]; then
 			trigger_reasons="${trigger_reasons}, issue spike +${issue_delta}"
@@ -1925,8 +1935,8 @@ ${type_breakdown}
 		fi
 	fi
 
-	# Condition 3: New high/critical severity findings
-	if [[ "$high_critical_delta" -gt 0 ]]; then
+	# Condition 3: New high/critical severity findings (skip on baseline)
+	if [[ "$is_baseline_run" == false && "$high_critical_delta" -gt 0 ]]; then
 		trigger_active=true
 		if [[ -n "$trigger_reasons" ]]; then
 			trigger_reasons="${trigger_reasons}, +${high_critical_delta} high/critical"
@@ -1948,9 +1958,13 @@ ${type_breakdown}
 "
 		echo "[pulse-wrapper] CodeRabbit: active review triggered for ${repo_slug} (${trigger_reasons})" >>"$LOGFILE"
 	else
+		local baseline_note=""
+		if [[ "$is_baseline_run" == true ]]; then
+			baseline_note=" (baseline established — deltas will be computed from next sweep)"
+		fi
 		coderabbit_section="### CodeRabbit
 
-_Monitoring: ${sweep_total_issues} issues (delta: ${issue_delta}), gate ${sweep_gate_status}, ${sweep_high_critical} high/critical — no active review needed._
+_Monitoring: ${sweep_total_issues} issues (delta: ${issue_delta}), gate ${sweep_gate_status}, ${sweep_high_critical} high/critical — no active review needed.${baseline_note}_
 "
 	fi
 	tool_count=$((tool_count + 1))
