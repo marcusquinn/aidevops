@@ -349,20 +349,23 @@ cmd_pr_lifecycle() {
 					local review_gate_result="UNKNOWN"
 					local review_count_fastpath=""
 					review_count_fastpath=$(gh pr view "$pr_number_fastpath" --repo "$repo_slug_fastpath" \
-						--json reviews --jq '.reviews | length' || echo "")
+						--json reviews --jq '.reviews | length' 2>>"${SUPERVISOR_LOG:-/dev/null}" || echo "")
 
 					# Optional bot-signal gate (PASS/SKIP means bot gate satisfied)
 					local bot_gate_result="WAITING"
 					local review_bot_gate_script
 					review_bot_gate_script="$(dirname "$(dirname "${BASH_SOURCE[0]}")")/review-bot-gate-helper.sh"
 					if [[ -x "$review_bot_gate_script" ]]; then
-						bot_gate_result=$("$review_bot_gate_script" check "$pr_number_fastpath" "$repo_slug_fastpath") || bot_gate_result="WAITING"
+						bot_gate_result=$("$review_bot_gate_script" check "$pr_number_fastpath" "$repo_slug_fastpath" 2>>"${SUPERVISOR_LOG:-/dev/null}") || bot_gate_result="WAITING"
 					fi
 
-					# Determine review gate result: bot gate PASS/SKIP is sufficient,
-					# OR having at least one formal review (human or bot) is sufficient.
-					# Only block when BOTH the bot gate is WAITING AND review count is 0.
-					if [[ "$bot_gate_result" == "PASS" || "$bot_gate_result" == "SKIP" ]]; then
+					# Determine review gate result:
+					# - Bot gate PASS = bot confirmed reviews exist → sufficient
+					# - Bot gate SKIP = label-driven bypass of bot check, NOT proof of reviews
+					#   SKIP only skips the bot gate; the review count check still applies
+					# - review_count > 0 = at least one formal review exists → sufficient
+					# - Otherwise → WAITING (no reviews yet)
+					if [[ "$bot_gate_result" == "PASS" ]]; then
 						review_gate_result="PASS"
 					elif [[ "$review_count_fastpath" =~ ^[0-9]+$ && "$review_count_fastpath" -gt 0 ]]; then
 						review_gate_result="PASS"
@@ -376,7 +379,7 @@ cmd_pr_lifecycle() {
 						local stage_end
 						stage_end=$(date +%s)
 						stage_timings="${stage_timings}pr_review:$((stage_end - stage_start))s(no_reviews),"
-						record_lifecycle_timing "$task_id" "$stage_timings" || true
+						record_lifecycle_timing "$task_id" "$stage_timings" 2>>"${SUPERVISOR_LOG:-/dev/null}" || true
 						return 0
 					fi
 
