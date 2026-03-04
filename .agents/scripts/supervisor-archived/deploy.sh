@@ -342,15 +342,46 @@ cmd_pr_lifecycle() {
 				pr_number_fastpath="${parsed_fastpath##*|}"
 
 				if [[ -n "$pr_number_fastpath" && -n "$repo_slug_fastpath" ]]; then
+					# t2839: Check that at least one review exists before fast-path merge.
+					# Zero reviews means "not yet reviewed", not "clean to merge".
+					# Uses review-bot-gate-helper.sh (t1382) if available, falls back to
+					# gh pr view --json reviews count.
+					local review_gate_result="UNKNOWN"
+					local review_bot_gate_script
+					review_bot_gate_script="$(dirname "$(dirname "${BASH_SOURCE[0]}")")/review-bot-gate-helper.sh"
+					if [[ -x "$review_bot_gate_script" ]]; then
+						review_gate_result=$("$review_bot_gate_script" check "$pr_number_fastpath" "$repo_slug_fastpath" 2>/dev/null) || review_gate_result="WAITING"
+					else
+						# Fallback: count reviews directly via gh API
+						local review_count_fastpath
+						review_count_fastpath=$(gh pr view "$pr_number_fastpath" --repo "$repo_slug_fastpath" \
+							--json reviews --jq '.reviews | length' 2>/dev/null || echo "0")
+						if [[ "$review_count_fastpath" -gt 0 ]]; then
+							review_gate_result="PASS"
+						else
+							review_gate_result="WAITING"
+						fi
+					fi
+
+					if [[ "$review_gate_result" == "WAITING" ]]; then
+						log_info "Fast-path blocked: no reviews posted yet for $task_id — waiting for review before merge (t2839)"
+						# Stay in pr_review state; next pulse will re-check
+						local stage_end
+						stage_end=$(date +%s)
+						stage_timings="${stage_timings}pr_review:$((stage_end - stage_start))s(no_reviews),"
+						record_lifecycle_timing "$task_id" "$stage_timings" 2>/dev/null || true
+						return 0
+					fi
+
 					local threads_json_fastpath
 					threads_json_fastpath=$(check_review_threads "$repo_slug_fastpath" "$pr_number_fastpath" 2>/dev/null || echo "[]")
 					local thread_count_fastpath
 					thread_count_fastpath=$(echo "$threads_json_fastpath" | jq 'length' 2>/dev/null || echo "0")
 
 					if [[ "$thread_count_fastpath" -eq 0 ]]; then
-						log_info "Fast-path: CI green + zero review threads - skipping review_triage, going directly to merge${merge_note}"
+						log_info "Fast-path: CI green + reviews posted + zero unresolved threads - skipping review_triage, going directly to merge${merge_note}"
 						if [[ "$dry_run" == "false" ]]; then
-							db "$SUPERVISOR_DB" "UPDATE tasks SET triage_result = '{\"action\":\"merge\",\"threads\":0,\"fast_path\":true,\"sonarcloud_unstable\":$(if [[ "$pr_status" == "unstable_sonarcloud" ]]; then echo "true"; else echo "false"; fi)}' WHERE id = '$escaped_id';"
+							db "$SUPERVISOR_DB" "UPDATE tasks SET triage_result = '{\"action\":\"merge\",\"threads\":0,\"fast_path\":true,\"review_gate\":\"$review_gate_result\",\"sonarcloud_unstable\":$(if [[ "$pr_status" == "unstable_sonarcloud" ]]; then echo "true"; else echo "false"; fi)}' WHERE id = '$escaped_id';"
 							cmd_transition "$task_id" "merging" 2>>"$SUPERVISOR_LOG" || true
 						fi
 						tstatus="merging"

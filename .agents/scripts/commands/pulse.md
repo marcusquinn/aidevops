@@ -115,7 +115,8 @@ Then skip to the next PR. The next pulse cycle will retry the permission check �
 
 **For maintainer PRs (admin/maintain/write permission):**
 
-- **Green CI + no blocking reviews** → merge: `gh pr merge <number> --repo <slug> --squash`. If the PR resolves an issue, the issue should be closed with a comment linking to the merged PR.
+- **Green CI + at least one review posted + no blocking reviews** → merge: `gh pr merge <number> --repo <slug> --squash`. If the PR resolves an issue, the issue should be closed with a comment linking to the merged PR. **CRITICAL (t2839): Zero reviews means "not yet reviewed", NOT "clean to merge".** Before merging, verify at least one review exists (human or bot). Check with `review-bot-gate-helper.sh check <number> <slug>` — if it returns `WAITING`, skip the PR this cycle. If the script is unavailable, check `gh pr view <number> --repo <slug> --json reviews --jq '.reviews | length'` — if 0, skip. A PR with green CI but zero reviews should be left for the next pulse cycle, not merged.
+- **Green CI + zero reviews** → skip this cycle. Review bots typically post within 2-5 minutes. The next pulse will pick it up once a review exists.
 - **Failing CI or changes requested** → dispatch a worker to fix it (counts against worker slots)
 
 **For all PRs (regardless of author):**
