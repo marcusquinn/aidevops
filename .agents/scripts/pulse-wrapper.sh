@@ -50,7 +50,9 @@ _validate_int() {
 		printf '%s' "$default"
 		return 0
 	fi
-	printf '%s' "$value"
+	# Canonicalize to base-10: strip leading zeros to prevent bash octal interpretation
+	# e.g., "08" (invalid octal) or "01024" (octal 532) become "8" and "1024"
+	printf '%d' "$((10#$value))"
 	return 0
 }
 PULSE_STALE_THRESHOLD=$(_validate_int PULSE_STALE_THRESHOLD "$PULSE_STALE_THRESHOLD" 1800)
@@ -1091,7 +1093,7 @@ ${worker_table}"
 	if [[ -n "${sys_load_1m:-}" && "${sys_cpu_cores:-0}" -gt 0 && "${sys_cpu_cores}" != "?" ]]; then
 		# Validate numeric before passing to awk (prevents awk injection)
 		if [[ "$sys_load_1m" =~ ^[0-9]+\.?[0-9]*$ ]] && [[ "$sys_cpu_cores" =~ ^[0-9]+$ ]]; then
-			sys_load_ratio=$(awk "BEGIN {printf \"%d\", (${sys_load_1m} / ${sys_cpu_cores}) * 100}" 2>/dev/null || echo "?")
+			sys_load_ratio=$(awk "BEGIN {printf \"%d\", (${sys_load_1m} / ${sys_cpu_cores}) * 100}" || echo "?")
 		fi
 	fi
 
@@ -1564,9 +1566,19 @@ _No smells detected or qlty analysis returned empty._
 		org_key=$(grep '^sonar.organization=' "${repo_path}/sonar-project.properties" 2>/dev/null | cut -d= -f2)
 
 		if [[ -n "$project_key" && -n "$org_key" ]]; then
+			# URL-encode project_key to prevent injection via crafted sonar-project.properties
+			local encoded_project_key
+			encoded_project_key=$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))' "$project_key" 2>/dev/null) || encoded_project_key=""
+			if [[ -z "$encoded_project_key" ]]; then
+				echo "[pulse-wrapper] Failed to URL-encode project_key — skipping SonarCloud" >&2
+			fi
+
 			# SonarCloud public API — quality gate status
-			local sonar_status
-			sonar_status=$(curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=${project_key}" || echo "")
+			local sonar_status=""
+			if [[ -n "$encoded_project_key" ]]; then
+				sonar_status=$(curl -sS --fail --connect-timeout 5 --max-time 20 \
+					"https://sonarcloud.io/api/qualitygates/project_status?projectKey=${encoded_project_key}" || echo "")
+			fi
 
 			if [[ -n "$sonar_status" ]] && echo "$sonar_status" | jq -e '.projectStatus' &>/dev/null; then
 				# Single jq pass: extract gate status and conditions together
@@ -1590,8 +1602,11 @@ ${conditions}
 			fi
 
 			# Fetch open issues summary
-			local sonar_issues
-			sonar_issues=$(curl -s "https://sonarcloud.io/api/issues/search?componentKeys=${project_key}&statuses=OPEN,CONFIRMED,REOPENED&ps=1&facets=severities,types" || echo "")
+			local sonar_issues=""
+			if [[ -n "$encoded_project_key" ]]; then
+				sonar_issues=$(curl -sS --fail --connect-timeout 5 --max-time 20 \
+					"https://sonarcloud.io/api/issues/search?componentKeys=${encoded_project_key}&statuses=OPEN,CONFIRMED,REOPENED&ps=1&facets=severities,types" || echo "")
+			fi
 
 			if [[ -n "$sonar_issues" ]] && echo "$sonar_issues" | jq -e '.total' &>/dev/null; then
 				# Single jq pass: extract total, severity breakdown, and type breakdown
@@ -1610,6 +1625,9 @@ ${conditions}
 				if ! [[ "$total_issues" =~ ^[0-9]+$ ]]; then
 					total_issues=0
 				fi
+				# Sanitise API data before embedding in markdown comment
+				severity_breakdown=$(_sanitize_markdown "$severity_breakdown")
+				type_breakdown=$(_sanitize_markdown "$type_breakdown")
 
 				sonar_section="${sonar_section}
 - **Open issues**: ${total_issues}
