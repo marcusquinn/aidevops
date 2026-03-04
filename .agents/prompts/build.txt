@@ -272,19 +272,31 @@ Git is the primary audit trail for all work. Every change should be discoverable
 #    Tables: llm_requests(session_id,model_id,cost,tokens_total,timestamp),
 #    tool_calls(session_id,tool_name,intent,success,duration_ms).
 #
-# Tier 3 — Remote (API calls, need a target):
-# 7. GitHub issue comments: `gh issue view {num} --comments --repo {slug}` or
-#    `gh api repos/{slug}/issues/{num}/comments`. Discussion, review feedback,
-#    decisions made in PR/issue threads — context that never reaches git or memory.
-#    Requires knowing which issue/PR to check (get the number from TODO.md first).
-# 8. GitHub search: `gh search issues "keyword" --repo {slug}` — broad search
-#    across all issues/PRs. Last resort when you don't know the issue number.
+# Tier 3 — Remote targeted (API calls, need a specific number):
+# 7. GitHub issue/PR comments: `gh issue view {num} --comments --repo {slug}`,
+#    `gh pr view {num} --comments --repo {slug}`, or the API equivalents
+#    `gh api repos/{slug}/issues/{num}/comments` and
+#    `gh api repos/{slug}/pulls/{num}/comments` (for inline review comments).
+#    Discussion, review feedback, decisions made in threads — context that never
+#    reaches git or memory. Get the issue/PR number from TODO.md first.
+#
+# Tier 4 — Remote broad (expensive, last resort):
+# 8. GitHub search: `gh search issues "keyword" --repo {slug}` (issues),
+#    `gh search prs "keyword" --repo {slug}` (PRs),
+#    `gh search code "keyword" --repo {slug}` (code). Broad search when you
+#    don't know the issue/PR number.
+# 9. GitHub discussions: `gh api repos/{slug}/discussions` (if enabled).
+#    Long-form design discussions, RFCs, community Q&A.
+# 10. GitHub wiki: `gh api repos/{slug}/pages` or clone the wiki repo
+#    (`git clone {repo}.wiki.git`). Persistent documentation that may contain
+#    architectural decisions, onboarding guides, or historical context.
 #
 # Examples:
 # "Remember that auth fix?" → memory recall + git log.
 # "What did we discuss about the database schema?" → memory recall + transcripts.
 # "How much did last week's batch run cost?" → observability DB.
-# "What did the reviewer say about that PR?" → TODO.md (get PR#) + issue comments.
+# "What did the reviewer say about that PR?" → TODO.md (get PR#) + PR comments.
+# "Was there a discussion about the migration?" → GitHub discussions/wiki.
 
 # Intelligence Over Determinism (CORE PRINCIPLE)
 You are an LLM. You can read an issue body, understand context, assess whether something is blocked, stuck, duplicated, or ready — and act on that understanding. No regex, state machine, or if/then ruleset can do this. The framework exists to give you goals, tools, and boundaries — not to script your decisions.
