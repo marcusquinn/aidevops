@@ -351,7 +351,7 @@ cmd_pr_lifecycle() {
 					review_count_fastpath=$(gh pr view "$pr_number_fastpath" --repo "$repo_slug_fastpath" \
 						--json reviews --jq '.reviews | length' 2>>"${SUPERVISOR_LOG:-/dev/null}" || echo "")
 
-					# Optional bot-signal gate (PASS/SKIP means bot gate satisfied)
+					# Optional bot-signal gate (only PASS is sufficient on its own)
 					local bot_gate_result="WAITING"
 					local review_bot_gate_script
 					review_bot_gate_script="$(dirname "$(dirname "${BASH_SOURCE[0]}")")/review-bot-gate-helper.sh"
