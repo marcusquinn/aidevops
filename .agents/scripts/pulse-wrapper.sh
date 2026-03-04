@@ -1407,6 +1407,7 @@ _ensure_quality_issue() {
 _quality_sweep_for_repo() {
 	local repo_slug="$1"
 	local repo_path="$2"
+	local slug_safe="${repo_slug//\//-}"
 
 	local issue_number
 	issue_number=$(_ensure_quality_issue "$repo_slug") || return 0
@@ -1582,9 +1583,95 @@ ${type_breakdown}
 		fi
 	fi
 
-	# --- 5. CodeRabbit trigger ---
-	# Always include @coderabbitai mention to trigger a full codebase review
-	local coderabbit_section="### CodeRabbit
+	# --- 5. CodeRabbit trigger (conditional — t1390) ---
+	# Only trigger active @coderabbitai review when metrics indicate a problem:
+	#   - Quality gate status changed to FAIL/ERROR
+	#   - Total issue count spiked by 10+ since last sweep
+	#   - New high/critical severity findings appeared
+	# Otherwise, post a passive monitoring line to avoid repetitive review requests.
+	local coderabbit_section=""
+	local _cr_trigger_reason=""
+	local _cr_state_file="${HOME}/.aidevops/logs/quality-sweep-state-${slug_safe}.json"
+
+	# Collect current metrics from sections 1-4 (variables already in scope)
+	local _cr_current_gate="${gate_status:-UNKNOWN}"
+	local _cr_current_sonar_issues="${total_issues:-0}"
+	local _cr_current_sc_errors="${sc_errors:-0}"
+	local _cr_current_sc_warnings="${sc_warnings:-0}"
+	local _cr_current_codacy_issues="${codacy_total:-0}"
+
+	# Count high/critical severity issues from SonarCloud breakdown
+	local _cr_current_high_critical=0
+	if [[ -n "${sonar_issues:-}" ]] && echo "$sonar_issues" | jq -e '.facets' &>/dev/null; then
+		_cr_current_high_critical=$(echo "$sonar_issues" | jq -r '
+			[.facets[]? | select(.property == "severities") | .values[]?
+			 | select(.val == "CRITICAL" or .val == "BLOCKER") | .count] | add // 0
+		' 2>/dev/null) || _cr_current_high_critical=0
+	fi
+
+	# Compute total issue count across all tools for delta comparison
+	local _cr_current_total_issues=$((_cr_current_sonar_issues + _cr_current_sc_errors + _cr_current_codacy_issues))
+
+	# Load previous state
+	local _cr_prev_gate="UNKNOWN"
+	local _cr_prev_total_issues=0
+	local _cr_prev_high_critical=0
+	if [[ -f "$_cr_state_file" ]]; then
+		_cr_prev_gate=$(jq -r '.gate_status // "UNKNOWN"' "$_cr_state_file" 2>/dev/null) || _cr_prev_gate="UNKNOWN"
+		_cr_prev_total_issues=$(jq -r '.total_issues // 0' "$_cr_state_file" 2>/dev/null) || _cr_prev_total_issues=0
+		_cr_prev_high_critical=$(jq -r '.high_critical // 0' "$_cr_state_file" 2>/dev/null) || _cr_prev_high_critical=0
+	fi
+
+	# Decision: should we trigger an active CodeRabbit review?
+	# Condition 1: Quality gate changed to a failing state
+	if [[ "$_cr_current_gate" == "ERROR" || "$_cr_current_gate" == "WARN" ]] &&
+		[[ "$_cr_prev_gate" != "$_cr_current_gate" ]]; then
+		_cr_trigger_reason="quality gate changed to ${_cr_current_gate} (was ${_cr_prev_gate})"
+	fi
+
+	# Condition 2: Total issue count spiked by 10+
+	local _cr_issue_delta=$((_cr_current_total_issues - _cr_prev_total_issues))
+	if [[ "$_cr_issue_delta" -ge 10 ]]; then
+		if [[ -n "$_cr_trigger_reason" ]]; then
+			_cr_trigger_reason="${_cr_trigger_reason}; issue count spiked by +${_cr_issue_delta}"
+		else
+			_cr_trigger_reason="issue count spiked by +${_cr_issue_delta} (${_cr_prev_total_issues} -> ${_cr_current_total_issues})"
+		fi
+	fi
+
+	# Condition 3: New high/critical severity findings
+	local _cr_hc_delta=$((_cr_current_high_critical - _cr_prev_high_critical))
+	if [[ "$_cr_hc_delta" -gt 0 ]]; then
+		if [[ -n "$_cr_trigger_reason" ]]; then
+			_cr_trigger_reason="${_cr_trigger_reason}; +${_cr_hc_delta} new high/critical findings"
+		else
+			_cr_trigger_reason="+${_cr_hc_delta} new high/critical findings (${_cr_prev_high_critical} -> ${_cr_current_high_critical})"
+		fi
+	fi
+
+	# Condition 4: First run (no previous state) — trigger to establish baseline
+	if [[ ! -f "$_cr_state_file" ]]; then
+		_cr_trigger_reason="first sweep — establishing baseline"
+	fi
+
+	# Save current state for next comparison
+	cat >"$_cr_state_file" <<-CRSTATE
+		{
+			"gate_status": "${_cr_current_gate}",
+			"total_issues": ${_cr_current_total_issues},
+			"sonar_issues": ${_cr_current_sonar_issues},
+			"shellcheck_errors": ${_cr_current_sc_errors},
+			"codacy_issues": ${_cr_current_codacy_issues},
+			"high_critical": ${_cr_current_high_critical},
+			"timestamp": "${now_iso}"
+		}
+	CRSTATE
+
+	# Build CodeRabbit section based on decision
+	if [[ -n "$_cr_trigger_reason" ]]; then
+		coderabbit_section="### CodeRabbit
+
+**Trigger**: ${_cr_trigger_reason}
 
 @coderabbitai Please run a full codebase review of this repository. Focus on:
 - Security vulnerabilities and credential exposure
@@ -1592,6 +1679,21 @@ ${type_breakdown}
 - Code duplication and maintainability
 - Documentation accuracy
 "
+		echo "[pulse-wrapper] Quality sweep: CodeRabbit active review triggered — ${_cr_trigger_reason}" >>"$LOGFILE"
+	else
+		# Passive monitoring — no @coderabbitai mention
+		local _cr_delta_display=""
+		if [[ "$_cr_issue_delta" -gt 0 ]]; then
+			_cr_delta_display=" (+${_cr_issue_delta})"
+		elif [[ "$_cr_issue_delta" -lt 0 ]]; then
+			_cr_delta_display=" (${_cr_issue_delta})"
+		fi
+
+		coderabbit_section="### CodeRabbit
+
+_Monitoring: ${_cr_current_total_issues} issues${_cr_delta_display}, gate ${_cr_current_gate}. No active review requested — metrics stable._
+"
+	fi
 	tool_count=$((tool_count + 1))
 
 	# --- 6. Merged PR review scanner ---
