@@ -185,7 +185,7 @@ When referencing specific functions or code include the pattern `file_path:line_
   - `systemctl show <service> --property=Environment`
   - Python/Node/Ruby one-liners that parse files containing credentials (e.g., `python3 -c "import json; print(json.load(open('.env')))"`)
   - `heroku config`, `vercel env pull`, `fly secrets list` (with values)
-  - Any command (including `grep`/`rg`) that prints or reconstructs secret VALUES from files known to contain secrets (`grep`/`rg` patterns that extract KEY NAMES only — e.g., `grep -oP '^[A-Z_]+(?==)' .env` — are allowed; see SAFE examples below)
+  - Disallow `grep`/`rg` (or any command) that may display secret values; allow `grep`/`rg` only when using patterns or processing steps that guarantee values are not printed (see `grep -oP '^[A-Z_]+(?==)' .env`, `printenv | cut -d= -f1`)
 - When debugging env var issues, show key NAMES only, never values:
   - SAFE: `pm2 show <app> --json | jq -r '.[0].pm2_env | keys_unsorted[]'` (key names only, robust)
   - SAFE: `printenv | cut -d= -f1 | sort` (list env var names without values)
