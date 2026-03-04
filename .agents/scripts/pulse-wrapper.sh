@@ -1908,15 +1908,25 @@ ${type_breakdown}
 	local high_critical_delta=$((sweep_high_critical - prev_high_critical))
 	local trigger_active=false
 	local trigger_reasons=""
+	local is_first_run=false
 
-	# Condition 1: Quality gate is failing
+	# Detect first run: prev_gate is UNKNOWN when no state file exists.
+	# On first run, delta comparisons are meaningless (comparing against 0
+	# inflates every metric into a "spike"). Only condition 1 (gate status)
+	# is valid on first run. Conditions 2 and 3 require a prior baseline.
+	if [[ "$prev_gate" == "UNKNOWN" ]]; then
+		is_first_run=true
+	fi
+
+	# Condition 1: Quality gate is failing (valid on first run and subsequent)
 	if [[ "$sweep_gate_status" == "ERROR" || "$sweep_gate_status" == "WARN" ]]; then
 		trigger_active=true
 		trigger_reasons="quality gate ${sweep_gate_status}"
 	fi
 
 	# Condition 2: Issue count spiked by threshold or more
-	if [[ "$issue_delta" -ge "$CODERABBIT_ISSUE_SPIKE" ]]; then
+	# Skip on first run — delta vs 0 is not a real spike (t1392)
+	if [[ "$is_first_run" == false && "$issue_delta" -ge "$CODERABBIT_ISSUE_SPIKE" ]]; then
 		trigger_active=true
 		if [[ -n "$trigger_reasons" ]]; then
 			trigger_reasons="${trigger_reasons}, issue spike +${issue_delta}"
@@ -1926,7 +1936,8 @@ ${type_breakdown}
 	fi
 
 	# Condition 3: New high/critical severity findings
-	if [[ "$high_critical_delta" -gt 0 ]]; then
+	# Skip on first run — delta vs 0 is not a real increase (t1392)
+	if [[ "$is_first_run" == false && "$high_critical_delta" -gt 0 ]]; then
 		trigger_active=true
 		if [[ -n "$trigger_reasons" ]]; then
 			trigger_reasons="${trigger_reasons}, +${high_critical_delta} high/critical"
@@ -1948,9 +1959,13 @@ ${type_breakdown}
 "
 		echo "[pulse-wrapper] CodeRabbit: active review triggered for ${repo_slug} (${trigger_reasons})" >>"$LOGFILE"
 	else
+		local baseline_note=""
+		if [[ "$is_first_run" == true ]]; then
+			baseline_note=" (first run — baseline established, deltas will be computed from next sweep)"
+		fi
 		coderabbit_section="### CodeRabbit
 
-_Monitoring: ${sweep_total_issues} issues (delta: ${issue_delta}), gate ${sweep_gate_status}, ${sweep_high_critical} high/critical — no active review needed._
+_Monitoring: ${sweep_total_issues} issues (delta: ${issue_delta}), gate ${sweep_gate_status}, ${sweep_high_critical} high/critical — no active review needed.${baseline_note}_
 "
 	fi
 	tool_count=$((tool_count + 1))
