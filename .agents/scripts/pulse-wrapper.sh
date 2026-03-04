@@ -628,7 +628,7 @@ check_external_contributor_pr() {
 
 	# Step 1: Check for existing label (capture exit code separately from output)
 	local label_output
-	label_output=$(gh pr view "$pr_number" --repo "$repo_slug" --json labels --jq '.labels[].name' 2>/dev/null)
+	label_output=$(gh pr view "$pr_number" --repo "$repo_slug" --json labels --jq '.labels[].name')
 	local label_exit=$?
 
 	local has_label=false
@@ -638,7 +638,7 @@ check_external_contributor_pr() {
 
 	# Step 2: Check for existing comment
 	local comment_output
-	comment_output=$(gh pr view "$pr_number" --repo "$repo_slug" --json comments --jq '.comments[].body' 2>/dev/null)
+	comment_output=$(gh pr view "$pr_number" --repo "$repo_slug" --json comments --jq '.comments[].body')
 	local comment_exit=$?
 
 	local has_comment=false
