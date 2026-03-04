@@ -33,25 +33,54 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 #######################################
 # Configuration
 #######################################
-PULSE_STALE_THRESHOLD="${PULSE_STALE_THRESHOLD:-1800}" # 30 min = definitely stuck (opencode idle bug)
+PULSE_STALE_THRESHOLD="${PULSE_STALE_THRESHOLD:-1800}"    # 30 min = definitely stuck (opencode idle bug)
+ORPHAN_MAX_AGE="${ORPHAN_MAX_AGE:-7200}"                  # 2 hours — kill orphans older than this
+RAM_PER_WORKER_MB="${RAM_PER_WORKER_MB:-1024}"            # 1 GB per worker
+RAM_RESERVE_MB="${RAM_RESERVE_MB:-8192}"                  # 8 GB reserved for OS + user apps
+MAX_WORKERS_CAP="${MAX_WORKERS_CAP:-8}"                   # Hard ceiling regardless of RAM
+QUALITY_SWEEP_INTERVAL="${QUALITY_SWEEP_INTERVAL:-86400}" # 24 hours between sweeps
 
-# Validate numeric configuration
-if ! [[ "$PULSE_STALE_THRESHOLD" =~ ^[0-9]+$ ]]; then
-	echo "[pulse-wrapper] Invalid PULSE_STALE_THRESHOLD: $PULSE_STALE_THRESHOLD — using default 1800" >&2
-	PULSE_STALE_THRESHOLD=1800
-fi
+# Validate numeric configuration — prevent command injection via $(( )) expansion.
+# Bash arithmetic evaluates variable contents as expressions, so unsanitised strings
+# like "a[$(cmd)]" would execute arbitrary commands.
+_validate_int() {
+	local name="$1" value="$2" default="$3"
+	if ! [[ "$value" =~ ^[0-9]+$ ]]; then
+		echo "[pulse-wrapper] Invalid ${name}: ${value} — using default ${default}" >&2
+		printf '%s' "$default"
+		return 0
+	fi
+	printf '%s' "$value"
+	return 0
+}
+PULSE_STALE_THRESHOLD=$(_validate_int PULSE_STALE_THRESHOLD "$PULSE_STALE_THRESHOLD" 1800)
+ORPHAN_MAX_AGE=$(_validate_int ORPHAN_MAX_AGE "$ORPHAN_MAX_AGE" 7200)
+RAM_PER_WORKER_MB=$(_validate_int RAM_PER_WORKER_MB "$RAM_PER_WORKER_MB" 1024)
+RAM_RESERVE_MB=$(_validate_int RAM_RESERVE_MB "$RAM_RESERVE_MB" 8192)
+MAX_WORKERS_CAP=$(_validate_int MAX_WORKERS_CAP "$MAX_WORKERS_CAP" 8)
+QUALITY_SWEEP_INTERVAL=$(_validate_int QUALITY_SWEEP_INTERVAL "$QUALITY_SWEEP_INTERVAL" 86400)
+
+# Sanitise untrusted strings before embedding in GitHub markdown comments.
+# Strips @ mentions (prevents unwanted notifications) and backtick sequences
+# (prevents markdown injection). Used for API response data that gets posted
+# as issue/PR comments.
+_sanitize_markdown() {
+	local input="$1"
+	# Remove @ mentions to prevent notification spam
+	input="${input//@/}"
+	# Remove backtick sequences that could break markdown fencing
+	input="${input//\`/}"
+	printf '%s' "$input"
+	return 0
+}
+
 PIDFILE="${HOME}/.aidevops/logs/pulse.pid"
 LOGFILE="${HOME}/.aidevops/logs/pulse.log"
 OPENCODE_BIN="${OPENCODE_BIN:-/opt/homebrew/bin/opencode}"
 PULSE_DIR="${PULSE_DIR:-${HOME}/Git/aidevops}"
 PULSE_MODEL="${PULSE_MODEL:-anthropic/claude-sonnet-4-6}"
-ORPHAN_MAX_AGE="${ORPHAN_MAX_AGE:-7200}"       # 2 hours — kill orphans older than this
-RAM_PER_WORKER_MB="${RAM_PER_WORKER_MB:-1024}" # 1 GB per worker
-RAM_RESERVE_MB="${RAM_RESERVE_MB:-8192}"       # 8 GB reserved for OS + user apps
-MAX_WORKERS_CAP="${MAX_WORKERS_CAP:-8}"        # Hard ceiling regardless of RAM
 REPOS_JSON="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 STATE_FILE="${HOME}/.aidevops/logs/pulse-state.txt"
-QUALITY_SWEEP_INTERVAL="${QUALITY_SWEEP_INTERVAL:-86400}" # 24 hours between sweeps
 QUALITY_SWEEP_LAST_RUN="${HOME}/.aidevops/logs/quality-sweep-last-run"
 
 #######################################
@@ -174,6 +203,12 @@ _get_process_age() {
 	else
 		seconds="$etime"
 	fi
+
+	# Validate components are numeric before arithmetic expansion
+	[[ "$days" =~ ^[0-9]+$ ]] || days=0
+	[[ "$hours" =~ ^[0-9]+$ ]] || hours=0
+	[[ "$minutes" =~ ^[0-9]+$ ]] || minutes=0
+	[[ "$seconds" =~ ^[0-9]+$ ]] || seconds=0
 
 	# Remove leading zeros to avoid octal interpretation
 	days=$((10#${days}))
@@ -517,6 +552,8 @@ _compute_struggle_ratio() {
 
 	local threshold="${STRUGGLE_RATIO_THRESHOLD:-30}"
 	local min_elapsed="${STRUGGLE_MIN_ELAPSED_MINUTES:-30}"
+	[[ "$threshold" =~ ^[0-9]+$ ]] || threshold=30
+	[[ "$min_elapsed" =~ ^[0-9]+$ ]] || min_elapsed=30
 	local min_elapsed_seconds=$((min_elapsed * 60))
 
 	# Extract --dir from command line
@@ -1013,6 +1050,10 @@ ${worker_table}"
 		page_size=$(sysctl -n hw.pagesize 2>/dev/null || echo "16384")
 		vm_free=$(vm_stat 2>/dev/null | awk '/Pages free/ {gsub(/\./,"",$3); print $3}')
 		vm_inactive=$(vm_stat 2>/dev/null | awk '/Pages inactive/ {gsub(/\./,"",$3); print $3}')
+		# Validate integers before arithmetic expansion
+		[[ "$page_size" =~ ^[0-9]+$ ]] || page_size=16384
+		[[ "$vm_free" =~ ^[0-9]+$ ]] || vm_free=0
+		[[ "$vm_inactive" =~ ^[0-9]+$ ]] || vm_inactive=0
 		if [[ -n "$vm_free" ]]; then
 			local avail_mb=$(((${vm_free:-0} + ${vm_inactive:-0}) * page_size / 1048576))
 			if [[ "$avail_mb" -lt 1024 ]]; then
@@ -1048,7 +1089,10 @@ ${worker_table}"
 
 	local sys_load_ratio="?"
 	if [[ -n "${sys_load_1m:-}" && "${sys_cpu_cores:-0}" -gt 0 && "${sys_cpu_cores}" != "?" ]]; then
-		sys_load_ratio=$(awk "BEGIN {printf \"%d\", (${sys_load_1m} / ${sys_cpu_cores}) * 100}" 2>/dev/null || echo "?")
+		# Validate numeric before passing to awk (prevents awk injection)
+		if [[ "$sys_load_1m" =~ ^[0-9]+\.?[0-9]*$ ]] && [[ "$sys_cpu_cores" =~ ^[0-9]+$ ]]; then
+			sys_load_ratio=$(awk "BEGIN {printf \"%d\", (${sys_load_1m} / ${sys_cpu_cores}) * 100}" 2>/dev/null || echo "?")
+		fi
 	fi
 
 	# Worktree count for this repo
@@ -1272,7 +1316,12 @@ run_daily_quality_sweep() {
 	# Timestamp guard — run at most once per QUALITY_SWEEP_INTERVAL
 	if [[ -f "$QUALITY_SWEEP_LAST_RUN" ]]; then
 		local last_run
-		last_run=$(cat "$QUALITY_SWEEP_LAST_RUN" 2>/dev/null || echo "0")
+		last_run=$(cat "$QUALITY_SWEEP_LAST_RUN" || echo "0")
+		# Validate integer before arithmetic expansion (prevents command injection)
+		if ! [[ "$last_run" =~ ^[0-9]+$ ]]; then
+			echo "[pulse-wrapper] Corrupt sweep timestamp '${last_run}' — resetting" >>"$LOGFILE"
+			last_run=0
+		fi
 		local now
 		now=$(date +%s)
 		local elapsed=$((now - last_run))
@@ -1517,13 +1566,21 @@ _No smells detected or qlty analysis returned empty._
 		if [[ -n "$project_key" && -n "$org_key" ]]; then
 			# SonarCloud public API — quality gate status
 			local sonar_status
-			sonar_status=$(curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=${project_key}" 2>/dev/null || echo "")
+			sonar_status=$(curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=${project_key}" || echo "")
 
 			if [[ -n "$sonar_status" ]] && echo "$sonar_status" | jq -e '.projectStatus' &>/dev/null; then
-				local gate_status
-				gate_status=$(echo "$sonar_status" | jq -r '.projectStatus.status // "UNKNOWN"')
-				local conditions
-				conditions=$(echo "$sonar_status" | jq -r '.projectStatus.conditions[]? | "- **\(.metricKey)**: \(.actualValue) (\(.status))"' 2>/dev/null || echo "")
+				# Single jq pass: extract gate status and conditions together
+				local gate_data
+				gate_data=$(echo "$sonar_status" | jq -r '
+					(.projectStatus.status // "UNKNOWN") as $status |
+					[.projectStatus.conditions[]? | "- **\(.metricKey)**: \(.actualValue) (\(.status))"] | join("\n") as $conds |
+					"\($status)|\($conds)"
+				') || gate_data="UNKNOWN|"
+				local gate_status="${gate_data%%|*}"
+				local conditions="${gate_data#*|}"
+				# Sanitise API data before embedding in markdown comment
+				gate_status=$(_sanitize_markdown "$gate_status")
+				conditions=$(_sanitize_markdown "$conditions")
 
 				sonar_section="### SonarCloud Quality Gate
 
@@ -1534,15 +1591,25 @@ ${conditions}
 
 			# Fetch open issues summary
 			local sonar_issues
-			sonar_issues=$(curl -s "https://sonarcloud.io/api/issues/search?componentKeys=${project_key}&statuses=OPEN,CONFIRMED,REOPENED&ps=1&facets=severities,types" 2>/dev/null || echo "")
+			sonar_issues=$(curl -s "https://sonarcloud.io/api/issues/search?componentKeys=${project_key}&statuses=OPEN,CONFIRMED,REOPENED&ps=1&facets=severities,types" || echo "")
 
 			if [[ -n "$sonar_issues" ]] && echo "$sonar_issues" | jq -e '.total' &>/dev/null; then
-				local total_issues
-				total_issues=$(echo "$sonar_issues" | jq -r '.total // 0')
-				local severity_breakdown
-				severity_breakdown=$(echo "$sonar_issues" | jq -r '.facets[]? | select(.property == "severities") | .values[]? | "  - \(.val): \(.count)"' 2>/dev/null || echo "")
-				local type_breakdown
-				type_breakdown=$(echo "$sonar_issues" | jq -r '.facets[]? | select(.property == "types") | .values[]? | "  - \(.val): \(.count)"' 2>/dev/null || echo "")
+				# Single jq pass: extract total, severity breakdown, and type breakdown
+				local issues_data
+				issues_data=$(echo "$sonar_issues" | jq -r '
+					(.total // 0) as $total |
+					([.facets[]? | select(.property == "severities") | .values[]? | "  - \(.val): \(.count)"] | join("\n")) as $sev |
+					([.facets[]? | select(.property == "types") | .values[]? | "  - \(.val): \(.count)"] | join("\n")) as $typ |
+					"\($total)|\($sev)|\($typ)"
+				') || issues_data="0||"
+				local total_issues="${issues_data%%|*}"
+				local remainder="${issues_data#*|}"
+				local severity_breakdown="${remainder%%|*}"
+				local type_breakdown="${remainder#*|}"
+				# Validate total_issues is numeric before any arithmetic use
+				if ! [[ "$total_issues" =~ ^[0-9]+$ ]]; then
+					total_issues=0
+				fi
 
 				sonar_section="${sonar_section}
 - **Open issues**: ${total_issues}
@@ -1573,6 +1640,7 @@ ${type_breakdown}
 		if [[ -n "$codacy_response" ]] && echo "$codacy_response" | jq -e '.pagination' &>/dev/null; then
 			local codacy_total
 			codacy_total=$(echo "$codacy_response" | jq -r '.pagination.total // 0')
+			[[ "$codacy_total" =~ ^[0-9]+$ ]] || codacy_total=0
 			codacy_section="### Codacy
 
 - **Open issues**: ${codacy_total}
@@ -1610,12 +1678,17 @@ ${type_breakdown}
 			--json) || scan_output=""
 
 		if [[ -n "$scan_output" ]] && echo "$scan_output" | jq -e '.scanned' &>/dev/null; then
-			local scanned
-			scanned=$(echo "$scan_output" | jq -r '.scanned // 0')
-			local scan_findings
-			scan_findings=$(echo "$scan_output" | jq -r '.findings // 0')
-			local scan_issues
-			scan_issues=$(echo "$scan_output" | jq -r '.issues_created // 0')
+			# Single jq pass: extract all three fields at once
+			local scan_data
+			scan_data=$(echo "$scan_output" | jq -r '"\(.scanned // 0)|\(.findings // 0)|\(.issues_created // 0)"') || scan_data="0|0|0"
+			local scanned="${scan_data%%|*}"
+			local remainder="${scan_data#*|}"
+			local scan_findings="${remainder%%|*}"
+			local scan_issues="${remainder#*|}"
+			# Validate integers before any arithmetic comparison
+			[[ "$scanned" =~ ^[0-9]+$ ]] || scanned=0
+			[[ "$scan_findings" =~ ^[0-9]+$ ]] || scan_findings=0
+			[[ "$scan_issues" =~ ^[0-9]+$ ]] || scan_issues=0
 
 			review_scan_section="### Merged PR Review Scanner
 
@@ -1727,6 +1800,7 @@ cleanup_orphans() {
 		fi
 
 		# This is an orphan — kill it
+		[[ "$rss" =~ ^[0-9]+$ ]] || rss=0
 		local mb=$((rss / 1024))
 		kill "$pid" 2>/dev/null || true
 		killed=$((killed + 1))
@@ -1750,6 +1824,7 @@ cleanup_orphans() {
 		[[ "$age_seconds" -lt "$ORPHAN_MAX_AGE" ]] && continue
 
 		kill "$pid" 2>/dev/null || true
+		[[ "$rss" =~ ^[0-9]+$ ]] || rss=0
 		local mb=$((rss / 1024))
 		killed=$((killed + 1))
 		total_mb=$((total_mb + mb))
@@ -1777,11 +1852,16 @@ calculate_max_workers() {
 		page_size=$(sysctl -n hw.pagesize 2>/dev/null || echo 16384)
 		free_pages=$(vm_stat 2>/dev/null | awk '/Pages free/ {gsub(/\./,"",$3); print $3}')
 		inactive_pages=$(vm_stat 2>/dev/null | awk '/Pages inactive/ {gsub(/\./,"",$3); print $3}')
+		# Validate integers before arithmetic expansion
+		[[ "$page_size" =~ ^[0-9]+$ ]] || page_size=16384
+		[[ "$free_pages" =~ ^[0-9]+$ ]] || free_pages=0
+		[[ "$inactive_pages" =~ ^[0-9]+$ ]] || inactive_pages=0
 		free_mb=$(((free_pages + inactive_pages) * page_size / 1024 / 1024))
 	else
 		# Linux: use MemAvailable from /proc/meminfo
 		free_mb=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 8192)
 	fi
+	[[ "$free_mb" =~ ^[0-9]+$ ]] || free_mb=8192
 
 	local available_mb=$((free_mb - RAM_RESERVE_MB))
 	local max_workers=$((available_mb / RAM_PER_WORKER_MB))
