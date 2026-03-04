@@ -589,6 +589,145 @@ _compute_struggle_ratio() {
 }
 
 #######################################
+# Check and flag external-contributor PRs (t1391)
+#
+# Deterministic idempotency guard for the external-contributor comment.
+# Moved from pulse.md inline bash to a shell function because the LLM
+# kept getting the fail-closed logic wrong (4 prior fix attempts:
+# PRs #2794, #2796, #2801, #2803 — all in pulse.md prompt text).
+#
+# This is exactly the kind of logic that belongs in the harness, not
+# the prompt: it has one correct answer regardless of context.
+#
+# Arguments:
+#   $1 - PR number
+#   $2 - repo slug (owner/repo)
+#   $3 - PR author login
+#
+# Exit codes:
+#   0 - already flagged (label or comment exists) — no action needed
+#   1 - not yet flagged AND API calls succeeded — caller should post
+#   2 - API error (fail closed) — caller must skip, next pulse retries
+#
+# Side effects when exit=1 (caller invokes with --post):
+#   Posts the external-contributor comment and adds the label.
+#######################################
+check_external_contributor_pr() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local pr_author="$3"
+	local do_post="${4:-}"
+
+	# Validate arguments
+	if [[ -z "$pr_number" || -z "$repo_slug" || -z "$pr_author" ]]; then
+		echo "[pulse-wrapper] check_external_contributor_pr: missing arguments" >>"$LOGFILE"
+		return 2
+	fi
+
+	# Step 1: Check for existing label (capture exit code separately from output)
+	local label_output
+	label_output=$(gh pr view "$pr_number" --repo "$repo_slug" --json labels --jq '.labels[].name' 2>/dev/null)
+	local label_exit=$?
+
+	local has_label=false
+	if [[ $label_exit -eq 0 ]] && echo "$label_output" | grep -q '^external-contributor$'; then
+		has_label=true
+	fi
+
+	# Step 2: Check for existing comment
+	local comment_output
+	comment_output=$(gh pr view "$pr_number" --repo "$repo_slug" --json comments --jq '.comments[].body' 2>/dev/null)
+	local comment_exit=$?
+
+	local has_comment=false
+	if [[ $comment_exit -eq 0 ]] && echo "$comment_output" | grep -qiF 'external contributor'; then
+		has_comment=true
+	fi
+
+	# Step 3: Decide action based on results
+	if [[ $label_exit -ne 0 || $comment_exit -ne 0 ]]; then
+		# API error on label or comment check — fail closed, skip posting entirely.
+		# The next pulse cycle will retry. Never post when we can't confirm absence.
+		echo "[pulse-wrapper] check_external_contributor_pr: API error (label_exit=$label_exit, comment_exit=$comment_exit) for PR #$pr_number in $repo_slug — skipping (fail closed)" >>"$LOGFILE"
+		return 2
+	fi
+
+	if [[ "$has_label" == "true" || "$has_comment" == "true" ]]; then
+		# Already flagged. Re-add label if missing (comment exists but label doesn't).
+		if [[ "$has_label" == "false" ]]; then
+			gh api "repos/${repo_slug}/issues/${pr_number}/labels" \
+				-X POST -f 'labels[]=external-contributor' 2>/dev/null || true
+		fi
+		return 0
+	fi
+
+	# Both API calls succeeded AND neither label nor comment exists.
+	if [[ "$do_post" == "--post" ]]; then
+		# Safe to post — this is the only code path that creates a comment.
+		gh pr comment "$pr_number" --repo "$repo_slug" \
+			--body "This PR is from an external contributor (@${pr_author}). Auto-merge is disabled for external PRs — a maintainer must review and merge manually." &&
+			gh api "repos/${repo_slug}/issues/${pr_number}/labels" \
+				-X POST -f 'labels[]=external-contributor' 2>/dev/null || true
+		echo "[pulse-wrapper] check_external_contributor_pr: flagged PR #$pr_number in $repo_slug as external contributor (@$pr_author)" >>"$LOGFILE"
+	fi
+	return 1
+}
+
+#######################################
+# Check and post permission-failure comment on a PR (t1391)
+#
+# Companion to check_external_contributor_pr() for the case where the
+# collaborator permission API itself fails (403, 429, 5xx, network error).
+# Posts a distinct "Permission check failed" comment so a maintainer
+# knows to review manually. Idempotent — checks for existing comment
+# before posting, fails closed on API errors.
+#
+# Arguments:
+#   $1 - PR number
+#   $2 - repo slug (owner/repo)
+#   $3 - PR author login
+#   $4 - HTTP status code from the failed permission check
+#
+# Exit codes:
+#   0 - comment already exists or was just posted
+#   2 - API error checking for existing comment (fail closed, skip)
+#######################################
+check_permission_failure_pr() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local pr_author="$3"
+	local http_status="${4:-unknown}"
+
+	if [[ -z "$pr_number" || -z "$repo_slug" || -z "$pr_author" ]]; then
+		echo "[pulse-wrapper] check_permission_failure_pr: missing arguments" >>"$LOGFILE"
+		return 2
+	fi
+
+	# Check for existing permission-failure comment (fail closed on API error)
+	local perm_comments
+	perm_comments=$(gh pr view "$pr_number" --repo "$repo_slug" --json comments --jq '.comments[].body' 2>/dev/null)
+	local perm_exit=$?
+
+	if [[ $perm_exit -ne 0 ]]; then
+		echo "[pulse-wrapper] check_permission_failure_pr: API error (exit=$perm_exit) for PR #$pr_number in $repo_slug — skipping (fail closed)" >>"$LOGFILE"
+		return 2
+	fi
+
+	if echo "$perm_comments" | grep -qF 'Permission check failed'; then
+		# Already posted — nothing to do
+		return 0
+	fi
+
+	# Safe to post — no existing comment and API call succeeded
+	gh pr comment "$pr_number" --repo "$repo_slug" \
+		--body "Permission check failed for this PR (HTTP ${http_status} from collaborator permission API). Unable to determine if @${pr_author} is a maintainer or external contributor. **A maintainer must review and merge this PR manually.** This is a fail-closed safety measure — the pulse will not auto-merge until the permission API succeeds." \
+		2>/dev/null || true
+
+	echo "[pulse-wrapper] check_permission_failure_pr: posted permission-failure comment on PR #$pr_number in $repo_slug (HTTP $http_status)" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
 # Pre-fetch active worker processes (t216, t1367)
 #
 # Captures a snapshot of running worker processes so the pulse agent
@@ -1801,4 +1940,10 @@ calculate_max_workers() {
 	return 0
 }
 
-main "$@"
+# Only run main when executed directly, not when sourced.
+# The pulse agent sources this file to access helper functions
+# (check_external_contributor_pr, check_permission_failure_pr)
+# without triggering the full pulse lifecycle.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+	main "$@"
+fi

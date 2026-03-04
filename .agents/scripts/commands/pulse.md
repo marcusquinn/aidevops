@@ -75,44 +75,28 @@ perm=$(echo "$response" | tail -1 | jq -r '.permission // empty' 2>/dev/null)
 
 1. **http_status=200 and perm is `admin`, `maintain`, or `write`** → the author is a maintainer. Proceed normally with CI checks and auto-merge.
 
-2. **http_status=200 and perm is `read` or `none`, OR http_status=404 (user not a collaborator)** → the author is an external contributor. **NEVER auto-merge external PRs.** Instead, check if this PR has already been flagged and, if not, comment requesting maintainer review:
+2. **http_status=200 and perm is `read` or `none`, OR http_status=404 (user not a collaborator)** → the author is an external contributor. **NEVER auto-merge external PRs.** Instead, call the deterministic helper function in `pulse-wrapper.sh` to check and flag the PR:
 
 ```bash
-# Idempotency guard: check BOTH label AND comment before posting (belt-and-suspenders).
-# CRITICAL: fail closed — if either API call fails, skip posting entirely.
-# Root cause of duplicate comments (#2795, #2802): API errors were treated as
-# "not found" instead of "unknown", causing the else branch to post every cycle.
+# Deterministic idempotency guard — lives in pulse-wrapper.sh, NOT inline.
+# This function checks BOTH label AND comment, fails closed on API errors,
+# and only posts when it can confirm the PR has not already been flagged.
+# Root cause of duplicate comments (#2795, #2802, #2809): inline bash in
+# pulse.md was re-implemented incorrectly by the LLM on each pulse cycle.
+# Moving to a shell function eliminates that failure mode entirely.
+#
+# Source the wrapper to get the function (it's in the same script directory):
+source ~/.aidevops/agents/scripts/pulse-wrapper.sh 2>/dev/null || true
 
-# Step 1: Check for existing label (capture exit code separately from output)
-label_output=$(gh pr view <number> --repo <slug> --json labels --jq '.labels[].name' 2>/dev/null)
-label_exit=$?
-has_label=false
-if [[ $label_exit -eq 0 ]] && echo "$label_output" | grep -q '^external-contributor$'; then
-  has_label=true
+# Exit codes: 0=already flagged, 1=needs flagging, 2=API error (skip)
+check_external_contributor_pr <number> <slug> <author> --post
+ec=$?
+if [[ $ec -eq 2 ]]; then
+  : # API error — fail closed, next pulse retries
+elif [[ $ec -eq 0 ]]; then
+  : # Already flagged — nothing to do
 fi
-
-# Step 2: Check for existing comment
-comment_output=$(gh pr view <number> --repo <slug> --json comments --jq '.comments[].body' 2>/dev/null)
-comment_exit=$?
-has_comment=false
-if [[ $comment_exit -eq 0 ]] && echo "$comment_output" | grep -qiF 'external contributor'; then
-  has_comment=true
-fi
-
-# Step 3: Decide action based on results
-if [[ $label_exit -ne 0 || $comment_exit -ne 0 ]]; then
-  : # API error on label or comment check — fail closed, skip posting entirely.
-    # The next pulse cycle will retry. Never post when we can't confirm absence.
-elif [[ "$has_label" == "true" || "$has_comment" == "true" ]]; then
-  # Already flagged. Re-add label if missing (comment exists but label doesn't).
-  if [[ "$has_label" == "false" ]]; then
-    gh api "repos/<slug>/issues/<number>/labels" -X POST -f 'labels[]=external-contributor' 2>/dev/null || true
-  fi
-else
-  # Both API calls succeeded AND neither label nor comment exists — safe to post.
-  gh pr comment <number> --repo <slug> --body "This PR is from an external contributor (@<author>). Auto-merge is disabled for external PRs — a maintainer must review and merge manually." \
-    && gh api "repos/<slug>/issues/<number>/labels" -X POST -f 'labels[]=external-contributor' 2>/dev/null || true
-fi
+# ec=1 with --post means it just posted the comment and added the label
 ```
 
 Then skip to the next PR. Do NOT dispatch workers to fix failing CI on external PRs either — that's the contributor's responsibility.
@@ -120,15 +104,11 @@ Then skip to the next PR. Do NOT dispatch workers to fix failing CI on external 
 3. **Any other http_status (403, 429, 5xx) or empty/missing status (network error, auth failure)** → the permission check itself failed. **Fail closed: do NOT auto-merge, do NOT label as external-contributor.** Post a distinct comment asking for manual intervention:
 
 ```bash
-# Only comment once — check for existing permission-failure comment.
-# Fail closed: if the comment check API call itself fails, skip posting.
-perm_comments=$(gh pr view <number> --repo <slug> --json comments --jq '.comments[].body' 2>/dev/null)
-perm_comment_exit=$?
-if [[ $perm_comment_exit -ne 0 ]]; then
-  : # API error checking comments — fail closed, skip posting. Next pulse retries.
-elif ! echo "$perm_comments" | grep -qF 'Permission check failed'; then
-  gh pr comment <number> --repo <slug> --body "Permission check failed for this PR (HTTP $http_status from collaborator permission API). Unable to determine if @<author> is a maintainer or external contributor. **A maintainer must review and merge this PR manually.** This is a fail-closed safety measure — the pulse will not auto-merge until the permission API succeeds."
-fi
+# Deterministic idempotency guard — lives in pulse-wrapper.sh.
+# Checks for existing "Permission check failed" comment before posting.
+# Fails closed on API errors (exit code 2 = skip, next pulse retries).
+source ~/.aidevops/agents/scripts/pulse-wrapper.sh 2>/dev/null || true
+check_permission_failure_pr <number> <slug> <author> "$http_status"
 ```
 
 Then skip to the next PR. The next pulse cycle will retry the permission check — if the API recovers, the PR will be processed normally.
@@ -488,4 +468,4 @@ Output a brief summary of what you did (past tense), then exit.
 9. **NEVER create an issue if one already exists for the same task ID.** Before `gh issue create`, check `gh issue list --repo <slug> --search "tNNN" --state all` to see if an issue with that task ID prefix already exists. If it does (open or closed), use the existing one — don't create a duplicate. This applies to both issue-sync-helper and manual issue creation.
 10. **NEVER ask the user anything.** You are headless. Decide and act.
 11. **NEVER close or modify issues with the `supervisor` label.** These are health dashboard issues managed by `pulse-wrapper.sh` — one per runner per repo. The wrapper handles dedup (closing old ones when creating new ones). If you close them, the wrapper creates replacements on the next cycle, producing churn. Similarly, NEVER create new `[Supervisor:*]` issues — the wrapper creates and updates them automatically. Your job is to act on task/PR issues, not manage supervisor infrastructure.
-12. **NEVER auto-merge PRs from external contributors or when the permission check fails.** Check author permission via `gh api -i repos/<slug>/collaborators/<author>/permission` before ANY merge — use `-i` to capture the HTTP status code. Only HTTP 200 with `admin`, `maintain`, or `write` permission = maintainer. HTTP 200 with `read`/`none`, or HTTP 404 = external contributor (comment + label). Any other HTTP status (403/429/5xx) or network failure = fail closed (distinct comment requesting manual intervention, no label, no merge). See "External contributor gate" in Step 3.
+12. **NEVER auto-merge PRs from external contributors or when the permission check fails.** Check author permission via `gh api -i repos/<slug>/collaborators/<author>/permission` before ANY merge — use `-i` to capture the HTTP status code. Only HTTP 200 with `admin`, `maintain`, or `write` permission = maintainer. HTTP 200 with `read`/`none`, or HTTP 404 = external contributor — call `check_external_contributor_pr` from `pulse-wrapper.sh`. Any other HTTP status (403/429/5xx) or network failure = fail closed — call `check_permission_failure_pr` from `pulse-wrapper.sh`. NEVER write inline idempotency checks — always use the helper functions. See "External contributor gate" in Step 3.
