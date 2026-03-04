@@ -53,6 +53,8 @@ REPOS_JSON="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 STATE_FILE="${HOME}/.aidevops/logs/pulse-state.txt"
 QUALITY_SWEEP_INTERVAL="${QUALITY_SWEEP_INTERVAL:-86400}" # 24 hours between sweeps
 QUALITY_SWEEP_LAST_RUN="${HOME}/.aidevops/logs/quality-sweep-last-run"
+QUALITY_SWEEP_STATE_DIR="${HOME}/.aidevops/logs/quality-sweep-state"
+CODERABBIT_ISSUE_SPIKE="${CODERABBIT_ISSUE_SPIKE:-10}" # trigger active review when issues increase by this many
 
 #######################################
 # Ensure log directory exists
@@ -1395,6 +1397,61 @@ _ensure_quality_issue() {
 }
 
 #######################################
+# Load previous quality sweep state for a repo
+#
+# Reads gate_status and total_issues from the per-repo state file.
+# Returns defaults if no state file exists (first run).
+#
+# Arguments:
+#   $1 - repo slug
+# Output: "gate_status|total_issues|high_critical_count" to stdout
+#######################################
+_load_sweep_state() {
+	local repo_slug="$1"
+	local slug_safe="${repo_slug//\//-}"
+	local state_file="${QUALITY_SWEEP_STATE_DIR}/${slug_safe}.json"
+
+	if [[ -f "$state_file" ]]; then
+		local prev_gate prev_issues prev_high_critical
+		prev_gate=$(jq -r '.gate_status // "UNKNOWN"' "$state_file" 2>/dev/null || echo "UNKNOWN")
+		prev_issues=$(jq -r '.total_issues // 0' "$state_file" 2>/dev/null || echo "0")
+		prev_high_critical=$(jq -r '.high_critical_count // 0' "$state_file" 2>/dev/null || echo "0")
+		echo "${prev_gate}|${prev_issues}|${prev_high_critical}"
+	else
+		echo "UNKNOWN|0|0"
+	fi
+	return 0
+}
+
+#######################################
+# Save current quality sweep state for a repo
+#
+# Persists gate_status, total_issues, and high/critical severity
+# count so the next sweep can compute deltas.
+#
+# Arguments:
+#   $1 - repo slug
+#   $2 - gate status (OK/ERROR/UNKNOWN)
+#   $3 - total issue count
+#   $4 - high+critical severity count
+#######################################
+_save_sweep_state() {
+	local repo_slug="$1"
+	local gate_status="$2"
+	local total_issues="$3"
+	local high_critical_count="$4"
+	local slug_safe="${repo_slug//\//-}"
+
+	mkdir -p "$QUALITY_SWEEP_STATE_DIR"
+
+	local state_file="${QUALITY_SWEEP_STATE_DIR}/${slug_safe}.json"
+	printf '{"gate_status":"%s","total_issues":%d,"high_critical_count":%d,"updated_at":"%s"}\n' \
+		"$gate_status" "$total_issues" "$high_critical_count" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+		>"$state_file"
+	return 0
+}
+
+#######################################
 # Run quality sweep for a single repo
 #
 # Gathers findings from all available tools and posts a single
@@ -1415,6 +1472,11 @@ _quality_sweep_for_repo() {
 	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 	local findings=""
 	local tool_count=0
+
+	# Function-scoped variables for cross-section use (CodeRabbit conditional logic)
+	local sweep_gate_status="UNKNOWN"
+	local sweep_total_issues=0
+	local sweep_high_critical=0
 
 	# --- 1. ShellCheck ---
 	local shellcheck_section=""
@@ -1522,6 +1584,7 @@ _No smells detected or qlty analysis returned empty._
 			if [[ -n "$sonar_status" ]] && echo "$sonar_status" | jq -e '.projectStatus' &>/dev/null; then
 				local gate_status
 				gate_status=$(echo "$sonar_status" | jq -r '.projectStatus.status // "UNKNOWN"')
+				sweep_gate_status="$gate_status"
 				local conditions
 				conditions=$(echo "$sonar_status" | jq -r '.projectStatus.conditions[]? | "- **\(.metricKey)**: \(.actualValue) (\(.status))"' 2>/dev/null || echo "")
 
@@ -1539,6 +1602,12 @@ ${conditions}
 			if [[ -n "$sonar_issues" ]] && echo "$sonar_issues" | jq -e '.total' &>/dev/null; then
 				local total_issues
 				total_issues=$(echo "$sonar_issues" | jq -r '.total // 0')
+				sweep_total_issues="$total_issues"
+				# Extract high+critical count for CodeRabbit trigger logic
+				local high_count critical_count
+				high_count=$(echo "$sonar_issues" | jq -r '.facets[]? | select(.property == "severities") | .values[]? | select(.val == "MAJOR" or .val == "CRITICAL" or .val == "BLOCKER") | .count' 2>/dev/null | awk '{s+=$1} END {print s+0}')
+				critical_count="${high_count:-0}"
+				sweep_high_critical="$critical_count"
 				local severity_breakdown
 				severity_breakdown=$(echo "$sonar_issues" | jq -r '.facets[]? | select(.property == "severities") | .values[]? | "  - \(.val): \(.count)"' 2>/dev/null || echo "")
 				local type_breakdown
@@ -1582,9 +1651,53 @@ ${type_breakdown}
 		fi
 	fi
 
-	# --- 5. CodeRabbit trigger ---
-	# Always include @coderabbitai mention to trigger a full codebase review
-	local coderabbit_section="### CodeRabbit
+	# --- 5. CodeRabbit trigger (conditional — t1390) ---
+	# Only trigger @coderabbitai active review when quality degrades:
+	#   - Quality gate status changes to FAIL/ERROR
+	#   - Issue count increases by CODERABBIT_ISSUE_SPIKE+ since last sweep
+	#   - New high/critical severity findings appear
+	# Otherwise post a passive monitoring line to avoid repetitive requests.
+	local coderabbit_section=""
+	local prev_state
+	prev_state=$(_load_sweep_state "$repo_slug")
+	local prev_gate prev_issues prev_high_critical
+	IFS='|' read -r prev_gate prev_issues prev_high_critical <<<"$prev_state"
+
+	local issue_delta=$((sweep_total_issues - prev_issues))
+	local high_critical_delta=$((sweep_high_critical - prev_high_critical))
+	local trigger_active=false
+	local trigger_reasons=""
+
+	# Condition 1: Quality gate is failing
+	if [[ "$sweep_gate_status" == "ERROR" || "$sweep_gate_status" == "WARN" ]]; then
+		trigger_active=true
+		trigger_reasons="quality gate ${sweep_gate_status}"
+	fi
+
+	# Condition 2: Issue count spiked by threshold or more
+	if [[ "$issue_delta" -ge "$CODERABBIT_ISSUE_SPIKE" ]]; then
+		trigger_active=true
+		if [[ -n "$trigger_reasons" ]]; then
+			trigger_reasons="${trigger_reasons}, issue spike +${issue_delta}"
+		else
+			trigger_reasons="issue spike +${issue_delta}"
+		fi
+	fi
+
+	# Condition 3: New high/critical severity findings
+	if [[ "$high_critical_delta" -gt 0 ]]; then
+		trigger_active=true
+		if [[ -n "$trigger_reasons" ]]; then
+			trigger_reasons="${trigger_reasons}, +${high_critical_delta} high/critical"
+		else
+			trigger_reasons="+${high_critical_delta} high/critical findings"
+		fi
+	fi
+
+	if [[ "$trigger_active" == true ]]; then
+		coderabbit_section="### CodeRabbit
+
+**Trigger**: ${trigger_reasons}
 
 @coderabbitai Please run a full codebase review of this repository. Focus on:
 - Security vulnerabilities and credential exposure
@@ -1592,7 +1705,17 @@ ${type_breakdown}
 - Code duplication and maintainability
 - Documentation accuracy
 "
+		echo "[pulse-wrapper] CodeRabbit: active review triggered for ${repo_slug} (${trigger_reasons})" >>"$LOGFILE"
+	else
+		coderabbit_section="### CodeRabbit
+
+_Monitoring: ${sweep_total_issues} issues (delta: ${issue_delta}), gate ${sweep_gate_status}, ${sweep_high_critical} high/critical — no active review needed._
+"
+	fi
 	tool_count=$((tool_count + 1))
+
+	# Save current state for next sweep's delta comparison
+	_save_sweep_state "$repo_slug" "$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical"
 
 	# --- 6. Merged PR review scanner ---
 	# Scans recently merged PRs for unactioned review feedback from bots
