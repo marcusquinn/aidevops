@@ -2571,6 +2571,19 @@ verify_task_deliverables() {
 		return 0
 	fi
 
+	# Accept verified_complete as a valid completion signal (t2838)
+	# Tasks that don't produce PRs (audit, documentation, research) may be marked
+	# complete with FULL_LOOP_COMPLETE signal and pr_url=verified_complete.
+	# These are legitimate completions that should pass deliverable verification.
+	if [[ "$pr_url" == "verified_complete" ]]; then
+		log_info "Task $task_id completed without PR (verified_complete signal) — accepting"
+		write_proof_log --task "$task_id" --event "deliverable_verified" --stage "complete" \
+			--decision "verified:no_pr:verified_complete" \
+			--evidence "pr_url=verified_complete,signal=FULL_LOOP_COMPLETE" \
+			--maker "verify_task_deliverables" 2>/dev/null || true
+		return 0
+	fi
+
 	# If no PR URL, task cannot be verified
 	if [[ -z "$pr_url" || "$pr_url" == "no_pr" || "$pr_url" == "task_only" ]]; then
 		log_warn "Task $task_id has no PR URL ($pr_url) - cannot verify deliverables"
