@@ -36,7 +36,7 @@ const DB_PATH = join(OBS_DIR, "llm-requests.db");
  */
 function sqliteExec(sql, timeout = 5000) {
   try {
-    return execSync(`sqlite3 "${DB_PATH}"`, {
+    return execSync(`sqlite3 -cmd ".timeout 5000" "${DB_PATH}"`, {
       input: sql,
       encoding: "utf-8",
       timeout,
