@@ -657,8 +657,8 @@ check_external_contributor_pr() {
 	if [[ "$has_label" == "true" || "$has_comment" == "true" ]]; then
 		# Already flagged. Re-add label if missing (comment exists but label doesn't).
 		if [[ "$has_label" == "false" ]]; then
-			gh api "repos/${repo_slug}/issues/${pr_number}/labels" \
-				-X POST -f 'labels[]=external-contributor' 2>/dev/null || true
+			gh api --silent "repos/${repo_slug}/issues/${pr_number}/labels" \
+				-X POST -f 'labels[]=external-contributor' || true
 		fi
 		return 0
 	fi
@@ -668,8 +668,8 @@ check_external_contributor_pr() {
 		# Safe to post — this is the only code path that creates a comment.
 		gh pr comment "$pr_number" --repo "$repo_slug" \
 			--body "This PR is from an external contributor (@${pr_author}). Auto-merge is disabled for external PRs — a maintainer must review and merge manually." &&
-			gh api "repos/${repo_slug}/issues/${pr_number}/labels" \
-				-X POST -f 'labels[]=external-contributor' 2>/dev/null || true
+			gh api --silent "repos/${repo_slug}/issues/${pr_number}/labels" \
+				-X POST -f 'labels[]=external-contributor' || true
 		echo "[pulse-wrapper] check_external_contributor_pr: flagged PR #$pr_number in $repo_slug as external contributor (@$pr_author)" >>"$LOGFILE"
 	fi
 	return 1

@@ -276,7 +276,7 @@ gh pr comment <number> --repo <slug> --body "This PR appears orphaned — no act
 2. **Add the `status:orphaned` label:**
 
 ```bash
-gh api "repos/<slug>/issues/<number>/labels" -X POST -f 'labels[]=status:orphaned' 2>/dev/null || true
+gh api --silent "repos/<slug>/issues/<number>/labels" -X POST -f 'labels[]=status:orphaned' || true
 ```
 
 3. **Flag the corresponding issue for re-dispatch.** Find the issue referenced in the PR title (task ID pattern `tNNN:` or `Issue #NNN`). If the issue exists and is labelled `status:in-progress` or `status:in-review`, relabel it to `status:available` so the next dispatch cycle picks it up:
