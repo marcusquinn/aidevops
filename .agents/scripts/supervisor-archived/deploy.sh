@@ -344,23 +344,30 @@ cmd_pr_lifecycle() {
 				if [[ -n "$pr_number_fastpath" && -n "$repo_slug_fastpath" ]]; then
 					# t2839: Check that at least one review exists before fast-path merge.
 					# Zero reviews means "not yet reviewed", not "clean to merge".
-					# Uses review-bot-gate-helper.sh (t1382) if available, falls back to
-					# gh pr view --json reviews count.
+					# Always count formal reviews (human or bot) via gh API as the
+					# authoritative source. The bot gate is an additional signal only.
 					local review_gate_result="UNKNOWN"
+					local review_count_fastpath=""
+					review_count_fastpath=$(gh pr view "$pr_number_fastpath" --repo "$repo_slug_fastpath" \
+						--json reviews --jq '.reviews | length' || echo "")
+
+					# Optional bot-signal gate (PASS/SKIP means bot gate satisfied)
+					local bot_gate_result="WAITING"
 					local review_bot_gate_script
 					review_bot_gate_script="$(dirname "$(dirname "${BASH_SOURCE[0]}")")/review-bot-gate-helper.sh"
 					if [[ -x "$review_bot_gate_script" ]]; then
-						review_gate_result=$("$review_bot_gate_script" check "$pr_number_fastpath" "$repo_slug_fastpath" 2>/dev/null) || review_gate_result="WAITING"
+						bot_gate_result=$("$review_bot_gate_script" check "$pr_number_fastpath" "$repo_slug_fastpath") || bot_gate_result="WAITING"
+					fi
+
+					# Determine review gate result: bot gate PASS/SKIP is sufficient,
+					# OR having at least one formal review (human or bot) is sufficient.
+					# Only block when BOTH the bot gate is WAITING AND review count is 0.
+					if [[ "$bot_gate_result" == "PASS" || "$bot_gate_result" == "SKIP" ]]; then
+						review_gate_result="PASS"
+					elif [[ "$review_count_fastpath" =~ ^[0-9]+$ && "$review_count_fastpath" -gt 0 ]]; then
+						review_gate_result="PASS"
 					else
-						# Fallback: count reviews directly via gh API
-						local review_count_fastpath
-						review_count_fastpath=$(gh pr view "$pr_number_fastpath" --repo "$repo_slug_fastpath" \
-							--json reviews --jq '.reviews | length' 2>/dev/null || echo "0")
-						if [[ "$review_count_fastpath" -gt 0 ]]; then
-							review_gate_result="PASS"
-						else
-							review_gate_result="WAITING"
-						fi
+						review_gate_result="WAITING"
 					fi
 
 					if [[ "$review_gate_result" == "WAITING" ]]; then
@@ -369,7 +376,7 @@ cmd_pr_lifecycle() {
 						local stage_end
 						stage_end=$(date +%s)
 						stage_timings="${stage_timings}pr_review:$((stage_end - stage_start))s(no_reviews),"
-						record_lifecycle_timing "$task_id" "$stage_timings" 2>/dev/null || true
+						record_lifecycle_timing "$task_id" "$stage_timings" || true
 						return 0
 					fi
 
@@ -381,7 +388,15 @@ cmd_pr_lifecycle() {
 					if [[ "$thread_count_fastpath" -eq 0 ]]; then
 						log_info "Fast-path: CI green + reviews posted + zero unresolved threads - skipping review_triage, going directly to merge${merge_note}"
 						if [[ "$dry_run" == "false" ]]; then
-							db "$SUPERVISOR_DB" "UPDATE tasks SET triage_result = '{\"action\":\"merge\",\"threads\":0,\"fast_path\":true,\"review_gate\":\"$review_gate_result\",\"sonarcloud_unstable\":$(if [[ "$pr_status" == "unstable_sonarcloud" ]]; then echo "true"; else echo "false"; fi)}' WHERE id = '$escaped_id';"
+							# Use parameterized JSON construction to prevent SQL injection (Gemini review feedback)
+							local sonarcloud_flag="false"
+							if [[ "$pr_status" == "unstable_sonarcloud" ]]; then
+								sonarcloud_flag="true"
+							fi
+							local triage_json
+							triage_json=$(jq -n --arg gate "$review_gate_result" --argjson sc "$sonarcloud_flag" \
+								'{"action":"merge","threads":0,"fast_path":true,"review_gate":$gate,"sonarcloud_unstable":$sc}')
+							db "$SUPERVISOR_DB" "UPDATE tasks SET triage_result = '$(echo "$triage_json" | sed "s/'/''/g")' WHERE id = '$escaped_id';"
 							cmd_transition "$task_id" "merging" 2>>"$SUPERVISOR_LOG" || true
 						fi
 						tstatus="merging"
