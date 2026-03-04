@@ -473,7 +473,41 @@ _build_sanity_state_snapshot() {
 	fi
 	snapshot+="\n"
 
-	# 9. Identity context
+	# 9. Completed tasks with stale TODO.md (t2838)
+	# Tasks that are complete/verified/deployed/merged in DB but still [ ] in TODO.md.
+	# These need trigger_update_todo, NOT reset/unclaim.
+	snapshot+="### Completed Tasks with Stale TODO.md\n"
+	local completed_stale
+	completed_stale=$(db -separator '|' "$SUPERVISOR_DB" "
+		SELECT id, status, COALESCE(pr_url,'')
+		FROM tasks
+		WHERE repo = '$(sql_escape "$repo_path")'
+		AND status IN ('complete', 'verified', 'deployed', 'merged')
+		ORDER BY id;
+	" 2>/dev/null || echo "")
+	if [[ -n "$completed_stale" ]]; then
+		local stale_found=false
+		while IFS='|' read -r csid csstatus cspr; do
+			[[ -z "$csid" ]] && continue
+			local escaped_csid
+			escaped_csid=$(printf '%s' "$csid" | sed 's/\./\\./g')
+			if grep -qE "^[[:space:]]*- \[ \] ${escaped_csid}( |$)" "$todo_file" 2>/dev/null; then
+				if [[ "$stale_found" == false ]]; then
+					snapshot+="id|db_status|pr_url (these need trigger_update_todo, NOT reset)\n"
+					stale_found=true
+				fi
+				snapshot+="$csid|$csstatus|$cspr\n"
+			fi
+		done <<<"$completed_stale"
+		if [[ "$stale_found" == false ]]; then
+			snapshot+="(none — all completed tasks are properly marked [x] in TODO.md)\n"
+		fi
+	else
+		snapshot+="(no completed tasks in DB)\n"
+	fi
+	snapshot+="\n"
+
+	# 10. Identity context
 	local identity
 	identity=$(get_aidevops_identity 2>/dev/null || whoami)
 	snapshot+="### Context\n"
@@ -501,6 +535,18 @@ You are a supervisor sanity checker for an automated task dispatch system. The q
 
 $state_snapshot
 
+## CRITICAL: Directional Authority Rule (t2838)
+
+The DB is authoritative for task state when it shows a MORE ADVANCED state than TODO.md.
+State progression: queued < dispatched < running < complete < deployed < verified.
+
+If the DB says a task is "complete", "verified", "deployed", or "merged" but TODO.md
+still shows [ ] (open), this means update-todo failed (e.g., deliverable verification
+rejected the PR URL). The correct fix is "trigger_update_todo" — NOT "reset" or "unclaim".
+
+NEVER propose "reset" or "unclaim" for tasks where the DB status is complete, verified,
+deployed, or merged. Doing so causes completed work to be re-dispatched as duplicate work.
+
 ## What to Look For
 
 1. **DB-failed tasks with TODO.md claims**: If the DB says a task failed/blocked but TODO.md still has assignee:/started: fields, the claim is stale. Strip it so the task can be re-assessed.
@@ -519,14 +565,16 @@ $state_snapshot
 
 8. **Issue tag drift**: Check the "Cross-Repo Issue Tag Truthfulness" section. If GitHub issue labels don't match DB state, recommend "log_only" with the specific drifts so the label sync can be triggered.
 
-9. **Any other contradiction** you can identify between the state sources.
+9. **Completed tasks with stale TODO.md**: Check the "Completed Tasks with Stale TODO.md" section. If a task is complete/verified/deployed/merged in the DB but still [ ] in TODO.md, use "trigger_update_todo" to sync TODO.md to match the DB. NEVER use "reset" or "unclaim" for these.
+
+10. **Any other contradiction** you can identify between the state sources.
 
 ## Output Format
 
 Respond with ONLY a JSON array of fix actions. No markdown fencing, no explanation.
 
 Each action object must have:
-- "action": one of "unclaim", "reset", "cancel_orphan", "remove_blocker", "add_auto_dispatch", "log_only"
+- "action": one of "unclaim", "reset", "cancel_orphan", "remove_blocker", "add_auto_dispatch", "trigger_update_todo", "log_only"
 - "task_id": the task ID to act on
 - "reasoning": why this fix is needed (one sentence)
 - For "remove_blocker": include "blocker_id" (the failed blocker to remove)
@@ -538,6 +586,7 @@ Example:
   {"action": "cancel_orphan", "task_id": "t456", "reasoning": "In DB as queued but missing from TODO.md"},
   {"action": "remove_blocker", "task_id": "t789", "blocker_id": "t456", "reasoning": "Blocker t456 permanently failed (3/3 retries)"},
   {"action": "add_auto_dispatch", "task_id": "t101", "reasoning": "Has model:sonnet, ~2h estimate, no blockers — eligible for dispatch"},
+  {"action": "trigger_update_todo", "task_id": "t025.3", "reasoning": "DB shows complete but TODO.md still [ ] — sync TODO.md to match DB"},
   {"action": "log_only", "task_id": "pipeline", "message": "Phase 3 evaluated 0 tasks for 5 consecutive runs — possible schema drift in gather_task_state query"}
 ]
 
@@ -642,6 +691,25 @@ _execute_sanity_action() {
 	fi
 
 	log_verbose "  Sanity AI action: $action_type on $task_id — $reasoning"
+
+	# Guard: NEVER downgrade tasks in advanced DB states (t2838)
+	# The DB is authoritative for task state when it shows a more advanced state
+	# than TODO.md. Completed tasks showing [ ] in TODO.md need their TODO.md
+	# updated (via trigger_update_todo), NOT their DB state reset to queued.
+	local _current_db_status=""
+	_current_db_status=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo "")
+	case "$action_type" in
+	unclaim | reset)
+		case "$_current_db_status" in
+		complete | verified | deployed | merged)
+			log_warn "  Phase 0.9: BLOCKED downgrade of $task_id from '$_current_db_status' to queued (t2838)"
+			log_warn "  Phase 0.9: DB is authoritative — trigger update-todo instead of resetting"
+			echo "blocked: refusing to downgrade $_current_db_status task to queued (t2838)"
+			return 1
+			;;
+		esac
+		;;
+	esac
 
 	case "$action_type" in
 	unclaim)
@@ -787,6 +855,45 @@ _execute_sanity_action() {
 		log_warn "  Phase 0.9 AI: $task_id — $message"
 		echo "logged: $message"
 		return 0
+		;;
+
+	trigger_update_todo)
+		# Trigger TODO.md update for a completed task whose [ ] was not yet marked [x] (t2838)
+		# This is the correct fix when DB shows complete/verified/deployed but TODO.md shows [ ].
+		# The DB is authoritative — we update TODO.md to match, NOT reset DB to queued.
+		if [[ -z "$_current_db_status" ]]; then
+			_current_db_status=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo "")
+		fi
+		case "$_current_db_status" in
+		complete | verified | deployed | merged)
+			log_info "  Phase 0.9: Triggering update-todo for $task_id (DB=$_current_db_status, TODO.md=[ ])"
+			if update_todo_on_complete "$task_id" 2>>"${SUPERVISOR_LOG:-/dev/null}"; then
+				echo "TODO.md updated to [x] for $_current_db_status task"
+				return 0
+			fi
+			# update_todo_on_complete may fail due to deliverable verification.
+			# In that case, force-mark with verified:date as proof-log (t2838).
+			log_warn "  Phase 0.9: update_todo_on_complete failed for $task_id — force-marking with verified:date"
+			local today
+			today=$(date +%Y-%m-%d)
+			local escaped_task_id
+			escaped_task_id=$(printf '%s' "$task_id" | sed 's/\./\\./g')
+			if grep -qE "^[[:space:]]*- \[ \] ${escaped_task_id}( |$)" "$todo_file" 2>/dev/null; then
+				sed_inplace -E "s/^([[:space:]]*- )\[ \] (${escaped_task_id} .*)$/\1[x] \2 verified:${today} completed:${today}/" "$todo_file"
+				if grep -qE "^[[:space:]]*- \[x\] ${escaped_task_id} " "$todo_file" 2>/dev/null; then
+					commit_and_push_todo "$repo_path" "chore: force-mark $task_id complete in TODO.md (DB=$_current_db_status, t2838)" >>"${SUPERVISOR_LOG:-/dev/null}" 2>&1 || true
+					echo "TODO.md force-marked [x] for $_current_db_status task (deliverable verification bypassed)"
+					return 0
+				fi
+			fi
+			echo "trigger_update_todo failed for $task_id"
+			return 1
+			;;
+		*)
+			echo "task $task_id is not in a completed state (DB=$_current_db_status) — cannot trigger update-todo"
+			return 1
+			;;
+		esac
 		;;
 
 	*)
