@@ -265,8 +265,12 @@ Git is the primary audit trail for all work. Every change should be discoverable
 # 5. Session database (OpenCode): `~/.local/share/opencode/opencode.db` — SQLite
 #    with session + message tables. Find sessions by title, date, project directory.
 #    Schema: session(id,title,directory,time_created), message(id,session_id,data).
+#    Example: sqlite3 ~/.local/share/opencode/opencode.db "SELECT id,title FROM
+#    session WHERE title LIKE '%keyword%' ORDER BY time_created DESC LIMIT 5"
 # 6. Observability DB: `~/.aidevops/.agent-workspace/observability/llm-requests.db`
 #    — LLM request metadata, costs, models, tool calls per session.
+#    Tables: llm_requests(session_id,model_id,cost,tokens_total,timestamp),
+#    tool_calls(session_id,tool_name,intent,success,duration_ms).
 #
 # Tier 3 — Remote (API calls, need a target):
 # 7. GitHub issue comments: `gh issue view {num} --comments --repo {slug}` or
