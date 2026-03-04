@@ -1964,8 +1964,25 @@ cmd_reconcile_queue_dispatchability() {
 			in_dispatch_queue=true
 		fi
 
+		# Check if task belongs to an active batch (GH#2836)
+		# Batch membership is explicit dispatch intent — skip reconciliation
+		# to avoid cancelling newly-added tasks before Phase 0.9 can tag them.
+		local in_active_batch=false
+		local active_batch_id=""
+		active_batch_id=$(db "$SUPERVISOR_DB" "
+			SELECT bt.batch_id FROM batch_tasks bt
+			JOIN batches b ON b.id = bt.batch_id
+			WHERE bt.task_id = '$(sql_escape "$tid")'
+			AND b.status IN ('active','paused')
+			LIMIT 1;
+		" 2>/dev/null || echo "")
+		if [[ -n "$active_batch_id" ]]; then
+			in_active_batch=true
+		fi
+
 		# If neither condition is met, this is a phantom queue entry
-		if [[ "$has_auto_dispatch" == "false" && "$in_dispatch_queue" == "false" ]]; then
+		# But skip tasks in active batches — they are intentionally queued
+		if [[ "$has_auto_dispatch" == "false" && "$in_dispatch_queue" == "false" && "$in_active_batch" == "false" ]]; then
 			phantom_count=$((phantom_count + 1))
 			if [[ "$dry_run" == "true" ]]; then
 				log_warn "[dry-run] Phase 0.6: $tid queued in DB but not dispatchable in TODO.md (no #auto-dispatch, not in Dispatch Queue)"
@@ -1980,7 +1997,7 @@ cmd_reconcile_queue_dispatchability() {
 				cancelled_count=$((cancelled_count + 1))
 			fi
 		else
-			log_verbose "Phase 0.6: $tid is dispatchable (has_auto_dispatch=$has_auto_dispatch, in_dispatch_queue=$in_dispatch_queue)"
+			log_verbose "Phase 0.6: $tid is dispatchable (has_auto_dispatch=$has_auto_dispatch, in_dispatch_queue=$in_dispatch_queue, in_active_batch=$in_active_batch)"
 		fi
 	done <<<"$queued_tasks"
 
