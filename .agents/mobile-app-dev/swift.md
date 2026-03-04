@@ -30,6 +30,7 @@ tools:
 - Deep Apple ecosystem integration (HealthKit, HomeKit, Siri Intents, Widgets)
 - Maximum native performance (games, AR, complex animations)
 - Apple Watch, tvOS, or visionOS targets
+- Hybrid native + web content apps (WebKit for SwiftUI provides first-class WebView support)
 - Leveraging Swift-specific libraries
 
 **Project scaffold via XcodeBuildMCP**:
@@ -153,6 +154,7 @@ SwiftUI provides excellent built-in animation support:
 | Biometrics | LocalAuthentication | Face ID, Touch ID |
 | Camera | AVFoundation | Photo/video capture |
 | NFC | Core NFC | NFC tag reading |
+| Web content | WebKit for SwiftUI | Native WebView, JS bridge, custom URL schemes (iOS 26+) |
 
 ### Swift Concurrency
 
@@ -173,6 +175,81 @@ Use structured concurrency throughout:
 | Keychain | Secure credentials and tokens |
 | FileManager | Documents, cached files |
 | CloudKit | iCloud sync across devices |
+
+## Hybrid Content (WebKit for SwiftUI)
+
+> iOS 26+ / macOS 26+ / visionOS 26+. Requires `import WebKit`.
+> Source: WWDC 2025 Session 231 — "Meet WebKit for SwiftUI".
+
+First-class SwiftUI views for embedding web content — replaces the old `WKWebView` UIKit/AppKit bridge pattern.
+
+### WebView and WebPage
+
+```swift
+import WebKit
+
+struct ArticleView: View {
+    @State private var page = WebPage()
+
+    var body: some View {
+        WebView(page)
+            .onAppear { page.url = URL(string: "https://example.com/article")! }
+            .navigationTitle(page.title ?? "Loading...")
+    }
+}
+```
+
+`WebPage` is an `@Observable` class exposing: `url`, `title`, `isLoading`, `estimatedProgress`, `themeColor`, `isAtTop`, `isAtBottom`.
+
+### JavaScript Bridge
+
+Call JavaScript with typed argument dictionaries and get typed results:
+
+```swift
+let count: Int = try await page.callJavaScript(
+    "addItems",
+    arguments: ["items": ["apple", "banana"], "startIndex": 0]
+)
+```
+
+Arguments and return values are automatically bridged between Swift and JavaScript types.
+
+### Custom URL Schemes
+
+Serve bundled HTML/CSS/JS via custom URL schemes using `URLSchemeHandler`:
+
+```swift
+WebView(page)
+    .urlScheme("app-resource") { request in
+        let path = Bundle.main.path(forResource: request.url!.path, ofType: nil)!
+        let data = try! Data(contentsOf: URL(fileURLWithPath: path))
+        return .init(statusCode: 200, headerFields: [:], data: data)
+    }
+```
+
+Load with `app-resource:///index.html` — content stays local, no network requests.
+
+### Navigation Policy
+
+Control which navigations are allowed using `WebPage.NavigationDeciding`:
+
+```swift
+page.navigationDeciding = .handler { action in
+    if action.request.url?.host == "example.com" {
+        return .allow
+    }
+    return .cancel
+}
+```
+
+### View Modifiers
+
+| Modifier | Purpose |
+|----------|---------|
+| `webViewScrollPosition(_:)` | Bind scroll position |
+| `onScrollGeometryChange` | React to scroll geometry changes |
+| `findNavigator(isPresented:)` | In-page find (Cmd+F) |
+| `webViewScrollInputBehavior(_:for:)` | Control scroll input handling |
 
 ## Build and Test
 
