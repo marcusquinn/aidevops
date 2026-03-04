@@ -81,7 +81,7 @@ perm=$(echo "$response" | tail -1 | jq -r '.permission // empty' 2>/dev/null)
 # Idempotency guard: skip if already labelled (pulse runs every 2 minutes)
 if ! gh pr view <number> --repo <slug> --json labels --jq '.labels[].name' 2>/dev/null | grep -q '^external-contributor$'; then
   gh pr comment <number> --repo <slug> --body "This PR is from an external contributor (@<author>). Auto-merge is disabled for external PRs — a maintainer must review and merge manually."
-  gh pr edit <number> --repo <slug> --add-label "external-contributor" 2>/dev/null || true
+  gh api "repos/<slug>/issues/<number>/labels" -X POST -f 'labels[]=external-contributor' 2>/dev/null || true
 fi
 ```
 
@@ -261,7 +261,7 @@ gh pr comment <number> --repo <slug> --body "This PR appears orphaned — no act
 2. **Add the `status:orphaned` label:**
 
 ```bash
-gh pr edit <number> --repo <slug> --add-label "status:orphaned" 2>/dev/null || true
+gh api "repos/<slug>/issues/<number>/labels" -X POST -f 'labels[]=status:orphaned' 2>/dev/null || true
 ```
 
 3. **Flag the corresponding issue for re-dispatch.** Find the issue referenced in the PR title (task ID pattern `tNNN:` or `Issue #NNN`). If the issue exists and is labelled `status:in-progress` or `status:in-review`, relabel it to `status:available` so the next dispatch cycle picks it up:
