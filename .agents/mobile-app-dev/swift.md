@@ -183,6 +183,18 @@ Use structured concurrency throughout:
 
 First-class SwiftUI views for embedding web content — replaces the old `WKWebView` UIKit/AppKit bridge pattern.
 
+**Compatibility**: These APIs require iOS 26+. For apps targeting earlier versions, guard with `#available` and provide a `WKWebView` fallback:
+
+```swift
+var body: some View {
+    if #available(iOS 26.0, *) {
+        WebView(url: url)
+    } else {
+        LegacyWKWebView(url: url) // UIViewRepresentable wrapper around WKWebView
+    }
+}
+```
+
 ### WebView and WebPage
 
 ```swift
@@ -193,7 +205,10 @@ struct ArticleView: View {
 
     var body: some View {
         WebView(page)
-            .onAppear { page.url = URL(string: "https://example.com/article")! }
+            .onAppear {
+                guard let url = URL(string: "https://example.com/article") else { return }
+                page.url = url
+            }
             .navigationTitle(page.title ?? "Loading...")
     }
 }
@@ -221,9 +236,24 @@ Serve bundled HTML/CSS/JS via custom URL schemes using `URLSchemeHandler`:
 ```swift
 WebView(page)
     .urlScheme("app-resource") { request in
-        let path = Bundle.main.path(forResource: request.url!.path, ofType: nil)!
-        let data = try! Data(contentsOf: URL(fileURLWithPath: path))
-        return .init(statusCode: 200, headerFields: [:], data: data)
+        guard
+            let url = request.url,
+            !url.path.isEmpty
+        else {
+            return .init(statusCode: 400, headerFields: [:], data: Data())
+        }
+
+        let relativePath = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let fileURL = Bundle.main.resourceURL?.appendingPathComponent(relativePath) else {
+            return .init(statusCode: 404, headerFields: [:], data: Data())
+        }
+
+        do {
+            let data = try Data(contentsOf: fileURL)
+            return .init(statusCode: 200, headerFields: [:], data: data)
+        } catch {
+            return .init(statusCode: 404, headerFields: [:], data: Data())
+        }
     }
 ```
 
