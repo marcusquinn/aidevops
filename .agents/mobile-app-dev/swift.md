@@ -31,6 +31,7 @@ tools:
 - Maximum native performance (games, AR, complex animations)
 - Apple Watch, tvOS, or visionOS targets
 - Leveraging Swift-specific libraries
+- Hybrid native + web content apps (WebKit for SwiftUI provides first-class WebView)
 
 **Project scaffold via XcodeBuildMCP**:
 
@@ -153,6 +154,22 @@ SwiftUI provides excellent built-in animation support:
 | Biometrics | LocalAuthentication | Face ID, Touch ID |
 | Camera | AVFoundation | Photo/video capture |
 | NFC | Core NFC | NFC tag reading |
+| Web content | WebKit for SwiftUI | Native WebView, JS bridge, custom URL schemes (iOS 26+) |
+
+### Hybrid Content (WebKit for SwiftUI)
+
+Introduced at WWDC 2025, WebKit for SwiftUI provides native SwiftUI views for embedding web content. Use this when your app needs to display rich HTML (help pages, articles, terms of service) or build hybrid native + web architectures.
+
+Key APIs:
+
+- `WebView(url:)` — display web content as a SwiftUI view
+- `WebPage` — `@Observable` class to load, control, and communicate with web content (title, URL, progress, theme color)
+- `callJavaScript()` — evaluate JS with typed argument dictionaries, cast return values to Swift types
+- `URLSchemeHandler` — serve bundled HTML/CSS via custom URL schemes (e.g., `myapp://article/1`)
+- `WebPage.NavigationDeciding` — control navigation policies (allow, cancel, open in external browser)
+- View modifiers: `webViewScrollPosition`, `onScrollGeometryChange`, `findNavigator`, `webViewScrollInputBehavior` (visionOS look-to-scroll)
+
+Requires iOS 26+ / macOS 26+ / visionOS 26+. For older deployment targets, use `WKWebView` via UIKit/AppKit bridge.
 
 ### Swift Concurrency
 
