@@ -79,18 +79,22 @@ perm=$(echo "$response" | tail -1 | jq -r '.permission // empty' 2>/dev/null)
 
 ```bash
 # Idempotency guard: skip if already labelled OR already commented (belt-and-suspenders).
-# IMPORTANT: Do NOT suppress stderr on the label check — a failed API call must not
-# silently bypass the guard (root cause of duplicate comments in #2795).
-labels=$(gh pr view <number> --repo <slug> --json labels --jq '.labels[].name' 2>&1) || true
-if echo "$labels" | grep -q '^external-contributor$'; then
+# Uses jq any() for a clean boolean result — avoids grep anchor issues with multi-line
+# output that caused duplicate comments (#2795, #2800).
+has_label=$(gh pr view <number> --repo <slug> --json labels --jq 'any(.labels[]; .name == "external-contributor")' 2>&1) || true
+if [ "$has_label" = "true" ]; then
   : # Already labelled — skip
-elif gh pr view <number> --repo <slug> --json comments --jq '.comments[].body' 2>&1 | grep -qiF 'external contributor'; then
-  # Comment already exists but label is missing — re-add the label only
-  gh api "repos/<slug>/issues/<number>/labels" -X POST -f 'labels[]=external-contributor' 2>/dev/null || true
 else
-  # Neither label nor comment exists — post comment and add label atomically
-  gh pr comment <number> --repo <slug> --body "This PR is from an external contributor (@<author>). Auto-merge is disabled for external PRs — a maintainer must review and merge manually." \
-    && gh api "repos/<slug>/issues/<number>/labels" -X POST -f 'labels[]=external-contributor' 2>/dev/null || true
+  # Label not found (or API failed) — check for existing comment as fallback
+  existing_comment=$(gh pr view <number> --repo <slug> --json comments --jq '[.comments[].body | select(test("external contributor"; "i"))] | length' 2>&1) || true
+  if [ "$existing_comment" != "0" ] && [ -n "$existing_comment" ]; then
+    # Comment already exists but label is missing — re-add the label only
+    gh api "repos/<slug>/issues/<number>/labels" -X POST -f 'labels[]=external-contributor' 2>/dev/null || true
+  else
+    # Neither label nor comment exists — post comment and add label atomically
+    gh pr comment <number> --repo <slug> --body "This PR is from an external contributor (@<author>). Auto-merge is disabled for external PRs — a maintainer must review and merge manually." \
+      && gh api "repos/<slug>/issues/<number>/labels" -X POST -f 'labels[]=external-contributor' 2>/dev/null || true
+  fi
 fi
 ```
 
@@ -100,9 +104,9 @@ Then skip to the next PR. Do NOT dispatch workers to fix failing CI on external 
 
 ```bash
 # Only comment once — check for existing permission-failure comment.
-# Do NOT suppress stderr — a failed API call must not bypass the guard.
-comments=$(gh pr view <number> --repo <slug> --json comments --jq '.comments[].body' 2>&1) || true
-if ! echo "$comments" | grep -qF 'Permission check failed'; then
+# Uses jq select+test for robust matching — avoids grep issues with multi-line output.
+perm_comment_count=$(gh pr view <number> --repo <slug> --json comments --jq '[.comments[].body | select(test("Permission check failed"))] | length' 2>&1) || true
+if [ "$perm_comment_count" = "0" ] || [ -z "$perm_comment_count" ]; then
   gh pr comment <number> --repo <slug> --body "Permission check failed for this PR (HTTP $http_status from collaborator permission API). Unable to determine if @<author> is a maintainer or external contributor. **A maintainer must review and merge this PR manually.** This is a fail-closed safety measure — the pulse will not auto-merge until the permission API succeeds."
 fi
 ```
