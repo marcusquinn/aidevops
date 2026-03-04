@@ -86,7 +86,7 @@ perm=$(echo "$response" | tail -1 | jq -r '.permission // empty' 2>/dev/null)
 # Moving to a shell function eliminates that failure mode entirely.
 #
 # Source the wrapper to get the function (it's in the same script directory):
-source ~/.aidevops/agents/scripts/pulse-wrapper.sh 2>/dev/null || true
+source ~/.aidevops/agents/scripts/pulse-wrapper.sh || true
 
 # Exit codes: 0=already flagged, 1=needs flagging, 2=API error (skip)
 check_external_contributor_pr <number> <slug> <author> --post
@@ -107,7 +107,7 @@ Then skip to the next PR. Do NOT dispatch workers to fix failing CI on external 
 # Deterministic idempotency guard — lives in pulse-wrapper.sh.
 # Checks for existing "Permission check failed" comment before posting.
 # Fails closed on API errors (exit code 2 = skip, next pulse retries).
-source ~/.aidevops/agents/scripts/pulse-wrapper.sh 2>/dev/null || true
+source ~/.aidevops/agents/scripts/pulse-wrapper.sh || true
 check_permission_failure_pr <number> <slug> <author> "$http_status"
 ```
 
