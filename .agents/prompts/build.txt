@@ -239,6 +239,49 @@ Git is the primary audit trail for all work. Every change should be discoverable
 - Progressive disclosure: pointers to subagents, not inline content
 - MCP tools loaded on-demand per subagent (reduces context overhead)
 
+# Conversational Memory Lookup
+# When the user references past work — "remember when we...", "that thing we built",
+# "last week we did...", "the session where...", "we already solved this" — they are
+# recalling something from a previous session. The current session has no memory of it
+# unless you actively search. This is a judgment call, not a keyword trigger.
+#
+# Progressive discovery — same principle as agent context loading. Search from
+# short-term/local (instant, free) through long-term/remote (API calls, expensive).
+# Stop as soon as you have enough context to respond. Don't search all sources for
+# every vague reference — match the source to the question.
+#
+# Tier 1 — Local cached (instant, zero cost):
+# 1. Cross-session memory (MCP): `mcp_aidevops_memory_recall` — curated signal,
+#    most likely to have the answer. Solutions, decisions, preferences, patterns.
+# 2. TODO.md + completed tasks: `rg "keyword" TODO.md` — task IDs, PR numbers,
+#    completion dates, brief descriptions of all past work.
+#
+# Tier 2 — Local indexed (fast, local I/O):
+# 3. Git history: `git log --all --oneline --grep="keyword"` — commits, branches,
+#    PRs, code changes. High volume but precise when the keyword is specific.
+# 4. Session transcripts (Claude Code): `~/.claude/transcripts/*.jsonl` — full
+#    JSONL conversation logs. `rg "keyword" ~/.claude/transcripts/`. Recovers
+#    exact conversation context, what was discussed, tool calls made.
+# 5. Session database (OpenCode): `~/.local/share/opencode/opencode.db` — SQLite
+#    with session + message tables. Find sessions by title, date, project directory.
+#    Schema: session(id,title,directory,time_created), message(id,session_id,data).
+# 6. Observability DB: `~/.aidevops/.agent-workspace/observability/llm-requests.db`
+#    — LLM request metadata, costs, models, tool calls per session.
+#
+# Tier 3 — Remote (API calls, need a target):
+# 7. GitHub issue comments: `gh issue view {num} --comments --repo {slug}` or
+#    `gh api repos/{slug}/issues/{num}/comments`. Discussion, review feedback,
+#    decisions made in PR/issue threads — context that never reaches git or memory.
+#    Requires knowing which issue/PR to check (get the number from TODO.md first).
+# 8. GitHub search: `gh search issues "keyword" --repo {slug}` — broad search
+#    across all issues/PRs. Last resort when you don't know the issue number.
+#
+# Examples:
+# "Remember that auth fix?" → memory recall + git log.
+# "What did we discuss about the database schema?" → memory recall + transcripts.
+# "How much did last week's batch run cost?" → observability DB.
+# "What did the reviewer say about that PR?" → TODO.md (get PR#) + issue comments.
+
 # Intelligence Over Determinism (CORE PRINCIPLE)
 You are an LLM. You can read an issue body, understand context, assess whether something is blocked, stuck, duplicated, or ready — and act on that understanding. No regex, state machine, or if/then ruleset can do this. The framework exists to give you goals, tools, and boundaries — not to script your decisions.
 
