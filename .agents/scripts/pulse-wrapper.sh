@@ -84,6 +84,8 @@ PULSE_MODEL="${PULSE_MODEL:-anthropic/claude-sonnet-4-6}"
 REPOS_JSON="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 STATE_FILE="${HOME}/.aidevops/logs/pulse-state.txt"
 QUALITY_SWEEP_LAST_RUN="${HOME}/.aidevops/logs/quality-sweep-last-run"
+QUALITY_SWEEP_STATE_DIR="${HOME}/.aidevops/logs/quality-sweep-state"
+CODERABBIT_ISSUE_SPIKE="${CODERABBIT_ISSUE_SPIKE:-10}" # trigger active review when issues increase by this many
 
 #######################################
 # Ensure log directory exists
@@ -624,6 +626,145 @@ _compute_struggle_ratio() {
 	fi
 
 	echo "${ratio}|${commits}|${messages}|${flag}"
+	return 0
+}
+
+#######################################
+# Check and flag external-contributor PRs (t1391)
+#
+# Deterministic idempotency guard for the external-contributor comment.
+# Moved from pulse.md inline bash to a shell function because the LLM
+# kept getting the fail-closed logic wrong (4 prior fix attempts:
+# PRs #2794, #2796, #2801, #2803 — all in pulse.md prompt text).
+#
+# This is exactly the kind of logic that belongs in the harness, not
+# the prompt: it has one correct answer regardless of context.
+#
+# Arguments:
+#   $1 - PR number
+#   $2 - repo slug (owner/repo)
+#   $3 - PR author login
+#
+# Exit codes:
+#   0 - already flagged (label or comment exists) — no action needed
+#   1 - not yet flagged AND API calls succeeded — caller should post
+#   2 - API error (fail closed) — caller must skip, next pulse retries
+#
+# Side effects when exit=1 (caller invokes with --post):
+#   Posts the external-contributor comment and adds the label.
+#######################################
+check_external_contributor_pr() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local pr_author="$3"
+	local do_post="${4:-}"
+
+	# Validate arguments
+	if [[ -z "$pr_number" || -z "$repo_slug" || -z "$pr_author" ]]; then
+		echo "[pulse-wrapper] check_external_contributor_pr: missing arguments" >>"$LOGFILE"
+		return 2
+	fi
+
+	# Step 1: Check for existing label (capture exit code separately from output)
+	local label_output
+	label_output=$(gh pr view "$pr_number" --repo "$repo_slug" --json labels --jq '.labels[].name' 2>/dev/null)
+	local label_exit=$?
+
+	local has_label=false
+	if [[ $label_exit -eq 0 ]] && echo "$label_output" | grep -q '^external-contributor$'; then
+		has_label=true
+	fi
+
+	# Step 2: Check for existing comment
+	local comment_output
+	comment_output=$(gh pr view "$pr_number" --repo "$repo_slug" --json comments --jq '.comments[].body' 2>/dev/null)
+	local comment_exit=$?
+
+	local has_comment=false
+	if [[ $comment_exit -eq 0 ]] && echo "$comment_output" | grep -qiF 'external contributor'; then
+		has_comment=true
+	fi
+
+	# Step 3: Decide action based on results
+	if [[ $label_exit -ne 0 || $comment_exit -ne 0 ]]; then
+		# API error on label or comment check — fail closed, skip posting entirely.
+		# The next pulse cycle will retry. Never post when we can't confirm absence.
+		echo "[pulse-wrapper] check_external_contributor_pr: API error (label_exit=$label_exit, comment_exit=$comment_exit) for PR #$pr_number in $repo_slug — skipping (fail closed)" >>"$LOGFILE"
+		return 2
+	fi
+
+	if [[ "$has_label" == "true" || "$has_comment" == "true" ]]; then
+		# Already flagged. Re-add label if missing (comment exists but label doesn't).
+		if [[ "$has_label" == "false" ]]; then
+			gh api "repos/${repo_slug}/issues/${pr_number}/labels" \
+				-X POST -f 'labels[]=external-contributor' 2>/dev/null || true
+		fi
+		return 0
+	fi
+
+	# Both API calls succeeded AND neither label nor comment exists.
+	if [[ "$do_post" == "--post" ]]; then
+		# Safe to post — this is the only code path that creates a comment.
+		gh pr comment "$pr_number" --repo "$repo_slug" \
+			--body "This PR is from an external contributor (@${pr_author}). Auto-merge is disabled for external PRs — a maintainer must review and merge manually." &&
+			gh api "repos/${repo_slug}/issues/${pr_number}/labels" \
+				-X POST -f 'labels[]=external-contributor' 2>/dev/null || true
+		echo "[pulse-wrapper] check_external_contributor_pr: flagged PR #$pr_number in $repo_slug as external contributor (@$pr_author)" >>"$LOGFILE"
+	fi
+	return 1
+}
+
+#######################################
+# Check and post permission-failure comment on a PR (t1391)
+#
+# Companion to check_external_contributor_pr() for the case where the
+# collaborator permission API itself fails (403, 429, 5xx, network error).
+# Posts a distinct "Permission check failed" comment so a maintainer
+# knows to review manually. Idempotent — checks for existing comment
+# before posting, fails closed on API errors.
+#
+# Arguments:
+#   $1 - PR number
+#   $2 - repo slug (owner/repo)
+#   $3 - PR author login
+#   $4 - HTTP status code from the failed permission check
+#
+# Exit codes:
+#   0 - comment already exists or was just posted
+#   2 - API error checking for existing comment (fail closed, skip)
+#######################################
+check_permission_failure_pr() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local pr_author="$3"
+	local http_status="${4:-unknown}"
+
+	if [[ -z "$pr_number" || -z "$repo_slug" || -z "$pr_author" ]]; then
+		echo "[pulse-wrapper] check_permission_failure_pr: missing arguments" >>"$LOGFILE"
+		return 2
+	fi
+
+	# Check for existing permission-failure comment (fail closed on API error)
+	local perm_comments
+	perm_comments=$(gh pr view "$pr_number" --repo "$repo_slug" --json comments --jq '.comments[].body' 2>/dev/null)
+	local perm_exit=$?
+
+	if [[ $perm_exit -ne 0 ]]; then
+		echo "[pulse-wrapper] check_permission_failure_pr: API error (exit=$perm_exit) for PR #$pr_number in $repo_slug — skipping (fail closed)" >>"$LOGFILE"
+		return 2
+	fi
+
+	if echo "$perm_comments" | grep -qF 'Permission check failed'; then
+		# Already posted — nothing to do
+		return 0
+	fi
+
+	# Safe to post — no existing comment and API call succeeded
+	gh pr comment "$pr_number" --repo "$repo_slug" \
+		--body "Permission check failed for this PR (HTTP ${http_status} from collaborator permission API). Unable to determine if @${pr_author} is a maintainer or external contributor. **A maintainer must review and merge this PR manually.** This is a fail-closed safety measure — the pulse will not auto-merge until the permission API succeeds." \
+		2>/dev/null || true
+
+	echo "[pulse-wrapper] check_permission_failure_pr: posted permission-failure comment on PR #$pr_number in $repo_slug (HTTP $http_status)" >>"$LOGFILE"
 	return 0
 }
 
@@ -1446,6 +1587,61 @@ _ensure_quality_issue() {
 }
 
 #######################################
+# Load previous quality sweep state for a repo
+#
+# Reads gate_status and total_issues from the per-repo state file.
+# Returns defaults if no state file exists (first run).
+#
+# Arguments:
+#   $1 - repo slug
+# Output: "gate_status|total_issues|high_critical_count" to stdout
+#######################################
+_load_sweep_state() {
+	local repo_slug="$1"
+	local slug_safe="${repo_slug//\//-}"
+	local state_file="${QUALITY_SWEEP_STATE_DIR}/${slug_safe}.json"
+
+	if [[ -f "$state_file" ]]; then
+		local prev_gate prev_issues prev_high_critical
+		prev_gate=$(jq -r '.gate_status // "UNKNOWN"' "$state_file" 2>/dev/null || echo "UNKNOWN")
+		prev_issues=$(jq -r '.total_issues // 0' "$state_file" 2>/dev/null || echo "0")
+		prev_high_critical=$(jq -r '.high_critical_count // 0' "$state_file" 2>/dev/null || echo "0")
+		echo "${prev_gate}|${prev_issues}|${prev_high_critical}"
+	else
+		echo "UNKNOWN|0|0"
+	fi
+	return 0
+}
+
+#######################################
+# Save current quality sweep state for a repo
+#
+# Persists gate_status, total_issues, and high/critical severity
+# count so the next sweep can compute deltas.
+#
+# Arguments:
+#   $1 - repo slug
+#   $2 - gate status (OK/ERROR/UNKNOWN)
+#   $3 - total issue count
+#   $4 - high+critical severity count
+#######################################
+_save_sweep_state() {
+	local repo_slug="$1"
+	local gate_status="$2"
+	local total_issues="$3"
+	local high_critical_count="$4"
+	local slug_safe="${repo_slug//\//-}"
+
+	mkdir -p "$QUALITY_SWEEP_STATE_DIR"
+
+	local state_file="${QUALITY_SWEEP_STATE_DIR}/${slug_safe}.json"
+	printf '{"gate_status":"%s","total_issues":%d,"high_critical_count":%d,"updated_at":"%s"}\n' \
+		"$gate_status" "$total_issues" "$high_critical_count" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+		>"$state_file"
+	return 0
+}
+
+#######################################
 # Run quality sweep for a single repo
 #
 # Gathers findings from all available tools and posts a single
@@ -1466,6 +1662,11 @@ _quality_sweep_for_repo() {
 	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 	local findings=""
 	local tool_count=0
+
+	# Function-scoped variables for cross-section use (CodeRabbit conditional logic)
+	local sweep_gate_status="UNKNOWN"
+	local sweep_total_issues=0
+	local sweep_high_critical=0
 
 	# --- 1. ShellCheck ---
 	local shellcheck_section=""
@@ -1593,6 +1794,8 @@ _No smells detected or qlty analysis returned empty._
 				# Sanitise API data before embedding in markdown comment
 				gate_status=$(_sanitize_markdown "$gate_status")
 				conditions=$(_sanitize_markdown "$conditions")
+				# Feed sweep state for CodeRabbit conditional trigger (section 5)
+				sweep_gate_status="$gate_status"
 
 				sonar_section="### SonarCloud Quality Gate
 
@@ -1609,22 +1812,31 @@ ${conditions}
 			fi
 
 			if [[ -n "$sonar_issues" ]] && echo "$sonar_issues" | jq -e '.total' &>/dev/null; then
-				# Single jq pass: extract total, severity breakdown, and type breakdown
+				# Single jq pass: extract total, high/critical count, severity breakdown, and type breakdown
 				local issues_data
 				issues_data=$(echo "$sonar_issues" | jq -r '
 					(.total // 0) as $total |
+					([.facets[]? | select(.property == "severities") | .values[]? | select(.val == "MAJOR" or .val == "CRITICAL" or .val == "BLOCKER") | .count] | add // 0) as $hc |
 					([.facets[]? | select(.property == "severities") | .values[]? | "  - \(.val): \(.count)"] | join("\n")) as $sev |
 					([.facets[]? | select(.property == "types") | .values[]? | "  - \(.val): \(.count)"] | join("\n")) as $typ |
-					"\($total)|\($sev)|\($typ)"
-				') || issues_data="0||"
+					"\($total)|\($hc)|\($sev)|\($typ)"
+				') || issues_data="0|0||"
 				local total_issues="${issues_data%%|*}"
 				local remainder="${issues_data#*|}"
+				local high_critical_count="${remainder%%|*}"
+				remainder="${remainder#*|}"
 				local severity_breakdown="${remainder%%|*}"
 				local type_breakdown="${remainder#*|}"
-				# Validate total_issues is numeric before any arithmetic use
+				# Validate numeric fields before any arithmetic use
 				if ! [[ "$total_issues" =~ ^[0-9]+$ ]]; then
 					total_issues=0
 				fi
+				if ! [[ "$high_critical_count" =~ ^[0-9]+$ ]]; then
+					high_critical_count=0
+				fi
+				# Feed sweep state for CodeRabbit conditional trigger (section 5)
+				sweep_total_issues="$total_issues"
+				sweep_high_critical="$high_critical_count"
 				# Sanitise API data before embedding in markdown comment
 				severity_breakdown=$(_sanitize_markdown "$severity_breakdown")
 				type_breakdown=$(_sanitize_markdown "$type_breakdown")
@@ -1668,9 +1880,53 @@ ${type_breakdown}
 		fi
 	fi
 
-	# --- 5. CodeRabbit trigger ---
-	# Always include @coderabbitai mention to trigger a full codebase review
-	local coderabbit_section="### CodeRabbit
+	# --- 5. CodeRabbit trigger (conditional — t1390) ---
+	# Only trigger @coderabbitai active review when quality degrades:
+	#   - Quality gate status changes to FAIL/ERROR
+	#   - Issue count increases by CODERABBIT_ISSUE_SPIKE+ since last sweep
+	#   - New high/critical severity findings appear
+	# Otherwise post a passive monitoring line to avoid repetitive requests.
+	local coderabbit_section=""
+	local prev_state
+	prev_state=$(_load_sweep_state "$repo_slug")
+	local prev_gate prev_issues prev_high_critical
+	IFS='|' read -r prev_gate prev_issues prev_high_critical <<<"$prev_state"
+
+	local issue_delta=$((sweep_total_issues - prev_issues))
+	local high_critical_delta=$((sweep_high_critical - prev_high_critical))
+	local trigger_active=false
+	local trigger_reasons=""
+
+	# Condition 1: Quality gate is failing
+	if [[ "$sweep_gate_status" == "ERROR" || "$sweep_gate_status" == "WARN" ]]; then
+		trigger_active=true
+		trigger_reasons="quality gate ${sweep_gate_status}"
+	fi
+
+	# Condition 2: Issue count spiked by threshold or more
+	if [[ "$issue_delta" -ge "$CODERABBIT_ISSUE_SPIKE" ]]; then
+		trigger_active=true
+		if [[ -n "$trigger_reasons" ]]; then
+			trigger_reasons="${trigger_reasons}, issue spike +${issue_delta}"
+		else
+			trigger_reasons="issue spike +${issue_delta}"
+		fi
+	fi
+
+	# Condition 3: New high/critical severity findings
+	if [[ "$high_critical_delta" -gt 0 ]]; then
+		trigger_active=true
+		if [[ -n "$trigger_reasons" ]]; then
+			trigger_reasons="${trigger_reasons}, +${high_critical_delta} high/critical"
+		else
+			trigger_reasons="+${high_critical_delta} high/critical findings"
+		fi
+	fi
+
+	if [[ "$trigger_active" == true ]]; then
+		coderabbit_section="### CodeRabbit
+
+**Trigger**: ${trigger_reasons}
 
 @coderabbitai Please run a full codebase review of this repository. Focus on:
 - Security vulnerabilities and credential exposure
@@ -1678,7 +1934,17 @@ ${type_breakdown}
 - Code duplication and maintainability
 - Documentation accuracy
 "
+		echo "[pulse-wrapper] CodeRabbit: active review triggered for ${repo_slug} (${trigger_reasons})" >>"$LOGFILE"
+	else
+		coderabbit_section="### CodeRabbit
+
+_Monitoring: ${sweep_total_issues} issues (delta: ${issue_delta}), gate ${sweep_gate_status}, ${sweep_high_critical} high/critical — no active review needed._
+"
+	fi
 	tool_count=$((tool_count + 1))
+
+	# Save current state for next sweep's delta comparison
+	_save_sweep_state "$repo_slug" "$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical"
 
 	# --- 6. Merged PR review scanner ---
 	# Scans recently merged PRs for unactioned review feedback from bots
@@ -1899,4 +2165,10 @@ calculate_max_workers() {
 	return 0
 }
 
-main "$@"
+# Only run main when executed directly, not when sourced.
+# The pulse agent sources this file to access helper functions
+# (check_external_contributor_pr, check_permission_failure_pr)
+# without triggering the full pulse lifecycle.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+	main "$@"
+fi
