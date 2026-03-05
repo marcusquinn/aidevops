@@ -344,6 +344,10 @@ run_shellcheck() {
 	# exponential expansion. Each file gets max 30s and 1GB virtual memory.
 	local sc_timeout=30
 	local file_result
+	# t1404: warn once when no timeout utility is available (degraded protection)
+	if [[ -z "$timeout_cmd" ]]; then
+		print_warning "ShellCheck: no timeout/gtimeout utility found; using portable fallback (less reliable process cleanup)"
+	fi
 	for file in "${ALL_SH_FILES[@]}"; do
 		[[ -f "$file" ]] || continue
 		file_result=""
@@ -371,12 +375,16 @@ run_shellcheck() {
 				continue
 			}
 			# t1398.2: no -x in fallback path (no timeout utility = higher risk)
+			# t1404: use process group kill to clean up ShellCheck child processes
 			(
 				ulimit -v 1048576 2>/dev/null || true
 				shellcheck -P SCRIPTDIR --severity=warning --format=gcc "$file"
 			) >"$sc_tmpfile" 2>&1 &
 			local sc_bg_pid=$!
-			(sleep "$sc_timeout" && kill "$sc_bg_pid" 2>/dev/null) &
+			# Watcher: kill the process group (- prefix) to catch child processes,
+			# falling back to single-process kill if group kill fails (e.g., not a
+			# process group leader on some shells).
+			(sleep "$sc_timeout" && kill -- -"$sc_bg_pid" 2>/dev/null || kill "$sc_bg_pid" 2>/dev/null) &
 			local sc_watcher_pid=$!
 			local sc_exit_code=0
 			wait "$sc_bg_pid" 2>/dev/null || sc_exit_code=$?
@@ -388,7 +396,7 @@ run_shellcheck() {
 			# Exit codes >128 indicate signal kill (timeout fired)
 			if [[ $sc_exit_code -gt 128 ]]; then
 				timed_out=$((timed_out + 1))
-				print_warning "ShellCheck: $file killed after ${sc_timeout}s (no timeout utility; portable fallback)"
+				print_warning "ShellCheck: $file killed after ${sc_timeout}s (portable fallback)"
 				file_result=""
 				continue
 			fi
