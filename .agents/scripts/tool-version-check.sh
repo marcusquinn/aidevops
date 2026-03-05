@@ -105,6 +105,10 @@ NOT_INSTALLED_COUNT=0
 declare -a OUTDATED_PACKAGES=()
 declare -a JSON_RESULTS=()
 
+# Timeout for local --version commands (seconds)
+# Local commands should respond in <1s; 10s is generous to avoid false positives
+readonly VERSION_TIMEOUT=10
+
 # Get installed version
 get_installed_version() {
 	local cmd="$1"
@@ -112,12 +116,19 @@ get_installed_version() {
 
 	if command -v "$cmd" &>/dev/null; then
 		local version
+		local raw_output
+		local exit_code=0
 		# shellcheck disable=SC2086
-		version=$("$cmd" $ver_flag 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
+		raw_output=$(timeout_sec "$VERSION_TIMEOUT" "$cmd" $ver_flag 2>/dev/null) || exit_code=$?
+		# Exit 124 = GNU timeout/gtimeout, 142 = perl alarm (128+SIGALRM)
+		if [[ $exit_code -eq 124 || $exit_code -eq 142 ]]; then
+			echo "timeout"
+			return 0
+		fi
+		version=$(echo "$raw_output" | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
 		if [[ -z "$version" ]]; then
 			# Try alternative patterns
-			# shellcheck disable=SC2086
-			version=$("$cmd" $ver_flag 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1 || echo "unknown")
+			version=$(echo "$raw_output" | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1 || echo "unknown")
 		fi
 		echo "$version"
 	else
@@ -221,6 +232,11 @@ check_tool() {
 		icon="○"
 		color="$YELLOW"
 		((NOT_INSTALLED_COUNT++)) || true
+	elif [[ "$installed" == "timeout" ]]; then
+		status="timeout"
+		icon="⏱"
+		color="$RED"
+		((INSTALLED_COUNT++)) || true
 	elif [[ "$installed" == "unknown" || "$latest" == "unknown" ]]; then
 		status="unknown"
 		icon="?"
@@ -256,6 +272,9 @@ check_tool() {
 			if [[ "$QUIET" != "true" ]]; then
 				echo "   Latest: $latest"
 			fi
+			;;
+		timeout)
+			echo -e "${color}${icon}  $name: --version timed out after ${VERSION_TIMEOUT}s${NC}"
 			;;
 		outdated)
 			echo -e "${color}${icon}  $name: $installed → $latest (UPDATE AVAILABLE)${NC}"
