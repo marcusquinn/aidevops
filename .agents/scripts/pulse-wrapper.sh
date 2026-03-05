@@ -883,7 +883,7 @@ check_permission_failure_pr() {
 #######################################
 prefetch_active_workers() {
 	local worker_lines
-	worker_lines=$(ps axo pid,etime,command | grep '/full-loop' | grep '\.opencode' | grep -v grep || true)
+	worker_lines=$(ps axo pid,etime,command | grep '/full-loop' | grep '[.]opencode' || true)
 
 	echo ""
 	echo "# Active Workers"
@@ -1005,7 +1005,11 @@ guard_child_processes() {
 
 		if [[ -n "$violation" ]]; then
 			local rss_mb=$((rss / 1024))
-			echo "[pulse-wrapper] Process guard: killing PID $pid ($cmd_base) — $violation" >>"$LOGFILE"
+			# Sanitize cmd_base: strip control characters to prevent log injection
+			# (Gemini review: attacker-crafted process names could inject fake log entries)
+			local safe_cmd_base
+			safe_cmd_base=$(printf '%s' "$cmd_base" | tr -cd '[:print:]' | cut -c1-200)
+			echo "[pulse-wrapper] Process guard: killing PID $pid ($safe_cmd_base) — $violation" >>"$LOGFILE"
 			_kill_tree "$pid" || true
 			sleep 1
 			if kill -0 "$pid" 2>/dev/null; then
@@ -1411,7 +1415,7 @@ _update_health_issue_for_repo() {
 	local workers_md=""
 	local worker_count=0
 	local worker_lines
-	worker_lines=$(ps axo pid,tty,etime,command | grep '\.opencode' | grep -v grep | grep -v 'bash-language-server' || true)
+	worker_lines=$(ps axo pid,tty,etime,command | grep '[.]opencode' | grep -v 'bash-language-server' || true)
 
 	if [[ -n "$worker_lines" ]]; then
 		local worker_table=""
@@ -2284,10 +2288,9 @@ _First sweep run — baseline saved (${sweep_total_issues} issues, gate ${sweep_
 		local trigger_reasons=""
 		if [[ ${#reasons[@]} -gt 0 ]]; then
 			trigger_active=true
-			trigger_reasons=$(
-				IFS=', '
-				echo -n "${reasons[*]}"
-			)
+			# Use printf -v to avoid subshell overhead (Gemini review on PR #2886)
+			printf -v trigger_reasons '%s, ' "${reasons[@]}"
+			trigger_reasons="${trigger_reasons%, }"
 		fi
 
 		if [[ "$trigger_active" == true ]]; then
@@ -2439,7 +2442,7 @@ cleanup_orphans() {
 		fi
 
 		# Skip active workers, pulse, strategic reviews, and language servers
-		if echo "$cmd" | grep -qE '/full-loop|Supervisor Pulse|Strategic Review|language-server|eslintServer'; then
+		if [[ "$cmd" =~ /full-loop|Supervisor\ Pulse|Strategic\ Review|language-server|eslintServer ]]; then
 			continue
 		fi
 
@@ -2456,7 +2459,7 @@ cleanup_orphans() {
 		kill "$pid" 2>/dev/null || true
 		killed=$((killed + 1))
 		total_mb=$((total_mb + mb))
-	done < <(ps axo pid,tty,etime,rss,command | grep '\.opencode' | grep -v grep | grep -v 'bash-language-server')
+	done < <(ps axo pid,tty,etime,rss,command | grep '[.]opencode' | grep -v 'bash-language-server')
 
 	# Also kill orphaned node launchers (parent of .opencode processes)
 	while IFS= read -r line; do
@@ -2464,7 +2467,7 @@ cleanup_orphans() {
 		read -r pid tty etime rss cmd <<<"$line"
 
 		[[ "$tty" != "?" && "$tty" != "??" ]] && continue
-		echo "$cmd" | grep -qE '/full-loop|Supervisor Pulse|Strategic Review|language-server|eslintServer' && continue
+		[[ "$cmd" =~ /full-loop|Supervisor\ Pulse|Strategic\ Review|language-server|eslintServer ]] && continue
 
 		local age_seconds
 		age_seconds=$(_get_process_age "$pid")
@@ -2475,7 +2478,7 @@ cleanup_orphans() {
 		local mb=$((rss / 1024))
 		killed=$((killed + 1))
 		total_mb=$((total_mb + mb))
-	done < <(ps axo pid,tty,etime,rss,command | grep 'node.*opencode' | grep -v grep | grep -v '\.opencode')
+	done < <(ps axo pid,tty,etime,rss,command | grep 'node.*opencode' | grep -v '[.]opencode')
 
 	if [[ "$killed" -gt 0 ]]; then
 		echo "[pulse-wrapper] Cleaned up $killed orphaned opencode processes (freed ~${total_mb}MB)" >>"$LOGFILE"
