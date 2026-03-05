@@ -2,6 +2,12 @@
 # Resolves SC1091 ("Not following: ... was not specified as input") by telling
 # ShellCheck to look in the same directory as the script being checked.
 # This handles source "./shared-constants.sh" and source "./_common.sh" patterns.
+#
+# WARNING (t1398.2): This directive combined with -x/--external-sources can cause
+# exponential expansion across 100+ scripts (observed: 5.7 GB RSS, 35+ min).
+# Automated/headless invocations (pulse-wrapper.sh quality sweep) MUST use --norc
+# to ignore this file. Interactive invocations (linters-local.sh) use per-file
+# timeout + ulimit -v as guards. See pulse-wrapper.sh and linters-local.sh.
 source-path=SCRIPTDIR
 
 # Project-wide accepted patterns and false positives:

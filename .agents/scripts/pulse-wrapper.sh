@@ -857,10 +857,11 @@ prefetch_active_workers() {
 #
 # Scans all child processes of the current pulse (and their descendants)
 # for resource violations. ShellCheck processes get stricter limits due
-# to their known exponential expansion with --external-sources.
+# to their known exponential expansion risk (see t1398.2).
 #
-# This is the primary defense against the March 3 kernel panic scenario:
-# a single shellcheck invocation consuming 5+ GB RAM for 35+ minutes.
+# This is a secondary defense — the primary defense is the hardened
+# ShellCheck invocation (no -x, --norc, per-file timeout, ulimit -v).
+# This guard catches any ShellCheck process that escapes those limits.
 #
 # Called from the watchdog loop inside run_pulse() every 60s.
 #
@@ -1843,6 +1844,26 @@ _quality_sweep_for_repo() {
 	local sweep_high_critical=0
 
 	# --- 1. ShellCheck ---
+	# t1398.2: Hardened ShellCheck invocation to prevent exponential expansion.
+	#
+	# Root cause of March 3 kernel panic: shellcheck --external-sources with
+	# source-path=SCRIPTDIR follows source directives across 100+ scripts,
+	# causing exponential expansion (5.7 GB RSS, 88% CPU, 35+ min observed).
+	#
+	# Hardening layers (defense in depth):
+	#   1. NEVER pass -x / --external-sources — shellcheck runs in syntax-only
+	#      mode for the quality sweep (source directives are not followed)
+	#   2. --norc — ignore .shellcheckrc which sets source-path=SCRIPTDIR
+	#      (prevents implicit source following via rc file)
+	#   3. Per-file timeout (30s) — caps each invocation regardless
+	#   4. ulimit -v to cap virtual memory per shellcheck subprocess
+	#   5. guard_child_processes() in the watchdog loop kills any shellcheck
+	#      exceeding SHELLCHECK_RSS_LIMIT_KB or SHELLCHECK_RUNTIME_LIMIT
+	#
+	# Trade-off: --norc means the quality sweep won't resolve source directives,
+	# so SC1091 ("Not following: ... was not specified as input") will appear.
+	# This is acceptable — the sweep is for catching real bugs, not source
+	# resolution. linters-local.sh (interactive, with timeout) handles that.
 	local shellcheck_section=""
 	if command -v shellcheck &>/dev/null; then
 		local sh_files
@@ -1876,8 +1897,12 @@ _quality_sweep_for_repo() {
 				while IFS= read -r shfile; do
 					[[ -z "$shfile" ]] && continue
 					local result
-					# t1398: timeout each shellcheck invocation to prevent exponential expansion
-					result=$($sc_timeout_cmd shellcheck -f gcc "$shfile" || true)
+					# t1398.2: hardened invocation — no -x, --norc, per-file timeout,
+					# ulimit -v in subshell to cap RSS per shellcheck process.
+					result=$(
+						ulimit -v 1048576 2>/dev/null || true
+						$sc_timeout_cmd shellcheck --norc -f gcc "$shfile" 2>/dev/null || true
+					)
 					if [[ -n "$result" ]]; then
 						local file_errors
 						file_errors=$(grep -c ':.*: error:' <<<"$result") || file_errors=0

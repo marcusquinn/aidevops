@@ -310,12 +310,23 @@ run_shellcheck() {
 		return 0
 	fi
 
-	# t1398: ShellCheck with -x (--external-sources) and recursive -P SCRIPTDIR
-	# can cause exponential expansion when 100+ scripts source each other,
-	# consuming 5+ GB RAM and running for 35+ minutes. Mitigations:
-	#   1. Per-file mode with timeout to cap each invocation
-	#   2. ulimit to cap RSS per shellcheck process
-	#   3. No --external-sources in batch mode (use -P SCRIPTDIR only)
+	# t1398.2: Hardened ShellCheck invocation to prevent exponential expansion.
+	#
+	# Root cause: shellcheck --external-sources (-x) with source-path=SCRIPTDIR
+	# follows source directives across 100+ scripts, causing exponential
+	# expansion (5.7 GB RSS, 88% CPU, 35+ min observed — March 3 kernel panic).
+	#
+	# Hardening layers (defense in depth):
+	#   1. Per-file mode with timeout (30s) to cap each invocation
+	#   2. ulimit -v (1 GB) to cap virtual memory per shellcheck subprocess
+	#   3. -P SCRIPTDIR restricts source resolution to the script's own directory
+	#      (prevents cross-directory recursive expansion chains)
+	#   4. .shellcheckrc source-path=SCRIPTDIR is intentionally kept for
+	#      interactive use — the per-file timeout + ulimit prevent runaway
+	#
+	# Trade-off: linters-local.sh keeps -x for better source resolution
+	# (unlike pulse-wrapper.sh which uses --norc). This is acceptable because
+	# linters-local.sh is interactive with per-file timeout + ulimit guards.
 	local violations=0
 	local result=""
 	local timed_out=0
@@ -330,14 +341,18 @@ run_shellcheck() {
 	fi
 
 	# Per-file mode with timeout: prevents any single file from causing
-	# exponential expansion. Each file gets max 30s and 1GB RSS.
+	# exponential expansion. Each file gets max 30s and 1GB virtual memory.
 	local sc_timeout=30
 	local file_result
 	for file in "${ALL_SH_FILES[@]}"; do
 		[[ -f "$file" ]] || continue
 		file_result=""
 		if [[ -n "$timeout_cmd" ]]; then
-			file_result=$($timeout_cmd "${sc_timeout}s" shellcheck -x -P SCRIPTDIR --severity=warning --format=gcc "$file" 2>&1) || {
+			# t1398.2: run in subshell with ulimit -v to cap virtual memory
+			file_result=$(
+				ulimit -v 1048576 2>/dev/null || true
+				$timeout_cmd "${sc_timeout}s" shellcheck -x -P SCRIPTDIR --severity=warning --format=gcc "$file" 2>&1
+			) || {
 				local sc_exit=$?
 				# Exit code 124 = timeout killed the process
 				if [[ $sc_exit -eq 124 ]]; then
@@ -348,20 +363,24 @@ run_shellcheck() {
 			}
 		else
 			# Portable timeout wrapper: no timeout/gtimeout available.
-			# Run shellcheck in background with a sleep-based watcher that kills it
+			# Run ShellCheck in background with a sleep-based watcher that kills it
 			# after sc_timeout seconds. Drop -x to reduce recursive expansion risk.
 			local sc_tmpfile
 			sc_tmpfile=$(mktemp) || {
 				file_result=""
 				continue
 			}
-			shellcheck -P SCRIPTDIR --severity=warning --format=gcc "$file" >"$sc_tmpfile" 2>&1 &
+			# t1398.2: no -x in fallback path (no timeout utility = higher risk)
+			(
+				ulimit -v 1048576 2>/dev/null || true
+				shellcheck -P SCRIPTDIR --severity=warning --format=gcc "$file"
+			) >"$sc_tmpfile" 2>&1 &
 			local sc_bg_pid=$!
 			(sleep "$sc_timeout" && kill "$sc_bg_pid" 2>/dev/null) &
 			local sc_watcher_pid=$!
 			local sc_exit_code=0
 			wait "$sc_bg_pid" 2>/dev/null || sc_exit_code=$?
-			# Clean up watcher (may already be done if shellcheck finished before timeout)
+			# Clean up watcher (may already be done if ShellCheck finished before timeout)
 			kill "$sc_watcher_pid" 2>/dev/null || true
 			wait "$sc_watcher_pid" 2>/dev/null || true
 			file_result=$(cat "$sc_tmpfile")
