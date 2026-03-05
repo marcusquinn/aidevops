@@ -310,23 +310,13 @@ run_shellcheck() {
 		return 0
 	fi
 
-	# t1398.2: Hardened ShellCheck invocation to prevent exponential expansion.
+	# ShellCheck invocation — no source following.
 	#
-	# Root cause: shellcheck --external-sources (-x) with source-path=SCRIPTDIR
-	# follows source directives across 100+ scripts, causing exponential
-	# expansion (5.7 GB RSS, 88% CPU, 35+ min observed — March 3 kernel panic).
-	#
-	# Hardening layers (defense in depth):
-	#   1. Per-file mode with timeout (30s) to cap each invocation
-	#   2. ulimit -v (1 GB) to cap virtual memory per shellcheck subprocess
-	#   3. -P SCRIPTDIR restricts source resolution to the script's own directory
-	#      (prevents cross-directory recursive expansion chains)
-	#   4. .shellcheckrc source-path=SCRIPTDIR is intentionally kept for
-	#      interactive use — the per-file timeout + ulimit prevent runaway
-	#
-	# Trade-off: linters-local.sh keeps -x for better source resolution
-	# (unlike pulse-wrapper.sh which uses --norc). This is acceptable because
-	# linters-local.sh is interactive with per-file timeout + ulimit guards.
+	# SC1091 is disabled globally in .shellcheckrc. We no longer pass -x
+	# (--external-sources) or -P SCRIPTDIR because source-path=SCRIPTDIR
+	# combined with -x caused exponential memory expansion (11 GB RSS,
+	# kernel panics — GH#2915). Per-file timeout + ulimit remain as
+	# defense-in-depth against any future regression.
 	local violations=0
 	local result=""
 	local timed_out=0
@@ -341,10 +331,10 @@ run_shellcheck() {
 	for file in "${ALL_SH_FILES[@]}"; do
 		[[ -f "$file" ]] || continue
 		file_result=""
-		# t1398.2: run in subshell with ulimit -v to cap virtual memory
+		# Run in subshell with ulimit -v to cap virtual memory
 		file_result=$(
 			ulimit -v 1048576 2>/dev/null || true
-			timeout_sec "$sc_timeout" shellcheck -x -P SCRIPTDIR --severity=warning --format=gcc "$file" 2>&1
+			timeout_sec "$sc_timeout" shellcheck --severity=warning --format=gcc "$file" 2>&1
 		) || {
 			local sc_exit=$?
 			# Exit code 124 = timeout killed the process

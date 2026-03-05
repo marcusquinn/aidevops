@@ -8,10 +8,9 @@
 #
 # Auto-kill (GH#2915): ShellCheck processes that hit CRITICAL RSS or exceed
 # runtime limits are automatically killed. This is safe because the bash
-# language server respawns them, and the .shellcheckrc in .agents/scripts/
-# now prevents the recursive source-chain expansion that caused the bloat.
-# The auto-kill is a safety net for cases where ShellCheck is invoked without
-# the .shellcheckrc (e.g., different source-path, --norc flag).
+# language server respawns them. The root cause (source-path=SCRIPTDIR in
+# .shellcheckrc causing recursive expansion) has been removed — SC1091 is
+# now globally disabled instead. This monitor remains as defense-in-depth.
 #
 # kern.memorystatus_level is a secondary/informational signal only. macOS runs
 # fine with compression + swap; aggressive thresholds on that metric cause false

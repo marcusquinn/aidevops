@@ -2,9 +2,10 @@
 # Safe ShellCheck wrapper for language servers (shellcheck-wrapper.sh)
 #
 # The bash language server hardcodes --external-sources in every ShellCheck
-# invocation (bash-language-server/out/shellcheck/index.js:82). Combined with
-# --source-path pointing to a directory with 463+ cross-sourcing scripts, this
-# causes exponential AST expansion (observed: 11 GB RSS, kernel panics).
+# invocation (bash-language-server/out/shellcheck/index.js:82). Even though
+# source-path=SCRIPTDIR has been removed from .shellcheckrc (and SC1091 is
+# now globally disabled), this wrapper remains as defense-in-depth: it strips
+# --external-sources to prevent any residual source-following expansion.
 #
 # This wrapper strips --external-sources from the arguments before passing them
 # to the real ShellCheck binary. It also enforces a memory limit via ulimit.

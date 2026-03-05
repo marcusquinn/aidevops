@@ -1985,26 +1985,11 @@ _quality_sweep_for_repo() {
 	local sweep_high_critical=0
 
 	# --- 1. ShellCheck ---
-	# t1398.2: Hardened ShellCheck invocation to prevent exponential expansion.
-	#
-	# Root cause of March 3 kernel panic: shellcheck --external-sources with
-	# source-path=SCRIPTDIR follows source directives across 100+ scripts,
-	# causing exponential expansion (5.7 GB RSS, 88% CPU, 35+ min observed).
-	#
-	# Hardening layers (defense in depth):
-	#   1. NEVER pass -x / --external-sources — shellcheck runs in syntax-only
-	#      mode for the quality sweep (source directives are not followed)
-	#   2. --norc — ignore .shellcheckrc which sets source-path=SCRIPTDIR
-	#      (prevents implicit source following via rc file)
-	#   3. Per-file timeout (30s) — caps each invocation regardless
-	#   4. ulimit -v to cap virtual memory per shellcheck subprocess
-	#   5. guard_child_processes() in the watchdog loop kills any shellcheck
-	#      exceeding SHELLCHECK_RSS_LIMIT_KB or SHELLCHECK_RUNTIME_LIMIT
-	#
-	# Trade-off: --norc means the quality sweep won't resolve source directives,
-	# so SC1091 ("Not following: ... was not specified as input") will appear.
-	# This is acceptable — the sweep is for catching real bugs, not source
-	# resolution. linters-local.sh (interactive, with timeout) handles that.
+	# SC1091 is disabled globally in .shellcheckrc and source-path=SCRIPTDIR
+	# has been removed (it caused 11 GB RSS / kernel panics — GH#2915).
+	# The quality sweep uses --norc + no -x for maximum isolation.
+	# Per-file timeout + ulimit + guard_child_processes() remain as
+	# defense-in-depth.
 	local shellcheck_section=""
 	if command -v shellcheck &>/dev/null; then
 		local sh_files

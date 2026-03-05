@@ -1,16 +1,24 @@
 # ShellCheck configuration for aidevops
-# Resolves SC1091 ("Not following: ... was not specified as input") by telling
-# ShellCheck to look in the same directory as the script being checked.
-# This handles source "./shared-constants.sh" and source "./_common.sh" patterns.
 #
-# WARNING (t1398.2): This directive combined with -x/--external-sources can cause
-# exponential expansion across 100+ scripts (observed: 5.7 GB RSS, 35+ min).
-# Automated/headless invocations (pulse-wrapper.sh quality sweep) MUST use --norc
-# to ignore this file. Interactive invocations (linters-local.sh) use per-file
-# timeout + ulimit -v as guards. See pulse-wrapper.sh and linters-local.sh.
-source-path=SCRIPTDIR
+# SC1091 ("Not following: ... was not specified as input") is disabled globally.
+# ShellCheck cannot resolve dynamic source paths like "${SCRIPT_DIR}/foo.sh"
+# (255 of 404 scripts use this pattern), so source-path=SCRIPTDIR only partially
+# worked and caused catastrophic memory expansion when combined with
+# --external-sources (-x): 11 GB RSS, kernel panics, 73 zombie processes.
+# See GH#2915, PR#2918, PR#2937 for the full incident chain.
+#
+# Defense-in-depth: even without source-path, the shellcheck-wrapper.sh strips
+# --external-sources from bash-language-server invocations, and SHELLCHECK_PATH
+# is set in .zshenv to route through the wrapper for non-interactive shells.
 
 # Project-wide accepted patterns and false positives:
+#
+# Source resolution:
+# SC1091: "Not following: ... was not specified as input" — info-level hint
+#         that ShellCheck cannot resolve a sourced file. Disabled because 255
+#         scripts use dynamic paths (${SCRIPT_DIR}/foo.sh) that ShellCheck
+#         cannot follow, and the previous fix (source-path=SCRIPTDIR) caused
+#         exponential memory expansion. See header comment.
 #
 # Library/sourced-file architecture:
 # SC2329: "Function is never invoked" — false positive for library functions
@@ -35,6 +43,7 @@ source-path=SCRIPTDIR
 # SC2153: "Possible misspelling" — false positive for UPPER/lower conventions
 # SC2004: "$/${} unnecessary on arithmetic variables" — style preference
 # SC2009: "Consider using pgrep" — ps|grep is intentional for portability
+disable=SC1091
 disable=SC2329
 disable=SC2317
 disable=SC2034
