@@ -371,7 +371,8 @@ main() {
 				# Run update command directly (not via eval for security)
 				# Commands are hardcoded in tool definitions, not user input
 				# Timeout prevents hangs on slow registries/network issues
-				if timeout 120 bash -c "$update_cmd" 2>&1 | tail -2; then
+				# Use timeout_sec for macOS compatibility (no native timeout)
+				if timeout_sec 120 bash -c "$update_cmd" 2>&1 | tail -2; then
 					echo -e "  ${GREEN}✓ Updated${NC}"
 				else
 					echo -e "  ${RED}✗ Failed${NC}"

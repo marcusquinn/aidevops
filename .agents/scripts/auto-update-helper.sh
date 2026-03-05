@@ -414,7 +414,8 @@ check_skill_freshness() {
 	if [[ -n "$last_skill_check" ]]; then
 		local last_epoch now_epoch elapsed
 		if [[ "$(uname)" == "Darwin" ]]; then
-			last_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_skill_check" "+%s" 2>/dev/null || echo "0")
+			# TZ=UTC: stored timestamps are UTC — macOS date -j ignores the Z suffix
+			last_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_skill_check" "+%s" 2>/dev/null || echo "0")
 		else
 			last_epoch=$(date -d "$last_skill_check" "+%s" 2>/dev/null || echo "0")
 		fi
@@ -533,7 +534,8 @@ check_openclaw_freshness() {
 	if [[ -n "$last_openclaw_check" ]]; then
 		local last_epoch now_epoch elapsed
 		if [[ "$(uname)" == "Darwin" ]]; then
-			last_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_openclaw_check" "+%s" 2>/dev/null || echo "0")
+			# TZ=UTC: stored timestamps are UTC — macOS date -j ignores the Z suffix
+			last_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_openclaw_check" "+%s" 2>/dev/null || echo "0")
 		else
 			last_epoch=$(date -d "$last_openclaw_check" "+%s" 2>/dev/null || echo "0")
 		fi
@@ -744,7 +746,8 @@ check_tool_freshness() {
 	if [[ -n "$last_tool_check" ]]; then
 		local last_epoch now_epoch elapsed
 		if [[ "$(uname)" == "Darwin" ]]; then
-			last_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_tool_check" "+%s" 2>/dev/null || echo "0")
+			# TZ=UTC: stored timestamps are UTC — macOS date -j ignores the Z suffix
+			last_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_tool_check" "+%s" 2>/dev/null || echo "0")
 		else
 			last_epoch=$(date -d "$last_tool_check" "+%s" 2>/dev/null || echo "0")
 		fi

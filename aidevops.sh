@@ -28,6 +28,21 @@ VERSION_FILE="$INSTALL_DIR/VERSION"
 # Portable sed in-place edit (macOS BSD sed vs GNU sed)
 sed_inplace() { if [[ "$(uname)" == "Darwin" ]]; then sed -i '' "$@"; else sed -i "$@"; fi; }
 
+# Portable timeout (macOS has no coreutils timeout)
+_timeout_cmd() {
+	local secs="$1"
+	shift
+	if command -v timeout &>/dev/null; then
+		timeout "$secs" "$@"
+	elif command -v perl &>/dev/null; then
+		perl -e 'alarm shift; exec @ARGV' "$secs" "$@"
+	elif command -v gtimeout &>/dev/null; then
+		gtimeout "$secs" "$@"
+	else
+		"$@"
+	fi
+}
+
 print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 print_success() { echo -e "${GREEN}[OK]${NC} $1"; }
 print_warning() { echo -e "${YELLOW}[WARN]${NC} $1"; }
@@ -849,9 +864,9 @@ cmd_update() {
 			# Get latest version (npm or brew) — timeout prevents hangs on slow registries
 			if [[ "$pkg_ref" == brew:* ]]; then
 				local brew_pkg="${pkg_ref#brew:}"
-				latest=$(timeout 30 brew info --json=v2 "$brew_pkg" 2>/dev/null | jq -r '.formulae[0].versions.stable // empty' 2>/dev/null || true)
+				latest=$(_timeout_cmd 30 brew info --json=v2 "$brew_pkg" 2>/dev/null | jq -r '.formulae[0].versions.stable // empty' 2>/dev/null || true)
 			else
-				latest=$(timeout 30 npm view "$pkg_ref" version 2>/dev/null || true)
+				latest=$(_timeout_cmd 30 npm view "$pkg_ref" version 2>/dev/null || true)
 			fi
 			[[ -z "$latest" ]] && continue
 
