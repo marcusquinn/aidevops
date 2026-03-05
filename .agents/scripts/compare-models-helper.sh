@@ -657,13 +657,17 @@ cmd_providers() {
 #   $2 - models_str (comma-separated)
 #   $3 - output_dir
 #   $4 - judge_model tier
-#   $5+ - model_names array
+#   $5 - prompt_version (may be empty)
+#   $6 - prompt_file (may be empty)
+#   $7+ - model_names array
 _cross_review_judge_score() {
 	local original_prompt="$1"
 	local models_str="$2"
 	local output_dir="$3"
 	local judge_model="$4"
-	shift 4
+	local prompt_version="$5"
+	local prompt_file="$6"
+	shift 6
 	local -a model_names=("$@")
 
 	# Validate judge_model identifier (used in filenames and runner names)
@@ -882,6 +886,8 @@ print(r)
 		--evaluator "$judge_model"
 	)
 	[[ -n "$winner" ]] && score_args+=(--winner "$winner")
+	[[ -n "$prompt_version" ]] && score_args+=(--prompt-version "$prompt_version")
+	[[ -n "$prompt_file" ]] && score_args+=(--prompt-file "$prompt_file")
 
 	for model_tier in "${models_with_output[@]}"; do
 		# Extract all scores in a single Python call (avoids 5 subprocesses per model)
@@ -933,6 +939,7 @@ print(s.get('correctness', 0), s.get('completeness', 0), s.get('quality', 0), s.
 cmd_cross_review() {
 	local prompt="" models_str="" workdir="" review_timeout="600" output_dir=""
 	local score_flag=false judge_model="opus"
+	local prompt_version="" prompt_file=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -991,6 +998,22 @@ cmd_cross_review() {
 				print_error "Invalid judge model identifier: $judge_model (only alphanumeric, dots, hyphens, underscores)"
 				return 1
 			fi
+			shift 2
+			;;
+		--prompt-version)
+			[[ $# -lt 2 ]] && {
+				print_error "--prompt-version requires a value"
+				return 1
+			}
+			prompt_version="$2"
+			shift 2
+			;;
+		--prompt-file)
+			[[ $# -lt 2 ]] && {
+				print_error "--prompt-file requires a value"
+				return 1
+			}
+			prompt_file="$2"
 			shift 2
 			;;
 		*)
@@ -1183,7 +1206,8 @@ cmd_cross_review() {
 	# When --score is set, dispatch all outputs to a judge model for structured scoring.
 	if [[ "$score_flag" == "true" ]]; then
 		_cross_review_judge_score \
-			"$prompt" "$models_str" "$output_dir" "$judge_model" "${model_names[@]}"
+			"$prompt" "$models_str" "$output_dir" "$judge_model" \
+			"$prompt_version" "$prompt_file" "${model_names[@]}"
 	fi
 
 	return 0
@@ -1329,8 +1353,11 @@ cmd_help() {
 	echo "    --model claude-sonnet-4-6 --correctness 9 --completeness 8 --quality 8 --clarity 9 --adherence 9 \\"
 	echo "    --model gpt-4.1 --correctness 8 --completeness 7 --quality 7 --clarity 8 --adherence 8 \\"
 	echo "    --winner claude-sonnet-4-6"
+	echo "  compare-models-helper.sh score --task 'review code' --prompt-file prompts/build.txt \\"
+	echo "    --model sonnet --correctness 9 --completeness 8 --quality 8 --clarity 9 --adherence 9"
 	echo "  compare-models-helper.sh results"
 	echo "  compare-models-helper.sh results --model sonnet --limit 5"
+	echo "  compare-models-helper.sh results --prompt-version a1b2c3d"
 	echo ""
 	echo "Discover options:"
 	echo "  --probe        Verify API keys by calling provider endpoints"
@@ -1350,6 +1377,9 @@ cmd_help() {
 	echo "  compare-models-helper.sh cross-review \\"
 	echo "    --prompt 'Review this PR diff' --models 'sonnet,gemini-pro' \\"
 	echo "    --score --judge sonnet            # use sonnet as judge instead"
+	echo "  compare-models-helper.sh cross-review \\"
+	echo "    --prompt 'Review this code' --models 'sonnet,opus' \\"
+	echo "    --prompt-file prompts/build.txt   # track prompt version in results"
 	echo ""
 	echo "Data is embedded in this script. Last updated: 2025-02-08."
 	echo "For live pricing, use /compare-models (with web fetch)."
@@ -1741,7 +1771,9 @@ CREATE TABLE IF NOT EXISTS comparisons (
     task_type TEXT DEFAULT 'general',
     created_at TEXT DEFAULT (datetime('now')),
     evaluator_model TEXT,
-    winner_model TEXT
+    winner_model TEXT,
+    prompt_version TEXT DEFAULT '',
+    prompt_file TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS comparison_scores (
@@ -1765,7 +1797,13 @@ CREATE TABLE IF NOT EXISTS comparison_scores (
 CREATE INDEX IF NOT EXISTS idx_comparisons_task ON comparisons(task_type);
 CREATE INDEX IF NOT EXISTS idx_comparisons_winner ON comparisons(winner_model);
 CREATE INDEX IF NOT EXISTS idx_scores_model ON comparison_scores(model_id);
+CREATE INDEX IF NOT EXISTS idx_comparisons_prompt ON comparisons(prompt_version);
 SQL
+
+	# Migrate existing DBs: add prompt_version and prompt_file columns if missing (t1396)
+	sqlite3 "$RESULTS_DB" "ALTER TABLE comparisons ADD COLUMN prompt_version TEXT DEFAULT '';" 2>/dev/null || true
+	sqlite3 "$RESULTS_DB" "ALTER TABLE comparisons ADD COLUMN prompt_file TEXT DEFAULT '';" 2>/dev/null || true
+
 	return 0
 }
 
@@ -1779,6 +1817,7 @@ cmd_score() {
 	init_results_db || return 1
 
 	local task="" task_type="general" evaluator="" winner=""
+	local prompt_version="" prompt_file=""
 	local -a model_entries=()
 	local current_model="" current_correct=0 current_complete=0 current_quality=0
 	local current_clarity=0 current_adherence=0 current_latency=0 current_tokens=0
@@ -1810,6 +1849,14 @@ cmd_score() {
 			;;
 		--winner)
 			winner="$2"
+			shift 2
+			;;
+		--prompt-version)
+			prompt_version="$2"
+			shift 2
+			;;
+		--prompt-file)
+			prompt_file="$2"
 			shift 2
 			;;
 		--model)
@@ -1891,13 +1938,20 @@ cmd_score() {
 		return 1
 	fi
 
+	# Resolve prompt_version from git if prompt_file is provided and no explicit version
+	if [[ -z "$prompt_version" && -n "$prompt_file" ]] && command -v git &>/dev/null; then
+		prompt_version=$(git log -1 --format='%h' -- "$prompt_file" 2>/dev/null) || prompt_version=""
+	fi
+
 	# Insert comparison record (escape all string values for SQL safety)
-	local comp_id safe_task safe_type safe_eval safe_winner
+	local comp_id safe_task safe_type safe_eval safe_winner safe_pv safe_pf
 	safe_task="${task//\'/\'\'}"
 	safe_type="${task_type//\'/\'\'}"
 	safe_eval="${evaluator//\'/\'\'}"
 	safe_winner="${winner//\'/\'\'}"
-	comp_id=$(sqlite3 "$RESULTS_DB" "INSERT INTO comparisons (task_description, task_type, evaluator_model, winner_model) VALUES ('${safe_task}', '${safe_type}', '${safe_eval}', '${safe_winner}'); SELECT last_insert_rowid();")
+	safe_pv="${prompt_version//\'/\'\'}"
+	safe_pf="${prompt_file//\'/\'\'}"
+	comp_id=$(sqlite3 "$RESULTS_DB" "INSERT INTO comparisons (task_description, task_type, evaluator_model, winner_model, prompt_version, prompt_file) VALUES ('${safe_task}', '${safe_type}', '${safe_eval}', '${safe_winner}', '${safe_pv}', '${safe_pf}'); SELECT last_insert_rowid();")
 
 	# Insert scores for each model (escape strings, validate numerics)
 	for entry in "${model_entries[@]}"; do
@@ -2015,7 +2069,7 @@ cmd_results() {
 	init_results_db || return 1
 
 	local limit=10
-	local model_filter="" type_filter=""
+	local model_filter="" type_filter="" pv_filter=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -2031,6 +2085,10 @@ cmd_results() {
 			type_filter="$2"
 			shift 2
 			;;
+		--prompt-version)
+			pv_filter="$2"
+			shift 2
+			;;
 		*) shift ;;
 		esac
 	done
@@ -2041,9 +2099,10 @@ cmd_results() {
 		return 1
 	fi
 
-	# Escape string values for SQL safety (prevent injection via --model/--type args)
+	# Escape string values for SQL safety (prevent injection via --model/--type/--prompt-version args)
 	local safe_model_filter="${model_filter//\'/\'\'}"
 	local safe_type_filter="${type_filter//\'/\'\'}"
+	local safe_pv_filter="${pv_filter//\'/\'\'}"
 
 	local where_clause=""
 	if [[ -n "$safe_model_filter" ]]; then
@@ -2054,6 +2113,13 @@ cmd_results() {
 			where_clause="$where_clause AND c.task_type = '${safe_type_filter}'"
 		else
 			where_clause="WHERE c.task_type = '${safe_type_filter}'"
+		fi
+	fi
+	if [[ -n "$safe_pv_filter" ]]; then
+		if [[ -n "$where_clause" ]]; then
+			where_clause="$where_clause AND c.prompt_version = '${safe_pv_filter}'"
+		else
+			where_clause="WHERE c.prompt_version = '${safe_pv_filter}'"
 		fi
 	fi
 
@@ -2074,14 +2140,20 @@ cmd_results() {
 
 	# Show recent comparisons
 	sqlite3 -separator '|' "$RESULTS_DB" "
-        SELECT c.id, c.created_at, c.task_type, c.task_description, c.winner_model
+        SELECT c.id, c.created_at, c.task_type, c.task_description, c.winner_model,
+               COALESCE(c.prompt_version, ''), COALESCE(c.prompt_file, '')
         FROM comparisons c
         ORDER BY c.created_at DESC
         LIMIT $limit;
-    " 2>/dev/null | while IFS='|' read -r cid cdate ctype cdesc cwinner; do
+    " 2>/dev/null | while IFS='|' read -r cid cdate ctype cdesc cwinner cpv cpf; do
 		echo "  #$cid [$ctype] $(echo "$cdesc" | head -c 60) ($cdate)"
 		if [[ -n "$cwinner" ]]; then
 			echo "    Winner: $cwinner"
+		fi
+		if [[ -n "$cpv" ]]; then
+			local pv_display="$cpv"
+			[[ -n "$cpf" ]] && pv_display="${cpv} (${cpf})"
+			echo "    Prompt version: $pv_display"
 		fi
 
 		# Show scores for this comparison

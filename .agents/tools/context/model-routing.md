@@ -219,6 +219,24 @@ compare-models-helper.sh capabilities
 
 Interactive commands: `/compare-models` (with live web fetch), `/compare-models-free` (offline), `/route <task>` (suggest optimal tier).
 
+## Prompt Version Tracking (t1396)
+
+Observability traces and comparison results can include prompt version metadata, enabling correlation between prompt changes and output quality over time.
+
+When `--prompt-file` is provided to `observability-helper.sh record` or `compare-models-helper.sh score/cross-review`, the git short hash of the last commit that modified the file is automatically resolved as `prompt_version`. Use `--prompt-version` to set an explicit version tag instead (overrides git hash detection).
+
+```bash
+# Record a trace with prompt version
+observability-helper.sh record --model claude-sonnet-4-6 \
+  --input-tokens 150 --output-tokens 320 \
+  --prompt-file prompts/build.txt
+
+# Filter comparison results by prompt version
+compare-models-helper.sh results --prompt-version a1b2c3d
+```
+
+Combined with model comparison scoring, this enables prompt regression detection: run the same dataset against two prompt versions and compare quality scores.
+
 ## Model Registry
 
 The model registry (`model-registry-helper.sh`) maintains a SQLite database tracking all known models across providers. It syncs from subagent frontmatter, embedded pricing data, and live provider APIs. Use `model-registry-helper.sh status` to check registry health and `model-registry-helper.sh check` to verify configured models are available.

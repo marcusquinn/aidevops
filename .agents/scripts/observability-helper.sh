@@ -57,13 +57,30 @@ _calc_costs() {
 	}"
 }
 
+# Resolve prompt version from git history for a given file path.
+# Returns the short hash of the last commit that touched the file, or empty string.
+_resolve_prompt_version() {
+	local file_path="$1"
+	[[ -z "$file_path" ]] && {
+		echo ""
+		return 0
+	}
+	# Try to get the git short hash of the last commit that modified this file
+	local version=""
+	if command -v git &>/dev/null; then
+		version=$(git log -1 --format='%h' -- "$file_path" 2>/dev/null) || version=""
+	fi
+	echo "$version"
+	return 0
+}
+
 # Write a metrics entry to the JSONL log.
 _write_metric() {
 	local provider="$1" model="$2" session_id="$3" request_id="$4" project="$5"
 	local input_tokens="$6" output_tokens="$7" cache_read="$8" cache_write="$9"
 	local cost_input="${10}" cost_output="${11}" cost_cache_read="${12}" cost_cache_write="${13}" cost_total="${14}"
 	local stop_reason="${15}" service_tier="${16}" git_branch="${17}" log_source="${18}" recorded_at="${19}"
-	local error_message="${20:-}"
+	local error_message="${20:-}" prompt_version="${21:-}" prompt_file="${22:-}"
 	jq -c -n \
 		--arg pv "$provider" --arg md "$model" --arg si "$session_id" --arg ri "$request_id" \
 		--arg pj "$project" --argjson it "$input_tokens" --argjson ot "$output_tokens" \
@@ -72,12 +89,14 @@ _write_metric() {
 		--arg ccw "$cost_cache_write" --arg ct "$cost_total" \
 		--arg sr "$stop_reason" --arg st "$service_tier" --arg gb "$git_branch" \
 		--arg ls "$log_source" --arg ra "$recorded_at" --arg em "$error_message" \
+		--arg pmv "$prompt_version" --arg pmf "$prompt_file" \
 		'{provider:$pv, model:$md, session_id:$si, request_id:$ri, project:$pj,
 		  input_tokens:$it, output_tokens:$ot, cache_read_tokens:$cr, cache_write_tokens:$cw,
 		  cost_input:($ci|tonumber), cost_output:($co|tonumber),
 		  cost_cache_read:($ccr|tonumber), cost_cache_write:($ccw|tonumber),
 		  cost_total:($ct|tonumber), stop_reason:$sr, service_tier:$st,
-		  git_branch:$gb, log_source:$ls, recorded_at:$ra, error_message:$em}' >>"$OBS_METRICS"
+		  git_branch:$gb, log_source:$ls, recorded_at:$ra, error_message:$em,
+		  prompt_version:$pmv, prompt_file:$pmf}' >>"$OBS_METRICS"
 	return 0
 }
 
@@ -180,6 +199,7 @@ cmd_ingest() {
 cmd_record() {
 	local provider="" model="" input_tokens=0 output_tokens=0 cache_read_tokens=0 cache_write_tokens=0
 	local session_id="" project="" stop_reason="" error_message=""
+	local prompt_version="" prompt_file=""
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--provider)
@@ -222,6 +242,14 @@ cmd_record() {
 			error_message="${2:-}"
 			shift 2
 			;;
+		--prompt-version)
+			prompt_version="${2:-}"
+			shift 2
+			;;
+		--prompt-file)
+			prompt_file="${2:-}"
+			shift 2
+			;;
 		*) shift ;;
 		esac
 	done
@@ -231,13 +259,19 @@ cmd_record() {
 	}
 	[[ -z "$provider" ]] && provider=$(get_provider_from_model "$model")
 
+	# Resolve prompt_version from git if prompt_file is provided and no explicit version
+	if [[ -z "$prompt_version" && -n "$prompt_file" ]]; then
+		prompt_version=$(_resolve_prompt_version "$prompt_file")
+	fi
+
 	local costs ci co ccr ccw ct
 	costs=$(_calc_costs "$input_tokens" "$output_tokens" "$cache_read_tokens" "$cache_write_tokens" "$model")
 	IFS='|' read -r ci co ccr ccw ct <<<"$costs"
 
 	_write_metric "$provider" "$model" "$session_id" "" "$project" \
 		"$input_tokens" "$output_tokens" "$cache_read_tokens" "$cache_write_tokens" \
-		"$ci" "$co" "$ccr" "$ccw" "$ct" "$stop_reason" "" "" "" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$error_message"
+		"$ci" "$co" "$ccr" "$ccw" "$ct" "$stop_reason" "" "" "" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+		"$error_message" "$prompt_version" "$prompt_file"
 	print_success "Recorded: $model ($provider) - \$${ct}"
 }
 
@@ -439,6 +473,21 @@ cmd_help() {
 Observability Helper — LLM request tracking via JSONL log
 Usage: observability-helper.sh [command] [options]
 Commands: ingest | record (--model X) | rate-limits (--json, --provider, --window) | help
+
+Record options:
+  --model MODEL          Model name (required)
+  --provider PROVIDER    Provider name (auto-detected from model if omitted)
+  --input-tokens N       Input token count
+  --output-tokens N      Output token count
+  --cache-read N         Cache read token count
+  --cache-write N        Cache write token count
+  --session ID           Session identifier
+  --project NAME         Project name
+  --stop-reason REASON   Stop reason
+  --error MESSAGE        Error message
+  --prompt-file PATH     Path to prompt file (auto-resolves git hash as version)
+  --prompt-version VER   Explicit prompt version (overrides git hash detection)
+
 Metrics: $OBS_METRICS
 EOF
 }

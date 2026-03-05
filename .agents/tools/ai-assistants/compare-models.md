@@ -136,6 +136,32 @@ Example output alongside static specs:
 sonnet: $3.00/$15.00 per 1M tokens, 200K context — 85% (n=47) success
 ```
 
+### Step 5b: Prompt Version Tracking (t1396)
+
+Track which prompt version produced each result. When `--prompt-file` is provided, the git short hash of the last commit that modified the file is automatically resolved as the version. Use `--prompt-version` to set an explicit version tag instead.
+
+```bash
+# Record a trace with prompt version (auto-resolved from git)
+~/.aidevops/agents/scripts/observability-helper.sh record \
+  --model claude-sonnet-4-6 --input-tokens 150 --output-tokens 320 \
+  --prompt-file prompts/build.txt
+
+# Score with explicit prompt version
+~/.aidevops/agents/scripts/compare-models-helper.sh score \
+  --task "review code" --prompt-file prompts/build.txt \
+  --model sonnet --correctness 9 --completeness 8 --quality 8 --clarity 9 --adherence 9
+
+# Cross-review with prompt version tracking
+~/.aidevops/agents/scripts/compare-models-helper.sh cross-review \
+  --prompt "Review this code" --models "sonnet,opus" \
+  --prompt-file prompts/build.txt --score
+
+# Filter results by prompt version
+~/.aidevops/agents/scripts/compare-models-helper.sh results --prompt-version a1b2c3d
+```
+
+This enables regression detection: run the same dataset against two prompt versions and compare scores.
+
 ### Step 6: Provide Actionable Advice
 
 For each comparison, include:
