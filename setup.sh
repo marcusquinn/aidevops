@@ -900,7 +900,7 @@ main() {
 		<string>1800</string>
 	</dict>
 	<key>RunAtLoad</key>
-	<false/>
+	<true/>
 	<key>KeepAlive</key>
 	<false/>
 </dict>
@@ -973,6 +973,83 @@ PLIST
 				else
 					print_info "Skipped. Enable later: aidevops repo-sync enable"
 				fi
+			fi
+		fi
+	fi
+
+	# Process guard — kills runaway AI processes (ShellCheck bloat, stuck workers)
+	# before they exhaust memory and cause kernel panics. Always installed when the
+	# script exists; no consent needed (safety net, not autonomous action).
+	# macOS: launchd plist (30s interval, RunAtLoad=true) | Linux: cron (every minute)
+	local guard_script="$HOME/.aidevops/agents/scripts/process-guard-helper.sh"
+	local guard_label="sh.aidevops.process-guard"
+	if [[ -x "$guard_script" ]]; then
+		mkdir -p "$HOME/.aidevops/logs"
+
+		if [[ "$(uname -s)" == "Darwin" ]]; then
+			local guard_plist="$HOME/Library/LaunchAgents/${guard_label}.plist"
+
+			# Unload old plist if upgrading
+			if _launchd_has_agent "$guard_label"; then
+				launchctl unload "$guard_plist" 2>/dev/null || true
+			fi
+
+			cat >"$guard_plist" <<GUARD_PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>${guard_label}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>${guard_script}</string>
+		<string>kill-runaways</string>
+	</array>
+	<key>StartInterval</key>
+	<integer>30</integer>
+	<key>StandardOutPath</key>
+	<string>${HOME}/.aidevops/logs/process-guard.log</string>
+	<key>StandardErrorPath</key>
+	<string>${HOME}/.aidevops/logs/process-guard.log</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>SHELLCHECK_RSS_LIMIT_KB</key>
+		<string>524288</string>
+		<key>SHELLCHECK_RUNTIME_LIMIT</key>
+		<string>120</string>
+		<key>CHILD_RSS_LIMIT_KB</key>
+		<string>8388608</string>
+		<key>CHILD_RUNTIME_LIMIT</key>
+		<string>7200</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<false/>
+</dict>
+</plist>
+GUARD_PLIST
+
+			if launchctl load "$guard_plist" 2>/dev/null; then
+				print_info "Process guard enabled (launchd, every 30s, survives reboot)"
+			else
+				print_warning "Failed to load process guard LaunchAgent"
+			fi
+		else
+			# Linux: cron entry (every minute — cron minimum granularity)
+			if ! crontab -l 2>/dev/null | grep -qF "aidevops: process-guard" 2>/dev/null; then
+				(
+					crontab -l 2>/dev/null | grep -v 'aidevops: process-guard'
+					echo "* * * * * SHELLCHECK_RSS_LIMIT_KB=524288 SHELLCHECK_RUNTIME_LIMIT=120 CHILD_RSS_LIMIT_KB=8388608 CHILD_RUNTIME_LIMIT=7200 /bin/bash ${guard_script} kill-runaways >> \$HOME/.aidevops/logs/process-guard.log 2>&1 # aidevops: process-guard"
+				) | crontab - 2>/dev/null || true
+			fi
+			if crontab -l 2>/dev/null | grep -qF "aidevops: process-guard" 2>/dev/null; then
+				print_info "Process guard enabled (cron, every minute)"
+			else
+				print_warning "Failed to install process guard cron entry"
 			fi
 		fi
 	fi
