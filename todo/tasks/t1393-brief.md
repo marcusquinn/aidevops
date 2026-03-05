@@ -138,7 +138,7 @@ Send all outputs to a haiku-tier model with a scoring prompt:
 ## Dependencies
 
 - **Blocked by:** none
-- **Blocks:** t1395 (dataset convention — bench is the primary consumer)
+- **Depends on:** t1395 (dataset convention — bench is the primary consumer)
 - **External:** At least one LLM provider API key configured (detected via `discover`)
 
 ## Estimate Breakdown

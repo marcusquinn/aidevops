@@ -147,7 +147,7 @@ ai-judgment-helper.sh evaluate --type faithfulness,relevancy,safety \
 ## Dependencies
 
 - **Blocked by:** none
-- **Blocks:** t1393 (bench --judge can delegate to these evaluators)
+- **Enhances:** t1393 (bench --judge can delegate to these evaluators)
 - **External:** Anthropic API key for haiku calls (existing credential)
 
 ## Estimate Breakdown
