@@ -233,13 +233,17 @@ _jsonc_get() {
 	merged=$(_get_merged_config)
 
 	# Use jq --arg to safely pass dotpath (no shell interpolation into filter)
-	local value
-	value=$(echo "$merged" | jq -r --arg p "$dotpath" 'getpath($p | split(".")) // empty' 2>/dev/null) || value=""
+	# NOTE: We must NOT use jq's `// empty` alternative operator here because
+	# it treats `false` and `null` the same (both are falsy in jq). Instead,
+	# get the raw JSON value and check for null explicitly in bash.
+	local raw_value
+	raw_value=$(echo "$merged" | jq --arg p "$dotpath" 'getpath($p | split("."))' 2>/dev/null) || raw_value="null"
 
-	if [[ -n "$value" && "$value" != "null" ]]; then
-		echo "$value"
-	else
+	if [[ "$raw_value" == "null" ]]; then
 		echo "$default"
+	else
+		# Use jq -r to strip quotes from strings; booleans/numbers pass through as-is
+		echo "$raw_value" | jq -r '.'
 	fi
 	return 0
 }
@@ -261,7 +265,14 @@ _jsonc_get_raw() {
 		echo ""
 		return 0
 	}
-	echo "$json" | jq -r --arg p "$dotpath" 'getpath($p | split(".")) // empty' 2>/dev/null || echo ""
+	# Avoid `// empty` — it discards false and 0 (falsy in jq). Check for null explicitly.
+	local raw_value
+	raw_value=$(echo "$json" | jq --arg p "$dotpath" 'getpath($p | split("."))' 2>/dev/null) || raw_value="null"
+	if [[ "$raw_value" == "null" ]]; then
+		echo ""
+	else
+		echo "$raw_value" | jq -r '.'
+	fi
 	return 0
 }
 
@@ -486,7 +497,14 @@ cmd_list() {
 
 		local user_val env_val effective source
 
-		user_val=$(echo "$user_json" | jq -r --arg p "$dotpath" 'getpath($p | split(".")) // empty' 2>/dev/null) || user_val=""
+		# Get raw JSON value to distinguish null (absent) from false/0
+		local raw_user_val
+		raw_user_val=$(echo "$user_json" | jq --arg p "$dotpath" 'getpath($p | split("."))' 2>/dev/null) || raw_user_val="null"
+		if [[ "$raw_user_val" == "null" ]]; then
+			user_val=""
+		else
+			user_val=$(echo "$raw_user_val" | jq -r '.')
+		fi
 
 		# Check env override
 		env_val=""
@@ -500,7 +518,7 @@ cmd_list() {
 		if [[ -n "$env_val" ]]; then
 			effective="$env_val"
 			source="env"
-		elif [[ -n "$user_val" ]]; then
+		elif [[ "$raw_user_val" != "null" ]]; then
 			effective="$user_val"
 			source="user"
 		else
@@ -579,17 +597,18 @@ cmd_set() {
 	# Validate dotpath contains only safe characters
 	_validate_dotpath "$dotpath" || return 1
 
-	# Validate key exists in defaults
+	# Validate key exists in defaults (use raw JSON to distinguish null from false/0)
 	local defaults_json
 	defaults_json=$(_strip_jsonc "$JSONC_DEFAULTS") || return 1
-	local default_val
-	default_val=$(echo "$defaults_json" | jq -r --arg p "$dotpath" 'getpath($p | split(".")) // empty' 2>/dev/null) || default_val=""
+	local raw_default_val default_val
+	raw_default_val=$(echo "$defaults_json" | jq --arg p "$dotpath" 'getpath($p | split("."))' 2>/dev/null) || raw_default_val="null"
 
-	if [[ -z "$default_val" ]]; then
+	if [[ "$raw_default_val" == "null" ]]; then
 		echo "[ERROR] Unknown config key: $dotpath" >&2
 		echo "  Run 'aidevops config list' to see available options." >&2
 		return 1
 	fi
+	default_val=$(echo "$raw_default_val" | jq -r '.')
 
 	# Validate value type from default and reject invalid input early
 	case "$default_val" in
