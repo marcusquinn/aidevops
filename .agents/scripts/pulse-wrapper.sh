@@ -2215,19 +2215,21 @@ ${type_breakdown}
 	[[ "$prev_high_critical" =~ ^[0-9]+$ ]] || prev_high_critical=0
 
 	# First-run guard: if no previous state exists (prev_gate is UNKNOWN from
-	# _load_sweep_state default), save the current metrics as baseline and skip
-	# the trigger. Without this, the delta from 0 to current issue count always
-	# exceeds the spike threshold, causing every first run (or run after state
-	# loss) to trigger a full review.
-	if [[ "$prev_gate" == "UNKNOWN" ]]; then
-		_save_sweep_state "$repo_slug" "$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical"
+	# _load_sweep_state default), skip delta-based triggers. Without this, the
+	# delta from 0 to current issue count always exceeds the spike threshold,
+	# causing every first run (or run after state loss) to trigger a full review.
+	#
+	# Refactored (t1401): _save_sweep_state and tool_count are common to all
+	# branches — hoisted outside the conditional to reduce duplication.
+	local is_baseline_run=false
+	[[ "$prev_gate" == "UNKNOWN" ]] && is_baseline_run=true
+
+	if [[ "$is_baseline_run" == true ]]; then
 		coderabbit_section="### CodeRabbit
 
 _First sweep run — baseline saved (${sweep_total_issues} issues, gate ${sweep_gate_status}). Review trigger will activate on next sweep if quality degrades._
 "
-		tool_count=$((tool_count + 1))
 		echo "[pulse-wrapper] CodeRabbit: first run for ${repo_slug} — saved baseline, skipping trigger" >>"$LOGFILE"
-		# Skip the rest of section 5 — jump to section 6
 	else
 		local issue_delta=$((sweep_total_issues - prev_issues))
 		local trigger_active=false
@@ -2267,11 +2269,11 @@ _First sweep run — baseline saved (${sweep_total_issues} issues, gate ${sweep_
 _Monitoring: ${sweep_total_issues} issues (delta: ${issue_delta}), gate ${sweep_gate_status} — no active review needed._
 "
 		fi
-		tool_count=$((tool_count + 1))
-
-		# Save current state for next sweep's delta comparison
-		_save_sweep_state "$repo_slug" "$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical"
 	fi
+
+	# Common to all branches: save state for next sweep and count the tool
+	_save_sweep_state "$repo_slug" "$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical"
+	tool_count=$((tool_count + 1))
 
 	# --- 6. Merged PR review scanner ---
 	# Scans recently merged PRs for unactioned review feedback from bots
