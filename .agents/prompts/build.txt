@@ -165,7 +165,41 @@ When referencing specific functions or code include the pattern `file_path:line_
 - NEVER expose credentials in output/logs
 - Store secrets via `aidevops secret set NAME` (gopass encrypted) or `~/.config/aidevops/credentials.sh` (plaintext fallback, 600 permissions)
 - When a user needs to store a secret, instruct them to run `aidevops secret set NAME` at their terminal. NEVER accept secret values in conversation.
-- NEVER run `gopass show`, `cat credentials.sh`, `echo $SECRET`, or any command that prints secret values
+#
+# 8. Secret value leaking in conversation (t2846)
+#    Threat: agent suggests or runs commands whose output contains secret values,
+#    exposing credentials in the conversation transcript. Transcripts are stored
+#    on disk and may be synced, logged, or visible to other tools. Once a secret
+#    appears in conversation, it must be rotated — the damage is done.
+#    Root cause: agents pattern-match on "I need to check the value" and reach
+#    for the obvious command (gopass show, cat .env, pm2 env) without considering
+#    that the output enters the conversation context.
+#    Incident: ILDS t006 session — Zoho OAuth credentials exposed, required rotation.
+- NEVER run, suggest, or output any command whose stdout/stderr would contain secret values. This is a principle, not a blocklist — apply judgment to ANY command that could print credentials. Common violations include but are not limited to:
+  - `gopass show <secret>`, `pass show`, `op read` (password managers)
+  - `cat .env`, `cat credentials.sh`, `cat dump.pm2`, `cat */secrets.*`
+  - `echo $SECRET_NAME`, `printenv SECRET_NAME`, `env | grep KEY`
+  - `pm2 env <app>` (dumps all env vars including secrets unfiltered)
+  - `docker inspect <container>` (includes env vars), `docker exec ... env`
+  - `kubectl get secret -o yaml`, `kubectl exec ... env`
+  - `systemctl show <service> --property=Environment`
+  - Python/Node/Ruby one-liners that parse files containing credentials (e.g., `python3 -c "import json; print(json.load(open('.env')))"`)
+  - `heroku config`, `vercel env pull`, `fly secrets list` (with values)
+  - Disallow `grep`/`rg` (or any command) that may display secret values; allow `grep`/`rg` only when using patterns or processing steps that guarantee values are not printed (see `grep -oP '^[A-Z_]+(?==)' .env`, `printenv | cut -d= -f1`)
+- When debugging env var issues, show key NAMES only, never values:
+  - SAFE: `pm2 show <app> --json | jq -r '.[0].pm2_env | keys_unsorted[]'` (key names only, robust)
+  - SAFE: `printenv | cut -d= -f1 | sort` (list env var names without values)
+  - SAFE: `grep -oP '^[A-Z_]+(?==)' .env` (key names from .env without values)
+  - SAFE: `docker inspect <container> --format '{{range .Config.Env}}{{println .}}{{end}}' | cut -d= -f1`
+  - UNSAFE: anything that prints the right side of `KEY=VALUE`
+- For credential lookups, pre-stage the command for the user's own terminal:
+  - "Run this in your terminal (not here): `gopass show <path>`"
+  - "Paste the value directly into the config file / environment, not into this conversation"
+  - NEVER say "show me the output" or "paste the result here" for credential commands
+- When a user pastes what appears to be a credential value (API key, token, password, OAuth secret, connection string with embedded credentials) directly into conversation:
+  - Immediately warn: "That looks like a credential. Conversation transcripts are stored on disk — treat this value as compromised. Rotate it and store the new value via `aidevops secret set NAME` in your terminal."
+  - Do NOT repeat, echo, or reference the pasted credential value in your response
+  - Continue helping with the task using a placeholder like `<YOUR_API_KEY>` instead
 - Confirm destructive operations before execution
 - NEVER create files in `~/` root - use `~/.aidevops/.agent-workspace/work/[project]/`
 - Do not commit files containing secrets (.env, credentials.json, etc.)
@@ -190,15 +224,17 @@ Git is the primary audit trail for all work. Every change should be discoverable
 **Traceability rules:**
 - Every PR MUST have a task ID in the title (`{task-id}: {description}`). No exceptions — even 1-line fixes. For unplanned work, create the TODO entry first, then the PR.
 - Every PR body MUST include `Closes #NNN` (or `Fixes`/`Resolves`) for its matching GitHub issue. This is the ONLY mechanism that creates a GitHub PR-issue link in the sidebar — without it, the PR and issue appear unrelated in list views. A CI check will comment on PRs missing this linkage.
-- Every task dispatched to a worker MUST have a GitHub issue (created by `issue-sync-helper.sh push` or manually). The issue number goes in TODO.md as `ref:GH#NNN`.
+- Every task dispatched to a worker MUST have a GitHub issue (created by `issue-sync-helper.sh push` or manually). The issue number goes in TODO.md as `ref=GH#NNN` (or `ref=GL#NNN` for GitLab).
 - When closing issues or merging PRs, always leave a comment linking the other side (issue -> PR, PR -> issue). A state change without explanation is an audit gap.
 - Non-git files (logs, workspace artifacts, generated configs) are ephemeral — the session and git history of the task that created them is sufficient. If a file matters enough to trace, it belongs in a git repo.
 
 **Cross-repo task creation:** When a session creates a task in a *different* repo (e.g., adding an aidevops TODO while working in another project), the full workflow must be followed — not just the TODO edit. Agents that only add a TODO line without committing, pushing, and creating an issue leave tasks invisible to dispatch and risk ID collisions.
 1. Claim the ID: `claim-task-id.sh --repo-path <target-repo> --title "description"` (CAS-based, atomic). NEVER grep TODO.md for the next ID.
 2. Commit and push the TODO immediately — planning files go direct to main, and pulse only sees remote state.
-3. Create a GitHub issue: `gh issue create --repo <slug> --title "tNNN: description"`. Record `ref:GH#NNN` in TODO.md. (If `claim-task-id.sh` already created the issue, this step is done.)
+3. Create a GitHub issue **only if one was not already created**: check whether `claim-task-id.sh` output included a `ref=GH#` (or `ref=GL#`) token or whether you passed `--no-issue`. If no issue exists yet, run `gh issue create --repo <slug> --title "tNNN: description"` and record `ref=GH#NNN` in TODO.md. Skip this step when `claim-task-id.sh` already created the issue — running `gh issue create` again would produce a duplicate.
 4. Code changes in the current repo still require a worktree + PR as normal.
+
+**Self-improvement repo routing:** When creating self-improvement tasks (see AGENTS.md "Self-Improvement"), route to the correct repo — not the repo you happen to be running in. Heuristic: if the observation references files under `~/.aidevops/`, framework scripts (`ai-actions.sh`, `ai-lifecycle.sh`, `supervisor/`, `dispatch.sh`, `pre-edit-check.sh`, helper scripts), agent prompt behaviour, or supervisor/pulse/orchestration logic, the task belongs in the aidevops repo. Run `claim-task-id.sh --repo-path <aidevops-repo-path>` first — it allocates the task ID and (by default) creates the GitHub issue. Only run `gh issue create --repo <aidevops-slug>` if `claim-task-id.sh` was invoked with `--no-issue` or its output did not include a `ref=GH#` (or `ref=GL#`) token; otherwise the issue already exists and a second create would duplicate it. Project-specific problems (CI, code, dependencies, domain logic) stay in the current repo. Framework tasks filed in project repos are invisible to framework maintainers and pollute the project's ID namespace.
 
 **Git-readiness check:** When working in a project directory that is NOT a git repo, or is a git repo without `TODO.md` / aidevops initialisation, flag this to the user: "This project has no git tracking / no aidevops task management. Work here won't be traceable. Consider `git init` + `aidevops init` to enable the full workflow." Use judgment — a throwaway script directory doesn't need this, but any project with ongoing development does.
 

@@ -8,13 +8,14 @@
 #   1. Uses a PID file with staleness check (not pgrep) for dedup
 #   2. Cleans up orphaned opencode processes before each pulse
 #   3. Calculates dynamic worker concurrency from available RAM
-#   4. Lets the pulse run to completion — no hard timeout
+#   4. Internal watchdog kills stuck pulses after PULSE_STALE_THRESHOLD (t1397)
 #
 # Lifecycle: launchd fires every 120s. If a pulse is still running, the
-# dedup check skips. If a pulse has been running longer than PULSE_STALE_THRESHOLD
-# (default 30 min), it's assumed stuck (opencode idle bug) and killed so the
-# next invocation can start fresh. This is the ONLY kill mechanism — no
-# arbitrary timeouts that would interrupt active work.
+# dedup check skips. run_pulse() has an internal watchdog that polls every
+# 60s and kills the opencode process if it exceeds PULSE_STALE_THRESHOLD
+# (default 30 min). This ensures the wrapper always exits, allowing launchd
+# to fire the next invocation. check_dedup() serves as a secondary safety
+# net for edge cases where the wrapper itself gets stuck.
 #
 # Called by launchd every 120s via the supervisor-pulse plist.
 
@@ -842,15 +843,18 @@ prefetch_active_workers() {
 }
 
 #######################################
-# Run the pulse — no hard timeout
+# Run the pulse — with internal watchdog timeout (t1397)
 #
-# The pulse runs until opencode exits naturally. If opencode enters its
-# idle-state bug (file watcher keeps process alive after session completes),
-# the NEXT launchd invocation's check_dedup() will detect the stale process
-# (age > PULSE_STALE_THRESHOLD) and kill it. This is correct because:
-#   - Active pulses doing real work are never interrupted
-#   - Stuck pulses are detected by the next invocation (120s later)
-#   - The stale threshold (30 min) is generous enough for any real workload
+# The pulse runs until opencode exits naturally. A watchdog loop checks
+# every 60s whether the process has exceeded PULSE_STALE_THRESHOLD. If so,
+# it kills the process tree and returns, allowing the wrapper to continue
+# to the quality sweep and health issue phases.
+#
+# Previous design relied on the NEXT launchd invocation's check_dedup()
+# to kill stale processes. This failed because launchd StartInterval only
+# fires when the previous invocation has exited — and the wrapper blocks
+# on `wait`, so the next invocation never starts. The watchdog is now
+# internal to the same process that spawned opencode.
 #######################################
 run_pulse() {
 	local start_epoch
@@ -869,7 +873,7 @@ ${state_content}
 --- END PRE-FETCHED STATE ---"
 	fi
 
-	# Run opencode — blocks until it exits (or is killed by next invocation's stale check)
+	# Run opencode in background
 	"$OPENCODE_BIN" run "$prompt" \
 		--dir "$PULSE_DIR" \
 		-m "$PULSE_MODEL" \
@@ -881,7 +885,29 @@ ${state_content}
 
 	echo "[pulse-wrapper] opencode PID: $opencode_pid" >>"$LOGFILE"
 
-	# Wait for natural exit
+	# Watchdog loop: check every 60s if the process is still alive and within
+	# the stale threshold. This replaces the bare `wait` that blocked the
+	# wrapper indefinitely when opencode hung.
+	while kill -0 "$opencode_pid" 2>/dev/null; do
+		local now
+		now=$(date +%s)
+		local elapsed=$((now - start_epoch))
+		if [[ "$elapsed" -gt "$PULSE_STALE_THRESHOLD" ]]; then
+			echo "[pulse-wrapper] Pulse exceeded stale threshold (${elapsed}s > ${PULSE_STALE_THRESHOLD}s) — killing" >>"$LOGFILE"
+			_kill_tree "$opencode_pid"
+			sleep 2
+			# Force kill if still alive
+			if kill -0 "$opencode_pid" 2>/dev/null; then
+				_force_kill_tree "$opencode_pid"
+			fi
+			break
+		fi
+		# Sleep 60s then re-check. Portable across bash 3.2+ (macOS default).
+		# The process may exit during sleep — kill -0 at top of loop catches that.
+		sleep 60
+	done
+
+	# Reap the process (may already be dead)
 	wait "$opencode_pid" 2>/dev/null || true
 
 	# Clean up PID file
@@ -1467,12 +1493,10 @@ run_daily_quality_sweep() {
 	# Timestamp guard — run at most once per QUALITY_SWEEP_INTERVAL
 	if [[ -f "$QUALITY_SWEEP_LAST_RUN" ]]; then
 		local last_run
-		last_run=$(cat "$QUALITY_SWEEP_LAST_RUN" || echo "0")
-		# Validate integer before arithmetic expansion (prevents command injection)
-		if ! [[ "$last_run" =~ ^[0-9]+$ ]]; then
-			echo "[pulse-wrapper] Corrupt sweep timestamp '${last_run}' — resetting" >>"$LOGFILE"
-			last_run=0
-		fi
+		last_run=$(cat "$QUALITY_SWEEP_LAST_RUN" 2>/dev/null || echo "0")
+		# Strip whitespace/newlines and validate integer (t1397)
+		last_run="${last_run//[^0-9]/}"
+		last_run="${last_run:-0}"
 		local now
 		now=$(date +%s)
 		local elapsed=$((now - last_run))
@@ -1888,12 +1912,19 @@ ${type_breakdown}
 		fi
 	fi
 
-	# --- 5. CodeRabbit trigger (conditional — t1390) ---
+	# --- 5. CodeRabbit trigger (conditional — t1390, fixed t2851) ---
 	# Only trigger @coderabbitai active review when quality degrades:
-	#   - Quality gate status changes to FAIL/ERROR
+	#   - Quality Gate fails (ERROR/WARN)
 	#   - Issue count increases by CODERABBIT_ISSUE_SPIKE+ since last sweep
-	#   - New high/critical severity findings appear
 	# Otherwise post a passive monitoring line to avoid repetitive requests.
+	#
+	# Root cause of prior failures (PRs #2806, #2832):
+	#   1. No first-run guard: when no state file exists, prev_issues=0 and
+	#      the delta from 0 to current count always exceeds the spike threshold.
+	#   2. Condition 3 (high_critical_delta > 0) was too sensitive — any +1
+	#      fluctuation in MAJOR-severity issues triggered a full review.
+	#   Both are fixed below: first run saves baseline without triggering,
+	#   and condition 3 is removed per the issue spec.
 	local coderabbit_section=""
 	local prev_state
 	prev_state=$(_load_sweep_state "$repo_slug")
@@ -1904,39 +1935,43 @@ ${type_breakdown}
 	[[ "$prev_issues" =~ ^[0-9]+$ ]] || prev_issues=0
 	[[ "$prev_high_critical" =~ ^[0-9]+$ ]] || prev_high_critical=0
 
-	local issue_delta=$((sweep_total_issues - prev_issues))
-	local high_critical_delta=$((sweep_high_critical - prev_high_critical))
-	local trigger_active=false
-	local trigger_reasons=""
-
-	# Condition 1: Quality gate is failing
-	if [[ "$sweep_gate_status" == "ERROR" || "$sweep_gate_status" == "WARN" ]]; then
-		trigger_active=true
-		trigger_reasons="quality gate ${sweep_gate_status}"
-	fi
-
-	# Condition 2: Issue count spiked by threshold or more
-	if [[ "$issue_delta" -ge "$CODERABBIT_ISSUE_SPIKE" ]]; then
-		trigger_active=true
-		if [[ -n "$trigger_reasons" ]]; then
-			trigger_reasons="${trigger_reasons}, issue spike +${issue_delta}"
-		else
-			trigger_reasons="issue spike +${issue_delta}"
-		fi
-	fi
-
-	# Condition 3: New high/critical severity findings
-	if [[ "$high_critical_delta" -gt 0 ]]; then
-		trigger_active=true
-		if [[ -n "$trigger_reasons" ]]; then
-			trigger_reasons="${trigger_reasons}, +${high_critical_delta} high/critical"
-		else
-			trigger_reasons="+${high_critical_delta} high/critical findings"
-		fi
-	fi
-
-	if [[ "$trigger_active" == true ]]; then
+	# First-run guard: if no previous state exists (prev_gate is UNKNOWN from
+	# _load_sweep_state default), save the current metrics as baseline and skip
+	# the trigger. Without this, the delta from 0 to current issue count always
+	# exceeds the spike threshold, causing every first run (or run after state
+	# loss) to trigger a full review.
+	if [[ "$prev_gate" == "UNKNOWN" ]]; then
+		_save_sweep_state "$repo_slug" "$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical"
 		coderabbit_section="### CodeRabbit
+
+_First sweep run — baseline saved (${sweep_total_issues} issues, gate ${sweep_gate_status}). Review trigger will activate on next sweep if quality degrades._
+"
+		tool_count=$((tool_count + 1))
+		echo "[pulse-wrapper] CodeRabbit: first run for ${repo_slug} — saved baseline, skipping trigger" >>"$LOGFILE"
+		# Skip the rest of section 5 — jump to section 6
+	else
+		local issue_delta=$((sweep_total_issues - prev_issues))
+		local trigger_active=false
+		local trigger_reasons=""
+
+		# Condition 1: Quality Gate is failing
+		if [[ "$sweep_gate_status" == "ERROR" || "$sweep_gate_status" == "WARN" ]]; then
+			trigger_active=true
+			trigger_reasons="quality gate ${sweep_gate_status}"
+		fi
+
+		# Condition 2: Issue count spiked by threshold or more
+		if [[ "$issue_delta" -ge "$CODERABBIT_ISSUE_SPIKE" ]]; then
+			trigger_active=true
+			if [[ -n "$trigger_reasons" ]]; then
+				trigger_reasons="${trigger_reasons}, issue spike +${issue_delta}"
+			else
+				trigger_reasons="issue spike +${issue_delta}"
+			fi
+		fi
+
+		if [[ "$trigger_active" == true ]]; then
+			coderabbit_section="### CodeRabbit
 
 **Trigger**: ${trigger_reasons}
 
@@ -1946,17 +1981,18 @@ ${type_breakdown}
 - Code duplication and maintainability
 - Documentation accuracy
 "
-		echo "[pulse-wrapper] CodeRabbit: active review triggered for ${repo_slug} (${trigger_reasons})" >>"$LOGFILE"
-	else
-		coderabbit_section="### CodeRabbit
+			echo "[pulse-wrapper] CodeRabbit: active review triggered for ${repo_slug} (${trigger_reasons})" >>"$LOGFILE"
+		else
+			coderabbit_section="### CodeRabbit
 
-_Monitoring: ${sweep_total_issues} issues (delta: ${issue_delta}), gate ${sweep_gate_status}, ${sweep_high_critical} high/critical — no active review needed._
+_Monitoring: ${sweep_total_issues} issues (delta: ${issue_delta}), gate ${sweep_gate_status} — no active review needed._
 "
-	fi
-	tool_count=$((tool_count + 1))
+		fi
+		tool_count=$((tool_count + 1))
 
-	# Save current state for next sweep's delta comparison
-	_save_sweep_state "$repo_slug" "$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical"
+		# Save current state for next sweep's delta comparison
+		_save_sweep_state "$repo_slug" "$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical"
+	fi
 
 	# --- 6. Merged PR review scanner ---
 	# Scans recently merged PRs for unactioned review feedback from bots

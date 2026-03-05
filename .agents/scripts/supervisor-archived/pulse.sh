@@ -748,9 +748,14 @@ cmd_pulse() {
 
 	# Phase 0: Auto-pickup new tasks from TODO.md (t128.5)
 	# Scans for #auto-dispatch tags and Dispatch Queue section
+	# t2837: Skip auto-pickup when --batch is specified. Targeted batch dispatch
+	# should only manage tasks within the specified batch — auto-pickup ingests
+	# unrelated tasks and creates phantom batches, causing collateral cancellations.
 	local all_repos
 	all_repos=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks;" 2>/dev/null || true)
-	if [[ -n "$all_repos" ]]; then
+	if [[ -n "$batch_id" ]]; then
+		log_info "Phase 0: Skipping auto-pickup (--batch $batch_id specified, t2837)"
+	elif [[ -n "$all_repos" ]]; then
 		while IFS= read -r repo_path; do
 			if [[ -f "$repo_path/TODO.md" ]]; then
 				cmd_auto_pickup --repo "$repo_path" 2>>"$SUPERVISOR_LOG" || true
@@ -1867,16 +1872,20 @@ cmd_pulse() {
 	# cross-references DB state, TODO.md state, and system state to find
 	# contradictions that cause silent stalls. Fixes: stale claims on DB-failed
 	# tasks, failed blocker cascades, missing #auto-dispatch tags, DB orphans.
-	local queued_before_sanity
-	queued_before_sanity=$(db "$SUPERVISOR_DB" "SELECT COUNT(*) FROM tasks WHERE status = 'queued';" 2>/dev/null || echo 0)
-	if [[ "$queued_before_sanity" -eq 0 ]]; then
-		# No queued tasks — check if there are open tasks in TODO.md that should be dispatchable
-		if [[ -n "$all_repos" ]]; then
-			while IFS= read -r repo_path; do
-				_run_sanity_check_for_repo "$repo_path"
-			done <<<"$all_repos"
-		else
-			_run_sanity_check_for_repo "$(pwd)"
+	# t2837: Skip when --batch is specified — sanity check triggers auto-pickup
+	# which would ingest unrelated tasks into phantom batches.
+	if [[ -z "$batch_id" ]]; then
+		local queued_before_sanity
+		queued_before_sanity=$(db "$SUPERVISOR_DB" "SELECT COUNT(*) FROM tasks WHERE status = 'queued';" 2>/dev/null || echo 0)
+		if [[ "$queued_before_sanity" -eq 0 ]]; then
+			# No queued tasks — check if there are open tasks in TODO.md that should be dispatchable
+			if [[ -n "$all_repos" ]]; then
+				while IFS= read -r repo_path; do
+					_run_sanity_check_for_repo "$repo_path"
+				done <<<"$all_repos"
+			else
+				_run_sanity_check_for_repo "$(pwd)"
+			fi
 		fi
 	fi
 
@@ -2051,14 +2060,20 @@ cmd_pulse() {
 				log_warn "Phase 2b: No active batch found — queued tasks have no batch to dispatch from"
 				# Auto-recovery: trigger auto-pickup to create a batch
 				# This handles the case where tasks were added to the DB but no batch was created
-				local stall_repos
-				stall_repos=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks WHERE status = 'queued';" 2>/dev/null || echo "")
-				if [[ -n "$stall_repos" ]]; then
-					while IFS= read -r stall_repo; do
-						[[ -z "$stall_repo" ]] && continue
-						log_info "Phase 2b: Re-running auto-pickup for $stall_repo to create batch"
-						cmd_auto_pickup --repo "$stall_repo" 2>>"$SUPERVISOR_LOG" || true
-					done <<<"$stall_repos"
+				# t2837: Skip when --batch is specified — the batch already exists and
+				# auto-pickup would ingest unrelated tasks into phantom batches.
+				if [[ -z "$batch_id" ]]; then
+					local stall_repos
+					stall_repos=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks WHERE status = 'queued';" 2>/dev/null || echo "")
+					if [[ -n "$stall_repos" ]]; then
+						while IFS= read -r stall_repo; do
+							[[ -z "$stall_repo" ]] && continue
+							log_info "Phase 2b: Re-running auto-pickup for $stall_repo to create batch"
+							cmd_auto_pickup --repo "$stall_repo" 2>>"$SUPERVISOR_LOG" || true
+						done <<<"$stall_repos"
+					fi
+				else
+					log_info "Phase 2b: Skipping auto-pickup stall recovery (--batch $batch_id specified, t2837)"
 				fi
 			else
 				# Batch exists but dispatch failed — log diagnostic info

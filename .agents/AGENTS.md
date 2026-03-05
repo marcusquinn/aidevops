@@ -53,6 +53,13 @@ Every agent session — interactive, worker, or supervisor — should improve th
 
 **Response: create a GitHub issue, not a workaround.** When you observe a systemic problem, file a GitHub issue describing the pattern, root cause hypothesis, and proposed fix. This enters the existing task queue and gets picked up by the next available worker. Never patch around a broken process — fix the process.
 
+**Route to the correct repo.** Not every improvement belongs in the current project. Before creating a self-improvement task, determine whether the problem is project-specific or framework-level:
+
+- **Framework-level** — route to the aidevops repo. Indicators: the observation references files under `~/.aidevops/`, framework scripts (`ai-actions.sh`, `ai-lifecycle.sh`, `supervisor/`, `dispatch.sh`, `pre-edit-check.sh`, helper scripts), agent prompt behaviour, supervisor/pulse logic, or cross-repo orchestration. Use `claim-task-id.sh --repo-path <aidevops-repo-path> --title "description"` (resolve the slug from `~/.config/aidevops/repos.json`). Only run `gh issue create --repo <aidevops-slug>` if `claim-task-id.sh` was invoked with `--no-issue` or its output did not include a `ref=GH#` (or `ref=GL#` for GitLab) token — otherwise the issue already exists and a second `gh issue create` would produce a duplicate. The fix belongs in the framework, not in the project that happened to trigger it.
+- **Project-specific** — route to the current repo. Indicators: the observation is about this project's CI, code patterns, dependencies, or domain logic.
+
+If uncertain, ask: "Would this fix apply to every repo the framework manages, or only this one?" Framework-wide problems go to aidevops; project-specific problems stay local. Never create framework tasks in a project repo — they become invisible to framework maintainers and pollute the project's task namespace.
+
 **What counts as self-improvement:**
 - Filing issues for repeated failure patterns
 - Improving agent prompts when workers consistently misunderstand instructions
@@ -151,7 +158,7 @@ Planning files go direct to main. Code changes need worktree + PR. Workers NEVER
 
 1. **Claim the ID atomically**: Run `claim-task-id.sh --repo-path <target-repo> --title "description"`. This allocates the next ID via CAS on the counter branch and optionally creates the GitHub issue. NEVER grep TODO.md to guess the next ID — concurrent sessions will collide.
 2. **Add the TODO entry and commit+push immediately**: Planning files go direct to main. The supervisor/pulse only sees remote state, so an uncommitted TODO entry is invisible to dispatch. Push right after committing.
-3. **Create a GitHub issue for dispatch**: If `claim-task-id.sh` was run with `--no-issue`, or you added the TODO manually, create the issue separately: `gh issue create --repo <slug> --title "tNNN: description" --body "..."`. Record the issue number in TODO.md as `ref:GH#NNN`.
+3. **Create a GitHub issue only if needed**: Only run `gh issue create --repo <slug> --title "tNNN: description" --body "..."` when `claim-task-id.sh` was invoked with `--no-issue` or its output did not include a `ref=GH#` (or `ref=GL#` for GitLab) token. If the issue already exists, skip this step — a second `gh issue create` would produce a duplicate. Record the issue number in TODO.md as `ref=GH#NNN`.
 4. **Code changes still need a worktree + PR**: The TODO/issue creation above is planning — it goes direct to main. If the task also involves code changes in the *current* repo, those follow the normal worktree + PR flow.
 
 Full rules: `reference/planning-detail.md`
