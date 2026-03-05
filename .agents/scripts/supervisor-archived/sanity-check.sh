@@ -257,7 +257,11 @@ _build_sanity_state_snapshot() {
 	# 1. Open tasks from TODO.md with metadata
 	snapshot+="### Open Tasks (TODO.md)\n"
 	local open_tasks
-	open_tasks=$(grep -E '^\s*- \[ \] t[0-9]+' "$todo_file" 2>/dev/null || echo "")
+	if [[ -f "$todo_file" ]]; then
+		open_tasks=$(grep -E '^\s*- \[ \] t[0-9]+' "$todo_file" || echo "")
+	else
+		open_tasks=""
+	fi
 	if [[ -n "$open_tasks" ]]; then
 		snapshot+="$open_tasks\n"
 	else
@@ -339,7 +343,7 @@ _build_sanity_state_snapshot() {
 			[[ -z "$oid" ]] && continue
 			local escaped_oid
 			escaped_oid=$(_escape_regex "$oid")
-			if ! grep -qE "^[[:space:]]*- \[.\] ${escaped_oid}( |$)" "$todo_file" 2>/dev/null; then
+			if [[ ! -f "$todo_file" ]] || ! grep -qE "^[[:space:]]*- \[.\] ${escaped_oid}( |$)" "$todo_file"; then
 				snapshot+="$oid ($ostatus): IN DB but NOT in TODO.md\n"
 			fi
 		done <<<"$orphans"
@@ -993,10 +997,17 @@ _log_queue_stall_reasons() {
 	local todo_file="$repo_path/TODO.md"
 
 	local open_count claimed_count blocked_count no_tag_count db_failed_count
-	open_count=$(grep -cE '^\s*- \[ \] t[0-9]+' "$todo_file" 2>/dev/null || echo "0")
-	claimed_count=$(grep -cE '^\s*- \[ \] t[0-9]+.*(assignee:|started:)' "$todo_file" 2>/dev/null || echo "0")
-	blocked_count=$(grep -cE '^\s*- \[ \] t[0-9]+.*blocked-by:' "$todo_file" 2>/dev/null || echo "0")
-	no_tag_count=$(grep -E '^\s*- \[ \] t[0-9]+' "$todo_file" 2>/dev/null | grep -cv '#auto-dispatch' || echo "0")
+	if [[ -f "$todo_file" ]]; then
+		open_count=$(grep -cE '^\s*- \[ \] t[0-9]+' "$todo_file" || echo "0")
+		claimed_count=$(grep -cE '^\s*- \[ \] t[0-9]+.*(assignee:|started:)' "$todo_file" || echo "0")
+		blocked_count=$(grep -cE '^\s*- \[ \] t[0-9]+.*blocked-by:' "$todo_file" || echo "0")
+		no_tag_count=$(grep -E '^\s*- \[ \] t[0-9]+' "$todo_file" | grep -cv '#auto-dispatch' || echo "0")
+	else
+		open_count="0"
+		claimed_count="0"
+		blocked_count="0"
+		no_tag_count="0"
+	fi
 	db_failed_count=$(db "$SUPERVISOR_DB" "
 		SELECT COUNT(*) FROM tasks
 		WHERE repo = '$(sql_escape "$repo_path")'
