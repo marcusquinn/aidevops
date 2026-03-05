@@ -2720,9 +2720,11 @@ cmd_pulse() {
 			local issue_sync_script="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/issue-sync-helper.sh"
 			if [[ -f "$issue_sync_script" && -f "$sync_repo/TODO.md" ]]; then
 				# Run reconcile to fix ref:GH# drift
-				bash "$issue_sync_script" reconcile --verbose 2>>"$SUPERVISOR_LOG" || true
+				# CRITICAL: pass --dir to ensure find_project_root() uses the target repo,
+				# not $PWD (which may be a different repo). See GH#230/qs-agency, t1504.
+				bash "$issue_sync_script" reconcile --dir "$sync_repo" --verbose 2>>"$SUPERVISOR_LOG" || true
 				# Run close to close stale issues for completed tasks
-				bash "$issue_sync_script" close --verbose 2>>"$SUPERVISOR_LOG" || true
+				bash "$issue_sync_script" close --dir "$sync_repo" --verbose 2>>"$SUPERVISOR_LOG" || true
 				echo "$now_epoch" >"$issue_sync_stamp"
 				log_info "  Phase 8: Issue-sync complete"
 			else

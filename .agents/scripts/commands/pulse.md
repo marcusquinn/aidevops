@@ -241,11 +241,15 @@ refs back to TODO.md) and `close` (close issues for completed tasks).
 
 **Note:** Helper scripts use `#!/usr/bin/env bash` shebangs which fail in the MCP shell if PATH is incomplete. Step 0's `export PATH=...` fixes this for the session. If you still see `env: bash: No such file or directory`, call scripts with an explicit `/bin/bash` prefix as shown below:
 
+**CRITICAL:** Always pass `--dir "$path"` when calling from a different working directory.
+Without `--dir`, the script walks up from `$PWD` to find TODO.md — which reads the wrong
+repo's TODO.md in cross-repo scenarios (see GH#230/qs-agency, t1504).
+
 ```bash
 # Pull: sync issue refs from GitHub to TODO.md (safe, idempotent)
-/bin/bash ~/.aidevops/agents/scripts/issue-sync-helper.sh pull --repo "$slug" 2>&1 || true
+/bin/bash ~/.aidevops/agents/scripts/issue-sync-helper.sh pull --repo "$slug" --dir "$path" 2>&1 || true
 # Close: close issues for completed tasks (safe, idempotent)
-/bin/bash ~/.aidevops/agents/scripts/issue-sync-helper.sh close --repo "$slug" 2>&1 || true
+/bin/bash ~/.aidevops/agents/scripts/issue-sync-helper.sh close --repo "$slug" --dir "$path" 2>&1 || true
 # Commit any ref changes
 git -C "$path" diff --quiet TODO.md 2>/dev/null || {
   git -C "$path" add TODO.md && git -C "$path" commit -m "chore: sync GitHub issue refs to TODO.md [skip ci]" && git -C "$path" push

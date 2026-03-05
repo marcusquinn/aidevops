@@ -58,8 +58,10 @@ _escape_ere() {
 }
 
 # Find project root (contains TODO.md)
+# Arguments:
+#   $1 - (optional) starting directory to search from (defaults to $PWD)
 find_project_root() {
-	local dir="$PWD"
+	local dir="${1:-$PWD}"
 	while [[ "$dir" != "/" ]]; do
 		if [[ -f "$dir/TODO.md" ]]; then
 			echo "$dir"
@@ -68,7 +70,7 @@ find_project_root() {
 		dir="${dir%/*}"
 		[[ -z "$dir" ]] && dir="/"
 	done
-	print_error "No TODO.md found in directory tree"
+	print_error "No TODO.md found in directory tree (searched from: ${1:-$PWD})"
 	return 1
 }
 
