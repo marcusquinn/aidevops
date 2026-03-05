@@ -43,36 +43,39 @@ Run `dataset-helper.sh schema` for the full JSON Schema.
 ## CLI Reference
 
 ```bash
+# Set the global dataset directory for copy/paste convenience
+DATASET_DIR="$HOME/.aidevops/.agent-workspace/datasets"
+
 # Create a new dataset
 dataset-helper.sh create golden-prompts                    # Global
 dataset-helper.sh create api-tests --project ~/Git/myapp   # Project-local
 
-# Add entries
-dataset-helper.sh add golden-prompts.jsonl \
+# Add entries (use full path from create output, or $DATASET_DIR)
+dataset-helper.sh add "$DATASET_DIR/golden-prompts.jsonl" \
   --input "What is the capital of France?" \
   --expected "Paris" \
   --tags "geography,factual"
 
-dataset-helper.sh add golden-prompts.jsonl \
+dataset-helper.sh add "$DATASET_DIR/golden-prompts.jsonl" \
   --input "Summarize this code" \
   --context "function add(a, b) { return a + b; }" \
   --tags "code,summarization" \
   --source "manual"
 
 # Validate dataset schema
-dataset-helper.sh validate golden-prompts.jsonl            # Basic checks
-dataset-helper.sh validate golden-prompts.jsonl --strict   # + type checking
+dataset-helper.sh validate "$DATASET_DIR/golden-prompts.jsonl"            # Basic checks
+dataset-helper.sh validate "$DATASET_DIR/golden-prompts.jsonl" --strict   # + type checking
 
 # List available datasets
 dataset-helper.sh list                                     # Global only
 dataset-helper.sh list --project ~/Git/myapp               # Global + project
 
 # Show statistics
-dataset-helper.sh stats golden-prompts.jsonl
+dataset-helper.sh stats "$DATASET_DIR/golden-prompts.jsonl"
 
 # Promote observability trace to dataset entry
 dataset-helper.sh promote --trace-id abc123
-dataset-helper.sh promote --trace-id abc123 -o regression.jsonl --tags "regression"
+dataset-helper.sh promote --trace-id abc123 -o "$DATASET_DIR/regression.jsonl" --tags "regression"
 
 # Merge datasets (dedup by ID, file2 wins on conflict)
 dataset-helper.sh merge dataset1.jsonl dataset2.jsonl -o merged.jsonl

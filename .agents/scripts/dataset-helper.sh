@@ -212,7 +212,7 @@ cmd_validate() {
 
 	local errors=0
 	local line_num=0
-	local seen_ids=""
+	local -A seen_ids=()
 
 	while IFS= read -r line || [[ -n "$line" ]]; do
 		line_num=$((line_num + 1))
@@ -242,15 +242,15 @@ cmd_validate() {
 			errors=$((errors + 1))
 		fi
 
-		# Check for duplicate IDs
+		# Check for duplicate IDs (O(1) lookup via associative array)
 		if [[ "$has_id" == "true" ]]; then
 			local entry_id
 			entry_id=$(echo "$line" | jq -r '.id' 2>/dev/null)
-			if echo "$seen_ids" | grep -qx "$entry_id" 2>/dev/null; then
+			if [[ -n "${seen_ids[$entry_id]+x}" ]]; then
 				print_error "Line $line_num: Duplicate ID '$entry_id'"
 				errors=$((errors + 1))
 			else
-				seen_ids="${seen_ids}${entry_id}"$'\n'
+				seen_ids["$entry_id"]=1
 			fi
 		fi
 
@@ -258,7 +258,9 @@ cmd_validate() {
 		if [[ "$strict" == "true" ]]; then
 			local type_errors
 			type_errors=$(echo "$line" | jq '
-				[ if has("tags") and (.tags | type) != "array" then "tags must be array" else empty end,
+				[ if has("id") and (.id | type) != "string" then "id must be string" else empty end,
+				  if has("input") and (.input | type) != "string" then "input must be string" else empty end,
+				  if has("tags") and ((.tags | type) != "array" or any(.tags[]?; type != "string")) then "tags must be an array of strings" else empty end,
 				  if has("expected") and (.expected | type) != "string" and .expected != null then "expected must be string or null" else empty end,
 				  if has("context") and (.context | type) != "string" and .context != null then "context must be string or null" else empty end,
 				  if has("source") and (.source | type) != "string" then "source must be string" else empty end,
@@ -301,30 +303,58 @@ cmd_add() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--input)
+			[[ $# -ge 2 ]] || {
+				print_error "--input requires a value"
+				return 1
+			}
 			input_text="$2"
 			shift 2
 			;;
 		--expected)
+			[[ $# -ge 2 ]] || {
+				print_error "--expected requires a value"
+				return 1
+			}
 			expected_text="$2"
 			shift 2
 			;;
 		--context)
+			[[ $# -ge 2 ]] || {
+				print_error "--context requires a value"
+				return 1
+			}
 			context_text="$2"
 			shift 2
 			;;
 		--tags)
+			[[ $# -ge 2 ]] || {
+				print_error "--tags requires a value"
+				return 1
+			}
 			tags_csv="$2"
 			shift 2
 			;;
 		--source)
+			[[ $# -ge 2 ]] || {
+				print_error "--source requires a value"
+				return 1
+			}
 			source_text="$2"
 			shift 2
 			;;
 		--id)
+			[[ $# -ge 2 ]] || {
+				print_error "--id requires a value"
+				return 1
+			}
 			entry_id="$2"
 			shift 2
 			;;
 		--metadata)
+			[[ $# -ge 2 ]] || {
+				print_error "--metadata requires a value"
+				return 1
+			}
 			metadata_json="$2"
 			shift 2
 			;;
@@ -446,8 +476,13 @@ cmd_list() {
 			echo "  --no-global       Skip global datasets"
 			return 0
 			;;
+		-*)
+			print_error "Unknown option: $1"
+			return 1
+			;;
 		*)
-			shift
+			print_error "Unexpected argument: $1"
+			return 1
 			;;
 		esac
 	done
@@ -640,13 +675,13 @@ cmd_promote() {
 		return 1
 	fi
 
-	# Find the trace in metrics
+	# Find the trace in metrics (use --arg to safely pass trace_id)
 	local trace_data
-	trace_data=$(jq -c "select(.request_id == \"$trace_id\")" <"$OBS_METRICS" 2>/dev/null | head -1)
+	trace_data=$(jq -c --arg trace_id "$trace_id" 'select(.request_id == $trace_id)' <"$OBS_METRICS" 2>/dev/null | head -1)
 
 	if [[ -z "$trace_data" ]]; then
 		# Try matching by session_id as fallback
-		trace_data=$(jq -c "select(.session_id == \"$trace_id\")" <"$OBS_METRICS" 2>/dev/null | head -1)
+		trace_data=$(jq -c --arg trace_id "$trace_id" 'select(.session_id == $trace_id)' <"$OBS_METRICS" 2>/dev/null | head -1)
 	fi
 
 	if [[ -z "$trace_data" ]]; then
@@ -766,11 +801,14 @@ cmd_merge() {
 	done
 
 	# Merge: file1 first, then file2 overrides on ID conflict
-	# Use jq slurp to deduplicate by id (last wins)
+	# Use reduce-to-map so "file2 wins" is deterministic (last write wins by key)
 	local merged
-	merged=$(cat "$file1" "$file2" | jq -c -s '
-		group_by(.id) | map(last) | .[]
-	' 2>/dev/null)
+	if ! merged=$(jq -c -s '
+		reduce .[] as $row ({}; .[$row.id] = $row) | .[]
+	' "$file1" "$file2" 2>/dev/null); then
+		print_error "Merge failed: invalid JSON input"
+		return 1
+	fi
 
 	if [[ -z "$merged" ]]; then
 		# Both files might be empty
