@@ -127,7 +127,7 @@ recover_stale_claims() {
 			SELECT id FROM tasks
 			WHERE status IN ('running', 'dispatched', 'evaluating', 'queued', 'pr_review', 'review_triage', 'merging')
 			ORDER BY id;
-		" 2>/dev/null || true)
+		" || true)
 	fi
 
 	local recovered_count=0
@@ -408,7 +408,7 @@ populate_verify_queue() {
 
 	# Get task description from DB
 	local task_desc
-	task_desc=$(db "$SUPERVISOR_DB" "SELECT description FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo "$task_id")
+	task_desc=$(db "$SUPERVISOR_DB" "SELECT description FROM tasks WHERE id = '$(sql_escape "$task_id")';" || echo "$task_id")
 	# Truncate long descriptions
 	if [[ ${#task_desc} -gt 60 ]]; then
 		task_desc="${task_desc:0:57}..."
@@ -542,7 +542,7 @@ process_verify_queue() {
 		WHERE status = 'verifying'
 		  AND updated_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-5 minutes')
 		ORDER BY id;
-	" 2>/dev/null || echo "")
+	" || echo "")
 
 	if [[ -n "$stuck_verifying" ]]; then
 		while IFS='|' read -r stuck_id; do
@@ -554,11 +554,11 @@ process_verify_queue() {
 				status = 'deployed',
 				error = NULL,
 				updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-			WHERE id = '$escaped_stuck_id';" 2>/dev/null || true
+		WHERE id = '$escaped_stuck_id';" || true
 			db "$SUPERVISOR_DB" "INSERT INTO state_log (task_id, from_state, to_state, timestamp, reason)
-			VALUES ('$escaped_stuck_id', 'verifying', 'deployed',
-				strftime('%Y-%m-%dT%H:%M:%SZ','now'),
-				'process_verify_queue: recovered from stuck verifying state (>5min timeout)');" 2>/dev/null || true
+		VALUES ('$escaped_stuck_id', 'verifying', 'deployed',
+			strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+			'process_verify_queue: recovered from stuck verifying state (>5min timeout)');" || true
 		done <<<"$stuck_verifying"
 	fi
 
@@ -1200,8 +1200,8 @@ auto_unblock_resolved_tasks() {
 			if [[ -n "${SUPERVISOR_DB:-}" && -f "${SUPERVISOR_DB}" ]]; then
 				local blocker_db_status=""
 				blocker_db_status=$(db "$SUPERVISOR_DB" \
-					"SELECT status FROM tasks WHERE id = '$(sql_escape "$blocker_id")' LIMIT 1;" \
-					2>/dev/null || echo "")
+					"SELECT status FROM tasks WHERE id = '$(sql_escape "$blocker_id")' LIMIT 1;" ||
+					echo "")
 				if [[ "$blocker_db_status" == "complete" ||
 					"$blocker_db_status" == "deployed" ||
 					"$blocker_db_status" == "verified" ||
@@ -1216,12 +1216,12 @@ auto_unblock_resolved_tasks() {
 			if [[ -n "${SUPERVISOR_DB:-}" && -f "${SUPERVISOR_DB}" ]]; then
 				local blocker_failed_status=""
 				blocker_failed_status=$(db "$SUPERVISOR_DB" \
-					"SELECT status FROM tasks WHERE id = '$(sql_escape "$blocker_id")' AND status = 'failed' LIMIT 1;" \
-					2>/dev/null || echo "")
+					"SELECT status FROM tasks WHERE id = '$(sql_escape "$blocker_id")' AND status = 'failed' LIMIT 1;" ||
+					echo "")
 				if [[ "$blocker_failed_status" == "failed" ]]; then
 					local blocker_retries_left blocker_max_retries_left
-					blocker_retries_left=$(db "$SUPERVISOR_DB" "SELECT COALESCE(retries, 0) FROM tasks WHERE id = '$(sql_escape "$blocker_id")';" 2>/dev/null || echo "")
-					blocker_max_retries_left=$(db "$SUPERVISOR_DB" "SELECT COALESCE(max_retries, 3) FROM tasks WHERE id = '$(sql_escape "$blocker_id")';" 2>/dev/null || echo "")
+					blocker_retries_left=$(db "$SUPERVISOR_DB" "SELECT COALESCE(retries, 0) FROM tasks WHERE id = '$(sql_escape "$blocker_id")';" || echo "")
+					blocker_max_retries_left=$(db "$SUPERVISOR_DB" "SELECT COALESCE(max_retries, 3) FROM tasks WHERE id = '$(sql_escape "$blocker_id")';" || echo "")
 					# Guard against empty strings from race conditions or db failure
 					# Default max_retries to 3 (not 0) so db failure doesn't falsely
 					# trigger "retries exhausted" and prematurely unblock dependents
@@ -1263,9 +1263,9 @@ auto_unblock_resolved_tasks() {
 			# Transition DB status from blocked to queued so dispatch picks it up
 			if [[ -n "${SUPERVISOR_DB:-}" && -f "${SUPERVISOR_DB}" ]]; then
 				local db_status
-				db_status=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$task_id")' LIMIT 1;" 2>/dev/null || echo "")
+				db_status=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$task_id")' LIMIT 1;" || echo "")
 				if [[ "$db_status" == "blocked" ]]; then
-					db "$SUPERVISOR_DB" "UPDATE tasks SET status='queued', error=NULL, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id='$(sql_escape "$task_id")';" 2>/dev/null || true
+					db "$SUPERVISOR_DB" "UPDATE tasks SET status='queued', error=NULL, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id='$(sql_escape "$task_id")';" || true
 					log_info "  auto-unblock: $task_id — DB status transitioned from blocked to queued"
 				fi
 			fi
@@ -1581,7 +1581,7 @@ cmd_reconcile_db_todo() {
 
 	# Determine repo path
 	if [[ -z "$repo_path" ]]; then
-		repo_path=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks LIMIT 1;" 2>/dev/null || echo "")
+		repo_path=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks LIMIT 1;" || echo "")
 		if [[ -z "$repo_path" ]]; then
 			repo_path="$(pwd)"
 		fi
@@ -1820,7 +1820,7 @@ cmd_reconcile_queue_dispatchability() {
 
 	# Determine repo path
 	if [[ -z "$repo_path" ]]; then
-		repo_path=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks LIMIT 1;" 2>/dev/null || echo "")
+		repo_path=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks LIMIT 1;" || echo "")
 		if [[ -z "$repo_path" ]]; then
 			repo_path="$(pwd)"
 		fi
@@ -1846,7 +1846,7 @@ cmd_reconcile_queue_dispatchability() {
 		WHERE t.status = 'queued'
 		$batch_filter
 		ORDER BY t.id;
-	" 2>/dev/null || echo "")
+	" || echo "")
 
 	if [[ -z "$queued_tasks" ]]; then
 		log_verbose "Phase 0.6: No queued tasks in DB — skipping reconciliation"
@@ -1939,7 +1939,7 @@ cmd_reconcile_queue_dispatchability() {
 				log_warn "[dry-run] Phase 0.6: $tid queued in DB but not in TODO.md — would cancel (orphaned, t1261)"
 			else
 				log_warn "Phase 0.6: $tid queued in DB but not in TODO.md — cancelling orphan (t1261)"
-				db "$SUPERVISOR_DB" "UPDATE tasks SET status='cancelled', error='Orphaned: queued in DB but not found in TODO.md (t1261)' WHERE id='$(sql_escape "$tid")' AND status='queued';" 2>/dev/null || true
+				db "$SUPERVISOR_DB" "UPDATE tasks SET status='cancelled', error='Orphaned: queued in DB but not found in TODO.md (t1261)' WHERE id='$(sql_escape "$tid")' AND status='queued';" || true
 				phantom_count=$((phantom_count + 1))
 			fi
 			continue
@@ -1975,7 +1975,7 @@ cmd_reconcile_queue_dispatchability() {
 			WHERE bt.task_id = '$(sql_escape "$tid")'
 			AND b.status IN ('active','paused')
 			LIMIT 1;
-		" 2>/dev/null || echo "")
+		" || echo "")
 		if [[ -n "$active_batch_id" ]]; then
 			in_active_batch=true
 		fi
