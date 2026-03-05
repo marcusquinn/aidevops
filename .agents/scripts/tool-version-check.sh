@@ -105,6 +105,11 @@ NOT_INSTALLED_COUNT=0
 declare -a OUTDATED_PACKAGES=()
 declare -a JSON_RESULTS=()
 
+# Timeout for local --version calls (seconds).
+# A well-behaved --version should return in <1s. 10s is generous enough for
+# slow interpreters (Python, Ruby) while still catching hung MCP servers.
+readonly VERSION_TIMEOUT=10
+
 # Get installed version
 get_installed_version() {
 	local cmd="$1"
@@ -115,16 +120,25 @@ get_installed_version() {
 		# Timeout version checks — some tools (MCP servers) start a blocking
 		# server process when given --version instead of printing a version.
 		# Without a timeout, the subshell hangs forever.
-		# NOTE: Do NOT pipe timeout_sec to head/grep — on macOS the perl alarm
-		# fallback doesn't close the pipe write end on SIGALRM, causing head to
-		# block forever. Use a temp file instead.
+		# NOTE: Do NOT pipe timeout_sec to head/grep — on macOS the background
+		# process fallback may not close the pipe write end on kill, causing
+		# head to block forever. Use a temp file instead.
 		local _ver_log
 		if ! _ver_log=$(mktemp "${TMPDIR:-/tmp}/tool-ver.XXXXXX"); then
 			echo "unknown"
 			return 0
 		fi
+		local _ver_rc=0
 		# shellcheck disable=SC2086
-		timeout_sec 5 "$cmd" $ver_flag >"$_ver_log" 2>/dev/null || true
+		timeout_sec "$VERSION_TIMEOUT" "$cmd" $ver_flag >"$_ver_log" 2>/dev/null || _ver_rc=$?
+
+		if [[ "$_ver_rc" -eq 124 ]]; then
+			# timeout_sec killed the process — command hung
+			rm -f "$_ver_log"
+			echo "timeout"
+			return 0
+		fi
+
 		version=$(head -1 "$_ver_log" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
 		if [[ -z "$version" ]]; then
 			version=$(head -1 "$_ver_log" | grep -oE '[0-9]+\.[0-9]+' | head -1 || echo "unknown")
@@ -139,24 +153,41 @@ get_installed_version() {
 
 # Portable timeout function (works on Linux and macOS)
 # Usage: timeout_sec 5 your_command arg1 arg2
+# Returns: command exit code, or 124 on timeout (matches coreutils convention)
 timeout_sec() {
-	local timeout="$1"
+	local secs="$1"
 	shift
 
 	if command -v timeout &>/dev/null; then
-		# Linux has native timeout
-		timeout "$timeout" "$@"
+		# Linux has native timeout — returns 124 on timeout
+		timeout "$secs" "$@"
+		return $?
+	elif command -v gtimeout &>/dev/null; then
+		# macOS with coreutils — returns 124 on timeout
+		gtimeout "$secs" "$@"
+		return $?
 	else
-		# macOS: prefer gtimeout (robust exit codes, pipe handling) over perl alarm
-		if command -v gtimeout &>/dev/null; then
-			gtimeout "$timeout" "$@"
-		elif command -v perl &>/dev/null; then
-			perl -e 'alarm shift; exec @ARGV' "$timeout" "$@"
-		else
-			# No timeout available - run directly (will hang if command hangs)
-			echo "[WARN] No timeout command available - running without timeout" >&2
-			"$@"
-		fi
+		# macOS fallback: background the command and kill after deadline.
+		# The perl alarm approach (perl -e 'alarm shift; exec @ARGV') is fragile:
+		# SIGALRM may not kill child processes that trap or ignore signals (e.g.,
+		# Node MCP servers). Using background + kill is more reliable.
+		"$@" &
+		local cmd_pid=$!
+		# Poll every 0.5s; count half-seconds to avoid floating-point math
+		local half_secs_remaining=$((secs * 2))
+		while kill -0 "$cmd_pid" 2>/dev/null; do
+			if ((half_secs_remaining <= 0)); then
+				kill -TERM "$cmd_pid" 2>/dev/null
+				sleep 0.2
+				kill -KILL "$cmd_pid" 2>/dev/null || true
+				wait "$cmd_pid" 2>/dev/null || true
+				return 124
+			fi
+			sleep 0.5
+			((half_secs_remaining--)) || true
+		done
+		wait "$cmd_pid" 2>/dev/null
+		return $?
 	fi
 }
 
@@ -233,6 +264,11 @@ check_tool() {
 		icon="○"
 		color="$YELLOW"
 		((NOT_INSTALLED_COUNT++)) || true
+	elif [[ "$installed" == "timeout" ]]; then
+		status="timeout"
+		icon="⏱"
+		color="$RED"
+		((INSTALLED_COUNT++)) || true
 	elif [[ "$installed" == "unknown" || "$latest" == "unknown" ]]; then
 		status="unknown"
 		icon="?"
@@ -258,7 +294,7 @@ check_tool() {
 		JSON_RESULTS+=("{\"name\":\"$json_name\",\"category\":\"$category\",\"installed\":\"$installed\",\"latest\":\"$latest\",\"status\":\"$status\",\"update_cmd\":\"$json_update\"}")
 	else
 		# Console output
-		if [[ "$QUIET" == "true" && "$status" != "outdated" ]]; then
+		if [[ "$QUIET" == "true" && "$status" != "outdated" && "$status" != "timeout" ]]; then
 			return
 		fi
 
@@ -271,6 +307,9 @@ check_tool() {
 			;;
 		outdated)
 			echo -e "${color}${icon}  $name: $installed → $latest (UPDATE AVAILABLE)${NC}"
+			;;
+		timeout)
+			echo -e "${color}${icon}  $name: --version hung (killed after ${VERSION_TIMEOUT}s)${NC}"
 			;;
 		unknown)
 			echo -e "${color}${icon}  $name: $installed (could not check latest)${NC}"
