@@ -486,9 +486,10 @@ When running as a headless worker (dispatched by the supervisor via `opencode ru
    if [[ -n "${PULSE_SCOPE_REPOS:-}" ]]; then
      if ! echo ",$PULSE_SCOPE_REPOS," | grep -qF ",$TARGET_SLUG,"; then
        echo "Repo $TARGET_SLUG is outside pulse scope — filing issue only, not implementing fix"
-        gh issue create --repo "$TARGET_SLUG" --title "TITLE" \
-          --body "Discovered while working on CURRENT_TASK. DETAILS"
-       # Do NOT create branches, PRs, or commit code on this repo
+       gh issue create --repo "$TARGET_SLUG" --title "TITLE" \
+         --body "Discovered while working on CURRENT_TASK. DETAILS"
+       echo "BLOCKED: target repo out of pulse scope; issue filed — stopping."
+       exit 0
      fi
    fi
    ```

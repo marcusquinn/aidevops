@@ -467,7 +467,7 @@ prefetch_state() {
 	# Workers CAN file issues on any repo (cross-repo self-improvement),
 	# but code changes (branches, PRs) are restricted to this list.
 	local scope_slugs
-	scope_slugs=$(echo "$repo_entries" | cut -d'|' -f1 | paste -sd ',' -)
+	scope_slugs=$(echo "$repo_entries" | cut -d'|' -f1 | grep . | paste -sd ',' -)
 	export PULSE_SCOPE_REPOS="$scope_slugs"
 	echo "[pulse-wrapper] PULSE_SCOPE_REPOS=${scope_slugs}" >>"$LOGFILE"
 
