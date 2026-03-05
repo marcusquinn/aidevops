@@ -374,11 +374,281 @@ test_memory_prune_intelligent_flag() {
 }
 
 # ============================================================
+# Test: evaluate command — help lists evaluate (t1394)
+# ============================================================
+test_evaluate_help_listed() {
+	echo "Test: evaluate command listed in help (t1394)"
+
+	local output
+	output=$("$AI_JUDGMENT" help 2>&1)
+	assert_contains "$output" "evaluate" "Help lists evaluate command"
+	assert_contains "$output" "faithfulness" "Help lists faithfulness evaluator"
+	assert_contains "$output" "relevancy" "Help lists relevancy evaluator"
+	assert_contains "$output" "safety" "Help lists safety evaluator"
+	assert_contains "$output" "format-validity" "Help lists format-validity evaluator"
+	assert_contains "$output" "completeness" "Help lists completeness evaluator"
+	assert_contains "$output" "conciseness" "Help lists conciseness evaluator"
+
+	return 0
+}
+
+# ============================================================
+# Test: evaluate command — missing --type returns error
+# ============================================================
+test_evaluate_missing_type() {
+	echo "Test: evaluate requires --type flag (t1394)"
+	setup
+
+	local exit_code=0
+	"$AI_JUDGMENT" evaluate --output "test" 2>/dev/null || exit_code=$?
+	assert_eq "1" "$exit_code" "Exits 1 when --type is missing"
+
+	teardown
+	return 0
+}
+
+# ============================================================
+# Test: evaluate command — missing --output returns error
+# ============================================================
+test_evaluate_missing_output() {
+	echo "Test: evaluate requires --output or --dataset (t1394)"
+	setup
+
+	local exit_code=0
+	"$AI_JUDGMENT" evaluate --type faithfulness --input "test" 2>/dev/null || exit_code=$?
+	assert_eq "1" "$exit_code" "Exits 1 when --output and --dataset are missing"
+
+	teardown
+	return 0
+}
+
+# ============================================================
+# Test: evaluate command — fallback when API unavailable
+# ============================================================
+test_evaluate_fallback() {
+	echo "Test: evaluate fallback when API unavailable (t1394)"
+	setup
+
+	# Unset API key to force fallback
+	local saved_key="${ANTHROPIC_API_KEY:-}"
+	unset ANTHROPIC_API_KEY
+
+	local result
+	result=$("$AI_JUDGMENT" evaluate --type faithfulness \
+		--input "What is the capital of France?" \
+		--output "The capital of France is Paris." 2>/dev/null)
+
+	# Should return JSON with null score and null passed (not 0/false)
+	assert_contains "$result" "\"score\": null" "Fallback returns null score"
+	assert_contains "$result" "\"passed\": null" "Fallback returns null passed"
+	assert_contains "$result" "\"evaluator\": \"faithfulness\"" "Fallback includes evaluator name"
+	assert_contains "$result" "API unavailable" "Fallback mentions API unavailable"
+
+	# Restore key if it was set
+	if [[ -n "$saved_key" ]]; then
+		export ANTHROPIC_API_KEY="$saved_key"
+	fi
+
+	teardown
+	return 0
+}
+
+# ============================================================
+# Test: evaluate command — multiple evaluators (comma-separated)
+# ============================================================
+test_evaluate_multiple_types() {
+	echo "Test: evaluate with multiple types (t1394)"
+	setup
+
+	# Unset API key to force fallback — we're testing the multi-type parsing
+	local saved_key="${ANTHROPIC_API_KEY:-}"
+	unset ANTHROPIC_API_KEY
+
+	local result
+	result=$("$AI_JUDGMENT" evaluate --type "faithfulness,relevancy,safety" \
+		--input "test" --output "test output" 2>/dev/null)
+
+	# Should return JSON array with 3 results
+	assert_contains "$result" "[" "Multiple types returns JSON array"
+	assert_contains "$result" "faithfulness" "Array contains faithfulness result"
+	assert_contains "$result" "relevancy" "Array contains relevancy result"
+	assert_contains "$result" "safety" "Array contains safety result"
+
+	if [[ -n "$saved_key" ]]; then
+		export ANTHROPIC_API_KEY="$saved_key"
+	fi
+
+	teardown
+	return 0
+}
+
+# ============================================================
+# Test: evaluate command — dataset mode
+# ============================================================
+test_evaluate_dataset() {
+	echo "Test: evaluate with --dataset flag (t1394)"
+	setup
+
+	# Unset API key to force fallback
+	local saved_key="${ANTHROPIC_API_KEY:-}"
+	unset ANTHROPIC_API_KEY
+
+	# Create a test dataset
+	local dataset_file="$WORK_DIR/test-dataset.jsonl"
+	echo '{"input": "What is 2+2?", "output": "4"}' >"$dataset_file"
+	echo '{"input": "Capital of France?", "output": "Paris", "context": "France capital is Paris"}' >>"$dataset_file"
+
+	local result
+	result=$("$AI_JUDGMENT" evaluate --type relevancy --dataset "$dataset_file" 2>/dev/null)
+
+	# Should contain row results and summary
+	assert_contains "$result" "\"row\":" "Dataset output contains row numbers"
+	assert_contains "$result" "\"summary\":" "Dataset output contains summary"
+	assert_contains "$result" "\"rows\": 2" "Summary shows correct row count"
+
+	if [[ -n "$saved_key" ]]; then
+		export ANTHROPIC_API_KEY="$saved_key"
+	fi
+
+	teardown
+	return 0
+}
+
+# ============================================================
+# Test: evaluate command — dataset file not found
+# ============================================================
+test_evaluate_dataset_not_found() {
+	echo "Test: evaluate --dataset with missing file (t1394)"
+	setup
+
+	local exit_code=0
+	"$AI_JUDGMENT" evaluate --type relevancy --dataset "/nonexistent/file.jsonl" 2>/dev/null || exit_code=$?
+	assert_eq "1" "$exit_code" "Exits 1 when dataset file not found"
+
+	teardown
+	return 0
+}
+
+# ============================================================
+# Test: evaluate command — custom evaluator with --prompt-file
+# ============================================================
+test_evaluate_custom_prompt_file() {
+	echo "Test: evaluate with custom --prompt-file (t1394)"
+	setup
+
+	# Unset API key to force fallback
+	local saved_key="${ANTHROPIC_API_KEY:-}"
+	unset ANTHROPIC_API_KEY
+
+	# Create a custom prompt file
+	local prompt_file="$WORK_DIR/custom-eval.txt"
+	echo 'You are a custom evaluator. Score the output.' >"$prompt_file"
+
+	local result
+	result=$("$AI_JUDGMENT" evaluate --type custom --prompt-file "$prompt_file" \
+		--input "test" --output "test output" 2>/dev/null)
+
+	# Should return fallback JSON (API unavailable)
+	assert_contains "$result" "\"evaluator\": \"custom\"" "Custom evaluator returns correct type"
+
+	if [[ -n "$saved_key" ]]; then
+		export ANTHROPIC_API_KEY="$saved_key"
+	fi
+
+	teardown
+	return 0
+}
+
+# ============================================================
+# Test: evaluate command — custom prompt file not found
+# ============================================================
+test_evaluate_custom_prompt_not_found() {
+	echo "Test: evaluate with missing --prompt-file (t1394)"
+	setup
+
+	local result
+	result=$("$AI_JUDGMENT" evaluate --type custom --prompt-file "/nonexistent/prompt.txt" \
+		--input "test" --output "test output" 2>/dev/null)
+
+	assert_contains "$result" "Prompt file not found" "Reports missing prompt file"
+	assert_contains "$result" "\"score\": null" "Returns null score for missing prompt"
+
+	teardown
+	return 0
+}
+
+# ============================================================
+# Test: evaluate command — result caching
+# ============================================================
+test_evaluate_caching() {
+	echo "Test: evaluate result caching (t1394)"
+	setup
+
+	# Unset API key to force fallback
+	local saved_key="${ANTHROPIC_API_KEY:-}"
+	unset ANTHROPIC_API_KEY
+
+	# Run evaluation twice with same inputs — second should use cache
+	"$AI_JUDGMENT" evaluate --type faithfulness \
+		--input "test input" --output "test output" 2>/dev/null || true
+
+	# Check that cache table has entries
+	local cache_count
+	cache_count=$(sqlite3 "$WORK_DIR/memory.db" \
+		"SELECT COUNT(*) FROM ai_judgment_cache WHERE key LIKE 'eval:%';" 2>/dev/null || echo "0")
+
+	# Note: fallback results are NOT cached (only AI results are cached)
+	# So with no API key, cache should be empty
+	assert_eq "0" "$cache_count" "Fallback results are not cached (correct behavior)"
+
+	if [[ -n "$saved_key" ]]; then
+		export ANTHROPIC_API_KEY="$saved_key"
+	fi
+
+	teardown
+	return 0
+}
+
+# ============================================================
+# Test: evaluate command — with API key (live test)
+# ============================================================
+test_evaluate_with_api() {
+	echo "Test: evaluate with API key (t1394)"
+
+	if ! has_api_key; then
+		skip_test "ANTHROPIC_API_KEY not set — skipping live evaluate tests"
+		return 0
+	fi
+
+	setup
+
+	# Test faithfulness evaluator with clear-cut case
+	local result
+	result=$("$AI_JUDGMENT" evaluate --type faithfulness \
+		--input "What is the capital of France?" \
+		--output "The capital of France is Paris." \
+		--context "France is a country in Western Europe. Its capital is Paris." 2>/dev/null)
+
+	assert_contains "$result" "\"score\":" "Live evaluation returns a score"
+	assert_contains "$result" "\"passed\":" "Live evaluation returns passed field"
+	assert_contains "$result" "\"evaluator\": \"faithfulness\"" "Live evaluation returns evaluator name"
+
+	# Verify caching works with API
+	local cache_count
+	cache_count=$(sqlite3 "$WORK_DIR/memory.db" \
+		"SELECT COUNT(*) FROM ai_judgment_cache WHERE key LIKE 'eval:%';" 2>/dev/null || echo "0")
+	assert_eq "1" "$cache_count" "Live evaluation result is cached"
+
+	teardown
+	return 0
+}
+
+# ============================================================
 # Run all tests
 # ============================================================
 main() {
 	echo "============================================"
-	echo "  AI Judgment Helper Tests (t1363.6)"
+	echo "  AI Judgment Helper Tests (t1363.6 + t1394)"
 	echo "============================================"
 	echo ""
 
@@ -403,6 +673,28 @@ main() {
 	test_ai_judgment_with_api
 	echo ""
 	test_memory_prune_intelligent_flag
+	echo ""
+	test_evaluate_help_listed
+	echo ""
+	test_evaluate_missing_type
+	echo ""
+	test_evaluate_missing_output
+	echo ""
+	test_evaluate_fallback
+	echo ""
+	test_evaluate_multiple_types
+	echo ""
+	test_evaluate_dataset
+	echo ""
+	test_evaluate_dataset_not_found
+	echo ""
+	test_evaluate_custom_prompt_file
+	echo ""
+	test_evaluate_custom_prompt_not_found
+	echo ""
+	test_evaluate_caching
+	echo ""
+	test_evaluate_with_api
 	echo ""
 
 	echo "============================================"
