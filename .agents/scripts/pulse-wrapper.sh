@@ -883,11 +883,9 @@ guard_child_processes() {
 	while IFS= read -r line; do
 		[[ -z "$line" ]] && continue
 
-		local pid rss etime comm
-		pid=$(echo "$line" | awk '{print $1}')
-		rss=$(echo "$line" | awk '{print $3}')
-		etime=$(echo "$line" | awk '{print $4}')
-		comm=$(echo "$line" | awk '{print $5}')
+		# Fields from ps -eo pid,ppid,rss,etime,comm (ppid unused here)
+		local pid ppid_unused rss etime comm
+		read -r pid ppid_unused rss etime comm <<<"$line"
 
 		# Validate numeric fields
 		[[ "$pid" =~ ^[0-9]+$ ]] || continue
@@ -1856,7 +1854,7 @@ _quality_sweep_for_repo() {
 				[[ -z "$shfile" ]] && continue
 				local result
 				# t1398: timeout each shellcheck invocation to prevent exponential expansion
-				result=$($sc_timeout_cmd shellcheck -f gcc "$shfile" 2>/dev/null || true)
+				result=$($sc_timeout_cmd shellcheck -f gcc "$shfile" || true)
 				if [[ -n "$result" ]]; then
 					local file_errors
 					file_errors=$(echo "$result" | grep -c ':.*: error:') || file_errors=0

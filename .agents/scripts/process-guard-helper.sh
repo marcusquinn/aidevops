@@ -37,15 +37,43 @@ if [[ -f "${SCRIPT_DIR}/shared-constants.sh" ]]; then
 	source "${SCRIPT_DIR}/shared-constants.sh"
 fi
 
+# Validate integer config: prevents command injection via arithmetic expansion.
+# Same pattern as pulse-wrapper.sh _validate_int.
+_validate_int() {
+	local name="$1" value="$2" default="$3" min="${4:-0}"
+	if ! [[ "$value" =~ ^[0-9]+$ ]]; then
+		echo "[process-guard] Invalid ${name}: ${value} — using default ${default}" >&2
+		printf '%s' "$default"
+		return 0
+	fi
+	local canonical
+	canonical=$(printf '%d' "$((10#$value))")
+	if ((canonical < min)); then
+		echo "[process-guard] ${name}=${canonical} below minimum ${min} — using default ${default}" >&2
+		printf '%s' "$default"
+		return 0
+	fi
+	printf '%s' "$canonical"
+	return 0
+}
+
 # Configuration defaults
 CHILD_RSS_LIMIT_KB="${CHILD_RSS_LIMIT_KB:-2097152}"
 CHILD_RUNTIME_LIMIT="${CHILD_RUNTIME_LIMIT:-600}"
 SHELLCHECK_RSS_LIMIT_KB="${SHELLCHECK_RSS_LIMIT_KB:-1048576}"
 SHELLCHECK_RUNTIME_LIMIT="${SHELLCHECK_RUNTIME_LIMIT:-300}"
 SESSION_COUNT_WARN="${SESSION_COUNT_WARN:-5}"
+
+# Validate all numeric config to prevent command injection via arithmetic expansion
+CHILD_RSS_LIMIT_KB=$(_validate_int CHILD_RSS_LIMIT_KB "$CHILD_RSS_LIMIT_KB" 2097152 1)
+CHILD_RUNTIME_LIMIT=$(_validate_int CHILD_RUNTIME_LIMIT "$CHILD_RUNTIME_LIMIT" 600 1)
+SHELLCHECK_RSS_LIMIT_KB=$(_validate_int SHELLCHECK_RSS_LIMIT_KB "$SHELLCHECK_RSS_LIMIT_KB" 1048576 1)
+SHELLCHECK_RUNTIME_LIMIT=$(_validate_int SHELLCHECK_RUNTIME_LIMIT "$SHELLCHECK_RUNTIME_LIMIT" 300 1)
+SESSION_COUNT_WARN=$(_validate_int SESSION_COUNT_WARN "$SESSION_COUNT_WARN" 5 1)
+
 LOGFILE="${HOME}/.aidevops/logs/process-guard.log"
 
-mkdir -p "$(dirname "$LOGFILE")" 2>/dev/null || true
+mkdir -p "$(dirname "$LOGFILE")" || true
 
 #######################################
 # Get process age in seconds (portable macOS + Linux)
@@ -114,14 +142,16 @@ cmd_scan() {
 
 	while IFS= read -r line; do
 		[[ -z "$line" ]] && continue
-		local pid rss etime comm
-		pid=$(echo "$line" | awk '{print $1}')
-		rss=$(echo "$line" | awk '{print $2}')
-		etime=$(echo "$line" | awk '{print $3}')
-		comm=$(echo "$line" | awk '{print $4}')
+		# command field is last so it captures the full command line (may contain spaces)
+		local pid rss etime cmd_full
+		read -r pid rss etime cmd_full <<<"$line"
 
 		[[ "$pid" =~ ^[0-9]+$ ]] || continue
 		[[ "$rss" =~ ^[0-9]+$ ]] || rss=0
+
+		# Extract basename for limit selection (e.g., /usr/bin/shellcheck → shellcheck)
+		local cmd_base="${cmd_full%% *}"
+		cmd_base="${cmd_base##*/}"
 
 		local rss_mb=$((rss / 1024))
 		total_rss_kb=$((total_rss_kb + rss))
@@ -132,7 +162,7 @@ cmd_scan() {
 
 		local rss_limit="$CHILD_RSS_LIMIT_KB"
 		local runtime_limit="$CHILD_RUNTIME_LIMIT"
-		if [[ "$comm" == "shellcheck" ]]; then
+		if [[ "$cmd_base" == "shellcheck" ]]; then
 			rss_limit="$SHELLCHECK_RSS_LIMIT_KB"
 			runtime_limit="$SHELLCHECK_RUNTIME_LIMIT"
 		fi
@@ -149,8 +179,8 @@ cmd_scan() {
 			violations=$((violations + 1))
 		fi
 
-		printf "%-8s %-6s %-10s %-12s %-8s %s\n" "$pid" "${rss_mb}MB" "$etime" "$comm" "$status" "$detail"
-	done < <(ps axo pid,rss,etime,comm 2>/dev/null | grep -E 'opencode|shellcheck|node.*opencode' | grep -v grep || true)
+		printf "%-8s %-6s %-10s %-12s %-8s %s\n" "$pid" "${rss_mb}MB" "$etime" "$cmd_base" "$status" "$detail"
+	done < <(ps axo pid,rss,etime,command 2>/dev/null | grep -E 'opencode|shellcheck|node.*opencode' | grep -v grep || true)
 
 	echo ""
 	echo "Total: ${process_count} processes, $((total_rss_kb / 1024))MB RSS, ${violations} violation(s)"
@@ -182,20 +212,21 @@ cmd_kill_runaways() {
 
 	while IFS= read -r line; do
 		[[ -z "$line" ]] && continue
-		local pid rss comm
-		pid=$(echo "$line" | awk '{print $1}')
-		rss=$(echo "$line" | awk '{print $2}')
-		comm=$(echo "$line" | awk '{print $4}')
+		local pid rss etime cmd_full
+		read -r pid rss etime cmd_full <<<"$line"
 
 		[[ "$pid" =~ ^[0-9]+$ ]] || continue
 		[[ "$rss" =~ ^[0-9]+$ ]] || rss=0
+
+		local cmd_base="${cmd_full%% *}"
+		cmd_base="${cmd_base##*/}"
 
 		local age_seconds
 		age_seconds=$(_get_process_age "$pid")
 
 		local rss_limit="$CHILD_RSS_LIMIT_KB"
 		local runtime_limit="$CHILD_RUNTIME_LIMIT"
-		if [[ "$comm" == "shellcheck" ]]; then
+		if [[ "$cmd_base" == "shellcheck" ]]; then
 			rss_limit="$SHELLCHECK_RSS_LIMIT_KB"
 			runtime_limit="$SHELLCHECK_RUNTIME_LIMIT"
 		fi
@@ -210,8 +241,8 @@ cmd_kill_runaways() {
 
 		if [[ -n "$violation" ]]; then
 			local rss_mb=$((rss / 1024))
-			echo "Killing PID $pid ($comm) — $violation"
-			echo "[process-guard] Killing PID $pid ($comm) — $violation" >>"$LOGFILE"
+			echo "Killing PID $pid ($cmd_base) — $violation"
+			echo "[process-guard] Killing PID $pid ($cmd_base) — $violation" >>"$LOGFILE"
 			kill "$pid" 2>/dev/null || true
 			sleep 1
 			if kill -0 "$pid" 2>/dev/null; then
@@ -220,7 +251,7 @@ cmd_kill_runaways() {
 			killed=$((killed + 1))
 			total_freed_mb=$((total_freed_mb + rss_mb))
 		fi
-	done < <(ps axo pid,rss,etime,comm 2>/dev/null | grep -E 'opencode|shellcheck|node.*opencode' | grep -v grep || true)
+	done < <(ps axo pid,rss,etime,command 2>/dev/null | grep -E 'opencode|shellcheck|node.*opencode' | grep -v grep || true)
 
 	if [[ "$killed" -gt 0 ]]; then
 		echo "Killed $killed process(es), freed ~${total_freed_mb}MB"
@@ -263,27 +294,26 @@ cmd_status() {
 
 	while IFS= read -r line; do
 		[[ -z "$line" ]] && continue
-		local rss
-		rss=$(echo "$line" | awk '{print $2}')
+		local pid rss etime cmd_full
+		read -r pid rss etime cmd_full <<<"$line"
 		[[ "$rss" =~ ^[0-9]+$ ]] || rss=0
 		total_rss_kb=$((total_rss_kb + rss))
 		process_count=$((process_count + 1))
 
-		local pid comm
-		pid=$(echo "$line" | awk '{print $1}')
-		comm=$(echo "$line" | awk '{print $4}')
+		local cmd_base="${cmd_full%% *}"
+		cmd_base="${cmd_base##*/}"
 		local age_seconds
 		age_seconds=$(_get_process_age "$pid")
 		local rss_limit="$CHILD_RSS_LIMIT_KB"
 		local runtime_limit="$CHILD_RUNTIME_LIMIT"
-		if [[ "$comm" == "shellcheck" ]]; then
+		if [[ "$cmd_base" == "shellcheck" ]]; then
 			rss_limit="$SHELLCHECK_RSS_LIMIT_KB"
 			runtime_limit="$SHELLCHECK_RUNTIME_LIMIT"
 		fi
 		if [[ "$rss" -gt "$rss_limit" ]] || [[ "$age_seconds" -gt "$runtime_limit" ]]; then
 			violations=$((violations + 1))
 		fi
-	done < <(ps axo pid,rss,etime,comm 2>/dev/null | grep -E 'opencode|shellcheck|node.*opencode' | grep -v grep || true)
+	done < <(ps axo pid,rss,etime,command 2>/dev/null | grep -E 'opencode|shellcheck|node.*opencode' | grep -v grep || true)
 
 	local session_count
 	session_count=$(ps axo pid,tty,command 2>/dev/null |
