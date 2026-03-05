@@ -154,13 +154,15 @@ check_dedup() {
 	elapsed_seconds=$(_get_process_age "$old_pid")
 
 	if [[ "$elapsed_seconds" -gt "$PULSE_STALE_THRESHOLD" ]]; then
-		# Process has been running too long — it's stuck
+		# Process has been running too long — it's stuck.
+		# Guard kill commands with || true so set -e doesn't abort cleanup
+		# if the target process has already exited between checks.
 		echo "[pulse-wrapper] Killing stale pulse process $old_pid (running ${elapsed_seconds}s, threshold ${PULSE_STALE_THRESHOLD}s)" >>"$LOGFILE"
-		_kill_tree "$old_pid"
+		_kill_tree "$old_pid" || true
 		sleep 2
 		# Force kill if still alive
-		if ps -p "$old_pid" >/dev/null; then
-			_force_kill_tree "$old_pid"
+		if kill -0 "$old_pid" 2>/dev/null; then
+			_force_kill_tree "$old_pid" || true
 		fi
 		rm -f "$PIDFILE"
 		return 0
@@ -258,11 +260,34 @@ _get_process_age() {
 }
 
 #######################################
+# Get integer CPU% for a single PID (helper for _get_process_tree_cpu)
+#
+# Extracts %CPU via ps, truncates to integer, validates numeric.
+# Returns 0 if the process doesn't exist or ps fails.
+#
+# Arguments:
+#   $1 - PID
+# Returns: integer CPU percentage via stdout
+#######################################
+_get_pid_cpu() {
+	local pid="$1"
+	local cpu_str
+	cpu_str=$(ps -p "$pid" -o %cpu= 2>/dev/null | tr -d ' ') || cpu_str="0"
+	# ps returns float like "12.3" — extract integer part
+	local cpu_int="${cpu_str%%.*}"
+	[[ "$cpu_int" =~ ^[0-9]+$ ]] || cpu_int=0
+	echo "$cpu_int"
+	return 0
+}
+
+#######################################
 # Get CPU usage percentage for a process tree (t1398.3)
 #
-# Sums %CPU for the given PID and all its descendants. This captures
-# the full opencode process tree (node, language servers, child
-# processes). A tree sum near zero means the entire process is idle.
+# Iteratively walks the full descendant tree (BFS) using pgrep -P at
+# each level. Previous implementation only checked direct children,
+# missing grandchildren and deeper descendants — this caused incorrect
+# CPU calculations when active processes were nested deeper than one
+# level (e.g., node -> shell -> language-server).
 #
 # Arguments:
 #   $1 - PID
@@ -272,25 +297,28 @@ _get_process_tree_cpu() {
 	local pid="$1"
 	local total_cpu=0
 
-	# Get CPU for the process itself
-	local cpu_str
-	cpu_str=$(ps -p "$pid" -o %cpu= 2>/dev/null | tr -d ' ') || cpu_str="0"
+	# Iteratively find the initial PID and all its descendants (BFS).
+	# pgrep -P only returns direct children, so we expand level by level.
+	local pids_to_scan=("$pid")
+	local all_pids=()
+	local i=0
+	while [[ $i -lt ${#pids_to_scan[@]} ]]; do
+		local current_pid="${pids_to_scan[$i]}"
+		all_pids+=("$current_pid")
+		local child
+		while IFS= read -r child; do
+			[[ -n "$child" ]] && pids_to_scan+=("$child")
+		done < <(pgrep -P "$current_pid" 2>/dev/null || true)
+		i=$((i + 1))
+	done
 
-	# ps returns float like "12.3" — extract integer part
-	local cpu_int="${cpu_str%%.*}"
-	[[ "$cpu_int" =~ ^[0-9]+$ ]] || cpu_int=0
-	total_cpu=$((total_cpu + cpu_int))
-
-	# Sum CPU for all descendants
-	local child
-	while IFS= read -r child; do
-		[[ -z "$child" ]] && continue
-		local child_cpu
-		child_cpu=$(ps -p "$child" -o %cpu= 2>/dev/null | tr -d ' ') || child_cpu="0"
-		local child_int="${child_cpu%%.*}"
-		[[ "$child_int" =~ ^[0-9]+$ ]] || child_int=0
-		total_cpu=$((total_cpu + child_int))
-	done < <(pgrep -P "$pid" 2>/dev/null || true)
+	# Sum CPU for all unique PIDs in the process tree.
+	local p
+	for p in $(printf "%s\n" "${all_pids[@]}" | sort -u); do
+		local cpu
+		cpu=$(_get_pid_cpu "$p")
+		total_cpu=$((total_cpu + cpu))
+	done
 
 	echo "$total_cpu"
 	return 0
@@ -978,10 +1006,10 @@ guard_child_processes() {
 		if [[ -n "$violation" ]]; then
 			local rss_mb=$((rss / 1024))
 			echo "[pulse-wrapper] Process guard: killing PID $pid ($cmd_base) — $violation" >>"$LOGFILE"
-			_kill_tree "$pid"
+			_kill_tree "$pid" || true
 			sleep 1
-			if ps -p "$pid" >/dev/null; then
-				_force_kill_tree "$pid"
+			if kill -0 "$pid" 2>/dev/null; then
+				_force_kill_tree "$pid" || true
 			fi
 			killed=$((killed + 1))
 			total_freed_mb=$((total_freed_mb + rss_mb))
@@ -1084,37 +1112,29 @@ ${state_content}
 	# Watchdog loop: check every 60s for stale threshold, idle timeout, or
 	# runaway children (t1397, t1398, t1398.3). This replaces the bare `wait`
 	# that blocked the wrapper indefinitely when opencode hung.
+	#
+	# Kill logic is deduplicated: both checks set kill_reason, and a single
+	# block at the end performs the kill + force-kill sequence. kill commands
+	# are guarded with || true to prevent set -e from aborting cleanup if
+	# the target process has already exited.
 	while ps -p "$opencode_pid" >/dev/null; do
 		local now
 		now=$(date +%s)
 		local elapsed=$((now - start_epoch))
 
+		local kill_reason=""
 		# Check 1: Wall-clock stale threshold (hard ceiling)
 		if [[ "$elapsed" -gt "$PULSE_STALE_THRESHOLD" ]]; then
-			echo "[pulse-wrapper] Pulse exceeded stale threshold (${elapsed}s > ${PULSE_STALE_THRESHOLD}s) — killing" >>"$LOGFILE"
-			_kill_tree "$opencode_pid"
-			sleep 2
-			if ps -p "$opencode_pid" >/dev/null; then
-				_force_kill_tree "$opencode_pid"
-			fi
-			break
-		fi
-
+			kill_reason="Pulse exceeded stale threshold (${elapsed}s > ${PULSE_STALE_THRESHOLD}s)"
 		# Check 2: Idle detection — CPU usage of the process tree (t1398.3)
 		# Skip idle checks during the first 2 minutes to allow startup/init.
-		if [[ "$elapsed" -ge 120 ]]; then
+		elif [[ "$elapsed" -ge 120 ]]; then
 			local tree_cpu
 			tree_cpu=$(_get_process_tree_cpu "$opencode_pid")
 			if [[ "$tree_cpu" -lt "$PULSE_IDLE_CPU_THRESHOLD" ]]; then
 				idle_seconds=$((idle_seconds + 60))
 				if [[ "$idle_seconds" -ge "$PULSE_IDLE_TIMEOUT" ]]; then
-					echo "[pulse-wrapper] Pulse idle for ${idle_seconds}s (CPU ${tree_cpu}% < ${PULSE_IDLE_CPU_THRESHOLD}%, threshold ${PULSE_IDLE_TIMEOUT}s) — killing (t1398.3)" >>"$LOGFILE"
-					_kill_tree "$opencode_pid"
-					sleep 2
-					if ps -p "$opencode_pid" >/dev/null; then
-						_force_kill_tree "$opencode_pid"
-					fi
-					break
+					kill_reason="Pulse idle for ${idle_seconds}s (CPU ${tree_cpu}% < ${PULSE_IDLE_CPU_THRESHOLD}%, threshold ${PULSE_IDLE_TIMEOUT}s) (t1398.3)"
 				fi
 			else
 				# Process is active — reset idle counter
@@ -1123,6 +1143,18 @@ ${state_content}
 				fi
 				idle_seconds=0
 			fi
+		fi
+
+		# Single kill block — avoids duplicating the kill+force-kill sequence.
+		# Guard with || true so set -e doesn't abort if the process already exited.
+		if [[ -n "$kill_reason" ]]; then
+			echo "[pulse-wrapper] ${kill_reason} — killing" >>"$LOGFILE"
+			_kill_tree "$opencode_pid" || true
+			sleep 2
+			if kill -0 "$opencode_pid" 2>/dev/null; then
+				_force_kill_tree "$opencode_pid" || true
+			fi
+			break
 		fi
 
 		# Process guard: kill children exceeding RSS/runtime limits (t1398)
