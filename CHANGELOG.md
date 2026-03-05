@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.151.2] - 2026-03-05
+
+### Added
+
+- add session-based pulse control (aidevops pulse start/stop/status) (#2935)
+
+### Fixed
+
+- disable SC1091 globally and remove source-path=SCRIPTDIR from .shellcheckrc (#2939)
+- require explicit consent for supervisor pulse installation (GH#2926) (#2936)
+
 ## [2.151.1] - 2026-03-05
 
 ### Fixed
