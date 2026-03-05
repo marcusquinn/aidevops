@@ -949,12 +949,12 @@ guard_child_processes() {
 check_session_count() {
 	local interactive_count=0
 
-	# Count opencode processes with a real TTY (interactive sessions)
-	interactive_count=$(ps axo pid,tty,command 2>/dev/null |
-		grep -E '\.opencode|opencode-ai' |
-		grep -v grep |
-		grep -v '??' |
-		wc -l | tr -d ' ') || interactive_count=0
+	# Count opencode processes with a real TTY (interactive sessions).
+	# Exclude both '?' (Linux headless) and '??' (macOS headless) TTYs.
+	interactive_count=$(ps axo tty,command 2>/dev/null | awk '
+		/(\.opencode|opencode-ai)/ && $1 != "?" && $1 != "??" { count++ }
+		END { print count + 0 }
+	') || interactive_count=0
 
 	if [[ "$interactive_count" -gt "$SESSION_COUNT_WARN" ]]; then
 		echo "[pulse-wrapper] Session warning: $interactive_count interactive sessions open (threshold: $SESSION_COUNT_WARN). Each consumes 100-440MB + language servers. Consider closing unused tabs." >>"$LOGFILE"

@@ -193,11 +193,10 @@ cmd_scan() {
 	echo ""
 	echo "--- Interactive Sessions ---"
 	local session_count
-	session_count=$(ps axo pid,tty,command 2>/dev/null |
-		grep -E '\.opencode|opencode-ai' |
-		grep -v grep |
-		grep -v '??' |
-		wc -l | tr -d ' ') || session_count=0
+	session_count=$(ps axo tty,command 2>/dev/null | awk '
+		/(\.opencode|opencode-ai)/ && $1 != "?" && $1 != "??" { count++ }
+		END { print count + 0 }
+	') || session_count=0
 	echo "Interactive sessions: ${session_count} (threshold: ${SESSION_COUNT_WARN})"
 	if [[ "$session_count" -gt "$SESSION_COUNT_WARN" ]]; then
 		echo "WARNING: Session count exceeds threshold. Each session uses 100-440MB + language servers."
@@ -277,11 +276,10 @@ cmd_kill_runaways() {
 #######################################
 cmd_sessions() {
 	local session_count
-	session_count=$(ps axo pid,tty,command 2>/dev/null |
-		grep -E '\.opencode|opencode-ai' |
-		grep -v grep |
-		grep -v '??' |
-		wc -l | tr -d ' ') || session_count=0
+	session_count=$(ps axo tty,command 2>/dev/null | awk '
+		/(\.opencode|opencode-ai)/ && $1 != "?" && $1 != "??" { count++ }
+		END { print count + 0 }
+	') || session_count=0
 
 	echo "$session_count"
 
@@ -332,11 +330,10 @@ cmd_status() {
 	done < <(ps axo pid,tty,rss,etime,command 2>/dev/null | grep -E 'opencode|shellcheck|node.*opencode' | grep -v grep || true)
 
 	local session_count
-	session_count=$(ps axo pid,tty,command 2>/dev/null |
-		grep -E '\.opencode|opencode-ai' |
-		grep -v grep |
-		grep -v '??' |
-		wc -l | tr -d ' ') || session_count=0
+	session_count=$(ps axo tty,command 2>/dev/null | awk '
+		/(\.opencode|opencode-ai)/ && $1 != "?" && $1 != "??" { count++ }
+		END { print count + 0 }
+	') || session_count=0
 
 	# Available memory (Linux)
 	local mem_avail_mb="unknown"
