@@ -6,6 +6,13 @@
 # processes (ShellCheck at 5.7 GB, zombie pulses, session accumulation), not by
 # generic OS memory pressure.
 #
+# Auto-kill (GH#2915): ShellCheck processes that hit CRITICAL RSS or exceed
+# runtime limits are automatically killed. This is safe because the bash
+# language server respawns them, and the .shellcheckrc in .agents/scripts/
+# now prevents the recursive source-chain expansion that caused the bloat.
+# The auto-kill is a safety net for cases where ShellCheck is invoked without
+# the .shellcheckrc (e.g., different source-path, --norc flag).
+#
 # kern.memorystatus_level is a secondary/informational signal only. macOS runs
 # fine with compression + swap; aggressive thresholds on that metric cause false
 # alarms. The primary signals are process-level.
@@ -35,6 +42,7 @@
 #   TOOL_RUNTIME_MAX          Other tool max runtime in seconds (default: 1800)
 #   SESSION_COUNT_WARN        Interactive session warning threshold (default: 5)
 #   AGGREGATE_RSS_WARN_MB     Total aidevops RSS warning (default: 8192)
+#   AUTO_KILL_SHELLCHECK       Auto-kill runaway ShellCheck (default: true)
 #   MEMORY_COOLDOWN_SECS      Notification cooldown per category (default: 300)
 #   MEMORY_NOTIFY             Set to "false" to disable notifications (log only)
 #   MEMORY_LOG_DIR            Override log directory
@@ -44,7 +52,7 @@ set -euo pipefail
 # --- Configuration -----------------------------------------------------------
 
 readonly SCRIPT_NAME="memory-pressure-monitor"
-readonly SCRIPT_VERSION="1.0.0"
+readonly SCRIPT_VERSION="1.1.0"
 
 # Per-process RSS thresholds (MB)
 PROCESS_RSS_WARN_MB="${PROCESS_RSS_WARN_MB:-2048}"
@@ -57,6 +65,9 @@ TOOL_RUNTIME_MAX="${TOOL_RUNTIME_MAX:-1800}"            # 30 min
 # Session/aggregate thresholds
 SESSION_COUNT_WARN="${SESSION_COUNT_WARN:-5}"
 AGGREGATE_RSS_WARN_MB="${AGGREGATE_RSS_WARN_MB:-8192}" # 8 GB total
+
+# Auto-kill: ShellCheck processes are safe to kill (language server respawns them)
+readonly AUTO_KILL_SHELLCHECK="${AUTO_KILL_SHELLCHECK:-true}"
 
 # Notification
 readonly COOLDOWN_SECS="${MEMORY_COOLDOWN_SECS:-300}"
@@ -391,6 +402,36 @@ _get_os_memory_info() {
 	return 0
 }
 
+# --- Auto-Kill ----------------------------------------------------------------
+
+# Kill a runaway process and log the action.
+# Arguments: $1=PID, $2=reason (human-readable)
+# Returns: 0 on success, 1 if process not found or kill failed
+_auto_kill_process() {
+	local pid="$1"
+	local reason="$2"
+
+	# Verify process still exists before killing
+	if ! kill -0 "$pid" 2>/dev/null; then
+		log_msg "INFO" "Auto-kill: PID ${pid} already gone (${reason})"
+		return 1
+	fi
+
+	# SIGTERM first (graceful), then SIGKILL after 2 seconds if still alive
+	log_msg "CRITICAL" "Auto-kill: sending SIGTERM to PID ${pid} (${reason})"
+	kill -TERM "$pid" 2>/dev/null || true
+	sleep 2
+
+	if kill -0 "$pid" 2>/dev/null; then
+		log_msg "CRITICAL" "Auto-kill: PID ${pid} survived SIGTERM, sending SIGKILL"
+		kill -KILL "$pid" 2>/dev/null || true
+	fi
+
+	log_msg "CRITICAL" "Auto-kill: PID ${pid} terminated (${reason})"
+	notify "Process Killed" "ShellCheck PID ${pid} killed: ${reason}" "critical"
+	return 0
+}
+
 # --- Core Logic ---------------------------------------------------------------
 
 # Evaluate all monitored processes and generate alerts
@@ -418,6 +459,10 @@ do_check() {
 		if [[ "$rss_mb" -ge "$PROCESS_RSS_CRIT_MB" ]]; then
 			findings+=("CRITICAL|rss|${pid}|${cmd_name} using ${rss_mb} MB RSS (limit: ${PROCESS_RSS_CRIT_MB} MB)")
 			has_critical=true
+			# Auto-kill ShellCheck at CRITICAL RSS — safe, language server respawns
+			if [[ "$cmd_name" == "shellcheck" && "$AUTO_KILL_SHELLCHECK" == "true" ]]; then
+				_auto_kill_process "$pid" "RSS ${rss_mb} MB exceeds ${PROCESS_RSS_CRIT_MB} MB limit"
+			fi
 		elif [[ "$rss_mb" -ge "$PROCESS_RSS_WARN_MB" ]]; then
 			findings+=("WARNING|rss|${pid}|${cmd_name} using ${rss_mb} MB RSS (limit: ${PROCESS_RSS_WARN_MB} MB)")
 			has_warning=true
@@ -436,6 +481,10 @@ do_check() {
 			limit_duration=$(_format_duration "$runtime_limit")
 			findings+=("WARNING|runtime|${pid}|${cmd_name} running for ${duration} (limit: ${limit_duration})")
 			has_warning=true
+			# Auto-kill ShellCheck exceeding runtime — stuck in source chain expansion
+			if [[ "$cmd_name" == "shellcheck" && "$AUTO_KILL_SHELLCHECK" == "true" ]]; then
+				_auto_kill_process "$pid" "runtime ${duration} exceeds ${limit_duration} limit"
+			fi
 		fi
 	done <<<"$processes"
 
@@ -606,6 +655,7 @@ cmd_status() {
 	echo "  Tool runtime max:         $(_format_duration "$TOOL_RUNTIME_MAX")"
 	echo "  Session count warning:    ${SESSION_COUNT_WARN}"
 	echo "  Aggregate RSS warning:    ${AGGREGATE_RSS_WARN_MB} MB"
+	echo "  Auto-kill ShellCheck:     ${AUTO_KILL_SHELLCHECK}"
 	echo "  Notification cooldown:    ${COOLDOWN_SECS}s"
 	echo "  Notifications:            ${NOTIFY_ENABLED}"
 
@@ -736,6 +786,11 @@ Process-level thresholds (primary):
   Session count:    warning >= ${SESSION_COUNT_WARN}
   Aggregate RSS:    warning >= ${AGGREGATE_RSS_WARN_MB}MB
 
+Auto-kill (GH#2915):
+  ShellCheck processes are auto-killed when they hit CRITICAL RSS (>${PROCESS_RSS_CRIT_MB}MB)
+  or exceed runtime limit (>$(_format_duration "$SHELLCHECK_RUNTIME_MAX")).
+  Safe because the language server respawns them. Disable: AUTO_KILL_SHELLCHECK=false
+
 Environment variables:
   PROCESS_RSS_WARN_MB       Per-process RSS warning (default: 2048)
   PROCESS_RSS_CRIT_MB       Per-process RSS critical (default: 4096)
@@ -743,6 +798,7 @@ Environment variables:
   TOOL_RUNTIME_MAX          Other tool max runtime in seconds (default: 1800)
   SESSION_COUNT_WARN        Interactive session warning threshold (default: 5)
   AGGREGATE_RSS_WARN_MB     Total aidevops RSS warning (default: 8192)
+  AUTO_KILL_SHELLCHECK      Auto-kill runaway ShellCheck (default: true)
   MEMORY_COOLDOWN_SECS      Notification cooldown per category (default: 300)
   MEMORY_NOTIFY             Set to "false" to disable notifications
   MEMORY_LOG_DIR            Override log directory

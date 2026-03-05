@@ -458,6 +458,86 @@ add_local_bin_to_path() {
 	return 0
 }
 
+# GH#2915: Configure SHELLCHECK_PATH to use the safe wrapper that strips
+# --external-sources. The bash language server hardcodes --external-sources
+# in every ShellCheck invocation, causing exponential memory growth (11 GB+)
+# when source chains span 463+ scripts. The wrapper intercepts this.
+#
+# Uses launchctl setenv (macOS) for GUI-launched apps + shell rc for terminals.
+# This ensures all processes — regardless of shell — see the wrapper.
+setup_shellcheck_wrapper() {
+	local wrapper_path="$HOME/.aidevops/agents/scripts/shellcheck-wrapper.sh"
+
+	# Verify the wrapper exists and is executable
+	if [[ ! -x "$wrapper_path" ]]; then
+		if [[ -f "$wrapper_path" ]]; then
+			chmod +x "$wrapper_path"
+		else
+			print_warning "ShellCheck wrapper not found at $wrapper_path (will be available after deploy)"
+			return 0
+		fi
+	fi
+
+	# Verify the wrapper actually works (can find real shellcheck)
+	if ! "$wrapper_path" --version >/dev/null 2>&1; then
+		print_warning "ShellCheck wrapper cannot find real shellcheck binary — skipping"
+		return 0
+	fi
+
+	local env_line
+	# shellcheck disable=SC2016 # env_line is written to rc files; must expand at shell startup
+	env_line='export SHELLCHECK_PATH="$HOME/.aidevops/agents/scripts/shellcheck-wrapper.sh"'
+	local added_to=""
+	local already_in=""
+
+	# Layer 1: launchctl setenv (macOS) — affects all GUI-launched processes
+	if [[ "$PLATFORM_MACOS" == "true" ]]; then
+		if launchctl setenv SHELLCHECK_PATH "$wrapper_path" 2>/dev/null; then
+			print_info "Set SHELLCHECK_PATH via launchctl (GUI processes)"
+		fi
+	fi
+
+	# Layer 2: Shell rc files — affects terminal sessions
+	local rc_file
+	while IFS= read -r rc_file; do
+		[[ -z "$rc_file" ]] && continue
+
+		if [[ ! -f "$rc_file" ]]; then
+			mkdir -p "$(dirname "$rc_file")"
+			touch "$rc_file"
+		fi
+
+		# Check if already added
+		if grep -q 'SHELLCHECK_PATH' "$rc_file" 2>/dev/null; then
+			already_in="${already_in:+$already_in, }$rc_file"
+			continue
+		fi
+
+		echo "" >>"$rc_file"
+		echo "# Added by aidevops setup (GH#2915: prevent ShellCheck memory explosion)" >>"$rc_file"
+		echo "$env_line" >>"$rc_file"
+		added_to="${added_to:+$added_to, }$rc_file"
+	done < <(get_all_shell_rcs)
+
+	if [[ -n "$added_to" ]]; then
+		print_success "Configured SHELLCHECK_PATH wrapper in: $added_to"
+	fi
+
+	if [[ -n "$already_in" ]]; then
+		print_info "SHELLCHECK_PATH already configured in: $already_in"
+	fi
+
+	if [[ -z "$added_to" && -z "$already_in" && "$PLATFORM_MACOS" != "true" ]]; then
+		print_warning "Could not configure SHELLCHECK_PATH automatically"
+		print_info "Add this to your shell config: $env_line"
+	fi
+
+	# Also export for current session
+	export SHELLCHECK_PATH="$wrapper_path"
+
+	return 0
+}
+
 setup_aliases() {
 	print_info "Setting up shell aliases..."
 

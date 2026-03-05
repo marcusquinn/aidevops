@@ -1,0 +1,36 @@
+# ShellCheck configuration for .agents/scripts/
+#
+# GH#2915: The bash language server spawns ShellCheck with --external-sources
+# on every edit. With 463 scripts cross-sourcing each other, this causes
+# exponential AST expansion (observed: 11 GB RSS, kernel panics).
+#
+# LIMITATION: This .shellcheckrc is effective when ShellCheck is invoked with
+# a file path (it walks up from the file's directory to find .shellcheckrc).
+# However, the bash language server pipes content via stdin (-), so ShellCheck
+# has no file path to walk from and CANNOT discover this file automatically.
+# The primary fix is shellcheck-wrapper.sh (strips --external-sources from
+# the language server's invocation). This .shellcheckrc is a secondary defense
+# for direct ShellCheck invocations on files in this directory.
+#
+# Framework-invoked ShellCheck (linters-local.sh, pulse-wrapper.sh) already
+# uses --norc and explicit flags, so this file doesn't affect them.
+
+# Disable external source following — prevents recursive expansion
+external-sources=false
+
+# Inherit the same disable rules as root .shellcheckrc
+# (ShellCheck only reads ONE .shellcheckrc — the first found — so we must
+# duplicate the disables here rather than inheriting from root)
+disable=SC2329
+disable=SC2317
+disable=SC2034
+disable=SC2001
+disable=SC2059
+disable=SC2012
+disable=SC2030
+disable=SC2031
+disable=SC2015
+disable=SC2129
+disable=SC2153
+disable=SC2004
+disable=SC2009
