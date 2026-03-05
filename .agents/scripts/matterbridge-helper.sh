@@ -3,6 +3,9 @@
 # Usage: matterbridge-helper.sh [setup|start|stop|status|logs|validate|update]
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 BINARY_PATH="/usr/local/bin/matterbridge"
 CONFIG_PATH="${MATTERBRIDGE_CONFIG:-$HOME/.config/aidevops/matterbridge.toml}"
 DATA_DIR="$HOME/.aidevops/.agent-workspace/matterbridge"
@@ -176,19 +179,9 @@ cmd_validate() {
 	log "Binary OK: $BINARY_PATH"
 
 	# Attempt to parse config (matterbridge will fail fast on invalid TOML)
-	# Use gtimeout on macOS if timeout is unavailable
-	local timeout_cmd="timeout"
-	if ! command -v timeout >/dev/null 2>&1; then
-		if command -v gtimeout >/dev/null 2>&1; then
-			timeout_cmd="gtimeout"
-		else
-			log "WARNING: timeout/gtimeout not found — skipping config parse check"
-			return 0
-		fi
-	fi
-
+	# timeout_sec (from shared-constants.sh) handles macOS + Linux portably
 	local parse_output parse_status
-	parse_output=$("$timeout_cmd" 5 "$BINARY_PATH" -conf "$config_path" 2>&1) && parse_status=$? || parse_status=$?
+	parse_output=$(timeout_sec 5 "$BINARY_PATH" -conf "$config_path" 2>&1) && parse_status=$? || parse_status=$?
 
 	if [[ "$parse_status" -eq 124 ]]; then
 		# timeout exit code 124 = process timed out (likely hung on credentials)

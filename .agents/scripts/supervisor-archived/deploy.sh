@@ -106,41 +106,12 @@ run_deploy_for_task() {
 
 	log_info "Running setup.sh for $task_id (timeout: 300s)..."
 
-	# Portable timeout: prefer timeout/gtimeout, fall back to background+kill
-	local timeout_cmd=""
-	if command -v timeout &>/dev/null; then
-		timeout_cmd="timeout 300"
-	elif command -v gtimeout &>/dev/null; then
-		timeout_cmd="gtimeout 300"
-	fi
-
+	# timeout_sec (from shared-constants.sh via _common.sh) handles macOS + Linux portably
 	local deploy_output
-	if [[ -n "$timeout_cmd" ]]; then
-		if ! deploy_output=$(cd "$repo" && AIDEVOPS_NON_INTERACTIVE=true $timeout_cmd ./setup.sh --non-interactive 2>&1); then
-			log_warn "Deploy (setup.sh) returned non-zero for $task_id (see $deploy_log)"
-			echo "$deploy_output" >"$deploy_log" 2>/dev/null || true
-			return 1
-		fi
-	else
-		# Fallback: background process with manual timeout
-		(cd "$repo" && AIDEVOPS_NON_INTERACTIVE=true ./setup.sh --non-interactive >"$deploy_log" 2>&1) &
-		local deploy_pid=$!
-		local waited=0
-		while kill -0 "$deploy_pid" 2>/dev/null && [[ "$waited" -lt 300 ]]; do
-			sleep 5
-			waited=$((waited + 5))
-		done
-		if kill -0 "$deploy_pid" 2>/dev/null; then
-			kill "$deploy_pid" 2>/dev/null || true
-			log_warn "Deploy (setup.sh) timed out after 300s for $task_id (see $deploy_log)"
-			return 1
-		fi
-		if ! wait "$deploy_pid"; then
-			deploy_output=$(cat "$deploy_log" 2>/dev/null || echo "")
-			log_warn "Deploy (setup.sh) returned non-zero for $task_id (see $deploy_log)"
-			return 1
-		fi
-		deploy_output=$(cat "$deploy_log" 2>/dev/null || echo "")
+	if ! deploy_output=$(cd "$repo" && AIDEVOPS_NON_INTERACTIVE=true timeout_sec 300 ./setup.sh --non-interactive 2>&1); then
+		log_warn "Deploy (setup.sh) returned non-zero for $task_id (see $deploy_log)"
+		echo "$deploy_output" >"$deploy_log" 2>/dev/null || true
+		return 1
 	fi
 	log_success "Deploy complete for $task_id"
 	return 0

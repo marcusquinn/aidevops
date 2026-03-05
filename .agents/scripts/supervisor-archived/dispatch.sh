@@ -1610,22 +1610,11 @@ check_cli_health() {
 	local version_output=""
 	local version_exit=1
 
-	# Use timeout to prevent hanging on broken installations
-	local timeout_cmd=""
-	if command -v gtimeout &>/dev/null; then
-		timeout_cmd="gtimeout"
-	elif command -v timeout &>/dev/null; then
-		timeout_cmd="timeout"
-	fi
-
+	# timeout_sec (from shared-constants.sh via _common.sh) handles macOS + Linux portably
 	# t1160.1: Build version command via build_cli_cmd abstraction
 	local -a version_cmd=()
 	eval "version_cmd=($(build_cli_cmd --cli "$ai_cli" --action version --output array))"
-	if [[ -n "$timeout_cmd" ]]; then
-		version_output=$("$timeout_cmd" 10 "${version_cmd[@]}" 2>&1) || version_exit=$?
-	else
-		version_output=$("${version_cmd[@]}" 2>&1) || version_exit=$?
-	fi
+	version_output=$(timeout_sec 10 "${version_cmd[@]}" 2>&1) || version_exit=$?
 
 	# If version command succeeded (exit 0) or produced output, CLI is working
 	if [[ "$version_exit" -eq 0 ]] || [[ -n "$version_output" && "$version_exit" -ne 124 && "$version_exit" -ne 137 ]]; then
@@ -1741,44 +1730,15 @@ check_model_health() {
 	fi
 
 	# Slow path: spawn AI CLI for a trivial prompt
-	local timeout_cmd=""
-	if command -v gtimeout &>/dev/null; then
-		timeout_cmd="gtimeout"
-	elif command -v timeout &>/dev/null; then
-		timeout_cmd="timeout"
-	fi
-
+	# timeout_sec (from shared-constants.sh via _common.sh) handles macOS + Linux portably
 	local probe_result=""
 	local probe_exit=1
 
 	# t1160.1: Build probe command via build_cli_cmd abstraction
 	local -a probe_cmd=()
 	eval "probe_cmd=($(build_cli_cmd --cli "$ai_cli" --action probe --output array --model "$model"))"
-	if [[ -n "$timeout_cmd" ]]; then
-		probe_result=$("$timeout_cmd" 15 "${probe_cmd[@]}" 2>&1)
-		probe_exit=$?
-	else
-		local probe_pid probe_tmpfile
-		probe_tmpfile=$(mktemp)
-		push_cleanup "rm -f '${probe_tmpfile}'"
-		("${probe_cmd[@]}" >"$probe_tmpfile" 2>&1) &
-		probe_pid=$!
-		local waited=0
-		while kill -0 "$probe_pid" 2>/dev/null && [[ "$waited" -lt 15 ]]; do
-			sleep 1
-			waited=$((waited + 1))
-		done
-		if kill -0 "$probe_pid" 2>/dev/null; then
-			kill "$probe_pid" 2>/dev/null || true
-			wait "$probe_pid" 2>/dev/null || true
-			probe_exit=124
-		else
-			wait "$probe_pid" 2>/dev/null || true
-			probe_exit=$?
-		fi
-		probe_result=$(cat "$probe_tmpfile" 2>/dev/null || true)
-		rm -f "$probe_tmpfile"
-	fi
+	probe_result=$(timeout_sec 15 "${probe_cmd[@]}" 2>&1)
+	probe_exit=$?
 
 	# Check for known failure patterns (t233: distinguish quota/rate-limit from generic failures)
 	if echo "$probe_result" | grep -qiE 'CreditsError|Insufficient balance'; then

@@ -865,24 +865,12 @@ _check_provider_rate_limit_risk() {
 		return 0
 	fi
 
-	# Determine timeout command (gtimeout on macOS, timeout on Linux)
-	local timeout_cmd=""
-	if command -v gtimeout &>/dev/null; then
-		timeout_cmd="gtimeout 5"
-	elif command -v timeout &>/dev/null; then
-		timeout_cmd="timeout 5"
-	fi
-
 	# Query rate-limit status as a subprocess to avoid variable conflicts.
 	# Timeout prevents blocking dispatch if observability DB is slow.
+	# timeout_sec is provided by shared-constants.sh (portable macOS + Linux)
 	local risk_status
-	if [[ -n "$timeout_cmd" ]]; then
-		risk_status=$($timeout_cmd bash "$obs_helper" rate-limits --provider "$provider" --json |
-			jq -r '.[0].status // "ok"' || true)
-	else
-		risk_status=$(bash "$obs_helper" rate-limits --provider "$provider" --json |
-			jq -r '.[0].status // "ok"' || true)
-	fi
+	risk_status=$(timeout_sec 5 bash "$obs_helper" rate-limits --provider "$provider" --json |
+		jq -r '.[0].status // "ok"' || true)
 	risk_status="${risk_status:-ok}"
 
 	case "$risk_status" in

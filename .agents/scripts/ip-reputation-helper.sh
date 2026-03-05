@@ -442,14 +442,8 @@ cmd_cache_clear() {
 	return 0
 }
 
-# Portable timeout command (macOS uses gtimeout from coreutils, Linux has timeout)
-TIMEOUT_CMD=""
-if command -v timeout &>/dev/null; then
-	TIMEOUT_CMD="timeout"
-elif command -v gtimeout &>/dev/null; then
-	TIMEOUT_CMD="gtimeout"
-fi
-readonly TIMEOUT_CMD
+# Portable timeout: timeout_sec() is provided by shared-constants.sh (sourced above).
+# It handles Linux timeout, macOS gtimeout, and bare macOS fallback transparently.
 
 # Default settings (prefixed to avoid conflict with shared-constants.sh DEFAULT_TIMEOUT)
 readonly IP_REP_DEFAULT_TIMEOUT="${IP_REP_TIMEOUT:-15}"
@@ -607,10 +601,7 @@ run_provider() {
 
 	while [[ "$attempt" -le "$max_retries" ]]; do
 		local result
-		local run_cmd=("$script_path" check "$ip")
-		if [[ -n "$TIMEOUT_CMD" ]]; then
-			run_cmd=("$TIMEOUT_CMD" "$timeout_secs" "${run_cmd[@]}")
-		fi
+		local run_cmd=(timeout_sec "$timeout_secs" "$script_path" check "$ip")
 
 		if result=$("${run_cmd[@]}" 2>/dev/null); then
 			if echo "$result" | jq empty 2>/dev/null; then

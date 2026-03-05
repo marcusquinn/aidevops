@@ -614,15 +614,8 @@ llm_extract_signature() {
 		return 1
 	fi
 
-	# Resolve timeout command
-	local timeout_cmd=""
-	if command -v gtimeout &>/dev/null; then
-		timeout_cmd="gtimeout 30"
-	elif command -v timeout &>/dev/null; then
-		timeout_cmd="timeout 30"
-	fi
-
 	# Try AI CLI (opencode preferred, claude fallback)
+	# timeout_sec (from shared-constants.sh) handles macOS + Linux portably
 	local ai_cli=""
 	ai_cli=$(resolve_ai_cli 2>/dev/null) || true
 
@@ -631,9 +624,9 @@ llm_extract_signature() {
 Signature:
 ${sig_block}"
 
-	if [[ -n "$ai_cli" && -n "$timeout_cmd" ]]; then
+	if [[ -n "$ai_cli" ]]; then
 		if [[ "$ai_cli" == "opencode" ]]; then
-			result=$($timeout_cmd opencode run \
+			result=$(timeout_sec 30 opencode run \
 				--format default \
 				--title "email-sig-parse-$$" \
 				"$prompt" 2>/dev/null) || true
@@ -642,7 +635,7 @@ ${sig_block}"
 				result=$(printf '%s' "$result" | sed 's/\x1b\[[0-9;]*[mGKHF]//g; s/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b\]//g; s/\x07//g')
 			fi
 		else
-			result=$($timeout_cmd claude -p "$prompt" \
+			result=$(timeout_sec 30 claude -p "$prompt" \
 				--output-format text 2>/dev/null) || true
 		fi
 	fi

@@ -9,6 +9,10 @@
 
 set -euo pipefail
 
+# Source shared-constants.sh for timeout_sec() and other shared utilities
+_COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${_COMMON_DIR}/../shared-constants.sh"
+
 #######################################
 # SQLite wrapper: sets busy_timeout on every connection
 # busy_timeout is per-connection and must be set each time
@@ -172,37 +176,9 @@ get_task_hung_timeout() {
 	return 0
 }
 
+# portable_timeout delegates to timeout_sec from shared-constants.sh (t1504).
+# Kept as a wrapper for backward compatibility with archived supervisor modules.
 portable_timeout() {
-	local secs="$1"
-	shift
-
-	# If GNU timeout is available, use it (faster, handles signals better)
-	if command -v timeout &>/dev/null; then
-		timeout "$secs" "$@"
-		return $?
-	fi
-
-	# Fallback: background the command, sleep, kill if still running
-	"$@" &
-	local cmd_pid=$!
-
-	(
-		sleep "$secs"
-		kill "$cmd_pid" 2>/dev/null
-	) &
-	local watchdog_pid=$!
-
-	wait "$cmd_pid" 2>/dev/null
-	local exit_code=$?
-
-	# Clean up watchdog if command finished before timeout
-	kill "$watchdog_pid" 2>/dev/null
-	wait "$watchdog_pid" 2>/dev/null
-
-	# If killed by our watchdog, return 124 (GNU timeout convention)
-	if [[ $exit_code -eq 137 || $exit_code -eq 143 ]]; then
-		return 124
-	fi
-
-	return "$exit_code"
+	timeout_sec "$@"
+	return $?
 }

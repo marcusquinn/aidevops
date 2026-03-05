@@ -826,7 +826,7 @@ send_test_email() {
 
         # Basic SMTP connectivity test
         print_info "Testing SMTP connectivity to $smtp_server:$smtp_port..."
-        if timeout 10 nc -z "$smtp_server" "$smtp_port" 2>/dev/null; then
+        if timeout_sec 10 nc -z "$smtp_server" "$smtp_port" 2>/dev/null; then
             print_success "SMTP server reachable at $smtp_server:$smtp_port"
         else
             print_error "Cannot connect to $smtp_server:$smtp_port"
@@ -835,7 +835,7 @@ send_test_email() {
 
         # STARTTLS test
         local tls_result
-        tls_result=$(echo "EHLO test.local" | timeout 10 openssl s_client -starttls smtp -connect "$smtp_server:$smtp_port" 2>&1 | head -3 || true)
+        tls_result=$(echo "EHLO test.local" | timeout_sec 10 openssl s_client -starttls smtp -connect "$smtp_server:$smtp_port" 2>&1 | head -3 || true)
         if [[ "$tls_result" == *"CONNECTED"* ]]; then
             print_success "STARTTLS supported"
         else

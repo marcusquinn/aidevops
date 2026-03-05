@@ -112,22 +112,11 @@ esac
 echo ""
 echo "5. Testing MCP command (5 second timeout)..."
 
-# Use gtimeout on macOS if available, otherwise skip timeout
-TIMEOUT_CMD=""
-if command -v gtimeout &>/dev/null; then
-	TIMEOUT_CMD="gtimeout 5"
-elif command -v timeout &>/dev/null; then
-	TIMEOUT_CMD="timeout 5"
-fi
-
+# timeout_sec (from shared-constants.sh) handles macOS + Linux portably
 case "$MCP_NAME" in
 augment-context-engine | augment)
 	echo "   Running: auggie --mcp"
-	if [[ -n "$TIMEOUT_CMD" ]]; then
-		$TIMEOUT_CMD auggie --mcp 2>&1 | head -3 || echo "   (timeout - normal for MCP servers)"
-	else
-		echo "   (skipping - install coreutils for timeout: brew install coreutils)"
-	fi
+	timeout_sec 5 auggie --mcp 2>&1 | head -3 || echo "   (timeout - normal for MCP servers)"
 	;;
 *)
 	echo "   Skipping direct test (unknown command pattern)"

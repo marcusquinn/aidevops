@@ -153,53 +153,8 @@ check_opencode_server() {
 	return 1
 }
 
-#######################################
-# Portable timeout wrapper
-# Uses GNU timeout if available, falls back to background process + kill
-# Arguments:
-#   $1 - timeout in seconds
-#   $@ - command and arguments
-# Returns:
-#   Command exit code, or 124 on timeout
-#######################################
-portable_timeout() {
-	local secs="$1"
-	shift
-
-	# Try GNU timeout first (Linux or Homebrew coreutils)
-	if command -v timeout >/dev/null 2>&1; then
-		timeout "$secs" "$@"
-		return $?
-	fi
-	if command -v gtimeout >/dev/null 2>&1; then
-		gtimeout "$secs" "$@"
-		return $?
-	fi
-
-	# Fallback: background process with kill
-	"$@" &
-	local cmd_pid=$!
-
-	# Watchdog in background
-	(
-		sleep "$secs"
-		kill "$cmd_pid" 2>/dev/null
-	) &
-	local watchdog_pid=$!
-
-	wait "$cmd_pid" 2>/dev/null
-	local exit_code=$?
-
-	# Clean up watchdog
-	kill "$watchdog_pid" 2>/dev/null
-	wait "$watchdog_pid" 2>/dev/null
-
-	# Check if killed by signal (128+9=137 for SIGKILL, 128+15=143 for SIGTERM)
-	if [[ $exit_code -ge 128 ]]; then
-		return 124
-	fi
-	return $exit_code
-}
+# portable_timeout() removed — timeout_sec() from shared-constants.sh provides
+# the same functionality (Linux timeout, macOS gtimeout, background+kill fallback).
 
 #######################################
 # Run a prompt through the AI CLI
@@ -347,7 +302,7 @@ run_prompt_opencode_cli() {
 	push_cleanup "rm -f '${raw_output}'"
 
 	local exit_code=0
-	portable_timeout "${timeout}" "${cmd[@]}" "$prompt" >"$raw_output" 2>"$stderr_file" || {
+	timeout_sec "${timeout}" "${cmd[@]}" "$prompt" >"$raw_output" 2>"$stderr_file" || {
 		exit_code=$?
 		if [[ $exit_code -eq 124 ]]; then
 			echo "[TIMEOUT after ${timeout}s]"

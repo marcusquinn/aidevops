@@ -151,45 +151,8 @@ get_installed_version() {
 	return 0
 }
 
-# Portable timeout function (works on Linux and macOS)
-# Usage: timeout_sec 5 your_command arg1 arg2
-# Returns: command exit code, or 124 on timeout (matches coreutils convention)
-timeout_sec() {
-	local secs="$1"
-	shift
-
-	if command -v timeout &>/dev/null; then
-		# Linux has native timeout — returns 124 on timeout
-		timeout "$secs" "$@"
-		return $?
-	elif command -v gtimeout &>/dev/null; then
-		# macOS with coreutils — returns 124 on timeout
-		gtimeout "$secs" "$@"
-		return $?
-	else
-		# macOS fallback: background the command and kill after deadline.
-		# The perl alarm approach (perl -e 'alarm shift; exec @ARGV') is fragile:
-		# SIGALRM may not kill child processes that trap or ignore signals (e.g.,
-		# Node MCP servers). Using background + kill is more reliable.
-		"$@" &
-		local cmd_pid=$!
-		# Poll every 0.5s; count half-seconds to avoid floating-point math
-		local half_secs_remaining=$((secs * 2))
-		while kill -0 "$cmd_pid" 2>/dev/null; do
-			if ((half_secs_remaining <= 0)); then
-				kill -TERM "$cmd_pid" 2>/dev/null
-				sleep 0.2
-				kill -KILL "$cmd_pid" 2>/dev/null || true
-				wait "$cmd_pid" 2>/dev/null || true
-				return 124
-			fi
-			sleep 0.5
-			((half_secs_remaining--)) || true
-		done
-		wait "$cmd_pid" 2>/dev/null
-		return $?
-	fi
-}
+# timeout_sec() is now provided by shared-constants.sh (sourced above).
+# Moved there in t1504 so all scripts get portable timeout support.
 
 # Timeout for external package manager queries (seconds)
 readonly PKG_QUERY_TIMEOUT=30

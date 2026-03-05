@@ -332,75 +332,28 @@ run_shellcheck() {
 	local timed_out=0
 	local file_count=${#ALL_SH_FILES[@]}
 
-	# Determine timeout command (gtimeout on macOS, timeout on Linux)
-	local timeout_cmd=""
-	if command -v timeout &>/dev/null; then
-		timeout_cmd="timeout"
-	elif command -v gtimeout &>/dev/null; then
-		timeout_cmd="gtimeout"
-	fi
-
 	# Per-file mode with timeout: prevents any single file from causing
 	# exponential expansion. Each file gets max 30s and 1GB virtual memory.
+	# timeout_sec (from shared-constants.sh) handles Linux timeout, macOS
+	# gtimeout, and bare macOS (background + kill fallback) transparently.
 	local sc_timeout=30
 	local file_result
-	# t1404: warn once when no timeout utility is available (degraded protection)
-	if [[ -z "$timeout_cmd" ]]; then
-		print_warning "ShellCheck: no timeout/gtimeout utility found; using portable fallback (less reliable process cleanup)"
-	fi
 	for file in "${ALL_SH_FILES[@]}"; do
 		[[ -f "$file" ]] || continue
 		file_result=""
-		if [[ -n "$timeout_cmd" ]]; then
-			# t1398.2: run in subshell with ulimit -v to cap virtual memory
-			file_result=$(
-				ulimit -v 1048576 2>/dev/null || true
-				$timeout_cmd "${sc_timeout}s" shellcheck -x -P SCRIPTDIR --severity=warning --format=gcc "$file" 2>&1
-			) || {
-				local sc_exit=$?
-				# Exit code 124 = timeout killed the process
-				if [[ $sc_exit -eq 124 ]]; then
-					timed_out=$((timed_out + 1))
-					print_warning "ShellCheck: $file timed out after ${sc_timeout}s (likely recursive source expansion)"
-					continue
-				fi
-			}
-		else
-			# Portable timeout wrapper: no timeout/gtimeout available.
-			# Run ShellCheck in background with a sleep-based watcher that kills it
-			# after sc_timeout seconds. Drop -x to reduce recursive expansion risk.
-			local sc_tmpfile
-			sc_tmpfile=$(mktemp) || {
-				file_result=""
-				continue
-			}
-			# t1398.2: no -x in fallback path (no timeout utility = higher risk)
-			# t1404: use process group kill to clean up ShellCheck child processes
-			(
-				ulimit -v 1048576 2>/dev/null || true
-				shellcheck -P SCRIPTDIR --severity=warning --format=gcc "$file"
-			) >"$sc_tmpfile" 2>&1 &
-			local sc_bg_pid=$!
-			# Watcher: kill the process group (- prefix) to catch child processes,
-			# falling back to single-process kill if group kill fails (e.g., not a
-			# process group leader on some shells).
-			(sleep "$sc_timeout" && kill -- -"$sc_bg_pid" 2>/dev/null || kill "$sc_bg_pid" 2>/dev/null) &
-			local sc_watcher_pid=$!
-			local sc_exit_code=0
-			wait "$sc_bg_pid" 2>/dev/null || sc_exit_code=$?
-			# Clean up watcher (may already be done if ShellCheck finished before timeout)
-			kill "$sc_watcher_pid" 2>/dev/null || true
-			wait "$sc_watcher_pid" 2>/dev/null || true
-			file_result=$(cat "$sc_tmpfile")
-			rm -f "$sc_tmpfile"
-			# Exit codes >128 indicate signal kill (timeout fired)
-			if [[ $sc_exit_code -gt 128 ]]; then
+		# t1398.2: run in subshell with ulimit -v to cap virtual memory
+		file_result=$(
+			ulimit -v 1048576 2>/dev/null || true
+			timeout_sec "$sc_timeout" shellcheck -x -P SCRIPTDIR --severity=warning --format=gcc "$file" 2>&1
+		) || {
+			local sc_exit=$?
+			# Exit code 124 = timeout killed the process
+			if [[ $sc_exit -eq 124 ]]; then
 				timed_out=$((timed_out + 1))
-				print_warning "ShellCheck: $file killed after ${sc_timeout}s (portable fallback)"
-				file_result=""
+				print_warning "ShellCheck: $file timed out after ${sc_timeout}s (likely recursive source expansion)"
 				continue
 			fi
-		fi
+		}
 		if [[ -n "$file_result" ]]; then
 			result="${result}${file_result}
 "
@@ -471,28 +424,12 @@ check_secrets() {
 			print_info "Run: bash $secretlint_script init"
 		fi
 	elif command -v docker &>/dev/null; then
-		local timeout_sec=60
-		# Use gtimeout (macOS) or timeout (Linux) to prevent Docker from hanging
-		local timeout_cmd=""
-		if command -v gtimeout &>/dev/null; then
-			timeout_cmd="gtimeout ${timeout_sec}"
-		elif command -v timeout &>/dev/null; then
-			timeout_cmd="timeout ${timeout_sec}"
-		fi
+		local sl_timeout=60
+		print_info "Secretlint: Using Docker for scan (${sl_timeout}s timeout)..."
 
-		if [[ -n "$timeout_cmd" ]]; then
-			print_info "Secretlint: Using Docker for scan (${timeout_sec}s timeout)..."
-		else
-			print_info "Secretlint: Using Docker for scan (no timeout available)..."
-		fi
-
+		# timeout_sec (from shared-constants.sh) handles macOS + Linux portably
 		local docker_result
-		if [[ -n "$timeout_cmd" ]]; then
-			docker_result=$($timeout_cmd docker run --init -v "$(pwd)":"$(pwd)" -w "$(pwd)" --rm secretlint/secretlint secretlint "**/*" --format compact 2>&1) || true
-		else
-			# No timeout available, run without (may hang on large repos)
-			docker_result=$(docker run --init -v "$(pwd)":"$(pwd)" -w "$(pwd)" --rm secretlint/secretlint secretlint "**/*" --format compact 2>&1) || true
-		fi
+		docker_result=$(timeout_sec "$sl_timeout" docker run --init -v "$(pwd)":"$(pwd)" -w "$(pwd)" --rm secretlint/secretlint secretlint "**/*" --format compact 2>&1) || true
 
 		if [[ -z "$docker_result" ]] || [[ "$docker_result" == *"0 problems"* ]]; then
 			print_success "Secretlint: No secrets detected"

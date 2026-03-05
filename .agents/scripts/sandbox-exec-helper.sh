@@ -168,7 +168,7 @@ sandbox_run() {
 	if [[ "$block_network" == true ]] && command -v sandbox-exec &>/dev/null; then
 		# macOS seatbelt: deny network access
 		local seatbelt_profile="(version 1)(allow default)(deny network*)"
-		timeout "$timeout_secs" \
+		timeout_sec "$timeout_secs" \
 			sandbox-exec -p "$seatbelt_profile" \
 			"${env_args[@]}" \
 			bash -c "$command" \
@@ -177,7 +177,7 @@ sandbox_run() {
 		if [[ "$block_network" == true ]]; then
 			log_sandbox "WARN" "Network blocking requested but sandbox-exec not available (non-macOS); proceeding without"
 		fi
-		timeout "$timeout_secs" \
+		timeout_sec "$timeout_secs" \
 			"${env_args[@]}" \
 			bash -c "$command" \
 			>"$stdout_file" 2>"$stderr_file" || exit_code=$?

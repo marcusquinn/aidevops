@@ -17,31 +17,15 @@
 # AI reasoning log directory
 AI_REASON_LOG_DIR="${AI_REASON_LOG_DIR:-$HOME/.aidevops/logs/ai-supervisor}"
 
-# Portable timeout alias — uses portable_timeout from _common.sh when sourced,
-# or defines a local fallback for standalone execution.
+# Portable timeout: uses portable_timeout from _common.sh (which delegates to
+# timeout_sec from shared-constants.sh). For standalone execution, source
+# shared-constants.sh directly to get timeout_sec.
 if ! declare -f portable_timeout &>/dev/null; then
+	_AI_REASON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	source "${_AI_REASON_DIR}/../shared-constants.sh"
 	portable_timeout() {
-		local secs="$1"
-		shift
-		if command -v timeout &>/dev/null; then
-			timeout "$secs" "$@"
-			return $?
-		fi
-		"$@" &
-		local cmd_pid=$!
-		(
-			sleep "$secs"
-			kill "$cmd_pid" 2>/dev/null
-		) &
-		local watchdog_pid=$!
-		wait "$cmd_pid" 2>/dev/null
-		local exit_code=$?
-		kill "$watchdog_pid" 2>/dev/null
-		wait "$watchdog_pid" 2>/dev/null
-		if [[ $exit_code -eq 137 || $exit_code -eq 143 ]]; then
-			return 124
-		fi
-		return "$exit_code"
+		timeout_sec "$@"
+		return $?
 	}
 fi
 

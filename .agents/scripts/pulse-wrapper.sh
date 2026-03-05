@@ -38,6 +38,7 @@ set -euo pipefail
 export PATH="/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:${PATH}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
 
 #######################################
 # Configuration
@@ -2015,78 +2016,63 @@ _quality_sweep_for_repo() {
 			local sc_summary=""
 			local sc_details=""
 
-			# Determine timeout command (t1398: prevent runaway shellcheck)
-			local sc_timeout_cmd=""
-			if command -v timeout &>/dev/null; then
-				sc_timeout_cmd="timeout 30s"
-			elif command -v gtimeout &>/dev/null; then
-				sc_timeout_cmd="gtimeout 30s"
-			fi
+			# timeout_sec (from shared-constants.sh) handles macOS + Linux portably.
+			# It always provides a timeout mechanism (background + kill fallback on
+			# bare macOS), so we no longer need to skip ShellCheck when no timeout
+			# utility is installed.
 
-			# t1398: skip shellcheck entirely when no timeout utility is available.
-			# Running shellcheck without a timeout risks unbounded execution
-			# (exponential source expansion can consume 5+ GB RAM for 35+ min).
-			if [[ -z "$sc_timeout_cmd" ]]; then
-				echo "[pulse-wrapper] WARNING: no timeout/gtimeout available — skipping ShellCheck to avoid runaway risk" >>"$LOGFILE"
-				shellcheck_section="### ShellCheck (skipped)
+			while IFS= read -r shfile; do
+				[[ -z "$shfile" ]] && continue
+				local result
+				# t1398.2: hardened invocation — no -x, --norc, per-file timeout,
+				# ulimit -v in subshell to cap RSS per shellcheck process.
+				# t1402: stderr merged into stdout (2>&1) so diagnostic messages
+				# (parse errors, timeouts, permission failures) are captured in
+				# $result and appear in the sweep summary.
+				result=$(
+					ulimit -v 1048576 2>/dev/null || true
+					timeout_sec 30 shellcheck --norc -f gcc "$shfile" 2>&1 || true
+				)
+				if [[ -n "$result" ]]; then
+					local file_errors
+					file_errors=$(grep -c ':.*: error:' <<<"$result") || file_errors=0
+					local file_warnings
+					file_warnings=$(grep -c ':.*: warning:' <<<"$result") || file_warnings=0
+					sc_errors=$((sc_errors + file_errors))
+					sc_warnings=$((sc_warnings + file_warnings))
 
-- **Reason**: no timeout utility available — skipping to prevent runaway expansion risk
+					# Capture first 3 findings per file for the summary
+					local rel_path="${shfile#"$repo_path"/}"
+					local top_findings
+					top_findings=$(head -3 <<<"$result" | while IFS= read -r line; do
+						echo "  - \`${rel_path}\`: ${line##*: }"
+					done)
+					if [[ -n "$top_findings" ]]; then
+						sc_details="${sc_details}${top_findings}
 "
-			else
-
-				while IFS= read -r shfile; do
-					[[ -z "$shfile" ]] && continue
-					local result
-					# t1398.2: hardened invocation — no -x, --norc, per-file timeout,
-					# ulimit -v in subshell to cap RSS per shellcheck process.
-					# t1402: stderr merged into stdout (2>&1) so diagnostic messages
-					# (parse errors, timeouts, permission failures) are captured in
-					# $result and appear in the sweep summary.
-					result=$(
-						ulimit -v 1048576 2>/dev/null || true
-						$sc_timeout_cmd shellcheck --norc -f gcc "$shfile" 2>&1 || true
-					)
-					if [[ -n "$result" ]]; then
-						local file_errors
-						file_errors=$(grep -c ':.*: error:' <<<"$result") || file_errors=0
-						local file_warnings
-						file_warnings=$(grep -c ':.*: warning:' <<<"$result") || file_warnings=0
-						sc_errors=$((sc_errors + file_errors))
-						sc_warnings=$((sc_warnings + file_warnings))
-
-						# Capture first 3 findings per file for the summary
-						local rel_path="${shfile#"$repo_path"/}"
-						local top_findings
-						top_findings=$(head -3 <<<"$result" | while IFS= read -r line; do
-							echo "  - \`${rel_path}\`: ${line##*: }"
-						done)
-						if [[ -n "$top_findings" ]]; then
-							sc_details="${sc_details}${top_findings}
-"
-						fi
 					fi
-				done <<<"$sh_files"
+				fi
+			done <<<"$sh_files"
 
-				local file_count
-				file_count=$(echo "$sh_files" | wc -l | tr -d ' ')
-				shellcheck_section="### ShellCheck ($file_count files scanned)
+			local file_count
+			file_count=$(echo "$sh_files" | wc -l | tr -d ' ')
+			shellcheck_section="### ShellCheck ($file_count files scanned)
 
 - **Errors**: ${sc_errors}
 - **Warnings**: ${sc_warnings}
 "
-				if [[ -n "$sc_details" ]]; then
-					shellcheck_section="${shellcheck_section}
+			if [[ -n "$sc_details" ]]; then
+				shellcheck_section="${shellcheck_section}
 **Top findings:**
 ${sc_details}"
-				fi
-				if [[ "$sc_errors" -eq 0 && "$sc_warnings" -eq 0 ]]; then
-					shellcheck_section="${shellcheck_section}
+			fi
+			if [[ "$sc_errors" -eq 0 && "$sc_warnings" -eq 0 ]]; then
+				shellcheck_section="${shellcheck_section}
 _All clear — no issues found._
 "
-				fi
-				tool_count=$((tool_count + 1))
+			fi
+			tool_count=$((tool_count + 1))
 
-			fi # end: sc_timeout_cmd non-empty guard
 		fi
 	fi
 

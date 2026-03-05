@@ -21,6 +21,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/shared-constants.sh"
 SUPERVISOR_DIR="${AIDEVOPS_SUPERVISOR_DIR:-$HOME/.aidevops/.agent-workspace/supervisor}"
 SUPERVISOR_DB="${SUPERVISOR_DIR}/supervisor.db"
 # shellcheck disable=SC2034 # SCORING_DB used by _record_contest_scores
@@ -78,7 +79,7 @@ run_ai_scoring() {
 
 	case "$ai_cli" in
 	opencode)
-		timeout 120 opencode run --format json \
+		timeout_sec 120 opencode run --format json \
 			--model "$model" \
 			--prompt "$prompt" \
 			>"$output_file" 2>/dev/null || true
@@ -86,7 +87,7 @@ run_ai_scoring() {
 	claude)
 		# claude CLI uses bare model name (strip provider/ prefix)
 		local claude_model="${model#*/}"
-		timeout 120 claude -p "$prompt" \
+		timeout_sec 120 claude -p "$prompt" \
 			--model "$claude_model" \
 			--output-format json \
 			>"$output_file" 2>/dev/null || true

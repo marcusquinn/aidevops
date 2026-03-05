@@ -589,7 +589,7 @@ test_smtp() {
     print_header "SMTP Connectivity Test: $server:$port"
 
     # Test basic TCP connectivity using nc (avoids clear-text /dev/tcp — S5332)
-    if timeout 10 nc -z "$server" "$port" 2>/dev/null; then
+    if timeout_sec 10 nc -z "$server" "$port" 2>/dev/null; then
         print_success "TCP connection to $server:$port successful"
     else
         print_error "Cannot connect to $server:$port"
@@ -599,7 +599,7 @@ test_smtp() {
 
     # Test SMTP banner
     local banner
-    banner=$(echo "" | timeout 10 nc -w 5 "$server" "$port" 2>/dev/null | head -1 || true)
+    banner=$(echo "" | timeout_sec 10 nc -w 5 "$server" "$port" 2>/dev/null | head -1 || true)
     if [[ -n "$banner" ]]; then
         print_success "SMTP banner received:"
         echo "  $banner"
@@ -608,7 +608,7 @@ test_smtp() {
     # Test STARTTLS support
     if [[ "$port" == "25" || "$port" == "587" ]]; then
         local starttls_result
-        starttls_result=$(echo "EHLO test.local" | timeout 10 openssl s_client -starttls smtp -connect "$server:$port" 2>&1 | head -5 || true)
+        starttls_result=$(echo "EHLO test.local" | timeout_sec 10 openssl s_client -starttls smtp -connect "$server:$port" 2>&1 | head -5 || true)
         if [[ "$starttls_result" == *"BEGIN CERTIFICATE"* || "$starttls_result" == *"SSL handshake"* ]]; then
             print_success "STARTTLS supported"
         else
@@ -619,7 +619,7 @@ test_smtp() {
     # Test TLS on port 465
     if [[ "$port" == "465" ]]; then
         local tls_result
-        tls_result=$(echo "EHLO test.local" | timeout 10 openssl s_client -connect "$server:$port" 2>&1 | head -5 || true)
+        tls_result=$(echo "EHLO test.local" | timeout_sec 10 openssl s_client -connect "$server:$port" 2>&1 | head -5 || true)
         if [[ "$tls_result" == *"BEGIN CERTIFICATE"* || "$tls_result" == *"SSL handshake"* ]]; then
             print_success "Implicit TLS connection successful"
         else
@@ -978,7 +978,7 @@ test_mail_tls() {
 
     local cert_info
     # shellcheck disable=SC2086
-    cert_info=$(echo "QUIT" | timeout 10 openssl s_client $connect_flag -connect "$server:$port" -servername "$server" 2>/dev/null || true)
+    cert_info=$(echo "QUIT" | timeout_sec 10 openssl s_client $connect_flag -connect "$server:$port" -servername "$server" 2>/dev/null || true)
 
     if [[ -z "$cert_info" ]]; then
         print_error "Could not establish TLS connection to $server:$port"

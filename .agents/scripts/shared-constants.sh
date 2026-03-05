@@ -165,6 +165,60 @@ readonly DEFAULT_PORT=80
 readonly SECURE_PORT=443
 
 # =============================================================================
+# Portable timeout function (macOS + Linux)
+# =============================================================================
+# macOS has no native `timeout` command. This function provides a portable
+# wrapper that works on Linux (coreutils timeout), macOS with Homebrew
+# coreutils (gtimeout), and bare macOS (background + kill fallback).
+#
+# Usage: timeout_sec 5 your_command arg1 arg2
+# Returns: command exit code, or 124 on timeout (matches coreutils convention)
+#
+# NOTE: Do NOT pipe timeout_sec to head/grep — on macOS the background
+# process may not be properly cleaned up when the pipe closes early.
+# Instead, redirect to a temp file and process afterward.
+#
+# Moved here from tool-version-check.sh (PR #2909) so all scripts that
+# source shared-constants.sh get portable timeout support automatically.
+
+timeout_sec() {
+	local secs="$1"
+	shift
+
+	if command -v timeout &>/dev/null; then
+		# Linux has native timeout — returns 124 on timeout
+		timeout "$secs" "$@"
+		return $?
+	elif command -v gtimeout &>/dev/null; then
+		# macOS with coreutils — returns 124 on timeout
+		gtimeout "$secs" "$@"
+		return $?
+	else
+		# macOS fallback: background the command and kill after deadline.
+		# The perl alarm approach (perl -e 'alarm shift; exec @ARGV') is fragile:
+		# SIGALRM may not kill child processes that trap or ignore signals (e.g.,
+		# Node MCP servers). Using background + kill is more reliable.
+		"$@" &
+		local cmd_pid=$!
+		# Poll every 0.5s; count half-seconds to avoid floating-point math
+		local half_secs_remaining=$((secs * 2))
+		while kill -0 "$cmd_pid" 2>/dev/null; do
+			if ((half_secs_remaining <= 0)); then
+				kill -TERM "$cmd_pid" 2>/dev/null
+				sleep 0.2
+				kill -KILL "$cmd_pid" 2>/dev/null || true
+				wait "$cmd_pid" 2>/dev/null || true
+				return 124
+			fi
+			sleep 0.5
+			((half_secs_remaining--)) || true
+		done
+		wait "$cmd_pid" 2>/dev/null
+		return $?
+	fi
+}
+
+# =============================================================================
 # CI/CD Service Timing Constants (Evidence-Based from PR #19 Analysis)
 # =============================================================================
 # These timings are based on observed completion times across multiple PRs.
