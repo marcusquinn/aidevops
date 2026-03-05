@@ -34,9 +34,8 @@ _find_real_shellcheck() {
 	local self
 	self="$(realpath "${BASH_SOURCE[0]}" 2>/dev/null || readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 
-	local IFS=':'
 	local dir
-	for dir in $PATH; do
+	while IFS= read -r -d ':' dir || [[ -n "$dir" ]]; do
 		local candidate="${dir}/shellcheck"
 		if [[ -x "$candidate" ]]; then
 			local resolved
@@ -46,7 +45,7 @@ _find_real_shellcheck() {
 				return 0
 			fi
 		fi
-	done
+	done <<<"$PATH"
 
 	# Common locations
 	local loc
