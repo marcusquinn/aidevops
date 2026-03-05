@@ -876,7 +876,7 @@ guard_child_processes() {
 
 	# Get all descendant PIDs of the current shell process
 	local descendants
-	descendants=$(ps -eo pid,ppid,rss,etime,comm 2>/dev/null | awk -v parent=$$ '
+	descendants=$(ps -eo pid,ppid,rss,etime,comm | awk -v parent=$$ '
 		BEGIN { pids[parent]=1 }
 		{ if ($2 in pids) { pids[$1]=1; print $0 } }
 	') || return 0
@@ -948,9 +948,9 @@ check_session_count() {
 	local interactive_count=0
 
 	# Count opencode processes with a real TTY (interactive sessions).
-	# Exclude both '?' (Linux headless) and '??' (macOS headless) TTYs.
-	interactive_count=$(ps axo tty,command 2>/dev/null | awk '
-		/(\.opencode|opencode-ai)/ && $1 != "?" && $1 != "??" { count++ }
+	# Filter both '?' (Linux) and '??' (macOS) headless TTY entries.
+	interactive_count=$(ps axo tty,command | awk '
+		/(\.(opencode|claude)|opencode-ai|claude-ai)/ && !/awk/ && $1 != "?" && $1 != "??" { count++ }
 		END { print count + 0 }
 	') || interactive_count=0
 

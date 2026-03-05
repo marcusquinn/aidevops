@@ -98,8 +98,8 @@ _get_process_age() {
 		etime="${etime#*-}"
 	fi
 
-	local colon_count
-	colon_count=$(echo "$etime" | tr -cd ':' | wc -c | tr -d ' ')
+	local colons_only="${etime//[!:]/}"
+	local colon_count="${#colons_only}"
 
 	if [[ "$colon_count" -eq 2 ]]; then
 		IFS=':' read -r hours minutes seconds <<<"$etime"
@@ -184,7 +184,7 @@ cmd_scan() {
 		fi
 
 		printf "%-8s %-6s %-10s %-5s %-12s %-8s %s\n" "$pid" "${rss_mb}MB" "$etime" "$tty" "$cmd_base" "$status" "$detail"
-	done < <(ps axo pid,tty,rss,etime,command 2>/dev/null | grep -E 'opencode|shellcheck|node.*opencode' | grep -v grep || true)
+	done < <(ps axo pid,tty,rss,etime,command | grep -E 'opencode|shellcheck|node.*opencode' | grep -v grep || true)
 
 	echo ""
 	echo "Total: ${process_count} processes, $((total_rss_kb / 1024))MB RSS, ${violations} violation(s)"
@@ -193,8 +193,8 @@ cmd_scan() {
 	echo ""
 	echo "--- Interactive Sessions ---"
 	local session_count
-	session_count=$(ps axo tty,command 2>/dev/null | awk '
-		/(\.opencode|opencode-ai)/ && $1 != "?" && $1 != "??" { count++ }
+	session_count=$(ps axo tty,command | awk '
+		/(\.(opencode|claude)|opencode-ai|claude-ai)/ && !/awk/ && $1 != "?" && $1 != "??" { count++ }
 		END { print count + 0 }
 	') || session_count=0
 	echo "Interactive sessions: ${session_count} (threshold: ${SESSION_COUNT_WARN})"
@@ -260,7 +260,7 @@ cmd_kill_runaways() {
 			killed=$((killed + 1))
 			total_freed_mb=$((total_freed_mb + rss_mb))
 		fi
-	done < <(ps axo pid,tty,rss,etime,command 2>/dev/null | grep -E 'opencode|shellcheck|node.*opencode' | grep -v grep || true)
+	done < <(ps axo pid,tty,rss,etime,command | grep -E 'opencode|shellcheck|node.*opencode' | grep -v grep || true)
 
 	if [[ "$killed" -gt 0 ]]; then
 		echo "Killed $killed process(es), freed ~${total_freed_mb}MB"
@@ -276,8 +276,8 @@ cmd_kill_runaways() {
 #######################################
 cmd_sessions() {
 	local session_count
-	session_count=$(ps axo tty,command 2>/dev/null | awk '
-		/(\.opencode|opencode-ai)/ && $1 != "?" && $1 != "??" { count++ }
+	session_count=$(ps axo tty,command | awk '
+		/(\.(opencode|claude)|opencode-ai|claude-ai)/ && !/awk/ && $1 != "?" && $1 != "??" { count++ }
 		END { print count + 0 }
 	') || session_count=0
 
@@ -327,11 +327,11 @@ cmd_status() {
 		if [[ "$rss" -gt "$rss_limit" ]] || [[ "$age_seconds" -gt "$runtime_limit" ]]; then
 			violations=$((violations + 1))
 		fi
-	done < <(ps axo pid,tty,rss,etime,command 2>/dev/null | grep -E 'opencode|shellcheck|node.*opencode' | grep -v grep || true)
+	done < <(ps axo pid,tty,rss,etime,command | grep -E 'opencode|shellcheck|node.*opencode' | grep -v grep || true)
 
 	local session_count
-	session_count=$(ps axo tty,command 2>/dev/null | awk '
-		/(\.opencode|opencode-ai)/ && $1 != "?" && $1 != "??" { count++ }
+	session_count=$(ps axo tty,command | awk '
+		/(\.(opencode|claude)|opencode-ai|claude-ai)/ && !/awk/ && $1 != "?" && $1 != "??" { count++ }
 		END { print count + 0 }
 	') || session_count=0
 
