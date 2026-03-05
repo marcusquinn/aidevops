@@ -116,7 +116,11 @@ Then skip to the next PR. The next pulse cycle will retry the permission check �
 **For maintainer PRs (admin/maintain/write permission):**
 
 - **Green CI + at least one review posted + no blocking reviews** → merge: `gh pr merge <number> --repo <slug> --squash`. If the PR resolves an issue, the issue should be closed with a comment linking to the merged PR.
-  - **CRITICAL (t2839):** Always verify the formal review count first: `gh pr view <number> --repo <slug> --json reviews --jq '.reviews | length'`. If count > 0, the review gate passes. If `review-bot-gate-helper.sh check <number> <slug>` is available, use it as an additional bot-activity signal — `PASS` from the bot gate is sufficient on its own. However, `WAITING` only means "no known bot activity" — it does NOT mean zero reviews. When `WAITING` is returned, check the review count explicitly (the `gh pr view` command above); if count > 0, proceed to merge. `SKIP` means the PR has a `skip-review-gate` label — it bypasses the bot gate only, NOT the review count requirement. Skip the PR only when both the bot gate is not `PASS` AND the formal review count is 0.
+  - **CRITICAL (t2839):** Before merging, always verify at least one review exists using `gh pr view <number> --repo <slug> --json reviews --jq '.reviews | length'`.
+  - If `review-bot-gate-helper.sh check <number> <slug>` is available, use it as an additional bot-activity signal. `PASS` from the bot gate is sufficient on its own — proceed to merge.
+  - `WAITING` only means "no known bot activity" — it does NOT mean zero reviews. When `WAITING` is returned, check the formal review count (the `gh pr view` command above). If count > 0, proceed to merge.
+  - `SKIP` means the PR has a `skip-review-gate` label — it bypasses the bot gate only, NOT the review count requirement.
+  - Skip the PR only when the formal review count is 0 AND the bot gate is not `PASS`.
 - **Green CI + zero reviews** → skip this cycle. Zero reviews means "not yet reviewed", NOT "clean to merge". Review bots typically post within 2-5 minutes. The next pulse will pick it up once a review exists.
 - **Failing CI or changes requested** → dispatch a worker to fix it (counts against worker slots)
 
