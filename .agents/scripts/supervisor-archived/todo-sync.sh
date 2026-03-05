@@ -1975,7 +1975,7 @@ cmd_reconcile_queue_dispatchability() {
 			WHERE bt.task_id = '$(sql_escape "$tid")'
 			AND b.status IN ('active','paused')
 			LIMIT 1;
-		" 2>/dev/null || echo "")
+		" || echo "")
 		if [[ -n "$active_batch_id" ]]; then
 			in_active_batch=true
 		fi
