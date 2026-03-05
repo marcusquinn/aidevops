@@ -201,6 +201,7 @@ sleep 2
 - Use `--dir <path>` from repos.json
 - Route non-code tasks with `--agent`: SEO, Content, Marketing, Business, Research (see AGENTS.md "Agent Routing")
 - **Bundle-aware agent routing (t1364.6):** Before dispatching, check if the target repo has a bundle with `agent_routing` overrides. Run `bundle-helper.sh get agent_routing <repo-path>` — if the task domain (code, seo, content, marketing) has a non-default agent, use `--agent <name>`. Example: a content-site bundle routes `marketing` tasks to the Marketing agent instead of Build+. Explicit `--agent` flags in the issue body always override bundle defaults.
+- **Scope boundary (t1405, GH#2928):** ONLY dispatch workers for repos in the pre-fetched state (i.e., repos with `pulse: true` in repos.json). The `PULSE_SCOPE_REPOS` env var (set by `pulse-wrapper.sh`) contains the comma-separated list of in-scope repo slugs. Workers inherit this env var and use it to restrict code changes (branches, PRs) to scoped repos. Workers CAN still file issues on any repo (cross-repo self-improvement), but the pulse must NEVER dispatch a worker to implement a fix on a repo outside this scope — even if an issue exists there. Issues on non-pulse repos enter that repo's queue for their own maintainers to handle.
 
 ### Priority order
 

@@ -474,6 +474,27 @@ When running as a headless worker (dispatched by the supervisor via `opencode ru
 
    Then continue with your assigned task in the current repo. The pulse supervisor will pick up the cross-repo issue on its next cycle. This prevents framework-level work from being tracked in app repos and vice versa.
 
+   **Scope boundary for code changes (t1405, GH#2928):** When dispatched by the pulse (headless mode), the `PULSE_SCOPE_REPOS` env var contains a comma-separated list of repo slugs that you are allowed to create branches and PRs on. This is set by `pulse-wrapper.sh` from repos with `pulse: true` in repos.json.
+
+   - **Filing issues**: ALWAYS allowed on any repo, regardless of scope. Cross-repo bug reports are valuable feedback to maintainers.
+   - **Creating branches, PRs, or committing code**: ONLY allowed on repos listed in `PULSE_SCOPE_REPOS`. If the target repo is not in scope, file the issue and stop — do NOT implement the fix.
+   - **If `PULSE_SCOPE_REPOS` is empty or unset**: you are in interactive mode (not pulse-dispatched) — no scope restriction applies.
+
+   ```bash
+   # Check if a target repo is in scope before creating code changes
+   TARGET_SLUG="owner/repo"
+   if [[ -n "${PULSE_SCOPE_REPOS:-}" ]]; then
+     if ! echo ",$PULSE_SCOPE_REPOS," | grep -qF ",$TARGET_SLUG,"; then
+       echo "Repo $TARGET_SLUG is outside pulse scope — filing issue only, not implementing fix"
+        gh issue create --repo "$TARGET_SLUG" --title "TITLE" \
+          --body "Discovered while working on CURRENT_TASK. DETAILS"
+       # Do NOT create branches, PRs, or commit code on this repo
+     fi
+   fi
+   ```
+
+   This prevents the pattern where a pulse-dispatched worker creates PRs on repos the user doesn't manage (observed: 4 PRs + a fork on a repo the user doesn't own).
+
 10. **Issue-task alignment (MANDATORY)** — Before linking your PR to an issue or claiming a task, verify your work matches the issue's actual description. Workers have hijacked issues by using a task ID for completely unrelated work (e.g., PR "Fix ShellCheck noise" closed issue "Add local dev row to build-plus.md" because both used t1344).
 
     **Before creating a PR that references an issue:**

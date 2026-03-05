@@ -60,6 +60,8 @@ Every agent session — interactive, worker, or supervisor — should improve th
 
 If uncertain, ask: "Would this fix apply to every repo the framework manages, or only this one?" Framework-wide problems go to aidevops; project-specific problems stay local. Never create framework tasks in a project repo — they become invisible to framework maintainers and pollute the project's task namespace.
 
+**Scope boundary for code changes (t1405, GH#2928).** Separate "observe and report" from "observe and fix". When dispatched by the pulse, the `PULSE_SCOPE_REPOS` env var lists the repo slugs where you may create branches and PRs. Filing issues is always allowed on any repo — cross-repo bug reports are valuable. But code changes (branches, PRs, commits) are restricted to repos in `PULSE_SCOPE_REPOS`. If the target repo is not in scope, file the issue and stop. The issue enters that repo's queue for their maintainers (or their own pulse) to handle. If `PULSE_SCOPE_REPOS` is empty or unset (interactive mode), no scope restriction applies.
+
 **What counts as self-improvement:**
 - Filing issues for repeated failure patterns
 - Improving agent prompts when workers consistently misunderstand instructions

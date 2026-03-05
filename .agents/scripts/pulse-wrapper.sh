@@ -462,6 +462,15 @@ prefetch_state() {
 	# Append active worker snapshot for orphaned PR detection (t216)
 	prefetch_active_workers >>"$STATE_FILE"
 
+	# Export PULSE_SCOPE_REPOS — comma-separated list of repo slugs that
+	# workers are allowed to create PRs/branches on (t1405, GH#2928).
+	# Workers CAN file issues on any repo (cross-repo self-improvement),
+	# but code changes (branches, PRs) are restricted to this list.
+	local scope_slugs
+	scope_slugs=$(echo "$repo_entries" | cut -d'|' -f1 | paste -sd ',' -)
+	export PULSE_SCOPE_REPOS="$scope_slugs"
+	echo "[pulse-wrapper] PULSE_SCOPE_REPOS=${scope_slugs}" >>"$LOGFILE"
+
 	local repo_count
 	repo_count=$(echo "$repo_entries" | wc -l | tr -d ' ')
 	echo "[pulse-wrapper] Pre-fetched state for $repo_count repos → $STATE_FILE" >>"$LOGFILE"
