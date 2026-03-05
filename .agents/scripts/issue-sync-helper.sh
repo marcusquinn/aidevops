@@ -40,6 +40,7 @@ DRY_RUN="${DRY_RUN:-false}"
 FORCE_CLOSE="${FORCE_CLOSE:-false}"
 FORCE_PUSH="${FORCE_PUSH:-false}"
 REPO_SLUG=""
+DIR_OVERRIDE=""
 
 log_verbose() {
 	[[ "$VERBOSE" == "true" ]] && print_info "$1"
@@ -73,9 +74,11 @@ verify_gh_cli() {
 	return 0
 }
 
-# Common preamble for commands that need project_root, repo, todo_file, gh auth
+# Common preamble for commands that need project_root, repo, todo_file, gh auth.
+# Uses DIR_OVERRIDE (from --dir flag) to start the project root search from a
+# specific path instead of $PWD, preventing cross-repo TODO.md contamination.
 _init_cmd() {
-	_CMD_ROOT=$(find_project_root) || return 1
+	_CMD_ROOT=$(find_project_root "${DIR_OVERRIDE:-}") || return 1
 	_CMD_REPO="${REPO_SLUG:-$(detect_repo_slug "$_CMD_ROOT")}"
 	_CMD_TODO="$_CMD_ROOT/TODO.md"
 	verify_gh_cli || return 1
@@ -671,8 +674,13 @@ cmd_help() {
 Issue Sync Helper — stateless TODO.md <-> GitHub Issues sync via gh CLI.
 Usage: issue-sync-helper.sh [command] [options]
 Commands: push [tNNN] | enrich [tNNN] | pull | close [tNNN] | reconcile | status | help
-Options: --repo SLUG | --dry-run | --verbose | --force (skip evidence on close)
+Options: --repo SLUG | --dir PATH | --dry-run | --verbose | --force (skip evidence on close)
          --force-push (allow bulk push outside CI — use with caution, risk of duplicates)
+
+  --dir PATH   Override the project root search starting directory. Without this
+               flag, find_project_root() walks up from $PWD. Use --dir to point
+               at the correct repo when calling from a different working directory
+               (e.g., cross-repo pulse sync). Prevents TODO.md contamination.
 
 Note: Bulk push (no task ID) is CI-only by default to prevent duplicate issues.
       Use 'push <task_id>' for single tasks, or --force-push to override.
@@ -685,6 +693,10 @@ main() {
 		case "$1" in
 		--repo)
 			REPO_SLUG="$2"
+			shift 2
+			;;
+		--dir)
+			DIR_OVERRIDE="$2"
 			shift 2
 			;;
 		--dry-run)

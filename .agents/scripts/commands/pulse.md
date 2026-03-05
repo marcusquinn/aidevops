@@ -243,9 +243,10 @@ refs back to TODO.md) and `close` (close issues for completed tasks).
 
 ```bash
 # Pull: sync issue refs from GitHub to TODO.md (safe, idempotent)
-/bin/bash ~/.aidevops/agents/scripts/issue-sync-helper.sh pull --repo "$slug" 2>&1 || true
+# --dir "$path" ensures the correct repo's TODO.md is used regardless of $PWD (t1504)
+/bin/bash ~/.aidevops/agents/scripts/issue-sync-helper.sh pull --repo "$slug" --dir "$path" 2>&1 || true
 # Close: close issues for completed tasks (safe, idempotent)
-/bin/bash ~/.aidevops/agents/scripts/issue-sync-helper.sh close --repo "$slug" 2>&1 || true
+/bin/bash ~/.aidevops/agents/scripts/issue-sync-helper.sh close --repo "$slug" --dir "$path" 2>&1 || true
 # Commit any ref changes
 git -C "$path" diff --quiet TODO.md 2>/dev/null || {
   git -C "$path" add TODO.md && git -C "$path" commit -m "chore: sync GitHub issue refs to TODO.md [skip ci]" && git -C "$path" push

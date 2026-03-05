@@ -57,9 +57,15 @@ _escape_ere() {
 	printf '%s' "$input" | sed -E 's/[][(){}.^$*+?|\\]/\\&/g'
 }
 
-# Find project root (contains TODO.md)
+# Find project root (contains TODO.md).
+# Arguments:
+#   $1 - (optional) starting directory override; defaults to $PWD.
+#         When set, walks up from this path instead of $PWD, preventing
+#         cross-repo TODO.md contamination (see issue #2919 / t1504).
 find_project_root() {
-	local dir="$PWD"
+	local dir="${1:-$PWD}"
+	# Resolve to absolute path if relative
+	[[ "$dir" != /* ]] && dir="$(cd "$dir" && pwd)"
 	while [[ "$dir" != "/" ]]; do
 		if [[ -f "$dir/TODO.md" ]]; then
 			echo "$dir"
@@ -68,7 +74,7 @@ find_project_root() {
 		dir="${dir%/*}"
 		[[ -z "$dir" ]] && dir="/"
 	done
-	print_error "No TODO.md found in directory tree"
+	print_error "No TODO.md found in directory tree from ${1:-\$PWD}"
 	return 1
 }
 
