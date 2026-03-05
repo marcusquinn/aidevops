@@ -882,7 +882,7 @@ cmd_pr_lifecycle() {
 				store_success_pattern "$task_id" "deployed" "" 2>>"$SUPERVISOR_LOG" || true
 				write_proof_log --task "$task_id" --event "auto_recover" --stage "deploying" \
 					--decision "deploying->deployed" --evidence "stuck_state_recovery,retries:$retry_count" \
-					--maker "pr_lifecycle:t222:t248:t263" 2>/dev/null || true
+					--maker "pr_lifecycle:t222:t248:t263" || true
 
 				# t263: Reset recovery counter on success
 				db "$SUPERVISOR_DB" "UPDATE tasks SET deploying_recovery_attempts = 0 WHERE id = '$escaped_id';" 2>>"$SUPERVISOR_LOG" || true
@@ -2629,7 +2629,7 @@ verify_task_deliverables() {
 		write_proof_log --task "$task_id" --event "deliverable_verified" --stage "complete" \
 			--decision "verified:no_pr:verified_complete" \
 			--evidence "pr_url=verified_complete,signal=FULL_LOOP_COMPLETE" \
-			--maker "verify_task_deliverables" 2>/dev/null || true
+			--maker "verify_task_deliverables" || true
 		return 0
 	fi
 
@@ -2700,7 +2700,7 @@ verify_task_deliverables() {
 					--decision "verified:PR#$pr_number:planning-task" \
 					--evidence "pr_state=$pr_state,planning_only=true,pr_number=$pr_number" \
 					--maker "verify_task_deliverables" \
-					--pr-url "$pr_url" 2>/dev/null || true
+					--pr-url "$pr_url" || true
 				return 0
 			fi
 		fi
@@ -2715,7 +2715,7 @@ verify_task_deliverables() {
 		--decision "verified:PR#$pr_number" \
 		--evidence "pr_state=$pr_state,file_count=$file_count,pr_number=$pr_number" \
 		--maker "verify_task_deliverables" \
-		--pr-url "$pr_url" 2>/dev/null || true
+		--pr-url "$pr_url" || true
 	log_info "Verified $task_id: PR #$pr_number merged with $file_count substantive file(s)"
 	return 0
 }
@@ -2872,7 +2872,7 @@ run_verify_checks() {
 			--decision "verified" \
 			--evidence "checks=${#checks[@]},all_passed=true,verify_id=$verify_id" \
 			--maker "run_verify_checks" \
-			${_verify_duration:+--duration "$_verify_duration"} 2>/dev/null || true
+			${_verify_duration:+--duration "$_verify_duration"} || true
 		log_success "All verification checks passed for $task_id ($verify_id)"
 		return 0
 	else
@@ -2887,7 +2887,7 @@ run_verify_checks() {
 			--decision "verify_failed" \
 			--evidence "checks=${#checks[@]},failures=${#failures[@]},reason=${failure_reason:0:200}" \
 			--maker "run_verify_checks" \
-			${_verify_duration:+--duration "$_verify_duration"} 2>/dev/null || true
+			${_verify_duration:+--duration "$_verify_duration"} || true
 		log_error "Verification failed for $task_id ($verify_id): $failure_reason"
 		return 1
 	fi
