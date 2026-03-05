@@ -823,9 +823,7 @@ prefetch_active_workers() {
 		echo ""
 		echo "$worker_lines" | while IFS= read -r line; do
 			local pid etime cmd
-			pid=$(echo "$line" | awk '{print $1}')
-			etime=$(echo "$line" | awk '{print $2}')
-			cmd=$(echo "$line" | cut -d' ' -f3-)
+			read -r pid etime cmd <<<"$line"
 
 			# Compute elapsed seconds for struggle ratio
 			local elapsed_seconds
@@ -886,9 +884,9 @@ guard_child_processes() {
 	while IFS= read -r line; do
 		[[ -z "$line" ]] && continue
 
-		# Fields from ps -eo pid,ppid,rss,etime,comm (ppid unused here)
-		local pid ppid_unused rss etime comm
-		read -r pid ppid_unused rss etime comm <<<"$line"
+		# Fields from ps -eo pid,ppid,rss,etime,comm (ppid captured but unused)
+		local pid _ppid rss etime comm
+		read -r pid _ppid rss etime comm <<<"$line"
 
 		# Validate numeric fields
 		[[ "$pid" =~ ^[0-9]+$ ]] || continue
@@ -1288,13 +1286,11 @@ _update_health_issue_for_repo() {
 		local worker_table=""
 		while IFS= read -r line; do
 			local w_pid w_tty w_etime w_cmd
-			w_pid=$(echo "$line" | awk '{print $1}')
-			w_tty=$(echo "$line" | awk '{print $2}')
-			w_etime=$(echo "$line" | awk '{print $3}')
-			w_cmd=$(echo "$line" | cut -d' ' -f4-)
+			read -r w_pid w_tty w_etime w_cmd <<<"$line"
 
-			# Only count headless workers (no TTY)
-			[[ "$w_tty" != "??" ]] && continue
+			# Only count headless workers (no TTY).
+			# Exclude both '?' (Linux headless) and '??' (macOS headless).
+			[[ "$w_tty" != "?" && "$w_tty" != "??" ]] && continue
 
 			# Extract title if present (--title "...")
 			local w_title="headless"
@@ -2272,14 +2268,12 @@ cleanup_orphans() {
 
 	while IFS= read -r line; do
 		local pid tty etime rss cmd
-		pid=$(echo "$line" | awk '{print $1}')
-		tty=$(echo "$line" | awk '{print $2}')
-		etime=$(echo "$line" | awk '{print $3}')
-		rss=$(echo "$line" | awk '{print $4}')
-		cmd=$(echo "$line" | cut -d' ' -f5-)
+		read -r pid tty etime rss cmd <<<"$line"
 
-		# Skip interactive sessions (has a real TTY)
-		if [[ "$tty" != "??" ]]; then
+		# Skip interactive sessions (has a real TTY).
+		# Exclude both '?' (Linux headless) and '??' (macOS headless) — only
+		# those are headless; anything else (pts/N, ttys00N) is interactive.
+		if [[ "$tty" != "?" && "$tty" != "??" ]]; then
 			continue
 		fi
 
@@ -2306,13 +2300,9 @@ cleanup_orphans() {
 	# Also kill orphaned node launchers (parent of .opencode processes)
 	while IFS= read -r line; do
 		local pid tty etime rss cmd
-		pid=$(echo "$line" | awk '{print $1}')
-		tty=$(echo "$line" | awk '{print $2}')
-		etime=$(echo "$line" | awk '{print $3}')
-		rss=$(echo "$line" | awk '{print $4}')
-		cmd=$(echo "$line" | cut -d' ' -f5-)
+		read -r pid tty etime rss cmd <<<"$line"
 
-		[[ "$tty" != "??" ]] && continue
+		[[ "$tty" != "?" && "$tty" != "??" ]] && continue
 		echo "$cmd" | grep -qE '/full-loop|Supervisor Pulse|Strategic Review|language-server|eslintServer' && continue
 
 		local age_seconds
