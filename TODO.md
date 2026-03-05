@@ -2069,4 +2069,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
   - [ ] t1398.2 Harden ShellCheck invocation — remove --external-sources or restrict --source-path, add per-file timeout, prevent recursive expansion. #bugfix ~1h model:sonnet
   - [ ] t1398.3 Add pulse self-watchdog — process-level idle timeout so pulse self-terminates rather than relying solely on external stale detection. #bugfix ~1h model:sonnet
   - [ ] t1398.4 Add session count awareness — warn when >N concurrent interactive sessions detected (configurable, default 5). Add to pre-edit or startup flow. #enhancement ~1h model:sonnet
-  - [ ] t1398.5 Rewrite memory pressure monitor — monitor process count, individual RSS, process runtime instead of kern.memorystatus_level. Incorporate valid concepts from PR #2792 with correct thresholds. #feature ~1.5h model:sonnet
+  - [x] t1398.5 Rewrite memory pressure monitor — monitor process count, individual RSS, process runtime instead of kern.memorystatus_level. Incorporate valid concepts from PR #2792 with correct thresholds. #feature ~1.5h model:sonnet pr:#2884 completed:2026-03-05
