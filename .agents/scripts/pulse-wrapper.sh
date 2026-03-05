@@ -1990,9 +1990,12 @@ _quality_sweep_for_repo() {
 					local result
 					# t1398.2: hardened invocation — no -x, --norc, per-file timeout,
 					# ulimit -v in subshell to cap RSS per shellcheck process.
+					# t1402: stderr merged into stdout (2>&1) so diagnostic messages
+					# (parse errors, timeouts, permission failures) are captured in
+					# $result and appear in the sweep summary.
 					result=$(
 						ulimit -v 1048576 2>/dev/null || true
-						$sc_timeout_cmd shellcheck --norc -f gcc "$shfile" 2>/dev/null || true
+						$sc_timeout_cmd shellcheck --norc -f gcc "$shfile" 2>&1 || true
 					)
 					if [[ -n "$result" ]]; then
 						local file_errors
