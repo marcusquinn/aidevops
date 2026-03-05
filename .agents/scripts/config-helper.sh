@@ -233,10 +233,12 @@ _jsonc_get() {
 	merged=$(_get_merged_config)
 
 	# Use jq --arg to safely pass dotpath (no shell interpolation into filter)
+	# NOTE: Do NOT use jq's // (alternative operator) here — it treats false and
+	# null identically, discarding false values. Instead, use 'if . == null'.
 	local value
-	value=$(echo "$merged" | jq -r --arg p "$dotpath" 'getpath($p | split(".")) // empty' 2>/dev/null) || value=""
+	value=$(echo "$merged" | jq -r --arg p "$dotpath" 'getpath($p | split(".")) | if . == null then empty else tostring end' 2>/dev/null) || value=""
 
-	if [[ -n "$value" && "$value" != "null" ]]; then
+	if [[ -n "$value" ]]; then
 		echo "$value"
 	else
 		echo "$default"
@@ -261,7 +263,7 @@ _jsonc_get_raw() {
 		echo ""
 		return 0
 	}
-	echo "$json" | jq -r --arg p "$dotpath" 'getpath($p | split(".")) // empty' 2>/dev/null || echo ""
+	echo "$json" | jq -r --arg p "$dotpath" 'getpath($p | split(".")) | if . == null then empty else tostring end' 2>/dev/null || echo ""
 	return 0
 }
 
@@ -486,7 +488,7 @@ cmd_list() {
 
 		local user_val env_val effective source
 
-		user_val=$(echo "$user_json" | jq -r --arg p "$dotpath" 'getpath($p | split(".")) // empty' 2>/dev/null) || user_val=""
+		user_val=$(echo "$user_json" | jq -r --arg p "$dotpath" 'getpath($p | split(".")) | if . == null then empty else tostring end' 2>/dev/null) || user_val=""
 
 		# Check env override
 		env_val=""
@@ -583,17 +585,22 @@ cmd_set() {
 	local defaults_json
 	defaults_json=$(_strip_jsonc "$JSONC_DEFAULTS") || return 1
 	local default_val
-	default_val=$(echo "$defaults_json" | jq -r --arg p "$dotpath" 'getpath($p | split(".")) // empty' 2>/dev/null) || default_val=""
+	# Use jq type check instead of // empty — false and 0 are valid defaults
+	local default_type
+	default_type=$(echo "$defaults_json" | jq -r --arg p "$dotpath" 'getpath($p | split(".")) | type' 2>/dev/null) || default_type="null"
+	default_val=$(echo "$defaults_json" | jq -r --arg p "$dotpath" 'getpath($p | split(".")) | if . == null then empty else tostring end' 2>/dev/null) || default_val=""
 
-	if [[ -z "$default_val" ]]; then
+	if [[ "$default_type" == "null" ]]; then
 		echo "[ERROR] Unknown config key: $dotpath" >&2
 		echo "  Run 'aidevops config list' to see available options." >&2
 		return 1
 	fi
 
 	# Validate value type from default and reject invalid input early
-	case "$default_val" in
-	true | false)
+	# Use jq type (boolean/number/string) rather than pattern-matching the
+	# stringified default — avoids false negatives when default is "false" or "0"
+	case "$default_type" in
+	boolean)
 		local lower_value
 		lower_value=$(echo "$value" | tr '[:upper:]' '[:lower:]')
 		if [[ "$lower_value" != "true" && "$lower_value" != "false" ]]; then
@@ -601,7 +608,7 @@ cmd_set() {
 			return 1
 		fi
 		;;
-	[0-9]*)
+	number)
 		if ! [[ "$value" =~ ^[0-9]+$ ]]; then
 			echo "[ERROR] Config '$dotpath' expects a number, got: $value" >&2
 			return 1
@@ -635,9 +642,10 @@ HEADER
 	}
 
 	# Use jq --arg for safe dotpath and value passing (no shell interpolation into filter)
+	# Use default_type (jq type) for dispatch — avoids false/0 misclassification
 	local updated
-	case "$default_val" in
-	true | false)
+	case "$default_type" in
+	boolean)
 		local lower_value
 		lower_value=$(echo "$value" | tr '[:upper:]' '[:lower:]')
 		updated=$(echo "$user_json" | jq --arg p "$dotpath" --argjson v "$lower_value" \
@@ -646,7 +654,7 @@ HEADER
 			return 1
 		}
 		;;
-	[0-9]*)
+	number)
 		updated=$(echo "$user_json" | jq --arg p "$dotpath" --argjson v "$value" \
 			'setpath($p | split("."); $v)' 2>/dev/null) || {
 			echo "[ERROR] Failed to update config" >&2
