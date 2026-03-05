@@ -1912,12 +1912,19 @@ ${type_breakdown}
 		fi
 	fi
 
-	# --- 5. CodeRabbit trigger (conditional — t1390) ---
+	# --- 5. CodeRabbit trigger (conditional — t1390, fixed t2851) ---
 	# Only trigger @coderabbitai active review when quality degrades:
-	#   - Quality gate status changes to FAIL/ERROR
+	#   - Quality Gate fails (ERROR/WARN)
 	#   - Issue count increases by CODERABBIT_ISSUE_SPIKE+ since last sweep
-	#   - New high/critical severity findings appear
 	# Otherwise post a passive monitoring line to avoid repetitive requests.
+	#
+	# Root cause of prior failures (PRs #2806, #2832):
+	#   1. No first-run guard: when no state file exists, prev_issues=0 and
+	#      the delta from 0 to current count always exceeds the spike threshold.
+	#   2. Condition 3 (high_critical_delta > 0) was too sensitive — any +1
+	#      fluctuation in MAJOR-severity issues triggered a full review.
+	#   Both are fixed below: first run saves baseline without triggering,
+	#   and condition 3 is removed per the issue spec.
 	local coderabbit_section=""
 	local prev_state
 	prev_state=$(_load_sweep_state "$repo_slug")
@@ -1928,49 +1935,43 @@ ${type_breakdown}
 	[[ "$prev_issues" =~ ^[0-9]+$ ]] || prev_issues=0
 	[[ "$prev_high_critical" =~ ^[0-9]+$ ]] || prev_high_critical=0
 
-	local issue_delta=$((sweep_total_issues - prev_issues))
-	local high_critical_delta=$((sweep_high_critical - prev_high_critical))
-	local trigger_active=false
-	local trigger_reasons=""
-	local is_baseline_run=false
-
-	# First-run baseline detection (t1392): When prev_gate is UNKNOWN, this is
-	# the first sweep (no state file exists). Deltas are computed against zero,
-	# which makes any non-zero current value look like a spike. Skip delta-based
-	# triggers on the first run — just save the baseline and post passive status.
+	# First-run guard: if no previous state exists (prev_gate is UNKNOWN from
+	# _load_sweep_state default), save the current metrics as baseline and skip
+	# the trigger. Without this, the delta from 0 to current issue count always
+	# exceeds the spike threshold, causing every first run (or run after state
+	# loss) to trigger a full review.
 	if [[ "$prev_gate" == "UNKNOWN" ]]; then
-		is_baseline_run=true
-		echo "[pulse-wrapper] CodeRabbit: first run for ${repo_slug} — establishing baseline (gate=${sweep_gate_status}, issues=${sweep_total_issues}, high_critical=${sweep_high_critical})" >>"$LOGFILE"
-	fi
-
-	# Condition 1: Quality gate is failing (always checked, even on baseline)
-	if [[ "$sweep_gate_status" == "ERROR" || "$sweep_gate_status" == "WARN" ]]; then
-		trigger_active=true
-		trigger_reasons="quality gate ${sweep_gate_status}"
-	fi
-
-	# Condition 2: Issue count spiked by threshold or more (skip on baseline)
-	if [[ "$is_baseline_run" == false && "$issue_delta" -ge "$CODERABBIT_ISSUE_SPIKE" ]]; then
-		trigger_active=true
-		if [[ -n "$trigger_reasons" ]]; then
-			trigger_reasons="${trigger_reasons}, issue spike +${issue_delta}"
-		else
-			trigger_reasons="issue spike +${issue_delta}"
-		fi
-	fi
-
-	# Condition 3: New high/critical severity findings (skip on baseline)
-	if [[ "$is_baseline_run" == false && "$high_critical_delta" -gt 0 ]]; then
-		trigger_active=true
-		if [[ -n "$trigger_reasons" ]]; then
-			trigger_reasons="${trigger_reasons}, +${high_critical_delta} high/critical"
-		else
-			trigger_reasons="+${high_critical_delta} high/critical findings"
-		fi
-	fi
-
-	if [[ "$trigger_active" == true ]]; then
+		_save_sweep_state "$repo_slug" "$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical"
 		coderabbit_section="### CodeRabbit
+
+_First sweep run — baseline saved (${sweep_total_issues} issues, gate ${sweep_gate_status}). Review trigger will activate on next sweep if quality degrades._
+"
+		tool_count=$((tool_count + 1))
+		echo "[pulse-wrapper] CodeRabbit: first run for ${repo_slug} — saved baseline, skipping trigger" >>"$LOGFILE"
+		# Skip the rest of section 5 — jump to section 6
+	else
+		local issue_delta=$((sweep_total_issues - prev_issues))
+		local trigger_active=false
+		local trigger_reasons=""
+
+		# Condition 1: Quality Gate is failing
+		if [[ "$sweep_gate_status" == "ERROR" || "$sweep_gate_status" == "WARN" ]]; then
+			trigger_active=true
+			trigger_reasons="quality gate ${sweep_gate_status}"
+		fi
+
+		# Condition 2: Issue count spiked by threshold or more
+		if [[ "$issue_delta" -ge "$CODERABBIT_ISSUE_SPIKE" ]]; then
+			trigger_active=true
+			if [[ -n "$trigger_reasons" ]]; then
+				trigger_reasons="${trigger_reasons}, issue spike +${issue_delta}"
+			else
+				trigger_reasons="issue spike +${issue_delta}"
+			fi
+		fi
+
+		if [[ "$trigger_active" == true ]]; then
+			coderabbit_section="### CodeRabbit
 
 **Trigger**: ${trigger_reasons}
 
@@ -1980,21 +1981,18 @@ ${type_breakdown}
 - Code duplication and maintainability
 - Documentation accuracy
 "
-		echo "[pulse-wrapper] CodeRabbit: active review triggered for ${repo_slug} (${trigger_reasons})" >>"$LOGFILE"
-	else
-		local baseline_note=""
-		if [[ "$is_baseline_run" == true ]]; then
-			baseline_note=" (baseline established — deltas will be computed from next sweep)"
-		fi
-		coderabbit_section="### CodeRabbit
+			echo "[pulse-wrapper] CodeRabbit: active review triggered for ${repo_slug} (${trigger_reasons})" >>"$LOGFILE"
+		else
+			coderabbit_section="### CodeRabbit
 
-_Monitoring: ${sweep_total_issues} issues (delta: ${issue_delta}), gate ${sweep_gate_status}, ${sweep_high_critical} high/critical — no active review needed.${baseline_note}_
+_Monitoring: ${sweep_total_issues} issues (delta: ${issue_delta}), gate ${sweep_gate_status} — no active review needed._
 "
-	fi
-	tool_count=$((tool_count + 1))
+		fi
+		tool_count=$((tool_count + 1))
 
-	# Save current state for next sweep's delta comparison
-	_save_sweep_state "$repo_slug" "$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical"
+		# Save current state for next sweep's delta comparison
+		_save_sweep_state "$repo_slug" "$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical"
+	fi
 
 	# --- 6. Merged PR review scanner ---
 	# Scans recently merged PRs for unactioned review feedback from bots
