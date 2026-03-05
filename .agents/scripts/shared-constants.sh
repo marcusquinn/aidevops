@@ -1327,6 +1327,7 @@ _ft_env_map() {
 	repo_sync) echo "AIDEVOPS_REPO_SYNC" ;;
 	openclaw_auto_update) echo "AIDEVOPS_OPENCLAW_AUTO_UPDATE" ;;
 	openclaw_freshness_hours) echo "AIDEVOPS_OPENCLAW_FRESHNESS_HOURS" ;;
+	max_interactive_sessions) echo "AIDEVOPS_MAX_SESSIONS" ;;
 	*) echo "" ;;
 	esac
 	return 0

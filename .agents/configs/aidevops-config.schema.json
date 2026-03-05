@@ -123,6 +123,12 @@
           "default": "haiku",
           "enum": ["haiku", "flash", "sonnet", "pro", "opus"],
           "description": "Model tier used for verification checks."
+        },
+        "max_interactive_sessions": {
+          "type": "integer",
+          "default": 5,
+          "minimum": 0,
+          "description": "Maximum concurrent interactive AI sessions before warning. 0 disables. Env: AIDEVOPS_MAX_SESSIONS"
         }
       },
       "additionalProperties": false

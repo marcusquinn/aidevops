@@ -247,6 +247,15 @@ main() {
 		echo "$nudge_output"
 	fi
 
+	# Check for excessive concurrent interactive sessions (t1398.4)
+	local session_warning=""
+	if [[ -x "${script_dir}/session-count-helper.sh" ]]; then
+		session_warning="$("${script_dir}/session-count-helper.sh" check 2>/dev/null || true)"
+	fi
+	if [[ -n "$session_warning" ]]; then
+		echo "$session_warning"
+	fi
+
 	# Cache output for agents without Bash (e.g., Plan+)
 	local cache_dir="$HOME/.aidevops/cache"
 	mkdir -p "$cache_dir"
@@ -254,6 +263,7 @@ main() {
 		echo "$output"
 		[[ -n "$runtime_hint" ]] && echo "$runtime_hint"
 		[[ -n "$nudge_output" ]] && echo "$nudge_output"
+		[[ -n "$session_warning" ]] && echo "$session_warning"
 	} >"$cache_dir/session-greeting.txt"
 
 	return 0

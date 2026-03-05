@@ -107,7 +107,13 @@
     "verification_enabled": true,
 
     // Model tier used for verification checks (cheapest sufficient tier).
-    "verification_tier": "haiku"
+    "verification_tier": "haiku",
+
+    // Maximum number of concurrent interactive AI sessions before warning.
+    // Counts processes matching known AI coding assistants (opencode, claude, etc.).
+    // Set to 0 to disable the session count check.
+    // Env override: AIDEVOPS_MAX_SESSIONS
+    "max_interactive_sessions": 5
   },
 
   // ---------------------------------------------------------------------------
