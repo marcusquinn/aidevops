@@ -381,10 +381,10 @@ run_shellcheck() {
 	done
 
 	if [[ -n "$result" ]]; then
-		# Count unique files with violations
-		violations=$(echo "$result" | grep -v '^$' | cut -d: -f1 | sort -u | wc -l | tr -d ' ')
+		# Count unique files with violations (grep -c avoids SC2126)
+		violations=$(echo "$result" | grep -v '^$' | cut -d: -f1 | sort -u | grep -c . || true)
 		local issue_count
-		issue_count=$(echo "$result" | grep -v '^$' | wc -l | tr -d ' ')
+		issue_count=$(echo "$result" | grep -vc '^$' || true)
 
 		print_error "ShellCheck: $violations files with $issue_count issues"
 		# Show first few issues
