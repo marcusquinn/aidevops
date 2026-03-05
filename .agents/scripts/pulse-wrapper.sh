@@ -2230,23 +2230,26 @@ _First sweep run — baseline saved (${sweep_total_issues} issues, gate ${sweep_
 		# Skip the rest of section 5 — jump to section 6
 	else
 		local issue_delta=$((sweep_total_issues - prev_issues))
-		local trigger_active=false
-		local trigger_reasons=""
+		local reasons=()
 
 		# Condition 1: Quality Gate is failing
 		if [[ "$sweep_gate_status" == "ERROR" || "$sweep_gate_status" == "WARN" ]]; then
-			trigger_active=true
-			trigger_reasons="quality gate ${sweep_gate_status}"
+			reasons+=("quality gate ${sweep_gate_status}")
 		fi
 
 		# Condition 2: Issue count spiked by threshold or more
 		if [[ "$issue_delta" -ge "$CODERABBIT_ISSUE_SPIKE" ]]; then
+			reasons+=("issue spike +${issue_delta}")
+		fi
+
+		local trigger_active=false
+		local trigger_reasons=""
+		if [[ ${#reasons[@]} -gt 0 ]]; then
 			trigger_active=true
-			if [[ -n "$trigger_reasons" ]]; then
-				trigger_reasons="${trigger_reasons}, issue spike +${issue_delta}"
-			else
-				trigger_reasons="issue spike +${issue_delta}"
-			fi
+			trigger_reasons=$(
+				IFS=', '
+				echo -n "${reasons[*]}"
+			)
 		fi
 
 		if [[ "$trigger_active" == true ]]; then
