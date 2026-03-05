@@ -9,13 +9,20 @@
 #   2. Cleans up orphaned opencode processes before each pulse
 #   3. Calculates dynamic worker concurrency from available RAM
 #   4. Internal watchdog kills stuck pulses after PULSE_STALE_THRESHOLD (t1397)
+#   5. Self-watchdog: idle detection kills pulse when CPU drops to zero (t1398.3)
 #
 # Lifecycle: launchd fires every 120s. If a pulse is still running, the
 # dedup check skips. run_pulse() has an internal watchdog that polls every
-# 60s and kills the opencode process if it exceeds PULSE_STALE_THRESHOLD
-# (default 30 min). This ensures the wrapper always exits, allowing launchd
-# to fire the next invocation. check_dedup() serves as a secondary safety
-# net for edge cases where the wrapper itself gets stuck.
+# 60s and checks two conditions:
+#   a) Wall-clock timeout: kills if elapsed > PULSE_STALE_THRESHOLD (30 min)
+#   b) Idle detection: kills if CPU usage stays below PULSE_IDLE_CPU_THRESHOLD
+#      for PULSE_IDLE_TIMEOUT consecutive seconds (default 5 min). This catches
+#      the opencode idle-state bug where the process completes but sits in a
+#      file watcher consuming no CPU. Without this, zombies persist until the
+#      next launchd invocation detects staleness — which fails if launchd
+#      stops firing (sleep, plist unloaded).
+# check_dedup() serves as a tertiary safety net for edge cases where the
+# wrapper itself gets stuck.
 #
 # Called by launchd every 120s via the supervisor-pulse plist.
 
@@ -35,6 +42,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 # Configuration
 #######################################
 PULSE_STALE_THRESHOLD="${PULSE_STALE_THRESHOLD:-1800}"    # 30 min = definitely stuck (opencode idle bug)
+PULSE_IDLE_TIMEOUT="${PULSE_IDLE_TIMEOUT:-300}"           # 5 min idle = process completed, sitting in file watcher (t1398.3)
+PULSE_IDLE_CPU_THRESHOLD="${PULSE_IDLE_CPU_THRESHOLD:-5}" # CPU% below this = idle (0-100 scale)
 ORPHAN_MAX_AGE="${ORPHAN_MAX_AGE:-7200}"                  # 2 hours — kill orphans older than this
 RAM_PER_WORKER_MB="${RAM_PER_WORKER_MB:-1024}"            # 1 GB per worker
 RAM_RESERVE_MB="${RAM_RESERVE_MB:-8192}"                  # 8 GB reserved for OS + user apps
@@ -72,6 +81,8 @@ _validate_int() {
 	return 0
 }
 PULSE_STALE_THRESHOLD=$(_validate_int PULSE_STALE_THRESHOLD "$PULSE_STALE_THRESHOLD" 1800)
+PULSE_IDLE_TIMEOUT=$(_validate_int PULSE_IDLE_TIMEOUT "$PULSE_IDLE_TIMEOUT" 300 60)
+PULSE_IDLE_CPU_THRESHOLD=$(_validate_int PULSE_IDLE_CPU_THRESHOLD "$PULSE_IDLE_CPU_THRESHOLD" 5)
 ORPHAN_MAX_AGE=$(_validate_int ORPHAN_MAX_AGE "$ORPHAN_MAX_AGE" 7200)
 RAM_PER_WORKER_MB=$(_validate_int RAM_PER_WORKER_MB "$RAM_PER_WORKER_MB" 1024 1)
 RAM_RESERVE_MB=$(_validate_int RAM_RESERVE_MB "$RAM_RESERVE_MB" 8192)
@@ -242,6 +253,45 @@ _get_process_age() {
 	seconds=$((10#${seconds}))
 
 	echo $((days * 86400 + hours * 3600 + minutes * 60 + seconds))
+	return 0
+}
+
+#######################################
+# Get CPU usage percentage for a process tree (t1398.3)
+#
+# Sums %CPU for the given PID and all its descendants. This captures
+# the full opencode process tree (node, language servers, child
+# processes). A tree sum near zero means the entire process is idle.
+#
+# Arguments:
+#   $1 - PID
+# Returns: integer CPU percentage via stdout (0-N, summed across cores)
+#######################################
+_get_process_tree_cpu() {
+	local pid="$1"
+	local total_cpu=0
+
+	# Get CPU for the process itself
+	local cpu_str
+	cpu_str=$(ps -p "$pid" -o %cpu= 2>/dev/null | tr -d ' ') || cpu_str="0"
+
+	# ps returns float like "12.3" — extract integer part
+	local cpu_int="${cpu_str%%.*}"
+	[[ "$cpu_int" =~ ^[0-9]+$ ]] || cpu_int=0
+	total_cpu=$((total_cpu + cpu_int))
+
+	# Sum CPU for all descendants
+	local child
+	while IFS= read -r child; do
+		[[ -z "$child" ]] && continue
+		local child_cpu
+		child_cpu=$(ps -p "$child" -o %cpu= 2>/dev/null | tr -d ' ') || child_cpu="0"
+		local child_int="${child_cpu%%.*}"
+		[[ "$child_int" =~ ^[0-9]+$ ]] || child_int=0
+		total_cpu=$((total_cpu + child_int))
+	done < <(pgrep -P "$pid" 2>/dev/null || true)
+
+	echo "$total_cpu"
 	return 0
 }
 
@@ -971,12 +1021,20 @@ check_session_count() {
 }
 
 #######################################
-# Run the pulse — with internal watchdog timeout (t1397)
+# Run the pulse — with internal watchdog timeout (t1397, t1398, t1398.3)
 #
 # The pulse runs until opencode exits naturally. A watchdog loop checks
-# every 60s whether the process has exceeded PULSE_STALE_THRESHOLD. If so,
-# it kills the process tree and returns, allowing the wrapper to continue
-# to the quality sweep and health issue phases.
+# every 60s for two termination conditions:
+#
+#   1. Wall-clock timeout (t1397): kills if elapsed > PULSE_STALE_THRESHOLD.
+#      This is the hard ceiling — no pulse should ever run longer than this.
+#
+#   2. Idle detection (t1398.3): tracks consecutive seconds where the
+#      process tree's CPU usage is below PULSE_IDLE_CPU_THRESHOLD. When
+#      idle time exceeds PULSE_IDLE_TIMEOUT, the process is killed. This
+#      catches the opencode idle-state bug much faster than the wall-clock
+#      timeout — typically within 5 minutes of the pulse completing, vs
+#      30 minutes for the stale threshold.
 #
 # The watchdog also runs guard_child_processes() every 60s to kill any
 # child process exceeding RSS or runtime limits (t1398).
@@ -1016,24 +1074,56 @@ ${state_content}
 
 	echo "[pulse-wrapper] opencode PID: $opencode_pid" >>"$LOGFILE"
 
-	# Watchdog loop: check every 60s if the process is still alive and within
-	# the stale threshold. Also runs process guard to kill runaway children (t1398).
-	# This replaces the bare `wait` that blocked the wrapper indefinitely when
-	# opencode hung.
+	# Idle detection state (t1398.3)
+	# Tracks how long the process tree has been continuously idle (CPU < threshold).
+	# Reset to 0 whenever CPU activity is detected. The poll interval (60s) is the
+	# granularity — idle_seconds increments by 60 each idle poll.
+	local idle_seconds=0
+
+	# Watchdog loop: check every 60s for stale threshold, idle timeout, or
+	# runaway children (t1397, t1398, t1398.3). This replaces the bare `wait`
+	# that blocked the wrapper indefinitely when opencode hung.
 	while ps -p "$opencode_pid" >/dev/null; do
 		local now
 		now=$(date +%s)
 		local elapsed=$((now - start_epoch))
+
+		# Check 1: Wall-clock stale threshold (hard ceiling)
 		if [[ "$elapsed" -gt "$PULSE_STALE_THRESHOLD" ]]; then
 			echo "[pulse-wrapper] Pulse exceeded stale threshold (${elapsed}s > ${PULSE_STALE_THRESHOLD}s) — killing" >>"$LOGFILE"
 			_kill_tree "$opencode_pid"
 			sleep 2
-			# Force kill if still alive
 			if ps -p "$opencode_pid" >/dev/null; then
 				_force_kill_tree "$opencode_pid"
 			fi
 			break
 		fi
+
+		# Check 2: Idle detection — CPU usage of the process tree (t1398.3)
+		# Skip idle checks during the first 2 minutes to allow startup/init.
+		if [[ "$elapsed" -ge 120 ]]; then
+			local tree_cpu
+			tree_cpu=$(_get_process_tree_cpu "$opencode_pid")
+			if [[ "$tree_cpu" -lt "$PULSE_IDLE_CPU_THRESHOLD" ]]; then
+				idle_seconds=$((idle_seconds + 60))
+				if [[ "$idle_seconds" -ge "$PULSE_IDLE_TIMEOUT" ]]; then
+					echo "[pulse-wrapper] Pulse idle for ${idle_seconds}s (CPU ${tree_cpu}% < ${PULSE_IDLE_CPU_THRESHOLD}%, threshold ${PULSE_IDLE_TIMEOUT}s) — killing (t1398.3)" >>"$LOGFILE"
+					_kill_tree "$opencode_pid"
+					sleep 2
+					if ps -p "$opencode_pid" >/dev/null; then
+						_force_kill_tree "$opencode_pid"
+					fi
+					break
+				fi
+			else
+				# Process is active — reset idle counter
+				if [[ "$idle_seconds" -gt 0 ]]; then
+					echo "[pulse-wrapper] Pulse active again (CPU ${tree_cpu}%) after ${idle_seconds}s idle — resetting idle counter" >>"$LOGFILE"
+				fi
+				idle_seconds=0
+			fi
+		fi
+
 		# Process guard: kill children exceeding RSS/runtime limits (t1398)
 		# Pass opencode_pid so the primary pulse process is exempt from
 		# CHILD_RUNTIME_LIMIT (it's governed by PULSE_STALE_THRESHOLD above).
