@@ -32,7 +32,7 @@ The pattern tracker already records historical success rates per model, but ther
 
 ### API calls
 
-Use `ai-research` MCP tool or direct provider API calls (via `curl` with keys from `$ANTHROPIC_API_KEY`/`$OPENAI_API_KEY` env vars sourced from `credentials.sh` or gopass). The `compare-models-helper.sh discover` command already detects available providers — reuse that for model availability.
+Use `ai-research` MCP tool or direct provider API calls (via `curl` with keys from `$ANTHROPIC_API_KEY`/`$OPENAI_API_KEY` env vars). Store API keys in a secure secrets store (`aidevops secret set <NAME>` via gopass) — never hardcode credentials in scripts or briefs. The `compare-models-helper.sh discover` command already detects available providers — reuse that for model availability.
 
 ### Key files to modify
 
