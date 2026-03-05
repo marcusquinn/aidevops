@@ -743,78 +743,132 @@ main() {
 		fi
 	fi
 
-	# Enable supervisor pulse scheduler
+	# Supervisor pulse scheduler — consent-gated autonomous orchestration.
 	# Uses pulse-wrapper.sh which handles dedup, orphan cleanup, and RAM-based concurrency.
 	# macOS: launchd plist invoking wrapper | Linux: cron entry invoking wrapper
 	# The plist is ALWAYS regenerated on setup.sh to pick up config changes (env vars,
-	# thresholds). Only the first-install prompt is gated on _pulse_installed.
-	# Respects config: aidevops config set orchestration.supervisor_pulse false
-	if is_feature_enabled supervisor_pulse 2>/dev/null; then
-		local wrapper_script="$HOME/.aidevops/agents/scripts/pulse-wrapper.sh"
-		local pulse_label="com.aidevops.aidevops-supervisor-pulse"
-		local _aidevops_dir
-		_aidevops_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	# thresholds). Only the first-install prompt is gated on consent state.
+	#
+	# Consent model (GH#2926):
+	#   - Default OFF: supervisor_pulse defaults to false in all config layers
+	#   - Explicit consent required: user must type "y" (prompt defaults to [y/N])
+	#   - Consent persisted: written to config.jsonc so it survives updates
+	#   - Never silently re-enabled: if config says false, skip entirely
+	#   - Non-interactive: only installs if config explicitly says true
+	local wrapper_script="$HOME/.aidevops/agents/scripts/pulse-wrapper.sh"
+	local pulse_label="com.aidevops.aidevops-supervisor-pulse"
+	local _aidevops_dir
+	_aidevops_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-		# Detect if pulse is already installed (any platform)
-		local _pulse_installed=false
-		if [[ "$(uname -s)" == "Darwin" ]]; then
-			local pulse_plist="$HOME/Library/LaunchAgents/${pulse_label}.plist"
-			if _launchd_has_agent "$pulse_label"; then
-				_pulse_installed=true
+	# Read explicit user consent from config.jsonc (not merged defaults).
+	# Empty = user never configured this; "true"/"false" = explicit choice.
+	local _pulse_user_config=""
+	if type _jsonc_get_raw &>/dev/null && [[ -f "${JSONC_USER:-$HOME/.config/aidevops/config.jsonc}" ]]; then
+		_pulse_user_config=$(_jsonc_get_raw "${JSONC_USER:-$HOME/.config/aidevops/config.jsonc}" "orchestration.supervisor_pulse")
+	fi
+
+	# Also check legacy .conf user override
+	if [[ -z "$_pulse_user_config" && -f "${FEATURE_TOGGLES_USER:-$HOME/.config/aidevops/feature-toggles.conf}" ]]; then
+		local _legacy_val
+		_legacy_val=$(grep -E '^supervisor_pulse=' "${FEATURE_TOGGLES_USER:-$HOME/.config/aidevops/feature-toggles.conf}" 2>/dev/null | tail -1 | cut -d= -f2)
+		if [[ -n "$_legacy_val" ]]; then
+			_pulse_user_config="$_legacy_val"
+		fi
+	fi
+
+	# Also check env var override (highest priority)
+	if [[ -n "${AIDEVOPS_SUPERVISOR_PULSE:-}" ]]; then
+		_pulse_user_config="$AIDEVOPS_SUPERVISOR_PULSE"
+	fi
+
+	# Determine action based on consent state
+	local _do_install=false
+	local _pulse_lower
+	_pulse_lower=$(echo "$_pulse_user_config" | tr '[:upper:]' '[:lower:]')
+
+	if [[ "$_pulse_lower" == "false" ]]; then
+		# User explicitly declined — never prompt, never install
+		_do_install=false
+	elif [[ "$_pulse_lower" == "true" ]]; then
+		# User explicitly consented — install/regenerate
+		_do_install=true
+	elif [[ -z "$_pulse_user_config" ]]; then
+		# No explicit config — fresh install or never configured
+		if [[ "$NON_INTERACTIVE" == "true" ]]; then
+			# Non-interactive: default OFF, do not install without consent
+			_do_install=false
+		elif [[ -f "$wrapper_script" ]]; then
+			# Interactive: prompt with default-no
+			echo ""
+			echo "The supervisor pulse enables autonomous orchestration."
+			echo "It will act under your GitHub identity and consume API credits:"
+			echo "  - Dispatches AI workers to implement tasks from GitHub issues"
+			echo "  - Creates PRs, merges passing PRs, files improvement issues"
+			echo "  - 4-hourly strategic review (opus-tier) for queue health"
+			echo "  - Circuit breaker pauses dispatch on consecutive failures"
+			echo ""
+			read -r -p "Enable supervisor pulse? [y/N]: " enable_pulse
+			if [[ "$enable_pulse" =~ ^[Yy]$ ]]; then
+				_do_install=true
+				# Record explicit consent
+				if type cmd_set &>/dev/null; then
+					cmd_set "orchestration.supervisor_pulse" "true" 2>/dev/null || true
+				fi
+			else
+				_do_install=false
+				# Record explicit decline so we never re-prompt on updates
+				if type cmd_set &>/dev/null; then
+					cmd_set "orchestration.supervisor_pulse" "false" 2>/dev/null || true
+				fi
+				print_info "Skipped. Enable later: aidevops config set orchestration.supervisor_pulse true && ./setup.sh"
 			fi
 		fi
-		if [[ "$_pulse_installed" == "false" ]] && crontab -l 2>/dev/null | grep -qF "pulse-wrapper" 2>/dev/null; then
+	fi
+
+	# Guard: wrapper must exist
+	if [[ "$_do_install" == "true" && ! -f "$wrapper_script" ]]; then
+		# Wrapper not deployed yet — skip (will install on next run after rsync)
+		_do_install=false
+	fi
+
+	# Detect if pulse is already installed (for upgrade messaging)
+	local _pulse_installed=false
+	if [[ "$(uname -s)" == "Darwin" ]]; then
+		local pulse_plist="$HOME/Library/LaunchAgents/${pulse_label}.plist"
+		if _launchd_has_agent "$pulse_label"; then
 			_pulse_installed=true
 		fi
+	fi
+	if [[ "$_pulse_installed" == "false" ]] && crontab -l 2>/dev/null | grep -qF "pulse-wrapper" 2>/dev/null; then
+		_pulse_installed=true
+	fi
 
-		# Detect opencode binary location
-		local opencode_bin
-		opencode_bin=$(command -v opencode 2>/dev/null || echo "/opt/homebrew/bin/opencode")
+	# Detect opencode binary location
+	local opencode_bin
+	opencode_bin=$(command -v opencode 2>/dev/null || echo "/opt/homebrew/bin/opencode")
 
-		# First install: prompt user. Upgrades: always regenerate silently.
-		local _do_install=true
-		if [[ "$_pulse_installed" == "false" && -f "$wrapper_script" ]]; then
-			if [[ "$NON_INTERACTIVE" != "true" ]]; then
-				echo ""
-				echo "The supervisor pulse enables autonomous orchestration:"
-				echo "  - Dispatches AI workers to implement tasks from GitHub issues"
-				echo "  - Merges passing PRs, observes outcomes, files improvement issues"
-				echo "  - 4-hourly strategic review (opus-tier) for queue health"
-				echo "  - Circuit breaker pauses dispatch on consecutive failures"
-				echo ""
-				read -r -p "Enable supervisor pulse? [Y/n]: " enable_pulse
-				if [[ ! "$enable_pulse" =~ ^[Yy]?$ && -n "$enable_pulse" ]]; then
-					_do_install=false
-					print_info "Skipped. Enable later: ./setup.sh (re-run)"
-				fi
+	if [[ "$_do_install" == "true" ]]; then
+		mkdir -p "$HOME/.aidevops/logs"
+
+		if [[ "$(uname -s)" == "Darwin" ]]; then
+			# macOS: use launchd plist with wrapper
+			local pulse_plist="$HOME/Library/LaunchAgents/${pulse_label}.plist"
+
+			# Unload old plist if upgrading
+			if _launchd_has_agent "$pulse_label"; then
+				launchctl unload "$pulse_plist" 2>/dev/null || true
+				pkill -f 'Supervisor Pulse' 2>/dev/null || true
 			fi
-		elif [[ "$_pulse_installed" == "false" ]]; then
-			# Wrapper not deployed yet — skip (will install on next run after rsync)
-			_do_install=false
-		fi
 
-		if [[ "$_do_install" == "true" && -f "$wrapper_script" ]]; then
-			mkdir -p "$HOME/.aidevops/logs"
+			# Also clean up old label if present
+			local old_plist="$HOME/Library/LaunchAgents/com.aidevops.supervisor-pulse.plist"
+			if [[ -f "$old_plist" ]]; then
+				launchctl unload "$old_plist" 2>/dev/null || true
+				rm -f "$old_plist"
+			fi
 
-			if [[ "$(uname -s)" == "Darwin" ]]; then
-				# macOS: use launchd plist with wrapper
-				local pulse_plist="$HOME/Library/LaunchAgents/${pulse_label}.plist"
-
-				# Unload old plist if upgrading
-				if _launchd_has_agent "$pulse_label"; then
-					launchctl unload "$pulse_plist" 2>/dev/null || true
-					pkill -f 'Supervisor Pulse' 2>/dev/null || true
-				fi
-
-				# Also clean up old label if present
-				local old_plist="$HOME/Library/LaunchAgents/com.aidevops.supervisor-pulse.plist"
-				if [[ -f "$old_plist" ]]; then
-					launchctl unload "$old_plist" 2>/dev/null || true
-					rm -f "$old_plist"
-				fi
-
-				# Write the plist (always regenerated to pick up config changes)
-				cat >"$pulse_plist" <<PLIST
+			# Write the plist (always regenerated to pick up config changes)
+			cat >"$pulse_plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -853,27 +907,42 @@ main() {
 </plist>
 PLIST
 
-				if launchctl load "$pulse_plist" 2>/dev/null; then
-					if [[ "$_pulse_installed" == "true" ]]; then
-						print_info "Supervisor pulse updated (launchd config regenerated)"
-					else
-						print_info "Supervisor pulse enabled (launchd, every 2 min)"
-					fi
+			if launchctl load "$pulse_plist" 2>/dev/null; then
+				if [[ "$_pulse_installed" == "true" ]]; then
+					print_info "Supervisor pulse updated (launchd config regenerated)"
 				else
-					print_warning "Failed to load supervisor pulse LaunchAgent"
+					print_info "Supervisor pulse enabled (launchd, every 2 min)"
 				fi
 			else
-				# Linux: use cron entry with wrapper
-				# Remove old-style cron entries (direct opencode invocation)
-				(
-					crontab -l 2>/dev/null | grep -v 'aidevops: supervisor-pulse'
-					echo "*/2 * * * * OPENCODE_BIN=${opencode_bin} PULSE_DIR=${_aidevops_dir} /bin/bash ${wrapper_script} >> $HOME/.aidevops/logs/pulse-wrapper.log 2>&1 # aidevops: supervisor-pulse"
-				) | crontab - 2>/dev/null || true
-				if crontab -l 2>/dev/null | grep -qF "aidevops: supervisor-pulse"; then
-					print_info "Supervisor pulse enabled (cron, every 2 min). Disable: crontab -e and remove the supervisor-pulse line"
-				else
-					print_warning "Failed to install supervisor pulse cron entry. See runners.md for manual setup."
-				fi
+				print_warning "Failed to load supervisor pulse LaunchAgent"
+			fi
+		else
+			# Linux: use cron entry with wrapper
+			# Remove old-style cron entries (direct opencode invocation)
+			(
+				crontab -l 2>/dev/null | grep -v 'aidevops: supervisor-pulse'
+				echo "*/2 * * * * OPENCODE_BIN=${opencode_bin} PULSE_DIR=${_aidevops_dir} /bin/bash ${wrapper_script} >> $HOME/.aidevops/logs/pulse-wrapper.log 2>&1 # aidevops: supervisor-pulse"
+			) | crontab - 2>/dev/null || true
+			if crontab -l 2>/dev/null | grep -qF "aidevops: supervisor-pulse"; then
+				print_info "Supervisor pulse enabled (cron, every 2 min). Disable: crontab -e and remove the supervisor-pulse line"
+			else
+				print_warning "Failed to install supervisor pulse cron entry. See runners.md for manual setup."
+			fi
+		fi
+	elif [[ "$_pulse_lower" == "false" && "$_pulse_installed" == "true" ]]; then
+		# User explicitly disabled but pulse is still installed — clean up
+		if [[ "$(uname -s)" == "Darwin" ]]; then
+			local pulse_plist="$HOME/Library/LaunchAgents/${pulse_label}.plist"
+			if _launchd_has_agent "$pulse_label"; then
+				launchctl unload "$pulse_plist" 2>/dev/null || true
+				rm -f "$pulse_plist"
+				pkill -f 'Supervisor Pulse' 2>/dev/null || true
+				print_info "Supervisor pulse disabled (launchd agent removed per config)"
+			fi
+		else
+			if crontab -l 2>/dev/null | grep -qF "pulse-wrapper" 2>/dev/null; then
+				crontab -l 2>/dev/null | grep -v 'aidevops: supervisor-pulse' | crontab - 2>/dev/null || true
+				print_info "Supervisor pulse disabled (cron entry removed per config)"
 			fi
 		fi
 	fi
@@ -976,8 +1045,8 @@ PLIST
 	echo "• Session miner            - Extracts learning from past sessions"
 	echo "• Circuit breaker          - Pauses dispatch on consecutive failures"
 	echo ""
-	echo "  The supervisor pulse was offered during setup. If skipped, enable later:"
-	echo "  See: ~/.aidevops/agents/scripts/commands/runners.md 'Pulse Scheduler Setup'"
+	echo "  Supervisor pulse (autonomous orchestration) requires explicit consent."
+	echo "  Enable: aidevops config set orchestration.supervisor_pulse true && ./setup.sh"
 	echo ""
 	echo "  Run /onboarding in your AI assistant to configure services interactively."
 	echo ""

@@ -72,10 +72,10 @@ manage_claude_config=true
 # Supervisor Pulse
 # -----------------------------------------------------------------------------
 # Enable the autonomous supervisor pulse scheduler (dispatches workers,
-# merges PRs, evaluates results). Set to false to disable autonomous
-# orchestration entirely.
+# merges PRs, evaluates results). Requires explicit user consent during
+# setup — defaults to OFF. Set to true to enable autonomous orchestration.
 # Env override: AIDEVOPS_SUPERVISOR_PULSE
-supervisor_pulse=true
+supervisor_pulse=false
 
 # -----------------------------------------------------------------------------
 # Repo Sync

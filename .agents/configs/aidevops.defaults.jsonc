@@ -86,8 +86,9 @@
   "orchestration": {
     // Enable the autonomous supervisor pulse scheduler.
     // Dispatches workers, merges PRs, evaluates results.
+    // Requires explicit user consent during setup — defaults to OFF.
     // Env override: AIDEVOPS_SUPERVISOR_PULSE
-    "supervisor_pulse": true,
+    "supervisor_pulse": false,
 
     // Enable daily git pull --ff-only on clean repos.
     // Env override: AIDEVOPS_REPO_SYNC
