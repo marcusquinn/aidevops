@@ -229,8 +229,8 @@ cmd_validate() {
 
 		# Check required fields
 		local has_id has_input
-		has_id=$(echo "$line" | jq 'has("id")' 2>/dev/null)
-		has_input=$(echo "$line" | jq 'has("input")' 2>/dev/null)
+		has_id=$(echo "$line" | jq 'has("id")')
+		has_input=$(echo "$line" | jq 'has("input")')
 
 		if [[ "$has_id" != "true" ]]; then
 			print_error "Line $line_num: Missing required field 'id'"
@@ -245,7 +245,7 @@ cmd_validate() {
 		# Check for duplicate IDs (O(1) lookup via associative array)
 		if [[ "$has_id" == "true" ]]; then
 			local entry_id
-			entry_id=$(echo "$line" | jq -r '.id' 2>/dev/null)
+			entry_id=$(echo "$line" | jq -r '.id')
 			if [[ -n "${seen_ids[$entry_id]+x}" ]]; then
 				print_error "Line $line_num: Duplicate ID '$entry_id'"
 				errors=$((errors + 1))
@@ -265,7 +265,7 @@ cmd_validate() {
 				  if has("context") and (.context | type) != "string" and .context != null then "context must be string or null" else empty end,
 				  if has("source") and (.source | type) != "string" then "source must be string" else empty end,
 				  if has("metadata") and (.metadata | type) != "object" and .metadata != null then "metadata must be object or null" else empty end
-				] | .[]' 2>/dev/null || echo "")
+				] | .[]' || echo "")
 
 			if [[ -n "$type_errors" ]]; then
 				while IFS= read -r err; do
@@ -439,7 +439,7 @@ cmd_add() {
 
 	if [[ -n "$metadata_json" ]]; then
 		# Validate metadata is valid JSON object
-		if echo "$metadata_json" | jq 'type == "object"' 2>/dev/null | grep -q true; then
+		if echo "$metadata_json" | jq -e 'type == "object"' >/dev/null 2>&1; then
 			entry=$(echo "$entry" | jq -c --argjson meta "$metadata_json" '. + {metadata: $meta}')
 		else
 			print_warning "Invalid metadata JSON (must be object), skipping"
@@ -508,9 +508,12 @@ cmd_list() {
 	# Project datasets
 	if [[ -n "$project_path" ]]; then
 		local project_dir="${project_path}/datasets"
+		# Resolve to absolute path to prevent option injection if path starts with hyphen
 		if [[ -d "$project_dir" ]]; then
+			local abs_project_dir
+			abs_project_dir=$(cd "$project_dir" && pwd)
 			local project_files
-			project_files=$(find "$project_dir" -maxdepth 1 -name "*.jsonl" -type f 2>/dev/null | sort)
+			project_files=$(find "$abs_project_dir" -maxdepth 1 -name "*.jsonl" -type f 2>/dev/null | sort)
 			if [[ -n "$project_files" ]]; then
 				echo -e "${CYAN}Project datasets${NC} ($project_dir):"
 				while IFS= read -r f; do
@@ -587,18 +590,18 @@ cmd_stats() {
 
 	# Entries with expected output
 	local with_expected
-	with_expected=$(jq -r 'select(.expected != null and .expected != "") | .id' <"$file_path" 2>/dev/null | wc -l | tr -d ' ')
+	with_expected=$(jq -r 'select(.expected != null and .expected != "") | .id' <"$file_path" | wc -l | tr -d ' ')
 	echo -e "${CYAN}With expected output:${NC} $with_expected / $total"
 
 	# Entries with context
 	local with_context
-	with_context=$(jq -r 'select(.context != null and .context != "") | .id' <"$file_path" 2>/dev/null | wc -l | tr -d ' ')
+	with_context=$(jq -r 'select(.context != null and .context != "") | .id' <"$file_path" | wc -l | tr -d ' ')
 	echo -e "${CYAN}With context:${NC} $with_context / $total"
 
 	# Source breakdown
 	echo ""
 	echo -e "${CYAN}Source breakdown:${NC}"
-	jq -r '.source // "unknown"' <"$file_path" 2>/dev/null | sort | uniq -c | sort -rn | while read -r count source; do
+	jq -r '.source // "unknown"' <"$file_path" | sort | uniq -c | sort -rn | while read -r count source; do
 		printf "  %-25s %s\n" "$source" "$count"
 	done
 
@@ -606,7 +609,7 @@ cmd_stats() {
 	echo ""
 	echo -e "${CYAN}Tag distribution:${NC}"
 	local tag_data
-	tag_data=$(jq -r '.tags // [] | .[]' <"$file_path" 2>/dev/null | sort | uniq -c | sort -rn)
+	tag_data=$(jq -r '.tags // [] | .[]' <"$file_path" | sort | uniq -c | sort -rn)
 	if [[ -n "$tag_data" ]]; then
 		echo "$tag_data" | while read -r count tag; do
 			printf "  %-25s %s\n" "$tag" "$count"
@@ -627,14 +630,26 @@ cmd_promote() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--trace-id)
+			[[ $# -ge 2 ]] || {
+				print_error "--trace-id requires a value"
+				return 1
+			}
 			trace_id="$2"
 			shift 2
 			;;
 		--output | -o)
+			[[ $# -ge 2 ]] || {
+				print_error "-o/--output requires a value"
+				return 1
+			}
 			output_file="$2"
 			shift 2
 			;;
 		--tags)
+			[[ $# -ge 2 ]] || {
+				print_error "--tags requires a value"
+				return 1
+			}
 			tags_csv="$2"
 			shift 2
 			;;
@@ -656,7 +671,8 @@ cmd_promote() {
 			return 1
 			;;
 		*)
-			shift
+			print_error "Unexpected argument: $1"
+			return 1
 			;;
 		esac
 	done
@@ -677,11 +693,11 @@ cmd_promote() {
 
 	# Find the trace in metrics (use --arg to safely pass trace_id)
 	local trace_data
-	trace_data=$(jq -c --arg trace_id "$trace_id" 'select(.request_id == $trace_id)' <"$OBS_METRICS" 2>/dev/null | head -1)
+	trace_data=$(jq -c --arg trace_id "$trace_id" 'select(.request_id == $trace_id)' <"$OBS_METRICS" | head -1)
 
 	if [[ -z "$trace_data" ]]; then
 		# Try matching by session_id as fallback
-		trace_data=$(jq -c --arg trace_id "$trace_id" 'select(.session_id == $trace_id)' <"$OBS_METRICS" 2>/dev/null | head -1)
+		trace_data=$(jq -c --arg trace_id "$trace_id" 'select(.session_id == $trace_id)' <"$OBS_METRICS" | head -1)
 	fi
 
 	if [[ -z "$trace_data" ]]; then
@@ -752,6 +768,10 @@ cmd_merge() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		-o | --output)
+			[[ $# -ge 2 ]] || {
+				print_error "-o/--output requires a value"
+				return 1
+			}
 			output_file="$2"
 			shift 2
 			;;
@@ -805,7 +825,7 @@ cmd_merge() {
 	local merged
 	if ! merged=$(jq -c -s '
 		reduce .[] as $row ({}; .[$row.id] = $row) | .[]
-	' "$file1" "$file2" 2>/dev/null); then
+	' -- "$file1" "$file2"); then
 		print_error "Merge failed: invalid JSON input"
 		return 1
 	fi
