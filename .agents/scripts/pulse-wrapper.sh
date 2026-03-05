@@ -8,13 +8,14 @@
 #   1. Uses a PID file with staleness check (not pgrep) for dedup
 #   2. Cleans up orphaned opencode processes before each pulse
 #   3. Calculates dynamic worker concurrency from available RAM
-#   4. Lets the pulse run to completion — no hard timeout
+#   4. Internal watchdog kills stuck pulses after PULSE_STALE_THRESHOLD (t1397)
 #
 # Lifecycle: launchd fires every 120s. If a pulse is still running, the
-# dedup check skips. If a pulse has been running longer than PULSE_STALE_THRESHOLD
-# (default 30 min), it's assumed stuck (opencode idle bug) and killed so the
-# next invocation can start fresh. This is the ONLY kill mechanism — no
-# arbitrary timeouts that would interrupt active work.
+# dedup check skips. run_pulse() has an internal watchdog that polls every
+# 60s and kills the opencode process if it exceeds PULSE_STALE_THRESHOLD
+# (default 30 min). This ensures the wrapper always exits, allowing launchd
+# to fire the next invocation. check_dedup() serves as a secondary safety
+# net for edge cases where the wrapper itself gets stuck.
 #
 # Called by launchd every 120s via the supervisor-pulse plist.
 
@@ -842,15 +843,18 @@ prefetch_active_workers() {
 }
 
 #######################################
-# Run the pulse — no hard timeout
+# Run the pulse — with internal watchdog timeout (t1397)
 #
-# The pulse runs until opencode exits naturally. If opencode enters its
-# idle-state bug (file watcher keeps process alive after session completes),
-# the NEXT launchd invocation's check_dedup() will detect the stale process
-# (age > PULSE_STALE_THRESHOLD) and kill it. This is correct because:
-#   - Active pulses doing real work are never interrupted
-#   - Stuck pulses are detected by the next invocation (120s later)
-#   - The stale threshold (30 min) is generous enough for any real workload
+# The pulse runs until opencode exits naturally. A watchdog loop checks
+# every 60s whether the process has exceeded PULSE_STALE_THRESHOLD. If so,
+# it kills the process tree and returns, allowing the wrapper to continue
+# to the quality sweep and health issue phases.
+#
+# Previous design relied on the NEXT launchd invocation's check_dedup()
+# to kill stale processes. This failed because launchd StartInterval only
+# fires when the previous invocation has exited — and the wrapper blocks
+# on `wait`, so the next invocation never starts. The watchdog is now
+# internal to the same process that spawned opencode.
 #######################################
 run_pulse() {
 	local start_epoch
@@ -869,7 +873,7 @@ ${state_content}
 --- END PRE-FETCHED STATE ---"
 	fi
 
-	# Run opencode — blocks until it exits (or is killed by next invocation's stale check)
+	# Run opencode in background
 	"$OPENCODE_BIN" run "$prompt" \
 		--dir "$PULSE_DIR" \
 		-m "$PULSE_MODEL" \
@@ -881,7 +885,29 @@ ${state_content}
 
 	echo "[pulse-wrapper] opencode PID: $opencode_pid" >>"$LOGFILE"
 
-	# Wait for natural exit
+	# Watchdog loop: check every 60s if the process is still alive and within
+	# the stale threshold. This replaces the bare `wait` that blocked the
+	# wrapper indefinitely when opencode hung.
+	while kill -0 "$opencode_pid" 2>/dev/null; do
+		local now
+		now=$(date +%s)
+		local elapsed=$((now - start_epoch))
+		if [[ "$elapsed" -gt "$PULSE_STALE_THRESHOLD" ]]; then
+			echo "[pulse-wrapper] Pulse exceeded stale threshold (${elapsed}s > ${PULSE_STALE_THRESHOLD}s) — killing" >>"$LOGFILE"
+			_kill_tree "$opencode_pid"
+			sleep 2
+			# Force kill if still alive
+			if kill -0 "$opencode_pid" 2>/dev/null; then
+				_force_kill_tree "$opencode_pid"
+			fi
+			break
+		fi
+		# Sleep 60s then re-check. Portable across bash 3.2+ (macOS default).
+		# The process may exit during sleep — kill -0 at top of loop catches that.
+		sleep 60
+	done
+
+	# Reap the process (may already be dead)
 	wait "$opencode_pid" 2>/dev/null || true
 
 	# Clean up PID file
@@ -1467,12 +1493,10 @@ run_daily_quality_sweep() {
 	# Timestamp guard — run at most once per QUALITY_SWEEP_INTERVAL
 	if [[ -f "$QUALITY_SWEEP_LAST_RUN" ]]; then
 		local last_run
-		last_run=$(cat "$QUALITY_SWEEP_LAST_RUN" || echo "0")
-		# Validate integer before arithmetic expansion (prevents command injection)
-		if ! [[ "$last_run" =~ ^[0-9]+$ ]]; then
-			echo "[pulse-wrapper] Corrupt sweep timestamp '${last_run}' — resetting" >>"$LOGFILE"
-			last_run=0
-		fi
+		last_run=$(cat "$QUALITY_SWEEP_LAST_RUN" 2>/dev/null || echo "0")
+		# Strip whitespace/newlines and validate integer (t1397)
+		last_run="${last_run//[^0-9]/}"
+		last_run="${last_run:-0}"
 		local now
 		now=$(date +%s)
 		local elapsed=$((now - last_run))
