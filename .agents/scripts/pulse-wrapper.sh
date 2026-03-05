@@ -1992,7 +1992,7 @@ _quality_sweep_for_repo() {
 					# ulimit -v in subshell to cap RSS per shellcheck process.
 					result=$(
 						ulimit -v 1048576 2>/dev/null || true
-						$sc_timeout_cmd shellcheck --norc -f gcc "$shfile" 2>/dev/null || true
+						$sc_timeout_cmd shellcheck --norc -f gcc "$shfile" || true
 					)
 					if [[ -n "$result" ]]; then
 						local file_errors
