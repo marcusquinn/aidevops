@@ -7,9 +7,10 @@
 # This wrapper:
 #   1. Uses a PID file with staleness check (not pgrep) for dedup
 #   2. Cleans up orphaned opencode processes before each pulse
-#   3. Calculates dynamic worker concurrency from available RAM
-#   4. Internal watchdog kills stuck pulses after PULSE_STALE_THRESHOLD (t1397)
-#   5. Self-watchdog: idle detection kills pulse when CPU drops to zero (t1398.3)
+#   3. Kills runaway processes exceeding RSS or runtime limits (t1398.1)
+#   4. Calculates dynamic worker concurrency from available RAM
+#   5. Internal watchdog kills stuck pulses after PULSE_STALE_THRESHOLD (t1397)
+#   6. Self-watchdog: idle detection kills pulse when CPU drops to zero (t1398.3)
 #
 # Lifecycle: launchd fires every 120s. If a pulse is still running, the
 # dedup check skips. run_pulse() has an internal watchdog that polls every
