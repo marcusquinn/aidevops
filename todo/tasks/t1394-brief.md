@@ -35,6 +35,7 @@ LangWatch charges for this via their platform. We can do it with ~$0.001 per eva
 ## How (Approach)
 
 ### Evaluator interface
+
 Each evaluator is a function that:
 1. Constructs a system prompt specific to the evaluation type
 2. Sends (input, output, optional context/expected) to haiku
@@ -52,15 +53,18 @@ Each evaluator is a function that:
 | `conciseness` | Is the output appropriately concise? | Is output Y unnecessarily verbose for input X? |
 
 ### Key files to modify
+
 - `.agents/scripts/ai-judgment-helper.sh` — add `evaluate` subcommand and evaluator functions
 - New or updated doc for evaluator usage guidance
 
 ### Patterns to follow
+
 - `ai-judgment-helper.sh:1-40` — existing judgment call pattern (haiku API, deterministic fallback)
 - `ai-judgment-helper.sh` caching pattern — cache evaluator results to avoid re-evaluating identical input/output pairs
 - LangWatch's `langevals/evaluators/langevals/langevals_langevals/llm_score.py` — LLM-as-judge scoring prompt design
 
 ### CLI interface
+
 ```bash
 # Single evaluation
 ai-judgment-helper.sh evaluate --type faithfulness \
@@ -85,30 +89,37 @@ ai-judgment-helper.sh evaluate --type faithfulness,relevancy,safety \
 ## Acceptance Criteria
 
 - [ ] `ai-judgment-helper.sh evaluate --type faithfulness --input "..." --output "..."` returns JSON with score, passed, details
+
   ```yaml
   verify:
     method: codebase
     pattern: "evaluate.*--type.*faithfulness"
     path: ".agents/scripts/ai-judgment-helper.sh"
   ```
+
 - [ ] All 6 built-in evaluators implemented (faithfulness, relevancy, safety, format-validity, completeness, conciseness)
+
   ```yaml
   verify:
     method: codebase
-    pattern: "faithfulness|relevancy|safety|format.validity|completeness|conciseness"
+    pattern: "faithfulness|relevancy|safety|format-validity|completeness|conciseness"
     path: ".agents/scripts/ai-judgment-helper.sh"
   ```
+
 - [ ] `--dataset` flag processes JSONL file and outputs per-row results
+
   ```yaml
   verify:
     method: codebase
     pattern: "--dataset.*jsonl"
     path: ".agents/scripts/ai-judgment-helper.sh"
   ```
+
 - [ ] Custom evaluator via `--prompt-file` works
 - [ ] Results cached to avoid duplicate API calls for identical inputs
-- [ ] Deterministic fallback when API unavailable (returns `{"score": null, "passed": null, "details": "API unavailable, using fallback"}`)
+- [ ] Deterministic fallback when API unavailable (returns `{"score": null, "passed": null, "details": "API unavailable, using fallback"}`). `score` is `null` (not `0`) and `passed` is `null` (not `false`) to distinguish "not evaluated" from "evaluated and failed". Callers must check for `null` before comparing scores or treating `passed` as boolean.
 - [ ] ShellCheck clean
+
   ```yaml
   verify:
     method: bash

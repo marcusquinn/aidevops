@@ -34,25 +34,30 @@ LangWatch builds a full prompt management UI for this. We just need a field in t
 ## How (Approach)
 
 ### Trace format change
-Add `prompt_version` to the JSONL schema in `observability-helper.sh`:
+
+Add `prompt_version` and `prompt_file` to existing JSONL trace records in `observability-helper.sh`. Existing fields remain unchanged — these are additive:
 
 ```jsonl
-{"ts":"...","model":"claude-sonnet-4-6","latency_ms":1200,"tokens_in":150,"tokens_out":320,"cost":0.0062,"prompt_version":"a1b2c3d","prompt_file":"prompts/build.txt"}
+{"ts":"...","model":"claude-sonnet-4-6","latency_ms":1200,"tokens_in":150,"tokens_out":320,"cost":0.0062,"session_id":"...","prompt_version":"a1b2c3d","prompt_file":"prompts/build.txt"}
 ```
 
 ### Version resolution
+
 Three strategies (in priority order):
+
 1. **Explicit tag**: `--prompt-version v2.1` passed by caller
 2. **Git hash**: If `--prompt-file path/to/prompt.txt` is provided, compute `git log -1 --format='%h' -- path/to/prompt.txt`
 3. **None**: Field omitted if no prompt metadata available (backward compatible)
 
 ### Key files to modify
-- `.agents/scripts/observability-helper.sh` — add `prompt_version` and `prompt_file` fields to `record` subcommand
+
+- `.agents/scripts/observability-helper.sh` — add `prompt_version` and `prompt_file` fields to `record` subcommand (via `--prompt-version` and `--prompt-file` flags)
 - `.agents/scripts/compare-models-helper.sh` — bench results include prompt version when available
 - `.agents/tools/ai-assistants/compare-models.md` — document prompt version filtering
 - `.agents/tools/context/model-routing.md` — cross-reference in "Model Comparison" section
 
 ### CLI changes
+
 ```bash
 # Record a trace with prompt version
 observability-helper.sh record \
@@ -70,29 +75,35 @@ compare-models-helper.sh bench --history --prompt-version a1b2c3d
 ```
 
 ### Patterns to follow
+
 - `observability-helper.sh` existing field handling — add fields without breaking existing consumers
 - Git short hash pattern: `git log -1 --format='%h' -- "$file"` (fast, deterministic)
 
 ## Acceptance Criteria
 
 - [ ] `observability-helper.sh record --prompt-file path/to/file` includes `prompt_version` (git short hash) in JSONL output
+
   ```yaml
   verify:
     method: codebase
-    pattern: "prompt_version|prompt.file"
+    pattern: "prompt_version|prompt_file"
     path: ".agents/scripts/observability-helper.sh"
   ```
+
 - [ ] Explicit `--prompt-version` flag overrides git hash detection
+
   ```yaml
   verify:
     method: codebase
-    pattern: "--prompt.version"
+    pattern: "--prompt-version"
     path: ".agents/scripts/observability-helper.sh"
   ```
+
 - [ ] Existing traces without prompt_version continue to work (backward compatible)
 - [ ] `compare-models-helper.sh bench` passes prompt version through to results when available
 - [ ] Documentation updated in compare-models.md and model-routing.md
 - [ ] ShellCheck clean
+
   ```yaml
   verify:
     method: bash

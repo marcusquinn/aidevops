@@ -20,7 +20,7 @@ tools:
 
 - **Purpose**: LLM trace observability, offline evaluation, agent simulation testing
 - **Repo**: [langwatch/langwatch](https://github.com/langwatch/langwatch) (BSL 1.1 — see License below)
-- **Self-host**: Docker Compose — 5 containers (app, NLP, langevals, postgres, redis, opensearch)
+- **Self-host**: Docker Compose — 6 containers (app, NLP, langevals, postgres, redis, opensearch)
 - **Local URL**: `https://langwatch.local` (via localdev)
 - **Port**: 5560 (default)
 - **Docs**: [docs.langwatch.ai](https://docs.langwatch.ai)
@@ -79,7 +79,7 @@ Core capabilities:
 
 - You only need basic "how many tokens did I use" metrics — `observability-helper.sh` is sufficient
 - You're running a single simple LLM integration with no quality concerns
-- Resource-constrained machine — the 5-container stack needs ~1-1.5GB RAM
+- Resource-constrained machine — the 6-container stack needs ~1-1.5GB RAM
 
 ## License
 

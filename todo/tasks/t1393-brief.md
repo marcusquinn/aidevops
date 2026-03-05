@@ -31,20 +31,24 @@ The pattern tracker already records historical success rates per model, but ther
 ## How (Approach)
 
 ### API calls
-Use `ai-research` MCP tool or direct provider API calls (via `curl` with keys from `credentials.sh`/gopass). The `compare-models-helper.sh discover` command already detects available providers — reuse that for model availability.
+
+Use `ai-research` MCP tool or direct provider API calls (via `curl` with keys from `$ANTHROPIC_API_KEY`/`$OPENAI_API_KEY` env vars sourced from `credentials.sh` or gopass). The `compare-models-helper.sh discover` command already detects available providers — reuse that for model availability.
 
 ### Key files to modify
+
 - `.agents/scripts/compare-models-helper.sh` — add `bench` subcommand
 - `.agents/tools/ai-assistants/compare-models.md` — document bench workflow
 - `.agents/tools/context/model-routing.md` — add cross-reference to bench command
 
 ### Patterns to follow
+
 - `compare-models-helper.sh:159-175` — existing `discover` command pattern for provider detection
 - `ai-judgment-helper.sh:1-40` — haiku-tier API call pattern for LLM-as-judge scoring
 - `observability-helper.sh:11-12` — JSONL storage pattern for metrics
 
 ### Output format (CLI)
-```
+
+```text
 | Model                  | Latency | Tokens (in/out) | Cost    | Judge Score |
 |------------------------|---------|-----------------|---------|-------------|
 | claude-sonnet-4-6      | 1.2s    | 150/320         | $0.0062 | 0.92        |
@@ -53,6 +57,7 @@ Use `ai-research` MCP tool or direct provider API calls (via `curl` with keys fr
 ```
 
 ### Result storage (JSONL)
+
 ```jsonl
 {"ts":"2026-03-05T10:00:00Z","prompt_hash":"abc123","model":"claude-sonnet-4-6","latency_ms":1200,"tokens_in":150,"tokens_out":320,"cost":0.0062,"judge_score":0.92,"output_hash":"def456"}
 ```
@@ -60,6 +65,7 @@ Use `ai-research` MCP tool or direct provider API calls (via `curl` with keys fr
 Store at `~/.aidevops/.agent-workspace/observability/bench-results.jsonl`.
 
 ### LLM-as-judge (optional, --judge flag)
+
 Send all outputs to a haiku-tier model with a scoring prompt:
 - Rate output quality 0-1 on: accuracy, completeness, clarity, relevance
 - Return structured score + brief rationale
@@ -68,35 +74,44 @@ Send all outputs to a haiku-tier model with a scoring prompt:
 ## Acceptance Criteria
 
 - [ ] `compare-models-helper.sh bench "prompt text" model1 model2 model3` produces a comparison table
+
   ```yaml
   verify:
     method: bash
-    run: "compare-models-helper.sh bench 'What is 2+2?' claude-sonnet-4-6 --dry-run 2>&1 | grep -q 'Model\\|Latency'"
+    run: "compare-models-helper.sh bench 'What is 2+2?' claude-sonnet-4-6 --dry-run 2>&1 | grep -q 'Model' && compare-models-helper.sh bench 'What is 2+2?' claude-sonnet-4-6 --dry-run 2>&1 | grep -q 'Latency'"
   ```
+
 - [ ] `compare-models-helper.sh bench --dataset path/to/dataset.jsonl model1 model2` reads prompts from JSONL file
+
   ```yaml
   verify:
     method: codebase
     pattern: "dataset.*jsonl|--dataset"
     path: ".agents/scripts/compare-models-helper.sh"
   ```
+
 - [ ] `--judge` flag triggers LLM-as-judge scoring for each output
+
   ```yaml
   verify:
     method: codebase
     pattern: "judge.*score|--judge"
     path: ".agents/scripts/compare-models-helper.sh"
   ```
+
 - [ ] Results stored in JSONL at `~/.aidevops/.agent-workspace/observability/bench-results.jsonl`
+
   ```yaml
   verify:
     method: codebase
     pattern: "bench-results\\.jsonl"
     path: ".agents/scripts/compare-models-helper.sh"
   ```
+
 - [ ] `compare-models-helper.sh bench --history` shows historical bench results
 - [ ] compare-models.md updated with bench workflow documentation
 - [ ] ShellCheck clean
+
   ```yaml
   verify:
     method: bash

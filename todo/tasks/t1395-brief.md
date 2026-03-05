@@ -34,18 +34,20 @@ LangWatch's dataset management is one of their stickiest features — once you h
 ## How (Approach)
 
 ### Dataset format (JSONL)
+
 Each line is a JSON object with standardised fields:
 
 ```jsonl
-{"id": "001", "input": "What is the capital of France?", "expected": "Paris", "context": "France is in Western Europe.", "tags": ["geography", "factual"], "source": "manual"}
-{"id": "002", "input": "Summarize this PR", "expected": null, "context": "PR #123 adds auth middleware...", "tags": ["code-review", "summarization"], "source": "trace:abc123"}
+{"id":"001","input":"What is the capital of France?","expected":"Paris","context":"France is in Western Europe.","tags":["geography","factual"],"source":"manual"}
+{"id":"002","input":"Summarize this PR","expected":null,"context":"PR #123 adds auth middleware...","tags":["code-review","summarization"],"source":"trace:abc123"}
 ```
 
 Required fields: `id`, `input`
 Optional fields: `expected`, `context`, `tags`, `source`, `metadata`
 
 ### Directory convention
-```
+
+```text
 ~/.aidevops/.agent-workspace/datasets/    # Global datasets (cross-project)
   golden-prompts.jsonl                     # Curated test prompts
   regression-auth.jsonl                    # Auth-related regression cases
@@ -54,6 +56,7 @@ Optional fields: `expected`, `context`, `tags`, `source`, `metadata`
 ```
 
 ### Helper script subcommands
+
 ```bash
 dataset-helper.sh create <name> [--project]     # Create empty dataset with header
 dataset-helper.sh validate <file>                # Validate JSONL schema
@@ -65,6 +68,7 @@ dataset-helper.sh merge <file1> <file2> -o <out> # Merge datasets, dedup by id
 ```
 
 ### Key files to create/modify
+
 - `.agents/scripts/dataset-helper.sh` — new helper script
 - `.agents/tools/ai-assistants/datasets.md` — new agent doc (or section in compare-models.md)
 - `.agents/scripts/observability-helper.sh` — add `promote` integration point
@@ -72,25 +76,30 @@ dataset-helper.sh merge <file1> <file2> -o <out> # Merge datasets, dedup by id
 - `.agents/scripts/ai-judgment-helper.sh` — ensure evaluate reads dataset format
 
 ### Patterns to follow
+
 - `compare-models-helper.sh` — helper script structure (subcommands, help, shared-constants)
 - `observability-helper.sh:11-12` — JSONL storage conventions
 - LangWatch dataset model — id, input, expected, context, tags, source tracking
 
 ## Acceptance Criteria
 
-- [ ] `dataset-helper.sh create golden-prompts` creates a valid empty JSONL file with schema comment
+- [ ] `dataset-helper.sh create golden-prompts` creates a valid empty JSONL file
+
   ```yaml
   verify:
     method: bash
     run: "test -f .agents/scripts/dataset-helper.sh && grep -q 'create' .agents/scripts/dataset-helper.sh"
   ```
+
 - [ ] `dataset-helper.sh validate <file>` checks JSONL schema (required fields, valid JSON per line)
+
   ```yaml
   verify:
     method: codebase
     pattern: "validate.*jsonl|required.*input"
     path: ".agents/scripts/dataset-helper.sh"
   ```
+
 - [ ] `dataset-helper.sh add` appends entries with auto-generated IDs
 - [ ] `dataset-helper.sh promote --trace-id` converts an observability trace to a dataset entry
 - [ ] `dataset-helper.sh stats` shows row count, tag distribution, source breakdown
@@ -98,6 +107,7 @@ dataset-helper.sh merge <file1> <file2> -o <out> # Merge datasets, dedup by id
 - [ ] `ai-judgment-helper.sh evaluate --dataset` reads the standard format (cross-reference with t1394)
 - [ ] Documentation covers format spec, directory convention, and workflows
 - [ ] ShellCheck clean
+
   ```yaml
   verify:
     method: bash
