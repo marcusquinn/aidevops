@@ -74,13 +74,42 @@ verify_gh_cli() {
 	return 0
 }
 
+# Resolve a repo slug to its local directory path via repos.json.
+# Defense-in-depth: when --repo is provided without --dir, this prevents
+# find_project_root() from walking up $PWD and finding the wrong TODO.md.
+# Arguments:
+#   $1 - repo slug (e.g. "owner/repo")
+# Returns: local path on stdout, or empty string if not found
+_resolve_repo_dir() {
+	local slug="$1"
+	local repos_json="${HOME}/.config/aidevops/repos.json"
+	[[ ! -f "$repos_json" ]] && return 0
+	local path
+	path=$(jq -r --arg s "$slug" '.initialized_repos[] | select(.slug == $s) | .path' "$repos_json" 2>/dev/null || echo "")
+	[[ -n "$path" && -d "$path" ]] && echo "$path"
+	return 0
+}
+
 # Common preamble for commands that need project_root, repo, todo_file, gh auth
 # Uses WORK_DIR (set by --dir flag) as the starting directory for find_project_root().
 # This is critical for cross-repo calls: without --dir, find_project_root() walks up
 # from $PWD and may find the wrong repo's TODO.md (GH#230, t1504).
+#
+# Resolution order for working directory:
+#   1. --dir flag (explicit, highest priority)
+#   2. --repo slug resolved to local path via repos.json (defense-in-depth)
+#   3. $PWD (legacy fallback — only safe when CWD is inside the target repo)
 _init_cmd() {
+	local start_dir=""
 	if [[ -n "$WORK_DIR" ]]; then
-		_CMD_ROOT=$(find_project_root "$WORK_DIR") || return 1
+		start_dir="$WORK_DIR"
+	elif [[ -n "$REPO_SLUG" ]]; then
+		start_dir=$(_resolve_repo_dir "$REPO_SLUG")
+		[[ -n "$start_dir" ]] && log_verbose "Resolved --repo $REPO_SLUG to $start_dir"
+	fi
+
+	if [[ -n "$start_dir" ]]; then
+		_CMD_ROOT=$(find_project_root "$start_dir") || return 1
 	else
 		_CMD_ROOT=$(find_project_root) || return 1
 	fi
@@ -681,7 +710,11 @@ Usage: issue-sync-helper.sh [command] [options]
 Commands: push [tNNN] | enrich [tNNN] | pull | close [tNNN] | reconcile | status | help
 Options: --repo SLUG | --dir PATH | --dry-run | --verbose | --force (skip evidence on close)
          --force-push (allow bulk push outside CI — use with caution, risk of duplicates)
-         --dir PATH sets the working directory for TODO.md lookup (critical for cross-repo calls)
+
+Working directory resolution (for TODO.md lookup):
+  1. --dir PATH   Explicit directory (highest priority, recommended for cross-repo calls)
+  2. --repo SLUG  Auto-resolved to local path via repos.json (defense-in-depth)
+  3. $PWD         Legacy fallback (only safe when CWD is inside the target repo)
 
 Note: Bulk push (no task ID) is CI-only by default to prevent duplicate issues.
       Use 'push <task_id>' for single tasks, or --force-push to override.
