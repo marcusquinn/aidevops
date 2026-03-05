@@ -1604,6 +1604,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 ## In Progress
 
+- [ ] t1402 fix: remove stderr suppression from shellcheck invocation in pulse-wrapper.sh quality sweep — `2>/dev/null` hides real errors, `|| true` already prevents exit #bugfix #quality-debt ~15m ref:GH#2902 started:2026-03-05
+
 - [x] t1400 fix: pulse-wrapper.sh 2>/dev/null suppressions — replace kill -0 with ps -p to avoid masking EPERM, remove redundant stderr suppression after -f check #bugfix #quality-debt ~30m ref:GH#2857 started:2026-03-05 pr:#2879 completed:2026-03-05
 
 - [x] t1388 fix: pulse external-contributor idempotency guard fails closed on API errors — comment check used pipe (gh pr view | grep) which silently returned "no match" on API failure, causing duplicate comments every 2-min pulse cycle (18 duplicates on PR #2792). Fix: fetch comments into variable, check exit code, skip posting if fetch fails. #bugfix #pulse ~30m ref:GH#2802 started:2026-03-04 pr:#2803 completed:2026-03-04
