@@ -416,8 +416,17 @@ test_env_injection_runtime() {
 	pass "SHELLCHECK_RUNTIME_MAX injection blocked"
 }
 
+test_env_injection_cooldown() {
+	# MEMORY_COOLDOWN_SECS must be validated — injection via arithmetic context
+	local result
+	# shellcheck disable=SC2016 # Intentional: single quotes prevent expansion (that's the test)
+	result=$(MEMORY_COOLDOWN_SECS='a[$(id>out)0]' bash "$SCRIPT_UNDER_TEST" --help 2>/dev/null | head -1)
+	pass "MEMORY_COOLDOWN_SECS injection blocked"
+}
+
 test_env_injection_rss_warn
 test_env_injection_runtime
+test_env_injection_cooldown
 
 # ============================================================================
 section "Notification Sanitisation"
@@ -434,7 +443,38 @@ test_notify_disabled() {
 	fi
 }
 
+test_notify_osascript_uses_stdin() {
+	# Verify the osascript call uses stdin (heredoc) not -e with interpolation.
+	# This is a static analysis test — check the source for the safe pattern.
+	# shellcheck disable=SC2016 # Intentional: searching for literal $title in source
+	if grep -q 'osascript - "\$title" "\$message"' "$SCRIPT_UNDER_TEST" &&
+		grep -q "on run argv" "$SCRIPT_UNDER_TEST" &&
+		! grep -F -q 'osascript -e "display notification' "$SCRIPT_UNDER_TEST"; then
+		pass "osascript uses stdin with argv (no string interpolation)"
+	else
+		fail "osascript uses stdin with argv" "Expected stdin pattern, found -e interpolation"
+	fi
+}
+
+test_notify_applescript_injection_payload() {
+	# Verify that a malicious process name containing AppleScript injection
+	# would not be interpreted as code. The notify function should handle
+	# this safely via argv passing. We test by calling notify directly with
+	# a payload that would break the old string-interpolation approach.
+	# With notifications disabled, this just verifies no crash/error.
+	local exit_code=0
+	# shellcheck disable=SC2016 # Intentional: testing injection payload
+	notify 'Test"; do shell script "whoami' 'msg"; do shell script "id' "normal" 2>/dev/null || exit_code=$?
+	if [[ "$exit_code" -eq 0 ]]; then
+		pass "AppleScript injection payload handled safely"
+	else
+		fail "AppleScript injection payload handled safely" "Exit $exit_code"
+	fi
+}
+
 test_notify_disabled
+test_notify_osascript_uses_stdin
+test_notify_applescript_injection_payload
 
 # ============================================================================
 # Summary

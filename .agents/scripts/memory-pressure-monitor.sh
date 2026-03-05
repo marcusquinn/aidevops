@@ -52,7 +52,7 @@ set -euo pipefail
 # --- Configuration -----------------------------------------------------------
 
 readonly SCRIPT_NAME="memory-pressure-monitor"
-readonly SCRIPT_VERSION="1.1.0"
+readonly SCRIPT_VERSION="1.2.0"
 
 # Per-process RSS thresholds (MB)
 PROCESS_RSS_WARN_MB="${PROCESS_RSS_WARN_MB:-2048}"
@@ -69,8 +69,8 @@ AGGREGATE_RSS_WARN_MB="${AGGREGATE_RSS_WARN_MB:-8192}" # 8 GB total
 # Auto-kill: ShellCheck processes are safe to kill (language server respawns them)
 readonly AUTO_KILL_SHELLCHECK="${AUTO_KILL_SHELLCHECK:-true}"
 
-# Notification
-readonly COOLDOWN_SECS="${MEMORY_COOLDOWN_SECS:-300}"
+# Notification — COOLDOWN_SECS validated after _validate_int is defined (see below)
+COOLDOWN_SECS="${MEMORY_COOLDOWN_SECS:-300}"
 readonly NOTIFY_ENABLED="${MEMORY_NOTIFY:-true}"
 readonly DAEMON_INTERVAL="${MEMORY_DAEMON_INTERVAL:-60}"
 
@@ -120,6 +120,8 @@ SHELLCHECK_RUNTIME_MAX=$(_validate_int SHELLCHECK_RUNTIME_MAX "$SHELLCHECK_RUNTI
 TOOL_RUNTIME_MAX=$(_validate_int TOOL_RUNTIME_MAX "$TOOL_RUNTIME_MAX" 1800 120)
 SESSION_COUNT_WARN=$(_validate_int SESSION_COUNT_WARN "$SESSION_COUNT_WARN" 5 2)
 AGGREGATE_RSS_WARN_MB=$(_validate_int AGGREGATE_RSS_WARN_MB "$AGGREGATE_RSS_WARN_MB" 8192 1024)
+COOLDOWN_SECS=$(_validate_int MEMORY_COOLDOWN_SECS "$COOLDOWN_SECS" 300 30)
+readonly COOLDOWN_SECS
 
 # --- Helpers ------------------------------------------------------------------
 
@@ -139,7 +141,7 @@ ensure_dirs() {
 
 # Send desktop notification (macOS)
 # Arguments: $1=title, $2=message, $3=urgency (normal|critical)
-# Security: uses printf %s to avoid injection in osascript
+# Security: osascript receives values via argv (stdin script), not string interpolation
 notify() {
 	local title="$1"
 	local message="$2"
@@ -164,14 +166,17 @@ notify() {
 		return 0
 	fi
 
-	# Fallback: osascript — sanitise inputs to prevent AppleScript injection
+	# Fallback: osascript — pass script via stdin with argv to prevent injection.
+	# Never interpolate user-controlled strings into AppleScript source code.
+	# Instead, pass title and message as positional arguments which AppleScript
+	# receives via the "on run argv" handler — no escaping needed, no breakout
+	# possible, because the values never appear in the script text.
 	if command -v osascript &>/dev/null; then
-		# Replace quotes and backslashes to prevent breaking out of the string
-		local safe_title="${title//\\/\\\\}"
-		safe_title="${safe_title//\"/\\\"}"
-		local safe_message="${message//\\/\\\\}"
-		safe_message="${safe_message//\"/\\\"}"
-		osascript -e "display notification \"${safe_message}\" with title \"${safe_title}\"" 2>/dev/null || true
+		osascript - "$title" "$message" <<'APPLESCRIPT' 2>/dev/null || true
+on run argv
+	display notification (item 2 of argv) with title (item 1 of argv)
+end run
+APPLESCRIPT
 		return 0
 	fi
 
@@ -186,7 +191,7 @@ check_cooldown() {
 	local cooldown_file="${STATE_DIR}/memory-pressure-${category}.cooldown"
 	if [[ -f "${cooldown_file}" ]]; then
 		local last_notify
-		last_notify="$(cat "${cooldown_file}" 2>/dev/null || echo 0)"
+		last_notify="$(cat "${cooldown_file}" || echo 0)"
 		if ! [[ "$last_notify" =~ ^[0-9]+$ ]]; then
 			last_notify=0
 		fi
@@ -311,9 +316,7 @@ _collect_monitored_processes() {
 		while IFS= read -r line; do
 			[[ -z "$line" ]] && continue
 			local pid rss_kb cmd
-			pid=$(echo "$line" | awk '{print $1}')
-			rss_kb=$(echo "$line" | awk '{print $2}')
-			cmd=$(echo "$line" | cut -d' ' -f3-)
+			read -r pid rss_kb cmd <<<"$line"
 
 			# Validate PID and RSS are numeric
 			[[ "$pid" =~ ^[0-9]+$ ]] || continue
@@ -323,9 +326,10 @@ _collect_monitored_processes() {
 			local runtime
 			runtime=$(_get_process_age "$pid")
 
-			# Extract short command name
+			# Extract short command name from first word of command
+			local cmd_path="${cmd%% *}"
 			local cmd_name
-			cmd_name=$(basename "$(echo "$cmd" | awk '{print $1}')" 2>/dev/null || echo "unknown")
+			cmd_name=$(basename "$cmd_path" 2>/dev/null || echo "unknown")
 
 			printf '%s|%s|%s|%s|%s\n' "$pid" "$rss_mb" "$runtime" "$cmd_name" "$cmd"
 		done <<<"$ps_output"
@@ -339,10 +343,7 @@ _count_interactive_sessions() {
 	local ps_output
 	ps_output=$(ps axo pid=,tty=,command= 2>/dev/null | grep -iE "(opencode|claude)" | grep -v "grep" | grep -v "run " || true)
 
-	while IFS= read -r line; do
-		[[ -z "$line" ]] && continue
-		local tty
-		tty=$(echo "$line" | awk '{print $2}')
+	while read -r _ tty _; do
 		# Interactive sessions have a TTY (not "??" on macOS or "?" on Linux)
 		if [[ "$tty" != "??" && "$tty" != "?" ]]; then
 			count=$((count + 1))
