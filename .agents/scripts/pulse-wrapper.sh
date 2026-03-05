@@ -109,6 +109,19 @@ _sanitize_markdown() {
 	return 0
 }
 
+# Sanitise untrusted strings before writing to log files.
+# Strips control characters (newlines, carriage returns, tabs, and non-printable
+# chars) to prevent log injection attacks where a crafted process name could
+# insert fake log entries or mislead administrators. (Gemini review, PR #2881)
+_sanitize_log_field() {
+	local input="$1"
+	# Strip all control characters (ASCII 0x00-0x1F and 0x7F) except space.
+	# The tr octal range is intentional (not a glob).
+	# shellcheck disable=SC2060
+	printf '%s' "$input" | tr -d '\000-\037\177'
+	return 0
+}
+
 PIDFILE="${HOME}/.aidevops/logs/pulse.pid"
 LOGFILE="${HOME}/.aidevops/logs/pulse.log"
 OPENCODE_BIN="${OPENCODE_BIN:-/opt/homebrew/bin/opencode}"
@@ -1005,10 +1018,10 @@ guard_child_processes() {
 
 		if [[ -n "$violation" ]]; then
 			local rss_mb=$((rss / 1024))
-			# Sanitize cmd_base: strip control characters to prevent log injection
-			# (Gemini review: attacker-crafted process names could inject fake log entries)
+			# Sanitise cmd_base before logging to prevent log injection via
+			# crafted process names containing control characters. (GH#2892)
 			local safe_cmd_base
-			safe_cmd_base=$(printf '%s' "$cmd_base" | tr -cd '[:print:]' | cut -c1-200)
+			safe_cmd_base=$(_sanitize_log_field "$cmd_base")
 			echo "[pulse-wrapper] Process guard: killing PID $pid ($safe_cmd_base) — $violation" >>"$LOGFILE"
 			_kill_tree "$pid" || true
 			sleep 1
