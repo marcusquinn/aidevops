@@ -116,11 +116,11 @@ Then skip to the next PR. The next pulse cycle will retry the permission check �
 **For maintainer PRs (admin/maintain/write permission):**
 
 - **Green CI + at least one review posted + no blocking reviews** → merge: `gh pr merge <number> --repo <slug> --squash`. If the PR resolves an issue, the issue should be closed with a comment linking to the merged PR.
-  - **CRITICAL (t2839):** Before merging, always verify at least one review exists using `gh pr view <number> --repo <slug> --json reviews --jq '.reviews | length'`.
-  - If `review-bot-gate-helper.sh check <number> <slug>` is available, use it as an additional bot-activity signal. `PASS` from the bot gate is sufficient on its own — proceed to merge.
+  - **CRITICAL (t2839):** Before merging, always verify at least one review exists using `gh pr view <number> --repo <slug> --json reviews --jq '.reviews | length'`. This is the mandatory gate — no PR merges with zero reviews.
+  - If `review-bot-gate-helper.sh check <number> <slug>` is available, use it as an additional bot-activity signal. `PASS` confirms bots have reviewed but does NOT replace the formal review-count check above.
   - `WAITING` only means "no known bot activity" — it does NOT mean zero reviews. When `WAITING` is returned, check the formal review count (the `gh pr view` command above). If count > 0, proceed to merge.
   - `SKIP` means the PR has a `skip-review-gate` label — it bypasses the bot gate only, NOT the review count requirement.
-  - Skip the PR only when the formal review count is 0 AND the bot gate is not `PASS`.
+  - Skip the PR when the formal review count is 0, regardless of bot gate status.
 - **Green CI + zero reviews** → skip this cycle. Zero reviews means "not yet reviewed", NOT "clean to merge". Review bots typically post within 2-5 minutes. The next pulse will pick it up once a review exists.
 - **Failing CI or changes requested** → dispatch a worker to fix it (counts against worker slots)
 
