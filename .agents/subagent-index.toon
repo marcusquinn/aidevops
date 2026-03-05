@@ -75,7 +75,7 @@ services/email/,Email services - transactional email deliverability testing and 
 services/communications/,Communications - SMS voice Matrix bot multi-platform chat bridging encrypted messaging Bluetooth mesh and Web3 messaging,twilio|telfon|matrix-bot|matterbridge|simplex|signal|telegram|whatsapp|imessage|nostr|slack|discord|google-chat|msteams|nextcloud-talk|urbit|bitchat|xmtp
 services/crm/,CRM integration - contact management,fluentcrm
 services/analytics/,Website analytics - GA4 reporting,google-analytics
-services/monitoring/,Error monitoring and debugging,sentry|socket
+services/monitoring/,Error monitoring and LLM observability,sentry|socket|langwatch
 services/accounting/,Accounting integration - invoicing,quickfile
 services/payments/,Payment processing and autonomous procurement - Stripe Issuing virtual cards budget enforcement receipt capture,stripe|revenuecat|superwall|procurement
 services/database/,Database schemas - multi-org isolation Drizzle ORM and PostgreSQL RLS,multi-org-isolation|postgres-drizzle-skill

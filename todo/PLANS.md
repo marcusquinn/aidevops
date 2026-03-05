@@ -22,6 +22,81 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-03-05] LLM Evaluation Suite — Benchmarking, Evaluators, Datasets, and Prompt Version Tracking
+
+**Status:** Planning
+**Estimate:** ~10h (ai:7h test:1.25h read:1h doc:0.75h)
+**TODO:** t1393, t1394, t1395, t1396
+**Logged:** 2026-03-05
+**Briefs:** [t1393](tasks/t1393-brief.md), [t1394](tasks/t1394-brief.md), [t1395](tasks/t1395-brief.md), [t1396](tasks/t1396-brief.md)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged}:
+p040,LLM Evaluation Suite,planning,0,4,,plan|feature|evaluation|model-comparison|observability,10h,7h,1.25h,1h,2026-03-05T00:00Z
+-->
+
+#### Purpose
+
+Build a lightweight LLM evaluation toolkit into aidevops — live model benchmarking, output quality scoring, reusable test datasets, and prompt version tracking. Inspired by [LangWatch](https://github.com/langwatch/langwatch) but implemented as CLI tools that fit our existing infrastructure (shell scripts, JSONL, pattern tracker) rather than requiring a 5-container Docker stack.
+
+**Four problems solved:**
+
+1. **No live model comparison.** `compare-models-helper.sh` compares models by static specs (pricing, context windows). There's no way to run the same prompt through N models and compare actual outputs. Choosing a model for a specific use case requires manual copy-paste between provider playgrounds.
+
+2. **No output quality evaluation.** Code review bots check code, but nothing checks LLM-generated content for hallucination, relevance, or safety. No CI/CD quality gates exist for prompt changes.
+
+3. **No reusable test datasets.** Every evaluation is ad-hoc. You can't re-run the same test cases after a prompt change to detect regressions, or build a golden set of edge cases from production.
+
+4. **No prompt-to-trace linkage.** Prompts are in git (versioned) but traces don't record which version produced them. There's no way to answer "did my last prompt edit make things better or worse?"
+
+**Catalyst:** Evaluating [LangWatch](https://github.com/langwatch/langwatch) (BSL 1.1, 3k stars) for aidevops integration. Their core value — batch evaluation with comparison charts, pluggable evaluators, dataset management, prompt versioning — can be replicated at 80% fidelity with CLI tools at ~$0.001/evaluation using haiku-tier calls.
+
+#### Task Breakdown
+
+| Task | Description | Estimate | Dependencies |
+|------|-------------|----------|--------------|
+| t1393 | `compare-models-helper.sh bench` — live model benchmarking | ~4h | none |
+| t1394 | Evaluator presets for `ai-judgment-helper.sh` | ~3h | none (enhances t1393 --judge) |
+| t1395 | Dataset convention (JSONL format, `dataset-helper.sh`) | ~2h | none (consumed by t1393, t1394) |
+| t1396 | Prompt version tracking in observability traces | ~1h | none (enhances t1393, t1394) |
+
+Tasks are independent — no hard blockers between them. However, the natural implementation order is t1395 (format) -> t1394 (evaluators) -> t1393 (bench, uses both) -> t1396 (observability enhancement).
+
+#### Terminology (adopted from LangWatch)
+
+| Term | Meaning in aidevops |
+|------|---------------------|
+| **Experiment** | A deliberate batch comparison — `compare-models-helper.sh bench` |
+| **Monitor** | Passive trace collection — `observability-helper.sh` |
+| **Guardrail** | Sync evaluator that blocks responses — `prompt-guard-helper.sh` |
+| **Evaluator** | Scoring function — `ai-judgment-helper.sh evaluate --type X` |
+| **Dataset** | Collection of test cases — JSONL files in `datasets/` |
+| **Score** | Evaluator result — `{score: 0-1, passed: bool, details: string}` |
+
+#### Architecture
+
+```text
+Dataset (JSONL)
+  |
+  v
+compare-models-helper.sh bench    ai-judgment-helper.sh evaluate
+  |  sends prompt to N models       |  scores output on quality dims
+  |  records: latency, tokens, cost  |  records: score, passed, details
+  |                                  |
+  +------ --judge delegates -------->+
+  |                                  |
+  v                                  v
+bench-results.jsonl              eval-results (pattern tracker)
+  |                                  |
+  +--- prompt_version field ---------+  (from observability-helper.sh)
+  |
+  v
+Historical trending / regression detection
+```
+
+#### LangWatch agent (separate)
+
+A LangWatch subagent doc (`services/monitoring/langwatch.md`) was also created in this session for users who want the full platform. It covers self-hosting setup, Docker Compose, localdev integration, and the decision factors for when LangWatch is worth the infrastructure overhead vs the CLI tools above.
+
 ### [2026-03-02] Prompt Injection Scanner — Tool-Agnostic Defense for aidevops and Agentic Apps
 
 **Status:** Planning
