@@ -804,7 +804,7 @@ check_permission_failure_pr() {
 #######################################
 prefetch_active_workers() {
 	local worker_lines
-	worker_lines=$(ps axo pid,etime,command 2>/dev/null | grep '/full-loop' | grep '\.opencode' | grep -v grep || true)
+	worker_lines=$(ps axo pid,etime,command | grep '/full-loop' | grep '\.opencode' | grep -v grep || true)
 
 	echo ""
 	echo "# Active Workers"
@@ -874,9 +874,11 @@ guard_child_processes() {
 	local killed=0
 	local total_freed_mb=0
 
-	# Get all descendant PIDs of the current shell process
+	# Get all descendant PIDs of the current shell process.
+	# Use 'command' (full command line) instead of 'comm' (basename only)
+	# so that patterns like 'node.*opencode' can match. (CodeRabbit review)
 	local descendants
-	descendants=$(ps -eo pid,ppid,rss,etime,comm | awk -v parent=$$ '
+	descendants=$(ps -eo pid,ppid,rss,etime,command | awk -v parent=$$ '
 		BEGIN { pids[parent]=1 }
 		{ if ($2 in pids) { pids[$1]=1; print $0 } }
 	') || return 0
@@ -884,9 +886,10 @@ guard_child_processes() {
 	while IFS= read -r line; do
 		[[ -z "$line" ]] && continue
 
-		# Fields from ps -eo pid,ppid,rss,etime,comm (ppid captured but unused)
-		local pid _ppid rss etime comm
-		read -r pid _ppid rss etime comm <<<"$line"
+		# Fields from ps -eo pid,ppid,rss,etime,command
+		# command is last and may contain spaces — read captures the rest
+		local pid _ppid rss etime cmd_full
+		read -r pid _ppid rss etime cmd_full <<<"$line"
 
 		# Validate numeric fields
 		[[ "$pid" =~ ^[0-9]+$ ]] || continue
@@ -895,10 +898,14 @@ guard_child_processes() {
 		local age_seconds
 		age_seconds=$(_get_process_age "$pid")
 
+		# Extract basename for limit selection (e.g., /usr/bin/shellcheck → shellcheck)
+		local cmd_base="${cmd_full%% *}"
+		cmd_base="${cmd_base##*/}"
+
 		# Determine limits: ShellCheck gets stricter limits
 		local rss_limit="$CHILD_RSS_LIMIT_KB"
 		local runtime_limit="$CHILD_RUNTIME_LIMIT"
-		if [[ "$comm" == "shellcheck" ]]; then
+		if [[ "$cmd_base" == "shellcheck" ]]; then
 			rss_limit="$SHELLCHECK_RSS_LIMIT_KB"
 			runtime_limit="$SHELLCHECK_RUNTIME_LIMIT"
 		fi
@@ -918,7 +925,7 @@ guard_child_processes() {
 
 		if [[ -n "$violation" ]]; then
 			local rss_mb=$((rss / 1024))
-			echo "[pulse-wrapper] Process guard: killing PID $pid ($comm) — $violation" >>"$LOGFILE"
+			echo "[pulse-wrapper] Process guard: killing PID $pid ($cmd_base) — $violation" >>"$LOGFILE"
 			_kill_tree "$pid"
 			sleep 1
 			if kill -0 "$pid" 2>/dev/null; then
@@ -1280,7 +1287,7 @@ _update_health_issue_for_repo() {
 	local workers_md=""
 	local worker_count=0
 	local worker_lines
-	worker_lines=$(ps axo pid,tty,etime,command 2>/dev/null | grep '\.opencode' | grep -v grep | grep -v 'bash-language-server' || true)
+	worker_lines=$(ps axo pid,tty,etime,command | grep '\.opencode' | grep -v grep | grep -v 'bash-language-server' || true)
 
 	if [[ -n "$worker_lines" ]]; then
 		local worker_table=""
@@ -1873,16 +1880,16 @@ _quality_sweep_for_repo() {
 					result=$($sc_timeout_cmd shellcheck -f gcc "$shfile" || true)
 					if [[ -n "$result" ]]; then
 						local file_errors
-						file_errors=$(echo "$result" | grep -c ':.*: error:') || file_errors=0
+						file_errors=$(grep -c ':.*: error:' <<<"$result") || file_errors=0
 						local file_warnings
-						file_warnings=$(echo "$result" | grep -c ':.*: warning:') || file_warnings=0
+						file_warnings=$(grep -c ':.*: warning:' <<<"$result") || file_warnings=0
 						sc_errors=$((sc_errors + file_errors))
 						sc_warnings=$((sc_warnings + file_warnings))
 
 						# Capture first 3 findings per file for the summary
 						local rel_path="${shfile#"$repo_path"/}"
 						local top_findings
-						top_findings=$(echo "$result" | head -3 | while IFS= read -r line; do
+						top_findings=$(head -3 <<<"$result" | while IFS= read -r line; do
 							echo "  - \`${rel_path}\`: ${line##*: }"
 						done)
 						if [[ -n "$top_findings" ]]; then
