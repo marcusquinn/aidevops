@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.151.0] - 2026-03-05
+
+### Fixed
+
+- address 5 review findings on memory-pressure-monitor.sh from PR #2884 (#2930)
+- sanitize process names in log output to prevent log injection (t1402) (#2908)
+- harden ShellCheck fallback path — process group kill + missing warning (#2923)
+- address quality-debt review feedback on pulse-wrapper.sh (t2892) (#2913)
+
 ## [2.150.0] - 2026-03-05
 
 ### Added
