@@ -866,10 +866,13 @@ prefetch_active_workers() {
 #
 # Called from the watchdog loop inside run_pulse() every 60s.
 #
-# Arguments: none (uses global config vars)
+# Arguments:
+#   $1 - (optional) PID of the primary pulse process to exempt from
+#        CHILD_RUNTIME_LIMIT (governed by PULSE_STALE_THRESHOLD instead)
 # Returns: 0 always (best-effort, never breaks the pulse)
 #######################################
 guard_child_processes() {
+	local pulse_pid="${1:-}"
 	local killed=0
 	local total_freed_mb=0
 
@@ -907,6 +910,10 @@ guard_child_processes() {
 			local rss_mb=$((rss / 1024))
 			local limit_mb=$((rss_limit / 1024))
 			violation="RSS ${rss_mb}MB > ${limit_mb}MB limit"
+		elif [[ -n "$pulse_pid" && "$pid" == "$pulse_pid" ]]; then
+			# Primary pulse process — runtime governed by PULSE_STALE_THRESHOLD,
+			# not CHILD_RUNTIME_LIMIT. Skip runtime check but keep RSS check.
+			:
 		elif [[ "$age_seconds" -gt "$runtime_limit" ]]; then
 			violation="runtime ${age_seconds}s > ${runtime_limit}s limit"
 		fi
@@ -1022,7 +1029,9 @@ ${state_content}
 			break
 		fi
 		# Process guard: kill children exceeding RSS/runtime limits (t1398)
-		guard_child_processes
+		# Pass opencode_pid so the primary pulse process is exempt from
+		# CHILD_RUNTIME_LIMIT (it's governed by PULSE_STALE_THRESHOLD above).
+		guard_child_processes "$opencode_pid"
 		# Sleep 60s then re-check. Portable across bash 3.2+ (macOS default).
 		# The process may exit during sleep — kill -0 at top of loop catches that.
 		sleep 60
@@ -1850,50 +1859,63 @@ _quality_sweep_for_repo() {
 				sc_timeout_cmd="gtimeout 30s"
 			fi
 
-			while IFS= read -r shfile; do
-				[[ -z "$shfile" ]] && continue
-				local result
-				# t1398: timeout each shellcheck invocation to prevent exponential expansion
-				result=$($sc_timeout_cmd shellcheck -f gcc "$shfile" || true)
-				if [[ -n "$result" ]]; then
-					local file_errors
-					file_errors=$(echo "$result" | grep -c ':.*: error:') || file_errors=0
-					local file_warnings
-					file_warnings=$(echo "$result" | grep -c ':.*: warning:') || file_warnings=0
-					sc_errors=$((sc_errors + file_errors))
-					sc_warnings=$((sc_warnings + file_warnings))
+			# t1398: skip shellcheck entirely when no timeout utility is available.
+			# Running shellcheck without a timeout risks unbounded execution
+			# (exponential source expansion can consume 5+ GB RAM for 35+ min).
+			if [[ -z "$sc_timeout_cmd" ]]; then
+				echo "[pulse-wrapper] WARNING: no timeout/gtimeout available — skipping ShellCheck to avoid runaway risk" >>"$LOGFILE"
+				shellcheck_section="### ShellCheck (skipped)
 
-					# Capture first 3 findings per file for the summary
-					local rel_path="${shfile#"$repo_path"/}"
-					local top_findings
-					top_findings=$(echo "$result" | head -3 | while IFS= read -r line; do
-						echo "  - \`${rel_path}\`: ${line##*: }"
-					done)
-					if [[ -n "$top_findings" ]]; then
-						sc_details="${sc_details}${top_findings}
+- **Reason**: no timeout utility available — skipping to prevent runaway expansion risk
 "
-					fi
-				fi
-			done <<<"$sh_files"
+			else
 
-			local file_count
-			file_count=$(echo "$sh_files" | wc -l | tr -d ' ')
-			shellcheck_section="### ShellCheck ($file_count files scanned)
+				while IFS= read -r shfile; do
+					[[ -z "$shfile" ]] && continue
+					local result
+					# t1398: timeout each shellcheck invocation to prevent exponential expansion
+					result=$($sc_timeout_cmd shellcheck -f gcc "$shfile" || true)
+					if [[ -n "$result" ]]; then
+						local file_errors
+						file_errors=$(echo "$result" | grep -c ':.*: error:') || file_errors=0
+						local file_warnings
+						file_warnings=$(echo "$result" | grep -c ':.*: warning:') || file_warnings=0
+						sc_errors=$((sc_errors + file_errors))
+						sc_warnings=$((sc_warnings + file_warnings))
+
+						# Capture first 3 findings per file for the summary
+						local rel_path="${shfile#"$repo_path"/}"
+						local top_findings
+						top_findings=$(echo "$result" | head -3 | while IFS= read -r line; do
+							echo "  - \`${rel_path}\`: ${line##*: }"
+						done)
+						if [[ -n "$top_findings" ]]; then
+							sc_details="${sc_details}${top_findings}
+"
+						fi
+					fi
+				done <<<"$sh_files"
+
+				local file_count
+				file_count=$(echo "$sh_files" | wc -l | tr -d ' ')
+				shellcheck_section="### ShellCheck ($file_count files scanned)
 
 - **Errors**: ${sc_errors}
 - **Warnings**: ${sc_warnings}
 "
-			if [[ -n "$sc_details" ]]; then
-				shellcheck_section="${shellcheck_section}
+				if [[ -n "$sc_details" ]]; then
+					shellcheck_section="${shellcheck_section}
 **Top findings:**
 ${sc_details}"
-			fi
-			if [[ "$sc_errors" -eq 0 && "$sc_warnings" -eq 0 ]]; then
-				shellcheck_section="${shellcheck_section}
+				fi
+				if [[ "$sc_errors" -eq 0 && "$sc_warnings" -eq 0 ]]; then
+					shellcheck_section="${shellcheck_section}
 _All clear — no issues found._
 "
-			fi
-			tool_count=$((tool_count + 1))
+				fi
+				tool_count=$((tool_count + 1))
+
+			fi # end: sc_timeout_cmd non-empty guard
 		fi
 	fi
 

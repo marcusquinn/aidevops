@@ -138,13 +138,13 @@ cmd_scan() {
 	local violations=0
 
 	echo "--- AI Processes ---"
-	printf "%-8s %-6s %-10s %-12s %-8s %s\n" "PID" "RSS_MB" "RUNTIME" "COMMAND" "STATUS" "DETAIL"
+	printf "%-8s %-6s %-10s %-5s %-12s %-8s %s\n" "PID" "RSS_MB" "RUNTIME" "TTY" "COMMAND" "STATUS" "DETAIL"
 
 	while IFS= read -r line; do
 		[[ -z "$line" ]] && continue
-		# command field is last so it captures the full command line (may contain spaces)
-		local pid rss etime cmd_full
-		read -r pid rss etime cmd_full <<<"$line"
+		# Fields: pid, tty, rss, etime, command (command is last — may contain spaces)
+		local pid tty rss etime cmd_full
+		read -r pid tty rss etime cmd_full <<<"$line"
 
 		[[ "$pid" =~ ^[0-9]+$ ]] || continue
 		[[ "$rss" =~ ^[0-9]+$ ]] || rss=0
@@ -169,7 +169,11 @@ cmd_scan() {
 
 		local status="OK"
 		local detail=""
-		if [[ "$rss" -gt "$rss_limit" ]]; then
+		# TTY-attached processes are interactive — report but don't flag as violations
+		if [[ "$tty" != "?" && "$tty" != "??" ]]; then
+			status="INTERACTIVE"
+			detail="TTY=$tty (protected)"
+		elif [[ "$rss" -gt "$rss_limit" ]]; then
 			status="OVER_RSS"
 			detail="RSS ${rss_mb}MB > $((rss_limit / 1024))MB"
 			violations=$((violations + 1))
@@ -179,8 +183,8 @@ cmd_scan() {
 			violations=$((violations + 1))
 		fi
 
-		printf "%-8s %-6s %-10s %-12s %-8s %s\n" "$pid" "${rss_mb}MB" "$etime" "$cmd_base" "$status" "$detail"
-	done < <(ps axo pid,rss,etime,command 2>/dev/null | grep -E 'opencode|shellcheck|node.*opencode' | grep -v grep || true)
+		printf "%-8s %-6s %-10s %-5s %-12s %-8s %s\n" "$pid" "${rss_mb}MB" "$etime" "$tty" "$cmd_base" "$status" "$detail"
+	done < <(ps axo pid,tty,rss,etime,command 2>/dev/null | grep -E 'opencode|shellcheck|node.*opencode' | grep -v grep || true)
 
 	echo ""
 	echo "Total: ${process_count} processes, $((total_rss_kb / 1024))MB RSS, ${violations} violation(s)"
@@ -212,11 +216,17 @@ cmd_kill_runaways() {
 
 	while IFS= read -r line; do
 		[[ -z "$line" ]] && continue
-		local pid rss etime cmd_full
-		read -r pid rss etime cmd_full <<<"$line"
+		# Fields: pid, tty, rss, etime, command (command is last — may contain spaces)
+		local pid tty rss etime cmd_full
+		read -r pid tty rss etime cmd_full <<<"$line"
 
 		[[ "$pid" =~ ^[0-9]+$ ]] || continue
 		[[ "$rss" =~ ^[0-9]+$ ]] || rss=0
+
+		# Skip TTY-attached processes — these are interactive user sessions
+		if [[ "$tty" != "?" && "$tty" != "??" ]]; then
+			continue
+		fi
 
 		local cmd_base="${cmd_full%% *}"
 		cmd_base="${cmd_base##*/}"
@@ -251,7 +261,7 @@ cmd_kill_runaways() {
 			killed=$((killed + 1))
 			total_freed_mb=$((total_freed_mb + rss_mb))
 		fi
-	done < <(ps axo pid,rss,etime,command 2>/dev/null | grep -E 'opencode|shellcheck|node.*opencode' | grep -v grep || true)
+	done < <(ps axo pid,tty,rss,etime,command 2>/dev/null | grep -E 'opencode|shellcheck|node.*opencode' | grep -v grep || true)
 
 	if [[ "$killed" -gt 0 ]]; then
 		echo "Killed $killed process(es), freed ~${total_freed_mb}MB"
@@ -294,11 +304,17 @@ cmd_status() {
 
 	while IFS= read -r line; do
 		[[ -z "$line" ]] && continue
-		local pid rss etime cmd_full
-		read -r pid rss etime cmd_full <<<"$line"
+		# Fields: pid, tty, rss, etime, command (command is last — may contain spaces)
+		local pid tty rss etime cmd_full
+		read -r pid tty rss etime cmd_full <<<"$line"
 		[[ "$rss" =~ ^[0-9]+$ ]] || rss=0
 		total_rss_kb=$((total_rss_kb + rss))
 		process_count=$((process_count + 1))
+
+		# Skip TTY-attached processes — interactive user sessions
+		if [[ "$tty" != "?" && "$tty" != "??" ]]; then
+			continue
+		fi
 
 		local cmd_base="${cmd_full%% *}"
 		cmd_base="${cmd_base##*/}"
@@ -313,7 +329,7 @@ cmd_status() {
 		if [[ "$rss" -gt "$rss_limit" ]] || [[ "$age_seconds" -gt "$runtime_limit" ]]; then
 			violations=$((violations + 1))
 		fi
-	done < <(ps axo pid,rss,etime,command 2>/dev/null | grep -E 'opencode|shellcheck|node.*opencode' | grep -v grep || true)
+	done < <(ps axo pid,tty,rss,etime,command 2>/dev/null | grep -E 'opencode|shellcheck|node.*opencode' | grep -v grep || true)
 
 	local session_count
 	session_count=$(ps axo pid,tty,command 2>/dev/null |

@@ -347,7 +347,32 @@ run_shellcheck() {
 				fi
 			}
 		else
-			file_result=$(shellcheck -x -P SCRIPTDIR --severity=warning --format=gcc "$file" 2>&1) || true
+			# Portable timeout wrapper: no timeout/gtimeout available.
+			# Run shellcheck in background with a sleep-based watcher that kills it
+			# after sc_timeout seconds. Drop -x to reduce recursive expansion risk.
+			local sc_tmpfile
+			sc_tmpfile=$(mktemp) || {
+				file_result=""
+				continue
+			}
+			shellcheck -P SCRIPTDIR --severity=warning --format=gcc "$file" >"$sc_tmpfile" 2>&1 &
+			local sc_bg_pid=$!
+			(sleep "$sc_timeout" && kill "$sc_bg_pid" 2>/dev/null) &
+			local sc_watcher_pid=$!
+			local sc_exit_code=0
+			wait "$sc_bg_pid" 2>/dev/null || sc_exit_code=$?
+			# Clean up watcher (may already be done if shellcheck finished before timeout)
+			kill "$sc_watcher_pid" 2>/dev/null || true
+			wait "$sc_watcher_pid" 2>/dev/null || true
+			file_result=$(cat "$sc_tmpfile")
+			rm -f "$sc_tmpfile"
+			# Exit codes >128 indicate signal kill (timeout fired)
+			if [[ $sc_exit_code -gt 128 ]]; then
+				timed_out=$((timed_out + 1))
+				print_warning "ShellCheck: $file killed after ${sc_timeout}s (no timeout utility; portable fallback)"
+				file_result=""
+				continue
+			fi
 		fi
 		if [[ -n "$file_result" ]]; then
 			result="${result}${file_result}
