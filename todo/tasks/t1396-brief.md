@@ -38,7 +38,7 @@ LangWatch builds a full prompt management UI for this. We just need a field in t
 Add `prompt_version` and `prompt_file` to existing JSONL trace records in `observability-helper.sh`. Existing fields remain unchanged — these are additive:
 
 ```jsonl
-{"ts":"...","model":"claude-sonnet-4-6","latency_ms":1200,"tokens_in":150,"tokens_out":320,"cost":0.0062,"session_id":"...","prompt_version":"a1b2c3d","prompt_file":"prompts/build.txt"}
+{"provider":"anthropic","model":"claude-sonnet-4-6","session_id":"...","request_id":"...","project":"...","input_tokens":150,"output_tokens":320,"cache_read_tokens":0,"cache_write_tokens":0,"cost_input":0.0,"cost_output":0.0,"cost_cache_read":0.0,"cost_cache_write":0.0,"cost_total":0.0062,"stop_reason":"","service_tier":"","git_branch":"...","log_source":"...","recorded_at":"...","error_message":"","prompt_version":"a1b2c3d","prompt_file":"prompts/build.txt"}
 ```
 
 ### Version resolution
@@ -62,8 +62,7 @@ Three strategies (in priority order):
 # Record a trace with prompt version
 observability-helper.sh record \
   --model claude-sonnet-4-6 \
-  --latency 1200 \
-  --tokens-in 150 --tokens-out 320 \
+  --input-tokens 150 --output-tokens 320 \
   --prompt-file prompts/build.txt
 
 # Bench with prompt version tracking

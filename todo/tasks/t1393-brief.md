@@ -16,7 +16,7 @@ A `compare-models-helper.sh bench` subcommand that sends the same prompt (or dat
 
 Deliverables:
 1. `compare-models-helper.sh bench` command accepting prompt(s) and model list
-2. CLI markdown table output showing side-by-side results
+2. CLI Markdown table output showing side-by-side results
 3. JSONL result storage for historical trending
 4. Optional LLM-as-judge scoring (via `ai-judgment-helper.sh` or direct haiku call)
 5. Integration with pattern tracker for historical data
@@ -78,7 +78,7 @@ Send all outputs to a haiku-tier model with a scoring prompt:
   ```yaml
   verify:
     method: bash
-    run: "compare-models-helper.sh bench 'What is 2+2?' claude-sonnet-4-6 --dry-run 2>&1 | grep -q 'Model' && compare-models-helper.sh bench 'What is 2+2?' claude-sonnet-4-6 --dry-run 2>&1 | grep -q 'Latency'"
+    run: "compare-models-helper.sh bench 'What is 2+2?' claude-sonnet-4-6 --dry-run 2>&1 | tee /tmp/bench.out >/dev/null && grep -q 'Model' /tmp/bench.out && grep -q 'Latency' /tmp/bench.out"
   ```
 
 - [ ] `compare-models-helper.sh bench --dataset path/to/dataset.jsonl model1 model2` reads prompts from JSONL file

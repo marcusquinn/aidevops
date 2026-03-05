@@ -105,12 +105,12 @@ Core capabilities:
 ```bash
 git clone https://github.com/langwatch/langwatch.git ~/Git/langwatch
 cd ~/Git/langwatch
-cp langwatch/.env.example langwatch/.env
+cp .env.example .env
 ```
 
 ### 2. Generate secrets
 
-Edit `langwatch/.env` and replace the placeholder secrets:
+Edit `.env` and replace the placeholder secrets:
 
 ```bash
 # Generate and set secrets (do NOT commit these)
@@ -121,7 +121,7 @@ API_TOKEN_JWT_SECRET="$(openssl rand -base64 32)"
 
 ### 3. Configure LLM provider keys
 
-LangWatch needs API keys for the LLM providers it evaluates against. Add to `langwatch/.env`:
+LangWatch needs API keys for the LLM providers it evaluates against. Add to `.env`:
 
 ```bash
 # At minimum, one of these for embeddings + evals
@@ -133,7 +133,7 @@ Source from aidevops credential store:
 
 ```bash
 source ~/.config/aidevops/credentials.sh
-# Then set in langwatch/.env accordingly
+# Then set in .env accordingly
 ```
 
 ### 4. Register with localdev
@@ -222,7 +222,7 @@ Docker Compose stack:
   langwatch/opensearch-lite      → Trace storage + search on :9200
 ```
 
-**Port conflicts**: The default ports (5432, 6379) may conflict with existing local services. If using the shared localdev Postgres, update `DATABASE_URL` in `.env` to point at the shared instance and remove the `postgres` service from `compose.yml`.
+**Port conflicts**: The default ports (5432, 6379) may conflict with existing local services. If using the shared localdev Postgres, update `DATABASE_URL` in `.env` to point at the shared instance and remove the `postgres` service from `docker-compose.yml`.
 
 ## Troubleshooting
 
@@ -235,14 +235,14 @@ lsof -i :6379  # Redis
 lsof -i :9200  # OpenSearch
 ```
 
-Either stop the conflicting service or remap ports in `compose.yml`.
+Either stop the conflicting service or remap ports in `docker-compose.yml`.
 
 ### OpenSearch out of memory
 
 The default config limits OpenSearch to 256MB. If it OOMs on large trace volumes:
 
 ```yaml
-# In compose.yml, increase the limit
+# In docker-compose.yml, increase the limit
 environment:
   - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
 deploy:

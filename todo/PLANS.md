@@ -54,12 +54,12 @@ Build a lightweight LLM evaluation toolkit into aidevops — live model benchmar
 
 | Task | Description | Estimate | Dependencies |
 |------|-------------|----------|--------------|
-| t1393 | `compare-models-helper.sh bench` — live model benchmarking | ~4h | none |
-| t1394 | Evaluator presets for `ai-judgment-helper.sh` | ~3h | none (enhances t1393 --judge) |
-| t1395 | Dataset convention (JSONL format, `dataset-helper.sh`) | ~2h | none (consumed by t1393, t1394) |
-| t1396 | Prompt version tracking in observability traces | ~1h | none (enhances t1393, t1394) |
+| t1395 | Dataset convention (JSONL format, `dataset-helper.sh`) | ~2h | none |
+| t1394 | Evaluator presets for `ai-judgment-helper.sh` | ~3h | none (enhances t1393 `--judge`) |
+| t1393 | `compare-models-helper.sh bench` — live model benchmarking | ~4h | t1395 (required), t1394 (optional enhancement via `--judge`) |
+| t1396 | Prompt version tracking in observability traces | ~1h | none (enhances observability for t1393/t1394 outputs) |
 
-Tasks are independent — no hard blockers between them. However, the natural implementation order is t1395 (format) -> t1394 (evaluators) -> t1393 (bench, uses both) -> t1396 (observability enhancement).
+Recommended order: t1395 (required input format) -> t1394 (optional evaluator presets) -> t1393 (bench) -> t1396 (observability enhancement).
 
 #### Terminology (adopted from LangWatch)
 

@@ -58,7 +58,7 @@ Optional fields: `expected`, `context`, `tags`, `source`, `metadata`
 ### Helper script subcommands
 
 ```bash
-dataset-helper.sh create <name> [--project]     # Create empty dataset with header
+dataset-helper.sh create <name> [--project]     # Create empty dataset (valid JSONL file)
 dataset-helper.sh validate <file>                # Validate JSONL schema
 dataset-helper.sh add <file> --input "..." [--expected "..."] [--tags "a,b"]  # Append entry
 dataset-helper.sh list [--project <path>]        # List available datasets
@@ -83,7 +83,8 @@ dataset-helper.sh merge <file1> <file2> -o <out> # Merge datasets, dedup by id
 
 ## Acceptance Criteria
 
-- [ ] `dataset-helper.sh create golden-prompts` creates a valid empty JSONL file
+- [ ] `dataset-helper.sh create golden-prompts` creates a valid empty JSONL file (pure JSONL, no inline comments)
+- [ ] Dataset schema is documented in the task doc (or a companion schema file)
 
   ```yaml
   verify:
