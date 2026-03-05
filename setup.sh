@@ -991,7 +991,7 @@ PLIST
 
 			# Unload old plist if upgrading
 			if _launchd_has_agent "$guard_label"; then
-				launchctl unload "$guard_plist" 2>/dev/null || true
+				launchctl unload "$guard_plist" || true
 			fi
 
 			cat >"$guard_plist" <<GUARD_PLIST
@@ -1015,7 +1015,9 @@ PLIST
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>
-		<string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<string>${PATH}</string>
+		<key>HOME</key>
+		<string>${HOME}</string>
 		<key>SHELLCHECK_RSS_LIMIT_KB</key>
 		<string>524288</string>
 		<key>SHELLCHECK_RUNTIME_LIMIT</key>
@@ -1033,19 +1035,18 @@ PLIST
 </plist>
 GUARD_PLIST
 
-			if launchctl load "$guard_plist" 2>/dev/null; then
+			if launchctl load "$guard_plist"; then
 				print_info "Process guard enabled (launchd, every 30s, survives reboot)"
 			else
 				print_warning "Failed to load process guard LaunchAgent"
 			fi
 		else
 			# Linux: cron entry (every minute — cron minimum granularity)
-			if ! crontab -l 2>/dev/null | grep -qF "aidevops: process-guard" 2>/dev/null; then
-				(
-					crontab -l 2>/dev/null | grep -v 'aidevops: process-guard'
-					echo "* * * * * SHELLCHECK_RSS_LIMIT_KB=524288 SHELLCHECK_RUNTIME_LIMIT=120 CHILD_RSS_LIMIT_KB=8388608 CHILD_RUNTIME_LIMIT=7200 /bin/bash ${guard_script} kill-runaways >> \$HOME/.aidevops/logs/process-guard.log 2>&1 # aidevops: process-guard"
-				) | crontab - 2>/dev/null || true
-			fi
+			# Always regenerate to pick up config changes (matches macOS behavior)
+			(
+				crontab -l 2>/dev/null | grep -v 'aidevops: process-guard'
+				echo "* * * * * SHELLCHECK_RSS_LIMIT_KB=524288 SHELLCHECK_RUNTIME_LIMIT=120 CHILD_RSS_LIMIT_KB=8388608 CHILD_RUNTIME_LIMIT=7200 /bin/bash \"${guard_script}\" kill-runaways >> \"\$HOME/.aidevops/logs/process-guard.log\" 2>&1 # aidevops: process-guard"
+			) | crontab - 2>/dev/null || true
 			if crontab -l 2>/dev/null | grep -qF "aidevops: process-guard" 2>/dev/null; then
 				print_info "Process guard enabled (cron, every minute)"
 			else
