@@ -3262,6 +3262,7 @@ cmd_help() {
 	echo "  status             Check installation status of all components"
 	echo "  update             Update aidevops to the latest version (alias: upgrade)"
 	echo "  upgrade            Alias for update"
+	echo "  pulse <cmd>        Session-based pulse control (start/stop/status)"
 	echo "  auto-update <cmd>  Manage automatic update polling (enable/disable/status)"
 	echo "  repo-sync <cmd>    Daily git pull for repos in parent dirs (enable/disable/status/dirs)"
 	echo "  update-tools       Check for outdated tools (--update to auto-update)"
@@ -3496,6 +3497,19 @@ main() {
 	plugin | plugins)
 		shift
 		cmd_plugin "$@"
+		;;
+	pulse)
+		shift
+		local pulse_session_helper="$AGENTS_DIR/scripts/pulse-session-helper.sh"
+		if [[ ! -f "$pulse_session_helper" ]]; then
+			pulse_session_helper="$INSTALL_DIR/.agents/scripts/pulse-session-helper.sh"
+		fi
+		if [[ -f "$pulse_session_helper" ]]; then
+			bash "$pulse_session_helper" "$@"
+		else
+			print_error "pulse-session-helper.sh not found. Run: aidevops update"
+			exit 1
+		fi
 		;;
 	detect | scan)
 		cmd_detect
