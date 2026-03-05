@@ -1956,12 +1956,44 @@ TODOEOF
 		skip "t2838: deploy.sh not found at $DEPLOY_SCRIPT"
 	fi
 
-	# Test: sanity-check.sh has the downgrade guard
-	if grep -q 'complete.*verified.*deployed.*merged' "$SANITY_CHECK_SCRIPT" &&
-		grep -q 'BLOCKED downgrade' "$SANITY_CHECK_SCRIPT"; then
-		pass "t2838: sanity-check.sh has downgrade prevention guard"
+	# Test: _execute_sanity_action blocks reset on a complete task (functional test)
+	# Instead of grepping for keywords, actually call the guard and verify it blocks.
+	# Use a numeric-only task ID (t28380) since _execute_sanity_action validates
+	# task IDs against ^t[0-9]+(\.[0-9]+)*$ — the existing t2838a has a letter suffix.
+	test_db "INSERT OR REPLACE INTO tasks (id, status) VALUES ('t28380', 'complete');"
+	reset_output=$(
+		# Subshell: stub supervisor globals, source sanity-check.sh, call the guard
+		SUPERVISOR_DB="$TEST_DIR/supervisor.db"
+		# Stubs for functions expected by sanity-check.sh from supervisor-helper.sh
+		db() { sqlite3 -cmd ".timeout 5000" "$@"; }
+		sql_escape() { printf '%s' "$1" | sed "s/'/''/g"; }
+		log_warn() { :; }
+		log_verbose() { :; }
+		log_info() { :; }
+		log_error() { :; }
+		# Source sanity-check.sh to get _execute_sanity_action
+		# shellcheck source=../.agents/scripts/supervisor-archived/sanity-check.sh
+		source "$SANITY_CHECK_SCRIPT"
+		# Attempt a reset on the complete task — the guard should block it
+		_execute_sanity_action \
+			'{"task_id":"t28380","reasoning":"test downgrade"}' \
+			"reset" \
+			"$TEST_DIR" 2>/dev/null
+	) && reset_rc=0 || reset_rc=$?
+	if [[ "$reset_rc" -ne 0 ]] && [[ "$reset_output" == *"blocked"* ]]; then
+		pass "t2838: downgrade guard blocks reset on complete task"
 	else
-		fail "t2838: sanity-check.sh missing downgrade prevention guard"
+		fail "t2838: downgrade guard did not block reset on complete task" \
+			"rc=$reset_rc, output=$reset_output"
+	fi
+
+	# Verify the task status is still 'complete' after the blocked reset attempt
+	post_reset_status=$(test_db "SELECT status FROM tasks WHERE id = 't28380';")
+	if [[ "$post_reset_status" == "complete" ]]; then
+		pass "t2838: task status remains complete after blocked reset"
+	else
+		fail "t2838: task status changed after reset should have been blocked" \
+			"expected=complete, got=$post_reset_status"
 	fi
 
 	# Test: sanity-check.sh has trigger_update_todo action
