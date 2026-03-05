@@ -463,8 +463,13 @@ add_local_bin_to_path() {
 # in every ShellCheck invocation, causing exponential memory growth (11 GB+)
 # when source chains span 463+ scripts. The wrapper intercepts this.
 #
-# Uses launchctl setenv (macOS) for GUI-launched apps + shell rc for terminals.
-# This ensures all processes — regardless of shell — see the wrapper.
+# Three layers ensure all processes see the wrapper:
+#   1. launchctl setenv (macOS) — GUI-launched apps (current boot only)
+#   2. .zshenv — ALL zsh processes including non-interactive (persists)
+#   3. Shell rc files (.zshrc, .bash_profile) — interactive terminals
+# Layer 2 is critical: opencode spawns bash-language-server as a non-interactive
+# child process. .zshrc is NOT sourced for non-interactive shells, so without
+# .zshenv the wrapper is invisible to the LSP and shellcheck runs unbounded.
 setup_shellcheck_wrapper() {
 	local wrapper_path="$HOME/.aidevops/agents/scripts/shellcheck-wrapper.sh"
 
@@ -497,7 +502,24 @@ setup_shellcheck_wrapper() {
 		fi
 	fi
 
-	# Layer 2: Shell rc files — affects terminal sessions
+	# Layer 2: .zshenv — affects ALL zsh processes (interactive AND non-interactive)
+	# This is critical because opencode spawns bash-language-server as a
+	# non-interactive child process. .zshrc is NOT sourced for non-interactive
+	# shells, so SHELLCHECK_PATH set only in .zshrc is invisible to the LSP.
+	local zshenv="$HOME/.zshenv"
+	if [[ -f "$zshenv" ]] || command -v zsh >/dev/null 2>&1; then
+		if grep -q 'SHELLCHECK_PATH' "$zshenv" 2>/dev/null; then
+			already_in="${already_in:+$already_in, }$zshenv"
+		else
+			touch "$zshenv"
+			echo "" >>"$zshenv"
+			echo "# Added by aidevops setup (GH#2915: prevent ShellCheck memory explosion)" >>"$zshenv"
+			echo "$env_line" >>"$zshenv"
+			added_to="${added_to:+$added_to, }$zshenv"
+		fi
+	fi
+
+	# Layer 3: Shell rc files — affects interactive terminal sessions
 	local rc_file
 	while IFS= read -r rc_file; do
 		[[ -z "$rc_file" ]] && continue
