@@ -501,7 +501,13 @@ setup_shellcheck_wrapper() {
 	# shellcheck disable=SC2016 # env_line is written to rc files; must expand at shell startup
 	env_line='export SHELLCHECK_PATH="$HOME/.aidevops/agents/scripts/shellcheck-wrapper.sh"'
 	# shellcheck disable=SC2016 # path_line is written to rc files; must expand at shell startup
-	local path_line='export PATH="$HOME/.aidevops/bin:$PATH"'
+	# Use case guard so repeated sourcing (e.g. nested shells) doesn't duplicate PATH entries
+	local path_line='case ":$PATH:" in *":$HOME/.aidevops/bin:"*) ;; *) export PATH="$HOME/.aidevops/bin:$PATH" ;; esac'
+	# Fish shell uses different syntax (set -gx instead of export)
+	# shellcheck disable=SC2016 # fish lines are written to config.fish; must expand at shell startup
+	local env_line_fish='set -gx SHELLCHECK_PATH "$HOME/.aidevops/agents/scripts/shellcheck-wrapper.sh"'
+	# shellcheck disable=SC2016
+	local path_line_fish='contains -- "$HOME/.aidevops/bin" $PATH; or set -gx PATH "$HOME/.aidevops/bin" $PATH'
 	local added_to=""
 	local already_in=""
 
@@ -534,9 +540,16 @@ setup_shellcheck_wrapper() {
 	fi
 
 	# Layer 1: launchctl setenv (macOS) — affects all GUI-launched processes
+	# Set both SHELLCHECK_PATH (for tools that honour it) and PATH (for tools
+	# that resolve shellcheck via PATH lookup, like bash-language-server).
 	if [[ "$PLATFORM_MACOS" == "true" ]]; then
 		if launchctl setenv SHELLCHECK_PATH "$wrapper_path" 2>/dev/null; then
 			print_info "Set SHELLCHECK_PATH via launchctl (GUI processes)"
+		fi
+		if [[ ":$PATH:" != *":$shim_dir:"* ]]; then
+			if launchctl setenv PATH "$shim_dir:$PATH" 2>/dev/null; then
+				print_info "Prepended $shim_dir to PATH via launchctl (GUI processes)"
+			fi
 		fi
 	fi
 
@@ -550,7 +563,7 @@ setup_shellcheck_wrapper() {
 		touch "$zshenv"
 
 		# SHELLCHECK_PATH env var (for tools that honour it)
-		if grep -q 'SHELLCHECK_PATH' "$zshenv" 2>/dev/null; then
+		if grep -q 'SHELLCHECK_PATH' "$zshenv"; then
 			already_in="${already_in:+$already_in, }$zshenv"
 		else
 			echo "" >>"$zshenv"
@@ -560,7 +573,8 @@ setup_shellcheck_wrapper() {
 		fi
 
 		# PATH prepend for ~/.aidevops/bin (GH#2993: shim must be on PATH)
-		if ! grep -q '\.aidevops/bin' "$zshenv" 2>/dev/null; then
+		# Use exact-line match so stale entries (append-form, comments) don't short-circuit
+		if ! grep -Fq "$path_line" "$zshenv"; then
 			echo "" >>"$zshenv"
 			echo "# Added by aidevops setup (GH#2993: shellcheck shim on PATH)" >>"$zshenv"
 			echo "$path_line" >>"$zshenv"
@@ -580,21 +594,36 @@ setup_shellcheck_wrapper() {
 			touch "$rc_file"
 		fi
 
+		# Detect fish config — uses set -gx syntax, not export
+		local is_fish_rc=false
+		if [[ "$rc_file" == *"/fish/config.fish" ]]; then
+			is_fish_rc=true
+		fi
+
+		# Select the correct syntax for this shell
+		local rc_env_line="$env_line"
+		local rc_path_line="$path_line"
+		if [[ "$is_fish_rc" == "true" ]]; then
+			rc_env_line="$env_line_fish"
+			rc_path_line="$path_line_fish"
+		fi
+
 		# SHELLCHECK_PATH env var
-		if grep -q 'SHELLCHECK_PATH' "$rc_file" 2>/dev/null; then
+		if grep -q 'SHELLCHECK_PATH' "$rc_file"; then
 			already_in="${already_in:+$already_in, }$rc_file"
 		else
 			echo "" >>"$rc_file"
 			echo "# Added by aidevops setup (GH#2915: prevent ShellCheck memory explosion)" >>"$rc_file"
-			echo "$env_line" >>"$rc_file"
+			echo "$rc_env_line" >>"$rc_file"
 			added_to="${added_to:+$added_to, }$rc_file"
 		fi
 
 		# PATH prepend for ~/.aidevops/bin (GH#2993)
-		if ! grep -q '\.aidevops/bin' "$rc_file" 2>/dev/null; then
+		# Use exact-line match so stale entries don't short-circuit
+		if ! grep -Fq "$rc_path_line" "$rc_file"; then
 			echo "" >>"$rc_file"
 			echo "# Added by aidevops setup (GH#2993: shellcheck shim on PATH)" >>"$rc_file"
-			echo "$path_line" >>"$rc_file"
+			echo "$rc_path_line" >>"$rc_file"
 		fi
 	done < <(get_all_shell_rcs)
 
