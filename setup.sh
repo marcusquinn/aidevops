@@ -1055,6 +1055,82 @@ GUARD_PLIST
 		fi
 	fi
 
+	# Memory pressure monitor — process-focused memory watchdog (t1398.5, GH#2915).
+	# Monitors individual process RSS, runtime, session count, and aggregate memory.
+	# Auto-kills runaway ShellCheck (language server respawns them). Always installed
+	# when the script exists; no consent needed (safety net, not autonomous action).
+	# macOS: launchd plist (60s interval, RunAtLoad=true) | Linux: cron (every minute)
+	local monitor_script="$HOME/.aidevops/agents/scripts/memory-pressure-monitor.sh"
+	local monitor_label="sh.aidevops.memory-pressure-monitor"
+	if [[ -x "$monitor_script" ]]; then
+		mkdir -p "$HOME/.aidevops/logs"
+
+		if [[ "$(uname -s)" == "Darwin" ]]; then
+			local monitor_plist="$HOME/Library/LaunchAgents/${monitor_label}.plist"
+
+			# Unload old plist if upgrading
+			if _launchd_has_agent "$monitor_label"; then
+				launchctl unload "$monitor_plist" 2>/dev/null || true
+			fi
+
+			cat >"$monitor_plist" <<MONITOR_PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>${monitor_label}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>${monitor_script}</string>
+	</array>
+	<key>StartInterval</key>
+	<integer>60</integer>
+	<key>StandardOutPath</key>
+	<string>${HOME}/.aidevops/logs/memory-pressure-launchd.log</string>
+	<key>StandardErrorPath</key>
+	<string>${HOME}/.aidevops/logs/memory-pressure-launchd.log</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>HOME</key>
+		<string>${HOME}</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<false/>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>LowPriorityBackgroundIO</key>
+	<true/>
+	<key>Nice</key>
+	<integer>10</integer>
+</dict>
+</plist>
+MONITOR_PLIST
+
+			if launchctl load "$monitor_plist" 2>/dev/null; then
+				print_info "Memory pressure monitor enabled (launchd, every 60s, survives reboot)"
+			else
+				print_warning "Failed to load memory pressure monitor LaunchAgent"
+			fi
+		else
+			# Linux: cron entry (every minute — cron minimum granularity)
+			(
+				crontab -l 2>/dev/null | grep -v 'aidevops: memory-pressure-monitor'
+				echo "* * * * * /bin/bash \"${monitor_script}\" >> \"\$HOME/.aidevops/logs/memory-pressure-launchd.log\" 2>&1 # aidevops: memory-pressure-monitor"
+			) | crontab - 2>/dev/null || true
+			if crontab -l 2>/dev/null | grep -qF "aidevops: memory-pressure-monitor" 2>/dev/null; then
+				print_info "Memory pressure monitor enabled (cron, every minute)"
+			else
+				print_warning "Failed to install memory pressure monitor cron entry"
+			fi
+		fi
+	fi
+
 	echo ""
 	echo "CLI Command:"
 	echo "  aidevops init         - Initialize aidevops in a project"
