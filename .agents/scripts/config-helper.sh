@@ -236,7 +236,7 @@ _jsonc_get() {
 	# NOTE: Do NOT use jq's // (alternative operator) here — it treats false and
 	# null identically, discarding false values. Instead, use 'if . == null'.
 	local value
-	value=$(echo "$merged" | jq -r --arg p "$dotpath" 'getpath($p | split(".")) | if . == null then empty else tostring end' 2>/dev/null) || value=""
+	value=$(echo "$merged" | jq -r --arg p "$dotpath" 'getpath($p | split(".")) | if . == null then empty else tostring end') || value=""
 
 	if [[ -n "$value" ]]; then
 		echo "$value"
@@ -263,7 +263,7 @@ _jsonc_get_raw() {
 		echo ""
 		return 0
 	}
-	echo "$json" | jq -r --arg p "$dotpath" 'getpath($p | split(".")) | if . == null then empty else tostring end' 2>/dev/null || echo ""
+	echo "$json" | jq -r --arg p "$dotpath" 'getpath($p | split(".")) | if . == null then empty else tostring end' || echo ""
 	return 0
 }
 
@@ -488,7 +488,7 @@ cmd_list() {
 
 		local user_val env_val effective source
 
-		user_val=$(echo "$user_json" | jq -r --arg p "$dotpath" 'getpath($p | split(".")) | if . == null then empty else tostring end' 2>/dev/null) || user_val=""
+		user_val=$(echo "$user_json" | jq -r --arg p "$dotpath" 'getpath($p | split(".")) | if . == null then empty else tostring end') || user_val=""
 
 		# Check env override
 		env_val=""
@@ -586,9 +586,12 @@ cmd_set() {
 	defaults_json=$(_strip_jsonc "$JSONC_DEFAULTS") || return 1
 	local default_val
 	# Use jq type check instead of // empty — false and 0 are valid defaults
+	# Get type and value in a single jq call for efficiency
 	local default_type
-	default_type=$(echo "$defaults_json" | jq -r --arg p "$dotpath" 'getpath($p | split(".")) | type' 2>/dev/null) || default_type="null"
-	default_val=$(echo "$defaults_json" | jq -r --arg p "$dotpath" 'getpath($p | split(".")) | if . == null then empty else tostring end' 2>/dev/null) || default_val=""
+	if ! read -r default_type default_val < <(echo "$defaults_json" | jq -r --arg p "$dotpath" 'getpath($p | split(".")) | [type, (if . == null then "" else tostring end)] | @tsv'); then
+		default_type="null"
+		default_val=""
+	fi
 
 	if [[ "$default_type" == "null" ]]; then
 		echo "[ERROR] Unknown config key: $dotpath" >&2
@@ -649,21 +652,21 @@ HEADER
 		local lower_value
 		lower_value=$(echo "$value" | tr '[:upper:]' '[:lower:]')
 		updated=$(echo "$user_json" | jq --arg p "$dotpath" --argjson v "$lower_value" \
-			'setpath($p | split("."); $v)' 2>/dev/null) || {
+			'setpath($p | split("."); $v)') || {
 			echo "[ERROR] Failed to update config" >&2
 			return 1
 		}
 		;;
 	number)
 		updated=$(echo "$user_json" | jq --arg p "$dotpath" --argjson v "$value" \
-			'setpath($p | split("."); $v)' 2>/dev/null) || {
+			'setpath($p | split("."); $v)') || {
 			echo "[ERROR] Failed to update config" >&2
 			return 1
 		}
 		;;
 	*)
 		updated=$(echo "$user_json" | jq --arg p "$dotpath" --arg v "$value" \
-			'setpath($p | split("."); $v)' 2>/dev/null) || {
+			'setpath($p | split("."); $v)') || {
 			echo "[ERROR] Failed to update config" >&2
 			return 1
 		}
