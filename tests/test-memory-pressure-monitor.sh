@@ -8,6 +8,7 @@
 # - Cooldown logic (check_cooldown, set_cooldown, clear_cooldown)
 # - OS memory info collection (_get_os_memory_info)
 # - Interactive session counting (_count_interactive_sessions)
+# - Process classification: app vs tool (_is_app_process) (GH#2992)
 # - CLI commands (--help, --status, --check)
 #
 # Uses isolated temp directories to avoid touching production data.
@@ -325,6 +326,94 @@ test_session_count_numeric() {
 }
 
 test_session_count_numeric
+
+# ============================================================================
+section "Process Classification (GH#2992)"
+# ============================================================================
+
+test_is_app_process_claude() {
+	if _is_app_process "claude"; then
+		pass "claude is classified as app"
+	else
+		fail "claude is classified as app"
+	fi
+}
+
+test_is_app_process_electron() {
+	if _is_app_process "Electron"; then
+		pass "Electron is classified as app (case-insensitive)"
+	else
+		fail "Electron is classified as app (case-insensitive)"
+	fi
+}
+
+test_is_app_process_opencode() {
+	if _is_app_process "opencode"; then
+		pass "opencode is classified as app"
+	else
+		fail "opencode is classified as app"
+	fi
+}
+
+test_is_app_process_shipit() {
+	if _is_app_process "ShipIt"; then
+		pass "ShipIt is classified as app (case-insensitive)"
+	else
+		fail "ShipIt is classified as app (case-insensitive)"
+	fi
+}
+
+test_is_tool_process_shellcheck() {
+	if ! _is_app_process "shellcheck"; then
+		pass "shellcheck is classified as tool"
+	else
+		fail "shellcheck is classified as tool" "Was classified as app"
+	fi
+}
+
+test_is_tool_process_node() {
+	if ! _is_app_process "node"; then
+		pass "node is classified as tool"
+	else
+		fail "node is classified as tool" "Was classified as app"
+	fi
+}
+
+test_is_tool_process_unknown() {
+	if ! _is_app_process "some-random-process"; then
+		pass "Unknown process is classified as tool"
+	else
+		fail "Unknown process is classified as tool" "Was classified as app"
+	fi
+}
+
+test_session_count_default_threshold() {
+	# Verify the default session count threshold is 8 (raised from 5 in GH#2992)
+	if [[ "$SESSION_COUNT_WARN" -eq 8 ]]; then
+		pass "Session count threshold default is 8"
+	else
+		fail "Session count threshold default is 8" "Got $SESSION_COUNT_WARN"
+	fi
+}
+
+test_is_app_process_dot_prefix() {
+	# .opencode is the actual binary name on some installs
+	if _is_app_process ".opencode"; then
+		pass ".opencode (dot-prefixed) is classified as app"
+	else
+		fail ".opencode (dot-prefixed) is classified as app"
+	fi
+}
+
+test_is_app_process_claude
+test_is_app_process_electron
+test_is_app_process_opencode
+test_is_app_process_shipit
+test_is_app_process_dot_prefix
+test_is_tool_process_shellcheck
+test_is_tool_process_node
+test_is_tool_process_unknown
+test_session_count_default_threshold
 
 # ============================================================================
 section "CLI Commands"

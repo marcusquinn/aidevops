@@ -6,6 +6,13 @@
 # processes (ShellCheck at 5.7 GB, zombie pulses, session accumulation), not by
 # generic OS memory pressure.
 #
+# Process classification (GH#2992):
+#   - "App" processes (Claude, Electron, ShipIt, OpenCode): long-running by design.
+#     Runtime alerts are skipped — only RSS is monitored. These processes run for
+#     hours/days and runtime warnings are 100% false positives (~5,400/day noise).
+#   - "Tool" processes (shellcheck, language servers, node workers): short-lived.
+#     Both RSS and runtime alerts are active.
+#
 # Auto-kill (GH#2915): ShellCheck processes that hit CRITICAL RSS or exceed
 # runtime limits are automatically killed. This is safe because the bash
 # language server respawns them. The root cause (source-path=SCRIPTDIR in
@@ -26,8 +33,9 @@
 #
 # Process-level thresholds (primary signals):
 #   RSS per process:  > 2 GB  → warning, > 4 GB → critical (kill candidate)
-#   Runtime:          > 10 min for shellcheck, > 30 min for other tools
-#   Session count:    > 5 concurrent interactive sessions → warning
+#   Runtime (tools):  > 10 min for shellcheck, > 30 min for other tools
+#   Runtime (apps):   skipped — long-running by design
+#   Session count:    > 8 concurrent interactive sessions → warning
 #   Total aidevops:   > 8 GB aggregate RSS → warning
 #
 # OS-level thresholds (secondary, informational only):
@@ -39,7 +47,7 @@
 #   PROCESS_RSS_CRIT_MB       Per-process RSS critical (default: 4096)
 #   SHELLCHECK_RUNTIME_MAX    ShellCheck max runtime in seconds (default: 600)
 #   TOOL_RUNTIME_MAX          Other tool max runtime in seconds (default: 1800)
-#   SESSION_COUNT_WARN        Interactive session warning threshold (default: 5)
+#   SESSION_COUNT_WARN        Interactive session warning threshold (default: 8)
 #   AGGREGATE_RSS_WARN_MB     Total aidevops RSS warning (default: 8192)
 #   AUTO_KILL_SHELLCHECK       Auto-kill runaway ShellCheck (default: true)
 #   MEMORY_COOLDOWN_SECS      Notification cooldown per category (default: 300)
@@ -51,7 +59,7 @@ set -euo pipefail
 # --- Configuration -----------------------------------------------------------
 
 readonly SCRIPT_NAME="memory-pressure-monitor"
-readonly SCRIPT_VERSION="1.1.0"
+readonly SCRIPT_VERSION="2.0.0"
 
 # Per-process RSS thresholds (MB)
 PROCESS_RSS_WARN_MB="${PROCESS_RSS_WARN_MB:-2048}"
@@ -62,7 +70,7 @@ SHELLCHECK_RUNTIME_MAX="${SHELLCHECK_RUNTIME_MAX:-600}" # 10 min
 TOOL_RUNTIME_MAX="${TOOL_RUNTIME_MAX:-1800}"            # 30 min
 
 # Session/aggregate thresholds
-SESSION_COUNT_WARN="${SESSION_COUNT_WARN:-5}"
+SESSION_COUNT_WARN="${SESSION_COUNT_WARN:-8}"
 AGGREGATE_RSS_WARN_MB="${AGGREGATE_RSS_WARN_MB:-8192}" # 8 GB total
 
 # Auto-kill: ShellCheck processes are safe to kill (language server respawns them)
@@ -92,6 +100,16 @@ readonly MONITORED_PATTERNS=(
 	"bash-language-server"
 )
 
+# App processes: long-running by design, runtime alerts are false positives (GH#2992).
+# Only RSS is monitored for these. Matched against the short command name (basename).
+# Case-insensitive matching via _is_app_process().
+readonly APP_PROCESS_NAMES=(
+	"claude"
+	"electron"
+	"shipit"
+	"opencode"
+)
+
 # --- Validation ---------------------------------------------------------------
 
 # Validate numeric configuration — prevent command injection via $(( )) expansion.
@@ -117,7 +135,7 @@ PROCESS_RSS_WARN_MB=$(_validate_int PROCESS_RSS_WARN_MB "$PROCESS_RSS_WARN_MB" 2
 PROCESS_RSS_CRIT_MB=$(_validate_int PROCESS_RSS_CRIT_MB "$PROCESS_RSS_CRIT_MB" 4096 512)
 SHELLCHECK_RUNTIME_MAX=$(_validate_int SHELLCHECK_RUNTIME_MAX "$SHELLCHECK_RUNTIME_MAX" 600 60)
 TOOL_RUNTIME_MAX=$(_validate_int TOOL_RUNTIME_MAX "$TOOL_RUNTIME_MAX" 1800 120)
-SESSION_COUNT_WARN=$(_validate_int SESSION_COUNT_WARN "$SESSION_COUNT_WARN" 5 2)
+SESSION_COUNT_WARN=$(_validate_int SESSION_COUNT_WARN "$SESSION_COUNT_WARN" 8 2)
 AGGREGATE_RSS_WARN_MB=$(_validate_int AGGREGATE_RSS_WARN_MB "$AGGREGATE_RSS_WARN_MB" 8192 1024)
 COOLDOWN_SECS=$(_validate_int COOLDOWN_SECS "$COOLDOWN_SECS" 300 30)
 DAEMON_INTERVAL=$(_validate_int DAEMON_INTERVAL "$DAEMON_INTERVAL" 60 10)
@@ -305,6 +323,28 @@ _format_duration() {
 	return 0
 }
 
+# Check if a command name is an "app" process (long-running by design).
+# App processes only get RSS monitoring — runtime alerts are skipped.
+# Arguments: $1=command name (short basename)
+# Returns: 0 if app process, 1 if tool process
+_is_app_process() {
+	local cmd_name="$1"
+	# Strip leading dot (e.g., ".opencode" → "opencode") — some binaries
+	# are installed with a dot-prefixed wrapper name
+	cmd_name="${cmd_name#.}"
+	# Case-insensitive: convert to lowercase via tr (bash 3.2 compatible)
+	local cmd_lower
+	cmd_lower=$(printf '%s' "$cmd_name" | tr '[:upper:]' '[:lower:]')
+	local app_name app_lower
+	for app_name in "${APP_PROCESS_NAMES[@]}"; do
+		app_lower=$(printf '%s' "$app_name" | tr '[:upper:]' '[:lower:]')
+		if [[ "$cmd_lower" == "$app_lower" ]]; then
+			return 0
+		fi
+	done
+	return 1
+}
+
 # Collect all monitored processes with their RSS and runtime
 # Output: one line per process: PID|RSS_MB|RUNTIME_SECS|COMMAND_NAME|FULL_COMMAND
 _collect_monitored_processes() {
@@ -473,22 +513,24 @@ do_check() {
 			has_warning=true
 		fi
 
-		# Runtime check — different limits for shellcheck vs other tools
-		local runtime_limit="$TOOL_RUNTIME_MAX"
-		if [[ "$cmd_name" == "shellcheck" ]]; then
-			runtime_limit="$SHELLCHECK_RUNTIME_MAX"
-		fi
+		# Runtime check — skip for app processes (long-running by design, GH#2992)
+		if ! _is_app_process "$cmd_name"; then
+			local runtime_limit="$TOOL_RUNTIME_MAX"
+			if [[ "$cmd_name" == "shellcheck" ]]; then
+				runtime_limit="$SHELLCHECK_RUNTIME_MAX"
+			fi
 
-		if [[ "$runtime" -gt "$runtime_limit" ]]; then
-			local duration
-			duration=$(_format_duration "$runtime")
-			local limit_duration
-			limit_duration=$(_format_duration "$runtime_limit")
-			findings+=("WARNING|runtime|${pid}|${cmd_name} running for ${duration} (limit: ${limit_duration})")
-			has_warning=true
-			# Auto-kill ShellCheck exceeding runtime — stuck in source chain expansion
-			if [[ "$cmd_name" == "shellcheck" && "$AUTO_KILL_SHELLCHECK" == "true" ]]; then
-				_auto_kill_process "$pid" "runtime ${duration} exceeds ${limit_duration} limit"
+			if [[ "$runtime" -gt "$runtime_limit" ]]; then
+				local duration
+				duration=$(_format_duration "$runtime")
+				local limit_duration
+				limit_duration=$(_format_duration "$runtime_limit")
+				findings+=("WARNING|runtime|${pid}|${cmd_name} running for ${duration} (limit: ${limit_duration})")
+				has_warning=true
+				# Auto-kill ShellCheck exceeding runtime — stuck in source chain expansion
+				if [[ "$cmd_name" == "shellcheck" && "$AUTO_KILL_SHELLCHECK" == "true" ]]; then
+					_auto_kill_process "$pid" "runtime ${duration} exceeds ${limit_duration} limit"
+				fi
 			fi
 		fi
 	done <<<"$processes"
@@ -593,8 +635,8 @@ cmd_status() {
 	if [[ -z "$processes" ]]; then
 		echo "  No monitored processes running"
 	else
-		printf "  %-8s %-8s %-12s %-20s %s\n" "PID" "RSS MB" "Runtime" "Command" "Status"
-		printf "  %-8s %-8s %-12s %-20s %s\n" "---" "------" "-------" "-------" "------"
+		printf "  %-8s %-8s %-12s %-20s %-6s %s\n" "PID" "RSS MB" "Runtime" "Command" "Type" "Status"
+		printf "  %-8s %-8s %-12s %-20s %-6s %s\n" "---" "------" "-------" "-------" "----" "------"
 
 		while IFS='|' read -r pid rss_mb runtime cmd_name full_cmd; do
 			[[ -z "$pid" ]] && continue
@@ -604,6 +646,11 @@ cmd_status() {
 			local duration
 			duration=$(_format_duration "$runtime")
 
+			local proc_type="tool"
+			if _is_app_process "$cmd_name"; then
+				proc_type="app"
+			fi
+
 			local status="ok"
 			if [[ "$rss_mb" -ge "$PROCESS_RSS_CRIT_MB" ]]; then
 				status="CRITICAL (RSS)"
@@ -611,17 +658,20 @@ cmd_status() {
 				status="WARNING (RSS)"
 			fi
 
-			local runtime_limit="$TOOL_RUNTIME_MAX"
-			[[ "$cmd_name" == "shellcheck" ]] && runtime_limit="$SHELLCHECK_RUNTIME_MAX"
-			if [[ "$runtime" -gt "$runtime_limit" ]]; then
-				if [[ "$status" == "ok" ]]; then
-					status="WARNING (runtime)"
-				else
-					status="${status}, WARNING (runtime)"
+			# Runtime check only for tool processes (apps are long-running by design)
+			if [[ "$proc_type" == "tool" ]]; then
+				local runtime_limit="$TOOL_RUNTIME_MAX"
+				[[ "$cmd_name" == "shellcheck" ]] && runtime_limit="$SHELLCHECK_RUNTIME_MAX"
+				if [[ "$runtime" -gt "$runtime_limit" ]]; then
+					if [[ "$status" == "ok" ]]; then
+						status="WARNING (runtime)"
+					else
+						status="${status}, WARNING (runtime)"
+					fi
 				fi
 			fi
 
-			printf "  %-8s %-8s %-12s %-20s %s\n" "$pid" "$rss_mb" "$duration" "$cmd_name" "$status"
+			printf "  %-8s %-8s %-12s %-20s %-6s %s\n" "$pid" "$rss_mb" "$duration" "$cmd_name" "$proc_type" "$status"
 		done <<<"$processes"
 
 		echo ""
@@ -784,10 +834,15 @@ Commands:
   --uninstall, -u   Remove launchd plist and state files
   --help, -h        Show this help
 
+Process classification (GH#2992):
+  App processes (claude, electron, shipit, opencode): RSS only, no runtime alerts
+  Tool processes (shellcheck, language servers): RSS + runtime alerts
+
 Process-level thresholds (primary):
   Per-process RSS:  warning=${PROCESS_RSS_WARN_MB}MB, critical=${PROCESS_RSS_CRIT_MB}MB
-  ShellCheck max:   $(_format_duration "$SHELLCHECK_RUNTIME_MAX")
-  Tool runtime max: $(_format_duration "$TOOL_RUNTIME_MAX")
+  ShellCheck max:   $(_format_duration "$SHELLCHECK_RUNTIME_MAX") (tool)
+  Tool runtime max: $(_format_duration "$TOOL_RUNTIME_MAX") (tool)
+  App runtime:      not checked (long-running by design)
   Session count:    warning >= ${SESSION_COUNT_WARN}
   Aggregate RSS:    warning >= ${AGGREGATE_RSS_WARN_MB}MB
 
@@ -801,7 +856,7 @@ Environment variables:
   PROCESS_RSS_CRIT_MB       Per-process RSS critical (default: 4096)
   SHELLCHECK_RUNTIME_MAX    ShellCheck max runtime in seconds (default: 600)
   TOOL_RUNTIME_MAX          Other tool max runtime in seconds (default: 1800)
-  SESSION_COUNT_WARN        Interactive session warning threshold (default: 5)
+  SESSION_COUNT_WARN        Interactive session warning threshold (default: 8)
   AGGREGATE_RSS_WARN_MB     Total aidevops RSS warning (default: 8192)
   AUTO_KILL_SHELLCHECK      Auto-kill runaway ShellCheck (default: true)
   MEMORY_COOLDOWN_SECS      Notification cooldown per category (default: 300)
