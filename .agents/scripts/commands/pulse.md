@@ -319,6 +319,36 @@ sleep 2
 - Route non-code tasks with `--agent`: SEO, Content, Marketing, Business, Research (see AGENTS.md "Agent Routing")
 - **Bundle-aware agent routing (t1364.6):** Before dispatching, check if the target repo has a bundle with `agent_routing` overrides. Run `bundle-helper.sh get agent_routing <repo-path>` — if the task domain (code, seo, content, marketing) has a non-default agent, use `--agent <name>`. Example: a content-site bundle routes `marketing` tasks to the Marketing agent instead of Build+. Explicit `--agent` flags in the issue body always override bundle defaults.
 - **Scope boundary (t1405, GH#2928):** ONLY dispatch workers for repos in the pre-fetched state (i.e., repos with `pulse: true` in repos.json). The `PULSE_SCOPE_REPOS` env var (set by `pulse-wrapper.sh`) contains the comma-separated list of in-scope repo slugs. Workers inherit this env var and use it to restrict code changes (branches, PRs) to scoped repos. Workers CAN still file issues on any repo (cross-repo self-improvement), but the pulse must NEVER dispatch a worker to implement a fix on a repo outside this scope — even if an issue exists there. Issues on non-pulse repos enter that repo's queue for their own maintainers to handle.
+- **Lineage context for subtasks (t1408.3):** When dispatching a subtask (task ID contains a dot, e.g., `t1408.3`), include a lineage context block in the dispatch prompt. This tells the worker what the parent task is, what sibling tasks exist, and to focus only on its specific scope. See `tools/ai-assistants/headless-dispatch.md` "Lineage Context for Subtask Workers" for the full format and assembly instructions. Example dispatch with lineage:
+
+  ```bash
+  # Subtask dispatch with lineage context
+  PARENT_ID="${TASK_ID%.*}"
+  PARENT_DESC=$(grep -E "^- \[.\] ${PARENT_ID} " TODO.md | head -1 \
+    | sed -E 's/^- \[.\] [^ ]+ //' | sed -E 's/ #[^ ]+//g' | cut -c1-120)
+  SIBLINGS=$(grep -E "^  - \[.\] ${PARENT_ID}\.[0-9]+" TODO.md \
+    | sed -E 's/^  - \[.\] ([^ ]+) (.*)/\1: \2/' | sed -E 's/ #[^ ]+//g')
+
+  # Build lineage block (see headless-dispatch.md for full assembly)
+  # Or use: LINEAGE_BLOCK=$(task-decompose-helper.sh format-lineage "$TASK_ID")
+
+  opencode run --dir <path> --title "Issue #<number>: <title>" \
+    "/full-loop Implement issue #<number> (<url>) -- <brief description>
+
+  TASK LINEAGE:
+    0. [parent] ${PARENT_DESC} (${PARENT_ID})
+      1. <sibling 1 desc> (${PARENT_ID}.1)
+      2. <sibling 2 desc> (${PARENT_ID}.2)  <-- THIS TASK
+      3. <sibling 3 desc> (${PARENT_ID}.3)
+
+  LINEAGE RULES:
+  - You are one of several agents working in parallel on sibling tasks under the same parent.
+  - Focus ONLY on your specific task (marked with '<-- THIS TASK').
+  - Do NOT duplicate work that sibling tasks would handle.
+  - If your task depends on interfaces or APIs from sibling tasks, define reasonable stubs.
+  - If blocked by a sibling task, exit with BLOCKED and specify which sibling." &
+  sleep 2
+  ```
 
 ### Batch execution strategies for decomposed tasks (t1408.4)
 
@@ -505,6 +535,28 @@ opencode run --dir <repo_path> --title "Mission <mission_id> - <feature_title>" 
   "/full-loop --poc <feature_description>. Mission context: <mission_goal>." &
 sleep 2
 ```
+
+- **Lineage context for mission features (t1408.3):** When dispatching mission features that are part of a milestone with multiple features, include lineage context so each worker knows what sibling features exist. The milestone is the "parent" and features are "siblings":
+
+  ```bash
+  # Mission dispatch with lineage — milestone as parent, features as siblings
+  opencode run --dir <repo_path> --title "Mission <mission_id> - <feature_title>" \
+    "/full-loop Implement <task_id> -- <feature_description>. Mission context: <mission_goal>.
+
+  TASK LINEAGE:
+    0. [milestone] <milestone_name>: <milestone_description> (mission:<mission_id>)
+      1. <feature_1_title> (<feature_1_task_id>)
+      2. <feature_2_title> (<feature_2_task_id>)  <-- THIS TASK
+      3. <feature_3_title> (<feature_3_task_id>)
+
+  LINEAGE RULES:
+  - You are one of several agents working in parallel on sibling features within the same milestone.
+  - Focus ONLY on your specific feature (marked with '<-- THIS TASK').
+  - Do NOT duplicate work that sibling features would handle.
+  - If your feature depends on interfaces or APIs from sibling features, define reasonable stubs.
+  - If blocked by a sibling feature, exit with BLOCKED and specify which sibling." &
+  sleep 2
+  ```
 
 - Update the feature status to `dispatched` in the mission state file
 - Mission feature dispatches count against the same `MAX_WORKERS` limit as regular dispatches

@@ -413,6 +413,49 @@ result=$(verify_operation "terraform destroy" "$risk")  # Returns: verified, con
 | `VERIFY_TIMEOUT` | `30` | Seconds to wait for verifier response |
 | `VERIFY_MODEL` | `haiku` | Model tier for verification (cheapest sufficient) |
 
+### Step 1.7: Parse Lineage Context (t1408.3)
+
+If the dispatch prompt contains a `TASK LINEAGE:` block (injected by the pulse or interactive dispatcher for subtasks), parse it at session start. This block tells you your place in a task hierarchy — what the parent task is, what sibling tasks exist, and what your specific scope is.
+
+**Detection:**
+
+```bash
+# Check if the dispatch arguments contain lineage context
+if echo "$ARGUMENTS" | grep -q "TASK LINEAGE:"; then
+  HAS_LINEAGE=true
+fi
+```
+
+**Worker rules when lineage is present:**
+
+1. **Scope boundary** — Only implement what's marked with `<-- THIS TASK`. If you find yourself implementing functionality described in a sibling task's description, stop and refocus.
+
+2. **Stub dependencies** — If your task needs types, APIs, or interfaces that a sibling task will create, define minimal stubs (e.g., a TypeScript interface, a function signature with `TODO` body). Document these stubs in the PR body under a "Cross-task stubs" section so the sibling worker knows to replace them.
+
+3. **No sibling work** — Do not implement features described in sibling task descriptions, even if they seem easy or closely related. Each sibling has its own worker, branch, and PR. Overlapping implementations cause merge conflicts.
+
+4. **PR body lineage section** — When creating the PR, include a "Task Lineage" section:
+
+   ```markdown
+   ## Task Lineage
+
+   This task is part of a decomposed parent task:
+   - **Parent:** t1408 — Recursive task decomposition for dispatch
+   - **This task:** t1408.3 — Add lineage context to worker dispatch prompts
+   - **Siblings:** t1408.1 (classify/decompose helper), t1408.2 (dispatch integration), t1408.4 (batch strategies), t1408.5 (testing)
+
+   ### Cross-task stubs
+   - None (this task is documentation-only)
+   ```
+
+5. **Blocked by sibling** — If you discover a hard dependency on a sibling task (not just a stub-able interface, but a fundamental prerequisite like "the database table doesn't exist yet"), exit cleanly:
+
+   ```text
+   BLOCKED: This task (t1408.3) requires task-decompose-helper.sh from sibling t1408.1,
+   which has not been merged yet. Cannot test lineage formatting without the helper.
+   Partial work committed on branch feature/t1408.3-lineage-context.
+   ```
+
 ### Step 2: Start Full Loop
 
 **Supervisor dispatch** (headless mode - t174):
