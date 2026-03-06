@@ -87,6 +87,33 @@ The strategy is a recommendation from the decompose output, not a hard constrain
 
 **Full docs**: `todo/tasks/t1408-brief.md`
 
+## Batch Execution Strategies (t1408.4)
+
+When the task decomposition pipeline (t1408) splits a composite task into subtasks, batch strategies control the dispatch order. This is relevant when multiple subtasks share a parent and need coordinated parallel execution.
+
+**Strategies:**
+
+| Strategy | Behaviour | Best for |
+|----------|-----------|----------|
+| depth-first (default) | Complete all subtasks under one branch before starting the next | Dependent work, sequential integration |
+| breadth-first | One subtask from each branch per batch | Independent work, even progress |
+
+```text
+depth-first (concurrency=2):       breadth-first (concurrency=3):
+  t1.1, t1.2 ─ batch 1              t1.1, t2.1, t3.1 ─ batch 1
+  t1.3       ─ batch 2              t1.2, t2.2, t3.2 ─ batch 2
+  t2.1, t2.2 ─ batch 3              t1.3, t2.3       ─ batch 3
+  t3.1       ─ batch 4
+```
+
+**CLI**: `batch-strategy-helper.sh [order|next-batch|validate] --strategy <strategy> --tasks <json> --concurrency <N>`
+
+**Integration**: The pulse supervisor uses `batch-strategy-helper.sh next-batch` when dispatching decomposed subtasks. Batch sizes are capped by available worker slots (`AVAILABLE` from Step 1). The helper respects `blocked_by:` dependencies — blocked tasks are excluded from batches until their blockers complete.
+
+**Configuration**: `BATCH_STRATEGY` env var (default: `depth-first`). Can be overridden per-repo via bundle config or per-task via the decomposition pipeline.
+
+**Full docs**: `scripts/commands/pulse.md` "Batch execution strategies" section, `scripts/batch-strategy-helper.sh help`
+
 ## Pattern Tracking
 
 Track success/failure patterns across task types, models, and approaches. Patterns feed into model routing recommendations for data-driven dispatch.

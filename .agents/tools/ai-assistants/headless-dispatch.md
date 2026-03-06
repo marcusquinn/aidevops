@@ -740,6 +740,31 @@ runner-helper.sh run tester "Write tests for the changes"
 | Refactor + update docs | Sequential | Docs depend on refactored code |
 | Generate tests for 5 modules | Parallel | Each module is independent |
 | Plan → implement → verify | Sequential | Each step depends on previous |
+| Decomposed subtasks (same parent) | Batch strategy | Use `batch-strategy-helper.sh` |
+
+### Batch Strategies for Decomposed Tasks (t1408.4)
+
+When the task decomposition pipeline (t1408) splits a composite task into subtasks, use batch strategies to control dispatch order. This is a layer above parallel/sequential — it determines which groups of subtasks to dispatch together.
+
+- **depth-first** (default): Finish one branch before starting the next. Use when subtask branches have implicit dependencies (e.g., "API module" should complete before "frontend module" starts).
+- **breadth-first**: One subtask from each branch per batch. Use when all branches are truly independent and you want even progress.
+
+```bash
+# Get the next batch of subtasks to dispatch
+NEXT=$(batch-strategy-helper.sh next-batch \
+  --strategy depth-first \
+  --tasks "$SUBTASKS_JSON" \
+  --concurrency "$AVAILABLE_SLOTS")
+
+# Dispatch each task in the batch
+echo "$NEXT" | jq -r '.[]' | while read -r task_id; do
+  opencode run --dir <path> --title "$task_id" \
+    "/full-loop Implement $task_id -- <description>" &
+  sleep 2
+done
+```
+
+The helper respects `blocked_by:` dependencies and never includes blocked tasks in a batch. See `scripts/batch-strategy-helper.sh help` for full usage.
 | Cron: daily report + weekly digest | Parallel | Independent scheduled tasks |
 | Migration: schema → data → verify | Sequential | Each step depends on previous |
 

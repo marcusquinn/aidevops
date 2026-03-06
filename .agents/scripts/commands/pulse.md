@@ -251,6 +251,58 @@ sleep 2
 - **Bundle-aware agent routing (t1364.6):** Before dispatching, check if the target repo has a bundle with `agent_routing` overrides. Run `bundle-helper.sh get agent_routing <repo-path>` — if the task domain (code, seo, content, marketing) has a non-default agent, use `--agent <name>`. Example: a content-site bundle routes `marketing` tasks to the Marketing agent instead of Build+. Explicit `--agent` flags in the issue body always override bundle defaults.
 - **Scope boundary (t1405, GH#2928):** ONLY dispatch workers for repos in the pre-fetched state (i.e., repos with `pulse: true` in repos.json). The `PULSE_SCOPE_REPOS` env var (set by `pulse-wrapper.sh`) contains the comma-separated list of in-scope repo slugs. Workers inherit this env var and use it to restrict code changes (branches, PRs) to scoped repos. Workers CAN still file issues on any repo (cross-repo self-improvement), but the pulse must NEVER dispatch a worker to implement a fix on a repo outside this scope — even if an issue exists there. Issues on non-pulse repos enter that repo's queue for their own maintainers to handle.
 
+### Batch execution strategies for decomposed tasks (t1408.4)
+
+When the task decomposition pipeline (t1408) produces subtasks grouped under parent tasks, use `batch-strategy-helper.sh` to determine dispatch order. This integrates with the existing `MAX_WORKERS` concurrency limit — batch sizes never exceed available worker slots.
+
+**Two strategies:**
+
+- **depth-first** (default): Complete all subtasks under one parent branch before starting the next. Tasks within each branch run concurrently up to the concurrency limit. Good for dependent work where branch B builds on branch A's output.
+- **breadth-first**: One subtask from each parent branch per batch, spreading progress evenly across all branches. Good for independent work where all branches can proceed in parallel.
+
+**When to use batch strategies:**
+
+Only when dispatching subtasks from a decomposed parent task (tasks sharing a `parent_id` in their issue body or TODO.md hierarchy). For regular unrelated issues, use the standard priority-based dispatch above — batch strategies add no value for independent tasks.
+
+**How to use:**
+
+```bash
+# Build the tasks JSON from decomposed subtasks in TODO.md or issue bodies.
+# Each task needs: id, parent_id, status, blocked_by, depth.
+TASKS_JSON='[{"id":"t1408.1","parent_id":"t1408","status":"pending","depth":1,"blocked_by":[]}, ...]'
+
+# Get the next batch to dispatch (respects blocked_by dependencies)
+NEXT_BATCH=$(batch-strategy-helper.sh next-batch \
+  --strategy "${BATCH_STRATEGY:-depth-first}" \
+  --tasks "$TASKS_JSON" \
+  --concurrency "$AVAILABLE")
+
+# Dispatch each task in the batch
+echo "$NEXT_BATCH" | jq -r '.[]' | while read -r task_id; do
+  # Look up the issue number and repo for this task_id
+  # Then dispatch as normal (see dispatch rules above)
+  opencode run --dir <path> --title "Issue #<number>: <title>" \
+    "/full-loop Implement issue #<number> (<url>) -- <brief description>" &
+  sleep 2
+done
+```
+
+**Configuration:**
+
+- `BATCH_STRATEGY` env var: `depth-first` (default) or `breadth-first`. Set in `pulse-wrapper.sh` or per-repo via bundle config.
+- Concurrency per batch is capped by `AVAILABLE` worker slots (from Step 1) and the helper's `MAX_BATCH_SIZE` (8).
+- The helper automatically skips blocked tasks (`blocked_by:` references to non-completed siblings).
+
+**Validation:** Before dispatching, optionally validate the dependency graph:
+
+```bash
+batch-strategy-helper.sh validate --tasks "$TASKS_JSON"
+# Returns JSON with {valid: bool, errors: [...], warnings: [...]}
+# Detects: circular dependencies, missing blocker references, excessive depth
+```
+
+**This is guidance, not enforcement.** The batch strategy is a recommendation for the pulse supervisor's dispatch ordering. Use judgment — if a breadth-first batch would dispatch 5 tasks but only 2 worker slots are available, dispatch the 2 highest-priority tasks regardless of strategy. The helper respects concurrency limits, but the supervisor has final say on what to dispatch.
+
 ### Priority order
 
 1. PRs with green CI → merge (free — no worker slot needed)
