@@ -1616,7 +1616,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 ## In Progress
 
-- [ ] t1410 fix review-bot-gate status fallback: CodeRabbit context mismatch — any_bot_has_success_status() greps for 'coderabbitai' but CodeRabbit posts commit status with context 'CodeRabbit'. Grep doesn't match, fallback never triggers, gate fails on rate-limited PRs. Fix: use 'coderabbit' prefix match. After fix, re-run Wait for AI Review Bots on PRs #2989 and #2979. #bugfix #ci ~30m ref:GH#3007 logged:2026-03-06
+- [x] t1410 fix review-bot-gate status fallback: CodeRabbit context mismatch — any_bot_has_success_status() greps for 'coderabbitai' but CodeRabbit posts commit status with context 'CodeRabbit'. Grep doesn't match, fallback never triggers, gate fails on rate-limited PRs. Fix: use 'coderabbit' prefix match. After fix, re-run Wait for AI Review Bots on PRs #2989 and #2979. #bugfix #ci ~30m ref:GH#3007 logged:2026-03-06 pr:#3008 completed:2026-03-06
 - [x] t1409 refactor: memory-pressure-monitor — remove runtime alerts for app processes, keep RSS monitoring only. Classify processes as app vs tool; skip runtime checks for apps (Claude, Electron, ShipIt, OpenCode); raise session count threshold to 8. #refactor #monitoring ~1h ref:GH#2992 started:2026-03-06 pr:#2998 completed:2026-03-06
 
 - [x] t1402 fix: remove stderr suppression from shellcheck invocation in pulse-wrapper.sh quality sweep — `2>/dev/null` hides real errors, `|| true` already prevents exit #bugfix #quality-debt ~15m ref:GH#2902 started:2026-03-05 pr:#2907 completed:2026-03-05
