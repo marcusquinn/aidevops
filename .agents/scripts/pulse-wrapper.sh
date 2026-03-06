@@ -1150,8 +1150,11 @@ ${state_content}
 		local elapsed=$((now - start_epoch))
 
 		local kill_reason=""
+		# Check 0: Stop flag — user ran `aidevops pulse stop` during this cycle (t2943)
+		if [[ -f "${HOME}/.aidevops/logs/pulse-session.stop" ]]; then
+			kill_reason="Stop flag detected during active pulse — user requested stop"
 		# Check 1: Wall-clock stale threshold (hard ceiling)
-		if [[ "$elapsed" -gt "$PULSE_STALE_THRESHOLD" ]]; then
+		elif [[ "$elapsed" -gt "$PULSE_STALE_THRESHOLD" ]]; then
 			kill_reason="Pulse exceeded stale threshold (${elapsed}s > ${PULSE_STALE_THRESHOLD}s)"
 		# Check 2: Idle detection — CPU usage of the process tree (t1398.3)
 		# Skip idle checks during the first 2 minutes to allow startup/init.
@@ -2434,26 +2437,15 @@ check_session_gate() {
 	fi
 
 	# Config consent — the persistent gate that survives reboots
-	# Check JSONC config first, then legacy .conf, then env var
+	# Uses _jsonc_get from config-helper.sh (sourced via shared-constants.sh)
+	# which handles JSONC comment stripping, defaults merging, and jq parsing.
+	# Env var override has highest priority.
 	local pulse_config=""
 
-	# JSONC config (primary) — strip // comments before matching
-	local config_file="${HOME}/.config/aidevops/config.jsonc"
-	if [[ -f "$config_file" ]]; then
-		pulse_config=$(sed 's|//.*||' "$config_file" | grep -o '"supervisor_pulse"[[:space:]]*:[[:space:]]*[a-z]*' | tail -1 | grep -o '[a-z]*$' || echo "")
-	fi
-
-	# Legacy .conf fallback
-	if [[ -z "$pulse_config" ]]; then
-		local legacy_conf="${HOME}/.config/aidevops/feature-toggles.conf"
-		if [[ -f "$legacy_conf" ]]; then
-			pulse_config=$(grep -E '^supervisor_pulse=' "$legacy_conf" | tail -1 | cut -d= -f2 || echo "")
-		fi
-	fi
-
-	# Env var override (highest priority for config layer)
 	if [[ -n "${AIDEVOPS_SUPERVISOR_PULSE:-}" ]]; then
 		pulse_config="$AIDEVOPS_SUPERVISOR_PULSE"
+	elif type _jsonc_get &>/dev/null; then
+		pulse_config=$(_jsonc_get "orchestration.supervisor_pulse" "false")
 	fi
 
 	local pulse_lower
@@ -2484,6 +2476,15 @@ main() {
 	calculate_max_workers
 	check_session_count >/dev/null
 	prefetch_state
+
+	# Re-check stop flag immediately before run_pulse() — a stop may have
+	# been issued during the prefetch/cleanup phase above (t2943)
+	local stop_flag_recheck="${HOME}/.aidevops/logs/pulse-session.stop"
+	if [[ -f "$stop_flag_recheck" ]]; then
+		echo "[pulse-wrapper] Stop flag appeared during setup — aborting before run_pulse()" >>"$LOGFILE"
+		return 0
+	fi
+
 	run_pulse
 	run_daily_quality_sweep
 	update_health_issues

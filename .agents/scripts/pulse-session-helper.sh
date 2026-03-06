@@ -19,6 +19,11 @@ set -euo pipefail
 
 export PATH="/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:${PATH}"
 
+# Source config-helper for _jsonc_get (shared JSONC config reader)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=config-helper.sh
+source "${SCRIPT_DIR}/config-helper.sh" 2>/dev/null || true
+
 # Configuration
 readonly SESSION_FLAG="${HOME}/.aidevops/logs/pulse-session.flag"
 readonly STOP_FLAG="${HOME}/.aidevops/logs/pulse-session.stop"
@@ -88,7 +93,7 @@ count_workers() {
 is_pulse_running() {
 	if [[ -f "$PIDFILE" ]]; then
 		local pid
-		pid=$(cat "$PIDFILE" 2>/dev/null || echo "")
+		pid=$(cat "$PIDFILE" || echo "")
 		if [[ -n "$pid" ]] && ps -p "$pid" >/dev/null 2>&1; then
 			return 0
 		fi
@@ -98,32 +103,26 @@ is_pulse_running() {
 
 #######################################
 # Check if config consent is enabled
-# Mirrors the config check in pulse-wrapper.sh check_session_gate()
+# Uses _jsonc_get from config-helper.sh (shared with pulse-wrapper.sh
+# via shared-constants.sh) to avoid duplicating JSONC parsing logic.
+# Env var AIDEVOPS_SUPERVISOR_PULSE overrides config.
 # Returns: 0 if enabled, 1 if not
 #######################################
 is_config_consent_enabled() {
-	# NOTE: This mirrors the config check in pulse-wrapper.sh check_session_gate().
-	# Kept separate because pulse-wrapper.sh is a standalone 2600+ line script
-	# with its own initialization — sourcing it here would be impractical.
 	local pulse_config=""
 
-	# JSONC config (primary) — strip // comments before matching
-	local config_file="${HOME}/.config/aidevops/config.jsonc"
-	if [[ -f "$config_file" ]]; then
-		pulse_config=$(sed 's|//.*||' "$config_file" | grep -o '"supervisor_pulse"[[:space:]]*:[[:space:]]*[a-z]*' | tail -1 | grep -o '[a-z]*$' || echo "")
-	fi
-
-	# Legacy .conf fallback
-	if [[ -z "$pulse_config" ]]; then
-		local legacy_conf="${HOME}/.config/aidevops/feature-toggles.conf"
-		if [[ -f "$legacy_conf" ]]; then
-			pulse_config=$(grep -E '^supervisor_pulse=' "$legacy_conf" | tail -1 | cut -d= -f2 || echo "")
-		fi
-	fi
-
-	# Env var override
+	# Env var override (highest priority)
 	if [[ -n "${AIDEVOPS_SUPERVISOR_PULSE:-}" ]]; then
 		pulse_config="$AIDEVOPS_SUPERVISOR_PULSE"
+	elif type _jsonc_get &>/dev/null; then
+		# Use shared config reader (handles JSONC stripping, defaults merging)
+		pulse_config=$(_jsonc_get "orchestration.supervisor_pulse" "false")
+	else
+		# Fallback if config-helper.sh failed to load — basic grep with comment stripping
+		local config_file="${HOME}/.config/aidevops/config.jsonc"
+		if [[ -f "$config_file" ]]; then
+			pulse_config=$(sed 's|//.*||' "$config_file" | grep -o '"supervisor_pulse"[[:space:]]*:[[:space:]]*[a-z]*' | tail -1 | grep -o '[a-z]*$' || echo "")
+		fi
 	fi
 
 	local pulse_lower
@@ -140,7 +139,7 @@ is_config_consent_enabled() {
 #######################################
 get_pulse_repo_count() {
 	if [[ -f "$REPOS_JSON" ]] && command -v jq &>/dev/null; then
-		jq '[.initialized_repos[] | select(.pulse == true)] | length' "$REPOS_JSON" 2>/dev/null || echo "0"
+		jq '[.initialized_repos[] | select(.pulse == true)] | length' "$REPOS_JSON" || echo "0"
 	else
 		echo "?"
 	fi
@@ -153,7 +152,7 @@ get_pulse_repo_count() {
 get_last_pulse_time() {
 	if [[ -f "$LOGFILE" ]]; then
 		local last_line
-		last_line=$(grep 'Starting pulse at' "$LOGFILE" 2>/dev/null | tail -1)
+		last_line=$(grep 'Starting pulse at' "$LOGFILE" | tail -1)
 		if [[ -n "$last_line" ]]; then
 			echo "$last_line" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z' | tail -1
 			return 0
@@ -196,7 +195,7 @@ EOF
 	repo_count=$(get_pulse_repo_count)
 	local max_workers="?"
 	if [[ -f "$MAX_WORKERS_FILE" ]]; then
-		max_workers=$(cat "$MAX_WORKERS_FILE" 2>/dev/null || echo "?")
+		max_workers=$(cat "$MAX_WORKERS_FILE" || echo "?")
 	fi
 
 	print_success "Pulse session started"
@@ -232,10 +231,14 @@ cmd_stop() {
 		esac
 	done
 
-	# Check if already stopped (stop flag present and no session flag)
+	# Check if already stopped — but allow --force through so it can kill workers
 	if [[ -f "$STOP_FLAG" ]] && ! is_session_active; then
-		print_info "Pulse is already stopped"
-		return 0
+		local worker_count_check
+		worker_count_check=$(count_workers)
+		if [[ "$force" != "true" ]] && [[ "$worker_count_check" -eq 0 ]] && ! is_pulse_running; then
+			print_info "Pulse is already stopped"
+			return 0
+		fi
 	fi
 
 	# If no session flag and no config consent, nothing to stop
@@ -427,7 +430,7 @@ cmd_status() {
 	# Pulse process
 	if is_pulse_running; then
 		local pulse_pid
-		pulse_pid=$(cat "$PIDFILE" 2>/dev/null || echo "?")
+		pulse_pid=$(cat "$PIDFILE" || echo "?")
 		echo -e "  Process:     ${GREEN}running${NC} (PID ${pulse_pid})"
 	else
 		echo -e "  Process:     ${BLUE}idle${NC} (waiting for next launchd cycle)"
@@ -445,7 +448,7 @@ cmd_status() {
 	# Max workers
 	local max_workers="?"
 	if [[ -f "$MAX_WORKERS_FILE" ]]; then
-		max_workers=$(cat "$MAX_WORKERS_FILE" 2>/dev/null || echo "?")
+		max_workers=$(cat "$MAX_WORKERS_FILE" || echo "?")
 	fi
 	echo "  Max workers: ${max_workers}"
 
