@@ -103,34 +103,18 @@ is_pulse_running() {
 
 #######################################
 # Check if config consent is enabled
-# Uses _jsonc_get from config-helper.sh (shared with pulse-wrapper.sh
-# via shared-constants.sh) to avoid duplicating JSONC parsing logic.
-# Env var AIDEVOPS_SUPERVISOR_PULSE overrides config.
+# Delegates to config_enabled from config-helper.sh (sourced above),
+# which handles: env var override (AIDEVOPS_SUPERVISOR_PULSE) >
+# user JSONC config > defaults JSONC config. Single canonical
+# implementation shared with pulse-wrapper.sh via shared-constants.sh.
 # Returns: 0 if enabled, 1 if not
 #######################################
 is_config_consent_enabled() {
-	local pulse_config=""
-
-	# Env var override (highest priority)
-	if [[ -n "${AIDEVOPS_SUPERVISOR_PULSE:-}" ]]; then
-		pulse_config="$AIDEVOPS_SUPERVISOR_PULSE"
-	elif type _jsonc_get &>/dev/null; then
-		# Use shared config reader (handles JSONC stripping, defaults merging)
-		pulse_config=$(_jsonc_get "orchestration.supervisor_pulse" "false")
-	else
-		# Fallback if config-helper.sh failed to load — basic grep with comment stripping
-		local config_file="${HOME}/.config/aidevops/config.jsonc"
-		if [[ -f "$config_file" ]]; then
-			pulse_config=$(sed 's|//.*||' "$config_file" | grep -o '"supervisor_pulse"[[:space:]]*:[[:space:]]*[a-z]*' | tail -1 | grep -o '[a-z]*$' || echo "")
-		fi
+	if type config_enabled &>/dev/null; then
+		config_enabled "orchestration.supervisor_pulse"
+		return $?
 	fi
-
-	local pulse_lower
-	pulse_lower=$(echo "$pulse_config" | tr '[:upper:]' '[:lower:]')
-
-	if [[ "$pulse_lower" == "true" ]]; then
-		return 0
-	fi
+	# Fallback if config-helper.sh failed to load entirely
 	return 1
 }
 

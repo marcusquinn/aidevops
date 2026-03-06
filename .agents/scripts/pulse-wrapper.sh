@@ -2436,22 +2436,12 @@ check_session_gate() {
 		return 0
 	fi
 
-	# Config consent — the persistent gate that survives reboots
-	# Uses _jsonc_get from config-helper.sh (sourced via shared-constants.sh)
-	# which handles JSONC comment stripping, defaults merging, and jq parsing.
-	# Env var override has highest priority.
-	local pulse_config=""
-
-	if [[ -n "${AIDEVOPS_SUPERVISOR_PULSE:-}" ]]; then
-		pulse_config="$AIDEVOPS_SUPERVISOR_PULSE"
-	elif type _jsonc_get &>/dev/null; then
-		pulse_config=$(_jsonc_get "orchestration.supervisor_pulse" "false")
-	fi
-
-	local pulse_lower
-	pulse_lower=$(echo "$pulse_config" | tr '[:upper:]' '[:lower:]')
-
-	if [[ "$pulse_lower" == "true" ]]; then
+	# Config consent — the persistent gate that survives reboots.
+	# Delegates to config_enabled from config-helper.sh (sourced via
+	# shared-constants.sh), which handles: env var override
+	# (AIDEVOPS_SUPERVISOR_PULSE) > user JSONC config > defaults.
+	# Single canonical implementation shared with pulse-session-helper.sh.
+	if type config_enabled &>/dev/null && config_enabled "orchestration.supervisor_pulse"; then
 		return 0
 	fi
 
