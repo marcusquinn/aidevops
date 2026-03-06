@@ -1244,7 +1244,7 @@ cleanup_worktrees() {
 		# worktrees in any managed repo. Skip local_only repos since
 		# worktree-helper.sh uses gh pr list for squash-merge detection.
 		local repo_paths
-		repo_paths=$(jq -r '.initialized_repos[] | select((.local_only // false) == false) | .path' "$repos_json" 2>/dev/null || echo "")
+		repo_paths=$(jq -r '.initialized_repos[] | select((.local_only // false) == false) | .path' "$repos_json" || echo "")
 
 		local repo_path
 		while IFS= read -r repo_path; do
@@ -1252,7 +1252,7 @@ cleanup_worktrees() {
 			[[ ! -d "$repo_path/.git" ]] && continue
 
 			local wt_count
-			wt_count=$(git -C "$repo_path" worktree list 2>/dev/null | wc -l | tr -d ' ')
+			wt_count=$(git -C "$repo_path" worktree list | wc -l | tr -d ' ')
 			# Skip repos with only 1 worktree (the main one) — nothing to clean
 			if [[ "${wt_count:-0}" -le 1 ]]; then
 				continue
