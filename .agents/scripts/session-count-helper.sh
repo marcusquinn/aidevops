@@ -81,7 +81,7 @@ count_interactive_sessions() {
 	# the first argument after the binary name.
 	# Headless: .opencode run ...
 	local opencode_pids=""
-	opencode_pids=$(pgrep -f '\.opencode' 2>/dev/null || true)
+	opencode_pids=$(pgrep -f '\.opencode' || true)
 
 	if [[ -n "$opencode_pids" ]]; then
 		local pid
@@ -92,7 +92,7 @@ count_interactive_sessions() {
 				# Linux: /proc/PID/cmdline has null-separated args
 				cmdline=$(tr '\0' ' ' <"/proc/${pid}/cmdline" 2>/dev/null || true)
 			else
-				# macOS fallback: ps -o args=
+				# macOS fallback: ps -o args= (2>/dev/null: PID may have exited)
 				cmdline=$(ps -o args= -p "$pid" 2>/dev/null || true)
 			fi
 
@@ -117,7 +117,7 @@ count_interactive_sessions() {
 	# --- Claude Code sessions ---
 	# Interactive claude: the claude binary WITHOUT "-p", "--print", or "run"
 	local claude_pids=""
-	claude_pids=$(pgrep -x claude 2>/dev/null || true)
+	claude_pids=$(pgrep -x claude || true)
 
 	if [[ -n "$claude_pids" ]]; then
 		local pid
@@ -127,6 +127,7 @@ count_interactive_sessions() {
 			if [[ -r "/proc/${pid}/cmdline" ]]; then
 				cmdline=$(tr '\0' ' ' <"/proc/${pid}/cmdline" 2>/dev/null || true)
 			else
+				# macOS fallback (2>/dev/null: PID may have exited)
 				cmdline=$(ps -o args= -p "$pid" 2>/dev/null || true)
 			fi
 
@@ -139,18 +140,22 @@ count_interactive_sessions() {
 	fi
 
 	# --- Cursor sessions ---
+	# Note: pgrep -c is not available on macOS; use pgrep | wc -l instead
 	local cursor_count=0
-	cursor_count=$(pgrep -c -f 'Cursor\.app' 2>/dev/null || true)
+	cursor_count=$(pgrep -f 'Cursor\.app' | wc -l || true)
+	cursor_count=$((cursor_count + 0)) # normalize whitespace from wc
 	count=$((count + cursor_count))
 
 	# --- Windsurf sessions ---
 	local windsurf_count=0
-	windsurf_count=$(pgrep -c -f 'Windsurf' 2>/dev/null || true)
+	windsurf_count=$(pgrep -f 'Windsurf' | wc -l || true)
+	windsurf_count=$((windsurf_count + 0))
 	count=$((count + windsurf_count))
 
 	# --- Aider sessions ---
 	local aider_count=0
-	aider_count=$(pgrep -c -f 'aider' 2>/dev/null || true)
+	aider_count=$(pgrep -f 'aider' | wc -l || true)
+	aider_count=$((aider_count + 0))
 	count=$((count + aider_count))
 
 	echo "$count"
@@ -158,13 +163,28 @@ count_interactive_sessions() {
 }
 
 # List detected interactive sessions with details.
-# Output format: PID | APP | RSS_MB | UPTIME | DIR
+# Output format: PID | APP | RSS_MB | UPTIME
 list_sessions() {
 	local found=0
 
+	# Helper: print session details for a given PID and app name.
+	# Uses 2>/dev/null on ps calls because the PID may have exited
+	# between detection and inspection (race condition).
+	_print_session_detail() {
+		local pid="$1"
+		local app_name="$2"
+		local rss_mb etime
+		rss_mb=$(ps -o rss= -p "$pid" 2>/dev/null || echo "0")
+		rss_mb=$((${rss_mb:-0} / 1024))
+		etime=$(ps -o etime= -p "$pid" 2>/dev/null || echo "unknown")
+		etime=$(echo "$etime" | tr -d ' ')
+		echo "  PID ${pid} | ${app_name} | ${rss_mb} MB | uptime: ${etime}"
+		return 0
+	}
+
 	# --- OpenCode sessions ---
 	local opencode_pids=""
-	opencode_pids=$(pgrep -f '\.opencode' 2>/dev/null || true)
+	opencode_pids=$(pgrep -f '\.opencode' || true)
 
 	if [[ -n "$opencode_pids" ]]; then
 		local pid
@@ -174,6 +194,7 @@ list_sessions() {
 			if [[ -r "/proc/${pid}/cmdline" ]]; then
 				cmdline=$(tr '\0' ' ' <"/proc/${pid}/cmdline" 2>/dev/null || true)
 			else
+				# macOS fallback (2>/dev/null: PID may have exited)
 				cmdline=$(ps -o args= -p "$pid" 2>/dev/null || true)
 			fi
 
@@ -188,20 +209,14 @@ list_sessions() {
 				continue
 			fi
 
-			local rss_mb etime
-			rss_mb=$(ps -o rss= -p "$pid" 2>/dev/null || echo "0")
-			rss_mb=$((${rss_mb:-0} / 1024))
-			etime=$(ps -o etime= -p "$pid" 2>/dev/null || echo "unknown")
-			etime=$(echo "$etime" | tr -d ' ')
-
-			echo "  PID ${pid} | OpenCode | ${rss_mb} MB | uptime: ${etime}"
+			_print_session_detail "$pid" "OpenCode"
 			found=$((found + 1))
 		done <<<"$opencode_pids"
 	fi
 
 	# --- Claude Code sessions ---
 	local claude_pids=""
-	claude_pids=$(pgrep -x claude 2>/dev/null || true)
+	claude_pids=$(pgrep -x claude || true)
 
 	if [[ -n "$claude_pids" ]]; then
 		local pid
@@ -211,6 +226,7 @@ list_sessions() {
 			if [[ -r "/proc/${pid}/cmdline" ]]; then
 				cmdline=$(tr '\0' ' ' <"/proc/${pid}/cmdline" 2>/dev/null || true)
 			else
+				# macOS fallback (2>/dev/null: PID may have exited)
 				cmdline=$(ps -o args= -p "$pid" 2>/dev/null || true)
 			fi
 
@@ -218,15 +234,48 @@ list_sessions() {
 				continue
 			fi
 
-			local rss_mb etime
-			rss_mb=$(ps -o rss= -p "$pid" 2>/dev/null || echo "0")
-			rss_mb=$((${rss_mb:-0} / 1024))
-			etime=$(ps -o etime= -p "$pid" 2>/dev/null || echo "unknown")
-			etime=$(echo "$etime" | tr -d ' ')
-
-			echo "  PID ${pid} | Claude Code | ${rss_mb} MB | uptime: ${etime}"
+			_print_session_detail "$pid" "Claude Code"
 			found=$((found + 1))
 		done <<<"$claude_pids"
+	fi
+
+	# --- Cursor sessions ---
+	local cursor_pids=""
+	cursor_pids=$(pgrep -f 'Cursor\.app' || true)
+
+	if [[ -n "$cursor_pids" ]]; then
+		local pid
+		while IFS= read -r pid; do
+			[[ -z "$pid" ]] && continue
+			_print_session_detail "$pid" "Cursor"
+			found=$((found + 1))
+		done <<<"$cursor_pids"
+	fi
+
+	# --- Windsurf sessions ---
+	local windsurf_pids=""
+	windsurf_pids=$(pgrep -f 'Windsurf' || true)
+
+	if [[ -n "$windsurf_pids" ]]; then
+		local pid
+		while IFS= read -r pid; do
+			[[ -z "$pid" ]] && continue
+			_print_session_detail "$pid" "Windsurf"
+			found=$((found + 1))
+		done <<<"$windsurf_pids"
+	fi
+
+	# --- Aider sessions ---
+	local aider_pids=""
+	aider_pids=$(pgrep -f 'aider' || true)
+
+	if [[ -n "$aider_pids" ]]; then
+		local pid
+		while IFS= read -r pid; do
+			[[ -z "$pid" ]] && continue
+			_print_session_detail "$pid" "Aider"
+			found=$((found + 1))
+		done <<<"$aider_pids"
 	fi
 
 	if [[ "$found" -eq 0 ]]; then

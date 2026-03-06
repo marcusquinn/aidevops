@@ -250,7 +250,7 @@ main() {
 	# Check for excessive concurrent interactive sessions (t1398.4)
 	local session_warning=""
 	if [[ -x "${script_dir}/session-count-helper.sh" ]]; then
-		session_warning="$("${script_dir}/session-count-helper.sh" check 2>/dev/null || true)"
+		session_warning="$("${script_dir}/session-count-helper.sh" check || true)"
 	fi
 	if [[ -n "$session_warning" ]]; then
 		echo "$session_warning"

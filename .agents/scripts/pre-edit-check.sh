@@ -419,7 +419,7 @@ else
 
 		# Session count warning (t1398.4) — non-blocking, informational only
 		if [[ -x "$SCRIPT_DIR/session-count-helper.sh" ]]; then
-			session_warning=$("$SCRIPT_DIR/session-count-helper.sh" check 2>/dev/null || true)
+			session_warning=$("$SCRIPT_DIR/session-count-helper.sh" check || true)
 			if [[ -n "$session_warning" ]]; then
 				echo -e "${YELLOW}${session_warning}${NC}"
 			fi
