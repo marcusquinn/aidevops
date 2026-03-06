@@ -33,13 +33,14 @@ readonly MAX_WORKERS_FILE="${HOME}/.aidevops/logs/pulse-max-workers"
 readonly REPOS_JSON="${HOME}/.config/aidevops/repos.json"
 readonly STOP_GRACE_PERIOD="${PULSE_STOP_GRACE_SECONDS:-300}" # 5 min default
 
-# Colors
-readonly GREEN='\033[0;32m'
-readonly BLUE='\033[0;34m'
-readonly YELLOW='\033[1;33m'
-readonly RED='\033[0;31m'
-readonly BOLD='\033[1m'
-readonly NC='\033[0m'
+# Colors — shared-constants.sh (via config-helper.sh) may have already set these
+# as readonly. Only define if not already present to avoid readonly collisions.
+[[ -z "${GREEN+x}" ]] && readonly GREEN='\033[0;32m'
+[[ -z "${BLUE+x}" ]] && readonly BLUE='\033[0;34m'
+[[ -z "${YELLOW+x}" ]] && readonly YELLOW='\033[1;33m'
+[[ -z "${RED+x}" ]] && readonly RED='\033[0;31m'
+[[ -z "${BOLD+x}" ]] && readonly BOLD='\033[1m'
+[[ -z "${NC+x}" ]] && readonly NC='\033[0m'
 
 # Ensure log directory exists
 mkdir -p "$(dirname "$SESSION_FLAG")"
