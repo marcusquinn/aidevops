@@ -130,7 +130,7 @@ get_installed_version() {
 		fi
 		local _ver_rc=0
 		# shellcheck disable=SC2086
-		timeout_sec "$VERSION_TIMEOUT" "$cmd" $ver_flag >"$_ver_log" 2>/dev/null || _ver_rc=$?
+		timeout_sec "$VERSION_TIMEOUT" "$cmd" $ver_flag >"$_ver_log" || _ver_rc=$?
 
 		if [[ "$_ver_rc" -eq 124 ]]; then
 			# timeout_sec killed the process — command hung
