@@ -120,6 +120,7 @@ setup_oh_my_zsh() {
 	if [[ "$install_omz" =~ ^[Yy]$ ]]; then
 		print_info "Installing Oh My Zsh..."
 		# Use verified download + --unattended to avoid changing the shell or starting zsh
+		# shellcheck disable=SC2034  # Read by verified_install() in setup.sh
 		VERIFIED_INSTALL_SHELL="sh"
 		if verified_install "Oh My Zsh" "https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh" --unattended; then
 			print_success "Oh My Zsh installed"

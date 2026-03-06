@@ -645,6 +645,7 @@ setup_recommended_tools() {
 						case "$pkg_manager" in
 						apt)
 							# Add packagecloud repo for Tabby (verified download, not piped to sudo)
+							# shellcheck disable=SC2034  # Read by verified_install() in setup.sh
 							VERIFIED_INSTALL_SUDO="true"
 							if verified_install "Tabby repository (apt)" "https://packagecloud.io/install/repositories/eugeny/tabby/script.deb.sh"; then
 								if ! sudo apt-get install -y tabby-terminal; then
@@ -654,6 +655,7 @@ setup_recommended_tools() {
 							fi
 							;;
 						dnf | yum)
+							# shellcheck disable=SC2034  # Read by verified_install() in setup.sh
 							VERIFIED_INSTALL_SUDO="true"
 							if verified_install "Tabby repository (rpm)" "https://packagecloud.io/install/repositories/eugeny/tabby/script.rpm.sh"; then
 								if ! sudo "$pkg_manager" install -y tabby-terminal; then
@@ -698,6 +700,7 @@ setup_recommended_tools() {
 					fi
 				elif [[ "$(uname)" == "Linux" ]]; then
 					# Zed provides an install script for Linux (verified download)
+					# shellcheck disable=SC2034  # Read by verified_install() in setup.sh
 					VERIFIED_INSTALL_SHELL="sh"
 					if verified_install "Zed" "https://zed.dev/install.sh"; then
 						zed_installed=true
@@ -981,6 +984,7 @@ setup_nodejs() {
 			# Use NodeSource for a recent version (apt default may be old)
 			print_info "Installing Node.js (via NodeSource for latest LTS)..."
 			if command -v curl >/dev/null 2>&1; then
+				# shellcheck disable=SC2034  # Read by verified_install() in setup.sh
 				VERIFIED_INSTALL_SUDO="true"
 				if verified_install "NodeSource repository" "https://deb.nodesource.com/setup_22.x"; then
 					# Install nodejs (NodeSource bundles npm, but distro fallback may not)
