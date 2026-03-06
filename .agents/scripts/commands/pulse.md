@@ -229,7 +229,8 @@ For each dispatchable issue:
 3. Skip if the issue has `status:queued`, `status:in-progress`, or `status:in-review` labels — but only if the issue was updated within the last 3 hours. These labels indicate a worker is handling it (possibly on another machine). If the label is stale (3+ hours, no PR, no recent branch activity), the worker likely died — recover the issue: relabel to `status:available`, unassign, and comment explaining the recovery. It becomes dispatchable this cycle.
 4. Skip if the issue is assigned and was updated within the last 3 hours — someone is actively working on it. If assigned but stale (3+ hours, no PR), treat as abandoned: unassign and relabel to `status:available`.
 5. Read the issue body briefly — if it has `blocked-by:` references, check if those are resolved (merged PR exists). If not, skip it.
-6. Dispatch:
+6. **Task decomposition check (t1408):** Before dispatching, check if the task should be decomposed. Run `task-decompose-helper.sh has-subtasks <task-id>` — if it already has subtasks, dispatch the leaf subtasks instead. If not, the `/full-loop` worker will classify and decompose if needed (Step 0.8). For tasks that are clearly composite from the issue title (multiple independent features listed), consider pre-decomposing before dispatch to avoid wasting a worker session on classification.
+7. Dispatch:
 
 ```bash
 # Assign the issue to prevent duplicate work by other runners/humans

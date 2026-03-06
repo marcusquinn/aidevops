@@ -66,6 +66,27 @@ budget-tracker-helper.sh configure-period opencode --start 2026-02-01 --end 2026
 
 **Full docs**: `tools/context/model-routing.md`, `tools/ai-assistants/compare-models.md`
 
+## Task Decomposition (t1408)
+
+Pre-dispatch step that classifies tasks as atomic (execute directly) or composite (split into subtasks). Uses haiku-tier LLM calls (~$0.001 each) with heuristic fallback when API is unavailable.
+
+**CLI**: `task-decompose-helper.sh [classify|decompose|format-lineage|has-subtasks]`
+
+**Flow**: Task description → classify (atomic/composite) → if composite: decompose into 2-5 subtasks with dependency edges → create child TODO entries → dispatch leaf subtasks.
+
+**Batch strategies** (for parallel dispatch of decomposed subtasks):
+
+- **depth-first** (default): Complete all subtasks under one branch before starting the next. Good for dependent work where later subtasks build on earlier ones.
+- **breadth-first**: One subtask from each branch per batch. Spreads progress evenly. Good for independent work.
+
+The strategy is a recommendation from the decompose output, not a hard constraint. The pulse supervisor uses judgment for dispatch order, respecting `MAX_CONCURRENT_WORKERS` and `blocked-by:` edges.
+
+**Depth limit**: `DECOMPOSE_MAX_DEPTH` (default: 3). Deeper decomposition suggests the original task was poorly scoped.
+
+**Skip already-decomposed tasks**: `task-decompose-helper.sh has-subtasks <id>` checks TODO.md for existing child tasks. Prevents re-decomposition of manually split tasks.
+
+**Full docs**: `todo/tasks/t1408-brief.md`
+
 ## Pattern Tracking
 
 Track success/failure patterns across task types, models, and approaches. Patterns feed into model routing recommendations for data-driven dispatch.

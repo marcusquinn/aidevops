@@ -221,6 +221,35 @@ fi
 
 **For interactive sessions** (not headless dispatch): If you are working on a task interactively and the issue exists, apply the label based on your own model identity. This ensures all task work is attributed, not just headless dispatches.
 
+### Step 0.8: Task Decomposition Check (t1408)
+
+Before starting implementation, check if the task should be decomposed into subtasks. This catches over-scoped tasks before they waste a worker session.
+
+```bash
+# Check if task already has subtasks (skip if already decomposed)
+HAS_SUBS=$(~/.aidevops/agents/scripts/task-decompose-helper.sh has-subtasks "$TASK_ID" 2>/dev/null || echo "false")
+
+if [[ "$HAS_SUBS" == "false" ]]; then
+  # Classify the task
+  CLASSIFY=$(~/.aidevops/agents/scripts/task-decompose-helper.sh classify "$TASK_DESC" 2>/dev/null || echo '{"kind":"atomic"}')
+  TASK_KIND=$(echo "$CLASSIFY" | sed -n 's/.*"kind"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+
+  if [[ "$TASK_KIND" == "composite" ]]; then
+    # Decompose into subtasks
+    DECOMPOSITION=$(~/.aidevops/agents/scripts/task-decompose-helper.sh decompose "$TASK_DESC" 2>/dev/null || echo "")
+
+    # Interactive mode: show tree and ask for confirmation
+    # Headless mode: auto-proceed (create child tasks and dispatch)
+  fi
+fi
+```
+
+**Interactive mode:** If the task is composite, show the decomposition tree and ask: "This task has multiple independent concerns. Should I split it into subtasks? [Y/n/edit]". On confirm, create child TODO entries with `claim-task-id.sh`, set `blocked-by:` edges, and dispatch workers for each leaf subtask.
+
+**Headless mode:** Auto-decompose and create child tasks. Depth limit: `DECOMPOSE_MAX_DEPTH` (default: 3). Skip decomposition for tasks that already have subtasks in TODO.md.
+
+**When to skip:** If the task is atomic (most tasks), proceed directly to Step 1. The classify call costs ~$0.001 (haiku-tier) and takes <1 second.
+
 ### Step 1: Auto-Branch Setup
 
 The loop automatically handles branch setup when on main/master:
