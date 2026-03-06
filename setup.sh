@@ -85,6 +85,30 @@ if [[ -f "$_SHARED_CONSTANTS" ]]; then
 fi
 unset _SHARED_CONSTANTS
 
+# Escape a string for safe embedding in XML (plist heredocs).
+# Prevents XML injection if paths contain &, <, >, ", or ' characters.
+_xml_escape() {
+	local str="$1"
+	str="${str//&/&amp;}"
+	str="${str//</&lt;}"
+	str="${str//>/&gt;}"
+	str="${str//\"/&quot;}"
+	str="${str//\'/&apos;}"
+	printf '%s' "$str"
+	return 0
+}
+
+# Escape a string for safe embedding in crontab entries.
+# Wraps value in single quotes (prevents $(…), backtick, and variable expansion
+# by cron's /bin/sh). Embedded single quotes are escaped via the '\'' idiom.
+_cron_escape() {
+	local str="$1"
+	# Replace each ' with '\'' (end quote, escaped quote, start quote)
+	str="${str//\'/\'\\\'\'}"
+	printf "'%s'" "$str"
+	return 0
+}
+
 # Check if a launchd agent is loaded (SIGPIPE-safe for pipefail, t1265)
 _launchd_has_agent() {
 	local label="$1"
@@ -92,16 +116,6 @@ _launchd_has_agent() {
 	output=$(launchctl list 2>/dev/null) || true
 	echo "$output" | grep -qF "$label"
 	return $?
-}
-
-# Escape a string for safe embedding inside single quotes.
-# Replaces each ' with '"'"' (end quote, double-quoted apostrophe, resume quote).
-# Usage: local safe_path; safe_path="$(shell_single_quote "$path")"
-#        echo "CMD='${safe_path}'"
-shell_single_quote() {
-	local input="$1"
-	printf '%s' "$input" | sed "s/'/'\"\\'\"'/g"
-	return 0
 }
 
 # Spinner for long-running operations
@@ -851,7 +865,7 @@ main() {
 			_pulse_installed=true
 		fi
 	fi
-	if [[ "$_pulse_installed" == "false" ]] && crontab -l 2>/dev/null | grep -qF "pulse-wrapper" 2>/dev/null; then
+	if [[ "$_pulse_installed" == "false" ]] && crontab -l 2>/dev/null | grep -qF "pulse-wrapper"; then
 		_pulse_installed=true
 	fi
 
@@ -868,16 +882,25 @@ main() {
 
 			# Unload old plist if upgrading
 			if _launchd_has_agent "$pulse_label"; then
-				launchctl unload "$pulse_plist" 2>/dev/null || true
+				launchctl unload "$pulse_plist" || true
 				pkill -f 'Supervisor Pulse' 2>/dev/null || true
 			fi
 
 			# Also clean up old label if present
 			local old_plist="$HOME/Library/LaunchAgents/com.aidevops.supervisor-pulse.plist"
 			if [[ -f "$old_plist" ]]; then
-				launchctl unload "$old_plist" 2>/dev/null || true
+				launchctl unload "$old_plist" || true
 				rm -f "$old_plist"
 			fi
+
+			# XML-escape paths for safe plist embedding (prevents injection
+			# if $HOME or paths contain &, <, > characters)
+			local _xml_wrapper_script _xml_home _xml_opencode_bin _xml_aidevops_dir _xml_path
+			_xml_wrapper_script=$(_xml_escape "$wrapper_script")
+			_xml_home=$(_xml_escape "$HOME")
+			_xml_opencode_bin=$(_xml_escape "$opencode_bin")
+			_xml_aidevops_dir=$(_xml_escape "$_aidevops_dir")
+			_xml_path=$(_xml_escape "$PATH")
 
 			# Write the plist (always regenerated to pick up config changes)
 			cat >"$pulse_plist" <<PLIST
@@ -890,24 +913,24 @@ main() {
 	<key>ProgramArguments</key>
 	<array>
 		<string>/bin/bash</string>
-		<string>${wrapper_script}</string>
+		<string>${_xml_wrapper_script}</string>
 	</array>
 	<key>StartInterval</key>
 	<integer>120</integer>
 	<key>StandardOutPath</key>
-	<string>${HOME}/.aidevops/logs/pulse-wrapper.log</string>
+	<string>${_xml_home}/.aidevops/logs/pulse-wrapper.log</string>
 	<key>StandardErrorPath</key>
-	<string>${HOME}/.aidevops/logs/pulse-wrapper.log</string>
+	<string>${_xml_home}/.aidevops/logs/pulse-wrapper.log</string>
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>
-		<string>${PATH}</string>
+		<string>${_xml_path}</string>
 		<key>HOME</key>
-		<string>${HOME}</string>
+		<string>${_xml_home}</string>
 		<key>OPENCODE_BIN</key>
-		<string>${opencode_bin}</string>
+		<string>${_xml_opencode_bin}</string>
 		<key>PULSE_DIR</key>
-		<string>${_aidevops_dir}</string>
+		<string>${_xml_aidevops_dir}</string>
 		<key>PULSE_STALE_THRESHOLD</key>
 		<string>1800</string>
 	</dict>
@@ -919,7 +942,7 @@ main() {
 </plist>
 PLIST
 
-			if launchctl load "$pulse_plist" 2>/dev/null; then
+			if launchctl load "$pulse_plist"; then
 				if [[ "$_pulse_installed" == "true" ]]; then
 					print_info "Supervisor pulse updated (launchd config regenerated)"
 				else
@@ -931,17 +954,16 @@ PLIST
 		else
 			# Linux: use cron entry with wrapper
 			# Remove old-style cron entries (direct opencode invocation)
-			# Escape paths for safe embedding in single-quoted crontab entry
-			# (handles apostrophes in paths, e.g. /home/O'Connor/...)
-			local _cron_opencode_q _cron_pulsedir_q _cron_wrapper_q _cron_log_q
-			_cron_opencode_q="$(shell_single_quote "$opencode_bin")"
-			_cron_pulsedir_q="$(shell_single_quote "$_aidevops_dir")"
-			_cron_wrapper_q="$(shell_single_quote "$wrapper_script")"
-			_cron_log_q="$(shell_single_quote "$HOME/.aidevops/logs/pulse-wrapper.log")"
+			# Shell-escape all interpolated paths to prevent command injection
+			# via $(…) or backticks if paths contain shell metacharacters
+			local _cron_opencode_bin _cron_aidevops_dir _cron_wrapper_script
+			_cron_opencode_bin=$(_cron_escape "$opencode_bin")
+			_cron_aidevops_dir=$(_cron_escape "$_aidevops_dir")
+			_cron_wrapper_script=$(_cron_escape "$wrapper_script")
 			(
 				crontab -l 2>/dev/null | grep -v 'aidevops: supervisor-pulse'
-				echo "*/2 * * * * OPENCODE_BIN='${_cron_opencode_q}' PULSE_DIR='${_cron_pulsedir_q}' /bin/bash '${_cron_wrapper_q}' >> '${_cron_log_q}' 2>&1 # aidevops: supervisor-pulse"
-			) | crontab - 2>/dev/null || true
+				echo "*/2 * * * * PATH=\"/usr/local/bin:/usr/bin:/bin\" OPENCODE_BIN=${_cron_opencode_bin} PULSE_DIR=${_cron_aidevops_dir} /bin/bash ${_cron_wrapper_script} >> \"\$HOME/.aidevops/logs/pulse-wrapper.log\" 2>&1 # aidevops: supervisor-pulse"
+			) | crontab - || true
 			if crontab -l 2>/dev/null | grep -qF "aidevops: supervisor-pulse"; then
 				print_info "Supervisor pulse enabled (cron, every 2 min). Disable: crontab -e and remove the supervisor-pulse line"
 			else
@@ -953,14 +975,14 @@ PLIST
 		if [[ "$(uname -s)" == "Darwin" ]]; then
 			local pulse_plist="$HOME/Library/LaunchAgents/${pulse_label}.plist"
 			if _launchd_has_agent "$pulse_label"; then
-				launchctl unload "$pulse_plist" 2>/dev/null || true
+				launchctl unload "$pulse_plist" || true
 				rm -f "$pulse_plist"
 				pkill -f 'Supervisor Pulse' 2>/dev/null || true
 				print_info "Supervisor pulse disabled (launchd agent removed per config)"
 			fi
 		else
-			if crontab -l 2>/dev/null | grep -qF "pulse-wrapper" 2>/dev/null; then
-				crontab -l 2>/dev/null | grep -v 'aidevops: supervisor-pulse' | crontab - 2>/dev/null || true
+			if crontab -l 2>/dev/null | grep -qF "pulse-wrapper"; then
+				crontab -l 2>/dev/null | grep -v 'aidevops: supervisor-pulse' | crontab - || true
 				print_info "Supervisor pulse disabled (cron entry removed per config)"
 			fi
 		fi
@@ -1013,6 +1035,13 @@ PLIST
 				launchctl unload "$guard_plist" || true
 			fi
 
+			# XML-escape paths for safe plist embedding (prevents injection
+			# if $HOME or paths contain &, <, > characters)
+			local _xml_guard_script _xml_guard_home _xml_guard_path
+			_xml_guard_script=$(_xml_escape "$guard_script")
+			_xml_guard_home=$(_xml_escape "$HOME")
+			_xml_guard_path=$(_xml_escape "$PATH")
+
 			cat >"$guard_plist" <<GUARD_PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -1022,21 +1051,22 @@ PLIST
 	<string>${guard_label}</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>${guard_script}</string>
+		<string>/bin/bash</string>
+		<string>${_xml_guard_script}</string>
 		<string>kill-runaways</string>
 	</array>
 	<key>StartInterval</key>
 	<integer>30</integer>
 	<key>StandardOutPath</key>
-	<string>${HOME}/.aidevops/logs/process-guard.log</string>
+	<string>${_xml_guard_home}/.aidevops/logs/process-guard.log</string>
 	<key>StandardErrorPath</key>
-	<string>${HOME}/.aidevops/logs/process-guard.log</string>
+	<string>${_xml_guard_home}/.aidevops/logs/process-guard.log</string>
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>
-		<string>${PATH}</string>
+		<string>${_xml_guard_path}</string>
 		<key>HOME</key>
-		<string>${HOME}</string>
+		<string>${_xml_guard_home}</string>
 		<key>SHELLCHECK_RSS_LIMIT_KB</key>
 		<string>524288</string>
 		<key>SHELLCHECK_RUNTIME_LIMIT</key>
@@ -1062,11 +1092,14 @@ GUARD_PLIST
 		else
 			# Linux: cron entry (every minute — cron minimum granularity)
 			# Always regenerate to pick up config changes (matches macOS behavior)
+			# Shell-escape path to prevent command injection via metacharacters
+			local _cron_guard_script
+			_cron_guard_script=$(_cron_escape "$guard_script")
 			(
 				crontab -l 2>/dev/null | grep -v 'aidevops: process-guard'
-				echo "* * * * * SHELLCHECK_RSS_LIMIT_KB=524288 SHELLCHECK_RUNTIME_LIMIT=120 CHILD_RSS_LIMIT_KB=8388608 CHILD_RUNTIME_LIMIT=7200 /bin/bash \"${guard_script}\" kill-runaways >> \"\$HOME/.aidevops/logs/process-guard.log\" 2>&1 # aidevops: process-guard"
-			) | crontab - 2>/dev/null || true
-			if crontab -l 2>/dev/null | grep -qF "aidevops: process-guard" 2>/dev/null; then
+				echo "* * * * * PATH=\"/usr/local/bin:/usr/bin:/bin\" SHELLCHECK_RSS_LIMIT_KB=524288 SHELLCHECK_RUNTIME_LIMIT=120 CHILD_RSS_LIMIT_KB=8388608 CHILD_RUNTIME_LIMIT=7200 /bin/bash ${_cron_guard_script} kill-runaways >> \"\$HOME/.aidevops/logs/process-guard.log\" 2>&1 # aidevops: process-guard"
+			) | crontab - || true
+			if crontab -l 2>/dev/null | grep -qF "aidevops: process-guard"; then
 				print_info "Process guard enabled (cron, every minute)"
 			else
 				print_warning "Failed to install process guard cron entry"

@@ -14,14 +14,119 @@
  * @module observability
  */
 
-import { mkdirSync } from "fs";
-import { join } from "path";
+import { mkdirSync, readFileSync } from "fs";
+import { join, dirname } from "path";
 import { homedir } from "os";
 import { execSync } from "child_process";
+import { fileURLToPath } from "url";
 
 const HOME = homedir();
 const OBS_DIR = join(HOME, ".aidevops", ".agent-workspace", "observability");
 const DB_PATH = join(OBS_DIR, "llm-requests.db");
+
+// ---------------------------------------------------------------------------
+// Pricing table — loaded from shared JSON (single source of truth).
+// File: .agents/configs/model-pricing.json (also consumed by shared-constants.sh)
+// Falls back to hardcoded defaults if the JSON file is missing/unreadable.
+// ---------------------------------------------------------------------------
+
+/** Hardcoded fallback — used only when model-pricing.json is unreadable */
+const FALLBACK_PRICING = {
+  "opus-4":    { input: 15.0,  output: 75.0,  cacheRead: 1.50,   cacheWrite: 18.75 },
+  "sonnet-4":  { input: 3.0,   output: 15.0,  cacheRead: 0.30,   cacheWrite: 3.75  },
+  "haiku-4":   { input: 0.80,  output: 4.0,   cacheRead: 0.08,   cacheWrite: 1.0   },
+  "haiku-3":   { input: 0.80,  output: 4.0,   cacheRead: 0.08,   cacheWrite: 1.0   },
+};
+const FALLBACK_DEFAULT = { input: 3.0, output: 15.0, cacheRead: 0.30, cacheWrite: 3.75 };
+
+/**
+ * Load pricing from the shared JSON file.
+ * The JSON uses snake_case keys (cache_read, cache_write) for cross-language
+ * compatibility; we convert to camelCase for JS consumption.
+ * @returns {{ models: Record<string, {input,output,cacheRead,cacheWrite}>, default: {input,output,cacheRead,cacheWrite} }}
+ */
+function loadPricingFromJSON() {
+  // Resolve relative to this file's location (works in both dev repo and deployed ~/.aidevops/)
+  const thisDir = dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    join(thisDir, "..", "..", "configs", "model-pricing.json"),          // repo: .agents/plugins/../../configs/
+    join(HOME, ".aidevops", "agents", "configs", "model-pricing.json"), // deployed
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      const raw = JSON.parse(readFileSync(candidate, "utf-8"));
+      const models = {};
+      for (const [key, p] of Object.entries(raw.models || {})) {
+        models[key] = {
+          input: p.input,
+          output: p.output,
+          cacheRead: p.cache_read,
+          cacheWrite: p.cache_write,
+        };
+      }
+      const def = raw.default || {};
+      const defaultPricing = {
+        input: def.input ?? 3.0,
+        output: def.output ?? 15.0,
+        cacheRead: def.cache_read ?? 0.30,
+        cacheWrite: def.cache_write ?? 3.75,
+      };
+      return { models, default: defaultPricing };
+    } catch {
+      // Try next candidate
+    }
+  }
+
+  // All candidates failed — use hardcoded fallback
+  console.error("[aidevops] Observability: model-pricing.json not found, using hardcoded fallback");
+  return { models: FALLBACK_PRICING, default: FALLBACK_DEFAULT };
+}
+
+const _pricing = loadPricingFromJSON();
+const MODEL_PRICING = _pricing.models;
+const DEFAULT_PRICING = _pricing.default;
+
+/**
+ * Look up pricing for a model ID. Matches against the pricing table keys
+ * as substrings of the model ID (e.g., "claude-sonnet-4-20250514" matches "sonnet-4").
+ * @param {string} modelID
+ * @returns {{ input: number, output: number, cacheRead: number, cacheWrite: number }}
+ */
+function getPricing(modelID) {
+  if (!modelID) return DEFAULT_PRICING;
+  const lower = modelID.toLowerCase();
+  for (const [key, pricing] of Object.entries(MODEL_PRICING)) {
+    if (lower.includes(key)) return pricing;
+  }
+  return DEFAULT_PRICING;
+}
+
+/**
+ * Calculate cost from token counts and model pricing.
+ * OpenCode does not provide cost in message events — we must compute it.
+ * @param {object} tokens - { input, output, reasoning, cache: { read, write } }
+ * @param {string} modelID
+ * @returns {number} Total cost in USD
+ */
+function calculateCost(tokens, modelID) {
+  if (!tokens) return 0.0;
+  const pricing = getPricing(modelID);
+  const inputTokens = tokens.input || 0;
+  const outputTokens = tokens.output || 0;
+  const reasoningTokens = tokens.reasoning || 0;
+  const cacheRead = tokens.cache?.read || 0;
+  const cacheWrite = tokens.cache?.write || 0;
+
+  // Reasoning tokens are billed at output rate
+  const cost =
+    (inputTokens / 1e6) * pricing.input +
+    ((outputTokens + reasoningTokens) / 1e6) * pricing.output +
+    (cacheRead / 1e6) * pricing.cacheRead +
+    (cacheWrite / 1e6) * pricing.cacheWrite;
+
+  return Math.round(cost * 1e8) / 1e8; // 8 decimal places
+}
 
 // ---------------------------------------------------------------------------
 // SQLite helpers (uses sqlite3 CLI — no native dependency needed in ESM)
@@ -171,7 +276,61 @@ CREATE INDEX IF NOT EXISTS idx_session_summaries_session
     sqliteExec("ALTER TABLE tool_calls ADD COLUMN intent TEXT;", 5000);
   }
 
+  // Migration: backfill cost for rows where cost=0 but tokens exist.
+  // OpenCode never provided msg.cost — all historical rows have cost=0.
+  // This runs once (subsequent runs find 0 rows to update) and takes ~1s.
+  backfillCosts();
+
   return true;
+}
+
+/**
+ * Backfill cost for historical rows where cost=0 but tokens exist.
+ * Uses SQL CASE expressions matching the JS pricing table to avoid
+ * round-tripping each row through JS. Runs in a single UPDATE statement.
+ * Idempotent — only updates rows where cost=0 AND tokens_total>0.
+ */
+function backfillCosts() {
+  // Build SQL CASE expression from the pricing table
+  const cases = Object.entries(MODEL_PRICING).map(([key, p]) =>
+    `WHEN lower(model_id) LIKE '%${key}%' THEN ` +
+    `(tokens_input * ${p.input} + (tokens_output + tokens_reasoning) * ${p.output} ` +
+    `+ tokens_cache_read * ${p.cacheRead} + tokens_cache_write * ${p.cacheWrite}) / 1000000.0`
+  ).join("\n    ");
+
+  const sql = `
+UPDATE llm_requests
+SET cost = CASE
+    ${cases}
+    ELSE (tokens_input * ${DEFAULT_PRICING.input} + (tokens_output + tokens_reasoning) * ${DEFAULT_PRICING.output}
+      + tokens_cache_read * ${DEFAULT_PRICING.cacheRead} + tokens_cache_write * ${DEFAULT_PRICING.cacheWrite}) / 1000000.0
+  END
+WHERE cost = 0.0 AND tokens_total > 0;
+`;
+
+  // Combine UPDATE and SELECT changes() in a single sqliteExec so they run
+  // on the same sqlite3 connection — a separate call would always return 0.
+  const countRaw = sqliteExec(`${sql}\nSELECT changes();`, 30000);
+  const count = countRaw?.split("\n").pop() ?? "0";
+  if (parseInt(count, 10) > 0) {
+    console.error(`[aidevops] Observability: backfilled cost for ${count} rows`);
+
+    // Rebuild session_summaries from the corrected data.
+    // Compute total_errors from actual error columns instead of hardcoding 0.
+    sqliteExec(`
+DELETE FROM session_summaries;
+INSERT INTO session_summaries (session_id, first_seen, last_seen, request_count,
+  total_tokens_input, total_tokens_output, total_cost, total_tool_calls, total_errors,
+  project_path, models_used)
+SELECT session_id, MIN(timestamp), MAX(timestamp), COUNT(*),
+  SUM(tokens_input), SUM(tokens_output), SUM(cost), MAX(tool_call_count),
+  SUM(CASE WHEN error_type IS NOT NULL OR error_message IS NOT NULL THEN 1 ELSE 0 END),
+  MAX(project_path), GROUP_CONCAT(DISTINCT model_id)
+FROM llm_requests
+GROUP BY session_id;
+`, 30000);
+    console.error("[aidevops] Observability: rebuilt session_summaries with corrected costs");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -275,6 +434,9 @@ function handleMessageUpdated(event) {
 
   const projectPath = msg.path?.root || msg.path?.cwd || null;
 
+  // Calculate cost from tokens — OpenCode does not provide msg.cost
+  const cost = calculateCost(msg.tokens, msg.modelID);
+
   const sql = `INSERT INTO llm_requests (
     session_id, message_id, provider_id, model_id, agent,
     tokens_input, tokens_output, tokens_reasoning,
@@ -293,7 +455,7 @@ function handleMessageUpdated(event) {
     ${msg.tokens?.cache?.read || 0},
     ${msg.tokens?.cache?.write || 0},
     ${msg.tokens?.total || 0},
-    ${msg.cost || 0.0},
+    ${cost},
     ${durationMs !== null ? durationMs : "NULL"},
     ${sqlEscape(msg.finish || null)},
     ${sqlEscape(errorType)},
@@ -306,7 +468,7 @@ function handleMessageUpdated(event) {
   sqliteExec(sql);
 
   // Update session summary (upsert)
-  updateSessionSummary(msg, toolCallCount);
+  updateSessionSummary(msg, cost, toolCallCount);
 }
 
 /**
@@ -314,9 +476,10 @@ function handleMessageUpdated(event) {
  * Uses INSERT OR REPLACE with accumulated values.
  *
  * @param {object} msg - Assistant message
+ * @param {number} cost - Pre-calculated cost for this request
  * @param {number} toolCallCount - Current tool call count for session
  */
-function updateSessionSummary(msg, toolCallCount) {
+function updateSessionSummary(msg, cost, toolCallCount) {
   const now = new Date().toISOString();
   const projectPath = msg.path?.root || msg.path?.cwd || null;
   const hasError = msg.error ? 1 : 0;
@@ -333,7 +496,7 @@ INSERT INTO session_summaries (
   1,
   ${msg.tokens?.input || 0},
   ${msg.tokens?.output || 0},
-  ${msg.cost || 0.0},
+  ${cost},
   ${toolCallCount},
   ${hasError},
   ${sqlEscape(projectPath)},
@@ -344,7 +507,7 @@ ON CONFLICT(session_id) DO UPDATE SET
   request_count = request_count + 1,
   total_tokens_input = total_tokens_input + ${msg.tokens?.input || 0},
   total_tokens_output = total_tokens_output + ${msg.tokens?.output || 0},
-  total_cost = total_cost + ${msg.cost || 0.0},
+  total_cost = total_cost + ${cost},
   total_tool_calls = ${toolCallCount},
   total_errors = total_errors + ${hasError},
   models_used = CASE

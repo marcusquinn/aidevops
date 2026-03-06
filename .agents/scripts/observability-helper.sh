@@ -172,8 +172,21 @@ cmd_ingest() {
 		shift
 	done
 
+	# Primary source: OpenCode plugin writes to SQLite DB in real-time.
+	# JSONL ingest is legacy (Claude Code transcripts, no longer updated).
+	local obs_db="${OBS_DIR}/llm-requests.db"
+	if [[ -f "$obs_db" ]] && command -v sqlite3 &>/dev/null; then
+		local row_count
+		if row_count=$(sqlite3 "$obs_db" "SELECT COUNT(*) FROM llm_requests;" 2>/dev/null); then
+			[[ "$quiet" != "true" ]] && print_success "SQLite DB has $row_count rows (real-time via OpenCode plugin)"
+			return 0
+		fi
+		[[ "$quiet" != "true" ]] && print_warning "SQLite DB exists but llm_requests could not be queried; falling back to legacy JSONL ingest"
+	fi
+
+	# Legacy fallback: parse Claude Code JSONL transcripts
 	[[ -d "$CLAUDE_LOG_DIR" ]] || {
-		print_warning "Claude log directory not found: $CLAUDE_LOG_DIR"
+		print_warning "No data sources found. OpenCode plugin SQLite DB not found, Claude log directory not found."
 		return 0
 	}
 	command -v jq &>/dev/null || {
@@ -313,6 +326,26 @@ _get_config_val() { _rl_jq '.[$f]' "" "$1" "$2"; }
 
 _count_usage_in_window() {
 	local provider="$1" window_minutes="$2"
+
+	# Prefer SQLite DB (populated by OpenCode plugin in real-time) over JSONL
+	local obs_db="${OBS_DIR}/llm-requests.db"
+	if [[ -f "$obs_db" ]] && command -v sqlite3 &>/dev/null; then
+		local result
+		result=$(sqlite3 "$obs_db" "
+			SELECT COUNT(*), COALESCE(SUM(tokens_input + tokens_output + tokens_cache_read + tokens_cache_write), 0)
+			FROM llm_requests
+			WHERE lower(provider_id) = lower('${provider}')
+			  AND timestamp > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-${window_minutes} minutes');
+		" 2>/dev/null) || result=""
+		if [[ -n "$result" ]]; then
+			local req_count tok_count
+			IFS='|' read -r req_count tok_count <<<"$result"
+			echo "${req_count:-0}|${tok_count:-0}"
+			return 0
+		fi
+	fi
+
+	# Fallback to JSONL (legacy — Claude Code transcripts, no longer updated)
 	[[ -f "$OBS_METRICS" ]] || {
 		echo "0|0"
 		return 0

@@ -110,6 +110,26 @@ Use `templates/brief-template.md` as the base. Populate from conversation contex
 - Claude Code: `$CLAUDE_SESSION_ID` or the conversation ID from the CLI
 - If unavailable: use `{app}:unknown-{ISO-date}` and note "session ID not captured"
 
+### Step 5.5: Decomposition Check (t1408)
+
+After creating the brief, classify the task to check if it should be decomposed:
+
+```bash
+CLASSIFY=$(~/.aidevops/agents/scripts/task-decompose-helper.sh classify "$TASK_TITLE" 2>/dev/null || echo '{"kind":"atomic"}')
+TASK_KIND=$(echo "$CLASSIFY" | sed -n 's/.*"kind"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+```
+
+If `TASK_KIND` is `composite`, offer to decompose:
+
+```text
+This task appears to have multiple independent concerns. Would you like to split it into subtasks?
+[Y] Yes — decompose into 2-5 subtasks with dependency edges
+[n] No — keep as a single task
+[e] Edit — show the decomposition and let me adjust
+```
+
+On confirmation, run `task-decompose-helper.sh decompose "$TASK_TITLE"` and create child task IDs with `claim-task-id.sh` for each subtask. Set `blocked-by:` edges between siblings as indicated by the decomposition output.
+
 ### Step 6: Add to TODO.md
 
 Format the TODO.md entry using the allocated ID:
