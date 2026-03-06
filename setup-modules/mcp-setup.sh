@@ -417,12 +417,20 @@ add_opencode_plugin() {
 
 	# Check if plugin array exists and if plugin is already configured
 	local has_plugin_array
-	has_plugin_array=$(jq -e '.plugin' "$opencode_config" >/dev/null 2>&1 && echo "true" || echo "false")
+	if jq -e '.plugin' "$opencode_config" >/dev/null 2>&1; then
+		has_plugin_array="true"
+	else
+		has_plugin_array="false"
+	fi
 
 	if [[ "$has_plugin_array" == "true" ]]; then
 		# Check if plugin is already in the array
 		local plugin_exists
-		plugin_exists=$(jq -e --arg p "$plugin_name" '.plugin | map(select(startswith($p))) | length > 0' "$opencode_config" >/dev/null 2>&1 && echo "true" || echo "false")
+		if jq -e --arg p "$plugin_name" '.plugin | map(select(startswith($p))) | length > 0' "$opencode_config" >/dev/null 2>&1; then
+			plugin_exists="true"
+		else
+			plugin_exists="false"
+		fi
 
 		if [[ "$plugin_exists" == "true" ]]; then
 			# Update existing plugin to latest version
@@ -504,14 +512,23 @@ setup_seo_mcps() {
 		# shellcheck source=/dev/null
 		source "$HOME/.config/aidevops/credentials.sh"
 
-		[[ -n "$DATAFORSEO_USERNAME" ]] && print_success "DataForSEO credentials configured" ||
+		if [[ -n "$DATAFORSEO_USERNAME" ]]; then
+			print_success "DataForSEO credentials configured"
+		else
 			print_info "DataForSEO: set DATAFORSEO_USERNAME and DATAFORSEO_PASSWORD in credentials.sh"
+		fi
 
-		[[ -n "$SERPER_API_KEY" ]] && print_success "Serper API key configured" ||
+		if [[ -n "$SERPER_API_KEY" ]]; then
+			print_success "Serper API key configured"
+		else
 			print_info "Serper: set SERPER_API_KEY in credentials.sh"
+		fi
 
-		[[ -n "$AHREFS_API_KEY" ]] && print_success "Ahrefs API key configured" ||
+		if [[ -n "$AHREFS_API_KEY" ]]; then
+			print_success "Ahrefs API key configured"
+		else
 			print_info "Ahrefs: set AHREFS_API_KEY in credentials.sh"
+		fi
 	else
 		print_info "Configure SEO API credentials in ~/.config/aidevops/credentials.sh"
 	fi
