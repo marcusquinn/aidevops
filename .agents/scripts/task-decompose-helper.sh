@@ -318,7 +318,8 @@ Respond with ONLY a JSON object (no markdown, no explanation outside the JSON):
 
 				# If that fails, try extracting from markdown code block
 				if [[ -z "$json_result" ]]; then
-					json_result=$(echo "$result" | sed -n '/^```/,/^```/p' | sed '1d;$d' | jq -c 'select(.subtasks)' 2>/dev/null || echo "")
+					local fence='```'
+					json_result=$(echo "$result" | sed -n "/^${fence}/,/^${fence}/p" | sed '1d;$d' | jq -c 'select(.subtasks)' 2>/dev/null || echo "")
 				fi
 
 				# If that fails, try finding JSON between braces
@@ -380,14 +381,12 @@ heuristic_decompose() {
 	items_text=$(echo "$description" | sed -E 's/^(build|create|implement|add|develop|set up|configure)[[:space:]]+//i')
 
 	# Split on ", and " or ", " or " and "
-	local IFS_BACKUP="$IFS"
 	while IFS= read -r item; do
 		item=$(echo "$item" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
 		if [[ -n "$item" ]]; then
 			subtasks+=("$item")
 		fi
 	done < <(echo "$items_text" | sed 's/,\s*and\s*/\n/g; s/,\s*/\n/g; s/\s+and\s+/\n/g')
-	IFS="$IFS_BACKUP"
 
 	# If we got fewer than 2 items, create a generic split
 	if [[ ${#subtasks[@]} -lt 2 ]]; then
