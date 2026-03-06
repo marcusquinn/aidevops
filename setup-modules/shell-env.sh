@@ -508,7 +508,7 @@ setup_shellcheck_wrapper() {
 	# shells, so SHELLCHECK_PATH set only in .zshrc is invisible to the LSP.
 	local zshenv="$HOME/.zshenv"
 	if [[ -f "$zshenv" ]] || command -v zsh >/dev/null 2>&1; then
-		if grep -q 'SHELLCHECK_PATH' "$zshenv" 2>/dev/null; then
+		if [[ -f "$zshenv" ]] && grep -q 'SHELLCHECK_PATH' "$zshenv"; then
 			already_in="${already_in:+$already_in, }$zshenv"
 		else
 			touch "$zshenv"
@@ -529,8 +529,8 @@ setup_shellcheck_wrapper() {
 			touch "$rc_file"
 		fi
 
-		# Check if already added
-		if grep -q 'SHELLCHECK_PATH' "$rc_file" 2>/dev/null; then
+		# Check if already added (file existence guaranteed by check above)
+		if grep -q 'SHELLCHECK_PATH' "$rc_file"; then
 			already_in="${already_in:+$already_in, }$rc_file"
 			continue
 		fi
