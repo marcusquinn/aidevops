@@ -154,6 +154,29 @@ Scan the pre-fetched state for check results across all open PRs. For each faili
 
 **This is a judgment call, not a threshold rule.** Read the check names and correlate. A check that fails on 80% of PRs with the same error is clearly systemic. A check that fails on 2 PRs with different errors is per-PR. When uncertain, skip — the next pulse is 2 minutes away.
 
+**Self-healing: re-run stale checks after a fix merges.**
+
+Detection alone isn't enough — existing PRs retain stale failed/cancelled check results even after the workflow bug is fixed on main. The new workflow code only runs on new events, so PRs that predate the fix stay UNSTABLE indefinitely unless something triggers a fresh run.
+
+After detecting a systemic CI failure pattern, check whether the issue has already been **resolved** (the issue is closed, or a PR fixing the workflow has merged since the failures started). If so, the stale checks on existing PRs are remnants of the old bug, not real failures. Heal them:
+
+```bash
+# For each PR with a stale failed/cancelled run for the systemic check:
+# 1. Get the failed run ID from the pre-fetched check results
+# 2. Re-run it — the fixed workflow code on main will execute
+gh run rerun <run_id> --repo <slug>
+```
+
+**Guard rails:**
+
+- Only re-run checks where you have evidence the fix is on main (closed issue with merged PR, or the same check now passes on recently-created PRs)
+- Only re-run the specific failed workflow run, not all checks on the PR
+- If a re-run still fails, the fix didn't work — file a new issue, don't re-run again
+- Limit to 10 re-runs per pulse cycle to avoid API rate limits
+- Log each re-run: "Re-ran <check name> on PR #<number> (stale failure from pre-fix workflow)"
+
+This completes the detect-fix-heal cycle: the pulse detects the pattern, dispatches a worker to fix the workflow, and once the fix merges, heals the existing PRs that were affected.
+
 ### Issues — close, unblock, or dispatch
 
 When closing any issue, ALWAYS add a comment first explaining: (1) why you're closing it, and (2) which PR(s) delivered the work (link them: `Resolved by #N`). If the work was done before the issue existed (synced from a completed TODO), say so and link the most relevant PRs. An issue closed without a comment is an audit failure.
