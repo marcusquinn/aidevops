@@ -151,18 +151,19 @@ any_bot_has_success_status() {
 		return 1
 	fi
 
-	# Get all commit statuses for the head SHA
-	local statuses
-	statuses=$(gh api "repos/${repo}/commits/${head_sha}/statuses" \
-		--paginate --jq '.[] | select(.state == "success") | .context' \
+	# Get the combined status (singular endpoint = latest per-context state)
+	# and check-runs unconditionally, then merge both streams.
+	# GH#3007: /status (singular) returns the latest state per context,
+	# avoiding stale-success matches from /statuses (plural, full history).
+	# Pagination ensures we don't miss contexts when >30 statuses exist.
+	local statuses check_runs
+	statuses=$(gh api "repos/${repo}/commits/${head_sha}/status?per_page=100" \
+		--paginate --jq '.statuses[] | select(.state == "success") | .context' \
 		2>/dev/null || echo "")
-
-	if [[ -z "$statuses" ]]; then
-		# Also check the combined status endpoint (check runs)
-		statuses=$(gh api "repos/${repo}/commits/${head_sha}/check-runs" \
-			--paginate --jq '.check_runs[] | select(.conclusion == "success") | .name' \
-			2>/dev/null || echo "")
-	fi
+	check_runs=$(gh api "repos/${repo}/commits/${head_sha}/check-runs?per_page=100" \
+		--paginate --jq '.check_runs[] | select(.conclusion == "success") | .name' \
+		2>/dev/null || echo "")
+	statuses=$(printf '%s\n%s\n' "$statuses" "$check_runs" | grep -v '^$' || true)
 
 	if [[ -z "$statuses" ]]; then
 		return 1
