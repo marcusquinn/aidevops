@@ -136,9 +136,11 @@ bot_has_real_review() {
 
 any_bot_has_success_status() {
 	# GH#3005: When bots are rate-limited in comments but still post a formal
-	# GitHub status check (e.g., CodeRabbit posts a "coderabbitai" context with
-	# state=success), treat the PR as reviewed. The bot completed its analysis
-	# even though the comment was a rate-limit notice.
+	# GitHub status check, treat the PR as reviewed.
+	# GH#3007: The status context name may differ from the bot login.
+	# E.g., bot login "coderabbitai" but status context "CodeRabbit".
+	# Match bidirectionally: bot_base starts with context OR context
+	# starts with bot_base (case-insensitive).
 	local pr_number="$1"
 	local repo="$2"
 
@@ -149,18 +151,19 @@ any_bot_has_success_status() {
 		return 1
 	fi
 
-	# Get all commit statuses for the head SHA
-	local statuses
-	statuses=$(gh api "repos/${repo}/commits/${head_sha}/statuses" \
-		--paginate --jq '.[] | select(.state == "success") | .context' \
+	# Get the combined status (singular endpoint = latest per-context state)
+	# and check-runs unconditionally, then merge both streams.
+	# GH#3007: /status (singular) returns the latest state per context,
+	# avoiding stale-success matches from /statuses (plural, full history).
+	# Pagination ensures we don't miss contexts when >30 statuses exist.
+	local statuses check_runs
+	statuses=$(gh api "repos/${repo}/commits/${head_sha}/status?per_page=100" \
+		--paginate --jq '.statuses[] | select(.state == "success") | .context' \
 		2>/dev/null || echo "")
-
-	if [[ -z "$statuses" ]]; then
-		# Also check the combined status endpoint (check runs)
-		statuses=$(gh api "repos/${repo}/commits/${head_sha}/check-runs" \
-			--paginate --jq '.check_runs[] | select(.conclusion == "success") | .name' \
-			2>/dev/null || echo "")
-	fi
+	check_runs=$(gh api "repos/${repo}/commits/${head_sha}/check-runs?per_page=100" \
+		--paginate --jq '.check_runs[] | select(.conclusion == "success") | .name' \
+		2>/dev/null || echo "")
+	statuses=$(printf '%s\n%s\n' "$statuses" "$check_runs" | grep -v '^$' || true)
 
 	if [[ -z "$statuses" ]]; then
 		return 1
@@ -169,14 +172,19 @@ any_bot_has_success_status() {
 	local statuses_lower
 	statuses_lower=$(echo "$statuses" | tr '[:upper:]' '[:lower:]')
 
-	# Check if any known bot has a success status
-	local bot bot_base
+	# GH#3007: Match bidirectionally — the status context may be a prefix
+	# of the bot login (e.g., "coderabbit" vs "coderabbitai") or vice versa.
+	local bot bot_base ctx
 	for bot in "${KNOWN_BOTS[@]}"; do
 		bot_base=$(echo "$bot" | tr '[:upper:]' '[:lower:]')
-		if echo "$statuses_lower" | grep -qi "$bot_base"; then
-			echo "Bot '${bot}' has SUCCESS status check on commit ${head_sha:0:8}" >&2
-			return 0
-		fi
+		while IFS= read -r ctx; do
+			[[ -z "$ctx" ]] && continue
+			# Bidirectional prefix match: either string starts with the other
+			if [[ "$bot_base" == "$ctx"* ]] || [[ "$ctx" == "$bot_base"* ]]; then
+				echo "Bot '${bot}' has SUCCESS status check on commit ${head_sha:0:8} (context: '${ctx}')" >&2
+				return 0
+			fi
+		done <<<"$statuses_lower"
 	done
 	return 1
 }
