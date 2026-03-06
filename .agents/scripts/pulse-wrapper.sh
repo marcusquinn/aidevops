@@ -11,17 +11,22 @@
 #   4. Calculates dynamic worker concurrency from available RAM
 #   5. Internal watchdog kills stuck pulses after PULSE_STALE_THRESHOLD (t1397)
 #   6. Self-watchdog: idle detection kills pulse when CPU drops to zero (t1398.3)
+#   7. Progress-based watchdog: kills if log output stalls for PULSE_PROGRESS_TIMEOUT (GH#2958)
 #
 # Lifecycle: launchd fires every 120s. If a pulse is still running, the
 # dedup check skips. run_pulse() has an internal watchdog that polls every
-# 60s and checks two conditions:
-#   a) Wall-clock timeout: kills if elapsed > PULSE_STALE_THRESHOLD (30 min)
+# 60s and checks three conditions:
+#   a) Wall-clock timeout: kills if elapsed > PULSE_STALE_THRESHOLD (60 min)
 #   b) Idle detection: kills if CPU usage stays below PULSE_IDLE_CPU_THRESHOLD
 #      for PULSE_IDLE_TIMEOUT consecutive seconds (default 5 min). This catches
 #      the opencode idle-state bug where the process completes but sits in a
 #      file watcher consuming no CPU. Without this, zombies persist until the
 #      next launchd invocation detects staleness — which fails if launchd
 #      stops firing (sleep, plist unloaded).
+#   c) Progress detection (GH#2958): kills if the log file hasn't grown for
+#      PULSE_PROGRESS_TIMEOUT seconds. A process that's running but producing
+#      no output is stuck — not productive. This catches cases where CPU is
+#      nonzero (network I/O, spinning) but no actual work is being done.
 # check_dedup() serves as a tertiary safety net for edge cases where the
 # wrapper itself gets stuck.
 #
@@ -43,9 +48,10 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 #######################################
 # Configuration
 #######################################
-PULSE_STALE_THRESHOLD="${PULSE_STALE_THRESHOLD:-1800}"    # 30 min = definitely stuck (opencode idle bug)
+PULSE_STALE_THRESHOLD="${PULSE_STALE_THRESHOLD:-3600}"    # 60 min hard ceiling (raised from 30 min — GH#2958)
 PULSE_IDLE_TIMEOUT="${PULSE_IDLE_TIMEOUT:-300}"           # 5 min idle = process completed, sitting in file watcher (t1398.3)
 PULSE_IDLE_CPU_THRESHOLD="${PULSE_IDLE_CPU_THRESHOLD:-5}" # CPU% below this = idle (0-100 scale)
+PULSE_PROGRESS_TIMEOUT="${PULSE_PROGRESS_TIMEOUT:-600}"   # 10 min no log output = stuck (GH#2958)
 ORPHAN_MAX_AGE="${ORPHAN_MAX_AGE:-7200}"                  # 2 hours — kill orphans older than this
 RAM_PER_WORKER_MB="${RAM_PER_WORKER_MB:-1024}"            # 1 GB per worker
 RAM_RESERVE_MB="${RAM_RESERVE_MB:-8192}"                  # 8 GB reserved for OS + user apps
@@ -54,7 +60,7 @@ QUALITY_SWEEP_INTERVAL="${QUALITY_SWEEP_INTERVAL:-86400}" # 24 hours between swe
 
 # Process guard limits (t1398)
 CHILD_RSS_LIMIT_KB="${CHILD_RSS_LIMIT_KB:-2097152}"           # 2 GB default — kill child if RSS exceeds this
-CHILD_RUNTIME_LIMIT="${CHILD_RUNTIME_LIMIT:-600}"             # 10 min default — kill child if runtime exceeds this
+CHILD_RUNTIME_LIMIT="${CHILD_RUNTIME_LIMIT:-1800}"            # 30 min default — raised from 10 min (GH#2958, quality scans need time)
 SHELLCHECK_RSS_LIMIT_KB="${SHELLCHECK_RSS_LIMIT_KB:-1048576}" # 1 GB — ShellCheck-specific (lower due to exponential expansion)
 SHELLCHECK_RUNTIME_LIMIT="${SHELLCHECK_RUNTIME_LIMIT:-300}"   # 5 min — ShellCheck-specific
 SESSION_COUNT_WARN="${SESSION_COUNT_WARN:-5}"                 # Warn when >N concurrent sessions detected
@@ -82,16 +88,17 @@ _validate_int() {
 	printf '%s' "$canonical"
 	return 0
 }
-PULSE_STALE_THRESHOLD=$(_validate_int PULSE_STALE_THRESHOLD "$PULSE_STALE_THRESHOLD" 1800)
+PULSE_STALE_THRESHOLD=$(_validate_int PULSE_STALE_THRESHOLD "$PULSE_STALE_THRESHOLD" 3600)
 PULSE_IDLE_TIMEOUT=$(_validate_int PULSE_IDLE_TIMEOUT "$PULSE_IDLE_TIMEOUT" 300 60)
 PULSE_IDLE_CPU_THRESHOLD=$(_validate_int PULSE_IDLE_CPU_THRESHOLD "$PULSE_IDLE_CPU_THRESHOLD" 5)
+PULSE_PROGRESS_TIMEOUT=$(_validate_int PULSE_PROGRESS_TIMEOUT "$PULSE_PROGRESS_TIMEOUT" 600 120)
 ORPHAN_MAX_AGE=$(_validate_int ORPHAN_MAX_AGE "$ORPHAN_MAX_AGE" 7200)
 RAM_PER_WORKER_MB=$(_validate_int RAM_PER_WORKER_MB "$RAM_PER_WORKER_MB" 1024 1)
 RAM_RESERVE_MB=$(_validate_int RAM_RESERVE_MB "$RAM_RESERVE_MB" 8192)
 MAX_WORKERS_CAP=$(_validate_int MAX_WORKERS_CAP "$MAX_WORKERS_CAP" 8)
 QUALITY_SWEEP_INTERVAL=$(_validate_int QUALITY_SWEEP_INTERVAL "$QUALITY_SWEEP_INTERVAL" 86400)
 CHILD_RSS_LIMIT_KB=$(_validate_int CHILD_RSS_LIMIT_KB "$CHILD_RSS_LIMIT_KB" 2097152 1)
-CHILD_RUNTIME_LIMIT=$(_validate_int CHILD_RUNTIME_LIMIT "$CHILD_RUNTIME_LIMIT" 600 1)
+CHILD_RUNTIME_LIMIT=$(_validate_int CHILD_RUNTIME_LIMIT "$CHILD_RUNTIME_LIMIT" 1800 1)
 SHELLCHECK_RSS_LIMIT_KB=$(_validate_int SHELLCHECK_RSS_LIMIT_KB "$SHELLCHECK_RSS_LIMIT_KB" 1048576 1)
 SHELLCHECK_RUNTIME_LIMIT=$(_validate_int SHELLCHECK_RUNTIME_LIMIT "$SHELLCHECK_RUNTIME_LIMIT" 300 1)
 SESSION_COUNT_WARN=$(_validate_int SESSION_COUNT_WARN "$SESSION_COUNT_WARN" 5 1)
@@ -1077,20 +1084,28 @@ check_session_count() {
 }
 
 #######################################
-# Run the pulse — with internal watchdog timeout (t1397, t1398, t1398.3)
+# Run the pulse — with internal watchdog timeout (t1397, t1398, t1398.3, GH#2958)
 #
 # The pulse runs until opencode exits naturally. A watchdog loop checks
-# every 60s for two termination conditions:
+# every 60s for three termination conditions:
 #
 #   1. Wall-clock timeout (t1397): kills if elapsed > PULSE_STALE_THRESHOLD.
 #      This is the hard ceiling — no pulse should ever run longer than this.
+#      Raised to 60 min (from 30 min) because quality sweeps across 8+ repos
+#      legitimately need more time (GH#2958).
 #
 #   2. Idle detection (t1398.3): tracks consecutive seconds where the
 #      process tree's CPU usage is below PULSE_IDLE_CPU_THRESHOLD. When
 #      idle time exceeds PULSE_IDLE_TIMEOUT, the process is killed. This
 #      catches the opencode idle-state bug much faster than the wall-clock
 #      timeout — typically within 5 minutes of the pulse completing, vs
-#      30 minutes for the stale threshold.
+#      60 minutes for the stale threshold.
+#
+#   3. Progress detection (GH#2958): tracks whether the log file is growing.
+#      If the log file size hasn't changed for PULSE_PROGRESS_TIMEOUT seconds,
+#      the process is stuck — producing no output despite running. This catches
+#      cases where CPU is nonzero (network I/O wait, spinning) but no actual
+#      work is being done. Resets whenever new output appears.
 #
 # The watchdog also runs guard_child_processes() every 60s to kill any
 # child process exceeding RSS or runtime limits (t1398).
@@ -1136,11 +1151,25 @@ ${state_content}
 	# granularity — idle_seconds increments by 60 each idle poll.
 	local idle_seconds=0
 
-	# Watchdog loop: check every 60s for stale threshold, idle timeout, or
-	# runaway children (t1397, t1398, t1398.3). This replaces the bare `wait`
-	# that blocked the wrapper indefinitely when opencode hung.
+	# Progress detection state (GH#2958)
+	# Tracks log file size to detect stalled processes. If the log hasn't grown
+	# for PULSE_PROGRESS_TIMEOUT seconds, the process is stuck (running but not
+	# producing output). This catches "busy but unproductive" states that idle
+	# detection misses (e.g., network I/O wait, API rate limiting loops).
+	local last_log_size=0
+	local progress_stall_seconds=0
+	if [[ -f "$LOGFILE" ]]; then
+		last_log_size=$(wc -c <"$LOGFILE" 2>/dev/null || echo "0")
+		# Strip whitespace from wc output (macOS wc pads with spaces)
+		last_log_size="${last_log_size// /}"
+	fi
+
+	# Watchdog loop: check every 60s for stale threshold, idle timeout,
+	# progress stall, or runaway children (t1397, t1398, t1398.3, GH#2958).
+	# This replaces the bare `wait` that blocked the wrapper indefinitely
+	# when opencode hung.
 	#
-	# Kill logic is deduplicated: both checks set kill_reason, and a single
+	# Kill logic is deduplicated: all checks set kill_reason, and a single
 	# block at the end performs the kill + force-kill sequence. kill commands
 	# are guarded with || true to prevent set -e from aborting cleanup if
 	# the target process has already exited.
@@ -1156,9 +1185,9 @@ ${state_content}
 		# Check 1: Wall-clock stale threshold (hard ceiling)
 		elif [[ "$elapsed" -gt "$PULSE_STALE_THRESHOLD" ]]; then
 			kill_reason="Pulse exceeded stale threshold (${elapsed}s > ${PULSE_STALE_THRESHOLD}s)"
-		# Check 2: Idle detection — CPU usage of the process tree (t1398.3)
-		# Skip idle checks during the first 2 minutes to allow startup/init.
-		elif [[ "$elapsed" -ge 120 ]]; then
+		# Skip checks 2 and 3 during the first 3 minutes to allow startup/init.
+		elif [[ "$elapsed" -ge 180 ]]; then
+			# Check 2: Idle detection — CPU usage of the process tree (t1398.3)
 			local tree_cpu
 			tree_cpu=$(_get_process_tree_cpu "$opencode_pid")
 			if [[ "$tree_cpu" -lt "$PULSE_IDLE_CPU_THRESHOLD" ]]; then
@@ -1172,6 +1201,34 @@ ${state_content}
 					echo "[pulse-wrapper] Pulse active again (CPU ${tree_cpu}%) after ${idle_seconds}s idle — resetting idle counter" >>"$LOGFILE"
 				fi
 				idle_seconds=0
+			fi
+
+			# Check 3: Progress detection — is the log file growing? (GH#2958)
+			# A process that's running (CPU > 0) but producing no output for
+			# PULSE_PROGRESS_TIMEOUT is stuck in a loop (API retries, rate
+			# limiting, infinite wait). This is the "busy but unproductive" case.
+			if [[ -z "$kill_reason" ]]; then
+				local current_log_size=0
+				if [[ -f "$LOGFILE" ]]; then
+					current_log_size=$(wc -c <"$LOGFILE" 2>/dev/null || echo "0")
+					current_log_size="${current_log_size// /}"
+				fi
+				[[ "$current_log_size" =~ ^[0-9]+$ ]] || current_log_size=0
+
+				if [[ "$current_log_size" -gt "$last_log_size" ]]; then
+					# Log grew — process is making progress
+					if [[ "$progress_stall_seconds" -gt 0 ]]; then
+						echo "[pulse-wrapper] Progress resumed after ${progress_stall_seconds}s stall (log grew by $((current_log_size - last_log_size)) bytes)" >>"$LOGFILE"
+					fi
+					last_log_size="$current_log_size"
+					progress_stall_seconds=0
+				else
+					# Log hasn't grown — increment stall counter
+					progress_stall_seconds=$((progress_stall_seconds + 60))
+					if [[ "$progress_stall_seconds" -ge "$PULSE_PROGRESS_TIMEOUT" ]]; then
+						kill_reason="Pulse stalled for ${progress_stall_seconds}s — no log output (log size: ${current_log_size} bytes, threshold: ${PULSE_PROGRESS_TIMEOUT}s) (GH#2958)"
+					fi
+				fi
 			fi
 		fi
 
@@ -2451,6 +2508,20 @@ check_session_gate() {
 
 #######################################
 # Main
+#
+# Execution order (GH#2958):
+#   1. Gate checks (consent, dedup)
+#   2. Cleanup (orphans, worktrees)
+#   3. Pre-pulse housekeeping (quality sweep, health issues) — these are
+#      shell-level operations that run quickly and don't need the LLM.
+#      Running them BEFORE the pulse ensures the LLM session gets maximum
+#      time for its actual job (triage, dispatch, PR review).
+#   4. Prefetch state (parallel gh API calls)
+#   5. Run pulse (LLM session — the main event)
+#
+# Previously, quality sweep and health issues ran AFTER the pulse. This
+# meant the pulse's 30-min timeout was shared with these operations,
+# and the LLM session was killed before completing its work.
 #######################################
 main() {
 	if ! check_session_gate; then
@@ -2465,6 +2536,12 @@ main() {
 	cleanup_worktrees
 	calculate_max_workers
 	check_session_count >/dev/null
+
+	# Run housekeeping BEFORE the pulse — these are shell-level operations
+	# that don't need the LLM and shouldn't eat into pulse time (GH#2958).
+	run_daily_quality_sweep
+	update_health_issues
+
 	prefetch_state
 
 	# Re-check stop flag immediately before run_pulse() — a stop may have
@@ -2476,8 +2553,6 @@ main() {
 	fi
 
 	run_pulse
-	run_daily_quality_sweep
-	update_health_issues
 	return 0
 }
 
