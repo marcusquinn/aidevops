@@ -770,7 +770,7 @@ main() {
 	# Also check legacy .conf user override
 	if [[ -z "$_pulse_user_config" && -f "${FEATURE_TOGGLES_USER:-$HOME/.config/aidevops/feature-toggles.conf}" ]]; then
 		local _legacy_val
-		_legacy_val=$(grep -E '^supervisor_pulse=' "${FEATURE_TOGGLES_USER:-$HOME/.config/aidevops/feature-toggles.conf}" 2>/dev/null | tail -1 | cut -d= -f2)
+		_legacy_val=$(grep -E '^supervisor_pulse=' "${FEATURE_TOGGLES_USER:-$HOME/.config/aidevops/feature-toggles.conf}" | tail -1 | cut -d= -f2)
 		if [[ -n "$_legacy_val" ]]; then
 			_pulse_user_config="$_legacy_val"
 		fi
@@ -812,13 +812,13 @@ main() {
 				_do_install=true
 				# Record explicit consent
 				if type cmd_set &>/dev/null; then
-					cmd_set "orchestration.supervisor_pulse" "true" 2>/dev/null || true
+					cmd_set "orchestration.supervisor_pulse" "true" || true
 				fi
 			else
 				_do_install=false
 				# Record explicit decline so we never re-prompt on updates
 				if type cmd_set &>/dev/null; then
-					cmd_set "orchestration.supervisor_pulse" "false" 2>/dev/null || true
+					cmd_set "orchestration.supervisor_pulse" "false" || true
 				fi
 				print_info "Skipped. Enable later: aidevops config set orchestration.supervisor_pulse true && ./setup.sh"
 			fi
@@ -921,7 +921,7 @@ PLIST
 			# Remove old-style cron entries (direct opencode invocation)
 			(
 				crontab -l 2>/dev/null | grep -v 'aidevops: supervisor-pulse'
-				echo "*/2 * * * * OPENCODE_BIN=${opencode_bin} PULSE_DIR=${_aidevops_dir} /bin/bash ${wrapper_script} >> $HOME/.aidevops/logs/pulse-wrapper.log 2>&1 # aidevops: supervisor-pulse"
+				echo "*/2 * * * * OPENCODE_BIN='${opencode_bin}' PULSE_DIR='${_aidevops_dir}' /bin/bash '${wrapper_script}' >> '$HOME/.aidevops/logs/pulse-wrapper.log' 2>&1 # aidevops: supervisor-pulse"
 			) | crontab - 2>/dev/null || true
 			if crontab -l 2>/dev/null | grep -qF "aidevops: supervisor-pulse"; then
 				print_info "Supervisor pulse enabled (cron, every 2 min). Disable: crontab -e and remove the supervisor-pulse line"
