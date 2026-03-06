@@ -177,9 +177,11 @@ cmd_ingest() {
 	local obs_db="${OBS_DIR}/llm-requests.db"
 	if [[ -f "$obs_db" ]] && command -v sqlite3 &>/dev/null; then
 		local row_count
-		row_count=$(sqlite3 "$obs_db" "SELECT COUNT(*) FROM llm_requests;" 2>/dev/null) || row_count=0
-		[[ "$quiet" != "true" ]] && print_success "SQLite DB has $row_count rows (real-time via OpenCode plugin)"
-		return 0
+		if row_count=$(sqlite3 "$obs_db" "SELECT COUNT(*) FROM llm_requests;" 2>/dev/null); then
+			[[ "$quiet" != "true" ]] && print_success "SQLite DB has $row_count rows (real-time via OpenCode plugin)"
+			return 0
+		fi
+		[[ "$quiet" != "true" ]] && print_warning "SQLite DB exists but llm_requests could not be queried; falling back to legacy JSONL ingest"
 	fi
 
 	# Legacy fallback: parse Claude Code JSONL transcripts
@@ -333,7 +335,7 @@ _count_usage_in_window() {
 			SELECT COUNT(*), COALESCE(SUM(tokens_input + tokens_output + tokens_cache_read + tokens_cache_write), 0)
 			FROM llm_requests
 			WHERE lower(provider_id) = lower('${provider}')
-			  AND timestamp > datetime('now', '-${window_minutes} minutes');
+			  AND timestamp > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-${window_minutes} minutes');
 		" 2>/dev/null) || result=""
 		if [[ -n "$result" ]]; then
 			local req_count tok_count
