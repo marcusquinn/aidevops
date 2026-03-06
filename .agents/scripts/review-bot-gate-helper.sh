@@ -136,9 +136,11 @@ bot_has_real_review() {
 
 any_bot_has_success_status() {
 	# GH#3005: When bots are rate-limited in comments but still post a formal
-	# GitHub status check (e.g., CodeRabbit posts a "coderabbitai" context with
-	# state=success), treat the PR as reviewed. The bot completed its analysis
-	# even though the comment was a rate-limit notice.
+	# GitHub status check, treat the PR as reviewed.
+	# GH#3007: The status context name may differ from the bot login.
+	# E.g., bot login "coderabbitai" but status context "CodeRabbit".
+	# Match bidirectionally: bot_base starts with context OR context
+	# starts with bot_base (case-insensitive).
 	local pr_number="$1"
 	local repo="$2"
 
@@ -169,14 +171,19 @@ any_bot_has_success_status() {
 	local statuses_lower
 	statuses_lower=$(echo "$statuses" | tr '[:upper:]' '[:lower:]')
 
-	# Check if any known bot has a success status
-	local bot bot_base
+	# GH#3007: Match bidirectionally — the status context may be a prefix
+	# of the bot login (e.g., "coderabbit" vs "coderabbitai") or vice versa.
+	local bot bot_base ctx
 	for bot in "${KNOWN_BOTS[@]}"; do
 		bot_base=$(echo "$bot" | tr '[:upper:]' '[:lower:]')
-		if echo "$statuses_lower" | grep -qi "$bot_base"; then
-			echo "Bot '${bot}' has SUCCESS status check on commit ${head_sha:0:8}" >&2
-			return 0
-		fi
+		while IFS= read -r ctx; do
+			[[ -z "$ctx" ]] && continue
+			# Bidirectional prefix match: either string starts with the other
+			if [[ "$bot_base" == "$ctx"* ]] || [[ "$ctx" == "$bot_base"* ]]; then
+				echo "Bot '${bot}' has SUCCESS status check on commit ${head_sha:0:8} (context: '${ctx}')" >&2
+				return 0
+			fi
+		done <<<"$statuses_lower"
 	done
 	return 1
 }
