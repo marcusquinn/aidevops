@@ -76,6 +76,85 @@ Claim → Branch Setup → Task Development → Preflight → PR Create → PR R
 
 ## Workflow
 
+### Step 0.45: Task Decomposition Check (t1408.2)
+
+Before claiming and starting work, classify the task to determine if it should be decomposed into subtasks. This catches over-scoped tasks before a worker spends hours on something that should be multiple focused PRs.
+
+**When to run:** After resolving the task description (Step 0) and before claiming (Step 0.5). Skip if `--no-decompose` flag is passed or if the task already has subtasks in TODO.md.
+
+**How it works:**
+
+```bash
+DECOMPOSE_HELPER="$HOME/.aidevops/agents/scripts/task-decompose-helper.sh"
+
+# Only run if the helper exists (t1408.1 must be merged)
+if [[ -x "$DECOMPOSE_HELPER" && -n "$TASK_ID" ]]; then
+  # Check if subtasks already exist
+  EXISTING=$(/bin/bash "$DECOMPOSE_HELPER" classify --task-id "$TASK_ID" --repo-path "$(git rev-parse --show-toplevel)" --quiet 2>/dev/null) || EXISTING=""
+  EXISTING_KIND=$(echo "$EXISTING" | jq -r '.kind // "atomic"' 2>/dev/null || echo "atomic")
+
+  if [[ "$EXISTING_KIND" == "composite" ]]; then
+    EXISTING_SUBS=$(echo "$EXISTING" | jq -r '.existing_subtasks // empty' 2>/dev/null || echo "")
+    if [[ -n "$EXISTING_SUBS" && "$EXISTING_SUBS" != "[]" ]]; then
+      # Subtasks already exist — skip decomposition
+      echo "[t1408.2] Task $TASK_ID already has subtasks — proceeding with implementation"
+    fi
+  fi
+
+  # If no existing subtasks, classify the task description
+  if [[ -z "$EXISTING_SUBS" || "$EXISTING_SUBS" == "[]" ]]; then
+    CLASSIFY=$(/bin/bash "$DECOMPOSE_HELPER" classify --task "$TASK_DESC" --task-id "$TASK_ID" --repo-path "$(git rev-parse --show-toplevel)" --quiet 2>/dev/null) || CLASSIFY=""
+    TASK_KIND=$(echo "$CLASSIFY" | jq -r '.kind // "atomic"' 2>/dev/null || echo "atomic")
+  fi
+fi
+```
+
+**If atomic (or helper unavailable):** Proceed to Step 0.5 (claim and implement directly). This is the default path — most tasks are atomic.
+
+**If composite — interactive mode:**
+
+Show the decomposition tree and ask for confirmation:
+
+```bash
+DECOMPOSE=$(/bin/bash "$DECOMPOSE_HELPER" decompose --task "$TASK_DESC" --task-id "$TASK_ID" --repo-path "$(git rev-parse --show-toplevel)" --quiet 2>/dev/null)
+SUBTASK_COUNT=$(echo "$DECOMPOSE" | jq '.subtasks | length' 2>/dev/null || echo 0)
+```
+
+Present to the user:
+
+```text
+This task appears to be composite (contains 2+ independent concerns).
+Suggested decomposition:
+
+1. {subtask_1_description} (~{estimate})
+2. {subtask_2_description} (~{estimate}) [depends on: 1]
+3. {subtask_3_description} (~{estimate})
+
+Options:
+  Y - Create subtasks and dispatch them separately (recommended)
+  n - Implement as a single task anyway
+  e - Edit the decomposition before creating subtasks
+```
+
+If the user confirms (Y):
+
+1. Create child task IDs using `claim-task-id.sh` for each subtask
+2. Add child entries to TODO.md with `blocked-by:` edges from the decomposition
+3. Create briefs for each child task (inheriting parent context + subtask-specific scope)
+4. Label the parent task `status:blocked` with `blocked-by:` refs to children
+5. Ask: "Implement the first leaf task now, or queue all for dispatch?"
+
+**If composite — headless mode:**
+
+Auto-decompose without confirmation (the pulse already classified this as composite):
+
+1. Create child tasks, briefs, and TODO entries automatically
+2. Label parent as `status:blocked`
+3. Exit cleanly with: `DECOMPOSED: task $TASK_ID split into $SUBTASK_COUNT subtasks ($CHILD_IDS). Parent blocked. Children queued for dispatch.`
+4. The next pulse cycle dispatches the leaf tasks
+
+**Depth limit:** Controlled by `DECOMPOSE_MAX_DEPTH` env var (default: 3). At depth 3+, tasks are always treated as atomic regardless of classification.
+
 ### Step 0.5: Claim Task (t1017)
 
 If the first argument is a task ID (`t\d+`), claim it before starting work. This prevents two agents (or a human and an agent) from working on the same task concurrently.

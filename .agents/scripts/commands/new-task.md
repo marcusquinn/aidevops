@@ -110,25 +110,48 @@ Use `templates/brief-template.md` as the base. Populate from conversation contex
 - Claude Code: `$CLAUDE_SESSION_ID` or the conversation ID from the CLI
 - If unavailable: use `{app}:unknown-{ISO-date}` and note "session ID not captured"
 
-### Step 5.5: Decomposition Check (t1408)
+### Step 5.5: Classify and Decompose (t1408.2)
 
-After creating the brief, classify the task to check if it should be decomposed:
+After creating the brief, classify the task to determine if it should be decomposed into subtasks. This is the earliest point where decomposition can happen — before the task enters the dispatch queue.
 
 ```bash
-CLASSIFY=$(~/.aidevops/agents/scripts/task-decompose-helper.sh classify "$TASK_TITLE" 2>/dev/null || echo '{"kind":"atomic"}')
-TASK_KIND=$(echo "$CLASSIFY" | sed -n 's/.*"kind"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+DECOMPOSE_HELPER="$HOME/.aidevops/agents/scripts/task-decompose-helper.sh"
+
+if [[ -x "$DECOMPOSE_HELPER" ]]; then
+  CLASSIFY=$(/bin/bash "$DECOMPOSE_HELPER" classify --task "{title}" --quiet 2>/dev/null) || CLASSIFY=""
+  TASK_KIND=$(echo "$CLASSIFY" | jq -r '.kind // "atomic"' 2>/dev/null || echo "atomic")
+fi
 ```
 
-If `TASK_KIND` is `composite`, offer to decompose:
+**If atomic:** Proceed to Step 6 (add single entry to TODO.md). This is the default.
+
+**If composite:** Present the decomposition to the user:
 
 ```text
-This task appears to have multiple independent concerns. Would you like to split it into subtasks?
-[Y] Yes — decompose into 2-5 subtasks with dependency edges
-[n] No — keep as a single task
-[e] Edit — show the decomposition and let me adjust
+This task appears composite — it contains 2+ independent concerns.
+Suggested decomposition:
+
+  {task_id}.1: {subtask_1_description} (~{estimate})
+  {task_id}.2: {subtask_2_description} (~{estimate}) [depends on: .1]
+  {task_id}.3: {subtask_3_description} (~{estimate})
+
+Options:
+  1. Create parent + subtasks (recommended for auto-dispatch)
+  2. Keep as single task (implement all at once)
+  3. Edit decomposition
 ```
 
-On confirmation, run `task-decompose-helper.sh decompose "$TASK_TITLE"` and create child task IDs with `claim-task-id.sh` for each subtask. Set `blocked-by:` edges between siblings as indicated by the decomposition output.
+If the user chooses option 1:
+
+1. Create the parent task entry in TODO.md (with `status:blocked`)
+2. For each subtask, run `claim-task-id.sh` to allocate `{task_id}.N` IDs
+3. Create a brief for each subtask (inheriting parent context)
+4. Add subtask entries to TODO.md with `blocked-by:` edges
+5. The parent entry gets `blocked-by:{task_id}.1,{task_id}.2,...`
+
+Each subtask brief references the parent: `**Parent task:** {task_id} — see [todo/tasks/{task_id}-brief.md]`
+
+**Skip decomposition when:** `--no-decompose` flag is passed, or the helper script is not available (t1408.1 not yet merged).
 
 ### Step 6: Add to TODO.md
 
@@ -139,6 +162,7 @@ Format the TODO.md entry using the allocated ID:
 ```
 
 **Auto-dispatch eligibility**: Only add `#auto-dispatch` if the brief has:
+
 - At least 2 acceptance criteria beyond "tests pass" and "lint clean"
 - A non-empty "How (Approach)" section with file references
 - A non-empty "What" section with clear deliverable
@@ -213,11 +237,14 @@ AI: Brief: todo/tasks/t326-brief.md
 
 ## CRITICAL: Supervisor Subtask Creation
 
-When the AI supervisor creates subtasks (e.g., decomposing t005 into t005.1-t005.5), it MUST:
+When the AI supervisor creates subtasks (e.g., decomposing t005 into t005.1-t005.5) — whether manually or via `task-decompose-helper.sh` (t1408.2) — it MUST:
 
 1. Create a brief for EACH subtask at `todo/tasks/{subtask_id}-brief.md`
 2. Reference the parent task's brief: `**Parent task:** {parent_id} — see [todo/tasks/{parent_id}-brief.md]`
 3. Inherit context from the parent but add subtask-specific details
 4. Include the session ID of the supervisor session that created the subtask
+5. Set `blocked-by:` edges between subtasks based on dependency analysis from the decomposition
+
+When using `task-decompose-helper.sh decompose`, the output includes dependency edges (`depends_on` array) that map to `blocked-by:` references in TODO.md. The decompose output also suggests a `batch_strategy` (depth-first or breadth-first) — use this to inform dispatch ordering in the pulse.
 
 A subtask without a brief is a knowledge loss. The parent task's rich context (from the original conversation) must flow down to every subtask.

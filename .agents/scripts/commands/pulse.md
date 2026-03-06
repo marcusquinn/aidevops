@@ -186,7 +186,7 @@ When closing any issue, ALWAYS add a comment first explaining: (1) why you're cl
 - **`status:done` label or body says "completed"** → find the PR(s) that delivered the work, comment with links, then close. If no PR exists (pre-existing completed work), explain that in the comment.
 - **`status:blocked` but blockers are resolved** (merged PR exists for each `blocked-by:` ref) → remove `status:blocked`, add `status:available`, comment explaining what unblocked it. It's now dispatchable this cycle.
 - **Duplicate issues for the same task ID** (multiple open issues whose titles start with the same `tNNN:` prefix) → keep the one referenced by `ref:GH#` in TODO.md; close the others with a comment like "Duplicate of #NNN — closing in favour of the canonical issue." This happens when issue-sync-helper and a manual/agent creation race, or when a task ID is reused after a collision. Check TODO.md's `ref:GH#` to determine which is canonical. If neither is referenced, keep the older one.
-- **Too large for one worker session** (multiple independent changes, 5+ checklist items, "audit all", "migrate everything") → create subtask issues, label parent `status:blocked` with `blocked-by:` refs to subtasks
+- **Too large for one worker session** (multiple independent changes, 5+ checklist items, "audit all", "migrate everything") → auto-decompose using `task-decompose-helper.sh` (see "Task decomposition before dispatch" below), or manually create subtask issues. Label parent `status:blocked` with `blocked-by:` refs to subtasks
 - **`status:queued` or `status:in-progress`** → likely being worked on (possibly on another machine). Check the `updatedAt` timestamp: if the issue was updated within the last 3 hours, skip it. If it's been 3+ hours with no open PR and no recent commits on a related branch, the worker likely died — relabel to `status:available`, unassign, and comment explaining the recovery. It's now dispatchable.
 - **`status:available` or no status label** → dispatch a worker (see below)
 
@@ -221,16 +221,85 @@ The "Active Workers" section in the pre-fetched state includes a `struggle_ratio
 - `STRUGGLE_RATIO_THRESHOLD` — ratio above which to flag (default: 30)
 - `STRUGGLE_MIN_ELAPSED_MINUTES` — minimum runtime before flagging (default: 30)
 
+### Task decomposition before dispatch (t1408.2)
+
+Before dispatching a worker for an issue, classify the task to determine if it's too large for a single worker session. This catches over-scoped tasks before they waste a worker slot.
+
+**When to classify:** For each dispatchable issue (after passing the skip checks below), run the classify step. Skip classification for issues that already have subtask issues (check if issues with `tNNN.1`, `tNNN.2` etc. exist in the title search).
+
+**How to classify:**
+
+```bash
+# Extract task description from the issue title/body
+TASK_DESC="<issue title and first paragraph of body>"
+
+# Classify — uses haiku-tier LLM call (~$0.001)
+CLASSIFY_RESULT=$(/bin/bash ~/.aidevops/agents/scripts/task-decompose-helper.sh classify \
+  --task "$TASK_DESC" --repo-path "$path" --quiet 2>/dev/null) || CLASSIFY_RESULT=""
+
+# Parse result
+TASK_KIND=$(echo "$CLASSIFY_RESULT" | jq -r '.kind // "atomic"' 2>/dev/null || echo "atomic")
+```
+
+**If atomic:** Dispatch the worker directly (unchanged flow — proceed to step 6 below).
+
+**If composite:** Auto-decompose and create child tasks instead of dispatching:
+
+```bash
+# Decompose into subtasks
+DECOMPOSE_RESULT=$(/bin/bash ~/.aidevops/agents/scripts/task-decompose-helper.sh decompose \
+  --task "$TASK_DESC" --repo-path "$path" \
+  --depth 0 --max-depth "${DECOMPOSE_MAX_DEPTH:-3}" --quiet 2>/dev/null) || DECOMPOSE_RESULT=""
+
+SUBTASK_COUNT=$(echo "$DECOMPOSE_RESULT" | jq '.subtasks | length' 2>/dev/null || echo 0)
+```
+
+If decomposition succeeds (`SUBTASK_COUNT >= 2`):
+
+1. For each subtask, create a child task using `claim-task-id.sh`:
+
+   ```bash
+   for i in $(seq 0 $((SUBTASK_COUNT - 1))); do
+     SUB_DESC=$(echo "$DECOMPOSE_RESULT" | jq -r ".subtasks[$i].description")
+     SUB_ESTIMATE=$(echo "$DECOMPOSE_RESULT" | jq -r ".subtasks[$i].estimate // \"~2h\"")
+     SUB_DEPS=$(echo "$DECOMPOSE_RESULT" | jq -r ".subtasks[$i].depends_on | map(\"blocked-by:${TASK_ID}.\" + tostring) | join(\" \")" 2>/dev/null || echo "")
+
+     # Claim child task ID
+     CHILD_OUTPUT=$(/bin/bash ~/.aidevops/agents/scripts/claim-task-id.sh \
+       --repo-path "$path" --title "${TASK_ID}.${i+1}: $SUB_DESC" --parent "$TASK_ID")
+     CHILD_ID=$(echo "$CHILD_OUTPUT" | grep '^TASK_ID=' | cut -d= -f2)
+
+     # Add to TODO.md (planning-commit-helper handles commit+push)
+     # Format: - [ ] tNNN.N Description ~Nh blocked-by:tNNN.M ref:GH#NNN
+   done
+   ```
+
+2. Label the parent issue `status:blocked` with a comment explaining the decomposition
+3. Create a brief for each child task from the parent brief + decomposition context
+4. The child tasks enter the normal dispatch queue — the next pulse cycle picks up the leaves (tasks with no unresolved `blocked-by:` refs)
+
+**Depth limit:** `DECOMPOSE_MAX_DEPTH` env var (default: 3). Tasks at depth 3+ are always treated as atomic. This prevents infinite decomposition.
+
+**Skip decomposition when:**
+
+- The issue already has subtask issues (titles matching `tNNN.N:`)
+- The issue body contains `skip-decompose` or `atomic` markers
+- Classification fails (API unavailable) — default to atomic and dispatch directly
+- The task is a bug fix, CI fix, or docs update (these are almost always atomic)
+
+**Cost:** ~$0.001-0.005 per classify+decompose call (haiku tier). A single avoided over-scoped worker failure saves $0.50-5.00 in wasted compute.
+
 ### Dispatch workers for open issues
 
 For each dispatchable issue:
+
 1. Skip if a worker is already running for it locally (check `ps` output for the issue number)
 2. Skip if an open PR already exists for it (check PR list)
 3. Skip if the issue has `status:queued`, `status:in-progress`, or `status:in-review` labels — but only if the issue was updated within the last 3 hours. These labels indicate a worker is handling it (possibly on another machine). If the label is stale (3+ hours, no PR, no recent branch activity), the worker likely died — recover the issue: relabel to `status:available`, unassign, and comment explaining the recovery. It becomes dispatchable this cycle.
 4. Skip if the issue is assigned and was updated within the last 3 hours — someone is actively working on it. If assigned but stale (3+ hours, no PR), treat as abandoned: unassign and relabel to `status:available`.
 5. Read the issue body briefly — if it has `blocked-by:` references, check if those are resolved (merged PR exists). If not, skip it.
-6. **Task decomposition check (t1408):** Before dispatching, check if the task should be decomposed. Run `task-decompose-helper.sh has-subtasks <task-id>` — if it already has subtasks, dispatch the leaf subtasks instead. If not, the `/full-loop` worker will classify and decompose if needed (Step 0.8). For tasks that are clearly composite from the issue title (multiple independent features listed), consider pre-decomposing before dispatch to avoid wasting a worker session on classification.
-7. Dispatch:
+5.5. **Classify and decompose (t1408.2):** Run the task decomposition check described in "Task decomposition before dispatch" above. If the task is composite, create child tasks and skip direct dispatch. If atomic (or classification unavailable), proceed to dispatch.
+6. Dispatch:
 
 ```bash
 # Assign the issue to prevent duplicate work by other runners/humans
