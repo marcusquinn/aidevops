@@ -18,10 +18,15 @@ on:
   issue_comment:
     types: [created]
 
-# Cancel in-progress runs when a new event fires (e.g., new push)
+# Do NOT cancel in-progress runs. When cancel-in-progress was true, the initial
+# pull_request:opened run was cancelled by the issue_comment:created event (fired
+# when a bot posted). The cancelled run left a permanent stale CANCELLED check on
+# the PR, making mergeStateStatus UNSTABLE even though the re-triggered run passed.
+# With cancel-in-progress: false, both runs complete — the first passes early
+# (PR too young) and the second confirms the bot posted. GH#2973.
 concurrency:
   group: review-bot-gate-${{ github.event.pull_request.number || github.event.issue.number }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   review-bot-gate:

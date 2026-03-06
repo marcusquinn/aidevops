@@ -29,6 +29,12 @@ jobs:
   security-check:
     name: Security Validation
     runs-on: ubuntu-latest
+    # Needs write permissions to post rejection replies on untrusted comments.
+    # Without this, the GITHUB_TOKEN defaults to read-only and the
+    # createReplyForReviewComment/createComment calls fail with 403. GH#2973.
+    permissions:
+      pull-requests: write
+      issues: write
     outputs:
       allowed: ${{ steps.check.outputs.allowed }}
       reason: ${{ steps.check.outputs.reason }}
@@ -46,8 +52,11 @@ jobs:
             const issue = context.payload.issue || context.payload.pull_request;
             const isPRReviewComment = context.eventName === 'pull_request_review_comment';
             
-            // Must contain /oc or /opencode trigger
-            const hasTrigger = /\/(oc|opencode)\b/.test(comment.body);
+            // Must contain /oc or /opencode trigger at start of line or after whitespace.
+            // The previous regex /\/(oc|opencode)\b/ matched file paths in bot review
+            // comments (e.g., /opencode-aidevops/observability.mjs), causing false
+            // positive triggers on every CodeRabbit review. GH#2973.
+            const hasTrigger = /(^|\s)\/(oc|opencode)\b/m.test(comment.body);
             if (!hasTrigger) {
               core.setOutput('allowed', 'false');
               core.setOutput('reason', 'No /oc or /opencode trigger found');
