@@ -140,20 +140,33 @@ count_interactive_sessions() {
 	fi
 
 	# --- Cursor sessions ---
-	# Note: pgrep -c is not available on macOS; use pgrep | wc -l instead
-	local cursor_count=0
-	cursor_count=$(pgrep -f 'Cursor\.app' | wc -l || true)
-	count=$((count + cursor_count))
+	# Note: pgrep -c is Linux-only; use pgrep | wc -l for cross-platform.
+	# Guard with -n check to avoid counting empty output as 1.
+	local cursor_pids=""
+	cursor_pids=$(pgrep -f 'Cursor\.app' || true)
+	if [[ -n "$cursor_pids" ]]; then
+		local cursor_count
+		cursor_count=$(echo "$cursor_pids" | wc -l | tr -d ' ')
+		count=$((count + cursor_count))
+	fi
 
 	# --- Windsurf sessions ---
-	local windsurf_count=0
-	windsurf_count=$(pgrep -f 'Windsurf' | wc -l || true)
-	count=$((count + windsurf_count))
+	local windsurf_pids=""
+	windsurf_pids=$(pgrep -f 'Windsurf' || true)
+	if [[ -n "$windsurf_pids" ]]; then
+		local windsurf_count
+		windsurf_count=$(echo "$windsurf_pids" | wc -l | tr -d ' ')
+		count=$((count + windsurf_count))
+	fi
 
 	# --- Aider sessions ---
-	local aider_count=0
-	aider_count=$(pgrep -f 'aider' | wc -l || true)
-	count=$((count + aider_count))
+	local aider_pids=""
+	aider_pids=$(pgrep -f 'aider' || true)
+	if [[ -n "$aider_pids" ]]; then
+		local aider_count
+		aider_count=$(echo "$aider_pids" | wc -l | tr -d ' ')
+		count=$((count + aider_count))
+	fi
 
 	echo "$count"
 	return 0
