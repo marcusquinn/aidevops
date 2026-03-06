@@ -130,6 +130,30 @@ Then skip to the next PR. The next pulse cycle will retry the permission check �
 - **Two PRs targeting the same issue** → flag the duplicate by commenting on the newer one
 - **Recently closed without merge** → a worker failed. Look for patterns. If the same failure repeats, file an improvement issue.
 
+### CI failure pattern detection (GH#2973)
+
+After processing individual PRs, correlate CI failures across all open PRs in the repo. The goal is to detect **systemic workflow bugs** that affect all PRs identically — these can't be fixed by dispatching workers to individual PRs.
+
+**How to detect systemic failures:**
+
+Scan the pre-fetched state for check results across all open PRs. For each failing or cancelled check, note the check name and which PRs it affects. If the **same check name fails on 3+ PRs**, it's likely a systemic issue (workflow bug, misconfigured bot, permissions problem) rather than a per-PR code issue.
+
+**What to do when a systemic pattern is found:**
+
+1. **Do NOT dispatch workers** to fix individual PRs for that check — the fix is in the workflow, not the PR code
+2. **Search for an existing issue** describing the pattern: `gh issue list --repo <slug> --search "<check name> failing" --state open`
+3. **If no issue exists**, file one describing: which check is failing, how many PRs are affected, the error message (from `gh run view <run_id> --log-failed`), and a hypothesis about the root cause
+4. **Label it** `bug` + `auto-dispatch` so a worker picks it up and fixes the workflow itself
+
+**Examples of systemic vs per-PR failures:**
+
+- "Framework Validation" fails on 1 PR but passes on 9 others → per-PR (dispatch a worker for that PR)
+- "Wait for AI Review Bots" is CANCELLED on 8/10 PRs → systemic (file an issue about the workflow's concurrency config)
+- "OpenCode AI Agent" fails with 403 on every PR that CodeRabbit reviews → systemic (file an issue about the workflow's regex/permissions)
+- "SonarCloud Analysis" fails on 2 PRs with different code smells → per-PR (dispatch workers)
+
+**This is a judgment call, not a threshold rule.** Read the check names and correlate. A check that fails on 80% of PRs with the same error is clearly systemic. A check that fails on 2 PRs with different errors is per-PR. When uncertain, skip — the next pulse is 2 minutes away.
+
 ### Issues — close, unblock, or dispatch
 
 When closing any issue, ALWAYS add a comment first explaining: (1) why you're closing it, and (2) which PR(s) delivered the work (link them: `Resolved by #N`). If the work was done before the issue existed (synced from a completed TODO), say so and link the most relevant PRs. An issue closed without a comment is an audit failure.
