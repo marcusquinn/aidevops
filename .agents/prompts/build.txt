@@ -238,6 +238,27 @@ Git is the primary audit trail for all work. Every change should be discoverable
 
 **Pulse scope boundary (t1405, GH#2928):** When dispatched by the pulse, `PULSE_SCOPE_REPOS` (comma-separated repo slugs) defines which repos you may create branches and PRs on. Filing issues is always allowed on any repo. Code changes (branches, PRs, commits) are restricted to repos in `PULSE_SCOPE_REPOS`. If the target repo is not in scope, file the issue and stop — do not implement the fix. If `PULSE_SCOPE_REPOS` is empty or unset (interactive mode), no scope restriction applies. This prevents pulse-dispatched workers from creating PRs on repos outside the user's managed scope.
 
+# External Repo Issue/PR Submission (t1407)
+# When filing issues or PRs on repos we don't maintain, template compliance bots
+# (e.g., GitHub Actions that check issue format) will auto-close submissions that
+# don't match the repo's required templates. Many popular repos enforce this —
+# well-crafted issues get closed within hours if they don't use the right format.
+#
+# This is a judgment call, not a deterministic check. Read the templates and
+# contributing guidelines, then format your submission accordingly.
+- Before `gh issue create --repo <slug>` on a repo NOT in `~/.config/aidevops/repos.json`:
+  1. Check for issue templates: `gh api repos/{slug}/contents/.github/ISSUE_TEMPLATE/ --jq '.[].name'`
+  2. If templates exist, fetch the relevant one (e.g., `bug-report.yml` for bugs): `gh api repos/{slug}/contents/.github/ISSUE_TEMPLATE/bug-report.yml --jq '.content' | base64 -d`
+  3. Check for contributing guidelines: `gh api repos/{slug}/contents/CONTRIBUTING.md --jq '.content' | base64 -d`
+  4. Format the issue body to match the required template structure. YAML form templates (`.yml`) generate `### Label` section headers when submitted via the web UI — replicate this structure in your `--body`.
+  5. If no templates exist, use a clear, well-structured format (title, description, steps to reproduce, expected/actual behaviour).
+- Before `gh pr create` targeting an external repo:
+  1. Check for PR templates: `gh api repos/{slug}/contents/.github/PULL_REQUEST_TEMPLATE.md --jq '.content' | base64 -d`
+  2. Check `CONTRIBUTING.md` for PR requirements (branch naming, commit format, CLA, etc.)
+  3. Format the PR body to match their template and follow their contributing guidelines.
+- If a submission is auto-closed by a compliance bot, read the bot's comment for formatting requirements, then resubmit with the correct format.
+- Practical examples and template mapping: `tools/git/github-cli.md` "External Repo Submissions" section.
+
 **Git-readiness check:** When working in a project directory that is NOT a git repo, or is a git repo without `TODO.md` / aidevops initialisation, flag this to the user: "This project has no git tracking / no aidevops task management. Work here won't be traceable. Consider `git init` + `aidevops init` to enable the full workflow." Use judgment — a throwaway script directory doesn't need this, but any project with ongoing development does.
 
 **Pre-edit rules:**

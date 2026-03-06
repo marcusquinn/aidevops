@@ -222,6 +222,121 @@ export GH_TOKEN=$(gh auth token)
 4. **Use `gh api`** - For advanced GitHub API access
 5. **Use `gh pr create --fill`** - Auto-fill PR details from commits
 
+## External Repo Submissions
+
+When filing issues or PRs on repos you don't maintain, many repos enforce template compliance via bots that auto-close non-conforming submissions. Check their guidelines first.
+
+### Discovering Issue Templates
+
+```bash
+# List available issue templates
+gh api repos/{owner}/{repo}/contents/.github/ISSUE_TEMPLATE/ --jq '.[].name'
+# Example output: bug-report.yml  feature-request.yml  config.yml
+
+# Read a specific template (YAML form)
+gh api repos/{owner}/{repo}/contents/.github/ISSUE_TEMPLATE/bug-report.yml \
+  --jq '.content' | base64 -d
+
+# Check for CONTRIBUTING.md
+gh api repos/{owner}/{repo}/contents/CONTRIBUTING.md \
+  --jq '.content' | base64 -d
+```
+
+### Mapping YAML Form Templates to Markdown
+
+GitHub's YAML issue forms (`.yml`) render as structured forms in the web UI. When submitted, they produce markdown with `### Label` headers matching each field's `label:` attribute. To submit a compliant issue via `gh issue create`, replicate this structure.
+
+**Example YAML form fields:**
+
+```yaml
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the bug
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+  - type: input
+    id: version
+    attributes:
+      label: Version
+```
+
+**Corresponding compliant issue body:**
+
+```markdown
+### Describe the bug
+
+The application crashes when clicking the save button after editing a profile.
+
+### Steps to reproduce
+
+1. Navigate to Settings > Profile
+2. Change the display name
+3. Click Save
+
+### Expected behavior
+
+Profile should save and show a success message.
+
+### Actual behavior
+
+Page crashes with a white screen. Console shows: TypeError: Cannot read property 'id' of undefined.
+
+### Version
+
+v2.4.1
+```
+
+**Key rules for YAML form compliance:**
+
+- Each `label:` value becomes a `### Label` header — match the text exactly (case-sensitive)
+- Every required field must have a non-empty section below its header
+- `type: checkboxes` fields render as `- [x]` / `- [ ]` lists under the header
+- `type: dropdown` fields render as the selected option text under the header
+- `type: input` fields render as plain text under the header
+- Fields with `required: true` must not be left blank — compliance bots check this
+
+### Discovering PR Templates
+
+```bash
+# Check for PR template
+gh api repos/{owner}/{repo}/contents/.github/PULL_REQUEST_TEMPLATE.md \
+  --jq '.content' | base64 -d
+
+# Some repos use a directory of templates
+gh api repos/{owner}/{repo}/contents/.github/PULL_REQUEST_TEMPLATE/ \
+  --jq '.[].name'
+```
+
+### Handling Auto-Close Bots
+
+If a submission is auto-closed by a compliance bot:
+
+1. Read the bot's closing comment — it usually explains what's missing
+2. Check the close window (some bots give 2 hours to fix before closing)
+3. Resubmit with the correct format rather than editing the closed issue
+4. Some bots use AI (e.g., Claude/Sonnet) to verify template compliance — partial matches may not pass
+
+### Quick Checklist
+
+Before submitting to an external repo:
+
+1. Is this repo in `~/.config/aidevops/repos.json`? If yes, skip these checks (it's ours)
+2. Does `.github/ISSUE_TEMPLATE/` exist? If yes, use the matching template
+3. Does `CONTRIBUTING.md` exist? If yes, follow its guidelines (CLA, branch naming, etc.)
+4. For PRs: check if they require signed commits, specific branch targets, or linked issues
+
 ## See Also
 
 - `lumen.md` - AI-powered visual diffs, commit message generation, and PR review
