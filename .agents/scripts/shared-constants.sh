@@ -1297,12 +1297,71 @@ detect_ai_backends() {
 # =============================================================================
 # Model Pricing & Provider Detection (consolidated from t1337.2)
 # =============================================================================
-# Shared by budget-tracker-helper.sh and observability-helper.sh.
+# Single source of truth: .agents/configs/model-pricing.json
+# Also consumed by observability.mjs (OpenCode plugin).
 # Pricing: per 1M tokens — input|output|cache_read|cache_write.
 # Budget-tracker uses only input|output; observability uses all four.
+#
+# Falls back to hardcoded case statement if jq or the JSON file is unavailable.
+
+# Cache for JSON-loaded pricing (avoids re-reading the file on every call)
+_MODEL_PRICING_JSON=""
+_MODEL_PRICING_JSON_LOADED=""
+
+# Load model-pricing.json into the cache variable.
+# Called once on first get_model_pricing() invocation.
+_load_model_pricing_json() {
+	_MODEL_PRICING_JSON_LOADED="attempted"
+	local json_file
+	# Try repo-relative path first (works in dev), then deployed path
+	local script_dir="${BASH_SOURCE[0]%/*}"
+	for json_file in \
+		"${script_dir}/../configs/model-pricing.json" \
+		"${HOME}/.aidevops/agents/configs/model-pricing.json"; do
+		if [[ -r "$json_file" ]] && command -v jq &>/dev/null; then
+			_MODEL_PRICING_JSON=$(cat "$json_file" 2>/dev/null) || _MODEL_PRICING_JSON=""
+			if [[ -n "$_MODEL_PRICING_JSON" ]]; then
+				return 0
+			fi
+		fi
+	done
+	return 1
+}
 
 get_model_pricing() {
 	local model="$1"
+
+	# Try JSON source first (single source of truth)
+	if [[ -z "$_MODEL_PRICING_JSON_LOADED" ]]; then
+		_load_model_pricing_json
+	fi
+
+	if [[ -n "$_MODEL_PRICING_JSON" ]]; then
+		local ms="${model#*/}"
+		ms="${ms%%-202*}"
+		ms=$(echo "$ms" | tr '[:upper:]' '[:lower:]')
+		# Search for a matching key in the JSON models object
+		local result
+		result=$(echo "$_MODEL_PRICING_JSON" | jq -r --arg ms "$ms" '
+			.models | to_entries[] |
+			select(.key as $k | $ms | contains($k)) |
+			"\(.value.input)|\(.value.output)|\(.value.cache_read)|\(.value.cache_write)"
+		' 2>/dev/null | head -1)
+		if [[ -n "$result" ]]; then
+			echo "$result"
+			return 0
+		fi
+		# No match — return default from JSON
+		result=$(echo "$_MODEL_PRICING_JSON" | jq -r '
+			"\(.default.input)|\(.default.output)|\(.default.cache_read)|\(.default.cache_write)"
+		' 2>/dev/null)
+		if [[ -n "$result" && "$result" != "null|null|null|null" ]]; then
+			echo "$result"
+			return 0
+		fi
+	fi
+
+	# Hardcoded fallback (no jq or JSON file unavailable)
 	local ms="${model#*/}"
 	ms="${ms%%-202*}"
 	case "$ms" in

@@ -14,43 +14,78 @@
  * @module observability
  */
 
-import { mkdirSync } from "fs";
-import { join } from "path";
+import { mkdirSync, readFileSync } from "fs";
+import { join, dirname } from "path";
 import { homedir } from "os";
 import { execSync } from "child_process";
+import { fileURLToPath } from "url";
 
 const HOME = homedir();
 const OBS_DIR = join(HOME, ".aidevops", ".agent-workspace", "observability");
 const DB_PATH = join(OBS_DIR, "llm-requests.db");
 
 // ---------------------------------------------------------------------------
-// Pricing table — per-million-token rates (input | output | cache_read | cache_write)
-// Mirrors shared-constants.sh get_model_pricing(). Update when models change.
+// Pricing table — loaded from shared JSON (single source of truth).
+// File: .agents/configs/model-pricing.json (also consumed by shared-constants.sh)
+// Falls back to hardcoded defaults if the JSON file is missing/unreadable.
 // ---------------------------------------------------------------------------
 
-const MODEL_PRICING = {
-  // Anthropic
+/** Hardcoded fallback — used only when model-pricing.json is unreadable */
+const FALLBACK_PRICING = {
   "opus-4":    { input: 15.0,  output: 75.0,  cacheRead: 1.50,   cacheWrite: 18.75 },
   "sonnet-4":  { input: 3.0,   output: 15.0,  cacheRead: 0.30,   cacheWrite: 3.75  },
   "haiku-4":   { input: 0.80,  output: 4.0,   cacheRead: 0.08,   cacheWrite: 1.0   },
   "haiku-3":   { input: 0.80,  output: 4.0,   cacheRead: 0.08,   cacheWrite: 1.0   },
-  // OpenAI
-  "gpt-4.1-mini": { input: 0.40, output: 1.60, cacheRead: 0.10,  cacheWrite: 0.40  },
-  "gpt-4.1":      { input: 2.0,  output: 8.0,  cacheRead: 0.50,  cacheWrite: 2.0   },
-  "o3":            { input: 10.0, output: 40.0, cacheRead: 2.50,  cacheWrite: 10.0  },
-  "o4-mini":       { input: 1.10, output: 4.40, cacheRead: 0.275, cacheWrite: 1.10  },
-  // Google
-  "gemini-2.5-pro":   { input: 1.25, output: 10.0, cacheRead: 0.3125, cacheWrite: 2.50 },
-  "gemini-2.5-flash": { input: 0.15, output: 0.60, cacheRead: 0.0375, cacheWrite: 0.15 },
-  "gemini-3-pro":     { input: 1.25, output: 10.0, cacheRead: 0.3125, cacheWrite: 2.50 },
-  "gemini-3-flash":   { input: 0.10, output: 0.40, cacheRead: 0.025,  cacheWrite: 0.10 },
-  // DeepSeek
-  "deepseek-r1": { input: 0.55, output: 2.19, cacheRead: 0.14, cacheWrite: 0.55 },
-  "deepseek-v3": { input: 0.27, output: 1.10, cacheRead: 0.07, cacheWrite: 0.27 },
 };
+const FALLBACK_DEFAULT = { input: 3.0, output: 15.0, cacheRead: 0.30, cacheWrite: 3.75 };
 
-// Default pricing (sonnet-tier) for unknown models
-const DEFAULT_PRICING = { input: 3.0, output: 15.0, cacheRead: 0.30, cacheWrite: 3.75 };
+/**
+ * Load pricing from the shared JSON file.
+ * The JSON uses snake_case keys (cache_read, cache_write) for cross-language
+ * compatibility; we convert to camelCase for JS consumption.
+ * @returns {{ models: Record<string, {input,output,cacheRead,cacheWrite}>, default: {input,output,cacheRead,cacheWrite} }}
+ */
+function loadPricingFromJSON() {
+  // Resolve relative to this file's location (works in both dev repo and deployed ~/.aidevops/)
+  const thisDir = dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    join(thisDir, "..", "..", "configs", "model-pricing.json"),          // repo: .agents/plugins/../../configs/
+    join(HOME, ".aidevops", "agents", "configs", "model-pricing.json"), // deployed
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      const raw = JSON.parse(readFileSync(candidate, "utf-8"));
+      const models = {};
+      for (const [key, p] of Object.entries(raw.models || {})) {
+        models[key] = {
+          input: p.input,
+          output: p.output,
+          cacheRead: p.cache_read,
+          cacheWrite: p.cache_write,
+        };
+      }
+      const def = raw.default || {};
+      const defaultPricing = {
+        input: def.input ?? 3.0,
+        output: def.output ?? 15.0,
+        cacheRead: def.cache_read ?? 0.30,
+        cacheWrite: def.cache_write ?? 3.75,
+      };
+      return { models, default: defaultPricing };
+    } catch {
+      // Try next candidate
+    }
+  }
+
+  // All candidates failed — use hardcoded fallback
+  console.error("[aidevops] Observability: model-pricing.json not found, using hardcoded fallback");
+  return { models: FALLBACK_PRICING, default: FALLBACK_DEFAULT };
+}
+
+const _pricing = loadPricingFromJSON();
+const MODEL_PRICING = _pricing.models;
+const DEFAULT_PRICING = _pricing.default;
 
 /**
  * Look up pricing for a model ID. Matches against the pricing table keys
