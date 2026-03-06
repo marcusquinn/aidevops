@@ -62,6 +62,17 @@ jobs:
             "copilot[bot]"
           )
 
+          # Patterns indicating rate-limit/quota notices (not real reviews).
+          # GH#2980: bots post these when rate-limited — must not count as reviews.
+          RATE_LIMIT_PATTERNS=(
+            "rate limit exceeded"
+            "rate limited by coderabbit"
+            "daily quota limit"
+            "reached your daily quota"
+            "Please wait up to 24 hours"
+            "has exceeded the limit for the number of"
+          )
+
           # Minimum wait time (seconds) after PR creation before we check
           # Gives bots time to start their analysis
           MIN_WAIT_SECONDS=120
@@ -80,6 +91,46 @@ jobs:
           if [[ "$ELAPSED" -lt "$MIN_WAIT_SECONDS" ]]; then
             echo "::warning::PR is only ${ELAPSED}s old (minimum ${MIN_WAIT_SECONDS}s). Review bots may not have posted yet."
           fi
+
+          # Helper: check if a comment body is a rate-limit notice
+          is_rate_limit_comment() {
+            local body="$1"
+            for pattern in "${RATE_LIMIT_PATTERNS[@]}"; do
+              if echo "$body" | grep -qi "$pattern"; then
+                return 0
+              fi
+            done
+            return 1
+          }
+
+          # Helper: check if a bot has at least one real review (not rate-limited)
+          # Uses jq to select comments by bot login and extract bodies.
+          # Base64-encodes each body so multi-line content stays on one line.
+          bot_has_real_review() {
+            local bot_base="$1"
+            local jq_filter
+            jq_filter=".[] | select(.user.login | ascii_downcase | test(\"${bot_base}\")) | .body | @base64"
+
+            local source encoded_bodies encoded body
+            for source in \
+              "repos/${REPO}/pulls/${PR_NUMBER}/reviews" \
+              "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+              "repos/${REPO}/pulls/${PR_NUMBER}/comments"; do
+
+              encoded_bodies=$(gh api "$source" --paginate --jq "$jq_filter" 2>/dev/null || echo "")
+              if [[ -n "$encoded_bodies" ]]; then
+                while IFS= read -r encoded; do
+                  [[ -z "$encoded" ]] && continue
+                  body=$(echo "$encoded" | base64 -d 2>/dev/null || echo "")
+                  [[ -z "$body" ]] && continue
+                  if ! is_rate_limit_comment "$body"; then
+                    return 0
+                  fi
+                done <<< "$encoded_bodies"
+              fi
+            done
+            return 1
+          }
 
           # Check PR reviews (formal GitHub reviews from bots)
           echo ""
@@ -105,9 +156,11 @@ jobs:
           echo "All commenters found:"
           echo "$ALL_COMMENTERS" | grep -v '^$' | sed 's/^/  - /'
 
-          # Check which known bots have posted
+          # Check which known bots have posted REAL reviews (not rate-limit notices)
+          # GH#2980: bots posting rate-limit notices were incorrectly counted as reviews
           FOUND_BOTS=""
           MISSING_BOTS=""
+          RATE_LIMITED_BOTS=""
 
           for bot in "${KNOWN_BOTS[@]}"; do
             # Use grep pattern matching (bot patterns may contain [bot] suffix)
@@ -116,8 +169,14 @@ jobs:
             bot_base=$(echo "$bot_lower" | sed 's/\[bot\]$//')
 
             if echo "$ALL_COMMENTERS" | grep -qi "$bot_base"; then
-              FOUND_BOTS="${FOUND_BOTS}${bot} "
-              echo "FOUND: ${bot}"
+              # Bot commented — verify it's a real review, not a rate-limit notice
+              if bot_has_real_review "$bot_base"; then
+                FOUND_BOTS="${FOUND_BOTS}${bot} "
+                echo "FOUND (real review): ${bot}"
+              else
+                RATE_LIMITED_BOTS="${RATE_LIMITED_BOTS}${bot} "
+                echo "FOUND (rate-limited, not a real review): ${bot}"
+              fi
             else
               MISSING_BOTS="${MISSING_BOTS}${bot} "
               echo "MISSING: ${bot}"
@@ -125,12 +184,13 @@ jobs:
           done
 
           echo ""
-          echo "Found bots: ${FOUND_BOTS:-none}"
+          echo "Found bots (real reviews): ${FOUND_BOTS:-none}"
+          echo "Rate-limited bots: ${RATE_LIMITED_BOTS:-none}"
           echo "Missing bots: ${MISSING_BOTS:-none}"
 
-          # Gate logic: require at least ONE known bot to have reviewed
+          # Gate logic: require at least ONE known bot to have posted a REAL review
           # This is intentionally lenient — not all repos have all bots.
-          # The goal is to catch the case where NO bots have reviewed at all.
+          # The goal is to catch the case where NO bots have actually reviewed.
           #
           # Race condition fix: on pull_request events (opened/synchronize/reopened),
           # the workflow fires before bots have had time to analyze. If no bots are
@@ -139,10 +199,11 @@ jobs:
           # Only hard-fail when the PR is old enough that bots should have posted.
           if [[ -n "$FOUND_BOTS" ]]; then
             echo ""
-            echo "PASS: At least one AI review bot has posted feedback."
+            echo "PASS: At least one AI review bot has posted a real review."
             echo "gate_passed=true" >> "$GITHUB_OUTPUT"
             echo "found_bots=${FOUND_BOTS}" >> "$GITHUB_OUTPUT"
             echo "missing_bots=${MISSING_BOTS}" >> "$GITHUB_OUTPUT"
+            echo "rate_limited_bots=${RATE_LIMITED_BOTS}" >> "$GITHUB_OUTPUT"
           elif [[ "$ELAPSED" -lt "$MIN_WAIT_SECONDS" ]]; then
             echo ""
             echo "PASS (pending): PR is ${ELAPSED}s old (< ${MIN_WAIT_SECONDS}s minimum)."
@@ -151,9 +212,14 @@ jobs:
             echo "gate_passed=true" >> "$GITHUB_OUTPUT"
             echo "found_bots=" >> "$GITHUB_OUTPUT"
             echo "missing_bots=${MISSING_BOTS}" >> "$GITHUB_OUTPUT"
+            echo "rate_limited_bots=${RATE_LIMITED_BOTS}" >> "$GITHUB_OUTPUT"
           else
             echo ""
-            echo "WAITING: No AI review bots have posted yet."
+            if [[ -n "$RATE_LIMITED_BOTS" ]]; then
+              echo "WAITING: Bots posted rate-limit notices only (not real reviews): ${RATE_LIMITED_BOTS}"
+            else
+              echo "WAITING: No AI review bots have posted yet."
+            fi
             echo "This check will re-run when a bot posts a review or comment."
             echo ""
             echo "Expected bots: ${KNOWN_BOTS[*]}"
@@ -163,6 +229,7 @@ jobs:
             echo "gate_passed=false" >> "$GITHUB_OUTPUT"
             echo "found_bots=" >> "$GITHUB_OUTPUT"
             echo "missing_bots=${MISSING_BOTS}" >> "$GITHUB_OUTPUT"
+            echo "rate_limited_bots=${RATE_LIMITED_BOTS}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Check for skip label
@@ -186,10 +253,18 @@ jobs:
       - name: Gate result
         if: steps.check.outputs.gate_passed != 'true' && steps.skip.outputs.skip != 'true'
         run: |
-          echo "::error::No AI review bots have posted on this PR yet."
+          if [[ -n "${{ steps.check.outputs.rate_limited_bots }}" ]]; then
+            echo "::error::Review bots posted rate-limit notices only — no real reviews."
+            echo ""
+            echo "Rate-limited bots: ${{ steps.check.outputs.rate_limited_bots }}"
+            echo ""
+            echo "The bots are rate-limited and did not perform actual code review."
+          else
+            echo "::error::No AI review bots have posted on this PR yet."
+          fi
           echo ""
           echo "This PR cannot be merged until at least one AI code review bot"
-          echo "(CodeRabbit, Gemini Code Assist, etc.) has posted its review."
+          echo "(CodeRabbit, Gemini Code Assist, etc.) has posted a real review."
           echo ""
           echo "What to do:"
           echo "  1. Wait a few minutes for bots to complete their analysis"
@@ -209,6 +284,10 @@ jobs:
               echo "**Status**: PASSED"
               echo ""
               echo "**Bots that reviewed**: ${{ steps.check.outputs.found_bots }}"
+              if [[ -n "${{ steps.check.outputs.rate_limited_bots }}" ]]; then
+                echo ""
+                echo "**Bots rate-limited (not counted)**: ${{ steps.check.outputs.rate_limited_bots }}"
+              fi
               if [[ -n "${{ steps.check.outputs.missing_bots }}" ]]; then
                 echo ""
                 echo "**Bots not yet reviewed**: ${{ steps.check.outputs.missing_bots }}"
@@ -223,7 +302,12 @@ jobs:
             else
               echo "**Status**: WAITING"
               echo ""
-              echo "No AI review bots have posted yet. This check will re-run"
+              if [[ -n "${{ steps.check.outputs.rate_limited_bots }}" ]]; then
+                echo "Bots posted rate-limit notices only (not real reviews):"
+                echo "${{ steps.check.outputs.rate_limited_bots }}"
+                echo ""
+              fi
+              echo "No real AI review bot feedback yet. This check will re-run"
               echo "automatically when a bot posts a review or comment."
             fi
           } >> "$GITHUB_STEP_SUMMARY"

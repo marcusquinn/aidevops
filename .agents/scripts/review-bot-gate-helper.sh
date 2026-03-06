@@ -33,6 +33,17 @@ KNOWN_BOTS=(
 	"copilot"
 )
 
+# Patterns that indicate a rate-limit or quota notice (not a real review).
+# Case-insensitive grep patterns — one per line.
+RATE_LIMIT_PATTERNS=(
+	"rate limit exceeded"
+	"rate limited by coderabbit"
+	"daily quota limit"
+	"reached your daily quota"
+	"Please wait up to 24 hours"
+	"has exceeded the limit for the number of"
+)
+
 SKIP_LABEL="skip-review-gate"
 
 # --- Functions ---
@@ -70,6 +81,57 @@ get_all_bot_commenters() {
 	# Combine, deduplicate, lowercase
 	echo -e "${reviews}\n${comments}\n${review_comments}" |
 		tr '[:upper:]' '[:lower:]' | sort -u | grep -v '^$' || true
+}
+
+is_rate_limit_comment() {
+	# Check if a comment body matches any known rate-limit/quota pattern.
+	# Returns 0 if the comment IS a rate-limit notice (not a real review).
+	local body="$1"
+
+	for pattern in "${RATE_LIMIT_PATTERNS[@]}"; do
+		if echo "$body" | grep -qi "$pattern"; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+bot_has_real_review() {
+	# Check if a bot has posted at least one comment that is NOT a rate-limit
+	# notice. Checks all three comment sources (reviews, issue comments,
+	# review comments). Returns 0 if a real review exists, 1 otherwise.
+	local pr_number="$1"
+	local repo="$2"
+	local bot_login="$3"
+
+	# Build a jq filter that selects comments by this bot (case-insensitive)
+	# and base64-encodes each body so multi-line content stays on one line.
+	local jq_filter
+	jq_filter=".[] | select(.user.login | ascii_downcase | test(\"${bot_login}\")) | .body | @base64"
+
+	local api_endpoints=(
+		"repos/${repo}/pulls/${pr_number}/reviews"
+		"repos/${repo}/issues/${pr_number}/comments"
+		"repos/${repo}/pulls/${pr_number}/comments"
+	)
+
+	local endpoint encoded_bodies body
+	for endpoint in "${api_endpoints[@]}"; do
+		encoded_bodies=$(gh api "$endpoint" --paginate --jq "$jq_filter" 2>/dev/null || echo "")
+		if [[ -n "$encoded_bodies" ]]; then
+			while IFS= read -r encoded; do
+				[[ -z "$encoded" ]] && continue
+				body=$(echo "$encoded" | base64 -d 2>/dev/null || echo "")
+				[[ -z "$body" ]] && continue
+				if ! is_rate_limit_comment "$body"; then
+					return 0
+				fi
+			done <<<"$encoded_bodies"
+		fi
+	done
+
+	# All comments from this bot were rate-limit notices (or empty)
+	return 1
 }
 
 check_for_skip_label() {
@@ -117,9 +179,16 @@ do_check() {
 	all_commenters=$(get_all_bot_commenters "$pr_number" "$repo")
 
 	local found_bots=""
+	local rate_limited_bots=""
 	for bot in "${KNOWN_BOTS[@]}"; do
 		if echo "$all_commenters" | grep -qi "$bot"; then
-			found_bots="${found_bots}${bot} "
+			# Bot commented — but is it a real review or a rate-limit notice?
+			if bot_has_real_review "$pr_number" "$repo" "$bot"; then
+				found_bots="${found_bots}${bot} "
+			else
+				rate_limited_bots="${rate_limited_bots}${bot} "
+				echo "rate-limited (not a real review): ${bot}" >&2
+			fi
 		fi
 	done
 
@@ -127,6 +196,10 @@ do_check() {
 		echo "PASS"
 		echo "found: ${found_bots}" >&2
 		return 0
+	elif [[ -n "$rate_limited_bots" ]]; then
+		echo "WAITING"
+		echo "Bots posted rate-limit notices only (not real reviews): ${rate_limited_bots}" >&2
+		return 1
 	else
 		echo "WAITING"
 		echo "No review bots found yet. Known bots: ${KNOWN_BOTS[*]}" >&2
@@ -176,6 +249,18 @@ do_list() {
 	local result
 	result=$(match_known_bots "$all_commenters")
 	echo "$result"
+	echo ""
+
+	# Show rate-limit status for each found bot
+	for bot in "${KNOWN_BOTS[@]}"; do
+		if echo "$all_commenters" | grep -qi "$bot"; then
+			if bot_has_real_review "$pr_number" "$repo" "$bot"; then
+				echo "  ${bot}: real review"
+			else
+				echo "  ${bot}: rate-limited (no real review)"
+			fi
+		fi
+	done
 	return 0
 }
 
