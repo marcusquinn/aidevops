@@ -94,6 +94,16 @@ _launchd_has_agent() {
 	return $?
 }
 
+# Escape a string for safe embedding inside single quotes.
+# Replaces each ' with '"'"' (end quote, double-quoted apostrophe, resume quote).
+# Usage: local safe_path; safe_path="$(shell_single_quote "$path")"
+#        echo "CMD='${safe_path}'"
+shell_single_quote() {
+	local input="$1"
+	printf '%s' "$input" | sed "s/'/'\"\\'\"'/g"
+	return 0
+}
+
 # Spinner for long-running operations
 # Usage: run_with_spinner "Installing package..." command arg1 arg2
 run_with_spinner() {
@@ -770,7 +780,9 @@ main() {
 	# Also check legacy .conf user override
 	if [[ -z "$_pulse_user_config" && -f "${FEATURE_TOGGLES_USER:-$HOME/.config/aidevops/feature-toggles.conf}" ]]; then
 		local _legacy_val
-		_legacy_val=$(grep -E '^supervisor_pulse=' "${FEATURE_TOGGLES_USER:-$HOME/.config/aidevops/feature-toggles.conf}" | tail -1 | cut -d= -f2)
+		# Use awk instead of grep|tail|cut — grep exits 1 on no match, which
+		# aborts the script under set -euo pipefail. awk always exits 0.
+		_legacy_val=$(awk -F= '/^supervisor_pulse=/{val=$2} END{print val}' "${FEATURE_TOGGLES_USER:-$HOME/.config/aidevops/feature-toggles.conf}")
 		if [[ -n "$_legacy_val" ]]; then
 			_pulse_user_config="$_legacy_val"
 		fi
@@ -919,9 +931,16 @@ PLIST
 		else
 			# Linux: use cron entry with wrapper
 			# Remove old-style cron entries (direct opencode invocation)
+			# Escape paths for safe embedding in single-quoted crontab entry
+			# (handles apostrophes in paths, e.g. /home/O'Connor/...)
+			local _cron_opencode_q _cron_pulsedir_q _cron_wrapper_q _cron_log_q
+			_cron_opencode_q="$(shell_single_quote "$opencode_bin")"
+			_cron_pulsedir_q="$(shell_single_quote "$_aidevops_dir")"
+			_cron_wrapper_q="$(shell_single_quote "$wrapper_script")"
+			_cron_log_q="$(shell_single_quote "$HOME/.aidevops/logs/pulse-wrapper.log")"
 			(
 				crontab -l 2>/dev/null | grep -v 'aidevops: supervisor-pulse'
-				echo "*/2 * * * * OPENCODE_BIN='${opencode_bin}' PULSE_DIR='${_aidevops_dir}' /bin/bash '${wrapper_script}' >> '$HOME/.aidevops/logs/pulse-wrapper.log' 2>&1 # aidevops: supervisor-pulse"
+				echo "*/2 * * * * OPENCODE_BIN='${_cron_opencode_q}' PULSE_DIR='${_cron_pulsedir_q}' /bin/bash '${_cron_wrapper_q}' >> '${_cron_log_q}' 2>&1 # aidevops: supervisor-pulse"
 			) | crontab - 2>/dev/null || true
 			if crontab -l 2>/dev/null | grep -qF "aidevops: supervisor-pulse"; then
 				print_info "Supervisor pulse enabled (cron, every 2 min). Disable: crontab -e and remove the supervisor-pulse line"
