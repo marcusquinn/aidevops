@@ -1209,15 +1209,22 @@ ${state_content}
 #######################################
 # Clean up worktrees for merged/closed PRs across ALL managed repos
 #
-# Iterates repos.json and runs worktree-helper.sh clean --auto --force-merged
-# in each repo directory. This prevents stale worktrees from accumulating
-# on disk after PR merges — including squash merges that git branch --merged
-# cannot detect.
+# Iterates repos.json (.initialized_repos[]) and runs
+# worktree-helper.sh clean --auto --force-merged in each repo directory.
+# This prevents stale worktrees from accumulating on disk after PR merges
+# — including squash merges that git branch --merged cannot detect.
 #
-# --force-merged: uses gh pr list to detect squash merges and force-removes
-# dirty worktrees when the PR is confirmed merged (dirty state = abandoned WIP).
+# worktree-helper.sh clean internally:
+#   1. Runs git fetch --prune origin (prunes deleted remote branches)
+#   2. Checks refs/remotes/origin/<branch> for each worktree
+#   3. Detects squash merges via gh pr list --state merged
+#   4. Removes worktrees + deletes local branches for merged PRs
 #
-# Safety: skips worktrees owned by active sessions (handled by worktree-helper.sh).
+# --force-merged: force-removes dirty worktrees when the PR is confirmed
+# merged (dirty state = abandoned WIP from a completed worker).
+#
+# Safety: skips worktrees owned by active sessions (handled by
+# worktree-helper.sh ownership registry, t189).
 #######################################
 cleanup_worktrees() {
 	local helper="${HOME}/.aidevops/agents/scripts/worktree-helper.sh"
@@ -1229,19 +1236,22 @@ cleanup_worktrees() {
 	local total_removed=0
 
 	if [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
-		# Iterate all repos, skip local_only (no GitHub remote for PR detection)
+		# Iterate all initialized repos — clean worktrees for any repo with
+		# a git directory, not just pulse-enabled ones. Workers can create
+		# worktrees in any managed repo. Skip local_only repos since
+		# worktree-helper.sh uses gh pr list for squash-merge detection.
 		local repo_paths
-		repo_paths=$(jq -r '.[] | select(.local_only != true) | .path' "$repos_json" 2>/dev/null || echo "")
+		repo_paths=$(jq -r '.initialized_repos[] | select((.local_only // false) == false) | .path' "$repos_json" 2>/dev/null || echo "")
 
 		local repo_path
 		while IFS= read -r repo_path; do
 			[[ -z "$repo_path" ]] && continue
 			[[ ! -d "$repo_path/.git" ]] && continue
 
-			local cleaned_output
-			cleaned_output=$(git -C "$repo_path" worktree list 2>/dev/null | wc -l)
+			local wt_count
+			wt_count=$(git -C "$repo_path" worktree list 2>/dev/null | wc -l | tr -d ' ')
 			# Skip repos with only 1 worktree (the main one) — nothing to clean
-			if [[ "$cleaned_output" -le 1 ]]; then
+			if [[ "${wt_count:-0}" -le 1 ]]; then
 				continue
 			fi
 
@@ -1260,13 +1270,18 @@ cleanup_worktrees() {
 		done <<<"$repo_paths"
 	else
 		# Fallback: just clean the current repo (legacy behaviour)
-		local cleaned_output
-		cleaned_output=$(bash "$helper" clean --auto --force-merged 2>&1) || true
+		local clean_result
+		clean_result=$(bash "$helper" clean --auto --force-merged 2>&1) || true
 		local fallback_count
-		fallback_count=$(echo "$cleaned_output" | grep -c 'Removing') || fallback_count=0
+		fallback_count=$(echo "$clean_result" | grep -c 'Removing') || fallback_count=0
 		if [[ "$fallback_count" -gt 0 ]]; then
 			echo "[pulse-wrapper] Worktree cleanup: $fallback_count worktree(s) removed" >>"$LOGFILE"
+			total_removed=$((total_removed + fallback_count))
 		fi
+	fi
+
+	if [[ "$total_removed" -gt 0 ]]; then
+		echo "[pulse-wrapper] Worktree cleanup total: $total_removed worktree(s) removed across all repos" >>"$LOGFILE"
 	fi
 
 	return 0
