@@ -1,24 +1,19 @@
 #!/usr/bin/env bash
-# pulse-session-helper.sh - Session-based pulse control
+# pulse-session-helper.sh - Pulse consent and session control
 #
-# Enables/disables the supervisor pulse for bounded work sessions.
-# Users start the pulse when they begin working and stop it when done,
-# avoiding unattended overnight API spend and unreviewed PR accumulation.
+# Controls the supervisor pulse via a layered consent model:
+#   1. Stop flag  (~/.aidevops/logs/pulse-session.stop)  — highest priority, pauses pulse
+#   2. Session flag (~/.aidevops/logs/pulse-session.flag) — explicit start, doesn't survive reboots
+#   3. Config consent (orchestration.supervisor_pulse=true) — persistent, survives reboots
 #
 # Usage:
-#   pulse-session-helper.sh start    # Enable pulse (create session flag)
-#   pulse-session-helper.sh stop     # Graceful stop (let workers finish, then disable)
-#   pulse-session-helper.sh status   # Show pulse session state
+#   pulse-session-helper.sh start    # Clear stop flag, create session flag
+#   pulse-session-helper.sh stop     # Create stop flag, remove session flag, wait for workers
+#   pulse-session-helper.sh status   # Show consent layers, workers, repos
 #   pulse-session-helper.sh help     # Show usage
 #
-# How it works:
-#   - `start` creates a session flag file that pulse-wrapper.sh checks
-#   - `stop` removes the flag and optionally waits for in-flight workers
-#   - pulse-wrapper.sh skips the pulse cycle when the flag is absent
-#   - The launchd plist stays loaded — it just becomes a no-op when disabled
-#
-# Flag file: ~/.aidevops/logs/pulse-session.flag
-# Contains: started_at ISO timestamp, started_by username
+# The launchd plist stays loaded — pulse-wrapper.sh checks these consent
+# layers on each cycle and skips if none grant permission.
 
 set -euo pipefail
 
@@ -26,6 +21,7 @@ export PATH="/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:${PATH}"
 
 # Configuration
 readonly SESSION_FLAG="${HOME}/.aidevops/logs/pulse-session.flag"
+readonly STOP_FLAG="${HOME}/.aidevops/logs/pulse-session.stop"
 readonly LOGFILE="${HOME}/.aidevops/logs/pulse.log"
 readonly PIDFILE="${HOME}/.aidevops/logs/pulse.pid"
 readonly MAX_WORKERS_FILE="${HOME}/.aidevops/logs/pulse-max-workers"
@@ -101,6 +97,45 @@ is_pulse_running() {
 }
 
 #######################################
+# Check if config consent is enabled
+# Mirrors the config check in pulse-wrapper.sh check_session_gate()
+# Returns: 0 if enabled, 1 if not
+#######################################
+is_config_consent_enabled() {
+	# NOTE: This mirrors the config check in pulse-wrapper.sh check_session_gate().
+	# Kept separate because pulse-wrapper.sh is a standalone 2600+ line script
+	# with its own initialization — sourcing it here would be impractical.
+	local pulse_config=""
+
+	# JSONC config (primary) — strip // comments before matching
+	local config_file="${HOME}/.config/aidevops/config.jsonc"
+	if [[ -f "$config_file" ]]; then
+		pulse_config=$(sed 's|//.*||' "$config_file" | grep -o '"supervisor_pulse"[[:space:]]*:[[:space:]]*[a-z]*' | tail -1 | grep -o '[a-z]*$' || echo "")
+	fi
+
+	# Legacy .conf fallback
+	if [[ -z "$pulse_config" ]]; then
+		local legacy_conf="${HOME}/.config/aidevops/feature-toggles.conf"
+		if [[ -f "$legacy_conf" ]]; then
+			pulse_config=$(grep -E '^supervisor_pulse=' "$legacy_conf" | tail -1 | cut -d= -f2 || echo "")
+		fi
+	fi
+
+	# Env var override
+	if [[ -n "${AIDEVOPS_SUPERVISOR_PULSE:-}" ]]; then
+		pulse_config="$AIDEVOPS_SUPERVISOR_PULSE"
+	fi
+
+	local pulse_lower
+	pulse_lower=$(echo "$pulse_config" | tr '[:upper:]' '[:lower:]')
+
+	if [[ "$pulse_lower" == "true" ]]; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
 # Get pulse-enabled repo count
 #######################################
 get_pulse_repo_count() {
@@ -132,9 +167,12 @@ get_last_pulse_time() {
 # Start pulse session
 #######################################
 cmd_start() {
+	# Remove stop flag if present (user is explicitly resuming)
+	rm -f "$STOP_FLAG"
+
 	if is_session_active; then
 		local started_at
-		started_at=$(grep '^started_at=' "$SESSION_FLAG" 2>/dev/null | cut -d= -f2)
+		started_at=$(grep '^started_at=' "$SESSION_FLAG" | cut -d= -f2)
 		print_warning "Pulse session already active (started: ${started_at:-unknown})"
 		echo ""
 		echo "  To restart: aidevops pulse stop && aidevops pulse start"
@@ -175,9 +213,10 @@ EOF
 #######################################
 # Stop pulse session (graceful)
 #
-# 1. Remove the session flag (prevents new pulse cycles)
-# 2. Wait for in-flight workers to finish (up to grace period)
-# 3. Optionally kill remaining workers if --force is passed
+# 1. Create stop flag (overrides all consent layers)
+# 2. Remove the session flag
+# 3. Wait for in-flight workers to finish (up to grace period)
+# 4. Optionally kill remaining workers if --force is passed
 #######################################
 cmd_stop() {
 	local force=false
@@ -193,22 +232,39 @@ cmd_stop() {
 		esac
 	done
 
-	if ! is_session_active; then
-		print_info "Pulse session is not active"
+	# Check if already stopped (stop flag present and no session flag)
+	if [[ -f "$STOP_FLAG" ]] && ! is_session_active; then
+		print_info "Pulse is already stopped"
 		return 0
 	fi
 
-	local started_at
-	started_at=$(grep '^started_at=' "$SESSION_FLAG" 2>/dev/null | cut -d= -f2)
+	# If no session flag and no config consent, nothing to stop
+	if ! is_session_active && ! is_config_consent_enabled; then
+		print_info "Pulse is not enabled (no session flag, no config consent)"
+		return 0
+	fi
 
-	# Remove session flag — this prevents new pulse cycles immediately
-	rm -f "$SESSION_FLAG"
+	local started_at=""
+	if is_session_active; then
+		started_at=$(grep '^started_at=' "$SESSION_FLAG" | cut -d= -f2)
+	fi
 
+	# Create stop flag — this overrides all consent layers immediately
 	local now_iso
 	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+	local user
+	user=$(whoami)
+	cat >"$STOP_FLAG" <<EOF
+stopped_at=${now_iso}
+stopped_by=${user}
+EOF
+
+	# Also remove session flag for clean state
+	rm -f "$SESSION_FLAG"
+
 	echo "[pulse-session] Session stopped at ${now_iso} (was started: ${started_at:-unknown})" >>"$LOGFILE"
 
-	print_success "Pulse session stopped (no new pulse cycles will start)"
+	print_success "Pulse stopped (no new pulse cycles will start)"
 
 	# Check for in-flight workers
 	local worker_count
@@ -292,20 +348,79 @@ cmd_stop() {
 # Show pulse session status
 #######################################
 cmd_status() {
-	echo -e "${BOLD}Pulse Session Status${NC}"
-	echo "─────────────────────"
+	echo -e "${BOLD}Pulse Status${NC}"
+	echo "────────────"
 	echo ""
 
-	# Session state
+	# Consent layers (mirrors check_session_gate() in pulse-wrapper.sh)
+	local effective_state="disabled"
+	local effective_reason=""
+
+	# Layer 1: Stop flag (highest priority — overrides everything)
+	local has_stop_flag=false
+	if [[ -f "$STOP_FLAG" ]]; then
+		has_stop_flag=true
+	fi
+
+	# Layer 2: Session flag (explicit user action)
+	local has_session_flag=false
 	if is_session_active; then
-		local started_at started_by
-		started_at=$(grep '^started_at=' "$SESSION_FLAG" 2>/dev/null | cut -d= -f2)
-		started_by=$(grep '^started_by=' "$SESSION_FLAG" 2>/dev/null | cut -d= -f2)
-		echo -e "  Session:     ${GREEN}active${NC}"
-		echo "  Started:     ${started_at:-unknown}"
-		echo "  Started by:  ${started_by:-unknown}"
+		has_session_flag=true
+	fi
+
+	# Layer 3: Config consent (persistent, survives reboots)
+	local has_config_consent=false
+	if is_config_consent_enabled; then
+		has_config_consent=true
+	fi
+
+	# Determine effective state
+	if [[ "$has_stop_flag" == "true" ]]; then
+		effective_state="stopped"
+		effective_reason="stop flag (aidevops pulse stop)"
+	elif [[ "$has_session_flag" == "true" ]]; then
+		effective_state="enabled"
+		effective_reason="session flag (aidevops pulse start)"
+	elif [[ "$has_config_consent" == "true" ]]; then
+		effective_state="enabled"
+		effective_reason="config consent (orchestration.supervisor_pulse=true)"
 	else
-		echo -e "  Session:     ${YELLOW}inactive${NC} (pulse will skip cycles)"
+		effective_state="disabled"
+		effective_reason="no consent layer active"
+	fi
+
+	# Display effective state
+	if [[ "$effective_state" == "enabled" ]]; then
+		echo -e "  Pulse:       ${GREEN}enabled${NC} via ${effective_reason}"
+	elif [[ "$effective_state" == "stopped" ]]; then
+		echo -e "  Pulse:       ${RED}stopped${NC} via ${effective_reason}"
+	else
+		echo -e "  Pulse:       ${YELLOW}disabled${NC} (${effective_reason})"
+	fi
+
+	# Show consent layer details
+	# Sanitize values from flag files to prevent terminal escape injection
+	echo ""
+	echo -e "  ${BOLD}Consent layers:${NC}"
+	if [[ "$has_stop_flag" == "true" ]]; then
+		local stopped_at
+		stopped_at=$(grep '^stopped_at=' "$STOP_FLAG" | cut -d= -f2 | tr -cd '[:alnum:]T:Z.+-')
+		echo -e "    Stop flag:      ${RED}set${NC} (${stopped_at:-unknown})"
+	else
+		echo -e "    Stop flag:      ${GREEN}clear${NC}"
+	fi
+	if [[ "$has_session_flag" == "true" ]]; then
+		local started_at started_by
+		started_at=$(grep '^started_at=' "$SESSION_FLAG" | cut -d= -f2 | tr -cd '[:alnum:]T:Z.+-')
+		started_by=$(grep '^started_by=' "$SESSION_FLAG" | cut -d= -f2 | tr -cd '[:alnum:]._-')
+		echo -e "    Session flag:   ${GREEN}active${NC} (${started_at:-unknown} by ${started_by:-unknown})"
+	else
+		echo -e "    Session flag:   ${YELLOW}inactive${NC}"
+	fi
+	if [[ "$has_config_consent" == "true" ]]; then
+		echo -e "    Config consent: ${GREEN}enabled${NC}"
+	else
+		echo -e "    Config consent: ${YELLOW}disabled${NC}"
 	fi
 	echo ""
 
@@ -313,9 +428,9 @@ cmd_status() {
 	if is_pulse_running; then
 		local pulse_pid
 		pulse_pid=$(cat "$PIDFILE" 2>/dev/null || echo "?")
-		echo -e "  Pulse:       ${GREEN}running${NC} (PID ${pulse_pid})"
+		echo -e "  Process:     ${GREEN}running${NC} (PID ${pulse_pid})"
 	else
-		echo -e "  Pulse:       ${BLUE}idle${NC} (waiting for next launchd cycle)"
+		echo -e "  Process:     ${BLUE}idle${NC} (waiting for next launchd cycle)"
 	fi
 
 	# Workers
@@ -367,11 +482,14 @@ cmd_status() {
 	fi
 
 	# Hint
-	if is_session_active; then
+	if [[ "$effective_state" == "enabled" ]]; then
 		echo "  Stop:  aidevops pulse stop"
 		echo "  Force: aidevops pulse stop --force"
+	elif [[ "$effective_state" == "stopped" ]]; then
+		echo "  Resume: aidevops pulse start"
 	else
-		echo "  Start: aidevops pulse start"
+		echo "  Start:  aidevops pulse start"
+		echo "  Or set: orchestration.supervisor_pulse=true in config.jsonc"
 	fi
 	return 0
 }
@@ -381,34 +499,49 @@ cmd_status() {
 #######################################
 cmd_help() {
 	cat <<'EOF'
-pulse-session-helper.sh - Session-based pulse control
+pulse-session-helper.sh - Pulse consent and session control
 
 USAGE:
     aidevops pulse <command> [options]
 
 COMMANDS:
-    start              Enable the pulse for this work session
-    stop [--force]     Gracefully stop the pulse session
-    status             Show pulse session state, workers, repos
+    start              Enable the pulse (clears stop flag, creates session flag)
+    stop [--force]     Stop the pulse (creates stop flag, removes session flag)
+    status             Show consent layers, workers, repos
 
 STOP OPTIONS:
     --force, -f        Send SIGTERM to workers immediately instead of waiting
 
 ENVIRONMENT:
     PULSE_STOP_GRACE_SECONDS   Grace period for workers on stop (default: 300)
+    AIDEVOPS_SUPERVISOR_PULSE  Override config consent (true/false)
 
 HOW IT WORKS:
-    The supervisor pulse runs every 2 minutes via launchd. When no session
-    is active, pulse-wrapper.sh skips the cycle (no-op). Starting a session
-    creates a flag file that enables the pulse. Stopping removes the flag
-    and optionally waits for in-flight workers to finish.
+    The supervisor pulse runs every 2 minutes via launchd/cron. Whether it
+    actually does work depends on a layered consent model (checked in order):
 
-    This gives you bounded automation: the pulse runs while you're available
-    to monitor outcomes, and stops when you're not.
+    1. Stop flag (~/.aidevops/logs/pulse-session.stop)
+       Highest priority. If present, pulse is paused regardless of other
+       layers. Created by 'aidevops pulse stop', cleared by 'start'.
+
+    2. Session flag (~/.aidevops/logs/pulse-session.flag)
+       Explicit user action. Created by 'aidevops pulse start'.
+       Does NOT survive reboots — use for bounded work sessions.
+
+    3. Config consent (orchestration.supervisor_pulse=true)
+       Persistent setting in ~/.config/aidevops/config.jsonc.
+       Survives reboots — the pulse runs unattended after reboot.
+       Set during 'aidevops init' or manually in config.
+
+    If none of the above are set, the pulse skips (no-op).
+
+    For unattended operation: set config consent and don't use start/stop.
+    For bounded sessions: use 'aidevops pulse start' and 'stop'.
+    To pause temporarily: 'aidevops pulse stop' (overrides config consent).
 
 EXAMPLES:
-    aidevops pulse start           # Begin work session
-    aidevops pulse status          # Check what's running
+    aidevops pulse start           # Enable pulse for this session
+    aidevops pulse status          # Show consent layers and workers
     aidevops pulse stop            # Graceful stop (wait for workers)
     aidevops pulse stop --force    # Stop immediately
 
