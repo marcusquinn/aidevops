@@ -202,13 +202,13 @@ setup_shell_compatibility() {
 
 	for src_file in "${bash_files[@]}"; do
 		local n
-		# grep -c exits 1 on no match; handle inside subshell to avoid ERR trap noise
-		# with inherit_errexit, || true after $() may still fire the trap in some Bash versions
-		n=$(grep -cE '^\s*export\s+[A-Z]' "$src_file" 2>/dev/null || :)
+		# grep -c exits 1 on no match; || : prevents ERR trap noise
+		# File existence already verified when building bash_files array
+		n=$(grep -cE '^\s*export\s+[A-Z]' "$src_file" || :)
 		total_exports=$((total_exports + ${n:-0}))
-		n=$(grep -cE '^\s*alias\s+' "$src_file" 2>/dev/null || :)
+		n=$(grep -cE '^\s*alias\s+' "$src_file" || :)
 		total_aliases=$((total_aliases + ${n:-0}))
-		n=$(grep -cE 'PATH.*=' "$src_file" 2>/dev/null || :)
+		n=$(grep -cE 'PATH.*=' "$src_file" || :)
 		total_paths=$((total_paths + ${n:-0}))
 	done
 
@@ -337,8 +337,8 @@ setup_shell_compatibility() {
 	chmod 644 "$shared_profile"
 	print_success "Extracted $extracted unique customization(s) to $shared_profile"
 
-	# Add sourcing to .zshrc if not already present
-	if ! grep -q 'shell_common' "$zsh_rc" 2>/dev/null; then
+	# Add sourcing to .zshrc if not already present (existence verified above)
+	if ! grep -q 'shell_common' "$zsh_rc"; then
 		{
 			echo ""
 			echo "# Cross-shell compatibility (added by aidevops setup)"
@@ -350,8 +350,9 @@ setup_shell_compatibility() {
 	fi
 
 	# Add sourcing to bash config files if not already present
+	# File existence already verified when building bash_files array
 	for src_file in "${bash_files[@]}"; do
-		if ! grep -q 'shell_common' "$src_file" 2>/dev/null; then
+		if ! grep -q 'shell_common' "$src_file"; then
 			{
 				echo ""
 				echo "# Cross-shell compatibility (added by aidevops setup)"
@@ -425,8 +426,8 @@ add_local_bin_to_path() {
 			touch "$rc_file"
 		fi
 
-		# Check if already added
-		if grep -q '\.local/bin' "$rc_file" 2>/dev/null; then
+		# Check if already added (file created above if it didn't exist)
+		if grep -q '\.local/bin' "$rc_file"; then
 			already_in="${already_in:+$already_in, }$rc_file"
 			continue
 		fi
@@ -693,7 +694,7 @@ ALIASES
 	local rc_file
 	while IFS= read -r rc_file; do
 		[[ -z "$rc_file" ]] && continue
-		if grep -q "# AI Assistant Server Access" "$rc_file" 2>/dev/null; then
+		if [[ -f "$rc_file" ]] && grep -q "# AI Assistant Server Access" "$rc_file"; then
 			any_configured=true
 			break
 		fi
@@ -701,7 +702,7 @@ ALIASES
 	# Also check fish config (not included in get_all_shell_rcs on macOS)
 	if [[ "$any_configured" == "false" ]]; then
 		local fish_config="$HOME/.config/fish/config.fish"
-		if grep -q "# AI Assistant Server Access" "$fish_config" 2>/dev/null; then
+		if [[ -f "$fish_config" ]] && grep -q "# AI Assistant Server Access" "$fish_config"; then
 			any_configured=true
 		fi
 	fi
@@ -733,8 +734,8 @@ ALIASES
 					touch "$rc_file"
 				fi
 
-				# Skip if already has aliases
-				if grep -q "# AI Assistant Server Access" "$rc_file" 2>/dev/null; then
+				# Skip if already has aliases (file created above if it didn't exist)
+				if grep -q "# AI Assistant Server Access" "$rc_file"; then
 					continue
 				fi
 
@@ -768,7 +769,7 @@ setup_terminal_title() {
 	local rc_file
 	while IFS= read -r rc_file; do
 		[[ -z "$rc_file" ]] && continue
-		if [[ -f "$rc_file" ]] && grep -q "aidevops terminal-title" "$rc_file" 2>/dev/null; then
+		if [[ -f "$rc_file" ]] && grep -q "aidevops terminal-title" "$rc_file"; then
 			title_configured=true
 			break
 		fi
@@ -799,7 +800,7 @@ setup_terminal_title() {
 	local tabby_config="$HOME/Library/Application Support/tabby/config.yaml"
 	if [[ -f "$tabby_config" ]]; then
 		local disabled_count
-		disabled_count=$(grep -c "disableDynamicTitle: true" "$tabby_config" 2>/dev/null || echo "0")
+		disabled_count=$(grep -c "disableDynamicTitle: true" "$tabby_config" || echo "0")
 		if [[ "$disabled_count" -gt 0 ]]; then
 			echo "  Tabby: detected, dynamic titles disabled in $disabled_count profile(s) (will fix)"
 		else
