@@ -143,19 +143,16 @@ count_interactive_sessions() {
 	# Note: pgrep -c is not available on macOS; use pgrep | wc -l instead
 	local cursor_count=0
 	cursor_count=$(pgrep -f 'Cursor\.app' | wc -l || true)
-	cursor_count=$((cursor_count + 0)) # normalize whitespace from wc
 	count=$((count + cursor_count))
 
 	# --- Windsurf sessions ---
 	local windsurf_count=0
 	windsurf_count=$(pgrep -f 'Windsurf' | wc -l || true)
-	windsurf_count=$((windsurf_count + 0))
 	count=$((count + windsurf_count))
 
 	# --- Aider sessions ---
 	local aider_count=0
 	aider_count=$(pgrep -f 'aider' | wc -l || true)
-	aider_count=$((aider_count + 0))
 	count=$((count + aider_count))
 
 	echo "$count"
