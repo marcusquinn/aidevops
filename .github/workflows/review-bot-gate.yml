@@ -126,11 +126,25 @@ jobs:
           # Gate logic: require at least ONE known bot to have reviewed
           # This is intentionally lenient — not all repos have all bots.
           # The goal is to catch the case where NO bots have reviewed at all.
+          #
+          # Race condition fix: on pull_request events (opened/synchronize/reopened),
+          # the workflow fires before bots have had time to analyze. If no bots are
+          # found and the PR is young, pass with a "pending" note — the check will
+          # re-run when a bot posts via pull_request_review or issue_comment triggers.
+          # Only hard-fail when the PR is old enough that bots should have posted.
           if [[ -n "$FOUND_BOTS" ]]; then
             echo ""
             echo "PASS: At least one AI review bot has posted feedback."
             echo "gate_passed=true" >> "$GITHUB_OUTPUT"
             echo "found_bots=${FOUND_BOTS}" >> "$GITHUB_OUTPUT"
+            echo "missing_bots=${MISSING_BOTS}" >> "$GITHUB_OUTPUT"
+          elif [[ "$ELAPSED" -lt "$MIN_WAIT_SECONDS" ]]; then
+            echo ""
+            echo "PASS (pending): PR is ${ELAPSED}s old (< ${MIN_WAIT_SECONDS}s minimum)."
+            echo "Bots have not posted yet but the PR is too young to enforce the gate."
+            echo "This check will re-run when a bot posts a review or comment."
+            echo "gate_passed=true" >> "$GITHUB_OUTPUT"
+            echo "found_bots=" >> "$GITHUB_OUTPUT"
             echo "missing_bots=${MISSING_BOTS}" >> "$GITHUB_OUTPUT"
           else
             echo ""
@@ -186,7 +200,7 @@ jobs:
           {
             echo "## Review Bot Gate"
             echo ""
-            if [[ "${{ steps.check.outputs.gate_passed }}" == "true" ]]; then
+            if [[ "${{ steps.check.outputs.gate_passed }}" == "true" && -n "${{ steps.check.outputs.found_bots }}" ]]; then
               echo "**Status**: PASSED"
               echo ""
               echo "**Bots that reviewed**: ${{ steps.check.outputs.found_bots }}"
@@ -194,6 +208,11 @@ jobs:
                 echo ""
                 echo "**Bots not yet reviewed**: ${{ steps.check.outputs.missing_bots }}"
               fi
+            elif [[ "${{ steps.check.outputs.gate_passed }}" == "true" ]]; then
+              echo "**Status**: PASSED (pending bot reviews)"
+              echo ""
+              echo "PR is too young to enforce the gate. Bots will re-trigger this"
+              echo "check when they post their reviews."
             elif [[ "${{ steps.skip.outputs.skip }}" == "true" ]]; then
               echo "**Status**: SKIPPED (skip-review-gate label)"
             else
