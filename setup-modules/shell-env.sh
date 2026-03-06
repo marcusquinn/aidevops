@@ -542,6 +542,9 @@ setup_shellcheck_wrapper() {
 	# Layer 1: launchctl setenv (macOS) — affects all GUI-launched processes
 	# Set both SHELLCHECK_PATH (for tools that honour it) and PATH (for tools
 	# that resolve shellcheck via PATH lookup, like bash-language-server).
+	# Note: 2>/dev/null on launchctl is intentional — launchctl may not be
+	# available in non-GUI contexts (SSH, containers). Unlike grep where we
+	# want errors visible, launchctl failure is a non-fatal fallback.
 	if [[ "$PLATFORM_MACOS" == "true" ]]; then
 		if launchctl setenv SHELLCHECK_PATH "$wrapper_path" 2>/dev/null; then
 			print_info "Set SHELLCHECK_PATH via launchctl (GUI processes)"
