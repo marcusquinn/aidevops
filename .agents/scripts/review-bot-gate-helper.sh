@@ -134,6 +134,53 @@ bot_has_real_review() {
 	return 1
 }
 
+any_bot_has_success_status() {
+	# GH#3005: When bots are rate-limited in comments but still post a formal
+	# GitHub status check (e.g., CodeRabbit posts a "coderabbitai" context with
+	# state=success), treat the PR as reviewed. The bot completed its analysis
+	# even though the comment was a rate-limit notice.
+	local pr_number="$1"
+	local repo="$2"
+
+	local head_sha
+	head_sha=$(gh pr view "$pr_number" --repo "$repo" \
+		--json headRefOid -q '.headRefOid' 2>/dev/null || echo "")
+	if [[ -z "$head_sha" ]]; then
+		return 1
+	fi
+
+	# Get all commit statuses for the head SHA
+	local statuses
+	statuses=$(gh api "repos/${repo}/commits/${head_sha}/statuses" \
+		--paginate --jq '.[] | select(.state == "success") | .context' \
+		2>/dev/null || echo "")
+
+	if [[ -z "$statuses" ]]; then
+		# Also check the combined status endpoint (check runs)
+		statuses=$(gh api "repos/${repo}/commits/${head_sha}/check-runs" \
+			--paginate --jq '.check_runs[] | select(.conclusion == "success") | .name' \
+			2>/dev/null || echo "")
+	fi
+
+	if [[ -z "$statuses" ]]; then
+		return 1
+	fi
+
+	local statuses_lower
+	statuses_lower=$(echo "$statuses" | tr '[:upper:]' '[:lower:]')
+
+	# Check if any known bot has a success status
+	local bot bot_base
+	for bot in "${KNOWN_BOTS[@]}"; do
+		bot_base=$(echo "$bot" | tr '[:upper:]' '[:lower:]')
+		if echo "$statuses_lower" | grep -qi "$bot_base"; then
+			echo "Bot '${bot}' has SUCCESS status check on commit ${head_sha:0:8}" >&2
+			return 0
+		fi
+	done
+	return 1
+}
+
 check_for_skip_label() {
 	local pr_number="$1"
 	local repo="$2"
@@ -196,9 +243,16 @@ do_check() {
 		echo "PASS"
 		echo "found: ${found_bots}" >&2
 		return 0
+	elif [[ -n "$rate_limited_bots" ]] && any_bot_has_success_status "$pr_number" "$repo"; then
+		# GH#3005: All bots are rate-limited in comments, but at least one
+		# posted a SUCCESS commit status check. Treat as reviewed.
+		echo "PASS"
+		echo "Status check fallback: bots rate-limited but have SUCCESS status checks" >&2
+		return 0
 	elif [[ -n "$rate_limited_bots" ]]; then
 		echo "WAITING"
 		echo "Bots posted rate-limit notices only (not real reviews): ${rate_limited_bots}" >&2
+		echo "No SUCCESS status checks found as fallback." >&2
 		return 1
 	else
 		echo "WAITING"
@@ -261,6 +315,15 @@ do_list() {
 			fi
 		fi
 	done
+
+	# Show status check fallback info
+	echo ""
+	echo "Status check fallback (GH#3005):"
+	if any_bot_has_success_status "$pr_number" "$repo" 2>&1; then
+		echo "  At least one bot has a SUCCESS status check."
+	else
+		echo "  No bot SUCCESS status checks found."
+	fi
 	return 0
 }
 

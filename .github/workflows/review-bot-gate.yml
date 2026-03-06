@@ -132,6 +132,51 @@ jobs:
             return 1
           }
 
+          # Helper: check if any bot posted a SUCCESS commit status check.
+          # GH#3005: When bots are rate-limited in comments but still post a
+          # formal GitHub status check (e.g., CodeRabbit posts a "coderabbitai"
+          # context with state=success), treat the PR as reviewed.
+          # Uses the PR head SHA to query commit statuses.
+          any_bot_has_success_status() {
+            local head_sha
+            head_sha=$(gh pr view "$PR_NUMBER" --repo "$REPO" \
+              --json headRefOid -q '.headRefOid' 2>/dev/null || echo "")
+            if [[ -z "$head_sha" ]]; then
+              return 1
+            fi
+
+            # Get all commit statuses for the head SHA
+            local statuses
+            statuses=$(gh api "repos/${REPO}/commits/${head_sha}/statuses" \
+              --paginate --jq '.[] | select(.state == "success") | .context' \
+              2>/dev/null || echo "")
+
+            if [[ -z "$statuses" ]]; then
+              # Also check the combined status endpoint (check runs)
+              statuses=$(gh api "repos/${REPO}/commits/${head_sha}/check-runs" \
+                --paginate --jq '.check_runs[] | select(.conclusion == "success") | .name' \
+                2>/dev/null || echo "")
+            fi
+
+            if [[ -z "$statuses" ]]; then
+              return 1
+            fi
+
+            local statuses_lower
+            statuses_lower=$(echo "$statuses" | tr '[:upper:]' '[:lower:]')
+
+            # Check if any known bot has a success status
+            for bot in "${KNOWN_BOTS[@]}"; do
+              local bot_base
+              bot_base=$(echo "$bot" | tr '[:upper:]' '[:lower:]' | sed 's/\[bot\]$//')
+              if echo "$statuses_lower" | grep -qi "$bot_base"; then
+                echo "Bot '${bot}' has SUCCESS status check on commit ${head_sha:0:8}"
+                return 0
+              fi
+            done
+            return 1
+          }
+
           # Check PR reviews (formal GitHub reviews from bots)
           echo ""
           echo "=== Checking PR reviews ==="
@@ -204,6 +249,18 @@ jobs:
             echo "found_bots=${FOUND_BOTS}" >> "$GITHUB_OUTPUT"
             echo "missing_bots=${MISSING_BOTS}" >> "$GITHUB_OUTPUT"
             echo "rate_limited_bots=${RATE_LIMITED_BOTS}" >> "$GITHUB_OUTPUT"
+            echo "status_fallback=false" >> "$GITHUB_OUTPUT"
+          elif [[ -n "$RATE_LIMITED_BOTS" ]] && any_bot_has_success_status; then
+            # GH#3005: All bots are rate-limited in comments, but at least one
+            # posted a SUCCESS commit status check. The bot completed its analysis
+            # even though the comment was a rate-limit notice. Treat as reviewed.
+            echo ""
+            echo "PASS (status check fallback): Bots are rate-limited but posted SUCCESS status checks."
+            echo "gate_passed=true" >> "$GITHUB_OUTPUT"
+            echo "found_bots=${RATE_LIMITED_BOTS}" >> "$GITHUB_OUTPUT"
+            echo "missing_bots=${MISSING_BOTS}" >> "$GITHUB_OUTPUT"
+            echo "rate_limited_bots=${RATE_LIMITED_BOTS}" >> "$GITHUB_OUTPUT"
+            echo "status_fallback=true" >> "$GITHUB_OUTPUT"
           elif [[ "$ELAPSED" -lt "$MIN_WAIT_SECONDS" ]]; then
             echo ""
             echo "PASS (pending): PR is ${ELAPSED}s old (< ${MIN_WAIT_SECONDS}s minimum)."
@@ -213,10 +270,12 @@ jobs:
             echo "found_bots=" >> "$GITHUB_OUTPUT"
             echo "missing_bots=${MISSING_BOTS}" >> "$GITHUB_OUTPUT"
             echo "rate_limited_bots=${RATE_LIMITED_BOTS}" >> "$GITHUB_OUTPUT"
+            echo "status_fallback=false" >> "$GITHUB_OUTPUT"
           else
             echo ""
             if [[ -n "$RATE_LIMITED_BOTS" ]]; then
               echo "WAITING: Bots posted rate-limit notices only (not real reviews): ${RATE_LIMITED_BOTS}"
+              echo "No SUCCESS status checks found as fallback."
             else
               echo "WAITING: No AI review bots have posted yet."
             fi
@@ -224,12 +283,13 @@ jobs:
             echo ""
             echo "Expected bots: ${KNOWN_BOTS[*]}"
             echo ""
-            echo "If no bots are configured on this repo, add 'skip-review-gate'"
-            echo "label to the PR to bypass this check."
+            echo "If no bots are configured, add 'skip-review-gate' label"
+            echo "to the PR to bypass this check."
             echo "gate_passed=false" >> "$GITHUB_OUTPUT"
             echo "found_bots=" >> "$GITHUB_OUTPUT"
             echo "missing_bots=${MISSING_BOTS}" >> "$GITHUB_OUTPUT"
             echo "rate_limited_bots=${RATE_LIMITED_BOTS}" >> "$GITHUB_OUTPUT"
+            echo "status_fallback=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Check for skip label
@@ -254,17 +314,19 @@ jobs:
         if: steps.check.outputs.gate_passed != 'true' && steps.skip.outputs.skip != 'true'
         run: |
           if [[ -n "${{ steps.check.outputs.rate_limited_bots }}" ]]; then
-            echo "::error::Review bots posted rate-limit notices only — no real reviews."
+            echo "::error::Review bots posted rate-limit notices only — no real reviews or SUCCESS status checks."
             echo ""
             echo "Rate-limited bots: ${{ steps.check.outputs.rate_limited_bots }}"
             echo ""
             echo "The bots are rate-limited and did not perform actual code review."
+            echo "No SUCCESS commit status checks were found as fallback."
           else
             echo "::error::No AI review bots have posted on this PR yet."
           fi
           echo ""
           echo "This PR cannot be merged until at least one AI code review bot"
-          echo "(CodeRabbit, Gemini Code Assist, etc.) has posted a real review."
+          echo "(CodeRabbit, Gemini Code Assist, etc.) has posted a real review"
+          echo "or a SUCCESS commit status check."
           echo ""
           echo "What to do:"
           echo "  1. Wait a few minutes for bots to complete their analysis"
@@ -280,7 +342,18 @@ jobs:
           {
             echo "## Review Bot Gate"
             echo ""
-            if [[ "${{ steps.check.outputs.gate_passed }}" == "true" && -n "${{ steps.check.outputs.found_bots }}" ]]; then
+            if [[ "${{ steps.check.outputs.gate_passed }}" == "true" && "${{ steps.check.outputs.status_fallback }}" == "true" ]]; then
+              echo "**Status**: PASSED (status check fallback)"
+              echo ""
+              echo "Bots posted rate-limit notices but have SUCCESS commit status checks."
+              echo "The bots completed their analysis — treating as reviewed. (GH#3005)"
+              echo ""
+              echo "**Bots with SUCCESS status**: ${{ steps.check.outputs.found_bots }}"
+              if [[ -n "${{ steps.check.outputs.missing_bots }}" ]]; then
+                echo ""
+                echo "**Bots not yet reviewed**: ${{ steps.check.outputs.missing_bots }}"
+              fi
+            elif [[ "${{ steps.check.outputs.gate_passed }}" == "true" && -n "${{ steps.check.outputs.found_bots }}" ]]; then
               echo "**Status**: PASSED"
               echo ""
               echo "**Bots that reviewed**: ${{ steps.check.outputs.found_bots }}"
