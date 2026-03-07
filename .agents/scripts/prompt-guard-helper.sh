@@ -1433,9 +1433,9 @@ cmd_classify_deep() {
 	local tier2_result
 	local tier2_exit=0
 	if [[ -n "$repo" && -n "$author" ]]; then
-		tier2_result=$("$classifier" classify-if-external "$repo" "$author" "$content" 2>/dev/null) || tier2_exit=$?
+		tier2_result=$("$classifier" classify-if-external "$repo" "$author" "$content") || tier2_exit=$?
 	else
-		tier2_result=$("$classifier" classify "$content" 2>/dev/null) || tier2_exit=$?
+		tier2_result=$("$classifier" classify "$content") || tier2_exit=$?
 	fi
 
 	local tier2_class
@@ -1448,6 +1448,18 @@ cmd_classify_deep() {
 		fi
 		echo "TIER2_${tier2_class}|${tier2_result}"
 		return 1
+	fi
+
+	# Fail securely: if Tier 2 errored or returned UNKNOWN, do not treat as clean
+	if [[ "$tier2_exit" -ne 0 || "$tier2_class" == "UNKNOWN" || -z "$tier2_class" ]]; then
+		_pg_log_error "Tier 2 classification failed or returned UNKNOWN (exit ${tier2_exit}): ${tier2_result}"
+		if [[ -n "$tier1_results" ]]; then
+			_pg_print_findings "$tier1_results"
+			echo "TIER1_WARN_T2_FAIL"
+			return 1
+		fi
+		echo "ERROR_T2_FAIL|${tier2_result}"
+		return 2
 	fi
 
 	# Both tiers agree it's clean (or Tier 1 had low findings + Tier 2 says SAFE)
