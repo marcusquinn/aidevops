@@ -146,7 +146,7 @@ any_bot_has_success_status() {
 
 	local head_sha
 	head_sha=$(gh pr view "$pr_number" --repo "$repo" \
-		--json headRefOid -q '.headRefOid' 2>/dev/null || echo "")
+		--json headRefOid -q '.headRefOid' || echo "")
 	if [[ -z "$head_sha" ]]; then
 		return 1
 	fi
@@ -158,11 +158,11 @@ any_bot_has_success_status() {
 	# Pagination ensures we don't miss contexts when >30 statuses exist.
 	local statuses check_runs
 	statuses=$(gh api "repos/${repo}/commits/${head_sha}/status?per_page=100" \
-		--paginate --jq '.statuses[] | select(.state == "success") | .context' \
-		2>/dev/null || echo "")
+		--paginate --jq '.statuses[] | select(.state == "success") | .context' ||
+		echo "")
 	check_runs=$(gh api "repos/${repo}/commits/${head_sha}/check-runs?per_page=100" \
-		--paginate --jq '.check_runs[] | select(.conclusion == "success") | .name' \
-		2>/dev/null || echo "")
+		--paginate --jq '.check_runs[] | select(.conclusion == "success") | .name' ||
+		echo "")
 	statuses=$(printf '%s\n%s\n' "$statuses" "$check_runs" | grep -v '^$' || true)
 
 	if [[ -z "$statuses" ]]; then
@@ -327,7 +327,7 @@ do_list() {
 	# Show status check fallback info
 	echo ""
 	echo "Status check fallback (GH#3005):"
-	if any_bot_has_success_status "$pr_number" "$repo" 2>&1; then
+	if any_bot_has_success_status "$pr_number" "$repo"; then
 		echo "  At least one bot has a SUCCESS status check."
 	else
 		echo "  No bot SUCCESS status checks found."
