@@ -191,6 +191,7 @@ cmd_recall() {
 	# "foo-bar baz" → "\"foo-bar\" \"baz\"" (each token quoted, joined by implicit AND)
 	local tokenised_query=""
 	local token
+	set -f # Disable globbing during tokenization (SC2086)
 	for token in $escaped_query; do
 		# Escape embedded double quotes within each token
 		token="${token//\"/\"\"}"
@@ -200,6 +201,7 @@ cmd_recall() {
 			tokenised_query="\"$token\""
 		fi
 	done
+	set +f # Re-enable globbing
 	escaped_query="$tokenised_query"
 
 	# Build filters with validation
