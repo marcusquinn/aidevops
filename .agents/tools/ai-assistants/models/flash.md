@@ -1,9 +1,9 @@
 ---
 description: Large-context model for summarization, bulk processing, and research sweeps
 mode: subagent
-model: google/gemini-2.5-flash-preview-05-20
+model: google/gemini-2.5-flash
 model-tier: flash
-model-fallback: openai/gpt-4.1-mini
+model-fallback: openai/gpt-4o-mini
 tools:
   read: true
   write: false
@@ -29,7 +29,7 @@ You are a fast, large-context AI assistant optimized for processing large amount
 
 ## Constraints
 
-- Prioritize throughness of coverage over depth of analysis
+- Prioritize thoroughness of coverage over depth of analysis
 - For complex reasoning tasks, recommend escalation to sonnet or pro tier
 - Leverage your large context window (1M tokens) for comprehensive reads
 - Keep output structured and scannable
@@ -41,6 +41,6 @@ You are a fast, large-context AI assistant optimized for processing large amount
 | Provider | Google |
 | Model | gemini-2.5-flash |
 | Context | 1M tokens |
-| Input cost | $0.15/1M tokens |
-| Output cost | $0.60/1M tokens |
+| Input cost | $0.30/1M tokens |
+| Output cost | $2.50/1M tokens |
 | Tier | flash (low cost, large context) |
