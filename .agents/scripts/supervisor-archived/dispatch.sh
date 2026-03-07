@@ -1025,6 +1025,21 @@ do_prompt_repeat() {
 		cmd_parts+=("$part")
 	done < <(build_cli_cmd "${build_cmd_args[@]}")
 
+	# t1412.1: Create sandboxed HOME for prompt-repeat worker
+	local sandbox_dir="" sandbox_env_lines=""
+	if [[ "${WORKER_SANDBOX_ENABLED:-true}" == "true" ]]; then
+		local sandbox_helper="${SCRIPT_DIR}/../worker-sandbox-helper.sh"
+		if [[ -x "$sandbox_helper" ]]; then
+			# shellcheck source=../worker-sandbox-helper.sh
+			source "$sandbox_helper"
+			sandbox_dir=$(create_worker_sandbox "$task_id") || sandbox_dir=""
+			if [[ -n "$sandbox_dir" ]]; then
+				sandbox_env_lines=$(generate_sandbox_env "$sandbox_dir") || sandbox_env_lines=""
+				log_info "Worker sandbox created for $task_id prompt-repeat: $sandbox_dir (t1412.1)"
+			fi
+		fi
+	fi
+
 	# Write dispatch script
 	# t1190: Use timestamped filename to prevent overwrite race condition.
 	local pr_dispatch_ts
@@ -1035,6 +1050,10 @@ do_prompt_repeat() {
 		echo "echo 'WORKER_STARTED task_id=${task_id} strategy=prompt_repeat pid=\$\$ timestamp='\$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 		echo "cd '${work_dir}' || { echo 'WORKER_FAILED: cd to work_dir failed: ${work_dir}'; exit 1; }"
 		echo "export FULL_LOOP_HEADLESS=true"
+		# t1412.1: Inject sandbox environment variables
+		if [[ -n "$sandbox_env_lines" ]]; then
+			echo "$sandbox_env_lines"
+		fi
 		# t1162: For OpenCode, set XDG_CONFIG_HOME; for Claude, MCP config is in CLI flags
 		if [[ "$ai_cli" != "claude" && -n "$worker_mcp_config" ]]; then
 			echo "export XDG_CONFIG_HOME='${worker_mcp_config}'"
@@ -1099,6 +1118,14 @@ do_prompt_repeat() {
 		echo "if [ \$rc -ne 0 ]; then"
 		echo "  echo \"WORKER_DISPATCH_ERROR: prompt-repeat script exited with code \${rc}\" >> '${new_log_file}'"
 		echo "fi"
+		# t1412.1: Clean up sandbox HOME directory after worker exits
+		if [[ -n "$sandbox_dir" ]]; then
+			echo "# t1412.1: Sandbox cleanup"
+			echo "if [[ -f '${sandbox_dir}/.aidevops-sandbox' ]]; then"
+			echo "  rm -rf '${sandbox_dir}' 2>/dev/null || true"
+			echo "  echo 'SANDBOX_CLEANED: ${sandbox_dir}' >> '${new_log_file}' 2>/dev/null || true"
+			echo "fi"
+		fi
 	} >"$wrapper_script"
 	chmod +x "$wrapper_script"
 
@@ -3049,6 +3076,29 @@ cmd_dispatch() {
 	# This ensures headless mode even if the AI doesn't parse --headless from the prompt
 	local headless_env="FULL_LOOP_HEADLESS=true"
 
+	# t1412.1: Create sandboxed HOME for worker credential isolation
+	# Workers run with a fake HOME containing only git config and scoped GH_TOKEN.
+	# This prevents compromised workers from accessing ~/.ssh/, gopass, credentials.sh,
+	# cloud provider tokens, or publish tokens. Interactive sessions are unaffected.
+	local sandbox_dir="" sandbox_env_lines=""
+	if [[ "${WORKER_SANDBOX_ENABLED:-true}" == "true" ]]; then
+		local sandbox_helper="${SCRIPT_DIR}/../worker-sandbox-helper.sh"
+		if [[ -x "$sandbox_helper" ]]; then
+			# shellcheck source=../worker-sandbox-helper.sh
+			source "$sandbox_helper"
+			sandbox_dir=$(create_worker_sandbox "$task_id") || {
+				log_warn "Failed to create worker sandbox for $task_id — proceeding without isolation (t1412.1)"
+				sandbox_dir=""
+			}
+			if [[ -n "$sandbox_dir" ]]; then
+				sandbox_env_lines=$(generate_sandbox_env "$sandbox_dir") || sandbox_env_lines=""
+				log_info "Worker sandbox created for $task_id: $sandbox_dir (t1412.1)"
+			fi
+		else
+			log_verbose "worker-sandbox-helper.sh not found — skipping sandbox (t1412.1)"
+		fi
+	fi
+
 	# Write dispatch script to a temp file to avoid bash -c quoting issues
 	# with multi-line prompts (newlines in printf '%q' break bash -c strings)
 	# t1190: Use timestamped filenames to prevent overwrite race condition when
@@ -3066,7 +3116,13 @@ cmd_dispatch() {
 		echo "echo 'WORKER_STARTED task_id=${task_id} pid=\$\$ timestamp='\$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 		echo "cd '${worktree_path}' || { echo 'WORKER_FAILED: cd to worktree failed: ${worktree_path}'; exit 1; }"
 		echo "export ${headless_env}"
+		# t1412.1: Inject sandbox environment variables (HOME override, XDG dirs, etc.)
+		if [[ -n "$sandbox_env_lines" ]]; then
+			echo "$sandbox_env_lines"
+		fi
 		# t1162: For OpenCode, set XDG_CONFIG_HOME; for Claude, MCP config is in CLI flags
+		# Note: sandbox already sets XDG_CONFIG_HOME, but worker_mcp_config overrides it
+		# for the specific purpose of disabling heavy indexers (t221)
 		if [[ "$ai_cli" != "claude" && -n "$worker_mcp_config" ]]; then
 			echo "export XDG_CONFIG_HOME='${worker_mcp_config}'"
 		fi
@@ -3148,6 +3204,14 @@ cmd_dispatch() {
 		echo "if [ \$rc -ne 0 ]; then"
 		echo "  echo \"WORKER_DISPATCH_ERROR: dispatch script exited with code \${rc}\" >> '${log_file}'"
 		echo "fi"
+		# t1412.1: Clean up sandbox HOME directory after worker exits
+		if [[ -n "$sandbox_dir" ]]; then
+			echo "# t1412.1: Sandbox cleanup"
+			echo "if [[ -f '${sandbox_dir}/.aidevops-sandbox' ]]; then"
+			echo "  rm -rf '${sandbox_dir}' 2>/dev/null || true"
+			echo "  echo 'SANDBOX_CLEANED: ${sandbox_dir}' >> '${log_file}' 2>/dev/null || true"
+			echo "fi"
+		fi
 	} >"$wrapper_script"
 	chmod +x "$wrapper_script"
 
@@ -3615,6 +3679,21 @@ Task description: ${tdesc:-$task_id}"
 		cmd_parts+=("$part")
 	done < <(build_cli_cmd "${build_cmd_args[@]}")
 
+	# t1412.1: Create sandboxed HOME for reprompt worker
+	local sandbox_dir="" sandbox_env_lines=""
+	if [[ "${WORKER_SANDBOX_ENABLED:-true}" == "true" ]]; then
+		local sandbox_helper="${SCRIPT_DIR}/../worker-sandbox-helper.sh"
+		if [[ -x "$sandbox_helper" ]]; then
+			# shellcheck source=../worker-sandbox-helper.sh
+			source "$sandbox_helper"
+			sandbox_dir=$(create_worker_sandbox "$task_id") || sandbox_dir=""
+			if [[ -n "$sandbox_dir" ]]; then
+				sandbox_env_lines=$(generate_sandbox_env "$sandbox_dir") || sandbox_env_lines=""
+				log_info "Worker sandbox created for $task_id reprompt: $sandbox_dir (t1412.1)"
+			fi
+		fi
+	fi
+
 	# Write dispatch script with startup sentinel (t183)
 	# t1190: Use timestamped filename to prevent overwrite race condition.
 	local reprompt_dispatch_ts
@@ -3624,6 +3703,10 @@ Task description: ${tdesc:-$task_id}"
 		echo '#!/usr/bin/env bash'
 		echo "echo 'WORKER_STARTED task_id=${task_id} retry=${tretries} pid=\$\$ timestamp='\$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 		echo "cd '${work_dir}' || { echo 'WORKER_FAILED: cd to work_dir failed: ${work_dir}'; exit 1; }"
+		# t1412.1: Inject sandbox environment variables
+		if [[ -n "$sandbox_env_lines" ]]; then
+			echo "$sandbox_env_lines"
+		fi
 		# t1162: For OpenCode, set XDG_CONFIG_HOME; for Claude, MCP config is in CLI flags
 		if [[ "$ai_cli" != "claude" && -n "$worker_mcp_config" ]]; then
 			echo "export XDG_CONFIG_HOME='${worker_mcp_config}'"
@@ -3682,6 +3765,14 @@ Task description: ${tdesc:-$task_id}"
 		echo "if [ \$rc -ne 0 ]; then"
 		echo "  echo \"WORKER_DISPATCH_ERROR: reprompt script exited with code \${rc}\" >> '${new_log_file}'"
 		echo "fi"
+		# t1412.1: Clean up sandbox HOME directory after worker exits
+		if [[ -n "$sandbox_dir" ]]; then
+			echo "# t1412.1: Sandbox cleanup"
+			echo "if [[ -f '${sandbox_dir}/.aidevops-sandbox' ]]; then"
+			echo "  rm -rf '${sandbox_dir}' 2>/dev/null || true"
+			echo "  echo 'SANDBOX_CLEANED: ${sandbox_dir}' >> '${new_log_file}' 2>/dev/null || true"
+			echo "fi"
+		fi
 	} >"$wrapper_script"
 	chmod +x "$wrapper_script"
 

@@ -479,6 +479,7 @@ export OPENAI_API_KEY="sk-..."
 4. **Credentials**: Never pass secrets in prompts - use environment variables
 5. **Cleanup**: Delete sessions after use to prevent data leakage
 6. **Scoped tokens** (t1412.2): Workers get minimal-permission GitHub tokens scoped to the target repo
+7. **Worker sandbox** (t1412.1): Headless workers run with an isolated HOME directory
 
 ### Scoped Worker Tokens (t1412.2)
 
@@ -557,6 +558,43 @@ worker-token-helper.sh validate --token-file "$TOKEN_FILE"
 # Clean up expired tokens
 worker-token-helper.sh cleanup
 ```
+
+### Worker Sandbox (t1412.1)
+
+Headless workers dispatched by the supervisor run with a **fake HOME directory** that contains only the minimal configuration needed for their task. This limits blast radius if a worker is compromised via prompt injection.
+
+**What workers get:**
+
+- `.gitconfig` — user name/email for commits (no credential helpers)
+- `GH_TOKEN` — GitHub API access via environment variable (not filesystem)
+- `.aidevops/` — symlink to agent prompts (read-only)
+- OpenCode/Claude config — MCP server definitions only (no auth tokens)
+- Writable XDG dirs — for tool state (npm cache, etc.)
+
+**What workers cannot access:**
+
+- `~/.ssh/` — no SSH key access
+- gopass / pass stores — no password manager access
+- `~/.config/aidevops/credentials.sh` — no plaintext credentials
+- Cloud provider tokens (AWS, GCP, Azure)
+- npm/pypi publish tokens
+- Browser profiles or cookies
+
+**Configuration:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WORKER_SANDBOX_ENABLED` | `true` | Set to `false` to disable sandboxing |
+| `WORKER_SANDBOX_BASE` | `/tmp/aidevops-worker` | Base path for sandbox directories |
+
+**Interactive sessions are never sandboxed** — the human in the loop is the enforcement layer.
+
+**Sandbox lifecycle:**
+
+1. Created by `worker-sandbox-helper.sh create <task_id>` before dispatch
+2. Environment variables injected into the worker's dispatch script
+3. Automatically cleaned up by the wrapper script after the worker exits
+4. Stale sandboxes (>24h) cleaned by `worker-sandbox-helper.sh cleanup-stale`
 
 ### Autonomous Mode (CI/CD)
 
