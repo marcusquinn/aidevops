@@ -235,10 +235,10 @@ TASK_DESC="<issue title and first paragraph of body>"
 
 # Classify — uses haiku-tier LLM call (~$0.001)
 CLASSIFY_RESULT=$(/bin/bash ~/.aidevops/agents/scripts/task-decompose-helper.sh classify \
-  --task "$TASK_DESC" --repo-path "$path" --quiet 2>/dev/null) || CLASSIFY_RESULT=""
+  --task "$TASK_DESC" --repo-path "$path" --quiet) || CLASSIFY_RESULT=""
 
 # Parse result
-TASK_KIND=$(echo "$CLASSIFY_RESULT" | jq -r '.kind // "atomic"' 2>/dev/null || echo "atomic")
+TASK_KIND=$(echo "$CLASSIFY_RESULT" | jq -r '.kind // "atomic"' || echo "atomic")
 ```
 
 **If atomic:** Dispatch the worker directly (unchanged flow — proceed to step 6 below).
@@ -249,9 +249,9 @@ TASK_KIND=$(echo "$CLASSIFY_RESULT" | jq -r '.kind // "atomic"' 2>/dev/null || e
 # Decompose into subtasks
 DECOMPOSE_RESULT=$(/bin/bash ~/.aidevops/agents/scripts/task-decompose-helper.sh decompose \
   --task "$TASK_DESC" --repo-path "$path" \
-  --depth 0 --max-depth "${DECOMPOSE_MAX_DEPTH:-3}" --quiet 2>/dev/null) || DECOMPOSE_RESULT=""
+  --depth 0 --max-depth "${DECOMPOSE_MAX_DEPTH:-3}" --quiet) || DECOMPOSE_RESULT=""
 
-SUBTASK_COUNT=$(echo "$DECOMPOSE_RESULT" | jq '.subtasks | length' 2>/dev/null || echo 0)
+SUBTASK_COUNT=$(echo "$DECOMPOSE_RESULT" | jq '.subtasks | length' || echo 0)
 ```
 
 If decomposition succeeds (`SUBTASK_COUNT >= 2`):
@@ -262,7 +262,7 @@ If decomposition succeeds (`SUBTASK_COUNT >= 2`):
    for i in $(seq 0 $((SUBTASK_COUNT - 1))); do
      SUB_DESC=$(echo "$DECOMPOSE_RESULT" | jq -r ".subtasks[$i].description")
      SUB_ESTIMATE=$(echo "$DECOMPOSE_RESULT" | jq -r ".subtasks[$i].estimate // \"~2h\"")
-     SUB_DEPS=$(echo "$DECOMPOSE_RESULT" | jq -r ".subtasks[$i].depends_on | map(\"blocked-by:${TASK_ID}.\" + tostring) | join(\" \")" 2>/dev/null || echo "")
+     SUB_DEPS=$(echo "$DECOMPOSE_RESULT" | jq -r ".subtasks[$i].depends_on | map(\"blocked-by:${TASK_ID}.\" + tostring) | join(\" \")" || echo "")
 
      # Claim child task ID
      CHILD_OUTPUT=$(/bin/bash ~/.aidevops/agents/scripts/claim-task-id.sh \
