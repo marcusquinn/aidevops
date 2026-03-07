@@ -337,24 +337,25 @@ The combination of shell execution and cached credentials is the critical vulner
 
 # GOOD — bot has read-only access, no shell, no extra credentials
 - name: AI Code Review
-  uses: ai-review-bot/action@v1
+  uses: ai-review-bot/action@a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2  # pin to SHA per Rule 7
   with:
     github-token: ${{ secrets.GITHUB_TOKEN }}
     mode: comment-only  # No shell execution
 ```
 
-**2. Use OIDC tokens, not long-lived PATs.**
+**2. Use short-lived tokens, not long-lived PATs.**
 
-GitHub Actions supports [OpenID Connect (OIDC)](https://docs.github.com/en/actions/security-for-github-actions/security-hardening-your-deployments/about-security-hardening-with-openid-connect) for short-lived, automatically-rotated tokens scoped to the current workflow run. Long-lived PATs cached in repository secrets are a persistent credential theft target.
+Long-lived PATs cached in repository secrets are a persistent credential theft target. Use short-lived, scoped alternatives instead.
+
+**For GitHub API auth:** Use the built-in `GITHUB_TOKEN` with least-privilege `permissions:`, or mint a [GitHub App installation token](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app) scoped to specific repositories. `actions/create-github-app-token` uses a GitHub App private key to create a short-lived installation token — this is not OIDC, but it is short-lived and scoped.
 
 ```yaml
 # BAD — long-lived PAT with broad permissions
 env:
   GH_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
-# GOOD — OIDC token, scoped to this workflow run, auto-expires
+# GOOD — GitHub App installation token, scoped to this repo, short-lived
 permissions:
-  id-token: write
   contents: read
   pull-requests: write
 steps:
@@ -366,9 +367,23 @@ steps:
       repositories: ${{ github.event.repository.name }}
 ```
 
+**For cloud-provider auth:** Use [OpenID Connect (OIDC)](https://docs.github.com/en/actions/security-for-github-actions/security-hardening-your-deployments/about-security-hardening-with-openid-connect) to exchange the workflow's identity for short-lived cloud credentials. This eliminates the need to store cloud provider secrets in GitHub.
+
+```yaml
+# GOOD — OIDC exchanges workflow identity for short-lived cloud credentials
+permissions:
+  id-token: write  # Required for OIDC token request
+  contents: read
+steps:
+  - uses: aws-actions/configure-aws-credentials@v4
+    with:
+      role-to-assume: arn:aws:iam::123456789012:role/github-actions
+      aws-region: us-east-1
+```
+
 **3. Apply minimal permissions to workflow tokens.**
 
-Every GitHub Actions workflow should declare the minimum `permissions` block. The default `GITHUB_TOKEN` has write access to many scopes — restrict it explicitly.
+Always declare the minimum `permissions` block explicitly to override repository/organization/enterprise defaults, which may be permissive or restricted (note: repos/orgs created after February 2023 may default certain scopes like `contents` and `packages` to read-only, while older ones default to read/write).
 
 ```yaml
 # At the top of every workflow that uses AI agents
@@ -395,7 +410,7 @@ Issue bodies, PR descriptions, commit messages, and comment content from non-col
 
 - name: AI Review (only if scan passes)
   if: success()
-  uses: ai-review-bot/action@v1
+  uses: ai-review-bot/action@a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2  # pin to SHA per Rule 7
 ```
 
 **5. Never use `allowed_non_write_users: "*"` or equivalent wildcard trust.**
@@ -404,12 +419,10 @@ Some AI bot configurations allow specifying which users can trigger the bot. A w
 
 ```yaml
 # BAD — any user can trigger the bot
-allowed_users: "*"
+allowed_non_write_users: "*"
 
 # GOOD — only collaborators can trigger
-allowed_users: "collaborators"
-# Or explicit list
-allowed_users: ["maintainer1", "maintainer2"]
+allowed_non_write_users: ["maintainer1", "maintainer2"]
 ```
 
 **6. Isolate AI agent jobs from deployment jobs.**
@@ -451,7 +464,7 @@ Tags can be force-pushed. A compromised AI action tag could inject malicious beh
 Use this checklist when adding or auditing AI agents in CI/CD pipelines:
 
 - [ ] AI agent job has explicit `permissions` block with minimal scopes
-- [ ] No long-lived PATs — using OIDC tokens or GitHub App tokens instead
+- [ ] No long-lived PATs — using `GITHUB_TOKEN`, GitHub App installation tokens, or OIDC for cloud providers
 - [ ] AI agent cannot access publish tokens (npm, PyPI, Docker Hub, etc.)
 - [ ] AI agent cannot access deployment credentials or SSH keys
 - [ ] Untrusted inputs (issue body, PR description, comments) are scanned before AI processing
