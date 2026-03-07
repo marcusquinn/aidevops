@@ -359,7 +359,7 @@ permissions:
   contents: read
   pull-requests: write
 steps:
-  - uses: actions/create-github-app-token@v1
+  - uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547  # v1 — pin to SHA per Rule 7
     id: app-token
     with:
       app-id: ${{ vars.APP_ID }}
@@ -375,7 +375,7 @@ permissions:
   id-token: write  # Required for OIDC token request
   contents: read
 steps:
-  - uses: aws-actions/configure-aws-credentials@v4
+  - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a  # v4 — pin to SHA per Rule 7
     with:
       role-to-assume: arn:aws:iam::123456789012:role/github-actions
       aws-region: us-east-1
