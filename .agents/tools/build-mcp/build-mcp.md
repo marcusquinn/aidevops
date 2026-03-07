@@ -201,6 +201,22 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 3): Promise<T> {
 
 Run `@code-standards` before committing TypeScript.
 
+## Security for MCP Server Authors
+
+MCP servers are a trust boundary. Users grant your server access to their conversation context, credentials, and system. Build with security as a first-class concern.
+
+**Tool response integrity** -- Never include instructions, directives, or behavioural suggestions in tool response content. Tool responses should contain only the requested data. Embedding instructions in responses is the primary vector for prompt injection via MCP (see `tools/security/prompt-injection-defender.md`).
+
+**Credential handling** -- Accept credentials via environment variables, not command-line arguments (which appear in process lists). Never log, persist, or transmit credentials beyond their intended use. Document the minimum required permissions for each credential.
+
+**Minimal permissions** -- Request only the API scopes and file system access your server needs. If your server only reads data, don't request write permissions. Document all required permissions in your README.
+
+**Dependency hygiene** -- Keep dependencies minimal and audited. Run `npx @socketsecurity/cli npm info <your-package>` before publishing. Pin dependency versions in `package.json` (not `@latest`). Use `npm audit` or Socket.dev in CI.
+
+**Input validation** -- Validate all tool arguments with Zod schemas. Never pass user-supplied strings directly to shell commands, SQL queries, or file paths without sanitisation.
+
+**Network transparency** -- Document all external network connections your server makes. Users should know which domains your server contacts and why. Avoid unexpected outbound connections.
+
 ## References
 
 Use Context7 MCP for current documentation:

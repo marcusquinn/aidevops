@@ -465,6 +465,60 @@ mcporter daemon restart                # bounce the daemon
 MCPORTER_LIST_TIMEOUT=120000 mcporter list <server>
 ```
 
+## Security Considerations
+
+**MCP servers are a distinct trust boundary.** Every MCP server you install runs as a persistent process with network access and full visibility into your AI assistant's conversation context. Treat MCP server installation with the same caution as installing any executable software.
+
+### Risks of Untrusted MCP Servers
+
+| Risk | Description |
+|------|-------------|
+| **Prompt injection via tool responses** | A compromised or malicious MCP server can inject instructions into tool responses that manipulate the AI agent's behaviour — causing it to execute unintended commands, exfiltrate data, or bypass security controls. |
+| **Credential access** | MCP servers configured with `env` blocks receive API keys and tokens. A malicious server can exfiltrate these credentials. Stdio servers inherit your shell environment by default, potentially exposing all environment variables. |
+| **Conversation context exposure** | MCP servers see the full tool call context — including file contents, code, and conversation history passed as arguments. A malicious server can log or exfiltrate this data. |
+| **Supply chain attacks** | MCP servers installed via `npx`, `pip`, or package managers are subject to the same supply chain risks as any dependency — typosquatting, dependency confusion, compromised maintainer accounts. |
+| **Persistent process risks** | Servers running in daemon mode (`mcporter daemon`) or as long-lived processes have sustained access to your system. A compromised daemon has more opportunity for exploitation than a one-shot tool. |
+
+### Before Installing an MCP Server
+
+1. **Verify the source.** Check the repository, maintainer reputation, star count, and recent commit activity. Prefer MCP servers from known organisations or maintainers.
+
+2. **Scan dependencies.** Use Socket.dev to check for known vulnerabilities and supply chain risks before installing:
+
+   ```bash
+   # Scan an npm MCP package before installing
+   npx @socketsecurity/cli npm info <package-name>
+
+   # Or use the Socket MCP if configured
+   # @socket check if <package-name> is safe to install
+   ```
+
+3. **Scan source for injection patterns.** Use the Cisco Skill Scanner to check MCP server source code for prompt injection, data exfiltration, or obfuscation patterns:
+
+   ```bash
+   # Clone the MCP server repo first, then scan
+   git clone https://github.com/example/some-mcp-server /tmp/some-mcp-server
+   skill-scanner scan /tmp/some-mcp-server
+   ```
+
+4. **Review permissions.** Check what environment variables, file paths, and network access the MCP server requires. Minimise the credentials you expose — use scoped tokens rather than full-access API keys where possible.
+
+5. **Prefer HTTPS endpoints.** For HTTP-based MCP servers, always use HTTPS. MCPorter enforces this by default (`--allow-http` is required to override).
+
+### Ongoing Vigilance
+
+- **Pin versions** in your `mcporter.json` or MCP config rather than using `@latest`. This prevents silent updates that could introduce malicious code.
+- **Audit periodically.** Run `mcporter list --verbose` to review all configured servers and their sources. Remove servers you no longer use.
+- **Monitor daemon processes.** If using `mcporter daemon`, periodically check `mcporter daemon status` and review logs for unexpected network activity.
+- **Scan on update.** When updating MCP servers, re-run dependency and source scans before deploying the new version.
+
+### Related Security Docs
+
+- `tools/security/prompt-injection-defender.md` — Prompt injection defense, including MCP tool output scanning
+- `tools/code-review/skill-scanner.md` — Cisco Skill Scanner for AI agent skill/MCP source analysis
+- `services/monitoring/socket.md` — Socket.dev dependency security scanning
+- `tools/security/opsec.md` — Operational security guide
+
 ## References
 
 - **Repository**: [steipete/mcporter](https://github.com/steipete/mcporter)
