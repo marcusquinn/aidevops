@@ -662,14 +662,11 @@ Workers that receive lineage context should:
 
 ### Integration with task-decompose-helper.sh
 
-When `task-decompose-helper.sh` (t1408.1) is available, use its `format-lineage` subcommand instead of manual assembly:
-
-```bash
-# Preferred: use helper for consistent formatting
-LINEAGE_BLOCK=$(task-decompose-helper.sh format-lineage "$TASK_ID")
-
-# Fallback: manual assembly from TODO.md (see above)
-```
+Use the manual TODO.md assembly shown above to build lineage blocks. The
+`task-decompose-helper.sh` helper (t1408.1) does not yet accept a task-id
+argument or emit the `TASK LINEAGE:` block format required by workers. Once
+the helper supports task-id lookup and produces the same block shape, it will
+be documented here as the preferred path.
 
 ## Pre-Dispatch Task Decomposition (t1408.2)
 
