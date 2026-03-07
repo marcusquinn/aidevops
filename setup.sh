@@ -29,16 +29,16 @@ CLEAN_MODE=false
 INTERACTIVE_MODE=false
 NON_INTERACTIVE="${AIDEVOPS_NON_INTERACTIVE:-false}"
 UPDATE_TOOLS_MODE=false
-# Platform constants (used across sourced setup modules: shell-env.sh, tool-install.sh)
-# shellcheck disable=SC2034  # PLATFORM_MACOS used in shell-env.sh:549,642 and tool-install.sh:249
+# Platform constants — exported so ShellCheck sees them as used (consumed by
+# sourced setup-modules: shell-env.sh:552,653 and tool-install.sh:249).
 PLATFORM_MACOS=$([[ "$(uname -s)" == "Darwin" ]] && echo true || echo false)
-# shellcheck disable=SC2034  # PLATFORM_ARM64 used in tool-install.sh:249
 PLATFORM_ARM64=$([[ "$(uname -m)" == "arm64" || "$(uname -m)" == "aarch64" ]] && echo true || echo false)
+export PLATFORM_MACOS PLATFORM_ARM64
 readonly PLATFORM_MACOS PLATFORM_ARM64
-# shellcheck disable=SC2034  # Used by sourced modules (setup-modules/core.sh, agent-deploy.sh)
+# Repo constants — exported; consumed by setup-modules/core.sh, agent-deploy.sh
 REPO_URL="https://github.com/marcusquinn/aidevops.git"
-# shellcheck disable=SC2034  # Used by sourced modules (setup-modules/core.sh, agent-deploy.sh)
 INSTALL_DIR="$HOME/Git/aidevops"
+export REPO_URL INSTALL_DIR
 
 # Source modular setup functions (t316.2)
 # These modules are sourced only when setup.sh is run from the repo directory
