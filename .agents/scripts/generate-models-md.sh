@@ -199,10 +199,21 @@ generate_routing_tiers() {
 	echo "| Tier | Primary Model | Relative Cost |"
 	echo "|------|---------------|---------------|"
 
+	# Resolve canonical model names from the models table.
+	# subagent_models may store preview/versioned names (e.g. gemini-2.5-flash-preview-05-20)
+	# while models stores canonical names (e.g. gemini-2.5-flash).
+	# Use a correlated subquery to find the longest matching canonical name,
+	# falling back to sm.model_id if no match or if already canonical.
 	sqlite3 -separator '|' "$REGISTRY_DB" "
         SELECT
             sm.tier,
-            sm.model_id,
+            COALESCE(
+                (SELECT m.model_id FROM models m
+                 WHERE sm.model_id LIKE m.model_id || '%'
+                 ORDER BY LENGTH(m.model_id) DESC
+                 LIMIT 1),
+                sm.model_id
+            ),
             CASE sm.tier
                 WHEN 'haiku' THEN '~0.33x'
                 WHEN 'flash' THEN '~0.20x'
