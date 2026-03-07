@@ -123,15 +123,20 @@ app.use("*", logger());
 app.use("*", timing());
 app.use("/api/*", cors());
 
-// Route-specific middleware
+// Route-specific middleware — validate token, not just header presence
 app.use("/api/admin/*", async (c, next) => {
-  const token = c.req.header("Authorization");
-  if (!token) {
-    return c.json({ error: "Unauthorized" }, 401);
+  const authHeader = c.req.header("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    return c.json({ error: "Missing or malformed Authorization header" }, 401);
   }
-  // TODO: Validate token (JWT verification, session lookup, etc.)
-  // const user = await verifyToken(token.replace("Bearer ", ""));
-  // if (!user) return c.json({ error: "Invalid token" }, 401);
+
+  const token = authHeader.slice(7); // Strip "Bearer " prefix
+  const user = await verifyToken(token); // Your JWT/session verification
+  if (!user) {
+    return c.json({ error: "Invalid or expired token" }, 401);
+  }
+
+  c.set("user", user); // Attach decoded user for downstream handlers
   await next();
 });
 ```
@@ -145,7 +150,13 @@ app.onError((err, c) => {
   if (err instanceof HTTPException) {
     return err.getResponse();
   }
-  console.error(err);
+  // Log structured error (avoid exposing stack traces in production responses)
+  console.error("[API Error]", {
+    message: err.message,
+    path: c.req.path,
+    method: c.req.method,
+    ...(process.env.NODE_ENV !== "production" && { stack: err.stack }),
+  });
   return c.json({ error: "Internal Server Error" }, 500);
 });
 
@@ -229,10 +240,16 @@ app.post("/api/upload", async (c) => {
     return c.json({ error: "Invalid file type" }, 400);
   }
   
+  // Sanitize filename: strip path segments, normalize characters
+  const safeName = file.name
+    .replace(/[/\\]/g, "")           // Remove path separators
+    .replace(/[^a-zA-Z0-9._-]/g, "_") // Replace unsafe chars
+    .replace(/^\.+/, "_");            // Prevent dotfiles
+
   const buffer = await file.arrayBuffer();
-  // Process file...
+  // Process file with safeName...
   
-  return c.json({ filename: file.name, size: file.size });
+  return c.json({ filename: safeName, size: file.size });
 });
 ```
 

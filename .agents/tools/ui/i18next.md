@@ -259,14 +259,35 @@ t("ai.sidebar.title"); // Autocomplete works!
 ## Validation Script
 
 ```bash
-# Check for missing keys across locales
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Check for missing translation keys across locales
 # Run from packages/i18n/src/translations/ directory
+
+# Prerequisites
+command -v jq >/dev/null 2>&1 || { echo "Error: jq is required" >&2; exit 1; }
+
+# Configuration
+BASE_LOCALE="en"
+TARGET_LOCALES=("de" "es" "fr")
+NAMESPACE="common"
+
 cd packages/i18n/src/translations
 
-for locale in de es fr; do
-  echo "=== Missing in $locale ==="
-  diff <(jq -r 'paths | join(".")' en/common.json | sort) \
-       <(jq -r 'paths | join(".")' $locale/common.json | sort) \
+if [[ ! -f "${BASE_LOCALE}/${NAMESPACE}.json" ]]; then
+  echo "Error: Base locale file ${BASE_LOCALE}/${NAMESPACE}.json not found" >&2
+  exit 1
+fi
+
+for locale in "${TARGET_LOCALES[@]}"; do
+  if [[ ! -f "${locale}/${NAMESPACE}.json" ]]; then
+    echo "Warning: ${locale}/${NAMESPACE}.json not found, skipping" >&2
+    continue
+  fi
+  echo "=== Missing in ${locale} ==="
+  diff <(jq -r 'paths | join(".")' "${BASE_LOCALE}/${NAMESPACE}.json" | sort) \
+       <(jq -r 'paths | join(".")' "${locale}/${NAMESPACE}.json" | sort) \
        | grep "^<" | sed 's/^< //' || true
 done
 ```

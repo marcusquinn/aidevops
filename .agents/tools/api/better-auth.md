@@ -140,8 +140,22 @@ import { signIn } from "@workspace/auth/client/react";
 
 ```tsx
 import { signUp } from "@workspace/auth/client/react";
+import { z } from "zod";
+
+// Validate password strength before submission
+const passwordSchema = z.string()
+  .min(8, "Password must be at least 8 characters")
+  .regex(/[A-Z]/, "Must contain an uppercase letter")
+  .regex(/[a-z]/, "Must contain a lowercase letter")
+  .regex(/[0-9]/, "Must contain a number");
 
 const handleSignUp = async (data: { email: string; password: string; name: string }) => {
+  const passwordCheck = passwordSchema.safeParse(data.password);
+  if (!passwordCheck.success) {
+    console.error("Weak password:", passwordCheck.error.flatten().formErrors);
+    return;
+  }
+
   const result = await signUp.email({
     email: data.email,
     password: data.password,

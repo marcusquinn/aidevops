@@ -228,14 +228,17 @@ import { db } from "../server";
 import { users, posts } from "../schema";
 
 async function seed() {
-  // Safety: prevent accidental production seeding
-  if (process.env.NODE_ENV === "production") {
-    throw new Error("Seeding is disabled in production. Set NODE_ENV=development.");
+  // Safety: prevent accidental data wipe in production
+  if (process.env.NODE_ENV === "production" && process.env.ALLOW_DB_WIPE !== "true") {
+    throw new Error(
+      "Seeding with destructive deletes is disabled in production. " +
+      "Set ALLOW_DB_WIPE=true to override (use with caution)."
+    );
   }
 
-  console.log("Seeding database...");
+  console.log(`Seeding database (NODE_ENV=${process.env.NODE_ENV ?? "undefined"})...`);
 
-  // Clear existing data
+  // Clear existing data (order matters: delete children before parents)
   await db.delete(posts);
   await db.delete(users);
 

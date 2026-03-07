@@ -86,7 +86,7 @@ const COOKIE_MAX_AGE = 60 * 60 * 24 * 7; // 7 days
 
 const setOpen = useCallback((value: boolean) => {
   setOpenState(value);
-  document.cookie = `${COOKIE_NAME}=${value}; path=/; max-age=${COOKIE_MAX_AGE}`;
+  document.cookie = `${COOKIE_NAME}=${value}; path=/; max-age=${COOKIE_MAX_AGE}; SameSite=Lax`;
 }, []);
 ```
 
@@ -171,13 +171,13 @@ export function SidebarProvider({
 
   const setOpen = useCallback((value: boolean) => {
     setOpenState(value);
-    document.cookie = `${COOKIE_NAME}=${value}; path=/; max-age=${60 * 60 * 24 * 7}`;
+    document.cookie = `${COOKIE_NAME}=${value}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`;
   }, []);
 
   const toggleSidebar = useCallback(() => {
     setOpenState((prev) => {
       const newValue = !prev;
-      document.cookie = `${COOKIE_NAME}=${newValue}; path=/; max-age=${60 * 60 * 24 * 7}`;
+      document.cookie = `${COOKIE_NAME}=${newValue}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`;
       return newValue;
     });
   }, []);
@@ -185,7 +185,7 @@ export function SidebarProvider({
   const setWidth = useCallback((value: number) => {
     const clamped = Math.min(Math.max(value, MIN_WIDTH), MAX_WIDTH);
     setWidthState(clamped);
-    document.cookie = `${WIDTH_COOKIE_NAME}=${clamped}; path=/; max-age=${60 * 60 * 24 * 7}`;
+    document.cookie = `${WIDTH_COOKIE_NAME}=${clamped}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`;
   }, []);
 
   return (

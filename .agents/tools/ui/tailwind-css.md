@@ -74,8 +74,9 @@ sticky   → hybrid (normal until scroll threshold)
 **CSS Variables with Tailwind**:
 
 ```tsx
-// Define in context/provider
-<style>{`:root { --sidebar-width: ${width}px; }`}</style>
+// Define in context/provider — validate numeric values before injecting into CSS
+const sanitizedWidth = typeof width === 'number' && width > 0 ? width : 384;
+<style>{`:root { --sidebar-width: ${sanitizedWidth}px; }`}</style>
 
 // Use in className
 <aside className="w-[var(--sidebar-width)]">
