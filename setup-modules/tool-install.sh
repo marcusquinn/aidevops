@@ -330,11 +330,23 @@ setup_shellcheck_wrapper() {
 	if head -5 "$sc_resolved" 2>/dev/null | grep -q "shellcheck-wrapper" 2>/dev/null; then
 		# Already replaced — check that .real exists
 		local real_path="${sc_resolved}.real"
-		if [[ -x "$real_path" ]]; then
-			print_success "shellcheck wrapper already installed at $sc_resolved"
-		else
+		if [[ ! -x "$real_path" ]]; then
 			print_warning "shellcheck wrapper installed but .real binary missing at $real_path"
 			print_info "Reinstall shellcheck (brew reinstall shellcheck) then re-run setup"
+			return 0
+		fi
+
+		# Check if the installed wrapper is outdated vs the source
+		if ! diff -q "$wrapper_src" "$sc_resolved" >/dev/null 2>&1; then
+			print_info "Updating shellcheck wrapper at $sc_resolved (source is newer)"
+			if cp "$wrapper_src" "$sc_resolved" 2>/dev/null || sudo cp "$wrapper_src" "$sc_resolved" 2>/dev/null; then
+				chmod +x "$sc_resolved" 2>/dev/null || sudo chmod +x "$sc_resolved" 2>/dev/null || true
+				print_success "shellcheck wrapper updated at $sc_resolved"
+			else
+				print_warning "Cannot update wrapper — insufficient permissions"
+			fi
+		else
+			print_success "shellcheck wrapper already installed at $sc_resolved"
 		fi
 		return 0
 	fi
