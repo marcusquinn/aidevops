@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2034
+# shellcheck disable=SC2034,SC2317,SC2329
+# SC2034: Variables set for sourced scripts
+# SC2317: Commands inside test functions appear unreachable to ShellCheck
+# SC2329: test_* functions invoked from main(); ShellCheck cannot trace indirect calls
 set -euo pipefail
 
 # Test suite for email-agent-helper.sh

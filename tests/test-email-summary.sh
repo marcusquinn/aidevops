@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2317,SC2329
+# SC2317: Commands inside test helper functions appear unreachable to ShellCheck
+# SC2329: cleanup/log_pass/log_fail/get_frontmatter_field invoked throughout;
+#         ShellCheck cannot trace all call sites
+#
 # test-email-summary.sh - Test auto-summary generation for email-to-markdown (t1044.7)
 # Tests: heuristic summary for short emails, LLM routing for long emails,
 #        empty body handling, HTML email handling, --summary-mode flag

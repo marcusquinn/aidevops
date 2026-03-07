@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2317,SC2329
+# SC2317: Commands inside test helper functions appear unreachable to ShellCheck
+# SC2329: cleanup/vm_run/vm_test/info/section invoked throughout; ShellCheck
+#         cannot trace all call sites across the script
+#
 # test-vm-setup.sh
 #
 # Self-test: create a fresh OrbStack Ubuntu VM, run setup.sh, verify outcomes.
