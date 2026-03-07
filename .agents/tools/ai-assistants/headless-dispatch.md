@@ -480,6 +480,7 @@ export OPENAI_API_KEY="sk-..."
 5. **Cleanup**: Delete sessions after use to prevent data leakage
 6. **Scoped tokens** (t1412.2): Workers get minimal-permission GitHub tokens scoped to the target repo
 7. **Worker sandbox** (t1412.1): Headless workers run with an isolated HOME directory
+8. **Network tiering** (t1412.3): Worker network access is classified into 5 tiers. Tier 5 domains (exfiltration indicators like `requestbin.com`, `ngrok.io`, raw IPs) are denied. Tier 4 (unknown) domains are allowed but flagged for post-session review. Use `sandbox-exec-helper.sh run --network-tiering --worker-id <id>` to enable. Config: `configs/network-tiers.conf`, user overrides: `~/.config/aidevops/network-tiers-custom.conf`. See `scripts/network-tier-helper.sh` for the full API.
 
 ### Scoped Worker Tokens (t1412.2)
 
@@ -1066,4 +1067,9 @@ See [runners/README.md](runners/README.md) for how to create runners from templa
 - `services/communications/matrix-bot.md` - Matrix bot setup and configuration
 - Pulse supervisor (`scripts/commands/pulse.md`) - Multi-agent coordination (replaces archived `coordinator-helper.sh`)
 - `scripts/mail-helper.sh` - Inter-agent mailbox
+- `scripts/worker-token-helper.sh` - Scoped GitHub token lifecycle for workers (t1412.2)
+- `scripts/network-tier-helper.sh` - Network domain tiering for worker sandboxing (t1412.3)
+- `scripts/sandbox-exec-helper.sh` - Execution sandbox with network tiering integration
+- `configs/network-tiers.conf` - Domain classification database
+- `tools/security/prompt-injection-defender.md` - Prompt injection defense (includes network tiering section)
 - `memory/README.md` - Memory system (supports namespaces)

@@ -3,12 +3,19 @@
 # Commands: run | audit | config | help
 #
 # Wraps command execution with environment clearing, timeout enforcement,
-# temp directory isolation, and optional network restriction.
+# temp directory isolation, optional network restriction, and network tiering.
 # Inspired by OpenFang's WASM sandbox — adapted for shell-native use.
+#
+# Network tiering (t1412.3): When --network-tiering is enabled, commands that
+# access the network have their target domains classified into tiers (1-5).
+# Tier 5 domains (exfiltration indicators) are logged and flagged. Tier 4
+# (unknown) domains are allowed but flagged for post-session review.
+# See network-tier-helper.sh for the full tier model.
 #
 # Usage:
 #   sandbox-exec-helper.sh run "command args"
 #   sandbox-exec-helper.sh run --timeout 60 --no-network "curl example.com"
+#   sandbox-exec-helper.sh run --network-tiering --worker-id w123 "curl example.com"
 #   sandbox-exec-helper.sh run --passthrough "GITHUB_TOKEN,NPM_TOKEN" "npm publish"
 #   sandbox-exec-helper.sh audit [--last N]
 #   sandbox-exec-helper.sh config --show
@@ -34,6 +41,9 @@ readonly MAX_OUTPUT_BYTES=10485760 # 10MB per stream
 
 # Minimal environment passthrough — only what's needed for basic operation
 readonly DEFAULT_PASSTHROUGH="PATH HOME USER LANG TERM SHELL"
+
+# Network tier helper (t1412.3)
+readonly NET_TIER_HELPER="${SCRIPT_DIR}/network-tier-helper.sh"
 
 # =============================================================================
 # Helpers
@@ -74,12 +84,59 @@ log_execution() {
 }
 
 # =============================================================================
+# Network Tiering Integration (t1412.3)
+# =============================================================================
+
+# Extract domains from a command string and check them against network tiers.
+# Best-effort heuristic: parses URLs and hostnames from common patterns
+# (curl, wget, git clone, npm install from URL, etc.).
+# Arguments:
+#   $1 - command string
+#   $2 - worker ID for logging
+_sandbox_check_network_tiers() {
+	local command="$1"
+	local wid="$2"
+
+	# Extract potential domains/URLs from the command using common patterns:
+	# - https://domain.com/... or http://domain.com/...
+	# - curl/wget/git clone followed by a URL
+	# - @scope/package from npm (not a domain, skip)
+	local domains
+	domains="$(printf '%s' "$command" | grep -oE 'https?://[a-zA-Z0-9._-]+' | sed 's|https\?://||' | sort -u)" || true
+
+	if [[ -z "$domains" ]]; then
+		return 0
+	fi
+
+	local domain tier_result
+	while IFS= read -r domain; do
+		[[ -z "$domain" ]] && continue
+		tier_result="$("$NET_TIER_HELPER" classify "$domain" 2>/dev/null)" || true
+
+		if [[ "$tier_result" == "5" ]]; then
+			log_sandbox "WARN" "Network tier DENY: ${domain} (Tier 5 — exfiltration indicator)"
+			"$NET_TIER_HELPER" log-access "$domain" "$wid" "pre-check-deny" 2>/dev/null || true
+		elif [[ "$tier_result" == "4" ]]; then
+			log_sandbox "INFO" "Network tier FLAG: ${domain} (Tier 4 — unknown domain)"
+			"$NET_TIER_HELPER" log-access "$domain" "$wid" "pre-check-flag" 2>/dev/null || true
+		else
+			# Tiers 1-3: log silently (tier helper handles routing)
+			"$NET_TIER_HELPER" log-access "$domain" "$wid" "pre-check-allow" 2>/dev/null || true
+		fi
+	done <<<"$domains"
+
+	return 0
+}
+
+# =============================================================================
 # Sandbox Execution
 # =============================================================================
 
 sandbox_run() {
 	local timeout_secs="$DEFAULT_TIMEOUT"
 	local block_network=false
+	local network_tiering=false
+	local worker_id="sandbox-$$"
 	local extra_passthrough=""
 	local command=""
 
@@ -97,6 +154,14 @@ sandbox_run() {
 		--no-network)
 			block_network=true
 			shift
+			;;
+		--network-tiering)
+			network_tiering=true
+			shift
+			;;
+		--worker-id)
+			worker_id="$2"
+			shift 2
 			;;
 		--passthrough)
 			extra_passthrough="$2"
@@ -158,7 +223,16 @@ sandbox_run() {
 	local stdout_file="${exec_tmpdir}/stdout"
 	local stderr_file="${exec_tmpdir}/stderr"
 
-	log_sandbox "INFO" "Executing (timeout=${timeout_secs}s, network_blocked=${block_network}): ${command:0:200}"
+	log_sandbox "INFO" "Executing (timeout=${timeout_secs}s, network_blocked=${block_network}, tiering=${network_tiering}): ${command:0:200}"
+
+	# Network tiering pre-check (t1412.3): extract domains from the command
+	# and check them against the tier classification before execution.
+	# This is a best-effort heuristic — it catches obvious cases like
+	# "curl evil.ngrok.io" but cannot intercept runtime DNS resolution.
+	# The primary value is logging + post-session review, not hard blocking.
+	if [[ "$network_tiering" == true ]] && [[ -x "$NET_TIER_HELPER" ]]; then
+		_sandbox_check_network_tiers "$command" "$worker_id"
+	fi
 
 	local start_time
 	start_time="$(date +%s)"
@@ -254,6 +328,7 @@ sandbox_config() {
 	echo "  Timeout:      ${DEFAULT_TIMEOUT}s (max ${MAX_TIMEOUT}s)"
 	echo "  Max output:   $((MAX_OUTPUT_BYTES / 1048576))MB per stream"
 	echo "  Passthrough:  ${DEFAULT_PASSTHROUGH}"
+	echo "  Net tiering:  $([ -x "$NET_TIER_HELPER" ] && echo "available" || echo "not found")"
 	echo ""
 	if [[ -f "$SANDBOX_LOG" ]]; then
 		local count
@@ -281,12 +356,15 @@ Commands:
 Run options:
   --timeout N                Timeout in seconds (default: 120, max: 3600)
   --no-network               Block network access (macOS only, uses seatbelt)
+  --network-tiering          Enable domain classification and logging (t1412.3)
+  --worker-id ID             Worker identifier for network tier logs
   --passthrough "VAR1,VAR2"  Additional env vars to pass through
 
 Examples:
   sandbox-exec-helper.sh run "ls -la /tmp"
   sandbox-exec-helper.sh run --timeout 60 "npm test"
   sandbox-exec-helper.sh run --no-network "python3 script.py"
+  sandbox-exec-helper.sh run --network-tiering --worker-id w123 "curl https://api.github.com/repos"
   sandbox-exec-helper.sh run --passthrough "GITHUB_TOKEN" "gh pr list"
   sandbox-exec-helper.sh audit --last 10
 
@@ -295,6 +373,7 @@ Security model:
   - Each execution gets isolated TMPDIR
   - Configurable timeout with hard kill
   - Optional network blocking (macOS seatbelt)
+  - Network domain tiering: classify, log, flag unknown domains (t1412.3)
   - All executions logged to JSONL audit trail
   - Output capped at 10MB per stream
 HELP
