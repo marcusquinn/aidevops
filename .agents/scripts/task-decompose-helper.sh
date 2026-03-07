@@ -10,8 +10,8 @@
 # not the code. Uses haiku-tier LLM calls (~$0.001 each).
 #
 # Usage:
-#   task-decompose-helper.sh classify <description> [--lineage <json>] [--depth N]
-#   task-decompose-helper.sh decompose <description> [--lineage <json>] [--max-subtasks 5]
+#   task-decompose-helper.sh classify <description> [--lineage <json>] [--depth N] [--task-id ID] [--todo-file PATH]
+#   task-decompose-helper.sh decompose <description> [--lineage <json>] [--max-subtasks 5] [--task-id ID] [--todo-file PATH]
 #   task-decompose-helper.sh format-lineage --parent <desc> --children <json> [--current N]
 #   task-decompose-helper.sh format-lineage --test
 #   task-decompose-helper.sh has-subtasks <task-id> [--todo-file <path>]
@@ -21,6 +21,7 @@
 #   ANTHROPIC_API_KEY — required for AI calls (falls back to heuristic without it)
 #   DECOMPOSE_MAX_DEPTH — max recursion depth (default: 3)
 #   DECOMPOSE_MAX_SUBTASKS — max subtasks per decomposition (default: 5)
+#   DECOMPOSE_NO_LLM — set to "true" to force heuristic fallback (for testing)
 #
 # Exit codes:
 #   0 - Success
@@ -36,6 +37,50 @@ set -euo pipefail
 readonly DEFAULT_MAX_DEPTH="${DECOMPOSE_MAX_DEPTH:-3}"
 readonly DEFAULT_MAX_SUBTASKS="${DECOMPOSE_MAX_SUBTASKS:-5}"
 readonly AI_HELPER="${SCRIPT_DIR}/ai-research-helper.sh"
+# DECOMPOSE_NO_LLM or legacy DECOMPOSE_TEST_NO_LLM disables LLM calls (for testing)
+readonly NO_LLM="${DECOMPOSE_NO_LLM:-${DECOMPOSE_TEST_NO_LLM:-false}}"
+
+#######################################
+# Check if LLM calls are available and enabled
+# Returns: 0 if LLM can be used, 1 if not
+#######################################
+llm_available() {
+	if [[ "$NO_LLM" == "true" ]]; then
+		return 1
+	fi
+	if [[ ! -x "$AI_HELPER" ]]; then
+		return 1
+	fi
+	return 0
+}
+
+#######################################
+# Check if a task already has subtasks in TODO.md (internal helper)
+# Arguments:
+#   $1 — task ID
+#   $2 — path to TODO.md
+# Output: "true" or "false" on stdout
+# Returns: 0 always
+#######################################
+check_existing_subtasks() {
+	local task_id="$1"
+	local todo_file="$2"
+
+	if [[ -z "$task_id" || ! -f "$todo_file" ]]; then
+		echo "false"
+		return 0
+	fi
+
+	local parent_pattern="^- \\[[ x-]\\] ${task_id} "
+	local child_pattern="^  - \\[[ x-]\\] ${task_id}\\."
+
+	if grep -qE "$parent_pattern" "$todo_file" && grep -qE "$child_pattern" "$todo_file"; then
+		echo "true"
+	else
+		echo "false"
+	fi
+	return 0
+}
 
 #######################################
 # Classify a task as atomic or composite using LLM judgment
@@ -44,6 +89,8 @@ readonly AI_HELPER="${SCRIPT_DIR}/ai-research-helper.sh"
 #   $1 — task description
 #   --lineage JSON — ancestor chain (optional)
 #   --depth N — current depth in hierarchy (default: 0)
+#   --task-id ID — task ID to check for existing subtasks (optional)
+#   --todo-file PATH — path to TODO.md for context (optional)
 #
 # Output: JSON {"kind": "atomic"|"composite", "confidence": 0-1, "reasoning": "..."}
 # Exit: 0 on success, 2 if API unavailable (heuristic used)
@@ -52,6 +99,8 @@ cmd_classify() {
 	local description=""
 	local lineage=""
 	local depth=0
+	local task_id=""
+	local todo_file=""
 
 	# First positional arg is description
 	if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
@@ -69,6 +118,14 @@ cmd_classify() {
 			depth="$2"
 			shift 2
 			;;
+		--task-id)
+			task_id="$2"
+			shift 2
+			;;
+		--todo-file)
+			todo_file="$2"
+			shift 2
+			;;
 		*)
 			# Treat remaining non-flag args as description if not set
 			if [[ -z "$description" ]]; then
@@ -80,8 +137,18 @@ cmd_classify() {
 	done
 
 	if [[ -z "$description" ]]; then
-		log_error "Usage: task-decompose-helper.sh classify <description> [--lineage <json>] [--depth N]"
+		log_error "Usage: task-decompose-helper.sh classify <description> [--lineage <json>] [--depth N] [--task-id ID] [--todo-file PATH]"
 		return 1
+	fi
+
+	# Fast-path: if task already has subtasks in TODO.md, treat as already-decomposed (atomic for dispatch)
+	if [[ -n "$task_id" && -n "$todo_file" ]]; then
+		local has_children
+		has_children=$(check_existing_subtasks "$task_id" "$todo_file")
+		if [[ "$has_children" == "true" ]]; then
+			echo '{"kind": "atomic", "confidence": 1.0, "reasoning": "Task already has subtasks in TODO.md — skip re-decomposition"}'
+			return 0
+		fi
 	fi
 
 	# Heuristic fast-path: at depth 2+, almost certainly atomic
@@ -91,7 +158,7 @@ cmd_classify() {
 	fi
 
 	# Try LLM classification
-	if [[ -x "$AI_HELPER" ]]; then
+	if llm_available; then
 		local lineage_context=""
 		if [[ -n "$lineage" ]]; then
 			lineage_context="
@@ -103,16 +170,27 @@ ${lineage}
 		local prompt
 		prompt="You are classifying a software development task as either ATOMIC or COMPOSITE.
 
-ATOMIC means: a single developer can implement this directly without further planning. It has one clear deliverable.
-COMPOSITE means: this clearly contains 2 or more independent concerns that should be worked on separately by different developers.
+ATOMIC means: a single developer can implement this in one focused session without further planning. It has one clear deliverable — a single PR.
+COMPOSITE means: this clearly contains 2 or more independent concerns that should be worked on separately by different developers in parallel.
 
 Rules:
-- When in doubt, choose ATOMIC. Over-decomposition creates more overhead than under-decomposition.
+- When in doubt, choose ATOMIC. Over-decomposition creates more overhead (more PRs, more merge conflicts, more coordination) than under-decomposition.
 - A task that is large but has a single concern (e.g., 'refactor the auth module') is ATOMIC.
 - A task that lists multiple independent features (e.g., 'build login, registration, and OAuth') is COMPOSITE.
-- At depth ${depth} in the hierarchy. Deeper tasks are almost always atomic.
+- At depth ${depth} in the hierarchy. Deeper tasks should almost always be atomic.
 - If the task mentions 'and' connecting truly independent deliverables, it's likely COMPOSITE.
 - Bug fixes, refactors, documentation tasks, and single-feature tasks are almost always ATOMIC.
+- A task with 'with' connecting a feature and its natural sub-component (e.g., 'profile page with avatar upload') is ATOMIC — the sub-component is part of the feature, not independent.
+
+Examples:
+- 'Fix the login page redirect loop' -> ATOMIC (single bug fix)
+- 'Refactor the authentication module to use JWT tokens' -> ATOMIC (single concern, even if large)
+- 'Create classify/decompose LLM prompts and helper functions' -> ATOMIC (single deliverable: one script)
+- 'Add CI self-healing to pulse' -> ATOMIC (single feature addition)
+- 'Build auth system with login, registration, password reset, and OAuth' -> COMPOSITE (4 independent features)
+- 'Recursive task decomposition with classify pipeline, lineage context, batch strategies, pulse integration' -> COMPOSITE (4 independent concerns)
+- 'Build a CRM with contacts, deals, email integration, and reporting dashboard' -> COMPOSITE (4 independent modules)
+- 'Create user management and billing system and notification service' -> COMPOSITE (3 independent systems)
 ${lineage_context}
 Task description: ${description}
 
@@ -120,31 +198,14 @@ Respond with ONLY a JSON object (no markdown, no explanation outside the JSON):
 {\"kind\": \"atomic\" or \"composite\", \"confidence\": 0.0-1.0, \"reasoning\": \"one sentence explanation\"}"
 
 		local result
-		result=$("$AI_HELPER" --prompt "$prompt" --model haiku --max-tokens 150 2>/dev/null || echo "")
+		result=$("$AI_HELPER" --prompt "$prompt" --model haiku --max-tokens 200 2>/dev/null || echo "")
 
 		if [[ -n "$result" ]]; then
-			# Extract JSON from response
 			local json_result
-			json_result=$(echo "$result" | sed -n 's/.*\({[^}]*"kind"[^}]*}\).*/\1/p' | head -1)
+			json_result=$(extract_classify_json "$result")
 
 			if [[ -n "$json_result" ]]; then
-				# Validate it has the required field
-				local kind
-				kind=$(echo "$json_result" | sed -n 's/.*"kind"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
-				if [[ "$kind" == "atomic" || "$kind" == "composite" ]]; then
-					echo "$json_result"
-					return 0
-				fi
-			fi
-
-			# Try to extract just the kind from freeform response
-			local lower_result
-			lower_result=$(echo "$result" | tr '[:upper:]' '[:lower:]')
-			if echo "$lower_result" | grep -q "composite"; then
-				echo '{"kind": "composite", "confidence": 0.7, "reasoning": "LLM indicated composite (parsed from freeform response)"}'
-				return 0
-			elif echo "$lower_result" | grep -q "atomic"; then
-				echo '{"kind": "atomic", "confidence": 0.7, "reasoning": "LLM indicated atomic (parsed from freeform response)"}'
+				echo "$json_result"
 				return 0
 			fi
 		fi
@@ -155,6 +216,46 @@ Respond with ONLY a JSON object (no markdown, no explanation outside the JSON):
 	result=$(heuristic_classify "$description" "$depth")
 	echo "$result"
 	return 2
+}
+
+#######################################
+# Extract and validate classification JSON from LLM response
+# Handles clean JSON, markdown-wrapped, and freeform responses.
+#
+# Arguments:
+#   $1 — raw LLM response text
+# Output: validated JSON on stdout, or empty string
+#######################################
+extract_classify_json() {
+	local response="$1"
+
+	# Try 1: extract JSON object containing "kind" key
+	local json_result
+	json_result=$(echo "$response" | sed -n 's/.*\({[^}]*"kind"[^}]*}\).*/\1/p' | head -1)
+
+	if [[ -n "$json_result" ]]; then
+		local kind
+		kind=$(echo "$json_result" | sed -n 's/.*"kind"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+		if [[ "$kind" == "atomic" || "$kind" == "composite" ]]; then
+			echo "$json_result"
+			return 0
+		fi
+	fi
+
+	# Try 2: extract kind from freeform response
+	local lower_result
+	lower_result=$(echo "$response" | tr '[:upper:]' '[:lower:]')
+	if echo "$lower_result" | grep -q "composite"; then
+		echo '{"kind": "composite", "confidence": 0.7, "reasoning": "LLM indicated composite (parsed from freeform response)"}'
+		return 0
+	elif echo "$lower_result" | grep -q "atomic"; then
+		echo '{"kind": "atomic", "confidence": 0.7, "reasoning": "LLM indicated atomic (parsed from freeform response)"}'
+		return 0
+	fi
+
+	# No valid classification found
+	echo ""
+	return 0
 }
 
 #######################################
@@ -233,6 +334,8 @@ heuristic_classify() {
 #   $1 — task description
 #   --lineage JSON — ancestor chain (optional)
 #   --max-subtasks N — max subtasks (default: 5)
+#   --task-id ID — task ID to check for existing subtasks (optional)
+#   --todo-file PATH — path to TODO.md for context (optional)
 #
 # Output: JSON {"subtasks": [{"description": "...", "blocked_by": []}], "strategy": "depth-first"|"breadth-first"}
 # Exit: 0 on success, 1 on error, 2 if API unavailable
@@ -241,6 +344,8 @@ cmd_decompose() {
 	local description=""
 	local lineage=""
 	local max_subtasks="$DEFAULT_MAX_SUBTASKS"
+	local task_id=""
+	local todo_file=""
 
 	# First positional arg is description
 	if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
@@ -258,6 +363,14 @@ cmd_decompose() {
 			max_subtasks="$2"
 			shift 2
 			;;
+		--task-id)
+			task_id="$2"
+			shift 2
+			;;
+		--todo-file)
+			todo_file="$2"
+			shift 2
+			;;
 		*)
 			if [[ -z "$description" ]]; then
 				description="$1"
@@ -268,12 +381,22 @@ cmd_decompose() {
 	done
 
 	if [[ -z "$description" ]]; then
-		log_error "Usage: task-decompose-helper.sh decompose <description> [--lineage <json>] [--max-subtasks N]"
+		log_error "Usage: task-decompose-helper.sh decompose <description> [--lineage <json>] [--max-subtasks N] [--task-id ID] [--todo-file PATH]"
 		return 1
 	fi
 
+	# Guard: if task already has subtasks, refuse to re-decompose
+	if [[ -n "$task_id" && -n "$todo_file" ]]; then
+		local has_children
+		has_children=$(check_existing_subtasks "$task_id" "$todo_file")
+		if [[ "$has_children" == "true" ]]; then
+			log_error "Task ${task_id} already has subtasks in TODO.md — skipping re-decomposition"
+			return 1
+		fi
+	fi
+
 	# Try LLM decomposition
-	if [[ -x "$AI_HELPER" ]]; then
+	if llm_available; then
 		local lineage_context=""
 		if [[ -n "$lineage" ]]; then
 			lineage_context="
@@ -283,15 +406,31 @@ ${lineage}
 		fi
 
 		local prompt
-		prompt="You are decomposing a software development task into independent subtasks.
+		prompt="You are decomposing a software development task into independent subtasks for parallel execution by different developers.
 
 Rules:
-- Break into the MINIMUM number of subtasks (2-${max_subtasks}). Never pad with unnecessary tasks.
-- Each subtask must be real, distinct work that a developer would naturally treat as a separate unit.
-- Each subtask should be independently implementable (can be assigned to a different developer).
-- Include dependency edges: if subtask B needs subtask A's output, note it.
+- Break into the MINIMUM number of subtasks (2-${max_subtasks}). Never pad with unnecessary tasks. Fewer subtasks = less coordination overhead.
+- Each subtask must be real, distinct work that a developer would naturally treat as a separate unit — a separate PR.
+- Each subtask should be independently implementable (can be assigned to a different developer working in parallel).
+- Include dependency edges: if subtask B needs subtask A's output, note it in blocked_by.
 - Use the blocked_by array to express dependencies (0-indexed subtask numbers).
 - Suggest a batch strategy: 'depth-first' if subtasks have sequential dependencies, 'breadth-first' if mostly independent.
+- Each subtask description should be specific enough to be a standalone task brief — not vague like 'handle edge cases'.
+
+Examples:
+
+Task: 'Build auth system with login, registration, password reset, and OAuth'
+Result: 4 subtasks (login, registration, password reset, OAuth) — all independent, breadth-first.
+
+Task: 'Build a REST API with database schema, then create frontend that calls the API, then add end-to-end tests'
+Result: 3 subtasks (API+schema, frontend, e2e tests) — sequential dependencies, depth-first.
+  - Frontend blocked_by API (needs endpoints to call)
+  - E2E tests blocked_by both (needs working system)
+
+Task: 'Recursive task decomposition with classify pipeline, lineage context, batch strategies, pulse integration'
+Result: 4-5 subtasks — classify/decompose helper, dispatch integration, lineage context, batch strategies, testing.
+  - Integration blocked_by helper (needs classify/decompose to exist)
+  - Testing blocked_by all implementation subtasks
 ${lineage_context}
 Task to decompose: ${description}
 
@@ -305,49 +444,15 @@ Respond with ONLY a JSON object (no markdown, no explanation outside the JSON):
 }"
 
 		local result
-		result=$("$AI_HELPER" --prompt "$prompt" --model haiku --max-tokens 500 2>/dev/null || echo "")
+		result=$("$AI_HELPER" --prompt "$prompt" --model haiku --max-tokens 600 2>/dev/null || echo "")
 
 		if [[ -n "$result" ]]; then
-			# Try to extract JSON — handle both clean JSON and markdown-wrapped
-			local json_result=""
-
-			# First try: extract JSON object with subtasks key
-			if command -v jq &>/dev/null; then
-				# Try parsing the whole response as JSON
-				json_result=$(echo "$result" | jq -c 'select(.subtasks)' 2>/dev/null || echo "")
-
-				# If that fails, try extracting from markdown code block
-				if [[ -z "$json_result" ]]; then
-					local fence='```'
-					json_result=$(echo "$result" | sed -n "/^${fence}/,/^${fence}/p" | sed '1d;$d' | jq -c 'select(.subtasks)' 2>/dev/null || echo "")
-				fi
-
-				# If that fails, try finding JSON between braces
-				if [[ -z "$json_result" ]]; then
-					json_result=$(echo "$result" | python3 -c "
-import sys, json, re
-text = sys.stdin.read()
-# Find the outermost JSON object
-match = re.search(r'\{.*\}', text, re.DOTALL)
-if match:
-    try:
-        obj = json.loads(match.group())
-        if 'subtasks' in obj:
-            print(json.dumps(obj))
-    except json.JSONDecodeError:
-        pass
-" 2>/dev/null || echo "")
-				fi
-			fi
+			local json_result
+			json_result=$(extract_decompose_json "$result" "$max_subtasks")
 
 			if [[ -n "$json_result" ]]; then
-				# Validate subtask count
-				local count
-				count=$(echo "$json_result" | jq '.subtasks | length' 2>/dev/null || echo "0")
-				if [[ "$count" -ge 2 && "$count" -le "$max_subtasks" ]]; then
-					echo "$json_result"
-					return 0
-				fi
+				echo "$json_result"
+				return 0
 			fi
 		fi
 	fi
@@ -357,6 +462,64 @@ if match:
 	result=$(heuristic_decompose "$description" "$max_subtasks")
 	echo "$result"
 	return 2
+}
+
+#######################################
+# Extract and validate decomposition JSON from LLM response
+# Handles clean JSON, markdown-wrapped, and brace-extracted responses.
+#
+# Arguments:
+#   $1 — raw LLM response text
+#   $2 — max subtasks allowed
+# Output: validated JSON on stdout, or empty string
+#######################################
+extract_decompose_json() {
+	local response="$1"
+	local max_subtasks="${2:-5}"
+	local json_result=""
+
+	if ! command -v jq &>/dev/null; then
+		echo ""
+		return 0
+	fi
+
+	# Try 1: parse whole response as JSON
+	json_result=$(echo "$response" | jq -c 'select(.subtasks)' 2>/dev/null || echo "")
+
+	# Try 2: extract from markdown code block
+	if [[ -z "$json_result" ]]; then
+		local fence='```'
+		json_result=$(echo "$response" | sed -n "/^${fence}/,/^${fence}/p" | sed '1d;$d' | jq -c 'select(.subtasks)' 2>/dev/null || echo "")
+	fi
+
+	# Try 3: find outermost JSON object with python3
+	if [[ -z "$json_result" ]] && command -v python3 &>/dev/null; then
+		json_result=$(echo "$response" | python3 -c "
+import sys, json, re
+text = sys.stdin.read()
+match = re.search(r'\{.*\}', text, re.DOTALL)
+if match:
+    try:
+        obj = json.loads(match.group())
+        if 'subtasks' in obj:
+            print(json.dumps(obj))
+    except json.JSONDecodeError:
+        pass
+" 2>/dev/null || echo "")
+	fi
+
+	# Validate subtask count
+	if [[ -n "$json_result" ]]; then
+		local count
+		count=$(echo "$json_result" | jq '.subtasks | length' 2>/dev/null || echo "0")
+		if [[ "$count" -ge 2 && "$count" -le "$max_subtasks" ]]; then
+			echo "$json_result"
+			return 0
+		fi
+	fi
+
+	echo ""
+	return 0
 }
 
 #######################################
@@ -616,22 +779,7 @@ cmd_has_subtasks() {
 		return 1
 	fi
 
-	if [[ ! -f "$todo_file" ]]; then
-		echo "false"
-		return 0
-	fi
-
-	# Check for indented child tasks under the parent
-	# Pattern: parent task line followed by indented lines with task IDs
-	# e.g., "- [ ] t1408 ..." followed by "  - [ ] t1408.1 ..."
-	local parent_pattern="^- \\[[ x-]\\] ${task_id} "
-	local child_pattern="^  - \\[[ x-]\\] ${task_id}\\."
-
-	if grep -qE "$parent_pattern" "$todo_file" && grep -qE "$child_pattern" "$todo_file"; then
-		echo "true"
-	else
-		echo "false"
-	fi
+	check_existing_subtasks "$task_id" "$todo_file"
 	return 0
 }
 
@@ -657,21 +805,26 @@ Options:
   --lineage <json>      Ancestor chain context (for classify/decompose)
   --depth N             Current depth in hierarchy (for classify, default: 0)
   --max-subtasks N      Max subtasks per decomposition (default: 5)
+  --task-id ID          Task ID to check for existing subtasks (for classify/decompose)
+  --todo-file <path>    Path to TODO.md (for classify/decompose/has-subtasks)
   --parent <desc>       Parent task description (for format-lineage)
   --children <json>     Child task descriptions JSON array (for format-lineage)
   --current N           Current task index, 0-based (for format-lineage)
   --test                Run self-test (for format-lineage)
-  --todo-file <path>    Path to TODO.md (for has-subtasks, default: ./TODO.md)
 
 Environment:
   ANTHROPIC_API_KEY         Required for LLM calls (falls back to heuristics)
   DECOMPOSE_MAX_DEPTH       Max recursion depth (default: 3)
   DECOMPOSE_MAX_SUBTASKS    Max subtasks per level (default: 5)
+  DECOMPOSE_NO_LLM          Set to "true" to force heuristic fallback (testing)
 
 Examples:
   # Classify a task
   task-decompose-helper.sh classify "Add a comment to the calculateTotal function"
   # Output: {"kind": "atomic", "confidence": 0.9, ...}
+
+  # Classify with TODO.md context (skips already-decomposed tasks)
+  task-decompose-helper.sh classify "Build CRM" --task-id t1408 --todo-file ./TODO.md
 
   # Classify with lineage context
   task-decompose-helper.sh classify "Implement deal pipeline" --lineage '{"parent": "Build CRM"}'
@@ -679,6 +832,9 @@ Examples:
   # Decompose a composite task
   task-decompose-helper.sh decompose "Build auth with login, registration, password reset, and OAuth"
   # Output: {"subtasks": [...], "strategy": "depth-first"}
+
+  # Decompose with guard against re-decomposition
+  task-decompose-helper.sh decompose "Build CRM" --task-id t1408 --todo-file ./TODO.md
 
   # Format lineage for a worker
   task-decompose-helper.sh format-lineage \
