@@ -429,6 +429,46 @@ check_dependencies() {
 		fi
 	fi
 
+	# Socket.dev scan (if socket CLI is available and package.json/requirements.txt present)
+	if command -v socket &>/dev/null; then
+		if [[ -f "$repo_path/package.json" ]] || [[ -f "$repo_path/requirements.txt" ]]; then
+			has_deps=true
+			print_info "Running Socket.dev supply chain scan..."
+			local socket_output
+			socket_output=$(socket scan "$repo_path" --json 2>/dev/null) || true
+
+			if [[ -n "$socket_output" ]]; then
+				local socket_critical
+				socket_critical=$(echo "$socket_output" | jq '[.[] | select(.severity == "critical")] | length' 2>/dev/null) || socket_critical="0"
+				local socket_high
+				socket_high=$(echo "$socket_output" | jq '[.[] | select(.severity == "high")] | length' 2>/dev/null) || socket_high="0"
+				local socket_total
+				socket_total=$(echo "$socket_output" | jq 'length' 2>/dev/null) || socket_total="0"
+
+				if [[ "$socket_critical" -gt 0 ]]; then
+					print_crit "Socket.dev: $socket_critical critical, $socket_high high ($socket_total total alerts)"
+					add_finding "critical" "dependencies" "Socket.dev: $socket_critical critical, $socket_high high alerts"
+				elif [[ "$socket_high" -gt 0 ]]; then
+					print_warn "Socket.dev: $socket_high high ($socket_total total alerts)"
+					add_finding "warning" "dependencies" "Socket.dev: $socket_high high alerts"
+				elif [[ "$socket_total" -gt 0 ]]; then
+					print_info "Socket.dev: $socket_total low/medium alerts"
+					add_finding "info" "dependencies" "Socket.dev: $socket_total low/medium alerts"
+				else
+					print_pass "Socket.dev: no supply chain alerts"
+					add_finding "pass" "dependencies" "Socket.dev: clean scan"
+				fi
+			else
+				print_skip "Socket.dev scan returned no output"
+			fi
+		fi
+	else
+		if [[ -f "$repo_path/package.json" ]] || [[ -f "$repo_path/requirements.txt" ]]; then
+			print_info "Socket.dev CLI not installed — install for supply chain scanning: npm install -g @socketsecurity/cli"
+			add_finding "info" "dependencies" "Socket.dev CLI not available"
+		fi
+	fi
+
 	if [[ "$has_deps" == "false" ]]; then
 		print_skip "No dependency manifests found (package.json, requirements.txt, Cargo.toml)"
 		add_finding "info" "dependencies" "No dependency manifests found"
@@ -557,14 +597,15 @@ store_posture() {
 	local repo_path="$1"
 	local config_file="$repo_path/.aidevops.json"
 
-	if [[ ! -f "$config_file" ]]; then
-		print_info "No .aidevops.json found — skipping posture storage"
-		return 0
-	fi
-
 	if ! command -v jq &>/dev/null; then
 		print_warn "jq not installed — cannot store posture in .aidevops.json"
 		return 0
+	fi
+
+	# Create minimal .aidevops.json if it doesn't exist
+	if [[ ! -f "$config_file" ]]; then
+		print_info "Creating .aidevops.json for security posture storage..."
+		echo '{}' >"$config_file"
 	fi
 
 	local timestamp
@@ -1153,7 +1194,7 @@ Per-repo checks (check/audit/store):
   1. GitHub Actions workflows for unsafe AI patterns
   2. Branch protection (PR reviews required)
   3. Review-bot-gate as required status check
-  4. Dependency vulnerabilities (npm/pip/cargo audit)
+  4. Dependency vulnerabilities (npm/pip/cargo audit + Socket.dev)
   5. Collaborator access levels (per-repo, never cached)
   6. Repository security basics (SECURITY.md, .gitignore, secrets)
 

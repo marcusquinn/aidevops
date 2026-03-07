@@ -1390,6 +1390,18 @@ Create `.md` files in this directory for domain-specific context:
 ```
 
 Each file is read on demand by AI assistants when relevant to the task.
+
+## Security
+
+When building features that accept user input or interact with LLMs:
+
+- **Prompt injection defense**: Sanitize all user-supplied text before including it in
+  LLM prompts. For JS/TS projects with package.json, consider `@stackone/defender`.
+  For other stacks, apply framework-agnostic input validation and output filtering.
+- **Supply chain**: Run `aidevops security audit` to check dependency vulnerabilities
+  and GitHub Actions workflow security.
+- **Secrets**: Never hardcode credentials. Use `aidevops secret set NAME` for storage.
+  See `~/.aidevops/agents/tools/security/prompt-injection-defender.md` for full guidance.
 AGENTSEOF
 		print_success "Created .agents/AGENTS.md"
 	fi
@@ -1419,6 +1431,12 @@ AGENTSEOF
 
 - Commits: [Conventional Commits](https://www.conventionalcommits.org/)
 - Branches: \`feature/\`, \`bugfix/\`, \`hotfix/\`, \`refactor/\`, \`chore/\`
+
+## Security
+
+- Run \`aidevops security audit\` for per-repo security posture assessment
+- Secrets: \`aidevops secret set NAME\` (never hardcode credentials)
+- See \`.agents/AGENTS.md\` Security section for project-specific guidance
 
 ## Key Files
 
@@ -2258,7 +2276,9 @@ cmd_features() {
 	echo "                 - Branch protection verification (PR reviews)"
 	echo "                 - Review-bot-gate status check"
 	echo "                 - Dependency vulnerability scanning (npm/pip/cargo)"
+	echo "                 - Socket.dev supply chain scan (if CLI installed)"
 	echo "                 - Collaborator access audit"
+	echo "                 - Results stored in .aidevops.json"
 	echo "                 - Re-run anytime: aidevops security audit"
 	echo ""
 	echo "Extensibility:"
