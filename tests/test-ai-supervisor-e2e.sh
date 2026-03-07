@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2034,SC1090
+# shellcheck disable=SC2034,SC1090,SC2317,SC2329
 # SC2034: Variables set for sourced scripts (BLUE, SUPERVISOR_DB, etc.)
 # SC1090: Non-constant source paths (test harness pattern)
+# SC2317: Commands inside subshell test functions appear unreachable to ShellCheck
+# SC2329: _test_* functions defined and called inline; ShellCheck cannot trace subshell calls
 #
 # test-ai-supervisor-e2e.sh - End-to-end tests for AI Supervisor pipeline (t1085.7)
 #

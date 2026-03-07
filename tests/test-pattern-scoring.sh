@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2317,SC2329
+# SC2317: Commands inside test helper functions appear unreachable to ShellCheck
+# SC2329: cleanup() invoked via trap; pass/fail/skip/section invoked throughout
+#
 # test-pattern-scoring.sh
 #
 # Tests for the unified model performance scoring backbone (t1094)

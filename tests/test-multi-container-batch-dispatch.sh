@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2034,SC1090
+# shellcheck disable=SC2034,SC1090,SC2317,SC2329
 # SC2034: Variables set for sourced scripts (BLUE, SUPERVISOR_DB, etc.)
 # SC1090: Non-constant source paths (test harness pattern)
+# SC2317: Commands inside subshell test functions appear unreachable to ShellCheck
+# SC2329: Helper functions (get_status, etc.) invoked throughout; ShellCheck cannot trace all call sites
 #
 # test-multi-container-batch-dispatch.sh (t1165.4)
 #

@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2317,SC2329
+# SC2317: Commands inside subshell test functions appear unreachable to ShellCheck
+# SC2329: Helper functions (sup, test_db, get_status, get_field, create_eval_task)
+#         are invoked throughout the script; ShellCheck cannot trace all call sites
+#
 # test-supervisor-state-machine.sh
 #
 # Unit tests for supervisor-helper.sh state machine:

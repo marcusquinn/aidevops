@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2329
+# SC2329: Library functions (e.g. generate_conversation_id) are exported for
+#         callers that source this script; not all are invoked internally
+#
 # entity-helper.sh - Entity memory system for aidevops
 # Manages entities (people, agents, services) with cross-channel identity,
 # versioned profiles, and privacy-filtered context loading.
