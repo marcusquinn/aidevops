@@ -717,14 +717,14 @@ _create_quality_debt_issues() {
 
 	# Ensure labels exist
 	gh label create "quality-debt" --repo "$repo_slug" --color "D93F0B" \
-		--description "Unactioned review feedback from merged PRs" --force 2>/dev/null || true
+		--description "Unactioned review feedback from merged PRs" --force >/dev/null || true
 
 	# Check existing quality-debt issues to avoid duplicates.
 	# Fetch both title and number so we can append to existing file-level issues (t1411).
 	local existing_issues_json
 	existing_issues_json=$(gh issue list --repo "$repo_slug" \
-		--label "quality-debt" --state open --limit 200 \
-		--json title,number 2>/dev/null || echo "[]")
+		--label "quality-debt" --state open --limit 1000 \
+		--json title,number || echo "[]")
 
 	# Group findings by file (null files grouped as "general")
 	local files
@@ -782,7 +782,7 @@ _create_quality_debt_issues() {
 		# Skip if exact duplicate (same PR + file combination)
 		local exact_title_match
 		exact_title_match=$(echo "$existing_issues_json" | jq -r --arg t "$issue_title" \
-			'.[] | select(.title == $t) | .number' 2>/dev/null | head -1 || echo "")
+			'.[] | select(.title == $t) | .number' | head -1 || echo "")
 		if [[ -n "$exact_title_match" ]]; then
 			echo "  Skipping duplicate: ${issue_title}" >&2
 			continue
@@ -796,8 +796,8 @@ _create_quality_debt_issues() {
 		local existing_file_issue=""
 		if [[ "$file" != "general" ]]; then
 			existing_file_issue=$(echo "$existing_issues_json" | jq -r --arg f "$file" \
-				'[.[] | select(.title | startswith("quality-debt: \($f) —"))] | .[0].number // empty' \
-				2>/dev/null || echo "")
+				'[.[] | select(.title | startswith("quality-debt: \($f) —"))] | .[0].number // empty' ||
+				echo "")
 		fi
 
 		if [[ -n "$existing_file_issue" ]]; then
@@ -816,7 +816,7 @@ ${finding_details}
 _Appended by \`quality-feedback-helper.sh scan-merged\` (cross-PR file dedup, t1411)._"
 
 			gh issue comment "$existing_file_issue" --repo "$repo_slug" \
-				--body "$comment_body" >/dev/null 2>&1 || true
+				--body "$comment_body" >/dev/null || true
 			echo "  Appended to existing #${existing_file_issue} for ${file} (PR #${pr_num})" >&2
 			created=$((created + 1))
 			continue
