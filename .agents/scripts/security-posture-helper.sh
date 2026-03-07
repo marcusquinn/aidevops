@@ -456,9 +456,9 @@ check_collaborators() {
 		return 0
 	fi
 
-	# Per-repo collaborator check — never use a global cache
+	# Per-repo collaborator check — never use a global cache (t1412.11: must paginate)
 	local collab_json
-	collab_json=$(gh api "repos/$slug/collaborators" --jq '.[] | {login: .login, role: .role_name}' 2>/dev/null) || true
+	collab_json=$(gh api --paginate "repos/$slug/collaborators?per_page=100" --jq '.[] | {login: .login, role: .role_name}' 2>/dev/null) || true
 
 	if [[ -z "$collab_json" ]]; then
 		print_skip "Cannot access collaborator list (may require admin permissions)"
