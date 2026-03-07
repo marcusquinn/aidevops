@@ -324,9 +324,9 @@ sleep 2
   ```bash
   # Subtask dispatch with lineage context
   PARENT_ID="${TASK_ID%.*}"
-  PARENT_DESC=$(grep -E "^- \[.\] ${PARENT_ID} " TODO.md | head -1 \
+  PARENT_DESC=$(grep -E "^- \[.\] ${PARENT_ID} " "$path/TODO.md" | head -1 \
     | sed -E 's/^- \[.\] [^ ]+ //' | sed -E 's/ #[^ ]+//g' | cut -c1-120)
-  SIBLINGS=$(grep -E "^  - \[.\] ${PARENT_ID}\.[0-9]+" TODO.md \
+  SIBLINGS=$(grep -E "^  - \[.\] ${PARENT_ID}\.[0-9]+" "$path/TODO.md" \
     | sed -E 's/^  - \[.\] ([^ ]+) (.*)/\1: \2/' | sed -E 's/ #[^ ]+//g')
 
   # Build lineage block (see headless-dispatch.md for full assembly)
