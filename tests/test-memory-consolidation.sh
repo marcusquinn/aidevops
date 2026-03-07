@@ -93,13 +93,12 @@ CREATE TABLE IF NOT EXISTS learning_relations (
 
 CREATE TABLE IF NOT EXISTS memory_consolidations (
     id TEXT PRIMARY KEY,
-    source_memory_ids TEXT NOT NULL,
-    insight_memory_id TEXT DEFAULT NULL,
-    insight_summary TEXT NOT NULL,
-    model_used TEXT DEFAULT 'haiku',
+    source_ids TEXT NOT NULL,
+    insight TEXT NOT NULL,
+    connections TEXT NOT NULL DEFAULT '[]',
     created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
-CREATE INDEX IF NOT EXISTS idx_consolidations_created ON memory_consolidations(created_at);
+CREATE INDEX IF NOT EXISTS idx_consolidations_created ON memory_consolidations(created_at DESC);
 EOF
 
 	echo "$test_dir"
@@ -115,8 +114,9 @@ seed_memories() {
 
 	local i
 	for i in $(seq 1 "$count"); do
+		# Use IDs matching the mem_[0-9]{14}_[0-9a-f]+ pattern expected by phase_consolidate()
 		local mem_id
-		mem_id="mem_test_$(printf '%03d' "$i")"
+		mem_id="mem_20260307120000_$(printf '%08x' "$i")"
 		local content="Test memory content number $i with enough characters to pass the length filter for consolidation testing"
 		sqlite3 "$test_db" "INSERT INTO learnings (id, session_id, content, type, tags, confidence, created_at, event_date, project_path, source) VALUES ('$mem_id', 'test-session', '$content', 'WORKING_SOLUTION', 'test', 'medium', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), '', 'test');"
 	done
@@ -141,13 +141,13 @@ test_table_creation() {
 		fail "memory_consolidations table created" "table not found"
 	fi
 
-	# Verify schema has expected columns
+	# Verify schema has expected columns (id, source_ids, insight, connections, created_at)
 	local col_count
 	col_count=$(sqlite3 "$test_db" "SELECT COUNT(*) FROM pragma_table_info('memory_consolidations');")
-	if [[ "$col_count" == "6" ]]; then
-		pass "memory_consolidations has 6 columns"
+	if [[ "$col_count" == "5" ]]; then
+		pass "memory_consolidations has 5 columns"
 	else
-		fail "memory_consolidations has 6 columns" "got $col_count"
+		fail "memory_consolidations has 5 columns" "got $col_count"
 	fi
 	TESTS_RUN=$((TESTS_RUN + 1))
 
@@ -235,9 +235,11 @@ test_consolidation_tracking() {
 	seed_memories "$test_db" 5
 
 	# Simulate a consolidation run by inserting a record that covers all 5 memories
-	sqlite3 "$test_db" "INSERT INTO memory_consolidations (id, source_memory_ids, insight_memory_id, insight_summary, model_used) VALUES ('cons_test_001', 'mem_test_001,mem_test_002,mem_test_003,mem_test_004,mem_test_005', NULL, 'Test consolidation', 'haiku');"
+	# source_ids is a JSON array matching the implementation schema
+	sqlite3 "$test_db" "INSERT INTO memory_consolidations (id, source_ids, insight, connections) VALUES ('cons_test_001', '[\"mem_20260307120000_00000001\",\"mem_20260307120000_00000002\",\"mem_20260307120000_00000003\",\"mem_20260307120000_00000004\",\"mem_20260307120000_00000005\"]', 'Test consolidation insight', '[]');"
 
 	# Now check unconsolidated count — should be 0 since all are tracked
+	# The implementation extracts IDs from the JSON source_ids array and excludes them
 	local unconsolidated
 	unconsolidated=$(
 		sqlite3 "$test_db" <<'EOF'
@@ -248,7 +250,7 @@ AND length(l.content) >= 20
 AND l.id NOT IN (
     SELECT DISTINCT value
     FROM memory_consolidations mc,
-         json_each('["' || replace(mc.source_memory_ids, ',', '","') || '"]')
+         json_each(mc.source_ids)
 );
 EOF
 	)
@@ -348,13 +350,12 @@ EOF
 	sqlite3 "$test_db" <<'EOF'
 CREATE TABLE IF NOT EXISTS memory_consolidations (
     id TEXT PRIMARY KEY,
-    source_memory_ids TEXT NOT NULL,
-    insight_memory_id TEXT DEFAULT NULL,
-    insight_summary TEXT NOT NULL,
-    model_used TEXT DEFAULT 'haiku',
+    source_ids TEXT NOT NULL,
+    insight TEXT NOT NULL,
+    connections TEXT NOT NULL DEFAULT '[]',
     created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
-CREATE INDEX IF NOT EXISTS idx_consolidations_created ON memory_consolidations(created_at);
+CREATE INDEX IF NOT EXISTS idx_consolidations_created ON memory_consolidations(created_at DESC);
 EOF
 
 	local after
@@ -443,10 +444,11 @@ test_integration_llm_call() {
 	local test_db="$test_dir/memory.db"
 
 	# Seed diverse memories that should produce cross-cutting insights
-	sqlite3 "$test_db" "INSERT INTO learnings (id, session_id, content, type, tags, confidence, created_at, event_date, project_path, source) VALUES ('mem_int_001', 'test', 'CORS fix: add Access-Control-Allow-Origin header to nginx reverse proxy configuration', 'WORKING_SOLUTION', 'nginx,cors', 'high', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), '', 'test');"
-	sqlite3 "$test_db" "INSERT INTO learnings (id, session_id, content, type, tags, confidence, created_at, event_date, project_path, source) VALUES ('mem_int_002', 'test', 'Nginx proxy_pass configuration for API backend: use upstream block with keepalive connections', 'WORKING_SOLUTION', 'nginx,proxy', 'high', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), '', 'test');"
-	sqlite3 "$test_db" "INSERT INTO learnings (id, session_id, content, type, tags, confidence, created_at, event_date, project_path, source) VALUES ('mem_int_003', 'test', 'SSL termination at nginx level improves backend performance by offloading TLS handshake', 'WORKING_SOLUTION', 'nginx,ssl,performance', 'medium', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), '', 'test');"
-	sqlite3 "$test_db" "INSERT INTO learnings (id, session_id, content, type, tags, confidence, created_at, event_date, project_path, source) VALUES ('mem_int_004', 'test', 'Rate limiting with nginx limit_req_zone prevents API abuse and protects backend services', 'WORKING_SOLUTION', 'nginx,security,rate-limiting', 'high', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), '', 'test');"
+	# IDs match the mem_[0-9]{14}_[0-9a-f]+ pattern expected by phase_consolidate()
+	sqlite3 "$test_db" "INSERT INTO learnings (id, session_id, content, type, tags, confidence, created_at, event_date, project_path, source) VALUES ('mem_20260307140000_a0000001', 'test', 'CORS fix: add Access-Control-Allow-Origin header to nginx reverse proxy configuration', 'WORKING_SOLUTION', 'nginx,cors', 'high', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), '', 'test');"
+	sqlite3 "$test_db" "INSERT INTO learnings (id, session_id, content, type, tags, confidence, created_at, event_date, project_path, source) VALUES ('mem_20260307140000_a0000002', 'test', 'Nginx proxy_pass configuration for API backend: use upstream block with keepalive connections', 'WORKING_SOLUTION', 'nginx,proxy', 'high', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), '', 'test');"
+	sqlite3 "$test_db" "INSERT INTO learnings (id, session_id, content, type, tags, confidence, created_at, event_date, project_path, source) VALUES ('mem_20260307140000_a0000003', 'test', 'SSL termination at nginx level improves backend performance by offloading TLS handshake', 'WORKING_SOLUTION', 'nginx,ssl,performance', 'medium', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), '', 'test');"
+	sqlite3 "$test_db" "INSERT INTO learnings (id, session_id, content, type, tags, confidence, created_at, event_date, project_path, source) VALUES ('mem_20260307140000_a0000004', 'test', 'Rate limiting with nginx limit_req_zone prevents API abuse and protects backend services', 'WORKING_SOLUTION', 'nginx,security,rate-limiting', 'high', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), '', 'test');"
 
 	# Run the actual consolidation via the script
 	# We need to override MEMORY_DB and related vars
@@ -473,11 +475,11 @@ test_integration_llm_call() {
 		if [[ "$derives_count" -gt 0 ]]; then
 			pass "integration: $derives_count derives relation(s) created"
 		else
-			# It's valid for the LLM to find no patterns — the consolidation record
-			# with NULL insight_memory_id is the "no patterns found" case
-			local null_insights
-			null_insights=$(sqlite3 "$test_db" "SELECT COUNT(*) FROM memory_consolidations WHERE insight_memory_id IS NULL;")
-			if [[ "$null_insights" -gt 0 ]]; then
+			# It's valid for the LLM to find no meaningful connections —
+			# the consolidation record with empty insight is the "no patterns found" case
+			local empty_insights
+			empty_insights=$(sqlite3 "$test_db" "SELECT COUNT(*) FROM memory_consolidations WHERE insight = '' OR connections = '[]';")
+			if [[ "$empty_insights" -gt 0 ]]; then
 				pass "integration: LLM found no patterns (valid outcome)"
 			else
 				fail "integration: derives relations created" "got 0"
