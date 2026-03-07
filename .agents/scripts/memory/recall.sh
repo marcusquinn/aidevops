@@ -176,12 +176,31 @@ cmd_recall() {
 		return $?
 	fi
 
-	# Escape query for FTS5 - wrap in double quotes to handle special chars
-	# FTS5 treats hyphens as NOT operator, asterisks as prefix, etc.
-	# Quoting the query makes it a literal phrase search.
+	# Escape query for FTS5 — tokenise into individual words joined by AND.
+	# Previous approach wrapped the entire query in double quotes, making it a
+	# phrase search (words must appear adjacent and in order). This caused most
+	# multi-word queries to return zero results — e.g., "shellcheck memory"
+	# only matched if those exact words appeared side-by-side in content.
+	#
+	# FTS5 implicit AND (space-separated tokens) is the correct default:
+	# each word must appear somewhere in the document, but not necessarily
+	# adjacent. Special characters (hyphens, asterisks) are handled by
+	# quoting individual tokens that contain them.
 	local escaped_query="${query//"'"/"''"}"
-	# Escape embedded double quotes for FTS5 (double them), then wrap in quotes
-	escaped_query="\"${escaped_query//\"/\"\"}\""
+	# Quote each token individually to handle special chars (hyphens = NOT in FTS5)
+	# "foo-bar baz" → "\"foo-bar\" \"baz\"" (each token quoted, joined by implicit AND)
+	local tokenised_query=""
+	local token
+	for token in $escaped_query; do
+		# Escape embedded double quotes within each token
+		token="${token//\"/\"\"}"
+		if [[ -n "$tokenised_query" ]]; then
+			tokenised_query="$tokenised_query \"$token\""
+		else
+			tokenised_query="\"$token\""
+		fi
+	done
+	escaped_query="$tokenised_query"
 
 	# Build filters with validation
 	local extra_filters=""
