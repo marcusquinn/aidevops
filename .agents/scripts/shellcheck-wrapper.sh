@@ -185,7 +185,7 @@ _check_rate_limit() {
 		# Return empty output (no diagnostics) instead of blocking
 		# This prevents the language server from hanging while still
 		# protecting against the kill-respawn-grow cycle
-		echo '{"comments":[]}' 2>/dev/null || true
+		echo '{"comments":[]}'
 		return 1
 	fi
 

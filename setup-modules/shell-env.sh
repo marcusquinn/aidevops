@@ -668,7 +668,7 @@ setup_shellcheck_wrapper() {
 		# Remove stale old-form entries (case guard that only checked presence,
 		# not position — left the shim at the end of PATH on upgrades)
 		# shellcheck disable=SC2016 # Matching literal $PATH text in rc files, not expanding
-		if grep -q 'case ":$PATH:" in.*\.aidevops/bin' "$rc_file" 2>/dev/null; then
+		if grep -q 'case ":$PATH:" in.*\.aidevops/bin' "$rc_file"; then
 			# shellcheck disable=SC2016
 			sed -i.bak '/case ":$PATH:" in.*\.aidevops\/bin/d' "$rc_file"
 			rm -f "${rc_file}.bak"
