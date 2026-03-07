@@ -52,7 +52,7 @@ Cost is negligible (~$0.001-0.01 per audit pulse run on 10-50 memories). Value i
 4. **Key files to modify**:
    - `.agents/scripts/memory-audit-pulse.sh` — add `phase_consolidate()`
    - `.agents/scripts/memory/_common.sh` — add `memory_consolidations` table to `init_db()` and `migrate_db()`
-   - `.agents/scripts/memory-helper.sh` — add `consolidate` command dispatch
+   - `.agents/scripts/memory-helper.sh` — add `insights` command dispatch
    - `.agents/memory/README.md` — document consolidation phase
 
 ## Acceptance Criteria
@@ -65,12 +65,12 @@ Cost is negligible (~$0.001-0.01 per audit pulse run on 10-50 memories). Value i
     run: "grep -q 'phase_consolidate\\|Phase.*[Cc]onsolidat' .agents/scripts/memory-audit-pulse.sh"
   ```
 
-- [ ] `memory-helper.sh consolidate` triggers consolidation manually
+- [ ] `memory-helper.sh insights` triggers consolidation manually
 
   ```yaml
   verify:
     method: bash
-    run: "grep -q 'consolidate)' .agents/scripts/memory-helper.sh"
+    run: "grep -q 'insights)' .agents/scripts/memory-helper.sh"
   ```
 
 - [ ] `memory_consolidations` table created in init_db migration
@@ -129,7 +129,7 @@ Cost is negligible (~$0.001-0.01 per audit pulse run on 10-50 memories). Value i
 
 - `.agents/scripts/memory-audit-pulse.sh` — main integration point, add Phase 4
 - `.agents/scripts/memory/_common.sh` — schema migration for `memory_consolidations` table
-- `.agents/scripts/memory-helper.sh` — add `consolidate` command dispatch
+- `.agents/scripts/memory-helper.sh` — add `insights` command dispatch
 - `.agents/scripts/memory/store.sh` — reference for how `learning_relations` are created
 - `.agents/scripts/ai-research-helper.sh` — LLM call interface
 - `.agents/memory/README.md` — documentation
