@@ -1230,11 +1230,18 @@ SQL
 	medium=$(echo "$response" | jq -r '[.facets[]? | select(.property=="severities") | .values[]? | select(.val=="MINOR") | .count] | add // 0' 2>/dev/null) || medium=0
 	low=$(echo "$response" | jq -r '[.facets[]? | select(.property=="severities") | .values[]? | select(.val=="INFO") | .count] | add // 0' 2>/dev/null) || low=0
 
-	# Get previous snapshot
+	# Sanitise: ensure all counts are integers (guards against malformed API responses)
+	[[ "$total" =~ ^[0-9]+$ ]] || total=0
+	[[ "$critical" =~ ^[0-9]+$ ]] || critical=0
+	[[ "$high" =~ ^[0-9]+$ ]] || high=0
+	[[ "$medium" =~ ^[0-9]+$ ]] || medium=0
+	[[ "$low" =~ ^[0-9]+$ ]] || low=0
+
+	# Get previous snapshot (single query for all columns)
+	local prev_snapshot
+	prev_snapshot=$(db "$AUDIT_DB" -separator '|' "SELECT total, critical, high FROM regression_snapshots WHERE source='sonarcloud' ORDER BY id DESC LIMIT 1;" 2>/dev/null) || prev_snapshot=""
 	local prev_total prev_critical prev_high
-	prev_total=$(db "$AUDIT_DB" "SELECT total FROM regression_snapshots WHERE source='sonarcloud' ORDER BY id DESC LIMIT 1;" 2>/dev/null) || prev_total=""
-	prev_critical=$(db "$AUDIT_DB" "SELECT critical FROM regression_snapshots WHERE source='sonarcloud' ORDER BY id DESC LIMIT 1;" 2>/dev/null) || prev_critical=""
-	prev_high=$(db "$AUDIT_DB" "SELECT high FROM regression_snapshots WHERE source='sonarcloud' ORDER BY id DESC LIMIT 1;" 2>/dev/null) || prev_high=""
+	IFS='|' read -r prev_total prev_critical prev_high <<<"$prev_snapshot"
 
 	# Store current snapshot
 	db "$AUDIT_DB" "INSERT INTO regression_snapshots (source, total, critical, high, medium, low) VALUES ('sonarcloud', $total, $critical, $high, $medium, $low);" 2>/dev/null
