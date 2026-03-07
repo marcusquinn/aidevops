@@ -235,7 +235,7 @@ TASK_DESC="<issue title and first paragraph of body>"
 
 # Classify — uses haiku-tier LLM call (~$0.001)
 CLASSIFY_RESULT=$(/bin/bash ~/.aidevops/agents/scripts/task-decompose-helper.sh classify \
-  --task "$TASK_DESC" --repo-path "$path" --quiet) || CLASSIFY_RESULT=""
+  "$TASK_DESC" --depth 0) || CLASSIFY_RESULT=""
 
 # Parse result
 TASK_KIND=$(echo "$CLASSIFY_RESULT" | jq -r '.kind // "atomic"' || echo "atomic")
@@ -248,8 +248,7 @@ TASK_KIND=$(echo "$CLASSIFY_RESULT" | jq -r '.kind // "atomic"' || echo "atomic"
 ```bash
 # Decompose into subtasks
 DECOMPOSE_RESULT=$(/bin/bash ~/.aidevops/agents/scripts/task-decompose-helper.sh decompose \
-  --task "$TASK_DESC" --repo-path "$path" \
-  --depth 0 --max-depth "${DECOMPOSE_MAX_DEPTH:-3}" --quiet) || DECOMPOSE_RESULT=""
+  "$TASK_DESC" --max-subtasks "${DECOMPOSE_MAX_SUBTASKS:-5}") || DECOMPOSE_RESULT=""
 
 SUBTASK_COUNT=$(echo "$DECOMPOSE_RESULT" | jq '.subtasks | length' || echo 0)
 ```

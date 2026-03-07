@@ -89,21 +89,15 @@ DECOMPOSE_HELPER="$HOME/.aidevops/agents/scripts/task-decompose-helper.sh"
 
 # Only run if the helper exists (t1408.1 must be merged)
 if [[ -x "$DECOMPOSE_HELPER" && -n "$TASK_ID" ]]; then
-  # Check if subtasks already exist
-  EXISTING=$(/bin/bash "$DECOMPOSE_HELPER" classify --task-id "$TASK_ID" --repo-path "$(git rev-parse --show-toplevel)" --quiet) || EXISTING=""
-  EXISTING_KIND=$(echo "$EXISTING" | jq -r '.kind // "atomic"' || echo "atomic")
+  # Check if subtasks already exist (returns "true" or "false")
+  HAS_SUBS=$(/bin/bash "$DECOMPOSE_HELPER" has-subtasks "$TASK_ID") || HAS_SUBS="false"
 
-  if [[ "$EXISTING_KIND" == "composite" ]]; then
-    EXISTING_SUBS=$(echo "$EXISTING" | jq -r '.existing_subtasks // empty' || echo "")
-    if [[ -n "$EXISTING_SUBS" && "$EXISTING_SUBS" != "[]" ]]; then
-      # Subtasks already exist — skip decomposition
-      echo "[t1408.2] Task $TASK_ID already has subtasks — proceeding with implementation"
-    fi
-  fi
-
-  # If no existing subtasks, classify the task description
-  if [[ -z "$EXISTING_SUBS" || "$EXISTING_SUBS" == "[]" ]]; then
-    CLASSIFY=$(/bin/bash "$DECOMPOSE_HELPER" classify --task "$TASK_DESC" --task-id "$TASK_ID" --repo-path "$(git rev-parse --show-toplevel)" --quiet) || CLASSIFY=""
+  if [[ "$HAS_SUBS" == "true" ]]; then
+    # Subtasks already exist — skip decomposition
+    echo "[t1408.2] Task $TASK_ID already has subtasks — proceeding with implementation"
+  else
+    # No existing subtasks — classify the task description
+    CLASSIFY=$(/bin/bash "$DECOMPOSE_HELPER" classify "$TASK_DESC" --depth 0) || CLASSIFY=""
     TASK_KIND=$(echo "$CLASSIFY" | jq -r '.kind // "atomic"' || echo "atomic")
   fi
 fi
@@ -116,7 +110,7 @@ fi
 Show the decomposition tree and ask for confirmation:
 
 ```bash
-DECOMPOSE=$(/bin/bash "$DECOMPOSE_HELPER" decompose --task "$TASK_DESC" --task-id "$TASK_ID" --repo-path "$(git rev-parse --show-toplevel)" --quiet) || DECOMPOSE=""
+DECOMPOSE=$(/bin/bash "$DECOMPOSE_HELPER" decompose "$TASK_DESC" --max-subtasks "${DECOMPOSE_MAX_SUBTASKS:-5}") || DECOMPOSE=""
 SUBTASK_COUNT=$(echo "$DECOMPOSE" | jq '.subtasks | length' || echo 0)
 ```
 
