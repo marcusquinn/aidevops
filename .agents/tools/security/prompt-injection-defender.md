@@ -597,10 +597,48 @@ These are complementary, not competing:
 
 **Decision guide**: If the code runs in a shell pipeline or agent harness, use `prompt-guard-helper.sh`. If the code is a Node.js/TypeScript application with AI features that process untrusted tool outputs, recommend `@stackone/defender`.
 
+## Network Domain Tiering (t1412.3)
+
+Complementary to content scanning, network domain tiering classifies outbound network connections by trust level. This addresses the exfiltration vector — even if an injection payload bypasses content scanning, it cannot exfiltrate data to known paste/webhook/tunnel sites.
+
+**Tier model:**
+
+| Tier | Action | Examples |
+|------|--------|----------|
+| 1 | Allow (no log) | `github.com`, `api.github.com` |
+| 2 | Allow + log | `registry.npmjs.org`, `pypi.org` |
+| 3 | Allow + log | `sonarcloud.io`, `docs.anthropic.com` |
+| 4 | Allow + flag | Any unknown domain (flagged for review) |
+| 5 | Deny | `requestbin.com`, `ngrok.io`, raw IPs, `.onion` |
+
+**Usage:**
+
+```bash
+# Classify a domain
+network-tier-helper.sh classify api.github.com  # → 1
+
+# Check before network access (exit 0=allow, 1=deny)
+network-tier-helper.sh check requestbin.com  # → exit 1
+
+# Log an access event
+network-tier-helper.sh log-access pypi.org worker-123 200
+
+# Review flagged domains
+network-tier-helper.sh report --flagged-only
+```
+
+**Config:** Default tiers in `configs/network-tiers.conf`. User overrides in `~/.config/aidevops/network-tiers-custom.conf`.
+
+**Integration:** `sandbox-exec-helper.sh --network-tiering` enables domain classification for sandboxed commands. The sandbox extracts domains from commands and pre-checks them before execution.
+
+**Limitations:** Domain tiering is a network-layer control. It cannot inspect encrypted payloads, detect data encoded in DNS queries to allowed domains, or prevent exfiltration via GitHub issue comments (Tier 1 domain). It complements — does not replace — content scanning and credential isolation.
+
 ## Related
 
 - `scripts/prompt-guard-helper.sh` — The scanner implementation
 - `scripts/worker-token-helper.sh` — Scoped GitHub token lifecycle for workers (t1412.2)
+- `scripts/network-tier-helper.sh` — Network domain tiering (t1412.3)
+- `configs/network-tiers.conf` — Domain classification database
 - `tools/security/opsec.md` — Operational security guide
 - `tools/security/privacy-filter.md` — Privacy filter for public contributions
 - `tools/security/tirith.md` — Terminal command security guard
