@@ -54,33 +54,7 @@ readonly REQUIRED_CREDENTIALS=(
 	"CWS_EXTENSION_ID"
 )
 
-# ------------------------------------------------------------------------------
-# UTILITY FUNCTIONS
-# ------------------------------------------------------------------------------
-
-print_error() {
-	local message="$1"
-	echo -e "\033[1;31m[ERROR]\033[0m $message" >&2
-	return 0
-}
-
-print_success() {
-	local message="$1"
-	echo -e "\033[0;32m[OK]\033[0m $message"
-	return 0
-}
-
-print_info() {
-	local message="$1"
-	echo -e "\033[1;33m[INFO]\033[0m $message"
-	return 0
-}
-
-print_warning() {
-	local message="$1"
-	echo -e "\033[1;33m[WARN]\033[0m $message"
-	return 0
-}
+# print_* functions provided by shared-constants.sh (sourced above)
 
 # ------------------------------------------------------------------------------
 # DEPENDENCY CHECKING
@@ -156,24 +130,6 @@ load_credentials() {
 		print_error "$ERROR_CREDENTIALS_MISSING"
 		print_info "Missing credentials: ${missing_creds[*]}"
 		print_info "Run 'chrome-webstore-helper.sh setup' to configure credentials"
-		return 1
-	fi
-
-	return 0
-}
-
-validate_credentials() {
-	local missing_creds=()
-
-	for key in "${REQUIRED_CREDENTIALS[@]}"; do
-		if [[ -z "${!key:-}" ]]; then
-			missing_creds+=("$key")
-		fi
-	done
-
-	if [[ ${#missing_creds[@]} -gt 0 ]]; then
-		print_error "$ERROR_CREDENTIALS_MISSING"
-		print_info "Missing credentials: ${missing_creds[*]}"
 		return 1
 	fi
 
@@ -499,7 +455,11 @@ cmd_publish() {
 	# Build extension if build command provided
 	if [[ -n "$build_cmd" ]]; then
 		print_info "Running build command: $build_cmd"
-		if ! bash -c "$build_cmd"; then
+		local build_cmd_arr
+		# Parse command string into array for safe execution (no eval/bash -c)
+		# shellcheck disable=SC2206
+		read -r -a build_cmd_arr <<<"$build_cmd"
+		if ! "${build_cmd_arr[@]}"; then
 			print_error "$ERROR_BUILD_FAILED"
 			return 1
 		fi
@@ -510,7 +470,11 @@ cmd_publish() {
 
 	if [[ -n "$zip_cmd" ]]; then
 		print_info "Running zip command: $zip_cmd"
-		if ! bash -c "$zip_cmd"; then
+		local zip_cmd_arr
+		# Parse command string into array for safe execution (no eval/bash -c)
+		# shellcheck disable=SC2206
+		read -r -a zip_cmd_arr <<<"$zip_cmd"
+		if ! "${zip_cmd_arr[@]}"; then
 			print_error "$ERROR_ZIP_FAILED"
 			return 1
 		fi
