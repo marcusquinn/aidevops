@@ -37,6 +37,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 # shellcheck source=shared-constants.sh
 source "${SCRIPT_DIR}/shared-constants.sh"
 
+# shellcheck disable=SC2034 # Used by log_info/log_error/log_warn in shared-constants.sh
 LOG_PREFIX="BATCH"
 
 # Default configuration

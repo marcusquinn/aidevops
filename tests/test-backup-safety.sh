@@ -23,7 +23,6 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPTS_DIR="$REPO_DIR/.agents/scripts"
-VERBOSE="${1:-}"
 
 # --- Test Framework ---
 PASS_COUNT=0
