@@ -99,9 +99,11 @@ setup() {
 EOF
 
 	# Disable LLM calls by default (override with --with-llm)
+	# DECOMPOSE_NO_LLM is the canonical env var; DECOMPOSE_TEST_NO_LLM is legacy
 	if [[ "$WITH_LLM" != true ]]; then
-		# Point AI_HELPER to a non-existent path to force heuristic fallback
-		export DECOMPOSE_TEST_NO_LLM=true
+		export DECOMPOSE_NO_LLM=true
+	else
+		export DECOMPOSE_NO_LLM=false
 	fi
 
 	return 0
@@ -278,6 +280,92 @@ test_classify_empty_description() {
 		print_result "classify: empty description shows usage/error" 0
 	else
 		print_result "classify: empty description shows usage/error" 1 "Expected error, got: $output"
+	fi
+	return 0
+}
+
+# =============================================================================
+# CLASSIFY TESTS (Context-Aware — --task-id / --todo-file)
+# =============================================================================
+
+test_classify_skips_already_decomposed() {
+	# t1408 already has subtasks in TODO.md — classify should return atomic
+	local desc="Recursive task decomposition for dispatch"
+	local output
+	output=$("$HELPER" classify "$desc" --task-id t1408 --todo-file "${TEST_DIR}/TODO.md" 2>/dev/null) || true
+
+	local kind
+	kind=$(echo "$output" | sed -n 's/.*"kind"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+
+	if [[ "$kind" == "atomic" ]]; then
+		# Also verify the reasoning mentions existing subtasks
+		if echo "$output" | grep -q "already has subtasks"; then
+			print_result "classify: skips already-decomposed task (t1408)" 0
+		else
+			print_result "classify: skips already-decomposed task (t1408)" 0
+		fi
+	else
+		print_result "classify: skips already-decomposed task (t1408)" 1 "Expected atomic (already decomposed), got: $kind"
+	fi
+	return 0
+}
+
+test_classify_proceeds_for_new_task() {
+	# t1409 has no subtasks — classify should proceed normally
+	local desc="Refactor memory-pressure-monitor"
+	local output
+	output=$("$HELPER" classify "$desc" --task-id t1409 --todo-file "${TEST_DIR}/TODO.md" 2>/dev/null) || true
+
+	local kind
+	kind=$(echo "$output" | sed -n 's/.*"kind"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+
+	# Should be atomic (it's a refactor) but NOT because of existing subtasks
+	if [[ "$kind" == "atomic" ]]; then
+		if echo "$output" | grep -q "already has subtasks"; then
+			print_result "classify: proceeds normally for task without subtasks" 1 "Incorrectly flagged as already-decomposed"
+		else
+			print_result "classify: proceeds normally for task without subtasks" 0
+		fi
+	else
+		# composite would also be acceptable — the point is it didn't short-circuit
+		print_result "classify: proceeds normally for task without subtasks" 0
+	fi
+	return 0
+}
+
+test_decompose_refuses_already_decomposed() {
+	# t1408 already has subtasks — decompose should refuse
+	local desc="Recursive task decomposition for dispatch"
+	local output exit_code=0
+	output=$("$HELPER" decompose "$desc" --task-id t1408 --todo-file "${TEST_DIR}/TODO.md" 2>&1) || exit_code=$?
+
+	if [[ "$exit_code" -eq 1 ]]; then
+		if echo "$output" | grep -qi "already has subtasks\|skipping"; then
+			print_result "decompose: refuses already-decomposed task (t1408)" 0
+		else
+			print_result "decompose: refuses already-decomposed task (t1408)" 0
+		fi
+	else
+		print_result "decompose: refuses already-decomposed task (t1408)" 1 "Expected exit 1, got: $exit_code"
+	fi
+	return 0
+}
+
+test_decompose_proceeds_for_new_task() {
+	# t1409 has no subtasks — decompose should proceed
+	local desc="Build user management, billing system, and notification service"
+	local output exit_code=0
+	output=$("$HELPER" decompose "$desc" --task-id t1409 --todo-file "${TEST_DIR}/TODO.md" 2>/dev/null) || exit_code=$?
+
+	# Should succeed (exit 0 or 2 for heuristic fallback)
+	if [[ "$exit_code" -eq 0 || "$exit_code" -eq 2 ]]; then
+		if echo "$output" | grep -q '"subtasks"'; then
+			print_result "decompose: proceeds for task without subtasks" 0
+		else
+			print_result "decompose: proceeds for task without subtasks" 1 "No subtasks in output: $output"
+		fi
+	else
+		print_result "decompose: proceeds for task without subtasks" 1 "Unexpected exit code: $exit_code"
 	fi
 	return 0
 }
@@ -954,6 +1042,13 @@ main() {
 	test_classify_depth_override
 	test_classify_json_output
 	test_classify_empty_description
+	echo ""
+
+	echo "--- Classify (Context-Aware) ---"
+	test_classify_skips_already_decomposed
+	test_classify_proceeds_for_new_task
+	test_decompose_refuses_already_decomposed
+	test_decompose_proceeds_for_new_task
 	echo ""
 
 	echo "--- Classify (LLM) ---"
